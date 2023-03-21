@@ -312,7 +312,7 @@ void setup() {
   pinMode(buck_EN,OUTPUT);
   pinMode(LED,OUTPUT); 
   pinMode(FAN,OUTPUT);
-  pinMode(TS,INPUT); 
+  pinMode(TempSensor,INPUT); 
   pinMode(ADC_ALERT,INPUT);
   pinMode(buttonLeft,INPUT); 
   pinMode(buttonRight,INPUT); 
