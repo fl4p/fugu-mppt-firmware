@@ -20,7 +20,7 @@ void Read_Sensors(){
 
   /////////// TEMPERATURE SENSOR /////////////
   if(sampleStoreTS<=avgCountTS){                               //TEMPERATURE SENSOR - Lite Averaging
-    TS = TS + analogRead(TempSensor);
+    TS = TS + analogRead(TempSensor); // ~150us
     sampleStoreTS++;   
   }
   else{
