@@ -328,7 +328,11 @@ void setup() {
   
   //ADC INITIALIZATION
   ADC_SetGain();                                             //Sets ADC Gain & Range
-  ads.begin();                                               //Initialize ADC
+  if(!ads.begin()) {                                              //Initialize ADC
+    Serial.println("Failed to initialize ADS.");
+  } else {
+    Serial.println("ADC initialized");
+  }
 
   //GPIO INITIALIZATION                          
   buck_Disable();
