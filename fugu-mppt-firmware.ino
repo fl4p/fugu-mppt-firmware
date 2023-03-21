@@ -167,7 +167,7 @@ avgCountVS              = 3,          //  CALIB PARAMETER - Voltage Sensor Avera
 avgCountCS              = 4,          //  CALIB PARAMETER - Current Sensor Average Sampling Count (Recommended: 4)
 avgCountTS              = 500;        //  CALIB PARAMETER - Temperature Sensor Average Sampling Count
 float
-inVoltageDivRatio       = 40.2156,    //  CALIB PARAMETER - Input voltage divider sensor ratio (change this value to calibrate voltage sensor)
+inVoltageDivRatio       = 43.5532,    //  CALIB PARAMETER - Input voltage divider sensor ratio (change this value to calibrate voltage sensor)
 outVoltageDivRatio      = 24.5000,    //  CALIB PARAMETER - Output voltage divider sensor ratio (change this value to calibrate voltage sensor)
 vOutSystemMax           = 50.0000,    //  CALIB PARAMETER - 
 cOutSystemMax           = 50.0000,    //  CALIB PARAMETER - 
