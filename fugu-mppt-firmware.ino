@@ -64,8 +64,8 @@
 // The lines below are for the Firmware Version info displayed on the MPPT's LCD Menu Interface     //
 //==================================================================================================//
 String 
-firmwareInfo      = "V1.10   ",
-firmwareDate      = "30/08/21",
+firmwareInfo      = "V1.11   ",
+firmwareDate      = "21/03/23",
 firmwareContactR1 = "www.youtube.com/",  
 firmwareContactR2 = "TechBuilder     ";        
            
@@ -140,8 +140,8 @@ telemCounterReset       = 0,           //  USER PARAMETER - Reset Telem Data Eve
 errorTimeLimit          = 1000,        //  USER PARAMETER - Time interval for reseting error counter (milliseconds)  
 errorCountLimit         = 5,           //  USER PARAMETER - Maximum number of errors  
 millisRoutineInterval   = 250,         //  USER PARAMETER - Time Interval Refresh Rate For Routine Functions (ms)
-millisSerialInterval    = 1,           //  USER PARAMETER - Time Interval Refresh Rate For USB Serial Datafeed (ms)
-millisLCDInterval       = 1000,        //  USER PARAMETER - Time Interval Refresh Rate For LCD Display (ms)
+millisSerialInterval    = 500,           //  USER PARAMETER - Time Interval Refresh Rate For USB Serial Datafeed (ms)
+millisLCDInterval       = 500,        //  USER PARAMETER - Time Interval Refresh Rate For LCD Display (ms)
 millisWiFiInterval      = 2000,        //  USER PARAMETER - Time Interval Refresh Rate For WiFi Telemetry (ms)
 millisLCDBackLInterval  = 2000,        //  USER PARAMETER - Time Interval Refresh Rate For WiFi Telemetry (ms)
 backlightSleepMode      = 0,           //  USER PARAMETER - 0 = Never, 1 = 10secs, 2 = 5mins, 3 = 1hr, 4 = 6 hrs, 5 = 12hrs, 6 = 1 day, 7 = 3 days, 8 = 1wk, 9 = 1month
