@@ -42,19 +42,25 @@ void Charging_Algorithm(){
       PWM = PPWM; 
       lcd.clear();
     }  
-    else{                                                                            //NO ERROR PRESENT  - Continue power conversion              
+    else{
+
+       if(currentOutput>currentCharging) {
+         if(currentOutput / currentCharging > 1.2f)          {PWM /= 2; Serial.println("Current is 20% above limit, halving PWM"); } // current is 20% too high
+         else if(currentOutput / currentCharging > 1.05f)          PWM-=2; // current is 5% too high
+        else { PWM--; } //Current Is Above → Decrease Duty Cycle
+         }                                      
+                                                                         //NO ERROR PRESENT  - Continue power conversion              
       /////////////////////// CC-CV BUCK PSU ALGORITHM ////////////////////////////// 
-      if(MPPT_Mode==0){                                                              //CC-CV PSU MODE
-        if(currentOutput>currentCharging)       {PWM--;}                             //Current Is Above → Decrease Duty Cycle
-        else if(voltageOutput>voltageBatteryMax){PWM--;}                             //Voltage Is Above → Decrease Duty Cycle   
+      else if(MPPT_Mode==0){                                                              //CC-CV PSU MODE
+        if(voltageOutput>voltageBatteryMax){PWM--;}                             //Voltage Is Above → Decrease Duty Cycle   
         else if(voltageOutput<voltageBatteryMax){PWM++;}                             //Increase duty cycle when output is below charging voltage (for CC-CV only mode)
         else{}                                                                       //Do nothing when set output voltage is reached 
-        PWM_Modulation();                                                            //Set PWM signal to Buck PWM GPIO       
+                                                                   //Set PWM signal to Buck PWM GPIO       
       }     
         /////////////////////// MPPT & CC-CV CHARGING ALGORITHM ///////////////////////  
       else{                                                                                                                                                         
-        if(currentOutput>currentCharging){PWM--;}                                      //Current Is Above → Decrease Duty Cycle
-        else if(voltageOutput>voltageBatteryMax){PWM--;}                               //Voltage Is Above → Decrease Duty Cycle   
+       
+        if(voltageOutput>voltageBatteryMax){PWM--;}                               //Voltage Is Above → Decrease Duty Cycle   
         else{                                                                          //MPPT ALGORITHM
           if(powerInput>powerInputPrev && voltageInput>voltageInputPrev)     {PWM--;}  //  ↑P ↑V ; →MPP  //D--
           else if(powerInput>powerInputPrev && voltageInput<voltageInputPrev){PWM++;}  //  ↑P ↓V ; MPP←  //D++
@@ -63,9 +69,9 @@ void Charging_Algorithm(){
           else if(voltageOutput<voltageBatteryMax)                           {PWM++;}  //  MP MV ; MPP Reached - 
           powerInputPrev   = powerInput;                                               //Store Previous Recorded Power
           voltageInputPrev = voltageInput;                                             //Store Previous Recorded Voltage        
-        }   
-        PWM_Modulation();                                                              //Set PWM signal to Buck PWM GPIO                                                                       
-      }  
+        }                                                            //Set PWM signal to Buck PWM GPIO                                                                       
+      } 
+      PWM_Modulation();  
     }
   }
 }
