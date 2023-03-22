@@ -50,7 +50,7 @@ void Read_Sensors(){
   }
   CSI_converted = (CSI/avgCountCS)*1.3300;
   currentInput  = ((CSI_converted-currentMidPoint)*-1)/currentSensV;  
-  if(currentInput<0){currentInput=0.0000;}
+  if(currentInput<0){currentInput=0.0000;} // todo fix
   if(voltageOutput<=0){currentOutput = 0.0000;}
   else{currentOutput = (voltageInput*currentInput)/voltageOutput;}
 
