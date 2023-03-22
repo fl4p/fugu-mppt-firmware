@@ -326,8 +326,8 @@ void setup() {
   pwmMax = pow(2,pwmResolution)-1;                           //Get PWM Max Bit Ceiling
   pwmMaxLimited = (PWM_MaxDC*pwmMax)/100.000;                //Get maximum PWM Duty Cycle (pwm limiting protection)
   
-  Wire.setClock(400000UL);
-  ads.setDataRate(RATE_ADS1115_860SPS);
+  //Wire.setClock(400000UL);
+  //ads.setDataRate(RATE_ADS1115_860SPS);
 
   //ADC INITIALIZATION
   ADC_SetGain();                                             //Sets ADC Gain & Range
