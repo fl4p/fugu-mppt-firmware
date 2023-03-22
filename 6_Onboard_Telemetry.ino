@@ -14,13 +14,13 @@ void Onboard_Telemetry(){
 //  else if(chargingPause==1){Serial.println("CHARGING PAUSED");}   // Charging paused message
     else if(serialTelemMode==1){                                    // 1 - Display All                           
       Serial.print(" ERR:");   Serial.print(ERR);
-      Serial.print(" FLV:");   Serial.print(FLV);  
+      // Serial.print(" FLV:");   Serial.print(FLV);  
       Serial.print(" BNC:");   Serial.print(BNC);  
       Serial.print(" IUV:");   Serial.print(IUV); 
       Serial.print(" IOC:");   Serial.print(IOC); 
       Serial.print(" OOV:");   Serial.print(OOV); 
       Serial.print(" OOC:");   Serial.print(OOC);
-      Serial.print(" OTE:");   Serial.print(OTE); 
+      // Serial.print(" OTE:");   Serial.print(OTE); 
       Serial.print(" REC:");   Serial.print(REC);
       Serial.print(" MPPTA:"); Serial.print(MPPT_Mode);     
       Serial.print(" CM:");    Serial.print(output_Mode);   //Charging Mode
@@ -34,17 +34,17 @@ void Onboard_Telemetry(){
       Serial.print(" PI:");    Serial.print(powerInput,0); 
       Serial.print(" PWM:");   Serial.print(PWM); 
       Serial.print(" PPWM:");  Serial.print(PPWM); 
-      Serial.print(" VI:");    Serial.print(voltageInput,1); 
-      Serial.print(" VO:");    Serial.print(voltageOutput,1); 
-      Serial.print(" CI:");    Serial.print(currentInput,2); 
-      Serial.print(" CO:");    Serial.print(currentOutput,2); 
+      Serial.print(" VI:");    Serial.print(voltageInput,3); 
+      Serial.print(" VO:");    Serial.print(voltageOutput,3); 
+      Serial.print(" CI:");    Serial.print(currentInput,3); 
+      Serial.print(" CO:");    Serial.print(currentOutput,3); 
       Serial.print(" Wh:");    Serial.print(Wh,2); 
       Serial.print(" Temp:");  Serial.print(temperature,1);  
       Serial.print(" "); 
       Serial.print(" CSMPV:"); Serial.print(currentMidPoint,3);  
       Serial.print(" CSV:");   Serial.print(CSI_converted,3);   
       Serial.print(" VO%Dev:");Serial.print(outputDeviation,1);   
-      Serial.print(" SOC:");   Serial.print(batteryPercent);Serial.print("%"); 
+      //Serial.print(" SOC:");   Serial.print(batteryPercent);Serial.print("%"); 
       Serial.print(" T:");     Serial.print(secondsElapsed); 
       Serial.print(" LoopT:"); Serial.print(loopTime,3);Serial.print("ms");  
       Serial.println("");    
