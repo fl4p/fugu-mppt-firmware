@@ -1,7 +1,8 @@
 void backflowControl(){                                                //PV BACKFLOW CONTROL (INPUT MOSFET) 
   if(output_Mode==0){bypassEnable=1;}                                  //PSU MODE: Force backflow MOSFET on
   else{                                                                //CHARGER MODE: Force backflow MOSFET on
-    if(voltageInput>voltageOutput+voltageDropout){bypassEnable=1;}     //CHARGER MODE: Normal Condition - Turn on Backflow MOSFET (on by default when not in MPPT charger mode)
+    if(voltageInput>voltageOutput+voltageDropout                       //CHARGER MODE: Normal Condition - Turn on Backflow MOSFET (on by default when not in MPPT charger mode)
+    && currentInput > 0){bypassEnable=1;}     // Voltage is not enough. the buck can act as a (reversed) boost, so check current is positive
     else{bypassEnable=0;}                                              //CHARGER MODE: Input Undervoltage - Turn off bypass MOSFET and prevent PV Backflow (SS)
   }
   digitalWrite(backflow_MOSFET,bypassEnable);                          //Signal backflow MOSFET GPIO pin   
