@@ -73,6 +73,7 @@ firmwareContactR2 = "TechBuilder     ";
 // You will have to download and install the following libraries below in order to program the MPPT //
 // unit. Visit TechBuilder's YouTube channel for the "MPPT" tutorial.                               //
 //============================================================================================= ====//
+#include<type_traits>
 #include <EEPROM.h>                 //SYSTEM PARAMETER  - EEPROM Library (By: Arduino)
 #include <Wire.h>                   //SYSTEM PARAMETER  - WIRE Library (By: Arduino)
 #include <SPI.h>                    //SYSTEM PARAMETER  - SPI Library (By: Arduino)
@@ -159,8 +160,8 @@ electricalPrice         = 9.5000;      //   USER PARAMETER - Input electrical pr
 // the values below if you know what you are doing. The values below have been pre-calibrated for  //
 // MPPT charge controllers designed by TechBuilder (Angelo S. Casimiro)                            //
 //=================================================================================================//
-bool
-ADS1015_Mode            = 0;          //  CALIB PARAMETER - Use 1 for ADS1015 ADC model use 0 for ADS1115 ADC model
+constexpr bool
+ADS1015_Mode            = std::is_same<Adafruit_ADS1015, decltype(ads)>::value;          //  CALIB PARAMETER - Use 1 for ADS1015 ADC model use 0 for ADS1115 ADC model
 int
 ADC_GainSelect          = 2,          //  CALIB PARAMETER - ADC Gain Selection (0→±6.144V 3mV/bit, 1→±4.096V 2mV/bit, 2→±2.048V 1mV/bit)
 avgCountVS              = 3,          //  CALIB PARAMETER - Voltage Sensor Average Sampling Count (Recommended: 3)
