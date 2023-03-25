@@ -314,10 +314,10 @@ void setup() {
   pinMode(FAN,OUTPUT);
   pinMode(TempSensor,INPUT); 
   pinMode(ADC_ALERT,INPUT);
-  pinMode(buttonLeft,INPUT); 
-  pinMode(buttonRight,INPUT); 
-  pinMode(buttonBack,INPUT); 
-  pinMode(buttonSelect,INPUT); 
+  pinMode(buttonLeft,INPUT_PULLDOWN); 
+  pinMode(buttonRight,INPUT_PULLDOWN); 
+  pinMode(buttonBack,INPUT_PULLDOWN); 
+  pinMode(buttonSelect,INPUT_PULLDOWN); 
   
   //PWM INITIALIZATION
   ledcSetup(pwmChannel,pwmFrequency,pwmResolution);          //Set PWM Parameters
