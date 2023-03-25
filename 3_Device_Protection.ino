@@ -21,7 +21,8 @@ void Device_Protection(){
   if(temperature>temperatureMax)                           {OTE=1;ERR++;errorCount++; Serial.println("!!! OVERTEMP!!!"); }else{OTE=0;}  //OTE - OVERTEMPERATURE: System overheat detected
   if(currentInput>currentInAbsolute)                       {IOC=1;ERR++;errorCount++;Serial.println("!!! IOC (hardcoded) !!!"); }else{IOC=0;}  //IOC - INPUT  OVERCURRENT: Input current has reached absolute limit
   if(currentOutput>currentOutAbsolute)                     {OOC=1;ERR++;errorCount++;Serial.println("!!! OOC (hardcoded) !!!"); }else{OOC=0;}  //OOC - OUTPUT OVERCURRENT: Output current has reached absolute limit 
-  if(voltageOutput>voltageBatteryMax+voltageBatteryThresh) {OOV=1;ERR++;errorCount++;Serial.println("!!! OOV (usr) !!!"); }else{OOV=0;}  //OOV - OUTPUT OVERVOLTAGE: Output voltage has reached absolute limit                     
+  if(voltageOutput>voltageBatteryMax+voltageBatteryThresh) {if(!OOV) Serial.println("!!! OOV !!!"); OOV=1;ERR++;errorCount++;}else{OOV=0;}  //OOV - OUTPUT OVERVOLTAGE: Output voltage has reached absolute limit                     
+  // ^^REC=1, because battery might have been just disconnected, so restart the PWM. Might fix the "loose battery contact mosfet burn"
   if(voltageInput<vInSystemMin&&voltageOutput<vInSystemMin){FLV=1;ERR++;errorCount++;Serial.println("!!! FLV !!!"); }else{FLV=0;}  //FLV - Fatally low system voltage (unable to resume operation)
 
   if(output_Mode==0){   
@@ -31,8 +32,8 @@ void Device_Protection(){
   }
   else{ 
     // charger mode                                                                                            //Charger MODE specific protection protocol                
-    if(voltageOutput<vInSystemMin)                   {BNC=1;ERR++;}      else{BNC=0;}               //BNC - BATTERY NOT CONNECTED (for charger mode only, does not treat BNC as error when not under MPPT mode)
-    if(voltageInput<voltageBatteryMax+voltageDropout){IUV=1;ERR++;REC=1;  Serial.println("!!! IUV (usr) !!!");}else{IUV=0;}               //IUV - INPUT UNDERVOLTAGE: Input voltage is below max battery charging voltage (for charger mode only)     
+    if(voltageOutput<vInSystemMin)                   {if(!BNC)Serial.println("!!! BNC !!!"); BNC=1;ERR++;}      else{BNC=0;}               //BNC - BATTERY NOT CONNECTED (for charger mode only, does not treat BNC as error when not under MPPT mode)
+    if(voltageInput<voltageBatteryMax+voltageDropout){if(!IUV)Serial.println("!!! IUV !!!");IUV=1;ERR++;REC=1;}else{IUV=0;}               //IUV - INPUT UNDERVOLTAGE: Input voltage is below max battery charging voltage (for charger mode only)     
   } 
   backflowControl(); //Enable backflow current detection & control           
 }
