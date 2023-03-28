@@ -18,3 +18,7 @@ Forks:
 ```
 while ! arduino-cli upload -b "esp32:esp32:esp32:UploadSpeed=115200" -p /dev/tty.usbserial-110 --discovery-timeout 1ms; echo retry; end
 ```
+
+
+
+* avoid trickle charge!  https://www.youtube.com/watch?v=wy516po6uVU
