@@ -16,6 +16,19 @@ void resetVariables(){
   daysRunning    = 0; 
   timeOn         = 0; 
 }
+
+
+
+float readADCVoltage(int ch) {
+  if(useInternalADC) {
+    auto raw = analogRead(ADC_internal_ch_map[ch]);
+    constexpr float Vmax = 1.750f; // 6db
+    return raw * Vmax / 4095.0f;
+  } else {
+      return  ads.computeVolts(ads.readADC_SingleEnded(ch));    
+  }
+}
+
 void Read_Sensors(){
 
   /////////// TEMPERATURE SENSOR /////////////
@@ -37,8 +50,8 @@ void Read_Sensors(){
 
   //VOLTAGE SENSOR - Instantenous Averaging   
   for(int i = 0; i<avgCountVS; i++){
-    VSI = VSI + ads.computeVolts(ads.readADC_SingleEnded(3));
-    VSO = VSO + ads.computeVolts(ads.readADC_SingleEnded(1));
+    VSI = VSI + readADCVoltage(3);
+    VSO = VSO + readADCVoltage(1);
   }
   voltageInput  = (VSI/avgCountVS)*inVoltageDivRatio; 
   voltageOutput = (VSO/avgCountVS)*outVoltageDivRatio; 
@@ -46,7 +59,7 @@ void Read_Sensors(){
   
   //CURRENT SENSOR - Instantenous Averaging   
   for(int i = 0; i<avgCountCS; i++){
-    CSI = CSI + ads.computeVolts(ads.readADC_SingleEnded(2));
+    CSI = CSI + readADCVoltage(2);
   }
   CSI_converted = (CSI/avgCountCS)*1.3300;
   currentInput  = ((CSI_converted-currentMidPoint)*-1)/currentSensV;  
