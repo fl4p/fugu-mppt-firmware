@@ -318,7 +318,6 @@ void setup() {
   pinMode(LED, OUTPUT);
   pinMode(FAN, OUTPUT);
   pinMode(TempSensor, INPUT);
-  pinMode(ADC_ALERT, INPUT);
   pinMode(buttonLeft, INPUT_PULLDOWN);
   pinMode(buttonRight, INPUT_PULLDOWN);
   pinMode(buttonBack, INPUT_PULLDOWN);
@@ -346,6 +345,7 @@ void setup() {
       }
   } else {
     Serial.println("ADC initialized");
+      pinMode(ADC_ALERT, INPUT_PULLDOWN);
   }
 
   //GPIO INITIALIZATION
