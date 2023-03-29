@@ -230,7 +230,8 @@ pwmMax                = 0,           // SYSTEM PARAMETER -
 pwmMaxLimited         = 0,           // SYSTEM PARAMETER -
 PWM                   = 0,           // SYSTEM PARAMETER -
 PPWM                  = 0,           // SYSTEM PARAMETER -
-pwmChannel            = 0,           // SYSTEM PARAMETER -
+pwmCh_IN              = 0,           // SYSTEM PARAMETER -
+pwmCh_EN              = 1,
 batteryPercent        = 0,           // SYSTEM PARAMETER -
 errorCount            = 0,           // SYSTEM PARAMETER -
 menuPage              = 0,           // SYSTEM PARAMETER -
@@ -311,7 +312,7 @@ void setup() {
   
   //GPIO PIN INITIALIZATION
   pinMode(backflow_MOSFET,OUTPUT);                          
-  pinMode(buck_EN,OUTPUT);
+  //pinMode(buck_EN,OUTPUT);
   pinMode(LED,OUTPUT); 
   pinMode(FAN,OUTPUT);
   pinMode(TempSensor,INPUT); 
@@ -322,11 +323,18 @@ void setup() {
   pinMode(buttonSelect,INPUT_PULLDOWN); 
   
   //PWM INITIALIZATION
-  ledcSetup(pwmChannel,pwmFrequency,pwmResolution);          //Set PWM Parameters
-  ledcAttachPin(buck_IN, pwmChannel);                        //Set pin as PWM
-  ledcWrite(pwmChannel,PWM);                                 //Write PWM value at startup (duty = 0)
+    ledcSetup(pwmCh_IN,pwmFrequency,pwmResolution);          //Set PWM Parameters
+    ledcAttachPin(buck_IN, pwmCh_IN);                        //Set pin as PWM
+    ledcWrite(pwmCh_IN,PWM);                                 //Write PWM value at startup (duty = 0)
+
+    // EN PWM Init
+    ledcSetup(pwmCh_EN,pwmFrequency,pwmResolution);          //Set PWM Parameters
+    ledcAttachPin(buck_EN, pwmCh_EN);                        //Set pin as PWM
+    ledcWrite(pwmCh_EN, 0);                                 //Write PWM value at startup (duty = 0)
+
   pwmMax = pow(2,pwmResolution)-1;                           //Get PWM Max Bit Ceiling
   pwmMaxLimited = (PWM_MaxDC*pwmMax)/100.000;                //Get maximum PWM Duty Cycle (pwm limiting protection)
+  // TODO p
   
   //Wire.setClock(400000UL);
   //ads.setDataRate(RATE_ADS1115_860SPS);
