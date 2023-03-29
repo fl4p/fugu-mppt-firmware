@@ -128,3 +128,7 @@ Solar Input is short-circuit safe. But the battery output is not. Can
 
 
 * avoid trickle charge!  https://www.youtube.com/watch?v=wy516po6uVU
+
+
+Ota update pull request:
+https://github.com/AngeloCasi/FUGU-ARDUINO-MPPT-FIRMWARE/pull/23
