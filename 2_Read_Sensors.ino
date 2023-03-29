@@ -18,12 +18,17 @@ void resetVariables(){
 }
 
 
+float intADC_gainCorr[4] = { 1.f, 25.2f/25.7f,  1.f, 1.0055};
 
 float readADCVoltage(int ch) {
   if(useInternalADC) {
     auto raw = analogRead(ADC_internal_ch_map[ch]);
     constexpr float Vmax = 1.750f; // 6db
-    return raw * Vmax / 4095.0f;
+
+    if (raw>4094) return Vmax;
+    // poly curve fit from https://github.com/espressif/esp-idf/issues/164#issuecomment-318861287
+    else return(-0.000000000023926 * pow(raw,3) + 0.000000094746 * pow(raw,2) + 0.00074539 * raw + 0.14925) * ((1/3.275f) * Vmax * intADC_gainCorr[ch]);
+    //return raw * Vmax / 4095.0f * intADC_gainCorr[ch];
   } else {
       return  ads.computeVolts(ads.readADC_SingleEnded(ch));    
   }
