@@ -1,6 +1,26 @@
 
 # Hardware
+
+- breakout (stackable for externsions) with 5v, 12V? supply
+- bccu FET use SMD? HYG007N03LS1C2 (but this is 30V only!)
+
+## Schematic
+- Reset+Program Buttons
+- programmer as extension?
+- use sync bucks?
+- put hall sensor before caps
+- think about power supply. libreSolar switches to LV supply if available. does this really reduce power consumption? TODO remove HV diode? crowbar circuit?
+
+## PCB
+- esp32 bigger pads
+- small buck coils footprint
+- SMD electrolytic
+- use bigger mosfet holes
 - use bigger terminals (pv + battery terminal blocks p=13)
+- terminal labels not visible
+- label r12 not readable (at ntc)
+- border around usb controller (to see which parts not to solder)
+
 - replace hall sensor with shunt? the ACS712ELCTR-30A-T costs $2,73 (lcsc 10x 2023-02). see  ads1115 datasheet for current sense application with midpoint voltage 
 - esp32 pin mount for easy replacement ( https://de.aliexpress.com/item/1005002213376743.html )
 - replace ADS1015 (which is hard to find in stock 2023-02) with  TLA2024 ?
@@ -10,6 +30,11 @@
 - USB type-c connector
 - -SPI outbreak for additional hardware /CAN
 - 5V outbreak
+- place hall sensor before capacitor!
+- use 100nF-200nf Film capacitors for EMF reduction
+- two temp sensors? (coil + fets)
+- Snubber?
+- 3.3V + 12V OV protection Zener-Diode + Fuse behind DCDC to protect components
 
 ## Simplifications
 * Use ESP32 ADCs
@@ -22,6 +47,7 @@
 - add R_sense and current amplifier (without common GND, put this on the low side and use ordinary OPV)
 
 # Firmware
+- OUTPUT voltage can get higher than expected! (sudden battery cut, such as Lifepo4 BMS)
 . minimum ontime lower FET, otherwise
 - handle negative current (set REC=1)
 - choose a framework:
@@ -30,6 +56,7 @@
 -- https://github.com/SmingHub/Sming
 null- Zephyr
 null- Mbed
+- switching frequency? https://github.com/LibreSolar/mppt-2420-lc/issues/23#issuecomment-373252866
 
 - store board indentifier in EEPROM so the FW can work on different boards and ESP32 pinout mappings
 
@@ -82,3 +109,18 @@ while ! arduino-cli upload -b "esp32:esp32:esp32:UploadSpeed=115200" -p /dev/tty
 ```
 
 * Boost Mode? swap PV/Batterie
+
+
+
+
+# Temp measurement
+U_in=52.6V, U_out=26.7V, I_out=20A: T_coil=80°C, T_mosfet=50°C
+
+
+
+# Lowside FET
+- https://www.ti.com/lit/an/slua962/slua962.pdf?ts=1679569354557&ref_url=https%253A%252F%252Fwww.google.com%252F
+
+
+# Battery Side Current measurement
+Solar Input is short-circuit safe. But the battery output is not. Can
