@@ -124,3 +124,7 @@ U_in=52.6V, U_out=26.7V, I_out=20A: T_coil=80°C, T_mosfet=50°C
 
 # Battery Side Current measurement
 Solar Input is short-circuit safe. But the battery output is not. Can
+
+
+
+* avoid trickle charge!  https://www.youtube.com/watch?v=wy516po6uVU
