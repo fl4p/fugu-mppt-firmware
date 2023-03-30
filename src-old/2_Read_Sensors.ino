@@ -1,25 +1,5 @@
-void ADC_SetGain(){
-  if(ADS1015_Mode==true){                                                    //FOR ADS1015 12-BIT ADC MODEL
-    if(ADC_GainSelect==0){ads.setGain(GAIN_TWOTHIRDS);ADC_BitReso=3.0000;}   // Gain: 2/3x  Range: +/- 6.144V  
-    else if(ADC_GainSelect==1){ads.setGain(GAIN_ONE);ADC_BitReso=2.0000;}    // Gain: 1x    Range: +/- 4.096V    
-    else if(ADC_GainSelect==2){ads.setGain(GAIN_TWO);ADC_BitReso=1.0000;}    // Gain: 2x    Range: +/- 2.048V       
-  }
-  else{                                                                      //FOR ADS1115 16-BIT ADC MODEL
-    if(ADC_GainSelect==0){ads.setGain(GAIN_TWOTHIRDS);ADC_BitReso= 0.1875;}  // Gain: 2/3x  Range: +/- 6.144V
-    else if(ADC_GainSelect==1){ads.setGain(GAIN_ONE);ADC_BitReso= 0.125;}    // Gain: 1x    Range: +/- 4.096V  
-    else if(ADC_GainSelect==2){ads.setGain(GAIN_TWO);ADC_BitReso= 0.0625;}   // Gain: 2x    Range: +/- 2.048V    
-  }
-}
-void resetVariables(){
-  secondsElapsed = 0;
-  energySavings  = 0; 
-  daysRunning    = 0; 
-  timeOn         = 0; 
-}
 
-
-float intADC_gainCorr[4] = { 1.f, 25.2f/25.7f,  1.f, 1.0055};
-
+/*
 float readADCVoltage(int ch) {
   if(useInternalADC) {
     auto raw = analogRead(ADC_internal_ch_map[ch]);
@@ -28,11 +8,12 @@ float readADCVoltage(int ch) {
     if (raw>4094) return Vmax;
     // poly curve fit from https://github.com/espressif/esp-idf/issues/164#issuecomment-318861287
     else return(-0.000000000023926 * pow(raw,3) + 0.000000094746 * pow(raw,2) + 0.00074539 * raw + 0.14925) * ((1/3.275f) * Vmax * intADC_gainCorr[ch]);
-    //return raw * Vmax / 4095.0f * intADC_gainCorr[ch];
+    //return raw * Vmax / 4095.0f * intADC_gainCorr[num];
   } else {
       return  ads.computeVolts(ads.readADC_SingleEnded(ch));    
   }
 }
+
 
 void Read_Sensors(){
 
@@ -106,3 +87,4 @@ void Read_Sensors(){
   secondsElapsed = millis()/1000;                                      //Gets the time in seconds since the was turned on  and active
   energySavings  = electricalPrice*(Wh/1000.0000);                     //Computes the solar energy saving in terms of money (electricity flag rate)   
 }
+*/
