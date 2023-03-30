@@ -1,55 +1,89 @@
-#pragma once
+#include <SPI.h> // not sure why this is needed
+#include <Adafruit_ADS1X15.h>
+#include "adc.h"
 
-#include <cstdlib>
+//#include "sampling.h"
 
-#include <driver/adc.h>
-#include <esp_adc_cal.h>
+volatile bool ads_alert = false;
 
-template <class T> class AsyncADC {
-public:
-    virtual bool init() = 0;
-    virtual void startReading(uint8_t channel) = 0;
-    virtual bool hasData() = 0;
-    virtual T getSample() = 0;
-};
 
-//
+class ADC_ADS : public AsyncADC<float> {
 
-class ADC_ESP32_RTC : public AsyncADC<float> {
-    static const uint8_t PIN_I0 = 4;
-    static const uint8_t PIN_I1 = 5;
-    static const uint8_t PIN_U = 6;
+    //Adafruit_ADS1115 ads; /* Use this for the 16-bit version */
+    Adafruit_ADS1015 ads; /* Use this for the 12-bit version */
 
-    static esp_adc_cal_characteristics_t adc_chars;
+    std::array<adsGain_t, 4> gainsByChannel {GAIN_ONE,GAIN_ONE,GAIN_ONE,GAIN_ONE};
 
-    // https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32s3/api-reference/peripherals/adc.html#adc-attenuation
-    float raw2V(int raw) {
-        //constexpr float Vmax = 1.750f; // 6db
-        //return raw * Vmax / 4095.0f;
-        return (float)esp_adc_cal_raw_to_voltage(raw, &adc_chars) * 1e-3f;
-    }
+    uint8_t readingChannel = 255;
+    bool newData = false;
 
 public:
+    bool init() override {
+        // RATE_ADS1115_128SPS (default)
+        // RATE_ADS1115_250SPS, RATE_ADS1115_475SPS
+        //ads.setDataRate(RATE_ADS1115_250SPS);
+        //ads.setDataRate(RATE_ADS1115_475SPS);
+        //ads.setDataRate(RATE_ADS1115_860SPS);
 
-    bool init(adc_atten_t atten=ADC_ATTEN_DB_6) {
-        adc1_config_width(ADC_WIDTH_BIT_12);
-        esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_6, ADC_WIDTH_BIT_12, 1100, &adc_chars);
-        return true;
+        return ads.begin();
     }
 
-    void initChannel(uint8_t ch) {
-        adc1_config_channel_atten(static_cast<adc1_channel_t>(ch), adc_chars.atten);
+    void setChannelGain(uint8_t channel, adsGain_t gain) {
+        gainsByChannel[channel] = gain;
     }
 
-    void startReading() { /*nop*/}
+
+    void startReading(uint8_t channel) {
+        assert(readingChannel == 255);
+        readingChannel = channel;
+        ads.setGain(gainsByChannel[channel]);
+        ads.startADCReading(MUX_BY_CHANNEL[2], /*continuous=*/false);
+    }
+
+
+    float computeVolts(int16_t counts, adsGain_t gain) {
+        uint8_t m_bitShift = 0;  // ads1115
+        // see data sheet Table 3
+        float fsRange;
+        switch (gain) {
+            case GAIN_TWOTHIRDS:
+                fsRange = 6.144f;
+                break;
+            case GAIN_ONE:
+                fsRange = 4.096f;
+                break;
+            case GAIN_TWO:
+                fsRange = 2.048f;
+                break;
+            case GAIN_FOUR:
+                fsRange = 1.024f;
+                break;
+            case GAIN_EIGHT:
+                fsRange = 0.512f;
+                break;
+            case GAIN_SIXTEEN:
+                fsRange = 0.256f;
+                break;
+            default:
+                fsRange = 0.0f;
+        }
+        return (float)counts * (fsRange / (float)(32768 >> m_bitShift));
+    }
+
+    void alertNewDataFromISR() {
+        newData = true;
+    }
 
     bool hasData() {
-        // we do the actual read in getSample(), so always have data to sample
-        return true;
+        return newData;
     }
 
-    float getSample(uint8_t channel) {
-        auto raw = adc1_get_raw(static_cast<adc1_channel_t>(channel));
-        return raw2V(raw);
+    float getSample() {
+        // TODO detect clipping
+        int16_t adc = ads.getLastConversionResults();
+        newData = false;
+        auto ch = readingChannel;
+        readingChannel = 255;
+        return computeVolts(adc, gainsByChannel[ch]);
     }
 };
