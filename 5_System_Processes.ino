@@ -31,18 +31,18 @@ void System_Processes(){
 void factoryReset(){
   EEPROM.write(0,1);  //STORE: Charging Algorithm (1 = MPPT Mode)
   EEPROM.write(12,1); //STORE: Charger/PSU Mode Selection (1 = Charger Mode)
-  EEPROM.write(1,12); //STORE: Max Battery Voltage (whole)
+  EEPROM.write(1,29); //STORE: Max Battery Voltage (whole)
   EEPROM.write(2,0);  //STORE: Max Battery Voltage (decimal)
-  EEPROM.write(3,9);  //STORE: Min Battery Voltage (whole)
+  EEPROM.write(3,20);  //STORE: Min Battery Voltage (whole)
   EEPROM.write(4,0);  //STORE: Min Battery Voltage (decimal) 
-  EEPROM.write(5,30); //STORE: Charging Current (whole)
-  EEPROM.write(6,0);  //STORE: Charging Current (decimal)
+  EEPROM.write(5,0); //STORE: Charging Current (whole)
+  EEPROM.write(6,1);  //STORE: Charging Current (decimal)
   EEPROM.write(7,1);  //STORE: Fan Enable (Bool)
-  EEPROM.write(8,60); //STORE: Fan Temp (Integer)
-  EEPROM.write(9,90); //STORE: Shutdown Temp (Integer)
+  EEPROM.write(8,45); //STORE: Fan Temp (Integer)
+  EEPROM.write(9,70); //STORE: Shutdown Temp (Integer)
   EEPROM.write(10,1); //STORE: Enable WiFi (Boolean)
   EEPROM.write(11,1); //STORE: Enable autoload (on by default)
-  EEPROM.write(13,0); //STORE: LCD backlight sleep timer (default: 0 = never)
+  EEPROM.write(13,2); //STORE: LCD backlight sleep timer (default: 0 = never)
   EEPROM.commit();
   loadSettings();
 }
