@@ -1,119 +1,11 @@
-/*  PROJECT FUGU FIRMWARE V1.10  (DIY 1kW Open Source MPPT Solar Charge Controller)
- *  By: TechBuilder (Angelo Casimiro)
- *  FIRMWARE STATUS: Verified Stable Build Version
- *  (Contact me for the experimental beta versions)
- *  -----------------------------------------------------------------------------------------------------------
- *  DATE CREATED:  02/07/2021 
- *  DATE MODIFIED: 30/08/2021
- *  -----------------------------------------------------------------------------------------------------------
- *  CONTACTS:
- *  GitHub - www.github.com/AngeloCasi (New firmware releases will only be available on GitHub Link)
- *  Email - casithebuilder@gmail.com
- *  YouTube - www.youtube.com/TechBuilder
- *  Facebook - www.facebook.com/AngeloCasii
- *  -----------------------------------------------------------------------------------------------------------
- *  PROGRAM FEATURES:
- *  - MPPT Perturbed Algorithm With CC-CV
- *  - WiFi & Bluetooth BLE Blynk Phone App Telemetry
- *  - Selectable Charger/PSU Mode (can operate as a programmable buck converter)
- *  - Dual Core ESP32 Unlocked (using xTaskCreatePinnedToCore(); )
- *  - Precision ADC Tracking Auto ADS1115/ADS1015 Detection (16bit/12bit I2C ADC)
- *  - Automatic ACS712-30A Current Sensor Calibration
- *  - Equipped With Battery Disconnect & Input Disconnect Recovery Protection Protocol
- *  - LCD Menu Interface (with settings & 4 display layouts)
- *  - Flash Memory (non-volatile settings save function)
- *  - Settable PWM Resolution (8bit-16bit)
- *  - Settable PWM Switching Frequency (1.2kHz - 312kHz)
- *  -----------------------------------------------------------------------------------------------------------
- *  PROGRAM INSTRUCTIONS:
- *  1.) Watch YouTube video tutorial first before using
- *  2.) Install the required Arduino libraries for the ICs
- *  3.) Select Tools > ESP32 Dev Board Board 
- *  4.) Do not modify code unless you know what you are doing
- *  5.) The MPPT's synchronous buck converter topology is code dependent, messing with the algorithm
- *      and safety protection protocols can be extremely dangerous especially when dealing with HVDC.
- *  6.) Install Blynk Legacy to access the phone app telemetry feature
- *  7.) Input the Blynk authentication in this program token sent by Blynk to your email after registration
- *  8.) Input WiFi SSID and password in this program
- *  9.) When using WiFi only mode, change "disableFlashAutoLoad = 0" to = 1 (LCD and buttons not installed)
- *      this prevents the MPPT unit to load the Flash Memory saved settings and will load the Arduino variable
- *      declarations set below instead
- *  -----------------------------------------------------------------------------------------------------------
- *  GOOGLE DRIVE PROJECT LINK: coming soon
- *  INSTRUCTABLE TUTORIAL LINK: coming soon
- *  YOUTUBE TUTORIAL LINK: www.youtube.com/watch?v=ShXNJM6uHLM
- *  GITHUB UPDATED FUGU FIRMWARE LINK: github.com/AngeloCasi/FUGU-ARDUINO-MPPT-FIRMWARE
- *  -----------------------------------------------------------------------------------------------------------
- *  ACTIVE CHIPS USED IN FIRMWARE:
- *  - ESP32 WROOM32
- *  - ADS1115/ADS1015 I2C ADC
- *  - ACS712-30A Current Sensor IC
- *  - IR2104 MOSFET Driver
- *  - CH340C USB TO UART IC
- *  - 16X2 I2C Character LCD
 
- *  OTHER CHIPS USED IN PROJECT:
- *  - XL7005A 80V 0.4A Buck Regulator (2x)
- *  - AMS1115-3.3 LDO Linear Regulator 
- *  - AMS1115-5.0 LDO Linear Regulator  
- *  - CSD19505 N-ch MOSFETS (3x)
- *  - B1212 DC-DC Isolated Converter
- *  - SS310 Diodes
- */
-//================================ MPPT FIRMWARE LCD MENU INFO =====================================//
-// The lines below are for the Firmware Version info displayed on the MPPT's LCD Menu Interface     //
-//==================================================================================================//
 String
   firmwareInfo = "V1.11   ",
   firmwareDate = "21/03/23",
   firmwareContactR1 = "www.youtube.com/",
   firmwareContactR2 = "TechBuilder     ";
 
-//====================== ARDUINO LIBRARIES (ESP32 Compatible Libraries) ============================//
-// You will have to download and install the following libraries below in order to program the MPPT //
-// unit. Visit TechBuilder's YouTube channel for the "MPPT" tutorial.                               //
-//============================================================================================= ====//
-#include <type_traits>
-#include <EEPROM.h>             //SYSTEM PARAMETER  - EEPROM Library (By: Arduino)
-#include <Wire.h>               //SYSTEM PARAMETER  - WIRE Library (By: Arduino)
-#include <SPI.h>                //SYSTEM PARAMETER  - SPI Library (By: Arduino)
-#include <WiFi.h>               //SYSTEM PARAMETER  - WiFi Library (By: Arduino)
-#include <WiFiClient.h>         //SYSTEM PARAMETER  - WiFi Library (By: Arduino)
-#include <BlynkSimpleEsp32.h>   //SYSTEM PARAMETER  - Blynk WiFi Library For Phone App
-#include <LiquidCrystal_I2C.h>  //SYSTEM PARAMETER  - ESP32 LCD Compatible Library (By: Robojax)
-#include <Adafruit_ADS1X15.h>   //SYSTEM PARAMETER  - ADS1115/ADS1015 ADC Library (By: Adafruit)
-//LiquidCrystal_I2C lcd(0x27,16,2);   //SYSTEM PARAMETER  - Configure LCD RowCol Size and I2C Address
-LiquidCrystal_I2C lcd(0x3F, 16, 2);
-TaskHandle_t Core2;    //SYSTEM PARAMETER  - Used for the ESP32 dual core operation
-Adafruit_ADS1015 ads;  //SYSTEM PARAMETER  - ADS1015 ADC Library (By: Adafruit) Kindly delete this line if you are using ADS1115
-//Adafruit_ADS1115 ads;             //SYSTEM PARAMETER  - ADS1115 ADC Library (By: Adafruit) Kindly uncomment this if you are using ADS1115
 
-//====================================== USER PARAMETERS ===========================================//
-// The parameters below are the default parameters used when the MPPT charger settings have not     //
-// been set or saved through the LCD menu interface or mobile phone WiFi app. Some parameters here  //
-// would allow you to override or unlock features for advanced users (settings not on the LCD menu) //
-//==================================================================================================//
-#define backflow_MOSFET 27  //SYSTEM PARAMETER - Backflow MOSFET
-#define buck_IN 33          //SYSTEM PARAMETER - Buck MOSFET Driver PWM Pin
-#define buck_EN 32          //SYSTEM PARAMETER - Buck MOSFET Driver Enable Pin
-#define LED 2               //SYSTEM PARAMETER - LED Indicator GPIO Pin
-#define FAN 16              //SYSTEM PARAMETER - Fan GPIO Pin
-#define ADC_ALERT 34        //SYSTEM PARAMETER - Fan GPIO Pin
-#define TempSensor 35       //SYSTEM PARAMETER - Temperature Sensor GPIO Pin
-#define buttonLeft 18       //SYSTEM PARAMETER -
-#define buttonRight 17      //SYSTEM PARAMETER -
-#define buttonBack 19       //SYSTEM PARAMETER -
-#define buttonSelect 23     //SYSTEM PARAMETER -
-
-//========================================= WiFi SSID ==============================================//
-// This MPPT firmware uses the Blynk phone app and arduino library for controls and data telemetry  //
-// Fill in your WiFi SSID and password. You will also have to get your own authentication token     //
-// from email after registering from the Blynk platform.                                            //
-//==================================================================================================//
-char
-  auth[] = "InputBlynkAuthenticationToken",  //   USER PARAMETER - Input Blynk Authentication Token (From email after registration)
-  ssid[] = "InputWiFiSSID",                  //   USER PARAMETER - Enter Your WiFi SSID
-  pass[] = "InputWiFiPassword";              //   USER PARAMETER - Enter Your WiFi Password
 
 //====================================== USER PARAMETERS ==========================================//
 // The parameters below are the default parameters used when the MPPT charger settings have not    //
@@ -161,8 +53,8 @@ float
 // the values below if you know what you are doing. The values below have been pre-calibrated for  //
 // MPPT charge controllers designed by TechBuilder (Angelo S. Casimiro)                            //
 //=================================================================================================//
-constexpr bool
-  ADS1015_Mode = std::is_same<Adafruit_ADS1015, decltype(ads)>::value;  //  CALIB PARAMETER - Use 1 for ADS1015 ADC model use 0 for ADS1115 ADC model
+constexpr bool ADS1015_Mode = std::is_same<Adafruit_ADS1015, decltype(ads)>::value; 
+
 int
   ADC_GainSelect = 2,  //  CALIB PARAMETER - ADC Gain Selection (0→±6.144V 3mV/bit, 1→±4.096V 2mV/bit, 2→±2.048V 1mV/bit)
   avgCountVS = 3,      //  CALIB PARAMETER - Voltage Sensor Average Sampling Count (Recommended: 3)
@@ -231,8 +123,7 @@ pwmMax                = 0,           // SYSTEM PARAMETER -
 pwmMaxLimited         = 0,           // SYSTEM PARAMETER -
 PWM                   = 0,           // SYSTEM PARAMETER -
 PPWM                  = 0,           // SYSTEM PARAMETER -
-pwmCh_IN              = 0,           // SYSTEM PARAMETER -
-pwmCh_EN              = 1,
+
 batteryPercent        = 0,           // SYSTEM PARAMETER -
 errorCount            = 0,           // SYSTEM PARAMETER -
 menuPage              = 0,           // SYSTEM PARAMETER -
