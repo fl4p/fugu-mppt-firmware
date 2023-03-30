@@ -1,4 +1,5 @@
 
+#if 0
 String
   firmwareInfo = "V1.11   ",
   firmwareDate = "21/03/23",
@@ -192,7 +193,7 @@ void coreTwo(void* pvParameters) {
   }
 }
 //================== CORE1: SETUP (DUAL CORE MODE) ====================//
-void setup() {
+[[noreturn]] void setup() {
 
   //SERIAL INITIALIZATION
   Serial.begin(baudRate);                  //Set serial baud rate
@@ -269,3 +270,5 @@ void loop() {
   Onboard_Telemetry();   //TAB#6 - Onboard telemetry (USB & Serial Telemetry)
   LCD_Menu();            //TAB#8 - Low Power Algorithm
 }
+
+#endif
