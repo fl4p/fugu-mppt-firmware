@@ -90,7 +90,16 @@ void saveAutoloadSettings(){
 }
 void initializeFlashAutoload(){
   if(disableFlashAutoLoad==0){
-    flashMemLoad = EEPROM.read(11);       //Load saved autoload (must be excluded from bulk save, uncomment under discretion) 
+    auto v11 = EEPROM.read(11);
+    Serial.print("flashMemLoad");
+    Serial.println(v11);
+    if(v11 == 0xFF) {
+      Serial.print("EEPROM not initialized, setting to factory defaults.");
+      factoryReset();
+      flashMemLoad = true;
+      return;
+    }
+    flashMemLoad = v11;       //Load saved autoload (must be excluded from bulk save, uncomment under discretion) 
     if(flashMemLoad==1){loadSettings();}  //Load stored settings from flash memory  
   } 
 }
