@@ -3,15 +3,16 @@
 #include "adc.h"
 #include "ads.h"
 #include "statmath.h"
+#include "sampling.h"
 
 #include <type_traits>
-#include <EEPROM.h>             
-#include <Wire.h>              
-#include <SPI.h>               
-#include <WiFi.h>              
-#include <WiFiClient.h>       
-#include <LiquidCrystal_I2C.h>  
-#include <Adafruit_ADS1X15.h>  
+#include <EEPROM.h>
+#include <Wire.h>
+#include <SPI.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <LiquidCrystal_I2C.h>
+#include <Adafruit_ADS1X15.h>
 
 
 //LiquidCrystal_I2C lcd(0x27,16,2);   //SYSTEM PARAMETER  - Configure LCD RowCol Size and I2C Address
@@ -30,10 +31,28 @@ TaskHandle_t Core2;    //SYSTEM PARAMETER  - Used for the ESP32 dual core operat
 #define buttonBack 19       //SYSTEM PARAMETER -
 #define buttonSelect 23     //SYSTEM PARAMETER -
 
+ADC_ADS adc;
+DCDC_PowerSampler dcdcPwr{adc, ThreeChannelUnion<ChannelAndFactor>{.s={
+        .chVin = {3, 204.7 / 4.7},
+        .chVout = {1, (47. / 2 + 1) / 1},
+        .chIin = {2, 1.0f} // todo offset
+}}};
+
 void setup() {
-  // put your setup code here, to run once:
+
+    adc.setChannelGain(dcdcPwr.channels.s.chVin.num, GAIN_TWO);
+    adc.setChannelGain(dcdcPwr.channels.s.chVout.num, GAIN_TWO);
+    adc.setChannelGain(dcdcPwr.channels.s.chIin.num, GAIN_TWO);
+
+    if (!adc.init()) {
+        ESP_LOGI("main", "Failed to initialize ADC");
+        while (true) yield();
+    }
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+    dcdcPwr.update();
+
+    ESP_LOGI("main", "VIN=%5.2f VOUT=%5.2f IIN=%5.2f", dcdcPwr.ewm.chVin.avg.get(), dcdcPwr.ewm.chVout.avg.get(),
+             dcdcPwr.ewm.chIin.avg.get());
 }

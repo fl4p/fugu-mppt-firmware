@@ -33,8 +33,10 @@ public:
 
     inline void add(float_t x) {
         avg.add(x);
-        if(!isnan(last_x))
-            std.add((x - last_x) / last_x);
+        if(!isnan(last_x)) {
+            float_t pct = (x - last_x) / last_x;
+            std.add(pct * pct);
+        }
         last_x = x;
     }
 };

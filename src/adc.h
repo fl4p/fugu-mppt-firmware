@@ -11,6 +11,7 @@ public:
     virtual void startReading(uint8_t channel) = 0;
     virtual bool hasData() = 0;
     virtual T getSample() = 0;
+    //virtual uint8_t getReadingChannel() = 0;
 };
 
 //
@@ -55,9 +56,4 @@ public:
         auto raw = adc1_get_raw(static_cast<adc1_channel_t>(channel));
         return raw2V(raw);
     }
-};
-
-class ADC_ESP32_RTC : public AsyncADC<float> {
-
-    bool init();
 };
