@@ -26,8 +26,7 @@ bool
   enableDynamicCooling = 0;  //   USER PARAMETER - Enable for PWM cooling control
 int
   serialTelemMode = 1,            //  USER PARAMETER - Selects serial telemetry data feed (0 - Disable Serial, 1 - Display All Data, 2 - Display Essential, 3 - Number only)
-  pwmResolution = 11,             //  USER PARAMETER - PWM Bit Resolution
-  pwmFrequency = 39000,           //  USER PARAMETER - PWM Switching Frequency - Hz (For Buck)
+
   temperatureFan = 60,            //  USER PARAMETER - Temperature threshold for fan to turn on
   temperatureMax = 90,            //  USER PARAMETER - Overtemperature, System Shudown When Exceeded (deg C)
   telemCounterReset = 0,          //  USER PARAMETER - Reset Telem Data Every (0 = Never, 1 = Day, 2 = Week, 3 = Month, 4 = Year)
@@ -70,8 +69,6 @@ float
   voltageBatteryThresh = 0.0000,  //  CALIB PARAMETER - Power cuts-off when this voltage is reached (Output V)
   currentInAbsolute = 31.0000,    //  CALIB PARAMETER - Maximum Input Current The System Can Handle (A - Input)
   currentOutAbsolute = 50.0000,   //  CALIB PARAMETER - Maximum Output Current The System Can Handle (A - Input)
-  PPWM_margin = 99.5000,          //  CALIB PARAMETER - Minimum Operating Duty Cycle for Predictive PWM (%)
-  PWM_MaxDC = 95.0000,            //  CALIB PARAMETER - Maximum Operating Duty Cycle (%) 90%-97% is good, 97 makes low-side turn-on too short for bootstrapping
   efficiencyRate = 1.0000,        //  CALIB PARAMETER - Theroretical Buck Efficiency (% decimal)
   currentMidPoint = 2.5250,       //  CALIB PARAMETER - Current Sensor Midpoint (V)
   currentSens = 0.0000,           //  CALIB PARAMETER - Current Sensor Sensitivity (V/A)
@@ -119,9 +116,6 @@ inputSource           = 0,           // SYSTEM PARAMETER - 0 = MPPT has no power
 avgStoreTS            = 0,           // SYSTEM PARAMETER - Temperature Sensor uses non invasive averaging, this is used an accumulator for mean averaging
 temperature           = 0,           // SYSTEM PARAMETER -
 sampleStoreTS         = 0,           // SYSTEM PARAMETER - TS AVG nth Sample
-pwmMax                = 0,           // SYSTEM PARAMETER -
-pwmMaxLimited         = 0,           // SYSTEM PARAMETER -
-PWM                   = 0,           // SYSTEM PARAMETER -
 PPWM                  = 0,           // SYSTEM PARAMETER -
 
 batteryPercent        = 0,           // SYSTEM PARAMETER -
@@ -209,23 +203,15 @@ void setup() {
   //pinMode(buck_EN,OUTPUT);
   pinMode(LED,OUTPUT); 
   pinMode(FAN,OUTPUT);
-  pinMode(TempSensor,INPUT); 
+  pinMode(TempSensor,INPUT);
+
   pinMode(buttonLeft, INPUT_PULLDOWN);
   pinMode(buttonRight, INPUT_PULLDOWN);
   pinMode(buttonBack, INPUT_PULLDOWN);
   pinMode(buttonSelect, INPUT_PULLDOWN);
-  //PWM INITIALIZATION
-    ledcSetup(pwmCh_IN,pwmFrequency,pwmResolution);          //Set PWM Parameters
-    ledcAttachPin(buck_IN, pwmCh_IN);                        //Set pin as PWM
-    ledcWrite(pwmCh_IN,PWM);                                 //Write PWM value at startup (duty = 0)
 
-    // EN PWM Init
-    ledcSetup(pwmCh_EN,pwmFrequency,pwmResolution);          //Set PWM Parameters
-    ledcAttachPin(buck_EN, pwmCh_EN);                        //Set pin as PWM
-    ledcWrite(pwmCh_EN, 0);                                 //Write PWM value at startup (duty = 0)
 
-  pwmMax = pow(2,pwmResolution)-1;                           //Get PWM Max Bit Ceiling
-  pwmMaxLimited = (PWM_MaxDC*pwmMax)/100.000;                //Get maximum PWM Duty Cycle (pwm limiting protection)
+
   // TODO p
   
   //Wire.setClock(400000UL);
