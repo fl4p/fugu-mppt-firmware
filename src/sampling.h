@@ -15,6 +15,7 @@ template<class T> union ThreeChannelUnion {
 struct ChannelAndFactor {
     uint8_t num;
     float factor;
+    float midpoint;
 };
 
 
@@ -26,6 +27,7 @@ class DCDC_PowerSampler {
 public:
     const ThreeChannelUnion<ChannelAndFactor> channels;
     ThreeChannelUnion<float> last{NAN, NAN, NAN};
+    ThreeChannelUnion<uint32_t> numSamples{0,0,0};
     ThreeChannelUnion<EWM<float>> ewm {
         EWM<float>{20},
         EWM<float>{20},
@@ -37,30 +39,24 @@ public:
             channels(channels) {
     }
 
-    void update() {
+    void begin() {
+        adc.startReading(channels[cycleCh].num);
+    }
+
+    bool update() {
         if(adc.hasData()) {
-            auto v = adc.getSample() * channels[cycleCh].factor;
+            auto v = (adc.getSample() - channels[cycleCh].midpoint) * channels[cycleCh].factor;
             last[cycleCh] = v;
             ewm[cycleCh].add(v);
+            ++numSamples[cycleCh];
+            cycleCh = (cycleCh+1) %3;
+            begin();
+            return true;
         }
+        return false;
     }
 };
 
 /*
-class MpptSampler {
-    AsyncADC<float> &adc;
 
-public:
-    EWM<float> Vin{20}, Vout{20}, Iin{20}, Iout{20};
-
-    explicit MpptSampler(AsyncADC<float> &adc) : adc(adc) {
-        uint8_t ch_Vin =
-    }
-
-    void update() {
-        if (adc.hasData()) {
-            adc.getSample();
-        }
-    }
-};
  */
