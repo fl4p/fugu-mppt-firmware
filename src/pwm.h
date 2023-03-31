@@ -16,6 +16,9 @@ class HalfBridgePwm {
     uint8_t pwmResolution = 11;
 
     uint16_t pwmHS = 0;
+    uint16_t pwmLS = 0;
+
+    uint16_t pwmMaxLS = 0;
 
 public:
 
@@ -55,22 +58,43 @@ public:
         return true;
     }
 
-    void setBuckDutyCycle(uint16_t pwm) {
-        pwmHS = constrain(pwm, pwmMinLS, pwmMaxHS);
+    void pwmPerturb(int8_t direction) {
+
+        // compute ordinary pwm update within bounds:
+        pwmHS = constrain(pwmHS + direction, pwmMinLS, pwmMaxHS);
+
+        // "fade-in" the low-side duty cycle
+        pwmLS = constrain(pwmLS, pwmMinLS, pwmMaxLS); pwmMax - pwmHS); // TODO PPWM max
+
         ledcWrite(pwmCh_IN, pwmHS);
-        ledcWrite(pwmCh_EN, pwmHS + pwmMinLS);
+        ledcWrite(pwmCh_EN, pwmHS + pwmLS);
     }
 
-    uint16_t getBuckDutyCycle() {
+    uint16_t getBuckDutyCycle() const {
         return pwmHS;
+    }
+
+    void halfDutyCycle() {
+        pwmHS /= 2;
+        pwmPerturb(0);
     }
 
     void disable() {
         if(pwmHS > 0)
             ESP_LOGW("pwm", "PWM disabled");
         pwmHS = 0;
+        pwmLS = 0;
         ledcWrite(pwmCh_IN, 0);
         ledcWrite(pwmCh_EN, 0);
+    }
+
+    void lowSideMinDuty() {
+        pwmLS = pwmMinLS;
+        ledcWrite(pwmCh_EN, pwmHS + pwmLS);
+    }
+
+    void setLowSideMaxDuty(uint16_t duty) {
+        pwmMaxLS =  duty;
     }
 
 };

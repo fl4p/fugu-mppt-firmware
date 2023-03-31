@@ -5,13 +5,13 @@
 #include "sampling.h"
 #include "pwm.h"
 #include "mppt.h"
-
+#include "util.h"
+#include "telemetry.h"
 
 #include <Wire.h>
 //#include <SPI.h>
 //#include <LiquidCrystal_I2C.h>
 #include <Adafruit_ADS1X15.h>
-#include <InfluxDbClient.h>
 
 //LiquidCrystal_I2C lcd(0x27,16,2);   //SYSTEM PARAMETER  - Configure LCD RowCol Size and I2C Address
 //Adafruit_ADS1115 ads;             //SYSTEM PARAMETER  - ADS1115 ADC Library (By: Adafruit) Kindly uncomment this if you are using ADS1115
@@ -53,7 +53,10 @@ void ICACHE_RAM_ATTR NewDataReadyISR() {
 }
 
 
+
 void setup() {
+    connect_wifi_async("^__^", "xxxxxxxx");
+
     //Wire.end();
     Wire.setClock(400000UL);
     Wire.setPins(21, 22);
@@ -83,9 +86,13 @@ void setup() {
         ESP_LOGE("main", "Failed to init half bridge");
     }
 
+    wait_for_wifi();
+    timeSync("CET-1CEST,M3.5.0,M10.5.0/3", "de.pool.ntp.org", "time.nis.gov");
+
+    dcdcPwr.onDataChange = dcdcDataChanged;
 }
 
-std::vector<Point> points_frame;
+
 
 unsigned long lastTimeOut = 0;
 uint32_t lastNSamples = 0;
@@ -99,7 +106,6 @@ void loop() {
     dcdcPwr.update();
 
     bool mppt_ok = mppt.protect();
-
     if(mppt_ok && (nowMs - lastTimeMpptUpdate) > 20) {
         mppt.update();
         lastTimeMpptUpdate = nowMs;
@@ -108,8 +114,8 @@ void loop() {
 
     if ((nowMs - lastTimeOut) >= 1000) {
         auto &ewm(dcdcPwr.ewm.s);
-        ESP_LOGI("main", "VIN=%5.2f VOUT=%5.2f IIN=%5.3f sps=%u PWM=%hu", dcdcPwr.last.s.chVin, ewm.chVout.avg.get(),
-                 dcdcPwr.last.s.chIin, (dcdcPwr.numSamples[0] - lastNSamples), pwm.getBuckDutyCycle());
+        ESP_LOGI("main", "VIN=%5.2f VOUT=%5.2f IIN=%5.3f P=%5.2f sps=%u PWM=%hu MPPT=%hhu", dcdcPwr.last.s.chVin, ewm.chVout.avg.get(),
+                 dcdcPwr.last.s.chIin, mppt.getPower(),  (dcdcPwr.numSamples[0] - lastNSamples), pwm.getBuckDutyCycle(), mppt.getState());
         lastTimeOut = nowMs;
         lastNSamples = dcdcPwr.numSamples[0];
     }
