@@ -24,7 +24,10 @@ class DCDC_PowerSampler {
 
     uint8_t cycleCh = 0;
 
+
 public:
+    std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange;
+
     const ThreeChannelUnion<ChannelAndFactor> channels;
     ThreeChannelUnion<float> last{NAN, NAN, NAN};
     ThreeChannelUnion<uint32_t> numSamples{0,0,0};
@@ -46,11 +49,17 @@ public:
     bool update() {
         if(adc.hasData()) {
             auto v = (adc.getSample() - channels[cycleCh].midpoint) * channels[cycleCh].factor;
+            bool changed = (last[cycleCh] != v);
             last[cycleCh] = v;
             ewm[cycleCh].add(v);
             ++numSamples[cycleCh];
             cycleCh = (cycleCh+1) %3;
             begin();
+
+            if( onDataChange) { // changed &&
+                onDataChange(*this, cycleCh);
+            }
+
             return true;
         }
         return false;
