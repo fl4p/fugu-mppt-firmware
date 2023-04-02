@@ -132,3 +132,6 @@ Solar Input is short-circuit safe. But the battery output is not. Can
 
 Ota update pull request:
 https://github.com/AngeloCasi/FUGU-ARDUINO-MPPT-FIRMWARE/pull/23
+
+breakout port for aux switches?
+- ESP32 internal temp
