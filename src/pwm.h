@@ -59,7 +59,7 @@ public:
 
     void pwmPerturb(int8_t direction) {
 
-        if (pwmHS <= 1)
+        if (pwmHS <= 1 && pwmHS < pwmStartHS)
             pwmHS = pwmStartHS;
 
         // compute ordinary pwm update within bounds:
@@ -71,6 +71,19 @@ public:
 
         ledcWrite(pwmCh_IN, pwmHS);
         ledcWrite(pwmCh_EN, std::min<uint16_t>(pwmHS + pwmLS, pwmMax));
+    }
+
+    float directionFloatBuffer = 0.0f;
+
+    void pwmPerturbFractional(float directionFloat) {
+        assert(std::abs(directionFloat) < 128);
+
+        directionFloat += directionFloatBuffer;
+        directionFloatBuffer = 0;
+        auto directionInt = (int8_t) (directionFloat);
+        if(directionInt != 0)
+            pwmPerturb(directionInt);
+        directionFloatBuffer += directionFloat - (float) directionInt;
     }
 
     uint16_t getBuckDutyCycle() const {
@@ -103,7 +116,8 @@ public:
         float margin = 99.5;
         auto idealBuckPwm = (uint16_t) ((float) pwmMax * (margin / 100.f) * std::min(1.f, voltageRatio));
 
-        pwmStartHS = idealBuckPwm / 2; // k =.75
+        // idealBuckPwm / 4 is still too much for open circuit output
+        pwmStartHS = 1; // idealBuckPwm / 4; // k =.75
 
         // prevents boosting and "low side burning" due to excessive LS current (non-diode behavior?):
         pwmMaxLS = pwmMax - idealBuckPwm;

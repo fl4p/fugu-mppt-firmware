@@ -71,12 +71,21 @@ void influxWritePointsUDP(const Point *p, uint8_t len) {
     }
 }
 
+const char * getChipId() {
+    static char ssid[20] {0};
+    if(!strlen(ssid))
+        snprintf(ssid, 20, "%s-%llX", CONFIG_IDF_TARGET, ESP.getEfuseMac());
+    return ssid;
+}
 
-void telemetryAddPoint(const Point &p) {
+void telemetryAddPoint(const Point &p, uint16_t maxQueue=40) {
     static std::vector<Point> points_frame;
 
+    assert(p.hasTime());
     points_frame.push_back(p);
-    if (points_frame.size() >= 20) {
+    points_frame.back().addTag("mcu", getChipId());
+
+    if (points_frame.size() >= maxQueue) {
         influxWritePointsUDP(&points_frame[0], points_frame.size());
         points_frame.clear();
     }
@@ -95,11 +104,7 @@ void dcdcDataChanged(const DCDC_PowerSampler &dcdc, uint8_t ch) {
         point.addField("I_in", dcdcData.s.chIin, 2);
         point.addField("I_in_ewma", dcdc.ewm.s.chIin.avg.get(), 3);
         point.addField("I_in_ewms", dcdc.ewm.s.chIin.std.get(), 3);
-
-        struct timeval u_time;
-        gettimeofday(&u_time, NULL);
-        point.setTime(getTimeStamp(&u_time, 3));
-
+        point.setTime(WritePrecision::MS);
         telemetryAddPoint(point);
     }
 
