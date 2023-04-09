@@ -1,3 +1,12 @@
+disable bccu on overvoltage
+
+compute U,I noise sigma, P2P
+estimate PV and battery impendance
+
+* constant voltage method (k=.76)
+  https://www.researchgate.net/publication/285589712_Combined_Constant_Voltage_and_Perturb_and_Observe_Method_Based_Algorithm_for_Fast_and_Efficient_Maximum_Power_Point_Tracking_Using_Buck-Boost_Converter
+
+
 
 # Hardware
 

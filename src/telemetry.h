@@ -11,10 +11,26 @@ WiFiMulti wifiMulti;
 WiFiUDP udp;
 
 
-
 void connect_wifi_async(const std::string &ssid, const std::string &pw) {
     WiFi.mode(WIFI_STA);
     wifiMulti.addAP(ssid.c_str(), pw.c_str());
+}
+
+static bool timeSynced = false;
+
+void wifiLoop() {
+    if (wifiMulti.run() != WL_CONNECTED) {
+        // do nothing
+    } else {
+        if (!timeSynced) {
+            Serial.printf("Connected to WiFi, RSSI %hhi IP %s", WiFi.RSSI(), WiFi.localIP().toString().c_str());
+            Serial.println();
+            Serial.println("Syncing time...");
+            timeSync("CET-1CEST,M3.5.0,M10.5.0/3", "pt.pool.ntp.org", "time.nis.gov");
+            Serial.println("Time synchronized");
+            timeSynced = true;
+        }
+    }
 }
 
 void wait_for_wifi() {
@@ -22,33 +38,56 @@ void wait_for_wifi() {
         delay(50);
         //Serial.print(".");
     }
-    Serial.print("Connected to WiFi, RSSI ");
-    Serial.print(WiFi.RSSI());
-    Serial.print(", IP ");
-    Serial.println(WiFi.localIP());
+    Serial.printf("Connected to WiFi, RSSI %hhi IP %s", WiFi.RSSI(), WiFi.localIP().toString().c_str());
 }
 
+void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
+    udp.beginPacket(host, port);
+    udp.print(msg);
+    udp.endPacket();
+    msg.clear();
+}
 
-ThreeChannelUnion<float> dcdcData;
-std::vector<Point> points_frame;
 
 void influxWritePointsUDP(const Point *p, uint8_t len) {
 
-    byte host[] = {192, 168, 178, 23};
-    udp.beginPacket(host, 8002);
+    constexpr int MTU = 1300;
+    byte host[] = {192, 168, 0, 177};
+    auto port = 8002;
+
+
     String msg;
-    for(uint8_t i = 0; i < len; ++i) {
-        msg += p[i].toLineProtocol() + '\n';
+
+    for (uint8_t i = 0; i < len; ++i) {
+        auto lp = p[i].toLineProtocol();
+        if (msg.length() + lp.length() >= MTU) {
+            udpFlushString(host, port, msg);
+        }
+        msg += lp + '\n';
     }
-    udp.print(msg);
-    udp.endPacket();
+
+    if (msg.length() > 0) {
+        udpFlushString(host, port, msg);
+    }
 }
 
+
+void telemetryAddPoint(const Point &p) {
+    static std::vector<Point> points_frame;
+
+    points_frame.push_back(p);
+    if (points_frame.size() >= 20) {
+        influxWritePointsUDP(&points_frame[0], points_frame.size());
+        points_frame.clear();
+    }
+}
+
+ThreeChannelUnion<float> dcdcData;
 
 void dcdcDataChanged(const DCDC_PowerSampler &dcdc, uint8_t ch) {
     dcdcData[ch] = dcdc.last[ch];
 
-    if(ch == 2) {
+    if (ch == 2) {
         Point point("mppt");
         point.addTag("device", "esp32_proto");
         point.addField("U_in", dcdcData.s.chVin, 3);
@@ -60,12 +99,10 @@ void dcdcDataChanged(const DCDC_PowerSampler &dcdc, uint8_t ch) {
         struct timeval u_time;
         gettimeofday(&u_time, NULL);
         point.setTime(getTimeStamp(&u_time, 3));
-        points_frame.push_back(point);
+
+        telemetryAddPoint(point);
     }
 
-    if (points_frame.size() >= 12)
-    {
-        influxWritePointsUDP(&points_frame[0], points_frame.size());
-        points_frame.clear();
-    }
+
 }
+

@@ -1,7 +1,7 @@
 #include <cstdint>
 #include <cmath>
+#include<algorithm>
 #include <Arduino.h>
-
 
 
 class HalfBridgePwm {
@@ -23,15 +23,14 @@ class HalfBridgePwm {
 public:
 
     const uint16_t pwmMax, pwmMaxHS, pwmMinLS;
-
+    uint16_t pwmStartHS = 0;
 
 
     HalfBridgePwm()
-    : pwmMax(pow(2, pwmResolution) - 1)
-    , pwmMaxHS(pwmMax * (1.0f-MinDutyCycleLS))
-    , pwmMinLS(pwmMax * MinDutyCycleLS) {}
+            : pwmMax(pow(2, pwmResolution) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
+              pwmMinLS(pwmMax * MinDutyCycleLS) {}
 
-    bool init()   {
+    bool init() {
 
         uint32_t pwmFrequency = 39000;           //  USER PARAMETER - PWM Switching Frequency - Hz (For Buck)
         float PPWM_margin = 99.5;          //  CALIB PARAMETER - Minimum Operating Duty Cycle for Predictive PWM (%)
@@ -60,14 +59,18 @@ public:
 
     void pwmPerturb(int8_t direction) {
 
+        if (pwmHS <= 1)
+            pwmHS = pwmStartHS;
+
         // compute ordinary pwm update within bounds:
-        pwmHS = constrain(pwmHS + direction, pwmMinLS, pwmMaxHS);
+        pwmHS = constrain(pwmHS + direction, 0, pwmMaxHS);// pwmMinLS
+
 
         // "fade-in" the low-side duty cycle
-        pwmLS = constrain(pwmLS, pwmMinLS, pwmMaxLS); pwmMax - pwmHS); // TODO PPWM max
+        pwmLS = constrain(pwmLS + 1, pwmMinLS, pwmMaxLS);
 
         ledcWrite(pwmCh_IN, pwmHS);
-        ledcWrite(pwmCh_EN, pwmHS + pwmLS);
+        ledcWrite(pwmCh_EN, std::min<uint16_t>(pwmHS + pwmLS, pwmMax));
     }
 
     uint16_t getBuckDutyCycle() const {
@@ -76,11 +79,12 @@ public:
 
     void halfDutyCycle() {
         pwmHS /= 2;
+        pwmLS /= 2;
         pwmPerturb(0);
     }
 
     void disable() {
-        if(pwmHS > 0)
+        if (pwmHS > 0)
             ESP_LOGW("pwm", "PWM disabled");
         pwmHS = 0;
         pwmLS = 0;
@@ -93,8 +97,20 @@ public:
         ledcWrite(pwmCh_EN, pwmHS + pwmLS);
     }
 
-    void setLowSideMaxDuty(uint16_t duty) {
-        pwmMaxLS =  duty;
+    void updateLowSideMaxDuty(float voltageRatio) {
+        // voltageRatio = Vout/Vin
+
+        float margin = 99.5;
+        auto idealBuckPwm = (uint16_t) ((float) pwmMax * (margin / 100.f) * std::min(1.f, voltageRatio));
+
+        pwmStartHS = idealBuckPwm / 2; // k =.75
+
+        // prevents boosting and "low side burning" due to excessive LS current (non-diode behavior?):
+        pwmMaxLS = pwmMax - idealBuckPwm;
+        if (pwmLS > pwmMaxLS) {
+            pwmLS = pwmMaxLS;
+            ledcWrite(pwmCh_EN, pwmHS + pwmLS); // instantly commit if limit decreases
+        }
     }
 
 };

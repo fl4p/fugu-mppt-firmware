@@ -3,13 +3,19 @@
 #include "adc.h"
 #include "statmath.h"
 
-template<class T> struct ThreeChannelStruct {T chVin, chVout, chIin;};
+template<class T>
+struct ThreeChannelStruct {
+    T chVin, chVout, chIin;
+};
 
-template<class T> union ThreeChannelUnion {
+template<class T>
+union ThreeChannelUnion {
     ThreeChannelStruct<T> s;
     T arr[3];
-    inline const T &operator[](int i) const {return arr[i];}
-    inline T &operator[](int i)  {return arr[i];}
+
+    inline const T &operator[](int i) const { return arr[i]; }
+
+    inline T &operator[](int i) { return arr[i]; }
 };
 
 struct ChannelAndFactor {
@@ -24,17 +30,24 @@ class DCDC_PowerSampler {
 
     uint8_t cycleCh = 0;
 
+    bool calibrating_ = false;
+    float calibZeroCurrent = 0;
+
+
+
 
 public:
+    static constexpr uint8_t EWM_SPAN = 20;
+
     std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange;
 
     const ThreeChannelUnion<ChannelAndFactor> channels;
     ThreeChannelUnion<float> last{NAN, NAN, NAN};
-    ThreeChannelUnion<uint32_t> numSamples{0,0,0};
-    ThreeChannelUnion<EWM<float>> ewm {
-        EWM<float>{20},
-        EWM<float>{20},
-        EWM<float>{20}};
+    ThreeChannelUnion<uint32_t> numSamples{0, 0, 0};
+    ThreeChannelUnion<EWM<float>> ewm{
+            EWM<float>{EWM_SPAN},
+            EWM<float>{EWM_SPAN},
+            EWM<float>{EWM_SPAN}};
 
 
     DCDC_PowerSampler(AsyncADC<float> &adc, const ThreeChannelUnion<ChannelAndFactor> &channels) :
@@ -46,23 +59,42 @@ public:
         adc.startReading(channels[cycleCh].num);
     }
 
+    void startCalibration() {
+        calibrating_ = true;
+        for (auto i = 0; i < 3; ++i)
+            numSamples[i] = 0;
+    }
+
     bool update() {
-        if(adc.hasData()) {
+        if (adc.hasData()) {
             auto v = (adc.getSample() - channels[cycleCh].midpoint) * channels[cycleCh].factor;
-            bool changed = (last[cycleCh] != v);
+            //bool changed = (last[cycleCh] != v);
+            if(&last[cycleCh] == &last.s.chIin) {
+                v -= calibZeroCurrent;
+            }
             last[cycleCh] = v;
             ewm[cycleCh].add(v);
             ++numSamples[cycleCh];
-            cycleCh = (cycleCh+1) %3;
+            cycleCh = (cycleCh + 1) % 3;
             begin();
 
-            if( onDataChange) { // changed &&
+            if (onDataChange) { // changed &&
                 onDataChange(*this, cycleCh);
+            }
+
+            if (calibrating_ && numSamples[cycleCh] > EWM_SPAN * 2) {
+                calibZeroCurrent = ewm.s.chIin.avg.get();
+                ESP_LOGI("dcdc", "Zero Current Calibration avg=%.4f std=%.6f", calibZeroCurrent, ewm.s.chIin.std.get());
+                calibrating_ = false;
             }
 
             return true;
         }
         return false;
+    }
+
+    bool isCalibrating() const {
+        return calibrating_;
     }
 };
 
