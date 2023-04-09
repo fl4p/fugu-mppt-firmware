@@ -38,6 +38,7 @@ class DCDC_PowerSampler {
 
 public:
     static constexpr uint8_t EWM_SPAN = 20;
+    static constexpr uint8_t EWM_SPAN_V = 12;
 
     std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange;
 
@@ -45,8 +46,8 @@ public:
     ThreeChannelUnion<float> last{NAN, NAN, NAN};
     ThreeChannelUnion<uint32_t> numSamples{0, 0, 0};
     ThreeChannelUnion<EWM<float>> ewm{
-            EWM<float>{EWM_SPAN},
-            EWM<float>{EWM_SPAN},
+            EWM<float>{EWM_SPAN_V},
+            EWM<float>{EWM_SPAN_V},
             EWM<float>{EWM_SPAN}};
 
 

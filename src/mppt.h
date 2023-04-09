@@ -7,16 +7,19 @@ struct MpptParams {
     float Vout_max = 29;
     float Vin_max = 70;
     float Iin_max = 4;
+    float P_max = 100;
 };
 
-enum MpptState :uint8_t {
+enum MpptState : uint8_t {
     None = 0,
     CV,
     CC,
+    CP,
     MPPT,
+    Max,
 };
 
-static const std::array<std::string, 4> MpptState2String {"N/A", "CV", "CC", "MPPT"};
+static const std::array<std::string, MpptState::Max> MpptState2String{"N/A", "CV", "CC", "CP", "MPPT"};
 
 class MpptSampler {
     const DCDC_PowerSampler &dcdcPwr;
@@ -27,30 +30,36 @@ class MpptSampler {
     float lastPower = 0;
     //float lastVoltage = 0;
     MpptState state = MpptState::None;
+    float pwmDirection = 0;
 public:
 
     explicit MpptSampler(const DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm)
             : dcdcPwr(dcdcPwr), pwm(pwm) {}
 
-    MpptState getState() const {return state;}
-    float getPower() const {return lastPower;}
+    MpptState getState() const { return state; }
+
+    float getPower() const { return lastPower; }
 
     bool protect() {
-        if(dcdcPwr.isCalibrating()) {
+        if (dcdcPwr.isCalibrating()) {
             pwm.disable();
             return false;
         }
 
         if (dcdcPwr.last.s.chVin > params.Vin_max) {
             // input over-voltage
-            ESP_LOGW("mppt", "Vin %f > %f!", dcdcPwr.last.s.chVin, params.Vin_max);
+            ESP_LOGW("mppt", "Vin %.1f > %.1f!", dcdcPwr.last.s.chVin, params.Vin_max);
             pwm.disable();
             return false;
         }
 
         if (dcdcPwr.last.s.chVout > params.Vout_max * 1.05) {
             // output over-voltage
-            ESP_LOGW("mppt", "Vout %f > %f + 5%%!", dcdcPwr.last.s.chVout, params.Vout_max);
+            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu,state=%s,dir=%.1f) > %.1fV + 5%%!",
+                     dcdcPwr.last.s.chVout,
+                     dcdcPwr.ewm.s.chVout.avg.get(), dcdcPwr.ewm.s.chVout.std.get(), pwm.getBuckDutyCycle(),
+                     MpptState2String[state].c_str(), pwmDirection,
+                     params.Vout_max);
             pwm.disable();
             return false;
         }
@@ -78,6 +87,11 @@ public:
             pwm.pwmPerturb(-2);
         }
 
+        if (dcdcPwr.last.s.chIin < -1) {
+            ESP_LOGE("MPPT", "Reverse current shutdown");
+            pwm.disable();
+        }
+
 
         if (dcdcPwr.last.s.chVout > dcdcPwr.last.s.chVin) {
             pwm.disable();
@@ -89,18 +103,17 @@ public:
             pwm.lowSideMinDuty();
         }
 
-        float voltageRatio = fmaxf(dcdcPwr.last.s.chVout,dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.last.s.chVin;
+        float voltageRatio = fmaxf(dcdcPwr.last.s.chVout, dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.last.s.chVin;
         pwm.updateLowSideMaxDuty(voltageRatio);
 
         return true;
     }
 
-    int8_t pwmDirection = 0;
 
-    void update() {
+    void update(bool dryRun) {
         //float voltage = pwm.getBuckDutyCycle(); // #dcdcPwr.ewm.s.chVin.avg.get(); // todo rename pwm
         auto Iin(dcdcPwr.ewm.s.chIin.avg.get());
-        auto Vin ( dcdcPwr.ewm.s.chVin.avg.get());
+        auto Vin(dcdcPwr.ewm.s.chVin.avg.get());
         float power = dcdcPwr.ewm.s.chIin.avg.get() * dcdcPwr.ewm.s.chVin.avg.get();
         //float power = dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin;
 
@@ -108,14 +121,21 @@ public:
         point.addTag("device", "esp32_proto_mppt");
         point.addField("I", Iin, 2);
         point.addField("I_raw", dcdcPwr.last.s.chIin, 2);
+
         point.addField("U", Vin, 2);
         point.addField("U_raw", dcdcPwr.last.s.chVin, 2);
+
+        point.addField("U_out", dcdcPwr.ewm.s.chVout.avg.get(), 2);
+        point.addField("U_out_raw", dcdcPwr.last.s.chVout, 2);
+
         point.addField("P", power, 2);
         point.addField("P_prev", lastPower, 2);
         point.addField("P_raw", dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin, 2);
 
-        if (dcdcPwr.last.s.chVout > params.Vout_max) {
-            pwmDirection = -1;
+        if (dcdcPwr.last.s.chVout >= params.Vout_max) {
+            pwmDirection = -2;
+            if (dcdcPwr.last.s.chVout >= params.Vout_max * 1.01)
+                pwmDirection = -8;
             state = MpptState::CV;
         } else if (dcdcPwr.last.s.chIin > params.Iin_max) {
             pwmDirection = -1;
@@ -123,49 +143,54 @@ public:
         } else {
             auto dP = power - lastPower;
             point.addField("dP", dP, 2);
-            if(power < 1.f) {
+            if (power < 1.f) {
                 pwmDirection = 1;
             }
-            if (std::abs(dP) < 1.5f) {
+            if (std::abs(dP) < 1.0f) {
                 // insignificant power change / noise
                 // do nothing
                 point.addField("dP_thres", 0.0f, 2);
                 // ESP_LOGI("MPPT", "abs(dP)<1 DIR=%hhi", pwmDirection);
             } else {
                 point.addField("dP_thres", dP, 2);
-                if(dP >= 0) {
+                if (dP >= 0) {
                     // power is increasing, we are on the right track
                     ESP_LOGI("MPPT", "dP=%.7f DIR=%hhi", dP, pwmDirection);
                 } else {
                     ESP_LOGI("MPPT", "dP=%.7f DIR=%hhi REVERSE", dP, pwmDirection);
-                    //pwmDirection *= -1;
-                    pwmDirection = 1;
+                    pwmDirection *= -1;
+                    //pwmDirection = 1;
                 }
                 lastPower = power;
             }
-            /*
-            if(power < 20.0f) {
-                pwmDirection = 1;
-            } else if ((power - lastPower > 0) == (voltage - lastVoltage > 0)) {
-                pwmDirection = -1; // decrease Vin
-            } else {
-                pwmDirection = 1; // increase Vin
-            }
-             */
             state = MpptState::MPPT;
         }
 
-        //lastVoltage = voltage;
+        auto pwmDirectionScaled = pwmDirection;
 
-        pwm.pwmPerturb(pwmDirection);
+        float vOut_pred =
+                dcdcPwr.last.s.chVout + std::max<float>(0.0f, dcdcPwr.last.s.chVout - dcdcPwr.ewm.s.chVout.avg.get());
+        if (vOut_pred >= params.Vout_max * 0.95f) {
+            pwmDirectionScaled *= 0.25;
+            if (vOut_pred >= params.Vout_max * 0.98f) {
+                pwmDirectionScaled *= 0.5;
+            }
+        }
+        point.addField("U_out_pred", vOut_pred, 2);
 
-        point.addField("pwm_dir", pwmDirection);
+        // slow down on low power (and high output impedance?)
+        if (power < 4) {
+            pwmDirectionScaled *= 0.25f;
+        }
+
+        if (!dryRun)
+            pwm.pwmPerturbFractional(pwmDirectionScaled);
+
+        if (!dryRun)
+            point.addField("pwm_dir_f", pwmDirectionScaled, 2);
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
         point.setTime(WritePrecision::MS);
-
-        telemetryAddPoint(point);
-
-
+        telemetryAddPoint(point, 40);
 
 
         // TODO limit chIout
@@ -174,12 +199,6 @@ public:
         // temperature
         // output power < limit
         // output current < limit
-
-
-        if (dcdcPwr.last.s.chIin < -1) {
-            ESP_LOGE("MPPT", "Reverse current shutdown");
-            pwm.disable();
-        }
     }
 
 };

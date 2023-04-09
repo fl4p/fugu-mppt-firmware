@@ -111,17 +111,19 @@ void loop() {
     if (nowMs > protectCoolDownUntil) {
         bool mppt_ok = mppt.protect();
         if (!mppt_ok) {
-            protectCoolDownUntil = nowMs + 1000;
+            protectCoolDownUntil = nowMs + 3000;
         }
 
         auto nSamples = dcdcPwr.numSamples.s.chIin;
-        if (mppt_ok
-            && (nowMs - lastTimeMpptUpdate) > 2
+        if (
+             (nowMs - lastTimeMpptUpdate) > 10
             && (nSamples - lastMpptUpdateNumSamples) > 0) {
-            mppt.update();
+            mppt.update(!mppt_ok);
             lastTimeMpptUpdate = nowMs;
             lastMpptUpdateNumSamples = nSamples;
         }
+    } else {
+        mppt.update(true);
     }
 
 
