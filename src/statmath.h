@@ -35,7 +35,8 @@ public:
         avg.add(x);
         if(!isnan(last_x)) {
             float_t pct = (x - last_x) / last_x;
-            std.add(pct * pct);
+            if(std::isfinite(pct))
+                std.add(pct * pct);
         }
         last_x = x;
     }

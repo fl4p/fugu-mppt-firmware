@@ -36,15 +36,14 @@ DCDC_PowerSampler dcdcPwr{adc, ThreeChannelUnion<ChannelAndFactor>{.s={
         .chVout = {1, (47. / 2 + 1) / 1, 0},
         .chIin = {2, -1 / 0.066f * (10 + 3.3) / 10., //ACS712-30 sensitivity)
                 /* TODO midpoint should be 2.5 (5/2)*/
-                 // 3.5 * 10. / (10 + 3.3) * 0.99788f
-                2.5 * 10. / (10 + 3.3) - 0.0117,
-                }, // 2.5250f/1.3300f
+                // 3.5 * 10. / (10 + 3.3) * 0.99788f
+                  2.5 * 10. / (10 + 3.3) - 0.0117,
+        }, // 2.5250f/1.3300f
 }}};
 
 HalfBridgePwm pwm;
 MpptSampler mppt{dcdcPwr, pwm};
 
-void scan_i2c();
 
 constexpr int READY_PIN = 34;
 
@@ -52,21 +51,20 @@ void ICACHE_RAM_ATTR NewDataReadyISR() {
     adc.alertNewDataFromISR();
 }
 
-
+bool disableWifi = false;
 
 void setup() {
-    connect_wifi_async("^__^", "xxxxxxxx");
+    if (!disableWifi)
+        //connect_wifi_async("^__^", "xxxxxxxx");
+        connect_wifi_async("mentha", "xxxxxxxx");
 
     //Wire.end();
     Wire.setClock(400000UL);
     Wire.setPins(21, 22);
     if (!Wire.begin()) {
         ESP_LOGE("main", "Failed to initialize Wire");
-        while (true) yield();
+        //while (true) yield();
     }
-
-
-    //scan_i2c();
 
     adc.setChannelGain(dcdcPwr.channels.s.chVin.num, GAIN_TWO);
     adc.setChannelGain(dcdcPwr.channels.s.chVout.num, GAIN_TWO);
@@ -82,22 +80,27 @@ void setup() {
 
     dcdcPwr.begin();
 
-    if(!pwm.init()) {
+    if (!pwm.init()) {
         ESP_LOGE("main", "Failed to init half bridge");
     }
 
-    wait_for_wifi();
-    timeSync("CET-1CEST,M3.5.0,M10.5.0/3", "de.pool.ntp.org", "time.nis.gov");
+    if (!disableWifi)
+        dcdcPwr.onDataChange = dcdcDataChanged;
 
-    dcdcPwr.onDataChange = dcdcDataChanged;
+    dcdcPwr.startCalibration();
+
+    ESP_LOGI("main", "setup() done.");
 }
-
 
 
 unsigned long lastTimeOut = 0;
 uint32_t lastNSamples = 0;
 
+unsigned long protectCoolDownUntil = 0;
+
 unsigned long lastTimeMpptUpdate = 0;
+unsigned long lastMpptUpdateNumSamples = 0;
+
 
 void loop() {
     //scan_i2c();
@@ -105,58 +108,37 @@ void loop() {
 
     dcdcPwr.update();
 
-    bool mppt_ok = mppt.protect();
-    if(mppt_ok && (nowMs - lastTimeMpptUpdate) > 20) {
-        mppt.update();
-        lastTimeMpptUpdate = nowMs;
+    if (nowMs > protectCoolDownUntil) {
+        bool mppt_ok = mppt.protect();
+        if (!mppt_ok) {
+            protectCoolDownUntil = nowMs + 1000;
+        }
+
+        auto nSamples = dcdcPwr.numSamples.s.chIin;
+        if (mppt_ok
+            && (nowMs - lastTimeMpptUpdate) > 2
+            && (nSamples - lastMpptUpdateNumSamples) > 0) {
+            mppt.update();
+            lastTimeMpptUpdate = nowMs;
+            lastMpptUpdateNumSamples = nSamples;
+        }
     }
 
 
     if ((nowMs - lastTimeOut) >= 1000) {
         auto &ewm(dcdcPwr.ewm.s);
-        ESP_LOGI("main", "VIN=%5.2f VOUT=%5.2f IIN=%5.3f P=%5.2f sps=%u PWM=%hu MPPT=%hhu", dcdcPwr.last.s.chVin, ewm.chVout.avg.get(),
-                 dcdcPwr.last.s.chIin, mppt.getPower(),  (dcdcPwr.numSamples[0] - lastNSamples), pwm.getBuckDutyCycle(), mppt.getState());
+        ESP_LOGI("main", "Vin=%5.2f Vout=%5.2f Iin=%5.3f Pin=%.1f σIin=%.5f σUin=%.5f sps=%u PWM=%hu MPPT=(P=%.1f state=%s)",
+                 dcdcPwr.last.s.chVin,
+                 dcdcPwr.last.s.chVout,
+                 dcdcPwr.last.s.chIin,
+                 ewm.chVin.avg.get() * ewm.chIin.avg.get(),
+                 ewm.chIin.std.get(), ewm.chVin.std.get(),
+                  (dcdcPwr.numSamples[0] - lastNSamples), pwm.getBuckDutyCycle(),
+                 mppt.getPower(), MpptState2String[mppt.getState()].c_str());
         lastTimeOut = nowMs;
         lastNSamples = dcdcPwr.numSamples[0];
     }
 
-
-}
-
-
-void scan_i2c() {
-    byte error, address;
-    int nDevices;
-
-    Serial.println("Scanning...");
-
-    nDevices = 0;
-    for (address = 1; address < 127; address++) {
-        // The i2c_scanner uses the return value of
-        // the Write.endTransmisstion to see if
-        // a device did acknowledge to the address.
-        Wire.beginTransmission(address);
-        error = Wire.endTransmission();
-
-        if (error == 0) {
-            Serial.print("I2C device found at address 0x");
-            if (address < 16)
-                Serial.print("0");
-            Serial.print(address, HEX);
-            Serial.println("  !");
-
-            nDevices++;
-        } else if (error == 4) {
-            Serial.print("Unknown error at address 0x");
-            if (address < 16)
-                Serial.print("0");
-            Serial.println(address, HEX);
-        }
-    }
-    if (nDevices == 0)
-        Serial.println("No I2C devices found\n");
-    else
-        Serial.println("done\n");
-
-    delay(5000);           // wait 5 seconds for next scan
+    if (!disableWifi)
+        wifiLoop();
 }
