@@ -99,7 +99,8 @@ public:
         }
 
         // try to prevent voltage boost and disable low side for low currents
-        if (fminf(dcdcPwr.ewm.s.chIin.avg.get(), dcdcPwr.last.s.chIin) < 0.2f) {
+        if (fminf(dcdcPwr.ewm.s.chIin.avg.get(), dcdcPwr.last.s.chIin) < 0.1f) {
+            //ESP_LOGW("pwm", "low-current, set low-side PWM to minimum");
             pwm.lowSideMinDuty();
         }
 
@@ -146,7 +147,7 @@ public:
             if (power < 1.f) {
                 pwmDirection = 1;
             }
-            if (std::abs(dP) < 1.0f) {
+            if (std::abs(dP) < 0.75f) {
                 // insignificant power change / noise
                 // do nothing
                 point.addField("dP_thres", 0.0f, 2);
@@ -179,6 +180,7 @@ public:
         point.addField("U_out_pred", vOut_pred, 2);
 
         // slow down on low power (and high output impedance?)
+        // this reduces ripple
         if (power < 4) {
             pwmDirectionScaled *= 0.25f;
         }
@@ -189,6 +191,7 @@ public:
         if (!dryRun)
             point.addField("pwm_dir_f", pwmDirectionScaled, 2);
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
+        point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
         point.setTime(WritePrecision::MS);
         telemetryAddPoint(point, 40);
 

@@ -133,6 +133,8 @@ U_in=52.6V, U_out=26.7V, I_out=20A: T_coil=80°C, T_mosfet=50°C
 
 # Battery Side Current measurement
 Solar Input is short-circuit safe. But the battery output is not. Can
+- detect low side short
+- proper diode emulation
 
 
 
@@ -144,3 +146,7 @@ https://github.com/AngeloCasi/FUGU-ARDUINO-MPPT-FIRMWARE/pull/23
 
 breakout port for aux switches?
 - ESP32 internal temp
+
+Mppt ALgorithm Todo
+- Filter noisy power loads (e.g. high-impedeance lead acid battery + inverter + macbook charger + macbook). Slow down mppt and use longer ewm
+- Improve buck open circuit CV, CC
