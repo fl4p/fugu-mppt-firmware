@@ -11,7 +11,7 @@ class HalfBridgePwm {
     static constexpr uint8_t pwmCh_IN = 0;
     static constexpr uint8_t pwmCh_EN = 1;
 
-    static constexpr float MinDutyCycleLS = 0.05f;
+    static constexpr float MinDutyCycleLS = 0.05f; // to keep the HS bootstrap circuit running
 
     uint8_t pwmResolution = 11;
 
@@ -19,6 +19,8 @@ class HalfBridgePwm {
     uint16_t pwmLS = 0;
 
     uint16_t pwmMaxLS = 0;
+
+    float outInVoltageRatio = 0;
 
 public:
 
@@ -66,11 +68,13 @@ public:
         pwmHS = constrain(pwmHS + direction, 0, pwmMaxHS);// pwmMinLS
 
 
+        pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
+
         // "fade-in" the low-side duty cycle
-        pwmLS = constrain(pwmLS + 1, pwmMinLS, pwmMaxLS);
+        pwmLS = constrain(pwmLS + 2, pwmMinLS, pwmMaxLS);
 
         ledcWrite(pwmCh_IN, pwmHS);
-        ledcWrite(pwmCh_EN, std::min<uint16_t>(pwmHS + pwmLS, pwmMax));
+        ledcWrite(pwmCh_EN, pwmHS + pwmLS);
     }
 
     float directionFloatBuffer = 0.0f;
@@ -81,13 +85,17 @@ public:
         directionFloat += directionFloatBuffer;
         directionFloatBuffer = 0;
         auto directionInt = (int8_t) (directionFloat);
-        if(directionInt != 0)
+        if (directionInt != 0)
             pwmPerturb(directionInt);
         directionFloatBuffer += directionFloat - (float) directionInt;
     }
 
     uint16_t getBuckDutyCycle() const {
         return pwmHS;
+    }
+
+    uint16_t getBuckDutyCycleLS() const {
+        return pwmLS;
     }
 
     void halfDutyCycle() {
@@ -106,21 +114,32 @@ public:
     }
 
     void lowSideMinDuty() {
+        if (pwmLS > pwmMinLS)
+            ESP_LOGW("pwm", "set low-side PWM to minimum");
         pwmLS = pwmMinLS;
         ledcWrite(pwmCh_EN, pwmHS + pwmLS);
     }
 
-    void updateLowSideMaxDuty(float voltageRatio) {
+    static uint16_t computePwmMaxLs(uint16_t pwmHS, uint16_t pwmMax, float voltageRatio) {
+        // prevents boosting and "low side burning" due to excessive LS current
+        // (non-diode behavior, negative reverse inductor current)
+        const float margin = 0.99f;
+        voltageRatio = std::max<float>(voltageRatio, 0.01f);
+        auto pwmMaxLs = (uint16_t) ((1 / voltageRatio - 1) * margin * (float) pwmHS);
+        return std::min<uint16_t>(pwmMaxLs, pwmMax - pwmHS);
+    }
+
+    void updateLowSideMaxDuty(float outInVoltageRatio_) {
         // voltageRatio = Vout/Vin
 
-        float margin = 99.5;
-        auto idealBuckPwm = (uint16_t) ((float) pwmMax * (margin / 100.f) * std::min(1.f, voltageRatio));
+        outInVoltageRatio = outInVoltageRatio_;
 
+        //auto idealBuckPwm = (uint16_t) ((float) pwmMax * (margin / 100.f) * std::min(1.f, voltageRatio));
         // idealBuckPwm / 4 is still too much for open circuit output
         pwmStartHS = 1; // idealBuckPwm / 4; // k =.75
 
-        // prevents boosting and "low side burning" due to excessive LS current (non-diode behavior?):
-        pwmMaxLS = pwmMax - idealBuckPwm;
+        pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
+
         if (pwmLS > pwmMaxLS) {
             pwmLS = pwmMaxLS;
             ledcWrite(pwmCh_EN, pwmHS + pwmLS); // instantly commit if limit decreases
