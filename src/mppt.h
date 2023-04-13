@@ -92,7 +92,6 @@ public:
             pwm.disable();
         }
 
-
         if (dcdcPwr.last.s.chVout > dcdcPwr.last.s.chVin) {
             pwm.disable();
             return false;
@@ -100,8 +99,8 @@ public:
 
         // try to prevent voltage boost and disable low side for low currents
         if (fminf(dcdcPwr.ewm.s.chIin.avg.get(), dcdcPwr.last.s.chIin) < 0.1f) {
-            //ESP_LOGW("pwm", "low-current, set low-side PWM to minimum");
             pwm.lowSideMinDuty();
+            pwm.enableBackflowMosfet(false);
         }
 
         float voltageRatio = fmaxf(dcdcPwr.last.s.chVout, dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.last.s.chVin;
@@ -181,12 +180,22 @@ public:
 
         // slow down on low power (and high output impedance?)
         // this reduces ripple
-        if (power < 4) {
-            pwmDirectionScaled *= 0.25f;
+        //if (power < 1.2) pwmDirectionScaled *= (1 / 4.0f);
+        if (power < 0.8) pwmDirectionScaled *= (1 / 4.0f);
+
+
+        if (!dryRun) {
+            pwm.pwmPerturbFractional(pwmDirectionScaled);
+
+            // "bounce" low pwm
+            if(pwmDirection <= 0 && pwm.getBuckDutyCycle() < pwm.pwmStartHS + 10) {
+                ESP_LOGI("MPPT", "PWM floor bounce %hu", pwm.getBuckDutyCycle());
+                pwmDirection = 1;
+            }
         }
 
-        if (!dryRun)
-            pwm.pwmPerturbFractional(pwmDirectionScaled);
+        if(Iin > 0.2f)
+            pwm.enableBackflowMosfet(true);
 
         if (!dryRun)
             point.addField("pwm_dir_f", pwmDirectionScaled, 2);
