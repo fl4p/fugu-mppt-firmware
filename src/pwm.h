@@ -7,6 +7,7 @@
 class HalfBridgePwm {
     static constexpr uint8_t buck_IN = 33;
     static constexpr uint8_t buck_EN = 32;
+    static constexpr uint8_t backFlow_EN = 27;
 
     static constexpr uint8_t pwmCh_IN = 0;
     static constexpr uint8_t pwmCh_EN = 1;
@@ -52,12 +53,15 @@ public:
         ledcAttachPin(buck_EN, pwmCh_EN);
         ledcWrite(pwmCh_EN, 0);
 
+        pinMode(backFlow_EN,OUTPUT);
+
         // pwmMax = pow(2, pwmResolution) - 1;                           //Get PWM Max Bit Ceiling
         //pwmMaxLimited =(PWM_MaxDC * pwmMax) / 100.0f;
 
 
         return true;
     }
+
 
     void pwmPerturb(int8_t direction) {
 
@@ -111,11 +115,12 @@ public:
         pwmLS = 0;
         ledcWrite(pwmCh_IN, 0);
         ledcWrite(pwmCh_EN, 0);
+        digitalWrite(backFlow_EN,0);
     }
 
     void lowSideMinDuty() {
-        if (pwmLS > pwmMinLS)
-            ESP_LOGW("pwm", "set low-side PWM to minimum");
+        if (pwmLS > pwmMinLS + 10)
+            ESP_LOGW("pwm", "set low-side PWM to minimum %hu -> %hu", pwmLS, pwmMinLS);
         pwmLS = pwmMinLS;
         ledcWrite(pwmCh_EN, pwmHS + pwmLS);
     }
@@ -136,7 +141,7 @@ public:
 
         //auto idealBuckPwm = (uint16_t) ((float) pwmMax * (margin / 100.f) * std::min(1.f, voltageRatio));
         // idealBuckPwm / 4 is still too much for open circuit output
-        pwmStartHS = 1; // idealBuckPwm / 4; // k =.75
+        pwmStartHS = pwmMinLS; // idealBuckPwm / 4; // k =.75
 
         pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
 
@@ -144,6 +149,10 @@ public:
             pwmLS = pwmMaxLS;
             ledcWrite(pwmCh_EN, pwmHS + pwmLS); // instantly commit if limit decreases
         }
+    }
+
+    void enableBackflowMosfet(bool enable) {
+        digitalWrite(backFlow_EN,enable);
     }
 
 };
