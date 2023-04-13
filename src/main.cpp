@@ -108,6 +108,7 @@ void loop() {
 
     dcdcPwr.update();
 
+
     if (nowMs > protectCoolDownUntil) {
         bool mppt_ok = mppt.protect();
         if (!mppt_ok) {
@@ -129,12 +130,12 @@ void loop() {
 
     if ((nowMs - lastTimeOut) >= 1000) {
         auto &ewm(dcdcPwr.ewm.s);
-        ESP_LOGI("main", "Vin=%5.2f Vout=%5.2f Iin=%5.3f Pin=%.1f σIin=%.5f σUin=%.5f sps=%u PWM=%hu MPPT=(P=%.1f state=%s)",
+        ESP_LOGI("main", "Vin=%5.1f Vout=%5.1f Iin=%5.3f Pin=%.1f σIin=%.2fm sps=%u PWM=%hu MPPT=(P=%.1f state=%s)",
                  dcdcPwr.last.s.chVin,
                  dcdcPwr.last.s.chVout,
                  dcdcPwr.last.s.chIin,
                  ewm.chVin.avg.get() * ewm.chIin.avg.get(),
-                 ewm.chIin.std.get(), ewm.chVin.std.get(),
+                 ewm.chIin.std.get() * 1000.f,
                   (dcdcPwr.numSamples[0] - lastNSamples), pwm.getBuckDutyCycle(),
                  mppt.getPower(), MpptState2String[mppt.getState()].c_str());
         lastTimeOut = nowMs;
