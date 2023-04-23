@@ -1,3 +1,5 @@
+- sample mean between mppt updates
+
 disable bccu on overvoltage
 
 compute U,I noise sigma, P2P
@@ -150,3 +152,10 @@ breakout port for aux switches?
 Mppt ALgorithm Todo
 - Filter noisy power loads (e.g. high-impedeance lead acid battery + inverter + macbook charger + macbook). Slow down mppt and use longer ewm
 - Improve buck open circuit CV, CC
+
+# Real Life Tests Results
+PV 2s vs 2p:
+With 2s HS FET gets hotter
+
+
+- Add Backflow mosfet gate resistor to protect dcdc

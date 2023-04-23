@@ -34,8 +34,6 @@ class DCDC_PowerSampler {
     float calibZeroCurrent = 0;
 
 
-
-
 public:
     static constexpr uint8_t EWM_SPAN = 20;
     static constexpr uint8_t EWM_SPAN_V = 12;
@@ -70,7 +68,7 @@ public:
         if (adc.hasData()) {
             auto v = (adc.getSample() - channels[cycleCh].midpoint) * channels[cycleCh].factor;
             //bool changed = (last[cycleCh] != v);
-            if(&last[cycleCh] == &last.s.chIin) {
+            if (&last[cycleCh] == &last.s.chIin) {
                 v -= calibZeroCurrent;
             }
             last[cycleCh] = v;
@@ -86,7 +84,11 @@ public:
             if (calibrating_ && numSamples[cycleCh] > EWM_SPAN * 2) {
                 calibZeroCurrent = ewm.s.chIin.avg.get();
                 ESP_LOGI("dcdc", "Zero Current Calibration avg=%.4f std=%.6f", calibZeroCurrent, ewm.s.chIin.std.get());
-                calibrating_ = false;
+                if (calibZeroCurrent > 0.5) {
+                    ESP_LOGE("dcdc", "Zero Current too high %.2f", calibZeroCurrent);
+                } else {
+                    calibrating_ = false;
+                }
             }
 
             return true;
@@ -98,7 +100,3 @@ public:
         return calibrating_;
     }
 };
-
-/*
-
- */

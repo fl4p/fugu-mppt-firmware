@@ -88,6 +88,7 @@ void setup() {
         dcdcPwr.onDataChange = dcdcDataChanged;
 
     dcdcPwr.startCalibration();
+    mppt.startSweep();
 
     ESP_LOGI("main", "setup() done.");
 }
@@ -113,6 +114,7 @@ void loop() {
         bool mppt_ok = mppt.protect();
         if (!mppt_ok) {
             protectCoolDownUntil = nowMs + 3000;
+            mppt.startSweep();
         }
 
         auto nSamples = dcdcPwr.numSamples.s.chIin;
@@ -128,7 +130,7 @@ void loop() {
     }
 
 
-    if ((nowMs - lastTimeOut) >= 1000) {
+    if ((nowMs - lastTimeOut) >= 2000) {
         auto &ewm(dcdcPwr.ewm.s);
         ESP_LOGI("main", "Vin=%5.1f Vout=%5.1f Iin=%5.3f Pin=%.1f σIin=%.2fm sps=%u PWM=%hu MPPT=(P=%.1f state=%s)",
                  dcdcPwr.last.s.chVin,
