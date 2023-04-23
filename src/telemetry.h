@@ -2,13 +2,17 @@
 
 #include "sampling.h"
 #include "../.pio/libdeps/esp32dev/ESP8266 Influxdb/src/Point.h"
+#include "web/server.h"
 #include <InfluxDbClient.h>
 
 #include <WiFiMulti.h>
 #include <WiFiUdp.h>
+#include <ESPmDNS.h>
 
 WiFiMulti wifiMulti;
 WiFiUDP udp;
+
+const char * getChipId();
 
 
 void connect_wifi_async(const std::string &ssid, const std::string &pw) {
@@ -25,10 +29,21 @@ void wifiLoop() {
         if (!timeSynced) {
             Serial.printf("Connected to WiFi, RSSI %hhi IP %s", WiFi.RSSI(), WiFi.localIP().toString().c_str());
             Serial.println();
+
+            String hostname = "fugu-" + String(getChipId());
+
+            if (!MDNS.begin(hostname.c_str())) { // abc.local
+                ESP_LOGE("tele", "Error setting up MDNS responder!");
+            } else {
+                ESP_LOGI("tele", "Set hostname %s", hostname.c_str());
+            }
+
             Serial.println("Syncing time...");
             timeSync("CET-1CEST,M3.5.0,M10.5.0/3", "pt.pool.ntp.org", "time.nis.gov");
             Serial.println("Time synchronized");
             timeSynced = true;
+
+            webserver_begin();
         }
     }
 }
@@ -50,10 +65,20 @@ void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
 
 
 void influxWritePointsUDP(const Point *p, uint8_t len) {
-
     constexpr int MTU = 1300;
-    byte host[] = {192, 168, 0, 177};
-    auto port = 8002;
+
+    /*
+    static IPAddress host{};
+    if(uint32_t(host) == 0) {
+        ESP_LOGI("tele", "resolving hostname");
+        host = MDNS.queryHost("homeassistant.local");
+        ESP_LOGI("tele", "resolved to %s",host.toString());
+    }
+     */
+
+    byte host[] = {192, 168, 0, 185};
+
+    auto port = 8086;
 
 
     String msg;
