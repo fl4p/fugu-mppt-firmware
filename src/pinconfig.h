@@ -7,9 +7,11 @@ enum class PinConfigESP32S3  : uint8_t {
     I2C_SCL = 2,
     ADC_ALERT = 6,
 
-    Bridge_IN = 16,
+    Bridge_IN = 17, // 16
     Bridge_EN = 15,
     Backflow_EN = 8,
+
+    LED = 48,
 
 };
 
@@ -21,6 +23,8 @@ enum class PinConfigESP32  : uint8_t {
     Bridge_IN = 33,
     Bridge_EN = 32,
     Backflow_EN = 27,
+
+    LED = 2,
 };
 
 #if CONFIG_IDF_TARGET_ESP32S3
