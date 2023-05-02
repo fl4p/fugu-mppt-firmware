@@ -84,8 +84,9 @@ public:
             if (calibrating_ && numSamples[cycleCh] > EWM_SPAN * 2) {
                 calibZeroCurrent = ewm.s.chIin.avg.get();
                 ESP_LOGI("dcdc", "Zero Current Calibration avg=%.4f std=%.6f", calibZeroCurrent, ewm.s.chIin.std.get());
-                if (calibZeroCurrent > 0.5) {
+                if (std::fabs(calibZeroCurrent) > 0.5f) {
                     ESP_LOGE("dcdc", "Zero Current too high %.2f", calibZeroCurrent);
+                    startCalibration();
                 } else {
                     calibrating_ = false;
                 }
