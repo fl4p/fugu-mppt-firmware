@@ -3,11 +3,10 @@
 #include<algorithm>
 #include <Arduino.h>
 
+#include "pinconfig.h"
+
 
 class HalfBridgePwm {
-    static constexpr uint8_t buck_IN = 33;
-    static constexpr uint8_t buck_EN = 32;
-    static constexpr uint8_t backFlow_EN = 27;
 
     static constexpr uint8_t pwmCh_IN = 0;
     static constexpr uint8_t pwmCh_EN = 1;
@@ -115,7 +114,7 @@ public:
         pwmLS = 0;
         ledcWrite(pwmCh_IN, 0);
         ledcWrite(pwmCh_EN, 0);
-        digitalWrite(backFlow_EN,0);
+        enableBackflowMosfet(false);
     }
 
     void lowSideMinDuty() {
@@ -152,7 +151,7 @@ public:
     }
 
     void enableBackflowMosfet(bool enable) {
-        digitalWrite(backFlow_EN,enable);
+        digitalWrite((uint8_t )PinConfig::Bridge_EN,enable);
     }
 
 };
