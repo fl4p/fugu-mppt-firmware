@@ -14,7 +14,8 @@ class ADC_ADS : public AsyncADC<float> {
 
 public:
     bool init() override {
-        ads.setDataRate(RATE_ADS1115_860SPS); // this is for ADS1015 also! (130 sps). fake chips?
+        //ads.setDataRate(RATE_ADS1115_860SPS); // this is for ADS1015 also! (130 sps). fake chips?
+        // ads.setDataRate(RATE_ADS1015_3300SPS);
         return ads.begin(0x48);
     }
 
