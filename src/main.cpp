@@ -13,16 +13,18 @@
 //#include <LiquidCrystal_I2C.h>
 #include <Adafruit_ADS1X15.h>
 
+#include "pinconfig.h"
+
 //LiquidCrystal_I2C lcd(0x27,16,2);   //SYSTEM PARAMETER  - Configure LCD RowCol Size and I2C Address
 //Adafruit_ADS1115 ads;             //SYSTEM PARAMETER  - ADS1115 ADC Library (By: Adafruit) Kindly uncomment this if you are using ADS1115
 //LiquidCrystal_I2C lcd(0x3F, 16, 2);
 //TaskHandle_t Core2;    //SYSTEM PARAMETER  - Used for the ESP32 dual core operation
 
 
-#define backflow_MOSFET 27  //SYSTEM PARAMETER - Backflow MOSFET
+//#define backflow_MOSFET 27  //SYSTEM PARAMETER - Backflow MOSFET
 #define LED 2               //SYSTEM PARAMETER - LED Indicator GPIO Pin
 #define FAN 16              //SYSTEM PARAMETER - Fan GPIO Pin
-#define ADC_ALERT 34        //SYSTEM PARAMETER - Fan GPIO Pin
+//#define ADC_ALERT 34        //SYSTEM PARAMETER - Fan GPIO Pin
 #define TempSensor 35       //SYSTEM PARAMETER - Temperature Sensor GPIO Pin
 #define buttonLeft 18       //SYSTEM PARAMETER -
 #define buttonRight 17      //SYSTEM PARAMETER -
@@ -45,8 +47,6 @@ HalfBridgePwm pwm;
 MpptSampler mppt{dcdcPwr, pwm};
 
 
-constexpr int READY_PIN = 34;
-
 void ICACHE_RAM_ATTR NewDataReadyISR() {
     adc.alertNewDataFromISR();
 }
@@ -55,15 +55,14 @@ bool disableWifi = false;
 
 void setup() {
     if (!disableWifi)
-        //connect_wifi_async("^__^", "xxxxxxxx");
-        connect_wifi_async("mentha", "xxxxxxxx");
-
-    //Wire.end();
+        connect_wifi_async("^__^", "xxxxxxxx");
+    //connect_wifi_async("mentha", "xxxxxxxx");
+    
     Wire.setClock(400000UL);
-    Wire.setPins(21, 22);
+    Wire.setPins((uint8_t) PinConfig::I2C_SDA, (uint8_t) PinConfig::I2C_SCL);
+
     if (!Wire.begin()) {
         ESP_LOGE("main", "Failed to initialize Wire");
-        //while (true) yield();
     }
 
     adc.setChannelGain(dcdcPwr.channels.s.chVin.num, GAIN_TWO);
@@ -72,11 +71,11 @@ void setup() {
 
     auto r = adc.init();
     if (!r) {
-        ESP_LOGE("main", "Failed to initialize ADC %i", r);
+        ESP_LOGE("main", "Failed to initialize ADC (%i)", r);
     }
 
-    pinMode(READY_PIN, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(READY_PIN), NewDataReadyISR, FALLING); // TODO rising
+    pinMode((uint8_t) PinConfig::ADC_ALERT, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt((uint8_t) PinConfig::ADC_ALERT), NewDataReadyISR, FALLING); // TODO rising
 
     dcdcPwr.begin();
 
