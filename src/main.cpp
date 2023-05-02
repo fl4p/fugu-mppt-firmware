@@ -118,8 +118,8 @@ void loop() {
 
         auto nSamples = dcdcPwr.numSamples.s.chIin;
         if (
-             (nowMs - lastTimeMpptUpdate) > 10
-            && (nSamples - lastMpptUpdateNumSamples) > 0) {
+                (nowMs - lastTimeMpptUpdate) > 10
+                && (nSamples - lastMpptUpdateNumSamples) > 0) {
             mppt.update(!mppt_ok);
             lastTimeMpptUpdate = nowMs;
             lastMpptUpdateNumSamples = nSamples;
@@ -131,13 +131,15 @@ void loop() {
 
     if ((nowMs - lastTimeOut) >= 2000) {
         auto &ewm(dcdcPwr.ewm.s);
-        ESP_LOGI("main", "Vin=%5.1f Vout=%5.1f Iin=%5.3f Pin=%.1f σIin=%.2fm sps=%u PWM=%hu MPPT=(P=%.1f state=%s)",
+        ESP_LOGI("main", "Vin=%5.1f Vout=%5.1f Iin=%5.3f Pin=%.1f σIin=%.2fm sps=%.0f PWM=%hu MPPT=(P=%.1f state=%s)",
                  dcdcPwr.last.s.chVin,
                  dcdcPwr.last.s.chVout,
                  dcdcPwr.last.s.chIin,
                  ewm.chVin.avg.get() * ewm.chIin.avg.get(),
                  ewm.chIin.std.get() * 1000.f,
-                  (dcdcPwr.numSamples[0] - lastNSamples), pwm.getBuckDutyCycle(),
+                 (float) (lastNSamples < dcdcPwr.numSamples[0] ? (dcdcPwr.numSamples[0] - lastNSamples) : 0) /
+                 (nowMs - lastTimeOut) * 1e-3f,
+                 pwm.getBuckDutyCycle(),
                  mppt.getPower(), MpptState2String[mppt.getState()].c_str());
         lastTimeOut = nowMs;
         lastNSamples = dcdcPwr.numSamples[0];
