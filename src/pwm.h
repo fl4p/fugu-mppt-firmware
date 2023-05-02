@@ -13,7 +13,7 @@ class HalfBridgePwm {
 
     static constexpr float MinDutyCycleLS = 0.05f; // to keep the HS bootstrap circuit running
 
-    uint8_t pwmResolution = 11;
+    uint8_t pwmResolution = 10;
 
     uint16_t pwmHS = 0;
     uint16_t pwmLS = 0;
