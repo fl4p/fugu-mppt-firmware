@@ -43,16 +43,22 @@ public:
         //uint16_t PWM = 0;
 
         //PWM INITIALIZATION
-        ledcSetup(pwmCh_IN, pwmFrequency, pwmResolution);
-        ledcAttachPin(buck_IN, pwmCh_IN);
+        auto freq = ledcSetup(pwmCh_IN, pwmFrequency, pwmResolution);
+        if(!freq) {
+            return false;
+        }
+        ledcAttachPin( (uint8_t )PinConfig::Bridge_IN, pwmCh_IN);
         ledcWrite(pwmCh_IN, 0);
 
         // EN PWM Init
-        ledcSetup(pwmCh_EN, pwmFrequency, pwmResolution);
-        ledcAttachPin(buck_EN, pwmCh_EN);
+        freq = ledcSetup(pwmCh_EN, pwmFrequency, pwmResolution);
+        if(!freq) {
+            return false;
+        }
+        ledcAttachPin((uint8_t )PinConfig::Bridge_EN, pwmCh_EN);
         ledcWrite(pwmCh_EN, 0);
 
-        pinMode(backFlow_EN,OUTPUT);
+        pinMode((uint8_t )PinConfig::Backflow_EN,OUTPUT);
 
         // pwmMax = pow(2, pwmResolution) - 1;                           //Get PWM Max Bit Ceiling
         //pwmMaxLimited =(PWM_MaxDC * pwmMax) / 100.0f;
