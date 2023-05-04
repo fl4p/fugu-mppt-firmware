@@ -1,3 +1,5 @@
+- sweep after shutdown
+- programmer header +EN +IO0
 - sample mean between mppt updates
 
 disable bccu on overvoltage
@@ -159,3 +161,28 @@ With 2s HS FET gets hotter
 
 
 - Add Backflow mosfet gate resistor to protect dcdc
+
+
+# ESP32-S3
+Footprint of side pins is equal to ESP32. There are 2 additional pins on the row opposing the antenna.
+Since these pins are unused, we can just replace the ESP32 with a ESP32S3.
+
+The S3 appears to have one bit lower LED PWM resolution, so instead of 2048 PWM values, there are 1024 only.
+I2C can be assigned to arbitrary pins, no problem here. GPIO pin numbers are different, need to adjust in firmware.
+
+S3 has USB on-board, so might remove the USB-to-UART chip. 
+
+
+
+# Gate Drive
+
+Measured Gate Rise/Fall Times with Osciloscope:
+
+STP150N10F7 @ 750W (62V->28V)
+LS: 2.99us, HS: 3.49us
+
+
+
+# Tests
+Power Supply: 60V, Current Limit 5A
+The sweep will go past the MPP.

@@ -35,8 +35,8 @@ class DCDC_PowerSampler {
 
 
 public:
-    static constexpr uint8_t EWM_SPAN = 20;
-    static constexpr uint8_t EWM_SPAN_V = 12;
+    static constexpr uint8_t EWM_SPAN = 5; // 20
+    static constexpr uint8_t EWM_SPAN_V = 5;
 
     std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange;
 
