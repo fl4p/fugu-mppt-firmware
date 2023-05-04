@@ -98,7 +98,7 @@ uint32_t lastNSamples = 0;
 
 unsigned long protectCoolDownUntil = 0;
 
-unsigned long lastTimeMpptUpdate = 0;
+//unsigned long lastTimeMpptUpdate = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
 
 
@@ -118,10 +118,10 @@ void loop() {
 
         auto nSamples = dcdcPwr.numSamples.s.chIin;
         if (
-                (nowMs - lastTimeMpptUpdate) > 40
-                && (nSamples - lastMpptUpdateNumSamples) > 0) {
+                //(nowMs - lastTimeMpptUpdate) > 40 &&
+                 (nSamples - lastMpptUpdateNumSamples) > 0) {
             mppt.update(!mppt_ok);
-            lastTimeMpptUpdate = nowMs;
+            //lastTimeMpptUpdate = nowMs;
             lastMpptUpdateNumSamples = nSamples;
         }
     } else {
@@ -131,7 +131,7 @@ void loop() {
 
     if ((nowMs - lastTimeOut) >= 2000) {
         auto &ewm(dcdcPwr.ewm.s);
-        ESP_LOGI("main", "Vin=%5.1f Vout=%5.1f Iin=%5.3f Pin=%.1f σIin=%.2fm sps=%u PWM=%hu MPPT=(P=%.1f state=%s)",
+        ESP_LOGI("main", "Vin=%5.1f Vout=%5.1f Iin=%5.3f Pin=%.1f σIin=%.2fm sps=%u PWM=%hu MPPT=(P=%.1f state=?)",
                  dcdcPwr.last.s.chVin,
                  dcdcPwr.last.s.chVout,
                  dcdcPwr.last.s.chIin,
@@ -140,7 +140,9 @@ void loop() {
                  (lastNSamples < dcdcPwr.numSamples[0] ? (dcdcPwr.numSamples[0] - lastNSamples) : 0) * 1000u /
                  (uint32_t)(nowMs - lastTimeOut),
                  pwm.getBuckDutyCycle(),
-                 mppt.getPower(), MpptState2String[mppt.getState()].c_str());
+                 mppt.getPower()
+                 //, MpptState2String[mpptState].c_str()
+                 );
         lastTimeOut = nowMs;
         lastNSamples = dcdcPwr.numSamples[0];
     }
