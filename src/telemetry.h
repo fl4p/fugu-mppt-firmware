@@ -76,7 +76,8 @@ void influxWritePointsUDP(const Point *p, uint8_t len) {
     }
      */
 
-    byte host[] = {192, 168, 0, 185};
+    // byte host[] = {192, 168, 0, 185};
+    byte host[] = {192, 168, 178, 28};
 
     auto port = 8086;
 

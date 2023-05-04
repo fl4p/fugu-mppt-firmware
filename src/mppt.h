@@ -3,6 +3,8 @@
 #include "sampling.h"
 #include "telemetry.h"
 
+#include "temperature.h"
+
 struct MpptParams {
     float Vout_max = 14.3 * 2;
     float Vin_max = 80;
@@ -34,10 +36,15 @@ class MpptSampler {
     float pwmDirection = 0;
 
     bool _sweeping = false;
+
+    Esp32TempSensor temp;
 public:
 
     explicit MpptSampler(const DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm)
-            : dcdcPwr(dcdcPwr), pwm(pwm) {}
+            : dcdcPwr(dcdcPwr), pwm(pwm) {
+        pinMode((uint8_t) PinConfig::LED, OUTPUT);
+        digitalWrite((uint8_t) PinConfig::LED, false);
+    }
 
     MpptState getState() const { return state; }
 
@@ -56,9 +63,9 @@ public:
             return false;
         }
 
-        if (dcdcPwr.last.s.chVout > params.Vout_max * 1.05) {
+        if (dcdcPwr.last.s.chVout > params.Vout_max * 1.08) {
             // output over-voltage
-            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu,state=%s,dir=%.1f) > %.1fV + 5%%!",
+            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu,state=%s,dir=%.1f) > %.1fV + 8%%!",
                      dcdcPwr.last.s.chVout,
                      dcdcPwr.ewm.s.chVout.avg.get(), dcdcPwr.ewm.s.chVout.std.get(), pwm.getBuckDutyCycle(),
                      MpptState2String[state].c_str(), pwmDirection,
@@ -89,6 +96,7 @@ public:
         if (dcdcPwr.ewm.s.chIin.avg.get() < -1) {
             ESP_LOGE("MPPT", "Reverse avg current shutdown %.1f A", dcdcPwr.ewm.s.chIin.avg.get());
             pwm.disable();
+            return false;
         }
 
         if (dcdcPwr.ewm.s.chVout.avg.get() > dcdcPwr.ewm.s.chVin.avg.get()) {
@@ -129,8 +137,12 @@ public:
 
 
     void startSweep() {
+        if (!_sweeping)
+            ESP_LOGI("mppt", "Start sweep");
         _sweeping = true;
     }
+
+    bool isSweeping() const { return _sweeping; }
 
 
     void update(bool dryRun) {
@@ -230,18 +242,26 @@ public:
 
             point.addField("pwm_dir_f", pwmDirectionScaled, 2);
 
-            // "bounce" low pwm
+            // "bounce" bottom
             if (pwmDirection <= 0 && pwm.getBuckDutyCycle() < pwm.pwmStartHS + 10) {
-                ESP_LOGI("MPPT", "PWM floor bounce %hu", pwm.getBuckDutyCycle());
+                //ESP_LOGI("MPPT", "PWM floor bounce %hu", pwm.getBuckDutyCycle());
                 pwmDirection = 1;
+            }
+
+            // bounce top
+            if (pwmDirection >= 0 && pwm.getBuckDutyCycle() == pwm.pwmMaxHS) {
+                pwmDirection = -1;
             }
         }
 
-        if (Iin > 0.2f)
-            pwm.enableBackflowMosfet(true);
+        pwm.enableBackflowMosfet((Iin > 0.2f));
 
+        bool ledState = (!dryRun && Iin > 0.2f && state == MpptState::MPPT && pwmDirectionScaled > 0);
+        digitalWrite((uint8_t) PinConfig::LED, ledState);
 
         point.addField("mppt_state", int(state));
+
+        point.addField("mcu_temp", temp.read(), 1);
 
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
         point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
