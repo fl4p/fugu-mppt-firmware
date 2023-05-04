@@ -9,7 +9,7 @@ struct MpptParams {
     float Vout_max = 14.3 * 2;
     float Vin_max = 80;
     float Iin_max = 20;
-    float P_max = 550;
+    float P_max = 235;
 };
 
 enum MpptState : uint8_t {
@@ -32,10 +32,11 @@ class MpptSampler {
     unsigned long lastOcFastRecovery = 0;
     float lastPower = 0;
     //float lastVoltage = 0;
-    MpptState state = MpptState::None;
-    float pwmDirection = 0;
+    int8_t pwmDirection = 0;
 
     bool _sweeping = false;
+
+    unsigned long nextUpdateTime = 0;
 
     Esp32TempSensor temp;
 public:
@@ -46,7 +47,7 @@ public:
         digitalWrite((uint8_t) PinConfig::LED, false);
     }
 
-    MpptState getState() const { return state; }
+    //MpptState getState() const { return state; }
 
     float getPower() const { return lastPower; }
 
@@ -65,10 +66,10 @@ public:
 
         if (dcdcPwr.last.s.chVout > params.Vout_max * 1.08) {
             // output over-voltage
-            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu,state=%s,dir=%.1f) > %.1fV + 8%%!",
+            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu,dir=%.1hhi) > %.1fV + 8%%!",
                      dcdcPwr.last.s.chVout,
                      dcdcPwr.ewm.s.chVout.avg.get(), dcdcPwr.ewm.s.chVout.std.get(), pwm.getBuckDutyCycle(),
-                     MpptState2String[state].c_str(), pwmDirection,
+                     pwmDirection,
                      params.Vout_max);
             pwm.disable();
             return false;
@@ -146,6 +147,11 @@ public:
 
 
     void update(bool dryRun) {
+        auto nowMs = millis();
+
+        if(nowMs < nextUpdateTime)
+            return;
+
         //float voltage = pwm.getBuckDutyCycle(); // #dcdcPwr.ewm.s.chVin.avg.get(); // todo rename pwm
         auto Iin(dcdcPwr.ewm.s.chIin.avg.get());
         auto Vin(dcdcPwr.ewm.s.chVin.avg.get());
@@ -167,6 +173,8 @@ public:
         point.addField("P_prev", lastPower, 2);
         point.addField("P_raw", dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin, 2);
 
+        MpptState state = MpptState::MPPT;
+
         if (dcdcPwr.last.s.chVout >= params.Vout_max) {
             pwmDirection = -8;
             if (dcdcPwr.last.s.chVout >= params.Vout_max * 1.01)
@@ -178,73 +186,70 @@ public:
         } else if (power > params.P_max) {
             pwmDirection = -1;
             state = MpptState::CP;
+        } else if (power < 1.f) {
+            startSweep();
+            pwmDirection = 1;
+            state = MpptState::Sweep;
+        } else if (_sweeping) {
+            pwmDirection = 1;
+            state = MpptState::Sweep;
+        }
+
+        if(_sweeping && (state != MpptState::Sweep || pwm.getBuckDutyCycle() == pwm.pwmMaxHS)) {
+            ESP_LOGI("mppt", "Stop sweep at state=%s PWM=%hu", MpptState2String[state].c_str(), pwm.getBuckDutyCycle());
+            _sweeping = false;
+        }
+
+        if (state != MpptState::MPPT) {
+            lastPower = power;
         } else {
             auto dP = power - lastPower;
             point.addField("dP", dP, 2);
 
-            if (power < 2.f) {
-                pwmDirection = 1;
-            }
-
             if (std::abs(dP) < 1.5f) {
-                // insignificant power change / noise
-                // do nothing
+                // insignificant power change / noise, do nothing
                 point.addField("dP_thres", 0.0f, 2);
-                // ESP_LOGI("MPPT", "abs(dP)<1 DIR=%hhi", pwmDirection);
             } else {
                 point.addField("dP_thres", dP, 2);
                 if (dP >= 0) {
                     // power is increasing, we are on the right track
-                    //ESP_LOGI("MPPT", "dP=%.7f DIR=%hhi", dP, pwmDirection);
                 } else {
-                    // ESP_LOGI("MPPT", "dP=%.7f DIR=%hhi REVERSE", dP, pwmDirection);
                     pwmDirection *= -1;
                 }
-                //if(std::abs(pwmDirection) > 1)
-                //    pwmDirection /= std::abs(pwmDirection);
                 lastPower = power;
             }
-            state = MpptState::MPPT;
         }
 
+        float speedScale = 1.0f;
 
-        auto pwmDirectionScaled = pwmDirection;
+        if(!_sweeping)
+            speedScale *= 0.25f * 0.5f;
 
         float vOut_pred =
                 dcdcPwr.last.s.chVout + std::max<float>(0.0f, dcdcPwr.last.s.chVout - dcdcPwr.ewm.s.chVout.avg.get());
         if (vOut_pred >= params.Vout_max * 0.95f) {
-            pwmDirectionScaled *= 0.5;
+            speedScale *= 0.5;
             if (vOut_pred >= params.Vout_max * 0.99f) {
-                pwmDirectionScaled *= 0.5;
+                speedScale *= 0.5;
             }
         }
         point.addField("U_out_pred", vOut_pred, 2);
 
-// slow down on low power (and high output impedance?)
-// this reduces ripple
-//if (power < 1.2) pwmDirectionScaled *= (1 / 4.0f);
-        if (power < 0.8) pwmDirectionScaled *= (1 / 4.0f);
-        if (power > 100) pwmDirectionScaled *= (1 / 4.0f); // TODO noise?
+        // slow down on low power (and high output impedance?), to reduce ripple
+        if (power < 0.8) speedScale *= (1 / 4.0f);
 
-        if (_sweeping) {
-            if (state != MpptState::MPPT || pwm.getBuckDutyCycle() == pwm.pwmMaxHS) {
-                ESP_LOGI("mppt", "Stop sweep");
-                _sweeping = false;
-            } else {
-                pwmDirectionScaled = 1.f;
-            }
-            state = MpptState::Sweep;
-        }
+        point.addField("speed_scale", speedScale, 2);
+
 
 
         if (!dryRun) {
-            pwm.pwmPerturbFractional(pwmDirectionScaled);
+            pwm.pwmPerturb(pwmDirection);
 
-            point.addField("pwm_dir_f", pwmDirectionScaled, 2);
+            //point.addField("pwm_dir_f", pwmDirectionScaled, 2);
+            point.addField("pwm_dir", pwmDirection);
 
             // "bounce" bottom
             if (pwmDirection <= 0 && pwm.getBuckDutyCycle() < pwm.pwmStartHS + 10) {
-                //ESP_LOGI("MPPT", "PWM floor bounce %hu", pwm.getBuckDutyCycle());
                 pwmDirection = 1;
             }
 
@@ -252,17 +257,16 @@ public:
             if (pwmDirection >= 0 && pwm.getBuckDutyCycle() == pwm.pwmMaxHS) {
                 pwmDirection = -1;
             }
+
+            pwm.enableBackflowMosfet((Iin > 0.2f));
+
+            bool ledState = (!dryRun && Iin > 0.2f && state == MpptState::MPPT && pwmDirection > 0);
+            digitalWrite((uint8_t) PinConfig::LED, ledState);
         }
 
-        pwm.enableBackflowMosfet((Iin > 0.2f));
-
-        bool ledState = (!dryRun && Iin > 0.2f && state == MpptState::MPPT && pwmDirectionScaled > 0);
-        digitalWrite((uint8_t) PinConfig::LED, ledState);
 
         point.addField("mppt_state", int(state));
-
         point.addField("mcu_temp", temp.read(), 1);
-
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
         point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
         point.setTime(WritePrecision::MS);
@@ -270,11 +274,10 @@ public:
 
 
         // TODO limit chIout
-        // switch off dcdc if power < min_power
-        // V_in < limit
         // temperature
-        // output power < limit
         // output current < limit
+
+        nextUpdateTime = nowMs + (unsigned long)(40.f / speedScale);
     }
 
 };
