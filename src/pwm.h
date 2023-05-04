@@ -11,7 +11,7 @@ class HalfBridgePwm {
     static constexpr uint8_t pwmCh_IN = 0;
     static constexpr uint8_t pwmCh_EN = 1;
 
-    static constexpr float MinDutyCycleLS = 0.05f; // to keep the HS bootstrap circuit running
+    static constexpr float MinDutyCycleLS = 0.06f; // to keep the HS bootstrap circuit running
 
     uint8_t pwmResolution = 10;
 
@@ -30,7 +30,7 @@ public:
 
     HalfBridgePwm()
             : pwmMax(pow(2, pwmResolution) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
-              pwmMinLS(pwmMax * MinDutyCycleLS) {}
+              pwmMinLS(std::ceil(pwmMax * MinDutyCycleLS)) {}
 
     bool init() {
 
@@ -157,7 +157,7 @@ public:
     }
 
     void enableBackflowMosfet(bool enable) {
-        digitalWrite((uint8_t )PinConfig::Bridge_EN,enable);
+        digitalWrite((uint8_t )PinConfig::Backflow_EN,enable);
     }
 
 };
