@@ -135,8 +135,11 @@ public:
         // (non-diode behavior, negative reverse inductor current)
         const float margin = 0.99f;
         voltageRatio = std::max<float>(voltageRatio, 0.01f);
-        auto pwmMaxLs = (uint16_t) ((1 / voltageRatio - 1) * margin * (float) pwmHS);
-        return std::min<uint16_t>(pwmMaxLs, pwmMax - pwmHS);
+        auto pwmMaxLs = ((1 / voltageRatio - 1) * (float) pwmHS);
+        pwmMaxLs = std::min<float>(pwmMaxLs, (float)pwmHS); // TODO explain why this is necessary
+        // I guess it can be a little more
+        // ^^ https://github.com/fl4p/fugu-mppt-firmware/issues/1
+        return (uint16_t)(std::min<float>(pwmMaxLs, (float)(pwmMax - pwmHS)) * margin);
     }
 
     void updateLowSideMaxDuty(float outInVoltageRatio_) {
