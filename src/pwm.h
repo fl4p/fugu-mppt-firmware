@@ -80,7 +80,7 @@ public:
         pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
 
         // "fade-in" the low-side duty cycle
-        pwmLS = constrain(pwmLS + 2, pwmMinLS, pwmMaxLS);
+        pwmLS = constrain(pwmLS + 3, pwmMinLS, pwmMaxLS);
 
         update_pwm(pwmCh_IN, pwmHS);
         update_pwm(pwmCh_EN, pwmHS + pwmLS);
