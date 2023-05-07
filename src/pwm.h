@@ -4,7 +4,9 @@
 #include <Arduino.h>
 
 #include "pinconfig.h"
-
+#include <stdio.h>
+#include "driver/ledc.h"
+#include "esp_err.h"
 
 class HalfBridgePwm {
 
@@ -13,7 +15,8 @@ class HalfBridgePwm {
 
     static constexpr float MinDutyCycleLS = 0.06f; // to keep the HS bootstrap circuit running
 
-    uint8_t pwmResolution = 10;
+    const uint8_t pwmResolution = 11;
+    const ledc_mode_t ledcMode = LEDC_LOW_SPEED_MODE;
 
     uint16_t pwmHS = 0;
     uint16_t pwmLS = 0;
@@ -30,45 +33,42 @@ public:
 
     HalfBridgePwm()
             : pwmMax(pow(2, pwmResolution) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
-              pwmMinLS(std::ceil(pwmMax * MinDutyCycleLS)) {}
+              pwmMinLS(std::ceil(pwmMax * MinDutyCycleLS)) {
+
+    }
 
     bool init() {
 
-        uint32_t pwmFrequency = 39000;           //  USER PARAMETER - PWM Switching Frequency - Hz (For Buck)
-        float PPWM_margin = 99.5;          //  CALIB PARAMETER - Minimum Operating Duty Cycle for Predictive PWM (%)
-        float PWM_MaxDC = 95.0;            //  CALIB PARAMETER - Maximum Operating Duty Cycle (%) 90%-97% is good, 97 makes low-side turn-on too short for bootstrapping
+        // TODO pin self-check?
+
+        //uint32_t pwmFrequency = 39000;           //  USER PARAMETER - PWM Switching Frequency - Hz (For Buck)
+        uint32_t pwmFrequency = 22000;           //  USER PARAMETER - PWM Switching Frequency - Hz (For Buck)
+        //float PPWM_margin = 99.5;          //  CALIB PARAMETER - Minimum Operating Duty Cycle for Predictive PWM (%)
+        //float PWM_MaxDC = 95.0;            //  CALIB PARAMETER - Maximum Operating Duty Cycle (%) 90%-97% is good, 97 makes low-side turn-on too short for bootstrapping
 
         //uint16_t pwmMax = 0;
         //uint16_t pwmMaxLimited = 0;
         //uint16_t PWM = 0;
 
+
+
+
         //PWM INITIALIZATION
-        auto freq = ledcSetup(pwmCh_IN, pwmFrequency, pwmResolution);
-        if(!freq) {
-            return false;
-        }
-        ledcAttachPin( (uint8_t )PinConfig::Bridge_IN, pwmCh_IN);
-        ledcWrite(pwmCh_IN, 0);
+        init_pwm(pwmCh_IN, (uint8_t) PinConfig::Bridge_IN, pwmFrequency);
+        init_pwm(pwmCh_EN, (uint8_t) PinConfig::Bridge_EN, pwmFrequency);
 
-        // EN PWM Init
-        freq = ledcSetup(pwmCh_EN, pwmFrequency, pwmResolution);
-        if(!freq) {
-            return false;
-        }
-        ledcAttachPin((uint8_t )PinConfig::Bridge_EN, pwmCh_EN);
-        ledcWrite(pwmCh_EN, 0);
-
-        pinMode((uint8_t )PinConfig::Backflow_EN,OUTPUT);
 
         // pwmMax = pow(2, pwmResolution) - 1;                           //Get PWM Max Bit Ceiling
         //pwmMaxLimited =(PWM_MaxDC * pwmMax) / 100.0f;
 
+        pinMode((uint8_t) PinConfig::Backflow_EN, OUTPUT);
+        digitalWrite((uint8_t) PinConfig::Backflow_EN, false);
 
         return true;
     }
 
 
-    void pwmPerturb(int8_t direction) {
+    void pwmPerturb(int16_t direction) {
 
         if (pwmHS <= 1 && pwmHS < pwmStartHS)
             pwmHS = pwmStartHS;
@@ -82,8 +82,8 @@ public:
         // "fade-in" the low-side duty cycle
         pwmLS = constrain(pwmLS + 2, pwmMinLS, pwmMaxLS);
 
-        ledcWrite(pwmCh_IN, pwmHS);
-        ledcWrite(pwmCh_EN, pwmHS + pwmLS);
+        update_pwm(pwmCh_IN, pwmHS);
+        update_pwm(pwmCh_EN, pwmHS + pwmLS);
     }
 
     float directionFloatBuffer = 0.0f;
@@ -118,8 +118,8 @@ public:
             ESP_LOGW("pwm", "PWM disabled");
         pwmHS = 0;
         pwmLS = 0;
-        ledcWrite(pwmCh_IN, 0);
-        ledcWrite(pwmCh_EN, 0);
+        update_pwm(pwmCh_IN, 0);
+        update_pwm(pwmCh_EN, 0);
         enableBackflowMosfet(false);
     }
 
@@ -127,7 +127,7 @@ public:
         if (pwmLS > pwmMinLS + 10)
             ESP_LOGW("pwm", "set low-side PWM to minimum %hu -> %hu", pwmLS, pwmMinLS);
         pwmLS = pwmMinLS;
-        ledcWrite(pwmCh_EN, pwmHS + pwmLS);
+        update_pwm(pwmCh_EN, pwmHS + pwmLS);
     }
 
     static uint16_t computePwmMaxLs(uint16_t pwmHS, uint16_t pwmMax, float voltageRatio) {
@@ -152,12 +152,44 @@ public:
 
         if (pwmLS > pwmMaxLS) {
             pwmLS = pwmMaxLS;
-            ledcWrite(pwmCh_EN, pwmHS + pwmLS); // instantly commit if limit decreases
+            update_pwm(pwmCh_EN, pwmHS + pwmLS); // instantly commit if limit decreases
         }
     }
 
     void enableBackflowMosfet(bool enable) {
-        digitalWrite((uint8_t )PinConfig::Backflow_EN,enable);
+        digitalWrite((uint8_t) PinConfig::Backflow_EN, enable);
+    }
+
+
+private:
+    void init_pwm(int channel, int pin, uint32_t freq) {
+        // Prepare and then apply the LEDC PWM timer configuration
+        ledc_timer_config_t ledc_timer = {
+                .speed_mode       = ledcMode,
+                .duty_resolution  = (ledc_timer_bit_t) pwmResolution,
+                .timer_num        = LEDC_TIMER_0,
+                .freq_hz          = freq,
+                .clk_cfg          = LEDC_AUTO_CLK
+        };
+        ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+        // Prepare and then apply the LEDC PWM channel configuration
+        ledc_channel_config_t ledc_channel = {
+                .gpio_num       = pin,
+                .speed_mode     = ledcMode,
+                .channel        = (ledc_channel_t) channel,
+                .intr_type      = LEDC_INTR_DISABLE,
+                .timer_sel      = LEDC_TIMER_0,
+                .duty           = 0, // Set duty to 0%
+                .hpoint         = 0
+        };
+        ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+    }
+
+    void update_pwm(int channel, uint32_t duty) {
+        ESP_ERROR_CHECK(ledc_set_duty(ledcMode, (ledc_channel_t) channel, duty));
+        // Update duty to apply the new value
+        ESP_ERROR_CHECK(ledc_update_duty(ledcMode, (ledc_channel_t) channel));
     }
 
 };
