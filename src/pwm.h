@@ -136,9 +136,18 @@ public:
         const float margin = 0.99f;
         voltageRatio = std::max<float>(voltageRatio, 0.01f);
         auto pwmMaxLs = ((1 / voltageRatio - 1) * (float) pwmHS);
-        pwmMaxLs = std::min<float>(pwmMaxLs, (float)pwmHS); // TODO explain why this is necessary
+
+        // pwmMaxLs = std::min<float>(pwmMaxLs, (float)pwmHS); // TODO explain why this is necessary
         // I guess it can be a little more
+        // At which duty cycle (HS) does coil current stop touching zero?
         // ^^ https://github.com/fl4p/fugu-mppt-firmware/issues/1
+
+        if(pwmMaxLs < (pwmMax - pwmHS)) {
+            // this is when the coil current is still touching zero
+            // it'll stop for higher HS duty cycles
+            pwmMaxLs = std::min<float>(pwmMaxLs, (float)pwmHS); // TODO explain why this is necessary
+        }
+
         return (uint16_t)(std::min<float>(pwmMaxLs, (float)(pwmMax - pwmHS)) * margin);
     }
 
