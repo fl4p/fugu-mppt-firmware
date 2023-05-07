@@ -9,7 +9,7 @@ struct MpptParams {
     float Vout_max = 14.3 * 2;
     float Vin_max = 80;
     float Iin_max = 20;
-    float P_max = 235;
+    float P_max = 500;
 };
 
 enum MpptState : uint8_t {
@@ -24,6 +24,8 @@ enum MpptState : uint8_t {
 
 static const std::array<std::string, MpptState::Max> MpptState2String{"N/A", "CV", "CC", "CP", "MPPT", "SWEEP"};
 
+
+
 class MpptSampler {
     const DCDC_PowerSampler &dcdcPwr;
     HalfBridgePwm &pwm;
@@ -35,6 +37,10 @@ class MpptSampler {
     int8_t pwmDirection = 0;
 
     bool _sweeping = false;
+    struct  {
+        float power = 0;
+        uint16_t dutyCycle = 0;
+    } maxPowerPoint;
 
     unsigned long nextUpdateTime = 0;
 
@@ -141,6 +147,7 @@ public:
         if (!_sweeping)
             ESP_LOGI("mppt", "Start sweep");
         _sweeping = true;
+        maxPowerPoint = {};
     }
 
     bool isSweeping() const { return _sweeping; }
@@ -192,11 +199,19 @@ public:
             state = MpptState::Sweep;
         } else if (_sweeping) {
             pwmDirection = 1;
+            if(power > maxPowerPoint.power) {
+                // capture MPP during sweep
+                maxPowerPoint.power = power;
+                maxPowerPoint.dutyCycle = pwm.getBuckDutyCycle();
+            }
             state = MpptState::Sweep;
         }
 
         if(_sweeping && (state != MpptState::Sweep || pwm.getBuckDutyCycle() == pwm.pwmMaxHS)) {
-            ESP_LOGI("mppt", "Stop sweep at state=%s PWM=%hu", MpptState2String[state].c_str(), pwm.getBuckDutyCycle());
+            ESP_LOGI("mppt", "Stop sweep at state=%s PWM=%hu, MPP=(%.1fW,PWM=%hu)", MpptState2String[state].c_str(),
+                     pwm.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle
+                     );
+
             _sweeping = false;
         }
 
@@ -223,7 +238,7 @@ public:
         float speedScale = 1.0f;
 
         if(!_sweeping)
-            speedScale *= 0.25f * 0.5f;
+            speedScale *= 0.25;
 
         float vOut_pred =
                 dcdcPwr.last.s.chVout + std::max<float>(0.0f, dcdcPwr.last.s.chVout - dcdcPwr.ewm.s.chVout.avg.get());
@@ -259,10 +274,10 @@ public:
             }
 
             pwm.enableBackflowMosfet((Iin > 0.2f));
-
-            bool ledState = (!dryRun && Iin > 0.2f && state == MpptState::MPPT && pwmDirection > 0);
-            digitalWrite((uint8_t) PinConfig::LED, ledState);
         }
+
+        bool ledState = (!dryRun && Iin > 0.2f && state == MpptState::MPPT && pwmDirection > 0);
+        digitalWrite((uint8_t) PinConfig::LED, ledState);
 
 
         point.addField("mppt_state", int(state));
@@ -277,7 +292,7 @@ public:
         // temperature
         // output current < limit
 
-        nextUpdateTime = nowMs + (unsigned long)(40.f / speedScale);
+        nextUpdateTime = nowMs + (unsigned long)(20.f / speedScale);
     }
 
 };
