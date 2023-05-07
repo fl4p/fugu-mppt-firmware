@@ -12,6 +12,7 @@
 //#include <SPI.h>
 //#include <LiquidCrystal_I2C.h>
 #include <Adafruit_ADS1X15.h>
+#include <hal/uart_types.h>
 
 #include "pinconfig.h"
 
@@ -53,7 +54,18 @@ void ICACHE_RAM_ATTR NewDataReadyISR() {
 
 bool disableWifi = false;
 
+void uartInit(int port_num);
+
 void setup() {
+    Serial.begin(115200);
+
+#if CONFIG_IDF_TARGET_ESP32S3
+    // for unknown reason need to initialize uart0 for serial reading (see loop below)
+    // Serial.available() works under Arduino IDE (for both ESP32,ESP32S3), but always returns 0 under platformio
+    // so we access the uart port directly. on ESP32 the Serial.begin() is sufficient (since it uses the uart0)
+    uartInit(0);
+#endif
+
     if (!disableWifi)
         connect_wifi_async("^__^", "xxxxxxxx");
     //connect_wifi_async("mentha", "xxxxxxxx");
@@ -101,6 +113,13 @@ unsigned long protectCoolDownUntil = 0;
 //unsigned long lastTimeMpptUpdate = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
 
+bool manualPwm = false;
+
+#include "freertos/FreeRTOS.h"
+#include "driver/uart.h"
+#include "driver/gpio.h"
+#include "esp_log.h"
+
 
 void loop() {
     //scan_i2c();
@@ -118,9 +137,9 @@ void loop() {
 
         auto nSamples = dcdcPwr.numSamples.s.chIin;
         if (
-                //(nowMs - lastTimeMpptUpdate) > 40 &&
-                 (nSamples - lastMpptUpdateNumSamples) > 0) {
-            mppt.update(!mppt_ok);
+            //(nowMs - lastTimeMpptUpdate) > 40 &&
+                (nSamples - lastMpptUpdateNumSamples) > 0) {
+            mppt.update(!mppt_ok || manualPwm);
             //lastTimeMpptUpdate = nowMs;
             lastMpptUpdateNumSamples = nSamples;
         }
@@ -138,15 +157,100 @@ void loop() {
                  ewm.chVin.avg.get() * ewm.chIin.avg.get(),
                  ewm.chIin.std.get() * 1000.f,
                  (lastNSamples < dcdcPwr.numSamples[0] ? (dcdcPwr.numSamples[0] - lastNSamples) : 0) * 1000u /
-                 (uint32_t)(nowMs - lastTimeOut),
+                 (uint32_t) (nowMs - lastTimeOut),
                  pwm.getBuckDutyCycle(),
                  mppt.getPower()
-                 //, MpptState2String[mpptState].c_str()
-                 );
+        //, MpptState2String[mpptState].c_str()
+        );
         lastTimeOut = nowMs;
         lastNSamples = dcdcPwr.numSamples[0];
     }
 
+    if (manualPwm) {
+        pwm.pwmPerturb(0); // this will increase LS duty cycle if possible
+        pwm.enableBackflowMosfet(true);
+        // notice that mppt::protect() calls updateLowSideMaxDuty()
+        delay(10);
+    }
+
+    // for some reason Serial.available() doesn't work under platformio
+    // so access the uart port directly
+
+    const uart_port_t uart_num = UART_NUM_0; // Arduino Serial is on port 0
+    char data[128];
+    int length = 0;
+    ESP_ERROR_CHECK(uart_get_buffered_data_len(uart_num, (size_t *) &length));
+    length = uart_read_bytes(uart_num, data, 127, 0);
+    if (length) {
+        data[length] = 0;
+        uart_write_bytes(uart_num, data, length);
+
+        String inp(data);
+
+        ESP_LOGI("main", "received serial command: %s", inp.c_str());
+        inp.trim();
+        if (inp.length() > 0) {
+            if (inp[0] == '+' or inp[0] == '-') {
+                int pwmStep = inp.toInt();
+                ESP_LOGI("main", "Manual PWM step %i", pwmStep);
+                manualPwm = true;
+                pwm.pwmPerturb((int16_t) pwmStep);
+            } else if (inp == "restart") {
+                Serial.println("Restart, delay 1s");
+                delay(200);
+                ESP.restart();
+            } else if (inp == "mppt" && manualPwm) {
+                ESP_LOGI("main", "MPPT re-enabled");
+                manualPwm = false;
+            } else if(inp.startsWith("dc ")) {
+                manualPwm = true;
+                pwm.pwmPerturb( inp.substring(3).toInt() - pwm.getBuckDutyCycle());
+            }
+        }
+    }
+
     if (!disableWifi)
         wifiLoop();
+}
+
+
+const int BUF_SIZE = 1024;
+char *uartBuf = (char *) malloc(BUF_SIZE);
+QueueHandle_t uart_queue;
+
+void uartInit(int port_num) {
+
+    uart_config_t uart_config = {
+            .baud_rate = 115200,
+            .data_bits = UART_DATA_8_BITS,
+            .parity    = UART_PARITY_DISABLE,
+            .stop_bits = UART_STOP_BITS_1,
+            .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, // UART_HW_FLOWCTRL_CTS_RTS
+            .source_clk = UART_SCLK_APB,
+    };
+    int intr_alloc_flags = 0;
+
+// tx=34, rx=33, stack=2048
+
+
+#if CONFIG_IDF_TARGET_ESP32S3
+    //const int PIN_TX = 34, PIN_RX = 33;
+    const int PIN_TX = 43, PIN_RX = 44;
+#else
+    const int PIN_TX = 1, PIN_RX = 3;
+#endif
+
+    ESP_ERROR_CHECK(uart_set_pin(port_num, PIN_TX, PIN_RX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_param_config(port_num, &uart_config));
+    ESP_ERROR_CHECK(uart_driver_install(port_num, BUF_SIZE * 2, BUF_SIZE * 2, 10, &uart_queue, intr_alloc_flags));
+
+
+/* uart_intr_config_t uart_intr = {
+     .intr_enable_mask = (0x1 << 0) | (0x8 << 0),  // UART_INTR_RXFIFO_FULL | UART_INTR_RXFIFO_TOUT,
+     .rx_timeout_thresh = 1,
+     .txfifo_empty_intr_thresh = 10,
+     .rxfifo_full_thresh = 112,
+};
+uart_intr_config((uart_port_t) 0, &uart_intr);  // Zero is the UART number for Arduino Serial
+*/
 }
