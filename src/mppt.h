@@ -5,14 +5,17 @@
 
 #include "temperature.h"
 
+#include "battery.h"
+
 struct MpptParams {
-    float Vout_max = 14.3 * 2;
+    float Vout_max = NAN; //14.6 * 2;
     float Vin_max = 80;
     float Iin_max = 20;
+    float Iout_max = 20;
     float P_max = 500;
 };
 
-enum MpptState : uint8_t {
+enum class MpptState : uint8_t {
     None = 0,
     CV,
     CC,
@@ -22,8 +25,14 @@ enum MpptState : uint8_t {
     Max,
 };
 
-static const std::array<std::string, MpptState::Max> MpptState2String{"N/A", "CV", "CC", "CP", "MPPT", "SWEEP"};
-
+static const std::array<std::string, (size_t)MpptState::Max> MpptState2String{
+        "N/A",
+        "CV",
+        "CC",
+        "CP",
+        "MPPT",
+        "SWEEP"
+};
 
 
 class MpptSampler {
@@ -37,7 +46,7 @@ class MpptSampler {
     int8_t pwmDirection = 0;
 
     bool _sweeping = false;
-    struct  {
+    struct {
         float power = 0;
         uint16_t dutyCycle = 0;
     } maxPowerPoint;
@@ -61,6 +70,19 @@ public:
         if (dcdcPwr.isCalibrating()) {
             pwm.disable();
             return false;
+        } else {
+            if(std::isnan(params.Vout_max)) {
+                auto vout = dcdcPwr.getBatteryIdleVoltage();
+                float detectedVout_max = detectMaxBatteryVoltage(vout);
+                if(std::isnan(detectedVout_max)) {
+                    ESP_LOGW("mppt", "Unable to detect battery voltage Vout=%.2fV", vout);
+                    pwm.disable();
+                    return false;
+                } else {
+                    ESP_LOGI("mppt", "Detected max battery voltage %.2fV (from Vout=%.2fV)", detectedVout_max, vout);
+                    params.Vout_max = detectedVout_max;
+                }
+            }
         }
 
         if (dcdcPwr.last.s.chVin > params.Vin_max) {
@@ -156,7 +178,7 @@ public:
     void update(bool dryRun) {
         auto nowMs = millis();
 
-        if(nowMs < nextUpdateTime)
+        if (nowMs < nextUpdateTime)
             return;
 
         //float voltage = pwm.getBuckDutyCycle(); // #dcdcPwr.ewm.s.chVin.avg.get(); // todo rename pwm
@@ -199,7 +221,7 @@ public:
             state = MpptState::Sweep;
         } else if (_sweeping) {
             pwmDirection = 1;
-            if(power > maxPowerPoint.power) {
+            if (power > maxPowerPoint.power) {
                 // capture MPP during sweep
                 maxPowerPoint.power = power;
                 maxPowerPoint.dutyCycle = pwm.getBuckDutyCycle();
@@ -207,10 +229,10 @@ public:
             state = MpptState::Sweep;
         }
 
-        if(_sweeping && (state != MpptState::Sweep || pwm.getBuckDutyCycle() == pwm.pwmMaxHS)) {
-            ESP_LOGI("mppt", "Stop sweep at state=%s PWM=%hu, MPP=(%.1fW,PWM=%hu)", MpptState2String[state].c_str(),
+        if (_sweeping && (state != MpptState::Sweep || pwm.getBuckDutyCycle() == pwm.pwmMaxHS)) {
+            ESP_LOGI("mppt", "Stop sweep at state=%s PWM=%hu, MPP=(%.1fW,PWM=%hu)", MpptState2String[(uint8_t)state].c_str(),
                      pwm.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle
-                     );
+            );
 
             _sweeping = false;
         }
@@ -237,7 +259,7 @@ public:
 
         float speedScale = 1.0f;
 
-        if(!_sweeping)
+        if (!_sweeping)
             speedScale *= 0.25;
 
         float vOut_pred =
@@ -254,7 +276,6 @@ public:
         if (power < 0.8) speedScale *= (1 / 4.0f);
 
         point.addField("speed_scale", speedScale, 2);
-
 
 
         if (!dryRun) {
@@ -292,7 +313,7 @@ public:
         // temperature
         // output current < limit
 
-        nextUpdateTime = nowMs + (unsigned long)(20.f / speedScale);
+        nextUpdateTime = nowMs + (unsigned long) (20.f / speedScale);
     }
 
 };

@@ -32,6 +32,7 @@ class DCDC_PowerSampler {
 
     bool calibrating_ = false;
     float calibZeroCurrent = 0;
+    float calibVout = 0;
 
 
 public:
@@ -81,11 +82,18 @@ public:
                 onDataChange(*this, cycleCh);
             }
 
-            if (calibrating_ && numSamples[cycleCh] > EWM_SPAN * 2) {
+            if (calibrating_ && numSamples[cycleCh] > std::max(EWM_SPAN,EWM_SPAN_V) * 2) {
                 calibZeroCurrent = ewm.s.chIin.avg.get();
                 ESP_LOGI("dcdc", "Zero Current Calibration avg=%.4f std=%.6f", calibZeroCurrent, ewm.s.chIin.std.get());
+
+                calibVout = ewm.s.chVout.avg.get();
+                ESP_LOGI("dcdc", "V_out avg=%.4f std=%.6f", calibVout, ewm.s.chVout.std.get());
+
                 if (std::fabs(calibZeroCurrent) > 0.5f) {
                     ESP_LOGE("dcdc", "Zero Current too high %.2f", calibZeroCurrent);
+                    startCalibration();
+                } else if (std::fabs(ewm.s.chVout.std.get()) > 10e-3f) {
+                    ESP_LOGE("dcdc", "Zero Current Vout std too high %.2f", ewm.s.chVout.std.get());
                     startCalibration();
                 } else {
                     calibrating_ = false;
@@ -99,5 +107,9 @@ public:
 
     bool isCalibrating() const {
         return calibrating_;
+    }
+
+    float getBatteryIdleVoltage() const {
+        return calibVout;
     }
 };
