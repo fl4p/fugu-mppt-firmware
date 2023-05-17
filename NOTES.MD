@@ -1,3 +1,4 @@
+- TODO slow down if DS cycle range is low (last X seconds)
 - bug? 2core coil (120uH), 22 khz pwm, Vin=58.8V, V_out=25.9V, duty cycle = 900 (precision 11bit)
 when reaching max LS, current goes negative
 
