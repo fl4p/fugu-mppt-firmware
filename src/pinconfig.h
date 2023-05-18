@@ -7,7 +7,7 @@ enum class PinConfigESP32S3  : uint8_t {
     I2C_SCL = 2,
     ADC_ALERT = 6,
 
-    Bridge_IN = 17, // 16
+    Bridge_IN = 16,
     Bridge_EN = 15,
     Backflow_EN = 8,
 
@@ -27,8 +27,22 @@ enum class PinConfigESP32  : uint8_t {
     LED = 2,
 };
 
+
+const char * getChipId();
+
+
+
 #if CONFIG_IDF_TARGET_ESP32S3
 typedef PinConfigESP32S3 PinConfig;
 #else
 typedef PinConfigESP32 PinConfig;
 #endif
+
+uint8_t getBuckIN_PIN() {
+    if(ESP.getEfuseMac() == 0x704082188534 /* white dot on cover near pin 16*/) {
+        ESP_LOGI("pins", "Using pin 17 for Bridge_IN");
+        return 17;
+    }
+    return (uint8_t)PinConfig::Bridge_IN;
+}
+
