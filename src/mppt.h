@@ -232,7 +232,8 @@ public:
             pwmDirection = -1;
             state = MpptState::CP;
         } else if (power < 1.f) {
-            startSweep();
+            if (!dryRun)
+                startSweep();
             pwmDirection = 1;
             state = MpptState::Sweep;
         } else if (_sweeping) {
@@ -245,8 +246,9 @@ public:
             state = MpptState::Sweep;
         }
 
-        if (_sweeping && (state != MpptState::Sweep || pwm.getBuckDutyCycle() == pwm.pwmMaxHS)) {
-            ESP_LOGI("mppt", "Stop sweep at state=%s PWM=%hu, MPP=(%.1fW,PWM=%hu)", MpptState2String[(uint8_t)state].c_str(),
+        if (!dryRun && _sweeping && (state != MpptState::Sweep || pwm.getBuckDutyCycle() == pwm.pwmMaxHS)) {
+            ESP_LOGI("mppt", "Stop sweep at state=%s PWM=%hu, MPP=(%.1fW,PWM=%hu)",
+                     MpptState2String[(uint8_t) state].c_str(),
                      pwm.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle
             );
 
