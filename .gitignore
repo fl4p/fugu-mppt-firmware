@@ -8,3 +8,6 @@ cmake-build-*
 
 /CMakeLists.txt
 /CMakeListsPrivate.txt
+
+web-flash/manifest.json
+web-flash/*.bin
