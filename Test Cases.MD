@@ -7,3 +7,8 @@
 - During charge, disconnect battery
 - Expected: Output voltage spikes max +10%, then falls back to V_out_max
 - Current: Total shutdown, then slow recovery
+
+
+# UV
+- V_in = 10.5V
+- Expected: shutdown
