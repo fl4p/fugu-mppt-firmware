@@ -1,37 +1,34 @@
 void scan_i2c() {
+    const char *TAG = "scan_i2c";
     byte error, address;
     int nDevices;
 
-    Serial.println("Scanning...");
+    ESP_LOGI(TAG, "Scanning I2C...");
 
     nDevices = 0;
     for (address = 1; address < 127; address++) {
-        // The i2c_scanner uses the return value of
-        // the Write.endTransmisstion to see if
-        // a device did acknowledge to the address.
         Wire.beginTransmission(address);
         error = Wire.endTransmission();
+        /*
+            0	success
+            1	data too long to fit in transmit buffer
+            2	received NACK on transmit of address
+            3	received NACK on transmit of data
+            4	other error
+         */
 
         if (error == 0) {
-            Serial.print("I2C device found at address 0x");
-            if (address < 16)
-                Serial.print("0");
-            Serial.print(address, HEX);
-            Serial.println("  !");
-
+            ESP_LOGI(TAG, "Device found at address 0x%02hhX", address);
             nDevices++;
-        } else if (error == 4) {
-            Serial.print("Unknown error at address 0x");
-            if (address < 16)
-                Serial.print("0");
-            Serial.println(address, HEX);
+        } else if (error != 2) {
+            ESP_LOGW(TAG, "Unknown error %hhu at address 0x%02hhX", error, address);
         }
     }
     if (nDevices == 0)
-        Serial.println("No I2C devices found\n");
+        ESP_LOGI(TAG, "No I2C devices found");
     else
-        Serial.println("done\n");
+        ESP_LOGI(TAG, "I2C scan done, %d devices found", nDevices);
 
-    delay(5000);           // wait 5 seconds for next scan
+    delay(5000);
 }
 
