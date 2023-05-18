@@ -36,9 +36,11 @@ static const std::array<std::string, (size_t) MpptState::Max> MpptState2String{
 
 
 class MpptSampler {
-    const DCDC_PowerSampler &dcdcPwr;
+    DCDC_PowerSampler &dcdcPwr;
     HalfBridgePwm &pwm;
     MpptParams params;
+
+    bool autoDetectVout_max = true;
 
     unsigned long lastOcFastRecovery = 0;
     float lastPower = 0;
@@ -52,11 +54,12 @@ class MpptSampler {
     } maxPowerPoint;
 
     unsigned long nextUpdateTime = 0;
+    unsigned long lastTimeProtectPassed = 0;
 
     Esp32TempSensor temp;
 public:
 
-    explicit MpptSampler(const DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm)
+    explicit MpptSampler(DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm)
             : dcdcPwr(dcdcPwr), pwm(pwm) {
         pinMode((uint8_t) PinConfig::LED, OUTPUT);
         digitalWrite((uint8_t) PinConfig::LED, false);
@@ -70,20 +73,22 @@ public:
         if (dcdcPwr.isCalibrating()) {
             pwm.disable();
             return false;
-        } else {
-            if(std::isnan(params.Vout_max)) {
-                auto vout = dcdcPwr.getBatteryIdleVoltage();
-                float detectedVout_max = detectMaxBatteryVoltage(vout);
-                if(std::isnan(detectedVout_max)) {
-                    ESP_LOGW("mppt", "Unable to detect battery voltage Vout=%.2fV", vout);
-                    pwm.disable();
-                    return false;
-                } else {
-                    ESP_LOGI("mppt", "Detected max battery voltage %.2fV (from Vout=%.2fV)", detectedVout_max, vout);
-                    params.Vout_max = detectedVout_max;
-                }
+        }
+
+        if (std::isnan(params.Vout_max)) {
+            auto vout = dcdcPwr.getBatteryIdleVoltage();
+            float detectedVout_max = detectMaxBatteryVoltage(vout);
+            if (std::isnan(detectedVout_max)) {
+                ESP_LOGW("mppt", "Unable to detect battery voltage Vout=%.2fV", vout);
+                pwm.disable();
+                dcdcPwr.startCalibration();
+                return false;
+            } else {
+                ESP_LOGI("mppt", "Detected max battery voltage %.2fV (from Vout=%.2fV)", detectedVout_max, vout);
+                params.Vout_max = detectedVout_max;
             }
         }
+
 
         if (dcdcPwr.last.s.chVin > params.Vin_max) {
             // input over-voltage
@@ -100,6 +105,13 @@ public:
                      pwmDirection,
                      params.Vout_max);
             pwm.disable();
+
+            if (autoDetectVout_max && millis() - lastTimeProtectPassed > 4000) {
+                // if the OV condition persists for some seconds, auto detect Vout_max
+                params.Vout_max = NAN;
+                dcdcPwr.startCalibration();
+            }
+
             return false;
         }
 
@@ -160,6 +172,8 @@ public:
 
         float voltageRatio = fmaxf(dcdcPwr.last.s.chVout, dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.last.s.chVin;
         pwm.updateLowSideMaxDuty(voltageRatio);
+
+        lastTimeProtectPassed = millis();
 
         return true;
     }
