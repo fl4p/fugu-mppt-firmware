@@ -3,6 +3,7 @@
 #include <cstdint>
 
 enum class PinConfigESP32S3  : uint8_t {
+    // https://www.espressif.com/sites/default/files/documentation/esp32-s3-wroom-1_wroom-1u_datasheet_en.pdf#page=10
     I2C_SDA = 42,
     I2C_SCL = 2,
     ADC_ALERT = 6,
@@ -12,7 +13,8 @@ enum class PinConfigESP32S3  : uint8_t {
     Backflow_EN = 8,
 
     LED = 48,
-
+    NTC = 7,
+    Fan = 36,
 };
 
 enum class PinConfigESP32  : uint8_t {
@@ -25,6 +27,8 @@ enum class PinConfigESP32  : uint8_t {
     Backflow_EN = 27,
 
     LED = 2,
+    NTC = 35,
+    Fan = 16,
 };
 
 

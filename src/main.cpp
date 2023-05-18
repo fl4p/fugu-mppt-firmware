@@ -67,7 +67,7 @@ void setup() {
     uartInit(0);
 #endif
 
-    ESP_LOGI("main", "Firmware Version %s", FIRMWARE_VERSION);
+    ESP_LOGI("main", "*** Fugu Firmware Version %s", FIRMWARE_VERSION);
 
     if (!disableWifi)
         connect_wifi_async();
@@ -208,6 +208,10 @@ void loop() {
             } else if (inp.startsWith("dc ")) {
                 manualPwm = true;
                 pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
+            } else if (inp.startsWith("fan ")) {
+                fanSet(inp.substring(4).toFloat() * 0.01f);
+            } else {
+                ESP_LOGI("main", "unknown command");
             }
         }
     }

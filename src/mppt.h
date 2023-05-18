@@ -4,15 +4,16 @@
 #include "telemetry.h"
 
 #include "temperature.h"
+#include "fan.h"
 
 #include "battery.h"
 
 struct MpptParams {
     float Vout_max = NAN; //14.6 * 2;
     float Vin_max = 80;
-    float Iin_max = 20;
-    float Iout_max = 20;
-    float P_max = 500;
+    float Iin_max = 30;
+    float Iout_max = 30;
+    float P_max = 800;
 };
 
 enum class MpptState : uint8_t {
@@ -57,12 +58,15 @@ class MpptSampler {
     unsigned long lastTimeProtectPassed = 0;
 
     Esp32TempSensor temp;
+    TempSensorGPIO_NTC ntc;
 public:
 
     explicit MpptSampler(DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm)
             : dcdcPwr(dcdcPwr), pwm(pwm) {
         pinMode((uint8_t) PinConfig::LED, OUTPUT);
         digitalWrite((uint8_t) PinConfig::LED, false);
+
+        fanInit();
     }
 
     //MpptState getState() const { return state; }
@@ -205,7 +209,19 @@ public:
         auto Iin(dcdcPwr.ewm.s.chIin.avg.get());
         auto Vin(dcdcPwr.ewm.s.chVin.avg.get());
         float power = dcdcPwr.ewm.s.chIin.avg.get() * dcdcPwr.ewm.s.chVin.avg.get();
+        float ntcTemp = ntc.read();
         //float power = dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin;
+
+        fanUpdateTemp(ntcTemp, power);
+
+        float powerLimit = params.P_max;
+        if(ntcTemp > 75) {
+            powerLimit = 300;
+        } else if(ntcTemp > 80) {
+            powerLimit = 200;
+        } else if(ntcTemp > 90) {
+            powerLimit = 20;
+        }
 
         Point point("mppt");
         point.addTag("device", "esp32_proto_mppt_" + String(getChipId()));
@@ -234,7 +250,7 @@ public:
         } else if (dcdcPwr.last.s.chIin > params.Iin_max or Iout > params.Iout_max) {
             pwmDirection = -1;
             state = MpptState::CC;
-        } else if (power > params.P_max) {
+        } else if (power > powerLimit) {
             pwmDirection = -1;
             state = MpptState::CP;
         } else if (power < 1.f) {
@@ -327,6 +343,7 @@ public:
 
         point.addField("mppt_state", int(state));
         point.addField("mcu_temp", temp.read(), 1);
+        point.addField("ntc_temp", ntcTemp, 1);
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
         point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
         point.setTime(WritePrecision::MS);
