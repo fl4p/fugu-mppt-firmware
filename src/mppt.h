@@ -25,7 +25,7 @@ enum class MpptState : uint8_t {
     Max,
 };
 
-static const std::array<std::string, (size_t)MpptState::Max> MpptState2String{
+static const std::array<std::string, (size_t) MpptState::Max> MpptState2String{
         "N/A",
         "CV",
         "CC",
@@ -204,12 +204,14 @@ public:
 
         MpptState state = MpptState::MPPT;
 
+        float Iout = dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin / std::max(dcdcPwr.last.s.chVout, 5.f);
+
         if (dcdcPwr.last.s.chVout >= params.Vout_max) {
             pwmDirection = -8;
             if (dcdcPwr.last.s.chVout >= params.Vout_max * 1.01)
                 pwmDirection = -16;
             state = MpptState::CV;
-        } else if (dcdcPwr.last.s.chIin > params.Iin_max) {
+        } else if (dcdcPwr.last.s.chIin > params.Iin_max or Iout > params.Iout_max) {
             pwmDirection = -1;
             state = MpptState::CC;
         } else if (power > params.P_max) {
