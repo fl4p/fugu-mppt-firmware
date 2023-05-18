@@ -89,6 +89,12 @@ public:
             }
         }
 
+        if(std::max(dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout) < 10.f) {
+            ESP_LOGW("mppt", "Vin %.1f and Vout %.1f < 10", dcdcPwr.last.s.chVin,dcdcPwr.last.s.chVout);
+            pwm.disable();
+            return false;
+        }
+
 
         if (dcdcPwr.last.s.chVin > params.Vin_max) {
             // input over-voltage
