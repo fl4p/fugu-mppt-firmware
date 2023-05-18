@@ -15,9 +15,12 @@ WiFiUDP udp;
 const char * getChipId();
 
 
-void connect_wifi_async(const std::string &ssid, const std::string &pw) {
+void connect_wifi_async() {
     WiFi.mode(WIFI_STA);
-    wifiMulti.addAP(ssid.c_str(), pw.c_str());
+    WiFi.setAutoReconnect(true);
+
+    wifiMulti.addAP("^__^", "modellbau");
+    wifiMulti.addAP("mentha",  "modellbau");
 }
 
 static bool timeSynced = false;
@@ -98,9 +101,9 @@ void influxWritePointsUDP(const Point *p, uint8_t len) {
 }
 
 const char * getChipId() {
-    static char ssid[20] {0};
+    static char ssid[25] {0};
     if(!strlen(ssid))
-        snprintf(ssid, 20, "%s-%llX", CONFIG_IDF_TARGET, ESP.getEfuseMac());
+        snprintf(ssid, 25, "%s-%llX", CONFIG_IDF_TARGET, ESP.getEfuseMac());
     return ssid;
 }
 
@@ -112,7 +115,8 @@ void telemetryAddPoint(const Point &p, uint16_t maxQueue=40) {
     points_frame.back().addTag("mcu", getChipId());
 
     if (points_frame.size() >= maxQueue) {
-        influxWritePointsUDP(&points_frame[0], points_frame.size());
+        if(timeSynced)
+            influxWritePointsUDP(&points_frame[0], points_frame.size());
         points_frame.clear();
     }
 }
