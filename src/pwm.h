@@ -42,7 +42,7 @@ public:
         // TODO pin self-check?
 
         //uint32_t pwmFrequency = 39000;           //  USER PARAMETER - PWM Switching Frequency - Hz (For Buck)
-        uint32_t pwmFrequency = 22000;           //  USER PARAMETER - PWM Switching Frequency - Hz (For Buck)
+        uint32_t pwmFrequency = 39000;           //  USER PARAMETER - PWM Switching Frequency - Hz (For Buck)
         //float PPWM_margin = 99.5;          //  CALIB PARAMETER - Minimum Operating Duty Cycle for Predictive PWM (%)
         //float PWM_MaxDC = 95.0;            //  CALIB PARAMETER - Maximum Operating Duty Cycle (%) 90%-97% is good, 97 makes low-side turn-on too short for bootstrapping
 
@@ -139,16 +139,17 @@ public:
 
         // pwmMaxLs = std::min<float>(pwmMaxLs, (float)pwmHS); // TODO explain why this is necessary
         // I guess it can be a little more
-        // At which duty cycle (HS) does coil current stop touching zero?
+        // At which duty cycle (HS) does coil current stop touching zero? see if-block below vvv
         // ^^ https://github.com/fl4p/fugu-mppt-firmware/issues/1
 
-        if(pwmMaxLs < (pwmMax - pwmHS)) {
+        // the extra 5% below fixes reverse current at 39khz, Vin55, Vout27, dc1000
+        if (pwmMaxLs < (pwmMax - pwmHS) * 1.05f) {
             // this is when the coil current is still touching zero
             // it'll stop for higher HS duty cycles
-            pwmMaxLs = std::min<float>(pwmMaxLs, (float)pwmHS); // TODO explain why this is necessary
+            pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS * 1.0f); // TODO explain why this is necessary
         }
 
-        return (uint16_t)(std::min<float>(pwmMaxLs, (float)(pwmMax - pwmHS)) * margin);
+        return (uint16_t) (std::min<float>(pwmMaxLs, (float) (pwmMax - pwmHS)) * margin);
     }
 
     void updateLowSideMaxDuty(float outInVoltageRatio_) {
