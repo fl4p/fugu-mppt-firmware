@@ -8,6 +8,7 @@
 #include "driver/ledc.h"
 #include "esp_err.h"
 
+
 class HalfBridgePwm {
 
     static constexpr uint8_t pwmCh_IN = 0;
@@ -156,10 +157,6 @@ public:
         // voltageRatio = Vout/Vin
 
         outInVoltageRatio = outInVoltageRatio_;
-
-        //auto idealBuckPwm = (uint16_t) ((float) pwmMax * (margin / 100.f) * std::min(1.f, voltageRatio));
-        // idealBuckPwm / 4 is still too much for open circuit output
-        pwmStartHS = pwmMinLS; // idealBuckPwm / 4; // k =.75
 
         pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
 
