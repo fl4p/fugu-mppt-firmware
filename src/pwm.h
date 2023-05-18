@@ -54,7 +54,7 @@ public:
 
 
         //PWM INITIALIZATION
-        init_pwm(pwmCh_IN, (uint8_t) PinConfig::Bridge_IN, pwmFrequency);
+        init_pwm(pwmCh_IN, getBuckIN_PIN(), pwmFrequency);
         init_pwm(pwmCh_EN, (uint8_t) PinConfig::Bridge_EN, pwmFrequency);
 
 
