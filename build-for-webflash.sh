@@ -1,9 +1,12 @@
+set -e
 
 mkdir -p web-flash
 
 env=e2_esp32dev
 
-pio run -e $env
+pio=$HOME/.platformio/penv/bin/pio
+
+$pio run -e $env
 
 "$HOME/.platformio/penv/bin/python" "$HOME/.platformio/packages/tool-esptoolpy@1.40500.0/esptool.py" \
   --chip esp32 merge_bin \
@@ -24,7 +27,7 @@ chip=esp32s3
 variant=adafruit_feather_esp32s3
 arduino_esp_sdk=$HOME/.platformio/packages/framework-arduinoespressif32
 
-pio run -e $env
+$pio run -e $env
 
 "$HOME/.platformio/penv/bin/python" "$HOME/.platformio/packages/tool-esptoolpy@1.40500.0/esptool.py" \
  --chip $chip merge_bin \
