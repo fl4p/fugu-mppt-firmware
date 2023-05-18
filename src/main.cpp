@@ -15,6 +15,7 @@
 #include <hal/uart_types.h>
 
 #include "pinconfig.h"
+#include "version.h"
 
 //LiquidCrystal_I2C lcd(0x27,16,2);   //SYSTEM PARAMETER  - Configure LCD RowCol Size and I2C Address
 //Adafruit_ADS1115 ads;             //SYSTEM PARAMETER  - ADS1115 ADC Library (By: Adafruit) Kindly uncomment this if you are using ADS1115
@@ -52,7 +53,7 @@ void ICACHE_RAM_ATTR NewDataReadyISR() {
     adc.alertNewDataFromISR();
 }
 
-bool disableWifi = false;
+bool disableWifi = true;
 
 void uartInit(int port_num);
 
@@ -66,9 +67,10 @@ void setup() {
     uartInit(0);
 #endif
 
+    ESP_LOGI("main", "Firmware Version %s", FIRMWARE_VERSION);
+
     if (!disableWifi)
-        connect_wifi_async("^__^", "xxxxxxxx");
-    //connect_wifi_async("mentha", "xxxxxxxx");
+        connect_wifi_async();
 
     Wire.setClock(400000UL);
     Wire.setPins((uint8_t) PinConfig::I2C_SDA, (uint8_t) PinConfig::I2C_SCL);
@@ -84,6 +86,7 @@ void setup() {
     auto r = adc.init();
     if (!r) {
         ESP_LOGE("main", "Failed to initialize ADC (%i)", r);
+        scan_i2c();
     }
 
     pinMode((uint8_t) PinConfig::ADC_ALERT, INPUT_PULLUP);
@@ -127,11 +130,10 @@ void loop() {
 
     dcdcPwr.update();
 
-
     if (nowMs > protectCoolDownUntil) {
         bool mppt_ok = mppt.protect();
         if (!mppt_ok) {
-            protectCoolDownUntil = nowMs + 3000;
+            protectCoolDownUntil = nowMs + 4000;
             mppt.startSweep();
         }
 
@@ -148,7 +150,7 @@ void loop() {
     }
 
 
-    if ((nowMs - lastTimeOut) >= 2000) {
+    if ((nowMs - lastTimeOut) >= 3000) {
         auto &ewm(dcdcPwr.ewm.s);
         ESP_LOGI("main", "Vin=%5.1f Vout=%5.1f Iin=%5.3f Pin=%.1f σIin=%.2fm sps=%u PWM=%hu MPPT=(P=%.1f state=?)",
                  dcdcPwr.last.s.chVin,
@@ -195,16 +197,17 @@ void loop() {
                 ESP_LOGI("main", "Manual PWM step %i", pwmStep);
                 manualPwm = true;
                 pwm.pwmPerturb((int16_t) pwmStep);
-            } else if (inp == "restart") {
+            } else if (inp == "restart" or inp == "reset") {
+                pwm.disable();
                 Serial.println("Restart, delay 1s");
                 delay(200);
                 ESP.restart();
             } else if (inp == "mppt" && manualPwm) {
                 ESP_LOGI("main", "MPPT re-enabled");
                 manualPwm = false;
-            } else if(inp.startsWith("dc ")) {
+            } else if (inp.startsWith("dc ")) {
                 manualPwm = true;
-                pwm.pwmPerturb( inp.substring(3).toInt() - pwm.getBuckDutyCycle());
+                pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
             }
         }
     }
