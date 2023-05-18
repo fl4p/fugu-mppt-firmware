@@ -1,15 +1,14 @@
 #pragma once
 
-// #include "driver/temperature_sensor.h"
-
+#if CONFIG_IDF_TARGET_ESP32S3
 #include "driver/temp_sensor.h"
-
 class Esp32TempSensor {
     //temperature_sensor_handle_t temp_handle = NULL;
     float tsens_out = NAN;
     temp_sensor_config_t conf{.dac_offset = TSENS_DAC_L2, .clk_div = 6};
 public:
     Esp32TempSensor() {
+
         /*temperature_sensor_config_t temp_sensor = {
                 .range_min = 20,
                 .range_max = 100,
@@ -44,3 +43,28 @@ public:
         return tsens_out;
     }
 };
+#else
+#include "esp32-hal.h"
+
+/*
+#ifdef __cplusplus
+extern "C" {
+#endif
+uint8_t temprature_sens_read();
+#ifdef __cplusplus
+}
+#endif
+ */
+
+class Esp32TempSensor {
+public:
+    Esp32TempSensor() {}
+
+    float read() {
+        //return (temprature_sens_read() - 32) / 1.8;
+        return temperatureRead();
+    }
+};
+#endif
+
+
