@@ -1,8 +1,37 @@
 #pragma once
 
+class TempSensorGPIO_NTC {
+    float ntcResistance = 10e3f;
+
+    EWMA<float> ewma{80};
+
+
+    float adc2Celsius(float adc) const {
+        // invalid adc 4095
+        float tl = log(ntcResistance * (4095.f / adc - 1.f));
+        float temp = (1.f / (1.009249522e-3f + 2.378405444e-4f * tl + 2.019202697e-7f * tl * tl * tl)) - 273.15f;
+        if (temp < -200 or temp > 300) {
+            ESP_LOGW("temp", "Invalid temp %.1f from ADC %f", temp, adc);
+            return NAN;
+        }
+        return temp;
+    }
+
+public:
+    float read() {
+        auto adc = analogRead((uint8_t) PinConfig::NTC);
+        if (adc < 4080) {
+            ewma.add(adc);
+        }
+        return adc2Celsius(ewma.get());
+    }
+};
+
 #if CONFIG_IDF_TARGET_ESP32S3
 #include "driver/temp_sensor.h"
 class Esp32TempSensor {
+    EWMA<float> ewma{40};
+
     //temperature_sensor_handle_t temp_handle = NULL;
     float tsens_out = NAN;
     temp_sensor_config_t conf{.dac_offset = TSENS_DAC_L2, .clk_div = 6};
@@ -40,10 +69,13 @@ public:
             conf.dac_offset = os;
         }
 
-        return tsens_out;
+        ewma.add(tsens_out);
+
+        return ewma.get();
     }
 };
 #else
+
 #include "esp32-hal.h"
 
 /*
@@ -56,6 +88,8 @@ uint8_t temprature_sens_read();
 #endif
  */
 
+
+
 class Esp32TempSensor {
 public:
     Esp32TempSensor() {}
@@ -65,6 +99,7 @@ public:
         return temperatureRead();
     }
 };
+
 #endif
 
 
