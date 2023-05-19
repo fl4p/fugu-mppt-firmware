@@ -39,10 +39,11 @@ public:
     static constexpr uint8_t EWM_SPAN = 5; // 20
     static constexpr uint8_t EWM_SPAN_V = 5;
 
-    std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange;
+    std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange = nullptr;
 
     const ThreeChannelUnion<ChannelAndFactor> channels;
     ThreeChannelUnion<float> last{NAN, NAN, NAN};
+    ThreeChannelUnion<float> previous{NAN, NAN, NAN};
     ThreeChannelUnion<uint32_t> numSamples{0, 0, 0};
     ThreeChannelUnion<EWM<float>> ewm{
             EWM<float>{EWM_SPAN_V},
@@ -72,6 +73,7 @@ public:
             if (&last[cycleCh] == &last.s.chIin) {
                 v -= calibZeroCurrent;
             }
+            previous[cycleCh] = last[cycleCh];
             last[cycleCh] = v;
             ewm[cycleCh].add(v);
             ++numSamples[cycleCh];
