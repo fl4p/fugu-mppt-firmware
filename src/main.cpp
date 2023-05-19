@@ -34,7 +34,6 @@
 #define buttonSelect 23     //SYSTEM PARAMETER -
 
 
-
 ADC_ADS adc;
 DCDC_PowerSampler dcdcPwr{adc, ThreeChannelUnion<ChannelAndFactor>{.s={
         .chVin = {3, (200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0},
@@ -52,7 +51,11 @@ void ICACHE_RAM_ATTR NewDataReadyISR() {
     adc.alertNewDataFromISR();
 }
 
+
 bool disableWifi = true;
+#ifdef NO_WIFI
+disableWifi = true;
+#endif
 
 void uartInit(int port_num);
 
