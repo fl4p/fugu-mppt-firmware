@@ -58,3 +58,5 @@ manifest_json = {
 
 with open('web-flash/manifest.json', 'w') as fh:
     json.dump(manifest_json, fh, indent=4)
+
+print('Wrote manifest.json, you can now upload')

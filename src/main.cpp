@@ -50,14 +50,16 @@ void ICACHE_RAM_ATTR NewDataReadyISR() {
 
 
 bool disableWifi = false;
-#ifdef NO_WIFI
-disableWifi = true;
-#endif
+
 
 void uartInit(int port_num);
 
 void setup() {
     Serial.begin(115200);
+
+#ifdef NO_WIFI
+    disableWifi = true;
+#endif
 
 #if CONFIG_IDF_TARGET_ESP32S3
     // for unknown reason need to initialize uart0 for serial reading (see loop below)
