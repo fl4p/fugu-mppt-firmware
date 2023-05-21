@@ -35,7 +35,7 @@ ADC_ADS adc;
 DCDC_PowerSampler dcdcPwr{adc, ThreeChannelUnion<ChannelAndFactor>{.s={
         .chVin = {3, (200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0},
         .chVout = {1, (47. / 2 + 1) / 1, 0},
-        .chIin = {2, -1 / 0.066f * (10 + 3.3) / 10., //ACS712-30 sensitivity)
+        .chIin = {2, -(1 / 0.066f) * (10 + 3.3) / 10. * (14.6f/13.1f)* (12.1f/13.f), //ACS712-30 sensitivity)
                   2.5 * 10. / (10 + 3.3) - 0.0117,
         },
 }}};
