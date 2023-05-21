@@ -206,10 +206,7 @@ void coreTwo(void* pvParameters) {
   pinMode(FAN,OUTPUT);
   pinMode(TempSensor,INPUT);
 
-  pinMode(buttonLeft, INPUT_PULLDOWN);
-  pinMode(buttonRight, INPUT_PULLDOWN);
-  pinMode(buttonBack, INPUT_PULLDOWN);
-  pinMode(buttonSelect, INPUT_PULLDOWN);
+
 
 
 
