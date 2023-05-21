@@ -256,15 +256,17 @@ public:
             state = MpptState::CV;
         } else if (dcdcPwr.last.s.chIin > params.Iin_max or Iout > params.Iout_max) {
             pwmDirection = -1;
+            if (dcdcPwr.last.s.chIin / params.Iin_max > 1.2)
+                pwmDirection = -16;
             state = MpptState::CC;
         } else if (power > powerLimit) {
             pwmDirection = -1;
             state = MpptState::CP;
-        } else if (power < 1.f) {
-            if (!dryRun)
-                startSweep();
-            pwmDirection = 1;
-            state = MpptState::Sweep;
+            /*} else if (power < 1.f) {
+                if (!dryRun)
+                    startSweep();
+                pwmDirection = 1;
+                state = MpptState::Sweep; */
         } else if (_sweeping) {
             pwmDirection = 1;
             if (power > maxPowerPoint.power) {
