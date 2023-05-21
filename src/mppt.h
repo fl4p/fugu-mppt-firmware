@@ -277,6 +277,8 @@ public:
             state = MpptState::Sweep;
         }
 
+        this->state = state;
+
         if (!dryRun && _sweeping && (state != MpptState::Sweep || pwm.getBuckDutyCycle() == pwm.pwmMaxHS)) {
             ESP_LOGI("mppt", "Stop sweep at state=%s PWM=%hu, MPP=(%.1fW,PWM=%hu)",
                      MpptState2String[(uint8_t) state].c_str(),
@@ -306,6 +308,20 @@ public:
             }
         }
 
+        if (pwmDirection > 2)
+            pwmDirection = 2;
+
+        if (!dryRun && pwmDirection == 0)
+            pwmDirection = 1;
+
+        /*if (false && state == MpptState::MPPT && nowMs - lastTimeRandomPerturb > 60000 && power > 4 &&
+            (power / powerLimit) < .9f) {
+            pwmDirection = -25; //pwmDirection > 0 ? 20 : -20;
+            ESP_LOGI("mppt", "Random perturb %hhi", pwmDirection);
+            lastTimeRandomPerturb = nowMs;
+        }
+         */
+
         float speedScale = 1.0f;
 
         if (!_sweeping)
@@ -334,7 +350,7 @@ public:
             point.addField("pwm_dir", pwmDirection);
 
             // "bounce" bottom
-            if (pwmDirection <= 0 && pwm.getBuckDutyCycle() < pwm.pwmStartHS + 10) {
+            if (pwmDirection <= 0 && pwm.getBuckDutyCycle() <= pwm.pwmMinLS + 1) {
                 pwmDirection = 1;
             }
 
@@ -358,10 +374,6 @@ public:
         point.setTime(WritePrecision::MS);
         telemetryAddPoint(point, 40);
 
-
-        // TODO limit chIout
-        // temperature
-        // output current < limit
 
         nextUpdateTime = nowMs + (unsigned long) (20.f / speedScale);
     }
