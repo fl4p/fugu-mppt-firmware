@@ -28,10 +28,7 @@
 #define FAN 16              //SYSTEM PARAMETER - Fan GPIO Pin
 //#define ADC_ALERT 34        //SYSTEM PARAMETER - Fan GPIO Pin
 #define TempSensor 35       //SYSTEM PARAMETER - Temperature Sensor GPIO Pin
-#define buttonLeft 18       //SYSTEM PARAMETER -
-#define buttonRight 17      //SYSTEM PARAMETER -
-#define buttonBack 19       //SYSTEM PARAMETER -
-#define buttonSelect 23     //SYSTEM PARAMETER -
+
 
 
 ADC_ADS adc;
@@ -52,7 +49,7 @@ void ICACHE_RAM_ATTR NewDataReadyISR() {
 }
 
 
-bool disableWifi = true;
+bool disableWifi = false;
 #ifdef NO_WIFI
 disableWifi = true;
 #endif
@@ -103,7 +100,6 @@ void setup() {
     if (!disableWifi)
         dcdcPwr.onDataChange = dcdcDataChanged;
 
-    dcdcPwr.startCalibration();
     mppt.startSweep();
 
     ESP_LOGI("main", "setup() done.");
@@ -154,17 +150,19 @@ void loop() {
 
     if ((nowMs - lastTimeOut) >= 3000) {
         auto &ewm(dcdcPwr.ewm.s);
-        ESP_LOGI("main", "Vin=%5.1f Vout=%5.1f Iin=%5.3f Pin=%.1f σIin=%.2fm sps=%u PWM=%hu MPPT=(P=%.1f state=?)",
+        ESP_LOGI("main", "Vin=%4.1f Vout=%4.1f Iin=%5.2fA Pin=%3.0fW T=%.0f°C sps=%2u bps=%u, PWM(H|L)=%4hu|%4hu MPPT(state=%s)",
                  dcdcPwr.last.s.chVin,
                  dcdcPwr.last.s.chVout,
                  dcdcPwr.last.s.chIin,
                  ewm.chVin.avg.get() * ewm.chIin.avg.get(),
-                 ewm.chIin.std.get() * 1000.f,
+        //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
+                 mppt.ntc.last(),
                  (lastNSamples < dcdcPwr.numSamples[0] ? (dcdcPwr.numSamples[0] - lastNSamples) : 0) * 1000u /
                  (uint32_t) (nowMs - lastTimeOut),
-                 pwm.getBuckDutyCycle(),
-                 mppt.getPower()
-        //, MpptState2String[mpptState].c_str()
+                 (uint32_t) (bytesSent * 1000u / millis()),
+                 pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(),
+        //mppt.getPower()
+                 MpptState2String[(uint8_t) mppt.getState()].c_str()
         );
         lastTimeOut = nowMs;
         lastNSamples = dcdcPwr.numSamples[0];
