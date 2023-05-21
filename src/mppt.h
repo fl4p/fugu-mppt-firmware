@@ -194,6 +194,8 @@ public:
 
 
     void startSweep() {
+        pwm.disable();
+        dcdcPwr.startCalibration();
         if (!_sweeping)
             ESP_LOGI("mppt", "Start sweep");
         _sweeping = true;
