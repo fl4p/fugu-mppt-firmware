@@ -135,9 +135,20 @@ public:
     static uint16_t computePwmMaxLs(uint16_t pwmHS, uint16_t pwmMax, float voltageRatio) {
         // prevents boosting and "low side burning" due to excessive LS current
         // (non-diode behavior, negative reverse inductor current)
-        const float margin = 0.99f;
-        voltageRatio = std::max<float>(voltageRatio, 0.01f);
-        auto pwmMaxLs = ((1 / voltageRatio - 1) * (float) pwmHS);
+
+        const float margin = 0.99f; // TODO what does this model or represent, remove?
+
+        // this is very sensitive to voltageRatio errors! at VR=0.64 a -5% error causes a 13% deviation of pwmMaxLs !
+        constexpr float voltageMaxErr = 0.02f; // inc -> safer, less efficient
+
+        // WCEF = worst case error factor
+        // compute the worst case error (Vout too low, Vin too high)
+        constexpr float voltageRatioWCEF = (1.f - voltageMaxErr) / (1.f + voltageMaxErr); // < 1.0
+
+        const float pwmMaxLsWCEF = (1 / (voltageRatio*voltageRatioWCEF) - 1) / (1 / voltageRatio - 1); // > 1
+
+        voltageRatio = std::max<float>(voltageRatio, 0.01f); // the greater, the safer
+        auto pwmMaxLs = (1 / voltageRatio - 1) * (float) pwmHS / pwmMaxLsWCEF; // the lower, the safer
 
         // pwmMaxLs = std::min<float>(pwmMaxLs, (float)pwmHS); // TODO explain why this is necessary
         // I guess it can be a little more
@@ -145,11 +156,17 @@ public:
         // ^^ https://github.com/fl4p/fugu-mppt-firmware/issues/1
 
         // the extra 5% below fixes reverse current at 39khz, Vin55, Vout27, dc1000
-        if (pwmMaxLs < (pwmMax - pwmHS) * 1.05f) {
+        // TODO pwm=1390 40.8/26.6
+
+        // TODO remove the 1.05?
+        if (pwmMaxLs < (pwmMax - pwmHS)  ) { // * 1.05f
             // this is when the coil current is still touching zero
             // it'll stop for higher HS duty cycles
             pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS * 1.0f); // TODO explain why this is necessary
         }
+
+        // todo beyond pwmMaxLs < (pwmMax - pwmHS), can we reduce the worst-case error assumption to boost eff?
+        // or just replace  with pwmMaxLs < (pwmMax - pwmHS) * pwmMaxLsWCEF and remove scaling pwmMaxLs by pwmMaxLsWCEF
 
         return (uint16_t) (std::min<float>(pwmMaxLs, (float) (pwmMax - pwmHS)) * margin);
     }
