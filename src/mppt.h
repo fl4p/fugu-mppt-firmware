@@ -48,6 +48,8 @@ class MpptSampler {
     //float lastVoltage = 0;
     int8_t pwmDirection = 0;
 
+    MpptState state;
+
     bool _sweeping = false;
     struct {
         float power = 0;
@@ -57,9 +59,11 @@ class MpptSampler {
     unsigned long nextUpdateTime = 0;
     unsigned long lastTimeProtectPassed = 0;
 
+    //unsigned long lastTimeRandomPerturb = 0;
+
     Esp32TempSensor temp;
-    TempSensorGPIO_NTC ntc;
 public:
+    TempSensorGPIO_NTC ntc;
 
     explicit MpptSampler(DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm)
             : dcdcPwr(dcdcPwr), pwm(pwm) {
@@ -69,7 +73,7 @@ public:
         fanInit();
     }
 
-    //MpptState getState() const { return state; }
+    MpptState getState() const { return state; }
 
     float getPower() const { return lastPower; }
 
@@ -79,6 +83,7 @@ public:
             return false;
         }
 
+        // detect battery voltage
         if (std::isnan(params.Vout_max)) {
             auto vout = dcdcPwr.getBatteryIdleVoltage();
             float detectedVout_max = detectMaxBatteryVoltage(vout);
@@ -93,8 +98,8 @@ public:
             }
         }
 
-        if(std::max(dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout) < 10.f) {
-            ESP_LOGW("mppt", "Vin %.1f and Vout %.1f < 10", dcdcPwr.last.s.chVin,dcdcPwr.last.s.chVout);
+        if (std::max(dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout) < 10.f) {
+            ESP_LOGW("mppt", "Vin %.1f and Vout %.1f < 10", dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout);
             pwm.disable();
             return false;
         }
@@ -107,10 +112,12 @@ public:
             return false;
         }
 
-        if (dcdcPwr.last.s.chVout > params.Vout_max * 1.08) {
+        // TODO shutdown on too samples in a row > 5%
+        auto ovTh = params.Vout_max * 1.08;
+        if (dcdcPwr.last.s.chVout > ovTh && dcdcPwr.previous.s.chVout > ovTh) {
             // output over-voltage
             ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu,dir=%.1hhi) > %.1fV + 8%%!",
-                     dcdcPwr.last.s.chVout,
+                     std::max(dcdcPwr.last.s.chVout, dcdcPwr.previous.s.chVout),
                      dcdcPwr.ewm.s.chVout.avg.get(), dcdcPwr.ewm.s.chVout.std.get(), pwm.getBuckDutyCycle(),
                      pwmDirection,
                      params.Vout_max);
