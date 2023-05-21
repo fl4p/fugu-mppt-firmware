@@ -221,32 +221,33 @@ public:
         fanUpdateTemp(ntcTemp, power);
 
         float powerLimit = params.P_max;
-        if(ntcTemp > 75) {
+        if (ntcTemp > 75) {
             powerLimit = 300;
-        } else if(ntcTemp > 80) {
+        } else if (ntcTemp > 80) {
             powerLimit = 200;
-        } else if(ntcTemp > 90) {
+        } else if (ntcTemp > 90) {
             powerLimit = 20;
         }
 
         Point point("mppt");
-        point.addTag("device", "esp32_proto_mppt_" + String(getChipId()));
+        point.addTag("device", "fugu_" + String(getChipId()));
         point.addField("I", Iin, 2);
-        point.addField("I_raw", dcdcPwr.last.s.chIin, 2);
+        //point.addField("I_raw", dcdcPwr.last.s.chIin, 2);
 
         point.addField("U", Vin, 2);
-        point.addField("U_raw", dcdcPwr.last.s.chVin, 2);
+        //point.addField("U_raw", dcdcPwr.last.s.chVin, 2);
 
         point.addField("U_out", dcdcPwr.ewm.s.chVout.avg.get(), 2);
-        point.addField("U_out_raw", dcdcPwr.last.s.chVout, 2);
+        //point.addField("U_out_raw", dcdcPwr.last.s.chVout, 2);
 
         point.addField("P", power, 2);
         point.addField("P_prev", lastPower, 2);
-        point.addField("P_raw", dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin, 2);
+        //point.addField("P_raw", dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin, 2);
 
         MpptState state = MpptState::MPPT;
 
-        float Iout = dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin / std::max(dcdcPwr.last.s.chVout, 5.f);
+        float conversionEff = 0.97f;
+        float Iout = dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin * conversionEff / std::max(dcdcPwr.last.s.chVout, 5.f);
 
         if (dcdcPwr.last.s.chVout >= params.Vout_max) {
             pwmDirection = -8;
