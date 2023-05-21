@@ -6,13 +6,18 @@
 #include <InfluxDbClient.h>
 
 #include <WiFiMulti.h>
-#include <WiFiUdp.h>
+//#include <WiFiUdp.h>
 #include <ESPmDNS.h>
 
+#include <AsyncUDP.h>
+
 WiFiMulti wifiMulti;
-WiFiUDP udp;
+//WiFiUDP udp;
+AsyncUDP asyncUdp;
 
 const char * getChipId();
+
+uint64_t bytesSent = 0;
 
 
 void connect_wifi_async() {
@@ -60,15 +65,24 @@ void wait_for_wifi() {
 }
 
 void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
-    udp.beginPacket(host, port);
-    udp.print(msg);
-    udp.endPacket();
+    if(msg.length() > CONFIG_TCP_MSS) {
+        ESP_LOGW("tele", "Payload len %d > TCP_MSS: %s", msg.length(), msg.substring(0, 200).c_str());
+        msg.clear();
+        return;
+    }
+
+    bytesSent += asyncUdp.writeTo((uint8_t*)msg.c_str(), msg.length(), host, port);
+
+    //udp.beginPacket(host, port);
+    //udp.print(msg);
+    //udp.endPacket();
+
     msg.clear();
 }
 
 
 void influxWritePointsUDP(const Point *p, uint8_t len) {
-    constexpr int MTU = 1300;
+    constexpr int MTU = CONFIG_TCP_MSS;
 
     /*
     static IPAddress host{};
@@ -123,21 +137,22 @@ void telemetryAddPoint(const Point &p, uint16_t maxQueue=40) {
 
 ThreeChannelUnion<float> dcdcData;
 
+
 void dcdcDataChanged(const DCDC_PowerSampler &dcdc, uint8_t ch) {
     dcdcData[ch] = dcdc.last[ch];
 
-    if (ch == 2) {
+    if (ch == 1 or ch == 2) {
         Point point("mppt");
-        point.addTag("device", "esp32_proto");
-        point.addField("U_in", dcdcData.s.chVin, 3);
-        point.addField("U_out", dcdcData.s.chVout, 3);
-        point.addField("I_in", dcdcData.s.chIin, 2);
-        point.addField("I_in_ewma", dcdc.ewm.s.chIin.avg.get(), 3);
-        point.addField("I_in_ewms", dcdc.ewm.s.chIin.std.get(), 3);
+        point.addTag("device", "fugu_" + String(getChipId()));
+        if(&dcdc.last[ch] == &dcdc.last.s.chVout)
+            point.addField("U_out_raw", dcdcData.s.chVout, 2);
+        else
+            point.addField("I_raw", dcdcData.s.chIin, 1);
         point.setTime(WritePrecision::MS);
         telemetryAddPoint(point);
     }
 
 
 }
+
 
