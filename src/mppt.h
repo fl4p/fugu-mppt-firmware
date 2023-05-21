@@ -132,18 +132,15 @@ public:
             return false;
         }
 
-        if (dcdcPwr.last.s.chIin / params.Iin_max > 1.2) {
-            // input over current
-            if (dcdcPwr.last.s.chIin / params.Iin_max > 1.5) {
-                pwm.disable();
-                ESP_LOGW("mppt", "Current %.1f 50%% above limit, shutdown", dcdcPwr.last.s.chIin);
-                return false;
-            }
-            ESP_LOGW("mppt", "Current %.1f 20%% above limit!", dcdcPwr.last.s.chIin);
-            pwm.halfDutyCycle();
+
+        // input over current
+        if (dcdcPwr.last.s.chIin / params.Iin_max > 1.5) {
+            pwm.disable();
+            ESP_LOGW("mppt", "Current %.1f 50%% above limit, shutdown", dcdcPwr.last.s.chIin);
+            return false;
         }
 
-        if (dcdcPwr.last.s.chIin < -1) {
+        if (dcdcPwr.last.s.chIin < -1 && dcdcPwr.previous.s.chIin < -1) {
             ESP_LOGE("MPPT", "Reverse current %.1f A, noise? disable BFC and low-side FET", dcdcPwr.last.s.chIin);
             //pwm.disable();
             pwm.enableBackflowMosfet(false);
@@ -171,7 +168,7 @@ public:
         }
 
         // try to prevent voltage boost and disable low side for low currents
-        if (fminf(dcdcPwr.ewm.s.chIin.avg.get(), dcdcPwr.last.s.chIin) < 0.1f) {
+        if (fminf(dcdcPwr.ewm.s.chIin.avg.get(), std::max(dcdcPwr.last.s.chIin, dcdcPwr.previous.s.chIin)) < 0.2f) {
             pwm.lowSideMinDuty();
             pwm.enableBackflowMosfet(false);
         }
