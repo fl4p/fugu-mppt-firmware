@@ -40,7 +40,7 @@ for env in envs:
     os.rename(bin_path, bin_path_ver)
 
 manifest_json = {
-    "name": "Fugu MPPT " + fw_ver,
+    "name": "Fugu MPPT",
     "version": fw_ver,
     "home_assistant_domain": "esphome",
     "new_install_prompt_erase": False,
