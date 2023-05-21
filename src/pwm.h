@@ -29,12 +29,13 @@ class HalfBridgePwm {
 public:
 
     const uint16_t pwmMax, pwmMaxHS, pwmMinLS;
-    uint16_t pwmStartHS = 0;
 
 
     HalfBridgePwm()
-            : pwmMax(pow(2, pwmResolution) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
-              pwmMinLS(std::ceil(pwmMax * MinDutyCycleLS)) {
+            : pwmMax((2 << (pwmResolution - 1)) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
+              pwmMinLS(std::ceil((float) pwmMax * MinDutyCycleLS)) {
+
+        ESP_LOGI("pwm", "pwmMinLS=%hu, pwmMaxHS=%hu", pwmMinLS, pwmMaxHS);
 
     }
 
@@ -71,11 +72,9 @@ public:
 
     void pwmPerturb(int16_t direction) {
 
-        if (pwmHS <= 1 && pwmHS < pwmStartHS)
-            pwmHS = pwmStartHS;
 
         // compute ordinary pwm update within bounds:
-        pwmHS = constrain(pwmHS + direction, 0, pwmMaxHS);// pwmMinLS
+        pwmHS = constrain(pwmHS + direction, pwmMinLS, pwmMaxHS);
 
 
         pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
@@ -125,8 +124,10 @@ public:
     }
 
     void lowSideMinDuty() {
-        if (pwmLS > pwmMinLS + 10)
-            ESP_LOGW("pwm", "set low-side PWM to minimum %hu -> %hu", pwmLS, pwmMinLS);
+        if (pwmLS > pwmMinLS + 10) {
+            ESP_LOGW("pwm", "set low-side PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmLS, pwmMinLS,
+                     outInVoltageRatio, pwmMaxLS);
+        }
         pwmLS = pwmMinLS;
         update_pwm(pwmCh_EN, pwmHS + pwmLS);
     }
@@ -159,6 +160,7 @@ public:
         outInVoltageRatio = outInVoltageRatio_;
 
         pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
+        pwmMaxLS = std::max(pwmMinLS, pwmMaxLS);
 
         if (pwmLS > pwmMaxLS) {
             pwmLS = pwmMaxLS;
