@@ -210,6 +210,8 @@ void loop() {
                 pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
             } else if (inp.startsWith("fan ")) {
                 fanSet(inp.substring(4).toFloat() * 0.01f);
+            } else if (inp == "sweep") {
+                mppt.startSweep();
             } else {
                 ESP_LOGI("main", "unknown command");
             }
