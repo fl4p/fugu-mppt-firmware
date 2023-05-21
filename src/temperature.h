@@ -5,6 +5,8 @@ class TempSensorGPIO_NTC {
 
     EWMA<float> ewma{80};
 
+    uint8_t _attack = 60; // discard first samples
+
 
     float adc2Celsius(float adc) const {
         // invalid adc 4095
@@ -20,11 +22,14 @@ class TempSensorGPIO_NTC {
 public:
     float read() {
         auto adc = analogRead((uint8_t) PinConfig::NTC);
-        if (adc < 4080) {
+        if (_attack) --_attack;
+        else if (adc < 4080) {
             ewma.add(adc);
         }
         return adc2Celsius(ewma.get());
     }
+
+    float last() const { return adc2Celsius(ewma.get()); }
 };
 
 #if CONFIG_IDF_TARGET_ESP32S3
