@@ -13,7 +13,6 @@ class TempSensorGPIO_NTC {
         float tl = log(ntcResistance * (4095.f / adc - 1.f));
         float temp = (1.f / (1.009249522e-3f + 2.378405444e-4f * tl + 2.019202697e-7f * tl * tl * tl)) - 273.15f;
         if (temp < -200 or temp > 300) {
-            ESP_LOGW("temp", "Invalid temp %.1f from ADC %f", temp, adc);
             return NAN;
         }
         return temp;
@@ -26,7 +25,15 @@ public:
         else if (adc < 4080) {
             ewma.add(adc);
         }
-        return adc2Celsius(ewma.get());
+
+        float temp = adc2Celsius(ewma.get());
+
+        if (isnan(temp) && !_attack) {
+            ESP_LOGW("temp", "Invalid temp %.1f from ADC %f", temp, adc);
+            _attack = 120;
+        }
+
+        return temp;
     }
 
     float last() const { return adc2Celsius(ewma.get()); }
