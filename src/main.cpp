@@ -107,7 +107,7 @@ void setup() {
     ESP_LOGI("main", "setup() done.");
 }
 
-
+unsigned long lastLoopTime = 0, maxLoopLag = 0;
 unsigned long lastTimeOut = 0;
 uint32_t lastNSamples = 0;
 
@@ -156,7 +156,7 @@ void loop() {
 
     if ((nowMs - lastTimeOut) >= 3000) {
         auto &ewm(dcdcPwr.ewm.s);
-        ESP_LOGI("main", "Vin=%4.1f Vout=%4.1f Iin=%5.2fA Pin=%3.0fW T=%.0f°C sps=%2u bps=%u, PWM(H|L)=%4hu|%4hu MPPT(state=%s)",
+        ESP_LOGI("main", "Vin=%4.1f Vout=%4.1f Iin=%5.2fA Pin=%3.0fW T=%.0f°C sps=%2u bps=%u, PWM(H|L)=%4hu|%4hu MPPT(state=%s) lag=%lu",
                  dcdcPwr.last.s.chVin,
                  dcdcPwr.last.s.chVout,
                  dcdcPwr.last.s.chIin,
@@ -168,7 +168,8 @@ void loop() {
                  (uint32_t) (bytesSent * 1000u / millis()),
                  pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(),
         //mppt.getPower()
-                 MpptState2String[(uint8_t) mppt.getState()].c_str()
+                 MpptState2String[(uint8_t) mppt.getState()].c_str(),
+                 maxLoopLag
         );
         lastTimeOut = nowMs;
         lastNSamples = dcdcPwr.numSamples[0];
@@ -226,11 +227,17 @@ void loop() {
 
     if (!disableWifi)
         wifiLoop();
+
+    if(timeSynced && lastLoopTime) {
+        auto now = micros();
+        auto lag = lastLoopTime - now;
+        if(lag > maxLoopLag) maxLoopLag = lag;
+        lastLoopTime = now;
+    }
 }
 
 
 const int BUF_SIZE = 1024;
-char *uartBuf = (char *) malloc(BUF_SIZE);
 QueueHandle_t uart_queue;
 
 void uartInit(int port_num) {
