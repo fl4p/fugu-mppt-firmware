@@ -15,7 +15,7 @@ WiFiMulti wifiMulti;
 //WiFiUDP udp;
 AsyncUDP asyncUdp;
 
-const char * getChipId();
+const char *getChipId();
 
 uint64_t bytesSent = 0;
 
@@ -25,34 +25,38 @@ void connect_wifi_async() {
     WiFi.setAutoReconnect(true);
 
     wifiMulti.addAP("^__^", "modellbau");
-    wifiMulti.addAP("mentha",  "modellbau");
+    wifiMulti.addAP("mentha", "modellbau");
+
 }
 
 static bool timeSynced = false;
 
 void wifiLoop() {
-    if (wifiMulti.run() != WL_CONNECTED) {
-        // do nothing
-    } else {
-        if (!timeSynced) {
-            Serial.printf("Connected to WiFi, RSSI %hhi IP %s", WiFi.RSSI(), WiFi.localIP().toString().c_str());
-            Serial.println();
+    uint8_t status = WiFi.status(); // NOLINT(readability-static-accessed-through-instance)
 
-            String hostname = "fugu-" + String(getChipId());
+    if (status != WL_CONNECTED) {
+        ESP_LOGI("tele", "Connecting WiFi");
+        status = wifiMulti.run();
+    }
 
-            if (!MDNS.begin(hostname.c_str())) { // abc.local
-                ESP_LOGE("tele", "Error setting up MDNS responder!");
-            } else {
-                ESP_LOGI("tele", "Set hostname %s", hostname.c_str());
-            }
+    if (!timeSynced && status == WL_CONNECTED) {
+        Serial.printf("Connected to WiFi, RSSI %hhi IP %s", WiFi.RSSI(), WiFi.localIP().toString().c_str());
+        Serial.println();
 
-            Serial.println("Syncing time...");
-            timeSync("CET-1CEST,M3.5.0,M10.5.0/3", "pt.pool.ntp.org", "time.nis.gov");
-            Serial.println("Time synchronized");
-            timeSynced = true;
+        String hostname = "fugu-" + String(getChipId());
 
-            webserver_begin();
+        if (!MDNS.begin(hostname.c_str())) { // abc.local
+            ESP_LOGE("tele", "Error setting up MDNS responder!");
+        } else {
+            ESP_LOGI("tele", "Set hostname %s", hostname.c_str());
         }
+
+        Serial.println("Syncing time...");
+        timeSync("CET-1CEST,M3.5.0,M10.5.0/3", "pt.pool.ntp.org", "time.nis.gov");
+        Serial.println("Time synchronized");
+        timeSynced = true;
+
+        webserver_begin();
     }
 }
 
@@ -65,13 +69,13 @@ void wait_for_wifi() {
 }
 
 void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
-    if(msg.length() > CONFIG_TCP_MSS) {
+    if (msg.length() > CONFIG_TCP_MSS) {
         ESP_LOGW("tele", "Payload len %d > TCP_MSS: %s", msg.length(), msg.substring(0, 200).c_str());
         msg.clear();
         return;
     }
 
-    bytesSent += asyncUdp.writeTo((uint8_t*)msg.c_str(), msg.length(), host, port);
+    bytesSent += asyncUdp.writeTo((uint8_t *) msg.c_str(), msg.length(), host, port);
 
     //udp.beginPacket(host, port);
     //udp.print(msg);
@@ -114,14 +118,14 @@ void influxWritePointsUDP(const Point *p, uint8_t len) {
     }
 }
 
-const char * getChipId() {
-    static char ssid[25] {0};
-    if(!strlen(ssid))
+const char *getChipId() {
+    static char ssid[25]{0};
+    if (!strlen(ssid))
         snprintf(ssid, 25, "%s-%llX", CONFIG_IDF_TARGET, ESP.getEfuseMac());
     return ssid;
 }
 
-void telemetryAddPoint(const Point &p, uint16_t maxQueue=40) {
+void telemetryAddPoint(const Point &p, uint16_t maxQueue = 40) {
     static std::vector<Point> points_frame;
 
     assert(p.hasTime());
@@ -129,7 +133,7 @@ void telemetryAddPoint(const Point &p, uint16_t maxQueue=40) {
     points_frame.back().addTag("mcu", getChipId());
 
     if (points_frame.size() >= maxQueue) {
-        if(timeSynced)
+        if (timeSynced)
             influxWritePointsUDP(&points_frame[0], points_frame.size());
         points_frame.clear();
     }
@@ -144,7 +148,7 @@ void dcdcDataChanged(const DCDC_PowerSampler &dcdc, uint8_t ch) {
     if (ch == 1 or ch == 2) {
         Point point("mppt");
         point.addTag("device", "fugu_" + String(getChipId()));
-        if(&dcdc.last[ch] == &dcdc.last.s.chVout)
+        if (&dcdc.last[ch] == &dcdc.last.s.chVout)
             point.addField("U_out_raw", dcdcData.s.chVout, 2);
         else
             point.addField("I_raw", dcdcData.s.chIin, 1);
