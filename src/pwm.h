@@ -114,7 +114,7 @@ public:
     }
 
     void disable() {
-        if (pwmHS > 0)
+        if (pwmHS > pwmMinLS)
             ESP_LOGW("pwm", "PWM disabled");
         pwmHS = 0;
         pwmLS = 0;
