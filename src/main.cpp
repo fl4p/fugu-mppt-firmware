@@ -130,6 +130,10 @@ void loop() {
 
     dcdcPwr.update();
 
+    if (dcdcPwr.isCalibrating()) {
+        pwm.disable();
+    }
+
     if (nowMs > protectCoolDownUntil) {
         bool mppt_ok = mppt.protect();
         if (!mppt_ok) {
@@ -194,7 +198,7 @@ void loop() {
         ESP_LOGI("main", "received serial command: %s", inp.c_str());
         inp.trim();
         if (inp.length() > 0) {
-            if (inp[0] == '+' or inp[0] == '-') {
+            if ((inp[0] == '+' or inp[0] == '-') &&  ! dcdcPwr.isCalibrating()) {
                 int pwmStep = inp.toInt();
                 ESP_LOGI("main", "Manual PWM step %i", pwmStep);
                 manualPwm = true;
@@ -207,7 +211,7 @@ void loop() {
             } else if (inp == "mppt" && manualPwm) {
                 ESP_LOGI("main", "MPPT re-enabled");
                 manualPwm = false;
-            } else if (inp.startsWith("dc ")) {
+            } else if (inp.startsWith("dc ") && ! dcdcPwr.isCalibrating()) {
                 manualPwm = true;
                 pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
             } else if (inp.startsWith("fan ")) {
