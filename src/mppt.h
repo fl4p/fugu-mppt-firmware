@@ -226,7 +226,7 @@ public:
         fanUpdateTemp(std::isnan(ntcTemp) ? mcu_temp.last() : ntcTemp, power);
 
         float powerLimit = params.P_max;
-        if (ntcTemp > 75) {
+        if (ntcTemp > 75 or std::isnan(ntcTemp) or mcu_temp.last() > 60) {
             powerLimit = 300;
         } else if (ntcTemp > 80) {
             powerLimit = 200;
