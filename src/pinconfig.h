@@ -23,6 +23,10 @@ enum class PinConfigESP32S3  : uint8_t {
     buttonBack = 40   ,
     buttonSelect = 1 ,
 
+    ADC_Vin = ADC1_CHANNEL_4,
+    ADC_Vout = ADC1_CHANNEL_5,
+    ADC_Iin = ADC1_CHANNEL_3,
+
 };
 
 enum class PinConfigESP32  : uint8_t {
