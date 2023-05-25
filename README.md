@@ -8,3 +8,5 @@ Set monitor port in platformio.ini
 ```
 pio device monitor 
 ```
+
+For the exception parser to work, must

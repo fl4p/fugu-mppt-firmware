@@ -32,14 +32,19 @@ void connect_wifi_async() {
 static bool timeSynced = false;
 
 void wifiLoop() {
-    uint8_t status = WiFi.status(); // NOLINT(readability-static-accessed-through-instance)
 
-    if (status != WL_CONNECTED) {
-        ESP_LOGI("tele", "Connecting WiFi");
-        status = wifiMulti.run();
-    }
 
-    if (!timeSynced && status == WL_CONNECTED) {
+    if (!timeSynced/*&& status == WL_CONNECTED*/) {
+        uint8_t status = WiFi.status(); // NOLINT(readability-static-accessed-through-instance)
+
+        if (status != WL_CONNECTED) {
+            ESP_LOGI("tele", "Connecting WiFi");
+            status = wifiMulti.run();
+        }
+
+        if (status != WL_CONNECTED)
+            return;
+
         Serial.printf("Connected to WiFi, RSSI %hhi IP %s", WiFi.RSSI(), WiFi.localIP().toString().c_str());
         Serial.println();
 

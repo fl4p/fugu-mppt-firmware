@@ -1,3 +1,12 @@
+- migrate to mcpwm api, which allows much higher frequencies
+- real time capabilities of esp32, wifi and i2s, internal adc? xCreateTask
+  - https://www.toptal.com/embedded/esp32-audio-sampling (use internal ADC and ISR)
+- use pid https://github.com/AdysTech/PIDPWM
+- wait 1 second for stable power supply > 10V, then start calibration
+- random +-20 perturbs to handle hall noise
+- FIX auto detect battery voltage
+- Vout OV shutdown use 2 samples!
+- reduce idle power (1-2W!! at night)
 - use async UDP
 - influxdb: write changed points only
 - TODO slow down if DS cycle range is low (last X seconds)
@@ -8,7 +17,6 @@ when reaching max LS, current goes negative
 - programmer header +EN +IO0
 - sample mean between mppt updates
 
-disable bccu on overvoltage
 
 compute U,I noise sigma, P2P
 estimate PV and battery impendance
