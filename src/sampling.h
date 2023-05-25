@@ -84,7 +84,12 @@ public:
                 onDataChange(*this, cycleCh);
             }
 
-            if (calibrating_ && numSamples[cycleCh] > std::max(EWM_SPAN,EWM_SPAN_V) * 2) {
+            if(std::max(last.s.chVin, last.s.chVout) < 10.f) {
+                if(!calibrating_)
+                    ESP_LOGW("dcdc", "Supply under-voltage!");
+                startCalibration();
+            }
+            else if (calibrating_ && numSamples[cycleCh] > std::max(EWM_SPAN,EWM_SPAN_V) * 2) {
                 calibZeroCurrent = ewm.s.chIin.avg.get();
                 ESP_LOGI("dcdc", "Zero Current Calibration avg=%.4f std=%.6f", calibZeroCurrent, ewm.s.chIin.std.get());
 
