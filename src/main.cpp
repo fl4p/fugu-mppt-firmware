@@ -37,17 +37,13 @@ DCDC_PowerSampler dcdcPwr{adc, ThreeChannelUnion<ChannelAndFactor>{.s={
         .chVin = {3, (200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0},
         .chVout = {1, (47. / 2 + 1) / 1, 0},
         .chIin = {2, -(1 / 0.066f) * (10 + 3.3) / 10. * (14.6f / 13.1f) * (12.1f / 13.f), //ACS712-30 sensitivity)
-                  2.5 * 10. / (10 + 3.3) - 0.0117,
+                  2.5 * 10. / (10 + 3.3) - 0.0117, // midpoint
         },
 }}};
 
 HalfBridgePwm pwm;
 MpptSampler mppt{dcdcPwr, pwm};
 
-
-void ICACHE_RAM_ATTR NewDataReadyISR() {
-    adc.alertNewDataFromISR();
-}
 
 
 bool disableWifi = false;
@@ -81,9 +77,10 @@ void setup() {
         ESP_LOGE("main", "Failed to initialize Wire");
     }
 
-    adc.setChannelGain(dcdcPwr.channels.s.chVin.num, GAIN_TWO);
-    adc.setChannelGain(dcdcPwr.channels.s.chVout.num, GAIN_TWO);
-    adc.setChannelGain(dcdcPwr.channels.s.chIin.num, GAIN_ONE);
+    adc.setMaxExpectedVoltage(dcdcPwr.channels.s.chVin.num, 2);
+    adc.setMaxExpectedVoltage(dcdcPwr.channels.s.chVout.num, 2);
+    adc.setMaxExpectedVoltage(dcdcPwr.channels.s.chIin.num, 2.8f ); // todo 3.3
+
 
     auto r = adc.init();
     if (!r) {
@@ -91,8 +88,6 @@ void setup() {
         scan_i2c();
     }
 
-    pinMode((uint8_t) PinConfig::ADC_ALERT, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt((uint8_t) PinConfig::ADC_ALERT), NewDataReadyISR, FALLING); // TODO rising
 
     dcdcPwr.begin();
 

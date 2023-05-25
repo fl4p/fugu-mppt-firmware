@@ -12,6 +12,9 @@ public:
     virtual bool hasData() = 0;
     virtual T getSample() = 0;
     //virtual uint8_t getReadingChannel() = 0;
+
+    virtual void setMaxExpectedVoltage(uint8_t ch, float voltage) = 0;
+
 };
 
 //

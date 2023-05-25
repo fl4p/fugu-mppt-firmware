@@ -1,6 +1,13 @@
 #include <SPI.h> // not sure why this is needed
 #include <Adafruit_ADS1X15.h>
 #include "adc.h"
+#include "pinconfig.h"
+
+class ADC_ADS;
+
+ADC_ADS *ads_inst = nullptr;
+
+void ICACHE_RAM_ATTR AdsAlertISR();
 
 class ADC_ADS : public AsyncADC<float> {
 
@@ -14,9 +21,34 @@ class ADC_ADS : public AsyncADC<float> {
 
 public:
     bool init() override {
+
+        if (!ads.begin(0x48)) {
+            return false;
+        }
+
+        pinMode((uint8_t) PinConfig::ADC_ALERT, INPUT_PULLUP);
+
+        if (ads_inst) {
+            return false;
+        }
+        ads_inst = this;
+        attachInterrupt(digitalPinToInterrupt((uint8_t) PinConfig::ADC_ALERT), AdsAlertISR, FALLING); // TODO rising
+
         //ads.setDataRate(RATE_ADS1115_860SPS); // this is for ADS1015 also! (130 sps). fake chips?
         // ads.setDataRate(RATE_ADS1015_3300SPS);
-        return ads.begin(0x48);
+        return true;
+    }
+
+    void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
+        adsGain_t g;
+        assert(voltage <= 6.144f);
+        if (voltage > 4.096f) g = GAIN_TWOTHIRDS;
+        else if (voltage > 2.048f) g = GAIN_ONE;
+        else if (voltage > 1.024f) g = GAIN_TWO;
+        else if (voltage > 0.512f) g = GAIN_FOUR;
+        else if (voltage > 0.256f) g = GAIN_EIGHT;
+        else g = GAIN_SIXTEEN;
+        setChannelGain(ch, g);
     }
 
     void setChannelGain(uint8_t channel, adsGain_t gain) {
@@ -77,3 +109,8 @@ public:
         return v;
     }
 };
+
+
+void ICACHE_RAM_ATTR AdsAlertISR() {
+    if (ads_inst) ads_inst->alertNewDataFromISR();
+}
