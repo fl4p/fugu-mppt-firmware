@@ -29,22 +29,22 @@ void fanSet(float duty) {
     else if(duty <= 0.25) duty = 5;
     else if(duty <= 0.5) duty = 15;
     else if(duty <= 0.75) duty = 40;
-    else duty = 1.f;
+    else duty = 100.f;
 
-    ledcWrite(FAN_PWM_CH, (uint16_t)(((2 << (FAN_PWM_BITS-1)) - 1) * duty));
+    ledcWrite(FAN_PWM_CH, (uint16_t)(((2 << (FAN_PWM_BITS-1)) - 1) * duty * 0.01f));
 }
 
 void fanUpdateTemp(float temp, float power) {
     static unsigned long fanOnTime = 0;
 
     if(temp > 65) {
-        fanSet(100.0f);
+        fanSet(1.f);
     } else if(temp > 60) {
-        fanSet(75.0f);
+        fanSet(.75f);
     } else if(temp > 55) {
-        fanSet(50.0f);
+        fanSet(.5f);
     } else if(temp > 48 ) { // or power > 550
-        fanSet(25.0f);
+        fanSet(.25f);
         fanOnTime = millis();
     } else if( temp < (power > 100 ? 40.f : 45.f) && (millis() - fanOnTime > 30000) ) {
         fanSet(0);

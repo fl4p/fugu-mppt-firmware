@@ -223,7 +223,7 @@ public:
         float ntcTemp = ntc.read();
         //float power = dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin;
 
-        fanUpdateTemp(ntcTemp, power);
+        fanUpdateTemp(std::isnan(ntcTemp) ? mcu_temp.last() : ntcTemp, power);
 
         float powerLimit = params.P_max;
         if (ntcTemp > 75) {
