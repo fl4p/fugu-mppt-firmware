@@ -121,7 +121,7 @@ TODO
 * OLED Display
 
 * PWM soft start
-* over temp cap Current
+* over mcu_temp cap Current
 null* Silen Mode (reduce current instead of FAN switch on)
 
 
@@ -163,7 +163,7 @@ Ota update pull request:
 https://github.com/AngeloCasi/FUGU-ARDUINO-MPPT-FIRMWARE/pull/23
 
 breakout port for aux switches?
-- ESP32 internal temp
+- ESP32 internal mcu_temp
 
 Mppt ALgorithm Todo
 - Filter noisy power loads (e.g. high-impedeance lead acid battery + inverter + macbook charger + macbook). Slow down mppt and use longer ewm

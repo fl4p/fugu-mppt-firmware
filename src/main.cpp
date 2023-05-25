@@ -30,8 +30,9 @@
 #define TempSensor 35       //SYSTEM PARAMETER - Temperature Sensor GPIO Pin
 
 
-//ADC_ADS adc;
-ADC_ESP32 adc;
+//#if CONFIG_IDF_TARGET_ESP32S3
+ADC_ADS adc;
+//ADC_ESP32 adc;
 
 
 DCDC_PowerSampler dcdcPwr{adc, ThreeChannelUnion<ChannelAndFactor>{.s={
