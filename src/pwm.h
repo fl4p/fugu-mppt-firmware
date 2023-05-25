@@ -35,8 +35,6 @@ public:
             : pwmMax((2 << (pwmResolution - 1)) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
               pwmMinLS(std::ceil((float) pwmMax * MinDutyCycleLS)) {
 
-        ESP_LOGI("pwm", "pwmMinLS=%hu, pwmMaxHS=%hu", pwmMinLS, pwmMaxHS);
-
     }
 
     bool init() {
@@ -51,6 +49,8 @@ public:
         //uint16_t pwmMax = 0;
         //uint16_t pwmMaxLimited = 0;
         //uint16_t PWM = 0;
+
+        ESP_LOGI("pwm", "pwmMinLS=%hu, pwmMaxHS=%hu", pwmMinLS, pwmMaxHS);
 
 
 
@@ -160,6 +160,7 @@ public:
 
         // TODO remove the 1.05?
         if (pwmMaxLs < (pwmMax - pwmHS)  ) { // * 1.05f
+            // DCM (Discontinuous Conduction Mode)
             // this is when the coil current is still touching zero
             // it'll stop for higher HS duty cycles
             pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS * 1.0f); // TODO explain why this is necessary
