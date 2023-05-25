@@ -2,6 +2,8 @@
 
 #include "adc.h"
 #include "ads.h"
+#include "adc_esp32.h"
+
 #include "sampling.h"
 #include "pwm.h"
 #include "mppt.h"
@@ -9,9 +11,6 @@
 #include "telemetry.h"
 
 #include <Wire.h>
-//#include <SPI.h>
-//#include <LiquidCrystal_I2C.h>
-#include <Adafruit_ADS1X15.h>
 #include <hal/uart_types.h>
 
 #include "pinconfig.h"
@@ -30,7 +29,10 @@
 #define TempSensor 35       //SYSTEM PARAMETER - Temperature Sensor GPIO Pin
 
 
-ADC_ADS adc;
+//ADC_ADS adc;
+ADC_ESP32 adc;
+
+
 DCDC_PowerSampler dcdcPwr{adc, ThreeChannelUnion<ChannelAndFactor>{.s={
         .chVin = {3, (200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0},
         .chVout = {1, (47. / 2 + 1) / 1, 0},
