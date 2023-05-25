@@ -11,6 +11,8 @@ class TempSensorGPIO_NTC {
 
     float adc2Celsius(float adc) const {
         // invalid adc 4095
+        if (adc >= 4080)
+            return NAN;
         float tl = log(ntcResistance * (4095.f / adc - 1.f));
         float temp = (1.f / (1.009249522e-3f + 2.378405444e-4f * tl + 2.019202697e-7f * tl * tl * tl)) - 273.15f;
         if (temp < -200 or temp > 300) {
@@ -22,22 +24,25 @@ class TempSensorGPIO_NTC {
 public:
     float read() {
         auto adc = analogRead((uint8_t) PinConfig::NTC);
+
         if (_attack) --_attack;
-        else if (adc < 4080) {
-            ewma.add(median3.next(adc));
+        else  {
+            float temp = adc2Celsius(adc);
+            if(!isnan(temp))
+                ewma.add(median3.next(temp));
         }
 
-        float temp = adc2Celsius(ewma.get());
+        //float temp = adc2Celsius(ewma.get());
 
-        if (isnan(temp) && !_attack) {
-            ESP_LOGW("temp", "Invalid temp %.1f from ADC %f", temp, adc);
-            _attack = 120;
-        }
+       // if (isnan(temp) && !_attack) {
+        //    ESP_LOGW("temp", "Invalid temp %.1f from ADC %f", temp, adc);
+         //   _attack = 120;
+       // }
 
-        return temp;
+        return ewma.get();
     }
 
-    float last() const { return adc2Celsius(ewma.get()); }
+    float last() const { return ewma.get(); }
 };
 
 #if CONFIG_IDF_TARGET_ESP32S3
