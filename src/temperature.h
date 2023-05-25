@@ -43,6 +43,7 @@ public:
 #if CONFIG_IDF_TARGET_ESP32S3
 #include "driver/temp_sensor.h"
 class Esp32TempSensor {
+    RunningMedian3<float> median3;
     EWMA<float> ewma{40};
 
     //temperature_sensor_handle_t temp_handle = NULL;
@@ -82,7 +83,7 @@ public:
             conf.dac_offset = os;
         }
 
-        ewma.add(tsens_out);
+        ewma.add(median3.next(tsens_out));
 
         return ewma.get();
     }
