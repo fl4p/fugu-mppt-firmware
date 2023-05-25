@@ -14,7 +14,7 @@ class HalfBridgePwm {
     static constexpr uint8_t pwmCh_IN = 0;
     static constexpr uint8_t pwmCh_EN = 1;
 
-    static constexpr float MinDutyCycleLS = 0.06f; // to keep the HS bootstrap circuit running
+    static constexpr float MinDutyCycleLS = 0.04f; // to keep the HS bootstrap circuit running
 
     const uint8_t pwmResolution = 11;
     const ledc_mode_t ledcMode = LEDC_LOW_SPEED_MODE;
@@ -72,10 +72,7 @@ public:
 
     void pwmPerturb(int16_t direction) {
 
-
-        // compute ordinary pwm update within bounds:
         pwmHS = constrain(pwmHS + direction, pwmMinLS, pwmMaxHS);
-
 
         pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
 
