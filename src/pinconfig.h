@@ -43,6 +43,10 @@ enum class PinConfigESP32  : uint8_t {
     buttonRight = 17   ,
     buttonBack =19   ,
     buttonSelect =23 ,
+
+    ADC_Vin = ADC1_CHANNEL_3,
+    ADC_Vout = ADC1_CHANNEL_6,
+    ADC_Iin = ADC1_CHANNEL_0,
 };
 
 
