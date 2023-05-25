@@ -62,6 +62,7 @@ public:
 
     void startCalibration() {
         calibrating_ = true;
+        calibZeroCurrent = 0;
         for (auto i = 0; i < 3; ++i)
             numSamples[i] = 0;
     }
