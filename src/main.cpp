@@ -218,6 +218,8 @@ void loop() {
                 fanSet(inp.substring(4).toFloat() * 0.01f);
             } else if (inp == "sweep") {
                 mppt.startSweep();
+            } else if (inp == "reset-lag") {
+                maxLoopLag = 0;
             } else {
                 ESP_LOGI("main", "unknown command");
             }
@@ -227,12 +229,10 @@ void loop() {
     if (!disableWifi)
         wifiLoop();
 
-    if(timeSynced && lastLoopTime) {
-        auto now = micros();
-        auto lag = lastLoopTime - now;
-        if(lag > maxLoopLag) maxLoopLag = lag;
-        lastLoopTime = now;
-    }
+    auto now = micros();
+    auto lag = now - lastLoopTime;
+    if (lastLoopTime && lag > maxLoopLag) maxLoopLag = lag;
+    lastLoopTime = now;
 }
 
 
