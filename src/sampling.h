@@ -36,8 +36,8 @@ class DCDC_PowerSampler {
 
 
 public:
-    static constexpr uint8_t EWM_SPAN = 5; // 20
-    static constexpr uint8_t EWM_SPAN_V = 5;
+    static constexpr uint8_t EWM_SPAN = 5; // 5 (20)
+    static constexpr uint8_t EWM_SPAN_V =5;
 
     std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange = nullptr;
 
@@ -56,11 +56,18 @@ public:
             channels(channels) {
     }
 
+    float getIoutSmooth(float conversionEff = 0.97f) const {
+        return ewm.s.chIin.avg.get() * ewm.s.chVin.avg.get() * conversionEff / std::max(ewm.s.chVout.avg.get(), 2.f);
+    }
+
     void begin() {
         adc.startReading(channels[cycleCh].num);
     }
 
     void startCalibration() {
+        // TODO use mean average, not EWM!
+        // - reset mean here
+        // consider: peak2peak values, emipiral uncertainty (higher stddev->need more samples)
         calibrating_ = true;
         calibZeroCurrent = 0;
         for (auto i = 0; i < 3; ++i)

@@ -248,7 +248,7 @@ public:
         MpptState state = MpptState::MPPT;
 
         float conversionEff = 0.97f;
-        float Iout = dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin * conversionEff / std::max(dcdcPwr.last.s.chVout, 5.f);
+        Iout = dcdcPwr.getIoutSmooth();
 
         if (dcdcPwr.last.s.chVout >= params.Vout_max) {
             pwmDirection = -8;
