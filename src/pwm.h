@@ -28,12 +28,13 @@ class HalfBridgePwm {
 
 public:
 
-    const uint16_t pwmMax, pwmMaxHS, pwmMinLS;
+    const uint16_t pwmMax, pwmMaxHS, pwmMinLS, pwmMinHS;
 
 
     HalfBridgePwm()
             : pwmMax((2 << (pwmResolution - 1)) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
-              pwmMinLS(std::ceil((float) pwmMax * MinDutyCycleLS)) {
+              pwmMinLS(std::ceil((float) pwmMax * MinDutyCycleLS)),
+              pwmMinHS(pwmMinLS * 3 / 2) {
 
     }
 
@@ -72,7 +73,7 @@ public:
 
     void pwmPerturb(int16_t direction) {
 
-        pwmHS = constrain(pwmHS + direction, pwmMinLS, pwmMaxHS);
+        pwmHS = constrain(pwmHS + direction, pwmMinHS, pwmMaxHS);
 
         pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
 
@@ -111,7 +112,7 @@ public:
     }
 
     void disable() {
-        if (pwmHS > pwmMinLS)
+        if (pwmHS > pwmMinHS)
             ESP_LOGW("pwm", "PWM disabled");
         pwmHS = 0;
         pwmLS = 0;
