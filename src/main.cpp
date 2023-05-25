@@ -53,8 +53,13 @@ bool disableWifi = false;
 
 void uartInit(int port_num);
 
+void controlLoop(void *_);
+
 void setup() {
+
     Serial.begin(115200);
+
+
 
 #ifdef NO_WIFI
     disableWifi = true;
@@ -69,41 +74,42 @@ void setup() {
 
     ESP_LOGI("main", "*** Fugu Firmware Version %s", FIRMWARE_VERSION);
 
+    //TaskHandle_t th;
+    // xTaskCreatePinnedToCore
+
+
+    /*xTaskCreate(controlLoop,
+                "controlLoop", 4000,
+                nullptr,
+                tskIDLE_PRIORITY,
+            //configMAX_PRIORITIES - 1,
+                &th);*/
+
     if (!disableWifi)
         connect_wifi_async();
 
-    Wire.setClock(400000UL);
-    Wire.setPins((uint8_t) PinConfig::I2C_SDA, (uint8_t) PinConfig::I2C_SCL);
 
-    if (!Wire.begin()) {
-        ESP_LOGE("main", "Failed to initialize Wire");
-    }
-
-    adc.setChannelGain(dcdcPwr.channels.s.chVin.num, GAIN_TWO);
-    adc.setChannelGain(dcdcPwr.channels.s.chVout.num, GAIN_TWO);
-    adc.setChannelGain(dcdcPwr.channels.s.chIin.num, GAIN_ONE);
-
-    auto r = adc.init();
-    if (!r) {
-        ESP_LOGE("main", "Failed to initialize ADC (%i)", r);
-        scan_i2c();
-    }
 
     pinMode((uint8_t) PinConfig::ADC_ALERT, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt((uint8_t) PinConfig::ADC_ALERT), NewDataReadyISR, FALLING); // TODO rising
 
-    dcdcPwr.begin();
+
 
     if (!pwm.init()) {
         ESP_LOGE("main", "Failed to init half bridge");
     }
 
-    if (!disableWifi)
-        dcdcPwr.onDataChange = dcdcDataChanged;
+    //if (!disableWifi)
+//        dcdcPwr.onDataChange = dcdcDataChanged;
 
     mppt.startSweep();
 
     ESP_LOGI("main", "setup() done.");
+
+
+
+    xTaskCreate(&controlLoop, "controlLoop", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 1, NULL);
+
 }
 
 unsigned long lastLoopTime = 0, maxLoopLag = 0;
@@ -123,11 +129,46 @@ bool manualPwm = false;
 #include "esp_log.h"
 
 
+
+void controlLoop(void *_) {
+    //Wire.setClock(400000UL);
+    //Wire.setPins((uint8_t) PinConfig::I2C_SDA, (uint8_t) PinConfig::I2C_SCL);
+
+    if (!Wire.begin((uint8_t) PinConfig::I2C_SDA, (uint8_t) PinConfig::I2C_SCL, 400000UL)) {
+        ESP_LOGE("main", "Failed to initialize Wire");
+    }
+
+    adc.setChannelGain(dcdcPwr.channels.s.chVin.num, GAIN_TWO);
+    adc.setChannelGain(dcdcPwr.channels.s.chVout.num, GAIN_TWO);
+    adc.setChannelGain(dcdcPwr.channels.s.chIin.num, GAIN_ONE);
+
+    auto r = adc.init();
+    if (!r) {
+        ESP_LOGE("main", "Failed to initialize ADC (%i)", r);
+        scan_i2c();
+    }
+
+    dcdcPwr.begin();
+
+    while (1) {
+        dcdcPwr.update();
+
+
+        auto now = micros();
+        auto lag = now - lastLoopTime;
+        if (lastLoopTime && lag > maxLoopLag) maxLoopLag = lag;
+        lastLoopTime = now;
+
+
+        vTaskDelay(1);
+    }
+}
+
 void loop() {
     //scan_i2c();
     auto nowMs = millis();
 
-    dcdcPwr.update();
+   // dcdcPwr.update();
 
     if (dcdcPwr.isCalibrating()) {
         pwm.disable();
@@ -155,7 +196,8 @@ void loop() {
 
     if ((nowMs - lastTimeOut) >= 3000) {
         auto &ewm(dcdcPwr.ewm.s);
-        ESP_LOGI("main", "Vin=%4.1f Vout=%4.1f Iin=%5.2fA Pin=%3.0fW T=%.0f°C sps=%2u bps=%u, PWM(H|L)=%4hu|%4hu MPPT(state=%s) lag=%lu",
+        ESP_LOGI("main",
+                 "Vin=%4.1f Vout=%4.1f Iin=%5.2fA Pin=%3.0fW T=%.0f°C sps=%2u bps=%u, PWM(H|L)=%4hu|%4hu MPPT(state=%s) lag=%lu",
                  dcdcPwr.last.s.chVin,
                  dcdcPwr.last.s.chVout,
                  dcdcPwr.last.s.chIin,
@@ -178,7 +220,7 @@ void loop() {
         pwm.pwmPerturb(0); // this will increase LS duty cycle if possible
         pwm.enableBackflowMosfet(true);
         // notice that mppt::protect() calls updateLowSideMaxDuty()
-        delay(10);
+        // delay(10);
     }
 
     // for some reason Serial.available() doesn't work under platformio
@@ -198,7 +240,7 @@ void loop() {
         ESP_LOGI("main", "received serial command: %s", inp.c_str());
         inp.trim();
         if (inp.length() > 0) {
-            if ((inp[0] == '+' or inp[0] == '-') &&  ! dcdcPwr.isCalibrating()) {
+            if ((inp[0] == '+' or inp[0] == '-') && !dcdcPwr.isCalibrating()) {
                 int pwmStep = inp.toInt();
                 ESP_LOGI("main", "Manual PWM step %i", pwmStep);
                 manualPwm = true;
@@ -211,13 +253,15 @@ void loop() {
             } else if (inp == "mppt" && manualPwm) {
                 ESP_LOGI("main", "MPPT re-enabled");
                 manualPwm = false;
-            } else if (inp.startsWith("dc ") && ! dcdcPwr.isCalibrating()) {
+            } else if (inp.startsWith("dc ") && !dcdcPwr.isCalibrating()) {
                 manualPwm = true;
                 pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
             } else if (inp.startsWith("fan ")) {
                 fanSet(inp.substring(4).toFloat() * 0.01f);
             } else if (inp == "sweep") {
                 mppt.startSweep();
+            } else if (inp == "reset-lag") {
+                maxLoopLag = 0;
             } else {
                 ESP_LOGI("main", "unknown command");
             }
@@ -227,11 +271,11 @@ void loop() {
     if (!disableWifi)
         wifiLoop();
 
-    if(timeSynced && lastLoopTime) {
-        auto now = micros();
-        auto lag = lastLoopTime - now;
-        if(lag > maxLoopLag) maxLoopLag = lag;
-        lastLoopTime = now;
+    if (timeSynced or disableWifi) {
+        //auto now = micros();
+        //auto lag = now - lastLoopTime;
+        //if(lastLoopTime && lag > maxLoopLag) maxLoopLag = lag;
+        //lastLoopTime = now;
     }
 }
 

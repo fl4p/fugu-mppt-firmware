@@ -80,7 +80,7 @@ void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
         return;
     }
 
-    bytesSent += asyncUdp.writeTo((uint8_t *) msg.c_str(), msg.length(), host, port);
+    //bytesSent += asyncUdp.writeTo((uint8_t *) msg.c_str(), msg.length(), host, port);
 
     //udp.beginPacket(host, port);
     //udp.print(msg);
