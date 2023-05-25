@@ -1,3 +1,73 @@
+#include <array>
+#include <Wire.h>
+#include "LiquidCrystal_I2C.h"
+
+#include "lcd.h"
+#include "version.h"
+
+const char *TAG = "LCD";
+
+
+bool testAddress(uint8_t addr) {
+    Wire.beginTransmission(addr);
+    return Wire.endTransmission() == 0;
+}
+
+
+bool LCD::init() {
+    if (lcd)
+        return false;
+
+    std::array<uint8_t, 2> addresses{0x27, 0x3F};
+    uint8_t addr = 0;
+
+    for (auto a: addresses) {
+        if (testAddress(a)) {
+            addr = a;
+            break;
+        }
+    }
+
+    if (!addr) {
+        ESP_LOGW(TAG, "The LCD was not found on the I2C bus");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Using addr 0x%02hhX", addr);
+    lcd = new LiquidCrystal_I2C(addr, 16, 2);
+    lcd->begin(16, 2);
+    lcd->clear();
+    lcd->backlight();
+
+
+    return true;
+}
+
+void LCD::updateValues(const LcdValues &values) {
+    if (!lcd) return;
+
+    auto now = millis();
+    if (now - lastDrawTime < 500 or now < msgUntil) return;
+    lastDrawTime = now;
+
+
+    char line[17];
+    snprintf(line, 17, "%4.1fV %4.1fA %3.0fW ", values.Vin, values.Iin, values.Vin * values.Iin);
+    lcd->setCursor(0, 0);
+    lcd->print(line);
+
+    snprintf(line, 17, "%4.1fV %4.1fA %2.0f\xDF" "C", values.Vout, values.Iout, values.Temp);
+    lcd->setCursor(0, 1);
+    lcd->print(line);
+}
+
+void LCD::displayMessage(const std::string &msg, uint16_t timeoutMs) {
+    if (!lcd) return;
+    lcd->clear();
+    lcd->print(msg.c_str());
+    msgUntil = timeoutMs + millis();
+}
+
 
 #if 0
 #include <functional>
@@ -58,7 +128,7 @@ class LCD_Menu{
             float voltageOutput, currentOutput;
             float voltageInput, currentInput;
 
-            float temp;
+            float mcu_temp;
 
             bool BNC;
             bool fanStatus;
@@ -73,7 +143,7 @@ class LCD_Menu{
         float P_max = 800;
     };
     MpptParams params;
-    
+
     HardwareConfig hw_conf;
 
         int daysRunning;
@@ -275,10 +345,10 @@ class LCD_Menu{
             lcd.setCursor(0, 0);
             lcd.print("TEMPERATURE STAT");
             lcd.setCursor(0, 1);
-            lcd.print(input.temp);
+            lcd.print(input.mcu_temp);
             lcd.print((char) 223);
             lcd.print("C");
-            padding100(input.temp);
+            padding100(input.mcu_temp);
             lcd.setCursor(8, 1);
             lcd.print("FAN");
             lcd.setCursor(12, 1);
@@ -1078,6 +1148,5 @@ class LCD_Menu{
 
 
 };
-
 
 #endif

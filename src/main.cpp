@@ -15,6 +15,7 @@
 
 #include "pinconfig.h"
 #include "version.h"
+#include "lcd.h"
 
 //LiquidCrystal_I2C lcd(0x27,16,2);   //SYSTEM PARAMETER  - Configure LCD RowCol Size and I2C Address
 //Adafruit_ADS1115 ads;             //SYSTEM PARAMETER  - ADS1115 ADC Library (By: Adafruit) Kindly uncomment this if you are using ADS1115
@@ -44,6 +45,7 @@ DCDC_PowerSampler dcdcPwr{adc, ThreeChannelUnion<ChannelAndFactor>{.s={
 HalfBridgePwm pwm;
 MpptSampler mppt{dcdcPwr, pwm};
 
+LCD lcd;
 
 
 bool disableWifi = false;
@@ -53,11 +55,6 @@ void uartInit(int port_num);
 
 void setup() {
     Serial.begin(115200);
-
-#ifdef NO_WIFI
-    disableWifi = true;
-#endif
-
 #if CONFIG_IDF_TARGET_ESP32S3
     // for unknown reason need to initialize uart0 for serial reading (see loop below)
     // Serial.available() works under Arduino IDE (for both ESP32,ESP32S3), but always returns 0 under platformio
@@ -67,19 +64,27 @@ void setup() {
 
     ESP_LOGI("main", "*** Fugu Firmware Version %s", FIRMWARE_VERSION);
 
-    if (!disableWifi)
-        connect_wifi_async();
 
-    Wire.setClock(400000UL);
-    Wire.setPins((uint8_t) PinConfig::I2C_SDA, (uint8_t) PinConfig::I2C_SCL);
-
-    if (!Wire.begin()) {
+    if (!Wire.begin((uint8_t) PinConfig::I2C_SDA, (uint8_t) PinConfig::I2C_SCL, 400000UL)) {
         ESP_LOGE("main", "Failed to initialize Wire");
     }
 
+    if (!lcd.init()) {
+        ESP_LOGE("main", "Failed to init LCD");
+    }
+
+    lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION, 2000);
+
+#ifdef NO_WIFI
+    disableWifi = true;
+#endif
+    if (!disableWifi)
+        connect_wifi_async();
+
+
     adc.setMaxExpectedVoltage(dcdcPwr.channels.s.chVin.num, 2);
     adc.setMaxExpectedVoltage(dcdcPwr.channels.s.chVout.num, 2);
-    adc.setMaxExpectedVoltage(dcdcPwr.channels.s.chIin.num, 2.8f ); // todo 3.3
+    adc.setMaxExpectedVoltage(dcdcPwr.channels.s.chIin.num, 2.8f); // todo 3.3
 
 
     auto r = adc.init();
@@ -87,7 +92,6 @@ void setup() {
         ESP_LOGE("main", "Failed to initialize ADC (%i)", r);
         scan_i2c();
     }
-
 
     dcdcPwr.begin();
 
@@ -99,6 +103,8 @@ void setup() {
         dcdcPwr.onDataChange = dcdcDataChanged;
 
     mppt.startSweep();
+
+
 
     ESP_LOGI("main", "setup() done.");
 }
@@ -152,7 +158,8 @@ void loop() {
 
     if ((nowMs - lastTimeOut) >= 3000) {
         auto &ewm(dcdcPwr.ewm.s);
-        ESP_LOGI("main", "Vin=%4.1f Vout=%4.1f Iin=%5.2fA Pin=%3.0fW T=%.0f°C sps=%2u bps=%u, PWM(H|L)=%4hu|%4hu MPPT(state=%s) lag=%lu",
+        ESP_LOGI("main",
+                 "Vin=%4.1f Vout=%4.1f Iin=%5.2fA Pin=%3.0fW T=%.0f°C sps=%2u bps=%u, PWM(H|L)=%4hu|%4hu MPPT(state=%s) lag=%lu",
                  dcdcPwr.last.s.chVin,
                  dcdcPwr.last.s.chVout,
                  dcdcPwr.last.s.chIin,
@@ -170,6 +177,15 @@ void loop() {
         lastTimeOut = nowMs;
         lastNSamples = dcdcPwr.numSamples[0];
     }
+
+
+    lcd.updateValues(LcdValues{
+            .Vin = dcdcPwr.last.s.chVin,
+            .Vout = dcdcPwr.last.s.chVout,
+            .Iin = dcdcPwr.last.s.chIin,
+            .Iout = dcdcPwr.getIoutSmooth(),
+            .Temp = std::isnan(mppt.ntc.last()) ? mppt.mcu_temp.last() : mppt.ntc.last(),
+    });
 
     if (manualPwm) {
         pwm.pwmPerturb(0); // this will increase LS duty cycle if possible
@@ -195,7 +211,7 @@ void loop() {
         ESP_LOGI("main", "received serial command: %s", inp.c_str());
         inp.trim();
         if (inp.length() > 0) {
-            if ((inp[0] == '+' or inp[0] == '-') &&  ! dcdcPwr.isCalibrating()) {
+            if ((inp[0] == '+' or inp[0] == '-') && !dcdcPwr.isCalibrating()) {
                 int pwmStep = inp.toInt();
                 ESP_LOGI("main", "Manual PWM step %i", pwmStep);
                 manualPwm = true;
@@ -208,7 +224,7 @@ void loop() {
             } else if (inp == "mppt" && manualPwm) {
                 ESP_LOGI("main", "MPPT re-enabled");
                 manualPwm = false;
-            } else if (inp.startsWith("dc ") && ! dcdcPwr.isCalibrating()) {
+            } else if (inp.startsWith("dc ") && !dcdcPwr.isCalibrating()) {
                 manualPwm = true;
                 pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
             } else if (inp.startsWith("fan ")) {
