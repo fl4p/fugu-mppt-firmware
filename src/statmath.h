@@ -12,11 +12,11 @@ public:
     const float_t alpha;
     float_t y = std::numeric_limits<float_t>::quiet_NaN();
 
-    explicit EWMA(uint32_t span) : alpha(2.f / (float_t)(span + 1)) {}
+    explicit EWMA(uint32_t span) : alpha(2.f / (float_t) (span + 1)) {}
 
     inline void add(float_t x) {
-        if(isnan(y))
-            y = x;
+        if unlikely(isnan(x)) return;
+        if unlikely(isnan(y)) y = x;
         y = (1 - alpha) * y + alpha * x;
     }
 
@@ -33,9 +33,9 @@ public:
 
     inline void add(float_t x) {
         avg.add(x);
-        if(!isnan(last_x)) {
+        if (!isnan(last_x)) {
             float_t pct = (x - last_x) / last_x;
-            if(std::isfinite(pct))
+            if (std::isfinite(pct))
                 std.add(pct * pct);
         }
         last_x = x;
@@ -44,20 +44,20 @@ public:
 
 
 template<typename T>
-inline bool greaterThan(const T &a, const T &b){ return a > b;}
+inline bool greaterThan(const T &a, const T &b) { return a > b; }
 
 template<typename T, bool (*comp)(const T &, const T &)>
-inline T median_of_three(const T &a, const T &b, const T &c)  {
-return comp(a, b) ? ( comp(b, c) ? b : ( comp( a, c) ? c : a ) )
-: ( comp(c, b) ? b : ( comp( c, a ) ? c : a ) );
+inline T median_of_three(const T &a, const T &b, const T &c) {
+    return comp(a, b) ? (comp(b, c) ? b : (comp(a, c) ? c : a))
+                      : (comp(c, b) ? b : (comp(c, a) ? c : a));
 }
 
 template<typename T>
 class RunningMedian3 {
-    T s1{},s2{};
+    T s1{}, s2{};
 public:
     inline T next(const T &s) {
-        T m = median_of_three<T, greaterThan<T>>(s, s1,s2);
+        T m = median_of_three<T, greaterThan<T>>(s, s1, s2);
         s2 = s1;
         s1 = s;
         return m;
