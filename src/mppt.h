@@ -61,9 +61,13 @@ class MpptSampler {
 
     //unsigned long lastTimeRandomPerturb = 0;
 
-    Esp32TempSensor temp;
+
+
+
 public:
+    Esp32TempSensor mcu_temp;
     TempSensorGPIO_NTC ntc;
+    float Iout;
 
     explicit MpptSampler(DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm)
             : dcdcPwr(dcdcPwr), pwm(pwm) {
@@ -368,7 +372,7 @@ public:
 
 
         point.addField("mppt_state", int(state));
-        point.addField("mcu_temp", temp.read(), 1);
+        point.addField("mcu_temp", mcu_temp.read(), 1);
         point.addField("ntc_temp", ntcTemp, 1);
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
         point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());

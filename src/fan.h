@@ -26,8 +26,9 @@ void fanSet(float duty) {
     //if(duty < 0) duty = 0;
 
     if(duty < 0.1) duty = 0;
-    else if(duty <= 0.5) duty = 0.06f;
-    else if(duty <= 0.75) duty = 0.2f;
+    else if(duty <= 0.25) duty = 5;
+    else if(duty <= 0.5) duty = 15;
+    else if(duty <= 0.75) duty = 40;
     else duty = 1.f;
 
     ledcWrite(FAN_PWM_CH, (uint16_t)(((2 << (FAN_PWM_BITS-1)) - 1) * duty));
