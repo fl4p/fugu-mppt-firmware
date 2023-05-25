@@ -3,6 +3,7 @@
 class TempSensorGPIO_NTC {
     float ntcResistance = 10e3f;
 
+    RunningMedian3<float> median3;
     EWMA<float> ewma{80};
 
     uint8_t _attack = 60; // discard first samples
@@ -23,7 +24,7 @@ public:
         auto adc = analogRead((uint8_t) PinConfig::NTC);
         if (_attack) --_attack;
         else if (adc < 4080) {
-            ewma.add(adc);
+            ewma.add(median3.next(adc));
         }
 
         float temp = adc2Celsius(ewma.get());
@@ -85,6 +86,8 @@ public:
 
         return ewma.get();
     }
+
+    float last() const { return ewma.get(); }
 };
 #else
 
@@ -104,12 +107,16 @@ uint8_t temprature_sens_read();
 
 class Esp32TempSensor {
 public:
+    float _last = NAN;
+
     Esp32TempSensor() {}
 
     float read() {
         //return (temprature_sens_read() - 32) / 1.8;
-        return temperatureRead();
+        return (_last = temperatureRead());
     }
+
+    float last() const { return _last; }
 };
 
 #endif
