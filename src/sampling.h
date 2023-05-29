@@ -26,7 +26,7 @@ struct ChannelAndFactor {
 
 
 class DCDC_PowerSampler {
-    AsyncADC<float> &adc;
+    AsyncADC<float> *adc = nullptr;
 
     uint8_t cycleCh = 0;
 
@@ -51,8 +51,7 @@ public:
             EWM<float>{EWM_SPAN}};
 
 
-    DCDC_PowerSampler(AsyncADC<float> &adc, const ThreeChannelUnion<ChannelAndFactor> &channels) :
-            adc(adc),
+    explicit DCDC_PowerSampler(const ThreeChannelUnion<ChannelAndFactor> &channels) :
             channels(channels) {
     }
 
@@ -60,8 +59,13 @@ public:
         return ewm.s.chIin.avg.get() * ewm.s.chVin.avg.get() * conversionEff / std::max(ewm.s.chVout.avg.get(), 2.f);
     }
 
-    void begin() {
-        adc.startReading(channels[cycleCh].num);
+    void _readNext() {
+        adc->startReading(channels[cycleCh].num);
+    }
+
+    void begin(AsyncADC<float> *adc_) {
+        adc = adc_;
+        _readNext();
     }
 
     void startCalibration() {
@@ -75,8 +79,8 @@ public:
     }
 
     bool update() {
-        if (adc.hasData()) {
-            auto v = (adc.getSample() - channels[cycleCh].midpoint) * channels[cycleCh].factor;
+        if (adc->hasData()) {
+            auto v = (adc->getSample() - channels[cycleCh].midpoint) * channels[cycleCh].factor;
             //bool changed = (last[cycleCh] != v);
             if (&last[cycleCh] == &last.s.chIin) {
                 v -= calibZeroCurrent;
@@ -86,7 +90,7 @@ public:
             ewm[cycleCh].add(v);
             ++numSamples[cycleCh];
             cycleCh = (cycleCh + 1) % 3;
-            begin();
+            _readNext();
 
             if (onDataChange) { // changed &&
                 onDataChange(*this, cycleCh);

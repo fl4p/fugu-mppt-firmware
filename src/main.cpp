@@ -31,11 +31,11 @@
 
 
 //#if CONFIG_IDF_TARGET_ESP32S3
-ADC_ADS adc;
-//ADC_ESP32 adc;
+ADC_ADS adc_ads;
+ADC_ESP32 adc_esp32;
 
 
-DCDC_PowerSampler dcdcPwr{adc, ThreeChannelUnion<ChannelAndFactor>{.s={
+DCDC_PowerSampler dcdcPwr{ThreeChannelUnion<ChannelAndFactor>{.s={
         .chVin = {3, (200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0},
         .chVout = {1, (47. / 2 + 1) / 1, 0},
         .chIin = {2, -(1 / 0.066f) * (10 + 3.3) / 10. * (14.6f / 13.1f) * (12.1f / 13.f), //ACS712-30 sensitivity)
@@ -82,19 +82,24 @@ void setup() {
     if (!disableWifi)
         connect_wifi_async();
 
-
-    adc.setMaxExpectedVoltage(dcdcPwr.channels.s.chVin.num, 2);
-    adc.setMaxExpectedVoltage(dcdcPwr.channels.s.chVout.num, 2);
-    adc.setMaxExpectedVoltage(dcdcPwr.channels.s.chIin.num, 2.8f); // todo 3.3
-
-
-    auto r = adc.init();
-    if (!r) {
-        ESP_LOGE("main", "Failed to initialize ADC (%i)", r);
+    AsyncADC<float> *adc = nullptr;
+    if(adc_ads.init() ) {
+        adc = &adc_ads;
+    } else if(adc_esp32.init()){
+        ESP_LOGW("main", "Failed to initialize external ADS1x15 ADC, using internal");
+        adc = &adc_esp32;
+    } else {
         scan_i2c();
+        ESP_LOGE("main", "Failed to initialize any ADC");
+        while(1) {};
     }
 
-    dcdcPwr.begin();
+    adc->setMaxExpectedVoltage(dcdcPwr.channels.s.chVin.num, 2);
+    adc->setMaxExpectedVoltage(dcdcPwr.channels.s.chVout.num, 2);
+    adc->setMaxExpectedVoltage(dcdcPwr.channels.s.chIin.num, 2.8f); // todo 3.3
+
+
+    dcdcPwr.begin(adc);
 
     if (!pwm.init()) {
         ESP_LOGE("main", "Failed to init half bridge");
@@ -104,8 +109,6 @@ void setup() {
         dcdcPwr.onDataChange = dcdcDataChanged;
 
     mppt.startSweep();
-
-
 
     ESP_LOGI("main", "setup() done.");
 }
@@ -128,7 +131,6 @@ bool manualPwm = false;
 
 
 void loop() {
-    //scan_i2c();
     auto nowMs = millis();
 
     dcdcPwr.update();
