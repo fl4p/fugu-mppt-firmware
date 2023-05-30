@@ -239,7 +239,14 @@ void loop() {
                 mppt.startSweep();
             } else if (inp == "reset-lag") {
                 maxLoopLag = 0;
-            } else {
+            } else if (inp == "wifi on") {
+                disableWifi = false;
+                timeSynced = false;
+                connect_wifi_async();
+            } else if (inp == "wifi off") {
+                WiFi.disconnect(true);
+                disableWifi = true;
+            }  else {
                 ESP_LOGI("main", "unknown command");
             }
         }
