@@ -63,7 +63,7 @@ void setup() {
     uartInit(0);
 #endif
 
-    ESP_LOGI("main", "*** Fugu Firmware Version %s", FIRMWARE_VERSION);
+    ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
 
 
     if (!Wire.begin((uint8_t) PinConfig::I2C_SDA, (uint8_t) PinConfig::I2C_SCL, 400000UL)) {
