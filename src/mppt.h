@@ -65,7 +65,7 @@ class MpptSampler {
 
 
 public:
-    Esp32TempSensor mcu_temp;
+    // Esp32TempSensor mcu_temp; // don't use this! poor real-time performance!
     TempSensorGPIO_NTC ntc;
     float Iout;
 
@@ -221,12 +221,13 @@ public:
         auto Vin(dcdcPwr.ewm.s.chVin.avg.get());
         float power = dcdcPwr.ewm.s.chIin.avg.get() * dcdcPwr.ewm.s.chVin.avg.get();
         float ntcTemp = ntc.read();
+        // mcu_temp.read();
         //float power = dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin;
 
-        fanUpdateTemp(std::isnan(ntcTemp) ? mcu_temp.last() : ntcTemp, power);
+        fanUpdateTemp( ntcTemp, power);
 
         float powerLimit = params.P_max;
-        if (ntcTemp > 75 or std::isnan(ntcTemp) or mcu_temp.last() > 60) {
+        if (ntcTemp > 75 or std::isnan(ntcTemp)) {
             powerLimit = 300;
         } else if (ntcTemp > 80) {
             powerLimit = 200;
@@ -372,7 +373,7 @@ public:
 
 
         point.addField("mppt_state", int(state));
-        point.addField("mcu_temp", mcu_temp.read(), 1);
+        // point.addField("mcu_temp", mcu_temp.last(), 1);
         point.addField("ntc_temp", ntcTemp, 1);
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
         point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
