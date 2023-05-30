@@ -26,18 +26,18 @@ public:
         auto adc = analogRead((uint8_t) PinConfig::NTC);
 
         if (_attack) --_attack;
-        else  {
+        else {
             float temp = adc2Celsius(adc);
-            if(!isnan(temp))
+            if (!isnan(temp))
                 ewma.add(median3.next(temp));
         }
 
         //float temp = adc2Celsius(ewma.get());
 
-       // if (isnan(temp) && !_attack) {
+        // if (isnan(temp) && !_attack) {
         //    ESP_LOGW("temp", "Invalid temp %.1f from ADC %f", temp, adc);
-         //   _attack = 120;
-       // }
+        //   _attack = 120;
+        // }
 
         return ewma.get();
     }
@@ -71,6 +71,7 @@ public:
 
     float read() {
 
+        // This has very poor real-time performance if WiFi is enabled (probably using ADC0?)
         if (temp_sensor_read_celsius(&tsens_out) != ESP_OK) {
             conf.dac_offset = (temp_sensor_dac_offset_t) ((conf.dac_offset + 1) % TSENS_DAC_MAX);
             return NAN;
@@ -112,17 +113,20 @@ uint8_t temprature_sens_read();
 
 
 class Esp32TempSensor {
+    RunningMedian3<float> median3{};
+    EWMA<float> ewma{40};
+
 public:
-    float _last = NAN;
 
     Esp32TempSensor() {}
 
     float read() {
         //return (temprature_sens_read() - 32) / 1.8;
-        return (_last = temperatureRead());
+        ewma.add(median3.next(temperatureRead() - 32.f)); // seems very off, remove?
+        return ewma.get();
     }
 
-    float last() const { return _last; }
+    float last() const { return ewma.get(); }
 };
 
 #endif
