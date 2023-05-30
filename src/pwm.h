@@ -33,8 +33,8 @@ public:
 
     HalfBridgePwm()
             : pwmMax((2 << (pwmResolution - 1)) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
-              pwmMinLS(std::ceil((float) pwmMax * MinDutyCycleLS)),
-              pwmMinHS(pwmMinLS * 3 / 2) {
+              pwmMinLS(std::ceil((float) pwmMax * MinDutyCycleLS)), // keeping the bootstrap circuit powered
+              pwmMinHS(pwmMinLS * 2 / 3) {
 
     }
 
@@ -51,7 +51,7 @@ public:
         //uint16_t pwmMaxLimited = 0;
         //uint16_t PWM = 0;
 
-        ESP_LOGI("pwm", "pwmMinLS=%hu, pwmMaxHS=%hu", pwmMinLS, pwmMaxHS);
+        ESP_LOGI("pwm", "pwmMax=%hu, pwmMinLS=%hu, pwmMinHS=%hu, pwmMaxHS=%hu", pwmMax, pwmMinLS, pwmMinHS, pwmMaxHS);
 
 
 
@@ -105,6 +105,10 @@ public:
         return pwmLS;
     }
 
+    uint16_t getDutyCycleLSMax() const {
+        return pwmMaxLS;
+    }
+
     void halfDutyCycle() {
         pwmHS /= 2;
         pwmLS /= 2;
@@ -143,9 +147,11 @@ public:
         // compute the worst case error (Vout too low, Vin too high)
         constexpr float voltageRatioWCEF = (1.f - voltageMaxErr) / (1.f + voltageMaxErr); // < 1.0
 
+        voltageRatio = std::max<float>(voltageRatio, 0.01f); // the greater, the safer
+
         const float pwmMaxLsWCEF = (1 / (voltageRatio*voltageRatioWCEF) - 1) / (1 / voltageRatio - 1); // > 1
 
-        voltageRatio = std::max<float>(voltageRatio, 0.01f); // the greater, the safer
+
         auto pwmMaxLs = (1 / voltageRatio - 1) * (float) pwmHS / pwmMaxLsWCEF; // the lower, the safer
 
         // pwmMaxLs = std::min<float>(pwmMaxLs, (float)pwmHS); // TODO explain why this is necessary
@@ -162,12 +168,16 @@ public:
             // this is when the coil current is still touching zero
             // it'll stop for higher HS duty cycles
             pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS * 1.0f); // TODO explain why this is necessary
+        } else {
+            pwmMaxLs = (float)(pwmMax - pwmHS);
         }
 
+        //ESP_LOGI("dbg", "pwmMaxLs=%f, (float) (pwmMax - pwmHS)=%f, pwmMax=%hu, pwmHS=%hu", pwmMaxLs, (float) (pwmMax - pwmHS), pwmMax, pwmHS);
+        
         // todo beyond pwmMaxLs < (pwmMax - pwmHS), can we reduce the worst-case error assumption to boost eff?
         // or just replace  with pwmMaxLs < (pwmMax - pwmHS) * pwmMaxLsWCEF and remove scaling pwmMaxLs by pwmMaxLsWCEF
 
-        return (uint16_t) (std::min<float>(pwmMaxLs, (float) (pwmMax - pwmHS)) * margin);
+        return (uint16_t) (pwmMaxLs * margin);
     }
 
     void updateLowSideMaxDuty(float outInVoltageRatio_) {
