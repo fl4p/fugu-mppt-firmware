@@ -240,7 +240,7 @@ public:
         //point.addField("I_raw", dcdcPwr.last.s.chIin, 2);
 
         point.addField("U", Vin, 2);
-        //point.addField("U_raw", dcdcPwr.last.s.chVin, 2);
+        //point.addField("U_in_raw", dcdcPwr.last.s.chVin, 2);
 
         point.addField("U_out", dcdcPwr.ewm.s.chVout.avg.get(), 2);
         //point.addField("U_out_raw", dcdcPwr.last.s.chVout, 2);

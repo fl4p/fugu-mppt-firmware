@@ -34,7 +34,9 @@ public:
     HalfBridgePwm()
             : pwmMax((2 << (pwmResolution - 1)) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
               pwmMinLS(std::ceil((float) pwmMax * MinDutyCycleLS)), // keeping the bootstrap circuit powered
-              pwmMinHS(pwmMinLS * 2 / 3) {
+              pwmMinHS(pwmMinLS * 2 / 3)
+              // ^ set this a bit lower than LS (because pwmMinLS might be already too much for CV with no load)
+              {
 
     }
 
@@ -138,7 +140,7 @@ public:
         // prevents boosting and "low side burning" due to excessive LS current
         // (non-diode behavior, negative reverse inductor current)
 
-        const float margin = 0.99f; // TODO what does this model or represent, remove?
+        const float margin = 0.99f; // TODO what does this model or represent, remove? maybe coil losses?
 
         // this is very sensitive to voltageRatio errors! at VR=0.64 a -5% error causes a 13% deviation of pwmMaxLs !
         constexpr float voltageMaxErr = 0.02f; // inc -> safer, less efficient
@@ -173,7 +175,7 @@ public:
         }
 
         //ESP_LOGI("dbg", "pwmMaxLs=%f, (float) (pwmMax - pwmHS)=%f, pwmMax=%hu, pwmHS=%hu", pwmMaxLs, (float) (pwmMax - pwmHS), pwmMax, pwmHS);
-        
+
         // todo beyond pwmMaxLs < (pwmMax - pwmHS), can we reduce the worst-case error assumption to boost eff?
         // or just replace  with pwmMaxLs < (pwmMax - pwmHS) * pwmMaxLsWCEF and remove scaling pwmMaxLs by pwmMaxLsWCEF
 
