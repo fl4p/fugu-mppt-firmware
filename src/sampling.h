@@ -16,6 +16,13 @@ union ThreeChannelUnion {
     inline const T &operator[](int i) const { return arr[i]; }
 
     inline T &operator[](int i) { return arr[i]; }
+
+    //template<void T::* MemPtr>
+    //template<typename T_arg0, void (T::*fn)(const T_arg0 &)>
+    //void call(const T_arg0 &arg0) {
+    //    for(auto & o : arr)
+    //        fn(o, arg0);
+    //}
 };
 
 struct ChannelAndFactor {
@@ -34,10 +41,11 @@ class DCDC_PowerSampler {
     float calibZeroCurrent = 0;
     float calibVout = 0;
 
-
+    uint16_t ewmSpan = 1;
 public:
-    static constexpr uint8_t EWM_SPAN = 5; // 5 (20)
-    static constexpr uint8_t EWM_SPAN_V =5;
+    //static constexpr uint8_t EWM_SPAN = 80; // 5 (20)
+    //static constexpr uint8_t EWM_SPAN_V =80;
+
 
     std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange = nullptr;
 
@@ -46,9 +54,9 @@ public:
     ThreeChannelUnion<float> previous{NAN, NAN, NAN};
     ThreeChannelUnion<uint32_t> numSamples{0, 0, 0};
     ThreeChannelUnion<EWM<float>> ewm{
-            EWM<float>{EWM_SPAN_V},
-            EWM<float>{EWM_SPAN_V},
-            EWM<float>{EWM_SPAN}};
+            EWM<float>{1},
+            EWM<float>{1},
+            EWM<float>{1}};
 
 
     explicit DCDC_PowerSampler(const ThreeChannelUnion<ChannelAndFactor> &channels) :
@@ -63,8 +71,12 @@ public:
         adc->startReading(channels[cycleCh].num);
     }
 
-    void begin(AsyncADC<float> *adc_) {
+    void begin(AsyncADC<float> *adc_, uint16_t ewmaSpan) {
         adc = adc_;
+        auto f = &EWM<float>::updateSpan;
+        for(auto &o : ewm.arr)
+            o.updateSpan(ewmaSpan);
+        ewmSpan = ewmaSpan;
         _readNext();
     }
 
@@ -101,7 +113,7 @@ public:
                     ESP_LOGW("dcdc", "Supply under-voltage!");
                 startCalibration();
             }
-            else if (calibrating_ && numSamples[cycleCh] > std::max(EWM_SPAN,EWM_SPAN_V) * 2) {
+            else if (calibrating_ && numSamples[cycleCh] > ewmSpan * 2) {
                 calibZeroCurrent = ewm.s.chIin.avg.get();
                 ESP_LOGI("dcdc", "Zero Current Calibration avg=%.4f std=%.6f", calibZeroCurrent, ewm.s.chIin.std.get());
 

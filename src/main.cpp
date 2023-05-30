@@ -83,11 +83,14 @@ void setup() {
         connect_wifi_async();
 
     AsyncADC<float> *adc = nullptr;
+    int ewmaSpan = 0;
     if(adc_ads.init() ) {
         adc = &adc_ads;
+        ewmaSpan = 5;
     } else if(adc_esp32.init()){
         ESP_LOGW("main", "Failed to initialize external ADS1x15 ADC, using internal");
         adc = &adc_esp32;
+        ewmaSpan = 80;
     } else {
         scan_i2c();
         ESP_LOGE("main", "Failed to initialize any ADC");
@@ -99,7 +102,7 @@ void setup() {
     adc->setMaxExpectedVoltage(dcdcPwr.channels.s.chIin.num, 2.8f); // todo 3.3
 
 
-    dcdcPwr.begin(adc);
+    dcdcPwr.begin(adc, ewmaSpan);
 
     if (!pwm.init()) {
         ESP_LOGE("main", "Failed to init half bridge");

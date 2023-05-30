@@ -7,12 +7,18 @@ class EWMA {
 /**
  * Implement exponential weighted moving average
  */
-
+     float_t alpha;
 public:
-    const float_t alpha;
+
     float_t y = std::numeric_limits<float_t>::quiet_NaN();
 
-    explicit EWMA(uint32_t span) : alpha(2.f / (float_t) (span + 1)) {}
+    explicit EWMA(uint32_t span)  {
+        updateSpan(span);
+    }
+
+    void updateSpan(uint32_t span) {
+        alpha = (2.f / (float_t) (span + 1));
+    }
 
     inline void add(float_t x) {
         if unlikely(isnan(x)) return;
@@ -30,6 +36,11 @@ public:
     EWMA<float_t> avg, std;
 
     explicit EWM(uint32_t span) : avg(span), std(span) {}
+
+    void updateSpan(uint32_t span) {
+        avg.updateSpan(span);
+        std.updateSpan(span);
+    }
 
     inline void add(float_t x) {
         avg.add(x);
