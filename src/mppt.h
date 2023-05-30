@@ -190,6 +190,7 @@ public:
         }
 
         float voltageRatio = fmaxf(dcdcPwr.last.s.chVout, dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.last.s.chVin;
+        //float voltageRatio = dcdcPwr.ewm.s.chVout.avg.get() / dcdcPwr.ewm.s.chVin.avg.get();
         pwm.updateLowSideMaxDuty(voltageRatio);
 
         lastTimeProtectPassed = millis();

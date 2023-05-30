@@ -84,17 +84,17 @@ void setup() {
 
     AsyncADC<float> *adc = nullptr;
     int ewmaSpan = 0;
-    if(adc_ads.init() ) {
+    if (adc_ads.init()) {
         adc = &adc_ads;
         ewmaSpan = 5;
-    } else if(adc_esp32.init()){
+    } else if (adc_esp32.init()) {
         ESP_LOGW("main", "Failed to initialize external ADS1x15 ADC, using internal");
         adc = &adc_esp32;
         ewmaSpan = 80;
     } else {
         scan_i2c();
         ESP_LOGE("main", "Failed to initialize any ADC");
-        while(1) {};
+        while (1) {};
     }
 
     adc->setMaxExpectedVoltage(dcdcPwr.channels.s.chVin.num, 2);
@@ -112,6 +112,10 @@ void setup() {
         dcdcPwr.onDataChange = dcdcDataChanged;
 
     mppt.startSweep();
+
+    //wait_for_wifi();
+    //timeSync("CET-1CEST,M3.5.0,M10.5.0/3", "de.pool.ntp.org", "time.nis.gov");
+    //timeSynced = true;
 
     ESP_LOGI("main", "setup() done.");
 }
@@ -173,8 +177,8 @@ void loop() {
         //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
                  mppt.ntc.last(),
                  (lastNSamples < dcdcPwr.numSamples[0] ? (dcdcPwr.numSamples[0] - lastNSamples) : 0) * 1000u /
-                 (uint32_t) (nowMs - lastTimeOut),
-                 (uint32_t) (bytesSent * 1000u / millis()),
+                 (uint32_t)(nowMs - lastTimeOut),
+                 (uint32_t)(bytesSent * 1000u / millis()),
                  pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
         //mppt.getPower()
                  MpptState2String[(uint8_t) mppt.getState()].c_str(),
@@ -190,7 +194,7 @@ void loop() {
             .Vout = dcdcPwr.last.s.chVout,
             .Iin = dcdcPwr.last.s.chIin,
             .Iout = dcdcPwr.getIoutSmooth(),
-            .Temp = std::isnan(mppt.ntc.last()) ? mppt.mcu_temp.last() : mppt.ntc.last(),
+            .Temp = mppt.ntc.last(),
     });
 
     if (manualPwm) {
@@ -246,7 +250,7 @@ void loop() {
             } else if (inp == "wifi off") {
                 WiFi.disconnect(true);
                 disableWifi = true;
-            }  else {
+            } else {
                 ESP_LOGI("main", "unknown command");
             }
         }
