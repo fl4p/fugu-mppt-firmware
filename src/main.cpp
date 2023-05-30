@@ -165,7 +165,7 @@ void loop() {
     if ((nowMs - lastTimeOut) >= 3000) {
         auto &ewm(dcdcPwr.ewm.s);
         ESP_LOGI("main",
-                 "Vin=%4.1f Vout=%4.1f Iin=%5.2fA Pin=%3.0fW T=%.0f°C sps=%2u bps=%u, PWM(H|L)=%4hu|%4hu MPPT(state=%s) lag=%lu",
+                 "Vin=%4.1f Vout=%4.1f Iin=%5.2fA Pin=%3.0fW T=%.0f°C sps=%2u bps=%u, PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(state=%s) lag=%.1fms",
                  dcdcPwr.last.s.chVin,
                  dcdcPwr.last.s.chVout,
                  dcdcPwr.last.s.chIin,
@@ -175,10 +175,10 @@ void loop() {
                  (lastNSamples < dcdcPwr.numSamples[0] ? (dcdcPwr.numSamples[0] - lastNSamples) : 0) * 1000u /
                  (uint32_t) (nowMs - lastTimeOut),
                  (uint32_t) (bytesSent * 1000u / millis()),
-                 pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(),
+                 pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
         //mppt.getPower()
                  MpptState2String[(uint8_t) mppt.getState()].c_str(),
-                 maxLoopLag
+                 maxLoopLag * 1e-3f
         );
         lastTimeOut = nowMs;
         lastNSamples = dcdcPwr.numSamples[0];
