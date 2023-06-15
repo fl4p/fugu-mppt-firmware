@@ -43,10 +43,10 @@ void fanUpdateTemp(float temp, float power) {
         fanSet(.75f);
     } else if(temp > 55) {
         fanSet(.5f);
-    } else if(temp > 50 ) { // or power > 550
+    } else if(temp >= 49.5f ) { // or power > 550
         fanSet(.25f);
         fanOnTime = millis();
-    } else if( temp < (power > 100 ? 40.f : 45.f) && (millis() - fanOnTime > 30000) ) {
+    } else if( temp < (power > 100 ? 35.f : 45.f) && (millis() - fanOnTime > 30000) ) {
         fanSet(0);
     }
 }
