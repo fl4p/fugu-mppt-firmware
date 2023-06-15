@@ -34,9 +34,10 @@ public:
     HalfBridgePwm()
             : pwmMax((2 << (pwmResolution - 1)) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
               pwmMinLS(std::ceil((float) pwmMax * MinDutyCycleLS)), // keeping the bootstrap circuit powered
-              pwmMinHS(pwmMinLS * 2 / 3)
-              // ^ set this a bit lower than LS (because pwmMinLS might be already too much for CV with no load)
-              {
+              pwmMinHS(pwmMinLS / 4) // everything else is too much!
+              // note that MOSFETs have different Vg(th) and switchting times. worst case is Vi/o=60/12
+            // ^ set pwmMinHS a bit lower than pwmMinLS (because pwmMinLS might be already too much for CV with no load)
+    {
 
     }
 
