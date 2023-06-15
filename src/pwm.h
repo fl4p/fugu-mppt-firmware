@@ -78,6 +78,11 @@ public:
         pwmHS = constrain(pwmHS + direction, pwmMinHS, pwmMaxHS);
 
         pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
+        pwmMaxLS = std::max(pwmMinLS, pwmMaxLS);
+
+        if (pwmLS - pwmMaxLS > (pwmMax / 10)) {
+            ESP_LOGW("pwm", "Set pwmLS %hu -> pwmMaxLS=%hu", pwmLS, pwmMaxLS);
+        }
 
         // "fade-in" the low-side duty cycle
         pwmLS = constrain(pwmLS + 3, pwmMinLS, pwmMaxLS);
@@ -93,7 +98,7 @@ public:
 
         directionFloat += directionFloatBuffer;
         directionFloatBuffer = 0;
-        auto directionInt = (int8_t) (directionFloat);
+        auto directionInt = (int8_t)(directionFloat);
         if (directionInt != 0)
             pwmPerturb(directionInt);
         directionFloatBuffer += directionFloat - (float) directionInt;
@@ -111,11 +116,11 @@ public:
         return pwmMaxLS;
     }
 
-    void halfDutyCycle() {
+    /*void halfDutyCycle() {
         pwmHS /= 2;
         pwmLS /= 2;
         pwmPerturb(0);
-    }
+    }*/
 
     void disable() {
         if (pwmHS > pwmMinHS)
@@ -128,7 +133,7 @@ public:
     }
 
     void lowSideMinDuty() {
-        if (pwmLS > pwmMinLS + 10) {
+        if (pwmLS > pwmMinLS + pwmMinLS/2) {
             ESP_LOGW("pwm", "set low-side PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmLS, pwmMinLS,
                      outInVoltageRatio, pwmMaxLS);
         }
@@ -151,7 +156,7 @@ public:
 
         voltageRatio = std::max<float>(voltageRatio, 0.01f); // the greater, the safer
 
-        const float pwmMaxLsWCEF = (1 / (voltageRatio*voltageRatioWCEF) - 1) / (1 / voltageRatio - 1); // > 1
+        const float pwmMaxLsWCEF = (1 / (voltageRatio * voltageRatioWCEF) - 1) / (1 / voltageRatio - 1); // > 1
 
 
         auto pwmMaxLs = (1 / voltageRatio - 1) * (float) pwmHS / pwmMaxLsWCEF; // the lower, the safer
@@ -165,13 +170,13 @@ public:
         // TODO pwm=1390 40.8/26.6
 
         // TODO remove the 1.05?
-        if (pwmMaxLs < (pwmMax - pwmHS)  ) { // * 1.05f
+        if (pwmMaxLs < (pwmMax - pwmHS)) { // * 1.05f
             // DCM (Discontinuous Conduction Mode)
             // this is when the coil current is still touching zero
             // it'll stop for higher HS duty cycles
             pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS * 1.0f); // TODO explain why this is necessary
         } else {
-            pwmMaxLs = (float)(pwmMax - pwmHS);
+            pwmMaxLs = (float) (pwmMax - pwmHS);
         }
 
         //ESP_LOGI("dbg", "pwmMaxLs=%f, (float) (pwmMax - pwmHS)=%f, pwmMax=%hu, pwmHS=%hu", pwmMaxLs, (float) (pwmMax - pwmHS), pwmMax, pwmHS);
@@ -179,7 +184,7 @@ public:
         // todo beyond pwmMaxLs < (pwmMax - pwmHS), can we reduce the worst-case error assumption to boost eff?
         // or just replace  with pwmMaxLs < (pwmMax - pwmHS) * pwmMaxLsWCEF and remove scaling pwmMaxLs by pwmMaxLsWCEF
 
-        return (uint16_t) (pwmMaxLs * margin);
+        return (uint16_t)(pwmMaxLs * margin);
     }
 
     void updateLowSideMaxDuty(float outInVoltageRatio_) {
@@ -191,6 +196,9 @@ public:
         pwmMaxLS = std::max(pwmMinLS, pwmMaxLS);
 
         if (pwmLS > pwmMaxLS) {
+            if (pwmLS - pwmMaxLS > (pwmMax / 10)) {
+                ESP_LOGW("pwm", "Set pwmLS %hu -> pwmMaxLS=%hu (VR=%.2f)", pwmLS, pwmMaxLS, outInVoltageRatio_);
+            }
             pwmLS = pwmMaxLS;
             update_pwm(pwmCh_EN, pwmHS + pwmLS); // instantly commit if limit decreases
         }
