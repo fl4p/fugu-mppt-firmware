@@ -54,6 +54,7 @@ class MpptSampler {
     struct {
         float power = 0;
         uint16_t dutyCycle = 0;
+        float voltage = 0;
     } maxPowerPoint;
 
     unsigned long nextUpdateTime = 0;
@@ -280,6 +281,7 @@ public:
                 // capture MPP during sweep
                 maxPowerPoint.power = power;
                 maxPowerPoint.dutyCycle = pwm.getBuckDutyCycle();
+                maxPowerPoint.voltage = Vin;
             }
             state = MpptState::Sweep;
         }
