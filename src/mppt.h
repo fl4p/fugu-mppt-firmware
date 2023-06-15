@@ -123,9 +123,10 @@ public:
         // TODO shutdown on too samples in a row > 5%
         auto ovTh = params.Vout_max * 1.08;
         if (dcdcPwr.last.s.chVout > ovTh && dcdcPwr.previous.s.chVout > ovTh) {
+            auto vout = std::max(dcdcPwr.last.s.chVout, dcdcPwr.previous.s.chVout);
             // output over-voltage
             ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu,dir=%.1hhi) > %.1fV + 8%%!",
-                     std::max(dcdcPwr.last.s.chVout, dcdcPwr.previous.s.chVout),
+                     vout,
                      dcdcPwr.ewm.s.chVout.avg.get(), dcdcPwr.ewm.s.chVout.std.get(), pwm.getBuckDutyCycle(),
                      pwmDirection,
                      params.Vout_max);
@@ -178,7 +179,12 @@ public:
         }
 
         // try to prevent voltage boost and disable low side for low currents
-        if (fminf(dcdcPwr.ewm.s.chIin.avg.get(), std::max(dcdcPwr.last.s.chIin, dcdcPwr.previous.s.chIin)) < 0.2f) {
+        if (fminf(dcdcPwr.ewm.s.chIin.avg.get(), std::max(dcdcPwr.last.s.chIin, dcdcPwr.previous.s.chIin)) < 0.1f) {
+            if (pwm.getBuckDutyCycleLS() > pwm.getDutyCycleLSMax() / 2 &&
+                pwm.getBuckDutyCycleLS() > (pwm.pwmMax / 10)) {
+                ESP_LOGW("MPPT", "Set low-side min duty (ewm(Iin)=%.2f, max(Iin,Iin[-1])=%.2f)",
+                         dcdcPwr.ewm.s.chIin.avg.get(), std::max(dcdcPwr.last.s.chIin, dcdcPwr.previous.s.chIin));
+            }
             pwm.lowSideMinDuty();
             pwm.enableBackflowMosfet(false);
         }
@@ -390,6 +396,7 @@ public:
         point.addField("ntc_temp", ntcTemp, 1);
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
         point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
+        point.addField("pwm_ls_max", pwm.getDutyCycleLSMax());
         point.setTime(WritePrecision::MS);
         telemetryAddPoint(point, 40);
 
