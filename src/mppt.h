@@ -132,7 +132,7 @@ public:
                      params.Vout_max);
             pwm.disable();
 
-            if (autoDetectVout_max && millis() - lastTimeProtectPassed > 4000) {
+            if (autoDetectVout_max && millis() - lastTimeProtectPassed > 20000) {
                 // if the OV condition persists for some seconds, auto detect Vout_max
                 params.Vout_max = NAN;
                 dcdcPwr.startCalibration();
@@ -279,7 +279,7 @@ public:
             if (dcdcPwr.last.s.chIin / params.Iin_max > 1.2)
                 pwmDirection = -16;
             state = MpptState::CC;
-        } else if(Vin < 10.5) {
+        } else if (Vin < 10.5) {
             // when reaching input under voltage,  increase input voltage
             pwmDirection = -1;
             state = MpptState::CV;
