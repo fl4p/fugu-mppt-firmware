@@ -1,3 +1,5 @@
+#include <driver/uart.h>
+
 void scan_i2c() {
     const char *TAG = "scan_i2c";
     byte error, address;
@@ -32,3 +34,16 @@ void scan_i2c() {
     delay(5000);
 }
 
+
+void UART_LOG(const char *fmt, ...) {
+    static char UART_LOG_buf[384];
+
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(UART_LOG_buf, 380, fmt, args);
+    va_end(args);
+    auto l = strlen(UART_LOG_buf);
+    UART_LOG_buf[l] = '\n';
+    UART_LOG_buf[++l] = '\0';
+    uart_write_bytes(0, UART_LOG_buf, l);
+}

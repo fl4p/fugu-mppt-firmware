@@ -30,7 +30,6 @@
 #define TempSensor 35       //SYSTEM PARAMETER - Temperature Sensor GPIO Pin
 
 
-//#if CONFIG_IDF_TARGET_ESP32S3
 ADC_ADS adc_ads;
 ADC_ESP32 adc_esp32;
 
@@ -38,15 +37,17 @@ ADC_ESP32 adc_esp32;
 DCDC_PowerSampler dcdcPwr{ThreeChannelUnion<ChannelAndFactor>{.s={
         .chVin = {3, (200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0},
         .chVout = {1, (47. / 2 + 1) / 1, 0},
-        .chIin = {2, -(1 / 0.066f) * (10 + 3.3) / 10. * (14.6f / 13.1f) * (12.1f / 13.f), //ACS712-30 sensitivity)
+        .chIin = {2,
+                  -(1 / 0.066f /*ACS712-30 sensitivity*/) * (10 + 3.3) / 10. * 1.03734586f, //
                   2.5 * 10. / (10 + 3.3) - 0.0117, // midpoint
         },
 }}};
 
-HalfBridgePwm pwm;
-MpptSampler mppt{dcdcPwr, pwm};
-
 LCD lcd;
+HalfBridgePwm pwm;
+MpptSampler mppt{dcdcPwr, pwm, lcd};
+
+
 
 
 bool disableWifi = false;
@@ -56,6 +57,7 @@ void uartInit(int port_num);
 
 void setup() {
     Serial.begin(115200);
+
 #if CONFIG_IDF_TARGET_ESP32S3
     // for unknown reason need to initialize uart0 for serial reading (see loop below)
     // Serial.available() works under Arduino IDE (for both ESP32,ESP32S3), but always returns 0 under platformio
@@ -74,7 +76,7 @@ void setup() {
         ESP_LOGE("main", "Failed to init LCD");
     }
 
-    lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION, 2000);
+    lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION "\n" __DATE__ " " __TIME__, 2000);
 
 #ifdef NO_WIFI
     disableWifi = true;
@@ -168,21 +170,21 @@ void loop() {
 
     if ((nowMs - lastTimeOut) >= 3000) {
         auto &ewm(dcdcPwr.ewm.s);
-        ESP_LOGI("main",
-                 "Vin=%4.1f Vout=%4.1f Iin=%5.2fA Pin=%3.0fW T=%.0f°C sps=%2u bps=%u, PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(state=%s) lag=%.1fms",
-                 dcdcPwr.last.s.chVin,
-                 dcdcPwr.last.s.chVout,
-                 dcdcPwr.last.s.chIin,
-                 ewm.chVin.avg.get() * ewm.chIin.avg.get(),
-        //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
-                 mppt.ntc.last(),
-                 (lastNSamples < dcdcPwr.numSamples[0] ? (dcdcPwr.numSamples[0] - lastNSamples) : 0) * 1000u /
-                 (uint32_t)(nowMs - lastTimeOut),
-                 (uint32_t)(bytesSent * 1000u / millis()),
-                 pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
-        //mppt.getPower()
-                 MpptState2String[(uint8_t) mppt.getState()].c_str(),
-                 maxLoopLag * 1e-3f
+        UART_LOG(
+                "Vi/o=%4.1f/%4.1f Iin=%4.1fA Pin=%3.0fW %.0f°C %2usps %ubps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s) lag=%.1fms",
+                dcdcPwr.last.s.chVin,
+                dcdcPwr.last.s.chVout,
+                dcdcPwr.last.s.chIin,
+                ewm.chVin.avg.get() * ewm.chIin.avg.get(),
+                //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
+                mppt.ntc.last(),
+                (lastNSamples < dcdcPwr.numSamples[0] ? (dcdcPwr.numSamples[0] - lastNSamples) : 0) * 1000u /
+                (uint32_t) (nowMs - lastTimeOut),
+                (uint32_t) (bytesSent * 1000u / millis()),
+                pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
+                //mppt.getPower()
+                MpptState2String[(uint8_t) mppt.getState()].c_str(),
+                maxLoopLag * 1e-3f
         );
         lastTimeOut = nowMs;
         lastNSamples = dcdcPwr.numSamples[0];
@@ -190,9 +192,9 @@ void loop() {
 
 
     lcd.updateValues(LcdValues{
-            .Vin = dcdcPwr.last.s.chVin,
-            .Vout = dcdcPwr.last.s.chVout,
-            .Iin = dcdcPwr.last.s.chIin,
+            .Vin = dcdcPwr.ewm.s.chVin.avg.get(),
+            .Vout = dcdcPwr.ewm.s.chVout.avg.get(),
+            .Iin = dcdcPwr.ewm.s.chIin.avg.get(),
             .Iout = dcdcPwr.getIoutSmooth(),
             .Temp = mppt.ntc.last(),
     });
@@ -250,6 +252,8 @@ void loop() {
             } else if (inp == "wifi off") {
                 WiFi.disconnect(true);
                 disableWifi = true;
+            } else if(inp =="scan-i2c") {
+                scan_i2c();
             } else {
                 ESP_LOGI("main", "unknown command");
             }
