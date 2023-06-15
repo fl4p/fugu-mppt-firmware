@@ -85,10 +85,10 @@ void setup() {
         connect_wifi_async();
 
     AsyncADC<float> *adc = nullptr;
-    int ewmaSpan = 0;
+    int ewmaSpan;
     if (adc_ads.init()) {
         adc = &adc_ads;
-        ewmaSpan = 5;
+        ewmaSpan = 8;
     } else if (adc_esp32.init()) {
         ESP_LOGW("main", "Failed to initialize external ADS1x15 ADC, using internal");
         adc = &adc_esp32;
