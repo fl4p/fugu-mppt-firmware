@@ -57,6 +57,7 @@ public:
             EWM<float>{1},
             EWM<float>{1},
             EWM<float>{1}};
+    ThreeChannelUnion<RunningMedian3<float>> med3 {{{},{},{}}};
 
 
     explicit DCDC_PowerSampler(const ThreeChannelUnion<ChannelAndFactor> &channels) :
@@ -99,7 +100,7 @@ public:
             }
             previous[cycleCh] = last[cycleCh];
             last[cycleCh] = v;
-            ewm[cycleCh].add(v);
+            ewm[cycleCh].add(med3[cycleCh].next(v));
             ++numSamples[cycleCh];
             cycleCh = (cycleCh + 1) % 3;
             _readNext();
