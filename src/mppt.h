@@ -7,6 +7,7 @@
 #include "fan.h"
 
 #include "battery.h"
+#include "lcd.h"
 
 struct MpptParams {
     float Vout_max = NAN; //14.6 * 2;
@@ -39,6 +40,7 @@ static const std::array<std::string, (size_t) MpptState::Max> MpptState2String{
 class MpptSampler {
     DCDC_PowerSampler &dcdcPwr;
     HalfBridgePwm &pwm;
+    LCD &lcd;
     MpptParams params;
 
     bool autoDetectVout_max = true;
@@ -70,8 +72,8 @@ public:
     TempSensorGPIO_NTC ntc;
     float Iout;
 
-    explicit MpptSampler(DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm)
-            : dcdcPwr(dcdcPwr), pwm(pwm) {
+    explicit MpptSampler(DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm, LCD &lcd)
+            : dcdcPwr(dcdcPwr), pwm(pwm), lcd(lcd) {
         pinMode((uint8_t) PinConfig::LED, OUTPUT);
         digitalWrite((uint8_t) PinConfig::LED, false);
 
@@ -134,6 +136,8 @@ public:
                 params.Vout_max = NAN;
                 dcdcPwr.startCalibration();
             }
+
+            lcd.displayMessageF("OV shutdown!\nVout=%.1fV max=%.1fV", 10000, vout, ovTh);
 
             return false;
         }
@@ -226,7 +230,7 @@ public:
         // mcu_temp.read();
         //float power = dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin;
 
-        fanUpdateTemp( ntcTemp, power);
+        fanUpdateTemp(ntcTemp, power);
 
         float powerLimit = params.P_max;
         if (ntcTemp > 75 or std::isnan(ntcTemp)) {
@@ -297,6 +301,8 @@ public:
                      MpptState2String[(uint8_t) state].c_str(),
                      pwm.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle
             );
+
+            lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
 
             _sweeping = false;
         }
