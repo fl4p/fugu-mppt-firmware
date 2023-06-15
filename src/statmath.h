@@ -66,12 +66,18 @@ inline T median_of_three(const T &a, const T &b, const T &c) {
 template<typename T>
 class RunningMedian3 {
     T s1{}, s2{};
+    T _last{};
 public:
     inline T next(const T &s) {
         T m = median_of_three<T, greaterThan<T>>(s, s1, s2);
         s2 = s1;
         s1 = s;
+        _last = m;
         return m;
+    }
+
+    inline T get() const {
+        return _last;
     }
 };
 

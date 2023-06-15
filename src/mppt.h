@@ -200,7 +200,9 @@ public:
             pwm.pwmPerturb(-2);
         }
 
-        float voltageRatio = fmaxf(dcdcPwr.last.s.chVout, dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.last.s.chVin;
+        //float voltageRatio = fmaxf(dcdcPwr.last.s.chVout, dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.last.s.chVin;
+        float voltageRatio =
+                fmaxf(dcdcPwr.med3.s.chVout.get(), dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.med3.s.chVin.get();
         //float voltageRatio = dcdcPwr.ewm.s.chVout.avg.get() / dcdcPwr.ewm.s.chVin.avg.get();
         pwm.updateLowSideMaxDuty(voltageRatio);
 
