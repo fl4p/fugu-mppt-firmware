@@ -119,12 +119,17 @@ public:
 
                 calibVout = ewm.s.chVout.avg.get();
                 ESP_LOGI("dcdc", "V_out avg=%.4f std=%.6f", calibVout, ewm.s.chVout.std.get());
+                ESP_LOGI("dcdc", "V_in avg=%.4f std=%.6f", ewm.s.chVin.avg.get(), ewm.s.chVin.std.get());
+
+                auto vOut_std = std::fabs(ewm.s.chVout.std.get() * ewm.s.chVout.avg.get());
+
+                // TODO peak2peak
 
                 if (std::fabs(calibZeroCurrent) > 0.5f) {
                     ESP_LOGE("dcdc", "Zero Current too high %.2f", calibZeroCurrent);
                     startCalibration();
-                } else if (std::fabs(ewm.s.chVout.std.get()) > 10e-3f) {
-                    ESP_LOGE("dcdc", "Zero Current Vout std too high %.2f", ewm.s.chVout.std.get());
+                } else if (vOut_std > 0.05f) {
+                    ESP_LOGE("dcdc", "Zero Current Vout std too high %.2f V", vOut_std);
                     startCalibration();
                 } else {
                     calibrating_ = false;
