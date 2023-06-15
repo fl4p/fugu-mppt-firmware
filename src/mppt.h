@@ -267,6 +267,10 @@ public:
             if (dcdcPwr.last.s.chIin / params.Iin_max > 1.2)
                 pwmDirection = -16;
             state = MpptState::CC;
+        } else if(Vin < 10.5) {
+            // when reaching input under voltage,  increase input voltage
+            pwmDirection = -1;
+            state = MpptState::CV;
         } else if (power > powerLimit) {
             pwmDirection = -1;
             state = MpptState::CP;
