@@ -48,8 +48,6 @@ HalfBridgePwm pwm;
 MpptSampler mppt{dcdcPwr, pwm, lcd};
 
 
-
-
 bool disableWifi = false;
 
 
@@ -81,8 +79,11 @@ void setup() {
 #ifdef NO_WIFI
     disableWifi = true;
 #endif
-    if (!disableWifi)
+    if (!disableWifi) {
         connect_wifi_async();
+        bool res = wait_for_wifi();
+        lcd.displayMessage(res ? ("WiFi connected.\n"+ std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
+    }
 
     AsyncADC<float> *adc = nullptr;
     int ewmaSpan;
@@ -252,7 +253,7 @@ void loop() {
             } else if (inp == "wifi off") {
                 WiFi.disconnect(true);
                 disableWifi = true;
-            } else if(inp =="scan-i2c") {
+            } else if (inp == "scan-i2c") {
                 scan_i2c();
             } else {
                 ESP_LOGI("main", "unknown command");
