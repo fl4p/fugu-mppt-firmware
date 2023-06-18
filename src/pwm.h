@@ -155,7 +155,7 @@ public:
         // compute the worst case error (Vout too low, Vin too high)
         constexpr float voltageRatioWCEF = (1.f - voltageMaxErr) / (1.f + voltageMaxErr); // < 1.0
 
-        voltageRatio = std::max<float>(voltageRatio, 0.01f); // the greater, the safer
+        voltageRatio = constrain(voltageRatio, 1e-2f, 1.f - 1e-2f); // the greater, the safer
 
         const float pwmMaxLsWCEF = (1 / (voltageRatio * voltageRatioWCEF) - 1) / (1 / voltageRatio - 1); // > 1
 
@@ -188,17 +188,21 @@ public:
         return (uint16_t)(pwmMaxLs * margin);
     }
 
-    void updateLowSideMaxDuty(float outInVoltageRatio_) {
+    void updateLowSideMaxDuty(float vout, float vin) {
         // voltageRatio = Vout/Vin
 
-        outInVoltageRatio = outInVoltageRatio_;
+        if(vin > vout && vin > 0.1f) {
+            outInVoltageRatio = vout / vin;
+        } else {
+            outInVoltageRatio = 1; // the safest (minimize LS duty cycle)
+        }
 
         pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
         pwmMaxLS = std::max(pwmMinLS, pwmMaxLS);
 
         if (pwmLS > pwmMaxLS) {
             if (pwmLS - pwmMaxLS > (pwmMax / 10)) {
-                ESP_LOGW("pwm", "Set pwmLS %hu -> pwmMaxLS=%hu (VR=%.2f)", pwmLS, pwmMaxLS, outInVoltageRatio_);
+                ESP_LOGW("pwm", "Set pwmLS %hu -> pwmMaxLS=%hu (VR=%.2f)", pwmLS, pwmMaxLS, outInVoltageRatio);
             }
             pwmLS = pwmMaxLS;
             update_pwm(pwmCh_EN, pwmHS + pwmLS); // instantly commit if limit decreases

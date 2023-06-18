@@ -121,11 +121,11 @@ public:
         }
 
         // TODO shutdown on too samples in a row > 5%
-        auto ovTh = params.Vout_max * 1.08;
-        if (dcdcPwr.last.s.chVout > ovTh && dcdcPwr.previous.s.chVout > ovTh) {
+        auto ovTh = params.Vout_max * 1.04;
+        if (dcdcPwr.med3.s.chVout.get() > ovTh) {
             auto vout = std::max(dcdcPwr.last.s.chVout, dcdcPwr.previous.s.chVout);
             // output over-voltage
-            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu,dir=%.1hhi) > %.1fV + 8%%!",
+            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu,dir=%.1hhi) > %.1fV + 4%%!",
                      vout,
                      dcdcPwr.ewm.s.chVout.avg.get(), dcdcPwr.ewm.s.chVout.std.get(), pwm.getBuckDutyCycle(),
                      pwmDirection,
@@ -201,10 +201,12 @@ public:
         }
 
         //float voltageRatio = fmaxf(dcdcPwr.last.s.chVout, dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.last.s.chVin;
-        float voltageRatio =
-                fmaxf(dcdcPwr.med3.s.chVout.get(), dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.med3.s.chVin.get();
         //float voltageRatio = dcdcPwr.ewm.s.chVout.avg.get() / dcdcPwr.ewm.s.chVin.avg.get();
-        pwm.updateLowSideMaxDuty(voltageRatio);
+
+        float vOut = fmaxf(dcdcPwr.med3.s.chVout.get(), dcdcPwr.ewm.s.chVout.avg.get());
+        float vIn = fminf(dcdcPwr.med3.s.chVin.get(), dcdcPwr.ewm.s.chVin.avg.get());
+
+        pwm.updateLowSideMaxDuty(vOut, vIn);
 
         lastTimeProtectPassed = millis();
 
