@@ -136,9 +136,7 @@ public:
                     calibrating_ = false;
                 }
             }
-
-
-
+            
             return true;
         }
         return false;

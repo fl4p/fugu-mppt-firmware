@@ -82,7 +82,8 @@ void setup() {
     if (!disableWifi) {
         connect_wifi_async();
         bool res = wait_for_wifi();
-        lcd.displayMessage(res ? ("WiFi connected.\n"+ std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
+        lcd.displayMessage(
+                res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
     }
 
     AsyncADC<float> *adc = nullptr;
@@ -145,34 +146,27 @@ void loop() {
 
     dcdcPwr.update();
 
+    auto nSamples = dcdcPwr.numSamples.s.chIin;
+
     if (dcdcPwr.isCalibrating()) {
         pwm.disable();
-    }
-
-    if (nowMs > protectCoolDownUntil) {
+    } else {
         bool mppt_ok = mppt.protect();
         if (!mppt_ok) {
             protectCoolDownUntil = nowMs + 4000;
-            mppt.startSweep();
+            mppt.startSweep(); // TODO delay
+        } else {
+            if (!manualPwm && (nSamples - lastMpptUpdateNumSamples) > 0) {
+                mppt.update();
+                lastMpptUpdateNumSamples = nSamples;
+            }
         }
-
-        auto nSamples = dcdcPwr.numSamples.s.chIin;
-        if (
-            //(nowMs - lastTimeMpptUpdate) > 40 &&
-                (nSamples - lastMpptUpdateNumSamples) > 0) {
-            mppt.update(!mppt_ok || manualPwm);
-            //lastTimeMpptUpdate = nowMs;
-            lastMpptUpdateNumSamples = nSamples;
-        }
-    } else {
-        mppt.update(true);
     }
-
 
     if ((nowMs - lastTimeOut) >= 3000) {
         auto &ewm(dcdcPwr.ewm.s);
         UART_LOG(
-                "Vi/o=%4.1f/%4.1f Iin=%4.1fA Pin=%3.0fW %.0f°C %2usps %ubps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s) lag=%.1fms",
+                "Vi/o=%4.1f/%4.1f Iin=%4.1fA Pin=%3.0fW %.0f°C %2usps %ubps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s) lag=%.1fms N=%u",
                 dcdcPwr.last.s.chVin,
                 dcdcPwr.last.s.chVout,
                 dcdcPwr.last.s.chIin,
@@ -185,7 +179,8 @@ void loop() {
                 pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
                 //mppt.getPower()
                 MpptState2String[(uint8_t) mppt.getState()].c_str(),
-                maxLoopLag * 1e-3f
+                maxLoopLag * 1e-3f,
+                nSamples
         );
         lastTimeOut = nowMs;
         lastNSamples = dcdcPwr.numSamples[0];

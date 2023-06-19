@@ -15,9 +15,10 @@ struct MpptParams {
     float Iin_max = 30;
     float Iout_max = 25; // coil & fuse limited
     float P_max = 800;
+    float Vin_min = 10.5f;
 };
 
-enum class MpptState : uint8_t {
+enum class MpptControlMode : uint8_t {
     None = 0,
     CV,
     CC,
@@ -27,7 +28,8 @@ enum class MpptState : uint8_t {
     Max,
 };
 
-static const std::array<std::string, (size_t) MpptState::Max> MpptState2String{
+
+static const std::array<std::string, (size_t) MpptControlMode::Max> MpptState2String{
         "N/A",
         "CV",
         "CC",
@@ -46,11 +48,12 @@ class MpptSampler {
     bool autoDetectVout_max = true;
 
     unsigned long lastOcFastRecovery = 0;
-    float lastPower = 0;
+    //float lastPower = 0;
     //float lastVoltage = 0;
-    int8_t pwmDirection = 0;
+    //int8_t pwmDirection = 0;
 
-    MpptState state;
+    MpptControlMode state;
+    bool _limiting = false;
 
     bool _sweeping = false;
     struct {
@@ -59,9 +62,10 @@ class MpptSampler {
         float voltage = 0;
     } maxPowerPoint;
 
-    unsigned long nextUpdateTime = 0;
+    //unsigned long nextUpdateTime = 0;
     unsigned long lastTimeProtectPassed = 0;
 
+    unsigned long _lastPointWrite = 0;
     //unsigned long lastTimeRandomPerturb = 0;
 
 
@@ -80,9 +84,9 @@ public:
         fanInit();
     }
 
-    MpptState getState() const { return state; }
+    MpptControlMode getState() const { return state; }
 
-    float getPower() const { return lastPower; }
+    //float getPower() const { return lastPower; }
 
     bool protect() {
         if (dcdcPwr.isCalibrating()) {
@@ -125,10 +129,9 @@ public:
         if (dcdcPwr.med3.s.chVout.get() > ovTh) {
             auto vout = std::max(dcdcPwr.last.s.chVout, dcdcPwr.previous.s.chVout);
             // output over-voltage
-            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu,dir=%.1hhi) > %.1fV + 4%%!",
+            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu) > %.1fV + 4%%!",
                      vout,
                      dcdcPwr.ewm.s.chVout.avg.get(), dcdcPwr.ewm.s.chVout.std.get(), pwm.getBuckDutyCycle(),
-                     pwmDirection,
                      params.Vout_max);
             pwm.disable();
 
@@ -214,8 +217,84 @@ public:
     }
 
 
+
+
+    bool isSweeping() const { return _sweeping; }
+
+    struct PD {
+        const float P, D;
+        const bool normalize;
+        float _prevE = NAN;
+
+        PD(float P, float D, bool normalize) : P(P), D(D), normalize(normalize) {}
+
+        void reset() {
+            _prevE = NAN;
+        }
+
+        float update(float actual, float target) {
+            if (normalize) {
+                actual /= target;
+                target = 1;
+            }
+            auto e = target - actual;
+            auto de = e - _prevE;
+            _prevE = e;
+            if (std::isnan(de)) de = 0; // first D component is 0
+            return P * e + D * de;
+        }
+    };
+
+    PD VinController{-100, -400, true}; // Vin under-voltage
+    PD VoutController{100, 400, true}; // Vout over-voltage
+    PD IinController{100, 400, true}; // Iin over-current
+    PD IoutCurrentController{100, 400, true}; // Iout over-current
+    PD powerController{100, 400, true}; // over-power
+
+    struct Tracker {
+        const float minPowerStep = 1.5f;
+        const float frequency = 20;
+
+        bool _direction = false;
+        float _lastPower = NAN;
+        unsigned long _time = 0;
+
+        float dP = NAN;
+
+        void resetTracker(float power, bool direction) {
+            _lastPower = power;
+            _direction = direction;
+            _time = millis();
+        }
+
+        bool update(float power) {
+            dP = power - _lastPower;
+
+            auto now = millis();
+            if ((now - _time) > (1000.f / frequency)) {
+                _time = now;
+                if (std::abs(dP) >= minPowerStep) {
+                    _lastPower = power;
+                    if (dP < 0)
+                        _direction = !_direction;
+                }
+            }
+
+            return _direction;
+        }
+    };
+
+    Tracker tracker{};
+
     void startSweep() {
         pwm.disable();
+        _limiting = false;
+
+        VinController.reset();
+        VoutController.reset();
+        IinController.reset();
+        IoutCurrentController.reset();
+
         dcdcPwr.startCalibration();
         if (!_sweeping)
             ESP_LOGI("mppt", "Start sweep");
@@ -223,23 +302,28 @@ public:
         maxPowerPoint = {};
     }
 
-    bool isSweeping() const { return _sweeping; }
 
+    void _stopSweep(MpptControlMode controlMode) {
+        ESP_LOGI("mppt", "Stop sweep at controlMode=%s PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
+                 MpptState2String[(uint8_t) controlMode].c_str(),
+                 pwm.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
+        );
+        lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
+        _sweeping = false;
+    }
 
-    void update(bool dryRun) {
+    void update() {
         auto nowMs = millis();
 
-        if (nowMs < nextUpdateTime)
-            return;
+        //if (nowMs < nextUpdateTime)
+        //    return;
 
-        //float voltage = pwm.getBuckDutyCycle(); // #dcdcPwr.ewm.s.chVin.avg.get(); // todo rename pwm
         auto Iin(dcdcPwr.ewm.s.chIin.avg.get());
         auto Vin(dcdcPwr.ewm.s.chVin.avg.get());
         float power = dcdcPwr.ewm.s.chIin.avg.get() * dcdcPwr.ewm.s.chVin.avg.get();
-        float ntcTemp = ntc.read();
-        // mcu_temp.read();
-        //float power = dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin;
+        Iout = dcdcPwr.getIoutSmooth();
 
+        float ntcTemp = ntc.read();
         fanUpdateTemp(ntcTemp, power);
 
         float powerLimit = params.P_max;
@@ -254,107 +338,106 @@ public:
         Point point("mppt");
         point.addTag("device", "fugu_" + String(getChipId()));
         point.addField("I", Iin, 2);
-        //point.addField("I_raw", dcdcPwr.last.s.chIin, 2);
-
         point.addField("U", Vin, 2);
-        //point.addField("U_in_raw", dcdcPwr.last.s.chVin, 2);
-
         point.addField("U_out", dcdcPwr.ewm.s.chVout.avg.get(), 2);
-        //point.addField("U_out_raw", dcdcPwr.last.s.chVout, 2);
-
         point.addField("P", power, 2);
-        point.addField("P_prev", lastPower, 2);
-        //point.addField("P_raw", dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin, 2);
+        //point.addField("P_prev", lastPower, 2);
 
-        MpptState state = MpptState::MPPT;
 
-        float conversionEff = 0.97f;
-        Iout = dcdcPwr.getIoutSmooth();
+        float uCV_in = VinController.update(dcdcPwr.last.s.chVin, params.Vin_min);
+        float uCV_out = VoutController.update(dcdcPwr.last.s.chVout, params.Vout_max);
+        float uCC_in = IinController.update(dcdcPwr.last.s.chIin, params.Iin_max);
+        float uCC_out = IoutCurrentController.update(Iout, params.Iout_max);
+        float uCP = powerController.update(power, powerLimit);
 
-        if (dcdcPwr.last.s.chVout >= params.Vout_max) {
-            pwmDirection = -8;
-            if (dcdcPwr.last.s.chVout >= params.Vout_max * 1.01)
-                pwmDirection = -16;
-            state = MpptState::CV;
-        } else if (dcdcPwr.last.s.chIin > params.Iin_max or Iout > params.Iout_max) {
-            pwmDirection = -1;
-            if (dcdcPwr.last.s.chIin / params.Iin_max > 1.2)
-                pwmDirection = -16;
-            state = MpptState::CC;
-        } else if (Vin < 10.5) {
-            // when reaching input under voltage,  increase input voltage
-            pwmDirection = -1;
-            state = MpptState::CV;
-        } else if (power > powerLimit) {
-            pwmDirection = -1;
-            state = MpptState::CP;
-            /*} else if (power < 1.f) {
-                if (!dryRun)
-                    startSweep();
-                pwmDirection = 1;
-                state = MpptState::Sweep; */
-        } else if (_sweeping) {
-            pwmDirection = 1;
-            if (power > maxPowerPoint.power) {
-                // capture MPP during sweep
-                maxPowerPoint.power = power;
-                maxPowerPoint.dutyCycle = pwm.getBuckDutyCycle();
-                maxPowerPoint.voltage = Vin;
-            }
-            state = MpptState::Sweep;
-        }
+        typedef std::pair<MpptControlMode, float> CVP;
 
-        this->state = state;
+        std::array<CVP, 5> controlValues{
+                CVP{MpptControlMode::CV, uCV_in},
+                CVP{MpptControlMode::CV, uCV_out},
+                CVP{MpptControlMode::CC, uCC_in},
+                CVP{MpptControlMode::CC, uCC_out},
+                CVP{MpptControlMode::CP, uCP},
+        };
 
-        if (!dryRun && _sweeping && (state != MpptState::Sweep || pwm.getBuckDutyCycle() == pwm.pwmMaxHS)) {
-            ESP_LOGI("mppt", "Stop sweep at state=%s PWM=%hu, MPP=(%.1fW,PWM=%hu)",
-                     MpptState2String[(uint8_t) state].c_str(),
-                     pwm.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle
-            );
+        auto limitingControl = *std::min_element(controlValues.begin(), controlValues.end(),
+                                                 [](const CVP &a, const CVP &b) { return a.second < b.second; });
 
-            lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
+        MpptControlMode controlMode = MpptControlMode::None;
+        float controlValue = 0;
 
-            _sweeping = false;
-        }
-
-        if (state != MpptState::MPPT) {
-            lastPower = power;
+        if (limitingControl.second <= 0) {
+            // limit condition
+            controlMode = limitingControl.first;
+            controlValue = limitingControl.second;
+            _limiting = true;
         } else {
-            auto dP = power - lastPower;
-            point.addField("dP", dP, 2);
+            // no limit condition
+            if(_limiting) {
+                // recover from limit condition
+                _limiting = false;
+                controlMode = MpptControlMode::MPPT;
+                controlValue = limitingControl.second;
+            }
+        }
 
-            if (std::abs(dP) < 1.5f) {
-                // insignificant power change / noise, do nothing
+        if (pwm.getBuckDutyCycle() == pwm.pwmMaxHS) {
+            controlMode = MpptControlMode::CV;
+            controlValue = -1;
+        } else if (pwm.getBuckDutyCycle() == pwm.pwmMinHS && !_sweeping) {
+            controlMode = MpptControlMode::CV;
+            controlValue = 1;
+        }
+
+        assert((controlMode == MpptControlMode::None) == (controlValue == 0));
+
+
+        if (_sweeping) {
+            if (controlMode == MpptControlMode::None) {
+                controlMode = MpptControlMode::Sweep;
+                controlValue = 1;
+
+                // capture MPP during sweep
+                if (power > maxPowerPoint.power) {
+                    maxPowerPoint.power = power;
+                    maxPowerPoint.dutyCycle = pwm.getBuckDutyCycle();
+                    maxPowerPoint.voltage = Vin;
+                }
+            } else {
+                _stopSweep(controlMode);
+            }
+        }
+
+        if (controlMode == MpptControlMode::None) {
+            controlMode = MpptControlMode::MPPT;
+            controlValue = tracker.update(power) ? 1 : -1;
+
+            auto dP = tracker.dP;
+            point.addField("dP", dP, 2);
+            if (std::abs(dP) < tracker.minPowerStep) {
                 point.addField("dP_thres", 0.0f, 2);
             } else {
                 point.addField("dP_thres", dP, 2);
-                if (dP >= 0) {
-                    // power is increasing, we are on the right track
-                } else {
-                    pwmDirection *= -1;
-                }
-                lastPower = power;
             }
+        } else {
+            tracker.resetTracker(power, controlValue > 0);
         }
 
-        if (pwmDirection > 2)
-            pwmDirection = 2;
+        assert(controlValue != 0 && controlMode != MpptControlMode::None);
 
-        if (!dryRun && pwmDirection == 0)
-            pwmDirection = 1;
+        controlValue = constrain(controlValue, -(float)pwm.getBuckDutyCycle(), 2.0f);
 
-        /*if (false && state == MpptState::MPPT && nowMs - lastTimeRandomPerturb > 60000 && power > 4 &&
-            (power / powerLimit) < .9f) {
-            pwmDirection = -25; //pwmDirection > 0 ? 20 : -20;
-            ESP_LOGI("mppt", "Random perturb %hhi", pwmDirection);
-            lastTimeRandomPerturb = nowMs;
-        }
-         */
+        this->state = controlMode;
+
+
+        // TODO speedscal?
+        /*
 
         float speedScale = 1.0f;
 
         if (!_sweeping)
             speedScale *= 0.25;
+
 
         float vOut_pred =
                 dcdcPwr.last.s.chVout + std::max<float>(0.0f, dcdcPwr.last.s.chVout - dcdcPwr.ewm.s.chVout.avg.get());
@@ -364,48 +447,39 @@ public:
                 speedScale *= 0.5;
             }
         }
-        point.addField("U_out_pred", vOut_pred, 2);
+
+        point.addField("U_out_pred", vOut_pred, 2); */
 
         // slow down on low power (and high output impedance?), to reduce ripple
-        if (power < 0.8) speedScale *= (1 / 4.0f);
+        // if (power < 0.8) speedScale *= (1 / 4.0f);
 
-        point.addField("speed_scale", speedScale, 2);
+        // point.addField("speed_scale", speedScale, 2);
+
+        pwm.pwmPerturbFractional(controlValue);
+
+        point.addField("pwm_dir_f", controlValue, 2);
+        // point.addField("pwm_dir", pwmDirection);
+
+        pwm.enableBackflowMosfet((Iin > 0.2f));
 
 
-        if (!dryRun) {
-            pwm.pwmPerturb(pwmDirection);
-
-            //point.addField("pwm_dir_f", pwmDirectionScaled, 2);
-            point.addField("pwm_dir", pwmDirection);
-
-            // "bounce" bottom
-            if (pwmDirection <= 0 && pwm.getBuckDutyCycle() <= pwm.pwmMinLS + 1) {
-                pwmDirection = 1;
-            }
-
-            // bounce top
-            if (pwmDirection >= 0 && pwm.getBuckDutyCycle() == pwm.pwmMaxHS) {
-                pwmDirection = -1;
-            }
-
-            pwm.enableBackflowMosfet((Iin > 0.2f));
-        }
-
-        bool ledState = (!dryRun && Iin > 0.2f && state == MpptState::MPPT && pwmDirection > 0);
+        bool ledState = (Iin > 0.2f && controlMode == MpptControlMode::MPPT && controlValue > 0);
         digitalWrite((uint8_t) PinConfig::LED, ledState);
 
 
-        point.addField("mppt_state", int(state));
+        point.addField("mppt_state", int(controlMode));
         // point.addField("mcu_temp", mcu_temp.last(), 1);
         point.addField("ntc_temp", ntcTemp, 1);
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
         point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
         point.addField("pwm_ls_max", pwm.getDutyCycleLSMax());
         point.setTime(WritePrecision::MS);
-        telemetryAddPoint(point, 40);
 
+        if(nowMs - _lastPointWrite > 40) {
+            telemetryAddPoint(point, 40);
+            _lastPointWrite = nowMs;
+        }
 
-        nextUpdateTime = nowMs + (unsigned long) (20.f / speedScale);
+        // nextUpdateTime = nowMs + (unsigned long) (20.f / speedScale);
     }
-
 };

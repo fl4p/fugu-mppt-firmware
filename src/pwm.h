@@ -95,11 +95,11 @@ public:
     float directionFloatBuffer = 0.0f;
 
     void pwmPerturbFractional(float directionFloat) {
-        assert(std::abs(directionFloat) < 128);
+        assert(std::abs(directionFloat) < pwmMax);
 
         directionFloat += directionFloatBuffer;
         directionFloatBuffer = 0;
-        auto directionInt = (int8_t)(directionFloat);
+        auto directionInt = (int16_t)(directionFloat);
         if (directionInt != 0)
             pwmPerturb(directionInt);
         directionFloatBuffer += directionFloat - (float) directionInt;
