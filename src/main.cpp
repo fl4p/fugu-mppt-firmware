@@ -227,7 +227,8 @@ void loop() {
         ESP_LOGI("main", "received serial command: %s", inp.c_str());
         inp.trim();
         if (inp.length() > 0) {
-            if ((inp[0] == '+' or inp[0] == '-') && !dcdcPwr.isCalibrating()) {
+            if ((inp[0] == '+' or inp[0] == '-') && !dcdcPwr.isCalibrating() && inp.length() < 6 && inp.toInt() != 0 &&
+                std::abs(inp.toInt()) < pwm.pwmMax) {
                 int pwmStep = inp.toInt();
                 ESP_LOGI("main", "Manual PWM step %i", pwmStep);
                 manualPwm = true;
@@ -240,7 +241,8 @@ void loop() {
             } else if (inp == "mppt" && manualPwm) {
                 ESP_LOGI("main", "MPPT re-enabled");
                 manualPwm = false;
-            } else if (inp.startsWith("dc ") && !dcdcPwr.isCalibrating()) {
+            } else if (inp.startsWith("dc ") && !dcdcPwr.isCalibrating() && inp.length() <= 8
+            && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmMax) {
                 manualPwm = true;
                 pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
             } else if (inp.startsWith("fan ")) {
