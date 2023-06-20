@@ -127,15 +127,18 @@ public:
         }
 
         // TODO shutdown on too samples in a row > 5%
-        auto ovTh = params.Vout_max * 1.04;
-        if (dcdcPwr.med3.s.chVout.get() > ovTh) {
+        auto ovTh = params.Vout_max * 1.08;
+        //if (dcdcPwr.med3.s.chVout.get() > ovTh) {
+        if (dcdcPwr.last.s.chVout > ovTh && dcdcPwr.previous.s.chVout > ovTh) {
+            pwm.disable();
+
             auto vout = std::max(dcdcPwr.last.s.chVout, dcdcPwr.previous.s.chVout);
             // output over-voltage
-            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu) > %.1fV + 4%%!",
+            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu) > %.1fV + 8%%!",
                      vout,
                      dcdcPwr.ewm.s.chVout.avg.get(), dcdcPwr.ewm.s.chVout.std.get(), pwm.getBuckDutyCycle(),
                      params.Vout_max);
-            pwm.disable();
+
 
             if (autoDetectVout_max && millis() - lastTimeProtectPassed > 20000) {
                 // if the OV condition persists for some seconds, auto detect Vout_max
