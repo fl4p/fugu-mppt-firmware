@@ -295,9 +295,10 @@ public:
         IinController.reset();
         IoutCurrentController.reset();
 
+        ESP_LOGI("mppt", "Start sweep");
+
         dcdcPwr.startCalibration();
-        if (!_sweeping)
-            ESP_LOGI("mppt", "Start sweep");
+        //if (!_sweeping)
         _sweeping = true;
         maxPowerPoint = {};
     }
@@ -333,6 +334,12 @@ public:
             powerLimit = 200;
         } else if (ntcTemp > 90) {
             powerLimit = 20;
+        }
+
+        if (!_sweeping && power < 10 && (nowMs - dcdcPwr.getTimeLastCalibration()) > (15 * 60000)) {
+            ESP_LOGI("mppt", "periodic zero-current calibration");
+            startSweep();
+            return;
         }
 
         Point point("mppt");

@@ -38,6 +38,7 @@ class DCDC_PowerSampler {
     uint8_t cycleCh = 0;
 
     bool calibrating_ = false;
+    unsigned long timeLastCalibration = 0;
     float calibZeroCurrent = 0;
     float calibVout = 0;
 
@@ -57,7 +58,7 @@ public:
             EWM<float>{1},
             EWM<float>{1},
             EWM<float>{1}};
-    ThreeChannelUnion<RunningMedian3<float>> med3 {{{},{},{}}};
+    ThreeChannelUnion<RunningMedian3<float>> med3{{{}, {}, {}}};
 
 
     explicit DCDC_PowerSampler(const ThreeChannelUnion<ChannelAndFactor> &channels) :
@@ -75,13 +76,14 @@ public:
     void begin(AsyncADC<float> *adc_, uint16_t ewmaSpan) {
         adc = adc_;
         auto f = &EWM<float>::updateSpan;
-        for(auto &o : ewm.arr)
+        for (auto &o: ewm.arr)
             o.updateSpan(ewmaSpan);
         ewmSpan = ewmaSpan;
         _readNext();
     }
 
     void startCalibration() {
+        ESP_LOGI("mppt", "Start calibration");
         // TODO use mean average, not EWM!
         // - reset mean here
         // consider: peak2peak values, emipiral uncertainty (higher stddev->need more samples)
@@ -109,12 +111,11 @@ public:
                 onDataChange(*this, cycleCh);
             }
 
-            if(std::max(last.s.chVin, last.s.chVout) < 10.f) {
-                if(!calibrating_)
+            if (std::max(last.s.chVin, last.s.chVout) < 10.f) {
+                if (!calibrating_)
                     ESP_LOGW("dcdc", "Supply under-voltage!");
                 startCalibration();
-            }
-            else if (calibrating_ && numSamples[cycleCh] > ewmSpan * 2) {
+            } else if (calibrating_ && numSamples[cycleCh] > ewmSpan * 2) {
                 calibZeroCurrent = ewm.s.chIin.avg.get();
                 ESP_LOGI("dcdc", "Zero Current Calibration avg=%.4f std=%.6f", calibZeroCurrent, ewm.s.chIin.std.get());
 
@@ -134,9 +135,10 @@ public:
                     startCalibration();
                 } else {
                     calibrating_ = false;
+                    timeLastCalibration = millis();
                 }
             }
-            
+
             return true;
         }
         return false;
@@ -149,4 +151,6 @@ public:
     float getBatteryIdleVoltage() const {
         return calibVout;
     }
+
+    unsigned getTimeLastCalibration() const { return timeLastCalibration; }
 };
