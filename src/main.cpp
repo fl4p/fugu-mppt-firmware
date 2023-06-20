@@ -173,7 +173,7 @@ void loop() {
     if ((nowMs - lastTimeOut) >= 3000) {
         auto &ewm(dcdcPwr.ewm.s);
         UART_LOG(
-                "Vi/o=%4.1f/%4.1f Iin=%4.1fA Pin=%3.0fW %.0f°C %2usps %ubps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s) lag=%.1fms N=%u",
+                "Vi/o=%4.1f/%4.1f Iin=%4.1fA Pin=%4.1fW %.0f°C %2usps %ubps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s,%i) lag=%.1fms N=%u",
                 dcdcPwr.last.s.chVin,
                 dcdcPwr.last.s.chVout,
                 dcdcPwr.last.s.chIin,
@@ -185,7 +185,8 @@ void loop() {
                 (uint32_t) (bytesSent * 1000u / millis()),
                 pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
                 //mppt.getPower()
-                MpptState2String[(uint8_t) mppt.getState()].c_str(),
+                manualPwm ? "MANU" : MpptState2String[(uint8_t) mppt.getState()].c_str(),
+                (int) charging,
                 maxLoopLag * 1e-3f,
                 nSamples
         );
