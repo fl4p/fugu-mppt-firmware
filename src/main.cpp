@@ -141,6 +141,8 @@ bool manualPwm = false;
 #include "esp_log.h"
 
 
+bool charging = false;
+
 void loop() {
     auto nowMs = millis();
 
@@ -154,9 +156,14 @@ void loop() {
         bool mppt_ok = mppt.protect();
         if (!mppt_ok) {
             protectCoolDownUntil = nowMs + 4000;
-            mppt.startSweep(); // TODO delay
+            charging = false;
         } else {
-            if (!manualPwm && (nSamples - lastMpptUpdateNumSamples) > 0) {
+            if (!charging && mppt.startCondition()) {
+                mppt.startSweep();
+                charging = true;
+            }
+
+            if (charging && !manualPwm && (nSamples - lastMpptUpdateNumSamples) > 0) {
                 mppt.update();
                 lastMpptUpdateNumSamples = nSamples;
             }
