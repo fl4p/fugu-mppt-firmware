@@ -260,7 +260,7 @@ public:
     };
 
     PD VinController{-100, -400, true}; // Vin under-voltage
-    PD VoutController{100, 400, true}; // Vout over-voltage
+    PD VoutController{150, 600, true}; // Vout over-voltage
     PD IinController{100, 400, true}; // Iin over-current
     PD IoutCurrentController{100, 400, true}; // Iout over-current
     PD powerController{100, 400, true}; // over-power
