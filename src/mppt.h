@@ -491,7 +491,7 @@ public:
         point.addField("pwm_dir_f", controlValue, 2);
         // point.addField("pwm_dir", pwmDirection);
 
-        pwm.enableBackflowMosfet((Iin > 0.2f));
+        pwm.enableBackflowMosfet((Iin > 0.35f));
 
 
         bool ledState = (Iin > 0.2f && controlMode == MpptControlMode::MPPT && controlValue > 0);
