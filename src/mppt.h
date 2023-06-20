@@ -209,6 +209,11 @@ public:
             pwm.pwmPerturb(-2);
         }
 
+        if (ntc.read() > 95) {
+            ESP_LOGE("MPPT", "Temp %.1f°C > 95°C, shutdown", ntc.last());
+            return false;
+        }
+
         //float voltageRatio = fmaxf(dcdcPwr.last.s.chVout, dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.last.s.chVin;
         //float voltageRatio = dcdcPwr.ewm.s.chVout.avg.get() / dcdcPwr.ewm.s.chVin.avg.get();
 
