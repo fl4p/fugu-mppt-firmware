@@ -73,6 +73,10 @@ public:
         return true;
     }
 
+    bool disabled() {
+        return pwmHS == 0;
+    }
+
 
     void pwmPerturb(int16_t direction) {
 

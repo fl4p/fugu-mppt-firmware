@@ -62,6 +62,7 @@ class MpptSampler {
         float voltage = 0;
     } maxPowerPoint;
 
+
     //unsigned long nextUpdateTime = 0;
     unsigned long lastTimeProtectPassed = 0;
 
@@ -80,6 +81,7 @@ public:
             : dcdcPwr(dcdcPwr), pwm(pwm), lcd(lcd) {
         pinMode((uint8_t) PinConfig::LED, OUTPUT);
         digitalWrite((uint8_t) PinConfig::LED, false);
+
 
         fanInit();
     }
@@ -168,9 +170,10 @@ public:
             return false;
         }
 
-        if (dcdcPwr.ewm.s.chVout.avg.get() > dcdcPwr.ewm.s.chVin.avg.get()) {
-            ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown", dcdcPwr.ewm.s.chVout.avg.get(),
-                     dcdcPwr.ewm.s.chVin.avg.get());
+        if (dcdcPwr.ewm.s.chVout.avg.get() > dcdcPwr.ewm.s.chVin.avg.get() * 1.25f) {
+            if (!pwm.disabled())
+                ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown", dcdcPwr.ewm.s.chVout.avg.get(),
+                         dcdcPwr.ewm.s.chVin.avg.get());
             pwm.disable();
             return false;
         }
@@ -286,6 +289,7 @@ public:
 
     Tracker tracker{};
 
+
     void startSweep() {
         pwm.disable();
         _limiting = false;
@@ -315,6 +319,14 @@ public:
 
     void update() {
         auto nowMs = millis();
+
+        if (pwm.disabled() && !startCondition()) {
+            pwm.enableBackflowMosfet(false);
+            state = MpptControlMode::None;
+            return;
+        }
+
+
 
         //if (nowMs < nextUpdateTime)
         //    return;
@@ -380,7 +392,7 @@ public:
             _limiting = true;
         } else {
             // no limit condition
-            if(_limiting) {
+            if (_limiting) {
                 // recover from limit condition
                 _limiting = false;
                 controlMode = MpptControlMode::MPPT;
@@ -432,7 +444,7 @@ public:
 
         assert(controlValue != 0 && controlMode != MpptControlMode::None);
 
-        controlValue = constrain(controlValue, -(float)pwm.getBuckDutyCycle(), 2.0f);
+        controlValue = constrain(controlValue, -(float) pwm.getBuckDutyCycle(), 2.0f);
 
         this->state = controlMode;
 
@@ -482,7 +494,7 @@ public:
         point.addField("pwm_ls_max", pwm.getDutyCycleLSMax());
         point.setTime(WritePrecision::MS);
 
-        if(nowMs - _lastPointWrite > 40) {
+        if (nowMs - _lastPointWrite > 40) {
             telemetryAddPoint(point, 40);
             _lastPointWrite = nowMs;
         }
