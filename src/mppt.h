@@ -227,7 +227,10 @@ public:
         return true;
     }
 
-
+    bool startCondition() {
+        return dcdcPwr.ewm.s.chVin.avg.get() > dcdcPwr.ewm.s.chVout.avg.get() + 1
+               && ntc.read() < 70.0f;
+    }
 
 
     bool isSweeping() const { return _sweeping; }
@@ -284,7 +287,8 @@ public:
             auto now = millis();
             if ((now - _time) > (1000.f / frequency)) {
                 _time = now;
-                if (std::abs(dP) >= minPowerStep) {
+                auto absDp = std::abs(dP);
+                if (absDp >= minPowerStep or absDp / _lastPower > 0.015f) {
                     _lastPower = power;
                     if (dP < 0)
                         _direction = !_direction;
