@@ -36,6 +36,7 @@ public:
 
         //ads.setDataRate(RATE_ADS1115_860SPS); // this is for ADS1015 also! (130 sps). fake chips?
         // ads.setDataRate(RATE_ADS1015_3300SPS);
+        //ads.setDataRate(RATE_ADS1015_3300SPS);
         return true;
     }
 

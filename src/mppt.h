@@ -348,7 +348,7 @@ public:
         float power = dcdcPwr.ewm.s.chIin.avg.get() * dcdcPwr.ewm.s.chVin.avg.get();
         Iout = dcdcPwr.getIoutSmooth();
 
-        float ntcTemp = ntc.read();
+        float ntcTemp = ntc.last();
         fanUpdateTemp(ntcTemp, power);
 
         float powerLimit = params.P_max;
