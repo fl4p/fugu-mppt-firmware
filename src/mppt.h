@@ -13,7 +13,7 @@ struct MpptParams {
     float Vout_max = NAN; //14.6 * 2;
     float Vin_max = 80;
     float Iin_max = 30;
-    float Iout_max = 26; // coil & fuse limited
+    float Iout_max = 27; // coil & fuse limited
     float P_max = 800;
     float Vin_min = 10.5f;
 };
