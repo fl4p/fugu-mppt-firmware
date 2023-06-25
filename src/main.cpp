@@ -231,7 +231,7 @@ void loop() {
                 std::abs(inp.toInt()) < pwm.pwmMax) {
                 int pwmStep = inp.toInt();
                 ESP_LOGI("main", "Manual PWM step %i", pwmStep);
-                manualPwm = true;
+                //manualPwm = true;
                 pwm.pwmPerturb((int16_t) pwmStep);
             } else if (inp == "restart" or inp == "reset") {
                 pwm.disable();

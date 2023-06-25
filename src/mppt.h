@@ -8,6 +8,7 @@
 
 #include "battery.h"
 #include "lcd.h"
+#include "tracker.h"
 
 struct MpptParams {
     float Vout_max = NAN; //14.6 * 2;
@@ -130,14 +131,16 @@ public:
         auto ovTh = params.Vout_max * 1.08;
         //if (dcdcPwr.med3.s.chVout.get() > ovTh) {
         if (dcdcPwr.last.s.chVout > ovTh && dcdcPwr.previous.s.chVout > ovTh) {
+            bool wasDisabled = pwm.disabled();
             pwm.disable();
 
             auto vout = std::max(dcdcPwr.last.s.chVout, dcdcPwr.previous.s.chVout);
             // output over-voltage
-            ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu) > %.1fV + 8%%!",
-                     vout,
-                     dcdcPwr.ewm.s.chVout.avg.get(), dcdcPwr.ewm.s.chVout.std.get(), pwm.getBuckDutyCycle(),
-                     params.Vout_max);
+            if (!wasDisabled)
+                ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu) > %.1fV + 8%%!",
+                         vout,
+                         dcdcPwr.ewm.s.chVout.avg.get(), dcdcPwr.ewm.s.chVout.std.get(), pwm.getBuckDutyCycle(),
+                         params.Vout_max);
 
 
             if (autoDetectVout_max && millis() - lastTimeProtectPassed > 20000) {
@@ -259,48 +262,15 @@ public:
         }
     };
 
-    PD VinController{-100, -400, true}; // Vin under-voltage
+    PD VinController{-100, -200, true}; // Vin under-voltage
     PD VoutController{150, 600, true}; // Vout over-voltage
     PD IinController{100, 400, true}; // Iin over-current
     PD IoutCurrentController{100, 400, true}; // Iout over-current
     PD powerController{100, 400, true}; // over-power
 
-    struct Tracker {
-        const float minPowerStep = 1.5f;
-        const float frequency = 20;
 
-        bool _direction = false;
-        float _lastPower = NAN;
-        unsigned long _time = 0;
-
-        float dP = NAN;
-
-        void resetTracker(float power, bool direction) {
-            _lastPower = power;
-            _direction = direction;
-            _time = millis();
-        }
-
-        bool update(float power) {
-            dP = power - _lastPower;
-
-            auto now = millis();
-            if ((now - _time) > (1000.f / frequency)) {
-                _time = now;
-                auto absDp = std::abs(dP);
-                if (absDp >= minPowerStep or absDp / _lastPower > 0.015f) {
-                    _lastPower = power;
-                    if (dP < 0)
-                        _direction = !_direction;
-                }
-            }
-
-            return _direction;
-        }
-    };
 
     Tracker tracker{};
-
 
     void startSweep() {
         pwm.disable();
@@ -358,7 +328,7 @@ public:
             powerLimit = 20;
         }
 
-        if (!_sweeping && power < 10 && (nowMs - dcdcPwr.getTimeLastCalibration()) > (15 * 60000)) {
+        if (!_sweeping && power < 30 && (nowMs - dcdcPwr.getTimeLastCalibration()) > (15 * 60000)) {
             ESP_LOGI("mppt", "periodic zero-current calibration");
             startSweep();
             return;
@@ -391,16 +361,25 @@ public:
                 CVP{MpptControlMode::CP, uCP},
         };
 
-        auto limitingControl = *std::min_element(controlValues.begin(), controlValues.end(),
-                                                 [](const CVP &a, const CVP &b) { return a.second < b.second; });
+        auto limitingControl = std::min_element(controlValues.begin(), controlValues.end(),
+                                                [](const CVP &a, const CVP &b) { return a.second < b.second; });
 
         MpptControlMode controlMode = MpptControlMode::None;
         float controlValue = 0;
 
-        if (limitingControl.second <= 0) {
+        if (limitingControl->second <= 0) {
             // limit condition
-            controlMode = limitingControl.first;
-            controlValue = limitingControl.second;
+            controlMode = limitingControl->first;
+            controlValue = limitingControl->second;
+
+            auto limIdx = (int) (limitingControl - controlValues.begin());
+            if (!_limiting && controlValue < -80) {
+                ESP_LOGI("mppt", "Limiting! Control value %.2f, mode=%s, idx=%i", controlValue,
+                         MpptState2String[(int) controlMode].c_str(), limIdx);
+            }
+
+            point.addField("cv_lim_idx", limIdx);
+
             _limiting = true;
         } else {
             // no limit condition
@@ -408,7 +387,7 @@ public:
                 // recover from limit condition
                 _limiting = false;
                 controlMode = MpptControlMode::MPPT;
-                controlValue = limitingControl.second;
+                controlValue = limitingControl->second;
             }
         }
 
@@ -441,7 +420,7 @@ public:
 
         if (controlMode == MpptControlMode::None) {
             controlMode = MpptControlMode::MPPT;
-            controlValue = tracker.update(power) ? 1 : -1;
+            controlValue = tracker.update(power);
 
             auto dP = tracker.dP;
             point.addField("dP", dP, 2);
@@ -460,31 +439,6 @@ public:
 
         this->state = controlMode;
 
-
-        // TODO speedscal?
-        /*
-
-        float speedScale = 1.0f;
-
-        if (!_sweeping)
-            speedScale *= 0.25;
-
-
-        float vOut_pred =
-                dcdcPwr.last.s.chVout + std::max<float>(0.0f, dcdcPwr.last.s.chVout - dcdcPwr.ewm.s.chVout.avg.get());
-        if (vOut_pred >= params.Vout_max * 0.95f) {
-            speedScale *= 0.5;
-            if (vOut_pred >= params.Vout_max * 0.99f) {
-                speedScale *= 0.5;
-            }
-        }
-
-        point.addField("U_out_pred", vOut_pred, 2); */
-
-        // slow down on low power (and high output impedance?), to reduce ripple
-        // if (power < 0.8) speedScale *= (1 / 4.0f);
-
-        // point.addField("speed_scale", speedScale, 2);
 
         pwm.pwmPerturbFractional(controlValue);
 

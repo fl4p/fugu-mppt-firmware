@@ -1,18 +1,19 @@
 #pragma once
 
 #include <cstdlib>
+#include <limits>
 
 template<class float_t=float>
 class EWMA {
 /**
  * Implement exponential weighted moving average
  */
-     float_t alpha;
+    float_t alpha;
 public:
 
     float_t y = std::numeric_limits<float_t>::quiet_NaN();
 
-    explicit EWMA(uint32_t span)  {
+    explicit EWMA(uint32_t span) {
         updateSpan(span);
     }
 
@@ -97,3 +98,61 @@ inline size_t pseudo_median_of_nine( const RandomAccessIterator &array, const qu
 
 }
 */
+
+
+
+
+
+struct MeanAccumulator {
+    // TODO trapezoidal sum?
+    float sum;
+    //float max;
+    uint32_t num;
+
+    float getMean() const { return sum / num; }
+
+    //float getMax() const {return max;}
+
+    void clear() {
+        sum = 0.f;
+        num = 0.f;
+        //max = std::numeric_limits<float>::lowest();
+    }
+
+    void add(float x) {
+        sum += x;
+        //if (x > max) max = x;
+        ++num;
+    }
+
+    float pop() {
+        float m = getMean();
+        clear();
+        return m;
+    }
+
+    MeanAccumulator() { clear(); }
+};
+
+
+template<typename F, typename T, typename D=double>
+class TrapezoidalIntegrator {
+    const F timeFactor;
+    const T maxDt;
+    T lastTime = 0;
+    F lastX{};
+    D value = 0;
+public:
+    explicit TrapezoidalIntegrator(float timeFactor = (1e-6f / 3600.f), T maxDt = 1e6) :
+            timeFactor(timeFactor), maxDt(maxDt) {}
+
+    D get() const { return value; }
+
+    void add(F x, T nowTime) {
+        T dt = nowTime - lastTime;
+        if (dt < maxDt)
+            value += (D) ((lastX + x) * 0.5 * (dt * timeFactor));
+        lastTime = nowTime;
+        lastX = x;
+    }
+};

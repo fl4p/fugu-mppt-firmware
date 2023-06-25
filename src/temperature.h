@@ -4,9 +4,9 @@ class TempSensorGPIO_NTC {
     float ntcResistance = 10e3f;
 
     RunningMedian3<float> median3{};
-    EWMA<float> ewma{80};
+    EWMA<float> ewma{120};
 
-    uint8_t _attack = 60; // discard first samples
+    uint8_t _attack = 80; // discard first samples
 
 
     float adc2Celsius(float adc) const {
