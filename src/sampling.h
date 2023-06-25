@@ -130,6 +130,9 @@ public:
                 if (std::fabs(calibZeroCurrent) > 0.5f) {
                     ESP_LOGE("dcdc", "Zero Current too high %.2f", calibZeroCurrent);
                     startCalibration();
+                } else if (ewm.s.chIin.std.get() > 0.001) {
+                    ESP_LOGE("dcdc", "Zero Current stddev too high %.5f", ewm.s.chIin.std.get());
+                    startCalibration();
                 } else if (vOut_std > 0.05f) {
                     ESP_LOGE("dcdc", "Zero Current Vout std too high %.2f V", vOut_std);
                     startCalibration();
