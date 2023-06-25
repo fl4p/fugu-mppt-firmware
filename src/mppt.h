@@ -55,6 +55,8 @@ class MpptSampler {
     MpptControlMode state;
     bool _limiting = false;
 
+    TrapezoidalIntegrator<float, unsigned long, double> _energy{1e-6f / 3600.f};
+
     bool _sweeping = false;
     struct {
         float power = 0;
@@ -87,8 +89,6 @@ public:
     }
 
     MpptControlMode getState() const { return state; }
-
-    //float getPower() const { return lastPower; }
 
     bool protect() {
         if (dcdcPwr.isCalibrating()) {
@@ -339,14 +339,12 @@ public:
         }
 
 
-
-        //if (nowMs < nextUpdateTime)
-        //    return;
-
+        float conversionEfficiency = 0.97f;
         auto Iin(dcdcPwr.ewm.s.chIin.avg.get());
         auto Vin(dcdcPwr.ewm.s.chVin.avg.get());
         float power = dcdcPwr.ewm.s.chIin.avg.get() * dcdcPwr.ewm.s.chVin.avg.get();
-        Iout = dcdcPwr.getIoutSmooth();
+        Iout = dcdcPwr.getIoutSmooth(conversionEfficiency);
+        _energy.add(dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin * conversionEfficiency, micros());
 
         float ntcTemp = ntc.last();
         fanUpdateTemp(ntcTemp, power);
@@ -372,12 +370,14 @@ public:
         point.addField("U", Vin, 2);
         point.addField("U_out", dcdcPwr.ewm.s.chVout.avg.get(), 2);
         point.addField("P", power, 2);
+        point.addField("E", _energy.get(), 1);
+
         //point.addField("P_prev", lastPower, 2);
 
 
-        float uCV_in = VinController.update(dcdcPwr.last.s.chVin, params.Vin_min);
-        float uCV_out = VoutController.update(dcdcPwr.last.s.chVout, params.Vout_max);
-        float uCC_in = IinController.update(dcdcPwr.last.s.chIin, params.Iin_max);
+        float uCV_in = VinController.update(dcdcPwr.med3.s.chVin.get(), params.Vin_min);
+        float uCV_out = VoutController.update(dcdcPwr.med3.s.chVout.get(), params.Vout_max);
+        float uCC_in = IinController.update(dcdcPwr.med3.s.chIin.get(), params.Iin_max);
         float uCC_out = IoutCurrentController.update(Iout, params.Iout_max);
         float uCP = powerController.update(power, powerLimit);
 
