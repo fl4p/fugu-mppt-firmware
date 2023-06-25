@@ -15,6 +15,9 @@ class LCD {
     unsigned long lastDrawTime = 0;
     unsigned long msgUntil = 0;
     unsigned long lightUntil = 0;
+
+    unsigned long lastInit = 0;
+    void periodicInit();
 public:
     bool init();
 

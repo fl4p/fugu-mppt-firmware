@@ -37,11 +37,11 @@ bool LCD::init() {
 
     ESP_LOGI(TAG, "Using addr 0x%02hhX", addr);
     lcd = new LiquidCrystal_I2C(addr, 16, 2);
-    lcd->begin(16, 2);
-    lcd->clear();
+
+    periodicInit();
+
     lcd->backlight();
     lightUntil = 60000 * 2 + millis();
-
 
     return true;
 }
@@ -51,6 +51,8 @@ void LCD::updateValues(const LcdValues &values) {
 
     if (!lcd) return;
 
+    periodicInit();
+
     auto now = millis();
     if (now - lastDrawTime < 500 or now < msgUntil) return;
     lastDrawTime = now;
@@ -58,8 +60,8 @@ void LCD::updateValues(const LcdValues &values) {
     auto pin = values.Vin * values.Iin;
 
     // keep light on when power is >=300W
-    if(pin >= 300)
-        lightUntil = std::max(lightUntil,now + 30000);
+    if (pin >= 300)
+        lightUntil = std::max(lightUntil, now + 30000);
 
     auto bgOn = (now <= lightUntil);
     if (bgIsOn != bgOn) {
@@ -80,11 +82,11 @@ void LCD::updateValues(const LcdValues &values) {
 
 void LCD::displayMessage(const std::string &msg, uint16_t timeoutMs) {
     if (!lcd) return;
+    periodicInit();
     lcd->clear();
     std::istringstream iss(msg);
     int i = 0;
-    for (std::string line; std::getline(iss, line); )
-    {
+    for (std::string line; std::getline(iss, line);) {
         lcd->print(line.c_str());
         lcd->setCursor(0, ++i);
     }
@@ -102,6 +104,24 @@ void LCD::displayMessageF(const std::string &msg, uint16_t timeoutMs, ...) {
     va_end(args);
 
     displayMessage(std::string(buf), timeoutMs);
+}
+
+void LCD::periodicInit() {
+    auto now = millis();
+
+    //if (lastInit && lastInit + (60000ul * 5ul) > now)
+    //    return;
+
+    // disable periodic init due to latency issues
+    if(lastInit)
+        return;
+
+    lcd->begin(16, 2);
+    lcd->clear();
+
+    ESP_LOGI("lcd", "lcd->begin()");
+
+    lastInit = millis();
 }
 
 
