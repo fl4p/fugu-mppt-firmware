@@ -26,6 +26,8 @@ class HalfBridgePwm {
 
     float outInVoltageRatio = 0;
 
+    bool lowSideEnabled = false;
+
 public:
 
     const uint16_t pwmMax, pwmMaxHS, pwmMinLS, pwmMinHS;
@@ -90,7 +92,7 @@ public:
         }
 
         // "fade-in" the low-side duty cycle
-        pwmLS = constrain(pwmLS + 3, pwmMinLS, pwmMaxLS);
+        pwmLS = lowSideEnabled ? constrain(pwmLS + 3, pwmMinLS, pwmMaxLS) : pwmMinLS;
 
         update_pwm(pwmCh_IN, pwmHS);
         update_pwm(pwmCh_EN, pwmHS + pwmLS);
@@ -137,14 +139,7 @@ public:
         enableBackflowMosfet(false);
     }
 
-    void lowSideMinDuty() {
-        if (pwmLS > pwmMinLS + pwmMinLS/2) {
-            ESP_LOGW("pwm", "set low-side PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmLS, pwmMinLS,
-                     outInVoltageRatio, pwmMaxLS);
-        }
-        pwmLS = pwmMinLS;
-        update_pwm(pwmCh_EN, pwmHS + pwmLS);
-    }
+
 
     static uint16_t computePwmMaxLs(uint16_t pwmHS, uint16_t pwmMax, float voltageRatio) {
         // prevents boosting and "low side burning" due to excessive LS current
@@ -202,6 +197,7 @@ public:
         }
 
         pwmMaxLS = computePwmMaxLs(pwmHS, pwmMax, outInVoltageRatio);
+
         pwmMaxLS = std::max(pwmMinLS, pwmMaxLS);
 
         if (pwmLS > pwmMaxLS) {
@@ -215,6 +211,23 @@ public:
 
     void enableBackflowMosfet(bool enable) {
         digitalWrite((uint8_t) PinConfig::Backflow_EN, enable);
+    }
+
+    void enableLowSide(bool enable) {
+        lowSideEnabled = enable;
+        if(!enable && pwmLS > pwmMinLS) {
+            pwmLS = pwmMinLS;
+            update_pwm(pwmCh_EN, pwmHS + pwmLS);
+        }
+    }
+
+    void lowSideMinDuty() {
+        if (pwmLS > pwmMinLS + pwmMinLS/2) {
+            ESP_LOGW("pwm", "set low-side PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmLS, pwmMinLS,
+                     outInVoltageRatio, pwmMaxLS);
+        }
+        pwmLS = pwmMinLS;
+        update_pwm(pwmCh_EN, pwmHS + pwmLS);
     }
 
 
