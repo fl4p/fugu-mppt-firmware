@@ -235,33 +235,6 @@ public:
                && ntc.read() < 70.0f;
     }
 
-
-    bool isSweeping() const { return _sweeping; }
-
-    struct PD {
-        const float P, D;
-        const bool normalize;
-        float _prevE = NAN;
-
-        PD(float P, float D, bool normalize) : P(P), D(D), normalize(normalize) {}
-
-        void reset() {
-            _prevE = NAN;
-        }
-
-        float update(float actual, float target) {
-            if (normalize) {
-                actual /= target;
-                target = 1;
-            }
-            auto e = target - actual;
-            auto de = e - _prevE;
-            _prevE = e;
-            if (std::isnan(de)) de = 0; // first D component is 0
-            return P * e + D * de;
-        }
-    };
-
     PD VinController{-100, -200, true}; // Vin under-voltage
     PD VoutController{150, 600, true}; // Vout over-voltage
     PD IinController{100, 400, true}; // Iin over-current
@@ -269,8 +242,9 @@ public:
     PD powerController{100, 400, true}; // over-power
 
 
-
     Tracker tracker{};
+
+    float speedScale = 1;
 
     void startSweep() {
         pwm.disable();
