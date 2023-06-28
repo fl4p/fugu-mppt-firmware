@@ -287,6 +287,8 @@ public:
         //if (!_sweeping)
         _sweeping = true;
         maxPowerPoint = {};
+
+        lcd.periodicInit();
     }
 
 

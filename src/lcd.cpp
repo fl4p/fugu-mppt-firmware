@@ -51,7 +51,7 @@ void LCD::updateValues(const LcdValues &values) {
 
     if (!lcd) return;
 
-    periodicInit();
+    //periodicInit();
 
     auto now = millis();
     if (now - lastDrawTime < 500 or now < msgUntil) return;
@@ -82,7 +82,7 @@ void LCD::updateValues(const LcdValues &values) {
 
 void LCD::displayMessage(const std::string &msg, uint16_t timeoutMs) {
     if (!lcd) return;
-    periodicInit();
+    //periodicInit();
     lcd->clear();
     std::istringstream iss(msg);
     int i = 0;
@@ -109,12 +109,15 @@ void LCD::displayMessageF(const std::string &msg, uint16_t timeoutMs, ...) {
 void LCD::periodicInit() {
     auto now = millis();
 
-    //if (lastInit && lastInit + (60000ul * 5ul) > now)
-    //    return;
+    if(!lcd)
+        return;
+
+    if (!lastInit && lastInit + (60000ul * 5ul) > now)
+        return;
 
     // disable periodic init due to latency issues
-    if(lastInit)
-        return;
+    //if(lastInit)
+    //    return;
 
     lcd->begin(16, 2);
     lcd->clear();

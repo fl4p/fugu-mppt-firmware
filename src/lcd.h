@@ -17,9 +17,9 @@ class LCD {
     unsigned long lightUntil = 0;
 
     unsigned long lastInit = 0;
-    void periodicInit();
 public:
     bool init();
+    void periodicInit();
 
     void displayMessage(const std::string &msg, uint16_t timeoutMs);
     void displayMessageF(const std::string &msg, uint16_t timeoutMs, ...);
