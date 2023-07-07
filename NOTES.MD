@@ -1,3 +1,6 @@
+- running ewm filter bins
+- around mpp P/u P/dutyCycle plots (real-time)
+- fix detect battery voltage
 - migrate to mcpwm api, which allows much higher frequencies
 - real time capabilities of esp32, wifi and i2s, internal adc? xCreateTask
   - https://www.toptal.com/embedded/esp32-audio-sampling (use internal ADC and ISR)

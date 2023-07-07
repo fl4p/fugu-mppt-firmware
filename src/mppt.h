@@ -302,6 +302,8 @@ public:
         }
     }
 
+    EWMA<float> avgIin{200}, avgVin{200};
+
     void update() {
         auto nowMs = millis();
 
@@ -316,6 +318,11 @@ public:
         auto Iin(dcdcPwr.ewm.s.chIin.avg.get());
         auto Vin(dcdcPwr.ewm.s.chVin.avg.get());
         float power = dcdcPwr.ewm.s.chIin.avg.get() * dcdcPwr.ewm.s.chVin.avg.get();
+
+        avgIin.add(dcdcPwr.last.s.chIin);
+        avgVin.add(dcdcPwr.last.s.chVin);
+        float smoothPower = avgIin.get() * avgVin.get();
+
         Iout = dcdcPwr.getIoutSmooth(conversionEfficiency);
         _energy.add(dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin * conversionEfficiency, micros());
 
@@ -331,7 +338,8 @@ public:
             powerLimit = 20;
         }
 
-        if (!_sweeping && power < 30 && (nowMs - dcdcPwr.getTimeLastCalibration()) > (15 * 60000)) {
+        // periodic sweep
+        if (!_sweeping /*&& power < 30*/ && (nowMs - dcdcPwr.getTimeLastCalibration()) > (15 * 60000)) {
             ESP_LOGI("mppt", "periodic zero-current calibration");
             startSweep();
             return;
@@ -421,10 +429,14 @@ public:
 
         if (controlMode == MpptControlMode::None) {
             controlMode = MpptControlMode::MPPT;
-            controlValue = tracker.update(power);
+            controlValue = tracker.update(smoothPower, pwm.getBuckDutyCycle());
+            controlValue *= speedScale;
 
             auto dP = tracker.dP;
+            point.addField("P_prev", tracker._lastPower, 2);
             point.addField("dP", dP, 2);
+            //point.addField("P_filt", tracker.pwmPowerTable[pwm.getBuckDutyCycle()].get(), 1);
+            point.addField("P_filt", tracker._powerBuf.getMean(), 1);
             if (std::abs(dP) < tracker.minPowerStep) {
                 point.addField("dP_thres", 0.0f, 2);
             } else {
@@ -434,7 +446,7 @@ public:
             tracker.resetTracker(power, controlValue > 0);
         }
 
-        assert(controlValue != 0 && controlMode != MpptControlMode::None);
+        //assert(controlValue != 0 && controlMode != MpptControlMode::None);
 
         controlValue = constrain(controlValue, -(float) pwm.getBuckDutyCycle(), 2.0f);
 
