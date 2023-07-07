@@ -345,8 +345,6 @@ public:
         point.addField("P", power, 2);
         point.addField("E", _energy.get(), 1);
 
-        //point.addField("P_prev", lastPower, 2);
-
 
         float uCV_in = VinController.update(dcdcPwr.med3.s.chVin.get(), params.Vin_min);
         float uCV_out = VoutController.update(dcdcPwr.med3.s.chVout.get(), params.Vout_max);
@@ -408,7 +406,7 @@ public:
         if (_sweeping) {
             if (controlMode == MpptControlMode::None) {
                 controlMode = MpptControlMode::Sweep;
-                controlValue = 1;
+                controlValue = 2; // 2x sweep speed
 
                 // capture MPP during sweep
                 if (power > maxPowerPoint.power) {
