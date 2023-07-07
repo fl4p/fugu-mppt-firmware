@@ -263,9 +263,12 @@ void loop() {
         }
     }
 
-    if (!disableWifi)
-        wifiLoop();
-
+    if (!disableWifi) {
+        /* only connect with disabled power conversion
+         * ESP32's wifi can cause latency issues otherwise
+         */
+        wifiLoop(pwm.disabled());
+    }
     auto now = micros();
     auto lag = now - lastLoopTime;
     if (lastLoopTime && lag > maxLoopLag) maxLoopLag = lag;
