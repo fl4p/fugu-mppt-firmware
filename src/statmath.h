@@ -54,6 +54,34 @@ public:
     }
 };
 
+template<typename float_t=float>
+class PctChange {
+    float_t _last = NAN;
+
+public:
+    inline float next(float x) {
+        float_t pct = (x - _last) / _last;
+        _last = x;
+        return pct;
+    }
+};
+
+template<int span, typename float_t=float>
+class EWMA_N {
+    float_t y = std::numeric_limits<float_t>::quiet_NaN();
+public:
+    inline void add(float_t x) {
+        constexpr auto alpha = (2.f / (float_t) (span + 1));
+        if unlikely(isnan(x)) return;
+        if unlikely(isnan(y)) y = x;
+        y = (1 - alpha) * y + alpha * x;
+    }
+
+    inline float_t get() const { return y; }
+
+    inline void reset() { y = std::numeric_limits<float_t>::quiet_NaN(); }
+};
+
 
 template<typename T>
 inline bool greaterThan(const T &a, const T &b) { return a > b; }
@@ -155,4 +183,24 @@ public:
         lastTime = nowTime;
         lastX = x;
     }
+};
+
+#include <deque>
+
+template<typename float_t =float>
+class RollingMean {
+    std::deque<float_t> q;
+    float_t sum_;
+
+public:
+    explicit RollingMean(size_t len) : q(len, 0), sum_(0) {}
+
+    void add(float_t x) {
+        sum_ += x - q.pop_front();
+        q.push_back(x);
+    }
+
+    inline void mean() const { return sum_ / q.size(); }
+
+    inline void sum() const { return sum_; }
 };
