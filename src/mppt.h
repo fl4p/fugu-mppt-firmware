@@ -73,8 +73,6 @@ class MpptSampler {
     //unsigned long lastTimeRandomPerturb = 0;
 
 
-
-
 public:
     // Esp32TempSensor mcu_temp; // don't use this! poor real-time performance!
     TempSensorGPIO_NTC ntc;
@@ -82,9 +80,10 @@ public:
 
     explicit MpptSampler(DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm, LCD &lcd)
             : dcdcPwr(dcdcPwr), pwm(pwm), lcd(lcd) {
-        pinMode((uint8_t) PinConfig::LED, OUTPUT);
-        digitalWrite((uint8_t) PinConfig::LED, false);
 
+        pinMode((uint8_t) PinConfig::LED, OUTPUT);
+
+        digitalWrite((uint8_t) PinConfig::LED, false);
 
         fanInit();
     }
@@ -274,6 +273,33 @@ public:
         lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
         _sweeping = false;
         pwm.pwmPerturb((int16_t) maxPowerPoint.dutyCycle - (int16_t) pwm.getBuckDutyCycle());
+    }
+
+    void telemetry() {
+        auto Iin = dcdcPwr.ewm.s.chIin.avg.get();
+        auto Vin = dcdcPwr.ewm.s.chVin.avg.get();
+        auto power = Iin * Vin;
+
+        Point point("mppt");
+        point.addTag("device", "fugu_" + String(getChipId()));
+        point.addField("P", power, 2);
+        point.addField("I", Iin, 3);
+        point.addField("U", Vin, 3);
+
+        point.addField("E", _energy.get(), 1);
+
+        point.addField("pwm_duty", pwm.getBuckDutyCycle());
+        point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
+        point.addField("pwm_ls_max", pwm.getDutyCycleLSMax());
+
+        auto nowMs = millis();
+
+        point.setTime(WritePrecision::MS);
+
+        if (nowMs - _lastPointWrite > 10) {
+            telemetryAddPoint(point, 40);
+            _lastPointWrite = nowMs;
+        }
     }
 
     void update() {

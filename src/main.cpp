@@ -163,8 +163,11 @@ void loop() {
                 charging = true;
             }
 
-            if (charging && !manualPwm && (nSamples - lastMpptUpdateNumSamples) > 0) {
-                mppt.update();
+            if ((nSamples - lastMpptUpdateNumSamples) > 0) {
+                if (charging && !manualPwm)
+                    mppt.update();
+                else
+                    mppt.telemetry();
                 lastMpptUpdateNumSamples = nSamples;
             }
         }
