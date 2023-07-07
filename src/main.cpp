@@ -17,22 +17,10 @@
 #include "version.h"
 #include "lcd.h"
 
-//LiquidCrystal_I2C lcd(0x27,16,2);   //SYSTEM PARAMETER  - Configure LCD RowCol Size and I2C Address
-//Adafruit_ADS1115 ads;             //SYSTEM PARAMETER  - ADS1115 ADC Library (By: Adafruit) Kindly uncomment this if you are using ADS1115
-//LiquidCrystal_I2C lcd(0x3F, 16, 2);
-//TaskHandle_t Core2;    //SYSTEM PARAMETER  - Used for the ESP32 dual core operation
-
-
-//#define backflow_MOSFET 27  //SYSTEM PARAMETER - Backflow MOSFET
-#define LED 2               //SYSTEM PARAMETER - LED Indicator GPIO Pin
-#define FAN 16              //SYSTEM PARAMETER - Fan GPIO Pin
-//#define ADC_ALERT 34        //SYSTEM PARAMETER - Fan GPIO Pin
-#define TempSensor 35       //SYSTEM PARAMETER - Temperature Sensor GPIO Pin
 
 
 ADC_ADS adc_ads;
 ADC_ESP32 adc_esp32;
-
 
 DCDC_PowerSampler dcdcPwr{ThreeChannelUnion<ChannelAndFactor>{.s={
         .chVin = {3, (200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0},

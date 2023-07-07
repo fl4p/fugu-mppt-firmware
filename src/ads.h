@@ -93,13 +93,9 @@ public:
         return (float) counts * (fsRange / (float) (32768 >> m_bitShift));
     }
 
-    void alertNewDataFromISR() {
-        newData = true;
-    }
+    inline void alertNewDataFromISR() { newData = true; }
 
-    bool hasData() override {
-        return newData;
-    }
+    inline bool hasData() override { return newData; }
 
     float getSample() override {
         // TODO detect clipping
