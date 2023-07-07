@@ -233,9 +233,15 @@ void loop() {
                 ESP_LOGI("main", "MPPT re-enabled");
                 manualPwm = false;
             } else if (inp.startsWith("dc ") && !dcdcPwr.isCalibrating() && inp.length() <= 8
-            && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmMax) {
+                       && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmMax) {
                 manualPwm = true;
                 pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
+            } else if (inp.startsWith("speed ") && inp.length() <= 12) {
+                float speedScale = inp.substring(6).toFloat();
+                if (speedScale >= 0 && speedScale < 10) {
+                    mppt.speedScale = speedScale;
+                    ESP_LOGI("main", "Set tracker speed scale %.4f", speedScale);
+                }
             } else if (inp.startsWith("fan ")) {
                 fanSet(inp.substring(4).toFloat() * 0.01f);
             } else if (inp == "sweep") {
