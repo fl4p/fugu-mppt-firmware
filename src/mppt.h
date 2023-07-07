@@ -461,9 +461,10 @@ public:
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
         point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
         point.addField("pwm_ls_max", pwm.getDutyCycleLSMax());
+
         point.setTime(WritePrecision::MS);
 
-        if (nowMs - _lastPointWrite > 40) {
+        if (nowMs - _lastPointWrite > 10) {
             telemetryAddPoint(point, 40);
             _lastPointWrite = nowMs;
         }
