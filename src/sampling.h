@@ -44,8 +44,6 @@ class DCDC_PowerSampler {
 
     uint16_t ewmSpan = 1;
 public:
-    //static constexpr uint8_t EWM_SPAN = 80; // 5 (20)
-    //static constexpr uint8_t EWM_SPAN_V =80;
 
 
     std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange = nullptr;
@@ -130,7 +128,7 @@ public:
                 if (std::fabs(calibZeroCurrent) > 0.5f) {
                     ESP_LOGE("dcdc", "Zero Current too high %.2f", calibZeroCurrent);
                     startCalibration();
-                } else if (ewm.s.chIin.std.get() > 0.001) {
+                } else if (ewm.s.chIin.std.get() > 0.1) { // 0.001
                     ESP_LOGE("dcdc", "Zero Current stddev too high %.5f", ewm.s.chIin.std.get());
                     startCalibration();
                 } else if (vOut_std > 0.05f) {
