@@ -11,3 +11,5 @@ cmake-build-*
 
 web-flash/manifest.json
 web-flash/*.bin
+
+/build/
