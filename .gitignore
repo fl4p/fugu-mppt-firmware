@@ -13,3 +13,6 @@ web-flash/manifest.json
 web-flash/*.bin
 
 /build/
+dependencies.lock
+
+sdkconfig.old
