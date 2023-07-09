@@ -1,6 +1,6 @@
 #pragma once
 
-#include "sampling.h"
+#include "adc/sampling.h"
 #include "telemetry.h"
 
 #include "temperature.h"
@@ -11,8 +11,12 @@
 #include "tracker.h"
 #include "control.h"
 
+#ifndef FUGU_BAT_V
+#define FUGU_BAT_V NAN
+#endif
+
 struct MpptParams {
-    float Vout_max = 28.5; //14.6 * 2;
+    float Vout_max = FUGU_BAT_V; //14.6 * 2;
     float Vin_max = 80;
     float Iin_max = 30;
     float Iout_max = 27; // coil & fuse limited

@@ -1,10 +1,10 @@
 #include <Arduino.h>
 
-#include "adc.h"
-#include "ads.h"
-#include "adc_esp32.h"
+#include "adc/adc.h"
+#include "adc/ads.h"
+#include "adc/adc_esp32.h"
 
-#include "sampling.h"
+#include "adc/sampling.h"
 #include "pwm.h"
 #include "mppt.h"
 #include "util.h"
@@ -44,7 +44,7 @@ void uartInit(int port_num);
 void setup() {
     Serial.begin(115200);
 
-#if CONFIG_IDF_TARGET_ESP32S3
+#if CONFIG_IDF_TARGET_ESP32S3 and !CONFIG_ESP_CONSOLE_UART_DEFAULT
     // for unknown reason need to initialize uart0 for serial reading (see loop below)
     // Serial.available() works under Arduino IDE (for both ESP32,ESP32S3), but always returns 0 under platformio
     // so we access the uart port directly. on ESP32 the Serial.begin() is sufficient (since it uses the uart0)
