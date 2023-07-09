@@ -9,6 +9,9 @@ ADC_ADS *ads_inst = nullptr;
 
 void ICACHE_RAM_ATTR AdsAlertISR();
 
+/**
+ * Implementation for ADS1x15 ADC. Uses ALERT pin for conversion ready notification interrupt.
+ */
 class ADC_ADS : public AsyncADC<float> {
 
     //Adafruit_ADS1115 ads; /* Use this for the 16-bit version */
@@ -63,7 +66,7 @@ public:
         ads.startADCReading(MUX_BY_CHANNEL[channel], /*continuous=*/false);
     }
 
-
+/*
     static float computeVolts(int16_t counts, adsGain_t gain) {
         constexpr uint8_t m_bitShift = 0;  // ads1115
         // see data sheet Table 3
@@ -92,6 +95,7 @@ public:
         }
         return (float) counts * (fsRange / (float) (32768 >> m_bitShift));
     }
+    */
 
     inline void alertNewDataFromISR() { newData = true; }
 

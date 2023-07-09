@@ -65,6 +65,10 @@ public:
 
 #include "driver/temp_sensor.h"
 
+/**
+ * Reads ESP32 internal temperature sensor.
+ * Don't use this in latency critical loops if WiFi is on!
+ */
 class Esp32TempSensor {
     RunningMedian3<float> median3;
     EWMA<float> ewma{40};

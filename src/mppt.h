@@ -45,6 +45,13 @@ static const std::array<std::string, (size_t) MpptControlMode::Max> MpptState2St
 };
 
 
+/**
+ * Implements
+ * - Protection of DCDC converter
+ * - Voltage and current control loop
+ * - MPP global scan
+ * - Telemetry
+ */
 class MpptSampler {
     DCDC_PowerSampler &dcdcPwr;
     HalfBridgePwm &pwm;
@@ -54,9 +61,6 @@ class MpptSampler {
     bool autoDetectVout_max = true;
 
     unsigned long lastOcFastRecovery = 0;
-    //float lastPower = 0;
-    //float lastVoltage = 0;
-    //int8_t pwmDirection = 0;
 
     MpptControlMode state;
     bool _limiting = false;
@@ -70,18 +74,23 @@ class MpptSampler {
         float voltage = 0;
     } maxPowerPoint;
 
-
-    //unsigned long nextUpdateTime = 0;
     unsigned long lastTimeProtectPassed = 0;
-
     unsigned long _lastPointWrite = 0;
-    //unsigned long lastTimeRandomPerturb = 0;
+
+    PD VinController{-100, -200, true}; // Vin under-voltage
+    PD VoutController{150, 600, true}; // Vout over-voltage
+    PD IinController{100, 400, true}; // Iin over-current
+    PD IoutCurrentController{100, 400, true}; // Iout over-current
+    PD powerController{100, 400, true}; // over-power
+
+
+    Tracker tracker{};
 
 
 public:
-    // Esp32TempSensor mcu_temp; // don't use this! poor real-time performance!
     TempSensorGPIO_NTC ntc;
     float Iout;
+    float speedScale = 1;
 
     explicit MpptSampler(DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm, LCD &lcd)
             : dcdcPwr(dcdcPwr), pwm(pwm), lcd(lcd) {
@@ -221,8 +230,6 @@ public:
             return false;
         }
 
-        //float voltageRatio = fmaxf(dcdcPwr.last.s.chVout, dcdcPwr.ewm.s.chVout.avg.get()) / dcdcPwr.last.s.chVin;
-        //float voltageRatio = dcdcPwr.ewm.s.chVout.avg.get() / dcdcPwr.ewm.s.chVin.avg.get();
 
         float vOut = fmaxf(dcdcPwr.med3.s.chVout.get(), dcdcPwr.ewm.s.chVout.avg.get());
         float vIn = fminf(dcdcPwr.med3.s.chVin.get(), dcdcPwr.ewm.s.chVin.avg.get());
@@ -238,17 +245,6 @@ public:
         return dcdcPwr.ewm.s.chVin.avg.get() > dcdcPwr.ewm.s.chVout.avg.get() + 1
                && ntc.read() < 70.0f;
     }
-
-    PD VinController{-100, -200, true}; // Vin under-voltage
-    PD VoutController{150, 600, true}; // Vout over-voltage
-    PD IinController{100, 400, true}; // Iin over-current
-    PD IoutCurrentController{100, 400, true}; // Iout over-current
-    PD powerController{100, 400, true}; // over-power
-
-
-    Tracker tracker{};
-
-    float speedScale = 1;
 
     void startSweep() {
         pwm.disable();
@@ -270,6 +266,10 @@ public:
     }
 
 
+    /**
+     * Stops MPPT scan and set duty cycle to captured MPP
+     * @param controlMode
+     */
     void _stopSweep(MpptControlMode controlMode) {
         ESP_LOGI("mppt", "Stop sweep at controlMode=%s PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
                  MpptState2String[(uint8_t) controlMode].c_str(),
@@ -307,8 +307,13 @@ public:
         }
     }
 
-    EWMA<float> avgIin{200}, avgVin{200};
+    //EWMA<float> avgIin{200}, avgVin{200};
 
+    /**
+     * - Energy counter
+     * - voltage and current control
+     * - calls mpp tracker
+     */
     void update() {
         auto nowMs = millis();
 
@@ -324,9 +329,9 @@ public:
         auto Vin(dcdcPwr.ewm.s.chVin.avg.get());
         float power = dcdcPwr.ewm.s.chIin.avg.get() * dcdcPwr.ewm.s.chVin.avg.get();
 
-        avgIin.add(dcdcPwr.last.s.chIin);
-        avgVin.add(dcdcPwr.last.s.chVin);
-        float smoothPower = avgIin.get() * avgVin.get();
+        //avgIin.add(dcdcPwr.last.s.chIin);
+        //avgVin.add(dcdcPwr.last.s.chVin);
+        //float smoothPower = avgIin.get() * avgVin.get();
 
         Iout = dcdcPwr.getIoutSmooth(conversionEfficiency);
         _energy.add(dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin * conversionEfficiency, micros());
@@ -405,6 +410,7 @@ public:
             }
         }
 
+        // bounce at pwm boundary
         if (pwm.getBuckDutyCycle() == pwm.pwmMaxHS) {
             controlMode = MpptControlMode::CV;
             controlValue = -1;
@@ -432,6 +438,7 @@ public:
             }
         }
 
+        //
         if (controlMode == MpptControlMode::None) {
             controlMode = MpptControlMode::MPPT;
             controlValue = tracker.update(power, pwm.getBuckDutyCycle());
@@ -453,7 +460,7 @@ public:
 
         //assert(controlValue != 0 && controlMode != MpptControlMode::None);
 
-        controlValue = constrain(controlValue, -(float) pwm.getBuckDutyCycle(), 2.0f);
+        controlValue = constrain(controlValue, -(float) pwm.getBuckDutyCycle(), 4.0f);
 
         this->state = controlMode;
 

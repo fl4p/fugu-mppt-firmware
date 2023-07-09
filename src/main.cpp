@@ -17,6 +17,10 @@
 #include "version.h"
 #include "lcd.h"
 
+#include "freertos/FreeRTOS.h"
+#include "driver/uart.h"
+#include "driver/gpio.h"
+#include "esp_log.h"
 
 
 ADC_ADS adc_ads;
@@ -37,6 +41,13 @@ MpptSampler mppt{dcdcPwr, pwm, lcd};
 
 
 bool disableWifi = false;
+
+unsigned long lastLoopTime = 0, maxLoopLag = 0;
+unsigned long lastTimeOut = 0;
+uint32_t lastNSamples = 0;
+unsigned long lastMpptUpdateNumSamples = 0;
+bool manualPwm = false;
+bool charging = false;
 
 
 void uartInit(int port_num);
@@ -105,31 +116,8 @@ void setup() {
 
     mppt.startSweep();
 
-    //wait_for_wifi();
-    //timeSync("CET-1CEST,M3.5.0,M10.5.0/3", "de.pool.ntp.org", "time.nis.gov");
-    //timeSynced = true;
-
     ESP_LOGI("main", "setup() done.");
 }
-
-unsigned long lastLoopTime = 0, maxLoopLag = 0;
-unsigned long lastTimeOut = 0;
-uint32_t lastNSamples = 0;
-
-unsigned long protectCoolDownUntil = 0;
-
-//unsigned long lastTimeMpptUpdate = 0;
-unsigned long lastMpptUpdateNumSamples = 0;
-
-bool manualPwm = false;
-
-#include "freertos/FreeRTOS.h"
-#include "driver/uart.h"
-#include "driver/gpio.h"
-#include "esp_log.h"
-
-
-bool charging = false;
 
 void loop() {
     auto nowMs = millis();
@@ -143,7 +131,7 @@ void loop() {
     } else {
         bool mppt_ok = mppt.protect();
         if (!mppt_ok) {
-            protectCoolDownUntil = nowMs + 4000;
+            //protectCoolDownUntil = nowMs + 4000;
             charging = false;
         } else {
             if (!charging && mppt.startCondition()) {
@@ -273,46 +261,4 @@ void loop() {
     auto lag = now - lastLoopTime;
     if (lastLoopTime && lag > maxLoopLag && !pwm.disabled()) maxLoopLag = lag;
     lastLoopTime = now;
-}
-
-
-const int BUF_SIZE = 1024;
-QueueHandle_t uart_queue;
-
-void uartInit(int port_num) {
-
-    uart_config_t uart_config = {
-            .baud_rate = 115200,
-            .data_bits = UART_DATA_8_BITS,
-            .parity    = UART_PARITY_DISABLE,
-            .stop_bits = UART_STOP_BITS_1,
-            .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, // UART_HW_FLOWCTRL_CTS_RTS
-            .rx_flow_ctrl_thresh = 122,
-            .source_clk = UART_SCLK_APB,
-    };
-    int intr_alloc_flags = 0;
-
-// tx=34, rx=33, stack=2048
-
-
-#if CONFIG_IDF_TARGET_ESP32S3
-    //const int PIN_TX = 34, PIN_RX = 33;
-    const int PIN_TX = 43, PIN_RX = 44;
-#else
-    const int PIN_TX = 1, PIN_RX = 3;
-#endif
-
-    ESP_ERROR_CHECK(uart_set_pin(port_num, PIN_TX, PIN_RX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    ESP_ERROR_CHECK(uart_param_config(port_num, &uart_config));
-    ESP_ERROR_CHECK(uart_driver_install(port_num, BUF_SIZE * 2, BUF_SIZE * 2, 10, &uart_queue, intr_alloc_flags));
-
-
-/* uart_intr_config_t uart_intr = {
-     .intr_enable_mask = (0x1 << 0) | (0x8 << 0),  // UART_INTR_RXFIFO_FULL | UART_INTR_RXFIFO_TOUT,
-     .rx_timeout_thresh = 1,
-     .txfifo_empty_intr_thresh = 10,
-     .rxfifo_full_thresh = 112,
-};
-uart_intr_config((uart_port_t) 0, &uart_intr);  // Zero is the UART number for Arduino Serial
-*/
 }

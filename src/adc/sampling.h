@@ -32,6 +32,13 @@ struct ChannelAndFactor {
 };
 
 
+/**
+ * Implement
+ * - ADC channel abstraction (for Vin, Vout, Iin)
+ * - Channel cycling
+ * - Zero current calibration
+ * - Exponentially weighted moving average (EWMA) filtering
+ */
 class DCDC_PowerSampler {
     AsyncADC<float> *adc = nullptr;
 
@@ -43,8 +50,9 @@ class DCDC_PowerSampler {
     float calibVout = 0;
 
     uint16_t ewmSpan = 1;
-public:
 
+
+public:
 
     std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange = nullptr;
 

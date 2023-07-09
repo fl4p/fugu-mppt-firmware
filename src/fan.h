@@ -21,6 +21,10 @@ bool fanInit() {
     return true;
 }
 
+/**
+ *
+ * @param duty Duty-cycle [0..1]
+ */
 void fanSet(float duty) {
     //if(duty > 1) duty = 1;
     //if(duty < 0) duty = 0;
