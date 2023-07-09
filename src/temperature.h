@@ -21,9 +21,25 @@ class TempSensorGPIO_NTC {
         return temp;
     }
 
+    esp_adc_cal_characteristics_t adc_char;
+    adc_atten_t adc_atten = ADC_ATTEN_DB_11; // 10k NTC / 10K pulldown on 3.3V => 1.65V mid
+
 public:
+
+    TempSensorGPIO_NTC() {
+        ESP_ERROR_CHECK(adc1_config_width(ADC_WIDTH_BIT_12));
+        ESP_ERROR_CHECK(adc1_config_channel_atten((adc1_channel_t) PinConfig::ADC_NTC, adc_atten));
+        assert(ESP_ADC_CAL_VAL_NOT_SUPPORTED !=
+               esp_adc_cal_characterize(ADC_UNIT_1, adc_atten, ADC_WIDTH_BIT_12, 1100, &adc_char));
+        //pinMode((uint8_t) PinConfig::NTC, ANALOG);
+        //assert(adcAttachPin((uint8_t) PinConfig::NTC));
+    }
+
     float read() {
-        auto adc = analogRead((uint8_t) PinConfig::NTC);
+        //auto adc = analogRead((uint8_t) PinConfig::NTC);
+        auto adc = adc1_get_raw((adc1_channel_t) PinConfig::ADC_NTC);
+
+        // ESP_LOGI("temp", "ADC_RAW=%i", adc);
 
         if (_attack) --_attack;
         else {
@@ -46,7 +62,9 @@ public:
 };
 
 #if CONFIG_IDF_TARGET_ESP32S3
+
 #include "driver/temp_sensor.h"
+
 class Esp32TempSensor {
     RunningMedian3<float> median3;
     EWMA<float> ewma{40};
@@ -73,7 +91,7 @@ public:
 
         // This has very poor real-time performance if WiFi is enabled (probably using ADC0?)
         if (temp_sensor_read_celsius(&tsens_out) != ESP_OK) {
-            conf.dac_offset = (temp_sensor_dac_offset_t) ((conf.dac_offset + 1) % TSENS_DAC_MAX);
+            conf.dac_offset = (temp_sensor_dac_offset_t)((conf.dac_offset + 1) % TSENS_DAC_MAX);
             return NAN;
         }
 
@@ -96,6 +114,7 @@ public:
 
     float last() const { return ewma.get(); }
 };
+
 #else
 
 #include "esp32-hal.h"
