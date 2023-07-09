@@ -1,6 +1,6 @@
 #include <array>
 #include <Wire.h>
-#include "LiquidCrystal_I2C.h"
+#include <LiquidCrystal_I2C.h>
 
 #include "lcd.h"
 #include "version.h"
@@ -70,8 +70,8 @@ void LCD::updateValues(const LcdValues &values) {
     }
 
 
-    char line[17];
-    snprintf(line, 17, "%4.1fV %4.1fA %3.0fW ", values.Vin, values.Iin, pin);
+    char line[20];
+    snprintf(line, 20, "%4.1fV %4.1fA %3.0fW ", values.Vin, values.Iin, pin);
     lcd->setCursor(0, 0);
     lcd->print(line);
 
@@ -119,7 +119,7 @@ void LCD::periodicInit() {
     //if(lastInit)
     //    return;
 
-    lcd->begin(16, 2);
+    lcd->begin(); //16, 2);
     lcd->clear();
 
     ESP_LOGI("lcd", "lcd->begin()");

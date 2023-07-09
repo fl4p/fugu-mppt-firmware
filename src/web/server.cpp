@@ -10,24 +10,25 @@
 #include <SPIFFS.h>
 #include <ESPmDNS.h>
 #include <WiFi.h>
-#include <AsyncTCP.h>
+//#include <AsyncTCP.h>
 #elif defined(ESP8266)
 #include <ESP8266WiFi.h>
 #include <ESPAsyncTCP.h>
 #include <ESP8266mDNS.h>
 #endif
-#include <ESPAsyncWebServer.h>
+//#include <ESPAsyncWebServer.h>
+
 //#include <SPIFFSEditor.h>
 
-AsyncWebServer server(80);
-AsyncWebSocket ws("/ws");
-AsyncEventSource events("/events");
+//AsyncWebServer server(80);
+//AsyncWebSocket ws("/ws");
+//AsyncEventSource events("/events");
 
 void webserver_begin(void) {
 
     MDNS.addService("http","tcp",80);
     SPIFFS.begin();
 
-    server.serveStatic("/", SPIFFS, "/web").setDefaultFile("index.html");
-    server.begin();
+    //server.serveStatic("/", SPIFFS, "/web").setDefaultFile("index.html");
+    //server.begin();
 }

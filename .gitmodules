@@ -2,3 +2,15 @@
 	path = components/arduino
 	url = https://github.com/espressif/arduino-esp32.git
 	shallow = true
+[submodule "components/Adafruit_ADS1X15/Adafruit_ADS1X15"]
+	path = components/Adafruit_ADS1X15/Adafruit_ADS1X15
+	url = https://github.com/adafruit/Adafruit_ADS1X15
+[submodule "components/Adafruit_BusIO"]
+	path = components/Adafruit_BusIO
+	url = https://github.com/adafruit/Adafruit_BusIO
+[submodule "components/InfluxDB-Client-for-Arduino/InfluxDB-Client-for-Arduino"]
+	path = components/InfluxDB-Client-for-Arduino/InfluxDB-Client-for-Arduino
+	url = https://github.com/tobiasschuerg/InfluxDB-Client-for-Arduino
+[submodule "components/Arduino-LiquidCrystal-I2C/Arduino-LiquidCrystal-I2C-library"]
+	path = components/Arduino-LiquidCrystal-I2C/Arduino-LiquidCrystal-I2C-library
+	url = https://github.com/fdebrabander/Arduino-LiquidCrystal-I2C-library
