@@ -40,7 +40,8 @@ enum class PinConfigESP32 : uint8_t {
     Backflow_EN = 27,
 
     LED = 2,
-    NTC = 35,
+    //NTC = 35,
+    ADC_NTC = ADC1_CHANNEL_7, //io35
     Fan = 16,
 
 

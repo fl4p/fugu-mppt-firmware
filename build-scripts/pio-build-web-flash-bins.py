@@ -29,7 +29,7 @@ for env in envs:
 
 print('Building FW ver %s...' % fw_ver)
 
-p = subprocess.Popen(["bash", "build-for-webflash.sh"], stdout=sys.stdout, stderr=sys.stderr)
+p = subprocess.Popen(["bash", "pio-build-for-webflash.sh"], stdout=sys.stdout, stderr=sys.stderr)
 out, _ = p.communicate()
 if p.returncode != 0:
     raise Exception('Shell script failed')

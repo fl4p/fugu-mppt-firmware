@@ -2,5 +2,11 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/components/Adafruit_ADS1X15/Adafruit_ADS1X15" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/components/Adafruit_BusIO" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/components/Arduino-LiquidCrystal-I2C/Arduino-LiquidCrystal-I2C-library" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/components/AsyncTCP" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/components/InfluxDB-Client-for-Arduino/InfluxDB-Client-for-Arduino" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/components/arduino" vcs="Git" />
   </component>
 </project>
