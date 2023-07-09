@@ -434,7 +434,7 @@ public:
 
         if (controlMode == MpptControlMode::None) {
             controlMode = MpptControlMode::MPPT;
-            controlValue = tracker.update(smoothPower, pwm.getBuckDutyCycle());
+            controlValue = tracker.update(power, pwm.getBuckDutyCycle());
             controlValue *= speedScale;
 
             auto dP = tracker.dP;

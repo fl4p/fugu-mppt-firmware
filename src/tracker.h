@@ -61,8 +61,10 @@ struct Tracker {
     float _lastPower = NAN;
 
 
+    EWMA<float> avgPower{200};
 
     MeanAccumulator _powerBuf{};
+
     //RunningMedian3<float> med3{};
 
 
@@ -90,7 +92,9 @@ struct Tracker {
     float update(float powerSample, uint16_t dutyCycle) {
         auto now = millis();
 
-        _powerBuf.add(powerSample);
+        avgPower.add(powerSample);
+
+        _powerBuf.add(prevSlow ? avgPower.get() : powerSample);
 
 
         if (now - pwmTimeTable[dutyCycle] > 1000 * 60) {
@@ -117,7 +121,8 @@ struct Tracker {
                 ESP_LOGI("mppt", "Reset maxPower to 0");
             }
 
-            if (power < maxPowerPoint.power * 0.90f && now - maxPowerPoint.timestamp > 1000 * 30) {
+            // reset maxPower if cur power is at 85%
+            if (power < maxPowerPoint.power * 0.85f && now - maxPowerPoint.timestamp > 1000 * 30) {
                 maxPowerPoint.power = 0;
                 ESP_LOGI("mppt", "Reset maxPower to 0 (<%.1f * 90%%)", power);
             }
@@ -143,9 +148,9 @@ struct Tracker {
         float speed = 1.f;
 
         // if we didn't find a new maxPower for 15s, slow-down
-        if (maxPowerPoint.power > 1 && now - maxPowerPoint.timestamp > 1000 * 30) {
-            speed = .03;
-            frequency = 2;
+        if (maxPowerPoint.power > 1 && now - maxPowerPoint.timestamp > 1000 * 15) {
+            speed = .02;
+            frequency = 1;
             minPowerStep = 1.5;
             if (!prevSlow) {
                 ESP_LOGI("mppt", "Near MPP, slow-down, set dutyCycle %hu", maxPowerPoint.dutyCycle);
