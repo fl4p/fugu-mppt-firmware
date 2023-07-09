@@ -49,6 +49,19 @@ voltage at the battery terminal, potentially destroying any connected device.
 
 Use it at your own risk. Add over-voltage protection (another DC/DC, varistor, TVS, crowbar circuit) if necessary.
 
+# Building
+```
+git clone --recursive https://github.com/fl4p/fugu-mppt-firmware
+cd fugu-mppt-firmware
+```
+
+Depending on your target chip, either rename `sdkconfig.esp32` or `sdkconfig.esp32s3` to `sdkconfig`.
+Then build
+```
+idf.py build
+```
+
+
 # Contribution
 
 We need contributors for Hardware Design and Software. Open an issue or pull request or drop me an email (you find my
