@@ -9,7 +9,7 @@ Instructables.
 The charger uses a simple CC (constant current) and CV (constant voltage) approach.
 This is common for Lithium-Batteries (e.g. LiFePo4).
 
-* PlatformIO or ESP-IDF build toolchain
+* PlatformIO or ESP-IDF using Arduino as component build toolchain
 * Compatible with ESP32 and ESP32-S3
 * Async ADC sampling
 * Zero-current calibration
