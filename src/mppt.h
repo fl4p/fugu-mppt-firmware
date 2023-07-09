@@ -419,7 +419,7 @@ public:
         if (_sweeping) {
             if (controlMode == MpptControlMode::None) {
                 controlMode = MpptControlMode::Sweep;
-                controlValue = 2; // 2x sweep speed
+                controlValue = 4; // 3x sweep speed
 
                 // capture MPP during sweep
                 if (power > maxPowerPoint.power) {
