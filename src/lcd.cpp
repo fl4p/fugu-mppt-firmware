@@ -112,7 +112,7 @@ void LCD::periodicInit() {
     if(!lcd)
         return;
 
-    if (!lastInit && lastInit + (60000ul * 5ul) > now)
+    if (lastInit && lastInit + (60000ul * 5ul) > now)
         return;
 
     // disable periodic init due to latency issues
