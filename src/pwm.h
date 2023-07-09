@@ -37,8 +37,8 @@ public:
             : pwmMax((2 << (pwmResolution - 1)) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
               pwmMinLS(std::ceil((float) pwmMax * MinDutyCycleLS)), // keeping the bootstrap circuit powered
               pwmMinHS(pwmMinLS / 4) // everything else is too much!
-              // note that MOSFETs have different Vg(th) and switchting times. worst case is Vi/o=60/12
-            // ^ set pwmMinHS a bit lower than pwmMinLS (because pwmMinLS might be already too much for CV with no load)
+    // note that MOSFETs have different Vg(th) and switchting times. worst case is Vi/o=60/12
+    // ^ set pwmMinHS a bit lower than pwmMinLS (because pwmMinLS might be already too much for CV with no load)
     {
 
     }
@@ -105,7 +105,7 @@ public:
 
         directionFloat += directionFloatBuffer;
         directionFloatBuffer = 0;
-        auto directionInt = (int16_t)(directionFloat);
+        auto directionInt = (int16_t) (directionFloat);
         if (directionInt != 0)
             pwmPerturb(directionInt);
         directionFloatBuffer += directionFloat - (float) directionInt;
@@ -138,7 +138,6 @@ public:
         update_pwm(pwmCh_EN, 0);
         enableBackflowMosfet(false);
     }
-
 
 
     static uint16_t computePwmMaxLs(uint16_t pwmHS, uint16_t pwmMax, float voltageRatio) {
@@ -184,13 +183,13 @@ public:
         // todo beyond pwmMaxLs < (pwmMax - pwmHS), can we reduce the worst-case error assumption to boost eff?
         // or just replace  with pwmMaxLs < (pwmMax - pwmHS) * pwmMaxLsWCEF and remove scaling pwmMaxLs by pwmMaxLsWCEF
 
-        return (uint16_t)(pwmMaxLs * margin);
+        return (uint16_t) (pwmMaxLs * margin);
     }
 
     void updateLowSideMaxDuty(float vout, float vin) {
         // voltageRatio = Vout/Vin
 
-        if(vin > vout && vin > 0.1f) {
+        if (vin > vout && vin > 0.1f) {
             outInVoltageRatio = vout / vin;
         } else {
             outInVoltageRatio = 1; // the safest (minimize LS duty cycle)
@@ -215,14 +214,14 @@ public:
 
     void enableLowSide(bool enable) {
         lowSideEnabled = enable;
-        if(!enable && pwmLS > pwmMinLS) {
+        if (!enable && pwmLS > pwmMinLS) {
             pwmLS = pwmMinLS;
             update_pwm(pwmCh_EN, pwmHS + pwmLS);
         }
     }
 
     void lowSideMinDuty() {
-        if (pwmLS > pwmMinLS + pwmMinLS/2) {
+        if (pwmLS > pwmMinLS + pwmMinLS / 2) {
             ESP_LOGW("pwm", "set low-side PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmLS, pwmMinLS,
                      outInVoltageRatio, pwmMaxLS);
         }
@@ -240,6 +239,7 @@ private:
                 .timer_num        = LEDC_TIMER_0,
                 .freq_hz          = freq,
                 .clk_cfg          = LEDC_AUTO_CLK
+
         };
         ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
@@ -251,7 +251,8 @@ private:
                 .intr_type      = LEDC_INTR_DISABLE,
                 .timer_sel      = LEDC_TIMER_0,
                 .duty           = 0, // Set duty to 0%
-                .hpoint         = 0
+                .hpoint         = 0,
+                .flags          = {.output_invert = 0},
         };
         ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
     }

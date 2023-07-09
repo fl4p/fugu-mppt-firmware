@@ -287,6 +287,7 @@ void uartInit(int port_num) {
             .parity    = UART_PARITY_DISABLE,
             .stop_bits = UART_STOP_BITS_1,
             .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, // UART_HW_FLOWCTRL_CTS_RTS
+            .rx_flow_ctrl_thresh = 122,
             .source_clk = UART_SCLK_APB,
     };
     int intr_alloc_flags = 0;

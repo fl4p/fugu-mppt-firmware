@@ -119,7 +119,7 @@ struct Tracker {
 
             if (power < maxPowerPoint.power * 0.90f && now - maxPowerPoint.timestamp > 1000 * 30) {
                 maxPowerPoint.power = 0;
-                ESP_LOGI("mppt", "Reset maxPower to 0 (<%.1f * 90%)", power);
+                ESP_LOGI("mppt", "Reset maxPower to 0 (<%.1f * 90%%)", power);
             }
 
             // capture maxPower

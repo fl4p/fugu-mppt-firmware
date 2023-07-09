@@ -73,7 +73,7 @@ public:
 
     void begin(AsyncADC<float> *adc_, uint16_t ewmaSpan) {
         adc = adc_;
-        auto f = &EWM<float>::updateSpan;
+        //auto f = &EWM<float>::updateSpan;
         for (auto &o: ewm.arr)
             o.updateSpan(ewmaSpan);
         ewmSpan = ewmaSpan;
