@@ -271,7 +271,7 @@ void loop() {
     }
     auto now = micros();
     auto lag = now - lastLoopTime;
-    if (lastLoopTime && lag > maxLoopLag) maxLoopLag = lag;
+    if (lastLoopTime && lag > maxLoopLag && !pwm.disabled()) maxLoopLag = lag;
     lastLoopTime = now;
 }
 
