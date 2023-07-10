@@ -28,6 +28,8 @@ public:
     }
 
     inline float_t get() const { return y; }
+
+    inline void reset() { y = std::numeric_limits<float_t>::quiet_NaN(); }
 };
 
 template<class float_t=float>

@@ -1,10 +1,11 @@
 #include <cstdint>
 #include <cmath>
-#include<algorithm>
+#include <cstdio>
+#include <algorithm>
 #include <Arduino.h>
 
 #include "pinconfig.h"
-#include <stdio.h>
+
 #include "driver/ledc.h"
 #include "esp_err.h"
 
@@ -37,37 +38,21 @@ public:
             : pwmMax((2 << (pwmResolution - 1)) - 1), pwmMaxHS(pwmMax * (1.0f - MinDutyCycleLS)),
               pwmMinLS(std::ceil((float) pwmMax * MinDutyCycleLS)), // keeping the bootstrap circuit powered
               pwmMinHS(pwmMinLS / 4) // everything else is too much!
-    // note that MOSFETs have different Vg(th) and switchting times. worst case is Vi/o=60/12
-    // ^ set pwmMinHS a bit lower than pwmMinLS (because pwmMinLS might be already too much for CV with no load)
-    {
-
-    }
+    // note that MOSFETs have different Vg(th) and switching times. worst case is Vi/o=60/12
+    // ^ set pwmMinHS a bit lower than pwmMinLS (might cause no-load output over-voltage otherwise)
+    {}
 
     bool init() {
 
         // TODO pin self-check?
 
-        //uint32_t pwmFrequency = 39000;           //  USER PARAMETER - PWM Switching Frequency - Hz (For Buck)
-        uint32_t pwmFrequency = 39000;           //  USER PARAMETER - PWM Switching Frequency - Hz (For Buck)
-        //float PPWM_margin = 99.5;          //  CALIB PARAMETER - Minimum Operating Duty Cycle for Predictive PWM (%)
-        //float PWM_MaxDC = 95.0;            //  CALIB PARAMETER - Maximum Operating Duty Cycle (%) 90%-97% is good, 97 makes low-side turn-on too short for bootstrapping
-
-        //uint16_t pwmMax = 0;
-        //uint16_t pwmMaxLimited = 0;
-        //uint16_t PWM = 0;
+        uint32_t pwmFrequency = 39000; // buck converter switching frequency
 
         ESP_LOGI("pwm", "pwmMax=%hu, pwmMinLS=%hu, pwmMinHS=%hu, pwmMaxHS=%hu", pwmMax, pwmMinLS, pwmMinHS, pwmMaxHS);
 
-
-
-
-        //PWM INITIALIZATION
         init_pwm(pwmCh_IN, getBuckIN_PIN(), pwmFrequency);
         init_pwm(pwmCh_EN, (uint8_t) PinConfig::Bridge_EN, pwmFrequency);
 
-
-        // pwmMax = pow(2, pwmResolution) - 1;                           //Get PWM Max Bit Ceiling
-        //pwmMaxLimited =(PWM_MaxDC * pwmMax) / 100.0f;
 
         pinMode((uint8_t) PinConfig::Backflow_EN, OUTPUT);
         digitalWrite((uint8_t) PinConfig::Backflow_EN, false);
@@ -75,10 +60,7 @@ public:
         return true;
     }
 
-    bool disabled() {
-        return pwmHS == 0;
-    }
-
+    bool disabled() const { return pwmHS == 0; }
 
     void pwmPerturb(int16_t direction) {
 
@@ -111,23 +93,11 @@ public:
         directionFloatBuffer += directionFloat - (float) directionInt;
     }
 
-    uint16_t getBuckDutyCycle() const {
-        return pwmHS;
-    }
+    uint16_t getBuckDutyCycle() const { return pwmHS; }
 
-    uint16_t getBuckDutyCycleLS() const {
-        return pwmLS;
-    }
+    uint16_t getBuckDutyCycleLS() const { return pwmLS; }
 
-    uint16_t getDutyCycleLSMax() const {
-        return pwmMaxLS;
-    }
-
-    /*void halfDutyCycle() {
-        pwmHS /= 2;
-        pwmLS /= 2;
-        pwmPerturb(0);
-    }*/
+    uint16_t getDutyCycleLSMax() const { return pwmMaxLS; }
 
     void disable() {
         if (pwmHS > pwmMinHS)
@@ -140,6 +110,14 @@ public:
     }
 
 
+    /**
+     * Compute low-side switch duty cycle to emulate a diode for synchronous buck
+     *
+     * @param pwmHS
+     * @param pwmMax
+     * @param voltageRatio Vout/Vin ratio
+     * @return
+     */
     static uint16_t computePwmMaxLs(uint16_t pwmHS, uint16_t pwmMax, float voltageRatio) {
         // prevents boosting and "low side burning" due to excessive LS current
         // (non-diode behavior, negative reverse inductor current)
@@ -160,21 +138,17 @@ public:
 
         auto pwmMaxLs = (1 / voltageRatio - 1) * (float) pwmHS / pwmMaxLsWCEF; // the lower, the safer
 
-        // pwmMaxLs = std::min<float>(pwmMaxLs, (float)pwmHS); // TODO explain why this is necessary
-        // I guess it can be a little more
-        // At which duty cycle (HS) does coil current stop touching zero? see if-block below vvv
-        // ^^ https://github.com/fl4p/fugu-mppt-firmware/issues/1
 
         // the extra 5% below fixes reverse current at 39khz, Vin55, Vout27, dc1000
         // TODO pwm=1390 40.8/26.6
 
         // TODO remove the 1.05?
-        if (pwmMaxLs < (pwmMax - pwmHS)) { // * 1.05f
+        if (pwmMaxLs < (float) (pwmMax - pwmHS)) { // * 1.05f
             // DCM (Discontinuous Conduction Mode)
-            // this is when the coil current is still touching zero
-            // it'll stop for higher HS duty cycles
+            // this is when the coil current is still touching zero, it'll stop for higher HS duty cycles
             pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS * 1.0f); // TODO explain why this is necessary
         } else {
+            // CCM (Continuous Conduction Mode)
             pwmMaxLs = (float) (pwmMax - pwmHS);
         }
 
@@ -212,7 +186,14 @@ public:
         digitalWrite((uint8_t) PinConfig::Backflow_EN, enable);
     }
 
+    /**
+     * Permanently set enable/disable low-side switch
+     * @param enable
+     */
     void enableLowSide(bool enable) {
+        if(enable != lowSideEnabled) {
+            ESP_LOGI("pwm", "Low-side switch %s", enable ? "enabled" : "disabled");
+        }
         lowSideEnabled = enable;
         if (!enable && pwmLS > pwmMinLS) {
             pwmLS = pwmMinLS;
@@ -220,13 +201,19 @@ public:
         }
     }
 
+    /**
+     * Set low-side duty cycle to minimum (e.g. disable power conduction, just keep the bootstrapping powered for HS drive)
+     *
+     */
     void lowSideMinDuty() {
-        if (pwmLS > pwmMinLS + pwmMinLS / 2) {
-            ESP_LOGW("pwm", "set low-side PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmLS, pwmMinLS,
-                     outInVoltageRatio, pwmMaxLS);
+        if (pwmLS > pwmMinLS) {
+            if (pwmLS > pwmMinLS + pwmMinLS / 2) {
+                ESP_LOGW("pwm", "set low-side PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmLS, pwmMinLS,
+                         outInVoltageRatio, pwmMaxLS);
+            }
+            pwmLS = pwmMinLS;
+            update_pwm(pwmCh_EN, pwmHS + pwmLS);
         }
-        pwmLS = pwmMinLS;
-        update_pwm(pwmCh_EN, pwmHS + pwmLS);
     }
 
 

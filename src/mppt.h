@@ -125,6 +125,7 @@ public:
             }
         }
 
+        // power supply under-voltage shutdown
         if (std::max(dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout) < 10.f) {
             ESP_LOGW("mppt", "Vin %.1f and Vout %.1f < 10", dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout);
             //pwm.disable();
@@ -133,6 +134,7 @@ public:
         }
 
 
+        // input over-voltage
         if (dcdcPwr.last.s.chVin > params.Vin_max) {
             // input over-voltage
             ESP_LOGW("mppt", "Vin %.1f > %.1f!", dcdcPwr.last.s.chVin, params.Vin_max);
@@ -140,7 +142,7 @@ public:
             return false;
         }
 
-        // TODO shutdown on too samples in a row > 5%
+        // output over-voltage
         auto ovTh = params.Vout_max * 1.08;
         //if (dcdcPwr.med3.s.chVout.get() > ovTh) {
         if (dcdcPwr.last.s.chVout > ovTh && dcdcPwr.previous.s.chVout > ovTh) {
@@ -148,7 +150,7 @@ public:
             pwm.disable();
 
             auto vout = std::max(dcdcPwr.last.s.chVout, dcdcPwr.previous.s.chVout);
-            // output over-voltage
+
             if (!wasDisabled)
                 ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu) > %.1fV + 8%%!",
                          vout,

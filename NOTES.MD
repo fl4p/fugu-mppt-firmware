@@ -203,3 +203,8 @@ LS: 2.99us, HS: 3.49us
 # Tests
 Power Supply: 60V, Current Limit 5A
 The sweep will go past the MPP.
+
+
+# Ota
+* https://github.com/ayushsharma82/ElegantOTA
+* https://github.com/espressif/esp-idf/tree/master/examples/system/ota
