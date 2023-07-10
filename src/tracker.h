@@ -41,7 +41,7 @@ class AdaptiveEWMATable {
 
         auto &y(avg[index]);
 
-        if (now - time[index] > 1000  * 60) y = NAN; // invalidate old
+        if (now - time[index] > 1000 * 60) y = NAN; // invalidate old
         if unlikely(isnan(y)) y = x; // reset
         y = (1 - alpha) * y + alpha * x; // ewm update
         time[index] = now;
@@ -57,6 +57,7 @@ struct Tracker {
 
     bool _direction = false;
     unsigned long _time = 0;
+    unsigned long _timeLastReverse = 0;
 
     float _lastPower = NAN;
 
@@ -80,13 +81,14 @@ struct Tracker {
 
     float dP = NAN;
 
-    bool prevSlow = false;
+    bool slowMode = false;
 
     void resetTracker(float power, bool direction) {
         _lastPower = power;
         _direction = direction;
         _time = millis();
         maxPowerPoint.power = 0;
+        avgPower.reset();
     }
 
     float update(float powerSample, uint16_t dutyCycle) {
@@ -94,7 +96,7 @@ struct Tracker {
 
         avgPower.add(powerSample);
 
-        _powerBuf.add(prevSlow ? avgPower.get() : powerSample);
+        _powerBuf.add(slowMode ? avgPower.get() : powerSample);
 
 
         if (now - pwmTimeTable[dutyCycle] > 1000 * 60) {
@@ -109,10 +111,13 @@ struct Tracker {
             //auto power = pwmPowerTable[dutyCycle].get();
             dP = power - _lastPower;
             auto absDp = std::abs(dP);
-            if (absDp >= minPowerStep or absDp / _lastPower > 0.05f) {
+            if ((absDp >= minPowerStep or absDp / _lastPower > 0.05f)
+                && (!slowMode || (now - _timeLastReverse) > 6000)) {
                 _lastPower = power;
-                if (dP < 0)
+                if (dP < 0) {
                     _direction = !_direction;
+                    _timeLastReverse = now;
+                }
             }
 
             // invalidate maxPower every 5min
@@ -162,8 +167,9 @@ struct Tracker {
         } else {
             // normal-mode
             frequency = 20;
-            minPowerStep = 1.5;
-            prevSlow = false;
+            minPowerStep = 1.5f;
+            slowMode = false;
+            //avgPower.reset();
         }
 
         return _direction ? speed : -speed;
