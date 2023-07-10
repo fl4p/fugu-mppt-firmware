@@ -4,7 +4,7 @@ class TempSensorGPIO_NTC {
     float ntcResistance = 10e3f;
 
     RunningMedian3<float> median3{};
-    EWMA<float> ewma{120};
+    EWMA<float> ewma{200};
 
     uint8_t _attack = 80; // discard first samples
 
@@ -21,7 +21,7 @@ class TempSensorGPIO_NTC {
         return temp;
     }
 
-    esp_adc_cal_characteristics_t adc_char;
+    esp_adc_cal_characteristics_t adc_char{};
     adc_atten_t adc_atten = ADC_ATTEN_DB_11; // 10k NTC / 10K pulldown on 3.3V => 1.65V mid
 
 public:
@@ -55,7 +55,7 @@ public:
         //   _attack = 120;
         // }
 
-        return ewma.get();
+        return last();
     }
 
     float last() const { return ewma.get(); }
