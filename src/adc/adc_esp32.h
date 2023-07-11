@@ -46,7 +46,9 @@ public:
         else if (voltage > 0.8f) g = ADC_ATTEN_DB_2_5;
         else g = ADC_ATTEN_DB_0;
 
-        adc1_config_channel_atten(channel2pin[readingChannel], g);
+        if(adc1_config_channel_atten(channel2pin[ch], g) != ESP_OK) {
+            ESP_LOGE("adc", "Failed to set ADC1 ch %i atten %i", (int)channel2pin[ch], (int)g);
+        }
         esp_adc_cal_characterize(ADC_UNIT_1, g, ADC_WIDTH_BIT_12, 1100, &adc_chars[ch]);
     }
 
