@@ -10,6 +10,7 @@
 #include "lcd.h"
 #include "tracker.h"
 #include "control.h"
+#include "store.h"
 
 #ifndef FUGU_BAT_V
 #define FUGU_BAT_V NAN
@@ -44,6 +45,10 @@ static const std::array<std::string, (size_t) MpptControlMode::Max> MpptState2St
         "SWEEP"
 };
 
+struct PersistentState {
+    uint32_t bootCount = 0;
+    double totalEnergy = 0;
+};
 
 /**
  * Implements
@@ -57,6 +62,14 @@ class MpptSampler {
     HalfBridgePwm &pwm;
     LCD &lcd;
     MpptParams params;
+
+    FlashValueStore<PersistentState> flash{
+            "/littlefs/stats",
+            [](const PersistentState &a, const PersistentState &b) {
+                return std::abs(a.totalEnergy - b.totalEnergy) < 5 && a.bootCount == b.bootCount;
+                },
+            1000 * 60 * 5
+    };
 
     bool autoDetectVout_max = true;
 
@@ -100,13 +113,31 @@ public:
         digitalWrite((uint8_t) PinConfig::LED, false);
 
         fanInit();
+
+    }
+
+    void begin() {
+        if(flash.load()) {
+            _energy.restore(flash.getFlashValue().totalEnergy);
+            ESP_LOGI("mppt", "Restored energy counter value %f, bootCounter %u", _energy.get(), flash.getFlashValue().bootCount);
+        }
+
+        auto stats = flash.getFlashValue();
+        ++stats.bootCount;
+        assert(flash.update(stats));
+
+        startSweep();
     }
 
     MpptControlMode getState() const { return state; }
 
+    void shutdownDcdc() {
+        pwm.disable();
+    }
+
     bool protect() {
         if (dcdcPwr.isCalibrating()) {
-            pwm.disable();
+            shutdownDcdc();
             return false;
         }
 
@@ -128,7 +159,7 @@ public:
         // power supply under-voltage shutdown
         if (std::max(dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout) < 10.f) {
             ESP_LOGW("mppt", "Vin %.1f and Vout %.1f < 10", dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout);
-            //pwm.disable();
+            //shutdownDcdc();
             startSweep();
             return false;
         }
@@ -138,7 +169,7 @@ public:
         if (dcdcPwr.last.s.chVin > params.Vin_max) {
             // input over-voltage
             ESP_LOGW("mppt", "Vin %.1f > %.1f!", dcdcPwr.last.s.chVin, params.Vin_max);
-            pwm.disable();
+            shutdownDcdc();
             return false;
         }
 
@@ -147,7 +178,7 @@ public:
         //if (dcdcPwr.med3.s.chVout.get() > ovTh) {
         if (dcdcPwr.last.s.chVout > ovTh && dcdcPwr.previous.s.chVout > ovTh) {
             bool wasDisabled = pwm.disabled();
-            pwm.disable();
+            shutdownDcdc();
 
             auto vout = std::max(dcdcPwr.last.s.chVout, dcdcPwr.previous.s.chVout);
 
@@ -172,14 +203,14 @@ public:
 
         // input over current
         if (dcdcPwr.last.s.chIin / params.Iin_max > 1.5) {
-            pwm.disable();
+            shutdownDcdc();
             ESP_LOGW("mppt", "Current %.1f 50%% above limit, shutdown", dcdcPwr.last.s.chIin);
             return false;
         }
 
         if (dcdcPwr.last.s.chIin < -1 && dcdcPwr.previous.s.chIin < -1) {
             ESP_LOGE("MPPT", "Reverse current %.1f A, noise? disable BFC and low-side FET", dcdcPwr.last.s.chIin);
-            //pwm.disable();
+            //shutdownDcdc();
             pwm.enableBackflowMosfet(false);
             pwm.lowSideMinDuty();
             //pwm.halfDutyCycle();
@@ -187,7 +218,7 @@ public:
 
         if (dcdcPwr.ewm.s.chIin.avg.get() < -1) {
             ESP_LOGE("MPPT", "Reverse avg current shutdown %.1f A", dcdcPwr.ewm.s.chIin.avg.get());
-            pwm.disable();
+            shutdownDcdc();
             return false;
         }
 
@@ -195,13 +226,13 @@ public:
             if (!pwm.disabled())
                 ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown", dcdcPwr.ewm.s.chVout.avg.get(),
                          dcdcPwr.ewm.s.chVin.avg.get());
-            pwm.disable();
+            shutdownDcdc();
             return false;
         }
 
         if (dcdcPwr.last.s.chVout > dcdcPwr.last.s.chVin * 2) {
             ESP_LOGE("MPPT", "Vout %.1f > 2x Vin %.1f, shutdown", dcdcPwr.last.s.chVout, dcdcPwr.last.s.chVin);
-            pwm.disable();
+            shutdownDcdc();
             return false;
         }
 
@@ -263,6 +294,10 @@ public:
         //if (!_sweeping)
         _sweeping = true;
         maxPowerPoint = {};
+
+        auto stats = flash.getFlashValue();
+        stats.totalEnergy = _energy.get();
+        flash.update(stats);
 
         lcd.periodicInit();
     }
@@ -338,7 +373,7 @@ public:
         Iout = dcdcPwr.getIoutSmooth(conversionEfficiency);
         _energy.add(dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin * conversionEfficiency, micros());
 
-        float ntcTemp = ntc.last();
+        const float ntcTemp = ntc.last();
         fanUpdateTemp(ntcTemp, power);
 
         float powerLimit = params.P_max;
@@ -427,7 +462,7 @@ public:
         if (_sweeping) {
             if (controlMode == MpptControlMode::None) {
                 controlMode = MpptControlMode::Sweep;
-                controlValue = 4; // 3x sweep speed
+                controlValue = 5; // sweep speed
 
                 // capture MPP during sweep
                 if (power > maxPowerPoint.power) {
@@ -462,7 +497,7 @@ public:
 
         //assert(controlValue != 0 && controlMode != MpptControlMode::None);
 
-        controlValue = constrain(controlValue, -(float) pwm.getBuckDutyCycle(), 4.0f);
+        controlValue = constrain(controlValue, -(float) pwm.getBuckDutyCycle(), 5.0f);
 
         this->state = controlMode;
 

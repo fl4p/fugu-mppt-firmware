@@ -85,6 +85,10 @@ void setup() {
                 res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
     }
 
+    if(mountLFS()) {
+       ESP_LOGI("main", "LittleFS partition mounted");
+    }
+
     AsyncADC<float> *adc = nullptr;
     int ewmaSpan;
     if (adc_ads.init()) {
@@ -114,7 +118,7 @@ void setup() {
     if (!disableWifi)
         dcdcPwr.onDataChange = dcdcDataChanged;
 
-    mppt.startSweep();
+    mppt.begin();
 
     ESP_LOGI("main", "setup() done.");
 }

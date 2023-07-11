@@ -165,7 +165,7 @@ struct MeanAccumulator {
 };
 
 
-template<typename F, typename T, typename D=double>
+template<typename F=float, typename T=unsigned long, typename D=double>
 class TrapezoidalIntegrator {
     const F timeFactor;
     const T maxDt;
@@ -184,6 +184,11 @@ public:
             value += (D) ((lastX + x) * 0.5 * (dt * timeFactor));
         lastTime = nowTime;
         lastX = x;
+    }
+
+    void restore(D v) {
+        assert(value == 0);
+        value = v;
     }
 };
 
