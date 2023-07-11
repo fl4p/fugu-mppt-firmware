@@ -27,7 +27,7 @@
 void webserver_begin(void) {
 
     MDNS.addService("http","tcp",80);
-    SPIFFS.begin();
+    // SPIFFS.begin(); // TODO use littleFS
 
     //server.serveStatic("/", SPIFFS, "/web").setDefaultFile("index.html");
     //server.begin();
