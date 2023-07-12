@@ -1,3 +1,10 @@
+# Original Hardware Issues / Considerations
+- Place filter caps closer to ADC input
+- Place current sensor between after output filter capacitor
+- Place backflow control FET on battery side
+
+- 
+- 
 - running ewm filter bins
 - around mpp P/u P/dutyCycle plots (real-time)
 - fix detect battery voltage

@@ -9,16 +9,17 @@ Instructables.
 The charger uses a simple CC (constant current) and CV (constant voltage) approach.
 This is common for Lithium-Batteries (e.g. LiFePo4).
 
-* PlatformIO or ESP-IDF using Arduino as component build toolchain
+
 * Compatible with ESP32 and ESP32-S3
 * Async ADC sampling
 * Zero-current calibration
+* Can use ESP32/ESP32-S3's internal ADC1 instead of the external ADS1x15, see [Internal ADC](doc/Internal%20ADC.md)
 * PID voltage and current control
 * Periodic MPPT global scan
 * Sophisticated Diode Emulation for low-side switch
-* Automatic battery voltage detection
+* Battery voltage detection
 * Fast protection shutdown in over-voltage and over-current conditions
-* Basic PWM Fan Control and temperature power derating
+* PWM Fan Control and temperature power limiting / derating
 * Telemetry to InfluxDB over UDP
 
 The firmware sends real-time data to InfluxDB server using UDP line protocol.
@@ -45,11 +46,14 @@ If the battery or load is removed during power conversion expect an over-voltage
 With a battery voltage of 28.5V, I measured 36V for 400ms.
 
 Keep in mind that in case of a failure (software or hardware), the charger might permanently output the max solar
-voltage at the battery terminal, potentially destroying any connected device.
+voltage at the battery terminal, potentially destroying any connected device. Add over-voltage protection (another DC/DC, varistor, TVS, crowbar circuit) if necessary.
 
-Use it at your own risk. Add over-voltage protection (another DC/DC, varistor, TVS, crowbar circuit) if necessary.
+Use it at your own risk.
 
 # Building
+You can build with PlatformIO or ESP-IDF using Arduino as component build toolchain.
+
+Here's how to build using ESP-IDF:
 ```
 git clone --recursive https://github.com/fl4p/fugu-mppt-firmware
 cd fugu-mppt-firmware
@@ -67,3 +71,7 @@ idf.py build
 We need contributors for Hardware Design and Software. Open an issue or pull request or drop me an email (you find my
 address in my
 github profile) if you want to contribute or just share your experience.
+
+
+# Resources
+* [Power conversion efficiency measurement](https://github.com/fl4p/fugu-mppt-doc/blob/master/Power%20Measurements.md#findings)
