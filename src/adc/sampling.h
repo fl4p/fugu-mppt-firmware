@@ -110,6 +110,9 @@ public:
             //bool changed = (last[cycleCh] != v);
             if (&last[cycleCh] == &last.s.chIin) {
                 v -= calibZeroCurrent;
+                if (std::max(last.s.chVin, last.s.chVout) < 10.f) {
+                    v = 0; // current sensor needs at 5V
+                }
             }
             previous[cycleCh] = last[cycleCh];
             last[cycleCh] = v;
