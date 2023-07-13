@@ -91,15 +91,17 @@ public:
     }
 
     void startCalibration() {
-        if(!calibrating_)
+        if (!calibrating_)
             ESP_LOGI("mppt", "Start calibration");
         // TODO use mean average, not EWM!
         // - reset mean here
         // consider: peak2peak values, emipiral uncertainty (higher stddev->need more samples)
         calibrating_ = true;
         calibZeroCurrent = 0;
-        for (auto i = 0; i < 3; ++i)
+        for (auto i = 0; i < 3; ++i) {
             numSamples[i] = 0;
+            ewm.arr[i].reset();
+        }
     }
 
     bool update() {
