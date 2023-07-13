@@ -67,8 +67,8 @@ class MpptSampler {
             "/littlefs/stats",
             [](const PersistentState &a, const PersistentState &b) {
                 return std::abs(a.totalEnergy - b.totalEnergy) < 5 && a.bootCount == b.bootCount;
-                },
-            1000 * 60 * 5
+            },
+            1000 * 60 * 2
     };
 
     bool autoDetectVout_max = true;
@@ -94,7 +94,7 @@ class MpptSampler {
     PD VoutController{150, 600, true}; // Vout over-voltage
     PD IinController{100, 400, true}; // Iin over-current
     PD IoutCurrentController{100, 400, true}; // Iout over-current
-    PD powerController{100, 400, true}; // over-power
+    PD powerController{10, 20, true}; // over-power // TODO PID?
 
 
     Tracker tracker{};
@@ -117,9 +117,10 @@ public:
     }
 
     void begin() {
-        if(flash.load()) {
+        if (flash.load()) {
             _energy.restore(flash.getFlashValue().totalEnergy);
-            ESP_LOGI("mppt", "Restored energy counter value %f, bootCounter %u", _energy.get(), flash.getFlashValue().bootCount);
+            ESP_LOGI("mppt", "Restored energy counter value %.3f, bootCounter %u", _energy.get(),
+                     flash.getFlashValue().bootCount);
         }
 
         auto stats = flash.getFlashValue();
@@ -133,6 +134,10 @@ public:
 
     void shutdownDcdc() {
         pwm.disable();
+    }
+
+    bool boardPowerSupplyUnderVoltage(bool start = false) {
+        return std::max(dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout) < (start ? 9.5f : 9.f);
     }
 
     bool protect() {
@@ -157,10 +162,11 @@ public:
         }
 
         // power supply under-voltage shutdown
-        if (std::max(dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout) < 10.f) {
-            ESP_LOGW("mppt", "Vin %.1f and Vout %.1f < 10", dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout);
-            //shutdownDcdc();
-            startSweep();
+        if (boardPowerSupplyUnderVoltage()) {
+            //startSweep();
+            if (!pwm.disabled())
+                ESP_LOGW("mppt", "Vin %.1f and Vout %.1f < 10", dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout);
+            shutdownDcdc();
             return false;
         }
 
@@ -275,10 +281,14 @@ public:
     }
 
     bool startCondition() {
-        return dcdcPwr.ewm.s.chVin.avg.get() > dcdcPwr.ewm.s.chVout.avg.get() + 1
-               && ntc.read() < 70.0f;
+        return ntc.read() < 70.0f
+               && dcdcPwr.ewm.s.chVin.avg.get() > dcdcPwr.ewm.s.chVout.avg.get() + 1
+               && !boardPowerSupplyUnderVoltage(true);
     }
 
+    /**
+     * Start a global MPPT scan.
+     */
     void startSweep() {
         pwm.disable();
         _limiting = false;
@@ -318,6 +328,9 @@ public:
     }
 
     void telemetry() {
+        if(!WiFi.isConnected())
+            return;
+
         auto Iin = dcdcPwr.ewm.s.chIin.avg.get();
         auto Vin = dcdcPwr.ewm.s.chVin.avg.get();
         auto power = Iin * Vin;
@@ -385,8 +398,8 @@ public:
             powerLimit = 20;
         }
 
-        // periodic sweep
-        if (!_sweeping /*&& power < 30*/ && (nowMs - dcdcPwr.getTimeLastCalibration()) > (15 * 60000)) {
+        // periodic sweep / scan
+        if (!_sweeping /*&& power < 30*/ && (nowMs - dcdcPwr.getTimeLastCalibration()) > (20 * 60000)) {
             ESP_LOGI("mppt", "periodic zero-current calibration");
             startSweep();
             return;
