@@ -81,24 +81,24 @@ struct Tracker {
                 }
             }
 
-            // invalidate maxPower every 5min
+            // invalidate MPP every 5min ..
             if (now - maxPowerPoint.timestamp > 1000 * 60 * 5) {
                 maxPowerPoint.power = 0;
                 ESP_LOGI("mppt", "Reset maxPower to 0");
             }
 
-            // reset maxPower if cur power is at 85%
+            // .. or if cur power is at 85%
             if (power < maxPowerPoint.power * 0.85f && now - maxPowerPoint.timestamp > 1000 * 30) {
                 maxPowerPoint.power = 0;
                 ESP_LOGI("mppt", "Reset maxPower to 0 (<%.1f * 90%%)", power);
             }
 
-            // capture maxPower
+            // capture MPP
             if (power > maxPowerPoint.power * 1.005f) {
                 maxPowerPoint.power = power;
                 maxPowerPoint.timestamp = now;
                 maxPowerPoint.dutyCycle = dutyCycle;
-                ESP_LOGI("mppt", "New maxPower %.2f", maxPowerPoint.power);
+                //ESP_LOGI("mppt", "New maxPower %.2f", maxPowerPoint.power);
             }
 
 

@@ -25,7 +25,7 @@ union ThreeChannelUnion {
     //}
 };
 
-struct ChannelAndFactor {
+struct ChannelTransform {
     uint8_t num;
     float factor;
     float midpoint;
@@ -40,7 +40,7 @@ struct ChannelAndFactor {
  * - Exponentially weighted moving average (EWMA) filtering
  */
 class DCDC_PowerSampler {
-    AsyncADC<float> *adc = nullptr;
+
 
     uint8_t cycleCh = 0;
 
@@ -54,9 +54,11 @@ class DCDC_PowerSampler {
 
 public:
 
+    AsyncADC<float> *adc = nullptr;
+
     std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange = nullptr;
 
-    const ThreeChannelUnion<ChannelAndFactor> channels;
+    const ThreeChannelUnion<ChannelTransform> channels;
     ThreeChannelUnion<float> last{NAN, NAN, NAN};
     ThreeChannelUnion<float> previous{NAN, NAN, NAN};
     ThreeChannelUnion<uint32_t> numSamples{0, 0, 0};
@@ -67,7 +69,7 @@ public:
     ThreeChannelUnion<RunningMedian3<float>> med3{{{}, {}, {}}};
 
 
-    explicit DCDC_PowerSampler(const ThreeChannelUnion<ChannelAndFactor> &channels) :
+    explicit DCDC_PowerSampler(const ThreeChannelUnion<ChannelTransform> &channels) :
             channels(channels) {
     }
 
@@ -112,17 +114,20 @@ public:
             ewm[cycleCh].add(med3[cycleCh].next(v));
             ++numSamples[cycleCh];
             cycleCh = (cycleCh + 1) % 3;
-            _readNext();
+
+            _readNext(); // start async read
 
             if (onDataChange) { // changed &&
                 onDataChange(*this, cycleCh);
             }
 
-            if (std::max(last.s.chVin, last.s.chVout) < 10.f) {
+
+
+            /*if (std::max(last.s.chVin, last.s.chVout) < 10.f) {
                 if (!calibrating_)
                     ESP_LOGW("dcdc", "Supply under-voltage!");
                 startCalibration();
-            } else if (calibrating_ && numSamples[cycleCh] > ewmSpan * 2) {
+            } else **/ if (calibrating_ && numSamples[cycleCh] > ewmSpan * 2) {
                 calibZeroCurrent = ewm.s.chIin.avg.get();
                 ESP_LOGI("dcdc", "Zero Current Calibration avg=%.4f std=%.6f", calibZeroCurrent, ewm.s.chIin.std.get());
 

@@ -45,6 +45,11 @@ public:
         std.updateSpan(span);
     }
 
+    void reset() {
+        avg.reset();
+        std.reset();
+    }
+
     inline void add(float_t x) {
         avg.add(x);
         if (!isnan(last_x)) {
