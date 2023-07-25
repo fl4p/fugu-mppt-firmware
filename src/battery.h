@@ -6,7 +6,7 @@ enum BatteryChemistry {
     None = 0,
     LiFePo4,
     AGM,
-    LeadAcid,
+    LeadAcid,// https://batteryuniversity.com/article/bu-403-charging-lead-acid
     Custom,
     Max,
 };
