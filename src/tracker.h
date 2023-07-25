@@ -1,6 +1,6 @@
 #pragma once
 
-#include "statmath.h"
+#include "math/statmath.h"
 
 struct MPP {
     float power = 0;
