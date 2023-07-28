@@ -55,10 +55,13 @@ void test_meter_storage() {
         DailyEnergyMeterState day{};
         day.energyDay = 2.5f;
         store.add(day);
+        ESP_LOGI("dbg", "added %f", store.state.ringBuf[0].energyDay.toFloat());
+
         TEST_ASSERT_EQUAL(1, store.getNumTotalDays());
         TEST_ASSERT_EQUAL(1, store.getAllDays().size());
         //TEST_ASSERT_EQUAL(2.5f, store.state.getAllDays()[0].energyDay.toFloat());
-        TEST_ASSERT_EQUAL(2.5f, store.getAllDays()[0].energyDay.toFloat());
+        TEST_ASSERT_FLOAT_WITHIN(1e-3f, 2.5f, day.energyDay.toFloat());
+        TEST_ASSERT_FLOAT_WITHIN(1e-3f, 2.5f, store.getAllDays().back().energyDay.toFloat());
     }
 
 
