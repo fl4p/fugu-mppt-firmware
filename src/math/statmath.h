@@ -32,6 +32,10 @@ public:
     inline void reset() { y = std::numeric_limits<float_t>::quiet_NaN(); }
 };
 
+/**
+ * Implement exponential weighted moving average and normalised standard deviation
+ * @tparam float_t
+ */
 template<class float_t=float>
 class EWM {
     float_t last_x = std::numeric_limits<float_t>::quiet_NaN();
@@ -54,7 +58,7 @@ public:
         avg.add(x);
         if (!isnan(last_x)) {
             float_t pct = (x - last_x) / last_x;
-            if (std::isfinite(pct))
+            if likely(std::isfinite(pct))
                 std.add(pct * pct);
         }
         last_x = x;
@@ -114,6 +118,12 @@ public:
 
     inline T get() const {
         return _last;
+    }
+
+    void reset() {
+        s1 = T{};
+        s2 = T{};
+        _last = T{};
     }
 };
 

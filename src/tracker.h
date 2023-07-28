@@ -82,13 +82,13 @@ struct Tracker {
             }
 
             // invalidate MPP every 5min ..
-            if (now - maxPowerPoint.timestamp > 1000 * 60 * 5) {
+            if (now - maxPowerPoint.timestamp > 1000 * 60 * 5 and maxPowerPoint.power > 0) {
                 maxPowerPoint.power = 0;
                 ESP_LOGI("mppt", "Reset maxPower to 0");
             }
 
             // .. or if cur power is at 85%
-            if (power < maxPowerPoint.power * 0.85f && now - maxPowerPoint.timestamp > 1000 * 30) {
+            if (power < maxPowerPoint.power * 0.85f && now - maxPowerPoint.timestamp > 1000 * 30 and maxPowerPoint.power > 0) {
                 maxPowerPoint.power = 0;
                 ESP_LOGI("mppt", "Reset maxPower to 0 (<%.1f * 90%%)", power);
             }

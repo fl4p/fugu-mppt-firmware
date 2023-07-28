@@ -1,3 +1,11 @@
+# Sample Rate
+- ADS1015 i2c at 800 khz
+- Loop: ads read only, wifi connected
+- 344sps * 3ch = 1032adc/s
+
+# TODO sweep +4 is too fast! lead to 41V OV!
+# TODO instead of waiting for a full 3-tuple sample (vin,vout,iin), process data as soon as it is available
+
 # Original Hardware Issues / Considerations
 - Place filter caps closer to ADC input
 - Place current sensor between after output filter capacitor

@@ -33,6 +33,7 @@ struct DailyRingStorageState {
 };
 
 class DailyRingStorage {
+    
     DailyRingStorageState<1000> state;
     FlashValueFile<decltype(state)> flash;
 
@@ -43,7 +44,7 @@ public:
 
     int getNumTotalDays() const { return state.totalDays; }
 
-    std::vector<DailyEnergyMeterState> &&getAllDays() {
+    std::vector<DailyEnergyMeterState> getAllDays() {
         constexpr auto n = decltype(state)::NumDays;
         std::vector<DailyEnergyMeterState> vec{};
         for (int i = 0; i < n; ++i) {
@@ -51,7 +52,7 @@ public:
             if (d.hasEnergy())
                 vec.push_back(d);
         }
-        return std::move(vec);
+        return vec;
     }
 
     bool load() {

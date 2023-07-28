@@ -65,6 +65,10 @@ Then build
 idf.py build
 ```
 
+## ENV Variables
+* Set `RUN_TESTS=1` to run unit-tests
+* Set the solar-input voltage divider resistor with `FUGU_HV_DIV`. Original board design uses 5.1k: `FUGU_HV_DIV=5.1`. Defaults to 4.7.
+* `FUGU_BAT_V`: hard-code the battery voltage. If not set the program tries to detect bat voltage from a multiple of 14.6V.
 
 # Contribution
 

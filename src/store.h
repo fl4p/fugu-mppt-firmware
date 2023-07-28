@@ -70,6 +70,8 @@ static bool mountLFS(const char *part_label = "littlefs", bool format = false) {
         if (esp_littlefs_format(part_label) != ESP_OK) {
             ESP_LOGE("store", "formatting %s failed!", part_label);
             return false;
+        } else {
+            ESP_LOGI("store", "Formatting done!");
         }
     }
 
