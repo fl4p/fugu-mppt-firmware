@@ -112,43 +112,47 @@ public:
 
     /**
      * Compute low-side switch duty cycle to emulate a diode for synchronous buck
+     * Prevents reverse current through the LS switch, which would lead to voltage boost and reverse current
+     * and can eventually destroy the LS switch.
+     * High-voltages at the output can toast anything connected (including the board itself!)
      *
-     * @param pwmHS
-     * @param pwmMax
-     * @param voltageRatio Vout/Vin ratio
+     * The function does some error estimation and decides whether we are in DCM or CCM mode and limits the LS duty cycle accordingly.
+     * See https://www.ti.com/seclit/ug/slyu036/slyu036.pdf#page=19 for more info about sync buck modes and timings
+     *
+     * @param pwmHS Duty cycle of the HS switch
+     * @param pwmMax The maximum duty cycle value
+     * @param voltageRatio Vout/Vin ratio (the greater, the safer but less efficient)
      * @return
      */
     static uint16_t computePwmMaxLs(uint16_t pwmHS, uint16_t pwmMax, float voltageRatio) {
-        // prevents boosting and "low side burning" due to excessive LS current
-        // (non-diode behavior, negative reverse inductor current)
 
-        const float margin = 0.99f; // TODO what does this model or represent, remove? maybe coil losses?
+        const float coilEfficiency = 0.99f; // TODO what does this model or represent, remove? maybe coil losses?
 
-        // this is very sensitive to voltageRatio errors! at VR=0.64 a -5% error causes a 13% deviation of pwmMaxLs !
+        // the computation below is very sensitive to voltageRatio errors!
+        // at VR=0.64 a -5% error causes a 13% deviation of pwmMaxLs !
+        // so we do some proper error computation here
         constexpr float voltageMaxErr = 0.02f; // inc -> safer, less efficient
 
         // WCEF = worst case error factor
-        // compute the worst case error (Vout too low, Vin too high)
+        // compute the worst case error (Vout estimated too low, Vin too high)
         constexpr float voltageRatioWCEF = (1.f - voltageMaxErr) / (1.f + voltageMaxErr); // < 1.0
 
-        voltageRatio = constrain(voltageRatio, 1e-2f, 1.f - 1e-2f); // the greater, the safer
+        voltageRatio = constrain(voltageRatio, 1e-2f, 1.f - 1e-2f); // constrain to reasonable range
 
+        // compute worst-case error at current working point
         const float pwmMaxLsWCEF = (1 / (voltageRatio * voltageRatioWCEF) - 1) / (1 / voltageRatio - 1); // > 1
-
 
         auto pwmMaxLs = (1 / voltageRatio - 1) * (float) pwmHS / pwmMaxLsWCEF; // the lower, the safer
 
-
-        // the extra 5% below fixes reverse current at 39khz, Vin55, Vout27, dc1000
-        // TODO pwm=1390 40.8/26.6
-
-        // TODO remove the 1.05?
-        if (pwmMaxLs < (float) (pwmMax - pwmHS)) { // * 1.05f
+        if (pwmMaxLs < (float) (pwmMax - pwmHS)) {
             // DCM (Discontinuous Conduction Mode)
             // this is when the coil current is still touching zero, it'll stop for higher HS duty cycles
-            pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS * 1.0f); // TODO explain why this is necessary
+            // Allowing higher duty cycles here would result a synchronous forced PWM.
+            // (forced PWM reduces output ripple?) TODO
+            pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS);
         } else {
             // CCM (Continuous Conduction Mode)
+            // coil current never becomes zero
             pwmMaxLs = (float) (pwmMax - pwmHS);
         }
 
@@ -157,7 +161,7 @@ public:
         // todo beyond pwmMaxLs < (pwmMax - pwmHS), can we reduce the worst-case error assumption to boost eff?
         // or just replace  with pwmMaxLs < (pwmMax - pwmHS) * pwmMaxLsWCEF and remove scaling pwmMaxLs by pwmMaxLsWCEF
 
-        return (uint16_t) (pwmMaxLs * margin);
+        return (uint16_t) (pwmMaxLs * coilEfficiency);
     }
 
     void updateLowSideMaxDuty(float vout, float vin) {
@@ -191,7 +195,7 @@ public:
      * @param enable
      */
     void enableLowSide(bool enable) {
-        if(enable != lowSideEnabled) {
+        if (enable != lowSideEnabled) {
             ESP_LOGI("pwm", "Low-side switch %s", enable ? "enabled" : "disabled");
         }
         lowSideEnabled = enable;

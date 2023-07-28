@@ -1,91 +1,155 @@
 #pragma once
 
+//#include <utility>
+#include <utility>
+#include <vector>
+#include <string>
+#include <functional>
+
+#include <esp_log.h>
+
+#include <Arduino.h>
+
 #include "adc.h"
-#include "statmath.h"
+#include "math/statmath.h"
 
-template<class T>
-struct ThreeChannelStruct {
-    T chVin, chVout, chIin;
-};
 
-template<class T>
-union ThreeChannelUnion {
-    ThreeChannelStruct<T> s;
-    T arr[3];
-
-    inline const T &operator[](int i) const { return arr[i]; }
-
-    inline T &operator[](int i) { return arr[i]; }
-
-    //template<void T::* MemPtr>
-    //template<typename T_arg0, void (T::*fn)(const T_arg0 &)>
-    //void call(const T_arg0 &arg0) {
-    //    for(auto & o : arr)
-    //        fn(o, arg0);
-    //}
-};
-
-struct ChannelTransform {
-    uint8_t num;
+struct LinearTransform {
     float factor;
     float midpoint;
+
+    inline float apply(float x) const { return (x - midpoint) * factor; }
+
+    inline float apply_inverse(float y) const { return (y / factor) + midpoint; }
 };
 
+struct CalibrationConstraints {
+    float maxAbsValue;
+    float maxStddev;
+
+    bool calibrateMidpoint;
+};
+
+template<typename T>
+struct VIinVout {
+    T Vin, Vout, Iin;
+};
 
 /**
+ *
+ * Implements asynchronous interleaved sampling of multiple sensors. Each sensor uses an ADC channel.
+ *
  * Implement
  * - ADC channel abstraction (for Vin, Vout, Iin)
  * - Channel cycling
  * - Zero current calibration
  * - Exponentially weighted moving average (EWMA) filtering
  */
-class DCDC_PowerSampler {
-
-
+class ADC_Sampler {
     uint8_t cycleCh = 0;
 
-    bool calibrating_ = false;
+    uint8_t calibrating_ = 0;
     unsigned long timeLastCalibration = 0;
-    float calibZeroCurrent = 0;
-    float calibVout = 0;
 
     uint16_t ewmSpan = 1;
-
 
 public:
 
     AsyncADC<float> *adc = nullptr;
 
-    std::function<void(const DCDC_PowerSampler &dcdc, uint8_t)> onDataChange = nullptr;
+    struct SensorParams {
+        const uint8_t adcCh;
+        const LinearTransform transform;
+        const CalibrationConstraints calibrationConstraints;
+        const std::string teleName;
+        const bool rawTelemetry;
+    };
 
-    const ThreeChannelUnion<ChannelTransform> channels;
-    ThreeChannelUnion<float> last{NAN, NAN, NAN};
-    ThreeChannelUnion<float> previous{NAN, NAN, NAN};
-    ThreeChannelUnion<uint32_t> numSamples{0, 0, 0};
-    ThreeChannelUnion<EWM<float>> ewm{
-            EWM<float>{1},
-            EWM<float>{1},
-            EWM<float>{1}};
-    ThreeChannelUnion<RunningMedian3<float>> med3{{{}, {}, {}}};
+    struct Sensor {
+        const SensorParams params;
 
+        float last = NAN;
+        float previous = NAN;
+        uint32_t numSamples = 0;
+        RunningMedian3<float> med3{};
+        EWM<float> ewm;
 
-    explicit DCDC_PowerSampler(const ThreeChannelUnion<ChannelTransform> &channels) :
-            channels(channels) {
+        float calibrationAvg = 0;
+
+        Sensor(SensorParams params, uint32_t ewmSpan) : params(std::move(params)), ewm{ewmSpan} {}
+
+        Sensor(const Sensor &other) = delete; // no-copy
+        Sensor &operator=(const Sensor &) = delete; // no-copy
+
+        void reset(bool resetCalibration = false) {
+            last = NAN;
+            previous = NAN;
+            numSamples = 0;
+            med3.reset();
+            ewm.reset();
+            if (resetCalibration)
+                calibrationAvg = 0;
+        }
+
+        void add_sample(float x) {
+            auto v = params.transform.apply(x);
+
+            if (params.calibrationConstraints.calibrateMidpoint) {
+                v -= calibrationAvg;
+            }
+
+            previous = last;
+            last = v;
+            ewm.add(med3.next(v));
+            ++numSamples;
+
+            //ESP_LOGD("s", "Sensor %s: add sample %.5f #%d (ewm avg %.5f)", teleName.c_str(), last, numSamples, ewm.avg.get());
+        }
+    };
+
+    /*struct _SensorCalibrationState {
+        std::vector<float> acc{};
+        std::vector<uint32_t> num {};
+    };*/
+
+    std::function<void(const ADC_Sampler &sampler, const Sensor &)> onNewSample = nullptr;
+    std::vector<Sensor *> channels{};
+
+    //_SensorCalibrationState * calibrationState = nullptr;
+    //explicit ADC_Sampler()  {}
+
+    void setADC(AsyncADC<float> *adc_) {
+        adc = adc_;
     }
 
-    float getIoutSmooth(float conversionEff = 0.97f) const {
-        return ewm.s.chIin.avg.get() * ewm.s.chVin.avg.get() * conversionEff / std::max(ewm.s.chVout.avg.get(), 2.f);
+    /**
+     * Add a sensor with a given transform, a max expected value for ADC ranging and a name used for telemetry
+     *
+     * @param adcChannel ADC channel to read samples from
+     * @param transform Transform applied to the samples
+     * @param maxY Max expected value of the transformed sample (used to program the ADC PGA)
+     */
+    const Sensor *addSensor(SensorParams params, float maxY) {
+        assert(adc != nullptr);
+        auto maxX = params.transform.apply_inverse(params.transform.factor < 0 ? -maxY : maxY);
+        ESP_LOGI("sampler", "%s ADC ch %hhu maxY=%.4f, maxX=%.4f", params.teleName.c_str(), params.adcCh, maxY, maxX);
+        adc->setMaxExpectedVoltage(params.adcCh, maxX);
+
+        channels.push_back(new Sensor{std::move(params), ewmSpan});
+        channels.back()->ewm.updateSpan(ewmSpan);
+        return channels.back();
     }
 
     void _readNext() {
-        adc->startReading(channels[cycleCh].num);
+        adc->startReading(channels[cycleCh]->params.adcCh);
     }
 
-    void begin(AsyncADC<float> *adc_, uint16_t ewmaSpan) {
-        adc = adc_;
-        //auto f = &EWM<float>::updateSpan;
-        for (auto &o: ewm.arr)
-            o.updateSpan(ewmaSpan);
+
+    void begin(uint16_t ewmaSpan) {
+        assert(adc != nullptr);
+        assert(!channels.empty());
+        for (auto &ch: channels)
+            ch->ewm.updateSpan(ewmaSpan);
         ewmSpan = ewmaSpan;
         _readNext();
     }
@@ -96,81 +160,76 @@ public:
         // TODO use mean average, not EWM!
         // - reset mean here
         // consider: peak2peak values, emipiral uncertainty (higher stddev->need more samples)
-        calibrating_ = true;
-        calibZeroCurrent = 0;
-        for (auto i = 0; i < 3; ++i) {
-            numSamples[i] = 0;
-            ewm.arr[i].reset();
+        calibrating_ = channels.size();
+        for (auto &ch: channels) {
+            ch->reset(true);
         }
     }
 
     bool update() {
-        if (adc->hasData()) {
-            auto v = (adc->getSample() - channels[cycleCh].midpoint) * channels[cycleCh].factor;
-            //bool changed = (last[cycleCh] != v);
-            if (&last[cycleCh] == &last.s.chIin) {
-                v -= calibZeroCurrent;
-                if (std::max(last.s.chVin, last.s.chVout) < 10.f) {
-                    v = 0; // current sensor needs at 5V
-                }
-            }
-            previous[cycleCh] = last[cycleCh];
-            last[cycleCh] = v;
-            ewm[cycleCh].add(med3[cycleCh].next(v));
-            ++numSamples[cycleCh];
-            cycleCh = (cycleCh + 1) % 3;
+        if (!adc->hasData())
+            return false;
 
-            _readNext(); // start async read
+        auto &ch(*channels[cycleCh]);
+        auto x = adc->getSample();
+        cycleCh = (cycleCh + 1) % channels.size();
+        _readNext(); // start async read
 
-            if (onDataChange) { // changed &&
-                onDataChange(*this, cycleCh);
-            }
-
-
-
-            /*if (std::max(last.s.chVin, last.s.chVout) < 10.f) {
-                if (!calibrating_)
-                    ESP_LOGW("dcdc", "Supply under-voltage!");
-                startCalibration();
-            } else **/ if (calibrating_ && numSamples[cycleCh] > ewmSpan * 2) {
-                calibZeroCurrent = ewm.s.chIin.avg.get();
-                ESP_LOGI("dcdc", "Zero Current Calibration avg=%.4f std=%.6f", calibZeroCurrent, ewm.s.chIin.std.get());
-
-                calibVout = ewm.s.chVout.avg.get();
-                ESP_LOGI("dcdc", "V_out avg=%.4f std=%.6f", calibVout, ewm.s.chVout.std.get());
-                ESP_LOGI("dcdc", "V_in avg=%.4f std=%.6f", ewm.s.chVin.avg.get(), ewm.s.chVin.std.get());
-
-                auto vOut_std = std::fabs(ewm.s.chVout.std.get() * ewm.s.chVout.avg.get());
-
-                // TODO peak2peak
-
-                if (std::fabs(calibZeroCurrent) > 0.5f) {
-                    ESP_LOGE("dcdc", "Zero Current too high %.2f", calibZeroCurrent);
-                    startCalibration();
-                } else if (ewm.s.chIin.std.get() > 0.1) { // 0.001
-                    ESP_LOGE("dcdc", "Zero Current stddev too high %.5f", ewm.s.chIin.std.get());
-                    startCalibration();
-                } else if (vOut_std > 0.05f) {
-                    ESP_LOGE("dcdc", "Zero Current Vout std too high %.2f V", vOut_std);
-                    startCalibration();
-                } else {
-                    calibrating_ = false;
-                    timeLastCalibration = millis();
-                }
-            }
-
-            return true;
+        ch.add_sample(x);
+        if (onNewSample) {
+            onNewSample(*this, ch);
         }
-        return false;
+
+        /*if(calibrationState) {
+            calibrationState->acc[cycleCh] += ch.last;
+            ++calibrationState->num[cycleCh];
+        }*/
+
+
+        if (calibrating_ && ch.numSamples >= std::max(3, ewmSpan * 2)) {
+            // calibZeroCurrent = ewm.s.chIin.avg.get();
+            auto avg = ch.ewm.avg.get();
+            auto std = ch.ewm.std.get();
+
+            auto &constrains{ch.params.calibrationConstraints};
+
+            if (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue) {
+                ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, x=%.6f)",
+                         ch.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, ch.last, x);
+                startCalibration();
+                return false;
+            }
+
+            if ( /*!std::isfinite(std) or */ std > constrains.maxStddev) {
+                ESP_LOGE("sampler", "Calibration failed, %s stddev %.6f > %.6f", ch.params.teleName.c_str(), std,
+                         constrains.maxStddev);
+                startCalibration();
+                return false;
+            }
+
+            // TODO peak2peak
+
+            ch.calibrationAvg = avg;
+
+            ESP_LOGI("sampler", "Sensor %s calibration: avg=%.4f std=%.6f", ch.params.teleName.c_str(), avg, std);
+            if (ch.params.calibrationConstraints.calibrateMidpoint)
+                ESP_LOGI("sampler", "Sensor %s midpoint-calibrated: %.6f", ch.params.teleName.c_str(), avg);
+
+            --calibrating_;
+
+            assert(calibrating_ < channels.size());
+
+            if (calibrating_ == 0) {
+                ESP_LOGI("sampler", "Calibration done!");
+                timeLastCalibration = millis();
+                return true;
+            }
+        }
+
+        return calibrating_ == 0;
     }
 
-    bool isCalibrating() const {
-        return calibrating_;
-    }
-
-    float getBatteryIdleVoltage() const {
-        return calibVout;
-    }
+    bool isCalibrating() const { return calibrating_ > 0; }
 
     unsigned getTimeLastCalibration() const { return timeLastCalibration; }
 };

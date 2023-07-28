@@ -55,7 +55,37 @@ public:
         setChannelGain(ch, g);
     }
 
+    static float gainVoltageRange(adsGain_t gain) {
+        float fsRange;
+        switch (gain) {
+            case GAIN_TWOTHIRDS:
+                fsRange = 6.144f;
+                break;
+            case GAIN_ONE:
+                fsRange = 4.096f;
+                break;
+            case GAIN_TWO:
+                fsRange = 2.048f;
+                break;
+            case GAIN_FOUR:
+                fsRange = 1.024f;
+                break;
+            case GAIN_EIGHT:
+                fsRange = 0.512f;
+                break;
+            case GAIN_SIXTEEN:
+                fsRange = 0.256f;
+                break;
+            default:
+                fsRange = 0.0f;
+        }
+        return fsRange;
+    }
+
     void setChannelGain(uint8_t channel, adsGain_t gain) {
+        if (gain != gainsByChannel[channel])
+            ESP_LOGI("ads", "Set channel %hhu gain %.3f -> %.3f", channel, gainVoltageRange(gainsByChannel[channel]),
+                     gainVoltageRange(gain));
         gainsByChannel[channel] = gain;
     }
 
@@ -65,6 +95,8 @@ public:
         ads.setGain(gainsByChannel[channel]);
         ads.startADCReading(MUX_BY_CHANNEL[channel], /*continuous=*/false);
     }
+
+
 
 /*
     static float computeVolts(int16_t counts, adsGain_t gain) {

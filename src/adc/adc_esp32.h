@@ -2,7 +2,7 @@
 #include <driver/adc.h>
 #include <esp_adc_cal.h>
 #include "pinconfig.h"
-#include "statmath.h"
+#include "math/statmath.h"
 
 /**
  * Single-shot implementation for ESP32's internal ADC1. Uses `esp_adc_cal_characterize()`.
