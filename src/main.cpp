@@ -5,7 +5,7 @@
 #include "adc/adc_esp32.h"
 
 #include "adc/sampling.h"
-#include "pwm.h"
+#include "buck.h"
 #include "mppt.h"
 #include "util.h"
 #include "telemetry.h"
@@ -23,21 +23,16 @@
 #include "esp_log.h"
 
 
-ADC_ADS adc_ads;
-ADC_ESP32 adc_esp32;
+ADC_ADS adc_ads; // ADS1x15
+ADC_ESP32 adc_esp32; // ESP32 internal ADC
 
-DCDC_PowerSampler dcdcPwr{ThreeChannelUnion<ChannelAndFactor>{.s={
-        .chVin = {3, (200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0},
-        .chVout = {1, (47. / 2 + 1) / 1, 0},
-        .chIin = {2,
-                  -(1 / 0.066f /*ACS712-30 sensitivity*/) * (10 + 3.3) / 10. * 1.03734586f, //
-                  2.5 * 10. / (10 + 3.3) - 0.0117, // midpoint
-        },
-}}};
-
+ADC_Sampler adcSampler{}; // schedules async ADC reading
 LCD lcd;
 HalfBridgePwm pwm;
-MpptSampler mppt{dcdcPwr, pwm, lcd};
+
+MpptController mppt{adcSampler, pwm, lcd};
+
+VIinVout<const ADC_Sampler::Sensor *> sensors{};
 
 
 bool disableWifi = false;
@@ -64,8 +59,7 @@ void setup() {
 
     ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
 
-
-    if (!Wire.begin((uint8_t) PinConfig::I2C_SDA, (uint8_t) PinConfig::I2C_SCL, 600000UL)) {
+    if (!Wire.begin((uint8_t) PinConfig::I2C_SDA, (uint8_t) PinConfig::I2C_SCL, 800000UL)) {
         ESP_LOGE("main", "Failed to initialize Wire");
     }
 
@@ -78,6 +72,7 @@ void setup() {
 #ifdef NO_WIFI
     disableWifi = true;
 #endif
+
     if (!disableWifi) {
         connect_wifi_async();
         bool res = wait_for_wifi();
@@ -85,39 +80,77 @@ void setup() {
                 res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
     }
 
-    if(mountLFS()) {
-       ESP_LOGI("main", "LittleFS partition mounted");
+    if (!mountLFS()) {
+        ESP_LOGE("main", "Error mounting LittleFS partition!");
     }
 
-    AsyncADC<float> *adc = nullptr;
+    AsyncADC<float> *adc;
+    uint8_t Vin_ch, Vout_ch, Iin_ch;
     int ewmaSpan;
     if (adc_ads.init()) {
         adc = &adc_ads;
         ewmaSpan = 8;
+        Vin_ch = 3;
+        Vout_ch = 1;
+        Iin_ch = 2;
     } else if (adc_esp32.init()) {
         ESP_LOGW("main", "Failed to initialize external ADS1x15 ADC, using internal");
         adc = &adc_esp32;
         ewmaSpan = 80;
+        Vin_ch = (uint8_t) PinConfig::ADC_Vin;
+        Vout_ch = (uint8_t) PinConfig::ADC_Vout;
+        Iin_ch = (uint8_t) PinConfig::ADC_Iin;
     } else {
         scan_i2c();
         ESP_LOGE("main", "Failed to initialize any ADC");
-        while (1) {};
+        while (1) {}
     }
 
-    adc->setMaxExpectedVoltage(dcdcPwr.channels.s.chVin.num, 2);
-    adc->setMaxExpectedVoltage(dcdcPwr.channels.s.chVout.num, 2);
-    adc->setMaxExpectedVoltage(dcdcPwr.channels.s.chIin.num, 2.8f); // todo 3.3
+    adcSampler.setADC(adc);
 
+    constexpr float acs712_30_sensitivity = 1. / 0.066;
 
-    dcdcPwr.begin(adc, ewmaSpan);
+    LinearTransform Vin_transform = {(200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0};
+    LinearTransform Vout_transform = {(47. / 2 + 1) / 1, 0};
+    LinearTransform Iin_transform = {
+            -acs712_30_sensitivity * (10 + 3.3) / 10. * 1.03734586, //-20.9
+            2.5 * 10. / (10 + 3.3) - 0.0117, // midpoint 1.88V
+    };
+
+    sensors.Vin = adcSampler.addSensor(
+            {
+                    Vin_ch,
+                    Vin_transform,
+                    {80, 0.1f, false},
+                    "U_in_raw",
+                    false},
+            80.f);
+    sensors.Iin = adcSampler.addSensor(
+            {
+                    Iin_ch,
+                    Iin_transform,
+                    {.5f, .1f, true},
+                    "I_raw",
+                    false},
+            30.f);
+    sensors.Vout = adcSampler.addSensor(
+            {Vout_ch,
+             Vout_transform,
+             {60, .05f, false},
+             "U_out_raw",
+             true},
+            60.f);
+
+    adcSampler.begin(ewmaSpan);
 
     if (!pwm.init()) {
         ESP_LOGE("main", "Failed to init half bridge");
     }
 
     if (!disableWifi)
-        dcdcPwr.onDataChange = dcdcDataChanged;
+        adcSampler.onNewSample = dcdcDataChanged;
 
+    mppt.setSensors(sensors);
     mppt.begin();
 
     ESP_LOGI("main", "setup() done.");
@@ -126,63 +159,91 @@ void setup() {
 void loop() {
     auto nowMs = millis();
 
-    dcdcPwr.update();
+    if(!adcSampler.update())
+        return; // no new data -> don't do anythings. this prevents unne
 
-    auto nSamples = dcdcPwr.numSamples.s.chIin;
+    mppt.ntc.read();
 
-    if (dcdcPwr.isCalibrating()) {
+    // cap control update rate to sensor sampling rate (see below). rate for all 3 sensors are equal.
+    // we choose Vout here because this is the most critical control value (react fast to prevent OV)
+    auto nSamples = sensors.Vout->numSamples;
+
+
+    // auto range current sense ADC channel TODO add hysteresis
+    /* float adcRangeBound = 2.0f;
+    adcSampler.adc->setMaxExpectedVoltage(
+            sensors.Iin->adcCh,
+            (std::max(sensors.Iin->last, sensors.Iin->ewm.avg.get()) < sensors.Iin->transform.apply(adcRangeBound))
+            ? adcRangeBound
+            : sensors.Iin->transform.apply_inverse(30.f)
+    ); */
+
+
+    if (adcSampler.isCalibrating()) {
         pwm.disable();
     } else {
-        bool mppt_ok = mppt.protect();
-        if (!mppt_ok) {
-            //protectCoolDownUntil = nowMs + 4000;
-            charging = false;
-        } else {
-            if (!charging && mppt.startCondition()) {
-                mppt.startSweep();
-                charging = true;
+        if (charging) {
+            bool mppt_ok = mppt.protect();
+            if (mppt_ok) {
+                if ((nSamples - lastMpptUpdateNumSamples) > 0) {
+                    if (charging && !manualPwm)
+                        mppt.update();
+                    else
+                        mppt.telemetry();
+                    lastMpptUpdateNumSamples = nSamples;
+                }
+            } else {
+                charging = false;
             }
-
-            if ((nSamples - lastMpptUpdateNumSamples) > 0) {
-                if (charging && !manualPwm)
-                    mppt.update();
-                else
-                    mppt.telemetry();
-                lastMpptUpdateNumSamples = nSamples;
-            }
+        } else if (mppt.startCondition()) {
+            mppt.startSweep();
+            charging = true;
         }
     }
 
     if ((nowMs - lastTimeOut) >= 3000) {
-        auto &ewm(dcdcPwr.ewm.s);
+        auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
+                   (uint32_t) (nowMs - lastTimeOut);
+
+        if(sps < 100 && !pwm.disabled()) {
+            ESP_LOGE("main", "Loop latency too high! shutdown");
+            pwm.disable();
+            charging = false;
+        }
+
         UART_LOG(
                 "Vi/o=%4.1f/%4.1f Iin=%4.1fA Pin=%4.1fW %.0f°C %2usps %ubps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s,%i) lag=%.1fms N=%u",
-                dcdcPwr.last.s.chVin,
-                dcdcPwr.last.s.chVout,
-                dcdcPwr.last.s.chIin,
-                ewm.chVin.avg.get() * ewm.chIin.avg.get(),
+                sensors.Vin->last,
+                sensors.Vout->last,
+                sensors.Iin->last,
+                sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
                 //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
                 mppt.ntc.last(),
-                (lastNSamples < dcdcPwr.numSamples[0] ? (dcdcPwr.numSamples[0] - lastNSamples) : 0) * 1000u /
-                (uint32_t) (nowMs - lastTimeOut),
+                sps,
                 (uint32_t) (bytesSent * 1000u / millis()),
                 pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
                 //mppt.getPower()
-                manualPwm ? "MANU" : MpptState2String[(uint8_t) mppt.getState()].c_str(),
+                manualPwm ? "MANU"
+                          : (!charging && !mppt.startCondition()
+                             ? "START"
+                             : MpptState2String[(uint8_t) mppt.getState()].c_str()),
                 (int) charging,
                 maxLoopLag * 1e-3f,
                 nSamples
         );
         lastTimeOut = nowMs;
-        lastNSamples = dcdcPwr.numSamples[0];
+        lastNSamples = nSamples;
+
+        if (!charging)
+            mppt.meter.update(); // always update the meter
     }
 
 
     lcd.updateValues(LcdValues{
-            .Vin = dcdcPwr.ewm.s.chVin.avg.get(),
-            .Vout = dcdcPwr.ewm.s.chVout.avg.get(),
-            .Iin = dcdcPwr.ewm.s.chIin.avg.get(),
-            .Iout = dcdcPwr.getIoutSmooth(),
+            .Vin = sensors.Vin->ewm.avg.get(),
+            .Vout = sensors.Vout->ewm.avg.get(),
+            .Iin = sensors.Iin->ewm.avg.get(),
+            .Iout = mppt.getIoutSmooth(),
             .Temp = mppt.ntc.last(),
     });
 
@@ -210,7 +271,8 @@ void loop() {
         ESP_LOGI("main", "received serial command: %s", inp.c_str());
         inp.trim();
         if (inp.length() > 0) {
-            if ((inp[0] == '+' or inp[0] == '-') && !dcdcPwr.isCalibrating() && inp.length() < 6 && inp.toInt() != 0 &&
+            if ((inp[0] == '+' or inp[0] == '-') && !adcSampler.isCalibrating() && inp.length() < 6 &&
+                inp.toInt() != 0 &&
                 std::abs(inp.toInt()) < pwm.pwmMax) {
                 int pwmStep = inp.toInt();
                 ESP_LOGI("main", "Manual PWM step %i", pwmStep);
@@ -224,7 +286,7 @@ void loop() {
             } else if (inp == "mppt" && manualPwm) {
                 ESP_LOGI("main", "MPPT re-enabled");
                 manualPwm = false;
-            } else if (inp.startsWith("dc ") && !dcdcPwr.isCalibrating() && inp.length() <= 8
+            } else if (inp.startsWith("dc ") && !adcSampler.isCalibrating() && inp.length() <= 8
                        && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmMax) {
                 manualPwm = true;
                 pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());

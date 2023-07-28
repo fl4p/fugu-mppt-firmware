@@ -11,18 +11,15 @@
 #include "tracker.h"
 #include "control.h"
 #include "store.h"
+#include "metering.h"
+#include "charger.h"
 
-#ifndef FUGU_BAT_V
-#define FUGU_BAT_V NAN
-#endif
 
-struct MpptParams {
-    float Vout_max = FUGU_BAT_V; //14.6 * 2;
-    float Vin_max = 80;
-    float Iin_max = 30;
-    float Iout_max = 27; // coil & fuse limited
-    float P_max = 800;
+struct MpptParams : public BatChargerParams {
+    float Vin_max = 80.f;
     float Vin_min = 10.5f;
+    float Iin_max = 30.f;
+    float P_max = 800.f;
 };
 
 enum class MpptControlMode : uint8_t {
@@ -45,10 +42,8 @@ static const std::array<std::string, (size_t) MpptControlMode::Max> MpptState2St
         "SWEEP"
 };
 
-struct PersistentState {
-    uint32_t bootCount = 0;
-    double totalEnergy = 0;
-};
+
+
 
 /**
  * Implements
@@ -57,98 +52,95 @@ struct PersistentState {
  * - MPP global scan
  * - Telemetry
  */
-class MpptSampler {
-    DCDC_PowerSampler &dcdcPwr;
+class MpptController {
+    ADC_Sampler &dcdcPwr;
     HalfBridgePwm &pwm;
     LCD &lcd;
     MpptParams params;
 
-    FlashValueStore<PersistentState> flash{
-            "/littlefs/stats",
-            [](const PersistentState &a, const PersistentState &b) {
-                return std::abs(a.totalEnergy - b.totalEnergy) < 5 && a.bootCount == b.bootCount;
-            },
-            1000 * 60 * 2
-    };
-
     bool autoDetectVout_max = true;
 
-    unsigned long lastOcFastRecovery = 0;
-
-    MpptControlMode state;
+    MpptControlMode state = MpptControlMode::None;
     bool _limiting = false;
-
-    TrapezoidalIntegrator<float, unsigned long, double> _energy{1e-6f / 3600.f};
-
     bool _sweeping = false;
+
     struct {
         float power = 0;
         uint16_t dutyCycle = 0;
         float voltage = 0;
-    } maxPowerPoint;
+    } maxPowerPoint;// MPP during sweep
 
     unsigned long lastTimeProtectPassed = 0;
     unsigned long _lastPointWrite = 0;
 
-    PD VinController{-100, -200, true}; // Vin under-voltage
-    PD VoutController{150, 600, true}; // Vout over-voltage
-    PD IinController{100, 400, true}; // Iin over-current
-    PD IoutCurrentController{100, 400, true}; // Iout over-current
-    PD powerController{10, 20, true}; // over-power // TODO PID?
+    VIinVout<const ADC_Sampler::Sensor*> sensors;
 
+    PD_Control VinController{-100, -200, true}; // Vin under-voltage
+    PD_Control VoutController{150, 600, true}; // Vout over-voltage
+    PD_Control IinController{100, 400, true}; // Iin over-current
+    PD_Control_SmoothTarget IoutCurrentController{30, 120, 200}; // Iout over-current
+    PD_Control_SmoothTarget powerController{10, 20, 200}; // over-power // TODO PID?
 
     Tracker tracker{};
-
+    BatteryCharger charger;
 
 public:
+    SolarEnergyMeter meter{};
     TempSensorGPIO_NTC ntc;
-    float Iout;
     float speedScale = 1;
 
-    explicit MpptSampler(DCDC_PowerSampler &dcdcPwr, HalfBridgePwm &pwm, LCD &lcd)
-            : dcdcPwr(dcdcPwr), pwm(pwm), lcd(lcd) {
+    explicit MpptController(ADC_Sampler &dcdcPwr, HalfBridgePwm &pwm, LCD &lcd)
+            : dcdcPwr(dcdcPwr), pwm(pwm), lcd(lcd), charger{params} {
 
         pinMode((uint8_t) PinConfig::LED, OUTPUT);
 
         digitalWrite((uint8_t) PinConfig::LED, false);
 
         fanInit();
+    }
 
+    void setSensors(const VIinVout<const ADC_Sampler::Sensor*> &channels_) {
+        sensors = channels_;
     }
 
     void begin() {
-        if (flash.load()) {
-            _energy.restore(flash.getFlashValue().totalEnergy);
-            ESP_LOGI("mppt", "Restored energy counter value %.3f, bootCounter %u", _energy.get(),
-                     flash.getFlashValue().bootCount);
-        }
-
-        auto stats = flash.getFlashValue();
-        ++stats.bootCount;
-        assert(flash.update(stats));
-
+        meter.load();
         startSweep();
     }
 
     MpptControlMode getState() const { return state; }
 
-    void shutdownDcdc() {
-        pwm.disable();
+    void shutdownDcdc() { pwm.disable(); }
+
+    bool boardPowerSupplyUnderVoltage(bool start = false) const {
+        return std::max(sensors.Vin->last, sensors.Vout->last) < (start ? 9.5f : 9.f);
     }
 
-    bool boardPowerSupplyUnderVoltage(bool start = false) {
-        return std::max(dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout) < (start ? 9.5f : 9.f);
+    bool startCondition() const {
+        return ntc.last() < 70.0f
+               && sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1
+               && !boardPowerSupplyUnderVoltage(true);
     }
 
     bool protect() {
+
+        // power supply under-voltage shutdown
+        if (boardPowerSupplyUnderVoltage()) {
+            if (!pwm.disabled())
+                ESP_LOGW("mppt", "Vin %.1f and Vout %.1f < 10", sensors.Vin->last, sensors.Vout->last);
+            shutdownDcdc();
+            return false;
+        }
+
         if (dcdcPwr.isCalibrating()) {
             shutdownDcdc();
             return false;
         }
 
         // detect battery voltage
+        // TODO move this to charger ?
         if (std::isnan(params.Vout_max)) {
-            auto vout = dcdcPwr.getBatteryIdleVoltage();
+            auto vout = sensors.Vout->calibrationAvg;
             float detectedVout_max = detectMaxBatteryVoltage(vout);
             if (std::isnan(detectedVout_max)) {
                 ESP_LOGW("mppt", "Unable to detect battery voltage Vout=%.2fV", vout);
@@ -161,37 +153,28 @@ public:
             }
         }
 
-        // power supply under-voltage shutdown
-        if (boardPowerSupplyUnderVoltage()) {
-            //startSweep();
-            if (!pwm.disabled())
-                ESP_LOGW("mppt", "Vin %.1f and Vout %.1f < 10", dcdcPwr.last.s.chVin, dcdcPwr.last.s.chVout);
-            shutdownDcdc();
-            return false;
-        }
-
 
         // input over-voltage
-        if (dcdcPwr.last.s.chVin > params.Vin_max) {
+        if (sensors.Vin->last > params.Vin_max) {
             // input over-voltage
-            ESP_LOGW("mppt", "Vin %.1f > %.1f!", dcdcPwr.last.s.chVin, params.Vin_max);
+            ESP_LOGW("mppt", "Vin %.1f > %.1f!", sensors.Vin->last, params.Vin_max);
             shutdownDcdc();
             return false;
         }
 
         // output over-voltage
         auto ovTh = params.Vout_max * 1.08;
-        //if (dcdcPwr.med3.s.chVout.get() > ovTh) {
-        if (dcdcPwr.last.s.chVout > ovTh && dcdcPwr.previous.s.chVout > ovTh) {
+        //if (adcSampler.med3.s.chVout.get() > ovTh) {
+        if (sensors.Vout->last > ovTh && sensors.Vout->previous > ovTh) {
             bool wasDisabled = pwm.disabled();
             shutdownDcdc();
 
-            auto vout = std::max(dcdcPwr.last.s.chVout, dcdcPwr.previous.s.chVout);
+            auto vout = std::max(sensors.Vout->last, sensors.Vout->previous);
 
             if (!wasDisabled)
                 ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu) > %.1fV + 8%%!",
                          vout,
-                         dcdcPwr.ewm.s.chVout.avg.get(), dcdcPwr.ewm.s.chVout.std.get(), pwm.getBuckDutyCycle(),
+                         sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.std.get(), pwm.getBuckDutyCycle(),
                          params.Vout_max);
 
 
@@ -208,71 +191,60 @@ public:
 
 
         // input over current
-        if (dcdcPwr.last.s.chIin / params.Iin_max > 1.5) {
+        if (sensors.Iin->last / params.Iin_max > 1.5) {
             shutdownDcdc();
-            ESP_LOGW("mppt", "Current %.1f 50%% above limit, shutdown", dcdcPwr.last.s.chIin);
+            ESP_LOGW("mppt", "Current %.1f 50%% above limit, shutdown", sensors.Iin->last);
             return false;
         }
 
-        if (dcdcPwr.last.s.chIin < -1 && dcdcPwr.previous.s.chIin < -1) {
-            ESP_LOGE("MPPT", "Reverse current %.1f A, noise? disable BFC and low-side FET", dcdcPwr.last.s.chIin);
+        if (sensors.Iin->last < -1 && sensors.Iin->previous < -1) {
+            ESP_LOGE("MPPT", "Reverse current %.1f A, noise? disable BFC and low-side FET", sensors.Iin->last);
             //shutdownDcdc();
             pwm.enableBackflowMosfet(false);
             pwm.lowSideMinDuty();
             //pwm.halfDutyCycle();
         }
 
-        if (dcdcPwr.ewm.s.chIin.avg.get() < -1) {
-            ESP_LOGE("MPPT", "Reverse avg current shutdown %.1f A", dcdcPwr.ewm.s.chIin.avg.get());
+        if (sensors.Iin->ewm.avg.get() < -1) {
+            ESP_LOGE("MPPT", "Reverse avg current shutdown %.1f A", sensors.Iin->ewm.avg.get());
             shutdownDcdc();
             return false;
         }
 
-        if (dcdcPwr.ewm.s.chVout.avg.get() > dcdcPwr.ewm.s.chVin.avg.get() * 1.25f) {
+        if (sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() * 1.25f) {
             if (!pwm.disabled())
-                ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown", dcdcPwr.ewm.s.chVout.avg.get(),
-                         dcdcPwr.ewm.s.chVin.avg.get());
+                ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown", sensors.Vout->ewm.avg.get(),
+                         sensors.Vin->ewm.avg.get());
             shutdownDcdc();
             return false;
         }
 
-        if (dcdcPwr.last.s.chVout > dcdcPwr.last.s.chVin * 2) {
-            ESP_LOGE("MPPT", "Vout %.1f > 2x Vin %.1f, shutdown", dcdcPwr.last.s.chVout, dcdcPwr.last.s.chVin);
+        if (sensors.Vout->last > sensors.Vin->last * 2) {
+            ESP_LOGE("MPPT", "Vout %.1f > 2x Vin %.1f, shutdown", sensors.Vout->last, sensors.Vin->last);
             shutdownDcdc();
             return false;
         }
 
         // try to prevent voltage boost and disable low side for low currents
-        if (fminf(dcdcPwr.ewm.s.chIin.avg.get(), std::max(dcdcPwr.last.s.chIin, dcdcPwr.previous.s.chIin)) < 0.1f) {
+        if (fminf(sensors.Iin->ewm.avg.get(), std::max(sensors.Iin->last, sensors.Iin->previous)) < 0.1f) {
             if (pwm.getBuckDutyCycleLS() > pwm.getDutyCycleLSMax() / 2 &&
                 pwm.getBuckDutyCycleLS() > (pwm.pwmMax / 10)) {
                 ESP_LOGW("MPPT", "Set low-side min duty (ewm(Iin)=%.2f, max(Iin,Iin[-1])=%.2f)",
-                         dcdcPwr.ewm.s.chIin.avg.get(), std::max(dcdcPwr.last.s.chIin, dcdcPwr.previous.s.chIin));
+                         sensors.Iin->ewm.avg.get(), std::max(sensors.Iin->last, sensors.Iin->previous));
             }
             pwm.lowSideMinDuty();
             pwm.enableBackflowMosfet(false);
         }
 
-        if (dcdcPwr.ewm.s.chIin.avg.get() / params.Iin_max > 1.05) {
-            // input over current (soft)
-            auto timeNow = millis();
-            auto debounceLog = (timeNow - lastOcFastRecovery > 1000);
-            if (debounceLog) {
-                ESP_LOGW("mppt", "Smooth current %.1f 5%% above limit!", dcdcPwr.ewm.s.chIin.avg.get());
-                lastOcFastRecovery = timeNow;
-            }
-            pwm.pwmPerturb(-2);
-        }
-
-        if (ntc.read() > 95) {
+        if (ntc.last() > 95) {
             ESP_LOGE("MPPT", "Temp %.1f°C > 95°C, shutdown", ntc.last());
             return false;
         }
 
 
-        float vOut = fmaxf(dcdcPwr.med3.s.chVout.get(), dcdcPwr.ewm.s.chVout.avg.get());
-        float vIn = fminf(dcdcPwr.med3.s.chVin.get(), dcdcPwr.ewm.s.chVin.avg.get());
-
+        // TODO move this to control loop
+        float vOut = fmaxf(sensors.Vout->med3.get(), sensors.Vout->ewm.avg.get());
+        float vIn = fminf(sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
         pwm.updateLowSideMaxDuty(vOut, vIn);
 
         lastTimeProtectPassed = millis();
@@ -280,11 +252,6 @@ public:
         return true;
     }
 
-    bool startCondition() {
-        return ntc.read() < 70.0f
-               && dcdcPwr.ewm.s.chVin.avg.get() > dcdcPwr.ewm.s.chVout.avg.get() + 1
-               && !boardPowerSupplyUnderVoltage(true);
-    }
 
     /**
      * Start a global MPPT scan.
@@ -305,11 +272,8 @@ public:
         _sweeping = true;
         maxPowerPoint = {};
 
-        auto stats = flash.getFlashValue();
-        stats.totalEnergy = _energy.get();
-        flash.update(stats);
-
-        lcd.periodicInit();
+        meter.commit(); // not real-time safe
+        lcd.periodicInit(); // not real-time safe
     }
 
 
@@ -324,15 +288,15 @@ public:
         );
         lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
         _sweeping = false;
-        pwm.pwmPerturb((int16_t) maxPowerPoint.dutyCycle - (int16_t) pwm.getBuckDutyCycle());
+        pwm.pwmPerturb((int16_t) maxPowerPoint.dutyCycle - (int16_t) pwm.getBuckDutyCycle()); // jump to MPP
     }
 
     void telemetry() {
-        if(!WiFi.isConnected())
+        if (!WiFi.isConnected())
             return;
 
-        auto Iin = dcdcPwr.ewm.s.chIin.avg.get();
-        auto Vin = dcdcPwr.ewm.s.chVin.avg.get();
+        auto Iin = sensors.Iin->ewm.avg.get();
+        auto Vin = sensors.Vin->ewm.avg.get();
         auto power = Iin * Vin;
 
         Point point("mppt");
@@ -341,7 +305,8 @@ public:
         point.addField("I", Iin, 3);
         point.addField("U", Vin, 3);
 
-        point.addField("E", _energy.get(), 1);
+        point.addField("E", meter.totalEnergy.get(), 1);
+        point.addField("E_today", meter.dailyEnergyMeter.today.energyDay.toFloat(), 1);
 
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
         point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
@@ -357,7 +322,10 @@ public:
         }
     }
 
-    //EWMA<float> avgIin{200}, avgVin{200};
+    float getIoutSmooth(float conversionEff = 0.97f) const {
+        auto pin = sensors.Iin->ewm.avg.get() * sensors.Vin->ewm.avg.get();
+        return pin * conversionEff / std::max(sensors.Vout->ewm.avg.get(), 2.f);
+    }
 
     /**
      * - Energy counter
@@ -366,6 +334,7 @@ public:
      */
     void update() {
         auto nowMs = millis();
+        auto nowUs = micros();
 
         if (pwm.disabled() && !startCondition()) {
             pwm.enableBackflowMosfet(false);
@@ -373,18 +342,20 @@ public:
             return;
         }
 
+        constexpr float conversionEfficiency = 0.97f;
 
-        float conversionEfficiency = 0.97f;
-        auto Iin(dcdcPwr.ewm.s.chIin.avg.get());
-        auto Vin(dcdcPwr.ewm.s.chVin.avg.get());
-        float power = dcdcPwr.ewm.s.chIin.avg.get() * dcdcPwr.ewm.s.chVin.avg.get();
+        auto Iin(sensors.Iin->ewm.avg.get());
+        auto Vin(sensors.Vin->ewm.avg.get());
+        auto Vout(sensors.Vout->ewm.avg.get());
+        float power = sensors.Iin->ewm.avg.get() * sensors.Vin->ewm.avg.get();
 
-        //avgIin.add(dcdcPwr.last.s.chIin);
-        //avgVin.add(dcdcPwr.last.s.chVin);
+        //avgIin.add(adcSampler.last.s.chIin);
+        //avgVin.add(adcSampler.last.s.chVin);
         //float smoothPower = avgIin.get() * avgVin.get();
 
-        Iout = dcdcPwr.getIoutSmooth(conversionEfficiency);
-        _energy.add(dcdcPwr.last.s.chIin * dcdcPwr.last.s.chVin * conversionEfficiency, micros());
+        auto Iout = getIoutSmooth(conversionEfficiency);
+        meter.add(sensors.Iin->last * sensors.Vin->last * conversionEfficiency, power, nowUs);
+
 
         const float ntcTemp = ntc.last();
         fanUpdateTemp(ntcTemp, power);
@@ -398,6 +369,9 @@ public:
             powerLimit = 20;
         }
 
+        // topping current
+        float Iout_max = charger.getToppingCurrent(Vout);
+
         // periodic sweep / scan
         if (!_sweeping /*&& power < 30*/ && (nowMs - dcdcPwr.getTimeLastCalibration()) > (20 * 60000)) {
             ESP_LOGI("mppt", "periodic zero-current calibration");
@@ -409,42 +383,56 @@ public:
         point.addTag("device", "fugu_" + String(getChipId()));
         point.addField("I", Iin, 2);
         point.addField("U", Vin, 2);
-        point.addField("U_out", dcdcPwr.ewm.s.chVout.avg.get(), 2);
+        point.addField("U_out", sensors.Vout->ewm.avg.get(), 2);
         point.addField("P", power, 2);
-        point.addField("E", _energy.get(), 1);
+        point.addField("E", meter.totalEnergy.get(), 1);
 
 
-        float uCV_in = VinController.update(dcdcPwr.med3.s.chVin.get(), params.Vin_min);
-        float uCV_out = VoutController.update(dcdcPwr.med3.s.chVout.get(), params.Vout_max);
-        float uCC_in = IinController.update(dcdcPwr.med3.s.chIin.get(), params.Iin_max);
-        float uCC_out = IoutCurrentController.update(Iout, params.Iout_max);
-        float uCP = powerController.update(power, powerLimit);
-
-        typedef std::pair<MpptControlMode, float> CVP;
-
-        std::array<CVP, 5> controlValues{
-                CVP{MpptControlMode::CV, uCV_in},
-                CVP{MpptControlMode::CV, uCV_out},
-                CVP{MpptControlMode::CC, uCC_in},
-                CVP{MpptControlMode::CC, uCC_out},
-                CVP{MpptControlMode::CP, uCP},
+        struct CVP {
+            MpptControlMode mode;
+            PD_Control &crtl;
+            struct {
+                float actual, target;
+            };
         };
 
-        auto limitingControl = std::min_element(controlValues.begin(), controlValues.end(),
-                                                [](const CVP &a, const CVP &b) { return a.second < b.second; });
+        constexpr auto CV = MpptControlMode::CV, CC = MpptControlMode::CC, CP = MpptControlMode::CP;
+
+        std::array<CVP, 5> controlValues{
+                CVP{CV, VinController, {sensors.Vin->med3.get(), params.Vin_min}},
+                CVP{CV, VoutController, {sensors.Vout->med3.get(), params.Vout_max}},
+                CVP{CC, IinController, {sensors.Iin->med3.get(), params.Iin_max}},
+                CVP{CC, IoutCurrentController, {Iout, Iout_max}},
+                CVP{CP, powerController, {power, powerLimit}},
+        };
+
+        CVP *limitingControl = nullptr;
+        float limitingControlValue = std::numeric_limits<float>::infinity();
+        for (auto &c: controlValues) {
+            auto cv = c.crtl.update(c.actual, c.target);
+            if (cv < limitingControlValue) {
+                limitingControlValue = cv;
+                limitingControl = &c;
+            }
+        }
+
+        //auto limitingControl = std::min_element(controlValues.begin(), controlValues.end(),
+        //                                        [](const CVP &a, const CVP &b) { return a.second < b.second; });
 
         MpptControlMode controlMode = MpptControlMode::None;
         float controlValue = 0;
 
-        if (limitingControl->second <= 0) {
+        if (limitingControlValue <= 0) {
             // limit condition
-            controlMode = limitingControl->first;
-            controlValue = limitingControl->second;
+            controlMode = limitingControl->mode;
+            controlValue = limitingControlValue;
 
             auto limIdx = (int) (limitingControl - controlValues.begin());
             if (!_limiting && controlValue < -80) {
-                ESP_LOGI("mppt", "Limiting! Control value %.2f, mode=%s, idx=%i", controlValue,
-                         MpptState2String[(int) controlMode].c_str(), limIdx);
+                ESP_LOGI("mppt", "Limiting! Control value %.2f, mode=%s, idx=%i (act=%.3f, tgt=%.3f)", controlValue,
+                         MpptState2String[(int) controlMode].c_str(), limIdx, limitingControl->actual,
+                         limitingControl->target);
+                ESP_LOGI("mppt", "Iout_max=%.2f powerLimit=%.2f", Iout_max, powerLimit);
             }
 
             point.addField("cv_lim_idx", limIdx);
@@ -456,7 +444,7 @@ public:
                 // recover from limit condition
                 _limiting = false;
                 controlMode = MpptControlMode::MPPT;
-                controlValue = limitingControl->second;
+                controlValue = limitingControlValue;
             }
         }
 
@@ -541,7 +529,5 @@ public:
             telemetryAddPoint(point, 40);
             _lastPointWrite = nowMs;
         }
-
-        // nextUpdateTime = nowMs + (unsigned long) (20.f / speedScale);
     }
 };

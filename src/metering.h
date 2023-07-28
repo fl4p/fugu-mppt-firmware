@@ -33,7 +33,7 @@ struct DailyRingStorageState {
 };
 
 class DailyRingStorage {
-    
+
     DailyRingStorageState<1000> state;
     FlashValueFile<decltype(state)> flash;
 
