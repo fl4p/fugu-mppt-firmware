@@ -87,31 +87,32 @@ class DailyEnergyMeter {
     float _prevTotalEnergy = 0;
 
 public:
-    DailyEnergyMeterState today{0};
+    //DailyEnergyMeterState today{0};
+    float todayEnergy = 0;
     long timeLastPower = 0;
 
-    void restore(float todayEnergy, long timeLastPower_) {
+    void restore(float todayEnergy_, long timeLastPower_) {
         store.load();
         timeLastPower = timeLastPower_;
 
         // maybe continue the day
-        if (todayEnergy > 2) {
-            today.energyDay = todayEnergy;
+        if (todayEnergy_ > 2) {
+            todayEnergy = todayEnergy_;
             auto now = std::time(nullptr);
             if (now < 1e9)
                 ESP_LOGW("mppt", "No system time sync!");
             // restore day only if timestamps are valid and last power was within last 3h
             if (now > 1e9 and timeLastPower > 1e9 and now - timeLastPower < 3600 * 3) {
-                ESP_LOGI("mppt", "Restored day energy %.2f, last power was <3h ago (%li s)", todayEnergy,
+                ESP_LOGI("mppt", "Restored day energy %.2f, last power was <3h ago (%li s)", todayEnergy_,
                          now - timeLastPower);
             } else {
-                ESP_LOGI("mppt", "Store yesterday energy %.2f (last power %li s ago)", todayEnergy,
+                ESP_LOGI("mppt", "Store yesterday energy %.2f (last power %li s ago)", todayEnergy_,
                          now - timeLastPower);
-                store.add(today);
-                today.energyDay = 0;
+                store.add(DailyEnergyMeterState{todayEnergy});
+                todayEnergy = 0;
             }
         } else {
-            today.energyDay = 0;
+            todayEnergy = 0;
         }
         _prevTotalEnergy = 0;
     }
@@ -123,21 +124,21 @@ public:
             timeLastPower = now;
         }
 
-        if ((today.hasEnergy() or smoothPower >= powerDayStart) and _prevTotalEnergy > 0 and
+        if ((todayEnergy > 0 or smoothPower >= powerDayStart) and _prevTotalEnergy > 0 and
             totalEnergy > _prevTotalEnergy + 0.000001f) {
             float e = (totalEnergy - _prevTotalEnergy);
-            if (!today.hasEnergy())
-                ESP_LOGI("met", "Good Morning! First energy %.4f for today! This is day #%u", e,
-                         store.getNumTotalDays() + 1);
-            today.energyDay += e;
+            if (todayEnergy == 0)
+                ESP_LOGI("met", "Good Day! First energy %.4f for today! This is day #%u, total energy meter is %.2f", e,
+                         store.getNumTotalDays() + 1, totalEnergy);
+            todayEnergy += e;
             // TODO fixw
             // assert(today.hasEnergy());
 
-        } else if (today.hasEnergy() && (now - timeLastPower) > 60 * 30) {
+        } else if (todayEnergy > 0 && (now - timeLastPower) > 60 * 30) {
             ESP_LOGI("met", "Day #%u ends, energy today %.3f, total %.2f", store.getNumTotalDays() + 1,
-                     today.energyDay.toFloat(), totalEnergy);
-            store.add(today);
-            today.energyDay = 0;
+                     todayEnergy, totalEnergy);
+            store.add(DailyEnergyMeterState{todayEnergy});
+            todayEnergy = 0;
         }
 
         _prevTotalEnergy = totalEnergy;
@@ -154,7 +155,7 @@ struct PersistentState {
 
 
 struct SolarEnergyMeter {
-    TrapezoidalIntegrator<float, unsigned long, double> totalEnergy{
+    TrapezoidalIntegrator<float, unsigned long, float> totalEnergy{
             1e-6f / 3600.f,  // us
             (unsigned long) 2e6f};
 
@@ -183,9 +184,9 @@ struct SolarEnergyMeter {
     }
 
     void add(float power, float smoothPower, unsigned long timeUs) {
-        if (std::abs(power) > 0.1f)
+        if (power > 0.1f)
             totalEnergy.add(power, timeUs);
-        dailyEnergyMeter.update(smoothPower, (float) totalEnergy.get());
+        dailyEnergyMeter.update(smoothPower, totalEnergy.get());
     }
 
     void update() {
@@ -196,7 +197,7 @@ struct SolarEnergyMeter {
         auto stats = flash.getFlashValue();
         stats.totalEnergy = totalEnergy.get();
         stats.timeLastPower = dailyEnergyMeter.timeLastPower;
-        stats.todayEnergy = dailyEnergyMeter.today.energyDay.toFloat();
+        stats.todayEnergy = dailyEnergyMeter.todayEnergy;
         if (increaseBootCounter)++stats.bootCount;
         flash.update(stats);
     }
