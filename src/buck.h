@@ -82,6 +82,12 @@ public:
 
     float directionFloatBuffer = 0.0f;
 
+    /**
+     * Perturb by a fractional step.
+     * Instantly perturbs the integer part and accumulates the remainder in a buffer
+     *
+     * @param directionFloat
+     */
     void pwmPerturbFractional(float directionFloat) {
         assert(std::abs(directionFloat) < pwmMax);
 
@@ -92,6 +98,10 @@ public:
             pwmPerturb(directionInt);
         directionFloatBuffer += directionFloat - (float) directionInt;
     }
+
+    //void pwmPerturbConstantRate(float normalizedDutyCycleStepPerSecond, unsigned long dt_us) {
+    //    pwmPerturbFractional(normalizedDutyCycleStepPerSecond * (float)dt_us * 1e-6f * (float)pwmMax);
+    //}
 
     uint16_t getBuckDutyCycle() const { return pwmHS; }
 
@@ -200,6 +210,7 @@ public:
         }
         lowSideEnabled = enable;
         if (!enable && pwmLS > pwmMinLS) {
+            ESP_LOGI("pwm", "Set Low-side pwm min");
             pwmLS = pwmMinLS;
             update_pwm(pwmCh_EN, pwmHS + pwmLS);
         }

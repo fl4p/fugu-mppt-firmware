@@ -58,7 +58,7 @@ public:
         return last();
     }
 
-    float last() const { return ewma.get(); }
+    inline float last() const { return ewma.get(); }
 };
 
 #if CONFIG_IDF_TARGET_ESP32S3

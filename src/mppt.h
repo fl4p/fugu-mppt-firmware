@@ -43,8 +43,6 @@ static const std::array<std::string, (size_t) MpptControlMode::Max> MpptState2St
 };
 
 
-
-
 /**
  * Implements
  * - Protection of DCDC converter
@@ -73,7 +71,7 @@ class MpptController {
     unsigned long lastTimeProtectPassed = 0;
     unsigned long _lastPointWrite = 0;
 
-    VIinVout<const ADC_Sampler::Sensor*> sensors;
+    VIinVout<const ADC_Sampler::Sensor *> sensors;
 
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
     PD_Control VoutController{150, 600, true}; // Vout over-voltage
@@ -99,7 +97,7 @@ public:
         fanInit();
     }
 
-    void setSensors(const VIinVout<const ADC_Sampler::Sensor*> &channels_) {
+    void setSensors(const VIinVout<const ADC_Sampler::Sensor *> &channels_) {
         sensors = channels_;
     }
 
@@ -306,7 +304,7 @@ public:
         point.addField("U", Vin, 3);
 
         point.addField("E", meter.totalEnergy.get(), 1);
-        point.addField("E_today", meter.dailyEnergyMeter.today.energyDay.toFloat(), 1);
+        point.addField("E_today", meter.dailyEnergyMeter.todayEnergy, 1);
 
         point.addField("pwm_duty", pwm.getBuckDutyCycle());
         point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
@@ -354,20 +352,14 @@ public:
         //float smoothPower = avgIin.get() * avgVin.get();
 
         auto Iout = getIoutSmooth(conversionEfficiency);
+
         meter.add(sensors.Iin->last * sensors.Vin->last * conversionEfficiency, power, nowUs);
 
 
         const float ntcTemp = ntc.last();
         fanUpdateTemp(ntcTemp, power);
 
-        float powerLimit = params.P_max;
-        if (ntcTemp > 75 or std::isnan(ntcTemp)) {
-            powerLimit = 300;
-        } else if (ntcTemp > 80) {
-            powerLimit = 200;
-        } else if (ntcTemp > 90) {
-            powerLimit = 20;
-        }
+        float powerLimit = std::min(thermalPowerLimit(ntcTemp), params.P_max);
 
         // topping current
         float Iout_max = charger.getToppingCurrent(Vout);
@@ -379,14 +371,16 @@ public:
             return;
         }
 
+        bool tele = WiFi.isConnected(); // disabled: sps=275, enabled: sps=165
         Point point("mppt");
-        point.addTag("device", "fugu_" + String(getChipId()));
-        point.addField("I", Iin, 2);
-        point.addField("U", Vin, 2);
-        point.addField("U_out", sensors.Vout->ewm.avg.get(), 2);
-        point.addField("P", power, 2);
-        point.addField("E", meter.totalEnergy.get(), 1);
-
+        if (tele) {
+            point.addTag("device", "fugu_" + String(getChipId()));
+            point.addField("I", Iin, 2);
+            point.addField("U", Vin, 2);
+            point.addField("U_out", sensors.Vout->ewm.avg.get(), 2);
+            point.addField("P", power, 2);
+            point.addField("E", meter.totalEnergy.get(), 1);
+        }
 
         struct CVP {
             MpptControlMode mode;
@@ -435,7 +429,7 @@ public:
                 ESP_LOGI("mppt", "Iout_max=%.2f powerLimit=%.2f", Iout_max, powerLimit);
             }
 
-            point.addField("cv_lim_idx", limIdx);
+            if (tele) point.addField("cv_lim_idx", limIdx);
 
             _limiting = true;
         } else {
@@ -482,15 +476,17 @@ public:
             controlValue = tracker.update(power, pwm.getBuckDutyCycle());
             controlValue *= speedScale;
 
-            auto dP = tracker.dP;
-            point.addField("P_prev", tracker._lastPower, 2);
-            point.addField("dP", dP, 2);
-            //point.addField("P_filt", tracker.pwmPowerTable[pwm.getBuckDutyCycle()].get(), 1);
-            point.addField("P_filt", tracker._powerBuf.getMean(), 1);
-            if (std::abs(dP) < tracker.minPowerStep) {
-                point.addField("dP_thres", 0.0f, 2);
-            } else {
-                point.addField("dP_thres", dP, 2);
+            if (tele) {
+                auto dP = tracker.dP;
+                point.addField("P_prev", tracker._lastPower, 2);
+                point.addField("dP", dP, 2);
+                //point.addField("P_filt", tracker.pwmPowerTable[pwm.getBuckDutyCycle()].get(), 1);
+                point.addField("P_filt", tracker._powerBuf.getMean(), 1);
+                if (std::abs(dP) < tracker.minPowerStep) {
+                    point.addField("dP_thres", 0.0f, 2);
+                } else {
+                    point.addField("dP_thres", dP, 2);
+                }
             }
         } else {
             tracker.resetTracker(power, controlValue > 0);
@@ -504,10 +500,6 @@ public:
 
 
         pwm.pwmPerturbFractional(controlValue);
-
-        point.addField("pwm_dir_f", controlValue, 2);
-        // point.addField("pwm_dir", pwmDirection);
-
         pwm.enableBackflowMosfet((Iin > 0.2f));
         pwm.enableLowSide((Iin > 0.2f));
 
@@ -516,18 +508,21 @@ public:
         digitalWrite((uint8_t) PinConfig::LED, ledState);
 
 
-        point.addField("mppt_state", int(controlMode));
-        // point.addField("mcu_temp", mcu_temp.last(), 1);
-        point.addField("ntc_temp", ntcTemp, 1);
-        point.addField("pwm_duty", pwm.getBuckDutyCycle());
-        point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
-        point.addField("pwm_ls_max", pwm.getDutyCycleLSMax());
+        if (tele) {
+            point.addField("pwm_dir_f", controlValue, 2);
+            point.addField("mppt_state", int(controlMode));
+            // point.addField("mcu_temp", mcu_temp.last(), 1);
+            point.addField("ntc_temp", ntcTemp, 1);
+            point.addField("pwm_duty", pwm.getBuckDutyCycle());
+            point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
+            point.addField("pwm_ls_max", pwm.getDutyCycleLSMax());
 
-        point.setTime(WritePrecision::MS);
+            point.setTime(WritePrecision::MS);
 
-        if (nowMs - _lastPointWrite > 10) {
-            telemetryAddPoint(point, 40);
-            _lastPointWrite = nowMs;
+            if (nowMs - _lastPointWrite > 10) {
+                telemetryAddPoint(point, 80);
+                _lastPointWrite = nowMs;
+            }
         }
     }
 };

@@ -196,7 +196,7 @@ public:
     void add(F x, T nowTime) {
         T dt = nowTime - lastTime;
         if (dt < maxDt)
-            value += (D) ((lastX + x) * 0.5 * (dt * timeFactor));
+            value += (D) ((lastX + x) * (F)0.5 * (F)(dt * timeFactor));
         lastTime = nowTime;
         lastX = x;
     }

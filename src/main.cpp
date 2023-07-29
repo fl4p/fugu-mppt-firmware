@@ -159,7 +159,7 @@ void setup() {
 void loop() {
     auto nowMs = millis();
 
-    if(!adcSampler.update())
+    if (!adcSampler.update())
         return; // no new data -> don't do anythings. this prevents unne
 
     mppt.ntc.read();
@@ -179,14 +179,14 @@ void loop() {
     ); */
 
 
-    if (adcSampler.isCalibrating()) {
+    if (unlikely(adcSampler.isCalibrating())) {
         pwm.disable();
     } else {
         if (charging) {
             bool mppt_ok = mppt.protect();
             if (mppt_ok) {
                 if ((nSamples - lastMpptUpdateNumSamples) > 0) {
-                    if (charging && !manualPwm)
+                    if (!manualPwm)
                         mppt.update();
                     else
                         mppt.telemetry();
@@ -205,14 +205,14 @@ void loop() {
         auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
                    (uint32_t) (nowMs - lastTimeOut);
 
-        if(sps < 100 && !pwm.disabled()) {
+        if (sps < 100 && !pwm.disabled() && nSamples > 1000) { //(nowMs - adcSampler.getTimeLastCalibration()) > 6000)
             ESP_LOGE("main", "Loop latency too high! shutdown");
             pwm.disable();
             charging = false;
         }
 
         UART_LOG(
-                "Vi/o=%4.1f/%4.1f Iin=%4.1fA Pin=%4.1fW %.0f°C %2usps %ubps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s,%i) lag=%.1fms N=%u",
+                "Vi/o=%4.1f/%4.1f Iin=%4.1fA Pin=%4.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s,%i) lag=%.1fms N=%u",
                 sensors.Vin->last,
                 sensors.Vout->last,
                 sensors.Iin->last,
@@ -220,7 +220,7 @@ void loop() {
                 //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
                 mppt.ntc.last(),
                 sps,
-                (uint32_t) (bytesSent * 1000u / millis()),
+                (uint32_t) (bytesSent /*/ 1000u * 1000u*/ / millis()),
                 pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
                 //mppt.getPower()
                 manualPwm ? "MANU"
