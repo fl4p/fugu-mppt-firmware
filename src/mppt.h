@@ -325,6 +325,8 @@ public:
         return pin * conversionEff / std::max(sensors.Vout->ewm.avg.get(), 2.f);
     }
 
+    unsigned long lastUs = 0;
+
     /**
      * - Energy counter
      * - voltage and current control
@@ -457,7 +459,7 @@ public:
         if (_sweeping) {
             if (controlMode == MpptControlMode::None) {
                 controlMode = MpptControlMode::Sweep;
-                controlValue = 5; // sweep speed
+                controlValue = 2; // sweep speed
 
                 // capture MPP during sweep
                 if (power > maxPowerPoint.power) {
@@ -494,12 +496,23 @@ public:
 
         //assert(controlValue != 0 && controlMode != MpptControlMode::None);
 
-        controlValue = constrain(controlValue, -(float) pwm.getBuckDutyCycle(), 5.0f);
+
 
         this->state = controlMode;
 
 
-        pwm.pwmPerturbFractional(controlValue);
+        //controlValue = constrain(controlValue, -(float) pwm.getBuckDutyCycle(), 5.0f);
+        //pwm.pwmPerturbFractional(controlValue);
+
+        if (lastUs) {
+            // normalize the control value to pwmMax and scale it with update rate to fix pwm slope rate
+            auto dt_us = nowUs - lastUs;
+            auto fp = controlValue * (1.f / 2000.f) * (float) pwm.pwmMax * (float) dt_us * 1e-6f * 25.f;
+            fp = constrain(fp, -(float) pwm.getBuckDutyCycle(), 1.0f); // TODO 1.f
+            pwm.pwmPerturbFractional(fp);
+        }
+        lastUs = nowUs;
+
         pwm.enableBackflowMosfet((Iin > 0.2f));
         pwm.enableLowSide((Iin > 0.2f));
 
