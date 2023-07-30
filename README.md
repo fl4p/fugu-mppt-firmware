@@ -65,7 +65,7 @@ The `VoutCTRL` is the fastest controller. Keeping the output voltage in-range wi
 prevent damage from transient over-voltage. Because this is powered by solar, reacting on short-circuits is not
 important, so `IinCTRL` (and `IoutCTRL`) can be slow.
 
-In each loop iteration we update all controllers and pick the one with the minimum response value. If it is positive, we
+In each loop iteration we update all controllers and pick the one with the lowest response value. If it is positive, we
 can proceed with the MPPT. Otherwise, we halt MPPT and decrease the duty cycle proportionally to the control value.
 
 The control loop has an update rate of about 160 Hz or 260 Hz without telemetry.
