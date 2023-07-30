@@ -115,7 +115,7 @@ public:
         if (checkFileSize) {
             struct stat st;
             if (stat(fn, &st) != 0) {
-                ESP_LOGI("store", "File %s doesn't exists / unable to stat", fn);
+                ESP_LOGI("store", "File %s doesn't exists (unable to stat)", fn);
                 return false;
             }
             if (st.st_size != sizeof(T)) {

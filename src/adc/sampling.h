@@ -166,6 +166,16 @@ public:
         }
     }
 
+    void cancelCalibration() {
+        if (!calibrating_)
+            return;
+        ESP_LOGI("mppt", "Cancel calibration");
+        calibrating_ = 0;
+        for (auto &ch: channels) {
+            ch->reset(false);
+        }
+    }
+
     bool update() {
         if (!adc->hasData())
             return false;

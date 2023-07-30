@@ -159,8 +159,12 @@ void setup() {
 void loop() {
     auto nowMs = millis();
 
-    if (!adcSampler.update())
+    if (!adcSampler.update()) {
+        if(adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage())
+            adcSampler.cancelCalibration();
         return; // no new data -> don't do anythings. this prevents unne
+    }
+
 
     mppt.ntc.read();
 
