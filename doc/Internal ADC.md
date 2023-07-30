@@ -28,10 +28,10 @@ A3 (solar voltage) ---> GPIO5 (ADC1_CHANNEL_4)
 A4 (bat voltage)   ---> GPIO6 (ADC1_CHANNEL_5) (orignally ADC-ALERT)
 ```
 
-# ESP32-WROOM-32
+## ESP32-WROOM-32
 
 ```
-A2 (solar current) ---> SENSOR_VP/GPIO36 (ADC1_CHANNEL_0)
-A3 (solar voltage) ---> SENSOR_VN/GPIO39 (ADC1_CHANNEL_3)
-A4 (bat voltage)   ---> IO34 (ADC1_CHANNEL_6) (orignally ADC-ALERT)
+A2 (solar current) ---> GPIO36 / SENSOR_VP (ADC1_CHANNEL_0)
+A3 (solar voltage) ---> GPIO39 / SENSOR_VN (ADC1_CHANNEL_3)
+A4 (bat voltage)   ---> GPIO34 (ADC1_CHANNEL_6) (orignally ADC-ALERT)
 ```

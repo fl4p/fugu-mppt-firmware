@@ -53,7 +53,7 @@ idf.py build
 
 The control loop reads Vout, Vin, Iin and adjust the PWM duty cycle of the buck DC-DC converter for MPPT and output
 regulation.  
-Besides the MPP tracker, the control loop contains 5 PD control units:
+Besides the MPP tracker, the control loop contains 5 PD control units (PID without the integral component):
 
 - `VinCTRL` (solar voltage), keeps solar voltage above 10.5V to prevent board supply UV
 - `IinCTRL` (solar current), limits input current to protect hardware
@@ -63,9 +63,9 @@ Besides the MPP tracker, the control loop contains 5 PD control units:
 
 The `VoutCTRL` is the fastest controller. Keeping the output voltage in-range with varying load is most crucial to
 prevent damage from transient over-voltage. Because this is powered by solar, reacting on short-circuits is not
-important, so `IoutCTRL` can be slow.
+important, so `IinCTRL` (and `IoutCTRL`) can be slow.
 
-In each loop iteration we update all controllers and pick the one with the minimum control value. If it is positive, we
+In each loop iteration we update all controllers and pick the one with the minimum response value. If it is positive, we
 can proceed with the MPPT. Otherwise, we halt MPPT and decrease the duty cycle proportionally to the control value.
 
 The control loop has an update rate of about 160 Hz or 260 Hz without telemetry.
@@ -75,10 +75,10 @@ The control loop has an update rate of about 160 Hz or 260 Hz without telemetry.
 The tracking consists of 3 phases:
 
 1. Global scan
-2. Fast tracking (observe+perturb)
-3. Slow tracking (observe+perturb)
+2. Fast tracking (observe & perturb)
+3. Slow tracking (observe & perturb)
 
-The controller starts with a global scan. It starts with a duty cycle 0 and linearly increases it while capturing the
+The controller starts with a global scan, at a duty cycle of 0 and linearly increases it while capturing the
 maximum power point (MPP) until one of these conditions are met:
 input under-voltage, output over-voltage, over-current, 100% duty cycle.
 
@@ -91,11 +91,20 @@ to quickly adapt to the new condition.
 A global scan is triggered every 30 minutes to prevent getting stuck in a local maximum. This can happen with partially
 shaded solar strings. A scan lasts about 20 to 60 seconds.
 
-# Low Side Switch Diode Emulation for Synchronous Buck
+# Synchronous Buck Diode Emulation
+
+We can leave the LS switch off and the coil discharge current will flow through the LS MOSFET´s body diode. The buck
+converter then operates in non-synchronous mode. This decreases conversion efficiency but prevents the buck converter
+from becoming a boost converter. Voltage boosting causes reverse current flow from battery to solar and can cause excess
+voltage at the solar input, eventually destroying the LS switch and even the board. Timing the LS can be tricky.
 
 The firmware implements a synchronous buck converter. It uses the Vout/Vin voltage ratio to estimate the slope of the
-coil current and adjusts the switching time so that the current never crosses zero.
-This approach allow arbitrary buck duty cycles, without trouble.
+coil current and adjusts the switching time of the Low-Side (LS) MOSFET so that the current never crosses zero.
+It handles both Continuous Conduction Mode (CCM) and Discontinuous Conduction Mode (DCM).
+This approach allows arbitrary buck duty cycles, without trouble.
+
+For additional safety the low-side duty cycle is slowly faded to its maximum value. As soon as we detect reverse
+current (which might also be noise), we decrease the LS switch duty cycle and slowly recover.
 
 # Not implemented / TODO
 
@@ -132,5 +141,7 @@ address in my
 github profile) if you want to contribute or just share your experience.
 
 # Resources
+
+* [TI Power Topologies Handbook](https://www.ti.com/seclit/ug/slyu036/slyu036.pdf#page=18) (timings CCM, DCM, forced PWM)
 
 * [Power conversion efficiency measurement](https://github.com/fl4p/fugu-mppt-doc/blob/master/Power%20Measurements.md#findings)
