@@ -61,6 +61,7 @@ class MpptController {
     MpptControlMode state = MpptControlMode::None;
     bool _limiting = false;// control limited (no MPPT)
     bool _sweeping = false;// global scan
+    uint16_t _targetDutyCycle = 0;// MPP from global scan
 
     struct {
         float power = 0;
@@ -258,6 +259,7 @@ public:
     void startSweep() {
         buck.disable();
         _limiting = false;
+        _targetDutyCycle = 0;
 
         VinController.reset();
         VoutController.reset();
@@ -287,7 +289,8 @@ public:
         );
         lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
         _sweeping = false;
-        pwm.pwmPerturb((int16_t) maxPowerPoint.dutyCycle - (int16_t) pwm.getBuckDutyCycle()); // jump to MPP
+        _targetDutyCycle = maxPowerPoint.dutyCycle;
+        // buck.pwmPerturb((int16_t) maxPowerPoint.dutyCycle - (int16_t) buck.getBuckDutyCycle()); // jump to MPP
     }
 
     void telemetry() {
@@ -470,6 +473,19 @@ public:
                 }
             } else {
                 _stopSweep(controlMode);
+            }
+        }
+
+        if (_targetDutyCycle) {
+            if (controlMode == MpptControlMode::None) {
+                controlMode = MpptControlMode::Sweep;
+                controlValue = (float) std::min(_targetDutyCycle - buck.getBuckDutyCycle(), 2);
+                if (std::fabs(controlValue) <= 1) {
+                    ESP_LOGI("mppt", "Reached target duty cycle %hu", _targetDutyCycle);
+                    _targetDutyCycle = 0;
+                }
+            } else {
+                _targetDutyCycle = 0;
             }
         }
 
