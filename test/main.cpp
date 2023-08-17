@@ -12,8 +12,13 @@ void test_LinearTransform();
 
 void test_ADCSampler();
 
+void test_float16();
+
 void setup() {
     UNITY_BEGIN();
+
+    RUN_TEST(test_float16);
+
     RUN_TEST(test_meter);
     RUN_TEST(test_meter_storage);
 

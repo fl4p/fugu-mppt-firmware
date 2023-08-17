@@ -137,7 +137,7 @@ public:
 
     bool update(T val) {
 
-        // a power-loss safe way of updating
+        // a power-loss safe way of updating a file
         // can't use fopen(..."a"), see https://stackoverflow.com/questions/5532371/does-fseek-move-the-file-pointer-to-the-beginning-of-the-file-if-it-was-opened/5532426#5532426
         FILE *f = fopen(fn, "r+");
 
@@ -223,9 +223,8 @@ public:
         if (similar(val, valueFlash))
             return false;
 
-        ESP_LOGI("flash", "Update flash value %s", file.fn);
-
         if (file.update(val)) {
+            ESP_LOGI("flash", "Wrote flash value %s", file.fn);
             valueFlash = val;
             _lastWrite = now;
         } else {

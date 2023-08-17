@@ -17,3 +17,6 @@
 [submodule "components/esp_littlefs"]
 	path = components/esp_littlefs
 	url = https://github.com/joltwallet/esp_littlefs.git
+[submodule "components/INA226_WE"]
+	path = components/INA226_WE/INA226_WE
+	url = https://github.com/wollewald/INA226_WE

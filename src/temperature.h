@@ -4,7 +4,7 @@ class TempSensorGPIO_NTC {
     float ntcResistance = 10e3f;
 
     RunningMedian3<float> median3{};
-    EWMA<float> ewma{300};
+    EWMA<float> ewma1{2000}, ewma2{2000};
 
     uint8_t _attack = 80; // discard first samples
 
@@ -44,8 +44,10 @@ public:
         if (_attack) --_attack;
         else {
             float temp = adc2Celsius(adc);
-            if (!isnan(temp))
-                ewma.add(median3.next(temp));
+            if (!isnan(temp)) {
+                ewma1.add(median3.next(temp));
+                ewma2.add(ewma1.get());
+            }
         }
 
         //float temp = adc2Celsius(ewma.get());
@@ -58,7 +60,7 @@ public:
         return last();
     }
 
-    inline float last() const { return ewma.get(); }
+    inline float last() const { return ewma2.get(); }
 };
 
 #if CONFIG_IDF_TARGET_ESP32S3
