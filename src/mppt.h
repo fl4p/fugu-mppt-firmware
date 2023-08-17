@@ -9,7 +9,7 @@
 #include "battery.h"
 #include "lcd.h"
 #include "tracker.h"
-#include "control.h"
+#include "pd_control.h"
 #include "store.h"
 #include "metering.h"
 #include "charger.h"
@@ -52,15 +52,15 @@ static const std::array<std::string, (size_t) MpptControlMode::Max> MpptState2St
  */
 class MpptController {
     ADC_Sampler &dcdcPwr;
-    HalfBridgePwm &pwm;
+    SynchronousBuck &buck;
     LCD &lcd;
     MpptParams params;
 
     bool autoDetectVout_max = true;
 
     MpptControlMode state = MpptControlMode::None;
-    bool _limiting = false;
-    bool _sweeping = false;
+    bool _limiting = false;// control limited (no MPPT)
+    bool _sweeping = false;// global scan
 
     struct {
         float power = 0;
@@ -87,8 +87,8 @@ public:
     TempSensorGPIO_NTC ntc;
     float speedScale = 1;
 
-    explicit MpptController(ADC_Sampler &dcdcPwr, HalfBridgePwm &pwm, LCD &lcd)
-            : dcdcPwr(dcdcPwr), pwm(pwm), lcd(lcd), charger{params} {
+    explicit MpptController(ADC_Sampler &dcdcPwr, SynchronousBuck &pwm, LCD &lcd)
+            : dcdcPwr(dcdcPwr), buck(pwm), lcd(lcd), charger{params} {
 
         pinMode((uint8_t) PinConfig::LED, OUTPUT);
 
@@ -108,7 +108,7 @@ public:
 
     MpptControlMode getState() const { return state; }
 
-    void shutdownDcdc() { pwm.disable(); }
+    void shutdownDcdc() { buck.disable(); }
 
     bool boardPowerSupplyUnderVoltage(bool start = false) const {
         return std::max(sensors.Vin->last, sensors.Vout->last) < (start ? 9.5f : 9.f);
@@ -124,9 +124,10 @@ public:
 
         // power supply under-voltage shutdown
         if (boardPowerSupplyUnderVoltage()) {
-            if (!pwm.disabled())
-                ESP_LOGW("mppt", "Vin %.1f and Vout %.1f < 10", sensors.Vin->last, sensors.Vout->last);
+            if (!buck.disabled())
+                ESP_LOGW("mppt", "Supply under-voltage! Vin %.1f and Vout %.1f < 10", sensors.Vin->last, sensors.Vout->last);
             shutdownDcdc();
+            meter.commit();
             return false;
         }
 
@@ -142,7 +143,7 @@ public:
             float detectedVout_max = detectMaxBatteryVoltage(vout);
             if (std::isnan(detectedVout_max)) {
                 ESP_LOGW("mppt", "Unable to detect battery voltage Vout=%.2fV", vout);
-                pwm.disable();
+                buck.disable();
                 dcdcPwr.startCalibration();
                 return false;
             } else {
@@ -164,15 +165,15 @@ public:
         auto ovTh = params.Vout_max * 1.08;
         //if (adcSampler.med3.s.chVout.get() > ovTh) {
         if (sensors.Vout->last > ovTh && sensors.Vout->previous > ovTh) {
-            bool wasDisabled = pwm.disabled();
+            bool wasDisabled = buck.disabled();
             shutdownDcdc();
 
             auto vout = std::max(sensors.Vout->last, sensors.Vout->previous);
 
             if (!wasDisabled)
-                ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,pwm=%hu) > %.1fV + 8%%!",
+                ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,buck=%hu) > %.1fV + 8%%!",
                          vout,
-                         sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.std.get(), pwm.getBuckDutyCycle(),
+                         sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.std.get(), buck.getBuckDutyCycle(),
                          params.Vout_max);
 
 
@@ -198,9 +199,9 @@ public:
         if (sensors.Iin->last < -1 && sensors.Iin->previous < -1) {
             ESP_LOGE("MPPT", "Reverse current %.1f A, noise? disable BFC and low-side FET", sensors.Iin->last);
             //shutdownDcdc();
-            pwm.enableBackflowMosfet(false);
-            pwm.lowSideMinDuty();
-            //pwm.halfDutyCycle();
+            buck.enableBackflowMosfet(false);
+            buck.lowSideMinDuty();
+            //buck.halfDutyCycle();
         }
 
         if (sensors.Iin->ewm.avg.get() < -1) {
@@ -210,7 +211,7 @@ public:
         }
 
         if (sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() * 1.25f) {
-            if (!pwm.disabled())
+            if (!buck.disabled())
                 ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown", sensors.Vout->ewm.avg.get(),
                          sensors.Vin->ewm.avg.get());
             shutdownDcdc();
@@ -225,13 +226,13 @@ public:
 
         // try to prevent voltage boost and disable low side for low currents
         if (fminf(sensors.Iin->ewm.avg.get(), std::max(sensors.Iin->last, sensors.Iin->previous)) < 0.1f) {
-            if (pwm.getBuckDutyCycleLS() > pwm.getDutyCycleLSMax() / 2 &&
-                pwm.getBuckDutyCycleLS() > (pwm.pwmMax / 10)) {
+            if (buck.getBuckDutyCycleLS() > buck.getDutyCycleLSMax() / 2 &&
+                buck.getBuckDutyCycleLS() > (buck.pwmMaxHS / 10)) {
                 ESP_LOGW("MPPT", "Set low-side min duty (ewm(Iin)=%.2f, max(Iin,Iin[-1])=%.2f)",
                          sensors.Iin->ewm.avg.get(), std::max(sensors.Iin->last, sensors.Iin->previous));
             }
-            pwm.lowSideMinDuty();
-            pwm.enableBackflowMosfet(false);
+            buck.lowSideMinDuty();
+            buck.enableBackflowMosfet(false);
         }
 
         if (ntc.last() > 95) {
@@ -243,7 +244,7 @@ public:
         // TODO move this to control loop
         float vOut = fmaxf(sensors.Vout->med3.get(), sensors.Vout->ewm.avg.get());
         float vIn = fminf(sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
-        pwm.updateLowSideMaxDuty(vOut, vIn);
+        buck.updateLowSideMaxDuty(vOut, vIn);
 
         lastTimeProtectPassed = millis();
 
@@ -255,7 +256,7 @@ public:
      * Start a global MPPT scan.
      */
     void startSweep() {
-        pwm.disable();
+        buck.disable();
         _limiting = false;
 
         VinController.reset();
@@ -282,7 +283,7 @@ public:
     void _stopSweep(MpptControlMode controlMode) {
         ESP_LOGI("mppt", "Stop sweep at controlMode=%s PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
                  MpptState2String[(uint8_t) controlMode].c_str(),
-                 pwm.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
+                 buck.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
         );
         lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
         _sweeping = false;
@@ -306,9 +307,9 @@ public:
         point.addField("E", meter.totalEnergy.get(), 1);
         point.addField("E_today", meter.dailyEnergyMeter.todayEnergy, 1);
 
-        point.addField("pwm_duty", pwm.getBuckDutyCycle());
-        point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
-        point.addField("pwm_ls_max", pwm.getDutyCycleLSMax());
+        point.addField("pwm_duty", buck.getBuckDutyCycle());
+        point.addField("pwm_ls_duty", buck.getBuckDutyCycleLS());
+        point.addField("pwm_ls_max", buck.getDutyCycleLSMax());
 
         auto nowMs = millis();
 
@@ -336,8 +337,8 @@ public:
         auto nowMs = millis();
         auto nowUs = micros();
 
-        if (pwm.disabled() && !startCondition()) {
-            pwm.enableBackflowMosfet(false);
+        if (buck.disabled() && !startCondition()) {
+            buck.enableBackflowMosfet(false);
             state = MpptControlMode::None;
             return;
         }
@@ -445,10 +446,10 @@ public:
         }
 
         // bounce at pwm boundary
-        if (pwm.getBuckDutyCycle() == pwm.pwmMaxHS) {
+        if (buck.getBuckDutyCycle() == buck.pwmMaxHS) {
             controlMode = MpptControlMode::CV;
             controlValue = -1;
-        } else if (pwm.getBuckDutyCycle() == pwm.pwmMinHS && !_sweeping) {
+        } else if (buck.getBuckDutyCycle() == buck.pwmMinHS && !_sweeping) {
             controlMode = MpptControlMode::CV;
             controlValue = 1;
         }
@@ -464,7 +465,7 @@ public:
                 // capture MPP during sweep
                 if (power > maxPowerPoint.power) {
                     maxPowerPoint.power = power;
-                    maxPowerPoint.dutyCycle = pwm.getBuckDutyCycle();
+                    maxPowerPoint.dutyCycle = buck.getBuckDutyCycle();
                     maxPowerPoint.voltage = Vin;
                 }
             } else {
@@ -475,14 +476,14 @@ public:
         //
         if (controlMode == MpptControlMode::None) {
             controlMode = MpptControlMode::MPPT;
-            controlValue = tracker.update(power, pwm.getBuckDutyCycle());
+            controlValue = tracker.update(power, buck.getBuckDutyCycle());
             controlValue *= speedScale;
 
             if (tele) {
                 auto dP = tracker.dP;
                 point.addField("P_prev", tracker._lastPower, 2);
                 point.addField("dP", dP, 2);
-                //point.addField("P_filt", tracker.pwmPowerTable[pwm.getBuckDutyCycle()].get(), 1);
+                //point.addField("P_filt", tracker.pwmPowerTable[buck.getBuckDutyCycle()].get(), 1);
                 point.addField("P_filt", tracker._powerBuf.getMean(), 1);
                 if (std::abs(dP) < tracker.minPowerStep) {
                     point.addField("dP_thres", 0.0f, 2);
@@ -507,14 +508,15 @@ public:
         if (lastUs) {
             // normalize the control value to pwmMax and scale it with update rate to fix pwm slope rate
             auto dt_us = nowUs - lastUs;
-            auto fp = controlValue * (1.f / 2000.f) * (float) pwm.pwmMax * (float) dt_us * 1e-6f * 25.f;
-            fp = constrain(fp, -(float) pwm.getBuckDutyCycle(), 1.0f); // TODO 1.f
-            pwm.pwmPerturbFractional(fp);
+            auto fp = controlValue * (1.f / 2000.f) * (float) buck.pwmMaxHS * (float) dt_us * 1e-6f * 25.f;
+            // constrain the buck step, this will slow down control for lower loop rates:
+            fp = constrain(fp, -(float) buck.getBuckDutyCycle(), 1.0f);
+            buck.pwmPerturbFractional(fp);
         }
         lastUs = nowUs;
 
-        pwm.enableBackflowMosfet((Iin > 0.2f));
-        pwm.enableLowSide((Iin > 0.2f));
+        buck.enableBackflowMosfet((Iin > 0.2f));
+        buck.enableLowSide((Iin > 0.2f));
 
 
         bool ledState = (Iin > 0.2f && controlMode == MpptControlMode::MPPT && controlValue > 0);
@@ -526,9 +528,9 @@ public:
             point.addField("mppt_state", int(controlMode));
             // point.addField("mcu_temp", mcu_temp.last(), 1);
             point.addField("ntc_temp", ntcTemp, 1);
-            point.addField("pwm_duty", pwm.getBuckDutyCycle());
-            point.addField("pwm_ls_duty", pwm.getBuckDutyCycleLS());
-            point.addField("pwm_ls_max", pwm.getDutyCycleLSMax());
+            point.addField("pwm_duty", buck.getBuckDutyCycle());
+            point.addField("pwm_ls_duty", buck.getBuckDutyCycleLS());
+            point.addField("pwm_ls_max", buck.getDutyCycleLSMax());
 
             point.setTime(WritePrecision::MS);
 
