@@ -3,7 +3,7 @@
 ESP32's internal ADC has non-linearity issues and is quite noisy.
 
 The linearity can be fixed with calibration and we keep a margin to the ADC voltage range. (e.g. at 6dB PGA attenuation
-150 mV ~ 1750 mV)
+150 mV ~ 1750 mV, see [suggested range](https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32s3/api-reference/peripherals/adc.html#_CPPv425adc1_config_channel_atten14adc1_channel_t11adc_atten_t))
 For simple curve fit see [here](https://github.com/espressif/esp-idf/issues/164#issuecomment-318861287).
 This can be improved with a look-up-table (LUT).
 

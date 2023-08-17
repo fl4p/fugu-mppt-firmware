@@ -10,7 +10,7 @@ The charger uses a simple CC (constant current) and CV (constant voltage) approa
 This is common for Lithium-Batteries (e.g. LiFePo4).
 
 * Compatible with ESP32 and ESP32-S3
-* Async ADC sampling
+* Async ADC sampling for low latency control loop
 * Zero-current calibration
 * Can use ESP32/ESP32-S3's internal ADC1 instead of the external ADS1x15, see [Internal ADC](doc/Internal%20ADC.md)
 * PID control for voltage and current regulation
@@ -20,6 +20,7 @@ This is common for Lithium-Batteries (e.g. LiFePo4).
 * Fast protection shutdown in over-voltage and over-current conditions
 * PWM Fan Control and temperature power limiting / derating
 * Telemetry to InfluxDB over UDP
+* Unit tests
 
 The firmware sends real-time data to InfluxDB server using UDP line protocol.
 
@@ -52,7 +53,9 @@ idf.py build
 # Control Loop
 
 The control loop reads Vout, Vin, Iin and adjust the PWM duty cycle of the buck DC-DC converter for MPPT and output
-regulation.  
+regulation. The control loop updates once a Vout reading is available. This ensures low latency for output voltage
+control, which is important (see below).
+
 Besides the MPP tracker, the control loop contains 5 PD control units (PID without the integral component):
 
 - `VinCTRL` (solar voltage), keeps solar voltage above 10.5V to prevent board supply UV
@@ -62,8 +65,8 @@ Besides the MPP tracker, the control loop contains 5 PD control units (PID witho
 - `PowerCTRL` (thermal derating), limits conversion power to prevent excess temperatures
 
 The `VoutCTRL` is the fastest controller. Keeping the output voltage in-range with varying load is most crucial to
-prevent damage from transient over-voltage. Because this is powered by solar, reacting on short-circuits is not
-important, so `IinCTRL` (and `IoutCTRL`) can be slow.
+prevent damage from transient over-voltage. Because a solar panel is very similar to a constant current
+source, `IinCTRL` and `IoutCTRL` can be slower.
 
 In each loop iteration we update all controllers and pick the one with the minimum response value. If it is positive, we
 can proceed with the MPPT. Otherwise, we halt MPPT and decrease the duty cycle proportionally to the control value.
@@ -89,18 +92,20 @@ When it detects a mayor change in power conditions (e.g. clouds, partial shading
 to quickly adapt to the new condition.
 
 A global scan is triggered every 30 minutes to prevent getting stuck in a local maximum. This can happen with partially
-shaded solar strings. A scan lasts about 20 to 60 seconds.
+shaded solar strings. A scan lasts about 20 to 60 seconds, depending on the loop update rate.
 
-# Synchronous Buck Diode Emulation
+# Synchronous Buck and Diode Emulation
 
-We can leave the LS switch off and the coil discharge current will flow through the LS MOSFET´s body diode. The buck
-converter then operates in non-synchronous mode. This decreases conversion efficiency but prevents the buck converter
-from becoming a boost converter. Voltage boosting causes reverse current flow from battery to solar and can cause excess
+We can leave the Low-Side (LS, aka *sync-FET*, *synchronous rectifier*) switch off and the coil discharge current will
+flow through the LS MOSFET´s body diode.
+The buck converter then operates in non-synchronous mode. This decreases conversion efficiency but prevents the buck
+converter from becoming a boost converter. Voltage boosting causes reverse current flow from battery to solar and can cause excess
 voltage at the solar input, eventually destroying the LS switch and even the board. Timing the LS can be tricky.
 
 The firmware implements a synchronous buck converter. It uses the Vout/Vin voltage ratio to estimate the slope of the
-coil current and adjusts the switching time of the Low-Side (LS) MOSFET so that the current never crosses zero.
-It handles both Continuous Conduction Mode (CCM) and Discontinuous Conduction Mode (DCM).
+coil current and adjusts the switching time of the LS MOSFET so that the current never crosses zero.
+It handles both Continuous Conduction Mode (CCM) and Discontinuous Conduction Mode (DCM). The LS FET stays off during
+low-power conversion (apart from a minimum on-time to keep the charge pump for the HS gate driver active).
 This approach allows arbitrary buck duty cycles, without trouble.
 
 For additional safety the low-side duty cycle is slowly faded to its maximum value. As soon as we detect reverse
@@ -130,7 +135,7 @@ With a battery voltage of 28.5V, I measured 36V for 400ms.
 
 Keep in mind that in case of a failure (software or hardware), the charger might permanently output the max solar
 voltage at the battery terminal, potentially destroying any connected device. Add over-voltage protection (another
-DC/DC, varistor, TVS, crowbar circuit) if necessary.
+DC/DC, Varistor, TVS, crowbar circuit) if necessary.
 
 Use it at your own risk.
 
@@ -142,6 +147,10 @@ github profile) if you want to contribute or just share your experience.
 
 # Resources
 
-* [TI Power Topologies Handbook](https://www.ti.com/seclit/ug/slyu036/slyu036.pdf#page=18) (timings CCM, DCM, forced PWM)
+* [TI Power Topologies Handbook](https://www.ti.com/seclit/ug/slyu036/slyu036.pdf#page=18) (timings CCM, DCM, forced
+  PWM)
 
 * [Power conversion efficiency measurement](https://github.com/fl4p/fugu-mppt-doc/blob/master/Power%20Measurements.md#findings)
+
+
+* [Can you explain diode emulation and why it is used? ](https://en-support.renesas.com/knowledgeBase/4967491)

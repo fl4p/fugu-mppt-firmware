@@ -1,3 +1,8 @@
+- MAtter API? QR Code=
+- 
+- use higher resolution PWM
+  - is this possible? ESP32 timer freq appears to be 80mhz, 39khz*2048 = 79mhz
+
 # Sample Rate
 - ADS1015 i2c at 800 khz
 - Loop: ads read only, wifi connected
@@ -28,7 +33,7 @@
 - use async UDP
 - influxdb: write changed points only
 - TODO slow down if DS cycle range is low (last X seconds)
-- bug? 2core coil (120uH), 22 khz pwm, Vin=58.8V, V_out=25.9V, duty cycle = 900 (precision 11bit)
+- bug? 2core coil (120uH), 22 khz buck, Vin=58.8V, V_out=25.9V, duty cycle = 900 (precision 11bit)
 when reaching max LS, current goes negative
 
 - sweep after shutdown
