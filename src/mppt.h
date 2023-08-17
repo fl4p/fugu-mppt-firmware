@@ -513,16 +513,18 @@ public:
 
         //assert(controlValue != 0 && controlMode != MpptControlMode::None);
 
+        // always cap control value
+        controlValue = std::min(controlValue, limitingControlValue);
 
 
         this->state = controlMode;
 
 
-        //controlValue = constrain(controlValue, -(float) pwm.getBuckDutyCycle(), 5.0f);
-        //pwm.pwmPerturbFractional(controlValue);
+        //controlValue = constrain(controlValue, -(float) buck.getBuckDutyCycle(), 5.0f);
+        //buck.pwmPerturbFractional(controlValue);
 
         if (lastUs) {
-            // normalize the control value to pwmMax and scale it with update rate to fix pwm slope rate
+            // normalize the control value to pwmMax and scale it with update rate to fix buck slope rate
             auto dt_us = nowUs - lastUs;
             auto fp = controlValue * (1.f / 2000.f) * (float) buck.pwmMaxHS * (float) dt_us * 1e-6f * 25.f;
             // constrain the buck step, this will slow down control for lower loop rates:
