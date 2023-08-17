@@ -3,6 +3,7 @@
 #include "adc/adc.h"
 #include "adc/ads.h"
 #include "adc/adc_esp32.h"
+#include "adc/ina226.h"
 
 #include "adc/sampling.h"
 #include "buck.h"
@@ -25,10 +26,11 @@
 
 ADC_ADS adc_ads; // ADS1x15
 ADC_ESP32 adc_esp32; // ESP32 internal ADC
+ADC_INA226 adc_ina226;
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
 LCD lcd;
-HalfBridgePwm pwm;
+SynchronousBuck pwm;
 
 MpptController mppt{adcSampler, pwm, lcd};
 
@@ -88,18 +90,26 @@ void setup() {
     uint8_t Vin_ch, Vout_ch, Iin_ch;
     int ewmaSpan;
     if (adc_ads.init()) {
+        ESP_LOGI("main", "Initialized external ADS1x15 ADC");
         adc = &adc_ads;
         ewmaSpan = 8;
         Vin_ch = 3;
         Vout_ch = 1;
         Iin_ch = 2;
-    } else if (adc_esp32.init()) {
-        ESP_LOGW("main", "Failed to initialize external ADS1x15 ADC, using internal");
+    } else if(adc_ina226.init()) {
+        ESP_LOGI("main", "Initialized INA226");
+        adc = &adc_ina226;
+        ewmaSpan = 8;
+        Vin_ch = 3;
+        Vout_ch = 1;
+        Iin_ch = 2;
+    /*} else if (adc_esp32.init()) {
+        ESP_LOGW("main", "Failed to initialize external ADC, using internal");
         adc = &adc_esp32;
         ewmaSpan = 80;
         Vin_ch = (uint8_t) PinConfig::ADC_Vin;
         Vout_ch = (uint8_t) PinConfig::ADC_Vout;
-        Iin_ch = (uint8_t) PinConfig::ADC_Iin;
+        Iin_ch = (uint8_t) PinConfig::ADC_Iin; */
     } else {
         scan_i2c();
         ESP_LOGE("main", "Failed to initialize any ADC");
@@ -123,7 +133,7 @@ void setup() {
                     Vin_transform,
                     {80, 0.1f, false},
                     "U_in_raw",
-                    false},
+                    true},
             80.f);
     sensors.Iin = adcSampler.addSensor(
             {
@@ -156,17 +166,24 @@ void setup() {
     ESP_LOGI("main", "setup() done.");
 }
 
+unsigned long timeLastSampler = 0;
+
 void loop() {
     auto nowMs = millis();
 
-    if (!adcSampler.update()) {
-        if(adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage())
-            adcSampler.cancelCalibration();
-        return; // no new data -> don't do anythings. this prevents unne
-    }
-
-
     mppt.ntc.read();
+
+    if (!adcSampler.update()) {
+        if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage())
+            adcSampler.cancelCalibration();
+
+        if (timeLastSampler && nowMs - timeLastSampler > 200 && !pwm.disabled()) {
+            ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown!");
+            pwm.disable();
+        }
+
+        return; // no new data -> don't do anythings. this prevents unnecessary cpu time
+    }
 
     // cap control update rate to sensor sampling rate (see below). rate for all 3 sensors are equal.
     // we choose Vout here because this is the most critical control value (react fast to prevent OV)
@@ -209,7 +226,7 @@ void loop() {
         auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
                    (uint32_t) (nowMs - lastTimeOut);
 
-        if (sps < 100 && !pwm.disabled() && nSamples > 1000) { //(nowMs - adcSampler.getTimeLastCalibration()) > 6000)
+        if (sps < 100 && !pwm.disabled() && nSamples > 1000 && !manualPwm) { //(nowMs - adcSampler.getTimeLastCalibration()) > 6000)
             ESP_LOGE("main", "Loop latency too high! shutdown");
             pwm.disable();
             charging = false;
@@ -229,7 +246,7 @@ void loop() {
                 //mppt.getPower()
                 manualPwm ? "MANU"
                           : (!charging && !mppt.startCondition()
-                             ? "START"
+                             ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
                              : MpptState2String[(uint8_t) mppt.getState()].c_str()),
                 (int) charging,
                 maxLoopLag * 1e-3f,
@@ -276,8 +293,7 @@ void loop() {
         inp.trim();
         if (inp.length() > 0) {
             if ((inp[0] == '+' or inp[0] == '-') && !adcSampler.isCalibrating() && inp.length() < 6 &&
-                inp.toInt() != 0 &&
-                std::abs(inp.toInt()) < pwm.pwmMax) {
+                inp.toInt() != 0 && std::abs(inp.toInt()) < pwm.pwmMaxHS) {
                 int pwmStep = inp.toInt();
                 ESP_LOGI("main", "Manual PWM step %i", pwmStep);
                 //manualPwm = true;
@@ -291,7 +307,7 @@ void loop() {
                 ESP_LOGI("main", "MPPT re-enabled");
                 manualPwm = false;
             } else if (inp.startsWith("dc ") && !adcSampler.isCalibrating() && inp.length() <= 8
-                       && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmMax) {
+                       && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmMaxHS) {
                 manualPwm = true;
                 pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
             } else if (inp.startsWith("speed ") && inp.length() <= 12) {

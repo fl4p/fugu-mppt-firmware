@@ -305,7 +305,7 @@ public:
         point.addTag("device", "fugu_" + String(getChipId()));
         point.addField("P", power, 2);
         point.addField("I", Iin, 3);
-        point.addField("U", Vin, 3);
+        point.addField("U", Vin, 2);
 
         point.addField("E", meter.totalEnergy.get(), 1);
         point.addField("E_today", meter.dailyEnergyMeter.todayEnergy, 1);
@@ -325,6 +325,8 @@ public:
     }
 
     float getIoutSmooth(float conversionEff = 0.97f) const {
+        if (boardPowerSupplyUnderVoltage())
+            return 0;
         auto pin = sensors.Iin->ewm.avg.get() * sensors.Vin->ewm.avg.get();
         return pin * conversionEff / std::max(sensors.Vout->ewm.avg.get(), 2.f);
     }
