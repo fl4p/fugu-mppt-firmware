@@ -112,6 +112,7 @@ public:
     void shutdownDcdc() { buck.disable(); }
 
     bool boardPowerSupplyUnderVoltage(bool start = false) const {
+        //return false;
         return std::max(sensors.Vin->last, sensors.Vout->last) < (start ? 9.5f : 9.f);
     }
 
@@ -324,12 +325,14 @@ public:
         }
     }
 
-    float getIoutSmooth(float conversionEff = 0.97f) const {
+    /* // sensor API now computes this through virtual sensors
+     * float getIoutSmooth(float conversionEff = 0.97f) const {
         if (boardPowerSupplyUnderVoltage())
             return 0;
         auto pin = sensors.Iin->ewm.avg.get() * sensors.Vin->ewm.avg.get();
         return pin * conversionEff / std::max(sensors.Vout->ewm.avg.get(), 2.f);
-    }
+    } */
+
 
     unsigned long lastUs = 0;
 
@@ -359,7 +362,6 @@ public:
         //avgVin.add(adcSampler.last.s.chVin);
         //float smoothPower = avgIin.get() * avgVin.get();
 
-        auto Iout = getIoutSmooth(conversionEfficiency);
 
         meter.add(sensors.Iin->last * sensors.Vin->last * conversionEfficiency, power, nowUs);
 
@@ -404,7 +406,7 @@ public:
                 CVP{CV, VinController, {sensors.Vin->med3.get(), params.Vin_min}},
                 CVP{CV, VoutController, {sensors.Vout->med3.get(), params.Vout_max}},
                 CVP{CC, IinController, {sensors.Iin->med3.get(), params.Iin_max}},
-                CVP{CC, IoutCurrentController, {Iout, Iout_max}},
+                CVP{CC, IoutCurrentController, {sensors.Iout->med3.get(), Iout_max}},
                 CVP{CP, powerController, {power, powerLimit}},
         };
 
@@ -531,6 +533,9 @@ public:
             auto fp = controlValue * (1.f / 2000.f) * (float) buck.pwmMaxHS * (float) dt_us * 1e-6f * 25.f;
             // constrain the buck step, this will slow down control for lower loop rates:
             fp = constrain(fp, -(float) buck.getBuckDutyCycle(), 1.0f);
+            if(controlValue < -80) {
+                ESP_LOGI("mppt", "controlValue %.2f => perturbation %.2f", controlValue, fp);
+            }
             buck.pwmPerturbFractional(fp);
         }
         lastUs = nowUs;

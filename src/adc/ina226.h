@@ -27,7 +27,7 @@ class ADC_INA226 : public AsyncADC<float> {
 
 public:
 
-    static constexpr auto ChVBus = 0, ChI = 1;
+    static constexpr auto ChVBus = 0, ChI = 1, ChAux = 2;
 
 
     bool init() override {
@@ -61,17 +61,7 @@ public:
         ina226.setAverage(AVERAGE_1);
         ina226.setConversionTime(CONV_TIME_1100);
 
-        //ina226.setAverage(AVERAGE_1024);
-        //ina226.setConversionTime(CONV_TIME_8244);
-
-        // ^^^ Conversion ready after conversion time x number of averages x 2
-
-
-        //ina226.setResistorRange(50e-3f / 100, 20.0f);
-        //ina226.setResistorRange(75e-3f / 20, 20.0f); // 20 A shunt
-        // ina226.setResistorRange(75e-3f / 40, 40.0f); // radiomag 40 A shunt
-
-        float resistor = 1e-3f, range = 80.0f;// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
+        float resistor = 1e-3f, range = 35.0f;// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
         ina226.setResistorRange(resistor, range);
 
         ina226.enableConvReadyAlert();
@@ -86,8 +76,9 @@ public:
 
         if(!intAdc.init())
             return false;
-
         intAdc.startReading((uint8_t)PinConfig::ADC_Vin);
+
+        ina226.setMeasureMode(CONTINUOUS);
 
         return true;
     }
@@ -120,7 +111,7 @@ public:
                 return ina226.getBusVoltage_V();
             case ChI:
                 return ina226.getCurrent_A();
-            case 2:
+            case ChAux:
                 return intAdc.getSample();
             default:
                 assert(false);
@@ -128,8 +119,10 @@ public:
     }
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
-        if(ch == 2)
-            intAdc.setMaxExpectedVoltage(ch, voltage);
+        if(ch == ChAux) {
+            ESP_LOGI("ina226", "internal ADC setMaxExpectedVoltage(%i,%.6f)", ch, voltage);
+            intAdc.setMaxExpectedVoltage((uint8_t)PinConfig::ADC_Vin, voltage);
+        }
     }
 };
 

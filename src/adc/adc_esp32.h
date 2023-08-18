@@ -11,7 +11,7 @@ class ADC_ESP32 : public AsyncADC<float> {
 
     adc1_channel_t readingChannel = adc1_channel_t::ADC1_CHANNEL_MAX;
     esp_adc_cal_characteristics_t *adc_chars[4]{nullptr, nullptr, nullptr, nullptr};
-    adc_atten_t attenuation[adc1_channel_t::ADC1_CHANNEL_MAX];
+    adc_atten_t attenuation[adc1_channel_t::ADC1_CHANNEL_MAX]{};
 
 public:
     bool init() override {
@@ -27,7 +27,9 @@ public:
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         adc_atten_t atten;
         // assert(ch < 4);
-        assert(voltage <= (0.8f * 3.548134f /*11dB*/));
+        // 0.81 to fit suggested range?
+        // see https://docs.espressif.com/projects/esp-idf/en/v4.2/esp32/api-reference/peripherals/adc.html#_CPPv425adc1_config_channel_atten14adc1_channel_t11adc_atten_t
+        assert(voltage <= (0.81f * 3.548134f /*11dB=max */));
 
         if (voltage > 1.6f) atten = ADC_ATTEN_DB_11;
         else if (voltage > 0.8f * 1.33f) atten = ADC_ATTEN_DB_6;
@@ -36,6 +38,7 @@ public:
 
         if (adc1_config_channel_atten((adc1_channel_t) ch, atten) != ESP_OK) {
             ESP_LOGE("adc", "Failed to set ADC1 ch %i attenuation %i", (int) ch, (int) atten);
+            assert(false);
         }
         attenuation[ch] = atten;
 

@@ -86,6 +86,17 @@ void setup() {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
     }
 
+
+    constexpr float acs712_30_sensitivity = 1. / 0.066;
+
+    LinearTransform Vin_transform = {(200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0};
+    LinearTransform Vout_transform = {(47. / 2 + 1) / 1, 0};
+    LinearTransform Iin_transform = {
+            -acs712_30_sensitivity * (10 + 3.3) / 10. * 1.03734586, //-20.9
+            2.5 * 10. / (10 + 3.3) - 0.0117, // midpoint 1.88V
+    };
+    LinearTransform Iout_transform = {-1, 0};
+
     AsyncADC<float> *adc;
     uint8_t Vin_ch, Iin_ch = 255, Vout_ch, Iout_ch = 255;
     int ewmaSpan;
@@ -101,10 +112,20 @@ void setup() {
         ESP_LOGI("main", "Initialized INA226");
         adc = &adc_ina226;
         ewmaSpan = 8;
-        Vin_ch = ADC_INA226::ChVBus;
+        Vin_ch = ADC_INA226::ChAux;
         Iin_ch = 255;
         Vout_ch = ADC_INA226::ChVBus;
         Iout_ch = ADC_INA226::ChI;
+
+
+        auto adcVDiv = [](float rH, float rL, float rA) {
+            auto rl = 1 / (1 / rL + 1 / rA);
+            return LinearTransform{(rH + rl) / rl, 0.f};
+        };
+
+        Vin_transform = adcVDiv(200, 7.5f, 500); // 500k ESP ADC impedance?
+        Vout_transform = adcVDiv(47, 47, 830); // 830k ina226 input impedance
+
         /*} else if (adc_esp32.init()) {
             ESP_LOGW("main", "Failed to initialize external ADC, using internal");
             adc = &adc_esp32;
@@ -120,44 +141,49 @@ void setup() {
 
     adcSampler.setADC(adc);
 
-    constexpr float acs712_30_sensitivity = 1. / 0.066;
 
-    LinearTransform Vin_transform = {(200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0};
-    LinearTransform Vout_transform = {(47. / 2 + 1) / 1, 0};
-    LinearTransform Iin_transform = {
-            -acs712_30_sensitivity * (10 + 3.3) / 10. * 1.03734586, //-20.9
-            2.5 * 10. / (10 + 3.3) - 0.0117, // midpoint 1.88V
-    };
-    LinearTransform Iout_transform = {1, 0};
+    constexpr float conversionEfficiency = 0.97f;
 
     sensors.Vin = adcSampler.addSensor(
             {
                     Vin_ch,
                     Vin_transform,
-                    {80, 0.1f, false},
+                    {80, 1.1f, false},
                     "U_in_raw",
                     true},
             80.f);
 
 
-    sensors.Iin = (Iin_ch != 255) ? adcSampler.addSensor(
-            {
-                    Iin_ch,
-                    Iin_transform,
-                    {.5f, .1f, true},
-                    "I_raw",
-                    false},
-            30.f) : nullptr;
+    sensors.Iin = (Iin_ch != 255)
+                  ? adcSampler.addSensor(
+                    {
+                            Iin_ch,
+                            Iin_transform,
+                            {.5f, .1f, true},
+                            "I_raw",
+                            false},
+                    30.f)
+                  : adcSampler.addVirtualSensor([&]() {
+                if (std::abs(sensors.Iout->last) < .05f or sensors.Vin->last < 0.1f)
+                    return 0.f;
+                return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
+            });
 
 
-    sensors.Iout = (Iout_ch != 255) ? adcSampler.addSensor(
-            {
-                    Iout_ch,
-                    Iout_transform,
-                    {.5f, .1f, true},
-                    "Io",
-                    false},
-            30.f) : nullptr;
+    sensors.Iout = (Iout_ch != 255)
+                   ? adcSampler.addSensor(
+                    {
+                            Iout_ch,
+                            Iout_transform,
+                            {.5f, .1f, true},
+                            "Io",
+                            false},
+                    30.f)
+                   : adcSampler.addVirtualSensor([&]() {
+                if (std::abs(sensors.Iin->last) < .05f or sensors.Vout->last < 0.1f)
+                    return 0.f;
+                return sensors.Iin->last * sensors.Vin->last / sensors.Vout->last * conversionEfficiency;
+            });
 
     // note that Vout should be the last sensor for lowest latency
     sensors.Vout = adcSampler.addSensor(
@@ -191,21 +217,23 @@ void loop() {
     mppt.ntc.read();
 
     if (!adcSampler.update()) {
-        if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage())
+        if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage()) {
+            ESP_LOGW("main", "Board power supply UV!");
             adcSampler.cancelCalibration();
+        }
 
         if (timeLastSampler && nowMs - timeLastSampler > 200 && !pwm.disabled()) {
-            ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown!");
             pwm.disable();
+            ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown!");
         }
 
         if (!timeLastSampler and nowMs > 20000) {
+            pwm.disable();
             ESP_LOGE("main", "Never got a sample! Please check ADC");
             delay(5000);
         }
 
         yield();
-
         return; // no new data -> don't do anythings. this prevents unnecessary cpu time
     }
 
@@ -213,6 +241,10 @@ void loop() {
     // we choose Vout here because this is the most critical control value (react fast to prevent OV)
     auto nSamples = sensors.Vout->numSamples;
 
+    bool haveNewSample = (nSamples - lastMpptUpdateNumSamples) > 0;
+
+    if (haveNewSample)
+        timeLastSampler = nowMs;
 
     // auto range current sense ADC channel TODO add hysteresis
     /* float adcRangeBound = 2.0f;
@@ -230,7 +262,7 @@ void loop() {
         if (charging) {
             bool mppt_ok = mppt.protect();
             if (mppt_ok) {
-                if ((nSamples - lastMpptUpdateNumSamples) > 0) {
+                if (haveNewSample) {
                     if (!manualPwm)
                         mppt.update();
                     else
@@ -258,10 +290,11 @@ void loop() {
         }
 
         UART_LOG(
-                "Vi/o=%4.1f/%4.1f Iin=%4.1fA Pin=%4.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s,%i) lag=%.1fms N=%u",
+                "Vi/o=%4.1f/%4.1f Ii/o=%4.1f/%4.1fA Pin=%4.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s,%i) lag=%.1fms N=%u",
                 sensors.Vin->last,
                 sensors.Vout->last,
                 sensors.Iin->last,
+                sensors.Iout->last,
                 sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
                 //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
                 mppt.ntc.last(),
@@ -289,7 +322,7 @@ void loop() {
             .Vin = sensors.Vin->ewm.avg.get(),
             .Vout = sensors.Vout->ewm.avg.get(),
             .Iin = sensors.Iin->ewm.avg.get(),
-            .Iout = mppt.getIoutSmooth(),
+            .Iout = sensors.Iout->ewm.avg.get(),
             .Temp = mppt.ntc.last(),
     });
 
@@ -372,4 +405,8 @@ void loop() {
     auto lag = now - lastLoopTime;
     if (lastLoopTime && lag > maxLoopLag && !pwm.disabled()) maxLoopLag = lag;
     lastLoopTime = now;
+
+    //yield();
+    //esp_task_wdt_reset();
+    vTaskDelay(1); // this resets the Watchdog Timer (WDT) for some reason
 }
