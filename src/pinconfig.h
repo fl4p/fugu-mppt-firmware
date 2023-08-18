@@ -80,8 +80,8 @@ enum class PinConfigESP32S3_v2 : uint8_t {
     buttonSelect = 1,
 
     ADC_Vin = ADC1_CHANNEL_3, // gpio4
-    ADC_Vout = ADC1_CHANNEL_MAX,
-    ADC_Iin = ADC1_CHANNEL_MAX,
+    ADC_Vout = ADC1_CHANNEL_MAX, // n/a
+    ADC_Iin = ADC1_CHANNEL_MAX, // n/a
 };
 
 

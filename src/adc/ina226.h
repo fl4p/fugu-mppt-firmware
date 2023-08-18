@@ -23,7 +23,11 @@ class ADC_INA226 : public AsyncADC<float> {
 
     uint8_t readChannel = 0;
 
+    ADC_ESP32 intAdc;
+
 public:
+
+    static constexpr auto ChVBus = 0, ChI = 1;
 
 
     bool init() override {
@@ -31,7 +35,7 @@ public:
             return false;
         }
 
-        if((int)PinConfig::INA22x_ALERT == 0) {
+        if ((int) PinConfig::INA22x_ALERT == 0) {
             ESP_LOGW("ina22x", "No ALERT pin specified");
             return false;
         }
@@ -75,10 +79,15 @@ public:
         ina226_instance = this;
 
 
-        auto READY_PIN = (uint8_t)PinConfig::INA22x_ALERT;
+        auto READY_PIN = (uint8_t) PinConfig::INA22x_ALERT;
         pinMode(READY_PIN, INPUT_PULLUP);
         attachInterrupt(digitalPinToInterrupt(READY_PIN), ina226_alert, FALLING);
         ESP_LOGI("ina226", "Setup ALERT interrupt pin %hhu", READY_PIN);
+
+        if(!intAdc.init())
+            return false;
+
+        intAdc.startReading((uint8_t)PinConfig::ADC_Vin);
 
         return true;
     }
@@ -106,15 +115,21 @@ public:
     }
 
     float getSample() override {
-        //if(readChannel == 0)
-
-        ina226.getCurrent_A();
-        ina226.getBusVoltage_V();
-        return 0;
+        switch (readChannel) {
+            case ChVBus:
+                return ina226.getBusVoltage_V();
+            case ChI:
+                return ina226.getCurrent_A();
+            case 2:
+                return intAdc.getSample();
+            default:
+                assert(false);
+        }
     }
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
-
+        if(ch == 2)
+            intAdc.setMaxExpectedVoltage(ch, voltage);
     }
 };
 

@@ -21,6 +21,8 @@ struct LinearTransform {
     inline float apply(float x) const { return (x - midpoint) * factor; }
 
     inline float apply_inverse(float y) const { return (y / factor) + midpoint; }
+
+    //const static LinearTransform Identity;
 };
 
 struct CalibrationConstraints {
@@ -32,7 +34,7 @@ struct CalibrationConstraints {
 
 template<typename T>
 struct VIinVout {
-    T Vin, Vout, Iin;
+    T Vin, Vout, Iin, Iout;
 };
 
 /**
@@ -62,6 +64,9 @@ public:
         const LinearTransform transform;
         const CalibrationConstraints calibrationConstraints;
         const std::string teleName;
+        /**
+         * Whether to capture each ADC conversion. Can produce a lot of networking data
+         */
         const bool rawTelemetry;
     };
 

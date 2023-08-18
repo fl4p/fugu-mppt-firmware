@@ -126,6 +126,8 @@ public:
      * The function does some error estimation and decides whether we are in DCM or CCM mode and limits the LS duty cycle accordingly.
      * See https://www.ti.com/seclit/ug/slyu036/slyu036.pdf#page=19 for more info about sync buck modes and timings
      *
+     * by Fabian Schlieper (fl4p) https://github.com/fl4p/fugu-mppt-firmware/
+     *
      * @param pwmHS Duty cycle of the HS switch
      * @param pwmMax The maximum duty cycle value
      * @param voltageRatio Vout/Vin ratio (the greater, the safer but less efficient)

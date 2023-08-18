@@ -87,29 +87,31 @@ void setup() {
     }
 
     AsyncADC<float> *adc;
-    uint8_t Vin_ch, Vout_ch, Iin_ch;
+    uint8_t Vin_ch, Iin_ch = 255, Vout_ch, Iout_ch = 255;
     int ewmaSpan;
     if (adc_ads.init()) {
         ESP_LOGI("main", "Initialized external ADS1x15 ADC");
         adc = &adc_ads;
         ewmaSpan = 8;
         Vin_ch = 3;
-        Vout_ch = 1;
         Iin_ch = 2;
-    } else if(adc_ina226.init()) {
+        Vout_ch = 1;
+        Iout_ch = 255;
+    } else if (adc_ina226.init()) {
         ESP_LOGI("main", "Initialized INA226");
         adc = &adc_ina226;
         ewmaSpan = 8;
-        Vin_ch = 3;
-        Vout_ch = 1;
-        Iin_ch = 2;
-    /*} else if (adc_esp32.init()) {
-        ESP_LOGW("main", "Failed to initialize external ADC, using internal");
-        adc = &adc_esp32;
-        ewmaSpan = 80;
-        Vin_ch = (uint8_t) PinConfig::ADC_Vin;
-        Vout_ch = (uint8_t) PinConfig::ADC_Vout;
-        Iin_ch = (uint8_t) PinConfig::ADC_Iin; */
+        Vin_ch = ADC_INA226::ChVBus;
+        Iin_ch = 255;
+        Vout_ch = ADC_INA226::ChVBus;
+        Iout_ch = ADC_INA226::ChI;
+        /*} else if (adc_esp32.init()) {
+            ESP_LOGW("main", "Failed to initialize external ADC, using internal");
+            adc = &adc_esp32;
+            ewmaSpan = 80;
+            Vin_ch = (uint8_t) PinConfig::ADC_Vin;
+            Vout_ch = (uint8_t) PinConfig::ADC_Vout;
+            Iin_ch = (uint8_t) PinConfig::ADC_Iin; */
     } else {
         scan_i2c();
         ESP_LOGE("main", "Failed to initialize any ADC");
@@ -126,6 +128,7 @@ void setup() {
             -acs712_30_sensitivity * (10 + 3.3) / 10. * 1.03734586, //-20.9
             2.5 * 10. / (10 + 3.3) - 0.0117, // midpoint 1.88V
     };
+    LinearTransform Iout_transform = {1, 0};
 
     sensors.Vin = adcSampler.addSensor(
             {
@@ -135,14 +138,28 @@ void setup() {
                     "U_in_raw",
                     true},
             80.f);
-    sensors.Iin = adcSampler.addSensor(
+
+
+    sensors.Iin = (Iin_ch != 255) ? adcSampler.addSensor(
             {
                     Iin_ch,
                     Iin_transform,
                     {.5f, .1f, true},
                     "I_raw",
                     false},
-            30.f);
+            30.f) : nullptr;
+
+
+    sensors.Iout = (Iout_ch != 255) ? adcSampler.addSensor(
+            {
+                    Iout_ch,
+                    Iout_transform,
+                    {.5f, .1f, true},
+                    "Io",
+                    false},
+            30.f) : nullptr;
+
+    // note that Vout should be the last sensor for lowest latency
     sensors.Vout = adcSampler.addSensor(
             {Vout_ch,
              Vout_transform,
@@ -181,6 +198,13 @@ void loop() {
             ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown!");
             pwm.disable();
         }
+
+        if (!timeLastSampler and nowMs > 20000) {
+            ESP_LOGE("main", "Never got a sample! Please check ADC");
+            delay(5000);
+        }
+
+        yield();
 
         return; // no new data -> don't do anythings. this prevents unnecessary cpu time
     }
@@ -226,7 +250,8 @@ void loop() {
         auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
                    (uint32_t) (nowMs - lastTimeOut);
 
-        if (sps < 100 && !pwm.disabled() && nSamples > 1000 && !manualPwm) { //(nowMs - adcSampler.getTimeLastCalibration()) > 6000)
+        if (sps < 100 && !pwm.disabled() && nSamples > 1000 &&
+            !manualPwm) { //(nowMs - adcSampler.getTimeLastCalibration()) > 6000)
             ESP_LOGE("main", "Loop latency too high! shutdown");
             pwm.disable();
             charging = false;
