@@ -9,21 +9,9 @@
  */
 class ADC_ESP32 : public AsyncADC<float> {
 
-    uint8_t readingChannel = 255;
-    esp_adc_cal_characteristics_t adc_chars[4]{{},
-                                               {},
-                                               {},
-                                               {}};
-
-    //static constexpr
-    std::array<adc1_channel_t, 4> channel2pin = {
-            ADC1_CHANNEL_0,
-            (adc1_channel_t) PinConfig::ADC_Vin,
-            (adc1_channel_t) PinConfig::ADC_Iin,
-            (adc1_channel_t) PinConfig::ADC_Vout
-    };
-
-    std::array<RunningMedian3<float>, 4> medians;
+    adc1_channel_t readingChannel = adc1_channel_t::ADC1_CHANNEL_MAX;
+    esp_adc_cal_characteristics_t *adc_chars[4]{nullptr, nullptr, nullptr, nullptr};
+    adc_atten_t attenuation[adc1_channel_t::ADC1_CHANNEL_MAX];
 
 public:
     bool init() override {
@@ -32,37 +20,41 @@ public:
         return true;
     }
 
-    void startReading(uint8_t channel) override { readingChannel = channel; }
+    void startReading(uint8_t channel) override { readingChannel = (adc1_channel_t) channel; }
 
     bool hasData() override { return true; }
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
-        adc_atten_t g;
-        assert(ch < 4);
+        adc_atten_t atten;
+        // assert(ch < 4);
         assert(voltage <= (0.8f * 3.548134f /*11dB*/));
 
-        if (voltage > 1.6f) g = ADC_ATTEN_DB_11;
-        else if (voltage > 0.8f * 1.33f) g = ADC_ATTEN_DB_6;
-        else if (voltage > 0.8f) g = ADC_ATTEN_DB_2_5;
-        else g = ADC_ATTEN_DB_0;
+        if (voltage > 1.6f) atten = ADC_ATTEN_DB_11;
+        else if (voltage > 0.8f * 1.33f) atten = ADC_ATTEN_DB_6;
+        else if (voltage > 0.8f) atten = ADC_ATTEN_DB_2_5;
+        else atten = ADC_ATTEN_DB_0;
 
-        if(adc1_config_channel_atten(channel2pin[ch], g) != ESP_OK) {
-            ESP_LOGE("adc", "Failed to set ADC1 ch %i atten %i", (int)channel2pin[ch], (int)g);
+        if (adc1_config_channel_atten((adc1_channel_t) ch, atten) != ESP_OK) {
+            ESP_LOGE("adc", "Failed to set ADC1 ch %i attenuation %i", (int) ch, (int) atten);
         }
-        esp_adc_cal_characterize(ADC_UNIT_1, g, ADC_WIDTH_BIT_12, 1100, &adc_chars[ch]);
+        attenuation[ch] = atten;
+
+        if (adc_chars[atten] == nullptr) {
+            adc_chars[atten] = new esp_adc_cal_characteristics_t{};
+            esp_adc_cal_characterize(ADC_UNIT_1, atten, ADC_WIDTH_BIT_12, 1100, adc_chars[atten]);
+        }
     }
 
 
     float getSample() override {
         // TODO detect clipping
-        auto raw = adc1_get_raw(channel2pin[readingChannel]);
-        float v = (float) esp_adc_cal_raw_to_voltage(raw, &adc_chars[readingChannel]) * 1e-3f;
-        return medians[readingChannel].next(v);
+        auto raw = adc1_get_raw(readingChannel);
+        float v = (float) esp_adc_cal_raw_to_voltage(raw, adc_chars[attenuation[readingChannel]]) * 1e-3f;
+        return v;
     }
 };
 
 
-//
 
 
 /**
