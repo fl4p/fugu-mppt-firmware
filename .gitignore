@@ -16,3 +16,5 @@ web-flash/*.bin
 dependencies.lock
 
 sdkconfig.old
+
+sdkconfig
