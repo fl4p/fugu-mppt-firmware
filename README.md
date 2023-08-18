@@ -72,6 +72,31 @@ can proceed with the MPPT. Otherwise, we halt MPPT and decrease the duty cycle p
 
 The control loop has an update rate of about 160 Hz or 260 Hz without telemetry.
 
+# Voltage & Current Sensors, ADC
+
+The firmware tries to be as hardware independent as possible by using layers of abstraction, so you can easily adopt it
+with your ADC model and topology. Implementations exist for the ADS1x15, INA226, esp32_adc.
+
+The hardware should always sense `Vin` and `Vout`. `Vin` is not crucial and can
+be coarse (8-bit ADC is ok), it is only needed for under- and over-voltage shutdown. Since `Vout` is our battery voltage
+it should be more precise.
+
+The current sensor can be either at the input (`Iin`) or output (`Iout`) or both. If there's only one current sensor we
+can infer the other current using the voltage ratio of the converter.
+The code represents this with a `VirtualSensor`.
+
+If the current sensor is bi-directional, the converter can operate in boost mode, boosting lower solar voltage to a
+higher battery voltage. This is not yet implemented.
+
+Here are some relevant types:
+
+* `LinearTransform`: Linear X->Y transform to scale voltage readings and zero-offsetting.
+* `ADC_Sampler`: Schedules ADC reads, manages sensors and calibration
+* `CalibrationConstraints`: value constraints a sensor must meet during calibration (average, stddev).
+* `Sensor`: Represents a physical sensor with running statistics (average, variance)
+* `VirtualSensor`: A sensor with computed values. Also comes with running stats.
+* `AsyncADC`: Abstract interface for asynchronous (non-blocking) ADC implementation
+
 # MPPT Algorithm
 
 The tracking consists of 3 phases:
@@ -99,8 +124,8 @@ We can leave the Low-Side (LS, aka *sync-FET*, *synchronous rectifier*) switch o
 flow through the LS MOSFET´s body diode.
 The buck converter then operates in non-synchronous mode. This decreases conversion efficiency but prevents the buck
 converter from becoming a boost converter. Voltage boosting causes reverse current flow from battery to solar and can
-cause excess
-voltage at the solar input, eventually destroying the LS switch and even the board. Timing the LS can be tricky.
+cause excess voltage at the solar input, eventually destroying the LS switch and even the board. Timing the LS can be
+tricky.
 
 The firmware implements a synchronous buck converter. It uses the Vout/Vin voltage ratio to estimate the slope of the
 coil current and adjusts the switching time of the LS MOSFET so that the current never crosses zero.
@@ -121,6 +146,7 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 * Bluetooth communication
 * Serial / Modbus interface
 * Acid Lead, AGM charging algorithm
+* Boost converter
 
 # Using this Firmware
 

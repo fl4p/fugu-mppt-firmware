@@ -17,6 +17,7 @@ void scan_i2c() {
             2	received NACK on transmit of address
             3	received NACK on transmit of data
             4	other error
+            5   timeout
          */
 
         if (error == 0) {
