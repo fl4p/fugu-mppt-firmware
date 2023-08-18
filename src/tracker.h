@@ -81,6 +81,10 @@ struct Tracker {
                 }
             }
 
+            // TODO does this help?:
+            if(power > _lastPower)
+                _lastPower = power;
+
             // invalidate MPP every 5min ..
             if (now - maxPowerPoint.timestamp > 1000 * 60 * 5 and maxPowerPoint.power > 0) {
                 maxPowerPoint.power = 0;
