@@ -1,15 +1,29 @@
-- MAtter API? QR Code=
-- 
-- use higher resolution PWM
-  - is this possible? ESP32 timer freq appears to be 80mhz, 39khz*2048 = 79mhz
 
-# Sample Rate
+# Sensor Code / reading ADC
+scheduling the adc reads and accessing values is currently separated.
+ADC_sampler does the scheduling.
+
+Might be simpler to just use read callbacks? with these we can easily use multiple ADC devices, without the need
+of complex scheduler code. do we actually need a scheduler? just read samples in the control loop and react.
+
+considerations:
+- support a combination of multiple ADCs (e.g. Vin ESP_ADC, Vout/Iout INA226)
+- support sensing of Iin, Iout and both.
+- ADCs can have very different sample rates and noise characteristics (filtering)
+
+
+# Sample Rates
 - ADS1015 i2c at 800 khz
 - Loop: ads read only, wifi connected
 - 344sps * 3ch = 1032adc/s
 
-# TODO sweep +4 is too fast! lead to 41V OV!
-# TODO instead of waiting for a full 3-tuple sample (vin,vout,iin), process data as soon as it is available
+
+# Features / Improvements
+- MAtter API? QR Code?
+- use higher resolution PWM
+  - is this possible? ESP32 timer freq appears to be 80mhz, 39khz*2048 = 79mhz
+- instead of waiting for a full 3-tuple sample (vin,vout,iin), process data as soon as it is available
+
 
 # Original Hardware Issues / Considerations
 - Place filter caps closer to ADC input

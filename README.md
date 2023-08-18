@@ -24,21 +24,20 @@ This is common for Lithium-Batteries (e.g. LiFePo4).
 
 The firmware sends real-time data to InfluxDB server using UDP line protocol.
 
+The aim of this program is to provide a flexible MPPT and DC/DC solution that you can use with various hardware
+configuration (e.g. buck & boost, location of current sensor). I tried to structure components in classes so they
+reflect the physical and logical building-blocks of a MPPT solar charger. Feel free to use parts of the code
+
 # Building
 
-You can build with PlatformIO or ESP-IDF using Arduino as component build toolchain.
+You can build with PlatformIO or ESP-IDF toolchain using Arduino as a component.
 
 Here's how to build using ESP-IDF:
 
 ```
 git clone --recursive https://github.com/fl4p/fugu-mppt-firmware
 cd fugu-mppt-firmware
-```
-
-Depending on your target chip, either rename `sdkconfig.esp32` or `sdkconfig.esp32s3` to `sdkconfig`.
-Then build
-
-```
+idf.py set-target esp32s3 # (or esp32)
 idf.py build
 ```
 
@@ -99,7 +98,8 @@ shaded solar strings. A scan lasts about 20 to 60 seconds, depending on the loop
 We can leave the Low-Side (LS, aka *sync-FET*, *synchronous rectifier*) switch off and the coil discharge current will
 flow through the LS MOSFET´s body diode.
 The buck converter then operates in non-synchronous mode. This decreases conversion efficiency but prevents the buck
-converter from becoming a boost converter. Voltage boosting causes reverse current flow from battery to solar and can cause excess
+converter from becoming a boost converter. Voltage boosting causes reverse current flow from battery to solar and can
+cause excess
 voltage at the solar input, eventually destroying the LS switch and even the board. Timing the LS can be tricky.
 
 The firmware implements a synchronous buck converter. It uses the Vout/Vin voltage ratio to estimate the slope of the
