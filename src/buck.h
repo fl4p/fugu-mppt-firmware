@@ -7,17 +7,12 @@
 #include "pinconfig.h"
 #include "pwm/ledc.h"
 #include "backflow.h"
-//#include "buck/mcpwm.h"
-
 
 class SynchronousBuck {
     static constexpr uint8_t pwmCh_IN = 0;
     static constexpr uint8_t pwmCh_EN = 1;
 
     PWM_ESP32_ledc pwmDriver;
-    //PWM_MCPWM pwmDriver;
-
-    BackflowDriver bflow;
 
     static constexpr float MinDutyCycleLS = 0.06f; // to keep the HS bootstrap circuit running
 
@@ -37,7 +32,7 @@ public:
 
 
     SynchronousBuck()
-            : pwmDriver(), bflow(), pwmMaxHS((uint16_t) ((float) pwmDriver.pwmMax * (1.0f - MinDutyCycleLS))),
+            : pwmDriver(), pwmMaxHS((uint16_t) ((float) pwmDriver.pwmMax * (1.0f - MinDutyCycleLS))),
               pwmMinLS(std::ceil((float) pwmDriver.pwmMax * MinDutyCycleLS)), // keeping the bootstrap circuit powered
               pwmMinHS(pwmMinLS / 4) // everything else is too much!
     // note that MOSFETs have different Vg(th) and switching times. worst case is Vi/o=60/12
@@ -45,18 +40,15 @@ public:
     {}
 
     bool init() {
-
-        // TODO pin self-check?
-
         uint32_t pwmFrequency = 39000; // buck converter switching frequency
+        // default clock freq is 80mhz (APB_CLK). with 11bit pwm precision (2^11 = 2048), max pwm freq is 39.0625 kHz
+        // pwmFreq = clkFreq / 2**pwmPrecision;
 
         ESP_LOGI("buck", "pwmDriver.pwmMax=%hu, pwmMinLS=%hu, pwmMinHS=%hu, pwmMaxHS=%hu", pwmDriver.pwmMax, pwmMinLS,
                  pwmMinHS, pwmMaxHS);
 
         pwmDriver.init_pwm(pwmCh_IN, getBuckIN_PIN(), pwmFrequency);
         pwmDriver.init_pwm(pwmCh_EN, (uint8_t) PinConfig::Bridge_EN, pwmFrequency);
-
-        bflow.init();
 
 
         return true;
@@ -195,9 +187,6 @@ public:
         }
     }
 
-    void enableBackflowMosfet(bool enable) {
-        bflow.enable(enable);
-    }
 
     /**
      * Permanently set enable/disable low-side switch

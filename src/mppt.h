@@ -84,6 +84,7 @@ class MpptController {
     BatteryCharger charger;
 
 public:
+    BackflowDriver bflow{};
     SolarEnergyMeter meter{};
     TempSensorGPIO_NTC ntc;
     float speedScale = 1;
@@ -103,13 +104,17 @@ public:
     }
 
     void begin() {
+        bflow.init();
         meter.load();
         startSweep();
     }
 
     MpptControlMode getState() const { return state; }
 
-    void shutdownDcdc() { buck.disable(); }
+    void shutdownDcdc() {
+        bflow.enable(false); // this is very fast
+        buck.disable(); // TODO this function uses logging, too slow
+    }
 
     bool boardPowerSupplyUnderVoltage(bool start = false) const {
         //return false;
@@ -201,7 +206,7 @@ public:
         if (sensors.Iin->last < -1 && sensors.Iin->previous < -1) {
             ESP_LOGE("MPPT", "Reverse current %.1f A, noise? disable BFC and low-side FET", sensors.Iin->last);
             //shutdownDcdc();
-            buck.enableBackflowMosfet(false);
+            bflow.enable(false);
             buck.lowSideMinDuty();
             //buck.halfDutyCycle();
         }
@@ -234,7 +239,7 @@ public:
                          sensors.Iin->ewm.avg.get(), std::max(sensors.Iin->last, sensors.Iin->previous));
             }
             buck.lowSideMinDuty();
-            buck.enableBackflowMosfet(false);
+            bflow.enable(false);
         }
 
         if (ntc.last() > 95) {
@@ -346,7 +351,7 @@ public:
         auto nowUs = micros();
 
         if (buck.disabled() && !startCondition()) {
-            buck.enableBackflowMosfet(false);
+            bflow.enable(false);
             state = MpptControlMode::None;
             return;
         }
@@ -540,7 +545,7 @@ public:
         }
         lastUs = nowUs;
 
-        buck.enableBackflowMosfet((Iin > 0.2f));
+        bflow.enable((Iin > 0.2f));
         buck.enableLowSide((Iin > 0.2f));
 
 
