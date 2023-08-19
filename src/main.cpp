@@ -177,7 +177,7 @@ void setup() {
                             Iout_transform,
                             {.5f, .1f, true},
                             "Io",
-                            false},
+                            true},
                     30.f)
                    : adcSampler.addVirtualSensor([&]() {
                 if (std::abs(sensors.Iin->last) < .05f or sensors.Vout->last < 0.1f)
