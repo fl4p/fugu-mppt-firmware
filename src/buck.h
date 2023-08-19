@@ -70,8 +70,9 @@ public:
         // "fade-in" the low-side duty cycle
         pwmLS = lowSideEnabled ? constrain(pwmLS + 3, pwmMinLS, pwmMaxLS) : pwmMinLS;
 
-        pwmDriver.update_pwm(pwmCh_IN, pwmHS);
+        // update EN before IN
         pwmDriver.update_pwm(pwmCh_EN, pwmHS + pwmLS);
+        pwmDriver.update_pwm(pwmCh_IN, pwmHS);
     }
 
 
@@ -99,13 +100,14 @@ public:
     uint16_t getDutyCycleLSMax() const { return pwmMaxLS; }
 
     void disable() {
-        if (pwmHS > pwmMinHS)
-            ESP_LOGW("buck", "PWM disabled");
+        pwmDriver.update_pwm(pwmCh_EN, 0); // disable EN before IN !
+        pwmDriver.update_pwm(pwmCh_IN, 0);
+
+        if (pwmHS > pwmMinHS) // TODO this function uses logging, too slow
+            ESP_LOGW("buck", "PWM disabled (duty cycle was %d)", (int)pwmHS);
         pwmHS = 0;
         pwmLS = 0;
-        pwmDriver.update_pwm(pwmCh_IN, 0);
-        pwmDriver.update_pwm(pwmCh_EN, 0);
-        enableBackflowMosfet(false);
+        lowSideEnabled = false;
     }
 
 

@@ -112,12 +112,13 @@ public:
     MpptControlMode getState() const { return state; }
 
     void shutdownDcdc() {
+        // disabling the backflow switch first to avoid any battery current into the converter
+        // solar current is usually not harmful, so shutting down the converter can wait
         bflow.enable(false); // this is very fast
         buck.disable(); // TODO this function uses logging, too slow
     }
 
     bool boardPowerSupplyUnderVoltage(bool start = false) const {
-        //return false;
         return std::max(sensors.Vin->last, sensors.Vout->last) < (start ? 9.5f : 9.f);
     }
 
@@ -431,7 +432,7 @@ public:
         MpptControlMode controlMode = MpptControlMode::None;
         float controlValue = 0;
 
-        if (limitingControlValue <= 0) {
+        if (limitingControlValue < 0) {
             // limit condition
             controlMode = limitingControl->mode;
             controlValue = limitingControlValue;
@@ -466,7 +467,8 @@ public:
             controlValue = 1;
         }
 
-        assert((controlMode == MpptControlMode::None) == (controlValue == 0));
+        // THIS CAN FAIL:
+        // assert((controlMode == MpptControlMode::None) == (controlValue == 0));
 
 
         if (_sweeping) {

@@ -257,7 +257,7 @@ void loop() {
 
 
     if (unlikely(adcSampler.isCalibrating())) {
-        pwm.disable();
+        mppt.shutdownDcdc();
     } else {
         if (charging) {
             bool mppt_ok = mppt.protect();
@@ -285,7 +285,7 @@ void loop() {
         if (sps < 100 && !pwm.disabled() && nSamples > 1000 &&
             !manualPwm) { //(nowMs - adcSampler.getTimeLastCalibration()) > 6000)
             ESP_LOGE("main", "Loop latency too high! shutdown");
-            pwm.disable();
+            mppt.shutdownDcdc();
             charging = false;
         }
 
@@ -328,7 +328,7 @@ void loop() {
 
     if (manualPwm) {
         pwm.pwmPerturb(0); // this will increase LS duty cycle if possible
-        pwm.enableBackflowMosfet(true);
+        mppt.bflow.enable(true);
         // notice that mppt::protect() calls updateLowSideMaxDuty()
         delay(10);
     }
