@@ -7,7 +7,8 @@
 
 struct BatChargerParams {
     float Vout_max = FUGU_BAT_V; //14.6 * 2;
-    float Iout_max = 27; // coil & fuse limited
+    //float Iout_max = 27; // HW1: coil & fuse limited
+    float Iout_max = 30; // HW2, backflow mosfet gets hot!
 
     float Vout_top() const { return Vout_max * 0.96f; } //0.975f;
     float Vout_top_release() const { return Vout_max * 0.94f; }

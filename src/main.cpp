@@ -111,7 +111,7 @@ void setup() {
     } else if (adc_ina226.init()) {
         ESP_LOGI("main", "Initialized INA226");
         adc = &adc_ina226;
-        ewmaSpan = 8;
+        ewmaSpan = 12;
         Vin_ch = ADC_INA226::ChAux;
         Iin_ch = 255;
         Vout_ch = ADC_INA226::ChVBus;
@@ -148,7 +148,7 @@ void setup() {
             {
                     Vin_ch,
                     Vin_transform,
-                    {80, 1.1f, false},
+                    {80, 1.8f, false},
                     "U_in_raw",
                     true},
             80.f);
@@ -189,7 +189,7 @@ void setup() {
     sensors.Vout = adcSampler.addSensor(
             {Vout_ch,
              Vout_transform,
-             {60, .05f, false},
+             {60, .7f, false},
              "U_out_raw",
              true},
             60.f);
