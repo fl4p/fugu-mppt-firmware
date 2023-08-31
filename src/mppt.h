@@ -80,10 +80,11 @@ class MpptController {
     const ADC_Sampler::Sensor *sensorPhysicalI{nullptr};
 
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
-    PD_Control VoutController{1000, 5000, true}; // Vout over-voltage
+    PD_Control VoutController{3000, 12000, true}; // Vout over-voltage
     PD_Control IinController{100, 400, true}; // Iin over-current
-    PD_Control_SmoothSetpoint IoutCurrentController{30, 120, 200}; // Iout over-current
+    PD_Control_SmoothSetpoint IoutCurrentController{20, 80, 200}; // Iout over-current
     PD_Control_SmoothSetpoint powerController{10, 20, 200}; // over-power // TODO PID?
+    //PD_Control LoadRegulationCTRL{5, -200, true}; //
 
     Tracker tracker{};
     BatteryCharger charger;
