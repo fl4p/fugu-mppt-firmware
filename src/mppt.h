@@ -84,7 +84,7 @@ class MpptController {
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
     PD_Control VoutController{3000, 12000, true}; // Vout over-voltage
     PD_Control IinController{100, 400, true}; // Iin over-current
-    PD_Control_SmoothSetpoint IoutCurrentController{20, 80, 200}; // Iout over-current
+    PD_Control_SmoothSetpoint IoutCurrentController{10, 40, 200}; // Iout over-current // TODO PID?
     PD_Control_SmoothSetpoint powerController{10, 20, 200}; // over-power // TODO PID?
     //PD_Control LoadRegulationCTRL{5, -200, true}; //
 
@@ -442,7 +442,7 @@ public:
                 CVP{CV, VinController, {sensors.Vin->med3.get(), params.Vin_min}},
                 CVP{CV, VoutController, {sensors.Vout->last, params.Vout_max}},
                 CVP{CC, IinController, {sensors.Iin->med3.get(), params.Iin_max}},
-                CVP{CC, IoutCurrentController, {sensors.Iout->ewm.avg.get(), Iout_max}},
+                CVP{CC, IoutCurrentController, {sensors.Iout->med3.get(), Iout_max}},
                 CVP{CP, powerController, {power, powerLimit}},
                 //CVP{CC, LoadRegulationCTRL, {sensors.Iout->last, Iout_max * 1.5f}},
         };
