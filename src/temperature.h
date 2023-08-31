@@ -72,7 +72,7 @@ public:
  * Don't use this in latency critical loops if WiFi is on!
  */
 class Esp32TempSensor {
-    RunningMedian3<float> median3;
+    RunningMedian3<float> median3{};
     EWMA<float> ewma{40};
 
     //temperature_sensor_handle_t temp_handle = NULL;
