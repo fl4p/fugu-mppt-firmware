@@ -97,9 +97,11 @@ void setup() {
     };
     LinearTransform Iout_transform = {-1, 0};
 
+    // int Vin_ewma_span = 20;
+
     AsyncADC<float> *adc;
     uint8_t Vin_ch, Iin_ch = 255, Vout_ch, Iout_ch = 255;
-    int ewmaSpan;
+    uint16_t ewmaSpan;
     if (adc_ads.init()) {
         ESP_LOGI("main", "Initialized external ADS1x15 ADC");
         adc = &adc_ads;
@@ -111,7 +113,7 @@ void setup() {
     } else if (adc_ina226.init()) {
         ESP_LOGI("main", "Initialized INA226");
         adc = &adc_ina226;
-        ewmaSpan = 12;
+        ewmaSpan = 20;
         Vin_ch = ADC_INA226::ChAux;
         Iin_ch = 255;
         Vout_ch = ADC_INA226::ChVBus;
@@ -123,8 +125,12 @@ void setup() {
             return LinearTransform{(rH + rl) / rl, 0.f};
         };
 
-        Vin_transform = adcVDiv(200, 7.5f, 500); // 500k ESP ADC impedance?
+        Vin_transform = adcVDiv(200, 7.5f, 600); // 500k ESP ADC impedance?
+        // Vin_transform.factor *= 1.005f;
         Vout_transform = adcVDiv(47, 47, 830); // 830k ina226 input impedance
+
+        Vin_transform.factor *= 0.99533f;
+        Vout_transform.factor *= 1.00516f;
 
         /*} else if (adc_esp32.init()) {
             ESP_LOGW("main", "Failed to initialize external ADC, using internal");
@@ -148,10 +154,11 @@ void setup() {
             {
                     Vin_ch,
                     Vin_transform,
+
                     {80, 1.8f, false},
                     "U_in_raw",
                     true},
-            80.f);
+            80.f, 60);
 
 
     sensors.Iin = (Iin_ch != 255)
@@ -159,15 +166,16 @@ void setup() {
                     {
                             Iin_ch,
                             Iin_transform,
+
                             {.5f, .1f, true},
                             "I_raw",
                             false},
-                    30.f)
+                    30.f, ewmaSpan)
                   : adcSampler.addVirtualSensor([&]() {
                 if (std::abs(sensors.Iout->last) < .05f or sensors.Vin->last < 0.1f)
                     return 0.f;
                 return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
-            });
+            }, ewmaSpan);
 
 
     sensors.Iout = (Iout_ch != 255)
@@ -175,15 +183,15 @@ void setup() {
                     {
                             Iout_ch,
                             Iout_transform,
-                            {.5f, .1f, true},
+                            {1.5f, .1f, true},
                             "Io",
                             true},
-                    30.f)
+                    30.f, ewmaSpan)
                    : adcSampler.addVirtualSensor([&]() {
                 if (std::abs(sensors.Iin->last) < .05f or sensors.Vout->last < 0.1f)
                     return 0.f;
                 return sensors.Iin->last * sensors.Vin->last / sensors.Vout->last * conversionEfficiency;
-            });
+            }, ewmaSpan);
 
     // note that Vout should be the last sensor for lowest latency
     sensors.Vout = adcSampler.addSensor(
@@ -192,9 +200,9 @@ void setup() {
              {60, .7f, false},
              "U_out_raw",
              true},
-            60.f);
+            60.f, 60);
 
-    adcSampler.begin(ewmaSpan);
+    adcSampler.begin();
 
     if (!pwm.init()) {
         ESP_LOGE("main", "Failed to init half bridge");
@@ -211,8 +219,12 @@ void setup() {
 
 unsigned long timeLastSampler = 0;
 
+unsigned long delayStartUntil = 0;
+
 void loop() {
     auto nowMs = millis();
+
+    flush_async_uart_log();
 
     mppt.ntc.read();
 
@@ -271,8 +283,9 @@ void loop() {
                 }
             } else {
                 charging = false;
+                delayStartUntil = nowMs + 2000;
             }
-        } else if (mppt.startCondition()) {
+        } else if (nowMs > delayStartUntil && mppt.startCondition()) {
             mppt.startSweep();
             charging = true;
         }
@@ -282,7 +295,7 @@ void loop() {
         auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
                    (uint32_t) (nowMs - lastTimeOut);
 
-        if (sps < 100 && !pwm.disabled() && nSamples > 1000 &&
+        if (sps < 80 && !pwm.disabled() && nSamples > 1000 &&
             !manualPwm) { //(nowMs - adcSampler.getTimeLastCalibration()) > 6000)
             ESP_LOGE("main", "Loop latency too high! shutdown");
             mppt.shutdownDcdc();
@@ -290,7 +303,7 @@ void loop() {
         }
 
         UART_LOG(
-                "Vi/o=%4.1f/%4.1f Ii/o=%4.1f/%4.1fA Pin=%4.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s,%i) lag=%.1fms N=%u",
+                "Vi/o=%5.2f/%5.2f Ii/o=%4.1f/%4.1fA Pin=%5.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s,%i) lag=%.1fms N=%u",
                 sensors.Vin->last,
                 sensors.Vout->last,
                 sensors.Iin->last,
@@ -354,8 +367,10 @@ void loop() {
                 inp.toInt() != 0 && std::abs(inp.toInt()) < pwm.pwmMaxHS) {
                 int pwmStep = inp.toInt();
                 ESP_LOGI("main", "Manual PWM step %i", pwmStep);
-                //manualPwm = true;
+                //manualPwm = true; // don't switch to manual pwm here!
                 pwm.pwmPerturb((int16_t) pwmStep);
+            } else if (manualPwm && (inp == "ls-disable" or inp == "ls-enable")) {
+                pwm.enableLowSide(inp == "ls-enable");
             } else if (inp == "restart" or inp == "reset") {
                 pwm.disable();
                 Serial.println("Restart, delay 1s");
@@ -368,6 +383,7 @@ void loop() {
                        && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmMaxHS) {
                 manualPwm = true;
                 pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
+                // pwm.enableLowSide(true);
             } else if (inp.startsWith("speed ") && inp.length() <= 12) {
                 float speedScale = inp.substring(6).toFloat();
                 if (speedScale >= 0 && speedScale < 10) {
