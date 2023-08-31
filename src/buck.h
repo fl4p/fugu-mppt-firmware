@@ -7,6 +7,7 @@
 #include "pinconfig.h"
 #include "pwm/ledc.h"
 #include "backflow.h"
+#include "util.h"
 
 class SynchronousBuck {
     static constexpr uint8_t pwmCh_IN = 0;
@@ -60,19 +61,38 @@ public:
 
         pwmHS = constrain(pwmHS + direction, pwmMinHS, pwmMaxHS);
 
-        pwmMaxLS = computePwmMaxLs(pwmHS, pwmDriver.pwmMax, outInVoltageRatio);
+        pwmMaxLS = computePwmMaxLs(pwmHS, pwmDriver.pwmMax, outInVoltageRatio, &dcmHysteresis);
         pwmMaxLS = std::max(pwmMinLS, pwmMaxLS);
 
         if (pwmLS - pwmMaxLS > (pwmDriver.pwmMax / 10)) {
-            ESP_LOGW("buck", "Set pwmLS %hu -> pwmMaxLS=%hu", pwmLS, pwmMaxLS);
+            UART_LOG_ASYNC("Set pwmLS %hu -> pwmMaxLS=%hu", pwmLS, pwmMaxLS);
         }
 
         // "fade-in" the low-side duty cycle
-        pwmLS = lowSideEnabled ? constrain(pwmLS + 3, pwmMinLS, pwmMaxLS) : pwmMinLS;
+        pwmLS = lowSideEnabled ? constrain(pwmLS + 6, pwmMinLS, pwmMaxLS) : pwmMinLS;
 
-        // update EN before IN
-        pwmDriver.update_pwm(pwmCh_EN, pwmHS + pwmLS);
-        pwmDriver.update_pwm(pwmCh_IN, pwmHS);
+        if (-direction > pwmDriver.pwmMax / 100) {
+            /*
+             * with larger decreases of duty cycle do a "safe" update
+             */
+            pwmDriver.update_pwm(pwmCh_EN, 0);
+            pwmDriver.update_pwm(pwmCh_IN, pwmHS);
+            pwmDriver.update_pwm(pwmCh_EN, pwmHS + pwmLS);
+        } else if (direction < 0) {
+            /*
+             * update EN before IN
+             * pwmHS will be smaller than before. after the EN update (we don't know the direction) pwmHS stays at the
+             * old value (larger) causing the effective pwmLS to be less, which is ok
+             */
+            pwmDriver.update_pwm(pwmCh_EN, pwmHS + pwmLS);
+            pwmDriver.update_pwm(pwmCh_IN, pwmHS);
+        } else {
+            /* update IN before EN
+             * we increase pwmHS here, so update it first
+             */
+            pwmDriver.update_pwm(pwmCh_IN, pwmHS);
+            pwmDriver.update_pwm(pwmCh_EN, pwmHS + pwmLS);
+        }
     }
 
 
@@ -103,8 +123,8 @@ public:
         pwmDriver.update_pwm(pwmCh_EN, 0); // disable EN before IN !
         pwmDriver.update_pwm(pwmCh_IN, 0);
 
-        if (pwmHS > pwmMinHS) // TODO this function uses logging, too slow
-            ESP_LOGW("buck", "PWM disabled (duty cycle was %d)", (int)pwmHS);
+        if (pwmHS > pwmMinHS)
+            UART_LOG_ASYNC("PWM disabled (duty cycle was %d)", (int) pwmHS);
         pwmHS = 0;
         pwmLS = 0;
         lowSideEnabled = false;
@@ -127,7 +147,7 @@ public:
      * @param voltageRatio Vout/Vin ratio (the greater, the safer but less efficient)
      * @return
      */
-    static uint16_t computePwmMaxLs(uint16_t pwmHS, uint16_t pwmMax, float voltageRatio) {
+    static uint16_t computePwmMaxLs(uint16_t pwmHS, const uint16_t pwmMax, float voltageRatio, bool *dcmHysteresis) {
 
         const float coilEfficiency = 0.99f; // TODO what does this model or represent, remove? maybe coil losses?
 
@@ -147,16 +167,25 @@ public:
 
         auto pwmMaxLs = (1 / voltageRatio - 1) * (float) pwmHS / pwmMaxLsWCEF; // the lower, the safer
 
-        if (pwmMaxLs < (float) (pwmMax - pwmHS)) {
+        if (pwmMaxLs < (float) (pwmMax - pwmHS + ((*dcmHysteresis) ? 0: -(pwmMax / 100)))) {
             // DCM (Discontinuous Conduction Mode)
             // this is when the coil current is still touching zero, it'll stop for higher HS duty cycles
-            // Allowing higher duty cycles here would result a synchronous forced PWM.
+            // Allowing higher duty cycles here would result a synchronous forced PWM. (reverse coil current, can be dangerous)
             // (forced PWM reduces output ripple?) TODO
             pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS);
+            if (!*dcmHysteresis) {
+                *dcmHysteresis = true;
+                UART_LOG_ASYNC("buck: CCM -> DCM");
+            }
+
         } else {
             // CCM (Continuous Conduction Mode)
             // coil current never becomes zero
             pwmMaxLs = (float) (pwmMax - pwmHS);
+            if (*dcmHysteresis) {
+                *dcmHysteresis = false;
+                UART_LOG_ASYNC("buck: DCM -> CCM");
+            }
         }
 
         //ESP_LOGI("dbg", "pwmMaxLs=%f, (float) (pwmMax - pwmHS)=%f, pwmMax=%hu, pwmHS=%hu", pwmMaxLs, (float) (pwmMax - pwmHS), pwmMax, pwmHS);
@@ -167,6 +196,8 @@ public:
         return (uint16_t) (pwmMaxLs * coilEfficiency);
     }
 
+    bool dcmHysteresis = false;
+
     void updateLowSideMaxDuty(float vout, float vin) {
         // voltageRatio = Vout/Vin
 
@@ -176,13 +207,13 @@ public:
             outInVoltageRatio = 1; // the safest (minimize LS duty cycle)
         }
 
-        pwmMaxLS = computePwmMaxLs(pwmHS, pwmDriver.pwmMax, outInVoltageRatio);
+        pwmMaxLS = computePwmMaxLs(pwmHS, pwmDriver.pwmMax, outInVoltageRatio, &dcmHysteresis);
 
         pwmMaxLS = std::max(pwmMinLS, pwmMaxLS);
 
         if (pwmLS > pwmMaxLS) {
-            if (pwmLS - pwmMaxLS > (pwmDriver.pwmMax / 10)) {
-                ESP_LOGW("buck", "Set pwmLS %hu -> pwmMaxLS=%hu (VR=%.2f)", pwmLS, pwmMaxLS, outInVoltageRatio);
+            if (pwmLS - pwmMaxLS > (pwmDriver.pwmMax / 40)) {
+                UART_LOG_ASYNC("Set pwmLS %hu -> pwmMaxLS=%hu (VR=%.3f)", pwmLS, pwmMaxLS, outInVoltageRatio);
             }
             pwmLS = pwmMaxLS;
             pwmDriver.update_pwm(pwmCh_EN, pwmHS + pwmLS); // instantly commit if limit decreases
