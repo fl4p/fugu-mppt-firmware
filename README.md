@@ -16,6 +16,7 @@ This is common for Lithium-Batteries (e.g. LiFePo4).
 * PID control for voltage and current regulation
 * Periodic MPPT global scan
 * Sophisticated Diode Emulation for low-side switch
+* Anti back-flow (back-feed, ideal diode)
 * Battery voltage detection
 * Fast protection shutdown in over-voltage and over-current conditions
 * PWM Fan Control and temperature power limiting / derating
@@ -147,6 +148,7 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 * Serial / Modbus interface
 * Acid Lead, AGM charging algorithm
 * Boost converter
+* Detect burned HS and short LS
 
 # Using this Firmware
 
@@ -154,7 +156,15 @@ I am currently using this firmware on a couple of Fugu Devices in a real-world a
 2s 410WP solar panels, charging an 24V LiFePo4 battery. They produce more than 4 kWh on sunny days.
 
 I'd consider the current state of this software as usable. However, a lot of things (WiFi, charging parameters) are
-hard-coded.
+hard-coded. ADC filtering and control loop speed depend on the quality of measurements (noise, outliers).
+
+The original FugFugu HW design has some flaws (hall sensor placement after input caps, hall sensor too close to coil,
+sense wires layout).
+
+Interference increases with power, so we must slow down the control loop to ensure a steady output. Otherwise the
+converter might unexpectedly shutdown, wasting solar energy. A slow control loop however causes higher voltage
+transients
+during load changes (e.g. BMS cut-off) which can be dangerous for devices.
 
 If the battery or load is removed during power conversion expect an over-voltage transient at the output.
 With a battery voltage of 28.5V, I measured 36V for 400ms.
@@ -178,5 +188,4 @@ github profile) if you want to contribute or just share your experience.
 
 * [Power conversion efficiency measurement](https://github.com/fl4p/fugu-mppt-doc/blob/master/Power%20Measurements.md#findings)
 
-
-* [Can you explain diode emulation and why it is used? ](https://en-support.renesas.com/knowledgeBase/4967491)
+* [Renesas: Can you explain diode emulation and why it is used?](https://en-support.renesas.com/knowledgeBase/4967491)
