@@ -12,7 +12,7 @@ struct BatChargerParams {
 
     float Vout_top() const { return Vout_max * 0.96f; } //0.975f;
     float Vout_top_release() const { return Vout_max * 0.94f; }
-    float Iout_top = 2;
+    float Iout_top = .5;
 };
 
 class BatteryCharger {

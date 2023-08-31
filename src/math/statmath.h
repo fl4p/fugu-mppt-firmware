@@ -105,9 +105,11 @@ inline T median_of_three(const T &a, const T &b, const T &c) {
 
 template<typename T>
 class RunningMedian3 {
-    T s1{}, s2{};
-    T _last{};
+    T s1, s2;
+    T _last;
 public:
+    RunningMedian3() { reset(); }
+
     inline T next(const T &s) {
         T m = median_of_three<T, greaterThan<T>>(s, s1, s2);
         s2 = s1;
@@ -121,9 +123,9 @@ public:
     }
 
     void reset() {
-        s1 = T{};
-        s2 = T{};
-        _last = T{};
+        s1 = std::numeric_limits<T>::quiet_NaN();
+        s2 = std::numeric_limits<T>::quiet_NaN();
+        _last = std::numeric_limits<T>::quiet_NaN();
     }
 };
 
