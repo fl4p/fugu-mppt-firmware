@@ -43,6 +43,10 @@ static const std::array<std::string, (size_t) MpptControlMode::Max> MpptState2St
 };
 
 
+struct TopologyConfig {
+    bool backflowAtHV = false;//backflow switch is at solar input
+};
+
 /**
  * Implements
  * - Protection of DCDC converter
@@ -72,7 +76,8 @@ class MpptController {
     unsigned long lastTimeProtectPassed = 0;
     unsigned long _lastPointWrite = 0;
 
-    VIinVout<const ADC_Sampler::Sensor *> sensors;
+    VIinVout<const ADC_Sampler::Sensor *> sensors{};
+    const ADC_Sampler::Sensor *sensorPhysicalI{nullptr};
 
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
     PD_Control VoutController{1000, 5000, true}; // Vout over-voltage
@@ -82,6 +87,8 @@ class MpptController {
 
     Tracker tracker{};
     BatteryCharger charger;
+
+    TopologyConfig topologyConfig;
 
 public:
     BackflowDriver bflow{};
@@ -101,6 +108,14 @@ public:
 
     void setSensors(const VIinVout<const ADC_Sampler::Sensor *> &channels_) {
         sensors = channels_;
+        if(sensors.Iout->isVirtual) {
+            ESP_LOGI("mppt", "Iout sensor is virtual, using Iin");
+            sensorPhysicalI = ::sensors.Iin;
+        } else {
+            // use Iout by default
+            assert(!sensors.Iout->isVirtual);
+            sensorPhysicalI = ::sensors.Iout;
+        }
     }
 
     void begin() {
@@ -112,10 +127,15 @@ public:
     MpptControlMode getState() const { return state; }
 
     void shutdownDcdc() {
-        // disabling the backflow switch first to avoid any battery current into the converter
-        // solar current is usually not harmful, so shutting down the converter can wait
-        bflow.enable(false); // this is very fast
-        buck.disable(); // TODO this function uses logging, too slow
+        if (topologyConfig.backflowAtHV) {
+            buck.disable();
+            bflow.enable(false);
+        } else {
+            // disabling the backflow switch first to avoid any battery current into the converter
+            // solar current is usually not harmful, so shutting down the converter can wait
+            bflow.enable(false); // this is very fast
+            buck.disable();
+        }
     }
 
     bool boardPowerSupplyUnderVoltage(bool start = false) const {
@@ -204,16 +224,16 @@ public:
             return false;
         }
 
-        if (sensors.Iin->last < -1 && sensors.Iin->previous < -1) {
-            ESP_LOGE("MPPT", "Reverse current %.1f A, noise? disable BFC and low-side FET", sensors.Iin->last);
+        if (sensorPhysicalI->last < -1 && sensorPhysicalI->previous < -1) {
             //shutdownDcdc();
             bflow.enable(false);
             buck.lowSideMinDuty();
+            ESP_LOGE("MPPT", "Reverse current %.1f A, noise? disable BFC and low-side FET", sensorPhysicalI->last);
             //buck.halfDutyCycle();
         }
 
-        if (sensors.Iin->ewm.avg.get() < -1) {
-            ESP_LOGE("MPPT", "Reverse avg current shutdown %.1f A", sensors.Iin->ewm.avg.get());
+        if (sensorPhysicalI->ewm.avg.get() < -1) {
+            ESP_LOGE("MPPT", "Reverse avg current shutdown %.1f A", sensorPhysicalI->ewm.avg.get());
             shutdownDcdc();
             return false;
         }
@@ -233,7 +253,7 @@ public:
         }
 
         // try to prevent voltage boost and disable low side for low currents
-        if (fminf(sensors.Iin->ewm.avg.get(), std::max(sensors.Iin->last, sensors.Iin->previous)) < 0.1f) {
+        if (fminf(sensorPhysicalI->ewm.avg.get(), std::max(sensorPhysicalI->last, sensorPhysicalI->previous)) < 0.1f) {
             if (buck.getBuckDutyCycleLS() > buck.getDutyCycleLSMax() / 2 &&
                 buck.getBuckDutyCycleLS() > (buck.pwmMaxHS / 10)) {
                 ESP_LOGW("MPPT", "Set low-side min duty (ewm(Iin)=%.2f, max(Iin,Iin[-1])=%.2f)",
@@ -252,6 +272,8 @@ public:
         // TODO move this to control loop
         float vOut = fmaxf(sensors.Vout->med3.get(), sensors.Vout->ewm.avg.get());
         float vIn = fminf(sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
+        //float vOut = sensors.Vout->ewm.avg.get();
+        //float vIn = sensors.Vin->ewm.avg.get();
         buck.updateLowSideMaxDuty(vOut, vIn);
 
         lastTimeProtectPassed = millis();
@@ -306,6 +328,7 @@ public:
 
         auto Iin = sensors.Iin->ewm.avg.get();
         auto Vin = sensors.Vin->ewm.avg.get();
+        auto Vout = sensors.Vout->ewm.avg.get();
         auto power = Iin * Vin;
 
         Point point("mppt");
@@ -313,6 +336,8 @@ public:
         point.addField("P", power, 2);
         point.addField("I", Iin, 3);
         point.addField("U", Vin, 2);
+        point.addField("U_out", Vout, 2);
+
 
         point.addField("E", meter.totalEnergy.get(), 1);
         point.addField("E_today", meter.dailyEnergyMeter.todayEnergy, 1);
