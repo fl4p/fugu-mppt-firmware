@@ -53,7 +53,6 @@ class ADC_Sampler {
     uint8_t calibrating_ = 0;
     unsigned long timeLastCalibration = 0;
 
-    uint16_t ewmSpan = 1;
 
 public:
 
@@ -62,6 +61,7 @@ public:
     struct SensorParams {
         const uint8_t adcCh;
         const LinearTransform transform;
+        //uint16_t ewmaSpan;
         const CalibrationConstraints calibrationConstraints;
         const std::string teleName;
         /**
@@ -81,8 +81,11 @@ public:
 
         float calibrationAvg = 0;
 
+        const bool isVirtual;
+
         Sensor(SensorParams params, uint32_t ewmSpan)
-                : params(std::move(params)), ewm{ewmSpan} {}
+                : params(std::move(params)), ewm{ewmSpan}, isVirtual(false) {}
+
 
         Sensor(const Sensor &other) = delete; // no-copy
         Sensor &operator=(const Sensor &) = delete; // no-copy
@@ -111,13 +114,19 @@ public:
 
             //ESP_LOGD("s", "Sensor %s: add sample %.5f #%d (ewm avg %.5f)", teleName.c_str(), last, numSamples, ewm.avg.get());
         }
+
+    protected:
+        Sensor(SensorParams params, uint32_t ewmSpan, bool isVirtual)
+                : params(std::move(params)), ewm{ewmSpan} , isVirtual{isVirtual}{}
+
+        //virtual ~Sensor() = default;  // make class polymorphic (to enable dynamic_cast)
     };
 
     struct VirtualSensor : public Sensor {
         std::function<float()> func;
 
         explicit VirtualSensor(std::function<float()> func, uint32_t ewmSpan)
-                : Sensor({0, {1, 0}, {}, "", false}, ewmSpan),
+                : Sensor({0, {1, 0}, {}, "", false}, ewmSpan, true),
                   func(std::move(func)) {
         }
     };
@@ -146,21 +155,19 @@ public:
      * @param transform Transform applied to the samples
      * @param maxY Max expected value of the transformed sample (used to program the ADC PGA)
      */
-    const Sensor *addSensor(SensorParams params, float maxY) {
+    const Sensor *addSensor(SensorParams params, float maxY, uint32_t ewmSpan) {
         assert(adc != nullptr);
         auto maxX = params.transform.apply_inverse(params.transform.factor < 0 ? -maxY : maxY);
         ESP_LOGI("sampler", "%s ADC ch %hhu maxY=%.4f, maxX=%.4f", params.teleName.c_str(), params.adcCh, maxY, maxX);
         adc->setMaxExpectedVoltage(params.adcCh, maxX);
 
         sensors.push_back(new Sensor{std::move(params), ewmSpan});
-        sensors.back()->ewm.updateSpan(ewmSpan);
         realSensors.push_back(sensors.back());
         return sensors.back();
     }
 
-    const Sensor *addVirtualSensor(std::function<float()> func) {
-        virtualSensors.push_back(new VirtualSensor{std::move(func), ewmSpan});
-        virtualSensors.back()->ewm.updateSpan(ewmSpan);
+    const Sensor *addVirtualSensor(std::function<float()> func, uint32_t ewmaSpan) {
+        virtualSensors.push_back(new VirtualSensor{std::move(func), ewmaSpan});
         sensors.push_back(virtualSensors.back());
         return sensors.back();
     }
@@ -170,12 +177,9 @@ public:
     }
 
 
-    void begin(uint16_t ewmaSpan) {
+    void begin() {
         assert(adc != nullptr);
         assert(!realSensors.empty());
-        for (auto &ch: sensors)
-            ch->ewm.updateSpan(ewmaSpan);
-        ewmSpan = ewmaSpan;
         _readNext();
     }
 
@@ -221,7 +225,7 @@ public:
         }*/
 
 
-        if (calibrating_ && sensor.numSamples >= std::max(3, ewmSpan * 2)) {
+        if (calibrating_ && sensor.numSamples >= 60) {
             // calibZeroCurrent = ewm.s.chIin.avg.get();
             auto avg = sensor.ewm.avg.get();
             auto std = sensor.ewm.std.get();
@@ -229,16 +233,16 @@ public:
             auto &constrains{sensor.params.calibrationConstraints};
 
             if (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue) {
-                ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, x=%.6f)",
-                         sensor.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, sensor.last, x);
+                ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, x=%.6f, stdn=%.6f)",
+                         sensor.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, sensor.last, x, std);
                 startCalibration();
                 return false;
             }
 
             if ( /*!std::isfinite(std) or */ std * avg > constrains.maxStddev) {
-                ESP_LOGE("sampler", "Calibration failed, %s stddev %.6f > %.6f", sensor.params.teleName.c_str(),
+                ESP_LOGE("sampler", "Calibration failed, %s stddev %.6f > %.6f (last=%.6f, x=%.6f, avg=%.6f)", sensor.params.teleName.c_str(),
                          std * avg,
-                         constrains.maxStddev);
+                         constrains.maxStddev, sensor.last, x, avg);
                 ESP_LOGW("sampler", "%s last=%.6f med3=%.6f avg=%.6f num=%u", sensor.params.teleName.c_str(),
                          sensor.last,
                          sensor.med3.get(), sensor.ewm.avg.get(), sensor.numSamples);

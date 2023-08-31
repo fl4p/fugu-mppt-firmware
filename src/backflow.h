@@ -5,6 +5,10 @@
 
 #include "pinconfig.h"
 
+/**
+ * Drives the backflow switch
+ * aka anti-back-feed, ideal diode
+ */
 class BackflowDriver {
 
 public:
