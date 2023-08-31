@@ -1,7 +1,9 @@
 #pragma once
 
 #include "adc/sampling.h"
+
 #include "telemetry.h"
+#include "util.h"
 
 #include "temperature.h"
 #include "fan.h"
@@ -154,7 +156,8 @@ public:
         // power supply under-voltage shutdown
         if (boardPowerSupplyUnderVoltage()) {
             if (!buck.disabled())
-                ESP_LOGW("mppt", "Supply under-voltage! Vin %.1f and Vout %.1f < 10", sensors.Vin->last, sensors.Vout->last);
+                ESP_LOGW("mppt", "Supply under-voltage! Vin %.1f and Vout %.1f < 10", sensors.Vin->last,
+                         sensors.Vout->last);
             shutdownDcdc();
             meter.commit();
             return false;
@@ -295,6 +298,7 @@ public:
         VoutController.reset();
         IinController.reset();
         IoutCurrentController.reset();
+        //LoadRegulationCTRL.reset();
 
         ESP_LOGI("mppt", "Start sweep");
 
@@ -436,11 +440,14 @@ public:
 
         std::array<CVP, 5> controlValues{
                 CVP{CV, VinController, {sensors.Vin->med3.get(), params.Vin_min}},
-                CVP{CV, VoutController, {sensors.Vout->med3.get(), params.Vout_max}},
+                CVP{CV, VoutController, {sensors.Vout->last, params.Vout_max}},
                 CVP{CC, IinController, {sensors.Iin->med3.get(), params.Iin_max}},
-                CVP{CC, IoutCurrentController, {sensors.Iout->med3.get(), Iout_max}},
+                CVP{CC, IoutCurrentController, {sensors.Iout->ewm.avg.get(), Iout_max}},
                 CVP{CP, powerController, {power, powerLimit}},
+                //CVP{CC, LoadRegulationCTRL, {sensors.Iout->last, Iout_max * 1.5f}},
         };
+
+        // TODO sum negative values
 
         CVP *limitingControl = nullptr;
         float limitingControlValue = std::numeric_limits<float>::infinity();
@@ -464,13 +471,6 @@ public:
             controlValue = limitingControlValue;
 
             auto limIdx = (int) (limitingControl - controlValues.begin());
-            if (!_limiting && controlValue < -80) {
-                ESP_LOGI("mppt", "Limiting! Control value %.2f, mode=%s, idx=%i (act=%.3f, tgt=%.3f)", controlValue,
-                         MpptState2String[(int) controlMode].c_str(), limIdx, limitingControl->actual,
-                         limitingControl->target);
-                ESP_LOGI("mppt", "Iout_max=%.2f powerLimit=%.2f", Iout_max, powerLimit);
-            }
-
             if (tele) point.addField("cv_lim_idx", limIdx);
 
             _limiting = true;
@@ -512,16 +512,17 @@ public:
                 _stopSweep(controlMode);
             }
         }
-
-        if (_targetDutyCycle) {
-            if (controlMode == MpptControlMode::None) {
+        else if (_targetDutyCycle) {
+            if (controlMode == MpptControlMode::None or (controlMode == MpptControlMode::CV && buck.getBuckDutyCycle() > _targetDutyCycle)) {
                 controlMode = MpptControlMode::Sweep;
-                controlValue = (float) std::min(_targetDutyCycle - buck.getBuckDutyCycle(), 2);
+                controlValue = (float) constrain(_targetDutyCycle - buck.getBuckDutyCycle(), -8, 2);
                 if (std::fabs(controlValue) <= 1) {
                     ESP_LOGI("mppt", "Reached target duty cycle %hu", _targetDutyCycle);
                     _targetDutyCycle = 0;
                 }
             } else {
+                ESP_LOGI("mppt", "PWM fade to %i stopped at controlMode %s", (int) _targetDutyCycle,
+                         MpptState2String[(int) controlMode].c_str());
                 _targetDutyCycle = 0;
             }
         }
@@ -545,7 +546,8 @@ public:
                 }
             }
         } else {
-            tracker.resetTracker(power, controlValue > 0);
+            // tracker.resetTracker(power, controlValue > 0);
+            tracker.resetDirection(controlValue > 0);
         }
 
         //assert(controlValue != 0 && controlMode != MpptControlMode::None);
