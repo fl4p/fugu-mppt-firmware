@@ -538,6 +538,7 @@ public:
             // normalize the control value to pwmMax and scale it with update rate to fix buck slope rate
             auto dt_us = nowUs - lastUs;
             auto fp = controlValue * (1.f / 2000.f) * (float) buck.pwmMaxHS * (float) dt_us * 1e-6f * 25.f;
+            if(!_sweeping && buck.getBuckDutyCycle() < buck.pwmMinHS *2) {
             // constrain the buck step, this will slow down control for lower loop rates:
             fp = constrain(fp, -(float) buck.getBuckDutyCycle(), 1.0f);
             if(controlValue < -80) {
