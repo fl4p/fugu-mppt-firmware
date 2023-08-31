@@ -45,11 +45,17 @@ struct Tracker {
     bool slowMode = false;
 
     void resetTracker(float power, bool direction) {
+        resetDirection(direction);
         _lastPower = power;
-        _direction = direction;
-        _time = millis();
         maxPowerPoint.power = 0;
         avgPower.reset();
+    }
+
+    void resetDirection(bool direction) {
+        _direction = direction;
+        _time = millis();
+        //maxPowerPoint.power = 0;
+        //avgPower.reset();
     }
 
     float update(float powerSample, uint16_t dutyCycle) {
