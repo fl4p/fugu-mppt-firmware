@@ -564,12 +564,23 @@ public:
             auto dt_us = nowUs - lastUs;
             auto fp = controlValue * (1.f / 2000.f) * (float) buck.pwmMaxHS * (float) dt_us * 1e-6f * 25.f;
             if(!_sweeping && buck.getBuckDutyCycle() < buck.pwmMinHS *2) {
+                fp *= 0.05f;
+            }
             // constrain the buck step, this will slow down control for lower loop rates:
             fp = constrain(fp, -(float) buck.getBuckDutyCycle(), 1.0f);
-            if(controlValue < -80) {
-                ESP_LOGI("mppt", "controlValue %.2f => perturbation %.2f", controlValue, fp);
-            }
             buck.pwmPerturbFractional(fp);
+
+            if (controlValue < -80) {
+                auto limIdx = (int) (limitingControl - controlValues.begin());
+                // TODO async log
+                UART_LOG_ASYNC(
+                        "Limiting! Control value %.2f => perturbation %.2f, mode=%s, idx=%i (act=%.3f, tgt=%.3f)",
+                        controlValue, fp,
+                        MpptState2String[(int) controlMode].c_str(), limIdx, limitingControl->actual,
+                        limitingControl->target);
+                if (controlMode == MpptControlMode::CC)
+                    UART_LOG_ASYNC("Iout_max=%.2f powerLimit=%.2f", Iout_max, powerLimit);
+            }
         }
         lastUs = nowUs;
 
