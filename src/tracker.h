@@ -10,7 +10,6 @@ struct MPP {
 };
 
 
-
 /**
  * Implement local MPP tracking perturb / observe.
  * If it doesn't find a new MPP for some time, it'll switch into slow mode.
@@ -24,7 +23,7 @@ struct Tracker {
     unsigned long _time = 0;
     unsigned long _timeLastReverse = 0;
 
-    float _lastPower = NAN;
+    float _lastPower = 0.0;
 
 
     EWMA<float> avgPower{200};
@@ -77,18 +76,23 @@ struct Tracker {
             auto power = _powerBuf.pop();
             //auto power = pwmPowerTable[dutyCycle].get();
             dP = power - _lastPower;
-            auto absDp = std::abs(dP);
-            if ((absDp >= minPowerStep or absDp / _lastPower > 0.05f)
-                && (!slowMode || (now - _timeLastReverse) > 6000)) {
-                _lastPower = power;
-                if (dP < 0) {
-                    _direction = !_direction;
-                    _timeLastReverse = now;
+
+            if (power < 0.5) {
+                _direction = true; // pump more power
+            } else {
+                auto absDp = std::abs(dP);
+                if ((absDp >= minPowerStep or absDp / _lastPower > 0.05f)
+                    && (!slowMode || (now - _timeLastReverse) > 6000)) {
+                    _lastPower = power;
+                    if (dP < 0) {
+                        _direction = !_direction;
+                        _timeLastReverse = now;
+                    }
                 }
             }
 
             // TODO does this help?:
-            if(power > _lastPower)
+            if (power > _lastPower)
                 _lastPower = power;
 
             // invalidate MPP every 5min ..
@@ -98,9 +102,10 @@ struct Tracker {
             }
 
             // .. or if cur power is at 85%
-            if (power < maxPowerPoint.power * 0.85f && now - maxPowerPoint.timestamp > 1000 * 30 and maxPowerPoint.power > 0) {
+            if (power < maxPowerPoint.power * 0.85f && now - maxPowerPoint.timestamp > 1000 * 30 and
+                maxPowerPoint.power > 0) {
                 maxPowerPoint.power = 0;
-                ESP_LOGI("mppt", "Reset maxPower to 0 (<%.1f * 90%%)", power);
+                ESP_LOGI("mppt", "Reset maxPower to 0 (<%.3f * 90%%)", power);
             }
 
             // capture MPP
@@ -125,7 +130,7 @@ struct Tracker {
 
         // if we didn't find a new maxPower for 15s, slow-down
         if (maxPowerPoint.power > 1 && now - maxPowerPoint.timestamp > 1000 * 15) {
-            speed = .02;
+            speed = .1; // 0.02
             frequency = 1;
             minPowerStep = 1.5f; // 0.75 is too small
             if (!slowMode) {
@@ -138,7 +143,8 @@ struct Tracker {
             }
         } else {
             // normal-mode
-            frequency = 20;
+            speed = .5;
+            frequency = 10;
             minPowerStep = 1.5f;
             slowMode = false;
             //avgPower.reset();
