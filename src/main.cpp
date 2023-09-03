@@ -222,11 +222,19 @@ void setup() {
     mppt.begin();
 
     ESP_LOGI("main", "setup() done.");
+
+    /*manualPwm = true;
+    adcSampler.cancelCalibration();
+    pwm.pwmPerturb(1327); // this can destroy the BF switch
+    pwm.enableLowSide(true);
+    mppt.bflow.enable(true); */
 }
 
 unsigned long timeLastSampler = 0;
 
 unsigned long delayStartUntil = 0;
+
+void handleCommand(const String &inp);
 
 void loop() {
     auto nowMs = millis();
@@ -278,7 +286,7 @@ void loop() {
     if (unlikely(adcSampler.isCalibrating())) {
         mppt.shutdownDcdc();
     } else {
-        if (charging) {
+        if (charging or manualPwm) {
             bool mppt_ok = mppt.protect();
             if (mppt_ok) {
                 if (haveNewSample) {
@@ -293,7 +301,7 @@ void loop() {
                 delayStartUntil = nowMs + 2000;
             }
         } else if (nowMs > delayStartUntil && mppt.startCondition()) {
-            mppt.startSweep();
+            if (!manualPwm) mppt.startSweep();
             charging = true;
         }
     }
@@ -374,76 +382,45 @@ void loop() {
     });
 
     if (manualPwm) {
-        pwm.pwmPerturb(0); // this will increase LS duty cycle if possible
-        mppt.bflow.enable(true);
+        if (!pwm.disabled())
+            pwm.pwmPerturb(0); // this will increase LS duty cycle if possible
+        //mppt.bflow.enable(true);
         // notice that mppt::protect() calls updateLowSideMaxDuty()
-        delay(10);
+        // delay(1); // why?
     }
 
     // for some reason Serial.available() doesn't work under platformio
     // so access the uart port directly
 
     const uart_port_t uart_num = UART_NUM_0; // Arduino Serial is on port 0
-    char data[128];
+    static char buf[128];
+    static uint8_t buf_pos = 0;
     int length = 0;
     ESP_ERROR_CHECK(uart_get_buffered_data_len(uart_num, (size_t *) &length));
-    length = uart_read_bytes(uart_num, data, 127, 0);
+    length = uart_read_bytes(uart_num, &buf[buf_pos], 128 - buf_pos, 0);
     if (length) {
-        data[length] = 0;
-        uart_write_bytes(uart_num, data, length);
-
-        String inp(data);
-
-        ESP_LOGI("main", "received serial command: %s", inp.c_str());
-        inp.trim();
-        if (inp.length() > 0) {
-            if ((inp[0] == '+' or inp[0] == '-') && !adcSampler.isCalibrating() && inp.length() < 6 &&
-                inp.toInt() != 0 && std::abs(inp.toInt()) < pwm.pwmMaxHS) {
-                int pwmStep = inp.toInt();
-                ESP_LOGI("main", "Manual PWM step %i", pwmStep);
-                //manualPwm = true; // don't switch to manual pwm here!
-                pwm.pwmPerturb((int16_t) pwmStep);
-            } else if (manualPwm && (inp == "ls-disable" or inp == "ls-enable")) {
-                pwm.enableLowSide(inp == "ls-enable");
-            } else if (inp == "restart" or inp == "reset") {
-                pwm.disable();
-                Serial.println("Restart, delay 1s");
-                delay(200);
-                ESP.restart();
-            } else if (inp == "mppt" && manualPwm) {
-                ESP_LOGI("main", "MPPT re-enabled");
-                manualPwm = false;
-            } else if (inp.startsWith("dc ") && !adcSampler.isCalibrating() && inp.length() <= 8
-                       && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmMaxHS) {
-                manualPwm = true;
-                pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
-                // pwm.enableLowSide(true);
-            } else if (inp.startsWith("speed ") && inp.length() <= 12) {
-                float speedScale = inp.substring(6).toFloat();
-                if (speedScale >= 0 && speedScale < 10) {
-                    mppt.speedScale = speedScale;
-                    ESP_LOGI("main", "Set tracker speed scale %.4f", speedScale);
-                }
-            } else if (inp.startsWith("fan ")) {
-                fanSet(inp.substring(4).toFloat() * 0.01f);
-            } else if (inp == "sweep") {
-                mppt.startSweep();
-            } else if (inp == "reset-lag") {
-                maxLoopLag = 0;
-            } else if (inp == "wifi on") {
-                disableWifi = false;
-                timeSynced = false;
-                connect_wifi_async();
-            } else if (inp == "wifi off") {
-                WiFi.disconnect(true);
-                disableWifi = true;
-            } else if (inp == "scan-i2c") {
-                scan_i2c();
-            } else {
-                ESP_LOGI("main", "unknown command");
-            }
+        if (buf_pos == 0) uart_write_bytes(uart_num, "> ", 2);
+        uart_write_bytes(uart_num, &buf[buf_pos], length); // echo
+        lastTimeOut = nowMs; // stop logging during user input
+        buf_pos += length;
+        while (buf_pos > 0 && buf[buf_pos - 1] == '\b') {
+            --buf_pos;
+            buf[buf_pos] = 0;
+        }
+        if (buf[buf_pos - 1] == '\r' or buf[buf_pos - 1] == '\n') {
+            buf[buf_pos] = 0;
+            String inp(buf);
+            inp.trim();
+            if (inp.length() > 0)
+                handleCommand(inp);
+            buf_pos = 0;
+        } else if (buf_pos == 128) {
+            buf[buf_pos] = 0;
+            ESP_LOGW("main", "discarding command buffer %s", buf);
+            buf_pos = 0;
         }
     }
+
 
     if (!disableWifi) {
         /* only connect with disabled power conversion
@@ -459,4 +436,65 @@ void loop() {
     //yield();
     //esp_task_wdt_reset();
     vTaskDelay(1); // this resets the Watchdog Timer (WDT) for some reason
+}
+
+
+void handleCommand(const String &inp) {
+    ESP_LOGI("main", "received serial command: '%s'", inp.c_str());
+
+
+    if ((inp[0] == '+' or inp[0] == '-') && !adcSampler.isCalibrating() && inp.length() < 6 &&
+        inp.toInt() != 0 && std::abs(inp.toInt()) < pwm.pwmMaxHS) {
+        int pwmStep = inp.toInt();
+        ESP_LOGI("main", "Manual PWM step %i", pwmStep);
+        //manualPwm = true; // don't switch to manual pwm here!
+        pwm.pwmPerturb((int16_t) pwmStep);
+    } else if (manualPwm && (inp == "ls-disable" or inp == "ls-enable")) {
+        pwm.enableLowSide(inp == "ls-enable");
+    } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable")) {
+        auto newState = inp == "bf-enable";
+        if (mppt.bflow.state() != newState)
+            ESP_LOGI("main", "Set bflow state %i", newState);
+        mppt.bflow.enable(newState);
+    } else if (inp == "restart" or inp == "reset") {
+        pwm.disable();
+        Serial.println("Restart, delay 1s");
+        delay(200);
+        ESP.restart();
+    } else if (inp == "mppt" && manualPwm) {
+        ESP_LOGI("main", "MPPT re-enabled");
+        manualPwm = false;
+    } else if (inp.startsWith("dc ") && !adcSampler.isCalibrating() && inp.length() <= 8
+               && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmMaxHS) {
+        if (!manualPwm)
+            ESP_LOGI("main", "Switched to manual PWM");
+        manualPwm = true;
+        pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
+        // pwm.enableLowSide(true);
+    } else if (inp.startsWith("speed ") && inp.length() <= 12) {
+        float speedScale = inp.substring(6).toFloat();
+        if (speedScale >= 0 && speedScale < 10) {
+            mppt.speedScale = speedScale;
+            ESP_LOGI("main", "Set tracker speed scale %.4f", speedScale);
+        }
+    } else if (inp.startsWith("fan ")) {
+        fanSet(inp.substring(4).toFloat() * 0.01f);
+    } else if (inp.startsWith("led ")) {
+        led.setRGB(inp.substring(4).c_str());
+    } else if (inp == "sweep") {
+        mppt.startSweep();
+    } else if (inp == "reset-lag") {
+        maxLoopLag = 0;
+    } else if (inp == "wifi on") {
+        disableWifi = false;
+        timeSynced = false;
+        connect_wifi_async();
+    } else if (inp == "wifi off") {
+        WiFi.disconnect(true);
+        disableWifi = true;
+    } else if (inp == "scan-i2c") {
+        scan_i2c();
+    } else {
+        ESP_LOGI("main", "unknown command");
+    }
 }
