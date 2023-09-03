@@ -77,11 +77,11 @@ struct Tracker {
             //auto power = pwmPowerTable[dutyCycle].get();
             dP = power - _lastPower;
 
-            if (power < 0.5) {
+            if (power < 1) {
                 _direction = true; // pump more power
             } else {
                 auto absDp = std::abs(dP);
-                if ((absDp >= minPowerStep or absDp / _lastPower > 0.05f)
+                if ((absDp >= minPowerStep or (absDp / _lastPower > 0.1f))
                     && (!slowMode || (now - _timeLastReverse) > 6000)) {
                     _lastPower = power;
                     if (dP < 0) {
@@ -128,8 +128,11 @@ struct Tracker {
 
         float speed = 1.f;
 
-        // if we didn't find a new maxPower for 15s, slow-down
-        if (maxPowerPoint.power > 1 && now - maxPowerPoint.timestamp > 1000 * 15) {
+        // slow-mode condition:
+        if (powerSample > 1
+            and now - maxPowerPoint.timestamp > 1000 * 15 // if we didn't find a new maxPower for 15s
+            and now - _timeLastReverse < 1000 * 15 // if we move in one direction for more than 15s, don't slow down
+                ) {
             speed = .1; // 0.02
             frequency = 1;
             minPowerStep = 1.5f; // 0.75 is too small
