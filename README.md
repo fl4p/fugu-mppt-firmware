@@ -21,6 +21,8 @@ This is common for Lithium-Batteries (e.g. LiFePo4).
 * Fast protection shutdown in over-voltage and over-current conditions
 * PWM Fan Control and temperature power limiting / derating
 * Telemetry to InfluxDB over UDP
+* LCD (hd44780)
+* WS2812B LED Indicator
 * Unit tests
 
 The firmware sends real-time data to InfluxDB server using UDP line protocol.
@@ -49,6 +51,7 @@ idf.py build
   Defaults to 4.7.
 * `FUGU_BAT_V`: hard-code the battery voltage. If not set the program tries to detect bat voltage from a multiple of
   14.6V.
+* `USE_INTERNAL_ADC` enable fallback to internal ADC 
 
 # Control Loop
 

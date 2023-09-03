@@ -6,12 +6,14 @@
       <file path="$PROJECT_DIR$/src" />
     </sourceRoots>
     <libraryRoots>
+      <file path="$PROJECT_DIR$/../../esp/esp-idf-4.4" />
       <file path="$PROJECT_DIR$/components" />
     </libraryRoots>
     <excludeRoots>
       <file path="$PROJECT_DIR$/.pio" />
       <file path="$PROJECT_DIR$/build" />
       <file path="$PROJECT_DIR$/cmake-build-debug" />
+      <file path="$PROJECT_DIR$/cmake-build-esp32dev" />
     </excludeRoots>
   </component>
 </project>
