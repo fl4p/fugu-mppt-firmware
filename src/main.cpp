@@ -98,7 +98,7 @@ void setup() {
             -acs712_30_sensitivity * (10 + 3.3) / 10. * 1.03734586, //-20.9
             2.5 * 10. / (10 + 3.3) - 0.0117, // midpoint 1.88V
     };
-    LinearTransform Iout_transform = {-1, 0};
+    LinearTransform Iout_transform = {-4.752 / 3.644, 0};
 
     // int Vin_ewma_span = 20;
 
@@ -116,7 +116,7 @@ void setup() {
     } else if (adc_ina226.init()) {
         ESP_LOGI("main", "Initialized INA226");
         adc = &adc_ina226;
-        ewmaSpan = 20;
+        ewmaSpan = 30;
         Vin_ch = ADC_INA226::ChAux;
         Iin_ch = 255;
         Vout_ch = ADC_INA226::ChVBus;
