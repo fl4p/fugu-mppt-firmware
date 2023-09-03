@@ -17,6 +17,7 @@
 #include "pinconfig.h"
 #include "version.h"
 #include "lcd.h"
+#include "led.h"
 
 #include "freertos/FreeRTOS.h"
 #include "driver/uart.h"
@@ -29,6 +30,7 @@ ADC_ESP32 adc_esp32; // ESP32 internal ADC
 ADC_INA226 adc_ina226;
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
+LedIndicator led;
 LCD lcd;
 SynchronousBuck pwm;
 
@@ -65,10 +67,10 @@ void setup() {
         ESP_LOGE("main", "Failed to initialize Wire");
     }
 
+    led.begin();
     if (!lcd.init()) {
         ESP_LOGE("main", "Failed to init LCD");
     }
-
     lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION "\n" __DATE__ " " __TIME__, 2000);
 
 #ifdef NO_WIFI
@@ -78,6 +80,7 @@ void setup() {
     if (!disableWifi) {
         connect_wifi_async();
         bool res = wait_for_wifi();
+        led.setHexShort(res ? 0x565 : 0x200);
         lcd.displayMessage(
                 res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
     }
@@ -328,6 +331,33 @@ void loop() {
 
         if (!charging)
             mppt.meter.update(); // always update the meter
+
+        if (manualPwm) {
+            uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.params.P_max * 255, 1, 255);
+            led.setRGB(0, i, i);
+        } else if (!charging) {
+            led.setHexShort(sensors.Vout->last > sensors.Vin->last ? 0x100 : 0x300);
+        } else {
+            switch (mppt.getState()) {
+                case MpptControlMode::Sweep:
+                    led.setHexShort(0x303); // purple
+                    break;
+                case MpptControlMode::MPPT:
+                    if (sensors.Iout->ewm.avg.get() > 0.2f)
+                        led.setHexShort(0x230);
+                    else
+                        led.setHexShort(0x111);
+                    break;
+                case MpptControlMode::CV:
+                    led.setHexShort(0x033);
+                    break;
+                default:
+                    // CV/CC/CP, topping
+                    led.setHexShort(0x310);
+                    break;
+            }
+        }
+
     }
 
 
