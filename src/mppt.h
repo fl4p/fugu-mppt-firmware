@@ -80,6 +80,7 @@ class MpptController {
 
     VIinVout<const ADC_Sampler::Sensor *> sensors{};
     const ADC_Sampler::Sensor *sensorPhysicalI{nullptr};
+    const ADC_Sampler::Sensor *sensorPhysicalU{nullptr};
 
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
     PD_Control VoutController{3000, 12000, true}; // Vout over-voltage
@@ -112,14 +113,17 @@ public:
 
     void setSensors(const VIinVout<const ADC_Sampler::Sensor *> &channels_) {
         sensors = channels_;
-        if(sensors.Iout->isVirtual) {
+        if (sensors.Iout->isVirtual) {
             ESP_LOGI("mppt", "Iout sensor is virtual, using Iin");
             sensorPhysicalI = ::sensors.Iin;
+            sensorPhysicalU = ::sensors.Vin;
         } else {
             // use Iout by default
-            assert(!sensors.Iout->isVirtual);
             sensorPhysicalI = ::sensors.Iout;
+            sensorPhysicalU = ::sensors.Vout;
         }
+        assert(!sensorPhysicalI->isVirtual);
+        assert(!sensorPhysicalU->isVirtual);
     }
 
     void begin() {
@@ -341,17 +345,19 @@ public:
         if (!WiFi.isConnected())
             return;
 
-        auto Iin = sensors.Iin->ewm.avg.get();
-        auto Vin = sensors.Vin->ewm.avg.get();
-        auto Vout = sensors.Vout->ewm.avg.get();
-        auto power = Iin * Vin;
+        auto I_phys_smooth = (sensorPhysicalI->ewm.avg.get());
+        auto V_phys_smooth = (sensorPhysicalU->ewm.avg.get());
+        //auto Vout(sensors.Vout->ewm.avg.get());
+        float power_smooth = I_phys_smooth * V_phys_smooth;
+        float power = sensorPhysicalI->last * sensorPhysicalU->last;
 
         Point point("mppt");
         point.addTag("device", "fugu_" + String(getChipId()));
+        point.addField("I", I_phys_smooth, 2);
+        point.addField("U", V_phys_smooth, 2);
         point.addField("P", power, 2);
-        point.addField("I", Iin, 3);
-        point.addField("U", Vin, 2);
-        point.addField("U_out", Vout, 2);
+        point.addField("P_smooth", power_smooth, 2);
+        //point.addField("U_out", Vout, 2);
 
 
         point.addField("E", meter.totalEnergy.get(), 1);
@@ -397,31 +403,30 @@ public:
             return;
         }
 
-        constexpr float conversionEfficiency = 0.97f;
-
-        auto Iin(sensors.Iin->ewm.avg.get());
-        auto Vin(sensors.Vin->ewm.avg.get());
-        auto Vout(sensors.Vout->ewm.avg.get());
-        float power = sensors.Iin->ewm.avg.get() * sensors.Vin->ewm.avg.get();
+        auto I_phys_smooth = (sensorPhysicalI->ewm.avg.get());
+        auto V_phys_smooth = (sensorPhysicalU->ewm.avg.get());
+        //auto Vout(sensors.Vout->ewm.avg.get());
+        float power_smooth = I_phys_smooth * V_phys_smooth;
+        float power = sensorPhysicalI->med3.get() * sensorPhysicalU->med3.get();
 
         //avgIin.add(adcSampler.last.s.chIin);
         //avgVin.add(adcSampler.last.s.chVin);
         //float smoothPower = avgIin.get() * avgVin.get();
 
 
-        meter.add(sensors.Iin->last * sensors.Vin->last * conversionEfficiency, power, nowUs);
+        meter.add(sensors.Iout->last * sensors.Vout->last, power_smooth, nowUs);
 
 
         const float ntcTemp = ntc.last();
-        fanUpdateTemp(ntcTemp, power);
+        fanUpdateTemp(ntcTemp, power_smooth);
 
         float powerLimit = std::min(thermalPowerLimit(ntcTemp), params.P_max);
 
         // topping current
-        float Iout_max = charger.getToppingCurrent(Vout);
+        float Iout_max = charger.getToppingCurrent(::sensors.Vout->ewm.avg.get());
 
         // periodic sweep / scan
-        if (!_sweeping /*&& power < 30*/ && (nowMs - dcdcPwr.getTimeLastCalibration()) > (20 * 60000)) {
+        if (!_sweeping /*&& power_smooth < 30*/ && (nowMs - dcdcPwr.getTimeLastCalibration()) > (20 * 60000)) {
             ESP_LOGI("mppt", "periodic zero-current calibration");
             startSweep();
             return;
@@ -431,10 +436,11 @@ public:
         Point point("mppt");
         if (tele) {
             point.addTag("device", "fugu_" + String(getChipId()));
-            point.addField("I", Iin, 2);
-            point.addField("U", Vin, 2);
-            point.addField("U_out", sensors.Vout->ewm.avg.get(), 2);
+            point.addField("I", I_phys_smooth, 2);
+            point.addField("U", V_phys_smooth, 2);
+            //point.addField("U_out", sensors.Vout->ewm.avg.get(), 2);
             point.addField("P", power, 2);
+            point.addField("P_smooth", power_smooth, 2);
             point.addField("E", meter.totalEnergy.get(), 1);
         }
 
@@ -453,7 +459,7 @@ public:
                 CVP{CV, VoutController, {sensors.Vout->last, params.Vout_max}},
                 CVP{CC, IinController, {sensors.Iin->med3.get(), params.Iin_max}},
                 CVP{CC, IoutCurrentController, {sensors.Iout->med3.get(), Iout_max}},
-                CVP{CP, powerController, {power, powerLimit}},
+                CVP{CP, powerController, {power_smooth, powerLimit}},
                 //CVP{CC, LoadRegulationCTRL, {sensors.Iout->last, Iout_max * 1.5f}},
         };
 
@@ -513,17 +519,17 @@ public:
                 controlValue = 2; // sweep speed
 
                 // capture MPP during sweep
-                if (power > maxPowerPoint.power) {
+                if (power_smooth > maxPowerPoint.power) {
                     maxPowerPoint.power = power;
                     maxPowerPoint.dutyCycle = buck.getBuckDutyCycle();
-                    maxPowerPoint.voltage = Vin;
+                    maxPowerPoint.voltage = sensors.Vin->med3.get();
                 }
             } else {
                 _stopSweep(controlMode);
             }
-        }
-        else if (_targetDutyCycle) {
-            if (controlMode == MpptControlMode::None or (controlMode == MpptControlMode::CV && buck.getBuckDutyCycle() > _targetDutyCycle)) {
+        } else if (_targetDutyCycle) {
+            if (controlMode == MpptControlMode::None or
+                (controlMode == MpptControlMode::CV && buck.getBuckDutyCycle() > _targetDutyCycle)) {
                 controlMode = MpptControlMode::Sweep;
                 controlValue = (float) constrain(_targetDutyCycle - buck.getBuckDutyCycle(), -8, 2);
                 if (std::fabs(controlValue) <= 1) {
