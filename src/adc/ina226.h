@@ -58,8 +58,11 @@ public:
         if (!ina226.init())
             return false;
 
-        ina226.setAverage(AVERAGE_1);
-        ina226.setConversionTime(CONV_TIME_1100);
+        //ina226.setAverage(AVERAGE_16);
+        //ina226.setConversionTime(CONV_TIME_204, CONV_TIME_140);
+
+        ina226.setAverage(AVERAGE_64);
+        ina226.setConversionTime(CONV_TIME_1100, CONV_TIME_140);
 
         float resistor = 1e-3f, range = 35.0f;// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
         ina226.setResistorRange(resistor, range);
@@ -91,6 +94,8 @@ public:
     void alertNewDataFromISR() { new_data = true; }
 
     bool hasData() override {
+        return true;
+
         if (!new_data)
             return false;
 
