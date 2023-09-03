@@ -210,7 +210,7 @@ public:
 
 
             if (autoDetectVout_max && millis() - lastTimeProtectPassed > 20000) {
-                // if the OV condition persists for some seconds, auto detect Vout_max
+                // if the OV condition persists for some seconds, auto-detect Vout_max
                 params.Vout_max = NAN;
                 dcdcPwr.startCalibration();
             }
@@ -230,7 +230,7 @@ public:
 
         if (sensorPhysicalI->last < -1 && sensorPhysicalI->previous < -1) {
             //shutdownDcdc();
-            bflow.enable(false);
+            bflow.enable(false); // reverse current
             buck.lowSideMinDuty();
             ESP_LOGE("MPPT", "Reverse current %.1f A, noise? disable BFC and low-side FET", sensorPhysicalI->last);
             //buck.halfDutyCycle();
@@ -257,18 +257,27 @@ public:
         }
 
         // try to prevent voltage boost and disable low side for low currents
-        if (fminf(sensorPhysicalI->ewm.avg.get(), std::max(sensorPhysicalI->last, sensorPhysicalI->previous)) < 0.1f) {
+        auto currentFilt = fminf(sensorPhysicalI->ewm.avg.get(), std::max(sensorPhysicalI->last, sensorPhysicalI->previous));
+        if (currentFilt < -0.05f) {
             if (buck.getBuckDutyCycleLS() > buck.getDutyCycleLSMax() / 2 &&
                 buck.getBuckDutyCycleLS() > (buck.pwmMaxHS / 10)) {
-                ESP_LOGW("MPPT", "Set low-side min duty (ewm(Iin)=%.2f, max(Iin,Iin[-1])=%.2f)",
+                ESP_LOGW("MPPT", "Low current, set low-side min duty (ewm(Iin)=%.2f, max(Iin,Iin[-1])=%.2f)",
                          sensors.Iin->ewm.avg.get(), std::max(sensors.Iin->last, sensors.Iin->previous));
             }
+            if(bflow.state())
+                ESP_LOGW("MPPT", "Low current %.2f, disable backflow", currentFilt);
             buck.lowSideMinDuty();
-            bflow.enable(false);
+            bflow.enable(false); // low current
         }
 
         if (ntc.last() > 95) {
             ESP_LOGE("MPPT", "Temp %.1f°C > 95°C, shutdown", ntc.last());
+            return false;
+        }
+
+        if(sensorPhysicalI->ewm.avg.get() > 10 && !bflow.state()) {
+            ESP_LOGE("MPPT", "High-current through open backflow switch!");
+            shutdownDcdc();
             return false;
         }
 
@@ -546,7 +555,7 @@ public:
                 }
             }
         } else {
-            // tracker.resetTracker(power, controlValue > 0);
+            // tracker.resetTracker(power_smooth, controlValue > 0);
             tracker.resetDirection(controlValue > 0);
         }
 
@@ -566,7 +575,7 @@ public:
             // normalize the control value to pwmMax and scale it with update rate to fix buck slope rate
             auto dt_us = nowUs - lastUs;
             auto fp = controlValue * (1.f / 2000.f) * (float) buck.pwmMaxHS * (float) dt_us * 1e-6f * 25.f;
-            if(!_sweeping && buck.getBuckDutyCycle() < buck.pwmMinHS *2) {
+            if (!_sweeping && buck.getBuckDutyCycle() < buck.pwmMinHS * 2) {
                 fp *= 0.05f;
             }
             // constrain the buck step, this will slow down control for lower loop rates:
@@ -587,11 +596,16 @@ public:
         }
         lastUs = nowUs;
 
-        bflow.enable((Iin > 0.2f));
-        buck.enableLowSide((Iin > 0.2f));
+        float currentThreshold = bflow.state() ? 0.05f : 0.2f; // hysteresis
+        float I_phys_smooth_min = I_phys_smooth; //std::min(I_phys_smooth, sensorPhysicalI->med3.get());
+        bool aboveThres = (I_phys_smooth_min > currentThreshold);
+        if(bflow.state() != aboveThres)
+            UART_LOG_ASYNC("Current %s threshold %.2f", aboveThres ? "above":"below", I_phys_smooth_min);
+        bflow.enable(aboveThres);
+        buck.enableLowSide(aboveThres);
 
 
-        bool ledState = (Iin > 0.2f && controlMode == MpptControlMode::MPPT && controlValue > 0);
+        bool ledState = (I_phys_smooth > 0.2f && controlMode == MpptControlMode::MPPT && controlValue > 0);
         digitalWrite((uint8_t) PinConfig::LED, ledState);
 
 

@@ -4,13 +4,14 @@
 #include <Arduino.h>
 
 #include "pinconfig.h"
+#include "util.h"
 
 /**
  * Drives the backflow switch
  * aka anti-back-feed, ideal diode
  */
 class BackflowDriver {
-
+    bool _state = false;
 public:
     void init() {
         if ((bool) PinConfig::Backflow_EN) {
@@ -22,6 +23,7 @@ public:
             pinMode((uint8_t) PinConfig::Backflow_SD, OUTPUT);
             digitalWrite((uint8_t) PinConfig::Backflow_SD, true);
         }
+        _state = false;
     }
 
     void enable(bool enable) {
@@ -30,5 +32,11 @@ public:
         } else {
             digitalWrite((uint8_t) PinConfig::Backflow_SD, !enable);
         }
+        if(_state != enable) {
+            UART_LOG_ASYNC("Backflow switch %s", enable ? "enabled" : "disabled");
+        }
+        _state = enable;
     }
+
+    bool state() const { return _state; }
 };
