@@ -85,8 +85,8 @@ class MpptController {
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
     PD_Control VoutController{3000, 12000, true}; // Vout over-voltage
     PD_Control IinController{100, 400, true}; // Iin over-current
-    PD_Control_SmoothSetpoint IoutCurrentController{10, 40, 200}; // Iout over-current // TODO PID?
-    PD_Control_SmoothSetpoint powerController{10, 20, 200}; // over-power // TODO PID?
+    PD_Control_SmoothSetpoint IoutCurrentController{200, 800, 200}; // Iout over-current // TODO PID?
+    PD_Control_SmoothSetpoint powerController{20, 40, 200}; // over-power // TODO PID?
     //PD_Control LoadRegulationCTRL{5, -200, true}; //
 
     Tracker tracker{};
@@ -233,6 +233,13 @@ public:
             return false;
         }
 
+        // input over current
+        if (sensors.Iout->last / params.Iout_max > 1.25 or sensors.Iout->last > (params.Iout_max + 5)) {
+            shutdownDcdc();
+            ESP_LOGW("mppt", "Output Current %.2f above limit, shutdown", sensors.Iout->last);
+            return false;
+        }
+
         if (sensorPhysicalI->last < -1 && sensorPhysicalI->previous < -1) {
             //shutdownDcdc();
             bflow.enable(false); // reverse current
@@ -250,7 +257,7 @@ public:
         if (sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() * 1.25f) {
             if (!buck.disabled())
                 ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown duty=%i", sensors.Vout->ewm.avg.get(),
-                         sensors.Vin->ewm.avg.get(), (int)buck.getBuckDutyCycle());
+                         sensors.Vin->ewm.avg.get(), (int) buck.getBuckDutyCycle());
             shutdownDcdc();
             return false;
         }
@@ -262,14 +269,15 @@ public:
         }
 
         // try to prevent voltage boost and disable low side for low currents
-        auto currentFilt = fminf(sensorPhysicalI->ewm.avg.get(), std::max(sensorPhysicalI->last, sensorPhysicalI->previous));
+        auto currentFilt = fminf(sensorPhysicalI->ewm.avg.get(),
+                                 std::max(sensorPhysicalI->last, sensorPhysicalI->previous));
         if (currentFilt < -0.05f) {
             if (buck.getBuckDutyCycleLS() > buck.getDutyCycleLSMax() / 2 &&
                 buck.getBuckDutyCycleLS() > (buck.pwmMaxHS / 10)) {
                 ESP_LOGW("MPPT", "Low current, set low-side min duty (ewm(Iin)=%.2f, max(Iin,Iin[-1])=%.2f)",
                          sensors.Iin->ewm.avg.get(), std::max(sensors.Iin->last, sensors.Iin->previous));
             }
-            if(bflow.state())
+            if (bflow.state())
                 ESP_LOGW("MPPT", "Low current %.2f, disable backflow", currentFilt);
             buck.lowSideMinDuty();
             bflow.enable(false); // low current
@@ -280,7 +288,7 @@ public:
             return false;
         }
 
-        if(sensorPhysicalI->ewm.avg.get() > 10 && !bflow.state()) {
+        if (sensorPhysicalI->ewm.avg.get() > 10 && !bflow.state()) {
             ESP_LOGE("MPPT", "High-current through open backflow switch!");
             shutdownDcdc();
             return false;
@@ -569,6 +577,7 @@ public:
         //assert(controlValue != 0 && controlMode != MpptControlMode::None);
 
         // always cap control value
+        // TODO instead of capping, use fade-to-target. the tracker might return big jumps
         controlValue = std::min(controlValue, limitingControlValue);
 
 
@@ -583,6 +592,9 @@ public:
             auto dt_us = nowUs - lastUs;
             auto fp = controlValue * (1.f / 2000.f) * (float) buck.pwmMaxHS * (float) dt_us * 1e-6f * 25.f;
             if (!_sweeping && buck.getBuckDutyCycle() < buck.pwmMinHS * 2) {
+                // slow-down control loop for low duty cycles (low-load condition)
+                // TODO does this makes sense? the aim here is to stabilize Vout in low/no-load condition
+                // can also slow-down the VoutCNTRL
                 fp *= 0.05f;
             }
             // constrain the buck step, this will slow down control for lower loop rates:
@@ -606,8 +618,8 @@ public:
         float currentThreshold = bflow.state() ? 0.05f : 0.2f; // hysteresis
         float I_phys_smooth_min = I_phys_smooth; //std::min(I_phys_smooth, sensorPhysicalI->med3.get());
         bool aboveThres = (I_phys_smooth_min > currentThreshold);
-        if(bflow.state() != aboveThres)
-            UART_LOG_ASYNC("Current %s threshold %.2f", aboveThres ? "above":"below", I_phys_smooth_min);
+        if (bflow.state() != aboveThres)
+            UART_LOG_ASYNC("Current %s threshold %.2f", aboveThres ? "above" : "below", I_phys_smooth_min);
         bflow.enable(aboveThres);
         buck.enableLowSide(aboveThres);
 
