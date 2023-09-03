@@ -48,6 +48,8 @@ unsigned long lastMpptUpdateNumSamples = 0;
 bool manualPwm = false;
 bool charging = false;
 
+uint8_t loopRateMin = 0;
+
 
 void uartInit(int port_num);
 
@@ -113,6 +115,7 @@ void setup() {
         Iin_ch = 2;
         Vout_ch = 1;
         Iout_ch = 255;
+        loopRateMin = 30; // <38
     } else if (adc_ina226.init()) {
         ESP_LOGI("main", "Initialized INA226");
         adc = &adc_ina226;
@@ -121,7 +124,7 @@ void setup() {
         Iin_ch = 255;
         Vout_ch = ADC_INA226::ChVBus;
         Iout_ch = ADC_INA226::ChI;
-
+        loopRateMin = 80;
 
         auto adcVDiv = [](float rH, float rL, float rA) {
             auto rl = 1 / (1 / rL + 1 / rA);
@@ -135,13 +138,15 @@ void setup() {
         Vin_transform.factor *= 0.99533f;
         Vout_transform.factor *= 1.00516f;
 
-        /*} else if (adc_esp32.init()) {
+#ifdef USE_INTERNAL_ADC
+        } else if (adc_esp32.init()) {
             ESP_LOGW("main", "Failed to initialize external ADC, using internal");
             adc = &adc_esp32;
             ewmaSpan = 80;
             Vin_ch = (uint8_t) PinConfig::ADC_Vin;
             Vout_ch = (uint8_t) PinConfig::ADC_Vout;
-            Iin_ch = (uint8_t) PinConfig::ADC_Iin; */
+            Iin_ch = (uint8_t) PinConfig::ADC_Iin;
+#endif
     } else {
         scan_i2c();
         ESP_LOGE("main", "Failed to initialize any ADC");
@@ -211,8 +216,7 @@ void setup() {
         ESP_LOGE("main", "Failed to init half bridge");
     }
 
-    if (!disableWifi)
-        adcSampler.onNewSample = dcdcDataChanged;
+    if (!disableWifi) adcSampler.onNewSample = dcdcDataChanged;
 
     mppt.setSensors(sensors);
     mppt.begin();
@@ -298,9 +302,9 @@ void loop() {
         auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
                    (uint32_t) (nowMs - lastTimeOut);
 
-        if (sps < 80 && !pwm.disabled() && nSamples > 1000 &&
+        if (sps < loopRateMin && !pwm.disabled() && nSamples > 1000 &&
             !manualPwm) { //(nowMs - adcSampler.getTimeLastCalibration()) > 6000)
-            ESP_LOGE("main", "Loop latency too high! shutdown");
+            ESP_LOGE("main", "Loop latency too high (%i < %hhu Hz), shutdown!", sps, loopRateMin);
             mppt.shutdownDcdc();
             charging = false;
         }
