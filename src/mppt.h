@@ -60,7 +60,7 @@ class MpptController {
     ADC_Sampler &dcdcPwr;
     SynchronousBuck &buck;
     LCD &lcd;
-    MpptParams params;
+
 
     bool autoDetectVout_max = true;
 
@@ -94,6 +94,7 @@ class MpptController {
     TopologyConfig topologyConfig;
 
 public:
+    MpptParams params;
     BackflowDriver bflow{};
     SolarEnergyMeter meter{};
     TempSensorGPIO_NTC ntc;
@@ -244,8 +245,8 @@ public:
 
         if (sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() * 1.25f) {
             if (!buck.disabled())
-                ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown", sensors.Vout->ewm.avg.get(),
-                         sensors.Vin->ewm.avg.get());
+                ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown duty=%i", sensors.Vout->ewm.avg.get(),
+                         sensors.Vin->ewm.avg.get(), (int)buck.getBuckDutyCycle());
             shutdownDcdc();
             return false;
         }
@@ -365,7 +366,7 @@ public:
         point.setTime(WritePrecision::MS);
 
         if (nowMs - _lastPointWrite > 10) {
-            telemetryAddPoint(point, 40);
+            telemetryAddPoint(point, 80);
             _lastPointWrite = nowMs;
         }
     }

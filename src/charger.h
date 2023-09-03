@@ -35,8 +35,8 @@ public:
         float Iout_max = params.Iout_max;
         if (Vout >= params.Vout_top()) {
             if (!timeTopUntil)
-                ESP_LOGI("chg", "Begin topping mode Iout_max %.2f (start=%.2f V, release=%.2f V)", params.Iout_top,
-                         params.Vout_top(), params.Vout_top_release());
+                ESP_LOGI("chg", "Begin topping mode Iout_max %.2f (start=%.2f V, release=%.2f V, Vbat_max=%.2f)", params.Iout_top,
+                         params.Vout_top(), params.Vout_top_release(), params.Vout_max);
             timeTopUntil = nowMs + 1000 * 60 * 5;
         } else if (Vout <= params.Vout_top_release()) {
             if (timeTopUntil) ESP_LOGI("chg", "End topping mode, Vout %.2f", Vout);

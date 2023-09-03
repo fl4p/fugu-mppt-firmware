@@ -145,7 +145,7 @@ void setup() {
     } else {
         scan_i2c();
         ESP_LOGE("main", "Failed to initialize any ADC");
-        while (1) {}
+        while (1) {} // trap
     }
 
     adcSampler.setADC(adc);
