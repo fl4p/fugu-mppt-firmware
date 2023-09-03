@@ -65,12 +65,14 @@ float thermalPowerLimit(float ntcTemp) {
     float powerLimit = std::numeric_limits<float>::max();
 
     // if temp is below 5, there might be an issue with the sensor
-    if (ntcTemp > 75 or std::isnan(ntcTemp) or ntcTemp < 5) {
-        powerLimit = 300;
+    if (ntcTemp > 90) {
+        powerLimit = 20;
     } else if (ntcTemp > 80) {
         powerLimit = 200;
-    } else if (ntcTemp > 90) {
-        powerLimit = 20;
+    } else if (ntcTemp > 75 or std::isnan(ntcTemp) or ntcTemp < 5) {
+        powerLimit = 300;
+    } else if (ntcTemp > 65) {
+        powerLimit = 700 - (ntcTemp - 65) * 40;
     }
 
     return powerLimit;
