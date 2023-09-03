@@ -59,6 +59,8 @@ public:
 
     void pwmPerturb(int16_t direction) {
 
+        // direction = std::min(direction, (int16_t) (pwmDriver.pwmMax / 10)); // prevent extreme transients to protect HW
+
         pwmHS = constrain(pwmHS + direction, pwmMinHS, pwmMaxHS);
 
         pwmMaxLS = computePwmMaxLs(pwmHS, pwmDriver.pwmMax, outInVoltageRatio, &dcmHysteresis);
@@ -167,25 +169,30 @@ public:
 
         auto pwmMaxLs = (1 / voltageRatio - 1) * (float) pwmHS / pwmMaxLsWCEF; // the lower, the safer
 
-        if (pwmMaxLs < (float) (pwmMax - pwmHS + ((*dcmHysteresis) ? 0: -(pwmMax / 100)))) {
+        auto lsCCM = pwmMax - pwmHS;
+        if (pwmMaxLs < (float) (lsCCM + ((*dcmHysteresis) ? 0 : -(pwmMax / 100)))) {
             // DCM (Discontinuous Conduction Mode)
             // this is when the coil current is still touching zero, it'll stop for higher HS duty cycles
             // Allowing higher duty cycles here would result a synchronous forced PWM. (reverse coil current, can be dangerous)
             // (forced PWM reduces output ripple?) TODO
-            pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS);
+
             if (!*dcmHysteresis) {
                 *dcmHysteresis = true;
-                UART_LOG_ASYNC("buck: CCM -> DCM");
+                UART_LOG_ASYNC("buck: CCM -> DCM (vr=%.4f, pwmMaxLs=%.1f, lsCCM=%hu)", voltageRatio, pwmMaxLs, lsCCM);
             }
+
+            pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS);
 
         } else {
             // CCM (Continuous Conduction Mode)
             // coil current never becomes zero
-            pwmMaxLs = (float) (pwmMax - pwmHS);
+
             if (*dcmHysteresis) {
                 *dcmHysteresis = false;
-                UART_LOG_ASYNC("buck: DCM -> CCM");
+                UART_LOG_ASYNC("buck: DCM -> CCM (vr=%.4f, pwmMaxLs=%.1f, lsCCM=%hu)", voltageRatio, pwmMaxLs, lsCCM);
             }
+
+            pwmMaxLs = (float) (pwmMax - pwmHS);
         }
 
         //ESP_LOGI("dbg", "pwmMaxLs=%f, (float) (pwmMax - pwmHS)=%f, pwmMax=%hu, pwmHS=%hu", pwmMaxLs, (float) (pwmMax - pwmHS), pwmMax, pwmHS);
