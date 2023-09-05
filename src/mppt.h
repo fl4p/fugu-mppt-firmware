@@ -6,7 +6,7 @@
 #include "util.h"
 
 #include "temperature.h"
-#include "fan.h"
+#include "cooling.h"
 
 #include "battery.h"
 #include "lcd.h"
