@@ -234,7 +234,7 @@ unsigned long timeLastSampler = 0;
 
 unsigned long delayStartUntil = 0;
 
-void handleCommand(const String &inp);
+bool handleCommand(const String &inp);
 
 void loop() {
     auto nowMs = millis();
@@ -439,7 +439,7 @@ void loop() {
 }
 
 
-void handleCommand(const String &inp) {
+bool handleCommand(const String &inp) {
     ESP_LOGI("main", "received serial command: '%s'", inp.c_str());
 
 
@@ -495,6 +495,11 @@ void handleCommand(const String &inp) {
     } else if (inp == "scan-i2c") {
         scan_i2c();
     } else {
-        ESP_LOGI("main", "unknown command");
+        ESP_LOGI("main", "unknown or unexpected command");
+        return false;
     }
+
+    ESP_LOGI("main", "OK: %s", inp.c_str());
+
+    return true;
 }
