@@ -19,16 +19,16 @@ This is common for Lithium-Batteries (e.g. LiFePo4).
 * Anti back-flow (back-feed, ideal diode)
 * Battery voltage detection
 * Fast protection shutdown in over-voltage and over-current conditions
-* PWM Fan Control and temperature power limiting / derating
+* PWM Fan Control and temperature power limiting, linear de-rating
 * Telemetry to InfluxDB over UDP
-* LCD (hd44780)
-* WS2812B LED Indicator
+* LCD (hd44780) and WS2812B LED Indicator
+* [Serial UART console](doc/Serial%20Console.md) to interact with the charger
 * Unit tests
 
 The firmware sends real-time data to InfluxDB server using UDP line protocol.
 
 The aim of this program is to provide a flexible MPPT and DC/DC solution that you can use with various hardware
-configuration (e.g. buck & boost, location of current sensor). I tried to structure components in classes so they
+topologies (e.g. buck & boost, location of current sensor). I tried to structure components in classes so they
 reflect the physical and logical building-blocks of a MPPT solar charger. Feel free to use parts of the code
 
 # Building
@@ -51,7 +51,7 @@ idf.py build
   Defaults to 4.7.
 * `FUGU_BAT_V`: hard-code the battery voltage. If not set the program tries to detect bat voltage from a multiple of
   14.6V.
-* `USE_INTERNAL_ADC` enable fallback to internal ADC 
+* `USE_INTERNAL_ADC` enable fallback to internal ADC
 
 # Control Loop
 
@@ -152,6 +152,11 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 * Acid Lead, AGM charging algorithm
 * Boost converter
 * Detect burned HS and short LS
+## Issues
+
+* There is a design issue with `IoutCTRL` and `PowerCTRL`. In an over-load situation, the controllers will
+  decrease duty-cycle, which can increase solar voltage. The converter increases power until it runs into the hard
+  limits, shuts down and recovers.
 
 # Using this Firmware
 

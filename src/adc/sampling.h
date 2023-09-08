@@ -96,14 +96,18 @@ public:
             numSamples = 0;
             med3.reset();
             ewm.reset();
-            if (resetCalibration)
+            if (resetCalibration && calibrationAvg != 0) {
+                ESP_LOGI("sensor", "%s reset calibration", params.teleName.c_str());
                 calibrationAvg = 0;
+            }
         }
 
         void add_sample(float x) {
             auto v = params.transform.apply(x);
 
             if (params.calibrationConstraints.calibrateMidpoint) {
+                //ESP_LOGI("sensor", "%s %.4f offset=%.4f std=%.4f n=%u", params.teleName.c_str(), v, calibrationAvg,
+                //         ewm.std.get(), numSamples);
                 v -= calibrationAvg;
             }
 
