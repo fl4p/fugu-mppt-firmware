@@ -121,7 +121,7 @@ public:
 
     protected:
         Sensor(SensorParams params, uint32_t ewmSpan, bool isVirtual)
-                : params(std::move(params)), ewm{ewmSpan} , isVirtual{isVirtual}{}
+                : params(std::move(params)), ewm{ewmSpan}, isVirtual{isVirtual} {}
 
         //virtual ~Sensor() = default;  // make class polymorphic (to enable dynamic_cast)
     };
@@ -243,8 +243,10 @@ public:
                 return false;
             }
 
-            if ( /*!std::isfinite(std) or */ std * avg > constrains.maxStddev) {
-                ESP_LOGE("sampler", "Calibration failed, %s stddev %.6f > %.6f (last=%.6f, x=%.6f, avg=%.6f)", sensor.params.teleName.c_str(),
+            if ((std::abs(avg) < 1e-9f or std::isfinite(std)) // std can be non-finite for 0 values
+                and std * std::abs(avg) > constrains.maxStddev) {
+                ESP_LOGE("sampler", "Calibration failed, %s stddev %.6f > %.6f (last=%.6f, x=%.6f, avg=%.6f)",
+                         sensor.params.teleName.c_str(),
                          std * avg,
                          constrains.maxStddev, sensor.last, x, avg);
                 ESP_LOGW("sampler", "%s last=%.6f med3=%.6f avg=%.6f num=%u", sensor.params.teleName.c_str(),
@@ -257,6 +259,7 @@ public:
             // TODO peak2peak
 
             sensor.calibrationAvg = avg;
+            sensor.reset(false);
 
             ESP_LOGI("sampler", "Sensor %s calibration: avg=%.4f std=%.6f", sensor.params.teleName.c_str(), avg, std);
             if (sensor.params.calibrationConstraints.calibrateMidpoint)
