@@ -40,6 +40,8 @@ template<class float_t=float>
 class EWM {
     float_t last_x = std::numeric_limits<float_t>::quiet_NaN();
 public:
+    static constexpr float regularisation = 0.001f;
+
     EWMA<float_t> avg, std;
 
     explicit EWM(uint32_t span) : avg(span), std(span) {}
@@ -56,6 +58,9 @@ public:
 
     inline void add(float_t x) {
         avg.add(x);
+        if constexpr (regularisation != 0) {
+            x = std::abs(x) + regularisation;
+        }
         if (!isnan(last_x)) {
             float_t pct = (x - last_x) / last_x;
             if likely(std::isfinite(pct))
