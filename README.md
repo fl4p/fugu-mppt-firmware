@@ -9,12 +9,13 @@ Instructables.
 The charger uses a simple CC (constant current) and CV (constant voltage) approach.
 This is common for Lithium-Batteries (e.g. LiFePo4).
 
-* Compatible with ESP32 and ESP32-S3
+* Tested with ESP32 and ESP32-S3
 * Async ADC sampling for low latency control loop
-* Zero-current calibration
-* Can use ESP32/ESP32-S3's internal ADC1 instead of the external ADS1x15, see [Internal ADC](doc/Internal%20ADC.md)
-* PID control for voltage and current regulation
-* Periodic MPPT global scan
+* Automatic zero-current calibration
+* Can use ESP32/ESP32-S3's internal ADC1 instead of the external ADS1x15 or INA226,
+  see [Internal ADC](doc/Internal%20ADC.md)
+* PID control for precise voltage and current regulation
+* Periodic MPPT global search
 * Sophisticated Diode Emulation for low-side switch
 * Anti back-flow (back-feed, ideal diode)
 * Battery voltage detection
@@ -55,7 +56,7 @@ idf.py build
 
 # Control Loop
 
-The control loop reads Vout, Vin, Iin and adjust the PWM duty cycle of the buck DC-DC converter for MPPT and output
+The control loop reads Vout, Vin, Iin and adjusts the PWM duty cycle of the buck DC-DC converter for MPPT and output
 regulation. The control loop updates once a Vout reading is available. This ensures low latency for output voltage
 control, which is important (see below).
 
@@ -71,6 +72,9 @@ The `VoutCTRL` is the fastest controller. Keeping the output voltage in-range wi
 prevent damage from transient over-voltage. Because a solar panel is very similar to a constant current
 source, `IinCTRL` and `IoutCTRL` can be slower.
 
+`IoutCTRL` and `PowerCTRL` both have variable set-points, provided by charging algorithm and temperature feedback,
+respectively.
+
 In each loop iteration we update all controllers and pick the one with the lowest response value. If it is positive, we
 can proceed with the MPPT. Otherwise, we halt MPPT and decrease the duty cycle proportionally to the control value.
 
@@ -78,15 +82,15 @@ The control loop has an update rate of about 160 Hz or 260 Hz without telemetry.
 
 # Voltage & Current Sensors, ADC
 
-The firmware tries to be as hardware independent as possible by using layers of abstraction, so you can easily adopt it
+The firmware tries to be as hardware independent as possible by using layers of abstraction (HAL), so you can easily adopt it
 with your ADC model and topology. Implementations exist for the ADS1x15, INA226, esp32_adc.
 
 The hardware should always sense `Vin` and `Vout`. `Vin` is not crucial and can
-be coarse (8-bit ADC is ok), it is only needed for under- and over-voltage shutdown. Since `Vout` is our battery voltage
+be coarse (8-bit ADC is ok), it is needed for diode emulation, under- and over-voltage shutdown. Since `Vout` is our battery voltage
 it should be more precise.
 
 The current sensor can be either at the input (`Iin`) or output (`Iout`) or both. If there's only one current sensor we
-can infer the other current using the voltage ratio of the converter.
+can infer the other current using the voltage ratio and efficiency of the converter.
 The code represents this with a `VirtualSensor`.
 
 If the current sensor is bi-directional, the converter can operate in boost mode, boosting lower solar voltage to a
@@ -94,8 +98,8 @@ higher battery voltage. This is not yet implemented.
 
 Here are some relevant types:
 
-* `LinearTransform`: Linear X->Y transform to scale voltage readings and zero-offsetting.
-* `ADC_Sampler`: Schedules ADC reads, manages sensors and calibration
+* `LinearTransform`: Simple linear X->Y transform to scale voltage readings and zero-offsetting.
+* `ADC_Sampler`: Schedules ADC reads, manages sensors and their calibration
 * `CalibrationConstraints`: value constraints a sensor must meet during calibration (average, stddev).
 * `Sensor`: Represents a physical sensor with running statistics (average, variance)
 * `VirtualSensor`: A sensor with computed values. Also comes with running stats.
@@ -105,7 +109,7 @@ Here are some relevant types:
 
 The tracking consists of 3 phases:
 
-1. Global scan
+1. Global scan (aka search, sweep)
 2. Fast tracking (observe & perturb)
 3. Slow tracking (observe & perturb)
 
@@ -113,7 +117,7 @@ The controller starts with a global scan, at a duty cycle of 0 and linearly incr
 maximum power point (MPP) until one of these conditions are met:
 input under-voltage, output over-voltage, over-current, 100% duty cycle.
 
-It then sets the duty cycle to the captured MPP and goes into fast tracking mode to track the MPP locally.
+It then sets the duty cycle to the captured MPP and goes into fast tracking mode to follow the MPP locally.
 
 After a while it switches to slow tracking mode, trying to reduce the mean tracking error.
 When it detects a mayor change in power conditions (e.g. clouds, partial shading), it'll switch back to fast tracking,
@@ -142,6 +146,8 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 
 # Not implemented / TODO
 
+* 2nd and more (interleaved) channels
+* PWM fade!
 * More precise PWM
 * LCD Buttons
 * Web Interface
@@ -149,14 +155,25 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 * WiFi Network managing, WiFi power saving / power off
 * Bluetooth communication
 * Serial / Modbus interface
-* Acid Lead, AGM charging algorithm
+* Acid Lead, AGM charging
+  algorithm ([1](https://github.com/RedCommissary/mppt-charger-firmware/blob/c0dba8700d3baff1d13a86c43f5ce570b15e01af/source/application/inc/Battery.hpp#L27))
 * Boost converter
-* Detect burned HS and short LS
+* Detect burned HS and short LS, and back-flow? (implement self-tests)
+* low current, low voltage drop -> disable bf (might sense phantom current due to temperature drift)
 ## Issues
 
 * There is a design issue with `IoutCTRL` and `PowerCTRL`. In an over-load situation, the controllers will
   decrease duty-cycle, which can increase solar voltage. The converter increases power until it runs into the hard
   limits, shuts down and recovers.
+
+# Current sensing
+
+- ina226
+- increase conversion time: reduce random noise, more aliasing
+- averaging: eliminate aliasing of I and U readings due to sampling the i2c registers
+- consider current sense input filter cut-off frequency and control loop update rate when tuning these values
+- Voltage refresh rate should be <10ms, so max averaging is 64 and 140us conversion time (64 * 140us = 9ms)
+    - note that we can use the ina226 OV alert feature and shutdown from an ISR
 
 # Using this Firmware
 
@@ -166,7 +183,7 @@ I am currently using this firmware on a couple of Fugu Devices in a real-world a
 I'd consider the current state of this software as usable. However, a lot of things (WiFi, charging parameters) are
 hard-coded. ADC filtering and control loop speed depend on the quality of measurements (noise, outliers).
 
-The original FugFugu HW design has some flaws (hall sensor placement after input caps, hall sensor too close to coil,
+The original Fugu HW design has some flaws (hall sensor placement after input caps, hall sensor too close to coil,
 sense wires layout).
 
 Interference increases with power, so we must slow down the control loop to ensure a steady output. Otherwise the

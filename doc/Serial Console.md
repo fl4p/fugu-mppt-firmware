@@ -1,16 +1,17 @@
 # Serial Console
 
-You can use serial commands to interact with the charger while it is running.
-It is also suitable for implementing automated test.
+You can send text commands on the UART to interact with the charger while it is running.
+It is also suitable to implement automated tests.
 
-Each successful command is confirmed with:
+Default baud rate is 115200. Terminate command with `\n` or `\r` (new line).
+The charger confirms successful command with:
 
 ```
 OK: <cmd>
 ```
 
 # General Commands
-* `wifi on`, `wifi off` disable wifi and telemtry. disabled wifi usually increases the control loop rate.
+* `wifi on`, `wifi off` disable wifi and telemetry. disabled wifi usually increases the control loop rate.
 * `restart`: reset the MCU
 * `speed <float>` set  tracking speed (default 1.0)
 * `fan <float>` set fan speed 0-100

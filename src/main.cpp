@@ -446,9 +446,9 @@ bool handleCommand(const String &inp) {
     if ((inp[0] == '+' or inp[0] == '-') && !adcSampler.isCalibrating() && inp.length() < 6 &&
         inp.toInt() != 0 && std::abs(inp.toInt()) < pwm.pwmMaxHS) {
         int pwmStep = inp.toInt();
-        ESP_LOGI("main", "Manual PWM step %i", pwmStep);
         //manualPwm = true; // don't switch to manual pwm here!
         pwm.pwmPerturb((int16_t) pwmStep);
+        ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int)pwm.getBuckDutyCycle());
     } else if (manualPwm && (inp == "ls-disable" or inp == "ls-enable")) {
         pwm.enableLowSide(inp == "ls-enable");
     } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable")) {
@@ -492,6 +492,8 @@ bool handleCommand(const String &inp) {
     } else if (inp == "wifi off") {
         WiFi.disconnect(true);
         disableWifi = true;
+    } else if (inp.startsWith("wifi-set ")) {
+        //inp.substring(9)
     } else if (inp == "scan-i2c") {
         scan_i2c();
     } else {

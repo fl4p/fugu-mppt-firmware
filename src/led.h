@@ -26,7 +26,7 @@ public:
 
         auto rgb = CRGB(ir, ig, ib);
         if (rgb != leds[0])
-            ESP_LOGI("LED", "setRgb(%hhu, %hhu, %hhu)", ir, ig, ib);
+            ESP_LOGD("LED", "setRgb(%hhu, %hhu, %hhu)", ir, ig, ib);
         //else return;
         leds[0] = rgb;
         FastLED.show();

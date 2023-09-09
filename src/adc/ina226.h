@@ -61,6 +61,11 @@ public:
         //ina226.setAverage(AVERAGE_16);
         //ina226.setConversionTime(CONV_TIME_204, CONV_TIME_140);
 
+        /**
+         * - conversion time should be 1x - 10x of (1/f_cutoff) with f_cutoff being the analog RC-filter cutoff freq (aliasing)
+         * - averaging eliminates aliasing due to i2c sampling of the ADC registers (U & I)
+         */
+
         ina226.setAverage(AVERAGE_64);
         ina226.setConversionTime(CONV_TIME_1100, CONV_TIME_140);
 

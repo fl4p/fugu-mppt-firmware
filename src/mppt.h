@@ -289,7 +289,8 @@ public:
         }
 
         if (sensorPhysicalI->ewm.avg.get() > 10 && !bflow.state()) {
-            ESP_LOGE("MPPT", "High-current through open backflow switch!");
+            if (!buck.disabled())
+                ESP_LOGE("MPPT", "High-current through open backflow switch!");
             shutdownDcdc();
             return false;
         }
