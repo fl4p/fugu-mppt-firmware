@@ -1,0 +1,41 @@
+
+# case 1
+ant bms OV protection disabled charging
+mppt was in topping mode (limiting current).
+
+```
+Vi/o=62.5/27.6 Ii/o= 6.4/14.1A Pin=399.0W 51°C 107sps 25kbps PWM(H|L|Lm)= 960|1076|1076 MPPT(st= MPPT,1) lag=17.3ms N=89178
+Vi/o=62.4/27.6 Ii/o= 6.3/13.8A Pin=400.6W 51°C 107sps 25kbps PWM(H|L|Lm)= 960|1076|1076 MPPT(st= MPPT,1) lag=17.3ms N=89499
+Vi/o=62.5/27.6 Ii/o= 6.2/13.6A Pin=393.7W 51°C 106sps 25kbps PWM(H|L|Lm)= 960|1076|1076 MPPT(st= MPPT,1) lag=17.3ms N=89819
+Vi/o=62.5/27.6 Ii/o= 6.3/13.8A Pin=392.7W 51°C 106sps 25kbps PWM(H|L|Lm)= 960|1076|1076 MPPT(st= MPPT,1) lag=17.3ms N=90140
+Vi/o=62.5/27.6 Ii/o= 6.4/14.0A Pin=391.9W 51°C 107sps 25kbps PWM(H|L|Lm)= 960|1076|1076 MPPT(st=   CC,1) lag=17.3ms N=90462
+I (869297) mppt: Limiting! Control value -336.72, mode=CV, idx=1 (act=29.546, tgt=29.200)
+I (869298) mppt: Iout_max=4.37 powerLimit=800.00
+I (869301) mppt: controlValue -336.72 => perturbation -73.57
+W (869325) buck: PWM disabled
+W (869326) mppt: Vout 36.5V (ewma=29.4V,std=0.0072,buck=0) > 29.2V + 8%!
+I (869330) mppt: Start sweep
+I (869330) mppt: Start calibration
+I (869346) store: Wrote /littlefs/stats (size 24)
+I (869346) flash: Wrote flash value /littlefs/stats
+I (869502) sampler: Sensor Io calibration: avg=0.2896 std=0.025447
+I (869503) sampler: Sensor Io midpoint-calibrated: 0.289623
+E (869506) sampler: Calibration failed, U_out_raw stddev 0.787015 > 0.700000
+W (869512) sampler: U_out_raw last=30.839111 med3=30.983074 avg=31.027721 num=24
+I (869673) sampler: Sensor U_in_raw calibration: avg=61.4164 std=0.025346
+I (869675) sampler: Sensor Io calibration: avg=0.2547 std=0.025391
+I (869677) sampler: Sensor Io midpoint-calibrated: 0.254677
+I (869685) sampler: Sensor U_out_raw calibration: avg=27.5672 std=0.025364
+I (869691) sampler: Calibration done!
+I (869696) buck: Low-side switch disabled
+E (869724) MPPT: Vout 26.9 > 2x Vin 0.0, shutdown # <- at this point the HS&LS switches already burned
+I (869727) mppt: Start sweep
+I (869727) mppt: Start calibration
+I (869883) sampler: Sensor U_out_raw calibration: avg=26.1745 std=0.025345
+I (869886) sampler: Sensor U_in_raw calibration: avg=3.6599 std=0.035646
+I (869889) sampler: Sensor Io calibration: avg=-0.0000 std=1.000000
+I (869895) sampler: Sensor Io midpoint-calibrated: -0.000000
+I (869901) sampler: Calibration done!
+Vi/o= 3.7/26.7 Ii/o= 0.0/ 0.0A Pin= 0.0W 52°C  0sps 25kbps PWM(H|L|Lm)=   0|   0| 123 MPPT(st=START,0) lag=17.3ms N=139
+
+```

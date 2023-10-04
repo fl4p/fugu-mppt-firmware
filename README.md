@@ -82,11 +82,13 @@ The control loop has an update rate of about 160 Hz or 260 Hz without telemetry.
 
 # Voltage & Current Sensors, ADC
 
-The firmware tries to be as hardware independent as possible by using layers of abstraction (HAL), so you can easily adopt it
+The firmware tries to be as hardware independent as possible by using layers of abstraction (HAL), so you can easily
+adopt it
 with your ADC model and topology. Implementations exist for the ADS1x15, INA226, esp32_adc.
 
 The hardware should always sense `Vin` and `Vout`. `Vin` is not crucial and can
-be coarse (8-bit ADC is ok), it is needed for diode emulation, under- and over-voltage shutdown. Since `Vout` is our battery voltage
+be coarse (8-bit ADC is ok), it is needed for diode emulation, under- and over-voltage shutdown. Since `Vout` is our
+battery voltage
 it should be more precise.
 
 The current sensor can be either at the input (`Iin`) or output (`Iout`) or both. If there's only one current sensor we
@@ -104,6 +106,9 @@ Here are some relevant types:
 * `Sensor`: Represents a physical sensor with running statistics (average, variance)
 * `VirtualSensor`: A sensor with computed values. Also comes with running stats.
 * `AsyncADC`: Abstract interface for asynchronous (non-blocking) ADC implementation
+
+Asynchronous here means that we request a sample from the ADC and continue code execution while the conversion is
+happening. This improves average CPU utilization and other things can run smoothly even with a slow ADC.
 
 # MPPT Algorithm
 
@@ -146,6 +151,8 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 
 # Not implemented / TODO
 
+* make buck signal pins configurable
+* learn buck start duty cycle
 * 2nd and more (interleaved) channels
 * PWM fade!
 * More precise PWM
@@ -160,6 +167,9 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 * Boost converter
 * Detect burned HS and short LS, and back-flow? (implement self-tests)
 * low current, low voltage drop -> disable bf (might sense phantom current due to temperature drift)
+* Calibration
+    * find pwm min duty (vout > 0 or iout > 0)
+
 ## Issues
 
 * There is a design issue with `IoutCTRL` and `PowerCTRL`. In an over-load situation, the controllers will

@@ -14,4 +14,3 @@ littlefs_test,  data, spiffs,      ,    64k
 # nvs_key,  data, nvs_keys, ,        0x1000
 
 #storage,  data, spiffs,  ,        0x10000
-#storage,  data, spiffs,  ,        0x10000

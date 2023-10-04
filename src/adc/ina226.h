@@ -35,15 +35,17 @@ public:
             return false;
         }
 
-        if ((int) PinConfig::INA22x_ALERT == 0) {
+        if constexpr ((int) PinConfig::INA22x_ALERT == 0) {
             ESP_LOGW("ina22x", "No ALERT pin specified");
             return false;
         }
 
         auto addr = INA226_WE::INA226_ADDRESS;
 
-        if (!i2c_test_address(addr))
+        if (!i2c_test_address(addr)) {
+            ESP_LOGI("ina226", "Chip didnt respond at address 0x%02hhX", addr);
             return false;
+        }
 
         auto mfrId = i2c_read_short(0, addr, INA22x_MANUFACTURER_ID_CMD);
         auto deviceId = i2c_read_short(0, addr, INA22x_DEVICE_ID_CMD);
@@ -82,9 +84,9 @@ public:
         attachInterrupt(digitalPinToInterrupt(READY_PIN), ina226_alert, FALLING);
         ESP_LOGI("ina226", "Setup ALERT interrupt pin %hhu", READY_PIN);
 
-        if(!intAdc.init())
+        if (!intAdc.init())
             return false;
-        intAdc.startReading((uint8_t)PinConfig::ADC_Vin);
+        intAdc.startReading((uint8_t) PinConfig::ADC_Vin);
 
         ina226.setMeasureMode(CONTINUOUS);
 
@@ -129,9 +131,9 @@ public:
     }
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
-        if(ch == ChAux) {
+        if (ch == ChAux) {
             ESP_LOGI("ina226", "internal ADC setMaxExpectedVoltage(%i,%.6f)", ch, voltage);
-            intAdc.setMaxExpectedVoltage((uint8_t)PinConfig::ADC_Vin, voltage);
+            intAdc.setMaxExpectedVoltage((uint8_t) PinConfig::ADC_Vin, voltage);
         }
     }
 };
