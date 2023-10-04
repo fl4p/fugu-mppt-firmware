@@ -59,9 +59,9 @@ public:
     inline void add(float_t x) {
         avg.add(x);
         if constexpr (regularisation != 0) {
-            x = std::abs(x) + regularisation;
+            x = ((x > 0) ? 1 : -1) * (std::abs(x) + regularisation);
         }
-        if (!isnan(last_x)) {
+        if likely(!isnan(last_x)) {
             float_t pct = (x - last_x) / last_x;
             if likely(std::isfinite(pct))
                 std.add(pct * pct);
