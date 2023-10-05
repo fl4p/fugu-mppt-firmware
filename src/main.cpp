@@ -191,7 +191,7 @@ void setup() {
                     {
                             Iout_ch,
                             Iout_transform,
-                            {1.5f, .1f, true},
+                            {2.0f, .1f, true},
                             "Io",
                             true},
                     30.f, ewmaSpan)
