@@ -148,8 +148,8 @@ void setup() {
             Iin_ch = (uint8_t) PinConfig::ADC_Iin;
 #endif
     } else {
-        scan_i2c();
         ESP_LOGE("main", "Failed to initialize any ADC");
+        scan_i2c();
         while (1) {} // trap
     }
 
