@@ -236,4 +236,85 @@ public:
     }
 };
 
+
+#include <fstream>
+#include<unordered_map>
+
+std::string
+trim(const std::string &s, char cc = '\0') { // removes whitespace characters from beginnig and end of string s
+    const int l = (int) s.length();
+    int a = 0, b = l - 1;
+    char c;
+    while (a < l && ((c = s[a]) == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r' || c == '\0'))
+        a++;
+    while (b > a && ((c = s[b]) == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r' || c == '\0'))
+        b--;
+    return s.substr(a, 1 + b - a);
+}
+
+class ConfFile {
+
+    std::unordered_map<std::string, std::string> _map;
+
+public:
+    ConfFile(const char *path) {
+        std::ifstream file(path);
+        if (file.is_open()) {
+            std::string line;
+            while (std::getline(file, line)) {
+                auto ic = line.find_first_of('#');
+                if (ic != std::string::npos)
+                    line = line.substr(0, ic);
+                line = trim(line);
+                if (line.length() == 0)
+                    continue;
+                auto ie = line.find_first_of('=');
+                if (ie == std::string::npos) {
+                    ESP_LOGE(TAG, "error reading %s: '=' not found in line '%s'", path, line.c_str());
+                    assert(false);
+                }
+                _map[line.substr(0, ie)] = line.substr(ie + 1);
+            }
+            file.close();
+        }
+    }
+
+    template<typename T>
+    // # (const char *, char **)
+    T getX(const std::string &key, T def, const std::function<T(const char *, char **)> &conv) {
+        auto i = _map.find(key);
+        if (i != _map.end()) {
+            char *endptr = nullptr;
+            T l = conv(i->second.c_str(), &endptr);
+            if (errno != 0) {
+                ESP_LOGE(TAG, "strtol(%s) failed: ret=%li, errno=%i", i->second.c_str(), l, errno);
+                assert(false);
+            }
+            if (*endptr != 0) {
+                ESP_LOGE(TAG, "additional chars after strtol(%s): '%s'", i->second.c_str(), endptr);
+                assert(false);
+            }
+            return l;
+        }
+        return def;
+    }
+
+    static long strtol_10(const char *s, char **endptr) {
+        return strtol(s, endptr, 10);
+    }
+
+    long getLong(const std::string &key, long def) {
+        return getX<long>(key, def, strtol_10);
+    }
+
+    long getLong(const std::string &key, int base, long def) {
+        auto fn = [base](const char *s, char **endptr) { return std::strtol(s, endptr, base); };
+        return getX<long>(key, def, fn);
+    }
+
+    float getFloat(const std::string &key, float def) {
+        return getX<float>(key, def, std::strtof);
+    }
+};
+
 #undef TAG
