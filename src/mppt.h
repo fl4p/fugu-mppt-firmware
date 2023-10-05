@@ -307,6 +307,15 @@ public:
         //float vIn = sensors.Vin->ewm.avg.get();
         buck.updateLowSideMaxDuty(vOut, vIn);
 
+
+        if (buck.getBuckDutyCycle() > buck.pwmMinLS * 2 and vOut < 1 and sensors.Iout->ewm.avg.get() < 1) {
+            if (!buck.disabled())
+                ESP_LOGE("MPPT",
+                         "Buck running but Vout and Iout low! Something is wrong with the sensors or the half-bridge");
+            shutdownDcdc();
+            return false;
+        }
+
         lastTimeProtectPassed = millis();
 
         return true;
