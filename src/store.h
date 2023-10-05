@@ -239,9 +239,10 @@ public:
 
 #include <fstream>
 #include<unordered_map>
+#include <numeric>
 
 std::string
-trim(const std::string &s, char cc = '\0') { // removes whitespace characters from beginnig and end of string s
+trim(const std::string &s) { // removes whitespace characters from beginnig and end of string s
     const int l = (int) s.length();
     int a = 0, b = l - 1;
     char c;
@@ -257,7 +258,7 @@ class ConfFile {
     std::unordered_map<std::string, std::string> _map;
 
 public:
-    ConfFile(const char *path) {
+    explicit ConfFile(const char *path) {
         std::ifstream file(path);
         if (file.is_open()) {
             std::string line;
@@ -273,7 +274,7 @@ public:
                     ESP_LOGE(TAG, "error reading %s: '=' not found in line '%s'", path, line.c_str());
                     assert(false);
                 }
-                _map[line.substr(0, ie)] = line.substr(ie + 1);
+                _map[trim(line.substr(0, ie))] = trim(line.substr(ie + 1));
             }
             file.close();
         }
@@ -281,13 +282,14 @@ public:
 
     template<typename T>
     // # (const char *, char **)
-    T getX(const std::string &key, T def, const std::function<T(const char *, char **)> &conv) {
+    T getX(const std::string &key, T def, const std::function<T(const char *, char **)> &strto_, bool noDef=false) const {
+        // strto_ error handling https://stackoverflow.com/questions/26080829/detecting-strtol-failure
         auto i = _map.find(key);
         if (i != _map.end()) {
             char *endptr = nullptr;
-            T l = conv(i->second.c_str(), &endptr);
+            T l = strto_(i->second.c_str(), &endptr);
             if (errno != 0) {
-                ESP_LOGE(TAG, "strtol(%s) failed: ret=%li, errno=%i", i->second.c_str(), l, errno);
+                ESP_LOGE(TAG, "strtol(%s) failed: ret=%f, errno=%i", i->second.c_str(), (float) l, errno);
                 assert(false);
             }
             if (*endptr != 0) {
@@ -296,14 +298,35 @@ public:
             }
             return l;
         }
+
+        if (!noDef && def == std::numeric_limits<T>::max()) {
+            auto v = keys();
+            std::string s = std::accumulate(v.begin(), v.end(), std::string{});
+            ESP_LOGE(TAG, "key '%s' not found in %s", key.c_str(), s.c_str());
+            assert(false);
+        }
+
         return def;
     }
 
-    static long strtol_10(const char *s, char **endptr) {
-        return strtol(s, endptr, 10);
+    std::vector<std::string> keys() const {
+        std::vector<std::string> keys;
+        std::transform(_map.begin(), _map.end(), keys.begin(),
+                       [](const std::pair<std::string, std::string> &p) { return p.first; });
+        return keys;
     }
 
-    long getLong(const std::string &key, long def) {
+    inline static long strtol_10(const char *s, char **endptr) { return strtol(s, endptr, 10); }
+
+    long getLong(const std::string &key, long def = std::numeric_limits<long>::max()) const {
+        return getX<long>(key, def, strtol_10);
+    }
+
+    uint8_t getByte(const std::string &key) const {
+        return getX<long>(key, 0, strtol_10, true);
+    }
+
+    uint8_t getByte(const std::string &key, uint8_t def) {
         return getX<long>(key, def, strtol_10);
     }
 
@@ -312,8 +335,30 @@ public:
         return getX<long>(key, def, fn);
     }
 
-    float getFloat(const std::string &key, float def) {
+    float getFloat(const std::string &key, float def = std::numeric_limits<float>::max()) const {
         return getX<float>(key, def, std::strtof);
+    }
+
+    float f(const std::string &key) { return getFloat(key); }
+
+    const std::string &getString(const std::string &key, const std::string &def = "") {
+        //static std::string empty;
+        auto i = _map.find(key);
+        if (i != _map.end()) {
+            return i->second;
+        }
+        if (!def.empty()) return def;
+        ESP_LOGE(TAG, "key '%s' not found", key.c_str());
+        assert(false);
+        //return empty;
+    }
+
+    const char *c(const std::string &key, const char *def = nullptr) {
+        auto i = _map.find(key);
+        if (i != _map.end()) {
+            return i->second.c_str();
+        }
+        return def;
     }
 };
 
