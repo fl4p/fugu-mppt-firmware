@@ -65,7 +65,17 @@ void setup() {
 
     ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
 
-    if (!Wire.begin((uint8_t) PinConfig::I2C_SDA, (uint8_t) PinConfig::I2C_SCL, 800000UL)) {
+    if (!mountLFS()) {
+        ESP_LOGE("main", "Error mounting LittleFS partition!");
+    }
+
+    ConfFile pinConf{"conf/pins"};
+
+    if (!Wire.begin(
+            (uint8_t) pinConf.getLong("i2c_sda"),
+            (uint8_t) pinConf.getLong("i2c_scl"),
+            pinConf.getLong("i2c_freq", 800000UL)
+    )) {
         ESP_LOGE("main", "Failed to initialize Wire");
     }
 
@@ -87,7 +97,7 @@ void setup() {
                 res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
     }
 
-    if (!mountLFS()) {
+    auto adcVDiv = [](float rH, float rL, float rA) {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
     }
 
