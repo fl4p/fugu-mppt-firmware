@@ -609,7 +609,7 @@ public:
                 // slow-down control loop for low duty cycles (low-load condition)
                 // TODO does this makes sense? the aim here is to stabilize Vout in low/no-load condition
                 // can also slow-down the VoutCNTRL
-                fp *= 0.05f;
+                fp *= 0.2f;
             }
             // constrain the buck step, this will slow down control for lower loop rates:
             fp = constrain(fp, -(float) buck.getBuckDutyCycle(), 1.0f);
