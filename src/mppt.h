@@ -234,18 +234,22 @@ public:
         }
 
         // input over current
-        if (sensors.Iout->last / params.Iout_max > 1.25 or sensors.Iout->last > (params.Iout_max + 5)) {
+        if (sensors.Iout->last / params.Iout_max > 1.25 or sensors.Iout->ewm.avg.get() > (params.Iout_max + 5)) {
             shutdownDcdc();
-            ESP_LOGW("mppt", "Output Current %.2f above limit, shutdown", sensors.Iout->last);
+            ESP_LOGW("mppt", "Output Current %.2f above limit %.2f, shutdown", sensors.Iout->last, params.Iout_max );
             return false;
         }
 
         if (sensorPhysicalI->last < -1 && sensorPhysicalI->previous < -1) {
-            //shutdownDcdc();
-            bflow.enable(false); // reverse current
-            buck.lowSideMinDuty();
-            ESP_LOGE("MPPT", "Reverse current %.1f A, noise? disable BFC and low-side FET", sensorPhysicalI->last);
-            //buck.halfDutyCycle();
+            if (sensors.Iout->ewm.avg.get() > 10) {
+                //buck.halfDutyCycle();
+                shutdownDcdc();
+                ESP_LOGE("MPPT", "Reverse current %.2f A, noise? High avg current, shutdown", sensorPhysicalI->last);
+            } else {
+                bflow.enable(false); // reverse current
+                buck.lowSideMinDuty();
+                ESP_LOGE("MPPT", "Reverse current %.2f A, noise? disable BFC and low-side FET", sensorPhysicalI->last);
+            }
         }
 
         if (sensorPhysicalI->ewm.avg.get() < -1) {
