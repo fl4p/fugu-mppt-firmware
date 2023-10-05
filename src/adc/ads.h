@@ -1,3 +1,5 @@
+#pragma once
+
 #include <SPI.h> // not sure why this is needed
 #include <Adafruit_ADS1X15.h>
 #include "adc.h"
@@ -15,7 +17,8 @@ void ICACHE_RAM_ATTR AdsAlertISR();
 class ADC_ADS : public AsyncADC<float> {
 
     //Adafruit_ADS1115 ads; /* Use this for the 16-bit version */
-    Adafruit_ADS1015 ads; /* Use this for the 12-bit version */
+
+    Adafruit_ADS1X15 ads;
 
     std::array<adsGain_t, 4> gainsByChannel{GAIN_ONE, GAIN_ONE, GAIN_ONE, GAIN_ONE};
 
@@ -23,9 +26,18 @@ class ADC_ADS : public AsyncADC<float> {
     volatile bool newData = false;
 
 public:
+
+    explicit ADC_ADS(bool _16bit) {
+        if(_16bit) {
+            ads = Adafruit_ADS1115();
+        } else {
+            ads = Adafruit_ADS1015();
+        }
+    }
+
     bool init() override {
 
-        if((int)PinConfig::ADS_ALERT == 0) {
+        if ((int) PinConfig::ADS_ALERT == 0) {
             return false;
         }
 
