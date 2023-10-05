@@ -3,6 +3,7 @@
 #include "adc/sampling.h"
 #include "../.pio/libdeps/esp32dev/ESP8266 Influxdb/src/Point.h"
 #include "web/server.h"
+#include "store.h"
 #include <InfluxDbClient.h>
 
 #include <WiFiMulti.h>
@@ -21,28 +22,31 @@ const char *getChipId();
 
 uint64_t bytesSent = 0;
 
-Preferences preferences;
 
 bool noSsid = false;
 
+void wifi_load_conf() {
+    ConfFile wifiConf{"conf/wifi"};
+
+    auto starts_with = [](const std::string& s, const std::string& t) { return s.substr(0, t.length()) == t; };
+
+    noSsid = true;
+    for (auto k: wifiConf.keys()) {
+        if (starts_with(k, "ssid_")) {
+            auto ssid = wifiConf.getString(k).c_str();
+            if (!wifiMulti.addAP(wifiConf.getString(k).c_str(), wifiConf.c(k, nullptr))) {
+                ESP_LOGW("tele", "Failed to add ap  %s", ssid);
+            } else {
+                ESP_LOGI(__FILENAME__, "Add WiFi SSID %s", ssid);
+                noSsid = false;
+            }
+        }
+    }
+}
+
 void connect_wifi_async() {
-
-    if (!preferences.begin("net", false, "littlefs")) {
-        ESP_LOGE(__FILENAME__, "Error opening preferences");
-    }
-
-    auto ssidAndPw = preferences.getString("wifi_cred", "");
-    noSsid = ssidAndPw.isEmpty();
-    if (!noSsid) {
-        auto br = ssidAndPw.indexOf('\n');
-        auto ssid = ssidAndPw.substring(0,br);
-        auto psk = ssidAndPw.substring(br+1);
-        ESP_LOGI(__FILENAME__, "Add WiFi SSID %s", ssid.c_str());
-        WiFi.mode(WIFI_STA);
-        //WiFi.setAutoReconnect(true);
-        wifiMulti.addAP(ssid.c_str(), psk.isEmpty() ? nullptr : psk.c_str());
-    }
-
+    if (noSsid) wifi_load_conf();
+    if (!noSsid) WiFi.mode(WIFI_STA);
 }
 
 static bool timeSynced = false;
@@ -50,7 +54,7 @@ static bool timeSynced = false;
 IPAddress ha_host{};
 
 void wifiLoop(bool connect = false) {
-    if(noSsid) return;
+    if (noSsid) return;
 
     if (connect && WiFi.status() != WL_CONNECTED) {
         ESP_LOGI("tele", "Connecting WiFi");
@@ -88,7 +92,7 @@ void wifiLoop(bool connect = false) {
 }
 
 bool wait_for_wifi() {
-    if(noSsid) return false;
+    if (noSsid) return false;
 
     ESP_LOGI("tele", "Connecting WiFi...");
     auto t_start = millis();
@@ -124,7 +128,7 @@ void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
 void influxWritePointsUDP(const Point *p, uint8_t len) {
     constexpr int MTU = CONFIG_TCP_MSS;
 
-    if(noSsid) return ;
+    if (noSsid) return;
 
     static IPAddress host{};
 
