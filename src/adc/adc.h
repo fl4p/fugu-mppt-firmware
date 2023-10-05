@@ -19,4 +19,6 @@ public:
 
     virtual void setMaxExpectedVoltage(uint8_t ch, float voltage) = 0;
 
+    virtual float getInputImpedance(uint8_t ch) = 0;
+
 };

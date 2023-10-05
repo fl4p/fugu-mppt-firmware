@@ -101,7 +101,6 @@ public:
     }
 
 
-
 /*
     static float computeVolts(int16_t counts, adsGain_t gain) {
         constexpr uint8_t m_bitShift = 0;  // ads1115
@@ -145,7 +144,12 @@ public:
         readingChannel = 255;
         return v;
     }
+
+    float getInputImpedance(uint8_t ch) override {
+        return 6e6; // TODO this depends on PGA gain! also consider diff.inp.imp
+    }
 };
+
 
 
 void ICACHE_RAM_ATTR AdsAlertISR() {

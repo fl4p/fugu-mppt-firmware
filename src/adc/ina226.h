@@ -136,6 +136,14 @@ public:
             intAdc.setMaxExpectedVoltage((uint8_t) PinConfig::ADC_Vin, voltage);
         }
     }
+
+    float getInputImpedance(uint8_t ch) override {
+        if(ch == ChAux) {
+            return intAdc.getInputImpedance((uint8_t) PinConfig::ADC_Vin);
+        } else {
+            return 830e3; // 830k ina226 input impedance
+        }
+    }
 };
 
 #ifndef IRAM_ATTR

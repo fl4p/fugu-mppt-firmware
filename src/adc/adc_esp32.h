@@ -55,9 +55,11 @@ public:
         float v = (float) esp_adc_cal_raw_to_voltage(raw, adc_chars[attenuation[readingChannel]]) * 1e-3f;
         return v;
     }
+
+    float getInputImpedance(uint8_t ch) override {
+        return 500e3; //  500k ESP ADC impedance?
+    }
 };
-
-
 
 
 /**
