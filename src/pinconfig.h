@@ -64,13 +64,14 @@ enum class PinConfigESP32S3_v2 : uint8_t {
     ADS_ALERT = 0,
     INA22x_ALERT = 41,
 
-    Bridge_IN = 14,
-    Bridge_EN = 13,
+    Bridge_IN = 21, // f2:14
+    Bridge_EN = 14, // f2:13
+
     Backflow_EN = 0,
     Backflow_SD = 40,
 
     LED = 1,
-    ADC_NTC = ADC1_CHANNEL_6,
+    ADC_NTC = ADC1_CHANNEL_7, // f2:6
     Fan = 36, // TODO
 
 

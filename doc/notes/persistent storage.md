@@ -40,3 +40,23 @@ iin_calibration=1.0345336
 vout_calibration=2.3434
 vin_calibration=5.1234
 ```
+
+
+hw.conf
+```
+vin_max=80
+vout_max=80
+iout_max=32
+```
+
+pin.conf
+```
+buck_IN=21 # half bridge driver IN
+pwm_IN=21
+buck_EN=14
+
+bf_EN=0
+#bf_SD=0 # inverted bf output
+
+adc_NTC=7
+```
