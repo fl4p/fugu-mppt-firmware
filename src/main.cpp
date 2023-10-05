@@ -25,9 +25,9 @@
 #include "esp_log.h"
 
 
-ADC_ADS adc_ads; // ADS1x15
-ADC_ESP32 adc_esp32; // ESP32 internal ADC
-ADC_INA226 adc_ina226;
+//ADC_ADS adc_ads; // ADS1x15
+//ADC_ESP32 adc_esp32; // ESP32 internal ADC
+//ADC_INA226 adc_ina226;
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
 LedIndicator led;
@@ -98,75 +98,65 @@ void setup() {
     }
 
     auto adcVDiv = [](float rH, float rL, float rA) {
-        ESP_LOGE("main", "Error mounting LittleFS partition!");
-    }
-
-
-    constexpr float acs712_30_sensitivity = 1. / 0.066;
-
-    LinearTransform Vin_transform = {(200 + FUGU_HV_DIV) / FUGU_HV_DIV, 0};
-    LinearTransform Vout_transform = {(47. / 2 + 1) / 1, 0};
-    LinearTransform Iin_transform = {
-            -acs712_30_sensitivity * (10 + 3.3) / 10. * 1.03734586, //-20.9
-            2.5 * 10. / (10 + 3.3) - 0.0117, // midpoint 1.88V
+        auto rl = 1 / (1 / rL + 1 / rA);
+        return LinearTransform{(rH + rl) / rl, 0.f};
     };
-    LinearTransform Iout_transform = {-1.128, 0};
 
-    // int Vin_ewma_span = 20;
+    ConfFile sensConf{"conf/sensors"};
 
     AsyncADC<float> *adc;
-    uint8_t Vin_ch, Iin_ch = 255, Vout_ch, Iout_ch = 255;
-    uint16_t ewmaSpan;
-    if (adc_ads.init()) {
-        ESP_LOGI("main", "Initialized external ADS1x15 ADC");
-        adc = &adc_ads;
-        ewmaSpan = 8;
-        Vin_ch = 3;
-        Iin_ch = 2;
-        Vout_ch = 1;
-        Iout_ch = 255;
-        loopRateMin = 30; // <38
-    } else if (adc_ina226.init()) {
-        ESP_LOGI("main", "Initialized INA226");
-        adc = &adc_ina226;
-        ewmaSpan = 30;
-        Vin_ch = ADC_INA226::ChAux;
-        Iin_ch = 255;
-        Vout_ch = ADC_INA226::ChVBus;
-        Iout_ch = ADC_INA226::ChI;
-        loopRateMin = 80;
 
-        auto adcVDiv = [](float rH, float rL, float rA) {
-            auto rl = 1 / (1 / rL + 1 / rA);
-            return LinearTransform{(rH + rl) / rl, 0.f};
-        };
 
-        Vin_transform = adcVDiv(200, 7.5f, 600); // 500k ESP ADC impedance?
-        // Vin_transform.factor *= 1.005f;
-        Vout_transform = adcVDiv(47, 47, 830); // 830k ina226 input impedance
-
-        Vin_transform.factor *= 0.99533f;
-        Vout_transform.factor *= 1.00516f;
-
-#ifdef USE_INTERNAL_ADC
-        } else if (adc_esp32.init()) {
-            ESP_LOGW("main", "Failed to initialize external ADC, using internal");
-            adc = &adc_esp32;
-            ewmaSpan = 80;
-            Vin_ch = (uint8_t) PinConfig::ADC_Vin;
-            Vout_ch = (uint8_t) PinConfig::ADC_Vout;
-            Iin_ch = (uint8_t) PinConfig::ADC_Iin;
-#endif
+    auto adcName = sensConf.getString("adc");
+    if (adcName == "ads1115" or adcName == "ads1015") {
+        adc = new ADC_ADS(adcName == "ads1115");
+    } else if (adcName == "ina226") {
+        adc = new ADC_INA226();
     } else {
-        ESP_LOGE("main", "Failed to initialize any ADC");
+        ESP_LOGE("main", "Unknown ADC %s", adcName.c_str());
+        assert(false);
+    }
+
+    loopRateMin = sensConf.getByte("expected_hz", 0);
+
+    auto Vin_ch = sensConf.getByte("vin_ch");
+    auto Vout_ch = sensConf.getByte("vout_ch");
+    auto Iin_ch = sensConf.getByte("iin_ch", 255);
+    auto Iout_ch = sensConf.getByte("iout_ch", 255);
+
+
+    LinearTransform Vin_transform = adcVDiv(
+            sensConf.f("vin_rh"),
+            sensConf.getFloat("vin_rl"),
+            adc->getInputImpedance(Vin_ch)
+    );
+    Vin_transform.factor *= sensConf.f("vin_calib");
+
+    LinearTransform Vout_transform = adcVDiv(
+            sensConf.f("vout_rh"),
+            sensConf.getFloat("vout_rl"),
+            adc->getInputImpedance(Vout_ch)
+    );
+    Vout_transform.factor *= sensConf.f("vout_calib");
+
+    LinearTransform Iin_transform = {1, 0};
+    if (Iin_ch != 255)
+        Iin_transform = {sensConf.f("iin_factor"), sensConf.f("iin_midpoint")};
+
+
+    LinearTransform Iout_transform{1, 0};
+
+    if (!adc->init()) {
+        ESP_LOGE("main", "Failed to initialize ADC %s", adcName.c_str());
         scan_i2c();
         while (1) {} // trap
     }
 
     adcSampler.setADC(adc);
 
-
-    constexpr float conversionEfficiency = 0.97f;
+    uint16_t iinFiltLen = sensConf.getLong("iin_filt_len");
+    uint16_t ioutFiltLen = sensConf.getLong("iout_filt_len");
+    float conversionEfficiency = sensConf.f("conversion_eff");
 
     sensors.Vin = adcSampler.addSensor(
             {
@@ -188,12 +178,12 @@ void setup() {
                             {.5f, .1f, true},
                             "I_raw",
                             false},
-                    30.f, ewmaSpan)
+                    30.f, iinFiltLen)
                   : adcSampler.addVirtualSensor([&]() {
                 if (std::abs(sensors.Iout->last) < .05f or sensors.Vin->last < 0.1f)
                     return 0.f;
                 return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
-            }, ewmaSpan);
+            }, iinFiltLen);
 
 
     sensors.Iout = (Iout_ch != 255)
@@ -204,12 +194,12 @@ void setup() {
                             {2.0f, .1f, true},
                             "Io",
                             true},
-                    30.f, ewmaSpan)
+                    30.f, ioutFiltLen)
                    : adcSampler.addVirtualSensor([&]() {
                 if (std::abs(sensors.Iin->last) < .05f or sensors.Vout->last < 0.1f)
                     return 0.f;
                 return sensors.Iin->last * sensors.Vin->last / sensors.Vout->last * conversionEfficiency;
-            }, ewmaSpan);
+            }, ioutFiltLen);
 
     // note that Vout should be the last sensor for lowest latency
     sensors.Vout = adcSampler.addSensor(
@@ -458,7 +448,7 @@ bool handleCommand(const String &inp) {
         int pwmStep = inp.toInt();
         //manualPwm = true; // don't switch to manual pwm here!
         pwm.pwmPerturb((int16_t) pwmStep);
-        ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int)pwm.getBuckDutyCycle());
+        ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) pwm.getBuckDutyCycle());
     } else if (manualPwm && (inp == "ls-disable" or inp == "ls-enable")) {
         pwm.enableLowSide(inp == "ls-enable");
     } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable")) {
