@@ -1,5 +1,8 @@
 #pragma once
 
+//#include "LittleFS.h"
+//LittleFS fs;
+
 /*
  * To implement an energy counter that survives power loss, we can use the flash memory.
  * ESP32 WROOM flash chips contain flash chips from different manufacturers.
@@ -56,6 +59,7 @@
 #include <functional>
 #include <esp32-hal.h>
 #include "esp_littlefs.h"
+#include "LittleFS.h"
 
 #define TAG "store" // see undef below
 
@@ -75,6 +79,10 @@ static bool mountLFS(const char *part_label = "littlefs", bool format = false) {
         }
     }
 
+
+    assert(LittleFS.begin(true, "/littlefs", 10, "littlefs"));
+
+    /*
     esp_vfs_littlefs_conf_t conf = {
             .base_path = "/littlefs",
             .partition_label = part_label,
@@ -94,6 +102,7 @@ static bool mountLFS(const char *part_label = "littlefs", bool format = false) {
         }
         return false;
     }
+     */
 
     return true;
 }
