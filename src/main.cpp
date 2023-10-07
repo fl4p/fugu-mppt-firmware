@@ -47,56 +47,17 @@ uint8_t loopRateMin = 0;
 
 void uartInit(int port_num);
 
-void setup() {
-    Serial.begin(115200);
-
-#if CONFIG_IDF_TARGET_ESP32S3 and !CONFIG_ESP_CONSOLE_UART_DEFAULT
-    // for unknown reason need to initialize uart0 for serial reading (see loop below)
-    // Serial.available() works under Arduino IDE (for both ESP32,ESP32S3), but always returns 0 under platformio
-    // so we access the uart port directly. on ESP32 the Serial.begin() is sufficient (since it uses the uart0)
-    uartInit(0);
-#endif
-
-    ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
-
-    if (!mountLFS()) {
-        ESP_LOGE("main", "Error mounting LittleFS partition!");
-    }
-
-    ConfFile pinConf{"conf/pins"};
-
-    if (!Wire.begin(
-            (uint8_t) pinConf.getLong("i2c_sda"),
-            (uint8_t) pinConf.getLong("i2c_scl"),
-            pinConf.getLong("i2c_freq", 800000UL)
-    )) {
-        ESP_LOGE("main", "Failed to initialize Wire");
-    }
-
-    led.begin();
-    if (!lcd.init()) {
-        ESP_LOGE("main", "Failed to init LCD");
-    }
-    lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION "\n" __DATE__ " " __TIME__, 2000);
-
-#ifdef NO_WIFI
-    disableWifi = true;
-#endif
-
-    if (!disableWifi) {
-        connect_wifi_async();
-        bool res = wait_for_wifi();
-        led.setHexShort(res ? 0x565 : 0x200);
-        lcd.displayMessage(
-                res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
-    }
-
+void setupSensors() {
     auto adcVDiv = [](float rH, float rL, float rA) {
         auto rl = 1 / (1 / rL + 1 / rA);
         return LinearTransform{(rH + rl) / rl, 0.f};
     };
 
-    ConfFile sensConf{"conf/sensors"};
+    ConfFile sensConf{"/littlefs/sensor"};
+
+    if (!sensConf) {
+        throw std::runtime_error("no sensor conf");
+    }
 
     AsyncADC<float> *adc;
 
@@ -106,6 +67,8 @@ void setup() {
         adc = new ADC_ADS(adcName == "ads1115");
     } else if (adcName == "ina226") {
         adc = new ADC_INA226();
+    } else if (adcName == "esp32adc1") {
+        adc = new ADC_ESP32();
     } else {
         ESP_LOGE("main", "Unknown ADC %s", adcName.c_str());
         assert(false);
@@ -124,14 +87,14 @@ void setup() {
             sensConf.getFloat("vin_rl"),
             adc->getInputImpedance(Vin_ch)
     );
-    Vin_transform.factor *= sensConf.f("vin_calib");
+    //Vin_transform.factor *= sensConf.f("vin_calib", 1.f);
 
     LinearTransform Vout_transform = adcVDiv(
             sensConf.f("vout_rh"),
             sensConf.getFloat("vout_rl"),
             adc->getInputImpedance(Vout_ch)
     );
-    Vout_transform.factor *= sensConf.f("vout_calib");
+    //Vout_transform.factor *= sensConf.f("vout_calib", 1.f);
 
     LinearTransform Iin_transform = {1, 0};
     if (Iin_ch != 255)
@@ -144,6 +107,9 @@ void setup() {
         ESP_LOGE("main", "Failed to initialize ADC %s", adcName.c_str());
         scan_i2c();
         while (1) {} // trap
+    } else {
+        ESP_LOGI("main", "Initialized ADC %s (V/I)(i/o)_ch = (%i %i %i %i)", adcName.c_str(), Vin_ch, Iin_ch,
+                 Vout_ch, Iout_ch);
     }
 
     adcSampler.setADC(adc);
@@ -204,7 +170,72 @@ void setup() {
              true},
             60.f, 60);
 
+    adcSampler.ignoreCalibrationConstraints = sensConf.getByte("ignore_calibration_constraints", 0);
+
+    if(adcSampler.ignoreCalibrationConstraints)
+        ESP_LOGW("main", "Skipping ADC range and noise checks.");
+
+    mppt.setSensors(sensors);
     adcSampler.begin();
+}
+
+
+void setup() {
+    Serial.begin(115200);
+
+#if CONFIG_IDF_TARGET_ESP32S3 and !CONFIG_ESP_CONSOLE_UART_DEFAULT
+    // for unknown reason need to initialize uart0 for serial reading (see loop below)
+    // Serial.available() works under Arduino IDE (for both ESP32,ESP32S3), but always returns 0 under platformio
+    // so we access the uart port directly. on ESP32 the Serial.begin() is sufficient (since it uses the uart0)
+    uartInit(0);
+#endif
+
+    ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
+
+    if (!mountLFS()) {
+        ESP_LOGE("main", "Error mounting LittleFS partition!");
+    }
+
+    ConfFile pinConf{"/littlefs/conf/pins"};
+
+    if (pinConf) {
+        if (!Wire.begin(
+                (uint8_t) pinConf.getLong("i2c_sda"),
+                (uint8_t) pinConf.getLong("i2c_scl"),
+                pinConf.getLong("i2c_freq", 800000UL)
+        )) {
+            ESP_LOGE("main", "Failed to initialize Wire");
+        }
+
+
+        led.begin();
+        if (!lcd.init()) {
+            ESP_LOGE("main", "Failed to init LCD");
+        }
+        lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION "\n" __DATE__ " " __TIME__, 2000);
+    }
+
+    try {
+        setupSensors();
+    } catch (const std::runtime_error &er) {
+        ESP_LOGE("main", "error during sensor setup: %s", er.what());
+        //if(adcSampler.adc) delete adcSampler.adc;
+        adcSampler.setADC(nullptr);
+    }
+
+
+#ifdef NO_WIFI
+    disableWifi = true;
+#endif
+
+    if (!disableWifi) {
+        connect_wifi_async();
+        bool res = wait_for_wifi();
+        led.setHexShort(res ? 0x565 : 0x200);
+        lcd.displayMessage(
+                res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
+    }
+
 
     if (!pwm.init()) {
         ESP_LOGE("main", "Failed to init half bridge");
@@ -212,7 +243,7 @@ void setup() {
 
     if (!disableWifi) adcSampler.onNewSample = dcdcDataChanged;
 
-    mppt.setSensors(sensors);
+
     mppt.begin();
 
     ESP_LOGI("main", "setup() done.");
@@ -230,6 +261,10 @@ unsigned long delayStartUntil = 0;
 
 bool handleCommand(const String &inp);
 
+void loopNewData(unsigned long nowMs);
+
+void loopUart(unsigned long nowMs);
+
 void loop() {
     auto nowMs = millis();
 
@@ -237,27 +272,59 @@ void loop() {
 
     mppt.ntc.read();
 
-    if (!adcSampler.update()) {
-        if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage()) {
-            ESP_LOGW("main", "Board power supply UV!");
-            adcSampler.cancelCalibration();
+    //uint32_t nSamples;
+    if (adcSampler.adc) {
+        auto samplerRet = adcSampler.update();
+
+        if(samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
+            mppt.shutdownDcdc();
+            charging = false;
+            delayStartUntil = nowMs + 4000;
         }
 
-        if (timeLastSampler && nowMs - timeLastSampler > 200 && !pwm.disabled()) {
-            pwm.disable();
-            ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown!");
-        }
+        if (samplerRet != ADC_Sampler::UpdateRet::NewData) {
+            if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage()) {
+                ESP_LOGW("main", "Board power supply UV!");
+                adcSampler.cancelCalibration();
+            }
 
-        if (!timeLastSampler and nowMs > 20000) {
-            pwm.disable();
-            ESP_LOGE("main", "Never got a sample! Please check ADC");
-            delay(5000);
-        }
+            if (timeLastSampler && nowMs - timeLastSampler > 200 && !pwm.disabled()) {
+                pwm.disable();
+                ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown!");
+            }
 
-        yield();
-        return; // no new data -> don't do anythings. this prevents unnecessary cpu time
+            if (!timeLastSampler and nowMs > 20000) {
+                pwm.disable();
+                ESP_LOGE("main", "Never got a sample! Please check ADC");
+                delay(5000);
+            }
+        } else {
+            loopNewData(nowMs);
+        }
     }
 
+    loopUart(nowMs);
+
+
+    if (!disableWifi) {
+        /* only connect with disabled power conversion
+         * ESP32's wifi can cause latency issues otherwise
+         */
+        wifiLoop(pwm.disabled());
+        ftpUpdate();
+    }
+
+    auto now = micros();
+    auto lag = now - lastLoopTime;
+    if (lastLoopTime && lag > maxLoopLag && !pwm.disabled()) maxLoopLag = lag;
+    lastLoopTime = now;
+
+    //yield();
+    //esp_task_wdt_reset();
+    vTaskDelay(1); // this resets the Watchdog Timer (WDT) for some reason
+}
+
+void loopNewData(unsigned long nowMs) {
     // cap control update rate to sensor sampling rate (see below). rate for all 3 sensors are equal.
     // we choose Vout here because this is the most critical control value (react fast to prevent OV)
     auto nSamples = sensors.Vout->numSamples;
@@ -299,6 +366,7 @@ void loop() {
             charging = true;
         }
     }
+
 
     if ((nowMs - lastTimeOut) >= 3000) {
         auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
@@ -382,7 +450,9 @@ void loop() {
         // notice that mppt::protect() calls updateLowSideMaxDuty()
         // delay(1); // why?
     }
+}
 
+void loopUart(unsigned long nowMs) {
     // for some reason Serial.available() doesn't work under platformio
     // so access the uart port directly
 
@@ -414,24 +484,7 @@ void loop() {
             buf_pos = 0;
         }
     }
-
-
-    if (!disableWifi) {
-        /* only connect with disabled power conversion
-         * ESP32's wifi can cause latency issues otherwise
-         */
-        wifiLoop(pwm.disabled());
-    }
-    auto now = micros();
-    auto lag = now - lastLoopTime;
-    if (lastLoopTime && lag > maxLoopLag && !pwm.disabled()) maxLoopLag = lag;
-    lastLoopTime = now;
-
-    //yield();
-    //esp_task_wdt_reset();
-    vTaskDelay(1); // this resets the Watchdog Timer (WDT) for some reason
 }
-
 
 bool handleCommand(const String &inp) {
     ESP_LOGI("main", "received serial command: '%s'", inp.c_str());
@@ -486,8 +539,16 @@ bool handleCommand(const String &inp) {
     } else if (inp == "wifi off") {
         WiFi.disconnect(true);
         disableWifi = true;
-    } else if (inp.startsWith("wifi-set ")) {
-        //inp.substring(9)
+    } else if (inp.startsWith("wifi-add ")) {
+        auto ssidAndPw = inp.substring(9);
+        auto i = ssidAndPw.indexOf(':');
+        if (i > 0) {
+            std::string ssid = ssidAndPw.substring(0, i).c_str();
+            auto psk = ssidAndPw.substring(i + 1);
+            ESP_LOGI("main", "adding wifi network %s (psk=%s)", ssid.c_str(), psk.c_str());
+            add_ap(ssid, psk.c_str());
+        }
+
     } else if (inp == "scan-i2c") {
         scan_i2c();
     } else {
