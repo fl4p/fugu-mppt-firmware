@@ -33,3 +33,7 @@ if ($ENV{FUGU_BAT_V})
     # 14.25, 28.5, 57
     component_compile_definitions("FUGU_BAT_V=$ENV{FUGU_BAT_V}")
 endif ()
+
+component_compile_options(--std=gnu++17)
+
+#component_compile_options(-fexceptions) # enable exceptions in menuconfig (CONFIG_COMPILER_CXX_EXCEPTIONS)!

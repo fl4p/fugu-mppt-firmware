@@ -24,20 +24,14 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 
-
-//ADC_ADS adc_ads; // ADS1x15
-//ADC_ESP32 adc_esp32; // ESP32 internal ADC
-//ADC_INA226 adc_ina226;
-
 ADC_Sampler adcSampler{}; // schedules async ADC reading
-LedIndicator led;
-LCD lcd;
 SynchronousBuck pwm;
 
+LedIndicator led;
+LCD lcd;
+
 MpptController mppt{adcSampler, pwm, lcd};
-
 VIinVout<const ADC_Sampler::Sensor *> sensors{};
-
 
 bool disableWifi = false;
 

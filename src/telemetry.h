@@ -1,7 +1,7 @@
 #pragma once
 
 #include "adc/sampling.h"
-#include "../.pio/libdeps/esp32dev/ESP8266 Influxdb/src/Point.h"
+#include "Point.h"
 #include "web/server.h"
 #include "store.h"
 #include <InfluxDbClient.h>
