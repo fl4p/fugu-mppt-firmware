@@ -122,8 +122,8 @@ public:
             sensorPhysicalI = ::sensors.Iout;
             sensorPhysicalU = ::sensors.Vout;
         }
-        assert(!sensorPhysicalI->isVirtual);
-        assert(!sensorPhysicalU->isVirtual);
+        if (sensorPhysicalI->isVirtual) throw std::runtime_error("no physical I sensor");
+        if (sensorPhysicalU->isVirtual) throw std::runtime_error("no physical U sensor");
     }
 
     void begin() {
@@ -236,7 +236,7 @@ public:
         // input over current
         if (sensors.Iout->last / params.Iout_max > 1.25 or sensors.Iout->ewm.avg.get() > (params.Iout_max + 5)) {
             shutdownDcdc();
-            ESP_LOGW("mppt", "Output Current %.2f above limit %.2f, shutdown", sensors.Iout->last, params.Iout_max );
+            ESP_LOGW("mppt", "Output Current %.2f above limit %.2f, shutdown", sensors.Iout->last, params.Iout_max);
             return false;
         }
 
