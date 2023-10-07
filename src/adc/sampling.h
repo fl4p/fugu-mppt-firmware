@@ -48,6 +48,9 @@ struct VIinVout {
  * - Exponentially weighted moving average (EWMA) filtering
  */
 class ADC_Sampler {
+public:
+    bool ignoreCalibrationConstraints = false;// for testing
+private:
     uint8_t cycleCh = 0;
 
     uint8_t calibrating_ = 0;
@@ -209,9 +212,16 @@ public:
         }
     }
 
-    bool update() {
+    enum class UpdateRet : uint8_t {
+        NoNewData,
+        NewData,
+        Calibrating,
+        CalibFailure,
+    };
+
+    UpdateRet update() {
         if (!adc->hasData())
-            return false;
+            return UpdateRet::NoNewData;
 
         auto &sensor(*realSensors[cycleCh]);
         auto x = adc->getSample();
@@ -236,14 +246,15 @@ public:
 
             auto &constrains{sensor.params.calibrationConstraints};
 
-            if (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue) {
+            if (!ignoreCalibrationConstraints && (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue)) {
                 ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, x=%.6f, stdn=%.6f)",
                          sensor.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, sensor.last, x, std);
-                startCalibration();
-                return false;
+                calibrating_ = 0;
+                //startCalibration();
+                return UpdateRet::CalibFailure;
             }
 
-            if ((std::abs(avg) < 1e-9f or std::isfinite(std)) // std can be non-finite for 0 values
+            if (!ignoreCalibrationConstraints && (std::abs(avg) < 1e-9f or std::isfinite(std)) // std can be non-finite for 0 values
                 and std * std::abs(avg) > constrains.maxStddev) {
                 ESP_LOGE("sampler", "Calibration failed, %s stddev %.6f > %.6f (last=%.6f, x=%.6f, avg=%.6f)",
                          sensor.params.teleName.c_str(),
@@ -252,8 +263,9 @@ public:
                 ESP_LOGW("sampler", "%s last=%.6f med3=%.6f avg=%.6f num=%u", sensor.params.teleName.c_str(),
                          sensor.last,
                          sensor.med3.get(), sensor.ewm.avg.get(), sensor.numSamples);
-                startCalibration();
-                return false;
+                calibrating_ = 0;
+                //startCalibration();
+                return UpdateRet::CalibFailure;
             }
 
             // TODO peak2peak
@@ -272,7 +284,7 @@ public:
             if (calibrating_ == 0) {
                 ESP_LOGI("sampler", "Calibration done!");
                 timeLastCalibration = millis();
-                return true;
+                return UpdateRet::Calibrating;
             }
         }
 
@@ -282,7 +294,7 @@ public:
             }
         }
 
-        return calibrating_ == 0;
+        return calibrating_ == 0 ? UpdateRet::NewData : UpdateRet::Calibrating;
     }
 
     bool isCalibrating() const { return calibrating_ > 0; }
