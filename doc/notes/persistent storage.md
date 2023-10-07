@@ -2,6 +2,11 @@ To reduce fragmentation of firmware binaries (having a different binary for each
 streamlined OTA updates, we avoid hard-coding GPIO pin numbers, ADC channel numbers, calibration factors and hardware limits (voltage & current).
 We make these adjustable through configuration files
 
+Partitions:
+* data: stores metering, daily statistics
+* conf: stores config files (board hw and charger?, wifi)
+* 
+
 # Things that need to be stored
 
 * daily rolling stats
@@ -107,6 +112,31 @@ iout_ch=1
 iin_filt_len=30
 
 #iin_ch=NA # virtual sensor
+
+expected_hz=80
+conversion_eff=0.97 # TODO does this belong here?
+
+```
+
+
+eps32 adc1
+```
+adc=esp32adc1
+
+#    ADC_Vin = ADC1_CHANNEL_4, // GPIO5
+#    ADC_Vout = ADC1_CHANNEL_5, // GPIO6
+#    ADC_Iin = ADC1_CHANNEL_3,
+
+vin_ch = 4        #2=chAux, esp32 adc
+vin_rh = 200e3    # upper resistor of voltage div.
+vin_rl = 7.5e3    # lower resistor
+
+vout_ch = 5
+vout_rh = 47e3    # upper resistor of voltage div.
+vout_rl = 47e3    # lower resistor
+
+iin_ch=3
+iin_filt_len=30
 
 expected_hz=80
 conversion_eff=0.97 # TODO does this belong here?
