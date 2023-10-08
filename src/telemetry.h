@@ -27,7 +27,7 @@ void ftpUpdate() {
     ftpSrv.handleFTP();
 }
 
-void _callback(FtpOperation ftpOperation, unsigned int freeSpace, unsigned int totalSpace){
+void _callback(FtpOperation ftpOperation, unsigned int freeSpace, unsigned int totalSpace) {
     switch (ftpOperation) {
         case FTP_CONNECT:
             Serial.println(F("FTP: Connected!"));
@@ -42,7 +42,8 @@ void _callback(FtpOperation ftpOperation, unsigned int freeSpace, unsigned int t
             break;
     }
 };
-void _transferCallback(FtpTransferOperation ftpOperation, const char* name, unsigned int transferredSize){
+
+void _transferCallback(FtpTransferOperation ftpOperation, const char *name, unsigned int transferredSize) {
     switch (ftpOperation) {
         case FTP_UPLOAD_START:
             Serial.println(F("FTP: Upload start!"));
@@ -80,7 +81,7 @@ void ftpBegin() {
     ftpSrv.setCallback(_callback);
     ftpSrv.setTransferCallback(_transferCallback);
 
-    ftpSrv.begin("user","password");    //username, password for ftp.   (default 21, 50009 for PASV)
+    ftpSrv.begin("user", "password");    //username, password for ftp.   (default 21, 50009 for PASV)
 
     Serial.println("FTP server started!");
 
@@ -94,10 +95,10 @@ uint64_t bytesSent = 0;
 bool noSsid = true;
 
 void wifi_load_conf() {
-    ConfFile wifiConf{"/littlefs/wifi"};
+    ConfFile wifiConf{"/littlefs/conf/wifi"};
 
     auto starts_with = [](const std::string &s, const std::string &t) { return s.substr(0, t.length()) == t; };
-    auto ends_with = [](const std::string &s, const std::string &t) { return s.substr(s.length()- t.length()) == t; };
+    auto ends_with = [](const std::string &s, const std::string &t) { return s.substr(s.length() - t.length()) == t; };
 
     noSsid = true;
     for (auto k: wifiConf.keys()) {
@@ -115,7 +116,7 @@ void wifi_load_conf() {
 }
 
 void add_ap(const std::string &ssid, const std::string &psk) {
-    ConfFile wifiConf{"/littlefs/wifi"};
+    ConfFile wifiConf{"/littlefs/conf/wifi"};
     wifiConf.add({
                          {"ssid_" + ssid,          ssid},
                          {"ssid_" + ssid + "_psk", psk.c_str()}});
@@ -123,50 +124,71 @@ void add_ap(const std::string &ssid, const std::string &psk) {
 
 void connect_wifi_async() {
     if (noSsid) wifi_load_conf();
-    if (!noSsid) WiFi.mode(WIFI_STA);
+    if (!noSsid) {
+        WiFi.mode(WIFI_STA);
+    }
 }
 
 static bool timeSynced = false;
 
 IPAddress ha_host{};
 
+bool timeSyncAsync(const char *tzInfo, const char *ntpServer1, const char *ntpServer2 = nullptr,
+                   const char *ntpServer3 = nullptr) {
+    static unsigned long tSyncStarted = 0;
+
+    if (!tSyncStarted) {
+        ESP_LOGI("tele", "Starting time sync");
+        tSyncStarted = millis() + 1;
+        configTzTime(tzInfo, ntpServer1, ntpServer2, ntpServer3);
+    } else if (time(nullptr) > 1000000000l) {
+        ESP_LOGI("tele", "Time synced!");
+        tSyncStarted = 0;
+        return true;
+    } else if ((millis() - tSyncStarted) > (20 * 1000)) {
+        ESP_LOGW("tele", "Timeout syncing time! (%s)", ntpServer1);
+        tSyncStarted = 0;
+    }
+    return false;
+}
+
+void _wifiConnected() {
+    if(!WiFi.isConnected()) return;
+
+    if(unlikely(!timeSynced)) {
+        if(timeSyncAsync("CET-1CEST,M3.5.0,M10.5.0/3", "pt.pool.ntp.org", "time.nis.gov")) {
+            timeSynced = true;
+        }
+    }
+
+    String hostname = "fugu-" + String(getChipId());
+
+    if (!MDNS.begin(hostname.c_str())) { // abc.local
+        ESP_LOGE("tele", "Error setting up MDNS responder!");
+    } else {
+        ESP_LOGI("tele", "Set hostname %s", hostname.c_str());
+    }
+
+    ha_host = MDNS.queryHost("homeassistant.local");
+    ESP_LOGI("tele", "resolved to %s", ha_host.toString().c_str());
+
+    webserver_begin();
+    ftpBegin();
+}
+
 void wifiLoop(bool connect = false) {
+    //static bool initialized = false;
     if (noSsid) return;
 
-    if (connect && WiFi.status() != WL_CONNECTED) {
+    if (connect && !WiFi.isConnected()) {
         ESP_LOGI("tele", "Connecting WiFi");
         wifiMulti.run();
     }
 
-    if (!timeSynced/*&& status == WL_CONNECTED*/) {
-        uint8_t status = WiFi.status(); // NOLINT(readability-static-accessed-through-instance)
-
-        if (status != WL_CONNECTED)
-            return;
-
-        Serial.printf("Connected to WiFi, RSSI %hhi IP %s", WiFi.RSSI(), WiFi.localIP().toString().c_str());
-        Serial.println();
-
-        String hostname = "fugu-" + String(getChipId());
-
-        if (!MDNS.begin(hostname.c_str())) { // abc.local
-            ESP_LOGE("tele", "Error setting up MDNS responder!");
-        } else {
-            ESP_LOGI("tele", "Set hostname %s", hostname.c_str());
-        }
-
-        ESP_LOGI("tele", "Syncing time ...");
-        timeSync("CET-1CEST,M3.5.0,M10.5.0/3", "pt.pool.ntp.org", "time.nis.gov");
-        ESP_LOGI("tele", "Time synchronized");
-        timeSynced = true;
-
-
-        ha_host = MDNS.queryHost("homeassistant.local");
-        ESP_LOGI("tele", "resolved to %s", ha_host.toString().c_str());
-
-        webserver_begin();
-        ftpBegin();
-    }
+    //if (unlikely(!initialized) && WiFi.isConnected()) {
+    //    initialized = true;
+    //    _wifiConnected();
+   // }
 }
 
 bool wait_for_wifi() {
@@ -183,6 +205,9 @@ bool wait_for_wifi() {
         }
     }
     ESP_LOGI("tele", "Connected to WiFi, RSSI %hhi IP %s", WiFi.RSSI(), WiFi.localIP().toString().c_str());
+
+    _wifiConnected();
+
     return true;
 }
 

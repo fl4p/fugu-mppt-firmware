@@ -70,3 +70,39 @@ Here the ACS712 has a MP of 2.5V, which is scaled through a voltage divider (10k
 iin_factor=-20.15  # sensivity = -1/0.066 * (10k+3.3k)/10k
 iin_midpoint=1.88  # midpoint  = 2.5V * 10k/(10k+3.3k)
 ```
+
+
+# Bare ESP32 example
+
+Here's a minimal dummy configuration:
+
+`/sensor`
+```
+adc=esp32adc1
+
+
+vin_ch = 4        # ch4 GPIO5
+vin_rh = 200e3    # upper resistor of voltage div.
+vin_rl = 1.5e3    # lower resistor
+
+vout_ch = 5	      # ch5 GPIO6
+vout_rh = 47e3    # upper resistor of voltage div.
+vout_rl = 1e3     # lower resistor
+
+iin_ch = 3        # ch3
+iin_factor = 20
+iin_midpoint = 0
+iin_filt_len = 30
+
+iout_filt_len=30
+
+expected_hz=80
+conversion_eff=0.97 # TODO does this belong here?
+
+ignore_calibration_constraints=1 # skip noise and range check (not for production!)
+```
+
+Use this configuration to run the firmware on an ESP32 without any external ADC. This is useful for testing other things than the ADC and PWM.
+
+If you leave the ADC pins floating, the values will be garbage with a high stddev. That's why we set `ignore_calibration_constraints=1` here.
+

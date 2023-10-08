@@ -53,7 +53,7 @@ void setupSensors() {
         return LinearTransform{(rH + rl) / rl, 0.f};
     };
 
-    ConfFile sensConf{"/littlefs/sensor"};
+    ConfFile sensConf{"/littlefs/conf/sensor"};
 
     if (!sensConf) {
         throw std::runtime_error("no sensor conf");
@@ -242,6 +242,7 @@ void setup() {
     }
 
     if (!disableWifi) adcSampler.onNewSample = dcdcDataChanged;
+
 
 
     mppt.begin();
