@@ -383,7 +383,7 @@ public:
 
 
         point.addField("E", meter.totalEnergy.get(), 1);
-        point.addField("E_today", meter.dailyEnergyMeter.todayEnergy, 1);
+        point.addField("E_today", meter.dailyEnergyMeter.today.energyDay, 1);
 
         point.addField("pwm_duty", buck.getBuckDutyCycle());
         point.addField("pwm_ls_duty", buck.getBuckDutyCycleLS());
@@ -436,7 +436,8 @@ public:
         //float smoothPower = avgIin.get() * avgVin.get();
 
 
-        meter.add(sensors.Iout->last * sensors.Vout->last, power_smooth, nowUs);
+        meter.add(sensors.Iout->last * sensors.Vout->last, power_smooth, sensors.Vin->ewm.avg.get(),
+                  sensors.Vout->ewm.avg.get(), nowUs);
 
 
         const float ntcTemp = ntc.last();

@@ -6,10 +6,37 @@
 #include "math/float16.h"
 #include "math/statmath.h"
 
+template<typename F=float16>
 struct DailyEnergyMeterState {
-    float16 energyDay;
+    F energyDay;
+    F vinMax;
+    F pinMax;
+    F voutMax;
+    F voutMin;
+    uint8_t numErrors;
+
+    DailyEnergyMeterState() {
+        reset();
+    }
+
+
+    template<typename F2>
+    DailyEnergyMeterState(const DailyEnergyMeterState<F2> &o) :
+            energyDay{o.energyDay}, vinMax{o.vinMax}, pinMax{o.pinMax}, voutMax{o.voutMax}, voutMin{o.voutMin},
+            numErrors{o.numErrors} {}
+
 
     inline bool hasEnergy() const { return !energyDay.isZero(); }
+
+    void reset() {
+        //memset(this, 0 , sizeof(*this));
+        energyDay = 0;
+        vinMax = 0;
+        pinMax = 0;
+        voutMax = 0;
+        voutMin = std::numeric_limits<F>::max();
+        numErrors = 0;
+    }
 };
 
 
@@ -18,13 +45,13 @@ struct DailyRingStorageState {
     static constexpr int NumDays = N;
     uint16_t totalDays = 0;
     uint16_t ringPtr = 0;
-    DailyEnergyMeterState ringBuf[NumDays];
+    DailyEnergyMeterState<float16> ringBuf[NumDays];
 
     void clear() {
         memset((void *) this, 0, sizeof(*this));
     }
 
-    void add(const DailyEnergyMeterState &day) {
+    void add(const DailyEnergyMeterState<float16> &day) {
         assert(day.hasEnergy());
         ringBuf[ringPtr] = day;
         ringPtr = (ringPtr + 1) % NumDays;
@@ -33,24 +60,21 @@ struct DailyRingStorageState {
 };
 
 class DailyRingStorage {
-
     DailyRingStorageState<1000> state;
     FlashValueFile<decltype(state)> flash;
 
-
 public:
-
     explicit DailyRingStorage(const char *fn = "/littlefs/daily") : flash{fn} {}
 
     int getNumTotalDays() const { return state.totalDays; }
 
-    std::vector<DailyEnergyMeterState> getAllDays() {
+    std::vector<DailyEnergyMeterState<float>> getAllDays() {
         constexpr auto n = decltype(state)::NumDays;
-        std::vector<DailyEnergyMeterState> vec{};
+        std::vector<DailyEnergyMeterState<float>> vec{};
         for (int i = 0; i < n; ++i) {
             auto &d{state.ringBuf[(state.ringPtr + i) % n]};
             if (d.hasEnergy())
-                vec.push_back(d);
+                vec.push_back(DailyEnergyMeterState<float>(d));
         }
         return vec;
     }
@@ -69,7 +93,7 @@ public:
         }
     }
 
-    void add(const DailyEnergyMeterState &day) {
+    void add(const DailyEnergyMeterState<float> &day) {
         state.add(day);
         flash.update(state);
     }
@@ -87,8 +111,13 @@ class DailyEnergyMeter {
     float _prevTotalEnergy = 0;
 
 public:
-    //DailyEnergyMeterState today{0};
-    float todayEnergy = 0;
+    DailyEnergyMeterState<float> today;
+
+    DailyEnergyMeter() {
+        today.reset();
+    }
+
+
     long timeLastPower = 0;
 
     void restore(float todayEnergy_, long timeLastPower_) {
@@ -97,51 +126,63 @@ public:
 
         // maybe continue the day
         if (todayEnergy_ > 2) {
-            todayEnergy = todayEnergy_;
-            auto now = std::time(nullptr);
+            today.energyDay = todayEnergy_;
+            time_t now;
+            for(auto i = 0; i < 20; ++i) {
+                now = std::time(nullptr);
+                if (now > 1e9) break;
+                if(i == 0) ESP_LOGI("meter", "waiting for time sync...");
+                delay(500);
+            }
             if (now < 1e9)
-                ESP_LOGW("mppt", "No system time sync!");
+                ESP_LOGW("meter", "No system time sync!");
             // restore day only if timestamps are valid and last power was within last 3h
             if (now > 1e9 and timeLastPower > 1e9 and now - timeLastPower < 3600 * 3) {
-                ESP_LOGI("mppt", "Restored day energy %.2f, last power was <3h ago (%li s)", todayEnergy_,
+                ESP_LOGI("meter", "Restored day energy %.2f, last power was <3h ago (%li s)", todayEnergy_,
                          now - timeLastPower);
             } else {
                 ESP_LOGI("mppt", "Store yesterday energy %.2f (last power %li s ago)", todayEnergy_,
                          now - timeLastPower);
-                store.add(DailyEnergyMeterState{todayEnergy});
-                todayEnergy = 0;
+                store.add(today);
+                today.reset();
             }
         } else {
-            todayEnergy = 0;
+            today.reset();
         }
         _prevTotalEnergy = 0;
     }
 
-    void update(float smoothPower, float totalEnergy) {
+    void update(float smoothPower, float totalEnergy, float vin = NAN, float vout = NAN) {
         auto now = std::time(nullptr);
 
         if (smoothPower > powerDayEnd) {
             timeLastPower = now;
+
+            if (smoothPower > today.pinMax) today.pinMax = smoothPower;
+            if (vin > today.vinMax) today.vinMax = vin;
+            if (vout > today.voutMax) today.voutMax = vout;
+            if (vout < today.voutMin) today.voutMin = vout;
         }
 
-        if ((todayEnergy > 0 or smoothPower >= powerDayStart) and _prevTotalEnergy > 0 and
-            totalEnergy > _prevTotalEnergy + 0.000001f) {
-            float e = (totalEnergy - _prevTotalEnergy);
-            if (todayEnergy == 0)
-                ESP_LOGI("met", "Good Day! First energy %.4f for today! This is day #%u, total energy meter is %.2f", e,
-                         store.getNumTotalDays() + 1, totalEnergy);
-            todayEnergy += e;
-            // TODO fixw
-            // assert(today.hasEnergy());
 
-        } else if (todayEnergy > 0 && (now - timeLastPower) > 60 * 30) {
+        if ((today.energyDay > 0 or smoothPower >= powerDayStart) and totalEnergy > _prevTotalEnergy + 1e-3f) {
+            if (_prevTotalEnergy > 0) {
+                float e = (totalEnergy - _prevTotalEnergy);
+                if (today.energyDay == 0)
+                    ESP_LOGI("met",
+                             "Good Day! First energy %.4f for today! This is day #%u, total energy meter is %.2f", e,
+                             store.getNumTotalDays() + 1, totalEnergy);
+                today.energyDay += e;
+            }
+
+            _prevTotalEnergy = totalEnergy;
+
+        } else if (today.energyDay > 0 && (now - timeLastPower) > 60 * 30) {
             ESP_LOGI("met", "Day #%u ends, energy today %.3f, total %.2f", store.getNumTotalDays() + 1,
-                     todayEnergy, totalEnergy);
-            store.add(DailyEnergyMeterState{todayEnergy});
-            todayEnergy = 0;
+                     today.energyDay, totalEnergy);
+            store.add(today);
+            today.reset();
         }
-
-        _prevTotalEnergy = totalEnergy;
     }
 };
 
@@ -183,10 +224,10 @@ struct SolarEnergyMeter {
         commit(true);
     }
 
-    void add(float power, float smoothPower, unsigned long timeUs) {
+    void add(float power, float smoothPower, float vin, float vout, unsigned long timeUs) {
         if (power > 0.1f)
             totalEnergy.add(power, timeUs);
-        dailyEnergyMeter.update(smoothPower, totalEnergy.get());
+        dailyEnergyMeter.update(smoothPower, totalEnergy.get(), vin, vout);
     }
 
     void update() {
@@ -197,7 +238,7 @@ struct SolarEnergyMeter {
         auto stats = flash.getFlashValue();
         stats.totalEnergy = totalEnergy.get();
         stats.timeLastPower = dailyEnergyMeter.timeLastPower;
-        stats.todayEnergy = dailyEnergyMeter.todayEnergy;
+        stats.todayEnergy = dailyEnergyMeter.today.energyDay;
         if (increaseBootCounter)++stats.bootCount;
         flash.update(stats);
     }
