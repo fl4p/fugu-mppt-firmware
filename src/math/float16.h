@@ -70,6 +70,8 @@ class float16
     float    f16tof32(uint16_t) const;
     uint16_t f32tof16(float) const;
 
+    explicit operator float() const { return toFloat(); }
+
 
   private:
     constexpr static uint8_t  _decimals = 4;
