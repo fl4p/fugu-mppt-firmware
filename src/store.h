@@ -17,14 +17,17 @@
  * sectors or blocks (wear leveling). SPIFFS implements wear leveling and one update consumes 2 pages (payload and meta data).
  * A problem with SPIFFS is that it erases whole 64k, which can take 0.25s (GD25Q32C). It is also out-dated. FAT has problems
  * with power loss. Choose LittleFS, which has the same latency issue as SPIFFS, since it clears whole blocks.
+ * If we carefully inspect values and choose the right moments (impending power loss), we can reduce writes to a minimum
+ * and achieve >30y estimated life span.
  * Below is a low-latency DIY Proposal, which I have not tested nor implemented.
  *
  * DIY Approach
  * Once any data bit changes, a whole page needs to be programmed. This means the ideal payload is 256 bytes (64 floats,ints).
- * For a flash wear estimate lets assume a write-interval of 1 minute.
- * To prevent data loss due to power loss, we need at least 2 sectors.
- * Allocating two 4KB sectors means that every 32min a page need to be erased, which wear out the flash after 6 years.
+ * For a flash wear estimate lets assume a write-interval of 1 minute and a payload of up to 255 bytes.
+ * To prevent data loss due to power loss, we need at least 2 sectors. (COW)
+ * Allocating two 4KB sectors means that every 32min ( 2*256b/4kb / 1/min ) a page need to be erased, which wear out the flash after 6 years.
  * Allocating 8 sectors increases life-time to 24 years.
+ * Because ESP32-WROOM has plenty of flash storage, using the LittleFS approach.
  *
  *
  * https://www.esp32.com/viewtopic.php?t=386#p1776

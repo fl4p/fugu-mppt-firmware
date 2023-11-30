@@ -54,6 +54,16 @@ idf.py build
   14.6V.
 * `USE_INTERNAL_ADC` enable fallback to internal ADC
 
+# Getting started
+Once you've built and flashed the firmware on the device, use the serial console to connect the chip to your
+wifi network: `wifi-add <ssid> <secret>`.
+You can then upload HW configuration files to configure IO pins, ADC and converter topology.
+This is currently WIP. I had a hard disk failure and develpment is currently halted.
+You can start at an older commit, without the runtime configuration (HW topology hard coded)
+* [tag/idf-working](https://github.com/fl4p/fugu-mppt-firmware/releases/tag/idf-working) (2023-09-09) last known working revision using esp-idf toolchain
+* tag/pio-last: old revision before adding esp-idf.
+These versions work with the original Fugu design. Mind the voltage divider values.
+
 # Control Loop
 
 The control loop reads Vout, Vin, Iin and adjusts the PWM duty cycle of the buck DC-DC converter for MPPT and output
