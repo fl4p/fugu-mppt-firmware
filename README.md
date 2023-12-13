@@ -200,7 +200,7 @@ I am currently using this firmware on a couple of Fugu Devices in a real-world a
 2s 410WP solar panels, charging an 24V LiFePo4 battery. They produce more than 4 kWh on sunny days.
 
 I'd consider the current state of this software as usable. However, a lot of things (WiFi, charging parameters) are
-hard-coded. ADC filtering and control loop speed depend on the quality of measurements (noise, outliers).
+hard-coded. ADC filtering and control loop speed depend on the quality of measurements (noise, outliers) and need to be adjusted manually.
 
 The original Fugu HW design has some flaws (hall sensor placement after input caps, hall sensor too close to coil,
 sense wires layout).
