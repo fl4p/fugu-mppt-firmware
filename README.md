@@ -203,12 +203,11 @@ I'd consider the current state of this software as usable. However, a lot of thi
 hard-coded. ADC filtering and control loop speed depend on the quality of measurements (noise, outliers) and need to be adjusted manually.
 
 The original Fugu HW design has some flaws (hall sensor placement after input caps, hall sensor too close to coil,
-sense wires layout).
+sense wires layout). Using the CSD19505 at the HS is not a good idea: it is a MOSFET designed for rectificiation and has a large Qrr (body diode reverse recovery charge) which will cause a lot of ringing noise.
 
-Interference increases with power, so we must slow down the control loop to ensure a steady output. Otherwise the
-converter might unexpectedly shutdown, wasting solar energy. A slow control loop however causes higher voltage
-transients
-during load changes (e.g. BMS cut-off) which can be dangerous for devices.
+Interference increases with power, so we can slow down the control loop to ensure a steady output. Otherwise the
+converter might repeatedly shutdown, wasting solar energy. A slow control loop however causes higher voltage
+transients during load changes (e.g. BMS cut-off) which can be dangerous for devices.
 
 If the battery or load is removed during power conversion expect an over-voltage transient at the output.
 With a battery voltage of 28.5V, I measured 36V for 400ms.
