@@ -56,7 +56,7 @@ idf.py build
 
 # Getting started
 Once you've built and flashed the firmware on the device, use the serial console to connect the chip to your
-wifi network: `wifi-add <ssid> <secret>`.
+wifi network: `wifi-add <ssid>:<secret>`.
 You can then upload HW configuration files to configure IO pins, ADC and converter topology.
 This is currently WIP. I had a hard disk failure and develpment is currently halted.
 You can start at an older commit, without the runtime configuration (HW topology hard coded)
