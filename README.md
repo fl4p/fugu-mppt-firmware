@@ -28,9 +28,22 @@ This is common for Lithium-Batteries (e.g. LiFePo4).
 
 The firmware sends real-time data to InfluxDB server using UDP line protocol.
 
-The aim of this program is to provide a flexible MPPT and DC/DC solution that you can use with various hardware
-topologies (e.g. buck & boost, location of current sensor). I tried to structure components in classes so they
-reflect the physical and logical building-blocks of a MPPT solar charger. Feel free to use parts of the code
+The aim of this program is to provide a flexible MPPT and DC/DC converter solution that you can use with various hardware
+topologies (e.g. buck & boost, location of current sensor). 
+You can configure pins, converter topo and sensors through config files, without the need to rebuild the firmware.
+Access files through FTP or USB Mass Storage Class (MSC, ESP32-S3).
+I tried to structure components in classes so they
+reflect the physical and logical building-blocks of a MPPT solar charger.
+See [Voltage & Current Sensors, ADC](#Voltage Current Sensors (ADC))
+Feel free to use parts of the code
+
+# Hardware References
+* [Original Fugu](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/) (Proteus) 
+* [Fugu2](https://cadlab.io/project/27217/master/files) (KiCad)
+  * Dual parallel HS switches
+  * Snubber circuit for reduced EMI
+  * INA226 current sensor
+  * Cheap back-flow switch driving circuit (no isolated DC-DC converter)
 
 # Building
 
@@ -62,7 +75,7 @@ This is currently WIP. I had a hard disk failure and develpment is currently hal
 You can start at an older commit, without the runtime configuration (HW topology hard coded)
 * [tag/idf-working](https://github.com/fl4p/fugu-mppt-firmware/releases/tag/idf-working) (2023-09-09) last known working revision using esp-idf toolchain
 * tag/pio-last: old revision before adding esp-idf.
-These versions work with the original Fugu design. Mind the voltage divider values.
+These versions work with the original Fugu design. Mind the voltage divider values. ADS1015 and ACS712-30 hall.
 
 # Control Loop
 
@@ -90,16 +103,16 @@ can proceed with the MPPT. Otherwise, we halt MPPT and decrease the duty cycle p
 
 The control loop has an update rate of about 160 Hz or 260 Hz without telemetry.
 
-# Voltage & Current Sensors, ADC
+# Voltage Current Sensors (ADC)
 
 The firmware tries to be as hardware independent as possible by using layers of abstraction (HAL), so you can easily
 adopt it
 with your ADC model and topology. Implementations exist for the ADS1x15, INA226, esp32_adc.
 
-The hardware should always sense `Vin` and `Vout`. `Vin` is not crucial and can
+The hardware should always sense `Vin` and `Vout`. `Vin` error is not crucial and reading can
 be coarse (8-bit ADC is ok), it is needed for diode emulation, under- and over-voltage shutdown. Since `Vout` is our
 battery voltage
-it should be more precise.
+it should be more precise. To reduce voltage transients during load change a high sampling rate is prefered.
 
 The current sensor can be either at the input (`Iin`) or output (`Iout`) or both. If there's only one current sensor we
 can infer the other current using the voltage ratio and efficiency of the converter.
@@ -147,8 +160,8 @@ We can leave the Low-Side (LS, aka *sync-FET*, *synchronous rectifier*) switch o
 flow through the LS MOSFET´s body diode.
 The buck converter then operates in non-synchronous mode. This decreases conversion efficiency but prevents the buck
 converter from becoming a boost converter. Voltage boosting causes reverse current flow from battery to solar and can
-cause excess voltage at the solar input, eventually destroying the LS switch and even the board. Timing the LS can be
-tricky.
+cause excess voltage at the solar input, eventually destroying the LS switch and even the board. So we must take timing
+the LS switch very carefully.
 
 The firmware implements a synchronous buck converter. It uses the Vout/Vin voltage ratio to estimate the slope of the
 coil current and adjusts the switching time of the LS MOSFET so that the current never crosses zero.
@@ -183,8 +196,8 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 ## Issues
 
 * There is a design issue with `IoutCTRL` and `PowerCTRL`. In an over-load situation, the controllers will
-  decrease duty-cycle, which can increase solar voltage. The converter increases power until it runs into the hard
-  limits, shuts down and recovers.
+  decrease duty-cycle, which can increase solar voltage, thus increase conversion power. In this case the converter will increases power until it runs into the hard
+  limits, shuts down and recovers. Because this is a transient situation, it should not cause any damage to hardware.
 
 # Current sensing
 
