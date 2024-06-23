@@ -69,7 +69,7 @@ idf.py build
 
 # Getting started
 Once you've built and flashed the firmware on the device, use the serial console to connect the chip to your
-wifi network: `wifi-add <ssid> <secret>`.
+wifi network: `wifi-add <ssid>:<secret>`.
 You can then upload HW configuration files to configure IO pins, ADC and converter topology.
 This is currently WIP. I had a hard disk failure and develpment is currently halted.
 You can start at an older commit, without the runtime configuration (HW topology hard coded)
@@ -109,12 +109,12 @@ The firmware tries to be as hardware independent as possible by using layers of 
 adopt it
 with your ADC model and topology. Implementations exist for the ADS1x15, INA226, esp32_adc.
 
-The hardware should always sense `Vin` and `Vout`. `Vin` error is not crucial and reading can
-be coarse (8-bit ADC is ok), it is needed for diode emulation, under- and over-voltage shutdown. Since `Vout` is our
-battery voltage
-it should be more precise. To reduce voltage transients during load change a high sampling rate is prefered.
+The hardware should always sense `Vin` and `Vout`. `Vin` is not crucial and can
+be coarse (8-bit ADC might be ok if there is a current sensor at `Iout`), it is needed for diode emulation, under- and over-voltage shutdown. Since `Vout` is our
+battery voltage it should be more precise.
+To reduce voltage transients during load change a high sampling rate is prefered.
 
-The current sensor can be either at the input (`Iin`) or output (`Iout`) or both. If there's only one current sensor we
+The current sensor can be either at the input (`Iin`, solar) or output (`Iout`, battery) or both. If there's only one current sensor we
 can infer the other current using the voltage ratio and efficiency of the converter.
 The code represents this with a `VirtualSensor`.
 
@@ -123,7 +123,7 @@ higher battery voltage. This is not yet implemented.
 
 Here are some relevant types:
 
-* `LinearTransform`: Simple linear X->Y transform to scale voltage readings and zero-offsetting.
+* `LinearTransform`: Simple 1-dimensional linear transform (Y = a*X + b) to scale voltage readings and zero-offsetting.
 * `ADC_Sampler`: Schedules ADC reads, manages sensors and their calibration
 * `CalibrationConstraints`: value constraints a sensor must meet during calibration (average, stddev).
 * `Sensor`: Represents a physical sensor with running statistics (average, variance)
@@ -143,7 +143,7 @@ The tracking consists of 3 phases:
 
 The controller starts with a global scan, at a duty cycle of 0 and linearly increases it while capturing the
 maximum power point (MPP) until one of these conditions are met:
-input under-voltage, output over-voltage, over-current, 100% duty cycle.
+input under-voltage, output over-voltage, over-current, max duty cycle.
 
 It then sets the duty cycle to the captured MPP and goes into fast tracking mode to follow the MPP locally.
 
@@ -152,7 +152,7 @@ When it detects a mayor change in power conditions (e.g. clouds, partial shading
 to quickly adapt to the new condition.
 
 A global scan is triggered every 30 minutes to prevent getting stuck in a local maximum. This can happen with partially
-shaded solar strings. A scan lasts about 20 to 60 seconds, depending on the loop update rate.
+shaded solar strings. A scan lasts about 20 to 60 seconds, depending on the loop update rate. Scanning too often or slow scanning ca significantly less reduce overall efficiency.
 
 # Synchronous Buck and Diode Emulation
 
@@ -214,15 +214,14 @@ I am currently using this firmware on a couple of Fugu Devices in a real-world a
 2s 410WP solar panels, charging an 24V LiFePo4 battery. They produce more than 4 kWh on sunny days.
 
 I'd consider the current state of this software as usable. However, a lot of things (WiFi, charging parameters) are
-hard-coded. ADC filtering and control loop speed depend on the quality of measurements (noise, outliers).
+hard-coded. ADC filtering and control loop speed depend on the quality of measurements (noise, outliers) and need to be adjusted manually.
 
 The original Fugu HW design has some flaws (hall sensor placement after input caps, hall sensor too close to coil,
-sense wires layout).
+sense wires layout). Using the CSD19505 at the HS is not a good idea: it is a MOSFET designed for rectificiation and has a large Qrr (body diode reverse recovery charge) which will cause a lot of ringing noise.
 
-Interference increases with power, so we must slow down the control loop to ensure a steady output. Otherwise the
-converter might unexpectedly shutdown, wasting solar energy. A slow control loop however causes higher voltage
-transients
-during load changes (e.g. BMS cut-off) which can be dangerous for devices.
+Interference increases with power, so we can slow down the control loop to ensure a steady output. Otherwise the
+converter might repeatedly shutdown, wasting solar energy. A slow control loop however causes higher voltage
+transients during load changes (e.g. BMS cut-off) which can be dangerous for devices.
 
 If the battery or load is removed during power conversion expect an over-voltage transient at the output.
 With a battery voltage of 28.5V, I measured 36V for 400ms.
