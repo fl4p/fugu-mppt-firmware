@@ -8,11 +8,13 @@
 
 template<typename F=float16>
 struct DailyEnergyMeterState {
-    F energyDay;
+    F energyYield;
     F vinMax;
     F pinMax;
     F voutMax;
     F voutMin;
+    uint8_t tempMax;
+    uint8_t usr:
     uint8_t numErrors;
 
     DailyEnergyMeterState() {
@@ -22,15 +24,15 @@ struct DailyEnergyMeterState {
 
     template<typename F2>
     DailyEnergyMeterState(const DailyEnergyMeterState<F2> &o) :
-            energyDay{o.energyDay}, vinMax{o.vinMax}, pinMax{o.pinMax}, voutMax{o.voutMax}, voutMin{o.voutMin},
+            energyYield{o.energyYield}, vinMax{o.vinMax}, pinMax{o.pinMax}, voutMax{o.voutMax}, voutMin{o.voutMin},
             numErrors{o.numErrors} {}
 
 
-    inline bool hasEnergy() const { return !energyDay.isZero(); }
+    inline bool hasEnergy() const { return !energyYield.isZero(); }
 
     void reset() {
         //memset(this, 0 , sizeof(*this));
-        energyDay = 0;
+        energyYield = 0;
         vinMax = 0;
         pinMax = 0;
         voutMax = 0;
@@ -126,7 +128,7 @@ public:
 
         // maybe continue the day
         if (todayEnergy_ > 2) {
-            today.energyDay = todayEnergy_;
+            today.energyYield = todayEnergy_;
             time_t now;
             for(auto i = 0; i < 20; ++i) {
                 now = std::time(nullptr);
@@ -165,21 +167,21 @@ public:
         }
 
 
-        if ((today.energyDay > 0 or smoothPower >= powerDayStart) and totalEnergy > _prevTotalEnergy + 1e-3f) {
+        if ((today.energyYield > 0 or smoothPower >= powerDayStart) and totalEnergy > _prevTotalEnergy + 1e-3f) {
             if (_prevTotalEnergy > 0) {
                 float e = (totalEnergy - _prevTotalEnergy);
-                if (today.energyDay == 0)
+                if (today.energyYield == 0)
                     ESP_LOGI("met",
                              "Good Day! First energy %.4f for today! This is day #%u, total energy meter is %.2f", e,
                              store.getNumTotalDays() + 1, totalEnergy);
-                today.energyDay += e;
+                today.energyYield += e;
             }
 
             _prevTotalEnergy = totalEnergy;
 
-        } else if (today.energyDay > 0 && (now - timeLastPower) > 60 * 30) {
+        } else if (today.energyYield > 0 && (now - timeLastPower) > 60 * 30) {
             ESP_LOGI("met", "Day #%u ends, energy today %.3f, total %.2f", store.getNumTotalDays() + 1,
-                     today.energyDay, totalEnergy);
+                     today.energyYield, totalEnergy);
             store.add(today);
             today.reset();
         }
@@ -238,7 +240,7 @@ struct SolarEnergyMeter {
         auto stats = flash.getFlashValue();
         stats.totalEnergy = totalEnergy.get();
         stats.timeLastPower = dailyEnergyMeter.timeLastPower;
-        stats.todayEnergy = dailyEnergyMeter.today.energyDay;
+        stats.todayEnergy = dailyEnergyMeter.today.energyYield;
         if (increaseBootCounter)++stats.bootCount;
         flash.update(stats);
     }
