@@ -1,4 +1,119 @@
 
+ina226 can report 0 current (after i2cWriteReadNonStop or sth else)
+* reset ina226 after i2c issues
+* reset ina226 on each calibration
+* shut down dc if current is zerp for high duty cycle
+* reset mcu if error persists`
+```
+Vi/o=30.85/14.17 Ii/o= 2.4/ 5.0A Pin= 73.7W 33°C 200sps  0kbps PWM(H|L|Lm)= 975| 123| 965 MPPT(st= MANU,0) lag=12.6ms N=105610
+
+Vi/o=30.80/14.18 Ii/o= 2.4/ 5.1A Pin= 74.0W 33°C 200sps  0kbps PWM(H|L|Lm)= 975| 123| 965 MPPT(st= MANU,0) lag=12.6ms N=106210
+
+Vi/o=30.77/14.18 Ii/o= 2.4/ 5.0A Pin= 73.8W 33°C 254sps  0kbps PWM(H|L|Lm)= 975| 123| 965 MPPT(st= MANU,0) lag=12.6ms N=106973
+
+[473762][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[473777][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[473912][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[473915][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[473955][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+Vi/o=30.80/14.18 Ii/o= 2.4/ 5.0A Pin= 73.6W 33°C 199sps  0kbps PWM(H|L|Lm)= 975| 123| 965 MPPT(st= MANU,0) lag=12.6ms N=107572
+
+[475852][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[0;33mW (475418) MPPT: Low current -0.08, disable backflow[0m
+
+Backflow switch disabled
+
+[475951][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[475953][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[475957][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[475963][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+buck: DCM -> CCM (vr=0.4447, pwmMaxLs=1134.3, lsCCM=1072)
+
+[475982][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476013][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476019][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476021][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476172][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476175][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476177][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476191][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476201][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476204][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476214][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476225][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476227][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476231][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476237][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476247][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476253][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476264][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476269][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476315][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+[476318][E][Wire.cpp:499] requestFrom(): i2cWriteReadNonStop returned Error -1
+
+Vi/o=31.07/14.00 Ii/o=-0.0/-0.1A Pin= -1.2W 33°C 193sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=108152
+
+Vi/o=31.07/13.99 Ii/o=-0.0/-0.1A Pin= -1.2W 33°C 200sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=108752
+
+Vi/o=31.07/13.97 Ii/o=-0.0/-0.1A Pin= -1.2W 33°C 199sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=109351
+
+Vi/o=31.07/13.96 Ii/o=-0.0/-0.1A Pin= -1.2W 33°C 200sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=109951
+
+Vi/o=31.10/13.96 Ii/o=-0.0/-0.1A Pin= -1.2W 33°C 200sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=110551
+
+Vi/o=31.10/13.95 Ii/o=-0.0/-0.1A Pin= -1.2W 33°C 199sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=111150
+
+Vi/o=31.07/13.95 Ii/o=-0.0/-0.1A Pin= -1.2W 34°C 200sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=111750
+
+Vi/o=31.07/13.94 Ii/o=-0.0/-0.1A Pin= -1.2W 34°C 200sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=112350
+
+Vi/o=31.05/13.94 Ii/o=-0.0/-0.1A Pin= -1.2W 34°C 199sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=112949
+
+Vi/o=31.07/13.93 Ii/o=-0.0/-0.1A Pin= -1.2W 34°C 200sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=113549
+
+Vi/o=31.05/13.93 Ii/o=-0.0/-0.1A Pin= -1.2W 34°C 200sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=114149
+
+Vi/o=31.07/13.93 Ii/o=-0.0/-0.1A Pin= -1.2W 33°C 199sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=114748
+
+Vi/o=31.05/13.93 Ii/o=-0.0/-0.1A Pin= -1.2W 33°C 200sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=115348
+
+Vi/o=31.07/13.92 Ii/o=-0.0/-0.1A Pin= -1.2W 33°C 200sps  0kbps PWM(H|L|Lm)= 975| 123|1061 MPPT(st= MANU,0) lag=30.6ms N=115948
+
+Vi/o=31.07/13.92 Ii/o=-0.0/-0.1A Pin= -1.2W 33°C 199sps  0kbps PWM(H|L|Lm)= 975
+```
+
+
+
 # Sensor Code / reading ADC
 scheduling the adc reads and accessing values is currently separated.
 ADC_sampler does the scheduling.
