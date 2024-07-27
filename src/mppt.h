@@ -148,7 +148,7 @@ public:
 
     float boardPowerSupplyVoltage() const {
         constexpr auto diodeFwdVoltage = 0.3f;
-        return std::max(sensors.Vin->last, sensors.Vout->last) - diodeFwdVoltage:
+        return std::max(sensors.Vin->last, sensors.Vout->last) - diodeFwdVoltage;
     }
 
     bool boardPowerSupplyUnderVoltage(bool start = false) const {
