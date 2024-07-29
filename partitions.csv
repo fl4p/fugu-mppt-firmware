@@ -6,11 +6,10 @@ factory,  app,  factory,  0x10000,  1500k
 #ota_0,    app,  ota_0,    ,         1M
 #ota_1,    app,  ota_1,    ,         1M
 
-littlefs,  data, spiffs,           ,    256k
-
 # for unit-testing:
 littlefs_test,  data, spiffs,      ,    64k
 
 # nvs_key,  data, nvs_keys, ,        0x1000
 
 #storage,  data, spiffs,  ,        0x10000
+littlefs,  data, spiffs,           ,    256k
