@@ -1,6 +1,6 @@
 # Sensors
 
-You can configure the voltage and current sensors through the file `conf/sensors` according to your topology and chips.
+You can configure the voltage and current sensors through the file `conf/sensor` according to your topology and chips.
 
 There are 4 sensors (Vin, Vout, Iin, Iout). Your hardware topology can have one or two current sensors.
 
@@ -76,7 +76,7 @@ iin_midpoint=1.88  # midpoint  = 2.5V * 10k/(10k+3.3k)
 
 Here's a minimal dummy configuration:
 
-`/sensor`
+`data/conf/sensor`
 ```
 adc=esp32adc1
 
@@ -105,4 +105,6 @@ ignore_calibration_constraints=1 # skip noise and range check (not for productio
 Use this configuration to run the firmware on an ESP32 without any external ADC. This is useful for testing other things than the ADC and PWM.
 
 If you leave the ADC pins floating, the values will be garbage with a high stddev. That's why we set `ignore_calibration_constraints=1` here.
+
+Just put /data/data/conf/ to this code , and use Visual Studio Code "Upload Filesystem Image" function.
 
