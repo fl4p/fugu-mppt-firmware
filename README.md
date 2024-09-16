@@ -246,3 +246,5 @@ github profile) if you want to contribute or just share your experience.
 * [Power conversion efficiency measurement](https://github.com/fl4p/fugu-mppt-doc/blob/master/Power%20Measurements.md#findings)
 
 * [Renesas: Can you explain diode emulation and why it is used?](https://en-support.renesas.com/knowledgeBase/4967491)
+
+* [fetlib - find the right MOSFET](https://github.com/fl4p/fetlib)
