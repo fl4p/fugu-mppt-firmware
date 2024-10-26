@@ -14,7 +14,7 @@ struct DailyEnergyMeterState {
     F voutMax;
     F voutMin;
     uint8_t tempMax;
-    uint8_t usr:
+    uint8_t usr;
     uint8_t numErrors;
 
     DailyEnergyMeterState() {
@@ -140,12 +140,12 @@ public:
                 ESP_LOGW("meter", "No system time sync!");
             // restore day only if timestamps are valid and last power was within last 3h
             if (now > 1e9 and timeLastPower > 1e9 and now - timeLastPower < 3600 * 3) {
-                ESP_LOGI("meter", "Restored day energy %.2f, last power was <3h ago (%li s)", todayEnergy_,
+                ESP_LOGI("meter", "Restored day energy %.2f, last power was <3h ago (%lli s)", todayEnergy_,
                          now - timeLastPower);
             } else {
-                ESP_LOGI("mppt", "Store yesterday energy %.2f (last power %li s ago)", todayEnergy_,
+                ESP_LOGI("mppt", "Store yesterday energy %.2f (last power %lli s ago)", todayEnergy_,
                          now - timeLastPower);
-                store.add(today);
+                //store.add(today); // TODO panic
                 today.reset();
             }
         } else {
@@ -220,7 +220,7 @@ struct SolarEnergyMeter {
             auto &stat(flash.getFlashValue());
             totalEnergy.restore(stat.totalEnergy);
             dailyEnergyMeter.restore(stat.todayEnergy, stat.timeLastPower);
-            ESP_LOGI("mppt", "Restored stats: totalEnergy=%.2f bootCounter=%u dailyEnergyMeter=%.2f", totalEnergy.get(),
+            ESP_LOGI("mppt", "Restored stats: totalEnergy=%.2f bootCounter=%lu dailyEnergyMeter=%.2f", totalEnergy.get(),
                      stat.bootCount, stat.totalEnergy);
         }
         commit(true);

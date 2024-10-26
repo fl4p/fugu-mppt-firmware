@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 struct LcdValues {
     float Vin;
     float Vout;

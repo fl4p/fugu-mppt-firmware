@@ -28,8 +28,9 @@ This is common for Lithium-Batteries (e.g. LiFePo4).
 
 The firmware sends real-time data to InfluxDB server using UDP line protocol.
 
-The aim of this program is to provide a flexible MPPT and DC/DC converter solution that you can use with various hardware
-topologies (e.g. buck & boost, location of current sensor). 
+The aim of this program is to provide a flexible MPPT and DC/DC converter solution that you can use with various
+hardware
+topologies (e.g. buck & boost, location of current sensor).
 You can configure pins, converter topo and sensors through config files, without the need to rebuild the firmware.
 Access files through FTP or USB Mass Storage Class (MSC, ESP32-S3).
 I tried to structure components in classes so they
@@ -38,24 +39,63 @@ See [Voltage & Current Sensors, ADC](#Voltage Current Sensors (ADC))
 Feel free to use parts of the code
 
 # Hardware References
-* [Original Fugu](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/) (Proteus) 
+
+* [Original Fugu](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/) (Proteus)
 * [Fugu2](https://cadlab.io/project/27217/master/files) (KiCad)
-  * Dual parallel HS switches
-  * Snubber circuit for reduced EMI
-  * INA226 current sensor
-  * Cheap back-flow switch driving circuit (no isolated DC-DC converter)
+    * Dual parallel HS switches
+    * Snubber circuit for reduced EMI
+    * INA226 current sensor
+    * Cheap back-flow switch driving circuit (no isolated DC-DC converter)
 
 # Building
 
-You can build with PlatformIO or ESP-IDF toolchain using Arduino as a component.
+You can build with ESP-IDF toolchain using Arduino as a component.
 
-Here's how to build using ESP-IDF:
+If you want to use PlatformIO, checkout `tag/pio-last`. The PIO build branch is currently not maintained.
+
+## ESP-IDF
+
+Follow the [Get Started guide](https://docs.espressif.com/projects/esp-idf/en/v5.1.4/esp32/get-started/index.html) to
+install ESP-IDF v5.1.4 . The firmware depends on `arduino-esp32` so we can use Arduino libraries.
+Since v3.x `arduino-esp32` is compatible with `esp-idf v5.1` (before we had to use `esp-idf v4.4`).
+To install `esp-idf v5.1.4` you can follow these commands (make sure you have all the prerequisites from
+the Espressif guide mentioned before and you might have to downgrade python to 3.9 if running into issues
+like [this](https://github.com/espressif/esp-idf/issues/12322), note that esp-idf will create a new python virtual
+environment with your system's default python version `python --version`):
+
+```
+git clone -b v5.1.4 --recursive https://github.com/espressif/esp-idf.git esp-idf-v5.1
+cd esp-idf-v5.1
+./install.sh esp32s3
+ . ./export.sh
+```
+
+Here's how to build the firmware using ESP-IDF:
 
 ```
 git clone --recursive https://github.com/fl4p/fugu-mppt-firmware
 cd fugu-mppt-firmware
 idf.py set-target esp32s3 # (or esp32)
 idf.py build
+```
+
+Now you can flash it with
+
+```
+idf.py flash
+```
+
+IO pins, I2C and sensor config is stored in `.conf` files on the `littlefs` partition.
+This enables easy OTA updates of the firmware across various hardware configurations. And you can easily alter the
+configuration by flashing a new `littlefs` image or with FTP.
+
+You find existing configuration in `provisioning/fmetal`, for the [Fugu2 board](https://github.com/fl4p/Fugu2).
+
+Flash these config files with:
+
+```
+littlefs-python create provisioning/fmetal littlefs.bin -v --fs-size=0x40000 --name-max=64 --block-size=4096
+parttool.py --port /dev/cu.usbserial-1101 write_partition --partition-name littlefs --input littlefs.bin
 ```
 
 ## Configuring Build
@@ -68,14 +108,17 @@ idf.py build
 * `USE_INTERNAL_ADC` enable fallback to internal ADC
 
 # Getting started
+
 Once you've built and flashed the firmware on the device, use the serial console to connect the chip to your
 wifi network: `wifi-add <ssid>:<secret>`.
 You can then upload HW configuration files to configure IO pins, ADC and converter topology.
 This is currently WIP. I had a hard disk failure and develpment is currently halted.
 You can start at an older commit, without the runtime configuration (HW topology hard coded)
-* [tag/idf-working](https://github.com/fl4p/fugu-mppt-firmware/releases/tag/idf-working) (2023-09-09) last known working revision using esp-idf toolchain
+
+* [tag/idf-working](https://github.com/fl4p/fugu-mppt-firmware/releases/tag/idf-working) (2023-09-09) last known working
+  revision using esp-idf toolchain
 * tag/pio-last: old revision before adding esp-idf.
-These versions work with the original Fugu design. Mind the voltage divider values. ADS1015 and ACS712-30 hall.
+  These versions work with the original Fugu design. Mind the voltage divider values. ADS1015 and ACS712-30 hall.
 
 # Control Loop
 
@@ -110,11 +153,13 @@ adopt it
 with your ADC model and topology. Implementations exist for the ADS1x15, INA226, esp32_adc.
 
 The hardware should always sense `Vin` and `Vout`. `Vin` is not crucial and can
-be coarse (8-bit ADC might be ok if there is a current sensor at `Iout`), it is needed for diode emulation, under- and over-voltage shutdown. Since `Vout` is our
+be coarse (8-bit ADC might be ok if there is a current sensor at `Iout`), it is needed for diode emulation, under- and
+over-voltage shutdown. Since `Vout` is our
 battery voltage it should be more precise.
 To reduce voltage transients during load change a high sampling rate is prefered.
 
-The current sensor can be either at the input (`Iin`, solar) or output (`Iout`, battery) or both. If there's only one current sensor we
+The current sensor can be either at the input (`Iin`, solar) or output (`Iout`, battery) or both. If there's only one
+current sensor we
 can infer the other current using the voltage ratio and efficiency of the converter.
 The code represents this with a `VirtualSensor`.
 
@@ -152,7 +197,8 @@ When it detects a mayor change in power conditions (e.g. clouds, partial shading
 to quickly adapt to the new condition.
 
 A global scan is triggered every 30 minutes to prevent getting stuck in a local maximum. This can happen with partially
-shaded solar strings. A scan lasts about 20 to 60 seconds, depending on the loop update rate. Scanning too often or slow scanning ca significantly less reduce overall efficiency.
+shaded solar strings. A scan lasts about 20 to 60 seconds, depending on the loop update rate. Scanning too often or slow
+scanning ca significantly less reduce overall efficiency.
 
 # Synchronous Buck and Diode Emulation
 
@@ -196,7 +242,8 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 ## Issues
 
 * There is a design issue with `IoutCTRL` and `PowerCTRL`. In an over-load situation, the controllers will
-  decrease duty-cycle, which can increase solar voltage, thus increase conversion power. In this case the converter will increases power until it runs into the hard
+  decrease duty-cycle, which can increase solar voltage, thus increase conversion power. In this case the converter will
+  increases power until it runs into the hard
   limits, shuts down and recovers. Because this is a transient situation, it should not cause any damage to hardware.
 
 # Current sensing
@@ -214,10 +261,12 @@ I am currently using this firmware on a couple of Fugu Devices in a real-world a
 2s 410WP solar panels, charging an 24V LiFePo4 battery. They produce more than 4 kWh on sunny days.
 
 I'd consider the current state of this software as usable. However, a lot of things (WiFi, charging parameters) are
-hard-coded. ADC filtering and control loop speed depend on the quality of measurements (noise, outliers) and need to be adjusted manually.
+hard-coded. ADC filtering and control loop speed depend on the quality of measurements (noise, outliers) and need to be
+adjusted manually.
 
 The original Fugu HW design has some flaws (hall sensor placement after input caps, hall sensor too close to coil,
-sense wires layout). Using the CSD19505 at the HS is not a good idea: it is a MOSFET designed for rectificiation and has a large Qrr (body diode reverse recovery charge) which will cause a lot of ringing noise.
+sense wires layout). Using the CSD19505 at the HS is not a good idea: it is a MOSFET designed for rectificiation and has
+a large Qrr (body diode reverse recovery charge) which will cause a lot of ringing noise.
 
 Interference increases with power, so we can slow down the control loop to ensure a steady output. Otherwise the
 converter might repeatedly shutdown, wasting solar energy. A slow control loop however causes higher voltage

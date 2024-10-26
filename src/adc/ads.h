@@ -35,9 +35,11 @@ public:
         }
     }
 
-    bool init() override {
+    bool init(const ConfFile &pinConf) override {
 
-        if ((int) PinConfig::ADS_ALERT == 0) {
+        auto adsAlert = pinConf.getByte("ads_alert");
+
+        if (adsAlert == 0) {
             return false;
         }
 
@@ -45,13 +47,13 @@ public:
             return false;
         }
 
-        pinMode((uint8_t) PinConfig::ADS_ALERT, INPUT_PULLUP);
+        pinMode((uint8_t) pinConf.getByte("ads_alert"), INPUT_PULLUP);
 
         if (ads_inst) {
             return false;
         }
         ads_inst = this;
-        attachInterrupt(digitalPinToInterrupt((uint8_t) PinConfig::ADS_ALERT), AdsAlertISR, FALLING); // TODO rising
+        attachInterrupt(digitalPinToInterrupt(adsAlert), AdsAlertISR, FALLING); // TODO rising
 
         //ads.setDataRate(RATE_ADS1115_860SPS); // this is for ADS1015 also! (130 sps). fake chips?
         // ads.setDataRate(RATE_ADS1015_3300SPS);

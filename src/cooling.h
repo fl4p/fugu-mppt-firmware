@@ -6,17 +6,24 @@
 #define FAN_PWM_CH 2
 #define FAN_PWM_BITS 8
 
-bool fanInit() {
-    pinMode((uint8_t) PinConfig::Fan, OUTPUT);
+bool fanInitialized = false;
 
-    auto freq = ledcSetup(FAN_PWM_CH, 16000, FAN_PWM_BITS);
+bool fanInit(const ConfFile &pinConf) {
+    auto pin = pinConf.getByte("fan_pwm", 255);
+    if(pin == 255) return false;
+
+    pinMode(pin, OUTPUT);
+
+    auto freq = ledcAttach(pin, 16000, FAN_PWM_BITS);
     if (!freq) {
         ESP_LOGE("fan", "ledcSetup failed");
         return false;
     }
 
-    ledcAttachPin((uint8_t) PinConfig::Fan, FAN_PWM_CH);
-    ledcWrite(FAN_PWM_CH, 0);
+    //ledcAttachPin((uint8_t) PinConfig::Fan, FAN_PWM_CH);
+    ledcWrite(pin, 0);
+
+    fanInitialized = true;
 
     return true;
 }
@@ -26,8 +33,11 @@ bool fanInit() {
  * @param duty Duty-cycle [0..1]
  */
 void fanSet(float duty) {
+    if(!fanInitialized) return;
+
     //if(duty > 1) duty = 1;
     //if(duty < 0) duty = 0;
+
 
     static uint16_t driverDC = 0;
 
@@ -46,6 +56,8 @@ void fanSet(float duty) {
 
 void fanUpdateTemp(float temp, float power) {
     static unsigned long fanOnTime = 0;
+
+    if(!fanInitialized) return;
 
     if (temp > 70) {
         fanSet(1.f);

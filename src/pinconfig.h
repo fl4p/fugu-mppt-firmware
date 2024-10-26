@@ -59,10 +59,10 @@ enum class PinConfigESP32 : uint8_t {
 
 enum class PinConfigESP32S3_v2 : uint8_t {
     // https://www.espressif.com/sites/default/files/documentation/esp32-s3-wroom-1_wroom-1u_datasheet_en.pdf#page=10
-    I2C_SDA = 42,
-    I2C_SCL = 2,
-    ADS_ALERT = 0,
-    INA22x_ALERT = 41,
+    //I2C_SDA = 42,
+    //I2C_SCL = 2,
+    // ADS_ALERT = 0,
+    //INA22x_ALERT = 41,
 
     Bridge_IN = 21, // f2:14
     Bridge_EN = 14, // f2:13
@@ -70,9 +70,9 @@ enum class PinConfigESP32S3_v2 : uint8_t {
     Backflow_EN = 0,
     Backflow_SD = 40,
 
-    LED = 1,
-    ADC_NTC = ADC1_CHANNEL_7, // f2:6
-    Fan = 36, // TODO
+    //LED = 1,
+    //ADC_NTC = ADC1_CHANNEL_7, // f2:6
+    //Fan = 36, // TODO
 
 
     buttonLeft = 39,
@@ -80,9 +80,9 @@ enum class PinConfigESP32S3_v2 : uint8_t {
     buttonBack = 40,
     buttonSelect = 1,
 
-    ADC_Vin = ADC1_CHANNEL_3, // gpio4
-    ADC_Vout = ADC1_CHANNEL_MAX, // n/a
-    ADC_Iin = ADC1_CHANNEL_MAX, // n/a
+    //ADC_Vin = ADC1_CHANNEL_3, // gpio4
+    //ADC_Vout = ADC1_CHANNEL_MAX, // n/a
+    //ADC_Iin = ADC1_CHANNEL_MAX, // n/a
 };
 
 

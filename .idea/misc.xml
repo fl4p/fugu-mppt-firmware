@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
+  <component name="Black">
+    <option name="sdkName" value="esp32-build" />
+  </component>
+  <component name="CMakePythonSetting">
+    <option name="pythonIntegrationState" value="YES" />
+  </component>
   <component name="CMakeWorkspace" PROJECT_DIR="$PROJECT_DIR$" />
   <component name="CidrRootsConfiguration">
     <sourceRoots>
@@ -7,6 +13,7 @@
     </sourceRoots>
     <libraryRoots>
       <file path="$PROJECT_DIR$/../../esp/esp-idf-4.4" />
+      <file path="$PROJECT_DIR$/../../esp/esp-idf-v5.1" />
       <file path="$PROJECT_DIR$/components" />
     </libraryRoots>
     <excludeRoots>

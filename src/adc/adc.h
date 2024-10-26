@@ -4,11 +4,12 @@
 
 #include <driver/adc.h>
 #include <esp_adc_cal.h>
+#include "store.h"
 
 template<class T>
 class AsyncADC {
 public:
-    virtual bool init() = 0;
+    virtual bool init(const ConfFile &pinConf) = 0;
 
     virtual void startReading(uint8_t channel) = 0;
 

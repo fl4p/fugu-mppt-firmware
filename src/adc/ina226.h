@@ -6,6 +6,7 @@
 //#include "ina228.h"
 
 #include "i2c.h"
+#include "store.h"
 
 class ADC_INA226;
 
@@ -30,25 +31,29 @@ public:
     static constexpr auto ChVBus = 0, ChI = 1, ChAux = 2;
 
 
-    bool init() override {
+    bool init(const ConfFile &pinConf) override  {
         if (ina226_instance) {
             return false;
         }
 
-        if constexpr ((int) PinConfig::INA22x_ALERT == 0) {
+        auto alertPin = (uint8_t) pinConf.getByte("ina22x_alert", 0);
+        if  (alertPin == 0) {
             ESP_LOGW("ina22x", "No ALERT pin specified");
             return false;
         }
 
-        auto addr = INA226_WE::INA226_ADDRESS;
+        auto addr = pinConf.getByte("ina22x_addr", 0b1000000);
 
         if (!i2c_test_address(addr)) {
             ESP_LOGI("ina226", "Chip didnt respond at address 0x%02hhX", addr);
             return false;
         }
 
-        auto mfrId = i2c_read_short(0, addr, INA22x_MANUFACTURER_ID_CMD);
-        auto deviceId = i2c_read_short(0, addr, INA22x_DEVICE_ID_CMD);
+        i2c_port_t i2c_port = (i2c_port_t)pinConf.getByte("i2c_port", 0);
+
+
+        auto mfrId = i2c_read_short(i2c_port, addr, INA22x_MANUFACTURER_ID_CMD);
+        auto deviceId = i2c_read_short(i2c_port, addr, INA22x_DEVICE_ID_CMD);
 
         ESP_LOGI("ina22x", "MfrID: 0x%04X, DeviceID: 0x%04X", mfrId, deviceId);
 
@@ -79,14 +84,14 @@ public:
         ina226_instance = this;
 
 
-        auto READY_PIN = (uint8_t) PinConfig::INA22x_ALERT;
-        pinMode(READY_PIN, INPUT_PULLUP);
-        attachInterrupt(digitalPinToInterrupt(READY_PIN), ina226_alert, FALLING);
-        ESP_LOGI("ina226", "Setup ALERT interrupt pin %hhu", READY_PIN);
 
-        if (!intAdc.init())
+        pinMode(alertPin, INPUT_PULLUP);
+        attachInterrupt(digitalPinToInterrupt(alertPin), ina226_alert, FALLING);
+        ESP_LOGI("ina226", "Setup ALERT interrupt pin %hhu", alertPin);
+
+        if (!intAdc.init(pinConf))
             return false;
-        intAdc.startReading((uint8_t) PinConfig::ADC_Vin);
+        intAdc.startReading((uint8_t) pinConf.getByte("ina226_aux_ch"));
 
         ina226.setMeasureMode(CONTINUOUS);
 
@@ -133,13 +138,13 @@ public:
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         if (ch == ChAux) {
             ESP_LOGI("ina226", "internal ADC setMaxExpectedVoltage(%i,%.6f)", ch, voltage);
-            intAdc.setMaxExpectedVoltage((uint8_t) PinConfig::ADC_Vin, voltage);
+            intAdc.setMaxExpectedVoltage(intAdc.readingChannel, voltage);
         }
     }
 
     float getInputImpedance(uint8_t ch) override {
         if(ch == ChAux) {
-            return intAdc.getInputImpedance((uint8_t) PinConfig::ADC_Vin);
+            return intAdc.getInputImpedance(intAdc.readingChannel);
         } else {
             return 830e3; // 830k ina226 input impedance
         }

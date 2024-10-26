@@ -108,6 +108,10 @@ public:
         void add_sample(float x) {
             auto v = params.transform.apply(x);
 
+            //if( !isfinite(v)) {
+            //    ESP_LOGW("s", "not-finite sensor val %f (name=%s, x=%f) ", v, params.teleName.c_str(), x);
+            //}
+
             if (params.calibrationConstraints.calibrateMidpoint) {
                 //ESP_LOGI("sensor", "%s %.4f offset=%.4f std=%.4f n=%u", params.teleName.c_str(), v, calibrationAvg,
                 //         ewm.std.get(), numSamples);
@@ -260,7 +264,7 @@ public:
                          sensor.params.teleName.c_str(),
                          std * avg,
                          constrains.maxStddev, sensor.last, x, avg);
-                ESP_LOGW("sampler", "%s last=%.6f med3=%.6f avg=%.6f num=%u", sensor.params.teleName.c_str(),
+                ESP_LOGW("sampler", "%s last=%.6f med3=%.6f avg=%.6f num=%lu", sensor.params.teleName.c_str(),
                          sensor.last,
                          sensor.med3.get(), sensor.ewm.avg.get(), sensor.numSamples);
                 calibrating_ = 0;

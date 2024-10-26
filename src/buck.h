@@ -56,6 +56,7 @@ public:
     }
 
     bool disabled() const { return pwmHS == 0; }
+    float voltageRatio(){return outInVoltageRatio; }
 
     void pwmPerturb(int16_t direction) {
 
@@ -205,7 +206,7 @@ public:
 
     bool dcmHysteresis = false;
 
-    void updateLowSideMaxDuty(float vout, float vin) {
+    const float& updateLowSideMaxDuty(float vout, float vin) {
         // voltageRatio = Vout/Vin
 
         if (vin > vout && vin > 0.1f) {
@@ -225,6 +226,8 @@ public:
             pwmLS = pwmMaxLS;
             pwmDriver.update_pwm(pwmCh_EN, pwmHS + pwmLS); // instantly commit if limit decreases
         }
+
+        return outInVoltageRatio;
     }
 
 

@@ -8,7 +8,11 @@
 #define ACK_VAL				I2C_MASTER_ACK
 #define NACK_VAL			I2C_MASTER_NACK
 
-esp_err_t i2c_write_short(uint8_t i2c_master_port, uint8_t address, uint8_t command, uint16_t data)
+//#ifndef portTICK_RATE_MS
+//#define portTICK_RATE_MS ( 1000 / configTICK_RATE_HZ )
+//#endif
+
+esp_err_t i2c_write_short(i2c_port_t i2c_master_port, uint8_t address, uint8_t command, uint16_t data)
 {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
 
@@ -20,7 +24,7 @@ esp_err_t i2c_write_short(uint8_t i2c_master_port, uint8_t address, uint8_t comm
     i2c_master_write_byte(cmd, data & 0xFF, ACK_CHECK_EN);
     i2c_master_stop(cmd);
 
-    esp_err_t ret = i2c_master_cmd_begin(i2c_master_port, cmd, 1000 / portTICK_RATE_MS);
+    esp_err_t ret = i2c_master_cmd_begin(i2c_master_port, cmd, configTICK_RATE_HZ);
     i2c_cmd_link_delete(cmd);
 
     if (ret == ESP_OK) {
@@ -32,7 +36,7 @@ esp_err_t i2c_write_short(uint8_t i2c_master_port, uint8_t address, uint8_t comm
     return(ret);
 }
 
-esp_err_t i2c_write_buf(uint8_t i2c_master_port, uint8_t address, uint8_t command, uint8_t *data, uint8_t len)
+esp_err_t i2c_write_buf(i2c_port_t i2c_master_port, uint8_t address, uint8_t command, uint8_t *data, uint8_t len)
 {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
 
@@ -46,7 +50,7 @@ esp_err_t i2c_write_buf(uint8_t i2c_master_port, uint8_t address, uint8_t comman
     }
     i2c_master_stop(cmd);
 
-    esp_err_t ret = i2c_master_cmd_begin(i2c_master_port, cmd, 1000 / portTICK_RATE_MS);
+    esp_err_t ret = i2c_master_cmd_begin(i2c_master_port, cmd, configTICK_RATE_HZ);
     i2c_cmd_link_delete(cmd);
 
     if (ret == ESP_OK) {
@@ -58,7 +62,7 @@ esp_err_t i2c_write_buf(uint8_t i2c_master_port, uint8_t address, uint8_t comman
     return(ret);
 }
 
-uint16_t i2c_read_short(uint8_t i2c_master_port, uint8_t address, uint8_t command)
+uint16_t i2c_read_short(i2c_port_t i2c_master_port, uint8_t address, uint8_t command)
 {
     i2c_write_buf(i2c_master_port, address, command, NULL, 0);
 
@@ -70,7 +74,7 @@ uint16_t i2c_read_short(uint8_t i2c_master_port, uint8_t address, uint8_t comman
     i2c_master_read(cmd, (uint8_t *)&data, 2, ACK_VAL);
     i2c_master_stop(cmd);
 
-    esp_err_t ret = i2c_master_cmd_begin(i2c_master_port, cmd, 1000 / portTICK_RATE_MS);
+    esp_err_t ret = i2c_master_cmd_begin(i2c_master_port, cmd, configTICK_RATE_HZ);
     i2c_cmd_link_delete(cmd);
 
 
@@ -85,7 +89,7 @@ uint16_t i2c_read_short(uint8_t i2c_master_port, uint8_t address, uint8_t comman
 }
 
 
-esp_err_t i2c_read_buf(uint8_t i2c_master_port, uint8_t address, uint8_t command, uint8_t *buffer, uint8_t len)
+esp_err_t i2c_read_buf(i2c_port_t i2c_master_port, uint8_t address, uint8_t command, uint8_t *buffer, uint8_t len)
 {
     i2c_write_buf(i2c_master_port, address, command, NULL, 0);
 
@@ -95,7 +99,7 @@ esp_err_t i2c_read_buf(uint8_t i2c_master_port, uint8_t address, uint8_t command
     i2c_master_read(cmd, buffer, len, ACK_VAL);
     i2c_master_stop(cmd);
 
-    esp_err_t ret = i2c_master_cmd_begin(i2c_master_port, cmd, 1000 / portTICK_RATE_MS);
+    esp_err_t ret = i2c_master_cmd_begin(i2c_master_port, cmd, configTICK_RATE_HZ);
     i2c_cmd_link_delete(cmd);
 
     if (ret == ESP_OK) {

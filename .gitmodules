@@ -1,7 +1,7 @@
 [submodule "components/arduino"]
 	path = components/arduino
 	url = https://github.com/espressif/arduino-esp32.git
-	shallow = true
+#	shallow = true
 [submodule "components/Adafruit_ADS1X15/Adafruit_ADS1X15"]
 	path = components/Adafruit_ADS1X15/Adafruit_ADS1X15
 	url = https://github.com/adafruit/Adafruit_ADS1X15

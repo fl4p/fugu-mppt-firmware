@@ -2,7 +2,7 @@
 <project version="4">
   <component name="CMakeSharedSettings">
     <configurations>
-      <configuration PROFILE_NAME="idf esp32s3" ENABLED="true" TOOLCHAIN_NAME="esp-idf" NO_GENERATOR="true">
+      <configuration PROFILE_NAME="idf esp32s3" ENABLED="true" TOOLCHAIN_NAME="esp-idf-v5.1" NO_GENERATOR="true">
         <ADDITIONAL_GENERATION_ENVIRONMENT>
           <envs>
             <env name="IDF_PATH" value="$PROJECT_DIR$/../../esp/esp-idf-4.4" />

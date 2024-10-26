@@ -90,25 +90,21 @@ class MpptController {
     //PD_Control LoadRegulationCTRL{5, -200, true}; //
 
     Tracker tracker{};
-    BatteryCharger charger;
 
     TopologyConfig topologyConfig;
 
+    uint8_t ledPinSimple = 255;
 public:
     MpptParams params;
+    BatteryCharger charger;
     BackflowDriver bflow{};
     SolarEnergyMeter meter{};
     TempSensorGPIO_NTC ntc;
     float speedScale = 1;
 
     explicit MpptController(ADC_Sampler &dcdcPwr, SynchronousBuck &pwm, LCD &lcd)
-            : dcdcPwr(dcdcPwr), buck(pwm), lcd(lcd), charger{params} {
-
-        pinMode((uint8_t) PinConfig::LED, OUTPUT);
-
-        digitalWrite((uint8_t) PinConfig::LED, false);
-
-        fanInit();
+            : dcdcPwr(dcdcPwr), buck(pwm), lcd(lcd), params{},
+              charger{params} {
     }
 
     void setSensors(const VIinVout<const ADC_Sampler::Sensor *> &channels_) {
@@ -126,13 +122,23 @@ public:
         if (sensorPhysicalU->isVirtual) throw std::runtime_error("no physical U sensor");
     }
 
-    void begin() {
+    void begin(const ConfFile &pinConf) {
+        ntc.begin(pinConf);
+
+        ledPinSimple = pinConf.getByte("led_simple", 255);
+        if(ledPinSimple != 255) {
+            pinMode(ledPinSimple, OUTPUT);
+            digitalWrite(ledPinSimple, false);
+        }
+
+        fanInit(pinConf);
+
         bflow.init();
         meter.load();
         startSweep();
     }
 
-    MpptControlMode getState() const { return state; }
+    [[nodiscard]] MpptControlMode getState() const { return state; }
 
     void shutdownDcdc() {
         if (topologyConfig.backflowAtHV) {
@@ -146,16 +152,16 @@ public:
         }
     }
 
-    float boardPowerSupplyVoltage() const {
+    [[nodiscard]] float boardPowerSupplyVoltage() const {
         constexpr auto diodeFwdVoltage = 0.3f;
-        return std::max(sensors.Vin->last, sensors.Vout->last) - diodeFwdVoltage:
+        return std::max(sensors.Vin->last, sensors.Vout->last) - diodeFwdVoltage;
     }
 
-    bool boardPowerSupplyUnderVoltage(bool start = false) const {
+    [[nodiscard]] bool boardPowerSupplyUnderVoltage(bool start = false) const {
         return boardPowerSupplyVoltage() < (start ? 9.5f : 9.f);
     }
 
-    bool startCondition() const {
+    [[nodiscard]] bool startCondition() const {
         return ntc.last() < 70.0f
                && sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1
                && !boardPowerSupplyUnderVoltage(true);
@@ -234,7 +240,8 @@ public:
         // input over current
         if (sensors.Iin->last / params.Iin_max > 1.5) {
             shutdownDcdc();
-            ESP_LOGW("mppt", "Current %.1f 50%% above limit, shutdown", sensors.Iin->last);
+            ESP_LOGW("mppt", "Input current %.1f 50%% above limit (Iout=%.1f, Vin=%.2f), shutdown", sensors.Iin->last,
+                     sensors.Iout->last, sensors.Vin->last);
             return false;
         }
 
@@ -297,7 +304,7 @@ public:
             return false;
         }
 
-        if (sensorPhysicalI->ewm.avg.get() > 10 && !bflow.state()) {
+        if (sensorPhysicalI->ewm.avg.get() > 6 && !bflow.state()) {
             if (!buck.disabled())
                 ESP_LOGE("MPPT", "High-current through open backflow switch!");
             shutdownDcdc();
@@ -310,13 +317,20 @@ public:
         float vIn = fminf(sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
         //float vOut = sensors.Vout->ewm.avg.get();
         //float vIn = sensors.Vin->ewm.avg.get();
-        buck.updateLowSideMaxDuty(vOut, vIn);
+        auto vr = buck.updateLowSideMaxDuty(vOut, vIn);
 
+        auto iOutSmall = sensorPhysicalI->ewm.avg.get() < 0.7;
 
-        if (buck.getBuckDutyCycle() > buck.pwmMinLS * 2 and vOut < 1 and sensors.Iout->ewm.avg.get() < 1) {
+        if (iOutSmall && buck.getBuckDutyCycle() > buck.pwmMinLS * 2 and
+            (vOut < 1 or (buck.getBuckDutyCycle() * 0.9f / (float) buck.pwmMaxHS) > vr)) {
+
             if (!buck.disabled())
                 ESP_LOGE("MPPT",
-                         "Buck running but Vout and Iout low! Something is wrong with the sensors or the half-bridge");
+                         "Buck running at %d%%DC but Vout (%.2f) and Iout (%.2f, last=%.2f) low! Sensor or half-bridge failure.",
+                         100 * buck.getBuckDutyCycle() / buck.pwmMaxHS, vOut, sensors.Iout->ewm.avg.get(),
+                         sensors.Iout->last
+                );
+
             shutdownDcdc();
             return false;
         }
@@ -388,7 +402,7 @@ public:
 
 
         point.addField("E", meter.totalEnergy.get(), 1);
-        point.addField("E_today", meter.dailyEnergyMeter.today.energyDay, 1);
+        point.addField("E_today", meter.dailyEnergyMeter.today.energyYield, 1);
 
         point.addField("pwm_duty", buck.getBuckDutyCycle());
         point.addField("pwm_ls_duty", buck.getBuckDutyCycleLS());
@@ -497,6 +511,13 @@ public:
         float limitingControlValue = std::numeric_limits<float>::infinity();
         for (auto &c: controlValues) {
             auto cv = c.crtl.update(c.actual, c.target);
+
+            if (!isfinite(cv)) {
+                ESP_LOGW("mppt", "Control value %f not finite act=%.3f tgt=%.3f idx=%i", cv, c.actual, c.target,
+                         int(&c -controlValues.begin()));
+                shutdownDcdc();
+            }
+
             if (cv < limitingControlValue) {
                 limitingControlValue = cv;
                 limitingControl = &c;
@@ -644,8 +665,10 @@ public:
         buck.enableLowSide(aboveThres);
 
 
-        bool ledState = (I_phys_smooth > 0.2f && controlMode == MpptControlMode::MPPT && controlValue > 0);
-        digitalWrite((uint8_t) PinConfig::LED, ledState);
+        if(ledPinSimple != 255) {
+            bool ledState = (I_phys_smooth > 0.2f && controlMode == MpptControlMode::MPPT && controlValue > 0);
+            digitalWrite(ledPinSimple, ledState);
+        }
 
 
         if (tele) {

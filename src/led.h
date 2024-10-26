@@ -9,20 +9,25 @@
 
 
 class LedIndicator {
-    CRGB leds[1];
+    CRGB leds[1]{0};
+
+    bool enabled = false;
 
 public:
-    void begin() {
-        if (!(uint8_t) PinConfig::LED)
-            return;
-        FastLED.addLeds<WS2812B, (uint8_t) PinConfig::LED, GRB>(leds, 1);
+    bool begin(const ConfFile &pinConfig) {
+        if (!pinConfig.getByte("led_WS2812B", 0))
+            return false;
+        assert(pinConfig.getByte("led_WS2812B") == 1);
+        constexpr uint8_t LED_PIN = 1;
+        FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, 1);
         FastLED.setBrightness(15);
         setHexShort(0x210);
+        enabled = true;
+        return true;
     }
 
     void setRGB(uint8_t ir, uint8_t ig, uint8_t ib) {
-        if (!(uint8_t) PinConfig::LED)
-            return;
+        if (!enabled)return;
 
         auto rgb = CRGB(ir, ig, ib);
         if (rgb != leds[0])
@@ -34,6 +39,7 @@ public:
     }
 
     void setRGB(const char *hex) {
+        if (!enabled)return;
         auto l = strtol(hex, nullptr, 16);
         if (strlen(hex) == 3) {
             setHexShort(l);

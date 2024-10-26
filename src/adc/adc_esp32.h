@@ -1,6 +1,8 @@
 #include "adc.h"
 #include <driver/adc.h>
 #include <esp_adc_cal.h>
+#include <stdexcept>
+
 #include "pinconfig.h"
 #include "math/statmath.h"
 
@@ -9,12 +11,14 @@
  */
 class ADC_ESP32 : public AsyncADC<float> {
 
+public:
     adc1_channel_t readingChannel = adc1_channel_t::ADC1_CHANNEL_MAX;
+private:
     esp_adc_cal_characteristics_t *adc_chars[4]{nullptr, nullptr, nullptr, nullptr};
     adc_atten_t attenuation[adc1_channel_t::ADC1_CHANNEL_MAX]{};
 
 public:
-    bool init() override {
+    bool init(const ConfFile &pinConf) override {
         if (adc1_config_width(ADC_WIDTH_BIT_12) != ESP_OK)
             return false;
         return true;
@@ -26,14 +30,16 @@ public:
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         adc_atten_t atten;
-        // assert(ch < 4);
+        assert(ch < adc1_channel_t::ADC1_CHANNEL_MAX);
+
         // 0.81 to fit suggested range?
         // see https://docs.espressif.com/projects/esp-idf/en/v4.2/esp32/api-reference/peripherals/adc.html#_CPPv425adc1_config_channel_atten14adc1_channel_t11adc_atten_t
         if (voltage > (0.81f * 3.548134f /*11dB=max */)) {
-            throw std::range_error("ch"+std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage));
+            throw std::range_error(
+                    "ch" + std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage));
         }
 
-        if (voltage > 1.6f) atten = ADC_ATTEN_DB_11;
+        if (voltage > 1.6f) atten = ADC_ATTEN_DB_12;
         else if (voltage > 0.8f * 1.33f) atten = ADC_ATTEN_DB_6;
         else if (voltage > 0.8f) atten = ADC_ATTEN_DB_2_5;
         else atten = ADC_ATTEN_DB_0;

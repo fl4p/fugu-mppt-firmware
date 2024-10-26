@@ -8,8 +8,10 @@ class TempSensorGPIO_NTC {
 
     uint8_t _attack = 80; // discard first samples
 
+    adc1_channel_t ch = adc1_channel_t::ADC1_CHANNEL_MAX;
 
-    float adc2Celsius(float adc) const {
+
+    [[nodiscard]] float adc2Celsius(float adc) const {
         // invalid adc 4095
         if (adc >= 4080)
             return NAN;
@@ -22,13 +24,18 @@ class TempSensorGPIO_NTC {
     }
 
     esp_adc_cal_characteristics_t adc_char{};
-    adc_atten_t adc_atten = ADC_ATTEN_DB_11; // 10k NTC / 10K pulldown on 3.3V => 1.65V mid
+    adc_atten_t adc_atten = ADC_ATTEN_DB_12; // 10k NTC / 10K pulldown on 3.3V => 1.65V mid
 
 public:
 
-    TempSensorGPIO_NTC() {
+    TempSensorGPIO_NTC() = default;
+
+    void begin(const ConfFile &pinConf) {
+        ch = (adc1_channel_t)pinConf.getByte("ntc_ch", adc1_channel_t::ADC1_CHANNEL_MAX);
+        assert(ch >= 0 and ch < adc1_channel_t::ADC1_CHANNEL_MAX );
+
         ESP_ERROR_CHECK(adc1_config_width(ADC_WIDTH_BIT_12));
-        ESP_ERROR_CHECK(adc1_config_channel_atten((adc1_channel_t) PinConfig::ADC_NTC, adc_atten));
+        ESP_ERROR_CHECK(adc1_config_channel_atten(ch, adc_atten));
         assert(ESP_ADC_CAL_VAL_NOT_SUPPORTED !=
                esp_adc_cal_characterize(ADC_UNIT_1, adc_atten, ADC_WIDTH_BIT_12, 1100, &adc_char));
         //pinMode((uint8_t) PinConfig::NTC, ANALOG);
@@ -37,7 +44,7 @@ public:
 
     float read() {
         //auto adc = analogRead((uint8_t) PinConfig::NTC);
-        auto adc = adc1_get_raw((adc1_channel_t) PinConfig::ADC_NTC);
+        auto adc = adc1_get_raw(ch);
 
         // ESP_LOGI("temp", "ADC_RAW=%i", adc);
 

@@ -294,6 +294,8 @@ public:
                 _map[k] = trim(line.substr(ie + 1));
             }
             file.close();
+        } else {
+            ESP_LOGW(TAG, "cannot read ConfFile %s", path);
         }
     }
 
@@ -386,18 +388,35 @@ public:
         return keys;
     }
 
-    inline static long strtol_10(const char *s, char **endptr) { return strtol(s, endptr, 10); }
+    //inline static long strtol_10(const char *s, char **endptr) { return strtol(s, endptr, 10); }
+
+    inline static long strtol_2_8_10_16(const char *s, char **endptr) {
+        int off = 0, base = 10;
+        auto len = strlen(s);
+
+        if (len > 2 and strncmp(s, "0b", 2) == 0) {
+            base = 2;
+            off = 2;
+        } else if (len > 2 and strncmp(s, "0x", 2) == 0) {
+            base = 16;
+            off = 2;
+        } else if (len > 1 && s[0] == '0' && strchr(s, '.') == nullptr) {
+            off = 1;
+            base = 8;
+        }
+        return strtol(s + off, endptr, base);
+    }
 
     long getLong(const std::string &key, long def = std::numeric_limits<long>::max()) const {
-        return getX<long>(key, def, strtol_10);
+        return getX<long>(key, def, strtol_2_8_10_16);
     }
 
     uint8_t getByte(const std::string &key) const {
-        return getX<long>(key, 0, strtol_10, true);
+        return getX<long>(key, 0, strtol_2_8_10_16, true);
     }
 
-    uint8_t getByte(const std::string &key, uint8_t def) {
-        return getX<long>(key, def, strtol_10);
+    uint8_t getByte(const std::string &key, uint8_t def) const {
+        return getX<long>(key, def, strtol_2_8_10_16);
     }
 
     long getLong(const std::string &key, int base, long def) {

@@ -36,4 +36,6 @@ endif ()
 
 component_compile_options(--std=gnu++17)
 
+#target_compile_options(__idf_FastLED PRIVATE -Wno-error=reorder)
+
 #component_compile_options(-fexceptions) # enable exceptions in menuconfig (CONFIG_COMPILER_CXX_EXCEPTIONS)!

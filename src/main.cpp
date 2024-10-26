@@ -41,19 +41,21 @@ uint32_t lastNSamples = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
 bool manualPwm = false;
 bool charging = false;
+float conversionEfficiency;
 
 uint8_t loopRateMin = 0;
 
 
 void uartInit(int port_num);
 
-void setupSensors() {
-    auto adcVDiv = [](float rH, float rL, float rA) {
-        auto rl = 1 / (1 / rL + 1 / rA);
-        return LinearTransform{(rH + rl) / rl, 0.f};
+void setupSensors(const ConfFile &pinConf) {
+    /// compute voltage factor for a resistor divider network with 2 parallel R_low (Rh+(Rl+Ra))
+    auto adcVDiv = [](float Rh, float Rl, float Ra) {
+        auto rl = 1 / (1 / Rl + 1 / Ra);
+        return LinearTransform{(Rh + rl) / rl, 0.f};
     };
 
-    ConfFile sensConf{"/littlefs/conf/sensor"};
+    ConfFile sensConf{"/littlefs/conf/sensor.conf"};
 
     if (!sensConf) {
         throw std::runtime_error("no sensor conf");
@@ -101,9 +103,10 @@ void setupSensors() {
         Iin_transform = {sensConf.f("iin_factor"), sensConf.f("iin_midpoint")};
 
 
-    LinearTransform Iout_transform{1, 0};
+    LinearTransform Iout_transform{-1, 0};
 
-    if (!adc->init()) {
+
+    if (!adc->init(pinConf)) {
         ESP_LOGE("main", "Failed to initialize ADC %s", adcName.c_str());
         scan_i2c();
         while (1) {} // trap
@@ -116,7 +119,8 @@ void setupSensors() {
 
     uint16_t iinFiltLen = sensConf.getLong("iin_filt_len");
     uint16_t ioutFiltLen = sensConf.getLong("iout_filt_len");
-    float conversionEfficiency = sensConf.f("conversion_eff");
+    conversionEfficiency = sensConf.f("conversion_eff");
+    assert(conversionEfficiency > 0.5f and conversionEfficiency < 1.0f);
 
     sensors.Vin = adcSampler.addSensor(
             {
@@ -140,7 +144,7 @@ void setupSensors() {
                             false},
                     30.f, iinFiltLen)
                   : adcSampler.addVirtualSensor([&]() {
-                if (std::abs(sensors.Iout->last) < .05f or sensors.Vin->last < 0.1f)
+                if (std::abs(sensors.Iout->last) < .01f or sensors.Vin->last < 0.1f)
                     return 0.f;
                 return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
             }, iinFiltLen);
@@ -172,7 +176,7 @@ void setupSensors() {
 
     adcSampler.ignoreCalibrationConstraints = sensConf.getByte("ignore_calibration_constraints", 0);
 
-    if(adcSampler.ignoreCalibrationConstraints)
+    if (adcSampler.ignoreCalibrationConstraints)
         ESP_LOGW("main", "Skipping ADC range and noise checks.");
 
     mppt.setSensors(sensors);
@@ -196,9 +200,15 @@ void setup() {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
     }
 
-    ConfFile pinConf{"/littlefs/conf/pins"};
+    ConfFile pinConf{"/littlefs/conf/pins.conf"};
 
     if (pinConf) {
+        // TODO
+        /*
+         * [0;32m[I][i2c.arduino:183]: Performing I2C bus recovery[0m
+[1;31m[E][i2c.arduino:199]: Recovery failed: SCL is held LOW on the I2C bus
+         */
+        //*?
         if (!Wire.begin(
                 (uint8_t) pinConf.getLong("i2c_sda"),
                 (uint8_t) pinConf.getLong("i2c_scl"),
@@ -208,7 +218,8 @@ void setup() {
         }
 
 
-        led.begin();
+        led.begin(pinConf);
+
         if (!lcd.init()) {
             ESP_LOGE("main", "Failed to init LCD");
         }
@@ -216,7 +227,7 @@ void setup() {
     }
 
     try {
-        setupSensors();
+        setupSensors(pinConf);
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during sensor setup: %s", er.what());
         //if(adcSampler.adc) delete adcSampler.adc;
@@ -244,8 +255,7 @@ void setup() {
     if (!disableWifi) adcSampler.onNewSample = dcdcDataChanged;
 
 
-
-    mppt.begin();
+    mppt.begin(pinConf);
 
     ESP_LOGI("main", "setup() done.");
 
@@ -277,7 +287,7 @@ void loop() {
     if (adcSampler.adc) {
         auto samplerRet = adcSampler.update();
 
-        if(samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
+        if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
             mppt.shutdownDcdc();
             charging = false;
             delayStartUntil = nowMs + 4000;
@@ -285,7 +295,7 @@ void loop() {
 
         if (samplerRet != ADC_Sampler::UpdateRet::NewData) {
             if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage()) {
-                ESP_LOGW("main", "Board power supply UV!");
+                ESP_LOGW("main", "Board power supply UV %.2f!", mppt.boardPowerSupplyVoltage());
                 adcSampler.cancelCalibration();
             }
 
@@ -297,6 +307,11 @@ void loop() {
             if (!timeLastSampler and nowMs > 20000) {
                 pwm.disable();
                 ESP_LOGE("main", "Never got a sample! Please check ADC");
+                if (nowMs > (1000 * 60 * 15)) {
+                    ESP_LOGW("main", "Rebooting");
+                    ESP.restart();
+                }
+
                 delay(5000);
             }
         } else {
@@ -375,13 +390,13 @@ void loopNewData(unsigned long nowMs) {
 
         if (sps < loopRateMin && !pwm.disabled() && nSamples > 1000 &&
             !manualPwm) { //(nowMs - adcSampler.getTimeLastCalibration()) > 6000)
-            ESP_LOGE("main", "Loop latency too high (%i < %hhu Hz), shutdown!", sps, loopRateMin);
+            ESP_LOGE("main", "Loop latency too high (%lu < %hhu Hz), shutdown!", sps, loopRateMin);
             mppt.shutdownDcdc();
             charging = false;
         }
 
         UART_LOG(
-                "Vi/o=%5.2f/%5.2f Ii/o=%4.1f/%4.1fA Pin=%5.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s,%i) lag=%.1fms N=%u",
+                "Vi/o=%5.2f/%5.2f Ii/o=%4.1f/%5.2fA Pin=%5.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s,%i) lag=%.1fms N=%u",
                 sensors.Vin->last,
                 sensors.Vout->last,
                 sensors.Iin->last,
@@ -552,6 +567,10 @@ bool handleCommand(const String &inp) {
 
     } else if (inp == "scan-i2c") {
         scan_i2c();
+    } else if (inp == "ls") {
+        //list_files();
+        ESP_LOGE("main", "not impl");
+        return false;
     } else {
         ESP_LOGI("main", "unknown or unexpected command");
         return false;
