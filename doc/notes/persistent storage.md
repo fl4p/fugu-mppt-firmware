@@ -1,11 +1,13 @@
 To reduce fragmentation of firmware binaries (having a different binary for each hardware configuration) and to enable
-streamlined OTA updates, we avoid hard-coding GPIO pin numbers, ADC channel numbers, calibration factors and hardware limits (voltage & current).
+streamlined OTA updates, we avoid hard-coding GPIO pin numbers, ADC channel numbers, calibration factors and hardware
+limits (voltage & current).
 We make these adjustable through configuration files
 
 Partitions:
+
 * data: stores metering, daily statistics
 * conf: stores config files (board hw and charger?, wifi)
-* 
+*
 
 # Things that need to be stored
 
@@ -95,6 +97,7 @@ i2c_freq=800000
 ```
 
 sensors
+
 ```
 adc=ina226
 
@@ -118,8 +121,8 @@ conversion_eff=0.97 # TODO does this belong here?
 
 ```
 
-
 eps32 adc1
+
 ```
 adc=esp32adc1
 
@@ -142,7 +145,6 @@ expected_hz=80
 conversion_eff=0.97 # TODO does this belong here?
 
 ```
-
 
 ```
 adc=ads1015
