@@ -24,3 +24,6 @@
 	path = components/FastLED
 	url = https://github.com/FastLED/FastLED
 
+[submodule "components/SimpleFTPServer/SimpleFTPServer"]
+	path = components/SimpleFTPServer/SimpleFTPServer
+	url = https://github.com/xreef/SimpleFTPServer
