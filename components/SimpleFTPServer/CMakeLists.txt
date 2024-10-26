@@ -1,12 +1,12 @@
 idf_component_register(
         SRCS
-        SimpleFTPServer/FtpServer.cpp
+            SimpleFTPServer/FtpServer.cpp
         INCLUDE_DIRS
-        SimpleFTPServer
+            SimpleFTPServer
         REQUIRES
-        #Adafruit_BusIO
-        arduino
-        #arduino-esp32
+            #Adafruit_BusIO
+            arduino
+            #arduino-esp32
 )
 
 #add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -14,11 +14,8 @@ idf_component_register(
 project(SimpleFTPServer)
 
 component_compile_definitions(DEFAULT_STORAGE_TYPE_ESP32=7 DEFAULT_FTP_SERVER_NETWORK_TYPE_ESP32=6)
-#
 
 # add_compile_definitions(STORAGE_TYPE=7 DEFAULT_FTP_SERVER_NETWORK_TYPE_ESP32=6 FTP_SERVER_DEBUG=1)
-
-
 #set_source_files_properties(
 #        ${SOURCES}
 #        PROPERTIES COMPILE_FLAGS "-DLFS_CONFIG=lfs_config.h"
