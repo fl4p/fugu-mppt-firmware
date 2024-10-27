@@ -3,6 +3,14 @@
   <component name="PublishConfigData" serverName="open-pe-web-flasher" remoteFilesAllowedToDisappearOnAutoupload="false" confirmBeforeUploading="false">
     <option name="confirmBeforeUploading" value="false" />
     <serverData>
+      <paths name="fugu 192.168.1.235">
+        <serverdata>
+          <mappings>
+            <mapping deploy="" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/conf" local="$PROJECT_DIR$/provisioning/fmetal" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="open-pe-web-flasher">
         <serverdata>
           <mappings>

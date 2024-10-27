@@ -9,34 +9,32 @@ Instructables.
 The charger uses a simple CC (constant current) and CV (constant voltage) approach.
 This is common for Lithium-Batteries (e.g. LiFePo4).
 
+Highlights:
 * Tested with ESP32 and ESP32-S3
 * Async ADC sampling for low latency control loop
 * Automatic zero-current calibration
-* Can use ESP32/ESP32-S3's internal ADC1 instead of the external ADS1x15 or INA226,
-  see [Internal ADC](doc/Internal%20ADC.md)
+* ADC abstraction layer with implementations for ESP32(S3) [Internal ADC](doc/Internal%20ADC.md), ADS1x15 and INA226/INA228
 * PID control for precise voltage and current regulation
 * Periodic MPPT global search
 * Sophisticated Diode Emulation for low-side switch
-* Anti back-flow (back-feed, ideal diode)
+* Anti back-flow (aka back-feed, ideal diode, panel switch)
 * Battery voltage detection
 * Fast protection shutdown in over-voltage and over-current conditions
 * PWM Fan Control and temperature power limiting, linear de-rating
 * Telemetry to InfluxDB over UDP
 * LCD (hd44780) and WS2812B LED Indicator
-* [Serial UART console](doc/Serial%20Console.md) to interact with the charger
+* [Serial UART console](doc/Serial%20Console.md) and telnet to interact with the charger
 * Unit tests
 
 The firmware sends real-time data to InfluxDB server using UDP line protocol.
 
 The aim of this program is to provide a flexible MPPT and DC/DC converter solution that you can use with various
-hardware
-topologies (e.g. buck & boost, location of current sensor).
-You can configure pins, converter topo and sensors through config files, without the need to rebuild the firmware.
+hardware topologies (e.g. buck & boost, location of current sensor).
+You can configure pins, limits, converter topology and sensors through config files, without the need to rebuild the firmware.
 Access files through FTP or USB Mass Storage Class (MSC, ESP32-S3).
-I tried to structure components in classes so they
-reflect the physical and logical building-blocks of a MPPT solar charger.
+I tried to structure components in classes, so they reflect the physical and logical building-blocks of a MPPT solar charger.
 See [Voltage & Current Sensors, ADC](#Voltage Current Sensors (ADC))
-Feel free to use parts of the code
+Feel free to use parts of the code.
 
 # Hardware References
 
@@ -45,17 +43,18 @@ Feel free to use parts of the code
     * Dual parallel HS switches
     * Snubber circuit for reduced EMI
     * INA226 current sensor
-    * Cheap back-flow switch driving circuit (no isolated DC-DC converter)
 
-# Building
+# Getting Started
 
 You can build with ESP-IDF toolchain using Arduino as a component.
 
 If you want to use PlatformIO, checkout `tag/pio-last`. The PIO build branch is currently not maintained.
+This version works with the original Fugu design. Mind the voltage divider values. ADS1015 and ACS712-30 hall.
 
-## ESP-IDF
 
-Follow the [Get Started guide](https://docs.espressif.com/projects/esp-idf/en/v5.1.4/esp32/get-started/index.html) to
+## Building with ESP-IDF
+
+Follow [Espressif's Get Started guide](https://docs.espressif.com/projects/esp-idf/en/v5.1.4/esp32/get-started/index.html) to
 install ESP-IDF v5.1.4 . The firmware depends on `arduino-esp32` so we can use Arduino libraries.
 Since v3.x `arduino-esp32` is compatible with `esp-idf v5.1` (before we had to use `esp-idf v4.4`).
 To install `esp-idf v5.1.4` you can follow these commands (make sure you have all the prerequisites from
@@ -70,26 +69,23 @@ cd esp-idf-v5.1
  . ./export.sh
 ```
 
-Here's how to build the firmware using ESP-IDF:
+Build the MPPT firmware:
 
 ```
 git clone --recursive https://github.com/fl4p/fugu-mppt-firmware
 cd fugu-mppt-firmware
 idf.py set-target esp32s3 # (or esp32)
 idf.py build
-```
-
-Now you can flash it with
-
-```
 idf.py flash
 ```
 
+## Configuration
+
 IO pins, I2C and sensor config is stored in `.conf` files on the `littlefs` partition.
 This enables easy OTA updates of the firmware across various hardware configurations. And you can easily alter the
-configuration by flashing a new `littlefs` image or with FTP.
+configuration by flashing a new `littlefs` image or by editing the files over FTP.
 
-You find existing configuration in `provisioning/fmetal`, for the [Fugu2 board](https://github.com/fl4p/Fugu2).
+You find existing configuration in [`provisioning/fmetal`](provisioning/fmetal), for the [Fugu2 board](https://github.com/fl4p/Fugu2).
 
 Flash these config files with:
 
@@ -98,28 +94,36 @@ littlefs-python create provisioning/fmetal littlefs.bin -v --fs-size=0x40000 --n
 parttool.py --port /dev/cu.usbserial-1101 write_partition --partition-name littlefs --input littlefs.bin
 ```
 
+Alternatively, in `CMakeLists.txt`, add `FLASH_IN_PROJECT` argument for `littlefs_create_partition_image()`:
+```
+littlefs_create_partition_image(littlefs provisioning/fmetal
+  FLASH_IN_PROJECT
+)
+```
+
+Once you've built and flashed the firmware on the device, use the serial console to connect the chip to your
+Wi-Fi network:
+
+```
+idf.py monitor
+> wifi-add <ssid>:<password>
+> restart
+```
+
+
+If Wi-Fi connection is successful you will be able to connect with telnet and FTP.
+You can send the same commands over telnet as over the [Serial console](doc/Serial%20Console.md).
+
+Use FTP to upload HW configuration files to configure IO pins, ADC and converter topology.
+FTP settings: 1 simultaneous connection, disable passive mode, root path TODO.
+
 ## Configuring Build
 
 * Set environment variable `RUN_TESTS=1` to run unit-tests
-* Set the solar-input voltage divider resistor with `FUGU_HV_DIV`. Original board design uses 5.1k: `FUGU_HV_DIV=5.1`.
-  Defaults to 4.7.
 * `FUGU_BAT_V`: hard-code the battery voltage. If not set the program tries to detect bat voltage from a multiple of
   14.6V.
-* `USE_INTERNAL_ADC` enable fallback to internal ADC
 
-# Getting started
-
-Once you've built and flashed the firmware on the device, use the serial console to connect the chip to your
-wifi network: `wifi-add <ssid>:<secret>`.
-You can then upload HW configuration files to configure IO pins, ADC and converter topology.
-This is currently WIP. I had a hard disk failure and develpment is currently halted.
-You can start at an older commit, without the runtime configuration (HW topology hard coded)
-
-* [tag/idf-working](https://github.com/fl4p/fugu-mppt-firmware/releases/tag/idf-working) (2023-09-09) last known working
-  revision using esp-idf toolchain
-* tag/pio-last: old revision before adding esp-idf.
-  These versions work with the original Fugu design. Mind the voltage divider values. ADS1015 and ACS712-30 hall.
-
+  
 # Control Loop
 
 The control loop reads Vout, Vin, Iin and adjusts the PWM duty cycle of the buck DC-DC converter for MPPT and output

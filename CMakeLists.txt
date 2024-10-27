@@ -5,7 +5,9 @@ project(main)
 
 set (CMAKE_CXX_FLAGS "-fexceptions") # -mfp16-format=ieee
 
-littlefs_create_partition_image(littlefs provisioning/fmetal FLASH_IN_PROJECT)
+littlefs_create_partition_image(littlefs provisioning/fmetal
+#        FLASH_IN_PROJECT
+)
 
 # Instrumentation Profiling TODO
 # -fprofile-arcs

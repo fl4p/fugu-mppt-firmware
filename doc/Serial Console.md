@@ -1,6 +1,6 @@
 # Serial Console
 
-You can send text commands on the UART to interact with the charger while it is running.
+You can send text commands on the UART (or telnet) to interact with the charger while it is running.
 It is also suitable to implement automated tests.
 
 Default baud rate is 115200. Terminate command with `\n` or `\r` (new line).
@@ -13,6 +13,7 @@ OK: <cmd>
 # General Commands
 
 * `wifi on`, `wifi off` disable wifi and telemetry. disabled wifi usually increases the control loop rate.
+* `wifi-add <ssid>:<password>`
 * `restart`: reset the MCU
 * `speed <float>` set tracking speed (default 1.0)
 * `fan <float>` set fan speed 0-100
@@ -21,6 +22,7 @@ OK: <cmd>
 * `+<int>`, `-<int>` manual perturb the buck duty cycle (for testing)
 * `reset-lag`: resets max lag statistic
 * `scan-i2c`: run a i2c bus scan
+* `ota <url>`: download and flash a new app image from a HTTP(S) URL.
 
 # Manual PWM Commands
 

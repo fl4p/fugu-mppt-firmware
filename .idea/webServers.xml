@@ -9,6 +9,14 @@
           </advancedOptions>
         </fileTransfer>
       </webServer>
+      <webServer id="de1e07ff-79a0-43c4-b19d-1292f5a5fdd9" name="fugu 192.168.1.235" url="http://192.168.1.235">
+        <fileTransfer host="192.168.1.235" port="21">
+          <advancedOptions>
+            <advancedOptions compatibilityMode="true" dataProtectionLevel="Private" forceListCommand="true" keepAliveTimeout="0" connections="1" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+        <option name="numberOfConnections" value="1" />
+      </webServer>
     </option>
   </component>
 </project>
