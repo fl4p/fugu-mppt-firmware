@@ -8,7 +8,7 @@
 
 /**
  * Drives the backflow switch
- * aka anti-back-feed, ideal diode
+ * aka anti-back-feed, ideal diode, panel switch)
  */
 class BackflowDriver {
     bool _state = false;

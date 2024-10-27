@@ -44,6 +44,9 @@ public:
 
     float read() {
         //auto adc = analogRead((uint8_t) PinConfig::NTC);
+        if(ch == adc1_channel_t::ADC1_CHANNEL_MAX)
+            return NAN;
+
         auto adc = adc1_get_raw(ch);
 
         // ESP_LOGI("temp", "ADC_RAW=%i", adc);

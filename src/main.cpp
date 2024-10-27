@@ -101,7 +101,7 @@ void setupSensors(const ConfFile &pinConf) {
         Iin_transform = {sensConf.f("iin_factor"), sensConf.f("iin_midpoint")};
 
 
-    LinearTransform Iout_transform{-1, 0};
+    LinearTransform Iout_transform{sensConf.f("iout_factor",1.f), 0};
 
 
     if (!adc->init(pinConf)) {
@@ -125,10 +125,10 @@ void setupSensors(const ConfFile &pinConf) {
                     Vin_ch,
                     Vin_transform,
 
-                    {80, 1.8f, false},
+                    {lim.Vin_max, 1.8f, false},
                     "U_in_raw",
                     true},
-            80.f, 60);
+            lim.Vin_max, 60);
 
 
     sensors.Iin = (Iin_ch != 255)
@@ -137,10 +137,10 @@ void setupSensors(const ConfFile &pinConf) {
                             Iin_ch,
                             Iin_transform,
 
-                            {.5f, .1f, true},
+                            {lim.Iin_max * 0.05f, .1f, true},
                             "I_raw",
                             false},
-                    30.f, iinFiltLen)
+                    lim.Iin_max, iinFiltLen)
                   : adcSampler.addVirtualSensor([&]() {
                 if (std::abs(sensors.Iout->last) < .01f or sensors.Vin->last < 0.1f)
                     return 0.f;
@@ -153,10 +153,10 @@ void setupSensors(const ConfFile &pinConf) {
                     {
                             Iout_ch,
                             Iout_transform,
-                            {2.0f, .1f, true},
+                            {lim.Iout_max * 0.05f, .1f, true},
                             "Io",
                             true},
-                    30.f, ioutFiltLen)
+                    lim.Iout_max, ioutFiltLen)
                    : adcSampler.addVirtualSensor([&]() {
                 if (std::abs(sensors.Iin->last) < .05f or sensors.Vout->last < 0.1f)
                     return 0.f;
@@ -167,10 +167,10 @@ void setupSensors(const ConfFile &pinConf) {
     sensors.Vout = adcSampler.addSensor(
             {Vout_ch,
              Vout_transform,
-             {60, .7f, false},
+             {lim.Vout_max, .7f, false},
              "U_out_raw",
              true},
-            60.f, 60);
+            lim.Vout_max, 60);
 
     adcSampler.ignoreCalibrationConstraints = sensConf.getByte("ignore_calibration_constraints", 0);
 
@@ -185,6 +185,7 @@ void setupSensors(const ConfFile &pinConf) {
 void setup() {
 
     Serial.begin(115200);
+    //esp_usb_console_init();
 
 #if CONFIG_IDF_TARGET_ESP32S3 and !CONFIG_ESP_CONSOLE_UART_DEFAULT
     // for unknown reason need to initialize uart0 for serial reading (see loop below)
@@ -227,8 +228,15 @@ void setup() {
         lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION "\n" __DATE__ " " __TIME__, 2000);
     }
 
+    Limits lim{};
     try {
-        setupSensors(pinConf);
+        lim = Limits{ConfFile{"/littlefs/conf/limits.conf"}};
+    } catch (const std::runtime_error &er) {
+        ESP_LOGE("main", "error reading limits.conf: %s", er.what());
+    }
+
+    try {
+        setupSensors(pinConf, lim);
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during sensor setup: %s", er.what());
         //if(adcSampler.adc) delete adcSampler.adc;
