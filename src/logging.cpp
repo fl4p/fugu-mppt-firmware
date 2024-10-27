@@ -5,26 +5,50 @@
 struct AsyncLogEntry {
     char *str;
     uint16_t len;
+    bool telnetOnly = false;
 };
 static std::deque<AsyncLogEntry> uart_async_log_queue;
 
 ESPTelnet *log_telnet = nullptr;
 
+vprintf_like_t old_vprintf = &vprintf;
+
+void enqueue_telnet_log(const char *s, int len) {
+    auto buf = new char[len+1];
+    strncpy(buf, s, len+1);
+    uart_async_log_queue.emplace_back(AsyncLogEntry{buf, (uint16_t )len, true});
+}
+
+void enqueue_telnet_log(const char *fmt, const va_list &args) {
+    auto buf = new char[200];
+    auto len = vsnprintf(buf, 200, fmt, args);
+    uart_async_log_queue.emplace_back(AsyncLogEntry{buf, (uint16_t )len, true});
+}
+
 void UART_LOG(const char *fmt, ...) {
-    static char UART_LOG_buf[384];
+    //static char UART_LOG_buf[384];
 
     va_list args;
     va_start(args, fmt);
-    vsnprintf(UART_LOG_buf, 380, fmt, args);
-    va_end(args);
-    auto l = strlen(UART_LOG_buf);
-    UART_LOG_buf[l] = '\n';
-    UART_LOG_buf[++l] = '\0';
-    uart_write_bytes(0, UART_LOG_buf, l);
+    old_vprintf(fmt, args);
+    //auto l = vsnprintf(UART_LOG_buf, 380, fmt, args);
 
-    // TODO async
-    if (log_telnet && log_telnet->isConnected())
-        log_telnet->write((uint8_t *) UART_LOG_buf, l);
+    if (log_telnet) {
+        // log_telnet->write((uint8_t *) UART_LOG_buf, l);
+        //enqueue_telnet_log(UART_LOG_buf, l);
+        enqueue_telnet_log(fmt, args);
+    }
+
+    va_end(args);
+    //if(l <= 0)
+    //    return;
+
+    //UART_LOG_buf[l] = '\n';
+   // UART_LOG_buf[++l] = '\0';
+    //uart_write_bytes(0, UART_LOG_buf, l);
+
+    //old_vprintf(UART_LOG_buf, nullptr);
+
 
 }
 
@@ -41,7 +65,7 @@ void UART_LOG_ASYNC(const char *fmt, ...) {
     buf[l] = '\n';
     buf[++l] = '\0';
 
-    uart_async_log_queue.emplace_back(AsyncLogEntry{buf, l});
+    uart_async_log_queue.emplace_back(AsyncLogEntry{buf, l, false});
 
     if (uart_async_log_queue.size() > 200) {
         delete[] uart_async_log_queue.front().str;
@@ -52,9 +76,14 @@ void UART_LOG_ASYNC(const char *fmt, ...) {
 void flush_async_uart_log() {
     while (!uart_async_log_queue.empty()) {
         auto entry = uart_async_log_queue.front();
-        uart_write_bytes(0, entry.str, entry.len);
 
-        if (log_telnet && log_telnet->isConnected())
+        if(!entry.telnetOnly) {
+            va_list l{};
+            old_vprintf(entry.str, l);
+        }
+            //uart_write_bytes(0, entry.str, entry.len);
+
+        if (log_telnet)
             log_telnet->write((uint8_t *) entry.str, entry.len);
 
         delete[] entry.str;
@@ -62,7 +91,7 @@ void flush_async_uart_log() {
     }
 }
 
-vprintf_like_t old_vprintf = nullptr;
+
 
 
 int vprintf_telnet(const char *fmt, va_list argptr) {
@@ -70,10 +99,12 @@ int vprintf_telnet(const char *fmt, va_list argptr) {
 
     int r = old_vprintf(fmt, argptr);
 
-    if (log_telnet && log_telnet->isConnected()) {
+    if (log_telnet) {
         int l = vsnprintf(loc_buf, sizeof(loc_buf), fmt, argptr);
-        if (l > 0) // TODO async
-            log_telnet->write((uint8_t *) loc_buf, l);
+        if (l > 0) {
+            enqueue_telnet_log(loc_buf, l);
+            //log_telnet->write((uint8_t *) loc_buf, l);
+        }
     }
 
     return r;
