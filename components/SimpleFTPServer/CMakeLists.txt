@@ -13,7 +13,13 @@ idf_component_register(
 
 project(SimpleFTPServer)
 
-component_compile_definitions(DEFAULT_STORAGE_TYPE_ESP32=7 DEFAULT_FTP_SERVER_NETWORK_TYPE_ESP32=6)
+component_compile_definitions(
+    DEFAULT_STORAGE_TYPE_ESP32=7
+    DEFAULT_FTP_SERVER_NETWORK_TYPE_ESP32=6
+)
+
+
+component_compile_options(-Wno-error=address) # https://github.com/xreef/SimpleFTPServer/issues/71
 
 # add_compile_definitions(STORAGE_TYPE=7 DEFAULT_FTP_SERVER_NETWORK_TYPE_ESP32=6 FTP_SERVER_DEBUG=1)
 #set_source_files_properties(

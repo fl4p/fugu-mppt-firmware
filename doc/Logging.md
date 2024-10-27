@@ -5,6 +5,7 @@ UART_LOG(...)
 UART_LOG_ASYNC(...)
 
 ESP_LOGX(...)
+    uses esp_log_write (which writes to UART0 *AND* USB!)
 
 // set custom log print function:
 esp_log_set_vprintf() 
