@@ -203,6 +203,8 @@ public:
         calibrating_ = realSensors.size();
         for (auto &ch: sensors) {
             ch->reset(true);
+            if(!ch->isVirtual)
+                adc->reset(ch->params.adcCh);
         }
     }
 

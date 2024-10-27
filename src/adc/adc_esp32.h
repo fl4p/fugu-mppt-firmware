@@ -113,3 +113,51 @@ public:
         return raw2V(raw);
     }
 };
+
+
+class ADC_Fake : public AsyncADC<float> {
+    /**
+     * ch0: const 0
+     * ch1: const 1
+     * ch2: 2 + sin(a*t) if t > 2s else 0
+     */
+public:
+    uint8_t readingChannel = 0;
+private:
+
+    std::array<unsigned long, 4> resetTimes;
+
+public:
+    bool init(const ConfFile &pinConf) override {
+        return true;
+    }
+
+    void startReading(uint8_t channel) override { readingChannel = channel; }
+
+    bool hasData() override { return true; }
+
+    void setMaxExpectedVoltage(uint8_t ch, float voltage) override {}
+
+
+    float getSample() override {
+        if(readingChannel == 0) {
+            return 0;
+        } else if(readingChannel == 1) {
+            return 1;
+        } else if(readingChannel == 2) {
+            auto t = millis() - resetTimes[readingChannel];
+            if(t > 2000) {
+                return 2.0f + sinf((float)t / 10e3f);
+            } else {
+                return 0.0f;
+            }
+        }
+        return NAN;
+    }
+
+    float getInputImpedance(uint8_t ch) override { return 100e3; }
+
+    void reset(const uint8_t ch) override {
+        resetTimes[ch] = millis();
+    }
+};

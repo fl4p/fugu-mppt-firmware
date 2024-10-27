@@ -22,4 +22,7 @@ public:
 
     virtual float getInputImpedance(uint8_t ch) = 0;
 
+    virtual void reset(const uint8_t ch) {
+
+    }
 };

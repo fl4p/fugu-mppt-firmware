@@ -69,6 +69,8 @@ void setupSensors(const ConfFile &pinConf) {
         adc = new ADC_INA226();
     } else if (adcName == "esp32adc1") {
         adc = new ADC_ESP32();
+    } else if (adcName == "fake") {
+        adc = new ADC_Fake();
     } else {
         ESP_LOGE("main", "Unknown ADC %s", adcName.c_str());
         assert(false);
