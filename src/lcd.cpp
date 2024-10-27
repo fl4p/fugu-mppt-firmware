@@ -1,11 +1,14 @@
+#include "logging.h"
+
 #include <array>
+#include <string>
+#include <sstream>
+
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
 #include "lcd.h"
-#include "version.h"
-#include <sstream>
-#include <string>
+
 
 const char *TAG = "LCD";
 
@@ -109,7 +112,7 @@ void LCD::displayMessageF(const std::string &msg, uint16_t timeoutMs, ...) {
 void LCD::periodicInit() {
     auto now = millis();
 
-    if(!lcd)
+    if (!lcd)
         return;
 
     if (lastInit && lastInit + (60000ul * 5ul) > now)

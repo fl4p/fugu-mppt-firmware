@@ -73,6 +73,7 @@ void fanUpdateTemp(float temp, float power) {
     }
 }
 
+/*
 float thermalPowerLimit(float ntcTemp) {
     float powerLimit = std::numeric_limits<float>::max();
 
@@ -89,4 +90,5 @@ float thermalPowerLimit(float ntcTemp) {
 
     return powerLimit;
 }
+ */
 

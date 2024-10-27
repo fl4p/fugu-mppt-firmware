@@ -19,11 +19,12 @@ class BatteryCharger {
 
     unsigned long timeTopUntil = 0; // charger
 
-    const BatChargerParams &params;
+
 
 public:
+    BatChargerParams params {};
 
-    explicit BatteryCharger(const BatChargerParams &params) : params{params} {
+    explicit BatteryCharger()  {
     }
 
     float getToppingCurrent(float Vout) {

@@ -22,6 +22,9 @@ class float16
     float16(void)               { _value = 0x0000; };
     float16(double f);
     float16(const float16 &f)   { _value = f._value; };
+    float16 & operator=(const float16 &f) = default;
+
+    //constexpr float16 & operator=(const float16 &f) = constexpr default; //   { return float16(f); };
 
     // Conversion
     float   toFloat(void) const;

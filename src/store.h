@@ -270,7 +270,7 @@ class ConfFile {
     std::unordered_map<std::string, std::string> _map;
     const char *path;
 public:
-    explicit ConfFile(const char *path) : path(path) {
+    explicit ConfFile(const char *path, bool no_warn_if_not_open=false) : path(path) {
         std::ifstream file(path);
         if (file.is_open()) {
             std::string line;
@@ -295,7 +295,9 @@ public:
             }
             file.close();
         } else {
-            ESP_LOGW(TAG, "cannot read ConfFile %s", path);
+            if(!no_warn_if_not_open) {
+                ESP_LOGW(TAG, "cannot read ConfFile %s", path);
+            }
         }
     }
 

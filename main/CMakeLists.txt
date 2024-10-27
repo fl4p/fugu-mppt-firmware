@@ -12,11 +12,15 @@ endif ()
 
 idf_component_register(SRCS
         ${MAIN_SRC}
+        "../src/logging.cpp"
         #"../src/main2.cpp"
         "../src/lcd.cpp"
         "../src/web/server.cpp"
         "../src/math/float16.cpp"
-        INCLUDE_DIRS "." "../src")
+        INCLUDE_DIRS "." "../src"
+        REQUIRES
+        # NetworkClientSecure # OTA
+)
 
 
 # FUGU_HV_DIV

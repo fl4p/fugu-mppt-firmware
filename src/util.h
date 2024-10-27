@@ -39,48 +39,4 @@ void scan_i2c() {
 }
 
 
-void UART_LOG(const char *fmt, ...) {
-    static char UART_LOG_buf[384];
 
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(UART_LOG_buf, 380, fmt, args);
-    va_end(args);
-    auto l = strlen(UART_LOG_buf);
-    UART_LOG_buf[l] = '\n';
-    UART_LOG_buf[++l] = '\0';
-    uart_write_bytes(0, UART_LOG_buf, l);
-}
-
-struct AsyncLogEntry {char *str; uint16_t len; };
-std::deque<AsyncLogEntry> uart_async_log_queue;
-
-void UART_LOG_ASYNC(const char *fmt, ...) {
-
-    auto buf = new char[384];
-
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, 380, fmt, args);
-    va_end(args);
-    auto l = (uint16_t)strlen(buf);
-    buf[l] = '\n';
-    buf[++l] = '\0';
-
-    uart_async_log_queue.emplace_back(AsyncLogEntry{buf,l});
-
-    if(uart_async_log_queue.size() > 200) {
-        delete[] uart_async_log_queue.front().str;
-        uart_async_log_queue.pop_front();
-    }
-}
-
-
-void flush_async_uart_log() {
-    while(!uart_async_log_queue.empty()) {
-        auto entry = uart_async_log_queue.front();
-        uart_write_bytes(0, entry.str, entry.len);
-        delete[] entry.str;
-        uart_async_log_queue.pop_front();
-    }
-}

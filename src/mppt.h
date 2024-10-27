@@ -16,6 +16,47 @@
 #include "metering.h"
 #include "charger.h"
 
+struct Limits {
+    const float Vin_max{};
+    const float Vin_min{};
+
+    const float Vout_max{};
+
+    const float Iin_max{};
+    const float Iout_max{};
+
+    const float P_max{};
+
+    const float Temp_max{};
+
+    const float Temp_derate{};
+
+
+    explicit Limits(const ConfFile &limits)
+            : Vin_max(limits.getFloat("vin_max")), Vin_min(limits.getFloat("vin_min")),
+              Vout_max(limits.getFloat("vout_max")),
+              Iin_max(limits.getFloat("iin_max")), Iout_max(limits.getFloat("iout_max")),
+              P_max(limits.getFloat("p_max")), Temp_max(limits.getFloat("temp_max")), Temp_derate(limits.getFloat("temp_derate")) {
+        assert(Vin_max > Vin_min);
+        assert(Vin_max * Iin_max > P_max);
+        assert(Vin_max * Iin_max < P_max * 4);
+    }
+
+    Limits() = default;
+
+    Limits(const Limits &lim) = default;
+
+    Limits &operator=(const Limits &right) {
+        if (this == &right) return *this;
+        this->~Limits();
+        new(this) Limits(right);
+        return *this;
+    }
+
+    //Limits &operator=(const Limits& other) = default;
+
+};
+
 
 struct MpptParams : public BatChargerParams {
     float Vin_max = 80.f;
@@ -95,7 +136,8 @@ class MpptController {
 
     uint8_t ledPinSimple = 255;
 public:
-    MpptParams params;
+    //MpptParams params;
+    Limits limits{};
     BatteryCharger charger;
     BackflowDriver bflow{};
     SolarEnergyMeter meter{};
@@ -103,8 +145,8 @@ public:
     float speedScale = 1;
 
     explicit MpptController(ADC_Sampler &dcdcPwr, SynchronousBuck &pwm, LCD &lcd)
-            : dcdcPwr(dcdcPwr), buck(pwm), lcd(lcd), params{},
-              charger{params} {
+            : dcdcPwr(dcdcPwr), buck(pwm), lcd(lcd),
+              charger{} {
     }
 
     void setSensors(const VIinVout<const ADC_Sampler::Sensor *> &channels_) {
@@ -122,11 +164,13 @@ public:
         if (sensorPhysicalU->isVirtual) throw std::runtime_error("no physical U sensor");
     }
 
-    void begin(const ConfFile &pinConf) {
+    void begin(const ConfFile &pinConf, const Limits &limits_) {
+        limits = limits_;
+
         ntc.begin(pinConf);
 
         ledPinSimple = pinConf.getByte("led_simple", 255);
-        if(ledPinSimple != 255) {
+        if (ledPinSimple != 255) {
             pinMode(ledPinSimple, OUTPUT);
             digitalWrite(ledPinSimple, false);
         }
@@ -186,7 +230,7 @@ public:
 
         // detect battery voltage
         // TODO move this to charger ?
-        if (std::isnan(params.Vout_max)) {
+        if (std::isnan(charger.params.Vout_max)) {
             auto vout = sensors.Vout->calibrationAvg;
             float detectedVout_max = detectMaxBatteryVoltage(vout);
             if (std::isnan(detectedVout_max)) {
@@ -196,21 +240,21 @@ public:
                 return false;
             } else {
                 ESP_LOGI("mppt", "Detected max battery voltage %.2fV (from Vout=%.2fV)", detectedVout_max, vout);
-                params.Vout_max = detectedVout_max;
+                charger.params.Vout_max = min(limits.Vout_max, detectedVout_max);
             }
         }
 
 
         // input over-voltage
-        if (sensors.Vin->last > params.Vin_max) {
+        if (sensors.Vin->last > limits.Vin_max) {
             // input over-voltage
-            ESP_LOGW("mppt", "Vin %.1f > %.1f!", sensors.Vin->last, params.Vin_max);
+            ESP_LOGW("mppt", "Vin %.1f > %.1f!", sensors.Vin->last, limits.Vin_max);
             shutdownDcdc();
             return false;
         }
 
         // output over-voltage
-        auto ovTh = params.Vout_max * 1.08;
+        auto ovTh = limits.Vout_max * 1.08;
         //if (adcSampler.med3.s.chVout.get() > ovTh) {
         if (sensors.Vout->last > ovTh && sensors.Vout->previous > ovTh) {
             bool wasDisabled = buck.disabled();
@@ -222,12 +266,12 @@ public:
                 ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,buck=%hu) > %.1fV + 8%%!",
                          vout,
                          sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.std.get(), buck.getBuckDutyCycle(),
-                         params.Vout_max);
+                         limits.Vout_max);
 
 
             if (autoDetectVout_max && millis() - lastTimeProtectPassed > 20000) {
                 // if the OV condition persists for some seconds, auto-detect Vout_max
-                params.Vout_max = NAN;
+                charger.params.Vout_max = NAN;
                 dcdcPwr.startCalibration();
             }
 
@@ -238,7 +282,7 @@ public:
 
 
         // input over current
-        if (sensors.Iin->last / params.Iin_max > 1.5) {
+        if (sensors.Iin->last / limits.Iin_max > 1.5) {
             shutdownDcdc();
             ESP_LOGW("mppt", "Input current %.1f 50%% above limit (Iout=%.1f, Vin=%.2f), shutdown", sensors.Iin->last,
                      sensors.Iout->last, sensors.Vin->last);
@@ -246,9 +290,9 @@ public:
         }
 
         // input over current
-        if (sensors.Iout->last / params.Iout_max > 1.25 or sensors.Iout->ewm.avg.get() > (params.Iout_max + 5)) {
+        if (sensors.Iout->last / limits.Iout_max > 1.25 or sensors.Iout->ewm.avg.get() > (limits.Iout_max + 5)) {
             shutdownDcdc();
-            ESP_LOGW("mppt", "Output Current %.2f above limit %.2f, shutdown", sensors.Iout->last, params.Iout_max);
+            ESP_LOGW("mppt", "Output Current %.2f above limit %.2f, shutdown", sensors.Iout->last, limits.Iout_max);
             return false;
         }
 
@@ -299,7 +343,7 @@ public:
             bflow.enable(false); // low current
         }
 
-        if (ntc.last() > 95) {
+        if (ntc.last() > limits.Temp_max) {
             ESP_LOGE("MPPT", "Temp %.1f°C > 95°C, shutdown", ntc.last());
             return false;
         }
@@ -462,10 +506,18 @@ public:
         const float ntcTemp = ntc.last();
         fanUpdateTemp(ntcTemp, power_smooth);
 
-        float powerLimit = std::min(thermalPowerLimit(ntcTemp), params.P_max);
+        float powerLimit = limits.P_max;
+        if (ntcTemp > limits.Temp_derate) {
+            auto powerScale = (limits.Temp_max - ntcTemp) / (limits.Temp_max - limits.Temp_derate);
+            assert(powerScale < 1);
+            if (powerScale < 0) powerScale = 0;
+            powerLimit = limits.P_max * powerScale;
+        }
+
+        //float powerLimit = std::min(thermalPowerLimit(ntcTemp), limits.P_max);
 
         // topping current
-        float Iout_max = charger.getToppingCurrent(::sensors.Vout->ewm.avg.get());
+        float Iout_max = limits.Iout_max; //charger.getToppingCurrent(::sensors.Vout->ewm.avg.get());
 
         // periodic sweep / scan
         if (!_sweeping /*&& power_smooth < 30*/ && (nowMs - dcdcPwr.getTimeLastCalibration()) > (20 * 60000)) {
@@ -497,9 +549,9 @@ public:
         constexpr auto CV = MpptControlMode::CV, CC = MpptControlMode::CC, CP = MpptControlMode::CP;
 
         std::array<CVP, 5> controlValues{
-                CVP{CV, VinController, {sensors.Vin->med3.get(), params.Vin_min}},
-                CVP{CV, VoutController, {sensors.Vout->last, params.Vout_max}},
-                CVP{CC, IinController, {sensors.Iin->med3.get(), params.Iin_max}},
+                CVP{CV, VinController, {sensors.Vin->med3.get(), limits.Vin_min}},
+                CVP{CV, VoutController, {sensors.Vout->last, charger.params.Vout_max}},
+                CVP{CC, IinController, {sensors.Iin->med3.get(), limits.Iin_max}},
                 CVP{CC, IoutCurrentController, {sensors.Iout->med3.get(), Iout_max}},
                 CVP{CP, powerController, {power_smooth, powerLimit}},
                 //CVP{CC, LoadRegulationCTRL, {sensors.Iout->last, Iout_max * 1.5f}},
@@ -665,7 +717,7 @@ public:
         buck.enableLowSide(aboveThres);
 
 
-        if(ledPinSimple != 255) {
+        if (ledPinSimple != 255) {
             bool ledState = (I_phys_smooth > 0.2f && controlMode == MpptControlMode::MPPT && controlValue > 0);
             digitalWrite(ledPinSimple, ledState);
         }

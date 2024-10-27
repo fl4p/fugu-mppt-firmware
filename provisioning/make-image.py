@@ -5,7 +5,7 @@ littlefs-python list --block-size 128 conf.bin
 
 parttool.py --port /dev/cu.usbserial-1101 write_partition --partition-name littlefs --input conf.bin
 
-littlefs-python create provisioning/fmetal littlefs.bin -v --fs-size=0x40000 --name-max=64 --block-size=4096 && parttool.py --port /dev/cu.usbserial-1101 write_partition --partition-name littlefs --input littlefs.bin
+littlefs-python create provisioning/fmetal littlefs.bin -v --fs-size=0x20000 --name-max=64 --block-size=4096 && parttool.py --port /dev/cu.usbserial-1101 write_partition --partition-name littlefs --input littlefs.bin
 
 """
 from littlefs import LittleFS

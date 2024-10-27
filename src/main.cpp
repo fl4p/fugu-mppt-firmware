@@ -1,28 +1,26 @@
+#include "logging.h"
+
+#include <hal/uart_types.h>
+#include <driver/uart.h>
+#include <driver/gpio.h>
+
 #include <Arduino.h>
+#include <Wire.h>
 
 #include "adc/adc.h"
 #include "adc/ads.h"
 #include "adc/adc_esp32.h"
 #include "adc/ina226.h"
-
 #include "adc/sampling.h"
 #include "buck.h"
 #include "mppt.h"
 #include "util.h"
 #include "telemetry.h"
-
-#include <Wire.h>
-#include <hal/uart_types.h>
-
-#include "pinconfig.h"
 #include "version.h"
 #include "lcd.h"
 #include "led.h"
+#include "ota.h"
 
-#include "freertos/FreeRTOS.h"
-#include "driver/uart.h"
-#include "driver/gpio.h"
-#include "esp_log.h"
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
 SynchronousBuck pwm;
@@ -185,6 +183,7 @@ void setupSensors(const ConfFile &pinConf) {
 
 
 void setup() {
+
     Serial.begin(115200);
 
 #if CONFIG_IDF_TARGET_ESP32S3 and !CONFIG_ESP_CONSOLE_UART_DEFAULT
@@ -193,6 +192,8 @@ void setup() {
     // so we access the uart port directly. on ESP32 the Serial.begin() is sufficient (since it uses the uart0)
     uartInit(0);
 #endif
+
+    enable_esp_log_to_telnet();
 
     ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
 
@@ -247,15 +248,18 @@ void setup() {
                 res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
     }
 
+    if (!disableWifi) adcSampler.onNewSample = dcdcDataChanged;
+
 
     if (!pwm.init()) {
         ESP_LOGE("main", "Failed to init half bridge");
     }
 
-    if (!disableWifi) adcSampler.onNewSample = dcdcDataChanged;
-
-
-    mppt.begin(pinConf);
+    try {
+        mppt.begin(pinConf, Limits{ConfFile{"/littlefs/conf/limits.conf"}});
+    } catch (const std::runtime_error &er) {
+        ESP_LOGE("main", "error during mppt setup: %s", er.what());
+    }
 
     ESP_LOGI("main", "setup() done.");
 
@@ -396,7 +400,8 @@ void loopNewData(unsigned long nowMs) {
         }
 
         UART_LOG(
-                "Vi/o=%5.2f/%5.2f Ii/o=%4.1f/%5.2fA Pin=%5.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu MPPT(st=%5s,%i) lag=%.1fms N=%u",
+                "V=%5.2f/%5.2f I=%4.1f/%5.2fA %5.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu"
+                " MPPT(st=%5s,%i) lag=%.1fms N=%u rssi=%hi",
                 sensors.Vin->last,
                 sensors.Vout->last,
                 sensors.Iin->last,
@@ -414,7 +419,8 @@ void loopNewData(unsigned long nowMs) {
                              : MpptState2String[(uint8_t) mppt.getState()].c_str()),
                 (int) charging,
                 maxLoopLag * 1e-3f,
-                nSamples
+                nSamples,
+                WiFi.RSSI()
         );
         lastTimeOut = nowMs;
         lastNSamples = nSamples;
@@ -423,7 +429,7 @@ void loopNewData(unsigned long nowMs) {
             mppt.meter.update(); // always update the meter
 
         if (manualPwm) {
-            uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.params.P_max * 255, 1, 255);
+            uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.limits.P_max * 255, 1, 255);
             led.setRGB(0, i, i);
         } else if (!charging) {
             led.setHexShort(sensors.Vout->last > sensors.Vin->last ? 0x100 : 0x300);
@@ -571,6 +577,10 @@ bool handleCommand(const String &inp) {
         //list_files();
         ESP_LOGE("main", "not impl");
         return false;
+    } else if (inp.startsWith("ota ")) {
+        auto url = inp.substring(4);
+        doOta(url);
+        return true;
     } else {
         ESP_LOGI("main", "unknown or unexpected command");
         return false;

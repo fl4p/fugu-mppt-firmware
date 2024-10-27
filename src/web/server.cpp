@@ -1,3 +1,5 @@
+#include "logging.h"
+
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WebServer.h>

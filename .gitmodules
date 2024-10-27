@@ -27,3 +27,6 @@
 [submodule "components/SimpleFTPServer/SimpleFTPServer"]
 	path = components/SimpleFTPServer/SimpleFTPServer
 	url = https://github.com/xreef/SimpleFTPServer
+[submodule "components/ESPTelnet/ESPTelnet"]
+	path = components/ESPTelnet/ESPTelnet
+	url = https://github.com/LennartHennigs/ESPTelnet

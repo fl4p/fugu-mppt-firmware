@@ -15,6 +15,7 @@
 //#include <Preferences.h>
 
 #include <SimpleFTPServer.h>
+#include <ESPTelnet.h>
 
 WiFiMulti wifiMulti;
 //WiFiUDP udp;
@@ -22,9 +23,14 @@ AsyncUDP asyncUdp;
 
 FtpServer ftpSrv;
 
+ESPTelnet telnet;
+
+
+void setupTelnet();
 
 void ftpUpdate() {
     ftpSrv.handleFTP();
+    telnet.loop();
 }
 
 void _callback(FtpOperation ftpOperation, unsigned int freeSpace, unsigned int totalSpace) {
@@ -95,7 +101,7 @@ uint64_t bytesSent = 0;
 bool noSsid = true;
 
 void wifi_load_conf() {
-    ConfFile wifiConf{"/littlefs/conf/wifi"};
+    ConfFile wifiConf{"/littlefs/conf/wifi.conf"};
 
     auto starts_with = [](const std::string &s, const std::string &t) { return s.substr(0, t.length()) == t; };
     auto ends_with = [](const std::string &s, const std::string &t) { return s.substr(s.length() - t.length()) == t; };
@@ -116,10 +122,12 @@ void wifi_load_conf() {
 }
 
 void add_ap(const std::string &ssid, const std::string &psk) {
-    ConfFile wifiConf{"/littlefs/conf/wifi"};
+    auto confPath = "/littlefs/conf/wifi.conf";
+    ConfFile wifiConf{confPath, true};
     wifiConf.add({
                          {"ssid_" + ssid,          ssid},
                          {"ssid_" + ssid + "_psk", psk.c_str()}});
+    ESP_LOGI("tele", "Added Wifi AP %s to %s", ssid.c_str(), confPath);
 }
 
 void connect_wifi_async() {
@@ -152,6 +160,10 @@ bool timeSyncAsync(const char *tzInfo, const char *ntpServer1, const char *ntpSe
     return false;
 }
 
+std::string getHostname() {
+    return "fugu-" + std::string(getChipId());
+}
+
 void _wifiConnected() {
     if(!WiFi.isConnected()) return;
 
@@ -161,7 +173,7 @@ void _wifiConnected() {
         }
     }
 
-    String hostname = "fugu-" + String(getChipId());
+    String hostname = String(getHostname().c_str());
 
     if (!MDNS.begin(hostname.c_str())) { // abc.local
         ESP_LOGE("tele", "Error setting up MDNS responder!");
@@ -172,6 +184,7 @@ void _wifiConnected() {
     ha_host = MDNS.queryHost("homeassistant.local");
     ESP_LOGI("tele", "resolved to %s", ha_host.toString().c_str());
 
+    setupTelnet();
     webserver_begin();
     ftpBegin();
 }
@@ -301,4 +314,43 @@ void dcdcDataChanged(const ADC_Sampler &dcdc, const ADC_Sampler::Sensor &sensor)
     }
 }
 
+void onTelnetConnect(String ip) {
+    ESP_LOGI("telnet", "Client %s connected", ip.c_str() );
+    telnet.println("\nWelcome to " + String(getHostname().c_str()) + " (" + telnet.getIP() + ")");
+    telnet.println("(Use ^] + q  to disconnect.)");
 
+    set_logging_telnet(&telnet);
+}
+
+void onTelnetDisconnect(String ip) {
+    set_logging_telnet(nullptr);
+    ESP_LOGI("telnet", "Client %s disconnected", ip.c_str() );
+}
+
+bool handleCommand(const String &inp);
+
+void setupTelnet() {
+    // passing on functions for various telnet events
+    telnet.onConnect(onTelnetConnect);
+    //telnet.onConnectionAttempt(onTelnetConnectionAttempt);
+    //telnet.onReconnect(onTelnetReconnect);
+    telnet.onDisconnect(onTelnetDisconnect);
+
+    // passing a lambda function
+    telnet.onInputReceived([](String str) {
+        // checks for a certain command
+        if (str == "ping") {
+            telnet.println("> pong");
+            Serial.println("- Telnet: pong");
+        } else {
+            handleCommand(str);
+        }
+    });
+
+    Serial.print("- Telnet: ");
+    if (telnet.begin()) {
+        ESP_LOGI("tele", "Telnet server running.");
+    } else {
+        ESP_LOGE("tele", "Telnet server start error");
+    }
+}
