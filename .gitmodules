@@ -30,3 +30,6 @@
 [submodule "components/ESPTelnet/ESPTelnet"]
 	path = components/ESPTelnet/ESPTelnet
 	url = https://github.com/LennartHennigs/ESPTelnet
+[submodule "components/esp32-semihosting-profiler/esp32-semihosting-profiler"]
+	path = components/esp32-semihosting-profiler/esp32-semihosting-profiler
+	url = https://github.com/LiluSoft/esp32-semihosting-profiler
