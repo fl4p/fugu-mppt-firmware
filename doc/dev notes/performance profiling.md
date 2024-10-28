@@ -34,6 +34,9 @@ python3 ../components/esp32-semihosting-profiler/sprofiler.py
 * CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
 * FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER ((Top) → Component config → FreeRTOS → Port → Choose the clock source for run time stats)
 
+https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/app_trace.html#app-trace-system-behaviour-analysis-with-segger-systemview
+
+
 
 # sdkconfig
 * CONFIG_ESP_EVENT_LOOP_PROFILING

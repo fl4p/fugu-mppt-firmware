@@ -58,7 +58,7 @@ struct Tracker {
     }
 
     float update(float powerSample, uint16_t dutyCycle) {
-        auto now = millis();
+        auto now = loopWallClockMs();
 
         avgPower.add(powerSample);
 

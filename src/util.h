@@ -3,6 +3,9 @@
 
 #include <driver/uart.h>
 
+const unsigned long &loopWallClockUs();
+unsigned long loopWallClockMs();
+
 void scan_i2c() {
     const char *TAG = "scan_i2c";
     byte error, address;

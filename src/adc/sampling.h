@@ -105,7 +105,7 @@ public:
             }
         }
 
-        void add_sample(float x) {
+        void add_sample(float x) { // IRAM_ATTR
             auto v = params.transform.apply(x);
 
             //if( !isfinite(v)) {

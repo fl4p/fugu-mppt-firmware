@@ -1,3 +1,6 @@
+# LED
+https://github.com/adafruit/Adafruit_NeoPixel (smaller than FastLED)
+
 # Wifi
 
 https://github.com/tzapu/WiFiManager

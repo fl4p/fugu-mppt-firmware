@@ -80,8 +80,8 @@ void flush_async_uart_log() {
         if(!entry.telnetOnly) {
             va_list l{};
             old_vprintf(entry.str, l);
-        }
             //uart_write_bytes(0, entry.str, entry.len);
+        }
 
         if (log_telnet)
             log_telnet->write((uint8_t *) entry.str, entry.len);

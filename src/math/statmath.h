@@ -3,6 +3,9 @@
 #include <cstdlib>
 #include <limits>
 
+template<class T>
+inline T abs(T x) { return x < 0 ? -x : x; }
+
 template<class float_t=float>
 class EWMA {
 /**
@@ -22,8 +25,8 @@ public:
     }
 
     inline void add(float_t x) {
-        if unlikely(isnan(x)) return;
-        if unlikely(isnan(y)) y = x;
+        if (unlikely(isnan(x))) return;
+        if (unlikely(isnan(y))) y = x;
         y = (1 - alpha) * y + alpha * x;
     }
 
@@ -59,11 +62,11 @@ public:
     inline void add(float_t x) {
         avg.add(x);
         if constexpr (regularisation != 0) {
-            x = ((x > 0) ? 1 : -1) * (std::abs(x) + regularisation);
+            x = abs(x) + regularisation;
         }
-        if likely(!isnan(last_x)) {
+        if (likely(!isnan(last_x))) {
             float_t pct = (x - last_x) / last_x;
-            if likely(std::isfinite(pct))
+            if (likely(std::isfinite(pct)))
                 std.add(pct * pct);
         }
         last_x = x;
@@ -88,8 +91,8 @@ class EWMA_N {
 public:
     inline void add(float_t x) {
         constexpr auto alpha = (2.f / (float_t) (span + 1));
-        if unlikely(isnan(x)) return;
-        if unlikely(isnan(y)) y = x;
+        if (unlikely(isnan(x))) return;
+        if (unlikely(isnan(y))) y = x;
         y = (1 - alpha) * y + alpha * x;
     }
 

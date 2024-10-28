@@ -6,7 +6,7 @@ class TempSensorGPIO_NTC {
     RunningMedian3<float> median3{};
     EWMA<float> ewma1{2000}, ewma2{2000};
 
-    uint8_t _attack = 80; // discard first samples
+    uint8_t _attack = 1; // discard first samples
 
     adc1_channel_t ch = adc1_channel_t::ADC1_CHANNEL_MAX;
 

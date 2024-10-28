@@ -115,6 +115,8 @@ public:
 };
 
 
+const unsigned long &loopWallClockUs();
+
 class ADC_Fake : public AsyncADC<float> {
     /**
      * ch0: const 0
@@ -140,14 +142,14 @@ public:
 
 
     float getSample() override {
-        if(readingChannel == 0) {
+        if (readingChannel == 0) {
             return 0;
-        } else if(readingChannel == 1) {
+        } else if (readingChannel == 1) {
             return 1;
-        } else if(readingChannel == 2) {
-            auto t = millis() - resetTimes[readingChannel];
-            if(t > 2000) {
-                return 2.0f + sinf((float)t / 10e3f);
+        } else if (readingChannel == 2) {
+            auto t = loopWallClockUs() - resetTimes[readingChannel];
+            if (t > 4000000) {
+                return 2.0f + sinf((float) t / 10e6f);
             } else {
                 return 0.0f;
             }
@@ -158,6 +160,7 @@ public:
     float getInputImpedance(uint8_t ch) override { return 100e3; }
 
     void reset(const uint8_t ch) override {
-        resetTimes[ch] = millis();
+        ESP_LOGI("adc_fake", "Reset channel %hhu at %lu", ch, loopWallClockUs());
+        resetTimes[ch] = loopWallClockUs();
     }
 };

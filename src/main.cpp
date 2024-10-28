@@ -36,7 +36,9 @@ VIinVout<const ADC_Sampler::Sensor *> sensors{};
 
 bool disableWifi = false;
 
-unsigned long lastLoopTime = 0, maxLoopLag = 0, maxLoopTime = 0;
+static unsigned long loopWallClockUs_ = 0;
+
+unsigned long lastLoopTime = 0, maxLoopLag = 0, maxLoopDT = 0;
 unsigned long lastTimeOut = 0;
 uint32_t lastNSamples = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
@@ -46,10 +48,17 @@ float conversionEfficiency;
 
 uint8_t loopRateMin = 0;
 
+const unsigned long &loopWallClockUs() { return loopWallClockUs_; }
+
+unsigned long loopWallClockMs() { return (unsigned long) (loopWallClockUs_ / 1000ULL); }
+
 
 void uartInit(int port_num);
 
 void setupSensors(const ConfFile &pinConf) {
+void setupSensors(const ConfFile &pinConf, const Limits &lim) {
+    loopWallClockUs_ = micros();
+
     /// compute voltage factor for a resistor divider network with 2 parallel R_low (Rh+(Rl+Ra))
     auto adcVDiv = [](float Rh, float Rl, float Ra) {
         auto rl = 1 / (1 / Rl + 1 / Ra);
@@ -211,8 +220,8 @@ void setup() {
 
     auto sprofHz = (uint32_t) pprofConf.getLong("sprofiler_hz", 0);
     if (sprofHz) {
+        ESP_LOGI("main", "starting sprofiler with freq %lu (samples/bank=%i)", sprofHz, PROFILING_ITEMS_PER_BANK);
         sprofiler_initialize(sprofHz);
-        ESP_LOGI("main", "sprofiler started with freq %lu", sprofHz);
     }
 
 
