@@ -17,10 +17,9 @@ Highlights:
 * PID control for precise voltage and current regulation
 * Periodic MPPT global search
 * Sophisticated Diode Emulation for low-side switch
-* Anti back-flow (aka back-feed, ideal diode, panel switch)
 * Battery voltage detection
 * Fast protection shutdown in over-voltage and over-current conditions
-* PWM Fan Control and temperature power limiting, linear de-rating
+* PWM Fan Control and linear temperature power de-rating
 * Telemetry to InfluxDB over UDP
 * LCD (hd44780) and WS2812B LED Indicator
 * [Serial UART console](doc/Serial%20Console.md) and telnet to interact with the charger
@@ -81,7 +80,7 @@ idf.py flash
 
 ## Configuration
 
-IO pins, I2C and sensor config is stored in `.conf` files on the `littlefs` partition.
+IO pins mapping, I2C and sensor config is stored in `.conf` files on the `littlefs` partition.
 This enables easy OTA updates of the firmware across various hardware configurations. And you can easily alter the
 configuration by flashing a new `littlefs` image or by editing the files over FTP.
 
@@ -90,11 +89,13 @@ You find existing configuration in [`provisioning/fmetal`](provisioning/fmetal),
 Flash these config files with:
 
 ```
-littlefs-python create provisioning/fmetal littlefs.bin -v --fs-size=0x40000 --name-max=64 --block-size=4096
-parttool.py --port /dev/cu.usbserial-1101 write_partition --partition-name littlefs --input littlefs.bin
+PROV=dry
+littlefs-python create provisioning/$PROV $PROV.bin -v --fs-size=0x20000 --name-max=64 --block-size=4096
+parttool.py -p /dev/cu.usb* write_partition --partition-name littlefs --input $PROV.bin
 ```
 
-Alternatively, in `CMakeLists.txt`, add `FLASH_IN_PROJECT` argument for `littlefs_create_partition_image()`:
+Alternatively, in `CMakeLists.txt`, add `FLASH_IN_PROJECT` argument for `littlefs_create_partition_image()`. Then the
+config files will be flashed with the next `idf.py flash`:
 ```
 littlefs_create_partition_image(littlefs provisioning/fmetal
   FLASH_IN_PROJECT
@@ -224,6 +225,9 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 
 # Not implemented / TODO
 
+* capture sweep I-V, P-V (IU, PU) curves
+  * https://github.com/saulpw/visidata
+  * https://github.com/Civitasv/asciichart
 * make buck signal pins configurable
 * learn buck start duty cycle
 * 2nd and more (interleaved) channels
@@ -288,8 +292,7 @@ Use it at your own risk.
 # Contribution
 
 We need contributors for Hardware Design and Software. Open an issue or pull request or drop me an email (you find my
-address in my
-github profile) if you want to contribute or just share your experience.
+address in my github profile) if you want to contribute or just share your experience.
 
 # Resources
 
