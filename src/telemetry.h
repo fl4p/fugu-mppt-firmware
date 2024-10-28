@@ -29,7 +29,7 @@ ESPTelnet telnet;
 void setupTelnet();
 
 void ftpUpdate() {
-    ftpSrv.handleFTP();
+    //ftpSrv.handleFTP(); // poor perfNetworkServer::accept() (NetworkServer.cpp) / lwip_accept (sockets.c)
     telnet.loop();
 }
 

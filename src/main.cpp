@@ -21,6 +21,9 @@
 #include "led.h"
 #include "ota.h"
 
+#include "perf.h"
+#include <sprofiler.h>
+
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
 SynchronousBuck pwm;
@@ -33,7 +36,7 @@ VIinVout<const ADC_Sampler::Sensor *> sensors{};
 
 bool disableWifi = false;
 
-unsigned long lastLoopTime = 0, maxLoopLag = 0;
+unsigned long lastLoopTime = 0, maxLoopLag = 0, maxLoopTime = 0;
 unsigned long lastTimeOut = 0;
 uint32_t lastNSamples = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
@@ -103,7 +106,7 @@ void setupSensors(const ConfFile &pinConf) {
         Iin_transform = {sensConf.f("iin_factor"), sensConf.f("iin_midpoint")};
 
 
-    LinearTransform Iout_transform{sensConf.f("iout_factor",1.f), 0};
+    LinearTransform Iout_transform{sensConf.f("iout_factor", 1.f), 0};
 
 
     if (!adc->init(pinConf)) {
@@ -204,6 +207,15 @@ void setup() {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
     }
 
+    ConfFile pprofConf{"/littlefs/conf/pprof.conf"};
+
+    auto sprofHz = (uint32_t) pprofConf.getLong("sprofiler_hz", 0);
+    if (sprofHz) {
+        sprofiler_initialize(sprofHz);
+        ESP_LOGI("main", "sprofiler started with freq %lu", sprofHz);
+    }
+
+
     ConfFile pinConf{"/littlefs/conf/pins.conf"};
 
     if (pinConf) {
@@ -292,10 +304,16 @@ void loopUart(unsigned long nowMs);
 
 void loop() {
     auto nowMs = millis();
+    auto nowUs = micros();
 
-    flush_async_uart_log();
+    if (lastLoopTime == 0) {
+        ESP_LOGI("main", "Loop running on core %i", (int) xPortGetCoreID());
+#ifdef CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+        ESP_LOGW("main", "CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS enabled!");
+        delay(200);
+#endif
+    }
 
-    mppt.ntc.read();
 
     //uint32_t nSamples;
     if (adcSampler.adc) {
@@ -399,71 +417,7 @@ void loopNewData(unsigned long nowMs) {
 
 
     if ((nowMs - lastTimeOut) >= 3000) {
-        auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
-                   (uint32_t) (nowMs - lastTimeOut);
-
-        if (sps < loopRateMin && !pwm.disabled() && nSamples > 1000 &&
-            !manualPwm) { //(nowMs - adcSampler.getTimeLastCalibration()) > 6000)
-            ESP_LOGE("main", "Loop latency too high (%lu < %hhu Hz), shutdown!", sps, loopRateMin);
-            mppt.shutdownDcdc();
-            charging = false;
-        }
-
-        UART_LOG(
-                "V=%5.2f/%5.2f I=%4.1f/%5.2fA %5.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu"
-                " MPPT(st=%5s,%i) lag=%.1fms N=%u rssi=%hi",
-                sensors.Vin->last,
-                sensors.Vout->last,
-                sensors.Iin->last,
-                sensors.Iout->last,
-                sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
-                //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
-                mppt.ntc.last(),
-                sps,
-                (uint32_t) (bytesSent /*/ 1000u * 1000u*/ / millis()),
-                pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
-                //mppt.getPower()
-                manualPwm ? "MANU"
-                          : (!charging && !mppt.startCondition()
-                             ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
-                             : MpptState2String[(uint8_t) mppt.getState()].c_str()),
-                (int) charging,
-                maxLoopLag * 1e-3f,
-                nSamples,
-                WiFi.RSSI()
-        );
-        lastTimeOut = nowMs;
-        lastNSamples = nSamples;
-
-        if (!charging)
-            mppt.meter.update(); // always update the meter
-
-        if (manualPwm) {
-            uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.limits.P_max * 255, 1, 255);
-            led.setRGB(0, i, i);
-        } else if (!charging) {
-            led.setHexShort(sensors.Vout->last > sensors.Vin->last ? 0x100 : 0x300);
-        } else {
-            switch (mppt.getState()) {
-                case MpptControlMode::Sweep:
-                    led.setHexShort(0x303); // purple
-                    break;
-                case MpptControlMode::MPPT:
-                    if (sensors.Iout->ewm.avg.get() > 0.2f)
-                        led.setHexShort(0x230);
-                    else
-                        led.setHexShort(0x111);
-                    break;
-                case MpptControlMode::CV:
-                    led.setHexShort(0x033);
-                    break;
-                default:
-                    // CV/CC/CP, topping
-                    led.setHexShort(0x310);
-                    break;
-            }
-        }
-
+        loopLF(nSamples, nowMs);
     }
 
 
