@@ -6,6 +6,9 @@
 #include "pinconfig.h"
 #include "math/statmath.h"
 
+
+const unsigned long &loopWallClockUs();
+
 /**
  * Single-shot implementation for ESP32's internal ADC1. Uses `esp_adc_cal_characterize()`.
  */
@@ -115,7 +118,7 @@ public:
 };
 
 
-const unsigned long &loopWallClockUs();
+//const unsigned long &loopWallClockUs();
 
 class ADC_Fake : public AsyncADC<float> {
     /**

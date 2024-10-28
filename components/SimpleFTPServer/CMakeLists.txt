@@ -20,6 +20,7 @@ component_compile_definitions(
 
 
 component_compile_options(-Wno-error=address) # https://github.com/xreef/SimpleFTPServer/issues/71
+component_compile_options(-Wno-error=stringop-truncation) #  strncpy( command, cmdLine, parameter - cmdLine );
 
 # add_compile_definitions(STORAGE_TYPE=7 DEFAULT_FTP_SERVER_NETWORK_TYPE_ESP32=6 FTP_SERVER_DEBUG=1)
 #set_source_files_properties(

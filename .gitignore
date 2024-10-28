@@ -24,3 +24,7 @@ sdkconfig
 
 /managed_components
 *.bin
+
+*.sprof
+
+*.out

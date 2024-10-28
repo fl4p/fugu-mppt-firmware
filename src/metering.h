@@ -229,11 +229,11 @@ struct SolarEnergyMeter {
     void add(float power, float smoothPower, float vin, float vout, unsigned long timeUs) {
         if (power > 0.1f)
             totalEnergy.add(power, timeUs);
-        dailyEnergyMeter.update(smoothPower, totalEnergy.get(), vin, vout);
+        //dailyEnergyMeter.update(smoothPower, totalEnergy.get(), vin, vout);
     }
 
     void update() {
-        dailyEnergyMeter.update(0, (float) totalEnergy.get());
+        //dailyEnergyMeter.update(0, (float) totalEnergy.get());
     }
 
     void commit(bool increaseBootCounter = false) {

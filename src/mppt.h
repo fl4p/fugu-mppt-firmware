@@ -36,7 +36,8 @@ struct Limits {
             : Vin_max(limits.getFloat("vin_max")), Vin_min(limits.getFloat("vin_min")),
               Vout_max(limits.getFloat("vout_max")),
               Iin_max(limits.getFloat("iin_max")), Iout_max(limits.getFloat("iout_max")),
-              P_max(limits.getFloat("p_max")), Temp_max(limits.getFloat("temp_max")), Temp_derate(limits.getFloat("temp_derate")) {
+              P_max(limits.getFloat("p_max")), Temp_max(limits.getFloat("temp_max")),
+              Temp_derate(limits.getFloat("temp_derate")) {
         assert(Vin_max > Vin_min);
         assert(Vin_max * Iin_max > P_max);
         assert(Vin_max * Iin_max < P_max * 4);
@@ -57,6 +58,19 @@ struct Limits {
 
 };
 
+
+struct TeleConf {
+    IPAddress influxdbHost;
+
+    TeleConf() : influxdbHost(0UL) {
+    }
+
+    TeleConf(const ConfFile &teleConf) {
+
+        auto host = teleConf.getString("influxdb_host", "");
+        influxdbHost = host.empty() ? IPAddress(0UL) : IPAddress(host.c_str());
+    }
+};
 
 struct MpptParams : public BatChargerParams {
     float Vin_max = 80.f;
@@ -138,6 +152,7 @@ class MpptController {
 public:
     //MpptParams params;
     Limits limits{};
+    TeleConf tele{};
     BatteryCharger charger;
     BackflowDriver bflow{};
     SolarEnergyMeter meter{};
@@ -164,8 +179,9 @@ public:
         if (sensorPhysicalU->isVirtual) throw std::runtime_error("no physical U sensor");
     }
 
-    void begin(const ConfFile &pinConf, const Limits &limits_) {
+    void begin(const ConfFile &pinConf, const Limits &limits_, const TeleConf &tele_) {
         limits = limits_;
+        tele = tele_;
 
         ntc.begin(pinConf);
 
@@ -212,6 +228,8 @@ public:
     }
 
     bool protect() {
+
+        auto nowMs = loopWallClockMs();
 
         // power supply under-voltage shutdown
         if (boardPowerSupplyUnderVoltage()) {
@@ -269,7 +287,7 @@ public:
                          limits.Vout_max);
 
 
-            if (autoDetectVout_max && millis() - lastTimeProtectPassed > 20000) {
+            if (autoDetectVout_max && nowMs - lastTimeProtectPassed > 20000) {
                 // if the OV condition persists for some seconds, auto-detect Vout_max
                 charger.params.Vout_max = NAN;
                 dcdcPwr.startCalibration();
@@ -379,7 +397,7 @@ public:
             return false;
         }
 
-        lastTimeProtectPassed = millis();
+        lastTimeProtectPassed = nowMs;
 
         return true;
     }
@@ -427,7 +445,7 @@ public:
     }
 
     void telemetry() {
-        if (!WiFi.isConnected())
+        if (!WiFi.isConnected() || !tele.influxdbHost)
             return;
 
         auto I_phys_smooth = (sensorPhysicalI->ewm.avg.get());
@@ -452,7 +470,7 @@ public:
         point.addField("pwm_ls_duty", buck.getBuckDutyCycleLS());
         point.addField("pwm_ls_max", buck.getDutyCycleLSMax());
 
-        auto nowMs = millis();
+        auto nowMs = loopWallClockMs();
 
         point.setTime(WritePrecision::MS);
 
@@ -479,8 +497,8 @@ public:
      * - calls mpp tracker
      */
     void update() {
-        auto nowMs = millis();
-        auto nowUs = micros();
+        auto nowMs = loopWallClockMs();
+        auto &nowUs = loopWallClockUs();
 
         if (buck.disabled() && !startCondition()) {
             bflow.enable(false);
@@ -526,17 +544,6 @@ public:
             return;
         }
 
-        bool tele = WiFi.isConnected(); // disabled: sps=275, enabled: sps=165
-        Point point("mppt");
-        if (tele) {
-            point.addTag("device", "fugu_" + String(getChipId()));
-            point.addField("I", I_phys_smooth, 2);
-            point.addField("U", V_phys_smooth, 2);
-            //point.addField("U_out", sensors.Vout->ewm.avg.get(), 2);
-            point.addField("P", power, 2);
-            point.addField("P_smooth", power_smooth, 2);
-            point.addField("E", meter.totalEnergy.get(), 1);
-        }
 
         struct CVP {
             MpptControlMode mode;
@@ -587,8 +594,6 @@ public:
             controlMode = limitingControl->mode;
             controlValue = limitingControlValue;
 
-            auto limIdx = (int) (limitingControl - controlValues.begin());
-            if (tele) point.addField("cv_lim_idx", limIdx);
 
             _limiting = true;
         } else {
@@ -650,18 +655,6 @@ public:
             controlValue = tracker.update(power, buck.getBuckDutyCycle());
             controlValue *= speedScale;
 
-            if (tele) {
-                auto dP = tracker.dP;
-                point.addField("P_prev", tracker._lastPower, 2);
-                point.addField("dP", dP, 2);
-                //point.addField("P_filt", tracker.pwmPowerTable[buck.getBuckDutyCycle()].get(), 1);
-                point.addField("P_filt", tracker._powerBuf.getMean(), 1);
-                if (std::abs(dP) < tracker.minPowerStep) {
-                    point.addField("dP_thres", 0.0f, 2);
-                } else {
-                    point.addField("dP_thres", dP, 2);
-                }
-            }
         } else {
             // tracker.resetTracker(power_smooth, controlValue > 0);
             tracker.resetDirection(controlValue > 0);
@@ -722,8 +715,20 @@ public:
             digitalWrite(ledPinSimple, ledState);
         }
 
+        // tele disabled: sps=275, enabled: sps=165
+        if (tele.influxdbHost and WiFi.isConnected()) {
 
-        if (tele) {
+            Point point("mppt");
+
+            point.addTag("device", "fugu_" + String(getChipId()));
+            point.addField("I", I_phys_smooth, 2);
+            point.addField("U", V_phys_smooth, 2);
+            //point.addField("U_out", sensors.Vout->ewm.avg.get(), 2);
+            point.addField("P", power, 2);
+            point.addField("P_smooth", power_smooth, 2);
+            point.addField("E", meter.totalEnergy.get(), 1);
+
+
             point.addField("pwm_dir_f", controlValue, 2);
             point.addField("mppt_state", int(controlMode));
             // point.addField("mcu_temp", mcu_temp.last(), 1);
@@ -731,6 +736,25 @@ public:
             point.addField("pwm_duty", buck.getBuckDutyCycle());
             point.addField("pwm_ls_duty", buck.getBuckDutyCycleLS());
             point.addField("pwm_ls_max", buck.getDutyCycleLSMax());
+
+
+            if (controlMode == MpptControlMode::MPPT) {
+                auto dP = tracker.dP;
+                point.addField("P_prev", tracker._lastPower, 2);
+                point.addField("dP", dP, 2);
+                //point.addField("P_filt", tracker.pwmPowerTable[buck.getBuckDutyCycle()].get(), 1);
+                point.addField("P_filt", tracker._powerBuf.getMean(), 1);
+                if (std::abs(dP) < tracker.minPowerStep) {
+                    point.addField("dP_thres", 0.0f, 2);
+                } else {
+                    point.addField("dP_thres", dP, 2);
+                }
+            }
+
+            if (limitingControl) {
+                auto limIdx = (int) (limitingControl - controlValues.begin());
+                point.addField("cv_lim_idx", limIdx);
+            }
 
             point.setTime(WritePrecision::MS);
 
@@ -740,4 +764,6 @@ public:
             }
         }
     }
+
+
 };

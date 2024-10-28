@@ -433,16 +433,21 @@ public:
 
     float f(const std::string &key, float def = std::numeric_limits<float>::max()) { return getFloat(key, def); }
 
-    const std::string &getString(const std::string &key, const std::string &def = "") {
-        //static std::string empty;
+    const std::string &getString(const std::string &key) const {
+        auto i = _map.find(key);
+        if (i != _map.end())
+            return i->second;
+        throw std::runtime_error("key not found: " + key);
+    }
+
+    const std::string &getString(const std::string &key, const std::string &def) const {
         auto i = _map.find(key);
         if (i != _map.end()) {
             return i->second;
         }
-        if (!def.empty()) return def;
+        return def;
         ESP_LOGE(TAG, "key '%s' not found", key.c_str());
         assert(false);
-        //return empty;
     }
 
     const char *c(const std::string &key, const char *def = nullptr) {

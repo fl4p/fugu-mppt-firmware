@@ -6,6 +6,8 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <USB.h>
+#include <esp_private/usb_console.h>
 
 #include "adc/adc.h"
 #include "adc/ads.h"
@@ -55,7 +57,8 @@ unsigned long loopWallClockMs() { return (unsigned long) (loopWallClockUs_ / 100
 
 void uartInit(int port_num);
 
-void setupSensors(const ConfFile &pinConf) {
+void loopNetwork_task(void *arg);
+
 void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     loopWallClockUs_ = micros();
 
@@ -216,10 +219,11 @@ void setup() {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
     }
 
-    ConfFile pprofConf{"/littlefs/conf/pprof.conf"};
+    ConfFile pprofConf{"/littlefs/conf/pprof.conf", true};
 
     auto sprofHz = (uint32_t) pprofConf.getLong("sprofiler_hz", 0);
-    if (sprofHz) {
+    if (sprofHz && !esp_cpu_dbgr_is_attached()) {
+        // only start the profiler with OpenOCD attached?
         ESP_LOGI("main", "starting sprofiler with freq %lu (samples/bank=%i)", sprofHz, PROFILING_ITEMS_PER_BANK);
         sprofiler_initialize(sprofHz);
     }
@@ -258,6 +262,28 @@ void setup() {
         ESP_LOGE("main", "error reading limits.conf: %s", er.what());
     }
 
+
+#ifdef NO_WIFI
+    disableWifi = true;
+#endif
+
+    TeleConf teleConf{};
+
+    if (!disableWifi) {
+        connect_wifi_async();
+        bool res = wait_for_wifi();
+        led.setHexShort(res ? 0x565 : 0x200);
+        lcd.displayMessage(
+                res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
+
+        teleConf = ConfFile{"/littlefs/conf/tele.conf"};
+    }
+
+    if (teleConf.influxdbHost) {
+        ESP_LOGI("main", "Influxdb telemetry to host %s", teleConf.influxdbHost.toString().c_str());
+        adcSampler.onNewSample = dcdcDataChanged;
+    }
+
     try {
         setupSensors(pinConf, lim);
     } catch (const std::runtime_error &er) {
@@ -267,30 +293,18 @@ void setup() {
     }
 
 
-#ifdef NO_WIFI
-    disableWifi = true;
-#endif
-
-    if (!disableWifi) {
-        connect_wifi_async();
-        bool res = wait_for_wifi();
-        led.setHexShort(res ? 0x565 : 0x200);
-        lcd.displayMessage(
-                res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
-    }
-
-    if (!disableWifi) adcSampler.onNewSample = dcdcDataChanged;
-
-
     if (!pwm.init()) {
         ESP_LOGE("main", "Failed to init half bridge");
     }
 
     try {
-        mppt.begin(pinConf, Limits{ConfFile{"/littlefs/conf/limits.conf"}});
+        if (adcSampler.adc)
+            mppt.begin(pinConf, lim, teleConf);
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during mppt setup: %s", er.what());
     }
+
+    xTaskCreatePinnedToCore(loopNetwork_task, "netloop", 4096 * 4, NULL, 1, NULL, 0);
 
     ESP_LOGI("main", "setup() done.");
 
@@ -312,15 +326,21 @@ void loopNewData(unsigned long nowMs);
 void loopUart(unsigned long nowMs);
 
 void loop() {
-    auto nowMs = millis();
-    auto nowUs = micros();
+    loopWallClockUs_ = micros();
+    auto &nowUs(loopWallClockUs_);
+
+    auto nowMs = (unsigned long) (nowUs / 1000ULL);
 
     if (lastLoopTime == 0) {
+        vTaskPrioritySet(NULL, 20); // highest priority (24)
+        // ^ see https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/performance/speed.html#choosing-task-priorities-of-the-application
+
         ESP_LOGI("main", "Loop running on core %i", (int) xPortGetCoreID());
 #ifdef CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
         ESP_LOGW("main", "CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS enabled!");
         delay(200);
 #endif
+        mppt.ntc.read();
     }
 
 
@@ -363,22 +383,91 @@ void loop() {
     loopUart(nowMs);
 
 
-    if (!disableWifi) {
-        /* only connect with disabled power conversion
-         * ESP32's wifi can cause latency issues otherwise
-         */
-        wifiLoop(pwm.disabled());
-        ftpUpdate();
-    }
-
-    auto now = micros();
-    auto lag = now - lastLoopTime;
+    auto now2 = micros();
+    auto lag = now2 - lastLoopTime;
     if (lastLoopTime && lag > maxLoopLag && !pwm.disabled()) maxLoopLag = lag;
-    lastLoopTime = now;
+    lastLoopTime = now2;
+
+    auto loopDT = now2 - nowUs;
+    if (loopDT > maxLoopDT && !pwm.disabled())
+        maxLoopDT = loopDT;
 
     //yield();
     //esp_task_wdt_reset();
-    vTaskDelay(1); // this resets the Watchdog Timer (WDT) for some reason
+
+    vTaskDelay(0); // this resets the Watchdog Timer (WDT) for some reason
+}
+
+static bool usbConnected = false;
+
+void loopLF(const unsigned long &nSamples, const unsigned long &nowMs) {
+    auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
+               (uint32_t) (nowMs - lastTimeOut);
+
+    if (sps < loopRateMin && !pwm.disabled() && nSamples > max(loopRateMin * 5, 200) &&
+        !manualPwm && lastTimeOut && (nowMs - adcSampler.getTimeLastCalibration()) > 2000) {
+        ESP_LOGE("main", "Loop latency too high (%lu < %hhu Hz), shutdown!", sps, loopRateMin);
+        mppt.shutdownDcdc();
+        charging = false;
+    }
+
+    usbConnected = usb_serial_jtag_is_connected();
+    mppt.ntc.read();
+
+    UART_LOG(
+            "V=%5.2f/%5.2f I=%4.1f/%5.2fA %5.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu"
+            " MPPT(st=%5s,%i) lag=%.1fms lt=%.1fms N=%u rssi=%hi\n",
+            sensors.Vin->last,
+            sensors.Vout->last,
+            sensors.Iin->last,
+            sensors.Iout->last,
+            sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
+            //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
+            mppt.ntc.last(),
+            sps,
+            (uint32_t) (bytesSent /*/ 1000u * 1000u*/ / nowMs),
+            pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
+            //mppt.getPower()
+            manualPwm ? "MANU"
+                      : (!charging && !mppt.startCondition()
+                         ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
+                         : MpptState2String[(uint8_t) mppt.getState()].c_str()),
+            (int) charging,
+            maxLoopLag * 1e-3f,
+            maxLoopDT * 1e-3f,
+            nSamples,
+            WiFi.RSSI()
+    );
+    lastNSamples = nSamples;
+
+    if (!charging)
+        mppt.meter.update(); // always update the meter
+
+    if (manualPwm) {
+        uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.limits.P_max * 255, 1, 255);
+        led.setRGB(0, i, i);
+    } else if (!charging) {
+        led.setHexShort(sensors.Vout->last > sensors.Vin->last ? 0x100 : 0x300);
+    } else {
+        switch (mppt.getState()) {
+            case MpptControlMode::Sweep:
+                led.setHexShort(0x303); // purple
+                break;
+            case MpptControlMode::MPPT:
+                if (sensors.Iout->ewm.avg.get() > 0.2f)
+                    led.setHexShort(0x230);
+                else
+                    led.setHexShort(0x111);
+                break;
+            case MpptControlMode::CV:
+                led.setHexShort(0x033);
+                break;
+            default:
+                // CV/CC/CP, topping
+                led.setHexShort(0x310);
+                break;
+        }
+    }
 }
 
 void loopNewData(unsigned long nowMs) {
@@ -427,8 +516,8 @@ void loopNewData(unsigned long nowMs) {
 
     if ((nowMs - lastTimeOut) >= 3000) {
         loopLF(nSamples, nowMs);
+        lastTimeOut = nowMs;
     }
-
 
     lcd.updateValues(LcdValues{
             .Vin = sensors.Vin->ewm.avg.get(),
@@ -447,19 +536,15 @@ void loopNewData(unsigned long nowMs) {
     }
 }
 
-void loopUart(unsigned long nowMs) {
-    // for some reason Serial.available() doesn't work under platformio
-    // so access the uart port directly
 
-    const uart_port_t uart_num = UART_NUM_0; // Arduino Serial is on port 0
+void loopConsole(int read(char *buf, size_t len), int write(const char *buf, size_t len), unsigned long nowMs) {
     static char buf[128];
     static uint8_t buf_pos = 0;
-    int length = 0;
-    ESP_ERROR_CHECK(uart_get_buffered_data_len(uart_num, (size_t *) &length));
-    length = uart_read_bytes(uart_num, &buf[buf_pos], 128 - buf_pos, 0);
+
+    int length = read(&buf[buf_pos], 128 - buf_pos);
     if (length) {
-        if (buf_pos == 0) uart_write_bytes(uart_num, "> ", 2);
-        uart_write_bytes(uart_num, &buf[buf_pos], length); // echo
+        if (buf_pos == 0) write("> ", 2);
+        write(&buf[buf_pos], length); // echo
         lastTimeOut = nowMs; // stop logging during user input
         buf_pos += length;
         while (buf_pos > 0 && buf[buf_pos - 1] == '\b') {
@@ -478,6 +563,50 @@ void loopUart(unsigned long nowMs) {
             ESP_LOGW("main", "discarding command buffer %s", buf);
             buf_pos = 0;
         }
+    }
+}
+
+int uartRead(char *buf, size_t len) {
+    const uart_port_t uart_num = UART_NUM_0; // Arduino Serial is on port 0
+    int length = 0;
+    ESP_ERROR_CHECK(uart_get_buffered_data_len(uart_num, (size_t *) &length));
+    if (length == 0) return 0;
+    length = uart_read_bytes(uart_num, buf, len, 0);
+    return length;
+}
+
+int uartWrite(const char *buf, size_t len) {
+    const uart_port_t uart_num = UART_NUM_0; // Arduino Serial is on port 0
+    return uart_write_bytes(uart_num, buf, len);
+}
+
+void loopUart(unsigned long nowMs) {
+    // for some reason Serial.available() doesn't work under platformio
+    // so access the uart port directly
+
+    loopConsole(uartRead, uartWrite, nowMs);
+
+    if (usbConnected) {
+        //loopConsole(esp_usb_console_read_buf, esp_usb_console_write_buf, nowMs);
+    }
+}
+
+
+void loopNetwork_task(void *arg) {
+    ESP_LOGI("main", "Net loop running on core %i", xPortGetCoreID());
+
+    while (1) {
+        flush_async_uart_log();
+
+        if (!disableWifi) {
+            /* only connect with disabled power conversion
+             * ESP32's wifi can cause latency issues otherwise
+             */
+            wifiLoop(pwm.disabled());
+            ftpUpdate();
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(2));
     }
 }
 
@@ -527,6 +656,7 @@ bool handleCommand(const String &inp) {
         mppt.startSweep();
     } else if (inp == "reset-lag") {
         maxLoopLag = 0;
+        maxLoopDT = 0;
     } else if (inp == "wifi on") {
         disableWifi = false;
         timeSynced = false;
@@ -554,6 +684,8 @@ bool handleCommand(const String &inp) {
         auto url = inp.substring(4);
         doOta(url);
         return true;
+    } else if (inp == "rt-stats") {
+        xTaskCreatePinnedToCore(print_real_time_stats_1s_task, "rtstats", 4096, NULL, 1, NULL, 0);
     } else {
         ESP_LOGI("main", "unknown or unexpected command");
         return false;
