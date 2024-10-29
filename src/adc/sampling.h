@@ -203,7 +203,7 @@ public:
         calibrating_ = realSensors.size();
         for (auto &ch: sensors) {
             ch->reset(true);
-            if(!ch->isVirtual)
+            if (!ch->isVirtual)
                 adc->reset(ch->params.adcCh);
         }
     }
@@ -225,26 +225,7 @@ public:
         CalibFailure,
     };
 
-    UpdateRet update() {
-        if (!adc->hasData())
-            return UpdateRet::NoNewData;
-
-        auto &sensor(*realSensors[cycleCh]);
-        auto x = adc->getSample();
-        cycleCh = (cycleCh + 1) % realSensors.size();
-        _readNext(); // start async read
-
-        sensor.add_sample(x);
-        if (onNewSample) {
-            onNewSample(*this, sensor);
-        }
-
-        /*if(calibrationState) {
-            calibrationState->acc[cycleCh] += sensor.last;
-            ++calibrationState->num[cycleCh];
-        }*/
-
-
+    UpdateRet handleSensorCalib(Sensor &sensor) {
         if (calibrating_ && sensor.numSamples >= 60) {
             // calibZeroCurrent = ewm.s.chIin.avg.get();
             auto avg = sensor.ewm.avg.get();
@@ -253,19 +234,20 @@ public:
             auto &constrains{sensor.params.calibrationConstraints};
 
             if (!ignoreCalibrationConstraints && (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue)) {
-                ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, x=%.6f, stdn=%.6f)",
-                         sensor.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, sensor.last, x, std);
+                ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, stdn=%.6f)",
+                         sensor.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, sensor.last, std);
                 calibrating_ = 0;
                 //startCalibration();
                 return UpdateRet::CalibFailure;
             }
 
-            if (!ignoreCalibrationConstraints && (std::abs(avg) < 1e-9f or std::isfinite(std)) // std can be non-finite for 0 values
+            if (!ignoreCalibrationConstraints &&
+                (std::abs(avg) < 1e-9f or std::isfinite(std)) // std can be non-finite for 0 values
                 and std * std::abs(avg) > constrains.maxStddev) {
-                ESP_LOGE("sampler", "Calibration failed, %s stddev %.6f > %.6f (last=%.6f, x=%.6f, avg=%.6f)",
+                ESP_LOGE("sampler", "Calibration failed, %s stddev %.6f > %.6f (last=%.6f, avg=%.6f)",
                          sensor.params.teleName.c_str(),
                          std * avg,
-                         constrains.maxStddev, sensor.last, x, avg);
+                         constrains.maxStddev, sensor.last, avg);
                 ESP_LOGW("sampler", "%s last=%.6f med3=%.6f avg=%.6f num=%lu", sensor.params.teleName.c_str(),
                          sensor.last,
                          sensor.med3.get(), sensor.ewm.avg.get(), sensor.numSamples);
@@ -293,6 +275,50 @@ public:
                 return UpdateRet::Calibrating;
             }
         }
+
+        return UpdateRet::NoNewData;
+    }
+
+    UpdateRet update() {
+        if (!adc->hasData())
+            return UpdateRet::NoNewData;
+
+        if (adc->getAltogether()) {
+            for (auto sensor: realSensors) {
+                adc->startReading(sensor->params.adcCh);
+
+                auto x = adc->getSample();
+                sensor->add_sample(x);
+                if (onNewSample) {
+                    onNewSample(*this, *sensor);
+                }
+
+                auto calibRes = handleSensorCalib(*sensor);
+                if (calibRes != UpdateRet::NoNewData)
+                    return calibRes;
+            }
+        } else {
+            auto &sensor(*realSensors[cycleCh]);
+            auto x = adc->getSample();
+            cycleCh = (cycleCh + 1) % realSensors.size();
+            _readNext(); // start async read
+
+            sensor.add_sample(x);
+            if (onNewSample) {
+                onNewSample(*this, sensor);
+            }
+
+            auto calibRes = handleSensorCalib(sensor);
+            if (calibRes != UpdateRet::NoNewData)
+                return calibRes;
+        }
+
+        /*if(calibrationState) {
+            calibrationState->acc[cycleCh] += sensor.last;
+            ++calibrationState->num[cycleCh];
+        }*/
+
+
 
         if (calibrating_ == 0 && cycleCh == 0) {
             for (auto &sn: virtualSensors) {

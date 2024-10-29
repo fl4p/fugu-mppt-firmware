@@ -33,3 +33,6 @@
 [submodule "components/esp32-semihosting-profiler/esp32-semihosting-profiler"]
 	path = components/esp32-semihosting-profiler/esp32-semihosting-profiler
 	url = https://github.com/LiluSoft/esp32-semihosting-profiler
+[submodule "lib/asciichart"]
+	path = lib/asciichart
+	url = https://github.com/Civitasv/asciichart

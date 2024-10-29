@@ -15,6 +15,7 @@ public:
 
     virtual bool hasData() = 0;
 
+
     virtual T getSample() = 0;
     //virtual uint8_t getReadingChannel() = 0;
 
@@ -24,5 +25,9 @@ public:
 
     virtual void reset(const uint8_t ch) {
 
+    }
+
+    [[nodiscard]] virtual bool getAltogether() const {
+        return false;
     }
 };
