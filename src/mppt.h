@@ -352,9 +352,9 @@ public:
         }
 
         // output over-voltage
-        auto ovTh = limits.Vout_max * 1.08;
+        auto ovTh = std::min(charger.params.Vout_max * 1.08f, limits.Vout_max);
         //if (adcSampler.med3.s.chVout.get() > ovTh) {
-        if (sensors.Vout->last > ovTh && sensors.Vout->previous > ovTh) {
+        if (sensors.Vout->last > ovTh && sensors.Vout->previous > ovTh * 0.95) {
             bool wasDisabled = buck.disabled();
             shutdownDcdc();
 
@@ -364,7 +364,8 @@ public:
                 ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,buck=%hu) > %.1fV + 8%%!",
                          vout,
                          sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.std.get(), buck.getBuckDutyCycle(),
-                         limits.Vout_max);
+                         charger.params.Vout_max
+                );
 
 
             if (autoDetectVout_max && nowMs - lastTimeProtectPassed > 20000) {
