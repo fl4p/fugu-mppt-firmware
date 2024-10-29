@@ -15,6 +15,7 @@
 #include "store.h"
 #include "metering.h"
 #include "charger.h"
+#include "asciichart/ascii.h"
 
 struct Limits {
     const float Vin_max{};
@@ -106,6 +107,79 @@ struct TopologyConfig {
     bool backflowAtHV = false;//backflow switch is at solar input
 };
 
+struct Plot {
+    std::vector<std::pair<float, float>> points{};
+
+    void plot() {
+        std::sort(points.begin(), points.end());
+
+        if (points.size() < 3)
+            return;
+
+
+        std::vector<float> series;
+
+        int bins = 130;
+        auto minX = points.begin()->first, maxX = points.back().first;
+        auto binW = (maxX - minX) / bins;
+
+        ESP_LOGI("mppt", "Grouping %u points (%.2f,%.2f)~(%.2f,%.2f) into %d bins, binW=%.2f", points.size(),
+                 minX, points.begin()->second, maxX, points.back().second, bins, binW);
+
+        auto it = points.begin();
+        float y = it->second;
+        for (int i = 0; i < bins; ++i) {
+            auto x = minX + i * binW;
+            int n = 0;
+            float ya = 0;
+            while (it != points.end() && it->first < x + binW * 0.5f) {
+                ya += it->second;
+                n++;
+                ++it;
+            }
+
+            if (n) y = ya / n;
+            else {
+                if (it != points.end()) {
+                    //TODO  interpolate
+                    //y = y
+                }
+            }
+            ESP_LOGD("plot", "bin %i x=%.2f n=%i y=%.2f,", i, x, n, y);
+            series.push_back(y);
+        }
+
+        points.clear();
+
+        std::vector<std::vector<ascii::Text>> screen;
+        {
+            ascii::Asciichart asciichart(std::vector<std::vector<float>>{series});
+            series.clear();
+            screen = asciichart.height(16).Plot();
+        }
+
+        for (auto &line: screen) {
+            std::stringstream ss;
+
+            for (auto &item: line) {
+                ss << item;
+            }
+            ss << ascii::Decoration::From(ascii::Decoration::RESET);
+
+            UART_LOG_ASYNC(ss.str().c_str());
+        }
+
+        std::stringbuf buffer;
+        std::ostream os(&buffer);
+        os << "  P|V     " << std::setprecision(3) << minX << "V .. " << maxX << "V\n\n\n";
+        UART_LOG_ASYNC(buffer.str().c_str());
+
+        //UART_LOG(sc.c_str());
+        //UART_LOG("%.1fV .. %.1fV", minX, maxX);
+
+    }
+};
+
 /**
  * Implements
  * - Protection of DCDC converter
@@ -132,6 +206,8 @@ class MpptController {
         float voltage = 0;
     } maxPowerPoint;// MPP during sweep
 
+    Plot sweepPlot{};
+
     unsigned long lastTimeProtectPassed = 0;
     unsigned long _lastPointWrite = 0;
 
@@ -146,8 +222,10 @@ class MpptController {
     PD_Control_SmoothSetpoint powerController{20, 40, 200}; // over-power // TODO PID?
     //PD_Control LoadRegulationCTRL{5, -200, true}; //
 
+public:
     Tracker tracker{};
 
+private:
     TopologyConfig topologyConfig;
 
     uint8_t ledPinSimple = 255;
@@ -435,15 +513,20 @@ public:
      * Stops MPPT scan and set duty cycle to captured MPP
      * @param controlMode
      */
-    void _stopSweep(MpptControlMode controlMode) {
-        ESP_LOGI("mppt", "Stop sweep at controlMode=%s PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
-                 MpptState2String[(uint8_t) controlMode].c_str(),
+    void _stopSweep(MpptControlMode controlMode, int limIdx) {
+        ESP_LOGI("mppt", "Stop sweep after %.2fs at controlMode=%s (limIdx=%i) PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
+                 (loopWallClockMs() - dcdcPwr.getTimeLastCalibration()) * 1e-3f,
+                 MpptState2String[(uint8_t) controlMode].c_str(), limIdx,
                  buck.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
         );
         lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
         _sweeping = false;
         _targetDutyCycle = maxPowerPoint.dutyCycle;
         // buck.pwmPerturb((int16_t) maxPowerPoint.dutyCycle - (int16_t) buck.getBuckDutyCycle()); // jump to MPP
+
+
+        sweepPlot.plot();
+
     }
 
     void telemetry() {
@@ -632,8 +715,16 @@ public:
                     maxPowerPoint.dutyCycle = buck.getBuckDutyCycle();
                     maxPowerPoint.voltage = sensors.Vin->med3.get();
                 }
+
+                auto u = sensors.Vin->med3.get();
+                if (sweepPlot.points.empty() or abs(sweepPlot.points.back().first - u) > (limits.Vin_max / 200)) {
+                    if(sweepPlot.points.size() > 250)
+                        sweepPlot.points.pop_back();
+                    sweepPlot.points.emplace_back(u, power);
+                }
+
             } else {
-                _stopSweep(controlMode);
+                _stopSweep(controlMode, limitingControl ? int(limitingControl - controlValues.begin()) : -1);
             }
         } else if (_targetDutyCycle) {
             if (controlMode == MpptControlMode::None or
@@ -690,7 +781,7 @@ public:
             fp = constrain(fp, -(float) buck.getBuckDutyCycle(), 1.0f);
             buck.pwmPerturbFractional(fp);
 
-            if (controlValue < -80) {
+            if (controlValue < -80 and fp < -0.01) {
                 auto limIdx = (int) (limitingControl - controlValues.begin());
                 // TODO async log
                 UART_LOG_ASYNC(
@@ -698,6 +789,7 @@ public:
                         controlValue, fp,
                         MpptState2String[(int) controlMode].c_str(), limIdx, limitingControl->actual,
                         limitingControl->target);
+
                 if (controlMode == MpptControlMode::CC)
                     UART_LOG_ASYNC("Iout_max=%.2f powerLimit=%.2f", Iout_max, powerLimit);
             }

@@ -17,8 +17,10 @@ idf_component_register(SRCS
         "../src/lcd.cpp"
         "../src/web/server.cpp"
         "../src/math/float16.cpp"
-        INCLUDE_DIRS "." "../src"
+        INCLUDE_DIRS "." "../src" "../src/asciichart"
         REQUIRES
+        #arduino
+        #esp_system
         # NetworkClientSecure # OTA
 )
 
