@@ -41,6 +41,8 @@ struct Limits {
         assert(Vin_max > Vin_min);
         assert(Vin_max * Iin_max > P_max);
         assert(Vin_max * Iin_max < P_max * 4);
+        assert(Temp_derate < Temp_max);
+        assert(20 < Temp_max and Temp_max < 120);
     }
 
     Limits() = default;
@@ -654,6 +656,7 @@ public:
             controlMode = MpptControlMode::MPPT;
             controlValue = tracker.update(power, buck.getBuckDutyCycle());
             controlValue *= speedScale;
+
 
         } else {
             // tracker.resetTracker(power_smooth, controlValue > 0);

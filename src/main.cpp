@@ -202,7 +202,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
 void setup() {
 
     Serial.begin(115200);
-    //esp_usb_console_init();
+    //ESP_ERROR_CHECK(esp_usb_console_init());
 
 #if CONFIG_IDF_TARGET_ESP32S3 and !CONFIG_ESP_CONSOLE_UART_DEFAULT
     // for unknown reason need to initialize uart0 for serial reading (see loop below)
@@ -360,9 +360,13 @@ void loop() {
                 adcSampler.cancelCalibration();
             }
 
-            if (timeLastSampler && nowMs - timeLastSampler > 200 && !pwm.disabled()) {
-                pwm.disable();
-                ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown!");
+            if (timeLastSampler && nowMs - timeLastSampler > 200 ) {
+                if(!pwm.disabled()) {
+                    pwm.disable();
+                    charging = false;
+                    ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown! numSamples %lu",
+                             lastMpptUpdateNumSamples);
+                }
             }
 
             if (!timeLastSampler and nowMs > 20000) {
@@ -400,13 +404,23 @@ void loop() {
 
 static bool usbConnected = false;
 
+std::string mpptStateStr() {
+    std::string arrow;
+    if(mppt.tracker.slowMode) {
+        arrow = mppt.tracker._direction ? "⇡" : "⇣";
+    } else {
+        arrow = mppt.tracker._direction ? "↑" : "↓";
+    }
+    return arrow + MpptState2String[(uint8_t) mppt.getState()];
+}
+
 void loopLF(const unsigned long &nSamples, const unsigned long &nowMs) {
     auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
                (uint32_t) (nowMs - lastTimeOut);
 
     if (sps < loopRateMin && !pwm.disabled() && nSamples > max(loopRateMin * 5, 200) &&
-        !manualPwm && lastTimeOut && (nowMs - adcSampler.getTimeLastCalibration()) > 2000) {
-        ESP_LOGE("main", "Loop latency too high (%lu < %hhu Hz), shutdown!", sps, loopRateMin);
+        !manualPwm && lastTimeOut && (nowMs - adcSampler.getTimeLastCalibration()) > 6000) {
+        ESP_LOGE("main", "Loop latency too high (%lu < %hhu Hz), shutdown! (nSamples=%lu)", sps, loopRateMin, nSamples);
         mppt.shutdownDcdc();
         charging = false;
     }
@@ -431,7 +445,7 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowMs) {
             manualPwm ? "MANU"
                       : (!charging && !mppt.startCondition()
                          ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
-                         : MpptState2String[(uint8_t) mppt.getState()].c_str()),
+                         : mpptStateStr().c_str()),
             (int) charging,
             maxLoopLag * 1e-3f,
             maxLoopDT * 1e-3f,
