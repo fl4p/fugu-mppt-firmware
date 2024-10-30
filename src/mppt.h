@@ -15,7 +15,7 @@
 #include "store.h"
 #include "metering.h"
 #include "charger.h"
-#include "asciichart/ascii.h"
+#include "plot.h"
 
 struct Limits {
     const float Vin_max{};
@@ -105,92 +105,6 @@ static const std::array<std::string, (size_t) MpptControlMode::Max> MpptState2St
 
 struct TopologyConfig {
     bool backflowAtHV = false;//backflow switch is at solar input
-};
-
-struct Plot {
-    std::vector<std::pair<float, float>> pointsU{};
-    std::vector<std::pair<float, float>> pointsD{};
-
-    static void _plotSeries(std::vector<std::pair<float, float>> &points, const std::string &label) {
-        std::sort(points.begin(), points.end());
-
-        if (points.size() < 3) {
-            points.clear();
-            ESP_LOGI("plot", "Not enough data to plot %s", label.c_str());
-            return;
-        }
-
-
-        std::vector<float> series;
-
-        int bins = 100; // 120 causes mem issue already, maybe reduce plot height
-
-        auto minX = points.begin()->first, maxX = points.back().first;
-        auto binW = (maxX - minX) / bins;
-
-        ESP_LOGI("mppt", "Grouping %u %s points (%.2f,%.2f)~(%.2f,%.2f) into %d bins, binW=%.3f", points.size(),
-                 label.c_str(),
-                 minX, points.begin()->second, maxX, points.back().second, bins, binW);
-
-        auto it = points.begin();
-        float y = it->second;
-        for (int i = 0; i < bins; ++i) {
-            auto x = minX + i * binW;
-            int n = 0;
-            float ya = 0;
-            while (it != points.end() && it->first < x + binW * 0.5f) {
-                ya += it->second;
-                n++;
-                ++it;
-            }
-
-            if (n) y = ya / n;
-            else {
-                if (it != points.end()) {
-                    //TODO  interpolate
-                    //y = y
-                }
-            }
-            ESP_LOGD("plot", "bin %i x=%.2f n=%i y=%.2f,", i, x, n, y);
-            series.push_back(y);
-        }
-
-        points.clear();
-
-        std::vector<std::vector<ascii::Text>> screen;
-        {
-            ascii::Asciichart asciichart(std::vector<std::vector<float>>{series});
-            series.clear();
-            screen = asciichart.height(16).Plot();
-        }
-
-        for (auto &line: screen) {
-            std::stringstream ss;
-
-            for (auto &item: line) {
-                ss << item;
-            }
-            ss << ascii::Decoration::From(ascii::Decoration::RESET);
-            ss << "\n";
-
-            UART_LOG(ss.str().c_str());
-        }
-
-        std::stringbuf buffer;
-        std::ostream os(&buffer);
-        os << "  P|" << label << "     " << std::setprecision(3) << minX << " .. " << maxX << "\n\n\n";
-        //UART_LOG_ASYNC(buffer.str().c_str());
-        UART_LOG(buffer.str().c_str());
-
-        //UART_LOG(sc.c_str());
-        //UART_LOG("%.1fV .. %.1fV", minX, maxX);
-
-    }
-
-    void plot() {
-        _plotSeries(pointsU, "V");
-        _plotSeries(pointsD, "D");
-    }
 };
 
 
@@ -543,8 +457,8 @@ public:
         _targetDutyCycle = maxPowerPoint.dutyCycle;
         // buck.pwmPerturb((int16_t) maxPowerPoint.dutyCycle - (int16_t) buck.getBuckDutyCycle()); // jump to MPP
 
-        //enqueue_task([&] { sweepPlot.plot(); });
-        sweepPlot.plot();
+        enqueue_task([&] { sweepPlot.plot(); });
+        //sweepPlot.plot();
     }
 
     void telemetry() {
@@ -735,18 +649,10 @@ public:
                 }
 
                 auto u = sensors.Vin->med3.get();
-                if (sweepPlot.pointsU.empty() or abs(sweepPlot.pointsU.back().first - u) > (limits.Vin_max / 200)) {
-                    if (sweepPlot.pointsU.size() > 250)
-                        sweepPlot.pointsU.pop_back();
-                    sweepPlot.pointsU.emplace_back(u, power);
-                }
+                sweepPlot.pointsU.add(u, power, limits.Vin_max);
 
                 float d = buck.getBuckDutyCycle() / (float) buck.pwmMaxHS;
-                if (sweepPlot.pointsD.empty() or abs(sweepPlot.pointsD.back().first - d) > (1.f / 200.f)) {
-                    if (sweepPlot.pointsD.size() > 250)
-                        sweepPlot.pointsD.pop_back();
-                    sweepPlot.pointsD.emplace_back(d, power);
-                }
+                sweepPlot.pointsD.add(d, power, 1.0f);
 
             } else {
                 _stopSweep(controlMode, limitingControl ? int(limitingControl - controlValues.begin()) : -1);

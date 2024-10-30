@@ -1,4 +1,4 @@
-﻿#ifndef INCLUDE_ASCII_ASCII_H_
+#ifndef INCLUDE_ASCII_ASCII_H_
 #define INCLUDE_ASCII_ASCII_H_
 
 #include <cmath>
