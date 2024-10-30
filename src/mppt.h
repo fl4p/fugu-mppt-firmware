@@ -325,12 +325,12 @@ public:
                && !boardPowerSupplyUnderVoltage(true);
     }
 
-    bool protect(bool lenient) {
+    bool protect(bool ignoreUV) {
 
         auto nowMs = loopWallClockMs();
 
         // power supply under-voltage shutdown
-        if (boardPowerSupplyUnderVoltage() and not lenient) {
+        if (boardPowerSupplyUnderVoltage() and not ignoreUV) {
             if (!buck.disabled())
                 ESP_LOGW("mppt", "Supply under-voltage! Vin %.1f and Vout %.1f < 10", sensors.Vin->last,
                          sensors.Vout->last);
@@ -431,7 +431,7 @@ public:
             return false;
         }
 
-        if (sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() * 1.25f) {
+        if (sensors.Vout->ewm.avg.get() > (sensors.Vin->ewm.avg.get() + 1.0f) * 1.25f) {
             if (!buck.disabled())
                 ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown duty=%i", sensors.Vout->ewm.avg.get(),
                          sensors.Vin->ewm.avg.get(), (int) buck.getBuckDutyCycle());
@@ -439,7 +439,7 @@ public:
             return false;
         }
 
-        if (sensors.Vout->last > sensors.Vin->last * 2) {
+        if (sensors.Vout->last > (sensors.Vin->last + .5f) * 2) {
             ESP_LOGE("MPPT", "Vout %.1f > 2x Vin %.1f, shutdown", sensors.Vout->last, sensors.Vin->last);
             shutdownDcdc();
             return false;
