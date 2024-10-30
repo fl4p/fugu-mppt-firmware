@@ -204,6 +204,17 @@ void setup() {
     Serial.begin(115200);
     //ESP_ERROR_CHECK(esp_usb_console_init());
 
+
+
+
+#ifndef CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+    //usb_serial_jtag_driver_config_t usb_serial_jtag_config = {
+    //        .tx_buffer_size = 1024,
+    //        .rx_buffer_size = 1024,
+    //};
+    //ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb_serial_jtag_config));
+#endif
+
 #if CONFIG_IDF_TARGET_ESP32S3 and !CONFIG_ESP_CONSOLE_UART_DEFAULT
     // for unknown reason need to initialize uart0 for serial reading (see loop below)
     // Serial.available() works under Arduino IDE (for both ESP32,ESP32S3), but always returns 0 under platformio
@@ -222,10 +233,12 @@ void setup() {
     ConfFile pprofConf{"/littlefs/conf/pprof.conf", true};
 
     auto sprofHz = (uint32_t) pprofConf.getLong("sprofiler_hz", 0);
-    if (sprofHz && !esp_cpu_dbgr_is_attached()) {
+    if (sprofHz && esp_cpu_dbgr_is_attached()) {
         // only start the profiler with OpenOCD attached?
         ESP_LOGI("main", "starting sprofiler with freq %lu (samples/bank=%i)", sprofHz, PROFILING_ITEMS_PER_BANK);
         sprofiler_initialize(sprofHz);
+    } else if (sprofHz) {
+        ESP_LOGW("main", "sprofiler configured but not debugger attached");
     }
 
 
@@ -552,12 +565,15 @@ void loopNewData(unsigned long nowMs) {
 
 
 void loopConsole(int read(char *buf, size_t len), int write(const char *buf, size_t len), unsigned long nowMs) {
-    static char buf[128];
+    constexpr uint8_t bufSiz = 128;
+    static char buf[bufSiz];
     static uint8_t buf_pos = 0;
 
     int length = read(&buf[buf_pos], 128 - buf_pos);
-    if (length) {
+    if (length > 0) {
         if (buf_pos == 0) write("> ", 2);
+        if (length + buf_pos >= bufSiz - 1)
+            length = bufSiz - 1 - buf_pos;
         write(&buf[buf_pos], length); // echo
         lastTimeOut = nowMs; // stop logging during user input
         buf_pos += length;
@@ -572,7 +588,7 @@ void loopConsole(int read(char *buf, size_t len), int write(const char *buf, siz
             if (inp.length() > 0)
                 handleCommand(inp);
             buf_pos = 0;
-        } else if (buf_pos == 128) {
+        } else if (buf_pos == bufSiz - 1) {
             buf[buf_pos] = 0;
             ESP_LOGW("main", "discarding command buffer %s", buf);
             buf_pos = 0;
@@ -594,14 +610,40 @@ int uartWrite(const char *buf, size_t len) {
     return uart_write_bytes(uart_num, buf, len);
 }
 
+
+#include "../vfs/private_include/esp_vfs_private.h"
+
+
+int console_read_usb(char *buf, size_t len) {
+    //esp_usb_console_set_cb()
+    //usb_serial_jtag_is_connected()
+    //return usb_serial_jtag_read_bytes(buf, len, 0);
+    //return usb_serial_jtag_read()
+#if CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+    return esp_vfs_usb_serial_jtag_get_vfs()->read(0, buf, len);
+#endif
+}
+
+
+int console_write_usb(const char *buf, size_t len) {
+    //usb_serial_jtag_write_bytes(buf, len, 1);
+    //return printf("%s", buf);
+    auto r = esp_vfs_usb_serial_jtag_get_vfs()->write(0, buf, len);
+    usb_serial_jtag_ll_txfifo_flush();
+    return r;
+    //return get_vfs_for_index(secondary_vfs_index)->vfs.write(vfs_console.fd_secondary, buf, len);;
+}
+
 void loopUart(unsigned long nowMs) {
     // for some reason Serial.available() doesn't work under platformio
     // so access the uart port directly
 
     loopConsole(uartRead, uartWrite, nowMs);
 
+
     if (usbConnected) {
         //loopConsole(esp_usb_console_read_buf, esp_usb_console_write_buf, nowMs);
+        loopConsole(console_read_usb, console_write_usb, nowMs);
     }
 }
 
