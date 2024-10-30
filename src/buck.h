@@ -237,7 +237,7 @@ public:
      */
     void enableLowSide(bool enable) {
         if (enable != lowSideEnabled) {
-            ESP_LOGI("buck", "Low-side switch %s", enable ? "enabled" : "disabled");
+            UART_LOG_ASYNC("Low-side switch %s", enable ? "enabled" : "disabled");
         }
         lowSideEnabled = enable;
         if (!enable)

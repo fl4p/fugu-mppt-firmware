@@ -24,6 +24,13 @@ ESPTelnet *log_telnet = nullptr;
 
 vprintf_like_t old_vprintf = &vprintf;
 
+void enqueue_log(const char *s, int len) {
+    if (uart_async_log_queue.size_approx() > 200) return;
+    auto buf = new char[len + 1];
+    strncpy(buf, s, len + 1);
+    uart_async_log_queue.enqueue(AsyncLogEntry{buf, (uint16_t) len, false});
+}
+
 void enqueue_telnet_log(const char *s, int len) {
     if (uart_async_log_queue.size_approx() > 200) return;
     auto buf = new char[len + 1];
@@ -107,8 +114,15 @@ void flush_async_uart_log() {
 }
 
 
-int vprintf_telnet(const char *fmt, va_list argptr) {
+int vprintf_(const char *fmt, va_list argptr) {
     static char loc_buf[200];
+
+    if (xPortGetCoreID() == 1) {
+        // RT core1: defer all log to core0
+        int l = vsnprintf(loc_buf, sizeof(loc_buf), fmt, argptr);
+        enqueue_log(loc_buf, l);
+        return l;
+    }
 
     int r = old_vprintf(fmt, argptr);
 
@@ -130,7 +144,7 @@ void set_logging_telnet(ESPTelnet *telnet) {
 
 void enable_esp_log_to_telnet() {
     // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/log.html
-    old_vprintf = esp_log_set_vprintf(&vprintf_telnet);
+    old_vprintf = esp_log_set_vprintf(&vprintf_);
     if (!old_vprintf)
         old_vprintf = &vprintf;
 }
