@@ -108,22 +108,28 @@ struct TopologyConfig {
 };
 
 struct Plot {
-    std::vector<std::pair<float, float>> points{};
+    std::vector<std::pair<float, float>> pointsU{};
+    std::vector<std::pair<float, float>> pointsD{};
 
-    void plot() {
+    static void _plotSeries(std::vector<std::pair<float, float>> &points, const std::string &label) {
         std::sort(points.begin(), points.end());
 
-        if (points.size() < 3)
+        if (points.size() < 3) {
+            points.clear();
+            ESP_LOGI("plot", "Not enough data to plot %s", label.c_str());
             return;
+        }
 
 
         std::vector<float> series;
 
-        int bins = 130;
+        int bins = 100; // 120 causes mem issue already, maybe reduce plot height
+
         auto minX = points.begin()->first, maxX = points.back().first;
         auto binW = (maxX - minX) / bins;
 
-        ESP_LOGI("mppt", "Grouping %u points (%.2f,%.2f)~(%.2f,%.2f) into %d bins, binW=%.2f", points.size(),
+        ESP_LOGI("mppt", "Grouping %u %s points (%.2f,%.2f)~(%.2f,%.2f) into %d bins, binW=%.3f", points.size(),
+                 label.c_str(),
                  minX, points.begin()->second, maxX, points.back().second, bins, binW);
 
         auto it = points.begin();
@@ -165,20 +171,28 @@ struct Plot {
                 ss << item;
             }
             ss << ascii::Decoration::From(ascii::Decoration::RESET);
+            ss << "\n";
 
-            UART_LOG_ASYNC(ss.str().c_str());
+            UART_LOG(ss.str().c_str());
         }
 
         std::stringbuf buffer;
         std::ostream os(&buffer);
-        os << "  P|V     " << std::setprecision(3) << minX << "V .. " << maxX << "V\n\n\n";
-        UART_LOG_ASYNC(buffer.str().c_str());
+        os << "  P|" << label << "     " << std::setprecision(3) << minX << " .. " << maxX << "\n\n\n";
+        //UART_LOG_ASYNC(buffer.str().c_str());
+        UART_LOG(buffer.str().c_str());
 
         //UART_LOG(sc.c_str());
         //UART_LOG("%.1fV .. %.1fV", minX, maxX);
 
     }
+
+    void plot() {
+        _plotSeries(pointsU, "V");
+        _plotSeries(pointsD, "D");
+    }
 };
+
 
 /**
  * Implements
@@ -529,9 +543,8 @@ public:
         _targetDutyCycle = maxPowerPoint.dutyCycle;
         // buck.pwmPerturb((int16_t) maxPowerPoint.dutyCycle - (int16_t) buck.getBuckDutyCycle()); // jump to MPP
 
-
+        //enqueue_task([&] { sweepPlot.plot(); });
         sweepPlot.plot();
-
     }
 
     void telemetry() {
@@ -722,10 +735,17 @@ public:
                 }
 
                 auto u = sensors.Vin->med3.get();
-                if (sweepPlot.points.empty() or abs(sweepPlot.points.back().first - u) > (limits.Vin_max / 200)) {
-                    if(sweepPlot.points.size() > 250)
-                        sweepPlot.points.pop_back();
-                    sweepPlot.points.emplace_back(u, power);
+                if (sweepPlot.pointsU.empty() or abs(sweepPlot.pointsU.back().first - u) > (limits.Vin_max / 200)) {
+                    if (sweepPlot.pointsU.size() > 250)
+                        sweepPlot.pointsU.pop_back();
+                    sweepPlot.pointsU.emplace_back(u, power);
+                }
+
+                float d = buck.getBuckDutyCycle() / (float) buck.pwmMaxHS;
+                if (sweepPlot.pointsD.empty() or abs(sweepPlot.pointsD.back().first - d) > (1.f / 200.f)) {
+                    if (sweepPlot.pointsD.size() > 250)
+                        sweepPlot.pointsD.pop_back();
+                    sweepPlot.pointsD.emplace_back(d, power);
                 }
 
             } else {
