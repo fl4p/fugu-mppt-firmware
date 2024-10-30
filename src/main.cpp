@@ -765,6 +765,11 @@ bool handleCommand(const String &inp) {
         return true;
     } else if (inp == "rt-stats") {
         xTaskCreatePinnedToCore(print_real_time_stats_1s_task, "rtstats", 4096, NULL, 1, NULL, 0);
+    } else if (inp == "mem") {
+        UART_LOG("Total heap:  %9d\n", ESP.getHeapSize());
+        UART_LOG("Free heap:   %9d\n", ESP.getFreeHeap());
+        UART_LOG("Total PSRAM: %9d\n", ESP.getPsramSize());
+        UART_LOG("Free PSRAM:  %9d\n", ESP.getFreePsram());
     } else {
         ESP_LOGI("main", "unknown or unexpected command");
         return false;
