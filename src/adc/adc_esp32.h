@@ -151,8 +151,9 @@ public:
             return 1;
         } else if (readingChannel == 2) {
             auto t = loopWallClockUs() - resetTimes[readingChannel];
-            if (t > 4000000) {
-                return 2.0f + sinf((float) t / 10e6f);
+            if (t > 2000000) {
+                // ramp up a 2 + sin(t)
+                return (2.0f + sinf((float) t / 10e6f)) * min((t - 2000000.f) / 2000000.f, 1.f);
             } else {
                 return 0.0f;
             }

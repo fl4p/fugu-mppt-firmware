@@ -7,6 +7,8 @@
 #include <deque>
 #include <driver/uart.h>
 
+#include<functional>
+
 //esp_log_write(ESP_LOG_ERROR,      tag, LOG_FORMAT(E, format), esp_log_timestamp(), tag __VA_OPT__(,) __VA_ARGS__);
 
 //void log_write()
@@ -30,6 +32,10 @@ void enable_esp_log_to_telnet();
 void UART_LOG(const char *fmt, ...);
 void UART_LOG_ASYNC(const char *fmt, ...);
 void flush_async_uart_log();
+
+
+void process_queued_tasks();
+void enqueue_task(std::function<void(void)> &&fn);
 
 class ESPTelnet;
 void set_logging_telnet(ESPTelnet *telnet);
