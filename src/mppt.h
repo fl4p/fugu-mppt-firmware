@@ -374,8 +374,8 @@ public:
             bflow.enable(false); // low current
         }
 
-        if (ntc.last() > limits.Temp_max) {
-            ESP_LOGE("MPPT", "Temp %.1f°C > 95°C, shutdown", ntc.last());
+        if (ntc.last() > limits.Temp_max || ucTemp.last() > limits.Temp_max) {
+            ESP_LOGE("MPPT", "Temp %.1f (or µC %.1f) > %.1f°C, shutdown", ntc.last(), ucTemp.last(), limits.Temp_max);
             return false;
         }
 
