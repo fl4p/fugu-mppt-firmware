@@ -32,12 +32,12 @@ public:
       std::hash<std::string> hasher;
       auto textStyleHash = (long)hasher(ss.str());
       auto &streamStyleHash = os.iword(get_style_stream_iword());
-      if(textStyleHash == streamStyleHash)
-        os << val.text_;
-      else {
-          os << val.style_ << val.text_; // << Decoration::From(Decoration::RESET);
+      if(textStyleHash != streamStyleHash) {
+          os << ss.str();
           streamStyleHash = textStyleHash;
       }
+      os << val.text_;
+      // reset style: << Decoration::From(Decoration::RESET);
     return os;
   }
 
