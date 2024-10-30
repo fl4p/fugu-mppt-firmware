@@ -237,6 +237,8 @@ public:
     BackflowDriver bflow{};
     SolarEnergyMeter meter{};
     TempSensorGPIO_NTC ntc;
+    Esp32TempSensor ucTemp;
+
     float speedScale = 1;
 
     explicit MpptController(ADC_Sampler &dcdcPwr, SynchronousBuck &pwm, LCD &lcd)
@@ -264,6 +266,8 @@ public:
         tele = tele_;
 
         ntc.begin(pinConf);
+        ucTemp.begin();
+        ucTemp.read();
 
         ledPinSimple = pinConf.getByte("led_simple", 255);
         if (ledPinSimple != 255) {

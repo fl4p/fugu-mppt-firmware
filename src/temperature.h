@@ -1,6 +1,11 @@
 #pragma once
 
-class TempSensorGPIO_NTC {
+class SingleValueSensor {
+    virtual float read() = 0;
+    [[nodiscard]] virtual float last() const = 0;
+};
+
+class TempSensorGPIO_NTC : public SingleValueSensor{
     float ntcResistance = 10e3f;
 
     RunningMedian3<float> median3{};
@@ -31,8 +36,8 @@ public:
     TempSensorGPIO_NTC() = default;
 
     void begin(const ConfFile &pinConf) {
-        ch = (adc1_channel_t)pinConf.getByte("ntc_ch", adc1_channel_t::ADC1_CHANNEL_MAX);
-        assert(ch >= 0 and ch < adc1_channel_t::ADC1_CHANNEL_MAX );
+        ch = (adc1_channel_t) pinConf.getByte("ntc_ch", adc1_channel_t::ADC1_CHANNEL_MAX);
+        assert(ch >= 0 and ch < adc1_channel_t::ADC1_CHANNEL_MAX);
 
         ESP_ERROR_CHECK(adc1_config_width(ADC_WIDTH_BIT_12));
         ESP_ERROR_CHECK(adc1_config_channel_atten(ch, adc_atten));
@@ -42,9 +47,9 @@ public:
         //assert(adcAttachPin((uint8_t) PinConfig::NTC));
     }
 
-    float read() {
+    float read() override {
         //auto adc = analogRead((uint8_t) PinConfig::NTC);
-        if(ch == adc1_channel_t::ADC1_CHANNEL_MAX)
+        if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
             return NAN;
 
         auto adc = adc1_get_raw(ch);
@@ -70,18 +75,69 @@ public:
         return last();
     }
 
-    inline float last() const { return ewma2.get(); }
+    [[nodiscard]] float last() const override { return ewma2.get(); }
 };
 
 #if CONFIG_IDF_TARGET_ESP32S3
 
-#include "driver/temp_sensor.h"
+#if ESP_IDF_VERSION_MAJOR == 5
 
+#include "driver/temperature_sensor.h"
+
+#else
+#include "driver/temp_sensor.h"
+#endif
+
+
+#if ESP_IDF_VERSION_MAJOR == 5
+class Esp32TempSensor : public SingleValueSensor {
+    RunningMedian3<float> median3{};
+    EWMA<float> ewma{20};
+
+    //temperature_sensor_handle_t temp_handle = NULL;
+    float tsens_out = NAN;
+    temperature_sensor_handle_t temp_sensor = NULL;
+    temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
+public:
+    Esp32TempSensor() {
+
+        /*temperature_sensor_config_t temp_sensor = {
+                .range_min = 20,
+                .range_max = 100,
+        };
+        ESP_ERROR_CHECK(temperature_sensor_install(&temp_sensor, &temp_handle));
+
+        ESP_ERROR_CHECK(temperature_sensor_enable(temp_handle));
+         */
+        // 20~100 is a pre-defined range
+    }
+
+    void begin() {
+        ESP_ERROR_CHECK(temperature_sensor_install(&temp_sensor_config, &temp_sensor));
+        ESP_ERROR_CHECK(temperature_sensor_enable(temp_sensor));
+    }
+
+    float read() override {
+
+        // This has very poor real-time performance if WiFi is enabled (probably using ADC0?)
+        if (temperature_sensor_get_celsius(temp_sensor, &tsens_out) != ESP_OK) {
+            //temp_sensor_config = (temp_sensor_dac_offset_t)((conf.dac_offset + 1) % TSENS_DAC_MAX);
+            return NAN;
+        }
+
+        ewma.add(median3.next(tsens_out));
+
+        return ewma.get();
+    }
+
+    [[nodiscard]] float last() const override { return ewma.get(); }
+};
+#else // ESP_IDF_VERSION_MAJOR == 5
 /**
  * Reads ESP32 internal temperature sensor.
  * Don't use this in latency critical loops if WiFi is on!
  */
-class Esp32TempSensor {
+class Esp32TempSensor : public SingleValueSensor {
     RunningMedian3<float> median3{};
     EWMA<float> ewma{40};
 
@@ -103,7 +159,7 @@ public:
         ESP_ERROR_CHECK(temp_sensor_start());
     }
 
-    float read() {
+    float read()  override {
 
         // This has very poor real-time performance if WiFi is enabled (probably using ADC0?)
         if (temp_sensor_read_celsius(&tsens_out) != ESP_OK) {
@@ -130,6 +186,7 @@ public:
 
     float last() const { return ewma.get(); }
 };
+#endif // ESP_IDF_VERSION_MAJOR == 5
 
 #else
 
