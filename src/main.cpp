@@ -508,7 +508,7 @@ void loopNewData(unsigned long nowMs) {
         mppt.shutdownDcdc();
     } else {
         if (charging or manualPwm) {
-            bool mppt_ok = mppt.protect();
+            bool mppt_ok = mppt.protect(manualPwm);
             if (mppt_ok) {
                 if (haveNewSample) {
                     if (!manualPwm)

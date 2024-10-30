@@ -307,12 +307,12 @@ public:
                && !boardPowerSupplyUnderVoltage(true);
     }
 
-    bool protect() {
+    bool protect(bool lenient) {
 
         auto nowMs = loopWallClockMs();
 
         // power supply under-voltage shutdown
-        if (boardPowerSupplyUnderVoltage()) {
+        if (boardPowerSupplyUnderVoltage() and not lenient) {
             if (!buck.disabled())
                 ESP_LOGW("mppt", "Supply under-voltage! Vin %.1f and Vout %.1f < 10", sensors.Vin->last,
                          sensors.Vout->last);
