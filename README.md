@@ -10,16 +10,18 @@ The charger uses a simple CC (constant current) and CV (constant voltage) approa
 This is common for Lithium-Batteries (e.g. LiFePo4).
 
 Highlights:
+
 * Tested with ESP32 and ESP32-S3
 * Async ADC sampling for low latency control loop
 * Automatic zero-current calibration
-* ADC abstraction layer with implementations for ESP32(S3) [Internal ADC](doc/Internal%20ADC.md), ADS1x15 and INA226/INA228
+* ADC abstraction layer with implementations for ESP32(S3) [Internal ADC](doc/Internal%20ADC.md), ADS1x15 and
+  INA226/INA228
 * PID control for precise voltage and current regulation
 * Periodic MPPT global search
 * Sophisticated Diode Emulation for low-side switch
 * Battery voltage detection
 * Fast protection shutdown in over-voltage and over-current conditions
-* PWM Fan Control and linear temperature power de-rating
+* PWM Fan Control and temperature power de-rating
 * Telemetry to InfluxDB over UDP
 * LCD (hd44780) and WS2812B LED Indicator
 * [Serial UART console](doc/Serial%20Console.md) and telnet to interact with the charger
@@ -29,19 +31,21 @@ The firmware sends real-time data to InfluxDB server using UDP line protocol.
 
 The aim of this program is to provide a flexible MPPT and DC/DC converter solution that you can use with various
 hardware topologies (e.g. buck & boost, location of current sensor).
-You can configure pins, limits, converter topology and sensors through config files, without the need to rebuild the firmware.
+You can configure pins, limits, converter topology and sensors through config files, without the need to rebuild the
+firmware.
 Access files through FTP or USB Mass Storage Class (MSC, ESP32-S3).
-I tried to structure components in classes, so they reflect the physical and logical building-blocks of a MPPT solar charger.
+I tried to structure components in classes, so they reflect the physical and logical building-blocks of a MPPT solar
+charger.
 See [Voltage & Current Sensors, ADC](#Voltage Current Sensors (ADC))
 Feel free to use parts of the code.
 
-# Hardware References
+# Reference Hardware
 
-* [Original Fugu](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/) (Proteus)
 * [Fugu2](https://cadlab.io/project/27217/master/files) (KiCad)
     * Dual parallel HS switches
     * Snubber circuit for reduced EMI
     * INA226 current sensor
+* [Original Fugu](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/) (Proteus)
 
 # Getting Started
 
@@ -50,10 +54,10 @@ You can build with ESP-IDF toolchain using Arduino as a component.
 If you want to use PlatformIO, checkout `tag/pio-last`. The PIO build branch is currently not maintained.
 This version works with the original Fugu design. Mind the voltage divider values. ADS1015 and ACS712-30 hall.
 
-
 ## Building with ESP-IDF
 
-Follow [Espressif's Get Started guide](https://docs.espressif.com/projects/esp-idf/en/v5.1.4/esp32/get-started/index.html) to
+Follow [Espressif's Get Started guide](https://docs.espressif.com/projects/esp-idf/en/v5.1.4/esp32/get-started/index.html)
+to
 install ESP-IDF v5.1.4 . The firmware depends on `arduino-esp32` so we can use Arduino libraries.
 Since v3.x `arduino-esp32` is compatible with `esp-idf v5.1` (before we had to use `esp-idf v4.4`).
 To install `esp-idf v5.1.4` you can follow these commands (make sure you have all the prerequisites from
@@ -78,24 +82,37 @@ idf.py build
 idf.py flash
 ```
 
-## Configuration
+## Configuring Build
 
-IO pins mapping, I2C and sensor config is stored in `.conf` files on the `littlefs` partition.
+* Set environment variable `RUN_TESTS=1` to run unit-tests
+* `FUGU_BAT_V`: hard-code the battery voltage. If not set the program tries to detect bat voltage from a multiple of
+  14.6V.
+
+## Board Configuration
+
+IO pins mappings, sensor and system (I2C, WiFi, etc.) config values are stored in `.conf` files on the `littlefs`
+partition.
 This enables easy OTA updates of the firmware across various hardware configurations. And you can easily alter the
-configuration by flashing a new `littlefs` image or by editing the files over FTP.
+configuration by flashing a new `littlefs` image or by editing the files over FTP. Some crucial parameters are still
+hard-coded, making them configurable is WIP.
 
-You find existing configuration in [`provisioning/fmetal`](provisioning/fmetal), for the [Fugu2 board](https://github.com/fl4p/Fugu2).
+You find existing board configuration in the folder [`provisioning/`](provisioning/):
 
-Flash these config files with:
+* `fmetal`: [Fugu2 board](https://github.com/fl4p/Fugu2)
+* `fugu`: original fugu design
+* `dry`: useful for testing with ESP32 dev boards, uses fake ADC
+
+Chose the board and flash these config files (set `PROV` to the name of the folder under `provisioning/`):
 
 ```
-PROV=dry
+BOARD=dry
 littlefs-python create provisioning/$PROV $PROV.bin -v --fs-size=0x20000 --name-max=64 --block-size=4096
-parttool.py -p /dev/cu.usb* write_partition --partition-name littlefs --input $PROV.bin
+parttool.py --port /dev/cu.usb* write_partition --partition-name littlefs --input $PROV.bin
 ```
 
 Alternatively, in `CMakeLists.txt`, add `FLASH_IN_PROJECT` argument for `littlefs_create_partition_image()`. Then the
 config files will be flashed with the next `idf.py flash`:
+
 ```
 littlefs_create_partition_image(littlefs provisioning/fmetal
   FLASH_IN_PROJECT
@@ -111,20 +128,13 @@ idf.py monitor
 > restart
 ```
 
-
 If Wi-Fi connection is successful you will be able to connect with telnet and FTP.
 You can send the same commands over telnet as over the [Serial console](doc/Serial%20Console.md).
 
 Use FTP to upload HW configuration files to configure IO pins, ADC and converter topology.
-FTP settings: 1 simultaneous connection, disable passive mode, root path TODO.
+Note that FTP server is unstable. It seems to work well with the Filezilla client.
+FTP settings: 1 simultaneous connection, disable passive mode.
 
-## Configuring Build
-
-* Set environment variable `RUN_TESTS=1` to run unit-tests
-* `FUGU_BAT_V`: hard-code the battery voltage. If not set the program tries to detect bat voltage from a multiple of
-  14.6V.
-
-  
 # Control Loop
 
 The control loop reads Vout, Vin, Iin and adjusts the PWM duty cycle of the buck DC-DC converter for MPPT and output
@@ -151,7 +161,7 @@ can proceed with the MPPT. Otherwise, we halt MPPT and decrease the duty cycle p
 
 The control loop has an update rate of about 160 Hz or 260 Hz without telemetry.
 
-# Voltage Current Sensors (ADC)
+# Voltage & Current Sensors (ADC)
 
 The firmware tries to be as hardware independent as possible by using layers of abstraction (HAL), so you can easily
 adopt it
@@ -225,13 +235,11 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 
 # Not implemented / TODO
 
-* capture sweep I-V, P-V (IU, PU) curves
-  * https://github.com/saulpw/visidata
-  * https://github.com/Civitasv/asciichart
+* usb console CDC multiplex
 * make buck signal pins configurable
-* learn buck start duty cycle
+* learn buck start duty cycle, buck self test * Calibration
+    * find pwm min duty (vout > 0 or iout > 0)
 * 2nd and more (interleaved) channels
-* PWM fade!
 * More precise PWM
 * LCD Buttons
 * Web Interface
@@ -244,8 +252,6 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 * Boost converter
 * Detect burned HS and short LS, and back-flow? (implement self-tests)
 * low current, low voltage drop -> disable bf (might sense phantom current due to temperature drift)
-* Calibration
-    * find pwm min duty (vout > 0 or iout > 0)
 
 ## Issues
 
@@ -253,15 +259,6 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
   decrease duty-cycle, which can increase solar voltage, thus increase conversion power. In this case the converter will
   increases power until it runs into the hard
   limits, shuts down and recovers. Because this is a transient situation, it should not cause any damage to hardware.
-
-# Current sensing
-
-- ina226
-- increase conversion time: reduce random noise, more aliasing
-- averaging: eliminate aliasing of I and U readings due to sampling the i2c registers
-- consider current sense input filter cut-off frequency and control loop update rate when tuning these values
-- Voltage refresh rate should be <10ms, so max averaging is 64 and 140us conversion time (64 * 140us = 9ms)
-    - note that we can use the ina226 OV alert feature and shutdown from an ISR
 
 # Using this Firmware
 
