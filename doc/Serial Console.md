@@ -34,3 +34,11 @@ OK: <cmd>
 * `bf-enable`, `bf-disable`: enable/disable the backflow switch. An enabled back-flow switch will allow current flow
   from the output to the input (bat to solar).
 * `mppt` switches back to MPP tracking mode
+
+
+
+# Telnet
+
+from Home Assistant:
+* install "Terminal & SSH" add-on
+* in add-on Configuration  add `busybox-extras` to Packages

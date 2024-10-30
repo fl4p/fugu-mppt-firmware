@@ -1,4 +1,9 @@
 
+* esp_log_write writes uses `s_log_print_func`, which defaults to `vprintf`. override with `esp_log_set_vprintf`
+* if ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG is enabled, `vprintf` also writes to usb
+  * probably in `vfs_console.c / console_write()`
+* see `vfs_console.c`
+* esp_console_new_repl_usb_serial_jtag
 ```
 
 UART_LOG(...)
@@ -23,3 +28,5 @@ USE_ESP_IDF_LOG
 
 
 ```
+
+ESP_CONSOLE_USB_CDC_SUPPORT_ETS_PRINTF(=n) "Enable esp_rom_printf / ESP_EARLY_LOG via USB CDC"
