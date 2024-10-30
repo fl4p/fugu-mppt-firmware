@@ -25,6 +25,7 @@
 
 #include "perf.h"
 #include <sprofiler.h>
+#include <hal/usb_serial_jtag_ll.h>
 
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
@@ -58,6 +59,8 @@ unsigned long loopWallClockMs() { return (unsigned long) (loopWallClockUs_ / 100
 void uartInit(int port_num);
 
 void loopNetwork_task(void *arg);
+
+void loopCore0_LF(void *arg);
 
 void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     loopWallClockUs_ = micros();
@@ -318,6 +321,8 @@ void setup() {
     }
 
     xTaskCreatePinnedToCore(loopNetwork_task, "netloop", 4096 * 4, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(loopCore0_LF, "core0LF", 4096 * 1, NULL, 1, NULL, 0);
+
 
     ESP_LOGI("main", "setup() done.");
 
@@ -351,7 +356,7 @@ void loop() {
         ESP_LOGI("main", "Loop running on core %i", (int) xPortGetCoreID());
 #ifdef CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
         ESP_LOGW("main", "CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS enabled!");
-        delay(200);
+        delay(1000);
 #endif
         mppt.ntc.read();
     }
@@ -373,8 +378,8 @@ void loop() {
                 adcSampler.cancelCalibration();
             }
 
-            if (timeLastSampler && nowMs - timeLastSampler > 200 ) {
-                if(!pwm.disabled()) {
+            if (timeLastSampler && nowMs - timeLastSampler > 200) {
+                if (!pwm.disabled()) {
                     pwm.disable();
                     charging = false;
                     ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown! numSamples %lu",
@@ -413,19 +418,25 @@ void loop() {
     //esp_task_wdt_reset();
 
     vTaskDelay(0); // this resets the Watchdog Timer (WDT) for some reason
+    //vTaskDelay(1);
+    //yield();
 }
 
 static bool usbConnected = false;
 
 std::string mpptStateStr() {
     std::string arrow;
-    if(mppt.tracker.slowMode) {
-        arrow = mppt.tracker._direction ? "⇡" : "⇣";
-    } else {
-        arrow = mppt.tracker._direction ? "↑" : "↓";
+    if (mppt.getState() == MpptControlMode::MPPT) {
+        if (mppt.tracker.slowMode) {
+            arrow = mppt.tracker._direction ? "⇡" : "⇣";
+        } else {
+            arrow = mppt.tracker._direction ? "↑" : "↓";
+        }
     }
     return arrow + MpptState2String[(uint8_t) mppt.getState()];
 }
+
+int console_write_usb(const char *buf, size_t len);
 
 void loopLF(const unsigned long &nSamples, const unsigned long &nowMs) {
     auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
@@ -433,24 +444,24 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowMs) {
 
     if (sps < loopRateMin && !pwm.disabled() && nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOut && (nowMs - adcSampler.getTimeLastCalibration()) > 6000) {
-        ESP_LOGE("main", "Loop latency too high (%lu < %hhu Hz), shutdown! (nSamples=%lu)", sps, loopRateMin, nSamples);
         mppt.shutdownDcdc();
+        ESP_LOGE("main", "Loop latency too high (%lu < %hhu Hz), shutdown! (nSamples=%lu)", sps, loopRateMin, nSamples);
         charging = false;
     }
 
     usbConnected = usb_serial_jtag_is_connected();
     mppt.ntc.read();
 
-    UART_LOG(
-            "V=%5.2f/%5.2f I=%4.1f/%5.2fA %5.1fW %.0f°C %2usps %2ukbps PWM(H|L|Lm)=%4hu|%4hu|%4hu"
-            " MPPT(st=%5s,%i) lag=%.1fms lt=%.1fms N=%u rssi=%hi\n",
+    UART_LOG_ASYNC(
+            "V=%5.2f/%5.2f I=%4.1f/%5.2fA %5.1fW %.0f℃%.0f℃ %2usps %2u㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
+            " MPPT(st=%5s,%i) lag=%.1fms lt=%.1fms N=%u rssi=%hi",
             sensors.Vin->last,
             sensors.Vout->last,
             sensors.Iin->last,
             sensors.Iout->last,
             sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
             //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
-            mppt.ntc.last(),
+            mppt.ntc.last(), mppt.ucTemp.last(),
             sps,
             (uint32_t) (bytesSent /*/ 1000u * 1000u*/ / nowMs),
             pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
@@ -653,6 +664,7 @@ void loopNetwork_task(void *arg) {
 
     while (1) {
         flush_async_uart_log();
+        process_queued_tasks();
 
         if (!disableWifi) {
             /* only connect with disabled power conversion
@@ -663,6 +675,17 @@ void loopNetwork_task(void *arg) {
         }
 
         vTaskDelay(pdMS_TO_TICKS(2));
+    }
+}
+
+void loopCore0_LF(void *arg) {
+    // do everything with poor real-time performance
+
+    while (1) {
+
+        mppt.ucTemp.read();
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
