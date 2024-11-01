@@ -283,8 +283,11 @@ public:
     }
 
     UpdateRet update() {
-        if (!adc->hasData())
+        auto hd = adc->hasData();
+        rtcount("adc.update.hasData");
+        if (!hd)
             return UpdateRet::NoNewData;
+
 
         if (adc->getAltogether()) {
             for (auto sensor: realSensors) {

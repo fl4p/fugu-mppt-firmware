@@ -351,9 +351,7 @@ void loop() {
     loopNetwork_task(nullptr);
 }
 
-void rtcount(const char *l) {
 
-}
 
 // TODO avoid using loop (run it on NON-rt core!)
 void loopRT(void *arg) {
@@ -383,6 +381,7 @@ void loopRT(void *arg) {
 
         //uint32_t nSamples;
         if (adcSampler.adc) {
+            rtcount("adc.update.pre");
             auto samplerRet = adcSampler.update();
             rtcount("adc.update");
 
@@ -419,12 +418,11 @@ void loopRT(void *arg) {
                 }
             } else {
                 loopNewData(nowMs);
+                rtcount("loopNewData");
             }
         } else {
             vTaskDelay(1);
         }
-
-        loopUart(nowMs);
 
 
         auto now2 = micros();
@@ -437,8 +435,6 @@ void loopRT(void *arg) {
             maxLoopDT = loopDT;
 
         //vTaskDelay(0); // this resets the Watchdog Timer (WDT) for some reason
-        // yield();
-        //esp_task_wdt_reset();
         //vTaskDelay(1);
         //yield();
     }
@@ -476,7 +472,7 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowMs) {
 
     UART_LOG_ASYNC(
             "V=%5.2f/%5.2f I=%4.1f/%5.2fA %5.1fW %.0f℃%.0f℃ %2usps %2u㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
-            " MPPT(st=%5s,%i) lag=%.1fms lt=%.1fms N=%u rssi=%hi",
+            " st=%5s,%i lag=%.1fms lt=%.1fms N=%u rssi=%hi",
             sensors.Vin->last,
             sensors.Vout->last,
             sensors.Iin->last,
@@ -531,8 +527,6 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowMs) {
 }
 
 void loopNewData(unsigned long nowMs) {
-    rtcount("loopNewData");
-
     // cap control update rate to sensor sampling rate (see below). rate for all 3 sensors are equal.
     // we choose Vout here because this is the most critical control value (react fast to prevent OV)
     auto nSamples = sensors.Vout->numSamples;
@@ -556,11 +550,13 @@ void loopNewData(unsigned long nowMs) {
         mppt.shutdownDcdc();
     } else {
         if (charging or manualPwm) {
+            rtcount("protect.pre");
             bool mppt_ok = mppt.protect(manualPwm);
             rtcount("protect");
             if (mppt_ok) {
                 if (haveNewSample) {
                     if (!manualPwm) {
+                        rtcount("mppt.update.pre");
                         mppt.update();
                         rtcount("mppt.update");
                     } else {
@@ -575,6 +571,7 @@ void loopNewData(unsigned long nowMs) {
             }
         } else if (nowMs > delayStartUntil && mppt.startCondition()) {
             if (!manualPwm) {
+                rtcount("mppt.startSweep.pre");
                 mppt.startSweep();
                 rtcount("mppt.startSweep");
             }
@@ -681,6 +678,9 @@ void loopNetwork_task(void *arg) {
     //ESP_LOGI("main", "Net loop running on core %i", xPortGetCoreID());
     assert(xPortGetCoreID() == 0);
 
+    auto nowMs(loopWallClockMs());
+
+    loopUart(nowMs);
     flush_async_uart_log();
     process_queued_tasks();
 
@@ -695,9 +695,8 @@ void loopNetwork_task(void *arg) {
     auto &nSamples(sensors.Vout->numSamples);
 
     if ((loopWallClockMs() - lastTimeOut) >= 3000) {
-        loopLF(nSamples, loopWallClockMs());
-        rtcount("mppt.loopLF");
-        lastTimeOut = loopWallClockMs();
+        loopLF(nSamples, nowMs);
+        lastTimeOut =nowMs;
     }
 
     lcd.updateValues(LcdValues{
@@ -769,6 +768,7 @@ bool handleCommand(const String &inp) {
     } else if (inp == "reset-lag") {
         maxLoopLag = 0;
         maxLoopDT = 0;
+        rtcount_print(true);
     } else if (inp == "wifi on") {
         disableWifi = false;
         timeSynced = false;

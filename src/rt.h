@@ -1,5 +1,61 @@
 #pragma once
 
+#include <map>
+
+struct rtcount_stat {
+    unsigned long total{0}, num{0}, max{0};
+};
+
+std::unordered_map<const char *, rtcount_stat> rtcount_stats{};
+
+volatile bool rtcount_en = true;
+
+void rtcount(const char *l) {
+    static unsigned long t0 = 0;
+
+    if(!rtcount_en) return;
+
+    if (t0) {
+        auto dt = micros() - t0;
+        auto f = rtcount_stats.find(l);
+        if (f == rtcount_stats.end()) {
+            rtcount_stats[l] = {};
+            f = rtcount_stats.find(l);
+        }
+        auto &stat(f->second);
+        ++stat.num;
+        stat.total += dt;
+        if (dt > stat.max) stat.max = dt;
+    }
+
+    t0 = micros();
+}
+
+void rtcount_print(bool reset) {
+    if(rtcount_en) {
+        rtcount_en = false;
+        vTaskDelay(100);
+    }
+
+    printf("rtcount_print:\n");
+    printf("%-22s %9s %9s %6s %6s (us)\n", "key", "num", "tot", "mean", "max");
+
+    //typedef std::remove_reference<decltype(*rtcount_stats.begin())>::type P;
+    typedef std::pair<const char *, rtcount_stat> P;
+    std::vector<P> sorted(rtcount_stats.begin(), rtcount_stats.end());
+    std::sort(sorted.begin(), sorted.end(), [](const P &a, const P&b ) {
+        return a.second.max > b.second.max;
+    });
+
+    for (auto [k, stat]: sorted) {
+        printf("%-22s %9lu %9lu %6lu %6lu\n", k, stat.num, stat.total, stat.total / stat.num, stat.max);
+    }
+    printf("\n\n");
+    if(reset)
+        rtcount_stats.clear();
+
+    rtcount_en = true;
+}
 
 class TaskNotification {
     // https:// www. FreeRTOS. org/ RTOS-task-notifications. html
