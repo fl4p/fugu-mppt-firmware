@@ -19,6 +19,11 @@ idf_component_register(SRCS
         "../src/math/float16.cpp"
         INCLUDE_DIRS "." "../src" "../src/asciichart"
         REQUIRES
+        # if we start to list components here we need to list them all
+        # put dependencies in component/Arduion-LiquidCrystal as only needed for linking
+        #arduino
+        #esp_system
+        #Arduino-LiquidCrystal-I2C
         #arduino
         #esp_system
         # NetworkClientSecure # OTA

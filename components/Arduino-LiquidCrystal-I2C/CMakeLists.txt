@@ -5,8 +5,6 @@ idf_component_register(
         Arduino-LiquidCrystal-I2C-library
         REQUIRES
         arduino
-        #arduino-esp32
-        #esp_partition # TODO remove, missing in arduino-esp
 )
 
 project(Arduino-LiquidCrystal-I2C)

@@ -84,8 +84,9 @@ void UART_LOG_ASYNC(const char *fmt, ...) {
     va_start(args, fmt);
     uint16_t l = vsnprintf(buf, 380, fmt, args);
     va_end(args);
-    buf[l] = '\n';
-    buf[++l] = '\0';
+    buf[l++] = '\r';
+    buf[l++] = '\n';
+    buf[l] = '\0';
 
     uart_async_log_queue.enqueue(AsyncLogEntry{buf, l, false});
 

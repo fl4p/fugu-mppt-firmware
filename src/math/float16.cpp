@@ -214,9 +214,10 @@ float float16::f16tof32(uint16_t _value) const
     return sgn ? -f : f;
 }
 
-uint16_t float16::f32tof16(float f) const
+uint16_t float16::f32tof16(const float &f) const
 {
-    uint32_t t = *(uint32_t *) &f;
+    uint32_t t; // no pointer punning here
+    memcpy(&t, &f, sizeof t);
     // man bits = 10; but we keep 11 for rounding
     uint16_t man = (t & 0x007FFFFF) >> 12;
     int16_t  exp = (t & 0x7F800000) >> 23;

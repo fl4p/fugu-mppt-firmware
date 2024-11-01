@@ -71,7 +71,7 @@ class float16
     // CORE CONVERSION
     // should be private but for testing...
     float    f16tof32(uint16_t) const;
-    uint16_t f32tof16(float) const;
+    uint16_t f32tof16(const float&) const;
 
     explicit operator float() const { return toFloat(); }
 
