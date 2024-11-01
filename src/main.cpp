@@ -27,6 +27,8 @@
 #include <sprofiler.h>
 #include <hal/usb_serial_jtag_ll.h>
 
+#include <esp_task_wdt.h>
+
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
 SynchronousBuck pwm;
@@ -61,6 +63,8 @@ void uartInit(int port_num);
 void loopNetwork_task(void *arg);
 
 void loopCore0_LF(void *arg);
+
+void loopRT(void *arg);
 
 void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     loopWallClockUs_ = micros();
@@ -198,7 +202,6 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         ESP_LOGW("main", "Skipping ADC range and noise checks.");
 
     mppt.setSensors(sensors);
-    adcSampler.begin();
 }
 
 
@@ -320,7 +323,8 @@ void setup() {
         ESP_LOGE("main", "error during mppt setup: %s", er.what());
     }
 
-    xTaskCreatePinnedToCore(loopNetwork_task, "netloop", 4096 * 4, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(loopRT, "loopRt", 4096 * 4, NULL, 20, NULL, 1);
+    //xTaskCreatePinnedToCore(loopNetwork_task, "netloop", 4096 * 4, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(loopCore0_LF, "core0LF", 4096 * 1, NULL, 1, NULL, 0);
 
 
@@ -344,82 +348,100 @@ void loopNewData(unsigned long nowMs);
 void loopUart(unsigned long nowMs);
 
 void loop() {
-    loopWallClockUs_ = micros();
-    auto &nowUs(loopWallClockUs_);
+    loopNetwork_task(nullptr);
+}
 
-    auto nowMs = (unsigned long) (nowUs / 1000ULL);
+void rtcount(const char *l) {
 
-    if (lastLoopTime == 0) {
-        vTaskPrioritySet(NULL, 20); // highest priority (24)
-        // ^ see https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/performance/speed.html#choosing-task-priorities-of-the-application
+}
 
-        ESP_LOGI("main", "Loop running on core %i", (int) xPortGetCoreID());
+// TODO avoid using loop (run it on NON-rt core!)
+void loopRT(void *arg) {
+
+    adcSampler.begin();
+
+    while (true) {
+        rtcount("start");
+        loopWallClockUs_ = micros();
+        rtcount("micros");
+        auto &nowUs(loopWallClockUs_);
+
+        auto nowMs = (unsigned long) (nowUs / 1000ULL);
+
+        if (lastLoopTime == 0) {
+            assert(xPortGetCoreID() == 1);
+            vTaskPrioritySet(NULL, 20); // highest priority (24)
+            // ^ see https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/performance/speed.html#choosing-task-priorities-of-the-application
+
+            ESP_LOGI("main", "Loop running on core %i", (int) xPortGetCoreID());
 #ifdef CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
-        ESP_LOGW("main", "CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS enabled!");
-        delay(1000);
+            ESP_LOGW("main", "CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS enabled!");
+            delay(1000);
 #endif
-        mppt.ntc.read();
-    }
-
-
-    //uint32_t nSamples;
-    if (adcSampler.adc) {
-        auto samplerRet = adcSampler.update();
-
-        if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
-            mppt.shutdownDcdc();
-            charging = false;
-            delayStartUntil = nowMs + 4000;
         }
 
-        if (samplerRet != ADC_Sampler::UpdateRet::NewData) {
-            if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage()) {
-                ESP_LOGW("main", "Board power supply UV %.2f!", mppt.boardPowerSupplyVoltage());
-                adcSampler.cancelCalibration();
+
+        //uint32_t nSamples;
+        if (adcSampler.adc) {
+            auto samplerRet = adcSampler.update();
+            rtcount("adc.update");
+
+            if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
+                mppt.shutdownDcdc();
+                charging = false;
+                delayStartUntil = nowMs + 4000;
             }
 
-            if (timeLastSampler && nowMs - timeLastSampler > 200) {
-                if (!pwm.disabled()) {
+            if (samplerRet != ADC_Sampler::UpdateRet::NewData) {
+                if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage()) {
+                    ESP_LOGW("main", "Board power supply UV %.2f!", mppt.boardPowerSupplyVoltage());
+                    adcSampler.cancelCalibration();
+                }
+
+                if (timeLastSampler && nowMs - timeLastSampler > 200) {
+                    if (!pwm.disabled()) {
+                        pwm.disable();
+                        charging = false;
+                        ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown! numSamples %lu",
+                                 lastMpptUpdateNumSamples);
+                    }
+                }
+
+                if (!timeLastSampler and nowMs > 20000) {
                     pwm.disable();
-                    charging = false;
-                    ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown! numSamples %lu",
-                             lastMpptUpdateNumSamples);
-                }
-            }
+                    ESP_LOGE("main", "Never got a sample! Please check ADC");
+                    if (nowMs > (1000 * 60 * 15)) {
+                        ESP_LOGW("main", "Rebooting");
+                        ESP.restart();
+                    }
 
-            if (!timeLastSampler and nowMs > 20000) {
-                pwm.disable();
-                ESP_LOGE("main", "Never got a sample! Please check ADC");
-                if (nowMs > (1000 * 60 * 15)) {
-                    ESP_LOGW("main", "Rebooting");
-                    ESP.restart();
+                    delay(5000);
                 }
-
-                delay(5000);
+            } else {
+                loopNewData(nowMs);
             }
         } else {
-            loopNewData(nowMs);
+            vTaskDelay(1);
         }
+
+        loopUart(nowMs);
+
+
+        auto now2 = micros();
+        auto lag = now2 - lastLoopTime;
+        if (lastLoopTime && lag > maxLoopLag && !pwm.disabled()) maxLoopLag = lag;
+        lastLoopTime = now2;
+
+        auto loopDT = now2 - nowUs;
+        if (loopDT > maxLoopDT && !pwm.disabled())
+            maxLoopDT = loopDT;
+
+        //vTaskDelay(0); // this resets the Watchdog Timer (WDT) for some reason
+        // yield();
+        //esp_task_wdt_reset();
+        //vTaskDelay(1);
+        //yield();
     }
-
-    loopUart(nowMs);
-
-
-    auto now2 = micros();
-    auto lag = now2 - lastLoopTime;
-    if (lastLoopTime && lag > maxLoopLag && !pwm.disabled()) maxLoopLag = lag;
-    lastLoopTime = now2;
-
-    auto loopDT = now2 - nowUs;
-    if (loopDT > maxLoopDT && !pwm.disabled())
-        maxLoopDT = loopDT;
-
-    //yield();
-    //esp_task_wdt_reset();
-
-    vTaskDelay(0); // this resets the Watchdog Timer (WDT) for some reason
-    //vTaskDelay(1);
-    //yield();
 }
 
 static bool usbConnected = false;
@@ -509,6 +531,8 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowMs) {
 }
 
 void loopNewData(unsigned long nowMs) {
+    rtcount("loopNewData");
+
     // cap control update rate to sensor sampling rate (see below). rate for all 3 sensors are equal.
     // we choose Vout here because this is the most critical control value (react fast to prevent OV)
     auto nSamples = sensors.Vout->numSamples;
@@ -533,12 +557,16 @@ void loopNewData(unsigned long nowMs) {
     } else {
         if (charging or manualPwm) {
             bool mppt_ok = mppt.protect(manualPwm);
+            rtcount("protect");
             if (mppt_ok) {
                 if (haveNewSample) {
-                    if (!manualPwm)
+                    if (!manualPwm) {
                         mppt.update();
-                    else
+                        rtcount("mppt.update");
+                    } else {
                         mppt.telemetry();
+                        rtcount("mppt.telemetry");
+                    }
                     lastMpptUpdateNumSamples = nSamples;
                 }
             } else {
@@ -546,24 +574,14 @@ void loopNewData(unsigned long nowMs) {
                 delayStartUntil = nowMs + 2000;
             }
         } else if (nowMs > delayStartUntil && mppt.startCondition()) {
-            if (!manualPwm) mppt.startSweep();
+            if (!manualPwm) {
+                mppt.startSweep();
+                rtcount("mppt.startSweep");
+            }
             charging = true;
         }
     }
 
-
-    if ((nowMs - lastTimeOut) >= 3000) {
-        loopLF(nSamples, nowMs);
-        lastTimeOut = nowMs;
-    }
-
-    lcd.updateValues(LcdValues{
-            .Vin = sensors.Vin->ewm.avg.get(),
-            .Vout = sensors.Vout->ewm.avg.get(),
-            .Iin = sensors.Iin->ewm.avg.get(),
-            .Iout = sensors.Iout->ewm.avg.get(),
-            .Temp = mppt.ntc.last(),
-    });
 
     if (manualPwm) {
         if (!pwm.disabled())
@@ -660,22 +678,37 @@ void loopUart(unsigned long nowMs) {
 
 
 void loopNetwork_task(void *arg) {
-    ESP_LOGI("main", "Net loop running on core %i", xPortGetCoreID());
+    //ESP_LOGI("main", "Net loop running on core %i", xPortGetCoreID());
+    assert(xPortGetCoreID() == 0);
 
-    while (1) {
-        flush_async_uart_log();
-        process_queued_tasks();
+    flush_async_uart_log();
+    process_queued_tasks();
 
-        if (!disableWifi) {
-            /* only connect with disabled power conversion
-             * ESP32's wifi can cause latency issues otherwise
-             */
-            wifiLoop(pwm.disabled());
-            ftpUpdate();
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(2));
+    if (!disableWifi) {
+        /* only connect with disabled power conversion
+         * ESP32's wifi can cause latency issues otherwise
+         */
+        wifiLoop(pwm.disabled());
+        ftpUpdate();
     }
+
+    auto &nSamples(sensors.Vout->numSamples);
+
+    if ((loopWallClockMs() - lastTimeOut) >= 3000) {
+        loopLF(nSamples, loopWallClockMs());
+        rtcount("mppt.loopLF");
+        lastTimeOut = loopWallClockMs();
+    }
+
+    lcd.updateValues(LcdValues{
+            .Vin = sensors.Vin->ewm.avg.get(),
+            .Vout = sensors.Vout->ewm.avg.get(),
+            .Iin = sensors.Iin->ewm.avg.get(),
+            .Iout = sensors.Iout->ewm.avg.get(),
+            .Temp = mppt.ntc.last(),
+    });
+
+    vTaskDelay(pdMS_TO_TICKS(2));
 }
 
 void loopCore0_LF(void *arg) {
@@ -706,9 +739,9 @@ bool handleCommand(const String &inp) {
         if (mppt.bflow.state() != newState)
             ESP_LOGI("main", "Set bflow state %i", newState);
         mppt.bflow.enable(newState);
-    } else if (inp == "restart" or inp == "reset") {
+    } else if (inp == "restart" or inp == "reset" or inp == "reboot") {
         pwm.disable();
-        Serial.println("Restart, delay 1s");
+        Serial.println("Restart, delay 200ms");
         delay(200);
         ESP.restart();
     } else if (inp == "mppt" && manualPwm) {
