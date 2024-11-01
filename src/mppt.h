@@ -437,8 +437,10 @@ public:
         _sweeping = true;
         maxPowerPoint = {};
 
-        meter.commit(); // not real-time safe
-        lcd.periodicInit(); // not real-time safe
+        enqueue_task([&] {
+            meter.commit(); // not real-time safe
+            lcd.periodicInit(); // not real-time safe
+        });
     }
 
 
