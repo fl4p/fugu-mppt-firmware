@@ -779,3 +779,13 @@ bool handleCommand(const String &inp) {
 
     return true;
 }
+
+void esp_task_wdt_isr_user_handler() {
+    //throw std::runtime_error("reboot");
+    enqueue_task([] {
+        pwm.disable();
+        ESP_LOGE("main", "Restart after WDT trigger");
+        vTaskDelay(1000);
+        ESP.restart();
+    });
+}
