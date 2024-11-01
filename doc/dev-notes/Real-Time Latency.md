@@ -1,3 +1,24 @@
+# meausures
+
+assume blocking networkt code runs on core0
+we want to run the latency -sensitive loop on core1.
+arduino's loop() is not RT capable because it does UART stuff between calls
+so run arduino and the network on core0, and the loopRT on core1
+
+// TODO use xSemaphoreGiveFromISR() 
+
+
+# configTICK_RATE_HZ
+defaults to 1000 (1tick = 1ms)
+for better RT perf set this to 10000
+this is the shortest amount of time a task can wait
+dont set higher than 1000 !
+https://www.esp32.com/viewtopic.php?t=1341#p6082
+
+
+#wdt
+https://esp32.com/viewtopic.php?t=14477
+
 # esp32 adc1
 
 * response time of adc1 appears to increase when WiFi enabled
@@ -27,3 +48,11 @@ the lwIP TCP/IP task (18) to avoid priority-inversion issues."
 
 * FastLED appears to have a significant lag
 
+
+# instrumentation profiling of code latency
+`gcc -pg`
+https://stackoverflow.com/questions/7290131/how-does-gccs-pg-flag-work-in-relation-to-profilers
+implement mcount for ESP32 (see esp32-semihosting-profiler)
+
+
+https://github.com/MacLeod-D/ESp32-Fast-external-IRQs

@@ -5,6 +5,7 @@
 
 #include "pinconfig.h"
 #include "math/statmath.h"
+#include "rt.h"
 
 
 const unsigned long &loopWallClockUs();
@@ -120,6 +121,8 @@ public:
 
 //const unsigned long &loopWallClockUs();
 
+static bool adc_fake_periodic_timer_callback(void *arg);
+
 class ADC_Fake : public AsyncADC<float> {
     /**
      * ch0: const 0
@@ -132,14 +135,65 @@ private:
 
     std::array<unsigned long, 4> resetTimes;
 
+    TaskNotification taskNotification{};
+
+    PeriodicTimer periodic_timer{};
+
 public:
     bool init(const ConfFile &pinConf) override {
+        periodic_timer.begin(4000*3, &adc_fake_periodic_timer_callback, this);
+
+        // Test taskNotification
+        {
+            taskNotification.subscribe(true);
+
+            auto t0 = millis();
+            bool r = taskNotification.wait(10);
+            assert(!r);
+            if (!(millis() - t0 >= 9 && millis() - t0 < 12)) {
+                printf("unexpected wait time %lu≠10\n", millis() - t0);
+                assert(millis() - t0 == 10);
+            }
+
+            //enqueue_task( [&] {taskNotification.notify()});
+            /*
+            r = taskNotification.wait(100);
+            assert(millis() - t0 < 5);
+            assert(r);
+            r = taskNotification.wait(10);
+            assert(millis() - t0 >= 9);
+            assert(!r);
+             */
+
+            periodic_timer.start();
+
+            t0 = millis();
+            r = taskNotification.wait(100);
+            assert(millis() - t0 < 10);
+            assert(r);
+
+
+            t0 = millis();
+            r = taskNotification.wait(100);
+            assert(millis() - t0 < 10);
+            assert(r);
+
+            taskNotification.unsubscribe();
+            ESP_LOGI("adc_fake", "Timer notify test passed");
+        }
+
         return true;
     }
 
-    void startReading(uint8_t channel) override { readingChannel = channel; }
 
-    bool hasData() override { return true; }
+    void startReading(uint8_t channel) override {
+        taskNotification.subscribe();
+        readingChannel = channel;
+    }
+
+    bool hasData() override {
+        return taskNotification.wait(10);
+    }
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {}
 
@@ -167,4 +221,13 @@ public:
         ESP_LOGI("adc_fake", "Reset channel %hhu at %lu", ch, loopWallClockUs());
         resetTimes[ch] = loopWallClockUs();
     }
+
+    bool periodicTimerCallback() {
+        return taskNotification.notifyFromIsr();
+    }
 };
+
+static IRAM_ATTR bool adc_fake_periodic_timer_callback(void *arg) {
+    auto adc = static_cast<ADC_Fake *>(arg);
+    return adc->periodicTimerCallback();
+}

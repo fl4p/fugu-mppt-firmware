@@ -7,6 +7,7 @@
 
 #include "i2c.h"
 #include "store.h"
+#include "rt.h"
 
 class ADC_INA226;
 
@@ -22,9 +23,13 @@ class ADC_INA226 : public AsyncADC<float> {
     INA226_WE ina226;
     volatile bool new_data = false;
 
+    TaskNotification taskNotification{};
+
     uint8_t readChannel = 0;
 
     ADC_ESP32 intAdc;
+
+
 
 public:
 
@@ -44,7 +49,6 @@ public:
 
         // esp32s3 has 45k internal pull up
         pinMode(alertPin, INPUT_PULLUP);
-
 
         ina226_instance = this;
         attachInterrupt(digitalPinToInterrupt(alertPin), ina226_alert, FALLING);
@@ -84,6 +88,7 @@ public:
 
         if (!intAdc.init(pinConf))
             return false;
+
         intAdc.startReading((uint8_t) pinConf.getByte("ina226_aux_ch"));
 
         //ina226.setAverage(AVERAGE_16);
@@ -108,10 +113,10 @@ public:
         return true;
     }
 
-    void update() {
+    /*void update() {
         //ina226.setMeasureMode(CONTINUOUS);
         ina226.enableConvReadyAlert();
-    }
+    } */
 
     bool testConvReadyAlert(uint8_t addr, uint8_t alertPin) {
 
@@ -198,13 +203,20 @@ public:
 
 
     void startReading(uint8_t channel) override {
+        taskNotification.subscribe();
         readChannel = channel;
     }
 
-    void alertNewDataFromISR() { new_data = true; }
+    void alertNewDataFromISR() {
+        new_data = true;
+        taskNotification.notifyFromIsr();
+    }
 
     bool hasData() override {
-        if (!new_data)
+        if(!taskNotification.wait(5))
+            throw std::runtime_error("timeout waiting for ina22x alert interrupt");
+
+        if (!new_data) // TODO remove this?
             return false;
         new_data = false;
 
@@ -247,9 +259,7 @@ public:
         }
     }
 
-    void setMaxExpectedVoltage(uint8_t ch, float voltage)
-
-    override {
+    void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         if (ch == ChAux) {
             ESP_LOGI("ina226", "internal ADC setMaxExpectedVoltage(%i,%.6f)", ch, voltage);
             intAdc.
@@ -258,9 +268,7 @@ public:
         }
     }
 
-    float getInputImpedance(uint8_t ch)
-
-    override {
+    float getInputImpedance(uint8_t ch)override {
         if (ch == ChAux) {
             return intAdc.
                     getInputImpedance(intAdc
@@ -270,9 +278,7 @@ public:
         }
     }
 
-    [[nodiscard]] bool getAltogether() const
-
-    override {
+    [[nodiscard]] bool getAltogether() const override {
         return true;
     }
 };

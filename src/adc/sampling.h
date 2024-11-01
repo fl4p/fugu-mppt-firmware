@@ -188,6 +188,9 @@ public:
     }
 
 
+    /**
+     * this must be called from the same task that perform ADC reading (calls hasData & getSample)
+     */
     void begin() {
         assert(adc != nullptr);
         assert(!realSensors.empty());

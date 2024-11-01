@@ -2,6 +2,8 @@ CONFIG_FREERTOS_HZ=1000
 
 CONFIG_AUTOSTART_ARDUINO=y
 
+ARDUINO_RUN_CORE0=y
+
 
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
@@ -15,7 +17,9 @@ CONFIG_COMPILER_CXX_EXCEPTIONS_EMG_POOL_SIZE=1024
 
 
 
-# TODO reset on wd
+# TODO reset on wd !
+# NO! dont disable WD as it is usefull to discover spinlocks (IDLE tasks needed for OS housekeeping)
+CONFIG_ESP_TASK_WDT_EN=y
 
 
 # OTA: (NetworkClientSecure)
