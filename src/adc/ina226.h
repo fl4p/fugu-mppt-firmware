@@ -98,7 +98,7 @@ public:
         ina226.setResistorRange(resistor, range);
 
         /**
-         * - conversion time should be 1x - 10x of (1/f_cutoff) with f_cutoff being the analog RC-filter cutoff freq (aliasing)
+         * - conversion time should be > 1x - 10x of (1/f_cutoff) with f_cutoff being the analog RC-filter cutoff freq (aliasing)
          * - averaging eliminates aliasing due to i2c sampling of the ADC registers (U & I)
          */
 

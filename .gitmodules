@@ -1,3 +1,7 @@
+# useful commands
+# set intended state of outer repo: git submodule update --init --recursive
+# dev update: git submodule update --init --recursive --remote
+
 [submodule "components/arduino"]
 	path = components/arduino
 	url = https://github.com/espressif/arduino-esp32.git
@@ -19,7 +23,7 @@
 	url = https://github.com/joltwallet/esp_littlefs.git
 [submodule "components/INA226_WE"]
 	path = components/INA226_WE/INA226_WE
-	url = https://github.com/wollewald/INA226_WE
+	url = https://github.com/fl4p/INA226_WE
 [submodule "components/FastLED"]
 	path = components/FastLED
 	url = https://github.com/FastLED/FastLED
