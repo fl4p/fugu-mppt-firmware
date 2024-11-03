@@ -8,7 +8,7 @@ FPWM (forced PWM, inductor current crosses zero)
 DCM (discontinous conduction mode)
 - reduce on-time to avoid negative inductor currents during light load conditions (low D)
 
-![img_1.png](img_1.png)
+![img_1.png](img/pwm-ccm-dcm.webp)
 https://www.ti.com/lit/an/slyt358/slyt358.pdf
 
 PFM (pulse frequency modulation )
@@ -16,7 +16,7 @@ PFM (pulse frequency modulation )
 - pulse skipping, burts
 - variable frequency
 - higher ripple
-![img.png](img.png)
+![img.png](img/pwm-pfm.webp)
 - https://www.ti.com/lit/an/slva236a/slva236a.pdf?ts=1730240504335
 
 
@@ -26,4 +26,4 @@ COT
 - nearly constant frequency
 - very good load transient response
   https://www.monolithicpower.com/en/learning/resources/advantages-of-constant-on-time-control-in-dc-dc-converters
-![img_2.png](img_2.png)
+![COT waveforms](img/pwm-cot.webp)

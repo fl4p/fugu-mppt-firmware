@@ -1,5 +1,5 @@
 * writing the flash (energy meter) causes latency issues?
-  * TODO write test
+    * TODO write test
 
 ```
 
@@ -158,7 +158,6 @@ mppt.startSweep.pre                    2        18      9     11      0
 
 ```
 
-
 ```
 V=56.45/29.18 I= 1.3/ 2.39A  71.8W -34℃31℃ 1136sps  0㎅/s PWM(H|L|Lm)= 218| 185| 185 st=↑MPPT,1 lag=0.9ms lt=0.9ms N=4788104 rssi=-12
 I (6010354) mppt: periodic zero-current calibration
@@ -188,11 +187,24 @@ V=56.45/29.18 I= 1.5/ 2.83A  85.1W -34℃31℃ 1136sps  0㎅/s PWM(H|L|Lm)= 498|
 V=56.45/29.18 I= 1.6/ 2.96A  89.0W -34℃31℃ 1135sps  0㎅/s PW
 ```
 
-
 # Flash Cache
+
 * IRAM
 * https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/performance/speed.html#measuring-performance
 * https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/performance/speed.html#speed-targeted-optimizations
 * noflash https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/linker-script-generation.html
-  * https://github.com/espressif/esp-idf/blob/v4.2.2/components/freertos/linker.lf
+    * https://github.com/espressif/esp-idf/blob/v4.2.2/components/freertos/linker.lf
 
+# GCC Instrumentation
+https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html
+
+* `-pg` flag
+* https://stackoverflow.com/a/7290284/2950527
+* inject call to mcount (or _mcount, or __mcount
+* https://www.math.utah.edu/docs/info/gprof_toc.html
+* https://docs-archive.freebsd.org/44doc/psd/18.gprof/paper.pdf
+
+# Off-loading critical parts
+
+The INA226 can be programmed to trigger an alert on bus over-voltage. this signal can be wired to the shut-down input of
+the gate driver to instantly turn off the DC-DC converter. The INA226 has a minimum conversion time of 140µs.

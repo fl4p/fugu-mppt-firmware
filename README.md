@@ -12,7 +12,7 @@ This is common for Lithium-Batteries (e.g. LiFePo4).
 Highlights:
 
 * Tested with ESP32 and ESP32-S3
-* Async ADC sampling for low latency control loop
+* Async ADC sampling for low latency control loop (<900µs in-out latency)
 * Automatic zero-current calibration
 * ADC abstraction layer with implementations for ESP32(S3) [Internal ADC](doc/Internal%20ADC.md), ADS1x15 and
   INA226/INA228
