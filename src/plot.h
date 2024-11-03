@@ -12,11 +12,14 @@ struct Series {
     }
 
     void add(float x, float y, float xMax) {
-        if (vec.empty() or abs(vec.back().first - x) > (xMax / (float) expectedLen)) {
-            if (vec.size() > expectedLen * 2) vec.pop_back();
-            else if (vec.empty()) vec.reserve(expectedLen);
+        if (vec.empty() or abs(vec.back().first - x) > (xMax / (expectedLen * 0.9f))) {
+            if (vec.size() >= expectedLen) vec.pop_back();
             vec.emplace_back(x, y);
         }
+    }
+
+    void reserve() {
+        vec.reserve(expectedLen);
     }
 
     void clear() {
@@ -26,8 +29,8 @@ struct Series {
 
 struct Plot {
     //typedef std::vector<std::pair<float, float>> Ser;
-    Series pointsU{200};
-    Series pointsD{200};
+    Series pointsU{240};
+    Series pointsD{240};
 
     static void _plotSeries(Series &ser, const std::string &label) {
         auto &points(ser.vec);
@@ -84,16 +87,16 @@ struct Plot {
             screen = asciichart.height(16).Plot();
         }
 
-       /* for(auto row = 0; row < screen.n0; ++row) {
-            std::stringstream ss;
-            for(auto col = 0; col < screen.n1; ++col) {
-                ss << screen[row][col];
-            }
-            ss << ascii::Decoration::From(ascii::Decoration::RESET) << "\n";
-            UART_LOG(ss.str().c_str());
-        } */
+        /* for(auto row = 0; row < screen.n0; ++row) {
+             std::stringstream ss;
+             for(auto col = 0; col < screen.n1; ++col) {
+                 ss << screen[row][col];
+             }
+             ss << ascii::Decoration::From(ascii::Decoration::RESET) << "\n";
+             UART_LOG(ss.str().c_str());
+         } */
 
-       for (auto &line: screen) {
+        for (auto &line: screen) {
             std::stringstream ss;
 
             for (auto &item: line) {
@@ -118,10 +121,17 @@ struct Plot {
 
     void plot() {
         //try {
-            _plotSeries(pointsU, "V");
-            _plotSeries(pointsD, "D");
+        _plotSeries(pointsU, "V");
+        _plotSeries(pointsD, "D");
         //} catch (const std::exception &e) {
         //    ESP_LOGE("plot", "Error: %s", e.what());
         //}
+    }
+
+    void reserve() {
+        pointsD.clear();
+        pointsD.reserve();
+        pointsU.clear();
+        pointsU.reserve();
     }
 };

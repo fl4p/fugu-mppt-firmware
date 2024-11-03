@@ -442,6 +442,7 @@ public:
         enqueue_task([&] {
             rtcount_en = false;
             vTaskDelay(10);
+            sweepPlot.reserve();
             meter.commit(); // not real-time safe
             lcd.periodicInit(); // not real-time safe
             rtcount_en = true;
