@@ -17,6 +17,8 @@
 #include <SimpleFTPServer.h>
 #include <ESPTelnet.h>
 
+#include <q/readerwriterqueue.h>
+
 WiFiMulti wifiMulti;
 //WiFiUDP udp;
 AsyncUDP asyncUdp;
@@ -24,6 +26,8 @@ AsyncUDP asyncUdp;
 FtpServer ftpSrv;
 
 ESPTelnet telnet;
+
+
 
 
 void setupTelnet();
@@ -287,18 +291,31 @@ const char *getChipId() {
     return ssid;
 }
 
-void telemetryAddPoint(const Point &p, uint16_t maxQueue = 40) {
-    static std::vector<Point> points_frame;
+
+static moodycamel::ReaderWriterQueue<Point> pointsQ{};
+
+void telemetryAddPoint(Point &p, uint16_t maxQueue = 40) {
+    //static std::vector<Point> points_frame;
 
     assert(p.hasTime());
-    points_frame.push_back(p);
-    if (!p.hasTags())
-        points_frame.back().addTag("mcu", getChipId());
 
-    if (points_frame.size() >= maxQueue) {
-        if (timeSynced)
-            influxWritePointsUDP(&points_frame[0], points_frame.size());
-        points_frame.clear();
+    if (!p.hasTags())
+        p.addTag("mcu", getChipId());
+
+    if(pointsQ.size_approx() < maxQueue)
+        pointsQ.enqueue(p);
+
+    //if (points_frame.size() >= maxQueue) {
+    //    if (timeSynced)
+    //        influxWritePointsUDP(&points_frame[0], points_frame.size());
+    //    points_frame.clear();
+    //}
+}
+
+void telemetryFlushPointsQ() {
+    static Point p{""};
+    while(pointsQ.try_dequeue(p)) {
+      //  influxWritePointsUDP(&points_frame[0], points_frame.size());
     }
 }
 
