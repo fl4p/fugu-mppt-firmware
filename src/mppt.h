@@ -454,18 +454,18 @@ public:
      * @param controlMode
      */
     void _stopSweep(MpptControlMode controlMode, int limIdx) {
-        ESP_LOGI("mppt", "Stop sweep after %.2fs at controlMode=%s (limIdx=%i) PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
-                 (loopWallClockUs() - dcdcPwr.getTimeLastCalibrationUs()) * 1e-6f,
-                 MpptState2String[(uint8_t) controlMode].c_str(), limIdx,
-                 buck.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
-        );
-        lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
         _sweeping = false;
         _targetDutyCycle = maxPowerPoint.dutyCycle;
-        // buck.pwmPerturb((int16_t) maxPowerPoint.dutyCycle - (int16_t) buck.getBuckDutyCycle()); // jump to MPP
 
-        enqueue_task([&] { sweepPlot.plot(); });
-        //sweepPlot.plot();
+        enqueue_task([&, controlMode, limIdx] {
+            ESP_LOGI("mppt", "Stop sweep after %.2fs at controlMode=%s (limIdx=%i) PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
+                     (loopWallClockUs() - dcdcPwr.getTimeLastCalibrationUs()) * 1e-6f,
+                     MpptState2String[(uint8_t) controlMode].c_str(), limIdx,
+                     buck.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
+            );
+            lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
+            sweepPlot.plot();
+        });
     }
 
     void telemetry() {
@@ -543,10 +543,12 @@ public:
 
         meter.add(sensors.Iout->last * sensors.Vout->last, power_smooth, sensors.Vin->ewm.avg.get(),
                   sensors.Vout->ewm.avg.get(), nowUs);
+        rtcount("mppt.update.meterAdd");
 
 
         const float ntcTemp = ntc.last();
         fanUpdateTemp(ntcTemp, power_smooth);
+        rtcount("mppt.update.thermals");
 
         float powerLimit = limits.P_max;
         if (ntcTemp > limits.Temp_derate) {
@@ -565,6 +567,7 @@ public:
         if (!_sweeping /*&& power_smooth < 30*/ && (nowUs - dcdcPwr.getTimeLastCalibrationUs()) > (30 * 60000000)) {
             ESP_LOGI("mppt", "periodic sweep & sensor calibration");
             startSweep();
+            rtcount("mppt.update.startSweep");
             return;
         }
 
@@ -642,8 +645,9 @@ public:
         // THIS CAN FAIL:
         // assert((controlMode == MpptControlMode::None) == (controlValue == 0));
 
+        rtcount("mppt.update.control");
 
-        if (_sweeping) {
+        if (_sweeping && !dcdcPwr.isCalibrating()) {
             if (controlMode == MpptControlMode::None) {
                 controlMode = MpptControlMode::Sweep;
                 controlValue = 2; // sweep speed
@@ -660,9 +664,10 @@ public:
 
                 float d = buck.getBuckDutyCycle() / (float) buck.pwmMaxHS;
                 sweepPlot.pointsD.add(d, power, 1.0f);
-
+                rtcount("mppt.update.sweeping");
             } else {
                 _stopSweep(controlMode, limitingControl ? int(limitingControl - controlValues.begin()) : -1);
+                rtcount("mppt.update.stopSweep");
             }
         } else if (_targetDutyCycle) {
             if (controlMode == MpptControlMode::None or
@@ -685,25 +690,19 @@ public:
             controlMode = MpptControlMode::MPPT;
             controlValue = tracker.update(power, buck.getBuckDutyCycle());
             controlValue *= speedScale;
-
-
         } else {
             // tracker.resetTracker(power_smooth, controlValue > 0);
             tracker.resetDirection(controlValue > 0);
         }
+        rtcount("mppt.update.tracker");
 
         //assert(controlValue != 0 && controlMode != MpptControlMode::None);
 
         // always cap control value
         // TODO instead of capping, use fade-to-target. the tracker might return big jumps
         controlValue = std::min(controlValue, limitingControlValue);
-
-
         this->state = controlMode;
 
-
-        //controlValue = constrain(controlValue, -(float) buck.getBuckDutyCycle(), 5.0f);
-        //buck.pwmPerturbFractional(controlValue);
 
         if (lastUs) {
             // normalize the control value to pwmMax and scale it with update rate to fix buck slope rate
@@ -715,13 +714,14 @@ public:
                 // can also slow-down the VoutCNTRL
                 fp *= 0.2f;
             }
+
             // constrain the buck step, this will slow down control for lower loop rates:
             fp = constrain(fp, -(float) buck.getBuckDutyCycle(), 1.0f);
             buck.pwmPerturbFractional(fp);
 
             if (controlValue < -80 and fp < -0.01) {
                 auto limIdx = (int) (limitingControl - controlValues.begin());
-                // TODO async log
+
                 UART_LOG_ASYNC(
                         "Limiting! Control value %.2f => perturbation %.2f, mode=%s, idx=%i (act=%.3f, tgt=%.3f)",
                         controlValue, fp,
@@ -731,6 +731,7 @@ public:
                 if (controlMode == MpptControlMode::CC)
                     UART_LOG_ASYNC("Iout_max=%.2f powerLimit=%.2f", Iout_max, powerLimit);
             }
+            rtcount("mppt.update.pwm");
         }
         lastUs = nowUs;
 
@@ -742,10 +743,12 @@ public:
         bflow.enable(aboveThres);
         buck.enableLowSide(aboveThres);
 
+        rtcount("mppt.update.en");
 
         if (ledPinSimple != 255) {
             bool ledState = (I_phys_smooth > 0.2f && controlMode == MpptControlMode::MPPT && controlValue > 0);
             digitalWrite(ledPinSimple, ledState);
+            rtcount("mppt.update.led");
         }
 
         // tele disabled: sps=275, enabled: sps=165
@@ -795,6 +798,8 @@ public:
                 telemetryAddPoint(point, 80);
                 _lastPointWrite = nowMs;
             }
+
+            rtcount("mppt.update.tele");
         }
     }
 

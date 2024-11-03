@@ -52,7 +52,7 @@ struct Tracker {
 
     void resetDirection(bool direction) {
         _direction = direction;
-        _time = millis();
+        _time = loopWallClockMs();
         //maxPowerPoint.power = 0;
         //avgPower.reset();
     }
