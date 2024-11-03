@@ -3,62 +3,73 @@
 #include <map>
 
 struct rtcount_stat {
-    unsigned long total{0}, num{0}, max{0};
+    unsigned long total{0}, num{0}, max{0}, max_num{0};
 };
 
 std::unordered_map<const char *, rtcount_stat> rtcount_stats{};
 
 volatile bool rtcount_en = true;
 
+unsigned long rtclock_us() {
+    // micros
+    return esp_cpu_get_cycle_count();
+}
+
 void rtcount(const char *l) {
     static unsigned long t0 = 0;
 
-    if(!rtcount_en) return;
-
-    if (t0) {
-        auto dt = micros() - t0;
+    if (rtcount_en && t0) {
+        constexpr auto maxT = std::numeric_limits<unsigned long>::max();
+        auto t = rtclock_us();
+        //auto dt = (t < t0) ? (maxT - t0 + t) : (t - t0);
+        auto dt = (t - t0)  / CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
+        //if(dt > maxT/2) dt = maxT - dt;
         auto f = rtcount_stats.find(l);
         if (f == rtcount_stats.end()) {
             rtcount_stats[l] = {};
             f = rtcount_stats.find(l);
         }
         auto &stat(f->second);
-        ++stat.num;
         stat.total += dt;
-        if (dt > stat.max) stat.max = dt;
+        if (dt > stat.max) {
+            stat.max = dt;
+            stat.max_num = stat.num;
+        }
+        ++stat.num;
     }
 
-    t0 = micros();
+    t0 = rtclock_us();
 }
 
 void rtcount_print(bool reset) {
-    if(rtcount_en) {
+    if (rtcount_en) {
         rtcount_en = false;
         vTaskDelay(100);
     }
 
-    printf("rtcount_print:\n");
-    printf("%-22s %9s %9s %6s %6s (us)\n", "key", "num", "tot", "mean", "max");
+    printf("rtcount_print :\n");
+    printf("%-30s %9s %9s %6s %6s %6s\n", "key", "num", "tot", "mean", "max", "maxNum");
 
     //typedef std::remove_reference<decltype(*rtcount_stats.begin())>::type P;
     typedef std::pair<const char *, rtcount_stat> P;
     std::vector<P> sorted(rtcount_stats.begin(), rtcount_stats.end());
-    std::sort(sorted.begin(), sorted.end(), [](const P &a, const P&b ) {
+    std::sort(sorted.begin(), sorted.end(), [](const P &a, const P &b) {
         return a.second.max > b.second.max;
     });
 
     for (auto [k, stat]: sorted) {
-        printf("%-22s %9lu %9lu %6lu %6lu\n", k, stat.num, stat.total, stat.total / stat.num, stat.max);
+        printf("%-30s %9lu %9lu %6lu %6lu %6lu\n", k, stat.num, stat.total, stat.total / stat.num, stat.max,
+               stat.max_num);
     }
     printf("\n\n");
-    if(reset)
+    if (reset)
         rtcount_stats.clear();
 
     rtcount_en = true;
 }
 
 class TaskNotification {
-    // https:// www. FreeRTOS. org/ RTOS-task-notifications. html
+    // https://www.freertos.org/Documentation/02-Kernel/02-Kernel-features/03-Direct-to-task-notifications/02-As-binary-semaphore
     // notifications are faster than semaphores!
     TaskHandle_t readingTask = nullptr;
 public:
