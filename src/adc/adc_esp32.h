@@ -141,7 +141,8 @@ private:
 
 public:
     bool init(const ConfFile &pinConf) override {
-        periodic_timer.begin(4000*3, &adc_fake_periodic_timer_callback, this);
+        auto f = pinConf.getLong("adc_fake_freq", 4000 * 3);
+        periodic_timer.begin(f, &adc_fake_periodic_timer_callback, this);
 
         // Test taskNotification
         {

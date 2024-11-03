@@ -46,13 +46,13 @@ static unsigned long loopWallClockUs_ = 0;
 
 unsigned long lastLoopTime = 0, maxLoopLag = 0, maxLoopDT = 0;
 unsigned long lastTimeOutUs = 0;
-uint32_t lastNSamples = 0;
+unsigned long lastNSamples = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
 bool manualPwm = false;
 bool charging = false;
 float conversionEfficiency;
 
-uint8_t loopRateMin = 0;
+uint16_t loopRateMin = 0;
 
 const unsigned long IRAM_ATTR &loopWallClockUs() { return loopWallClockUs_; }
 
@@ -134,8 +134,8 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         scan_i2c();
         while (1) {} // trap
     } else {
-        ESP_LOGI("main", "Initialized ADC %s (V/I)(i/o)_ch = (%i %i %i %i)", adcName.c_str(), Vin_ch, Iin_ch,
-                 Vout_ch, Iout_ch);
+        ESP_LOGI("main", "Initialized ADC %s (V/I)(i/o)_ch = (%i %i %i %i) , exp.LoopRate=%hu", adcName.c_str(), Vin_ch, Iin_ch,
+                 Vout_ch, Iout_ch, loopRateMin);
     }
 
     adcSampler.setADC(adc);
@@ -241,8 +241,8 @@ void setup() {
     auto sprofHz = (uint32_t) pprofConf.getLong("sprofiler_hz", 0);
     if (sprofHz && esp_cpu_dbgr_is_attached()) {
         // only start the profiler with OpenOCD attached?
-        ESP_LOGI("main", "starting sprofiler with freq %lu (samples/bank=%i)", sprofHz, PROFILING_ITEMS_PER_BANK);
-        sprofiler_initialize(sprofHz);
+        //ESP_LOGI("main", "starting sprofiler with freq %lu (samples/bank=%i)", sprofHz, PROFILING_ITEMS_PER_BANK);
+        //sprofiler_initialize(sprofHz);
     } else if (sprofHz) {
         ESP_LOGW("main", "sprofiler configured but not debugger attached");
     }
@@ -477,14 +477,14 @@ std::string mpptStateStr() {
 int console_write_usb(const char *buf, size_t len);
 
 void loopLF(const unsigned long &nSamples, const unsigned long &nowUs) {
-    auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000000u /
+    uint32_t sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000000u /
                (uint32_t) (nowUs - lastTimeOutUs);
 
     if (sps < loopRateMin && !pwm.disabled() && nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 6000000) {
         mppt.shutdownDcdc();
         auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
-        ESP_LOGE("main", "Loop latency too high (%lu < %hhu Hz), shutdown! (nSamples=%lu, D=%u, loopRunTime=%.1fs )",
+        ESP_LOGE("main", "Loop latency too high (%lu < %hu Hz), shutdown! (nSamples=%lu, D=%u, loopRunTime=%.1fs )",
                  sps, loopRateMin, nSamples, pwm.getBuckDutyCycle(), loopRunTime * 1e-6f);
         charging = false;
     }
@@ -493,8 +493,8 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowUs) {
     mppt.ntc.read();
 
     UART_LOG_ASYNC(
-            "V=%5.2f/%5.2f I=%4.1f/%5.2fA %5.1fW %.0f℃%.0f℃ %2usps %2u㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
-            " st=%5s,%i lag=%.1fms lt=%.1fms N=%u rssi=%hi",
+            "V=%5.2f/%5.2f I=%4.1f/%5.2fA %5.1fW %.0f℃%.0f℃ %2lusps %2u㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
+            " st=%5s,%i lag=%u㎲ lt=%u㎲ N=%u rssi=%hi",
             sensors.Vin->last,
             sensors.Vout->last,
             sensors.Iin->last,
@@ -511,8 +511,8 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowUs) {
                          ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
                          : mpptStateStr().c_str()),
             (int) charging,
-            maxLoopLag * 1e-3f,
-            maxLoopDT * 1e-3f,
+            maxLoopLag ,
+            maxLoopDT ,
             nSamples,
             WiFi.RSSI()
     );
