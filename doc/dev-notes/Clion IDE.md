@@ -44,7 +44,12 @@ Create new Run Config
 * Remote Debug
   * choose xtensa-gdb version
   * on apple M3: `dyld[]: missing symbol called` https://stackoverflow.com/questions/78855046/esp32-gdb-debugging-error-on-m1-mac-dyld-missing-symbol-called
-  * could not get this to work on apple
+  * SOLUTION: path to xtensa-gdb in Toolchain settings and then select it from the dropdown in the run config 
+  ```
+  Failed to process MI record:
+>-file-exec-and-symbols "/Users/fab/dev/pv/fugu-mppt-firmware/build/main.elf"
+<&&"\n\n"
+```
 
 * Install plugin https://github.com/ThexXTURBOXx/clion-embedded-esp32
   * on apple M3: `dyld[]: missing symbol called`

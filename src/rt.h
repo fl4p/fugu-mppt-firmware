@@ -27,6 +27,8 @@ unsigned long rtclock_us() {
     return esp_cpu_get_cycle_count();
 }
 
+//#define rtcount(s) do {}while(0)
+
 void rtcount(const char *l) {
     static unsigned long t0 = 0;
 

@@ -13,7 +13,7 @@
     </sourceRoots>
     <libraryRoots>
       <file path="$PROJECT_DIR$/../../esp/esp-idf-4.4" />
-      <file path="$PROJECT_DIR$/../../esp/esp-idf-v5.1" />
+      <file path="$IDF_PATH$" />
       <file path="$PROJECT_DIR$/components" />
     </libraryRoots>
     <excludeRoots>
@@ -22,5 +22,10 @@
       <file path="$PROJECT_DIR$/cmake-build-debug" />
       <file path="$PROJECT_DIR$/cmake-build-esp32dev" />
     </excludeRoots>
+  </component>
+  <component name="elmot.OpenOcdPlugin">
+    <option name="openOcdHome" value="$USER_HOME$/.espressif/tools/openocd-esp32/v0.12.0-esp32-20230921/openocd-esp32" />
+    <option name="shippedGdb" value="false" />
+    <option name="autoUpdateCmake" value="true" />
   </component>
 </project>
