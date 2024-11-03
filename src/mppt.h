@@ -450,7 +450,7 @@ public:
      */
     void _stopSweep(MpptControlMode controlMode, int limIdx) {
         ESP_LOGI("mppt", "Stop sweep after %.2fs at controlMode=%s (limIdx=%i) PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
-                 (loopWallClockMs() - dcdcPwr.getTimeLastCalibration()) * 1e-3f,
+                 (loopWallClockUs() - dcdcPwr.getTimeLastCalibrationUs()) * 1e-6f,
                  MpptState2String[(uint8_t) controlMode].c_str(), limIdx,
                  buck.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
         );
@@ -557,8 +557,8 @@ public:
         float Iout_max = limits.Iout_max; //charger.getToppingCurrent(::sensors.Vout->ewm.avg.get());
 
         // periodic sweep / scan
-        if (!_sweeping /*&& power_smooth < 30*/ && (nowMs - dcdcPwr.getTimeLastCalibration()) > (20 * 60000)) {
-            ESP_LOGI("mppt", "periodic zero-current calibration");
+        if (!_sweeping /*&& power_smooth < 30*/ && (nowUs - dcdcPwr.getTimeLastCalibrationUs()) > (30 * 60000000)) {
+            ESP_LOGI("mppt", "periodic sweep & sensor calibration");
             startSweep();
             return;
         }

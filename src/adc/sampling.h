@@ -200,6 +200,7 @@ public:
     void startCalibration() {
         if (!calibrating_)
             ESP_LOGI("mppt", "Start calibration");
+
         // TODO use mean average, not EWM!
         // - reset mean here
         // consider: peak2peak values, empirical uncertainty (higher stddev->need more samples)
@@ -274,7 +275,7 @@ public:
 
             if (calibrating_ == 0) {
                 ESP_LOGI("sampler", "Calibration done!");
-                timeLastCalibration = millis();
+                timeLastCalibration = loopWallClockUs();
                 return UpdateRet::Calibrating;
             }
         }
@@ -335,8 +336,8 @@ public:
         return calibrating_ == 0 ? UpdateRet::NewData : UpdateRet::Calibrating;
     }
 
-    bool isCalibrating() const { return calibrating_ > 0; }
+    [[nodiscard]] bool isCalibrating() const { return calibrating_ > 0; }
 
-    unsigned getTimeLastCalibration() const { return timeLastCalibration; }
+    [[nodiscard]] unsigned long getTimeLastCalibrationUs() const { return timeLastCalibration; }
 
 };

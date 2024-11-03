@@ -28,6 +28,7 @@
 #include <hal/usb_serial_jtag_ll.h>
 
 #include <esp_task_wdt.h>
+#include <esp_pm.h>
 
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
@@ -44,7 +45,7 @@ bool disableWifi = false;
 static unsigned long loopWallClockUs_ = 0;
 
 unsigned long lastLoopTime = 0, maxLoopLag = 0, maxLoopDT = 0;
-unsigned long lastTimeOut = 0;
+unsigned long lastTimeOutUs = 0;
 uint32_t lastNSamples = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
 bool manualPwm = false;
@@ -53,9 +54,9 @@ float conversionEfficiency;
 
 uint8_t loopRateMin = 0;
 
-const unsigned long &loopWallClockUs() { return loopWallClockUs_; }
+const unsigned long IRAM_ATTR &loopWallClockUs() { return loopWallClockUs_; }
 
-unsigned long loopWallClockMs() { return (unsigned long) (loopWallClockUs_ / 1000ULL); }
+unsigned long IRAM_ATTR loopWallClockMs() { return (unsigned long) (loopWallClockUs_ / 1000ULL); }
 
 
 void uartInit(int port_num);
@@ -456,14 +457,16 @@ std::string mpptStateStr() {
 
 int console_write_usb(const char *buf, size_t len);
 
-void loopLF(const unsigned long &nSamples, const unsigned long &nowMs) {
-    auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000u /
-               (uint32_t) (nowMs - lastTimeOut);
+void loopLF(const unsigned long &nSamples, const unsigned long &nowUs) {
+    auto sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000000u /
+               (uint32_t) (nowUs - lastTimeOutUs);
 
     if (sps < loopRateMin && !pwm.disabled() && nSamples > max(loopRateMin * 5, 200) &&
-        !manualPwm && lastTimeOut && (nowMs - adcSampler.getTimeLastCalibration()) > 6000) {
+        !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 6000000) {
         mppt.shutdownDcdc();
-        ESP_LOGE("main", "Loop latency too high (%lu < %hhu Hz), shutdown! (nSamples=%lu)", sps, loopRateMin, nSamples);
+        auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
+        ESP_LOGE("main", "Loop latency too high (%lu < %hhu Hz), shutdown! (nSamples=%lu, D=%u, loopRunTime=%.1fs )",
+                 sps, loopRateMin, nSamples, pwm.getBuckDutyCycle(), loopRunTime * 1e-6f);
         charging = false;
     }
 
@@ -481,7 +484,7 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowMs) {
             //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
             mppt.ntc.last(), mppt.ucTemp.last(),
             sps,
-            (uint32_t) (bytesSent /*/ 1000u * 1000u*/ / nowMs),
+            (uint32_t) (bytesSent * 1000 / (nowUs - lastTimeOutUs)),
             pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
             //mppt.getPower()
             manualPwm ? "MANU"
@@ -495,6 +498,7 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowMs) {
             WiFi.RSSI()
     );
     lastNSamples = nSamples;
+    bytesSent = 0;
 
     if (!charging)
         mppt.meter.update(); // always update the meter
@@ -601,7 +605,7 @@ void loopConsole(int read(char *buf, size_t len), int write(const char *buf, siz
         if (length + buf_pos >= bufSiz - 1)
             length = bufSiz - 1 - buf_pos;
         write(&buf[buf_pos], length); // echo
-        lastTimeOut = nowMs; // stop logging during user input
+        lastTimeOutUs = loopWallClockUs(); // stop logging during user input
         buf_pos += length;
         while (buf_pos > 0 && buf[buf_pos - 1] == '\b') {
             --buf_pos;
@@ -694,9 +698,9 @@ void loopNetwork_task(void *arg) {
 
     auto &nSamples(sensors.Vout->numSamples);
 
-    if ((loopWallClockMs() - lastTimeOut) >= 3000) {
-        loopLF(nSamples, nowMs);
-        lastTimeOut =nowMs;
+    if ((loopWallClockUs() - lastTimeOutUs) >= 3000000) {
+        loopLF(nSamples, loopWallClockUs());
+        lastTimeOutUs = loopWallClockUs();
     }
 
     lcd.updateValues(LcdValues{
