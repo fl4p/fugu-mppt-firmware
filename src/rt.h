@@ -2,6 +2,18 @@
 
 #include <map>
 
+
+void rtcount_test_cycle_counter() {
+    auto t0 = micros();
+    auto c0 = esp_cpu_get_cycle_count();
+    vTaskDelay(100);
+    auto c1 = esp_cpu_get_cycle_count();
+    auto t1 = micros();
+    int cpUs = (c1 - c0) / (t1 - t0);
+    ESP_LOGI("main", "dt=%lu dc=%lu cycles/s=%i", t1 - t0, c1 - c0, cpUs);
+    assert(abs(cpUs - CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ) < CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 0.05f);
+}
+
 struct rtcount_stat {
     unsigned long total{0}, num{0}, max{0}, max_num{0};
 };

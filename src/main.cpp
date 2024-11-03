@@ -209,10 +209,9 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
 void setup() {
 
     Serial.begin(115200);
-    //ESP_ERROR_CHECK(esp_usb_console_init());
+    //ESP_ERROR_CHECK(esp_usb_console_init()); // using JTAG
 
-
-
+    rtcount_test_cycle_counter();
 
 #ifndef CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
     //usb_serial_jtag_driver_config_t usb_serial_jtag_config = {
