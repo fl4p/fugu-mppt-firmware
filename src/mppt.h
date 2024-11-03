@@ -249,7 +249,7 @@ public:
                 ESP_LOGW("mppt", "Supply under-voltage! Vin %.1f and Vout %.1f < 10", sensors.Vin->last,
                          sensors.Vout->last);
             shutdownDcdc();
-            meter.commit();
+            enqueue_task([&] { meter.commit(); });
             return false;
         }
 
@@ -266,7 +266,7 @@ public:
             if (std::isnan(detectedVout_max)) {
                 ESP_LOGW("mppt", "Unable to detect battery voltage Vout=%.2fV", vout);
                 buck.disable();
-                dcdcPwr.startCalibration();
+                enqueue_task([&] { dcdcPwr.startCalibration(); });
                 return false;
             } else {
                 ESP_LOGI("mppt", "Detected max battery voltage %.2fV (from Vout=%.2fV)", detectedVout_max, vout);
@@ -306,7 +306,9 @@ public:
                 dcdcPwr.startCalibration();
             }
 
-            lcd.displayMessageF("OV shutdown!\nVout=%.1fV max=%.1fV", 10000, vout, ovTh);
+            enqueue_task([&] {
+                lcd.displayMessageF("OV shutdown!\nVout=%.1fV max=%.1fV", 10000, vout, ovTh);
+            });
 
             return false;
         }
@@ -432,14 +434,17 @@ public:
 
         ESP_LOGI("mppt", "Start sweep");
 
-        dcdcPwr.startCalibration();
-        //if (!_sweeping)
         _sweeping = true;
         maxPowerPoint = {};
 
+        dcdcPwr.startCalibration();
+
         enqueue_task([&] {
+            rtcount_en = false;
+            vTaskDelay(10);
             meter.commit(); // not real-time safe
             lcd.periodicInit(); // not real-time safe
+            rtcount_en = true;
         });
     }
 

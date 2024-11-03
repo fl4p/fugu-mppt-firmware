@@ -293,29 +293,39 @@ public:
         if (adc->getAltogether()) {
             for (auto sensor: realSensors) {
                 adc->startReading(sensor->params.adcCh);
+                rtcount("adc.update.startReading");
 
                 auto x = adc->getSample();
+                rtcount("adc.update.getSample");
                 sensor->add_sample(x);
+                rtcount("adc.update.addSample");
                 if (onNewSample) {
                     onNewSample(*this, *sensor);
+                    rtcount("adc.update.onNewSample");
                 }
 
                 auto calibRes = handleSensorCalib(*sensor);
+                rtcount("adc.update.handleSensorCalib");
                 if (calibRes != UpdateRet::NoNewData)
                     return calibRes;
             }
         } else {
             auto &sensor(*realSensors[cycleCh]);
             auto x = adc->getSample();
+            rtcount("adc.update.getSample");
             cycleCh = (cycleCh + 1) % realSensors.size();
             _readNext(); // start async read
+            rtcount("adc.update.startReading");
 
             sensor.add_sample(x);
+            rtcount("adc.update.addSample");
             if (onNewSample) {
                 onNewSample(*this, sensor);
+                rtcount("adc.update.onNewSample");
             }
 
             auto calibRes = handleSensorCalib(sensor);
+            rtcount("adc.update.handleSensorCalib");
             if (calibRes != UpdateRet::NoNewData)
                 return calibRes;
         }
@@ -330,6 +340,7 @@ public:
         if (calibrating_ == 0 && cycleCh == 0) {
             for (auto &sn: virtualSensors) {
                 sn->add_sample(sn->func());
+                rtcount("adc.update.AddSampleVirtual");
             }
         }
 

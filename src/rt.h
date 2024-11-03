@@ -34,7 +34,7 @@ void rtcount(const char *l) {
         constexpr auto maxT = std::numeric_limits<unsigned long>::max();
         auto t = rtclock_us();
         //auto dt = (t < t0) ? (maxT - t0 + t) : (t - t0);
-        auto dt = (t - t0)  / CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
+        auto dt = (t - t0) / CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
         //if(dt > maxT/2) dt = maxT - dt;
         auto f = rtcount_stats.find(l);
         if (f == rtcount_stats.end()) {
