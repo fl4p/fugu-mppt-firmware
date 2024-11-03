@@ -351,10 +351,30 @@ void loop() {
     loopNetwork_task(nullptr);
 }
 
+static esp_err_t disable_cpu_power_saving(void) {
+    esp_err_t ret = ESP_OK;
 
+    static esp_pm_lock_handle_t s_cli_pm_lock = NULL;
+
+
+    ret = esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "nopowersave", &s_cli_pm_lock);
+    if (ret == ESP_OK) {
+        esp_pm_lock_acquire(s_cli_pm_lock);
+        ESP_LOGI("main", "Successfully created CLI pm lock");
+    } else {
+        if (s_cli_pm_lock != NULL) {
+            esp_pm_lock_delete(s_cli_pm_lock);
+            s_cli_pm_lock = NULL;
+        }
+        ESP_LOGI("main", " Failed to create CLI pm lock");
+    }
+    return ret;
+}
 
 // TODO avoid using loop (run it on NON-rt core!)
 void loopRT(void *arg) {
+    disable_cpu_power_saving();
+
 
     adcSampler.begin();
 
@@ -693,6 +713,7 @@ void loopNetwork_task(void *arg) {
          */
         wifiLoop(pwm.disabled());
         ftpUpdate();
+        telemetryFlushPointsQ();
     }
 
     auto &nSamples(sensors.Vout->numSamples);
