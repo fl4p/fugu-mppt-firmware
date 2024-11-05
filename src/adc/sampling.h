@@ -192,7 +192,7 @@ public:
      * this must be called from the same task that perform ADC reading (calls hasData & getSample)
      */
     void begin() {
-        assert(adc != nullptr);
+        if (adc == nullptr)throw std::runtime_error("adc null");
         assert(!realSensors.empty());
         _readNext();
     }

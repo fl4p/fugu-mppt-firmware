@@ -205,7 +205,7 @@ public:
 
         fanInit(pinConf);
 
-        bflow.init();
+        bflow.init(pinConf);
         meter.load();
         startSweep();
     }

@@ -12,28 +12,33 @@
  */
 class BackflowDriver {
     bool _state = false;
+    int8_t panelEN;
+    int8_t panelSD;
 public:
-    void init() {
-        if ((bool) PinConfig::Backflow_EN) {
-            assert(!(bool) PinConfig::Backflow_SD);
-            pinMode((uint8_t) PinConfig::Backflow_EN, OUTPUT);
-            digitalWrite((uint8_t) PinConfig::Backflow_EN, false);
+    void init(const ConfFile &pin) {
+        panelEN = pin.getByte("panel_en", 0);
+        panelSD = pin.getByte("panel_sd", 0);
+
+        if (panelEN) {
+            assert(!panelSD);
+            pinMode(panelEN, OUTPUT);
+            digitalWrite(panelEN, false);
         } else {
-            assert((bool) PinConfig::Backflow_SD);
-            pinMode((uint8_t) PinConfig::Backflow_SD, OUTPUT);
-            digitalWrite((uint8_t) PinConfig::Backflow_SD, true);
+            assert(panelSD);
+            pinMode(panelSD, OUTPUT);
+            digitalWrite(panelSD, true);
         }
         _state = false;
     }
 
     void enable(bool enable) {
-        if ((bool) PinConfig::Backflow_EN) {
-            digitalWrite((uint8_t) PinConfig::Backflow_EN, enable);
+        if (panelEN) {
+            digitalWrite(panelEN, enable);
         } else {
-            digitalWrite((uint8_t) PinConfig::Backflow_SD, !enable);
+            digitalWrite(panelSD, !enable);
         }
-        if(_state != enable) {
-            UART_LOG_ASYNC("Backflow switch %s", enable ? "enabled" : "disabled");
+        if (_state != enable) {
+            UART_LOG_ASYNC("Back-flow switch %s", enable ? "enabled" : "disabled");
         }
         _state = enable;
     }

@@ -126,20 +126,19 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     );
     //Vout_transform.factor *= sensConf.f("vout_calib", 1.f);
 
-    LinearTransform Iin_transform = {1, 0};
-    if (Iin_ch != 255)
-        Iin_transform = {sensConf.f("iin_factor"), sensConf.f("iin_midpoint")};
-
-
-    LinearTransform Iout_transform{sensConf.f("iout_factor", 1.f), 0};
+    LinearTransform Iin_transform = {sensConf.f("iin_factor", 1.f), sensConf.f("iin_midpoint", 0.f)};
+    LinearTransform Iout_transform{sensConf.f("iout_factor", 1.f), sensConf.f("iout_midpoint", 0.f)};
 
 
     if (!adc->init(pinConf)) {
         ESP_LOGE("main", "Failed to initialize ADC %s", adcName.c_str());
         scan_i2c();
-        while (1) {} // trap
+        //while (1) {} // trap
+        adcSampler.setADC(nullptr);
+        return;
     } else {
-        ESP_LOGI("main", "Initialized ADC %s (V/I)(i/o)_ch = (%i %i %i %i) , exp.LoopRate=%hu", adcName.c_str(), Vin_ch, Iin_ch,
+        ESP_LOGI("main", "Initialized ADC %s (V/I)(i/o)_ch = (%i %i %i %i) , exp.LoopRate=%hu", adcName.c_str(), Vin_ch,
+                 Iin_ch,
                  Vout_ch, Iout_ch, loopRateMin);
     }
 
@@ -233,8 +232,6 @@ void setup() {
     uartInit(0);
 #endif
 
-    enable_esp_log_to_telnet();
-
     ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
 
     if (!mountLFS()) {
@@ -255,6 +252,11 @@ void setup() {
 
     ConfFile pinConf{"/littlefs/conf/pins.conf"};
 
+    if (pinConf.getString("mcu", "") != CONFIG_IDF_TARGET) {
+        ESP_LOGE("main", "pins.conf expects MCU %s, but target is %s", pinConf.getString("mcu").c_str(),
+                 CONFIG_IDF_TARGET);
+    }
+
     if (pinConf) {
         // TODO
         /*
@@ -262,10 +264,13 @@ void setup() {
 [1;31m[E][i2c.arduino:199]: Recovery failed: SCL is held LOW on the I2C bus
          */
         //*?
+        auto i2c_freq = pinConf.getLong("i2c_freq", 100000);
+        ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", pinConf.getByte("i2c_sda"), pinConf.getByte("i2c_scl"),
+                 i2c_freq);
         if (!Wire.begin(
                 (uint8_t) pinConf.getLong("i2c_sda"),
                 (uint8_t) pinConf.getLong("i2c_scl"),
-                pinConf.getLong("i2c_freq", 800000UL)
+                pinConf.getLong("i2c_freq", i2c_freq)
         )) {
             ESP_LOGE("main", "Failed to initialize Wire");
         }
@@ -333,6 +338,10 @@ void setup() {
     xTaskCreatePinnedToCore(loopCore0_LF, "core0LF", 4096 * 1, NULL, 1, NULL, 0);
 
 
+    // this will defer all logs, if abort() is called during setup we might never see relevant messages
+    // so calls this after everything else has been setup
+    enable_esp_log_to_telnet();
+
     ESP_LOGI("main", "setup() done.");
 
     /*manualPwm = true;
@@ -376,12 +385,26 @@ static esp_err_t disable_cpu_power_saving(void) {
     return ret;
 }
 
-// TODO avoid using loop (run it on NON-rt core!)
 void loopRT(void *arg) {
+    try {
+        adcSampler.begin();
+    } catch (const std::runtime_error &er) {
+        ESP_LOGE("main", "error starting ADC sampler: %s", er.what());
+        while (true) { vTaskDelay(10); }
+    }
+
     disable_cpu_power_saving();
 
+    assert(xPortGetCoreID() == 1);
+    vTaskPrioritySet(NULL, 20); // highest priority (24)
+    // ^ see https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/performance/speed.html#choosing-task-priorities-of-the-application
 
-    adcSampler.begin();
+    ESP_LOGI("main", "Loop running on core %i", (int) xPortGetCoreID());
+
+#ifdef CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+    ESP_LOGW("main", "CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS enabled!");
+            delay(1000);
+#endif
 
     while (true) {
         rtcount("start");
@@ -391,62 +414,45 @@ void loopRT(void *arg) {
 
         auto nowMs = (unsigned long) (nowUs / 1000ULL);
 
-        if (lastLoopTime == 0) {
-            assert(xPortGetCoreID() == 1);
-            vTaskPrioritySet(NULL, 20); // highest priority (24)
-            // ^ see https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/performance/speed.html#choosing-task-priorities-of-the-application
 
-            ESP_LOGI("main", "Loop running on core %i", (int) xPortGetCoreID());
-#ifdef CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
-            ESP_LOGW("main", "CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS enabled!");
-            delay(1000);
-#endif
+        rtcount("adc.update.pre");
+        auto samplerRet = adcSampler.update();
+        rtcount("adc.update");
+
+        if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
+            mppt.shutdownDcdc();
+            charging = false;
+            delayStartUntil = nowMs + 4000;
         }
 
-
-        //uint32_t nSamples;
-        if (adcSampler.adc) {
-            rtcount("adc.update.pre");
-            auto samplerRet = adcSampler.update();
-            rtcount("adc.update");
-
-            if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
-                mppt.shutdownDcdc();
-                charging = false;
-                delayStartUntil = nowMs + 4000;
+        if (samplerRet != ADC_Sampler::UpdateRet::NewData) {
+            if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage()) {
+                ESP_LOGW("main", "Board power supply UV %.2f!", mppt.boardPowerSupplyVoltage());
+                adcSampler.cancelCalibration();
             }
 
-            if (samplerRet != ADC_Sampler::UpdateRet::NewData) {
-                if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage()) {
-                    ESP_LOGW("main", "Board power supply UV %.2f!", mppt.boardPowerSupplyVoltage());
-                    adcSampler.cancelCalibration();
-                }
-
-                if (timeLastSampler && nowMs - timeLastSampler > 200) {
-                    if (!pwm.disabled()) {
-                        pwm.disable();
-                        charging = false;
-                        ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown! numSamples %lu",
-                                 lastMpptUpdateNumSamples);
-                    }
-                }
-
-                if (!timeLastSampler and nowMs > 20000) {
+            if (timeLastSampler && nowMs - timeLastSampler > 200) {
+                if (!pwm.disabled()) {
                     pwm.disable();
-                    ESP_LOGE("main", "Never got a sample! Please check ADC");
-                    if (nowMs > (1000 * 60 * 15)) {
-                        ESP_LOGW("main", "Rebooting");
-                        ESP.restart();
-                    }
-
-                    delay(5000);
+                    charging = false;
+                    ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown! numSamples %lu",
+                             lastMpptUpdateNumSamples);
                 }
-            } else {
-                loopNewData(nowMs);
-                rtcount("loopNewData");
+            }
+
+            if (!timeLastSampler and nowMs > 20000) {
+                pwm.disable();
+                ESP_LOGE("main", "Never got a sample! Please check ADC");
+                if (nowMs > (1000 * 60 * 15)) {
+                    ESP_LOGW("main", "Rebooting");
+                    ESP.restart();
+                }
+
+                delay(5000);
             }
         } else {
-            vTaskDelay(1);
+            loopNewData(nowMs);
+            rtcount("loopNewData");
         }
 
 
@@ -458,6 +464,9 @@ void loopRT(void *arg) {
         auto loopDT = now2 - nowUs;
         if (loopDT > maxLoopDT && !pwm.disabled())
             maxLoopDT = loopDT;
+
+        // Not need to yield or call vTaskDelay here
+        // waiting for adc values does the necessary blocking
 
         //vTaskDelay(0); // this resets the Watchdog Timer (WDT) for some reason
         //vTaskDelay(1);
@@ -483,7 +492,7 @@ int console_write_usb(const char *buf, size_t len);
 
 void loopLF(const unsigned long &nSamples, const unsigned long &nowUs) {
     uint32_t sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000000u /
-               (uint32_t) (nowUs - lastTimeOutUs);
+                   (uint32_t) (nowUs - lastTimeOutUs);
 
     if (sps < loopRateMin && !pwm.disabled() && nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 6000000) {
@@ -519,8 +528,8 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowUs) {
                          ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
                          : mpptStateStr().c_str()),
             (int) charging,
-            maxLoopLag ,
-            maxLoopDT ,
+            maxLoopLag,
+            maxLoopDT,
             nSamples,
             WiFi.RSSI()
     );

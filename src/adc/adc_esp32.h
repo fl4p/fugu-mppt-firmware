@@ -38,9 +38,11 @@ public:
 
         // 0.81 to fit suggested range?
         // see https://docs.espressif.com/projects/esp-idf/en/v4.2/esp32/api-reference/peripherals/adc.html#_CPPv425adc1_config_channel_atten14adc1_channel_t11adc_atten_t
-        if (voltage > (0.81f * 3.548134f /*11dB=max */)) {
+        auto maxVolt = 0.81f * 3.548134f;/*11dB=max */
+        if (voltage > maxVolt) {
             throw std::range_error(
-                    "ch" + std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage));
+                    "ch" + std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage)
+                    + " > " + std::to_string(maxVolt));
         }
 
         if (voltage > 1.6f) atten = ADC_ATTEN_DB_12;
