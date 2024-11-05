@@ -28,3 +28,5 @@ sdkconfig
 *.sprof
 
 *.out
+
+*.img
