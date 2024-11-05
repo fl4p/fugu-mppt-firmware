@@ -386,6 +386,18 @@ static esp_err_t disable_cpu_power_saving(void) {
 }
 
 void loopRT(void *arg) {
+#define RT_CORE 1
+
+#if CONFIG_ARDUINO_RUNNING_CORE == RT_CORE or CONFIG_ARDUINO_EVENT_RUNNING_CORE == RT_CORE or \
+    CONFIG_ARDUINO_UDP_RUNNING_CORE == RT_CORE or CONFIG_ARDUINO_SERIAL_EVENT_TASK_RUNNING_CORE == RT_CORE
+#error "arduino runtime is configured to run on RT_CORE"
+#endif
+
+# if CONFIG_ESP_TIMER_ISR_AFFINITY != RT_CORE or CONFIG_ESP_TIMER_TASK_AFFINITY == RT_CORE or CONFIG_LWIP_TCPIP_TASK_AFFINITY == RT_CORE \
+ or CONFIG_PTHREAD_TASK_CORE_DEFAULT == RT_CORE or CONFIG_FMB_PORT_TASK_AFFINITY == RT_CORE or CONFIG_MDNS_TASK_AFFINITY == RT_CORE
+#error "esp runtime is configured to run on RT_CORE"
+#endif
+
     try {
         adcSampler.begin();
     } catch (const std::runtime_error &er) {
