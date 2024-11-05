@@ -35,6 +35,7 @@ public:
 
     TempSensorGPIO_NTC() = default;
 
+
     void begin(const ConfFile &pinConf) {
         ch = (adc1_channel_t) pinConf.getByte("ntc_ch", adc1_channel_t::ADC1_CHANNEL_MAX);
         assert(ch >= 0 and ch < adc1_channel_t::ADC1_CHANNEL_MAX);
@@ -159,6 +160,8 @@ public:
         ESP_ERROR_CHECK(temp_sensor_start());
     }
 
+    void begin() {}
+
     float read()  override {
 
         // This has very poor real-time performance if WiFi is enabled (probably using ADC0?)
@@ -211,6 +214,7 @@ class Esp32TempSensor {
 public:
 
     Esp32TempSensor() {}
+    void begin() {}
 
     float read() {
         //return (temprature_sens_read() - 32) / 1.8;

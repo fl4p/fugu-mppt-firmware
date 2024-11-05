@@ -25,7 +25,12 @@
 
 #include "perf.h"
 #include <sprofiler.h>
+
+#if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
+
 #include <hal/usb_serial_jtag_ll.h>
+
+#endif
 
 #include <esp_task_wdt.h>
 #include <esp_pm.h>
@@ -489,7 +494,10 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowUs) {
         charging = false;
     }
 
+#if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
     usbConnected = usb_serial_jtag_is_connected();
+#endif
+
     mppt.ntc.read();
 
     UART_LOG_ASYNC(
@@ -664,23 +672,22 @@ int uartWrite(const char *buf, size_t len) {
 
 
 int console_read_usb(char *buf, size_t len) {
-    //esp_usb_console_set_cb()
-    //usb_serial_jtag_is_connected()
-    //return usb_serial_jtag_read_bytes(buf, len, 0);
-    //return usb_serial_jtag_read()
 #if CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
     return esp_vfs_usb_serial_jtag_get_vfs()->read(0, buf, len);
+#else
+    return 0;
 #endif
 }
 
 
 int console_write_usb(const char *buf, size_t len) {
-    //usb_serial_jtag_write_bytes(buf, len, 1);
-    //return printf("%s", buf);
+#if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
     auto r = esp_vfs_usb_serial_jtag_get_vfs()->write(0, buf, len);
     usb_serial_jtag_ll_txfifo_flush();
     return r;
-    //return get_vfs_for_index(secondary_vfs_index)->vfs.write(vfs_console.fd_secondary, buf, len);;
+#else
+    return 0;
+#endif
 }
 
 void loopUart(unsigned long nowMs) {

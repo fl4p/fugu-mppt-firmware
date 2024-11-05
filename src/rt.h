@@ -190,7 +190,7 @@ public:
 
 static bool IRAM_ATTR
 periodic_timer_on_alarm(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data) {
-    BaseType_t high_task_awoken = pdFALSE;
+    //BaseType_t high_task_awoken = pdFALSE;
     auto pt = (PeriodicTimer *) user_data;
     return pt->callback(pt->arg);
 }
