@@ -1,15 +1,14 @@
-# Name,   Type, SubType,  Offset,   Size,  Flags
-nvs,      data, nvs,      0x9000,  0x4000
-otadata,  data, ota,      0xd000,  0x2000
-phy_init, data, phy,      0xf000,  0x1000
-factory,  app,  factory,  0x10000,  1700k
-#ota_0,    app,  ota_0,    ,         1M
-#ota_1,    app,  ota_1,    ,         1M
-
-littlefs,  data, spiffs,           ,    128k
+# Name,         Type, SubType,  Offset,   Size,  Flags
+nvs,            data, nvs,      0x9000,  0x4000
+otadata,        data, ota,      0xd000,  0x2000
+phy_init,       data, phy,      0xf000,  0x1000
+factory,        app,  factory,  0x10000,  1700k
+littlefs,       data, spiffs,           ,    128k
 
 # for unit-testing:
 littlefs_test,  data, spiffs,      ,    8k
 
-# nvs_key,  data, nvs_keys, ,        0x1000
+#nvs_key,  data, nvs_keys, ,        0x1000
 #storage,  data, spiffs,  ,        0x10000
+#ota_0,         app,  ota_0,    ,         1M
+#ota_1,         app,  ota_1,    ,         1M
