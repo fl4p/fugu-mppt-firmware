@@ -208,3 +208,17 @@ https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html
 
 The INA226 can be programmed to trigger an alert on bus over-voltage. this signal can be wired to the shut-down input of
 the gate driver to instantly turn off the DC-DC converter. The INA226 has a minimum conversion time of 140µs.
+
+
+
+run arduino:
+```
+CONFIG_ARDUINO_RUNNING_CORE=0
+CONFIG_ARDUINO_RUN_CORE0=y
+CONFIG_ARDUINO_EVENT_RUNNING_CORE=0
+CONFIG_ARDUINO_EVENT_RUN_CORE0=y
+CONFIG_ARDUINO_SERIAL_EVENT_TASK_RUNNING_CORE=0
+CONFIG_ARDUINO_SERIAL_EVENT_RUN_CORE0=y
+CONFIG_ARDUINO_UDP_RUNNING_CORE=0
+CONFIG_ARDUINO_UDP_RUN_CORE0=y
+```
