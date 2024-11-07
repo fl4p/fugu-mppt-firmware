@@ -39,13 +39,19 @@ void enqueue_log(const char *s, int len) {
 }
 
 
-int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appendBreak = false) {
+int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appendBreak = false, bool timestamp= false) {
     assert((xPortGetCoreID() == 1));
 
     if (uart_async_log_queue.size_approx() > 200) return -1;
     auto buf = new char[l + 1];
-    auto len = vsnprintf(buf, l + 1 - size_t(appendBreak), fmt, args);
-    if (len <= 0) return len; // error or empty
+    int len = 0;
+    if(timestamp) {
+        len = snprintf(buf, l + 1, "(%lu): ", micros());
+        if (len <= 0) return len;
+    }
+    auto r2 = vsnprintf(buf + len, l + 1 - len - size_t(appendBreak), fmt, args);
+    if (r2 <= 0) return len; // error or empty
+    len += r2;
     if (appendBreak) {
         buf[len] = '\n';
         buf[len + 1] = 0;
@@ -80,7 +86,7 @@ void UART_LOG(const char *fmt, ...) {
     va_start(args, fmt);
     if (xPortGetCoreID() == 1) {
         // RT core1: defer all log to core0
-        enqueue_log(fmt, 200, args, true);
+        enqueue_log(fmt, 200, args, true, true);
     } else {
         vprintf_mux(fmt, args);
         vprintf_mux("\n", va_list{});
@@ -132,7 +138,7 @@ void UART_LOG_ASYNC(const char *fmt, ...) {
 }
 */
 
-int printf_old(const char *fmt, ... ) {
+int printf_old(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     int l = old_vprintf(fmt, args);
