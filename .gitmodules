@@ -36,7 +36,7 @@
 	url = https://github.com/LennartHennigs/ESPTelnet
 [submodule "components/esp32-semihosting-profiler/esp32-semihosting-profiler"]
 	path = components/esp32-semihosting-profiler/esp32-semihosting-profiler
-	url = https://github.com/LiluSoft/esp32-semihosting-profiler
+	url = https://github.com/fl4p/esp32-semihosting-profiler
 [submodule "lib/asciichart"]
 	path = lib/asciichart
 	url = https://github.com/Civitasv/asciichart
