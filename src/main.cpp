@@ -91,6 +91,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
 
     AsyncADC<float> *adc;
 
+    auto ntc_ch = pinConf.getByte("ntc_ch", 255);
 
     auto adcName = sensConf.getString("adc");
     if (adcName == "ads1115" or adcName == "ads1015") {
@@ -98,7 +99,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     } else if (adcName == "ina226") {
         adc = new ADC_INA226();
     } else if (adcName == "esp32adc1") {
-        assert_throw(pinConf.getByte("ntc_ch", 255) == 255, "adc1 conflicts ntc impl TODO fix");
+        // assert_throw(ntc_ch== 255, "adc1 conflicts ntc impl TODO fix");
         adc = new ADC_ESP32_Cont();
     } else if (adcName == "fake") {
         adc = new ADC_Fake();
@@ -170,7 +171,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
                             Iin_transform,
 
                             {lim.Iin_max * 0.05f, .1f, true},
-                            "Iid",
+                            "Ii",
                             false},
                     lim.Iin_max, iinFiltLen)
                   : adcSampler.addVirtualSensor([&]() {
@@ -204,8 +205,19 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
              true},
             lim.Vout_max, 60);
 
-    adcSampler.ignoreCalibrationConstraints = sensConf.getByte("ignore_calibration_constraints", 0);
+    if (ntc_ch != 255 && adcName == "esp32adc1") {
+        auto sense = adcSampler.addSensor(
+                {
+                        ntc_ch,
+                        {1.f, 0.0f},
+                        {2.6f, .1f, false},
+                        "NTC",
+                        false},
+                2.6f, 200);
+        mppt.ntc.setValueRef(sense->ewm.avg.get());
+    }
 
+    adcSampler.ignoreCalibrationConstraints = sensConf.getByte("ignore_calibration_constraints", 0);
     if (adcSampler.ignoreCalibrationConstraints)
         ESP_LOGW("main", "Skipping ADC range and noise checks.");
 
@@ -233,6 +245,7 @@ void setup() {
     // for unknown reason need to initialize uart0 for serial reading (see loop below)
     // Serial.available() works under Arduino IDE (for both ESP32,ESP32S3), but always returns 0 under platformio
     // so we access the uart port directly. on ESP32 the Serial.begin() is sufficient (since it uses the uart0)
+    // see esp-idf vfs_console.c
     uartInit(0);
 #endif
 
@@ -248,8 +261,8 @@ void setup() {
     auto sprofHz = (uint32_t) pprofConf.getLong("sprofiler_hz", 0);
     if (sprofHz && esp_cpu_dbgr_is_attached()) {
         // only start the profiler with OpenOCD attached?
-        //ESP_LOGI("main", "starting sprofiler with freq %lu (samples/bank=%i)", sprofHz, PROFILING_ITEMS_PER_BANK);
-        //sprofiler_initialize(sprofHz);
+        ESP_LOGI("main", "starting sprofiler with freq %lu (samples/bank=%i)", sprofHz, PROFILING_ITEMS_PER_BANK);
+        sprofiler_initialize(sprofHz);
     } else if (sprofHz) {
         ESP_LOGW("main", "sprofiler configured but not debugger attached");
     }

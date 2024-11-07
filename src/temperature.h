@@ -2,14 +2,17 @@
 
 class SingleValueSensor {
     virtual float read() = 0;
+
     [[nodiscard]] virtual float last() const = 0;
 };
 
-class TempSensorGPIO_NTC : public SingleValueSensor{
+class TempSensorGPIO_NTC : public SingleValueSensor {
     float ntcResistance = 10e3f;
 
+    const float *valuePtr = nullptr;
+
     RunningMedian3<float> median3{};
-    EWMA<float> ewma1{2000}, ewma2{2000};
+    EWMA<float> ewma1{20}, ewma2{20};
 
     uint8_t _attack = 1; // discard first samples
 
@@ -37,36 +40,47 @@ public:
 
 
     void begin(const ConfFile &pinConf) {
-        ch = (adc1_channel_t) pinConf.getByte("ntc_ch", adc1_channel_t::ADC1_CHANNEL_MAX);
-        if(ch == adc1_channel_t::ADC1_CHANNEL_MAX)
-            return;
+        if (valuePtr == nullptr) {
+            ch = (adc1_channel_t) pinConf.getByte("ntc_ch", adc1_channel_t::ADC1_CHANNEL_MAX);
+            if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
+                return;
 
-        assert(ch >= 0 and ch < adc1_channel_t::ADC1_CHANNEL_MAX);
+            assert(ch >= 0 and ch < adc1_channel_t::ADC1_CHANNEL_MAX);
 
-        ESP_ERROR_CHECK(adc1_config_width(ADC_WIDTH_BIT_12));
-        ESP_ERROR_CHECK(adc1_config_channel_atten(ch, adc_atten));
-        assert(ESP_ADC_CAL_VAL_NOT_SUPPORTED !=
-               esp_adc_cal_characterize(ADC_UNIT_1, adc_atten, ADC_WIDTH_BIT_12, 1100, &adc_char));
-        //pinMode((uint8_t) PinConfig::NTC, ANALOG);
-        //assert(adcAttachPin((uint8_t) PinConfig::NTC));
+            ESP_ERROR_CHECK(adc1_config_width(ADC_WIDTH_BIT_12));
+            ESP_ERROR_CHECK(adc1_config_channel_atten(ch, adc_atten));
+            assert(ESP_ADC_CAL_VAL_NOT_SUPPORTED !=
+                   esp_adc_cal_characterize(ADC_UNIT_1, adc_atten, ADC_WIDTH_BIT_12, 1100, &adc_char));
+            //pinMode((uint8_t) PinConfig::NTC, ANALOG);
+            //assert(adcAttachPin((uint8_t) PinConfig::NTC));
+        } else {
+            //ESP_LOGI("ntc")
+        }
     }
 
     float read() override {
-        //auto adc = analogRead((uint8_t) PinConfig::NTC);
-        if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
-            return NAN;
 
-        auto adc = adc1_get_raw(ch);
+        if (valuePtr == nullptr) {
+            //auto adc = analogRead((uint8_t) PinConfig::NTC);
+            if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
+                return NAN;
 
-        // ESP_LOGI("temp", "ADC_RAW=%i", adc);
+            auto adc = adc1_get_raw(ch);
 
-        if (_attack) --_attack;
-        else {
-            float temp = adc2Celsius(adc);
-            if (!isnan(temp)) {
-                ewma1.add(median3.next(temp));
-                ewma2.add(ewma1.get());
+            // ESP_LOGI("temp", "ADC_RAW=%i", adc);
+
+            if (_attack) --_attack;
+            else {
+                float temp = adc2Celsius(adc);
+                if (!isnan(temp)) {
+                    ewma1.add(median3.next(temp));
+                    ewma2.add(ewma1.get());
+                }
             }
+        } else {
+            auto volt = *valuePtr;
+            float temp = adc2Celsius(volt / 3.9f * 4095.0f); // 11/12db => 3.9V full range (see docs)
+            ewma2.add(temp);
         }
 
         //float temp = adc2Celsius(ewma.get());
@@ -80,6 +94,11 @@ public:
     }
 
     [[nodiscard]] float last() const override { return ewma2.get(); }
+
+
+    void setValueRef(const float &ref) {
+        valuePtr = &ref;
+    }
 };
 
 #if CONFIG_IDF_TARGET_ESP32S3
@@ -217,6 +236,7 @@ class Esp32TempSensor {
 public:
 
     Esp32TempSensor() {}
+
     void begin() {}
 
     float read() {
