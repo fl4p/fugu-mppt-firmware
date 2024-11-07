@@ -98,6 +98,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     } else if (adcName == "ina226") {
         adc = new ADC_INA226();
     } else if (adcName == "esp32adc1") {
+        assert_throw(pinConf.getByte("ntc_ch", 255) == 255, "adc1 conflicts ntc impl TODO fix");
         adc = new ADC_ESP32_Cont();
     } else if (adcName == "fake") {
         adc = new ADC_Fake();
@@ -210,7 +211,6 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
 
     mppt.setSensors(sensors);
 }
-
 
 
 void setup() {

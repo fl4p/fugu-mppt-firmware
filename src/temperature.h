@@ -38,6 +38,9 @@ public:
 
     void begin(const ConfFile &pinConf) {
         ch = (adc1_channel_t) pinConf.getByte("ntc_ch", adc1_channel_t::ADC1_CHANNEL_MAX);
+        if(ch == adc1_channel_t::ADC1_CHANNEL_MAX)
+            return;
+
         assert(ch >= 0 and ch < adc1_channel_t::ADC1_CHANNEL_MAX);
 
         ESP_ERROR_CHECK(adc1_config_width(ADC_WIDTH_BIT_12));

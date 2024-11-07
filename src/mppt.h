@@ -189,13 +189,16 @@ public:
         if (sensorPhysicalU->isVirtual) throw std::runtime_error("no physical U sensor");
     }
 
+    void initSensors(const ConfFile &pinConf) {
+        ntc.begin(pinConf);
+        ucTemp.begin();
+        ucTemp.read();
+    }
+
     void begin(const ConfFile &pinConf, const Limits &limits_, const TeleConf &tele_) {
         limits = limits_;
         tele = tele_;
 
-        ntc.begin(pinConf);
-        ucTemp.begin();
-        ucTemp.read();
 
         ledPinSimple = pinConf.getByte("led_simple", 255);
         if (ledPinSimple != 255) {
@@ -234,7 +237,7 @@ public:
     }
 
     [[nodiscard]] bool startCondition() const {
-        return ntc.last() < 70.0f
+        return !(ntc.last() > limits.Temp_derate) && ucTemp.last() < limits.Temp_derate
                && sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1
                && !boardPowerSupplyUnderVoltage(true);
     }
@@ -549,7 +552,9 @@ public:
         rtcount("mppt.update.meterAdd");
 
 
-        const float ntcTemp = ntc.last();
+        float ntcTemp = ntc.last();
+        if (ucTemp.last() > ntcTemp) ntcTemp = ucTemp.last();
+
         fanUpdateTemp(ntcTemp, power_smooth);
         rtcount("mppt.update.thermals");
 
@@ -559,6 +564,8 @@ public:
             assert(powerScale < 1);
             if (powerScale < 0) powerScale = 0;
             powerLimit = limits.P_max * powerScale;
+        } else if (isnan(ntcTemp)) {
+            powerLimit = limits.P_max * .25f;
         }
 
         //float powerLimit = std::min(thermalPowerLimit(ntcTemp), limits.P_max);
