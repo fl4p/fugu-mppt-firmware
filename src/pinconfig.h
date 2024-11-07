@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <Esp.h>
+//#include <driver/adc.h>
+//#include <esp_adc_cal.h>
 
 enum class PinConfigESP32S3 : uint8_t {
     // https://www.espressif.com/sites/default/files/documentation/esp32-s3-wroom-1_wroom-1u_datasheet_en.pdf#page=10
@@ -16,7 +18,7 @@ enum class PinConfigESP32S3 : uint8_t {
 
     LED = 48,
     //NTC = 7, // ch6
-    ADC_NTC = ADC1_CHANNEL_6,
+    //ADC_NTC = ADC1_CHANNEL_6,
     Fan = 36,
 
 
@@ -25,9 +27,9 @@ enum class PinConfigESP32S3 : uint8_t {
     buttonBack = 40,
     buttonSelect = 1,
 
-    ADC_Vin = ADC1_CHANNEL_4, // GPIO5
-    ADC_Vout = ADC1_CHANNEL_5, // GPIO6
-    ADC_Iin = ADC1_CHANNEL_3,
+    //ADC_Vin = ADC1_CHANNEL_4, // GPIO5
+   // ADC_Vout = ADC1_CHANNEL_5, // GPIO6
+   // ADC_Iin = ADC1_CHANNEL_3,
 
     INA22x_ALERT = 0,
 };
@@ -43,7 +45,7 @@ enum class PinConfigESP32 : uint8_t {
 
     LED = 2,
     //NTC = 35,
-    ADC_NTC = ADC1_CHANNEL_7, //io35
+    //ADC_NTC = ADC1_CHANNEL_7, //io35
     Fan = 16,
 
 
@@ -52,9 +54,9 @@ enum class PinConfigESP32 : uint8_t {
     buttonBack = 19,
     buttonSelect = 23,
 
-    ADC_Vin = ADC1_CHANNEL_3,
-    ADC_Vout = ADC1_CHANNEL_6,
-    ADC_Iin = ADC1_CHANNEL_0,
+    //ADC_Vin = ADC1_CHANNEL_3,
+   // ADC_Vout = ADC1_CHANNEL_6,
+   // ADC_Iin = ADC1_CHANNEL_0,
 };
 
 enum class PinConfigESP32S3_v2 : uint8_t {
@@ -97,7 +99,7 @@ typedef PinConfigESP32S3_v2 PinConfig;
 typedef PinConfigESP32 PinConfig;
 #endif
 
-uint8_t getBuckIN_PIN() {
+static uint8_t getBuckIN_PIN() {
     if (ESP.getEfuseMac() == 0x704082188534 /* white dot on cover near pin 16*/) {
         ESP_LOGI("pins", "pin %i output broken, using pin 17 for Bridge_IN", (int) PinConfig::Bridge_IN);
         return 17;
