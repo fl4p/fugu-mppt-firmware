@@ -2,8 +2,10 @@
 
 #include <map>
 
+#define RT_PRIO 20
 
-void rtcount_test_cycle_counter() {
+
+static void rtcount_test_cycle_counter() {
     auto t0 = micros();
     auto c0 = esp_cpu_get_cycle_count();
     vTaskDelay(100);
@@ -18,22 +20,22 @@ struct rtcount_stat {
     unsigned long total{0}, num{0}, max{0}, max_num{0};
 };
 
-std::unordered_map<const char *, rtcount_stat> rtcount_stats{};
+static std::unordered_map<const char *, rtcount_stat> rtcount_stats{};
 
-volatile bool rtcount_en = true;
+static volatile bool rtcount_en = true;
 
-unsigned long rtclock_us() {
+static unsigned long rtclock_us() {
     // micros
     return esp_cpu_get_cycle_count();
 }
 
 //#define rtcount(s) do {}while(0)
 
-void rtcount(const char *l) {
+static void rtcount(const char *l) {
     static unsigned long t0 = 0;
 
     if (rtcount_en && t0) {
-        constexpr auto maxT = std::numeric_limits<unsigned long>::max();
+        //constexpr auto maxT = std::numeric_limits<unsigned long>::max();
         auto t = rtclock_us();
         //auto dt = (t < t0) ? (maxT - t0 + t) : (t - t0);
         auto dt = (t - t0) / CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
@@ -55,7 +57,7 @@ void rtcount(const char *l) {
     t0 = rtclock_us();
 }
 
-void rtcount_print(bool reset) {
+static void rtcount_print(bool reset) {
     if (rtcount_en) {
         rtcount_en = false;
         vTaskDelay(100);
@@ -111,8 +113,8 @@ public:
      *
      * @return true if a higher priority task has been woken
      */
-    bool notifyFromIsr() {
-        BaseType_t higherWokenTask;
+    bool IRAM_ATTR notifyFromIsr() {
+        BaseType_t higherWokenTask; // = must yield
         if (readingTask) {
             vTaskNotifyGiveFromISR(readingTask, &higherWokenTask);
             if (higherWokenTask) {
@@ -136,7 +138,7 @@ public:
 
 #include <driver/gptimer.h>
 
-static bool IRAM_ATTR
+static bool
 periodic_timer_on_alarm(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data);
 
 class PeriodicTimer {
@@ -162,6 +164,8 @@ public:
                 .clk_src = GPTIMER_CLK_SRC_DEFAULT,
                 .direction = GPTIMER_COUNT_UP,
                 .resolution_hz = hz, // 1MHz, 1 tick=1us
+                .intr_priority = RT_PRIO-1,
+                .flags =  {.intr_shared = 0}, // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/intr_alloc.html
         };
         ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &gptimer));
 

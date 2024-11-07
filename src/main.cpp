@@ -333,7 +333,7 @@ void setup() {
         ESP_LOGE("main", "error during mppt setup: %s", er.what());
     }
 
-    xTaskCreatePinnedToCore(loopRT, "loopRt", 4096 * 4, NULL, 20, NULL, 1);
+    xTaskCreatePinnedToCore(loopRT, "loopRt", 4096 * 4, NULL, RT_PRIO, NULL, 1);
     //xTaskCreatePinnedToCore(loopNetwork_task, "netloop", 4096 * 4, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(loopCore0_LF, "core0LF", 4096 * 1, NULL, 1, NULL, 0);
 
