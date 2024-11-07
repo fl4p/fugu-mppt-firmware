@@ -253,8 +253,7 @@ public:
 #include<unordered_map>
 #include <numeric>
 
-std::string
-trim(const std::string &s) { // removes whitespace characters from beginnig and end of string s
+static std::string trim(const std::string &s) { // removes whitespace characters from beginnig and end of string s
     const int l = (int) s.length();
     int a = 0, b = l - 1;
     char c;

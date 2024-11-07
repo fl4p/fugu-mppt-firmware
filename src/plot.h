@@ -1,6 +1,7 @@
 #pragma once
 
 #include "asciichart/ascii.h"
+#include "logging.h"
 
 struct Series {
     std::vector<std::pair<float, float>> vec;
@@ -105,7 +106,7 @@ struct Plot {
             ss << ascii::Decoration::From(ascii::Decoration::RESET);
             ss << "\n";
 
-            UART_LOG(ss.str().c_str());
+            printf_mux(ss.str().c_str());
         }
 
         std::stringbuf buffer;

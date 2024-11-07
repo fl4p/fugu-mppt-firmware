@@ -29,11 +29,12 @@
 void enable_esp_log_to_telnet();
 // esp_log_set_vprintf
 
-void UART_LOG(const char *fmt, ...);
-void UART_LOG_ASYNC(const char *fmt, ...);
+void UART_LOG(const char *format, ...)  __attribute__ ((format (printf, 1, 2)));
+void printf_mux(const char *format, ...)  __attribute__ ((format (printf, 1, 2)));
+#define UART_LOG_ASYNC UART_LOG
+//void UART_LOG_ASYNC(const char *format, ...)  __attribute__ ((format (printf, 1, 2)));
+
 void flush_async_uart_log();
-
-
 void process_queued_tasks();
 void enqueue_task(std::function<void(void)> &&fn);
 

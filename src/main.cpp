@@ -521,13 +521,13 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowUs) {
 
     mppt.ntc.read();
 
-    UART_LOG_ASYNC(
-            "V=%5.2f/%5.2f I=%4.1f/%5.2fA %5.1fW %.0f℃%.0f℃ %2lusps %2u㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
-            " st=%5s,%i lag=%u㎲ lt=%u㎲ N=%u rssi=%hi",
+    UART_LOG(
+            "V=%5.2f/%5.2f I=%4.1f/%5.2fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
+            " st=%5s,%i lag=%lu㎲ lt=%lu㎲ N=%lu rssi=%hi",
             sensors.Vin->last,
             sensors.Vout->last,
-            sensors.Iin->last,
-            sensors.Iout->last,
+            sensors.Iin->ewm.avg.get(), // sensors.Iin->last,
+            sensors.Iout->ewm.avg.get(),
             sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
             //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
             mppt.ntc.last(), mppt.ucTemp.last(),
@@ -851,10 +851,10 @@ bool handleCommand(const String &inp) {
     } else if (inp == "rt-stats") {
         xTaskCreatePinnedToCore(print_real_time_stats_1s_task, "rtstats", 4096, NULL, 1, NULL, 0);
     } else if (inp == "mem") {
-        UART_LOG("Total heap:  %9d\n", ESP.getHeapSize());
-        UART_LOG("Free heap:   %9d\n", ESP.getFreeHeap());
-        UART_LOG("Total PSRAM: %9d\n", ESP.getPsramSize());
-        UART_LOG("Free PSRAM:  %9d\n", ESP.getFreePsram());
+        UART_LOG("Total heap:  %9ld\n", ESP.getHeapSize());
+        UART_LOG("Free heap:   %9ld\n", ESP.getFreeHeap());
+        UART_LOG("Total PSRAM: %9ld\n", ESP.getPsramSize());
+        UART_LOG("Free PSRAM:  %9ld\n", ESP.getFreePsram());
     } else {
         ESP_LOGI("main", "unknown or unexpected command");
         return false;

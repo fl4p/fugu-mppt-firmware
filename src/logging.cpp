@@ -10,6 +10,10 @@
 //   static const size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE = 0;
 //};
 
+int vprintf_(const char *fmt, va_list argptr);
+
+int vprintf_mux(const char *fmt, va_list argptr);
+
 struct AsyncLogEntry {
     char *str;
     uint16_t len;
@@ -24,59 +28,89 @@ ESPTelnet *log_telnet = nullptr;
 
 vprintf_like_t old_vprintf = &vprintf;
 
+
 void enqueue_log(const char *s, int len) {
+    assert((xPortGetCoreID() == 1));
+
     if (uart_async_log_queue.size_approx() > 200) return;
     auto buf = new char[len + 1];
     strncpy(buf, s, len + 1);
     uart_async_log_queue.enqueue(AsyncLogEntry{buf, (uint16_t) len, false});
 }
 
+
+int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appendBreak = false) {
+    assert((xPortGetCoreID() == 1));
+
+    if (uart_async_log_queue.size_approx() > 200) return -1;
+    auto buf = new char[l + 1];
+    auto len = vsnprintf(buf, l + 1 - size_t(appendBreak), fmt, args);
+    if (len <= 0) return len; // error or empty
+    if (appendBreak) {
+        buf[len] = '\n';
+        buf[len + 1] = 0;
+        len += 1;
+    }
+    uart_async_log_queue.enqueue(AsyncLogEntry{buf, (uint16_t) len, false});
+    return len;
+}
+
+/*
 void enqueue_telnet_log(const char *s, int len) {
+    assert((xPortGetCoreID() == 1));
+
     if (uart_async_log_queue.size_approx() > 200) return;
     auto buf = new char[len + 1];
     strncpy(buf, s, len + 1);
     uart_async_log_queue.enqueue(AsyncLogEntry{buf, (uint16_t) len, true});
 }
-
+*/
+/*
 void enqueue_telnet_log(const char *fmt, size_t l, const va_list &args) {
+    assert((xPortGetCoreID() == 1));
+
     if (uart_async_log_queue.size_approx() > 200) return;
     auto buf = new char[l + 1];
     auto len = vsnprintf(buf, l + 1, fmt, args);
     uart_async_log_queue.enqueue(AsyncLogEntry{buf, (uint16_t) len, true});
-}
+}*/
 
 void UART_LOG(const char *fmt, ...) {
-    //static char UART_LOG_buf[384];
-
     va_list args;
     va_start(args, fmt);
-    auto l = old_vprintf(fmt, args);
-    //auto l = vsnprintf(UART_LOG_buf, 380, fmt, args);
-
-    if (log_telnet) {
-        // log_telnet->write((uint8_t *) UART_LOG_buf, l);
-        //enqueue_telnet_log(UART_LOG_buf, l);
-        enqueue_telnet_log(fmt, l, args);
+    if (xPortGetCoreID() == 1) {
+        // RT core1: defer all log to core0
+        enqueue_log(fmt, 200, args, true);
+    } else {
+        vprintf_mux(fmt, args);
+        vprintf_mux("\n", va_list{});
     }
-
     va_end(args);
-    //if(l <= 0)
-    //    return;
+}
 
-    //UART_LOG_buf[l] = '\n';
-    // UART_LOG_buf[++l] = '\0';
-    //uart_write_bytes(0, UART_LOG_buf, l);
-
-    //old_vprintf(UART_LOG_buf, nullptr);
-
-
+void printf_mux(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    if (xPortGetCoreID() == 1) {
+        // RT core1: defer all log to core0
+        enqueue_log(fmt, 200, args, false);
+    } else {
+        vprintf_mux(fmt, args);
+    }
+    va_end(args);
 }
 
 
+/*
 void UART_LOG_ASYNC(const char *fmt, ...) {
+
+    assert (xPortGetCoreID() == 1);
+    //UART_LOG(fmt, ...);
 
     if (uart_async_log_queue.size_approx() > 200)
         return;
+
+
 
     auto buf = new char[384];
 
@@ -90,11 +124,20 @@ void UART_LOG_ASYNC(const char *fmt, ...) {
 
     uart_async_log_queue.enqueue(AsyncLogEntry{buf, l, false});
 
-    /* if (uart_async_log_queue.size() > 200) {
+    / * if (uart_async_log_queue.size() > 200) {
          delete[] uart_async_log_queue.front().str;
          uart_async_log_queue.pop_front(); // TODO fix race, use lock-free queu
          // e.g. https://github.com/cameron314/concurrentqueue/blob/master/concurrentqueue.h
-     }*/
+     }* /
+}
+*/
+
+int printf_old(const char *fmt, ... ) {
+    va_list args;
+    va_start(args, fmt);
+    int l = old_vprintf(fmt, args);
+    va_end(args);
+    return l;
 }
 
 void flush_async_uart_log() {
@@ -102,8 +145,14 @@ void flush_async_uart_log() {
     while (uart_async_log_queue.try_dequeue(entry)) {
 
         if (!entry.telnetOnly) {
-            va_list l{};
-            old_vprintf(entry.str, l);
+            // we call the old vprintf here for convenience.
+            // otherwise we can write the string to UART and JTAG USB
+            // see esp-idf/console, which does the multiplexing for us
+
+            //va_list l{};
+            //old_vprintf(entry.str, l);
+            //old_vprintf("%s", entry.str);
+            printf_old(entry.str);
             //uart_write_bytes(0, entry.str, entry.len);
         }
 
@@ -114,28 +163,35 @@ void flush_async_uart_log() {
     }
 }
 
-
-int vprintf_(const char *fmt, va_list argptr) {
+/**
+ * Synchronous printf to UART, JTAG USB and telnet
+ * @param fmt
+ * @param argptr
+ * @return
+ */
+int vprintf_mux(const char *fmt, va_list argptr) {
     static char loc_buf[200];
 
-    if (xPortGetCoreID() == 1) {
-        // RT core1: defer all log to core0
-        int l = vsnprintf(loc_buf, sizeof(loc_buf), fmt, argptr);
-        enqueue_log(loc_buf, l);
-        return l;
-    }
-
     int r = old_vprintf(fmt, argptr);
-
     if (log_telnet) {
         int l = vsnprintf(loc_buf, sizeof(loc_buf), fmt, argptr);
         if (l > 0) {
-            enqueue_telnet_log(loc_buf, l);
-            //log_telnet->write((uint8_t *) loc_buf, l);
+            //enqueue_telnet_log(loc_buf, l);
+            log_telnet->write((uint8_t *) loc_buf, l);
         }
     }
 
     return r;
+}
+
+
+int vprintf_(const char *fmt, va_list argptr) {
+    if (xPortGetCoreID() == 1) {
+        // RT core1: defer all log to core0
+        return enqueue_log(fmt, 200, argptr);
+    } else {
+        return vprintf_mux(fmt, argptr);
+    }
 }
 
 void set_logging_telnet(ESPTelnet *telnet) {

@@ -396,14 +396,14 @@ public:
         //float vIn = sensors.Vin->ewm.avg.get();
         auto vr = buck.updateLowSideMaxDuty(vOut, vIn);
 
-        auto iOutSmall = sensorPhysicalI->ewm.avg.get() < 0.7;
+        auto iOutSmall = sensorPhysicalI->ewm.avg.get() < 0.2;
 
         if (iOutSmall && buck.getBuckDutyCycle() > buck.pwmMinLS * 2 and
             (vOut < 1 or (buck.getBuckDutyCycle() * 0.9f / (float) buck.pwmMaxHS) > vr)) {
 
             if (!buck.disabled())
                 ESP_LOGE("MPPT",
-                         "Buck running at %d%%DC but Vout (%.2f) and Iout (%.2f, last=%.2f) low! Sensor or half-bridge failure.",
+                         "Buck running at D=%d%% but Vout (%.2f) and Iout (%.2f, last=%.2f) low! Sensor or half-bridge failure.",
                          100 * buck.getBuckDutyCycle() / buck.pwmMaxHS, vOut, sensors.Iout->ewm.avg.get(),
                          sensors.Iout->last
                 );
