@@ -68,7 +68,7 @@ public:
         pwmMaxLS = std::max(pwmMinLS, pwmMaxLS);
 
         if (pwmLS - pwmMaxLS > (pwmDriver.pwmMax / 10)) {
-            UART_LOG_ASYNC("Set pwmLS %hu -> pwmMaxLS=%hu", pwmLS, pwmMaxLS);
+            UART_LOG("Set pwmLS %hu -> pwmMaxLS=%hu\n", pwmLS, pwmMaxLS);
         }
 
         // "fade-in" the low-side duty cycle
@@ -127,7 +127,7 @@ public:
         pwmDriver.update_pwm(pwmCh_IN, 0);
 
         if (pwmHS > pwmMinHS)
-            UART_LOG_ASYNC("PWM disabled (duty cycle was %d)", (int) pwmHS);
+            UART_LOG("PWM disabled (duty cycle was %d)\n", (int) pwmHS);
         pwmHS = 0;
         pwmLS = 0;
         lowSideEnabled = false;
@@ -179,7 +179,7 @@ public:
 
             if (!*dcmHysteresis) {
                 *dcmHysteresis = true;
-                UART_LOG_ASYNC("buck: CCM -> DCM (vr=%.4f, pwmMaxLs=%.1f, lsCCM=%hu)", voltageRatio, pwmMaxLs, lsCCM);
+                UART_LOG("buck: CCM -> DCM (vr=%.4f, pwmMaxLs=%.1f, lsCCM=%hu)", voltageRatio, pwmMaxLs, lsCCM);
             }
 
             pwmMaxLs = std::min<float>(pwmMaxLs, (float) pwmHS);
@@ -190,7 +190,7 @@ public:
 
             if (*dcmHysteresis) {
                 *dcmHysteresis = false;
-                UART_LOG_ASYNC("buck: DCM -> CCM (vr=%.4f, pwmMaxLs=%.1f, lsCCM=%hu)", voltageRatio, pwmMaxLs, lsCCM);
+                UART_LOG("buck: DCM -> CCM (vr=%.4f, pwmMaxLs=%.1f, lsCCM=%hu)\n", voltageRatio, pwmMaxLs, lsCCM);
             }
 
             pwmMaxLs = (float) (pwmMax - pwmHS);
@@ -221,7 +221,7 @@ public:
 
         if (pwmLS > pwmMaxLS) {
             if (pwmLS - pwmMaxLS > (pwmDriver.pwmMax / 40)) {
-                UART_LOG_ASYNC("Set pwmLS %hu -> pwmMaxLS=%hu (VR=%.3f)", pwmLS, pwmMaxLS, outInVoltageRatio);
+                UART_LOG("Set pwmLS %hu -> pwmMaxLS=%hu (VR=%.3f)", pwmLS, pwmMaxLS, outInVoltageRatio);
             }
             pwmLS = pwmMaxLS;
             pwmDriver.update_pwm(pwmCh_EN, pwmHS + pwmLS); // instantly commit if limit decreases
@@ -237,7 +237,7 @@ public:
      */
     void enableLowSide(bool enable) {
         if (enable != lowSideEnabled) {
-            UART_LOG_ASYNC("Low-side switch %s", enable ? "enabled" : "disabled");
+            UART_LOG("Low-side switch %s", enable ? "enabled" : "disabled");
         }
         lowSideEnabled = enable;
         if (!enable)

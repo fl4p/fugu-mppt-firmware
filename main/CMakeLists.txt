@@ -3,7 +3,7 @@ if ($ENV{RUN_TESTS})
     set(MAIN_SRC "../test/main.cpp"
             "../test/test_meter.cpp"
             ../test/test_sampler.cpp
-            )
+    )
 elseif ($ENV{MAIN_SRC})
     set(MAIN_SRC $ENV{MAIN_SRC})
 else ()
@@ -13,7 +13,8 @@ endif ()
 idf_component_register(SRCS
         ${MAIN_SRC}
         "../src/logging.cpp"
-        #"../src/main2.cpp"
+        "../src/util.cpp"
+        "../src/adc/adc_esp32_cont.cpp"
         "../src/lcd.cpp"
         "../src/web/server.cpp"
         "../src/math/float16.cpp"
@@ -35,7 +36,18 @@ if ($ENV{FUGU_BAT_V})
     component_compile_definitions("FUGU_BAT_V=$ENV{FUGU_BAT_V}")
 endif ()
 
+component_compile_options(-Werror=missing-field-initializers)
+component_compile_options(-Werror=attributes) # IRAM_ATTR used in forward decl
+
 component_compile_options(--std=gnu++17)
+component_compile_options(
+      #  -fsanitize=address
+      #  -fsanitize=shadow-call-stack # esp32: not supported
+      #  -fsanitize=thread
+        #-fsanitize=leak
+        #-fsanitize=undefined -fno-sanitize=shift-base
+      #  -fsanitize-address-use-after-scope
+)
 
 #target_compile_options(__idf_FastLED PRIVATE -Wno-error=reorder)
 

@@ -42,6 +42,7 @@ struct Tracker {
     float dP = NAN;
 
     bool slowMode = false;
+    //unsigned long slowModeTime = false;
 
     void resetTracker(float power, bool direction) {
         resetDirection(direction);

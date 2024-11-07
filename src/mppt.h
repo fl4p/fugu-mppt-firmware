@@ -315,15 +315,17 @@ public:
 
 
         // input over current
-        if (sensors.Iin->last / limits.Iin_max > 1.5) {
+        if (sensors.Iin->last / limits.Iin_max > 1.5 && !buck.disabled()) {
             shutdownDcdc();
-            ESP_LOGW("mppt", "Input current %.1f 50%% above limit (Iout=%.1f, Vin=%.2f), shutdown", sensors.Iin->last,
-                     sensors.Iout->last, sensors.Vin->last);
+            ESP_LOGW("mppt", "Input current %.1f > 1.5x limit (Iout=%.1f, Vin=%.2f, Iin=%.2f), shutdown",
+                     sensors.Iin->last,
+                     sensors.Iout->last, sensors.Vin->last, sensors.Iin->last);
             return false;
         }
 
-        // input over current
-        if (sensors.Iout->last / limits.Iout_max > 1.25 or sensors.Iout->ewm.avg.get() > (limits.Iout_max + 5)) {
+        // output over current
+        if ((sensors.Iout->last / limits.Iout_max > 1.25 or sensors.Iout->ewm.avg.get() > (limits.Iout_max + 5)
+            ) and not buck.disabled()) {
             shutdownDcdc();
             ESP_LOGW("mppt", "Output Current %.2f above limit %.2f, shutdown", sensors.Iout->last, limits.Iout_max);
             return false;
@@ -396,7 +398,7 @@ public:
         //float vIn = sensors.Vin->ewm.avg.get();
         auto vr = buck.updateLowSideMaxDuty(vOut, vIn);
 
-        auto iOutSmall = sensorPhysicalI->ewm.avg.get() < 0.2;
+        auto iOutSmall = sensorPhysicalI->ewm.avg.get() < (limits.Iout_max * 0.01f);
 
         if (iOutSmall && buck.getBuckDutyCycle() > buck.pwmMinLS * 2 and
             (vOut < 1 or (buck.getBuckDutyCycle() * 0.9f / (float) buck.pwmMaxHS) > vr)) {

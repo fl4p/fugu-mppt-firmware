@@ -14,7 +14,7 @@ idf_component_register(
 project(SimpleFTPServer)
 
 component_compile_definitions(
-    DEFAULT_STORAGE_TYPE_ESP32=7
+    DEFAULT_STORAGE_TYPE_ESP32=7 # STORAGE_LITTLEFS
     DEFAULT_FTP_SERVER_NETWORK_TYPE_ESP32=6
 )
 
