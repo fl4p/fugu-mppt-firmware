@@ -53,7 +53,7 @@ static unsigned long loopWallClockUs_ = 0;
 
 unsigned long lastLoopTime = 0, maxLoopLag = 0, maxLoopDT = 0;
 unsigned long lastTimeOutUs = 0;
-unsigned long lastNSamples = 0;
+uint32_t lastNSamples = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
 bool manualPwm = false;
 bool charging = false;
@@ -504,9 +504,8 @@ std::string mpptStateStr() {
 
 int console_write_usb(const char *buf, size_t len);
 
-void loopLF(const unsigned long &nSamples, const unsigned long &nowUs) {
-    uint32_t sps = (lastNSamples < nSamples ? (nSamples - lastNSamples) : 0) * 1000000u /
-                   (uint32_t) (nowUs - lastTimeOutUs);
+void loopLF(const uint32_t &nSamples, const unsigned long &nowUs) {
+    uint32_t sps = (uint64_t) (nSamples - lastNSamples) * 1000000llu / (uint64_t) (nowUs - lastTimeOutUs);
 
     if (sps < loopRateMin && !pwm.disabled() && nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 6000000) {
