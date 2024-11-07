@@ -82,8 +82,10 @@ struct Tracker {
                 _direction = true; // pump more power
             } else {
                 auto absDp = std::abs(dP);
-                if ((absDp >= minPowerStep or (absDp / _lastPower > 0.1f))
-                    && (!slowMode || (now - _timeLastReverse) > 6000)) {
+                if ((absDp >= minPowerStep
+                     or (abs(_lastPower) > (minPowerStep * 10) and absDp / abs(_lastPower) > 0.1f)
+                     )
+                    and (!slowMode || (now - _timeLastReverse) > 6000)) {
                     _lastPower = power;
                     if (dP < 0) {
                         _direction = !_direction;
@@ -136,14 +138,17 @@ struct Tracker {
                 ) {
             speed = .1; // 0.02
             frequency = 1;
-            minPowerStep = 1.5f; // 0.75 is too small
+            minPowerStep = 1.0f; // 0.75 is too small ?
             if (!slowMode) {
-                ESP_LOGI("mppt", "Near MPP, slow-down, set dutyCycle %hu", maxPowerPoint.dutyCycle);
+                auto d = (float) maxPowerPoint.dutyCycle - (float) dutyCycle;
+                if (abs(d) > 5)
+                    ESP_LOGI("mppt", "Near MPP, slow-down, set dutyCycle %hu (powerSample=%.2f)",
+                             maxPowerPoint.dutyCycle, powerSample);
                 slowMode = true;
                 avgPower.reset();
                 // out power measurement with hall sensor is poor and non-linear, so in slow-mode we might stay in a
                 // local maximum. this work-around captures MPP duty cycle during normal mode
-                return (float) maxPowerPoint.dutyCycle - (float) dutyCycle;
+                return d;
             }
         } else {
             // normal-mode
