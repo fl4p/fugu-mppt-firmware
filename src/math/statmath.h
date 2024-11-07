@@ -30,7 +30,7 @@ public:
         y = (1 - alpha) * y + alpha * x;
     }
 
-    inline float_t get() const { return y; }
+    inline const float_t &get() const { return y; }
 
     inline void reset() { y = std::numeric_limits<float_t>::quiet_NaN(); }
 };

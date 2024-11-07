@@ -9,7 +9,7 @@
 bool fanInitialized = false;
 
 bool fanInit(const ConfFile &pinConf) {
-    auto pin = pinConf.getByte("fan_pwm", 255);
+    uint8_t pin = pinConf.getByte("fan_pwm", 255);
     if(pin == 255) return false;
 
     pinMode(pin, OUTPUT);
@@ -18,6 +18,8 @@ bool fanInit(const ConfFile &pinConf) {
     if (!freq) {
         ESP_LOGE("fan", "ledcSetup failed");
         return false;
+    } else {
+        ESP_LOGI("fan", "Initialized at pin %hhu", pin);
     }
 
     //ledcAttachPin((uint8_t) PinConfig::Fan, FAN_PWM_CH);
@@ -32,8 +34,8 @@ bool fanInit(const ConfFile &pinConf) {
  *
  * @param duty Duty-cycle [0..1]
  */
-void fanSet(float duty) {
-    if(!fanInitialized) return;
+bool fanSet(float duty) {
+    if(!fanInitialized) return false;
 
     //if(duty > 1) duty = 1;
     //if(duty < 0) duty = 0;
@@ -51,7 +53,9 @@ void fanSet(float duty) {
     if (driverDC != dc) {
         ledcWrite(FAN_PWM_CH, dc);
         driverDC = dc;
+        return true;
     }
+    return false;
 }
 
 void fanUpdateTemp(float temp, float power) {

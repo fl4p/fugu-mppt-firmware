@@ -19,7 +19,7 @@ enum class PinConfigESP32S3 : uint8_t {
     LED = 48,
     //NTC = 7, // ch6
     //ADC_NTC = ADC1_CHANNEL_6,
-    Fan = 36,
+    //Fan = 36,
 
 
     buttonLeft = 39,
@@ -46,7 +46,7 @@ enum class PinConfigESP32 : uint8_t {
     LED = 2,
     //NTC = 35,
     //ADC_NTC = ADC1_CHANNEL_7, //io35
-    Fan = 16,
+    //Fan = 16,
 
 
     buttonLeft = 18,

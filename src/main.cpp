@@ -51,7 +51,11 @@ bool disableWifi = false;
 
 static unsigned long loopWallClockUs_ = 0;
 
-unsigned long lastLoopTime = 0, maxLoopLag = 0, maxLoopDT = 0;
+unsigned long lastLoopTime = 0, maxLoopLag = 0;
+#if CAPTURE_LOOP_DT
+unsigned long maxLoopDT = 0;
+#endif
+
 unsigned long lastTimeOutUs = 0;
 uint32_t lastNSamples = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
@@ -499,14 +503,16 @@ void loopRT(void *arg) {
         }
 
 
-        auto now2 = micros();
-        auto lag = now2 - lastLoopTime;
+        auto lag = nowUs - lastLoopTime;
         if (lastLoopTime && lag > maxLoopLag && !pwm.disabled()) maxLoopLag = lag;
-        lastLoopTime = now2;
+        lastLoopTime = nowUs;
 
+#if CAPTURE_LOOP_DT
+        auto now2 = micros();
         auto loopDT = now2 - nowUs;
         if (loopDT > maxLoopDT && !pwm.disabled())
             maxLoopDT = loopDT;
+#endif
 
         // Not need to yield or call vTaskDelay here
         // waiting for adc values does the necessary blocking
@@ -552,12 +558,12 @@ void loopLF(const uint32_t &nSamples, const unsigned long &nowUs) {
     mppt.ntc.read();
 
     UART_LOG(
-            "V=%5.2f/%5.2f I=%4.1f/%5.2fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
-            " st=%5s,%i lag=%lu㎲ lt=%lu㎲ N=%lu rssi=%hi",
-            sensors.Vin->last,
-            sensors.Vout->last,
-            sensors.Iin->ewm.avg.get(), // sensors.Iin->last,
-            sensors.Iout->ewm.avg.get(),
+            "V=%4.*f/%4.*f I=%4.*f/%4.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
+            " st=%5s,%i lag=%lu㎲ N=%lu rssi=%hi",
+            sensors.Vin->last >= 9.55f ? 1 : 2, sensors.Vin->last,
+            sensors.Vout->last >= 9.55f ? 1 : 2, sensors.Vout->last,
+            sensors.Iin->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iin->ewm.avg.get(), // sensors.Iin->last,
+            sensors.Iout->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iout->ewm.avg.get(),
             sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
             //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
             mppt.ntc.last(), mppt.ucTemp.last(),
@@ -571,7 +577,7 @@ void loopLF(const uint32_t &nSamples, const unsigned long &nowUs) {
                          : mpptStateStr().c_str()),
             (int) charging,
             maxLoopLag,
-            maxLoopDT,
+            //maxLoopDT,
             nSamples,
             WiFi.RSSI()
     );
@@ -843,14 +849,17 @@ bool handleCommand(const String &inp) {
             ESP_LOGI("main", "Set tracker speed scale %.4f", speedScale);
         }
     } else if (inp.startsWith("fan ")) {
-        fanSet(inp.substring(4).toFloat() * 0.01f);
+        if(!fanSet(inp.substring(4).toFloat() * 0.01f))
+            return false;
     } else if (inp.startsWith("led ")) {
         led.setRGB(inp.substring(4).c_str());
     } else if (inp == "sweep") {
         mppt.startSweep();
     } else if (inp == "reset-lag") {
         maxLoopLag = 0;
+#if CAPTURE_LOOP_DT
         maxLoopDT = 0;
+#endif
         rtcount_print(true);
     } else if (inp == "wifi on") {
         disableWifi = false;
