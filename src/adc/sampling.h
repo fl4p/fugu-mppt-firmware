@@ -12,6 +12,7 @@
 
 #include "adc.h"
 #include "math/statmath.h"
+#include "util.h"
 
 
 struct LinearTransform {
@@ -152,6 +153,8 @@ public:
     std::vector<Sensor *> realSensors{};
     std::vector<VirtualSensor *> virtualSensors{};
 
+    std::array<Sensor *, 8> sensorByCh{nullptr};
+
     //_SensorCalibrationState * calibrationState = nullptr;
     //explicit ADC_Sampler()  {}
 
@@ -172,9 +175,15 @@ public:
         ESP_LOGI("sampler", "%s ADC ch %hhu maxY=%.4f, maxX=%.4f", params.teleName.c_str(), params.adcCh, maxY, maxX);
         adc->setMaxExpectedVoltage(params.adcCh, maxX);
 
-        sensors.push_back(new Sensor{std::move(params), ewmSpan});
-        realSensors.push_back(sensors.back());
-        return sensors.back();
+        assert_throw(sensorByCh[params.adcCh] == nullptr, "duplicate sensor adc channel");
+
+        auto sensorPtr = new Sensor{std::move(params), ewmSpan};
+
+        sensors.push_back(sensorPtr);
+        realSensors.push_back(sensorPtr);
+        sensorByCh[sensorPtr->params.adcCh] = sensorPtr;
+
+        return sensorPtr;
     }
 
     const Sensor *addVirtualSensor(std::function<float()> func, uint32_t ewmaSpan) {
@@ -194,7 +203,14 @@ public:
     void begin() {
         if (adc == nullptr)throw std::runtime_error("adc null");
         assert(!realSensors.empty());
-        _readNext();
+
+        //adc->setSampleCallback([&](uint8_t ch, float v) {
+        //    _addSensorSample(sensorByCh[ch], v);
+        //});
+
+        adc->start();
+        if (adc->scheme() != SampleReadScheme::any)
+            _readNext();
     }
 
     void startCalibration() {
@@ -223,7 +239,7 @@ public:
     }
 
     enum class UpdateRet : uint8_t {
-        NoNewData,
+        NoNewData = 0,
         NewData,
         Calibrating,
         CalibFailure,
@@ -283,6 +299,20 @@ public:
         return UpdateRet::NoNewData;
     }
 
+    UpdateRet _addSensorSample(Sensor *sensor, float v) {
+        sensor->add_sample(v);
+        rtcount("adc.update.addSample");
+
+        if (onNewSample) {
+            onNewSample(*this, *sensor);
+            rtcount("adc.update.onNewSample");
+        }
+
+        auto calibRes = handleSensorCalib(*sensor);
+        rtcount("adc.update.handleSensorCalib");
+        return calibRes;
+    }
+
     UpdateRet update() {
         auto hd = adc->hasData();
         rtcount("adc.update.hasData");
@@ -290,45 +320,42 @@ public:
             return UpdateRet::NoNewData;
 
 
-        if (adc->getAltogether()) {
+        auto scheme = adc->scheme();
+        UpdateRet calibRes;
+        if (scheme == SampleReadScheme::any) {
+            calibRes = UpdateRet::NoNewData;
+            adc->read([&](uint8_t ch, float v) {
+                auto cr = _addSensorSample(sensorByCh[ch], v);
+                if (cr > calibRes) calibRes = cr;
+            });
+            rtcount("adc.update.read");
+        } else if (scheme == SampleReadScheme::all) {
+            calibRes = UpdateRet::NoNewData;
             for (auto sensor: realSensors) {
                 adc->startReading(sensor->params.adcCh);
                 rtcount("adc.update.startReading");
 
                 auto x = adc->getSample();
                 rtcount("adc.update.getSample");
-                sensor->add_sample(x);
-                rtcount("adc.update.addSample");
-                if (onNewSample) {
-                    onNewSample(*this, *sensor);
-                    rtcount("adc.update.onNewSample");
-                }
 
-                auto calibRes = handleSensorCalib(*sensor);
-                rtcount("adc.update.handleSensorCalib");
-                if (calibRes != UpdateRet::NoNewData)
-                    return calibRes;
+                auto cr = _addSensorSample(sensor, x);
+                if (cr > calibRes) calibRes = cr;
             }
         } else {
-            auto &sensor(*realSensors[cycleCh]);
+            auto sensor(realSensors[cycleCh]);
+
             auto x = adc->getSample();
             rtcount("adc.update.getSample");
+
             cycleCh = (cycleCh + 1) % realSensors.size();
             _readNext(); // start async read
             rtcount("adc.update.startReading");
 
-            sensor.add_sample(x);
-            rtcount("adc.update.addSample");
-            if (onNewSample) {
-                onNewSample(*this, sensor);
-                rtcount("adc.update.onNewSample");
-            }
-
-            auto calibRes = handleSensorCalib(sensor);
-            rtcount("adc.update.handleSensorCalib");
-            if (calibRes != UpdateRet::NoNewData)
-                return calibRes;
+            calibRes = _addSensorSample(sensor, x);
         }
+
+        if (calibRes != UpdateRet::NoNewData)
+            return calibRes;
 
         /*if(calibrationState) {
             calibrationState->acc[cycleCh] += sensor.last;
@@ -336,7 +363,8 @@ public:
         }*/
 
 
-
+        // update virtual sensors
+        // TODO virtual sensor calibration?
         if (calibrating_ == 0 && cycleCh == 0) {
             for (auto &sn: virtualSensors) {
                 sn->add_sample(sn->func());

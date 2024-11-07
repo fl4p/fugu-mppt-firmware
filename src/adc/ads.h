@@ -35,6 +35,10 @@ public:
         }
     }
 
+    [[nodiscard]] SampleReadScheme scheme() const override {
+        return SampleReadScheme::cycle;
+    }
+
     bool init(const ConfFile &pinConf) override {
 
         auto adsAlert = pinConf.getByte("ads_alert");

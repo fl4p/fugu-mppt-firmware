@@ -11,7 +11,9 @@
 
 #include "adc/adc.h"
 #include "adc/ads.h"
-#include "adc/adc_esp32.h"
+//#include "adc/adc_esp32.h"
+#include "adc/adc_esp32_cont.h"
+#include "adc/fake.h"
 #include "adc/ina226.h"
 #include "adc/sampling.h"
 #include "buck.h"
@@ -96,7 +98,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     } else if (adcName == "ina226") {
         adc = new ADC_INA226();
     } else if (adcName == "esp32adc1") {
-        adc = new ADC_ESP32();
+        adc = new ADC_ESP32_Cont();
     } else if (adcName == "fake") {
         adc = new ADC_Fake();
     } else {
@@ -167,7 +169,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
                             Iin_transform,
 
                             {lim.Iin_max * 0.05f, .1f, true},
-                            "I_raw",
+                            "Iid",
                             false},
                     lim.Iin_max, iinFiltLen)
                   : adcSampler.addVirtualSensor([&]() {

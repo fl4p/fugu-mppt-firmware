@@ -4,6 +4,7 @@
 #include "pinconfig.h"
 #include "sampling.h"
 //#include "ina228.h"
+#include "adc_esp32.h"
 
 #include "i2c.h"
 #include "store.h"
@@ -30,10 +31,14 @@ class ADC_INA226 : public AsyncADC<float> {
     ADC_ESP32 intAdc;
 
 
-
 public:
 
     static constexpr auto ChVBus = 0, ChI = 1, ChAux = 2;
+
+    [[nodiscard]] SampleReadScheme scheme() const override {
+        return SampleReadScheme::all;
+    }
+
 
 
     bool init(const ConfFile &pinConf) override {
@@ -213,7 +218,7 @@ public:
     }
 
     bool hasData() override {
-        if(!taskNotification.wait(5))
+        if (!taskNotification.wait(5))
             throw std::runtime_error("timeout waiting for ina22x alert interrupt");
 
         if (!new_data) // TODO remove this?
@@ -262,24 +267,16 @@ public:
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         if (ch == ChAux) {
             ESP_LOGI("ina226", "internal ADC setMaxExpectedVoltage(%i,%.6f)", ch, voltage);
-            intAdc.
-                    setMaxExpectedVoltage(intAdc
-                                                  .readingChannel, voltage);
+            intAdc.setMaxExpectedVoltage(intAdc.readingChannel, voltage);
         }
     }
 
-    float getInputImpedance(uint8_t ch)override {
+    float getInputImpedance(uint8_t ch) override {
         if (ch == ChAux) {
-            return intAdc.
-                    getInputImpedance(intAdc
-                                              .readingChannel);
+            return intAdc.getInputImpedance(intAdc.readingChannel);
         } else {
             return 830e3; // 830k ina226 input impedance
         }
-    }
-
-    [[nodiscard]] bool getAltogether() const override {
-        return true;
     }
 };
 
