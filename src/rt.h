@@ -164,7 +164,7 @@ public:
                 .clk_src = GPTIMER_CLK_SRC_DEFAULT,
                 .direction = GPTIMER_COUNT_UP,
                 .resolution_hz = hz, // 1MHz, 1 tick=1us
-                .intr_priority = RT_PRIO-1,
+                .intr_priority = 3, // GPTIMER_ALLOW_INTR_PRIORITY_MASK
                 .flags =  {.intr_shared = 0}, // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/intr_alloc.html
         };
         ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &gptimer));

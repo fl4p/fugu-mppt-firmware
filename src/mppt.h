@@ -295,7 +295,7 @@ public:
             if (!wasDisabled)
                 ESP_LOGW("mppt", "Vout %.1fV (ewma=%.1fV,std=%.4f,buck=%hu) > %.1fV + 8%%!",
                          vout,
-                         sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.std.get(), buck.getBuckDutyCycle(),
+                         sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.std.get(), buck.getBuckOnPwmCnt(),
                          charger.params.Vout_max
                 );
 
@@ -352,7 +352,7 @@ public:
         if (sensors.Vout->ewm.avg.get() > (sensors.Vin->ewm.avg.get() + 1.0f) * 1.25f) {
             if (!buck.disabled())
                 ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown duty=%i", sensors.Vout->ewm.avg.get(),
-                         sensors.Vin->ewm.avg.get(), (int) buck.getBuckDutyCycle());
+                         sensors.Vin->ewm.avg.get(), (int) buck.getBuckOnPwmCnt());
             shutdownDcdc();
             return false;
         }
@@ -400,13 +400,13 @@ public:
 
         auto iOutSmall = sensorPhysicalI->ewm.avg.get() < (limits.Iout_max * 0.01f);
 
-        if (iOutSmall && buck.getBuckDutyCycle() > buck.pwmMinLS * 2 and
-            (vOut < 1 or (buck.getBuckDutyCycle() * 0.9f / (float) buck.pwmMaxHS) > vr)) {
+        if (iOutSmall && buck.getBuckOnPwmCnt() > buck.pwmMinLS * 2 and
+            (vOut < 1 or (buck.getBuckDutyCycle() * 0.9) > vr)) {
 
             if (!buck.disabled())
                 ESP_LOGE("MPPT",
                          "Buck running at D=%d%% but Vout (%.2f) and Iout (%.2f, last=%.2f) low! Sensor or half-bridge failure.",
-                         100 * buck.getBuckDutyCycle() / buck.pwmMaxHS, vOut, sensors.Iout->ewm.avg.get(),
+                         100 * buck.getBuckOnPwmCnt() / buck.pwmMaxHS, vOut, sensors.Iout->ewm.avg.get(),
                          sensors.Iout->last
                 );
 
@@ -464,7 +464,7 @@ public:
             ESP_LOGI("mppt", "Stop sweep after %.2fs at controlMode=%s (limIdx=%i) PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
                      (loopWallClockUs() - dcdcPwr.getTimeLastCalibrationUs()) * 1e-6f,
                      MpptState2String[(uint8_t) controlMode].c_str(), limIdx,
-                     buck.getBuckDutyCycle(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
+                     buck.getBuckOnPwmCnt(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
             );
             lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
             sweepPlot.plot();
@@ -493,7 +493,7 @@ public:
         point.addField("E", meter.totalEnergy.get(), 1);
         point.addField("E_today", meter.dailyEnergyMeter.today.energyYield, 1);
 
-        point.addField("pwm_duty", buck.getBuckDutyCycle());
+        point.addField("pwm_duty", buck.getBuckOnPwmCnt());
         point.addField("pwm_ls_duty", buck.getBuckDutyCycleLS());
         point.addField("pwm_ls_max", buck.getDutyCycleLSMax());
 
@@ -637,10 +637,10 @@ public:
         }
 
         // bounce at pwm boundary
-        if (buck.getBuckDutyCycle() == buck.pwmMaxHS) {
+        if (buck.getBuckOnPwmCnt() == buck.pwmMaxHS) {
             controlMode = MpptControlMode::CV;
             controlValue = -1;
-        } else if (buck.getBuckDutyCycle() == buck.pwmMinHS && !_sweeping) {
+        } else if (buck.getBuckOnPwmCnt() == buck.pwmMinHS && !_sweeping) {
             controlMode = MpptControlMode::CV;
             controlValue = 1;
         }
@@ -658,14 +658,14 @@ public:
                 // capture MPP during sweep
                 if (power_smooth > maxPowerPoint.power) {
                     maxPowerPoint.power = power;
-                    maxPowerPoint.dutyCycle = buck.getBuckDutyCycle();
+                    maxPowerPoint.dutyCycle = buck.getBuckOnPwmCnt();
                     maxPowerPoint.voltage = sensors.Vin->med3.get();
                 }
 
                 auto u = sensors.Vin->med3.get();
                 sweepPlot.pointsU.add(u, power, limits.Vin_max);
 
-                float d = buck.getBuckDutyCycle() / (float) buck.pwmMaxHS;
+                float d = buck.getBuckOnPwmCnt() / (float) buck.pwmMaxHS;
                 sweepPlot.pointsD.add(d, power, 1.0f);
                 rtcount("mppt.update.sweeping");
             } else {
@@ -674,9 +674,9 @@ public:
             }
         } else if (_targetDutyCycle) {
             if (controlMode == MpptControlMode::None or
-                (controlMode == MpptControlMode::CV && buck.getBuckDutyCycle() > _targetDutyCycle)) {
+                (controlMode == MpptControlMode::CV && buck.getBuckOnPwmCnt() > _targetDutyCycle)) {
                 controlMode = MpptControlMode::Sweep;
-                controlValue = (float) constrain(_targetDutyCycle - buck.getBuckDutyCycle(), -8, 2);
+                controlValue = (float) constrain(_targetDutyCycle - buck.getBuckOnPwmCnt(), -8, 2);
                 if (std::fabs(controlValue) <= 1) {
                     ESP_LOGI("mppt", "Reached target duty cycle %hu", _targetDutyCycle);
                     _targetDutyCycle = 0;
@@ -691,7 +691,7 @@ public:
         //
         if (controlMode == MpptControlMode::None) {
             controlMode = MpptControlMode::MPPT;
-            controlValue = tracker.update(power, buck.getBuckDutyCycle());
+            controlValue = tracker.update(power, buck.getBuckOnPwmCnt());
             controlValue *= speedScale;
         } else {
             // tracker.resetTracker(power_smooth, controlValue > 0);
@@ -711,7 +711,7 @@ public:
             // normalize the control value to pwmMax and scale it with update rate to fix buck slope rate
             auto dt_us = nowUs - lastUs;
             auto fp = controlValue * (1.f / 2000.f) * (float) buck.pwmMaxHS * (float) dt_us * 1e-6f * 25.f;
-            if (!_sweeping && buck.getBuckDutyCycle() < buck.pwmMinHS * 2) {
+            if (!_sweeping && buck.getBuckOnPwmCnt() < buck.pwmMinHS * 2) {
                 // slow-down control loop for low duty cycles (low-load condition)
                 // TODO does this makes sense? the aim here is to stabilize Vout in low/no-load condition
                 // can also slow-down the VoutCNTRL
@@ -719,7 +719,7 @@ public:
             }
 
             // constrain the buck step, this will slow down control for lower loop rates:
-            fp = constrain(fp, -(float) buck.getBuckDutyCycle(), 1.0f);
+            fp = constrain(fp, -(float) buck.getBuckOnPwmCnt(), 1.0f);
             buck.pwmPerturbFractional(fp);
 
             if (controlValue < -80 and fp < -0.01) {
@@ -772,7 +772,7 @@ public:
             point.addField("mppt_state", int(controlMode));
             // point.addField("mcu_temp", mcu_temp.last(), 1);
             point.addField("ntc_temp", ntcTemp, 1);
-            point.addField("pwm_duty", buck.getBuckDutyCycle());
+            point.addField("pwm_duty", buck.getBuckOnPwmCnt());
             point.addField("pwm_ls_duty", buck.getBuckDutyCycleLS());
             point.addField("pwm_ls_max", buck.getDutyCycleLSMax());
 

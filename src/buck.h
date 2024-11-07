@@ -116,7 +116,9 @@ public:
         directionFloatBuffer += directionFloat - (float) directionInt;
     }
 
-    uint16_t getBuckDutyCycle() const { return pwmHS; }
+    uint16_t getBuckOnPwmCnt() const { return pwmHS; }
+
+    [[nodiscard]] float getBuckDutyCycle() const { return (float)pwmHS / (float) pwmMaxHS; }
 
     uint16_t getBuckDutyCycleLS() const { return pwmLS; }
 

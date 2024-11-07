@@ -8,7 +8,7 @@
 
 enum class SampleReadScheme : uint8_t {
     cycle = 0,
-    any,
+    any, // using callback
     all,
 };
 

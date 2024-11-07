@@ -445,8 +445,8 @@ public:
             return i->second;
         }
         return def;
-        ESP_LOGE(TAG, "key '%s' not found", key.c_str());
-        assert(false);
+        //ESP_LOGE(TAG, "key '%s' not found", key.c_str());
+        //assert(false);
     }
 
     const char *c(const std::string &key, const char *def = nullptr) {

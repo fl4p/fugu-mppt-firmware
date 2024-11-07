@@ -254,9 +254,9 @@ void setup() {
 
     ConfFile pinConf{"/littlefs/conf/pins.conf"};
 
-    if (pinConf.getString("mcu", "") != CONFIG_IDF_TARGET) {
-        ESP_LOGE("main", "pins.conf expects MCU %s, but target is %s", pinConf.getString("mcu").c_str(),
-                 CONFIG_IDF_TARGET);
+    auto mcuStr = pinConf.getString("mcu", "");
+    if (mcuStr != CONFIG_IDF_TARGET) {
+        ESP_LOGE("main", "pins.conf expects MCU %s, but target is %s", mcuStr.c_str(), CONFIG_IDF_TARGET);
     }
 
     if (pinConf) {
@@ -513,7 +513,7 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowUs) {
         mppt.shutdownDcdc();
         auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
         ESP_LOGE("main", "Loop latency too high (%lu < %hu Hz), shutdown! (nSamples=%lu, D=%u, loopRunTime=%.1fs )",
-                 sps, loopRateMin, nSamples, pwm.getBuckDutyCycle(), loopRunTime * 1e-6f);
+                 sps, loopRateMin, nSamples, pwm.getBuckOnPwmCnt(), loopRunTime * 1e-6f);
         charging = false;
     }
 
@@ -535,7 +535,7 @@ void loopLF(const unsigned long &nSamples, const unsigned long &nowUs) {
             mppt.ntc.last(), mppt.ucTemp.last(),
             sps,
             (uint32_t) (bytesSent * 1000 / (nowUs - lastTimeOutUs)),
-            pwm.getBuckDutyCycle(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
+            pwm.getBuckOnPwmCnt(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
             //mppt.getPower()
             manualPwm ? "MANU"
                       : (!charging && !mppt.startCondition()
@@ -784,7 +784,7 @@ bool handleCommand(const String &inp) {
         int pwmStep = inp.toInt();
         //manualPwm = true; // don't switch to manual pwm here!
         pwm.pwmPerturb((int16_t) pwmStep);
-        ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) pwm.getBuckDutyCycle());
+        ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) pwm.getBuckOnPwmCnt());
     } else if (manualPwm && (inp == "ls-disable" or inp == "ls-enable")) {
         pwm.enableLowSide(inp == "ls-enable");
     } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable")) {
@@ -805,7 +805,7 @@ bool handleCommand(const String &inp) {
         if (!manualPwm)
             ESP_LOGI("main", "Switched to manual PWM");
         manualPwm = true;
-        pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckDutyCycle());
+        pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckOnPwmCnt());
         // pwm.enableLowSide(true);
     } else if (inp.startsWith("speed ") && inp.length() <= 12) {
         float speedScale = inp.substring(6).toFloat();
