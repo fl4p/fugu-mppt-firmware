@@ -27,4 +27,9 @@ public:
     void displayMessageF(const std::string &msg, uint16_t timeoutMs, ...);
 
     void updateValues(const LcdValues &values);
+
+    explicit operator bool()
+    {
+        return lcd != nullptr;
+    }
 };

@@ -175,14 +175,14 @@ public:
         ESP_LOGI("sampler", "%s ADC ch %hhu maxY=%.4f, maxX=%.4f", params.teleName.c_str(), params.adcCh, maxY, maxX);
         adc->setMaxExpectedVoltage(params.adcCh, maxX);
 
-        if(adc->scheme() == SampleReadScheme::any)
+        if (adc->scheme() == SampleReadScheme::any)
             assert_throw(sensorByCh[params.adcCh] == nullptr, "duplicate sensor adc channel");
 
         auto sensorPtr = new Sensor{std::move(params), ewmSpan};
 
         sensors.push_back(sensorPtr);
         realSensors.push_back(sensorPtr);
-        if(!sensorByCh[sensorPtr->params.adcCh])
+        if (!sensorByCh[sensorPtr->params.adcCh])
             sensorByCh[sensorPtr->params.adcCh] = sensorPtr;
 
         return sensorPtr;
@@ -203,12 +203,8 @@ public:
      * this must be called from the same task that perform ADC reading (calls hasData & getSample)
      */
     void begin() {
-        if (adc == nullptr)throw std::runtime_error("adc null");
-        assert(!realSensors.empty());
-
-        //adc->setSampleCallback([&](uint8_t ch, float v) {
-        //    _addSensorSample(sensorByCh[ch], v);
-        //});
+        assert_throw (adc, "adc null");
+        assert_throw(!realSensors.empty(), "");
 
         adc->start();
         if (adc->scheme() != SampleReadScheme::any)

@@ -33,7 +33,9 @@ void ADC_ESP32_Cont::start() {
             ESP_LOGI("adc_esp32", "pattern[%lu] = {.atten=%d, .channel=%d}", numCh, attenuation[ch], ch);
             ++numCh;
         }
-
+    // Note about sample freq:
+    // this is the frequency the adc reads samples of any channel
+    // if we sample 3 channels in a continous pattern, the effective sampling rate per channel will be 1/3.
     adc_continuous_config_t dig_cfg = {
             .pattern_num = numCh,
             .adc_pattern = adc_pattern,

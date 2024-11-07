@@ -212,7 +212,9 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
 }
 
 
+
 void setup() {
+    bool setupErr = false;
 
     Serial.begin(115200);
     //ESP_ERROR_CHECK(esp_usb_console_init()); // using JTAG
@@ -238,6 +240,7 @@ void setup() {
 
     if (!mountLFS()) {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
+        setupErr = true;
     }
 
     ConfFile pprofConf{"/littlefs/conf/pprof.conf", true};
@@ -257,6 +260,7 @@ void setup() {
     auto mcuStr = pinConf.getString("mcu", "");
     if (mcuStr != CONFIG_IDF_TARGET) {
         ESP_LOGE("main", "pins.conf expects MCU %s, but target is %s", mcuStr.c_str(), CONFIG_IDF_TARGET);
+        setupErr = true;
     }
 
     if (pinConf) {
@@ -267,23 +271,28 @@ void setup() {
          */
         //*?
         auto i2c_freq = pinConf.getLong("i2c_freq", 100000);
-        ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", pinConf.getByte("i2c_sda"), pinConf.getByte("i2c_scl"),
-                 i2c_freq);
-        if (!Wire.begin(
-                (uint8_t) pinConf.getLong("i2c_sda"),
-                (uint8_t) pinConf.getLong("i2c_scl"),
-                pinConf.getLong("i2c_freq", i2c_freq)
-        )) {
-            ESP_LOGE("main", "Failed to initialize Wire");
+        auto i2c_sda = pinConf.getByte("i2c_sda", 255);
+        bool noI2C = i2c_sda == 255;
+        if (!noI2C) {
+            ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, pinConf.getByte("i2c_scl"), i2c_freq);
+            if (!Wire.begin(i2c_sda, (uint8_t) pinConf.getLong("i2c_scl"), i2c_freq)) {
+                ESP_LOGE("main", "Failed to initialize Wire");
+                setupErr = true;
+            }
+        } else {
+            ESP_LOGI("main", "no i2c_sda pin set");
         }
 
 
         led.begin(pinConf);
 
-        if (!lcd.init()) {
-            ESP_LOGE("main", "Failed to init LCD");
+        if (!noI2C) {
+            if (!lcd.init()) {
+                ESP_LOGE("main", "Failed to init LCD");
+            } else {
+                lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION "\n" __DATE__ " " __TIME__, 2000);
+            }
         }
-        lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION "\n" __DATE__ " " __TIME__, 2000);
     }
 
     Limits lim{};
@@ -291,6 +300,7 @@ void setup() {
         lim = Limits{ConfFile{"/littlefs/conf/limits.conf"}};
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error reading limits.conf: %s", er.what());
+        setupErr = true;
     }
 
 
@@ -321,16 +331,22 @@ void setup() {
         ESP_LOGE("main", "error during sensor setup: %s", er.what());
         //if(adcSampler.adc) delete adcSampler.adc;
         adcSampler.setADC(nullptr);
+        setupErr = true;
     }
 
-
-    if (!pwm.init()) {
-        ESP_LOGE("main", "Failed to init half bridge");
+    if (setupErr) {
+        ESP_LOGE("main", "Error during setup, adc-only mode, skip pwm init");
+    } else {
+        if (!pwm.init()) {
+            ESP_LOGE("main", "Failed to init half bridge");
+        }
     }
 
     try {
-        if (adcSampler.adc)
+        mppt.initSensors(pinConf);
+        if (adcSampler.adc && !setupErr) {
             mppt.begin(pinConf, lim, teleConf);
+        }
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during mppt setup: %s", er.what());
     }
@@ -752,13 +768,14 @@ void loopNetwork_task(void *arg) {
         lastTimeOutUs = loopWallClockUs();
     }
 
-    lcd.updateValues(LcdValues{
-            .Vin = sensors.Vin->ewm.avg.get(),
-            .Vout = sensors.Vout->ewm.avg.get(),
-            .Iin = sensors.Iin->ewm.avg.get(),
-            .Iout = sensors.Iout->ewm.avg.get(),
-            .Temp = mppt.ntc.last(),
-    });
+    if (lcd && adcSampler.adc)
+        lcd.updateValues(LcdValues{
+                .Vin = sensors.Vin->ewm.avg.get(),
+                .Vout = sensors.Vout->ewm.avg.get(),
+                .Iin = sensors.Iin->ewm.avg.get(),
+                .Iout = sensors.Iout->ewm.avg.get(),
+                .Temp = mppt.ntc.last(),
+        });
 
     vTaskDelay(pdMS_TO_TICKS(2));
 }
