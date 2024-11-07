@@ -20,7 +20,7 @@
 
 
 
-#define ADC1_READ_LEN 256
+#define ADC1_READ_LEN 128
 
 
 class ADC_ESP32_Cont : public AsyncADC<float> {

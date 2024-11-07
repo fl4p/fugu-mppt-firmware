@@ -36,3 +36,16 @@ A2 (solar current) ---> GPIO36 / SENSOR_VP (ADC1_CHANNEL_0)
 A3 (solar voltage) ---> GPIO34 (ADC1_CHANNEL_6) (orignally ADC-ALERT)
 A4 (bat voltage)   ---> GPIO39 / SENSOR_VN (ADC1_CHANNEL_3) 
 ```
+
+# Sampling Rate
+
+We configure ESP32's ADC unit 1 in continuous mode with a sampling rate of 80 kHz (`adc_continuous_config`).
+This means that the ADC does 80k conversions per second. We apply averaging of 32 samples to reduce the quite noisy
+readings. With 4 channels this gives 625 samples per second per channel (80000 / 3 / 32).
+
+On the ESP32-S3 we can achieve this theoretic rate, the ESP32 appears to be a bit slower (511 / 625 @ 80 kHz, 639 /
+781 @ 100khz ) and always at ~80% of the calculated rate. This ratio is constant across tested sampling rates 80k, 100k,
+125k, 128k, 156.25k, 160k, 200k, 250k, 312.5k, 320k and 400kHz.
+
+At 640 kHz the ESP32 works at 70% of expected sampling rate and with significant variance. This might be due to a slow
+control loop.
