@@ -272,7 +272,7 @@ void setup() {
         //*?
         auto i2c_freq = pinConf.getLong("i2c_freq", 100000);
         auto i2c_sda = pinConf.getByte("i2c_sda", 255);
-        bool noI2C = i2c_sda == 255;
+        bool noI2C = (i2c_sda == 255);
         if (!noI2C) {
             ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, pinConf.getByte("i2c_scl"), i2c_freq);
             if (!Wire.begin(i2c_sda, (uint8_t) pinConf.getLong("i2c_scl"), i2c_freq)) {

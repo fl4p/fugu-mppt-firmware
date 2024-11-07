@@ -1,5 +1,7 @@
 #pragma once
 
+#if CONFIG_MBEDTLS_PSK_MODES
+
 #include <HTTPUpdate.h>
 
 /**
@@ -75,3 +77,11 @@ void doOta(String url) {
     }
 
 }
+
+#else
+
+void doOta(String url) {
+    ESP_LOGE("ota", "Not available. Enable CONFIG_MBEDTLS_PSK_MODES");
+}
+
+#endif

@@ -260,6 +260,7 @@ private:
     if (rows == 0) rows = 1;
 
     // 5. initialize chart using empty str
+    //printf("sizeof(Text) = %u, total = %u\n", sizeof(Text), sizeof(Text)*(rows+1) * cols);
     std::vector<std::vector<Text>> screen(
         rows + 1, std::vector<Text>(cols, symbols_["empty"]));
 

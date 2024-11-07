@@ -121,12 +121,12 @@ struct Plot {
     }
 
     void plot() {
-        //try {
-        _plotSeries(pointsU, "V");
-        _plotSeries(pointsD, "D");
-        //} catch (const std::exception &e) {
-        //    ESP_LOGE("plot", "Error: %s", e.what());
-        //}
+        try {
+            _plotSeries(pointsU, "V");
+            _plotSeries(pointsD, "D");
+        } catch (const std::exception &e) {
+            ESP_LOGE("plot", "Error: %s", e.what());
+        }
     }
 
     void reserve() {
