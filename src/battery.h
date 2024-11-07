@@ -20,7 +20,9 @@ enum CellChemistry {
 };
 
 float detectMaxBatteryVoltage(float openCircuitVoltage) {
-    float voltageStep = 14.6f; // lifepo4 4s (3.65V) [1,2,4]
+    auto constexpr CellVolt = 3.65;
+    auto constexpr CellPack = 4;
+    float voltageStep = CellPack * CellVolt; // lifepo4 4s (3.65V) [1,2,4]
     float minVoltage = 10.f;
 
     for (int n = 1; n < 4; n *= 2) {

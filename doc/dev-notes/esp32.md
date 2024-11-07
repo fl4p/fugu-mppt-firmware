@@ -12,7 +12,7 @@ esptool.py read_flash 0x187000  0x40000 fugu-grey-littlefs-data-partition.img
 
 
 # change target
-rm -rf managed_components && idf.py fullclean && idf.py set-target esp32 && idf.py flash && idf.py monitor
+TARGET=esp32s3; rm -rf managed_components build && idf.py fullclean && idf.py set-target $TARGET && idf.py flash
 
 ```
 

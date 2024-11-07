@@ -175,13 +175,15 @@ public:
         ESP_LOGI("sampler", "%s ADC ch %hhu maxY=%.4f, maxX=%.4f", params.teleName.c_str(), params.adcCh, maxY, maxX);
         adc->setMaxExpectedVoltage(params.adcCh, maxX);
 
-        assert_throw(sensorByCh[params.adcCh] == nullptr, "duplicate sensor adc channel");
+        if(adc->scheme() == SampleReadScheme::any)
+            assert_throw(sensorByCh[params.adcCh] == nullptr, "duplicate sensor adc channel");
 
         auto sensorPtr = new Sensor{std::move(params), ewmSpan};
 
         sensors.push_back(sensorPtr);
         realSensors.push_back(sensorPtr);
-        sensorByCh[sensorPtr->params.adcCh] = sensorPtr;
+        if(!sensorByCh[sensorPtr->params.adcCh])
+            sensorByCh[sensorPtr->params.adcCh] = sensorPtr;
 
         return sensorPtr;
     }
