@@ -214,10 +214,10 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
                 {
                         ntc_ch,
                         {1.f, 0.0f},
-                        {2.6f, .1f, false},
+                        {3.9f, .1f, false},
                         "NTC",
                         false},
-                2.6f, 200);
+                3.9f, 200);
         mppt.ntc.setValueRef(sense->ewm.avg.get());
     }
 

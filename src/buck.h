@@ -40,7 +40,7 @@ public:
     // ^ set pwmMinHS a bit lower than pwmMinLS (might cause no-load output over-voltage otherwise)
     {}
 
-    bool init() {
+    bool init(const ConfFile &pinConf) {
         uint32_t pwmFrequency = 39000; // buck converter switching frequency
         // default clock freq is 80mhz (APB_CLK). with 11bit pwm precision (2^11 = 2048), max pwm freq is 39.0625 kHz
         // pwmFreq = clkFreq / 2**pwmPrecision;
@@ -48,15 +48,29 @@ public:
         ESP_LOGI("buck", "pwmDriver.pwmMax=%hu, pwmMinLS=%hu, pwmMinHS=%hu, pwmMaxHS=%hu", pwmDriver.pwmMax, pwmMinLS,
                  pwmMinHS, pwmMaxHS);
 
-        pwmDriver.init_pwm(pwmCh_IN, getBuckIN_PIN(), pwmFrequency);
-        pwmDriver.init_pwm(pwmCh_EN, (uint8_t) PinConfig::Bridge_EN, pwmFrequency);
+        // ti, infineon gate drivers: in pins pulled low, EN/SD pins pulled high
+
+        auto pinIn = pinConf.getByte("pwm_in");
+        auto pinEn = pinConf.getByte("pwm_en");
+        try {
+            assert_throw(pinIn != pinEn, "");
+            assertPinState(pinIn, false, "pwm_in", true);
+            assertPinState(pinEn, false, "pwm_en", true);
+        } catch (const std::exception &ex) {
+            ESP_LOGE("pwm", "error %s", ex.what());
+            return false;
+        }
+
+        pwmDriver.init_pwm(pwmCh_IN, pinIn, pwmFrequency);
+        pwmDriver.init_pwm(pwmCh_EN, pinEn, pwmFrequency);
 
 
         return true;
     }
 
     bool disabled() const { return pwmHS == 0; }
-    float voltageRatio(){return outInVoltageRatio; }
+
+    float voltageRatio() { return outInVoltageRatio; }
 
     void pwmPerturb(int16_t direction) {
 
@@ -118,7 +132,7 @@ public:
 
     uint16_t getBuckOnPwmCnt() const { return pwmHS; }
 
-    [[nodiscard]] float getBuckDutyCycle() const { return (float)pwmHS / (float) pwmMaxHS; }
+    [[nodiscard]] float getBuckDutyCycle() const { return (float) pwmHS / (float) pwmMaxHS; }
 
     uint16_t getBuckDutyCycleLS() const { return pwmLS; }
 
@@ -173,7 +187,7 @@ public:
         auto pwmMaxLs = (1 / voltageRatio - 1) * (float) pwmHS / pwmMaxLsWCEF; // the lower, the safer
 
         auto lsCCM = pwmMax - pwmHS;
-        if (pwmMaxLs < (float) (lsCCM + ((*dcmHysteresis) ? 0 : -(pwmMax / 100)))) {
+        if (pwmMaxLs < (float) (lsCCM - ((*dcmHysteresis) ? 0u : (pwmMax / 100u)))) {
             // DCM (Discontinuous Conduction Mode)
             // this is when the coil current is still touching zero, it'll stop for higher HS duty cycles
             // Allowing higher duty cycles here would result a synchronous forced PWM. (reverse coil current, can be dangerous)
@@ -208,7 +222,7 @@ public:
 
     bool dcmHysteresis = false;
 
-    const float& updateLowSideMaxDuty(float vout, float vin) {
+    const float &updateLowSideMaxDuty(float vout, float vin) {
         // voltageRatio = Vout/Vin
 
         if (vin > vout && vin > 0.1f) {

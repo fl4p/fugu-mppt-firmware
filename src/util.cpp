@@ -1,5 +1,20 @@
 #include "util.h"
 #include <Wire.h>
+#include <stdexcept>
+#include <string>
+
+void assertPinState(uint8_t pin, bool digitalVal, const char *pinName, bool pull) {
+    pinMode(pin, pull ? (digitalVal ? INPUT_PULLDOWN : INPUT_PULLUP) : INPUT);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    auto read = digitalRead(pin);
+    if(pull)  pinMode(pin, INPUT);
+
+    if (read != digitalVal) {
+        throw std::runtime_error(
+                "pin " + std::to_string(pin) + (pinName ? ("(" + std::string(pinName) + ")") : "")
+                + " is not " + (digitalVal ? "HIGH" : "LOW"));
+    }
+}
 
 void scan_i2c() {
     const char *TAG = "scan_i2c";
