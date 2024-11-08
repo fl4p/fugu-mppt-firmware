@@ -7,13 +7,18 @@
 #define FAN_PWM_BITS 8
 
 bool fanInitialized = false;
+uint8_t  fanPin = 255;
 
 bool fanInit(const ConfFile &pinConf) {
     uint8_t pin = pinConf.getByte("fan_pwm", 255);
     if(pin == 255) return false;
+    fanPin = pin;
 
     pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+    ESP_LOGI("fan", "Initialized at pin %hhu", pin);
 
+    /*
     auto freq = ledcAttach(pin, 16000, FAN_PWM_BITS);
     if (!freq) {
         ESP_LOGE("fan", "ledcSetup failed");
@@ -24,6 +29,9 @@ bool fanInit(const ConfFile &pinConf) {
 
     //ledcAttachPin((uint8_t) PinConfig::Fan, FAN_PWM_CH);
     ledcWrite(pin, 0);
+
+
+     */
 
     fanInitialized = true;
 
@@ -36,6 +44,11 @@ bool fanInit(const ConfFile &pinConf) {
  */
 bool fanSet(float duty) {
     if(!fanInitialized) return false;
+
+
+    digitalWrite(fanPin, duty > 0.1);
+    return true;
+    //if(duty > 0)
 
     //if(duty > 1) duty = 1;
     //if(duty < 0) duty = 0;
