@@ -163,7 +163,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
                     Vin_transform,
 
                     {lim.Vin_max, 1.8f, false},
-                    "U_in_raw",
+                    "U_in_raw", 'V',
                     true},
             lim.Vin_max, 60);
 
@@ -175,14 +175,14 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
                             Iin_transform,
 
                             {lim.Iin_max * 0.05f, .1f, true},
-                            "Ii",
+                            "Ii", 'A',
                             false},
                     lim.Iin_max, iinFiltLen)
                   : adcSampler.addVirtualSensor([&]() {
                 if (std::abs(sensors.Iout->last) < .01f or sensors.Vin->last < 0.1f)
                     return 0.f;
                 return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
-            }, iinFiltLen);
+            }, iinFiltLen, "Ii", 'A');
 
 
     sensors.Iout = (Iout_ch != 255)
@@ -191,21 +191,21 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
                             Iout_ch,
                             Iout_transform,
                             {lim.Iout_max * 0.05f, .1f, true},
-                            "Io",
+                            "Io", 'A',
                             true},
                     lim.Iout_max, ioutFiltLen)
                    : adcSampler.addVirtualSensor([&]() {
                 if (std::abs(sensors.Iin->last) < .05f or sensors.Vout->last < 0.1f)
                     return 0.f;
                 return sensors.Iin->last * sensors.Vin->last / sensors.Vout->last * conversionEfficiency;
-            }, ioutFiltLen);
+            }, ioutFiltLen, "Io", 'A');
 
     // note that Vout should be the last sensor for lowest latency
     sensors.Vout = adcSampler.addSensor(
             {Vout_ch,
              Vout_transform,
              {lim.Vout_max, .7f, false},
-             "U_out_raw",
+             "U_out_raw", 'V',
              true},
             lim.Vout_max, 60);
 
@@ -214,10 +214,10 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
                 {
                         ntc_ch,
                         {1.f, 0.0f},
-                        {3.9f, .1f, false},
-                        "NTC",
+                        {2.8f, .1f, false},
+                        "NTC", 'V',
                         false},
-                3.9f, 200);
+                2.8f, 200);
         mppt.ntc.setValueRef(sense->ewm.avg.get());
     }
 

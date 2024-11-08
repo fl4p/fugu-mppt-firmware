@@ -68,6 +68,7 @@ public:
         //uint16_t ewmaSpan;
         const CalibrationConstraints calibrationConstraints;
         const std::string teleName;
+        const char unit;
         /**
          * Whether to capture each ADC conversion. Can produce a lot of networking data
          */
@@ -137,8 +138,8 @@ public:
     struct VirtualSensor : public Sensor {
         std::function<float()> func;
 
-        explicit VirtualSensor(std::function<float()> func, uint32_t ewmSpan)
-                : Sensor({0, {1, 0}, {}, "", false}, ewmSpan, true),
+        explicit VirtualSensor(std::function<float()> func, uint32_t ewmSpan, const char *teleName, char unit)
+                : Sensor({255, {1, 0}, {}, teleName, unit, false}, ewmSpan, true),
                   func(std::move(func)) {
         }
     };
@@ -188,8 +189,8 @@ public:
         return sensorPtr;
     }
 
-    const Sensor *addVirtualSensor(std::function<float()> func, uint32_t ewmaSpan) {
-        virtualSensors.push_back(new VirtualSensor{std::move(func), ewmaSpan});
+    const Sensor *addVirtualSensor(std::function<float()> func, uint32_t ewmaSpan, const char *teleName, char unit) {
+        virtualSensors.push_back(new VirtualSensor{std::move(func), ewmaSpan, teleName, unit});
         sensors.push_back(virtualSensors.back());
         return sensors.back();
     }
