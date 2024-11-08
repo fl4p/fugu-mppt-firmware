@@ -99,11 +99,12 @@ typedef PinConfigESP32S3_v2 PinConfig;
 typedef PinConfigESP32 PinConfig;
 #endif
 
+/*
 static uint8_t getBuckIN_PIN() {
-    if (ESP.getEfuseMac() == 0x704082188534 /* white dot on cover near pin 16*/) {
+    if (ESP.getEfuseMac() == 0x704082188534 ) { // white dot on cover near pin 16
         ESP_LOGI("pins", "pin %i output broken, using pin 17 for Bridge_IN", (int) PinConfig::Bridge_IN);
         return 17;
     }
     return (uint8_t) PinConfig::Bridge_IN;
 }
-
+ */

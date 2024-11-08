@@ -14,6 +14,8 @@ enum CellChemistry {
     AGM,
     LeadAcid,// https://batteryuniversity.com/article/bu-403-charging-lead-acid
 
+    SIB, // sodium-ion
+
     Custom,
 
     Max,
@@ -26,13 +28,13 @@ float detectMaxBatteryVoltage(float openCircuitVoltage) {
     float minVoltage = 10.f;
 
     for (int n = 1; n < 4; n *= 2) {
-        if(openCircuitVoltage > minVoltage * (float)n && openCircuitVoltage < voltageStep * (float)n ) {
-            return voltageStep * (float)n;
+        if (openCircuitVoltage > minVoltage * (float) n && openCircuitVoltage < voltageStep * (float) n) {
+            return voltageStep * (float) n;
         }
     }
 
     // default to 12V systems if voltage is low
-    if(openCircuitVoltage < minVoltage)
+    if (openCircuitVoltage < minVoltage)
         return voltageStep;
 
     // not detectable

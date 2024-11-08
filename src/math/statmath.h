@@ -24,6 +24,8 @@ public:
         alpha = (2.f / (float_t) (span + 1));
     }
 
+    [[nodiscard]] uint32_t span() const {return uint32_t(2.f / alpha) - 1;}
+
     inline void add(float_t x) {
         if (unlikely(isnan(x))) return;
         if (unlikely(isnan(y))) y = x;
@@ -53,6 +55,8 @@ public:
         avg.updateSpan(span);
         std.updateSpan(span);
     }
+
+    auto span() const { return avg.span(); }
 
     void reset() {
         avg.reset();
