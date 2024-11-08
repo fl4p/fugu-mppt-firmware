@@ -1,9 +1,9 @@
 #include "adc_esp32_cont.h"
 
-#define ADC1_SR 200000 // sampling rate (105k max, see https://www.esp32.com/viewtopic.php?t=1215)
+#define ADC1_SR 400000 // sampling rate (105k max, see https://www.esp32.com/viewtopic.php?t=1215)
 // 50k, 64k, 80k, 100k, 125k, 128k, 156.25k, 160k, 200k, 250k, 312.5k, 320k, 400k, 500k, 625k, 640k, 800k
 // https://www.wolframalpha.com/input?i=factor+%5B%2F%2Fmath%3A80000000%2F%2F%5D
-#define ADC1_AVG 32 // num averaging samples, max 256
+#define ADC1_AVG 64 // num averaging samples, max 256
 
 #if CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2
 #define EXAMPLE_ADC_OUTPUT_TYPE             ADC_DIGI_OUTPUT_FORMAT_TYPE1
