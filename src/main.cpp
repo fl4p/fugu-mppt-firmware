@@ -354,8 +354,9 @@ void setup() {
     if (setupErr) {
         ESP_LOGE("main", "Error during setup, adc-only mode, skip pwm init");
     } else {
-        if (!pwm.init()) {
+        if (!pwm.init(pinConf)) {
             ESP_LOGE("main", "Failed to init half bridge");
+            setupErr = true;
         }
     }
 
@@ -849,7 +850,7 @@ bool handleCommand(const String &inp) {
             ESP_LOGI("main", "Set tracker speed scale %.4f", speedScale);
         }
     } else if (inp.startsWith("fan ")) {
-        if(!fanSet(inp.substring(4).toFloat() * 0.01f))
+        if (!fanSet(inp.substring(4).toFloat() * 0.01f))
             return false;
     } else if (inp.startsWith("led ")) {
         led.setRGB(inp.substring(4).c_str());
@@ -891,10 +892,23 @@ bool handleCommand(const String &inp) {
     } else if (inp == "rt-stats") {
         xTaskCreatePinnedToCore(print_real_time_stats_1s_task, "rtstats", 4096, NULL, 1, NULL, 0);
     } else if (inp == "mem") {
-        UART_LOG("Total heap:  %9ld\n", ESP.getHeapSize());
-        UART_LOG("Free heap:   %9ld\n", ESP.getFreeHeap());
-        UART_LOG("Total PSRAM: %9ld\n", ESP.getPsramSize());
-        UART_LOG("Free PSRAM:  %9ld\n", ESP.getFreePsram());
+        UART_LOG("Total heap:  %9ld", ESP.getHeapSize());
+        UART_LOG("Free heap:   %9ld", ESP.getFreeHeap());
+        UART_LOG("Total PSRAM: %9ld", ESP.getPsramSize());
+        UART_LOG("Free PSRAM:  %9ld", ESP.getFreePsram());
+    } else if (inp == "sensor") {
+
+        for (auto s: adcSampler.sensors) {
+            auto u = s->params.unit;
+            UART_LOG("\nSensor `%s` (ch%d, %s):", s->params.teleName.c_str(), s->params.adcCh,
+                     s->isVirtual ? "virtual" : "physical");
+            UART_LOG("  num=%6lu  last=%7.3f %c   prev=%7.3f %c  ", s->numSamples, s->last, u, s->previous, u);
+            UART_LOG("  EWM(%4lu):  avg= %7.3f %c   std*=%7.4f %c  std%%=%7.3f %%", s->ewm.span(),
+                     s->ewm.avg.get(), u,
+                     sqrt(s->ewm.std.get()) * abs(s->ewm.avg.get()), u,
+                     sqrt(s->ewm.std.get()) * 100.f);
+        }
+
     } else {
         ESP_LOGI("main", "unknown or unexpected command");
         return false;
