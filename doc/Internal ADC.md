@@ -1,12 +1,27 @@
-# Poor ADC
+# Poor ADC ?
 
-ESP32's internal ADC has non-linearity issues and is quite noisy.
+The ESP32 internal ADC has a sloppy reputation.
+It suffers from non-linearity and is known to be noisy. But is it really that bad?
 
 The linearity can be fixed with calibration and we keep a margin to the ADC voltage range. (e.g. at 6dB PGA attenuation
 150 mV ~ 1750 mV,
 see [suggested range](https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32s3/api-reference/peripherals/adc.html#_CPPv425adc1_config_channel_atten14adc1_channel_t11adc_atten_t))
 For simple curve fit see [here](https://github.com/espressif/esp-idf/issues/164#issuecomment-318861287).
 This can be improved with a look-up-table (LUT).
+
+About the noise issue, we should take a closer look how we take measurements.
+A simple and naive way is to set up a periodic timer and take a single-shot measurement with Arduino API `analogRead()`,
+expecting a 12-bit precision. But what about conversion time? The shorter the AD conversion time, the higher the noise.
+We didn't tell the ADC for how long to measure. If we measure the time `analogRead` takes until return, its only a
+couple
+10 microseconds. Digging through the code, we find that it calls `adc_oneshot_read`, `adc_oneshot_hal_convert`.
+The ADC characteristics in the ESP32 data sheet show 2 Msps sampling rate with the DIG controller. So we can assume that
+measurements are taken with sub-µs time, which explains the noise issue quite well.
+
+A better approach is to start a continuous measurements at maximum sampling rate and average the samples so we get the
+desired sampling rate. Averaging should be done with the raw adc int16 readings for best performance.
+
+ESP32's internal ADC has non-linearity issues and is quite noisy.
 
 We can reduce noise with a sliding mean filter, which reduces update rates.
 The ESP32 ADC being much faster than the ADS1015, the reduced update rate is still sufficient for an MPPT application.
@@ -49,3 +64,18 @@ On the ESP32-S3 we can achieve this theoretic rate, the ESP32 appears to be a bi
 
 At 640 kHz the ESP32 works at 70% of expected sampling rate and with significant variance. This might be due to a slow
 control loop.
+
+
+SOC_ADC_SAMPLE_FREQ_THRES_HIGH is 83333 for esp32s3 wtf?
+* datasheet says it: 100k SPS :( https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf#page=65
+* https://esp32.com/viewtopic.php?t=29554
+
+esp32 has `SOC_ADC_SAMPLE_FREQ_THRES_HIGH          (2*1000*1000)`
+* https://www.espressif.com/sites/default/files/documentation/esp32_datasheet_en.pdf#page=44
+  * dig controller 2M SPS
+
+* esp32s3
+  * no info in datasheet? https://www.espressif.com/sites/default/files/documentation/esp32-s2_datasheet_en.pdf#page=38
+  * according to `scop_caps.h`: 83333 Hz
+
+looks like esp32 is the only one with 2Msps
