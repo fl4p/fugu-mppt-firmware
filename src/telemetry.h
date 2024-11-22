@@ -169,10 +169,10 @@ std::string getHostname() {
 }
 
 void _wifiConnected() {
-    if(!WiFi.isConnected()) return;
+    if (!WiFi.isConnected()) return;
 
-    if(unlikely(!timeSynced)) {
-        if(timeSyncAsync("CET-1CEST,M3.5.0,M10.5.0/3", "pt.pool.ntp.org", "time.nis.gov")) {
+    if (unlikely(!timeSynced)) {
+        if (timeSyncAsync("CET-1CEST,M3.5.0,M10.5.0/3", "pt.pool.ntp.org", "time.nis.gov")) {
             timeSynced = true;
         }
     }
@@ -205,7 +205,7 @@ void wifiLoop(bool connect = false) {
     //if (unlikely(!initialized) && WiFi.isConnected()) {
     //    initialized = true;
     //    _wifiConnected();
-   // }
+    // }
 }
 
 bool wait_for_wifi() {
@@ -245,8 +245,9 @@ void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
 }
 
 
-void influxWritePointsUDP(const Point *p, uint8_t len) {
+void influxWritePointsUDP(moodycamel::ReaderWriterQueue<Point> &q) {
     constexpr int MTU = CONFIG_TCP_MSS;
+    // notice that MTU is not the UDP max message size, here we use MTU from ip4 as a "safe" value
 
     if (noSsid) return;
 
@@ -269,18 +270,15 @@ void influxWritePointsUDP(const Point *p, uint8_t len) {
     auto port = 8086;
 
 
-    String msg;
+    static String msg;
 
-    for (uint8_t i = 0; i < len; ++i) {
-        auto lp = p[i].toLineProtocol();
+    static Point p{""};
+    while (q.try_dequeue(p)) {
+        auto lp = p.toLineProtocol();
         if (msg.length() + lp.length() >= MTU) {
             udpFlushString(host, port, msg);
         }
         msg += lp + '\n';
-    }
-
-    if (msg.length() > 0) {
-        udpFlushString(host, port, msg);
     }
 }
 
@@ -302,7 +300,7 @@ void telemetryAddPoint(Point &p, uint16_t maxQueue = 40) {
     if (!p.hasTags())
         p.addTag("mcu", getChipId());
 
-    if(pointsQ.size_approx() < maxQueue)
+    if (pointsQ.size_approx() < maxQueue)
         pointsQ.enqueue(p);
 
     //if (points_frame.size() >= maxQueue) {
@@ -314,8 +312,8 @@ void telemetryAddPoint(Point &p, uint16_t maxQueue = 40) {
 
 void telemetryFlushPointsQ() {
     static Point p{""};
-    while(pointsQ.try_dequeue(p)) {
-      //  influxWritePointsUDP(&points_frame[0], points_frame.size());
+    while (pointsQ.try_dequeue(p)) {
+        influxWritePointsUDP(pointsQ);
     }
 }
 
@@ -332,7 +330,7 @@ void dcdcDataChanged(const ADC_Sampler &dcdc, const ADC_Sampler::Sensor &sensor)
 }
 
 void onTelnetConnect(String ip) {
-    ESP_LOGI("telnet", "Client %s connected", ip.c_str() );
+    ESP_LOGI("telnet", "Client %s connected", ip.c_str());
     telnet.println("\nWelcome to " + String(getHostname().c_str()) + " (" + telnet.getIP() + ")");
     telnet.println("(Use ^] + q  to disconnect.)");
 
@@ -341,7 +339,7 @@ void onTelnetConnect(String ip) {
 
 void onTelnetDisconnect(String ip) {
     set_logging_telnet(nullptr);
-    ESP_LOGI("telnet", "Client %s disconnected", ip.c_str() );
+    ESP_LOGI("telnet", "Client %s disconnected", ip.c_str());
 }
 
 bool handleCommand(const String &inp);
@@ -365,7 +363,8 @@ void setupTelnet() {
     });
 
     Serial.print("- Telnet: ");
-    if (telnet.begin()) {
+    if (telnet.begin(23)) {
+        MDNS.addService("telnet", "tcp", 23);
         ESP_LOGI("tele", "Telnet server running.");
     } else {
         ESP_LOGE("tele", "Telnet server start error");

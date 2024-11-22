@@ -37,3 +37,6 @@
 [submodule "components/esp32-semihosting-profiler/esp32-semihosting-profiler"]
 	path = components/esp32-semihosting-profiler/esp32-semihosting-profiler
 	url = https://github.com/fl4p/esp32-semihosting-profiler
+[submodule "components/ESPAsyncWebServer"]
+	path = components/ESPAsyncWebServer
+	url = https://github.com/me-no-dev/ESPAsyncWebServer
