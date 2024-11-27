@@ -23,7 +23,7 @@
 //#include <SPIFFSEditor.h>
 
 //AsyncWebServer server(80);
-//AsyncWebSocket ws("/ws");
+// AsyncWebSocket ws("/ws");
 //AsyncEventSource events("/events");
 
 void webserver_begin(void) {

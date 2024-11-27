@@ -19,6 +19,8 @@
 
 #include <q/readerwriterqueue.h>
 
+#include "tele/scope.h"
+
 WiFiMulti wifiMulti;
 //WiFiUDP udp;
 AsyncUDP asyncUdp;
@@ -28,13 +30,13 @@ FtpServer ftpSrv;
 ESPTelnet telnet;
 
 
-
-
 void setupTelnet();
 
 void ftpUpdate() {
     //ftpSrv.handleFTP(); // poor perfNetworkServer::accept() (NetworkServer.cpp) / lwip_accept (sockets.c)
     telnet.loop();
+    if (scope) scope->update();
+    //MDNS.update();
 }
 
 void _callback(FtpOperation ftpOperation, unsigned int freeSpace, unsigned int totalSpace) {
@@ -98,8 +100,6 @@ void ftpBegin() {
 }
 
 const char *getChipId();
-
-uint64_t bytesSent = 0;
 
 
 bool noSsid = true;
@@ -189,8 +189,16 @@ void _wifiConnected() {
     ESP_LOGI("tele", "resolved to %s", ha_host.toString().c_str());
 
     setupTelnet();
-    webserver_begin();
     ftpBegin();
+
+    //webserver_begin();
+
+    scope = new Scope();
+    if (!scope->begin(24)) {
+        ESP_LOGE("tele", "scope setup failed");
+    } else {
+        ESP_LOGI("tele", "Scope server listening on port 24");
+    }
 }
 
 void wifiLoop(bool connect = false) {

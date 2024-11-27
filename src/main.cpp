@@ -25,6 +25,7 @@
 #include "led.h"
 #include "ota.h"
 
+
 #include "perf.h"
 #include <sprofiler.h>
 
@@ -64,6 +65,8 @@ bool charging = false;
 float conversionEfficiency;
 
 uint16_t loopRateMin = 0;
+
+Scope *scope = nullptr;
 
 const unsigned long IRAM_ATTR &loopWallClockUs() { return loopWallClockUs_; }
 
@@ -797,7 +800,12 @@ void loopNetwork_task(void *arg) {
                 .Temp = mppt.ntc.last(),
         });
 
-    vTaskDelay(pdMS_TO_TICKS(2));
+    if (scope && scope->connected) {
+        // scope will block
+        scope->netLoop();
+    } else {
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
 }
 
 void loopCore0_LF(void *arg) {

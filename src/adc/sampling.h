@@ -14,6 +14,8 @@
 #include "math/statmath.h"
 #include "util.h"
 
+#include "tele/scope.h"
+
 
 struct LinearTransform {
     float factor;
@@ -180,6 +182,8 @@ public:
             assert_throw(sensorByCh[params.adcCh] == nullptr, "duplicate sensor adc channel");
 
         auto sensorPtr = new Sensor{std::move(params), ewmSpan};
+
+        if(scope) scope->addChannel(sensorPtr->params.adcCh, 'u', 12, sensorPtr->params.teleName.c_str());
 
         sensors.push_back(sensorPtr);
         realSensors.push_back(sensorPtr);
