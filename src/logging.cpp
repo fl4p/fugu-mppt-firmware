@@ -5,6 +5,8 @@
 //#include "concurrentqueue.h"
 #include "q/readerwriterqueue.h"
 
+
+
 //struct ConcurrentQueueMinMemTraits : public moodycamel::ConcurrentQueueDefaultTraits {
 //    static const size_t BLOCK_SIZE = 2;
 //   static const size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE = 0;
@@ -27,6 +29,12 @@ static moodycamel::ReaderWriterQueue<AsyncLogEntry> uart_async_log_queue{};
 ESPTelnet *log_telnet = nullptr;
 
 vprintf_like_t old_vprintf = &vprintf;
+
+bool deferLogs = false;
+
+void loggingEnableDefer() {
+    deferLogs = true;
+}
 
 
 void enqueue_log(const char *s, int len) {
@@ -81,10 +89,12 @@ void enqueue_telnet_log(const char *fmt, size_t l, const va_list &args) {
     uart_async_log_queue.enqueue(AsyncLogEntry{buf, (uint16_t) len, true});
 }*/
 
+
+
 void UART_LOG(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    if (xPortGetCoreID() == 1) {
+    if (xPortGetCoreID() == 1 && deferLogs) {
         // RT core1: defer all log to core0
         enqueue_log(fmt, 200, args, true, true);
     } else {
@@ -97,7 +107,7 @@ void UART_LOG(const char *fmt, ...) {
 void printf_mux(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    if (xPortGetCoreID() == 1) {
+    if (xPortGetCoreID() == 1 && deferLogs) {
         // RT core1: defer all log to core0
         enqueue_log(fmt, 200, args, false);
     } else {
@@ -192,7 +202,7 @@ int vprintf_mux(const char *fmt, va_list argptr) {
 
 
 int vprintf_(const char *fmt, va_list argptr) {
-    if (xPortGetCoreID() == 1) {
+    if (xPortGetCoreID() == 1 && deferLogs) {
         // RT core1: defer all log to core0
         return enqueue_log(fmt, 200, argptr);
     } else {

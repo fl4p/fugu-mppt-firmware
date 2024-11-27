@@ -358,7 +358,7 @@ void setup() {
         ESP_LOGE("main", "Error during setup, adc-only mode, skip pwm init");
     } else {
         if (!pwm.init(pinConf)) {
-            ESP_LOGE("main", "Failed to init half bridge");
+            ESP_LOGE("main", "Failed to init half bridge driver");
             setupErr = true;
         }
     }
@@ -456,6 +456,10 @@ void loopRT(void *arg) {
     ESP_LOGW("main", "CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS enabled!");
             delay(1000);
 #endif
+
+    // enable log defer just before starting the loop
+    // this way we instantly know about things going wrong during start-up
+    loggingEnableDefer();
 
     while (true) {
         rtcount("start");
@@ -572,7 +576,7 @@ void loopLF(const uint32_t &nSamples, const unsigned long &nowUs) {
             //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
             mppt.ntc.last(), mppt.ucTemp.last(),
             sps,
-            (uint32_t) (bytesSent * 1000 / (nowUs - lastTimeOutUs)),
+            (uint32_t) (bytesSent * 1000llu / (nowUs - lastTimeOutUs)),
             pwm.getBuckOnPwmCnt(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
             //mppt.getPower()
             manualPwm ? "MANU"

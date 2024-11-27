@@ -26,6 +26,7 @@
 // class ESPTelnet;
 // ESPTelnet *log_telnet = nullptr;
 
+void loggingEnableDefer();
 void enable_esp_log_to_telnet();
 // esp_log_set_vprintf
 

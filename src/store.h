@@ -374,7 +374,7 @@ public:
         if (!noDef && def == std::numeric_limits<T>::max()) {
             auto v = keys();
             std::string s = std::accumulate(v.begin(), v.end(), std::string{});
-            ESP_LOGE(TAG, "key '%s' not found in %s", key.c_str(), s.c_str());
+            ESP_LOGE(TAG, "key '%s' not found in %s (%s)", key.c_str(), s.c_str(), path);
             //assert(false);
             throw std::runtime_error("key not found: " + key);
         }
