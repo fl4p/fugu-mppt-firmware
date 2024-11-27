@@ -7,8 +7,8 @@
 #include "math/statmath.h"
 #include "rt.h"
 
-#include <string.h>
-#include <stdio.h>
+#include <cstring>
+#include <cstdio>
 #include <esp_adc_cal.h>
 #include "sdkconfig.h"
 #include "esp_log.h"
@@ -19,8 +19,10 @@
 #include "util.h"
 
 
+// TODO decrease READ_LEN and do ADC reading from another dedicated loop with even higher priority
+// than the "big" control loop and a fast shutdown path
 
-#define ADC1_READ_LEN 128
+#define ADC1_READ_LEN 512
 
 
 class ADC_ESP32_Cont : public AsyncADC<float> {
@@ -35,21 +37,31 @@ private:
     adc_continuous_handle_t handle = nullptr;
     uint8_t result[ADC1_READ_LEN] = {0};
 
+    uint16_t avgNum = 0;
+    uint32_t sr = 0; // sampling rate
+
     struct ChAvgBuf {
-        uint32_t agg : 22; // 22bit can store 1024 accumulated 12-bit values
-        uint32_t num : 10; // 2**10 = 1024
+        uint32_t agg: 22; // 22bit can store 1024 accumulated 12-bit values
+        uint32_t num: 10; // 2**10 = 1024
     };
-    static_assert(sizeof (ChAvgBuf) <= 4);
+    static_assert(sizeof(ChAvgBuf) <= 4);
 
     ChAvgBuf avgBuf[adc1_channel_t::ADC1_CHANNEL_MAX]{};
 
 public:
     [[nodiscard]] SampleReadScheme scheme() const override { return SampleReadScheme::any; };
 
+    ADC_ESP32_Cont(const ConfFile &sensConf) {
+        avgNum = sensConf.getLong("adc_avg");
+        sr = sensConf.getLong("adc_sr");
+    }
+
     bool init(const ConfFile &pinConf) override {
         for (auto &at: attenuation)
             at = (adc_atten_t) -1;
+
         memset(avgBuf, 0, sizeof(avgBuf));
+
         return true;
     }
 
@@ -58,7 +70,7 @@ public:
     void startReading(uint8_t channel) override { abort(); } // this should never get called
     float getSample() override { abort(); }
 
-    bool hasData() override { return notification.wait(1); }
+    bool hasData() override { return notification.wait(2); }
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         adc_atten_t atten;

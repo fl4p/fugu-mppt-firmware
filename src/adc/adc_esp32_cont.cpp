@@ -1,9 +1,11 @@
 #include "adc_esp32_cont.h"
 
-#define ADC1_SR 400000 // sampling rate (105k max, see https://www.esp32.com/viewtopic.php?t=1215)
+#include "tele/scope.h"
+
+//#define ADC1_SR 400000 // sampling rate (105k max, see https://www.esp32.com/viewtopic.php?t=1215)
 // 50k, 64k, 80k, 100k, 125k, 128k, 156.25k, 160k, 200k, 250k, 312.5k, 320k, 400k, 500k, 625k, 640k, 800k
 // https://www.wolframalpha.com/input?i=factor+%5B%2F%2Fmath%3A80000000%2F%2F%5D
-#define ADC1_AVG 64 // num averaging samples, max 256
+//#define ADC1_AVG 64 // num averaging samples, max 256
 
 #if CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2
 #define EXAMPLE_ADC_OUTPUT_TYPE             ADC_DIGI_OUTPUT_FORMAT_TYPE1
@@ -48,14 +50,21 @@ void ADC_ESP32_Cont::start() {
             adc_pattern[numCh].bit_width = SOC_ADC_DIGI_MAX_BITWIDTH;
             ESP_LOGI("adc_esp32", "pattern[%lu] = {.atten=%d, .channel=%d}", numCh, attenuation[ch], ch);
             ++numCh;
+            //if(scope)scope->addChannel(ch, 'u', 12, "");
         }
+
+    assert_throw(numCh > 0, "");
+
+    ESP_LOGI("adc_esp32", "ADC1 SR=%lu Hz, nCh=%lu, avg=%u => %lu sps/ch", sr, numCh, avgNum,
+             sr / numCh / avgNum);
+
     // Note about sample freq:
     // this is the frequency the adc reads samples of any channel
     // if we sample 3 channels in a continous pattern, the effective sampling rate per channel will be 1/3.
     adc_continuous_config_t dig_cfg = {
             .pattern_num = numCh,
             .adc_pattern = adc_pattern,
-            .sample_freq_hz = ADC1_SR, // sps= /numCh/averaging
+            .sample_freq_hz = sr, // sps= /numCh/averaging
             .conv_mode = ADC_CONV_SINGLE_UNIT_1,
             .format = EXAMPLE_ADC_OUTPUT_TYPE,
     };
@@ -73,10 +82,20 @@ void ADC_ESP32_Cont::start() {
 }
 
 uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
+    static uint32_t max_ret_num = 0;
     uint32_t ret_num = 0;
     esp_err_t ret = adc_continuous_read(handle, result, ADC1_READ_LEN, &ret_num, 0);
 
     if (ret == ESP_OK) {
+        if (ret_num > max_ret_num) {
+            if (ret_num == ADC1_READ_LEN and max_ret_num <= 32)
+                max_ret_num++; // grace periode
+            else {
+                max_ret_num = ret_num;
+                ESP_LOGI("adc_esp32", "max_ret_num=%lu", max_ret_num);
+            }
+        }
+
         //ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32" bytes", ret, ret_num);
         for (int i = 0; i < ret_num; i += SOC_ADC_DIGI_RESULT_BYTES) {
             auto *p = (adc_digi_output_data_t *) &result[i];
@@ -86,16 +105,22 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
             if (chan_num < SOC_ADC_CHANNEL_NUM(ADC_UNIT_1)) {
 //ESP_LOGI("adc_esp32", "Unit: %s, Channel: %"PRIu32", Value: %"PRIx32, unit, chan_num, data);
 
+                if(scope) {
+                    scope->addSample12(chan_num, data);
+                }
+                //ESP_LOGI("adccont", "scope %p", scope);
+
                 avgBuf[chan_num].num++;
                 avgBuf[chan_num].agg += data;
 
                 //assert(data < 4096);
                 //assert(avgBuf[chan_num].agg < 65536);
 
-                if (avgBuf[chan_num].num == ADC1_AVG) {
+                if (avgBuf[chan_num].num == avgNum) {
                     data = avgBuf[chan_num].agg / avgBuf[chan_num].num;
                     float v = (float) esp_adc_cal_raw_to_voltage(data, adc_chars[attenuation[chan_num]]) * 1e-3f;
                     newSampleCallback(chan_num, v);
+                    //if(scope) scope->addSample12(chan_num, data);
                     avgBuf[chan_num].num = 0;
                     avgBuf[chan_num].agg = 0;
                 }
