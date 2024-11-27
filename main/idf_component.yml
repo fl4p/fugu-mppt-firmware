@@ -1,5 +1,6 @@
 ## IDF Component Manager Manifest File
 dependencies:
+  brianpugh/tamp: "^1.6.0"
   ## Required IDF version
   idf:
     version: ">=5.1.4"
