@@ -4,6 +4,7 @@
 #include <stdexcept>
 //#include "math/statmath.h"
 #include "rt.h"
+#include "tele/scope.h"
 
 
 const unsigned long &loopWallClockUs();
@@ -92,20 +93,25 @@ public:
 
 
     float getSample() override {
+        float x = NAN;
         if (readingChannel == 0) {
-            return 0;
+            x = 0;
         } else if (readingChannel == 1) {
-            return 1;
+            x = 1;
         } else if (readingChannel == 2) {
             auto t = loopWallClockUs() - resetTimes[readingChannel];
             if (t > 2000000) {
                 // ramp up a 2 + sin(t)
-                return (2.0f + sinf((float) t / 10e6f)) * min((t - 2000000.f) / 2000000.f, 1.f);
+                x = (2.0f + sinf((float) t / 10e6f)) * min((t - 2000000.f) / 2000000.f, 1.f);
             } else {
-                return 0.0f;
+                x = 0.0f;
             }
         }
-        return NAN;
+
+        if(scope)
+            scope->addSample12(readingChannel, x / 3 * 4000);
+
+        return x;
     }
 
     float getInputImpedance(uint8_t ch) override { return 100e3; }

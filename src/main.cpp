@@ -13,7 +13,7 @@
 #include "adc/ads.h"
 //#include "adc/adc_esp32.h"
 #include "adc/adc_esp32_cont.h"
-#include "adc/fake.h"
+#include "adc/mock.h"
 #include "adc/ina226.h"
 #include "adc/sampling.h"
 #include "buck.h"
