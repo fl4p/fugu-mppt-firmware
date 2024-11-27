@@ -54,8 +54,10 @@ public:
         auto pinEn = pinConf.getByte("pwm_en");
         try {
             assert_throw(pinIn != pinEn, "");
-            assertPinState(pinIn, false, "pwm_in", true);
-            assertPinState(pinEn, false, "pwm_en", true);
+            if(!pinConf.getByte("skip_assert",0)) {
+                assertPinState(pinIn, false, "pwm_in", true);
+                assertPinState(pinEn, false, "pwm_en", true);
+            }
         } catch (const std::exception &ex) {
             ESP_LOGE("pwm", "error %s", ex.what());
             return false;

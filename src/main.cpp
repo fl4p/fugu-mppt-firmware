@@ -107,7 +107,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         adc = new ADC_INA226();
     } else if (adcName == "esp32adc1") {
         // assert_throw(ntc_ch== 255, "adc1 conflicts ntc impl TODO fix");
-        adc = new ADC_ESP32_Cont();
+        adc = new ADC_ESP32_Cont(sensConf);
     } else if (adcName == "fake") {
         adc = new ADC_Fake();
     } else {
@@ -157,7 +157,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
 
     uint16_t iinFiltLen = sensConf.getLong("iin_filt_len");
     uint16_t ioutFiltLen = sensConf.getLong("iout_filt_len");
-    conversionEfficiency = sensConf.f("conversion_eff");
+    conversionEfficiency = sensConf.f("power_conversion_eff", 0.95f);
     assert(conversionEfficiency > 0.5f and conversionEfficiency < 1.0f);
 
     sensors.Vin = adcSampler.addSensor(
