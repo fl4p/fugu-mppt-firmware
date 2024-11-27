@@ -934,6 +934,7 @@ bool handleCommand(const String &inp) {
 void esp_task_wdt_isr_user_handler() {
     //throw std::runtime_error("reboot");
     enqueue_task([] {
+        if (esp_cpu_dbgr_is_attached()) return;
         pwm.disable();
         ESP_LOGE("main", "Restart after WDT trigger");
         vTaskDelay(1000);

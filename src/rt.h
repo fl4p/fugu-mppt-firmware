@@ -1,6 +1,137 @@
 #pragma once
 
 #include <map>
+#include <soc/interrupts.h>
+
+#include "esp_intr_alloc.h"
+
+#define CPU_INT_LINES_COUNT 32
+
+typedef struct vector_desc_t vector_desc_t;
+
+#define VECDESC_FL_RESERVED     (1<<0)
+#define VECDESC_FL_INIRAM       (1<<1)
+#define VECDESC_FL_SHARED       (1<<2)
+#define VECDESC_FL_NONSHARED    (1<<3)
+
+struct shared_vector_desc_t {
+    int disabled: 1;
+    int source: 8;
+    volatile uint32_t *statusreg;
+    uint32_t statusmask;
+    intr_handler_t isr;
+    void *arg;
+    shared_vector_desc_t *next;
+};
+
+//Pack using bitfields for better memory use
+struct vector_desc_t {
+    int flags: 16;                          //OR of VECDESC_FL_* defines
+    unsigned int cpu: 1;
+    unsigned int intno: 5;
+    int source: 8;                          //Interrupt mux flags, used when not shared
+    shared_vector_desc_t *shared_vec_info;  //used when VECDESC_FL_SHARED
+    vector_desc_t *next;
+};
+
+
+//Linked list of vector descriptions, sorted by cpu.intno value
+static vector_desc_t *vector_desc_head = NULL;
+
+//Returns a vector_desc entry for an intno/cpu, or NULL if none exists.
+static vector_desc_t *find_desc_for_int(int intno, int cpu)
+{
+    vector_desc_t *vd = vector_desc_head;
+    while(vd != NULL) {
+        if (vd->cpu == cpu && vd->intno == intno) {
+            break;
+        }
+        vd = vd->next;
+    }
+    return vd;
+}
+
+static esp_err_t esp_intr_dump(FILE *stream)
+{
+    if (stream == NULL) {
+        stream = stdout;
+    }
+#ifdef CONFIG_ESP_SYSTEM_SINGLE_CORE_MODE
+    const int cpu_num = 1;
+#else
+    const int cpu_num = SOC_CPU_CORES_NUM;
+#endif
+
+    int general_use_ints_free = 0;
+    int shared_ints = 0;
+
+    for (int cpu = 0; cpu < cpu_num; ++cpu) {
+        fprintf(stream, "CPU %d interrupt status:\n", cpu);
+        fprintf(stream, " Int  Level  Type   Status\n");
+        for (int i_num = 0; i_num < CPU_INT_LINES_COUNT; ++i_num) {
+            fprintf(stream, " %2d  ", i_num);
+            esp_cpu_intr_desc_t intr_desc;
+            esp_cpu_intr_get_desc(cpu, i_num, &intr_desc);
+            bool is_general_use = true;
+            vector_desc_t *vd = find_desc_for_int(i_num, cpu);
+
+#ifndef SOC_CPU_HAS_FLEXIBLE_INTC
+            fprintf(stream, "   %d    %s  ",
+                    intr_desc.priority,
+                    intr_desc.type == ESP_CPU_INTR_TYPE_EDGE ? "Edge " : "Level");
+
+            is_general_use = (intr_desc.type == ESP_CPU_INTR_TYPE_LEVEL) && (intr_desc.priority <= XCHAL_EXCM_LEVEL);
+#else // SOC_CPU_HAS_FLEXIBLE_INTC
+            if (vd == NULL) {
+                fprintf(stream, "   *      *    ");
+            } else {
+                // # TODO: IDF-9512
+                // esp_cpu_intr_get_* functions need to be extended with cpu parameter.
+                // Showing info for the current cpu only, in the meantime.
+                if (esp_cpu_get_core_id() == cpu) {
+                    fprintf(stream, "   %d    %s  ",
+                            esp_cpu_intr_get_priority(i_num),
+                            esp_cpu_intr_get_type(i_num) == ESP_CPU_INTR_TYPE_EDGE ? "Edge " : "Level");
+                } else {
+                    fprintf(stream, "   ?      ?    ");
+                }
+            }
+#endif // SOC_CPU_HAS_FLEXIBLE_INTC
+
+            if (intr_desc.flags & ESP_CPU_INTR_DESC_FLAG_RESVD) {
+                fprintf(stream, "Reserved");
+            } else if (intr_desc.flags & ESP_CPU_INTR_DESC_FLAG_SPECIAL) {
+                fprintf(stream, "CPU-internal");
+            } else {
+                if (vd == NULL || (vd->flags & (VECDESC_FL_RESERVED | VECDESC_FL_NONSHARED | VECDESC_FL_SHARED)) == 0) {
+                    fprintf(stream, "Free");
+                    if (is_general_use) {
+                        ++general_use_ints_free;
+                    } else {
+                        fprintf(stream, " (not general-use)");
+                    }
+                } else if (vd->flags & VECDESC_FL_RESERVED)  {
+                    fprintf(stream, "Reserved (run-time)");
+                } else if (vd->flags & VECDESC_FL_NONSHARED) {
+                    fprintf(stream, "Used: %s", esp_isr_names[vd->source]);
+                } else if (vd->flags & VECDESC_FL_SHARED) {
+                    fprintf(stream, "Shared: ");
+                    for (shared_vector_desc_t *svd = vd->shared_vec_info; svd != NULL; svd = svd->next) {
+                        fprintf(stream, "%s ", esp_isr_names[svd->source]);
+                    }
+                    ++shared_ints;
+                } else {
+                    fprintf(stream, "Unknown, flags = 0x%x", vd->flags);
+                }
+            }
+
+            fprintf(stream, "\n");
+        }
+    }
+    fprintf(stream, "Interrupts available for general use: %d\n", general_use_ints_free);
+    fprintf(stream, "Shared interrupts: %d\n", shared_ints);
+    return ESP_OK;
+}
 
 #define RT_PRIO 20
 
@@ -164,7 +295,7 @@ public:
                 .clk_src = GPTIMER_CLK_SRC_DEFAULT,
                 .direction = GPTIMER_COUNT_UP,
                 .resolution_hz = hz, // 1MHz, 1 tick=1us
-                .intr_priority = 3, // GPTIMER_ALLOW_INTR_PRIORITY_MASK
+                .intr_priority = 0, // GPTIMER_ALLOW_INTR_PRIORITY_MASK
                 .flags =  {.intr_shared = 0}, // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/intr_alloc.html
         };
         ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &gptimer));
@@ -172,7 +303,10 @@ public:
         gptimer_event_callbacks_t cbs = {
                 .on_alarm = periodic_timer_on_alarm,
         };
-        ESP_ERROR_CHECK(gptimer_register_event_callbacks(gptimer, &cbs, this));
+        if(gptimer_register_event_callbacks(gptimer, &cbs, this) != ESP_OK) {
+            esp_intr_dump(NULL);
+            throw std::runtime_error("register event callback failed");
+        }
 
         ESP_ERROR_CHECK(gptimer_enable(gptimer));
         gptimer_alarm_config_t alarm_config1 = {
