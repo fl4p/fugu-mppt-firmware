@@ -130,8 +130,8 @@ class MpptController {
 
     struct {
         float power = 0;
-        uint16_t dutyCycle = 0;
         float voltage = 0;
+        uint16_t dutyCycle = 0;
     } maxPowerPoint;// MPP during sweep
 
     Plot sweepPlot{};
@@ -239,12 +239,11 @@ public:
     [[nodiscard]] bool startCondition() const {
         return !(ntc.last() > limits.Temp_derate) && ucTemp.last() < limits.Temp_derate
                && sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1
-               && !boardPowerSupplyUnderVoltage(true);
+               && !boardPowerSupplyUnderVoltage(true) && !dcdcPwr.isCalibrating();
     }
 
-    bool protect(bool ignoreUV) {
-
-        auto nowMs = loopWallClockMs();
+    bool protectLf(bool ignoreUV) {
+        //auto nowMs = loopWallClockMs();
 
         // power supply under-voltage shutdown
         if (boardPowerSupplyUnderVoltage() and not ignoreUV) {
@@ -253,11 +252,6 @@ public:
                          sensors.Vout->last);
             shutdownDcdc();
             enqueue_task([&] { meter.commit(); });
-            return false;
-        }
-
-        if (dcdcPwr.isCalibrating()) {
-            shutdownDcdc();
             return false;
         }
 
@@ -277,6 +271,17 @@ public:
             }
         }
 
+        if (ntc.last() > limits.Temp_max || ucTemp.last() > limits.Temp_max) {
+            ESP_LOGE("MPPT", "Temp %.1f (or µC %.1f) > %.1f°C, shutdown", ntc.last(), ucTemp.last(), limits.Temp_max);
+            return false;
+        }
+
+        return true;
+    }
+
+    bool protect(bool ignoreUV) {
+
+        auto nowMs = loopWallClockMs();
 
         // input over-voltage
         if (sensors.Vin->last > limits.Vin_max) {
@@ -318,7 +323,7 @@ public:
 
 
         // input over current
-        if (sensors.Iin->last / limits.Iin_max > 1.5 && !buck.disabled()) {
+        if (sensors.Iin->last > limits.Iin_max * 1.3f && !buck.disabled()) {
             shutdownDcdc();
             ESP_LOGW("mppt", "Input current %.1f > 1.5x limit (Iout=%.1f, Vin=%.2f, Iin=%.2f), shutdown",
                      sensors.Iin->last,
@@ -327,7 +332,7 @@ public:
         }
 
         // output over current
-        if ((sensors.Iout->last / limits.Iout_max > 1.25 or sensors.Iout->ewm.avg.get() > (limits.Iout_max + 5)
+        if ((sensors.Iout->last > limits.Iout_max * 1.25f or sensors.Iout->ewm.avg.get() > (limits.Iout_max + 5.f)
             ) and not buck.disabled()) {
             shutdownDcdc();
             ESP_LOGW("mppt", "Output Current %.2f above limit %.2f, shutdown", sensors.Iout->last, limits.Iout_max);
@@ -381,10 +386,6 @@ public:
             bflow.enable(false); // low current
         }
 
-        if (ntc.last() > limits.Temp_max || ucTemp.last() > limits.Temp_max) {
-            ESP_LOGE("MPPT", "Temp %.1f (or µC %.1f) > %.1f°C, shutdown", ntc.last(), ucTemp.last(), limits.Temp_max);
-            return false;
-        }
 
         if (sensorPhysicalI->ewm.avg.get() > 6 && !bflow.state()) {
             if (!buck.disabled())
@@ -404,7 +405,7 @@ public:
         auto iOutSmall = sensorPhysicalI->ewm.avg.get() < (limits.Iout_max * 0.01f);
 
         if (iOutSmall && buck.getBuckOnPwmCnt() > buck.pwmMinLS * 2 and
-            (vOut < 1 or (buck.getBuckDutyCycle() * 0.9) > vr)) {
+            (vOut < 1 or (buck.getBuckDutyCycle() * 0.9f) > vr)) {
 
             if (!buck.disabled())
                 ESP_LOGE("MPPT",
