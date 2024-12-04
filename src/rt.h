@@ -39,10 +39,9 @@ struct vector_desc_t {
 static vector_desc_t *vector_desc_head = NULL;
 
 //Returns a vector_desc entry for an intno/cpu, or NULL if none exists.
-static vector_desc_t *find_desc_for_int(int intno, int cpu)
-{
+static vector_desc_t *find_desc_for_int(int intno, int cpu) {
     vector_desc_t *vd = vector_desc_head;
-    while(vd != NULL) {
+    while (vd != NULL) {
         if (vd->cpu == cpu && vd->intno == intno) {
             break;
         }
@@ -51,8 +50,7 @@ static vector_desc_t *find_desc_for_int(int intno, int cpu)
     return vd;
 }
 
-static esp_err_t esp_intr_dump(FILE *stream)
-{
+static esp_err_t esp_intr_dump(FILE *stream) {
     if (stream == NULL) {
         stream = stdout;
     }
@@ -110,7 +108,7 @@ static esp_err_t esp_intr_dump(FILE *stream)
                     } else {
                         fprintf(stream, " (not general-use)");
                     }
-                } else if (vd->flags & VECDESC_FL_RESERVED)  {
+                } else if (vd->flags & VECDESC_FL_RESERVED) {
                     fprintf(stream, "Reserved (run-time)");
                 } else if (vd->flags & VECDESC_FL_NONSHARED) {
                     fprintf(stream, "Used: %s", esp_isr_names[vd->source]);
@@ -148,7 +146,9 @@ static void rtcount_test_cycle_counter() {
 }
 
 struct rtcount_stat {
-    unsigned long total{0}, num{0}, max{0}, max_num{0};
+    unsigned long total{0}, num{0},
+            max{0}, max_num{0},
+            min{std::numeric_limits<unsigned long>::max()}, min_num{0};
 };
 
 static std::unordered_map<const char *, rtcount_stat> rtcount_stats{};
@@ -182,6 +182,10 @@ static void rtcount(const char *l) {
             stat.max = dt;
             stat.max_num = stat.num;
         }
+        if (dt < stat.min) {
+            stat.min = dt;
+            stat.min_num = stat.num;
+        }
         ++stat.num;
     }
 
@@ -195,7 +199,7 @@ static void rtcount_print(bool reset) {
     }
 
     printf("rtcount_print :\n");
-    printf("%-30s %9s %9s %6s %6s %6s\n", "key", "num", "tot", "mean", "max", "maxNum");
+    printf("%-30s %9s %9s %6s %6s %6s %6s %6s\n", "key", "num", "tot", "mean", "max", "maxNum", "min", "minNum");
 
     //typedef std::remove_reference<decltype(*rtcount_stats.begin())>::type P;
     typedef std::pair<const char *, rtcount_stat> P;
@@ -205,8 +209,8 @@ static void rtcount_print(bool reset) {
     });
 
     for (auto [k, stat]: sorted) {
-        printf("%-30s %9lu %9lu %6lu %6lu %6lu\n", k, stat.num, stat.total, stat.total / stat.num, stat.max,
-               stat.max_num);
+        printf("%-30s %9lu %9lu %6lu %6lu %6lu %6lu %6lu\n", k, stat.num, stat.total, stat.total / stat.num,
+               stat.max, stat.max_num, stat.min, stat.min_num);
     }
     printf("\n\n");
     if (reset)
@@ -303,7 +307,7 @@ public:
         gptimer_event_callbacks_t cbs = {
                 .on_alarm = periodic_timer_on_alarm,
         };
-        if(gptimer_register_event_callbacks(gptimer, &cbs, this) != ESP_OK) {
+        if (gptimer_register_event_callbacks(gptimer, &cbs, this) != ESP_OK) {
             esp_intr_dump(NULL);
             throw std::runtime_error("register event callback failed");
         }
