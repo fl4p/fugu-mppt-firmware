@@ -16,11 +16,49 @@ sample_rate = 40000
 time_x = np.array(np.linspace(0, 1, num=int(duration * sample_rate))) * duration
 win_len = len(time_x)
 
+is_connected = False
+
 from matplotlib.widgets import Slider
 
 
 # def update_offset(val):
 #    redraw()
+
+
+def discover_scope_servers():
+    from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
+
+    addr = []
+
+    class MyListener(ServiceListener):
+
+        def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+            print(f"Service {name} updated")
+
+        def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+            print(f"Service {name} removed")
+
+        def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+            info = zc.get_service_info(type_, name)
+            addr.extend((a, info.port) for a in info.parsed_addresses())
+
+
+    zeroconf = Zeroconf()
+    listener = MyListener()
+    # browser = ServiceBrowser(zeroconf, "_http._tcp.local.", listener)
+    browser = ServiceBrowser(zeroconf, "_scope._tcp.local.", listener)
+
+    t0 = time.time()
+
+    try:
+        while time.time() - t0 < 8:
+            if addr:
+                return addr
+            time.sleep(.1)
+    finally:
+        zeroconf.close()
+
+
 
 
 class Channel:
@@ -79,21 +117,33 @@ channelNames = dict()
 
 
 def receive_loop(decoder):
-    global num_bytes_rx
+    global num_bytes_rx, is_connected
 
-    addr = ("192.168.178.89", 24)
     while True:
+        print('discovering hosts...')
+        addr = discover_scope_servers()
+
+        if not addr:
+            print('no services discovered')
+            time.sleep(1)
+            continue
+
+        print('Discovered services:', addr)
+        addr = addr[0]
+
         print('connecting', addr, '...')
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(4)
         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         try:
             s.connect(addr)
-        except socket.timeout:
-            print('connection timeout')
+        except Exception as e:
+            print('connection timeout', e)
             time.sleep(2)
+            continue
 
         t_last = time.time()
+        is_connected = True
 
         while True:
             try:
@@ -105,6 +155,7 @@ def receive_loop(decoder):
                 if time.time() - t_last >= 8:
                     print('timeout!', e)
                     s.close()
+                    is_connected = False
                     # channelNames.clear()
                     break
                 time.sleep(.1)
@@ -172,7 +223,7 @@ def main():
         num_samples += 1
 
     def on_channels(chs):
-        nonlocal t0
+        nonlocal t0, num_samples
         for ch_num, ch_name, ch_typ in chs:
             if ch_num not in channelNames:
                 channelNames[ch_num] = ch_name
@@ -184,6 +235,7 @@ def main():
 
         ax.legend(loc='upper left')
         t0 = time.time()
+        num_samples = 0
 
     def lf_loop():
         while True:
@@ -191,10 +243,12 @@ def main():
             t_run = time.time() - t0
             sps = num_samples / t_run
             bps = num_bytes_rx / t_run
-            sys.stdout.write('\rsps=%.1fk, bps=%.1fk' % (sps / 1000, bps / 1000))
-            sys.stdout.flush()
+            if is_connected:
+                sys.stdout.write('\rsps=%.1fk, bps=%.1fk, tRun=%.1fs' % (sps / 1000, bps / 1000, t_run))
+                sys.stdout.flush()
 
     dec = ScopeDecoder(on_sample=on_sample, on_channels=on_channels)
+
 
     Thread(target=receive_loop, args=(dec,), daemon=True).start()
     Thread(target=redraw_loop, args=(channels, fig, ax), daemon=True).start()
