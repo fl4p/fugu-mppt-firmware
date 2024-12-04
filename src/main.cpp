@@ -1,13 +1,9 @@
 #include "logging.h"
 
-#include <hal/uart_types.h>
-#include <driver/uart.h>
-#include <driver/gpio.h>
-
 #include <Arduino.h>
 #include <Wire.h>
 #include <USB.h>
-#include <esp_private/usb_console.h>
+
 
 #include "adc/adc.h"
 #include "adc/ads.h"
@@ -41,14 +37,13 @@
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
 SynchronousBuck pwm;
-
 LedIndicator led;
 LCD lcd;
-
 MpptController mppt{adcSampler, pwm, lcd};
-VIinVout<const ADC_Sampler::Sensor *> sensors{};
+VIinVout<const ADC_Sampler::Sensor *> sensors{nullptr, nullptr, nullptr, nullptr};
 
 bool disableWifi = false;
+bool usbConnected = false;
 
 static unsigned long loopWallClockUs_ = 0;
 
@@ -71,7 +66,6 @@ Scope *scope = nullptr;
 const unsigned long IRAM_ATTR &loopWallClockUs() { return loopWallClockUs_; }
 
 unsigned long IRAM_ATTR loopWallClockMs() { return (unsigned long) (loopWallClockUs_ / 1000ULL); }
-
 
 void uartInit(int port_num);
 
@@ -265,7 +259,7 @@ void setup() {
 
     ConfFile pprofConf{"/littlefs/conf/pprof.conf", true};
 
-    auto sprofHz = (uint32_t) pprofConf.getLong("sprofiler_hz", 0);
+    auto sprofHz = (uint32_t) pprofConf.getLong("sprofiler_hz", 0); // 100~300
     if (sprofHz && esp_cpu_dbgr_is_attached()) {
         // only start the profiler with OpenOCD attached?
         ESP_LOGI("main", "starting sprofiler with freq %lu (samples/bank=%i)", sprofHz, PROFILING_ITEMS_PER_BANK);
@@ -370,6 +364,7 @@ void setup() {
         }
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during mppt setup: %s", er.what());
+        setupErr = true;
     }
 
     xTaskCreatePinnedToCore(loopRT, "loopRt", 4096 * 4, NULL, RT_PRIO, NULL, 1);
@@ -397,8 +392,6 @@ unsigned long delayStartUntil = 0;
 bool handleCommand(const String &inp);
 
 void loopNewData(unsigned long nowMs);
-
-void loopUart(unsigned long nowMs);
 
 void loop() {
     loopNetwork_task(nullptr);
@@ -441,7 +434,10 @@ void loopRT(void *arg) {
         adcSampler.begin();
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error starting ADC sampler: %s", er.what());
-        while (true) { vTaskDelay(10); }
+        while (true) {
+            loopWallClockUs_ = micros();
+            vTaskDelay(10);
+        }
     }
 
     disable_cpu_power_saving();
@@ -531,8 +527,6 @@ void loopRT(void *arg) {
     }
 }
 
-static bool usbConnected = false;
-
 std::string mpptStateStr() {
     std::string arrow;
     if (mppt.getState() == MpptControlMode::MPPT) {
@@ -545,13 +539,11 @@ std::string mpptStateStr() {
     return arrow + MpptState2String[(uint8_t) mppt.getState()];
 }
 
-int console_write_usb(const char *buf, size_t len);
-
 void loopLF(const uint32_t &nSamples, const unsigned long &nowUs) {
     uint32_t sps = (uint64_t) (nSamples - lastNSamples) * 1000000llu / (uint64_t) (nowUs - lastTimeOutUs);
 
     if (sps < loopRateMin && !pwm.disabled() && nSamples > max(loopRateMin * 5, 200) &&
-        !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 6000000) {
+        !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 2000000) {
         mppt.shutdownDcdc();
         auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
         ESP_LOGE("main", "Loop latency too high (%lu < %hu Hz), shutdown! (nSamples=%lu, D=%u, loopRunTime=%.1fs )",
@@ -565,30 +557,31 @@ void loopLF(const uint32_t &nSamples, const unsigned long &nowUs) {
 
     mppt.ntc.read();
 
-    UART_LOG(
-            "V=%4.*f/%4.*f I=%4.*f/%4.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
-            " st=%5s,%i lag=%lu㎲ N=%lu rssi=%hi",
-            sensors.Vin->last >= 9.55f ? 1 : 2, sensors.Vin->last,
-            sensors.Vout->last >= 9.55f ? 1 : 2, sensors.Vout->last,
-            sensors.Iin->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iin->ewm.avg.get(), // sensors.Iin->last,
-            sensors.Iout->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iout->ewm.avg.get(),
-            sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
-            //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
-            mppt.ntc.last(), mppt.ucTemp.last(),
-            sps,
-            (uint32_t) (bytesSent * 1000llu / (nowUs - lastTimeOutUs)),
-            pwm.getBuckOnPwmCnt(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
-            //mppt.getPower()
-            manualPwm ? "MANU"
-                      : (!charging && !mppt.startCondition()
-                         ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
-                         : mpptStateStr().c_str()),
-            (int) charging,
-            maxLoopLag,
-            //maxLoopDT,
-            nSamples,
-            WiFi.RSSI()
-    );
+    if (sensors.Vin)
+        UART_LOG(
+                "V=%4.*f/%4.*f I=%4.*f/%4.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
+                " st=%5s,%i lag=%lu㎲ N=%lu rssi=%hi",
+                sensors.Vin->last >= 9.55f ? 1 : 2, sensors.Vin->last,
+                sensors.Vout->last >= 9.55f ? 1 : 2, sensors.Vout->last,
+                sensors.Iin->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iin->ewm.avg.get(), // sensors.Iin->last,
+                sensors.Iout->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iout->ewm.avg.get(),
+                sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
+                //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
+                mppt.ntc.last(), mppt.ucTemp.last(),
+                sps,
+                (uint32_t) (bytesSent * 1000llu / (nowUs - lastTimeOutUs)),
+                pwm.getBuckOnPwmCnt(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
+                //mppt.getPower()
+                manualPwm ? "MANU"
+                          : (!charging && !mppt.startCondition()
+                             ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
+                             : mpptStateStr().c_str()),
+                (int) charging,
+                maxLoopLag,
+                //maxLoopDT,
+                nSamples,
+                WiFi.RSSI()
+        );
     lastNSamples = nSamples;
     bytesSent = 0;
 
@@ -599,7 +592,8 @@ void loopLF(const uint32_t &nSamples, const unsigned long &nowUs) {
         uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.limits.P_max * 255, 1, 255);
         led.setRGB(0, i, i);
     } else if (!charging) {
-        led.setHexShort(sensors.Vout->last > sensors.Vin->last ? 0x100 : 0x300);
+        if (sensors.Vin)
+            led.setHexShort(sensors.Vout->last > sensors.Vin->last ? 0x100 : 0x300);
     } else {
         switch (mppt.getState()) {
             case MpptControlMode::Sweep:
@@ -649,6 +643,8 @@ void loopNewData(unsigned long nowMs) {
             rtcount("protect.pre");
             bool mppt_ok = mppt.protect(manualPwm);
             rtcount("protect");
+            mppt_ok = mppt_ok && mppt.protectLf(manualPwm);
+            rtcount("protectLf");
             if (mppt_ok) {
                 if (haveNewSample) {
                     if (!manualPwm) {
@@ -686,87 +682,7 @@ void loopNewData(unsigned long nowMs) {
 }
 
 
-void loopConsole(int read(char *buf, size_t len), int write(const char *buf, size_t len), unsigned long nowMs) {
-    constexpr uint8_t bufSiz = 128;
-    static char buf[bufSiz];
-    static uint8_t buf_pos = 0;
-
-    int length = read(&buf[buf_pos], 128 - buf_pos);
-    if (length > 0) {
-        if (buf_pos == 0) write("> ", 2);
-        if (length + buf_pos >= bufSiz - 1)
-            length = bufSiz - 1 - buf_pos;
-        write(&buf[buf_pos], length); // echo
-        lastTimeOutUs = loopWallClockUs(); // stop logging during user input
-        buf_pos += length;
-        while (buf_pos > 0 && buf[buf_pos - 1] == '\b') {
-            --buf_pos;
-            buf[buf_pos] = 0;
-        }
-        if (buf[buf_pos - 1] == '\r' or buf[buf_pos - 1] == '\n') {
-            buf[buf_pos] = 0;
-            String inp(buf);
-            inp.trim();
-            if (inp.length() > 0)
-                handleCommand(inp);
-            buf_pos = 0;
-        } else if (buf_pos == bufSiz - 1) {
-            buf[buf_pos] = 0;
-            ESP_LOGW("main", "discarding command buffer %s", buf);
-            buf_pos = 0;
-        }
-    }
-}
-
-int uartRead(char *buf, size_t len) {
-    const uart_port_t uart_num = UART_NUM_0; // Arduino Serial is on port 0
-    int length = 0;
-    ESP_ERROR_CHECK(uart_get_buffered_data_len(uart_num, (size_t *) &length));
-    if (length == 0) return 0;
-    length = uart_read_bytes(uart_num, buf, len, 0);
-    return length;
-}
-
-int uartWrite(const char *buf, size_t len) {
-    const uart_port_t uart_num = UART_NUM_0; // Arduino Serial is on port 0
-    return uart_write_bytes(uart_num, buf, len);
-}
-
-
-#include "../vfs/private_include/esp_vfs_private.h"
-
-
-int console_read_usb(char *buf, size_t len) {
-#if CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
-    return esp_vfs_usb_serial_jtag_get_vfs()->read(0, buf, len);
-#else
-    return 0;
-#endif
-}
-
-
-int console_write_usb(const char *buf, size_t len) {
-#if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
-    auto r = esp_vfs_usb_serial_jtag_get_vfs()->write(0, buf, len);
-    usb_serial_jtag_ll_txfifo_flush();
-    return r;
-#else
-    return 0;
-#endif
-}
-
-void loopUart(unsigned long nowMs) {
-    // for some reason Serial.available() doesn't work under platformio
-    // so access the uart port directly
-
-    loopConsole(uartRead, uartWrite, nowMs);
-
-
-    if (usbConnected) {
-        //loopConsole(esp_usb_console_read_buf, esp_usb_console_write_buf, nowMs);
-        loopConsole(console_read_usb, console_write_usb, nowMs);
-    }
-}
+#include "console.h"
 
 
 void loopNetwork_task(void *arg) {
@@ -788,7 +704,7 @@ void loopNetwork_task(void *arg) {
         telemetryFlushPointsQ();
     }
 
-    auto &nSamples(sensors.Vout->numSamples);
+    auto &nSamples(sensors.Vout ? sensors.Vout->numSamples : lastNSamples);
 
     if ((loopWallClockUs() - lastTimeOutUs) >= 3000000) {
         loopLF(nSamples, loopWallClockUs());
@@ -933,8 +849,9 @@ bool handleCommand(const String &inp) {
 
 void esp_task_wdt_isr_user_handler() {
     //throw std::runtime_error("reboot");
+    if (esp_cpu_dbgr_is_attached()) return;
+
     enqueue_task([] {
-        if (esp_cpu_dbgr_is_attached()) return;
         pwm.disable();
         ESP_LOGE("main", "Restart after WDT trigger");
         vTaskDelay(1000);
