@@ -34,6 +34,12 @@ openocd -f board/esp32s3-builtin.cfg  &
 xtensa-esp32-elf-gdb -x gdbinit ../build/main.elf
  ```
 
+Run clion from esp-idf environment:
+```
+. $IDF_PATH/export.sh
+clion
+```
+
 
 Clion Settings / Embedded Dev / OpenOCD Location:
 ~/.espressif/tools/openocd-esp32/v0.12.0-esp32-20230921/openocd-esp32/bin/openocd
