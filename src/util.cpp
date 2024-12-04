@@ -3,11 +3,11 @@
 #include <stdexcept>
 #include <string>
 
-void assertPinState(uint8_t pin, bool digitalVal, const char *pinName, bool pull) {
-    pinMode(pin, pull ? (digitalVal ? INPUT_PULLDOWN : INPUT_PULLUP) : INPUT);
+void assertPinState(uint8_t pin, bool digitalVal, const char *pinName, bool weakBackPull) {
+    pinMode(pin, weakBackPull ? (digitalVal ? INPUT_PULLDOWN : INPUT_PULLUP) : INPUT);
     vTaskDelay(pdMS_TO_TICKS(5));
     auto read = digitalRead(pin);
-    if(pull)  pinMode(pin, INPUT);
+    if(weakBackPull)  pinMode(pin, INPUT);
 
     if (read != digitalVal) {
         throw std::runtime_error(
