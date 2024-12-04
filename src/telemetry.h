@@ -14,6 +14,8 @@
 
 //#include <Preferences.h>
 
+#include <Arduino.h>
+
 #include <SimpleFTPServer.h>
 #include <ESPTelnet.h>
 
@@ -185,8 +187,10 @@ void _wifiConnected() {
         ESP_LOGI("tele", "Set hostname %s", hostname.c_str());
     }
 
+    MDNS.setInstanceName(hostname);
+
     ha_host = MDNS.queryHost("homeassistant.local");
-    ESP_LOGI("tele", "resolved to %s", ha_host.toString().c_str());
+    ESP_LOGI("tele", "%s resolved to %s", "homeassistant.local", ha_host.toString().c_str());
 
     setupTelnet();
     ftpBegin();
@@ -197,6 +201,9 @@ void _wifiConnected() {
     if (!scope->begin(24)) {
         ESP_LOGE("tele", "scope setup failed");
     } else {
+        if(!MDNS.addService("_scope", "_tcp", 24)) {
+            ESP_LOGE("tele", "scope setup failed");
+        }
         ESP_LOGI("tele", "Scope server listening on port 24");
     }
 }

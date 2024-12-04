@@ -305,8 +305,8 @@ public:
     }
 
     void _updateClient(TCPClient &cl) {
-        int any = 0;
-        auto us = &any; // &loopWallClockUs();
+        //int any = 0;
+        //auto us = &any; // &loopWallClockUs();
         //cl.write((uint8_t *) us, sizeof(*us));
     }
 
@@ -365,8 +365,8 @@ class ScopeDecoder {
                 } else {
                     if (bufPos < sizeof(Scope::Data32Ch4)) break;
                     throw std::range_error("not impl");
-                    const auto &d32 = (Scope::Data32Ch4 *) buf;
-                    start += sizeof(Scope::Data32Ch4);
+                    //const auto &d32 = (Scope::Data32Ch4 *) buf;
+                    //start += sizeof(Scope::Data32Ch4);
                 }
             }
         }
