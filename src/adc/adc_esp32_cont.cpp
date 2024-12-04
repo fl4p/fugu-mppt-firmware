@@ -32,8 +32,11 @@ s_conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *
 void ADC_ESP32_Cont::start() {
 
     adc_continuous_handle_cfg_t adc_config = {
-            .max_store_buf_size = ADC1_READ_LEN * 4,
-            .conv_frame_size = ADC1_READ_LEN, // ADC1_READ_LEN
+            .max_store_buf_size = ADC1_READ_LEN * 2,
+            .conv_frame_size = ADC1_READ_LEN / 2, // use half read len to drain buffer while data exists
+            // the driver will trigger the interrupt once <conv_frame_size> bytes are available. if we miss
+            // one interrupt, and we only read <conv_frame_size> bytes per notification, one frame will always
+            // stay in the ring buffer (<max_store_buf_size> bytes), adding unnecessary latency
     };
     ESP_ERROR_CHECK(adc_continuous_new_handle(&adc_config, &handle));
 
@@ -68,7 +71,7 @@ void ADC_ESP32_Cont::start() {
             .conv_mode = ADC_CONV_SINGLE_UNIT_1,
             .format = EXAMPLE_ADC_OUTPUT_TYPE,
     };
-    ESP_ERROR_CHECK(adc_continuous_config(handle, &dig_cfg));
+    ESP_ERROR_CHECK_THROW(adc_continuous_config(handle, &dig_cfg));
 
     // start
     notification.subscribe();
@@ -77,16 +80,18 @@ void ADC_ESP32_Cont::start() {
             .on_conv_done = s_conv_done_cb,
             .on_pool_ovf = nullptr,
     };
-    ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(handle, &cbs, this));
-    ESP_ERROR_CHECK(adc_continuous_start(handle));
+    ESP_ERROR_CHECK_THROW(adc_continuous_register_event_callbacks(handle, &cbs, this));
+    ESP_ERROR_CHECK_THROW(adc_continuous_start(handle));
 }
 
 uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
-    static uint32_t max_ret_num = 0;
+    static uint32_t max_ret_num = 0, min_ret_num = ADC1_READ_LEN + 1;
     uint32_t ret_num = 0;
-    esp_err_t ret = adc_continuous_read(handle, result, ADC1_READ_LEN, &ret_num, 0);
+    esp_err_t ret = adc_continuous_read(handle, result, ADC1_READ_LEN, &ret_num, 3);
 
     if (ret == ESP_OK) {
+        //assert(ret_num == ADC1_READ_LEN);
+
         if (ret_num > max_ret_num) {
             if (ret_num == ADC1_READ_LEN and max_ret_num <= 32)
                 max_ret_num++; // grace periode
@@ -94,6 +99,11 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
                 max_ret_num = ret_num;
                 ESP_LOGI("adc_esp32", "max_ret_num=%lu", max_ret_num);
             }
+        }
+
+        if (ret_num < min_ret_num) {
+            min_ret_num = ret_num;
+            ESP_LOGI("adc_esp32", "min_ret_num=%lu", min_ret_num);
         }
 
         //ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32" bytes", ret, ret_num);
@@ -105,7 +115,7 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
             if (chan_num < SOC_ADC_CHANNEL_NUM(ADC_UNIT_1)) {
 //ESP_LOGI("adc_esp32", "Unit: %s, Channel: %"PRIu32", Value: %"PRIx32, unit, chan_num, data);
 
-                if(scope) {
+                if (scope) {
                     scope->addSample12(chan_num, data);
                 }
                 //ESP_LOGI("adccont", "scope %p", scope);
@@ -133,6 +143,9 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
 //We try to read `EXAMPLE_READ_LEN` until API returns timeout, which means there's no available data
         ESP_LOGW("adc_esp32", "Read timeout.");
 //vTaskDelay(100);
+    } else {
+        assert(ret == ESP_ERR_INVALID_STATE);
+        ESP_ERROR_CHECK_THROW(ret);
     }
 
     return ret_num;

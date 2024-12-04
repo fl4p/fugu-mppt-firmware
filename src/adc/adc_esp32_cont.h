@@ -22,7 +22,10 @@
 // TODO decrease READ_LEN and do ADC reading from another dedicated loop with even higher priority
 // than the "big" control loop and a fast shutdown path
 
-#define ADC1_READ_LEN 512
+// higher values inc latency, driver will always return this read len
+// for abg=32, 2ch, 4bytes/sample:
+
+#define ADC1_READ_LEN 128
 
 
 class ADC_ESP32_Cont : public AsyncADC<float> {
@@ -70,7 +73,7 @@ public:
     void startReading(uint8_t channel) override { abort(); } // this should never get called
     float getSample() override { abort(); }
 
-    bool hasData() override { return notification.wait(2); }
+    bool hasData() override { return notification.wait(3); }
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         adc_atten_t atten;
