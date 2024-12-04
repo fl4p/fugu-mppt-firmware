@@ -40,7 +40,6 @@ public:
     }
 
 
-
     bool init(const ConfFile &pinConf) override {
         if (ina226_instance) {
             return false;
@@ -51,6 +50,8 @@ public:
             ESP_LOGW("ina22x", "No ALERT pin specified");
             return false;
         }
+
+        assertPinState(alertPin, true, "ina22x_alert", false);
 
         // esp32s3 has 45k internal pull up
         pinMode(alertPin, INPUT_PULLUP);
