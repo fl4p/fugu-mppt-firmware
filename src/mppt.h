@@ -8,6 +8,7 @@
 #include "temperature.h"
 #include "cooling.h"
 
+#include "buck.h"
 #include "battery.h"
 #include "lcd.h"
 #include "tracker.h"
