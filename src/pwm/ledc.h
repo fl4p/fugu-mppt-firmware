@@ -4,19 +4,27 @@
 #include "esp_err.h"
 
 class PWM_ESP32_ledc {
-    const uint8_t pwmResolution = 11;
+    //const uint8_t pwmResolution = 10;
     const ledc_mode_t ledcMode = LEDC_LOW_SPEED_MODE;
 
 public:
-    const uint16_t pwmMax;
+    uint16_t pwmMax;
 
-    PWM_ESP32_ledc() : pwmMax((2 << (pwmResolution - 1)) - 1) {}
+    PWM_ESP32_ledc() : pwmMax(0) {}
+
 
     void init_pwm(int channel, int pin, uint32_t freq) {
+        // see idf5.3 ledc_find_suitable_duty_resolution()
+        uint32_t div = getApbFrequency() / freq; // + pwmFrequency / 2
+        auto resolution = min((int) log2(div), SOC_LEDC_TIMER_BIT_WIDTH);
+        auto pm = ((2 << (resolution - 1)) - 1);
+        if (pwmMax == 0) pwmMax = pm;
+        assert(pm == pwmMax);
+
         // Prepare and then apply the LEDC PWM timer configuration
         ledc_timer_config_t ledc_timer = {
                 .speed_mode       = ledcMode,
-                .duty_resolution  = (ledc_timer_bit_t) pwmResolution,
+                .duty_resolution  = (ledc_timer_bit_t) resolution,
                 .timer_num        = LEDC_TIMER_0,
                 .freq_hz          = freq,
                 .clk_cfg          = LEDC_AUTO_CLK
@@ -40,7 +48,11 @@ public:
 
     void update_pwm(int channel, uint32_t duty) {
         ESP_ERROR_CHECK(ledc_set_duty(ledcMode, (ledc_channel_t) channel, duty));
-        // Update duty to apply the new value
+        ESP_ERROR_CHECK(ledc_update_duty(ledcMode, (ledc_channel_t) channel));
+    }
+
+    void update_pwm(int channel, uint32_t hpoint, uint32_t duty) {
+        ESP_ERROR_CHECK(ledc_set_duty_with_hpoint(ledcMode, (ledc_channel_t) channel, duty, hpoint));
         ESP_ERROR_CHECK(ledc_update_duty(ledcMode, (ledc_channel_t) channel));
     }
 };
