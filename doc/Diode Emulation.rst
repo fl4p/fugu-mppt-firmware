@@ -6,7 +6,6 @@ We can leave the Low-Side switch (LS, aka *sync-FET*, *synchronous rectifier*) o
 flow through the LS MOSFET´s body diode.
 The buck converter then operates in non-synchronous mode, which is much easier to implement with the cost of lower conversion efficiency.
 
-
 In CCM (Continuous conduction mode), switching the LS is trivial. DC bias current is higher than half the ripple current, so we just keep LS on while
 HS is off. Notice that the LS body diode conducts during driver dead times.
 The duty cycle D equals conversion ratio M (Vo/Vi).
@@ -20,10 +19,10 @@ Conversion ratio is:
 Where R is the load resistance and Re is the effective input resistance of the converter:
 
 .. math::
-    R_e = \frac{2L}{ D^2 t_{on,LS} }
+    R_e = \frac{2L\cdot f_sw}{ D^2 }
 
-For more details refer to Fundamentals of Power Electronics, Third Edition, page 597.
-Here it is sufficient to notice that conversion ratio M does not equal duty cycle D.
+For more details refer to Fundamentals of Power Electronics, Third Edition, pages 145, 597.
+Here it is sufficient to understand that in DCM conversion ratio M does not equal duty cycle D.
 
 -------------------------------------
 Inductor Current Zero Cross Detection
@@ -42,18 +41,19 @@ Turning the LS off too early will increase power loss of the LS body diode. Turn
 Forced-PWM mode with reverse current flow, which decreases efficiency as well.
 
 First, we need to check if converter operating condition requires DCM.
-We compute the inductor ripple current:
-
-.. math::
-    \Delta I_L = \frac{V_o}{f_sw \cdot L} \cdot (1 - V_o/V_i)
-
 The converter is in DCM if half the ripple current is larger than dc output current:
 
 .. math::
     \frac{\Delta I_L}{2} > I_o
 
+We compute the inductor ripple current:
+
+.. math::
+    \Delta I_L = \frac{V_o}{f_sw \cdot L} \cdot (1 - V_o/V_i)
+
+
 For powder core materials, permeability drops with increasing dc bias current. We neglect frequency and temperature dependency, as it is usually low.
-With dc coil current, number of turns N and magnetic path length l_e we compute the magnetization force:
+With dc coil current, number of turns N and magnetic path length l_e we compute the dc magnetization force:
 
 .. math::
     H_dc =  \frac{N}{l_e} \cdot I_o
@@ -105,6 +105,22 @@ Takeaways
 * Switching LS too long causes reverse coil current and might turn the buck converter into a (reversed) boost converter
 
 
+-------
+Boost Converter
+-------
+
+
+.. math::
+    M_CCM = \frac{1}{1-D}
+
+.. math::
+    t_{on,HS} = t_{on,LS} \cdot \frac{1}{M - 1}
+
+.. math::
+    t_{on,HS} = \frac{D}{f_sw} \cdot \frac{1}{M - 1}
+
+
+
 References
 
-* Fundamentals of Power Electronics
+* Fundamentals of Power Electronics, chapters 5 and 15

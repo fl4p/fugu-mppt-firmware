@@ -7,14 +7,15 @@ enum CellChemistry {
     LiFePo4, // LFP 2.5~3.65V
 
     NCM, // LiCoMn LiIon, LiPo, 3.0~4.2V. Pedelec, EV (no Tesla), Tesla Powerwall
-    NCA, // 3.0~4.2V. highest 279 mAh/g, Tesla EV
+    NCA, // Nickel-Cobalt-Aluminium, 3.0~4.2V. highest 200 mAh/g, Tesla EV, usually 18650 (LiNiCoAlO2)
+    LCO, // LiCoO2
 
     LTO, // Li4Ti5O12 1.8~2.65V (float 2.25V) https://www.lto-store.de/home/Yinlong-LTO66160K-2-3V-45Ah-A-grade-p542371477
 
     AGM,
     LeadAcid,// https://batteryuniversity.com/article/bu-403-charging-lead-acid
 
-    SIB, // sodium-ion
+    SIB, // sodium-ion, Na+
 
     Custom,
 

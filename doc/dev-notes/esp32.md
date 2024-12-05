@@ -20,3 +20,20 @@ TARGET=esp32s3; rm -rf managed_components build && idf.py fullclean && idf.py se
 - even if logging is set to
 - menuconfig
   - ESP_CONSOLE_USB_CDC_SUPPORT_ETS_PRINTF(=n) "Enable esp_rom_printf / ESP_EARLY_LOG via USB CDC"
+
+
+# adc
+* ESP32: 2 Msps
+* ESP32S3 (and all other boards): 100 ksps
+
+# ledcpwm
+supports duty cycle fading
+ledc: esp32 has high-speed mode
+"This mode is implemented in hardware and offers automatic and glitch-free changing of the PWM duty cycle."
+https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/ledc.html#introduction
+https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/ledc.html#ledc-api-high-low-speed-mode
+https://www.espressif.com/sites/default/files/documentation/esp32_technical_reference_manual_en.pdf#ledpwm
+
+
+# mcpwm
+https://www.espressif.com/sites/default/files/documentation/esp32-s3_technical_reference_manual_en.pdf#mcpwm

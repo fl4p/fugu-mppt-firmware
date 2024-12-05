@@ -1,7 +1,7 @@
 # FUGU-ARDUINO-MPPT-FIRMWARE
 
 This is a complete re-write of the
-original [FUGU-ARDUINO-MPPT-FIRMWARE](https://github.com/AngeloCasi/FUGU-ARDUINO-MPPT-FIRMWARE) by AngeloCasi.
+original [AngeloCasi/FUGU-ARDUINO-MPPT-FIRMWARE](https://github.com/AngeloCasi/FUGU-ARDUINO-MPPT-FIRMWARE) .
 It is compatible with
 the [original hardware design](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/) you can find on
 Instructables.
@@ -11,11 +11,11 @@ This is common for Lithium-Batteries (e.g. LiFePo4, NCA, NCM, Sodium-Ion).
 
 Highlights:
 
-* Tested with ESP32 and ESP32-S3
+* Supports ESP32 and ESP32-S3
 * Async ADC sampling for low latency control loop (<900µs in-out latency)
-* Automatic zero-current calibration
 * ADC abstraction layer with implementations for ESP32(S3) [Internal ADC](doc/Internal%20ADC.md), ADS1x15 and
   INA226/INA228
+* Automatic zero-current calibration
 * PID control for precise voltage and current regulation
 * Periodic MPPT global search
 * Sophisticated Diode Emulation for low-side switch

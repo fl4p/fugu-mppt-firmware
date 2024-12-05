@@ -8,8 +8,15 @@ inline int geti() {
     return i;
 }
 
-std::ostream& add_one(std::ostream& os) { os.iword(geti()) = 1; return os; }
-std::ostream& add_none(std::ostream& os) { os.iword(geti()) = 0; return os; }
+std::ostream &add_one(std::ostream &os) {
+    os.iword(geti()) = 1;
+    return os;
+}
+
+std::ostream &add_none(std::ostream &os) {
+    os.iword(geti()) = 0;
+    return os;
+}
 
 int main() {
 
@@ -140,27 +147,24 @@ int main() {
     auto a = series[0.0];
 
     ascii::Asciichart asciichart(std::vector<std::vector<float>>{series});
-    auto screen =  asciichart.height(18).type(ascii::Asciichart::LINE).Plot();
+    auto screen = asciichart.height(18).type(ascii::Asciichart::LINE).Plot();
 
-    for(auto row = 0; row < screen.n0; ++row) {
+    /*for(auto row = 0; row < screen.n0; ++row) {
         std::stringstream ss;
         for(auto col = 0; col < screen.n1; ++col) {
             std::cout << screen[row][col];
         }
         std::cout  << ascii::Decoration::From(ascii::Decoration::RESET) << "\n";
-    }
+    }*/
 
 
-   /* for(auto &line :screen) {
-        for (auto &item : line) {
+    for (auto &line: screen) {
+        for (auto &item: line) {
             std::cout << item;
         }
 
-        std::cout  << ascii::Decoration::From(ascii::Decoration::RESET) << "\n";
-    } */
-
-
-
+        std::cout << ascii::Decoration::From(ascii::Decoration::RESET) << "\n";
+    }
 
 
 }
