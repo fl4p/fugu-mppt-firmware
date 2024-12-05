@@ -39,7 +39,7 @@ public:
                 .strip_gpio_num = pin,  // The GPIO that connected to the LED strip's data line
                 .max_leds = 1,                 // The number of LEDs in the strip,
                 .led_model = LED_MODEL_WS2812, // LED strip model, it determines the bit timing
-                .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB, // The color component format is G-R-B
+                .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_RGB, // The color component format is G-R-B
                 .flags = {
                         .invert_out = false, // don't invert the output signal
                 }
@@ -64,9 +64,8 @@ public:
         FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, 1);
         FastLED.setBrightness(15);
 #endif
-
-        setHexShort(0x111);
         enabled = true;
+
         return true;
     }
 
@@ -82,12 +81,16 @@ public:
         FastLED.show();
 #else
         if (!ir && !ig && !ib) {
-            ESP_LOGI("led", "Clear!");
+            ESP_LOGD("led", "Clear!");
             ESP_ERROR_CHECK(led_strip_clear(led_strip));
         } else {
+            uint8_t damp = 8;
+            if(ir) ir = max(1, ir / damp);
+            if(ig) ig = max(1, ig / damp);
+            if(ib) ib = max(1, ib / damp);
             ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, ir, ig, ib));
             ESP_ERROR_CHECK(led_strip_refresh(led_strip));
-            ESP_LOGI("led", "R=%d,G=%d,B=%d", ir, ig, ib);
+            ESP_LOGD("led", "R=%d,G=%d,B=%d", ir, ig, ib);
         }
 #endif
     }
@@ -100,6 +103,10 @@ public:
         } else {
             setRGB((l >> 16) & 0xFF, (l >> 8) & 0xFF, (l >> 0) & 0xFF);
         }
+    }
+
+    inline void setHex(uint32_t l) {
+        setRGB(l >> 16, (l >> 8) & 0xff, l & 0xff);
     }
 
     void setHexShort(uint16_t l) {

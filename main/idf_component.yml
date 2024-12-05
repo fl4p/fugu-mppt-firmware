@@ -1,5 +1,7 @@
 ## IDF Component Manager Manifest File
 dependencies:
+  espressif/led_strip: "^3.0.0"
+  espressif/mdns: "*"
   brianpugh/tamp: "^1.6.0"
   ## Required IDF version
   idf:

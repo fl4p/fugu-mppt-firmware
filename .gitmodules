@@ -24,9 +24,6 @@
 [submodule "components/INA226_WE"]
 	path = components/INA226_WE/INA226_WE
 	url = https://github.com/fl4p/INA226_WE
-[submodule "components/FastLED"]
-	path = components/FastLED
-	url = https://github.com/FastLED/FastLED
 
 [submodule "components/SimpleFTPServer/SimpleFTPServer"]
 	path = components/SimpleFTPServer/SimpleFTPServer

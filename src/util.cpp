@@ -4,6 +4,7 @@
 #include <string>
 
 void assertPinState(uint8_t pin, bool digitalVal, const char *pinName, bool weakBackPull) {
+    // esp32s3 has 45k up/down pull resistors
     pinMode(pin, weakBackPull ? (digitalVal ? INPUT_PULLDOWN : INPUT_PULLUP) : INPUT);
     vTaskDelay(pdMS_TO_TICKS(5));
     auto read = digitalRead(pin);

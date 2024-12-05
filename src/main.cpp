@@ -539,7 +539,8 @@ std::string mpptStateStr() {
     return arrow + MpptState2String[(uint8_t) mppt.getState()];
 }
 
-void loopLF(const uint32_t &nSamples, const unsigned long &nowUs) {
+void loopLF(const unsigned long &nowUs) {
+    auto &nSamples(sensors.Vout ? sensors.Vout->numSamples : lastNSamples);
     uint32_t sps = (uint64_t) (nSamples - lastNSamples) * 1000000llu / (uint64_t) (nowUs - lastTimeOutUs);
 
     if (sps < loopRateMin && !pwm.disabled() && nSamples > max(loopRateMin * 5, 200) &&
@@ -704,10 +705,9 @@ void loopNetwork_task(void *arg) {
         telemetryFlushPointsQ();
     }
 
-    auto &nSamples(sensors.Vout ? sensors.Vout->numSamples : lastNSamples);
 
     if ((loopWallClockUs() - lastTimeOutUs) >= 3000000) {
-        loopLF(nSamples, loopWallClockUs());
+        loopLF(loopWallClockUs());
         lastTimeOutUs = loopWallClockUs();
     }
 
@@ -843,6 +843,7 @@ bool handleCommand(const String &inp) {
     }
 
     ESP_LOGI("main", "OK: %s", inp.c_str());
+    loopLF(loopWallClockUs());
 
     return true;
 }
