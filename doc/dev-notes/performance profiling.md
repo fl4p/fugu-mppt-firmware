@@ -8,9 +8,10 @@
 cd data
 openocd -f board/esp32s3-builtin.cfg
 
-
 # host terminal 2:
 idf.py monitor
+
+# .. let the program run some time ..
 
 # host terminal 1:
 ctrl+c
@@ -21,6 +22,10 @@ python3 ../components/esp32-semihosting-profiler/sprofiler.py
 
 # tune PROFILING_ITEMS_PER_BANK
 ```
+
+# gprof
+https://components.espressif.com/components/espressif/gprof
+https://github.com/espressif/esp-iot-solution/blob/master/components/gprof/src/esp_gprof.c
 
 # TODO review
 * https://github.com/LiluSoft/esp32-semihosting-profiler
@@ -59,10 +64,4 @@ https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/app_tra
 * does this actually work with esp-idf?
   https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html
 
-# JTAG
 
-TODO
-
-
-
-# latency

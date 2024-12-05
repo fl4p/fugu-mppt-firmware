@@ -1,10 +1,11 @@
 # Serial Console
 
 You can send text commands on the UART (or telnet) to interact with the charger while it is running.
-It is also suitable to implement automated tests.
+It is also suitable to implement automated tests. Input and output are multiplexed across UART, USB serial JTAG and
+telnet.
 
-Default baud rate is 115200. Terminate command with `\n` or `\r` (new line).
-The charger confirms successful command with:
+Default baud rate for serial UART is 115200. Terminate command with `\n` or `\r` (new line).
+The charger confirms a successful command with:
 
 ```
 OK: <cmd>
@@ -22,7 +23,9 @@ OK: <cmd>
 * `+<int>`, `-<int>` manual perturb the buck duty cycle (for testing)
 * `reset-lag`: resets max lag statistic
 * `scan-i2c`: run a i2c bus scan
-* `ota <url>`: download and flash a new app image from a HTTP(S) URL.
+* `sensor`: display sensor data
+* `mem`: display heap and PSRAM sizes
+* `ota <url>`: download and flash a new app image from a HTTP(S) URL
 
 # Manual PWM Commands
 
@@ -35,10 +38,12 @@ OK: <cmd>
   from the output to the input (bat to solar).
 * `mppt` switches back to MPP tracking mode
 
-
-
 # Telnet
 
-from Home Assistant:
+Use any telnet client to connect on port 23. No password is required. Only one connection at a time.
+
+
+Connect from Home Assistant:
+
 * install "Terminal & SSH" add-on
-* in add-on Configuration  add `busybox-extras` to Packages
+* in add-on Configuration add `busybox-extras` to Packages

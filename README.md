@@ -6,8 +6,8 @@ It is compatible with
 the [original hardware design](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/) you can find on
 Instructables.
 
-The charger uses a simple CC (constant current) and CV (constant voltage) approach.
-This is common for Lithium-Batteries (e.g. LiFePo4).
+The charger uses a simple CC-CV (constant current - constant voltage) approach.
+This is common for Lithium-Batteries (e.g. LiFePo4, NCA, NCM, Sodium-Ion).
 
 Highlights:
 
@@ -24,8 +24,9 @@ Highlights:
 * PWM Fan Control and temperature power de-rating
 * Telemetry to InfluxDB over UDP
 * LCD (hd44780) and WS2812B LED Indicator
+* Configuration files on flash file system (littlefs)
 * [Serial UART console](doc/Serial%20Console.md) and telnet to interact with the charger
-* Unit tests
+* Unit tests, on-board [performance profiler](https://github.com/LiluSoft/esp32-semihosting-profiler/)
 
 The firmware sends real-time data to InfluxDB server using UDP line protocol.
 
@@ -49,6 +50,10 @@ Feel free to use parts of the code.
 
 # Getting Started
 
+1. Build and flash the firmware
+2. Flash the configuration (provisioning)
+3. Calibrate the ADC (important for proper diode emulation)
+
 You can build with ESP-IDF toolchain using Arduino as a component.
 
 If you want to use PlatformIO, checkout `tag/pio-last`. The PIO build branch is currently not maintained.
@@ -57,11 +62,9 @@ This version works with the original Fugu design. Mind the voltage divider value
 ## Building with ESP-IDF
 
 Follow [Espressif's Get Started guide](https://docs.espressif.com/projects/esp-idf/en/v5.1.4/esp32/get-started/index.html)
-to
-install ESP-IDF v5.1.4 . The firmware depends on `arduino-esp32` so we can use Arduino libraries.
-Since v3.x `arduino-esp32` is compatible with `esp-idf v5.1` (before we had to use `esp-idf v4.4`).
-To install `esp-idf v5.1.4` you can follow these commands (make sure you have all the prerequisites from
-the Espressif guide mentioned before and you might have to downgrade python to 3.9 if running into issues
+to install ESP-IDF v5.1.4. (The firmware depends on `arduino-esp32` which is compatible with `esp-idf v5.1`.)
+You can follow these commands: (make sure you have all the prerequisites from
+the Espressif guide and you might have to downgrade python to 3.9 if running into issues
 like [this](https://github.com/espressif/esp-idf/issues/12322), note that esp-idf will create a new python virtual
 environment with your system's default python version `python --version`):
 
@@ -90,7 +93,8 @@ idf.py flash
 
 ## Board Configuration
 
-IO pins mappings, sensor and system (I2C, WiFi, etc.) config values are stored in `.conf` files on the `littlefs`
+The firmware reads IO pin mappings, sensor and system (I2C, WiFi, etc.) configuration values from `.conf` files on
+the `littlefs`
 partition.
 This enables easy OTA updates of the firmware across various hardware configurations. And you can easily alter the
 configuration by flashing a new `littlefs` image or by editing the files over FTP. Some crucial parameters are still
@@ -99,15 +103,16 @@ hard-coded, making them configurable is WIP.
 You find existing board configuration in the folder [`provisioning/`](provisioning/):
 
 * `fmetal`: [Fugu2 board](https://github.com/fl4p/Fugu2)
-* `fugu`: original fugu design
-* `dry`: useful for testing with ESP32 dev boards, uses fake ADC
+* `fugu_int_adc`: original fugu design but using the [internal ADC](doc/Internal%20ADC.md)
+* `dry_mock`: uses a mock ADC producing sinusoidal readings, useful for testing with ESP32 dev boards
+* `dry_int`: uses the internal ADC for dry testing
 
 Chose the board and flash these config files (set `PROV` to the name of the folder under `provisioning/`):
 
 ```
 BOARD=dry
-littlefs-python create provisioning/$PROV $PROV.bin -v --fs-size=0x20000 --name-max=64 --block-size=4096
-parttool.py --port /dev/cu.usb* write_partition --partition-name littlefs --input $PROV.bin
+littlefs-python create provisioning/$BOARD $BOARD.bin -v --fs-size=0x20000 --name-max=64 --block-size=4096
+parttool.py --port /dev/cu.usb* write_partition --partition-name littlefs --input $BOARD.bin
 ```
 
 Alternatively, in `CMakeLists.txt`, add `FLASH_IN_PROJECT` argument for `littlefs_create_partition_image()`. Then the
@@ -228,19 +233,18 @@ The firmware implements a synchronous buck converter. It uses the Vout/Vin volta
 coil current and adjusts the switching time of the LS MOSFET so that the current never crosses zero.
 It handles both Continuous Conduction Mode (CCM) and Discontinuous Conduction Mode (DCM). The LS FET stays off during
 low-power conversion (apart from a minimum on-time to keep the charge pump for the HS gate driver active).
-This approach allows arbitrary buck duty cycles, without trouble.
+This approach allows arbitrary buck duty cycles, without trouble. See [Diode Emulation](doc/Diode%20Emulation.rst) for
+more details and formulae.
 
 For additional safety the low-side duty cycle is slowly faded to its maximum value. As soon as we detect reverse
 current (which might also be noise), we decrease the LS switch duty cycle and slowly recover.
 
 # Not implemented / TODO
 
-* usb console CDC multiplex
-* make buck signal pins configurable
 * learn buck start duty cycle, buck self test * Calibration
     * find pwm min duty (vout > 0 or iout > 0)
 * 2nd and more (interleaved) channels
-* More precise PWM
+* -More precise PWM- not possible. clock is 80mhz
 * LCD Buttons
 * Web Interface
 * OTA Updates
@@ -250,7 +254,7 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 * Acid Lead, AGM charging
   algorithm ([1](https://github.com/RedCommissary/mppt-charger-firmware/blob/c0dba8700d3baff1d13a86c43f5ce570b15e01af/source/application/inc/Battery.hpp#L27))
 * Boost converter
-* Detect burned HS and short LS, and back-flow? (implement self-tests)
+* Detect burned HS and short LS, and back-flow? (implement self-tests), see libre-solar firmware
 * low current, low voltage drop -> disable bf (might sense phantom current due to temperature drift)
 
 ## Issues
@@ -292,6 +296,8 @@ We need contributors for Hardware Design and Software. Open an issue or pull req
 address in my github profile) if you want to contribute or just share your experience.
 
 # Resources
+
+* [Robert Erikson: Fundamentals of Power Electronics](https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-power-electronics-3n_2020.pdf)
 
 * [TI Power Topologies Handbook](https://www.ti.com/seclit/ug/slyu036/slyu036.pdf#page=18) (timings CCM, DCM, forced
   PWM)

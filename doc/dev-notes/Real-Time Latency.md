@@ -1,12 +1,32 @@
-* writing the flash (energy meter) causes latency issues?
-    * TODO write test
+# Real-time performance on ESP32 with Wi-Fi
+
+With networking enabled, the ESP32 executes code that is not real-time capable and thus can block for a couple of
+milliseconds.
+Luckily, we have 2 cores, so we can use one core for all the non-RT and the other for the RT code.
+
+The DC-DC converter control loop needs to have a fast load transient response to minimize transient surge voltages at
+the output. Latency is the time between an input change and a response to this change at the output.
+
+A control loop might look like this:
 
 ```
-
-void networkLoop() {
-  // wifi stuff and everything that 
+void criticalTask() {
+  while(true) {
+    adcRead();
+    pwmWrite();
+    yield();
+  }
 }
+```
 
+Latency should be deterministic. it is the maximum.
+On a general purpose CPU, a lot of things can happen besides our critical task
+
+## Real-time loop
+
+Here's a rough pseudocode of how to achieve good real-time performance on the ESP32 while Wi-Fi is enabled:
+
+```
 void adcAlertInterrupt() {
   vTaskNotifyGiveFromISR(controlLoopTask);
 }
@@ -15,9 +35,15 @@ void controlLoop() {
   while(true) {
     ulTaskNotifyTake(pdFALSE, pdMS_TO_TICKS(1));
     adcRead();
+    updateControl();
     pwmWrite();
   }
 }
+
+void networkLoop() {
+  // wifi stuff and everything else not RT-critical
+}
+
 
 void main() {
     controlLoopTask = createTaskCore1(controLoop, {.prio=20});
@@ -28,39 +54,62 @@ void main() {
 
 * `controlLoop` is our time critical task. we want the response time, i.e. the time the uC takes to react on an analog
   input change to the output, be less than 1 millisecond
-* calling `ESP_LOGx(...)` usually writes `UART`, which may block longer
 * `core1` is our real-time core, everything that is not related to the controlLoop or can block longer runs on `core0`
+* calling `ESP_LOGx(...)` usually writes `UART` and/or USB JTAG, which may block longer
+* use a (non-blocking) queue to defer calls from the `controlLoop` to `networkLoopTask` (e.g. logging)
 * `controlLoop` runs exclusively on `core1` with elevated priority
-* use a queue to defer calls from the `controlLoop` to `networkLoopTask` (e.g. logging)
-* notice that `controlLoop` doesn' t call `yield()` or `vTaskDelay()`. `ulTaskNotifyTake` will block while ADC is busy,
-  so
-  FreeRTOS housekeeping (`IDLE` task) can run. TODO: specify housekeeping, what does idle task do?
+* notice that `controlLoop` doesn't call `yield()` or `vTaskDelay()`. `ulTaskNotifyTake` will block while ADC is busy,
+  so FreeRTOS housekeeping (`IDLE` task) can run. TODO: specify housekeeping, what does idle task do?
+* instead of semaphores we use task notifications which are faster according to FreeRTOS documentation
 
-# meausures
+## ESP32(-S3) internal ADC
 
-assume blocking networkt code runs on core0
-we want to run the latency -sensitive loop on core1.
-arduino's loop() is not RT capable because it does UART stuff between calls
-so run arduino and the network on core0, and the loopRT on core1
+With the esp-idf API `esp_adc/adc_continuous.h` we cannot program the ADC conversion time. It appears to be always
+working at the shortest possible time. This is why single shot measurements are quite noisy and it is better to use
+continuous DMA reading and averaging with the highest possible sampling rate (83kHz for ESP32-S3).
 
-// TODO use xSemaphoreGiveFromISR()
+Reading the DMA ring buffer from the "big" control loop might be to slow and we loose samples.
+It might be useful to add another critical loop with even higher priority than the control loop that just reads and
+averages the ADC samples.
 
-# configTICK_RATE_HZ
+Additionally, in this adc averaging loop we can implement a fast shutdown path to further reduce the response time
+to OV or OC transients (load disconnect or short-circuit).
 
-defaults to 1000 (1tick = 1ms)
-for better RT perf set this to 10000
-this is the shortest amount of time a task can wait
-dont set higher than 1000 !
+## Set explicit core affinity
+
+```
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+CONFIG_LWIP_TCPIP_TASK_AFFINITY=0x0
+CONFIG_PTHREAD_DEFAULT_CORE_NO_AFFINITY=0x0
+
+CONFIG_ARDUINO_RUNNING_CORE=0
+CONFIG_ARDUINO_RUN_CORE0=y
+CONFIG_ARDUINO_EVENT_RUNNING_CORE=0
+CONFIG_ARDUINO_EVENT_RUN_CORE0=y
+CONFIG_ARDUINO_SERIAL_EVENT_TASK_RUNNING_CORE=0
+CONFIG_ARDUINO_SERIAL_EVENT_RUN_CORE0=y
+CONFIG_ARDUINO_UDP_RUNNING_CORE=0
+CONFIG_ARDUINO_UDP_RUN_CORE0=y
+```
+
+* assume networking code runs on core0.
+* we want to run the latency -sensitive loop on core1.
+* arduino's loop() is not RT capable because it does UART stuff between calls (do not use)
+* so run arduino and the network on core0, and the loopRT on core1
+
+## Note about configTICK_RATE_HZ
+
+defaults to 1000 (1tick = 1ms).
+this is the shortest amount of time a task can wait.
+not recommended to set to 10000, as it has a lot of overhead.
+consider 2000Hz ?
 https://www.esp32.com/viewtopic.php?t=1341#p6082
 
-#wdt
+## wdt
+
 https://esp32.com/viewtopic.php?t=14477
 
-# esp32 adc1
-
-* response time of adc1 appears to increase when WiFi enabled
-    * TODO verify
-    * TODO use adc2?
+##       
 
 https://github.com/MacLeod-D/ESp32-Fast-external-IRQs
 
@@ -73,17 +122,10 @@ lwIP TCP/IP stack and other less time-critical internal functionality - this is 
 that do not perform network operations. Any task that does TCP/IP network operations should run at a lower priority than
 the lwIP TCP/IP task (18) to avoid priority-inversion issues."
 
-# TODO
-
-* try unpinned tasks
-*
-
 # esp32s2
 
 * core1 is more performant than core0
-
-
-* FastLED appears to have a significant lag
+* FastLED appears to have a significant lag (does it use bit banging?)
 
 # instrumentation profiling of code latency
 
@@ -196,6 +238,7 @@ V=56.45/29.18 I= 1.6/ 2.96A  89.0W -34℃31℃ 1135sps  0㎅/s PW
     * https://github.com/espressif/esp-idf/blob/v4.2.2/components/freertos/linker.lf
 
 # GCC Instrumentation
+
 https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html
 
 * `-pg` flag
@@ -209,9 +252,8 @@ https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html
 The INA226 can be programmed to trigger an alert on bus over-voltage. this signal can be wired to the shut-down input of
 the gate driver to instantly turn off the DC-DC converter. The INA226 has a minimum conversion time of 140µs.
 
-
-
 run arduino:
+
 ```
 CONFIG_ARDUINO_RUNNING_CORE=0
 CONFIG_ARDUINO_RUN_CORE0=y
