@@ -30,3 +30,5 @@ sdkconfig
 *.out
 
 *.img
+
+scope-test

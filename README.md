@@ -18,7 +18,7 @@ Highlights:
 * Automatic zero-current calibration
 * PID control for precise voltage and current regulation
 * Periodic MPPT global search
-* Sophisticated Diode Emulation for low-side switch
+* Sophisticated [Diode Emulation](#synchronous-buck-and-diode-emulation) for low-side switch
 * Battery voltage detection
 * Fast protection shutdown in over-voltage and over-current conditions
 * PWM Fan Control and temperature power de-rating
