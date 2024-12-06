@@ -36,7 +36,7 @@
 
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
-SynchronousBuck pwm;
+SynchronousConverter pwm;
 LedIndicator led;
 LCD lcd;
 MpptController mppt{adcSampler, pwm, lcd};
@@ -548,7 +548,7 @@ void loopLF(const unsigned long &nowUs) {
         mppt.shutdownDcdc();
         auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
         ESP_LOGE("main", "Loop latency too high (%lu < %hu Hz), shutdown! (nSamples=%lu, D=%u, loopRunTime=%.1fs )",
-                 sps, loopRateMin, nSamples, pwm.getBuckOnPwmCnt(), loopRunTime * 1e-6f);
+                 sps, loopRateMin, nSamples, pwm.getCtrlOnPwmCnt(), loopRunTime * 1e-6f);
         charging = false;
     }
 
@@ -571,7 +571,7 @@ void loopLF(const unsigned long &nowUs) {
                 mppt.ntc.last(), mppt.ucTemp.last(),
                 sps,
                 (uint32_t) (bytesSent * 1000llu / (nowUs - lastTimeOutUs)),
-                pwm.getBuckOnPwmCnt(), pwm.getBuckDutyCycleLS(), pwm.getDutyCycleLSMax(),
+                pwm.getCtrlOnPwmCnt(), pwm.getRectOnPwmCnt(), pwm.getRectOnPwmMax(),
                 //mppt.getPower()
                 manualPwm ? "MANU"
                           : (!charging && !mppt.startCondition()
@@ -744,13 +744,13 @@ bool handleCommand(const String &inp) {
 
 
     if ((inp[0] == '+' or inp[0] == '-') && !adcSampler.isCalibrating() && inp.length() < 6 &&
-        inp.toInt() != 0 && std::abs(inp.toInt()) < pwm.pwmMaxHS) {
+        inp.toInt() != 0 && std::abs(inp.toInt()) < pwm.pwmCtrlMax) {
         int pwmStep = inp.toInt();
         //manualPwm = true; // don't switch to manual pwm here!
         pwm.pwmPerturb((int16_t) pwmStep);
-        ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) pwm.getBuckOnPwmCnt());
+        ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) pwm.getCtrlOnPwmCnt());
     } else if (manualPwm && (inp == "ls-disable" or inp == "ls-enable")) {
-        pwm.enableLowSide(inp == "ls-enable");
+        pwm.enableSyncRect(inp == "ls-enable");
     } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable")) {
         auto newState = inp == "bf-enable";
         if (mppt.bflow.state() != newState)
@@ -765,11 +765,11 @@ bool handleCommand(const String &inp) {
         ESP_LOGI("main", "MPPT re-enabled");
         manualPwm = false;
     } else if (inp.startsWith("dc ") && !adcSampler.isCalibrating() && inp.length() <= 8
-               && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmMaxHS) {
+               && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmCtrlMax) {
         if (!manualPwm)
             ESP_LOGI("main", "Switched to manual PWM");
         manualPwm = true;
-        pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getBuckOnPwmCnt());
+        pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getCtrlOnPwmCnt());
         // pwm.enableLowSide(true);
     } else if (inp.startsWith("speed ") && inp.length() <= 12) {
         float speedScale = inp.substring(6).toFloat();

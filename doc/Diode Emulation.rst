@@ -40,6 +40,9 @@ In a sensor-less approach we model coil current over time and shut the LS off wh
 Turning the LS off too early will increase power loss of the LS body diode. Turning off to late puts the converter into
 Forced-PWM mode with reverse current flow, which decreases efficiency as well.
 
+
+*CCM or CCM*
+
 First, we need to check if converter operating condition requires DCM.
 The converter is in DCM if half the ripple current is larger than dc output current:
 
@@ -49,9 +52,9 @@ The converter is in DCM if half the ripple current is larger than dc output curr
 We compute the inductor ripple current:
 
 .. math::
-    \Delta I_L = \frac{V_o}{f_sw \cdot L} \cdot (1 - V_o/V_i)
+    \Delta I_L = \frac{V_o}{f_sw \cdot L(I_o)} \cdot (1 - V_o/V_i)
 
-
+Notice that inductivity L here depends on I_o.
 For powder core materials, permeability drops with increasing dc bias current. We neglect frequency and temperature dependency, as it is usually low.
 With dc coil current, number of turns N and magnetic path length l_e we compute the dc magnetization force:
 
@@ -59,9 +62,23 @@ With dc coil current, number of turns N and magnetic path length l_e we compute 
     H_dc =  \frac{N}{l_e} \cdot I_o
 
 With the value of the H-field we can compute the permeability and inductivity drop with the model from the materials's
-datasheet. With the DC-saturated inductivity value we compute ripple current and decide if the converter is in DCM and compute
-LS on-time as follows.
+datasheet (:math:`\%µ_i(H_dc)`).
 
+.. math::
+    L(I_o) =  \frac{\%µ_i(H_dc)}{µ_i} * L_0
+
+
+With the DC-saturated inductivity value we compute ripple current and decide if the converter is in DCM.
+
+Besides inductivity value L, this approach needs the number of winding turns, the magnet path length of the core and
+the dc bias model of the core material. Simulations show that there is only a rather small operating range where
+the converter would operate in DCM with L(I_o), and in CCM with L0.
+For reduced complexity of the implementation, we can just assume a fixed inductivity drop of 5%.
+An analytic inference still needs to be done.
+
+If we find the converter to be in DCM, we compute LS on-time as follows.
+
+*DCM Rectifier timing*
 
 During HS on-time (:math:`0<t<t_{on,HS}`), coil current rises:
 

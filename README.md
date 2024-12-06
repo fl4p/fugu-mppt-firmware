@@ -42,7 +42,7 @@ Feel free to use parts of the code.
 
 # Reference Hardware
 
-* [Fugu2](https://cadlab.io/project/27217/master/files) (KiCad)
+* [Fugu2](https://github.com/fl4p/Fugu2) (KiCad)
     * Dual parallel HS switches
     * Snubber circuit for reduced EMI
     * INA226 current sensor
