@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 
 const unsigned long &loopWallClockUs();
 unsigned long loopWallClockMs();

@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="scope-test.cpp" type="CppFileRunConfiguration" factoryName="CppFileRunConfiguration" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="main" TARGET_NAME="scope-test.cpp - System" CONFIG_NAME="scope-test.cpp">
+  <configuration default="false" name="scope-test.cpp" type="CppFileRunConfiguration" factoryName="CppFileRunConfiguration" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="fugu-firmware" TARGET_NAME="scope-test.cpp - System" CONFIG_NAME="scope-test.cpp">
     <option name="compilerOptions" value="-std=c++11" />
     <option name="sourceFile" value="$PROJECT_DIR$/test/host-stub/scope-test.cpp" />
     <option name="toolchainName" value="System" />

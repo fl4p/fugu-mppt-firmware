@@ -1,7 +1,8 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="converter-test.cpp" type="CppFileRunConfiguration" factoryName="CppFileRunConfiguration" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="fugu-firmware" TARGET_NAME="converter-test.cpp" CONFIG_NAME="converter-test.cpp">
-    <option name="compilerOptions" value="-std=c++11" />
+  <configuration default="false" name="converter-test.cpp" type="CppFileRunConfiguration" factoryName="CppFileRunConfiguration" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="fugu-firmware" TARGET_NAME="converter-test.cpp - System" CONFIG_NAME="converter-test.cpp">
+    <option name="compilerOptions" value="-std=c++17" />
     <option name="sourceFile" value="$PROJECT_DIR$/test/host-stub/converter-test.cpp" />
+    <option name="toolchainName" value="System" />
     <method v="2">
       <option name="com.jetbrains.cidr.cpp.runfile.CppFileBuildBeforeRunTaskProvider$BasicBuildBeforeRunTask" enabled="true" />
     </method>

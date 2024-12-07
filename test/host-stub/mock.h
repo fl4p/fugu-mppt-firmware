@@ -1,5 +1,9 @@
 #pragma once
 
+// TODO SEE https://github.com/FabioBatSilva/ArduinoFake
+
+#define MOCK 1
+
 #include <unistd.h> // fsync
 #include <stdint.h>
 
