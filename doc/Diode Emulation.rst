@@ -122,6 +122,20 @@ Takeaways
 * Switching LS too long causes reverse coil current and might turn the buck converter into a (reversed) boost converter
 
 
+*Error Considerations*
+
+The converter measures V_in and V_out with an ADC. Noise, temperature drift and non-linearity cause voltage errors.
+This affects the value for M and finally the rectification on time.
+
+Let assume two extreme cases for the voltage measurements:
+V_in is +1% of the actual value, V_out -1%: we will get an M which is around -2% below the actual value.
+Since rectification time is reciprocal to M, this will cause a +4% error rectification on time at D=0.5.
+If we double the voltage error, we get approximately double the error for rectification time. Longer rectification time
+will cause reverse current flow and additional loss (it can reduce ripple voltage, refer to forced PWM or FPWM)
+
+If we measure V_out with -1% error and V_out +1%, the rectification time will be 4% too short.
+
+
 -------
 Boost Converter
 -------

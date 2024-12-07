@@ -4,12 +4,19 @@
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
-#include <Arduino.h>
 
+
+#ifndef MOCK
+#include <Arduino.h>
 #include "pinconfig.h"
 #include "pwm/ledc.h"
-#include "backflow.h"
-#include "store.h"
+#else
+
+#include "pwm/mock.h"
+
+#endif
+
+#include "conf.h"
 #include "util.h"
 
 /**
@@ -29,7 +36,11 @@ class SynchronousConverter {
     static constexpr float InductivityDcBias = 0.95f;
 
 
+#ifdef ARDUINO
     PWM_ESP32_ledc pwmDriver;
+#else
+    PWM_Mock pwmDriver;
+#endif
 
     bool pwmEnLogic = false; // whether the driver has a IN/SD input logic (instead of HI/LO)
     uint8_t pinSd = 255;
@@ -39,6 +50,7 @@ class SynchronousConverter {
     uint16_t pwmCtrl = 0; // buck: HS
     uint16_t pwmRect = 0; // buck: LS
     uint16_t pwmRectMax = 0;
+    float pwmRectRatioDCM = 0; // t_onRect/t_onCtrl when in DCM
 
     float outInVoltageRatio = 0; // M
     float directionFloatBuffer = 0.0f; // fractional perturbation buffer
@@ -78,17 +90,19 @@ public:
         uint32_t pwmFrequency = pinConf.getLong("pwm_freq"); //39000; //  converter switching frequency
         assert_throw(pwmFrequency > 5e3 && pwmFrequency < 5e5, "");
 
-        fL = (float) pwmFrequency * L0 * InductivityDcBias;
+        fL = (float) pwmFrequency * L0 * InductivityDcBias; // for ripple current computation
+        assert(fL < 5);
+        assert(fL > 1);
 
         auto drvInpLogic = pinConf.getString("pwm_driver_logic"); // driver input logic "in,en", "hi,li" and en
         uint8_t pinCtrl, pinRect;
 
         try {
-            if (drvInpLogic == "in,en") { // e.g. Infineon ir2814
+            if (drvInpLogic == "InEn") { // e.g. Infineon ir2814
 
                 pwmEnLogic = true;
                 auto pnCtrl = isBoost ? "pwm_en" : "pwm_in";
-                auto pnRect = isBoost ? "pwm_in" : "pwm_en"
+                auto pnRect = isBoost ? "pwm_in" : "pwm_en";
 
                 pinCtrl = pinConf.getByte(pnCtrl);
                 pinRect = pinConf.getByte(pnRect);
@@ -100,9 +114,9 @@ public:
                     assertPinState(pinRect, false, pnRect, true);
                 }
 
-            } else if (drvInpLogic == "hi,li") {  // e.g. TI UCC21330x with optional DIS pin (SD pin)
+            } else if (drvInpLogic == "HiLi") {  // e.g. TI UCC21330x with optional DIS pin (SD pin)
                 auto pnCtrl = isBoost ? "pwm_li" : "pwm_hi";
-                auto pnRect = isBoost ? "pwm_hi" : "pwm_li"
+                auto pnRect = isBoost ? "pwm_hi" : "pwm_li";
 
                 pinCtrl = pinConf.getByte(pnCtrl);
                 pinRect = pinConf.getByte(pnRect);
@@ -148,15 +162,19 @@ public:
         return true;
     }
 
+    void computePwmRectMax() {
+        if (dcmHysteresis) pwmRectMax = (uint16_t) std::round((float) pwmCtrl * pwmRectRatioDCM);
+        else pwmRectMax = pwmDriver.pwmMax - pwmCtrl;
+        pwmRectMax = std::max(pwmRectMin, pwmRectMax);
+    }
+
     void pwmPerturb(int16_t direction) {
 
         if (unlikely(disabled() and direction > 0 and pinSd != 255))
             digitalWrite(pinSd, 0);
 
         pwmCtrl = constrain(pwmCtrl + direction, pwmCtrlMin, pwmCtrlMax);
-
-        pwmRectMax = computePwmMaxSyncRect(pwmCtrl, pwmDriver.pwmMax, outInVoltageRatio, &dcmHysteresis);
-        pwmRectMax = std::max(pwmRectMin, pwmRectMax);
+        computePwmRectMax();
 
         if (pwmRect - pwmRectMax > (pwmDriver.pwmMax / 10)) {
             UART_LOG("Set pwmLS %hu -> pwmMaxLS=%hu\n", pwmRect, pwmRectMax);
@@ -241,7 +259,7 @@ public:
 
     [[nodiscard]] inline float rippleCurrent(float hv, float lv) const {
         // this does not consider dc bias, just a constant 0.95 inductivity factor
-        return lv / fL * (1.0f - lv / hv)
+        return lv / fL * (1.0f - lv / hv);
     }
 
     /**
@@ -250,14 +268,14 @@ public:
      * @param vl lower-voltage side (buck: Vout)
      * @param il inductor dc current
      */
-    [[nodiscard]] void inDCM(float vh, float vl, float il) {
+    [[nodiscard]] bool computeDCM(float vh, float vl, float il) {
         auto ir = rippleCurrent(vh, vl);
         auto dcm = ir > il * (dcmHysteresis ? 1.9f : 2.f);
         if (dcm != dcmHysteresis) {
             dcmHysteresis = dcm;
-            UART_LOG("converter: %s -> %s (M=%.3f, ∆I=%.3f)",
+            UART_LOG("converter: %s -> %s (M=%.2f, I=%.2f, ∆I=%.2f)",
                      dcm ? "CCM" : "DCM", dcm ? "DCM" : "CCM",
-                     isBoost ? (vh / vl) : (vl / vh), ir);
+                     isBoost ? (vh / vl) : (vl / vh), il, ir);
         }
         return dcm;
     }
@@ -274,7 +292,11 @@ public:
       * @return pwmRect/pwmCtrl ratio
       */
     [[nodiscard]] float rectCtrlRatio(float m) const {
-        return isBoost ? (1.f / (m - 1.f)) : (1.f / m - 1.f)
+        return isBoost ? (1.f / (m - 1.f)) : (1.f / m - 1.f);
+    }
+
+    [[nodiscard]] float inDCM() const {
+        return dcmHysteresis;
     }
 
     /**
@@ -293,10 +315,9 @@ public:
      * @param voltageRatio Vout/Vin ratio, D (the greater, the safer but less efficient)
      * @return
      */
-    uint16_t computePwmMaxSyncRect(uint16_t pwmCtrl, const uint16_t pwmMax, float vh, float vl, float il) {
-        uint16_t pwmMaxRect;
+    void computeSyncRectRatio(float vh, float vl, float il) {
 
-        if (inDCM(vh, vl, il)) {
+        if (computeDCM(vh, vl, il)) {
             // computation of t_onCtrl and t_onRect ratio is quite error sensitive
             // e.g. at VR=0.64 a -5% error causes a 13% deviation of pwmMaxLs !
             // so we do some proper error computation here
@@ -312,31 +333,29 @@ public:
                     (isBoost
                      ? ((vh > vl && vl > 0.1f) ? constrain(vh / vl, 1e-2f, 10.f) : 10.0f) // boost
                      : ((vh > vl && vh > 0.1f) ? constrain(vl / vh, 1e-2f, 1.f - 1e-2f) : 1.0f) //buck
-                    ) * voltageRatioWCEF;
+                    ) / voltageRatioWCEF;
 
-            pwmMaxRect = (uint16_t) std::round(rectCtrlRatio(convRatioWCE) * (float) pwmCtrl);
+            outInVoltageRatio = convRatioWCE;
+            pwmRectRatioDCM = rectCtrlRatio(convRatioWCE);
+            //pwmMaxRect = (uint16_t) std::round( * (float) pwmCtrl);
 
             // TODO remove:
             // compute worst-case error at current working point
+            const float voltageRatio = vl / vh;
             const float pwmMaxLsWCEF = (1 / (voltageRatio * voltageRatioWCEF) - 1) / (1 / voltageRatio - 1); // > 1
             const float pwmMaxRectWCEF = rectCtrlRatio(voltageRatio * voltageRatioWCEF) / rectCtrlRatio(voltageRatio);
             if (!isBoost) {
                 assert(abs(pwmMaxLsWCEF - pwmMaxRectWCEF) < 0.01);
             }
 
-        } else {
-            pwmMaxRect = pwmMax - pwmCtrl;
         }
-
-        return pwmMaxRect;
     }
 
-    const float &updateSyncRectMaxDuty(float vout, float vin) {
-        // voltageRatio = Vout/Vin
 
-        pwmRectMax = computePwmMaxSyncRect(pwmCtrl, pwmDriver.pwmMax, outInVoltageRatio, &dcmHysteresis);
+    const float &updateSyncRectMaxDuty(float vh, float vl, float il) {
 
-        pwmRectMax = std::max(pwmRectMin, pwmRectMax);
+        computeSyncRectRatio(vh, vl, il);
+        computePwmRectMax();
 
         if (pwmRect > pwmRectMax) {
             if (pwmRect - pwmRectMax > (pwmDriver.pwmMax / 40)) {
