@@ -11,17 +11,17 @@ conversion efficiency.
 In CCM (Continuous conduction mode), switching the LS is trivial. DC
 bias current is higher than half the ripple current, so we just keep LS
 on while HS is off. Notice that the LS body diode conducts during driver
-dead times. The duty cycle D equals conversion ratio M (Vo/Vi).
+dead times. The inductor is permanently energized and the duty cycle D equals conversion ratio M (=Vo/Vi).
 
 In DCM, e.g. during light load conditions, we must take care about LS
 switching times. Conversion ratio is:
 
-$$M_DCM = \frac{2}{ 1 + \sqrt{1+4R_e/R} }$$
+$$M_{DCM} = \frac{2}{ 1 + \sqrt{1+4R_e/R} }$$
 
 Where R is the load resistance and Re is the effective input resistance
 of the converter:
 
-$$R_e = \frac{2L\cdot f_sw}{ D^2 }$$
+$$R_e = \frac{2L\cdot f_{sw}}{ D^2 }$$
 
 For more details refer to Fundamentals of Power Electronics, Third
 Edition, pages 145, 597. Here it is sufficient to understand that in DCM
@@ -35,7 +35,7 @@ implementation requires an ADC sampling rate much higher than the
 switching frequency for accurate timing.
 
 An analog ZCD works with a fast comparator, whose output can be fed into
-the half bridge driver disable input.
+the half bridge driver to `DIS` (or `SD`, `EN*`) input.
 
 The advantage of ZCD is that it implements peak current limiting. This
 prevent excessive currents when inductor core starts to saturate and the
@@ -64,7 +64,7 @@ $$\frac{\Delta I_L}{2} > I_o$$
 
 We compute the inductor ripple current:
 
-$$\Delta I_L = \frac{V_o}{f_sw \cdot L(I_o)} \cdot (1 - V_o/V_i)$$
+$$\Delta I_L = \frac{V_o}{f_{sw} \cdot L(I_o)} \cdot (1 - V_o/V_i)$$
 
 Notice that inductivity L here depends on I_o. For powder core
 materials, permeability drops with increasing dc bias current. We
@@ -72,13 +72,13 @@ neglect frequency and temperature dependency, as it is usually low. With
 dc coil current, number of turns N and magnetic path length l_e we
 compute the dc magnetization force:
 
-$$H_dc =  \frac{N}{l_e} \cdot I_o$$
+$$H_{dc} = \frac{N}{l_e} \cdot I_o$$
 
 With the value of the H-field we can compute the permeability and
 inductivity drop with the model from the materials\'s datasheet
-($\%µ_i(H_dc)$).
+( $\%\mu _i(H_{dc})$ ).
 
-$$L(I_o) =  \frac{\%µ_i(H_dc)}{µ_i} * L_0$$
+$$L(I_o) = \frac{\%\mu _i(H_dc)}{\mu _i} * L_0$$
 
 With the DC-saturated inductivity value we compute ripple current and
 decide if the converter is in DCM.
@@ -111,7 +111,7 @@ $$I_L(t) = I_{L,max} - \frac{1}{L} (V_o) \cdot (t- t_{on,HS})$$
 Now we want to find $t_{on,LS}$ when the current becomes zero for given
 $t_{on,HS}, V_i, V_o$:
 
-$$0 \stackrel{!}{=}  I_{L,max} - \frac{1}{L} (V_o) \cdot t_{on,LS}$$
+$$0 \stackrel{!}{=} I_{L,max} - \frac{1}{L} (V_o) \cdot t_{on,LS}$$
 
 Which results:
 
@@ -126,13 +126,13 @@ $$t_{on,LS,CCM} = \frac{1-D}{f_sw}$$
 
 Takeaways
 
--   In CCM low-side switching time is simply (1-D)/f_sw
--   whether converter operates in CCM / DCM depends on load conditions
-    and (dc-biased) inductivity
--   In DCM low-side switching time depends on conversion ratio M and
-    duty cycle D
--   Switching LS too long causes reverse coil current and might turn the
-    buck converter into a (reversed) boost converter
+- In CCM low-side switching time is simply (1-D)/f_sw
+- whether converter operates in CCM / DCM depends on load conditions
+  and (dc-biased) inductivity
+- In DCM low-side switching time depends on conversion ratio M and
+  duty cycle D
+- Switching LS too long causes reverse coil current and might turn the
+  buck converter into a (reversed) boost converter
 
 *Error Considerations*
 
@@ -162,4 +162,4 @@ $$t_{on,HS} = \frac{D}{f_sw} \cdot \frac{1}{M - 1}$$
 
 References
 
--   Fundamentals of Power Electronics, chapters 5 and 15
+- Fundamentals of Power Electronics, chapters 5 and 15
