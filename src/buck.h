@@ -8,7 +8,7 @@
 
 #ifndef MOCK
 #include <Arduino.h>
-#include "pinconfig.h"
+//#include "pinconfig.h"
 #include "pwm/ledc.h"
 #else
 

@@ -3,7 +3,7 @@
 #include "adc.h"
 #include <stdexcept>
 //#include "math/statmath.h"
-#include "rt.h"
+#include "etc/rt.h"
 #include "tele/scope.h"
 
 
@@ -109,7 +109,7 @@ public:
         }
 
         if(scope)
-            scope->addSample12(readingChannel, x / 3 * 4000);
+            scope->addSample12(this, readingChannel, x / 3 * 4000);
 
         return x;
     }

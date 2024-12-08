@@ -22,6 +22,7 @@
       <file path="$PROJECT_DIR$/cmake-build-debug" />
       <file path="$PROJECT_DIR$/cmake-build-esp32dev" />
       <file path="$PROJECT_DIR$/cmake-build-idf-esp32s3" />
+      <file path="$PROJECT_DIR$/converter-test.dSYM" />
     </excludeRoots>
   </component>
   <component name="elmot.OpenOcdPlugin">

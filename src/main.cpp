@@ -7,22 +7,22 @@
 
 #include "adc/adc.h"
 #include "adc/ads.h"
-//#include "adc/adc_esp32.h"
 #include "adc/adc_esp32_cont.h"
 #include "adc/mock.h"
 #include "adc/ina226.h"
 #include "adc/sampling.h"
+
 #include "buck.h"
 #include "mppt.h"
 #include "util.h"
 #include "telemetry.h"
-#include "version.h"
-#include "lcd.h"
-#include "led.h"
-#include "ota.h"
+#include "viz/lcd.h"
+#include "viz/led.h"
+#include "etc/ota.h"
 
+#include "etc/version.h"
 
-#include "perf.h"
+#include "etc/perf.h"
 #include <sprofiler.h>
 
 #if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
@@ -40,7 +40,7 @@ SynchronousConverter pwm;
 LedIndicator led;
 LCD lcd;
 MpptController mppt{adcSampler, pwm, lcd};
-VIinVout<const ADC_Sampler::Sensor *> sensors{nullptr, nullptr, nullptr, nullptr};
+VIinVout<const Sensor *> sensors{nullptr, nullptr, nullptr, nullptr};
 
 bool disableWifi = false;
 bool usbConnected = false;
@@ -63,9 +63,14 @@ uint16_t loopRateMin = 0;
 
 Scope *scope = nullptr;
 
-const unsigned long IRAM_ATTR &loopWallClockUs() { return loopWallClockUs_; }
+const unsigned long IRAM_ATTR
+&
 
-unsigned long IRAM_ATTR loopWallClockMs() { return (unsigned long) (loopWallClockUs_ / 1000ULL); }
+loopWallClockUs() { return loopWallClockUs_; }
+
+unsigned long IRAM_ATTR
+
+loopWallClockMs() { return (unsigned long) (loopWallClockUs_ / 1000ULL); }
 
 void uartInit(int port_num);
 
@@ -74,6 +79,33 @@ void loopNetwork_task(void *arg);
 void loopCore0_LF(void *arg);
 
 void loopRT(void *arg);
+
+#include <set>
+
+AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &pinConf, const ConfFile &sensConf) {
+    AsyncADC<float> *adc;
+    if (adcName == "ads1115" or adcName == "ads1015") {
+        adc = new ADC_ADS(adcName == "ads1115");
+    } else if (adcName == "ina226") {
+        adc = new ADC_INA226();
+    } else if (adcName == "esp32adc1") {
+        // assert_throw(ntc_ch== 255, "adc1 conflicts ntc impl TODO fix");
+        adc = new ADC_ESP32_Cont(sensConf);
+    } else if (adcName == "fake") {
+        adc = new ADC_Fake();
+    } else {
+        ESP_LOGE("main", "Unknown ADC %s", adcName.c_str());
+        assert(false);
+    }
+
+    if (!adc->init(pinConf)) {
+        ESP_LOGE("main", "Failed to initialize ADC %s", adcName.c_str());
+        delete adc;
+        return nullptr;
+    }
+
+    return adc;
+}
 
 void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     loopWallClockUs_ = micros();
@@ -90,132 +122,155 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         throw std::runtime_error("no sensor conf");
     }
 
-    AsyncADC<float> *adc;
-
-    auto ntc_ch = pinConf.getByte("ntc_ch", 255);
-
-    auto adcName = sensConf.getString("adc");
-    if (adcName == "ads1115" or adcName == "ads1015") {
-        adc = new ADC_ADS(adcName == "ads1115");
-    } else if (adcName == "ina226") {
-        adc = new ADC_INA226();
-    } else if (adcName == "esp32adc1") {
-        // assert_throw(ntc_ch== 255, "adc1 conflicts ntc impl TODO fix");
-        adc = new ADC_ESP32_Cont(sensConf);
-    } else if (adcName == "fake") {
-        adc = new ADC_Fake();
-    } else {
-        ESP_LOGE("main", "Unknown ADC %s", adcName.c_str());
-        assert(false);
-    }
-
     loopRateMin = sensConf.getByte("expected_hz", 0);
-
-    auto Vin_ch = sensConf.getByte("vin_ch");
-    auto Vout_ch = sensConf.getByte("vout_ch");
-    auto Iin_ch = sensConf.getByte("iin_ch", 255);
-    auto Iout_ch = sensConf.getByte("iout_ch", 255);
-
-
-    LinearTransform Vin_transform = adcVDiv(
-            sensConf.f("vin_rh"),
-            sensConf.getFloat("vin_rl"),
-            adc->getInputImpedance(Vin_ch)
-    );
-    //Vin_transform.factor *= sensConf.f("vin_calib", 1.f);
-
-    LinearTransform Vout_transform = adcVDiv(
-            sensConf.f("vout_rh"),
-            sensConf.getFloat("vout_rl"),
-            adc->getInputImpedance(Vout_ch)
-    );
-    //Vout_transform.factor *= sensConf.f("vout_calib", 1.f);
-
-    LinearTransform Iin_transform = {sensConf.f("iin_factor", 1.f), sensConf.f("iin_midpoint", 0.f)};
-    LinearTransform Iout_transform{sensConf.f("iout_factor", 1.f), sensConf.f("iout_midpoint", 0.f)};
-
-
-    if (!adc->init(pinConf)) {
-        ESP_LOGE("main", "Failed to initialize ADC %s", adcName.c_str());
-        scan_i2c();
-        //while (1) {} // trap
-        adcSampler.setADC(nullptr);
-        return;
-    } else {
-        ESP_LOGI("main", "Initialized ADC %s (V/I)(i/o)_ch = (%i %i %i %i) , exp.LoopRate=%hu", adcName.c_str(), Vin_ch,
-                 Iin_ch,
-                 Vout_ch, Iout_ch, loopRateMin);
-    }
-
-    adcSampler.setADC(adc);
-
-    uint16_t iinFiltLen = sensConf.getLong("iin_filt_len");
-    uint16_t ioutFiltLen = sensConf.getLong("iout_filt_len");
     conversionEfficiency = sensConf.f("power_conversion_eff", 0.95f);
     assert(conversionEfficiency > 0.5f and conversionEfficiency < 1.0f);
 
-    sensors.Vin = adcSampler.addSensor(
-            {
-                    Vin_ch,
-                    Vin_transform,
+    bool err = false;
 
-                    {lim.Vin_max, 1.8f, false},
-                    "U_in_raw", 'V',
-                    true},
-            lim.Vin_max, 60);
+    struct p {
+        SensorParams params;
+        AsyncADC<float> *adc;
+        uint16_t filtLen;
+    };
+    std::unordered_map<std::string, p> params;
+
+    auto defAdcName = sensConf.getString("adc");
+    std::unordered_map<std::string, AsyncADC<float> *> adcs{};
+    for (auto chn_: {"ntc", "vin", "iin", "iout", "vout",}) {
+        auto chn = std::string(chn_);
+        auto an = sensConf.getString(chn + '_' + "adc", defAdcName);
+        if (adcs.find(an) == adcs.end()) {
+            adcs[an] = createAdcInstance(an, pinConf, sensConf);
+        }
+        auto adc = adcs[an];
+        if (!adc) err = true;
+
+        auto chNum = sensConf.getByte(chn + '_' + "ch", 255);
+
+        LinearTransform lt{1.f, 0.f};
+
+        if(chNum != 255) {
+            if (chn[0] == 'v') {
+                lt = adcVDiv(
+                        sensConf.f(chn + '_' + "rh"),
+                        sensConf.getFloat(chn + '_' + "rl"),
+                        adc->getInputImpedance(chNum)
+                );
+            } else if (chn[0] == 'i') {
+                lt = {
+                        sensConf.f(chn + '_' + "factor", 1.f),
+                        sensConf.f(chn + '_' + "midpoint", 0.f)
+                };
+            }
+        }
+
+        uint16_t filtLen = sensConf.getLong(chn + '_' + "filt_len");
+
+        params.emplace(chn, p{
+                .params = SensorParams{
+                        .adcCh= chNum,
+                        .transform = lt,
+                        .calibrationConstraints = {},
+                        .teleName = chn,
+                        .unit = ' ',
+                        .rawTelemetry = false,
+                },
+                .adc=adc,
+                .filtLen=filtLen,
+        });
+
+        //ESP_LOGI("main", "Initialized ADC %s (V/I)(i/o)_ch = (%i %i %i %i) , exp.LoopRate=%hu", adcName.c_str(), Vin_ch,
+        //         Iin_ch,
+        //         Vout_ch, Iout_ch, loopRateMin);
+    }
+
+    if (err) {
+        scan_i2c();
+    } else {
+        adcSampler.adcStates.clear();
+    }
+
+    //Vin_transform.factor *= sensConf.f("vin_calib", 1.f);
+    //Vout_transform.factor *= sensConf.f("vout_calib", 1.f);
+
+    params.find("vin")->second.params.calibrationConstraints = {lim.Vin_max, 1.8f, false};
+    params.find("vin")->second.params.unit = 'V';
+    params.find("vin")->second.params.rawTelemetry = true;
+    sensors.Vin = adcSampler.addSensor(params.find("vin")->second.adc,
+                                       params.find("vin")->second.params,
+                                       lim.Vin_max,
+                                       params.find("vin")->second.filtLen);     // filtLen = 60
 
 
-    sensors.Iin = (Iin_ch != 255)
-                  ? adcSampler.addSensor(
-                    {
-                            Iin_ch,
-                            Iin_transform,
+    {
+        auto &iin(params.find("iin")->second);
 
-                            {lim.Iin_max * 0.05f, .1f, true},
-                            "Ii", 'A',
-                            false},
-                    lim.Iin_max, iinFiltLen)
-                  : adcSampler.addVirtualSensor([&]() {
-                if (std::abs(sensors.Iout->last) < .01f or sensors.Vin->last < 0.1f)
-                    return 0.f;
-                return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
-            }, iinFiltLen, "Ii", 'A');
+        if (iin.params.adcCh != 255) {
+            iin.params.calibrationConstraints = {lim.Iin_max * 0.05f, .1f, true};
+            iin.params.unit = 'A';
+            sensors.Iin = adcSampler.addSensor(
+                    iin.adc,
+                    iin.params,
+                    lim.Iin_max,
+                    iin.filtLen);
+        } else {
+            sensors.Iin = adcSampler.addVirtualSensor(
+                    [&]() {
+                        if (std::abs(sensors.Iout->last) < .01f or sensors.Vin->last < 0.1f)
+                            return 0.f;
+                        return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
+                    },
+                    iin.filtLen,
+                    iin.params.teleName.c_str(),
+                    iin.params.unit);
+        }
+    }
 
 
-    sensors.Iout = (Iout_ch != 255)
-                   ? adcSampler.addSensor(
-                    {
-                            Iout_ch,
-                            Iout_transform,
-                            {lim.Iout_max * 0.05f, .1f, true},
-                            "Io", 'A',
-                            true},
-                    lim.Iout_max, ioutFiltLen)
-                   : adcSampler.addVirtualSensor([&]() {
-                if (std::abs(sensors.Iin->last) < .05f or sensors.Vout->last < 0.1f)
-                    return 0.f;
-                return sensors.Iin->last * sensors.Vin->last / sensors.Vout->last * conversionEfficiency;
-            }, ioutFiltLen, "Io", 'A');
+    {
+        auto &iout(params.find("iout")->second);
 
-    // note that Vout should be the last sensor for lowest latency
-    sensors.Vout = adcSampler.addSensor(
-            {Vout_ch,
-             Vout_transform,
-             {lim.Vout_max, .7f, false},
-             "U_out_raw", 'V',
-             true},
-            lim.Vout_max, 60);
+        if (iout.params.adcCh != 255) {
+            iout.params.calibrationConstraints = {lim.Iout_max * 0.05f, .1f, true};
+            iout.params.unit = 'A';
+            iout.params.rawTelemetry = true;
+            sensors.Iout = adcSampler.addSensor(
+                    iout.adc,
+                    iout.params,
+                    lim.Iout_max,
+                    iout.filtLen);
+        } else {
+            sensors.Iout = adcSampler.addVirtualSensor(
+                    [&]() {
+                        if (std::abs(sensors.Iin->last) < .05f or sensors.Vout->last < 0.1f)
+                            return 0.f;
+                        return sensors.Iin->last * sensors.Vin->last / sensors.Vout->last * conversionEfficiency;
+                    },
+                    iout.filtLen,
+                    iout.params.teleName.c_str(),
+                    iout.params.unit
+            );
+        }
+    }
 
-    if (ntc_ch != 255 && adcName == "esp32adc1") {
-        auto sense = adcSampler.addSensor(
-                {
-                        ntc_ch,
-                        {1.f, 0.0f},
-                        {2.8f, .1f, false},
-                        "NTC", 'V',
-                        false},
-                2.8f, 200);
-        mppt.ntc.setValueRef(sense->ewm.avg.get());
+    {
+        auto &ntc(params.find("ntc")->second);
+        if (ntc.params.adcCh != 255) {
+            ntc.params.calibrationConstraints = {2.8f, .1f, false};
+            ntc.params.unit = 'C';
+            auto sense = adcSampler.addSensor(ntc.adc, ntc.params, 2.8f, 200);
+            mppt.ntc.setValueRef(sense->ewm.avg.get());
+        }
+    }
+
+
+    {
+        // notice that Vout should be the last sensor for lowest latency
+        auto &vout(params.find("vout")->second);
+        vout.params.calibrationConstraints = {lim.Vout_max, .7f, false};
+        vout.params.unit = 'V';
+        sensors.Vout = adcSampler.addSensor(vout.adc, vout.params, lim.Vout_max, vout.filtLen); // 60
     }
 
     adcSampler.ignoreCalibrationConstraints = sensConf.getByte("ignore_calibration_constraints", 0);
@@ -278,16 +333,12 @@ void setup() {
     }
 
     if (pinConf) {
-        // TODO
-        /*
-         * [0;32m[I][i2c.arduino:183]: Performing I2C bus recovery[0m
-[1;31m[E][i2c.arduino:199]: Recovery failed: SCL is held LOW on the I2C bus
-         */
-        //*?
         auto i2c_freq = pinConf.getLong("i2c_freq", 100000);
         auto i2c_sda = pinConf.getByte("i2c_sda", 255);
         bool noI2C = (i2c_sda == 255);
         if (!noI2C) {
+            assertPinState(i2c_sda, true, "i2c_sda");
+            assertPinState(pinConf.getLong("i2c_scl"), true, "i2c_scl");
             ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, pinConf.getByte("i2c_scl"), i2c_freq);
             if (!Wire.begin(i2c_sda, (uint8_t) pinConf.getLong("i2c_scl"), i2c_freq)) {
                 ESP_LOGE("main", "Failed to initialize Wire");
@@ -344,14 +395,15 @@ void setup() {
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during sensor setup: %s", er.what());
         //if(adcSampler.adc) delete adcSampler.adc;
-        adcSampler.setADC(nullptr);
+        adcSampler.adcStates.clear();
         setupErr = true;
     }
 
     if (setupErr) {
         ESP_LOGE("main", "Error during setup, adc-only mode, skip pwm init");
     } else {
-        if (!pwm.init(pinConf)) {
+        ConfFile coilConf{"/littlefs/conf/coil.conf"};
+        if (!pwm.init(pinConf, coilConf.getFloat("L0"))) {
             ESP_LOGE("main", "Failed to init half bridge driver");
             setupErr = true;
         }
@@ -359,7 +411,7 @@ void setup() {
 
     try {
         mppt.initSensors(pinConf);
-        if (adcSampler.adc && !setupErr) {
+        if (!adcSampler.adcStates.empty() && !setupErr) {
             mppt.begin(pinConf, lim, teleConf);
         }
     } catch (const std::runtime_error &er) {
@@ -388,8 +440,6 @@ void setup() {
 unsigned long timeLastSampler = 0;
 
 unsigned long delayStartUntil = 0;
-
-bool handleCommand(const String &inp);
 
 void loopNewData(unsigned long nowMs);
 
@@ -442,18 +492,18 @@ void loopRT(void *arg) {
 
     disable_cpu_power_saving();
 
-    assert(xPortGetCoreID() == 1);
-    vTaskPrioritySet(NULL, 20); // highest priority (24)
+    assert(xPortGetCoreID() == RT_CORE);
+    vTaskPrioritySet(nullptr, 20); // highest priority (24)
     // ^ see https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/performance/speed.html#choosing-task-priorities-of-the-application
 
-    ESP_LOGI("main", "Loop running on core %i", (int) xPortGetCoreID());
+    ESP_LOGD("main", "Loop running on core %i", (int) xPortGetCoreID());
 
 #ifdef CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
     ESP_LOGW("main", "CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS enabled!");
             delay(1000);
 #endif
 
-    // enable log defer just before starting the loop
+    // enable log defer just before starting the RT loop
     // this way we instantly know about things going wrong during start-up
     loggingEnableDefer();
 
@@ -711,7 +761,7 @@ void loopNetwork_task(void *arg) {
         lastTimeOutUs = loopWallClockUs();
     }
 
-    if (lcd && adcSampler.adc)
+    if (lcd && !adcSampler.adcStates.empty())
         lcd.updateValues(LcdValues{
                 .Vin = sensors.Vin->ewm.avg.get(),
                 .Vout = sensors.Vout->ewm.avg.get(),

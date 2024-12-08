@@ -3,19 +3,23 @@
 //#include <esp_adc_cal.h>
 #include <stdexcept>
 
-#include "pinconfig.h"
+#include "etc/pinconfig.h"
 #include "math/statmath.h"
-#include "rt.h"
+#include "etc/rt.h"
 
 #include <cstring>
 #include <cstdio>
-#include <esp_adc_cal.h>
+
 #include "sdkconfig.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "esp_adc/adc_continuous.h"
+
+#include <esp_adc/adc_continuous.h>
+#include <esp_adc/adc_cali.h>
+#include <esp_adc/adc_cali_scheme.h>
+
 #include "util.h"
 
 
@@ -33,8 +37,8 @@ class ADC_ESP32_Cont : public AsyncADC<float> {
 public:
     //adc1_channel_t readingChannel = adc1_channel_t::ADC1_CHANNEL_MAX;
 private:
-    esp_adc_cal_characteristics_t *adc_chars[4]{nullptr, nullptr, nullptr, nullptr};
-    adc_atten_t attenuation[adc1_channel_t::ADC1_CHANNEL_MAX]{};
+    adc_cali_handle_t adc_chars[4]{nullptr, nullptr, nullptr, nullptr};
+    adc_atten_t attenuation[adc_channel_t::ADC_CHANNEL_9 + 1]{};
 
     TaskNotification notification;
     adc_continuous_handle_t handle = nullptr;
@@ -49,14 +53,14 @@ private:
     };
     static_assert(sizeof(ChAvgBuf) <= 4);
 
-    ChAvgBuf avgBuf[adc1_channel_t::ADC1_CHANNEL_MAX]{};
+    ChAvgBuf avgBuf[adc_channel_t::ADC_CHANNEL_9 + 1]{};
 
 public:
     [[nodiscard]] SampleReadScheme scheme() const override { return SampleReadScheme::any; };
 
-    ADC_ESP32_Cont(const ConfFile &sensConf) {
-        avgNum = sensConf.getLong("adc_avg");
-        sr = sensConf.getLong("adc_sr");
+    explicit ADC_ESP32_Cont(const ConfFile &sensConf) {
+        avgNum = sensConf.getLong("esp32adc1_avg");
+        sr = sensConf.getLong("esp32adc1_sr");
     }
 
     bool init(const ConfFile &pinConf) override {
@@ -77,7 +81,7 @@ public:
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         adc_atten_t atten;
-        assert(ch < adc1_channel_t::ADC1_CHANNEL_MAX);
+        assert(ch < adc_channel_t::ADC_CHANNEL_9);
 
         // for best linearity, we expect a voltage < 1.8V
         // 0.81 to fit suggested range?
@@ -104,8 +108,14 @@ public:
         attenuation[ch] = atten;
 
         if (adc_chars[atten] == nullptr) {
-            adc_chars[atten] = new esp_adc_cal_characteristics_t{};
-            esp_adc_cal_characterize(ADC_UNIT_1, atten, ADC_WIDTH_BIT_12, 1100, adc_chars[atten]);
+            adc_cali_curve_fitting_config_t conf{
+                    .unit_id = ADC_UNIT_1,
+                    .chan = ADC_CHANNEL_0,
+                    .atten = atten,
+                    .bitwidth = ADC_BITWIDTH_12,
+            };
+            ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&conf, &adc_chars[atten]));
+            //esp_adc_cal_characterize(ADC_UNIT_1, atten, ADC_WIDTH_BIT_12, 1100, adc_chars[atten]);
         }
     }
 

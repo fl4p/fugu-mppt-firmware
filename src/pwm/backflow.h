@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <Arduino.h>
 
-#include "pinconfig.h"
+#include "etc/pinconfig.h"
 #include "util.h"
 
 /**

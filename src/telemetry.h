@@ -19,7 +19,7 @@
 #include <SimpleFTPServer.h>
 #include <ESPTelnet.h>
 
-#include <q/readerwriterqueue.h>
+#include <etc/readerwriterqueue.h>
 
 #include "tele/scope.h"
 
@@ -332,9 +332,9 @@ void telemetryFlushPointsQ() {
     }
 }
 
-extern VIinVout<const ADC_Sampler::Sensor *> sensors;
+extern VIinVout<const Sensor *> sensors;
 
-void dcdcDataChanged(const ADC_Sampler &dcdc, const ADC_Sampler::Sensor &sensor) {
+void dcdcDataChanged(const ADC_Sampler &dcdc, const Sensor &sensor) {
     if (timeSynced && sensor.params.rawTelemetry && !sensor.params.teleName.empty() && WiFi.isConnected()) {
         Point point("mppt");
         point.addTag("device", "fugu_" + String(getChipId()));

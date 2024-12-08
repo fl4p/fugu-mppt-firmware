@@ -7,6 +7,8 @@
 #include <functional>
 #include <vector>
 #include <limits>
+#include <cstring>
+#include <esp_log.h>
 
 
 #define TAG "conf"
@@ -70,7 +72,7 @@ public:
         }
 
 
-        for (auto [key, val]: values) {
+        for (auto &[key, val]: values) {
             if (_map.find(key) != _map.end()) {
                 ESP_LOGE(TAG, "cannot add duplicate key %s", key.c_str());
                 //assert(false);
@@ -172,7 +174,7 @@ public:
     }
 
     uint8_t getByte(const std::string &key) const {
-        return getX<long>(key, 0, strtol_2_8_10_16, true);
+        return getX<long>(key, 255, strtol_2_8_10_16, true);
     }
 
     uint8_t getByte(const std::string &key, uint8_t def) const {

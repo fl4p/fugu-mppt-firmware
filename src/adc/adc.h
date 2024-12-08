@@ -79,4 +79,6 @@ public:
     virtual void reset(const uint8_t ch) {
 
     }
+
+    virtual ~AsyncADC() = default;
 };

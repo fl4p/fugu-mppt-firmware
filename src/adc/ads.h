@@ -3,7 +3,7 @@
 #include <SPI.h> // not sure why this is needed
 #include <Adafruit_ADS1X15.h>
 #include "adc.h"
-#include "pinconfig.h"
+#include "etc/pinconfig.h"
 
 class ADC_ADS;
 

@@ -44,7 +44,7 @@ void ADC_ESP32_Cont::start() {
     adc_digi_pattern_config_t adc_pattern[SOC_ADC_PATT_LEN_MAX] = {};
 
     uint32_t numCh = 0;
-    for (auto ch = 0; ch < adc1_channel_t::ADC1_CHANNEL_MAX; ++ch)
+    for (auto ch = 0; ch <= adc_channel_t::ADC_CHANNEL_9; ++ch)
         if (attenuation[ch] != (adc_atten_t) -1) {
             assert(numCh < SOC_ADC_PATT_LEN_MAX);
             adc_pattern[numCh].atten = attenuation[ch];
@@ -116,7 +116,7 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
 //ESP_LOGI("adc_esp32", "Unit: %s, Channel: %"PRIu32", Value: %"PRIx32, unit, chan_num, data);
 
                 if (scope) {
-                    scope->addSample12(chan_num, data);
+                    scope->addSample12(this, chan_num, data);
                 }
                 //ESP_LOGI("adccont", "scope %p", scope);
 
@@ -128,7 +128,9 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
 
                 if (avgBuf[chan_num].num == avgNum) {
                     data = avgBuf[chan_num].agg / avgBuf[chan_num].num;
-                    float v = (float) esp_adc_cal_raw_to_voltage(data, adc_chars[attenuation[chan_num]]) * 1e-3f;
+                    int mv = 0;
+                    adc_cali_raw_to_voltage(adc_chars[attenuation[chan_num]], data, &mv);
+                    float v = (float) mv * 1e-3f;
                     newSampleCallback(chan_num, v);
                     //if(scope) scope->addSample12(chan_num, data);
                     avgBuf[chan_num].num = 0;

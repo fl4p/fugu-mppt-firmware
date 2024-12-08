@@ -9,14 +9,15 @@
 #include "cooling.h"
 
 #include "buck.h"
+#include "pwm/backflow.h"
 #include "battery.h"
-#include "lcd.h"
+#include "viz/lcd.h"
 #include "tracker.h"
 #include "pd_control.h"
 #include "store.h"
 #include "metering.h"
 #include "charger.h"
-#include "plot.h"
+#include "etc/plot.h"
 
 struct Limits {
     const float Vin_max{};
@@ -140,9 +141,9 @@ class MpptController {
     unsigned long lastTimeProtectPassed = 0;
     unsigned long _lastPointWrite = 0;
 
-    VIinVout<const ADC_Sampler::Sensor *> sensors{};
-    const ADC_Sampler::Sensor *sensorPhysicalI{nullptr};
-    const ADC_Sampler::Sensor *sensorPhysicalU{nullptr};
+    VIinVout<const Sensor *> sensors{};
+    const Sensor *sensorPhysicalI{nullptr};
+    const Sensor *sensorPhysicalU{nullptr};
 
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
     PD_Control VoutController{5000, 12000, true}; // Vout over-voltage
@@ -175,7 +176,7 @@ public:
               charger{} {
     }
 
-    void setSensors(const VIinVout<const ADC_Sampler::Sensor *> &channels_) {
+    void setSensors(const VIinVout<const Sensor *> &channels_) {
         sensors = channels_;
         if (sensors.Iout->isVirtual) {
             ESP_LOGI("mppt", "Iout sensor is virtual, using Iin");
@@ -401,7 +402,7 @@ public:
         float vIn = fminf(sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
         //float vOut = sensors.Vout->ewm.avg.get();
         //float vIn = sensors.Vin->ewm.avg.get();
-        auto vr = buck.updateSyncRectMaxDuty(vOut, vIn);
+        auto vr = buck.updateSyncRectMaxDuty(vIn, vOut, sensors.Iout->ewm.avg.get()); // buck
 
         auto iOutSmall = sensorPhysicalI->ewm.avg.get() < (limits.Iout_max * 0.01f);
 

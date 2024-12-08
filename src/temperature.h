@@ -6,6 +6,7 @@ class SingleValueSensor {
     [[nodiscard]] virtual float last() const = 0;
 };
 
+
 class TempSensorGPIO_NTC : public SingleValueSensor {
     float ntcResistance = 10e3f;
 
@@ -16,7 +17,7 @@ class TempSensorGPIO_NTC : public SingleValueSensor {
 
     uint8_t _attack = 1; // discard first samples
 
-    adc1_channel_t ch = adc1_channel_t::ADC1_CHANNEL_MAX;
+    adc_channel_t ch = adc_channel_t::ADC_CHANNEL_9;
 
 
     [[nodiscard]] float adc2Celsius(float adc) const {
@@ -31,7 +32,7 @@ class TempSensorGPIO_NTC : public SingleValueSensor {
         return temp;
     }
 
-    esp_adc_cal_characteristics_t adc_char{};
+    //esp_adc_cal_characteristics_t adc_char{};
     adc_atten_t adc_atten = ADC_ATTEN_DB_12; // 10k NTC / 10K pulldown on 3.3V => 1.65V mid
 
 public:
@@ -41,11 +42,15 @@ public:
 
     void begin(const ConfFile &pinConf) {
         if (valuePtr == nullptr) {
-            ch = (adc1_channel_t) pinConf.getByte("ntc_ch", adc1_channel_t::ADC1_CHANNEL_MAX);
-            if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
+            auto chi = pinConf.getByte("ntc_ch", 255);
+            if (chi == 255)
                 return;
 
-            assert(ch >= 0 and ch < adc1_channel_t::ADC1_CHANNEL_MAX);
+            assert_throw(false, "ntc: adc1 not implemented, only be ptr");
+            /*
+            ch = (adc_channel_t) chi;
+
+            assert(ch >= 0 and ch <= adc_channel_t::ADC_CHANNEL_9);
 
             ESP_ERROR_CHECK(adc1_config_width(ADC_WIDTH_BIT_12));
             ESP_ERROR_CHECK(adc1_config_channel_atten(ch, adc_atten));
@@ -53,6 +58,7 @@ public:
                    esp_adc_cal_characterize(ADC_UNIT_1, adc_atten, ADC_WIDTH_BIT_12, 1100, &adc_char));
             //pinMode((uint8_t) PinConfig::NTC, ANALOG);
             //assert(adcAttachPin((uint8_t) PinConfig::NTC));
+             */
         } else {
             //ESP_LOGI("ntc")
         }
@@ -62,7 +68,7 @@ public:
 
         if (valuePtr == nullptr) {
             //auto adc = analogRead((uint8_t) PinConfig::NTC);
-            if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
+           /* if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
                 return NAN;
 
             auto adc = adc1_get_raw(ch);
@@ -77,6 +83,7 @@ public:
                     ewma2.add(ewma1.get());
                 }
             }
+            */
         } else {
             auto volt = *valuePtr;
             float temp = adc2Celsius(volt / 3.9f * 4095.0f); // 11/12db => 3.9V full range (see docs)

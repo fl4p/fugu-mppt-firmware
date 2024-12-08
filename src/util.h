@@ -20,3 +20,4 @@ void assertPinState(uint8_t pin, bool digitalVal, const char *pinName = nullptr,
             throw std::runtime_error(#x);                                                                  \
             }                                                               \
     } while(0)
+

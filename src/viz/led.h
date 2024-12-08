@@ -6,7 +6,7 @@
 
 #endif
 
-#include "pinconfig.h"
+#include "etc/pinconfig.h"
 #include "store.h"
 
 /**
@@ -30,9 +30,9 @@ public:
         if (!pin) pin = pinConfig.getLong(k + "B", 0);
         if (!pin)return false;
 
-        ESP_LOGI("led", "pin = %d", pin);
-        for (auto &s: pinConfig.keys())
-            ESP_LOGI("led", "k=%s", s.c_str());
+        //ESP_LOGI("led", "pin = %d", pin);
+        //for (auto &s: pinConfig.keys())
+        //    ESP_LOGI("led", "k=%s", s.c_str());
 
         /// LED strip common configuration
         led_strip_config_t strip_config = {

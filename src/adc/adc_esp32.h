@@ -41,7 +41,7 @@ public:
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         adc_atten_t atten;
-        assert(ch < adc1_channel_t::ADC1_CHANNEL_MAX);
+        assert(ch <= adc1_channel_t::ADC1_CHANNEL_9);
 
         // 0.81 to fit suggested range?
         // see https://docs.espressif.com/projects/esp-idf/en/v4.2/esp32/api-reference/peripherals/adc.html#_CPPv425adc1_config_channel_atten14adc1_channel_t11adc_atten_t

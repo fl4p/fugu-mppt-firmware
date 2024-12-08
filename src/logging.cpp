@@ -2,8 +2,7 @@
 
 #include <ESPTelnet.h>
 
-//#include "concurrentqueue.h"
-#include "q/readerwriterqueue.h"
+#include "etc/readerwriterqueue.h"
 
 
 

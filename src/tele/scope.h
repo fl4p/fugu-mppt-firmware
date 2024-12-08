@@ -203,7 +203,7 @@ public:
 
     bool connected = false;
 
-    void addChannel(uint8_t chNum, uint8_t typ, uint8_t bitLen, const char *name) {
+    void addChannel(const void *adc, uint8_t chNum, uint8_t typ, uint8_t bitLen, const char *name) {
         // assert(buf == nullptr);
         // assert(bitLen % 8 == 0);
         // uint8_t len = bitLen / 8;
@@ -228,7 +228,7 @@ public:
         return false;
     }
 
-    void addSample12(uint8_t ch, const uint16_t &sample) {
+    void addSample12(const void *adc, uint8_t ch, const uint16_t &sample) {
 
         if (!connected)
             return;

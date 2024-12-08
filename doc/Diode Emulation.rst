@@ -33,6 +33,13 @@ A digital ZCD implementation requires an ADC sampling rate much higher than the 
 
 An analog ZCD works with a fast comparator, whose output can be fed into the half bridge driver disable input.
 
+The advantage of ZCD is that it implements peak current limiting.
+This prevent excessive currents when inductor core starts to saturate and the ac ripple current waveform becomes spiky.
+Once the current threshold is reached, we shut-down the ctrl switch and after the chosen dead-time enable the sync switch.
+The analog signal path garantues very fast shut-down in over-load and short-circuit conditions.
+
+https://www.monolithicpower.com/en/learning/resources/power-losses-in-buck-converters-and-how-to-increase-efficiency
+
 --------------------
 Sensor-less approach
 --------------------

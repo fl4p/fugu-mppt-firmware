@@ -1,41 +1,35 @@
 
 #include <INA226_WE.h>
 
-#include "pinconfig.h"
+//#include "etc/pinconfig.h"
 #include "sampling.h"
 //#include "ina228.h"
-#include "adc_esp32.h"
 
 #include "i2c.h"
-#include "store.h"
-#include "rt.h"
+#include "conf.h"
+#include "etc/rt.h"
 
 class ADC_INA226;
-
 
 void ina226_alert();
 
 ADC_INA226 *ina226_instance = nullptr;
 
-#define INA22x_MANUFACTURER_ID_CMD    0x3E
-#define INA22x_DEVICE_ID_CMD          0x3F
 
 class ADC_INA226 : public AsyncADC<float> {
     INA226_WE ina226;
     volatile bool new_data = false;
-
     TaskNotification taskNotification{};
-
     uint8_t readChannel = 0;
-
-    ADC_ESP32 intAdc;
-
 
 public:
 
-    static constexpr auto ChVBus = 0, ChI = 1, ChAux = 2;
+    static constexpr auto ChVBus = 0, ChI = 1;
+    static constexpr auto INA22x_MANUFACTURER_ID_CMD = 0x3E;
+    static constexpr auto INA22x_DEVICE_ID_CMD = 0x3F;
 
     [[nodiscard]] SampleReadScheme scheme() const override {
+        //
         return SampleReadScheme::all;
     }
 
@@ -53,8 +47,7 @@ public:
 
         assertPinState(alertPin, true, "ina22x_alert", false);
 
-        // esp32s3 has 45k internal pull up
-        pinMode(alertPin, INPUT_PULLUP);
+        pinMode(alertPin, INPUT_PULLUP);  // esp32s3 has 45k internal pull up
 
         ina226_instance = this;
         attachInterrupt(digitalPinToInterrupt(alertPin), ina226_alert, FALLING);
@@ -91,11 +84,6 @@ public:
             return false;
         }
 
-
-        if (!intAdc.init(pinConf))
-            return false;
-
-        intAdc.startReading((uint8_t) pinConf.getByte("ina226_aux_ch"));
 
         //ina226.setAverage(AVERAGE_16);
         //ina226.setConversionTime(CONV_TIME_204, CONV_TIME_140);
@@ -171,6 +159,7 @@ public:
         /*auto maskEnReg = i2c_read_short(bus, addr, INA226_WE::INA226_MASK_EN_REG, true, 100);
 
         // TODO read multi reg
+         // this is not faster
         bool overflow = (maskEnReg >> 2) & 0x0001;
         bool convAlert = (maskEnReg >> 3) & 0x0001;
         bool limitAlert = (maskEnReg >> 4) & 0x0001;
@@ -222,8 +211,9 @@ public:
         if (!taskNotification.wait(5))
             throw std::runtime_error("timeout waiting for ina22x alert interrupt");
 
-        if (!new_data) // TODO remove this?
-            return false;
+        assert(new_data);
+        //if (!new_data) // TODO remove this?
+        //    return false;
         new_data = false;
 
         uint16_t value = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG);
@@ -257,27 +247,23 @@ public:
             case ChI:
                 return ina226.getCurrent_A();
 
-            case ChAux:
-                return intAdc.getSample();
-
             default:
                 assert(false);
         }
     }
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
-        if (ch == ChAux) {
-            ESP_LOGI("ina226", "internal ADC setMaxExpectedVoltage(%i,%.6f)", ch, voltage);
-            intAdc.setMaxExpectedVoltage(intAdc.readingChannel, voltage);
+        if (ch == ChVBus) {
+            assert_throw(voltage <= 36,"");
+        } else if (ch == ChI) {
+            ESP_LOGW("ina22x", "Check shunt voltage range!");
+        } else {
+            assert(false);
         }
     }
 
     float getInputImpedance(uint8_t ch) override {
-        if (ch == ChAux) {
-            return intAdc.getInputImpedance(intAdc.readingChannel);
-        } else {
-            return 830e3; // 830k ina226 input impedance
-        }
+        return 830e3; // 830k ina226 input impedance
     }
 };
 

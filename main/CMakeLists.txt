@@ -15,9 +15,10 @@ idf_component_register(SRCS
         "../src/logging.cpp"
         "../src/util.cpp"
         "../src/adc/adc_esp32_cont.cpp"
-        "../src/lcd.cpp"
+        "../src/viz/lcd.cpp"
         "../src/web/server.cpp"
         "../src/console.cpp"
+        "../src/etc/rt.cpp"
         "../src/math/float16.cpp"
         INCLUDE_DIRS "." "../src" "../src/asciichart"
         REQUIRES

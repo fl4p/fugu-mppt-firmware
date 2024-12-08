@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include "pinconfig.h"
+#include "etc/pinconfig.h"
 
 #define FAN_PWM_CH 2
 #define FAN_PWM_BITS 8

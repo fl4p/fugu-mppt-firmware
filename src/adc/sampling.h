@@ -35,10 +35,108 @@ struct CalibrationConstraints {
     bool calibrateMidpoint;
 };
 
+/*struct _SensorCalibrationState {
+    std::vector<float> acc{};
+    std::vector<uint32_t> num {};
+};*/
+
+struct SensorParams {
+    const uint8_t adcCh;
+    const LinearTransform transform;
+    //uint16_t ewmaSpan;
+    CalibrationConstraints calibrationConstraints;
+    const std::string teleName;
+    char unit;
+    /**
+     * Whether to capture each ADC conversion. Can produce a lot of networking data
+     */
+    bool rawTelemetry;
+    //uint16_t filtLen;
+};
+
+struct Sensor {
+    const SensorParams params;
+
+    float last = NAN;
+    float previous = NAN;
+    uint32_t numSamples = 0;
+    RunningMedian3<float> med3{};
+    EWM<float> ewm;
+
+    float calibrationAvg = 0;
+
+    const bool isVirtual;
+
+    Sensor(SensorParams params, uint32_t ewmSpan)
+            : params(std::move(params)), ewm{ewmSpan}, isVirtual(false) {}
+
+
+    Sensor(const Sensor &other) = delete; // no-copy
+    Sensor &operator=(const Sensor &) = delete; // no-copy
+
+    void reset(bool resetCalibration = false) {
+        last = NAN;
+        previous = NAN;
+        numSamples = 0;
+        med3.reset();
+        ewm.reset();
+        if (resetCalibration && calibrationAvg != 0) {
+            ESP_LOGI("sensor", "%s reset calibration", params.teleName.c_str());
+            calibrationAvg = 0;
+        }
+    }
+
+    void add_sample(float x) { // IRAM_ATTR
+        auto v = params.transform.apply(x);
+
+        //if( !isfinite(v)) {
+        //    ESP_LOGW("s", "not-finite sensor val %f (name=%s, x=%f) ", v, params.teleName.c_str(), x);
+        //}
+
+        if (params.calibrationConstraints.calibrateMidpoint) {
+            //ESP_LOGI("sensor", "%s %.4f offset=%.4f std=%.4f n=%u", params.teleName.c_str(), v, calibrationAvg,
+            //         ewm.std.get(), numSamples);
+            v -= calibrationAvg;
+        }
+
+        previous = last;
+        last = v;
+        ewm.add(med3.next(v));
+        ++numSamples;
+
+        //ESP_LOGD("s", "Sensor %s: add sample %.5f #%d (ewm avg %.5f)", teleName.c_str(), last, numSamples, ewm.avg.get());
+    }
+
+protected:
+    Sensor(SensorParams params, uint32_t ewmSpan, bool isVirtual)
+            : params(std::move(params)), ewm{ewmSpan}, isVirtual{isVirtual} {}
+
+    //virtual ~Sensor() = default;  // make class polymorphic (to enable dynamic_cast)
+};
+
+struct PhysicalSensor : public Sensor {
+    AsyncADC<float> *adc{nullptr};
+
+    explicit PhysicalSensor(AsyncADC<float> *adc, const SensorParams &params, uint32_t ewmSpan)
+            : Sensor(params, ewmSpan, false),
+              adc(adc) {
+    }
+};
+
+struct VirtualSensor : public Sensor {
+    std::function<float()> func;
+
+    explicit VirtualSensor(std::function<float()> func, uint32_t ewmSpan, const char *teleName, char unit)
+            : Sensor({255, {1, 0}, {}, teleName, unit, false}, ewmSpan, true),
+              func(std::move(func)) {
+    }
+};
+
 template<typename T>
 struct VIinVout {
     T Vin, Vout, Iin, Iout;
 };
+
 
 /**
  *
@@ -53,8 +151,16 @@ struct VIinVout {
 class ADC_Sampler {
 public:
     bool ignoreCalibrationConstraints = false;// for testing
+
+    //typedef Sensor Sensor;
+    //using Sensor = Sensor;
+
 private:
-    uint8_t cycleCh = 0;
+    struct AdcState {
+        AsyncADC<float> *adc{nullptr};
+        std::array<Sensor *, 8> sensorByCh{nullptr};
+        uint8_t cycleCh = 0;
+    };
 
     uint8_t calibrating_ = 0;
     unsigned long timeLastCalibration = 0;
@@ -62,107 +168,20 @@ private:
 
 public:
 
-    AsyncADC<float> *adc = nullptr;
-
-    struct SensorParams {
-        const uint8_t adcCh;
-        const LinearTransform transform;
-        //uint16_t ewmaSpan;
-        const CalibrationConstraints calibrationConstraints;
-        const std::string teleName;
-        const char unit;
-        /**
-         * Whether to capture each ADC conversion. Can produce a lot of networking data
-         */
-        const bool rawTelemetry;
-    };
-
-    struct Sensor {
-        const SensorParams params;
-
-        float last = NAN;
-        float previous = NAN;
-        uint32_t numSamples = 0;
-        RunningMedian3<float> med3{};
-        EWM<float> ewm;
-
-        float calibrationAvg = 0;
-
-        const bool isVirtual;
-
-        Sensor(SensorParams params, uint32_t ewmSpan)
-                : params(std::move(params)), ewm{ewmSpan}, isVirtual(false) {}
-
-
-        Sensor(const Sensor &other) = delete; // no-copy
-        Sensor &operator=(const Sensor &) = delete; // no-copy
-
-        void reset(bool resetCalibration = false) {
-            last = NAN;
-            previous = NAN;
-            numSamples = 0;
-            med3.reset();
-            ewm.reset();
-            if (resetCalibration && calibrationAvg != 0) {
-                ESP_LOGI("sensor", "%s reset calibration", params.teleName.c_str());
-                calibrationAvg = 0;
-            }
-        }
-
-        void add_sample(float x) { // IRAM_ATTR
-            auto v = params.transform.apply(x);
-
-            //if( !isfinite(v)) {
-            //    ESP_LOGW("s", "not-finite sensor val %f (name=%s, x=%f) ", v, params.teleName.c_str(), x);
-            //}
-
-            if (params.calibrationConstraints.calibrateMidpoint) {
-                //ESP_LOGI("sensor", "%s %.4f offset=%.4f std=%.4f n=%u", params.teleName.c_str(), v, calibrationAvg,
-                //         ewm.std.get(), numSamples);
-                v -= calibrationAvg;
-            }
-
-            previous = last;
-            last = v;
-            ewm.add(med3.next(v));
-            ++numSamples;
-
-            //ESP_LOGD("s", "Sensor %s: add sample %.5f #%d (ewm avg %.5f)", teleName.c_str(), last, numSamples, ewm.avg.get());
-        }
-
-    protected:
-        Sensor(SensorParams params, uint32_t ewmSpan, bool isVirtual)
-                : params(std::move(params)), ewm{ewmSpan}, isVirtual{isVirtual} {}
-
-        //virtual ~Sensor() = default;  // make class polymorphic (to enable dynamic_cast)
-    };
-
-    struct VirtualSensor : public Sensor {
-        std::function<float()> func;
-
-        explicit VirtualSensor(std::function<float()> func, uint32_t ewmSpan, const char *teleName, char unit)
-                : Sensor({255, {1, 0}, {}, teleName, unit, false}, ewmSpan, true),
-                  func(std::move(func)) {
-        }
-    };
-
-    /*struct _SensorCalibrationState {
-        std::vector<float> acc{};
-        std::vector<uint32_t> num {};
-    };*/
 
     std::function<void(const ADC_Sampler &sampler, const Sensor &)> onNewSample = nullptr;
+
+    std::vector<AdcState> adcStates{};
     std::vector<Sensor *> sensors{};
     std::vector<Sensor *> realSensors{};
     std::vector<VirtualSensor *> virtualSensors{};
 
-    std::array<Sensor *, 8> sensorByCh{nullptr};
 
-    //_SensorCalibrationState * calibrationState = nullptr;
-    //explicit ADC_Sampler()  {}
-
-    void setADC(AsyncADC<float> *adc_) {
-        adc = adc_;
+    AdcState &getAdcState(AsyncADC<float> *adc) {
+        for (auto &s: adcStates)
+            if (s.adc == adc)
+                return s;
+        return adcStates.emplace_back(AdcState{.adc = adc});
     }
 
     /**
@@ -172,18 +191,20 @@ public:
      * @param transform Transform applied to the samples
      * @param maxY Max expected value of the transformed sample (used to program the ADC PGA)
      */
-    const Sensor *addSensor(SensorParams params, float maxY, uint32_t ewmSpan) {
+    const Sensor *addSensor(AsyncADC<float> *adc, SensorParams params, float maxY, uint32_t ewmSpan) {
         assert(adc != nullptr);
         auto maxX = params.transform.apply_inverse(params.transform.factor < 0 ? -maxY : maxY);
         ESP_LOGI("sampler", "%s ADC ch %hhu maxY=%.4f, maxX=%.4f", params.teleName.c_str(), params.adcCh, maxY, maxX);
         adc->setMaxExpectedVoltage(params.adcCh, maxX);
 
+        auto &sensorByCh(getAdcState(adc).sensorByCh);
+
         if (adc->scheme() == SampleReadScheme::any)
             assert_throw(sensorByCh[params.adcCh] == nullptr, "duplicate sensor adc channel");
 
-        auto sensorPtr = new Sensor{std::move(params), ewmSpan};
+        auto sensorPtr = new PhysicalSensor{adc, params, ewmSpan};
 
-        if(scope) scope->addChannel(sensorPtr->params.adcCh, 'u', 12, sensorPtr->params.teleName.c_str());
+        if (scope) scope->addChannel(this, sensorPtr->params.adcCh, 'u', 12, sensorPtr->params.teleName.c_str());
 
         sensors.push_back(sensorPtr);
         realSensors.push_back(sensorPtr);
@@ -199,21 +220,23 @@ public:
         return sensors.back();
     }
 
-    void _readNext() {
-        adc->startReading(realSensors[cycleCh]->params.adcCh);
+    void _readNext(AdcState &state) {
+        state.adc->startReading(realSensors[state.cycleCh]->params.adcCh);
     }
 
 
     /**
-     * this must be called from the same task that perform ADC reading (calls hasData & getSample)
+     * user must call this from the same task that perform ADC reading (calls hasData & getSample)
      */
     void begin() {
-        assert_throw (adc, "adc null");
+        assert_throw (!adcStates.empty(), "adc null");
         assert_throw(!realSensors.empty(), "");
 
-        adc->start();
-        if (adc->scheme() != SampleReadScheme::any)
-            _readNext();
+        for (auto &s: adcStates) {
+            s.adc->start();
+            if (s.adc->scheme() != SampleReadScheme::any)
+                _readNext(s);
+        }
     }
 
     void startCalibration() {
@@ -227,7 +250,7 @@ public:
         for (auto &ch: sensors) {
             ch->reset(true);
             if (!ch->isVirtual)
-                adc->reset(ch->params.adcCh);
+                static_cast<PhysicalSensor *>(ch)->adc->reset(ch->params.adcCh);
         }
     }
 
@@ -316,7 +339,10 @@ public:
         return calibRes;
     }
 
-    UpdateRet update() {
+
+    UpdateRet _updateAdc(AdcState &state) {
+        auto adc = state.adc;
+
         auto hd = adc->hasData();
         rtcount("adc.update.hasData");
         if (!hd)
@@ -325,10 +351,11 @@ public:
 
         auto scheme = adc->scheme();
         UpdateRet calibRes;
+
         if (scheme == SampleReadScheme::any) {
             calibRes = UpdateRet::NoNewData;
             adc->read([&](uint8_t ch, float v) {
-                auto cr = _addSensorSample(sensorByCh[ch], v);
+                auto cr = _addSensorSample(state.sensorByCh[ch], v);
                 if (cr > calibRes) calibRes = cr;
             });
             rtcount("adc.update.read");
@@ -345,13 +372,13 @@ public:
                 if (cr > calibRes) calibRes = cr;
             }
         } else {
-            auto sensor(realSensors[cycleCh]);
+            auto sensor(realSensors[state.cycleCh]);
 
             auto x = adc->getSample();
             rtcount("adc.update.getSample");
 
-            cycleCh = (cycleCh + 1) % realSensors.size();
-            _readNext(); // start async read
+            state.cycleCh = (state.cycleCh + 1) % realSensors.size();
+            _readNext(state); // start async read
             rtcount("adc.update.startReading");
 
             calibRes = _addSensorSample(sensor, x);
@@ -366,17 +393,30 @@ public:
         }*/
 
 
+        return calibrating_ == 0 ? UpdateRet::NewData : UpdateRet::Calibrating;
+    }
+
+    UpdateRet update() {
+        UpdateRet res = UpdateRet::NoNewData;
+        bool updateVirtual = false;
+        for (auto &state: adcStates) {
+            auto r = _updateAdc(state);
+            if (r > res) res = r;
+            if (state.cycleCh == 0) updateVirtual = true;
+        }
+
         // update virtual sensors
         // TODO virtual sensor calibration?
-        if (calibrating_ == 0 && cycleCh == 0) {
+        if (calibrating_ == 0 && updateVirtual) {
             for (auto &sn: virtualSensors) {
                 sn->add_sample(sn->func());
                 rtcount("adc.update.AddSampleVirtual");
             }
         }
 
-        return calibrating_ == 0 ? UpdateRet::NewData : UpdateRet::Calibrating;
+        return res;
     }
+
 
     [[nodiscard]] bool isCalibrating() const { return calibrating_ > 0; }
 
