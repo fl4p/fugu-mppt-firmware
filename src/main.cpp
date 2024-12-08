@@ -609,6 +609,13 @@ void loopLF(const unsigned long &nowUs) {
 
     mppt.ntc.read();
 
+    if (mppt.ucTemp.last() > 95 && WiFi.isConnected()) {
+        ESP_LOGW("main", "High chip temperature, shut-down WiFi");
+        flush_async_uart_log();
+        vTaskDelay(pdMS_TO_TICKS(200));
+        WiFi.disconnect(true);
+    }
+
     if (sensors.Vin)
         UART_LOG(
                 "V=%4.*f/%4.*f I=%4.*f/%4.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
@@ -751,7 +758,7 @@ void loopNetwork_task(void *arg) {
         /* only connect with disabled power conversion
          * ESP32's wifi can cause latency issues otherwise
          */
-        wifiLoop(converter.disabled());
+        wifiLoop(converter.disabled() && mppt.ucTemp.last() < 80);
         ftpUpdate();
         telemetryFlushPointsQ();
     }
