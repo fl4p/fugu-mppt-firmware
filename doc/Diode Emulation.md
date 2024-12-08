@@ -77,14 +77,14 @@ With the value of the H-field we can compute the permeability and
 inductivity drop with the model from the materials\'s datasheet
 ( $\\%\mu _i( H )$ ).
 
-$$L(I_o) = \frac{\\%\mu _i(H_{dc})}{\mu _i} \cdot L_0$$
+$$L(I_o) = \frac{\\%\mu _i(H_dc)}{\mu _i} \cdot L_0$$
 
-With the DC-saturated inductivity value we compute ripple current and
+With the DC-biased inductivity value we compute ripple current and
 decide if the converter is in DCM.
 
 Besides inductivity value L, this approach needs the number of winding
 turns, the magnet path length of the core and the dc bias model of the
-core material. Simulations show that there is only a rather small
+core material. Simulations show that there is a rather small
 operating range where the converter would operate in DCM with L(I_o),
 and in CCM with L0. For reduced complexity of the implementation, we can
 just assume a fixed inductivity drop of 5%. An analytic inference still
@@ -153,7 +153,7 @@ will be 4% too short.
 
 # Boost Converter
 
-$$M_CCM = \frac{1}{1-D}$$
+$$M_{CCM} = \frac{1}{1-D}$$
 
 $$t_{on,HS} = t_{on,LS} \cdot \frac{1}{M - 1}$$
 

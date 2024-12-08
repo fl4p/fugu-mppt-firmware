@@ -1,6 +1,6 @@
 # Poor ADC ?
 
-The ESP32 internal ADC has a sloppy reputation.
+The ESP32 internal ADC has a poor reputation.
 It suffers from non-linearity and is known to be noisy. But is it really that bad?
 
 The linearity can be fixed with calibration and we keep a margin to the ADC voltage range, like Espressif suggests
@@ -26,6 +26,8 @@ For the ESP32-S3, a good configuration appears to be 83.3kHz SR and 32 samples a
 per-channel rate of ~ 868 sps (=83333 / 32 / 3).
 
 # Wiring
+
+*This applies to the original fugu PCB design with either ESP32 or ESP32-S3*
 
 To use the internal ADC1 of the ESP32/ESP32-S3, just omit ADS1015 or ADS1115 (U10) and the ALERT 10k pull-up resistor
 (R31).

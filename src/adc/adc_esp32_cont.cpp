@@ -43,29 +43,48 @@ void ADC_ESP32_Cont::start() {
 
     adc_digi_pattern_config_t adc_pattern[SOC_ADC_PATT_LEN_MAX] = {};
 
-    uint32_t numCh = 0;
+    uint32_t patLen = 0;
+    bool hasNtc = false;
     for (auto ch = 0; ch <= adc_channel_t::ADC_CHANNEL_9; ++ch)
         if (attenuation[ch] != (adc_atten_t) -1) {
-            assert(numCh < SOC_ADC_PATT_LEN_MAX);
-            adc_pattern[numCh].atten = attenuation[ch];
-            adc_pattern[numCh].channel = ch & 0x7;
-            adc_pattern[numCh].unit = ADC_UNIT_1;
-            adc_pattern[numCh].bit_width = SOC_ADC_DIGI_MAX_BITWIDTH;
-            ESP_LOGI("adc_esp32", "pattern[%lu] = {.atten=%d, .channel=%d}", numCh, attenuation[ch], ch);
-            ++numCh;
+            assert(patLen < SOC_ADC_PATT_LEN_MAX);
+            adc_pattern[patLen].atten = attenuation[ch];
+            adc_pattern[patLen].channel = ch & 0x7;
+            adc_pattern[patLen].unit = ADC_UNIT_1;
+            adc_pattern[patLen].bit_width = SOC_ADC_DIGI_MAX_BITWIDTH;
+            ESP_LOGI("adc_esp32", "pattern[%lu] = {.atten=%d, .channel=%d}", patLen, attenuation[ch], ch);
+            ++patLen;
             //if(scope)scope->addChannel(ch, 'u', 12, "");
+            if (ch == ntcCh) hasNtc = true;
         }
 
-    assert_throw(numCh > 0, "");
+    // duplicate pattern for HF channels (without NTC ch) for increased BW
+    if (hasNtc && (patLen - 1) * 2 <= SOC_ADC_PATT_LEN_MAX) {
+        ESP_LOGI("adc_esp32", "Duplicate pattern without ntc channel");
+        for (auto ch = 0; ch <= adc_channel_t::ADC_CHANNEL_9; ++ch)
+            if (attenuation[ch] != (adc_atten_t) -1 && ch != ntcCh) {
+                assert(patLen < SOC_ADC_PATT_LEN_MAX);
+                adc_pattern[patLen].atten = attenuation[ch];
+                adc_pattern[patLen].channel = ch & 0x7;
+                adc_pattern[patLen].unit = ADC_UNIT_1;
+                adc_pattern[patLen].bit_width = SOC_ADC_DIGI_MAX_BITWIDTH;
+                ESP_LOGI("adc_esp32", "pattern[%lu] = {.atten=%d, .channel=%d}", patLen, attenuation[ch], ch);
+                ++patLen;
+            }
+    } else if(hasNtc) {
+        ESP_LOGI("adc_esp32", "NTC channel but pattern table to small to duplicate");
+    }
 
-    ESP_LOGI("adc_esp32", "ADC1 SR=%lu Hz, nCh=%lu, avg=%u => %lu sps/ch", sr, numCh, avgNum,
-             sr / numCh / avgNum);
+    assert_throw(patLen > 0, "");
+
+    ESP_LOGI("adc_esp32", "ADC1 SR=%lu Hz, nCh=%lu, avg=%u => %lu sps/ch", sr, patLen, avgNum,
+             sr / patLen / avgNum);
 
     // Note about sample freq:
     // this is the frequency the adc reads samples of any channel
     // if we sample 3 channels in a continous pattern, the effective sampling rate per channel will be 1/3.
     adc_continuous_config_t dig_cfg = {
-            .pattern_num = numCh,
+            .pattern_num = patLen,
             .adc_pattern = adc_pattern,
             .sample_freq_hz = sr, // sps= /numCh/averaging
             .conv_mode = ADC_CONV_SINGLE_UNIT_1,
@@ -85,13 +104,14 @@ void ADC_ESP32_Cont::start() {
 }
 
 uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
-    static uint32_t max_ret_num = 0, min_ret_num = ADC1_READ_LEN + 1;
+    //static uint32_t max_ret_num = 0, min_ret_num = ADC1_READ_LEN + 1;
     uint32_t ret_num = 0;
     esp_err_t ret = adc_continuous_read(handle, result, ADC1_READ_LEN, &ret_num, 3);
 
     if (ret == ESP_OK) {
         //assert(ret_num == ADC1_READ_LEN);
 
+        /*
         if (ret_num > max_ret_num) {
             if (ret_num == ADC1_READ_LEN and max_ret_num <= 32)
                 max_ret_num++; // grace periode
@@ -105,6 +125,7 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
             min_ret_num = ret_num;
             ESP_LOGI("adc_esp32", "min_ret_num=%lu", min_ret_num);
         }
+         */
 
         //ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32" bytes", ret, ret_num);
         for (int i = 0; i < ret_num; i += SOC_ADC_DIGI_RESULT_BYTES) {

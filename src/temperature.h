@@ -68,22 +68,22 @@ public:
 
         if (valuePtr == nullptr) {
             //auto adc = analogRead((uint8_t) PinConfig::NTC);
-           /* if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
-                return NAN;
+            /* if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
+                 return NAN;
 
-            auto adc = adc1_get_raw(ch);
+             auto adc = adc1_get_raw(ch);
 
-            // ESP_LOGI("temp", "ADC_RAW=%i", adc);
+             // ESP_LOGI("temp", "ADC_RAW=%i", adc);
 
-            if (_attack) --_attack;
-            else {
-                float temp = adc2Celsius(adc);
-                if (!isnan(temp)) {
-                    ewma1.add(median3.next(temp));
-                    ewma2.add(ewma1.get());
-                }
-            }
-            */
+             if (_attack) --_attack;
+             else {
+                 float temp = adc2Celsius(adc);
+                 if (!isnan(temp)) {
+                     ewma1.add(median3.next(temp));
+                     ewma2.add(ewma1.get());
+                 }
+             }
+             */
         } else {
             auto volt = *valuePtr;
             float temp = adc2Celsius(volt / 3.9f * 4095.0f); // 11/12db => 3.9V full range (see docs)
@@ -120,6 +120,7 @@ public:
 
 
 #if ESP_IDF_VERSION_MAJOR == 5
+
 class Esp32TempSensor : public SingleValueSensor {
     RunningMedian3<float> median3{};
     EWMA<float> ewma{20};
@@ -145,15 +146,18 @@ public:
     void begin() {
         ESP_ERROR_CHECK(temperature_sensor_install(&temp_sensor_config, &temp_sensor));
         ESP_ERROR_CHECK(temperature_sensor_enable(temp_sensor));
+        if (scope) scope->addChannel(this, 0, 'u', 12, "ucTemp");
     }
 
     float read() override {
 
-        // This has very poor real-time performance if WiFi is enabled (probably using ADC0?)
+        // This has very poor real-time performance if WiFi is enabled
         if (temperature_sensor_get_celsius(temp_sensor, &tsens_out) != ESP_OK) {
             //temp_sensor_config = (temp_sensor_dac_offset_t)((conf.dac_offset + 1) % TSENS_DAC_MAX);
             return NAN;
         }
+
+        if (scope) scope->addSample12(this, 0, tsens_out * 40);
 
         ewma.add(median3.next(tsens_out));
 
@@ -162,6 +166,7 @@ public:
 
     [[nodiscard]] float last() const override { return ewma.get(); }
 };
+
 #else // ESP_IDF_VERSION_MAJOR == 5
 /**
  * Reads ESP32 internal temperature sensor.

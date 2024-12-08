@@ -204,7 +204,7 @@ public:
 
         auto sensorPtr = new PhysicalSensor{adc, params, ewmSpan};
 
-        if (scope) scope->addChannel(this, sensorPtr->params.adcCh, 'u', 12, sensorPtr->params.teleName.c_str());
+        if (scope) scope->addChannel(adc, sensorPtr->params.adcCh, 'u', 12, sensorPtr->params.teleName.c_str());
 
         sensors.push_back(sensorPtr);
         realSensors.push_back(sensorPtr);

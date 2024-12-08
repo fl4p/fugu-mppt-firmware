@@ -91,7 +91,6 @@ void loopUart(unsigned long nowMs) {
     // so access the uart port directly
     loopConsole(uartRead, uartWrite, nowMs);
 
-
     if (usbConnected) {
         //loopConsole(esp_usb_console_read_buf, esp_usb_console_write_buf, nowMs);
         loopConsole(console_read_usb, console_write_usb, nowMs);

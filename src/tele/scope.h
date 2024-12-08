@@ -162,6 +162,7 @@ private:
     TCPServer srv;
     TCPClient client;
 
+    std::unordered_map<const void *, uint8_t> ptr2Cid;
 
 public:
     //uint32_t numBytesSent = 0;
@@ -184,12 +185,13 @@ public:
     static constexpr uint8_t TypF = 'f';
 
     struct h {
-        uint8_t ch;
+        uint8_t cid; // global ch id
+        uint8_t ch; // adc local channel
         uint8_t typ;
         uint8_t bitLen;
         const char *name;
         //const char *fmt; // i8, i12, i16, u8, u12, u16, u32, f32
-        void *ptr;
+        //void *ptr;
     };
 
     std::vector<h> channels;
@@ -207,11 +209,14 @@ public:
         // assert(buf == nullptr);
         // assert(bitLen % 8 == 0);
         // uint8_t len = bitLen / 8;
-        channels.emplace_back(h{chNum, typ, bitLen, name, nullptr});
-        //channels
+        uint8_t cid = channels.empty() ? 0 : (channels.back().cid + 1);
+        channels.emplace_back(h{cid, chNum, typ, bitLen, name});
+        assert(ptr2Cid.find((char *) adc + chNum) == ptr2Cid.end()); // check for cid collision
+        ptr2Cid[((char *) adc) + chNum] = cid; // todo custom mapping
     }
 
     void startStream() {
+        uint8_t offset = 0;
     }
 
     TaskNotification notification{};
@@ -226,6 +231,10 @@ public:
             return true;
         }
         return false;
+    }
+
+    uint8_t cid(const void *adc, uint8_t chNum) const {
+        return ptr2Cid.find((char *) adc + chNum)->second;
     }
 
     void addSample12(const void *adc, uint8_t ch, const uint16_t &sample) {
@@ -251,7 +260,7 @@ public:
 
         auto p = (Data12Ch4 *) &(buf[bufSel][bufPos[bufSel]]);
         p->_zero = 0;
-        p->channel = ch;
+        p->channel = cid(adc, ch);
         p->data = sample;
 
         bufPos[bufSel] += sizeof(Data12Ch4);
@@ -299,7 +308,8 @@ public:
     void sendHeader(TCPClient &cl) {
         std::stringstream ss;
         ss << "###ScopeHead:";
-        for (auto &ch: channels) ss << int(ch.ch) << '$' << ch.name << "=" << ch.typ << (int) ch.bitLen << ',';
+        for (auto &ch: channels)
+            ss << int(ch.ch) << '$' << ch.name << "=" << ch.typ << (int) ch.bitLen << ',';
         ss << "###ENDHEAD\n";
         cl.write(ss.str().c_str());
     }

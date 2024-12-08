@@ -91,6 +91,7 @@ AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &p
     } else if (adcName == "esp32adc1") {
         // assert_throw(ntc_ch== 255, "adc1 conflicts ntc impl TODO fix");
         adc = new ADC_ESP32_Cont(sensConf);
+        ((ADC_ESP32_Cont *) adc)->setNtcCh(sensConf.getByte("ntc_ch", 255));
     } else if (adcName == "fake") {
         adc = new ADC_Fake();
     } else {
@@ -150,7 +151,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
 
         LinearTransform lt{1.f, 0.f};
 
-        if(chNum != 255) {
+        if (chNum != 255) {
             if (chn[0] == 'v') {
                 lt = adcVDiv(
                         sensConf.f(chn + '_' + "rh"),

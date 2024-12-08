@@ -173,7 +173,7 @@ adopt it
 with your ADC model and topology. Implementations exist for the ADS1x15, INA226, esp32_adc.
 
 The hardware should always sense `Vin` and `Vout`. `Vin` is not crucial and can
-be coarse (8-bit ADC might be ok if there is a current sensor at `Iout`), it is needed for diode emulation, under- and
+be coarse (8-bit ADC might be ok if there is a current sensor at `Iout`), it is needed for diode emulation in DCM, under- and
 over-voltage shutdown. Since `Vout` is our
 battery voltage it should be more precise.
 To reduce voltage transients during load change a high sampling rate is prefered.
@@ -224,17 +224,23 @@ scanning ca significantly less reduce overall efficiency.
 
 We can leave the Low-Side (LS, aka *sync-FET*, *synchronous rectifier*) switch off and the coil discharge current will
 flow through the LS MOSFET´s body diode.
-The buck converter then operates in non-synchronous mode. This decreases conversion efficiency but prevents the buck
-converter from becoming a boost converter. Voltage boosting causes reverse current flow from battery to solar and can
-cause excess voltage at the solar input, eventually destroying the LS switch and even the board. So we must take timing
-the LS switch very carefully.
+The buck converter then operates in non-synchronous mode with reduced conversion efficiency since the mosfet body diode
+usually has a voltage drop of around 1V.
 
-The firmware implements a synchronous buck converter. It uses the Vout/Vin voltage ratio to estimate the slope of the
-coil current and adjusts the switching time of the LS MOSFET so that the current never crosses zero.
-It handles both Continuous Conduction Mode (CCM) and Discontinuous Conduction Mode (DCM). The LS FET stays off during
-low-power conversion (apart from a minimum on-time to keep the charge pump for the HS gate driver active).
-This approach allows arbitrary buck duty cycles, without trouble. See [Diode Emulation](doc/Diode%20Emulation.rst) for
-more details and formulae.
+Turning on the LS must be taken with care to prevent the converter from becoming a (reversed) boost converter.
+Switching the LS for too long causes reverse current flow from battery to solar and can cause high voltage at the solar
+input. The high current can destroy the LS switch and the high voltage can destroy the whole board. So we must take
+timing the LS switch with a lot of care.
+
+The firmware implements a synchronous buck converter with sensor-less diode emulation. It uses the Vin, Vout and coil
+inductance value to estimate the coil ripple current and adjusts the switching time of the LS MOSFET so that the current
+never crosses zero.
+It handles both Continuous Conduction Mode (CCM) and Discontinuous Conduction Mode (DCM). Inductor core saturation is
+modelled using a constant -5% inductance drop, which appears to be reasonably accurate. This inaccuracy is only
+noticeable during operation near the CCM/DCM transition point, and it usually causes the rectification switch to turn
+off too early. If you experience reverse inductor current, decrease `L0` value.
+A more accurate model would use the DC-bias curve from the core material's datasheet.
+See [Diode Emulation](doc/Diode%20Emulation.md) for more details and formulae.
 
 For additional safety the low-side duty cycle is slowly faded to its maximum value. As soon as we detect reverse
 current (which might also be noise), we decrease the LS switch duty cycle and slowly recover.

@@ -44,8 +44,10 @@ private:
     adc_continuous_handle_t handle = nullptr;
     uint8_t result[ADC1_READ_LEN] = {0};
 
-    uint16_t avgNum = 0;
+
     uint32_t sr = 0; // sampling rate
+    uint16_t avgNum = 0;
+    uint8_t ntcCh = 255;
 
     struct ChAvgBuf {
         uint32_t agg: 22; // 22bit can store 1024 accumulated 12-bit values
@@ -71,6 +73,8 @@ public:
 
         return true;
     }
+
+    void setNtcCh(uint8_t ch) { ntcCh = ch; }
 
     void start() override;
 
