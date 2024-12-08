@@ -21,7 +21,7 @@ OK: <cmd>
 * `led <RRGGBB>`, `led <RGB>` set the LED rgb color in hex or short hex (e.g. `led 33ff33` or `led 3f3`)
 * `sweep`: starts a global MPP scan / search
 * `+<int>`, `-<int>` manual perturb the buck duty cycle (for testing)
-* `reset-lag`: resets max lag statistic
+* `reset-lag`: resets max lag statistic and displays [rtcount](Real-time%20Counter.md) statistics
 * `scan-i2c`: run a i2c bus scan
 * `sensor`: display sensor data
 * `mem`: display heap and PSRAM sizes
