@@ -1,6 +1,5 @@
----
-title: Diode Emulation
----
+# Diode Emulation
+
 
 We can leave the Low-Side switch (LS, aka *sync-FET*, *synchronous
 rectifier*) off and the coil discharge current will flow through the LS
@@ -27,7 +26,7 @@ For more details refer to Fundamentals of Power Electronics, Third
 Edition, pages 145, 597. Here it is sufficient to understand that in DCM
 conversion ratio M does not equal duty cycle D.
 
-# Inductor Current Zero Cross Detection
+## Inductor Current Zero Cross Detection
 
 We can use a current sensor with zero cross detection (ZCD) to disable
 the LS as soon as coil current becomes zero. A digital ZCD
@@ -46,7 +45,7 @@ shut-down in over-load and short-circuit conditions.
 
 <https://www.monolithicpower.com/en/learning/resources/power-losses-in-buck-converters-and-how-to-increase-efficiency>
 
-# Sensor-less approach
+## Sensor-less approach
 
 In a sensor-less approach we model coil current over time and shut the
 LS off when we expect the coil current to be near zero. Turning the LS
@@ -54,7 +53,7 @@ off too early will increase power loss of the LS body diode. Turning off
 to late puts the converter into Forced-PWM mode with reverse current
 flow, which decreases efficiency as well.
 
-*CCM or CCM*
+### DCM or CCM
 
 First, we need to check if converter operating condition requires DCM.
 The converter is in DCM if half the ripple current is larger than dc
@@ -76,9 +75,9 @@ $$H_{dc} = \frac{N}{l_e} \cdot I_o$$
 
 With the value of the H-field we can compute the permeability and
 inductivity drop with the model from the materials\'s datasheet
-( $\%\mu _i(H_{dc})$ ).
+( $\\%\mu _i( H )$ ).
 
-$$L(I_o) = \frac{\%\mu _i(H_dc)}{\mu _i} * L_0$$
+$$L(I_o) = \frac{\\%\mu _i(H_{dc})}{\mu _i} \cdot L_0$$
 
 With the DC-saturated inductivity value we compute ripple current and
 decide if the converter is in DCM.
@@ -93,7 +92,7 @@ needs to be done.
 
 If we find the converter to be in DCM, we compute LS on-time as follows.
 
-*DCM Rectifier timing*
+### DCM Rectifier timing
 
 During HS on-time ($0<t<t_{on,HS}$), coil current rises:
 
@@ -134,7 +133,7 @@ Takeaways
 - Switching LS too long causes reverse coil current and might turn the
   buck converter into a (reversed) boost converter
 
-*Error Considerations*
+### Error Considerations
 
 The converter measures V_in and V_out with an ADC. Noise, temperature
 drift and non-linearity cause voltage errors. This affects the value for
@@ -152,13 +151,13 @@ PWM or FPWM)
 If we measure V_out with -1% error and V_out +1%, the rectification time
 will be 4% too short.
 
-\-\-\-\-\-\--Boost Converter \-\-\-\-\-\--
+# Boost Converter
 
 $$M_CCM = \frac{1}{1-D}$$
 
 $$t_{on,HS} = t_{on,LS} \cdot \frac{1}{M - 1}$$
 
-$$t_{on,HS} = \frac{D}{f_sw} \cdot \frac{1}{M - 1}$$
+$$t_{on,HS} = \frac{D}{f_{sw}} \cdot \frac{1}{M - 1}$$
 
 References
 
