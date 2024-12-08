@@ -87,8 +87,9 @@ turns, the magnet path length of the core and the dc bias model of the
 core material. Simulations show that there is a rather small
 operating range where the converter would operate in DCM with L(I_o),
 and in CCM with L0. For reduced complexity of the implementation, we can
-just assume a fixed inductivity drop of 5%. An analytic inference still
-needs to be done.
+just assume a fixed inductivity drop of 5%. A simplified model would assume a linear L(I_o), which is expected to work
+with well designed converters where ripple current is around 0.3 of full load dc current.
+An analytic inference still needs to be done.
 
 If we find the converter to be in DCM, we compute LS on-time as follows.
 

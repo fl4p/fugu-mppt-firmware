@@ -7,9 +7,11 @@
 
 
 #ifndef MOCK
+
 #include <Arduino.h>
 //#include "pinconfig.h"
 #include "pwm/ledc.h"
+
 #else
 
 #include "pwm/mock.h"
@@ -87,6 +89,9 @@ public:
     [[nodiscard]] float voltageRatio() const { return outInVoltageRatio; } // M
 
     bool init(const ConfFile &pinConf, float L0) {
+
+        isBoost = pinConf.getByte("boost", 0);
+
         uint32_t pwmFrequency = pinConf.getLong("pwm_freq"); //39000; //  converter switching frequency
         assert_throw(pwmFrequency > 5e3 && pwmFrequency < 5e5, "");
 
@@ -149,15 +154,15 @@ public:
             digitalWrite(pinSd, 1);
         }
 
-        pwmCtrlMax = (uint16_t) ((float) pwmDriver.pwmMax * (1.0f - MinDutyCycleLS));
+        pwmCtrlMax = (uint16_t)((float) pwmDriver.pwmMax * (1.0f - MinDutyCycleLS));
         pwmRectMin = std::ceil(
                 (float) pwmDriver.pwmMax * (isBoost ? 0.f : MinDutyCycleLS)); // keeping the bootstrap circuit powered
         pwmCtrlMin = isBoost ? 0 : (pwmRectMin / 5); // TODO why this? everything else is too much!
         // note that mosfets have different Vg(th) and switching times worst case is Vi/o=80/12
         // ^ set pwmMinHS a bit lower than pwmMinLS (might cause no-load output over-voltage otherwise)
 
-        ESP_LOGI("converter", "pwmDriver.pwmMax=%hu, pwmMinLS=%hu, pwmMinHS=%hu, pwmMaxHS=%hu",
-                 pwmDriver.pwmMax, pwmRectMin, pwmCtrlMin, pwmCtrlMax);
+        ESP_LOGI("converter", "f=%u, boost=%d, pwmDriver.pwmMax=%hu, pwmMinLS=%hu, pwmMinHS=%hu, pwmMaxHS=%hu",
+                 pwmFrequency, isBoost, pwmDriver.pwmMax, pwmRectMin, pwmCtrlMin, pwmCtrlMax);
 
         return true;
     }
@@ -236,7 +241,7 @@ public:
 
         directionFloat += directionFloatBuffer;
         directionFloatBuffer = 0;
-        auto directionInt = (int16_t) (directionFloat);
+        auto directionInt = (int16_t)(directionFloat);
         if (directionInt != 0)
             pwmPerturb(directionInt);
         directionFloatBuffer += directionFloat - (float) directionInt;
@@ -352,7 +357,9 @@ public:
     }
 
 
-    const float &updateSyncRectMaxDuty(float vh, float vl, float il) {
+    const float &updateSyncRectMaxDuty(float vin, float vout, float il) {
+        auto &vh(isBoost ? vout : vin);
+        auto &vl(isBoost ? vin : vout);
 
         computeSyncRectRatio(vh, vl, il);
         computePwmRectMax();

@@ -36,10 +36,10 @@
 
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
-SynchronousConverter pwm;
+SynchronousConverter converter;
 LedIndicator led;
 LCD lcd;
-MpptController mppt{adcSampler, pwm, lcd};
+MpptController mppt{adcSampler, converter, lcd};
 VIinVout<const Sensor *> sensors{nullptr, nullptr, nullptr, nullptr};
 
 bool disableWifi = false;
@@ -404,7 +404,7 @@ void setup() {
         ESP_LOGE("main", "Error during setup, adc-only mode, skip pwm init");
     } else {
         ConfFile coilConf{"/littlefs/conf/coil.conf"};
-        if (!pwm.init(pinConf, coilConf.getFloat("L0"))) {
+        if (!converter.init(pinConf, coilConf.getFloat("L0"))) {
             ESP_LOGE("main", "Failed to init half bridge driver");
             setupErr = true;
         }
@@ -534,8 +534,8 @@ void loopRT(void *arg) {
             }
 
             if (timeLastSampler && nowMs - timeLastSampler > 200) {
-                if (!pwm.disabled()) {
-                    pwm.disable();
+                if (!converter.disabled()) {
+                    converter.disable();
                     charging = false;
                     ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown! numSamples %lu",
                              lastMpptUpdateNumSamples);
@@ -543,7 +543,7 @@ void loopRT(void *arg) {
             }
 
             if (!timeLastSampler and nowMs > 20000) {
-                pwm.disable();
+                converter.disable();
                 ESP_LOGE("main", "Never got a sample! Please check ADC");
                 if (nowMs > (1000 * 60 * 15)) {
                     ESP_LOGW("main", "Rebooting");
@@ -559,7 +559,7 @@ void loopRT(void *arg) {
 
 
         auto lag = nowUs - lastLoopTime;
-        if (lastLoopTime && lag > maxLoopLag && !pwm.disabled()) maxLoopLag = lag;
+        if (lastLoopTime && lag > maxLoopLag && !converter.disabled()) maxLoopLag = lag;
         lastLoopTime = nowUs;
 
 #if CAPTURE_LOOP_DT
@@ -594,12 +594,12 @@ void loopLF(const unsigned long &nowUs) {
     auto &nSamples(sensors.Vout ? sensors.Vout->numSamples : lastNSamples);
     uint32_t sps = (uint64_t) (nSamples - lastNSamples) * 1000000llu / (uint64_t) (nowUs - lastTimeOutUs);
 
-    if (sps < loopRateMin && !pwm.disabled() && nSamples > max(loopRateMin * 5, 200) &&
+    if (sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 2000000) {
         mppt.shutdownDcdc();
         auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
         ESP_LOGE("main", "Loop latency too high (%lu < %hu Hz), shutdown! (nSamples=%lu, D=%u, loopRunTime=%.1fs )",
-                 sps, loopRateMin, nSamples, pwm.getCtrlOnPwmCnt(), loopRunTime * 1e-6f);
+                 sps, loopRateMin, nSamples, converter.getCtrlOnPwmCnt(), loopRunTime * 1e-6f);
         charging = false;
     }
 
@@ -622,7 +622,7 @@ void loopLF(const unsigned long &nowUs) {
                 mppt.ntc.last(), mppt.ucTemp.last(),
                 sps,
                 (uint32_t) (bytesSent * 1000llu / (nowUs - lastTimeOutUs)),
-                pwm.getCtrlOnPwmCnt(), pwm.getRectOnPwmCnt(), pwm.getRectOnPwmMax(),
+                converter.getCtrlOnPwmCnt(), converter.getRectOnPwmCnt(), converter.getRectOnPwmMax(),
                 //mppt.getPower()
                 manualPwm ? "MANU"
                           : (!charging && !mppt.startCondition()
@@ -725,8 +725,8 @@ void loopNewData(unsigned long nowMs) {
 
 
     if (manualPwm) {
-        if (!pwm.disabled())
-            pwm.pwmPerturb(0); // this will increase LS duty cycle if possible
+        if (!converter.disabled())
+            converter.pwmPerturb(0); // this will increase LS duty cycle if possible
         //mppt.bflow.enable(true);
         // notice that mppt::protect() calls updateLowSideMaxDuty()
         // delay(1); // why?
@@ -751,7 +751,7 @@ void loopNetwork_task(void *arg) {
         /* only connect with disabled power conversion
          * ESP32's wifi can cause latency issues otherwise
          */
-        wifiLoop(pwm.disabled());
+        wifiLoop(converter.disabled());
         ftpUpdate();
         telemetryFlushPointsQ();
     }
@@ -795,20 +795,20 @@ bool handleCommand(const String &inp) {
 
 
     if ((inp[0] == '+' or inp[0] == '-') && !adcSampler.isCalibrating() && inp.length() < 6 &&
-        inp.toInt() != 0 && std::abs(inp.toInt()) < pwm.pwmCtrlMax) {
+        inp.toInt() != 0 && std::abs(inp.toInt()) < converter.pwmCtrlMax) {
         int pwmStep = inp.toInt();
         //manualPwm = true; // don't switch to manual pwm here!
-        pwm.pwmPerturb((int16_t) pwmStep);
-        ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) pwm.getCtrlOnPwmCnt());
+        converter.pwmPerturb((int16_t) pwmStep);
+        ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) converter.getCtrlOnPwmCnt());
     } else if (manualPwm && (inp == "ls-disable" or inp == "ls-enable")) {
-        pwm.enableSyncRect(inp == "ls-enable");
+        converter.enableSyncRect(inp == "ls-enable");
     } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable")) {
         auto newState = inp == "bf-enable";
         if (mppt.bflow.state() != newState)
             ESP_LOGI("main", "Set bflow state %i", newState);
         mppt.bflow.enable(newState);
     } else if (inp == "restart" or inp == "reset" or inp == "reboot") {
-        pwm.disable();
+        converter.disable();
         Serial.println("Restart, delay 200ms");
         delay(200);
         ESP.restart();
@@ -816,11 +816,11 @@ bool handleCommand(const String &inp) {
         ESP_LOGI("main", "MPPT re-enabled");
         manualPwm = false;
     } else if (inp.startsWith("dc ") && !adcSampler.isCalibrating() && inp.length() <= 8
-               && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < pwm.pwmCtrlMax) {
+               && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < converter.pwmCtrlMax) {
         if (!manualPwm)
             ESP_LOGI("main", "Switched to manual PWM");
         manualPwm = true;
-        pwm.pwmPerturb(inp.substring(3).toInt() - pwm.getCtrlOnPwmCnt());
+        converter.pwmPerturb(inp.substring(3).toInt() - converter.getCtrlOnPwmCnt());
         // pwm.enableLowSide(true);
     } else if (inp.startsWith("speed ") && inp.length() <= 12) {
         float speedScale = inp.substring(6).toFloat();
@@ -904,7 +904,7 @@ void esp_task_wdt_isr_user_handler() {
     if (esp_cpu_dbgr_is_attached()) return;
 
     enqueue_task([] {
-        pwm.disable();
+        converter.disable();
         ESP_LOGE("main", "Restart after WDT trigger");
         vTaskDelay(1000);
         ESP.restart();

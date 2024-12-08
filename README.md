@@ -247,7 +247,7 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 
 # Not implemented / TODO
 
-* learn buck start duty cycle, buck self test * Calibration
+* learn converter start duty cycle, converter self test * Calibration
     * find pwm min duty (vout > 0 or iout > 0)
 * 2nd and more (interleaved) channels
 * -More precise PWM- not possible. clock is 80mhz
