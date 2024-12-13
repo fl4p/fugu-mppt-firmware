@@ -15,6 +15,7 @@ void ina226_alert();
 
 ADC_INA226 *ina226_instance = nullptr;
 
+int console_read_usb(char *buf, size_t len); //debug
 
 class ADC_INA226 : public AsyncADC<float> {
     INA226_WE ina226;
@@ -45,19 +46,17 @@ public:
             return false;
         }
 
-        assertPinState(alertPin, true, "ina22x_alert", false);
-
         pinMode(alertPin, INPUT_PULLUP);  // esp32s3 has 45k internal pull up
 
         ina226_instance = this;
         attachInterrupt(digitalPinToInterrupt(alertPin), ina226_alert, FALLING);
-        ESP_LOGI("ina226", "Setup ALERT interrupt pin %hhu", alertPin);
+        ESP_LOGI("ina22x", "Setup ALERT interrupt pin %hhu", alertPin);
 
         assert(!new_data);
 
         auto addr = pinConf.getByte("ina22x_addr", 0b1000000);
         if (!i2c_test_address(addr)) {
-            ESP_LOGI("ina226", "Chip didnt respond at address 0x%02hhX", addr);
+            ESP_LOGI("ina22x", "Chip didnt respond at address 0x%02hhX", addr);
             return false;
         }
 
@@ -69,9 +68,12 @@ public:
         ESP_LOGI("ina22x", "MfrID: 0x%04X, DeviceID: 0x%04X", mfrId, deviceId);
 
         if (deviceId != 0x2260) {
-            ESP_LOGW("ina226", "This is not an INA226 device!");
+            ESP_LOGW("ina22x", "This is not an INA226 device!");
             return false;
         }
+
+        ina226.reset_INA226();         //in case the device is still initialized
+        assertPinState(alertPin, true, "ina22x_alert", false);
 
         assert(!new_data);
 
@@ -84,11 +86,21 @@ public:
             return false;
         }
 
+        if (!testContinuousAlert()) {
+            return false;
+        }
+
+        //if (!testConvReadyAlert(addr, alertPin)) {
+        //    return false;
+        //}
+
+
+
 
         //ina226.setAverage(AVERAGE_16);
         //ina226.setConversionTime(CONV_TIME_204, CONV_TIME_140);
 
-        float resistor = 1e-3f, range = 35.0f;// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
+        float resistor = pinConf.getFloat("ina22x_resistor"), range = 35.0f;// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
         ina226.setResistorRange(resistor, range);
 
         /**
@@ -112,15 +124,47 @@ public:
         ina226.enableConvReadyAlert();
     } */
 
+    void debugMode() {
+        bool debug = true;
+        if (debug) ESP_LOGI("ina22x", "Entering debug console");
+        while (debug) {
+            char buf[10];
+            auto r = console_read_usb(buf, sizeof buf);
+            if (r == 1) {
+                buf[r] = 0;
+                //
+                bool ok = true;
+                if (buf[0] == 'r') ina226.reset_INA226();
+                else if (buf[0] == 'm') ina226.readAndClearFlags();
+                else if (buf[0] == 'a') ina226.enableConvReadyAlert();
+                else if (buf[0] == 'c') ina226.setMeasureMode(CONTINUOUS);
+                else if (buf[0] == 't') ina226.setMeasureMode(TRIGGERED);
+                else if (buf[0] == 'l') ina226.enableAlertLatch();
+                else if (buf[0] == 'v') ESP_LOGI("ina22x", "V=%.3f", ina226.getBusVoltage_V());
+                else if (buf[0] == 'x') break;
+                else ok = false;
+                if (ok) ESP_LOGI("ina22x", "console cmd %s", buf);
+                //else ESP_LOGW("ina225", "unknown");
+            }
+            vTaskDelay(1);
+        }
+        ESP_LOGI("ina22x", "exit debug mode");
+    }
+
     bool testConvReadyAlert(uint8_t addr, uint8_t alertPin) {
 
         ina226.setAverage(AVERAGE_4);
         ina226.setConversionTime(CONV_TIME_140, CONV_TIME_140);
         ina226.setMeasureMode(TRIGGERED);
 
+        delay(1);
         new_data = false;
         delay(5);
-        assert(!new_data);
+        if (new_data) {
+            ESP_LOGW("ina22x", "unexpected new data");
+            debugMode();
+        }
+        //assert(!new_data);
 
         if (digitalRead(alertPin) != HIGH) {
             ESP_LOGE("ina22x", "Alert pin %hhu not pulled up, short to ground?", alertPin);
@@ -187,17 +231,64 @@ public:
         // the busyWait time is ~ (convTime_I + convTime_U) * AvgSamples
         assert ((tBusyWait - tWrite) < (100 + (140 + 10) * 2 * 4));
 
-        ESP_LOGI("ina22x", "Timings: sendTrigger=%lu busyWait=%lu read=%lu tReadIV=%lu (us)",
+        ESP_LOGI("ina22x", "Single-shot timings: sendTrigger=%lu busyWait=%lu read=%lu tReadIV=%lu (us)",
                  tWrite - t0, tBusyWait - tWrite, tRead - tBusyWait, tReadI - tRead);
 
 
         //ina226.getCurrent_mA(); // todo CONFIG_DISABLE_HAL_LOCKS
+
+
+
+
+        return true;
+    }
+
+    bool testContinuousAlert() {
+        new_data = false;
+
+        ESP_LOGI("ina22x", "testContinuousAlert");
+        ina226.reset_INA226();
+        vTaskDelay(1);
+        ina226.enableConvReadyAlert();
+        auto regME = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG);
+        assert(!(regME & 0x0001)); // alert latch disabled
+
+        //debugMode();
+
+        regME = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG);
+        assert(!(regME & 0x0001)); // alert latch disabled
+
+        new_data = false;
+        while (!new_data) {} // busy wait
+        ESP_LOGI("ina22x", "alert pass default");
+
+        ina226.readAndClearFlags();
+
+        new_data = false;
+        while (!new_data) {} // busy wait
+        ESP_LOGI("ina22x", "alert pass default2");
+
+        ina226.setAverage(AVERAGE_1);
+        ina226.setConversionTime(CONV_TIME_1100, CONV_TIME_1100);
+        ina226.setMeasureMode(CONTINUOUS);
+        ina226.readAndClearFlags();
+        while (!new_data) {} // busy wait
+        ESP_LOGI("ina22x", "Continuous 1st");
+        ina226.readAndClearFlags();
+        new_data = false;
+        auto t0 = micros();
+        while (!new_data) {} // busy wait
+        auto t1 = micros();
+        ESP_LOGI("ina22x", "Continuous 2nd");
+
+        ESP_LOGI("ina22x", "Continuous timings: busyWait=%lu (us)", t1 - t0);
 
         return true;
     }
 
 
     void startReading(uint8_t channel) override {
+        assert_throw(channel <= 1, "");
         taskNotification.subscribe();
         readChannel = channel;
     }
@@ -208,12 +299,18 @@ public:
     }
 
     bool hasData() override {
-        if (!taskNotification.wait(5))
-            throw std::runtime_error("timeout waiting for ina22x alert interrupt");
+        static uint32_t numTimeouts = 0;
+        if (!new_data && !taskNotification.wait(1)) {
+            ++numTimeouts;
+            //if (numTimeouts % 1000 == 0) {
+                //ESP_LOGE("ina22x", "%lu timeout!", numTimeouts);
+            //}
+        }
 
-        assert(new_data);
-        //if (!new_data) // TODO remove this?
-        //    return false;
+        // we might get a task notification from other ADCs
+        if (!new_data)
+            return false;
+
         new_data = false;
 
         uint16_t value = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG);
@@ -223,10 +320,10 @@ public:
 
         //ina226.readAndClearFlags();
         if (overflow) {
-            ESP_LOGW("ina226", "Overflow!");
+            ESP_LOGW("ina22x", "Overflow!");
         }
         if (limitAlert) {
-            ESP_LOGW("ina226", "Limit Alert!");
+            ESP_LOGW("ina22x", "Limit Alert!");
         }
 
         //if (convAlert) {
@@ -254,7 +351,7 @@ public:
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         if (ch == ChVBus) {
-            assert_throw(voltage <= 36,"");
+            assert_throw(voltage <= 36, "");
         } else if (ch == ChI) {
             ESP_LOGW("ina22x", "Check shunt voltage range!");
         } else {
