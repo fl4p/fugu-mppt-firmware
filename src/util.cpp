@@ -8,12 +8,13 @@ void assertPinState(uint8_t pin, bool digitalVal, const char *pinName, bool weak
     pinMode(pin, weakBackPull ? (digitalVal ? INPUT_PULLDOWN : INPUT_PULLUP) : INPUT);
     vTaskDelay(pdMS_TO_TICKS(5));
     auto read = digitalRead(pin);
-    if(weakBackPull)  pinMode(pin, INPUT);
+    if (weakBackPull) pinMode(pin, INPUT);
 
     if (read != digitalVal) {
         throw std::runtime_error(
                 "pin " + std::to_string(pin) + (pinName ? ("(" + std::string(pinName) + ")") : "")
-                + " is not " + (digitalVal ? "HIGH" : "LOW"));
+                + " is not " + (digitalVal ? "HIGH" : "LOW") +
+                (weakBackPull ? (std::string(" with weak pull") + (digitalVal ? "down" : "up")) : ""));
     }
 }
 

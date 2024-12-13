@@ -1,3 +1,5 @@
+//#include <set>
+
 #include "logging.h"
 
 #include <Arduino.h>
@@ -12,6 +14,7 @@
 #include "adc/ina226.h"
 #include "adc/sampling.h"
 
+#include "console.h"
 #include "buck.h"
 #include "mppt.h"
 #include "util.h"
@@ -36,18 +39,21 @@
 
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
-SynchronousConverter converter;
+VIinVout<const Sensor *> sensors{nullptr, nullptr, nullptr, nullptr};
+SynchronousConverter converter; // buck or boost
 LedIndicator led;
 LCD lcd;
-MpptController mppt{adcSampler, converter, lcd};
-VIinVout<const Sensor *> sensors{nullptr, nullptr, nullptr, nullptr};
+MpptController mppt{adcSampler, sensors, converter, lcd};
 
-bool disableWifi = false;
-bool usbConnected = false;
 
-static unsigned long loopWallClockUs_ = 0;
+unsigned long loopWallClockUs_ = 0;
 
 unsigned long lastLoopTime = 0, maxLoopLag = 0;
+
+unsigned long timeLastSampler = 0;
+
+unsigned long delayStartUntil = 0;
+
 #if CAPTURE_LOOP_DT
 unsigned long maxLoopDT = 0;
 #endif
@@ -55,32 +61,25 @@ unsigned long maxLoopDT = 0;
 unsigned long lastTimeOutUs = 0;
 uint32_t lastNSamples = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
+
 bool manualPwm = false;
 bool charging = false;
-float conversionEfficiency;
+bool disableWifi = false;
+bool usbConnected = false;
 
+float conversionEfficiency;
 uint16_t loopRateMin = 0;
 
 Scope *scope = nullptr;
 
-const unsigned long IRAM_ATTR
-&
-
-loopWallClockUs() { return loopWallClockUs_; }
-
-unsigned long IRAM_ATTR
-
-loopWallClockMs() { return (unsigned long) (loopWallClockUs_ / 1000ULL); }
-
-void uartInit(int port_num);
 
 void loopNetwork_task(void *arg);
 
-void loopCore0_LF(void *arg);
+//void loopCore0_LF(void *arg);
 
-void loopRT(void *arg);
+void loopRT(void *arg); // this is the critical one
 
-#include <set>
+void loopNewData(unsigned long nowMs);
 
 AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &pinConf, const ConfFile &sensConf) {
     AsyncADC<float> *adc;
@@ -95,14 +94,16 @@ AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &p
     } else if (adcName == "fake") {
         adc = new ADC_Fake();
     } else {
-        ESP_LOGE("main", "Unknown ADC %s", adcName.c_str());
-        assert(false);
+        //ESP_LOGE("main", "Unknown ADC '%s'", adcName.c_str());
+        throw std::runtime_error("unknown ADC '" + adcName + "'");
+        //return nullptr;
     }
 
     if (!adc->init(pinConf)) {
-        ESP_LOGE("main", "Failed to initialize ADC %s", adcName.c_str());
+        //ESP_LOGE("main", "Failed to initialize ADC %s", adcName.c_str());
         delete adc;
-        return nullptr;
+        throw std::runtime_error("failed to initialize ADC " + adcName);
+        //return nullptr;
     }
 
     return adc;
@@ -125,9 +126,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
 
     loopRateMin = sensConf.getByte("expected_hz", 0);
     conversionEfficiency = sensConf.f("power_conversion_eff", 0.95f);
-    assert(conversionEfficiency > 0.5f and conversionEfficiency < 1.0f);
-
-    bool err = false;
+    assert_throw(conversionEfficiency > 0.5f and conversionEfficiency < 1.0f, "");
 
     struct p {
         SensorParams params;
@@ -136,18 +135,17 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     };
     std::unordered_map<std::string, p> params;
 
-    auto defAdcName = sensConf.getString("adc");
+    auto defAdcName = sensConf.getString("adc", "");
     std::unordered_map<std::string, AsyncADC<float> *> adcs{};
     for (auto chn_: {"ntc", "vin", "iin", "iout", "vout",}) {
         auto chn = std::string(chn_);
+        auto chNum = sensConf.getByte(chn + '_' + "ch", 255);
         auto an = sensConf.getString(chn + '_' + "adc", defAdcName);
-        if (adcs.find(an) == adcs.end()) {
+
+        if (chNum != 255 && adcs.find(an) == adcs.end()) {
             adcs[an] = createAdcInstance(an, pinConf, sensConf);
         }
-        auto adc = adcs[an];
-        if (!adc) err = true;
-
-        auto chNum = sensConf.getByte(chn + '_' + "ch", 255);
+        auto adc = chNum != 255 ? adcs[an] : nullptr;
 
         LinearTransform lt{1.f, 0.f};
 
@@ -166,7 +164,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
             }
         }
 
-        uint16_t filtLen = sensConf.getLong(chn + '_' + "filt_len");
+        auto filtLen = (uint16_t) sensConf.getLong(chn + '_' + "filt_len");
 
         params.emplace(chn, p{
                 .params = SensorParams{
@@ -184,12 +182,6 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         //ESP_LOGI("main", "Initialized ADC %s (V/I)(i/o)_ch = (%i %i %i %i) , exp.LoopRate=%hu", adcName.c_str(), Vin_ch,
         //         Iin_ch,
         //         Vout_ch, Iout_ch, loopRateMin);
-    }
-
-    if (err) {
-        scan_i2c();
-    } else {
-        adcSampler.adcStates.clear();
     }
 
     //Vin_transform.factor *= sensConf.f("vin_calib", 1.f);
@@ -277,36 +269,16 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     adcSampler.ignoreCalibrationConstraints = sensConf.getByte("ignore_calibration_constraints", 0);
     if (adcSampler.ignoreCalibrationConstraints)
         ESP_LOGW("main", "Skipping ADC range and noise checks.");
-
-    mppt.setSensors(sensors);
 }
 
 
 void setup() {
     bool setupErr = false;
 
-    Serial.begin(115200);
-    //ESP_ERROR_CHECK(esp_usb_console_init()); // using JTAG
+    consoleInit();
+    ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
 
     rtcount_test_cycle_counter();
-
-#ifndef CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
-    //usb_serial_jtag_driver_config_t usb_serial_jtag_config = {
-    //        .tx_buffer_size = 1024,
-    //        .rx_buffer_size = 1024,
-    //};
-    //ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb_serial_jtag_config));
-#endif
-
-#if CONFIG_IDF_TARGET_ESP32S3 and !CONFIG_ESP_CONSOLE_UART_DEFAULT
-    // for unknown reason need to initialize uart0 for serial reading (see loop below)
-    // Serial.available() works under Arduino IDE (for both ESP32,ESP32S3), but always returns 0 under platformio
-    // so we access the uart port directly. on ESP32 the Serial.begin() is sufficient (since it uses the uart0)
-    // see esp-idf vfs_console.c
-    uartInit(0);
-#endif
-
-    ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
 
     if (!mountLFS()) {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
@@ -338,8 +310,13 @@ void setup() {
         auto i2c_sda = pinConf.getByte("i2c_sda", 255);
         bool noI2C = (i2c_sda == 255);
         if (!noI2C) {
-            assertPinState(i2c_sda, true, "i2c_sda");
-            assertPinState(pinConf.getLong("i2c_scl"), true, "i2c_scl");
+            try {
+                assertPinState(i2c_sda, true, "i2c_sda");
+                assertPinState(pinConf.getLong("i2c_scl"), true, "i2c_scl");
+            } catch (const std::exception &e) {
+                ESP_LOGE("main", "error %s", e.what());
+                setupErr = true;
+            }
             ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, pinConf.getByte("i2c_scl"), i2c_freq);
             if (!Wire.begin(i2c_sda, (uint8_t) pinConf.getLong("i2c_scl"), i2c_freq)) {
                 ESP_LOGE("main", "Failed to initialize Wire");
@@ -398,6 +375,7 @@ void setup() {
         //if(adcSampler.adc) delete adcSampler.adc;
         adcSampler.adcStates.clear();
         setupErr = true;
+        scan_i2c();
     }
 
     if (setupErr) {
@@ -422,11 +400,11 @@ void setup() {
 
     xTaskCreatePinnedToCore(loopRT, "loopRt", 4096 * 4, NULL, RT_PRIO, NULL, 1);
     //xTaskCreatePinnedToCore(loopNetwork_task, "netloop", 4096 * 4, NULL, 1, NULL, 0);
-    xTaskCreatePinnedToCore(loopCore0_LF, "core0LF", 4096 * 1, NULL, 1, NULL, 0);
+    //xTaskCreatePinnedToCore(loopCore0_LF, "core0LF", 4096, NULL, 1, NULL, 0);
 
 
     // this will defer all logs, if abort() is called during setup we might never see relevant messages
-    // so calls this after everything else has been setup
+    // so calls this after everything else has been set up
     enable_esp_log_to_telnet();
 
     ESP_LOGI("main", "setup() done.");
@@ -438,33 +416,30 @@ void setup() {
     mppt.bflow.enable(true); */
 }
 
-unsigned long timeLastSampler = 0;
-
-unsigned long delayStartUntil = 0;
-
-void loopNewData(unsigned long nowMs);
 
 void loop() {
+    // use arduino loop for networking (non-critical stuff)
     loopNetwork_task(nullptr);
 }
 
 static esp_err_t disable_cpu_power_saving(void) {
     esp_err_t ret = ESP_OK;
 
-    static esp_pm_lock_handle_t s_cli_pm_lock = NULL;
+#ifdef CONFIG_PM_ENABLE
+    static esp_pm_lock_handle_t s_cli_pm_lock = nullptr;
 
-
-    ret = esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "nopowersave", &s_cli_pm_lock);
+    ret = esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "noPwrSave", &s_cli_pm_lock);
     if (ret == ESP_OK) {
-        esp_pm_lock_acquire(s_cli_pm_lock);
+        ESP_ERROR_CHECK(esp_pm_lock_acquire(s_cli_pm_lock));
         ESP_LOGI("main", "Successfully created CLI pm lock");
     } else {
         if (s_cli_pm_lock != NULL) {
             esp_pm_lock_delete(s_cli_pm_lock);
             s_cli_pm_lock = NULL;
         }
-        ESP_LOGI("main", " Failed to create CLI pm lock");
+        ESP_LOGW("main", "Failed to create CLI pm lock: %s", esp_err_to_name(ret));
     }
+#endif
     return ret;
 }
 
@@ -592,7 +567,9 @@ std::string mpptStateStr() {
 
 void loopLF(const unsigned long &nowUs) {
     auto &nSamples(sensors.Vout ? sensors.Vout->numSamples : lastNSamples);
-    uint32_t sps = (uint64_t) (nSamples - lastNSamples) * 1000000llu / (uint64_t) (nowUs - lastTimeOutUs);
+    auto dt = nowUs - lastTimeOutUs;
+    uint32_t sps = dt ? (uint64_t) (nSamples - lastNSamples) * 1000000llu / dt : 0;
+
 
     if (sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 2000000) {
@@ -608,6 +585,7 @@ void loopLF(const unsigned long &nowUs) {
 #endif
 
     mppt.ntc.read();
+    mppt.ucTemp.read();
 
     if (mppt.ucTemp.last() > 95 && WiFi.isConnected()) {
         ESP_LOGW("main", "High chip temperature, shut-down WiFi");
@@ -618,7 +596,7 @@ void loopLF(const unsigned long &nowUs) {
 
     if (sensors.Vin)
         UART_LOG(
-                "V=%4.*f/%4.*f I=%4.*f/%4.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s PWM(H|L|Lm)=%4hu|%4hu|%4hu"
+                "V=%4.*f/%4.*f I=%4.*f/%4.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s %s(H|L|Lm)=%4hu|%4hu|%4hu"
                 " st=%5s,%i lag=%lu㎲ N=%lu rssi=%hi",
                 sensors.Vin->last >= 9.55f ? 1 : 2, sensors.Vin->last,
                 sensors.Vout->last >= 9.55f ? 1 : 2, sensors.Vout->last,
@@ -628,7 +606,8 @@ void loopLF(const unsigned long &nowUs) {
                 //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
                 mppt.ntc.last(), mppt.ucTemp.last(),
                 sps,
-                (uint32_t) (bytesSent * 1000llu / (nowUs - lastTimeOutUs)),
+                dt ? (uint32_t) (bytesSent * 1000llu / dt) : 0,
+                converter.inDCM() ? "DCM" : "CCM",
                 converter.getCtrlOnPwmCnt(), converter.getRectOnPwmCnt(), converter.getRectOnPwmMax(),
                 //mppt.getPower()
                 manualPwm ? "MANU"
@@ -741,14 +720,11 @@ void loopNewData(unsigned long nowMs) {
 }
 
 
-#include "console.h"
-
-
 void loopNetwork_task(void *arg) {
     //ESP_LOGI("main", "Net loop running on core %i", xPortGetCoreID());
     assert(xPortGetCoreID() == 0);
 
-    auto nowMs(loopWallClockMs());
+    auto nowMs(wallClockMs());
 
     loopUart(nowMs);
     flush_async_uart_log();
@@ -764,9 +740,9 @@ void loopNetwork_task(void *arg) {
     }
 
 
-    if ((loopWallClockUs() - lastTimeOutUs) >= 3000000) {
-        loopLF(loopWallClockUs());
-        lastTimeOutUs = loopWallClockUs();
+    if ((wallClockUs() - lastTimeOutUs) >= 3000000) {
+        loopLF(wallClockUs());
+        lastTimeOutUs = wallClockUs();
     }
 
     if (lcd && !adcSampler.adcStates.empty())
@@ -786,16 +762,16 @@ void loopNetwork_task(void *arg) {
     }
 }
 
+/*
 void loopCore0_LF(void *arg) {
-    // do everything with poor real-time performance
+    // do everything with poor real-time performance @ 1Hz
 
     while (1) {
-
-        mppt.ucTemp.read();
-
+        // nothing here yet
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
+ */
 
 bool handleCommand(const String &inp) {
     ESP_LOGI("main", "received serial command: '%s'", inp.c_str());
@@ -901,7 +877,7 @@ bool handleCommand(const String &inp) {
     }
 
     ESP_LOGI("main", "OK: %s", inp.c_str());
-    loopLF(loopWallClockUs());
+    loopLF(wallClockUs());
 
     return true;
 }

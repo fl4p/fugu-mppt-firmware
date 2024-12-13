@@ -43,7 +43,7 @@ void ADC_ESP32_Cont::start() {
 
     adc_digi_pattern_config_t adc_pattern[SOC_ADC_PATT_LEN_MAX] = {};
 
-    uint32_t patLen = 0;
+    uint32_t patLen = 0, chNum = 0;
     bool hasNtc = false;
     for (auto ch = 0; ch <= adc_channel_t::ADC_CHANNEL_9; ++ch)
         if (attenuation[ch] != (adc_atten_t) -1) {
@@ -56,6 +56,7 @@ void ADC_ESP32_Cont::start() {
             ++patLen;
             //if(scope)scope->addChannel(ch, 'u', 12, "");
             if (ch == ntcCh) hasNtc = true;
+            ++chNum;
         }
 
     // duplicate pattern for HF channels (without NTC ch) for increased BW
@@ -71,14 +72,14 @@ void ADC_ESP32_Cont::start() {
                 ESP_LOGI("adc_esp32", "pattern[%lu] = {.atten=%d, .channel=%d}", patLen, attenuation[ch], ch);
                 ++patLen;
             }
-    } else if(hasNtc) {
+    } else if (hasNtc) {
         ESP_LOGI("adc_esp32", "NTC channel but pattern table to small to duplicate");
     }
 
     assert_throw(patLen > 0, "");
 
-    ESP_LOGI("adc_esp32", "ADC1 SR=%lu Hz, nCh=%lu, avg=%u => %lu sps/ch", sr, patLen, avgNum,
-             sr / patLen / avgNum);
+    ESP_LOGI("adc_esp32", "ADC1 SR=%lu Hz, nCh=%lu, avg=%u, pattern=%lu => %.0f sps/ch", sr, chNum, avgNum, patLen,
+             sr / chNum * ((float) (patLen == chNum ? patLen : (patLen + hasNtc)) / patLen) / avgNum);
 
     // Note about sample freq:
     // this is the frequency the adc reads samples of any channel
@@ -106,7 +107,8 @@ void ADC_ESP32_Cont::start() {
 uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
     //static uint32_t max_ret_num = 0, min_ret_num = ADC1_READ_LEN + 1;
     uint32_t ret_num = 0;
-    esp_err_t ret = adc_continuous_read(handle, result, ADC1_READ_LEN, &ret_num, 3);
+    // don't wait here, as we already do in haveData(), we dont want to block other ADCs
+    esp_err_t ret = adc_continuous_read(handle, result, ADC1_READ_LEN, &ret_num, 0);
 
     if (ret == ESP_OK) {
         //assert(ret_num == ADC1_READ_LEN);
@@ -164,7 +166,7 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
         }
     } else if (ret == ESP_ERR_TIMEOUT) {
 //We try to read `EXAMPLE_READ_LEN` until API returns timeout, which means there's no available data
-        ESP_LOGW("adc_esp32", "Read timeout.");
+        //ESP_LOGW("adc_esp32", "Read timeout.");
 //vTaskDelay(100);
     } else {
         assert(ret == ESP_ERR_INVALID_STATE);

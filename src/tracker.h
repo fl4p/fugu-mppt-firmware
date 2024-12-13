@@ -53,13 +53,13 @@ struct Tracker {
 
     void resetDirection(bool direction) {
         _direction = direction;
-        _time = loopWallClockMs();
+        _time = wallClockMs();
         //maxPowerPoint.power = 0;
         //avgPower.reset();
     }
 
     float update(float powerSample, uint16_t dutyCycle) {
-        auto now = loopWallClockMs();
+        auto now = wallClockMs();
 
         avgPower.add(powerSample);
 

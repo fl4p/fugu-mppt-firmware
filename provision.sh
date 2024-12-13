@@ -12,5 +12,5 @@ fi
 # TODO
 # check pins.conf/mcu == current target chip
 
-littlefs-python create provisioning/"$BOARD" "$BOARD".bin -v --fs-size=0x20000 --name-max=64 --block-size=4096
-parttool.py --port /dev/cu.usb* write_partition --partition-name littlefs --input "$BOARD".bin
+littlefs-python create provisioning/"$BOARD" provisioning/"$BOARD".bin -v --fs-size=0x20000 --name-max=64 --block-size=4096
+parttool.py --port /dev/cu.usb* write_partition --partition-name littlefs --input provisioning/"$BOARD".bin

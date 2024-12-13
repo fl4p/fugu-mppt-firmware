@@ -46,7 +46,7 @@ public:
             if (chi == 255)
                 return;
 
-            assert_throw(false, "ntc: adc1 not implemented, only be ptr");
+            assert_throw(false, "ntc: adc1 not implemented, only by ptr");
             /*
             ch = (adc_channel_t) chi;
 

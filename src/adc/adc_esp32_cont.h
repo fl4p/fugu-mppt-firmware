@@ -81,20 +81,30 @@ public:
     void startReading(uint8_t channel) override { abort(); } // this should never get called
     float getSample() override { abort(); }
 
-    bool hasData() override { return notification.wait(3); }
+    bool hasData() override { return notification.wait(1); }
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         adc_atten_t atten;
         assert(ch < adc_channel_t::ADC_CHANNEL_9);
 
+        // esp32-s3 measurable voltage range:
+        // https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32s3/api-reference/peripherals/adc.html#adc-attenuation
+
         // for best linearity, we expect a voltage < 1.8V
         // 0.81 to fit suggested range?
-        // see https://docs.espressif.com/projects/esp-idf/en/v4.2/esp32/api-reference/peripherals/adc.html#_CPPv425adc1_config_channel_atten14adc1_channel_t11adc_atten_t
-        auto maxVolt = 0.81f * 3.548134f;/*12dB=max */
+        // see https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32s3/api-reference/peripherals/adc.html#_CPPv425adc1_config_channel_atten14adc1_channel_t11adc_atten_t
+
+        auto maxVolt = 3.548134f;
+        auto suggestVolt = 0.81f *maxVolt; /*12dB=max */
         if (voltage > maxVolt) {
             throw std::range_error(
                     "ch" + std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage)
                     + " > " + std::to_string(maxVolt));
+        }
+
+        if (voltage > suggestVolt) {
+            ESP_LOGW("tag", "%s", ("ch" + std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage)
+                            + " > " + std::to_string(maxVolt)).c_str());
         }
 
         if (voltage > 1.6f) atten = ADC_ATTEN_DB_12;

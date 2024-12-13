@@ -7,7 +7,7 @@
 #include "tele/scope.h"
 
 
-const unsigned long &loopWallClockUs();
+const unsigned long &wallClockUs();
 
 static bool adc_fake_periodic_timer_callback(void *arg);
 
@@ -99,7 +99,7 @@ public:
         } else if (readingChannel == 1) {
             x = 1;
         } else if (readingChannel == 2) {
-            auto t = loopWallClockUs() - resetTimes[readingChannel];
+            auto t = wallClockUs() - resetTimes[readingChannel];
             if (t > 2000000) {
                 // ramp up a 2 + sin(t)
                 x = (2.0f + sinf((float) t / 10e6f)) * min((t - 2000000.f) / 2000000.f, 1.f);
@@ -117,8 +117,8 @@ public:
     float getInputImpedance(uint8_t ch) override { return 100e3; }
 
     void reset(const uint8_t ch) override {
-        ESP_LOGI("adc_fake", "Reset channel %hhu at %lu", ch, loopWallClockUs());
-        resetTimes[ch] = loopWallClockUs();
+        ESP_LOGI("adc_fake", "Reset channel %hhu at %lu", ch, wallClockUs());
+        resetTimes[ch] = wallClockUs();
     }
 
     bool periodicTimerCallback() {

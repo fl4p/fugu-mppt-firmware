@@ -135,6 +135,10 @@ struct VirtualSensor : public Sensor {
 template<typename T>
 struct VIinVout {
     T Vin, Vout, Iin, Iout;
+
+    VIinVout(const VIinVout &) = delete;
+
+    VIinVout(const VIinVout &&) = delete;
 };
 
 
@@ -221,7 +225,9 @@ public:
     }
 
     void _readNext(AdcState &state) {
-        state.adc->startReading(realSensors[state.cycleCh]->params.adcCh);
+        auto r = std::find_if(state.sensorByCh.begin(), state.sensorByCh.end(), [](Sensor *s) { return !!s; });
+        assert(r != state.sensorByCh.end());
+        state.adc->startReading((*r)->params.adcCh);
     }
 
 
@@ -317,7 +323,7 @@ public:
 
             if (calibrating_ == 0) {
                 ESP_LOGI("sampler", "Calibration done!");
-                timeLastCalibration = loopWallClockUs();
+                timeLastCalibration = wallClockUs();
                 return UpdateRet::Calibrating;
             }
         }
@@ -361,8 +367,10 @@ public:
             rtcount("adc.update.read");
         } else if (scheme == SampleReadScheme::all) {
             calibRes = UpdateRet::NoNewData;
-            for (auto sensor: realSensors) {
-                adc->startReading(sensor->params.adcCh);
+            for (int i = 0; i < state.sensorByCh.size(); ++i) {
+                auto sensor = state.sensorByCh[i];
+                if (!sensor) continue;
+                adc->startReading(i);
                 rtcount("adc.update.startReading");
 
                 auto x = adc->getSample();
@@ -372,6 +380,8 @@ public:
                 if (cr > calibRes) calibRes = cr;
             }
         } else {
+            assert_throw(false, "not implemented");
+
             auto sensor(realSensors[state.cycleCh]);
 
             auto x = adc->getSample();
