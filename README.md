@@ -173,7 +173,8 @@ adopt it
 with your ADC model and topology. Implementations exist for the ADS1x15, INA226, esp32_adc.
 
 The hardware should always sense `Vin` and `Vout`. `Vin` is not crucial and can
-be coarse (8-bit ADC might be ok if there is a current sensor at `Iout`), it is needed for diode emulation in DCM, under- and
+be coarse (8-bit ADC might be ok if there is a current sensor at `Iout`), it is needed for diode emulation in DCM,
+under- and
 over-voltage shutdown. Since `Vout` is our
 battery voltage it should be more precise.
 To reduce voltage transients during load change a high sampling rate is prefered.
@@ -244,6 +245,15 @@ See [Diode Emulation](doc/Diode%20Emulation.md) for more details and formulae.
 
 For additional safety the low-side duty cycle is slowly faded to its maximum value. As soon as we detect reverse
 current (which might also be noise), we decrease the LS switch duty cycle and slowly recover.
+
+# On-board testing and debugging features
+
+* UART, USB and telnet interface for automated testing
+* `InfluxDB`: time series writer
+* `scope`: inspect real-time, high-frequency ADC samples over Wi-Fi to debug analog noise and filtering
+* `rtcount`: profile real-time performance of code
+* `sprofiler`: sampling performance profiler
+* `i2c` scanner
 
 # Not implemented / TODO
 

@@ -18,12 +18,25 @@ The ADC characteristics in the ESP32-S3 data sheet show 100ksps (for the ESP32 e
 controller. So we can assume that
 measurements are taken with sub-µs time, which explains the noise issue quite well.
 
+The more time the ADC spends for conversion, the better the results get. Let's assume a measurement that takes 100µs and
+we take it every 100ms. This will give us an effective ADC duty cycle of 0.1% (1/1000). So 99.9% of the time the ADC
+doesn't
+do anything.
+
 To get most of the ADC performance we start a continuous measurements at maximum sampling
 rate (`SOC_ADC_SAMPLE_FREQ_THRES_HIGH`) and average the samples so we get the
 desired sampling rate. Averaging should be done with the raw adc int16 readings for best performance.
 
 For the ESP32-S3, a good configuration appears to be 83.3kHz SR and 32 samples averaging. With 3 channesl this gives an
 per-channel rate of ~ 868 sps (=83333 / 32 / 3).
+
+We cannot use the single-shot measurement API when the ADC is in continuous mode. So when adding another channel that
+has low requirements (e.g. an NTC), we need to add it the continous reading pattern, which will reduce bandwidth of
+all channels to 651sps (83333/4/32). We can improve this by duplicating the pattern without the NTC channel.
+
+For example `ch0,ch1,ch2,ch3,ch0,ch1,ch2`, where `ch3` is the NTC channel.
+This increases sampling rate of `ch0`,`ch1` and `ch2` to 744sps (83333/4/32*8/7). `ch3` is sampled with 372sps (
+83333/7/32).
 
 # Wiring
 

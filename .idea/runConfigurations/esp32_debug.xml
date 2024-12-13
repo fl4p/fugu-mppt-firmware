@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="esp32-debug" type="CLion_Remote" version="1" remoteCommand=":3333" symbolFile="$PROJECT_DIR$/build/main.elf" sysroot="$PROJECT_DIR$/data">
+  <configuration default="false" name="esp32-debug" type="CLion_Remote" version="1" remoteCommand=":3333" symbolFile="$PROJECT_DIR$/build/fugu-firmware.elf" sysroot="$PROJECT_DIR$/etc">
     <debugger toolchainName="esp-idf-v5.1" />
     <method v="2" />
   </configuration>

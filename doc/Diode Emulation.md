@@ -1,5 +1,13 @@
-# Diode Emulation
+# Nomenclature
 
+```
+HS: high-side switch
+LS: low-side swith
+cntrl switch: control switch (buck: HS, boost: LS)
+rect switch: synchrounous rectification switch (buck: LS, boost: HS)
+```
+
+# Diode Emulation
 
 We can leave the Low-Side switch (LS, aka *sync-FET*, *synchronous
 rectifier*) off and the coil discharge current will flow through the LS
@@ -36,10 +44,12 @@ switching frequency for accurate timing.
 An analog ZCD works with a fast comparator, whose output can be fed into
 the half bridge driver to `DIS` (or `SD`, `EN*`) input.
 
-The advantage of ZCD is that it implements peak current limiting. This
-prevent excessive currents when inductor core starts to saturate and the
-ac ripple current waveform becomes spiky. Once the current threshold is
-reached, we shut-down the ctrl switch and after the chosen dead-time
+With the current sensor measuring coil current, we can add another comparator
+to implement peak current limiting. This prevents excessive currents when inductor core starts to saturate and the
+ac ripple current waveform becomes spiky (
+see [MPS article, Figure 7](https://www.monolithicpower.com/en/learning/resources/power-losses-in-buck-converters-and-how-to-increase-efficiency)).
+Once the current threshold is
+reached, we shut down the ctrl switch and after the chosen dead-time
 enable the sync switch. The analog signal path garantues very fast
 shut-down in over-load and short-circuit conditions.
 
@@ -86,10 +96,11 @@ Besides inductivity value L, this approach needs the number of winding
 turns, the magnet path length of the core and the dc bias model of the
 core material. Simulations show that there is a rather small
 operating range where the converter would operate in DCM with L(I_o),
-and in CCM with L0. For reduced complexity of the implementation, we can
-just assume a fixed inductivity drop of 5%. A simplified model would assume a linear L(I_o), which is expected to work
-with well designed converters where ripple current is around 0.3 of full load dc current.
-An analytic inference still needs to be done.
+but in CCM with L0. For reduced complexity of the implementation, we can
+just assume a fixed inductivity drop of 5%. This works for well-designed inductors with moderate ripple factor around
+0.3, because powder core DC saturation curve tends to be rather flat during the CCM/DCM transition point and the dc
+margin is sufficiently higher than ripple current during higher condition in CCM. A simplified model would assume a
+linear L(I_o), such as 0.1 Imax => 10% drop. An analytic inference still needs to be done.
 
 If we find the converter to be in DCM, we compute LS on-time as follows.
 
@@ -117,7 +128,7 @@ Which results:
 
 $$t_{on,LS} = t_{on,HS} \cdot (\frac{V_i}{V_o} - 1) = t_{on,HS} \cdot (\frac{1}{M} - 1)$$
 
-$$t_{on,LS} = \frac{D}{f_sw} \cdot (\frac{1}{M} - 1)$$
+$$t_{on,LS} = \frac{D}{f_{sw}} \cdot (\frac{1}{M} - 1)$$
 
 Notice that if we set M = D, as in CCM, this equation becomes equal to
 the CCM case:
@@ -133,6 +144,7 @@ Takeaways
   duty cycle D
 - Switching LS too long causes reverse coil current and might turn the
   buck converter into a (reversed) boost converter
+- Switching time ratio of HS and LS is independent of inductivity value
 
 ### Error Considerations
 
@@ -142,7 +154,7 @@ M and finally the rectification on time.
 
 Let assume two extreme cases for the voltage measurements: V_in is +1%
 of the actual value, V_out -1%: we will get an M which is around -2%
-below the actual value. Since rectification time is reciprocal to M,
+below the actual value ( precisely $0.99/1.01≈0.98$ ). Rectification time is reciprocal to M and
 this will cause a +4% error rectification on time at D=0.5. If we double
 the voltage error, we get approximately double the error for
 rectification time. Longer rectification time will cause reverse current
