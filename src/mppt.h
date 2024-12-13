@@ -34,18 +34,21 @@ struct Limits {
 
     const float Temp_derate{};
 
+    const bool reverse_current_paranoia{};
+
 
     explicit Limits(const ConfFile &limits)
             : Vin_max(limits.getFloat("vin_max")), Vin_min(limits.getFloat("vin_min")),
               Vout_max(limits.getFloat("vout_max")),
               Iin_max(limits.getFloat("iin_max")), Iout_max(limits.getFloat("iout_max")),
               P_max(limits.getFloat("p_max")), Temp_max(limits.getFloat("temp_max")),
-              Temp_derate(limits.getFloat("temp_derate")) {
-        assert(Vin_max > Vin_min);
-        assert(Vin_max * Iin_max > P_max);
-        assert(Vin_max * Iin_max < P_max * 4);
-        assert(Temp_derate < Temp_max);
-        assert(20 < Temp_max and Temp_max < 120);
+              Temp_derate(limits.getFloat("temp_derate")),
+              reverse_current_paranoia(limits.getByte("reverse_current_paranoia", 1) != 0) {
+        assert_throw(Vin_max > Vin_min, "");
+        assert_throw(Vin_max * Iin_max > P_max, "");
+        assert_throw(Vin_max * Iin_max < P_max * 4, "");
+        assert_throw(Temp_derate < Temp_max, "");
+        assert_throw(20 < Temp_max and Temp_max < 120, "");
     }
 
     Limits() = default;
@@ -123,8 +126,6 @@ class MpptController {
     LCD &lcd;
 
 
-    bool autoDetectVout_max = true;
-
     MpptControlMode state = MpptControlMode::None;
     bool _limiting = false;// control limited (no MPPT)
     bool _sweeping = false;// global scan
@@ -141,7 +142,7 @@ class MpptController {
     unsigned long lastTimeProtectPassed = 0;
     unsigned long _lastPointWrite = 0;
 
-    VIinVout<const Sensor *> sensors{};
+    const VIinVout<const Sensor *> &sensors;
     const Sensor *sensorPhysicalI{nullptr};
     const Sensor *sensorPhysicalU{nullptr};
 
@@ -159,6 +160,11 @@ private:
     TopologyConfig topologyConfig;
 
     uint8_t ledPinSimple = 255;
+
+    struct flags_ {
+        bool autoDetectVout_max: 1 = true;
+    };
+    flags_ flags;
 public:
     //MpptParams params;
     Limits limits{};
@@ -171,13 +177,16 @@ public:
 
     float speedScale = 1;
 
-    explicit MpptController(ADC_Sampler &dcdcPwr, SynchronousConverter &converter, LCD &lcd)
-            : sampler(dcdcPwr), converter(converter), lcd(lcd),
+    explicit MpptController(ADC_Sampler &dcdcPwr, const VIinVout<const Sensor *> &sensors,
+                            SynchronousConverter &converter, LCD &lcd)
+            : sampler(dcdcPwr), converter(converter), lcd(lcd), sensors{sensors},
               charger{} {
     }
 
-    void setSensors(const VIinVout<const Sensor *> &channels_) {
-        sensors = channels_;
+    void initSensors(const ConfFile &pinConf) {
+        assert_throw(sensors.Vout, "");
+        assert_throw(sensors.Iout, "");
+
         if (sensors.Iout->isVirtual) {
             ESP_LOGI("mppt", "Iout sensor is virtual, using Iin");
             sensorPhysicalI = ::sensors.Iin;
@@ -189,9 +198,7 @@ public:
         }
         if (sensorPhysicalI->isVirtual) throw std::runtime_error("no physical I sensor");
         if (sensorPhysicalU->isVirtual) throw std::runtime_error("no physical U sensor");
-    }
 
-    void initSensors(const ConfFile &pinConf) {
         ntc.begin(pinConf);
         ucTemp.begin();
         ucTemp.read();
@@ -240,7 +247,8 @@ public:
 
     [[nodiscard]] bool startCondition() const {
         return !(ntc.last() > limits.Temp_derate) && ucTemp.last() < limits.Temp_derate
-               && sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1
+               && (converter.boost() ? sensors.Vin->ewm.avg.get() < sensors.Vout->ewm.avg.get() + 1
+                                     : sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1)
                && !boardPowerSupplyUnderVoltage(true) && !sampler.isCalibrating();
     }
 
@@ -283,7 +291,7 @@ public:
 
     bool protect(bool ignoreUV) {
 
-        auto nowMs = loopWallClockMs();
+        auto nowMs = wallClockMs();
 
         // input over-voltage
         if (sensors.Vin->last > limits.Vin_max) {
@@ -294,7 +302,8 @@ public:
         }
 
         // output over-voltage
-        auto ovTh = std::min(charger.params.Vout_max * 1.05f, limits.Vout_max);
+        auto ovTh = std::min(charger.params.Vout_max * (limits.reverse_current_paranoia ? 1.05f : 1.5f),
+                             limits.Vout_max);
         //if (adcSampler.med3.s.chVout.get() > ovTh) {
         if (sensors.Vout->last > ovTh) { //  && sensors.Vout->previous > ovTh * 0.9f
             bool wasDisabled = converter.disabled();
@@ -310,7 +319,7 @@ public:
                 );
 
 
-            if (autoDetectVout_max && nowMs - lastTimeProtectPassed > 20000) {
+            if (flags.autoDetectVout_max && nowMs - lastTimeProtectPassed > 20000) {
                 // if the OV condition persists for some seconds, auto-detect Vout_max
                 charger.params.Vout_max = NAN;
                 sampler.startCalibration();
@@ -359,33 +368,39 @@ public:
             return false;
         }
 
-        if (sensors.Vout->ewm.avg.get() > (sensors.Vin->ewm.avg.get() + 1.0f) * 1.25f) {
-            if (!converter.disabled())
-                ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown duty=%i", sensors.Vout->ewm.avg.get(),
-                         sensors.Vin->ewm.avg.get(), (int) converter.getCtrlOnPwmCnt());
-            shutdownDcdc();
-            return false;
-        }
-
-        if (sensors.Vout->last > (sensors.Vin->last + .5f) * 2) {
-            ESP_LOGE("MPPT", "Vout %.1f > 2x Vin %.1f, shutdown", sensors.Vout->last, sensors.Vin->last);
-            shutdownDcdc();
-            return false;
-        }
-
-        // try to prevent voltage boost and disable low side for low currents
-        auto currentFilt = fminf(sensorPhysicalI->ewm.avg.get(),
-                                 std::max(sensorPhysicalI->last, sensorPhysicalI->previous));
-        if (currentFilt < -0.05f) {
-            if (converter.getRectOnPwmCnt() > converter.getRectOnPwmMax() / 2 &&
-                converter.getRectOnPwmCnt() > (converter.pwmCtrlMax / 10)) {
-                ESP_LOGW("MPPT", "Low current, set low-side min duty (ewm(Iin)=%.2f, max(Iin,Iin[-1])=%.2f)",
-                         sensors.Iin->ewm.avg.get(), std::max(sensors.Iin->last, sensors.Iin->previous));
+        if (!converter.boost()) {
+            if (sensors.Vout->ewm.avg.get() > (sensors.Vin->ewm.avg.get() + 1.0f) * 1.25f) {
+                if (!converter.disabled())
+                    ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown duty=%i", sensors.Vout->ewm.avg.get(),
+                             sensors.Vin->ewm.avg.get(), (int) converter.getCtrlOnPwmCnt());
+                shutdownDcdc();
+                return false;
             }
-            if (bflow.state())
-                ESP_LOGW("MPPT", "Low current %.2f, disable backflow", currentFilt);
-            converter.syncRectMinDuty();
-            bflow.enable(false); // low current
+            if (sensors.Vout->last > (sensors.Vin->last + .5f) * 2) {
+                ESP_LOGE("MPPT", "Vout %.1f > 2x Vin %.1f, shutdown", sensors.Vout->last, sensors.Vin->last);
+                shutdownDcdc();
+                return false;
+            }
+
+            // try to prevent voltage boost and disable low side for low currents
+            auto currentFilt = fminf(sensorPhysicalI->ewm.avg.get(),
+                                     std::max(sensorPhysicalI->last, sensorPhysicalI->previous));
+            if (currentFilt < -0.05f && limits.reverse_current_paranoia) {
+                if (converter.getRectOnPwmCnt() > converter.getRectOnPwmMax() / 2 &&
+                    converter.getRectOnPwmCnt() > (converter.pwmCtrlMax / 10)) {
+                    ESP_LOGW("MPPT", "Low current, set low-side min duty (ewm(Iin)=%.2f, max(Iin,Iin[-1])=%.2f)",
+                             sensors.Iin->ewm.avg.get(), std::max(sensors.Iin->last, sensors.Iin->previous));
+                }
+                if (bflow.state())
+                    ESP_LOGW("MPPT", "Low current %.2f, disable backflow", currentFilt);
+                if (converter.getRectOnPwmCnt() > converter.getRectOnPwmMin())
+                    ESP_LOGW("MPPT", "Low current %.2f, disable sync rect", currentFilt);
+                converter.syncRectMinDuty();
+                bflow.enable(false); // low current
+            }
+
+        } else {
+            // TODO Vin
         }
 
 
@@ -407,7 +422,7 @@ public:
         auto iOutSmall = sensorPhysicalI->ewm.avg.get() < (limits.Iout_max * 0.01f);
 
         if (iOutSmall && converter.getCtrlOnPwmCnt() > converter.pwmRectMin * 2 and
-            (vOut < 1 or (converter.getDutyCycle() * 0.9f) > vr)) {
+            (vOut < 1 or (converter.getDutyCycle() * 0.5f) > vr) and limits.reverse_current_paranoia) {
 
             if (!converter.disabled())
                 ESP_LOGE("MPPT",
@@ -468,7 +483,7 @@ public:
 
         enqueue_task([&, controlMode, limIdx] {
             ESP_LOGI("mppt", "Stop sweep after %.2fs at controlMode=%s (limIdx=%i) PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
-                     (loopWallClockUs() - sampler.getTimeLastCalibrationUs()) * 1e-6f,
+                     (wallClockUs() - sampler.getTimeLastCalibrationUs()) * 1e-6f,
                      MpptState2String[(uint8_t) controlMode].c_str(), limIdx,
                      converter.getCtrlOnPwmCnt(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
             );
@@ -503,7 +518,7 @@ public:
         point.addField("pwm_ls_duty", converter.getRectOnPwmCnt());
         point.addField("pwm_ls_max", converter.getRectOnPwmMax());
 
-        auto nowMs = loopWallClockMs();
+        auto nowMs = wallClockMs();
 
         point.setTime(WritePrecision::MS);
 
@@ -530,8 +545,8 @@ public:
      * - calls mpp tracker
      */
     void update() {
-        auto nowMs = loopWallClockMs();
-        auto &nowUs = loopWallClockUs();
+        auto nowMs = wallClockMs();
+        auto &nowUs = wallClockUs();
 
         if (converter.disabled() && !startCondition()) {
             bflow.enable(false);
@@ -729,15 +744,16 @@ public:
             }
 
             // constrain the buck step, this will slow down control for lower loop rates:
-            fp = constrain(fp, -(float) converter.getCtrlOnPwmCnt(), 1.0f);
+            // this causes very slow load response time, but works well when battery is connected
+            fp = constrain(fp, -(float) converter.getCtrlOnPwmCnt(), 8.0f);
             converter.pwmPerturbFractional(fp);
 
-            if (controlValue < -80 and fp < -0.01) {
+            if (controlValue < -80 and fp < -0.01 and converter.getCtrlOnPwmCnt() > converter.getCtrlOnPwmMin()) {
                 auto limIdx = (int) (limitingControl - controlValues.begin());
 
                 UART_LOG_ASYNC(
-                        "Limiting! Control value %.2f => perturbation %.2f, mode=%s, idx=%i (act=%.3f, tgt=%.3f)",
-                        controlValue, fp,
+                        "Limiting! Control value %.2f => perturbation %.2f (to %hu), mode=%s, idx=%i (act=%.3f, tgt=%.3f)",
+                        controlValue, fp, converter.getCtrlOnPwmCnt(),
                         MpptState2String[(int) controlMode].c_str(), limIdx, limitingControl->actual,
                         limitingControl->target);
 
@@ -748,7 +764,9 @@ public:
         }
         lastUs = nowUs;
 
-        float currentThreshold = bflow.state() ? 0.05f : 0.2f; // hysteresis
+        float currentThreshold = limits.reverse_current_paranoia
+                                 ? (bflow.state() ? 0.05f : 0.2f)
+                                 : (bflow.state() ? 0.0f : 0.1f); // hysteresis; // hysteresis
         float I_phys_smooth_min = I_phys_smooth; //std::min(I_phys_smooth, sensorPhysicalI->med3.get());
         bool aboveThres = (I_phys_smooth_min > currentThreshold);
         if (bflow.state() != aboveThres)
