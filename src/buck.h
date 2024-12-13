@@ -58,10 +58,13 @@ class SynchronousConverter {
     float directionFloatBuffer = 0.0f; // fractional perturbation buffer
 
     bool isBoost = false;
+    bool forcedPwm = false;
 
     float fL = NAN; // fsw * L
 
 public:
+
+    inline bool boost() const { return isBoost; }
 
     uint16_t pwmCtrlMax{}, pwmRectMin{}, pwmCtrlMin{};
 
@@ -78,6 +81,8 @@ public:
 
     [[nodiscard]] uint16_t getCtrlOnPwmCnt() const { return pwmCtrl; }
 
+    [[nodiscard]] uint16_t getCtrlOnPwmMin() const { return pwmCtrlMin; }
+
     [[nodiscard]] uint16_t getRectOnPwmCnt() const { return pwmRect; }
 
     [[nodiscard]] uint16_t getLowSideOnPwmCnt() const { return isBoost ? pwmCh_Ctrl : pwmRect; }
@@ -85,19 +90,26 @@ public:
     [[nodiscard]] uint16_t getLowSideMinPwmCnt() const { return isBoost ? 0 : pwmRectMin; }
 
     [[nodiscard]] uint16_t getRectOnPwmMax() const { return pwmRectMax; }
+    [[nodiscard]] uint16_t getRectOnPwmMin() const { return pwmRectMin; }
 
     [[nodiscard]] float voltageRatio() const { return outInVoltageRatio; } // M
 
-    bool init(const ConfFile &pinConf, float L0) {
+    bool init(const ConfFile &converterConf, const ConfFile &pinConf, const ConfFile &coilConf ) {
 
-        isBoost = pinConf.getByte("boost", 0);
+        isBoost =   converterConf.getByte("boost", 0);
+        forcedPwm = converterConf.getByte("forced_pwm", 0);
+
+        if(forcedPwm)ESP_LOGW("converter", "%s", "forced_pwm");
+
+        auto L0 = coilConf.getFloat("L0");
+
 
         uint32_t pwmFrequency = pinConf.getLong("pwm_freq"); //39000; //  converter switching frequency
         assert_throw(pwmFrequency > 5e3 && pwmFrequency < 5e5, "");
 
         fL = (float) pwmFrequency * L0 * InductivityDcBias; // for ripple current computation
-        assert(fL < 5);
-        assert(fL > 1);
+        assert_throw(fL < 5, "");
+        assert_throw(fL > 1, "");
 
         auto drvInpLogic = pinConf.getString("pwm_driver_logic"); // driver input logic "in,en", "hi,li" and en
         uint8_t pinCtrl, pinRect;
@@ -154,7 +166,7 @@ public:
             digitalWrite(pinSd, 1);
         }
 
-        pwmCtrlMax = (uint16_t)((float) pwmDriver.pwmMax * (1.0f - MinDutyCycleLS));
+        pwmCtrlMax = (uint16_t) ((float) pwmDriver.pwmMax * (1.0f - MinDutyCycleLS));
         pwmRectMin = std::ceil(
                 (float) pwmDriver.pwmMax * (isBoost ? 0.f : MinDutyCycleLS)); // keeping the bootstrap circuit powered
         pwmCtrlMin = isBoost ? 0 : (pwmRectMin / 5); // TODO why this? everything else is too much!
@@ -168,9 +180,11 @@ public:
     }
 
     void computePwmRectMax() {
-        if (dcmHysteresis) pwmRectMax = (uint16_t) std::round((float) pwmCtrl * pwmRectRatioDCM);
+        if (dcmHysteresis) {
+            pwmRectMax = (uint16_t) std::round((float) pwmCtrl * pwmRectRatioDCM);
+        }
         else pwmRectMax = pwmDriver.pwmMax - pwmCtrl;
-        pwmRectMax = std::max(pwmRectMin, pwmRectMax);
+        pwmRectMax = std::min<uint16_t>(std::max(pwmRectMin, pwmRectMax), pwmDriver.pwmMax - pwmCtrlMin);
     }
 
     void pwmPerturb(int16_t direction) {
@@ -241,7 +255,7 @@ public:
 
         directionFloat += directionFloatBuffer;
         directionFloatBuffer = 0;
-        auto directionInt = (int16_t)(directionFloat);
+        auto directionInt = (int16_t) (directionFloat);
         if (directionInt != 0)
             pwmPerturb(directionInt);
         directionFloatBuffer += directionFloat - (float) directionInt;
@@ -275,7 +289,8 @@ public:
      */
     [[nodiscard]] bool computeDCM(float vh, float vl, float il) {
         auto ir = rippleCurrent(vh, vl);
-        auto dcm = ir > il * (dcmHysteresis ? 1.9f : 2.f);
+        auto dcm = ir > il * (dcmHysteresis ? 1.9f : 2.f) || il < 0.1f; // TODO: il < 0.1f
+        if(forcedPwm) dcm = false;
         if (dcm != dcmHysteresis) {
             dcmHysteresis = dcm;
             UART_LOG("converter: %s -> %s (M=%.2f, I=%.2f, ∆I=%.2f)",
@@ -300,7 +315,7 @@ public:
         return isBoost ? (1.f / (m - 1.f)) : (1.f / m - 1.f);
     }
 
-    [[nodiscard]] float inDCM() const {
+    [[nodiscard]] bool inDCM() const {
         return dcmHysteresis;
     }
 
@@ -341,17 +356,23 @@ public:
                     ) / voltageRatioWCEF;
 
             outInVoltageRatio = convRatioWCE;
-            pwmRectRatioDCM = rectCtrlRatio(convRatioWCE);
+            /*if(il < 0.05f || vl < 1.0f) // TODO get rid of magic constants
+            {
+                if(pwmRectRatioDCM > 0.2f)
+                    ESP_LOGI("converter", "Disable sync rect, low coil current (%.2f) or low volt (%.2f)", il, vl);
+                pwmRectRatioDCM = 0.0f;
+            } else */
+                pwmRectRatioDCM = rectCtrlRatio(convRatioWCE);
             //pwmMaxRect = (uint16_t) std::round( * (float) pwmCtrl);
 
             // TODO remove:
             // compute worst-case error at current working point
-            const float voltageRatio = vl / vh;
+            /*const float voltageRatio = vl / vh;
             const float pwmMaxLsWCEF = (1 / (voltageRatio * voltageRatioWCEF) - 1) / (1 / voltageRatio - 1); // > 1
             const float pwmMaxRectWCEF = rectCtrlRatio(voltageRatio * voltageRatioWCEF) / rectCtrlRatio(voltageRatio);
             if (!isBoost) {
                 assert(abs(pwmMaxLsWCEF - pwmMaxRectWCEF) < 0.01);
-            }
+            }*/
 
         }
     }
