@@ -90,16 +90,17 @@ public:
     [[nodiscard]] uint16_t getLowSideMinPwmCnt() const { return isBoost ? 0 : pwmRectMin; }
 
     [[nodiscard]] uint16_t getRectOnPwmMax() const { return pwmRectMax; }
+
     [[nodiscard]] uint16_t getRectOnPwmMin() const { return pwmRectMin; }
 
     [[nodiscard]] float voltageRatio() const { return outInVoltageRatio; } // M
 
-    bool init(const ConfFile &converterConf, const ConfFile &pinConf, const ConfFile &coilConf ) {
+    bool init(const ConfFile &converterConf, const ConfFile &pinConf, const ConfFile &coilConf) {
 
-        isBoost =   converterConf.getByte("boost", 0);
+        isBoost = converterConf.getByte("boost", 0);
         forcedPwm = converterConf.getByte("forced_pwm", 0);
 
-        if(forcedPwm)ESP_LOGW("converter", "%s", "forced_pwm");
+        if (forcedPwm)ESP_LOGW("converter", "%s", "forced_pwm");
 
         auto L0 = coilConf.getFloat("L0");
 
@@ -182,8 +183,7 @@ public:
     void computePwmRectMax() {
         if (dcmHysteresis) {
             pwmRectMax = (uint16_t) std::round((float) pwmCtrl * pwmRectRatioDCM);
-        }
-        else pwmRectMax = pwmDriver.pwmMax - pwmCtrl;
+        } else pwmRectMax = pwmDriver.pwmMax - pwmCtrl;
         pwmRectMax = std::min<uint16_t>(std::max(pwmRectMin, pwmRectMax), pwmDriver.pwmMax - pwmCtrlMin);
     }
 
@@ -290,7 +290,7 @@ public:
     [[nodiscard]] bool computeDCM(float vh, float vl, float il) {
         auto ir = rippleCurrent(vh, vl);
         auto dcm = ir > il * (dcmHysteresis ? 1.9f : 2.f) || il < 0.1f; // TODO: il < 0.1f
-        if(forcedPwm) dcm = false;
+        if (forcedPwm) dcm = false;
         if (dcm != dcmHysteresis) {
             dcmHysteresis = dcm;
             UART_LOG("converter: %s -> %s (M=%.2f, I=%.2f, ∆I=%.2f)",
@@ -356,13 +356,14 @@ public:
                     ) / voltageRatioWCEF;
 
             outInVoltageRatio = convRatioWCE;
-            /*if(il < 0.05f || vl < 1.0f) // TODO get rid of magic constants
+            if (il < 0.05f || vl < 1.0f) // TODO get rid of magic constants
             {
-                if(pwmRectRatioDCM > 0.2f)
+                if (pwmRectRatioDCM > 0.2f)
                     ESP_LOGI("converter", "Disable sync rect, low coil current (%.2f) or low volt (%.2f)", il, vl);
                 pwmRectRatioDCM = 0.0f;
-            } else */
+            } else
                 pwmRectRatioDCM = rectCtrlRatio(convRatioWCE);
+            
             //pwmMaxRect = (uint16_t) std::round( * (float) pwmCtrl);
 
             // TODO remove:
