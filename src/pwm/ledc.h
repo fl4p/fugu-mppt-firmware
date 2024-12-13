@@ -30,7 +30,7 @@ public:
                 .clk_cfg          = LEDC_AUTO_CLK
 
         };
-        ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+        ESP_ERROR_CHECK_THROW(ledc_timer_config(&ledc_timer));
 
         // Prepare and then apply the LEDC PWM channel configuration
         ledc_channel_config_t ledc_channel = {
@@ -43,7 +43,7 @@ public:
                 .hpoint         = 0,
                 .flags          = {.output_invert = 0},
         };
-        ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+        ESP_ERROR_CHECK_THROW(ledc_channel_config(&ledc_channel));
     }
 
     void update_pwm(int channel, uint32_t duty) {

@@ -33,7 +33,7 @@ void loopConsole(int read(char *buf, size_t len), int write(const char *buf, siz
         if (length + buf_pos >= bufSiz - 1)
             length = bufSiz - 1 - buf_pos;
         write(&buf[buf_pos], length); // echo
-        lastTimeOutUs = loopWallClockUs(); // stop logging during user input
+        lastTimeOutUs = wallClockUs(); // stop logging during user input
         buf_pos += length;
         while (buf_pos > 0 && buf[buf_pos - 1] == '\b') {
             --buf_pos;
