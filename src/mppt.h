@@ -161,8 +161,11 @@ private:
 
     uint8_t ledPinSimple = 255;
 
+    uint16_t targetPwmCnt = 0;
+
     struct flags_ {
         bool autoDetectVout_max: 1 = true;
+
     };
     flags_ flags;
 public:
@@ -204,9 +207,15 @@ public:
         ucTemp.read();
     }
 
-    void begin(const ConfFile &pinConf, const Limits &limits_, const TeleConf &tele_) {
+    void begin(const ConfFile &trackerConf, const ConfFile &pinConf, const Limits &limits_, const TeleConf &tele_) {
         limits = limits_;
         tele = tele_;
+
+        targetPwmCnt = (uint16_t )std::round(trackerConf.getFloat("target_duty_cycle", 0.0f) * (float)converter.pwmCtrlMax);
+
+        if(targetPwmCnt) {
+            ESP_LOGW("mppt", "target duty cycle PWM=%.2hu, not performing tracking!", targetPwmCnt);
+        }
 
 
         ledPinSimple = pinConf.getByte("led_simple", 255);
@@ -302,6 +311,7 @@ public:
         }
 
         // output over-voltage
+        // todo introduce separate variable for reverse_current_paranoia
         auto ovTh = std::min(charger.params.Vout_max * (limits.reverse_current_paranoia ? 1.05f : 1.5f),
                              limits.Vout_max);
         //if (adcSampler.med3.s.chVout.get() > ovTh) {
@@ -714,7 +724,12 @@ public:
         }
 
         //
-        if (controlMode == MpptControlMode::None) {
+        if (targetPwmCnt) {
+            // no tracking,
+            controlMode = MpptControlMode::MPPT;
+            auto cnt = converter.getCtrlOnPwmCnt();
+            controlValue = cnt == targetPwmCnt ? 0 : (cnt > targetPwmCnt) ? -1 : 1;
+        } else if (controlMode == MpptControlMode::None) {
             controlMode = MpptControlMode::MPPT;
             controlValue = tracker.update(power, converter.getCtrlOnPwmCnt());
             controlValue *= speedScale;
