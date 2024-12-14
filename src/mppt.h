@@ -147,7 +147,7 @@ class MpptController {
     const Sensor *sensorPhysicalU{nullptr};
 
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
-    PD_Control VoutController{5000, 12000, true}; // Vout over-voltage
+    PD_Control VoutController{1000, 10000, true}; // Vout over-voltage
     PD_Control IinController{100, 400, true}; // Iin over-current
     PD_Control_SmoothSetpoint IoutCurrentController{200, 800, 200}; // Iout over-current // TODO PID?
     PD_Control_SmoothSetpoint powerController{20, 40, 200}; // over-power // TODO PID?
