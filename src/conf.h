@@ -124,7 +124,7 @@ public:
                 throw std::runtime_error("strto_ error " + i->second);
             }
             if (*endptr != 0) {
-                ESP_LOGE(TAG, "additional chars after strtol(%s): '%s'", i->second.c_str(), endptr);
+                ESP_LOGE(TAG, "%s:%s additional chars after strtol(%s): '%s'", path, key.c_str(), i->second.c_str(), endptr);
                 //assert(false);
                 throw std::runtime_error("additional chars " + i->second);
             }

@@ -382,16 +382,23 @@ void setup() {
         ESP_LOGE("main", "Error during setup, adc-only mode, skip pwm init");
     } else {
         ConfFile coilConf{"/littlefs/conf/coil.conf"};
-        if (!converter.init(pinConf, coilConf.getFloat("L0"))) {
+        ConfFile converterConf{"/littlefs/conf/converter.conf"};
+
+        mppt.charger.params.Vout_max = converterConf.getFloat("vout_max", NAN);
+        auto mode = converterConf.getString("mode", "mppt");
+
+        if (!converter.init(converterConf, pinConf, coilConf)) {
             ESP_LOGE("main", "Failed to init half bridge driver");
             setupErr = true;
         }
     }
 
+    ConfFile trackerConf{"/littlefs/conf/tracker.conf"};
+
     try {
         mppt.initSensors(pinConf);
         if (!adcSampler.adcStates.empty() && !setupErr) {
-            mppt.begin(pinConf, lim, teleConf);
+            mppt.begin(trackerConf, pinConf, lim, teleConf);
         }
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during mppt setup: %s", er.what());
@@ -690,6 +697,8 @@ void loopNewData(unsigned long nowMs) {
                         mppt.update();
                         rtcount("mppt.update");
                     } else {
+
+                        // if(mppt)
                         mppt.telemetry();
                         rtcount("mppt.telemetry");
                     }
@@ -800,8 +809,13 @@ bool handleCommand(const String &inp) {
         manualPwm = false;
     } else if (inp.startsWith("dc ") && !adcSampler.isCalibrating() && inp.length() <= 8
                && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < converter.pwmCtrlMax) {
-        if (!manualPwm)
+        if (!manualPwm || converter.disabled()) {
             ESP_LOGI("main", "Switched to manual PWM");
+            if (!mppt.limits.reverse_current_paranoia) {
+                converter.enableSyncRect(true);
+                mppt.bflow.enable(true);
+            }
+        }
         manualPwm = true;
         converter.pwmPerturb(inp.substring(3).toInt() - converter.getCtrlOnPwmCnt());
         // pwm.enableLowSide(true);
