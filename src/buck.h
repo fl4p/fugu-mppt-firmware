@@ -356,7 +356,7 @@ public:
                     ) / voltageRatioWCEF;
 
             outInVoltageRatio = convRatioWCE;
-            if (il < 0.05f || vl < 1.0f) // TODO get rid of magic constants
+            if (il < 0.01f || vl < 1.0f) // TODO get rid of magic constants
             {
                 if (pwmRectRatioDCM > 0.2f)
                     ESP_LOGI("converter", "Disable sync rect, low coil current (%.2f) or low volt (%.2f)", il, vl);

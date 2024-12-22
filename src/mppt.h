@@ -440,7 +440,8 @@ public:
         float vIn = fminf(sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
         //float vOut = sensors.Vout->ewm.avg.get();
         //float vIn = sensors.Vin->ewm.avg.get();
-        auto vr = converter.updateSyncRectMaxDuty(vIn, vOut, sensors.Iout->ewm.avg.get());
+        auto vr = converter.updateSyncRectMaxDuty(vIn, vOut, converter.boost() ? sensors.Iin->ewm.avg.get()
+                                                                               : sensors.Iout->ewm.avg.get());
 
         auto iOutSmall = sensorPhysicalI->ewm.avg.get() < (limits.Iout_max * 0.01f);
 
