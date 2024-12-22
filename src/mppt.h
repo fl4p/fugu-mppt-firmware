@@ -764,7 +764,7 @@ public:
         if (lastUs) {
             // normalize the control value to pwmMax and scale it with update rate to fix buck slope rate
             auto dt_us = nowUs - lastUs;
-            auto fp = controlValue * (1.f / 2000.f) * (float) converter.pwmCtrlMax * (float) dt_us * 1e-6f * 25.f * 4.f;
+            auto fp = controlValue * (1.f / 2000.f) * (float) converter.pwmCtrlMax * (float) dt_us * 1e-6f * 25.f * 2.f;
             if (!_sweeping && converter.getCtrlOnPwmCnt() < converter.pwmCtrlMin * 2) {
                 // slow-down control loop for low duty cycles (low-load condition)
                 // TODO does this makes sense? the aim here is to stabilize Vout in low/no-load condition
