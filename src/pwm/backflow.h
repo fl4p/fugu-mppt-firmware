@@ -23,10 +23,11 @@ public:
             assert(!panelSD);
             pinMode(panelEN, OUTPUT);
             digitalWrite(panelEN, false);
-        } else {
-            assert(panelSD);
+        } else if (panelSD) {
             pinMode(panelSD, OUTPUT);
             digitalWrite(panelSD, true);
+        } else {
+            // nothing
         }
         _state = false;
     }
@@ -34,8 +35,12 @@ public:
     void enable(bool enable) {
         if (panelEN) {
             digitalWrite(panelEN, enable);
-        } else {
+        } else if (panelSD) {
             digitalWrite(panelSD, !enable);
+        } else {
+            if (_state != enable) {
+                UART_LOG_ASYNC("Back-flow switch ignored");
+            }
         }
         if (_state != enable) {
             UART_LOG_ASYNC("Back-flow switch %s", enable ? "enabled" : "disabled");
@@ -44,4 +49,8 @@ public:
     }
 
     bool state() const { return _state; }
+
+    explicit operator bool() const {
+        return panelSD != 0 and panelEN != 0;
+    }
 };

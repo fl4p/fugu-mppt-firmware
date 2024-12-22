@@ -211,11 +211,14 @@ public:
         limits = limits_;
         tele = tele_;
 
-        targetPwmCnt = (uint16_t )std::round(trackerConf.getFloat("target_duty_cycle", 0.0f) * (float)converter.pwmCtrlMax);
+        targetPwmCnt = (uint16_t) std::round(
+                trackerConf.getFloat("target_duty_cycle", 0.0f) * (float) converter.pwmCtrlMax);
 
-        if(targetPwmCnt) {
+        if (targetPwmCnt) {
             ESP_LOGW("mppt", "target duty cycle PWM=%.2hu, not performing tracking!", targetPwmCnt);
         }
+
+        //flags.noPanelSwitch = pinConf
 
 
         ledPinSimple = pinConf.getByte("led_simple", 255);
@@ -414,11 +417,21 @@ public:
         }
 
 
-        if (sensorPhysicalI->ewm.avg.get() > 6 && !bflow.state()) {
-            if (!converter.disabled())
-                ESP_LOGE("MPPT", "High-current through open backflow switch!");
-            shutdownDcdc();
-            return false;
+        if (bflow && !bflow.state()) {
+            if (sensorPhysicalI->ewm.avg.get() > 6) {
+                if (!converter.disabled())
+                    ESP_LOGE("MPPT", "High-current through open backflow switch!");
+                shutdownDcdc();
+                return false;
+            }
+
+            if (converter.getDutyCycle() > 0.33f) {
+                // in case the current sensor is wrong
+                if (!converter.disabled())
+                    ESP_LOGE("MPPT", "High duty cycle with open backflow switch!");
+                shutdownDcdc();
+                return false;
+            }
         }
 
 

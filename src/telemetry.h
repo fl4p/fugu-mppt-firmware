@@ -120,7 +120,7 @@ void wifi_load_conf() {
             if (!wifiMulti.addAP(wifiConf.getString(k).c_str(), psk)) {
                 ESP_LOGW("tele", "Failed to add ap  %s", ssid);
             } else {
-                ESP_LOGI(__FILENAME__, "Add WiFi SSID %s (psk %s)", ssid, psk ? psk : "<none>");
+                ESP_LOGI(__FILENAME__, "Add WiFi SSID %s (psk %s)", ssid, psk ? "***" : "<none>");
                 noSsid = false;
             }
         }
