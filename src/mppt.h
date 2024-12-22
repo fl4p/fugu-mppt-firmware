@@ -616,7 +616,8 @@ public:
         float Iout_max = limits.Iout_max; //charger.getToppingCurrent(::sensors.Vout->ewm.avg.get());
 
         // periodic sweep / scan
-        if (!_sweeping /*&& power_smooth < 30*/ && (nowUs - sampler.getTimeLastCalibrationUs()) > (30 * 60000000)) {
+        if (!_sweeping /*&& power_smooth < 30*/ && (nowUs - sampler.getTimeLastCalibrationUs()) > (30 * 60000000)
+            && targetPwmCnt == 0) {
             ESP_LOGI("mppt", "periodic sweep & sensor calibration");
             startSweep();
             rtcount("mppt.update.startSweep");
