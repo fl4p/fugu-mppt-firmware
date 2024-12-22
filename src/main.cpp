@@ -575,7 +575,7 @@ std::string mpptStateStr() {
 void loopLF(const unsigned long &nowUs) {
     auto &nSamples(sensors.Vout ? sensors.Vout->numSamples : lastNSamples);
     auto dt = nowUs - lastTimeOutUs;
-    uint32_t sps = dt ? (uint64_t) (nSamples - lastNSamples) * 1000000llu / dt : 0;
+    uint32_t sps = (dt > 20000) ? (uint64_t) (nSamples - lastNSamples) * 1000000llu / dt : 0;
 
 
     if (sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
@@ -885,6 +885,8 @@ bool handleCommand(const String &inp) {
                      sqrt(s->ewm.std.get()) * 100.f);
         }
 
+    } else if(inp == "ip") {
+        UART_LOG("Local IP Address: %s", WiFi.localIP().toString().c_str());
     } else {
         ESP_LOGI("main", "unknown or unexpected command");
         return false;

@@ -75,7 +75,7 @@ public:
         ina226.reset_INA226();         //in case the device is still initialized
         assertPinState(alertPin, true, "ina22x_alert", false);
 
-        assert(!new_data);
+        assert_throw(!new_data, "unexpected alert signal");
 
         if (!ina226.init())
             return false;
@@ -246,7 +246,7 @@ public:
     bool testContinuousAlert() {
         new_data = false;
 
-        ESP_LOGI("ina22x", "testContinuousAlert");
+        //ESP_LOGI("ina22x", "testContinuousAlert");
         ina226.reset_INA226();
         vTaskDelay(1);
         ina226.enableConvReadyAlert();
@@ -260,28 +260,28 @@ public:
 
         new_data = false;
         while (!new_data) {} // busy wait
-        ESP_LOGI("ina22x", "alert pass default");
+        //ESP_LOGI("ina22x", "alert pass default");
 
         ina226.readAndClearFlags();
 
         new_data = false;
         while (!new_data) {} // busy wait
-        ESP_LOGI("ina22x", "alert pass default2");
+        //ESP_LOGI("ina22x", "alert pass default2");
 
         ina226.setAverage(AVERAGE_1);
         ina226.setConversionTime(CONV_TIME_1100, CONV_TIME_1100);
         ina226.setMeasureMode(CONTINUOUS);
         ina226.readAndClearFlags();
         while (!new_data) {} // busy wait
-        ESP_LOGI("ina22x", "Continuous 1st");
+        //ESP_LOGD("ina22x", "Continuous 1st");
         ina226.readAndClearFlags();
         new_data = false;
         auto t0 = micros();
         while (!new_data) {} // busy wait
         auto t1 = micros();
-        ESP_LOGI("ina22x", "Continuous 2nd");
+        ESP_LOGD("ina22x", "Continuous 2nd");
 
-        ESP_LOGI("ina22x", "Continuous timings: busyWait=%lu (us)", t1 - t0);
+        ESP_LOGD("ina22x", "Continuous timings: busyWait=%lu (us)", t1 - t0);
 
         return true;
     }
@@ -353,7 +353,7 @@ public:
         if (ch == ChVBus) {
             assert_throw(voltage <= 36, "");
         } else if (ch == ChI) {
-            ESP_LOGW("ina22x", "Check shunt voltage range!");
+            ESP_LOGW("ina22x", "Check shunt voltage range! %.2f", voltage);
         } else {
             assert(false);
         }

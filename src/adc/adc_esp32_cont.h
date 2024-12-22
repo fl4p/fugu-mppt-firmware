@@ -103,8 +103,8 @@ public:
         }
 
         if (voltage > suggestVolt) {
-            ESP_LOGW("tag", "%s", ("ch" + std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage)
-                            + " > " + std::to_string(maxVolt)).c_str());
+            ESP_LOGW("esp32_adc", "%s", ("ch" + std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage)
+                            + " > " + std::to_string(suggestVolt) + " (suggested)").c_str());
         }
 
         if (voltage > 1.6f) atten = ADC_ATTEN_DB_12;

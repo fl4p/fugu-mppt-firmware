@@ -363,7 +363,7 @@ public:
                 pwmRectRatioDCM = 0.0f;
             } else
                 pwmRectRatioDCM = rectCtrlRatio(convRatioWCE);
-            
+
             //pwmMaxRect = (uint16_t) std::round( * (float) pwmCtrl);
 
             // TODO remove:
