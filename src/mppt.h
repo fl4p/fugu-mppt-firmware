@@ -798,7 +798,9 @@ public:
                                  ? (bflow.state() ? 0.05f : 0.2f)
                                  : (bflow.state() ? 0.0f : 0.1f); // hysteresis; // hysteresis
         float I_phys_smooth_min = I_phys_smooth; //std::min(I_phys_smooth, sensorPhysicalI->med3.get());
-        bool aboveThres = (I_phys_smooth_min > currentThreshold);
+        bool aboveThres = (I_phys_smooth_min > currentThreshold
+                || (I_phys_smooth_min > -0.01 && converter.getDutyCycle() > 0.3f)
+        );
         if (bflow.state() != aboveThres)
             UART_LOG_ASYNC("Current %s threshold %.2f", aboveThres ? "above" : "below", I_phys_smooth_min);
         bflow.enable(aboveThres);
