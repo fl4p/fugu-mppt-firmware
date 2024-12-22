@@ -100,7 +100,8 @@ public:
         //ina226.setAverage(AVERAGE_16);
         //ina226.setConversionTime(CONV_TIME_204, CONV_TIME_140);
 
-        float resistor = pinConf.getFloat("ina22x_resistor"), range = 35.0f;// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
+        float resistor = pinConf.getFloat("ina22x_resistor"),
+            range = pinConf.getFloat("ina22x_range", 35.0f);// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
         ina226.setResistorRange(resistor, range);
 
         /**
