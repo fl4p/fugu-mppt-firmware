@@ -15,6 +15,7 @@ OK: <cmd>
 
 * `wifi on`, `wifi off` disable wifi and telemetry. disabled wifi usually increases the control loop rate.
 * `wifi-add <ssid>:<password>`
+* `ip` show IP address
 * `restart`: reset the MCU
 * `speed <float>` set tracking speed (default 1.0)
 * `fan <float>` set fan speed 0-100

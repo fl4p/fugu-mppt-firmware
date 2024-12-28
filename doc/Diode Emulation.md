@@ -39,7 +39,7 @@ conversion ratio M does not equal duty cycle D.
 We can use a current sensor with zero cross detection (ZCD) to disable
 the LS as soon as coil current becomes zero. A digital ZCD
 implementation requires an ADC sampling rate much higher than the
-switching frequency for accurate timing.
+switching frequency for accurate timing (such as the dsPIC33CK64MC105).
 
 An analog ZCD works with a fast comparator, whose output can be fed into
 the half bridge driver to `DIS` (or `SD`, `EN*`) input.

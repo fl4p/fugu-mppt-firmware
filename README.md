@@ -26,7 +26,7 @@ Highlights:
 * Telemetry to InfluxDB over UDP
 * LCD (hd44780) and WS2812B LED Indicator
 * Configuration files on flash file system (littlefs)
-* [Serial UART console](doc/Serial%20Console.md) and telnet to interact with the charger
+* [Serial UART console](doc/Console.md) and telnet to interact with the charger
 * Unit tests, on-board [performance profiler](https://github.com/LiluSoft/esp32-semihosting-profiler/)
 
 The firmware sends real-time data to InfluxDB server using UDP line protocol.
@@ -38,7 +38,7 @@ firmware.
 Access files through FTP or USB Mass Storage Class (MSC, ESP32-S3).
 I tried to structure components in classes, so they reflect the physical and logical building-blocks of a MPPT solar
 charger.
-See [Voltage & Current Sensors, ADC](#Voltage Current Sensors (ADC))
+See [Voltage & Current Sensors, ADC](#voltage--current-sensors-adc (ADC))
 Feel free to use parts of the code.
 
 # Reference Hardware
@@ -165,8 +165,6 @@ respectively.
 In each loop iteration we update all controllers and pick the one with the lowest response value. If it is positive, we
 can proceed with the MPPT. Otherwise, we halt MPPT and decrease the duty cycle proportionally to the control value.
 
-The control loop has an update rate of about 160 Hz or 260 Hz without telemetry.
-
 # Voltage & Current Sensors (ADC)
 
 The firmware tries to be as hardware independent as possible by using layers of abstraction (HAL), so you can easily
@@ -249,7 +247,7 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 
 # On-board testing and debugging features
 
-* UART, USB and telnet interface for automated testing
+* UART, USB and telnet console for user interaction & automated testing
 * `InfluxDB`: time series writer
 * `scope`: inspect real-time, high-frequency ADC samples over Wi-Fi to debug analog noise and filtering
 * `rtcount`: profile real-time performance of code
