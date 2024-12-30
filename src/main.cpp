@@ -578,7 +578,7 @@ void loopLF(const unsigned long &nowUs) {
     uint32_t sps = (dt > 20000) ? (uint64_t) (nSamples - lastNSamples) * 1000000llu / dt : 0;
 
 
-    if (sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
+    if ( (dt > 10000) && sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 2000000) {
         mppt.shutdownDcdc();
         auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
@@ -606,9 +606,9 @@ void loopLF(const unsigned long &nowUs) {
                 "V=%4.*f/%4.*f I=%4.*f/%4.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s %s(H|L|Lm)=%4hu|%4hu|%4hu"
                 " st=%5s,%i lag=%lu㎲ N=%lu rssi=%hi",
                 sensors.Vin->last >= 9.55f ? 1 : 2, sensors.Vin->last,
-                sensors.Vout->last >= 9.55f ? 1 : 2, sensors.Vout->last,
+                sensors.Vout->last >= 9.55f ? 2 : 2, sensors.Vout->last,
                 sensors.Iin->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iin->ewm.avg.get(), // sensors.Iin->last,
-                sensors.Iout->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iout->ewm.avg.get(),
+                sensors.Iout->ewm.avg.get() >= 9.55f ? 2 : 2, sensors.Iout->ewm.avg.get(),
                 sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
                 //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
                 mppt.ntc.last(), mppt.ucTemp.last(),
@@ -887,6 +887,8 @@ bool handleCommand(const String &inp) {
 
     } else if(inp == "ip") {
         UART_LOG("Local IP Address: %s", WiFi.localIP().toString().c_str());
+    } else if(inp == "adc-restart") {
+        adcSampler.reInitADCs();
     } else {
         ESP_LOGI("main", "unknown or unexpected command");
         return false;
