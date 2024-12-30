@@ -279,7 +279,7 @@ public:
 
         // detect battery voltage
         // TODO move this to charger ?
-        if (std::isnan(charger.params.Vout_max)) {
+        if (std::isnan(charger.params.Vbat_max)) {
             auto vout = sensors.Vout->calibrationAvg;
             float detectedVout_max = detectMaxBatteryVoltage(vout);
             if (std::isnan(detectedVout_max)) {
@@ -289,7 +289,7 @@ public:
                 return false;
             } else {
                 ESP_LOGI("mppt", "Detected max battery voltage %.2fV (from Vout=%.2fV)", detectedVout_max, vout);
-                charger.params.Vout_max = min(limits.Vout_max, detectedVout_max);
+                charger.params.Vbat_max = min(limits.Vout_max, detectedVout_max);
             }
         }
 
@@ -315,7 +315,7 @@ public:
 
         // output over-voltage
         // todo introduce separate variable for reverse_current_paranoia
-        auto ovTh = std::min(charger.params.Vout_max * (limits.reverse_current_paranoia ? 1.05f : 1.5f),
+        auto ovTh = std::min(charger.params.Vbat_max * (limits.reverse_current_paranoia ? 1.05f : 1.5f),
                              limits.Vout_max);
         //if (adcSampler.med3.s.chVout.get() > ovTh) {
         if (sensors.Vout->last > ovTh) { //  && sensors.Vout->previous > ovTh * 0.9f
@@ -328,13 +328,13 @@ public:
                 ESP_LOGW("mppt", "Vout %.1fV (prev=%.1fV,ewma=%.1fV,std=%.4f,buck=%hu) > %.1fV + 5pct!",
                          sensors.Vout->last, sensors.Vout->previous,
                          sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.std.get(), converter.getCtrlOnPwmCnt(),
-                         charger.params.Vout_max
+                         charger.params.Vbat_max
                 );
 
 
             if (flags.autoDetectVout_max && nowMs - lastTimeProtectPassed > 20000) {
                 // if the OV condition persists for some seconds, auto-detect Vout_max
-                charger.params.Vout_max = NAN;
+                charger.params.Vbat_max = NAN;
                 sampler.startCalibration();
             }
 
@@ -496,21 +496,31 @@ public:
         });
     }
 
+    struct CVP {
+        MpptControlMode mode;
+        PD_Control &crtl;
+        struct {
+            float actual, target;
+        };
+    };
+
 
     /**
      * Stops MPPT scan and set duty cycle to captured MPP
      * @param controlMode
      */
-    void _stopSweep(MpptControlMode controlMode, int limIdx) {
+    void _stopSweep(MpptControlMode controlMode, int limIdx, CVP *limCtrl) {
         _sweeping = false;
         _targetDutyCycle = maxPowerPoint.dutyCycle;
 
-        enqueue_task([&, controlMode, limIdx] {
-            ESP_LOGI("mppt", "Stop sweep after %.2fs at controlMode=%s (limIdx=%i) PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
-                     (wallClockUs() - sampler.getTimeLastCalibrationUs()) * 1e-6f,
-                     MpptState2String[(uint8_t) controlMode].c_str(), limIdx,
-                     converter.getCtrlOnPwmCnt(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
-            );
+        ESP_LOGI("mppt", "Stop sweep after %.2fs at controlMode=%s (limIdx=%i, tgt=%.2f, act=%.2f) PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
+                 (wallClockUs() - sampler.getTimeLastCalibrationUs()) * 1e-6f,
+                 MpptState2String[(uint8_t) controlMode].c_str(), limIdx,
+                 limCtrl ? limCtrl->target : NAN, limCtrl ? limCtrl->actual : NAN,
+                 converter.getCtrlOnPwmCnt(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
+        );
+
+        enqueue_task([&, controlMode, limIdx, limCtrl] {
             lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
             sweepPlot.plot();
         });
@@ -625,21 +635,15 @@ public:
         }
 
 
-        struct CVP {
-            MpptControlMode mode;
-            PD_Control &crtl;
-            struct {
-                float actual, target;
-            };
-        };
+
 
         constexpr auto CV = MpptControlMode::CV, CC = MpptControlMode::CC, CP = MpptControlMode::CP;
 
         std::array<CVP, 5> controlValues{
                 CVP{CV, VinController, {sensors.Vin->med3.get(), limits.Vin_min}},
-                CVP{CV, VoutController, {sensors.Vout->last, charger.params.Vout_max}},
-                CVP{CC, IinController, {sensors.Iin->med3.get(), limits.Iin_max}},
-                CVP{CC, IoutCurrentController, {sensors.Iout->med3.get(), Iout_max}},
+                CVP{CV, VoutController, {_sweeping ? sensors.Vout->ewm.avg.get() : sensors.Vout->med3.get(), charger.params.Vbat_max}}, // todo last or med3
+                CVP{CC, IinController, {_sweeping ? sensors.Iin->ewm.avg.get() : sensors.Iin->med3.get(), limits.Iin_max}},
+                CVP{CC, IoutCurrentController, {_sweeping ? sensors.Iout->ewm.avg.get() : sensors.Iout->med3.get(), Iout_max}},
                 CVP{CP, powerController, {power_smooth, powerLimit}},
                 //CVP{CC, LoadRegulationCTRL, {sensors.Iout->last, Iout_max * 1.5f}},
         };
@@ -703,7 +707,7 @@ public:
         if (_sweeping && !sampler.isCalibrating()) {
             if (controlMode == MpptControlMode::None) {
                 controlMode = MpptControlMode::Sweep;
-                controlValue = 2; // sweep speed
+                controlValue = std::min(limitingControlValue / 8, 2.0f); // sweep speed
 
                 // capture MPP during sweep
                 if (power_smooth > maxPowerPoint.power) {
@@ -719,11 +723,12 @@ public:
                 sweepPlot.pointsD.add(d, power, 1.0f);
                 rtcount("mppt.update.sweeping");
             } else {
-                _stopSweep(controlMode, limitingControl ? int(limitingControl - controlValues.begin()) : -1);
+                _stopSweep(controlMode, limitingControl ? int(limitingControl - controlValues.begin()) : -1,
+                           limitingControl);
                 rtcount("mppt.update.stopSweep");
             }
         } else if (_targetDutyCycle) {
-            if (controlMode == MpptControlMode::None or
+            if (controlMode == MpptControlMode::None or controlMode == MpptControlMode::MPPT or
                 (controlMode == MpptControlMode::CV && converter.getCtrlOnPwmCnt() > _targetDutyCycle)) {
                 controlMode = MpptControlMode::Sweep;
                 controlValue = (float) constrain(_targetDutyCycle - converter.getCtrlOnPwmCnt(), -8, 2);
@@ -802,7 +807,8 @@ public:
                 || (I_phys_smooth_min > -0.01 && converter.getDutyCycle() > 0.3f)
         );
         if (bflow.state() != aboveThres)
-            UART_LOG_ASYNC("Current %s threshold %.2f", aboveThres ? "above" : "below", I_phys_smooth_min);
+            UART_LOG_ASYNC("Current %s threshold %.2f (pwm=%hu)", aboveThres ? "above" : "below", I_phys_smooth_min,
+                           converter.getCtrlOnPwmCnt());
         bflow.enable(aboveThres);
         converter.enableSyncRect(aboveThres);
 
