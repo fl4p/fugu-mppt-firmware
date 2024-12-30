@@ -184,7 +184,7 @@ public:
         if (dcmHysteresis) {
             pwmRectMax = (uint16_t) std::round((float) pwmCtrl * pwmRectRatioDCM);
         } else pwmRectMax = pwmDriver.pwmMax - pwmCtrl;
-        pwmRectMax = std::min<uint16_t>(std::max(pwmRectMin, pwmRectMax), pwmDriver.pwmMax - pwmCtrlMin);
+        pwmRectMax = std::min<uint16_t>(std::max(pwmRectMin, pwmRectMax), pwmDriver.pwmMax - pwmCtrl);
     }
 
     void pwmPerturb(int16_t direction) {
@@ -289,13 +289,13 @@ public:
      */
     [[nodiscard]] bool computeDCM(float vh, float vl, float il) {
         auto ir = rippleCurrent(vh, vl);
-        auto dcm = ir > il * (dcmHysteresis ? 1.9f : 2.f) || il < 0.1f; // TODO: il < 0.1f
+        auto dcm = ir > il * (dcmHysteresis ? 1.8f : 2.f) || il < 0.1f; // TODO: il < 0.1f
         if (forcedPwm) dcm = false;
         if (dcm != dcmHysteresis) {
             dcmHysteresis = dcm;
-            UART_LOG("converter: %s -> %s (M=%.2f, I=%.2f, ∆I=%.2f)",
+            UART_LOG("converter: %s -> %s (M=%.2f, I=%.2f, ∆I/2=%.2f, pwm=%hu)",
                      dcm ? "CCM" : "DCM", dcm ? "DCM" : "CCM",
-                     isBoost ? (vh / vl) : (vl / vh), il, ir);
+                     isBoost ? (vh / vl) : (vl / vh), il, ir*.5f, pwmCtrl);
         }
         return dcm;
     }
@@ -359,7 +359,7 @@ public:
             if (il < 0.01f || vl < 1.0f) // TODO get rid of magic constants
             {
                 if (pwmRectRatioDCM > 0.2f)
-                    ESP_LOGI("converter", "Disable sync rect, low coil current (%.2f) or low volt (%.2f)", il, vl);
+                    ESP_LOGI("converter", "Disable sync rect, low coil current (%.2f) or low volt (%.2f) pwm=%hu", il, vl, getCtrlOnPwmCnt());
                 pwmRectRatioDCM = 0.0f;
             } else
                 pwmRectRatioDCM = rectCtrlRatio(convRatioWCE);
