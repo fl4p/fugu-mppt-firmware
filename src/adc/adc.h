@@ -29,6 +29,8 @@ public:
      */
     virtual bool init(const ConfFile &pinConf) = 0;
 
+    virtual void deinit() = 0;
+
     /**
      * start reading
      * implementation setup

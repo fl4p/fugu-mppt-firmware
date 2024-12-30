@@ -65,6 +65,11 @@ public:
         return true;
     }
 
+    void deinit() {
+        void();
+        // TODO detach interrupt
+    }
+
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
         adsGain_t g;
         assert(voltage <= 6.144f);

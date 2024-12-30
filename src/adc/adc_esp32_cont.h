@@ -74,6 +74,11 @@ public:
         return true;
     }
 
+    void deinit() override {
+        adc_continuous_stop(handle);
+        adc_continuous_deinit(handle);
+    }
+
     void setNtcCh(uint8_t ch) { ntcCh = ch; }
 
     void start() override;

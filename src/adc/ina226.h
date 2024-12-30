@@ -22,6 +22,7 @@ class ADC_INA226 : public AsyncADC<float> {
     volatile bool new_data = false;
     TaskNotification taskNotification{};
     uint8_t readChannel = 0;
+    uint8_t alertPin;
 
 public:
 
@@ -40,8 +41,8 @@ public:
             return false;
         }
 
-        auto alertPin = (uint8_t) pinConf.getByte("ina22x_alert", 0);
-        if (alertPin == 0) {
+        alertPin = (uint8_t) pinConf.getByte("ina22x_alert", 255);
+        if (alertPin == 255) {
             ESP_LOGW("ina22x", "No ALERT pin specified");
             return false;
         }
@@ -113,11 +114,19 @@ public:
         //ina226.setConversionTime(CONV_TIME_1100, CONV_TIME_140);
         ina226.setAverage(AVERAGE_1);
         ina226.setConversionTime(CONV_TIME_1100, CONV_TIME_1100);
+        // TODO adjust hasData() timeout !
+        //ina226.setConversionTime(CONV_TIME_588, CONV_TIME_588);
+
 
         ina226.setMeasureMode(CONTINUOUS);
         ina226.enableConvReadyAlert();
 
         return true;
+    }
+
+    void deinit() override {
+        if (alertPin != 255)
+            detachInterrupt(digitalPinToInterrupt(alertPin));
     }
 
     /*void update() {
@@ -301,11 +310,11 @@ public:
 
     bool hasData() override {
         static uint32_t numTimeouts = 0;
-        if (!new_data && !taskNotification.wait(1)) {
+        if (!new_data && !taskNotification.wait(3)) {
             ++numTimeouts;
-            //if (numTimeouts % 1000 == 0) {
-                //ESP_LOGE("ina22x", "%lu timeout!", numTimeouts);
-            //}
+            if (numTimeouts % 2000 == 0) {
+                ESP_LOGE("ina22x", "%lu timeout!", numTimeouts);
+            }
         }
 
         // we might get a task notification from other ADCs
