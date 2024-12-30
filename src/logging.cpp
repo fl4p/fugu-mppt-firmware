@@ -185,7 +185,7 @@ void flush_async_uart_log() {
  * @return
  */
 int vprintf_mux(const char *fmt, va_list argptr) {
-    static char loc_buf[200];
+    static char loc_buf[300];
 
     int r = old_vprintf(fmt, argptr);
     if (log_telnet) {
