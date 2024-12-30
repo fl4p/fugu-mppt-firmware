@@ -432,4 +432,14 @@ public:
 
     [[nodiscard]] unsigned long getTimeLastCalibrationUs() const { return timeLastCalibration; }
 
+
+    void reInitADCs() {
+        ConfFile pinConf{"/littlefs/conf/pins.conf"};
+        for(auto &s:adcStates) {
+            s.adc->deinit();
+            s.adc->init(pinConf);
+            s.adc->start();
+        }
+    }
+
 };

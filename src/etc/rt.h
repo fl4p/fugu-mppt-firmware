@@ -192,6 +192,12 @@ public:
         ESP_ERROR_CHECK(gptimer_set_alarm_action(gptimer, &alarm_config1));
     }
 
+    void destroy() {
+        gptimer_stop(gptimer);
+        gptimer_disable(gptimer);
+        gptimer_del_timer(gptimer);
+    }
+
     void start() {
         ESP_ERROR_CHECK(gptimer_start(gptimer));
     }

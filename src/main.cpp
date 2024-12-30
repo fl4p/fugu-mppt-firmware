@@ -384,7 +384,7 @@ void setup() {
         ConfFile coilConf{"/littlefs/conf/coil.conf"};
         ConfFile converterConf{"/littlefs/conf/converter.conf"};
 
-        mppt.charger.params.Vout_max = converterConf.getFloat("vout_max", NAN);
+        mppt.charger.params.Vbat_max = converterConf.getFloat("vout_max", NAN);
         auto mode = converterConf.getString("mode", "mppt");
 
         if (!converter.init(converterConf, pinConf, coilConf)) {

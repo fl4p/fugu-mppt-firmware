@@ -79,6 +79,10 @@ public:
         return true;
     }
 
+    void deinit() override {
+        periodic_timer.destroy();
+    }
+
 
     void startReading(uint8_t channel) override {
         taskNotification.subscribe();
@@ -108,7 +112,7 @@ public:
             }
         }
 
-        if(scope)
+        if (scope)
             scope->addSample12(this, readingChannel, x / 3 * 4000);
 
         return x;

@@ -6,12 +6,12 @@
 
 
 struct BatChargerParams {
-    float Vout_max = FUGU_BAT_V; //FUGU_BAT_V; //14.6 * 2;
+    float Vbat_max = FUGU_BAT_V; //FUGU_BAT_V; //14.6 * 2;
     //float Iout_max = 27; // HW1: coil & fuse limited
     float Iout_max = 32; // HW2, backflow mosfet gets hot!
 
-    float Vout_top() const { return Vout_max * 0.98f; } //0.96 0.975f;
-    float Vout_top_release() const { return Vout_max * 0.94f; }
+    float Vout_top() const { return Vbat_max * 0.98f; } //0.96 0.975f;
+    float Vout_top_release() const { return Vbat_max * 0.94f; }
     float Iout_top = .5;
 };
 
@@ -37,7 +37,7 @@ public:
         if (Vout >= params.Vout_top()) {
             if (!timeTopUntil)
                 ESP_LOGI("chg", "Begin topping mode Iout_max %.2f (start=%.2f V, release=%.2f V, Vbat_max=%.2f)", params.Iout_top,
-                         params.Vout_top(), params.Vout_top_release(), params.Vout_max);
+                         params.Vout_top(), params.Vout_top_release(), params.Vbat_max);
             timeTopUntil = nowMs + 1000 * 60 * 5;
         } else if (Vout <= params.Vout_top_release()) {
             if (timeTopUntil) ESP_LOGI("chg", "End topping mode, Vout %.2f", Vout);
