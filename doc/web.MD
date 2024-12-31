@@ -3,3 +3,5 @@
 * energy counter
 * mqtt config
 * ota
+* sweep P-V chart
+* 

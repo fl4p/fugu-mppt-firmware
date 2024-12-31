@@ -25,7 +25,7 @@ from matplotlib.widgets import Slider
 #    redraw()
 
 
-def discover_scope_servers():
+def discover_scope_servers(stop_after=99, timeout=1):
     from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
 
     addr = []
@@ -42,7 +42,6 @@ def discover_scope_servers():
             info = zc.get_service_info(type_, name)
             addr.extend((a, info.port) for a in info.parsed_addresses())
 
-
     zeroconf = Zeroconf()
     listener = MyListener()
     # browser = ServiceBrowser(zeroconf, "_http._tcp.local.", listener)
@@ -50,15 +49,19 @@ def discover_scope_servers():
 
     t0 = time.time()
 
+    addrs = set()
+
     try:
-        while time.time() - t0 < 8:
+        while time.time() - t0 < timeout:
             if addr:
-                return addr
+                addrs.update(addr)
+                if len(addrs) > stop_after:
+                    return addrs
             time.sleep(.1)
     finally:
         zeroconf.close()
 
-
+    return list(addrs)
 
 
 class Channel:
@@ -158,6 +161,8 @@ def receive_loop(decoder):
                     is_connected = False
                     # channelNames.clear()
                     break
+                else:
+                    raise
                 time.sleep(.1)
 
 
@@ -195,7 +200,7 @@ class ScopeDecoder:
             self._decode_stream(ba)
 
 
-offset_slider:plt.Slider = None
+offset_slider: plt.Slider = None
 
 
 def main():
@@ -223,6 +228,7 @@ def main():
         num_samples += 1
 
     def on_channels(chs):
+        print('channels', chs)
         nonlocal t0, num_samples
         for ch_num, ch_name, ch_typ in chs:
             if ch_num not in channelNames:
@@ -249,7 +255,6 @@ def main():
 
     dec = ScopeDecoder(on_sample=on_sample, on_channels=on_channels)
 
-
     Thread(target=receive_loop, args=(dec,), daemon=True).start()
     Thread(target=redraw_loop, args=(channels, fig, ax), daemon=True).start()
     Thread(target=lf_loop, daemon=True).start()
@@ -257,5 +262,6 @@ def main():
     plt.show()
 
 
+print(discover_scope_servers())
 main()
 # websockets.
