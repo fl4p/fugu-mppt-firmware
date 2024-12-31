@@ -170,7 +170,7 @@ public:
         pwmCtrlMax = (uint16_t) ((float) pwmDriver.pwmMax * (1.0f - MinDutyCycleLS));
         pwmRectMin = std::ceil(
                 (float) pwmDriver.pwmMax * (isBoost ? 0.f : MinDutyCycleLS)); // keeping the bootstrap circuit powered
-        pwmCtrlMin = isBoost ? 0 : (pwmRectMin / 5); // TODO why this? everything else is too much!
+        pwmCtrlMin = 1; //isBoost ? 0 : 0;
         // note that mosfets have different Vg(th) and switching times worst case is Vi/o=80/12
         // ^ set pwmMinHS a bit lower than pwmMinLS (might cause no-load output over-voltage otherwise)
 

@@ -309,7 +309,7 @@ public:
         std::stringstream ss;
         ss << "###ScopeHead:";
         for (auto &ch: channels)
-            ss << int(ch.ch) << '$' << ch.name << "=" << ch.typ << (int) ch.bitLen << ',';
+            ss << int(ch.cid) << '$' << ch.name << "=" << ch.typ << (int) ch.bitLen << ',';
         ss << "###ENDHEAD\n";
         cl.write(ss.str().c_str());
     }

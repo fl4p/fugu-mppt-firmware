@@ -79,7 +79,7 @@ void loopNetwork_task(void *arg);
 
 void loopRT(void *arg); // this is the critical one
 
-void loopNewData(unsigned long nowMs);
+void loopRTNewData(unsigned long nowMs);
 
 AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &pinConf, const ConfFile &sensConf) {
     AsyncADC<float> *adc;
@@ -535,8 +535,8 @@ void loopRT(void *arg) {
                 delay(5000);
             }
         } else {
-            loopNewData(nowMs);
-            rtcount("loopNewData");
+            loopRTNewData(nowMs);
+            rtcount("loopRTNewData");
         }
 
 
@@ -578,7 +578,7 @@ void loopLF(const unsigned long &nowUs) {
     uint32_t sps = (dt > 20000) ? (uint64_t) (nSamples - lastNSamples) * 1000000llu / dt : 0;
 
 
-    if ( (dt > 10000) && sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
+    if ((dt > 10000) && sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 2000000) {
         mppt.shutdownDcdc();
         auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
@@ -661,7 +661,7 @@ void loopLF(const unsigned long &nowUs) {
     }
 }
 
-void loopNewData(unsigned long nowMs) {
+void loopRTNewData(unsigned long nowMs) {
     // cap control update rate to sensor sampling rate (see below). rate for all 3 sensors are equal.
     // we choose Vout here because this is the most critical control value (react fast to prevent OV)
     auto nSamples = sensors.Vout->numSamples;
@@ -885,9 +885,9 @@ bool handleCommand(const String &inp) {
                      sqrt(s->ewm.std.get()) * 100.f);
         }
 
-    } else if(inp == "ip") {
+    } else if (inp == "ip") {
         UART_LOG("Local IP Address: %s", WiFi.localIP().toString().c_str());
-    } else if(inp == "adc-restart") {
+    } else if (inp == "adc-restart") {
         adcSampler.reInitADCs();
     } else {
         ESP_LOGI("main", "unknown or unexpected command");
