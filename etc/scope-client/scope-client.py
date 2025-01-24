@@ -1,5 +1,8 @@
+import collections
 import math
+import select
 import socket
+import statistics
 import sys
 import time
 from collections import deque, defaultdict
@@ -9,6 +12,7 @@ from typing import List, Dict
 import numpy as np
 
 import matplotlib.pyplot as plt
+import pandas as pd
 
 duration = 1 / 10
 sample_rate = 40000
@@ -64,6 +68,26 @@ def discover_scope_servers(stop_after=99, timeout=1):
     return list(addrs)
 
 
+class EWMA:
+    # Implement Exponential Weighted Moving Average
+    def __init__(self, span: int):
+        self.alpha = math.nan
+        self.y = math.nan
+        self.update_span(span)
+
+    def update_span(self, span):
+        self.alpha = (2 / (span + 1))
+
+    def add(self, x):
+        if not math.isfinite(x):
+            return
+        if not math.isfinite(self.y):
+            self.y = x
+        self.y = (1 - self.alpha) * self.y + self.alpha * x
+
+    @property
+    def value(self):
+        return self.y
 class Channel:
     def __init__(self, chNum: int, name: str, type: str):
         self.chNum = chNum
@@ -71,8 +95,15 @@ class Channel:
         self.sample_buffer = deque([math.nan] * win_len, maxlen=win_len)
         self.waveform: plt.Axes = None
         self.offset = 0
+        self.win3 = collections.deque(maxlen=3)
+        self.ewma = EWMA(90)
+        #self.win2 = collections.deque(maxlen=90)
 
     def add_sample(self, y):
+        self.win3.append(y)
+        #y =statistics.mean(self.win3)
+        #self.ewma.add(y)
+        #y = self.ewma.value
         self.sample_buffer.append(y)
 
     def plot(self, ax):
@@ -106,7 +137,7 @@ def redraw_loop(channels: Dict[str, Channel], fig, ax):
                     trig_i = i
                     break
 
-        for ch in channels.values():
+        for ch in list(channels.values()):
             ch.redraw(trig_i)
 
         ax.relim()
@@ -133,6 +164,7 @@ def receive_loop(decoder):
 
         print('Discovered services:', addr)
         addr = addr[0]
+        addr = ('192.168.1.208', 24)
 
         print('connecting', addr, '...')
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -243,6 +275,23 @@ def main():
         t0 = time.time()
         num_samples = 0
 
+    def console():
+        try:
+            if select.select([sys.stdin,],[],[],0.1)[0]:
+                line = next(sys.stdin)
+                print ("Got:", repr(line.strip()))
+                inp = line.strip()
+                if inp == 's':
+                    for chn, ch in channels.items():
+                        pd.Series(ch.sample_buffer).to_csv(ch.name+'.csv', index=False)
+                        print('written', ch.name+'.csv')
+
+            #else:
+                #print ("No data for 2 secs")
+
+        except StopIteration:
+            return
+
     def lf_loop():
         while True:
             time.sleep(1)
@@ -252,6 +301,9 @@ def main():
             if is_connected:
                 sys.stdout.write('\rsps=%.1fk, bps=%.1fk, tRun=%.1fs' % (sps / 1000, bps / 1000, t_run))
                 sys.stdout.flush()
+
+            console()
+
 
     dec = ScopeDecoder(on_sample=on_sample, on_channels=on_channels)
 
