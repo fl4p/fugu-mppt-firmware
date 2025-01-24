@@ -22,6 +22,7 @@
 #include <etc/readerwriterqueue.h>
 
 #include "tele/scope.h"
+#include "storage/key-value.h"
 
 WiFiMulti wifiMulti;
 //WiFiUDP udp;
@@ -31,6 +32,8 @@ FtpServer ftpSrv;
 
 ESPTelnet telnet;
 
+
+extern KeyValueStorage nvs;
 
 void setupTelnet();
 
@@ -113,10 +116,21 @@ void wifi_load_conf() {
     auto ends_with = [](const std::string &s, const std::string &t) { return s.substr(s.length() - t.length()) == t; };
 
     noSsid = true;
-    for (auto k: wifiConf.keys()) {
+
+    nvs.open();
+    auto ssid_def = nvs.readString("wifi_ssid", "");
+    auto psk_def = nvs.readString("wifi_psk", "");
+    nvs.close();
+    if (!ssid_def.empty()) {
+        wifiMulti.addAP(ssid_def.c_str(), psk_def.c_str());
+        noSsid = false;
+    }
+
+    for (const auto& k: wifiConf.keys()) {
         if (starts_with(k, "ssid") && !ends_with(k, "_psk")) {
             auto ssid = wifiConf.getString(k).c_str();
             auto psk = wifiConf.c(k + "_psk", nullptr);
+            if (ssid == ssid_def and psk == ssid_def) continue;
             if (!wifiMulti.addAP(wifiConf.getString(k).c_str(), psk)) {
                 ESP_LOGW("tele", "Failed to add ap  %s", ssid);
             } else {
@@ -166,18 +180,19 @@ bool timeSyncAsync(const char *tzInfo, const char *ntpServer1, const char *ntpSe
     return false;
 }
 
-std::string getHostname() {
-    return "fugu-" + std::string(getChipId());
+const std::string &getHostname(bool reload = false) {
+    static std::string hostname{};
+    if (hostname.empty() or reload) {
+        nvs.open();
+        hostname = nvs.readString("hostname", "fugu-" + std::string(getChipId()));
+        nvs.close();
+    }
+    return hostname;
 }
 
 void _wifiConnected() {
     if (!WiFi.isConnected()) return;
 
-    if (unlikely(!timeSynced)) {
-        if (timeSyncAsync("CET-1CEST,M3.5.0,M10.5.0/3", "pt.pool.ntp.org", "time.nis.gov")) {
-            timeSynced = true;
-        }
-    }
 
     String hostname = String(getHostname().c_str());
 
@@ -201,7 +216,7 @@ void _wifiConnected() {
     if (!scope->begin(24)) {
         ESP_LOGE("tele", "scope setup failed");
     } else {
-        if(!MDNS.addService("_scope", "_tcp", 24)) {
+        if (!MDNS.addService("_scope", "_tcp", 24)) {
             ESP_LOGE("tele", "scope setup failed");
         }
         ESP_LOGI("tele", "Scope server listening on port 24");
@@ -215,6 +230,12 @@ void wifiLoop(bool connect = false) {
     if (connect && !WiFi.isConnected()) {
         ESP_LOGI("tele", "Connecting WiFi");
         wifiMulti.run();
+    }
+
+    if (unlikely(!timeSynced)) {
+        if (timeSyncAsync("CET-1CEST,M3.5.0,M10.5.0/3", "pt.pool.ntp.org", "time.nis.gov")) {
+            timeSynced = true;
+        }
     }
 
     //if (unlikely(!initialized) && WiFi.isConnected()) {
@@ -260,30 +281,13 @@ void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
 }
 
 
-void influxWritePointsUDP(moodycamel::ReaderWriterQueue<Point> &q) {
+void influxWritePointsUDP(const IPAddress &dst, moodycamel::ReaderWriterQueue<Point> &q) {
     constexpr int MTU = CONFIG_TCP_MSS;
     // notice that MTU is not the UDP max message size, here we use MTU from ip4 as a "safe" value
 
     if (noSsid) return;
 
-    static IPAddress host{};
-
-
-    if (uint32_t(host) == 0) {
-        if (uint32_t(ha_host) == 0) {
-            if (WiFi.localIP().toString().startsWith("192.168.178")) {
-                host = IPAddress({192, 168, 178, 28});
-            } else {
-                host = IPAddress({192, 168, 0, 185});
-            }
-        } else {
-            host = ha_host;
-        }
-        ESP_LOGI("tele", "using udp target host %s", host.toString().c_str());
-    }
-
-    auto port = 8086;
-
+    constexpr auto port = 8086;
 
     static String msg;
 
@@ -291,7 +295,7 @@ void influxWritePointsUDP(moodycamel::ReaderWriterQueue<Point> &q) {
     while (q.try_dequeue(p)) {
         auto lp = p.toLineProtocol();
         if (msg.length() + lp.length() >= MTU) {
-            udpFlushString(host, port, msg);
+            udpFlushString(dst, port, msg);
         }
         msg += lp + '\n';
     }
@@ -325,11 +329,9 @@ void telemetryAddPoint(Point &p, uint16_t maxQueue = 40) {
     //}
 }
 
-void telemetryFlushPointsQ() {
-    static Point p{""};
-    while (pointsQ.try_dequeue(p)) {
-        influxWritePointsUDP(pointsQ);
-    }
+void telemetryFlushPointsQ(const IPAddress &addr) {
+    if (pointsQ.size_approx() > 40)
+        influxWritePointsUDP(addr, pointsQ);
 }
 
 extern VIinVout<const Sensor *> sensors;
@@ -337,7 +339,7 @@ extern VIinVout<const Sensor *> sensors;
 void dcdcDataChanged(const ADC_Sampler &dcdc, const Sensor &sensor) {
     if (timeSynced && sensor.params.rawTelemetry && !sensor.params.teleName.empty() && WiFi.isConnected()) {
         Point point("mppt");
-        point.addTag("device", "fugu_" + String(getChipId()));
+        point.addTag("device", getHostname().c_str());
         point.addField(sensor.params.teleName.c_str(), sensor.last, 3);
         point.setTime(WritePrecision::MS);
         telemetryAddPoint(point, 600);
@@ -346,7 +348,7 @@ void dcdcDataChanged(const ADC_Sampler &dcdc, const Sensor &sensor) {
 
 void onTelnetConnect(String ip) {
     ESP_LOGI("telnet", "Client %s connected", ip.c_str());
-    telnet.println("\nWelcome to " + String(getHostname().c_str()) + " (" + telnet.getIP() + ")");
+    telnet.println("\nWelcome to " + String(getHostname().c_str()) + " (" + WiFi.localIP().toString().c_str() + ")");
     telnet.println("(Use ^] + q  to disconnect.)");
 
     set_logging_telnet(&telnet);

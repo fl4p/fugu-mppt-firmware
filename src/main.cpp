@@ -363,10 +363,6 @@ void setup() {
         teleConf = ConfFile{"/littlefs/conf/tele.conf"};
     }
 
-    if (teleConf.influxdbHost) {
-        ESP_LOGI("main", "Influxdb telemetry to host %s", teleConf.influxdbHost.toString().c_str());
-        adcSampler.onNewSample = dcdcDataChanged;
-    }
 
     try {
         setupSensors(pinConf, lim);
@@ -506,7 +502,7 @@ void loopRT(void *arg) {
         if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
             mppt.shutdownDcdc();
             charging = false;
-            delayStartUntil = nowMs + 4000;
+            delayStartUntil = nowUs + 4000000;
         }
 
         if (samplerRet != ADC_Sampler::UpdateRet::NewData) {
@@ -699,16 +695,16 @@ void loopRTNewData(unsigned long nowMs) {
                     } else {
 
                         // if(mppt)
-                        mppt.telemetry();
-                        rtcount("mppt.telemetry");
+
+                        //rtcount("mppt.telemetry");
                     }
                     lastMpptUpdateNumSamples = nSamples;
                 }
             } else {
                 charging = false;
-                delayStartUntil = nowMs + 2000;
+                delayStartUntil = wallClockUs() + 2000000;
             }
-        } else if (nowMs > delayStartUntil && mppt.startCondition()) {
+        } else if (wallClockUs() > delayStartUntil && mppt.startCondition()) {
             if (!manualPwm) {
                 rtcount("mppt.startSweep.pre");
                 mppt.startSweep();
@@ -745,7 +741,9 @@ void loopNetwork_task(void *arg) {
          */
         wifiLoop(converter.disabled() && mppt.ucTemp.last() < 80);
         ftpUpdate();
-        telemetryFlushPointsQ();
+
+        mppt.telemetry();
+        telemetryFlushPointsQ(mppt.tele.influxdbHost);
     }
 
 
@@ -801,7 +799,11 @@ bool handleCommand(const String &inp) {
         mppt.bflow.enable(newState);
     } else if (inp == "restart" or inp == "reset" or inp == "reboot") {
         converter.disable();
-        Serial.println("Restart, delay 200ms");
+        UART_LOG("Rebooting in 200ms");
+        if (telnet.isConnected()) {
+            telnet.flush();
+            telnet.disconnectClient();
+        }
         delay(200);
         ESP.restart();
     } else if (inp == "mppt" && manualPwm) {

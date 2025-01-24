@@ -19,6 +19,7 @@ idf_component_register(SRCS
         "../src/web/server.cpp"
         "../src/console.cpp"
         "../src/etc/rt.cpp"
+        "../src/mqtt.cpp"
         "../src/math/float16.cpp"
         INCLUDE_DIRS "." "../src" "../src/asciichart"
         REQUIRES
@@ -41,7 +42,7 @@ endif ()
 component_compile_options(-Werror=missing-field-initializers)
 component_compile_options(-Werror=attributes) # IRAM_ATTR used in forward decl
 
-component_compile_options(--std=gnu++17)
+component_compile_options(--std=gnu++20)
 component_compile_options(
       #  -fsanitize=address
       #  -fsanitize=shadow-call-stack # esp32: not supported

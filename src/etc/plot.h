@@ -104,7 +104,7 @@ struct Plot {
                 ss << item;
             }
             ss << ascii::Decoration::From(ascii::Decoration::RESET);
-            ss << "\n";
+            ss << "\r\n";
 
             printf_mux(ss.str().c_str());
         }

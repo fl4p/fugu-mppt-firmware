@@ -470,7 +470,7 @@ public:
      */
     void startSweep() {
         converter.disable();
-        _limiting = false;
+        ctrlState._limiting = false;
         _targetDutyCycle = 0;
 
         VinController.reset();
@@ -513,28 +513,34 @@ public:
         _sweeping = false;
         _targetDutyCycle = maxPowerPoint.dutyCycle;
 
-        ESP_LOGI("mppt", "Stop sweep after %.2fs at controlMode=%s (limIdx=%i, tgt=%.2f, act=%.2f) PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
+        ESP_LOGI("mppt",
+                 "Stop sweep after %.2fs at controlMode=%s (limIdx=%i, tgt=%.2f, act=%.2f) PWM=%hu, MPP=(%.1fW,PWM=%hu,%.1fV)",
                  (wallClockUs() - sampler.getTimeLastCalibrationUs()) * 1e-6f,
                  MpptState2String[(uint8_t) controlMode].c_str(), limIdx,
                  limCtrl ? limCtrl->target : NAN, limCtrl ? limCtrl->actual : NAN,
                  converter.getCtrlOnPwmCnt(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
         );
 
-        enqueue_task([&, controlMode, limIdx, limCtrl] {
+        enqueue_task([&] {
             lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
             sweepPlot.plot();
         });
     }
 
     void telemetry() {
-        if (!WiFi.isConnected() || !tele.influxdbHost)
+        if (!WiFi.isConnected() || !tele.influxdbHost || !timeSynced)
             return;
+
+        if (wallClockUs() - _lastPointWrite < 20000) {
+            return;
+        }
 
         auto I_phys_smooth = (sensorPhysicalI->ewm.avg.get());
         auto V_phys_smooth = (sensorPhysicalU->ewm.avg.get());
         //auto Vout(sensors.Vout->ewm.avg.get());
         float power_smooth = I_phys_smooth * V_phys_smooth;
         float power = sensorPhysicalI->last * sensorPhysicalU->last;
+
 
         Point point("mppt");
         point.addTag("device", "fugu_" + String(getChipId()));
@@ -548,18 +554,40 @@ public:
         point.addField("E", meter.totalEnergy.get(), 1);
         point.addField("E_today", meter.dailyEnergyMeter.today.energyYield, 1);
 
+
+        point.addField("pwm_dir_f", cntrlValue, 2);
+        point.addField("mppt_state", int(ctrlState.mode));
+        // point.addField("mcu_temp", mcu_temp.last(), 1);
+        point.addField("ntc_temp", ntc.last(), 1);
+
         point.addField("pwm_duty", converter.getCtrlOnPwmCnt());
         point.addField("pwm_ls_duty", converter.getRectOnPwmCnt());
         point.addField("pwm_ls_max", converter.getRectOnPwmMax());
 
-        auto nowMs = wallClockMs();
+        if (ctrlState.mode == MpptControlMode::MPPT) {
+            auto dP = tracker.dP;
+            point.addField("P_prev", tracker._lastPower, 2);
+            point.addField("dP", dP, 2);
+            //point.addField("P_filt", tracker.pwmPowerTable[buck.getBuckDutyCycle()].get(), 1);
+            point.addField("P_filt", tracker._powerBuf.getMean(), 1);
+            if (std::abs(dP) < tracker.minPowerStep) {
+                point.addField("dP_thres", 0.0f, 2);
+            } else {
+                point.addField("dP_thres", dP, 2);
+            }
+        }
+
+        if (ctrlState._limiting) {
+            point.addField("cv_lim_idx", ctrlState.limIdx);
+        }
+
 
         point.setTime(WritePrecision::MS);
 
-        if (nowMs - _lastPointWrite > 10) {
-            telemetryAddPoint(point, 80);
-            _lastPointWrite = nowMs;
-        }
+
+        telemetryAddPoint(point, 80);
+        _lastPointWrite = wallClockUs();
+
     }
 
     /* // sensor API now computes this through virtual sensors
@@ -579,12 +607,12 @@ public:
      * - calls mpp tracker
      */
     void update() {
-        auto nowMs = wallClockMs();
+        //auto nowMs = wallClockMs();
         auto &nowUs = wallClockUs();
 
         if (converter.disabled() && !startCondition()) {
             bflow.enable(false);
-            state = MpptControlMode::None;
+            ctrlState.mode = MpptControlMode::None;
             return;
         }
 
@@ -635,15 +663,16 @@ public:
         }
 
 
-
-
         constexpr auto CV = MpptControlMode::CV, CC = MpptControlMode::CC, CP = MpptControlMode::CP;
 
         std::array<CVP, 5> controlValues{
                 CVP{CV, VinController, {sensors.Vin->med3.get(), limits.Vin_min}},
-                CVP{CV, VoutController, {_sweeping ? sensors.Vout->ewm.avg.get() : sensors.Vout->med3.get(), charger.params.Vbat_max}}, // todo last or med3
-                CVP{CC, IinController, {_sweeping ? sensors.Iin->ewm.avg.get() : sensors.Iin->med3.get(), limits.Iin_max}},
-                CVP{CC, IoutCurrentController, {_sweeping ? sensors.Iout->ewm.avg.get() : sensors.Iout->med3.get(), Iout_max}},
+                CVP{CV, VoutController, {_sweeping ? sensors.Vout->ewm.avg.get() : sensors.Vout->med3.get(),
+                                         charger.params.Vbat_max}}, // todo last or med3
+                CVP{CC, IinController,
+                    {_sweeping ? sensors.Iin->ewm.avg.get() : sensors.Iin->med3.get(), limits.Iin_max}},
+                CVP{CC, IoutCurrentController,
+                    {_sweeping ? sensors.Iout->ewm.avg.get() : sensors.Iout->med3.get(), Iout_max}},
                 CVP{CP, powerController, {power_smooth, powerLimit}},
                 //CVP{CC, LoadRegulationCTRL, {sensors.Iout->last, Iout_max * 1.5f}},
         };

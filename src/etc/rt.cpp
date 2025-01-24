@@ -1,4 +1,5 @@
 #include "rt.h"
+#include "logging.h"
 
 
 esp_err_t esp_intr_dump(FILE *stream) {
@@ -83,7 +84,6 @@ esp_err_t esp_intr_dump(FILE *stream) {
 }
 
 
-
 void rtcount(const char *l) {
     static unsigned long t0 = 0;
 
@@ -114,14 +114,14 @@ void rtcount(const char *l) {
     t0 = rtclock_us();
 }
 
- void rtcount_print(bool reset) {
+void rtcount_print(bool reset) {
     if (rtcount_en) {
         rtcount_en = false;
         vTaskDelay(100);
     }
 
-    printf("rtcount_print :\n");
-    printf("%-30s %9s %9s %6s %6s %6s %6s %6s\n", "key", "num", "tot", "mean", "max", "maxNum", "min", "minNum");
+    UART_LOG("rtcount_print :");
+    UART_LOG("%-30s %9s %9s %6s %6s %6s %6s %6s", "key", "num", "tot", "mean", "max", "maxNum", "min", "minNum");
 
     //typedef std::remove_reference<decltype(*rtcount_stats.begin())>::type P;
     typedef std::pair<const char *, rtcount_stat> P;
@@ -131,10 +131,10 @@ void rtcount(const char *l) {
     });
 
     for (auto [k, stat]: sorted) {
-        printf("%-30s %9lu %9lu %6lu %6lu %6lu %6lu %6lu\n", k, stat.num, stat.total, stat.total / stat.num,
-               stat.max, stat.max_num, stat.min, stat.min_num);
+        UART_LOG("%-30s %9lu %9lu %6lu %6lu %6lu %6lu %6lu", k, stat.num, stat.total, stat.total / stat.num,
+                 stat.max, stat.max_num, stat.min, stat.min_num);
     }
-    printf("\n\n");
+    UART_LOG("\n");
     if (reset)
         rtcount_stats.clear();
 

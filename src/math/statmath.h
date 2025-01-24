@@ -6,12 +6,12 @@
 template<class T>
 inline T abs(T x) { return x < 0 ? -x : x; }
 
-template<class float_t=float>
+template<class float_t=float, class float_t_alpha=float_t>
 class EWMA {
 /**
  * Implement exponential weighted moving average
  */
-    float_t alpha;
+    float_t_alpha alpha;
 public:
 
     float_t y = std::numeric_limits<float_t>::quiet_NaN();
