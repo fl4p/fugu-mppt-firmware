@@ -65,6 +65,7 @@ class SynchronousConverter {
 public:
 
     inline bool boost() const { return isBoost; }
+    inline bool forcedPwm_() const { return forcedPwm; }
 
     uint16_t pwmCtrlMax{}, pwmRectMin{}, pwmCtrlMin{};
 
@@ -167,9 +168,9 @@ public:
             digitalWrite(pinSd, 1);
         }
 
-        pwmCtrlMax = (uint16_t) ((float) pwmDriver.pwmMax * (1.0f - MinDutyCycleLS));
         pwmRectMin = std::ceil(
                 (float) pwmDriver.pwmMax * (isBoost ? 0.f : MinDutyCycleLS)); // keeping the bootstrap circuit powered
+        pwmCtrlMax = (uint16_t) (pwmDriver.pwmMax - pwmRectMin);
         pwmCtrlMin = 1; //isBoost ? 0 : 0;
         // note that mosfets have different Vg(th) and switching times worst case is Vi/o=80/12
         // ^ set pwmMinHS a bit lower than pwmMinLS (might cause no-load output over-voltage otherwise)
@@ -181,29 +182,59 @@ public:
     }
 
     void computePwmRectMax() {
+        // update pwmRectMax for DCM or DCM case
         if (dcmHysteresis) {
+            // DCM
             pwmRectMax = (uint16_t) std::round((float) pwmCtrl * pwmRectRatioDCM);
-        } else pwmRectMax = pwmDriver.pwmMax - pwmCtrl;
+        } else {
+            // CCM
+            pwmRectMax = pwmDriver.pwmMax - pwmCtrl;
+        }
         pwmRectMax = std::min<uint16_t>(std::max(pwmRectMin, pwmRectMax), pwmDriver.pwmMax - pwmCtrl);
     }
 
     void pwmPerturb(int16_t direction) {
 
-        if (unlikely(disabled() and direction > 0 and pinSd != 255))
+        if (unlikely(disabled() and direction > 0 and pinSd != 255)) {
+            UART_LOG("Converter enabled");
             digitalWrite(pinSd, 0);
-
-        pwmCtrl = constrain(pwmCtrl + direction, pwmCtrlMin, pwmCtrlMax);
-        computePwmRectMax();
-
-        if (pwmRect - pwmRectMax > (pwmDriver.pwmMax / 10)) {
-            UART_LOG("Set pwmLS %hu -> pwmMaxLS=%hu\n", pwmRect, pwmRectMax);
         }
 
-        // "fade-in" the low-side duty cycle
-        pwmRect = syncRectEnabled ? constrain(pwmRect + (pwmRectMax - pwmRect) / 4, pwmRectMin, pwmRectMax)
-                                  : pwmRectMin;
+        pwmCtrl = constrain(pwmCtrl + direction, pwmCtrlMin, pwmCtrlMax);
 
-        if (-direction > pwmDriver.pwmMax / 100) {
+
+        bool largerDecrease = (-direction > pwmDriver.pwmMax / 50);
+
+        // update pwmRect block
+        {
+            if (largerDecrease && !forcedPwm)
+                // assume DCM as it will always give equal or less pwmRectMax
+                dcmHysteresis = true;
+
+            computePwmRectMax();
+
+            if (largerDecrease && !forcedPwm) {
+                // we don't know if we end up in CCM/DCM, so set rect duty cycle to min
+                // let the converter and sensors converge
+                if (pwmRect > pwmRectMin + (pwmDriver.pwmMax / 64))
+                    UART_LOG("Set pwmLS %hu -> pwmRectMin=%hu\n", pwmRect, pwmRectMin);
+                pwmRect = pwmRectMin;
+            } else {
+                if (pwmRect - pwmRectMax > (pwmDriver.pwmMax / 16)) {
+                    // report if rect duty cycle is significantly above upper limit
+                    UART_LOG("Set pwmLS %hu -> pwmMaxLS=%hu\n", pwmRect, pwmRectMax);
+                }
+
+                // "fade-in" the low-side duty cycle
+                // start slowly, then quickly step towards pwmRectMax
+                auto step = 1 + ((pwmRect > pwmRectMin + 32) ? (pwmRectMax - pwmRect) / 64 : 0);
+                pwmRect = syncRectEnabled ? constrain(pwmRect + step, pwmRectMin, pwmRectMax)
+                                          : pwmRectMin;
+            }
+        }
+
+
+        if (largerDecrease) {
             /*
              * with larger decreases of duty cycle do a "safe" update
              */
@@ -251,7 +282,7 @@ public:
      * @param directionFloat
      */
     void pwmPerturbFractional(float directionFloat) {
-        assert(std::abs(directionFloat) < pwmDriver.pwmMax);
+        assert(std::abs(directionFloat) <= pwmDriver.pwmMax);
 
         directionFloat += directionFloatBuffer;
         directionFloatBuffer = 0;
@@ -264,8 +295,11 @@ public:
 
     void disable() {
         if (pinSd != 255)digitalWrite(pinSd, 1);
-        pwmDriver.update_pwm(pwmCh_Ctrl, 0);
-        pwmDriver.update_pwm(pwmCh_Rect, 0);
+        //pwmDriver.update_pwm(pwmCh_Ctrl, 0);
+        //pwmDriver.update_pwm(pwmCh_Rect, 0);
+
+        pwmDriver.stop(pwmCh_Ctrl, 0);
+        pwmDriver.stop(pwmCh_Rect, 0);
 
         if (pwmCtrl > pwmCtrlMin)
             UART_LOG("PWM disabled (duty cycle was %d)\n", (int) pwmCtrl);
@@ -295,7 +329,7 @@ public:
             dcmHysteresis = dcm;
             UART_LOG("converter: %s -> %s (M=%.2f, I=%.2f, ∆I/2=%.2f, pwm=%hu)",
                      dcm ? "CCM" : "DCM", dcm ? "DCM" : "CCM",
-                     isBoost ? (vh / vl) : (vl / vh), il, ir*.5f, pwmCtrl);
+                     isBoost ? (vh / vl) : (vl / vh), il, ir * .5f, pwmCtrl);
         }
         return dcm;
     }
@@ -359,7 +393,8 @@ public:
             if (il < 0.01f || vl < 1.0f) // TODO get rid of magic constants
             {
                 if (pwmRectRatioDCM > 0.2f)
-                    ESP_LOGI("converter", "Disable sync rect, low coil current (%.2f) or low volt (%.2f) pwm=%hu", il, vl, getCtrlOnPwmCnt());
+                    ESP_LOGI("converter", "Disable sync rect, low coil current (%.2f) or low volt (%.2f) pwm=%hu", il,
+                             vl, getCtrlOnPwmCnt());
                 pwmRectRatioDCM = 0.0f;
             } else
                 pwmRectRatioDCM = rectCtrlRatio(convRatioWCE);
@@ -406,7 +441,8 @@ public:
      * Permanently set enable/disable low-side switch
      * @param enable
      */
-    void enableSyncRect(bool enable) {
+    void enableSyncRect(bool enable, bool overwriteFPWM= false) {
+        if(forcedPwm && !overwriteFPWM) enable = true;
         if (enable != syncRectEnabled) {
             UART_LOG("Sync rect %s", enable ? "enabled" : "disabled");
         }
@@ -434,5 +470,15 @@ public:
                 pwmDriver.update_pwm(pwmCh_Rect, pwmCtrl, pwmRect);
             }
         }
+    }
+
+    void shortLs() {
+        disable();
+
+        auto pwmChLS = boost() ? pwmCh_Ctrl : pwmCh_Rect;
+        auto pwmChHS = !boost() ? pwmCh_Ctrl : pwmCh_Rect;
+        pwmDriver.stop(pwmChLS, 1);
+        pwmDriver.stop(pwmChHS, 0);
+        if (pinSd != 255)digitalWrite(pinSd, 0);
     }
 };

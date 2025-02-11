@@ -228,12 +228,12 @@ void wifiLoop(bool connect = false) {
     if (noSsid) return;
 
     if (connect && !WiFi.isConnected()) {
-        ESP_LOGI("tele", "Connecting WiFi");
+        //ESP_LOGI("tele", "Connecting WiFi");
         wifiMulti.run();
     }
 
     if (unlikely(!timeSynced)) {
-        if (timeSyncAsync("CET-1CEST,M3.5.0,M10.5.0/3", "pt.pool.ntp.org", "time.nis.gov")) {
+        if (timeSyncAsync("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org", "time.nis.gov")) {
             timeSynced = true;
         }
     }
