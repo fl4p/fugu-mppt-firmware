@@ -85,10 +85,15 @@ public:
             ESP_ERROR_CHECK(led_strip_clear(led_strip));
         } else {
             uint8_t damp = 8;
-            if(ir) ir = max(1, ir / damp);
-            if(ig) ig = max(1, ig / damp);
-            if(ib) ib = max(1, ib / damp);
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, ir, ig, ib));
+            if (ir) ir = max(1, ir / damp);
+            if (ig) ig = max(1, ig / damp);
+            if (ib) ib = max(1, ib / damp);
+            constexpr bool grb = true;
+            if (grb) {
+                ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, ig, ir, ib));
+            } else {
+                ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, ir, ig, ib));
+            }
             ESP_ERROR_CHECK(led_strip_refresh(led_strip));
             ESP_LOGD("led", "R=%d,G=%d,B=%d", ir, ig, ib);
         }
