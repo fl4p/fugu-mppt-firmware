@@ -20,7 +20,7 @@ public:
      * Tells the user how to read samples from this ADC
      * @return
      */
-    virtual SampleReadScheme scheme() const  = 0;
+    virtual SampleReadScheme scheme() const = 0;
 
     /**
      * Initializes ADC hardware
@@ -30,6 +30,8 @@ public:
     virtual bool init(const ConfFile &pinConf) = 0;
 
     virtual void deinit() = 0;
+
+    virtual bool resetPeripherals() { return true; }
 
     /**
      * start reading
@@ -68,6 +70,7 @@ public:
      */
     //typedef void SampleCallback(const uint8_t &ch, float val);
     typedef std::function<void(const uint8_t &ch, T val)> SampleCallback;
+
     virtual uint32_t read(SampleCallback &&newSampleCallback) {
         throw std::runtime_error("not implemented");
     };

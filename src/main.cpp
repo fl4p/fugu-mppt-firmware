@@ -34,6 +34,8 @@
 
 #endif
 
+#include "storage/key-value.h"
+
 #include <esp_task_wdt.h>
 #include <esp_pm.h>
 
@@ -72,6 +74,9 @@ uint16_t loopRateMin = 0;
 
 Scope *scope = nullptr;
 
+KeyValueStorage nvs{};
+
+void systemRestart();
 
 void loopNetwork_task(void *arg);
 
@@ -280,6 +285,8 @@ void setup() {
 
     rtcount_test_cycle_counter();
 
+    nvs.init();
+
     if (!mountLFS()) {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
         setupErr = true;
@@ -446,6 +453,12 @@ static esp_err_t disable_cpu_power_saving(void) {
     return ret;
 }
 
+void stopAndBackoff(uint32_t secondsDelay) {
+    mppt.shutdownDcdc();
+    charging = false;
+    delayStartUntil = wallClockUs() + secondsDelay * 1000000;
+}
+
 void loopRT(void *arg) {
 #define RT_CORE 1
 
@@ -500,9 +513,7 @@ void loopRT(void *arg) {
         rtcount("adc.update");
 
         if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
-            mppt.shutdownDcdc();
-            charging = false;
-            delayStartUntil = nowUs + 4000000;
+            stopAndBackoff(4);
         }
 
         if (samplerRet != ADC_Sampler::UpdateRet::NewData) {
@@ -513,10 +524,18 @@ void loopRT(void *arg) {
 
             if (timeLastSampler && nowMs - timeLastSampler > 200) {
                 if (!converter.disabled()) {
-                    converter.disable();
-                    charging = false;
+                    stopAndBackoff(4);
                     ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown! numSamples %lu",
                              lastMpptUpdateNumSamples);
+                    if (adcSampler.resetPeripherals()) {
+                        ESP_LOGI("main", "ADC peripherals reset");
+                    } else {
+                        ESP_LOGE("main", "Failed to reset ADC peripherals");
+                    }
+                }
+
+                if (timeLastSampler && nowMs - timeLastSampler > 60000) {
+                    systemRestart();
                 }
             }
 
@@ -524,10 +543,8 @@ void loopRT(void *arg) {
                 converter.disable();
                 ESP_LOGE("main", "Never got a sample! Please check ADC");
                 if (nowMs > (1000 * 60 * 15)) {
-                    ESP_LOGW("main", "Rebooting");
-                    ESP.restart();
+                    systemRestart();
                 }
-
                 delay(5000);
             }
         } else {
@@ -576,11 +593,10 @@ void loopLF(const unsigned long &nowUs) {
 
     if ((dt > 10000) && sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 2000000) {
-        mppt.shutdownDcdc();
+        stopAndBackoff(4);
         auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
         ESP_LOGE("main", "Loop latency too high (%lu < %hu Hz), shutdown! (nSamples=%lu, D=%u, loopRunTime=%.1fs )",
                  sps, loopRateMin, nSamples, converter.getCtrlOnPwmCnt(), loopRunTime * 1e-6f);
-        charging = false;
     }
 
 #if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
@@ -599,7 +615,7 @@ void loopLF(const unsigned long &nowUs) {
 
     if (sensors.Vin)
         UART_LOG(
-                "V=%4.*f/%4.*f I=%4.*f/%4.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s %s(H|L|Lm)=%4hu|%4hu|%4hu"
+                "V=%4.*f/%5.*f I=%4.*f/%5.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s %s(H|L|Lm)=%4hu|%4hu|%4hu"
                 " st=%5s,%i lag=%lu㎲ N=%lu rssi=%hi",
                 sensors.Vin->last >= 9.55f ? 1 : 2, sensors.Vin->last,
                 sensors.Vout->last >= 9.55f ? 2 : 2, sensors.Vout->last,
@@ -633,8 +649,13 @@ void loopLF(const unsigned long &nowUs) {
         uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.limits.P_max * 255, 1, 255);
         led.setRGB(0, i, i);
     } else if (!charging) {
-        if (sensors.Vin)
-            led.setHexShort(sensors.Vout->last > sensors.Vin->last ? 0x100 : 0x300);
+        if (sensors.Vin) {
+            if (mppt.boardPowerSupplyUnderVoltage(true)) {
+                led.setHexShort(0x100);
+            } else {
+                led.setHexShort(sensors.Vout->last > sensors.Vin->last ? 0x100 : 0x300);
+            }
+        }
     } else {
         switch (mppt.getState()) {
             case MpptControlMode::Sweep:
@@ -701,8 +722,7 @@ void loopRTNewData(unsigned long nowMs) {
                     lastMpptUpdateNumSamples = nSamples;
                 }
             } else {
-                charging = false;
-                delayStartUntil = wallClockUs() + 2000000;
+                stopAndBackoff(4);
             }
         } else if (wallClockUs() > delayStartUntil && mppt.startCondition()) {
             if (!manualPwm) {
@@ -780,6 +800,17 @@ void loopCore0_LF(void *arg) {
 }
  */
 
+void systemRestart() {
+    converter.disable();
+    UART_LOG("Rebooting in 200ms");
+    if (telnet.isConnected()) {
+        telnet.flush();
+        telnet.disconnectClient();
+    }
+    delay(200);
+    ESP.restart();
+}
+
 bool handleCommand(const String &inp) {
     ESP_LOGI("main", "received serial command: '%s'", inp.c_str());
 
@@ -790,37 +821,44 @@ bool handleCommand(const String &inp) {
         //manualPwm = true; // don't switch to manual pwm here!
         converter.pwmPerturb((int16_t) pwmStep);
         ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) converter.getCtrlOnPwmCnt());
-    } else if (manualPwm && (inp == "ls-disable" or inp == "ls-enable")) {
-        converter.enableSyncRect(inp == "ls-enable");
+    } else if (manualPwm && (inp == "sync-disable" or inp == "sync-en")) {
+        converter.enableSyncRect(inp == "ls-enable", true);
+        if (converter.forcedPwm_()) {
+            ESP_LOGW("main", "forced_pwm");
+            return false;
+        }
     } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable")) {
         auto newState = inp == "bf-enable";
         if (mppt.bflow.state() != newState)
             ESP_LOGI("main", "Set bflow state %i", newState);
         mppt.bflow.enable(newState);
     } else if (inp == "restart" or inp == "reset" or inp == "reboot") {
-        converter.disable();
-        UART_LOG("Rebooting in 200ms");
-        if (telnet.isConnected()) {
-            telnet.flush();
-            telnet.disconnectClient();
-        }
-        delay(200);
-        ESP.restart();
+        systemRestart();
     } else if (inp == "mppt" && manualPwm) {
         ESP_LOGI("main", "MPPT re-enabled");
         manualPwm = false;
     } else if (inp.startsWith("dc ") && !adcSampler.isCalibrating() && inp.length() <= 8
-               && inp.substring(3).toInt() > 0 && inp.substring(3).toInt() < converter.pwmCtrlMax) {
+               && inp.substring(3).toInt() >= 0 && inp.substring(3).toInt() <= converter.pwmCtrlMax) {
+        auto dc = inp.substring(3).toInt();
+
         if (!manualPwm || converter.disabled()) {
             ESP_LOGI("main", "Switched to manual PWM");
-            if (!mppt.limits.reverse_current_paranoia) {
+            if (dc != 0 && !mppt.limits.reverse_current_paranoia) {
                 converter.enableSyncRect(true);
                 mppt.bflow.enable(true);
             }
         }
         manualPwm = true;
         converter.pwmPerturb(inp.substring(3).toInt() - converter.getCtrlOnPwmCnt());
+        if (dc == 0) converter.disable();
         // pwm.enableLowSide(true);
+    } else if (inp == "short-ls") {
+        if (converter.boost() && abs(sensors.Vin->ewm.avg.get()) < 0.05) {
+            converter.shortLs();
+        } else {
+            return false;
+        }
+
     } else if (inp.startsWith("speed ") && inp.length() <= 12) {
         float speedScale = inp.substring(6).toFloat();
         if (speedScale >= 0 && speedScale < 10) {
@@ -843,7 +881,9 @@ bool handleCommand(const String &inp) {
     } else if (inp == "wifi on") {
         disableWifi = false;
         timeSynced = false;
+
         connect_wifi_async();
+
     } else if (inp == "wifi off") {
         WiFi.disconnect(true);
         disableWifi = true;
@@ -907,9 +947,7 @@ void esp_task_wdt_isr_user_handler() {
     if (esp_cpu_dbgr_is_attached()) return;
 
     enqueue_task([] {
-        converter.disable();
         ESP_LOGE("main", "Restart after WDT trigger");
-        vTaskDelay(1000);
-        ESP.restart();
+        systemRestart();
     });
 }

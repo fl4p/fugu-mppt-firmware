@@ -20,6 +20,7 @@ int console_read_usb(char *buf, size_t len); //debug
 class ADC_INA226 : public AsyncADC<float> {
     INA226_WE ina226;
     volatile bool new_data = false;
+    bool overflow = false;
     TaskNotification taskNotification{};
     uint8_t readChannel = 0;
     uint8_t alertPin;
@@ -55,13 +56,33 @@ public:
 
         assert(!new_data);
 
+        auto i2c_port = (i2c_port_t) pinConf.getByte("i2c_port", 0);
         auto addr = pinConf.getByte("ina22x_addr", 0b1000000);
-        if (!i2c_test_address(addr)) {
-            ESP_LOGI("ina22x", "Chip didnt respond at address 0x%02hhX", addr);
+
+        assert_throw(i2c_port == 0, ""); // not implemented, see _setupPeripherals()
+        //if(i2c_port != 0)
+        //    ina226._wire = new TwoWire((uint8_t) i2c_port);
+        ina226.i2cAddress = addr;
+
+        float resistor = pinConf.getFloat("ina22x_resistor"),
+                range = pinConf.getFloat("ina22x_range",
+                                         35.0f);// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
+        ina226.setResistorRange(resistor, range);
+
+        if (!resetPeripherals())
+            return false;
+
+        return true;
+    }
+
+    bool resetPeripherals() override {
+        if (!i2c_test_address(ina226.i2cAddress)) {
+            ESP_LOGI("ina22x", "Chip didnt respond at address 0x%02hhX", (uint8_t) ina226.i2cAddress);
             return false;
         }
 
-        i2c_port_t i2c_port = (i2c_port_t) pinConf.getByte("i2c_port", 0);
+        i2c_port_t i2c_port = I2C_NUM_0; // TODO
+        auto addr = (uint8_t) ina226.i2cAddress;
 
         auto mfrId = i2c_read_short(i2c_port, addr, INA22x_MANUFACTURER_ID_CMD);
         auto deviceId = i2c_read_short(i2c_port, addr, INA22x_DEVICE_ID_CMD);
@@ -73,13 +94,18 @@ public:
             return false;
         }
 
-        ina226.reset_INA226();         //in case the device is still initialized
+
+        ina226.reset_INA226();         //in case the device is already/still initialized
         assertPinState(alertPin, true, "ina22x_alert", false);
 
         assert_throw(!new_data, "unexpected alert signal");
 
-        if (!ina226.init())
-            return false;
+        //if (!ina226.init())
+        //    return false;
+
+        ina226.setAverage(AVERAGE_1);
+        ina226.setConversionTime(CONV_TIME_1100);
+        ina226.writeRegister(INA226_WE::INA226_CAL_REG, ina226.calVal);
 
         assert(!new_data);
 
@@ -91,19 +117,14 @@ public:
             return false;
         }
 
+
         //if (!testConvReadyAlert(addr, alertPin)) {
         //    return false;
         //}
 
-
-
-
         //ina226.setAverage(AVERAGE_16);
         //ina226.setConversionTime(CONV_TIME_204, CONV_TIME_140);
 
-        float resistor = pinConf.getFloat("ina22x_resistor"),
-            range = pinConf.getFloat("ina22x_range", 35.0f);// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
-        ina226.setResistorRange(resistor, range);
 
         /**
          * - conversion time should be > 1x - 10x of (1/f_cutoff) with f_cutoff being the analog RC-filter cutoff freq (aliasing)
@@ -188,6 +209,7 @@ public:
         assert(!new_data); // test disabled ConvReadyAlert
 
         ina226.enableConvReadyAlert();
+        assert(!new_data);
         ina226.startSingleMeasurement();
         assert(new_data); // test enabled ConvReadyAlert
         new_data = false;
@@ -268,26 +290,29 @@ public:
         regME = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG);
         assert(!(regME & 0x0001)); // alert latch disabled
 
+        auto t0 = micros();
         new_data = false;
-        while (!new_data) {} // busy wait
+        while (!new_data) { if (micros() - t0 > 100000) return false; } // busy wait
         //ESP_LOGI("ina22x", "alert pass default");
 
         ina226.readAndClearFlags();
 
         new_data = false;
-        while (!new_data) {} // busy wait
+        t0 = micros();
+        while (!new_data) { if (micros() - t0 > 100000) return false; } // busy wait
         //ESP_LOGI("ina22x", "alert pass default2");
 
         ina226.setAverage(AVERAGE_1);
         ina226.setConversionTime(CONV_TIME_1100, CONV_TIME_1100);
         ina226.setMeasureMode(CONTINUOUS);
         ina226.readAndClearFlags();
-        while (!new_data) {} // busy wait
+        t0 = micros();
+        while (!new_data) { if (micros() - t0 > 100000) return false; } // busy wait
         //ESP_LOGD("ina22x", "Continuous 1st");
         ina226.readAndClearFlags();
         new_data = false;
-        auto t0 = micros();
-        while (!new_data) {} // busy wait
+        t0 = micros();
+        while (!new_data) { if (micros() - t0 > 100000) return false; } // busy wait
         auto t1 = micros();
         ESP_LOGD("ina22x", "Continuous 2nd");
 
@@ -324,7 +349,7 @@ public:
         new_data = false;
 
         uint16_t value = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG);
-        bool overflow = (value >> 2) & 0x0001;
+        overflow = (value >> 2) & 0x0001;
         bool convAlert = (value >> 3) & 0x0001;
         bool limitAlert = (value >> 4) & 0x0001;
 
@@ -343,17 +368,31 @@ public:
         //}
 
         return convAlert;
-
     }
 
     float getSample() override {
+        bool success;
         switch (readChannel) {
-            case ChVBus:
-                return ina226.getBusVoltage_V();
-
-            case ChI:
-                return ina226.getCurrent_A();
-
+            case ChVBus: {
+                uint16_t raw = ina226.readRegister(INA226_WE::INA226_BUS_REG, success);
+                if (!success) {
+                    ESP_LOGW("ina22x", "failure reading register");
+                    return NAN;
+                }
+                if (scope) scope->addSample12(this, readChannel, raw / 4);
+                return (float) raw * 0.00125f;
+            }
+            case ChI: {
+                auto raw = static_cast<int16_t>(ina226.readRegister(INA226_WE::INA226_CURRENT_REG, success));
+                if (!success) {
+                    ESP_LOGW("ina22x", "failure reading register");
+                    return NAN;
+                }
+                if (scope) scope->addSample12(this, readChannel, std::abs(raw) / 3 /*abs(i16)->12bit*/);
+                auto amp = ((float) raw / ina226.currentDivider_mA / 1000.f);
+                if (unlikely(overflow)) ESP_LOGW("ina22x", "Overflow current = %.2fA", amp);
+                return amp;
+            }
             default:
                 assert(false);
         }
@@ -374,9 +413,6 @@ public:
     }
 };
 
-#ifndef IRAM_ATTR
-#define IRAM_ATTR
-#endif
 
 void IRAM_ATTR ina226_alert() {
     if (ina226_instance)
