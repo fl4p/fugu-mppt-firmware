@@ -461,8 +461,8 @@ public:
 
             if (!converter.disabled())
                 ESP_LOGE("MPPT",
-                         "Buck running at D=%d %% but Vout (%.2f) and Iout (%.2f, last=%.2f) low! Sensor or half-bridge failure.",
-                         100 * converter.getCtrlOnPwmCnt() / converter.pwmCtrlMax, vOut, sensors.Iout->ewm.avg.get(),
+                         "Buck running at D=%d %% but Vout (%.2f, vr=%.2f) and Iout (%.2f, last=%.2f) low! Sensor or half-bridge failure.",
+                         100 * converter.getCtrlOnPwmCnt() / converter.pwmCtrlMax, vOut, vr, sensors.Iout->ewm.avg.get(),
                          sensors.Iout->last
                 );
 
@@ -579,10 +579,11 @@ public:
 
         if (ctrlState.mode == MpptControlMode::MPPT) {
             auto dP = tracker.dP;
+            point.addField("P_filt", tracker._curPower, 2);
             point.addField("P_prev", tracker._lastPower, 2);
             point.addField("dP", dP, 2);
             //point.addField("P_filt", tracker.pwmPowerTable[buck.getBuckDutyCycle()].get(), 1);
-            point.addField("P_filt", tracker._powerBuf.getMean(), 1);
+            //point.addField("P_filt", tracker._powerBuf.getMean(), 1);
             if (std::abs(dP) < tracker.minPowerStep) {
                 point.addField("dP_thres", 0.0f, 2);
             } else {
@@ -594,9 +595,7 @@ public:
             point.addField("cv_lim_idx", ctrlState.limIdx);
         }
 
-
         point.setTime(WritePrecision::MS);
-
 
         telemetryAddPoint(point, 80);
         _lastPointWrite = wallClockUs();
@@ -801,7 +800,7 @@ public:
                                  : (bflow.state() ? 0.0f : 0.1f); // hysteresis; // hysteresis
         float I_phys_smooth_min = I_phys_smooth; //std::min(I_phys_smooth, sensorPhysicalI->med3.get());
         bool aboveThres = (I_phys_smooth_min > currentThreshold
-                           || (I_phys_smooth_min > -0.01 && converter.getDutyCycle() > 0.3f)
+                           || (I_phys_smooth_min > 0.05 && converter.getDutyCycle() > 0.3f)
         );
 
         //

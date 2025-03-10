@@ -23,6 +23,7 @@ struct Tracker {
     unsigned long _time = 0;
     unsigned long _timeLastReverse = 0;
 
+    float _curPower = 0.0;
     float _lastPower = 0.0;
 
 
@@ -75,6 +76,7 @@ struct Tracker {
         if ((float) (now - _time) > (1000.f / frequency)) {
             _time = now;
             auto power = _powerBuf.pop();
+            _curPower = power;
             //auto power = pwmPowerTable[dutyCycle].get();
             dP = power - _lastPower;
 

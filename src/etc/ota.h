@@ -1,5 +1,8 @@
 #pragma once
 
+#include <esp_http_client.h>
+#include <esp_https_ota.h>
+
 #if CONFIG_MBEDTLS_PSK_MODES
 
 #include <HTTPUpdate.h>
@@ -80,8 +83,102 @@ void doOta(String url) {
 
 #else
 
-void doOta(String url) {
-    ESP_LOGE("ota", "Not available. Enable CONFIG_MBEDTLS_PSK_MODES");
+#define TAG "ota"
+
+esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
+    static int contentLen = 0;
+    static int contentReceived = 0;
+    static unsigned long tStart = 0;
+    static uint8_t lastPct = 0;
+
+    switch (evt->event_id) {
+        case HTTP_EVENT_ERROR:
+            ESP_LOGD(TAG, "HTTP_EVENT_ERROR");
+            break;
+        case HTTP_EVENT_ON_CONNECTED:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
+            break;
+        case HTTP_EVENT_HEADER_SENT:
+            ESP_LOGD(TAG, "HTTP_EVENT_HEADER_SENT");
+            break;
+        case HTTP_EVENT_ON_HEADER:
+            if (strcmp(evt->header_key, "Content-Length") == 0) {
+                contentLen = atoi(evt->header_value);
+                contentReceived = 0;
+                tStart = wallClockUs();
+            }
+            ESP_LOGI(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            break;
+        case HTTP_EVENT_ON_DATA:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
+            contentReceived += evt->data_len;
+            {
+                uint8_t pct = contentReceived * 100 / contentLen;
+                if (lastPct != pct) {
+                    ESP_LOGI("ota", "Download Progress: %4d %%", pct);
+                    lastPct = pct;
+                    if(pct == 100) {
+                        ESP_LOGI(TAG, "Download took %lu ms (%lu KB/s)",  (wallClockUs()-tStart)/1000,
+                                 contentReceived*1000/(wallClockUs()-tStart)
+                                 );
+                    }
+                }
+            }
+            break;
+        case HTTP_EVENT_ON_FINISH:
+
+            break;
+        case HTTP_EVENT_DISCONNECTED:
+            ESP_LOGD(TAG, "HTTP_EVENT_DISCONNECTED");
+            break;
+        case HTTP_EVENT_REDIRECT:
+            ESP_LOGD(TAG, "HTTP_EVENT_REDIRECT");
+            break;
+    }
+    return ESP_OK;
 }
+
+#undef TAG
+
+void systemRestart();
+
+void doOta(const char *url) {
+    //ESP_LOGE("ota", "Not available. Enable CONFIG_MBEDTLS_PSK_MODES");
+
+    esp_http_client_config_t config{};
+    config.url = url,
+    #ifdef CONFIG_EXAMPLE_USE_CERT_BUNDLE
+            config.crt_bundle_attach = esp_crt_bundle_attach;
+#else
+                    config.cert_pem = 0,// (char *)server_cert_pem_start,
+    #endif /* CONFIG_EXAMPLE_USE_CERT_BUNDLE */
+            config.event_handler = _ota_http_event_handler;
+    config.keep_alive_enable = true;
+    config.buffer_size = 1024; // DEFAULT_HTTP_BUF_SIZE=512
+#ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_BIND_IF
+    config.if_name = &ifr;
+#endif
+
+
+    config.skip_cert_common_name_check = true;
+
+    esp_https_ota_config_t ota_config = {
+            .http_config = &config,
+            .http_client_init_cb = nullptr,
+            .bulk_flash_erase = false,
+            .partial_http_download = false,
+            .max_http_request_size = 0,
+    };
+    ESP_LOGI("ota", "Attempting to download update from %s", config.url);
+
+    esp_err_t ret = esp_https_ota(&ota_config);
+    if (ret == ESP_OK) {
+        ESP_LOGI("ota", "OTA Succeed, Rebooting...");
+        systemRestart();
+    } else {
+        ESP_LOGE("ota", "Firmware upgrade failed");
+    }
+}
+
 
 #endif

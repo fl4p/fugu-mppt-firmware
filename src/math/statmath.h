@@ -221,11 +221,12 @@ struct MeanAccumulator {
 
     void clear() {
         sum = 0.f;
-        num = 0.f;
+        num = 0;
         //max = std::numeric_limits<float>::lowest();
     }
 
     void add(float x) {
+        assert(num < std::numeric_limits<decltype(num)>::max()); // overflow
         sum += x;
         //if (x > max) max = x;
         ++num;

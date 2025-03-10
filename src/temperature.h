@@ -150,6 +150,7 @@ public:
     }
 
     float read() override {
+        if (!temp_sensor)return NAN;
 
         // This has very poor real-time performance if WiFi is enabled
         if (temperature_sensor_get_celsius(temp_sensor, &tsens_out) != ESP_OK) {

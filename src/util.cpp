@@ -11,10 +11,10 @@ void assertPinState(uint8_t pin, bool digitalVal, const char *pinName, bool weak
     if (weakBackPull) pinMode(pin, INPUT);
 
     if (read != digitalVal) {
-        throw std::runtime_error(
-                "pin " + std::to_string(pin) + (pinName ? ("(" + std::string(pinName) + ")") : "")
-                + " is not " + (digitalVal ? "HIGH" : "LOW") +
-                (weakBackPull ? (std::string(" with weak pull") + (digitalVal ? "down" : "up")) : ""));
+        auto msg = "pin " + std::to_string(pin) + (pinName ? ("(" + std::string(pinName) + ")") : "")
+                   + " is not " + (digitalVal ? "HIGH" : "LOW") +
+                   (weakBackPull ? (std::string(" with weak pull") + (digitalVal ? "down" : "up")) : "");
+        throw std::runtime_error(msg);
     }
 }
 

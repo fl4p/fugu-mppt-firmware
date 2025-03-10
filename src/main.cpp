@@ -47,6 +47,8 @@ LedIndicator led;
 LCD lcd;
 MpptController mppt{adcSampler, sensors, converter, lcd};
 
+volatile bool inOta = false;
+
 
 unsigned long loopWallClockUs_ = 0;
 
@@ -509,6 +511,11 @@ void loopRT(void *arg) {
 
         auto nowMs = (unsigned long) (nowUs / 1000ULL);
 
+        if(unlikely(inOta)) {
+            if(!converter.disabled())stopAndBackoff(10);
+            vTaskDelay(10);
+            continue;
+        }
 
         rtcount("adc.update.pre");
         auto samplerRet = adcSampler.update();
@@ -607,7 +614,8 @@ void loopLF(const unsigned long &nowUs) {
 
     mppt.ntc.read();
     mppt.ucTemp.read();
-    mppt.charger.update(sensors.Vout->ewm.avg.get());
+    if(sensors.Vout)
+        mppt.charger.update(sensors.Vout->ewm.avg.get());
 
     if (mppt.ucTemp.last() > 95 && WiFi.isConnected()) {
         ESP_LOGW("main", "High chip temperature, shut-down WiFi");
@@ -825,8 +833,8 @@ bool handleCommand(const String &inp) {
         //manualPwm = true; // don't switch to manual pwm here!
         converter.pwmPerturb((int16_t) pwmStep);
         ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) converter.getCtrlOnPwmCnt());
-    } else if (manualPwm && (inp == "sync-disable" or inp == "sync-en")) {
-        converter.enableSyncRect(inp == "ls-enable", true);
+    } else if (manualPwm && (inp == "sync-dis" or inp == "sync-en")) {
+        converter.enableSyncRect(inp == "sync-en", true);
         if (converter.forcedPwm_()) {
             ESP_LOGW("main", "forced_pwm");
             return false;
@@ -914,7 +922,10 @@ bool handleCommand(const String &inp) {
         return false;
     } else if (inp.startsWith("ota ")) {
         auto url = inp.substring(4);
-        doOta(url);
+        stopAndBackoff(10);
+        inOta = true; // disable ADC reading
+        doOta(url.c_str());
+        inOta = false;
         return true;
     } else if (inp == "rt-stats") {
         xTaskCreatePinnedToCore(print_real_time_stats_1s_task, "rtstats", 4096, NULL, 1, NULL, 0);
