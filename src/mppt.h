@@ -620,6 +620,11 @@ public:
      * - calls mpp tracker
      */
     void update() {
+        if (targetPwmCnt) {
+            updateCV();
+            return;
+        }
+
         //auto nowMs = wallClockMs();
         auto &nowUs = wallClockUs();
 
@@ -694,6 +699,7 @@ public:
 
         CVP *limitingControl = nullptr;
         float limitingControlValue = std::numeric_limits<float>::infinity();
+        float voutCtrlVal = 0.f;
         for (auto &c: controlValues) {
             auto cv = c.crtl.update(c.actual, c.target);
 
@@ -706,6 +712,10 @@ public:
             if (cv < limitingControlValue) {
                 limitingControlValue = cv;
                 limitingControl = &c;
+            }
+
+            if (&c.crtl == &VoutController) {
+                voutCtrlVal = cv;
             }
         }
 
@@ -721,12 +731,12 @@ public:
             controlValue = limitingControlValue;
 
 
-            _limiting = true;
+            ctrlState._limiting = true;
         } else {
             // no limit condition
-            if (_limiting) {
+            if (ctrlState._limiting) {
                 // recover from limit condition
-                _limiting = false;
+                ctrlState._limiting = false;
                 controlMode = MpptControlMode::MPPT;
                 controlValue = limitingControlValue;
             }
@@ -785,12 +795,22 @@ public:
             }
         }
 
+
+        float currentThreshold = limits.reverse_current_paranoia
+                                 ? (bflow.state() ? 0.05f : 0.2f)
+                                 : (bflow.state() ? 0.0f : 0.1f); // hysteresis; // hysteresis
+        float I_phys_smooth_min = I_phys_smooth; //std::min(I_phys_smooth, sensorPhysicalI->med3.get());
+        bool aboveThres = (I_phys_smooth_min > currentThreshold
+                           || (I_phys_smooth_min > -0.01 && converter.getDutyCycle() > 0.3f)
+        );
+
         //
         if (targetPwmCnt) {
             // no tracking,
             controlMode = MpptControlMode::MPPT;
             auto cnt = converter.getCtrlOnPwmCnt();
-            controlValue = cnt == targetPwmCnt ? 0 : (cnt > targetPwmCnt) ? -1 : 1;
+            controlValue = cnt == targetPwmCnt ? 0 : (cnt > targetPwmCnt) ? -1 : std::min(
+                    voutCtrlVal, (float) targetPwmCnt - cnt);
         } else if (controlMode == MpptControlMode::None) {
             controlMode = MpptControlMode::MPPT;
             controlValue = tracker.update(power, converter.getCtrlOnPwmCnt());
@@ -805,8 +825,12 @@ public:
 
         // always cap control value
         // TODO instead of capping, use fade-to-target. the tracker might return big jumps
-        controlValue = std::min(controlValue, limitingControlValue);
-        this->state = controlMode;
+        if (targetPwmCnt and limitingControlValue > 0)
+            controlValue = std::min(controlValue, limitingControlValue * 8);
+        else
+            controlValue = std::min(controlValue, limitingControlValue);
+        ctrlState.mode = controlMode;
+        cntrlValue = controlValue;
 
 
         if (lastUs) {
@@ -822,11 +846,12 @@ public:
 
             // constrain the buck step, this will slow down control for lower loop rates:
             // this causes very slow load response time, but works well when battery is connected
-            fp = constrain(fp, -(float) converter.getCtrlOnPwmCnt(), 8.0f);
+            fp = constrain(fp, -(float) converter.getCtrlOnPwmCnt(), 16.0f);
             converter.pwmPerturbFractional(fp);
 
             if (controlValue < -80 and fp < -0.01 and converter.getCtrlOnPwmCnt() > converter.getCtrlOnPwmMin()) {
                 auto limIdx = (int) (limitingControl - controlValues.begin());
+                ctrlState.limIdx = limIdx;
 
                 UART_LOG_ASYNC(
                         "Limiting! Control value %.2f => perturbation %.2f (to %hu), mode=%s, idx=%i (act=%.3f, tgt=%.3f)",
@@ -841,13 +866,6 @@ public:
         }
         lastUs = nowUs;
 
-        float currentThreshold = limits.reverse_current_paranoia
-                                 ? (bflow.state() ? 0.05f : 0.2f)
-                                 : (bflow.state() ? 0.0f : 0.1f); // hysteresis; // hysteresis
-        float I_phys_smooth_min = I_phys_smooth; //std::min(I_phys_smooth, sensorPhysicalI->med3.get());
-        bool aboveThres = (I_phys_smooth_min > currentThreshold
-                || (I_phys_smooth_min > -0.01 && converter.getDutyCycle() > 0.3f)
-        );
         if (bflow.state() != aboveThres)
             UART_LOG_ASYNC("Current %s threshold %.2f (pwm=%hu)", aboveThres ? "above" : "below", I_phys_smooth_min,
                            converter.getCtrlOnPwmCnt());
@@ -861,57 +879,65 @@ public:
             digitalWrite(ledPinSimple, ledState);
             rtcount("mppt.update.led");
         }
-
-        // tele disabled: sps=275, enabled: sps=165
-        if (tele.influxdbHost and WiFi.isConnected()) {
-
-            Point point("mppt");
-
-            point.addTag("device", "fugu_" + String(getChipId()));
-            point.addField("I", I_phys_smooth, 2);
-            point.addField("U", V_phys_smooth, 2);
-            //point.addField("U_out", sensors.Vout->ewm.avg.get(), 2);
-            point.addField("P", power, 2);
-            point.addField("P_smooth", power_smooth, 2);
-            point.addField("E", meter.totalEnergy.get(), 1);
+    }
 
 
-            point.addField("pwm_dir_f", controlValue, 2);
-            point.addField("mppt_state", int(controlMode));
-            // point.addField("mcu_temp", mcu_temp.last(), 1);
-            point.addField("ntc_temp", ntcTemp, 1);
-            point.addField("pwm_duty", converter.getCtrlOnPwmCnt());
-            point.addField("pwm_ls_duty", converter.getRectOnPwmCnt());
-            point.addField("pwm_ls_max", converter.getRectOnPwmMax());
+    void updateCV() {
+        auto &nowUs = wallClockUs();
+
+        auto cv = VoutController.update(sensors.Vout->last, charger.Vbat_max());
+        ctrlState.mode = MpptControlMode::CV;
+        cntrlValue = cv;
 
 
-            if (controlMode == MpptControlMode::MPPT) {
-                auto dP = tracker.dP;
-                point.addField("P_prev", tracker._lastPower, 2);
-                point.addField("dP", dP, 2);
-                //point.addField("P_filt", tracker.pwmPowerTable[buck.getBuckDutyCycle()].get(), 1);
-                point.addField("P_filt", tracker._powerBuf.getMean(), 1);
-                if (std::abs(dP) < tracker.minPowerStep) {
-                    point.addField("dP_thres", 0.0f, 2);
-                } else {
-                    point.addField("dP_thres", dP, 2);
-                }
+        float currentThreshold = limits.reverse_current_paranoia
+                                 ? (bflow.state() ? 0.05f : 0.2f)
+                                 : (bflow.state() ? 0.0f : 0.1f); // hysteresis; // hysteresis
+        float I_phys_smooth_min = sensorPhysicalI->ewm.avg.get();
+        bool aboveThres = (I_phys_smooth_min > currentThreshold
+                           || (I_phys_smooth_min > -0.01 && converter.getDutyCycle() > 0.3f)
+        );
+
+        /*
+        if (targetPwmCnt) {
+            // no tracking,
+            controlMode = MpptControlMode::MPPT;
+            auto cnt = converter.getCtrlOnPwmCnt();
+            controlValue = cnt == targetPwmCnt ? 0 : (cnt > targetPwmCnt) ? -1 : std::min(
+                    voutCtrlVal, (float)targetPwmCnt - cnt);
+        } */
+
+
+
+        if (lastUs) {
+            // normalize the control value to pwmMax and scale it with update rate to fix buck slope rate
+            auto dt_us = nowUs - lastUs;
+            auto fp = cv * (1.f / 10000.f) * (float) converter.pwmCtrlMax * (float) dt_us * 1e-6f * 25.f * 2.f;
+
+            if (converter.getCtrlOnPwmCnt() < 160) {
+                fp *= 0.01f;
+            } else if (converter.getCtrlOnPwmCnt() < 200) {
+                fp *= 0.04f;
+            } else {
+                fp *= 10.0f;
             }
 
-            if (limitingControl) {
-                auto limIdx = (int) (limitingControl - controlValues.begin());
-                point.addField("cv_lim_idx", limIdx);
+            if (fp + (float) converter.getCtrlOnPwmCnt() > (float) targetPwmCnt) {
+                fp = (float) targetPwmCnt - (float) converter.getCtrlOnPwmCnt();
             }
-
-            point.setTime(WritePrecision::MS);
-
-            if (nowMs - _lastPointWrite > 10) {
-                telemetryAddPoint(point, 80);
-                _lastPointWrite = nowMs;
-            }
-
-            rtcount("mppt.update.tele");
+            converter.pwmPerturbFractional(fp);
+            rtcount("mppt.update.pwm");
         }
+        lastUs = nowUs;
+
+        if (bflow.state() != aboveThres)
+            UART_LOG_ASYNC("Current %s threshold %.2f (pwm=%hu)", aboveThres ? "above" : "below", I_phys_smooth_min,
+                           converter.getCtrlOnPwmCnt());
+
+        bflow.enable(aboveThres);
+        converter.enableSyncRect(aboveThres);
+
+        rtcount("mppt.update.en");
     }
 
 
