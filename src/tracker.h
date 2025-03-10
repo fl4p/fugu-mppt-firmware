@@ -26,7 +26,7 @@ struct Tracker {
     float _lastPower = 0.0;
 
 
-    EWMA<float> avgPower{200};
+    //EWMA<float> avgPower{200};
 
     MeanAccumulator _powerBuf{};
 
@@ -48,7 +48,7 @@ struct Tracker {
         resetDirection(direction);
         _lastPower = power;
         maxPowerPoint.power = 0;
-        avgPower.reset();
+        //avgPower.reset();
     }
 
     void resetDirection(bool direction) {
@@ -61,9 +61,9 @@ struct Tracker {
     float update(float powerSample, uint16_t dutyCycle) {
         auto now = wallClockMs();
 
-        avgPower.add(powerSample);
-
-        _powerBuf.add(slowMode ? avgPower.get() : powerSample);
+        //avgPower.add(powerSample);
+        //_powerBuf.add(slowMode ? avgPower.get() : powerSample);
+        _powerBuf.add(powerSample);
 
 
         if (now - pwmTimeTable[dutyCycle] > 1000 * 60) {
@@ -82,10 +82,12 @@ struct Tracker {
                 _direction = true; // pump more power
             } else {
                 auto absDp = std::abs(dP);
-                if ((absDp >= minPowerStep
-                     or (abs(_lastPower) > (minPowerStep * 10) and absDp / abs(_lastPower) > 0.1f)
-                     )
-                    and (!slowMode || (now - _timeLastReverse) > 6000)) {
+                if ((
+                        absDp >= minPowerStep
+                        or (abs(_lastPower) > (minPowerStep * 10) and absDp / abs(_lastPower) > 0.1f)
+                )
+                    //and (!slowMode || (now - _timeLastReverse) > 6000)
+                        ) {
                     _lastPower = power;
                     if (dP < 0) {
                         _direction = !_direction;
@@ -133,19 +135,19 @@ struct Tracker {
 
         // slow-mode condition:
         if (powerSample > (slowMode ? 0.5f : 2.f) // hysteresis
-            and now - maxPowerPoint.timestamp > 1000 * 15 // if we didn't find a new maxPower for 15s
+            and now - maxPowerPoint.timestamp > 1000 * 30 // if we didn't find a new maxPower for 15s
             and now - _timeLastReverse < 1000 * 15 // if we move in one direction for more than 15s, don't slow down
                 ) {
-            speed = .1; // 0.02
-            frequency = 1;
-            minPowerStep = 1.0f; // 0.75 is too small ?
+            speed = .5; // 0.02
+            frequency = 10;
+            minPowerStep = 0.75f; // 0.75 is too small ?
             if (!slowMode) {
                 auto d = (float) maxPowerPoint.dutyCycle - (float) dutyCycle;
                 if (abs(d) > 5)
                     ESP_LOGI("mppt", "Near MPP, slow-down, set dutyCycle %hu (powerSample=%.2f)",
                              maxPowerPoint.dutyCycle, powerSample);
                 slowMode = true;
-                avgPower.reset();
+                //avgPower.reset();
                 // out power measurement with hall sensor is poor and non-linear, so in slow-mode we might stay in a
                 // local maximum. this work-around captures MPP duty cycle during normal mode
                 return d;
