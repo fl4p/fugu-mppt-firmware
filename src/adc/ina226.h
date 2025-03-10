@@ -101,18 +101,24 @@ public:
 
 
         ina226.reset_INA226();         //in case the device is already/still initialized
-        assertPinState(alertPin, true, "ina22x_alert", false);
 
-        assert_throw(!new_data, "unexpected alert signal");
+        try {
+            assertPinState(alertPin, true, "ina22x_alert", false);
 
-        //if (!ina226.init())
-        //    return false;
+            assert_throw(!new_data, "unexpected alert signal");
 
-        ina226.setAverage(AVERAGE_1);
-        ina226.setConversionTime(CONV_TIME_1100);
-        ina226.writeRegister(INA226_WE::INA226_CAL_REG, ina226.calVal);
+            //if (!ina226.init())
+            //    return false;
 
-        assert(!new_data);
+            ina226.setAverage(AVERAGE_1);
+            ina226.setConversionTime(CONV_TIME_1100);
+            ina226.writeRegister(INA226_WE::INA226_CAL_REG, ina226.calVal);
+
+            assert_throw(!new_data, "");
+        } catch (const std::exception &ex) {
+            ESP_LOGE("ina22x", "error %s", ex.what());
+            return false;
+        }
 
         if (!testConvReadyAlert(addr, alertPin)) {
             return false;

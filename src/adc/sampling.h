@@ -62,6 +62,7 @@ struct Sensor {
     uint32_t numSamples = 0;
     RunningMedian5<float> med3{};
     EWM<float> ewm;
+    MeanAccumulator calibBuffer{};
 
     float calibrationAvg = 0;
 
@@ -83,6 +84,7 @@ struct Sensor {
         if (resetCalibration && calibrationAvg != 0) {
             ESP_LOGI("sensor", "%s reset calibration", params.teleName.c_str());
             calibrationAvg = 0;
+            calibBuffer.clear();
         }
     }
 
@@ -282,53 +284,58 @@ public:
     };
 
     UpdateRet handleSensorCalib(Sensor &sensor) {
-        if (calibrating_ && sensor.numSamples >= 60) {
+        if (calibrating_ && sensor.numSamples >= 100) {
             // calibZeroCurrent = ewm.s.chIin.avg.get();
-            auto avg = sensor.ewm.avg.get();
-            auto std = sensor.ewm.std.get();
+            sensor.calibBuffer.add(sensor.last);
 
-            auto &constrains{sensor.params.calibrationConstraints};
+            if(sensor.calibBuffer.num > 100) {
+                auto avg = sensor.calibBuffer.pop(); //sensor.ewm.avg.get();
+                auto std = sensor.ewm.std.get();
 
-            if (!ignoreCalibrationConstraints && (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue)) {
-                ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, stdn=%.6f)",
-                         sensor.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, sensor.last, std);
-                calibrating_ = 0;
-                //startCalibration();
-                return UpdateRet::CalibFailure;
-            }
+                auto &constrains{sensor.params.calibrationConstraints};
 
-            if (!ignoreCalibrationConstraints &&
-                (std::abs(avg) < 1e-9f or std::isfinite(std)) // std can be non-finite for 0 values
-                and std * std::abs(avg) > constrains.maxStddev) {
-                ESP_LOGE("sampler", "Calibration failed, %s stddev %.6f > %.6f (last=%.6f, avg=%.6f)",
-                         sensor.params.teleName.c_str(),
-                         std * avg,
-                         constrains.maxStddev, sensor.last, avg);
-                ESP_LOGW("sampler", "%s last=%.6f med3=%.6f avg=%.6f num=%lu", sensor.params.teleName.c_str(),
-                         sensor.last,
-                         sensor.med3.get(), sensor.ewm.avg.get(), sensor.numSamples);
-                calibrating_ = 0;
-                //startCalibration();
-                return UpdateRet::CalibFailure;
-            }
+                if (!ignoreCalibrationConstraints && (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue)) {
+                    ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, stdn=%.6f)",
+                             sensor.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, sensor.last, std);
+                    calibrating_ = 0;
+                    //startCalibration();
+                    return UpdateRet::CalibFailure;
+                }
 
-            // TODO peak2peak
+                if (!ignoreCalibrationConstraints &&
+                    (std::abs(avg) < 1e-9f or std::isfinite(std)) // std can be non-finite for 0 values
+                    and std * std::abs(avg) > constrains.maxStddev) {
+                    ESP_LOGE("sampler", "Calibration failed, %s stddev %.6f > %.6f (last=%.6f, avg=%.6f)",
+                             sensor.params.teleName.c_str(),
+                             std * avg,
+                             constrains.maxStddev, sensor.last, avg);
+                    ESP_LOGW("sampler", "%s last=%.6f med3=%.6f avg=%.6f num=%lu", sensor.params.teleName.c_str(),
+                             sensor.last,
+                             sensor.med3.get(), sensor.ewm.avg.get(), sensor.numSamples);
+                    calibrating_ = 0;
+                    //startCalibration();
+                    return UpdateRet::CalibFailure;
+                }
 
-            sensor.calibrationAvg = avg;
-            sensor.reset(false);
+                // TODO peak2peak
 
-            ESP_LOGI("sampler", "Sensor %s calibration: avg=%.4f std=%.6f", sensor.params.teleName.c_str(), avg, std);
-            if (sensor.params.calibrationConstraints.calibrateOffset)
-                ESP_LOGI("sampler", "Sensor %s offset-calibrated: %.6f", sensor.params.teleName.c_str(), avg);
+                sensor.calibrationAvg = avg;
+                sensor.reset(false);
 
-            --calibrating_;
+                ESP_LOGI("sampler", "Sensor %s calibration: avg=%.4f std=%.6f", sensor.params.teleName.c_str(), avg,
+                         std);
+                if (sensor.params.calibrationConstraints.calibrateOffset)
+                    ESP_LOGI("sampler", "Sensor %s offset-calibrated: %.6f", sensor.params.teleName.c_str(), avg);
 
-            assert(calibrating_ < realSensors.size());
+                --calibrating_;
 
-            if (calibrating_ == 0) {
-                ESP_LOGI("sampler", "Calibration done!");
-                timeLastCalibration = wallClockUs();
-                return UpdateRet::Calibrating;
+                assert(calibrating_ < realSensors.size());
+
+                if (calibrating_ == 0) {
+                    ESP_LOGI("sampler", "Calibration done!");
+                    timeLastCalibration = wallClockUs();
+                    return UpdateRet::Calibrating;
+                }
             }
         }
 
