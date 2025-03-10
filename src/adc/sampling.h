@@ -60,7 +60,7 @@ struct Sensor {
     float last = NAN, lastRaw = NAN;
     float previous = NAN;
     uint32_t numSamples = 0;
-    RunningMedian3<float> med3{};
+    RunningMedian5<float> med3{};
     EWM<float> ewm;
 
     float calibrationAvg = 0;

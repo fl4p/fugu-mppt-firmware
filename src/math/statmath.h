@@ -109,10 +109,27 @@ public:
 template<typename T>
 inline bool greaterThan(const T &a, const T &b) { return a > b; }
 
+
+// inspired by https://github.com/wjakob/tbb/blob/master/include/tbb/parallel_sort.h
+
 template<typename T, bool (*comp)(const T &, const T &)>
 inline T median_of_three(const T &a, const T &b, const T &c) {
     return comp(a, b) ? (comp(b, c) ? b : (comp(a, c) ? c : a))
                       : (comp(c, b) ? b : (comp(c, a) ? c : a));
+}
+
+
+// https://stackoverflow.com/a/6984153/2950527
+template<class V>
+inline V median(const V &a, const V &b, const V &c) {
+    return max(min(a, b), min(c, max(a, b)));
+}
+
+template<class V>
+inline V median(const V &a, const V &b, const V &c, const V &d, const V &e) {
+    V f = max(min(a, b), min(c, d)); // discards lowest from first 4
+    V g = min(max(a, b), max(c, d)); // discards biggest from first 4
+    return median(e, f, g);
 }
 
 template<typename T>
@@ -137,6 +154,36 @@ public:
     void reset() {
         s1 = std::numeric_limits<T>::quiet_NaN();
         s2 = std::numeric_limits<T>::quiet_NaN();
+        _last = std::numeric_limits<T>::quiet_NaN();
+    }
+};
+
+template<typename T>
+class RunningMedian5 {
+    T b[5];
+    T _last;
+    uint8_t pos;
+public:
+    RunningMedian5() {
+        reset();
+        pos = 0;
+    }
+
+    inline const T &next(const T &s) {
+        b[pos] = s;
+        pos = (pos + 1) % 5;
+        _last = median(b[0], b[1], b[2], b[3], b[4]);
+        return _last;
+    }
+
+    inline const T &get() const {
+        return _last;
+    }
+
+    void reset() {
+        for (auto &s: b) {
+            s = std::numeric_limits<T>::quiet_NaN();
+        }
         _last = std::numeric_limits<T>::quiet_NaN();
     }
 };
