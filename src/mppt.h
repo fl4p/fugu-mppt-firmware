@@ -125,9 +125,16 @@ class MpptController {
     SynchronousConverter &converter;
     LCD &lcd;
 
+    float cntrlValue = 0.0f;
 
-    MpptControlMode state = MpptControlMode::None;
-    bool _limiting = false;// control limited (no MPPT)
+    struct {
+        MpptControlMode mode: 3 = MpptControlMode::None;
+        bool _limiting: 1 = false;// control limited (no MPPT)
+        uint8_t limIdx: 4 = 0;
+
+    } ctrlState;
+
+
     bool _sweeping = false;// global scan
     uint16_t _targetDutyCycle = 0;// MPP from global scan
 
@@ -147,10 +154,10 @@ class MpptController {
     const Sensor *sensorPhysicalU{nullptr};
 
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
-    PD_Control VoutController{1000, 10000, true}; // Vout over-voltage
+    PD_Control VoutController{1500, /*100**/ 6 * 1000, true}; // Vout over-voltage  TODO 8k, 10k prevents full sweep
     PD_Control IinController{100, 200, true}; // Iin over-current
     PD_Control_SmoothSetpoint IoutCurrentController{200, 400, 200}; // Iout over-current // TODO PID?
-    PD_Control_SmoothSetpoint powerController{20, 10, 200}; // over-power // TODO PID?
+    PD_Control_SmoothSetpoint powerController{20, 5, 200}; // over-power // TODO PID?
     //PD_Control LoadRegulationCTRL{5, -200, true}; //
 
 public:
@@ -218,6 +225,10 @@ public:
             ESP_LOGW("mppt", "target duty cycle PWM=%.2hu, not performing tracking!", targetPwmCnt);
         }
 
+        if (tele.influxdbHost) {
+            ESP_LOGI("main", "Influxdb telemetry to host %s", tele.influxdbHost.toString().c_str());
+            // sampler.onNewSample = dcdcDataChanged;
+        }
         //flags.noPanelSwitch = pinConf
 
 
@@ -234,7 +245,7 @@ public:
         startSweep();
     }
 
-    [[nodiscard]] MpptControlMode getState() const { return state; }
+    [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }
 
     void shutdownDcdc() {
         if (topologyConfig.backflowAtHV) {
@@ -315,7 +326,7 @@ public:
 
         // output over-voltage
         // todo introduce separate variable for reverse_current_paranoia
-        auto ovTh = std::min(charger.params.Vbat_max * (limits.reverse_current_paranoia ? 1.05f : 1.5f),
+        auto ovTh = std::min(charger.params.Vbat_max * (limits.reverse_current_paranoia ? 1.03f : 1.5f),
                              limits.Vout_max);
         //if (adcSampler.med3.s.chVout.get() > ovTh) {
         if (sensors.Vout->last > ovTh) { //  && sensors.Vout->previous > ovTh * 0.9f
@@ -450,7 +461,7 @@ public:
 
             if (!converter.disabled())
                 ESP_LOGE("MPPT",
-                         "Buck running at D=%d%% but Vout (%.2f) and Iout (%.2f, last=%.2f) low! Sensor or half-bridge failure.",
+                         "Buck running at D=%d %% but Vout (%.2f) and Iout (%.2f, last=%.2f) low! Sensor or half-bridge failure.",
                          100 * converter.getCtrlOnPwmCnt() / converter.pwmCtrlMax, vOut, sensors.Iout->ewm.avg.get(),
                          sensors.Iout->last
                 );
@@ -539,13 +550,15 @@ public:
         auto V_phys_smooth = (sensorPhysicalU->ewm.avg.get());
         //auto Vout(sensors.Vout->ewm.avg.get());
         float power_smooth = I_phys_smooth * V_phys_smooth;
-        float power = sensorPhysicalI->last * sensorPhysicalU->last;
+        float power = sensorPhysicalI->med3.get() * sensorPhysicalU->med3.get();
 
 
         Point point("mppt");
-        point.addTag("device", "fugu_" + String(getChipId()));
+        point.addTag("device", getHostname().c_str());
         point.addField("I", I_phys_smooth, 2);
-        point.addField("U", V_phys_smooth, 2);
+        point.addField("Ui", sensors.Vin->med3.get(), 2);
+        point.addField("Uo", sensors.Vout->med3.get(), 2);
+        //point.addField("U", V_phys_smooth, 2);
         point.addField("P", power, 2);
         point.addField("P_smooth", power_smooth, 2);
         //point.addField("U_out", Vout, 2);
@@ -557,7 +570,7 @@ public:
 
         point.addField("pwm_dir_f", cntrlValue, 2);
         point.addField("mppt_state", int(ctrlState.mode));
-        // point.addField("mcu_temp", mcu_temp.last(), 1);
+        point.addField("mcu_temp", ucTemp.last(), 1);
         point.addField("ntc_temp", ntc.last(), 1);
 
         point.addField("pwm_duty", converter.getCtrlOnPwmCnt());
@@ -627,8 +640,8 @@ public:
         //float smoothPower = avgIin.get() * avgVin.get();
 
 
-        meter.add(sensors.Iout->last * sensors.Vout->last, power_smooth, sensors.Vin->ewm.avg.get(),
-                  sensors.Vout->ewm.avg.get(), nowUs);
+        meter.add(sensors.Iout->last * sensors.Vout->last, power_smooth,
+                  sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get(), nowUs);
         rtcount("mppt.update.meterAdd");
 
 
@@ -668,7 +681,7 @@ public:
         std::array<CVP, 5> controlValues{
                 CVP{CV, VinController, {sensors.Vin->med3.get(), limits.Vin_min}},
                 CVP{CV, VoutController, {_sweeping ? sensors.Vout->ewm.avg.get() : sensors.Vout->med3.get(),
-                                         charger.params.Vbat_max}}, // todo last or med3
+                                         charger.Vbat_max()}}, // todo last or med3
                 CVP{CC, IinController,
                     {_sweeping ? sensors.Iin->ewm.avg.get() : sensors.Iin->med3.get(), limits.Iin_max}},
                 CVP{CC, IoutCurrentController,
