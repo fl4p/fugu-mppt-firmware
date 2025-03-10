@@ -2,13 +2,16 @@
 nvs,            data, nvs,      0x9000,  0x4000
 otadata,        data, ota,      0xd000,  0x2000
 phy_init,       data, phy,      0xf000,  0x1000
-factory,        app,  factory,  0x10000,  1700k
+#factory,        app,  factory,  0x10000,  1700k
+
+ota_0,         app,   ota_0,    ,         1700k
+ota_1,         app,  ota_1,    ,        1700k
 
 # for unit-testing:
-littlefs_test,  data, spiffs,      ,    8k
+littlefs_test,  data, littlefs,      ,    8k
 
 # the main data partition should be at the end https://github.com/fl4p/fugu-mppt-firmware/pull/13
-littlefs,       data, spiffs,           ,    128k
+littlefs,       data, littlefs,           ,    128k
 
 # TODO: partitions for wifi (nvs store?), calibration and statistics
 
