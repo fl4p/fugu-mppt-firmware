@@ -130,10 +130,10 @@ public:
         if (todayEnergy_ > 2) {
             today.energyYield = todayEnergy_;
             time_t now;
-            for(auto i = 0; i < 20; ++i) {
+            for (auto i = 0; i < 20; ++i) {
                 now = std::time(nullptr);
                 if (now > 1e9) break;
-                if(i == 0) ESP_LOGI("meter", "waiting for time sync...");
+                if (i == 0) ESP_LOGI("meter", "waiting for time sync...");
                 delay(500);
             }
             if (now < 1e9)
@@ -199,8 +199,9 @@ struct PersistentState {
 
 struct SolarEnergyMeter {
     TrapezoidalIntegrator<float, unsigned long, float> totalEnergy{
-            1e-6f / 3600.f,  // us
-            (unsigned long) 2e6f};
+            1e-6f / 3600.f,  // /us => /h
+            (unsigned long) 2e6f // 2sec
+    };
 
     FlashValueStore<PersistentState> flash{
             "/littlefs/stats",
@@ -220,7 +221,8 @@ struct SolarEnergyMeter {
             auto &stat(flash.getFlashValue());
             totalEnergy.restore(stat.totalEnergy);
             dailyEnergyMeter.restore(stat.todayEnergy, stat.timeLastPower);
-            ESP_LOGI("mppt", "Restored stats: totalEnergy=%.2f bootCounter=%lu dailyEnergyMeter=%.2f", totalEnergy.get(),
+            ESP_LOGI("mppt", "Restored stats: totalEnergy=%.2f bootCounter=%lu dailyEnergyMeter=%.2f",
+                     totalEnergy.get(),
                      stat.bootCount, stat.totalEnergy);
         }
         commit(true);

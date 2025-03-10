@@ -32,7 +32,7 @@ struct CalibrationConstraints {
     float maxAbsValue;
     float maxStddev;
 
-    bool calibrateMidpoint;
+    bool calibrateOffset;
 };
 
 /*struct _SensorCalibrationState {
@@ -57,7 +57,7 @@ struct SensorParams {
 struct Sensor {
     const SensorParams params;
 
-    float last = NAN;
+    float last = NAN, lastRaw = NAN;
     float previous = NAN;
     uint32_t numSamples = 0;
     RunningMedian3<float> med3{};
@@ -93,7 +93,7 @@ struct Sensor {
         //    ESP_LOGW("s", "not-finite sensor val %f (name=%s, x=%f) ", v, params.teleName.c_str(), x);
         //}
 
-        if (params.calibrationConstraints.calibrateMidpoint) {
+        if (params.calibrationConstraints.calibrateOffset) {
             //ESP_LOGI("sensor", "%s %.4f offset=%.4f std=%.4f n=%u", params.teleName.c_str(), v, calibrationAvg,
             //         ewm.std.get(), numSamples);
             v -= calibrationAvg;
@@ -101,6 +101,7 @@ struct Sensor {
 
         previous = last;
         last = v;
+        lastRaw = x;
         ewm.add(med3.next(v));
         ++numSamples;
 
@@ -134,11 +135,13 @@ struct VirtualSensor : public Sensor {
 
 template<typename T>
 struct VIinVout {
-    T Vin, Vout, Iin, Iout;
+    T Vin{}, Vout{}, Iin{}, Iout{};
 
     VIinVout(const VIinVout &) = delete;
 
     VIinVout(const VIinVout &&) = delete;
+
+    VIinVout(T vin, T vout, T iin, T iout) : Vin{vin}, Vout{vout}, Iin{iin}, Iout{iout} {}
 };
 
 
@@ -208,7 +211,8 @@ public:
 
         auto sensorPtr = new PhysicalSensor{adc, params, ewmSpan};
 
-        if (scope) scope->addChannel(adc, sensorPtr->params.adcCh, 'u', 12, sensorPtr->params.teleName.c_str());
+        if (scope)
+            scope->addChannel(adc, sensorPtr->params.adcCh, 'u', 12, sensorPtr->params.teleName.c_str());
 
         sensors.push_back(sensorPtr);
         realSensors.push_back(sensorPtr);
@@ -314,8 +318,8 @@ public:
             sensor.reset(false);
 
             ESP_LOGI("sampler", "Sensor %s calibration: avg=%.4f std=%.6f", sensor.params.teleName.c_str(), avg, std);
-            if (sensor.params.calibrationConstraints.calibrateMidpoint)
-                ESP_LOGI("sampler", "Sensor %s midpoint-calibrated: %.6f", sensor.params.teleName.c_str(), avg);
+            if (sensor.params.calibrationConstraints.calibrateOffset)
+                ESP_LOGI("sampler", "Sensor %s offset-calibrated: %.6f", sensor.params.teleName.c_str(), avg);
 
             --calibrating_;
 
@@ -332,6 +336,9 @@ public:
     }
 
     UpdateRet _addSensorSample(Sensor *sensor, float v) {
+        if(unlikely(isnan(v)))
+            return UpdateRet::CalibFailure;
+
         sensor->add_sample(v);
         rtcount("adc.update.addSample");
 
@@ -440,6 +447,14 @@ public:
             s.adc->init(pinConf);
             s.adc->start();
         }
+    }
+
+    bool resetPeripherals() {
+        bool ok = true;
+        for(auto &s:adcStates) {
+            ok = s.adc->resetPeripherals() and ok;
+        }
+        return ok;
     }
 
 };

@@ -91,7 +91,11 @@ void mqtt_init() {
 
     if (!conf)return;
 
-    auto brokerUri = conf.getString("broker_uri");
+    auto brokerUri = conf.getString("broker_uri","");
+
+    if(brokerUri.empty())return;
+
+    ESP_LOGI("mqtt", "connecting to broker %s", brokerUri.c_str());
 
 
     esp_mqtt_client_config_t mqtt_cfg{};
@@ -101,6 +105,7 @@ void mqtt_init() {
     /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
     esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, mqtt_event_handler, NULL);
     esp_mqtt_client_start(client);
+
 }
 
 

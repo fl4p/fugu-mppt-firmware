@@ -161,7 +161,7 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
                 }
 
             } else {
-                ESP_LOGW("adc_esp32", "Invalid data [%s_%"PRIu32"_%"PRIx32"]", "ADC1", chan_num, data);
+                ESP_LOGW("adc_esp32", "Invalid data [%s_%" PRIu32 "_%" PRIx32 "]", "ADC1", chan_num, data);
             }
         }
     } else if (ret == ESP_ERR_TIMEOUT) {

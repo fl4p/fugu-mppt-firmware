@@ -65,6 +65,7 @@ class SynchronousConverter {
 public:
 
     inline bool boost() const { return isBoost; }
+
     inline bool forcedPwm_() const { return forcedPwm; }
 
     uint16_t pwmCtrlMax{}, pwmRectMin{}, pwmCtrlMin{};
@@ -104,6 +105,8 @@ public:
         if (forcedPwm)ESP_LOGW("converter", "%s", "forced_pwm");
 
         auto L0 = coilConf.getFloat("L0");
+
+        ESP_LOGI("converter", "Coil L0=%.1f µH", L0 * 1e6f);
 
 
         uint32_t pwmFrequency = pinConf.getLong("pwm_freq"); //39000; //  converter switching frequency
@@ -441,8 +444,8 @@ public:
      * Permanently set enable/disable low-side switch
      * @param enable
      */
-    void enableSyncRect(bool enable, bool overwriteFPWM= false) {
-        if(forcedPwm && !overwriteFPWM) enable = true;
+    void enableSyncRect(bool enable, bool overwriteFPWM = false) {
+        if (forcedPwm && !overwriteFPWM) enable = true;
         if (enable != syncRectEnabled) {
             UART_LOG("Sync rect %s", enable ? "enabled" : "disabled");
         }

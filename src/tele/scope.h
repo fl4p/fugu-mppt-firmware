@@ -216,7 +216,7 @@ public:
     }
 
     void startStream() {
-        uint8_t offset = 0;
+        //uint8_t offset = 0;
     }
 
     TaskNotification notification{};
@@ -263,7 +263,7 @@ public:
         p->channel = cid(adc, ch);
         p->data = sample;
 
-        bufPos[bufSel] += sizeof(Data12Ch4);
+        bufPos[bufSel] = bufPos[bufSel] + sizeof(Data12Ch4);
     }
 
     /*

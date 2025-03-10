@@ -1,6 +1,23 @@
 #include "rt.h"
 #include "logging.h"
 
+volatile bool rtcount_en = true;
+
+//Linked list of vector descriptions, sorted by cpu.intno value
+vector_desc_t *vector_desc_head = NULL;
+
+//Returns a vector_desc entry for an intno/cpu, or NULL if none exists.
+vector_desc_t *find_desc_for_int(int intno, int cpu) {
+    vector_desc_t *vd = vector_desc_head;
+    while (vd != NULL) {
+        if (vd->cpu == cpu && vd->intno == intno) {
+            break;
+        }
+        vd = vd->next;
+    }
+    return vd;
+}
+
 
 esp_err_t esp_intr_dump(FILE *stream) {
     if (stream == NULL) {
@@ -139,4 +156,16 @@ void rtcount_print(bool reset) {
         rtcount_stats.clear();
 
     rtcount_en = true;
+}
+
+
+void rtcount_test_cycle_counter() {
+    auto t0 = micros();
+    auto c0 = esp_cpu_get_cycle_count();
+    vTaskDelay(100);
+    auto c1 = esp_cpu_get_cycle_count();
+    auto t1 = micros();
+    int cpUs = (c1 - c0) / (t1 - t0);
+    ESP_LOGD("rtcount", "dt=%lu dc=%lu cycles/s=%i", t1 - t0, c1 - c0, cpUs);
+    assert(abs(cpUs - CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ) < CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 0.05f);
 }

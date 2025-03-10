@@ -11,7 +11,7 @@
 
 class KeyValueStorage {
 
-    nvs_handle_t my_handle;
+    nvs_handle_t my_handle = 0;
 
 public:
     void init() {
@@ -36,7 +36,7 @@ public:
         char buf[64];
         size_t len = maxLen;
         auto err = nvs_get_str(my_handle, key.c_str(), buf, &len);
-        if(err == ESP_ERR_NVS_NOT_FOUND)
+        if (err == ESP_ERR_NVS_NOT_FOUND)
             return defaultValue;
         ESP_ERROR_CHECK(err);
         return buf;
@@ -47,8 +47,8 @@ public:
         my_handle = {};
     }
 
-    void writeString(const std::string& key, const std::string& value) {
-        auto err =nvs_set_str(my_handle, key.c_str(), value.c_str());
+    void writeString(const std::string &key, const std::string &value) {
+        auto err = nvs_set_str(my_handle, key.c_str(), value.c_str());
         ESP_ERROR_CHECK(err);
     }
 };

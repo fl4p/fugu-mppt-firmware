@@ -148,11 +148,23 @@ void add_ap(const std::string &ssid, const std::string &psk) {
                          {"ssid_" + ssid,          ssid},
                          {"ssid_" + ssid + "_psk", psk.c_str()}});
     ESP_LOGI("tele", "Added Wifi AP %s to %s", ssid.c_str(), confPath);
+    noSsid = false;
+}
+
+const std::string &getHostname(bool reload = false) {
+    static std::string hostname{};
+    if (hostname.empty() or reload) {
+        nvs.open();
+        hostname = nvs.readString("hostname", "fugu-" + std::string(getChipId()));
+        nvs.close();
+    }
+    return hostname;
 }
 
 void connect_wifi_async() {
     if (noSsid) wifi_load_conf();
     if (!noSsid) {
+        NetworkManager::setHostname(getHostname().c_str());
         WiFi.mode(WIFI_STA);
     }
 }
@@ -180,19 +192,10 @@ bool timeSyncAsync(const char *tzInfo, const char *ntpServer1, const char *ntpSe
     return false;
 }
 
-const std::string &getHostname(bool reload = false) {
-    static std::string hostname{};
-    if (hostname.empty() or reload) {
-        nvs.open();
-        hostname = nvs.readString("hostname", "fugu-" + std::string(getChipId()));
-        nvs.close();
-    }
-    return hostname;
-}
+
 
 void _wifiConnected() {
     if (!WiFi.isConnected()) return;
-
 
     String hostname = String(getHostname().c_str());
 

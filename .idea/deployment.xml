@@ -18,6 +18,22 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="rpi">
+        <serverdata>
+          <mappings>
+            <mapping local="$IDF_PATH$" web="/" />
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="rpi3">
+        <serverdata>
+          <mappings>
+            <mapping local="$IDF_PATH$" web="/" />
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
     </serverData>
   </component>
 </project>

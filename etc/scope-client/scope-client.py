@@ -107,7 +107,7 @@ class Channel:
         self.sample_buffer.append(y)
 
     def plot(self, ax):
-        self.waveform, = ax.plot(time_x, np.zeros(time_x.shape), label=self.name)  # channel 1 plot
+        self.waveform, = ax.plot(time_x, np.zeros(time_x.shape), label=f'#{self.chNum}: {self.name}')  # channel 1 plot
 
     def redraw(self, trig_i):
         w = max(trig_i, len(self.sample_buffer) - win_len)
@@ -131,9 +131,10 @@ def redraw_loop(channels: Dict[str, Channel], fig, ax):
 
         if trig_ch and trig_ch in channels:
             buf = channels[trig_ch].sample_buffer
+            dc = np.mean(channels[trig_ch].sample_buffer)
             # for i in range(len(buf) - 1, 1, -1):
             for i in range(1, len(buf), 1):
-                if buf[i] >= trig_val > buf[i - 1]:
+                if buf[i] >= (trig_val+dc) > buf[i - 1]:
                     trig_i = i
                     break
 

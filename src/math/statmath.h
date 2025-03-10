@@ -24,7 +24,7 @@ public:
         alpha = (2.f / (float_t) (span + 1));
     }
 
-    [[nodiscard]] uint32_t span() const {return uint32_t(2.f / alpha) - 1;}
+    [[nodiscard]] uint32_t span() const { return uint32_t(2.f / alpha) - 1; }
 
     inline void add(float_t x) {
         if (unlikely(isnan(x))) return;
@@ -198,12 +198,12 @@ template<typename F=float, typename T=unsigned long, typename D=double>
 class TrapezoidalIntegrator {
     const F timeFactor;
     const T maxDt;
-    T lastTime = 0;
-    F lastX{};
-    D value = 0;
+    T lastTime;
+    F lastX;
+    D value;
 public:
     explicit TrapezoidalIntegrator(float timeFactor = (1e-6f / 3600.f), T maxDt = 1e6) :
-            timeFactor(timeFactor), maxDt(maxDt) {}
+            timeFactor(timeFactor), maxDt(maxDt), lastTime{0}, lastX{0}, value{0} {}
 
     D get() const { return value; }
 
@@ -217,7 +217,8 @@ public:
 
     void restore(D v) {
         assert(value == 0);
-        value = v;
+        if(isfinite(v))
+            value = v;
     }
 };
 

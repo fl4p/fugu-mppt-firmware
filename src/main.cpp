@@ -368,6 +368,8 @@ void setup() {
                 res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
 
         teleConf = ConfFile{"/littlefs/conf/tele.conf"};
+
+        mqtt_init();
     }
 
 
@@ -591,7 +593,7 @@ void loopLF(const unsigned long &nowUs) {
     uint32_t sps = (dt > 20000) ? (uint64_t) (nSamples - lastNSamples) * 1000000llu / dt : 0;
 
 
-    if ((dt > 10000) && sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
+    if ((dt > 100000) && sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 2000000) {
         stopAndBackoff(4);
         auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
@@ -605,6 +607,7 @@ void loopLF(const unsigned long &nowUs) {
 
     mppt.ntc.read();
     mppt.ucTemp.read();
+    mppt.charger.update(sensors.Vout->ewm.avg.get());
 
     if (mppt.ucTemp.last() > 95 && WiFi.isConnected()) {
         ESP_LOGW("main", "High chip temperature, shut-down WiFi");
@@ -767,7 +770,8 @@ void loopNetwork_task(void *arg) {
     }
 
 
-    if ((wallClockUs() - lastTimeOutUs) >= 3000000) {
+    const auto lfPeriod = 3000000; //(mppt.tracker.avgPower.get() < 1) ? 3000000 : 3000000;
+    if ((wallClockUs() - lastTimeOutUs) >= lfPeriod) {
         loopLF(wallClockUs());
         lastTimeOutUs = wallClockUs();
     }
@@ -854,6 +858,7 @@ bool handleCommand(const String &inp) {
         // pwm.enableLowSide(true);
     } else if (inp == "short-ls") {
         if (converter.boost() && abs(sensors.Vin->ewm.avg.get()) < 0.05) {
+            manualPwm = true;
             converter.shortLs();
         } else {
             return false;
@@ -887,6 +892,10 @@ bool handleCommand(const String &inp) {
     } else if (inp == "wifi off") {
         WiFi.disconnect(true);
         disableWifi = true;
+        nvs.open();
+        if (!nvs.readString("wifi_ssid", "").empty())
+            nvs.writeString("wifi_ssid", "");
+        nvs.close();
     } else if (inp.startsWith("wifi-add ")) {
         auto ssidAndPw = inp.substring(9);
         auto i = ssidAndPw.indexOf(':');
@@ -920,7 +929,8 @@ bool handleCommand(const String &inp) {
             auto u = s->params.unit;
             UART_LOG("\nSensor `%s` (ch%d, %s):", s->params.teleName.c_str(), s->params.adcCh,
                      s->isVirtual ? "virtual" : "physical");
-            UART_LOG("  num=%6lu  last=%7.3f %c   prev=%7.3f %c  ", s->numSamples, s->last, u, s->previous, u);
+            UART_LOG("  num=%6lu  last=%7.3f %c   prev=%7.3f %c  raw=%8.4f", s->numSamples, s->last, u, s->previous, u,
+                     s->lastRaw);
             UART_LOG("  EWM(%4lu):  avg= %7.3f %c   std*=%7.4f %c  std%%=%7.3f %%", s->ewm.span(),
                      s->ewm.avg.get(), u,
                      sqrt(s->ewm.std.get()) * abs(s->ewm.avg.get()), u,
@@ -931,6 +941,11 @@ bool handleCommand(const String &inp) {
         UART_LOG("Local IP Address: %s", WiFi.localIP().toString().c_str());
     } else if (inp == "adc-restart") {
         adcSampler.reInitADCs();
+    } else if (inp.startsWith("hostname ") && inp.length() >= 9 + 1) {
+        nvs.open();
+        auto hn = inp.substring(9);
+        nvs.writeString("hostname", hn.c_str());
+        nvs.close();
     } else {
         ESP_LOGI("main", "unknown or unexpected command");
         return false;
