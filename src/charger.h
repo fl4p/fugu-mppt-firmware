@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mqtt.h"
+
 #ifndef FUGU_BAT_V
 #define FUGU_BAT_V NAN
 #endif
@@ -8,25 +10,34 @@
 struct BatChargerParams {
     float Vbat_max = FUGU_BAT_V; //FUGU_BAT_V; //14.6 * 2;
     //float Iout_max = 27; // HW1: coil & fuse limited
-    float Iout_max = 32; // HW2, backflow mosfet gets hot!
+    //float Iout_max = 32; // HW2, backflow mosfet gets hot!
 
-    float Vout_top() const { return Vbat_max * 0.98f; } //0.96 0.975f;
-    float Vout_top_release() const { return Vbat_max * 0.94f; }
-    float Iout_top = .5;
+    //float Vout_top() const { return Vbat_max * 0.98f; } //0.96 0.975f;
+    //float Vout_top_release() const { return Vbat_max * 0.94f; }
+
+    // float Iout_top = .5;
 };
 
 class BatteryCharger {
-
-    unsigned long timeTopUntil = 0; // charger
-
-
+    // unsigned long timeTopUntil = 0; // charger
+    //float vbat_cap = NAN;
 
 public:
-    BatChargerParams params {};
+    BatChargerParams params{};
 
-    explicit BatteryCharger()  {
+    volatile float vcell_max = 0;
+    volatile unsigned long vcell_max_t = 0;
+
+    explicit BatteryCharger() = default;
+
+    void begin() {
+        mqtt_subscribe_topic("bat_caravan/cell_voltages/max", [&](const char *dat, int len) {
+            this->vcell_max = strtof(dat, nullptr);
+            this->vcell_max_t = wallClockUs();
+        });
     }
 
+    /*
     float getToppingCurrent(float Vout) {
         auto nowMs = millis();
 
@@ -53,5 +64,29 @@ public:
         }
 
         return Iout_max;
+    }
+     */
+
+    float vcell_eoc = 3.6f; // cell end-of-charge voltage
+
+    EWMA<volatile float, float> vbat_cap{60};
+
+    void update(float vbat) {
+        if (std::isfinite(vcell_max) and vcell_max > vcell_eoc and (vcell_max_t - wallClockUs()) < 200000000) {
+            auto vbat_cap2 = vbat - (vcell_max - vcell_eoc);
+            if (vbat_cap2 > params.Vbat_max) vbat_cap2 = params.Vbat_max;
+            vbat_cap.add(vbat_cap2);
+        } else {
+            vbat_cap.add(params.Vbat_max);
+        }
+    }
+
+    void reset() {
+        vbat_cap.reset();
+    }
+
+    [[nodiscard]] float Vbat_max() const {
+        if (vbat_cap.get() > 0) return vbat_cap.get();
+        return params.Vbat_max;
     }
 };
