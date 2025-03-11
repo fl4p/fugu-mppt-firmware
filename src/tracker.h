@@ -87,6 +87,7 @@ struct Tracker {
                 if ((
                         absDp >= minPowerStep
                         or (abs(_lastPower) > (minPowerStep * 10) and absDp / abs(_lastPower) > 0.1f)
+                        //or (_timeLastReverse - now > ) // TODO scheduled reversal?
                 )
                     //and (!slowMode || (now - _timeLastReverse) > 6000)
                         ) {
@@ -99,8 +100,8 @@ struct Tracker {
             }
 
             // TODO does this help?:
-            if (power > _lastPower)
-                _lastPower = power;
+            //if (power > _lastPower)
+            //    _lastPower = power;
 
             // invalidate MPP every 5min ..
             if (now - maxPowerPoint.timestamp > 1000 * 60 * 5 and maxPowerPoint.power > 0) {
@@ -139,10 +140,11 @@ struct Tracker {
         if (powerSample > (slowMode ? 0.5f : 2.f) // hysteresis
             and now - maxPowerPoint.timestamp > 1000 * 30 // if we didn't find a new maxPower for 15s
             and now - _timeLastReverse < 1000 * 15 // if we move in one direction for more than 15s, don't slow down
+            and false
                 ) {
-            speed = .5; // 0.02
+            speed = .25; // 0.02
             frequency = 10;
-            minPowerStep = 0.75f; // 0.75 is too small ?
+            minPowerStep = 0.5f; // 0.75 is too small ?
             if (!slowMode) {
                 auto d = (float) maxPowerPoint.dutyCycle - (float) dutyCycle;
                 if (abs(d) > 5)
@@ -156,8 +158,8 @@ struct Tracker {
             }
         } else {
             // normal-mode
-            speed = .5;
-            frequency = 10;
+            speed = .5f;
+            frequency = 30;
             minPowerStep = 1.5f;
             slowMode = false;
             //avgPower.reset();
