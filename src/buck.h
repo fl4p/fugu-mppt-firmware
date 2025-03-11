@@ -97,7 +97,7 @@ public:
 
     [[nodiscard]] float voltageRatio() const { return outInVoltageRatio; } // M
 
-    bool init(const ConfFile &converterConf, const ConfFile &pinConf, const ConfFile &coilConf) {
+    void init(const ConfFile &converterConf, const ConfFile &pinConf, const ConfFile &coilConf) {
 
         isBoost = converterConf.getByte("boost", 0);
         forcedPwm = converterConf.getByte("forced_pwm", 0);
@@ -108,59 +108,54 @@ public:
 
         ESP_LOGI("converter", "Coil L0=%.1f µH", L0 * 1e6f);
 
-
         uint32_t pwmFrequency = pinConf.getLong("pwm_freq"); //39000; //  converter switching frequency
         assert_throw(pwmFrequency > 5e3 && pwmFrequency < 5e5, "");
 
         fL = (float) pwmFrequency * L0 * InductivityDcBias; // for ripple current computation
-        assert_throw(fL < 5, "");
-        assert_throw(fL > 1, "");
+        assert_throw(fL < 5, "pwmFreq*L0 out-of-range");
+        assert_throw(fL > 1, "pwmFreq*L0 out-of-range");
 
         auto drvInpLogic = pinConf.getString("pwm_driver_logic"); // driver input logic "in,en", "hi,li" and en
         uint8_t pinCtrl, pinRect;
 
-        try {
-            if (drvInpLogic == "InEn") { // e.g. Infineon ir2814
 
-                pwmEnLogic = true;
-                auto pnCtrl = isBoost ? "pwm_en" : "pwm_in";
-                auto pnRect = isBoost ? "pwm_in" : "pwm_en";
+        if (drvInpLogic == "InEn") { // e.g. Infineon ir2814
 
-                pinCtrl = pinConf.getByte(pnCtrl);
-                pinRect = pinConf.getByte(pnRect);
-                assert_throw(pinCtrl != pinRect, "");
+            pwmEnLogic = true;
+            auto pnCtrl = isBoost ? "pwm_en" : "pwm_in";
+            auto pnRect = isBoost ? "pwm_in" : "pwm_en";
 
-                if (!pinConf.getByte("skip_assert", 0)) {
-                    // ti, infineon gate drivers: in pins pulled low, EN/SD pins pulled high
-                    assertPinState(pinCtrl, false, pnCtrl, true);
-                    assertPinState(pinRect, false, pnRect, true);
-                }
+            pinCtrl = pinConf.getByte(pnCtrl);
+            pinRect = pinConf.getByte(pnRect);
+            assert_throw(pinCtrl != pinRect, "");
 
-            } else if (drvInpLogic == "HiLi") {  // e.g. TI UCC21330x with optional DIS pin (SD pin)
-                auto pnCtrl = isBoost ? "pwm_li" : "pwm_hi";
-                auto pnRect = isBoost ? "pwm_hi" : "pwm_li";
-
-                pinCtrl = pinConf.getByte(pnCtrl);
-                pinRect = pinConf.getByte(pnRect);
-                pinSd = pinConf.getByte("pwm_sd", 255); // DIS
-
-                assert_throw(pinCtrl != pinRect, "");
-                assert_throw(pinCtrl != pinSd, "");
-                assert_throw(pinRect != pinSd, "");
-
-                if (!pinConf.getByte("skip_assert", 0)) {
-                    assertPinState(pinCtrl, false, pnCtrl, false);
-                    assertPinState(pinRect, false, pnRect, false);
-                    if (pinSd != 255) assertPinState(pinSd, true, "pwm_sd", false);
-                }
-
-            } else {
-                ESP_LOGE("pwm", "unrecognized pwm_driver_logic %s", drvInpLogic.c_str());
-                return false;
+            if (!pinConf.getByte("skip_assert", 0)) {
+                // ti, infineon gate drivers: in pins pulled low, EN/SD pins pulled high
+                assertPinState(pinCtrl, false, pnCtrl, true);
+                assertPinState(pinRect, false, pnRect, true);
             }
-        } catch (const std::exception &ex) {
-            ESP_LOGE("pwm", "error %s", ex.what());
-            return false;
+
+        } else if (drvInpLogic == "HiLi") {  // e.g. TI UCC21330x with optional DIS pin (SD pin)
+            auto pnCtrl = isBoost ? "pwm_li" : "pwm_hi";
+            auto pnRect = isBoost ? "pwm_hi" : "pwm_li";
+
+            pinCtrl = pinConf.getByte(pnCtrl);
+            pinRect = pinConf.getByte(pnRect);
+            pinSd = pinConf.getByte("pwm_sd", 255); // DIS
+
+            assert_throw(pinCtrl != pinRect, "");
+            assert_throw(pinCtrl != pinSd, "");
+            assert_throw(pinRect != pinSd, "");
+
+            if (!pinConf.getByte("skip_assert", 0)) {
+                assertPinState(pinCtrl, false, pnCtrl, false);
+                assertPinState(pinRect, false, pnRect, false);
+                if (pinSd != 255) assertPinState(pinSd, true, "pwm_sd", false);
+            }
+
+        } else {
+            throw std::runtime_error("unrecognized pwm_driver_logic " + drvInpLogic);
+
         }
 
         pwmDriver.init_pwm(pwmCh_Ctrl, pinCtrl, pwmFrequency);
@@ -180,8 +175,6 @@ public:
 
         ESP_LOGI("converter", "f=%lu, boost=%d, pwmDriver.pwmMax=%hu, pwmMinLS=%hu, pwmMinHS=%hu, pwmMaxHS=%hu",
                  pwmFrequency, isBoost, pwmDriver.pwmMax, pwmRectMin, pwmCtrlMin, pwmCtrlMax);
-
-        return true;
     }
 
     void computePwmRectMax() {
@@ -399,9 +392,10 @@ public:
                     ESP_LOGI("converter", "Disable sync rect, low coil current (%.2f) or low volt (%.2f) pwm=%hu", il,
                              vl, getCtrlOnPwmCnt());
                 pwmRectRatioDCM = 0.0f;
-            } else
+            } else {
                 pwmRectRatioDCM = rectCtrlRatio(convRatioWCE);
-
+                //if(dcmHysteresis)pwmRectRatioDCM = min(pwmRectRatioDCM, 1.5f); // TODO
+            }
             //pwmMaxRect = (uint16_t) std::round( * (float) pwmCtrl);
 
             // TODO remove:

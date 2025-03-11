@@ -61,7 +61,7 @@ public:
     }
 
 
-    void add(const std::unordered_map<std::string, std::string> &values, bool overwrite=false) {
+    void add(const std::unordered_map<std::string, std::string> &values, bool overwrite = false) {
         FILE *f = fopen(path, "a");
         if (f == nullptr) {
             f = fopen(path, "w");

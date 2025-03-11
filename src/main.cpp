@@ -294,15 +294,18 @@ void setup() {
         setupErr = true;
     }
 
-    ConfFile pprofConf{"/littlefs/conf/pprof.conf", true};
 
-    auto sprofHz = (uint32_t) pprofConf.getLong("sprofiler_hz", 0); // 100~300
-    if (sprofHz && esp_cpu_dbgr_is_attached()) {
-        // only start the profiler with OpenOCD attached?
-        ESP_LOGI("main", "starting sprofiler with freq %lu (samples/bank=%i)", sprofHz, PROFILING_ITEMS_PER_BANK);
-        sprofiler_initialize(sprofHz);
-    } else if (sprofHz) {
-        ESP_LOGW("main", "sprofiler configured but not debugger attached");
+    {
+        ConfFile pprofConf{"/littlefs/conf/pprof.conf", true};
+
+        auto sprofHz = (uint32_t) pprofConf.getLong("sprofiler_hz", 0); // 100~300
+        if (sprofHz && esp_cpu_dbgr_is_attached()) {
+            // only start the profiler with OpenOCD attached?
+            ESP_LOGI("main", "starting sprofiler with freq %lu (samples/bank=%i)", sprofHz, PROFILING_ITEMS_PER_BANK);
+            sprofiler_initialize(sprofHz);
+        } else if (sprofHz) {
+            ESP_LOGW("main", "sprofiler configured but not debugger attached");
+        }
     }
 
 
@@ -310,14 +313,16 @@ void setup() {
 
     auto mcuStr = pinConf.getString("mcu", "");
     if (mcuStr != CONFIG_IDF_TARGET) {
-        ESP_LOGE("main", "pins.conf expects MCU %s, but target is %s", mcuStr.c_str(), CONFIG_IDF_TARGET);
+        ESP_LOGE("main", "pins.conf expects MCU '%s', but target is '%s'", mcuStr.c_str(), CONFIG_IDF_TARGET);
         setupErr = true;
     }
+
+    bool noI2C = true;
 
     if (pinConf) {
         auto i2c_freq = pinConf.getLong("i2c_freq", 100000);
         auto i2c_sda = pinConf.getByte("i2c_sda", 255);
-        bool noI2C = (i2c_sda == 255);
+        noI2C = (i2c_sda == 255);
         if (!noI2C) {
             try {
                 assertPinState(i2c_sda, true, "i2c_sda");
@@ -377,45 +382,37 @@ void setup() {
 
     try {
         setupSensors(pinConf, lim);
+        mppt.initSensors(pinConf);
+
+        if (!setupErr) {
+            ConfFile coilConf{"/littlefs/conf/coil.conf"};
+            ConfFile converterConf{"/littlefs/conf/converter.conf"};
+
+            mppt.charger.params.Vbat_max = converterConf.getFloat("vout_max", NAN);
+            auto mode = converterConf.getString("mode", "mppt");
+
+            converter.init(converterConf, pinConf, coilConf);
+        }
+
+        if (!setupErr && !adcSampler.adcStates.empty()) {
+            ConfFile trackerConf{"/littlefs/conf/tracker.conf"};
+            mppt.begin(trackerConf, pinConf, lim, teleConf);
+        }
+
     } catch (const std::runtime_error &er) {
-        ESP_LOGE("main", "error during sensor setup: %s", er.what());
+        ESP_LOGE("main", "error during sensor/converter/tracker setup: %s", er.what());
         //if(adcSampler.adc) delete adcSampler.adc;
         adcSampler.adcStates.clear();
         setupErr = true;
-        scan_i2c();
+        if (!noI2C) scan_i2c();
     }
 
-    if (setupErr) {
-        ESP_LOGE("main", "Error during setup, adc-only mode, skip pwm init");
-    } else {
-        ConfFile coilConf{"/littlefs/conf/coil.conf"};
-        ConfFile converterConf{"/littlefs/conf/converter.conf"};
 
-        mppt.charger.params.Vbat_max = converterConf.getFloat("vout_max", NAN);
-        auto mode = converterConf.getString("mode", "mppt");
-
-        if (!converter.init(converterConf, pinConf, coilConf)) {
-            ESP_LOGE("main", "Failed to init half bridge driver");
-            setupErr = true;
-        }
+    if (!setupErr) {
+        xTaskCreatePinnedToCore(loopRT, "loopRt", 4096 * 4, NULL, RT_PRIO, NULL, 1);
+        //xTaskCreatePinnedToCore(loopNetwork_task, "netloop", 4096 * 4, NULL, 1, NULL, 0);
+        //xTaskCreatePinnedToCore(loopCore0_LF, "core0LF", 4096, NULL, 1, NULL, 0);
     }
-
-    ConfFile trackerConf{"/littlefs/conf/tracker.conf"};
-
-    try {
-        mppt.initSensors(pinConf);
-        if (!adcSampler.adcStates.empty() && !setupErr) {
-            mppt.begin(trackerConf, pinConf, lim, teleConf);
-        }
-    } catch (const std::runtime_error &er) {
-        ESP_LOGE("main", "error during mppt setup: %s", er.what());
-        setupErr = true;
-    }
-
-    xTaskCreatePinnedToCore(loopRT, "loopRt", 4096 * 4, NULL, RT_PRIO, NULL, 1);
-    //xTaskCreatePinnedToCore(loopNetwork_task, "netloop", 4096 * 4, NULL, 1, NULL, 0);
-    //xTaskCreatePinnedToCore(loopCore0_LF, "core0LF", 4096, NULL, 1, NULL, 0);
-
 
     // this will defer all logs, if abort() is called during setup we might never see relevant messages
     // so calls this after everything else has been set up
@@ -511,8 +508,8 @@ void loopRT(void *arg) {
 
         auto nowMs = (unsigned long) (nowUs / 1000ULL);
 
-        if(unlikely(inOta)) {
-            if(!converter.disabled())stopAndBackoff(10);
+        if (unlikely(inOta)) {
+            if (!converter.disabled())stopAndBackoff(10);
             vTaskDelay(10);
             continue;
         }
@@ -614,7 +611,7 @@ void loopLF(const unsigned long &nowUs) {
 
     mppt.ntc.read();
     mppt.ucTemp.read();
-    if(sensors.Vout)
+    if (sensors.Vout)
         mppt.charger.update(sensors.Vout->ewm.avg.get());
 
     if (mppt.ucTemp.last() > 95 && WiFi.isConnected()) {
@@ -725,9 +722,7 @@ void loopRTNewData(unsigned long nowMs) {
                         mppt.update();
                         rtcount("mppt.update");
                     } else {
-
                         // if(mppt)
-
                         //rtcount("mppt.telemetry");
                     }
                     lastMpptUpdateNumSamples = nSamples;
@@ -959,6 +954,17 @@ bool handleCommand(const String &inp) {
         auto hn = inp.substring(9);
         nvs.writeString("hostname", hn.c_str());
         nvs.close();
+    } else if (inp.startsWith("set-config ")) {
+        auto ikey = inp.indexOf(' ', 11);
+        auto ival = inp.indexOf(' ', ikey + 1);
+        auto fn = "/littlefs/conf/" + inp.substring(11, ikey);
+        auto key = inp.substring(ikey + 1, ival);
+        auto val = inp.substring(ival + 1);
+        ConfFile conf{fn.c_str()};
+        auto oldVal = conf.getString(key.c_str(), "");
+        ESP_LOGI("main", "Setting conf '%s:%s' = '%s' (was %s)", fn.c_str(), key.c_str(), val.c_str(), oldVal.c_str());
+        conf.add({{key.c_str(), val.c_str()}}, true);
+        // set-config coil.conf L0 50
     } else {
         ESP_LOGW("main", "unknown or unexpected command");
         return false;
@@ -970,7 +976,7 @@ bool handleCommand(const String &inp) {
     return true;
 }
 
-void esp_task_wdt_isr_user_handler() {
+[[maybe_unused]] void esp_task_wdt_isr_user_handler() {
     //throw std::runtime_error("reboot");
     if (esp_cpu_dbgr_is_attached()) return;
 

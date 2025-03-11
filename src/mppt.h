@@ -130,7 +130,7 @@ class MpptController {
     struct {
         MpptControlMode mode: 3 = MpptControlMode::None;
         bool _limiting: 1 = false;// control limited (no MPPT)
-        uint8_t limIdx: 4 = 0;
+        uint8_t limIdx: 4 = 15;
 
     } ctrlState;
 
@@ -265,6 +265,8 @@ public:
     }
 
     [[nodiscard]] bool boardPowerSupplyUnderVoltage(bool start = false) const {
+        if(isnan(sensors.Vin->last) || isnan(sensors.Vout->last))
+            return false;
         return boardPowerSupplyVoltage() < (start ? 9.5f : 9.f);
     }
 
@@ -644,7 +646,7 @@ public:
         //float smoothPower = avgIin.get() * avgVin.get();
 
 
-        meter.add(sensors.Iout->last * sensors.Vout->last, power_smooth,
+        meter.add(sensors.Iout->med3.get() * sensors.Vout->med3.get(), power_smooth,
                   sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get(), nowUs);
         rtcount("mppt.update.meterAdd");
 
@@ -729,13 +731,15 @@ public:
             controlMode = limitingControl->mode;
             controlValue = limitingControlValue;
 
-
             ctrlState._limiting = true;
+            auto limIdx = (int) (limitingControl - controlValues.begin());
+            ctrlState.limIdx = limIdx;
         } else {
             // no limit condition
             if (ctrlState._limiting) {
                 // recover from limit condition
                 ctrlState._limiting = false;
+                ctrlState.limIdx = 15;
                 controlMode = MpptControlMode::MPPT;
                 controlValue = limitingControlValue;
             }
@@ -849,13 +853,12 @@ public:
             converter.pwmPerturbFractional(fp);
 
             if (controlValue < -80 and fp < -0.01 and converter.getCtrlOnPwmCnt() > converter.getCtrlOnPwmMin()) {
-                auto limIdx = (int) (limitingControl - controlValues.begin());
-                ctrlState.limIdx = limIdx;
+
 
                 UART_LOG_ASYNC(
                         "Limiting! Control value %.2f => perturbation %.2f (to %hu), mode=%s, idx=%i (act=%.3f, tgt=%.3f)",
                         controlValue, fp, converter.getCtrlOnPwmCnt(),
-                        MpptState2String[(int) controlMode].c_str(), limIdx, limitingControl->actual,
+                        MpptState2String[(int) controlMode].c_str(), ctrlState.limIdx, limitingControl->actual,
                         limitingControl->target);
 
                 if (controlMode == MpptControlMode::CC)
