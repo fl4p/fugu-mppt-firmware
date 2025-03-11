@@ -47,8 +47,8 @@ public:
                 }
                 auto k = trim(line.substr(0, ie));
                 if (_map.find(k) != _map.end()) {
-                    ESP_LOGE(TAG, "duplicate key %s in file '%s'", k.c_str(), path);
-                    assert(false);
+                    ESP_LOGW(TAG, "duplicate key %s in file '%s'", k.c_str(), path);
+                    //assert(false);
                 }
                 _map[k] = trim(line.substr(ie + 1));
             }
@@ -71,13 +71,14 @@ public:
             assert (f != nullptr);
         }
 
-        assert(!overwrite);
+        //assert(!overwrite);
 
         for (auto &[key, val]: values) {
             if (_map.find(key) != _map.end()) {
-                ESP_LOGE(TAG, "cannot add duplicate key %s", key.c_str());
+                if (!overwrite)
+                    throw std::runtime_error("duplicate key: " + key);
+                ESP_LOGW(TAG, "add duplicate key %s", key.c_str());
                 //assert(false);
-                throw std::runtime_error("duplicate key: " + key);
             }
             fputc('\n', f);
             assert(fwrite(key.c_str(), key.length(), 1, f) == 1);
@@ -125,7 +126,8 @@ public:
                 throw std::runtime_error("strto_ error " + i->second);
             }
             if (*endptr != 0) {
-                ESP_LOGE(TAG, "%s:%s additional chars after strtol(%s): '%s'", path, key.c_str(), i->second.c_str(), endptr);
+                ESP_LOGE(TAG, "%s:%s additional chars after strtol(%s): '%s'", path, key.c_str(), i->second.c_str(),
+                         endptr);
                 //assert(false);
                 throw std::runtime_error("additional chars " + i->second);
             }
