@@ -47,9 +47,6 @@ LedIndicator led;
 LCD lcd;
 MpptController mppt{adcSampler, sensors, converter, lcd};
 
-volatile bool inOta = false;
-
-
 unsigned long loopWallClockUs_ = 0;
 
 unsigned long lastLoopTime = 0, maxLoopLag = 0;
@@ -461,6 +458,7 @@ void stopAndBackoff(uint32_t secondsDelay) {
 }
 
 void loopRT(void *arg) {
+    // low-latency control loop task
 #define RT_CORE 1
 
 #if CONFIG_ARDUINO_RUNNING_CORE == RT_CORE or CONFIG_ARDUINO_EVENT_RUNNING_CORE == RT_CORE or \
@@ -508,15 +506,11 @@ void loopRT(void *arg) {
 
         auto nowMs = (unsigned long) (nowUs / 1000ULL);
 
-        if (unlikely(inOta)) {
-            if (!converter.disabled())stopAndBackoff(10);
-            vTaskDelay(10);
-            continue;
-        }
-
         rtcount("adc.update.pre");
         auto samplerRet = adcSampler.update();
         rtcount("adc.update");
+
+        if(adcSampler.halted) continue;
 
         if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
             stopAndBackoff(4);
@@ -918,9 +912,9 @@ bool handleCommand(const String &inp) {
     } else if (inp.startsWith("ota ")) {
         auto url = inp.substring(4);
         stopAndBackoff(10);
-        inOta = true; // disable ADC reading
+        adcSampler.halted = true; // disable ADC reading
         doOta(url.c_str());
-        inOta = false;
+        adcSampler.halted = false;
         return true;
     } else if (inp == "rt-stats") {
         xTaskCreatePinnedToCore(print_real_time_stats_1s_task, "rtstats", 4096, NULL, 1, NULL, 0);

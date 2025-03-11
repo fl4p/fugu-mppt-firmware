@@ -178,6 +178,8 @@ private:
 
 public:
 
+    volatile bool halted = false;
+
 
     std::function<void(const ADC_Sampler &sampler, const Sensor &)> onNewSample = nullptr;
 
@@ -424,6 +426,12 @@ public:
 
     UpdateRet update() {
         UpdateRet res = UpdateRet::NoNewData;
+
+        if(unlikely(halted)) {
+            vTaskDelay(10);
+            return res;
+        }
+
         bool updateVirtual = false;
         for (auto &state: adcStates) {
             auto r = _updateAdc(state);
