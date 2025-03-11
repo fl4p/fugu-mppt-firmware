@@ -952,13 +952,15 @@ bool handleCommand(const String &inp) {
         UART_LOG("Local IP Address: %s", WiFi.localIP().toString().c_str());
     } else if (inp == "adc-restart") {
         adcSampler.reInitADCs();
+    } else if (inp == "adc-reset") {
+        adcSampler.resetPeripherals();
     } else if (inp.startsWith("hostname ") && inp.length() >= 9 + 1) {
         nvs.open();
         auto hn = inp.substring(9);
         nvs.writeString("hostname", hn.c_str());
         nvs.close();
     } else {
-        ESP_LOGI("main", "unknown or unexpected command");
+        ESP_LOGW("main", "unknown or unexpected command");
         return false;
     }
 

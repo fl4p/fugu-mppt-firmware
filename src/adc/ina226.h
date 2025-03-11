@@ -102,6 +102,10 @@ public:
 
         ina226.reset_INA226();         //in case the device is already/still initialized
 
+        vTaskDelay(2);
+
+        new_data = false;
+
         try {
             assertPinState(alertPin, true, "ina22x_alert", false);
 

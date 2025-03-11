@@ -13,6 +13,7 @@
 #include "adc.h"
 #include "math/statmath.h"
 #include "util.h"
+#include "etc/rt.h"
 
 #include "tele/scope.h"
 
@@ -324,6 +325,7 @@ public:
 
                 ESP_LOGI("sampler", "Sensor %s calibration: avg=%.4f std=%.6f", sensor.params.teleName.c_str(), avg,
                          std);
+
                 if (sensor.params.calibrationConstraints.calibrateOffset)
                     ESP_LOGI("sampler", "Sensor %s offset-calibrated: %.6f", sensor.params.teleName.c_str(), avg);
 

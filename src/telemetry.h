@@ -377,6 +377,10 @@ void setupTelnet() {
         if (str == "ping") {
             telnet.println("> pong");
             Serial.println("- Telnet: pong");
+        } else if (str == "exit") {
+            telnet.println("goodbye!");
+            telnet.flush();
+            telnet.disconnectClient();
         } else {
             handleCommand(str);
         }

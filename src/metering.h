@@ -76,7 +76,7 @@ public:
         for (int i = 0; i < n; ++i) {
             auto &d{state.ringBuf[(state.ringPtr + i) % n]};
             if (d.hasEnergy())
-                vec.push_back(DailyEnergyMeterState<float>(d));
+                vec.emplace_back(DailyEnergyMeterState<float>(d));
         }
         return vec;
     }
