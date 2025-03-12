@@ -265,7 +265,7 @@ public:
     }
 
     [[nodiscard]] bool boardPowerSupplyUnderVoltage(bool start = false) const {
-        if(isnan(sensors.Vin->last) || isnan(sensors.Vout->last))
+        if (isnan(sensors.Vin->last) || isnan(sensors.Vout->last))
             return false;
         return boardPowerSupplyVoltage() < (start ? 9.5f : 9.f);
     }
@@ -307,7 +307,7 @@ public:
         }
 
         if (ntc.last() > limits.Temp_max || ucTemp.last() > limits.Temp_max) {
-            ESP_LOGE("MPPT", "Temp %.1f (or µC %.1f) > %.1f°C, shutdown", ntc.last(), ucTemp.last(), limits.Temp_max);
+            ESP_LOGE("mppt", "Temp %.1f (or µC %.1f) > %.1f°C, shutdown", ntc.last(), ucTemp.last(), limits.Temp_max);
             return false;
         }
 
@@ -464,7 +464,8 @@ public:
             if (!converter.disabled())
                 ESP_LOGE("MPPT",
                          "Buck running at D=%d %% but Vout (%.2f, vr=%.2f) and Iout (%.2f, last=%.2f) low! Sensor or half-bridge failure.",
-                         100 * converter.getCtrlOnPwmCnt() / converter.pwmCtrlMax, vOut, vr, sensors.Iout->ewm.avg.get(),
+                         100 * converter.getCtrlOnPwmCnt() / converter.pwmCtrlMax, vOut, vr,
+                         sensors.Iout->ewm.avg.get(),
                          sensors.Iout->last
                 );
 
@@ -673,8 +674,7 @@ public:
         float Iout_max = limits.Iout_max; //charger.getToppingCurrent(::sensors.Vout->ewm.avg.get());
 
         // periodic sweep / scan
-        if (!_sweeping /*&& power_smooth < 30*/ && (nowUs - sampler.getTimeLastCalibrationUs()) > (30 * 60000000)
-            && targetPwmCnt == 0) {
+        if (!_sweeping /*&& power_smooth < 30*/ && (nowUs - sampler.getTimeLastCalibrationUs()) > (30 * 60000000)) {
             ESP_LOGI("mppt", "periodic sweep & sensor calibration");
             startSweep();
             rtcount("mppt.update.startSweep");
@@ -700,23 +700,20 @@ public:
 
         CVP *limitingControl = nullptr;
         float limitingControlValue = std::numeric_limits<float>::infinity();
-        float voutCtrlVal = 0.f;
+
         for (auto &c: controlValues) {
             auto cv = c.crtl.update(c.actual, c.target);
 
-            if (!isfinite(cv)) {
+            if (!isfinite(cv) && !converter.disabled()) {
                 ESP_LOGW("mppt", "Control value %f not finite act=%.3f tgt=%.3f idx=%i", cv, c.actual, c.target,
                          int(&c -controlValues.begin()));
                 shutdownDcdc();
+                cv = -1;
             }
 
             if (cv < limitingControlValue) {
                 limitingControlValue = cv;
                 limitingControl = &c;
-            }
-
-            if (&c.crtl == &VoutController) {
-                voutCtrlVal = cv;
             }
         }
 
@@ -774,7 +771,7 @@ public:
                 auto u = sensors.Vin->med3.get();
                 sweepPlot.pointsU.add(u, power, limits.Vin_max);
 
-                float d = converter.getCtrlOnPwmCnt() / (float) converter.pwmCtrlMax;
+                float d = converter.getDutyCycle();
                 sweepPlot.pointsD.add(d, power, 1.0f);
                 rtcount("mppt.update.sweeping");
             } else {
@@ -807,14 +804,7 @@ public:
                            || (I_phys_smooth_min > 0.05 && converter.getDutyCycle() > 0.3f)
         );
 
-        //
-        if (targetPwmCnt) {
-            // no tracking,
-            controlMode = MpptControlMode::MPPT;
-            auto cnt = converter.getCtrlOnPwmCnt();
-            controlValue = cnt == targetPwmCnt ? 0 : (cnt > targetPwmCnt) ? -1 : std::min(
-                    voutCtrlVal, (float) targetPwmCnt - cnt);
-        } else if (controlMode == MpptControlMode::None) {
+        if (controlMode == MpptControlMode::None) {
             controlMode = MpptControlMode::MPPT;
             controlValue = tracker.update(power, converter.getCtrlOnPwmCnt());
             controlValue *= speedScale;
@@ -828,10 +818,7 @@ public:
 
         // always cap control value
         // TODO instead of capping, use fade-to-target. the tracker might return big jumps
-        if (targetPwmCnt and limitingControlValue > 0)
-            controlValue = std::min(controlValue, limitingControlValue * 8);
-        else
-            controlValue = std::min(controlValue, limitingControlValue);
+        controlValue = std::min(controlValue, limitingControlValue);
         ctrlState.mode = controlMode;
         cntrlValue = controlValue;
 
