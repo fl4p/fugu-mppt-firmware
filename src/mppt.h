@@ -369,10 +369,13 @@ public:
         }
 
         // output over current
-        if ((sensors.Iout->last > limits.Iout_max * 1.25f or sensors.Iout->ewm.avg.get() > (limits.Iout_max + 5.f)
+        if ((sensors.Iout->last > limits.Iout_max * 1.5f
+             or sensors.Iout->med3.get() > limits.Iout_max * 1.25f
+             or sensors.Iout->ewm.avg.get() > limits.Iout_max * 1.15f
             ) and not converter.disabled()) {
             shutdownDcdc();
-            ESP_LOGW("mppt", "Output Current %.2f above limit %.2f, shutdown", sensors.Iout->last, limits.Iout_max);
+            ESP_LOGW("mppt", "Output Current %.2f (med %.2f, avg %.2f) above limit %.2f, shutdown", sensors.Iout->last,
+                     sensors.Iout->med3.get(), sensors.Iout->ewm.avg.get(), limits.Iout_max);
             return false;
         }
 
@@ -646,7 +649,6 @@ public:
         //avgVin.add(adcSampler.last.s.chVin);
         //float smoothPower = avgIin.get() * avgVin.get();
 
-
         meter.add(sensors.Iout->med3.get() * sensors.Vout->med3.get(), power_smooth,
                   sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get(), nowUs);
         rtcount("mppt.update.meterAdd");
@@ -759,11 +761,11 @@ public:
         if (_sweeping && !sampler.isCalibrating()) {
             if (controlMode == MpptControlMode::None) {
                 controlMode = MpptControlMode::Sweep;
-                controlValue = std::min(limitingControlValue / 8, 2.0f); // sweep speed
+                controlValue = std::min(limitingControlValue / 4.0f, 4.0f); // sweep speed
 
                 // capture MPP during sweep
                 if (power_smooth > maxPowerPoint.power) {
-                    maxPowerPoint.power = power;
+                    maxPowerPoint.power = power_smooth;
                     maxPowerPoint.dutyCycle = converter.getCtrlOnPwmCnt();
                     maxPowerPoint.voltage = sensors.Vin->med3.get();
                 }

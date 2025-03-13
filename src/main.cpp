@@ -762,7 +762,7 @@ void loopNetwork_task(void *arg) {
         /* only connect with disabled power conversion
          * ESP32's wifi can cause latency issues otherwise
          */
-        wifiLoop(converter.disabled() && mppt.ucTemp.last() < 80);
+        wifiLoop((converter.disabled() || mppt.tracker._curPower < 10) && mppt.ucTemp.last() < 80);
         ftpUpdate();
 
         mppt.telemetry();
