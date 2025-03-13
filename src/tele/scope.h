@@ -180,6 +180,10 @@ public:
         return true;
     }
 
+    void end() {
+        srv.end();
+    }
+
     static constexpr uint8_t TypInt = 'i';
     static constexpr uint8_t TypUInt = 'u';
     static constexpr uint8_t TypF = 'f';
@@ -339,6 +343,7 @@ public:
                     ESP_LOGI("scope", "New client %s connected", newClient.remoteIP().toString().c_str());
                     client = newClient;
                     sendHeader(client);
+                    WiFi.setTxPower(WIFI_POWER_21dBm);
                 }
             }
         } else {
