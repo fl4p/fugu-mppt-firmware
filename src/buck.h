@@ -112,8 +112,9 @@ public:
         assert_throw(pwmFrequency > 5e3 && pwmFrequency < 5e5, "");
 
         fL = (float) pwmFrequency * L0 * InductivityDcBias; // for ripple current computation
-        assert_throw(fL < 5, "pwmFreq*L0 out-of-range");
+        assert_throw(fL < 20, "pwmFreq*L0 out-of-range");
         assert_throw(fL > 1, "pwmFreq*L0 out-of-range");
+        // Lo: https://www.ti.com/lit/ds/symlink/lm5163.pdf#page=18
 
         auto drvInpLogic = pinConf.getString("pwm_driver_logic"); // driver input logic "in,en", "hi,li" and en
         uint8_t pinCtrl, pinRect;

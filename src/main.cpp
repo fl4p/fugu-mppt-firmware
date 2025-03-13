@@ -55,6 +55,8 @@ unsigned long timeLastSampler = 0;
 
 unsigned long delayStartUntil = 0;
 
+const auto lfPeriod = 3000000; //(mppt.tracker.avgPower.get() < 1) ? 3000000 : 3000000;
+
 #if CAPTURE_LOOP_DT
 unsigned long maxLoopDT = 0;
 #endif
@@ -349,13 +351,7 @@ void setup() {
         }
     }
 
-    Limits lim{};
-    try {
-        lim = Limits{ConfFile{"/littlefs/conf/limits.conf"}};
-    } catch (const std::runtime_error &er) {
-        ESP_LOGE("main", "error reading limits.conf: %s", er.what());
-        setupErr = true;
-    }
+
 
 
 #ifdef NO_WIFI
@@ -376,6 +372,13 @@ void setup() {
         mqtt_init();
     }
 
+    Limits lim{};
+    try {
+        lim = Limits{ConfFile{"/littlefs/conf/limits.conf"}};
+    } catch (const std::runtime_error &er) {
+        ESP_LOGE("main", "error reading limits.conf: %s", er.what());
+        setupErr = true;
+    }
 
     try {
         setupSensors(pinConf, lim);
@@ -591,12 +594,12 @@ void loopLF(const unsigned long &nowUs) {
     uint32_t sps = (dt > 20000) ? (uint64_t) (nSamples - lastNSamples) * 1000000llu / dt : 0;
 
 
-    if ((dt > 100000) && sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
+    if ((dt > (lfPeriod*0.9f)) && sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 2000000) {
-        stopAndBackoff(4);
         auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
         ESP_LOGE("main", "Loop latency too high (%lu < %hu Hz), shutdown! (nSamples=%lu, D=%u, loopRunTime=%.1fs )",
                  sps, loopRateMin, nSamples, converter.getCtrlOnPwmCnt(), loopRunTime * 1e-6f);
+        stopAndBackoff(4);
     }
 
 #if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
@@ -767,7 +770,7 @@ void loopNetwork_task(void *arg) {
     }
 
 
-    const auto lfPeriod = 3000000; //(mppt.tracker.avgPower.get() < 1) ? 3000000 : 3000000;
+
     if ((wallClockUs() - lastTimeOutUs) >= lfPeriod) {
         loopLF(wallClockUs());
         lastTimeOutUs = wallClockUs();
@@ -957,8 +960,10 @@ bool handleCommand(const String &inp) {
         ConfFile conf{fn.c_str()};
         auto oldVal = conf.getString(key.c_str(), "");
         ESP_LOGI("main", "Setting conf '%s:%s' = '%s' (was %s)", fn.c_str(), key.c_str(), val.c_str(), oldVal.c_str());
-        conf.add({{key.c_str(), val.c_str()}}, true);
+        if(oldVal != val.c_str())
+            conf.add({{key.c_str(), val.c_str()}}, true);
         // set-config coil.conf L0 50
+        // set-config limits.conf iout_max 20
     } else {
         ESP_LOGW("main", "unknown or unexpected command");
         return false;
