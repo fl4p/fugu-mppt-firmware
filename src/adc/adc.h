@@ -43,6 +43,10 @@ public:
 
     }
 
+    virtual float getSamplingRate(uint8_t channel) {
+        throw std::runtime_error("not implemented");
+    };
+
     /**
      * select the channel to read (scheme cycle and all)
      * @param channel

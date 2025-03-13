@@ -16,6 +16,7 @@
 #include "etc/rt.h"
 
 #include "tele/scope.h"
+#include "math/notch.h"
 
 
 struct LinearTransform {
@@ -61,6 +62,7 @@ struct Sensor {
     float last = NAN, lastRaw = NAN;
     float previous = NAN;
     uint32_t numSamples = 0;
+    NotchFilter *notchFilter = nullptr;
     RunningMedian5<float> med3{};
     EWM<float> ewm;
     MeanAccumulator calibBuffer{};
@@ -105,6 +107,8 @@ struct Sensor {
         previous = last;
         last = v;
         lastRaw = x;
+
+        if (notchFilter)notchFilter->filter(&last, &v, 1);
         ewm.add(med3.next(v));
         ++numSamples;
 
@@ -124,6 +128,19 @@ struct PhysicalSensor : public Sensor {
     explicit PhysicalSensor(AsyncADC<float> *adc, const SensorParams &params, uint32_t ewmSpan)
             : Sensor(params, ewmSpan, false),
               adc(adc) {
+    }
+
+    void createNotchFilter() {
+        try {
+            auto fs = adc->getSamplingRate(params.adcCh);
+            notchFilter = new NotchFilter();
+            const auto inverterFreq = 50.0f;
+            const auto inverterInputFreq = 2*50.0f; // abs(sin(t))
+            notchFilter->begin(inverterInputFreq / fs);
+            ESP_LOGI("sampling", "%s notch filter fs=%.1fHz f0=%.1fHz", params.teleName.c_str(),fs, inverterInputFreq);
+        } catch (const std::exception &ex) {
+            ESP_LOGE("sampling", "error %s", ex.what());
+        }
     }
 };
 
@@ -252,6 +269,12 @@ public:
             if (s.adc->scheme() != SampleReadScheme::any)
                 _readNext(s);
         }
+
+        for(auto &s:sensors) {
+            if(s->isVirtual) continue;
+            auto ps = (PhysicalSensor*)s;
+            ps->createNotchFilter();
+        }
     }
 
     void startCalibration() {
@@ -291,7 +314,7 @@ public:
             // calibZeroCurrent = ewm.s.chIin.avg.get();
             sensor.calibBuffer.add(sensor.last);
 
-            if(sensor.calibBuffer.num > 100) {
+            if (sensor.calibBuffer.num > 100) {
                 auto avg = sensor.calibBuffer.pop(); //sensor.ewm.avg.get();
                 auto std = sensor.ewm.std.get();
 
@@ -347,7 +370,7 @@ public:
     }
 
     UpdateRet _addSensorSample(Sensor *sensor, float v) {
-        if(unlikely(isnan(v)))
+        if (unlikely(isnan(v)))
             return UpdateRet::CalibFailure;
 
         sensor->add_sample(v);
@@ -427,7 +450,7 @@ public:
     UpdateRet update() {
         UpdateRet res = UpdateRet::NoNewData;
 
-        if(unlikely(halted)) {
+        if (unlikely(halted)) {
             vTaskDelay(10);
             return res;
         }
@@ -459,7 +482,7 @@ public:
 
     void reInitADCs() {
         ConfFile pinConf{"/littlefs/conf/pins.conf"};
-        for(auto &s:adcStates) {
+        for (auto &s: adcStates) {
             s.adc->deinit();
             s.adc->init(pinConf);
             s.adc->start();
@@ -468,7 +491,7 @@ public:
 
     bool resetPeripherals() {
         bool ok = true;
-        for(auto &s:adcStates) {
+        for (auto &s: adcStates) {
             ok = s.adc->resetPeripherals() and ok;
         }
         return ok;

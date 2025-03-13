@@ -80,6 +80,10 @@ public:
         return true;
     }
 
+    float getSamplingRate(uint8_t channel) override {
+        return 451.f;
+    }
+
     bool resetPeripherals() override {
         if (!i2c_test_address(ina226.i2cAddress)) {
             ESP_LOGI("ina22x", "Chip didnt respond at address 0x%02hhX", (uint8_t) ina226.i2cAddress);

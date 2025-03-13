@@ -74,6 +74,25 @@ public:
         return true;
     }
 
+    float getSamplingRate(uint8_t ch) override {
+        int chNum = 0;
+        bool hasNtc = false;
+        for (auto ch = 0; ch <= adc_channel_t::ADC_CHANNEL_9; ++ch) {
+            if (attenuation[ch] != (adc_atten_t) -1) ++chNum;
+            if (ch == ntcCh) hasNtc = true;
+        }
+
+
+        chNum = chNum + (chNum -1); // pattern length
+
+        if(ntcCh == ch) {
+            return (float) sr / (float) (avgNum*chNum);
+        } else {
+            // all other channels are sampled 2 times per patterns
+            return (float) sr / (float) (avgNum*chNum) * 2.0f;
+        }
+    }
+
     void deinit() override {
         adc_continuous_stop(handle);
         adc_continuous_deinit(handle);
@@ -100,7 +119,7 @@ public:
         // see https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32s3/api-reference/peripherals/adc.html#_CPPv425adc1_config_channel_atten14adc1_channel_t11adc_atten_t
 
         auto maxVolt = 3.548134f;
-        auto suggestVolt = 0.81f *maxVolt; /*12dB=max */
+        auto suggestVolt = 0.81f * maxVolt; /*12dB=max */
         if (voltage > maxVolt) {
             throw std::range_error(
                     "ch" + std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage)
@@ -108,8 +127,9 @@ public:
         }
 
         if (voltage > suggestVolt) {
-            ESP_LOGW("esp32_adc", "%s", ("ch" + std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage)
-                            + " > " + std::to_string(suggestVolt) + " (suggested)").c_str());
+            ESP_LOGW("esp32_adc", "%s",
+                     ("ch" + std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage)
+                      + " > " + std::to_string(suggestVolt) + " (suggested)").c_str());
         }
 
         if (voltage > 1.6f) atten = ADC_ATTEN_DB_12;
