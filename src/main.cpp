@@ -964,6 +964,7 @@ bool handleCommand(const String &inp) {
             conf.add({{key.c_str(), val.c_str()}}, true);
         // set-config coil.conf L0 50
         // set-config limits.conf iout_max 20
+        // set-config converter.conf vout_max 28.5
     } else {
         ESP_LOGW("main", "unknown or unexpected command");
         return false;

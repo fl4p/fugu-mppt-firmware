@@ -10,7 +10,9 @@ from threading import Thread
 from typing import List, Dict
 
 import numpy as np
+from scipy import signal
 
+from scipy.ndimage import median_filter
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -68,6 +70,15 @@ def discover_scope_servers(stop_after=99, timeout=1):
     return list(addrs)
 
 
+class NotchIIR():
+    def __init__(self, fs, f0, Q=30.0):
+        self.b, self.a = signal.iirnotch(f0, Q, fs)
+        self.zi = signal.lfilter_zi(self.b, self.a)
+
+    def __call__(self, x):
+        y, self.zi = signal.lfilter(self.b, self.a, x, zi=self.zi)
+        return y
+
 class EWMA:
     # Implement Exponential Weighted Moving Average
     def __init__(self, span: int):
@@ -88,6 +99,63 @@ class EWMA:
     @property
     def value(self):
         return self.y
+
+from heapq import heappush, heappop
+
+class SortedVector:
+    """Keeps a sorteed list of all inserted elements"""
+    def __init__(self):
+        self.data_ = []
+
+    def find_pos_(self, x):
+        """Finds where given value is or should be"""
+
+        (a, b) = (0, len(self.data_))
+
+        while a < b:
+            m = (a + b) // 2
+
+            if self.data_[m] < x:
+                a = m + 1
+            else:
+                b = m
+
+        return a
+
+    def insert(self, x):
+        i = self.find_pos_(x)
+        self.data_[i:i] = [x]
+
+    def remove(self, x):
+        i = self.find_pos_(x)
+        del self.data_[i]
+
+    def __getitem__(self, item): return self.data_[item]
+    def __len__(self): return len(self.data_)
+
+def median_from_sorted(s):
+    """Returns the median of the _already_sorted_ list s"""
+    l = len(s)
+    m = l // 2
+    return s[m] if l % 2 else (s[m] + s[m - 1]) / 2
+class RunningMedian:
+
+    def __init__(self, window_size):
+        self.ring_ = [None] * window_size
+        self.head_ = 0
+        self.sorted_ = SortedVector()
+
+    def insert(self, x):
+        current = self.ring_[self.head_]
+        self.ring_[self.head_] = x
+        self.head_ = (self.head_ + 1) % len(self.ring_)
+
+        if current != None: self.sorted_.remove(current)
+        self.sorted_.insert(x)
+
+    def median(self):
+        return median_from_sorted(self.sorted_)
+
 class Channel:
     def __init__(self, chNum: int, name: str, type: str):
         self.chNum = chNum
@@ -96,14 +164,28 @@ class Channel:
         self.waveform: plt.Axes = None
         self.offset = 0
         self.win3 = collections.deque(maxlen=3)
+        self.med = RunningMedian(5)
+        self.notch50 = NotchIIR(451, 50*2, 20)
+        self.notch60 = NotchIIR(451, 60*2, 20)
         self.ewma = EWMA(90)
-        #self.win2 = collections.deque(maxlen=90)
+        # self.win2 = collections.deque(maxlen=90)
 
     def add_sample(self, y):
         self.win3.append(y)
-        #y =statistics.mean(self.win3)
-        #self.ewma.add(y)
-        #y = self.ewma.value
+        # y =statistics.mean(self.win3)
+        # self.ewma.add(y)
+        # y = self.ewma.value
+        # TODO https://github.com/what-in-the-nim/real-time-iir-filter/blob/main/iir.py
+
+        if self.chNum < 5:
+            # filter inverter noise
+            y = self.notch50([y])[0]
+            y = self.notch60([y])[0]
+
+            # filter spikes (after notch)
+            self.med.insert(y)
+            y = self.med.median()
+
         self.sample_buffer.append(y)
 
     def plot(self, ax):
@@ -117,6 +199,8 @@ class Channel:
             b.fill(np.nan)
             a = np.concatenate([a, b])
             assert len(a) == win_len
+
+       # a = median_filter(a, 5)
         self.waveform.set_ydata(a + self.offset)
 
 
@@ -134,7 +218,7 @@ def redraw_loop(channels: Dict[str, Channel], fig, ax):
             dc = np.mean(channels[trig_ch].sample_buffer)
             # for i in range(len(buf) - 1, 1, -1):
             for i in range(1, len(buf), 1):
-                if buf[i] >= (trig_val+dc) > buf[i - 1]:
+                if buf[i] >= (trig_val + dc) > buf[i - 1]:
                     trig_i = i
                     break
 
@@ -151,7 +235,7 @@ num_bytes_rx = 0
 channelNames = dict()
 
 
-def receive_loop(decoder):
+def receive_loop(decoder:'ScopeDecoder'):
     global num_bytes_rx, is_connected
 
     while True:
@@ -165,7 +249,8 @@ def receive_loop(decoder):
 
         print('Discovered services:', addr)
         addr = addr[0]
-        addr = ('192.168.1.208', 24)
+        #addr = ('192.168.1.208', 24)
+        #addr =  ('192.168.1.231', 24)
 
         print('connecting', addr, '...')
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -278,17 +363,17 @@ def main():
 
     def console():
         try:
-            if select.select([sys.stdin,],[],[],0.1)[0]:
+            if select.select([sys.stdin, ], [], [], 0.1)[0]:
                 line = next(sys.stdin)
-                print ("Got:", repr(line.strip()))
+                print("Got:", repr(line.strip()))
                 inp = line.strip()
                 if inp == 's':
                     for chn, ch in channels.items():
-                        pd.Series(ch.sample_buffer).to_csv(ch.name+'.csv', index=False)
-                        print('written', ch.name+'.csv')
+                        pd.Series(ch.sample_buffer).to_csv(ch.name + '.csv', index=False)
+                        print('written', ch.name + '.csv')
 
-            #else:
-                #print ("No data for 2 secs")
+            # else:
+            # print ("No data for 2 secs")
 
         except StopIteration:
             return
@@ -304,7 +389,6 @@ def main():
                 sys.stdout.flush()
 
             console()
-
 
     dec = ScopeDecoder(on_sample=on_sample, on_channels=on_channels)
 

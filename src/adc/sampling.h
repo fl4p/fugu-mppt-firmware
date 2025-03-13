@@ -62,12 +62,12 @@ struct Sensor {
     float last = NAN, lastRaw = NAN;
     float previous = NAN;
     uint32_t numSamples = 0;
-    NotchFilter *notchFilter = nullptr;
-    RunningMedian5<float> med3{};
-    EWM<float> ewm;
-    MeanAccumulator calibBuffer{};
+    NotchFilter *notchFilter = nullptr; // filter 50/60 Hz inverter noise
+    RunningMedian5<float> med3{}; // filter burst noise
+    EWM<float> ewm; // filter residual noise
+    MeanAccumulator calibBuffer{}; // for offset calibration
 
-    float calibrationAvg = 0;
+    float calibrationAvg = 0; // stores the mean value from calibBuffer
 
     const bool isVirtual;
 

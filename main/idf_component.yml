@@ -1,5 +1,6 @@
 ## IDF Component Manager Manifest File
 dependencies:
+  espressif/esp-dsp: "*"
   espressif/led_strip: "^3.0.0"
   espressif/mdns: "*"
   brianpugh/tamp: "^1.6.0"

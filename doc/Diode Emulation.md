@@ -128,7 +128,13 @@ Which results:
 
 $$t_{on,LS} = t_{on,HS} \cdot (\frac{V_i}{V_o} - 1) = t_{on,HS} \cdot (\frac{1}{M} - 1)$$
 
-$$t_{on,LS} = \frac{D}{f_{sw}} \cdot (\frac{1}{M} - 1)$$
+$$t_{on,LS,DCM} = \frac{D}{f_{sw}} \cdot (\frac{1}{M} - 1)$$
+
+With $t_{on,HS} = \frac{D}{f_{sw}}$:
+
+$$t_{on,LS,DCM} = $$t_{on,HS} \cdot (\frac{1}{M} - 1)$$
+
+
 
 Notice that if we set M = D, as in CCM, this equation becomes equal to
 the CCM case:

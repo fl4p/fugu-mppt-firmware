@@ -1,0 +1,25 @@
+
+- board
+  - pins
+  - adc sensors
+  - power limits
+    - make this independent of buck/boost operation, instead of Vin/Vout use Vh,Vl
+- coil (put this under converter?)
+  - inductivity L0
+  - dc bias model?
+- converter
+  - pwm frequency & resolution 
+  - buck/boost
+  - FPWM
+- regulator
+  - control coefficients (voltage, current)
+  - mode (mppt, fixed ratio)
+- charger
+  - battery voltage
+  - max charge current
+- tracker
+  - speed
+- network/telemetry
+  - wifi
+  - mqtt
+  - influxdb

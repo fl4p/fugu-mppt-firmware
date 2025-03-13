@@ -27,6 +27,8 @@ OK: <cmd>
 * `sensor`: display sensor data
 * `mem`: display heap and PSRAM sizes
 * `ota <url>`: download and flash a new app image from a HTTP(S) URL
+* `hostname <hostname>` set device's hostname
+* `set-config <file> <key> <value>` set a config file and write it to flash
 
 # Manual PWM Commands
 
@@ -38,6 +40,7 @@ OK: <cmd>
 * `bf-enable`, `bf-disable`: enable/disable the backflow switch. An enabled back-flow switch will allow current flow
   from the output to the input (bat to solar).
 * `mppt` switches back to MPP tracking mode
+* `short-ls`
 
 # Telnet
 

@@ -16,10 +16,12 @@ Highlights:
 * ADC abstraction layer with implementations for ESP32(S3) [Internal ADC](doc/Internal%20ADC.md), ADS1x15 and
   INA226/INA228
 * Automatic zero-current calibration
-* PID control for precise voltage and current regulation
+* Robust signal processing using [notch filters](https://www.youtube.com/watch?v=tpAA5eUb6eo) (reject inverter noise)
+  and rolling median (reject burst noise)
+* [PID](https://www.youtube.com/watch?v=wkfEZmsQqiA) control for precise voltage and current regulation
 * Periodic MPPT global search
 * Sophisticated [Diode Emulation](#synchronous-buck-and-diode-emulation) for low-side switch
-* Supports buck and boost conversion
+* Supports buck and boost converter operation
 * Battery voltage detection
 * Fast protection shutdown in over-voltage and over-current conditions
 * PWM Fan Control and temperature power de-rating
@@ -27,7 +29,8 @@ Highlights:
 * LCD (hd44780) and WS2812B LED Indicator
 * Configuration files on flash file system (littlefs)
 * [Serial UART console](doc/Console.md) and telnet to interact with the charger
-* Unit tests, on-board [performance profiler](https://github.com/LiluSoft/esp32-semihosting-profiler/)
+* Unit tests, on-board [performance profiler](https://github.com/LiluSoft/esp32-semihosting-profiler/) and latency
+  profiler
 
 The firmware sends real-time data to InfluxDB server using UDP line protocol.
 
@@ -198,6 +201,11 @@ Here are some relevant types:
 Asynchronous here means that we request a sample from the ADC and continue code execution while the conversion is
 happening. This improves average CPU utilization and other things can run smoothly even with a slow ADC.
 
+### Signal Filtering
+
+We use IIR notch filters to remove inverter noise and a moving median to remove bursts/spikes from the voltage and current
+signals. Another IIR smoothing filter suppresses residual noise.
+
 # MPPT Algorithm
 
 The tracking consists of 3 phases:
@@ -278,6 +286,16 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
   decrease duty-cycle, which can increase solar voltage, thus increase conversion power. In this case the converter will
   increases power until it runs into the hard
   limits, shuts down and recovers. Because this is a transient situation, it should not cause any damage to hardware.
+
+# BMS Communication
+
+When the MPPT charger is connected to the battery with a BMS, the BMS might break connection any time during charging.
+This causes voltage transients at the battery terminals, a fast shut-down prevents damage to connected devices.
+For sensible devices consider over-voltage protection.
+
+If the charger can communicate with the BMS, it can regulate its output before to avoid the cut-off transient.
+We can for example read the max cell voltage from the battery and control the PWM so it never causes a BMS over-voltage
+cut-off. This avoids voltage transients, improves cell balancing time and avoids "trickle" charge.
 
 # Using this Firmware
 
