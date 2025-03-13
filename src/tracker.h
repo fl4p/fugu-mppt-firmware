@@ -86,7 +86,7 @@ struct Tracker {
                 auto absDp = std::abs(dP);
                 if ((
                         absDp >= minPowerStep
-                        or (abs(_lastPower) > (minPowerStep * 10) and absDp / abs(_lastPower) > 0.1f)
+                        or (abs(_lastPower) > (minPowerStep * 10) and absDp / abs(_lastPower) > 0.02f)
                         //or (_timeLastReverse - now > ) // TODO scheduled reversal?
                 )
                     //and (!slowMode || (now - _timeLastReverse) > 6000)
@@ -142,8 +142,8 @@ struct Tracker {
             and now - _timeLastReverse < 1000 * 15 // if we move in one direction for more than 15s, don't slow down
             and false
                 ) {
-            speed = .25; // 0.02
-            frequency = 10;
+            speed = .2f; // 0.02
+            frequency = 15;
             minPowerStep = 0.5f; // 0.75 is too small ?
             if (!slowMode) {
                 auto d = (float) maxPowerPoint.dutyCycle - (float) dutyCycle;
@@ -160,7 +160,7 @@ struct Tracker {
             // normal-mode
             speed = .5f;
             frequency = 30;
-            minPowerStep = 1.5f;
+            minPowerStep = 1.0f; // not lower than 0.5f, maybe better 0.75f-1.0f
             slowMode = false;
             //avgPower.reset();
         }
