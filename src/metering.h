@@ -62,10 +62,10 @@ struct DailyRingStorageState {
 };
 
 class DailyRingStorage {
+public:
     DailyRingStorageState<1000> state;
     FlashValueFile<decltype(state)> flash;
 
-public:
     explicit DailyRingStorage(const char *fn = "/littlefs/daily") : flash{fn} {}
 
     int getNumTotalDays() const { return state.totalDays; }

@@ -1,9 +1,22 @@
+* detect high impedance battery connection
+  * https://h.fabi.me/grafana/d/f4a22deb-8528-427d-9473-4e7b06c6d874/fugu-mppt?orgId=1&from=1741693099256&to=1741704737323
+
+* 50hz/60hz band stop filter to remove inverter noise (notch filter)
+  * https://www.youtube.com/watch?v=tpAA5eUb6eo
+
+* boost mode, forced_pwm, reverse current
+  * the largerDecrease update block causes excessive reverse current into the power supply (bat/LV terminal)
+  * ignoring largerDecrease fixes the problem
+* iout midpoint calibration fix! with ina226 we get an offset of
+  0.9A ! https://github.com/fl4p/fugu-mppt-firmware/issues/28
+* after sending "adc-restart": device panics, restarts. then connects to wifi (sending influxdb monitoring data of temp
+  sensor), but is unreachable through telnet. reports voltage and current but does not start conversion/tracking! [img.png](img.png)
+*
 * store last warnings, errors
 * restart adc after some time
 * simulate ina226 external reset
-se
+  se
 * inspect ADC noise with scope-client
-*
 
 * manual sync control to find inductivity
 * sweep web plot
@@ -16,7 +29,6 @@ se
 - consider kalman
 - consider smaller f_cut for Iout RC-filter (larger R)
 - tracker accumulation buffer
-
 
 ```
 I (64555) mppt: Grouping 214 D points (0.00,nan)~(1.00,29.83) into 100 bins, binW=0.010
@@ -71,22 +83,15 @@ Rebooting...
 
 ```
 
-
-
-
-
-
-
 ```
 
 sw
 ```
 
-
-
 issues:
 biggy goes in to download mode.
 when connecting idf.py monitor --no reset and sending cntrl+t ctrl+z, it:
+
 ```
 waiting for download
 ESP-ROM:esp32s3-20210327
@@ -109,4 +114,13 @@ waiting for download
 https://github.com/espressif/esp-idf/issues/13287
 https://github.com/espressif/arduino-esp32/issues/6762
 https://github.com/espressif/esptool/commit/0215786283660480e9ec85dd077e6fc2f46919e9#diff-cb25ea9381c2f7a537ecf1516335d3a9e8a711a9dbf3d1eff78453a611072103R356
-#  /Users/fab/.espressif/python_env/idf5.1_py3.9_env/lib/python3.9/site-packages/esptool/targets/esp32s3.py
+
+# /Users/fab/.espressif/python_env/idf5.1_py3.9_env/lib/python3.9/site-packages/esptool/targets/esp32s3.py
+
+```
+
+207288640
+
+timeout waiting for new adc sample!
+
+```

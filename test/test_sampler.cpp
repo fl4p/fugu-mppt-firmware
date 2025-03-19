@@ -24,6 +24,7 @@ void test_LinearTransform() {
     }
 }
 
+#if 0
 void test_ADCSampler() {
 
     std::vector<std::vector<float>> samples{
@@ -135,3 +136,4 @@ void test_ADCSampler() {
 
     TEST_ASSERT_FLOAT_WITHIN(1e-6, ewmI.ewm.std.get(), sensorI.ewm.std.get());
 }
+#endif

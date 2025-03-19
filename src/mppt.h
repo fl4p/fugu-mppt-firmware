@@ -608,14 +608,6 @@ public:
 
     }
 
-    /* // sensor API now computes this through virtual sensors
-     * float getIoutSmooth(float conversionEff = 0.97f) const {
-        if (boardPowerSupplyUnderVoltage())
-            return 0;
-        auto pin = sensors.Iin->ewm.avg.get() * sensors.Vin->ewm.avg.get();
-        return pin * conversionEff / std::max(sensors.Vout->ewm.avg.get(), 2.f);
-    } */
-
 
     unsigned long lastUs = 0;
 
@@ -763,7 +755,7 @@ public:
                 controlMode = MpptControlMode::Sweep;
                 controlValue = std::min(limitingControlValue / 4.0f, 4.0f); // sweep speed
 
-                // capture MPP during sweep
+                // capture MPP during sweep, this will be our target afterward
                 if (power_smooth > maxPowerPoint.power) {
                     maxPowerPoint.power = power_smooth;
                     maxPowerPoint.dutyCycle = converter.getCtrlOnPwmCnt();
@@ -816,8 +808,6 @@ public:
         }
         rtcount("mppt.update.tracker");
 
-        //assert(controlValue != 0 && controlMode != MpptControlMode::None);
-
         // always cap control value
         // TODO instead of capping, use fade-to-target. the tracker might return big jumps
         controlValue = std::min(controlValue, limitingControlValue);
@@ -842,8 +832,6 @@ public:
             converter.pwmPerturbFractional(fp);
 
             if (controlValue < -80 and fp < -0.01 and converter.getCtrlOnPwmCnt() > converter.getCtrlOnPwmMin()) {
-
-
                 UART_LOG_ASYNC(
                         "Limiting! Control value %.2f => perturbation %.2f (to %hu), mode=%s, idx=%i (act=%.3f, tgt=%.3f)",
                         controlValue, fp, converter.getCtrlOnPwmCnt(),
