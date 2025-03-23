@@ -31,9 +31,27 @@ public:
     explicit BatteryCharger() = default;
 
     void begin() {
+
+    }
+
+
+    void _update(float vbat = INFINITY) {
+        if (vcell_max > vcell_eoc /* and (vcell_max_t - wallClockUs()) < 180000000*/) {
+            vbat_cap = fmin(vbat_avg.get(), vbat) - (vcell_max - vcell_eoc) * 4;
+            if (vbat_cap > params.Vbat_max) vbat_cap = params.Vbat_max;
+        } else {
+            vbat_cap = params.Vbat_max;
+        }
+    }
+
+    void beginMqtt() {
         mqtt_subscribe_topic("bat_caravan/cell_voltages/max", [&](const char *dat, int len) {
-            this->vcell_max = strtof(dat, nullptr);
+            std::string val{dat, dat + len}; // add null-termination
+            this->vcell_max = strtof(val.c_str(), nullptr);
             this->vcell_max_t = wallClockUs();
+            ESP_LOGI("charger", "avg(vbat)=%.4fV vcell_max=%.4fV vcell_eoc=%.4fV vbat_cap=%.5fV vbat_max=%.5fV", this->vbat_avg.get(),
+                     this->vcell_max, vcell_eoc, this->Vbat_max(), params.Vbat_max);
+            _update();
         });
     }
 
@@ -67,26 +85,22 @@ public:
     }
      */
 
-    float vcell_eoc = 3.6f; // cell end-of-charge voltage
+    float vcell_eoc = 3.54f; // cell end-of-charge voltage
 
-    EWMA<volatile float, float> vbat_cap{60};
+    EWMA<volatile float, float> vbat_avg{60}; // update freq is 3s
+    float vbat_cap = NAN;
 
     void update(float vbat) {
-        if (std::isfinite(vcell_max) and vcell_max > vcell_eoc and (vcell_max_t - wallClockUs()) < 200000000) {
-            auto vbat_cap2 = vbat - (vcell_max - vcell_eoc);
-            if (vbat_cap2 > params.Vbat_max) vbat_cap2 = params.Vbat_max;
-            vbat_cap.add(vbat_cap2);
-        } else {
-            vbat_cap.add(params.Vbat_max);
-        }
+        vbat_avg.add(vbat);
+        _update();
     }
 
     void reset() {
-        vbat_cap.reset();
+        vbat_cap = NAN;
     }
 
     [[nodiscard]] float Vbat_max() const {
-        if (vbat_cap.get() > 0) return vbat_cap.get();
+        if (vbat_cap > 0) return vbat_cap;
         return params.Vbat_max;
     }
 };
