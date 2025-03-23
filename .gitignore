@@ -39,3 +39,5 @@ sdkconfig
 idf-export.sh
 
 etc/scope-client/*.csv
+
+etc/scope-client/__pycache__/

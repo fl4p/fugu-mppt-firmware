@@ -4,7 +4,7 @@ import time
 from os import environ
 
 HOST = environ['HOST']
-USER = environ['USER']
+USER = environ['USERNAME']
 PASSWORD = environ['PASSWORD']
 
 print(os.stat('../build/fugu-firmware.elf').st_mtime - time.time())

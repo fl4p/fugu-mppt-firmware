@@ -51,21 +51,20 @@ class LHQ:
 
 class EWM:
     # Implement EWMA statistics mean and stddev
-    def __init__(self, span: int, std_regularisation: float):
+    def __init__(self, span: int, std_regularisation: float, mean_var=False):
         self.avg = EWMA(span)
         self.std = EWMA(span)
         self._last_x = math.nan
         self.std_regularisation = std_regularisation
+        self.mean_var = mean_var
 
     def add(self, x):
         self.avg.add(x)
-        if self.std_regularisation != 0:
-            x = (-1 if x < 0 else 1) * (abs(x) + self.std_regularisation)
-        ex = self._last_x
-        # ex = self.avg.value
+        #ex = self._last_x
+        ex = self.avg.value if self.mean_var else self._last_x
         if math.isfinite(ex):
-            pct = abs(x - ex) / ex
-            pct = min(pct, 1.4)
+            pct = abs(x - ex) / (abs(self.avg.value) + self.std_regularisation)
+            pct = min(pct, 2)
             self.std.add(pct * pct)
         self._last_x = x
 

@@ -2,22 +2,19 @@ import collections
 import math
 import select
 import socket
-import statistics
 import sys
 import time
-from collections import deque, defaultdict
+from collections import deque
 from threading import Thread
-from typing import List, Dict
+from typing import Dict
 
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from scipy import signal
 
-from scipy.ndimage import median_filter
-import matplotlib.pyplot as plt
-import pandas as pd
-
-duration = 1 / 10
-sample_rate = 40000
+duration = 4 / 1
+sample_rate = 2000
 
 time_x = np.array(np.linspace(0, 1, num=int(duration * sample_rate))) * duration
 win_len = len(time_x)
@@ -79,6 +76,7 @@ class NotchIIR():
         y, self.zi = signal.lfilter(self.b, self.a, x, zi=self.zi)
         return y
 
+
 class EWMA:
     # Implement Exponential Weighted Moving Average
     def __init__(self, span: int):
@@ -100,10 +98,10 @@ class EWMA:
     def value(self):
         return self.y
 
-from heapq import heappush, heappop
 
 class SortedVector:
     """Keeps a sorteed list of all inserted elements"""
+
     def __init__(self):
         self.data_ = []
 
@@ -130,14 +128,20 @@ class SortedVector:
         i = self.find_pos_(x)
         del self.data_[i]
 
-    def __getitem__(self, item): return self.data_[item]
-    def __len__(self): return len(self.data_)
+    def __getitem__(self, item):
+        return self.data_[item]
+
+    def __len__(self):
+        return len(self.data_)
+
 
 def median_from_sorted(s):
     """Returns the median of the _already_sorted_ list s"""
     l = len(s)
     m = l // 2
     return s[m] if l % 2 else (s[m] + s[m - 1]) / 2
+
+
 class RunningMedian:
 
     def __init__(self, window_size):
@@ -156,28 +160,40 @@ class RunningMedian:
     def median(self):
         return median_from_sorted(self.sorted_)
 
+
 class Channel:
     def __init__(self, chNum: int, name: str, type: str):
         self.chNum = chNum
         self.name = name
         self.sample_buffer = deque([math.nan] * win_len, maxlen=win_len)
+        self.capture_buffer = deque([], maxlen=200_000)
         self.waveform: plt.Axes = None
         self.offset = 0
         self.win3 = collections.deque(maxlen=3)
         self.med = RunningMedian(5)
-        self.notch50 = NotchIIR(451, 50*2, 20)
-        self.notch60 = NotchIIR(451, 60*2, 20)
+        self.notch50 = NotchIIR(451, 50 * 2, 20)
+        self.notch60 = NotchIIR(451, 60 * 2, 20)
+        from adaptive_noise_filter import anf
+        self.anf = anf.AdaptiveLengthFilter(5, 200, 0.2)
         self.ewma = EWMA(90)
+        self.t_first = 0
+        self.n_samples = 0
         # self.win2 = collections.deque(maxlen=90)
 
     def add_sample(self, y):
-        self.win3.append(y)
+        if math.isfinite(y):
+            if self.t_first == 0:
+                self.t_first = time.time()
+            self.n_samples += 1
+
+        self.capture_buffer.append(y)
+
         # y =statistics.mean(self.win3)
         # self.ewma.add(y)
         # y = self.ewma.value
         # TODO https://github.com/what-in-the-nim/real-time-iir-filter/blob/main/iir.py
 
-        if self.chNum < 5:
+        if self.chNum < 5 and math.isfinite(y):
             # filter inverter noise
             y = self.notch50([y])[0]
             y = self.notch60([y])[0]
@@ -185,7 +201,9 @@ class Channel:
             # filter spikes (after notch)
             self.med.insert(y)
             y = self.med.median()
+            pass
 
+        self.anf.add(y)
         self.sample_buffer.append(y)
 
     def plot(self, ax):
@@ -193,15 +211,21 @@ class Channel:
 
     def redraw(self, trig_i):
         w = max(trig_i, len(self.sample_buffer) - win_len)
-        a = np.array(self.sample_buffer)[w:]
+        a = np.array(self.sample_buffer, dtype=np.float32)[w:]
         if trig_i:
             b = np.empty(win_len - len(a))
             b.fill(np.nan)
             a = np.concatenate([a, b])
             assert len(a) == win_len
 
-       # a = median_filter(a, 5)
+        # if True:
+        #     a -= np.nanmean(a)
+
+        # a = median_filter(a, 5)
         self.waveform.set_ydata(a + self.offset)
+
+    def get_sr(self):
+        return self.n_samples / (time.time() - self.t_first)
 
 
 def redraw_loop(channels: Dict[str, Channel], fig, ax):
@@ -235,7 +259,7 @@ num_bytes_rx = 0
 channelNames = dict()
 
 
-def receive_loop(decoder:'ScopeDecoder'):
+def receive_loop(decoder: 'ScopeDecoder'):
     global num_bytes_rx, is_connected
 
     while True:
@@ -249,8 +273,8 @@ def receive_loop(decoder:'ScopeDecoder'):
 
         print('Discovered services:', addr)
         addr = addr[0]
-        #addr = ('192.168.1.208', 24)
-        #addr =  ('192.168.1.231', 24)
+        # addr = ('192.168.1.208', 24)
+        # addr =  ('192.168.1.231', 24)
 
         print('connecting', addr, '...')
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -280,7 +304,8 @@ def receive_loop(decoder:'ScopeDecoder'):
                     # channelNames.clear()
                     break
                 else:
-                    raise
+                    pass
+                    # raise
                 time.sleep(.1)
 
 
@@ -323,11 +348,12 @@ offset_slider: plt.Slider = None
 
 def main():
     global offset_slider
-    channels = dict()
+    channels: Dict[str, 'Channel'] = dict()
 
     fig, ax = plt.subplots()
     ax.grid()
     ax.set_xlabel("Time (s)")
+    ax.set_xlim([0, duration])
     # ax.set_ylim([-4, 4])
     ax.set_ylabel("Voltage")
 
@@ -336,6 +362,18 @@ def main():
     # Make a vertically oriented slider to control the offset
     ax_offset = plt.axes([0.05, 0.2, 0.0225, 0.63], facecolor='lemonchiffon')
     offset_slider = Slider(ax=ax_offset, label="TrigLv", valmin=0, valmax=2 ** 12, valinit=200, orientation="vertical")
+
+    def onpick(event):
+        legend_label = event.artist.get_label()
+
+        for x in range(len(ax.get_lines())):
+            if legend_label == ax.get_lines()[x].get_label():
+                ax.get_lines()[x].set_alpha(0)
+                fig.canvas.draw()
+
+    for legend in plt.legend().get_lines():
+        legend.set_picker(5)
+    fig.canvas.mpl_connect('pick_event', onpick)
 
     t0 = 0
     num_samples = 0
@@ -369,8 +407,9 @@ def main():
                 inp = line.strip()
                 if inp == 's':
                     for chn, ch in channels.items():
-                        pd.Series(ch.sample_buffer).to_csv(ch.name + '.csv', index=False)
-                        print('written', ch.name + '.csv')
+                        fn = f'{ch.name}_{int(round(ch.get_sr()))}hz.csv'
+                        pd.Series(ch.capture_buffer).to_csv(fn, index=False)
+                        print('written', fn)
 
             # else:
             # print ("No data for 2 secs")
@@ -385,7 +424,14 @@ def main():
             sps = num_samples / t_run
             bps = num_bytes_rx / t_run
             if is_connected:
-                sys.stdout.write('\rsps=%.1fk, bps=%.1fk, tRun=%.1fs' % (sps / 1000, bps / 1000, t_run))
+                srs = 'SR:'
+                for ch in channels.values():
+                    if ch.name in {'ucTemp', 'ntc'}:
+                        continue
+                    srs += (f'{ch.name}={round(ch.get_sr(), 0)},'
+                            f'anf(L={ch.anf.span},N={round(ch.anf.noise_level*1000,2)},S={round(ch.anf.signal_level*1000,2)}| ')
+                # TODO line up: "\033[A" or curses module
+                sys.stdout.write('\rsps=%.1fk|bps=%.1fk|t=%.1fs|%s' % (sps / 1000, bps / 1000, t_run, srs))
                 sys.stdout.flush()
 
             console()
