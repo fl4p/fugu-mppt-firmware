@@ -17,6 +17,7 @@
 
 #include "tele/scope.h"
 #include "math/notch.h"
+#include "math/noise.h"
 
 
 struct LinearTransform {
@@ -64,7 +65,7 @@ struct Sensor {
     uint32_t numSamples = 0;
     NotchFilter *notchFilter = nullptr; // filter 50/60 Hz inverter noise
     RunningMedian5<float> med3{}; // filter burst noise
-    EWM<float> ewm; // filter residual noise
+    AdaptiveNoiseFilter anf{};
     MeanAccumulator calibBuffer{}; // for offset calibration
 
     float calibrationAvg = 0; // stores the mean value from calibBuffer
@@ -109,7 +110,10 @@ struct Sensor {
         lastRaw = x;
 
         if (notchFilter)notchFilter->filter(&last, &v, 1);
-        ewm.add(med3.next(v));
+        v = med3.next(v);
+        ewm.add(v);
+        anf.add(v);
+
         ++numSamples;
 
         //ESP_LOGD("s", "Sensor %s: add sample %.5f #%d (ewm avg %.5f)", teleName.c_str(), last, numSamples, ewm.avg.get());
@@ -117,7 +121,9 @@ struct Sensor {
 
 protected:
     Sensor(SensorParams params, uint32_t ewmSpan, bool isVirtual)
-            : params(std::move(params)), ewm{ewmSpan}, isVirtual{isVirtual} {}
+            : params(std::move(params)), ewm{ewmSpan}, isVirtual{isVirtual} {
+        anf.begin(ewmSpan, 0.2f);
+    }
 
     //virtual ~Sensor() = default;  // make class polymorphic (to enable dynamic_cast)
 };

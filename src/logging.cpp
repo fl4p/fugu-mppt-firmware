@@ -47,7 +47,7 @@ void enqueue_log(const char *s, int len) {
 
 
 int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appendBreak = false, bool timestamp= false) {
-    assert((xPortGetCoreID() == 1));
+    assert((xPortGetCoreID() == 1)); // ensure RT core
 
     if (uart_async_log_queue.size_approx() > 200) return -1;
     auto buf = new char[l + 1];
