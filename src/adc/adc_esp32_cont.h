@@ -38,7 +38,7 @@ public:
     //adc1_channel_t readingChannel = adc1_channel_t::ADC1_CHANNEL_MAX;
 private:
     adc_cali_handle_t adc_chars[4]{nullptr, nullptr, nullptr, nullptr};
-    adc_atten_t attenuation[adc_channel_t::ADC_CHANNEL_9 + 1]{};
+    adc_atten_t attenuation[adc_channel_t::ADC_CHANNEL_9 + 1] = {(adc_atten_t)-1};
 
     TaskNotification notification;
     adc_continuous_handle_t handle = nullptr;
@@ -81,15 +81,17 @@ public:
             if (attenuation[ch] != (adc_atten_t) -1) ++chNum;
             if (ch == ntcCh) hasNtc = true;
         }
+        assert_throw(chNum > 0,"");
 
+        // pattern length:
+        chNum = 2 * chNum;
+        if (hasNtc) chNum -= 1;
 
-        chNum = chNum + (chNum -1); // pattern length
-
-        if(ntcCh == ch) {
-            return (float) sr / (float) (avgNum*chNum);
+        if (ntcCh == ch) {
+            return (float) sr / (float) (avgNum * chNum);
         } else {
             // all other channels are sampled 2 times per patterns
-            return (float) sr / (float) (avgNum*chNum) * 2.0f;
+            return (float) sr / (float) (avgNum * chNum) * 2.0f;
         }
     }
 
