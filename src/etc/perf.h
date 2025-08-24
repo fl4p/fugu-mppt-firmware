@@ -159,4 +159,5 @@ static esp_err_t print_real_time_stats(TickType_t xTicksToWait) {
 
 void print_real_time_stats_1s_task(void *) {
     print_real_time_stats(pdMS_TO_TICKS(2000));
+    vTaskDelete(NULL);
 }
