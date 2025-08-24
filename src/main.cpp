@@ -352,8 +352,6 @@ void setup() {
     }
 
 
-
-
 #ifdef NO_WIFI
     disableWifi = true;
 #endif
@@ -462,7 +460,9 @@ void stopAndBackoff(uint32_t secondsDelay) {
 
 void loopRT(void *arg) {
     // low-latency control loop task
+
 #define RT_CORE 1
+#define NON_RT_CORE 0
 
 #if CONFIG_ARDUINO_RUNNING_CORE == RT_CORE or CONFIG_ARDUINO_EVENT_RUNNING_CORE == RT_CORE or \
     CONFIG_ARDUINO_UDP_RUNNING_CORE == RT_CORE or CONFIG_ARDUINO_SERIAL_EVENT_TASK_RUNNING_CORE == RT_CORE
@@ -513,7 +513,7 @@ void loopRT(void *arg) {
         auto samplerRet = adcSampler.update();
         rtcount("adc.update");
 
-        if(adcSampler.halted) continue;
+        if (adcSampler.halted) continue;
 
         if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
             stopAndBackoff(4);
@@ -525,11 +525,11 @@ void loopRT(void *arg) {
                 adcSampler.cancelCalibration();
             }
 
-            if (timeLastSampler && nowMs - timeLastSampler > 200) {
+            if (timeLastSampler && nowUs - timeLastSampler > 200000) {
                 if (!converter.disabled()) {
                     stopAndBackoff(4);
-                    ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown! numSamples %lu",
-                             lastMpptUpdateNumSamples);
+                    ESP_LOGE("main", "Timeout waiting for new ADC sample, shutdown! numSamples=%lu dt=%lu ms",
+                             lastMpptUpdateNumSamples, (nowUs - timeLastSampler) / 1000);
                     if (adcSampler.resetPeripherals()) {
                         ESP_LOGI("main", "ADC peripherals reset");
                     } else {
@@ -537,7 +537,7 @@ void loopRT(void *arg) {
                     }
                 }
 
-                if (timeLastSampler && nowMs - timeLastSampler > 60000) {
+                if (timeLastSampler && nowUs - timeLastSampler > 60000000) {
                     systemRestart();
                 }
             }
@@ -577,15 +577,19 @@ void loopRT(void *arg) {
 }
 
 std::string mpptStateStr() {
+    auto st = mppt.getState();
     std::string arrow;
-    if (mppt.getState() == MpptControlMode::MPPT) {
+    if (st == MpptControlMode::MPPT) {
         if (mppt.tracker.slowMode) {
             arrow = mppt.tracker._direction ? "⇡" : "⇣";
         } else {
             arrow = mppt.tracker._direction ? "↑" : "↓";
         }
     }
-    return arrow + MpptState2String[(uint8_t) mppt.getState()];
+
+    mppt.limIdxSampled.reset();
+
+    return arrow + MpptState2String[(uint8_t) st];
 }
 
 void loopLF(const unsigned long &nowUs) {
@@ -594,7 +598,8 @@ void loopLF(const unsigned long &nowUs) {
     uint32_t sps = (dt > 20000) ? (uint64_t) (nSamples - lastNSamples) * 1000000llu / dt : 0;
 
 
-    if ((dt > (lfPeriod*0.9f)) && sps < loopRateMin && !converter.disabled() && nSamples > max(loopRateMin * 5, 200) &&
+    if ((dt > (lfPeriod * 0.9f)) && sps < loopRateMin && !converter.disabled() &&
+        nSamples > max(loopRateMin * 5, 200) &&
         !manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 2000000) {
         auto loopRunTime = (nowUs - adcSampler.getTimeLastCalibrationUs());
         ESP_LOGE("main", "Loop latency too high (%lu < %hu Hz), shutdown! (nSamples=%lu, D=%u, loopRunTime=%.1fs )",
@@ -691,7 +696,7 @@ void loopRTNewData(unsigned long nowMs) {
     bool haveNewSample = (nSamples - lastMpptUpdateNumSamples) > 0;
 
     if (haveNewSample)
-        timeLastSampler = nowMs;
+        timeLastSampler = wallClockUs();
 
     // auto range current sense ADC channel TODO add hysteresis
     /* float adcRangeBound = 2.0f;
@@ -735,6 +740,11 @@ void loopRTNewData(unsigned long nowMs) {
             }
             charging = true;
         }
+
+        if (scope && sensors.Vout && haveNewSample)
+            scope->addSample12(&mppt, 0,
+                               (uint16_t) (sensors.Vout->med3.get() / 60.0f *
+                                           4000.0f));
     }
 
 
@@ -770,9 +780,9 @@ void loopNetwork_task(void *arg) {
     }
 
 
-
     if ((wallClockUs() - lastTimeOutUs) >= lfPeriod) {
         loopLF(wallClockUs());
+        mqttUpdateSensors(mppt.tracker._lastPower);
         lastTimeOutUs = wallClockUs();
     }
 
@@ -807,10 +817,7 @@ void loopCore0_LF(void *arg) {
 void systemRestart() {
     converter.disable();
     UART_LOG("Rebooting in 200ms");
-    if (telnet.isConnected()) {
-        telnet.flush();
-        telnet.disconnectClient();
-    }
+    telnetEnd();
     delay(200);
     ESP.restart();
 }
@@ -885,8 +892,6 @@ bool handleCommand(const String &inp) {
         rtcount_print(true);
     } else if (inp == "wifi on") {
         disableWifi = false;
-        timeSynced = false;
-
         connect_wifi_async();
 
     } else if (inp == "wifi off") {
@@ -920,7 +925,7 @@ bool handleCommand(const String &inp) {
         adcSampler.halted = false;
         return true;
     } else if (inp == "rt-stats") {
-        xTaskCreatePinnedToCore(print_real_time_stats_1s_task, "rtstats", 4096, NULL, 1, NULL, 0);
+        xTaskCreatePinnedToCore(print_real_time_stats_1s_task, "rtstats", 4096, NULL, 1, NULL, NON_RT_CORE /*core*/);
     } else if (inp == "mem") {
         UART_LOG("Total heap:  %9ld", ESP.getHeapSize());
         UART_LOG("Free heap:   %9ld", ESP.getFreeHeap());
@@ -960,11 +965,36 @@ bool handleCommand(const String &inp) {
         ConfFile conf{fn.c_str()};
         auto oldVal = conf.getString(key.c_str(), "");
         ESP_LOGI("main", "Setting conf '%s:%s' = '%s' (was %s)", fn.c_str(), key.c_str(), val.c_str(), oldVal.c_str());
-        if(oldVal != val.c_str())
+        if (oldVal != val.c_str())
             conf.add({{key.c_str(), val.c_str()}}, true);
         // set-config coil.conf L0 50
-        // set-config limits.conf iout_max 20
+        // set-config limits.conf iout_max 35
         // set-config converter.conf vout_max 28.5
+        // set-config mqtt.conf broker_uri mqtt://192.168.1.134:1882
+        // set-config mqtt.conf username pv
+        // set-config mqtt.conf password 0ffgrid
+        // set-config charger.conf cell_voltage_eoc 3.53
+
+        // set-config sensor.conf vout_filt_len 10
+        // set-config sensor.conf iout_filt_len 10
+        // set-config sensor.conf vin_filt_len 10
+
+        // get-config mqtt.conf broker_uri
+        // get-config converter.conf
+
+    } else if (inp.startsWith("get-config ")) {
+        auto ikey = inp.indexOf(' ', 11);
+        auto fn = "/littlefs/conf/" + inp.substring(11, ikey != -1 ? ikey : inp.length());
+        ConfFile conf{fn.c_str()};
+        if (ikey != -1) {
+            auto key = inp.substring(ikey + 1);
+            auto val = conf.getString(key.c_str(), "");
+            ESP_LOGI("main", "Conf '%s:%s' = '%s'", fn.c_str(), key.c_str(), val.c_str());
+        } else {
+            for (const auto &key: conf.keys()) {
+                ESP_LOGI("main", "Conf '%s:%s' = '%s'", fn.c_str(), key.c_str(), conf.getString(key).c_str());
+            }
+        }
     } else {
         ESP_LOGW("main", "unknown or unexpected command");
         return false;
