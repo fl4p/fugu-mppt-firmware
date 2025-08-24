@@ -6,7 +6,7 @@ struct MPP {
     float power = 0;
     unsigned long timestamp = 0;
     uint16_t dutyCycle = 0;
-    //float voltage = 0;
+    float vin = 0;
 };
 
 
@@ -16,7 +16,8 @@ struct MPP {
  * Slow mode uses longer smoothing filters, a lower update frequency and a slower perturbation speed
  */
 struct Tracker {
-    float minPowerStep = 1.5f;
+    float minPowerStep = 1.0f;
+    float minPowerStepRel = 1.0f;
     float frequency = 20;
 
     bool _direction = false; //true => increase duty cycle/decrease solar voltage
@@ -25,11 +26,13 @@ struct Tracker {
 
     float _curPower = 0.0;
     float _lastPower = 0.0;
+    float _lastVin = 0.0;
 
 
     //EWMA<float> avgPower{200};
 
     MeanAccumulator _powerBuf{};
+    MeanAccumulator _vinBuf{};
 
     //RunningMedian3<float> med3{};
     //bool _sweeping = false;
@@ -49,6 +52,7 @@ struct Tracker {
         resetDirection(direction);
         _lastPower = power;
         maxPowerPoint.power = 0;
+        maxPowerPoint.vin = 0;
         //avgPower.reset();
     }
 
@@ -59,12 +63,13 @@ struct Tracker {
         //avgPower.reset();
     }
 
-    float update(float powerSample, uint16_t dutyCycle) {
+    float update(float powerSample, uint16_t dutyCycle, float vin) {
         auto now = wallClockMs();
 
         //avgPower.add(powerSample);
         //_powerBuf.add(slowMode ? avgPower.get() : powerSample);
         _powerBuf.add(powerSample);
+        _vinBuf.add(vin);
 
 
         if (now - pwmTimeTable[dutyCycle] > 1000 * 60) {
@@ -76,6 +81,8 @@ struct Tracker {
         if ((float) (now - _time) > (1000.f / frequency)) {
             _time = now;
             auto power = _powerBuf.pop();
+            auto vin = _vinBuf.pop();
+
             _curPower = power;
             //auto power = pwmPowerTable[dutyCycle].get();
             dP = power - _lastPower;
@@ -84,18 +91,33 @@ struct Tracker {
                 _direction = true; // pump more power
             } else {
                 auto absDp = std::abs(dP);
+                bool rev = false;
+
                 if ((
                         absDp >= minPowerStep
-                        or (abs(_lastPower) > (minPowerStep * 10) and absDp / abs(_lastPower) > 0.02f)
+                        or (abs(_lastPower) > (minPowerStep * 1) and absDp / abs(_lastPower) > minPowerStepRel)
                         //or (_timeLastReverse - now > ) // TODO scheduled reversal?
                 )
                     //and (!slowMode || (now - _timeLastReverse) > 6000)
                         ) {
                     _lastPower = power;
-                    if (dP < 0) {
-                        _direction = !_direction;
-                        _timeLastReverse = now;
+                    if (dP < 0  ) {
+                     rev = true;
                     }
+                }
+
+                // cloud recovery
+                // when vin changed 5% since last reversal, reverse.
+                // we might be tracking on a light intensity transient
+                // and end up at a voltage far away from MPP
+                if((abs(vin - _lastVin) / (_lastVin + 0.1f)) > 0.05f) {
+                    rev = true;
+                }
+
+                if(rev) {
+                    _direction = !_direction;
+                    _timeLastReverse = now;
+                    _lastVin = vin;
                 }
             }
 
@@ -106,6 +128,7 @@ struct Tracker {
             // invalidate MPP every 5min ..
             if (now - maxPowerPoint.timestamp > 1000 * 60 * 5 and maxPowerPoint.power > 0) {
                 maxPowerPoint.power = 0;
+                maxPowerPoint.vin = 0;
                 ESP_LOGI("mppt", "Reset maxPower to 0");
             }
 
@@ -113,12 +136,14 @@ struct Tracker {
             if (power < maxPowerPoint.power * 0.85f && now - maxPowerPoint.timestamp > 1000 * 30 and
                 maxPowerPoint.power > 0) {
                 maxPowerPoint.power = 0;
+                maxPowerPoint.vin = 0;
                 ESP_LOGI("mppt", "Reset maxPower to 0 (<%.3f * 90%%)", power);
             }
 
             // capture MPP
             if (power > maxPowerPoint.power * 1.005f) {
                 maxPowerPoint.power = power;
+                maxPowerPoint.vin = vin;
                 maxPowerPoint.timestamp = now;
                 maxPowerPoint.dutyCycle = dutyCycle;
                 //ESP_LOGI("mppt", "New maxPower %.2f", maxPowerPoint.power);
@@ -140,11 +165,12 @@ struct Tracker {
         if (powerSample > (slowMode ? 0.5f : 2.f) // hysteresis
             and now - maxPowerPoint.timestamp > 1000 * 30 // if we didn't find a new maxPower for 15s
             and now - _timeLastReverse < 1000 * 15 // if we move in one direction for more than 15s, don't slow down
-            and false
+           // and false
                 ) {
-            speed = .2f; // 0.02
-            frequency = 15;
+            speed = .02f; // 0.02
+            frequency = 2;
             minPowerStep = 0.5f; // 0.75 is too small ?
+            minPowerStepRel = 0.0015f;
             if (!slowMode) {
                 auto d = (float) maxPowerPoint.dutyCycle - (float) dutyCycle;
                 if (abs(d) > 5)
@@ -161,6 +187,7 @@ struct Tracker {
             speed = .5f;
             frequency = 30;
             minPowerStep = 1.0f; // not lower than 0.5f, maybe better 0.75f-1.0f
+            minPowerStepRel = 0.015f;
             slowMode = false;
             //avgPower.reset();
         }
