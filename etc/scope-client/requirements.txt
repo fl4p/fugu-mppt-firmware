@@ -1,0 +1,7 @@
+
+matplotlib
+fastplotlib
+pandas
+scipy
+
+zeroconf

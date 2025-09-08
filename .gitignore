@@ -41,3 +41,6 @@ idf-export.sh
 etc/scope-client/*.csv
 
 etc/scope-client/__pycache__/
+/etc/scope-client/data/
+
+etc/scope-client/adaptive_noise_filter/__pycache__/

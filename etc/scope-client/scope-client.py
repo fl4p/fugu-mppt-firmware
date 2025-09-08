@@ -8,9 +8,11 @@ from collections import deque
 from threading import Thread
 from typing import Dict
 
+import fastplotlib as fpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.pyplot import figure
 from scipy import signal
 
 duration = 4 / 1
@@ -168,6 +170,7 @@ class Channel:
         self.sample_buffer = deque([math.nan] * win_len, maxlen=win_len)
         self.capture_buffer = deque([], maxlen=200_000)
         self.waveform: plt.Axes = None
+        self.fpl_waveform: fpl.LineGraphic = None
         self.offset = 0
         self.win3 = collections.deque(maxlen=3)
         self.med = RunningMedian(5)
@@ -195,19 +198,22 @@ class Channel:
 
         if self.chNum < 5 and math.isfinite(y):
             # filter inverter noise
-            y = self.notch50([y])[0]
-            y = self.notch60([y])[0]
+            #y = self.notch50([y])[0]
+            #y = self.notch60([y])[0]
 
             # filter spikes (after notch)
             self.med.insert(y)
             y = self.med.median()
             pass
 
-        self.anf.add(y)
+        #y = self.anf.add(y)
         self.sample_buffer.append(y)
 
     def plot(self, ax):
-        self.waveform, = ax.plot(time_x, np.zeros(time_x.shape), label=f'#{self.chNum}: {self.name}')  # channel 1 plot
+        if figure is not None:
+            self.fpl_waveform = figure[0, 0].add_line(data=np.zeros(time_x.shape), thickness=1, colors="magenta")
+        else:
+            self.waveform, = ax.plot(time_x, np.zeros(time_x.shape), label=f'#{self.chNum}: {self.name}')  # channel 1 plot
 
     def redraw(self, trig_i):
         w = max(trig_i, len(self.sample_buffer) - win_len)
@@ -220,22 +226,38 @@ class Channel:
 
         # if True:
         #     a -= np.nanmean(a)
-
         # a = median_filter(a, 5)
-        self.waveform.set_ydata(a + self.offset)
+
+        if figure is None:
+            self.waveform.set_ydata(a + self.offset)
+        else:
+            self.fpl_waveform.data[:, 1]  = a + self.offset
 
     def get_sr(self):
         return self.n_samples / (time.time() - self.t_first)
 
+num_frames = 0
 
 def redraw_loop(channels: Dict[str, Channel], fig, ax):
+    global num_frames
+
     trig_ch = 1
     trig_val = 120
+    last_num_bytes_rx = 0
 
     while True:
+
+        if num_bytes_rx == last_num_bytes_rx:
+            # only redraw if new data received
+            time.sleep(0.1)
+            continue
+        last_num_bytes_rx = num_bytes_rx
+
         trig_i = 0
         if offset_slider:
             trig_val = offset_slider.val
+
+        tcpu_0 = time.time()
 
         if trig_ch and trig_ch in channels:
             buf = channels[trig_ch].sample_buffer
@@ -246,13 +268,23 @@ def redraw_loop(channels: Dict[str, Channel], fig, ax):
                     trig_i = i
                     break
 
+        tcpu_trig = time.time()
+
         for ch in list(channels.values()):
             ch.redraw(trig_i)
+
+        tcpu_draw = time.time()
 
         ax.relim()
         ax.autoscale_view(True, False, True)
         fig.canvas.draw_idle()
-        time.sleep(.1)
+        tcpu_figure = time.time()
+
+        #tc = lambda dt: round(dt*1000)
+        #print('tcpu',tc( tcpu_trig - tcpu_0), tc(tcpu_draw - tcpu_trig), tc(tcpu_figure - tcpu_draw))
+
+        num_frames += 1
+        time.sleep(.01)
 
 
 num_bytes_rx = 0
@@ -346,8 +378,10 @@ class ScopeDecoder:
 offset_slider: plt.Slider = None
 
 
+figure = None
+
 def main():
-    global offset_slider
+    global offset_slider, figure
     channels: Dict[str, 'Channel'] = dict()
 
     fig, ax = plt.subplots()
@@ -362,6 +396,8 @@ def main():
     # Make a vertically oriented slider to control the offset
     ax_offset = plt.axes([0.05, 0.2, 0.0225, 0.63], facecolor='lemonchiffon')
     offset_slider = Slider(ax=ax_offset, label="TrigLv", valmin=0, valmax=2 ** 12, valinit=200, orientation="vertical")
+
+    #figure = fpl.Figure(size=(700, 560))
 
     def onpick(event):
         legend_label = event.artist.get_label()
@@ -399,6 +435,10 @@ def main():
         t0 = time.time()
         num_samples = 0
 
+        if figure is not None:
+            figure[0, 0].axes.grids.xy.visible = True
+            figure.show()
+
     def console():
         try:
             if select.select([sys.stdin, ], [], [], 0.1)[0]:
@@ -429,9 +469,9 @@ def main():
                     if ch.name in {'ucTemp', 'ntc'}:
                         continue
                     srs += (f'{ch.name}={round(ch.get_sr(), 0)},'
-                            f'anf(L={ch.anf.span},N={round(ch.anf.noise_level*1000,2)},S={round(ch.anf.signal_level*1000,2)}| ')
+                            f'anf(L={ch.anf.span},N={round(ch.anf.noise_level * 1000, 2)},S={round(ch.anf.signal_level * 1000, 2)}| ')
                 # TODO line up: "\033[A" or curses module
-                sys.stdout.write('\rsps=%.1fk|bps=%.1fk|t=%.1fs|%s' % (sps / 1000, bps / 1000, t_run, srs))
+                sys.stdout.write('\rfps=%.0f|sps=%.1fk|bps=%.1fk|t=%.1fs|%s' % (num_frames/t_run, sps / 1000, bps / 1000, t_run, srs))
                 sys.stdout.flush()
 
             console()
@@ -442,6 +482,7 @@ def main():
     Thread(target=redraw_loop, args=(channels, fig, ax), daemon=True).start()
     Thread(target=lf_loop, daemon=True).start()
 
+    fpl.loop.run()
     plt.show()
 
 
