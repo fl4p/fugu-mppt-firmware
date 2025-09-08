@@ -1,3 +1,17 @@
+* after calibration wait until ewm.avg is finite, filters have settled, then sweep
+
+## components
+
+add named components (mqtt, adc, etc)
+* similar to a service
+* wraps / abstracts a building block (hw driver or software component)
+* interface:
+  * begin(), end()
+  * status
+  * setLogLevel()
+  * config namespace?
+* user has access over console (e.g. restart, query stats, enable debug log, change config)
+
 * detect high impedance battery connection
   * https://h.fabi.me/grafana/d/f4a22deb-8528-427d-9473-4e7b06c6d874/fugu-mppt?orgId=1&from=1741693099256&to=1741704737323
 

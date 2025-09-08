@@ -112,6 +112,43 @@ struct TopologyConfig {
     bool backflowAtHV = false;//backflow switch is at solar input
 };
 
+template<typename T_NUM, T_NUM max = std::numeric_limits<T_NUM>::max()>
+struct MinSampler {
+    T_NUM min{max};
+
+    void add(const T_NUM &v) { if (v < min) min = v; }
+
+    void reset() { min = max; }
+
+    bool empty() const { return min == max; }
+
+    const T_NUM &get(bool &empty) const {
+        if (min == max) empty = true;
+        return min;
+    }
+
+    const T_NUM &get() const {
+        return min;
+    }
+
+    bool tryGet(T_NUM &out) const {
+        if (min == max)return false;
+        out = min;
+        return true;
+    }
+
+    T_NUM pop(bool &empty) {
+        auto r = get(empty);
+        reset();
+        return r;
+    }
+
+    T_NUM pop() {
+        auto r = get();
+        reset();
+        return r;
+    }
+};
 
 /**
  * Implements
@@ -134,6 +171,11 @@ class MpptController {
 
     } ctrlState;
 
+public:
+    //MinSampler<MpptControlMode, MpptControlMode::Max> ctrlModeSampled{};
+    MinSampler<uint8_t, 15> limIdxSampled{};
+
+private:
 
     bool _sweeping = false;// global scan
     uint16_t _targetDutyCycle = 0;// MPP from global scan
@@ -199,12 +241,12 @@ public:
 
         if (sensors.Iout->isVirtual) {
             ESP_LOGI("mppt", "Iout sensor is virtual, using Iin");
-            sensorPhysicalI = ::sensors.Iin;
-            sensorPhysicalU = ::sensors.Vin;
+            sensorPhysicalI = sensors.Iin;
+            sensorPhysicalU = sensors.Vin;
         } else {
             // use Iout by default
-            sensorPhysicalI = ::sensors.Iout;
-            sensorPhysicalU = ::sensors.Vout;
+            sensorPhysicalI = sensors.Iout;
+            sensorPhysicalU = sensors.Vout;
         }
         if (sensorPhysicalI->isVirtual) throw std::runtime_error("no physical I sensor");
         if (sensorPhysicalU->isVirtual) throw std::runtime_error("no physical U sensor");
@@ -239,6 +281,7 @@ public:
         }
 
         fanInit(pinConf);
+
 
         bflow.init(pinConf);
         meter.load();
@@ -450,14 +493,13 @@ public:
             }
         }
 
-
         // TODO move this to control loop
-        float vOut = fmaxf(sensors.Vout->med3.get(), sensors.Vout->ewm.avg.get());
-        float vIn = fminf(sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
-        //float vOut = sensors.Vout->ewm.avg.get();
-        //float vIn = sensors.Vin->ewm.avg.get();
-        auto vr = converter.updateSyncRectMaxDuty(vIn, vOut, converter.boost() ? sensors.Iin->ewm.avg.get()
-                                                                               : sensors.Iout->ewm.avg.get());
+        //float vOut = fmaxf(sensors.Vout->med3.get(), sensors.Vout->ewm.avg.get());
+        //float vIn = fminf(sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
+        float vOut = sensors.Vout->ewm.avg.get();
+        float vIn = sensors.Vin->ewm.avg.get();
+        auto vr = converter.updateSyncRectMaxDuty(
+                vIn, vOut, converter.boost() ? sensors.Iin->ewm.avg.get() : sensors.Iout->ewm.avg.get());
 
         auto iOutSmall = sensorPhysicalI->ewm.avg.get() < (limits.Iout_max * 0.01f);
 
@@ -561,7 +603,7 @@ public:
 
         Point point("mppt");
         point.addTag("device", getHostname().c_str());
-        point.addField("I", I_phys_smooth, 2);
+        point.addField("I", sensorPhysicalI->med3.get(), 3);
         point.addField("Ui", sensors.Vin->med3.get(), 2);
         point.addField("Uo", sensors.Vout->med3.get(), 2);
         //point.addField("U", V_phys_smooth, 2);
@@ -582,6 +624,7 @@ public:
         point.addField("pwm_duty", converter.getCtrlOnPwmCnt());
         point.addField("pwm_ls_duty", converter.getRectOnPwmCnt());
         point.addField("pwm_ls_max", converter.getRectOnPwmMax());
+        point.addField("pwm_dcm", converter.inDCM());
 
         if (ctrlState.mode == MpptControlMode::MPPT) {
             auto dP = tracker.dP;
@@ -597,8 +640,8 @@ public:
             }
         }
 
-        if (ctrlState._limiting) {
-            point.addField("cv_lim_idx", ctrlState.limIdx);
+        if (!limIdxSampled.empty()) {
+            point.addField("cv_lim_idx", limIdxSampled.pop());
         }
 
         point.setTime(WritePrecision::MS);
@@ -635,7 +678,7 @@ public:
         auto V_phys_smooth = (sensorPhysicalU->ewm.avg.get());
         //auto Vout(sensors.Vout->ewm.avg.get());
         float power_smooth = I_phys_smooth * V_phys_smooth;
-        float power = sensorPhysicalI->med3.get() * sensorPhysicalU->med3.get();
+        float power = power_smooth; // sensorPhysicalI->med3.get() * sensorPhysicalU->med3.get();
 
         //avgIin.add(adcSampler.last.s.chIin);
         //avgVin.add(adcSampler.last.s.chVin);
@@ -665,7 +708,7 @@ public:
         //float powerLimit = std::min(thermalPowerLimit(ntcTemp), limits.P_max);
 
         // topping current
-        float Iout_max = limits.Iout_max; //charger.getToppingCurrent(::sensors.Vout->ewm.avg.get());
+        float Iout_max = min(limits.Iout_max, charger.Ibat_max());
 
         // periodic sweep / scan
         if (!_sweeping /*&& power_smooth < 30*/ && (nowUs - sampler.getTimeLastCalibrationUs()) > (30 * 60000000)) {
@@ -698,7 +741,7 @@ public:
         for (auto &c: controlValues) {
             auto cv = c.crtl.update(c.actual, c.target);
 
-            if (!isfinite(cv) && !converter.disabled()) {
+            if (!isfinite(cv) && !converter.disabled() && converter.getDutyCycle() > 0.01f) {
                 ESP_LOGW("mppt", "Control value %f not finite act=%.3f tgt=%.3f idx=%i", cv, c.actual, c.target,
                          int(&c -controlValues.begin()));
                 shutdownDcdc();
@@ -725,6 +768,7 @@ public:
             ctrlState._limiting = true;
             auto limIdx = (int) (limitingControl - controlValues.begin());
             ctrlState.limIdx = limIdx;
+            limIdxSampled.add(limIdx);
         } else {
             // no limit condition
             if (ctrlState._limiting) {
@@ -753,7 +797,8 @@ public:
         if (_sweeping && !sampler.isCalibrating()) {
             if (controlMode == MpptControlMode::None) {
                 controlMode = MpptControlMode::Sweep;
-                controlValue = std::min(limitingControlValue / 4.0f, 4.0f); // sweep speed
+                controlValue = std::min(limitingControlValue / 5.0f, 4.0f); // sweep speed
+                //controlValue = std::min(limitingControlValue / 8.0f, 2.0f); // sweep speed
 
                 // capture MPP during sweep, this will be our target afterward
                 if (power_smooth > maxPowerPoint.power) {
@@ -800,7 +845,7 @@ public:
 
         if (controlMode == MpptControlMode::None) {
             controlMode = MpptControlMode::MPPT;
-            controlValue = tracker.update(power, converter.getCtrlOnPwmCnt());
+            controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get());
             controlValue *= speedScale;
         } else {
             // tracker.resetTracker(power_smooth, controlValue > 0);

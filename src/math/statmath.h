@@ -1,10 +1,59 @@
 #pragma once
 
+#include <cmath>
 #include <cstdlib>
 #include <limits>
 
 template<class T>
 inline T abs(T x) { return x < 0 ? -x : x; }
+
+template<class float_t_alpha=float_t>
+class EWMASpan {
+protected:
+public:
+    float_t_alpha alpha;
+    explicit EWMASpan(uint32_t span) { updateSpan(span); }
+    void updateSpan(uint32_t span) { alpha = (2.f / (float_t) (span + 1)); }
+
+    [[nodiscard]] uint32_t span() const { return uint32_t(2.f / alpha) - 1; }
+};
+
+
+template<size_t channels, size_t passes, class float_t=float, class float_t_alpha=float_t>
+class EWMA_nCh_nPass : public EWMASpan<float_t_alpha> {
+/**
+ * Implement exponential weighted moving average
+ */
+public:
+    float_t y[channels][passes] = {{std::numeric_limits<float_t>::quiet_NaN()}};
+
+    explicit EWMA_nCh_nPass(uint32_t span) : EWMASpan<float_t_alpha>(span) {
+    }
+
+    inline void add(uint8_t ch, const float_t &x) {
+        for (int i = 0; i < passes; ++i) {
+            if (unlikely(isnan(x))) return;
+            if (unlikely(isnan(y[ch][i]))) y[ch][i] = x;
+            y[i] = (1 - EWMASpan<float_t_alpha>::alpha) * y[ch][i] + EWMASpan<float_t_alpha>::alpha * x;
+            x = y[i];
+        }
+    }
+
+    inline void addVector(const float_t *x) {
+        for (int c = 0; c < channels; ++c) {
+            add(c, x[c]);
+        }
+    }
+
+    inline const float_t &get(uint8_t channel) const { return y[channel][passes - 1]; }
+
+    inline void reset() {
+        for (int c = 0; c < channels; ++c)
+            for (int i = 0; i < passes; ++i)
+                y[c][i] = std::numeric_limits<float_t>::quiet_NaN();
+    }
+};
+
 
 template<class float_t=float, class float_t_alpha=float_t>
 class EWMA {
@@ -20,7 +69,7 @@ public:
         updateSpan(span);
     }
 
-    void updateSpan(uint32_t span) {
+    void updateSpan(float span) {
         alpha = (2.f / (float_t) (span + 1));
     }
 
@@ -37,21 +86,61 @@ public:
     inline void reset() { y = std::numeric_limits<float_t>::quiet_NaN(); }
 };
 
+
+
+template<size_t passes, class float_t=float, class float_t_alpha=float_t>
+class EWMA_nPass {
+/**
+ * Implement exponential weighted moving average
+ */
+    float_t_alpha alpha;
+public:
+
+    float_t y[passes] = {std::numeric_limits<float_t>::quiet_NaN()};
+
+    explicit EWMA_nPass(uint32_t span) {
+        updateSpan(span);
+    }
+
+    void updateSpan(float span) {
+        alpha = (2.f / (float_t) (span + 1.f));
+    }
+
+    [[nodiscard]] uint32_t span() const { return uint32_t(2.f / alpha) - 1; }
+
+    inline void add(float_t x) {
+        for (int i = 0; i < passes; ++i) {
+            if (unlikely(isnan(x))) return;
+            if (unlikely(isnan(y[i]))) y[i] = x;
+            y[i] = (1 - alpha) * y[i] + alpha * x;
+            x = y[i];
+        }
+    }
+
+    inline const float_t &get() const { return y[passes - 1]; }
+
+    inline void reset() { for (int i = 0; i < passes; ++i) y[i] = std::numeric_limits<float_t>::quiet_NaN(); }
+};
+
+
+
+
 /**
  * Implement exponential weighted moving average and normalised standard deviation
  * @tparam float_t
  */
-template<class float_t=float>
+template<bool meanVar = false, class float_t=float>
 class EWM {
     float_t last_x = std::numeric_limits<float_t>::quiet_NaN();
 public:
-    static constexpr float regularisation = 0.001f;
+    static constexpr float regularisation = 0.0001f;
 
-    EWMA<float_t> avg, std;
+    EWMA_nPass<2> avg;
+    EWMA<float_t> std;
 
     explicit EWM(uint32_t span) : avg(span), std(span) {}
 
-    void updateSpan(uint32_t span) {
+    void updateSpan(float span) {
         avg.updateSpan(span);
         std.updateSpan(span);
     }
@@ -61,20 +150,23 @@ public:
     void reset() {
         avg.reset();
         std.reset();
+        if (!meanVar) last_x = std::numeric_limits<float_t>::quiet_NaN();
     }
 
     inline void add(float_t x) {
         avg.add(x);
-        if constexpr (regularisation != 0) {
-            x = abs(x) + regularisation;
-        }
-        if (likely(!isnan(last_x))) {
-            float_t pct = (x - last_x) / last_x;
+        const auto ex = meanVar ? avg.get() : last_x;
+        if (likely(!isnan(ex))) {
+            float_t pct = (x - ex) / (abs(avg.get()) + regularisation);
             if (likely(std::isfinite(pct)))
                 std.add(pct * pct);
         }
-        last_x = x;
+        if (!meanVar) last_x = x;
     }
+
+    inline const float_t &nstddev() const { return sqrt(std.get()); }
+
+    inline const float_t &nvar() const { return std.get(); }
 };
 
 template<typename float_t=float>
@@ -158,6 +250,7 @@ public:
     }
 };
 
+// TODO compare to https://github.com/thomedes/RunningMedian.cpp/blob/master/RunningMedian.cpp
 template<typename T>
 class RunningMedian5 {
     T b[5];
@@ -265,7 +358,7 @@ public:
 
     void restore(D v) {
         assert(value == 0);
-        if(isfinite(v))
+        if (isfinite(v))
             value = v;
     }
 };

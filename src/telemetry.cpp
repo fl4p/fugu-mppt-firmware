@@ -35,7 +35,7 @@ FtpServer ftpSrv;
 ESPTelnet telnet;
 
 bool noSsid = true;
- bool timeSynced = false;
+bool timeSynced = false;
 
 IPAddress ha_host{};
 
@@ -112,8 +112,6 @@ void ftpBegin() {
 }
 
 
-
-
 void wifi_load_conf() {
     ConfFile wifiConf{"/littlefs/conf/wifi.conf"};
 
@@ -131,7 +129,7 @@ void wifi_load_conf() {
         noSsid = false;
     }
 
-    for (const auto& k: wifiConf.keys()) {
+    for (const auto &k: wifiConf.keys()) {
         if (starts_with(k, "ssid") && !ends_with(k, "_psk")) {
             auto ssid = wifiConf.getString(k).c_str();
             auto psk = wifiConf.c(k + "_psk", nullptr);
@@ -176,7 +174,6 @@ void connect_wifi_async() {
 }
 
 
-
 bool timeSyncAsync(const char *tzInfo, const char *ntpServer1, const char *ntpServer2 = nullptr,
                    const char *ntpServer3 = nullptr) {
     static unsigned long tSyncStarted = 0;
@@ -195,7 +192,6 @@ bool timeSyncAsync(const char *tzInfo, const char *ntpServer1, const char *ntpSe
     }
     return false;
 }
-
 
 
 void _wifiConnected() {
@@ -220,7 +216,7 @@ void _wifiConnected() {
 
     //webserver_begin();
 
-    if(scope == nullptr)
+    if (scope == nullptr)
         scope = new Scope();
     scope->end();
     if (!scope->begin(24)) {
@@ -254,7 +250,10 @@ void wifiLoop(bool connect) {
 }
 
 bool wait_for_wifi() {
+    static unsigned long lastTimeout = 0;
+
     if (noSsid) return false;
+    if (lastTimeout and (micros() - lastTimeout < 30 * 1000 * 1000)) return false;
 
     ESP_LOGI("tele", "Connecting WiFi...");
     auto t_start = millis();
@@ -263,6 +262,7 @@ bool wait_for_wifi() {
         //Serial.print(".");
         if (millis() - t_start > 6000) {
             ESP_LOGW("tele", "WiFi connection timeout");
+            lastTimeout = micros();
             return false;
         }
     }
@@ -401,7 +401,6 @@ void setupTelnet() {
         ESP_LOGE("tele", "Telnet server start error");
     }
 }
-
 
 
 void telnetEnd() {

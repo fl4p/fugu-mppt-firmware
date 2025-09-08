@@ -359,6 +359,7 @@ void setup() {
     TeleConf teleConf{};
 
     if (!disableWifi) {
+        mppt.charger.beginMqtt();
         connect_wifi_async();
         bool res = wait_for_wifi();
         led.setHexShort(res ? 0x565 : 0x200);
@@ -381,12 +382,15 @@ void setup() {
     try {
         setupSensors(pinConf, lim);
         mppt.initSensors(pinConf);
+        if (scope) scope->addChannel(&mppt, 0, 'u', 12, "vout_filt");
 
         if (!setupErr) {
             ConfFile coilConf{"/littlefs/conf/coil.conf"};
             ConfFile converterConf{"/littlefs/conf/converter.conf"};
+            ConfFile chargerConf{"/littlefs/conf/charger.conf"};
 
-            mppt.charger.params.Vbat_max = converterConf.getFloat("vout_max", NAN);
+            mppt.charger.begin(chargerConf, converterConf);
+
             auto mode = converterConf.getString("mode", "mppt");
 
             converter.init(converterConf, pinConf, coilConf);
@@ -782,7 +786,7 @@ void loopNetwork_task(void *arg) {
 
     if ((wallClockUs() - lastTimeOutUs) >= lfPeriod) {
         loopLF(wallClockUs());
-        mqttUpdateSensors(mppt.tracker._lastPower);
+        //if(WiFi.isConnected())mqttUpdateSensors(mppt.tracker._lastPower);
         lastTimeOutUs = wallClockUs();
     }
 
@@ -943,6 +947,9 @@ bool handleCommand(const String &inp) {
                      s->ewm.avg.get(), u,
                      sqrt(s->ewm.std.get()) * abs(s->ewm.avg.get()), u,
                      sqrt(s->ewm.std.get()) * 100.f);
+            UART_LOG("  ANF(span=%4.0f):  Nstd= %7.3f   Sstd=%7.3f   NSR=%7.3f", s->anf.span,
+                     sqrt(s->anf.ewmN.nvar()) * 100.0f, sqrt(s->anf.ewmS.nvar()) * 100.0f,
+                     sqrt(s->anf.ewmN.nvar() / s->anf.ewmS.nvar()));
         }
 
     } else if (inp == "ip") {

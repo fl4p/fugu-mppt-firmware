@@ -66,14 +66,18 @@ struct Sensor {
     NotchFilter *notchFilter = nullptr; // filter 50/60 Hz inverter noise
     RunningMedian5<float> med3{}; // filter burst noise
     AdaptiveNoiseFilter anf{};
+    EWM<false, float> ewm; // filter residual noise
     MeanAccumulator calibBuffer{}; // for offset calibration
 
     float calibrationAvg = 0; // stores the mean value from calibBuffer
 
     const bool isVirtual;
 
+    /*
     Sensor(SensorParams params, uint32_t ewmSpan)
-            : params(std::move(params)), ewm{ewmSpan}, isVirtual(false) {}
+            : params(std::move(params)), ewm{ewmSpan}, isVirtual(false) {
+        anf.begin(ewmSpan, 0.2f);
+    } */
 
 
     Sensor(const Sensor &other) = delete; // no-copy
@@ -239,6 +243,7 @@ public:
 
         auto sensorPtr = new PhysicalSensor{adc, params, ewmSpan};
 
+        // todo scope:  adc->getSamplingRate() needs to be called after adc->setMaxExpectedVoltage()
         if (scope)
             scope->addChannel(adc, sensorPtr->params.adcCh, 'u', 12, sensorPtr->params.teleName.c_str());
 

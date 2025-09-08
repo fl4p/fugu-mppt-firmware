@@ -16,10 +16,12 @@ idf_component_register(SRCS
         "../src/util.cpp"
         "../src/adc/adc_esp32_cont.cpp"
         "../src/viz/lcd.cpp"
+        "../src/telemetry.cpp"
         "../src/web/server.cpp"
         "../src/console.cpp"
         "../src/etc/rt.cpp"
         "../src/mqtt.cpp"
+        "../src/tele/HAMqttDevice.cpp"
         "../src/math/float16.cpp"
         INCLUDE_DIRS "." "../src" "../src/asciichart"
         REQUIRES

@@ -138,9 +138,8 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
             if (chan_num < SOC_ADC_CHANNEL_NUM(ADC_UNIT_1)) {
 //ESP_LOGI("adc_esp32", "Unit: %s, Channel: %"PRIu32", Value: %"PRIx32, unit, chan_num, data);
 
-                if (scope) {
-                    scope->addSample12(this, chan_num, data);
-                }
+                //if (scope)scope->addSample12(this, chan_num, data);
+
                 //ESP_LOGI("adccont", "scope %p", scope);
 
                 avgBuf[chan_num].num++;
@@ -151,6 +150,7 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
 
                 if (avgBuf[chan_num].num == avgNum) {
                     data = avgBuf[chan_num].agg / avgBuf[chan_num].num;
+                    if (scope)scope->addSample12(this, chan_num, data);
                     int mv = 0;
                     adc_cali_raw_to_voltage(adc_chars[attenuation[chan_num]], data, &mv);
                     float v = (float) mv * 1e-3f;
