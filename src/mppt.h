@@ -478,6 +478,9 @@ public:
 
 
         if (bflow && !bflow.state()) {
+        // if bflow switch is powered by HS gate drive, need a min duty cycle
+        constexpr auto BflowMinDutyCycle = 0.1f;
+        if (bflow && (!bflow.state() || converter.getDutyCycle() < BflowMinDutyCycle)) {
             if (sensorPhysicalI->ewm.avg.get() > 6) {
                 if (!converter.disabled())
                     ESP_LOGE("MPPT", "High-current through open backflow switch!");
