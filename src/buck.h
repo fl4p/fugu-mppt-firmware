@@ -68,6 +68,8 @@ public:
 
     inline bool forcedPwm_() const { return forcedPwm; }
 
+    inline bool syncRectEnabled_() const {return syncRectEnabled;}
+
     uint16_t pwmCtrlMax{}, pwmRectMin{}, pwmCtrlMin{};
 
 public:

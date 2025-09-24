@@ -460,8 +460,9 @@ public:
             if (currentFilt < -0.05f && limits.reverse_current_paranoia) {
                 if (converter.getRectOnPwmCnt() > converter.getRectOnPwmMax() / 2 &&
                     converter.getRectOnPwmCnt() > (converter.pwmCtrlMax / 10)) {
-                    ESP_LOGW("MPPT", "Low current, set low-side min duty (ewm(Iin)=%.2f, max(Iin,Iin[-1])=%.2f)",
-                             sensors.Iin->ewm.avg.get(), std::max(sensors.Iin->last, sensors.Iin->previous));
+                    ESP_LOGW("MPPT", "Low current, set low-side min duty (ewm(%s)=%.2f, max(i[0],i[-1])=%.2f)",
+                             sensorPhysicalI->params.teleName.c_str(),
+                             sensorPhysicalI->ewm.avg.get(), std::max(sensorPhysicalI->last, sensorPhysicalI->previous));
                 }
                 if (bflow.state())
                     ESP_LOGW("MPPT", "Low current %.2f, disable backflow", currentFilt);
@@ -488,6 +489,15 @@ public:
                 // in case the current sensor is wrong
                 if (!converter.disabled())
                     ESP_LOGE("MPPT", "High duty cycle with open backflow switch!");
+                shutdownDcdc();
+                return false;
+            }
+        }
+
+        if (!converter.syncRectEnabled_()) {
+            if (sensorPhysicalI->ewm.avg.get() > 6) {
+                if (!converter.disabled())
+                    ESP_LOGE("MPPT", "High current without sync rectification!");
                 shutdownDcdc();
                 return false;
             }
