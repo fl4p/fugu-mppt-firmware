@@ -476,8 +476,13 @@ public:
             // TODO Vin
         }
 
+        if(sensors.Iout->ewm.avg.get() > 1 and sensors.Vout->ewm.avg.get() < 1) {
+            ESP_LOGE("MPPT", "Short circuit detected!");
+            shutdownDcdc();
+            // TODO delay
+            return false;
+        }
 
-        if (bflow && !bflow.state()) {
         // if bflow switch is powered by HS gate drive, need a min duty cycle
         constexpr auto BflowMinDutyCycle = 0.1f;
         if (bflow && (!bflow.state() || converter.getDutyCycle() < BflowMinDutyCycle)) {
