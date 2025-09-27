@@ -183,7 +183,10 @@ bool timeSyncAsync(const char *tzInfo, const char *ntpServer1, const char *ntpSe
         tSyncStarted = millis() + 1;
         configTzTime(tzInfo, ntpServer1, ntpServer2, ntpServer3);
     } else if (time(nullptr) > 1000000000l) {
-        ESP_LOGI("tele", "Time synced!");
+        struct tm timeinfo;
+        time_t nowSecs = time(nullptr);
+        gmtime_r(&nowSecs, &timeinfo);
+        ESP_LOGI("tele", "Time synced! %s UTC", asctime(&timeinfo));
         tSyncStarted = 0;
         return true;
     } else if ((millis() - tSyncStarted) > (20 * 1000)) {
