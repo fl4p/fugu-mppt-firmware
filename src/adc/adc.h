@@ -7,7 +7,7 @@
 #include "store.h" // ConfFile
 
 enum class SampleReadScheme : uint8_t {
-    cycle = 0,
+    cycle = 0, // cycle around channels
     any, // using callback
     all,
 };
@@ -20,7 +20,7 @@ public:
      * Tells the user how to read samples from this ADC
      * @return
      */
-    virtual SampleReadScheme scheme() const = 0;
+    [[nodiscard]] virtual SampleReadScheme scheme() const = 0;
 
     /**
      * Initializes ADC hardware

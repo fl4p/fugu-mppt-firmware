@@ -21,7 +21,7 @@ public:
     uint8_t readingChannel = 0;
 
     [[nodiscard]] SampleReadScheme scheme() const override {
-        return SampleReadScheme::cycle;
+        return SampleReadScheme::all;
     }
 
 private:
@@ -34,7 +34,7 @@ private:
 
 public:
     bool init(const ConfFile &pinConf) override {
-        auto f = pinConf.getLong("adc_fake_freq", 4000 * 3);
+        auto f = pinConf.getLong("adc_fake_freq", 1000 * 3);
         periodic_timer.begin(f, &adc_fake_periodic_timer_callback, this);
 
         // Test taskNotification
@@ -110,6 +110,8 @@ public:
             } else {
                 x = 0.0f;
             }
+        } else {
+            x = 1;
         }
 
         if (scope)

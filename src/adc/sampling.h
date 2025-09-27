@@ -432,7 +432,7 @@ public:
                 if (cr > calibRes) calibRes = cr;
             }
         } else {
-            assert_throw(false, "not implemented");
+            assert_throw(false, "scheme not implemented");
 
             auto sensor(realSensors[state.cycleCh]);
 
