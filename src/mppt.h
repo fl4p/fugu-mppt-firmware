@@ -476,7 +476,7 @@ public:
             // TODO Vin
         }
 
-        if(sensors.Iout->ewm.avg.get() > 1 and sensors.Vout->ewm.avg.get() < 1) {
+        if(sensors.Iout->ewm.avg.get() > 6 and sensors.Vout->ewm.avg.get() < 1) {
             ESP_LOGE("MPPT", "Short circuit detected!");
             shutdownDcdc();
             // TODO delay
