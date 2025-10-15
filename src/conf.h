@@ -202,7 +202,7 @@ public:
         throw std::runtime_error("key not found: " + key);
     }
 
-    const std::string &getString(const std::string &key, const std::string &def) const {
+    [[nodiscard]] const std::string &getString(const std::string &key, const std::string &def) const {
         auto i = _map.find(key);
         if (i != _map.end()) {
             return i->second;

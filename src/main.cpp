@@ -87,7 +87,8 @@ void loopRT(void *arg); // this is the critical one
 
 void loopRTNewData(unsigned long nowMs);
 
-AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &pinConf, const ConfFile &sensConf) {
+AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &pinConf, const ConfFile &sensConf,
+    const std::string &chnDebug) {
     AsyncADC<float> *adc;
     if (adcName == "ads1115" or adcName == "ads1015") {
         adc = new ADC_ADS(adcName == "ads1115");
@@ -101,7 +102,7 @@ AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &p
         adc = new ADC_Fake();
     } else {
         //ESP_LOGE("main", "Unknown ADC '%s'", adcName.c_str());
-        throw std::runtime_error("unknown ADC '" + adcName + "'");
+        throw std::runtime_error("unknown ADC '" + adcName + "'" + " " + chnDebug);
         //return nullptr;
     }
 
@@ -117,6 +118,7 @@ AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &p
 
 void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     loopWallClockUs_ = micros();
+    heap_caps_check_integrity_all(true);
 
     /// compute voltage factor for a resistor divider network with 2 parallel R_low (Rh+(Rl+Ra))
     auto adcVDiv = [](float Rh, float Rl, float Ra) {
@@ -149,7 +151,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         auto an = sensConf.getString(chn + '_' + "adc", defAdcName);
 
         if (chNum != 255 && adcs.find(an) == adcs.end()) {
-            adcs[an] = createAdcInstance(an, pinConf, sensConf);
+            adcs[an] = createAdcInstance(an, pinConf, sensConf, chn);
         }
         auto adc = chNum != 255 ? adcs[an] : nullptr;
 
@@ -275,6 +277,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     adcSampler.ignoreCalibrationConstraints = sensConf.getByte("ignore_calibration_constraints", 0);
     if (adcSampler.ignoreCalibrationConstraints)
         ESP_LOGW("main", "Skipping ADC range and noise checks.");
+    heap_caps_check_integrity_all(true);
 }
 
 
