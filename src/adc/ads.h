@@ -6,6 +6,7 @@
 #include "util.h"
 #include "etc/pinconfig.h"
 #include "etc/rt.h"
+#include "tele/scope.h"
 
 class ADC_ADS;
 
@@ -74,6 +75,11 @@ public:
 
         // defaults: RATE_ADS1015_1600SPS and RATE_ADS1115_128SPS
 
+        testAlert();
+
+        if (!_isADS1115_16bit) {
+            ads.setDataRate(RATE_ADS1015_490SPS);
+        }
         //ads.setDataRate(RATE_ADS1115_860SPS); // this is for ADS1015 also! (130 sps). fake chips?
         // ads.setDataRate(RATE_ADS1015_3300SPS);
         //ads.setDataRate(RATE_ADS1015_3300SPS);
@@ -86,8 +92,8 @@ public:
             assert(ads.getDataRate()==RATE_ADS1115_128SPS);
             return 128.f / (float) usedChannels;
         } else {
-            assert(ads.getDataRate()==RATE_ADS1015_1600SPS);
-            return 1600.f / (float) usedChannels;
+            assert(ads.getDataRate()==RATE_ADS1015_490SPS);
+            return 490.f / (float) usedChannels;
         }
     }
 
@@ -145,12 +151,35 @@ public:
 
     void startReading(uint8_t channel) override {
         //ESP_LOGI("ads", "Start reading channel %hhu", channel);
-        assert(readingChannel == 255);
+        //assert(readingChannel == 255);
         readingChannel = channel;
         ads.setGain(gainsByChannel[channel]);
         //newData = false;
-        ads.startADCReading(MUX_BY_CHANNEL[channel], /*continuous=*/true);
+        ads.startADCReading(MUX_BY_CHANNEL[channel], /*continuous=*/false);
         taskNotification.subscribe();
+    }
+
+    bool testAlert() {
+        vTaskDelay(1);
+        newData = false;
+        ads.setDataRate(_isADS1115_16bit ? RATE_ADS1115_128SPS : RATE_ADS1015_1600SPS);
+        ads.startADCReading(MUX_BY_CHANNEL[0], /*continuous=*/false);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        assert(newData);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        //assert(!newData);
+
+        newData = false;
+        ads.startADCReading(MUX_BY_CHANNEL[0], /*continuous=*/false);
+        auto t0 = micros();
+        while (!newData) { if (micros() - t0 > 100000) return false; } // busy wait
+        auto convTime = micros() - t0;
+
+        ESP_LOGI("ads", "ADC conv time: %lu us", convTime);
+        auto expectedCT = 1e6f / ( _isADS1115_16bit ? 128 : 1600);
+        //assert ((fabs(convTime - expectedCT) / expectedCT) < 0.05f);
+
+        return true;
     }
 
 
@@ -192,17 +221,33 @@ public:
 
     inline bool hasData() override {
         //return taskNotification.wait(3);
-        bool hd = newData || (taskNotification.wait(30) && newData);
-        newData = false;
-        return hd;
+        //bool hd = newData || (taskNotification.wait(30) && newData);
+        if (!taskNotification.wait(30)) {
+            //ESP_LOGW("ads", "ads timeout!");
+            startReading(readingChannel);
+            return false;
+        }
+
+        if (newData) {
+            newData = false;
+            return true;
+        }
+        return false;
+
+        //bool hd = newData || taskNotification.wait(30);
+        //newData = false;
+        //return hd;
     }
 
     float getSample() override {
         // TODO detect clipping
-        int16_t adc = ads.getLastConversionResults();
-        auto v = ads.computeVolts(adc);
+        int16_t raw = ads.getLastConversionResults();
+        if (scope) scope->addSample12(this, readingChannel, raw);
+        auto v = ads.computeVolts(raw);
+        //if (v > 4) v = 4;
+        //if (v < 0) v = 0;
         //newData = false;
-        readingChannel = 255;
+        //readingChannel = 255;
         return v;
     }
 

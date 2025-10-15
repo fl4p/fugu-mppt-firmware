@@ -218,7 +218,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         } else {
             sensors.Iin = adcSampler.addVirtualSensor(
                     [&]() {
-                        if (std::abs(sensors.Iout->last) < .01f or sensors.Vin->last < 0.1f)
+                        if (std::abs(sensors.Iout->last) < .01f or sensors.Vout->last < 0.1f)
                             return 0.f;
                         return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
                     },
