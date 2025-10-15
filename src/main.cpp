@@ -88,7 +88,7 @@ void loopRT(void *arg); // this is the critical one
 void loopRTNewData(unsigned long nowMs);
 
 AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &pinConf, const ConfFile &sensConf,
-    const std::string &chnDebug) {
+                                   const std::string &chnDebug) {
     AsyncADC<float> *adc;
     if (adcName == "ads1115" or adcName == "ads1015") {
         adc = new ADC_ADS(adcName == "ads1115");
@@ -160,14 +160,14 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         if (chNum != 255) {
             if (chn[0] == 'v') {
                 lt = adcVDiv(
-                        sensConf.f(chn + '_' + "rh"),
-                        sensConf.getFloat(chn + '_' + "rl"),
-                        adc->getInputImpedance(chNum)
+                    sensConf.f(chn + '_' + "rh"),
+                    sensConf.getFloat(chn + '_' + "rl"),
+                    adc->getInputImpedance(chNum)
                 );
             } else if (chn[0] == 'i') {
                 lt = {
-                        sensConf.f(chn + '_' + "factor", 1.f),
-                        sensConf.f(chn + '_' + "midpoint", 0.f)
+                    sensConf.f(chn + '_' + "factor", 1.f),
+                    sensConf.f(chn + '_' + "midpoint", 0.f)
                 };
             }
         }
@@ -175,17 +175,17 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         auto filtLen = (uint16_t) sensConf.getLong(chn + '_' + "filt_len");
 
         params.emplace(chn, p{
-                .params = SensorParams{
-                        .adcCh= chNum,
-                        .transform = lt,
-                        .calibrationConstraints = {},
-                        .teleName = chn,
-                        .unit = ' ',
-                        .rawTelemetry = false,
-                },
-                .adc=adc,
-                .filtLen=filtLen,
-        });
+                           .params = SensorParams{
+                               .adcCh = chNum,
+                               .transform = lt,
+                               .calibrationConstraints = {},
+                               .teleName = chn,
+                               .unit = ' ',
+                               .rawTelemetry = false,
+                           },
+                           .adc = adc,
+                           .filtLen = filtLen,
+                       });
 
         //ESP_LOGI("main", "Initialized ADC %s (V/I)(i/o)_ch = (%i %i %i %i) , exp.LoopRate=%hu", adcName.c_str(), Vin_ch,
         //         Iin_ch,
@@ -201,7 +201,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
     sensors.Vin = adcSampler.addSensor(params.find("vin")->second.adc,
                                        params.find("vin")->second.params,
                                        lim.Vin_max,
-                                       params.find("vin")->second.filtLen);     // filtLen = 60
+                                       params.find("vin")->second.filtLen); // filtLen = 60
 
 
     {
@@ -211,20 +211,20 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
             iin.params.calibrationConstraints = {lim.Iin_max * 0.05f, .1f, true};
             iin.params.unit = 'A';
             sensors.Iin = adcSampler.addSensor(
-                    iin.adc,
-                    iin.params,
-                    lim.Iin_max,
-                    iin.filtLen);
+                iin.adc,
+                iin.params,
+                lim.Iin_max,
+                iin.filtLen);
         } else {
             sensors.Iin = adcSampler.addVirtualSensor(
-                    [&]() {
-                        if (std::abs(sensors.Iout->last) < .01f or sensors.Vout->last < 0.1f)
-                            return 0.f;
-                        return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
-                    },
-                    iin.filtLen,
-                    iin.params.teleName.c_str(),
-                    iin.params.unit);
+                [&]() {
+                    if (std::abs(sensors.Iout->last) < .01f or sensors.Vin->last < 0.1f)
+                        return 0.f;
+                    return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
+                },
+                iin.filtLen,
+                iin.params.teleName.c_str(),
+                iin.params.unit);
         }
     }
 
@@ -237,20 +237,20 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
             iout.params.unit = 'A';
             iout.params.rawTelemetry = true;
             sensors.Iout = adcSampler.addSensor(
-                    iout.adc,
-                    iout.params,
-                    lim.Iout_max,
-                    iout.filtLen);
+                iout.adc,
+                iout.params,
+                lim.Iout_max,
+                iout.filtLen);
         } else {
             sensors.Iout = adcSampler.addVirtualSensor(
-                    [&]() {
-                        if (std::abs(sensors.Iin->last) < .05f or sensors.Vout->last < 0.1f)
-                            return 0.f;
-                        return sensors.Iin->last * sensors.Vin->last / sensors.Vout->last * conversionEfficiency;
-                    },
-                    iout.filtLen,
-                    iout.params.teleName.c_str(),
-                    iout.params.unit
+                [&]() {
+                    if (std::abs(sensors.Iin->last) < .05f or sensors.Vout->last < 0.1f)
+                        return 0.f;
+                    return sensors.Iin->last * sensors.Vin->last / sensors.Vout->last * conversionEfficiency;
+                },
+                iout.filtLen,
+                iout.params.teleName.c_str(),
+                iout.params.unit
             );
         }
     }
@@ -368,7 +368,7 @@ void setup() {
         bool res = wait_for_wifi();
         led.setHexShort(res ? 0x565 : 0x200);
         lcd.displayMessage(
-                res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
+            res ? ("WiFi connected.\n" + std::string(WiFi.localIP().toString().c_str())) : "WiFi timeout.", 2000);
 
         teleConf = ConfFile{"/littlefs/conf/tele.conf"};
 
@@ -404,7 +404,6 @@ void setup() {
             ConfFile trackerConf{"/littlefs/conf/tracker.conf"};
             mppt.begin(trackerConf, pinConf, lim, teleConf);
         }
-
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during sensor/converter/tracker setup: %s", er.what());
         //if(adcSampler.adc) delete adcSampler.adc;
@@ -473,7 +472,7 @@ void loopRT(void *arg) {
 #define NON_RT_CORE 0
 
 #if CONFIG_ARDUINO_RUNNING_CORE == RT_CORE or CONFIG_ARDUINO_EVENT_RUNNING_CORE == RT_CORE or \
-    CONFIG_ARDUINO_UDP_RUNNING_CORE == RT_CORE or CONFIG_ARDUINO_SERIAL_EVENT_TASK_RUNNING_CORE == RT_CORE
+CONFIG_ARDUINO_UDP_RUNNING_CORE == RT_CORE or CONFIG_ARDUINO_SERIAL_EVENT_TASK_RUNNING_CORE == RT_CORE
 #error "arduino runtime is configured to run on RT_CORE"
 #endif
 
@@ -502,7 +501,7 @@ void loopRT(void *arg) {
 
 #ifdef CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
     ESP_LOGW("main", "CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS enabled!");
-            delay(1000);
+    delay(1000);
 #endif
 
     // enable log defer just before starting the RT loop
@@ -633,29 +632,30 @@ void loopLF(const unsigned long &nowUs) {
 
     if (sensors.Vin)
         UART_LOG(
-                "V=%4.*f/%5.*f I=%4.*f/%5.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s %s(H|L|Lm)=%4hu|%4hu|%4hu"
-                " st=%5s,%i lag=%lu㎲ N=%lu rssi=%hi",
-                sensors.Vin->last >= 9.55f ? 1 : 2, sensors.Vin->last,
-                sensors.Vout->last >= 9.55f ? 2 : 2, sensors.Vout->last,
-                sensors.Iin->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iin->ewm.avg.get(), // sensors.Iin->last,
-                sensors.Iout->ewm.avg.get() >= 9.55f ? 2 : 2, sensors.Iout->ewm.avg.get(),
-                sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
-                //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
-                mppt.ntc.last(), mppt.ucTemp.last(),
-                sps,
-                dt ? (uint32_t) (bytesSent * 1000llu / dt) : 0,
-                converter.inDCM() ? "DCM" : "CCM",
-                converter.getCtrlOnPwmCnt(), converter.getRectOnPwmCnt(), converter.getRectOnPwmMax(),
-                //mppt.getPower()
-                manualPwm ? "MANU"
-                          : (!charging && !mppt.startCondition()
-                             ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
-                             : mpptStateStr().c_str()),
-                (int) charging,
-                maxLoopLag,
-                //maxLoopDT,
-                nSamples,
-                WiFi.RSSI()
+            "V=%4.*f/%5.*f I=%4.*f/%5.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s %s(H|L|Lm)=%4hu|%4hu|%4hu"
+            " st=%5s,%i lag=%lu㎲ N=%lu rssi=%hi",
+            sensors.Vin->last >= 9.55f ? 1 : 2, sensors.Vin->last,
+            sensors.Vout->last >= 9.55f ? 2 : 2, sensors.Vout->last,
+            sensors.Iin->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iin->ewm.avg.get(), // sensors.Iin->last,
+            sensors.Iout->ewm.avg.get() >= 9.55f ? 2 : 2, sensors.Iout->ewm.avg.get(),
+            sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
+            //ewm.chIin.std.get() * 1000.f, σIin=%.2fm
+            mppt.ntc.last(), mppt.ucTemp.last(),
+            sps,
+            dt ? (uint32_t) (bytesSent * 1000llu / dt) : 0,
+            converter.inDCM() ? "DCM" : "CCM",
+            converter.getCtrlOnPwmCnt(), converter.getRectOnPwmCnt(), converter.getRectOnPwmMax(),
+            //mppt.getPower()
+            manualPwm
+                ? "MANU"
+                : (!charging && !mppt.startCondition()
+                       ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
+                       : mpptStateStr().c_str()),
+            (int) charging,
+            maxLoopLag,
+            //maxLoopDT,
+            nSamples,
+            WiFi.RSSI()
         );
     lastNSamples = nSamples;
     bytesSent = 0;
@@ -751,8 +751,8 @@ void loopRTNewData(unsigned long nowMs) {
 
         if (scope && sensors.Vout && haveNewSample)
             scope->addSample12(&mppt, 0,
-                               (uint16_t) (sensors.Vout->med3.get() / 60.0f *
-                                           4000.0f));
+                               (uint16_t) max(0.f, sensors.Vout->last / 60.0f *
+                                           2000.0f));
     }
 
 
@@ -796,11 +796,11 @@ void loopNetwork_task(void *arg) {
 
     if (lcd && !adcSampler.adcStates.empty())
         lcd.updateValues(LcdValues{
-                .Vin = sensors.Vin->ewm.avg.get(),
-                .Vout = sensors.Vout->ewm.avg.get(),
-                .Iin = sensors.Iin->ewm.avg.get(),
-                .Iout = sensors.Iout->ewm.avg.get(),
-                .Temp = mppt.ntc.last(),
+            .Vin = sensors.Vin->ewm.avg.get(),
+            .Vout = sensors.Vout->ewm.avg.get(),
+            .Iin = sensors.Iin->ewm.avg.get(),
+            .Iout = sensors.Iout->ewm.avg.get(),
+            .Temp = mppt.ntc.last(),
         });
 
     if (scope && scope->connected) {
@@ -878,7 +878,6 @@ bool handleCommand(const String &inp) {
         } else {
             return false;
         }
-
     } else if (inp.startsWith("speed ") && inp.length() <= 12) {
         float speedScale = inp.substring(6).toFloat();
         if (speedScale >= 0 && speedScale < 10) {
@@ -901,7 +900,6 @@ bool handleCommand(const String &inp) {
     } else if (inp == "wifi on") {
         disableWifi = false;
         connect_wifi_async();
-
     } else if (inp == "wifi off") {
         WiFi.disconnect(true);
         disableWifi = true;
@@ -918,7 +916,6 @@ bool handleCommand(const String &inp) {
             ESP_LOGI("main", "adding wifi network %s (psk=%s)", ssid.c_str(), psk.c_str());
             add_ap(ssid, psk.c_str());
         }
-
     } else if (inp == "scan-i2c") {
         scan_i2c();
     } else if (inp == "ls") {
@@ -940,7 +937,6 @@ bool handleCommand(const String &inp) {
         UART_LOG("Total PSRAM: %9ld", ESP.getPsramSize());
         UART_LOG("Free PSRAM:  %9ld", ESP.getFreePsram());
     } else if (inp == "sensor") {
-
         for (auto s: adcSampler.sensors) {
             auto u = s->params.unit;
             UART_LOG("\nSensor `%s` (ch%d, %s):", s->params.teleName.c_str(), s->params.adcCh,
@@ -955,7 +951,6 @@ bool handleCommand(const String &inp) {
                      sqrt(s->anf.ewmN.nvar()) * 100.0f, sqrt(s->anf.ewmS.nvar()) * 100.0f,
                      sqrt(s->anf.ewmN.nvar() / s->anf.ewmS.nvar()));
         }
-
     } else if (inp == "ip") {
         UART_LOG("Local IP Address: %s", WiFi.localIP().toString().c_str());
     } else if (inp == "adc-restart") {
@@ -992,7 +987,6 @@ bool handleCommand(const String &inp) {
 
         // get-config mqtt.conf broker_uri
         // get-config converter.conf
-
     } else if (inp.startsWith("get-config ")) {
         auto ikey = inp.indexOf(' ', 11);
         auto fn = "/littlefs/conf/" + inp.substring(11, ikey != -1 ? ikey : inp.length());

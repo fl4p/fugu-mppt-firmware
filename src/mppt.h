@@ -381,7 +381,7 @@ public:
             auto vout = std::max(sensors.Vout->last, sensors.Vout->previous);
 
             if (!wasDisabled)
-                ESP_LOGW("mppt", "Vout %.1fV (prev=%.1fV,ewma=%.1fV,std=%.4f,buck=%hu) > %.1fV + 5pct!",
+                ESP_LOGW("mppt", "Vout %.1fV (prev=%.1fV,ewma=%.1fV,std=%.4f,D=%hu) > %.1fV + 5pct!",
                          sensors.Vout->last, sensors.Vout->previous,
                          sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.std.get(), converter.getCtrlOnPwmCnt(),
                          charger.params.Vbat_max
@@ -435,7 +435,8 @@ public:
         }
 
         if (sensorPhysicalI->ewm.avg.get() < -1) {
-            ESP_LOGE("MPPT", "Reverse avg current shutdown %.1f A", sensorPhysicalI->ewm.avg.get());
+            if (!converter.disabled())
+                ESP_LOGE("MPPT", "Reverse avg current %.1f A, shutdown!", sensorPhysicalI->ewm.avg.get());
             shutdownDcdc();
             return false;
         }
@@ -477,7 +478,7 @@ public:
         }
 
         if(sensors.Iout->ewm.avg.get() > 6 and sensors.Vout->ewm.avg.get() < 1) {
-            ESP_LOGE("MPPT", "Short circuit detected!");
+            if (!converter.disabled()) ESP_LOGE("MPPT", "Short circuit detected!");
             shutdownDcdc();
             // TODO delay
             return false;

@@ -18,6 +18,8 @@ from scipy import signal
 duration = 4 / 1
 sample_rate = 2000
 
+hide_channels = {'ntc'}
+
 time_x = np.array(np.linspace(0, 1, num=int(duration * sample_rate))) * duration
 win_len = len(time_x)
 
@@ -271,7 +273,8 @@ def redraw_loop(channels: Dict[str, Channel], fig, ax):
         tcpu_trig = time.time()
 
         for ch in list(channels.values()):
-            ch.redraw(trig_i)
+            if ch.name not in hide_channels:
+                ch.redraw(trig_i)
 
         tcpu_draw = time.time()
 
@@ -426,7 +429,8 @@ def main():
             if ch_num not in channelNames:
                 channelNames[ch_num] = ch_name
                 ch = Channel(ch_num, ch_name, ch_typ)
-                ch.plot(ax)
+                if ch_name not in hide_channels:
+                    ch.plot(ax)
                 channels[ch_num] = ch
             else:
                 assert channelNames[ch_num] == ch_name
@@ -485,7 +489,7 @@ def main():
     fpl.loop.run()
     plt.show()
 
-
+print('discovering hosts..')
 print(discover_scope_servers())
 main()
 # websockets.

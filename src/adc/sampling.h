@@ -444,7 +444,7 @@ public:
             //using namespace std::string_literals;
             //assert_throw(false, "cycle scheme"s + "not implemented");
 
-            auto sensor(state.cycleSensors[state.cycleSensorsPos]);
+            const auto sensor(state.cycleSensors[state.cycleSensorsPos]);
 
             auto x = adc->getSample();
             rtcount("adc.update.getSample");
