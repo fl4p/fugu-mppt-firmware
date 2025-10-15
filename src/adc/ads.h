@@ -5,6 +5,7 @@
 #include "adc.h"
 #include "util.h"
 #include "etc/pinconfig.h"
+#include "etc/rt.h"
 
 class ADC_ADS;
 
@@ -25,20 +26,34 @@ class ADC_ADS : public AsyncADC<float> {
 
     uint8_t readingChannel = 255;
     volatile bool newData = false;
+    bool _isADS1115_16bit = false;
+
+    TaskNotification taskNotification{};
 
 public:
 
     explicit ADC_ADS(bool _16bit) {
         if(_16bit) {
             ads = Adafruit_ADS1115();
+            _isADS1115_16bit = true;
         } else {
             ads = Adafruit_ADS1015();
         }
     }
 
     [[nodiscard]] SampleReadScheme scheme() const override {
-        return SampleReadScheme::cycle;
+        return SampleReadScheme::cycle; // cycle
     }
+
+    /*
+    uint32_t read(SampleCallback &&newSampleCallback) override {
+
+        //newSampleCallback
+
+        newSampleCallback(readingChannel, getSample());
+
+
+    } */
 
     bool init(const ConfFile &pinConf) override {
 
@@ -60,10 +75,23 @@ public:
         ads_inst = this;
         attachInterrupt(digitalPinToInterrupt(adsAlert), AdsAlertISR, FALLING); // TODO rising
 
+        // defaults: RATE_ADS1015_1600SPS and RATE_ADS1115_128SPS
+
         //ads.setDataRate(RATE_ADS1115_860SPS); // this is for ADS1015 also! (130 sps). fake chips?
         // ads.setDataRate(RATE_ADS1015_3300SPS);
         //ads.setDataRate(RATE_ADS1015_3300SPS);
         return true;
+    }
+
+    float getSamplingRate(uint8_t ch) override {
+        int usedChannels = 3; // TODO
+        if (_isADS1115_16bit) {
+            assert (ads.getDataRate()==RATE_ADS1115_128SPS);
+            return 128.f / (float)usedChannels;
+        } else {
+            assert (ads.getDataRate()==RATE_ADS1015_1600SPS);
+            return 1600.f / (float)usedChannels;
+        }
     }
 
     void deinit() {
@@ -123,6 +151,7 @@ public:
         readingChannel = channel;
         ads.setGain(gainsByChannel[channel]);
         ads.startADCReading(MUX_BY_CHANNEL[channel], /*continuous=*/false);
+        taskNotification.subscribe();
     }
 
 
@@ -157,9 +186,15 @@ public:
     }
     */
 
-    inline void alertNewDataFromISR() { newData = true; }
+    inline void alertNewDataFromISR() {
+        newData = true;taskNotification.notifyFromIsr();
+    }
 
-    inline bool hasData() override { return newData; }
+    inline bool hasData() override {
+        bool hd = newData || taskNotification.wait(3);
+        newData = false;
+        return hd;
+    }
 
     float getSample() override {
         // TODO detect clipping

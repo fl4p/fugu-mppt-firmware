@@ -10,6 +10,8 @@
     <mapping directory="$IDF_PATH$/components/bt/controller/lib_esp32h2/esp32h2-bt-lib" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/bt/host/nimble/nimble" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/cmock/CMock" vcs="Git" />
+    <mapping directory="$IDF_PATH$/components/cmock/CMock/vendor/c_exception" vcs="Git" />
+    <mapping directory="$IDF_PATH$/components/cmock/CMock/vendor/unity" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/esp_coex/lib" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/esp_phy/lib" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/esp_wifi/lib" vcs="Git" />
