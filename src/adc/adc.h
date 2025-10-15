@@ -44,7 +44,8 @@ public:
     }
 
     virtual float getSamplingRate(uint8_t channel) {
-        throw std::runtime_error("not implemented");
+        using namespace std::string_literals;
+        throw std::runtime_error("getSR"s + "not implemented");
     };
 
     /**
@@ -76,7 +77,8 @@ public:
     typedef std::function<void(const uint8_t &ch, T val)> SampleCallback;
 
     virtual uint32_t read(SampleCallback &&newSampleCallback) {
-        throw std::runtime_error("not implemented");
+        using namespace std::string_literals;
+        throw std::runtime_error("read"s + "not implemented");
     };
 
     //virtual uint8_t getReadingChannel() = 0;

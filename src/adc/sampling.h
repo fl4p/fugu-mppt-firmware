@@ -96,7 +96,8 @@ struct Sensor {
         }
     }
 
-    void add_sample(float x) { // IRAM_ATTR
+    void add_sample(float x) {
+        // IRAM_ATTR
         auto v = params.transform.apply(x);
 
         //if( !isfinite(v)) {
@@ -125,7 +126,7 @@ struct Sensor {
 
 protected:
     Sensor(SensorParams params, uint32_t ewmSpan, bool isVirtual)
-            : params(std::move(params)), ewm{ewmSpan}, isVirtual{isVirtual} {
+        : params(std::move(params)), ewm{ewmSpan}, isVirtual{isVirtual} {
         anf.begin(ewmSpan, 0.2f);
     }
 
@@ -136,8 +137,8 @@ struct PhysicalSensor : public Sensor {
     AsyncADC<float> *adc{nullptr};
 
     explicit PhysicalSensor(AsyncADC<float> *adc, const SensorParams &params, uint32_t ewmSpan)
-            : Sensor(params, ewmSpan, false),
-              adc(adc) {
+        : Sensor(params, ewmSpan, false),
+          adc(adc) {
     }
 
     void createNotchFilter() {
@@ -145,9 +146,9 @@ struct PhysicalSensor : public Sensor {
             auto fs = adc->getSamplingRate(params.adcCh);
             notchFilter = new NotchFilter();
             const auto inverterFreq = 50.0f;
-            const auto inverterInputFreq = 2*50.0f; // abs(sin(t))
+            const auto inverterInputFreq = 2 * 50.0f; // abs(sin(t))
             notchFilter->begin(inverterInputFreq / fs);
-            ESP_LOGI("sampling", "%s notch filter fs=%.1fHz f0=%.1fHz", params.teleName.c_str(),fs, inverterInputFreq);
+            ESP_LOGI("sampling", "%s notch filter fs=%.1fHz f0=%.1fHz", params.teleName.c_str(), fs, inverterInputFreq);
         } catch (const std::exception &ex) {
             ESP_LOGE("sampling", "error %s", ex.what());
         }
@@ -158,8 +159,8 @@ struct VirtualSensor : public Sensor {
     std::function<float()> func;
 
     explicit VirtualSensor(std::function<float()> func, uint32_t ewmSpan, const char *teleName, char unit)
-            : Sensor({255, {1, 0}, {}, teleName, unit, false}, ewmSpan, true),
-              func(std::move(func)) {
+        : Sensor({255, {1, 0}, {}, teleName, unit, false}, ewmSpan, true),
+          func(std::move(func)) {
     }
 };
 
@@ -171,7 +172,8 @@ struct VIinVout {
 
     VIinVout(const VIinVout &&) = delete;
 
-    VIinVout(T vin, T vout, T iin, T iout) : Vin{vin}, Vout{vout}, Iin{iin}, Iout{iout} {}
+    VIinVout(T vin, T vout, T iin, T iout) : Vin{vin}, Vout{vout}, Iin{iin}, Iout{iout} {
+    }
 };
 
 
@@ -187,7 +189,7 @@ struct VIinVout {
  */
 class ADC_Sampler {
 public:
-    bool ignoreCalibrationConstraints = false;// for testing
+    bool ignoreCalibrationConstraints = false; // for testing
 
     //typedef Sensor Sensor;
     //using Sensor = Sensor;
@@ -195,24 +197,23 @@ public:
 private:
     struct AdcState {
         AsyncADC<float> *adc{nullptr};
-        std::array<Sensor *, 8> sensorByCh{nullptr};
-        uint8_t cycleCh = 0;
+        std::array<Sensor *, 8> sensorByCh{};
+        std::vector<Sensor *> cycleSensors{}; // only used if scheme==cycle
+        uint8_t cycleSensorsPos = 0;
     };
 
     uint8_t calibrating_ = 0;
     unsigned long timeLastCalibration = 0;
 
-
 public:
-
     volatile bool halted = false;
 
 
     std::function<void(const ADC_Sampler &sampler, const Sensor &)> onNewSample = nullptr;
 
     std::vector<AdcState> adcStates{};
-    std::vector<Sensor *> sensors{};
-    std::vector<Sensor *> realSensors{};
+    std::vector<Sensor *> sensors{}; // physical + virtual sensors
+    std::vector<Sensor *> realSensors{}; // physical sensors from all ADCs
     std::vector<VirtualSensor *> virtualSensors{};
 
 
@@ -251,6 +252,8 @@ public:
         realSensors.push_back(sensorPtr);
         if (!sensorByCh[sensorPtr->params.adcCh])
             sensorByCh[sensorPtr->params.adcCh] = sensorPtr;
+        if (adc->scheme() == SampleReadScheme::cycle)
+            getAdcState(adc).cycleSensors.push_back(sensorPtr);
 
         return sensorPtr;
     }
@@ -272,18 +275,24 @@ public:
      * user must call this from the same task that perform ADC reading (calls hasData & getSample)
      */
     void begin() {
-        assert_throw (!adcStates.empty(), "adc null");
+        assert_throw(!adcStates.empty(), "adc null");
         assert_throw(!realSensors.empty(), "");
 
         for (auto &s: adcStates) {
             s.adc->start();
             if (s.adc->scheme() != SampleReadScheme::any)
                 _readNext(s);
+            else if (s.adc->scheme() == SampleReadScheme::cycle) {
+                assert_throw(!s.cycleSensors.empty(), "no sensors to cycle");
+                s.cycleSensorsPos = 0;
+                s.adc->startReading(s.cycleSensors[0]->params.adcCh);
+            }
         }
 
-        for(auto &s:sensors) {
-            if(s->isVirtual) continue;
-            auto ps = (PhysicalSensor*)s;
+
+        for (auto &s: sensors) {
+            if (s->isVirtual) continue;
+            auto ps = (PhysicalSensor *) s;
             ps->createNotchFilter();
         }
     }
@@ -432,17 +441,16 @@ public:
                 if (cr > calibRes) calibRes = cr;
             }
         } else {
-            assert_throw(false, "scheme not implemented");
+            //using namespace std::string_literals;
+            //assert_throw(false, "cycle scheme"s + "not implemented");
 
-            auto sensor(realSensors[state.cycleCh]);
+            auto sensor(state.cycleSensors[state.cycleSensorsPos]);
 
             auto x = adc->getSample();
             rtcount("adc.update.getSample");
-
-            state.cycleCh = (state.cycleCh + 1) % realSensors.size();
-            _readNext(state); // start async read
+            state.cycleSensorsPos = (state.cycleSensorsPos + 1) % state.cycleSensors.size();
+            state.adc->startReading(state.cycleSensors[state.cycleSensorsPos]->params.adcCh);
             rtcount("adc.update.startReading");
-
             calibRes = _addSensorSample(sensor, x);
         }
 
@@ -470,7 +478,7 @@ public:
         for (auto &state: adcStates) {
             auto r = _updateAdc(state);
             if (r > res) res = r;
-            if (state.cycleCh == 0) updateVirtual = true;
+            if (state.cycleSensorsPos == 0) updateVirtual = true;
         }
 
         // update virtual sensors
@@ -507,5 +515,4 @@ public:
         }
         return ok;
     }
-
 };
