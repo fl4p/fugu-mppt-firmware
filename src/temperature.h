@@ -1,6 +1,7 @@
 #pragma once
 
 class SingleValueSensor {
+public:
     virtual float read() = 0;
 
     [[nodiscard]] virtual float last() const = 0;
@@ -128,7 +129,13 @@ class Esp32TempSensor : public SingleValueSensor {
     //temperature_sensor_handle_t temp_handle = NULL;
     float tsens_out = NAN;
     temperature_sensor_handle_t temp_sensor = NULL;
-    temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
+    temperature_sensor_config_t temp_sensor_config =  {                                                  \
+        .range_min = 20,
+        .range_max = 100,
+        .clk_src = TEMPERATURE_SENSOR_CLK_SRC_DEFAULT,
+        .flags = { .allow_pd=false },
+    };
+
 public:
     Esp32TempSensor() {
 

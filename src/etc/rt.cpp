@@ -19,7 +19,8 @@ vector_desc_t *find_desc_for_int(int intno, int cpu) {
 }
 
 
-esp_err_t esp_intr_dump(FILE *stream) {
+esp_err_t esp_intr_dump_(FILE *stream) {
+    // TODO remove? idf5.5 already ships with `esp_intr_dump()`
     if (stream == NULL) {
         stream = stdout;
     }

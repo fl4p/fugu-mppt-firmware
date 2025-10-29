@@ -37,6 +37,8 @@ void ADC_ESP32_Cont::start() {
             // the driver will trigger the interrupt once <conv_frame_size> bytes are available. if we miss
             // one interrupt, and we only read <conv_frame_size> bytes per notification, one frame will always
             // stay in the ring buffer (<max_store_buf_size> bytes), adding unnecessary latency
+
+            .flags = {.flush_pool = false}, // TODO
     };
     ESP_ERROR_CHECK(adc_continuous_new_handle(&adc_config, &handle));
 

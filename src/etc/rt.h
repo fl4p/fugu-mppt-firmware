@@ -38,7 +38,7 @@ struct vector_desc_t {
 };
 
 
-esp_err_t esp_intr_dump(FILE *stream);
+esp_err_t esp_intr_dump(FILE *stream); // since idf5.5
 
 #define RT_PRIO 20
 

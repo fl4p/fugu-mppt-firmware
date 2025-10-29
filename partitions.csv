@@ -2,10 +2,10 @@
 nvs,            data, nvs,      0x9000,  0x4000
 otadata,        data, ota,      0xd000,  0x2000
 phy_init,       data, phy,      0xf000,  0x1000
-#factory,        app,  factory,  0x10000,  1700k
+#factory,        app,  factory,  0x10000,  1802240
 
-ota_0,         app,   ota_0,    ,         1700k
-ota_1,         app,  ota_1,    ,        1700k
+ota_0,         app,   ota_0,    ,       1802240
+ota_1,         app,  ota_1,    ,        1802240
 
 # for unit-testing:
 littlefs_test,  data, littlefs,      ,    8k
