@@ -6,8 +6,8 @@ idf_component_register(
         "InfluxDB-Client-for-Arduino/src"
         REQUIRES
         #Adafruit_BusIO
-        #arduino-esp32
-        arduino
+        arduino-esp32
+        #arduino
         #esp_partition # TODO remove, missing in arduino-esp
 )
 

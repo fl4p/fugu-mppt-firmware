@@ -168,6 +168,12 @@ void doOta(const char *url) {
             .bulk_flash_erase = false,
             .partial_http_download = false,
             .max_http_request_size = 0,
+        .buffer_caps=MALLOC_CAP_DEFAULT,
+        .partition {                                        /*!< Details of staging and final partitions for OTA update */
+                .staging = nullptr,             /*!< New image will be downloaded in this staging partition. If NULL then a free app partition (passive app partition) is selected as the staging partition. */
+                .final=nullptr,               /*!< Final destination partition. Its type/subtype will be used for verification. If set to NULL, staging partition shall be set as the final partition. */
+                .finalize_with_copy=false,                    /*!< Flag to copy the staging image to the final partition at the end of OTA update */
+            },
     };
     ESP_LOGI("ota", "Attempting to download update from %s", config.url);
 

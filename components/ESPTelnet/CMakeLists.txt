@@ -5,9 +5,9 @@ idf_component_register(
         INCLUDE_DIRS
             ESPTelnet/src
         REQUIRES
-            arduino
+            #arduino
             # Adafruit_BusIO
-            # arduino-esp32
+            arduino-esp32
 )
 
 project(ESPTelnet)

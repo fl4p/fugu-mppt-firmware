@@ -4,7 +4,7 @@ idf_component_register(
         INCLUDE_DIRS
         Arduino-LiquidCrystal-I2C-library
         REQUIRES
-        arduino
+        arduino-esp32
 )
 
 project(Arduino-LiquidCrystal-I2C)
