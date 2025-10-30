@@ -19,7 +19,7 @@ Highlights:
 * Robust signal processing using [notch filters](https://www.youtube.com/watch?v=tpAA5eUb6eo) (reject inverter noise)
   and rolling median (reject burst noise)
 * [PID](https://www.youtube.com/watch?v=wkfEZmsQqiA) control for precise voltage and current regulation
-* Periodic MPPT global search
+* Periodic MPPT global search (aka scan, sweep)
 * Sophisticated [Diode Emulation](#synchronous-buck-and-diode-emulation) for low-side switch
 * Supports buck and boost converter operation
 * Battery voltage detection
@@ -340,3 +340,19 @@ address in my github profile) if you want to contribute or just share your exper
 * [Renesas: Can you explain diode emulation and why it is used?](https://en-support.renesas.com/knowledgeBase/4967491)
 
 * [fetlib - find the right MOSFET](https://github.com/fl4p/fetlib)
+
+
+
+TODO
+```
+I (4575) main: received serial command: 'dc 800'
+I (4575) main: Switched to manual PWM
+I (4576) main: OK: dc 800
+V=56.5/27.67 I=0.96/ 1.87A  54.4W nan℃34℃  0sps  0㎅/s DCM(H|L|Lm)= 646| 588| 646 st= MANU,1 lag=813㎲ N=10566 rssi=0
+V=56.5/27.67 I=1.35/ 2.61A  76.1W nan℃34℃ 2986sps  0㎅/s DCM(H|L|Lm)= 646| 646| 646 st= MANU,1 lag=813㎲ N=19562 rssi=0
+V=56.5/27.67 I=1.45/ 2.82A  82.1W nan℃34℃ 3000sps  0㎅/s DCM(H|L|Lm)= 646| 646| 646 st= MANU,1 lag=813㎲ N=28571 rssi=0
+V=56.5/27.67 I=1.52/ 2.95A  86.0W nan℃34℃ 3000sps  0㎅/s DCM(H|L|Lm)= 646| 646| 646 st= MANU,1 lag=813㎲ N=37581 rssi=0
+V=56.5/27.67 I=1.55/ 3.00A  87.4W nan℃34℃ 3000sps  0㎅/s DCM(H|L|Lm)= 646| 646| 646 st= MANU,1 lag=813㎲ N=46590 rssi=0
+V=56.5/27.67 I=1.53/ 2.96A  86.2W nan℃35℃ 3000sps  0㎅/s DCM(H|L|Lm)= 646| 646| 646 st= MANU,1 lag=813㎲ N=55596 rssi=0
+
+```
