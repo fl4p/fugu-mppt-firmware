@@ -46,3 +46,5 @@ etc/scope-client/__pycache__/
 etc/scope-client/adaptive_noise_filter/__pycache__/
 
 .idea/editor.xml
+
+wifi.conf
