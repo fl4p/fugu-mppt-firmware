@@ -321,39 +321,48 @@ void setup() {
 
     bool noI2C = true;
 
-    if (pinConf) {
-        auto i2c_freq = pinConf.getLong("i2c_freq", 100000);
-        auto i2c_sda = pinConf.getByte("i2c_sda", 255);
-        noI2C = (i2c_sda == 255);
-        if (!noI2C) {
-            if (!pinConf.getByte("skip_assert", 0))
-                try {
-                    assertPinState(i2c_sda, true, "i2c_sda");
-                    assertPinState(pinConf.getLong("i2c_scl"), true, "i2c_scl");
-                } catch (const std::exception &e) {
-                    ESP_LOGE("main", "error %s", e.what());
+    if (pinConf)
+        try {
+            auto i2c_freq = pinConf.getLong("i2c_freq", 100000);
+            auto i2c_sda = pinConf.getByte("i2c_sda", 255);
+            noI2C = (i2c_sda == 255);
+            if (!noI2C) {
+                if (!pinConf.getByte("skip_assert", 0))
+                    try {
+                        auto i2c_scl = pinConf.getLong("i2c_scl");
+                        assertPinState(i2c_sda, true, "i2c_sda");
+                        assertPinState(i2c_scl, true, "i2c_scl");
+                        pinMode(i2c_scl, OUTPUT);
+                        digitalWrite(i2c_scl, LOW);
+                        usleep(1);
+                        assertPinState(i2c_sda, true, "i2c_sda(scl_short)");
+                    } catch (const std::exception &e) {
+                        ESP_LOGE("main", "error %s", e.what());
+                        setupErr = true;
+                    }
+                ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, pinConf.getByte("i2c_scl"), i2c_freq);
+                if (!Wire.begin(i2c_sda, (uint8_t) pinConf.getLong("i2c_scl"), i2c_freq)) {
+                    ESP_LOGE("main", "Failed to initialize Wire");
                     setupErr = true;
                 }
-            ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, pinConf.getByte("i2c_scl"), i2c_freq);
-            if (!Wire.begin(i2c_sda, (uint8_t) pinConf.getLong("i2c_scl"), i2c_freq)) {
-                ESP_LOGE("main", "Failed to initialize Wire");
-                setupErr = true;
-            }
-        } else {
-            ESP_LOGI("main", "no i2c_sda pin set");
-        }
-
-
-        led.begin(pinConf);
-
-        if (!noI2C) {
-            if (!lcd.init()) {
-                ESP_LOGE("main", "Failed to init LCD");
             } else {
-                lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION "\n" __DATE__ " " __TIME__, 2000);
+                ESP_LOGI("main", "no i2c_sda pin set");
             }
+
+
+            led.begin(pinConf);
+
+            if (!noI2C) {
+                if (!lcd.init()) {
+                    ESP_LOGE("main", "Failed to init LCD");
+                } else {
+                    lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION "\n" __DATE__ " " __TIME__, 2000);
+                }
+            }
+        } catch (const std::exception &ex) {
+            ESP_LOGE("main", "error %s", ex.what());
+            setupErr = true;
         }
-    }
 
 
 #ifdef NO_WIFI
@@ -752,7 +761,7 @@ void loopRTNewData(unsigned long nowMs) {
         if (scope && sensors.Vout && haveNewSample)
             scope->addSample12(&mppt, 0,
                                (uint16_t) max(0.f, sensors.Vout->last / 60.0f *
-                                           2000.0f));
+                                                   2000.0f));
     }
 
 

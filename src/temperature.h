@@ -14,7 +14,7 @@ class TempSensorGPIO_NTC : public SingleValueSensor {
     const float *valuePtr = nullptr;
 
     RunningMedian3<float> median3{};
-    EWMA<float> ewma1{20}, ewma2{20};
+    EWMA<float>  ewma2{2};
 
     uint8_t _attack = 1; // discard first samples
 
@@ -23,6 +23,7 @@ class TempSensorGPIO_NTC : public SingleValueSensor {
 
     [[nodiscard]] float adc2Celsius(float adc) const {
         // invalid adc 4095
+        // dc 3380K
         if (adc >= 4080)
             return NAN;
         float tl = log(ntcResistance * (4095.f / adc - 1.f));

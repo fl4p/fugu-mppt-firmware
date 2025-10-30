@@ -478,7 +478,8 @@ public:
         }
 
         if(sensors.Iout->ewm.avg.get() > 6 and sensors.Vout->ewm.avg.get() < 1) {
-            if (!converter.disabled()) ESP_LOGE("MPPT", "Short circuit detected!");
+            if (!converter.disabled()) ESP_LOGE("MPPT", "Output short circuit detected! (V=%.2f, I= %.1fA",
+               sensors.Vout->ewm.avg.get(), sensors.Iout->ewm.avg.get() );
             shutdownDcdc();
             // TODO delay
             return false;
