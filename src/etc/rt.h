@@ -100,7 +100,7 @@ public:
         if (readingTask) {
             vTaskNotifyGiveFromISR(readingTask, &higherWokenTask);
             if (higherWokenTask) {
-                portYIELD_FROM_ISR();
+                portYIELD_FROM_ISR(higherWokenTask);
                 return true;
             }
         }
