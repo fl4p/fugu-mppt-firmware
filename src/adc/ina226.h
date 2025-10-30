@@ -93,9 +93,11 @@ public:
         i2c_port_t i2c_port = I2C_NUM_0; // TODO
         auto addr = (uint8_t) ina226.i2cAddress;
 
-        auto mfrId = i2c_read_short(i2c_port, addr, INA22x_MANUFACTURER_ID_CMD);
-        auto deviceId = i2c_read_short(i2c_port, addr, INA22x_DEVICE_ID_CMD);
-
+        bool ok = false;
+        auto mfrId = ina226.readRegister(INA22x_MANUFACTURER_ID_CMD, ok);
+        assert_throw(ok, "");
+        auto deviceId = ina226.readRegister( INA22x_DEVICE_ID_CMD, ok);
+        assert_throw(ok, "");
         ESP_LOGI("ina22x", "MfrID: 0x%04X, DeviceID: 0x%04X", mfrId, deviceId);
 
         if (deviceId != 0x2260) {
@@ -235,7 +237,10 @@ public:
         new_data = false;
 
 
-        auto confReg = i2c_read_short(bus, addr, INA226_WE::INA226_CONF_REG, true, 100);
+        //auto confReg = i2c_read_short(bus, addr, INA226_WE::INA226_CONF_REG, true, 100);
+        bool ok;
+        auto confReg = ina226.readRegister(INA226_WE::INA226_CONF_REG, ok);
+        assert_throw(ok, "");
 
         assert(!new_data);
 
