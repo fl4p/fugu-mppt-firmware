@@ -260,7 +260,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         if (ntc.params.adcCh != 255) {
             ntc.params.calibrationConstraints = {2.8f, .1f, false};
             ntc.params.unit = 'C';
-            auto sense = adcSampler.addSensor(ntc.adc, ntc.params, 2.8f, 200);
+            auto sense = adcSampler.addSensor(ntc.adc, ntc.params, 2.8f, 50);
             mppt.ntc.setValueRef(sense->ewm.avg.get());
         }
     }
