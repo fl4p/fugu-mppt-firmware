@@ -8,7 +8,7 @@ from collections import deque
 from threading import Thread
 from typing import Dict
 
-import fastplotlib as fpl
+#import fastplotlib as fpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -172,7 +172,7 @@ class Channel:
         self.sample_buffer = deque([math.nan] * win_len, maxlen=win_len)
         self.capture_buffer = deque([], maxlen=200_000)
         self.waveform: plt.Axes = None
-        self.fpl_waveform: fpl.LineGraphic = None
+        self.fpl_waveform: 'fpl.LineGraphic' = None
         self.offset = 0
         self.win3 = collections.deque(maxlen=3)
         self.med = RunningMedian(5)
@@ -486,7 +486,8 @@ def main():
     Thread(target=redraw_loop, args=(channels, fig, ax), daemon=True).start()
     Thread(target=lf_loop, daemon=True).start()
 
-    fpl.loop.run()
+    if 'fpl' in globals():
+        fpl.loop.run()
     plt.show()
 
 print('discovering hosts..')
