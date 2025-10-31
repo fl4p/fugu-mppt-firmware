@@ -20,6 +20,7 @@
 
 #include "conf.h"
 #include "util.h"
+#include "logging.h"
 
 /**
  * Synchronous buck or boost converter
@@ -67,6 +68,8 @@ public:
     inline bool boost() const { return isBoost; }
 
     inline bool forcedPwm_() const { return forcedPwm; }
+
+    inline void forcedPwm_(bool forced) { forcedPwm = forced; }
 
     inline bool syncRectEnabled_() const {return syncRectEnabled;}
 

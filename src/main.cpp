@@ -859,14 +859,18 @@ bool handleCommand(const String &inp) {
         //manualPwm = true; // don't switch to manual pwm here!
         converter.pwmPerturb((int16_t) pwmStep);
         ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) converter.getCtrlOnPwmCnt());
-    } else if (manualPwm && (inp == "sync-dis" or inp == "sync-en")) {
-        converter.enableSyncRect(inp == "sync-en", true);
-        if (converter.forcedPwm_()) {
-            ESP_LOGW("main", "forced_pwm");
+    } else if (manualPwm && inp.startsWith("sync ")) {
+        auto arg = inp.substring(5);
+        if (arg== "on" or arg == "1" or arg == "off" or arg == "on") {
+            converter.forcedPwm_(false);
+            converter.enableSyncRect(arg== "on" or arg == "1", true);
+        } else if (arg == "forced") {
+            converter.forcedPwm_(true);
+        } else {
             return false;
         }
-    } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable")) {
-        auto newState = inp == "bf-enable";
+    } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable" or inp == "bf-en")) {
+        auto newState = inp == "bf-enable" or inp == "bf-en";
         if (mppt.bflow.state() != newState)
             ESP_LOGI("main", "Set bflow state %i", newState);
         mppt.bflow.enable(newState);
@@ -904,7 +908,7 @@ bool handleCommand(const String &inp) {
             ESP_LOGI("main", "Set tracker speed scale %.4f", speedScale);
         }
     } else if (inp.startsWith("fan ")) {
-        if (!fanSet(inp.substring(4).toFloat() * 0.01f))
+        if (!mppt.fan.fanSet(inp.substring(4).toFloat() * 0.01f))
             return false;
     } else if (inp.startsWith("led ")) {
         led.setRGB(inp.substring(4).c_str());
@@ -1020,7 +1024,7 @@ bool handleCommand(const String &inp) {
             }
         }
     } else {
-        ESP_LOGW("main", "unknown or unexpected command");
+        ESP_LOGE("main", "unknown or unexpected command");
         return false;
     }
 
