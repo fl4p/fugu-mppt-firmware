@@ -254,36 +254,7 @@ public:
         ucTemp.read();
     }
 
-    void begin(const ConfFile &trackerConf, const ConfFile &pinConf, const Limits &limits_, const TeleConf &tele_) {
-        limits = limits_;
-        tele = tele_;
-
-        targetPwmCnt = (uint16_t) std::round(
-            trackerConf.getFloat("target_duty_cycle", 0.0f) * (float) converter.pwmCtrlMax);
-
-        if (targetPwmCnt) {
-            ESP_LOGW("mppt", "target duty cycle PWM=%.2hu, not performing tracking!", targetPwmCnt);
-        }
-
-        if (tele.influxdbHost) {
-            ESP_LOGI("main", "Influxdb telemetry to host %s", tele.influxdbHost.toString().c_str());
-            // sampler.onNewSample = dcdcDataChanged;
-        }
-        //flags.noPanelSwitch = pinConf
-
-
-        ledPinSimple = pinConf.getByte("led_simple", 255);
-        if (ledPinSimple != 255) {
-            pinMode(ledPinSimple, OUTPUT);
-            digitalWrite(ledPinSimple, false);
-        }
-
-        fan.init(pinConf);
-
-        bflow.init(pinConf);
-        meter.load();
-        startSweep();
-    }
+    void begin(const ConfFile &trackerConf, const ConfFile &pinConf, const Limits &limits_, const TeleConf &tele_);
 
     [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }
 
@@ -420,7 +391,7 @@ public:
             return false;
         }
 
-        if (sensorPhysicalI->last < -1 && sensorPhysicalI->previous < -1) {
+        if (sensorPhysicalI->last < -1 && sensorPhysicalI->previous < -1 && !converter.forcedPwm_()) {
             if (sensors.Iout->ewm.avg.get() > 10) {
                 //buck.halfDutyCycle();
                 shutdownDcdc();
@@ -428,11 +399,13 @@ public:
             } else {
                 bflow.enable(false); // reverse current
                 converter.syncRectMinDuty();
-                ESP_LOGE("MPPT", "Reverse current %.2f A, noise? disable BFC and low-side FET", sensorPhysicalI->last);
+                ESP_LOGE("MPPT", "Reverse current %.2f A, noise? disable BFC and low-side FET (pwm=%hu)",
+                         sensorPhysicalI->last,
+                         converter.getCtrlOnPwmCnt());
             }
         }
 
-        if (sensorPhysicalI->ewm.avg.get() < -1) {
+        if (sensorPhysicalI->ewm.avg.get() < -1 /*&& !converter.forcedPwm_()*/) {
             if (!converter.disabled())
                 ESP_LOGE("MPPT", "Reverse avg current %.1f A, shutdown!", sensorPhysicalI->ewm.avg.get());
             shutdownDcdc();
@@ -517,6 +490,7 @@ public:
         //float vIn = fminf(sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
         float vOut = sensors.Vout->ewm.avg.get();
         float vIn = sensors.Vin->ewm.avg.get();
+        // TODO smoothing!
         auto vr = converter.updateSyncRectMaxDuty(
             vIn, vOut, converter.boost() ? sensors.Iin->ewm.avg.get() : sensors.Iout->ewm.avg.get());
 

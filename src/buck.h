@@ -73,6 +73,8 @@ public:
 
     inline bool syncRectEnabled_() const {return syncRectEnabled;}
 
+    const uint16_t &pwmMaxDriver() const { return pwmDriver.pwmMax; };
+
     uint16_t pwmCtrlMax{}, pwmRectMin{}, pwmCtrlMin{};
 
 public:

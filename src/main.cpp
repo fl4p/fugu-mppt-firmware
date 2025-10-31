@@ -861,10 +861,11 @@ bool handleCommand(const String &inp) {
         ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) converter.getCtrlOnPwmCnt());
     } else if (manualPwm && inp.startsWith("sync ")) {
         auto arg = inp.substring(5);
-        if (arg== "on" or arg == "1" or arg == "off" or arg == "on") {
+        if (arg == "on" or arg == "1" or arg == "off" or arg == "0") {
             converter.forcedPwm_(false);
-            converter.enableSyncRect(arg== "on" or arg == "1", true);
+            converter.enableSyncRect(arg == "on" or arg == "1", true);
         } else if (arg == "forced") {
+            converter.enableSyncRect(true);
             converter.forcedPwm_(true);
         } else {
             return false;
