@@ -18,9 +18,9 @@
 [submodule "components/Arduino-LiquidCrystal-I2C/Arduino-LiquidCrystal-I2C-library"]
 	path = components/Arduino-LiquidCrystal-I2C/Arduino-LiquidCrystal-I2C-library
 	url = https://github.com/fdebrabander/Arduino-LiquidCrystal-I2C-library
-[submodule "components/esp_littlefs"]
-	path = components/esp_littlefs
-	url = https://github.com/joltwallet/esp_littlefs.git
+#[submodule "components/esp_littlefs"]
+#	path = components/esp_littlefs
+#	url = https://github.com/joltwallet/esp_littlefs.git
 [submodule "components/INA226_WE"]
 	path = components/INA226_WE/INA226_WE
 	url = https://github.com/fl4p/INA226_WE
