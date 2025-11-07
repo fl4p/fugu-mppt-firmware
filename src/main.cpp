@@ -353,6 +353,7 @@ void setup() {
 
 
             led.begin(pinConf);
+            led.setHexShort(0x111);
 
             if (!noI2C) {
                 if (!lcd.init()) {

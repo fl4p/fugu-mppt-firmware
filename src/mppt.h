@@ -435,7 +435,7 @@ public:
                                      std::max(sensorPhysicalI->last, sensorPhysicalI->previous));
             if (currentFilt < -0.05f && limits.reverse_current_paranoia) {
                 if (converter.getRectOnPwmCnt() > converter.getRectOnPwmMax() / 2 &&
-                    converter.getRectOnPwmCnt() > (converter.pwmCtrlMax / 10)) {
+                    converter.getRectOnPwmCnt() > (converter.pwmRectMin + converter.pwmCtrlMax / 20)) {
                     ESP_LOGW("MPPT", "Low current, set low-side min duty (ewm(%s)=%.2f, max(i[0],i[-1])=%.2f)",
                              sensorPhysicalI->params.teleName.c_str(),
                              sensorPhysicalI->ewm.avg.get(),

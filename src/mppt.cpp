@@ -53,12 +53,12 @@ void MpptController::updateCV() {
                 fp = (float) targetPwmCnt - (float) converter.getCtrlOnPwmCnt();
         } /*else         if (targetPwmCnt && absdiff(converter.getCtrlOnPwmCnt(), targetPwmCnt) < converter.pwmCtrlMax/128) {
             //if (fp < 0 or fp > 100)
-            //    ESP_LOGI("mppt", "near tgt, fp=%.4f pwm=%hu, tgt=%hu", fp, converter.getCtrlOnPwmCnt(), targetPwmCnt);
+            //    ESP_LOGI("mppt", "near tgt,-5 fp=%.4f pwm=%hu, tgt=%hu", fp, converter.getCtrlOnPwmCnt(), targetPwmCnt);
             if ((int)fabsf(fp) < converter.pwmCtrlMax/512)
                 fp = 0;
         }*/
 
-
+        fp = constrain(fp, -(float) converter.getCtrlOnPwmCnt(), 16.0f);
         converter.pwmPerturbFractional(fp);
 
         rtcount("mppt.update.pwm");
