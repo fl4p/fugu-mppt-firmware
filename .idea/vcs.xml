@@ -36,7 +36,5 @@
     <mapping directory="$PROJECT_DIR$/components/InfluxDB-Client-for-Arduino/InfluxDB-Client-for-Arduino" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/components/SimpleFTPServer/SimpleFTPServer" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/components/esp32-semihosting-profiler/esp32-semihosting-profiler" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/components/esp_littlefs" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/components/esp_littlefs/src/littlefs" vcs="Git" />
   </component>
 </project>
