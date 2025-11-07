@@ -225,7 +225,7 @@ public:
         }
 
 
-        auto bus = (i2c_port_t) 0;
+        //auto bus = (i2c_port_t) 0;
 
         ina226.startSingleMeasurement();
         assert(!new_data); // test disabled ConvReadyAlert

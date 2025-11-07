@@ -25,7 +25,7 @@ struct Limits {
 
     const float Vout_max{};
 
-    const float Iin_max{};
+    const float Iin_max{}, Ishort{};
     const float Iout_max{};
 
     const float P_max{};
@@ -40,8 +40,9 @@ struct Limits {
     explicit Limits(const ConfFile &limits)
         : Vin_max(limits.getFloat("vin_max")), Vin_min(limits.getFloat("vin_min")),
           Vout_max(limits.getFloat("vout_max")),
-          Iin_max(limits.getFloat("iin_max")), Iout_max(limits.getFloat("iout_max")),
-          P_max(limits.getFloat("p_max")), Temp_max(limits.getFloat("temp_max")),
+          Iin_max(limits.getFloat("iin_max")), Ishort(limits.getFloat("iout_short")),
+          Iout_max(limits.getFloat("iout_max")),
+          P_max(limits.getFloat("p_max")), Temp_max(limits.getFloat("temp_max", 90.0f)),
           Temp_derate(limits.getFloat("temp_derate")),
           reverse_current_paranoia(limits.getByte("reverse_current_paranoia", 1) != 0) {
         assert_throw(Vin_max > Vin_min, "");
@@ -157,9 +158,12 @@ struct MinSampler {
  */
 class MpptController {
     ADC_Sampler &sampler;
+
+public:
     SynchronousConverter &converter;
     LCD &lcd;
 
+private:
     float cntrlValue = 0.0f;
 
     struct {
@@ -319,7 +323,7 @@ public:
         }
 
         if (ntc.last() > limits.Temp_max || ucTemp.last() > limits.Temp_max) {
-            ESP_LOGE("mppt", "Temp %.1f (or µC %.1f) > %.1f°C, shutdown", ntc.last(), ucTemp.last(), limits.Temp_max);
+            ESP_LOGE("mppt", "Temp %.1f (or mcu %.1f) > %.1f°C, shutdown", ntc.last(), ucTemp.last(), limits.Temp_max);
             return false;
         }
 
@@ -397,11 +401,11 @@ public:
                 shutdownDcdc();
                 ESP_LOGE("MPPT", "Reverse current %.2f A, noise? High avg current, shutdown", sensorPhysicalI->last);
             } else {
+                if (bflow.state() || converter.getRectOnPwmCnt() > converter.getRectOnPwmMin())
+                    ESP_LOGE("MPPT", "Reverse current %.2f A, noise? disable BFC and low-side FET (pwm=%hu)",
+                         sensorPhysicalI->last, converter.getCtrlOnPwmCnt());
                 bflow.enable(false); // reverse current
                 converter.syncRectMinDuty();
-                ESP_LOGE("MPPT", "Reverse current %.2f A, noise? disable BFC and low-side FET (pwm=%hu)",
-                         sensorPhysicalI->last,
-                         converter.getCtrlOnPwmCnt());
             }
         }
 
@@ -448,7 +452,7 @@ public:
             // TODO Vin
         }
 
-        if (sensors.Iout->ewm.avg.get() > 6 and sensors.Vout->ewm.avg.get() < 1) {
+        if (sensors.Iout->ewm.avg.get() > limits.Ishort and sensors.Vout->ewm.avg.get() < 1) {
             if (!converter.disabled())
                 ESP_LOGE("MPPT", "Output short circuit detected! (V=%.2f, I= %.1fA",
                      sensors.Vout->ewm.avg.get(), sensors.Iout->ewm.avg.get());

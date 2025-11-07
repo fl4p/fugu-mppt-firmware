@@ -1,6 +1,8 @@
 #include "mppt.h"
 
 void MpptController::updateCV() {
+    // TODO TODO
+    // Temperature derating?
     auto &nowUs = wallClockUs();
 
     auto cv = VoutController.update(sensors.Vout->last, charger.Vbat_max());
@@ -49,7 +51,13 @@ void MpptController::updateCV() {
             //    ESP_LOGI("mppt", "near tgt, fp=%.4f pwm=%hu, tgt=%hu", fp, converter.getCtrlOnPwmCnt(), targetPwmCnt);
             if ((int)fabsf(fp) < converter.pwmCtrlMax/512)
                 fp = (float) targetPwmCnt - (float) converter.getCtrlOnPwmCnt();
-        }
+        } /*else         if (targetPwmCnt && absdiff(converter.getCtrlOnPwmCnt(), targetPwmCnt) < converter.pwmCtrlMax/128) {
+            //if (fp < 0 or fp > 100)
+            //    ESP_LOGI("mppt", "near tgt, fp=%.4f pwm=%hu, tgt=%hu", fp, converter.getCtrlOnPwmCnt(), targetPwmCnt);
+            if ((int)fabsf(fp) < converter.pwmCtrlMax/512)
+                fp = 0;
+        }*/
+
 
         converter.pwmPerturbFractional(fp);
 

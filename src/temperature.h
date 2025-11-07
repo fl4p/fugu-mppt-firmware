@@ -25,8 +25,6 @@ class TempSensorGPIO_NTC : public SingleValueSensor {
 
     [[nodiscard]] float adc2Celsius(float adc) const {
         // invalid adc 4095
-        // dc 3380K
-        constexpr auto beta = 3380.f; // K
         if (adc >= 4080)
             return NAN;
         float tl = log(ntcResistance * (4095.f / adc - 1.f));

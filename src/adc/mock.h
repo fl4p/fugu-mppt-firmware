@@ -83,6 +83,9 @@ public:
         periodic_timer.destroy();
     }
 
+     float getSamplingRate(uint8_t channel) override{
+       return static_cast<float>(periodic_timer.freq());
+    };
 
     void startReading(uint8_t channel) override {
         taskNotification.subscribe();

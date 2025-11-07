@@ -15,7 +15,6 @@ enum class SampleReadScheme : uint8_t {
 template<class T>
 class AsyncADC {
 public:
-
     /**
      * Tells the user how to read samples from this ADC
      * @return
@@ -40,12 +39,11 @@ public:
      * - wake-up the ADC hardware from sleep (energy saving)
      */
     virtual void start() {
-
     }
 
     virtual float getSamplingRate(uint8_t channel) {
         using namespace std::string_literals;
-        throw std::runtime_error("getSR"s + "not implemented");
+        throw std::runtime_error("getSR"s + " " + "not implemented");
     };
 
     /**
@@ -88,7 +86,6 @@ public:
     virtual float getInputImpedance(uint8_t ch) = 0;
 
     virtual void reset(const uint8_t ch) {
-
     }
 
     virtual ~AsyncADC() = default;

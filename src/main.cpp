@@ -65,10 +65,12 @@ unsigned long lastTimeOutUs = 0;
 uint32_t lastNSamples = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
 
+// todo bit fields
 bool manualPwm = false;
 bool charging = false;
 bool disableWifi = false;
 bool usbConnected = false;
+bool setupErr = false;
 
 float conversionEfficiency;
 uint16_t loopRateMin = 0;
@@ -281,9 +283,9 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
 }
 
 
-void setup() {
-    bool setupErr = false;
 
+
+void setup() {
     consoleInit();
     ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
 
@@ -426,6 +428,8 @@ void setup() {
         xTaskCreatePinnedToCore(loopRT, "loopRt", 4096 * 4, NULL, RT_PRIO, NULL, 1);
         //xTaskCreatePinnedToCore(loopNetwork_task, "netloop", 4096 * 4, NULL, 1, NULL, 0);
         //xTaskCreatePinnedToCore(loopCore0_LF, "core0LF", 4096, NULL, 1, NULL, 0);
+    } else {
+        led.setHexShort(0x200);
     }
 
     // this will defer all logs, if abort() is called during setup we might never see relevant messages
@@ -686,7 +690,8 @@ void loopLF(const unsigned long &nowUs) {
         uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.limits.P_max * 255, 1, 255);
         led.setRGB(0, i, i);
     } else if (!charging) {
-        if (sensors.Vin) {
+        if (setupErr) led.setHexShort(0x600);
+        else if (sensors.Vin) {
             if (mppt.boardPowerSupplyUnderVoltage(true)) {
                 led.setHexShort(0x100);
             } else {
@@ -740,10 +745,13 @@ void loopRTNewData(unsigned long nowMs) {
     } else {
         if (charging or manualPwm) {
             rtcount("protect.pre");
-            bool mppt_ok = mppt.protect(manualPwm);
-            rtcount("protect");
-            mppt_ok = mppt_ok && mppt.protectLf(manualPwm);
-            rtcount("protectLf");
+            bool mppt_ok = true;
+            if (!mppt.converter.disabled()) {
+                mppt_ok &= mppt.protect(manualPwm);
+                rtcount("protect");
+                mppt_ok &= mppt.protectLf(manualPwm);
+                rtcount("protectLf");
+            }
             if (mppt_ok) {
                 if (haveNewSample) {
                     if (!manualPwm) {
