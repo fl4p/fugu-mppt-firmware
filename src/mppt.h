@@ -263,6 +263,7 @@ public:
     [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }
 
     void shutdownDcdc() {
+        // TODO backoff time delay
         if (topologyConfig.backflowAtHV) {
             converter.disable();
             bflow.enable(false);
@@ -501,7 +502,10 @@ public:
         auto iOutSmall = sensorPhysicalI->ewm.avg.get() < (limits.Iout_max * 0.01f);
 
         if (iOutSmall && converter.getCtrlOnPwmCnt() > converter.pwmRectMin * 2 and
-            (vOut < 1 or (converter.getDutyCycle() * 0.5f) > vr) and limits.reverse_current_paranoia) {
+        (converter.forcedPwm_()
+            ? (vOut < 1 or (converter.getDutyCycle() * 0.5f) > vr)
+            : (converter.getDutyCycle() * 0.8f) > vr)
+            and limits.reverse_current_paranoia) {
             if (!converter.disabled())
                 ESP_LOGE("MPPT",
                      "Buck running at D=%d %% but Vout (%.2f, vr=%.2f) and Iout (%.2f, last=%.2f) low! Sensor or half-bridge failure.",

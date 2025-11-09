@@ -283,8 +283,6 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
 }
 
 
-
-
 void setup() {
     consoleInit();
     ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
@@ -375,7 +373,8 @@ void setup() {
     TeleConf teleConf{};
 
     if (!disableWifi) {
-        mppt.charger.beginMqtt();
+        ConfFile mqttConf{"/littlefs/conf/mqtt.conf"};
+        mppt.charger.beginMqtt(mqttConf);
         connect_wifi_async();
         bool res = wait_for_wifi();
         led.setHexShort(res ? 0x565 : 0x200);
@@ -384,7 +383,7 @@ void setup() {
 
         teleConf = ConfFile{"/littlefs/conf/tele.conf"};
 
-        mqtt_init();
+        mqtt_init(mqttConf);
     }
 
     Limits lim{};
@@ -405,7 +404,7 @@ void setup() {
             ConfFile converterConf{"/littlefs/conf/converter.conf"};
             ConfFile chargerConf{"/littlefs/conf/charger.conf"};
 
-            mppt.charger.begin(chargerConf, converterConf);
+            mppt.charger.begin(chargerConf);
 
             //auto mode = converterConf.getString("mode", "mppt");
 
@@ -1034,6 +1033,16 @@ bool handleCommand(const String &inp) {
                 ESP_LOGI("main", "Conf '%s:%s' = '%s'", fn.c_str(), key.c_str(), conf.getString(key).c_str());
             }
         }
+    } else if (inp.startsWith("vset ")) {
+        float v = inp.substring(5).toFloat();
+        if (v >= 0 and v <= 999)
+            mppt.charger.params.Vbat_max = inp.substring(5).toFloat();
+        else return false;
+    } else if (inp.startsWith("iset ")) {
+        float v = inp.substring(5).toFloat();
+        if (v >= 0 and v <= 999)
+            mppt.charger.params.Iout_max = inp.substring(5).toFloat();
+        else return false;
     } else {
         ESP_LOGE("main", "unknown or unexpected command");
         return false;

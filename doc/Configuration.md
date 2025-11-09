@@ -69,10 +69,11 @@ If set to `1`, diode emulation is disabled and the converter will always run in 
 
 * less output noise because inductor is never "free-wheeling".
   See [here](https://www.nisshinbo-microdevices.co.jp/en/faq/083.html) for wave forms
-* better output regulation during load changes
+* much better output regulation during load changes, useful for PSU
 * less conversion efficiency due to reverse coil current. energy is charged back and forth between output and input.
 * a buck converter in FPWM can easily boost voltage from output to input
 
+Forced PWM is useful if you want to use the converter as power supply.
 
 
 # ACS712

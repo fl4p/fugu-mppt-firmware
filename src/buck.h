@@ -376,26 +376,26 @@ public:
      * @return
      */
     void computeSyncRectRatio(float vh, float vl, float il) {
+        // computation of t_onCtrl and t_onRect ratio is quite error sensitive
+        // e.g. at VR=0.64 a -5% error causes a 13% deviation of pwmMaxLs !
+        // so we do some proper error computation here
+        constexpr float voltageMaxErr = 0.01f; // inc -> safer, less efficient
+
+        // WCEF = worst case error factor
+        // compute the worst case error (Vout estimated too low, Vin too high => VR estimated too low)
+        // this is true for buck and boost
+        constexpr float voltageRatioWCEF = (1.f - voltageMaxErr) / (1.f + voltageMaxErr); // < 1.0
+
+
+        const float convRatioWCE =
+                (isBoost
+                 ? ((vh > vl && vl > 0.1f) ? constrain(vh / vl, 1e-2f, 10.f) : 10.0f) // boost
+                 : ((vh > vl && vh > 0.1f) ? constrain(vl / vh, 1e-2f, 1.f - 1e-2f) : 1.0f) //buck
+                ) / voltageRatioWCEF;
+
+        outInVoltageRatio = convRatioWCE;
 
         if (computeDCM(vh, vl, il)) {
-            // computation of t_onCtrl and t_onRect ratio is quite error sensitive
-            // e.g. at VR=0.64 a -5% error causes a 13% deviation of pwmMaxLs !
-            // so we do some proper error computation here
-            constexpr float voltageMaxErr = 0.01f; // inc -> safer, less efficient
-
-            // WCEF = worst case error factor
-            // compute the worst case error (Vout estimated too low, Vin too high => VR estimated too low)
-            // this is true for buck and boost
-            constexpr float voltageRatioWCEF = (1.f - voltageMaxErr) / (1.f + voltageMaxErr); // < 1.0
-
-
-            const float convRatioWCE =
-                    (isBoost
-                     ? ((vh > vl && vl > 0.1f) ? constrain(vh / vl, 1e-2f, 10.f) : 10.0f) // boost
-                     : ((vh > vl && vh > 0.1f) ? constrain(vl / vh, 1e-2f, 1.f - 1e-2f) : 1.0f) //buck
-                    ) / voltageRatioWCEF;
-
-            outInVoltageRatio = convRatioWCE;
             if (il < 0.01f || vl < 1.0f) // TODO get rid of magic constants
             {
                 if (pwmRectRatioDCM > 0.2f)

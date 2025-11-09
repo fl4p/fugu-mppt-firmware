@@ -120,9 +120,8 @@ void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event
 }
 
 
-void mqtt_init() {
+void mqtt_init(const ConfFile &conf) {
 
-    ConfFile conf{"/littlefs/conf/mqtt.conf"};
 
     if (!conf)return;
 
