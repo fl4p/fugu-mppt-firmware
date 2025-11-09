@@ -1013,6 +1013,7 @@ bool handleCommand(const String &inp) {
         // set-config mqtt.conf username pv
         // set-config mqtt.conf password 0ffgrid
         // set-config charger.conf cell_voltage_eoc 3.53
+        // set-config charger.conf vout_max 12
 
         // set-config sensor.conf vout_filt_len 10
         // set-config sensor.conf iout_filt_len 10

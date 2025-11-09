@@ -104,7 +104,7 @@ This enables easy OTA updates of the firmware across various hardware configurat
 configuration by flashing a new `littlefs` image or by editing the files over FTP. Some crucial parameters are still
 hard-coded, making them configurable is WIP.
 
-You find existing board configuration in the folder [`provisioning/`](provisioning/):
+You find existing board configuration in the folder [`config/`](config/):
 
 * `fmetal`: [Fugu2 board](https://github.com/fl4p/Fugu2)
 * `fugu_int_adc`: original fugu design but using the [internal ADC](doc/Internal%20ADC.md)
