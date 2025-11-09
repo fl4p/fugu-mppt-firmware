@@ -8,7 +8,7 @@
 
 
 struct BatChargerParams {
-    float Vbat_max = FUGU_BAT_V; //FUGU_BAT_V; //14.6 * 2;
+    float Vbat_max = NAN; //FUGU_BAT_V; //14.6 * 2;
     float Iout_max = NAN; // HW1: coil & fuse limited
     float vcell_eoc = 3.53f; // cell end-of-charge voltage
     float vcell_float = 3.5f; // cell end-of-charge voltage
@@ -54,15 +54,17 @@ public:
 
     void beginMqtt(const ConfFile &mqttConf) {
         // TODO conffile
-        mqtt_subscribe_topic(mqttConf.getString("cell_voltages_max_topic"), [&](const char *dat, int len) {
-            std::string val{dat, dat + len}; // add null-termination
-            this->vcell_max = strtof(val.c_str(), nullptr);
-            this->vcell_max_t = wallClockUs();
-            ESP_LOGI("charger", "avg(vbat)=%.4fV vcell_max=%.4fV vcell_eoc=%.4fV vbat_cap=%.5fV vbat_max=%.5fV",
-                     this->vbat_avg.get(),
-                     this->vcell_max, params.vcell_eoc, this->Vbat_max(), params.Vbat_max);
-            _update();
-        });
+        auto topic = mqttConf.getString("cell_voltages_max_topic", "");
+        if (!topic.empty())
+            mqtt_subscribe_topic(topic, [&](const char *dat, int len) {
+                std::string val{dat, dat + len}; // add null-termination
+                this->vcell_max = strtof(val.c_str(), nullptr);
+                this->vcell_max_t = wallClockUs();
+                ESP_LOGI("charger", "avg(vbat)=%.4fV vcell_max=%.4fV vcell_eoc=%.4fV vbat_cap=%.5fV vbat_max=%.5fV",
+                         this->vbat_avg.get(),
+                         this->vcell_max, params.vcell_eoc, this->Vbat_max(), params.Vbat_max);
+                _update();
+            });
     }
 
     /*
@@ -97,7 +99,7 @@ public:
 
     float Ibat_max() const {
         auto s = min(max(0.f, (params.vcell_eoc - vcell_max) / (params.vcell_eoc - params.vcell_float)), 1.f);
-        if(!isfinite(s)) s = 1;
+        if (!isfinite(s)) s = 1;
         return params.Iout_max * s;
     }
 

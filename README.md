@@ -73,10 +73,10 @@ like [this](https://github.com/espressif/esp-idf/issues/12322), note that esp-id
 environment with your system's default python version `python --version`):
 
 ```
-git clone -b v5.1.4 --recursive https://github.com/espressif/esp-idf.git esp-idf-v5.1
-cd esp-idf-v5.1
-./install.sh esp32s3
- . ./export.sh
+git clone -b v5.5 --recursive https://github.com/espressif/esp-idf.git esp-idf-v5.5
+cd esp-idf-v5.5
+./install.sh esp32s3 # windows: install.bat esp32s3
+ . ./export.sh       # windows: export.bat
 ```
 
 Build the MPPT firmware:
@@ -84,7 +84,7 @@ Build the MPPT firmware:
 ```
 git clone --recursive https://github.com/fl4p/fugu-mppt-firmware
 cd fugu-mppt-firmware
-idf.py set-target esp32s3 # (or esp32)
+idf.py set-target esp32s3
 idf.py build
 idf.py flash
 ```
@@ -92,14 +92,11 @@ idf.py flash
 ## Configuring Build
 
 * Set environment variable `RUN_TESTS=1` to run unit-tests
-* `FUGU_BAT_V`: hard-code the battery voltage. If not set the program tries to detect bat voltage from a multiple of
-  14.6V.
 
 ## Board Configuration
 
-The firmware reads IO pin mappings, sensor and system (I2C, WiFi, etc.) configuration values from `.conf` files on
-the `littlefs`
-partition.
+The firmware reads IO pin mappings, sensor and system (I2C, WiFi, etc.) configuration values from configuration files on
+a data partition.
 This enables easy OTA updates of the firmware across various hardware configurations. And you can easily alter the
 configuration by flashing a new `littlefs` image or by editing the files over FTP. Some crucial parameters are still
 hard-coded, making them configurable is WIP.
@@ -203,7 +200,8 @@ happening. This improves average CPU utilization and other things can run smooth
 
 ### Signal Filtering
 
-We use IIR notch filters to remove inverter noise and a moving median to remove bursts/spikes from the voltage and current
+We use IIR notch filters to remove inverter noise and a moving median to remove bursts/spikes from the voltage and
+current
 signals. Another IIR smoothing filter suppresses residual noise.
 
 # MPPT Algorithm
@@ -341,9 +339,8 @@ address in my github profile) if you want to contribute or just share your exper
 
 * [fetlib - find the right MOSFET](https://github.com/fl4p/fetlib)
 
-
-
 TODO
+
 ```
 I (4575) main: received serial command: 'dc 800'
 I (4575) main: Switched to manual PWM

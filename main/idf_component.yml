@@ -6,7 +6,7 @@ dependencies:
   brianpugh/tamp: ^1.6.0
   ## Required IDF version
   idf:
-    version: '>=5.1.4'
+    version: '>=5.5'
   # # Put list of dependencies here
   # # For components maintained by Espressif:
   # component: "~1.0.0"
