@@ -65,7 +65,7 @@ public:
         sr = sensConf.getLong("esp32adc1_sr");
     }
 
-    bool init(const ConfFile &pinConf) override {
+    bool init(const ConfFile &boardConf) override {
         for (auto &at: attenuation)
             at = (adc_atten_t) -1;
 

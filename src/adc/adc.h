@@ -23,10 +23,10 @@ public:
 
     /**
      * Initializes ADC hardware
-     * @param pinConf
+     * @param boardConf
      * @return
      */
-    virtual bool init(const ConfFile &pinConf) = 0;
+    virtual bool init(const ConfFile &boardConf) = 0;
 
     virtual void deinit() = 0;
 

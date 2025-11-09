@@ -76,7 +76,7 @@ void MpptController::updateCV() {
 }
 
 
-void MpptController::begin(const ConfFile &trackerConf, const ConfFile &pinConf, const Limits &limits_,
+void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardConf, const Limits &limits_,
                            const TeleConf &tele_) {
     limits = limits_;
     tele = tele_;
@@ -92,18 +92,18 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &pinConf,
         ESP_LOGI("main", "Influxdb telemetry to host %s", tele.influxdbHost.toString().c_str());
         // sampler.onNewSample = dcdcDataChanged;
     }
-    //flags.noPanelSwitch = pinConf
+    //flags.noPanelSwitch = boardConf
 
 
-    ledPinSimple = pinConf.getByte("led_simple", 255);
+    ledPinSimple = boardConf.getByte("led_simple", 255);
     if (ledPinSimple != 255) {
         pinMode(ledPinSimple, OUTPUT);
         digitalWrite(ledPinSimple, false);
     }
 
-    fan.init(pinConf);
+    fan.init(boardConf);
 
-    bflow.init(pinConf);
+    bflow.init(boardConf);
     meter.load();
     startSweep();
 }

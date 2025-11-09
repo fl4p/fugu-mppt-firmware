@@ -26,7 +26,7 @@ public:
         return SampleReadScheme::cycle;
     }
 
-    bool init(const ConfFile &pinConf) override {
+    bool init(const ConfFile &boardConf) override {
         if (adc1_config_width(ADC_WIDTH_BIT_12) != ESP_OK)
             return false;
         return true;

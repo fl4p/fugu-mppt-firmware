@@ -500,10 +500,10 @@ public:
 
 
     void reInitADCs() {
-        ConfFile pinConf{"/littlefs/conf/pins.conf"};
+        ConfFile boardConf{"/littlefs/conf/pins.conf"};
         for (auto &s: adcStates) {
             s.adc->deinit();
-            s.adc->init(pinConf);
+            s.adc->init(boardConf);
             s.adc->start();
         }
     }

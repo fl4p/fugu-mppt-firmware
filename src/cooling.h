@@ -11,8 +11,8 @@ class Fan {
     uint8_t fanPin = 255;
 
 public:
-    bool init(const ConfFile &pinConf) {
-        uint8_t pin = pinConf.getByte("fan_pwm", 255);
+    bool init(const ConfFile &boardConf) {
+        uint8_t pin = boardConf.getByte("fan_pwm", 255);
         if (pin == 255) return false;
         fanPin = pin;
 

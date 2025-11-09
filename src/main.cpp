@@ -89,7 +89,7 @@ void loopRT(void *arg); // this is the critical one
 
 void loopRTNewData(unsigned long nowMs);
 
-AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &pinConf, const ConfFile &sensConf,
+AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &boardConf, const ConfFile &sensConf,
                                    const std::string &chnDebug) {
     AsyncADC<float> *adc;
     if (adcName == "ads1115" or adcName == "ads1015") {
@@ -108,7 +108,7 @@ AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &p
         //return nullptr;
     }
 
-    if (!adc->init(pinConf)) {
+    if (!adc->init(boardConf)) {
         //ESP_LOGE("main", "Failed to initialize ADC %s", adcName.c_str());
         delete adc;
         throw std::runtime_error("failed to initialize ADC " + adcName);
@@ -118,7 +118,7 @@ AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &p
     return adc;
 }
 
-void setupSensors(const ConfFile &pinConf, const Limits &lim) {
+void setupSensors(const ConfFile &boardConf, const Limits &lim) {
     loopWallClockUs_ = micros();
     heap_caps_check_integrity_all(true);
 
@@ -153,7 +153,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         auto an = sensConf.getString(chn + '_' + "adc", defAdcName);
 
         if (chNum != 255 && adcs.find(an) == adcs.end()) {
-            adcs[an] = createAdcInstance(an, pinConf, sensConf, chn);
+            adcs[an] = createAdcInstance(an, boardConf, sensConf, chn);
         }
         auto adc = chNum != 255 ? adcs[an] : nullptr;
 
@@ -313,25 +313,25 @@ void setup() {
     }
 
 
-    ConfFile pinConf{"/littlefs/conf/pins.conf"};
+    ConfFile boardConf{"/littlefs/conf/board.conf"};
 
-    auto mcuStr = pinConf.getString("mcu", "");
+    auto mcuStr = boardConf.getString("mcu", "");
     if (mcuStr != CONFIG_IDF_TARGET) {
-        ESP_LOGE("main", "pins.conf expects MCU '%s', but target is '%s'", mcuStr.c_str(), CONFIG_IDF_TARGET);
+        ESP_LOGE("main", "board.conf expects MCU '%s', but target is '%s'", mcuStr.c_str(), CONFIG_IDF_TARGET);
         setupErr = true;
     }
 
     bool noI2C = true;
 
-    if (pinConf)
+    if (boardConf)
         try {
-            auto i2c_freq = pinConf.getLong("i2c_freq", 100000);
-            auto i2c_sda = pinConf.getByte("i2c_sda", 255);
+            auto i2c_freq = boardConf.getLong("i2c_freq", 100000);
+            auto i2c_sda = boardConf.getByte("i2c_sda", 255);
             noI2C = (i2c_sda == 255);
             if (!noI2C) {
-                if (!pinConf.getByte("skip_assert", 0))
+                if (!boardConf.getByte("skip_assert", 0))
                     try {
-                        auto i2c_scl = pinConf.getLong("i2c_scl");
+                        auto i2c_scl = boardConf.getLong("i2c_scl");
                         assertPinState(i2c_sda, true, "i2c_sda");
                         assertPinState(i2c_scl, true, "i2c_scl");
                         pinMode(i2c_scl, OUTPUT);
@@ -342,8 +342,8 @@ void setup() {
                         ESP_LOGE("main", "error %s", e.what());
                         setupErr = true;
                     }
-                ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, pinConf.getByte("i2c_scl"), i2c_freq);
-                if (!Wire.begin(i2c_sda, (uint8_t) pinConf.getLong("i2c_scl"), i2c_freq)) {
+                ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, boardConf.getByte("i2c_scl"), i2c_freq);
+                if (!Wire.begin(i2c_sda, (uint8_t) boardConf.getLong("i2c_scl"), i2c_freq)) {
                     ESP_LOGE("main", "Failed to initialize Wire");
                     setupErr = true;
                 }
@@ -352,7 +352,7 @@ void setup() {
             }
 
 
-            led.begin(pinConf);
+            led.begin(boardConf);
             led.setHexShort(0x111);
 
             if (!noI2C) {
@@ -396,8 +396,8 @@ void setup() {
     }
 
     try {
-        setupSensors(pinConf, lim);
-        mppt.initSensors(pinConf);
+        setupSensors(boardConf, lim);
+        mppt.initSensors(boardConf);
         if (scope) scope->addChannel(&mppt, 0, 'u', 12, "vout_filt");
 
         if (!setupErr) {
@@ -407,14 +407,14 @@ void setup() {
 
             mppt.charger.begin(chargerConf, converterConf);
 
-            auto mode = converterConf.getString("mode", "mppt");
+            //auto mode = converterConf.getString("mode", "mppt");
 
-            converter.init(converterConf, pinConf, coilConf);
+            converter.init(converterConf, boardConf, coilConf);
         }
 
         if (!setupErr && !adcSampler.adcStates.empty()) {
             ConfFile trackerConf{"/littlefs/conf/tracker.conf"};
-            mppt.begin(trackerConf, pinConf, lim, teleConf);
+            mppt.begin(trackerConf, boardConf, lim, teleConf);
         }
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during sensor/converter/tracker setup: %s", er.what());

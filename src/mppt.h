@@ -237,7 +237,7 @@ public:
           charger{} {
     }
 
-    void initSensors(const ConfFile &pinConf) {
+    void initSensors(const ConfFile &boardConf) {
         assert_throw(sensors.Vout, "");
         assert_throw(sensors.Iout, "");
 
@@ -253,12 +253,12 @@ public:
         if (sensorPhysicalI->isVirtual) throw std::runtime_error("no physical I sensor");
         if (sensorPhysicalU->isVirtual) throw std::runtime_error("no physical U sensor");
 
-        ntc.begin(pinConf);
+        ntc.begin(boardConf);
         ucTemp.begin();
         ucTemp.read();
     }
 
-    void begin(const ConfFile &trackerConf, const ConfFile &pinConf, const Limits &limits_, const TeleConf &tele_);
+    void begin(const ConfFile &trackerConf, const ConfFile &boardConf, const Limits &limits_, const TeleConf &tele_);
 
     [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }
 

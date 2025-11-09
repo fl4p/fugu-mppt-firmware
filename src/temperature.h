@@ -53,9 +53,9 @@ public:
     TempSensorGPIO_NTC() = default;
 
 
-    void begin(const ConfFile &pinConf) {
+    void begin(const ConfFile &boardConf) {
         if (valuePtr == nullptr) {
-            auto chi = pinConf.getByte("ntc_ch", 255);
+            auto chi = boardConf.getByte("ntc_ch", 255);
             if (chi == 255)
                 return;
 

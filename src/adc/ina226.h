@@ -37,12 +37,12 @@ public:
     }
 
 
-    bool init(const ConfFile &pinConf) override {
+    bool init(const ConfFile &boardConf) override {
         if (ina226_instance) {
             return false;
         }
 
-        alertPin = (uint8_t) pinConf.getByte("ina22x_alert", 255);
+        alertPin = (uint8_t) boardConf.getByte("ina22x_alert", 255);
         if (alertPin == 255) {
             ESP_LOGW("ina22x", "No ALERT pin specified");
             return false;
@@ -56,16 +56,16 @@ public:
 
         assert(!new_data);
 
-        auto i2c_port = (i2c_port_t) pinConf.getByte("i2c_port", 0);
-        auto addr = pinConf.getByte("ina22x_addr", 0b1000000);
+        auto i2c_port = (i2c_port_t) boardConf.getByte("i2c_port", 0);
+        auto addr = boardConf.getByte("ina22x_addr", 0b1000000);
 
         assert_throw(i2c_port == 0, ""); // not implemented, see _setupPeripherals()
         //if(i2c_port != 0)
         //    ina226._wire = new TwoWire((uint8_t) i2c_port);
         ina226.i2cAddress = addr;
 
-        float resistor = pinConf.getFloat("ina22x_resistor"),
-                range = pinConf.getFloat("ina22x_range",
+        float resistor = boardConf.getFloat("ina22x_resistor"),
+                range = boardConf.getFloat("ina22x_range",
                                          35.0f);// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
         ina226.setResistorRange(resistor, range);
         //ESP_LOGI("ina226", "ina226.calVal=%d", ina226.calVal);
