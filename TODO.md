@@ -1,3 +1,6 @@
+* provisioning overrides
+  * eg ina22x_resistor, voltage dividers etc that persists when flashing a new provisioning image
+  * also wifi, coil. "extend" a config set?
 * after calibration wait until ewm.avg is finite, filters have settled, then sweep
 
 ## components
@@ -23,9 +26,6 @@ add named components (mqtt, adc, etc)
   * ignoring largerDecrease fixes the problem
 * iout midpoint calibration fix! with ina226 we get an offset of
   0.9A ! https://github.com/fl4p/fugu-mppt-firmware/issues/28
-* after sending "adc-restart": device panics, restarts. then connects to wifi (sending influxdb monitoring data of temp
-  sensor), but is unreachable through telnet. reports voltage and current but does not start conversion/tracking! [img.png](img.png)
-*
 * store last warnings, errors
 * restart adc after some time
 * simulate ina226 external reset
@@ -136,5 +136,63 @@ https://github.com/espressif/esptool/commit/0215786283660480e9ec85dd077e6fc2f469
 207288640
 
 timeout waiting for new adc sample!
+
+```
+
+
+
+panic
+```
+11 ┤                                                          ╭───╯                                  ╰─ 
+ 9 ┤                                                      ╭───╯                                         
+ 8 ┤                                                  ╭───╯                                             
+Guru Meditation Error: Core  1 panic'ed (StoreProhibited). Exception was unhandled.
+
+Core  1 register dump:
+PC      : 0x40384f81  PS      : 0x00060233  A0      : 0x80384715  A1      : 0x3fccbc40  
+--- 0x40384f81: insert_free_block at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/tl
+--- 0x40384f81: insert_free_block at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/tlsf/tlsf.c:362
+ (inlined by) block_insert at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/tlsf/tlsf.c:388
+ (inlined by) block_trim_free at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/tlsf/tlsf.c:502
+ (inlined by) block_prepare_used at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/tlsf/tlsf.c:579
+ (inlined by) tlsf_malloc at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/tlsf/tlsf.c:1006
+
+A2      : 0x3fcb084c  A3      : 0x00000005  A4      : 0x3fcb08a4  A5      : 0x3c1398b8  
+A6      : 0x00007530  A7      : 0x00000020  A8      : 0x3fcd0390  A9      : 0x3fcd03a0  
+A10     : 0x00000009  A11     : 0x00000000  A12     : 0x00000034  A13     : 0x00000000  
+A14     : 0x3fcd03c8  A15     : 0x3fcd03a0  SAR     : 0x00000020  EXCCAUSE: 0x0000001d  
+EXCVADDR: 0x00000011  LBEG    : 0x4211b199  LEND    : 0x4211b1b8  LCOUNT  : 0x00000000  
+--- 0x4211b199: dsps_biquad_f32_ae32 at /Users/fab/dev/pv/fugu-mppt-firmware/managed_components/espressif__esp-dsp/modules/iir/biquad/dsps_biquad_f32_ae32.S:70
+0x4211b1b8: loop_bq_end_m_ae32 at /Users/fab/dev/pv/fugu-mppt-firmware/managed_components/espressif__esp-dsp/modules/iir/biquad/dsps_biquad_f32_ae32.S:83
+
+
+
+Backtrace: 0x40384f7e:0x3fccbc40 0x40384712:0x3fccbc60 0x40376495:0x3fccbc80 0x403764ed:0x3fccbca0 0x40376522:0x3fccbcc0 0x40386771:0x3fccbce0 0x420d42b5:0x3fccbd00 0x42010675:0x3fccbd20 0x420106a1:0x3fccbd40 0x42010702:0x3fccbd60 0x42010804:0x3fccbda0 0x420148a6:0x3fccbdc0 0x40381832:0x3fccbdf0
+--- 0x40384f7e: insert_free_block at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/tlsf/tlsf.c:360
+ (inlined by) block_insert at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/tlsf/tlsf.c:388
+ (inlined by) block_trim_free at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/tlsf/tlsf.c:502
+ (inlined by) block_prepare_used at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/tlsf/tlsf.c:579
+ (inlined by) tlsf_malloc at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/tlsf/tlsf.c:1006
+0x40384712: multi_heap_malloc_impl at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/multi_heap.c:207
+0x40376495: heap_caps_malloc_base at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/heap_caps.c:176
+0x403764ed: heap_caps_malloc at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/heap_caps.c:197
+0x40376522: heap_caps_malloc_default at /Users/fab/dev/esp/esp-idf-v5.1/components/heap/heap_caps.c:223
+0x40386771: malloc at /Users/fab/dev/esp/esp-idf-v5.1/components/newlib/heap.c:24
+0x420d42b5: operator new(unsigned int) at /Users/brnomac003/.gitlab-runner/builds/qR2TxTby/1/idf/crosstool-NG/.build/xtensa-esp32s3-elf/src/gcc/libstdc++-v3/libsupc++/new_op.cc:50
+0x42010675: void std::_Function_base::_Base_manager<ADC_Sampler::_updateAdc(ADC_Sampler::AdcState&)::{lambda(unsigned char, float)#1}>::_M_create<ADC_Sampler::_updateAdc(ADC_Sampler::AdcState&)::{lambda(unsigned char, float)#1}>(std::_Any_data&, ADC_Sampler::_updateAdc(ADC_Sampler::AdcState&)::{lambda(unsigned char, float)#1}&&, std::integral_constant<bool, false>) at /Users/fab/.espressif/tools/xtensa-esp32s3-elf/esp-12.2.0_20230208/xtensa-esp32s3-elf/xtensa-esp32s3-elf/include/c++/12.2.0/bits/std_function.h:161
+0x420106a1: void std::_Function_base::_Base_manager<ADC_Sampler::_updateAdc(ADC_Sampler::AdcState&)::{lambda(unsigned char, float)#1}>::_M_init_functor<ADC_Sampler::_updateAdc(ADC_Sampler::AdcState&)::{lambda(unsigned char, float)#1}>(std::_Any_data&, ADC_Sampler::_updateAdc(ADC_Sampler::AdcState&)::{lambda(unsigned char, float)#1}&&) at /Users/fab/.espressif/tools/xtensa-esp32s3-elf/esp-12.2.0_20230208/xtensa-esp32s3-elf/xtensa-esp32s3-elf/include/c++/12.2.0/bits/std_function.h:215
+ (inlined by) std::function<void (unsigned char const&, float)>::function<ADC_Sampler::_updateAdc(ADC_Sampler::AdcState&)::{lambda(unsigned char, float)#1}, void>(ADC_Sampler::_updateAdc(ADC_Sampler::AdcState&)::{lambda(unsigned char, float)#1}&&) at /Users/fab/.espressif/tools/xtensa-esp32s3-elf/esp-12.2.0_20230208/xtensa-esp32s3-elf/xtensa-esp32s3-elf/include/c++/12.2.0/bits/std_function.h:449
+0x42010702: ADC_Sampler::_updateAdc(ADC_Sampler::AdcState&) at /Users/fab/dev/pv/fugu-mppt-firmware/src/adc/sampling.h:415
+0x42010804: ADC_Sampler::update() at /Users/fab/dev/pv/fugu-mppt-firmware/src/adc/sampling.h:471
+0x420148a6: loopRT(void*) at /Users/fab/dev/pv/fugu-mppt-firmware/src/main.cpp:518
+0x40381832: vPortTaskWrapper at /Users/fab/dev/esp/esp-idf-v5.1/components/freertos/FreeRTOS-Kernel/portable/xtensa/port.c:162
+
+
+
+
+
+ELF file SHA256: c4198f82faed558a
+
+Rebooting...
 
 ```
