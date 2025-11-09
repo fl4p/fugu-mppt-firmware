@@ -22,7 +22,7 @@ public:
         resetPointer();
     }
 
-    bool init(const ConfFile &pinConf) override {
+    bool init(const ConfFile &boardConf) override {
         return true;
     }
 

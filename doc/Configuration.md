@@ -57,6 +57,24 @@ vout_rh = 47e3    # upper resistor of voltage divider
 vout_rl = 47e3    # lower resistor
 ```
 
+# Converter.conf
+
+
+### `forced_pwm`
+With the default value `0`, the converter will run in DCM during light load conditions.
+Notice that the controller uses inductivity (from `coil.conf`), input and output voltages to decided if the converter
+operates in DCM or CCM.
+
+If set to `1`, diode emulation is disabled and the converter will always run in CCM, which is called forced PWM mode and has these characteristics:
+
+* less output noise because inductor is never "free-wheeling".
+  See [here](https://www.nisshinbo-microdevices.co.jp/en/faq/083.html) for wave forms
+* better output regulation during load changes
+* less conversion efficiency due to reverse coil current. energy is charged back and forth between output and input.
+* a buck converter in FPWM can easily boost voltage from output to input
+
+
+
 # ACS712
 
 The ACS712 sensitivity is 66mV/A. Output is scaled with a 10k+3.3k voltage divider to match the ADC voltage range.

@@ -2,7 +2,7 @@
 <module classpath="CMake" type="CPP_MODULE" version="4">
   <component name="FacetManager">
     <facet type="Python" name="Python facet">
-      <configuration sdkName="esp32-build" />
+      <configuration sdkName="Python 3.14 (fugu-mppt-firmware)" />
     </facet>
   </component>
 </module>

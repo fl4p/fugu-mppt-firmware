@@ -18,23 +18,23 @@ A notch filter can remove this quite well.
 
 A median filter can filter load bursts.
 
-
 https://github.com/Krampmeier/uncertainty
 
 # Median
+
 - filter spikes
 
+## Residual Noise
 
-## Residual Noise 
-IIR filters have lower memory footprint and work faster compared to FIR. 
-A disadvantage is the nonlinear phase response. Since we are just measuring dc amplitude, we don't use phase information.
+IIR filters have lower memory footprint and work faster compared to FIR.
+A disadvantage is the nonlinear phase response. Since we are just measuring dc amplitude, we don't use phase
+information.
 Soo IIR filters are a good choice.
 https://www.ni.com/docs/de-DE/bundle/diadem/page/genmaths/genmaths/calc_filterfir_iir.htm
 
 * use iir
 * multipass filters
 * adaptive window length for given target noise
-
 
 Lets have a look at the following signal.
 It is the charger output current sampled by ina226 ADC (t_conv=1140µs, avg=1).
@@ -44,16 +44,14 @@ There is a slight 100 Hz ac component due to the sinusodial inverter input which
 
 The useful signal has a triangular waveform, which comes from the MPPT perturbation.
 
-![img_5.png](img_5.png)
+![img_5.png](img/noise1.webp)
 Noisy signal (blue), moving average N=80 (orange) and 2-pass moving average N=40.
 
 The 2-pass filter has a much better noise rejection:
-![img_6.png](img_6.png)
-
+![img_6.png](img/noise_2p.webp)
 
 IIR:
-![img_7.png](img_7.png)
-
+![img_7.png](img/noiseIir.webp)
 
 2-pass IIR:
-![img_8.png](img_8.png)
+![img_8.png](img/noiseIIR2.webp)

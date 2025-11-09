@@ -20,6 +20,7 @@
 
 #include "conf.h"
 #include "util.h"
+#include "logging.h"
 
 /**
  * Synchronous buck or boost converter
@@ -68,7 +69,11 @@ public:
 
     inline bool forcedPwm_() const { return forcedPwm; }
 
+    inline void forcedPwm_(bool forced) { forcedPwm = forced; }
+
     inline bool syncRectEnabled_() const {return syncRectEnabled;}
+
+    const uint16_t &pwmMaxDriver() const { return pwmDriver.pwmMax; };
 
     uint16_t pwmCtrlMax{}, pwmRectMin{}, pwmCtrlMin{};
 
@@ -99,9 +104,11 @@ public:
 
     [[nodiscard]] float voltageRatio() const { return outInVoltageRatio; } // M
 
-    void init(const ConfFile &converterConf, const ConfFile &pinConf, const ConfFile &coilConf) {
+    void init(const ConfFile &converterConf, const ConfFile &boardConf, const ConfFile &coilConf) {
 
-        isBoost = converterConf.getByte("boost", 0);
+        auto topo = converterConf.getString("topo", "buck");
+        assert_throw(topo == "buck" or topo == "boost", "");
+        isBoost = topo == "boost";
         forcedPwm = converterConf.getByte("forced_pwm", 0);
 
         if (forcedPwm)ESP_LOGW("converter", "%s", "forced_pwm");
@@ -110,7 +117,7 @@ public:
 
         ESP_LOGI("converter", "Coil L0=%.1f µH", L0 * 1e6f);
 
-        uint32_t pwmFrequency = pinConf.getLong("pwm_freq"); //39000; //  converter switching frequency
+        uint32_t pwmFrequency = boardConf.getLong("pwm_freq"); //39000; //  converter switching frequency
         assert_throw(pwmFrequency > 5e3 && pwmFrequency < 5e5, "");
 
         fL = (float) pwmFrequency * L0 * InductivityDcBias; // for ripple current computation
@@ -118,7 +125,7 @@ public:
         assert_throw(fL > 1, "pwmFreq*L0 out-of-range");
         // Lo: https://www.ti.com/lit/ds/symlink/lm5163.pdf#page=18
 
-        auto drvInpLogic = pinConf.getString("pwm_driver_logic"); // driver input logic "in,en", "hi,li" and en
+        auto drvInpLogic = boardConf.getString("pwm_driver_logic"); // driver input logic "in,en", "hi,li" and en
         uint8_t pinCtrl, pinRect;
 
 
@@ -128,11 +135,11 @@ public:
             auto pnCtrl = isBoost ? "pwm_en" : "pwm_in";
             auto pnRect = isBoost ? "pwm_in" : "pwm_en";
 
-            pinCtrl = pinConf.getByte(pnCtrl);
-            pinRect = pinConf.getByte(pnRect);
+            pinCtrl = boardConf.getByte(pnCtrl);
+            pinRect = boardConf.getByte(pnRect);
             assert_throw(pinCtrl != pinRect, "");
 
-            if (!pinConf.getByte("skip_assert", 0)) {
+            if (!boardConf.getByte("skip_assert", 0)) {
                 // ti, infineon gate drivers: in pins pulled low, EN/SD pins pulled high
                 assertPinState(pinCtrl, false, pnCtrl, true);
                 assertPinState(pinRect, false, pnRect, true);
@@ -142,15 +149,15 @@ public:
             auto pnCtrl = isBoost ? "pwm_li" : "pwm_hi";
             auto pnRect = isBoost ? "pwm_hi" : "pwm_li";
 
-            pinCtrl = pinConf.getByte(pnCtrl);
-            pinRect = pinConf.getByte(pnRect);
-            pinSd = pinConf.getByte("pwm_sd", 255); // DIS
+            pinCtrl = boardConf.getByte(pnCtrl);
+            pinRect = boardConf.getByte(pnRect);
+            pinSd = boardConf.getByte("pwm_sd", 255); // DIS
 
             assert_throw(pinCtrl != pinRect, "");
             assert_throw(pinCtrl != pinSd, "");
             assert_throw(pinRect != pinSd, "");
 
-            if (!pinConf.getByte("skip_assert", 0)) {
+            if (!boardConf.getByte("skip_assert", 0)) {
                 assertPinState(pinCtrl, false, pnCtrl, false);
                 assertPinState(pinRect, false, pnRect, false);
                 if (pinSd != 255) assertPinState(pinSd, true, "pwm_sd", false);

@@ -36,7 +36,7 @@ OK: <cmd>
 * `+<int>`, `-<int>` relative converter duty cycle perturbation step. be careful with large positive jumps, this can cause
   extreme
   current transients destroying the switches. also availble in tracking mode to test tracker recovery.
-* `ls-disable`, `ls-enable`: disable/enable low-side switch (i.e. diode emulation, sync rectification).
+* `sync [0, 1, forced]`:  disable/enable low-side switch (i.e. diode emulation, sync rectification). `forced` puts converter into forced PWM mode and disables various reverse current checks
 * `bf-enable`, `bf-disable`: enable/disable the backflow switch. An enabled back-flow switch will allow current flow
   from the output to the input (bat to solar).
 * `mppt` switches back to MPP tracking mode

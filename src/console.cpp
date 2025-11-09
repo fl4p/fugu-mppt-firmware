@@ -8,6 +8,7 @@
 #include "util.h"
 
 #include <esp_private/usb_console.h>
+
 #include <USB.h>
 #include <Wire.h>
 #include <driver/uart.h>
@@ -15,7 +16,8 @@
 #include "logging.h"
 #include "console.h"
 
-#include "../vfs/private_include/esp_vfs_private.h"
+#include <driver/esp_private/usb_serial_jtag_vfs.h>
+//#include "../vfs/private_include/esp_vfs_private.h"
 
 QueueHandle_t uart_queue;
 
@@ -98,7 +100,8 @@ void loopUart(unsigned long nowMs) {
 }
 
 
-void uartInit(int port_num) {
+void uartInit(int port_num_) {
+    uart_port_t port_num = (uart_port_t)port_num_;
 
     uart_config_t uart_config = {
             .baud_rate = 115200,
@@ -108,6 +111,7 @@ void uartInit(int port_num) {
             .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, // UART_HW_FLOWCTRL_CTS_RTS
             .rx_flow_ctrl_thresh = 122,
             .source_clk = UART_SCLK_APB,
+            .flags = {.allow_pd = false, .backup_before_sleep = false },
     };
     int intr_alloc_flags = 0;
 

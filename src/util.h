@@ -24,3 +24,8 @@ void assertPinState(uint8_t pin, bool digitalVal, const char *pinName = nullptr,
             }                                                                       \
     } while(0)
 
+
+template<typename T>
+T absdiff(const T &lhs, const T &rhs) {
+    return lhs > rhs ? lhs - rhs : rhs - lhs;
+}

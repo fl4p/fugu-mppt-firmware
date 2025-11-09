@@ -33,8 +33,8 @@ private:
     PeriodicTimer periodic_timer{};
 
 public:
-    bool init(const ConfFile &pinConf) override {
-        auto f = pinConf.getLong("adc_fake_freq", 1000 * 3);
+    bool init(const ConfFile &boardConf) override {
+        auto f = boardConf.getLong("adc_fake_freq", 1000 * 3);
         periodic_timer.begin(f, &adc_fake_periodic_timer_callback, this);
 
         // Test taskNotification
@@ -83,6 +83,9 @@ public:
         periodic_timer.destroy();
     }
 
+     float getSamplingRate(uint8_t channel) override{
+       return static_cast<float>(periodic_timer.freq());
+    };
 
     void startReading(uint8_t channel) override {
         taskNotification.subscribe();

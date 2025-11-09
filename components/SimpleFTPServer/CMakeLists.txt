@@ -5,8 +5,8 @@ idf_component_register(
             SimpleFTPServer
         REQUIRES
             #Adafruit_BusIO
-            arduino
-            #arduino-esp32
+            #arduino
+            arduino-esp32
 )
 
 #add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX)

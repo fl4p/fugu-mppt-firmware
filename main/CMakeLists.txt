@@ -12,6 +12,7 @@ endif ()
 
 idf_component_register(SRCS
         ${MAIN_SRC}
+        "../src/mppt.cpp"
         "../src/logging.cpp"
         "../src/util.cpp"
         "../src/adc/adc_esp32_cont.cpp"

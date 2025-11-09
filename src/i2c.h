@@ -1,6 +1,25 @@
 #pragma once
 
-#include "driver/i2c.h"
+#include <Wire.h>
+
+bool i2c_test_address(uint8_t addr) {
+    Wire.beginTransmission(addr);
+    return Wire.endTransmission() == 0;
+}
+
+
+#ifndef USE_OLD_I2C_DRIVER
+#include "driver/i2c_master.h"
+/*
+uint16_t i2c_read_short(i2c_port_t i2c_master_port, uint8_t address, uint8_t command, bool write_ack = true,
+                        uint32_t timeoutMs = 1000) {
+    //i2c_master_transmit_receive(dev_handle, &address, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+    Wire.
+}
+*/
+
+
+#else
 
 #define ACK_CHECK_EN            0x1
 #define ACK_CHECK_DIS            0x0
@@ -211,7 +230,5 @@ esp_err_t i2c_read_buf(i2c_port_t i2c_master_port, uint8_t address, uint8_t comm
     return (ret);
 }
 
-bool i2c_test_address(uint8_t addr) {
-    Wire.beginTransmission(addr);
-    return Wire.endTransmission() == 0;
-}
+#endif
+

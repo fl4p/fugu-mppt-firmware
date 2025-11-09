@@ -6,8 +6,10 @@
     <mapping directory="$IDF_PATH$/components/bt/controller/lib_esp32" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/bt/controller/lib_esp32c2/esp32c2-bt-lib" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/bt/controller/lib_esp32c3_family" vcs="Git" />
+    <mapping directory="$IDF_PATH$/components/bt/controller/lib_esp32c5/esp32c5-bt-lib" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/bt/controller/lib_esp32c6/esp32c6-bt-lib" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/bt/controller/lib_esp32h2/esp32h2-bt-lib" vcs="Git" />
+    <mapping directory="$IDF_PATH$/components/bt/esp_ble_mesh/lib/lib" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/bt/host/nimble/nimble" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/cmock/CMock" vcs="Git" />
     <mapping directory="$IDF_PATH$/components/cmock/CMock/vendor/c_exception" vcs="Git" />
@@ -33,9 +35,6 @@
     <mapping directory="$PROJECT_DIR$/components/INA226_WE/INA226_WE" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/components/InfluxDB-Client-for-Arduino/InfluxDB-Client-for-Arduino" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/components/SimpleFTPServer/SimpleFTPServer" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/components/arduino" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/components/esp32-semihosting-profiler/esp32-semihosting-profiler" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/components/esp_littlefs" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/components/esp_littlefs/src/littlefs" vcs="Git" />
   </component>
 </project>

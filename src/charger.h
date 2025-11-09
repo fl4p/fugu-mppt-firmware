@@ -35,8 +35,8 @@ public:
 
     explicit BatteryCharger() = default;
 
-    void begin(ConfFile &chargerConf, ConfFile &converterConf) {
-        params.Vbat_max = converterConf.getFloat("vout_max", NAN);
+    void begin(ConfFile &chargerConf) {
+        params.Vbat_max = chargerConf.getFloat("vout_max", NAN);
         params.vcell_eoc = chargerConf.getFloat("cell_voltage_eoc", 3.53f);
         params.vcell_float = chargerConf.getFloat("cell_voltage_float", 3.5f);
         params.Iout_max = chargerConf.getFloat("ibat_max", 40.f); // iout = ibat + iload
@@ -52,9 +52,9 @@ public:
         }
     }
 
-    void beginMqtt() {
+    void beginMqtt(const ConfFile &mqttConf) {
         // TODO conffile
-        mqtt_subscribe_topic("bat_caravan/cell_voltages/max", [&](const char *dat, int len) {
+        mqtt_subscribe_topic(mqttConf.getString("cell_voltages_max_topic"), [&](const char *dat, int len) {
             std::string val{dat, dat + len}; // add null-termination
             this->vcell_max = strtof(val.c_str(), nullptr);
             this->vcell_max_t = wallClockUs();

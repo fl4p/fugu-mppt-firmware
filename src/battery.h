@@ -22,7 +22,7 @@ enum CellChemistry {
     Max,
 };
 
-float detectMaxBatteryVoltage(float openCircuitVoltage) {
+inline float detectMaxBatteryVoltage(float openCircuitVoltage) {
     auto constexpr CellVolt = 3.65;
     auto constexpr CellPack = 4;
     float voltageStep = CellPack * CellVolt; // lifepo4 4s (3.65V) [1,2,4]

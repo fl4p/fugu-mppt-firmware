@@ -1,6 +1,9 @@
 #pragma once
 
+#include <hal/adc_types.h>
+
 class SingleValueSensor {
+public:
     virtual float read() = 0;
 
     [[nodiscard]] virtual float last() const = 0;
@@ -13,7 +16,7 @@ class TempSensorGPIO_NTC : public SingleValueSensor {
     const float *valuePtr = nullptr;
 
     RunningMedian3<float> median3{};
-    EWMA<float> ewma1{20}, ewma2{20};
+    EWMA<float> ewma2{2};
 
     uint8_t _attack = 1; // discard first samples
 
@@ -32,17 +35,27 @@ class TempSensorGPIO_NTC : public SingleValueSensor {
         return temp;
     }
 
+    [[nodiscard]] float volt2Temp(float vr) const {
+        // vr = v_adc/vcc_supply
+        // returns temperature in celsius
+        constexpr auto beta = 3380.f; // [K] (25/50℃) (3380: NCP18XH103F03RB)
+        constexpr auto T0 = 25.0f + 273.15f; // [K]
+        constexpr auto R0 = 10e3f; // R(T0)
+        constexpr auto Rp = 10e3f; // pull-down resistor
+
+        return 1.f / (std::log(Rp / R0 * (1.f / vr - 1.f)) / beta + 1.f / T0) - 273.15f;
+    }
+
     //esp_adc_cal_characteristics_t adc_char{};
     adc_atten_t adc_atten = ADC_ATTEN_DB_12; // 10k NTC / 10K pulldown on 3.3V => 1.65V mid
 
 public:
-
     TempSensorGPIO_NTC() = default;
 
 
-    void begin(const ConfFile &pinConf) {
+    void begin(const ConfFile &boardConf) {
         if (valuePtr == nullptr) {
-            auto chi = pinConf.getByte("ntc_ch", 255);
+            auto chi = boardConf.getByte("ntc_ch", 255);
             if (chi == 255)
                 return;
 
@@ -65,7 +78,6 @@ public:
     }
 
     float read() override {
-
         if (valuePtr == nullptr) {
             //auto adc = analogRead((uint8_t) PinConfig::NTC);
             /* if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
@@ -86,7 +98,9 @@ public:
              */
         } else {
             auto volt = *valuePtr;
-            float temp = adc2Celsius(volt / 3.9f * 4095.0f); // 11/12db => 3.9V full range (see docs)
+            constexpr auto vcc = 3.3f;
+            //float temp = adc2Celsius(volt / 3.9f * 4095.0f); // 11/12db => 3.9V full range (see docs)
+            float temp = volt2Temp(volt / vcc);
             ewma2.add(temp);
         }
 
@@ -128,10 +142,15 @@ class Esp32TempSensor : public SingleValueSensor {
     //temperature_sensor_handle_t temp_handle = NULL;
     float tsens_out = NAN;
     temperature_sensor_handle_t temp_sensor = NULL;
-    temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
+    temperature_sensor_config_t temp_sensor_config = {
+        .range_min = 20,
+        .range_max = 100,
+        .clk_src = TEMPERATURE_SENSOR_CLK_SRC_DEFAULT,
+        .flags = {.allow_pd = false},
+    };
+
 public:
     Esp32TempSensor() {
-
         /*temperature_sensor_config_t temp_sensor = {
                 .range_min = 20,
                 .range_max = 100,
@@ -180,9 +199,9 @@ class Esp32TempSensor : public SingleValueSensor {
     //temperature_sensor_handle_t temp_handle = NULL;
     float tsens_out = NAN;
     temp_sensor_config_t conf{.dac_offset = TSENS_DAC_L2, .clk_div = 6};
+
 public:
     Esp32TempSensor() {
-
         /*temperature_sensor_config_t temp_sensor = {
                 .range_min = 20,
                 .range_max = 100,
@@ -195,10 +214,10 @@ public:
         ESP_ERROR_CHECK(temp_sensor_start());
     }
 
-    void begin() {}
+    void begin() {
+    }
 
-    float read()  override {
-
+    float read() override {
         // This has very poor real-time performance if WiFi is enabled (probably using ADC0?)
         if (temp_sensor_read_celsius(&tsens_out) != ESP_OK) {
             conf.dac_offset = (temp_sensor_dac_offset_t)((conf.dac_offset + 1) % TSENS_DAC_MAX);
@@ -241,16 +260,16 @@ uint8_t temprature_sens_read();
  */
 
 
-
 class Esp32TempSensor {
     RunningMedian3<float> median3{};
     EWMA<float> ewma{40};
 
 public:
+    Esp32TempSensor() {
+    }
 
-    Esp32TempSensor() {}
-
-    void begin() {}
+    void begin() {
+    }
 
     float read() {
         //return (temprature_sens_read() - 32) / 1.8;

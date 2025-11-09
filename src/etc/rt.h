@@ -29,16 +29,16 @@ struct shared_vector_desc_t {
 
 //Pack using bitfields for better memory use
 struct vector_desc_t {
-    int flags: 16;                          //OR of VECDESC_FL_* defines
+    int flags: 16; //OR of VECDESC_FL_* defines
     unsigned int cpu: 1;
     unsigned int intno: 5;
-    int source: 8;                          //Interrupt mux flags, used when not shared
-    shared_vector_desc_t *shared_vec_info;  //used when VECDESC_FL_SHARED
+    int source: 8; //Interrupt mux flags, used when not shared
+    shared_vector_desc_t *shared_vec_info; //used when VECDESC_FL_SHARED
     vector_desc_t *next;
 };
 
 
-esp_err_t esp_intr_dump(FILE *stream);
+esp_err_t esp_intr_dump(FILE *stream); // since idf5.5
 
 #define RT_PRIO 20
 
@@ -55,7 +55,7 @@ static std::unordered_map<const char *, rtcount_stat> rtcount_stats{};
 
 extern volatile bool rtcount_en;
 
-[[maybe_unused]]static inline unsigned long rtclock_us() {
+[[maybe_unused]] static inline unsigned long rtclock_us() {
     // micros
     return esp_cpu_get_cycle_count();
 }
@@ -70,6 +70,7 @@ class TaskNotification {
     // https://www.freertos.org/Documentation/02-Kernel/02-Kernel-features/03-Direct-to-task-notifications/02-As-binary-semaphore
     // notifications are faster than semaphores!
     TaskHandle_t readingTask = nullptr;
+
 public:
     inline void subscribe(bool updateTaskHandle = false) {
         if (updateTaskHandle or unlikely(readingTask == nullptr))
@@ -132,6 +133,8 @@ public:
     Callback *callback = nullptr;
     void *arg = nullptr;
 
+    uint32_t hz;
+
     /***
      *
      * @param hz
@@ -139,20 +142,23 @@ public:
      * @param arg
      */
     void begin(uint32_t hz, bool cb(void *), void *arg) {
+        this->hz = hz;
         callback = cb;
         this->arg = arg;
 
         gptimer_config_t timer_config = {
-                .clk_src = GPTIMER_CLK_SRC_DEFAULT,
-                .direction = GPTIMER_COUNT_UP,
-                .resolution_hz = hz, // 1MHz, 1 tick=1us
-                .intr_priority = 0, // GPTIMER_ALLOW_INTR_PRIORITY_MASK
-                .flags =  {.intr_shared = 0}, // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/intr_alloc.html
+            .clk_src = GPTIMER_CLK_SRC_DEFAULT,
+            .direction = GPTIMER_COUNT_UP,
+            .resolution_hz = hz, // 1MHz, 1 tick=1us
+            .intr_priority = 0, // GPTIMER_ALLOW_INTR_PRIORITY_MASK
+            .flags = {
+                .intr_shared = 0, .allow_pd = 0, .backup_before_sleep = 0, // backup_before_sleep is deprecated
+            }, // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/intr_alloc.html
         };
         ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &gptimer));
 
         gptimer_event_callbacks_t cbs = {
-                .on_alarm = periodic_timer_on_alarm,
+            .on_alarm = periodic_timer_on_alarm,
         };
         if (gptimer_register_event_callbacks(gptimer, &cbs, this) != ESP_OK) {
             esp_intr_dump(NULL);
@@ -161,11 +167,15 @@ public:
 
         ESP_ERROR_CHECK(gptimer_enable(gptimer));
         gptimer_alarm_config_t alarm_config1 = {
-                .alarm_count = 1, // period = 1/hz
-                .reload_count = 0,
-                .flags = {.auto_reload_on_alarm = 1},
+            .alarm_count = 1, // period = 1/hz
+            .reload_count = 0,
+            .flags = {.auto_reload_on_alarm = 1},
         };
         ESP_ERROR_CHECK(gptimer_set_alarm_action(gptimer, &alarm_config1));
+    }
+
+    [[nodiscard]] const uint32_t &freq() const {
+        return hz; // todo use timer field
     }
 
     void destroy() {
@@ -193,11 +203,11 @@ periodic_timer_on_alarm(gptimer_handle_t timer, const gptimer_alarm_event_data_t
 
 #else
 class PeriodicTimer {
-
-    void begin(int hz, void *cb(void *), void *arg) {}
+    void begin(int hz, void *cb(void *), void *arg) {
+    }
 
     void start();
-    void stop();
 
+    void stop();
 };
 #endif

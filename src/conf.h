@@ -8,6 +8,7 @@
 #include <vector>
 #include <limits>
 #include <cstring>
+#include <algorithm> // std::transform
 #include <esp_log.h>
 
 

@@ -95,7 +95,7 @@ struct Tracker {
 
                 if ((
                         absDp >= minPowerStep
-                        or (abs(_lastPower) > (minPowerStep * 1) and absDp / abs(_lastPower) > minPowerStepRel)
+                        or (abs(_lastPower) > (minPowerStep * 1) and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel)
                         //or (_timeLastReverse - now > ) // TODO scheduled reversal?
                 )
                     //and (!slowMode || (now - _timeLastReverse) > 6000)

@@ -54,8 +54,8 @@ public:
 
     } */
 
-    bool init(const ConfFile &pinConf) override {
-        auto adsAlert = pinConf.getByte("ads_alert");
+    bool init(const ConfFile &boardConf) override {
+        auto adsAlert = boardConf.getByte("ads_alert");
 
         if (adsAlert == 0) {
             return false;
@@ -65,7 +65,7 @@ public:
             return false;
         }
 
-        pinMode((uint8_t) pinConf.getByte("ads_alert"), INPUT_PULLUP);
+        pinMode((uint8_t) boardConf.getByte("ads_alert"), INPUT_PULLUP);
 
         if (ads_inst) {
             return false;

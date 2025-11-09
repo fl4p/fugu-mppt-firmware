@@ -37,12 +37,12 @@ public:
     }
 
 
-    bool init(const ConfFile &pinConf) override {
+    bool init(const ConfFile &boardConf) override {
         if (ina226_instance) {
             return false;
         }
 
-        alertPin = (uint8_t) pinConf.getByte("ina22x_alert", 255);
+        alertPin = (uint8_t) boardConf.getByte("ina22x_alert", 255);
         if (alertPin == 255) {
             ESP_LOGW("ina22x", "No ALERT pin specified");
             return false;
@@ -56,16 +56,16 @@ public:
 
         assert(!new_data);
 
-        auto i2c_port = (i2c_port_t) pinConf.getByte("i2c_port", 0);
-        auto addr = pinConf.getByte("ina22x_addr", 0b1000000);
+        auto i2c_port = (i2c_port_t) boardConf.getByte("i2c_port", 0);
+        auto addr = boardConf.getByte("ina22x_addr", 0b1000000);
 
         assert_throw(i2c_port == 0, ""); // not implemented, see _setupPeripherals()
         //if(i2c_port != 0)
         //    ina226._wire = new TwoWire((uint8_t) i2c_port);
         ina226.i2cAddress = addr;
 
-        float resistor = pinConf.getFloat("ina22x_resistor"),
-                range = pinConf.getFloat("ina22x_range",
+        float resistor = boardConf.getFloat("ina22x_resistor"),
+                range = boardConf.getFloat("ina22x_range",
                                          35.0f);// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
         ina226.setResistorRange(resistor, range);
         //ESP_LOGI("ina226", "ina226.calVal=%d", ina226.calVal);
@@ -93,9 +93,11 @@ public:
         i2c_port_t i2c_port = I2C_NUM_0; // TODO
         auto addr = (uint8_t) ina226.i2cAddress;
 
-        auto mfrId = i2c_read_short(i2c_port, addr, INA22x_MANUFACTURER_ID_CMD);
-        auto deviceId = i2c_read_short(i2c_port, addr, INA22x_DEVICE_ID_CMD);
-
+        bool ok = false;
+        auto mfrId = ina226.readRegister(INA22x_MANUFACTURER_ID_CMD, ok);
+        assert_throw(ok, "");
+        auto deviceId = ina226.readRegister( INA22x_DEVICE_ID_CMD, ok);
+        assert_throw(ok, "");
         ESP_LOGI("ina22x", "MfrID: 0x%04X, DeviceID: 0x%04X", mfrId, deviceId);
 
         if (deviceId != 0x2260) {
@@ -223,7 +225,7 @@ public:
         }
 
 
-        auto bus = (i2c_port_t) 0;
+        //auto bus = (i2c_port_t) 0;
 
         ina226.startSingleMeasurement();
         assert(!new_data); // test disabled ConvReadyAlert
@@ -235,7 +237,10 @@ public:
         new_data = false;
 
 
-        auto confReg = i2c_read_short(bus, addr, INA226_WE::INA226_CONF_REG, true, 100);
+        //auto confReg = i2c_read_short(bus, addr, INA226_WE::INA226_CONF_REG, true, 100);
+        bool ok;
+        auto confReg = ina226.readRegister(INA226_WE::INA226_CONF_REG, ok);
+        assert_throw(ok, "");
 
         assert(!new_data);
 

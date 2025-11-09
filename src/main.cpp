@@ -65,10 +65,12 @@ unsigned long lastTimeOutUs = 0;
 uint32_t lastNSamples = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
 
+// todo bit fields
 bool manualPwm = false;
 bool charging = false;
 bool disableWifi = false;
 bool usbConnected = false;
+bool setupErr = false;
 
 float conversionEfficiency;
 uint16_t loopRateMin = 0;
@@ -87,7 +89,7 @@ void loopRT(void *arg); // this is the critical one
 
 void loopRTNewData(unsigned long nowMs);
 
-AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &pinConf, const ConfFile &sensConf,
+AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &boardConf, const ConfFile &sensConf,
                                    const std::string &chnDebug) {
     AsyncADC<float> *adc;
     if (adcName == "ads1115" or adcName == "ads1015") {
@@ -106,7 +108,7 @@ AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &p
         //return nullptr;
     }
 
-    if (!adc->init(pinConf)) {
+    if (!adc->init(boardConf)) {
         //ESP_LOGE("main", "Failed to initialize ADC %s", adcName.c_str());
         delete adc;
         throw std::runtime_error("failed to initialize ADC " + adcName);
@@ -116,7 +118,7 @@ AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &p
     return adc;
 }
 
-void setupSensors(const ConfFile &pinConf, const Limits &lim) {
+void setupSensors(const ConfFile &boardConf, const Limits &lim) {
     loopWallClockUs_ = micros();
     heap_caps_check_integrity_all(true);
 
@@ -151,7 +153,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         auto an = sensConf.getString(chn + '_' + "adc", defAdcName);
 
         if (chNum != 255 && adcs.find(an) == adcs.end()) {
-            adcs[an] = createAdcInstance(an, pinConf, sensConf, chn);
+            adcs[an] = createAdcInstance(an, boardConf, sensConf, chn);
         }
         auto adc = chNum != 255 ? adcs[an] : nullptr;
 
@@ -260,7 +262,7 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
         if (ntc.params.adcCh != 255) {
             ntc.params.calibrationConstraints = {2.8f, .1f, false};
             ntc.params.unit = 'C';
-            auto sense = adcSampler.addSensor(ntc.adc, ntc.params, 2.8f, 200);
+            auto sense = adcSampler.addSensor(ntc.adc, ntc.params, 2.8f, 50);
             mppt.ntc.setValueRef(sense->ewm.avg.get());
         }
     }
@@ -281,9 +283,9 @@ void setupSensors(const ConfFile &pinConf, const Limits &lim) {
 }
 
 
-void setup() {
-    bool setupErr = false;
 
+
+void setup() {
     consoleInit();
     ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
 
@@ -311,49 +313,59 @@ void setup() {
     }
 
 
-    ConfFile pinConf{"/littlefs/conf/pins.conf"};
+    ConfFile boardConf{"/littlefs/conf/board.conf"};
 
-    auto mcuStr = pinConf.getString("mcu", "");
+    auto mcuStr = boardConf.getString("mcu", "");
     if (mcuStr != CONFIG_IDF_TARGET) {
-        ESP_LOGE("main", "pins.conf expects MCU '%s', but target is '%s'", mcuStr.c_str(), CONFIG_IDF_TARGET);
+        ESP_LOGE("main", "board.conf expects MCU '%s', but target is '%s'", mcuStr.c_str(), CONFIG_IDF_TARGET);
         setupErr = true;
     }
 
     bool noI2C = true;
 
-    if (pinConf) {
-        auto i2c_freq = pinConf.getLong("i2c_freq", 100000);
-        auto i2c_sda = pinConf.getByte("i2c_sda", 255);
-        noI2C = (i2c_sda == 255);
-        if (!noI2C) {
-            if (!pinConf.getByte("skip_assert", 0))
-                try {
-                    assertPinState(i2c_sda, true, "i2c_sda");
-                    assertPinState(pinConf.getLong("i2c_scl"), true, "i2c_scl");
-                } catch (const std::exception &e) {
-                    ESP_LOGE("main", "error %s", e.what());
+    if (boardConf)
+        try {
+            auto i2c_freq = boardConf.getLong("i2c_freq", 100000);
+            auto i2c_sda = boardConf.getByte("i2c_sda", 255);
+            noI2C = (i2c_sda == 255);
+            if (!noI2C) {
+                if (!boardConf.getByte("skip_assert", 0))
+                    try {
+                        auto i2c_scl = boardConf.getLong("i2c_scl");
+                        assertPinState(i2c_sda, true, "i2c_sda");
+                        assertPinState(i2c_scl, true, "i2c_scl");
+                        pinMode(i2c_scl, OUTPUT);
+                        digitalWrite(i2c_scl, LOW);
+                        usleep(1);
+                        assertPinState(i2c_sda, true, "i2c_sda(scl_short)");
+                    } catch (const std::exception &e) {
+                        ESP_LOGE("main", "error %s", e.what());
+                        setupErr = true;
+                    }
+                ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, boardConf.getByte("i2c_scl"), i2c_freq);
+                if (!Wire.begin(i2c_sda, (uint8_t) boardConf.getLong("i2c_scl"), i2c_freq)) {
+                    ESP_LOGE("main", "Failed to initialize Wire");
                     setupErr = true;
                 }
-            ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, pinConf.getByte("i2c_scl"), i2c_freq);
-            if (!Wire.begin(i2c_sda, (uint8_t) pinConf.getLong("i2c_scl"), i2c_freq)) {
-                ESP_LOGE("main", "Failed to initialize Wire");
-                setupErr = true;
-            }
-        } else {
-            ESP_LOGI("main", "no i2c_sda pin set");
-        }
-
-
-        led.begin(pinConf);
-
-        if (!noI2C) {
-            if (!lcd.init()) {
-                ESP_LOGE("main", "Failed to init LCD");
             } else {
-                lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION "\n" __DATE__ " " __TIME__, 2000);
+                ESP_LOGI("main", "no i2c_sda pin set");
             }
+
+
+            led.begin(boardConf);
+            led.setHexShort(0x111);
+
+            if (!noI2C) {
+                if (!lcd.init()) {
+                    ESP_LOGE("main", "Failed to init LCD");
+                } else {
+                    lcd.displayMessage("Fugu FW v" FIRMWARE_VERSION "\n" __DATE__ " " __TIME__, 2000);
+                }
+            }
+        } catch (const std::exception &ex) {
+            ESP_LOGE("main", "error %s", ex.what());
+            setupErr = true;
         }
-    }
 
 
 #ifdef NO_WIFI
@@ -384,8 +396,8 @@ void setup() {
     }
 
     try {
-        setupSensors(pinConf, lim);
-        mppt.initSensors(pinConf);
+        setupSensors(boardConf, lim);
+        mppt.initSensors(boardConf);
         if (scope) scope->addChannel(&mppt, 0, 'u', 12, "vout_filt");
 
         if (!setupErr) {
@@ -395,14 +407,14 @@ void setup() {
 
             mppt.charger.begin(chargerConf, converterConf);
 
-            auto mode = converterConf.getString("mode", "mppt");
+            //auto mode = converterConf.getString("mode", "mppt");
 
-            converter.init(converterConf, pinConf, coilConf);
+            converter.init(converterConf, boardConf, coilConf);
         }
 
         if (!setupErr && !adcSampler.adcStates.empty()) {
             ConfFile trackerConf{"/littlefs/conf/tracker.conf"};
-            mppt.begin(trackerConf, pinConf, lim, teleConf);
+            mppt.begin(trackerConf, boardConf, lim, teleConf);
         }
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during sensor/converter/tracker setup: %s", er.what());
@@ -417,6 +429,8 @@ void setup() {
         xTaskCreatePinnedToCore(loopRT, "loopRt", 4096 * 4, NULL, RT_PRIO, NULL, 1);
         //xTaskCreatePinnedToCore(loopNetwork_task, "netloop", 4096 * 4, NULL, 1, NULL, 0);
         //xTaskCreatePinnedToCore(loopCore0_LF, "core0LF", 4096, NULL, 1, NULL, 0);
+    } else {
+        led.setHexShort(0x200);
     }
 
     // this will defer all logs, if abort() is called during setup we might never see relevant messages
@@ -476,9 +490,19 @@ CONFIG_ARDUINO_UDP_RUNNING_CORE == RT_CORE or CONFIG_ARDUINO_SERIAL_EVENT_TASK_R
 #error "arduino runtime is configured to run on RT_CORE"
 #endif
 
+
+# if CONFIG_ESP_TIMER_ISR_AFFINITY != RT_CORE // and (RT_CORE ? CONFIG_ESP_TIMER_ISR_AFFINITY_CPU1==1 )
+#warning "CONFIG_ESP_TIMER_ISR_AFFINITY
+#endif
+
+# if CONFIG_ESP_TIMER_TASK_AFFINITY == RT_CORE
+#error "CONFIG_ESP_TIMER_TASK_AFFINITY"
+#endif
+
+
 # if CONFIG_ESP_TIMER_ISR_AFFINITY != RT_CORE or CONFIG_ESP_TIMER_TASK_AFFINITY == RT_CORE or CONFIG_LWIP_TCPIP_TASK_AFFINITY == RT_CORE \
  or CONFIG_PTHREAD_TASK_CORE_DEFAULT == RT_CORE or CONFIG_FMB_PORT_TASK_AFFINITY == RT_CORE or CONFIG_MDNS_TASK_AFFINITY == RT_CORE
-#error "esp runtime is configured to run on RT_CORE"
+#warning  "esp runtime is configured to run on RT_CORE"
 #endif
 
     try {
@@ -667,7 +691,8 @@ void loopLF(const unsigned long &nowUs) {
         uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.limits.P_max * 255, 1, 255);
         led.setRGB(0, i, i);
     } else if (!charging) {
-        if (sensors.Vin) {
+        if (setupErr) led.setHexShort(0x600);
+        else if (sensors.Vin) {
             if (mppt.boardPowerSupplyUnderVoltage(true)) {
                 led.setHexShort(0x100);
             } else {
@@ -721,10 +746,13 @@ void loopRTNewData(unsigned long nowMs) {
     } else {
         if (charging or manualPwm) {
             rtcount("protect.pre");
-            bool mppt_ok = mppt.protect(manualPwm);
-            rtcount("protect");
-            mppt_ok = mppt_ok && mppt.protectLf(manualPwm);
-            rtcount("protectLf");
+            bool mppt_ok = true;
+            if (!mppt.converter.disabled()) {
+                mppt_ok &= mppt.protect(manualPwm);
+                rtcount("protect");
+                mppt_ok &= mppt.protectLf(manualPwm);
+                rtcount("protectLf");
+            }
             if (mppt_ok) {
                 if (haveNewSample) {
                     if (!manualPwm) {
@@ -752,7 +780,7 @@ void loopRTNewData(unsigned long nowMs) {
         if (scope && sensors.Vout && haveNewSample)
             scope->addSample12(&mppt, 0,
                                (uint16_t) max(0.f, sensors.Vout->last / 60.0f *
-                                           2000.0f));
+                                                   2000.0f));
     }
 
 
@@ -840,14 +868,19 @@ bool handleCommand(const String &inp) {
         //manualPwm = true; // don't switch to manual pwm here!
         converter.pwmPerturb((int16_t) pwmStep);
         ESP_LOGI("main", "Manual PWM step %i -> %i", pwmStep, (int) converter.getCtrlOnPwmCnt());
-    } else if (manualPwm && (inp == "sync-dis" or inp == "sync-en")) {
-        converter.enableSyncRect(inp == "sync-en", true);
-        if (converter.forcedPwm_()) {
-            ESP_LOGW("main", "forced_pwm");
+    } else if (manualPwm && inp.startsWith("sync ")) {
+        auto arg = inp.substring(5);
+        if (arg == "on" or arg == "1" or arg == "off" or arg == "0") {
+            converter.forcedPwm_(false);
+            converter.enableSyncRect(arg == "on" or arg == "1", true);
+        } else if (arg == "forced") {
+            converter.enableSyncRect(true);
+            converter.forcedPwm_(true);
+        } else {
             return false;
         }
-    } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable")) {
-        auto newState = inp == "bf-enable";
+    } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable" or inp == "bf-en")) {
+        auto newState = inp == "bf-enable" or inp == "bf-en";
         if (mppt.bflow.state() != newState)
             ESP_LOGI("main", "Set bflow state %i", newState);
         mppt.bflow.enable(newState);
@@ -885,7 +918,7 @@ bool handleCommand(const String &inp) {
             ESP_LOGI("main", "Set tracker speed scale %.4f", speedScale);
         }
     } else if (inp.startsWith("fan ")) {
-        if (!fanSet(inp.substring(4).toFloat() * 0.01f))
+        if (!mppt.fan.fanSet(inp.substring(4).toFloat() * 0.01f))
             return false;
     } else if (inp.startsWith("led ")) {
         led.setRGB(inp.substring(4).c_str());
@@ -980,6 +1013,7 @@ bool handleCommand(const String &inp) {
         // set-config mqtt.conf username pv
         // set-config mqtt.conf password 0ffgrid
         // set-config charger.conf cell_voltage_eoc 3.53
+        // set-config charger.conf vout_max 12
 
         // set-config sensor.conf vout_filt_len 10
         // set-config sensor.conf iout_filt_len 10
@@ -1001,7 +1035,7 @@ bool handleCommand(const String &inp) {
             }
         }
     } else {
-        ESP_LOGW("main", "unknown or unexpected command");
+        ESP_LOGE("main", "unknown or unexpected command");
         return false;
     }
 

@@ -31,8 +31,8 @@ public:
                 .duty_resolution  = (ledc_timer_bit_t) resolution,
                 .timer_num        = LEDC_TIMER_0,
                 .freq_hz          = freq,
-                .clk_cfg          = LEDC_AUTO_CLK
-
+                .clk_cfg          = LEDC_AUTO_CLK,
+                .deconfigure      = false,
         };
         ESP_ERROR_CHECK_THROW(ledc_timer_config(&ledc_timer));
 
@@ -45,6 +45,7 @@ public:
                 .timer_sel      = LEDC_TIMER_0,
                 .duty           = 0, // Set duty to 0%
                 .hpoint         = 0,
+                .sleep_mode     = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
                 .flags          = {.output_invert = 0},
         };
         ESP_ERROR_CHECK_THROW(ledc_channel_config(&ledc_channel));
