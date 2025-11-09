@@ -24,15 +24,14 @@ Highlights:
 * Supports buck and boost converter operation, and can be used for power supply too
 * Battery voltage detection
 * Fast protection shutdown in over-voltage and over-current conditions
-* PWM Fan Control and temperature power de-rating
+* Temperature power de-rating and PWM Fan Control
 * Telemetry to InfluxDB over UDP
-* LCD (hd44780) and WS2812B LED Indicator
+* LCD (hd44780) and WS2812B RGB LED driver
 * Configuration files on flash file system (littlefs)
 * [Serial UART console](doc/Console.md) and telnet to interact with the charger
+* Basic MQTT support to communicate with the BMS over Home Assistant
 * Unit tests, on-board [performance profiler](https://github.com/LiluSoft/esp32-semihosting-profiler/) and latency
   profiler
-
-The firmware sends real-time data to InfluxDB server using UDP line protocol.
 
 The aim of this program is to provide a flexible MPPT and DC/DC converter solution that you can use with various
 hardware topologies (e.g. buck & boost, location of current sensor).
@@ -56,7 +55,7 @@ Feel free to use parts of the code.
 
 1. Build and flash the firmware
 2. Flash the configuration (provisioning)
-3. Calibrate the ADC (important for proper diode emulation)
+3. Calibrate the ADC (optional, important for proper diode emulation to increase efficiency)
 
 You can build with ESP-IDF toolchain using Arduino as a component.
 
@@ -66,9 +65,8 @@ This version works with the original Fugu design. Mind the voltage divider value
 ## Building with ESP-IDF
 
 Follow [Espressif's Get Started guide](https://docs.espressif.com/projects/esp-idf/en/v5.1.4/esp32/get-started/index.html)
-to install ESP-IDF v5.1.4. (The firmware depends on `arduino-esp32` which is compatible with `esp-idf v5.1`.)
-You can follow these commands: (make sure you have all the prerequisites from
-the Espressif guide and you might have to downgrade python to 3.9 if running into issues
+to install ESP-IDF v5.5. You can follow these commands: (make sure you have all the prerequisites from
+the Espressif guide, and you might have to downgrade python to 3.9 if running into issues
 like [this](https://github.com/espressif/esp-idf/issues/12322), note that esp-idf will create a new python virtual
 environment with your system's default python version `python --version`):
 
@@ -104,15 +102,18 @@ hard-coded, making them configurable is WIP.
 You find existing board configuration in the folder [`config/`](config/):
 
 * `fmetal`: [Fugu2 board](https://github.com/fl4p/Fugu2)
-* `fugu_int_adc`: original fugu design but using the [internal ADC](doc/Internal%20ADC.md)
-* `dry_mock`: uses a mock ADC producing sinusoidal readings, useful for testing with ESP32 dev boards
-* `dry_int`: uses the internal ADC for dry testing
+* `fugu1/fugu1`: original fugu design with ADS1015 ADC
+* `fugu1/fugu_int_adc`: original fugu design but using the [internal ADC](doc/Internal%20ADC.md)
+* `psu_12v`: example for a 12V power supply using Forced PWM
+* `lab/dry_mock`: uses a mock ADC producing sinusoidal readings, useful for testing with ESP32 dev boards
+* `lab/dry_int`: uses the internal ADC for dry testing
 
-Chose the board and flash these config files (set `PROV` to the name of the folder under `provisioning/`):
+To flash these files on the ESP32, we use `littlefs-python` (install with `pip install littlefs-python`).
+Chose the board and run these commands (set `BOARD` variable to the name of the folder under `config/`):
 
 ```
 BOARD=dry
-littlefs-python create provisioning/$BOARD $BOARD.bin -v --fs-size=0x20000 --name-max=64 --block-size=4096
+littlefs-python create config/$BOARD $BOARD.bin -v --fs-size=0x20000 --name-max=64 --block-size=4096
 parttool.py --port /dev/cu.usb* write_partition --partition-name littlefs --input $BOARD.bin
 ```
 
@@ -120,7 +121,7 @@ Alternatively, in `CMakeLists.txt`, add `FLASH_IN_PROJECT` argument for `littlef
 config files will be flashed with the next `idf.py flash`:
 
 ```
-littlefs_create_partition_image(littlefs provisioning/fmetal
+littlefs_create_partition_image(littlefs config/fmetal
   FLASH_IN_PROJECT
 )
 ```
@@ -137,7 +138,7 @@ idf.py monitor
 If Wi-Fi connection is successful you will be able to connect with telnet and FTP.
 You can send the same commands over telnet as over the [Serial console](doc/Serial%20Console.md).
 
-Use FTP to upload HW configuration files to configure IO pins, ADC and converter topology.
+Use FTP to change HW configuration files to configure IO pins, ADC and converter topology.
 Note that FTP server is unstable. It seems to work well with the Filezilla client.
 FTP settings: 1 simultaneous connection, disable passive mode.
 
@@ -168,19 +169,15 @@ can proceed with the MPPT. Otherwise, we halt MPPT and decrease the duty cycle p
 # Voltage & Current Sensors (ADC)
 
 The firmware tries to be as hardware independent as possible by using layers of abstraction (HAL), so you can easily
-adopt it
-with your ADC model and topology. Implementations exist for the ADS1x15, INA226, esp32_adc.
+adopt it with your ADC model and topology. Implementations exist for the ADS1x15, INA226, esp32_adc.
 
 The hardware should always sense `Vin` and `Vout`. `Vin` is not crucial and can
 be coarse (8-bit ADC might be ok if there is a current sensor at `Iout`), it is needed for diode emulation in DCM,
-under- and
-over-voltage shutdown. Since `Vout` is our
-battery voltage it should be more precise.
+under- and over-voltage shutdown. Since `Vout` is our battery voltage it should be more precise.
 To reduce voltage transients during load change a high sampling rate is prefered.
 
 The current sensor can be either at the input (`Iin`, solar) or output (`Iout`, battery) or both. If there's only one
-current sensor we
-can infer the other current using the voltage ratio and efficiency of the converter.
+current sensor we can infer the other current using the voltage ratio and efficiency of the converter.
 The code represents this with a `VirtualSensor`.
 
 If the current sensor is bi-directional, the converter can operate in boost mode, boosting lower solar voltage to a
@@ -300,17 +297,14 @@ cut-off. This avoids voltage transients, improves cell balancing time and avoids
 I am currently using this firmware on a couple of Fugu Devices in a real-world application. Each device is connected to
 2s 410WP solar panels, charging an 24V LiFePo4 battery. They produce more than 4 kWh on sunny days.
 
-I'd consider the current state of this software as usable. However, a lot of things (WiFi, charging parameters) are
-hard-coded. ADC filtering and control loop speed depend on the quality of measurements (noise, outliers) and need to be
+I'd consider the current state of this software as usable. ADC filtering and control loop speed depend on the quality of
+measurements (noise, outliers) and need to be
 adjusted manually.
 
-The original Fugu HW design has some flaws (hall sensor placement after input caps, hall sensor too close to coil,
-sense wires layout). Using the CSD19505 at the HS is not a good idea: it is a MOSFET designed for rectificiation and has
-a large Qrr (body diode reverse recovery charge) which will cause a lot of ringing noise.
-
-Interference increases with power, so we can slow down the control loop to ensure a steady output. Otherwise the
-converter might repeatedly shutdown, wasting solar energy. A slow control loop however causes higher voltage
-transients during load changes (e.g. BMS cut-off) which can be dangerous for devices.
+Sensor noise increases with power, so we can slow down the control loop to ensure a steady output. Otherwise, the
+converter might repeatedly detect over-voltage or over-current and shut down, wasting solar energy. A slow control loop
+however causes higher voltage
+transients during load changes (e.g. BMS battery cut-off) which can be dangerous for devices.
 
 If the battery or load is removed during power conversion expect an over-voltage transient at the output.
 With a battery voltage of 28.5V, I measured 36V for 400ms.
@@ -338,18 +332,3 @@ address in my github profile) if you want to contribute or just share your exper
 * [Renesas: Can you explain diode emulation and why it is used?](https://en-support.renesas.com/knowledgeBase/4967491)
 
 * [fetlib - find the right MOSFET](https://github.com/fl4p/fetlib)
-
-TODO
-
-```
-I (4575) main: received serial command: 'dc 800'
-I (4575) main: Switched to manual PWM
-I (4576) main: OK: dc 800
-V=56.5/27.67 I=0.96/ 1.87A  54.4W nan℃34℃  0sps  0㎅/s DCM(H|L|Lm)= 646| 588| 646 st= MANU,1 lag=813㎲ N=10566 rssi=0
-V=56.5/27.67 I=1.35/ 2.61A  76.1W nan℃34℃ 2986sps  0㎅/s DCM(H|L|Lm)= 646| 646| 646 st= MANU,1 lag=813㎲ N=19562 rssi=0
-V=56.5/27.67 I=1.45/ 2.82A  82.1W nan℃34℃ 3000sps  0㎅/s DCM(H|L|Lm)= 646| 646| 646 st= MANU,1 lag=813㎲ N=28571 rssi=0
-V=56.5/27.67 I=1.52/ 2.95A  86.0W nan℃34℃ 3000sps  0㎅/s DCM(H|L|Lm)= 646| 646| 646 st= MANU,1 lag=813㎲ N=37581 rssi=0
-V=56.5/27.67 I=1.55/ 3.00A  87.4W nan℃34℃ 3000sps  0㎅/s DCM(H|L|Lm)= 646| 646| 646 st= MANU,1 lag=813㎲ N=46590 rssi=0
-V=56.5/27.67 I=1.53/ 2.96A  86.2W nan℃35℃ 3000sps  0㎅/s DCM(H|L|Lm)= 646| 646| 646 st= MANU,1 lag=813㎲ N=55596 rssi=0
-
-```
