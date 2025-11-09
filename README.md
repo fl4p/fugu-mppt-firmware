@@ -21,7 +21,7 @@ Highlights:
 * [PID](https://www.youtube.com/watch?v=wkfEZmsQqiA) control for precise voltage and current regulation
 * Periodic MPPT global search (aka scan, sweep)
 * Sophisticated [Diode Emulation](#synchronous-buck-and-diode-emulation) for low-side switch
-* Supports buck and boost converter operation
+* Supports buck and boost converter operation, and can be used for power supply too
 * Battery voltage detection
 * Fast protection shutdown in over-voltage and over-current conditions
 * PWM Fan Control and temperature power de-rating

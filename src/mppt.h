@@ -263,6 +263,7 @@ public:
     [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }
 
     void shutdownDcdc() {
+        // TODO backoff time delay
         if (topologyConfig.backflowAtHV) {
             converter.disable();
             bflow.enable(false);
