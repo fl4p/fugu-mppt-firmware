@@ -3,7 +3,7 @@
 #include <functional>
 #include <string>
 
-#include "conf.h"
+#include "../conf.h"
 #include "mqtt_client.h"
 
 typedef std::function<void(const char *, int len)> MqttMsgCallback;

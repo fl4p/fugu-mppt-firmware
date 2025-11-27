@@ -2,10 +2,10 @@
 
 #include "telemetry.h"
 
-#include "adc/sampling.h"
+#include "../adc/sampling.h"
 #include "Point.h"
-#include "web/server.h"
-#include "store.h"
+#include "../web/server.h"
+#include "../store.h"
 #include <InfluxDbClient.h>
 
 #include <WiFiMulti.h>
@@ -21,10 +21,10 @@
 #include <SimpleFTPServer.h>
 #include <ESPTelnet.h>
 
-#include <etc/readerwriterqueue.h>
+#include <../etc/readerwriterqueue.h>
 
-#include "tele/scope.h"
-#include "storage/key-value.h"
+#include "scope.h"
+#include "../storage/key-value.h"
 
 WiFiMulti wifiMulti;
 //WiFiUDP udp;

@@ -37,3 +37,6 @@
 [submodule "components/ESPAsyncWebServer"]
 	path = components/ESPAsyncWebServer
 	url = https://github.com/me-no-dev/ESPAsyncWebServer
+[submodule "etc/fugu"]
+	path = etc/fugu
+	url = https://github.com/fl4p/fugu-py

@@ -1,9 +1,9 @@
-#include "mqtt.h"
-#include "conf.h"
-#include "util.h"
+#include "../mqtt.h"
+#include "../conf.h"
+#include "../util.h"
 
-#include "tele/HAMqttDevice.h"
-#include "telemetry.h"
+#include <HAMqttDevice.h>
+#include "../telemetry.h"
 
 #define TAG "mqtt"
 

@@ -40,10 +40,10 @@ idf-export.sh
 
 etc/scope-client/*.csv
 
-etc/scope-client/__pycache__/
-/etc/scope-client/data/
+etc/scope_client/__pycache__/
+/etc/scope_client/data/
 
-etc/scope-client/adaptive_noise_filter/__pycache__/
+etc/scope_client/adaptive_noise_filter/__pycache__/
 
 .idea/editor.xml
 

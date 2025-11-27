@@ -1,9 +1,9 @@
 #pragma once
 
-#include "adc/sampling.h"
+#include "../adc/sampling.h"
 #include "Point.h"
-#include "web/server.h"
-#include "store.h"
+#include "../web/server.h"
+#include "../store.h"
 #include <InfluxDbClient.h>
 
 #include <WiFiMulti.h>
