@@ -64,25 +64,25 @@ class SynchronousConverter {
     float fL = NAN; // fsw * L
 
 public:
-
-    inline bool boost() const { return isBoost; }
-
-    inline bool forcedPwm_() const { return forcedPwm; }
-
-    inline void forcedPwm_(bool forced) { forcedPwm = forced; }
-
-    inline bool syncRectEnabled_() const {return syncRectEnabled;}
-
-    const uint16_t &pwmMaxDriver() const { return pwmDriver.pwmMax; };
-
-    uint16_t pwmCtrlMax{}, pwmRectMin{}, pwmCtrlMin{};
-
-public:
-    SynchronousConverter() : pwmDriver() {}
+    SynchronousConverter() : pwmDriver() {
+    }
 
     SynchronousConverter(const SynchronousConverter &) = delete;
 
     SynchronousConverter &operator=(SynchronousConverter const &) = delete;
+
+
+    [[nodiscard]] bool boost() const { return isBoost; }
+
+    [[nodiscard]] bool forcedPwm_() const { return forcedPwm; }
+
+    void forcedPwm_(bool forced) { forcedPwm = forced; }
+
+    [[nodiscard]] bool syncRectEnabled_() const { return syncRectEnabled; }
+
+    [[nodiscard]] const uint16_t &pwmMaxDriver() const { return pwmDriver.pwmMax; };
+
+    uint16_t pwmCtrlMax{}, pwmRectMin{}, pwmCtrlMin{};
 
     [[nodiscard]] bool disabled() const { return pwmCtrl == 0; }
 
@@ -94,7 +94,7 @@ public:
 
     [[nodiscard]] uint16_t getRectOnPwmCnt() const { return pwmRect; }
 
-    [[nodiscard]] uint16_t getLowSideOnPwmCnt() const { return isBoost ? pwmCh_Ctrl : pwmRect; }
+    [[nodiscard]] uint16_t getLowSideOnPwmCnt() const { return isBoost ? pwmCtrl : pwmRect; }
 
     [[nodiscard]] uint16_t getLowSideMinPwmCnt() const { return isBoost ? 0 : pwmRectMin; }
 
@@ -105,13 +105,13 @@ public:
     [[nodiscard]] float voltageRatio() const { return outInVoltageRatio; } // M
 
     void init(const ConfFile &converterConf, const ConfFile &boardConf, const ConfFile &coilConf) {
-
         auto topo = converterConf.getString("topo", "buck");
         assert_throw(topo == "buck" or topo == "boost", "");
         isBoost = topo == "boost";
         forcedPwm = converterConf.getByte("forced_pwm", 0);
 
-        if (forcedPwm)ESP_LOGW("converter", "%s", "forced_pwm");
+        if (forcedPwm)
+            ESP_LOGW("converter", "%s", "forced_pwm");
 
         auto L0 = coilConf.getFloat("L0");
 
@@ -129,7 +129,8 @@ public:
         uint8_t pinCtrl, pinRect;
 
 
-        if (drvInpLogic == "InEn") { // e.g. Infineon ir2814
+        if (drvInpLogic == "InEn") {
+            // e.g. Infineon ir2814
 
             pwmEnLogic = true;
             auto pnCtrl = isBoost ? "pwm_en" : "pwm_in";
@@ -144,8 +145,8 @@ public:
                 assertPinState(pinCtrl, false, pnCtrl, true);
                 assertPinState(pinRect, false, pnRect, true);
             }
-
-        } else if (drvInpLogic == "HiLi") {  // e.g. TI UCC21330x with optional DIS pin (SD pin)
+        } else if (drvInpLogic == "HiLi") {
+            // e.g. TI UCC21330x with optional DIS pin (SD pin)
             auto pnCtrl = isBoost ? "pwm_li" : "pwm_hi";
             auto pnRect = isBoost ? "pwm_hi" : "pwm_li";
 
@@ -162,10 +163,8 @@ public:
                 assertPinState(pinRect, false, pnRect, false);
                 if (pinSd != 255) assertPinState(pinSd, true, "pwm_sd", false);
             }
-
         } else {
             throw std::runtime_error("unrecognized pwm_driver_logic " + drvInpLogic);
-
         }
 
         pwmDriver.init_pwm(pwmCh_Ctrl, pinCtrl, pwmFrequency);
@@ -177,7 +176,7 @@ public:
         }
 
         pwmRectMin = std::ceil(
-                (float) pwmDriver.pwmMax * (isBoost ? 0.f : MinDutyCycleLS)); // keeping the bootstrap circuit powered
+            (float) pwmDriver.pwmMax * (isBoost ? 0.f : MinDutyCycleLS)); // keeping the bootstrap circuit powered
         pwmCtrlMax = (uint16_t) (pwmDriver.pwmMax - pwmRectMin);
         pwmCtrlMin = 1; //isBoost ? 0 : 0;
         // note that mosfets have different Vg(th) and switching times worst case is Vi/o=80/12
@@ -200,7 +199,6 @@ public:
     }
 
     void pwmPerturb(int16_t direction) {
-
         if (unlikely(disabled() and direction > 0 and pinSd != 255)) {
             UART_LOG("Converter enabled");
             digitalWrite(pinSd, 0);
@@ -234,8 +232,9 @@ public:
                 // "fade-in" the low-side duty cycle
                 // start slowly, then quickly step towards pwmRectMax
                 auto step = 1 + ((pwmRect > pwmRectMin + 32) ? (pwmRectMax - pwmRect) / 64 : 0);
-                pwmRect = syncRectEnabled ? constrain(pwmRect + step, pwmRectMin, pwmRectMax)
-                                          : pwmRectMin;
+                pwmRect = syncRectEnabled
+                              ? constrain(pwmRect + step, pwmRectMin, pwmRectMax)
+                              : pwmRectMin;
             }
         }
 
@@ -388,39 +387,27 @@ public:
 
 
         const float convRatioWCE =
-                (isBoost
-                 ? ((vh > vl && vl > 0.1f) ? constrain(vh / vl, 1e-2f, 10.f) : 10.0f) // boost
-                 : ((vh > vl && vh > 0.1f) ? constrain(vl / vh, 1e-2f, 1.f - 1e-2f) : 1.0f) //buck
-                ) / voltageRatioWCEF;
+        (isBoost
+             ? ((vh > vl && vl > 0.1f) ? constrain(vh / vl, 1e-2f, 10.f) : 10.0f) // boost
+             : ((vh > vl && vh > 0.1f) ? constrain(vl / vh, 1e-2f, 1.f - 1e-2f) : 1.0f) //buck
+        ) / voltageRatioWCEF;
 
         outInVoltageRatio = convRatioWCE;
 
         if (computeDCM(vh, vl, il)) {
             if (il < 0.01f || vl < 1.0f) // TODO get rid of magic constants
             {
-                if (pwmRectRatioDCM > 0.2f)
-                    ESP_LOGI("converter", "Disable sync rect, low coil current (%.2f) or low volt (%.2f) pwm=%hu", il,
-                             vl, getCtrlOnPwmCnt());
+                if (pwmRectRatioDCM > 0.2f && pwmRect > pwmRectMin)
+                    ESP_LOGI("converter", "Disable sync rect, low coil current (%.2f) or low volt (%.2f) pwm=%hu|%hu", il,
+                         vl, pwmCtrl, pwmRect);
                 pwmRectRatioDCM = 0.0f;
             } else {
                 pwmRectRatioDCM = rectCtrlRatio(convRatioWCE);
                 //if(dcmHysteresis)pwmRectRatioDCM = min(pwmRectRatioDCM, 1.5f); // TODO
             }
-            //pwmMaxRect = (uint16_t) std::round( * (float) pwmCtrl);
-
-            // TODO remove:
-            // compute worst-case error at current working point
-            /*const float voltageRatio = vl / vh;
-            const float pwmMaxLsWCEF = (1 / (voltageRatio * voltageRatioWCEF) - 1) / (1 / voltageRatio - 1); // > 1
-            const float pwmMaxRectWCEF = rectCtrlRatio(voltageRatio * voltageRatioWCEF) / rectCtrlRatio(voltageRatio);
-            if (!isBoost) {
-                assert(abs(pwmMaxLsWCEF - pwmMaxRectWCEF) < 0.01);
-            }*/
-
         }
     }
-
-
+    
     const float &updateSyncRectMaxDuty(float vin, float vout, float il) {
         auto &vh(isBoost ? vout : vin);
         auto &vl(isBoost ? vin : vout);
