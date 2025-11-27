@@ -836,10 +836,10 @@ public:
         }
         lastUs = nowUs;
 
-        if (bflow.state() != aboveThres)
+        if (converter.syncRectEnabled_() != aboveThres)
             UART_LOG_ASYNC("Current %s threshold %.2f (pwm=%hu)", aboveThres ? "above" : "below", I_phys_smooth_min,
                            converter.getCtrlOnPwmCnt());
-        bflow.enable(aboveThres);
+        bflow.enable(aboveThres || converter.boost()); // the backflow switch is only useful in buck topology
         converter.enableSyncRect(aboveThres);
 
         rtcount("mppt.update.en");
