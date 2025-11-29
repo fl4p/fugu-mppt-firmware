@@ -287,7 +287,12 @@ public:
      * @param directionFloat
      */
     void pwmPerturbFractional(float directionFloat) {
-        assert(std::abs(directionFloat) <= pwmDriver.pwmMax);
+        if (!(std::abs(directionFloat) <= pwmDriver.pwmMax)) {
+            ESP_LOGE("buck", "perturbation out of range %f", directionFloat);
+            //return;
+            throw std::out_of_range("pwmPerturbFractional");
+        }
+        //assert(std::abs(directionFloat) <= pwmDriver.pwmMax);
 
         directionFloat += directionFloatBuffer;
         directionFloatBuffer = 0;
