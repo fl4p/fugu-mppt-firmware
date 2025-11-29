@@ -9,6 +9,14 @@ void MpptController::updateCV() {
     ctrlState.mode = MpptControlMode::CV;
     cntrlValue = cv;
 
+    if (!std::isfinite(cv)) {
+        if (!converter.disabled()) {
+            ESP_LOGW("mppt", "Control value %f not finite act=%.3f tgt=%.3f idx=%i", cv, sensors.Vout->last,
+                     charger.Vbat_max(), 0);
+            shutdownDcdc();
+        }
+        return;
+    }
 
     float currentThreshold = limits.reverse_current_paranoia
                                  ? (bflow.state() ? 0.05f : 0.2f)
@@ -46,10 +54,10 @@ void MpptController::updateCV() {
         }
 
         // no pwm jitter near target, "lock-in"
-        if (targetPwmCnt && absdiff(converter.getCtrlOnPwmCnt(), targetPwmCnt) < converter.pwmCtrlMax/512) {
+        if (targetPwmCnt && absdiff(converter.getCtrlOnPwmCnt(), targetPwmCnt) < converter.pwmCtrlMax / 512) {
             //if (fp < 0 or fp > 100)
             //    ESP_LOGI("mppt", "near tgt, fp=%.4f pwm=%hu, tgt=%hu", fp, converter.getCtrlOnPwmCnt(), targetPwmCnt);
-            if ((int)fabsf(fp) < converter.pwmCtrlMax/512)
+            if ((int) fabsf(fp) < converter.pwmCtrlMax / 512)
                 fp = (float) targetPwmCnt - (float) converter.getCtrlOnPwmCnt();
         } /*else         if (targetPwmCnt && absdiff(converter.getCtrlOnPwmCnt(), targetPwmCnt) < converter.pwmCtrlMax/128) {
             //if (fp < 0 or fp > 100)

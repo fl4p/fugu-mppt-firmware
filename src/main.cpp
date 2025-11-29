@@ -70,7 +70,6 @@ unsigned long lastMpptUpdateNumSamples = 0;
 
 // todo bit fields
 bool manualPwm = false;
-bool charging = false;
 bool disableWifi = false;
 bool usbConnected = false;
 bool setupErr = false;
@@ -382,8 +381,6 @@ void setup() {
     TeleConf teleConf{};
 
     if (!disableWifi) {
-        ConfFile mqttConf{"/littlefs/conf/mqtt.conf"};
-        mppt.charger.beginMqtt(mqttConf);
         connect_wifi_async();
         bool res = wait_for_wifi();
         led.setHexShort(res ? 0x565 : 0x200);
@@ -489,7 +486,6 @@ static esp_err_t disable_cpu_power_saving(void) {
 
 void stopAndBackoff(uint32_t secondsDelay) {
     mppt.shutdownDcdc();
-    charging = false;
     delayStartUntil = wallClockUs() + secondsDelay * 1000000;
 }
 
@@ -506,7 +502,7 @@ CONFIG_ARDUINO_UDP_RUNNING_CORE == RT_CORE or CONFIG_ARDUINO_SERIAL_EVENT_TASK_R
 
 
 # if CONFIG_ESP_TIMER_ISR_AFFINITY != RT_CORE // and (RT_CORE ? CONFIG_ESP_TIMER_ISR_AFFINITY_CPU1==1 )
-#warning "CONFIG_ESP_TIMER_ISR_AFFINITY
+#warning "CONFIG_ESP_TIMER_ISR_AFFINITY"
 #endif
 
 # if CONFIG_ESP_TIMER_TASK_AFFINITY == RT_CORE
@@ -686,10 +682,10 @@ void loopLF(const unsigned long &nowUs) {
             //mppt.getPower()
             manualPwm
                 ? "MANU"
-                : (!charging && !mppt.startCondition()
+                : (mppt.converter.disabled() && !mppt.startCondition()
                        ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
                        : mpptStateStr().c_str()),
-            (int) charging,
+            (int) mppt.active(),
             maxLoopLag,
             //maxLoopDT,
             nSamples,
@@ -698,19 +694,20 @@ void loopLF(const unsigned long &nowUs) {
     lastNSamples = nSamples;
     bytesSent = 0;
 
-    if (!charging)
+    if (mppt.converter.disabled())
         mppt.meter.update(); // always update the meter
 
     if (manualPwm) {
         uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.limits.P_max * 255, 1, 255);
         led.setRGB(0, i, i);
-    } else if (!charging) {
+    } else if (mppt.converter.disabled()) {
         if (setupErr) led.setHexShort(0x600);
         else if (sensors.Vin) {
             if (mppt.boardPowerSupplyUnderVoltage(true)) {
                 led.setHexShort(0x100);
             } else {
-                led.setHexShort(sensors.Vout->last > sensors.Vin->last ? 0x100 : 0x300);
+                if (nowUs > 60000000 * 15) led.setHexShort(0x000); // turn off light at night (protect insects)
+                else led.setHexShort(sensors.Vout->last > sensors.Vin->last ? 0x100 : 0x300);
             }
         }
     } else {
@@ -758,7 +755,7 @@ void loopRTNewData(unsigned long nowMs) {
     if (unlikely(adcSampler.isCalibrating())) {
         mppt.shutdownDcdc();
     } else {
-        if (charging or manualPwm) {
+        if (mppt.active() or manualPwm) {
             rtcount("protect.pre");
             bool mppt_ok = true;
             if (!mppt.converter.disabled()) {
@@ -787,8 +784,8 @@ void loopRTNewData(unsigned long nowMs) {
                 rtcount("mppt.startSweep.pre");
                 mppt.startSweep();
                 rtcount("mppt.startSweep");
+                delayStartUntil = wallClockUs() + 4 * 1000000;
             }
-            charging = true;
         }
 
         if (scope && sensors.Vout && haveNewSample)
@@ -898,8 +895,13 @@ bool handleCommand(const String &inp) {
         } else {
             return false;
         }
-    } else if (manualPwm && (inp == "bf-disable" or inp == "bf-enable" or inp == "bf-en")) {
-        auto newState = inp == "bf-enable" or inp == "bf-en";
+    } else if (manualPwm && (inp.startsWith("bf ") || inp.startsWith("panel "))) {
+        if (!mppt.bflow) {
+            ESP_LOGW("main", "panel switch not configured");
+            return false;
+        }
+        auto newState = inp.substring(inp.indexOf(' ') + 1).toInt();
+        if (newState != 0 and newState != 1) return false;
         if (mppt.bflow.state() != newState)
             ESP_LOGI("main", "Set bflow state %i", newState);
         mppt.bflow.enable(newState);

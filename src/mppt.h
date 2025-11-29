@@ -262,6 +262,8 @@ public:
     void begin(const ConfFile &trackerConf, const ConfFile &boardConf, const Limits &limits_, const TeleConf &tele_);
 
     [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }
+    [[nodiscard]] bool active() const { return _sweeping or sampler.isCalibrating() or !converter.disabled(); }
+    [[nodiscard]] bool isSweeping() const { return _sweeping ; }
 
     void shutdownDcdc() {
         // TODO backoff time delay
@@ -464,6 +466,7 @@ public:
         }
 
         // if bflow switch is powered by HS gate drive, need a min duty cycle
+        // TODO lift this, bflow switch will be powered from bootstrap cap and not gate drive signal
         constexpr auto BflowMinDutyCycle = 0.1f;
         if (bflow && (!bflow.state() || converter.getDutyCycle() < BflowMinDutyCycle)) {
             if (sensorPhysicalI->ewm.avg.get() > 6) {
@@ -503,9 +506,9 @@ public:
         auto iOutSmall = sensorPhysicalI->ewm.avg.get() < (limits.Iout_max * 0.01f);
 
         if (iOutSmall && converter.getCtrlOnPwmCnt() > converter.pwmRectMin * 2 and
-        (converter.forcedPwm_()
-            ? (vOut < 1 or (converter.getDutyCycle() * 0.5f) > vr)
-            : (converter.getDutyCycle() * 0.8f) > vr)
+            (converter.forcedPwm_()
+                 ? (vOut < 1 or (converter.getDutyCycle() * 0.5f) > vr)
+                 : (converter.getDutyCycle() * 0.8f) > vr)
             and limits.reverse_current_paranoia) {
             if (!converter.disabled())
                 ESP_LOGE("MPPT",
@@ -529,6 +532,8 @@ public:
      * Start a global MPPT scan.
      */
     void startSweep() {
+        _sweeping = true;
+
         converter.disable();
         ctrlState._limiting = false;
         _targetDutyCycle = 0;
@@ -541,7 +546,7 @@ public:
 
         ESP_LOGI("mppt", "Start sweep");
 
-        _sweeping = true;
+
         maxPowerPoint = {};
 
         sampler.startCalibration();
