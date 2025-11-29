@@ -38,6 +38,8 @@
 
 #include <esp_task_wdt.h>
 #include <esp_pm.h>
+#include <filesystem>
+
 #include "tele/home_assistant.h"
 
 
@@ -313,6 +315,12 @@ void setup() {
 
 
     ConfFile boardConf{"/littlefs/conf/board.conf"};
+
+    if (!boardConf && std::filesystem::exists("/littlefs/conf")) {
+        for (const auto &entry: std::filesystem::directory_iterator("/littlefs/conf")) {
+            ESP_LOGI("main", "file: %s", entry.path().c_str());
+        }
+    }
 
     auto mcuStr = boardConf.getString("mcu", "");
     if (mcuStr != CONFIG_IDF_TARGET) {
