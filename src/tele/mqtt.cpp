@@ -1,42 +1,12 @@
-#include "../mqtt.h"
+#include "mqtt.h"
 #include "../conf.h"
 #include "../util.h"
 
-#include <HAMqttDevice.h>
-#include "../telemetry.h"
+#include "HAMqttDevice.h"
+#include "telemetry.h"
 
 #define TAG "mqtt"
 
-
-esp_mqtt_client_handle_t client;
-std::unordered_map<std::string, MqttMsgCallback> mqttMsgHandlers{};
-bool mqttConnected = false;
-
-HAMqttDevice * powerSensor = nullptr;
-
-void setupSensor() {
-
-    /*
-     *         hass_config_data["device_class"] = 'power'
-        hass_config_data["unit_of_measurement"] = 'W'
-     */
-    powerSensor = new HAMqttDevice((getHostname() + " Power").c_str(), HAMqttDevice::SENSOR);
-    (*powerSensor)
-            .addConfigVar("device_class", "power")
-            .addConfigVar("unit_of_measurement", "W")
-            .addConfigVar("retain", "false")
-            .addConfigVar("unique_id", (getHostname() + "_power").c_str());
-
-    powerSensor->enableStateTopic();
-
-    auto payload = powerSensor->getConfigPayload();
-    auto res = esp_mqtt_client_publish(client, powerSensor->getConfigTopic().c_str(), payload.c_str(),
-                                       payload.length(), 0, 0);
-    if (res < 0) ESP_LOGE("mqtt", "publish error %d", res);
-    else
-        ESP_LOGI("mqtt", "published %s: %s", powerSensor->getConfigTopic().c_str(), payload.c_str());
-
-}
 
 void log_error_if_nonzero(const char *message, int error_code) {
     if (error_code != 0) {
@@ -44,7 +14,7 @@ void log_error_if_nonzero(const char *message, int error_code) {
     }
 }
 
-void mqtt_subscribe_topic(const std::string &topic, MqttMsgCallback fn) {
+void MqttService::subscribeTopic(const std::string &topic, MqttMsgCallback fn) {
     // TODO lock?
     assert_throw(!mqttConnected, "");
     mqttMsgHandlers[topic] = std::move(fn);
@@ -55,12 +25,18 @@ void mqtt_subscribe_topic(const std::string &topic, MqttMsgCallback fn) {
 }
 
 void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+    auto svc = (MqttService *) handler_args;
+    svc->_handleEvent(base, event_id, event_data);
+}
+
+void MqttService::_handleEvent(esp_event_base_t base, int32_t event_id, void *event_data) {
     ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32, base, event_id);
     auto event = (esp_mqtt_event_handle_t) event_data;
     auto client = event->client;
     int msg_id;
+
     switch ((esp_mqtt_event_id_t) event_id) {
-        case MQTT_EVENT_CONNECTED:
+        case MQTT_EVENT_CONNECTED: {
             ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
             //msg_id = esp_mqtt_client_publish(client, "/topic/qos1", "data_3", 0, 1, 0);
             //ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
@@ -71,9 +47,10 @@ void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event
             }
             mqttConnected = true;
 
-            setupSensor();
+            if (onConnected) onConnected();
+        }
+        break;
 
-            break;
         case MQTT_EVENT_DISCONNECTED:
             mqttConnected = false;
             ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
@@ -110,7 +87,6 @@ void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event
                 log_error_if_nonzero("captured as transport's socket errno",
                                      event->error_handle->esp_transport_sock_errno);
                 ESP_LOGI(TAG, "Last errno string (%s)", strerror(event->error_handle->esp_transport_sock_errno));
-
             }
             break;
         default:
@@ -120,9 +96,7 @@ void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event
 }
 
 
-void mqtt_init(const ConfFile &conf) {
-
-
+void MqttService::init(const ConfFile &conf) {
     if (!conf)return;
 
     auto brokerUri = conf.getString("broker_uri", "");
@@ -142,27 +116,13 @@ void mqtt_init(const ConfFile &conf) {
     if (!password.empty())mqtt_cfg.credentials.authentication.password = password.c_str();
 
     client = esp_mqtt_client_init(&mqtt_cfg);
-    if (client == nullptr) ESP_LOGE("mqtt", "error");
-    //assert_throw(client, "");
+    assert_throw(client, "");
     /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
-    esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, mqtt_event_handler, NULL);
+    esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, mqtt_event_handler, &MQTT);
     esp_mqtt_client_start(client);
-
-
 }
 
-void mqttUpdateSensors(const float &power) {
-    char buf[16];
-    auto len = snprintf(buf, 16, "%5.*f", power > 999 ? 0 : 3, power);
-    if (len < 1)
-        ESP_LOGE("mqtt", "snprintf error %d", len);
-    else {
-        len = esp_mqtt_client_publish(client, powerSensor->getStateTopic().c_str(), buf, len, 0, 0);
-        if (len < 0) ESP_LOGE("mqtt", "publish error %d", len);
-        else
-            ESP_LOGI("mqtt", "published %s: %s", powerSensor->getStateTopic().c_str(), buf);
-    }
-}
+MqttService MQTT;
 
 
 #undef TAG

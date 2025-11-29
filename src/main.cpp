@@ -18,7 +18,7 @@
 #include "buck.h"
 #include "mppt.h"
 #include "util.h"
-#include "telemetry.h"
+#include "tele/telemetry.h"
 #include "viz/lcd.h"
 #include "viz/led.h"
 #include "etc/ota.h"
@@ -38,6 +38,7 @@
 
 #include <esp_task_wdt.h>
 #include <esp_pm.h>
+#include "tele/home_assistant.h"
 
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
@@ -383,7 +384,12 @@ void setup() {
 
         teleConf = ConfFile{"/littlefs/conf/tele.conf"};
 
-        mqtt_init(mqttConf);
+        ConfFile mqttConf{"/littlefs/conf/mqtt.conf"};
+        if (mqttConf) {
+            mppt.charger.beginMqtt(mqttConf);
+            MQTT.onConnected = haMqttSendDiscovery;
+            MQTT.init(mqttConf);
+        }
     }
 
     Limits lim{};
@@ -435,6 +441,7 @@ void setup() {
     // this will defer all logs, if abort() is called during setup we might never see relevant messages
     // so calls this after everything else has been set up
     enable_esp_log_to_telnet();
+
 
     ESP_LOGI("main", "setup() done.");
 
@@ -815,9 +822,14 @@ void loopNetwork_task(void *arg) {
     }
 
 
-    if ((wallClockUs() - lastTimeOutUs) >= lfPeriod) {
+    if ((wallClockUs() - lastTimeOutUs) >= (mppt.converter.disabled() ? (lfPeriod * 6) : lfPeriod)) {
         loopLF(wallClockUs());
-        //if(WiFi.isConnected())mqttUpdateSensors(mppt.tracker._lastPower);
+        float pow = mppt.sensorPhysicalI->ewm.avg.get() * mppt.sensorPhysicalU->ewm.avg.get();
+        //if (mppt.converter.disabled()) pow = 0;
+        if (WiFi.isConnected())
+            haMqttUpdate({
+                .power = mppt.isSweeping() ? NAN : pow
+            });
         lastTimeOutUs = wallClockUs();
     }
 

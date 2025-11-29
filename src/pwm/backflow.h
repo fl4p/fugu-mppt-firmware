@@ -34,7 +34,7 @@ public:
 
     void enable(bool enable) {
         if (panelEN) {
-            digitalWrite(panelEN, enable);
+            digitalWrite(panelEN, !!enable);
         } else if (panelSD) {
             digitalWrite(panelSD, !enable);
         } else {

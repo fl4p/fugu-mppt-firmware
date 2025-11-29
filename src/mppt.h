@@ -2,7 +2,7 @@
 
 #include "adc/sampling.h"
 
-#include "telemetry.h"
+#include "tele/telemetry.h"
 #include "util.h"
 
 #include "temperature.h"
@@ -192,8 +192,7 @@ private:
     unsigned long _lastPointWrite = 0;
 
     const VIinVout<const Sensor *> &sensors;
-    const Sensor *sensorPhysicalI{nullptr};
-    const Sensor *sensorPhysicalU{nullptr};
+
 
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
     PD_Control VoutController{1500, /*100**/ 12 * 1000, true}; // Vout over-voltage  TODO 8k, 10k prevents full sweep
@@ -203,6 +202,8 @@ private:
     //PD_Control LoadRegulationCTRL{5, -200, true}; //
 
 public:
+    const Sensor *sensorPhysicalI{nullptr};
+    const Sensor *sensorPhysicalU{nullptr};
     Tracker tracker{};
 
 private:

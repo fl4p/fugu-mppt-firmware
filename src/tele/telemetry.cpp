@@ -105,10 +105,9 @@ void ftpBegin() {
     ftpSrv.setTransferCallback(_transferCallback);
 
     ftpSrv.end();
-    ftpSrv.begin("user", "password");    //username, password for ftp.   (default 21, 50009 for PASV)
+    ftpSrv.begin("user", "password"); //username, password for ftp.   (default 21, 50009 for PASV)
 
     Serial.println("FTP server started!");
-
 }
 
 
@@ -148,17 +147,22 @@ void add_ap(const std::string &ssid, const std::string &psk) {
     auto confPath = "/littlefs/conf/wifi.conf";
     ConfFile wifiConf{confPath, true};
     wifiConf.add({
-                         {"ssid_" + ssid,          ssid},
-                         {"ssid_" + ssid + "_psk", psk.c_str()}});
+        {"ssid_" + ssid, ssid},
+        {"ssid_" + ssid + "_psk", psk.c_str()}
+    });
     ESP_LOGI("tele", "Added Wifi AP %s to %s", ssid.c_str(), confPath);
     noSsid = false;
+}
+
+std::string getDeviceId() {
+    return "fugu-" + std::string(getChipId());
 }
 
 const std::string &getHostname(bool reload) {
     static std::string hostname{};
     if (hostname.empty() or reload) {
         nvs.open();
-        hostname = nvs.readString("hostname", "fugu-" + std::string(getChipId()));
+        hostname = nvs.readString("hostname", getDeviceId());
         nvs.close();
     }
     return hostname;
@@ -203,7 +207,8 @@ void _wifiConnected() {
     String hostname = String(getHostname().c_str());
 
     MDNS.end();
-    if (!MDNS.begin(hostname.c_str())) { // abc.local
+    if (!MDNS.begin(hostname.c_str())) {
+        // abc.local
         ESP_LOGE("tele", "Error setting up MDNS responder!");
     } else {
         ESP_LOGI("tele", "Set hostname %s", hostname.c_str());
