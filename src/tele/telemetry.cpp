@@ -44,7 +44,7 @@ extern KeyValueStorage nvs;
 void set_logging_telnet(ESPTelnet *telnet);
 
 void ftpUpdate() {
-    //ftpSrv.handleFTP(); // poor perfNetworkServer::accept() (NetworkServer.cpp) / lwip_accept (sockets.c)
+    ftpSrv.handleFTP(); // poor perfNetworkServer::accept() (NetworkServer.cpp) / lwip_accept (sockets.c)
     telnet.loop();
     if (scope) scope->update();
     //MDNS.update();
