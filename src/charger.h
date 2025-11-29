@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mqtt.h"
+#include "tele/mqtt.h"
 
 #ifndef FUGU_BAT_V
 #define FUGU_BAT_V NAN
@@ -56,7 +56,7 @@ public:
         // TODO conffile
         auto topic = mqttConf.getString("cell_voltages_max_topic", "");
         if (!topic.empty())
-            mqtt_subscribe_topic(topic, [&](const char *dat, int len) {
+            MQTT.subscribeTopic(topic, [&](const char *dat, int len) {
                 std::string val{dat, dat + len}; // add null-termination
                 this->vcell_max = strtof(val.c_str(), nullptr);
                 this->vcell_max_t = wallClockUs();

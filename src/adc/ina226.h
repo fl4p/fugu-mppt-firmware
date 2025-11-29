@@ -90,7 +90,7 @@ public:
             return false;
         }
 
-        i2c_port_t i2c_port = I2C_NUM_0; // TODO
+        //i2c_port_t i2c_port = I2C_NUM_0; // TODO
         auto addr = (uint8_t) ina226.i2cAddress;
 
         bool ok = false;
@@ -362,7 +362,7 @@ public:
         static uint32_t numTimeouts = 0;
         if (!new_data && !taskNotification.wait(3)) {
             ++numTimeouts;
-            if (numTimeouts % 2000 == 0) {
+            if (numTimeouts % 20000 == 0) {
                 ESP_LOGE("ina22x", "%lu timeout!", numTimeouts);
             }
         }

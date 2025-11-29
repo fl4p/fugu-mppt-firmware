@@ -156,7 +156,8 @@ Besides the MPP tracker, the control loop contains 5 PD control units (PID witho
 - `IoutCTRL` (charge current), controls the charge current
 - `PowerCTRL` (thermal derating), limits conversion power to prevent excess temperatures
 
-The `VoutCTRL` is the fastest controller. Keeping the output voltage in-range with varying load is most crucial to
+The `VoutCTRL` is the fastest controller, which means it has rather large coefficients, especially for the differential
+component. Keeping the output voltage in-range with varying load is most crucial to
 prevent damage from transient over-voltage. Because a solar panel is very similar to a constant current
 source, `IinCTRL` and `IoutCTRL` can be slower.
 
@@ -169,25 +170,25 @@ can proceed with the MPPT. Otherwise, we halt MPPT and decrease the duty cycle p
 # Voltage & Current Sensors (ADC)
 
 The firmware tries to be as hardware independent as possible by using layers of abstraction (HAL), so you can easily
-adopt it with your ADC model and topology. Implementations exist for the ADS1x15, INA226, esp32_adc.
+adopt it with your ADC model and topology. Implementations exist for the ADS1x15 (ADS1015, ADS1115), INA226, esp32_adc.
 
-The hardware should always sense `Vin` and `Vout`. `Vin` is not crucial and can
+The hardware should always sense `Vin` and `Vout`. `Vin` accuracy is not crucial and can
 be coarse (8-bit ADC might be ok if there is a current sensor at `Iout`), it is needed for diode emulation in DCM,
 under- and over-voltage shutdown. Since `Vout` is our battery voltage it should be more precise.
-To reduce voltage transients during load change a high sampling rate is prefered.
+To reduce voltage transients during load change a high sampling rate is preferred.
 
 The current sensor can be either at the input (`Iin`, solar) or output (`Iout`, battery) or both. If there's only one
 current sensor we can infer the other current using the voltage ratio and efficiency of the converter.
 The code represents this with a `VirtualSensor`.
 
 If the current sensor is bi-directional, the converter can operate in boost mode, boosting lower solar voltage to a
-higher battery voltage. This is not yet implemented.
+higher battery voltage.
 
 Here are some relevant types:
 
-* `LinearTransform`: Simple 1-dimensional linear transform (Y = a*X + b) to scale voltage readings and zero-offsetting.
+* `LinearTransform`: Simple 1-dimensional linear transform (y = A*x + B) to scale voltage readings and zero-offsetting.
 * `ADC_Sampler`: Schedules ADC reads, manages sensors and their calibration
-* `CalibrationConstraints`: value constraints a sensor must meet during calibration (average, stddev).
+* `CalibrationConstraints`: value constraints a sensor must meet during calibration (average, standard deviation).
 * `Sensor`: Represents a physical sensor with running statistics (average, variance)
 * `VirtualSensor`: A sensor with computed values. Also comes with running stats.
 * `AsyncADC`: Abstract interface for asynchronous (non-blocking) ADC implementation
@@ -220,15 +221,15 @@ When it detects a mayor change in power conditions (e.g. clouds, partial shading
 to quickly adapt to the new condition.
 
 A global scan is triggered every 30 minutes to prevent getting stuck in a local maximum. This can happen with partially
-shaded solar strings. A scan lasts about 20 to 60 seconds, depending on the loop update rate. Scanning too often or slow
-scanning ca significantly less reduce overall efficiency.
+shaded solar strings. A scan lasts about 20 to 60 seconds, depending on the loop update rate. Sweeping too often or to slow
+can significantly reduce overall efficiency.
 
 # Synchronous Buck and Diode Emulation
 
 We can leave the Low-Side (LS, aka *sync-FET*, *synchronous rectifier*) switch off and the coil discharge current will
 flow through the LS MOSFET´s body diode.
 The buck converter then operates in non-synchronous mode with reduced conversion efficiency since the mosfet body diode
-usually has a voltage drop of around 1V.
+usually has a voltage drop of a couple of 100 mV.
 
 Turning on the LS must be taken with care to prevent the converter from becoming a (reversed) boost converter.
 Switching the LS for too long causes reverse current flow from battery to solar and can cause high voltage at the solar
@@ -238,7 +239,8 @@ timing the LS switch with a lot of care.
 The firmware implements a synchronous buck converter with sensor-less diode emulation. It uses the Vin, Vout and coil
 inductance value to estimate the coil ripple current and adjusts the switching time of the LS MOSFET so that the current
 never crosses zero.
-It handles both Continuous Conduction Mode (CCM) and Discontinuous Conduction Mode (DCM). Inductor core saturation is
+It handles both Continuous Conduction Mode (CCM) and Discontinuous Conduction Mode (DCM). Inductivity of a real inductor
+drops with increasing current due to core saturation. Inductor core saturation is
 modelled using a constant -5% inductance drop, which appears to be reasonably accurate. This inaccuracy is only
 noticeable during operation near the CCM/DCM transition point, and it usually causes the rectification switch to turn
 off too early. If you experience reverse inductor current, decrease `L0` value.

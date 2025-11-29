@@ -15,6 +15,8 @@ import pandas as pd
 from matplotlib.pyplot import figure
 from scipy import signal
 
+from etc.fugu.discover import discover_scope_servers
+
 duration = 4 / 1
 sample_rate = 2000
 
@@ -30,45 +32,6 @@ from matplotlib.widgets import Slider
 
 # def update_offset(val):
 #    redraw()
-
-
-def discover_scope_servers(stop_after=99, timeout=1):
-    from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
-
-    addr = []
-
-    class MyListener(ServiceListener):
-
-        def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
-            print(f"Service {name} updated")
-
-        def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:
-            print(f"Service {name} removed")
-
-        def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
-            info = zc.get_service_info(type_, name)
-            addr.extend((a, info.port) for a in info.parsed_addresses())
-
-    zeroconf = Zeroconf()
-    listener = MyListener()
-    # browser = ServiceBrowser(zeroconf, "_http._tcp.local.", listener)
-    browser = ServiceBrowser(zeroconf, "_scope._tcp.local.", listener)
-
-    t0 = time.time()
-
-    addrs = set()
-
-    try:
-        while time.time() - t0 < timeout:
-            if addr:
-                addrs.update(addr)
-                if len(addrs) > stop_after:
-                    return addrs
-            time.sleep(.1)
-    finally:
-        zeroconf.close()
-
-    return list(addrs)
 
 
 class NotchIIR():
@@ -307,7 +270,7 @@ def receive_loop(decoder: 'ScopeDecoder'):
             continue
 
         print('Discovered services:', addr)
-        addr = addr[0]
+        addr = (addr[0][0], addr[0][1])
         # addr = ('192.168.1.208', 24)
         # addr =  ('192.168.1.231', 24)
 

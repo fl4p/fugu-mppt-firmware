@@ -67,7 +67,7 @@
 
 #define TAG "store" // see undef below
 
-static bool mountLFS(const char *part_label = "littlefs", bool format = false) {
+inline bool mountLFS(const char *part_label = "littlefs", bool format = false) {
 
     if (format) {
         ESP_LOGI("store", "Formatting partition %s", part_label);

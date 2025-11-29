@@ -145,8 +145,8 @@ struct PhysicalSensor : public Sensor {
         try {
             auto fs = adc->getSamplingRate(params.adcCh);
             notchFilter = new NotchFilter();
-            const auto inverterFreq = 50.0f;
-            const auto inverterInputFreq = 2 * 50.0f; // abs(sin(t))
+            constexpr auto inverterFreq = 50.0f;
+            constexpr auto inverterInputFreq = 2 * inverterFreq; // abs(sin(t))
             notchFilter->begin(inverterInputFreq / fs);
             ESP_LOGI("sampling", "%s notch filter fs=%.1fHz f0=%.1fHz", params.teleName.c_str(), fs, inverterInputFreq);
         } catch (const std::exception &ex) {
