@@ -50,3 +50,6 @@ etc/scope_client/adaptive_noise_filter/__pycache__/
 wifi.conf
 
 etc/__pycache__/
+
+
+etc/dl/

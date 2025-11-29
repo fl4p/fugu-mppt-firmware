@@ -11,6 +11,7 @@ idf.py build
 #  python3 -m http.server 9000
 
 """""
+import asyncio
 import re
 import time
 
@@ -26,9 +27,9 @@ print(hosts)
 
 listening = set()
 
-for ip,port,name in hosts:
+async def send_ota_command(addr, name):
     print('\n', name)
-    st = SocketTransport(ip)
+    st = SocketTransport(addr)
     fd = FuguDevice(st, block=True, prefix=name)
     fd.verbose = True
     ota_progress = 0
@@ -46,7 +47,13 @@ for ip,port,name in hosts:
     fd.write(f"ota http://{private_ip}:9000/build/fugu-firmware.bin\n")
     print(fd.pwm_state)
     while ota_progress < 100:
-        time.sleep(.1)
+        await asyncio.sleep(.2)
     fd.close()
+
+async def main():
+    await asyncio.gather(*[send_ota_command(ip, name)  for ip,port,name in hosts])
+
+asyncio.run(main())
+
     #print('update installed, waiting for device to come online again..')
     #fd = FuguDevice(SocketTransport(ip), block=True, prefix=name)
