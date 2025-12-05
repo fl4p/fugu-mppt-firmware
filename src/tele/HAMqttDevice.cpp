@@ -1,5 +1,6 @@
 #include "HAMqttDevice.h"
 #include <cctype>
+#include <string>
 
 HAMqttDevice::HAMqttDevice(
     const String &name,
@@ -77,6 +78,12 @@ HAMqttDevice &HAMqttDevice::enableAttributesTopic()
 HAMqttDevice &HAMqttDevice::addConfigVar(const String &name, const String &value)
 {
     _configVars.push_back({name, value});
+    return *this;
+}
+
+HAMqttDevice &HAMqttDevice::addConfigVar(const String &name, const long &value)
+{
+    _configVars.push_back({name, std::to_string(value).c_str()});
     return *this;
 }
 

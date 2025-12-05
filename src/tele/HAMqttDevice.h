@@ -61,6 +61,7 @@ public:
     HAMqttDevice &enableAttributesTopic();
 
     HAMqttDevice &addConfigVar(const String &key, const String &value);
+    HAMqttDevice &addConfigVar(const String &key, const long &value);
     HAMqttDevice &addAttribute(const String &key, const String &value);
     HAMqttDevice &clearAttributes();
 
