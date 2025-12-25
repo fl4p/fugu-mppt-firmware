@@ -3,6 +3,8 @@
 #include <esp_http_client.h>
 #include <esp_https_ota.h>
 
+void systemRestart();
+
 #if CONFIG_MBEDTLS_PSK_MODES
 
 #include <HTTPUpdate.h>
@@ -93,7 +95,8 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
 
     switch (evt->event_id) {
         case HTTP_EVENT_ERROR:
-            ESP_LOGD(TAG, "HTTP_EVENT_ERROR");
+            ESP_LOGE(TAG, "HTTP_EVENT_ERROR");
+            systemRestart();
             break;
         case HTTP_EVENT_ON_CONNECTED:
             ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
@@ -129,7 +132,7 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
 
             break;
         case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGD(TAG, "HTTP_EVENT_DISCONNECTED");
+            ESP_LOGE(TAG, "HTTP_EVENT_DISCONNECTED");
             break;
         case HTTP_EVENT_REDIRECT:
             ESP_LOGD(TAG, "HTTP_EVENT_REDIRECT");
@@ -140,13 +143,14 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
 
 #undef TAG
 
-void systemRestart();
+
 
 void doOta(const char *url) {
     //ESP_LOGE("ota", "Not available. Enable CONFIG_MBEDTLS_PSK_MODES");
 
     esp_http_client_config_t config{};
     config.url = url,
+    config.timeout_ms = 10000,
     #ifdef CONFIG_EXAMPLE_USE_CERT_BUNDLE
             config.crt_bundle_attach = esp_crt_bundle_attach;
 #else

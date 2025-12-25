@@ -49,6 +49,11 @@ async def send_ota_command(addr, name):
     while ota_progress < 100:
         await asyncio.sleep(.2)
     fd.close()
+    # not try to re-connect
+    time.sleep(1)
+    print(fd.prefix, 'waiting for device to come online again')
+    fd = FuguDevice(st, block=True, prefix=name)
+    print(fd.prefix, 'device online! OTA successful (probably TODO check ver)')
 
 async def main():
     await asyncio.gather(*[send_ota_command(ip, name)  for ip,port,name in hosts])
