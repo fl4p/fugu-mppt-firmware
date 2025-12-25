@@ -655,7 +655,7 @@ void loopLF(const unsigned long &nowUs) {
     mppt.ntc.read();
     mppt.ucTemp.read();
     if (sensors.Vout)
-        mppt.charger.update(sensors.Vout->ewm.avg.get());
+        mppt.charger.update(sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.avg.get());
 
     if (mppt.ucTemp.last() > 95 && WiFi.isConnected()) {
         ESP_LOGW("main", "High chip temperature, shut-down WiFi");
