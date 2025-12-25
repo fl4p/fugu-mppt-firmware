@@ -1,0 +1,13 @@
+[wokwi]
+version = 1
+elf = "build/fugu-firmware.elf"
+firmware = "build/flasher_args.json"
+gdbServerPort=3333
+
+[net]
+gateway="ws://localhost:9011"
+
+# Forward http://localhost:2323 to port 23 on the simulated ESP32:
+[[net.forward]]
+from = "localhost:2323"
+to = "target:23"
