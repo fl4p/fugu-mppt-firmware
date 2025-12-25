@@ -37,16 +37,16 @@ public:
     bool update(const volatile float &vcell_max, const float &ibat) {
         // check charge termination criteria
         // https://github.com/fl4p/fugu-mppt-firmware/issues/31
-        float k = 0.05f; // LFP
-        float cv = vcell_max - ibat * (p.vcell_eoc - p.cv_min);
-        if (!floatMode and cv / k > p.cv_min) {
+        float k = 0.05f; // [1/Ah] LFP:0.05
+        float r = (p.vcell_eoc - p.cv_min) / k; // "some form of resistance"
+        float cv = vcell_max - ibat * r;
+        if (!floatMode and cv > p.cv_min) {
             floatMode = true;
-            //ESP_LOGI("charger", "float mode %hhu (ibat=%.3f)", floatMode, ibat);
         } else if (floatMode and vcell_max < p.cv_min) {
             floatMode = false;
-            //ESP_LOGI("charger", "float mode %hhu (ibat=%.3f)", floatMode, ibat);
         }
-        ESP_LOGI("charger", "float mode %hhu (ibat=%.3f, vcell_max=%.3f, cv=%.3f, cv_min=%.3f)", floatMode, ibat, vcell_max, cv, p.cv_min);    
+        ESP_LOGI("charger", "float mode %hhu (ibat=%.3f, vcell_max=%.3f, cv=%.3f, cv_min=%.3f)", floatMode, ibat, vcell_max,
+            cv, p.cv_min);
         return floatMode;
     }
 };
@@ -88,13 +88,13 @@ public:
         }
 
         // LFP cutoff (see https://github.com/fl4p/fugu-mppt-firmware/issues/31 )
-        if (ibat_mean.num >= 8) {
+        if (ibat_mean.num >= 16) {
             float ibat = ibat_mean.pop(), iout = iout_mean.pop();
             if (floatMode.update(vcell_max, ibat)) {
                 // the highest cell triggers termination
                 // now compute the new output current limit (which is not necessarily the battery current)
                 float alpha = .3; // fade-in the limit exponentially to stabilize in case of many chargers
-                ioutLim = iout * (alpha - 1) + (iout - ibat) * alpha;
+                ioutLim = iout * (1 - alpha) + (iout - ibat) * alpha;
                 ESP_LOGI("charger", "float update: ibat=%.3f iout=%.3f iout_lim:=%.3f", ibat, iout, ioutLim);
             } else {
                 // unlimited
@@ -182,7 +182,7 @@ public:
     [[nodiscard]] float Ibat_max() const {
         // TODO this should take the acquired ibat - iout delta into account
         // ibat != iout (generally)
-        
+
         auto lim = params.Iout_max;
 
         // eoc regulation
