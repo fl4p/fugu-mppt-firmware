@@ -43,3 +43,10 @@ https://www.espressif.com/sites/default/files/documentation/esp32_technical_refe
 # mcpwm
 
 https://www.espressif.com/sites/default/files/documentation/esp32-s3_technical_reference_manual_en.pdf#mcpwm
+
+
+# rf comm
+
+espnow vs ble
+https://www.reddit.com/r/esp32/comments/j2j1df/is_espnow_or_ble_more_power_efficient/
+https://pastebin.com/uuGtCAZj
