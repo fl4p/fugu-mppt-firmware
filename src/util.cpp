@@ -52,3 +52,13 @@ void scan_i2c() {
 
     delay(5000);
 }
+
+float strntof(const char *dat, int len) {
+    if (dat[len - 1] == '\0')
+        return strtof(dat, nullptr);
+    // add NUL termination
+    char *str = strndup(dat, len);
+    float f = strtof(str, nullptr);
+    free(str);
+    return f;
+}

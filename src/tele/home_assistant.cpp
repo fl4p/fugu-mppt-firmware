@@ -7,7 +7,7 @@
 
 //HAMqttDevice *powerSensor = nullptr;
 uint16_t numUpdates = 0;
-std::string powerSensorTopic;
+std::string powerSensorStateTopic;
 
 
 void haMqttSendDiscovery() {
@@ -42,7 +42,7 @@ void haMqttSendDiscovery() {
             .addConfigVar("exp_aft", 30)
             .addConfigVar("dev",
                           (R"({"name":")" + getHostname() + R"(","ids":[")" + getDeviceId() + R"("]})").c_str());
-    powerSensorTopic = powerSensor.getConfigTopic().c_str();
+    powerSensorStateTopic = powerSensor.getStateTopic().c_str();
 
     auto payload = powerSensor.getConfigPayload();
     auto res = esp_mqtt_client_publish(MQTT.client, powerSensor.getConfigTopic().c_str(), payload.c_str(),
@@ -67,11 +67,11 @@ void haMqttUpdate(const HAMqttFields &fields) {
         if (len < 1)
             ESP_LOGE("mqtt", "snprintf error %d", len);
         else {
-            len = esp_mqtt_client_publish(MQTT.client, powerSensorTopic.c_str(), buf, len, 0, 0);
+            len = esp_mqtt_client_publish(MQTT.client, powerSensorStateTopic.c_str(), buf, len, 0, 0);
             if (len < 0)
                 ESP_LOGE("mqtt", "publish error %d", len);
             else
-                ESP_LOGD("mqtt", "published %s: %s", powerSensorTopic.c_str(), buf);
+                ESP_LOGD("mqtt", "published %s: %s", powerSensorStateTopic.c_str(), buf);
         }
 
         ++numUpdates;

@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <deque>
+
 
 template<class T>
 inline T abs(T x) { return x < 0 ? -x : x; }
@@ -301,12 +303,12 @@ inline size_t pseudo_median_of_nine( const RandomAccessIterator &array, const qu
 
 
 
-
+#pragma pack(1)
 struct MeanAccumulator {
     // TODO trapezoidal sum?
     float sum;
     //float max;
-    uint32_t num;
+    uint16_t num;
 
     float getMean() const { return sum / num; }
 
@@ -333,7 +335,7 @@ struct MeanAccumulator {
 
     MeanAccumulator() { clear(); }
 };
-
+#pragma pack()
 
 template<typename F=float, typename T=unsigned long, typename D=double>
 class TrapezoidalIntegrator {
@@ -343,14 +345,14 @@ class TrapezoidalIntegrator {
     F lastX;
     D value;
 public:
-    explicit TrapezoidalIntegrator(float timeFactor = (1e-6f / 3600.f), T maxDt = 1e6) :
+    explicit TrapezoidalIntegrator(float timeFactor = (1.f/ 3600e6f), T maxDt = 1e6) :
             timeFactor(timeFactor), maxDt(maxDt), lastTime{0}, lastX{0}, value{0} {}
 
     D get() const { return value; }
 
     void add(F x, T nowTime) {
         T dt = nowTime - lastTime;
-        if (dt < maxDt)
+        if (dt < maxDt && std::isfinite(lastX) && std::isfinite(x))
             value += (D) ((lastX + x) * (F) 0.5 * (F) (dt * timeFactor));
         lastTime = nowTime;
         lastX = x;
@@ -363,7 +365,6 @@ public:
     }
 };
 
-#include <deque>
 
 template<typename float_t =float>
 class RollingMean {

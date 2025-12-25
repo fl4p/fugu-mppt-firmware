@@ -423,7 +423,7 @@ void setup() {
         }
 
         if (!setupErr && !adcSampler.adcStates.empty()) {
-            ConfFile trackerConf{"/littlefs/conf/tracker.conf"};
+            ConfFile trackerConf{"/littlefs/conf/tracker.conf", true};
             mppt.begin(trackerConf, boardConf, lim, teleConf);
         }
     } catch (const std::runtime_error &er) {
@@ -827,7 +827,7 @@ void loopNetwork_task(void *arg) {
     }
 
 
-    if ((wallClockUs() - lastTimeOutUs) >= (mppt.converter.disabled() ? (lfPeriod * 6) : lfPeriod)) {
+    if ((wallClockUs() - lastTimeOutUs) >= (mppt.converter.disabled() ? (lfPeriod * 6) : lfPeriod) or !lastTimeOutUs) {
         loopLF(wallClockUs());
         float pow = mppt.sensorPhysicalI->ewm.avg.get() * mppt.sensorPhysicalU->ewm.avg.get();
         //if (mppt.converter.disabled()) pow = 0;

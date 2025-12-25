@@ -1,5 +1,8 @@
 #include "mppt.h"
 
+#include "Point.h"
+#include "WritePrecision.h"
+
 void MpptController::updateCV() {
     // TODO TODO
     // Temperature derating?
@@ -152,9 +155,11 @@ void MpptController::telemetry() {
     point.addField("ntc_temp", ntc.last(), 1);
 
     point.addField("pwm_duty", converter.getCtrlOnPwmCnt());
-    point.addField("pwm_ls_duty", converter.getRectOnPwmCnt());
-    point.addField("pwm_ls_max", converter.getRectOnPwmMax());
-    point.addField("pwm_dcm", converter.inDCM());
+    if (!converter.disabled()) {
+        point.addField("pwm_ls_duty", converter.getRectOnPwmCnt());
+        point.addField("pwm_ls_max", converter.getRectOnPwmMax());
+        point.addField("pwm_dcm", converter.inDCM());
+    }
 
     if (ctrlState.mode == MpptControlMode::MPPT) {
         auto dP = tracker.dP;

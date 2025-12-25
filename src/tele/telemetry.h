@@ -1,25 +1,11 @@
 #pragma once
 
-#include "../adc/sampling.h"
-#include "Point.h"
-#include "../web/server.h"
-#include "../store.h"
-#include <InfluxDbClient.h>
-
-#include <WiFiMulti.h>
-//#include <WiFiUdp.h>
-#include <ESPmDNS.h>
-
-//#include <AsyncUDP.h>
-
+//#include "../adc/sampling.h"
+//#include "Point.h"
+//#include "../store.h"
+#include <string>
 #include <Arduino.h>
 
-//#include <SimpleFTPServer.h>
-//#include <ESPTelnet.h>
-
-//#include <etc/readerwriterqueue.h>
-
-//#include "tele/scope.h"
 
 extern bool timeSynced;
 
@@ -49,10 +35,15 @@ void ftpBegin();
 void ftpUpdate();
 
 
+class Point;
+
 void telemetryAddPoint(Point &p, uint16_t maxQueue = 40);
 
 void telemetryFlushPointsQ(const IPAddress &addr);
 
+
+class ADC_Sampler;
+struct Sensor;
 
 void dcdcDataChanged(const ADC_Sampler &dcdc, const Sensor &sensor);
 

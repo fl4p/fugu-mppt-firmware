@@ -651,7 +651,7 @@ public:
 
         //float powerLimit = std::min(thermalPowerLimit(ntcTemp), limits.P_max);
 
-        // topping current
+        // charge current
         float Iout_max = min(limits.Iout_max, charger.Ibat_max());
 
         // periodic sweep / scan

@@ -1,12 +1,10 @@
-#pragma once
-
 #include "telemetry.h"
 
 #include "../adc/sampling.h"
 #include "Point.h"
 #include "../web/server.h"
 #include "../store.h"
-#include <InfluxDbClient.h>
+//#include <InfluxDbClient.h>
 
 #include <WiFiMulti.h>
 //#include <WiFiUdp.h>
@@ -131,8 +129,8 @@ void wifi_load_conf() {
     for (const auto &k: wifiConf.keys()) {
         if (starts_with(k, "ssid") && !ends_with(k, "_psk")) {
             auto ssid = wifiConf.getString(k).c_str();
-            auto psk = wifiConf.c(k + "_psk", nullptr);
-            if (ssid == ssid_def and psk == ssid_def) continue;
+            auto psk = wifiConf.c(k + "_psk", "");
+            if (ssid == ssid_def and psk == psk_def) continue;
             if (!wifiMulti.addAP(wifiConf.getString(k).c_str(), psk)) {
                 ESP_LOGW("tele", "Failed to add ap  %s", ssid);
             } else {
@@ -300,7 +298,7 @@ void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
 
 void influxWritePointsUDP(const IPAddress &dst, moodycamel::ReaderWriterQueue<Point> &q) {
     constexpr int MTU = CONFIG_TCP_MSS;
-    // notice that MTU is not the UDP max message size, here we use MTU from ip4 as a "safe" value
+    // notice that MTU is not the UDP max message size (which is >64k?), here we use MTU from ip4 as a "safe" value
 
     if (noSsid) return;
 

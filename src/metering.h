@@ -200,7 +200,7 @@ struct PersistentState {
 struct SolarEnergyMeter {
     TrapezoidalIntegrator<float, unsigned long, float> totalEnergy{
             1e-6f / 3600.f,  // /us => /h
-            (unsigned long) 2e6f // 2sec
+            /*maxDt*/(unsigned long) 4e6f // 4sec
     };
 
     FlashValueStore<PersistentState> flash{

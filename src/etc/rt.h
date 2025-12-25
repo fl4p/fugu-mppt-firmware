@@ -147,9 +147,9 @@ public:
         this->arg = arg;
 
         gptimer_config_t timer_config = {
-            .clk_src = GPTIMER_CLK_SRC_DEFAULT,
+            .clk_src = GPTIMER_CLK_SRC_DEFAULT, // APB = 80 MHz
             .direction = GPTIMER_COUNT_UP,
-            .resolution_hz = hz, // 1MHz, 1 tick=1us
+            .resolution_hz = hz, //
             .intr_priority = 0, // GPTIMER_ALLOW_INTR_PRIORITY_MASK
             .flags = {
                 .intr_shared = 0, .allow_pd = 0, .backup_before_sleep = 0, // backup_before_sleep is deprecated
