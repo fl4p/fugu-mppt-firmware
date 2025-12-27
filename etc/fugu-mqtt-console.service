@@ -1,0 +1,15 @@
+[Unit]
+Description=Fugu Console Log
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5s
+User=pi
+WorkingDirectory=/home/pi/pv
+ExecStart=/home/pi/miniconda3/bin/python3 mqtt_console.py
+
+[Install]
+WantedBy=multi-user.target
