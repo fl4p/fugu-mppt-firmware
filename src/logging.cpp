@@ -5,7 +5,6 @@
 #include "etc/readerwriterqueue.h"
 
 
-
 //struct ConcurrentQueueMinMemTraits : public moodycamel::ConcurrentQueueDefaultTraits {
 //    static const size_t BLOCK_SIZE = 2;
 //   static const size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE = 0;
@@ -20,6 +19,7 @@ struct AsyncLogEntry {
     uint16_t len;
     bool telnetOnly = false;
 };
+
 //static std::deque<AsyncLogEntry> uart_async_log_queue;
 
 //static moodycamel::ConcurrentQueue<AsyncLogEntry, ConcurrentQueueMinMemTraits> uart_async_log_queue{1};
@@ -27,12 +27,21 @@ static moodycamel::ReaderWriterQueue<AsyncLogEntry> uart_async_log_queue{};
 
 ESPTelnet *log_telnet = nullptr;
 
+void (*logCallback)(const char *str, uint16_t len) = nullptr;
+
 vprintf_like_t old_vprintf = &vprintf;
 
 bool deferLogs = false;
 
 void loggingEnableDefer() {
     deferLogs = true;
+}
+
+void addLogCallback(void (*callback)(const char *str, uint16_t len)) {
+    if (logCallback != nullptr && callback != nullptr) {
+        ESP_LOGW("log", "callback already set, overwrite");
+    }
+    logCallback = callback;
 }
 
 
@@ -46,13 +55,13 @@ void enqueue_log(const char *s, int len) {
 }
 
 
-int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appendBreak = false, bool timestamp= false) {
+int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appendBreak = false, bool timestamp = false) {
     assert((xPortGetCoreID() == 1)); // ensure RT core
 
     if (uart_async_log_queue.size_approx() > 200) return -1;
     auto buf = new char[l + 1];
     int len = 0;
-    if(timestamp) {
+    if (timestamp) {
         len = snprintf(buf, l + 1, "(%lu): ", micros());
         if (len <= 0) return len;
     }
@@ -87,7 +96,6 @@ void enqueue_telnet_log(const char *fmt, size_t l, const va_list &args) {
     auto len = vsnprintf(buf, l + 1, fmt, args);
     uart_async_log_queue.enqueue(AsyncLogEntry{buf, (uint16_t) len, true});
 }*/
-
 
 
 void UART_LOG(const char *fmt, ...) {
@@ -158,7 +166,6 @@ int printf_old(const char *fmt, ...) {
 void flush_async_uart_log() {
     AsyncLogEntry entry;
     while (uart_async_log_queue.try_dequeue(entry)) {
-
         if (!entry.telnetOnly) {
             // we call the old vprintf here for convenience.
             // otherwise we can write the string to UART and JTAG USB
@@ -174,6 +181,9 @@ void flush_async_uart_log() {
         if (log_telnet)
             log_telnet->write((uint8_t *) entry.str, entry.len);
 
+        if (logCallback)
+            logCallback(entry.str, entry.len);
+
         delete[] entry.str;
     }
 }
@@ -188,11 +198,13 @@ int vprintf_mux(const char *fmt, va_list argptr) {
     static char loc_buf[300];
 
     int r = old_vprintf(fmt, argptr);
-    if (log_telnet) {
+
+    if (log_telnet or logCallback) {
         int l = vsnprintf(loc_buf, sizeof(loc_buf), fmt, argptr);
         if (l > 0) {
             //enqueue_telnet_log(loc_buf, l);
-            log_telnet->write((uint8_t *) loc_buf, l);
+            if (log_telnet) log_telnet->write((uint8_t *) loc_buf, l);
+            if (logCallback)logCallback(loc_buf, l);
         }
     }
 

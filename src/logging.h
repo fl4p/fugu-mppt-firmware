@@ -42,3 +42,5 @@ void enqueue_task(std::function<void(void)> &&fn);
 class ESPTelnet;
 void set_logging_telnet(ESPTelnet *telnet);
 
+
+void addLogCallback(void (*callback)(const char *str, uint16_t len));

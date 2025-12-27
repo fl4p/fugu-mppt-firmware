@@ -3,10 +3,12 @@
 #include "../util.h"
 
 #include "HAMqttDevice.h"
+#include "logging.h"
 #include "telemetry.h"
 
 #define TAG "mqtt"
 
+void mqttLogCallback(const char *str, uint16_t len);
 
 void log_error_if_nonzero(const char *message, int error_code) {
     if (error_code != 0) {
@@ -47,12 +49,14 @@ void MqttService::_handleEvent(esp_event_base_t base, int32_t event_id, void *ev
             }
             mqttConnected = true;
 
+            addLogCallback(mqttLogCallback);
             if (onConnected) onConnected();
         }
         break;
 
         case MQTT_EVENT_DISCONNECTED:
             mqttConnected = false;
+            addLogCallback(nullptr);
             ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
             break;
 
@@ -93,6 +97,26 @@ void MqttService::_handleEvent(esp_event_base_t base, int32_t event_id, void *ev
             ESP_LOGI(TAG, "Other event id:%d", event->event_id);
             break;
     }
+}
+
+void mqttLogCallback(const char *str, uint16_t len) {
+    static char *topic = nullptr;
+    if (!MQTT.isConnected()) return;
+    if (strnstr(str, ") mqtt:", len) != nullptr) return; // don't publish mqtt messages
+
+    if (topic == nullptr) {
+        auto t = "pv/log/" + getHostname(true);
+        topic = new char[t.length() + 1];
+        t.copy(topic, t.length()); // does not append null !
+        topic[t.length()] = '\0'; // terminate
+        ESP_LOGI(TAG, "console log topic='%s'", topic);
+    }
+
+    len = esp_mqtt_client_publish(MQTT.client, topic, str, len, 0, 0);
+    if (len < 0)
+        ESP_LOGE("mqtt", "publish error %d", len);
+    //esp_mqtt_client_publish(MQTT.client, topic, str, len, 0, 0);
+    //esp_mqtt_client_enqueue(MQTT.client, topic, str, len, 0, 0, false);
 }
 
 
