@@ -60,6 +60,11 @@ public:
     virtual bool hasData() = 0;
 
 
+    virtual bool isGood() {
+        return true;
+    };
+
+
     /**
      * read a single sample value (scheme cycle and all)
      * @return

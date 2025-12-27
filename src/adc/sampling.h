@@ -327,6 +327,7 @@ public:
         NewData,
         Calibrating,
         CalibFailure,
+        AdcError,
     };
 
     UpdateRet handleSensorCalib(Sensor &sensor) {
@@ -412,9 +413,10 @@ public:
 
         auto hd = adc->hasData();
         rtcount("adc.update.hasData");
+        if (!adc->isGood())
+            return UpdateRet::AdcError;
         if (!hd)
             return UpdateRet::NoNewData;
-
 
         auto scheme = adc->scheme();
         UpdateRet calibRes;

@@ -556,6 +556,11 @@ CONFIG_ARDUINO_UDP_RUNNING_CORE == RT_CORE or CONFIG_ARDUINO_SERIAL_EVENT_TASK_R
 
         if (adcSampler.halted) continue;
 
+        if (samplerRet == ADC_Sampler::UpdateRet::AdcError) {
+            ESP_LOGE("main", "ADC error");
+            stopAndBackoff(16);
+        }
+
         if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
             stopAndBackoff(4);
         }

@@ -379,7 +379,7 @@ public:
         new_data = false;
 
         uint16_t value = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG, 2);
-        overflow = (value >> 2) & 0x0001;
+        overflow = (value >> 2) & 0x0001; // MATH overflow, current and power data can be invalid
         bool convAlert = (value >> 3) & 0x0001;
         bool limitAlert = (value >> 4) & 0x0001;
 
@@ -398,6 +398,10 @@ public:
         //}
 
         return convAlert;
+    }
+
+    bool isGood() override {
+        return !overflow;
     }
 
     float getSample() override {
