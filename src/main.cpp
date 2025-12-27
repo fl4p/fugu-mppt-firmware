@@ -776,8 +776,7 @@ void loopRTNewData(unsigned long nowMs) {
                         mppt.update();
                         rtcount("mppt.update");
                     } else {
-                        // if(mppt)
-                        //rtcount("mppt.telemetry");
+                        mppt.updateManual();
                     }
                     lastMpptUpdateNumSamples = nSamples;
                 }
@@ -927,8 +926,7 @@ bool handleCommand(const String &inp) {
             }
         }
         manualPwm = true;
-        converter.pwmPerturb(inp.substring(3).toInt() - converter.getCtrlOnPwmCnt());
-        if (dc == 0) converter.disable();
+        mppt.setTargetDutyCycle(dc);
         // pwm.enableLowSide(true);
     } else if (inp == "short-ls") {
         if (converter.boost() && abs(sensors.Vin->ewm.avg.get()) < 0.05) {
