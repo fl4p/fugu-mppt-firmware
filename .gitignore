@@ -54,3 +54,7 @@ etc/__pycache__/
 
 etc/dl/
 /config/dl/
+
+test/host-stub/*-test
+
+*.log

@@ -105,6 +105,11 @@ public:
             return false;
         }
 
+        //flat: ina22x: MfrID: 0x5449, DeviceID: 0x2260 (444sps)
+        // fry:         MfrID: 0x5449, DeviceID: 0x2260 (512sps) -> probably fake, much higher noise on shunt channel
+        // expected:  1000/(1.100*2) = 454sps
+
+
 
         ina226.reset_INA226();         //in case the device is already/still initialized
 

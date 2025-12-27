@@ -980,6 +980,7 @@ bool handleCommand(const String &inp) {
         auto url = inp.substring(4);
         stopAndBackoff(10);
         adcSampler.halted = true; // disable ADC reading
+        //MQTT.close();
         doOta(url.c_str());
         adcSampler.halted = false;
         return true;

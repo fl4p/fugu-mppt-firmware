@@ -2,10 +2,14 @@
 nvs,            data, nvs,      0x9000,  0x4000
 otadata,        data, ota,      0xd000,  0x2000
 phy_init,       data, phy,      0xf000,  0x1000
-#factory,        app,  factory,  0x10000,  1802240
 
-ota_0,         app,   ota_0,    ,       1802240
-ota_1,         app,  ota_1,    ,        1802240
+#factory,        app,  factory,  0x10000,  1933312
+
+# size 1933312 is max we can squeeze on 4MiB flash with 128k data part
+# aligment:0x1000=4096
+
+ota_0,         app,   ota_0,    0x10000,   1806336
+ota_1,         app,  ota_1,    ,           1806336
 
 # for unit-testing:
 littlefs_test,  data, littlefs,      ,    8k

@@ -112,8 +112,7 @@ void mqttLogCallback(const char *str, uint16_t len) {
         ESP_LOGI(TAG, "console log topic='%s'", topic);
     }
 
-    len = esp_mqtt_client_publish(MQTT.client, topic, str, len, 0, 0);
-    if (len < 0)
+    if (esp_mqtt_client_publish(MQTT.client, topic, str, len, 0, 0) < 0)
         ESP_LOGE("mqtt", "publish error %d", len);
     //esp_mqtt_client_publish(MQTT.client, topic, str, len, 0, 0);
     //esp_mqtt_client_enqueue(MQTT.client, topic, str, len, 0, 0, false);
@@ -144,6 +143,16 @@ void MqttService::init(const ConfFile &conf) {
     /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
     esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, mqtt_event_handler, &MQTT);
     esp_mqtt_client_start(client);
+}
+
+void MqttService::close() {
+    if (client) {
+        if (isConnected()) esp_mqtt_client_disconnect(client);
+        mqttConnected = false;
+        esp_mqtt_client_stop(client);
+        esp_mqtt_client_unregister_event(client, MQTT_EVENT_ANY, mqtt_event_handler);
+        esp_mqtt_client_destroy(client);
+    }
 }
 
 MqttService MQTT;

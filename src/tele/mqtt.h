@@ -25,6 +25,7 @@ public:
     void subscribeTopic(const std::string &topic, MqttMsgCallback fn);
 
     void init(const ConfFile &conf);
+    void close();
 
     void _handleEvent(esp_event_base_t base, int32_t event_id, void *event_data);
 };
