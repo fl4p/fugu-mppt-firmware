@@ -8,8 +8,8 @@ phy_init,       data, phy,      0xf000,  0x1000
 # size 1933312 is max we can squeeze on 4MiB flash with 128k data part
 # aligment:0x1000=4096
 
-ota_0,         app,   ota_0,    0x10000,   1806336
-ota_1,         app,  ota_1,    ,           1806336
+ota_0,         app,   ota_0,    0x10000,   1871872
+ota_1,         app,  ota_1,    ,           1871872
 
 # for unit-testing:
 littlefs_test,  data, littlefs,      ,    8k
