@@ -747,6 +747,8 @@ public:
         rtcount("mppt.update.control");
 
         if (_sweeping && !sampler.isCalibrating()) {
+            if (converter.disabled()) converter.pwmPerturb(1);
+
             if (controlMode == MpptControlMode::None) {
                 controlMode = MpptControlMode::Sweep;
                 controlValue = std::min(limitingControlValue / 5.0f, 4.0f); // sweep speed
