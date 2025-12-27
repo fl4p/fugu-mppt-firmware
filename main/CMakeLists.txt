@@ -22,6 +22,7 @@ idf_component_register(SRCS
         "../src/console.cpp"
         "../src/etc/rt.cpp"
         "../src/tele/mqtt.cpp"
+        "../src/etc/ota.cpp"
         "../src/tele/HAMqttDevice.cpp"
         "../src/tele/home_assistant.cpp"
         "../src/math/float16.cpp"
