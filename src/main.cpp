@@ -655,7 +655,7 @@ void loopLF(const unsigned long &nowUs) {
     mppt.ntc.read();
     mppt.ucTemp.read();
     if (sensors.Vout)
-        mppt.charger.update(sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.avg.get());
+        mppt.charger.update(sensors.Vout->ewm.avg.get(), sensors.Iout->ewm.avg.get());
 
     if (mppt.ucTemp.last() > 95 && WiFi.isConnected()) {
         ESP_LOGW("main", "High chip temperature, shut-down WiFi");
@@ -1063,7 +1063,7 @@ bool handleCommand(const String &inp) {
     } else if (inp.startsWith("iset ")) {
         float v = inp.substring(5).toFloat();
         if (v >= 0 and v <= 999)
-            mppt.charger.params.Iout_max = inp.substring(5).toFloat();
+            mppt.charger.params.Ibat_lim = inp.substring(5).toFloat();
         else return false;
     } else {
         ESP_LOGE("main", "unknown or unexpected command");

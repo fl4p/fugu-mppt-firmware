@@ -10,60 +10,72 @@
 
 struct BatChargerParams {
     float Vbat_max = NAN; //FUGU_BAT_V; //14.6 * 2;
-    float Iout_max = NAN; // HW1: coil & fuse limited
-    float vcell_eoc = 3.55f; // cell end-of-charge voltage
-    float vcell_float = 3.5f; // cell end-of-charge voltage
-    float cv_min = 3.37;
-
-    //float vcell_stop = 3.59f; // cell end-of-charge voltage
-
-    //float Iout_max = 32; // HW2, backflow mosfet gets hot!
-
-    //float Vout_top() const { return Vbat_max * 0.98f; } //0.96 0.975f;
-    //float Vout_top_release() const { return Vbat_max * 0.94f; }
-
-    // float Iout_top = .5;
+    float Ibat_lim = NAN; // [A] Max bat charge current (Ibat = Iout - Iload)
+    float Cbat = NAN; // [C] Battery capacity
+    float cv_eoc = NAN; // cell end-of-charge voltage. LFP: @Ibat=0.05C
+    float cv_min = NAN; // where the termination line starts @Ibat=0
 };
 
-class LFP_FloatMode {
-    bool floatMode = false;
+class Li_ChgTerminationCondition {
+    /**
+     * Charge termination condition for LFP (LiFePo4, Lithium Iron Phosphate) and other (?) Lithium Batteries
+     * as described in https://nordkyndesign.com/charging-marine-lithium-battery-banks/
+     * also see discussion https://github.com/fl4p/fugu-mppt-firmware/issues/31
+     */
 
     const BatChargerParams &p;
+    bool terminated = false;
 
 public:
-    explicit LFP_FloatMode(const BatChargerParams &params) : p(params) {
+    float v_term; // termination cell voltage
+
+    explicit operator bool() const { return terminated; }
+
+    BatChargerParams get_value(const BatChargerParams &params) {
+        return params;
     }
 
-    bool update(const volatile float &vcell_max, const float &ibat) {
-        // check charge termination criteria
-        // https://github.com/fl4p/fugu-mppt-firmware/issues/31
-        float k = 0.05f; // [1/Ah] LFP:0.05
-        float r = (p.vcell_eoc - p.cv_min) / k; // "some form of resistance"
-        float cv = vcell_max - ibat * r;
-        if (!floatMode and cv > p.cv_min) {
-            floatMode = true;
-        } else if (floatMode and vcell_max < p.cv_min) {
-            floatMode = false;
+    explicit Li_ChgTerminationCondition(const BatChargerParams &params)
+        : p(params),
+          v_term(get_value(params).cv_min) {
+    }
+
+    bool update(const volatile float &vcell_high, const float &ibat) {
+        const float k = 0.05f;
+        // k is the ratio of cut-off current and capacity at EOC voltage (LFP: 3.65V, NCR: 4.2V)
+        //  LFP:0.05
+        // NCR: 0.02? https://www.orbtronic.com/content/Datasheet-specs-Sanyo-Panasonic-NCR18650GA-3500mah.pdf 67mA
+        // EVE INR18650: k=0.033
+        // k: the higher the safer, so for now just leave it at 0.05
+        float r = (p.cv_eoc - p.cv_min) / (k * p.Cbat); // some form of resistance (for 280Ah this is ~20mΩ)
+        float vo = ibat * r;
+        v_term = fminf(p.cv_min + fmax(0, vo), p.cv_eoc); // dont go beyond cv_eoc to avoid BMS cut-offr
+        if (!terminated and ibat > 0 and vcell_high > p.cv_min + vo) {
+            terminated = true;
+        } else if (terminated and vcell_high < p.cv_min) {
+            terminated = false;
         }
-        ESP_LOGI("charger", "float mode %hhu (ibat=%.3f, vcell_max=%.3f, cv=%.3f, cv_min=%.3f)", floatMode, ibat, vcell_max,
-            cv, p.cv_min);
-        return floatMode;
+        ESP_LOGI("charger", "termination %hhu (iBat=%.2f, vcHigh=%.3f, vcTerm=%.3f, vcD=%.3f)", terminated, ibat,
+                 vcell_high, v_term, v_term - vcell_high
+
+                 // ", vhc*=%.3f", vcell_high - vo /* vhc* is the 'internal' cell voltage, I compensated */ useful?
+        );
+        return terminated;
     }
 };
 
 class BatteryCharger {
-    // unsigned long timeTopUntil = 0; // charger
     EWMA<volatile float, float> vbat_avg{60}; // update freq is 3s
-    float vbat_cap = NAN;
+    float vpack_pin = NAN;
 
-    MeanAccumulator ibat_mean;
-    MeanAccumulator iout_mean;
+    MeanAccumulator ibat_mean{};
+    MeanAccumulator iout_mean{};
 
     float ioutLim = NAN;
 
 public:
     BatChargerParams params{};
-    LFP_FloatMode floatMode{params};
+    Li_ChgTerminationCondition termCond{params};
 
     volatile float vcell_max = 0;
     volatile unsigned long vcell_max_t = 0;
@@ -73,29 +85,39 @@ public:
 
     void begin(ConfFile &chargerConf) {
         params.Vbat_max = chargerConf.getFloat("vout_max", NAN);
-        params.vcell_eoc = chargerConf.getFloat("cell_voltage_eoc", 3.6f);
-        params.vcell_float = chargerConf.getFloat("cell_voltage_float", 3.55f);
-        params.Iout_max = chargerConf.getFloat("ibat_max", 40.f); // iout = ibat + iload
+        params.cv_eoc = chargerConf.getFloat("cv_eoc", 3.6f);
+        params.cv_min = chargerConf.getFloat("cv_min", 3.37f);
+        params.Ibat_lim = chargerConf.getFloat("ibat_max", 40.f); // note: iout = ibat + iload
+        params.Cbat = chargerConf.getFloat("bat_c", NAN);
+        termCond.v_term = params.cv_min;
     }
 
 
-    void _update(float vbat = INFINITY) {
-        if (vcell_max > params.vcell_eoc /* and (vcell_max_t - wallClockUs()) < 180000000*/) {
-            vbat_cap = fmin(vbat_avg.get(), vbat) - (vcell_max - params.vcell_eoc) * 4;
-            if (vbat_cap > params.Vbat_max) vbat_cap = params.Vbat_max;
-        } else {
-            vbat_cap = params.Vbat_max;
-        }
+    void _updateTermination() {
+        constexpr auto MEAN_NUM = 8;
 
-        // LFP cutoff (see https://github.com/fl4p/fugu-mppt-firmware/issues/31 )
-        if (ibat_mean.num >= 16) {
-            float ibat = ibat_mean.pop(), iout = iout_mean.pop();
-            if (floatMode.update(vcell_max, ibat)) {
-                // the highest cell triggers termination
-                // now compute the new output current limit (which is not necessarily the battery current)
-                float alpha = .3; // fade-in the limit exponentially to stabilize in case of many chargers
-                ioutLim = iout * (1 - alpha) + (iout - ibat) * alpha;
-                ESP_LOGI("charger", "float update: ibat=%.3f iout=%.3f iout_lim:=%.3f", ibat, iout, ioutLim);
+        // update termination and current regulation
+        if (ibat_mean.num >= MEAN_NUM and iout_mean.num >= MEAN_NUM) {
+            const float ibat = ibat_mean.pop(), iout = iout_mean.pop();
+            const float cv_float = (params.cv_min + params.cv_eoc) * .5f;
+            const bool rampOff = vcell_max >= cv_float;
+
+            // the highest cell triggers termination
+            if (termCond.update(vcell_max, ibat) or rampOff) {
+                // ramp down current on voltage interval [(cv_min+cv_eoc)/2, cv_eoc] (s -> [1, 0])
+                auto s = min(max(0.f, (params.cv_eoc - vcell_max) / (params.cv_eoc - cv_float)), 1.f);
+
+                const float ioutLimTarget = fmax(
+                    .0f, termCond
+                             ? iout - ibat // we want ibat to be zero and only supply load current
+                             : params.Ibat_lim * s + (iout - ibat) * (1.f - s) // ramp-off
+                );
+
+                constexpr float alpha = .3; // fade-in the limit exponentially to stabilize in case of many chargers
+                ioutLim = iout * (1 - alpha) + ioutLimTarget * alpha;
+                ESP_LOGI("charger", "%s: iBat=%.2f iOut=%.2f iOutLim:=%.2f iOutLimTgt=%.2f s=%.2f iBatLim=%.2f",
+                         termCond ? "terminated" : "ramp-off", ibat, iout, ioutLim, ioutLimTarget, s,
+                         params.Ibat_lim);
             } else {
                 // unlimited
                 ioutLim = NAN;
@@ -103,19 +125,39 @@ public:
         }
     }
 
+    void _updatePackVoltagePinning(float vbat = INFINITY) {
+        // EOC voltage regulation "pack voltage pinning"
+        // once a cell reaches termination voltage we capture pack voltage and set it as max output voltage
+
+        float v_eoc = fmin(params.cv_eoc, termCond.v_term);
+        //  ^ v_eoc: theoretically we could go beyond cv_eoc if ibat is sufficiently high. however a "dumb" BMS will
+        //  cut us off, causing a voltage transient which we like to avoid. so never go beyond cv_eoc
+
+        if (vcell_max >= v_eoc  and (wallClockUs() - vcell_max_t) < 180000000) {
+            constexpr auto OV_FEEDBACK = 2; // 4
+            float vPin = fmin(vbat_avg.get(), vbat) - (vcell_max - v_eoc) * OV_FEEDBACK;
+            if (vPin < vpack_pin)
+                ESP_LOGI("charger", "vpPin:=%.3fV (cvHigh=%.3f v_term=%.3f vbat_avg=%.3f)", vPin, vcell_max,
+                     v_eoc, vbat_avg.get());
+            vpack_pin = vPin;
+            if (vpack_pin > params.Vbat_max) vpack_pin = params.Vbat_max;
+        } else {
+            vpack_pin = params.Vbat_max;
+        }
+    }
+
 
     void beginMqtt(const ConfFile &mqttConf) {
-        // TODO conffile
         auto topic = mqttConf.getString("cell_voltages_max_topic", "");
         if (!topic.empty())
             MQTT.subscribeTopic(topic, [&](const char *dat, int len) {
                 this->vcell_max = strntof(dat, len);
                 this->vcell_max_t = wallClockUs();
-                ESP_LOGI("charger",
-                         "avg(vbat)=%.4fV vcell_max(mqtt)=%.4fV vcell_eoc=%.4fV vbat_cap=%.4fV vbat_max=%.4fV",
+                ESP_LOGD("charger",
+                         "avg(vbat)=%.3fV cv_max(mqtt)=%.3fV cv_term=%.3fV vbat_lim=%.3fV vbat_max=%.3fV",
                          this->vbat_avg.get(),
-                         this->vcell_max, params.vcell_eoc, this->Vbat_max(), params.Vbat_max);
-                _update();
+                         this->vcell_max, termCond.v_term, this->Vbat_max(), params.Vbat_max);
+                _updatePackVoltagePinning();
             });
 
         topic = mqttConf.getString("ibat_topic", "");
@@ -127,9 +169,8 @@ public:
         topic = mqttConf.getString("ibat_lim_topic", "");
         if (!topic.empty())
             MQTT.subscribeTopic(topic, [&](const char *dat, int len) {
-                params.Iout_max = strntof(dat, len);
-                ESP_LOGI("charger", "I_lim %.3f A", params.Iout_max);
-                _update();
+                params.Ibat_lim = strntof(dat, len);
+                ESP_LOGI("charger", "Ibat_lim= %.3f A", params.Ibat_lim);
             });
     }
 
@@ -166,16 +207,20 @@ public:
 
     void update(float vbat, float iout) {
         vbat_avg.add(vbat);
-        iout_mean.add(iout);
-        _update();
+        // note: iout = ibat + iload
+        //if (iout > params.Ibat_lim * 0.005f)
+        if (isfinite(iout))iout_mean.add(iout);
+        else iout_mean.clear();
+        _updateTermination();
+        _updatePackVoltagePinning();
     }
 
     void reset() {
-        vbat_cap = NAN;
+        vpack_pin = NAN;
     }
 
     [[nodiscard]] float Vbat_max() const {
-        if (vbat_cap > 0) return vbat_cap;
+        if (vpack_pin > 0) return vpack_pin;
         return params.Vbat_max;
     }
 
@@ -183,13 +228,14 @@ public:
         // TODO this should take the acquired ibat - iout delta into account
         // ibat != iout (generally)
 
-        auto lim = params.Iout_max;
+        auto lim = params.Ibat_lim;
 
-        // eoc regulation
-        auto s = min(max(0.f, (params.vcell_eoc - vcell_max) / (params.vcell_eoc - params.vcell_float)), 1.f);
+        // float current regulation
+        const float cv_float = (params.cv_min + params.cv_eoc) * .5f;
+        auto s = min(max(0.f, (params.cv_eoc - vcell_max) / (params.cv_eoc - cv_float)), 1.f);
         if (isfinite(s)) lim *= s;
 
-        // float mode limit
+        // termination mode limit (keep Ibat~0 and supply loads)
         if (isfinite(ioutLim)) lim = min(lim, ioutLim);
 
         return lim;
