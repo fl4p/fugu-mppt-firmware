@@ -2,7 +2,7 @@
 
 #include <array>
 #include <string>
-#include <sstream>
+//#include <sstream>
 
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -87,12 +87,12 @@ void LCD::displayMessage(const std::string &msg, uint16_t timeoutMs) {
     if (!lcd) return;
     //periodicInit();
     lcd->clear();
-    std::istringstream iss(msg);
+    /*std::istringstream iss(msg);
     int i = 0;
     for (std::string line; std::getline(iss, line);) {
         lcd->print(line.c_str());
         lcd->setCursor(0, ++i);
-    }
+    }*/
 
     msgUntil = timeoutMs + millis();
     lightUntil = std::max(lightUntil, std::min(timeoutMs * 2, 30000) + millis());

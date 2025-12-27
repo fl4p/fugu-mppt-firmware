@@ -1,15 +1,20 @@
 #pragma once
 
+
+# define ASCII_PLOT_DISABLED 1
+
+#if !ASCII_PLOT_DISABLED
 #include "asciichart/ascii.h"
+#endif
+
 #include "logging.h"
 
 struct Series {
-    std::vector<std::pair<float, float>> vec;
+    std::vector<std::pair<float, float> > vec;
 
     uint16_t expectedLen;
 
     Series(uint16_t expectedLen) : expectedLen(expectedLen) {
-
     }
 
     void add(float x, float y, float xMax) {
@@ -34,6 +39,7 @@ struct Plot {
     Series pointsD{240};
 
     static void _plotSeries(Series &ser, const std::string &label) {
+#if !ASCII_PLOT_DISABLED
         auto &points(ser.vec);
         std::sort(points.begin(), points.end());
 
@@ -81,9 +87,8 @@ struct Plot {
 
         ser.clear();
 
-        std::vector<std::vector<ascii::Text>> screen{};
-        {
-            ascii::Asciichart asciichart(std::vector<std::vector<float>>{series});
+        std::vector<std::vector<ascii::Text> > screen{}; {
+            ascii::Asciichart asciichart(std::vector<std::vector<float> >{series});
             decltype(series)().swap(series); // clear() & shrink_to_fit
             screen = asciichart.height(16).Plot();
         }
@@ -117,7 +122,7 @@ struct Plot {
 
         //UART_LOG(sc.c_str());
         //UART_LOG("%.1fV .. %.1fV", minX, maxX);
-
+#endif
     }
 
     void plot() {

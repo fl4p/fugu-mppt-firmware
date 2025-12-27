@@ -1,6 +1,6 @@
 #pragma once
 
-#include <sstream>
+//#include <sstream>
 #include <cassert>
 
 static uint64_t bytesSent = 0;
@@ -310,12 +310,12 @@ public:
 
 
     void sendHeader(TCPClient &cl) {
-        std::stringstream ss;
+        /* std::stringstream ss;
         ss << "###ScopeHead:";
         for (auto &ch: channels)
             ss << int(ch.cid) << '$' << ch.name << "=" << ch.typ << (int) ch.bitLen << ',';
         ss << "###ENDHEAD\n";
-        cl.write(ss.str().c_str());
+        cl.write(ss.str().c_str()); */
     }
 
     void _updateClient(TCPClient &cl) {
