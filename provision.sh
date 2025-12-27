@@ -3,7 +3,14 @@ set -e
 
 FOLDER="config"
 BOARD="$1"
+
+if [[ -d "$BOARD" ]] && [[ "${BOARD:0:7}" = config/ ]]; then
+  BOARD="${BOARD:7}"
+fi
+
+
 echo "BOARD=$BOARD"
+
 if [[ ! -d "$FOLDER/$BOARD" ]] || [[ "" == "$BOARD" ]]; then
   echo "invalid board, choose from"
   ls $FOLDER/

@@ -176,7 +176,7 @@ public:
         auto convTime = micros() - t0;
 
         ESP_LOGI("ads", "ADC conv time: %lu us", convTime);
-        auto expectedCT = 1e6f / ( _isADS1115_16bit ? 128 : 1600);
+        //auto expectedCT = 1e6f / ( _isADS1115_16bit ? 128 : 1600);
         //assert ((fabs(convTime - expectedCT) / expectedCT) < 0.05f);
 
         return true;

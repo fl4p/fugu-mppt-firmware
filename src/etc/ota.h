@@ -110,7 +110,7 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
                 contentReceived = 0;
                 tStart = wallClockUs();
             }
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
             break;
         case HTTP_EVENT_ON_DATA:
             ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
@@ -132,10 +132,12 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
 
             break;
         case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGE(TAG, "HTTP_EVENT_DISCONNECTED");
+            if (lastPct != 100)
+                ESP_LOGW(TAG, "HTTP_EVENT_DISCONNECTED @ %d %%", lastPct);
+            systemRestart();
             break;
         case HTTP_EVENT_REDIRECT:
-            ESP_LOGD(TAG, "HTTP_EVENT_REDIRECT");
+            ESP_LOGW(TAG, "HTTP_EVENT_REDIRECT");
             break;
     }
     return ESP_OK;

@@ -44,7 +44,7 @@ public:
                 auto ie = line.find_first_of('=');
                 if (ie == std::string::npos) {
                     ESP_LOGE(TAG, "error reading %s: '=' not found in line '%s'", path, line.c_str());
-                    assert(false);
+                    throw std::runtime_error("error reading line: " + line);
                 }
                 auto k = trim(line.substr(0, ie));
                 if (_map.find(k) != _map.end()) {
@@ -83,7 +83,7 @@ public:
             }
             fputc('\n', f);
             assert(fwrite(key.c_str(), key.length(), 1, f) == 1);
-            assert(fwrite(" = ", 3, 1, f) == 1);
+            assert(fwrite("=", 1, 1, f) == 1);
             assert(fwrite(val.c_str(), val.length(), 1, f) == 1);
         }
 
