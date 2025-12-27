@@ -1,3 +1,8 @@
+fallback_hosts = [
+    # (ip, port, name),
+    # ('192.168.4.13', 0, 'flat'),
+    ('192.168.4.2', 0, 'fry'),
+]
 
 """
 
@@ -5,7 +10,7 @@
 2. start web server to server firmware binary
 3. discover hosts
 4 iterate hosts
-    > ota http://192.168.1.129:9000/build/fugu-firmware.bin 
+    > ota http://192.168.1.161:9000/build/fugu-firmware.bin 
 
 idf.py build
 #  python3 -m http.server 9000
@@ -13,19 +18,25 @@ idf.py build
 """""
 import asyncio
 import re
+import sys
 import time
 
 from etc.fugu.discover import discover_scope_servers
 from etc.fugu.fugu import FuguDevice
 from etc.fugu.transport import SocketTransport
 
-import http.server
-
 hosts = discover_scope_servers()
+
+# hosts = hosts or fallback_hosts
+
+if not hosts:
+    print('no hosts discovered!')
+    sys.exit(1)
 
 print(hosts)
 
 listening = set()
+
 
 async def send_ota_command(addr, name):
     print('\n', name)
@@ -33,32 +44,59 @@ async def send_ota_command(addr, name):
     fd = FuguDevice(st, block=True, prefix=name)
     fd.verbose = True
     ota_progress = 0
+
     def on_message(rx):
-        global ota_progress
-        m = re.match(r'.+ota: Download Progress:\s*([0-9.]+)\s*%.+', rx)
+        nonlocal ota_progress
+        m = re.match(r'.*ota: Download Progress:\s*([0-9.]+)\s*%.*', rx)
         if m:
             ota_progress = float(m[1])
+
     fd.on_message = on_message
-    private_ip, *_  = st.sock.getsockname()
+
+    private_ip, *_ = st.sock.getsockname()
     if private_ip not in listening:
-        #http.server.SimpleHTTPRequestHandler()
+        # http.server.SimpleHTTPRequestHandler()
+        # TODO we currently spawn the http server in ota.sh
         listening.add(private_ip)
-    #fd.wait_for_pwm_state()
+    # fd.wait_for_pwm_state()
     fd.write(f"ota http://{private_ip}:9000/build/fugu-firmware.bin\n")
+    # fd.write(f"reset\n")
     print(fd.pwm_state)
     while ota_progress < 100:
-        await asyncio.sleep(.2)
+        if not st.check_connection():
+            print(fd.prefix, 'connection to device unexpectedly closed @ota_progress=', ota_progress)
+            return False
+        await asyncio.sleep(.3)
+
+    print(fd.prefix, 'waiting for device to close the connection..')
+    while st.check_connection():
+        time.sleep(.02)
+    print(fd.prefix, 'closed the connection')
     fd.close()
-    # not try to re-connect
-    time.sleep(1)
+
+    # now try to re-connect
     print(fd.prefix, 'waiting for device to come online again')
-    fd = FuguDevice(st, block=True, prefix=name)
-    print(fd.prefix, 'device online! OTA successful (probably TODO check ver)')
+    for _ in range(10):
+        time.sleep(1)
+        st = SocketTransport(addr)
+        try:
+            fd = FuguDevice(st, block=True, prefix=name)
+        except (ConnectionRefusedError, TimeoutError):
+            continue
+        print(fd.prefix, 'device back online! OTA successful (probably TODO check ver)')
+        break
+    else:
+        print(fd.prefix, 'device didnt come online in time')
+        return False
+
+    return True
+
 
 async def main():
-    await asyncio.gather(*[send_ota_command(ip, name)  for ip,port,name in hosts])
+    res = await asyncio.gather(*[send_ota_command(ip, name) for ip, port, name in hosts])
+    res = dict(zip((name for _, _, name in hosts), res))
+    print(res)
+    return all(res.values())
 
-asyncio.run(main())
 
-    #print('update installed, waiting for device to come online again..')
-    #fd = FuguDevice(SocketTransport(ip), block=True, prefix=name)
+sys.exit(0 if asyncio.run(main()) else 1)
