@@ -378,7 +378,7 @@ public:
 
         new_data = false;
 
-        uint16_t value = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG);
+        uint16_t value = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG, 2);
         overflow = (value >> 2) & 0x0001;
         bool convAlert = (value >> 3) & 0x0001;
         bool limitAlert = (value >> 4) & 0x0001;
@@ -404,7 +404,7 @@ public:
         bool success;
         switch (readChannel) {
             case ChVBus: {
-                uint16_t raw = ina226.readRegister(INA226_WE::INA226_BUS_REG, success);
+                uint16_t raw = ina226.readRegister(INA226_WE::INA226_BUS_REG, success, 2);
                 if (!success) {
                     ESP_LOGW("ina22x", "failure reading register");
                     return NAN;
@@ -413,7 +413,7 @@ public:
                 return (float) raw * 0.00125f;
             }
             case ChI: {
-                auto raw = static_cast<int16_t>(ina226.readRegister(INA226_WE::INA226_CURRENT_REG, success));
+                auto raw = static_cast<int16_t>(ina226.readRegister(INA226_WE::INA226_CURRENT_REG, success, 2));
                 if (!success) {
                     ESP_LOGW("ina22x", "failure reading register");
                     return NAN;

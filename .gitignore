@@ -58,3 +58,5 @@ etc/dl/
 test/host-stub/*-test
 
 *.log
+
+doc/dev-notes/tmp
