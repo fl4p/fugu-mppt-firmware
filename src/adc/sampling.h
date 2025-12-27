@@ -502,7 +502,7 @@ public:
 
 
     void reInitADCs() {
-        ConfFile boardConf{"/littlefs/conf/pins.conf"};
+        ConfFile boardConf{"/littlefs/conf/board.conf"};
         for (auto &s: adcStates) {
             s.adc->deinit();
             s.adc->init(boardConf);
