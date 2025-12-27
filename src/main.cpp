@@ -284,10 +284,11 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
     heap_caps_check_integrity_all(true);
 }
 
+const char* VER_STRING = "*** Fugu Firmware Version " FIRMWARE_VERSION " (" __DATE__ " " __TIME__ ")";
 
 void setup() {
     consoleInit();
-    ESP_LOGI("main", "*** Fugu Firmware Version %s (" __DATE__ " " __TIME__ ")", FIRMWARE_VERSION);
+    ESP_LOGI("main", "%s", VER_STRING);
 
     rtcount_test_cycle_counter();
 

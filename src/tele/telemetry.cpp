@@ -362,10 +362,12 @@ void dcdcDataChanged(const ADC_Sampler &dcdc, const Sensor &sensor) {
 }
 
 extern unsigned long lastTimeOutUs;
+extern const char* VER_STRING;
 
 void onTelnetConnect(String ip) {
     ESP_LOGI("telnet", "Client %s connected", ip.c_str());
     telnet.println("\nWelcome to " + String(getHostname().c_str()) + " (" + WiFi.localIP().toString().c_str() + ")");
+    telnet.println(VER_STRING);
     telnet.println("(Use ^] + q  to disconnect.)");
 
     set_logging_telnet(&telnet);
