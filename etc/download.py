@@ -88,7 +88,6 @@ if __name__ == "__main__":
         print('no hosts discovered on network')
 
     upload = False
-
     if upload:
         input('confirm upload to %d devices ' % len(hosts))
 

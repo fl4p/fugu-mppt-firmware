@@ -100,7 +100,7 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
     switch (evt->event_id) {
         case HTTP_EVENT_ERROR:
             ESP_LOGE(TAG, "HTTP_EVENT_ERROR");
-            systemRestart();
+            //systemRestart();
             break;
         case HTTP_EVENT_ON_CONNECTED:
             ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
@@ -136,9 +136,9 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
 
             break;
         case HTTP_EVENT_DISCONNECTED:
-            if (lastPct != 100)
+            if (lastPct != 100) {
                 ESP_LOGW(TAG, "HTTP_EVENT_DISCONNECTED @ %d %%", lastPct);
-            systemRestart();
+            }
             break;
         case HTTP_EVENT_REDIRECT:
             ESP_LOGW(TAG, "HTTP_EVENT_REDIRECT");

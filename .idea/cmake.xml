@@ -6,6 +6,7 @@
         <ADDITIONAL_GENERATION_ENVIRONMENT>
           <envs>
             <env name="IDF_TARGET" value="esp32s3" />
+            <env name="IDF_COMPONENT_MANAGER" value="1" />
           </envs>
         </ADDITIONAL_GENERATION_ENVIRONMENT>
       </configuration>
