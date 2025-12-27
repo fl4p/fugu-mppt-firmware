@@ -17,26 +17,27 @@ Highlights:
   INA226/INA228
 * Automatic zero-current calibration
 * Robust signal processing using [notch filters](https://www.youtube.com/watch?v=tpAA5eUb6eo) (reject inverter noise)
-  and rolling median (reject burst noise)
+  , rolling median (reject burst noise) and fast IIR filters (low pass, like pandas ewm)
 * [PID](https://www.youtube.com/watch?v=wkfEZmsQqiA) control for precise voltage and current regulation
 * Periodic MPPT global search (aka scan, sweep)
 * Sophisticated [Diode Emulation](#synchronous-buck-and-diode-emulation) for low-side switch
 * Supports buck and boost converter operation, and can be used for power supply too
-* Battery voltage detection
+* Automatic battery voltage detection
+* Proper LiFePo4 [charge termination](https://nordkyndesign.com/charging-marine-lithium-battery-banks/)
 * Fast protection shutdown in over-voltage and over-current conditions
 * Temperature power de-rating and PWM Fan Control
 * Telemetry to InfluxDB over UDP
 * LCD (hd44780) and WS2812B RGB LED driver
 * Configuration files on flash file system (littlefs)
 * [Serial UART console](doc/Console.md) and telnet to interact with the charger
-* Basic MQTT support to communicate with the BMS over Home Assistant
-* Unit tests, on-board [performance profiler](https://github.com/LiluSoft/esp32-semihosting-profiler/) and latency
-  profiler
+* MQTT support to communicate with the BMS and Home Assistant
+* Unit tests, on-board [performance profiler](https://github.com/LiluSoft/esp32-semihosting-profiler/), latency
+  profiler and latency watchdog
 
-The aim of this program is to provide a flexible MPPT and DC/DC converter solution that you can use with various
+The aim of this program is to provide a flexible MPPT and DC/DC converter platform that you can use with various
 hardware topologies (e.g. buck & boost, location of current sensor).
-You can configure pins, limits, converter topology and sensors through config files, without the need to rebuild the
-firmware.
+You can configure converter topology, pins, sensors, limits and charger through config files, without the need to
+rebuild the firmware.
 Access files through FTP or USB Mass Storage Class (MSC, ESP32-S3).
 I tried to structure components in classes, so they reflect the physical and logical building-blocks of a MPPT solar
 charger.
@@ -221,7 +222,8 @@ When it detects a mayor change in power conditions (e.g. clouds, partial shading
 to quickly adapt to the new condition.
 
 A global scan is triggered every 30 minutes to prevent getting stuck in a local maximum. This can happen with partially
-shaded solar strings. A scan lasts about 20 to 60 seconds, depending on the loop update rate. Sweeping too often or to slow
+shaded solar strings. A scan lasts about 20 to 60 seconds, depending on the loop update rate. Sweeping too often or to
+slow
 can significantly reduce overall efficiency.
 
 # Synchronous Buck and Diode Emulation
@@ -252,12 +254,14 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 
 # On-board testing and debugging features
 
-* UART, USB and telnet console for user interaction & automated testing
+* console on UART, USB, telnet and MQTT for user interaction, debugging and automated
+  testing ([python lib](https://github.com/fl4p/fugu-py))
 * `InfluxDB`: time series writer
 * `scope`: inspect real-time, high-frequency ADC samples over Wi-Fi to debug analog noise and filtering
 * `rtcount`: profile real-time performance of code
 * `sprofiler`: sampling performance profiler
 * `i2c` scanner
+* ADC specific debug console (see ina226.debugMode())
 
 # Not implemented / TODO
 
