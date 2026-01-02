@@ -31,22 +31,19 @@ public:
 
     explicit operator bool() const { return terminated; }
 
-    BatChargerParams get_value(const BatChargerParams &params) {
-        return params;
-    }
 
     explicit Li_ChgTerminationCondition(const BatChargerParams &params)
         : p(params),
-          v_term(get_value(params).cv_min) {
+          v_term(params.cv_min) {
     }
 
     bool update(const volatile float &vcell_high, const float &ibat) {
-        const float k = 0.05f;
+        constexpr float k = 0.05f;
         // k is the ratio of cut-off current and capacity at EOC voltage (LFP: 3.65V, NCR: 4.2V)
         //  LFP:0.05
         // NCR: 0.02? https://www.orbtronic.com/content/Datasheet-specs-Sanyo-Panasonic-NCR18650GA-3500mah.pdf 67mA
         // EVE INR18650: k=0.033
-        // k: the higher the safer, so for now just leave it at 0.05
+        // k: the higher, the safer, so for now just leave it at 0.05
         float r = (p.cv_eoc - p.cv_min) / (k * p.Cbat); // some form of resistance (for 280Ah this is ~20mΩ)
         float vo = ibat * r;
         v_term = fminf(p.cv_min + fmax(0, vo), p.cv_eoc); // dont go beyond cv_eoc to avoid BMS cut-offr
