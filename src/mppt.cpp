@@ -58,7 +58,7 @@ void MpptController::update() {
     //float powerLimit = std::min(thermalPowerLimit(ntcTemp), limits.P_max);
 
     // charge current
-    float Iout_max = min(limits.Iout_max, charger.Ibat_max());
+    float Iout_max = min(limits.Iout_max, charger.Iout_max());
 
     // periodic sweep / scan
     if (!_sweeping /*&& power_smooth < 30*/ && (nowUs - sampler.getTimeLastCalibrationUs()) > (30 * 60000000)) {
@@ -76,7 +76,7 @@ void MpptController::update() {
         CVP{
             CV, VoutController, {
                 _sweeping ? sensors.Vout->ewm.avg.get() : sensors.Vout->med3.get(),
-                charger.Vbat_max()
+                charger.Vout_max()
             }
         }, // todo last or med3
         CVP{
@@ -270,14 +270,14 @@ void MpptController::updateCV() {
     // Temperature derating?
     auto &nowUs = wallClockUs();
 
-    auto cv = VoutController.update(sensors.Vout->last, charger.Vbat_max());
+    auto cv = VoutController.update(sensors.Vout->last, charger.Vout_max());
     ctrlState.mode = MpptControlMode::CV;
     cntrlValue = cv;
 
     if (!std::isfinite(cv)) {
         if (!converter.disabled()) {
             ESP_LOGW("mppt", "Control value %f not finite act=%.3f tgt=%.3f idx=%i", cv, sensors.Vout->last,
-                     charger.Vbat_max(), 0);
+                     charger.Vout_max(), 0);
             shutdownDcdc();
         }
         return;
