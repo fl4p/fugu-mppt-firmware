@@ -18,9 +18,12 @@ struct BatChargerParams {
 
     void load(const ConfFile &chargerConf) {
         Vbat_max = chargerConf.getFloat("vout_max", NAN);
-        Vbat_fallback = chargerConf.getFloat("vout_max_fallback", NAN);
         cv_eoc = chargerConf.getFloat("cv_eoc", 3.6f);
-        cv_min = chargerConf.getFloat("cv_min", 3.37f);
+        cv_min = chargerConf.getFloat("cv_float", 3.37f);
+        assert_throw(cv_eoc >= cv_min, "");
+        float vout_fallback = floorf(Vbat_max / cv_eoc) * cv_min;
+        Vbat_fallback = chargerConf.getFloat("vout_max_fallback", vout_fallback);
+
         Ibat_lim = chargerConf.getFloat("ibat_max", 40.f); // note: iout = ibat + iload
         Cbat = chargerConf.getFloat("bat_c", NAN);
     }
@@ -120,7 +123,7 @@ public:
     void _updateTermination() {
         constexpr auto MEAN_NUM = 8;
 
-        // update termination and current regulation
+        // update termination and voltage regulation
         if (batSt.ibat_mean.num >= MEAN_NUM and batSt.iout_mean.num >= MEAN_NUM) {
             const float ibat = batSt.ibat_mean.pop(), iout = batSt.iout_mean.pop();
             const float cv_float = (params.cv_min + params.cv_eoc) * .5f;
@@ -171,11 +174,11 @@ public:
             constexpr auto OV_FEEDBACK_GAIN = 2; // 4
             // TODO run average filter on vPin (or vcell_high?)
             float vPin = fmin(batSt.vbat_avg.get(), vbat) - (batSt.vcell_high - v_eoc) * OV_FEEDBACK_GAIN;
-            if (vPin < vpack_pin)
+            if (isnan(vpack_pin) or vPin < vpack_pin - 0.01f)
                 ESP_LOGI("charger", "vpPin:=%.3fV (cvHigh=%.3f v_term=%.3f vbat_avg=%.3f)", vPin, batSt.vcell_high,
                      v_eoc, batSt.vbat_avg.get());
             vpack_pin = vPin;
-        } else if (!vcell_valid && params.Vbat_fallback > 0) {
+        } else if (!vcell_valid && params.Vbat_fallback >= 0) {
             ESP_LOGW("charger", "Cell Voltage n/a, fall back to VbatMax=%.3fV", params.Vbat_fallback);
             vpack_pin = params.Vbat_fallback;
         } else {
