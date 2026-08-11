@@ -18,11 +18,44 @@ phenomena on the switch node:
   layout. This is what most app notes (TI slyt465, Specter Engineering, ADI) focus on.
 - **DCM coil ringing** (this document) — occurs *only after* the inductor current
   reaches zero and both FETs are off, caused by the **main power inductor L**
-  (~50–80 µH on fry/flat) resonating with C_oss (~100–200 pF). Frequency
-  f_r ≈ 1/(2π√(L·C_oss)) ≈ **1.3–2 MHz** on this hardware — well above f_sw (39 kHz)
-  but far below the HF transition ring. The ring duration is hundreds of ns to µs,
-  and its lower frequency makes firmware active damping feasible (T_ring/4 ≈ 125–192 ns
-  is within MCPWM tick resolution).
+  resonating with the switch-node capacitance C_sw. Frequency f_r ≈ 1/(2π√(L·C_sw)),
+  well above f_sw (39 kHz) but far below the HF transition ring. The ring duration is
+  hundreds of ns to µs, and its lower frequency makes firmware active damping feasible
+  (T_ring/4 is comfortably within MCPWM tick resolution).
+
+  **C_sw is per-board and is dominated by how many FETs are paralleled** — it is NOT a
+  universal constant. An earlier version of this document quoted "C_oss ~100–200 pF →
+  1.3–2 MHz" as if it applied to this hardware generally. That is roughly an order of
+  magnitude low for any board with paralleled 100 V FETs:
+
+  | board | L | C_sw | f_r | T_ring/4 |
+  |---|--:|--:|--:|--:|
+  | fry / flat | 50–80 µH | ~100–200 pF *(estimate, unverified)* | 1.3–2 MHz | 125–192 ns |
+  | **fbuck** | **40 µH** (`coil.conf L0`) | **~3.3 nF** (measured) | **~435 kHz** | **~574 ns** |
+
+  fbuck carries 2× IPP050N10NF2S (HS) + 2× IPP039N10N5 (LS) — four 100 V dies on the
+  node, and C_oss rises steeply toward 0 V, which is precisely where this ring lives.
+
+  **Provenance of the fbuck number.** With the output open and near-zero current, the
+  switch node was measured (MXO44, 12 events/point, triggered on the LS gate falling
+  edge) rising from 0 V to Vin in **470–690 ns**, monotone, with the duration nearly
+  INDEPENDENT of Vin across 14.9–46.1 V while the slope scaled ~linearly (18.7 →
+  80.3 V/µs). A Vin-independent duration is the signature of a resonant quarter-cycle:
+  `(π/2)·√(L·C_sw)`. Inverting the 574 ns measured at Vin 46 against the configured
+  L = 40 µH gives **C_sw = 3.34 nF**, and the same model predicts 84.7 V/µs against
+  80.3 measured (−5%). Note this C_sw is a FIT to one measurement, not a datasheet sum
+  or a bridge reading; the agreement with the ~3 nF expected from four 100 V dies is a
+  cross-check, not an independent measurement. The low-Vin end fits worse (27.4 V/µs
+  predicted vs 18.7 measured), as expected when more of the swing sits in the
+  high-C_oss region near 0 V.
+
+  A competing model — a constant current `I_neg = Vout·t_LS/L` pumped by the low-side
+  minimum on-time charging C_sw — was tested and **refuted**: with the same constants it
+  over-predicts dV/dt by 8.6× and predicts a Vin-INDEPENDENT 67 ns rise, contradicting
+  the measured 470–690 ns. Both models predict slope ∝ Vin, so that scaling alone does
+  not discriminate between them; the magnitude and the constant duration do.
+
+  Raw traces and the full write-up: `dcdc-tools/verifications/vin-sweep/`.
 
 This is a companion to [Diode Emulation.md](Diode%20Emulation.md), which covers the ZCD
 timing. Here we cover what happens *after* the LS FET turns off at the zero crossing.
@@ -110,7 +143,11 @@ the LS FET turns off:
   a controlled dissipative element. This is the most promising firmware-only approach for
   this project — the existing `SynchronousConverter` (`src/buck.h`) already computes
   diode-emulation timing; a brief LS-FET re-trigger pulse at the first ring valley
-  (~T_ring/4 ≈ 125–250 ns after LS-off) could be added.
+  (~T_ring/4 after LS-off) could be added. **The valley time is per-board** — see the
+  C_sw table above: ~125–250 ns on fry/flat, but **~574 ns on fbuck** (measured). A
+  re-trigger hard-coded to the fry/flat timing would fire at roughly the ring's peak on
+  fbuck, i.e. pump energy in rather than clamp it out, so this delay must be derived
+  from the board's own `L0` and its FET population, not from a constant.
   - **MCPWM**: the ESP32-S3 has 2 comparators per operator (`SOC_MCPWM_COMPARATORS_PER_OPERATOR=2`),
     both already used for HS and LS edges (`cmpHS_`, `cmpLS_` in `src/pwm/mcpwm.h`). An LS
     re-trigger pulse would need a different mechanism — e.g. a second operator's comparator
