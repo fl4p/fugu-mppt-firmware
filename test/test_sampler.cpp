@@ -220,6 +220,99 @@ void test_cycle_no_interleave_two_channels() {
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 100.f, sampler.effectiveSampleRate((PhysicalSensor *) c0));
 }
 
+void test_calibration_counts_each_sensor_once() {
+    MuxRrMockADC adc;
+    ADC_Sampler sampler{};
+    sampler.ignoreCalibrationConstraints = true;
+    auto *fast = const_cast<Sensor *>(sampler.addSensor(&adc, mkp(0, "fast"), 100.f, 1));
+    auto *slow = const_cast<Sensor *>(sampler.addSensor(&adc, mkp(1, "slow"), 100.f, 1));
+
+    sampler.begin();
+    sampler.startCalibration();
+    sampler.update();
+
+    auto feed = [&](Sensor *sensor, float value, int count) {
+        for (int i = 0; i < count; ++i) {
+            sensor->add_sample(value);
+            sampler.handleSensorCalib(*sensor);
+        }
+    };
+
+    feed(fast, 10.f, 400);
+    TEST_ASSERT_TRUE(sampler.isCalibrating());
+    TEST_ASSERT_TRUE(fast->calibrationComplete);
+    TEST_ASSERT_FALSE(slow->calibrationComplete);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 10.f, fast->calibrationAvg);
+
+    feed(slow, 20.f, 200);
+    TEST_ASSERT_FALSE(sampler.isCalibrating());
+    TEST_ASSERT_TRUE(slow->calibrationComplete);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 20.f, slow->calibrationAvg);
+}
+
+void test_calibration_reset_is_deferred_to_update() {
+    MuxRrMockADC adc;
+    ADC_Sampler sampler{};
+    sampler.ignoreCalibrationConstraints = true;
+    auto *sensor = const_cast<Sensor *>(sampler.addSensor(&adc, mkp(0, "sensor"), 100.f, 1));
+    sampler.begin();
+
+    sensor->add_sample(42.f);
+    sensor->calibrationAvg = 3.f;
+    sensor->calibrationComplete = true;
+    sampler.startCalibration();
+
+    TEST_ASSERT_TRUE(sampler.isCalibrating());
+    TEST_ASSERT_EQUAL_UINT32(1, sensor->numSamples);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 3.f, sensor->calibrationAvg);
+    TEST_ASSERT_TRUE(sensor->calibrationComplete);
+
+    sampler.update();
+    TEST_ASSERT_EQUAL_UINT32(1, sensor->numSamples); // reset, then one ADC sample in update()
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.f, sensor->calibrationAvg);
+    TEST_ASSERT_FALSE(sensor->calibrationComplete);
+}
+
+void test_calibration_restart_is_deferred_to_update() {
+    MuxRrMockADC adc;
+    ADC_Sampler sampler{};
+    sampler.ignoreCalibrationConstraints = true;
+    auto *sensor = const_cast<Sensor *>(sampler.addSensor(&adc, mkp(0, "sensor"), 100.f, 1));
+    sampler.begin();
+    sampler.startCalibration();
+    sampler.update();
+    sensor->add_sample(42.f);
+    const auto samplesBeforeRestart = sensor->numSamples;
+
+    sampler.startCalibration();
+    TEST_ASSERT_TRUE(sampler.isCalibrating());
+    TEST_ASSERT_EQUAL_UINT32(samplesBeforeRestart, sensor->numSamples);
+
+    sampler.update();
+    TEST_ASSERT_EQUAL_UINT32(1, sensor->numSamples); // reset, then one ADC sample in update()
+    TEST_ASSERT_FALSE(sensor->calibrationComplete);
+}
+
+void test_calibration_cancel_is_deferred_to_update() {
+    MuxRrMockADC adc;
+    ADC_Sampler sampler{};
+    sampler.ignoreCalibrationConstraints = true;
+    auto *sensor = const_cast<Sensor *>(sampler.addSensor(&adc, mkp(0, "sensor"), 100.f, 1));
+    sampler.begin();
+    sampler.startCalibration();
+    sampler.update();
+    sensor->add_sample(42.f);
+    const auto samplesBeforeCancel = sensor->numSamples;
+
+    sampler.cancelCalibration();
+    TEST_ASSERT_TRUE(sampler.isCalibrating());
+    TEST_ASSERT_EQUAL_UINT32(samplesBeforeCancel, sensor->numSamples);
+
+    sampler.update();
+    TEST_ASSERT_FALSE(sampler.isCalibrating());
+    TEST_ASSERT_EQUAL_UINT32(1, sensor->numSamples); // reset, then one ADC sample in update()
+}
+
 namespace {
 // StreamedCallback mock mirroring ADC_ESP32_Cont's no-sample watchdog: read() is the ONLY place
 // that delivers samples and (here, like lastDataUs_) clears `good`. Lets us regression-test that

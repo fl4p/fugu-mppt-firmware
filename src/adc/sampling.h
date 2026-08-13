@@ -6,6 +6,7 @@
 #include <string>
 #include <functional>
 #include <cassert>
+#include <atomic>
 
 #include <esp_log.h>
 #include <esp_attr.h> // IRAM_ATTR
@@ -80,6 +81,7 @@ struct Sensor {
     MeanAccumulator calibBuffer{}; // for offset calibration
 
     float calibrationAvg = 0; // stores the mean value from calibBuffer
+    bool calibrationComplete = false;
 
     const bool isVirtual;
 
@@ -100,10 +102,12 @@ struct Sensor {
         med3.reset();
         despikeScale = 0;
         ewm.reset();
-        if (resetCalibration && calibrationAvg != 0) {
-            ESP_LOGI("sensor", "%s reset calibration", params.teleName.c_str());
+        if (resetCalibration) {
+            if (calibrationAvg != 0)
+                ESP_LOGI("sensor", "%s reset calibration", params.teleName.c_str());
             calibrationAvg = 0;
             calibBuffer.clear();
+            calibrationComplete = false;
         }
     }
 
@@ -234,8 +238,46 @@ private:
         uint8_t cycleSensorsPos = 0;          // position in cycleOrder
     };
 
-    uint8_t calibrating_ = 0;
+    // Other cores only publish requests here. update() owns every sensor/filter mutation.
+    enum class CalibrationState : uint32_t { Idle, StartRequested, Active, CancelRequested, Cancelling };
+    std::atomic<CalibrationState> calibrationState_{CalibrationState::Idle};
+    uint8_t calibrating_ = 0; // remaining sensors; RT task only
     time_us timeLastCalibration = 0;
+
+    void applyCalibrationCommandRt() {
+        auto state = calibrationState_.load(std::memory_order_acquire);
+        if (state == CalibrationState::StartRequested) {
+            if (!calibrationState_.compare_exchange_strong(
+                    state, CalibrationState::Active, std::memory_order_acq_rel))
+                return;
+
+            calibrating_ = realSensors.size();
+            for (auto &ch: sensors) {
+                ch->reset(true);
+                if (!ch->isVirtual)
+                    static_cast<PhysicalSensor *>(ch)->adc->reset(ch->params.adcCh);
+            }
+        } else if (state == CalibrationState::CancelRequested) {
+            if (!calibrationState_.compare_exchange_strong(
+                    state, CalibrationState::Cancelling, std::memory_order_acq_rel))
+                return;
+
+            ESP_LOGI("mppt", "Cancel calibration");
+            calibrating_ = 0;
+            for (auto &ch: sensors) ch->reset(false);
+
+            state = CalibrationState::Cancelling;
+            calibrationState_.compare_exchange_strong(
+                state, CalibrationState::Idle, std::memory_order_release, std::memory_order_relaxed);
+        }
+    }
+
+    void finishCalibrationRt() {
+        calibrating_ = 0;
+        auto state = CalibrationState::Active;
+        calibrationState_.compare_exchange_strong(
+            state, CalibrationState::Idle, std::memory_order_release, std::memory_order_relaxed);
+    }
 
 public:
     volatile bool halted = false;
@@ -426,27 +468,18 @@ public:
     }
 
     void startCalibration() {
-        if (!calibrating_)
+        auto previous = calibrationState_.exchange(CalibrationState::StartRequested, std::memory_order_acq_rel);
+        if (previous == CalibrationState::Idle)
             ESP_LOGI("mppt", "Start calibration");
-
-        // TODO use mean average, not EWM!
-        // - reset mean here
-        // consider: peak2peak values, empirical uncertainty (higher stddev->need more samples)
-        calibrating_ = realSensors.size();
-        for (auto &ch: sensors) {
-            ch->reset(true);
-            if (!ch->isVirtual)
-                static_cast<PhysicalSensor *>(ch)->adc->reset(ch->params.adcCh);
-        }
     }
 
     void cancelCalibration() {
-        if (!calibrating_)
-            return;
-        ESP_LOGI("mppt", "Cancel calibration");
-        calibrating_ = 0;
-        for (auto &ch: sensors) {
-            ch->reset(false);
+        auto state = calibrationState_.load(std::memory_order_acquire);
+        while (state != CalibrationState::Idle && state != CalibrationState::CancelRequested &&
+               state != CalibrationState::Cancelling) {
+            if (calibrationState_.compare_exchange_weak(
+                    state, CalibrationState::CancelRequested, std::memory_order_acq_rel))
+                return;
         }
     }
 
@@ -459,7 +492,8 @@ public:
     };
 
     UpdateRet handleSensorCalib(Sensor &sensor) {
-        if (calibrating_ && sensor.numSamples >= 100) {
+        if (calibrationState_.load(std::memory_order_acquire) == CalibrationState::Active &&
+            !sensor.calibrationComplete && sensor.numSamples >= 100) {
             // calibZeroCurrent = ewm.s.chIin.avg.get();
             sensor.calibBuffer.add(sensor.last);
 
@@ -472,7 +506,7 @@ public:
                 if (!ignoreCalibrationConstraints && (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue)) {
                     ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, stdn=%.6f)",
                              sensor.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, sensor.last, std);
-                    calibrating_ = 0;
+                    finishCalibrationRt();
                     //startCalibration();
                     return UpdateRet::CalibFailure;
                 }
@@ -487,7 +521,7 @@ public:
                     ESP_LOGW("sampler", "%s last=%.6f med3=%.6f avg=%.6f num=%lu", sensor.params.teleName.c_str(),
                              sensor.last,
                              sensor.med3.get(), sensor.ewm.avg.get(), sensor.numSamples);
-                    calibrating_ = 0;
+                    finishCalibrationRt();
                     //startCalibration();
                     return UpdateRet::CalibFailure;
                 }
@@ -496,6 +530,7 @@ public:
 
                 sensor.calibrationAvg = avg;
                 sensor.reset(false);
+                sensor.calibrationComplete = true;
 
                 ESP_LOGI("sampler", "Sensor %s calibration: avg=%.4f std=%.6f", sensor.params.teleName.c_str(), avg,
                          std);
@@ -508,8 +543,12 @@ public:
                 assert(calibrating_ < realSensors.size());
 
                 if (calibrating_ == 0) {
-                    ESP_LOGI("sampler", "Calibration done!");
-                    timeLastCalibration = wallClockUs();
+                    auto state = CalibrationState::Active;
+                    if (calibrationState_.compare_exchange_strong(
+                            state, CalibrationState::Idle, std::memory_order_release, std::memory_order_relaxed)) {
+                        ESP_LOGI("sampler", "Calibration done!");
+                        timeLastCalibration = wallClockUs();
+                    }
                     return UpdateRet::Calibrating;
                 }
             }
@@ -611,7 +650,7 @@ public:
         }*/
 
 
-        return calibrating_ == 0 ? UpdateRet::NewData : UpdateRet::Calibrating;
+        return isCalibrating() ? UpdateRet::Calibrating : UpdateRet::NewData;
     }
 
     UpdateRet update() {
@@ -621,6 +660,8 @@ public:
             vTaskDelay(10);
             return res;
         }
+
+        applyCalibrationCommandRt();
 
         bool updateVirtual = false;
         for (auto &state: adcStates) {
@@ -634,7 +675,7 @@ public:
 
         // update virtual sensors
         // TODO virtual sensor calibration?
-        if (calibrating_ == 0 && updateVirtual) {
+        if (!isCalibrating() && updateVirtual) {
             for (auto &sn: virtualSensors) {
                 sn->add_sample(sn->func());
                 rtcount("adc.update.AddSampleVirtual");
@@ -664,7 +705,9 @@ public:
     }
 
 
-    [[nodiscard]] bool isCalibrating() const { return calibrating_ > 0; }
+    [[nodiscard]] bool isCalibrating() const {
+        return calibrationState_.load(std::memory_order_acquire) != CalibrationState::Idle;
+    }
 
     [[nodiscard]] time_us getTimeLastCalibrationUs() const { return timeLastCalibration; }
 

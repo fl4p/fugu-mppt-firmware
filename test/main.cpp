@@ -80,6 +80,10 @@ void test_LinearTransform();
 // adc/sampling.h — muxed-cycle Vout interleave + notch-rate correction
 void test_vout_interleave_poll_order();
 void test_vout_interleave_notch_rate();
+void test_calibration_counts_each_sensor_once();
+void test_calibration_reset_is_deferred_to_update();
+void test_calibration_restart_is_deferred_to_update();
+void test_calibration_cancel_is_deferred_to_update();
 void test_cycle_no_interleave_two_channels();
 void test_streamed_watchdog_does_not_deadlock_read();
 // etc/rt.h — TaskNotification binary-semaphore wait() (boot "ADC error" burst regression)
@@ -444,6 +448,10 @@ void setup() {
     // RUN_TEST(test_ADCSampler); // body is #if 0'd in test_sampler.cpp
     RUN_TEST(test_vout_interleave_poll_order);
     RUN_TEST(test_vout_interleave_notch_rate);
+    RUN_TEST(test_calibration_counts_each_sensor_once);
+    RUN_TEST(test_calibration_reset_is_deferred_to_update);
+    RUN_TEST(test_calibration_restart_is_deferred_to_update);
+    RUN_TEST(test_calibration_cancel_is_deferred_to_update);
     RUN_TEST(test_cycle_no_interleave_two_channels);
     RUN_TEST(test_streamed_watchdog_does_not_deadlock_read);
     RUN_TEST(test_tasknotification_burst_reads_as_one_wakeup);
