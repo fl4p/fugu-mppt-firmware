@@ -45,10 +45,25 @@ void ADC_ESP32_Cont::start() {
 
     uint32_t patLen = 0, chNum = 0;
     bool hasNtc = false;
+    // Normalize all channels to maxAtten (IDF requires uniform attenuation per ADC unit)
+    if (maxAtten > ADC_ATTEN_DB_0 && calByAtten[maxAtten] == nullptr) {
+#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+        adc_cali_curve_fitting_config_t conf{
+            .unit_id = ADC_UNIT_1, .chan = ADC_CHANNEL_0, .atten = maxAtten, .bitwidth = ADC_BITWIDTH_12,
+        };
+        ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&conf, &calByAtten[maxAtten]));
+#else
+        adc_cali_line_fitting_config_t cali_config = {
+            .unit_id = ADC_UNIT_1, .atten = maxAtten, .bitwidth = ADC_BITWIDTH_DEFAULT, .default_vref = 0,
+        };
+        ESP_ERROR_CHECK(adc_cali_create_scheme_line_fitting(&cali_config, &calByAtten[maxAtten]));
+#endif
+    }
     for (auto ch = 0; ch <= adc_channel_t::ADC_CHANNEL_9; ++ch)
         if (attenByCh[ch] != (adc_atten_t) -1) {
+            attenByCh[ch] = maxAtten;
             assert(patLen < SOC_ADC_PATT_LEN_MAX);
-            adc_pattern[patLen].atten = attenByCh[ch];
+            adc_pattern[patLen].atten = maxAtten;
             adc_pattern[patLen].channel = ch;
             adc_pattern[patLen].unit = ADC_UNIT_1;
             adc_pattern[patLen].bit_width = SOC_ADC_DIGI_MAX_BITWIDTH;
@@ -65,11 +80,11 @@ void ADC_ESP32_Cont::start() {
         for (auto ch = 0; ch <= adc_channel_t::ADC_CHANNEL_9; ++ch)
             if (attenByCh[ch] != (adc_atten_t) -1 && ch != ntcCh) {
                 assert(patLen < SOC_ADC_PATT_LEN_MAX);
-                adc_pattern[patLen].atten = attenByCh[ch];
+                adc_pattern[patLen].atten = maxAtten;
                 adc_pattern[patLen].channel = ch;
                 adc_pattern[patLen].unit = ADC_UNIT_1;
                 adc_pattern[patLen].bit_width = SOC_ADC_DIGI_MAX_BITWIDTH;
-                ESP_LOGI("adc_esp32", "pattern[%lu] = {.atten=%d, .channel=%d}", patLen, attenByCh[ch], ch);
+                ESP_LOGI("adc_esp32", "pattern[%lu] = {.atten=%d, .channel=%d}", patLen, maxAtten, ch);
                 ++patLen;
             }
     } else if (hasNtc) {

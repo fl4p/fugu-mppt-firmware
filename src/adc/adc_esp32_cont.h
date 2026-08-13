@@ -33,6 +33,7 @@ class ADC_ESP32_Cont : public AsyncADC<float> {
 private:
     adc_cali_handle_t calByAtten[4]{nullptr, nullptr, nullptr, nullptr};
     adc_atten_t attenByCh[adc_channel_t::ADC_CHANNEL_9 + 1] = {ADC_ATTEN_NA};
+    adc_atten_t maxAtten = ADC_ATTEN_DB_0;
 
     TaskNotification notification;
     adc_continuous_handle_t handle = nullptr;
@@ -150,15 +151,8 @@ public:
         adc_atten_t atten;
         assert_throw(ch <= adc_channel_t::ADC_CHANNEL_9, "adc channel out of range");
 
-        // esp32-s3 measurable voltage range:
-        // https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32s3/api-reference/peripherals/adc.html#adc-attenuation
-
-        // for best linearity, we expect a voltage < 1.8V
-        // 0.81 to fit suggested range?
-        // see https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32s3/api-reference/peripherals/adc.html#_CPPv425adc1_config_channel_atten14adc1_channel_t11adc_atten_t
-
         auto maxVolt = 3.548134f;
-        auto suggestVolt = 0.81f * maxVolt; /*12dB=max */
+        auto suggestVolt = 0.81f * maxVolt;
         if (voltage > maxVolt) {
             throw std::range_error(
                 "ch" + std::to_string(ch) + ": expected voltage too high: " + std::to_string(voltage)
@@ -176,12 +170,11 @@ public:
         else if (voltage > 0.8f) atten = ADC_ATTEN_DB_2_5;
         else atten = ADC_ATTEN_DB_0;
 
-        //if (adc1_config_channel_atten((adc1_channel_t) ch, atten) != ESP_OK) {
-        //    ESP_LOGE("adc", "Failed to set ADC1 ch %i attenuation %i", (int) ch, (int) atten);
-        //    assert(false);
-        //}
-
         assert_throw(handle == nullptr, "adc already started");
+
+        // IDF adc_continuous_config requires all ADC1 channels share the same attenuation.
+        // Track the max; start() normalizes all channels to it.
+        if (atten > maxAtten) maxAtten = atten;
 
         attenByCh[ch] = atten;
 
@@ -203,7 +196,6 @@ public:
             };
             ESP_ERROR_CHECK(adc_cali_create_scheme_line_fitting(&cali_config, & calByAtten[atten]));
 #endif
-            //esp_adc_cal_characterize(ADC_UNIT_1, atten, ADC_WIDTH_BIT_12, 1100, adc_chars[atten]);
         }
     }
 
