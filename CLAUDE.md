@@ -208,9 +208,9 @@ live in `src/main.cpp` (they touch `mppt`/`lcd`/`sensors`); `MqttService` *is* t
 
 ### Console & debugging surfaces
 
-Single command dispatcher `handleCommand()` in `src/main.cpp` handles input from UART, USB-CDC, telnet, **and** MQTT (
-same string protocol). Notable commands: `+N`/`-N` (PWM step), `dc N` (manual duty, switches to `manualPwm` mode),
-`sweep`, `mppt` (re-enable auto), `sync on/off/forced`, `bf 0/1` (backflow switch), `fan N`, `set-config`/`get-config`,
+Single command dispatcher `handleCommand()` in `src/cli.cpp` handles input from UART, USB-CDC, telnet, **and** MQTT (
+same string protocol). Notable commands: `+N`/`-N` (PWM step), `dc N` (manual duty, switches to manual mode),
+`sweep`, `mppt` (re-enable auto), `psu <V>` (constant-voltage PSU mode), `sync on/off/forced`, `bf 0/1` (backflow switch), `fan N`, `set-config`/`get-config`,
 `ota <url>`, `rt-stats`, `sensor`, `status` (charger/battery snapshot), `wifi-add ssid:psk`, `restart`. See
 `doc/Console.md`.
 
