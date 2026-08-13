@@ -68,7 +68,9 @@ static void configureVirtualConverter() {
     float k   = vc.f("pv_k", 0.8f);
     g_vconv.setPv(isc, voc, k);
 
-    g_vconv.setBat(vc.f("v_bat", 28.0f), vc.f("r_bat", 0.05f));
+    const float vBat = vc.f("v_bat", 28.0f);
+    const float rBat = vc.f("r_bat", 0.05f);
+    g_vconv.setBat(vBat, rBat);
     g_vconv.setBatRipple(vc.f("vbat_ac_amp", 0.0f), vc.f("vbat_ac_freq", 100.0f),
                          (int) vc.getByte("vbat_ac_shape", 0));
 
@@ -76,13 +78,24 @@ static void configureVirtualConverter() {
     float L0 = coil.f("L0", 50e-6f);
     g_vconv.setPassives(vc.f("c_in", 470e-6f), vc.f("c_out", 470e-6f), L0);
 
-    // Seed cap voltages near steady-state so the model doesn't start in the
-    // sub-MinRatioVoltage relaxation branch.
-    g_vconv.setVin(voc * 0.5f);
-    g_vconv.setVout(vc.f("v_bat", 28.0f));
+    // Topology comes from converter.conf, not vconv.conf: the plant must match whatever buck.h was
+    // told, or the Ctrl/Rect gate roles and the sim disagree. We run before converter.init(), so we
+    // cannot ask the converter — reject an unrecognised value the same way it does rather than
+    // silently modelling a buck while the firmware drives a boost.
+    ConfFile conv{"/littlefs/conf/converter.conf"};
+    const std::string topo = conv.getString("topo", "buck");
+    assert_throw(topo == "buck" || topo == "boost", "vconv: converter.conf::topo must be buck|boost");
+    const bool boost = topo == "boost";
+    g_vconv.setBoost(boost);
 
-    ESP_LOGI("vconv", "PV Isc=%.2fA Voc=%.2fV k=%.2f  Bat=%.2fV/%.3fΩ  L0=%.1fµH",
-             isc, voc, k, vc.f("v_bat", 28.0f), vc.f("r_bat", 0.05f), L0 * 1e6f);
+    // Seed cap voltages near steady-state so the model doesn't start in the
+    // sub-MinRatioVoltage relaxation branch. In boost V_out sits ABOVE V_in, so seeding it
+    // at v_bat with V_in at voc/2 would start the model below its own passthrough floor.
+    g_vconv.setVin(voc * 0.5f);
+    g_vconv.setVout((boost && vBat < voc * 0.5f) ? voc * 0.5f : vBat);
+
+    ESP_LOGI("vconv", "%s PV Isc=%.2fA Voc=%.2fV k=%.2f  Bat=%.2fV/%.3fΩ  L0=%.1fµH",
+             boost ? "boost" : "buck", isc, voc, k, vBat, rBat, L0 * 1e6f);
 }
 #endif
 

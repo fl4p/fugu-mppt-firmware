@@ -606,6 +606,258 @@ void testU_spiky_ripple() {
     EXPECT_NEAR(m / M, 20.0f, 0.05f);
 }
 
+// ----- V-Z: boost topology ---------------------------------------------------
+//
+// Boost rig: stiff source on the LV input, resistive load on the HV output.
+// In boost, pwmCtrl is the LS (charging) switch and pwmRect the HS (delivering)
+// one -- the same role swap buck.h does via isBoost.
+void rigBoost(VirtualConverter &v, float vin, float vout, uint16_t ctrl, uint16_t rect,
+              float rload = 12.0f, float cout = 1e-3f, float l = kL) {
+    v.setBoost(true);
+    v.setPv(200.0f, vin * 1.25f, 0.99f); // Isc >> any draw; Vin is held by runPinnedVin below
+    v.setBat(0.0f, rload);               // pure resistive load (v_bat = 0)
+    v.setBatRipple(0.0f, 100.0f);
+    v.setPassives(1.0f, cout, l);
+    v.setVin(vin);
+    v.setVout(vout);
+    v.setPwm(mkPwm(ctrl, rect));
+}
+
+// A battery input is a stiff VOLTAGE source, but setPv() is a current source -- left alone it
+// charges C_in up to voc*1.05 and every boost ratio comes out high. Re-pin V_in each cycle and
+// let only V_out evolve.
+void runPinnedVin(VirtualConverter &v, int n, float vin) {
+    for (int i = 0; i < n; ++i) {
+        v.setVin(vin);
+        v.stepSeconds(kT, kFreq);
+    }
+    v.setVin(vin);
+}
+
+// V: the branch is live at all -- same counts, opposite topology, Vout moves the other way.
+void testV_boost_branch_is_live() {
+    section("V: boost branch selected");
+    VirtualConverter b, k;
+    rigBoost(b, 24.0f, 24.0f, 300, 600);
+    EXPECT(b.isBoost());
+    rig(k, 24.0f, 24.0f, 300, 600, 1.0f, 1e-3f);
+    EXPECT(!k.isBoost());
+    runN(b, 4000);
+    runN(k, 4000);
+    // Boost pushes Vout above Vin; buck (same counts, 24->24 with D=0.3) pulls it down.
+    EXPECT(b.getVout() > 24.0f);
+    EXPECT(k.getVout() < 24.0f);
+}
+
+// W: CCM conversion ratio Vout/Vin = 1/(1-D), D = Ctrl(LS) duty.
+//
+// Verified AT the operating point, not by settling to it -- same caveat test A records for buck.
+// With rect = pmax-ctrl there is no dead time, so L and C_out form a high-Q bidirectional
+// resonator; started far from equilibrium it rings, and the `if (vOut_ < 0) vOut_ = 0` clamp
+// rectifies the undershoot into a sustained oscillation (a pre-existing model artifact, not a
+// boost-branch bug -- see the note in stepOneCycle). Pinning both rails and checking that the coil
+// current is periodic is the real invariant: net volt-seconds over a cycle must be zero.
+void testW_boost_ccm_ratio() {
+    section("W: boost CCM ratio 1/(1-D)");
+    // Settled, not pinned. The forward-Euler L/C_out instability (see the note at the vOut_ clamp)
+    // only bites at light load, so pick the damped side of zeta < w0*T/4: r_bat 2 ohm, C_out 470uF.
+    // rect = pmax-ctrl-1 is exactly what buck.h commands in CCM. A stiff source needs voc == vin,
+    // otherwise setPv() is a current source that charges C_in up to voc and every ratio reads high.
+    for (uint16_t ctrl : {200, 300, 400}) {
+        VirtualConverter v;
+        const float vin = 24.0f;
+        const float D = (float) ctrl / (float) kPmax;
+        const float want = vin / (1.0f - D);
+        v.setBoost(true);
+        v.setPv(200.0f, vin, 0.99f); // stiff ~vin rail, no pinning needed
+        v.setBat(0.0f, 2.0f);
+        v.setBatRipple(0.0f, 100.0f);
+        v.setPassives(10e-3f, 470e-6f, kL);
+        v.setVin(vin);
+        v.setVout(vin);
+        v.setPwm(mkPwm(ctrl, (uint16_t) (kPmax - ctrl - 1)));
+        runN(v, 200000);
+        std::printf("  W: D=%.2f Vout=%.2f want=%.2f\n", D, v.getVout(), want);
+        EXPECT_REL(v.getVout(), want, 0.05);
+    }
+}
+
+// W2: CCM with a real DC load current. W settles to the ideal ratio where iL rides on ~zero DC,
+// which makes a power-balance check tautological (iOut/iIn == 1-D identically for a zero-DC
+// triangle) -- and `dcm_` is `cEnd == 0.0f` exactly, so an !inDcm() assertion there would pass on
+// float noise. Force a genuine DC bias instead: hold the rails slightly off the ideal ratio so the
+// coil ramps, then check the lossless balance with real bias current. This is the case where the
+// "phase 1 charges the input but reaches the output" attribution actually matters.
+void testW2_boost_ccm_dc_bias() {
+    section("W2: boost CCM balance under DC bias");
+    const float vin = 24.0f, vout = 36.0f; // M=1.5 -> ideal D=1/3
+    VirtualConverter v;
+    rigBoost(v, vin, vout, 340, (uint16_t) (kPmax - 340 - 1), 12.0f, 1.0f);
+    runPinned(v, 800, vin, vout); // slight imbalance accumulates a DC component
+    const float iL = v.getIL();
+    const float pIn = v.getIinAvg() * vin, pOut = v.getIoutAvg() * vout;
+    std::printf("  W2: iL=%.3f A  Pin=%.4g W Pout=%.4g W  iIn/iOut=%.4f (Vout/Vin=%.4f)\n",
+                iL, pIn, pOut, v.getIinAvg() / v.getIoutAvg(), vout / vin);
+    EXPECT(std::fabs(iL) > 1.0f);                              // a real DC bias, not float noise
+    EXPECT(!v.inDcm());                                        // and genuinely continuous
+    EXPECT_REL(pIn, pOut, 0.01);                               // lossless
+    EXPECT_REL(v.getIinAvg() / v.getIoutAvg(), vout / vin, 0.01); // the ratio that implies
+}
+
+// X: THE FLOOR. Vout can never sit below Vin -- the HS body diode passes the input
+// through even with both switches off. This is the hazard the buck plant cannot show,
+// and it is why a PSU setpoint at or below Vin is unreachable.
+void testX_boost_vout_cannot_go_below_vin() {
+    section("X: Vout >= Vin floor (passthrough)");
+    // The cleanest statement of the hazard: command ZERO duty, start ABOVE Vin, and let a real
+    // load discharge the output. It decays only to Vin and stops -- the HS body diode picks up
+    // there. No commanded duty can take the rail lower, so a PSU setpoint <= Vin is unreachable.
+    VirtualConverter v;
+    rigBoost(v, 24.0f, 60.0f, 0, 0, 12.0f, 1e-3f);
+    EXPECT_NEAR(v.getIL(), 0.0f, 1e-9f); // idle coil -> exercises the c==0 passthrough branch
+    runPinnedVin(v, 400000, 24.0f);
+    std::printf("  X: zero duty, 60V -> settled %.2f V (Vin=24, floor)\n", v.getVout());
+    EXPECT(v.getVout() < 59.0f);  // it really did discharge...
+    EXPECT(v.getVout() > 22.0f);  // ...but stopped at the Vin floor, not at 0
+    EXPECT(v.getVout() < 27.0f);
+
+    // Starting BELOW Vin, the same passthrough pulls the rail up to the floor unbidden.
+    VirtualConverter w;
+    rigBoost(w, 24.0f, 5.0f, 0, 0, 12.0f, 1e-3f);
+    runPinnedVin(w, 400000, 24.0f);
+    std::printf("  X: zero duty, 5V -> settled %.2f V (pulled up to floor)\n", w.getVout());
+    EXPECT(w.getVout() > 20.0f);
+}
+
+// Y: duty-floor pumping. At the minimum Ctrl count the per-cycle energy is tiny;
+// check the delivered power against E=0.5*L*Ipk^2 per cycle, then confirm it cannot
+// hold a rail against a modest load. This is what decides whether PSU mode needs
+// disable-and-rearm hysteresis at pwmCtrlMin.
+void testY_boost_duty_floor_power() {
+    section("Y: duty-floor injected power");
+    const float vin = 48.0f;
+    VirtualConverter v;
+    // 1 count of 1000 at 39kHz = 25.6ns; measure with Vin/Vout pinned.
+    rigBoost(v, vin, 80.0f, 1, 0, 12.0f, 1e-3f);
+    runPinned(v, 200, vin, 80.0f);
+    const float tOn = (1.0f / (float) kPmax) * kT;
+    const float iPk = vin * tOn / kL;
+    // NOT just E*fsw: during the DCM decay the INPUT keeps supplying energy alongside the coil,
+    // so the output receives E*fsw * Vout/(Vout-Vin). Omitting that factor understates the
+    // injected power by 2.5x at 48->80.
+    const float eCycle = 0.5f * kL * iPk * iPk;
+    const float pAnalytic = eCycle * (float) kFreq * 80.0f / (80.0f - vin);
+    const float pModel = v.getIoutAvg() * 80.0f;
+    std::printf("  Y: t_on=%.1fns Ipk=%.4gA  P_model=%.4gW P_analytic=%.4gW\n",
+                tOn * 1e9f, iPk, pModel, pAnalytic);
+    EXPECT(pModel > 0.0f);
+    EXPECT_REL(pModel, pAnalytic, 0.15);
+
+    // The decision-relevant part: the floor duty cannot hold 80V against a 12 ohm load -- it
+    // collapses to the Vin floor. So PSU mode does NOT need disable-and-rearm hysteresis as long
+    // as the load (or bleeder) exceeds the injected power, which by the numbers above it does.
+    VirtualConverter w;
+    rigBoost(w, vin, 80.0f, 1, 0, 12.0f, 1e-3f);
+    runPinnedVin(w, 400000, vin);
+    std::printf("  Y: floor duty into 12ohm settles at %.2f V (Vin=%.0f floor)\n",
+                w.getVout(), vin);
+    EXPECT(w.getVout() < 55.0f);      // cannot sustain the 80V setpoint...
+    EXPECT(w.getVout() > vin - 2.0f); // ...and never falls below the Vin floor
+}
+
+// Z: topology asymmetry of the current sensors. In boost the coil is in series with
+// the input, so iIn is non-zero even when nothing reaches the output; and a negative
+// coil current in phase 3 routes to ground (LS body diode), not to the output.
+void testZ_boost_current_routing() {
+    section("Z: boost current routing");
+    // Ctrl on / Rect off. The output does NOT receive zero -- in DCM all the charge is delivered
+    // during phase 3 through the HS body diode. What is invariant is the lossless ratio: the coil
+    // is in series with the input in every phase, so iIn/iOut == Vout/Vin exactly.
+    VirtualConverter v;
+    rigBoost(v, 24.0f, 80.0f, 300, 0, 12.0f, 1.0f);
+    runPinned(v, 50, 24.0f, 80.0f);
+    std::printf("  Z: iIn=%.4g iOut=%.4g  ratio=%.4f (Vout/Vin=%.4f)\n",
+                v.getIinAvg(), v.getIoutAvg(), v.getIinAvg() / v.getIoutAvg(), 80.0f / 24.0f);
+    EXPECT(v.getIinAvg() > 0.0f);
+    EXPECT(v.getIoutAvg() > 0.0f); // phase-3 delivery, not zero
+    EXPECT_REL(v.getIinAvg() / v.getIoutAvg(), 80.0f / 24.0f, 0.01);
+
+    // Negative coil current with both switches off -> LS body diode to ground:
+    // it is input current but must NOT be counted as output current.
+    VirtualConverter w;
+    rigBoost(w, 24.0f, 80.0f, 0, 0, 12.0f, 1.0f);
+    w.setPwm(mkPwm(0, 400));
+    runPinned(w, 1, 24.0f, 80.0f); // one delivering cycle drives iL negative
+    EXPECT(w.getIL() < 0.0f);
+    w.setPwm(mkPwm(0, 0));
+    runPinned(w, 1, 24.0f, 80.0f);
+    EXPECT_NEAR(w.getIoutAvg(), 0.0f, 1e-6f);
+    EXPECT(w.getIinAvg() < 0.0f);
+}
+
+// X2: reverse coil current does NOT break the floor, and the one duty that does is clamped away.
+// Test X covers zero duty (body-diode passthrough holds V_out up at V_in). Here: approach the
+// operating point from ABOVE, so the sync rect conducts in reverse and bucks C_out back toward
+// C_in. It settles at V_in/(1-D) -- above V_in -- not below it. Run on the DAMPED side of the
+// forward-Euler criterion (see the vOut_ clamp note): in the light-load unstable regime the same
+// duty shows a sub-V_in excursion with iL very negative, which is a solver artifact, and mistaking
+// it for a real floor escape is an easy trap.
+void testX2_boost_floor_holds_under_reverse_current() {
+    section("X2: floor holds under reverse current");
+    const float vin = 25.2f;
+    VirtualConverter v;
+    v.setBoost(true);
+    v.setPv(200.0f, vin, 0.99f);
+    v.setBat(0.0f, 2.0f);          // damped: zeta 0.082 > w0*T/4 = 0.042
+    v.setBatRipple(0.0f, 100.0f);
+    v.setPassives(10e-3f, 470e-6f, kL);
+    v.setVin(vin);
+    v.setVout(vin); // start at the floor and let it boost up to the ratio
+    v.setPwm(mkPwm(200, 799));
+    float lo = 1e9f;
+    for (int i = 0; i < 600000; ++i) {
+        v.setVin(vin);
+        v.stepSeconds(kT, kFreq);
+        if (v.getVout() < lo) lo = v.getVout();
+    }
+    const float want = vin / (1.0f - 0.2f);
+    std::printf("  X2: settled %.2f (want %.2f), min seen %.2f, Vin=%.1f\n",
+                v.getVout(), want, lo, vin);
+    EXPECT_REL(v.getVout(), want, 0.05); // the duty-determined ratio, which is >= Vin by construction
+    EXPECT(lo > vin - 2.0f);             // never meaningfully below the floor
+
+    // The real escape: pwmCtrl == pwmMax leaves no path to the output at all, so V_out collapses
+    // to zero while the coil shorts the input. buck.h's pwmCtrlMax = 0.9*driverPwmMax is the only
+    // thing keeping it unreachable -- the floor is duty-clamp enforced at the top end.
+    VirtualConverter w;
+    w.setBoost(true);
+    w.setPv(200.0f, vin, 0.99f);
+    w.setBat(0.0f, 2.0f);
+    w.setBatRipple(0.0f, 100.0f);
+    w.setPassives(10e-3f, 470e-6f, kL);
+    w.setVin(vin);
+    w.setVout(80.0f);
+    w.setPwm(mkPwm(kPmax, 0));
+    for (int i = 0; i < 200000; ++i) { w.setVin(vin); w.stepSeconds(kT, kFreq); }
+    std::printf("  X2: ctrl==pmax (no output path) -> Vout=%.2f\n", w.getVout());
+    EXPECT(w.getVout() < 1.0f);
+}
+
+// Y2: scope on Y's conclusion. Y shows the duty floor cannot hold a rail against a 12 ohm load, so
+// no disable-and-rearm hysteresis is needed THERE. But the threshold is load-dependent: with a
+// near-open output the floor does pump the rail up past V_in without bound. So the plan's
+// "hysteresis not needed" holds only while the load (or bleeder) exceeds the injected power --
+// which is the design assumption, not a property of the converter.
+void testY2_boost_duty_floor_pumps_open_output() {
+    section("Y2: duty floor pumps a near-open output");
+    const float vin = 48.0f;
+    VirtualConverter v;
+    rigBoost(v, vin, vin, 1, 0, 1e6f /*near-open*/, 1e-3f);
+    runPinnedVin(v, 2000000, vin);
+    std::printf("  Y2: floor duty into 1Mohm climbed %.0f -> %.2f V\n", vin, v.getVout());
+    EXPECT(v.getVout() > vin + 2.0f); // unloaded, the floor really does creep upward
+}
+
 } // namespace
 
 int main() {
@@ -631,6 +883,14 @@ int main() {
     testS_degenerate();
     testT_mains_ripple();
     testU_spiky_ripple();
+    testV_boost_branch_is_live();
+    testW_boost_ccm_ratio();
+    testW2_boost_ccm_dc_bias();
+    testX_boost_vout_cannot_go_below_vin();
+    testX2_boost_floor_holds_under_reverse_current();
+    testY_boost_duty_floor_power();
+    testY2_boost_duty_floor_pumps_open_output();
+    testZ_boost_current_routing();
 
     std::printf("\nvconv-test: %d/%d passed\n", g_run - g_fail, g_run);
     return g_fail == 0 ? 0 : 1;

@@ -4,7 +4,8 @@
 #include <cmath>
 #include <algorithm>
 
-// Pure-C++ model of a synchronous buck converter. No Arduino, no IDF, no FreeRTOS.
+// Pure-C++ model of a synchronous buck OR boost converter (setBoost()). No Arduino, no IDF,
+// no FreeRTOS.
 // Wire-up (PWM input, ADC output, conf parsing) lives in src/pwm/vconv.h,
 // src/adc/vconv.h, and src/sensor_setup.cpp. Spec:
 // docs/superpowers/specs/2026-05-23-virtual-converter-design.md
@@ -12,10 +13,15 @@ class VirtualConverter {
 public:
     struct PwmState {
         uint16_t pwmMax = 0;
-        uint16_t pwmCtrl = 0;   // HS on-count (buck)
-        uint16_t pwmRect = 0;   // LS on-count (buck)
+        uint16_t pwmCtrl = 0;   // on-count of the control switch: HS in buck, LS in boost
+        uint16_t pwmRect = 0;   // on-count of the rectifier switch: LS in buck, HS in boost
         uint32_t pwmFreq = 0;   // Hz
     };
+
+    // Topology. Mirrors converter.conf::topo — buck.h swaps the Ctrl/Rect gate roles the same
+    // way, so the shim's ch0->Ctrl / ch1->Rect mapping needs no change.
+    void setBoost(bool b) { boost_ = b; }
+    [[nodiscard]] bool isBoost() const { return boost_; }
 
     // PV: single-diode-ish exponential parameterized by Isc, Voc, k = V_mpp/Voc.
     // alpha is solved from k once at setPv-time.
@@ -134,6 +140,8 @@ public:
     void stepSeconds(float dt_s, uint32_t pwmFreqFallback);
 
 private:
+    bool boost_ = false;
+
     // PV
     float isc_ = 8.0f;
     float voc_ = 40.0f;
@@ -178,6 +186,8 @@ private:
     float oscS_ = 0.0f, oscC_ = 1.0f, rotS_ = 0.0f, rotC_ = 1.0f, oscStep_ = -1.0f;
 
     void stepOneCycle(float T);
+    void stepOneCycleBuck(float T);
+    void stepOneCycleBoost(float T);
 };
 
 // Singleton. Defined in src/sim/vconv.cpp.
