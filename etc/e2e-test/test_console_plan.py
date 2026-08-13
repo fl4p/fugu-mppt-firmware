@@ -120,6 +120,10 @@ PLAN = [
     ("dc 0", None, GROUP_MOCK, False),
     ("mppt", None, GROUP_MOCK, False),  # back to tracking (valid only in manual mode)
     ("sweep", None, GROUP_MOCK, False),
+    # --- PSU mode (enter/exit, restore to MPPT) ---------------------------------------------
+    ("psu 28.5", None, GROUP_MOCK, False),  # enter PSU mode with a setpoint
+    ("psu", None, GROUP_MOCK, False),  # print PSU state
+    ("psu off", None, GROUP_MOCK, False),  # exit PSU mode back to MPPT
     # --- network / NVS / reboot (opt-in only) -----------------------------------------------
     ("wifi on", None, GROUP_NET, False),
     ("hostname fugu-test", None, GROUP_NET, False),

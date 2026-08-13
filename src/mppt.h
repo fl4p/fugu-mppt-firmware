@@ -18,6 +18,7 @@
 #include "metering.h"
 #include "charger.h"
 #include "etc/plot.h"
+#include "app_state.h"
 
 struct Limits {
     const float Vin_max{};
@@ -201,11 +202,16 @@ private:
     time_us _lastPointWrite = 0;
     time_us _backoffUntilUs = 0;
     uint32_t _backoffArmedSec = 0; // length of the running backoff, so a repeat can't extend it
+    time_ms psuTripWindowStart = 0;
+    uint8_t psuTripCount = 0;
     unsigned short _teleNumPoints = 0;
 
     const VIinVout<const Sensor *> &sensors;
 
 
+    // Gains below are the defaults; converter.conf::ctrl_<name>_{kp,kd,td} override them (begin()).
+    // They are not the whole loop gain: update() scales the result into a duty slew rate
+    // by a further per-path constant (see kCtrlSlewLimit in mppt.cpp).
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
     PD_Control VoutController{1500, /*100**/ 12 * 1000, true}; // Vout over-voltage  TODO 8k, 10k prevents full sweep
     PD_Control IinController{100, 200, true}; // Iin over-current
@@ -273,7 +279,8 @@ public:
         ucTemp.read();
     }
 
-    void begin(const ConfFile &trackerConf, const ConfFile &boardConf, const Limits &limits_, const TeleConf &tele_);
+    void begin(const ConfFile &trackerConf, const ConfFile &boardConf, const ConfFile &converterConf,
+               const Limits &limits_, const TeleConf &tele_);
 
     [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }
 
@@ -304,30 +311,49 @@ public:
             converter.disable();
             bflow.enable(false);
         } else {
-            // disabling the backflow switch first to avoid any battery current into the converter
-            // solar current is usually not harmful, so shutting down the converter can wait
-            bflow.enable(false); // this is very fast
+            bflow.enable(false);
             converter.disable();
         }
         if (backoffSec) {
-            // Arm and log on the *entry* to a backoff only. A condition that persists across ticks
-            // (supply-UV, OV) calls us every iteration; re-arming each time pushes the deadline
-            // forward indefinitely so it never expires to retry, and the log itself becomes the
-            // flood that makes the device unreachable over BLE (issue #58).
-            // Escalate on a longer trip (a 30 s Iout-OC must not be cut short by a 5 s one), but a
-            // repeat of the *same* length is not new information — re-arming on it would push the
-            // deadline out by another full period every tick, so it could never expire to retry.
-            if (!inBackoff() || backoffSec > _backoffArmedSec) {
-                _backoffUntilUs = wallClockUs() + static_cast<time_us>(backoffSec) * 1000000ULL;
-                _backoffArmedSec = backoffSec;
-                ESP_LOGW("mppt", "backoff %lus [%s]%s", (unsigned long) backoffSec, who,
-                         _sweeping ? " mid-sweep" : "");
+            // PSU fast-retry: only for transient faults (Vout-OV, supply-UV). Other faults
+            // (sensor-fail, revI, highI) keep their normal backoff even in PSU mode.
+            // stopAndBackoff caller is maintenance, not a fault — don't count it.
+            bool psuFastRetry = g_app.psuMode() && backoffSec <= 5
+                && strcmp(who, "stopAndBackoff") != 0
+                && (strstr(who, "Vout-OV") || strstr(who, "supply-UV"));
+            if (psuFastRetry) {
+                auto nowMs = wallClockMs();
+                if (nowMs - psuTripWindowStart > 60000) {
+                    psuTripWindowStart = nowMs;
+                    psuTripCount = 0;
+                }
+                ++psuTripCount;
+                if (psuTripCount > 8) {
+                    psuLatched = true;
+                    _backoffUntilUs = wallClockUs() + 30000000ULL;
+                    _backoffArmedSec = 30;
+                    ESP_LOGE("mppt", "PSU latch [%s] (%u trips)", who, psuTripCount);
+                } else if (psuTripCount > 4) {
+                    psuEscalated = true;
+                    if (!inBackoff() || backoffSec > _backoffArmedSec) {
+                        _backoffUntilUs = wallClockUs() + static_cast<time_us>(backoffSec) * 1000000ULL;
+                        _backoffArmedSec = backoffSec;
+                        ESP_LOGW("mppt", "PSU escalated backoff %lus [%s] (trip %u)",
+                                 (unsigned long) backoffSec, who, psuTripCount);
+                    }
+                } else {
+                    _backoffUntilUs = wallClockUs() + 100000ULL;
+                    _backoffArmedSec = 0;
+                    ESP_LOGW("mppt", "PSU fast retry [%s] (trip %u)", who, psuTripCount);
+                }
+            } else {
+                if (!inBackoff() || backoffSec > _backoffArmedSec) {
+                    _backoffUntilUs = wallClockUs() + static_cast<time_us>(backoffSec) * 1000000ULL;
+                    _backoffArmedSec = backoffSec;
+                    ESP_LOGW("mppt", "backoff %lus [%s]%s", (unsigned long) backoffSec, who,
+                             _sweeping ? " mid-sweep" : "");
+                }
             }
-            // Abort the sweep: update()'s sweep branch re-enables the converter on every tick and
-            // doesn't consult the backoff, so leaving _sweeping set livelocks the trip
-            // (enable -> protect trip -> disable -> enable ...) at sample rate. The zero-backoff
-            // callers (calibration, user `dc 0`) want immediate resume and must keep sweeping —
-            // startSweep() itself calibrates, and that path calls us every tick.
             _sweeping = false;
         }
     }
@@ -378,15 +404,16 @@ public:
     // First startCondition() clause currently blocking a start, or nullptr if clear.
     // Single source of truth for startCondition(); also logged while idle in START.
     [[nodiscard]] const char *startBlockReason() const {
+        if (psuLatched) return "psu-latch";
         if (inBackoff()) return "backoff";
-        // gate restart at the hard-cutoff knee (Temp_max), not the derate onset: between the
-        // knees the converter must run derated, not stay off (a sweep/backoff above Temp_derate
-        // could never restart until it cooled past the *lower* knee). 3°C re-arm hysteresis.
         if (ntc.last() > limits.Temp_max - 3 || !(ucTemp.last() < limits.Temp_max - 3)) return "temp";
-        if (!(converter.boost()
+        if (!g_app.psuMode() &&
+            !(converter.boost()
                   ? sensors.Vin->ewm.avg.get() < sensors.Vout->ewm.avg.get() + 1
                   : sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1))
             return "Vin-Vout";
+        if (g_app.psuMode() && sensors.Vout && sensors.Vout->last > computeOvThreshold() * 0.98f)
+            return "Vout-still-OV";
         if (boardPowerSupplyUnderVoltage(true)) return "supply-UV";
         if (sampler.isCalibrating()) return "calibrating";
         return nullptr;
@@ -409,7 +436,7 @@ public:
 
         // detect battery voltage
         // TODO move this to charger ?
-        if (!charger.params.haveVbatMax()) {
+        if (!g_app.psuMode() && !charger.params.haveVbatMax()) {
             auto vout = sensors.Vout->calibrationAvg;
             float detectedVout_max = detectMaxBatteryVoltage(vout);
             if (std::isnan(detectedVout_max)) {
@@ -443,14 +470,12 @@ public:
         }
 
         // output over-voltage
-        // todo introduce separate variable for reverse_current_paranoia
+        // An explicit `ovset` overrides the derived threshold (issue #59). Without it the threshold
+        // is derived from Vbat_max × a factor (1.03 with reverse_current_paranoia, 1.5 without).
         // Until the battery is identified, the hard configured ceiling is the only threshold we
         // have. Deriving one from an unusable Vbat_max instead would yield ~0 and trip OV on any
         // output voltage — and protectLf()'s re-detect never runs, because a trip returns before it.
-        auto ovTh = charger.params.haveVbatMax()
-                        ? std::min(charger.params.Vbat_max * (limits.reverse_current_paranoia ? 1.03f : 1.5f),
-                                   limits.Vout_max)
-                        : limits.Vout_max;
+        auto ovTh = computeOvThreshold();
         //if (adcSampler.med3.s.chVout.get() > ovTh) {
         if (sensors.Vout->last > ovTh) {
             //  && sensors.Vout->previous > ovTh * 0.9f
@@ -463,14 +488,23 @@ public:
                 ESP_LOGW("mppt", "Vout %.1fV (prev=%.1fV,ewma=%.1fV,std=%.4f,D=%hu) > %.1fV + 5pct!",
                      sensors.Vout->last, sensors.Vout->previous,
                      sensors.Vout->ewm.avg.get(), sensors.Vout->ewm.std.get(), converter.getCtrlOnPwmCnt(),
-                     charger.params.Vbat_max
+                     ovTh
             );
 
 
-            if (flags.autoDetectVout_max && nowMs - lastTimeProtectPassed > 20000) {
-                // if the OV condition persists for some seconds, auto-detect Vout_max
-                charger.params.Vbat_max = NAN;
-                sampler.startCalibration();
+            if (flags.autoDetectVout_max && !g_app.psuMode() && nowMs - lastTimeProtectPassed > 20000) {
+                // Persistent OV: auto-detect Vout_max by clearing the setpoint so protectLf()
+                // re-detects it. But an explicitly commanded `vset` setpoint must not be silently
+                // discarded — that widens the protection threshold (to the board ceiling) with no
+                // feedback to the host (issue #59).
+                if (charger.params.vbatMaxExplicit) {
+                    ESP_LOGE("mppt", "Vout OV persists %.1fs, but Vbat_max=%.2fV was set via vset — NOT resetting",
+                             (float) (nowMs - lastTimeProtectPassed) / 1000.f, charger.params.Vbat_max);
+                } else {
+                    ESP_LOGW("mppt", "Vout OV persists, clearing Vbat_max for auto-detect");
+                    charger.params.Vbat_max = NAN;
+                    sampler.startCalibration();
+                }
             }
 
             enqueue_task([&] {
@@ -610,7 +644,8 @@ public:
             (converter.forcedPwm_()
                  ? (vOut < 1 or (converter.getDutyCycle() * 0.5f) > vr)
                  : (converter.getDutyCycle() * 0.8f) > vr)
-            and limits.reverse_current_paranoia) {
+            and limits.reverse_current_paranoia
+            and !(g_app.psuMode() && vOut > 0.5f * psuVsetpoint && vOut < psuVsetpoint)) {
             if (!converter.disabled())
                 ESP_LOGE("MPPT",
                      "Buck D=%d%% but Vout(%.2f,vr=%.2f) Iout(%.2f,last=%.2f) low! sensor/HB fail",
@@ -679,6 +714,36 @@ public:
         targetDutyCycle = duty;
     }
 
+    float psuVsetpoint = NAN; // PSU CV setpoint (V); NAN = not commanded
+    bool psuEscalated = false;
+    bool psuLatched = false;
+
+    void setPsuSetpoint(float v) {
+        if (!std::isfinite(v) || v <= 0 || v > limits.Vout_max) return;
+        VoutController.reset();
+        psuVsetpoint = v;
+    }
+
+    void psuResetTripState() {
+        psuTripCount = 0;
+        psuTripWindowStart = 0;
+        psuEscalated = false;
+        psuLatched = false;
+    }
+
+    [[nodiscard]] uint8_t getPsuTripCount() const { return psuTripCount; }
+
+    [[nodiscard]] float computeOvThreshold() const {
+        if (std::isfinite(charger.params.Vout_ov_limit) && charger.params.Vout_ov_limit > 0)
+            return std::min(charger.params.Vout_ov_limit, limits.Vout_max);
+        if (g_app.psuMode() && std::isfinite(psuVsetpoint))
+            return std::min(psuVsetpoint * (limits.reverse_current_paranoia ? 1.03f : 1.5f), limits.Vout_max);
+        if (charger.params.haveVbatMax())
+            return std::min(charger.params.Vbat_max * (limits.reverse_current_paranoia ? 1.03f : 1.5f),
+                            limits.Vout_max);
+        return limits.Vout_max;
+    }
+
     struct CVP {
         MpptControlMode mode;
         PD_Control &crtl;
@@ -729,6 +794,5 @@ public:
     time_us lastUs = 0;
 
     void update(); // normal update
-    void updateCV(); // Constant-Voltage mode
     void updateManual(); // manual mode
 };

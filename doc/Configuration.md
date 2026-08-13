@@ -119,12 +119,53 @@ See [Topology notes & examples](#topology-notes--examples) below for worked ACS7
 | key          | unit | type  | default | description                                                |
 |--------------|------|-------|---------|------------------------------------------------------------|
 | `topo`       |      | enum  | —       | Converter topology: `buck` or `boost`                      |
+| `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default) or `psu` (constant-voltage supply; see `psu` console command) |
+| `psu_vout`   | V    | float | —       | PSU mode output voltage setpoint (used when `mode=psu`; range-checked against `vout_max`) |
 | `forced_pwm` |      | bool  | 0       | Force CCM PWM even at light loads (see notes below)        |
 | `pwm_driver` |      | enum  | ledc    | Gate driver: `ledc` or `mcpwm`. Only consulted when the firmware compiles in both (`CONFIG_FUGU_WITH_LEDC` and `CONFIG_FUGU_WITH_MCPWM`); with one compiled it is forced to that one |
 | `vout_max`   | V    | float | —       | Legacy output voltage limit (real one is in `limits.conf`) |
 | `sync_role`  |      | enum  | none    | Wired MCPWM clock sync (`WITH_WSYNC`): `none`, `leader` (emit TEZ pulse on `board.conf::pwm_sync_pin`) or `follower` (phase-reload timer from that pin). See `doc/dev-notes/wired-sync.md` |
 | `sync_phase_deg` | ° | float | 0      | Leader only: pulse offset from its TEZ as an angle (= follower period-start shift; `180` for interleave). Ignored on a follower (reload fixed at 0) |
 | `sync_phase_ns` | ns | float | 0      | Leader only: additive trim on `sync_phase_deg`, for wire + receiver propagation delay (a time, so it does not scale with `pwm_freq`) |
+| `ctrl_<n>_kp`  |      | float | see below | Proportional gain of control unit `<n>` ∈ {`vin`, `vout`, `iin`, `iout`, `power`} |
+| `ctrl_<n>_kd`  |      | float | see below | Derivative gain of unit `<n>`, applied to the **per-sample** error difference |
+| `ctrl_<n>_td`  | s    | float | (unset)   | Derivative *time* of unit `<n>`. When set it replaces `_kd` and makes the D component sample-rate invariant |
+
+### Control-loop gains
+
+The five PD units in `src/mppt.h` limit duty against Vin (under-voltage), Vout (over-voltage / CV),
+Iin, Iout and power; the smallest response wins each tick. Compiled-in defaults:
+
+| unit    | `_kp` | `_kd` | error is relative to |
+|---------|-------|-------|----------------------|
+| `vin`   | -100  | -200  | `limits.conf::vin_min` |
+| `vout`  | 1500  | 12000 | `charger.Vout_max()` |
+| `iin`   | 100   | 200   | `limits.conf::iin_max` |
+| `iout`  | 200   | 400   | derived `Iout_max` |
+| `power` | 20    | 5     | derived power limit |
+
+These are **not** the whole loop gain — the controller output is scaled into a duty slew rate by a
+per-path constant in `mppt.cpp`:
+
+| path | constant | effective scale |
+|------|----------|-----------------|
+| limiter (`update()`)  | `kCtrlSlewLimit` = 0.025 | 0.025 |
+
+The limiter path is the only duty-slew path: the five PD controllers (Vin, Vout, Iin, Iout, power)
+produce a control value each tick, the minimum wins, and `kCtrlSlewLimit` scales it into a duty
+step. In PSU mode the same chain runs — when no limiter binds, the Vout controller's output drives
+duty toward the setpoint (CV); when a current or power limit binds, it folds back (CC).
+
+**`_kd` vs `_td`.** `_kd` multiplies the raw difference between consecutive samples, so its
+contribution to duty scales with the loop period: the same `_kd` is a *different* derivative gain
+at a different sample rate. Change `sensor.conf::esp32adc1_avg` or `esp32adc1_sr` and every `_kd`
+silently retunes. `_td` expresses the same thing as a time (`de/dt`), which is invariant. To port a
+board without changing its behaviour, set `_td = (_kd / _kp) * Ts` where `Ts` is that board's
+current control period (1 / the Vout sensor's sample rate — the loop runs once per Vout sample).
+Setting `_td` makes `_kd` unused. Both are logged at boot (`ctrl vout: Kp=… Td=…`).
+
+Gains live here rather than in `charger.conf` because they are a property of the plant — L, output
+capacitance, `pwm_freq`, `pwmMax`, buck-vs-boost — not of the battery.
 
 ## charger.conf — battery termination
 

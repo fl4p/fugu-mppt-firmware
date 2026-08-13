@@ -94,9 +94,13 @@ conf-check
 
 | Command | Description |
 | --- | --- |
-| `status` | Print a charger/battery snapshot: termination state, effective limits (`Vbat_max`/`Vout_max`, `Ibat_lim`/`Iout_max`), the termination line (`v_term`/`cv_min`/`cv_eoc`/`Cbat`/`recharge_dod`) and the BMS feed (`vcell_high` with staleness, `ibat`, `ahSinceFull`, `vout_avg`). |
-| `vset <float>` | Set the battery max voltage (`Vbat_max`), range 0–999. |
+| `status` | Print a charger/battery snapshot: termination state, effective limits (`Vbat_max`/`Vout_max`, `Ibat_lim`/`Iout_max`), the termination line (`v_term`/`cv_min`/`cv_eoc`/`Cbat`/`recharge_dod`) and the BMS feed (`vcell_high` with staleness, `ibat`, `ahSinceFull`, `vout_avg`). In PSU mode also prints the setpoint, trip count and escalation state. |
+| `vset <float>` | Set the battery max voltage (`Vbat_max`), range 0–999. Marks the setpoint as explicit so the persistent-OV auto-detect will not silently discard it. |
 | `iset <float>` | Set the battery current limit (`Ibat_lim`), range 0–999. |
+| `ovset <float>` | Set an independent hard output over-voltage trip limit, range 0–999. 0 clears it (reverts to the derived threshold: `Vbat_max` × 1.5, or × 1.03 with `reverse_current_paranoia`). When set, the OV threshold is `min(ovset, vout_max)` regardless of the CV setpoint. |
+| `psu <float>` | Enter PSU (constant-voltage) mode and set the output voltage setpoint. The limiter chain regulates Vout to the setpoint with CV/CC foldback — no MPPT tracker, no periodic sweep, no charger-layer battery semantics. Trips use a fast 100 ms auto-retry with escalation to a hard latch after repeated faults. Range-checks against `limits.conf::vout_max`. |
+| `psu off` | Exit PSU mode, return to MPPT tracking. |
+| `psu` | Print PSU mode state: setpoint, trip count, escalation/latch state. |
 
 These override the running charger parameters only; use `set-config charger.conf …` to persist.
 
@@ -106,8 +110,8 @@ These override the running charger parameters only; use `set-config charger.conf
 | --- | --- |
 | `dc <int>` | Set the converter duty cycle directly and switch the charger to manual PWM mode (no tracking, protection still active). A non-zero duty enables sync rectification and the backflow switch unless `reverse_current_paranoia` is set. |
 | `+<int>`, `-<int>` | Relative duty-cycle perturbation step. Available both in manual and tracking mode (to test tracker recovery). **Be careful with large positive jumps** — they can cause extreme current transients that destroy the switches. |
-| `mppt` | Switch back to MPP tracking mode (only valid while in manual PWM mode). |
-| `sweep` | Start a global MPP scan / search. |
+| `mppt` | Switch back to MPP tracking mode (only valid while in manual PWM or PSU mode). |
+| `sweep` | Start a global MPP scan / search. Exits PSU mode if active. |
 | `speed <float>` | Set tracking speed scale, range 0–10 (default 1.0). |
 | `measure-coil l0\|ls [steps\|hs] [dwell_ms] [apply]` | Measure the coil on-device by driving a DCM sweep (takes over manual PWM, restores MPPT when done). `l0` sweeps duty and reports the inductance (median over the DCM band); `ls` holds HS and sweeps the low-side count to find the `rect_offset_ns` timing. `apply` writes the result to `coil.conf`. Needs `Vin > Vout` (sun/headroom). Port of `etc/measure_coil.py`; see [Coil Inductance Measurement](Coil%20Inductance%20Measurement.md). |
 

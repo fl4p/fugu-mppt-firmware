@@ -91,7 +91,7 @@ static bool s_cmdFailed = false;
 #define CMD_FAIL_RETURN(...) do { ESP_LOGW("main", __VA_ARGS__); s_cmdFailed = true; return; } while (0)
 
 static void cmdSync(cmd *c) {
-    if (!g_app.manualPwm)
+    if (!g_app.manualPwm())
         CMD_FAIL_RETURN("sync: only in manual PWM (use 'dc N' first)");
     auto arg = Command(c).getArg(0).getValue();
     auto on = arg == "on" or arg == "1";
@@ -107,7 +107,7 @@ static void cmdSync(cmd *c) {
 }
 
 static void cmdBflow(cmd *c) {
-    if (!g_app.manualPwm)
+    if (!g_app.manualPwm())
         CMD_FAIL_RETURN("bf: only in manual PWM (use 'dc N' first)");
     if (!mppt.bflow)
         CMD_FAIL_RETURN("panel switch not configured");
@@ -122,12 +122,20 @@ static void cmdBflow(cmd *c) {
 static void cmdRestart(cmd *) { systemRestart(); }
 
 static void cmdMppt(cmd *) {
-    if (!g_app.manualPwm)
+    if (g_app.psuMode()) {
+        ESP_LOGI("main", "MPPT re-enabled (from PSU)");
+        g_app.opMode = OpMode::Mppt;
+        mppt.psuVsetpoint = NAN;
+        mppt.psuResetTripState();
+        mppt.releaseCvFloorLatch("cmdMppt");
+    } else if (!g_app.manualPwm()) {
         CMD_FAIL_RETURN("MPPT already enabled");
-    ESP_LOGI("main", "MPPT re-enabled");
-    converter.setManualRect(-1); // drop any bench LS hold
-    mppt.clearBootTarget(); // drop config-derived duty cap so update() does real tracking
-    g_app.manualPwm = false;
+    } else {
+        ESP_LOGI("main", "MPPT re-enabled");
+        g_app.opMode = OpMode::Mppt;
+    }
+    converter.setManualRect(-1);
+    mppt.clearBootTarget();
 }
 
 // dc <hs> [ls]  — manual PWM. With no [ls] the low side is automatic (diode emulation); with
@@ -155,14 +163,20 @@ static void cmdDc(cmd *c) {
     // manual PWM overrides any running scan; don't leave it latched (mppt.active() would stay true)
     mppt.abortSweep();
 
-    if (!g_app.manualPwm || converter.disabled()) {
+    if (!g_app.manualPwm() || g_app.psuMode() || converter.disabled()) {
         ESP_LOGI("main", "Switched to manual PWM");
         if (dc != 0 && !mppt.limits.reverse_current_paranoia) {
             converter.enableSyncRect(true);
             mppt.bflow.enable(true);
         }
     }
-    g_app.manualPwm = true;
+    if (g_app.psuMode()) {
+        g_app.opMode = OpMode::Manual;
+        mppt.psuVsetpoint = NAN;
+        mppt.psuResetTripState();
+    } else {
+        g_app.opMode = OpMode::Manual;
+    }
     mppt.setManualTarget(dc);
 
     if (cc.countArgs() >= 2 && dc > 0) {
@@ -178,7 +192,7 @@ static void cmdDc(cmd *c) {
 static void cmdShortLs(cmd *) {
     if (converter.boost() && abs(sensors.Vin->ewm.avg.get()) < 0.05) {
         mppt.abortSweep();
-        g_app.manualPwm = true;
+        g_app.opMode = OpMode::Manual;
         mppt.setManualTarget(0);
         converter.shortLs();
     } else {
@@ -254,14 +268,18 @@ static void cmdMcpwmTest(cmd *c) {
 }
 
 static void cmdSweep(cmd *) {
-    // Sweep state advances inside mppt.update(), which loopRTNewData only calls
-    // when !g_app.manualPwm. Drop manual mode here so the sweep can actually ramp PWM.
-    mppt.clearBootTarget(); // drop config-derived duty cap before flipping mode
-    if (g_app.manualPwm) {
+    mppt.clearBootTarget();
+    if (g_app.manualPwm() || g_app.psuMode()) {
         converter.setManualRect(-1);
-        g_app.manualPwm = false;
+        if (g_app.psuMode()) {
+            g_app.opMode = OpMode::Mppt;
+            mppt.psuVsetpoint = NAN;
+            mppt.psuResetTripState();
+        } else {
+            g_app.opMode = OpMode::Mppt;
+        }
     }
-    mppt.clearBackoff(); // user override: don't absorb the manual sweep into a stale trip timer
+    mppt.clearBackoff();
     mppt.startSweep();
 }
 
@@ -489,12 +507,13 @@ static void cmdOta(cmd *c) {
     if (url.length() == 0)
         CMD_FAIL_RETURN("ota: expected url");
 
+    auto savedMode = g_app.opMode;
     // Stop power conversion and let the stage de-energize BEFORE downloading. OTA flash
     // writes briefly stall the RT loop and draw erase-current spikes; at full power that
     // reset the device mid-transfer (doing `dc 0` by hand first was the reliable workaround).
     // Latch manual mode (also disables the !manualPwm-gated watchdogs) and ramp the converter
     // to 0, then wait for it to actually disable so the supply is settled when flashing begins.
-    g_app.manualPwm = true;
+    g_app.opMode = OpMode::Manual;
     mppt.setManualTarget(0); // graceful ramp-down, then converter.disable()
     for (int i = 0; i < 100 && !converter.disabled(); ++i) delay(100); // <=10s for the ramp
     delay(500);                 // let the output coil/caps de-energize
@@ -502,11 +521,16 @@ static void cmdOta(cmd *c) {
 
     bool ok = doOta(url.c_str()); // reboots on success and never returns
 
-    // OTA failed — resume normal operation (mirror cmdMppt).
+    // OTA failed — resume the prior operating mode
     adcSampler.halted = false;
     converter.setManualRect(-1);
     mppt.clearBootTarget();
-    g_app.manualPwm = false;
+    if (savedMode == OpMode::Psu) {
+        mppt.psuResetTripState();
+        g_app.opMode = OpMode::Psu;
+    } else {
+        g_app.opMode = OpMode::Mppt;
+    }
     if (!ok)
         CMD_FAIL_RETURN("ota: update failed");
 }
@@ -1273,8 +1297,10 @@ static void cmdConfCheck(cmd *) {
 static void cmdVset(cmd *c) {
     float v = Command(c).getArg(0).getValue().toFloat();
     // 0 is not "no limit": it clamps the OV threshold to ~0 and wedges the converter (issue #58).
-    if (v > 0 and v <= 999) mppt.charger.params.Vbat_max = v;
-    else
+    if (v > 0 and v <= 999) {
+        mppt.charger.params.Vbat_max = v;
+        mppt.charger.params.vbatMaxExplicit = true;
+    } else
         CMD_FAIL_RETURN("vset: out of range (0,999]");
 }
 
@@ -1283,6 +1309,56 @@ static void cmdIset(cmd *c) {
     if (v >= 0 and v <= 999) mppt.charger.params.Ibat_lim = v;
     else
         CMD_FAIL_RETURN("iset: out of range [0,999]");
+}
+
+static void cmdOvset(cmd *c) {
+    float v = Command(c).getArg(0).getValue().toFloat();
+    if (v > 0 and v <= 999) {
+        mppt.charger.params.Vout_ov_limit = v;
+        UART_LOG("ovset: hard OV limit = %.2fV", v);
+    } else if (v == 0) {
+        mppt.charger.params.Vout_ov_limit = NAN;
+        UART_LOG("ovset: cleared, OV threshold reverts to derived");
+    } else
+        CMD_FAIL_RETURN("ovset: out of range [0,999] (0 = clear)");
+}
+
+static void cmdPsu(cmd *c) {
+    Command cc(c);
+    auto arg = cc.countArgs() >= 1 ? cc.getArg(0).getValue() : String();
+    if (arg.length() == 0) {
+        if (g_app.psuMode()) {
+            UART_LOG("PSU: on vset=%.2fV %s trips=%u",
+                     mppt.psuVsetpoint,
+                     mppt.psuLatched ? "LATCHED" : mppt.psuEscalated ? "escalated" : "ok",
+                     mppt.getPsuTripCount());
+        } else {
+            UART_LOG("PSU: off");
+        }
+        return;
+    }
+    if (arg == "off") {
+        if (!g_app.psuMode())
+            CMD_FAIL_RETURN("psu: not in PSU mode");
+        mppt.abortSweep();
+        mppt.clearBackoff();
+        converter.setManualRect(-1);
+        g_app.opMode = OpMode::Mppt;
+        mppt.psuVsetpoint = NAN;
+        mppt.psuResetTripState();
+        ESP_LOGI("main", "PSU off, MPPT mode");
+        return;
+    }
+    float v = arg.toFloat();
+    if (!std::isfinite(v) || v <= 0 || v > mppt.limits.Vout_max)
+        CMD_FAIL_RETURN("psu: out of range (0,%.1f]", mppt.limits.Vout_max);
+    mppt.abortSweep();
+    mppt.clearBackoff();
+    converter.setManualRect(-1);
+    mppt.psuResetTripState();
+    mppt.setPsuSetpoint(v);
+    g_app.opMode = OpMode::Psu;
+    ESP_LOGI("main", "PSU mode, vset=%.2fV", v);
 }
 
 // status  — charger/battery snapshot: termination state, effective limits, termination line and BMS feed.
@@ -1296,6 +1372,11 @@ static void cmdStatus(cmd *) {
     UART_LOG("Charger: %s", (bool) chg.termCond ? "TERMINATED (float)" : "charging");
     UART_LOG("  Vbat_max=%.2fV Vout_max=%.2fV  Ibat_lim=%.1fA Iout_max=%.1fA",
              p.Vbat_max, chg.Vout_max(), p.Ibat_lim, chg.Iout_max());
+    if (std::isfinite(p.Vout_ov_limit) && p.Vout_ov_limit > 0)
+        UART_LOG("  OV limit=%.2fV (explicit ovset%s)", p.Vout_ov_limit,
+                 p.vbatMaxExplicit ? ", vset locked" : "");
+    else
+        UART_LOG("  OV limit=derived from Vbat_max%s", p.vbatMaxExplicit ? " (vset locked)" : "");
     UART_LOG("  v_term=%.3fV cv_min=%.3f cv_eoc=%.3f  Cbat=%.1fAh recharge_dod=%.2f",
              chg.termCond.v_term(), p.cv_min, p.cv_eoc, p.Cbat, p.recharge_dod);
     float ah = bs.coulombCounter.ahSinceFull();
@@ -1304,6 +1385,11 @@ static void cmdStatus(cmd *) {
              bs.ibatSmoothed(), ah, bs.vout_avg.get());
     if ((bool) chg.termCond && std::isfinite(p.Cbat) && p.Cbat > 0.f && p.recharge_dod > 0.f)
         UART_LOG("  DoD since full: %.0f%% / %.0f%% to recharge", ah / p.Cbat * 100.f, p.recharge_dod * 100.f);
+    if (g_app.psuMode()) {
+        UART_LOG("PSU: vset=%.2fV %s trips=%u", mppt.psuVsetpoint,
+                 mppt.psuLatched ? "LATCHED" : mppt.psuEscalated ? "escalated" : "ok",
+                 mppt.getPsuTripCount());
+    }
 }
 
 // svc [list]                       svc on|off|restart|rs <name>
@@ -1685,6 +1771,8 @@ void setupCli() {
 #endif
     cli.addSingleArgCmd("vset", cmdVset);
     cli.addSingleArgCmd("iset", cmdIset);
+    cli.addSingleArgCmd("ovset", cmdOvset);
+    cli.addBoundlessCmd("psu", cmdPsu);
     cli.addCommand("status", cmdStatus);
 
     cli.addBoundlessCmd("hostname,hn", cmdHostname);
@@ -1725,8 +1813,13 @@ bool handleCommand(const String &inp) {
         int target = (int) converter.getCtrlOnPwmCnt() + pwmStep;
         if (target < 0) target = 0;
         if (target > converter.pwmCtrlMax) target = converter.pwmCtrlMax;
-        if (g_app.manualPwm)
+        if (g_app.manualPwm())
             mppt.setManualTarget((uint16_t) target);
+        else if (g_app.psuMode()) {
+            ESP_LOGW("main", "+-N: not in PSU mode (use 'psu off' first)");
+            s_cmdFailed = true;
+            return false;
+        }
         else
             mppt.setAutoRampTarget((uint16_t) target);
         ESP_LOGI("main", "PWM step %i -> target %i", pwmStep, target);

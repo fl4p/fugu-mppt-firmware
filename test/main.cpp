@@ -197,6 +197,15 @@ void test_pd_derivative_on_step();
 void test_pd_normalize_relative_error();
 void test_pd_reset_clears_derivative();
 void test_pd_smooth_setpoint_lags_step();
+void test_pd_legacy_kd_is_sample_rate_coupled();
+void test_pd_td_is_sample_rate_invariant();
+void test_pd_td_matches_legacy_at_nominal_ts();
+void test_pd_td_zero_dt_suppresses_derivative();
+void test_pd_load_gains_empty_conf_is_noop();
+void test_pd_load_gains_applies_keys();
+void test_pd_load_gains_rejects_negative_td();
+void test_pd_load_gains_rejects_nonfinite_kp();
+void test_pd_negative_td_would_flip_limiter_sign();
 
 // buck.h
 void test_buck_ripple_current();
@@ -282,6 +291,25 @@ void test_terminated_no_authority_yields_low();
 void test_not_terminated_no_authority_releases_high();
 // test_charger.cpp — releaseVoutPinning must reset the terminated-state memory so the float glide restarts
 void test_release_vout_pinning_restarts_float_glide();
+
+// test_psu_mode.cpp — PSU constant-voltage mode
+void test_psu_ov_threshold_from_setpoint();
+void test_psu_ov_threshold_clamped_to_vout_max();
+void test_psu_ov_threshold_explicit_ovset_overrides();
+void test_psu_ov_threshold_no_setpoint_falls_back();
+void test_psu_trip_escalates_after_repeated_trips();
+void test_psu_trip_latches_after_many_trips();
+void test_psu_trip_sparse_does_not_escalate();
+void test_psu_trip_permanent_fault_reaches_latch();
+void test_psu_serious_fault_stays_out_of_fast_retry_bucket();
+void test_psu_trip_latch_blocks_start();
+void test_psu_reset_clears_latch();
+void test_psu_setpoint_rejects_negative();
+void test_psu_setpoint_rejects_zero();
+void test_psu_setpoint_rejects_nan();
+void test_psu_setpoint_rejects_above_vout_max();
+void test_psu_setpoint_accepts_valid();
+void test_psu_mode_flag_correct();
 
 void setup() {
 #ifdef TEST_ADC_HW
@@ -378,6 +406,15 @@ void setup() {
     RUN_TEST(test_pd_normalize_relative_error);
     RUN_TEST(test_pd_reset_clears_derivative);
     RUN_TEST(test_pd_smooth_setpoint_lags_step);
+    RUN_TEST(test_pd_legacy_kd_is_sample_rate_coupled);
+    RUN_TEST(test_pd_td_is_sample_rate_invariant);
+    RUN_TEST(test_pd_td_matches_legacy_at_nominal_ts);
+    RUN_TEST(test_pd_td_zero_dt_suppresses_derivative);
+    RUN_TEST(test_pd_load_gains_empty_conf_is_noop);
+    RUN_TEST(test_pd_load_gains_applies_keys);
+    RUN_TEST(test_pd_load_gains_rejects_negative_td);
+    RUN_TEST(test_pd_load_gains_rejects_nonfinite_kp);
+    RUN_TEST(test_pd_negative_td_would_flip_limiter_sign);
 
     // tracker.h — perturb&observe MPPT. Runs before buck.h because on the ESP32-classic the buck
     // tests drive LEDC on pwm_hi=1 (= U0TXD), hijacking the console UART — anything logged after
@@ -434,6 +471,25 @@ void setup() {
     RUN_TEST(test_terminated_no_authority_yields_low);
     RUN_TEST(test_not_terminated_no_authority_releases_high);
     RUN_TEST(test_release_vout_pinning_restarts_float_glide);
+
+    // PSU mode — constant-voltage operating mode
+    RUN_TEST(test_psu_mode_flag_correct);
+    RUN_TEST(test_psu_ov_threshold_from_setpoint);
+    RUN_TEST(test_psu_ov_threshold_clamped_to_vout_max);
+    RUN_TEST(test_psu_ov_threshold_explicit_ovset_overrides);
+    RUN_TEST(test_psu_ov_threshold_no_setpoint_falls_back);
+    RUN_TEST(test_psu_setpoint_rejects_negative);
+    RUN_TEST(test_psu_setpoint_rejects_zero);
+    RUN_TEST(test_psu_setpoint_rejects_nan);
+    RUN_TEST(test_psu_setpoint_rejects_above_vout_max);
+    RUN_TEST(test_psu_setpoint_accepts_valid);
+    RUN_TEST(test_psu_trip_escalates_after_repeated_trips);
+    RUN_TEST(test_psu_trip_latches_after_many_trips);
+    RUN_TEST(test_psu_trip_sparse_does_not_escalate);
+    RUN_TEST(test_psu_trip_permanent_fault_reaches_latch);
+    RUN_TEST(test_psu_serious_fault_stays_out_of_fast_retry_bucket);
+    RUN_TEST(test_psu_trip_latch_blocks_start);
+    RUN_TEST(test_psu_reset_clears_latch);
     RUN_TEST(test_nvs_readstring_roundtrips_long_value);
     RUN_TEST(test_nvs_readstring_short_and_missing);
     RUN_TEST(test_telnet_command_is_deferred_then_runs_on_drain);

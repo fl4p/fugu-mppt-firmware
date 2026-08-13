@@ -244,10 +244,11 @@ static void sweepLs(const MeasArgs &a) {
 
 static void measureCoilTask(void *arg) {
     auto a = *(const MeasArgs *) arg;
+    auto savedMode = g_app.opMode;
     if (!sensors.Vin || !sensors.Vout || !sensors.Iout) {
         UART_LOG("measure-coil: missing Vin/Vout/Iout sensor");
     } else {
-        g_app.manualPwm = true;
+        g_app.opMode = OpMode::Manual;
         if (!mppt.limits.reverse_current_paranoia) {
             converter.enableSyncRect(true);
             mppt.bflow.enable(true);
@@ -260,9 +261,9 @@ static void measureCoilTask(void *arg) {
     while (!converter.disabled() && wallClockMs() < doneDeadline)
         vTaskDelay(pdMS_TO_TICKS(10));
     mppt.clearBootTarget();
-    g_app.manualPwm = false;
+    g_app.opMode = savedMode;
     s_measureBusy.store(false);
-    UART_LOG("measure-coil: done, MPPT restored");
+    UART_LOG("measure-coil: done, mode restored");
     vTaskDelete(nullptr);
 }
 

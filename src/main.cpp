@@ -218,22 +218,34 @@ static void setupConverterAndMppt(const ConfFile &boardConf, const Limits &lim, 
         scope->addChannel(&mppt, 0, 'u', 12, "vout_filt"); // scope owned by scopeService (scope -> &scopeObj)
 #endif
 
+        // converterConf outlives the block below: mppt.begin() reads the ctrl_* gains from it, so
+        // its warnUnknownKeys() has to wait until after that (else those keys read as unknown).
+        ConfFile converterConf{};
+
         if (!g_app.setupErr) {
             ConfFile coilConf{"/littlefs/conf/coil.conf"};
-            ConfFile converterConf{"/littlefs/conf/converter.conf"};
             ConfFile chargerConf{"/littlefs/conf/charger.conf"};
+            converterConf = ConfFile{"/littlefs/conf/converter.conf"};
 
             mppt.charger.begin(chargerConf);
             converter.init(converterConf, boardConf, coilConf);
             chargerConf.warnUnknownKeys();
-            converterConf.warnUnknownKeys();
             coilConf.warnUnknownKeys();
         }
 
         if (!g_app.setupErr && !adcSampler.adcStates.empty()) {
             ConfFile trackerConf{"/littlefs/conf/tracker.conf", true};
-            mppt.begin(trackerConf, boardConf, lim, teleConf);
+            try {
+                mppt.begin(trackerConf, boardConf, converterConf, lim, teleConf);
+            } catch (...) {
+                // begin() throws on a malformed ctrl_* value. The unknown-key warning is what names
+                // a *typo'd* key, so it has to survive that throw — otherwise the one diagnostic
+                // that explains the failed boot is swallowed by the failure itself.
+                converterConf.warnUnknownKeys();
+                throw;
+            }
             trackerConf.warnUnknownKeys();
+            converterConf.warnUnknownKeys();
         }
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during sensor/converter/tracker setup: %s", er.what());
@@ -519,8 +531,12 @@ static esp_err_t disable_cpu_power_saving(void) {
 }
 
 void stopAndBackoff(uint32_t secondsDelay) {
-    mppt.shutdownDcdc("stopAndBackoff");
-    delayStartUntil = wallClockUs() + static_cast<time_us>(secondsDelay) * 1000000ULL;
+    if (!converter.disabled())
+        mppt.shutdownDcdc("stopAndBackoff");
+    if (g_app.psuMode() && secondsDelay <= 5)
+        delayStartUntil = wallClockUs() + 100000ULL;
+    else
+        delayStartUntil = wallClockUs() + static_cast<time_us>(secondsDelay) * 1000000ULL;
 }
 
 static void loopRT(void *arg) {
@@ -680,7 +696,7 @@ static void lfWatchdog(time_us nowUs, uint32_t dt, uint32_t sps, uint32_t nSampl
 
     bool starved = (dt > (lfPeriod * 0.9f)) && sps < g_app.loopRateMin && !converter.disabled() &&
                    nSamples > max(g_app.loopRateMin * 5, 200) &&
-                   !g_app.manualPwm && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 2000000;
+                   !g_app.manualPwm() && lastTimeOutUs && (nowUs - adcSampler.getTimeLastCalibrationUs()) > 2000000;
     if (!starved) {
         starvedWindows = 0;
         return;
@@ -727,7 +743,10 @@ static void lfStuckWatchdog() {
     // re-runs ADC calibration (resetPeripherals), which would keep resetting the stuck-timer and
     // defeat this watchdog. A legitimate calibration is far shorter than TIMEOUT_US, so the
     // sustained timer already excludes it.
-    bool stuck = headroom && noPower && !g_app.manualPwm && !bool(mppt.charger.termCond);
+    bool stuck = headroom && noPower && !g_app.manualPwm()
+                 && (g_app.psuMode()
+                         ? (std::isfinite(mppt.psuVsetpoint) && sensors.Vout->ewm.avg.get() < mppt.psuVsetpoint - 2.0f)
+                         : !bool(mppt.charger.termCond));
 
     if (!stuck) { stuckSinceUs = 0; triedRelease = false; return; }
     if (!stuckSinceUs) { stuckSinceUs = nowUs; return; }
@@ -798,11 +817,13 @@ static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt) {
         dt ? (uint32_t) (bytesSent * 1000llu / dt) : 0,
         converter.inDCM() ? "DCM" : "CCM",
         converter.getCtrlOnPwmCnt(), converter.getRectOnPwmCnt(), converter.getRectOnPwmMax(),
-        g_app.manualPwm
+        g_app.manualPwm()
             ? "MANU"
-            : (mppt.converter.disabled() && !mppt.startCondition()
-                   ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
-                   : mpptStateStr().c_str()),
+            : (g_app.psuMode()
+                   ? "PSU"
+                   : (mppt.converter.disabled() && !mppt.startCondition()
+                          ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
+                          : mpptStateStr().c_str())),
         (int) mppt.active(),
         g_app.maxLoopLag,
         nSamples,
@@ -811,7 +832,7 @@ static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt) {
 
     // While idle in START, name the startCondition() clause that's blocking the start
     // (throttled: on-change, else every 30s). Diagnoses stuck pre-dawn starts from the log.
-    if (mppt.converter.disabled() && !g_app.manualPwm) {
+    if (mppt.converter.disabled() && !g_app.manualPwm() && !g_app.psuMode()) {
         const char *reason = mppt.startBlockReason();
         static const char *lastReason = nullptr;
         static time_us lastLogUs = 0;
@@ -828,7 +849,7 @@ static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt) {
 
 // RGB LED color from current converter state (manual / idle / sweep / MPPT / CV / topping).
 static void lfUpdateLed(time_us nowUs) {
-    if (g_app.manualPwm) {
+    if (g_app.manualPwm()) {
         uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.limits.P_max * 255, 1, 255);
         led.setRGB(0, i, i);
         return;
@@ -923,18 +944,18 @@ static void loopRTNewData(time_ms nowMs) {
     if (unlikely(adcSampler.isCalibrating())) {
         mppt.shutdownDcdc("calib", 0); // calibration must resume MPPT immediately on completion
     } else {
-        if (mppt.active() or g_app.manualPwm) {
+        if (mppt.active() or g_app.manualPwm()) {
             rtcount("protect.pre");
             bool mppt_ok = true;
             if (!mppt.converter.disabled()) {
-                mppt_ok &= mppt.protect(g_app.manualPwm);
+                mppt_ok &= mppt.protect(g_app.manualPwm());
                 rtcount("protect");
-                mppt_ok &= mppt.protectLf(g_app.manualPwm);
+                mppt_ok &= mppt.protectLf(g_app.manualPwm());
                 rtcount("protectLf");
             }
             if (mppt_ok) {
                 if (haveNewSample) {
-                    if (!g_app.manualPwm) {
+                    if (!g_app.manualPwm()) {
                         rtcount("mppt.update.pre");
                         mppt.update();
                         rtcount("mppt.update");
@@ -947,7 +968,12 @@ static void loopRTNewData(time_ms nowMs) {
                 stopAndBackoff(4);
             }
         } else if (wallClockUs() > delayStartUntil && mppt.startCondition()) {
-            if (!g_app.manualPwm) {
+            if (g_app.psuMode()) {
+                mppt.bflow.enable(true);
+                converter.pwmPerturb(1);
+                delayStartUntil = wallClockUs() + 4 * 1000000ULL;
+                ESP_LOGI("mppt", "PSU: arming converter from cold start");
+            } else if (!g_app.manualPwm()) {
                 // Don't open-loop sweep into a possibly-full pack: a sweep ramps duty 0->max and dumps a
                 // charge pulse (the recharge-after-reboot we saw on repeated OTAs). Skip while terminated.
                 // Right after boot termCond isn't known until the first BMS cell frame arrives, so if a BMS
@@ -988,7 +1014,7 @@ static void loopRTNewData(time_ms nowMs) {
     }
 
 
-    if (g_app.manualPwm) {
+    if (g_app.manualPwm()) {
         if (!converter.disabled())
             converter.pwmPerturb(0); // this will increase LS duty cycle if possible
     }

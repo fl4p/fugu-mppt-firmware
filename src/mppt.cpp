@@ -9,19 +9,23 @@
 
 constexpr auto withDebugFields = false;
 
+// Controller output -> duty slew rate [normalized duty per second]. The loop gain of a controller
+// is Kp * this, so keep it named rather than as a literal buried in the update path.
+// updateCV() additionally applies a low-duty gate factor on top (see there).
+static constexpr float kCtrlSlewLimit = 25.f * 2.f / 2000.f; // limiter path, update()
+
+// Gain loading lives in pd_control.h (pdLoadGains) so it is reachable from the unit tests.
+
 /**
  * - Energy counter
  * - voltage and current control
  * - calls mpp tracker
  */
 void MpptController::update() {
-    if (targetPwmCnt) {
-        updateCV();
-        return;
-    }
-
     //auto nowMs = wallClockMs();
     auto &nowUs = wallClockUs();
+    // 0 on the first update after a reset: suppresses the D component instead of dividing by it
+    const float dtCtrl = lastUs ? (float) (nowUs - lastUs) * 1e-6f : 0.f;
 
     if (converter.disabled() && !startCondition()) {
         bflow.enable(false);
@@ -63,7 +67,7 @@ void MpptController::update() {
     //float powerLimit = std::min(thermalPowerLimit(ntcTemp), limits.P_max);
 
     // charge current
-    float Iout_max = min(limits.Iout_max, charger.Iout_max());
+    float Iout_max = g_app.psuMode() ? limits.Iout_max : min(limits.Iout_max, charger.Iout_max());
 
     // periodic sweep / scan
     // Skip while the battery is full / output-voltage-limited (CV): there's no MPP to find,
@@ -71,7 +75,7 @@ void MpptController::update() {
     // Also wait out any pending backoff — a scheduled re-sweep firing into an active trip
     // timer would stall under the same livelock that startCondition() guards against.
     bool batteryFull = bool(charger.termCond) || ctrlState.mode == MpptControlMode::CV;
-    if (!_sweeping && !batteryFull && !inBackoff() && (nowUs - sampler.getTimeLastCalibrationUs()) > (30 * 60000000)) {
+    if (!g_app.psuMode() && !_sweeping && !batteryFull && !inBackoff() && (nowUs - sampler.getTimeLastCalibrationUs()) > (30 * 60000000)) {
         ESP_LOGI("mppt", "periodic sweep & sensor calibration");
         g_app.maxLoopLag = 0; // restart the lag window so telemetry tracks per-sweep peak, not all-time
         startSweep();
@@ -87,7 +91,7 @@ void MpptController::update() {
         CVP{
             CV, VoutController, {
                 _sweeping ? sensors.Vout->ewm.avg.get() : sensors.Vout->med3.get(),
-                charger.Vout_max()
+                g_app.psuMode() ? psuVsetpoint : charger.Vout_max()
             }
         }, // todo last or med3
         CVP{
@@ -108,7 +112,7 @@ void MpptController::update() {
     float limitingControlValue = std::numeric_limits<float>::infinity();
 
     for (auto &c: controlValues) {
-        auto cv = c.crtl.update(c.actual, c.target);
+        auto cv = c.crtl.update(c.actual, c.target, dtCtrl);
 
         if (!isfinite(cv) && !converter.disabled() && converter.getDutyCycle() > 0.01f) {
             ESP_LOGW("mppt", "Control value %f not finite act=%.3f tgt=%.3f idx=%i", cv, c.actual, c.target,
@@ -225,9 +229,14 @@ void MpptController::update() {
     );
 
     if (controlMode == MpptControlMode::None) {
-        controlMode = MpptControlMode::MPPT;
-        controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get());
-        controlValue *= speedScale;
+        if (g_app.psuMode()) {
+            controlMode = MpptControlMode::CV;
+            controlValue = limitingControlValue;
+        } else {
+            controlMode = MpptControlMode::MPPT;
+            controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get());
+            controlValue *= speedScale;
+        }
     } else {
         // tracker.resetTracker(power_smooth, controlValue > 0);
         tracker.resetDirection(controlValue > 0);
@@ -243,8 +252,7 @@ void MpptController::update() {
 
     if (lastUs) {
         // normalize the control value to pwmMax and scale it with update rate to fix buck slope rate
-        auto dt_us = nowUs - lastUs;
-        auto fp = controlValue * (1.f / 2000.f) * (float) converter.pwmCtrlMax * (float) dt_us * 1e-6f * 25.f * 2.f;
+        auto fp = controlValue * kCtrlSlewLimit * (float) converter.pwmCtrlMax * dtCtrl;
         if (!_sweeping && converter.getCtrlOnPwmCnt() < converter.pwmCtrlMin * 2) {
             // slow-down control loop for low duty cycles (low-load condition)
             // TODO does this makes sense? the aim here is to stabilize Vout in low/no-load condition
@@ -274,7 +282,7 @@ void MpptController::update() {
     if (converter.syncRectEnabled_() != aboveThres)
         UART_LOG_ASYNC("Current %s threshold %.2f (pwm=%hu)", aboveThres ? "above" : "below", I_phys_smooth_min,
                        converter.getCtrlOnPwmCnt());
-    bflow.enable(aboveThres || converter.boost()); // the backflow switch is only useful in buck topology
+    bflow.enable(aboveThres || converter.boost() || g_app.psuMode());
     converter.enableSyncRect(aboveThres);
 
     rtcount("mppt.update.en");
@@ -285,94 +293,6 @@ void MpptController::update() {
         rtcount("mppt.update.led");
     }
 }
-
-void MpptController::updateCV() {
-    // TODO TODO
-    // Temperature derating?
-    auto &nowUs = wallClockUs();
-
-    auto cv = VoutController.update(sensors.Vout->last, charger.Vout_max());
-    ctrlState.mode = MpptControlMode::CV;
-    cntrlValue = cv;
-
-    if (!std::isfinite(cv)) {
-        if (!converter.disabled()) {
-            ESP_LOGW("mppt", "Control value %f not finite act=%.3f tgt=%.3f idx=%i", cv, sensors.Vout->last,
-                     charger.Vout_max(), 0);
-            shutdownDcdc("updateCV-nan");
-        }
-        return;
-    }
-
-    float currentThreshold = limits.reverse_current_paranoia
-                                 ? (bflow.state() ? 0.05f : 0.2f)
-                                 : (bflow.state() ? 0.0f : 0.1f); // hysteresis; // hysteresis
-    float I_phys_smooth_min = sensorPhysicalI->ewm.avg.get();
-    bool aboveThres = (I_phys_smooth_min > currentThreshold
-                       || (I_phys_smooth_min > -0.01 && converter.getDutyCycle() > 0.3f)
-    );
-
-    /*
-        if (targetPwmCnt) {
-            // no tracking,
-            controlMode = MpptControlMode::MPPT;
-            auto cnt = converter.getCtrlOnPwmCnt();
-            controlValue = cnt == targetPwmCnt ? 0 : (cnt > targetPwmCnt) ? -1 : std::min(
-                    voutCtrlVal, (float)targetPwmCnt - cnt);
-        } */
-
-
-    if (lastUs) {
-        // normalize the control value to pwmMax and scale it with update rate to fix buck slope rate
-        auto dt_us = nowUs - lastUs;
-        auto fp = cv * (1.f / 10000.f) * (float) converter.pwmCtrlMax * (float) dt_us * 1e-6f * 25.f * 2.f;
-
-        // Low-duty gate: slow the loop at very short Ctrl on-times (low/no-load). Thresholds are
-        // on-times in ns so they stay invariant to PWM resolution/frequency (counts = ns*fsw*pwmMax).
-        const auto onCnt = converter.getCtrlOnPwmCnt();
-        const float tickRate = converter.getPwmTickRate();
-        if (onCnt < pwmCountsFromNs(2000.f, tickRate)) {
-            fp *= 0.01f;
-        } else if (onCnt < pwmCountsFromNs(2500.f, tickRate)) {
-            fp *= 0.04f;
-        } else {
-            fp *= 10.0f;
-        }
-
-        if ((fp + (float) converter.getCtrlOnPwmCnt() > (float) targetPwmCnt)) {
-            fp = (float) targetPwmCnt - (float) converter.getCtrlOnPwmCnt();
-        }
-
-        // no pwm jitter near target, "lock-in"
-        if (targetPwmCnt && absdiff(converter.getCtrlOnPwmCnt(), targetPwmCnt) < converter.pwmCtrlMax / 512) {
-            //if (fp < 0 or fp > 100)
-            //    ESP_LOGI("mppt", "near tgt, fp=%.4f pwm=%hu, tgt=%hu", fp, converter.getCtrlOnPwmCnt(), targetPwmCnt);
-            if ((int) fabsf(fp) < converter.pwmCtrlMax / 512)
-                fp = (float) targetPwmCnt - (float) converter.getCtrlOnPwmCnt();
-        } /*else         if (targetPwmCnt && absdiff(converter.getCtrlOnPwmCnt(), targetPwmCnt) < converter.pwmCtrlMax/128) {
-            //if (fp < 0 or fp > 100)
-            //    ESP_LOGI("mppt", "near tgt,-5 fp=%.4f pwm=%hu, tgt=%hu", fp, converter.getCtrlOnPwmCnt(), targetPwmCnt);
-            if ((int)fabsf(fp) < converter.pwmCtrlMax/512)
-                fp = 0;
-        }*/
-
-        fp = constrain(fp, -(float) converter.getCtrlOnPwmCnt(), 16.0f * (float) converter.pwmCtrlMax / 2000.f);
-        converter.pwmPerturbFractional(fp);
-
-        rtcount("mppt.update.pwm");
-    }
-    lastUs = nowUs;
-
-    if (bflow.state() != aboveThres)
-        UART_LOG_ASYNC("Current %s threshold %.2f (pwm=%hu)", aboveThres ? "above" : "below", I_phys_smooth_min,
-                       converter.getCtrlOnPwmCnt());
-
-    bflow.enable(aboveThres);
-    converter.enableSyncRect(aboveThres);
-
-    rtcount("mppt.update.en");
-}
-
 
 void MpptController::updateManual() {
     lastUs = wallClockUs();
@@ -405,10 +325,16 @@ void MpptController::updateManual() {
 }
 
 
-void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardConf, const Limits &limits_,
-                           const TeleConf &tele_) {
+void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardConf, const ConfFile &converterConf,
+                           const Limits &limits_, const TeleConf &tele_) {
     limits = limits_;
     tele = tele_;
+
+    pdLoadGains(converterConf, VinController, "vin");
+    pdLoadGains(converterConf, VoutController, "vout");
+    pdLoadGains(converterConf, IinController, "iin");
+    pdLoadGains(converterConf, IoutCurrentController, "iout");
+    pdLoadGains(converterConf, powerController, "power");
 
     float frac = trackerConf.getFloat("target_duty_cycle", 0.0f);
     if (std::isfinite(frac) && frac > 0.0f && frac <= 1.0f)
@@ -417,10 +343,27 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
         targetPwmCnt = 0;
 
     if (targetPwmCnt) {
-        g_app.manualPwm = true;
+        g_app.opMode = OpMode::Manual;
         manualTarget = std::min(targetPwmCnt, converter.pwmCtrlMax);
         ESP_LOGW("mppt", "target duty cycle PWM=%hu, manual mode (fixed duty), pwmMaxDriver=%u",
                  targetPwmCnt, (unsigned) converter.pwmMaxDriver());
+    }
+
+    auto mode = converterConf.getString("mode", "");
+    if (mode == "psu" && !targetPwmCnt) {
+        float vout = converterConf.getFloat("psu_vout", 0.0f);
+        if (std::isfinite(vout) && vout > 0 && vout <= limits.Vout_max) {
+            psuVsetpoint = vout;
+            VoutController.reset();
+            g_app.opMode = OpMode::Psu;
+            ESP_LOGI("mppt", "PSU mode, vset=%.2fV", vout);
+        } else {
+            ESP_LOGE("mppt", "PSU mode but psu_vout invalid (%.2f), disabling", vout);
+            g_app.setupErr = true;
+        }
+    } else if (!mode.empty() && mode != "mppt" && !targetPwmCnt) {
+        ESP_LOGE("mppt", "Unknown converter.conf mode '%s', disabling", mode.c_str());
+        g_app.setupErr = true;
     }
 
     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
@@ -448,6 +391,9 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
             converter.enableSyncRect(true);
             bflow.enable(true);
         }
+    } else if (g_app.psuMode()) {
+        sampler.startCalibration();
+        ESP_LOGI("mppt", "PSU mode: calibration started, converter arm deferred to RT loop");
     } else {
         startSweep();
     }

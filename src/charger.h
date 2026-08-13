@@ -25,6 +25,14 @@ struct BatChargerParams {
     float recharge_dod = 0.20f; // DoD-since-EoC to release termination. LFP  ~0.20. See doc/Termination.md.
     float recharge_vfloor_band = 0.05f; // [V] cell-voltage drop below cv_min to release termination (fallback to DoD). See doc/Termination.md.
     float vout_offset_max = 0.6f; // [V] worst-case Vout-sensor error to tolerate during terminated float.
+
+    // Independent hard output OV trip limit, set by the `ovset` console command. NAN = not set;
+    // the OV threshold is then derived from Vbat_max (issue #59). When set, the threshold is
+    // min(Vout_ov_limit, limits.Vout_max), independent of the CV setpoint.
+    float Vout_ov_limit = NAN;
+    // True when Vbat_max was set explicitly via `vset` (not from config or auto-detect). The
+    // persistent-OV auto-detect reset must not discard an explicitly commanded setpoint (issue #59).
+    bool vbatMaxExplicit = false;
     // The EOC feedback loop drives the highest cell (BMS, accurate) down to its target by lowering vpack_pin;
     // this is how far below the nominal float floor (Vbat_fallback, expressed in this converter's possibly-
     // offset Vout frame) it may pull. Without it a converter that reads Vout high pins a full pack above EOC

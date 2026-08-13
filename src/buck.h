@@ -574,7 +574,8 @@ public:
         auto bootRefreshNs = boardConf.getFloat("boot_refresh_ns", 2000.f);
         pwmRectMin = isBoost ? 0 : (uint16_t) std::ceil(
                          bootRefreshNs * 1e-9f * (float) pwmFrequency * (float) driverPwmMax);
-        pwmCtrlMax = (uint16_t) (driverPwmMax - pwmRectMin);
+        // Boost: cap max duty at 90% so the LS FET always turns off to release inductor energy
+        pwmCtrlMax = isBoost ? (uint16_t)(driverPwmMax * 0.9f) : (uint16_t)(driverPwmMax - pwmRectMin);
         pwmCtrlMin = 1; //isBoost ? 0 : 0;
         // note that mosfets have different Vg(th) and switching times worst case is Vi/o=80/12
         // ^ set pwmMinHS a bit lower than pwmMinLS (might cause no-load output over-voltage otherwise)
