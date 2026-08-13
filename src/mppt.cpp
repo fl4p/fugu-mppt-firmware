@@ -282,7 +282,7 @@ void MpptController::update() {
     if (converter.syncRectEnabled_() != aboveThres)
         UART_LOG_ASYNC("Current %s threshold %.2f (pwm=%hu)", aboveThres ? "above" : "below", I_phys_smooth_min,
                        converter.getCtrlOnPwmCnt());
-    bflow.enable(aboveThres || converter.boost() || g_app.psuMode());
+    bflow.enable((aboveThres || converter.boost() || g_app.psuMode()) && !(sensorPhysicalI->ewm.avg.get() < -0.05f && limits.reverse_current_paranoia));
     converter.enableSyncRect(aboveThres);
 
     rtcount("mppt.update.en");

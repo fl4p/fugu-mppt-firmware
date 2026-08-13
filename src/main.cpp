@@ -737,7 +737,9 @@ static void lfStuckWatchdog() {
     // should now prevent the CV-floor latch; this stays a backstop. Gated against night (no
     // headroom), calibration, manual PWM and brief transients (sustained timeout).
     bool headroom = sensors.Vin && sensors.Vout
-                    && sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 8.0f;
+                    && (converter.boost()
+                            ? sensors.Vin->ewm.avg.get() > mppt.limits.Vin_min + 2.0f
+                            : sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 8.0f);
     bool noPower = sensors.Iout && fabsf(sensors.Iout->ewm.avg.get()) < 0.3f;
     // NOTE: do not gate on !adcSampler.isCalibrating() — a corruption/Vin-OV loop repeatedly
     // re-runs ADC calibration (resetPeripherals), which would keep resetting the stuck-timer and

@@ -527,6 +527,7 @@ static void cmdOta(cmd *c) {
     mppt.clearBootTarget();
     if (savedMode == OpMode::Psu) {
         mppt.psuResetTripState();
+        mppt.setPsuSetpoint(mppt.psuVsetpoint);
         g_app.opMode = OpMode::Psu;
     } else {
         g_app.opMode = OpMode::Mppt;
@@ -1346,6 +1347,7 @@ static void cmdPsu(cmd *c) {
         g_app.opMode = OpMode::Mppt;
         mppt.psuVsetpoint = NAN;
         mppt.psuResetTripState();
+        mppt.releaseCvFloorLatch("psu off");
         ESP_LOGI("main", "PSU off, MPPT mode");
         return;
     }

@@ -261,6 +261,8 @@ static void measureCoilTask(void *arg) {
     while (!converter.disabled() && wallClockMs() < doneDeadline)
         vTaskDelay(pdMS_TO_TICKS(10));
     mppt.clearBootTarget();
+    if (savedMode == OpMode::Psu)
+        mppt.setPsuSetpoint(mppt.psuVsetpoint);
     g_app.opMode = savedMode;
     s_measureBusy.store(false);
     UART_LOG("measure-coil: done, mode restored");
