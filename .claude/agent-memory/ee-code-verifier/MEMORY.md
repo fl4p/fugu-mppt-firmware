@@ -8,3 +8,7 @@
 - [fry ADC-error reboot loop (2026-05-29)](project_fry_adc_error_reboot_loop_may29.md) — internal cont-ADC (vin+ntc) DMA stalls every boot, resetPeripherals won't revive it (flat does), reboots ~15s; real root = heap/vtable corruption (HEAP_POISONING is the probe); gpio_install warning benign
 - [wsync sync event = zero dead-time shoot-through](project_wsync_sync_event_shootthrough.md) — follower sync drives LS LOW + HS HIGH on the same trigger, DT submodule bypassed; only safe while locked
 - [wsync coupling-network worked numbers](project_wsync_coupling_network_numbers.md) — real bias 0.64 V (not 0.77), C2 in series with C1, τ=6.1 µs, no CM rejection above DC
+- [PD loop gain anatomy: Kp is only half of it](project_pd_control_loop_gain_anatomy.md) — kCtrlSlewLimit/CV, the hidden x10 in updateCV, why Vin's Kp is negative, Td=(Kd/Kp)*Ts identity
+- [PD Td + dt plumbing traps](project_pd_control_td_and_dt_traps.md) — Td<0 flips the D sign unchecked, Kp=0 kills D, conf accepts nan/inf gains, lastUs != last controller call
+- [vconv L-Cout is forward-Euler unstable](project_vconv_forward_euler_lc_instability.md) — unstable when ζ < ω0·T/4 (light load); state clamps only bound the blow-up; pre-existing in buck too
+- [vconv boost floor/ceiling semantics](project_vconv_boost_floor_and_ceiling.md) — Vout≥Vin only while reverse current is blocked; D=1 breaks it; vOutMax=8·voc clips the D=0.9 point
