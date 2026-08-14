@@ -305,7 +305,8 @@ void MpptController::updateManual() {
         return;
     }
 
-    if (manualTarget == 0) {
+    const uint16_t target = manualTarget.load(std::memory_order_relaxed);
+    if (target == 0) {
         if (!converter.disabled()) {
             if (converter.getCtrlOnPwmCnt() <= converter.pwmCtrlMin)
                 converter.disable();
@@ -319,7 +320,7 @@ void MpptController::updateManual() {
                 bflow.enable(true);
             }
         }
-        int16_t step = constrain((int32_t)manualTarget - (int32_t)converter.getCtrlOnPwmCnt(), -rampStep, rampStep);
+        int16_t step = constrain((int32_t)target - (int32_t)converter.getCtrlOnPwmCnt(), -rampStep, rampStep);
         if (step) converter.pwmPerturb(step);
     }
 }
@@ -344,7 +345,8 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
 
     if (targetPwmCnt) {
         g_app.opMode = OpMode::Manual;
-        manualTarget = std::min(targetPwmCnt, converter.pwmCtrlMax);
+        manualTarget.store(std::min(targetPwmCnt, converter.pwmCtrlMax),
+                           std::memory_order_relaxed);
         ESP_LOGW("mppt", "target duty cycle PWM=%hu, manual mode (fixed duty), pwmMaxDriver=%u",
                  targetPwmCnt, (unsigned) converter.pwmMaxDriver());
     }
@@ -352,14 +354,11 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     auto mode = converterConf.getString("mode", "");
     if (mode == "psu" && !targetPwmCnt) {
         float vout = converterConf.getFloat("psu_vout", 0.0f);
-        if (std::isfinite(vout) && vout > 0 && vout <= limits.Vout_max) {
-            psuVsetpoint = vout;
-            VoutController.reset();
-            g_app.opMode = OpMode::Psu;
-            ESP_LOGI("mppt", "PSU mode, vset=%.2fV", vout);
-        } else {
+        if (!requestPsuSetpoint(vout, true)) {
             ESP_LOGE("mppt", "PSU mode but psu_vout invalid (%.2f), disabling", vout);
             g_app.setupErr = true;
+        } else {
+            ESP_LOGI("mppt", "PSU mode %.2fV queued until fresh telemetry", vout);
         }
     } else if (!mode.empty() && mode != "mppt" && !targetPwmCnt) {
         ESP_LOGE("mppt", "Unknown converter.conf mode '%s', disabling", mode.c_str());

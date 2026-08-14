@@ -31,9 +31,11 @@ automated runs.
   (`-p <serial>` / `--ip <host>` / `--ble`), one command per step with `-c "<cmd>"` (repeatable),
   a batch of commands piped to `--stdin`, or the interactive REPL (the default with no mode flag).
   Telemetry goes to InfluxDB; the per-sample `scope` TCP stream is useful for transient capture.
-- **Config** — use a bench config (`config/lab/fbuck_lab_bench`, `config/lab/dry_int`) so limits and
-  sensors match the rig. Note `reverse_current_paranoia` differs between configs and changes several
-  thresholds below.
+- **Config** — use `config/lab/fbuck_lab_bench` only with the 29 V battery/emulator setup. An
+  open-output SW-node sweep must instead be provisioned with
+  `config/lab/fbuck_lab_bench_open_output`; its explicit name and separate complete profile guard
+  against carrying the 60 V open-output threshold back to a connected battery. Note
+  `reverse_current_paranoia` differs between configs and changes several thresholds below.
 
 Thresholds quoted below are from `config/fmetal/conf/limits.conf` /`charger.conf`
 (`vin_max=85`, `vout_max=60`, `iin_max=30`, `iout_max=32`, `temp_max=90`, `temp_derate=70`,

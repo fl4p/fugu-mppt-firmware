@@ -90,6 +90,27 @@ static SimpleCLI cli;
 static bool s_cmdFailed = false;
 #define CMD_FAIL_RETURN(...) do { ESP_LOGW("main", __VA_ARGS__); s_cmdFailed = true; return; } while (0)
 
+static bool waitPsuCommand(uint32_t ticket, uint32_t timeoutMs = 1000) {
+    const auto deadline = wallClockMs() + timeoutMs;
+    while (!mppt.isPsuCommandDone(ticket) && wallClockMs() < deadline)
+        delay(1);
+    if (mppt.isPsuCommandDone(ticket)) return true;
+    if (mppt.cancelPsuCommand(ticket)) return false;
+    for (int i = 0; i < 10 && !mppt.isPsuCommandDone(ticket); ++i) delay(1);
+    return mppt.isPsuCommandDone(ticket);
+}
+
+static const char *psuErrorText(PsuSetpointError error) {
+    switch (error) {
+        case PsuSetpointError::None: return "none";
+        case PsuSetpointError::OutOfRange: return "out of range";
+        case PsuSetpointError::TelemetryUnavailable: return "fresh Vin telemetry unavailable";
+        case PsuSetpointError::BoostBelowInput: return "boost setpoint must exceed Vin by 0.5 V";
+        case PsuSetpointError::OvLimitConflict: return "setpoint conflicts with explicit OV limit";
+    }
+    return "unknown error";
+}
+
 static void cmdSync(cmd *c) {
     if (!g_app.manualPwm())
         CMD_FAIL_RETURN("sync: only in manual PWM (use 'dc N' first)");
@@ -122,20 +143,13 @@ static void cmdBflow(cmd *c) {
 static void cmdRestart(cmd *) { systemRestart(); }
 
 static void cmdMppt(cmd *) {
-    if (g_app.psuMode()) {
-        ESP_LOGI("main", "MPPT re-enabled (from PSU)");
-        g_app.opMode = OpMode::Mppt;
-        mppt.psuVsetpoint = NAN;
-        mppt.psuResetTripState();
-        mppt.releaseCvFloorLatch("cmdMppt");
-    } else if (!g_app.manualPwm()) {
+    if (!g_app.psuMode() && !g_app.manualPwm() && !mppt.hasPendingPsuCommand()) {
         CMD_FAIL_RETURN("MPPT already enabled");
-    } else {
-        ESP_LOGI("main", "MPPT re-enabled");
-        g_app.opMode = OpMode::Mppt;
     }
-    converter.setManualRect(-1);
-    mppt.clearBootTarget();
+    const auto ticket = mppt.requestPsuOff();
+    if (!waitPsuCommand(ticket))
+        CMD_FAIL_RETURN("mppt: RT transition timed out");
+    ESP_LOGI("main", "MPPT re-enabled");
 }
 
 // dc <hs> [ls]  — manual PWM. With no [ls] the low side is automatic (diode emulation); with
@@ -160,41 +174,24 @@ static void cmdDc(cmd *c) {
     if (dc != 0 && adcSampler.isCalibrating())
         CMD_FAIL_RETURN("dc: busy calibrating");
 
-    // manual PWM overrides any running scan; don't leave it latched (mppt.active() would stay true)
-    mppt.abortSweep();
+    int manualRect = -1;
+    if (cc.countArgs() >= 2 && dc > 0)
+        manualRect = cc.getArg(1).getValue().toInt();
 
-    if (!g_app.manualPwm() || g_app.psuMode() || converter.disabled()) {
-        ESP_LOGI("main", "Switched to manual PWM");
-        if (dc != 0 && !mppt.limits.reverse_current_paranoia) {
-            converter.enableSyncRect(true);
-            mppt.bflow.enable(true);
-        }
-    }
-    if (g_app.psuMode()) {
-        g_app.opMode = OpMode::Manual;
-        mppt.psuVsetpoint = NAN;
-        mppt.psuResetTripState();
-    } else {
-        g_app.opMode = OpMode::Manual;
-    }
-    mppt.setManualTarget(dc);
-
-    if (cc.countArgs() >= 2 && dc > 0) {
-        int ls = cc.getArg(1).getValue().toInt();
-        converter.setManualRect(ls);
-        if (ls >= 0)
-            UART_LOG("Manual LS=%i held (HS=%i); reverse-current risk, bench only", ls, (int) dc);
-    } else {
-        converter.setManualRect(-1); // auto LS
-    }
+    const auto ticket = mppt.requestPsuManual(dc, manualRect);
+    if (!waitPsuCommand(ticket))
+        CMD_FAIL_RETURN("dc: RT transition timed out");
+    ESP_LOGI("main", "Switched to manual PWM");
+    if (manualRect >= 0)
+        UART_LOG("Manual LS=%i held (HS=%i); reverse-current risk, bench only",
+                 manualRect, (int) dc);
 }
 
 static void cmdShortLs(cmd *) {
     if (converter.boost() && abs(sensors.Vin->ewm.avg.get()) < 0.05) {
-        mppt.abortSweep();
-        g_app.opMode = OpMode::Manual;
-        mppt.setManualTarget(0);
-        converter.shortLs();
+        const auto ticket = mppt.requestPsuShortLowSide();
+        if (!waitPsuCommand(ticket))
+            CMD_FAIL_RETURN("short-ls: RT transition timed out");
     } else {
         CMD_FAIL_RETURN("short-ls: requires boost mode and Vin~0");
     }
@@ -268,19 +265,9 @@ static void cmdMcpwmTest(cmd *c) {
 }
 
 static void cmdSweep(cmd *) {
-    mppt.clearBootTarget();
-    if (g_app.manualPwm() || g_app.psuMode()) {
-        converter.setManualRect(-1);
-        if (g_app.psuMode()) {
-            g_app.opMode = OpMode::Mppt;
-            mppt.psuVsetpoint = NAN;
-            mppt.psuResetTripState();
-        } else {
-            g_app.opMode = OpMode::Mppt;
-        }
-    }
-    mppt.clearBackoff();
-    mppt.startSweep();
+    const auto ticket = mppt.requestPsuSweep();
+    if (!waitPsuCommand(ticket))
+        CMD_FAIL_RETURN("sweep: RT transition timed out");
 }
 
 static void cmdResetLag(cmd *) {
@@ -507,14 +494,17 @@ static void cmdOta(cmd *c) {
     if (url.length() == 0)
         CMD_FAIL_RETURN("ota: expected url");
 
-    auto savedMode = g_app.opMode;
+    auto savedMode = g_app.opMode.load();
+    const float savedPsuSetpoint = mppt.getPsuSetpoint();
+    const uint16_t savedManualTarget = mppt.getManualTarget();
     // Stop power conversion and let the stage de-energize BEFORE downloading. OTA flash
     // writes briefly stall the RT loop and draw erase-current spikes; at full power that
     // reset the device mid-transfer (doing `dc 0` by hand first was the reliable workaround).
     // Latch manual mode (also disables the !manualPwm-gated watchdogs) and ramp the converter
     // to 0, then wait for it to actually disable so the supply is settled when flashing begins.
-    g_app.opMode = OpMode::Manual;
-    mppt.setManualTarget(0); // graceful ramp-down, then converter.disable()
+    const auto stopTicket = mppt.requestPsuManual(0, -1);
+    if (!waitPsuCommand(stopTicket))
+        CMD_FAIL_RETURN("ota: RT shutdown transition timed out");
     for (int i = 0; i < 100 && !converter.disabled(); ++i) delay(100); // <=10s for the ramp
     delay(500);                 // let the output coil/caps de-energize
     adcSampler.halted = true;   // disable ADC reading
@@ -523,14 +513,19 @@ static void cmdOta(cmd *c) {
 
     // OTA failed — resume the prior operating mode
     adcSampler.halted = false;
-    converter.setManualRect(-1);
-    mppt.clearBootTarget();
     if (savedMode == OpMode::Psu) {
-        mppt.psuResetTripState();
-        mppt.setPsuSetpoint(mppt.psuVsetpoint);
-        g_app.opMode = OpMode::Psu;
+        const auto ticket = mppt.queuePsuSetpoint(savedPsuSetpoint);
+        if (!ticket || !waitPsuCommand(ticket)
+            || mppt.getPsuCommandError(ticket) != PsuSetpointError::None)
+            ESP_LOGE("main", "ota: failed to restore PSU mode: %s",
+                     psuErrorText(ticket ? mppt.getPsuCommandError(ticket)
+                                         : mppt.getLastPsuRequestError()));
+    } else if (savedMode == OpMode::Manual) {
+        const auto ticket = mppt.requestPsuManual(savedManualTarget, -1);
+        if (!waitPsuCommand(ticket)) ESP_LOGE("main", "ota: failed to restore manual mode");
     } else {
-        g_app.opMode = OpMode::Mppt;
+        const auto ticket = mppt.requestPsuOff();
+        if (!waitPsuCommand(ticket)) ESP_LOGE("main", "ota: failed to restore MPPT mode");
     }
     if (!ok)
         CMD_FAIL_RETURN("ota: update failed");
@@ -1315,10 +1310,13 @@ static void cmdIset(cmd *c) {
 static void cmdOvset(cmd *c) {
     float v = Command(c).getArg(0).getValue().toFloat();
     if (v > 0 and v <= 999) {
-        mppt.charger.params.Vout_ov_limit = v;
+        const float requested = mppt.getRequestedPsuSetpoint();
+        if (std::isfinite(requested) && requested >= 0.98f * v)
+            CMD_FAIL_RETURN("ovset: %.2fV conflicts with PSU setpoint %.2fV", v, requested);
+        mppt.setExplicitOvLimit(v);
         UART_LOG("ovset: hard OV limit = %.2fV", v);
     } else if (v == 0) {
-        mppt.charger.params.Vout_ov_limit = NAN;
+        mppt.setExplicitOvLimit(NAN);
         UART_LOG("ovset: cleared, OV threshold reverts to derived");
     } else
         CMD_FAIL_RETURN("ovset: out of range [0,999] (0 = clear)");
@@ -1328,10 +1326,10 @@ static void cmdPsu(cmd *c) {
     Command cc(c);
     auto arg = cc.countArgs() >= 1 ? cc.getArg(0).getValue() : String();
     if (arg.length() == 0) {
-        if (g_app.psuMode()) {
-            UART_LOG("PSU: on vset=%.2fV %s trips=%u",
-                     mppt.psuVsetpoint,
-                     mppt.psuLatched ? "LATCHED" : mppt.psuEscalated ? "escalated" : "ok",
+        if (g_app.psuMode() || mppt.hasPendingPsuCommand()) {
+            UART_LOG("PSU: %s vset=%.2fV %s trips=%u",
+                     g_app.psuMode() ? "on" : "pending", mppt.getRequestedPsuSetpoint(),
+                     mppt.isPsuLatched() ? "LATCHED" : mppt.isPsuEscalated() ? "escalated" : "ok",
                      mppt.getPsuTripCount());
         } else {
             UART_LOG("PSU: off");
@@ -1339,27 +1337,23 @@ static void cmdPsu(cmd *c) {
         return;
     }
     if (arg == "off") {
-        if (!g_app.psuMode())
+        if (!g_app.psuMode() && !mppt.hasPendingPsuCommand())
             CMD_FAIL_RETURN("psu: not in PSU mode");
-        mppt.abortSweep();
-        mppt.clearBackoff();
-        converter.setManualRect(-1);
-        g_app.opMode = OpMode::Mppt;
-        mppt.psuVsetpoint = NAN;
-        mppt.psuResetTripState();
-        mppt.releaseCvFloorLatch("psu off");
-        ESP_LOGI("main", "PSU off, MPPT mode");
+        const auto ticket = mppt.requestPsuOff();
+        if (!waitPsuCommand(ticket))
+            CMD_FAIL_RETURN("psu off: RT transition timed out");
         return;
     }
     float v = arg.toFloat();
     if (!std::isfinite(v) || v <= 0 || v > mppt.limits.Vout_max)
         CMD_FAIL_RETURN("psu: out of range (0,%.1f]", mppt.limits.Vout_max);
-    mppt.abortSweep();
-    mppt.clearBackoff();
-    converter.setManualRect(-1);
-    mppt.psuResetTripState();
-    mppt.setPsuSetpoint(v);
-    g_app.opMode = OpMode::Psu;
+    const auto ticket = mppt.queuePsuSetpoint(v);
+    if (!ticket)
+        CMD_FAIL_RETURN("psu: %s", psuErrorText(mppt.getLastPsuRequestError()));
+    if (!waitPsuCommand(ticket))
+        CMD_FAIL_RETURN("psu: RT transition timed out");
+    if (mppt.getPsuCommandError(ticket) != PsuSetpointError::None)
+        CMD_FAIL_RETURN("psu: %s", psuErrorText(mppt.getPsuCommandError(ticket)));
     ESP_LOGI("main", "PSU mode, vset=%.2fV", v);
 }
 
@@ -1374,8 +1368,9 @@ static void cmdStatus(cmd *) {
     UART_LOG("Charger: %s", (bool) chg.termCond ? "TERMINATED (float)" : "charging");
     UART_LOG("  Vbat_max=%.2fV Vout_max=%.2fV  Ibat_lim=%.1fA Iout_max=%.1fA",
              p.Vbat_max, chg.Vout_max(), p.Ibat_lim, chg.Iout_max());
-    if (std::isfinite(p.Vout_ov_limit) && p.Vout_ov_limit > 0)
-        UART_LOG("  OV limit=%.2fV (explicit ovset%s)", p.Vout_ov_limit,
+    const float ovLimit = mppt.getExplicitOvLimit();
+    if (std::isfinite(ovLimit) && ovLimit > 0)
+        UART_LOG("  OV limit=%.2fV (explicit ovset%s)", ovLimit,
                  p.vbatMaxExplicit ? ", vset locked" : "");
     else
         UART_LOG("  OV limit=derived from Vbat_max%s", p.vbatMaxExplicit ? " (vset locked)" : "");
@@ -1388,8 +1383,8 @@ static void cmdStatus(cmd *) {
     if ((bool) chg.termCond && std::isfinite(p.Cbat) && p.Cbat > 0.f && p.recharge_dod > 0.f)
         UART_LOG("  DoD since full: %.0f%% / %.0f%% to recharge", ah / p.Cbat * 100.f, p.recharge_dod * 100.f);
     if (g_app.psuMode()) {
-        UART_LOG("PSU: vset=%.2fV %s trips=%u", mppt.psuVsetpoint,
-                 mppt.psuLatched ? "LATCHED" : mppt.psuEscalated ? "escalated" : "ok",
+        UART_LOG("PSU: vset=%.2fV %s trips=%u", mppt.getPsuSetpoint(),
+                 mppt.isPsuLatched() ? "LATCHED" : mppt.isPsuEscalated() ? "escalated" : "ok",
                  mppt.getPsuTripCount());
     }
 }

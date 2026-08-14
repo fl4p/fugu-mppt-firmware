@@ -1,5 +1,9 @@
 #pragma once
 
+#include <atomic>
+
+#include "freertos/FreeRTOS.h"
+
 #include "adc/sampling.h"
 
 #include "tele/telemetry.h"
@@ -97,6 +101,18 @@ enum class MpptControlMode : uint8_t {
     Max,
 };
 
+enum class PsuSetpointError : uint8_t {
+    None = 0,
+    OutOfRange,
+    TelemetryUnavailable,
+    BoostBelowInput,
+    OvLimitConflict,
+};
+
+enum class PsuCommand : uint8_t {
+    None = 0, Enable, DisableMppt, DisableManual, StartSweep, ShortLowSide
+};
+
 
 // inline + const char* => single copy in flash .rodata, no per-TU std::string array or global ctor
 inline constexpr std::array<const char *, (size_t) MpptControlMode::Max> MpptState2String{
@@ -178,7 +194,9 @@ public:
     //MinSampler<MpptControlMode, MpptControlMode::Max> ctrlModeSampled{};
     MinSampler<uint8_t, 15> limIdxSampled{};
     uint16_t targetDutyCycle = 0; // one-shot ramp target from sweep/MPP (cleared on arrival)
-    uint16_t manualTarget = 0;   // persistent manual-mode duty target (survives backoff, cleared only by dc 0)
+    // Written by console/self-test tasks and consumed by the RT loop. The target itself is the
+    // mailbox; PWM hardware remains RT-owned.
+    std::atomic<uint16_t> manualTarget{0};
 
 private:
     bool _sweeping = false; // global scan
@@ -203,10 +221,55 @@ private:
     time_us _backoffUntilUs = 0;
     uint32_t _backoffArmedSec = 0; // length of the running backoff, so a repeat can't extend it
     time_ms psuTripWindowStart = 0;
-    uint8_t psuTripCount = 0;
+    std::atomic<uint8_t> psuTripCount{0};
+    std::atomic<float> pendingPsuSetpoint{NAN};
+    // [31:8] request ticket, [7:0] PsuCommand. One atomic word binds the action to its
+    // completion identity, so a later request cannot make an earlier RT completion wake it.
+    std::atomic<uint32_t> pendingPsuCommandWord{0};
+    std::atomic<uint32_t> nextPsuTicket{0};
+    // More than one non-RT producer can wait concurrently. A single "last completed" ticket
+    // loses A when B completes before A is scheduled. Keep a bounded result slot per ticket;
+    // there are currently at most two producers (console and measure-coil), with ample margin.
+    static constexpr size_t PsuResultSlots = 8;
+    std::array<std::atomic<uint32_t>, PsuResultSlots> completedPsuResults{};
+    std::atomic<uint32_t> psuMailboxSeq{0};
+    portMUX_TYPE psuMailboxMux = portMUX_INITIALIZER_UNLOCKED;
+    std::atomic<PsuSetpointError> lastPsuRequestError{PsuSetpointError::None};
+    std::atomic<bool> pendingPsuBootRequest{false};
+    std::atomic<float> publishedPsuSetpoint{NAN};
+    // Runtime console setting: both CLI and RT protection read it, so it cannot live in the
+    // otherwise single-core charger params object as an ordinary float.
+    std::atomic<float> explicitOvLimit{NAN};
+    std::atomic<uint16_t> pendingManualTarget{0};
+    std::atomic<int> pendingManualRect{-1};
     unsigned short _teleNumPoints = 0;
 
     const VIinVout<const Sensor *> &sensors;
+
+    void lockPsuMailbox() {
+        // Producers can be separate tasks on NON_RT_CORE (console, OTA and measure-coil).
+        // A plain atomic spin lock can deadlock if a higher-priority producer preempts its
+        // owner on that same core. The IDF port mux disables local preemption while owned;
+        // the RT consumer never takes it and only observes the odd/even sequence below.
+        portENTER_CRITICAL(&psuMailboxMux);
+        psuMailboxSeq.fetch_add(1, std::memory_order_acq_rel);
+    }
+
+    uint32_t postPsuCommand(PsuCommand command) {
+        uint32_t ticket = (nextPsuTicket.fetch_add(1, std::memory_order_relaxed) + 1) & 0x00ffffffu;
+        if (ticket == 0)
+            ticket = (nextPsuTicket.fetch_add(1, std::memory_order_relaxed) + 1) & 0x00ffffffu;
+        pendingPsuCommandWord.store((ticket << 8) | static_cast<uint8_t>(command),
+                                    std::memory_order_release);
+        psuMailboxSeq.fetch_add(1, std::memory_order_release);
+        portEXIT_CRITICAL(&psuMailboxMux);
+        return ticket;
+    }
+
+    void completePsuCommand(uint32_t ticket, PsuSetpointError error) {
+        completedPsuResults[ticket % PsuResultSlots].store(
+            (ticket << 8) | static_cast<uint8_t>(error), std::memory_order_release);
+    }
 
 
     // Gains below are the defaults; converter.conf::ctrl_<name>_{kp,kd,td} override them (begin()).
@@ -325,26 +388,26 @@ public:
                 auto nowMs = wallClockMs();
                 if (nowMs - psuTripWindowStart > 60000) {
                     psuTripWindowStart = nowMs;
-                    psuTripCount = 0;
+                    psuTripCount.store(0, std::memory_order_relaxed);
                 }
-                ++psuTripCount;
-                if (psuTripCount > 8) {
+                const uint8_t tripCount = psuTripCount.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (tripCount > 8) {
                     psuLatched = true;
                     _backoffUntilUs = wallClockUs() + 30000000ULL;
                     _backoffArmedSec = 30;
-                    ESP_LOGE("mppt", "PSU latch [%s] (%u trips)", who, psuTripCount);
-                } else if (psuTripCount > 4) {
+                    ESP_LOGE("mppt", "PSU latch [%s] (%u trips)", who, tripCount);
+                } else if (tripCount > 4) {
                     psuEscalated = true;
                     if (!inBackoff() || backoffSec > _backoffArmedSec) {
                         _backoffUntilUs = wallClockUs() + static_cast<time_us>(backoffSec) * 1000000ULL;
                         _backoffArmedSec = backoffSec;
                         ESP_LOGW("mppt", "PSU escalated backoff %lus [%s] (trip %u)",
-                                 (unsigned long) backoffSec, who, psuTripCount);
+                                 (unsigned long) backoffSec, who, tripCount);
                     }
                 } else {
                     _backoffUntilUs = wallClockUs() + 100000ULL;
                     _backoffArmedSec = 0;
-                    ESP_LOGW("mppt", "PSU fast retry [%s] (trip %u)", who, psuTripCount);
+                    ESP_LOGW("mppt", "PSU fast retry [%s] (trip %u)", who, tripCount);
                 }
             } else {
                 if (!inBackoff() || backoffSec > _backoffArmedSec) {
@@ -405,6 +468,13 @@ public:
     // Single source of truth for startCondition(); also logged while idle in START.
     [[nodiscard]] const char *startBlockReason() const {
         if (psuLatched) return "psu-latch";
+        if (g_app.psuMode()) {
+            const auto feasibility = currentPsuFeasibility();
+            if (feasibility == PsuSetpointError::BoostBelowInput)
+                return "psu-boost-setpoint";
+            if (feasibility == PsuSetpointError::OvLimitConflict)
+                return "psu-ov-conflict";
+        }
         if (inBackoff()) return "backoff";
         if (ntc.last() > limits.Temp_max - 3 || !(ucTemp.last() < limits.Temp_max - 3)) return "temp";
         if (!g_app.psuMode() &&
@@ -460,6 +530,20 @@ public:
 
     bool protect(bool ignoreUV) {
         auto nowMs = wallClockMs();
+
+        if (g_app.psuMode()) {
+            const auto feasibility = currentPsuFeasibility();
+            if (feasibility == PsuSetpointError::BoostBelowInput
+                || feasibility == PsuSetpointError::OvLimitConflict) {
+                if (!psuLatched.exchange(true, std::memory_order_relaxed)) {
+                    ESP_LOGE("mppt", "active PSU setpoint %.2f V became infeasible (Vin %.2f V, OV %.2f V)",
+                             psuVsetpoint, sensors.Vin ? sensors.Vin->ewm.avg.get() : NAN,
+                             getExplicitOvLimit());
+                    shutdownDcdc("psu-setpoint-infeasible", 30);
+                }
+                return false;
+            }
+        }
 
         // input over-voltage
         if (sensors.Vin->last > limits.Vin_max) {
@@ -715,27 +799,238 @@ public:
     }
 
     float psuVsetpoint = NAN; // PSU CV setpoint (V); NAN = not commanded
-    bool psuEscalated = false;
-    bool psuLatched = false;
+    std::atomic<bool> psuEscalated{false};
+    std::atomic<bool> psuLatched{false};
 
     void setPsuSetpoint(float v) {
         if (!std::isfinite(v) || v <= 0 || v > limits.Vout_max) return;
         VoutController.reset();
         psuVsetpoint = v;
+        publishedPsuSetpoint.store(v, std::memory_order_release);
+    }
+
+    static PsuSetpointError validatePsuSetpoint(float requested, float voutMax, bool boost,
+                                                float vin, float explicitOvLimit) {
+        if (!std::isfinite(requested) || requested <= 0 || requested > voutMax)
+            return PsuSetpointError::OutOfRange;
+        // An explicit OV threshold is a hard protection setting, not a second CV target. Leave
+        // the same 2% approach margin startBlockReason() uses so the requested operating point
+        // cannot be inside the trip band by construction.
+        if (std::isfinite(explicitOvLimit) && explicitOvLimit > 0
+            && requested >= 0.98f * explicitOvLimit)
+            return PsuSetpointError::OvLimitConflict;
+        // A boost can regulate only ABOVE its input. Unknown Vin is not evidence that the
+        // setpoint is feasible; entry waits for a fresh sample and rejects an unusable one.
+        constexpr float BoostHeadroomV = 0.5f;
+        if (boost && !std::isfinite(vin))
+            return PsuSetpointError::TelemetryUnavailable;
+        if (boost && requested <= vin + BoostHeadroomV)
+            return PsuSetpointError::BoostBelowInput;
+        return PsuSetpointError::None;
+    }
+
+    [[nodiscard]] uint32_t queuePsuSetpoint(float v, bool bootRequest = false) {
+        const auto precheck = validatePsuSetpoint(v, limits.Vout_max, false, NAN,
+                                                  getExplicitOvLimit());
+        if (precheck != PsuSetpointError::None) {
+            lastPsuRequestError.store(precheck, std::memory_order_relaxed);
+            return 0;
+        }
+        lockPsuMailbox();
+        pendingPsuSetpoint.store(v, std::memory_order_relaxed);
+        pendingPsuBootRequest.store(bootRequest, std::memory_order_relaxed);
+        return postPsuCommand(PsuCommand::Enable);
+    }
+
+    [[nodiscard]] bool requestPsuSetpoint(float v, bool bootRequest = false) {
+        return queuePsuSetpoint(v, bootRequest) != 0;
+    }
+
+    [[nodiscard]] uint32_t requestPsuOff() {
+        lockPsuMailbox();
+        pendingPsuBootRequest.store(false, std::memory_order_relaxed);
+        return postPsuCommand(PsuCommand::DisableMppt);
+    }
+
+    [[nodiscard]] uint32_t requestPsuManual(uint16_t duty, int manualRect) {
+        lockPsuMailbox();
+        pendingManualTarget.store(duty, std::memory_order_relaxed);
+        pendingManualRect.store(manualRect, std::memory_order_relaxed);
+        pendingPsuBootRequest.store(false, std::memory_order_relaxed);
+        return postPsuCommand(PsuCommand::DisableManual);
+    }
+
+    [[nodiscard]] uint32_t requestPsuSweep() {
+        lockPsuMailbox();
+        pendingPsuBootRequest.store(false, std::memory_order_relaxed);
+        return postPsuCommand(PsuCommand::StartSweep);
+    }
+
+    [[nodiscard]] uint32_t requestPsuShortLowSide() {
+        lockPsuMailbox();
+        pendingPsuBootRequest.store(false, std::memory_order_relaxed);
+        return postPsuCommand(PsuCommand::ShortLowSide);
+    }
+
+    [[nodiscard]] bool hasPendingPsuCommand() const {
+        return pendingPsuCommandWord.load(std::memory_order_acquire) != 0;
+    }
+    [[nodiscard]] bool isPsuCommandDone(uint32_t ticket) const {
+        if (ticket == 0) return false;
+        return (completedPsuResults[ticket % PsuResultSlots].load(std::memory_order_acquire) >> 8)
+               == ticket;
+    }
+    [[nodiscard]] PsuSetpointError getPsuCommandError(uint32_t ticket) const {
+        if (ticket == 0) return lastPsuRequestError.load(std::memory_order_relaxed);
+        const uint32_t result =
+            completedPsuResults[ticket % PsuResultSlots].load(std::memory_order_acquire);
+        return (result >> 8) == ticket
+               ? static_cast<PsuSetpointError>(result & 0xffu)
+               : PsuSetpointError::None;
+    }
+    bool cancelPsuCommand(uint32_t ticket) {
+        uint32_t expected = (ticket << 8)
+                            | (pendingPsuCommandWord.load(std::memory_order_acquire) & 0xffu);
+        if ((expected >> 8) != ticket) return false;
+        return pendingPsuCommandWord.compare_exchange_strong(expected, 0,
+                                                             std::memory_order_acq_rel);
+    }
+    [[nodiscard]] float getPsuSetpoint() const {
+        return publishedPsuSetpoint.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] float getExplicitOvLimit() const {
+        return explicitOvLimit.load(std::memory_order_acquire);
+    }
+    void setExplicitOvLimit(float v) {
+        explicitOvLimit.store(v, std::memory_order_release);
+    }
+    [[nodiscard]] float getRequestedPsuSetpoint() const {
+        const auto command = static_cast<PsuCommand>(
+            pendingPsuCommandWord.load(std::memory_order_acquire) & 0xffu);
+        return command == PsuCommand::Enable
+               ? pendingPsuSetpoint.load(std::memory_order_relaxed) : getPsuSetpoint();
+    }
+    [[nodiscard]] uint16_t getManualTarget() const {
+        return manualTarget.load(std::memory_order_relaxed);
+    }
+
+    // RT-CORE ONLY. Console code posts a mailbox command; this is the single writer for the
+    // controller resets, trip counters, sweep/backoff state and PSU setpoint transition.
+    void applyPendingPsuCommandRt(bool freshTelemetry = true) {
+        const uint32_t seqBefore = psuMailboxSeq.load(std::memory_order_acquire);
+        if (seqBefore & 1u) return;
+        auto word = pendingPsuCommandWord.load(std::memory_order_acquire);
+        if (word == 0) return;
+        const auto command = static_cast<PsuCommand>(word & 0xffu);
+        const uint32_t ticket = word >> 8;
+        // An Enable needs the current Vin for boost feasibility. Off/manual/sweep remain
+        // available during ADC loss, but stale telemetry must never be used to energize.
+        if (command == PsuCommand::Enable && !freshTelemetry) return;
+        const float requested = pendingPsuSetpoint.load(std::memory_order_relaxed);
+        const uint16_t manualDuty = pendingManualTarget.load(std::memory_order_relaxed);
+        const int manualRect = pendingManualRect.load(std::memory_order_relaxed);
+        const bool bootRequest = pendingPsuBootRequest.load(std::memory_order_relaxed);
+        if (psuMailboxSeq.load(std::memory_order_acquire) != seqBefore) return;
+        if (!pendingPsuCommandWord.compare_exchange_strong(word, 0, std::memory_order_acq_rel))
+            return;
+
+        if (command != PsuCommand::Enable) {
+            abortSweep();
+            clearBackoff();
+            converter.setManualRect(-1);
+            psuVsetpoint = NAN;
+            publishedPsuSetpoint.store(NAN, std::memory_order_release);
+            psuResetTripState();
+            releaseCvFloorLatch("psu off");
+            lastPsuRequestError.store(PsuSetpointError::None, std::memory_order_relaxed);
+            if (command == PsuCommand::DisableManual) {
+                setManualTarget(manualDuty);
+                converter.setManualRect(manualRect);
+                if (manualDuty != 0 && !limits.reverse_current_paranoia) {
+                    converter.enableSyncRect(true);
+                    bflow.enable(true);
+                }
+                g_app.opMode = OpMode::Manual;
+                ESP_LOGI("mppt", "PSU off, manual PWM mode");
+            } else if (command == PsuCommand::StartSweep) {
+                g_app.opMode = OpMode::Mppt;
+                clearBootTarget();
+                startSweep();
+                ESP_LOGI("mppt", "PSU off, sweep started");
+            } else if (command == PsuCommand::ShortLowSide) {
+                setManualTarget(0);
+                g_app.opMode = OpMode::Manual;
+                converter.shortLs();
+                ESP_LOGI("mppt", "PSU off, low side shorted for diagnostic");
+            } else {
+                g_app.opMode = OpMode::Mppt;
+                clearBootTarget();
+                ESP_LOGI("mppt", "PSU off, MPPT mode");
+            }
+            completePsuCommand(ticket, PsuSetpointError::None);
+            return;
+        }
+
+        const float vin = sensors.Vin ? sensors.Vin->ewm.avg.get() : NAN;
+        const auto error = validatePsuSetpoint(requested, limits.Vout_max, converter.boost(), vin,
+                                               getExplicitOvLimit());
+        lastPsuRequestError.store(error, std::memory_order_relaxed);
+        if (error != PsuSetpointError::None) {
+            const char *why = error == PsuSetpointError::TelemetryUnavailable
+                              ? "fresh Vin telemetry unavailable"
+                              : error == PsuSetpointError::BoostBelowInput
+                              ? "boost setpoint must exceed Vin by 0.5 V"
+                              : error == PsuSetpointError::OvLimitConflict
+                                ? "setpoint conflicts with explicit OV threshold"
+                                : "setpoint out of range";
+            ESP_LOGE("mppt", "PSU request %.2f V rejected: %s (Vin %.2f V, OV %.2f V)",
+                     requested, why, vin, getExplicitOvLimit());
+            if (bootRequest)
+                g_app.setupErr = true;
+            completePsuCommand(ticket, error);
+            return;
+        }
+        abortSweep();
+        clearBackoff();
+        converter.setManualRect(-1);
+        psuResetTripState();
+        setPsuSetpoint(requested);
+        g_app.opMode = OpMode::Psu;
+        ESP_LOGI("mppt", "PSU mode, vset=%.2fV", requested);
+        completePsuCommand(ticket, PsuSetpointError::None);
+    }
+
+    [[nodiscard]] PsuSetpointError getLastPsuRequestError() const {
+        return lastPsuRequestError.load(std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] PsuSetpointError currentPsuFeasibility() const {
+        const float vin = sensors.Vin ? sensors.Vin->ewm.avg.get() : NAN;
+        return validatePsuSetpoint(psuVsetpoint, limits.Vout_max, converter.boost(), vin,
+                                   getExplicitOvLimit());
     }
 
     void psuResetTripState() {
-        psuTripCount = 0;
+        psuTripCount.store(0, std::memory_order_relaxed);
         psuTripWindowStart = 0;
         psuEscalated = false;
         psuLatched = false;
     }
 
-    [[nodiscard]] uint8_t getPsuTripCount() const { return psuTripCount; }
+    [[nodiscard]] uint8_t getPsuTripCount() const {
+        return psuTripCount.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool isPsuEscalated() const {
+        return psuEscalated.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool isPsuLatched() const {
+        return psuLatched.load(std::memory_order_relaxed);
+    }
 
     [[nodiscard]] float computeOvThreshold() const {
-        if (std::isfinite(charger.params.Vout_ov_limit) && charger.params.Vout_ov_limit > 0)
-            return std::min(charger.params.Vout_ov_limit, limits.Vout_max);
+        const float ovLimit = getExplicitOvLimit();
+        if (std::isfinite(ovLimit) && ovLimit > 0)
+            return std::min(ovLimit, limits.Vout_max);
         if (g_app.psuMode() && std::isfinite(psuVsetpoint))
             return std::min(psuVsetpoint * (limits.reverse_current_paranoia ? 1.03f : 1.5f), limits.Vout_max);
         if (charger.params.haveVbatMax())

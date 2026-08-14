@@ -30,6 +30,17 @@ struct MeasArgs {
 static std::atomic<bool> s_measureBusy{false};
 static MeasArgs s_measArgs{};
 
+static bool waitPsuCommand(uint32_t ticket, uint32_t timeoutMs = 1000) {
+    const auto deadline = wallClockMs() + timeoutMs;
+    while (!mppt.isPsuCommandDone(ticket) && wallClockMs() < deadline)
+        vTaskDelay(pdMS_TO_TICKS(1));
+    if (mppt.isPsuCommandDone(ticket)) return true;
+    if (mppt.cancelPsuCommand(ticket)) return false;
+    for (int i = 0; i < 10 && !mppt.isPsuCommandDone(ticket); ++i)
+        vTaskDelay(pdMS_TO_TICKS(1));
+    return mppt.isPsuCommandDone(ticket);
+}
+
 struct Reading { float vin, vout, iout; uint16_t H; bool dcm; };
 
 // Insertion sort then return the middle element (sorts the array in place).
@@ -244,15 +255,15 @@ static void sweepLs(const MeasArgs &a) {
 
 static void measureCoilTask(void *arg) {
     auto a = *(const MeasArgs *) arg;
-    auto savedMode = g_app.opMode;
-    if (!sensors.Vin || !sensors.Vout || !sensors.Iout) {
+    auto savedMode = g_app.opMode.load();
+    const float savedPsuSetpoint = mppt.getPsuSetpoint();
+    const uint16_t savedManualTarget = mppt.getManualTarget();
+    const auto enterTicket = mppt.requestPsuManual(0, -1);
+    if (!waitPsuCommand(enterTicket)) {
+        UART_LOG("measure-coil: RT transition timed out");
+    } else if (!sensors.Vin || !sensors.Vout || !sensors.Iout) {
         UART_LOG("measure-coil: missing Vin/Vout/Iout sensor");
     } else {
-        g_app.opMode = OpMode::Manual;
-        if (!mppt.limits.reverse_current_paranoia) {
-            converter.enableSyncRect(true);
-            mppt.bflow.enable(true);
-        }
         if (a.ls) sweepLs(a); else sweepL0(a);
     }
     converter.setManualRect(-1);
@@ -260,10 +271,18 @@ static void measureCoilTask(void *arg) {
     time_ms doneDeadline = wallClockMs() + 2000;
     while (!converter.disabled() && wallClockMs() < doneDeadline)
         vTaskDelay(pdMS_TO_TICKS(10));
-    mppt.clearBootTarget();
-    if (savedMode == OpMode::Psu)
-        mppt.setPsuSetpoint(mppt.psuVsetpoint);
-    g_app.opMode = savedMode;
+    if (savedMode == OpMode::Psu) {
+        const auto ticket = mppt.queuePsuSetpoint(savedPsuSetpoint);
+        if (!ticket || !waitPsuCommand(ticket)
+            || mppt.getPsuCommandError(ticket) != PsuSetpointError::None)
+            UART_LOG("measure-coil: PSU mode restore failed");
+    } else if (savedMode == OpMode::Manual) {
+        const auto ticket = mppt.requestPsuManual(savedManualTarget, -1);
+        if (!waitPsuCommand(ticket)) UART_LOG("measure-coil: manual mode restore failed");
+    } else {
+        const auto ticket = mppt.requestPsuOff();
+        if (!waitPsuCommand(ticket)) UART_LOG("measure-coil: MPPT mode restore failed");
+    }
     s_measureBusy.store(false);
     UART_LOG("measure-coil: done, mode restored");
     vTaskDelete(nullptr);

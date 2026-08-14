@@ -309,6 +309,14 @@ void test_psu_setpoint_rejects_zero();
 void test_psu_setpoint_rejects_nan();
 void test_psu_setpoint_rejects_above_vout_max();
 void test_psu_setpoint_accepts_valid();
+void test_psu_boost_rejects_setpoint_below_input();
+void test_psu_boost_accepts_setpoint_with_headroom();
+void test_psu_boost_rejects_unknown_input();
+void test_psu_setpoint_rejects_explicit_ov_conflict();
+void test_psu_enable_waits_for_fresh_telemetry();
+void test_psu_later_override_wins_before_rt_apply();
+void test_psu_completion_keeps_earlier_concurrent_ticket();
+void test_psu_short_low_side_transition_is_rt_owned();
 void test_psu_mode_flag_correct();
 
 void setup() {
@@ -483,6 +491,14 @@ void setup() {
     RUN_TEST(test_psu_setpoint_rejects_nan);
     RUN_TEST(test_psu_setpoint_rejects_above_vout_max);
     RUN_TEST(test_psu_setpoint_accepts_valid);
+    RUN_TEST(test_psu_boost_rejects_setpoint_below_input);
+    RUN_TEST(test_psu_boost_accepts_setpoint_with_headroom);
+    RUN_TEST(test_psu_boost_rejects_unknown_input);
+    RUN_TEST(test_psu_setpoint_rejects_explicit_ov_conflict);
+    RUN_TEST(test_psu_enable_waits_for_fresh_telemetry);
+    RUN_TEST(test_psu_later_override_wins_before_rt_apply);
+    RUN_TEST(test_psu_completion_keeps_earlier_concurrent_ticket);
+    RUN_TEST(test_psu_short_low_side_transition_is_rt_owned);
     RUN_TEST(test_psu_trip_escalates_after_repeated_trips);
     RUN_TEST(test_psu_trip_latches_after_many_trips);
     RUN_TEST(test_psu_trip_sparse_does_not_escalate);

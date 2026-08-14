@@ -616,6 +616,10 @@ static void loopRT(void *arg) {
         }
 
         if (samplerRet != ADC_Sampler::UpdateRet::NewData) {
+            // Do not make console PSU shutdown/override depend on a fresh ADC sample. A wedged
+            // sampler is exactly when `psu off` must still be able to transfer ownership to the
+            // RT core and disable/ramp the converter.
+            mppt.applyPendingPsuCommandRt(false);
             if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage()) {
                 ESP_LOGW("main", "Board power supply UV %.2f!", mppt.boardPowerSupplyVoltage());
                 adcSampler.cancelCalibration();
@@ -745,9 +749,11 @@ static void lfStuckWatchdog() {
     // re-runs ADC calibration (resetPeripherals), which would keep resetting the stuck-timer and
     // defeat this watchdog. A legitimate calibration is far shorter than TIMEOUT_US, so the
     // sustained timer already excludes it.
+    const float psuSetpoint = mppt.getPsuSetpoint();
     bool stuck = headroom && noPower && !g_app.manualPwm()
                  && (g_app.psuMode()
-                         ? (std::isfinite(mppt.psuVsetpoint) && sensors.Vout->ewm.avg.get() < mppt.psuVsetpoint - 2.0f)
+                         ? (std::isfinite(psuSetpoint)
+                            && sensors.Vout->ewm.avg.get() < psuSetpoint - 2.0f)
                          : !bool(mppt.charger.termCond));
 
     if (!stuck) { stuckSinceUs = 0; triedRelease = false; return; }
@@ -929,6 +935,10 @@ static void loopRTNewData(time_ms nowMs) {
     auto nSamples = sensors.Vout->numSamples;
 
     bool haveNewSample = (nSamples - lastMpptUpdateNumSamples) > 0;
+
+    // Enabling PSU mode needs this fresh Vin sample. Non-enabling commands may also arrive here
+    // and share the same RT-owned transition path.
+    mppt.applyPendingPsuCommandRt(haveNewSample);
 
     if (haveNewSample)
         timeLastSampler = wallClockUs();

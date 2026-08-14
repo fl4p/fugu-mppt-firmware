@@ -27,7 +27,7 @@ static void setupLimits(float vout_max, bool rcp) {
 void test_psu_ov_threshold_from_setpoint() {
     setPsuMode();
     setupLimits(100.0f, true);
-    mppt.charger.params.Vout_ov_limit = NAN;
+    mppt.setExplicitOvLimit(NAN);
     mppt.charger.params.Vbat_max = NAN;
     mppt.psuVsetpoint = 50.0f;
     auto ovTh = mppt.computeOvThreshold();
@@ -37,7 +37,7 @@ void test_psu_ov_threshold_from_setpoint() {
 void test_psu_ov_threshold_clamped_to_vout_max() {
     setPsuMode();
     setupLimits(60.0f, false);
-    mppt.charger.params.Vout_ov_limit = NAN;
+    mppt.setExplicitOvLimit(NAN);
     mppt.charger.params.Vbat_max = NAN;
     mppt.psuVsetpoint = 80.0f;
     auto ovTh = mppt.computeOvThreshold();
@@ -47,7 +47,7 @@ void test_psu_ov_threshold_clamped_to_vout_max() {
 void test_psu_ov_threshold_explicit_ovset_overrides() {
     setPsuMode();
     setupLimits(100.0f, true);
-    mppt.charger.params.Vout_ov_limit = 55.0f;
+    mppt.setExplicitOvLimit(55.0f);
     mppt.psuVsetpoint = 50.0f;
     auto ovTh = mppt.computeOvThreshold();
     TEST_ASSERT_EQUAL_FLOAT(55.0f, ovTh);
@@ -56,7 +56,7 @@ void test_psu_ov_threshold_explicit_ovset_overrides() {
 void test_psu_ov_threshold_no_setpoint_falls_back() {
     setPsuMode();
     setupLimits(100.0f, false);
-    mppt.charger.params.Vout_ov_limit = NAN;
+    mppt.setExplicitOvLimit(NAN);
     mppt.charger.params.Vbat_max = NAN;
     mppt.psuVsetpoint = NAN;
     auto ovTh = mppt.computeOvThreshold();
@@ -174,6 +174,75 @@ void test_psu_setpoint_accepts_valid() {
     mppt.psuVsetpoint = NAN;
     mppt.setPsuSetpoint(72.5f);
     TEST_ASSERT_EQUAL_FLOAT(72.5f, mppt.psuVsetpoint);
+}
+
+void test_psu_boost_rejects_setpoint_below_input() {
+    auto e = MpptController::validatePsuSetpoint(48.0f, 80.0f, true, 48.0f, NAN);
+    TEST_ASSERT_EQUAL_INT((int) PsuSetpointError::BoostBelowInput, (int) e);
+}
+
+void test_psu_boost_accepts_setpoint_with_headroom() {
+    auto e = MpptController::validatePsuSetpoint(50.0f, 80.0f, true, 48.0f, NAN);
+    TEST_ASSERT_EQUAL_INT((int) PsuSetpointError::None, (int) e);
+}
+
+void test_psu_boost_rejects_unknown_input() {
+    auto e = MpptController::validatePsuSetpoint(50.0f, 80.0f, true, NAN, NAN);
+    TEST_ASSERT_EQUAL_INT((int) PsuSetpointError::TelemetryUnavailable, (int) e);
+}
+
+void test_psu_setpoint_rejects_explicit_ov_conflict() {
+    auto e = MpptController::validatePsuSetpoint(50.0f, 80.0f, false, 24.0f, 50.0f);
+    TEST_ASSERT_EQUAL_INT((int) PsuSetpointError::OvLimitConflict, (int) e);
+}
+
+void test_psu_enable_waits_for_fresh_telemetry() {
+    setMpptMode();
+    setupLimits(80.0f, false);
+    mppt.setExplicitOvLimit(NAN);
+    const auto ticket = mppt.queuePsuSetpoint(50.0f);
+    TEST_ASSERT_NOT_EQUAL_UINT32(0, ticket);
+    mppt.applyPendingPsuCommandRt(false);
+    TEST_ASSERT_TRUE(mppt.hasPendingPsuCommand());
+    TEST_ASSERT_FALSE(mppt.isPsuCommandDone(ticket));
+    TEST_ASSERT_FALSE(g_app.psuMode());
+}
+
+void test_psu_later_override_wins_before_rt_apply() {
+    setMpptMode();
+    setupLimits(80.0f, false);
+    mppt.setExplicitOvLimit(NAN);
+    const auto enableTicket = mppt.queuePsuSetpoint(50.0f);
+    const auto manualTicket = mppt.requestPsuManual(0, -1);
+    mppt.applyPendingPsuCommandRt(false);
+    TEST_ASSERT_FALSE(mppt.isPsuCommandDone(enableTicket));
+    TEST_ASSERT_TRUE(mppt.isPsuCommandDone(manualTicket));
+    TEST_ASSERT_TRUE(g_app.manualPwm());
+}
+
+void test_psu_completion_keeps_earlier_concurrent_ticket() {
+    setMpptMode();
+    setupLimits(80.0f, false);
+    mppt.setExplicitOvLimit(NAN);
+    const auto first = mppt.queuePsuSetpoint(50.0f);
+    mppt.applyPendingPsuCommandRt(true);
+    const auto second = mppt.requestPsuManual(0, -1);
+    mppt.applyPendingPsuCommandRt(false);
+    TEST_ASSERT_TRUE(mppt.isPsuCommandDone(first));
+    TEST_ASSERT_TRUE(mppt.isPsuCommandDone(second));
+    TEST_ASSERT_EQUAL_INT((int) PsuSetpointError::None,
+                          (int) mppt.getPsuCommandError(first));
+}
+
+void test_psu_short_low_side_transition_is_rt_owned() {
+    setPsuMode();
+    const auto ticket = mppt.requestPsuShortLowSide();
+    TEST_ASSERT_TRUE(mppt.hasPendingPsuCommand());
+    TEST_ASSERT_TRUE(g_app.psuMode());
+    mppt.applyPendingPsuCommandRt(false);
+    TEST_ASSERT_TRUE(mppt.isPsuCommandDone(ticket));
+    TEST_ASSERT_TRUE(g_app.manualPwm());
+    TEST_ASSERT_EQUAL_UINT16(0, mppt.getManualTarget());
 }
 
 // --- 4. OpMode flags ---------------------------------------------------------

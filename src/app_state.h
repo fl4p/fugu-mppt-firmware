@@ -5,15 +5,18 @@
 // granularity already.
 
 #include <cstdint>
+#include <atomic>
 
 #include "util.h"
 
 enum class OpMode : uint8_t { Mppt = 0, Manual, Psu };
 
 struct AppState {
-    OpMode opMode = OpMode::Mppt;
-    [[nodiscard]] bool manualPwm() const { return opMode == OpMode::Manual; }
-    [[nodiscard]] bool psuMode()   const { return opMode == OpMode::Psu; }
+    // Written by console/service tasks and read by the RT loop. A plain enum here was a C++
+    // data race even when each individual byte write happened to be atomic on the ESP32.
+    std::atomic<OpMode> opMode{OpMode::Mppt};
+    [[nodiscard]] bool manualPwm() const { return opMode.load() == OpMode::Manual; }
+    [[nodiscard]] bool psuMode()   const { return opMode.load() == OpMode::Psu; }
 #ifdef WITH_NETW
     bool disableWifi = false;
     time_ms wifiReenableMs = 0; // wallClockMs() deadline to auto re-enable WiFi (0 = never)
