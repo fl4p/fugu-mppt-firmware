@@ -17,13 +17,17 @@ def test_battery_profile_keeps_the_29v_protection_reference():
 def test_open_output_profile_is_complete_and_changes_only_the_charger_limit():
     battery = ROOT / "config/lab/fbuck_lab_bench"
     open_output = ROOT / "config/lab/fbuck_lab_bench_open_output"
+    # wifi.conf is gitignored (holds the lab PSK), so it is absent on a fresh clone.
     expected = {
         "board.conf", "charger.conf", "coil.conf", "converter.conf",
-        "limits.conf", "sensor.conf", "tele.conf", "tracker.conf", "wifi.conf",
+        "limits.conf", "sensor.conf", "tele.conf", "tracker.conf",
     }
 
-    assert {path.name for path in (battery / "conf").iterdir()} == expected
-    assert {path.name for path in (open_output / "conf").iterdir()} == expected
+    def tracked(profile):
+        return {p.name for p in (profile / "conf").glob("*.conf")} - {"wifi.conf"}
+
+    assert tracked(battery) == expected
+    assert tracked(open_output) == expected
     assert not (open_output / "extends").exists()
     assert _vout(battery) == 29.0
     assert _vout(open_output) == 60.0
