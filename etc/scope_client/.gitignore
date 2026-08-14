@@ -1,2 +1,5 @@
 # scope captures written by save_csv into this folder (subfolder datasets stay tracked)
 /*.csv
+
+# per-device capture folders, <device>/<UTC timestamp>/
+/*/[0-9]*T[0-9]*Z/

@@ -17,10 +17,18 @@ dependencies.lock
 
 /sdkconfig
 sdkconfig.old
+sdkconfig.bak
 
 sdkconfig.s3
 
+# side ESP-IDF projects under etc/ generate their own build dir + sdkconfig
+etc/*/build/
+etc/*/sdkconfig
+
 .DS_Store
+
+# scratch screenshots/plots dropped at the repo root (doc images live under doc/)
+/*.png
 
 
 /managed_components
