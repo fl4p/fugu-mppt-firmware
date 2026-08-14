@@ -169,13 +169,25 @@ from bleak import BleakScanner
 devs = await BleakScanner.discover(timeout=15.0)
 ```
 
+But do not trust the *first* scan after a rename: `d.name` is CoreBluetooth's cached field, and it
+kept reporting the old name across several scans of a board that had demonstrably rebooted under
+the new hostname (console `hostname` said the new one). Re-scan before concluding the rename
+failed — it cleared on its own.
+
 The bench tooling's `--buck-name` defaults to `fugu-fbuck` and `--boost-name` to `fugu-fboost`, so
 match those unless you also update the invocation.
 
 A **bonded** Mac failing at subscribe with ATT code 3 ("Writing is not permitted") after a firmware
 change that altered the GATT layout is a stale macOS GATT cache, not a firmware bug:
 `blueutil --unpair <mac>`, then reconnect. Renaming the device does not help — the cache is keyed
-by the bond, not the name. (Code 5/15 is a different failure: insufficient auth/encryption.)
+by the bond, not the name.
+
+An **unbonded** host is the opposite case, ATT code 5/15 `Insufficient Authentication` on the first
+console write — it scans and connects fine, then every write fails. `ble_security` defaults to
+`justworks` (encrypted link) and the `fbuck_lab_bench*` profiles ship no `ble.conf`, so a freshly
+provisioned board refuses writes from a Mac it has never paired with. Pair it, or drop the link
+encryption: `set-config ble.conf ble_security none`, then `svc off ble; svc on ble`. Values and
+defaults are in `doc/dev-notes/ble-dev.md`.
 
 ## Console commands: read-only vs state-changing
 
