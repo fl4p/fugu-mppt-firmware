@@ -138,6 +138,11 @@ entry too — same recovery as above). Profiles live in `config/`: `lab/fbuck_la
 Symptoms of **no config partition**: `ls /` fails, `ntc=-273℃`, `0sps` in the status line. The conf
 path is `/littlefs/conf/`, not `/conf/`.
 
+`wifi.conf` is gitignored repo-wide (it holds the lab PSK), so **no profile in a fresh clone has
+one** and a board provisioned from it comes up with no credentials — set them with
+`wifi-add <ssid>:<psk>` over serial/BLE, creds are in the global `~/.claude/CLAUDE.md`, not the repo.
+Keys: `doc/Configuration.md`. For the same reason, don't assert on `wifi.conf` in a host test.
+
 `open_output` vs plain `fbuck_lab_bench` is a real distinction: with the output open Vout floats
 toward Vin, so the battery profile's `vout_max=29` trips OV above ~30 V Vin. Only use `open_output`
 for genuinely open-output sweeps.
