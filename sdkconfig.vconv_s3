@@ -1,0 +1,3 @@
+# vconv (virtual converter) on ESP32-S3 — bench/sim only
+# CONFIG_FUGU_WITH_MCPWM is not set
+CONFIG_FUGU_WITH_VCONV=y
