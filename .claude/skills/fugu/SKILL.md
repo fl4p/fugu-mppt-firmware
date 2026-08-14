@@ -222,12 +222,21 @@ wide-spread result can be persisted. Read the IQR before trusting an applied val
 ## Power-loop rig
 
 fboost supplies fbuck's input; the rig recirculates. `doc/Power Loop.md` and
-`dcdc-tools/verifications/vin-sweep/BRIEF-power-loop-rig.md` are the references. Two standing traps:
+`dcdc-tools/verifications/vin-sweep/BRIEF-power-loop-rig.md` are the references. Four standing traps:
 
 * **Low duty is the dangerous end.** Below fboost's count, fbuck boosts back into it and the
   reverse-current protection trips. The trip is protection working, not a fault.
 * **`--sync forced` or it silently runs DCM**, which `loss.py` assumes away. It's read back from
   firmware and the point is refused on mismatch.
+* **fboost must be LOCKED at `dc 2499`** — every pwr-metering ladder was calibrated there and
+  preflight refuses otherwise. Set it if it is off (standing operator instruction, 2026-08-14).
+  The firmware comes up at 2499 **by itself**, so a `dc 0` reading straight after a shutdown can be
+  stale: observed 2026-08-14, preflight refused on "dc 0" and a direct read a minute later showed
+  2499 with fresh telemetry. Re-read before concluding the boost is down.
+* **Shutdown order: fboost duty DOWN FIRST, then fbuck to zero.** Reversing it unloads a pumping
+  fboost into its reverse-current trip. Loaded pwr-metering runs deliberately **end energised** at
+  the lowest ladder rung (parking to zero would collapse the loop), so shutdown is a separate
+  operator step and the runner says so on every exit.
 
 For bench measurement conventions (ground springs not clips, `--probes`/`--dut`, restarting the
 bench daemon after editing `bench/*.py`), see that brief's trap list — it applies to anything run
