@@ -517,9 +517,11 @@ static void cmdOta(cmd *c) {
     adcSampler.halted = false;
     if (savedMode == OpMode::Psu) {
         // A PV curve must be restored as the curve, not as a CV pin at the saved
-        // instantaneous setpoint.
+        // instantaneous setpoint. rebase=false: the saved Isc may be a scaled one, and a
+        // restore must not turn it into the new `pv scale` reference.
         const auto ticket = savedPvActive
-                                ? mppt.queuePvCurve(savedPvIsc, savedPvVoc, savedPvK)
+                                ? mppt.queuePvCurve(savedPvIsc, savedPvVoc, savedPvK,
+                                                    false, false)
                                 : mppt.queuePsuSetpoint(savedPsuSetpoint);
         if (!ticket || !waitPsuCommand(ticket)
             || mppt.getPsuCommandError(ticket) != PsuSetpointError::None)

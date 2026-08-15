@@ -274,8 +274,10 @@ static void measureCoilTask(void *arg) {
     while (!converter.disabled() && wallClockMs() < doneDeadline)
         vTaskDelay(pdMS_TO_TICKS(10));
     if (savedMode == OpMode::Psu) {
+        // rebase=false: don't let a restore of a scaled curve become the `pv scale` reference
         const auto ticket = savedPvActive
-                                ? mppt.queuePvCurve(savedPvIsc, savedPvVoc, savedPvK)
+                                ? mppt.queuePvCurve(savedPvIsc, savedPvVoc, savedPvK,
+                                                    false, false)
                                 : mppt.queuePsuSetpoint(savedPsuSetpoint);
         if (!ticket || !waitPsuCommand(ticket)
             || mppt.getPsuCommandError(ticket) != PsuSetpointError::None)

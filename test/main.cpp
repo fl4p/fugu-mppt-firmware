@@ -328,6 +328,7 @@ void test_pv_inplace_update_keeps_setpoint();
 void test_pv_scale_rebase_semantics();
 void test_pv_rt_rejection_preserves_base_isc();
 void test_pv_inplace_update_clears_latch();
+void test_pv_scale_does_not_clear_latch();
 void test_pv_disable_paths_clear_active();
 void test_pv_plain_psu_enable_reverts_to_cv();
 void test_pv_pending_overridden_by_manual();
@@ -537,6 +538,7 @@ void setup() {
     RUN_TEST(test_pv_scale_rebase_semantics);
     RUN_TEST(test_pv_rt_rejection_preserves_base_isc);
     RUN_TEST(test_pv_inplace_update_clears_latch);
+    RUN_TEST(test_pv_scale_does_not_clear_latch);
     RUN_TEST(test_pv_disable_paths_clear_active);
     RUN_TEST(test_pv_plain_psu_enable_reverts_to_cv);
     RUN_TEST(test_pv_pending_overridden_by_manual);

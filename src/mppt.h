@@ -280,9 +280,12 @@ private:
             (ticket << 8) | static_cast<uint8_t>(error), std::memory_order_release);
     }
 
-    // RT-only seqlock writer for the published PV curve snapshot.
+    // RT-only seqlock writer for the published PV curve snapshot. The release fence after the
+    // odd-marking increment is load-bearing: a release RMW alone does not keep the payload
+    // stores from becoming visible before it.
     void publishPvState(bool active, float isc, float voc, float k) {
-        pvPubSeq.fetch_add(1, std::memory_order_release);
+        pvPubSeq.fetch_add(1, std::memory_order_relaxed);
+        std::atomic_thread_fence(std::memory_order_release);
         pvPubActive.store(active, std::memory_order_relaxed);
         pvPubIsc.store(isc, std::memory_order_relaxed);
         pvPubVoc.store(voc, std::memory_order_relaxed);
@@ -916,20 +919,23 @@ public:
     }
 
     // Coherent read of the published curve. Returns active; outputs are NAN when never set.
-    // Bounded retry: the writer's critical section is a handful of straight-line stores on the
-    // RT core, so contention resolves in one or two rounds — the cap only matters if RT died
-    // mid-publish, where a possibly-mixed read beats wedging the console/OTA task forever.
+    // Callers are non-RT tasks (console/OTA/measure-coil). Bounded retry with a yield: an odd
+    // seq can persist for a whole interrupt on the RT core, so spin briefly, then sleep-retry;
+    // the final fallback (possibly-mixed read) only fires if RT died mid-publish — better than
+    // wedging the caller forever.
     bool getPvCurve(float &isc, float &voc, float &k) const {
-        uint32_t s1 = 0, s2;
+        uint32_t s1, s2;
         bool active;
         for (int tries = 0; tries < 64; ++tries) {
+            if (tries >= 8) vTaskDelay(1);
             s1 = pvPubSeq.load(std::memory_order_acquire);
             if (s1 & 1u) continue;
             active = pvPubActive.load(std::memory_order_relaxed);
             isc = pvPubIsc.load(std::memory_order_relaxed);
             voc = pvPubVoc.load(std::memory_order_relaxed);
             k = pvPubK.load(std::memory_order_relaxed);
-            s2 = pvPubSeq.load(std::memory_order_acquire);
+            std::atomic_thread_fence(std::memory_order_acquire);
+            s2 = pvPubSeq.load(std::memory_order_relaxed);
             if (s1 == s2) return active;
         }
         active = pvPubActive.load(std::memory_order_relaxed);
@@ -1112,10 +1118,13 @@ public:
         if (pvCmd && pvSim.active) {
             // In-place curve update: keep the current setpoint (the slew limiter walks it to
             // the new curve), no controller reset — a jump to Voc under load is the excursion
-            // the limiter exists to prevent. Trip state IS cleared, like a `psu <v>` re-issue:
-            // re-issuing the curve is the operator's unlatch escape hatch.
-            psuResetTripState();
-            clearBackoff();
+            // the limiter exists to prevent. Only a deliberate full `pv <isc> <voc>` re-issue
+            // (rebase set) is the unlatch escape hatch, like `psu <v>`; a `pv scale` or a
+            // save/restore must not silently cancel a fault backoff or the trip history.
+            if (pvRebase) {
+                psuResetTripState();
+                clearBackoff();
+            }
             pvSim.model.set(pvIsc, requested, pvK);
             if (pvRebase) pvBaseIsc.store(pvIsc, std::memory_order_relaxed);
             publishPvState(true, pvIsc, requested, pvK);

@@ -138,6 +138,21 @@ void test_pv_inplace_update_clears_latch() {
     TEST_ASSERT_EQUAL_FLOAT(40.0f, mppt.psuVsetpoint);
 }
 
+void test_pv_scale_does_not_clear_latch() {
+    pvSetup();
+    pvEnable(5, 60, 0.8f);
+    mppt.psuLatched = true;
+    // rebase=false (`pv scale` / save-restore) is a routine update, not the unlatch escape
+    // hatch — fault state must survive it.
+    const auto ticket = mppt.queuePvCurve(2.5f, 60, 0.8f, false, false);
+    TEST_ASSERT_NOT_EQUAL_UINT32(0, ticket);
+    mppt.applyPendingPsuCommandRt(true);
+    TEST_ASSERT_TRUE(mppt.isPsuCommandDone(ticket));
+    TEST_ASSERT_TRUE(mppt.psuLatched);
+    TEST_ASSERT_EQUAL_FLOAT(2.5f, mppt.pvSim.model.isc);
+    mppt.psuResetTripState();
+}
+
 void test_pv_disable_paths_clear_active() {
     pvSetup();
     pvEnable();
