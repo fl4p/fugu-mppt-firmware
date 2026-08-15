@@ -23,6 +23,9 @@ automated runs.
   - For real MPPT tracking you need a **PV/solar-array simulator** (Keysight, Chroma) or a PSU with
     a known **series resistance** so an MPP exists. A stiff CV source has no maximum power point —
     the tracker will just walk to the current limit.
+  - In-house alternative: a second Fugu boost in **`mode=pv`** emulates the panel curve at its
+    output (`pv` console command, `config/lab/fboost_pv`) — see the PV-sim section in
+    [Power Loop.md](Power%20Loop.md) for the rig caveats.
 - **Output sink** — an electronic load is the battery emulator:
   - **CV mode** = fixed pack voltage (charger sees a battery clamped at that voltage).
   - **CC mode** = fixed sink current (defines the operating point / charge current).

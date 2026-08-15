@@ -258,6 +258,8 @@ static void measureCoilTask(void *arg) {
     auto savedMode = g_app.opMode.load();
     const float savedPsuSetpoint = mppt.getPsuSetpoint();
     const uint16_t savedManualTarget = mppt.getManualTarget();
+    float savedPvIsc, savedPvVoc, savedPvK;
+    const bool savedPvActive = mppt.getPvCurve(savedPvIsc, savedPvVoc, savedPvK);
     const auto enterTicket = mppt.requestPsuManual(0, -1);
     if (!waitPsuCommand(enterTicket)) {
         UART_LOG("measure-coil: RT transition timed out");
@@ -272,7 +274,9 @@ static void measureCoilTask(void *arg) {
     while (!converter.disabled() && wallClockMs() < doneDeadline)
         vTaskDelay(pdMS_TO_TICKS(10));
     if (savedMode == OpMode::Psu) {
-        const auto ticket = mppt.queuePsuSetpoint(savedPsuSetpoint);
+        const auto ticket = savedPvActive
+                                ? mppt.queuePvCurve(savedPvIsc, savedPvVoc, savedPvK)
+                                : mppt.queuePsuSetpoint(savedPsuSetpoint);
         if (!ticket || !waitPsuCommand(ticket)
             || mppt.getPsuCommandError(ticket) != PsuSetpointError::None)
             UART_LOG("measure-coil: PSU mode restore failed");

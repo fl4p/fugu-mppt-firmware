@@ -101,6 +101,10 @@ conf-check
 | `psu <float>` | Enter PSU (constant-voltage) mode and set the output voltage setpoint. The limiter chain regulates Vout to the setpoint with CV/CC foldback — no MPPT tracker, no periodic sweep, no charger-layer battery semantics. Trips use a fast 100 ms auto-retry with escalation to a hard latch after repeated faults. Range-checks against `limits.conf::vout_max`. |
 | `psu off` | Exit PSU mode, return to MPPT tracking. |
 | `psu` | Print PSU mode state: setpoint, trip count, escalation/latch state. |
+| `pv <isc> <voc> [k]` | Enter PV-sim (solar-array-simulator) mode: the output follows the panel curve V=f(Iout) with `Voc` at no load and MPP at `k·Voc` (k default 0.8, range [0.5,0.95]). Runs on the PSU machinery (same trips/latch); the setpoint moves along the curve, slew-limited, clamped to [Vin+0.5, min(Voc, `vout_max`)] — a boost can only emulate the curve above Vin. The Iout limiter is capped at 1.1·Isc; **below the Vin floor the body diode passes current firmware cannot limit** — keep the input supply's current limit low. Re-issuing while active updates the curve in place (no setpoint jump). |
+| `pv scale <s>` | Irradiance knob: re-apply the curve with `Isc = s ×` the last full `pv` command's Isc, s in (0,1.2]. Scales don't compound. |
+| `pv off` | Ramp to 0 duty and enter manual mode (deliberately not the MPPT fallback of `psu off` — this is a bench source). |
+| `pv` | Print PV-sim state: curve params, live setpoint/Vout/Iout, trip state. |
 
 These override the running charger parameters only; use `set-config charger.conf …` to persist.
 

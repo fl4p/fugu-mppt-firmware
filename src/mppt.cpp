@@ -66,8 +66,13 @@ void MpptController::update() {
 
     //float powerLimit = std::min(thermalPowerLimit(ntcTemp), limits.P_max);
 
-    // charge current
-    float Iout_max = g_app.psuMode() ? limits.Iout_max : min(limits.Iout_max, charger.Iout_max());
+    // charge current. PV-sim: cap at the emulated Isc — once the curve is clamped at the
+    // Vin floor the converter is a stiff CV source, and without this the only limit left
+    // is the hardware Iout_max.
+    float Iout_max = g_app.psuMode()
+                         ? (pvSim.active ? min(limits.Iout_max, pvSim.model.isc * 1.1f)
+                                         : limits.Iout_max)
+                         : min(limits.Iout_max, charger.Iout_max());
 
     // periodic sweep / scan
     // Skip while the battery is full / output-voltage-limited (CV): there's no MPP to find,
@@ -85,6 +90,9 @@ void MpptController::update() {
 
 
     constexpr auto CV = MpptControlMode::CV, CC = MpptControlMode::CC, CP = MpptControlMode::CP;
+
+    if (g_app.psuMode() && pvSim.active)
+        pvAdvanceSetpoint(sensors.Iout->med3.get(), sensors.Vin->ewm.avg.get(), dtCtrl);
 
     std::array<CVP, 5> controlValues{
         CVP{CV, VinController, {sensors.Vin->med3.get(), limits.Vin_min}},
@@ -294,6 +302,24 @@ void MpptController::update() {
     }
 }
 
+void MpptController::pvAdvanceSetpoint(float iout, float vin, float dt) {
+    if (std::isfinite(iout)) pvSim.iout.add(std::max(iout, 0.f));
+    const float iF = pvSim.iout.get();
+    float vTgt = std::isfinite(iF) ? pvSim.model.voltage(iF) : pvSim.model.voc;
+    const float ceil_ = std::min(pvSim.model.voc, limits.Vout_max);
+    // Boost floor: below Vin the topology can't regulate — truncate the curve. If Vin has
+    // risen into the headroom of Voc the feasible interval is empty; hold the ceiling and
+    // let the Voc-pinned feasibility latch own that fault.
+    if (std::isfinite(vin)) vTgt = std::max(vTgt, vin + BoostHeadroomV);
+    vTgt = std::min(vTgt, ceil_);
+    // dt is stale-prone (early returns don't refresh lastUs); an unclamped step would both
+    // jump the curve and kick the Vout PD's derivative.
+    dt = std::min(dt > 0 ? dt : 6e-4f, 0.01f);
+    const float dv = pvSim.slewVps * dt;
+    psuVsetpoint += constrain(vTgt - psuVsetpoint, -dv, dv);
+    publishedPsuSetpoint.store(psuVsetpoint, std::memory_order_release);
+}
+
 void MpptController::updateManual() {
     lastUs = wallClockUs();
     ctrlState.mode = MpptControlMode::None;
@@ -352,13 +378,33 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     }
 
     auto mode = converterConf.getString("mode", "");
-    if (mode == "psu" && !targetPwmCnt) {
+    bool psuBootQueued = false;
+    if (targetPwmCnt && (mode == "psu" || mode == "pv")) {
+        ESP_LOGE("mppt", "tracker.conf::target_duty_cycle overrides converter.conf mode=%s",
+                 mode.c_str());
+    } else if (mode == "psu") {
         float vout = converterConf.getFloat("psu_vout", 0.0f);
         if (!requestPsuSetpoint(vout, true)) {
             ESP_LOGE("mppt", "PSU mode but psu_vout invalid (%.2f), disabling", vout);
             g_app.setupErr = true;
         } else {
             ESP_LOGI("mppt", "PSU mode %.2fV queued until fresh telemetry", vout);
+            psuBootQueued = true;
+        }
+    } else if (mode == "pv") {
+        pvSim.slewVps = std::max(10.f, converterConf.getFloat("pv_slew", 200.0f));
+        pvSim.iout.updateSpan(std::max(1.0f, converterConf.getFloat("pv_iout_span", 16.0f)));
+        float isc = converterConf.getFloat("pv_isc", 0.0f);
+        float voc = converterConf.getFloat("pv_voc", 0.0f);
+        float k = converterConf.getFloat("pv_k", 0.8f);
+        if (!queuePvCurve(isc, voc, k, true)) {
+            ESP_LOGE("mppt", "PV mode but curve invalid (Isc=%.2f Voc=%.2f k=%.2f), disabling",
+                     isc, voc, k);
+            g_app.setupErr = true;
+        } else {
+            ESP_LOGI("mppt", "PV-sim Isc=%.2fA Voc=%.2fV k=%.2f queued until fresh telemetry",
+                     isc, voc, k);
+            psuBootQueued = true;
         }
     } else if (!mode.empty() && mode != "mppt" && !targetPwmCnt) {
         ESP_LOGE("mppt", "Unknown converter.conf mode '%s', disabling", mode.c_str());
@@ -390,7 +436,10 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
             converter.enableSyncRect(true);
             bflow.enable(true);
         }
-    } else if (g_app.psuMode()) {
+    } else if (psuBootQueued || g_app.psuMode()) {
+        // At boot the queued Enable/EnablePv hasn't been applied by the RT consumer yet, so
+        // psuMode() alone is false here — without psuBootQueued this would fall into the
+        // sweep (and only calibrate as its side effect).
         sampler.startCalibration();
         ESP_LOGI("mppt", "PSU mode: calibration started, converter arm deferred to RT loop");
     } else {
@@ -450,6 +499,8 @@ void MpptController::telemetry() {
     }
 
     point.addField("pwm_duty", converter.getCtrlOnPwmCnt());
+    if (g_app.psuMode() && (_teleNumPoints % 10) == 0)
+        point.addField("Vset", getPsuSetpoint(), 2); // moving in PV-sim, constant in plain PSU
     if (!converter.disabled() && (_teleNumPoints % 10) == 0) {
         point.addField("pwm_ls_duty", converter.getRectOnPwmCnt());
         point.addField("pwm_ls_max", converter.getRectOnPwmMax());

@@ -107,7 +107,7 @@ void VirtualConverter::stepOneCycle(float T) {
     vOut_ = (vOut_ + (T * iOutAvg_) * invCout_ + aOut_ * vBatEff) * inv1pAout_;
 
     if (vIn_ < 0.0f) vIn_ = 0.0f;
-    const float vInMax = voc_ * 1.05f;
+    const float vInMax = pv_.voc * 1.05f;
     if (vIn_ > vInMax) vIn_ = vInMax;
     // KNOWN SOLVER LIMITATION (pre-existing, affects buck and boost alike). iL is advanced using
     // the OLD vOut_, so the L–C_out loop is forward-Euler and grows energy at (w0*T)^2/4 per cycle
@@ -128,13 +128,13 @@ void VirtualConverter::stepOneCycle(float T) {
     // preset: r_bat≫1, v_bat=0) fall back to 2·Voc so V_out can charge up to the
     // firmware's OVP trip instead of being pinned at zero. Boost adds the boost-ratio
     // headroom: V_out legitimately sits well above both on this topology.
-    float vOutMax = std::max(vbat_ * 2.0f, voc_ * 2.0f);
+    float vOutMax = std::max(vbat_ * 2.0f, pv_.voc * 2.0f);
     // Boost: buck.h caps duty at pwmCtrlMax = 0.9*driverPwmMax, so the ideal ratio reaches 10, and
     // vIn_ is itself allowed up to 1.05*voc — a LEGITIMATE operating point is therefore 10.5*voc.
     // Anything tighter silently pins the plant so it stops responding to duty, which makes a Vout
     // loop look stable when it is not. 12x leaves margin over that; keep it in step with
     // MaxBoostRatio / pwmCtrlMax in buck.h.
-    if (boost_) vOutMax = std::max(vOutMax, voc_ * 12.0f);
+    if (boost_) vOutMax = std::max(vOutMax, pv_.voc * 12.0f);
     if (vOut_ > vOutMax) vOut_ = vOutMax;
 }
 

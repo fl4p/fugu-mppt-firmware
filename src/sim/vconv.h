@@ -4,6 +4,8 @@
 #include <cmath>
 #include <algorithm>
 
+#include "math/pv_model.h"
+
 // Pure-C++ model of a synchronous buck OR boost converter (setBoost()). No Arduino, no IDF,
 // no FreeRTOS.
 // Wire-up (PWM input, ADC output, conf parsing) lives in src/pwm/vconv.h,
@@ -23,35 +25,10 @@ public:
     void setBoost(bool b) { boost_ = b; }
     [[nodiscard]] bool isBoost() const { return boost_; }
 
-    // PV: single-diode-ish exponential parameterized by Isc, Voc, k = V_mpp/Voc.
-    // alpha is solved from k once at setPv-time.
-    void setPv(float isc, float voc, float k) {
-        isc_ = isc; voc_ = voc; pvK_ = k;
-        // Solve alpha * (1 - k) = ln(1 + k * alpha) by Newton iteration.
-        // f(a)  = a*(1-k) - ln(1 + k*a)
-        // f'(a) = (1-k) - k / (1 + k*a)
-        float a = (k > 0.0f && k < 1.0f) ? (1.0f / (1.0f - k)) : 1.0f;
-        for (int i = 0; i < 12; ++i) {
-            float fa = a * (1.0f - k) - std::log(1.0f + k * a);
-            float fp = (1.0f - k) - k / (1.0f + k * a);
-            if (std::fabs(fp) < 1e-9f) break;
-            float step = fa / fp;
-            a -= step;
-            if (a < 1e-3f) a = 1e-3f;
-            if (std::fabs(step) < 1e-7f) break;
-        }
-        pvAlpha_ = a;
-        pvNorm_ = 1.0f / (1.0f - std::exp(-a));
-    }
+    // PV source curve (math/pv_model.h).
+    void setPv(float isc, float voc, float k) { pv_.set(isc, voc, k); }
 
-    [[nodiscard]] float pvCurrent(float v) const {
-        if (v >= voc_) return 0.0f;
-        if (v <= 0.0f) return isc_;
-        float i = isc_ * (1.0f - std::exp(pvAlpha_ * (v - voc_) / voc_)) * pvNorm_;
-        if (i < 0.0f) return 0.0f;
-        if (i > isc_) return isc_;
-        return i;
-    }
+    [[nodiscard]] float pvCurrent(float v) const { return pv_.current(v); }
 
     void setBat(float vbat, float rbat) {
         vbat_ = vbat;
@@ -101,9 +78,9 @@ public:
     [[nodiscard]] float getVin()  const { return vIn_; }
     [[nodiscard]] float getVout() const { return vOut_; }
     [[nodiscard]] float getIL()   const { return iLEnd_; }
-    [[nodiscard]] float getIsc()  const { return isc_; }
-    [[nodiscard]] float getVoc()  const { return voc_; }
-    [[nodiscard]] float getPvK()  const { return pvK_; }
+    [[nodiscard]] float getIsc()  const { return pv_.isc; }
+    [[nodiscard]] float getVoc()  const { return pv_.voc; }
+    [[nodiscard]] float getPvK()  const { return pv_.k; }
     [[nodiscard]] float getVbat() const { return vbat_; }
     [[nodiscard]] float getRbat() const { return rbat_; }
     [[nodiscard]] float getCin()  const { return cIn_; }
@@ -142,12 +119,7 @@ public:
 private:
     bool boost_ = false;
 
-    // PV
-    float isc_ = 8.0f;
-    float voc_ = 40.0f;
-    float pvK_ = 0.8f;
-    float pvAlpha_ = 11.5f;
-    float pvNorm_  = 1.0f;
+    PvModel pv_;
 
     // Battery + passives
     float vbat_ = 28.0f;

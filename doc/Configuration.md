@@ -119,8 +119,13 @@ See [Topology notes & examples](#topology-notes--examples) below for worked ACS7
 | key          | unit | type  | default | description                                                |
 |--------------|------|-------|---------|------------------------------------------------------------|
 | `topo`       |      | enum  | —       | Converter topology: `buck` or `boost`                      |
-| `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default) or `psu` (constant-voltage supply; see `psu` console command) |
+| `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default), `psu` (constant-voltage supply; see `psu` console command) or `pv` (solar-array-simulator: output follows a PV curve; see `pv` console command) |
 | `psu_vout`   | V    | float | —       | PSU mode output voltage setpoint (used when `mode=psu`; range-checked against `vout_max`) |
+| `pv_isc`     | A    | float | —       | PV-sim short-circuit current (`mode=pv`; also caps the Iout limiter at 1.1×) |
+| `pv_voc`     | V    | float | —       | PV-sim open-circuit voltage (range-checked against `vout_max`; carries the OV threshold and boost feasibility) |
+| `pv_k`       |      | float | 0.8     | PV-sim Vmp/Voc curve factor, valid range [0.5, 0.95] |
+| `pv_slew`    | V/s  | float | 200     | PV-sim setpoint slew limit (min 10) |
+| `pv_iout_span` |    | float | 16      | PV-sim EWMA span of the Iout feedback for the curve (local, separate from `iout_filt_len`) |
 | `forced_pwm` |      | bool  | 0       | Force CCM PWM even at light loads (see notes below)        |
 | `pwm_driver` |      | enum  | ledc    | Gate driver: `ledc` or `mcpwm`. Only consulted when the firmware compiles in both (`CONFIG_FUGU_WITH_LEDC` and `CONFIG_FUGU_WITH_MCPWM`); with one compiled it is forced to that one |
 | `vout_max`   | V    | float | —       | Legacy output voltage limit (real one is in `limits.conf`) |
@@ -154,7 +159,10 @@ per-path constant in `mppt.cpp`:
 The limiter path is the only duty-slew path: the five PD controllers (Vin, Vout, Iin, Iout, power)
 produce a control value each tick, the minimum wins, and `kCtrlSlewLimit` scales it into a duty
 step. In PSU mode the same chain runs — when no limiter binds, the Vout controller's output drives
-duty toward the setpoint (CV); when a current or power limit binds, it folds back (CC).
+duty toward the setpoint (CV); when a current or power limit binds, it folds back (CC). `mode=pv`
+runs the identical chain, but the Vout setpoint is recomputed each tick from the PV curve
+V=f(Iout), clamped to [Vin+0.5, min(`pv_voc`, `vout_max`)] and slew-limited by `pv_slew`; the OV
+threshold and feasibility checks stay pinned at `pv_voc`, not the moving setpoint.
 
 **`_kd` vs `_td`.** `_kd` multiplies the raw difference between consecutive samples, so its
 contribution to duty scales with the loop period: the same `_kd` is a *different* derivative gain

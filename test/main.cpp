@@ -319,6 +319,25 @@ void test_psu_completion_keeps_earlier_concurrent_ticket();
 void test_psu_short_low_side_transition_is_rt_owned();
 void test_psu_mode_flag_correct();
 
+// test_pv_sim.cpp — PV-sim solar-array-simulator curve mode
+void test_pv_rejects_bad_params();
+void test_pv_rejects_ovset_conflict();
+void test_pv_enable_enters_psu_mode_at_voc();
+void test_pv_enable_waits_for_fresh_telemetry();
+void test_pv_inplace_update_keeps_setpoint();
+void test_pv_scale_rebase_semantics();
+void test_pv_disable_paths_clear_active();
+void test_pv_plain_psu_enable_reverts_to_cv();
+void test_pv_pending_overridden_by_manual();
+void test_pv_ov_threshold_pinned_at_voc();
+void test_pv_requested_setpoint_reports_voc();
+void test_pv_trips_reach_latch();
+void test_pv_advance_slew_clamp();
+void test_pv_advance_dt_clamp();
+void test_pv_advance_vin_floor();
+void test_pv_advance_voc_ceiling_holds_on_empty_interval();
+void test_pv_advance_tracks_curve_point();
+
 void setup() {
 #ifdef TEST_ADC_HW
     // Safe to flash onto a live converter: force both gate-driver inputs low (fry pwm_hi=21,
@@ -506,6 +525,25 @@ void setup() {
     RUN_TEST(test_psu_serious_fault_stays_out_of_fast_retry_bucket);
     RUN_TEST(test_psu_trip_latch_blocks_start);
     RUN_TEST(test_psu_reset_clears_latch);
+
+    // PV-sim — solar-array-simulator curve mode (on the PSU machinery)
+    RUN_TEST(test_pv_rejects_bad_params);
+    RUN_TEST(test_pv_rejects_ovset_conflict);
+    RUN_TEST(test_pv_enable_enters_psu_mode_at_voc);
+    RUN_TEST(test_pv_enable_waits_for_fresh_telemetry);
+    RUN_TEST(test_pv_inplace_update_keeps_setpoint);
+    RUN_TEST(test_pv_scale_rebase_semantics);
+    RUN_TEST(test_pv_disable_paths_clear_active);
+    RUN_TEST(test_pv_plain_psu_enable_reverts_to_cv);
+    RUN_TEST(test_pv_pending_overridden_by_manual);
+    RUN_TEST(test_pv_ov_threshold_pinned_at_voc);
+    RUN_TEST(test_pv_requested_setpoint_reports_voc);
+    RUN_TEST(test_pv_trips_reach_latch);
+    RUN_TEST(test_pv_advance_slew_clamp);
+    RUN_TEST(test_pv_advance_dt_clamp);
+    RUN_TEST(test_pv_advance_vin_floor);
+    RUN_TEST(test_pv_advance_voc_ceiling_holds_on_empty_interval);
+    RUN_TEST(test_pv_advance_tracks_curve_point);
     RUN_TEST(test_nvs_readstring_roundtrips_long_value);
     RUN_TEST(test_nvs_readstring_short_and_missing);
     RUN_TEST(test_telnet_command_is_deferred_then_runs_on_drain);

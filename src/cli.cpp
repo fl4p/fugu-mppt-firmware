@@ -497,6 +497,8 @@ static void cmdOta(cmd *c) {
     auto savedMode = g_app.opMode.load();
     const float savedPsuSetpoint = mppt.getPsuSetpoint();
     const uint16_t savedManualTarget = mppt.getManualTarget();
+    float savedPvIsc, savedPvVoc, savedPvK;
+    const bool savedPvActive = mppt.getPvCurve(savedPvIsc, savedPvVoc, savedPvK);
     // Stop power conversion and let the stage de-energize BEFORE downloading. OTA flash
     // writes briefly stall the RT loop and draw erase-current spikes; at full power that
     // reset the device mid-transfer (doing `dc 0` by hand first was the reliable workaround).
@@ -514,7 +516,11 @@ static void cmdOta(cmd *c) {
     // OTA failed — resume the prior operating mode
     adcSampler.halted = false;
     if (savedMode == OpMode::Psu) {
-        const auto ticket = mppt.queuePsuSetpoint(savedPsuSetpoint);
+        // A PV curve must be restored as the curve, not as a CV pin at the saved
+        // instantaneous setpoint.
+        const auto ticket = savedPvActive
+                                ? mppt.queuePvCurve(savedPvIsc, savedPvVoc, savedPvK)
+                                : mppt.queuePsuSetpoint(savedPsuSetpoint);
         if (!ticket || !waitPsuCommand(ticket)
             || mppt.getPsuCommandError(ticket) != PsuSetpointError::None)
             ESP_LOGE("main", "ota: failed to restore PSU mode: %s",
@@ -1357,6 +1363,66 @@ static void cmdPsu(cmd *c) {
     ESP_LOGI("main", "PSU mode, vset=%.2fV", v);
 }
 
+// pv                      — status
+// pv <isc> <voc> [k]      — enter PV-sim (output follows the panel curve) / update the curve
+// pv scale <s>            — irradiance knob: Isc = s * last full-command Isc
+// pv off                  — ramp to 0, manual mode (deliberately NOT the MPPT fallback of `psu off`)
+static void cmdPv(cmd *c) {
+    Command cc(c);
+    int n = cc.countArgs();
+    auto arg = n >= 1 ? cc.getArg(0).getValue() : String();
+    if (arg.length() == 0) {
+        float isc, voc, k;
+        if (mppt.getPvCurve(isc, voc, k)) {
+            UART_LOG("PV: on Isc=%.2fA Voc=%.2fV k=%.2f  Vset=%.2fV Vout=%.2fV Iout=%.2fA %s trips=%u",
+                     isc, voc, k, mppt.getPsuSetpoint(),
+                     sensors.Vout->med3.get(), sensors.Iout->med3.get(),
+                     mppt.isPsuLatched() ? "LATCHED" : mppt.isPsuEscalated() ? "escalated" : "ok",
+                     mppt.getPsuTripCount());
+        } else {
+            UART_LOG("PV: off");
+        }
+        return;
+    }
+    if (arg == "off") {
+        if (!mppt.isPvActive() && !mppt.hasPendingPsuCommand())
+            CMD_FAIL_RETURN("pv: not in PV mode");
+        const auto ticket = mppt.requestPsuManual(0, -1);
+        if (!waitPsuCommand(ticket))
+            CMD_FAIL_RETURN("pv off: RT transition timed out");
+        return;
+    }
+    float isc, voc, k;
+    bool rebase = true;
+    if (arg == "scale") {
+        float s = n >= 2 ? cc.getArg(1).getValue().toFloat() : NAN;
+        if (!std::isfinite(s) || s <= 0 || s > 1.2f)
+            CMD_FAIL_RETURN("pv scale: expected (0,1.2]");
+        float base = mppt.getPvBaseIsc();
+        if (!mppt.getPvCurve(isc, voc, k) || !std::isfinite(base))
+            CMD_FAIL_RETURN("pv scale: no active curve");
+        isc = base * s;
+        rebase = false;
+    } else {
+        isc = arg.toFloat();
+        voc = n >= 2 ? cc.getArg(1).getValue().toFloat() : NAN;
+        k = n >= 3 ? cc.getArg(2).getValue().toFloat() : 0.8f;
+    }
+    if (!MpptController::validPvParams(isc, voc, k))
+        CMD_FAIL_RETURN("pv: expected isc>0 voc>0 k in [0.5,0.95]");
+    const auto ticket = mppt.queuePvCurve(isc, voc, k, false, rebase);
+    if (!ticket)
+        CMD_FAIL_RETURN("pv: %s", psuErrorText(mppt.getLastPsuRequestError()));
+    if (!waitPsuCommand(ticket))
+        CMD_FAIL_RETURN("pv: RT transition timed out");
+    if (mppt.getPsuCommandError(ticket) != PsuSetpointError::None)
+        CMD_FAIL_RETURN("pv: %s", psuErrorText(mppt.getPsuCommandError(ticket)));
+    PvModel m;
+    m.set(isc, voc, k);
+    ESP_LOGI("main", "PV-sim Isc=%.2fA Voc=%.2fV k=%.2f (MPP %.1fV/%.0fW)",
+             isc, voc, k, k * voc, k * voc * m.current(k * voc));
+}
+
 // status  — charger/battery snapshot: termination state, effective limits, termination line and BMS feed.
 static void cmdStatus(cmd *) {
     auto &chg = mppt.charger;
@@ -1386,6 +1452,9 @@ static void cmdStatus(cmd *) {
         UART_LOG("PSU: vset=%.2fV %s trips=%u", mppt.getPsuSetpoint(),
                  mppt.isPsuLatched() ? "LATCHED" : mppt.isPsuEscalated() ? "escalated" : "ok",
                  mppt.getPsuTripCount());
+        float isc, voc, k;
+        if (mppt.getPvCurve(isc, voc, k))
+            UART_LOG("  PV curve Isc=%.2fA Voc=%.2fV k=%.2f", isc, voc, k);
     }
 }
 
@@ -1770,6 +1839,7 @@ void setupCli() {
     cli.addSingleArgCmd("iset", cmdIset);
     cli.addSingleArgCmd("ovset", cmdOvset);
     cli.addBoundlessCmd("psu", cmdPsu);
+    cli.addBoundlessCmd("pv", cmdPv); // pv <isc> <voc> [k] | scale <s> | off
     cli.addCommand("status", cmdStatus);
 
     cli.addBoundlessCmd("hostname,hn", cmdHostname);

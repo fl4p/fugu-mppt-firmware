@@ -23,6 +23,7 @@
 #include "charger.h"
 #include "etc/plot.h"
 #include "app_state.h"
+#include "math/pv_model.h"
 
 struct Limits {
     const float Vin_max{};
@@ -110,7 +111,7 @@ enum class PsuSetpointError : uint8_t {
 };
 
 enum class PsuCommand : uint8_t {
-    None = 0, Enable, DisableMppt, DisableManual, StartSweep, ShortLowSide
+    None = 0, Enable, DisableMppt, DisableManual, StartSweep, ShortLowSide, EnablePv
 };
 
 
@@ -242,6 +243,13 @@ private:
     std::atomic<float> explicitOvLimit{NAN};
     std::atomic<uint16_t> pendingManualTarget{0};
     std::atomic<int> pendingManualRect{-1};
+    std::atomic<float> pendingPvIsc{NAN}, pendingPvVoc{NAN}, pendingPvK{NAN};
+    // Published PV curve snapshot for non-RT readers (status/OTA/measure-coil). Seqlock
+    // (odd = write in progress) so a concurrent curve update can't yield a mixed set.
+    std::atomic<uint32_t> pvPubSeq{0};
+    std::atomic<float> pvPubIsc{NAN}, pvPubVoc{NAN}, pvPubK{NAN};
+    std::atomic<bool> pvPubActive{false};
+    std::atomic<float> pvBaseIsc{NAN}; // last full `pv` Isc, reference for `pv scale`
     unsigned short _teleNumPoints = 0;
 
     const VIinVout<const Sensor *> &sensors;
@@ -269,6 +277,22 @@ private:
     void completePsuCommand(uint32_t ticket, PsuSetpointError error) {
         completedPsuResults[ticket % PsuResultSlots].store(
             (ticket << 8) | static_cast<uint8_t>(error), std::memory_order_release);
+    }
+
+    // RT-only seqlock writer for the published PV curve snapshot.
+    void publishPvState(bool active, float isc, float voc, float k) {
+        pvPubSeq.fetch_add(1, std::memory_order_release);
+        pvPubActive.store(active, std::memory_order_relaxed);
+        pvPubIsc.store(isc, std::memory_order_relaxed);
+        pvPubVoc.store(voc, std::memory_order_relaxed);
+        pvPubK.store(k, std::memory_order_relaxed);
+        pvPubSeq.fetch_add(1, std::memory_order_release);
+    }
+
+    void pvDeactivateRt() {
+        if (!pvSim.active) return;
+        pvSim.active = false;
+        publishPvState(false, NAN, NAN, NAN);
     }
 
 
@@ -802,12 +826,26 @@ public:
     std::atomic<bool> psuEscalated{false};
     std::atomic<bool> psuLatched{false};
 
+    // PV-sim (solar-array-simulator): the output follows the panel curve V = f(Iout).
+    // RT-owned; while active, psuVsetpoint is advanced along the curve each tick
+    // (pvAdvanceSetpoint) instead of being a constant. slewVps/iout span are boot-config
+    // (begin(), before the RT loop runs).
+    struct {
+        bool active = false;
+        PvModel model{};
+        float slewVps = 200.f;
+        EWMA<float> iout{16};
+    } pvSim;
+
     void setPsuSetpoint(float v) {
         if (!std::isfinite(v) || v <= 0 || v > limits.Vout_max) return;
         VoutController.reset();
         psuVsetpoint = v;
         publishedPsuSetpoint.store(v, std::memory_order_release);
     }
+
+    // Shared boost headroom: setpoint feasibility gate and the PV-sim curve floor.
+    static constexpr float BoostHeadroomV = 0.5f;
 
     static PsuSetpointError validatePsuSetpoint(float requested, float voutMax, bool boost,
                                                 float vin, float explicitOvLimit) {
@@ -821,7 +859,6 @@ public:
             return PsuSetpointError::OvLimitConflict;
         // A boost can regulate only ABOVE its input. Unknown Vin is not evidence that the
         // setpoint is feasible; entry waits for a fresh sample and rejects an unusable one.
-        constexpr float BoostHeadroomV = 0.5f;
         if (boost && !std::isfinite(vin))
             return PsuSetpointError::TelemetryUnavailable;
         if (boost && requested <= vin + BoostHeadroomV)
@@ -844,6 +881,58 @@ public:
 
     [[nodiscard]] bool requestPsuSetpoint(float v, bool bootRequest = false) {
         return queuePsuSetpoint(v, bootRequest) != 0;
+    }
+
+    // The alpha family degenerates below k=0.5 (solver floors, ~linear curve) and k→1 is
+    // pathological, hence the narrower range than vconv's model.
+    [[nodiscard]] static bool validPvParams(float isc, float voc, float k) {
+        return std::isfinite(isc) && isc > 0 && std::isfinite(voc) && voc > 0
+               && std::isfinite(k) && k >= 0.5f && k <= 0.95f;
+    }
+
+    // rebase=false (`pv scale`) keeps pvBaseIsc as the reference for later scales.
+    [[nodiscard]] uint32_t queuePvCurve(float isc, float voc, float k,
+                                        bool bootRequest = false, bool rebase = true) {
+        if (!validPvParams(isc, voc, k)) {
+            lastPsuRequestError.store(PsuSetpointError::OutOfRange, std::memory_order_relaxed);
+            return 0;
+        }
+        const auto precheck = validatePsuSetpoint(voc, limits.Vout_max, false, NAN,
+                                                  getExplicitOvLimit());
+        if (precheck != PsuSetpointError::None) {
+            lastPsuRequestError.store(precheck, std::memory_order_relaxed);
+            return 0;
+        }
+        if (rebase) pvBaseIsc.store(isc, std::memory_order_relaxed);
+        lockPsuMailbox();
+        pendingPvIsc.store(isc, std::memory_order_relaxed);
+        pendingPvVoc.store(voc, std::memory_order_relaxed);
+        pendingPvK.store(k, std::memory_order_relaxed);
+        pendingPsuBootRequest.store(bootRequest, std::memory_order_relaxed);
+        return postPsuCommand(PsuCommand::EnablePv);
+    }
+
+    // Coherent read of the published curve. Returns active; outputs are NAN when never set.
+    bool getPvCurve(float &isc, float &voc, float &k) const {
+        uint32_t s1, s2;
+        bool active;
+        do {
+            s1 = pvPubSeq.load(std::memory_order_acquire);
+            if (s1 & 1u) continue;
+            active = pvPubActive.load(std::memory_order_relaxed);
+            isc = pvPubIsc.load(std::memory_order_relaxed);
+            voc = pvPubVoc.load(std::memory_order_relaxed);
+            k = pvPubK.load(std::memory_order_relaxed);
+            s2 = pvPubSeq.load(std::memory_order_acquire);
+        } while (s1 != s2 || (s1 & 1u));
+        return active;
+    }
+
+    [[nodiscard]] bool isPvActive() const {
+        return pvPubActive.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] float getPvBaseIsc() const {
+        return pvBaseIsc.load(std::memory_order_relaxed);
     }
 
     [[nodiscard]] uint32_t requestPsuOff() {
@@ -907,8 +996,15 @@ public:
     [[nodiscard]] float getRequestedPsuSetpoint() const {
         const auto command = static_cast<PsuCommand>(
             pendingPsuCommandWord.load(std::memory_order_acquire) & 0xffu);
-        return command == PsuCommand::Enable
-               ? pendingPsuSetpoint.load(std::memory_order_relaxed) : getPsuSetpoint();
+        if (command == PsuCommand::Enable)
+            return pendingPsuSetpoint.load(std::memory_order_relaxed);
+        if (command == PsuCommand::EnablePv)
+            return pendingPvVoc.load(std::memory_order_relaxed);
+        // PV-sim active: the commanded top of the curve, not the moving setpoint — `ovset`
+        // validates against this, and an OV limit inside (moving-Vset, Voc) would latch.
+        if (pvPubActive.load(std::memory_order_relaxed))
+            return pvPubVoc.load(std::memory_order_relaxed);
+        return getPsuSetpoint();
     }
     [[nodiscard]] uint16_t getManualTarget() const {
         return manualTarget.load(std::memory_order_relaxed);
@@ -925,8 +1021,12 @@ public:
         const uint32_t ticket = word >> 8;
         // An Enable needs the current Vin for boost feasibility. Off/manual/sweep remain
         // available during ADC loss, but stale telemetry must never be used to energize.
-        if (command == PsuCommand::Enable && !freshTelemetry) return;
-        const float requested = pendingPsuSetpoint.load(std::memory_order_relaxed);
+        const bool pvCmd = command == PsuCommand::EnablePv;
+        if ((command == PsuCommand::Enable || pvCmd) && !freshTelemetry) return;
+        const float requested = pvCmd ? pendingPvVoc.load(std::memory_order_relaxed)
+                                      : pendingPsuSetpoint.load(std::memory_order_relaxed);
+        const float pvIsc = pendingPvIsc.load(std::memory_order_relaxed);
+        const float pvK = pendingPvK.load(std::memory_order_relaxed);
         const uint16_t manualDuty = pendingManualTarget.load(std::memory_order_relaxed);
         const int manualRect = pendingManualRect.load(std::memory_order_relaxed);
         const bool bootRequest = pendingPsuBootRequest.load(std::memory_order_relaxed);
@@ -934,12 +1034,13 @@ public:
         if (!pendingPsuCommandWord.compare_exchange_strong(word, 0, std::memory_order_acq_rel))
             return;
 
-        if (command != PsuCommand::Enable) {
+        if (command != PsuCommand::Enable && !pvCmd) {
             abortSweep();
             clearBackoff();
             converter.setManualRect(-1);
             psuVsetpoint = NAN;
             publishedPsuSetpoint.store(NAN, std::memory_order_release);
+            pvDeactivateRt();
             psuResetTripState();
             releaseCvFloorLatch("psu off");
             lastPsuRequestError.store(PsuSetpointError::None, std::memory_order_relaxed);
@@ -972,8 +1073,11 @@ public:
         }
 
         const float vin = sensors.Vin ? sensors.Vin->ewm.avg.get() : NAN;
-        const auto error = validatePsuSetpoint(requested, limits.Vout_max, converter.boost(), vin,
-                                               getExplicitOvLimit());
+        // For a PV curve the no-load operating point IS Voc, so Voc carries the feasibility check.
+        auto error = validatePsuSetpoint(requested, limits.Vout_max, converter.boost(), vin,
+                                         getExplicitOvLimit());
+        if (pvCmd && error == PsuSetpointError::None && !validPvParams(pvIsc, requested, pvK))
+            error = PsuSetpointError::OutOfRange;
         lastPsuRequestError.store(error, std::memory_order_relaxed);
         if (error != PsuSetpointError::None) {
             const char *why = error == PsuSetpointError::TelemetryUnavailable
@@ -990,15 +1094,43 @@ public:
             completePsuCommand(ticket, error);
             return;
         }
+        if (pvCmd && pvK * requested < vin + 2)
+            ESP_LOGW("mppt", "PV MPP %.1f V is below the boost floor (Vin %.1f V) — knee not emulatable",
+                     pvK * requested, vin);
+        if (pvCmd && pvSim.active) {
+            // In-place curve update: keep the current setpoint (the slew limiter walks it to
+            // the new curve), no controller reset — a jump to Voc under load is the excursion
+            // the limiter exists to prevent.
+            pvSim.model.set(pvIsc, requested, pvK);
+            publishPvState(true, pvIsc, requested, pvK);
+            ESP_LOGI("mppt", "PV curve update, Isc=%.2fA Voc=%.2fV k=%.2f", pvIsc, requested, pvK);
+            completePsuCommand(ticket, PsuSetpointError::None);
+            return;
+        }
         abortSweep();
         clearBackoff();
         converter.setManualRect(-1);
         psuResetTripState();
-        setPsuSetpoint(requested);
-        g_app.opMode = OpMode::Psu;
-        ESP_LOGI("mppt", "PSU mode, vset=%.2fV", requested);
+        if (pvCmd) {
+            pvSim.model.set(pvIsc, requested, pvK);
+            pvSim.iout.reset();
+            pvSim.active = true;
+            publishPvState(true, pvIsc, requested, pvK);
+            setPsuSetpoint(requested);
+            g_app.opMode = OpMode::Psu;
+            ESP_LOGI("mppt", "PV-sim mode, Isc=%.2fA Voc=%.2fV k=%.2f", pvIsc, requested, pvK);
+        } else {
+            pvDeactivateRt(); // a plain `psu <V>` while PV is active reverts to fixed CV
+            setPsuSetpoint(requested);
+            g_app.opMode = OpMode::Psu;
+            ESP_LOGI("mppt", "PSU mode, vset=%.2fV", requested);
+        }
         completePsuCommand(ticket, PsuSetpointError::None);
     }
+
+    // RT-only, PV-sim active: advance psuVsetpoint one tick along the curve.
+    // No controller reset (a per-tick reset would kill the Vout PD's derivative).
+    void pvAdvanceSetpoint(float iout, float vin, float dt);
 
     [[nodiscard]] PsuSetpointError getLastPsuRequestError() const {
         return lastPsuRequestError.load(std::memory_order_relaxed);
@@ -1006,7 +1138,11 @@ public:
 
     [[nodiscard]] PsuSetpointError currentPsuFeasibility() const {
         const float vin = sensors.Vin ? sensors.Vin->ewm.avg.get() : NAN;
-        return validatePsuSetpoint(psuVsetpoint, limits.Vout_max, converter.boost(), vin,
+        // PV-sim: judge feasibility at the curve top (Voc), not the moving setpoint — the
+        // per-tick Vin-floor clamp keeps the moving value feasible by construction, so the
+        // infeasibility latch fires only when Vin rises to within the headroom of Voc.
+        const float v = pvSim.active ? pvSim.model.voc : psuVsetpoint;
+        return validatePsuSetpoint(v, limits.Vout_max, converter.boost(), vin,
                                    getExplicitOvLimit());
     }
 
@@ -1031,8 +1167,10 @@ public:
         const float ovLimit = getExplicitOvLimit();
         if (std::isfinite(ovLimit) && ovLimit > 0)
             return std::min(ovLimit, limits.Vout_max);
-        if (g_app.psuMode() && std::isfinite(psuVsetpoint))
-            return std::min(psuVsetpoint * (limits.reverse_current_paranoia ? 1.03f : 1.5f), limits.Vout_max);
+        // PV-sim: pin the OV band to Voc so it doesn't follow the moving setpoint down the curve.
+        const float psuBase = pvSim.active ? pvSim.model.voc : psuVsetpoint;
+        if (g_app.psuMode() && std::isfinite(psuBase))
+            return std::min(psuBase * (limits.reverse_current_paranoia ? 1.03f : 1.5f), limits.Vout_max);
         if (charger.params.haveVbatMax())
             return std::min(charger.params.Vbat_max * (limits.reverse_current_paranoia ? 1.03f : 1.5f),
                             limits.Vout_max);

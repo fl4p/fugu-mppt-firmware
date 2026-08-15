@@ -828,7 +828,7 @@ static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt) {
         g_app.manualPwm()
             ? "MANU"
             : (g_app.psuMode()
-                   ? "PSU"
+                   ? (mppt.isPvActive() ? "PVS" : "PSU")
                    : (mppt.converter.disabled() && !mppt.startCondition()
                           ? (mppt.boardPowerSupplyUnderVoltage() ? "UV" : "START")
                           : mpptStateStr().c_str())),

@@ -360,6 +360,38 @@ void testM_pv_newton() {
     }
 }
 
+// ----- M2: PvModel inverse V(I) ----------------------------------------------
+void testM2_pv_inverse() {
+    section("M2: PvModel inverse V(I)");
+    const float ks[] = {0.5f, 0.75f, 0.85f, 0.95f};
+    const float Voc = 40.0f, Isc = 8.0f;
+    for (float k : ks) {
+        PvModel m;
+        m.set(Isc, Voc, k);
+        EXPECT_NEAR(m.voltage(0.0f), Voc, 1e-4f);
+        EXPECT_NEAR(m.voltage(-1.0f), Voc, 1e-4f);
+        EXPECT_NEAR(m.voltage(Isc), 0.0f, 1e-3f);
+        EXPECT_NEAR(m.voltage(Isc + 1.0f), 0.0f, 1e-5f);
+        // Inverse consistency against a double-precision forward curve (the float
+        // current() saturates to Isc over the steep region at high alpha, so a
+        // float round-trip V(I(v)) is not testable there), plus monotonicity.
+        float prevV = Voc + 1.0f;
+        for (int i = 2; i <= 98; ++i) {
+            float I = (float) i / 100 * Isc;
+            float v = m.voltage(I);
+            double iRef = (double) m.isc *
+                          (1.0 - std::exp((double) m.alpha * (v - m.voc) / m.voc)) *
+                          (double) m.norm;
+            EXPECT_NEAR(iRef, I, 1e-3f * Isc);
+            EXPECT(v <= prevV + 1e-5f);
+            prevV = v;
+        }
+    }
+    PvModel def; // default-constructed: derived constants must be valid
+    EXPECT_NEAR(def.voltage(0.0f), def.voc, 1e-4f);
+    EXPECT_NEAR(def.voltage(def.current(def.voc * 0.8f)), def.voc * 0.8f, 1e-3f * def.voc);
+}
+
 // ----- N: PWM_VConv shim wiring (per spec table) ------------------------------
 void testN_shim_wiring() {
     section("N: PWM_VConv shim wiring");
@@ -875,6 +907,7 @@ int main() {
     testK_phase_wrap();
     testL_pv_boundary();
     testM_pv_newton();
+    testM2_pv_inverse();
     testN_shim_wiring();
     testO_error_latch();
     testP_determinism();
