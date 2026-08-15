@@ -102,6 +102,42 @@ void test_pv_scale_rebase_semantics() {
     TEST_ASSERT_EQUAL_FLOAT(2.5f, mppt.pvSim.model.isc);
 }
 
+void test_pv_rt_rejection_preserves_base_isc() {
+    pvSetup();
+    pvEnable(5, 60, 0.8f);
+    TEST_ASSERT_EQUAL_FLOAT(5.0f, mppt.getPvBaseIsc());
+    // Second curve passes the producer precheck, then the environment changes before the
+    // RT consumer applies it (here: an OV limit conflict). The rejection must leave both
+    // the active model AND the `pv scale` base untouched.
+    const auto ticket = mppt.queuePvCurve(3.0f, 60, 0.8f);
+    TEST_ASSERT_NOT_EQUAL_UINT32(0, ticket);
+    mppt.setExplicitOvLimit(50.0f);
+    mppt.applyPendingPsuCommandRt(true);
+    TEST_ASSERT_TRUE(mppt.isPsuCommandDone(ticket));
+    TEST_ASSERT_EQUAL_INT((int) PsuSetpointError::OvLimitConflict,
+                          (int) mppt.getPsuCommandError(ticket));
+    TEST_ASSERT_EQUAL_FLOAT(5.0f, mppt.getPvBaseIsc());
+    TEST_ASSERT_EQUAL_FLOAT(5.0f, mppt.pvSim.model.isc);
+    mppt.setExplicitOvLimit(NAN);
+}
+
+void test_pv_inplace_update_clears_latch() {
+    pvSetup();
+    pvEnable(5, 60, 0.8f);
+    mppt.psuLatched = true;
+    mppt.psuEscalated = true;
+    mppt.psuVsetpoint = 40.0f;
+    // Re-issuing the curve is the unlatch escape hatch (like a `psu <v>` re-issue) — it must
+    // clear trip state without jumping the setpoint.
+    const auto ticket = mppt.queuePvCurve(5, 60, 0.8f);
+    TEST_ASSERT_NOT_EQUAL_UINT32(0, ticket);
+    mppt.applyPendingPsuCommandRt(true);
+    TEST_ASSERT_TRUE(mppt.isPsuCommandDone(ticket));
+    TEST_ASSERT_FALSE(mppt.psuLatched);
+    TEST_ASSERT_FALSE(mppt.psuEscalated);
+    TEST_ASSERT_EQUAL_FLOAT(40.0f, mppt.psuVsetpoint);
+}
+
 void test_pv_disable_paths_clear_active() {
     pvSetup();
     pvEnable();

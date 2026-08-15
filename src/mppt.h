@@ -244,6 +244,7 @@ private:
     std::atomic<uint16_t> pendingManualTarget{0};
     std::atomic<int> pendingManualRect{-1};
     std::atomic<float> pendingPvIsc{NAN}, pendingPvVoc{NAN}, pendingPvK{NAN};
+    std::atomic<bool> pendingPvRebase{false};
     // Published PV curve snapshot for non-RT readers (status/OTA/measure-coil). Seqlock
     // (odd = write in progress) so a concurrent curve update can't yield a mixed set.
     std::atomic<uint32_t> pvPubSeq{0};
@@ -903,20 +904,25 @@ public:
             lastPsuRequestError.store(precheck, std::memory_order_relaxed);
             return 0;
         }
-        if (rebase) pvBaseIsc.store(isc, std::memory_order_relaxed);
         lockPsuMailbox();
         pendingPvIsc.store(isc, std::memory_order_relaxed);
         pendingPvVoc.store(voc, std::memory_order_relaxed);
         pendingPvK.store(k, std::memory_order_relaxed);
+        // The base is committed by the RT consumer on success — a producer-side store would
+        // survive an RT-side rejection and corrupt a later `pv scale`.
+        pendingPvRebase.store(rebase, std::memory_order_relaxed);
         pendingPsuBootRequest.store(bootRequest, std::memory_order_relaxed);
         return postPsuCommand(PsuCommand::EnablePv);
     }
 
     // Coherent read of the published curve. Returns active; outputs are NAN when never set.
+    // Bounded retry: the writer's critical section is a handful of straight-line stores on the
+    // RT core, so contention resolves in one or two rounds — the cap only matters if RT died
+    // mid-publish, where a possibly-mixed read beats wedging the console/OTA task forever.
     bool getPvCurve(float &isc, float &voc, float &k) const {
-        uint32_t s1, s2;
+        uint32_t s1 = 0, s2;
         bool active;
-        do {
+        for (int tries = 0; tries < 64; ++tries) {
             s1 = pvPubSeq.load(std::memory_order_acquire);
             if (s1 & 1u) continue;
             active = pvPubActive.load(std::memory_order_relaxed);
@@ -924,7 +930,12 @@ public:
             voc = pvPubVoc.load(std::memory_order_relaxed);
             k = pvPubK.load(std::memory_order_relaxed);
             s2 = pvPubSeq.load(std::memory_order_acquire);
-        } while (s1 != s2 || (s1 & 1u));
+            if (s1 == s2) return active;
+        }
+        active = pvPubActive.load(std::memory_order_relaxed);
+        isc = pvPubIsc.load(std::memory_order_relaxed);
+        voc = pvPubVoc.load(std::memory_order_relaxed);
+        k = pvPubK.load(std::memory_order_relaxed);
         return active;
     }
 
@@ -1027,6 +1038,7 @@ public:
                                       : pendingPsuSetpoint.load(std::memory_order_relaxed);
         const float pvIsc = pendingPvIsc.load(std::memory_order_relaxed);
         const float pvK = pendingPvK.load(std::memory_order_relaxed);
+        const bool pvRebase = pendingPvRebase.load(std::memory_order_relaxed);
         const uint16_t manualDuty = pendingManualTarget.load(std::memory_order_relaxed);
         const int manualRect = pendingManualRect.load(std::memory_order_relaxed);
         const bool bootRequest = pendingPsuBootRequest.load(std::memory_order_relaxed);
@@ -1100,8 +1112,12 @@ public:
         if (pvCmd && pvSim.active) {
             // In-place curve update: keep the current setpoint (the slew limiter walks it to
             // the new curve), no controller reset — a jump to Voc under load is the excursion
-            // the limiter exists to prevent.
+            // the limiter exists to prevent. Trip state IS cleared, like a `psu <v>` re-issue:
+            // re-issuing the curve is the operator's unlatch escape hatch.
+            psuResetTripState();
+            clearBackoff();
             pvSim.model.set(pvIsc, requested, pvK);
+            if (pvRebase) pvBaseIsc.store(pvIsc, std::memory_order_relaxed);
             publishPvState(true, pvIsc, requested, pvK);
             ESP_LOGI("mppt", "PV curve update, Isc=%.2fA Voc=%.2fV k=%.2f", pvIsc, requested, pvK);
             completePsuCommand(ticket, PsuSetpointError::None);
@@ -1115,6 +1131,7 @@ public:
             pvSim.model.set(pvIsc, requested, pvK);
             pvSim.iout.reset();
             pvSim.active = true;
+            if (pvRebase) pvBaseIsc.store(pvIsc, std::memory_order_relaxed);
             publishPvState(true, pvIsc, requested, pvK);
             setPsuSetpoint(requested);
             g_app.opMode = OpMode::Psu;
