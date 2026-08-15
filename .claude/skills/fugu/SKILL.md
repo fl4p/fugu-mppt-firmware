@@ -9,8 +9,9 @@ Repo: `/Users/fab/dev/pv/fugu-mppt-firmware` (`git@github.com:fl4p/fugu-mppt-fir
 
 **The repo's `doc/` is authoritative and maintained — do not duplicate it here.** `Console.md`,
 `Services.md`, `Configuration.md`, `Power Loop.md`, `Coil Inductance Measurement.md`,
-`Automated Bench Tests.md`, `Agentic Programming.md`, plus root `CLAUDE.md`. This skill is only the
-operational sequence, which lives in no single doc and is what actually costs time.
+`Automated Bench Tests.md`, `Agentic Programming.md`, **`Bench Operations.md`** (the operational
+detail behind this file), plus root `CLAUDE.md`. This skill is the headline traps and sequence;
+when a line here says "details: Bench Operations", the evidence and full recipes are there.
 
 ## Maintaining this skill — read before you edit it
 
@@ -49,17 +50,27 @@ optional.
 
 Take a lock (`lock` skill) on every shared resource: the board's serial port (`usbmodem*` — check
 the exact name, `usbmodem101` and `usbmodem1101` are different boards), plus `fugu-rig` / `scope`
-if a measurement is involved. Several agent sessions work this repo concurrently; assume a dirty
-tree and another session mid-edit. Never `pkill` a daemon you did not start.
+if a measurement is involved. One reader per port — contention kills the other process silently
+(`lsof /dev/cu.usbmodemXXX` first). Several agent sessions work this repo concurrently; assume a
+dirty tree and another session mid-edit: `git diff --cached --name-only` before every commit and
+`git log origin/main..HEAD` before every push — both have swallowed/published another session's
+work (details: Bench Operations). Never `pkill` a daemon you did not start, and never *start* one
+either (`brew services start …` was noticed and objected to).
 
 ## Toolchain
 
-ESP-IDF is **not on PATH** and `which idf.py` finds nothing. Installs are recorded in
-`~/.espressif/esp_idf.json` / `idf-env.json`. Currently:
+ESP-IDF is **not on PATH** and `which idf.py` finds nothing. Enter the env with the repo wrapper,
+**from the repo root only** (it sources IDF 5.5.1 by relative path):
 
 ```bash
-source /Users/fab/dev/esp/idf5.5/export.sh      # IDF 5.5.1 — matches what the boards run
+. ./idf-export.sh
 ```
+
+It `deactivate`s any venv — invoke repo Python tools as `.venv/bin/python3 etc/…` afterwards — and
+it exports `ESPPORT` from the **first** `/dev/cu.usbmodem*` match, a coin flip with two boards
+attached (this has flashed the wrong board): always pass `-p` explicitly. Bare `esptool` can be a
+broken PlatformIO shim; `python -m esptool` after sourcing always works. The vendored IDF carries a
+local NimBLE patch (`etc/patches/`) that **an IDF update silently reverts** — reapply after bumps.
 
 ## Build
 
@@ -70,10 +81,14 @@ idf.py -B build-<tag> build
 * **Use a separate `-B` build dir.** The shared `build/` may be in use by another session.
 * Build options are Kconfig (`CONFIG_FUGU_WITH_*`), **not** env vars — the build errors out if a
   legacy `WITH_*` env var is set. `WITH_NETW` and `WITH_BLE` default **on**; `MCPWM`,
-  `MEASURE_COIL`, `VCONV`, `SPROFILER` default **off**, but the tree's checked-in `sdkconfig` may
-  differ — read it, don't assume.
+  `MEASURE_COIL`, `VCONV`, `SPROFILER` default **off**. The local `sdkconfig` is **gitignored** and
+  regenerable; flags appended to it **vanish on the next regeneration** — this has shipped builds
+  missing BLE_TELE and silently pruned bsync (a lost `MCPWM=y` and Kconfig depends-on). Durable
+  flags go in `sdkconfig.defaults` or a fragment.
 * For a variant without disturbing the shared `sdkconfig`: copy it to scratch, edit, then
-  `idf.py -B build-<tag> -D SDKCONFIG=/path/to/sdkconfig.<tag> build`.
+  `idf.py -B build-<tag> -D SDKCONFIG=/path/to/sdkconfig.<tag> build`. Multiple defaults fragments
+  must be **quoted** (`-DSDKCONFIG_DEFAULTS="a;b"` — unquoted, the shell eats the second one
+  silently); `idf.py set-config` does not exist; `SDKCONFIG` as an env var has no effect.
 
 **Verify features against the built binary, not the config** — the config you think you passed is a
 proxy, the binary is the artifact:
@@ -83,16 +98,27 @@ strings -a build-<tag>/fugu-firmware.bin | grep -F "NUS console"        # WITH_B
 strings -a build-<tag>/fugu-firmware.bin | grep -F "measure-coil L0:"   # WITH_MEASURE_COIL
 ```
 
+On a running board the same check is one console verb: a feature's command answering
+`Command not found` means it is not in the image — no runtime setting fixes that.
+
 ## Flash — use `app-flash`, never `flash`
 
-**Identify the target first** unless you just used this exact port: `esptool.py -p PORT chip_id`
-plus the boot banner's `Project name:` line. Fugu units, the NAT router and other ESP32s on this
-Mac look identical on USB — this check once stopped NAT-router firmware from wiping a live
-converter (chip said S3, banner said `fugu-firmware`; the expected target was a classic ESP32).
+**Identify the target first, and re-verify after every replug** — the port↔board mapping *swaps*
+(observed four times: role configs on the wrong board, three flashes to fbuck believed to be
+fboost, and a foreign S3 clobbered — details: Bench Operations). Fugu units, the NAT router and
+other ESP32s on this Mac look identical on USB. Cheapest check without touching the board:
+`system_profiler SPUSBDataType` prints each S3's **efuse MAC as its USB Serial Number**; then
+console `hostname` / boot banner; `python -m esptool -p PORT chip_id` (resets the board) last.
+esptool errors reading like link noise (`Invalid head of packet`, `Corrupt data`, ROM boot-loop)
+can mean *wrong device* — check identity before blaming cables.
 
 ```bash
-idf.py -B build-<tag> -p /dev/cu.usbmodemXXX app-flash
+./flash.sh <name> -B build-<tag> -p /dev/cu.usbmodemXXX app-flash
 ```
+
+`flash.sh` just sets `FUGU_DEVICE=<name>` so the archived ELF is keyed by board (else the unstable
+port basename — a later coredump decode by `--device` misses). **A bare `./flash.sh <name>` with no
+idf.py args runs a full `idf.py build flash`** — always append `app-flash`.
 
 `idf.py flash` also writes the littlefs config partition, and for esp32s3 the CMake default source
 is `config/lab/dry_mock` with `FLASH_IN_PROJECT` — a profile with `adc=fake`,
@@ -101,8 +127,10 @@ hazard, and it lands before you can provision.
 See **[issue #61](https://github.com/fl4p/fugu-mppt-firmware/issues/61)**. `app-flash` writes only
 the app partition and leaves littlefs and NVS alone.
 
-Check the partition table matches first — `bootinfo` reports e.g. `ota_0 @0x010000 (1828KB)`
-against the build's `Smallest app partition is 0x1c9000` (= 1828 KB).
+Check the partition table matches **before every flash to a port not just verified** — `bootinfo`
+reports e.g. `ota_0 @0x010000 (1828KB)` against the build's `Smallest app partition is 0x1c9000`
+(= 1828 KB). esptool does *not* check: it wrote the 1.7 MB fugu app over a foreign S3's 1448 KB
+app partition and 216 KB of its data, reporting `Hash of data verified. Done`.
 
 ### When esptool can't reset the board
 
@@ -110,8 +138,15 @@ against the build's `Smallest app partition is 0x1c9000` (= 1828 KB).
 responding to **neither** the app nor the bootloader (silent console, `chip_id` also fails). It is
 not bricked; nothing was written. Recover by:
 
-1. retrying — a second `esptool.py --chip esp32s3 -p PORT chip_id` often just connects; or
+1. retrying — a second `python -m esptool --chip esp32s3 -p PORT chip_id` often just connects; or
 2. manual download mode: hold **BOOT**, tap **EN/RESET**, release BOOT.
+
+The inverse also happens: a board replugged **with BOOT held** latches ROM download mode — esptool
+works perfectly while the app never runs (mute console reads as a firmware hang). Recover with a
+plain replug *without* touching BOOT; probe via `--before no_reset --after no_reset chip_id`, kick
+to the app with `--before no_reset run`. Never hand-roll a pyserial DTR/RTS reset — one held IO0
+and caused exactly this (and `etc/idf-devtools/rts.py` doesn't work on native S3 USB-JTAG ports).
+A **dead USB serial ≠ dead board**: one answered instantly over BLE — switch transport.
 
 Some boards set `pwm_sync_pin=44` (= U0RXD) for the wired-sync follower, with `board.conf` noting
 "serial-RX console dead on this board" — suspected but unconfirmed as the reason auto-reset is
@@ -124,6 +159,21 @@ within seconds of plugging in (`usbmodem11301` → `usbmodem1101`), so a glob-ba
 autodetect errors "no matches found" or goes stale mid-session. Wait 2–3 s and re-run
 `ls /dev/cu.usbmodem*`; if `system_profiler SPUSBDataType` shows the Espressif device but no node
 exists yet, `ioreg -l -r -c AppleUSBACMData` → `IOCalloutDevice` is the `/dev/cu.*` path.
+(zsh aborts the *whole* command on any unmatched glob — quote patterns, split per-glob;
+`2>/dev/null` doesn't help.)
+
+## OTA
+
+`etc/ota.py` (Wi-Fi; flags in `CLAUDE.md`) refuses non-interactively: dirty images, `WITH_NETW=n`,
+`WITH_VCONV=y` — commit or `git stash push -- <paths>` first. Over BLE:
+`.venv/bin/python3 etc/ota_ble.py -n <name> -y`, **detached** (2–3+ min; a 300 s foreground timeout
+killed one mid-transfer) and **one at a time** (one Mac radio — two concurrent pushes both
+stalled). The version string is git-describe: an uncommitted rebuild keeps the old string and the
+tool *skips*, printing a success-looking `☑️ skip:` — pass `-f` when the tree changed without a
+commit; a real push prints hundreds of progress lines. A failed/killed push leaves the device
+armed: console `ota-ble abort` (the verb — docs say `otab`), then retry. After OTA/`restart` the
+board is silent ~10–15 s; scan misses and READY timeouts there are retryable. `doc/OTA over BLE.md`
++ Bench Operations.
 
 ## Provision a config profile
 
@@ -135,8 +185,16 @@ Builds a littlefs image from the profile dir and writes it via `parttool.py` (so
 entry too — same recovery as above). Profiles live in `config/`: `lab/fbuck_lab_bench`,
 `lab/fbuck_lab_bench_open_output`, `lab/fboost`, `fmetal`, `lab/dry_mock`, …
 
-Symptoms of **no config partition**: `ls /` fails, `ntc=-273℃`, `0sps` in the status line. The conf
-path is `/littlefs/conf/`, not `/conf/`.
+Symptoms of **no config partition**: `ls /` fails, `ntc=-273℃`. (`0sps` is *not* a reliable
+symptom: a status-line bug — fixed in `6b83991` — produced it from any scripted console session,
+and NaN/`0sps` is normal for ~15 s after boot while the sampler calibrates; re-read before calling
+an ADC dead.) The conf path is `/littlefs/conf/`, not `/conf/`.
+
+The deployed config **drifts from `config/` in the repo** — `get-config` is ground truth for what
+a board runs. Read back every `set-config` in the same invocation (a stray `~` framing corruption
+has silently dropped writes); `set-config k ""` stores the quotes literally; wifi keys apply only
+after `restart`. Read a whole live partition back with `etc/dump_littlefs.py` — it **reboots the
+board**. Details: Bench Operations.
 
 `wifi.conf` is gitignored repo-wide (it holds the lab PSK), so **no profile in a fresh clone has
 one** and a board provisioned from it comes up with no credentials — set them with
@@ -167,42 +225,61 @@ Three independent things must all be true; each has bitten separately.
    svc on ble           # enables + starts, and persists
    ```
 
-Then **confirm over the air**, not from the log — scan with `bleak` and look for the name:
-
-```python
-from bleak import BleakScanner
-devs = await BleakScanner.discover(timeout=15.0)
-```
-
-But do not trust the *first* scan after a rename: `d.name` is CoreBluetooth's cached field, and it
-kept reporting the old name across several scans of a board that had demonstrably rebooted under
-the new hostname (console `hostname` said the new one). Re-scan before concluding the rename
-failed — it cleared on its own.
+Then **confirm over the air**, not from the log — a `bleak` `BleakScanner.discover()` scan,
+matching by **name**: with BLE_ADV telemetry the adv payload has no room for the NUS UUID, so a
+UUID-filtered scanner shows nothing while the board is fine. A board **absent from scans entirely**
+is usually *held*, not dead: `NIMBLE_MAX_CONNECTIONS=1`, and a connected board stops advertising
+(or advertises non-connectably) — culprits are another agent's console or the rpi bridge, and the
+link lives in bluetoothd (killing the client doesn't free it): `bluetoothctl disconnect <mac>` on
+the holder, or `svc rs ble` on the device, restores it. A WiFi scan-loop against a missing AP also
+starves BLE (`wifi off` fixed it). And don't trust the *first* scan after a rename — CoreBluetooth
+caches `d.name` across scans; re-scan before concluding the rename failed.
 
 The bench tooling's `--buck-name` defaults to `fugu-fbuck` and `--boost-name` to `fugu-fboost`, so
 match those unless you also update the invocation.
 
 A **bonded** Mac failing at subscribe with ATT code 3 ("Writing is not permitted") after a firmware
-change that altered the GATT layout is a stale macOS GATT cache, not a firmware bug:
-`blueutil --unpair <mac>`, then reconnect. Renaming the device does not help — the cache is keyed
-by the bond, not the name.
+change that altered the GATT layout is a stale macOS GATT cache, not a firmware bug. The cache is
+keyed by BLE address, so renaming doesn't help; the fix is toggling Bluetooth —
+`blueutil -p 0 && blueutil -p 1` (`doc/OTA over BLE.md`) — noting `blueutil` is **not installed**
+by default on this Mac, and unpairing otherwise needs the GUI (ask the user).
 
 An **unbonded** host is the opposite case, ATT code 5/15 `Insufficient Authentication` on the first
 console write — it scans and connects fine, then every write fails. `ble_security` defaults to
 `justworks` (encrypted link) and the `fbuck_lab_bench*` profiles ship no `ble.conf`, so a freshly
 provisioned board refuses writes from a Mac it has never paired with. Pair it, or drop the link
-encryption: `set-config ble.conf ble_security none`, then `svc off ble; svc on ble`. Values and
-defaults are in `doc/dev-notes/ble-dev.md`.
+encryption: `set-config ble.conf ble_security none` + **`restart`** — `svc rs`/`off`/`on ble` do
+NOT re-apply `ble.conf` (props are set once at stack init and the wrapper is not reinit-safe,
+`console_ble.cpp`). ATT code 17 "Insufficient Resources" is a third case: NimBLE mbuf starvation
+from rapid reconnect cycles — `restart` the board, space out connects. Values and defaults are in
+`doc/dev-notes/ble-dev.md`; symptom→cause table in Bench Operations.
 
-## Console commands: read-only vs state-changing
+## Console
+
+The client (`doc/Agentic Programming.md` has the design; traps in Bench Operations):
+
+```bash
+timeout 30 .venv/bin/python3 etc/fugu_console.py -p PORT -c "status" -c "svc" | grep -a -v '^V='
+```
+
+Not executable — always via `.venv/bin/python3`; always `timeout`-wrapped (it doesn't exit);
+`grep -a` (stream has binary bytes). Batched replies interleave with log output and can
+**fabricate** errors (`Command not found` next to the correct reply) — re-send singly before
+trusting an `ERR:`, or quiet the board first (`log <tag> error`). A read batched right after a
+state-change shows the **pre-change** state — sleep 3–10 s between; ~12 s after `restart`. Async
+events (trip reasons) only reach a connection open when they fire: trigger + device-side `sleep` +
+read in ONE `--stdin` script. `bf`/`dc`/`sync` are silently no-ops outside manual mode — verify in
+the status line, absence of `ERR` proves nothing.
 
 **While diagnosing, send only read-only commands.** Safe: `bootinfo`, `tasks`, `uptime`, `status`,
-`svc`, `hostname` (no arg), `ls`, `cat`, `get-config`, `rt-stats`, `mem`, `heap`, `ip`.
+`svc`, `hostname` (no arg), `ls`, `cat`, `get-config`, `rt-stats`, `mem`, `heap`, `ip`,
+`pwm-dump` (the only readout of the real pwmMax), `wsync`, `scan-i2c`.
 
 Ask first before: `bf`/`panel`, `dc`, `sweep`, `mppt`, `sync`, `psu`, `vset`/`iset`/`ovset`,
-`measure-coil`, `restart`, `ota`/`ota-ble`, `short-ls`, `adc-restart`. A bare `bf` or `dc` takes an
-argument-less default that changes converter state — this has altered someone's live test before.
-Flashing firmware is pre-authorised on bench units; toggling converter state is not the same thing.
+`measure-coil`, `restart`, `ota`/`ota-ble`, `short-ls`, `adc-restart`, `adc-reset`. A bare `bf` or
+`dc` takes an argument-less default that changes converter state — this has altered someone's live
+test before. Flashing firmware is pre-authorised on bench units; toggling converter state is not
+the same thing.
 
 ## Coil inductance
 
