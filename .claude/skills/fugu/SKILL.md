@@ -104,11 +104,9 @@ On a running board the same check is one console verb: a feature's command answe
 ## Flash — use `app-flash`, never `flash`
 
 **Identify the target first, and re-verify after every replug** — the port↔board mapping *swaps*
-(observed four times: role configs on the wrong board, three flashes to fbuck believed to be
-fboost, and a foreign S3 clobbered — details: Bench Operations). Fugu units, the NAT router and
-other ESP32s on this Mac look identical on USB. Cheapest check without touching the board:
-`system_profiler SPUSBDataType` prints each S3's **efuse MAC as its USB Serial Number**; then
-console `hostname` / boot banner; `python -m esptool -p PORT chip_id` (resets the board) last.
+(four observed incidents incl. flashing a foreign S3 — Bench Operations). Cheapest check, no board
+touch: `system_profiler SPUSBDataType` prints each S3's **efuse MAC as its USB Serial Number**;
+then console `hostname`/banner; `python -m esptool -p PORT chip_id` (resets the board) last.
 esptool errors reading like link noise (`Invalid head of packet`, `Corrupt data`, ROM boot-loop)
 can mean *wrong device* — check identity before blaming cables.
 
@@ -141,12 +139,11 @@ not bricked; nothing was written. Recover by:
 1. retrying — a second `python -m esptool --chip esp32s3 -p PORT chip_id` often just connects; or
 2. manual download mode: hold **BOOT**, tap **EN/RESET**, release BOOT.
 
-The inverse also happens: a board replugged **with BOOT held** latches ROM download mode — esptool
-works perfectly while the app never runs (mute console reads as a firmware hang). Recover with a
-plain replug *without* touching BOOT; probe via `--before no_reset --after no_reset chip_id`, kick
-to the app with `--before no_reset run`. Never hand-roll a pyserial DTR/RTS reset — one held IO0
-and caused exactly this (and `etc/idf-devtools/rts.py` doesn't work on native S3 USB-JTAG ports).
-A **dead USB serial ≠ dead board**: one answered instantly over BLE — switch transport.
+The inverse also happens: a board stuck **in** download mode (replugged with BOOT held, or a
+hand-rolled DTR/RTS reset holding IO0 — never do that) — esptool works perfectly while the app
+never runs, reading as a firmware hang. Recover: plain replug *without* touching BOOT; probe with
+`--before no_reset chip_id`, kick to the app with `--before no_reset run`. And a **dead USB serial
+≠ dead board**: one answered instantly over BLE — switch transport (Bench Operations).
 
 Some boards set `pwm_sync_pin=44` (= U0RXD) for the wired-sync follower, with `board.conf` noting
 "serial-RX console dead on this board" — suspected but unconfirmed as the reason auto-reset is
@@ -166,14 +163,12 @@ exists yet, `ioreg -l -r -c AppleUSBACMData` → `IOCalloutDevice` is the `/dev/
 
 `etc/ota.py` (Wi-Fi; flags in `CLAUDE.md`) refuses non-interactively: dirty images, `WITH_NETW=n`,
 `WITH_VCONV=y` — commit or `git stash push -- <paths>` first. Over BLE:
-`.venv/bin/python3 etc/ota_ble.py -n <name> -y`, **detached** (2–3+ min; a 300 s foreground timeout
-killed one mid-transfer) and **one at a time** (one Mac radio — two concurrent pushes both
-stalled). The version string is git-describe: an uncommitted rebuild keeps the old string and the
-tool *skips*, printing a success-looking `☑️ skip:` — pass `-f` when the tree changed without a
+`.venv/bin/python3 etc/ota_ble.py -n <name> -y`, **detached** (2–3+ min) and **one at a time** (one
+Mac radio). The version string is git-describe, so an uncommitted rebuild keeps the old string and
+the tool *skips* with a success-looking `☑️ skip:` — pass `-f` when the tree changed without a
 commit; a real push prints hundreds of progress lines. A failed/killed push leaves the device
-armed: console `ota-ble abort` (the verb — docs say `otab`), then retry. After OTA/`restart` the
-board is silent ~10–15 s; scan misses and READY timeouts there are retryable. `doc/OTA over BLE.md`
-+ Bench Operations.
+armed: `ota-ble abort` (the verb — docs say `otab`), retry. Post-OTA/`restart` the board is silent
+~10–15 s; scan misses and READY timeouts there are retryable. `doc/OTA over BLE.md` + Bench Ops.
 
 ## Provision a config profile
 
