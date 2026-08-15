@@ -120,3 +120,4 @@
 - [Use provision.sh for config-only changes, don't full flash](feedback_use_provision_sh_for_config_only.md) — When only the littlefs config changed (not firmware), use ./provision.sh <config> not idf.py flash
 - [PV-sim output mode implemented (8-15)](project_pv_sim_mode_implemented.md) — mode=pv/`pv` cmd on PSU machinery, commit 2440421; bench validation pending (port was locked)
 - [conf-editor scraper clobbers FILE_KEYS](project_conf_editor_scraper_clobbers.md) — scrape_conf_keys.py --write drops ctrl_*/bsync/ble/tele keys; hand-edit instead
+- [codex exec stdin hang](reference_codex_exec_stdin_hang.md) — background `codex exec` blocks on stdin forever; always `< /dev/null`, no tail pipe
