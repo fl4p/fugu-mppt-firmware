@@ -258,7 +258,11 @@ timeout 30 .venv/bin/python3 etc/fugu_console.py -p PORT -c "status" -c "svc" | 
 ```
 
 Not executable — always via `.venv/bin/python3`; always `timeout`-wrapped (it doesn't exit);
-`grep -a` (stream has binary bytes). Batched replies interleave with log output and can
+`grep -a` (stream has binary bytes). **`^V=` above IS the status line** — drop it to read command
+replies, KEEP it (`grep -a '^V='`) to read rig state, which lives nowhere else: `V=Vin/Vout`,
+`I=Iin/Iout`, W, both temps, `sps`, `CCM|DCM(H|L|Lm)=` counts, `st=` mode, `lag`, `N`. `status`
+alone reports limits and averages, not the operating point. Batched replies interleave with log
+output and can
 **fabricate** errors (`Command not found` next to the correct reply) — re-send singly before
 trusting an `ERR:`, or quiet the board first (`log <tag> error`). A read batched right after a
 state-change shows the **pre-change** state — sleep 3–10 s between; ~12 s after `restart`. Async
