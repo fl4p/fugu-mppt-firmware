@@ -278,7 +278,9 @@ Ask first before: `bf`/`panel`, `dc`, `sweep`, `mppt`, `sync`, `psu`, `vset`/`is
 `measure-coil`, `restart`, `ota`/`ota-ble`, `short-ls`, `adc-restart`, `adc-reset`. A bare `bf` or
 `dc` takes an argument-less default that changes converter state — this has altered someone's live
 test before. Flashing firmware is pre-authorised on bench units; toggling converter state is not
-the same thing.
+the same thing. **`iset` is RAM-only**: it moves `Ibat_lim` *and* `Iout_max` together, and a power
+cycle silently reverts both (observed 2026-08-16 — 22 A back to 20 A), so a limit raised for a test
+is gone after the next power-up with nothing in the status line saying it changed.
 
 ## Coil inductance
 
