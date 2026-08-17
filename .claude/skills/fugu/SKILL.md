@@ -223,7 +223,11 @@ Three independent things must all be true; each has bitten separately.
 Then **confirm over the air**, not from the log — a `bleak` `BleakScanner.discover()` scan,
 matching by **name**: with BLE_ADV telemetry the adv payload has no room for the NUS UUID, so a
 UUID-filtered scanner shows nothing while the board is fine. A board **absent from scans entirely**
-is usually *held*, not dead: `NIMBLE_MAX_CONNECTIONS=1`, and a connected board stops advertising
+is *unpowered* or *held*, not dead — and **the count tells you which**: the rig converters take
+their power from the bench PSU, so a Korad at 0 V puts them ALL off air at once, where a held link
+only ever hides ONE. Check the supply before you hunt a holder (2026-08-17: "no fugu/NUS devices
+advertising at all" was both boards unpowered, and the rpi's `bluetoothctl` was a red herring).
+Otherwise it is held: `NIMBLE_MAX_CONNECTIONS=1`, and a connected board stops advertising
 (or advertises non-connectably) — culprits are another agent's console or the rpi bridge, and the
 link lives in bluetoothd (killing the client doesn't free it): `bluetoothctl disconnect <mac>` on
 the holder, or `svc rs ble` on the device, restores it. A WiFi scan-loop against a missing AP also
