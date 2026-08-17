@@ -259,7 +259,12 @@ The client (`doc/Agentic Programming.md` has the design; traps in Bench Operatio
 
 ```bash
 timeout 30 .venv/bin/python3 etc/fugu_console.py -p PORT -c "status" -c "svc" | grep -a -v '^V='
+timeout 90 .venv/bin/python3 etc/fugu_console.py --ble --name fugu-flu -c "status"   # BLE form
 ```
+
+**The BLE name is a `--name` VALUE, not positional.** `--ble fugu-flu` exits 2 with
+`unrecognized arguments: fugu-flu` — measured 2026-08-17; `doc/BTHome Advertising.md:169` still
+shows that broken form. Allow ~90 s: the scan alone costs 10-20 s, so a 30 s timeout kills it.
 
 Not executable — always via `.venv/bin/python3`; always `timeout`-wrapped (it doesn't exit);
 `grep -a` (stream has binary bytes). **`^V=` above IS the status line** — drop it to read command
