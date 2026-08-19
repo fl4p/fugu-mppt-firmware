@@ -888,7 +888,12 @@ static void cmdRtStats(cmd *) {
 // pulse, follower = wire delivery check. Expect the converter's own pwm_freq.
 static void cmdWsync(cmd *) {
     if (!converter.wsyncHasCounter()) {
+        // Keep the "no edge counter" substring: fugu.py keys role=none off it.
+#if WITH_WSYNC
+        UART_LOG("wsync: no edge counter, mode=%s", wsyncModeStr(converter.wsyncMode));
+#else
         UART_LOG("wsync: no edge counter (sync_role=none, or WITH_WSYNC off)");
+#endif
         return;
     }
     // The RUNNING role, which only the driver knows: sync_role is read once at boot while

@@ -41,21 +41,31 @@ MCPWM operator on the same timer, so the gate-drive dead-time submodule is untou
 devices keep identical `pwm_freq`; the sync does not replace the period, it re-phases the
 follower each cycle.
 
-On the follower the sync edge is a full **TEZ substitute**: the count hardware-reloads to 0, the
-generators run their period-start actions (HS high, LS to its TEZ state), and the
-comparator/period shadow registers also latch on sync (`update_cmp_on_sync`/
-`update_period_on_sync`). This closes two hazards: an arbitrary phase jump (first pulse after
-free-run, wire glitch recovery) cannot skip a comparator event and stretch a gate pulse — the
-jump lands in a defined period-start state — and a follower whose crystal runs slow (reloaded
-below its period every cycle, so its own TEZ never fires) still gets its TEZ-equivalent
-latching and gate actions from the sync event.
+On the follower the sync edge reloads the count to 0 and latches the comparator/period shadow
+registers (`update_cmp_on_sync`/`update_period_on_sync`/`update_dead_time_on_sync`), so a
+follower whose crystal runs slow — reloaded below its period every cycle, so its own TEZ never
+fires — still gets its shadow latching from the sync event.
 
-Implementation note: IDF permits one sync-trigger action per operator
-(`mcpwm_generator_set_action_on_sync_event` returns `ESP_ERR_INVALID_STATE` on the second
-call), so the LS generator takes the public API — its LOW-at-sync is what prevents HS/LS
-overlap after a mid-cycle jump on HiLi hardware — and the HS action is written to the same
-trigger slot via `mcpwm_ll_generator_set_action_on_trigger_event` (operator 0 / generator 0 /
-trigger 0, the single-global-leg hw-index assumption also used by `count()`).
+It is **not** a full TEZ substitute for the gates: only LS takes a sync action (below), so an
+arbitrary-phase jump does not land in a clean period-start state. See the pulse anomalies
+described further down; that is why the wire must be qualified before the follower is armed.
+
+Implementation note: only the **LS** generator gets a sync action
+(`mcpwm_generator_set_action_on_sync_event`); its LOW-at-sync is what prevents HS/LS overlap
+after a mid-cycle jump on HiLi hardware. There is deliberately **no HS action** — driving HS
+high on the sync edge would turn it on in the same clock that turns LS off, with zero dead
+time. HS turn-on stays with TEZ, which the follower always reaches first thanks to
+`wsyncLeadTicks`.
+
+An arbitrary-phase edge is therefore not shoot-through, but it is not harmless either. On
+**HiLi** (`enLogic=0`, the flu/fbuck case) the sync action drives LS LOW: sync while HS is high
+forces LS low, leaves HS high, and resets the counter — so HS stays on for another full
+`cmpHS` interval, approaching twice its normal on-time. Sync while LS is high chops LS and
+skips the next HS pulse. On **InEn** (`enLogic=1`) the same action drives LS/EN *high*, so the
+anomaly differs; the reasoning above is HiLi-specific.
+
+This is why the sync input is armed before `start()`, with the gates idle, and why nothing may
+arm a follower that has not positively qualified a live leader.
 
 `bsync` and `sync_role=follower` are mutually exclusive at runtime: the bsync service refuses to
 start on a wired-sync follower (the wire owns the period).
@@ -143,3 +153,34 @@ rather than a pass whenever the role, `pwm_freq` or the count cannot be establis
 - [ ] measure propagation delay (leader TEZ → follower reload) → subtract it via `sync_phase_ns`
 - [ ] pull the wire: follower free-runs (beat returns), reconnect → relock within one period
 - [ ] 1 V DC offset injected between grounds: no lock change, no DC current in the pair
+
+## Sync on a USB pad (no GPIO header)
+
+`flu` breaks out only USB and I2C, so its sync wire arrives on **GPIO19 (USB D−)** — also half
+the USB-Serial-JTAG PHY. The pad serves the PHY or the GPIO matrix, never both, so `drvInit`
+picks at boot (`src/pwm/wsync_usb.h`). This engages only when `pwm_sync_pin` is a USB pin;
+pin 44 / pin 0 boards take the unchanged path.
+
+1. If `usb_serial_jtag_is_connected()` (SOF activity, not just VBUS) — a host is really there,
+   leave the pad alone and run without wired sync.
+2. Otherwise disable the PHY pad and qualify the line: two 20 ms PCNT windows, both within
+   ±10% of `pwm_freq` and agreeing with each other.
+3. Qualified → keep the pad, arm the follower. Otherwise restore the pad and fall back to USB.
+
+Two details are load-bearing:
+
+- The probe uses a **25 ns** PCNT glitch filter to match the MCPWM PIN filter. Qualifying
+  through a wider window would pass a line whose sub-window ringing then re-phases the timer.
+- `pcnt_new_channel()` unconditionally enables the pad **pull-up** and disables the pull-down,
+  which parks the AC-coupled node near mid-rail. The probe re-applies `GPIO_PULLDOWN_ONLY`
+  immediately, as `initSyncIn()` does for the operational path.
+
+Teardown order on the reject path is fixed — `stop → disable → del_channel → del_unit →
+pad enable` — so the pad never returns to the PHY while its pulls are still being touched.
+
+`wsync` reports the outcome (`mode=usb (no sync edges)`, `mode=usb (host active)`, …); without
+it a USB fallback is indistinguishable from a configured `sync_role=none`.
+
+Bench-validated on flu 2026-08-19: OTA over BLE, `pwm_sync_pin=19`, locked at 38.99–39.04 kHz
+across three windows against `pwm_freq=39000`, no ADC errors, sampler steady. Pointing the pin
+at D+ (GPIO20, unwired) correctly reported `mode=usb (no sync edges)` and restored USB.

@@ -28,6 +28,10 @@ using LegacyPwm = PWM_ESP32_ledc;
 #define HAVE_MCPWM 1
 #if WITH_WSYNC
 #include <driver/pulse_cnt.h>
+#include "pwm/wsync_usb.h"
+#if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
+#include <driver/usb_serial_jtag.h>
+#endif
 #endif
 #endif
 
@@ -141,11 +145,58 @@ class SynchronousConverter {
             uint32_t dtTicks = pwmEnLogic ? 0u : (uint32_t) std::lround(
                 boardConf.getFloat("pwm_deadtime_ns", 0.f) * 1e-9f * (float) resolutionHz);
             bool syncFollower = false;
+            uint8_t faultPin = boardConf.getByte("pwm_fault_pin", 255);
 #if WITH_WSYNC
-            syncFollower = syncRole == "follower";
+            // Role is decided BEFORE mcpwmDrv.init(): syncFollower is not a late detail, it
+            // configures the leg (2-tick lead, and period/dead-time/comparator updates on sync).
+            std::string role = syncRole;
+            syncFollower = role == "follower";
+            uint8_t syncPin = 255;
+            if (role != "none") {
+                syncPin = boardConf.getByte("pwm_sync_pin", 255);
+                // Every pin/role guard runs while USB is still alive: a throw after the pad is
+                // handed over would strand a header-less board with no console at all.
+                assert_throw(syncPin != 255, "pwm_sync_pin missing in board.conf");
+                assert_throw(syncFollower ? GPIO_IS_VALID_GPIO(syncPin) : GPIO_IS_VALID_OUTPUT_GPIO(syncPin),
+                             "pwm_sync_pin invalid");
+                assert_throw(syncPin != pinCtrl && syncPin != pinRect && syncPin != pinSd
+                             && syncPin != faultPin, "pwm_sync_pin collides");
+            }
+#if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
+            // Sync on a USB pad (boards with no GPIO header): the pad serves the USB-Serial-JTAG
+            // PHY or the GPIO matrix, never both, so pick here and fall back to USB -- the
+            // recoverable state -- unless a leader is positively qualified.
+            if (syncFollower && wsyncPinIsUsb(syncPin)) {
+                if (usb_serial_jtag_is_connected()) {
+                    // SOF activity, i.e. a host is really there. Never take the pad from it.
+                    wsyncMode = WsyncMode::usb_host_active;
+                } else {
+                    wsyncUsbPadEnable(false);
+                    auto pr = wsyncQualifyLine(syncPin, (float) pwmFrequency);
+                    ESP_LOGI("converter", "wsync usb-pin probe: %d edges, %.2f kHz, %s",
+                             pr.edges, pr.rateHz * 1e-3f, pr.qualified ? "qualified" : "rejected");
+                    if (pr.qualified) {
+                        wsyncMode = WsyncMode::armed_follower;
+                    } else {
+                        wsyncUsbPadEnable(true);
+                        wsyncMode = pr.edges ? WsyncMode::probe_bad_rate : WsyncMode::probe_no_edges;
+                    }
+                }
+                if (wsyncMode != WsyncMode::armed_follower) {
+                    // Downgrade so the sync block below self-skips: wsyncFollower stays false,
+                    // bsync is free to run, and `wsync` reports why via wsyncMode.
+                    role = "none";
+                    syncFollower = false;
+                    ESP_LOGW("converter", "wired sync disabled, %s", wsyncModeStr(wsyncMode));
+                }
+            } else if (role != "none") {
+                wsyncMode = syncFollower ? WsyncMode::armed_follower : WsyncMode::leader;
+            }
+#else
+            if (role != "none") wsyncMode = syncFollower ? WsyncMode::armed_follower : WsyncMode::leader;
+#endif
 #endif
             mcpwmDrv.init(0, pwmFrequency, pinCtrl, pinRect, dtTicks, pwmEnLogic, 0, syncFollower);
-            uint8_t faultPin = boardConf.getByte("pwm_fault_pin", 255);
             if (faultPin != 255) {
                 faultBrake.initGpio(0, faultPin, boardConf.getByte("pwm_fault_active_high", 0));
                 faultBrake.bindLeg(mcpwmDrv.oper(), mcpwmDrv.genHS(), mcpwmDrv.genLS());
@@ -155,13 +206,8 @@ class SynchronousConverter {
             // the sync half-configured. Leader: TEZ-locked pulse on pwm_sync_pin, sync_phase_deg
             // shifts the pulse (= follower period start) for interleaving. Follower: pulse edge
             // = period boundary, no shift.
-            if (syncRole != "none") {
-                uint8_t syncPin = boardConf.getByte("pwm_sync_pin", 255);
-                assert_throw(syncPin != 255, "pwm_sync_pin missing in board.conf");
-                assert_throw(syncFollower ? GPIO_IS_VALID_GPIO(syncPin) : GPIO_IS_VALID_OUTPUT_GPIO(syncPin),
-                             "pwm_sync_pin invalid");
-                assert_throw(syncPin != pinCtrl && syncPin != pinRect && syncPin != pinSd
-                             && syncPin != faultPin, "pwm_sync_pin collides");
+            // syncPin and its guards were validated above, before the USB pad decision.
+            if (role != "none") {
                 float tickHz = (float) mcpwmDrv.resolutionHz;
                 // pad edge counter for both roles (`wsync` cmd): follower = wire delivery check,
                 // leader = self-check of its own pulse. Runs BEFORE the role init: enabling the
@@ -211,7 +257,7 @@ class SynchronousConverter {
                     mcpwmDrv.initSyncOut(syncPin, pulseTicks, (uint16_t) ph);
                     ESP_LOGI("converter", "wired sync leader pulse offset %ld ticks", (long) ph);
                 }
-                ESP_LOGI("converter", "wired sync %s pin=%u", syncRole.c_str(), syncPin);
+                ESP_LOGI("converter", "wired sync %s pin=%u", role.c_str(), syncPin);
             }
 #endif
             mcpwmDrv.start();
@@ -352,6 +398,9 @@ public:
     bool wsyncFollower = false;
 #if WITH_WSYNC
     pcnt_unit_handle_t wsyncPcnt_ = nullptr;
+    // Why wired sync ended up in the state it did. Without this, `wsync` cannot tell a USB-pad
+    // fallback from a configured sync_role=none -- both simply have no edge counter.
+    WsyncMode wsyncMode = WsyncMode::configured_none;
 #endif
     // A wired-sync edge counter exists (sync_role != none on a WSYNC build). Separate from the
     // count itself: a count is a valid non-negative number, so it cannot double as a sentinel.

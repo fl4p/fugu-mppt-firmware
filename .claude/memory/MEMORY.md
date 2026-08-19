@@ -121,3 +121,5 @@
 - [PV-sim output mode implemented (8-15)](project_pv_sim_mode_implemented.md) — mode=pv/`pv` cmd on PSU machinery, commit 2440421; bench validation pending (port was locked)
 - [conf-editor scraper clobbers FILE_KEYS](project_conf_editor_scraper_clobbers.md) — scrape_conf_keys.py --write drops ctrl_*/bsync/ble/tele keys; hand-edit instead
 - [codex exec stdin hang](reference_codex_exec_stdin_hang.md) — background `codex exec` blocks on stdin forever; always `< /dev/null`, no tail pipe
+- [PCNT forces pull-UP on its edge pin](project_pcnt_new_channel_forces_pullup.md) — pcnt_new_channel() enables pull-up + disables pull-down; re-apply GPIO_PULLDOWN_ONLY after it on AC-coupled lines
+- [codex exec has no DNS in the Claude Code sandbox](reference_codex_no_resolver_in_sandbox.md) — getaddrinfo dead (resolver unreachable); run it from a real Terminal, tee to a file, read that back

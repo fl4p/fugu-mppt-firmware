@@ -57,4 +57,9 @@ public:
         auto err = nvs_set_str(my_handle, key.c_str(), value.c_str());
         ESP_ERROR_CHECK(err);
     }
+
+    // nvs_set_* only stages the write; without this the value is lost on esp_restart().
+    void commit() {
+        ESP_ERROR_CHECK(nvs_commit(my_handle));
+    }
 };
