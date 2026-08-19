@@ -187,6 +187,56 @@ static void cmdDc(cmd *c) {
                  manualRect, (int) dc);
 }
 
+// dt [ns] — MCPWM hardware dead-time. No argument reports the live value. The change is applied
+// by the RT core and is RAM-only; `set-config board.conf pwm_deadtime_ns <ns>` makes it survive.
+static void cmdDeadTime(cmd *c) {
+    Command cc(c);
+    auto v = cc.getArg(0).getValue();
+    if (v.length()) {
+#ifdef WITH_MEASURE_COIL
+        // measure-coil snapshots pwmMax/pwmCtrlMax for its duty math and may persist the result
+        if (isMeasuring())
+            CMD_FAIL_RETURN("dt: busy measuring");
+#endif
+        // toFloat() stops at the first non-numeric character and reports no error, so "300,9" and
+        // "80O" would silently become 300 and 80. Require the whole token to parse.
+        char *end = nullptr;
+        const float ns = strtof(v.c_str(), &end);
+        if (end == v.c_str() || *end)
+            CMD_FAIL_RETURN("dt: expected a single value in ns");
+        // Shortening the dead-band is the direction that can short the half-bridge, so it stays a
+        // bench operation. Lengthening it only adds margin and is allowed in any mode. Compare
+        // quantized ticks, not ns -- a request that lands on the current tick count is a no-op.
+        if (converter.deadTimeTicksFor(ns) < converter.getDtTicks() && !g_app.manualPwm())
+            CMD_FAIL_RETURN("dt: lowering the dead-time needs manual PWM (use 'dc N' first)");
+        uint16_t ticks = 0;
+        if (const char *err = converter.requestDeadTimeNs(ns, ticks))
+            CMD_FAIL_RETURN("dt: %s", err);
+        // esp_timer_get_time(), not wallClockMs(): the latter is only advanced by loopRT itself, so
+        // a wedged RT loop -- the one failure this deadline exists to report -- would stop the very
+        // clock measuring it and spin here forever, taking the whole network task down with it.
+        const int64_t deadline = esp_timer_get_time() + 1000000;
+        while (!converter.deadTimeIdle() && esp_timer_get_time() < deadline) delay(1);
+        // No cancel on timeout: withdrawing a request the RT core may already be applying could
+        // hand it back the PREVIOUS value. Report it as unconfirmed, still queued.
+        if (!converter.deadTimeIdle())
+            CMD_FAIL_RETURN("dt: RT loop did not confirm within 1 s (request still queued)");
+        if (converter.getDtTicks() != ticks)
+            CMD_FAIL_RETURN("dt: driver rejected %u ct, still %u ct",
+                            (unsigned) ticks, (unsigned) converter.getDtTicks());
+    }
+    if (!converter.hasDeadTime())
+        CMD_FAIL_RETURN("dt: n/a, %s has no dead-time module",
+                        converter.isEnLogic() ? "an InEn gate driver" : "this gate driver");
+    const unsigned ct = converter.getDtTicks();
+    if (!ct)
+        CMD_FAIL_RETURN("dt: module bypassed at boot (board.conf pwm_deadtime_ns=0)");
+    // realized HS->LS gap is one tick short of the configured value, see setDeadTimeTicks()
+    UART_LOG("dt=%.0f ns (%u ct, gap %u ct) pwmMax=%u minLS=%u maxHS=%u", converter.getDeadTimeNs(),
+             ct, ct - 1, (unsigned) converter.pwmMaxDriver(),
+             (unsigned) converter.getRectOnPwmMin(), (unsigned) converter.pwmCtrlMax);
+}
+
 static void cmdShortLs(cmd *) {
     if (converter.boost() && abs(sensors.Vin->ewm.avg.get()) < 0.05) {
         const auto ticket = mppt.requestPsuShortLowSide();
@@ -921,13 +971,37 @@ static void cmdUptime(cmd *) {
     UART_LOG("App: %s", format_version());
 }
 
-// peek <addr> [len]  — read up to 256 bytes from internal RAM, DROM (flash-mapped const) or
-// IRAM/IROM and either print one typed value (len ∈ {1,2,4,8}) or a hex+ASCII dump (any other
-// 1..256). Address accepts `0x…`, decimal, or octal (strtoul base 0). Executable regions need
-// 4-byte aligned addr+len so we can issue 32-bit instruction-bus loads. Symbol resolution lives
-// host-side in fugu_console.py.
+// peek <addr> [len]  — read up to 256 bytes from internal RAM, DROM (flash-mapped const),
+// IRAM/IROM, RTC slow memory or peripheral MMIO, and either print one typed value
+// (len ∈ {1,2,4,8}) or a hex+ASCII dump (any other 1..256). Address accepts `0x…`, decimal, or
+// octal (strtoul base 0). Executable and MMIO regions need 4-byte aligned addr+len so we can
+// issue 32-bit bus loads. Symbol resolution lives host-side in fugu_console.py.
+//
+// MMIO caveats: a register whose peripheral clock is gated faults the bus, several registers are
+// read-destructive (UART/I2C FIFO pop, MCPWM capture, *_INT_ST latches), and the read is not
+// synchronised against the RT loop.
+#if CONFIG_IDF_TARGET_ESP32S3
+#define PEEK_MMIO_LOW  0x60000000UL
+#define PEEK_MMIO_HIGH 0x600D2000UL
+#elif CONFIG_IDF_TARGET_ESP32
+#include <soc/dport_access.h>
+#define PEEK_MMIO_LOW  0x3FF00000UL
+#define PEEK_MMIO_HIGH 0x3FF80000UL
+#else
+#define PEEK_MMIO_LOW  0UL
+#define PEEK_MMIO_HIGH 0UL
+#endif
 static inline bool peekByteOk(const void *p) {
-    return esp_ptr_internal(p) || esp_ptr_in_drom(p) || esp_ptr_external_ram(p);
+    return esp_ptr_internal(p) || esp_ptr_in_drom(p) || esp_ptr_external_ram(p)
+           || esp_ptr_in_rtc_slow(p) || esp_ptr_in_rtc_dram_fast(p);
+}
+static inline bool peekMmioOk(uint32_t a) { return a >= PEEK_MMIO_LOW && a < PEEK_MMIO_HIGH; }
+static inline uint32_t peekWord(uint32_t a) {
+#if CONFIG_IDF_TARGET_ESP32
+    // classic DPORT needs the APB-interlocked read to avoid returning the other bus's data
+    if (a >= DR_REG_DPORT_BASE && a <= DR_REG_DPORT_END) return DPORT_SEQUENCE_REG_READ(a);
+#endif
+    return *(const volatile uint32_t *) a;
 }
 static void cmdPeek(cmd *c) {
     Command cc(c);
@@ -946,13 +1020,14 @@ static void cmdPeek(cmd *c) {
     const void *first = (const void *) addr;
     const void *last  = (const void *) (addr + len - 1);
     uint8_t buf[256];
+    bool mmio = peekMmioOk(addr) && peekMmioOk(addr + len - 1);
     if (peekByteOk(first) && peekByteOk(last)) {
         memcpy(buf, first, (size_t) len);
-    } else if (esp_ptr_executable(first) && esp_ptr_executable(last)) {
+    } else if (mmio || (esp_ptr_executable(first) && esp_ptr_executable(last))) {
         if ((addr & 3) || (len & 3))
-            CMD_FAIL_RETURN("peek: executable region needs 4-byte aligned addr+len");
+            CMD_FAIL_RETURN("peek: %s region needs 4-byte aligned addr+len", mmio ? "mmio" : "executable");
         for (int i = 0; i < len; i += 4) {
-            uint32_t w = *(const volatile uint32_t *) (addr + i);
+            uint32_t w = peekWord(addr + i);
             memcpy(buf + i, &w, 4);
         }
     } else {
@@ -1533,6 +1608,8 @@ static void cmdMeasureCoil(cmd *c) {
     int arg1 = numArgs >= 2 ? cc.getArg(1).getValue().toInt() : 0;
     uint32_t dwellMs = numArgs >= 3 ? (uint32_t) cc.getArg(2).getValue().toInt() : 3000;
     if (dwellMs < 200) dwellMs = 200;
+    if (!converter.deadTimeIdle())
+        CMD_FAIL_RETURN("measure-coil: a dead-time change is still queued");
     if (!measureCoilStart(ls, apply, arg1, dwellMs))
         CMD_FAIL_RETURN("measure-coil: already running");
 }
@@ -1775,6 +1852,7 @@ void setupCli() {
     cli.addCommand("anf", cmdAnf);
 
     cli.addBoundlessCmd("dc", cmdDc); // dc <hs> [ls]
+    cli.addBoundlessCmd("dt,deadtime", cmdDeadTime); // dt [ns]
     cli.addSingleArgCmd("sync", cmdSync);
     cli.addSingleArgCmd("bf,panel", cmdBflow);
     cli.addSingleArgCmd("speed", cmdSpeed);

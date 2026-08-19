@@ -163,7 +163,9 @@ exists yet, `ioreg -l -r -c AppleUSBACMData` → `IOCalloutDevice` is the `/dev/
 
 `etc/ota.py` (Wi-Fi; flags in `CLAUDE.md`) refuses non-interactively: dirty images, `WITH_NETW=n`,
 `WITH_VCONV=y` — commit or `git stash push -- <paths>` first. Over BLE:
-`.venv/bin/python3 etc/ota_ble.py -n <name> -y`, **detached** (2–3+ min) and **one at a time** (one
+`.venv/bin/python3 etc/ota_ble.py build-<tag>/fugu-firmware.bin -n <name> -y` — **pass the image
+positionally**, the default is the shared `build/` that another session may have rebuilt under you —
+**detached** (~9 min for a 1.74 MB image, measured 2026-08-19) and **one at a time** (one
 Mac radio). The version string is git-describe, so an uncommitted rebuild keeps the old string and
 the tool *skips* with a success-looking `☑️ skip:` — pass `-f` when the tree changed without a
 commit; a real push prints hundreds of progress lines. A failed/killed push leaves the device
@@ -281,7 +283,11 @@ the status line, absence of `ERR` proves nothing.
 
 **While diagnosing, send only read-only commands.** Safe: `bootinfo`, `tasks`, `uptime`, `status`,
 `svc`, `hostname` (no arg), `ls`, `cat`, `get-config`, `rt-stats`, `mem`, `heap`, `ip`,
-`pwm-dump` (the only readout of the real pwmMax), `wsync`, `scan-i2c`.
+`pwm-dump` (the only readout of the real pwmMax), `wsync`, `scan-i2c`. `peek` is safe on RAM/DROM
+but now also reaches peripheral MMIO, where a clock-gated register is expected to fault the bus
+(unconfirmed) and FIFO/`*_INT_ST`/capture registers are read-destructive — check
+`SYSTEM_PERIP_CLK_EN0` (`peek 0x600C0018`) before peeking a peripheral: on a `pwm_driver=mcpwm`
+board LEDC (bit 11) reads 0, PWM0 (bit 17) reads 1 (flu, 2026-08-19).
 
 Ask first before: `bf`/`panel`, `dc`, `sweep`, `mppt`, `sync`, `psu`, `vset`/`iset`/`ovset`,
 `measure-coil`, `restart`, `ota`/`ota-ble`, `short-ls`, `adc-restart`, `adc-reset`. A bare `bf` or
