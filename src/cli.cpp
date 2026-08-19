@@ -936,11 +936,33 @@ static void cmdRtStats(cmd *) {
 
 // wired-sync diagnostic: edge rate on the sync pin (PCNT). Leader = self-check of its own
 // pulse, follower = wire delivery check. Expect the converter's own pwm_freq.
-static void cmdWsync(cmd *) {
+static void cmdWsync(cmd *c) {
+#if WITH_WSYNC
+    // Handled before the counter check on purpose: `arm` is only ever needed in the state that
+    // has no counter (USB fallback), where the check below would have returned already.
+    Command cc(c);
+    if (cc.countArgs() >= 1 && cc.getArg(0).getValue() == "arm") {
+        bool on = !(cc.countArgs() >= 2 && cc.getArg(1).getValue() == "off");
+        nvs.open();
+        nvs.writeString("wsync_arm", on ? "1" : "");
+        nvs.commit();
+        nvs.close();
+        // One-shot, and it only skips the USB host pre-check -- the line still has to qualify,
+        // so this cannot arm a follower against a leader that is not running.
+        UART_LOG("wsync arm: %s. restart to apply",
+                 on ? "next boot probes the sync pin even with USB attached" : "cleared");
+        return;
+    }
+#else
+    (void) c;
+#endif
     if (!converter.wsyncHasCounter()) {
         // Keep the "no edge counter" substring: fugu.py keys role=none off it.
 #if WITH_WSYNC
-        UART_LOG("wsync: no edge counter, mode=%s", wsyncModeStr(converter.wsyncMode));
+        // The one-shot flag is the only way to tell "probed because you armed me" from "probed
+        // because no host was attached" -- both reach the same mode.
+        UART_LOG("wsync: no edge counter, mode=%s%s", wsyncModeStr(converter.wsyncMode),
+                 converter.wsyncArmRequest ? " (armed this boot)" : "");
 #else
         UART_LOG("wsync: no edge counter (sync_role=none, or WITH_WSYNC off)");
 #endif
@@ -949,7 +971,12 @@ static void cmdWsync(cmd *) {
     // The RUNNING role, which only the driver knows: sync_role is read once at boot while
     // set-config edits the file live, and a leader counts its own outgoing pulse at exactly
     // pwm_freq -- indistinguishable from a locked follower unless the reply says which this is.
-    UART_LOG("wsync role=%s", converter.wsyncFollower ? "follower" : "leader");
+    UART_LOG("wsync role=%s%s", converter.wsyncFollower ? "follower" : "leader",
+#if WITH_WSYNC
+             converter.wsyncArmRequest ? " (armed this boot)" : "");
+#else
+             "");
+#endif
     // keep the window short at high pwm_freq: the count accumulates across the 16-bit wrap
     // (see drvInit), but a shorter window still bounds the wrap-ISR load
     uint32_t f = converter.getPwmFrequency();
@@ -1842,7 +1869,7 @@ void setupCli() {
     cli.addBoundlessCmd("crash", cmdCrash); // crash <null|abort|stack>: deliberate panic, writes coredump
 #endif
     cli.addCommand("uptime", cmdUptime);
-    cli.addCommand("wsync", cmdWsync);
+    cli.addBoundlessCmd("wsync", cmdWsync); // `wsync` edge rate; `wsync arm [off]` one-shot USB-pad probe
     cli.addBoundlessCmd("sensor", cmdSensor); // `sensor` full dump; `sensor avg` compact EWM line
 #ifdef WITH_NETW
     cli.addCommand("ip", cmdIp);

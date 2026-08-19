@@ -181,6 +181,21 @@ pad enable` — so the pad never returns to the PHY while its pulls are still be
 `wsync` reports the outcome (`mode=usb (no sync edges)`, `mode=usb (host active)`, …); without
 it a USB fallback is indistinguishable from a configured `sync_role=none`.
 
+### Re-arming after the leader comes up late
+
+A board that booted with USB attached, or before its leader was running, stays in USB mode for
+that whole run — the pad decision is a boot-time one. `wsync arm` (over BLE) sets a **one-shot**
+NVS flag; the next boot skips the *USB host pre-check* only and runs the probe anyway. It never
+skips qualification: `sync_role=follower` with no leader on the wire still falls back to USB.
+That is deliberate — a follower armed against a dead wire takes its first arbitrary-phase sync
+edge with the gates already switching, and the HS anomaly above is a double-length pulse into
+the half-bridge. `wsync arm off` clears a pending flag.
+
+The flag is read, cleared and committed in `setup()` *before* `converter.init()` runs, so a
+crash inside the probe returns to automatic mode rather than repeating the forced probe on every
+boot. A plain power cycle likewise returns to automatic. `KeyValueStorage::commit()` exists for
+this: `writeString()` only stages the `nvs_set_str`, which `esp_restart()` would discard.
+
 Bench-validated on flu 2026-08-19: OTA over BLE, `pwm_sync_pin=19`, locked at 38.99–39.04 kHz
 across three windows against `pwm_freq=39000`, no ADC errors, sampler steady. Pointing the pin
 at D+ (GPIO20, unwired) correctly reported `mode=usb (no sync edges)` and restored USB.

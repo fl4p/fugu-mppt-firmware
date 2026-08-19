@@ -167,10 +167,14 @@ class SynchronousConverter {
             // PHY or the GPIO matrix, never both, so pick here and fall back to USB -- the
             // recoverable state -- unless a leader is positively qualified.
             if (syncFollower && wsyncPinIsUsb(syncPin)) {
-                if (usb_serial_jtag_is_connected()) {
+                // `wsync arm` overrides only the host pre-check, never the qualification below:
+                // arming a follower with no leader is the hazard this whole path exists to avoid.
+                if (!wsyncArmRequest && usb_serial_jtag_is_connected()) {
                     // SOF activity, i.e. a host is really there. Never take the pad from it.
                     wsyncMode = WsyncMode::usb_host_active;
                 } else {
+                    if (wsyncArmRequest)
+                        ESP_LOGI("converter", "%s", "wsync arm: probing the pad despite USB");
                     wsyncUsbPadEnable(false);
                     auto pr = wsyncQualifyLine(syncPin, (float) pwmFrequency);
                     ESP_LOGI("converter", "wsync usb-pin probe: %d edges, %.2f kHz, %s",
@@ -401,6 +405,10 @@ public:
     // Why wired sync ended up in the state it did. Without this, `wsync` cannot tell a USB-pad
     // fallback from a configured sync_role=none -- both simply have no edge counter.
     WsyncMode wsyncMode = WsyncMode::configured_none;
+    // Set by setup() from the `wsync arm` NVS one-shot, before init(). Skips the USB host
+    // pre-check for this boot only; the line still has to qualify. Owned by main.cpp so the
+    // flag is consumed (cleared + committed) before anything here touches the pad.
+    bool wsyncArmRequest = false;
 #endif
     // A wired-sync edge counter exists (sync_role != none on a WSYNC build). Separate from the
     // count itself: a count is a valid non-negative number, so it cannot double as a sentinel.

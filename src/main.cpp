@@ -469,6 +469,19 @@ void setup() {
     pinGpioIsrToRtCore();
 #endif
 
+#if WITH_WSYNC
+    // Consume the `wsync arm` one-shot BEFORE the converter can touch the USB pad: clearing it
+    // afterwards would repeat the forced probe forever if the probe itself crashed, and clearing
+    // it at all is what keeps a power cycle a way back to automatic mode.
+    nvs.open();
+    if (!nvs.readString("wsync_arm", "").empty()) {
+        nvs.writeString("wsync_arm", "");
+        nvs.commit();
+        converter.wsyncArmRequest = true;
+    }
+    nvs.close();
+#endif
+
     setupConverterAndMppt(boardConf, lim, teleConf, noI2C);
 
     if (!g_app.setupErr) {
