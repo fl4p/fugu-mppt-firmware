@@ -152,11 +152,19 @@ def print_results(phase, rows):
     return n_fail
 
 
-BOARD_CONF_KEYS = ["pwm_freq", "pwm_deadtime_ns", "pwm_hi", "pwm_li", "pwm_fault_pin"]
+BOARD_CONF_KEYS = ["pwm_freq", "pwm_deadtime_ns", "pwm_deadtime_hl_ns", "pwm_deadtime_lh_ns",
+                   "pwm_hi", "pwm_li", "pwm_fault_pin"]
+# per-transition overrides; each falls back to the common pwm_deadtime_ns when unset
+_DT_EDGE_KEYS = ["pwm_deadtime_hl_ns", "pwm_deadtime_lh_ns"]
 # Bench/mock hosts: bare `fugu` or `fugu-esp32s3-*`; real converters (fry, flat, fugu139C, …) are not matched.
 SAFE_HOST_PATTERN = re.compile(r"^fugu(-esp32s3-.*)?$")
 # get-config replies look like:  Conf '/littlefs/conf/board.conf:pwm_freq' = '39000'
-_CONF_REPLY_RE = re.compile(r"^Conf\s+'[^']*:(?P<k>\w+)'\s*=\s*'(?P<v>-?\d*)'\s*$", re.MULTILINE)
+# The dead-time keys are floats and a quantized value is genuinely fractional (193.75 ns), so the
+# value pattern has to accept decimals and exponents -- an int-only pattern reads them as absent
+# and silently substitutes the common key.
+_CONF_REPLY_RE = re.compile(
+    r"^Conf\s+'[^']*:(?P<k>\w+)'\s*=\s*'(?P<v>[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)?'\s*$",
+    re.MULTILINE)
 
 
 def setup_board(con) -> dict:
@@ -168,10 +176,17 @@ def setup_board(con) -> dict:
         r = con.command(f"get-config board.conf {k}", timeout=3.0)
         m = _CONF_REPLY_RE.search(r.text)
         if m and m.group("v"):
-            out[k] = int(m.group("v"))
+            # float first: int("193.75") raises. Keep an integral value as int so pin/flag keys
+            # still compare and format as they always did.
+            fv = float(m.group("v"))
+            out[k] = int(fv) if fv.is_integer() else fv
         else:
-            # empty value: pwm_deadtime_ns -> 0 (sensible default), pwm_fault_pin -> -1 (unconfigured)
+            # empty value: pwm_deadtime_ns -> 0 (sensible default), pwm_fault_pin -> -1
+            # (unconfigured), the per-edge keys -> resolved from pwm_deadtime_ns below
             out[k] = 0 if k == "pwm_deadtime_ns" else (-1 if k == "pwm_fault_pin" else None)
+    for k in _DT_EDGE_KEYS:
+        if out[k] is None:
+            out[k] = out["pwm_deadtime_ns"]
     dump = parse_pwm_dump(con.command("pwm-dump", timeout=3.0).text)
     out["pwm_max"] = dump.get("pwmMax")
     return out
@@ -429,15 +444,17 @@ def phase2_ls_pos_width(con, scope, pc, board: dict) -> list[Result]:
 
 
 def phase3_deadtime(con, scope, pc, board: dict) -> list[Result]:
-    """Measure HS-fall → LS-rise gap (the dead-time the MCPWM module inserts) and assert it
-    matches board.conf::pwm_deadtime_ns within ±1 tick. Also assert there's no sample where
-    HS and LS are both above the logic threshold."""
+    """Measure both dead-bands and assert each matches its board.conf key within ±1 tick:
+    dt_hl (HS-fall → LS-rise, the MCPWM RED register, pwm_deadtime_hl_ns) and dt_lh (LS-fall →
+    next HS-rise at the period wrap, the pwmMax reservation, pwm_deadtime_lh_ns). Also assert
+    there's no sample where HS and LS are both above the logic threshold."""
     rows: list[Result] = []
     pwm_max = board["pwm_max"]
     freq    = board["pwm_freq"]
     tick_s  = 1.0 / (freq * pwm_max)
     tol_s   = tick_s
-    dt_ns_exp = board["pwm_deadtime_ns"] or 0
+    hl_ns_exp = board["pwm_deadtime_hl_ns"] or 0
+    lh_ns_exp = board["pwm_deadtime_lh_ns"] or 0
 
     hs = pwm_max // 2
     ls = (pwm_max - hs - 1) // 2
@@ -464,18 +481,52 @@ def phase3_deadtime(con, scope, pc, board: dict) -> list[Result]:
         con.command("dc 0", timeout=2.0)
         return rows
     dt_hl_s = (lr_after - hf0) * dt
-    ok_dt = abs(dt_hl_s - dt_ns_exp * 1e-9) <= tol_s
+    ok_dt = abs(dt_hl_s - hl_ns_exp * 1e-9) <= tol_s
     rows.append(Result("dt_hl", ok_dt,
                        measured=f"{dt_hl_s*1e9:.0f}ns",
-                       expected=f"{dt_ns_exp}ns",
+                       expected=f"{hl_ns_exp}ns",
                        tol=f"{tol_s*1e9:.1f}ns (1t)"))
 
     shoot = any(hs_v[i] > LOGIC_TH and ls_v[i] > LOGIC_TH for i in range(len(hs_v)))
     rows.append(Result("shoot_through", not shoot,
                        detail="none" if not shoot else "OVERLAP DETECTED"))
 
+    rows += _dt_lh_row(con, scope, pc, pwm_max, freq, tick_s, tol_s, lh_ns_exp, hs)
     con.command("dc 0", timeout=2.0)
     return rows
+
+
+def _dt_lh_row(con, scope, pc, pwm_max, freq, tick_s, tol_s, lh_ns_exp, hs) -> list[Result]:
+    """Wrap-side band: LS-fall -> the next HS-rise, in its own capture with LS commanded to its
+    maximum (`ls = pwm_max - hs - 1`).
+
+    The band is `period_ticks - cmpLS`, so any commanded slack between cmpLS and pwm_max lands in
+    the measurement on top of the reserved dead-time. That slack has to be converted to time with
+    `tick_s`, which is the NOMINAL 1/(freq*pwm_max) and not the true 1/resolution_hz — at 39 kHz
+    the two differ by ~0.05 ns per tick, negligible over the 32 ticks dt_hl spans but ~49 ns over
+    the ~1019 ticks a half-width LS leaves, i.e. 8x the one-tick tolerance. Driving LS to its
+    maximum collapses the slack to a single count and the error with it."""
+    ls = pwm_max - hs - 1
+    con.command(f"dc {hs} {ls}", timeout=2.0)
+    time.sleep(0.1)
+    try:
+        dt, hs_v, ls_v = capture(scope, pc, freq)
+    except Exception as e:
+        return [Result("dt_lh", False, detail=f"capture error: {e}")]
+    hs_rises, _   = edges(hs_v)
+    _, ls_falls   = edges(ls_v)
+    lf0 = next((i for i in ls_falls), None)
+    hr_after = next((i for i in hs_rises if lf0 is not None and i > lf0), None)
+    if lf0 is None or hr_after is None:
+        return [Result("dt_lh", False, detail="no LS-fall / HS-rise pair at the period wrap")]
+    dt_lh_s  = (hr_after - lf0) * dt
+    slack_s  = (pwm_max - (hs + ls)) * tick_s   # = 1 count by construction
+    exp_s    = lh_ns_exp * 1e-9 + slack_s
+    return [Result("dt_lh", abs(dt_lh_s - exp_s) <= tol_s,
+                   measured=f"{dt_lh_s*1e9:.0f}ns",
+                   expected=f"{exp_s*1e9:.0f}ns",
+                   tol=f"{tol_s*1e9:.1f}ns (1t)",
+                   detail=f"{lh_ns_exp}ns reserved + 1 count slack (ls={ls})")]
 
 
 def phase4_fault_brake(con, scope, pc, board: dict, drv_pin: int) -> list[Result]:

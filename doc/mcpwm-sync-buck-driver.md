@@ -70,7 +70,7 @@ Worked example: `fsw = 39 kHz`, `src_clk = 160 MHz` → `presc = 1`, `period_tic
 `resolution = 160 MHz`, `actual_freq ≈ 38997 Hz` (~12-bit duty).
 
 The driver exports `pwmMax`. After dead-time reservation (next section):
-`pwmMax = period_ticks - dtTicks_LS_wrap`. The controller clamps all comparator writes
+`pwmMax = period_ticks - dtLhTicks`. The controller clamps all comparator writes
 to `[0, pwmMax - 1]`.
 
 ## Dead-time (HiLi)
@@ -79,18 +79,30 @@ Each MCPWM operator has **one shared dead-time submodule** — the posedge / neg
 delays in `mcpwm_dead_time_config_t` cannot be configured independently for both
 generators. We therefore split the two transitions:
 
-- **HS → LS (mid-period, at `cmpHS`):** delay the LS *rising* edge by `dtTicks` via
-  `mcpwm_generator_set_dead_time(genLS, genLS, {posedge_delay_ticks = dtTicks})`. HS
-  falls at `cmpHS` (no delay); LS rises `dtTicks` later. Dead-band = `dtTicks`.
+- **HS → LS (mid-period, at `cmpHS`):** delay the LS *rising* edge by `dtHlTicks` via
+  `mcpwm_generator_set_dead_time(genLS, genLS, {posedge_delay_ticks = dtHlTicks})`. HS
+  falls at `cmpHS` (no delay); LS rises `dtHlTicks` later. Dead-band = `dtHlTicks`.
 - **LS → HS (period wrap, TEZ):** reserved in software by reducing `pwmMax`:
-  `pwmMax = period_ticks - dtTicks`. Since the controller clamps `cmpLS ≤ pwmMax - 1`,
-  LS goes low at least `dtTicks + 1` ticks before TEZ.
+  `pwmMax = period_ticks - dtLhTicks`. Since the controller clamps `cmpLS ≤ pwmMax - 1`,
+  LS goes low at least `dtLhTicks + 1` ticks before TEZ.
 
-Conversion: `dtTicks = round(pwm_deadtime_ns × 1e-9 × resolution_hz)`. Must use the
-true `resolution_hz` from `bestTiming()`, not `pwm_freq × period_ticks` (they only
-agree by accident when `period_ticks = resolution_hz / pwm_freq` exactly).
+The two mechanisms are independent — a RED register write versus a `pwmMax` reservation
+— so the two transitions carry **one value each**, and they need not be equal. `hl == 0
+&& lh > 0` is a legal state: the dead-time submodule stays bypassed (no path claim, so
+no 1-tick falling delay on HS, and `setDeadTimeTicks` still refuses to arm it later)
+while the wrap band is still reserved out of `pwmMax`.
 
-`InEn` mode passes `dtTicks = 0`; the half-bridge driver chip owns the dead-time.
+Conversion: `ticks = round(pwm_deadtime_{hl,lh}_ns × 1e-9 × resolution_hz)`, each key
+defaulting to `pwm_deadtime_ns`. Must use the true `resolution_hz` from `bestTiming()`,
+not `pwm_freq × period_ticks` (they only agree by accident when
+`period_ticks = resolution_hz / pwm_freq` exactly).
+
+The realized HS→LS gap is `dtHlTicks - 1`: claiming the dead-time path costs the HS
+generator a 1-tick FED (see `init()`). The LS→HS band is `period_ticks - cmpLS` and
+depends on no delay register; with every caller capping `cmpLS` at `pwmMax - 1` its
+tightest realized value is `dtLhTicks + 1`, i.e. one tick wider than configured.
+
+`InEn` mode passes `0, 0`; the half-bridge driver chip owns the dead-time.
 
 ## Comparator updates — TEZ-buffered
 
@@ -149,7 +161,7 @@ group plus one fault brake. Phase relationship:
 - `recover(operator)` — clear the latched OST condition.
 
 `MCPWM_SyncLeg`
-- `init(group, fsw, pinHS, pinLS, dtTicks, enLogic, fixedTicks = 0)` — build timer,
+- `init(group, fsw, pinHS, pinLS, dtHlTicks, dtLhTicks, enLogic, fixedTicks = 0)` — build timer,
   operator, comparators, generators, dead-time. `fixedTicks > 0` overrides
   `bestTiming()` (kept for migration / bit-identical replays; not the production path).
 - `setHsOff(uint16_t)`, `setLsOff(uint16_t)` — comparator writes (TEZ-buffered).
@@ -170,6 +182,8 @@ group plus one fault brake. Phase relationship:
 | `pwm_hi` / `pwm_li`      | gate pins (HiLi)                                           |
 | `pwm_in` / `pwm_en`      | IN / EN pins (InEn)                                        |
 | `pwm_sd` (optional)      | driver SD pin, driven high in `init`                       |
-| `pwm_deadtime_ns`        | HiLi dead-time in ns; ignored when `InEn`                  |
+| `pwm_deadtime_ns`        | HiLi dead-time in ns, both transitions; ignored when `InEn` |
+| `pwm_deadtime_hl_ns`     | HS→LS override (RED register, realized −1 tick)            |
+| `pwm_deadtime_lh_ns`     | LS→HS override (`pwmMax` reservation, realized exactly)    |
 | `pwm_fault_pin` (opt.)   | GPIO fault input pin                                       |
 | `pwm_fault_active_high`  | fault polarity (0/1); pull resistor set accordingly        |

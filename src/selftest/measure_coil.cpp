@@ -295,6 +295,10 @@ static void measureCoilTask(void *arg) {
 }
 
 bool measureCoilStart(bool ls, bool apply, int arg1, uint32_t dwellMs) {
+    // The sweeps below snapshot pwmMax/pwmCtrlMax/pwmRectMin once and run for seconds. A dead-time
+    // request that is still queued (console `dt` timed out but did not withdraw it) would land
+    // mid-sweep and move all three under those copies, silently corrupting an L0 we may persist.
+    if (!converter.deadTimeIdle()) return false;
     if (s_measureBusy.exchange(true)) return false;
     s_measArgs = {ls, apply, arg1, dwellMs};
     xTaskCreatePinnedToCore(measureCoilTask, "meas-coil", 6144, &s_measArgs, 1, nullptr, NON_RT_CORE);

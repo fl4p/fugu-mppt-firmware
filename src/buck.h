@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
+#include <atomic>
 
 
 // Gate-driver back-ends. The MCPWM driver and a "legacy" LEDC-style driver (LEDC on real
@@ -125,6 +126,22 @@ class SynchronousConverter {
 
     float fL = NAN; // fsw * L
     float coilL0 = 0; // retained from coil.conf so logConfig() can re-emit the config line
+    uint16_t rectRefreshTicks = 0; // bootstrap-refresh pulse in timer ticks; pwmRectMin minus dead-time
+
+    // Runtime dead-time change (console `dt`), posted from core 0 and applied on the RT core so
+    // pwmMax and the gate comparators never move under the control path. One word — [31:22] seq,
+    // [21:11] hl, [10:0] lh — so the triple is a coherent snapshot; ack==req means idle. seq
+    // (never 0 once posted) rather than a sentinel tick count, so "no request" is not a valid
+    // dead-time. 11 bits per value is enough: both are producer-clamped to periodTicks/32 <= 2047.
+    //
+    // This is a latest-value MAILBOX, not a queue, and it assumes ONE producer: a second post
+    // overwrites an unapplied request instead of being rejected or queued. That holds today because
+    // every console transport (UART, USB-CDC, telnet, MQTT, BLE) dispatches on core 0 through the
+    // same handleCommand(), and `dt` waits for the ack before returning. A second producer, or a
+    // post issued after the CLI's 1 s ack timeout gave up, would silently drop the older request.
+    std::atomic<uint32_t> dtReqWord{0}, dtAckWord{0};
+    static constexpr uint32_t kDtTickMask = 0x7ffu;   // 11 bits, >= 65535/32
+    static constexpr uint32_t kDtSeqMask  = 0x3ffu;   // 10 bits
 
     // ---- gate-driver dispatch ----------------------------------------------------------------
     // One place per distinct driver operation. With both drivers compiled these branch on
@@ -142,8 +159,71 @@ class SynchronousConverter {
             // stored as ns and converted to counts later, so it survives the resolution change.
             uint32_t resolutionHz = bestTiming(pwmFrequency).resolution_hz;
             // InEn drivers do dead-time in the gate-driver chip, so the MCPWM dt submodule stays off.
-            uint32_t dtTicks = pwmEnLogic ? 0u : (uint32_t) std::lround(
-                boardConf.getFloat("pwm_deadtime_ns", 0.f) * 1e-9f * (float) resolutionHz);
+            // One value per transition: hl (ctrl-off -> rect-on) is the hardware RED, lh (rect-off ->
+            // ctrl-on at the wrap) is the pwmMax reservation. Both default to the common key.
+            // The common key is validated ONCE here, so a bad per-edge key can fall back to a value
+            // already known to be sane rather than to zero.
+            const float dtCommonRaw = boardConf.getFloat("pwm_deadtime_ns", 0.f);
+            const bool commonOk = (dtCommonRaw >= 0.f && dtCommonRaw <= 1e6f); // also rejects NaN
+            if (!commonOk)
+                ESP_LOGE("converter", "pwm_deadtime_ns=%.1f is out of range, using 0", dtCommonRaw);
+            const float dtCommonNs = commonOk ? dtCommonRaw : 0.f;
+            // Same ceiling the runtime `dt` command enforces; a dead-band worth more than a
+            // thirty-second of the period is a misconfiguration, not a tuning choice. A wired-sync
+            // follower runs a period shortened by wsyncLeadTicks, and the runtime guard measures
+            // against THAT period -- take the shorter one here too, or a value accepted at boot can
+            // be one count above what `dt` will re-accept later.
+            uint32_t ceilPeriod = bestTiming(pwmFrequency).period_ticks;
+#if WITH_WSYNC
+            if (ceilPeriod > MCPWM_SyncLeg::wsyncLeadTicks) ceilPeriod -= MCPWM_SyncLeg::wsyncLeadTicks;
+#endif
+            const uint32_t dtCeil = ceilPeriod / 32;
+            // `hlEdge`: the realized gap is one tick short (the HS generator carries the 1-tick FED
+            // that claims the dead-time path), so 1 tick is not a small gap but none at all. The lh
+            // band is periodTicks - cmpLS and carries no such fixed offset.
+            auto parseDt = [&](const char *key, bool hlEdge) -> uint32_t {
+                const float raw = boardConf.getFloat(key, dtCommonNs);
+                // Bound before the conversion: NaN or an absurd value would make lround UB, and a
+                // tick count above the period underflows pwmMax = periodTicks - lh to ~65000, which
+                // destroys every duty calculation downstream. 1 ms is already many periods.
+                //
+                // Falling back to 0 here would fail OPEN: on a HiLi board `hl=0` bypasses the
+                // dead-time module entirely, so one typo'd key would boot the half-bridge with HS
+                // going low and LS going high on the same comparator event. Fall back to the
+                // validated common value instead -- an explicit 0 stays legal, a malformed value
+                // does not silently become one.
+                const bool ok = (raw >= 0.f && raw <= 1e6f);
+                const float ns = ok ? raw : dtCommonNs;
+                if (!ok)
+                    ESP_LOGE("converter", "%s=%.1f is out of range, falling back to pwm_deadtime_ns=%.1f",
+                             key, raw, dtCommonNs);
+                if (pwmEnLogic) return 0u;
+                auto ticks = (uint32_t) std::lround(ns * 1e-9f * (float) resolutionHz);
+                if (ticks > dtCeil) {
+                    ESP_LOGE("converter", "%s=%.1f is %u ticks, clamping to %u", key,
+                             ns, (unsigned) ticks, (unsigned) dtCeil);
+                    ticks = dtCeil;
+                }
+                if (hlEdge && ticks == 1) {
+                    ticks = 2;
+                    ESP_LOGW("converter", "%s rounds to 1 tick (= no gap), using 2", key);
+                } else if (ticks == 0 && ns > 0.f) {
+                    // Asked for a dead-time, quantized away to nothing. Silence here would leave the
+                    // module bypassed for good, and `dt` refuses to arm it at runtime.
+                    ESP_LOGW("converter", "%s=%.1f is under one tick, no dead-band", key, ns);
+                }
+                // Not an `else`: the 1 -> 2 bump above lands at a 1-tick realized gap, which is
+                // exactly the case most in need of this warning.
+                if (ticks > 0) {
+                    const float gapNs = (float) (ticks - (hlEdge ? 1u : 0u)) * 1e9f / (float) resolutionHz;
+                    if (gapNs < 50.f)
+                        ESP_LOGW("converter", "%s=%.1f gives only %.0f ns realized gap, below the "
+                                 "%.0f ns the runtime `dt` command would accept", key, ns, gapNs, 50.f);
+                }
+                return ticks;
+            };
+            const uint32_t dtHlTicks = parseDt("pwm_deadtime_hl_ns", true);
+            const uint32_t dtLhTicks = parseDt("pwm_deadtime_lh_ns", false);
             bool syncFollower = false;
             uint8_t faultPin = boardConf.getByte("pwm_fault_pin", 255);
 #if WITH_WSYNC
@@ -200,7 +280,8 @@ class SynchronousConverter {
             if (role != "none") wsyncMode = syncFollower ? WsyncMode::armed_follower : WsyncMode::leader;
 #endif
 #endif
-            mcpwmDrv.init(0, pwmFrequency, pinCtrl, pinRect, dtTicks, pwmEnLogic, 0, syncFollower);
+            mcpwmDrv.init(0, pwmFrequency, pinCtrl, pinRect, dtHlTicks, dtLhTicks, pwmEnLogic, 0,
+                          syncFollower);
             if (faultPin != 255) {
                 faultBrake.initGpio(0, faultPin, boardConf.getByte("pwm_fault_active_high", 0));
                 faultBrake.bindLeg(mcpwmDrv.oper(), mcpwmDrv.genHS(), mcpwmDrv.genLS());
@@ -368,9 +449,34 @@ class SynchronousConverter {
 #endif
     }
 
-    [[nodiscard]] uint16_t drvDtTicks() const {
+    [[nodiscard]] uint16_t drvDtHlTicks() const {
 #if HAVE_MCPWM
-        if (useMcpwm) return mcpwmDrv.getDtTicks();
+        if (useMcpwm) return mcpwmDrv.getDtHlTicks();
+#endif
+        return 0;
+    }
+
+    [[nodiscard]] uint16_t drvDtLhTicks() const {
+#if HAVE_MCPWM
+        if (useMcpwm) return mcpwmDrv.getDtLhTicks();
+#endif
+        return 0;
+    }
+
+    // Dead-time tick rate. 0 means the active driver has no dead-time submodule (LEDC/mock),
+    // which is also the "cannot convert ns<->ticks" answer — callers must treat it as unsupported
+    // rather than silently dividing by it.
+    [[nodiscard]] uint32_t drvDtResolutionHz() const {
+#if HAVE_MCPWM
+        if (useMcpwm) return mcpwmDrv.resolutionHz;
+#endif
+        return 0;
+    }
+
+    // Timer period in ticks, the ceiling a dead-time must stay below. 0 = no MCPWM leg.
+    [[nodiscard]] uint16_t drvPeriodTicks() const {
+#if HAVE_MCPWM
+        if (useMcpwm) return mcpwmDrv.periodTicks;
 #endif
         return 0;
     }
@@ -439,8 +545,176 @@ public:
         return c;
     }
 
-    [[nodiscard]] uint16_t getDtTicks() const {
-        return drvDtTicks();
+    [[nodiscard]] uint16_t getDtHlTicks() const { return drvDtHlTicks(); }
+
+    [[nodiscard]] uint16_t getDtLhTicks() const { return drvDtLhTicks(); }
+
+    // The active driver can retune its dead-time at runtime. False is NOT "dead-time is 0" — it is
+    // "there is no dead-time module to read or set", which callers must report as such.
+    [[nodiscard]] bool hasDeadTime() const { return drvDtResolutionHz() != 0 && !pwmEnLogic; }
+
+    // Configured HS->LS dead-time. The realized gap is one tick less: the HS generator carries a
+    // 1-tick delay from claiming its dead-time path (see MCPWM_SyncLeg::setDeadTimeTicks).
+    [[nodiscard]] float getDeadTimeHlNs() const {
+        const uint32_t hz = drvDtResolutionHz();
+        return hz ? (float) drvDtHlTicks() * 1e9f / (float) hz : 0.f;
+    }
+
+    // Configured LS->HS dead-time, carved out of pwmMax at the period wrap. No fixed hardware
+    // offset like the hl edge; the realized band is one tick WIDER (>= lh+1), because every caller
+    // caps cmpLS at pwmMax-1.
+    [[nodiscard]] float getDeadTimeLhNs() const {
+        const uint32_t hz = drvDtResolutionHz();
+        return hz ? (float) drvDtLhTicks() * 1e9f / (float) hz : 0.f;
+    }
+
+    // Tick count a given ns request would quantize to, 0 if there is no dead-time module. Lets the
+    // console compare like with like: 199 ns against a 200 ns setting is the SAME 32 ticks, so it
+    // is not a decrease and must not be gated as one.
+    [[nodiscard]] uint16_t deadTimeTicksFor(float ns) const {
+        const uint32_t hz = drvDtResolutionHz();
+        if (!hz || !(ns >= 0.f && ns <= 1e6f)) return 0;
+        return (uint16_t) std::min<long>(std::lround(ns * 1e-9f * (float) hz), 65535);
+    }
+
+    // Console (core 0): queue a dead-time change, applied by the RT loop within one control tick
+    // (poll deadTimeIdle()). Returns nullptr when queued, else a static reason. hlTicks/lhTicks
+    // report the quantized values. RAM only -- board.conf::pwm_deadtime_{hl,lh}_ns still own the
+    // boot values.
+    const char *requestDeadTimeNs(float hlNs, float lhNs, uint16_t &hlTicks, uint16_t &lhTicks) {
+        const uint32_t hz = drvDtResolutionHz();
+        const uint16_t period = drvPeriodTicks();
+        if (!hz || !period) return "needs the MCPWM driver (converter.conf::pwm_driver)";
+        if (pwmEnLogic) return "InEn gate driver has its own dead-time (HiLi boards only)";
+        // Arming a bypassed module puts both gates on the HS waveform between the two register
+        // writes -- see MCPWM_SyncLeg::setDeadTimeTicks. Only retuning is safe.
+        if (!drvDtHlTicks())
+            return "module bypassed at boot; set board.conf pwm_deadtime_hl_ns and reboot";
+        // Bound before lround: converting an out-of-range float to long is UB. 1 ms is already
+        // dozens of periods, so nothing legitimate is lost.
+        if (!(hlNs >= 0.f && hlNs <= 1e6f) || !(lhNs >= 0.f && lhNs <= 1e6f))
+            return "expected dead-time in ns"; // also rejects NaN
+        const long hl = std::lround(hlNs * 1e-9f * (float) hz);
+        const long lh = std::lround(lhNs * 1e-9f * (float) hz);
+        // Physical floor, not just the arithmetic one. The gap has to outlast the MOSFET turn-off
+        // plus the gate driver's channel-to-channel skew; at 160 MHz the 2-tick minimum the driver
+        // enforces is 6.25 ns realized, which shoots through on real silicon. kMinGapNs is
+        // deliberately well below any dead-time we ship (200 ns) -- it exists to stop a typo, not
+        // to express a tuned value. hl realizes one tick SHORT (the path-1 FED claim); lh realizes
+        // one tick WIDE (cmpLS is capped at pwmMax-1), so its floor needs no correction and is
+        // conservative by a tick.
+        constexpr float kMinGapNs = 50.f;
+        const long gapMin = (long) std::ceil(kMinGapNs * 1e-9f * (float) hz);
+        if (hl < std::max(2L, gapMin + 1))
+            return "hl below the minimum safe gap (realized gap must exceed FET turn-off)";
+        if (lh < std::max(1L, gapMin))
+            return "lh below the minimum safe gap (realized gap must exceed FET turn-off)";
+        // Two ceilings. lh is reserved out of pwmMax, so it eats commandable duty; hl delays the LS
+        // turn-on, so pwmRectMin grows with it (rectRefreshTicks + hl) and eats more. Both together
+        // must stay a small part of the period.
+        if (hl > period / 32 || lh > period / 32) return "above 1/32 of the switching period";
+        if (!isBoost && (long) rectRefreshTicks + hl > period / 4)
+            return "would leave too little duty range next to the LS minimum";
+        hlTicks = (uint16_t) hl;
+        lhTicks = (uint16_t) lh;
+        uint32_t seq = ((dtReqWord.load(std::memory_order_relaxed) >> 22) + 1) & kDtSeqMask;
+        if (!seq) seq = 1;
+        dtReqWord.store((seq << 22) | ((uint32_t) hlTicks << 11) | lhTicks, std::memory_order_release);
+        return nullptr;
+    }
+
+    [[nodiscard]] bool deadTimeIdle() const {
+        return dtAckWord.load(std::memory_order_acquire) == dtReqWord.load(std::memory_order_acquire);
+    }
+
+    // RT-CORE ONLY. Applies a queued dead-time change, pulling the live comparators inside the new
+    // envelope. The clamp is split around the driver write -- widening before, capping after; see
+    // the ordering note below. A driver call that fails after the widening leaves the LS span a
+    // little wide for the dead-time still in force, which is harmless (more rectifier conduction,
+    // still inside the unchanged pwmMax) and cannot happen for a request that passed the producer.
+    void applyPendingDeadTimeRt() {
+        const uint32_t req = dtReqWord.load(std::memory_order_acquire);
+        if (req == dtAckWord.load(std::memory_order_relaxed)) return;
+        const auto hl = (uint16_t) ((req >> 11) & kDtTickMask);
+        const auto lh = (uint16_t) (req & kDtTickMask);
+#if HAVE_MCPWM
+        // Mirror the producer's ceiling, not just the driver's: newMax below 2 would make the
+        // std::clamp() below run with hi < lo, which is UB.
+        if (useMcpwm && hl >= 2 && hl <= mcpwmDrv.periodTicks / 32
+            && lh >= 1 && lh <= mcpwmDrv.periodTicks / 32) {
+            // rectOnOffset and rectRefreshTicks are counts of TIMER ticks, whose duration is set by
+            // resolutionHz and does not move with the dead-time — they stay put. pwmRectMin does
+            // follow, because it reserves the HS->LS dead-time on top of the refresh pulse (init()).
+            const auto newMax = (uint16_t) (mcpwmDrv.periodTicks - lh);
+            const auto newRectMin = isBoost ? (uint16_t) 0 : (uint16_t) (rectRefreshTicks + hl);
+            // -1 because cmpLS must stay below the period (see computePwmRectMax): at
+            // pwmCtrl == newCtrlMax the widest legal LS span is newMax - newCtrlMax - 1, and that
+            // has to be newRectMin, not one short of it.
+            const auto newCtrlMax = (uint16_t) std::clamp<int32_t>(
+                isBoost ? (int32_t) ((float) newMax * 0.9f)
+                        : (int32_t) newMax - (int32_t) newRectMin - 1,
+                1, (int32_t) newMax - 1);
+            // Both bands can tighten the envelope, independently: lh lowers the pwmMax ceiling, hl
+            // raises the LS floor (it delays LS turn-on, so a span legal at the old dead-time now
+            // realizes hl fewer ticks of conduction -- 353 counts at hl 32->128 realizes 225, well
+            // below the measured 300-count bootstrap-refresh floor).
+            const bool tightens = newMax < driverPwmMax || newRectMin > pwmRectMin;
+            // Order matters, and it is not the same for the two directions. Both the delay
+            // registers and the comparators latch on TEZ, so if no period boundary falls between
+            // the two writes the change is atomic; if one does, a single period runs the new
+            // dead-time against the old comparators.
+            //
+            // That transient is shoot-through-safe either way -- the LS->HS band is
+            // periodTicks - cmpLS and touches no delay register, so the old cmpLS <= periodTicks -
+            // oldLh - 1 keeps at least the OLD band -- but it is NOT bootstrap-safe when hl grows:
+            // an LS span sitting at the old floor realizes rectRefreshTicks - (newHl - oldHl) for
+            // that period. So widen the LS span BEFORE arming the longer delay. Capping (lh
+            // growing) stays after the driver write: a shorter span is safe against the old
+            // dead-time, and doing it late keeps a rejected driver call from stepping duty down
+            // against a ceiling that never moved.
+            if (tightens && newRectMin > pwmRectMin) {
+                // Clamp against whichever pwmMax is in force in BOTH periods, so the pre-write
+                // comparators are legal before and after the latch. pwmCtrl is pulled down first
+                // with the same conservative ceiling, which guarantees newRectMin <= rectCap.
+                const auto safeMax = std::min(driverPwmMax, newMax);
+                const auto safeCtrlMax = (uint16_t) std::clamp<int32_t>(
+                    isBoost ? (int32_t) ((float) safeMax * 0.9f)
+                            : (int32_t) safeMax - (int32_t) newRectMin - 1,
+                    1, (int32_t) safeMax - 1);
+                pwmCtrl = std::min(pwmCtrl, safeCtrlMax);
+                const auto rectCap = (uint16_t) (safeMax - pwmCtrl - 1);
+                pwmRect = (uint16_t) std::clamp<int32_t>(pwmRect, newRectMin, rectCap);
+                pwmRectMax = (uint16_t) std::clamp<int32_t>(pwmRectMax, newRectMin, rectCap);
+                mcpwmDrv.setHsOff(pwmCtrl);
+                mcpwmDrv.setLsOff(pwmCtrl + pwmRect);
+            }
+            esp_err_t err = mcpwmDrv.setDeadTimeTicks(hl, lh);
+            if (err == ESP_OK) {
+                if (tightens) {
+                    // Re-run against the final limits. When only the floor rose this is a no-op
+                    // (the pre-write clamp already used them); when the ceiling dropped it is the
+                    // cap that had to wait for the driver write to land.
+                    pwmCtrl = std::min(pwmCtrl, newCtrlMax);
+                    const auto rectCap = (uint16_t) (newMax - pwmCtrl - 1);
+                    pwmRect = (uint16_t) std::clamp<int32_t>(pwmRect, newRectMin, rectCap);
+                    pwmRectMax = (uint16_t) std::clamp<int32_t>(pwmRectMax, newRectMin, rectCap);
+                    mcpwmDrv.setHsOff(pwmCtrl);
+                    mcpwmDrv.setLsOff(pwmCtrl + pwmRect);
+                }
+                driverPwmMax = mcpwmDrv.pwmMax;
+                pwmRectMin = newRectMin;
+                pwmCtrlMax = newCtrlMax;
+                ESP_LOGI("converter", "dead-time hl=%u ct (%.0f ns) lh=%u ct (%.0f ns), "
+                         "pwmMax=%u minLS=%u maxHS=%u",
+                         (unsigned) hl, getDeadTimeHlNs(), (unsigned) lh, getDeadTimeLhNs(),
+                         (unsigned) driverPwmMax, (unsigned) pwmRectMin, (unsigned) pwmCtrlMax);
+            } else {
+                ESP_LOGE("converter", "dead-time hl=%u lh=%u ct rejected: %s",
+                         (unsigned) hl, (unsigned) lh, esp_err_to_name(err));
+            }
+        }
+#endif
+        dtAckWord.store(req, std::memory_order_release);
     }
 
     [[nodiscard]] bool isEnLogic() const { return pwmEnLogic; }
@@ -472,9 +746,21 @@ public:
 
     void setRectOnOffset(int o) { rectOnOffset = (int16_t) o; } // DCM LS dead-time offset, counts
 
-    // PWM counts per second = fsw * pwmMax (same tick-rate basis as boot_refresh_ns). Used to
-    // convert the physical rect_offset_ns <-> comparator counts independent of driver resolution.
-    [[nodiscard]] float getPwmTickRate() const { return (float) pwmFrequency * (float) driverPwmMax; }
+    // Comparator counts per second = fsw * the full timer period. Used to convert the physical
+    // rect_offset_ns / boot_refresh_ns <-> counts independent of driver resolution. It is the FULL
+    // period, not pwmMax: the dead-time is carved out of pwmMax but does not change how long a tick
+    // lasts, so a plain fsw*pwmMax would re-read a fixed count as a different time after a runtime
+    // dead-time change. The lh ticks are 0 on drivers without a dead-time module, so this is
+    // unchanged there.
+    // Duration of one duty count, as a rate. On MCPWM this is the peripheral resolution itself:
+    // deriving it as pwmFrequency * periodTicks is 106 ppm off (the realized fsw is not the nominal
+    // one) and is wrong by 0.05 % on a wsync follower, whose period is shortened while its clock is
+    // not. Either way it must not move with the dead-time, or rect_offset_ns and boot_refresh_ns
+    // would silently rescale on a runtime `dt`.
+    [[nodiscard]] float getPwmTickRate() const {
+        const uint32_t hz = drvDtResolutionHz();
+        return hz ? (float) hz : (float) pwmFrequency * (float) (driverPwmMax + drvDtLhTicks());
+    }
 
     // Emitted from init() (boot serial) and re-fired once MQTT is up (so it lands in the MQTT/telnet
     // log too — init() runs during setup(), before those sinks exist).
@@ -628,11 +914,19 @@ public:
         //
         // Being a time rather than a count, this stays correct across the LEDC<->MCPWM
         // resolution change; the 300-count floor is board- and fsw-specific, the 2 us is not.
+        //
+        // pwmRectMin is a COMMANDED span (cmpLS - cmpHS) while the refresh is the REALIZED pulse,
+        // hardware dead-time delays the LS turn-on by the HS->LS value — so that is reserved on
+        // top of the refresh, not taken out of it. Without that the realized pulse is hl ticks short
+        // (286 counts at 200 ns on fbuck — under the 300-count floor above).
         auto bootRefreshNs = boardConf.getFloat("boot_refresh_ns", 2000.f);
-        pwmRectMin = isBoost ? 0 : (uint16_t) std::ceil(
-                         bootRefreshNs * 1e-9f * (float) pwmFrequency * (float) driverPwmMax);
+        rectRefreshTicks = isBoost ? 0 : (uint16_t) std::ceil(bootRefreshNs * 1e-9f * getPwmTickRate());
+        pwmRectMin = isBoost ? 0 : (uint16_t) (rectRefreshTicks + drvDtHlTicks());
         // Boost: cap max duty at 90% so the LS FET always turns off to release inductor energy
-        pwmCtrlMax = isBoost ? (uint16_t)(driverPwmMax * 0.9f) : (uint16_t)(driverPwmMax - pwmRectMin);
+        // -1: cmpLS must stay under the period, so the widest LS span at max duty is
+        // driverPwmMax - pwmCtrlMax - 1 and that must still reach pwmRectMin
+        pwmCtrlMax = isBoost ? (uint16_t)(driverPwmMax * 0.9f)
+                             : (uint16_t)(driverPwmMax - pwmRectMin - 1);
         pwmCtrlMin = 1; //isBoost ? 0 : 0;
         // note that mosfets have different Vg(th) and switching times worst case is Vi/o=80/12
         // ^ set pwmMinHS a bit lower than pwmMinLS (might cause no-load output over-voltage otherwise)

@@ -192,9 +192,11 @@ struct McpwmLegRig {
     std::optional<CapTimer>    timer;
     std::optional<CapChan>     hsChan, lsChan;
 
+    // dtLhTicks < 0 (default) mirrors dtHlTicks -- symmetric, the pre-split behavior.
     void init(uint32_t fsw, uint32_t dtTicks = 0, bool enLogic = false,
-              bool capture_ls = false) {
-        leg.init(/*group*/ 0, fsw, kHsPin, kLsPin, dtTicks, enLogic);
+              bool capture_ls = false, int32_t dtLhTicks = -1) {
+        leg.init(/*group*/ 0, fsw, kHsPin, kLsPin, dtTicks,
+                 dtLhTicks < 0 ? dtTicks : (uint32_t) dtLhTicks, enLogic);
         leg.start();
         timer.emplace(0);
         // CapChan ctor's gpio_config calls gpio_output_enable which resets the matrix
@@ -529,7 +531,7 @@ void test_mcpwm_hs_duty() {
 }
 
 // Test 3. pwmMax matches bestTiming-derived arithmetic. Pure host check, no edges.
-// Verifies HiLi (pwmMax = period_ticks − dtTicks) and InEn (pwmMax = period_ticks).
+// Verifies HiLi (pwmMax = period_ticks − dtLhTicks) and InEn (pwmMax = period_ticks).
 void test_mcpwm_pwmmax_arithmetic() {
     struct Case {
         uint32_t fsw;
@@ -553,7 +555,7 @@ void test_mcpwm_pwmmax_arithmetic() {
                  (unsigned)c.fsw, (unsigned)c.dtTicks, c.enLogic,
                  (unsigned)t.period_ticks, (unsigned)rig.leg.pwmMax, (unsigned)expected);
         TEST_ASSERT_EQUAL_UINT16(expected, rig.leg.pwmMax);
-        TEST_ASSERT_EQUAL_UINT16((uint16_t)c.dtTicks, rig.leg.getDtTicks());
+        TEST_ASSERT_EQUAL_UINT16((uint16_t)c.dtTicks, rig.leg.getDtHlTicks());
     }
 }
 
@@ -565,7 +567,8 @@ void test_mcpwm_pwmmax_arithmetic() {
 // Use dtTicks = 32 (= 200 ns @ 160 MHz) — comfortably above the ±50 ns CAP noise floor.
 static constexpr uint32_t kDtTestTicks = 32;
 static constexpr uint32_t kDtTestFsw   = 39000;
-static constexpr float    kExpectedDtHsLsNs = (float)kDtTestTicks * 1e9f / 160e6f; // 200 ns
+// realized gap is one tick short of configured — the HS path claim costs a 1-tick FED
+static constexpr float    kExpectedDtHsLsNs = (float)(kDtTestTicks - 1) * 1e9f / 160e6f; // 193.75 ns
 // LS→HS gap = (dtTicks + 1) MCPWM ticks = 33 ticks @ 6.25 ns = 206.25 ns
 static constexpr float    kExpectedDtLsHsNs = (float)(kDtTestTicks + 1) * 1e9f / 160e6f;
 
@@ -618,6 +621,194 @@ void test_mcpwm_deadband_ls_to_hs() {
     TEST_ASSERT_GREATER_OR_EQUAL_UINT32(N / 2, ls_to_hs.n);
     TEST_ASSERT_GREATER_THAN_UINT32(0, ls_to_hs.min_ticks);
     TEST_ASSERT_FLOAT_WITHIN(50.0f, kExpectedDtLsHsNs, ls_to_hs.mean_ns());
+}
+
+// Test 10b. Runtime dead-time change (console `dt` / MCPWM_SyncLeg::setDeadTimeTicks) on a
+// LIVE leg — no re-init. Walks up then back down so both directions are covered, and measures the
+// resulting band each time. The two refusals are asserted too, because both are shoot-through
+// guards, not hygiene: arming a bypassed module leaves the LS pin on the HS waveform between the
+// two register writes, and dt=1 is fully cancelled by the 1-tick HS path-claim delay. Neither
+// transient is observable from the CAP ring, so only the refusal itself can be tested here.
+void test_mcpwm_deadtime_runtime_change() {
+    static constexpr uint32_t kSteps[] = {16, 80, 8};
+    constexpr uint32_t N = 256;
+
+    {   // never armed at init -> retuning must refuse rather than cross the outputs
+        McpwmLegRig bypassed;
+        bypassed.init(kDtTestFsw, /*dtTicks*/0, /*enLogic*/false, /*capture_ls*/false);
+        TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, bypassed.leg.setDeadTimeTicks(16, 16));
+        TEST_ASSERT_EQUAL_UINT16(0, bypassed.leg.getDtHlTicks());
+        TEST_ASSERT_EQUAL_UINT16(bypassed.leg.periodTicks, bypassed.leg.pwmMax);
+    }
+
+    McpwmLegRig rig;
+    rig.init(kDtTestFsw, kSteps[0], /*enLogic*/false, /*capture_ls*/true);
+    const uint16_t periodTicks = rig.leg.periodTicks;
+
+    // 1 tick would close the band entirely; 0 would bypass (and cross the outputs)
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, rig.leg.setDeadTimeTicks(1, 1));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, rig.leg.setDeadTimeTicks(0, 0));
+    TEST_ASSERT_EQUAL_UINT16(kSteps[0], rig.leg.getDtHlTicks());
+    // fractions of the INITIAL pwmMax: they must stay valid as pwmMax moves with the dead-time
+    rig.leg.setHsOff(rig.leg.pwmMax / 2);
+    rig.leg.setLsOff(rig.leg.pwmMax * 3 / 4);
+
+    for (uint32_t k = 0; k < sizeof(kSteps) / sizeof(kSteps[0]); ++k) {
+        const uint32_t dt = kSteps[k];
+        if (k) TEST_ASSERT_EQUAL(ESP_OK, rig.leg.setDeadTimeTicks((uint16_t) dt, (uint16_t) dt));
+        TEST_ASSERT_EQUAL_UINT16(dt, rig.leg.getDtHlTicks());
+        TEST_ASSERT_EQUAL_UINT16(periodTicks - dt, rig.leg.pwmMax);
+
+        vTaskDelay(2);
+        rig.rearm();
+        char fail_msg[64];
+        snprintf(fail_msg, sizeof fail_msg, "Test 10b: CAP ring did not fill (dt=%u)", (unsigned) dt);
+        TEST_ASSERT_TRUE_MESSAGE(wait_events(N * 4 + 8, 250, /*diag*/-1), fail_msg);
+
+        DtStats hs_to_ls, ls_to_hs;
+        analyse_deadbands(hs_to_ls, ls_to_hs);
+        // The realized gap is dt-1 timer ticks (the HS path claim costs one), and those are MCPWM
+        // timer ticks — kNsPerTick is the 80 MHz CAPTURE tick, twice as long.
+        const float expect_ns = (float) (dt - 1) * 1e9f / (float) rig.leg.resolutionHz;
+        // The pre-fix model, one timer tick away. A ±30 ns band contains BOTH, so asserting only
+        // that would pass on either — the discriminating assertion is which side of the midpoint
+        // the mean lands on. One tick is 6.25 ns against a 12.5 ns capture tick, so no single
+        // sample resolves it; the mean over N does, which is why hs_to_ls.n is checked first.
+        const float naive_ns = (float) dt * 1e9f / (float) rig.leg.resolutionHz;
+        ESP_LOGI(TAG_PWM, "Test 10b dt=%u ticks: measured=%.1f ns min=%.1f ns (expected %.1f ns, n=%u)",
+                 (unsigned) dt, hs_to_ls.mean_ns(), hs_to_ls.min_ns(), expect_ns, (unsigned) hs_to_ls.n);
+        TEST_ASSERT_GREATER_OR_EQUAL_UINT32(N / 2, hs_to_ls.n);
+        TEST_ASSERT_GREATER_THAN_UINT32(0, hs_to_ls.min_ticks);  // SAFETY: no shoot-through
+        TEST_ASSERT_FLOAT_WITHIN(30.0f, expect_ns, hs_to_ls.mean_ns());
+        snprintf(fail_msg, sizeof fail_msg, "Test 10b: gap tracks dt, not dt-1 (dt=%u)", (unsigned) dt);
+        TEST_ASSERT_TRUE_MESSAGE(hs_to_ls.mean_ns() < 0.5f * (expect_ns + naive_ns), fail_msg);
+        // wrap side: cmpLS is fixed here, so this band does not track dt — it only has to survive.
+        // Guard n first: with no samples min_ticks is UINT32_MAX and the safety check is vacuous.
+        TEST_ASSERT_GREATER_OR_EQUAL_UINT32(N / 2, ls_to_hs.n);
+        TEST_ASSERT_GREATER_THAN_UINT32(0, ls_to_hs.min_ticks);
+    }
+}
+
+// Test 10c. Split dead-time at init: hl and lh are independent mechanisms (RED register vs
+// pwmMax reservation), so an asymmetric pair must land on exactly one each. Picked far apart
+// (32 vs 80 ticks = 200 vs 500 ns) so a value leaking into the other edge is unmissable.
+void test_mcpwm_deadtime_split_init() {
+    static constexpr uint32_t kHl = 32, kLh = 80;
+    constexpr uint32_t N = 256;
+
+    McpwmLegRig rig;
+    rig.init(kDtTestFsw, kHl, /*enLogic*/false, /*capture_ls*/true, /*dtLhTicks*/kLh);
+    TEST_ASSERT_EQUAL_UINT16(kHl, rig.leg.getDtHlTicks());
+    TEST_ASSERT_EQUAL_UINT16(kLh, rig.leg.getDtLhTicks());
+    TEST_ASSERT_EQUAL_UINT16(rig.leg.periodTicks - kLh, rig.leg.pwmMax);
+
+    rig.leg.setHsOff(rig.leg.pwmMax / 2);
+    rig.leg.setLsOff(rig.leg.pwmMax * 3 / 4);
+    vTaskDelay(2);
+    rig.rearm();
+    TEST_ASSERT_TRUE_MESSAGE(wait_events(N * 4 + 8, 250, /*diag*/-1),
+                             "Test 10c: CAP ring did not fill");
+
+    DtStats hs_to_ls, ls_to_hs;
+    analyse_deadbands(hs_to_ls, ls_to_hs);
+    // realized hl gap is one tick short (the HS path-1 FED claim)
+    const float expect_ns = (float) (kHl - 1) * 1e9f / (float) rig.leg.resolutionHz;
+    const float lh_ns     = (float) kLh * 1e9f / (float) rig.leg.resolutionHz;
+    ESP_LOGI(TAG_PWM, "Test 10c hl=%u lh=%u: HS→LS=%.1f ns (expected %.1f, lh would be %.1f)",
+             (unsigned) kHl, (unsigned) kLh, hs_to_ls.mean_ns(), expect_ns, lh_ns);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(N / 2, hs_to_ls.n);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, hs_to_ls.min_ticks);  // SAFETY: no shoot-through
+    TEST_ASSERT_FLOAT_WITHIN(30.0f, expect_ns, hs_to_ls.mean_ns());
+    // discriminating: the measured HS→LS band must be nowhere near lh
+    TEST_ASSERT_TRUE_MESSAGE(hs_to_ls.mean_ns() < 0.5f * (expect_ns + lh_ns),
+                             "Test 10c: HS→LS gap tracks lh, not hl");
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(N / 2, ls_to_hs.n);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, ls_to_hs.min_ticks);
+}
+
+// Test 10d. hl == 0 && lh > 0: the dead-time submodule stays bypassed (no path claim, so no
+// 1-tick HS falling delay and no retune) while the wrap band is still reserved out of pwmMax.
+// This state is unreachable before the split and is the one that must not accidentally arm.
+void test_mcpwm_deadtime_lh_only() {
+    static constexpr uint32_t kLh = 80;
+    McpwmLegRig rig;
+    rig.init(kDtTestFsw, /*dtTicks*/0, /*enLogic*/false, /*capture_ls*/false, /*dtLhTicks*/kLh);
+    TEST_ASSERT_EQUAL_UINT16(0, rig.leg.getDtHlTicks());
+    TEST_ASSERT_EQUAL_UINT16(kLh, rig.leg.getDtLhTicks());
+    TEST_ASSERT_EQUAL_UINT16(rig.leg.periodTicks - kLh, rig.leg.pwmMax);
+    // bypassed at boot -> retuning refuses, exactly as with hl == lh == 0
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, rig.leg.setDeadTimeTicks(16, 16));
+    TEST_ASSERT_EQUAL_UINT16(0, rig.leg.getDtHlTicks());
+    TEST_ASSERT_EQUAL_UINT16(kLh, rig.leg.getDtLhTicks());
+
+    // No path claim -> HS falls exactly at cmpHS. One timer tick is 6.25 ns against a 12.5 ns
+    // capture tick, so no single sample resolves it; the mean over N does. Discriminate the same
+    // way Test 10b does: which side of the midpoint between "exact" and "one tick long" it lands.
+    constexpr uint32_t N = 512;
+    const uint16_t hsOff = (uint16_t) (rig.leg.pwmMax / 2);
+    rig.leg.setHsOff(hsOff);
+    rig.leg.setLsOff(rig.leg.pwmMax * 3 / 4);
+    vTaskDelay(2);
+    rig.rearm();
+    TEST_ASSERT_TRUE_MESSAGE(wait_events(N * 2 + 8, 250, /*diag*/-1),
+                             "Test 10d: CAP ring did not fill");
+    uint64_t sum_widths = 0; uint32_t n_widths = 0;
+    analyse_pulse_width(kMcpwmHsChanId, N, sum_widths, n_widths);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(N / 2, n_widths);
+    const float on_ns   = (float) sum_widths / (float) n_widths * kNsPerTick;
+    const float cmd_ns  = (float) hsOff * 1e9f / (float) rig.leg.resolutionHz;
+    const float fed_ns  = (float) (hsOff + 1) * 1e9f / (float) rig.leg.resolutionHz;
+    ESP_LOGI(TAG_PWM, "Test 10d lh-only: HS on=%.1f ns commanded=%.1f ns (armed would be %.1f)",
+             on_ns, cmd_ns, fed_ns);
+    TEST_ASSERT_FLOAT_WITHIN(30.0f, cmd_ns, on_ns);
+    TEST_ASSERT_TRUE_MESSAGE(on_ns < 0.5f * (cmd_ns + fed_ns),
+                             "Test 10d: HS carries a 1-tick FED, module was armed");
+}
+
+// Test 10e. Runtime split retune: pwmMax must track lh alone and the measured HS→LS band hl
+// alone. Change one at a time so a cross-wired update cannot hide behind the other moving too.
+void test_mcpwm_deadtime_split_runtime() {
+    constexpr uint32_t N = 256;
+    McpwmLegRig rig;
+    rig.init(kDtTestFsw, /*dtTicks*/32, /*enLogic*/false, /*capture_ls*/true, /*dtLhTicks*/32);
+    const uint16_t periodTicks = rig.leg.periodTicks;
+    rig.leg.setHsOff(rig.leg.pwmMax / 2);
+    rig.leg.setLsOff(rig.leg.pwmMax * 3 / 4);
+
+    // lh only: pwmMax moves, the HS→LS band must not
+    TEST_ASSERT_EQUAL(ESP_OK, rig.leg.setDeadTimeTicks(32, 96));
+    TEST_ASSERT_EQUAL_UINT16(32, rig.leg.getDtHlTicks());
+    TEST_ASSERT_EQUAL_UINT16(periodTicks - 96, rig.leg.pwmMax);
+    vTaskDelay(2);
+    rig.rearm();
+    TEST_ASSERT_TRUE_MESSAGE(wait_events(N * 4 + 8, 250, /*diag*/-1),
+                             "Test 10e: CAP ring did not fill (lh step)");
+    DtStats hs_to_ls, ls_to_hs;
+    analyse_deadbands(hs_to_ls, ls_to_hs);
+    const float hl32_ns = (float) (32 - 1) * 1e9f / (float) rig.leg.resolutionHz;
+    ESP_LOGI(TAG_PWM, "Test 10e lh 32->96: HS→LS=%.1f ns (expected %.1f)",
+             hs_to_ls.mean_ns(), hl32_ns);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(N / 2, hs_to_ls.n);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, hs_to_ls.min_ticks);
+    TEST_ASSERT_FLOAT_WITHIN(30.0f, hl32_ns, hs_to_ls.mean_ns());
+
+    // hl only: the band moves, pwmMax must not
+    TEST_ASSERT_EQUAL(ESP_OK, rig.leg.setDeadTimeTicks(80, 96));
+    TEST_ASSERT_EQUAL_UINT16(80, rig.leg.getDtHlTicks());
+    TEST_ASSERT_EQUAL_UINT16(periodTicks - 96, rig.leg.pwmMax);
+    vTaskDelay(2);
+    rig.rearm();
+    TEST_ASSERT_TRUE_MESSAGE(wait_events(N * 4 + 8, 250, /*diag*/-1),
+                             "Test 10e: CAP ring did not fill (hl step)");
+    analyse_deadbands(hs_to_ls, ls_to_hs);
+    const float hl80_ns = (float) (80 - 1) * 1e9f / (float) rig.leg.resolutionHz;
+    ESP_LOGI(TAG_PWM, "Test 10e hl 32->80: HS→LS=%.1f ns (expected %.1f)",
+             hs_to_ls.mean_ns(), hl80_ns);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(N / 2, hs_to_ls.n);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, hs_to_ls.min_ticks);
+    TEST_ASSERT_FLOAT_WITHIN(30.0f, hl80_ns, hs_to_ls.mean_ns());
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(N / 2, ls_to_hs.n);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, ls_to_hs.min_ticks);
 }
 
 // Test 10. Dead-time linearity: sweep dtTicks ∈ {8, 16, 32, 80} (= 50/100/200/500 ns
@@ -920,7 +1111,7 @@ void test_mcpwm_interleaved_phase() {
     MCPWM_Converter<2> conv;
     const int pinHS[2] = {kHsPin,    PWM_HS_PIN_2};
     const int pinLS[2] = {kLsPin,    PWM_LS_PIN_2};
-    conv.init(0, kFsw, pinHS, pinLS, /*dtTicks*/0, /*enLogic*/false, /*fixedTicks*/0);
+    conv.init(0, kFsw, pinHS, pinLS, /*dtHl*/0, /*dtLh*/0, /*enLogic*/false, /*fixedTicks*/0);
     conv.setHsOff(conv.pwmMax / 2);
     vTaskDelay(2);
 
@@ -1069,7 +1260,8 @@ void test_mcpwm_interleaved_phase_deadtime() {
     MCPWM_Converter<2> conv;
     const int pinHS[2] = {kHsPin,    PWM_HS_PIN_2};
     const int pinLS[2] = {kLsPin,    PWM_LS_PIN_2};
-    conv.init(0, kFsw, pinHS, pinLS, /*dtTicks*/kDtTestTicks, /*enLogic*/false, /*fixedTicks*/0);
+    conv.init(0, kFsw, pinHS, pinLS, /*dtHl*/kDtTestTicks, /*dtLh*/kDtTestTicks,
+              /*enLogic*/false, /*fixedTicks*/0);
     conv.setHsOff(conv.pwmMax / 2);
     vTaskDelay(2);
 
@@ -1159,7 +1351,7 @@ void test_mcpwm_endpoint_duty_scope() {
     ESP_LOGI(TAG_PWM, "[SCOPE] warmup done; switching to MCPWM");
 
     MCPWM_SyncLeg leg;
-    leg.init(/*group*/0, kFsw, kHsScope, kLsScope, /*dt*/0, /*enLogic*/false);
+    leg.init(/*group*/0, kFsw, kHsScope, kLsScope, /*dtHl*/0, /*dtLh*/0, /*enLogic*/false);
     leg.start();
     ESP_LOGI(TAG_PWM, "[SCOPE] target ready: pin HS=%d LS=%d fsw=%u pwmMax=%u",
              kHsScope, kLsScope, (unsigned)kFsw, (unsigned)leg.pwmMax);

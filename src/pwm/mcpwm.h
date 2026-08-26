@@ -54,7 +54,7 @@ public:
 
 // One synchronous leg = one MCPWM operator. See doc/mcpwm-sync-buck-driver.md for the spec.
 // HiLi:  HS on [0, hsOff],         LS on [hsOff, lsOff]   (MCPWM dead-time)
-// InEn:  IN on [0, hsOff],         EN on [0, lsOff]       (driver chip dead-time, dtTicks=0)
+// InEn:  IN on [0, hsOff],         EN on [0, lsOff]       (driver chip dead-time, dt 0/0)
 // Comparators latch on TEZ -> glitch-free, order-independent duty updates.
 class MCPWM_SyncLeg {
     mcpwm_timer_handle_t timer_ = nullptr;
@@ -69,12 +69,13 @@ class MCPWM_SyncLeg {
     mcpwm_sync_handle_t  syncIn_   = nullptr;
     gpio_glitch_filter_handle_t syncFilt_ = nullptr;
 #endif
-    uint16_t dtTicks_  = 0;
+    uint16_t dtHlTicks_ = 0;   // ctrl-off -> rect-on, hardware RED on the LS rising edge
+    uint16_t dtLhTicks_ = 0;   // rect-off -> ctrl-on at the period wrap, reserved out of pwmMax
     int group_ = 0;
 
 public:
     const char *name = "mcpwm";
-    uint16_t pwmMax     = 0;   // commandable span: period_ticks (InEn) or period_ticks-dtTicks (HiLi)
+    uint16_t pwmMax     = 0;   // commandable span: period_ticks (InEn) or period_ticks-dtLhTicks (HiLi)
     uint16_t periodTicks = 0;  // true timer period; phase math must use this, not pwmMax
     static constexpr uint16_t wsyncLeadTicks = 2;  // follower period shortening, see init()
     uint32_t resolutionHz = 0; // timer tick rate (counts/sec)
@@ -83,7 +84,8 @@ public:
     mcpwm_gen_handle_t   genHS() const { return genHS_; }
     mcpwm_gen_handle_t   genLS() const { return genLS_; }
     mcpwm_timer_handle_t timer() const { return timer_; }
-    [[nodiscard]] uint16_t getDtTicks() const { return dtTicks_; }
+    [[nodiscard]] uint16_t getDtHlTicks() const { return dtHlTicks_; }
+    [[nodiscard]] uint16_t getDtLhTicks() const { return dtLhTicks_; }
 
     // fixedTicks=0 (default, production) -> bestTiming(freq): max counts the hw can give.
     // fixedTicks>0 overrides bestTiming with that exact period; for migration / bit-identical
@@ -93,9 +95,11 @@ public:
     // slow follower crystal would otherwise never reach its own TEZ once the reloads keep it
     // below period).
     void init(int group, uint32_t freq, int pinHS, int pinLS,
-              uint32_t dtTicks, bool enLogic, uint32_t fixedTicks = 0, bool syncFollower = false) {
-        ESP_LOGI("mcpwm-leg", "init grp=%d freq=%u pinHS=%d pinLS=%d dtTicks=%u enLogic=%d fixed=%u",
-                 group, (unsigned) freq, pinHS, pinLS, (unsigned) dtTicks, enLogic, (unsigned) fixedTicks);
+              uint32_t dtHlTicks, uint32_t dtLhTicks, bool enLogic, uint32_t fixedTicks = 0,
+              bool syncFollower = false) {
+        ESP_LOGI("mcpwm-leg", "init grp=%d freq=%u pinHS=%d pinLS=%d dtHl=%u dtLh=%u enLogic=%d fixed=%u",
+                 group, (unsigned) freq, pinHS, pinLS, (unsigned) dtHlTicks, (unsigned) dtLhTicks,
+                 enLogic, (unsigned) fixedTicks);
         PwmTiming t = fixedTicks ? PwmTiming{freq * fixedTicks, fixedTicks, freq}
                                  : bestTiming(freq);
         // A follower runs deliberately FAST (period short by wsyncLeadTicks) so that its own TEZ
@@ -126,7 +130,21 @@ public:
         };
         ESP_ERROR_CHECK(mcpwm_new_timer(&tc, &timer_));
 
-        mcpwm_operator_config_t oc = {.group_id = group, .intr_priority = 0, .flags = {}};
+        // Latch the dead-time delay registers on TEZ, like the comparators below. The IDF default is
+        // "at once" (mcpwm_hal.c: dt_red_upmethod=0), so a runtime dt change would otherwise land at
+        // an arbitrary point in the period. What the RED submodule does when its threshold drops
+        // below an already-running delay count is NOT documented in the TRM or the IDF sources: if
+        // it is a counter compare, shrinking dt fires the pending LS rise early and the HS->LS gap
+        // collapses toward zero. We have not proven that mechanism on silicon, so this is a
+        // precaution against an unspecified behaviour, not a fix for a measured one. The cost is
+        // nil -- the delay simply updates at a period boundary, alongside the comparators.
+        mcpwm_operator_config_t oc = {
+            .group_id = group, .intr_priority = 0,
+            .flags = {.update_gen_action_on_tez = 0, .update_gen_action_on_tep = 0,
+                      .update_gen_action_on_sync = 0, .update_dead_time_on_tez = 1,
+                      .update_dead_time_on_tep = 0,
+                      .update_dead_time_on_sync = (uint32_t) syncFollower},
+        };
         ESP_ERROR_CHECK(mcpwm_new_operator(&oc, &oper_));
         ESP_ERROR_CHECK(mcpwm_operator_connect_timer(oper_, timer_));
 
@@ -164,12 +182,21 @@ public:
         ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(genLS_,
             MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, cmpLS_, MCPWM_GEN_ACTION_LOW)));
 
-        // Dead-time: each MCPWM operator has ONE shared dead-time submodule, so we delay only
-        // the LS rising edge by dtTicks (covers the HS->LS transition). The LS->HS transition
-        // (start of next period) gets its dead-band by reducing pwmMax by dtTicks so software
-        // clamps keep lsOff <= period - dtTicks. HiLi only; 0 = no-op (InEn).
-        dtTicks_ = (uint16_t) dtTicks;
-        if (dtTicks) {
+        // Dead-time, one value per transition. HS->LS (dtHlTicks): each MCPWM operator has ONE
+        // shared dead-time submodule, so we delay only the LS rising edge by dtHlTicks. LS->HS
+        // (dtLhTicks, at the start of the next period): reserved in software by reducing pwmMax,
+        // so clamps keep lsOff <= period - dtLhTicks - 1 and the realized band is dtLhTicks + 1 at
+        // its tightest (that last -1 is the caller's). The two are independent mechanisms — hl==0
+        // with lh>0 is legal (submodule bypassed, wrap band still reserved). HiLi only; InEn
+        // passes 0/0.
+        // Both must fit the period: pwmMax = period - lh underflows to ~65000 otherwise, and every
+        // downstream duty clamp with it. Callers clamp to period/32; this is the backstop.
+        assert_throw(dtHlTicks < t.period_ticks && dtLhTicks < t.period_ticks,
+                     "pwm dead-time exceeds the switching period");
+        dtHlTicks_ = (uint16_t) dtHlTicks;
+        dtLhTicks_ = (uint16_t) dtLhTicks;
+        pwmMax = (uint16_t) (t.period_ticks - dtLhTicks);   // reserves the LS->HS dead-band
+        if (dtHlTicks) {
             // The IDF mcpwm dt submodule binds RED to path 0 (= output A's natural
             // routing). To put RED on gen B (LS-rising), we must swap gen B onto
             // path 0 *and* swap gen A off path 0 onto path 1. swap_out_path is
@@ -183,12 +210,15 @@ public:
             };
             ESP_ERROR_CHECK(mcpwm_generator_set_dead_time(genHS_, genHS_, &a_fed));
             mcpwm_dead_time_config_t b_red = {
-                .posedge_delay_ticks = dtTicks,
+                .posedge_delay_ticks = dtHlTicks,
                 .negedge_delay_ticks = 0,
                 .flags = {.invert_output = 0},
             };
             ESP_ERROR_CHECK(mcpwm_generator_set_dead_time(genLS_, genLS_, &b_red));
-            pwmMax = (uint16_t) (t.period_ticks - dtTicks);   // reserves the LS->HS dead-band
+            // These two writes land in the shadow registers (update_dead_time_on_tez above) and
+            // latch at the first TEZ after start(). That is harmless here: the timer is still
+            // stopped, both comparators are 0, and start() is followed immediately by
+            // forceShutdown(), so no gate can toggle before the delay is live.
         }
     }
 
@@ -261,7 +291,7 @@ public:
         ESP_ERROR_CHECK(mcpwm_timer_set_phase_on_sync(timer_, &pc));
         // LS to its period-start state on sync. There is deliberately NO HS action here: driving
         // HS high on the sync edge would switch it on in the same clock that switches LS off,
-        // with zero dead time (the LS->HS band is reserved in software as pwmMax -= dtTicks,
+        // with zero dead time (the LS->HS band is reserved in software as pwmMax -= dtLhTicks,
         // which only holds at a real period boundary). HS turn-on stays with TEZ, which the
         // follower always reaches first thanks to wsyncLeadTicks.
         ESP_ERROR_CHECK(mcpwm_generator_set_action_on_sync_event(genLS_,
@@ -284,6 +314,58 @@ public:
         ESP_ERROR_CHECK(gpio_glitch_filter_enable(syncFilt_));
     }
 #endif // WITH_WSYNC
+
+    // Re-arm the dead-time submodule while the timer runs (console `dt`). Re-issues the same
+    // two-call path-claim pattern as init() — see the comment there. The delay registers latch on
+    // TEZ (update_dead_time_on_tez in the operator config), so the new RED delay takes effect at
+    // the next period boundary, together with whatever comparator writes the caller made. Note the
+    // topology bits (swap_out_path, bypass, input select) are NOT covered by that update method and
+    // still change live -- harmless here, since a retune rewrites them to the values they hold.
+    //
+    // Takes both transitions: `hl` is the hardware RED write above, `lh` a pure software update of
+    // the wrap-side reservation (pwmMax = periodTicks - lh). The lh part needs no armed module, but
+    // the call as a whole keeps the armed-at-boot gate below; accepting an lh-only retune while hl
+    // is bypassed is a trivial follow-up, not done here.
+    //
+    // RETUNING ONLY: this refuses to run when the module was left bypassed at boot (dtHlTicks_==0),
+    // and that refusal is load-bearing, not conservatism. From bypass, the first call claims path 1
+    // for HS and swaps output A onto it while output B STILL reads path 1 — so until the second
+    // call lands, the LS pin follows the HS waveform and both gates are high together. Re-arming an
+    // already-claimed pair is a pure delay-register write with both swaps already set, so it has no
+    // such window. Bypassing (dt=0) is likewise unreachable: a bypass call skips swap_out_path and
+    // would leave the outputs crossed for good. Change pwm_deadtime_hl_ns and reboot instead.
+    //
+    // The 2-tick floor here is only the arithmetic one: the HS generator carries a 1-tick FED (the
+    // path-1 claim), so the realized hl gap is hl-1 and hl=1 would close it entirely. It is NOT a
+    // safe gap for real silicon — 2 ticks is 6.25 ns realized, far under any MOSFET turn-off. The
+    // physical floor belongs to the caller, which knows the resolution; see
+    // SynchronousConverter::requestDeadTimeNs().
+    //
+    // Callers own the pwmMax shrink: it is published here, but the live comparators must be
+    // clamped BEFORE this call when lh grows.
+    esp_err_t setDeadTimeTicks(uint16_t hl, uint16_t lh) {
+        if (dtHlTicks_ == 0) return ESP_ERR_INVALID_STATE;
+        if (hl < 2 || hl >= periodTicks) return ESP_ERR_INVALID_ARG;
+        if (lh >= periodTicks) return ESP_ERR_INVALID_ARG;
+        mcpwm_dead_time_config_t a_fed = {
+            .posedge_delay_ticks = 0,
+            .negedge_delay_ticks = 1,
+            .flags = {.invert_output = 0},
+        };
+        esp_err_t err = mcpwm_generator_set_dead_time(genHS_, genHS_, &a_fed);
+        if (err != ESP_OK) return err;
+        mcpwm_dead_time_config_t b_red = {
+            .posedge_delay_ticks = hl,
+            .negedge_delay_ticks = 0,
+            .flags = {.invert_output = 0},
+        };
+        err = mcpwm_generator_set_dead_time(genLS_, genLS_, &b_red);
+        if (err != ESP_OK) return err;
+        dtHlTicks_ = hl;
+        dtLhTicks_ = lh;
+        pwmMax = (uint16_t) (periodTicks - lh);
+        return ESP_OK;
+    }
 
     inline void setHsOff(uint16_t c) { mcpwm_comparator_set_compare_value(cmpHS_, c); }
     inline void setLsOff(uint16_t c) { mcpwm_comparator_set_compare_value(cmpLS_, c); }
@@ -354,10 +436,10 @@ public:
     uint16_t pwmMax = 0;
 
     void init(int group, uint32_t freq, const int (&pinHS)[N], const int (&pinLS)[N],
-              uint32_t dtTicks, bool enLogic, uint32_t fixedTicks,
+              uint32_t dtHlTicks, uint32_t dtLhTicks, bool enLogic, uint32_t fixedTicks,
               int faultPin = -1, bool faultActiveHigh = false) {
         for (int i = 0; i < N; ++i)
-            legs_[i].init(group, freq, pinHS[i], pinLS[i], dtTicks, enLogic, fixedTicks);
+            legs_[i].init(group, freq, pinHS[i], pinLS[i], dtHlTicks, dtLhTicks, enLogic, fixedTicks);
         pwmMax = legs_[0].pwmMax;
 
         if (faultPin >= 0) {

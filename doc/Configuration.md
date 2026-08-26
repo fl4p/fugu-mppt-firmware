@@ -48,8 +48,10 @@ Conventions used in the tables below:
 | `pwm_sd`                | GPIO | int    | —       | Gate driver shutdown/DIS pin (HiLi mode)       |
 | `pwm_in`                | GPIO | int    | —       | Gate driver IN pin (InEn mode)                 |
 | `pwm_en`                | GPIO | int    | —       | Gate driver EN pin (InEn mode)                 |
-| `boot_refresh_ns`       | ns   | float  | 1500    | Min LS on-time to refresh HS bootstrap cap     |
-| `pwm_deadtime_ns`       | ns   | float  | 0       | HiLi hardware dead-time (MCPWM); 0 = none      |
+| `boot_refresh_ns`       | ns   | float  | 2000    | Min *realized* LS on-time to refresh HS bootstrap cap; `pwm_deadtime_hl_ns` is reserved on top |
+| `pwm_deadtime_ns`       | ns   | float  | 0       | HiLi hardware dead-time (MCPWM), common value for both transitions; 0 = none, and 0 also means the console `dt` command cannot arm it later |
+| `pwm_deadtime_hl_ns`    | ns   | float  | `pwm_deadtime_ns` | HS->LS override (ctrl-off -> rect-on). Hardware RED delay on the rect rising edge; the *realized* gap is one tick less (the ctrl generator spends one tick claiming its dead-time path). 0 leaves the submodule bypassed for the whole boot |
+| `pwm_deadtime_lh_ns`    | ns   | float  | `pwm_deadtime_ns` | LS->HS override (rect-off -> ctrl-on at the period wrap). Reserved in software as `pwmMax = periodTicks - ticks`; the realized band is one tick *wider* (callers cap `cmpLS` at `pwmMax-1`) and it eats commandable duty span |
 | `pwm_fault_pin`         | GPIO | int    | 255     | GPIO for HW OST brake (MCPWM); 255 = disabled  |
 | `pwm_fault_active_high` |      | bool   | 0       | 1 if fault asserts high, 0 if low              |
 | `pwm_sync_pin`          | GPIO | int    | —       | Wired-sync pulse pin (`WITH_WSYNC`, MCPWM); leader out / follower in |

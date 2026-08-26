@@ -276,6 +276,49 @@ def _make_fake_con(dump_line):
     return _FakeCon(dump_line)
 
 
+class TestSetupBoard(unittest.TestCase):
+    """setup_board() reads board.conf through `get-config`. The dead-time keys are floats and a
+    quantized dead-time is genuinely fractional, so an int-only value pattern would read them as
+    absent and silently fall back to the common key — the failure this covers."""
+
+    @staticmethod
+    def _con(values: dict):
+        class _Con:
+            def command(self, cmd, timeout=2.0):
+                class R: pass
+                r = R()
+                if cmd == "pwm-dump":
+                    r.text = "freq=39000 pwmMax=4071 hs_off=0 ls_on=0 ls_off=0"
+                    return r
+                key = cmd.split()[-1]
+                v = values.get(key)
+                r.text = "" if v is None else f"Conf '/littlefs/conf/board.conf:{key}' = '{v}'"
+                return r
+        return _Con()
+
+    def test_fractional_deadtime_keys_are_read(self):
+        from mcpwm_gate_verify import setup_board
+        b = setup_board(self._con({
+            "pwm_freq": "39000", "pwm_deadtime_ns": "200",
+            "pwm_deadtime_hl_ns": "193.75", "pwm_deadtime_lh_ns": "106.25",
+            "pwm_hi": "21", "pwm_li": "20", "pwm_fault_pin": "-1",
+        }))
+        self.assertAlmostEqual(b["pwm_deadtime_hl_ns"], 193.75)
+        self.assertAlmostEqual(b["pwm_deadtime_lh_ns"], 106.25)
+        self.assertEqual(b["pwm_freq"], 39000)
+        self.assertIsInstance(b["pwm_freq"], int)   # integral keys stay ints
+        self.assertEqual(b["pwm_fault_pin"], -1)
+
+    def test_absent_edge_keys_fall_back_to_common(self):
+        from mcpwm_gate_verify import setup_board
+        b = setup_board(self._con({
+            "pwm_freq": "39000", "pwm_deadtime_ns": "200",
+            "pwm_hi": "21", "pwm_li": "20", "pwm_fault_pin": "-1",
+        }))
+        self.assertEqual(b["pwm_deadtime_hl_ns"], 200)
+        self.assertEqual(b["pwm_deadtime_lh_ns"], 200)
+
+
 class TestPhase2Synthetic(unittest.TestCase):
     """Drive phase2_ls_pos_width() via fake console + scope without hardware."""
 
@@ -390,25 +433,36 @@ class TestPhase3Synthetic(unittest.TestCase):
         self.phase3 = phase3_deadtime
 
     @staticmethod
-    def _make_capture(freq, pwm_max, hs_off, ls_rise_tick):
-        """Build (dt, hs_v, ls_v): 4 periods, 1 sample per tick.
-        HS is high in [0, hs_off), LS is high in [ls_rise_tick, pwm_max)."""
-        samples = 4 * pwm_max
+    def _make_capture(freq, pwm_max, hs_off, ls_rise_tick, lh_ticks=0, ls_fall_tick=None):
+        """Build (dt, hs_v, ls_v): 4 periods, 1 sample per tick. The timer period is
+        pwm_max + lh_ticks (the LS->HS band is reserved out of pwm_max, so it lives past
+        the commandable span). HS is high in [0, hs_off), LS in [ls_rise_tick, ls_fall_tick)."""
+        period = pwm_max + lh_ticks
+        if ls_fall_tick is None:
+            ls_fall_tick = period
+        samples = 4 * period
         dt = 1.0 / (freq * pwm_max)
         hs_v, ls_v = [], []
         for i in range(samples):
-            tick = i % pwm_max
+            tick = i % period
             hs_v.append(3.3 if tick < hs_off else 0.0)
-            ls_v.append(3.3 if tick >= ls_rise_tick else 0.0)
+            ls_v.append(3.3 if ls_rise_tick <= tick < ls_fall_tick else 0.0)
         return dt, hs_v, ls_v
 
-    def _run_phase3(self, board, hs_off, ls_rise_tick):
+    @staticmethod
+    def _commanded(pwm_max):
+        """The duty the dt_lh capture drives: `dc hs (pwm_max - hs - 1)`, LS at its maximum so the
+        wrap band carries only one count of commanded slack."""
+        hs = pwm_max // 2
+        return hs, pwm_max - hs - 1
+
+    def _run_phase3(self, board, hs_off, ls_rise_tick, lh_ticks=0, ls_fall_tick=None):
         import mcpwm_gate_verify as m
         freq    = board["pwm_freq"]
         pwm_max = board["pwm_max"]
 
         def fake_capture(scope, pc, f, samples=3000):
-            return self._make_capture(freq, pwm_max, hs_off, ls_rise_tick)
+            return self._make_capture(freq, pwm_max, hs_off, ls_rise_tick, lh_ticks, ls_fall_tick)
 
         class _Con:
             def command(self, cmd, timeout=2.0):
@@ -422,42 +476,76 @@ class TestPhase3Synthetic(unittest.TestCase):
         finally:
             m.capture = orig
 
+    @staticmethod
+    def _board(freq, pwm_max, hl_ns, lh_ns):
+        return {"pwm_freq": freq, "pwm_max": pwm_max, "pwm_deadtime_ns": hl_ns,
+                "pwm_deadtime_hl_ns": hl_ns, "pwm_deadtime_lh_ns": lh_ns,
+                "pwm_hi": 13, "pwm_li": 11, "pwm_fault_pin": -1}
+
     def test_dt0_passes_and_no_shoot_through(self):
-        """pwm_deadtime_ns=0: LS rises exactly 1 sample after HS falls (degenerate gap of 1 tick).
-        dt_hl PASS (gap=1 tick, expected=0, tol=1 tick) and shoot_through PASS."""
+        """Dead-time 0/0: LS rises exactly 1 sample after HS falls (degenerate gap of 1 tick).
+        dt_hl PASS (gap=1 tick, expected=0, tol=1 tick), dt_lh PASS and shoot_through PASS."""
         pwm_max = 256
         freq    = 40000
-        board   = {"pwm_freq": freq, "pwm_max": pwm_max, "pwm_deadtime_ns": 0,
-                   "pwm_hi": 13, "pwm_li": 11, "pwm_fault_pin": -1}
-        hs_off       = pwm_max // 2          # HS falls at tick hs_off
+        board   = self._board(freq, pwm_max, 0, 0)
+        hs_cmd, ls_cmd = self._commanded(pwm_max)
+        hs_off       = hs_cmd                # HS falls at tick hs_off
         ls_rise_tick = hs_off + 1            # LS rises 1 tick later (gap = 1 tick)
 
-        rows = self._run_phase3(board, hs_off, ls_rise_tick)
+        rows = self._run_phase3(board, hs_off, ls_rise_tick,
+                                ls_fall_tick=hs_cmd + ls_cmd)
 
         dt_row = next((r for r in rows if r.name == "dt_hl"), None)
+        lh_row = next((r for r in rows if r.name == "dt_lh"), None)
         st_row = next((r for r in rows if r.name == "shoot_through"), None)
         self.assertIsNotNone(dt_row, f"dt_hl row missing; rows={[r.name for r in rows]}")
+        self.assertIsNotNone(lh_row, f"dt_lh row missing; rows={[r.name for r in rows]}")
         self.assertIsNotNone(st_row, f"shoot_through row missing; rows={[r.name for r in rows]}")
         self.assertTrue(dt_row.pass_, f"dt_hl FAIL: {dt_row}")
+        self.assertTrue(lh_row.pass_, f"dt_lh FAIL: {lh_row}")
         self.assertTrue(st_row.pass_, f"shoot_through FAIL: {st_row}")
 
     def test_dt80ns_passes(self):
-        """pwm_deadtime_ns=80: LS rise positioned at the right sample. dt_hl PASS within ±1 tick."""
+        """Symmetric 80 ns: LS rise positioned at the right sample. dt_hl PASS within ±1 tick."""
         pwm_max      = 256
         freq         = 40000
         dt_ns_exp    = 80
         tick_s       = 1.0 / (freq * pwm_max)
         dt_ticks     = round(dt_ns_exp * 1e-9 / tick_s)  # ticks for 80 ns gap
-        board        = {"pwm_freq": freq, "pwm_max": pwm_max, "pwm_deadtime_ns": dt_ns_exp,
-                        "pwm_hi": 13, "pwm_li": 11, "pwm_fault_pin": -1}
-        hs_off       = pwm_max // 2
+        board        = self._board(freq, pwm_max, dt_ns_exp, dt_ns_exp)
+        hs_cmd, ls_cmd = self._commanded(pwm_max)
+        hs_off       = hs_cmd
         ls_rise_tick = hs_off + dt_ticks
 
-        rows = self._run_phase3(board, hs_off, ls_rise_tick)
+        rows = self._run_phase3(board, hs_off, ls_rise_tick,
+                                lh_ticks=dt_ticks, ls_fall_tick=hs_cmd + ls_cmd)
 
         dt_row = next((r for r in rows if r.name == "dt_hl"), None)
+        lh_row = next((r for r in rows if r.name == "dt_lh"), None)
         self.assertIsNotNone(dt_row, f"dt_hl row missing; rows={[r.name for r in rows]}")
         self.assertTrue(dt_row.pass_, f"dt_hl FAIL: {dt_row}")
+        self.assertTrue(lh_row.pass_, f"dt_lh FAIL: {lh_row}")
+
+    def test_split_deadtime_rows_track_their_own_edge(self):
+        """Asymmetric hl=50 ns / lh=200 ns: each row must match its own key. A verifier that
+        reused one value for both edges fails at least one of these."""
+        pwm_max  = 256
+        freq     = 40000
+        tick_s   = 1.0 / (freq * pwm_max)
+        hl_ticks = round(50e-9 / tick_s)
+        lh_ticks = round(200e-9 / tick_s)
+        self.assertNotEqual(hl_ticks, lh_ticks)
+        board    = self._board(freq, pwm_max, round(hl_ticks * tick_s * 1e9),
+                               round(lh_ticks * tick_s * 1e9))
+        hs_cmd, ls_cmd = self._commanded(pwm_max)
+
+        rows = self._run_phase3(board, hs_cmd, hs_cmd + hl_ticks,
+                                lh_ticks=lh_ticks, ls_fall_tick=hs_cmd + ls_cmd)
+
+        dt_row = next((r for r in rows if r.name == "dt_hl"), None)
+        lh_row = next((r for r in rows if r.name == "dt_lh"), None)
+        self.assertTrue(dt_row.pass_, f"dt_hl FAIL: {dt_row}")
+        self.assertTrue(lh_row.pass_, f"dt_lh FAIL: {lh_row}")
 
 
 class TestPhase4Synthetic(unittest.TestCase):

@@ -594,6 +594,9 @@ static void loopRT(void *arg) {
         auto samplerRet = adcSampler.update();
         rtcount("adc.update");
 
+        // outside the NewData branch: a dead-time change must also land while the converter idles
+        converter.applyPendingDeadTimeRt();
+
         if (adcSampler.halted) continue;
 
         if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure)

@@ -187,8 +187,10 @@ static void cmdDc(cmd *c) {
                  manualRect, (int) dc);
 }
 
-// dt [ns] — MCPWM hardware dead-time. No argument reports the live value. The change is applied
-// by the RT core and is RAM-only; `set-config board.conf pwm_deadtime_ns <ns>` makes it survive.
+// dt [hl_ns [lh_ns]] — MCPWM hardware dead-time, one value per transition (HS->LS / LS->HS).
+// One argument sets both. No argument reports the live values. The change is applied by the RT
+// core and is RAM-only; `set-config board.conf pwm_deadtime_hl_ns|pwm_deadtime_lh_ns <ns>` makes
+// it survive.
 static void cmdDeadTime(cmd *c) {
     Command cc(c);
     auto v = cc.getArg(0).getValue();
@@ -201,16 +203,26 @@ static void cmdDeadTime(cmd *c) {
         // toFloat() stops at the first non-numeric character and reports no error, so "300,9" and
         // "80O" would silently become 300 and 80. Require the whole token to parse.
         char *end = nullptr;
-        const float ns = strtof(v.c_str(), &end);
+        const float hlNs = strtof(v.c_str(), &end);
         if (end == v.c_str() || *end)
-            CMD_FAIL_RETURN("dt: expected a single value in ns");
-        // Shortening the dead-band is the direction that can short the half-bridge, so it stays a
-        // bench operation. Lengthening it only adds margin and is allowed in any mode. Compare
-        // quantized ticks, not ns -- a request that lands on the current tick count is a no-op.
-        if (converter.deadTimeTicksFor(ns) < converter.getDtTicks() && !g_app.manualPwm())
+            CMD_FAIL_RETURN("dt: expected dead-time in ns");
+        float lhNs = hlNs;
+        if (cc.countArgs() >= 2) {
+            auto v2 = cc.getArg(1).getValue();
+            lhNs = strtof(v2.c_str(), &end);
+            if (end == v2.c_str() || *end)
+                CMD_FAIL_RETURN("dt: expected dead-time in ns");
+        }
+        // Shortening a dead-band is the direction that can short the half-bridge, so it stays a
+        // bench operation -- lowering EITHER edge needs manual PWM. Lengthening only adds margin
+        // and is allowed in any mode. Compare quantized ticks, not ns -- a request that lands on
+        // the current tick count is a no-op.
+        if ((converter.deadTimeTicksFor(hlNs) < converter.getDtHlTicks()
+             || converter.deadTimeTicksFor(lhNs) < converter.getDtLhTicks())
+            && !g_app.manualPwm())
             CMD_FAIL_RETURN("dt: lowering the dead-time needs manual PWM (use 'dc N' first)");
-        uint16_t ticks = 0;
-        if (const char *err = converter.requestDeadTimeNs(ns, ticks))
+        uint16_t hlTicks = 0, lhTicks = 0;
+        if (const char *err = converter.requestDeadTimeNs(hlNs, lhNs, hlTicks, lhTicks))
             CMD_FAIL_RETURN("dt: %s", err);
         // esp_timer_get_time(), not wallClockMs(): the latter is only advanced by loopRT itself, so
         // a wedged RT loop -- the one failure this deadline exists to report -- would stop the very
@@ -221,19 +233,22 @@ static void cmdDeadTime(cmd *c) {
         // hand it back the PREVIOUS value. Report it as unconfirmed, still queued.
         if (!converter.deadTimeIdle())
             CMD_FAIL_RETURN("dt: RT loop did not confirm within 1 s (request still queued)");
-        if (converter.getDtTicks() != ticks)
-            CMD_FAIL_RETURN("dt: driver rejected %u ct, still %u ct",
-                            (unsigned) ticks, (unsigned) converter.getDtTicks());
+        if (converter.getDtHlTicks() != hlTicks || converter.getDtLhTicks() != lhTicks)
+            CMD_FAIL_RETURN("dt: driver rejected hl=%u lh=%u ct, still hl=%u lh=%u ct",
+                            (unsigned) hlTicks, (unsigned) lhTicks,
+                            (unsigned) converter.getDtHlTicks(), (unsigned) converter.getDtLhTicks());
     }
     if (!converter.hasDeadTime())
         CMD_FAIL_RETURN("dt: n/a, %s has no dead-time module",
                         converter.isEnLogic() ? "an InEn gate driver" : "this gate driver");
-    const unsigned ct = converter.getDtTicks();
-    if (!ct)
-        CMD_FAIL_RETURN("dt: module bypassed at boot (board.conf pwm_deadtime_ns=0)");
-    // realized HS->LS gap is one tick short of the configured value, see setDeadTimeTicks()
-    UART_LOG("dt=%.0f ns (%u ct, gap %u ct) pwmMax=%u minLS=%u maxHS=%u", converter.getDeadTimeNs(),
-             ct, ct - 1, (unsigned) converter.pwmMaxDriver(),
+    const unsigned hl = converter.getDtHlTicks(), lh = converter.getDtLhTicks();
+    if (!hl && !lh)
+        CMD_FAIL_RETURN("dt: module bypassed at boot (board.conf pwm_deadtime_hl_ns=0)");
+    // realized HS->LS gap is one tick short of the configured value, see setDeadTimeTicks();
+    // the LS->HS band is periodTicks - cmpLS, so with cmpLS capped at pwmMax-1 it is one tick wide
+    UART_LOG("dt hl=%.0f ns (%u ct, gap %u ct) lh=%.0f ns (%u ct) pwmMax=%u minLS=%u maxHS=%u",
+             converter.getDeadTimeHlNs(), hl, hl ? hl - 1 : 0u,
+             converter.getDeadTimeLhNs(), lh, (unsigned) converter.pwmMaxDriver(),
              (unsigned) converter.getRectOnPwmMin(), (unsigned) converter.pwmCtrlMax);
 }
 
@@ -1879,7 +1894,7 @@ void setupCli() {
     cli.addCommand("anf", cmdAnf);
 
     cli.addBoundlessCmd("dc", cmdDc); // dc <hs> [ls]
-    cli.addBoundlessCmd("dt,deadtime", cmdDeadTime); // dt [ns]
+    cli.addBoundlessCmd("dt,deadtime", cmdDeadTime); // dt [hl_ns [lh_ns]]
     cli.addSingleArgCmd("sync", cmdSync);
     cli.addSingleArgCmd("bf,panel", cmdBflow);
     cli.addSingleArgCmd("speed", cmdSpeed);
@@ -1915,11 +1930,11 @@ void setupCli() {
         uint16_t pwmMax = converter.pwmMaxDriver();
         uint16_t pwmCtrl = converter.getCtrlOnPwmCnt();
         uint16_t pwmRect = converter.getRectOnPwmCnt();
-        uint16_t dtTicks = converter.getDtTicks();
+        uint16_t dtHlTicks = converter.getDtHlTicks();
         uint16_t hs_off = pwmCtrl;
         // enLogic: LS rises at TEZ (tick 0); HiLi: LS rises at cmpHS_. DT module delays the posedge.
         uint16_t ls_on_base = converter.isEnLogic() ? 0 : pwmCtrl;
-        uint16_t ls_on = (pwmRect == 0) ? 0 : (uint16_t) (ls_on_base + dtTicks);
+        uint16_t ls_on = (pwmRect == 0) ? 0 : (uint16_t) (ls_on_base + dtHlTicks);
         uint16_t ls_off = (pwmRect == 0) ? 0 : (uint16_t) (pwmCtrl + pwmRect);
         UART_LOG("freq=%u pwmMax=%u hs_off=%u ls_on=%u ls_off=%u fault=0 brake=0",
                  (unsigned) freq, (unsigned) pwmMax,
