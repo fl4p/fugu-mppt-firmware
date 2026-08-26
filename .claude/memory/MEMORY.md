@@ -122,4 +122,5 @@
 - [conf-editor scraper clobbers FILE_KEYS](project_conf_editor_scraper_clobbers.md) — scrape_conf_keys.py --write drops ctrl_*/bsync/ble/tele keys; hand-edit instead
 - [codex exec stdin hang](reference_codex_exec_stdin_hang.md) — background `codex exec` blocks on stdin forever; always `< /dev/null`, no tail pipe
 - [PCNT forces pull-UP on its edge pin](project_pcnt_new_channel_forces_pullup.md) — pcnt_new_channel() enables pull-up + disables pull-down; re-apply GPIO_PULLDOWN_ONLY after it on AC-coupled lines
-- [codex exec has no DNS in the Claude Code sandbox](reference_codex_no_resolver_in_sandbox.md) — getaddrinfo dead (resolver unreachable); run it from a real Terminal, tee to a file, read that back
+- [codex DNS in the sandbox is intermittent](reference_codex_no_resolver_in_sandbox.md) — PROBE with a one-liner first; it worked fine 2026-08-26. If blocked: run from a real Terminal, tee to a file
+- [Split dead-time (per-transition HL/LH)](project_split_deadtime_plan.md) — IMPLEMENTED 40b1676 (2026-08-26); on-target + fbuck bench validation still outstanding, don't OTA fry/flat yet
