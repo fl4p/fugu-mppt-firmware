@@ -224,7 +224,11 @@ Three independent things must all be true; each has bitten separately.
 
 Then **confirm over the air**, not from the log — a `bleak` `BleakScanner.discover()` scan,
 matching by **name**: with BLE_ADV telemetry the adv payload has no room for the NUS UUID, so a
-UUID-filtered scanner shows nothing while the board is fine. A board **absent from scans entirely**
+UUID-filtered scanner shows nothing while the board is fine. **Scan for 30 s before concluding
+anything**: a 15 s `discover()` missed `fugu-flu` outright while a 30 s one found it at RSSI −69,
+same room, board fine (2026-09-03) — and it arrives with `adv.local_name` **None** (the name comes
+from CoreBluetooth's cache), so a scan that filters on the adv payload's name drops it too. A board
+**absent from scans entirely**
 is *unpowered* or *held*, not dead — and **the count tells you which**: the rig converters take
 their power from the bench PSU, so a Korad at 0 V puts them ALL off air at once, where a held link
 only ever hides ONE. Check the supply before you hunt a holder (2026-08-17: "no fugu/NUS devices
@@ -283,14 +287,18 @@ the status line, absence of `ERR` proves nothing.
 
 **While diagnosing, send only read-only commands.** Safe: `bootinfo`, `tasks`, `uptime`, `status`,
 `svc`, `hostname` (no arg), `ls`, `cat`, `get-config`, `rt-stats`, `mem`, `heap`, `ip`,
-`pwm-dump` (the only readout of the real pwmMax), `wsync`, `scan-i2c`. `peek` is safe on RAM/DROM
+`pwm-dump` (the only readout of the real pwmMax), `dt`/`deadtime` (no args — the only readout
+of the live split dead time; `board.conf` can disagree), `wsync`, `scan-i2c`. `peek` is safe on RAM/DROM
 but now also reaches peripheral MMIO, where a clock-gated register is expected to fault the bus
 (unconfirmed) and FIFO/`*_INT_ST`/capture registers are read-destructive — check
 `SYSTEM_PERIP_CLK_EN0` (`peek 0x600C0018`) before peeking a peripheral: on a `pwm_driver=mcpwm`
 board LEDC (bit 11) reads 0, PWM0 (bit 17) reads 1 (flu, 2026-08-19).
 
 Ask first before: `bf`/`panel`, `dc`, `sweep`, `mppt`, `sync`, `psu`, `vset`/`iset`/`ovset`,
-`measure-coil`, `restart`, `ota`/`ota-ble`, `short-ls`, `adc-restart`, `adc-reset`. A bare `bf` or
+`measure-coil`, `restart`, `ota`/`ota-ble`, `short-ls`, `adc-restart`, `adc-reset`. **`restart` is
+not a way to stop the converter**: `dc` is RAM-only, and a non-zero `tracker.conf::target_duty_cycle`
+(`doc/Configuration.md`) re-enters manual PWM at that duty within ~1 s of boot — flu came back
+switching at D=0.37 after a `dc 0` (2026-09-03). Read the duty back after every restart. A bare `bf` or
 `dc` takes an argument-less default that changes converter state — this has altered someone's live
 test before. Flashing firmware is pre-authorised on bench units; toggling converter state is not
 the same thing. **`iset` is RAM-only**: it moves `Ibat_lim` *and* `Iout_max` together, and a power
