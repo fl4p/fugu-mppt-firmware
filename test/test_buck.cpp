@@ -293,6 +293,8 @@ void test_pwm_freq_roundtrip_rescales_duty() {
     TEST_ASSERT_NULL(c.requestPwmFrequency(75000, ticks));
     TEST_ASSERT_EQUAL_UINT16(2133, ticks);
     TEST_ASSERT_TRUE(c.applyPendingPwmFreqRt() > 0.f);
+    c.ackPendingPwmFreqRt();   // the RT caller owns the ack; without it the next request is refused
+    TEST_ASSERT_TRUE(c.pwmFreqIdle());
     TEST_ASSERT_EQUAL_UINT16(2133, c.getPeriodTicks());
     TEST_ASSERT_EQUAL_UINT16((uint16_t) (2133 - lh0), c.pwmMaxDriver());
     // one count of quantization on a 2133-tick period
@@ -303,9 +305,21 @@ void test_pwm_freq_roundtrip_rescales_duty() {
     TEST_ASSERT_EQUAL_UINT16(rectMin0, c.getRectOnPwmMin());
     TEST_ASSERT_EQUAL_INT16(off0, c.getRectOnOffset());
 
+    // A second request while the first is still un-acked is refused, not queued behind it: that is
+    // what keeps one transaction in the mailbox and stops the producer reading RT-owned state.
+    {
+        uint16_t t2 = 0;
+        TEST_ASSERT_NULL(c.requestPwmFrequency(48000, t2));
+        TEST_ASSERT_NOT_NULL(c.requestPwmFrequency(60000, t2));
+        TEST_ASSERT_TRUE(c.applyPendingPwmFreqRt() > 0.f);
+        c.ackPendingPwmFreqRt();
+        TEST_ASSERT_EQUAL_UINT16(3333, c.getPeriodTicks());
+    }
     TEST_ASSERT_NULL(c.requestPwmFrequency(39000, ticks));
     TEST_ASSERT_EQUAL_UINT16(p39, ticks);
     TEST_ASSERT_TRUE(c.applyPendingPwmFreqRt() > 0.f);
+    c.ackPendingPwmFreqRt();   // the RT caller owns the ack; without it the next request is refused
+    TEST_ASSERT_TRUE(c.pwmFreqIdle());
     TEST_ASSERT_EQUAL_UINT16(p39, c.getPeriodTicks());
     TEST_ASSERT_FLOAT_WITHIN(2.f / (float) p39, ratio0, (float) c.getCtrlOnPwmCnt() / (float) p39);
     TEST_ASSERT_EQUAL_UINT16(rectMin0, c.getRectOnPwmMin());

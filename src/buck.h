@@ -155,6 +155,9 @@ class SynchronousConverter {
     // after the CLI's 1 s ack timeout give up pair request N's period with request N+1's Hz — the
     // exact tear the dead-time mailbox packs its triple into one word to avoid.
     std::atomic<uint32_t> freqReqWord{0}, freqAckWord{0};
+    // The request being applied, held between applyPendingPwmFreqRt() and ackPendingPwmFreqRt().
+    // RT-core only, so a plain word. 0 = nothing part-applied.
+    uint32_t freqApplying = 0;
     static constexpr uint32_t kFreqHzMask = 0xfffffu;   // 20 bits, >= 500000
     static constexpr uint32_t kFreqSeqMask = 0xfffu;    // 12 bits
 
@@ -525,7 +528,13 @@ public:
     // the period register at 1 kHz, so nothing else may change the period under it. Owned by
     // BeaconSyncService (set in onStart, cleared in onStop) — the guard lives with the producer so a
     // caller other than the console cannot miss it.
-    bool bsyncOwnsPeriod = false;
+    //
+    // Atomic only to keep the read/write well-defined. It is NOT an airtight claim protocol: the
+    // guard is a check followed by a separate claim, so a genuine second producer would need a CAS
+    // on shared ownership state, not merely this being atomic. Today every console transport and
+    // the service lifecycle dispatch through the one core-0 network task, which is what actually
+    // serialises them.
+    std::atomic<bool> bsyncOwnsPeriod{false};
 #if WITH_WSYNC
     pcnt_unit_handle_t wsyncPcnt_ = nullptr;
     // Why wired sync ended up in the state it did. Without this, `wsync` cannot tell a USB-pad
@@ -759,6 +768,11 @@ public:
         const uint32_t res = drvDtResolutionHz();
         const uint16_t period = drvPeriodTicks();
         if (!res || !period) return "needs the MCPWM driver (converter.conf::pwm_driver)";
+        // Serialise against a change still in flight. The CLI's 1 s timeout deliberately leaves the
+        // old request queued, so a retry lands here: refusing it keeps one transaction in the
+        // mailbox at a time, and stops this validation reading periodTicks (a plain uint16_t owned
+        // by the RT core) while core 1 is writing it.
+        if (!pwmFreqIdle()) return "a frequency change is still being applied";
 #if WITH_WSYNC
         // The leader's pulse comparators are absolute ticks written once in initSyncOut(), and a
         // follower's period is baked wsyncLeadTicks short in init(); neither has a re-arm path, and
@@ -804,9 +818,18 @@ public:
     // RT-CORE ONLY. Applies a queued frequency change and returns the count-domain scale that was
     // applied, 0 when nothing changed — duty targets held outside this class (MpptController's
     // manualTarget and its two captured MPPs) are raw counts and must be rescaled by it.
+    //
+    // This does NOT acknowledge the request: the caller must rescale the counts it owns and then
+    // call ackPendingPwmFreqRt(). The console treats ack==req as completion and returns, so an ack
+    // published here would let the next queued command (`+N`, `dc`) write a target in NEW-period
+    // counts that this transaction has not finished with — and the outer rescale would then
+    // multiply that fresh value by the ratio a second time.
     float applyPendingPwmFreqRt() {
         const uint32_t req = freqReqWord.load(std::memory_order_acquire);
         if (req == freqAckWord.load(std::memory_order_relaxed)) return 0.f;
+        // Latched before any early-out below, so a refused request is still acknowledged and the
+        // console gets an answer instead of timing out.
+        freqApplying = req;
         float scale = 0.f;
 #if HAVE_MCPWM
         const uint32_t hz = req & kFreqHzMask;
@@ -904,8 +927,15 @@ public:
             }
         }
 #endif
-        freqAckWord.store(req, std::memory_order_release);
         return scale;
+    }
+
+    // RT-CORE ONLY. Publishes completion of the transaction applyPendingPwmFreqRt() started. Call
+    // it only after every count-domain value the caller owns has been rescaled.
+    void ackPendingPwmFreqRt() {
+        if (!freqApplying) return;
+        freqAckWord.store(freqApplying, std::memory_order_release);
+        freqApplying = 0;
     }
 
     [[nodiscard]] bool isEnLogic() const { return pwmEnLogic; }

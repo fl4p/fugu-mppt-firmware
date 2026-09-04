@@ -827,7 +827,10 @@ public:
     // manual PWM that undoes the frequency change's operating point within milliseconds.
     void applyPendingPwmFreqRt() {
         const float r = converter.applyPendingPwmFreqRt();
-        if (!(r > 0.f)) return;
+        if (!(r > 0.f)) {
+            converter.ackPendingPwmFreqRt();
+            return;
+        }
         const uint16_t hi = converter.pwmCtrlMax;
         auto rescale = [r, hi](uint16_t v) {
             return (uint16_t) std::min<int32_t>(std::lround((float) v * r), hi);
@@ -842,6 +845,9 @@ public:
         // (P&O) and this class's own sweep capture, which _stopSweep() commits as targetDutyCycle.
         tracker.maxPowerPoint.dutyCycle = rescale(tracker.maxPowerPoint.dutyCycle);
         maxPowerPoint.dutyCycle = rescale(maxPowerPoint.dutyCycle);
+        // Last: the console returns as soon as this lands, and the next command it dispatches must
+        // find every count already in the new period's scale.
+        converter.ackPendingPwmFreqRt();
     }
 
     // One-shot automatic ramp target (consumed by update() sweep/MPP fade path).

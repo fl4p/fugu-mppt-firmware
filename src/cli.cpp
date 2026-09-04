@@ -271,8 +271,12 @@ static void cmdPwmFreq(cmd *c) {
         // toFloat()/toInt() stop at the first non-numeric character and report no error, so "39k"
         // would silently become 39. Require the whole token to parse.
         char *end = nullptr;
+        errno = 0;
         const long hz = strtol(v.c_str(), &end, 10);
-        if (end == v.c_str() || *end || hz <= 0)
+        // Bound before narrowing to uint32_t. `long` is 32-bit on the target so a huge input
+        // saturates and the range guard catches it, but on an LP64 host build 4295006296 would
+        // truncate to 39000 and pass — a far-tail input flipping the verdict back to accept.
+        if (end == v.c_str() || *end || errno == ERANGE || hz <= 0 || hz > 1000000L)
             CMD_FAIL_RETURN("pwm-freq: expected a frequency in Hz");
         uint16_t ticks = 0;
         if (const char *err = converter.requestPwmFrequency((uint32_t) hz, ticks))
