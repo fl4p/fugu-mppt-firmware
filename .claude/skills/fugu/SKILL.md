@@ -233,6 +233,12 @@ is *unpowered* or *held*, not dead — and **the count tells you which**: the ri
 their power from the bench PSU, so a Korad at 0 V puts them ALL off air at once, where a held link
 only ever hides ONE. Check the supply before you hunt a holder (2026-08-17: "no fugu/NUS devices
 advertising at all" was both boards unpowered, and the rpi's `bluetoothctl` was a red herring).
+**The converse does NOT hold: a scan HIT does not prove the board is powered.** CoreBluetooth
+serves cached peripherals, so an unpowered board still shows up with a plausible RSSI while every
+connect fails — measured 2026-09-04, `fugu-flu` "advertising now … rssi -62" through five failed
+attempts with `CBError Code=14 "Peer removed pairing information"`, then connecting first try once
+the Korad came on (`bootinfo`: `reset reason: POWERON, uptime: 39 s`). Code 14 at CONNECT is the
+board being off, not the stale-bond case below; check the supply before reaching for `blueutil`.
 Otherwise it is held: `NIMBLE_MAX_CONNECTIONS=1`, and a connected board stops advertising
 (or advertises non-connectably) — culprits are another agent's console or the rpi bridge, and the
 link lives in bluetoothd (killing the client doesn't free it): `bluetoothctl disconnect <mac>` on
@@ -313,7 +319,9 @@ the 1.57× difference is two different inductors, not measurement error, cross-c
 battery shunt. Check there before measuring anything.
 
 Note `coil.conf::L0=40e-6` in both `fbuck_lab_bench*` profiles matches **neither** board and is
-stale.
+stale. A wrong `L0` also **stops the board booting** at low `pwm_freq`: `src/buck.h` asserts
+`pwm_freq * L0 * 0.95` in (1, 20) during init, so 40e-6 refuses below ~26.3 kHz and 80e-6 below
+~13.2 kHz. A board silent after a `pwm_freq` change is this, not a bad flash — read `coil.conf`.
 
 `measure-coil l0|ls [steps|hs] [dwell_ms] [apply]` is an **active duty sweep**, not a passive probe:
 it needs `Vin > Vout + 1`, keeps only DCM points, stops on CCM entry / `Iout > min(2 A, Iout_max)` /
