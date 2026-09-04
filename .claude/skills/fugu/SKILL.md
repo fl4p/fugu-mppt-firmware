@@ -307,7 +307,12 @@ Ask first before: `bf`/`panel`, `dc`, `sweep`, `mppt`, `sync`, `psu`, `vset`/`is
 `ota`/`ota-ble`, `short-ls`, `adc-restart`, `adc-reset`. **`restart` is
 not a way to stop the converter**: `dc` is RAM-only, and a non-zero `tracker.conf::target_duty_cycle`
 (`doc/Configuration.md`) re-enters manual PWM at that duty within ~1 s of boot — flu came back
-switching at D=0.37 after a `dc 0` (2026-09-03). Read the duty back after every restart. A bare `bf` or
+switching at D=0.37 after a `dc 0` (2026-09-03). Read the duty back after every restart, and
+after every `dc`: **`pwm-dump`'s `hs_off` is the commanded count verbatim** (confirmed on four
+scripted steps, flu 2026-09-04) and is the only confirmation a `dc` landed. The argument is in
+**`pwmMax` counts, not a fraction** (`tracker.conf::target_duty_cycle` is the fraction), and
+`pwmMax` moves with `pwm-freq` — 4089 at 39 kHz — so a duty count means nothing without the
+realized frequency beside it. A bare `bf` or
 `dc` takes an argument-less default that changes converter state — this has altered someone's live
 test before. Flashing firmware is pre-authorised on bench units; toggling converter state is not
 the same thing. **`iset` is RAM-only**: it moves `Ibat_lim` *and* `Iout_max` together, and a power
