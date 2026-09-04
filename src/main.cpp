@@ -873,8 +873,41 @@ static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt) {
     }
 }
 
+// Wired-sync follower: is the leader's pulse still arriving on the sync pin? Edge rate between
+// loopLF calls, sampled without clearing the counter (the `wsync` command clears it, which shows
+// up as a negative delta and is skipped instead of read as a loss). Returns a warning color, or
+// 0 while the rate matches pwm_freq — a locked wire adds no color of its own.
+static uint16_t lfWsyncWarnColor(time_us nowUs) {
+    if (!converter.wsyncFollower || !converter.wsyncHasCounter()) return 0;
+    static int lastCount = 0;
+    static time_us lastUs = 0;
+    static uint16_t warn = 0;
+    int c = converter.wsyncCount();
+    int dc = c - lastCount;
+    time_us dt = nowUs - lastUs;
+    bool first = !lastUs;
+    lastCount = c;
+    lastUs = nowUs;
+    if (first || dc < 0 || dt < 100000) return warn;
+    float expect = (float) converter.getPwmFrequency() * (float) dt * 1e-6f;
+    warn = ((float) dc < expect * 0.1f) ? 0x300                                   // no pulses at all
+         : ((float) dc < expect * 0.8f || (float) dc > expect * 1.25f) ? 0x330    // wrong rate / noise
+         : 0;
+    return warn;
+}
+
 // RGB LED color from current converter state (manual / idle / sweep / MPPT / CV / topping).
 static void lfUpdateLed(time_us nowUs) {
+    // A follower whose wire is dead free-runs against the leader, so flag it above everything
+    // else — but only every other update, so the state color below stays readable. Suppressed
+    // once the idle branch turns the LED off for the night.
+    uint16_t wsyncWarn = lfWsyncWarnColor(nowUs);
+    static bool warnPhase = false;
+    warnPhase = !warnPhase;
+    if (wsyncWarn && warnPhase && (!mppt.converter.disabled() || nowUs <= 60000000ULL * 15)) {
+        led.setHexShort(wsyncWarn);
+        return;
+    }
     if (g_app.manualPwm()) {
         uint8_t i = constrain((sensors.Vout->last * sensors.Iout->last) / mppt.limits.P_max * 255, 1, 255);
         led.setRGB(0, i, i);
