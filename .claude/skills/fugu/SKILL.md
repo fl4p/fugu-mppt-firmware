@@ -293,15 +293,18 @@ the status line, absence of `ERR` proves nothing.
 
 **While diagnosing, send only read-only commands.** Safe: `bootinfo`, `tasks`, `uptime`, `status`,
 `svc`, `hostname` (no arg), `ls`, `cat`, `get-config`, `rt-stats`, `mem`, `heap`, `ip`,
-`pwm-dump` (the only readout of the real pwmMax), `dt`/`deadtime` (no args — the only readout
-of the live split dead time; `board.conf` can disagree), `wsync`, `scan-i2c`. `peek` is safe on RAM/DROM
+`pwm-dump` and `pwm-freq`/`fsw` (no arg — realized fsw and `period_ticks`, the only honest source:
+the requested `pwm_freq` is rounded to whole ticks and `actual_freq` truncates), `dt`/`deadtime`
+(no args — the only readout of the live split dead time; `board.conf` can disagree), `wsync`,
+`scan-i2c`. `peek` is safe on RAM/DROM
 but now also reaches peripheral MMIO, where a clock-gated register is expected to fault the bus
 (unconfirmed) and FIFO/`*_INT_ST`/capture registers are read-destructive — check
 `SYSTEM_PERIP_CLK_EN0` (`peek 0x600C0018`) before peeking a peripheral: on a `pwm_driver=mcpwm`
 board LEDC (bit 11) reads 0, PWM0 (bit 17) reads 1 (flu, 2026-08-19).
 
 Ask first before: `bf`/`panel`, `dc`, `sweep`, `mppt`, `sync`, `psu`, `vset`/`iset`/`ovset`,
-`measure-coil`, `restart`, `ota`/`ota-ble`, `short-ls`, `adc-restart`, `adc-reset`. **`restart` is
+`pwm-freq <hz>` (with an argument — it retunes the live gate timing), `measure-coil`, `restart`,
+`ota`/`ota-ble`, `short-ls`, `adc-restart`, `adc-reset`. **`restart` is
 not a way to stop the converter**: `dc` is RAM-only, and a non-zero `tracker.conf::target_duty_cycle`
 (`doc/Configuration.md`) re-enters manual PWM at that duty within ~1 s of boot — flu came back
 switching at D=0.37 after a `dc 0` (2026-09-03). Read the duty back after every restart. A bare `bf` or
