@@ -199,3 +199,9 @@ this: `writeString()` only stages the `nvs_set_str`, which `esp_restart()` would
 Bench-validated on flu 2026-08-19: OTA over BLE, `pwm_sync_pin=19`, locked at 38.99–39.04 kHz
 across three windows against `pwm_freq=39000`, no ADC errors, sampler steady. Pointing the pin
 at D+ (GPIO20, unwired) correctly reported `mode=usb (no sync edges)` and restored USB.
+
+A runtime switching-frequency change (`pwm-freq`) is **refused while wired sync is armed** (leader, or a
+follower that qualified its line). The leader's pulse comparators are absolute ticks written once in
+`initSyncOut()`, a follower's period is baked `wsyncLeadTicks` short in `init()`, and both ends are
+assumed to run the same `pwm_freq` — none of which has a re-arm path. The refusal is on the *effective*
+mode, not on `sync_role`: a board whose follower probe fell back to USB has a free period and is allowed.

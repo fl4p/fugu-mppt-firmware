@@ -132,3 +132,8 @@ Measurement traps (they cost runs): the servo's reported `e` over-states physica
 (~×4.5); polling the console during a capture stretches the 1 kHz dither slots (core-0
 esp_timer starvation) → µs ripple; ×100 probes are SNR-starved on 3 V gates (fast σ inflates
 3×); a SW node reads soft/load-dependent at light load — probe the LS gate.
+
+A runtime switching-frequency change (`pwm-freq`) is **refused while this service is Running**: the
+servo caches `nomPeriod_`/`ticksPerUs_` at start and dithers the period register around them at 1 kHz,
+so it would drive the period straight back to the old frequency. `svc off bsync` first. `phase_us` is a
+TIME, so a 180-degree interleave value has to be recomputed after a frequency change either way.

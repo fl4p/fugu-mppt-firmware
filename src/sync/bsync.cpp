@@ -221,6 +221,15 @@ bool BeaconSyncService::onStart() {
         ESP_LOGE(name(), "wired-sync follower: the sync wire owns the period, bsync must stay off");
         return false;
     }
+    // A `pwm-freq` change is in flight (posted, not yet applied by the RT core). Latching
+    // nomPeriod_ now would cache the period that is about to be replaced, and the servo would then
+    // dither around a stale nominal. requestPwmFrequency() refuses once bsyncOwnsPeriod is set, so
+    // this is the other half of that mutual exclusion.
+    if (!converter.pwmFreqIdle()) {
+        leg_ = nullptr;
+        ESP_LOGE(name(), "a switching-frequency change is pending, retry once it has landed");
+        return false;
+    }
     if (leg_->resolutionHz % 1000000u != 0) {
         // the phase grid math assumes an integral tick-per-us rate (true for 160 MHz)
         ESP_LOGE(name(), "tick rate %lu not integral per us", (unsigned long) leg_->resolutionHz);
@@ -274,6 +283,9 @@ bool BeaconSyncService::onStart() {
         onStop();
         return false;
     }
+    // Claim the period: requestPwmFrequency() refuses while this is set. Last thing before the
+    // success return, so no failure path can leave it claimed.
+    converter.bsyncOwnsPeriod = true;
     ESP_LOGI(name(), "sniffing %s ch=%u grid=%u+0.5 ticks @%lu Hz phase=%+.1f us bw=%.2f kp=%.2g ki=%.2g A=%.3f%s",
              bs.c_str(), channel_, nomPeriod_, (unsigned long) leg_->resolutionHz, phaseUs_, bw_, kp_, ki_, alphaA_,
              hwOnly_ ? " hw_only" : "");
@@ -281,6 +293,7 @@ bool BeaconSyncService::onStart() {
 }
 
 void BeaconSyncService::onStop() {
+    converter.bsyncOwnsPeriod = false;
     if (ditherTimer_) {
         esp_timer_stop(ditherTimer_);
         esp_timer_delete(ditherTimer_);

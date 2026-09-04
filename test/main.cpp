@@ -227,6 +227,9 @@ void test_buck_pwm_driver_runtime_select();
 void test_pwm_driver_defaults_to_ledc();
 void test_pwm_driver_invalid_throws();
 #endif
+void test_pwm_freq_prescaler_invariant();
+void test_pwm_freq_refusals();
+void test_pwm_freq_roundtrip_rescales_duty();
 
 // pwm — measurement-rig self-test (doc/pwm-test-spec1.md)
 void test_pwm_rig_freq_path();
@@ -480,6 +483,9 @@ void setup() {
     RUN_TEST(test_pwm_driver_defaults_to_ledc);
     RUN_TEST(test_pwm_driver_invalid_throws);
 #endif
+    RUN_TEST(test_pwm_freq_prescaler_invariant);
+    RUN_TEST(test_pwm_freq_refusals);
+    RUN_TEST(test_pwm_freq_roundtrip_rescales_duty);
 
     // conf.h — ConfFile getters
     RUN_TEST(test_conf_getlong_bases);

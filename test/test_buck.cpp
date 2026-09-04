@@ -240,3 +240,73 @@ void test_pwm_driver_invalid_throws() {
     TEST_ASSERT_TRUE(threw);
 }
 #endif
+
+// ---- runtime switching-frequency change (console `pwm-freq`) --------------------------------
+
+// The whole design rests on the tick rate NOT moving with the frequency: bestTiming keeps the
+// prescaler at 1 across the legal range on a 160 MHz source, so everything stored as a TIME
+// (dead-time, rect_offset_ns, boot_refresh_ns) stays correct without being re-derived. If this
+// ever fails, applyPendingPwmFreqRt() silently rescales those calibrations.
+void test_pwm_freq_prescaler_invariant() {
+    for (uint32_t f = 5100; f <= 500000; f += 1100) {
+        PwmTiming t = bestTiming(f);
+        char msg[64];
+        snprintf(msg, sizeof msg, "f=%u res=%u ticks=%u", (unsigned) f,
+                 (unsigned) t.resolution_hz, (unsigned) t.period_ticks);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(160000000u, t.resolution_hz, msg);
+        TEST_ASSERT_TRUE_MESSAGE(t.period_ticks >= 320 && t.period_ticks <= 32000, msg);
+    }
+}
+
+// Every refusal leaves the converter untouched and queues nothing. L0=50e-6 here, so the
+// fsw*L0*0.95 window closes below ~21.05 kHz.
+void test_pwm_freq_refusals() {
+    SynchronousConverter c;
+    initConv(c);
+    const uint16_t period0 = c.getPeriodTicks(), max0 = c.pwmMaxDriver(), ctrlMax0 = c.pwmCtrlMax;
+    uint16_t ticks = 0;
+    TEST_ASSERT_NOT_NULL(c.requestPwmFrequency(4000, ticks));
+    TEST_ASSERT_NOT_NULL(c.requestPwmFrequency(600000, ticks));
+    TEST_ASSERT_NOT_NULL(c.requestPwmFrequency(20000, ticks));   // fsw*L0 <= 1
+    TEST_ASSERT_TRUE(c.pwmFreqIdle());
+    TEST_ASSERT_EQUAL_UINT16(period0, c.getPeriodTicks());
+    TEST_ASSERT_EQUAL_UINT16(max0, c.pwmMaxDriver());
+    TEST_ASSERT_EQUAL_UINT16(ctrlMax0, c.pwmCtrlMax);
+}
+
+// A round trip preserves the duty RATIO and leaves every ns-derived count bit-identical.
+void test_pwm_freq_roundtrip_rescales_duty() {
+    SynchronousConverter c;
+    initConv(c);
+    if (!c.getPeriodTicks()) TEST_IGNORE_MESSAGE("no MCPWM leg in this build");
+    const uint16_t p39 = c.getPeriodTicks();
+    TEST_ASSERT_EQUAL_UINT16(4103, p39);
+    const uint16_t hl0 = c.getDtHlTicks(), lh0 = c.getDtLhTicks(), rectMin0 = c.getRectOnPwmMin();
+    const int16_t off0 = c.getRectOnOffset();
+
+    c.pwmPerturb((int16_t) (p39 / 4));
+    const uint16_t duty0 = c.getCtrlOnPwmCnt();
+    TEST_ASSERT_GREATER_THAN_UINT16(0, duty0);
+    const float ratio0 = (float) duty0 / (float) p39;
+
+    uint16_t ticks = 0;
+    TEST_ASSERT_NULL(c.requestPwmFrequency(75000, ticks));
+    TEST_ASSERT_EQUAL_UINT16(2133, ticks);
+    TEST_ASSERT_TRUE(c.applyPendingPwmFreqRt() > 0.f);
+    TEST_ASSERT_EQUAL_UINT16(2133, c.getPeriodTicks());
+    TEST_ASSERT_EQUAL_UINT16((uint16_t) (2133 - lh0), c.pwmMaxDriver());
+    // one count of quantization on a 2133-tick period
+    TEST_ASSERT_FLOAT_WITHIN(1.f / 2133.f, ratio0, (float) c.getCtrlOnPwmCnt() / 2133.f);
+    // fixed times at a fixed tick: untouched by the frequency change
+    TEST_ASSERT_EQUAL_UINT16(hl0, c.getDtHlTicks());
+    TEST_ASSERT_EQUAL_UINT16(lh0, c.getDtLhTicks());
+    TEST_ASSERT_EQUAL_UINT16(rectMin0, c.getRectOnPwmMin());
+    TEST_ASSERT_EQUAL_INT16(off0, c.getRectOnOffset());
+
+    TEST_ASSERT_NULL(c.requestPwmFrequency(39000, ticks));
+    TEST_ASSERT_EQUAL_UINT16(p39, ticks);
+    TEST_ASSERT_TRUE(c.applyPendingPwmFreqRt() > 0.f);
+    TEST_ASSERT_EQUAL_UINT16(p39, c.getPeriodTicks());
+    TEST_ASSERT_FLOAT_WITHIN(2.f / (float) p39, ratio0, (float) c.getCtrlOnPwmCnt() / (float) p39);
+    TEST_ASSERT_EQUAL_UINT16(rectMin0, c.getRectOnPwmMin());
+}

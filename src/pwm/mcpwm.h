@@ -371,9 +371,28 @@ public:
     inline void setLsOff(uint16_t c) { mcpwm_comparator_set_compare_value(cmpLS_, c); }
 
     // Trim the timer period (latches on TEZ, see update_period_on_empty). Callers must never pass
-    // a value below the init periodTicks: comparators may sit at periodTicks-1 and a shrunken
-    // period would skip their event, leaving the LS gate high for a full cycle.
+    // a value below the CURRENT periodTicks: comparators may sit at periodTicks-1 and a shrunken
+    // period would skip their event, leaving the LS gate high for a full cycle. This is the raw
+    // register write for servos that dither around the nominal period (bsync); it deliberately
+    // leaves periodTicks/pwmMax alone, so the members keep describing the nominal period.
     inline void setPeriodTicks(uint16_t t) { mcpwm_timer_set_period(timer_, t); }
+
+    // Change the period for good (console `pwm-freq`): the register plus the two members derived
+    // from it. The skip hazard above is the caller's to avoid — when the period SHRINKS the
+    // comparators must already be inside the new period before this lands. See
+    // SynchronousConverter::applyPendingPwmFreqRt(), which owns that ordering.
+    //
+    // The prescaler is fixed at mcpwm_new_timer(), so this changes the period only: the tick stays
+    // 6.25 ns and every count stored as a TIME (dead-time, rect_offset, the bootstrap refresh) keeps
+    // meaning what it meant. That invariance is why the dead-time ticks are untouched here.
+    esp_err_t setPeriod(uint16_t t) {
+        if (t < 16 || t <= dtHlTicks_ || t <= dtLhTicks_) return ESP_ERR_INVALID_ARG;
+        esp_err_t err = mcpwm_timer_set_period(timer_, t);
+        if (err != ESP_OK) return err;
+        periodTicks = t;
+        pwmMax = (uint16_t) (t - dtLhTicks_);
+        return ESP_OK;
+    }
 
     // Live counter value, register read. The driver never exposes the count; production has a
     // single global leg, so this leg holds hw timer 0 of its group (first mcpwm_new_timer alloc).

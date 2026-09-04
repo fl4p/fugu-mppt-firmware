@@ -594,8 +594,10 @@ static void loopRT(void *arg) {
         auto samplerRet = adcSampler.update();
         rtcount("adc.update");
 
-        // outside the NewData branch: a dead-time change must also land while the converter idles
+        // outside the NewData branch: a dead-time or frequency change must also land while the
+        // converter idles
         converter.applyPendingDeadTimeRt();
+        mppt.applyPendingPwmFreqRt();
 
         if (adcSampler.halted) continue;
 

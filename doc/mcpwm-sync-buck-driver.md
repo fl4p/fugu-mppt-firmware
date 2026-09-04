@@ -187,3 +187,21 @@ group plus one fault brake. Phase relationship:
 | `pwm_deadtime_lh_ns`     | LS→HS override (`pwmMax` reservation, realized exactly)    |
 | `pwm_fault_pin` (opt.)   | GPIO fault input pin                                       |
 | `pwm_fault_active_high`  | fault polarity (0/1); pull resistor set accordingly        |
+
+## Invariant: a latched period must never have `cmpLS < cmpHS`
+
+In HiLi mode the LS generator has **no TEZ action** — it goes HIGH at `cmpHS` and LOW at `cmpLS`
+(`src/pwm/mcpwm.h`), so **LS holds its level across the period wrap**. A period that latches with
+`cmpLS < cmpHS` therefore runs: the `cmpLS`→LOW event passes as a no-op, `cmpHS` drives LS HIGH,
+and at TEZ HS goes HIGH on top of it — both FETs on for most of a period.
+
+`cmpHS` and `cmpLS` are two separate registers and both latch on TEZ, so a TEZ falling between the
+two writes publishes a *mixed* pair. Order the writes so the mixed pair stays ordered:
+
+* **HS widening** (`cmpHS` increasing) — write `cmpLS` first.
+* **HS narrowing** — write `cmpHS` first.
+
+The normal control path is safe without this because duty moves by a few counts per tick and
+`pwmRectMin` (~330 ct) covers the gap. It matters wherever `cmpHS` jumps by a large amount:
+`applyPendingPwmFreqRt()` rescales it by `newPeriod/oldPeriod`, so a 75 → 39 kHz change at duty
+0.61 moves `cmpHS` from 1281 to 2464 against a stale `cmpLS` of 2100 — 25.6 µs of shoot-through.

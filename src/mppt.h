@@ -820,6 +820,30 @@ public:
     // Drop the config-derived boot duty cap so update() resumes normal MPPT tracking.
     void clearBootTarget() { targetPwmCnt = 0; }
 
+    // RT-CORE ONLY. Applies a queued `pwm-freq` change and carries the duty state that lives HERE
+    // through it. manualTarget, the boot duty cap, the one-shot ramp target and the tracker's
+    // captured MPP are all raw PWM counts: rescaling only the converter would leave the very next
+    // control tick ramping back toward a count that no longer means the same duty — on a bench in
+    // manual PWM that undoes the frequency change's operating point within milliseconds.
+    void applyPendingPwmFreqRt() {
+        const float r = converter.applyPendingPwmFreqRt();
+        if (!(r > 0.f)) return;
+        const uint16_t hi = converter.pwmCtrlMax;
+        auto rescale = [r, hi](uint16_t v) {
+            return (uint16_t) std::min<int32_t>(std::lround((float) v * r), hi);
+        };
+        manualTarget.store(rescale(manualTarget.load(std::memory_order_relaxed)),
+                           std::memory_order_relaxed);
+        targetPwmCnt = rescale(targetPwmCnt);
+        targetDutyCycle = rescale(targetDutyCycle);
+        // Rescaled, not cleared: the operating point is preserved across the change, so a captured
+        // MPP is still the same physical point — only its count changed. Clearing it would send a
+        // sweep-driven fade to duty 0. There are TWO captures and both are raw counts: the tracker's
+        // (P&O) and this class's own sweep capture, which _stopSweep() commits as targetDutyCycle.
+        tracker.maxPowerPoint.dutyCycle = rescale(tracker.maxPowerPoint.dutyCycle);
+        maxPowerPoint.dutyCycle = rescale(maxPowerPoint.dutyCycle);
+    }
+
     // One-shot automatic ramp target (consumed by update() sweep/MPP fade path).
     void setAutoRampTarget(uint16_t duty) {
         if (duty > converter.pwmCtrlMax) duty = converter.pwmCtrlMax;

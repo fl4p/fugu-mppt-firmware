@@ -143,6 +143,21 @@ class SynchronousConverter {
     static constexpr uint32_t kDtTickMask = 0x7ffu;   // 11 bits, >= 65535/32
     static constexpr uint32_t kDtSeqMask  = 0x3ffu;   // 10 bits
 
+    // Runtime switching-frequency change (console `pwm-freq`), same mailbox contract as the
+    // dead-time above: ONE core-0 producer, applied on the RT core so periodTicks/pwmMax and the
+    // gate comparators never move under the control path. Latest-value mailbox, not a queue.
+    // [31:20] seq (never 0 once posted), [19:0] the requested frequency in Hz — the producer bounds
+    // it under 500 kHz, so it fits.
+    //
+    // The NOMINAL Hz is what travels, not the period: pwmFrequency and fL (the ripple basis, and so
+    // the CCM/DCM decision) are written from it, and the period is a pure function of it at a fixed
+    // prescaler. Carrying the period and the Hz in separate words would let a second request posted
+    // after the CLI's 1 s ack timeout give up pair request N's period with request N+1's Hz — the
+    // exact tear the dead-time mailbox packs its triple into one word to avoid.
+    std::atomic<uint32_t> freqReqWord{0}, freqAckWord{0};
+    static constexpr uint32_t kFreqHzMask = 0xfffffu;   // 20 bits, >= 500000
+    static constexpr uint32_t kFreqSeqMask = 0xfffu;    // 12 bits
+
     // ---- gate-driver dispatch ----------------------------------------------------------------
     // One place per distinct driver operation. With both drivers compiled these branch on
     // useMcpwm at runtime; with a single driver the unreachable arm is #if'd out and the call
@@ -506,6 +521,11 @@ public:
     // true when this converter is a wired-sync follower (sync_role=follower): the wire owns
     // the period, so period-trimming servos (bsync) must not run.
     bool wsyncFollower = false;
+    // true while the beacon-sync servo is running: it caches the nominal period at start and dithers
+    // the period register at 1 kHz, so nothing else may change the period under it. Owned by
+    // BeaconSyncService (set in onStart, cleared in onStop) — the guard lives with the producer so a
+    // caller other than the console cannot miss it.
+    bool bsyncOwnsPeriod = false;
 #if WITH_WSYNC
     pcnt_unit_handle_t wsyncPcnt_ = nullptr;
     // Why wired sync ended up in the state it did. Without this, `wsync` cannot tell a USB-pad
@@ -715,6 +735,177 @@ public:
         }
 #endif
         dtAckWord.store(req, std::memory_order_release);
+    }
+
+    // True timer period in ticks (0 on drivers without one) and the tick rate it counts at.
+    [[nodiscard]] uint16_t getPeriodTicks() const { return drvPeriodTicks(); }
+
+    [[nodiscard]] uint32_t getPwmResolutionHz() const { return drvDtResolutionHz(); }
+
+    // Realized switching frequency. Not the requested one: bestTiming() rounds the period to whole
+    // ticks, and its own actual_freq is resolution/ticks in uint32 integer division, which truncates
+    // (4103 ticks reports 38995 where the true value is 38995.86). This is the only honest source.
+    [[nodiscard]] double realizedFreqHz() const {
+        const uint32_t res = drvDtResolutionHz();
+        const uint16_t p = drvPeriodTicks();
+        return (res && p) ? (double) res / (double) p : (double) pwmFrequency;
+    }
+
+    // Console (core 0): queue a switching-frequency change, applied by the RT loop within one
+    // control tick (poll pwmFreqIdle()). Returns nullptr when queued, else a static reason.
+    // `ticks` reports the resulting timer period. RAM only — board.conf::pwm_freq still owns the
+    // boot value, so a power cycle returns to a known frequency.
+    const char *requestPwmFrequency(uint32_t hz, uint16_t &ticks) {
+        const uint32_t res = drvDtResolutionHz();
+        const uint16_t period = drvPeriodTicks();
+        if (!res || !period) return "needs the MCPWM driver (converter.conf::pwm_driver)";
+#if WITH_WSYNC
+        // The leader's pulse comparators are absolute ticks written once in initSyncOut(), and a
+        // follower's period is baked wsyncLeadTicks short in init(); neither has a re-arm path, and
+        // the pad qualifier assumes both ends run the same pwm_freq.
+        if (wsyncMode == WsyncMode::leader || wsyncMode == WsyncMode::armed_follower)
+            return "wired sync owns the period (converter.conf::sync_role)";
+#endif
+        if (!(hz > 5000u && hz < 500000u)) return "expected 5..500 kHz";
+        // The prescaler is fixed when the timer is created and setPeriod() writes the period
+        // register only, so the resolution cannot follow. bestTiming keeps the prescaler at 1 across
+        // the whole 5..500 kHz range on a 160 MHz source, so this never fires today — it guards the
+        // day the source clock or the range changes, because a resolution change would silently
+        // rescale rect_offset_ns, boot_refresh_ns and every dead-time tick count.
+        if (bestTiming(hz).resolution_hz != res) return "would need a different timer prescaler";
+        // Same layer as the wsync refusal above, and for the same reason: bsync caches nomPeriod_ at
+        // start and dithers this very register at 1 kHz, so it would drive the period straight back.
+        // The flag is owned by the service, so a second (non-CLI) producer cannot miss the guard.
+        if (bsyncOwnsPeriod) return "bsync owns the period (svc off bsync first)";
+        const long t = std::lround((double) res / (double) hz);
+        if (t < 16 || t > 65535) return "period out of range for the timer";
+        // Ripple guard, the runtime twin of the boot assert. It REFUSES rather than throwing: an
+        // out-of-range pwm_freq in the config keeps the board from booting at all, which looks
+        // exactly like a bad flash.
+        const float fLnew = (float) hz * coilL0 * InductivityDcBias;
+        if (!(fLnew > 1.f && fLnew < 20.f)) return "fsw*L0 out of range for this coil (coil.conf::L0)";
+        // Both dead-bands are fixed tick counts, so a shorter period is what makes them too large.
+        // Same ceilings the `dt` command enforces, measured against the NEW period.
+        const long hl = drvDtHlTicks(), lh = drvDtLhTicks();
+        if (hl > t / 32 || lh > t / 32) return "dead-time would exceed 1/32 of the new period";
+        if (!isBoost && (long) rectRefreshTicks + hl > t / 4)
+            return "would leave too little duty range next to the LS minimum";
+        ticks = (uint16_t) t;
+        uint32_t seq = ((freqReqWord.load(std::memory_order_relaxed) >> 20) + 1) & kFreqSeqMask;
+        if (!seq) seq = 1;
+        freqReqWord.store((seq << 20) | (hz & kFreqHzMask), std::memory_order_release);
+        return nullptr;
+    }
+
+    [[nodiscard]] bool pwmFreqIdle() const {
+        return freqAckWord.load(std::memory_order_acquire) == freqReqWord.load(std::memory_order_acquire);
+    }
+
+    // RT-CORE ONLY. Applies a queued frequency change and returns the count-domain scale that was
+    // applied, 0 when nothing changed — duty targets held outside this class (MpptController's
+    // manualTarget and its two captured MPPs) are raw counts and must be rescaled by it.
+    float applyPendingPwmFreqRt() {
+        const uint32_t req = freqReqWord.load(std::memory_order_acquire);
+        if (req == freqAckWord.load(std::memory_order_relaxed)) return 0.f;
+        float scale = 0.f;
+#if HAVE_MCPWM
+        const uint32_t hz = req & kFreqHzMask;
+        const uint16_t oldTicks = useMcpwm ? mcpwmDrv.periodTicks : 0;
+        // Derived here rather than carried, so the period and the Hz can never come from different
+        // requests. Same inputs and same rounding as the producer, at a prescaler that cannot move.
+        const long t = (useMcpwm && hz) ? std::lround((double) mcpwmDrv.resolutionHz / (double) hz) : 0;
+        const auto newTicks = (uint16_t) t;
+        const long hl = mcpwmDrv.getDtHlTicks(), lh = mcpwmDrv.getDtLhTicks();
+        // Mirror the producer's ceilings, exactly as applyPendingDeadTimeRt() mirrors its own: they
+        // are what makes newMax >= 2 and pwmRectMin <= rectCap, and a std::clamp() with hi < lo is
+        // UB. The RT core must not depend on a producer it cannot see.
+        if (useMcpwm && oldTicks && t >= 16 && t <= 65535
+            && hl <= t / 32 && lh <= t / 32
+            && (isBoost || (long) rectRefreshTicks + hl <= t / 4)) {
+            const auto newMax = (uint16_t) (newTicks - (uint16_t) lh);
+            // pwmRectMin does NOT scale: it is rectRefreshTicks + hl, both fixed times at a tick
+            // whose duration the prescaler pins. So a rising frequency eats duty range at the top —
+            // the clamp below is what the console reports back.
+            const auto newCtrlMax = (uint16_t) std::clamp<int32_t>(
+                isBoost ? (int32_t) ((float) newMax * 0.9f)
+                        : (int32_t) newMax - (int32_t) pwmRectMin - 1,
+                1, (int32_t) newMax - 1);
+            const float r = (float) newTicks / (float) oldTicks;
+            auto scaled = [r](int32_t v) { return (int32_t) std::lround((float) v * r); };
+            // Scale the commanded counts so the DUTY RATIO survives, then clamp into the new
+            // envelope. A disabled converter stays disabled: pwmCtrl == 0 is the "off" state, not a
+            // duty to preserve, and pwmRectMin would otherwise lift the LS span off zero.
+            const bool off = (pwmCtrl == 0);
+            const auto newCtrl = off ? (uint16_t) 0
+                                     : (uint16_t) std::clamp<int32_t>(scaled(pwmCtrl), 1, newCtrlMax);
+            const auto rectCap = (uint16_t) (newMax - newCtrl - 1);
+            // Backstop, not arithmetic: the ceilings above make rectCap >= pwmRectMin. std::clamp
+            // with hi < lo is UB, and this runs on the RT core on a value that came via a mailbox.
+            const auto rectLo = std::min(pwmRectMin, rectCap);
+            const auto newRect = off ? (uint16_t) 0
+                                     : (uint16_t) std::clamp<int32_t>(scaled(pwmRect), rectLo, rectCap);
+            const auto newLsOff = off ? (uint16_t) 0 : (uint16_t) (newCtrl + newRect);
+
+            // ORDER, twice over. The period register and both comparators latch on TEZ, so with no
+            // period boundary between the writes the change is atomic; a TEZ falling between any two
+            // of them publishes a MIXED pair, and both mixes have to be safe.
+            //
+            // (a) period vs comparators. Shrink: comparators first — a comparator left above a
+            //     newly shortened period never fires and leaves LS high for a whole cycle (see
+            //     setPeriod()). Grow: period first. IDF enforces this for us as it happens
+            //     (mcpwm_comparator_set_compare_value rejects cmp > peak_ticks, and set_period
+            //     updates peak immediately), but the reason stands on its own.
+            //
+            // (b) cmpHS vs cmpLS, which is the one that bites. In HiLi the LS generator has NO TEZ
+            //     action (mcpwm.h: HIGH at cmpHS, LOW at cmpLS), so LS holds its level across the
+            //     wrap. A latched pair with cmpLS < cmpHS therefore runs: cmpLS passes as a no-op,
+            //     cmpHS drives LS HIGH, and at TEZ HS goes HIGH on top of it — BOTH FETS ON for most
+            //     of a period. Rescaling moves cmpHS by hundreds of counts, so the mixed pair really
+            //     can invert (75->39 kHz at duty 0.61: cmpHS 2464 against a stale cmpLS 2100).
+            //     Write whichever comparator keeps the mixed pair ordered: LS first when HS widens,
+            //     HS first when HS narrows. Both mixes then satisfy cmpLS >= cmpHS.
+            auto commitPair = [&](uint16_t hs, uint16_t ls, uint16_t hsNow) {
+                if (hs >= hsNow) { mcpwmDrv.setLsOff(ls); mcpwmDrv.setHsOff(hs); }
+                else             { mcpwmDrv.setHsOff(hs); mcpwmDrv.setLsOff(ls); }
+            };
+            const bool shrink = newTicks < oldTicks;
+            if (shrink) commitPair(newCtrl, newLsOff, pwmCtrl);
+            esp_err_t err = mcpwmDrv.setPeriod(newTicks);
+            if (err == ESP_OK) {
+                if (!shrink) commitPair(newCtrl, newLsOff, pwmCtrl);
+                pwmCtrl = newCtrl;
+                pwmRect = newRect;
+                pwmRectMax = (uint16_t) std::clamp<int32_t>(scaled(pwmRectMax), rectLo, rectCap);
+                if (manualRect >= 0)
+                    manualRect = std::clamp<int32_t>(scaled(manualRect), rectLo, rectCap);
+                driverPwmMax = mcpwmDrv.pwmMax;
+                pwmCtrlMax = newCtrlMax;
+                scale = r;
+                // float, not the double realizedFreqHz(): this runs on the RT core.
+                ESP_LOGI("converter", "pwm period %u ct, pwmMax=%u maxHS=%u hs_off=%u ls_off=%u",
+                         (unsigned) newTicks, (unsigned) driverPwmMax,
+                         (unsigned) pwmCtrlMax, (unsigned) pwmCtrl, (unsigned) (pwmCtrl + pwmRect));
+            } else {
+                // Only reachable if the driver rejects what the producer already validated. On the
+                // shrink path the comparators were narrowed already, so put them back — same
+                // ordering rule, since restoring pwmCtrl WIDENS cmpHS again.
+                if (shrink)
+                    commitPair(pwmCtrl, pwmCtrl ? (uint16_t) (pwmCtrl + pwmRect) : (uint16_t) 0, newCtrl);
+                ESP_LOGE("converter", "pwm period %u ct rejected: %s",
+                         (unsigned) newTicks, esp_err_to_name(err));
+            }
+            // Nominal frequency and the ripple basis. Deliberately NOT gated on the period having
+            // moved: two nearby requests can round to the same tick count (39000 and 39100 are both
+            // 4103 ct) and the CLI reports that as success, so an early-out there would leave fL —
+            // the CCM/DCM decision input — on the old frequency behind a success reply.
+            if (err == ESP_OK) {
+                pwmFrequency = hz;
+                fL = (float) hz * coilL0 * InductivityDcBias;
+            }
+        }
+#endif
+        freqAckWord.store(req, std::memory_order_release);
+        return scale;
     }
 
     [[nodiscard]] bool isEnLogic() const { return pwmEnLogic; }

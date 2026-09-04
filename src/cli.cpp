@@ -252,6 +252,53 @@ static void cmdDeadTime(cmd *c) {
              (unsigned) converter.getRectOnPwmMin(), (unsigned) converter.pwmCtrlMax);
 }
 
+// pwm-freq [hz] — MCPWM switching frequency, changed live (no reboot). No argument reports the
+// REALIZED frequency. The change is applied by the RT core and is RAM-only; `set-config board.conf
+// pwm_freq <hz>` makes it survive a power cycle.
+//
+// Duty is carried through as a ratio, so the operating point survives — that is the whole point:
+// on the recirculating power-loop rig a reboot of the buck is a reversed shutdown and collapses the
+// loop.
+static void cmdPwmFreq(cmd *c) {
+    Command cc(c);
+    auto v = cc.getArg(0).getValue();
+    if (v.length()) {
+#ifdef WITH_MEASURE_COIL
+        // measure-coil snapshots pwmMax/pwmCtrlMax for its duty math and may persist the result
+        if (isMeasuring())
+            CMD_FAIL_RETURN("pwm-freq: busy measuring");
+#endif
+        // toFloat()/toInt() stop at the first non-numeric character and report no error, so "39k"
+        // would silently become 39. Require the whole token to parse.
+        char *end = nullptr;
+        const long hz = strtol(v.c_str(), &end, 10);
+        if (end == v.c_str() || *end || hz <= 0)
+            CMD_FAIL_RETURN("pwm-freq: expected a frequency in Hz");
+        uint16_t ticks = 0;
+        if (const char *err = converter.requestPwmFrequency((uint32_t) hz, ticks))
+            CMD_FAIL_RETURN("pwm-freq: %s", err);
+        // esp_timer_get_time(), not wallClockMs(): the latter is only advanced by loopRT itself, so
+        // a wedged RT loop -- the one failure this deadline exists to report -- would stop the very
+        // clock measuring it and spin here forever, taking the whole network task down with it.
+        const int64_t deadline = esp_timer_get_time() + 1000000;
+        while (!converter.pwmFreqIdle() && esp_timer_get_time() < deadline) delay(1);
+        // No cancel on timeout: withdrawing a request the RT core may already be applying could
+        // hand it back the PREVIOUS period. Report it as unconfirmed, still queued.
+        if (!converter.pwmFreqIdle())
+            CMD_FAIL_RETURN("pwm-freq: RT loop did not confirm within 1 s (request still queued)");
+        if (converter.getPeriodTicks() != ticks)
+            CMD_FAIL_RETURN("pwm-freq: driver rejected %u ct, still %u ct",
+                            (unsigned) ticks, (unsigned) converter.getPeriodTicks());
+    }
+    if (!converter.getPeriodTicks())
+        CMD_FAIL_RETURN("pwm-freq: n/a, needs the MCPWM driver (converter.conf::pwm_driver)");
+    UART_LOG("pwm-freq %.2f Hz period_ticks=%u res=%lu pwmMax=%u hs_off=%u maxHS=%u nominal=%lu",
+             converter.realizedFreqHz(), (unsigned) converter.getPeriodTicks(),
+             (unsigned long) converter.getPwmResolutionHz(), (unsigned) converter.pwmMaxDriver(),
+             (unsigned) converter.getCtrlOnPwmCnt(), (unsigned) converter.pwmCtrlMax,
+             (unsigned long) converter.getPwmFrequency());
+}
+
 static void cmdShortLs(cmd *) {
     if (converter.boost() && abs(sensors.Vin->ewm.avg.get()) < 0.05) {
         const auto ticket = mppt.requestPsuShortLowSide();
@@ -1895,6 +1942,7 @@ void setupCli() {
 
     cli.addBoundlessCmd("dc", cmdDc); // dc <hs> [ls]
     cli.addBoundlessCmd("dt,deadtime", cmdDeadTime); // dt [hl_ns [lh_ns]]
+    cli.addBoundlessCmd("pwm-freq,fsw", cmdPwmFreq); // pwm-freq [hz]
     cli.addSingleArgCmd("sync", cmdSync);
     cli.addSingleArgCmd("bf,panel", cmdBflow);
     cli.addSingleArgCmd("speed", cmdSpeed);
@@ -1936,8 +1984,11 @@ void setupCli() {
         uint16_t ls_on_base = converter.isEnLogic() ? 0 : pwmCtrl;
         uint16_t ls_on = (pwmRect == 0) ? 0 : (uint16_t) (ls_on_base + dtHlTicks);
         uint16_t ls_off = (pwmRect == 0) ? 0 : (uint16_t) (pwmCtrl + pwmRect);
-        UART_LOG("freq=%u pwmMax=%u hs_off=%u ls_on=%u ls_off=%u fault=0 brake=0",
-                 (unsigned) freq, (unsigned) pwmMax,
+        // realized, not requested: bestTiming() rounds the period to whole ticks (39000 asked,
+        // 38995.86 delivered at 4103 ct) -- period_ticks is the source of truth
+        UART_LOG("freq=%.2f nominal=%u period_ticks=%u pwmMax=%u hs_off=%u ls_on=%u ls_off=%u fault=0 brake=0",
+                 converter.realizedFreqHz(), (unsigned) freq,
+                 (unsigned) converter.getPeriodTicks(), (unsigned) pwmMax,
                  (unsigned) hs_off, (unsigned) ls_on, (unsigned) ls_off);
     });
 #if WITH_LEDC
