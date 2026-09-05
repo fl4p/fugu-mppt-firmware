@@ -48,10 +48,13 @@ optional.
 
 ## Before touching hardware
 
-Take a lock (`lock` skill) on every shared resource: the board's serial port (`usbmodem*` — check
-the exact name, `usbmodem101` and `usbmodem1101` are different boards), plus `fugu-rig` / `scope`
-if a measurement is involved. One reader per port — contention kills the other process silently
-(`lsof /dev/cu.usbmodemXXX` first). **Bench scripts do not lock for you** — `lock.sh list` first,
+Take a lock (`lock` skill) on every shared resource: **the board by name** (`flu`, `fbuck`,
+`fboost`, … — all registered), plus `fugu-rig` / `scope` if a measurement is involved. Lock the
+BOARD, not the port: `lock.sh acquire usbmodem1101` is REFUSED (exit 2, "not a registered
+resource"), and a port name is the wrong mutex anyway because the node re-enumerates under a new
+suffix (see "When the port vanishes") while the board name is stable. Still check which port is
+which before flashing — `usbmodem101` and `usbmodem1101` are different boards. One reader per port
+— contention kills the other process silently (`lsof /dev/cu.usbmodemXXX` first). **Bench scripts do not lock for you** — `lock.sh list` first,
 and a lock held by a *live* pid that is not yours is a stop, not a formality: on 2026-09-05 an
 8-hour, 56-point rig campaign ran start to finish while a peer session had held `fugu-rig` since
 the previous day, and the data survived only because that peer stayed idle. Several agent sessions
