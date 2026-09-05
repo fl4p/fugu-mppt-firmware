@@ -286,7 +286,12 @@ alone reports limits and averages, not the operating point. Batched replies inte
 output and can
 **fabricate** errors (`Command not found` next to the correct reply) — re-send singly before
 trusting an `ERR:`, or quiet the board first (`log <tag> error`). A read batched right after a
-state-change shows the **pre-change** state — sleep 3–10 s between; ~12 s after `restart`. Async
+state-change shows the **pre-change** state — sleep 3–10 s between; ~12 s after `restart`. **`sleep` is capped at
+0..60 s and an over-range argument is REFUSED WITH A WARNING, not an error** — `sleep 300`
+logs `W main: sleep: 300.00 out of range (0..60)` and sleeps zero, while the reply looks
+perfectly healthy; chain `sleep 60` to wait longer, and grep the transcript for `out of range`
+rather than trusting the absence of `ERR` (measured 2026-09-05: a 300 s settle silently became
+no settle and invalidated a whole sweep). Async
 events (trip reasons) only reach a connection open when they fire: trigger + device-side `sleep` +
 read in ONE `--stdin` script. `bf`/`dc`/`sync` are silently no-ops outside manual mode — verify in
 the status line, absence of `ERR` proves nothing.
