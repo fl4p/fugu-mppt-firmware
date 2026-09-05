@@ -309,7 +309,12 @@ the status line, absence of `ERR` proves nothing.
 **While diagnosing, send only read-only commands.** Safe: `bootinfo`, `tasks`, `uptime`, `status`,
 `svc`, `hostname` (no arg), `ls`, `cat`, `get-config`, `rt-stats`, `mem`, `heap`, `ip`,
 `pwm-dump` and `pwm-freq`/`fsw` (no arg — realized fsw and `period_ticks`, the only honest source:
-the requested `pwm_freq` is rounded to whole ticks and `actual_freq` truncates), `dt`/`deadtime`
+the requested `pwm_freq` is rounded to whole ticks and `actual_freq` truncates). **Older images
+lack `pwm-freq` entirely** and their `pwm-dump` then prints the REQUESTED frequency, not the
+realized one — fboost answers `Command not found` and reports a flat `freq=39000` where flu, same
+nominal 39 kHz, reports `freq=38995.86 nominal=39000 period_ticks=4103` (2026-09-06). The tell is
+the fields: no `period_ticks`/`nominal=` means the `freq=` is nominal and must be measured, not
+read. `dt`/`deadtime`
 (no args — the only readout of the live split dead time; `board.conf` can disagree), `wsync`,
 `scan-i2c`. `peek` is safe on RAM/DROM
 but now also reaches peripheral MMIO, where a clock-gated register is expected to fault the bus
