@@ -51,7 +51,11 @@ optional.
 Take a lock (`lock` skill) on every shared resource: the board's serial port (`usbmodem*` — check
 the exact name, `usbmodem101` and `usbmodem1101` are different boards), plus `fugu-rig` / `scope`
 if a measurement is involved. One reader per port — contention kills the other process silently
-(`lsof /dev/cu.usbmodemXXX` first). Several agent sessions work this repo concurrently; assume a
+(`lsof /dev/cu.usbmodemXXX` first). **Bench scripts do not lock for you** — `lock.sh list` first,
+and a lock held by a *live* pid that is not yours is a stop, not a formality: on 2026-09-05 an
+8-hour, 56-point rig campaign ran start to finish while a peer session had held `fugu-rig` since
+the previous day, and the data survived only because that peer stayed idle. Several agent sessions
+work this repo concurrently; assume a
 dirty tree and another session mid-edit: `git diff --cached --name-only` before every commit and
 `git log origin/main..HEAD` before every push — both have swallowed/published another session's
 work (details: Bench Operations). Never `pkill` a daemon you did not start, and never *start* one
