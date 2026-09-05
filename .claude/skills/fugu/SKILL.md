@@ -289,9 +289,12 @@ trusting an `ERR:`, or quiet the board first (`log <tag> error`). A read batched
 state-change shows the **pre-change** state — sleep 3–10 s between; ~12 s after `restart`. **`sleep` is capped at
 0..60 s and an over-range argument is REFUSED WITH A WARNING, not an error** — `sleep 300`
 logs `W main: sleep: 300.00 out of range (0..60)` and sleeps zero, while the reply looks
-perfectly healthy; chain `sleep 60` to wait longer, and grep the transcript for `out of range`
-rather than trusting the absence of `ERR` (measured 2026-09-05: a 300 s settle silently became
-no settle and invalidated a whole sweep). Async
+perfectly healthy; chain `sleep 60` to wait longer, and grep the transcript for
+`sleep:.*out of range` rather than trusting the absence of `ERR` (measured 2026-09-05: a 300 s
+settle silently became no settle and invalidated a whole sweep). **Anchor that grep on `sleep:`** —
+a bare `out of range` also matches fboost's routine `main: dc: out of range [0,4071]`, which fires
+22–26× per fade as the ramp saturates against pwmMax (the bound varies with the live limit, e.g.
+`[0,3758]`, `[0,1788]`), so an unanchored guard trips on every run. Async
 events (trip reasons) only reach a connection open when they fire: trigger + device-side `sleep` +
 read in ONE `--stdin` script. `bf`/`dc`/`sync` are silently no-ops outside manual mode — verify in
 the status line, absence of `ERR` proves nothing.
