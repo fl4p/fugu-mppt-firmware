@@ -196,7 +196,10 @@ and NaN/`0sps` is normal for ~15 s after boot while the sampler calibrates; re-r
 an ADC dead.) The conf path is `/littlefs/conf/`, not `/conf/`.
 
 The deployed config **drifts from `config/` in the repo** — `get-config` is ground truth for what
-a board runs. Read back every `set-config` in the same invocation (a stray `~` framing corruption
+a board runs. That includes `config/dl/<host>/`: those are untracked local dumps with no git
+history, so their age is a file mtime and nothing else. The fry/flat ones are from 2026-05-22 and
+still carry `coil.conf::rect_offset`, a key the firmware stopped reading on 2026-06-08 (`e6762ce`) —
+reading a live-converter setting out of them produces a confident, wrong answer. Read back every `set-config` in the same invocation (a stray `~` framing corruption
 has silently dropped writes); `set-config k ""` stores the quotes literally; wifi keys apply only
 after `restart`. Read a whole live partition back with `etc/dump_littlefs.py` — it **reboots the
 board**. Details: Bench Operations.
