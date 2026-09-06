@@ -31,47 +31,85 @@ phenomena on the switch node:
   | board | L | C_sw | f_r | T_ring/4 |
   |---|--:|--:|--:|--:|
   | fry / flat | 50–80 µH | ~100–200 pF *(estimate, unverified)* | 1.3–2 MHz | 125–192 ns |
-  | **fbuck** | **40 µH** (`coil.conf L0`) | **~3.3 nF** (measured) | **~435 kHz** | **~574 ns** |
+  | **flu** | **83 µH** (measured, DMM6500 4-wire) | **2.98–3.04 nF** (measured 2026-09-06) | **320 kHz** | **~780 ns** |
+  | fbuck | 40 µH (`coil.conf L0`) | **unmeasured** — see the retraction below | — | — |
 
-  fbuck carries 2× IPP050N10NF2S (HS) + 2× IPP039N10N5 (LS) — four 100 V dies on the
-  node, and C_oss rises steeply toward 0 V, which is precisely where this ring lives.
+  flu carries a single IPP022N12NM6 on the low side; fbuck carries 2× IPP050N10NF2S (HS) +
+  2× IPP039N10N5 (LS), four 100 V dies on the node. C_oss rises steeply toward 0 V, which is
+  precisely where this ring lives.
 
-  **Provenance of the fbuck number.** With the output open and near-zero current, the
-  switch node was measured (MXO44, 12 events/point, triggered on the LS gate falling
-  edge) rising from 0 V to Vin in **470–690 ns**, monotone, with the duration nearly
-  INDEPENDENT of Vin across 14.9–46.1 V while the slope scaled ~linearly (18.7 →
-  80.3 V/µs). A Vin-independent duration is the signature of a resonant quarter-cycle:
-  `(π/2)·√(L·C_sw)`. Inverting the 574 ns measured at Vin 46 against the configured
-  L = 40 µH gives **C_sw = 3.34 nF**, and the same model predicts 84.7 V/µs against
-  80.3 measured (−5%). Note this C_sw is a FIT to one measurement, not a datasheet sum
-  or a bridge reading; the agreement with the ~3 nF expected from four 100 V dies is a
-  cross-check, not an independent measurement. The low-Vin end fits worse (27.4 V/µs
-  predicted vs 18.7 measured), as expected when more of the swing sits in the
-  high-C_oss region near 0 V.
+  ### How to measure it, and the mistake this document previously made
 
-  **This number also tests the curated Coss curves, and they run high against it.** For
-  fbuck's exact stack the curves give `Q_node` = 319.5 nC at 46 V, i.e. a **charge-equivalent
-  6.945 nF** (= Q/V, the quantity a hard-switched edge actually moves) — **2.08×** the 3.34 nF
-  measured here. That is NOT 2.08× of error: the two are different averages of the same
-  nonlinear `C(v)`, and the *energy*-equivalent of the same curve is already 1.61× the measured
-  value. But it does mean a datasheet-summed `Q_node` should not be treated as a fixed point.
-  Measured 2026-09-06 from `pv/ee/dcdc-tools/scratch/coss_provenance_20260906.py`; the context
-  is `pv/ee/plans/RESULTS-flu-fsw-lowduty-20260906.md` §R4, where a hard-switching loss ceiling
-  built on the curated `Q_node` left 5.8 µJ/cycle unexplained on flu.
+  **Trigger on the LOW-SIDE GATE, falling.** The switch node cannot be used to trigger its own
+  measurement: `scope_backends.mxo.capture()` defaults to a *slew-rate* trigger
+  (`max_transition_s = 100e-9`) that by construction fires only on transitions **faster** than
+  100 ns, and this ring's transit is of order 1 µs. A run armed on the node therefore records
+  the HS turn-on edge and looks like a successful ring capture. That is exactly what
+  `dcdc-tools/verifications/vin-sweep/flu-c1ring-20260814b` contains — its rise durations fall
+  217 → 132 ns across Vin 35–70 V, and it was mistaken for this measurement for three weeks.
+  The LS gate is ground-referenced and driven every cycle regardless of what the power stage
+  does, so it is the only sound arming point.
 
-  **If flu's ring is ever measured, do it at Vin 46**, the same point fbuck was taken at. The
-  method's bias moves with where the swing sits on `C(v)` — this doc's own fit runs −5 % at
-  Vin 46 but −32 % at the low end — so a ratio taken at a common voltage cancels it and a ratio
-  across two voltages does not. At a common 46 V the curated curves predict flu/fbuck = **1.113**
-  (flu's node is the *larger* of the two, the 2.2 mΩ IPP022N12NM6 being over half of it), i.e.
-  **expect C_sw ≈ 3.72 nF**. Measuring instead at flu's own 70.55 V would predict 3.01 nF but
-  carries an uncancelled method bias.
+  **Fit the resonance; do NOT invert a quarter-cycle.** This document previously computed
+  `C_sw` from `T/4 = (π/2)·√(L·C_sw)` applied to the 0 → Vin transit. **That is wrong for this
+  waveform and the number it produced is retracted** (see below). The transit is not a
+  quarter-cycle starting from rest: the node swings about a *midpoint* and is truncated when the
+  HS body diode clamps it one V_f above V_in, so `dV/dt` peaks near **mid-swing** rather than at
+  the rail. Fit `v(t) = V_c − A·cos(ω(t − t₀))` over the unclamped part of the rise (3–93 %) and
+  take `C_sw = 1/(ω²L)`.
 
-  A competing model — a constant current `I_neg = Vout·t_LS/L` pumped by the low-side
-  minimum on-time charging C_sw — was tested and **refuted**: with the same constants it
-  over-predicts dV/dt by 8.6× and predicts a Vin-INDEPENDENT 67 ns rise, contradicting
-  the measured 470–690 ns. Both models predict slope ∝ Vin, so that scaling alone does
-  not discriminate between them; the magnitude and the constant duration do.
+  **Run it in diode emulation, not forced PWM.** Forced PWM holds the LS on through the zero
+  crossing and abolishes the ring entirely.
+
+  **Provenance of the flu number (2026-09-06).** Output open, near-zero current, Vin 71.10 V,
+  `dc 200` (D = 0.049). MXO44, C1 on the switch node, C2 on the LS gate, armed on the gate's
+  falling edge, 12 events. Fit gives `ω = 2.012e6 ± 9.6e3 rad/s` (sd 0.5 % across events),
+  `V_c = 37.84 ± 0.11 V`, `A = 41.96 ± 0.18 V`, `f_r = 320.2 kHz`; the swing would reach
+  `V_c + A` = 79.8 V and is clamped at **72.84 ± 0.10 V**, one diode drop above V_in. With
+  L = 83 µH (measured) that is **2.977 nF**; with `A_L·N²` = 81.2 µH, **3.042 nF**. Driver:
+  `dcdc-tools/bench/flu_dcm_ring.py`. Raw: `verifications/vin-sweep/flu-dcmring-20260906/`.
+  Write-up: `pv/ee/plans/RESULTS-flu-csw-ring-20260906.md`.
+
+  ### RETRACTED: fbuck's 3.34 nF, and the 2.08× Coss claim built on it
+
+  This document previously reported fbuck at **C_sw = 3.34 nF**, fitted from a 574 ns transit at
+  Vin 46, and used it to conclude that the curated Coss curves run **2.08× high** on a
+  charge-equivalent basis. **Both are withdrawn (2026-09-06).**
+
+  The identification rested on the transit being *"nearly independent of Vin across
+  14.9–46.1 V"* — the signature of a resonant quarter-cycle. The source traces are
+  `verifications/vin-sweep/run2-20260811` and `run3-20260811` (identity confirmed by reproducing
+  this document's own published slopes: 19.0 → 81.9 and 19.6 → 83.7 V/µs against the quoted
+  18.7 → 80.3). In those traces the 0 → Vin transit is **not** Vin-independent:
+
+  | Vin (V) | 14.9 | 20.2 | 25.3 | 30.4 | 35.7 | 40.9 | 46.0 |
+  |---|--:|--:|--:|--:|--:|--:|--:|
+  | run2 (ns) | 781 | 695 | 633 | 589 | 623 | 598 | 546 |
+  | run3 (ns) | 833 | 712 | 677 | 524 | 547 | 533 | 479 |
+
+  A monotone fall of 30 % (run2) and 43 % (run3). The published "470–690 ns" range is
+  recoverable only by discarding the two lowest-Vin points of each run. fbuck's `dV/dt` also
+  peaks at 50–60 % of swing, like flu's, where a quarter-cycle from rest must peak at the rail.
+
+  **No replacement value is offered, deliberately.** Refitting these traces with the resonant
+  model gives a `C_sw` that drifts 7.97 → 3.88 nF with Vin and diverges outright on run3's three
+  lowest points (`V_c` = −5582 V, f = 8.4 kHz — a cosine fitted to a nearly straight segment).
+  At Vin 46 the candidates span 2.3–4.4 nF, which brackets 3.34 without confirming it. **fbuck's
+  node capacitance is unmeasured, not measured wrong**, and anything that depended on 3.34 nF or
+  on the 2.08× ratio needs re-deriving. A fresh acquisition by the gate-triggered method above
+  would settle it.
+
+  **What is still genuinely open on flu, too.** A straight line fits the central 15–85 % of
+  *every* rise in this tree to R² ≈ 0.999, flu's included — over that span a cosine and a ramp
+  are barely distinguishable. flu's number rests on its fit converging where fbuck's does not,
+  plus the body-diode clamp; it does **not** rest on having excluded a constant-current charge.
+  The test that separates them is a Vin sweep with the gate trigger: a resonance gives a transit
+  invariant with Vin, a current-driven charge gives one proportional to it. That sweep has not
+  been run.
+
+  For the same reason, the constant-current model — `I_neg = Vout·t_LS/L` pumped by the low-side
+  minimum on-time — is **no longer refuted**. Its rejection was argued from the transit being
+  Vin-independent, which the table above shows it is not. Treat it as an open alternative.
 
   Raw traces and the full write-up: `dcdc-tools/verifications/vin-sweep/`.
 
@@ -162,10 +200,12 @@ the LS FET turns off:
   this project — the existing `SynchronousConverter` (`src/buck.h`) already computes
   diode-emulation timing; a brief LS-FET re-trigger pulse at the first ring valley
   (~T_ring/4 after LS-off) could be added. **The valley time is per-board** — see the
-  C_sw table above: ~125–250 ns on fry/flat, but **~574 ns on fbuck** (measured). A
-  re-trigger hard-coded to the fry/flat timing would fire at roughly the ring's peak on
-  fbuck, i.e. pump energy in rather than clamp it out, so this delay must be derived
-  from the board's own `L0` and its FET population, not from a constant.
+  C_sw table above: ~125–250 ns on fry/flat, but **~780 ns on flu** (measured
+  2026-09-06). A re-trigger hard-coded to the fry/flat timing would fire at roughly the
+  ring's peak on flu, i.e. pump energy in rather than clamp it out, so this delay must be
+  derived from the board's own `L0` and its FET population, not from a constant. **fbuck has
+  no usable valley time** — the 574 ns previously quoted here came from the retracted 3.34 nF
+  and must not be used to time a re-trigger; measure it first.
   - **MCPWM**: the ESP32-S3 has 2 comparators per operator (`SOC_MCPWM_COMPARATORS_PER_OPERATOR=2`),
     both already used for HS and LS edges (`cmpHS_`, `cmpLS_` in `src/pwm/mcpwm.h`). An LS
     re-trigger pulse would need a different mechanism — e.g. a second operator's comparator
