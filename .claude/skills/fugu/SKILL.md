@@ -172,7 +172,8 @@ exists yet, `ioreg -l -r -c AppleUSBACMData` → `IOCalloutDevice` is the `/dev/
 `WITH_VCONV=y` — commit or `git stash push -- <paths>` first. Over BLE:
 `.venv/bin/python3 etc/ota_ble.py build-<tag>/fugu-firmware.bin -n <name> -y` — **pass the image
 positionally**, the default is the shared `build/` that another session may have rebuilt under you —
-**detached** (~9 min for a 1.74 MB image, measured 2026-08-19) and **one at a time** (one
+**detached** (1.75 MB in 66-73 s over direct macOS BLE, measured twice 2026-09-06; an earlier
+~9 min for 1.74 MB was measured 2026-08-19, so budget for either) and **one at a time** (one
 Mac radio). The version string is git-describe, so an uncommitted rebuild keeps the old string and
 the tool *skips* with a success-looking `☑️ skip:` — pass `-f` when the tree changed without a
 commit; a real push prints hundreds of progress lines. A failed/killed push leaves the device
