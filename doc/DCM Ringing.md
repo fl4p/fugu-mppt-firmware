@@ -49,6 +49,24 @@ phenomena on the switch node:
   predicted vs 18.7 measured), as expected when more of the swing sits in the
   high-C_oss region near 0 V.
 
+  **This number also tests the curated Coss curves, and they run high against it.** For
+  fbuck's exact stack the curves give `Q_node` = 319.5 nC at 46 V, i.e. a **charge-equivalent
+  6.945 nF** (= Q/V, the quantity a hard-switched edge actually moves) — **2.08×** the 3.34 nF
+  measured here. That is NOT 2.08× of error: the two are different averages of the same
+  nonlinear `C(v)`, and the *energy*-equivalent of the same curve is already 1.61× the measured
+  value. But it does mean a datasheet-summed `Q_node` should not be treated as a fixed point.
+  Measured 2026-09-06 from `pv/ee/dcdc-tools/scratch/coss_provenance_20260906.py`; the context
+  is `pv/ee/plans/RESULTS-flu-fsw-lowduty-20260906.md` §R4, where a hard-switching loss ceiling
+  built on the curated `Q_node` left 5.8 µJ/cycle unexplained on flu.
+
+  **If flu's ring is ever measured, do it at Vin 46**, the same point fbuck was taken at. The
+  method's bias moves with where the swing sits on `C(v)` — this doc's own fit runs −5 % at
+  Vin 46 but −32 % at the low end — so a ratio taken at a common voltage cancels it and a ratio
+  across two voltages does not. At a common 46 V the curated curves predict flu/fbuck = **1.113**
+  (flu's node is the *larger* of the two, the 2.2 mΩ IPP022N12NM6 being over half of it), i.e.
+  **expect C_sw ≈ 3.72 nF**. Measuring instead at flu's own 70.55 V would predict 3.01 nF but
+  carries an uncancelled method bias.
+
   A competing model — a constant current `I_neg = Vout·t_LS/L` pumped by the low-side
   minimum on-time charging C_sw — was tested and **refuted**: with the same constants it
   over-predicts dV/dt by 8.6× and predicts a Vin-INDEPENDENT 67 ns rise, contradicting
