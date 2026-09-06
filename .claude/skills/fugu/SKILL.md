@@ -293,7 +293,14 @@ Not executable — always via `.venv/bin/python3`; always `timeout`-wrapped (it 
 `grep -a` (stream has binary bytes). **`^V=` above IS the status line** — drop it to read command
 replies, KEEP it (`grep -a '^V='`) to read rig state, which lives nowhere else: `V=Vin/Vout`,
 `I=Iin/Iout`, W, both temps, `sps`, `CCM|DCM(H|L|Lm)=` counts, `st=` mode, `lag`, `N`. `status`
-alone reports limits and averages, not the operating point. Batched replies interleave with log
+alone reports limits and averages, not the operating point. **Take the status line with `tail -1`,
+never `head -1`**: a session opens by replaying the board's log ring, so the FIRST matching line is
+HISTORY and can predate a reboot. Measured 2026-09-06: a `head -1` read returned
+`V= nan/nan … −273℃ … 0sps … DCM(H|L|Lm)= 8|330|330 … N=0` — a previous boot's operating point —
+while the live board was at `N=884307` with 1957 s uptime. **The staleness tell is `N` against
+uptime**: `N` counts samples since boot (~451 sps), so a small `N` beside a large uptime is a
+replayed line. The same trap eats section headers: a pattern like `"pwm-freq "` also matches
+`=== pwm-freq ===`, so with `head -N` the header fills a slot the real reply needed. Batched replies interleave with log
 output and can
 **fabricate** errors (`Command not found` next to the correct reply) — re-send singly before
 trusting an `ERR:`, or quiet the board first (`log <tag> error`). A read batched right after a
