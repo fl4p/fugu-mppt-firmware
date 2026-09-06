@@ -84,7 +84,7 @@ void loggingEnableDefer() {
     deferLogs = true;
 }
 
-void addLogCallback(LogCallback callback) {
+void addLogCallback(LogCallback callback, bool replayBootLog) {
     if (!callback) return;
     bool full = false;
     size_t replayLen = 0;
@@ -96,7 +96,9 @@ void addLogCallback(LogCallback callback) {
         if (logCallbackCount >= kMaxLogCallbacks) full = true;
         else logCallbacks[logCallbackCount++] = callback;
     }
-    if (!dup && !full) { replayLen = s_bootLogLen; s_bootLogOpen = false; } // freeze backlog, replay below
+    // Freeze the backlog on any first attach (a later sink must not capture a partial tail),
+    // but only hand it to sinks that asked for it.
+    if (!dup && !full) { if (replayBootLog) replayLen = s_bootLogLen; s_bootLogOpen = false; }
     portEXIT_CRITICAL(&logCbMux);
     if (full) ESP_LOGW("log", "log callback table full, dropping"); // log outside the lock
     // Replay the captured boot backlog to the freshly-attached sink (outside the lock; capture is

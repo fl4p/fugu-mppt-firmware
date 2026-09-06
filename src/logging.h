@@ -47,6 +47,10 @@ void set_logging_telnet(ESPTelnet *telnet);
 // receives every muxed log line on core 0. addLogCallback dedupes and ignores nullptr.
 typedef void (*LogCallback)(const char *str, uint16_t len);
 
-void addLogCallback(LogCallback callback);
+// replayBootLog=false suppresses the one-shot boot-backlog replay for this sink. Pass false for
+// interactive/scripted consoles: the replay is sized for MQTT (attaches late, wants the boot
+// sequence), but on a console it dumps up to 8 KB into the transport at connect -- which on BLE
+// pushes the log mirror over its half-FIFO cap and silently eats the NEXT command's result line.
+void addLogCallback(LogCallback callback, bool replayBootLog = true);
 
 void removeLogCallback(LogCallback callback);

@@ -116,6 +116,12 @@ static bool lastNotifyOk = true;             // set by TxCallbacks::onStatus, re
 // controller assert lld_con.c:3275 (r_lld_con_param_update). We instead request it once from the
 // network-loop drain after the window, off the host callback. Backpressure tolerates the brief
 // slow-interval drain before the faster interval applies.
+// Command results (pwm-freq, sync, dt, status, ...) are emitted with UART_LOG, so they travel the
+// LOG path and are subject to the half-FIFO cap above -- a client can lose a reply with no error
+// and no gap, and cannot tell a command that failed from one whose answer was discarded. Until
+// results get their own channel, at least make the loss visible: latch a drop and emit one marker
+// once the backlog clears, through bleWrite (full FIFO) so the marker itself cannot be dropped.
+static bool logDropped = false;
 static volatile bool txArmSettle = false;
 static volatile bool connParamsPending = false;
 static time_ms txConnectMs = 0;
@@ -176,6 +182,11 @@ static void bleTxDrain(time_ms nowMs) {
         txHead += n;
     }
     if (txHead == txBuf.size()) { txBuf.clear(); txHead = 0; }
+    if (logDropped && txBuf.size() - txHead < TX_BUF_CAP / 4) {
+        logDropped = false; // clear first: bleWrite re-enters nothing, but keep it re-armable
+        static const char marker[] = "\r\n[log output dropped - a command result may be missing]\r\n";
+        bleWrite(marker, sizeof(marker) - 1);
+    }
 }
 
 // Mirror logs to the connected client (registered as a log sink on connect, like telnet). Just queues;
@@ -185,7 +196,7 @@ static void bleTxDrain(time_ms nowMs) {
 // the buffer and starve console replies — the client sees its commands time out (rpi bridge 8-05).
 static void bleLogWrite(const char *str, uint16_t len) {
     std::lock_guard<std::recursive_mutex> lk(txMutex);
-    if (txBuf.size() - txHead + len > TX_BUF_CAP / 2) return;
+    if (txBuf.size() - txHead + len > TX_BUF_CAP / 2) { logDropped = true; return; }
     bleWrite(str, len);
 }
 
@@ -210,7 +221,7 @@ class FwRxCallbacks : public BLECharacteristicCallbacks {
 class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer *s) override {
         deviceConnected = true;
-        addLogCallback(bleLogWrite);
+        addLogCallback(bleLogWrite, false); // no boot replay: it floods the FIFO and eats the next result
         // Defer the fast-interval connection-param request to the network-loop drain (see TX_SETTLE_MS
         // note): requesting it here, in the host connect callback, trips controller assert lld_con.c:3275.
         connParamsPending = true;
