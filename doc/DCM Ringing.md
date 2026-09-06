@@ -200,7 +200,7 @@ the LS FET turns off:
   this project — the existing `SynchronousConverter` (`src/buck.h`) already computes
   diode-emulation timing; a brief LS-FET re-trigger pulse at the first ring valley
   (~T_ring/4 after LS-off) could be added. **The valley time is per-board** — see the
-  C_sw table above: ~125–250 ns on fry/flat, but **~780 ns on flu** (measured
+  C_sw table above: ~125–192 ns on fry/flat (estimate, unverified), but **~780 ns on flu** (measured
   2026-09-06). A re-trigger hard-coded to the fry/flat timing would fire at roughly the
   ring's peak on flu, i.e. pump energy in rather than clamp it out, so this delay must be
   derived from the board's own `L0` and its FET population, not from a constant. **fbuck has
