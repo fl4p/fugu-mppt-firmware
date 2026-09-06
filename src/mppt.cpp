@@ -271,6 +271,10 @@ void MpptController::update() {
         // constrain the buck step, this will slow down control for lower loop rates:
         // this causes very slow load response time, but works well when battery is connected
         fp = constrain(fp, -(float) converter.getCtrlOnPwmCnt(), 16.0f * (float) converter.pwmCtrlMax / 2000.f);
+        // Same hold as updateManual(): while the forced-PWM gate is counting, the duty must stand
+        // still or it outruns both the hold and the EWMA voltages the gate is judging it against.
+        // Upward only - a limiter or the tracker must always be able to back off.
+        if (fp > 0 && converter.forcedPwmGateArming()) fp = 0;
         converter.pwmPerturbFractional(fp);
 
         if (controlValue < -80 and fp < -0.01 and converter.getCtrlOnPwmCnt() > converter.getCtrlOnPwmMin()) {
@@ -347,6 +351,12 @@ void MpptController::updateManual() {
             }
         }
         int16_t step = constrain((int32_t)target - (int32_t)converter.getCtrlOnPwmCnt(), -rampStep, rampStep);
+        // Hold the duty while the forced-PWM gate counts out its hold - upward only, a retreat is
+        // never blocked. The gate compares an instantaneous duty against EWMA-filtered voltages; if
+        // the duty kept climbing through the wait (rampStep counts per ADC sample) it would both
+        // outrun those filters and pile on current that the still-diode-emulating LS carries in its
+        // body diode.
+        if (step > 0 && converter.forcedPwmGateArming()) return;
         if (step) converter.pwmPerturb(step);
     }
 }

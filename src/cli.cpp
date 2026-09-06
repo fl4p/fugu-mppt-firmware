@@ -112,18 +112,39 @@ static const char *psuErrorText(PsuSetpointError error) {
 }
 
 static void cmdSync(cmd *c) {
+    auto arg = Command(c).getArg(0).getValue();
+    if (arg.isEmpty()) {
+        const char *fpwm = !converter.forcedPwmRequested()
+                               ? "off"
+                               : (!converter.forcedPwmGateEnabled()
+                                      ? "on (ungated)"
+                                      : (converter.forcedPwmGateArming()
+                                             ? "arming"
+                                             : (converter.forcedPwmGated() ? "armed" : "engaged")));
+        UART_LOG("sync rect %s, forced pwm %s (D=%.3f, engage>=%.3f) pwmLS=%hu",
+                 converter.syncRectEnabled_() ? "on" : "off", fpwm,
+                 converter.dutyCtrlEff(), converter.forcedPwmEngageDuty(),
+                 converter.getRectOnPwmCnt());
+        return;
+    }
     if (!g_app.manualPwm())
         CMD_FAIL_RETURN("sync: only in manual PWM (use 'dc N' first)");
-    auto arg = Command(c).getArg(0).getValue();
     auto on = arg == "on" or arg == "1";
     if (on or arg == "off" or arg == "0") {
         converter.forcedPwm_(false);
         converter.enableSyncRect(on, true);
-    } else if (arg == "forced") {
+    } else if (arg == "forced" or arg == "forced!") {
+        // Plain `forced` arms the bring-up gate: the LS stays diode-emulating until the duty is
+        // above the voltage ratio, so a ramp from 0 cannot boost back into the source. `forced!`
+        // engages immediately - only for an output that cannot sink (open output, no loop).
+        const bool immediate = (arg == "forced!");
+        converter.forcedPwm_(true, immediate);
         converter.enableSyncRect(true);
-        converter.forcedPwm_(true);
+        if (!immediate && converter.forcedPwmGated())
+            UART_LOG("forced PWM armed, engages above D=%.3f (now %.3f)",
+                     converter.forcedPwmEngageDuty(), converter.dutyCtrlEff());
     } else {
-        CMD_FAIL_RETURN("sync: expected on|off|forced");
+        CMD_FAIL_RETURN("sync: expected on|off|forced|forced!");
     }
 }
 

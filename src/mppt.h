@@ -198,6 +198,7 @@ public:
     // Written by console/self-test tasks and consumed by the RT loop. The target itself is the
     // mailbox; PWM hardware remains RT-owned.
     std::atomic<uint16_t> manualTarget{0};
+    uint32_t lastVoutSamples = 0; // RT only, edge-detects fresh Vout data for the forced-PWM gate
 
 private:
     bool _sweeping = false; // global scan
@@ -747,13 +748,23 @@ public:
         float vOut = sensors.Vout->ewm.avg.get();
         float vIn = sensors.Vin->ewm.avg.get();
         // TODO smoothing!
+        // protect() runs on every loop pass, but vIn/vOut only move when the sampler produces new
+        // data - the forced-PWM gate measures its hold in voltage samples, so tell it which is which.
+        const uint32_t voutSamples = sensors.Vout->numSamples;
+        const bool freshV = (voutSamples != lastVoutSamples);
+        lastVoutSamples = voutSamples;
         auto vr = converter.updateSyncRectMaxDuty(
-            vIn, vOut, converter.boost() ? sensors.Iin->ewm.avg.get() : sensors.Iout->ewm.avg.get());
+            vIn, vOut, converter.boost() ? sensors.Iin->ewm.avg.get() : sensors.Iout->ewm.avg.get(),
+            freshV);
 
         auto iOutSmall = sensorPhysicalI->ewm.avg.get() < (limits.Iout_max * 0.01f);
 
         if (iOutSmall && converter.getCtrlOnPwmCnt() > converter.pwmRectMin * 2 and
-            (converter.forcedPwm_()
+            // Requested, not gated: a board that asks for forced PWM does so because its current
+            // sensor is unusable, and iOutSmall is then permanently true. Judging it by the strict
+            // branch while the bring-up gate is still armed trips this mid-ramp - the more so as
+            // getDutyCycle() normalizes to pwmCtrlMax, ~8.5% short of a period on a buck.
+            (converter.forcedPwmRequested()
                  ? (vOut < 1 or (converter.getDutyCycle() * 0.5f) > vr)
                  : (converter.getDutyCycle() * 0.8f) > vr)
             and limits.reverse_current_paranoia

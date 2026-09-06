@@ -118,11 +118,63 @@ class SynchronousConverter {
     bool rectDither = true; // false: plain round() (fallback)
     int16_t rectOnOffset = 0; // DCM LS-count dead-time/gate-delay offset (counts; >0 = LS off later, toward zero crossing)
 
+    bool syncRectOffHyst = false; // latched: sync rect disabled by low current, needs 4x to re-arm
     float outInVoltageRatio = 0; // M
     float directionFloatBuffer = 0.0f; // fractional perturbation buffer
 
     bool isBoost = false;
-    bool forcedPwm = false;
+    // Requested forced-PWM mode (converter.conf::forced_pwm, `sync forced`). What actually reaches
+    // the diode-emulation logic is forcedPwm_() - see the bring-up gate below. Atomic because it is
+    // published from core 0 (console) and read on core 1 by the protections.
+    std::atomic<bool> forcedPwm{false};
+
+    // Forced-PWM bring-up gate. Forced PWM makes the rect switch complementary, so the DC coil
+    // current is (D*Vin - Vout)/R_loop with R_loop only the DCR+Rds: while the commanded duty is
+    // still below the voltage ratio the converter pumps current BACKWARDS, out of the output node
+    // and into the input - a buck boosting into its source. Against a stiff output (a supply, a
+    // battery, the input node of a power-loop rig) that is hundreds of amps, so a duty ramp from 0
+    // in forced PWM is destructive. The gate holds forced PWM off until the commanded duty has
+    // risen past the measured ratio (i.e. until the converter is in CCM and conducting forward),
+    // and drops it again on the way down.
+    bool fpwmGate = true; // converter.conf::fpwm_gate, 0 disables (engage forced PWM immediately)
+    float fpwmGateMargin = 0.01f; // duty margin above the ratio required to engage
+    // Consecutive passing samples before engaging. Sized against the VOLTAGE FILTER, not against
+    // noise: protect() feeds the gate EWMA averages (vin/vout_filt_len, 60 by default) while the
+    // duty it compares them to is instantaneous. On a sustained ramp that lag is a steady-state
+    // error, not a transient - a bus sagging under the rising load reports Vin too high, which
+    // understates the zero-current duty and would engage early, into reverse current. The hold is
+    // only a defence against it because MpptController::updateManual() FREEZES the ramp while the
+    // gate is arming (forcedPwmGateArming()), so the filters actually catch up during the wait.
+    uint16_t fpwmGateHold = 192; // converter.conf::fpwm_gate_hold
+    // The gate state lives on the RT core. Other cores only PUBLISH a request, as one word so the
+    // sequence and its payload cannot be observed apart: [31:1] seq, [0] immediate. Two publishers
+    // exist (the console, and disable() which is reachable from core 0 via startSweep), so the word
+    // is written with a compare-exchange, never a plain store.
+    static constexpr uint32_t kFpwmImmediate = 1u;
+
+    // Publish a gate request: bump the sequence and set the payload in ONE word, so the RT core
+    // cannot pair a new sequence with someone else's payload.
+    void fpwmPublish(bool immediate) {
+        uint32_t cur = fpwmReqWord.load(std::memory_order_relaxed), next;
+        do {
+            next = ((cur & ~kFpwmImmediate) + 2u) | (immediate ? kFpwmImmediate : 0u);
+        } while (!fpwmReqWord.compare_exchange_weak(cur, next, std::memory_order_release,
+                                                    std::memory_order_relaxed));
+    }
+
+    std::atomic<uint32_t> fpwmReqWord{0};
+    std::atomic<bool> fpwmEngaged{false}; // gate output, RT-written, read from both cores
+    std::atomic<bool> fpwmUngated{false}; // `sync forced!` override in effect
+    std::atomic<uint16_t> fpwmGateCnt{0}; // RT-written; read from core 0 by forcedPwmGateArming()
+    uint32_t fpwmAckWord = 0; // RT only
+    // Consecutive FRESH voltage samples with pwmCtrl unchanged. Atomic because the console reads it
+    // through forcedPwmGateArming()/forcedPwmEngageDuty() on core 0.
+    std::atomic<uint16_t> fpwmStillCnt{0};
+    uint16_t fpwmLastCtrl = 0; // RT only
+    // Thresholds, RT-written, read from core 0 to print them - atomic so that is not a data race.
+    std::atomic<float> fpwmEngageDuty{NAN}; // engage at/above this while the duty is still moving
+    std::atomic<float> fpwmConvergeDuty{NAN}; // engage at/above this once the duty has stopped
+    std::atomic<float> fpwmDropDuty{NAN}; // disengage below this
 
     float fL = NAN; // fsw * L
     float coilL0 = 0; // retained from coil.conf so logConfig() can re-emit the config line
@@ -509,9 +561,54 @@ public:
 
     [[nodiscard]] bool boost() const { return isBoost; }
 
-    [[nodiscard]] bool forcedPwm_() const { return forcedPwm; }
+    // The effective mode: what the diode-emulation logic and the reverse-current protections see.
+    [[nodiscard]] bool forcedPwm_() const {
+        return forcedPwm.load(std::memory_order_relaxed)
+               && (!fpwmGate || fpwmEngaged.load(std::memory_order_relaxed));
+    }
 
-    void forcedPwm_(bool forced) { forcedPwm = forced; }
+    // The requested mode (what the console/config asked for), independent of the bring-up gate.
+    // Use this where the question is "is this board configured to run without diode emulation",
+    // e.g. because its current sensor cannot be trusted - not "is the LS complementary right now".
+    [[nodiscard]] bool forcedPwmRequested() const { return forcedPwm.load(std::memory_order_relaxed); }
+
+    // False when this converter is not gated at all: fpwm_gate=0, or an `sync forced!` override.
+    [[nodiscard]] bool forcedPwmGateEnabled() const {
+        return fpwmGate && !fpwmUngated.load(std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] bool forcedPwmGated() const {
+        return forcedPwmRequested() && fpwmGate && !forcedPwm_();
+    }
+
+    // True while the gate has a passing duty and is counting out its hold: the duty must stay put
+    // until it decides, or the ramp outruns both the hold and the voltage filters behind it.
+    // `!disabled()` is not cosmetic: main.cpp skips protect() - and with it the whole gate - while
+    // the converter is off, so a counter left standing by a protection trip would otherwise freeze
+    // the restart ramp forever, with nothing left running to clear it.
+    [[nodiscard]] bool forcedPwmGateArming() const {
+        return !disabled() && forcedPwmGated() && fpwmGateCnt.load(std::memory_order_relaxed) > 0;
+    }
+
+    [[nodiscard]] bool forcedPwmSettled() const {
+        return fpwmStillCnt.load(std::memory_order_relaxed) >= fpwmGateHold;
+    }
+
+    // Duty the gate needs to see before it engages forced PWM, for the situation it is actually in:
+    // a settled converter is judged against the converge floor, a moving one against the forward
+    // threshold. NAN until the ratio is measurable.
+    [[nodiscard]] float forcedPwmEngageDuty() const {
+        return (forcedPwmSettled() ? fpwmConvergeDuty : fpwmEngageDuty).load(std::memory_order_relaxed);
+    }
+
+    // Core 0 (console). Publishes the request only - the gate's latch and counter belong to the RT
+    // core, which picks the change up on its next update. `immediate` skips the bring-up gate: only
+    // safe when the operating point is already known to be forward-conducting (or the output cannot
+    // sink, e.g. an open output on the bench).
+    void forcedPwm_(bool forced, bool immediate = false) {
+        forcedPwm.store(forced, std::memory_order_relaxed);
+        fpwmPublish(forced && immediate);
+    }
 
     [[nodiscard]] bool syncRectEnabled_() const { return syncRectEnabled; }
 
@@ -1015,9 +1112,16 @@ public:
         assert_throw(topo == "buck" or topo == "boost", "");
         isBoost = topo == "boost";
         forcedPwm = converterConf.getByte("forced_pwm", 0);
+        fpwmGate = converterConf.getByte("fpwm_gate", 1);
+        fpwmGateMargin = converterConf.getFloat("fpwm_gate_margin", 0.01f);
+        if (!(fpwmGateMargin >= 0.f && fpwmGateMargin < 0.5f)) fpwmGateMargin = 0.01f;
+        fpwmGateHold = (uint16_t) std::clamp(converterConf.getLong("fpwm_gate_hold", 192), 1L, 65535L);
+        fpwmEngaged.store(false, std::memory_order_relaxed);
+        fpwmGateCnt = 0;
 
         if (forcedPwm)
-            ESP_LOGW("converter", "%s", "forced_pwm");
+            ESP_LOGW("converter", "forced_pwm (gate %s, margin %.3f, hold %hu)",
+                     fpwmGate ? "on" : "OFF", fpwmGateMargin, fpwmGateHold);
 
 #if defined(HAVE_MCPWM) && defined(HAVE_LEGACY)
         {
@@ -1198,6 +1302,7 @@ public:
         }
 
         pwmCtrl = constrain(pwmCtrl + direction, pwmCtrlMin, pwmCtrlMax);
+        if (direction < 0) fpwmRecheckAfterStep();
 
 
         bool largerDecrease = (-direction > driverPwmMax / 50);
@@ -1208,13 +1313,13 @@ public:
             pwmRect = (uint16_t) constrain(manualRect, (int) pwmRectMin,
                                            (int) (driverPwmMax - pwmCtrl - 1));
         } else {
-            if (largerDecrease && !forcedPwm)
+            if (largerDecrease && !forcedPwm_())
                 // assume DCM as it will always give equal or less pwmRectMax
                 dcmHysteresis = true;
 
             computePwmRectMax();
 
-            if (largerDecrease && !forcedPwm) {
+            if (largerDecrease && !forcedPwm_()) {
                 // we don't know if we end up in CCM/DCM, so set rect duty cycle to min
                 // let the converter and sensors converge
                 if (pwmRect > pwmRectMin + (driverPwmMax / 64))
@@ -1259,6 +1364,13 @@ public:
         auto directionInt = (int16_t) (directionFloat);
         if (directionInt != 0)
             pwmPerturb(directionInt);
+        else if (forcedPwm_() && pwmRect < pwmRectMax)
+            // The LS fade lives in pwmPerturb(), and this is the one caller that can stop reaching
+            // it: a controller sitting at equilibrium truncates to a zero integer step forever.
+            // Manual PWM has main.cpp's per-tick pwmPerturb(0) for this; the automatic modes would
+            // otherwise engage forced PWM and leave the low side at its diode-emulation minimum,
+            // carrying the current in the body diode. Zero step, so pwmCtrl does not move.
+            pwmPerturb(0);
         directionFloatBuffer += directionFloat - (float) directionInt;
     }
 
@@ -1273,6 +1385,11 @@ public:
         pwmCtrl = 0;
         pwmRect = 0;
         syncRectEnabled = false;
+        // A restart ramps from 0 again and must re-earn forced PWM - including an `sync forced!`
+        // override. disable() is reachable from core 0 (startSweep), so go through the request word
+        // rather than the RT-owned state.
+        fpwmEngaged.store(false, std::memory_order_relaxed);
+        fpwmPublish(false);
     }
 
 
@@ -1291,7 +1408,7 @@ public:
         auto ir = rippleCurrent(vh, vl);
         auto dcm = ir > il * (dcmHysteresis ? DcmExitRippleRatio : DcmEnterRippleRatio)
                    || il < DcmForceCurrent;
-        if (forcedPwm) dcm = false;
+        if (forcedPwm_()) dcm = false;
         if (dcm != dcmHysteresis) {
             dcmHysteresis = dcm;
             UART_LOG("converter: %s -> %s (M=%.2f, I=%.2f, ∆I/2=%.2f, pwm=%hu)",
@@ -1362,22 +1479,194 @@ public:
         outInVoltageRatio = convRatioWCE;
 
         if (computeDCM(vh, vl, il)) {
-            if (il < SyncRectOffCurrent || vl < SyncRectOffVoltage) {
+            // Hysteresis on the off-current test. Without it a current reading that sits ON the
+            // threshold - a dead or common-mode-defeated sensor hovering at 0.00/0.01 A, which is
+            // the normal case on a power-loop board - flaps the LS between OFF and the full DCM
+            // freewheel window every few seconds. That window is t_on*(1/M-1), the CCM freewheel
+            // time, so at genuinely zero DC current it holds the LS on long past the zero crossing
+            // and builds Vout*t/L of REVERSE current before the next sample clamps it back.
+            // <= on the un-latched test: a dead or quantized sensor pinned at exactly
+            // SyncRectOffCurrent would never enter the latch under a strict <, and the sawtooth
+            // this hysteresis exists to stop would come back after every cold start.
+            if (syncRectOffHyst ? (il < SyncRectOffCurrent * 4.f || vl < SyncRectOffVoltage)
+                                : (il <= SyncRectOffCurrent || vl < SyncRectOffVoltage)) {
+                syncRectOffHyst = true;
                 if (pwmRectRatioDCM > 0.2f && pwmRect > pwmRectMin)
                     ESP_LOGI("converter", "Disable sync rect, low I(%.2f)/V(%.2f) pwm=%hu|%hu", il,
                          vl, pwmCtrl, pwmRect);
                 pwmRectRatioDCM = 0.0f;
             } else {
+                syncRectOffHyst = false;
                 pwmRectRatioDCM = rectCtrlRatio(convRatioWCE);
                 //if(dcmHysteresis)pwmRectRatioDCM = min(pwmRectRatioDCM, 1.5f); // TODO
             }
         }
     }
     
-    const float &updateSyncRectMaxDuty(float vin, float vout, float il) {
+    /**
+     * Effective duty cycle of the ctrl switch: the fraction of the period the coil sees the full
+     * input voltage. Neither dead-band is taken out of it (see below); the one-tick FED on the ctrl
+     * generator makes the realized on-time one tick LONGER than the commanded count, so this
+     * expression underestimates the duty by ~0.02 % - the safe direction for the gate below, which
+     * must not think the converter drives harder than it does.
+     */
+    [[nodiscard]] float dutyCtrlEff() const {
+        // Denominator is the full timer period, NOT driverPwmMax: the LS->HS dead-band is reserved
+        // in software by pwmMax = periodTicks - dtLh (mcpwm.h), so driverPwmMax is already short of
+        // a period. Numerator is the raw count: neither dead-band comes out of the ctrl switch -
+        // it is genHS_ in both topologies, HIGH at TEZ and LOW at cmpHS, while dtHl delays the RECT
+        // rising edge and dtLh is the reserved wrap band. (The 1-tick FED that claims the DT path
+        // makes the realized on-time one tick longer; ignoring it understates the duty, which is
+        // the safe direction for the gate.)
+        const float period = (float) driverPwmMax + (float) drvDtLhTicks();
+        if (!(period > 0.f)) return 0.f;
+        return (float) pwmCtrl / period;
+    }
+
+    /**
+     * Bring-up gate for forced PWM (see fpwmGate). Zero DC coil current sits at D = M for the buck
+     * and D = 1 - 1/M for the boost, M being the ratio of the two side voltages. Below that duty a
+     * complementary rect switch pulls current out of the low side and pushes it into the high side;
+     * the only thing limiting it is the loop resistance (DCR + Rds, milliohms), so against a stiff
+     * output "a bit below" is already hundreds of amps. Engage forced PWM only above that duty,
+     * plus the worst-case ratio error and a configured margin, and drop it again below.
+     *
+     * @param vh higher-voltage side (buck: Vin)
+     * @param vl lower-voltage side (buck: Vout)
+     */
+    void updateForcedPwmGate(float vh, float vl, bool freshV) {
+        // vh > vl is not pedantry: with it the ratio is a real conversion ratio and dZero lands in
+        // (0,1). Without it - a boost whose output cap still sits at Vin through the HS body diode,
+        // or a mis-scaled Vout sensor - r > 1 makes the boost's dZero NEGATIVE and every duty looks
+        // like it passes, which is precisely the state the gate exists to refuse. Same guard
+        // computeSyncRectRatio() carries one call later.
+        const bool ratioOk = (vh > MinRatioVoltage) && (vl > MinRatioVoltage) && (vh > vl);
+        if (ratioOk) {
+            // Worst case on a ratio of two independently measured voltages, the same per-sensor
+            // error the diode emulation assumes (voltageMaxErr in computeSyncRectRatio - keep the
+            // two in step). Note the error term is r*kErr for BOTH topologies: for the buck
+            // dZero == r, but for the boost dZero = 1-r and its absolute error is still r*kErr,
+            // not dZero*kErr (which would be too small by r/(1-r)).
+            // Exact worst case on a ratio of two independently measured voltages, the SAME model
+            // computeSyncRectRatio() uses (voltageMaxErr / voltageRatioWCEF) - keep the two in step.
+            constexpr float kErr = (1.f + 0.01f) / (1.f - 0.01f) - 1.f;
+            const float r = vl / vh;
+            const float dZero = isBoost ? (1.f - r) : r; // duty at zero DC coil current
+            const float err = r * kErr;
+            // Three thresholds, because there are two different ways to deserve forced PWM.
+            //
+            // WHILE THE DUTY IS STILL MOVING the only safe test is "provably forward":
+            // dZero+err+margin. A ramp that has not reached its operating point yet may be climbing
+            // toward a stiff output, and engaging below dZero there is the destructive case.
+            //
+            // ONCE THE DUTY HAS STOPPED MOVING the situation is different: the converter has
+            // settled, and a settled converter with no load sits at D == dZero BY DEFINITION (that
+            // is what zero current means). Refusing forced PWM there would refuse it exactly where
+            // it is both harmless and wanted - a bench converter parked at the ratio is steerable
+            // only in forced PWM, since diode emulation cannot pull the output down. So a settled
+            // duty engages from dZero-err: converged onto the ratio from below, not ramping at it.
+            fpwmEngageDuty.store(dZero + err + fpwmGateMargin, std::memory_order_relaxed);
+            fpwmConvergeDuty.store(dZero - err, std::memory_order_relaxed);
+            // Disengage a margin below the converge floor, so steering by single counts does not
+            // chatter the gate while a ramp away from the operating point still drops it promptly.
+            fpwmDropDuty.store(dZero - err - fpwmGateMargin, std::memory_order_relaxed);
+        } else {
+            fpwmEngageDuty.store(NAN, std::memory_order_relaxed);
+            fpwmConvergeDuty.store(NAN, std::memory_order_relaxed);
+            fpwmDropDuty.store(NAN, std::memory_order_relaxed);
+        }
+
+        // Duty-still tracking. pwmPerturb(0) runs every RT tick in manual PWM (main.cpp) without
+        // moving pwmCtrl, so "still" here means the operating point, not the absence of calls.
+        // Counted in FRESH Vin/Vout samples only: protect() runs on every loop pass, not only on
+        // new data, so counting calls would let a stale EWMA pair be mistaken for a settled one and
+        // would break the whole point of the hold, which is to let those filters catch up.
+        if (pwmCtrl != fpwmLastCtrl) {
+            fpwmLastCtrl = pwmCtrl;
+            fpwmStillCnt.store(0, std::memory_order_relaxed);
+        } else if (freshV) {
+            const uint16_t n = fpwmStillCnt.load(std::memory_order_relaxed);
+            if (n < 0xffff) fpwmStillCnt.store((uint16_t) (n + 1), std::memory_order_relaxed);
+        }
+
+        // Consume a request (core 0 console, or disable() from either core). Sequence and payload
+        // come from one word, so they cannot be mismatched.
+        const uint32_t req = fpwmReqWord.load(std::memory_order_acquire);
+        if (req != fpwmAckWord) {
+            fpwmAckWord = req;
+            fpwmGateCnt.store(0, std::memory_order_relaxed);
+            const bool ungated = forcedPwmRequested() && (req & kFpwmImmediate);
+            fpwmUngated.store(ungated, std::memory_order_relaxed);
+            fpwmEngaged.store(ungated, std::memory_order_relaxed);
+        }
+
+        // fpwmUngated: an explicit `sync forced!` stays engaged. Evaluating it would drop it again
+        // on the very next sample, which is the opposite of what the operator asked for.
+        if (!forcedPwmRequested() || !fpwmGate || fpwmUngated.load(std::memory_order_relaxed)) return;
+        const bool was = fpwmEngaged.load(std::memory_order_relaxed);
+        const float d = dutyCtrlEff();
+
+        // NAN thresholds compare false, so !ratioOk is handled explicitly: no ratio, no engagement.
+        if (!ratioOk || pwmCtrl <= pwmCtrlMin || d < fpwmDropDuty.load(std::memory_order_relaxed)) {
+            fpwmGateCnt.store(0, std::memory_order_relaxed);
+            fpwmEngaged.store(false, std::memory_order_relaxed);
+            if (was)
+                UART_LOG("Forced PWM disengaged: D=%.3f < %.3f (%.2f/%.2f V)", d,
+                         fpwmDropDuty.load(std::memory_order_relaxed), vl, vh);
+            return;
+        }
+        if (was) return;
+
+        // Settled means settled for the whole hold, which is also what lets the EWMA voltages catch
+        // up with the duty they are being compared against.
+        const bool settled = fpwmStillCnt.load(std::memory_order_relaxed) >= fpwmGateHold;
+        if (d < (settled ? fpwmConvergeDuty.load(std::memory_order_relaxed)
+                         : fpwmEngageDuty.load(std::memory_order_relaxed))) {
+            fpwmGateCnt.store(0, std::memory_order_relaxed);
+            return;
+        }
+        if (!freshV) return; // same reason as fpwmStillCnt: hold is measured in voltage samples
+        const uint16_t cnt = (uint16_t) (fpwmGateCnt.load(std::memory_order_relaxed) + 1);
+        fpwmGateCnt.store(cnt, std::memory_order_relaxed);
+        if (cnt < fpwmGateHold) return;
+        fpwmEngaged.store(true, std::memory_order_relaxed);
+        UART_LOG("Forced PWM engaged %s: D=%.3f >= %.3f (%.2f/%.2f V, pwm=%hu)",
+                 settled ? "settled" : "forward", d,
+                 (settled ? fpwmConvergeDuty : fpwmEngageDuty).load(std::memory_order_relaxed),
+                 vl, vh, pwmCtrl);
+    }
+
+    // Re-test the drop threshold against a duty that is ABOUT TO BE COMMITTED. The gate itself runs
+    // once per sample in protect(), before the control update picks the new duty, so a single step
+    // (and the control loop may step all the way down to zero in one go) would otherwise be
+    // committed with a complementary rect window that the new duty no longer justifies - one full
+    // control interval of reverse current. Called from pwmPerturb() after pwmCtrl moves and before
+    // the rect window is recomputed.
+    void fpwmRecheckAfterStep() {
+        if (!fpwmGate || fpwmUngated.load(std::memory_order_relaxed)) return;
+        if (!fpwmEngaged.load(std::memory_order_relaxed)) return;
+        const float d = dutyCtrlEff();
+        const float drop = fpwmDropDuty.load(std::memory_order_relaxed);
+        if (d >= drop) return; // NAN: no ratio, so no basis to stay engaged either
+        fpwmEngaged.store(false, std::memory_order_relaxed);
+        fpwmGateCnt.store(0, std::memory_order_relaxed);
+        // Clearing the latch is not enough to clamp the rect switch. While forced PWM was engaged
+        // computeDCM() held dcmHysteresis false, and an ordinary -1/-8 step is not a largerDecrease,
+        // so the computePwmRectMax() that runs next in this very pwmPerturb() would still hand back
+        // the CCM complementary window and commit it - one more control interval at full reverse
+        // current, which is exactly what this recheck exists to prevent. Put the converter back into
+        // the DCM state the sensorless path assumes: with the ratio zeroed, computePwmRectMax()
+        // yields pwmRectMin and the fade below clamps pwmRect to it in the same call.
+        dcmHysteresis = true;
+        pwmRectRatioDCM = 0.0f;
+        UART_LOG("Forced PWM disengaged on step: D=%.3f < %.3f", d, drop);
+    }
+
+    const float &updateSyncRectMaxDuty(float vin, float vout, float il, bool freshV = true) {
         auto &vh(isBoost ? vout : vin);
         auto &vl(isBoost ? vin : vout);
 
+        updateForcedPwmGate(vh, vl, freshV);
         computeSyncRectRatio(vh, vl, il);
         if (manualRect >= 0) return outInVoltageRatio; // bench: hold manual LS, skip clamp
         computePwmRectMax();
@@ -1399,7 +1688,10 @@ public:
      * @param enable
      */
     void enableSyncRect(bool enable, bool overwriteFPWM = false) {
-        if (forcedPwm && !overwriteFPWM) enable = true;
+        // Requested, not gated: while the gate is still armed the LS window is bounded by diode
+        // emulation anyway, and letting a low-current auto-mode tick switch sync rect OFF here
+        // would leave the fade-in inert after the gate finally engages.
+        if (forcedPwmRequested() && !overwriteFPWM) enable = true;
         if (enable != syncRectEnabled) {
             UART_LOG("Sync rect %s", enable ? "enabled" : "disabled");
         }

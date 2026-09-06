@@ -321,6 +321,9 @@ const META = {
   // converter.conf
   topo:{unit:"",desc:"Converter topology: buck or boost",type:"enum"},
   forced_pwm:{unit:"",desc:"Force CCM PWM even at light loads (1=on)",type:"bool"},
+  fpwm_gate:{unit:"",desc:"Hold forced PWM off until the duty reaches the voltage ratio (bring-up gate)",type:"bool"},
+  fpwm_gate_margin:{unit:"",desc:"Duty margin the forced-PWM gate requires on top of the measured ratio",type:"float"},
+  fpwm_gate_hold:{unit:"",desc:"Samples of passing duty before the forced-PWM gate engages (ramp held meanwhile)",type:"long"},
   sync_role:{unit:"",desc:"Wired MCPWM clock sync (WITH_WSYNC): none, leader or follower",type:"enum"},
   sync_phase_deg:{unit:"deg",desc:"Leader only: pulse offset as an angle (180 = interleave); ignored on follower",type:"float"},
   sync_phase_ns:{unit:"ns",desc:"Leader only: additive trim on sync_phase_deg for wire propagation delay",type:"float"},
@@ -451,7 +454,7 @@ const FILE_KEYS = {
   "converter.conf":["ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
     "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
     "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td",
-    "forced_pwm","mode","psu_vout","pv_iout_span","pv_isc","pv_k","pv_slew","pv_voc",
+    "forced_pwm","fpwm_gate","fpwm_gate_hold","fpwm_gate_margin","mode","psu_vout","pv_iout_span","pv_isc","pv_k","pv_slew","pv_voc",
     "pwm_driver","sync_phase_deg","sync_phase_ns","sync_role","topo"],
   "charger.conf":["bat_c","cv_ceiling","cv_eoc","cv_float","ibat_max","recharge_dod","recharge_vfloor_band","tail_c_rate","vout_max",
     "vout_max_fallback","vout_offset_max"],
@@ -474,13 +477,13 @@ const FILE_KEYS = {
    (getByte/getLong/getFloat/getString), determined by grepping src/. */
 // SCRAPER:BEGIN TYPE_KEYS
 const TYPE_KEYS = {
-  byte: new Set(["addr","ads_alert","cmd_input","enabled","expected_hz","fan_pwm","forced_pwm",
+  byte: new Set(["addr","ads_alert","cmd_input","enabled","expected_hz","fan_pwm","forced_pwm","fpwm_gate",
     "i2c_port","i2c_scl","i2c_sda","ignore_calibration_constraints","ina22x_addr","ina22x_alert",
     "led_simple","notch_adaptive","ntc_ch","panel_en","panel_sd","pwm_en","pwm_fault_active_high","pwm_fault_pin",
     "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert"]),
-  long: new Set(["adc_fake_freq","ble_passkey","esp32adc1_avg","esp32adc1_sr","i2c_freq",
+  long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq",
     "i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pwm_freq","sprofiler_hz","switch_delay"]),
-  float: new Set(["L0","bat_c","boot_refresh_ns","cv_ceiling","cv_eoc","cv_float","ibat_max","iin_max","psu_vout","rect_offset_ns",
+  float: new Set(["L0","bat_c","boot_refresh_ns","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","ibat_max","iin_max","psu_vout","rect_offset_ns",
      "ina22x_range","ina22x_resistor","iout_max","iout_short","notch_freq","notch_q","p_max","power_conversion_eff",
      "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
     "vin_max","vin_min","vout_max","vout_max_fallback","vout_offset_max",
@@ -512,7 +515,7 @@ const DEFAULTS = {
   // coil.conf
   "rect_offset_ns":"0",
   // converter.conf
-  "forced_pwm":"0","mode":"\"mppt\"","pwm_driver":"\"ledc\"","sync_phase_deg":"0","sync_phase_ns":"0","sync_role":"\"none\"","topo":"\"buck\"",
+  "forced_pwm":"0","fpwm_gate":"1","fpwm_gate_hold":"192","fpwm_gate_margin":"0.01","mode":"\"mppt\"","pwm_driver":"\"ledc\"","sync_phase_deg":"0","sync_phase_ns":"0","sync_role":"\"none\"","topo":"\"buck\"",
   "ctrl_vin_kp":"-100","ctrl_vin_kd":"-200","ctrl_vout_kp":"1500","ctrl_vout_kd":"12000",
   "ctrl_iin_kp":"100","ctrl_iin_kd":"200","ctrl_iout_kp":"200","ctrl_iout_kd":"400",
   "ctrl_power_kp":"20","ctrl_power_kd":"5",
