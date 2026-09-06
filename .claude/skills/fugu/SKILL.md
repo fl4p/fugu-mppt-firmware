@@ -254,11 +254,12 @@ Otherwise it is held: `NIMBLE_MAX_CONNECTIONS=1`, and a connected board stops ad
 (or advertises non-connectably) — culprits are another agent's console or the rpi bridge, and the
 link lives in bluetoothd (killing the client doesn't free it): `bluetoothctl disconnect <mac>` on
 the holder, or `svc rs ble` on the device, restores it. But a peer's holder process being ALIVE is
-not proof the links are held: `bench_session.py --serve` announces that it "holds the links" yet
-parks them when idle (suspected `--idle-park`) — 2026-09-06, both boards advertised and a console
-connected while a peer's serve had been up 38 min. Scan and TRY before concluding a peer blocks
-you, and never kill their daemon on the strength of `ps` alone; its `--max-hold-minutes 30` does
-not make it exit at 30 min either (measured still running at 38:10). **A setpoint that will not
+not proof the links are held — measured 2026-09-06: `bench_session.py --serve` had been up 38 min
+advertising that it "holds the links", yet a 30 s scan saw both boards and a console connected
+first try. **The mechanism is unidentified**; it is NOT `--idle-park`, which parks the CONVERTERS
+(`bench_session.py:618`), nor `--max-hold-minutes`, which caps one requested hold rather than the
+daemon's life. So SCAN AND TRY before concluding a peer blocks you, and never kill their daemon on
+the strength of `ps`. **A setpoint that will not
 HOLD is a contention symptom, and the echo is the cheap test**: `received serial command:` is
 printed for every writer (Bench Operations: it never says *which* transport), so a peer's writes
 appear in your own console output. 2026-09-06, `dc 2499` on fboost was followed within seconds by
