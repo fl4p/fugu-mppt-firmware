@@ -258,7 +258,12 @@ not proof the links are held: `bench_session.py --serve` announces that it "hold
 parks them when idle (suspected `--idle-park`) — 2026-09-06, both boards advertised and a console
 connected while a peer's serve had been up 38 min. Scan and TRY before concluding a peer blocks
 you, and never kill their daemon on the strength of `ps` alone; its `--max-hold-minutes 30` does
-not make it exit at 30 min either (measured still running at 38:10). A WiFi scan-loop against a
+not make it exit at 30 min either (measured still running at 38:10). **A setpoint that will not
+HOLD is a contention symptom, and the echo is the cheap test**: `received serial command:` is
+printed for every writer (Bench Operations: it never says *which* transport), so a peer's writes
+appear in your own console output. 2026-09-06, `dc 2499` on fboost was followed within seconds by
+`dc 1` and `vset 72` — a peer serve's `--idle-park` and its `--v-max 72` — and the collapse was
+written up twice as a firmware no-load shutdown before anyone read the echo. A WiFi scan-loop against a
 missing AP also starves BLE (`wifi off` fixed it). And don't trust the *first* scan after a rename — CoreBluetooth
 caches `d.name` across scans; re-scan before concluding the rename failed.
 
