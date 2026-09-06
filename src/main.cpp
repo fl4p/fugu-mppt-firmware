@@ -544,12 +544,19 @@ static esp_err_t disable_cpu_power_saving(void) {
 }
 
 void stopAndBackoff(uint32_t secondsDelay) {
+    // Two independent gates hold the converter down: delayStartUntil here, and mppt's
+    // _backoffUntilUs (via startCondition()). The restart needs BOTH, so the longer one wins and
+    // arming shutdownDcdc's 5 s default below would mask the 100 ms fast retry entirely -- which it
+    // did, since shutdownDcdc's own psuFastRetry excludes who=="stopAndBackoff" by name. That
+    // exclusion is about not counting maintenance toward the trip/latch counter and is kept; it
+    // must not also decide the duration. Pass 0 so the fast path is governed by delayStartUntil
+    // alone. 100 ms still rate-limits the retry ~45x below the sample rate, which is what the
+    // default backoff exists to prevent.
+    const bool psuFast = g_app.psuMode() && secondsDelay <= 5;
     if (!converter.disabled())
-        mppt.shutdownDcdc("stopAndBackoff");
-    if (g_app.psuMode() && secondsDelay <= 5)
-        delayStartUntil = wallClockUs() + 100000ULL;
-    else
-        delayStartUntil = wallClockUs() + static_cast<time_us>(secondsDelay) * 1000000ULL;
+        mppt.shutdownDcdc("stopAndBackoff", psuFast ? 0 : 5);
+    delayStartUntil = wallClockUs() + (psuFast ? 100000ULL
+                                              : static_cast<time_us>(secondsDelay) * 1000000ULL);
 }
 
 static void loopRT(void *arg) {
@@ -974,8 +981,7 @@ void loopLF(const time_us &nowUs, bool interim) {
     lastWindowUs = nowUs;
     bytesSent = 0;
 
-    if (mppt.converter.disabled())
-        mppt.meter.update(); // always update the meter
+    mppt.meter.update(); // day accumulator; needs to run WHILE converting, that is when energy flows
 
     lfUpdateLed(nowUs);
 }

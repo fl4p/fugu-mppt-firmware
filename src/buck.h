@@ -1266,7 +1266,13 @@ public:
         logConfig();
     }
 
-    void computePwmRectMax() {
+    // `advanceDither` owns the error-feedback integrator. This runs twice per sample -- once from
+    // updateSyncRectMaxDuty() to clamp pwmRect, once from pwmPerturb() at the new duty -- but only
+    // pwmPerturb()'s result survives the tick. Stepping rectDitherErr on both carried a remainder
+    // out of a decision that was discarded, so the committed sequence no longer time-averages to
+    // the ideal turn-off, which is the integrator's whole purpose. The clamp path passes false and
+    // reads the quantized value without moving it; a half-tick is immaterial to a max().
+    void computePwmRectMax(bool advanceDither = true) {
         // update pwmRectMax for DCM or DCM case
         if (dcmHysteresis) {
             // DCM: the LS turn-off count is the fractional ideal pwmCtrl*ratio quantized to whole
@@ -1282,7 +1288,7 @@ public:
             if (rectDither) {
                 float v = ideal + rectDitherErr;
                 long ls = std::lround(v);
-                rectDitherErr = v - (float) ls;
+                if (advanceDither) rectDitherErr = v - (float) ls;
                 pwmRectMax = (uint16_t) std::max<long>(0, ls);
             } else {
                 pwmRectMax = (uint16_t) std::round(ideal);
@@ -1669,7 +1675,7 @@ public:
         updateForcedPwmGate(vh, vl, freshV);
         computeSyncRectRatio(vh, vl, il);
         if (manualRect >= 0) return outInVoltageRatio; // bench: hold manual LS, skip clamp
-        computePwmRectMax();
+        computePwmRectMax(false); // clamp only -- pwmPerturb() owns the dither step this sample
 
         if (pwmRect > pwmRectMax) {
             if (pwmRect - pwmRectMax > (driverPwmMax / 40)) {

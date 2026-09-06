@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <ctime>
 #include <vector>
 #include "store.h"
@@ -217,6 +218,10 @@ struct SolarEnergyMeter {
 
     DailyEnergyMeter dailyEnergyMeter;
 
+    // RT -> core 0 handoff for update(). Relaxed: each is read independently and a
+    // one-sample skew between them is below the day accumulator's resolution.
+    std::atomic<float> rtPower{0}, rtVin{NAN}, rtVout{NAN};
+
 
     void load() {
         if (flash.load()) {
@@ -230,14 +235,25 @@ struct SolarEnergyMeter {
         commit(true);
     }
 
+    // RT path. dailyEnergyMeter.update() must NOT run here: it calls std::time() every sample and
+    // its day-end branch writes flash. Stash the operating point instead and let update() below,
+    // which runs on core 0, do the work.
     void add(float power, float smoothPower, float vin, float vout, time_us timeUs) {
         if (power > 0.1f)
             totalEnergy.add(power, timeUs);
-        //dailyEnergyMeter.update(smoothPower, totalEnergy.get(), vin, vout);
+        rtPower.store(smoothPower, std::memory_order_relaxed);
+        rtVin.store(vin, std::memory_order_relaxed);
+        rtVout.store(vout, std::memory_order_relaxed);
     }
 
+    // Core 0 only. Passing 0 for smoothPower (as the old commented-out call did) cannot work: the
+    // accumulator's first branch needs energyYield > 0 OR smoothPower >= powerDayStart, so with a
+    // hardcoded 0 it never starts and E_today stays at its restored value forever.
     void update() {
-        //dailyEnergyMeter.update(0, (float) totalEnergy.get());
+        dailyEnergyMeter.update(rtPower.load(std::memory_order_relaxed),
+                                (float) totalEnergy.get(),
+                                rtVin.load(std::memory_order_relaxed),
+                                rtVout.load(std::memory_order_relaxed));
     }
 
     void commit(bool increaseBootCounter = false) {
