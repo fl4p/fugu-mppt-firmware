@@ -253,8 +253,13 @@ board being off, not the stale-bond case below; check the supply before reaching
 Otherwise it is held: `NIMBLE_MAX_CONNECTIONS=1`, and a connected board stops advertising
 (or advertises non-connectably) — culprits are another agent's console or the rpi bridge, and the
 link lives in bluetoothd (killing the client doesn't free it): `bluetoothctl disconnect <mac>` on
-the holder, or `svc rs ble` on the device, restores it. A WiFi scan-loop against a missing AP also
-starves BLE (`wifi off` fixed it). And don't trust the *first* scan after a rename — CoreBluetooth
+the holder, or `svc rs ble` on the device, restores it. But a peer's holder process being ALIVE is
+not proof the links are held: `bench_session.py --serve` announces that it "holds the links" yet
+parks them when idle (suspected `--idle-park`) — 2026-09-06, both boards advertised and a console
+connected while a peer's serve had been up 38 min. Scan and TRY before concluding a peer blocks
+you, and never kill their daemon on the strength of `ps` alone; its `--max-hold-minutes 30` does
+not make it exit at 30 min either (measured still running at 38:10). A WiFi scan-loop against a
+missing AP also starves BLE (`wifi off` fixed it). And don't trust the *first* scan after a rename — CoreBluetooth
 caches `d.name` across scans; re-scan before concluding the rename failed.
 
 The bench tooling's `--buck-name` defaults to `fugu-fbuck` and `--boost-name` to `fugu-fboost`, so
