@@ -273,7 +273,7 @@ littlefs partition, editable at runtime:
 
 ```
 set-config coil.conf L0 50
-set-config charger.conf cell_voltage_eoc 3.53
+set-config charger.conf cv_eoc 3.53
 set-config limits.conf iout_max 35
 conf-check          # report unknown/obsolete keys
 get-config charger.conf

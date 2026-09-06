@@ -1422,7 +1422,7 @@ std::string confFile(const String &c) {
 
 // set-config <file> <key> <value...>  — value may contain spaces, so join the trailing tokens.
 //   set-config coil.conf L0 50            set-config mqtt.conf broker_uri mqtt://192.168.1.134:1882
-//   set-config limits.conf iout_max 35    set-config charger.conf cell_voltage_eoc 3.53
+//   set-config limits.conf iout_max 35    set-config charger.conf cv_eoc 3.53
 static void cmdSetConfig(cmd *c) {
     Command cc(c);
     if (cc.countArgs() < 3)

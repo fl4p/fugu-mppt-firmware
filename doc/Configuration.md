@@ -185,8 +185,8 @@ capacitance, `pwm_freq`, `pwmMax`, buck-vs-boost — not of the battery.
 | key                 | unit | type  | default    | description                                                    |
 |---------------------|------|-------|------------|----------------------------------------------------------------|
 | `vout_max`          | V    | float | —          | Max pack/output charge-target voltage                          |
-| `cv_eoc`            | V    | float | 3.6        | End-of-charge voltage of highest cell at tail current          |
-| `cv_float`          | V    | float | 3.37       | Float cell voltage where termination line meets zero current   |
+| `cv_eoc`            | V    | float | 3.5        | End-of-charge voltage of highest cell at tail current          |
+| `cv_float`          | V    | float | 3.325      | Float cell voltage where termination line meets zero current   |
 | `cv_ceiling`        | V    | float | cv_eoc+0.05 | Hard per-cell ceiling: latch termination if highest cell reaches it, regardless of current (backstops cv_eoc on imbalanced packs) |
 | `vout_max_fallback` | V    | float | build-time | Max output voltage when BMS data missing; 0 disables converter |
 | `ibat_max`          | A    | float | 20         | Maximum battery charge current limit                           |

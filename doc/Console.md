@@ -79,7 +79,7 @@ set-config coil.conf L0 50
 set-config limits.conf iout_max 35
 set-config converter.conf vout_max 28.5
 set-config mqtt.conf broker_uri mqtt://192.168.1.134:1882
-set-config charger.conf cell_voltage_eoc 3.53
+set-config charger.conf cv_eoc 3.53
 set-config sensor.conf vout_filt_len 10
 
 del-config sensor.conf vout_filt_len
