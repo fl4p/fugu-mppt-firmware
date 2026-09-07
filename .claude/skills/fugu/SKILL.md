@@ -317,7 +317,12 @@ match — and pull the line and any field off it with ONE expression: two select
 and pair a mode with another line's numbers, with nothing marking the mismatch. A complete,
 live-looking line can also still be UNEVALUABLE: `N=0`, `-273℃`, `nan`, `0sps` or a
 `st=<mode>,0` (converter not enabled) each say the line describes a board that is not running —
-refuse it and retake, never average it in. The same trap eats section headers: a pattern like
+refuse it and retake, never average it in. **None of those tells catches a frozen TEMPERATURE**:
+on images before `e246ea8` the two `℃` fields stop updating while `N`, `sps` and every voltage on
+the same line stay live, because polling the console faster than 3 s (24 s at `dc 0`) postponed the
+only code that refreshes them — [issue #65](https://github.com/fl4p/fugu-mppt-firmware/issues/65),
+which silently corrupted three of leg T's measurements. Do not use T1/T2 off a polled status line
+as a thermal gate on an un-reflashed board; the fixed image prints `--` instead. The same trap eats section headers: a pattern like
 `"pwm-freq "` also matches
 `=== pwm-freq ===`, so with `head -N` the header fills a slot the real reply needed. Batched replies interleave with log
 output and can
