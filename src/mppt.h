@@ -385,7 +385,7 @@ public:
     TeleSnap teleSnap() {
         float i = sensorPhysicalI->med3.get();
         return {.Ui = sensors.Vin->med3.get(), .Uo = sensors.Vout->med3.get(), .I = i,
-                .P = i * sensorPhysicalU->med3.get(), .mcuTemp = ucTemp.last(), .ntcTemp = ntc.last(),
+                .P = i * sensorPhysicalU->med3.get(), .mcuTemp = ucTemp.lastFresh(), .ntcTemp = ntc.lastFresh(),
                 .duty = (uint16_t) converter.getCtrlOnPwmCnt(),
                 .mode = (uint8_t) ctrlState.mode, .limIdx = ctrlState.limIdx};
     }
@@ -505,7 +505,7 @@ public:
                 return "psu-ov-conflict";
         }
         if (inBackoff()) return "backoff";
-        if (ntc.last() > limits.Temp_max - 3 || !(ucTemp.last() < limits.Temp_max - 3)) return "temp";
+        if (ntc.lastFresh() > limits.Temp_max - 3 || !(ucTemp.lastFresh() < limits.Temp_max - 3)) return "temp";
         if (!g_app.psuMode() &&
             !(converter.boost()
                   ? sensors.Vin->ewm.avg.get() < sensors.Vout->ewm.avg.get() + 1
@@ -549,7 +549,7 @@ public:
             }
         }
 
-        if (ntc.last() > limits.Temp_max || ucTemp.last() > limits.Temp_max) {
+        if (ntc.lastFresh() > limits.Temp_max || ucTemp.lastFresh() > limits.Temp_max) {
             ESP_LOGE("mppt", "Temp %.1f (or mcu %.1f) > %.1f°C, shutdown", ntc.last(), ucTemp.last(), limits.Temp_max);
             return false;
         }

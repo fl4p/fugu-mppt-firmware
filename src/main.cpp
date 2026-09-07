@@ -79,6 +79,11 @@ time_us delayStartUntil = 0;
 const auto lfPeriod = 3000000ULL; //(mppt.tracker.avgPower.get() < 1) ? 3000000 : 3000000;
 
 time_us lastTimeOutUs = 0;
+// Deadline for the low-frequency CONTROL work. Deliberately separate from lastTimeOutUs, which is
+// console print-pacing state that every input byte pushes forward (console.cpp:43): sharing them
+// let a host polling faster than lfPeriod postpone lfControl()/the watchdogs/lfMarkOtaValid()
+// indefinitely, and publish the frozen NTC/die temperature as a current reading (issue #65).
+time_us lastLfWorkUs = 0;
 uint32_t lastNSamples = 0;
 
 unsigned long lastMpptUpdateNumSamples = 0;
@@ -826,7 +831,7 @@ static void lfControl() {
                                    && currentShowsAuthority;
         mppt.charger.update(vout, iout, voutAuthority);
     }
-    wifiShutdownIfHot(mppt.ucTemp.last());
+    wifiShutdownIfHot(mppt.ucTemp.lastFresh());
 }
 
 // One-line UART/MQTT/telnet status line. WITH_MEASURE_COIL skips it during the coil sweep so the
@@ -837,15 +842,23 @@ static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt) {
 #else
     if (!sensors.Vin) return;
 #endif
+    // A frozen temperature must not read like a measured one: print "--" once the refresh path has
+    // stopped stepping the filter (issue #65).
+    char ntcStr[8], ucStr[8];
+    auto tempStr = [](char *buf, const SingleValueSensor &s) -> const char * {
+        if (!s.fresh()) snprintf(buf, 8, "--");
+        else snprintf(buf, 8, "%.0f", s.last());
+        return buf;
+    };
     UART_LOG(
-        "V=%4.*f/%5.*f I=%4.*f/%5.*fA %5.1fW %.0f℃%.0f℃ %2lusps %2lu㎅/s %s(H|L|Lm)=%4hu|%4hu|%4hu"
+        "V=%4.*f/%5.*f I=%4.*f/%5.*fA %5.1fW %s℃%s℃ %2lusps %2lu㎅/s %s(H|L|Lm)=%4hu|%4hu|%4hu"
         " st=%5s,%i lag=%lu㎲ N=%lu rssi=%hi",
         sensors.Vin->last >= 9.55f ? 1 : 2, sensors.Vin->last,
         sensors.Vout->last >= 9.55f ? 2 : 2, sensors.Vout->last,
         sensors.Iin->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iin->ewm.avg.get(),
         sensors.Iout->ewm.avg.get() >= 9.55f ? 2 : 2, sensors.Iout->ewm.avg.get(),
         sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
-        mppt.ntc.last(), mppt.ucTemp.last(),
+        tempStr(ntcStr, mppt.ntc), tempStr(ucStr, mppt.ucTemp),
         sps,
         dt ? (uint32_t) (bytesSent * 1000llu / dt) : 0,
         converter.inDCM() ? "DCM" : "CCM",
@@ -975,7 +988,13 @@ void loopLF(const time_us &nowUs, bool interim) {
         if (mq && mq->state() == ServiceState::Running) { loggedConvCfg = true; converter.logConfig(); }
     }
 
-    lfStatusLine(nSamples, sps, dt);
+    // Print pacing stays coupled to console activity (don't scribble over what the user is typing,
+    // and stay quiet while idle) — but it no longer gates any of the work above.
+    if (!lastTimeOutUs
+        or (nowUs - lastTimeOutUs) >= (mppt.converter.disabled() ? (lfPeriod * 8) : lfPeriod)) {
+        lfStatusLine(nSamples, sps, dt);
+        lastTimeOutUs = wallClockUs();
+    }
 
     lastNSamples = nSamples;
     lastWindowUs = nowUs;
@@ -1180,10 +1199,12 @@ static void loopNetwork_task(void *arg) {
     g_services.tickAll();
 
 
-    if ((wallClockUs() - lastTimeOutUs) >= (mppt.converter.disabled() ? (lfPeriod * 8) : lfPeriod) or !lastTimeOutUs) {
+    // Control cadence is fixed and console-independent; the status line keeps its own (slower when
+    // idle) pacing inside loopLF.
+    if ((wallClockUs() - lastLfWorkUs) >= lfPeriod or !lastLfWorkUs) {
         loopLF(wallClockUs(), false);
         // HA power publish moved to MqttService::onTick (MQTT.tickHook, wired in setup()).
-        lastTimeOutUs = wallClockUs();
+        lastLfWorkUs = wallClockUs();
     }
 
     // Preserve the cooperative yield: scope's netLoop() blocks ~1 tick when a client is attached

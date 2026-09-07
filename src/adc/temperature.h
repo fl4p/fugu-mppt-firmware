@@ -1,12 +1,39 @@
 #pragma once
 
 #include <hal/adc_types.h>
+#include <esp_timer.h>
 
+// Cached slow sensor with an explicit age, following the charger.h/BMS convention: a value that
+// nothing refreshed must not be indistinguishable from a measured one. read() stamps the cache
+// whether or not it produced a number, so "no sensor fitted" stays fresh-NaN (the existing isnan
+// policies apply unchanged) while a starved refresh path presents as stale.
 class SingleValueSensor {
-public:
-    virtual float read() = 0;
+    int64_t _lastReadUs = 0;
 
-    [[nodiscard]] virtual float last() const = 0;
+protected:
+    virtual float readImpl() = 0;
+
+public:
+    // Generous vs. the ~3s refresh cadence: only a genuinely starved scheduler trips it.
+    static constexpr int64_t EXPIRE_US = 20ll * 1000000ll;
+
+    virtual ~SingleValueSensor() = default;
+
+    float read() {
+        _lastReadUs = esp_timer_get_time();
+        return readImpl();
+    }
+
+    [[nodiscard]] virtual float last() const = 0; // raw cache, may be stale
+
+    [[nodiscard]] bool fresh() const { return _lastReadUs && (esp_timer_get_time() - _lastReadUs) < EXPIRE_US; }
+
+    // Use this wherever a stale reading would be acted on as a measurement.
+    [[nodiscard]] float lastFresh() const { return fresh() ? last() : NAN; }
+
+    [[nodiscard]] uint32_t ageSec() const {
+        return _lastReadUs ? (uint32_t) ((esp_timer_get_time() - _lastReadUs) / 1000000ll) : 0;
+    }
 };
 
 
@@ -77,7 +104,7 @@ public:
         }
     }
 
-    float read() override {
+    float readImpl() override {
         if (valuePtr == nullptr) {
             //auto adc = analogRead((uint8_t) PinConfig::NTC);
             /* if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
@@ -168,7 +195,7 @@ public:
         if (scope) scope->addChannel(this, 0, 'u', 12, "ucTemp");
     }
 
-    float read() override {
+    float readImpl() override {
         if (!temp_sensor)return NAN;
 
         // This has very poor real-time performance if WiFi is enabled
@@ -217,7 +244,7 @@ public:
     void begin() {
     }
 
-    float read() override {
+    float readImpl() override {
         // This has very poor real-time performance if WiFi is enabled (probably using ADC0?)
         if (temp_sensor_read_celsius(&tsens_out) != ESP_OK) {
             conf.dac_offset = (temp_sensor_dac_offset_t)((conf.dac_offset + 1) % TSENS_DAC_MAX);
@@ -241,7 +268,7 @@ public:
         return ewma.get();
     }
 
-    float last() const { return ewma.get(); }
+    [[nodiscard]] float last() const override { return ewma.get(); }
 };
 #endif // ESP_IDF_VERSION_MAJOR == 5
 
@@ -260,7 +287,7 @@ uint8_t temprature_sens_read();
  */
 
 
-class Esp32TempSensor {
+class Esp32TempSensor : public SingleValueSensor {
     RunningMedian3<float> median3{};
     EWMA<float> ewma{40};
 
@@ -271,13 +298,13 @@ public:
     void begin() {
     }
 
-    float read() {
+    float readImpl() override {
         //return (temprature_sens_read() - 32) / 1.8;
         ewma.add(median3.next(temperatureRead() - 32.f)); // seems very off, remove?
         return ewma.get();
     }
 
-    float last() const { return ewma.get(); }
+    [[nodiscard]] float last() const override { return ewma.get(); }
 };
 
 #endif

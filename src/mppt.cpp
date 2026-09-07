@@ -48,8 +48,8 @@ void MpptController::update() {
     rtcount("mppt.update.meterAdd");
 
 
-    float ntcTemp = ntc.last();
-    if (ucTemp.last() > ntcTemp) ntcTemp = ucTemp.last();
+    float ntcTemp = ntc.lastFresh();
+    if (ucTemp.lastFresh() > ntcTemp) ntcTemp = ucTemp.lastFresh();
 
     fan.fanUpdateTemp(ntcTemp, power_smooth);
     rtcount("mppt.update.thermals");
@@ -503,8 +503,8 @@ void MpptController::telemetry() {
     }
 
     if ((_teleNumPoints % 40) == 0) {
-        point.addField("mcu_temp", ucTemp.last(), 1); // TODO to frequent
-        point.addField("ntc_temp", ntc.last(), 1); // TODO to frequent
+        point.addField("mcu_temp", ucTemp.lastFresh(), 1); // TODO to frequent
+        point.addField("ntc_temp", ntc.lastFresh(), 1); // TODO to frequent
         point.addField("lag", (int) g_app.maxLoopLag); // peak RT-loop lag (µs), resets on rt-stats
     }
 
