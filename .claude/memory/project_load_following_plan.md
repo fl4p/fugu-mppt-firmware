@@ -9,6 +9,8 @@ metadata:
   originSessionId: ses_0c4446f77ffeyIL75KQ2dF5GYP
 ---
 
+**STATUS 2026-09-07: superseded in part. `partial_charge` (charger.conf) implements load-following as the partial-charge hold: an ibat-frame-gated integrator on vpack_pin (±20 mV/frame, 4 mV/A, 0.5 A deadband) instead of the plan's proportional OCV law (which leaves a steady trickle when OCV ≠ Vbat_fallback). Phase 1 (terminated + discharging on a shared bus) is still open. See doc/Termination.md.**
+
 Two-phase plan to fix terminated chargers wasting solar while battery discharges. Plan file: `plans/load-following.md`.
 
 **Phase 1 — Fix voutAuthority asymmetry (~10 lines):** When terminated + battery discharging (ibat < -0.1A), pin no-authority converter to `Vbat_fallback` (26.8V) instead of floor (26.2V). Allow sweeps from duty=0 by making `batteryFull` false when ibat < -0.1A in mppt.cpp:70 and main.cpp:934. Gets both converters producing power symmetrically. Known limitation: still trickle-charges at float voltage.

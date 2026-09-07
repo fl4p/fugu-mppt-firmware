@@ -779,7 +779,7 @@ static void lfStuckWatchdog() {
                  && (g_app.psuMode()
                          ? (std::isfinite(psuSetpoint)
                             && sensors.Vout->ewm.avg.get() < psuSetpoint - 2.0f)
-                         : !bool(mppt.charger.termCond));
+                         : !mppt.charger.chargeHold());
 
     if (!stuck) { stuckSinceUs = 0; triedRelease = false; return; }
     if (!stuckSinceUs) { stuckSinceUs = nowUs; return; }
@@ -820,7 +820,7 @@ static void lfControl() {
         uint16_t pwmMargin = mppt.converter.pwmCtrlMax / 256;
         if (pwmMargin < 8) pwmMargin = 8;
         const uint16_t minAuthorityPwm = mppt.converter.getCtrlOnPwmMin() + pwmMargin;
-        const bool currentShowsAuthority = std::isfinite(iout) && (iout > 0.5f || bool(mppt.charger.termCond));
+        const bool currentShowsAuthority = std::isfinite(iout) && (iout > 0.5f || mppt.charger.chargeHold());
         const bool voutAuthority = !mppt.converter.disabled()
                                    && mppt.converter.getCtrlOnPwmCnt() > minAuthorityPwm
                                    && currentShowsAuthority;
@@ -1049,20 +1049,27 @@ static void loopRTNewData(time_ms nowMs) {
                 // source is configured but silent, wait briefly for it; if it never comes, sweep anyway
                 // (the charger then holds Vbat_fallback float, so there's no real overcharge).
                 static int64_t bmsBootDeadline = 0;
+                static int64_t bmsRearmAllowedUs = 0;
                 static bool bmsWasFresh = false;
                 constexpr int64_t BMS_BOOT_WAIT_US = 12'000'000;
+                constexpr int64_t BMS_REARM_MIN_US = 10ll * 60 * 1000000;
                 bool bmsFresh = mppt.charger.batSt.haveValidCellVoltage();
                 // A stale BMS cell frame can leave termCond stuck true. Don't trust it: only treat
-                // the pack as full when termCond is true AND the BMS data is fresh.
-                bool full = bool(mppt.charger.termCond) && bmsFresh;
+                // the pack as full when the hold is asserted AND the BMS data is fresh. A cold
+                // block needs no cell data.
+                bool full = (mppt.charger.chargeHold() && bmsFresh) || mppt.charger.chargeBlocked();
                 // Wait for termCond to actually be evaluated (cell voltage AND warm ibat), not just
                 // for the first cell frame — otherwise the sweep could fire in the gap before ibat
-                // smoothing warms up and termination latches. Also wait if the BMS just went stale,
-                // so a brief outage doesn't immediately allow a sweep into a possibly-full pack.
+                // smoothing warms up and termination latches. A fresh->stale edge re-arms the wait
+                // (a brief outage must not sweep into a possibly-full pack), but at most once per
+                // 10 min: re-arming on every edge let a flapping BMS block the sweep for hours
+                // (flat, 2026-07-06).
                 bool waitingForBms = mppt.charger.hasBmsCellSource()
                                      && (!mppt.charger.terminationDecided() || !bmsFresh);
-                if (bmsWasFresh && !bmsFresh)
-                    bmsBootDeadline = 0; // reset the wait window on fresh -> stale transition
+                if (bmsWasFresh && !bmsFresh && esp_timer_get_time() > bmsRearmAllowedUs) {
+                    bmsBootDeadline = 0;
+                    bmsRearmAllowedUs = esp_timer_get_time() + BMS_REARM_MIN_US;
+                }
                 bmsWasFresh = bmsFresh;
                 if (waitingForBms && bmsBootDeadline == 0)
                     bmsBootDeadline = esp_timer_get_time() + BMS_BOOT_WAIT_US;

@@ -1,6 +1,6 @@
 ---
 name: EOC feedback death-spiral causes premature termination
-description: Charger EOC feedback loop (charger.h:330-356) creates a positive feedback: cvHigh→v_eoc triggers vpack_pin reduction→current drops→v_term collapses to cv_float→termination latches. Recurring on fry/flat with cv_float=3.35 on devices; confirmed 7-2, 7-3, 7-7. Fix direction: freeze v_term during EOC feedback or gate low-current termination.
+description: "FIXED IN CODE 2026-09-07 (not yet OTA-validated): EOC feedback target was v_term(ibat) → positive feedback → premature termination at 3.40 V/cell on fry/flat (7-2, 7-3, 7-7). Now target = cv_eoc while charging, cv_min once terminated; line trigger debounced over 2 cell frames."
 created: 2026-07-12T09:52:20.612Z
 metadata:
   node_type: memory
@@ -10,6 +10,9 @@ metadata:
 ---
 
 # EOC feedback death-spiral causes premature termination
+
+**STATUS 2026-09-07: fixed in src/charger.h (uncommitted→committed same day): `v_eoc = terminated ? cv_min : cv_eoc`, termCond.update() gated to one call per BMS cell frame, VTERM_STREAK_REQ=2. Host-run of test/test_charger.cpp passes (`test_eoc_feedback_does_not_chase_termination_line`). NOT yet validated on fry/flat — watch for termination at cv_eoc with tail current after the next OTA.**
+
 **Type:** project
 **Description:** Charger EOC feedback loop (charger.h:330-356) creates a positive feedback: cvHigh→v_eoc triggers vpack_pin reduction→current drops→v_term collapses to cv_float→termination latches. Recurring on fry/flat with cv_float=3.35 on devices; confirmed 7-2, 7-3, 7-7. Fix direction: freeze v_term during EOC feedback or gate low-current termination.
 

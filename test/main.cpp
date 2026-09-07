@@ -130,6 +130,15 @@ void test_termination_latches_when_vcell_above_cv_eoc_at_high_current();
 void test_termination_release_via_dod();
 void test_termination_release_via_voltage_floor();
 void test_termination_dod_release_skipped_when_cbat_missing();
+void test_termination_line_streak_resets();
+void test_eoc_feedback_does_not_chase_termination_line();
+void test_terminated_target_is_cv_min();
+void test_bat_temp_cold_block_and_hysteresis();
+void test_bat_temp_hot_derate();
+void test_bat_temp_cold_hold_follows_load();
+void test_partial_hold_cycle();
+void test_partial_hold_disabled_by_default();
+void test_mqtt_bat_temp_topics();
 void test_termination_reset_clears_latch();
 void test_coulomb_counter_starts_at_zero();
 void test_coulomb_counter_discharge_accumulates();
@@ -375,6 +384,15 @@ void setup() {
     RUN_TEST(test_termination_release_via_voltage_floor);
     RUN_TEST(test_termination_dod_release_skipped_when_cbat_missing);
     RUN_TEST(test_termination_reset_clears_latch);
+    RUN_TEST(test_termination_line_streak_resets);
+    // charger.h — EOC target, temperature policy, partial-charge hold
+    RUN_TEST(test_eoc_feedback_does_not_chase_termination_line);
+    RUN_TEST(test_terminated_target_is_cv_min);
+    RUN_TEST(test_bat_temp_cold_block_and_hysteresis);
+    RUN_TEST(test_bat_temp_hot_derate);
+    RUN_TEST(test_bat_temp_cold_hold_follows_load);
+    RUN_TEST(test_partial_hold_cycle);
+    RUN_TEST(test_partial_hold_disabled_by_default);
     // etc/coulomb_counter.h
     RUN_TEST(test_coulomb_counter_starts_at_zero);
     RUN_TEST(test_coulomb_counter_discharge_accumulates);
@@ -387,6 +405,7 @@ void setup() {
     RUN_TEST(test_mqtt_ibat_lim_accepts_valid);
     RUN_TEST(test_mqtt_ibat_lim_rejects_negative);
     RUN_TEST(test_mqtt_ibat_lim_rejects_nan);
+    RUN_TEST(test_mqtt_bat_temp_topics);
 
     // asciichart/ascii.h — NaN handling regression + edge cases
     RUN_TEST(test_ascii_empty_single_series_emits_nothing);

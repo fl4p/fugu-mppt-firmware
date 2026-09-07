@@ -39,8 +39,9 @@ pack lasts longest?
    `recharge_dod` reduces the number of full-charge events and the time at 100 %, which is
    still worth having, but the pack never leaves the top quarter. To move the average SoC down,
    the charger would have to stop short of full (an Ah-counted ceiling such as 70–80 % of `bat_c`
-   from the last full charge) and go to 100 % only periodically for balancing. That feature does
-   not exist in this firmware today. Caveat from S5/S7: shallow cycles (10–20 % DoD) parked around
+   from the last full charge) and go to 100 % only periodically for balancing. Implemented on
+   2026-09-07 as `partial_charge` / `full_charge_interval` (see `Termination.md`); not yet
+   validated on a converter. Caveat from S5/S7: shallow cycles (10–20 % DoD) parked around
    50 % SoC showed a strong but partly reversible dip, and the journal version ranks that 50 %
    window worse than 25 % or 75 % for 20 % DoD cycles; mechanism deferred to a follow-up, absent
    under moving-SoC profiles.
@@ -128,10 +129,10 @@ Mapped onto `charger.conf` and the termination logic in `doc/LFP Charging.md`.
 | `cv_float` | Keep as the zero-current end of the termination line only. No sustained hold at or near the EoC voltage after termination. A low float (~3.4 V) is neither supported nor refuted by inspected primaries. | high for "no EoC hold" (S1, S7, S8); low for anything about a low float |
 | `tail_c_rate` | 0.05 matches the vendor's standard-charge cutoff (S3). A larger value terminates earlier and shortens the CV dwell at the top; how much capacity that forgoes was not measured in any inspected source. | medium for the vendor value; the "earlier is fine" part is inference |
 | `recharge_dod` | Keep or raise (0.2–0.3): fewer full-charge events and less time at 100 %. It does **not** lower the average SoC: with 0.2 the pack cycles 80–100 %, the worst window in S8. | medium |
-| partial-charge target (new) | The evidence-backed way to lower average SoC is to stop charging at an Ah-counted ceiling (e.g. 70–80 % of `bat_c` since the last full) and top to 100 % only on a periodic balancing schedule. The exact ceiling is cell-specific (S1: 57–73 % across cells; S3 recommends 10–90 %); it is not measured for the LF280K. | high for the direction (S1, S8); the number is a guess |
+| `partial_charge` (added 2026-09-07) | The evidence-backed way to lower average SoC is to stop charging at an Ah-counted ceiling (e.g. 70–80 % of `bat_c` since the last full) and top to 100 % only on a periodic balancing schedule. The exact ceiling is cell-specific (S1: 57–73 % across cells; S3 recommends 10–90 %); it is not measured for the LF280K. | high for the direction (S1, S8); the number is a guess |
 | balancing / full charge | Full charge is still required periodically for BMS balancing on LFP's flat curve; make it periodic (weekly to monthly) rather than daily. This is engineering inference; no primary on balancing cadence was inspected. | inference |
 | `ibat_max` | ≤ 0.5 C (S3); typical solar rates ≤ 0.2 C are in the regime where, for the 26650 cell in S7, cycle aging was a small addition to calendar aging. Transfer to a 280 Ah prismatic cell is assumed. | medium |
-| temperature | Block charging below 0 °C (S3, S9). Derate or stop above ~45 °C (S3 cycle life, S2 trend, S10 → Yi). Long-term storage 0–35 °C (S3). | high for 0 °C floor; medium for the 45 °C derate |
+| temperature (`bat_temp_*`, added 2026-09-07) | Block charging below 0 °C (S3, S9). Derate or stop above ~45 °C (S3 cycle life, S2 trend, S10 → Yi). Long-term storage 0–35 °C (S3). | high for 0 °C floor; medium for the 45 °C derate |
 | storage | If the pack will idle for weeks, leave it at 30–50 % SoC (S3), cool (S1, S7: 0–10 °C storage showed almost no aging). | high |
 
 The firmware's existing structure (absorption → termination → DoD-gated recharge, no float) is

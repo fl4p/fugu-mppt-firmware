@@ -44,6 +44,11 @@ static void driveCounter(CoulombCounter &cc, float ibat,
     for (unsigned long t = startUs; t <= endUs; t += stepUs) cc.updateBatCurrent(ibat, t);
 }
 
+// The line trigger latches only after two consecutive over-line frames (like the ceiling).
+static void updateFrames(Li_ChgTerminationCondition &tc, float vcell, float ibat, float ah, int n = 2) {
+    for (int i = 0; i < n; ++i) tc.update(vcell, ibat, ah);
+}
+
 // ------------------------------------------------------------------
 //  Li_ChgTerminationCondition — termination-line math
 // ------------------------------------------------------------------
@@ -94,6 +99,8 @@ void test_termination_latches_above_line() {
     auto p = makeLfpParams();
     Li_ChgTerminationCondition tc{p};
     tc.update(3.70f, 14.0f, 0.0f); // vcell 3.70 > v_term=3.65
+    TEST_ASSERT_FALSE(bool(tc)); // one frame is a spike, not a latch
+    updateFrames(tc, 3.70f, 14.0f, 0.0f);
     TEST_ASSERT_TRUE(bool(tc));
 }
 
@@ -106,14 +113,14 @@ void test_termination_latches_when_vcell_above_cv_eoc_at_high_current() {
     Li_ChgTerminationCondition tc{p};
     const float highA = 4.0f * p.tail_c_rate * p.Cbat; // 56 A
     // v_term is capped at cv_eoc even at high current; old code would have needed ~4.45 V.
-    tc.update(p.cv_eoc + 0.02f, highA, 0.0f);
+    updateFrames(tc, p.cv_eoc + 0.02f, highA, 0.0f);
     TEST_ASSERT_TRUE(bool(tc));
 }
 
 void test_termination_release_via_dod() {
     auto p = makeLfpParams();
     Li_ChgTerminationCondition tc{p};
-    tc.update(3.70f, 14.0f, 0.0f);
+    updateFrames(tc, 3.70f, 14.0f, 0.0f);
     TEST_ASSERT_TRUE(bool(tc));
 
     // Below the DoD threshold: still terminated
@@ -128,7 +135,7 @@ void test_termination_release_via_dod() {
 void test_termination_release_via_voltage_floor() {
     auto p = makeLfpParams();
     Li_ChgTerminationCondition tc{p};
-    tc.update(3.70f, 14.0f, 0.0f);
+    updateFrames(tc, 3.70f, 14.0f, 0.0f);
     TEST_ASSERT_TRUE(bool(tc));
 
     // Release floor is cv_min - 0.1V, debounced over several BMS frames so a single
@@ -150,7 +157,7 @@ void test_termination_release_via_voltage_floor() {
 void test_termination_dod_release_skipped_when_cbat_missing() {
     auto p = makeLfpParams();
     Li_ChgTerminationCondition tc{p};
-    tc.update(3.70f, 14.0f, 0.0f); // latch with valid params
+    updateFrames(tc, 3.70f, 14.0f, 0.0f); // latch with valid params
     TEST_ASSERT_TRUE(bool(tc));
 
     p.Cbat = NAN; // simulate config drop / unset bat_c
@@ -167,7 +174,7 @@ void test_termination_dod_release_skipped_when_cbat_missing() {
 void test_termination_reset_clears_latch() {
     auto p = makeLfpParams();
     Li_ChgTerminationCondition tc{p};
-    tc.update(3.70f, 14.0f, 0.0f);
+    updateFrames(tc, 3.70f, 14.0f, 0.0f);
     TEST_ASSERT_TRUE(bool(tc));
 
     tc.reset();
@@ -465,3 +472,214 @@ void test_release_vout_pinning_restarts_float_glide() {
     TEST_ASSERT_FLOAT_WITHIN(0.01f, charger.params.Vbat_max, charger.Vout_max());
 }
 
+
+// A single over-line frame followed by a normal one must not latch (streak resets).
+void test_termination_line_streak_resets() {
+    auto p = makeLfpParams();
+    Li_ChgTerminationCondition tc{p};
+    tc.update(3.70f, 14.0f, 0.0f);
+    tc.update(3.40f, 14.0f, 0.0f);
+    tc.update(3.70f, 14.0f, 0.0f);
+    TEST_ASSERT_FALSE(bool(tc));
+}
+
+// Drive absorption: cell held at vcell with a constant ibat and fresh cell + ibat frames.
+static void driveFrames(BatteryCharger &charger, float vcellHigh, float ibat, int frames, bool authority = true) {
+    for (int i = 0; i < frames; ++i) {
+        loopWallClockUs_ += 4'000'000;
+        charger.batSt.setVcellHigh(vcellHigh);
+        charger.batSt.updateBatCurrent(ibat);
+        charger.update(charger.params.Vbat_max, ibat, authority);
+    }
+}
+
+// Regression (fry/flat 2026-07): the EOC feedback target used to be v_term(ibat). A cell above
+// cv_min but well below cv_eoc at moderate current then pulled the pin down, the current fell,
+// v_term fell with it, and the pack "terminated" at 3.40 V/cell. The absorption target is now the
+// fixed cv_eoc: such a cell must neither be pulled down nor terminate.
+void test_eoc_feedback_does_not_chase_termination_line() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams();
+    charger.termCond.reset();
+    loopWallClockUs_ = 1'000'000;
+    driveFrames(charger, 3.45f, 10.0f, 40); // v_term(10A) = 3.57 > 3.45: below the line, below cv_eoc
+    TEST_ASSERT_FALSE(bool(charger.termCond));
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, charger.params.Vbat_max, charger.Vout_max()); // bulk, not pulled down
+    // At cv_eoc the feedback engages: the pin comes down.
+    driveFrames(charger, charger.params.cv_eoc + 0.01f, 10.0f, 10);
+    TEST_ASSERT_TRUE(charger.Vout_max() < charger.params.Vbat_max - 0.05f);
+}
+
+// Once terminated the feedback target is cv_min: a terminated pack still above cv_min gets the
+// pin pulled down (no trickle), even at a small positive ibat that used to raise v_term.
+void test_terminated_target_is_cv_min() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams();
+    loopWallClockUs_ = 1'000'000;
+    driveEocFeedback(charger, charger.params.cv_min + 0.10f, 10); // latches
+    TEST_ASSERT_TRUE(bool(charger.termCond));
+    float before = charger.Vout_max();
+    driveFrames(charger, charger.params.cv_min + 0.02f, 2.0f, 20); // v_term(2A) would be 3.39 > cell
+    TEST_ASSERT_TRUE(charger.Vout_max() < before - 0.01f);
+}
+
+// Battery temperature: below bat_temp_min charging is blocked (released with hysteresis). Without
+// BMS current to follow, the output limit drops to the small floor; with it, the load-follower
+// holds the pack current at 0 and the output limit stays free (loads are served).
+void test_bat_temp_cold_block_and_hysteresis() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams(); // Ibat_lim 40, temps 0/45/55
+    loopWallClockUs_ = 1'000'000;
+    charger.update(13.3f, 0.0f, true);
+    TEST_ASSERT_EQUAL_FLOAT(40.0f, charger.Iout_max()); // no sensor: no limit
+    TEST_ASSERT_FALSE(charger.chargeBlocked());
+    charger.batSt.setTemp(0, -1.0f);
+    charger.update(13.3f, 0.0f, true);
+    TEST_ASSERT_TRUE(charger.chargeBlocked());
+    TEST_ASSERT_TRUE(charger.chargeHold());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.25f, charger.Iout_max()); // no ibat: idle at the floor, never 0
+    charger.batSt.setTemp(0, 1.0f); // inside the 2 °C band: still blocked
+    charger.update(13.3f, 0.0f, true);
+    TEST_ASSERT_TRUE(charger.chargeBlocked());
+    charger.batSt.setTemp(0, 2.5f);
+    charger.update(13.3f, 0.0f, true);
+    TEST_ASSERT_FALSE(charger.chargeBlocked());
+    TEST_ASSERT_EQUAL_FLOAT(40.0f, charger.Iout_max());
+    // Out-of-range sensor values are ignored.
+    charger.batSt.setTemp(0, -60.0f);
+    charger.update(13.3f, 0.0f, true);
+    TEST_ASSERT_FALSE(charger.chargeBlocked());
+}
+
+void test_bat_temp_cold_hold_follows_load() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams();
+    loopWallClockUs_ = 1'000'000;
+    charger.batSt.setTemp(0, -5.0f);
+    driveFrames(charger, 3.30f, 6.0f, 12); // charging 6 A into a cold pack
+    TEST_ASSERT_TRUE(charger.chargeBlocked());
+    TEST_ASSERT_EQUAL_FLOAT(40.0f, charger.Iout_max()); // loads may still be served
+    float pin0 = charger.Vout_max();
+    driveFrames(charger, 3.30f, 6.0f, 10);
+    TEST_ASSERT_TRUE(charger.Vout_max() < pin0 - 0.05f); // pin walks down to stop the charge current
+    // Expiry: ~1 h without a temperature frame drops the policy.
+    for (int i = 0; i < 3700; ++i) charger.update(13.3f, 0.0f, true);
+    TEST_ASSERT_FALSE(charger.chargeBlocked());
+}
+
+void test_bat_temp_hot_derate() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams();
+    loopWallClockUs_ = 1'000'000;
+    charger.batSt.setTemp(0, 20.0f);
+    charger.batSt.setTemp(1, 50.0f); // the hottest sensor derates
+    charger.update(13.3f, 0.0f, true);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 20.0f, charger.Iout_max()); // halfway 45..55 -> 50 %
+    // The derate is on the pack current: the load share (iout - ibat) is added on top.
+    driveFrames(charger, 3.30f, 5.0f, 12);
+    charger.update(13.3f, 15.0f, true); // 15 A out, 5 A into the pack -> 10 A load
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 30.0f, charger.Iout_max());
+    charger.batSt.setTemp(1, 60.0f);
+    charger.update(13.3f, 15.0f, true);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 10.0f, charger.Iout_max()); // load only, no charge
+    TEST_ASSERT_FALSE(charger.chargeBlocked()); // the coldest sensor (20 °C) is fine
+}
+
+// Partial-charge ceiling: needs a full event first; then holds at partial_charge (Ah-counted),
+// releases recharge_dod below the ceiling, and is dropped when the full-charge interval expires.
+void test_partial_hold_cycle() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams(); // Cbat 280, recharge_dod 0.2
+    charger.params.partial_charge = 0.8f; // ceiling deficit 56 Ah, release at 112 Ah
+    charger.params.full_charge_interval_s = 86400;
+    loopWallClockUs_ = 1'000'000;
+    // Move Ah with a moderate current over time so the producer-side ibat EWMA isn't left with a
+    // huge residual that the frames below would have to wash out.
+    auto moveAh = [&](float ah) {
+        unsigned long secs = (unsigned long) (fabsf(ah) / 60.0f * 3600.0f);
+        driveCounter(charger.batSt.coulombCounter, ah > 0 ? -60.0f : 60.0f, loopWallClockUs_, loopWallClockUs_ + secs * 1'000'000UL);
+        loopWallClockUs_ += secs * 1'000'000UL;
+    };
+
+    // No full event yet: charging normally even with ahSinceFull = 0.
+    driveFrames(charger, 3.30f, 5.0f, 12);
+    TEST_ASSERT_FALSE(charger.partialHold());
+    TEST_ASSERT_FALSE(charger.chargeHold());
+
+    // Full charge terminates -> full event.
+    driveEocFeedback(charger, charger.params.cv_min + 0.10f, 12);
+    TEST_ASSERT_TRUE(bool(charger.termCond));
+    TEST_ASSERT_FALSE(charger.partialHold()); // termination has precedence
+    TEST_ASSERT_TRUE(charger.lastFullUs() != 0);
+
+    // Discharge 60 Ah: termination releases at 56 Ah, hold is not yet on (deficit > ceiling).
+    moveAh(60.0f);
+    driveFrames(charger, 3.30f, -1.0f, 4);
+    TEST_ASSERT_FALSE(bool(charger.termCond));
+    TEST_ASSERT_FALSE(charger.partialHold());
+
+    // Charge 5 Ah back: deficit 55 Ah <= 56 -> hold engages and follows the load.
+    moveAh(-5.0f);
+    driveFrames(charger, 3.33f, 8.0f, 4);
+    TEST_ASSERT_TRUE(charger.partialHold());
+    TEST_ASSERT_TRUE(charger.chargeHold());
+    float pin0 = charger.Vout_max();
+    driveFrames(charger, 3.33f, 8.0f, 10); // pack still charging: pin steps down
+    TEST_ASSERT_TRUE(charger.Vout_max() < pin0 - 0.05f);
+    float pin1 = charger.Vout_max();
+    driveFrames(charger, 3.33f, -8.0f, 12); // load exceeds PV: pin steps up
+    TEST_ASSERT_TRUE(charger.Vout_max() > pin1 + 0.05f);
+    // 1 Ah above the ceiling the Ah trim asks for -0.5 A; ±0.2 A around that is the deadband.
+    driveFrames(charger, 3.33f, -0.5f, 20);
+    float pin2 = charger.Vout_max();
+    driveFrames(charger, 3.33f, -0.4f, 5);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, pin2, charger.Vout_max());
+    // Without output authority (converter off at night) the pin must not integrate the load.
+    driveFrames(charger, 3.33f, -8.0f, 10, /*authority*/ false);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, pin2, charger.Vout_max());
+
+    // Discharge past the release band (deficit > 112 Ah): hold releases, pin glides to Vbat_max.
+    moveAh(70.0f);
+    driveFrames(charger, 3.30f, -1.0f, 4);
+    TEST_ASSERT_FALSE(charger.partialHold());
+    loopWallClockUs_ += 10'000'000UL; // past the 5 s glide
+    driveFrames(charger, 3.30f, 5.0f, 2);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, charger.params.Vbat_max, charger.Vout_max());
+
+    // Charge back to the ceiling: hold again. Then let the full-charge interval expire: dropped.
+    moveAh(-70.0f);
+    driveFrames(charger, 3.33f, 5.0f, 4);
+    TEST_ASSERT_TRUE(charger.partialHold());
+    loopWallClockUs_ += 86400ULL * 1'000'000ULL;
+    driveFrames(charger, 3.33f, 5.0f, 2);
+    TEST_ASSERT_FALSE(charger.partialHold());
+}
+
+void test_partial_hold_disabled_by_default() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams(); // partial_charge 0
+    loopWallClockUs_ = 1'000'000;
+    driveEocFeedback(charger, charger.params.cv_min + 0.10f, 12);
+    driveCounter(charger.batSt.coulombCounter, -3600.0f, loopWallClockUs_, loopWallClockUs_ + 60'000'000UL);
+    loopWallClockUs_ += 60'000'000UL;
+    driveFrames(charger, 3.30f, -1.0f, 4);
+    driveCounter(charger.batSt.coulombCounter, 3600.0f, loopWallClockUs_, loopWallClockUs_ + 5'000'000UL);
+    loopWallClockUs_ += 5'000'000UL;
+    driveFrames(charger, 3.33f, 8.0f, 4);
+    TEST_ASSERT_FALSE(charger.partialHold());
+}
+
+void test_mqtt_bat_temp_topics() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams();
+    ConfFile mqttConf{{
+        {"bat_temp_topic", "test/t1, test/t2"},
+    }};
+    charger.beginMqtt(mqttConf);
+    MQTT._invokeForTest("test/t1", "12.5", 4);
+    MQTT._invokeForTest("test/t2", "-3", 2);
+    MQTT._invokeForTest("test/t2", "", 0);
+    TEST_ASSERT_TRUE(charger.batSt.haveTemp());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -3.0f, charger.batSt.tempMin());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 12.5f, charger.batSt.tempMax());
+}

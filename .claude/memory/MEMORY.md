@@ -95,9 +95,9 @@
 - [mppt telemetry in InfluxDB](reference_mppt_telemetry_influx.md) — `mppt` at tm.fabi.me/ha_van (NOT open_pe); console log UTC+1 vs device UTC
 - [teleflush bad_alloc panic](project_teleflush_bad_alloc_panic.md) — unguarded std::bad_alloc in flushQueue terminates device; needs try/catch
 - [Adaptive inverter-ripple notch](project_adaptive_ripple_notch.md) — Goertzel auto-tune notch (fixed 100Hz was the bug); not yet flashed
-- [EOC feedback death-spiral causes premature termination](project_eoc_feedback_death_spiral.md) — charger.h:330-356 positive feedback latches termination; confirmed 7-2/7-3/7-7; fix = freeze v_term during EOC feedback
-- [flat BMS-flap permanently blocks startup sweep (7-6)](project_flat_bms_flap_permanent_sweep_block.md) — bmsBootDeadline resets on every fresh→stale transition → 12s fallback never expires
-- [Load-following plan for terminated chargers](project_load_following_plan.md) — plans/load-following.md; Phase 1 (voutAuthority) + 2 (OCV tracking) not yet implemented
+- [EOC feedback death-spiral (FIXED in code 9-07, not OTA-validated)](project_eoc_feedback_death_spiral.md) — EOC target now cv_eoc/cv_min, not v_term(ibat); termCond per cell frame, 2-frame line debounce
+- [flat BMS-flap sweep block (FIXED 9-07, not validated)](project_flat_bms_flap_permanent_sweep_block.md) — bmsBootDeadline no longer re-armed on fresh→stale
+- [Load-following plan for terminated chargers](project_load_following_plan.md) — Phase 2 superseded by `partial_charge` hold (9-07); Phase 1 shared-bus asymmetry still open
 - [voutAuthority asymmetry on shared bus](project_voutauthority_asymmetry_shared_bus.md) — both terminated → one floats, other floors at 0W; confirmed 6-30, 7-7
 - [BMS MQTT topic publish rates](reference_bms_mqtt_topic_rates.md) — ibat ~4s, cell_voltages/max ~12s, separate topics
 - [rpi BLE timeouts = shared WiFi/BT radio; USB adapter fixes it](project_rpi_ble_connect_scan_contention.md) — 20/30@3.2s → 30/30@0.4s; select adapter by MAC 10:20:BA:05:4C:8E, hciN moves
@@ -124,3 +124,5 @@
 - [PCNT forces pull-UP on its edge pin](project_pcnt_new_channel_forces_pullup.md) — pcnt_new_channel() enables pull-up + disables pull-down; re-apply GPIO_PULLDOWN_ONLY after it on AC-coupled lines
 - [codex DNS in the sandbox is intermittent](reference_codex_no_resolver_in_sandbox.md) — PROBE with a one-liner first; it worked fine 2026-08-26. If blocked: run from a real Terminal, tee to a file
 - [Split dead-time (per-transition HL/LH)](project_split_deadtime_plan.md) — IMPLEMENTED 40b1676 (2026-08-26); on-target + fbuck bench validation still outstanding, don't OTA fry/flat yet
+- [LFP longevity research (9-05)](reference_lfp_longevity_research.md) — doc/LFP Longevity Research.md (codex-reviewed) + kb note + lit archive ~/dev/pv/ee/lit/bat; recharge_dod does NOT lower avg SoC, needs partial-charge ceiling; no EoC hold; 0 °C floor
+- [No feature/fix branches — always main](feedback_no_feature_branches_always_main.md) — commit unvalidated work to main too; flag it in the message, not the branch topology

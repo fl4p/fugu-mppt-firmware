@@ -195,6 +195,11 @@ capacitance, `pwm_freq`, `pwmMax`, buck-vs-boost — not of the battery.
 | `recharge_dod`      |      | float | 0.20       | Depth-of-discharge since full to release termination           |
 | `recharge_vfloor_band` | V | float | 0.05    | Cell-voltage drop below cv_min to release termination (fallback to DoD counter) |
 | `vout_offset_max`   | V    | float | 0.6        | Worst-case Vout-sensor error tolerated during float: how far below the float floor the BMS-driven EOC loop may pull to stop charging a full pack when Vout reads high |
+| `partial_charge`    |      | float | 0          | SoC fraction to stop at between full charges (Ah-counted from the last termination); the pack is held there by load-following. 0 = always charge to full. Needs `bat_c` and a BMS `ibat_topic` |
+| `full_charge_interval` | d | float | 7          | With `partial_charge`: charge to full (BMS balancing) at least this often. Counted from the last termination since boot; a reboot charges to full first |
+| `bat_temp_min`      | °C   | float | 0          | Pack current held at zero below this pack temperature (BMS `bat_temp_topic`, coldest sensor; loads still served); released 2 °C above |
+| `bat_temp_derate`   | °C   | float | 45         | Charge current limit ramps down linearly from here (hottest sensor) ... |
+| `bat_temp_max`      | °C   | float | 55         | ... to zero here |
 
 ## tracker.conf — MPPT
 
@@ -227,6 +232,7 @@ SSIDs are pattern-based; add as many `ssid_<name>` / `ssid_<name>_psk` pairs as 
 | `cell_voltages_max_topic` |      | string | —       | Topic for BMS highest cell voltage                      |
 | `ibat_topic`              |      | string | —       | Topic for battery current from BMS                      |
 | `ibat_lim_topic`          |      | string | —       | Topic for battery charge current limit                  |
+| `bat_temp_topic`          |      | string | —       | Up to 4 comma-separated topics for pack temperatures from the BMS (batmon-ha: `<dev>/temperatures/1,<dev>/temperatures/2`); drives `bat_temp_*` in charger.conf |
 | `cmd_input`               |      | bool   | 0       | Accept console commands over MQTT (`pv/log/<host>/cmd`) |
 | `enabled`                 |      | bool   | 1       | Start this service at boot                              |
 | `log_level`               |      | enum   | info    | Verbosity: `error`, `warn` or `info`                    |

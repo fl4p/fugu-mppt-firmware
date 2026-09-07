@@ -1,6 +1,6 @@
 ---
 name: flat BMS-flap permanently blocks startup sweep (7-6)
-description: flat stuck at 0W 2026-07-06: bmsBootDeadline resets to 0 on every fresh→stale BMS transition (main.cpp:941-942), so a flapping BMS prevents the 12s fallback from ever expiring → sweep permanently blocked; fry escaped only because it rebooted twice (05:20, 07:48) which reset termCond
+description: "FIXED 2026-09-07 (bmsBootDeadline no longer re-armed on fresh→stale; not yet OTA-validated). Original: flat stuck at 0W 2026-07-06: bmsBootDeadline resets to 0 on every fresh→stale BMS transition (main.cpp:941-942), so a flapping BMS prevents the 12s fallback from ever expiring → sweep permanently blocked; fry escaped only because it rebooted twice (05:20, 07:48) which reset termCond
 created: 2026-07-06T08:00:20.168Z
 metadata:
   node_type: memory
@@ -8,6 +8,8 @@ metadata:
   type: project
   originSessionId: ses_0c989dfbaffeu8t54SjhsuwLSw
 ---
+
+**STATUS 2026-09-07: fix direction (1) applied in src/main.cpp (the deadline is armed once and never reset). Not yet validated on hardware.**
 
 On 2026-07-06 flat was stuck at 0W for 2+ hours after sunrise (Vin=67.2V, PWM=0, DCM, st=↑MPPT,0) while fry produced ~150W normally. Charger termination had latched the previous afternoon at ~14:03 Jul 5 (cell voltage hit v_term ~3.46V/cell; logs show `no Vout authority (terminated): yield -> 26.200`). The `START blocked: Vin-Vout` phase cleared ~06:11 when Vin exceeded Vout, but the startup sweep at main.cpp:921-952 never fired because `full = bool(mppt.charger.termCond) && bmsFresh` stayed true.
 

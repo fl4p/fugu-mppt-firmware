@@ -79,7 +79,7 @@ void MpptController::update() {
     // and ramping duty from 0 would just dump a charge pulse into a full pack (recharge-after-full).
     // Also wait out any pending backoff — a scheduled re-sweep firing into an active trip
     // timer would stall under the same livelock that startCondition() guards against.
-    bool batteryFull = bool(charger.termCond) || ctrlState.mode == MpptControlMode::CV;
+    bool batteryFull = charger.chargeHold() || ctrlState.mode == MpptControlMode::CV;
     if (!g_app.psuMode() && !_sweeping && !batteryFull && !inBackoff() && (nowUs - sampler.getTimeLastCalibrationUs()) > (30 * 60000000)) {
         ESP_LOGI("mppt", "periodic sweep & sensor calibration");
         g_app.maxLoopLag = 0; // restart the lag window so telemetry tracks per-sweep peak, not all-time

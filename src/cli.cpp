@@ -1627,7 +1627,9 @@ static void cmdStatus(cmd *) {
     bool vcOk = bs.haveValidCellVoltage();
     uint32_t ageS = bs.vcell_high > 0 ? (uint32_t) ((static_cast<uint32_t>(wallClockUs()) - bs.vcell_high_t) / 1000000ULL) : 0;
 
-    UART_LOG("Charger: %s", (bool) chg.termCond ? "TERMINATED (float)" : "charging");
+    UART_LOG("Charger: %s", (bool) chg.termCond ? "TERMINATED (float)"
+                            : chg.chargeBlocked() ? "BLOCKED (pack cold)"
+                            : chg.partialHold() ? "PARTIAL HOLD (load-following)" : "charging");
     UART_LOG("  Vbat_max=%.2fV Vout_max=%.2fV  Ibat_lim=%.1fA Iout_max=%.1fA",
              p.Vbat_max, chg.Vout_max(), p.Ibat_lim, chg.Iout_max());
     const float ovLimit = mppt.getExplicitOvLimit();
@@ -1644,6 +1646,21 @@ static void cmdStatus(cmd *) {
              bs.ibatSmoothed(), ah, bs.vout_avg.get());
     if ((bool) chg.termCond && std::isfinite(p.Cbat) && p.Cbat > 0.f && p.recharge_dod > 0.f)
         UART_LOG("  DoD since full: %.0f%% / %.0f%% to recharge", ah / p.Cbat * 100.f, p.recharge_dod * 100.f);
+    if (p.partial_charge > 0.f) {
+        time_us lf = chg.lastFullUs();
+        if (lf)
+            UART_LOG("  partial_charge=%.0f%%  last full %.1fh ago (full charge every %.1f d)",
+                     p.partial_charge * 100.f, (wallClockUs() - lf) * (1.f / 3600e6f),
+                     p.full_charge_interval_s / 86400.f);
+        else
+            UART_LOG("  partial_charge=%.0f%%  no full charge since boot yet (charging to full first)",
+                     p.partial_charge * 100.f);
+    }
+    if (bs.haveTemp())
+        UART_LOG("  pack temp %.1f..%.1f°C (%us ago%s)  charge min %.0f derate %.0f max %.0f°C",
+                 bs.tempMin(), bs.tempMax(), (unsigned) chg.tempStaleS(),
+                 chg.tempStaleS() > 3600 ? ", expired" : "",
+                 p.bat_temp_min, p.bat_temp_derate, p.bat_temp_max);
     if (g_app.psuMode()) {
         UART_LOG("PSU: vset=%.2fV %s trips=%u", mppt.getPsuSetpoint(),
                  mppt.isPsuLatched() ? "LATCHED" : mppt.isPsuEscalated() ? "escalated" : "ok",

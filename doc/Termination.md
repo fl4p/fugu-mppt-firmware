@@ -100,3 +100,59 @@ If `bat_c` is missing, `r` is non-finite and the impedance-compensation branch
 degrades to "absorption-only" — pack-voltage pinning still caps at `cv_eoc`
 via `Vbat_fallback`, so the charger is safe but does not fully charge. The Ah
 release condition is also disabled in that case; only the voltage floor remains.
+
+## Absorption target vs. termination line
+
+The EOC feedback loop (`BatteryCharger::_updatePackVoltagePinning`) lowers the
+pack-voltage pin whenever the highest cell is above its target. That target is
+the fixed `cv_eoc` while charging and `cv_min` once terminated. It must not be
+the current-dependent `v_term`: lowering the pin reduces the current, which
+lowers `v_term`, which lowers the pin again, until the current is zero and the
+line trips at `cv_min` — the premature termination seen on fry/flat in July
+2026 at 3.40 V/cell. The line only *decides* termination; it is not a setpoint.
+
+The line trigger, like the ceiling, needs two consecutive BMS cell frames above
+the line (`termCond.update()` runs once per cell frame).
+
+## Partial-charge ceiling (`partial_charge`)
+
+Recharge hysteresis alone keeps the pack in the 80–100 % window. To lower the
+average SoC — the best-evidenced LFP lifetime lever, see
+`LFP Longevity Research.md` — the charger can stop short of full:
+
+- After a termination (the only point where the Ah counter is known to be at
+  zero), charging stops once `ahSinceFull <= (1 - partial_charge) * Cbat` and
+  the pack is **held** there by load-following: on every BMS `ibat` frame the
+  pin steps by up to 20 mV (4 mV/A, 0.2 A deadband) so the pack current goes to
+  a small target and the converter covers the load only. The target is trimmed
+  by the Ah error (±1 A at 2 Ah off the ceiling) so a BMS current offset inside
+  the deadband cannot walk the SoC away over the week. The hold starts from the
+  measured bus voltage and only steps while the converter drives the bus (not
+  at night). The pin may fall to
+  `n_cells * (cv_float - recharge_vfloor_band) - vout_offset_max` and rise to
+  `Vbat_max`; if the load exceeds the PV the pin sits at `Vbat_max` and the
+  pack discharges normally.
+- The hold releases when the deficit exceeds the ceiling by `recharge_dod`
+  (pack cycles between `partial_charge - recharge_dod` and `partial_charge`).
+- Every `full_charge_interval` days the ceiling is dropped and the pack charges
+  to full for BMS balancing; a reboot also charges to full first, because the
+  deficit counter starts unknown.
+
+`status` reports `PARTIAL HOLD (load-following)`, the ceiling and the age of the
+last full charge. Sweeps and the stuck watchdog treat the hold like termination.
+
+## Pack temperature (`bat_temp_*`)
+
+With `mqtt.conf:bat_temp_topic` configured (up to four BMS sensors):
+
+- coldest sensor below `bat_temp_min` (default 0 °C): the pack current is held
+  at zero by the same load-follower as the partial hold (loads are still served
+  from PV; discharging a cold pack is fine); without an `ibat_topic` the output
+  limit drops to 0.25 A instead. Released 2 °C above.
+- hottest sensor above `bat_temp_derate` (45 °C): the *pack* current limit
+  `ibat_max` scales linearly to zero at `bat_temp_max` (55 °C); the output limit
+  is that plus the estimated load current (`iout - ibat`).
+
+Readings outside −40…100 °C are ignored. The last reading holds for an hour if
+the BMS stops publishing, then the policy switches off (as without a sensor).
+Without a topic nothing changes.

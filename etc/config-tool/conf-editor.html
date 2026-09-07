@@ -363,6 +363,11 @@ const META = {
   recharge_dod:{unit:"",desc:"Depth-of-discharge since full to release termination",type:"float"},
   recharge_vfloor_band:{unit:"V",desc:"Cell-voltage drop below cv_min to release termination (fallback to DoD)",type:"float"},
   vout_offset_max:{unit:"V",desc:"Worst-case Vout-sensor error tolerated during float: how far below the float floor the BMS-driven EOC loop may pull to stop charging a full pack when Vout reads high",type:"float"},
+  partial_charge:{unit:"",desc:"SoC fraction to stop at between full charges (Ah-counted from the last termination, held by load-following); 0 = always charge to full",type:"float"},
+  full_charge_interval:{unit:"d",desc:"With partial_charge: charge to full (BMS balancing) at least this often",type:"float"},
+  bat_temp_min:{unit:"°C",desc:"No charge current below this pack temperature (coldest BMS sensor); released 2 °C above",type:"float"},
+  bat_temp_derate:{unit:"°C",desc:"Charge current limit ramps down linearly from here (hottest BMS sensor)",type:"float"},
+  bat_temp_max:{unit:"°C",desc:"Charge current limit reaches zero here",type:"float"},
 
   // tracker.conf
   target_duty_cycle:{unit:"",desc:"Fixed duty cycle fraction (0-1 of pwmMaxDriver); if > 0 enters manual PWM mode with hard-fixed duty (no PD control, no MPPT tracking)",type:"float"},
@@ -375,6 +380,7 @@ const META = {
   cell_voltages_max_topic:{unit:"",desc:"Topic for BMS highest cell voltage",type:"string"},
   ibat_topic:{unit:"",desc:"Topic for battery current from BMS",type:"string"},
   ibat_lim_topic:{unit:"",desc:"Topic for battery charge current limit",type:"string"},
+  bat_temp_topic:{unit:"",desc:"Up to 4 comma-separated BMS pack temperature topics (batmon-ha: <dev>/temperatures/1,<dev>/temperatures/2)",type:"string"},
   cmd_input:{unit:"",desc:"Accept console commands over MQTT (pv/log/<host>/cmd)",type:"bool"},
 
   // tele.conf
@@ -456,10 +462,10 @@ const FILE_KEYS = {
     "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td",
     "forced_pwm","fpwm_gate","fpwm_gate_hold","fpwm_gate_margin","mode","psu_vout","pv_iout_span","pv_isc","pv_k","pv_slew","pv_voc",
     "pwm_driver","sync_phase_deg","sync_phase_ns","sync_role","topo"],
-  "charger.conf":["bat_c","cv_ceiling","cv_eoc","cv_float","ibat_max","recharge_dod","recharge_vfloor_band","tail_c_rate","vout_max",
-    "vout_max_fallback","vout_offset_max"],
+  "charger.conf":["bat_c","bat_temp_derate","bat_temp_max","bat_temp_min","cv_ceiling","cv_eoc","cv_float","full_charge_interval","ibat_max",
+    "partial_charge","recharge_dod","recharge_vfloor_band","tail_c_rate","vout_max","vout_max_fallback","vout_offset_max"],
   "tracker.conf":["sweep_speed","target_duty_cycle"],
-  "mqtt.conf":["broker_uri","cell_voltages_max_topic","cmd_input","enabled","ibat_lim_topic",
+  "mqtt.conf":["bat_temp_topic","broker_uri","cell_voltages_max_topic","cmd_input","enabled","ibat_lim_topic",
     "ibat_topic","log_level","password","username"],
   "tele.conf":["adv_ms","binary","ble","enabled","influxdb_host","log_level"],
   "ftp.conf":["enabled","ftp_pass","ftp_user","log_level"],
@@ -483,7 +489,7 @@ const TYPE_KEYS = {
     "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert"]),
   long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq",
     "i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pwm_freq","sprofiler_hz","switch_delay"]),
-  float: new Set(["L0","bat_c","boot_refresh_ns","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","ibat_max","iin_max","psu_vout","rect_offset_ns",
+  float: new Set(["L0","bat_c","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","ibat_max","iin_max","psu_vout","rect_offset_ns",
      "ina22x_range","ina22x_resistor","iout_max","iout_short","notch_freq","notch_q","p_max","power_conversion_eff",
      "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
     "vin_max","vin_min","vout_max","vout_max_fallback","vout_offset_max",
@@ -491,7 +497,7 @@ const TYPE_KEYS = {
     "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
     "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td"]),
   string: new Set(["adc","ble_security","broker_uri","cell_voltages_max_topic","ftp_pass",
-    "ftp_user","ibat_lim_topic","ibat_topic","influxdb_host","log_level","mcu","mode","password",
+    "ftp_user","bat_temp_topic","ibat_lim_topic","ibat_topic","influxdb_host","log_level","mcu","mode","password",
     "pwm_driver","pwm_driver_logic","topo","username"]),
 };
 // SCRAPER:END TYPE_KEYS
@@ -521,6 +527,7 @@ const DEFAULTS = {
   "ctrl_power_kp":"20","ctrl_power_kd":"5",
   // charger.conf
   "cv_eoc":"3.5","cv_float":"3.325","recharge_dod":"0.2","recharge_vfloor_band":"0.05","tail_c_rate":"0.05","vout_offset_max":"0.6",
+  "partial_charge":"0","full_charge_interval":"7","bat_temp_min":"0","bat_temp_derate":"45","bat_temp_max":"55",
   // tracker.conf
   "sweep_speed":"4.0","target_duty_cycle":"0.0",
   // mqtt.conf
