@@ -231,7 +231,17 @@ class ServerCallbacks : public BLEServerCallbacks {
 
     void onDisconnect(BLEServer *s) override {
         deviceConnected = false;
-        if (otaBleActive()) otaBleRequestAbort(); // net-loop tick aborts; never free OTA state on the host task
+        // UNCONDITIONAL. The otaBleActive() guard that used to be here made this
+        // miss the case it exists for: otaBleSubmitCommand() only LATCHES a
+        // begin, and the consumer tick executes it, so between those two points
+        // a disconnect sees active == false and the guard swallowed the abort.
+        // The tick then opened the OTA handle for a peer that was already gone -
+        // with quiesce(true) fired, i.e. stopAndBackoff(10) and a halted sampler,
+        // so the converter stayed down until someone rebooted it.
+        // esp-ota-ble now cancels a latched begin, but only if it is TOLD, and
+        // otaBleRequestAbort() has always been documented as safe to call with
+        // nothing in flight. See esp-ota-ble/BUGS-2026-09-07.md defect 1.
+        otaBleRequestAbort(); // net-loop tick aborts; never free OTA state on the host task
         teleBleRequestStop(); // ditto: net-loop tick frees the stream buffers, not the host task
         removeLogCallback(bleLogWrite);
         { std::lock_guard<std::recursive_mutex> lk(txMutex); txBuf.clear(); txHead = 0; }

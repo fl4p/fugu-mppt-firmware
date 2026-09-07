@@ -32,6 +32,15 @@ BLE console); pass --force to push regardless. Requires: pip install bleak (and 
 import argparse
 import asyncio
 import hashlib
+
+# The link/protocol module ships with the device-side receiver.
+import os as _os, sys as _sys
+for _cand in (_os.path.expanduser("~/dev/pv/esp-ota-ble/host"),
+              _os.path.dirname(_os.path.abspath(__file__))):
+    if _os.path.isfile(_os.path.join(_cand, "esp_ota_ble.py")):
+        _sys.path.insert(0, _cand)
+        break
+import esp_ota_ble as O
 import os
 import re
 import struct
@@ -374,39 +383,24 @@ async def push(bin_path, link, force=False, assume_yes=False):
             print("    aborted.")
             return False
 
-    granted = 0          # cumulative byte offset the device permits us to send up to
-    credit_ev = asyncio.Event()
-    done_ev = asyncio.Event()    # OK or FAIL received
-    full_ev = asyncio.Event()    # device confirmed it has flushed the whole image (PROG == size)
-    ready_ev = asyncio.Event()
-    result = {"ok": False, "fail": False}
-    rxbuf = ""
-    rx_lines = []                # every console line received (for the version probe)
+    # THE PROTOCOL NOW COMES FROM THE SHARED MODULE in the esp-ota-ble repo -
+    # the same repo as the device-side receiver this is talking to. What is
+    # left here is fugu's own: the BLE-image guard above, the version probe
+    # below, and the two transports, one of which is an ESPHome bluetooth
+    # proxy that the module deliberately does not know about.
+    #
+    # adapt_link() bridges this file's transport shape (set_notify with raw
+    # payloads) to the module's, so ProxyLink keeps working untouched.
+    ml = O.adapt_link(link)
 
-    def on_tx(payload):
-        nonlocal granted, rxbuf
-        rxbuf += payload.decode("utf-8", "replace")
-        while "\n" in rxbuf:
-            line, rxbuf = rxbuf.split("\n", 1)
-            rx_lines.append(line)
-            if "OTAB READY" in line:
-                print("  <", line.strip()); ready_ev.set()
-            elif "OTAB CRED" in line:
-                granted = int(line.split()[-1]); credit_ev.set()
-            elif "OTAB PROG" in line:
-                try:
-                    w = int(line.split()[-1].split("/")[0])
-                    progress_bar(w, len(data), "flush ")
-                except ValueError:
-                    print("  <", line.strip())
-                if line.split()[-1] == f"{len(data)}/{len(data)}":
-                    full_ev.set()
-            elif "OTAB OK" in line:
-                print("  <", line.strip()); result["ok"] = True; done_ev.set()
-            elif "OTAB FAIL" in line:
-                print("  <", line.strip()); result["fail"] = True; done_ev.set()
+    rx_lines = []
 
-    link.set_notify(on_tx)
+    def line(text):
+        rx_lines.append(text)
+        print("  <", text)
+
+    ml.set_line_handler(line)
+
     try:
         await link.open()
     except Exception as e:
@@ -414,81 +408,39 @@ async def push(bin_path, link, force=False, assume_yes=False):
         await link.aclose()
         return False
 
-    chunk = max(link.mtu - 3, 20)
-    print(f"connected, mtu={link.mtu}, chunk={chunk}")
+    print(f"connected, mtu={ml.mtu}, chunk={ml.chunk}")
 
     try:
-        await link.write_cmd(b"ping\n")
+        await ml.write_cmd("ping")
 
-        # Skip the push if the device already runs this exact version (mirrors ota.py).
+        # Skip the push if the device already runs this exact version.
         rx_lines.clear()
-        await link.write_cmd(b"uptime\n")
+        await ml.write_cmd("uptime")
         await asyncio.sleep(2)
         dev_ver = parse_device_version(rx_lines)
         print(f"  device version: {dev_ver or '?'}")
         if local_ver and dev_ver == local_ver and not force:
-            print(f"  ☑️ skip: already at {local_ver} (use --force to push anyway)")
+            print(f"  \u2611\ufe0f skip: already at {local_ver} (use --force to push anyway)")
             return True
 
-        await link.write_cmd(f"ota-ble begin {len(data)} {sha}\n".encode())
-        try:
-            await asyncio.wait_for(ready_ev.wait(), timeout=30)  # waits out the partition erase
-        except asyncio.TimeoutError:
-            print("timeout waiting for READY"); return False
-
-        sent = 0
-        while sent < len(data):
-            if sent >= granted:
-                # Wait for more credit. A weak link can drop a CRED notify, but the device keeps
-                # flushing and re-grants on the next step — so retry a few short windows (bailing fast
-                # if the link actually dropped) instead of hard-failing on the first 20 s gap.
-                stalled = 0
-                while sent >= granted:
-                    if link.disconnected.is_set():
-                        print(f"\nlink dropped at {sent}/{len(data)}"); return False
-                    credit_ev.clear()
-                    try:
-                        await asyncio.wait_for(credit_ev.wait(), timeout=20)
-                    except asyncio.TimeoutError:
-                        stalled += 1
-                        if stalled >= 3:
-                            print(f"\ntimeout waiting for credit (stuck at {sent}/{len(data)})")
-                            return False
-                        print(f"\n  …credit stalled at {sent}/{len(data)}, retrying ({stalled}/3)")
-                continue
-            n = min(chunk, granted - sent, len(data) - sent)
-            await link.write_fw(data[sent:sent + n])
-            sent += n
-            progress_bar(sent, len(data), "upload")
-
-        # Wait until the device has flushed the whole image to flash before finalizing — otherwise the
-        # last write-no-response packets may still be in flight when `end` runs (device sees it short).
-        try:
-            await asyncio.wait_for(full_ev.wait(), timeout=30)
-        except asyncio.TimeoutError:
-            print("timeout waiting for full flush"); return False
-
-        await link.write_cmd(b"ota-ble end\n")
-        # On success the device reboots right after queuing OTAB OK, so the notify usually never drains:
-        # accept either an explicit OK or the link dropping (reboot) as success; only OTAB FAIL fails.
-        await asyncio.wait([asyncio.create_task(done_ev.wait()),
-                            asyncio.create_task(link.disconnected.wait())],
-                           timeout=35, return_when=asyncio.FIRST_COMPLETED)
-        if result["fail"]:
-            return False
-        if not (result["ok"] or link.disconnected.is_set()):
-            print("timeout waiting for OK/disconnect"); return False
-
-        # Verify the device came back up (mirrors ota.py's reconnect probe).
-        await link.release()
-        print("waiting for device to come back online ...")
-        if await link.verify():
-            print("device is advertising again — OTA successful")
-            return True
-        print("device did not reappear")
+        ml.set_line_handler(line)
+        ok = await O.push_image(
+            ml, data, sha=sha, cmd_prefix="ota-ble ",
+            on_line=line,
+            on_progress=lambda s, t: progress_bar(s, t, "upload"))
+        if ok:
+            print("\ndevice accepted the image and is rebooting; waiting for it to advertise again")
+            if await link.verify():
+                print("  device is advertising again")
+            else:
+                print("  device did NOT come back within the wait - check it")
+        return ok
+    except O.OtaBleError as exc:
+        print(f"\nOTA over BLE failed: {exc}")
         return False
     finally:
         await link.aclose()
+
 
 
 def make_link(args):
