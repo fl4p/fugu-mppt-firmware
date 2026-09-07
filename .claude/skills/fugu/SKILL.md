@@ -178,7 +178,11 @@ Mac radio). The version string is git-describe, so an uncommitted rebuild keeps 
 the tool *skips* with a success-looking `☑️ skip:` — pass `-f` when the tree changed without a
 commit; a real push prints hundreds of progress lines. A failed/killed push leaves the device
 armed: `ota-ble abort` (the verb — docs say `otab`), retry. Post-OTA/`restart` the board is silent
-~10–15 s; scan misses and READY timeouts there are retryable. `doc/OTA over BLE.md` + Bench Ops.
+~10–15 s; scan misses and READY timeouts there are retryable. **`ota_ble.py` does NOT archive the
+ELF** (no `elf_archive` reference in it, unlike `etc/ota.py`), so a coredump pulled from a
+BLE-OTA'd board has nothing to decode against — archive it yourself right after a successful push:
+`python3 etc/idf-devtools/elf_archive.py archive <device> --method ota --build-dir build-<tag>`.
+`doc/OTA over BLE.md` + Bench Ops.
 
 ## Provision a config profile
 
