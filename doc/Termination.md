@@ -137,9 +137,16 @@ average SoC — the best-evidenced LFP lifetime lever, see
 - Every `full_charge_interval` days the ceiling is dropped and the pack charges
   to full for BMS balancing; a reboot also charges to full first, because the
   deficit counter starts unknown.
+- The hold needs live BMS data: if the cell-voltage or the `ibat` stream stops
+  (180 s) the hold is dropped and the charger falls back to its ordinary
+  behaviour; it re-engages when the data returns.
+- The hold does not block the dawn start (unlike termination): the converter
+  has to run to serve the loads, and the pin keeps the pack current at zero.
 
 `status` reports `PARTIAL HOLD (load-following)`, the ceiling and the age of the
-last full charge. Sweeps and the stuck watchdog treat the hold like termination.
+last full charge. The periodic re-sweep and the stuck watchdog treat the hold
+like termination. Config: `0 < recharge_dod < partial_charge`, else the release
+band would reach below 0 % SoC; without `bat_c` the ceiling is disabled.
 
 ## Pack temperature (`bat_temp_*`)
 
@@ -147,12 +154,17 @@ With `mqtt.conf:bat_temp_topic` configured (up to four BMS sensors):
 
 - coldest sensor below `bat_temp_min` (default 0 °C): the pack current is held
   at zero by the same load-follower as the partial hold (loads are still served
-  from PV; discharging a cold pack is fine); without an `ibat_topic` the output
-  limit drops to 0.25 A instead. Released 2 °C above.
+  from PV; discharging a cold pack is fine). The cold hold has no voltage floor,
+  a cold pack may sit at any SoC. Released 2 °C above.
 - hottest sensor above `bat_temp_derate` (45 °C): the *pack* current limit
-  `ibat_max` scales linearly to zero at `bat_temp_max` (55 °C); the output limit
-  is that plus the estimated load current (`iout - ibat`).
+  `ibat_max` scales linearly to zero at `bat_temp_max` (55 °C), and the
+  load-follower regulates the BMS pack current to that limit. Regulating the
+  pack current rather than this converter's output is what makes it hold on a
+  shared bus, where neither converter can tell the load from the sibling.
+- without a live `ibat` (no topic, or the stream stopped for 180 s) both fall
+  back to an output-current limit: 0.25 A when cold, the derated `ibat_max`
+  when hot.
 
-Readings outside −40…100 °C are ignored. The last reading holds for an hour if
-the BMS stops publishing, then the policy switches off (as without a sensor).
+Readings outside −40…100 °C drop that sensor. Each sensor expires an hour after
+its last frame; with none left the policy switches off (as without a sensor).
 Without a topic nothing changes.

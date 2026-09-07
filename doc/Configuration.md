@@ -198,7 +198,7 @@ capacitance, `pwm_freq`, `pwmMax`, buck-vs-boost — not of the battery.
 | `partial_charge`    |      | float | 0          | SoC fraction to stop at between full charges (Ah-counted from the last termination); the pack is held there by load-following. 0 = always charge to full. Needs `bat_c` and a BMS `ibat_topic` |
 | `full_charge_interval` | d | float | 7          | With `partial_charge`: charge to full (BMS balancing) at least this often. Counted from the last termination since boot; a reboot charges to full first |
 | `bat_temp_min`      | °C   | float | 0          | Pack current held at zero below this pack temperature (BMS `bat_temp_topic`, coldest sensor; loads still served); released 2 °C above |
-| `bat_temp_derate`   | °C   | float | 45         | Charge current limit ramps down linearly from here (hottest sensor) ... |
+| `bat_temp_derate`   | °C   | float | 45         | Pack current limit ramps down linearly from here (hottest sensor), regulated through the pack-voltage pin ... |
 | `bat_temp_max`      | °C   | float | 55         | ... to zero here |
 
 ## tracker.conf — MPPT

@@ -1055,9 +1055,10 @@ static void loopRTNewData(time_ms nowMs) {
                 constexpr int64_t BMS_REARM_MIN_US = 10ll * 60 * 1000000;
                 bool bmsFresh = mppt.charger.batSt.haveValidCellVoltage();
                 // A stale BMS cell frame can leave termCond stuck true. Don't trust it: only treat
-                // the pack as full when the hold is asserted AND the BMS data is fresh. A cold
-                // block needs no cell data.
-                bool full = (mppt.charger.chargeHold() && bmsFresh) || mppt.charger.chargeBlocked();
+                // the pack as full when termCond is true AND the BMS data is fresh. The partial and
+                // cold holds don't block the start: their pin regulates the pack current, and the
+                // converter has to run to serve the loads.
+                bool full = bool(mppt.charger.termCond) && bmsFresh;
                 // Wait for termCond to actually be evaluated (cell voltage AND warm ibat), not just
                 // for the first cell frame — otherwise the sweep could fire in the gap before ibat
                 // smoothing warms up and termination latches. A fresh->stale edge re-arms the wait

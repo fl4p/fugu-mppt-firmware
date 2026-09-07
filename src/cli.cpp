@@ -1641,9 +1641,9 @@ static void cmdStatus(cmd *) {
     UART_LOG("  v_term=%.3fV cv_min=%.3f cv_eoc=%.3f  Cbat=%.1fAh recharge_dod=%.2f",
              chg.termCond.v_term(), p.cv_min, p.cv_eoc, p.Cbat, p.recharge_dod);
     float ah = bs.coulombCounter.ahSinceFull();
-    UART_LOG("  BMS vcell_high=%.3fV (%s, %lus ago)  ibat=%.2fA  ahSinceFull=%.2fAh  vout_avg=%.2fV",
+    UART_LOG("  BMS vcell_high=%.3fV (%s, %lus ago)  ibat=%.2fA (%s, %lus ago)  ahSinceFull=%.2fAh  vout_avg=%.2fV",
              bs.vcell_high, vcOk ? "ok" : "stale/na", ageS,
-             bs.ibatSmoothed(), ah, bs.vout_avg.get());
+             bs.ibatSmoothed(), chg.ibatFresh() ? "ok" : "stale/na", (unsigned long) chg.ibatAgeS(), ah, bs.vout_avg.get());
     if ((bool) chg.termCond && std::isfinite(p.Cbat) && p.Cbat > 0.f && p.recharge_dod > 0.f)
         UART_LOG("  DoD since full: %.0f%% / %.0f%% to recharge", ah / p.Cbat * 100.f, p.recharge_dod * 100.f);
     if (p.partial_charge > 0.f) {
@@ -1656,11 +1656,12 @@ static void cmdStatus(cmd *) {
             UART_LOG("  partial_charge=%.0f%%  no full charge since boot yet (charging to full first)",
                      p.partial_charge * 100.f);
     }
-    if (bs.haveTemp())
-        UART_LOG("  pack temp %.1f..%.1f°C (%us ago%s)  charge min %.0f derate %.0f max %.0f°C",
-                 bs.tempMin(), bs.tempMax(), (unsigned) chg.tempStaleS(),
-                 chg.tempStaleS() > 3600 ? ", expired" : "",
+    if (chg.haveTemp())
+        UART_LOG("  pack temp %.1f..%.1f°C (%lus ago)  charge min %.0f derate %.0f max %.0f°C",
+                 chg.tempMin(), chg.tempMax(), (unsigned long) chg.tempAgeS(),
                  p.bat_temp_min, p.bat_temp_derate, p.bat_temp_max);
+    else if (chg.tempAgeS())
+        UART_LOG("  pack temp expired (%lus ago)", (unsigned long) chg.tempAgeS());
     if (g_app.psuMode()) {
         UART_LOG("PSU: vset=%.2fV %s trips=%u", mppt.getPsuSetpoint(),
                  mppt.isPsuLatched() ? "LATCHED" : mppt.isPsuEscalated() ? "escalated" : "ok",

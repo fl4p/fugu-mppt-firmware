@@ -136,6 +136,12 @@ void test_terminated_target_is_cv_min();
 void test_bat_temp_cold_block_and_hysteresis();
 void test_bat_temp_hot_derate();
 void test_bat_temp_cold_hold_follows_load();
+void test_bat_temp_cold_low_soc_pack();
+void test_bat_temp_per_sensor_expiry();
+void test_partial_hold_clears_on_stale_ibat();
+void test_termination_decided_after_two_frames();
+void test_iout_max_never_zero();
+void test_partial_charge_config_validation();
 void test_partial_hold_cycle();
 void test_partial_hold_disabled_by_default();
 void test_mqtt_bat_temp_topics();
@@ -391,6 +397,12 @@ void setup() {
     RUN_TEST(test_bat_temp_cold_block_and_hysteresis);
     RUN_TEST(test_bat_temp_hot_derate);
     RUN_TEST(test_bat_temp_cold_hold_follows_load);
+    RUN_TEST(test_bat_temp_cold_low_soc_pack);
+    RUN_TEST(test_bat_temp_per_sensor_expiry);
+    RUN_TEST(test_partial_hold_clears_on_stale_ibat);
+    RUN_TEST(test_termination_decided_after_two_frames);
+    RUN_TEST(test_iout_max_never_zero);
+    RUN_TEST(test_partial_charge_config_validation);
     RUN_TEST(test_partial_hold_cycle);
     RUN_TEST(test_partial_hold_disabled_by_default);
     // etc/coulomb_counter.h

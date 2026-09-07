@@ -73,8 +73,17 @@ struct BatChargerParams {
         assert_throw(recharge_vfloor_band >= 0.f, "recharge_vfloor_band must be >= 0");
         vout_offset_max = chargerConf.getFloat("vout_offset_max", 0.6f);
         assert_throw(vout_offset_max >= 0.f, "vout_offset_max must be >= 0");
+        assert_throw(recharge_dod >= 0.f && recharge_dod < 1.f, "recharge_dod must be in [0, 1)");
         partial_charge = chargerConf.getFloat("partial_charge", 0.f);
         assert_throw(partial_charge >= 0.f && partial_charge < 1.f, "partial_charge must be in [0, 1)");
+        if (partial_charge > 0.f) {
+            // the hold releases recharge_dod below the ceiling; that band must stay above 0 % SoC
+            assert_throw(recharge_dod > 0.f && recharge_dod < partial_charge, "need 0 < recharge_dod < partial_charge");
+            if (!(std::isfinite(Cbat) && Cbat > 0.f)) {
+                ESP_LOGW("charger", "partial_charge needs bat_c, disabled");
+                partial_charge = 0.f;
+            }
+        }
         float days = chargerConf.getFloat("full_charge_interval", 7.f);
         assert_throw(days > 0.f && days < 365.f, "full_charge_interval must be in (0, 365) days");
         full_charge_interval_s = (uint32_t) (days * 86400.f);
@@ -95,7 +104,7 @@ struct BatteryState {
     volatile uint32_t vcell_high_t = 0; // 32-bit lower half of wallClockUs(). 32-bit single-store/load is atomic across cores on Xtensa; 64-bit would not be.
     volatile uint32_t ibat_t = 0; // last ibat frame, same clock as vcell_high_t
     volatile float temp[TEMP_SENSORS]{NAN, NAN, NAN, NAN}; // [°C] pack sensors from BMS
-    volatile uint32_t temp_t = 0;
+    volatile uint32_t temp_t[TEMP_SENSORS]{0, 0, 0, 0};
 
     EWMA<volatile float, float> vout_avg{60}; // time-averaged pack voltage
     CoulombCounter coulombCounter{}; // Ah-since-last-full tracker, used for recharge hysteresis
@@ -106,27 +115,9 @@ struct BatteryState {
     }
 
     void setTemp(uint8_t i, float t) {
-        if (i >= TEMP_SENSORS || !(t > -40.f && t < 100.f)) return; // NAN and sensor-fault values
-
-        temp[i] = t;
-        temp_t = static_cast<uint32_t>(wallClockUs());
-    }
-
-    [[nodiscard]] bool haveTemp() const {
-        for (auto t: temp) if (std::isfinite(t)) return true;
-        return false;
-    }
-
-    [[nodiscard]] float tempMin() const {
-        float m = INFINITY;
-        for (auto t: temp) if (std::isfinite(t) && t < m) m = t;
-        return m;
-    }
-
-    [[nodiscard]] float tempMax() const {
-        float m = -INFINITY;
-        for (auto t: temp) if (std::isfinite(t) && t > m) m = t;
-        return m;
+        if (i >= TEMP_SENSORS) return;
+        temp[i] = (t > -40.f && t < 100.f) ? t : NAN; // NAN and sensor-fault values drop the sensor
+        temp_t[i] = static_cast<uint32_t>(wallClockUs());
     }
 
     [[nodiscard]] bool haveValidCellVoltage() const {
@@ -299,17 +290,30 @@ class BatteryCharger {
     uint32_t _lastIbatFrameUs = 0; // load-following steps once per ibat frame
 
     bool _bmsCellSource = false; // a BMS cell-voltage topic was configured (termination can be evaluated)
-    bool _termDecided = false; // termCond has been evaluated at least once (needs cell voltage + warm ibat)
-    bool _coldBlocked = false; // pack below bat_temp_min: hold ibat at 0 (loads are still served)
-    uint16_t _tempStaleTicks = 0; // update() ticks since the last temperature frame
-    uint32_t _lastTempFrameUs = 0;
-    bool _partialHold = false; // Ah ceiling reached: hold SoC by following the load (ibat -> 0)
-    bool _wasPartial = false;
+    bool _termDecided = false; // termCond has seen enough cell frames to have latched (needs warm, fresh ibat)
+    uint8_t _termEvals = 0;
+    volatile bool _coldBlocked = false; // pack below bat_temp_min: hold ibat at 0 (loads are still served)
+    volatile bool _partialHold = false; // Ah ceiling reached: hold SoC by following the load (ibat -> 0)
+    float _hotScale = NAN; // derate factor for Ibat_lim above bat_temp_derate (NAN = none)
+    bool _wasHold = false;
     time_us _lastFullUs = 0; // last termination latch (0 = none since boot)
 
+    // Consumer-side freshness of the producer's 32-bit frame stamps: the stamp only tells us a
+    // frame arrived; when it changed is noted here on the 64-bit loop clock (wrap-free, no torn read).
+    uint32_t _ibatLastT = 0, _tempLastT[BatteryState::TEMP_SENSORS]{};
+    time_us _ibatSeenUs = 0, _tempSeenUs[BatteryState::TEMP_SENSORS]{};
+    float _tempMin = NAN, _tempMax = NAN; // over fresh sensors, NAN when none
+
     static constexpr float BAT_TEMP_HYST = 2.f; // [°C] cold-block release band
-    static constexpr uint16_t TEMP_EXPIRE_TICKS = 3600; // ~1 h without a frame: policy off (as without a sensor)
+    static constexpr time_us TEMP_EXPIRE_US = 3600ULL * 1000000ULL; // policy off without a frame (as without a sensor)
+    static constexpr time_us IBAT_EXPIRE_US = 180ULL * 1000000ULL; // like VCELL_EXPIRATION_TIME_SEC
     static constexpr float IOUT_LIM_FLOOR = 0.25f; // the CC limiter normalizes by its setpoint; never 0
+
+    // Notes when a frame stamp changes; true while the last change is younger than maxAge.
+    static bool _fresh(uint32_t stamp, uint32_t &last, time_us &seen, time_us now, time_us maxAge) {
+        if (stamp != last) { last = stamp; seen = now; }
+        return seen != 0 && (now - seen) < maxAge;
+    }
 
 public:
     BatChargerParams params{};
@@ -332,7 +336,7 @@ public:
         if (!batSt.haveValidCellVoltage()) return;
 
         float ibat = batSt.ibatSmoothed();
-        if (!std::isfinite(ibat)) return; // smoothing not warm yet
+        if (!std::isfinite(ibat) || !ibatFresh()) return; // smoothing not warm yet, or the ibat stream stopped
 
         uint32_t frame = batSt.vcell_high_t;
         if (frame == _lastTermFrameUs) return; // streaks inside termCond count cell frames, not loop ticks
@@ -340,7 +344,10 @@ public:
 
         bool wasTerm = bool(termCond);
         termCond.update(batSt.vcell_high, ibat, batSt.coulombCounter.ahSinceFull());
-        _termDecided = true; // termCond now reflects a real evaluation (cell voltage + warm ibat)
+        // the line needs VTERM_STREAK_REQ frames to latch, so the boot sweep must not trust
+        // "not terminated" before that many have been seen
+        if (_termEvals < UINT8_MAX) ++_termEvals;
+        _termDecided = _termEvals >= 2;
         if (!wasTerm && bool(termCond)) {
             // Rising edge — pack is full, re-zero the coulomb counter so the
             // recharge_dod hysteresis measures against this full point.
@@ -350,50 +357,69 @@ public:
         }
     }
 
-    // Battery-temperature policy. No sensor data (or none for ~1 h): no limit, as without the feature.
-    // Cold: charge current is held at 0 by the load-follower (the converter still serves the loads;
-    // discharging a cold pack is fine). Hot: the *battery* current limit derates, so the output limit
-    // is the estimated load current (iout - ibat) plus the derated ibat_max.
-    void _updateTempLimit(float iout) {
+    // Battery-temperature policy. Sensors expire individually after an hour without a frame; with none
+    // fresh the policy is off, as without the feature. Cold: the pack current is held at 0 by the
+    // load-follower (loads are still served; discharging a cold pack is fine). Hot: the follower
+    // holds the pack current at the derated ibat_max instead; that regulates the *pack* current even
+    // when a sibling converter feeds it too. Without a fresh ibat both fall back to an output limit.
+    void _updateTempLimit() {
         ioutLim = NAN;
-        uint32_t frame = batSt.temp_t;
-        if (frame != _lastTempFrameUs) { _lastTempFrameUs = frame; _tempStaleTicks = 0; }
-        else if (_tempStaleTicks < UINT16_MAX) ++_tempStaleTicks;
-        if (!batSt.haveTemp() || _tempStaleTicks > TEMP_EXPIRE_TICKS) {
+        _hotScale = NAN;
+        time_us now = wallClockUs();
+        _tempMin = INFINITY; _tempMax = -INFINITY;
+        for (uint8_t i = 0; i < BatteryState::TEMP_SENSORS; ++i) {
+            float t = batSt.temp[i];
+            if (!_fresh(batSt.temp_t[i], _tempLastT[i], _tempSeenUs[i], now, TEMP_EXPIRE_US) || !std::isfinite(t)) continue;
+            if (t < _tempMin) _tempMin = t;
+            if (t > _tempMax) _tempMax = t;
+        }
+        if (!std::isfinite(_tempMin)) {
+            _tempMin = _tempMax = NAN;
             if (_coldBlocked) ESP_LOGW("charger", "pack temperature stale, cold block dropped");
             _coldBlocked = false;
             return;
         }
-        float tmin = batSt.tempMin(), tmax = batSt.tempMax();
         float release = params.bat_temp_min + BAT_TEMP_HYST;
-        if (tmin < (_coldBlocked ? release : params.bat_temp_min)) {
+        if (_tempMin < (_coldBlocked ? release : params.bat_temp_min)) {
             if (!_coldBlocked)
-                ESP_LOGW("charger", "pack %.1f°C < %.1f°C: charging blocked until %.1f°C", tmin, params.bat_temp_min, release);
+                ESP_LOGW("charger", "pack %.1f°C < %.1f°C: charging blocked until %.1f°C", _tempMin, params.bat_temp_min, release);
             _coldBlocked = true;
-            if (!std::isfinite(batSt.ibatSmoothed())) ioutLim = IOUT_LIM_FLOOR; // no ibat to follow: idle
+            if (!ibatFresh()) ioutLim = IOUT_LIM_FLOOR; // no ibat to follow: idle
             return;
         }
-        if (_coldBlocked) ESP_LOGI("charger", "pack %.1f°C: charging released", tmin);
+        if (_coldBlocked) ESP_LOGI("charger", "pack %.1f°C: charging released", _tempMin);
         _coldBlocked = false;
-        if (tmax > params.bat_temp_derate) {
-            float scale = fmaxf(0.f, (params.bat_temp_max - tmax) / (params.bat_temp_max - params.bat_temp_derate));
-            float ibat = batSt.ibatSmoothed();
-            float iload = (std::isfinite(ibat) && std::isfinite(iout)) ? fmaxf(0.f, iout - ibat) : 0.f;
-            ioutLim = fmaxf(iload + params.Ibat_lim * scale, IOUT_LIM_FLOOR);
+        if (_tempMax > params.bat_temp_derate) {
+            _hotScale = fmaxf(0.f, (params.bat_temp_max - _tempMax) / (params.bat_temp_max - params.bat_temp_derate));
+            if (!ibatFresh()) ioutLim = fmaxf(params.Ibat_lim * _hotScale, IOUT_LIM_FLOOR); // assumes iload ~ 0
         }
     }
 
-    [[nodiscard]] uint16_t tempStaleS() const { return _tempStaleTicks; }
+    [[nodiscard]] bool ibatFresh() {
+        return std::isfinite(batSt.ibatSmoothed())
+               && _fresh(batSt.ibat_t, _ibatLastT, _ibatSeenUs, wallClockUs(), IBAT_EXPIRE_US);
+    }
+    [[nodiscard]] bool haveTemp() const { return std::isfinite(_tempMin); }
+    [[nodiscard]] float tempMin() const { return _tempMin; }
+    [[nodiscard]] float tempMax() const { return _tempMax; }
+    [[nodiscard]] uint32_t ibatAgeS() const { return _ibatSeenUs ? (uint32_t) ((wallClockUs() - _ibatSeenUs) / 1000000ULL) : 0; }
+    [[nodiscard]] uint32_t tempAgeS() const {
+        time_us newest = 0;
+        for (auto t: _tempSeenUs) if (t > newest) newest = t;
+        return newest ? (uint32_t) ((wallClockUs() - newest) / 1000000ULL) : 0;
+    }
 
     // Partial-charge ceiling: after a full charge, stop at partial_charge (Ah-counted from that
     // full) and hold there by load-following until the pack has discharged recharge_dod below the
     // ceiling, or until full_charge_interval expires (then charge to full again for balancing).
     // Needs a full event since boot: the Ah counter is a deficit-since-full, unknown before that.
     void _updatePartialHold() {
-        bool enabled = params.partial_charge > 0.f && std::isfinite(params.Cbat) && _lastFullUs != 0
+        bool dataOk = batSt.haveValidCellVoltage() && ibatFresh(); // the deficit counter is only trusted live
+        bool enabled = params.partial_charge > 0.f && _lastFullUs != 0 && dataOk
                        && (wallClockUs() - _lastFullUs) < (time_us) params.full_charge_interval_s * 1000000ULL;
         if (!enabled || bool(termCond)) {
-            if (_partialHold) ESP_LOGI("charger", "partial hold off (%s)", bool(termCond) ? "terminated" : "full charge due");
+            if (_partialHold)
+                ESP_LOGI("charger", "partial hold off (%s)", bool(termCond) ? "terminated" : !dataOk ? "BMS stale" : "full charge due");
             _partialHold = false;
             return;
         }
@@ -408,30 +434,39 @@ public:
         }
     }
 
-    // Load-following: nudge vpack_pin so the BMS pack current goes to ibatTarget (~0: the converter
+    // Load-following: nudge vpack_pin so the BMS pack current goes to ibatTarget (0: the converter
     // covers the load, nothing goes into the pack). One capped step per ibat frame; ibat is already
     // smoothed over IBAT_MIN_SAMPLES frames, so the step must stay small against the stiff pack
-    // (tens of mΩ including cables) or the loop hunts. The floor is the termination-release voltage
-    // minus the Vout tolerance, where a pack at partial SoC rests. Only steps while this converter
-    // drives the bus: a disabled converter (night) would otherwise integrate the house load up to
-    // Vbat_max and charge for minutes at dawn.
+    // (tens of mΩ including cables) or the loop hunts. Only steps while this converter drives the
+    // bus: a disabled converter (night) would otherwise integrate the house load up to Vbat_max and
+    // charge for minutes at dawn. The partial hold has a floor (the termination-release voltage minus
+    // the Vout tolerance: a pack at partial SoC rests above it); a cold pack may sit at any SoC, so
+    // the cold/hot holds have none.
     void _loadFollowStep(float ibat, float ibatTarget, bool authority) {
         constexpr float DEADBAND_A = 0.2f, GAIN_V_PER_A = 0.004f, STEP_MAX_V = 0.02f;
         uint32_t frame = batSt.ibat_t;
         if (!authority || frame == _lastIbatFrameUs) return;
         _lastIbatFrameUs = frame;
-        float floor = params.n_cells * (params.cv_min - params.recharge_vfloor_band) - params.vout_offset_max;
+        float floor = _partialHold && !_coldBlocked
+                          ? params.n_cells * (params.cv_min - params.recharge_vfloor_band) - params.vout_offset_max
+                          : 0.f;
         float err = ibat - ibatTarget;
         float step = fabsf(err) > DEADBAND_A ? fminf(fmaxf(-err * GAIN_V_PER_A, -STEP_MAX_V), STEP_MAX_V) : 0.f;
         vpack_pin = fminf(fmaxf(vpack_pin + step, floor), params.Vbat_max);
     }
 
-    // Partial hold: trim towards the Ah ceiling so a BMS current offset inside the deadband can't
-    // walk the SoC away over a week (0.2 A is 34 Ah / 12 % in 7 days on 280 Ah). ±1 A at 2 Ah off.
+    // Pack-current target of the hold, the strictest of: cold 0 A; hot the derated ibat_max; partial
+    // a trim towards the Ah ceiling so a BMS current offset inside the deadband can't walk the SoC
+    // away over a week (0.2 A is 34 Ah / 12 % in 7 days on 280 Ah), ±1 A at 2 Ah off.
     [[nodiscard]] float _holdIbatTarget() const {
-        if (!_partialHold) return 0.f;
-        float ceilAh = (1.f - params.partial_charge) * params.Cbat;
-        return fminf(fmaxf((batSt.coulombCounter.ahSinceFull() - ceilAh) * 0.5f, -1.f), 1.f);
+        float t = INFINITY;
+        if (_coldBlocked) t = 0.f;
+        if (std::isfinite(_hotScale)) t = fminf(t, params.Ibat_lim * _hotScale);
+        if (_partialHold) {
+            float ceilAh = (1.f - params.partial_charge) * params.Cbat;
+            t = fminf(t, fminf(fmaxf((batSt.coulombCounter.ahSinceFull() - ceilAh) * 0.5f, -1.f), 1.f));
+        }
+        return t;
     }
 
     void _updatePackVoltagePinning(bool voutAuthority = true, float vbat = INFINITY) {
@@ -463,19 +498,20 @@ public:
         float v_eoc = nowTerm ? params.cv_min : params.cv_eoc;
 
         float ibat = batSt.ibatSmoothed();
-        bool hold = std::isfinite(ibat) && ((_partialHold && batDataOk) || _coldBlocked);
-        if (hold != _wasPartial) {
+        bool hold = ibatFresh() && (_partialHold || _coldBlocked || std::isfinite(_hotScale));
+        if (hold != _wasHold) {
             if (hold) {
                 // start at the bus voltage the pack sits at now (the bulk pin is far above it)
                 float bus = batSt.vout_avg.get();
                 if (std::isfinite(bus)) vpack_pin = std::isfinite(vpack_pin) ? fminf(vpack_pin, bus) : bus;
-                ESP_LOGI("charger", "hold (%s): load-following from vpPin %.3fV", _coldBlocked ? "cold" : "partial", vpack_pin);
+                ESP_LOGI("charger", "hold (%s): load-following from vpPin %.3fV, ibat -> %.1fA",
+                         _coldBlocked ? "cold" : _partialHold ? "partial" : "hot", vpack_pin, _holdIbatTarget());
             } else {
                 float from = std::isfinite(vpack_pin) ? vpack_pin : params.Vbat_max;
                 _floatGlide.start(from, params.Vbat_max, nowUs);
                 ESP_LOGI("charger", "hold end, gliding vpPin %.3fV -> %.3fV", from, params.Vbat_max);
             }
-            _wasPartial = hold;
+            _wasHold = hold;
         }
         if (hold) {
             _vPinFilt.reset();
@@ -642,7 +678,7 @@ public:
     void update(float vout, float iout, bool voutAuthority = true) {
         batSt.update(vout, iout);
         _updateTermination();
-        _updateTempLimit(iout);
+        _updateTempLimit();
         _updatePartialHold();
         _updatePackVoltagePinning(voutAuthority);
     }
@@ -697,9 +733,7 @@ public:
 
         auto lim = params.Ibat_lim;
 
-        // termination mode limit (keep Ibat~0 and supply loads)
         if (std::isfinite(ioutLim)) lim = min(lim, ioutLim);
-
-        return lim;
+        return fmaxf(lim, IOUT_LIM_FLOOR); // the CC limiter normalizes by its setpoint; 0 (e.g. ibat_lim_topic) would divide by 0
     }
 };

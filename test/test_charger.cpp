@@ -39,9 +39,9 @@ static BatChargerParams makeLfpParams() {
 // Drive the integrator with a constant current over a duration in 10s steps so we
 // stay well under TrapezoidalIntegrator's 30s maxDt guard.
 static void driveCounter(CoulombCounter &cc, float ibat,
-                         unsigned long startUs, unsigned long endUs,
-                         unsigned long stepUs = 10'000'000UL) {
-    for (unsigned long t = startUs; t <= endUs; t += stepUs) cc.updateBatCurrent(ibat, t);
+                         time_us startUs, time_us endUs,
+                         time_us stepUs = 10'000'000ULL) {
+    for (time_us t = startUs; t <= endUs; t += stepUs) cc.updateBatCurrent(ibat, t);
 }
 
 // The line trigger latches only after two consecutive over-line frames (like the ceiling).
@@ -484,12 +484,13 @@ void test_termination_line_streak_resets() {
 }
 
 // Drive absorption: cell held at vcell with a constant ibat and fresh cell + ibat frames.
-static void driveFrames(BatteryCharger &charger, float vcellHigh, float ibat, int frames, bool authority = true) {
+static void driveFrames(BatteryCharger &charger, float vcellHigh, float ibat, int frames, bool authority = true,
+                        float vout = NAN) {
     for (int i = 0; i < frames; ++i) {
         loopWallClockUs_ += 4'000'000;
         charger.batSt.setVcellHigh(vcellHigh);
         charger.batSt.updateBatCurrent(ibat);
-        charger.update(charger.params.Vbat_max, ibat, authority);
+        charger.update(std::isfinite(vout) ? vout : charger.params.Vbat_max, ibat, authority);
     }
 }
 
@@ -562,9 +563,102 @@ void test_bat_temp_cold_hold_follows_load() {
     float pin0 = charger.Vout_max();
     driveFrames(charger, 3.30f, 6.0f, 10);
     TEST_ASSERT_TRUE(charger.Vout_max() < pin0 - 0.05f); // pin walks down to stop the charge current
-    // Expiry: ~1 h without a temperature frame drops the policy.
-    for (int i = 0; i < 3700; ++i) charger.update(13.3f, 0.0f, true);
+    // Expiry: an hour without a temperature frame drops the policy.
+    loopWallClockUs_ += 3601ULL * 1'000'000ULL;
+    charger.update(13.3f, 0.0f, true);
     TEST_ASSERT_FALSE(charger.chargeBlocked());
+}
+
+// A cold pack can sit at any SoC: the hold must be able to pull the pin below the partial-hold floor
+// (12.68 V for this 4S config) down to the actual bus voltage, or it would charge a low pack.
+void test_bat_temp_cold_low_soc_pack() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams();
+    loopWallClockUs_ = 1'000'000;
+    charger.batSt.setTemp(0, -5.0f);
+    driveFrames(charger, 3.10f, 6.0f, 12, true, 12.4f); // bus 12.4 V, 6 A still flowing in
+    TEST_ASSERT_TRUE(charger.chargeBlocked());
+    TEST_ASSERT_TRUE(charger.Vout_max() <= 12.4f + 0.01f); // seeded at the bus, never clamped up
+    driveFrames(charger, 3.10f, 6.0f, 10, true, 12.4f);
+    TEST_ASSERT_TRUE(charger.Vout_max() < 12.4f - 0.05f);
+}
+
+// Sensors expire individually: a dead cold sensor must not block forever while another one stays live.
+void test_bat_temp_per_sensor_expiry() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams();
+    loopWallClockUs_ = 1'000'000;
+    charger.batSt.setTemp(0, -5.0f);
+    charger.batSt.setTemp(1, 20.0f);
+    charger.update(13.3f, 0.0f, true);
+    TEST_ASSERT_TRUE(charger.chargeBlocked());
+    for (int i = 0; i < 80; ++i) { // sensor 1 keeps reporting for ~1.3 h, sensor 0 is silent
+        loopWallClockUs_ += 60ULL * 1'000'000ULL;
+        charger.batSt.setTemp(1, 20.0f);
+        charger.update(13.3f, 0.0f, true);
+    }
+    TEST_ASSERT_FALSE(charger.chargeBlocked());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 20.0f, charger.tempMin());
+}
+
+// A stopped ibat stream must clear the partial hold (the deficit counter is dead) so the converter
+// falls back to normal charging instead of freezing the pin and suppressing every recovery path.
+void test_partial_hold_clears_on_stale_ibat() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams();
+    charger.params.partial_charge = 0.8f;
+    loopWallClockUs_ = 1'000'000;
+    driveEocFeedback(charger, charger.params.cv_min + 0.10f, 12);
+    driveCounter(charger.batSt.coulombCounter, 60.0f, loopWallClockUs_, loopWallClockUs_ + 3600ULL * 1'000'000ULL);
+    loopWallClockUs_ += 3600ULL * 1'000'000ULL;
+    driveFrames(charger, 3.30f, -1.0f, 4);
+    driveCounter(charger.batSt.coulombCounter, -60.0f, loopWallClockUs_, loopWallClockUs_ + 300ULL * 1'000'000ULL);
+    loopWallClockUs_ += 300ULL * 1'000'000ULL;
+    driveFrames(charger, 3.33f, 8.0f, 4);
+    TEST_ASSERT_TRUE(charger.partialHold());
+    for (int i = 0; i < 50; ++i) { // cell frames continue, ibat frames stop
+        loopWallClockUs_ += 4'000'000;
+        charger.batSt.setVcellHigh(3.33f);
+        charger.update(charger.params.Vbat_max, 0.0f, true);
+    }
+    TEST_ASSERT_FALSE(charger.partialHold());
+    TEST_ASSERT_FALSE(charger.chargeHold());
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, charger.params.Vbat_max, charger.Vout_max());
+}
+
+// The boot sweep trusts terminationDecided(); the line needs two frames, so one frame is not a decision.
+void test_termination_decided_after_two_frames() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams();
+    charger.termCond.reset();
+    loopWallClockUs_ = 1'000'000;
+    for (int i = 0; i < 8; ++i) charger.batSt.updateBatCurrent(0.1f); // warm the smoothing
+    driveFrames(charger, charger.params.cv_min + 0.10f, 0.1f, 1);
+    TEST_ASSERT_FALSE(charger.terminationDecided());
+    TEST_ASSERT_FALSE(bool(charger.termCond));
+    driveFrames(charger, charger.params.cv_min + 0.10f, 0.1f, 1);
+    TEST_ASSERT_TRUE(charger.terminationDecided());
+    TEST_ASSERT_TRUE(bool(charger.termCond));
+}
+
+// The output limit is floored on the final value: a BMS may publish ibat_lim = 0.
+void test_iout_max_never_zero() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams();
+    charger.params.Ibat_lim = 0.0f;
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.25f, charger.Iout_max());
+}
+
+void test_partial_charge_config_validation() {
+    ConfFile bad{{{"vout_max", "14.6"}, {"cv_eoc", "3.65"}, {"cv_float", "3.37"}, {"bat_c", "280"},
+                  {"partial_charge", "0.5"}, {"recharge_dod", "0.6"}}};
+    BatChargerParams p;
+    bool threw = false;
+    try { p.load(bad); } catch (...) { threw = true; }
+    TEST_ASSERT_TRUE(threw);
+    ConfFile noCap{{{"vout_max", "14.6"}, {"cv_eoc", "3.65"}, {"cv_float", "3.37"}, {"partial_charge", "0.5"}}};
+    p.load(noCap); // no bat_c: warns and disables the ceiling instead of refusing to start
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, p.partial_charge);
 }
 
 void test_bat_temp_hot_derate() {
@@ -574,15 +668,20 @@ void test_bat_temp_hot_derate() {
     charger.batSt.setTemp(0, 20.0f);
     charger.batSt.setTemp(1, 50.0f); // the hottest sensor derates
     charger.update(13.3f, 0.0f, true);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 20.0f, charger.Iout_max()); // halfway 45..55 -> 50 %
-    // The derate is on the pack current: the load share (iout - ibat) is added on top.
-    driveFrames(charger, 3.30f, 5.0f, 12);
-    charger.update(13.3f, 15.0f, true); // 15 A out, 5 A into the pack -> 10 A load
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 30.0f, charger.Iout_max());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 20.0f, charger.Iout_max()); // no ibat: output cap, halfway 45..55 -> 50 %
     charger.batSt.setTemp(1, 60.0f);
-    charger.update(13.3f, 15.0f, true);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 10.0f, charger.Iout_max()); // load only, no charge
+    charger.update(13.3f, 0.0f, true);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.25f, charger.Iout_max()); // never 0
     TEST_ASSERT_FALSE(charger.chargeBlocked()); // the coldest sensor (20 °C) is fine
+    // With a live ibat the derate regulates the *pack* current through the pin (shared-bus safe):
+    // 30 A into the pack at 50 °C against a 20 A target -> the pin walks down, the output cap is free.
+    charger.batSt.setTemp(1, 50.0f);
+    driveFrames(charger, 3.30f, 30.0f, 12);
+    TEST_ASSERT_EQUAL_FLOAT(40.0f, charger.Iout_max());
+    float pin0 = charger.Vout_max();
+    driveFrames(charger, 3.30f, 30.0f, 10);
+    TEST_ASSERT_TRUE(charger.Vout_max() < pin0 - 0.05f);
+    TEST_ASSERT_FALSE(charger.chargeHold()); // hot is a derate, not a hold: sweeps stay allowed
 }
 
 // Partial-charge ceiling: needs a full event first; then holds at partial_charge (Ah-counted),
@@ -678,8 +777,10 @@ void test_mqtt_bat_temp_topics() {
     charger.beginMqtt(mqttConf);
     MQTT._invokeForTest("test/t1", "12.5", 4);
     MQTT._invokeForTest("test/t2", "-3", 2);
-    MQTT._invokeForTest("test/t2", "", 0);
-    TEST_ASSERT_TRUE(charger.batSt.haveTemp());
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, -3.0f, charger.batSt.tempMin());
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 12.5f, charger.batSt.tempMax());
+    MQTT._invokeForTest("test/t2", "", 0); // empty payload: ignored
+    loopWallClockUs_ = 1'000'000;
+    charger.update(13.3f, 0.0f, true);
+    TEST_ASSERT_TRUE(charger.haveTemp());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -3.0f, charger.tempMin());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 12.5f, charger.tempMax());
 }
