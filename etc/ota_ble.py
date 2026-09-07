@@ -35,8 +35,10 @@ import hashlib
 
 # The link/protocol module ships with the device-side receiver.
 import os as _os, sys as _sys
-for _cand in (_os.path.expanduser("~/dev/pv/esp-ota-ble/host"),
-              _os.path.dirname(_os.path.abspath(__file__))):
+_HERE = _os.path.dirname(_os.path.abspath(__file__))
+for _cand in (_os.path.join(_HERE, "..", "..", "esp-ota-ble", "host"),
+              _os.path.expanduser("~/dev/pv/esp-ota-ble/host"),
+              _HERE):
     if _os.path.isfile(_os.path.join(_cand, "esp_ota_ble.py")):
         _sys.path.insert(0, _cand)
         break
@@ -433,7 +435,15 @@ async def push(bin_path, link, force=False, assume_yes=False):
             if await link.verify():
                 print("  device is advertising again")
             else:
+                # FAIL, do not just warn. Before the module conversion this
+                # returned False here, and it must keep doing so: the shared
+                # push_image() treats a link drop after `end` as success, which
+                # is a guess - the receiver selects the boot slot AFTER the last
+                # PROG - so re-advertising is the only evidence this tool has
+                # that the device came back at all. Printing a warning and
+                # returning success made that guess authoritative.
                 print("  device did NOT come back within the wait - check it")
+                return False
         return ok
     except O.OtaBleError as exc:
         print(f"\nOTA over BLE failed: {exc}")
