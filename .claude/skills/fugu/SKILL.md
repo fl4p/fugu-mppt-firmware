@@ -310,7 +310,15 @@ HISTORY and can predate a reboot. Measured 2026-09-06: a `head -1` read returned
 `V= nan/nan … −273℃ … 0sps … DCM(H|L|Lm)= 8|330|330 … N=0` — a previous boot's operating point —
 while the live board was at `N=884307` with 1957 s uptime. **The staleness tell is `N` against
 uptime**: `N` counts samples since boot (~451 sps), so a small `N` beside a large uptime is a
-replayed line. The same trap eats section headers: a pattern like `"pwm-freq "` also matches
+replayed line. **`tail -1` alone is still not enough.** The last `V=` line can be TRUNCATED
+(the capture cut mid-line), so match a fully well-formed pattern and take the last COMPLETE
+match — and pull the line and any field off it with ONE expression: two selectors (a
+`startswith('V=')` scan for the line, a separate regex for `st=`) can land on DIFFERENT lines
+and pair a mode with another line's numbers, with nothing marking the mismatch. A complete,
+live-looking line can also still be UNEVALUABLE: `N=0`, `-273℃`, `nan`, `0sps` or a
+`st=<mode>,0` (converter not enabled) each say the line describes a board that is not running —
+refuse it and retake, never average it in. The same trap eats section headers: a pattern like
+`"pwm-freq "` also matches
 `=== pwm-freq ===`, so with `head -N` the header fills a slot the real reply needed. Batched replies interleave with log
 output and can
 **fabricate** errors (`Command not found` next to the correct reply) — re-send singly before
