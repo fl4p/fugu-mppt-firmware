@@ -2,38 +2,53 @@
 
 #include <hal/adc_types.h>
 #include <esp_timer.h>
+#include <cmath>
 
 // Cached slow sensor with an explicit age, following the charger.h/BMS convention: a value that
-// nothing refreshed must not be indistinguishable from a measured one. read() stamps the cache
-// whether or not it produced a number, so "no sensor fitted" stays fresh-NaN (the existing isnan
-// policies apply unchanged) while a starved refresh path presents as stale.
+// nothing refreshed must not be indistinguishable from a measured one. A starved refresh path or a
+// failing sensor presents as stale; a sensor that is simply not fitted stays fresh-NaN, so the
+// pre-existing isnan policies apply to it unchanged.
 class SingleValueSensor {
-    int64_t _lastReadUs = 0;
+    // 32-bit lower half of esp_timer_get_time(), same reason as charger.h's vcell_high_t: written on
+    // core 0, read from the RT loop on core 1, and a 64-bit load/store is not atomic across cores on
+    // Xtensa. Unsigned wrap arithmetic keeps the age correct across the ~71.6 min rollover.
+    volatile uint32_t _lastGoodUs32 = 0;
+    volatile bool _everGood = false;
 
 protected:
     virtual float readImpl() = 0;
 
+    // False once the sensor is known to be absent (no NTC fitted, driver install failed). Such a
+    // sensor stays permanently "fresh NaN" so the pre-existing isnan policies apply unchanged,
+    // instead of decaying into a staleness report that no refresh could ever clear.
+    [[nodiscard]] virtual bool present() const { return true; }
+
 public:
-    // Generous vs. the ~3s refresh cadence: only a genuinely starved scheduler trips it.
-    static constexpr int64_t EXPIRE_US = 20ll * 1000000ll;
+    // Backstop only — the refresh runs every lfPeriod (3 s). Sized above the longest legitimate
+    // core-0 stall (`sleep` caps at 60 s, an FTP passive-connect waits up to 2x30 s) so a healthy
+    // board does not report staleness; the freezes this guards against lasted minutes.
+    static constexpr uint32_t EXPIRE_US = 90u * 1000000u;
 
     virtual ~SingleValueSensor() = default;
 
     float read() {
-        _lastReadUs = esp_timer_get_time();
-        return readImpl();
+        float v = readImpl();
+        // Stamp only on an actual update. A read that fails leaves the filters holding their old
+        // finite value, so stamping unconditionally would keep a permanently failing sensor
+        // "fresh" forever — the same stale-as-fresh defect through a different door.
+        if (!present()) { _everGood = true; _lastGoodUs32 = (uint32_t) esp_timer_get_time(); }
+        else if (std::isfinite(last())) { _everGood = true; _lastGoodUs32 = (uint32_t) esp_timer_get_time(); }
+        return v;
     }
 
     [[nodiscard]] virtual float last() const = 0; // raw cache, may be stale
 
-    [[nodiscard]] bool fresh() const { return _lastReadUs && (esp_timer_get_time() - _lastReadUs) < EXPIRE_US; }
+    [[nodiscard]] bool fresh() const {
+        return _everGood && ((uint32_t) esp_timer_get_time() - _lastGoodUs32) < EXPIRE_US;
+    }
 
     // Use this wherever a stale reading would be acted on as a measurement.
     [[nodiscard]] float lastFresh() const { return fresh() ? last() : NAN; }
-
-    [[nodiscard]] uint32_t ageSec() const {
-        return _lastReadUs ? (uint32_t) ((esp_timer_get_time() - _lastReadUs) / 1000000ll) : 0;
-    }
 };
 
 
@@ -75,6 +90,9 @@ class TempSensorGPIO_NTC : public SingleValueSensor {
 
     //esp_adc_cal_characteristics_t adc_char{};
     adc_atten_t adc_atten = ADC_ATTEN_DB_12; // 10k NTC / 10K pulldown on 3.3V => 1.65V mid
+
+protected:
+    [[nodiscard]] bool present() const override { return valuePtr != nullptr; }
 
 public:
     TempSensorGPIO_NTC() = default;
@@ -188,6 +206,8 @@ public:
          */
         // 20~100 is a pre-defined range
     }
+
+    [[nodiscard]] bool present() const override { return temp_sensor != nullptr; }
 
     void begin() {
         ESP_ERROR_CHECK(temperature_sensor_install(&temp_sensor_config, &temp_sensor));

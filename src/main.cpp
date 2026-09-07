@@ -832,6 +832,18 @@ static void lfControl() {
         mppt.charger.update(vout, iout, voutAuthority);
     }
     wifiShutdownIfHot(mppt.ucTemp.lastFresh());
+
+    // Staleness fails open for the OTP (NaN > Temp_max is false), matching how a missing sensor has
+    // always been treated — so say so out loud instead. Only reachable now via a >EXPIRE_US core-0
+    // stall or a sensor that stopped answering; either is worth a line in the log.
+    static bool warnedStale = false;
+    bool stale = !mppt.ntc.fresh() || !mppt.ucTemp.fresh();
+    if (stale != warnedStale) {
+        warnedStale = stale;
+        if (stale) ESP_LOGW("main", "temperature stale (ntc=%d mcu=%d), OTP and derate are blind",
+                            (int) mppt.ntc.fresh(), (int) mppt.ucTemp.fresh());
+        else ESP_LOGI("main", "temperature refresh recovered");
+    }
 }
 
 // One-line UART/MQTT/telnet status line. WITH_MEASURE_COIL skips it during the coil sweep so the
@@ -886,7 +898,7 @@ static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt) {
         if (reason && (reason != lastReason || nowUs - lastLogUs > 30000000)) {
             ESP_LOGI("mppt", "START blocked: %s (Vin=%.1f Vout=%.1f ntc=%.0f mcu=%.0f)", reason,
                      sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get(),
-                     mppt.ntc.last(), mppt.ucTemp.last());
+                     mppt.ntc.lastFresh(), mppt.ucTemp.lastFresh());
             lastReason = reason;
             lastLogUs = nowUs;
         }
@@ -993,6 +1005,9 @@ void loopLF(const time_us &nowUs, bool interim) {
     if (!lastTimeOutUs
         or (nowUs - lastTimeOutUs) >= (mppt.converter.disabled() ? (lfPeriod * 8) : lfPeriod)) {
         lfStatusLine(nSamples, sps, dt);
+        // Unconditional: lfStatusLine also returns without printing (no sensors / coil sweep), and
+        // leaving lastTimeOutUs at 0 there would make the outer !lastTimeOutUs gate spin loopLF —
+        // and with it the die-sensor read — every millisecond.
         lastTimeOutUs = wallClockUs();
     }
 
@@ -1148,7 +1163,7 @@ static void networkLoopTick() {
          * watchdog, so connect regardless of conversion; still gate on uC temp.
          */
         bool converting = !converter.disabled() && mppt.tracker._curPower >= 10;
-        wifiLoop(mppt.ucTemp.last() < 80);
+        wifiLoop(mppt.ucTemp.lastFresh() < 80);
 
         // self-heal: bring up enabled network services on the WiFi-up edge (they fail to start
         // at boot when WiFi isn't connected yet). _wifiConnected() has set up MDNS by now.
@@ -1201,7 +1216,8 @@ static void loopNetwork_task(void *arg) {
 
     // Control cadence is fixed and console-independent; the status line keeps its own (slower when
     // idle) pacing inside loopLF.
-    if ((wallClockUs() - lastLfWorkUs) >= lfPeriod or !lastLfWorkUs) {
+    // !lastTimeOutUs: telnet onConnect zeroes it to force an immediate status line.
+    if ((wallClockUs() - lastLfWorkUs) >= lfPeriod or !lastLfWorkUs or !lastTimeOutUs) {
         loopLF(wallClockUs(), false);
         // HA power publish moved to MqttService::onTick (MQTT.tickHook, wired in setup()).
         lastLfWorkUs = wallClockUs();
