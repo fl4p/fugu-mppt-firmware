@@ -177,9 +177,14 @@ exists yet, `ioreg -l -r -c AppleUSBACMData` → `IOCalloutDevice` is the `/dev/
 `WITH_VCONV=y` — commit or `git stash push -- <paths>` first. Over BLE:
 `.venv/bin/python3 etc/ota_ble.py build-<tag>/fugu-firmware.bin -n <name> -y` — **pass the image
 positionally**, the default is the shared `build/` that another session may have rebuilt under you —
-**detached** (1.75 MB in 66-73 s over direct macOS BLE, measured twice 2026-09-06; an earlier
-~9 min for 1.74 MB was measured 2026-08-19, so budget for either) and **one at a time** (one
-Mac radio). The version string is git-describe, so an uncommitted rebuild keeps the old string and
+**detached** (1.76 MB in 64-73 s over direct macOS BLE, measured five times 2026-09-06/09-08) and
+**one at a time per radio**. A multi-minute push means 20-byte writes, not a slow link: bleak's
+BlueZ backend reports MTU 23 until asked, and the same image took 6m33s from farmgw that way vs
+1m11s once fixed (esp-ota-ble `040eb62` + `f9f25c08`, 2026-09-08) — that is also the likely
+explanation for the unattributed ~9 min seen on 2026-08-19. **farmgw is a second radio** for a
+board out of the Mac's range, needing a one-off bond (`bluetoothctl --agent NoInputNoOutput --
+pair <mac>`; its default agent fails to register) — 1m11s with bleak, 1m24s with `bluek` as a
+drop-in. The version string is git-describe, so an uncommitted rebuild keeps the old string and
 the tool *skips* with a success-looking `☑️ skip:` — pass `-f` when the tree changed without a
 commit; a real push prints hundreds of progress lines. A failed/killed push leaves the device
 armed: `ota-ble abort` (the verb — docs say `otab`), retry. Post-OTA/`restart` the board is silent
