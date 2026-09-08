@@ -147,50 +147,85 @@ Typical NOR 4 KB sector erase is 45-60 ms (spec maximum several hundred), and th
 64 KB erase measured 217 ms against a 150-300 ms typical band, i.e. mid-band. So sector
 granularity is marginal at best for the 147-sector case and clearly worse for 230.
 
-**Provisional, from datasheet-typical figures -- 4 KB erase on this part has NOT been
-measured.** That measurement is the one open question, and it is now a pass/fail rather
-than an exploration: erase a run of 4 KB sectors in the inactive OTA slot, time it, and
-compare against 50 ms. If it is above, keep the 64 KB schedule and the projection below
-stands; if it is below, sector granularity is worth building.
+### 4 KB sector erase is ~56 ms on this part, derived from a push already measured
 
-Blocked 2026-09-08: `flu` was in use by another session (leg T of
-`plans/BENCH-flu-E-separation.md`, heat gun on D9), so the board was not taken.
+The pass/fail above does not need the bench after all. Two independently measured numbers
+on this same part pin it:
 
-## What this does NOT do on its own
+* **32.4 s of a 43.4 s push was inside `esp_ota_write`**, for a 1.76 MB image under
+  `OTA_WITH_SEQUENTIAL_WRITES` -- which erases each 4 KB sector as the write pointer first
+  crosses it, so that time is ~430 sector erases plus the programming
+  (`esp-ota-ble/src/ota_ble.cpp:248-251`).
+* **Programming runs at 190-205 kB/s**, measured separately and independent of chunk size
+  (`esp-ota-ble/doc/2026-09-08-payload-transforms-benchmark.md:210`), so 1.76 MB of
+  programming is ~8.5 s.
 
-**Nothing, until the receiver skips identical sectors.** `esp_ota_write` currently writes
-all 1.77 MB unconditionally, so a stable layout saves zero seconds by itself — and
-skip-if-identical saves almost nothing today (6.9-7.9 % of sectors match the inactive slot).
-The two are only useful as a pair. With both, and A/B alternation meaning the destination
-holds the image from two pushes ago:
+`(32.4 - 8.5) / 430` = **55.6 ms per 4 KB sector erase**. The programming rate's own 8 %
+spread moves that by under 2 ms, so the figure is robust where it matters.
 
-The receiver already owns its erase schedule -- `eraseAhead()` drives
-`esp_partition_erase_range` directly and passes only a 64 KB head to `esp_ota_begin`
-(`esp-ota-ble/src/ota_ble.cpp:283-298, :429`) -- so a compare-before-erase check is
-reachable without fighting `esp_ota_begin`'s bulk erase. What is *not* settled is the cost:
+That is *above* the 50 ms threshold, so on the stated pass/fail the answer is "keep the
+64 KB schedule". It is still derived rather than timed directly, and the `OTAB SKIP` line
+the receiver now emits reports `erases` and `erase_ms` on every push, which measures it
+outright the first time one runs.
 
-| | now | both |
-|---|---|---|
-| sectors written | 97 % | 34 % (147 of 437) |
-| 64 KB blocks touched | 28 of 28 | **19 of 28** |
-| erase + write, 64 KB granularity | 14.7 s | **~10.4 s** (`19 x (0.217 + 65536/200000)`) |
-| erase + write, 4 KB granularity | | program 3.0 s + erase **unmeasured** |
-| delta push wall | 19.5 s | **~15 s at 64 KB granularity** |
+## The other half: the receiver now skips identical sectors
 
-The 147 changed sectors are scattered across 19 of the 28 64 KB erase blocks, so block-
-granularity erase recovers only ~4 s, not the ~10 s a naive `147/437` scaling suggests.
-4 KB sector erase would program in 3.0 s, but **4 KB erase timing was never measured** --
-only the 217 ms/64 KB block figure. Until it is, "~5 s flash / ~10 s wall" is unverified
-and this table's 64 KB row is the defensible one.
+A stable layout saves **zero seconds** by itself -- `esp_ota_write` wrote all 1.77 MB
+regardless of what the slot already held. The two halves are only useful as a pair, and
+before the layout fix the pairing was worthless in the other direction too: only 6.9-7.9 %
+of sectors matched the inactive slot, so there was nothing to skip.
 
-The A/B destination holds the image from *two* pushes ago, not one; the 147/437 rate is
-measured for consecutive builds, and the n-vs-n-2 rate is not demonstrated here.
+The receiver half now exists (`esp-ota-ble/src/ota_ble.cpp`, `OTA_BLE_SECTOR_SKIP`). It
+passes `esp_ota_begin` a single erase sector -- the smallest request that still leaves
+`need_erase == false` and hands every later erase to the module -- then buffers each 4 KB
+sector of the reconstructed image, compares it against the slot, and erases and programs
+only on a mismatch. Host-native tests cover it; **nothing has run on hardware.**
+
+### What it is projected to save
+
+At the 55.6 ms sector erase derived above, and 197 kB/s programming:
+
+| | erase | program | flash work |
+|---|---|---|---|
+| today: erase the slot, write it all | 6.2 s | 8.5 s | **14.7 s** |
+| skip identical, 4 KB granularity (built) | 8.2 s (147) | 3.1 s | **11.2 s** + 0.4 s compare reads |
+| block granularity, rewrite dirty blocks | 4.2 s (19) | 6.3 s | **10.5 s** |
+
+**The two post-fix rows are a tie**, and the one that was built is the marginally slower of
+them -- at this erase time, trading 64 KB block erases for a third of the programming very
+nearly cancels out. Both save ~3.5-4 s of a 19.5 s delta push. Do not describe sector
+granularity as beating block granularity here; it does not.
+
+Two things still argue for the sector-granular version that was built:
+
+* **It scales with the quantity that is actually improving.** The 147 changed sectors are
+  scattered across 19 of the 28 blocks, so block granularity is pinned near 10.5 s however
+  much better the layout gets. Halve the changed sectors again and the sector-granular row
+  falls to ~5.6 s while the block row barely moves.
+* **It is the strategy that measures the number this whole section turns on.** Its
+  `OTAB SKIP kept=.. wrote=.. erases=.. erase_ms=..` line reports the real sector erase time
+  on every push. If 55.6 ms is an overestimate, the sector row falls and the block row does
+  not.
+
+### Two caveats on the 147/437 figure
+
+The A/B destination holds the image from **two** pushes ago, not one. The 147/437 rate is
+measured for consecutive builds; the n-vs-n-2 rate is not demonstrated here, and it can only
+be worse.
+
+The layout change alters every address in the image, so the **first** push after adopting it
+rewrites the full image regardless.
 
 ## Status
 
 Build-level prototype only. **Not flashed, not run on hardware.** Builds are
 byte-reproducible (rebuilding `lf1` from the same source produced a byte-identical image).
 Reviewed adversarially by codex 2026-09-08; the DROM-margin and erase-cost corrections
-above came from that review. The layout change alters
-every address in the image, so the first push after adopting it rewrites the full image
-regardless, and the OTA base-image cache must be re-seeded.
+above came from that review. The OTA base-image cache must be re-seeded after adopting the
+layout change.
+
+The receiver-side skip is likewise **built and tested host-native, never run on hardware**:
+`flu` and `fugu-rig` were held by another session all day (leg T of
+`plans/BENCH-flu-E-separation.md`, heat gun on D9), so no board was taken. The first real
+push is what turns the projection table above into measurements, and it reports the numbers
+to do it with.
