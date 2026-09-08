@@ -384,6 +384,23 @@ static void bootWatchdogDisarm() {
     s_bootWdt = nullptr;
 }
 
+// Keep the rollback net armed until WE say so.
+//
+// Arduino's initArduino() otherwise confirms a PENDING_VERIFY image itself
+// (managed_components/espressif__arduino-esp32/cores/esp32/esp32-hal-misc.c:312) whenever
+// CONFIG_APP_ROLLBACK_ENABLE=y: the weak verifyRollbackLater() returns false and the weak
+// verifyOta() returns true unconditionally, so the image is marked valid before setup() runs —
+// before the boot watchdog is even armed — and lfMarkOtaValid() below then always finds a
+// non-pending state and skips. Measured on flu 2026-09-08: a fresh BLE OTA reported
+// `rollback=VALID` at 8 s uptime, well inside the 20 s gate. That is the safety net silently
+// absent, so a bad image boot-loops instead of reverting.
+//
+// Overriding the hook defers the decision to lfMarkOtaValid(), which confirms only once the RT
+// loop is proven healthy. C linkage: the weak symbol comes from a C translation unit.
+#ifdef CONFIG_APP_ROLLBACK_ENABLE
+extern "C" bool verifyRollbackLater() { return true; }
+#endif
+
 // Confirm a PENDING_VERIFY image once the RT loop is proven alive (sampling). Runs from loopLF on
 // core 0 (one-shot otadata flash write). Non-pending state (normal flash) → cheap skip. Until this
 // runs, a reset reverts to the previous slot — that's the rollback safety net.
