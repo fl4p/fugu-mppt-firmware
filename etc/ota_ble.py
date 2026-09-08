@@ -62,6 +62,11 @@ RE_APP_LINE = re.compile(r'App:\s+(\S+)\s+v\S+\s+(\S+)\s+\(built (.+),\s+IDF\s+(
 # BLE would disable the very console/OTA path we're using — so we warn before doing it.
 BLE_SIGNATURES = (b"OTAB CRED", b"OTAB READY", b"(NUS console)", b"BLE_HS")
 
+# Seconds a freshly booted image stays PENDING_VERIFY before the firmware confirms it. Until then
+# esp_ota_begin refuses with ESP_ERR_OTA_ROLLBACK_INVALID_STATE. Mirrors OTA_VALIDATE_UPTIME_MS in
+# the firmware (src/main.cpp); only used to bound how long a push waits for the window to pass.
+OTA_CONFIRM_S = 20.0
+
 
 def image_has_ble(data):
     """Heuristic: does this firmware image look like a BLE-enabled (WITH_BLE) build?"""
@@ -226,14 +231,19 @@ class BleakLink:
             except Exception:
                 pass
 
-    async def verify(self):
-        # Short per-attempt bound, not SCAN_TIMEOUT: this retries 20 times, so the coverage comes
-        # from the loop. A long bound here would only stretch the case where the device never
-        # comes back at all.
-        for _ in range(20):
-            await asyncio.sleep(2)
-            if await self._find(self.target, timeout=10.0):
+    async def verify(self, total_timeout=45.0):
+        # Scan almost immediately and keep scanning, rather than sleeping 2 s before each of 20
+        # attempts. The board is silent for a while after the reboot, but "silent" is not a reason
+        # to stop looking -- it just means this scan finds nothing and the next one starts. The old
+        # shape spent at least 2 s every time even when the device was already back, which on a
+        # ~20 s delta push was pure tail latency.
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + total_timeout
+        await asyncio.sleep(0.3)  # let the disconnect settle before re-scanning
+        while loop.time() < deadline:
+            if await self._find(self.target, timeout=5.0):
                 return True
+            await asyncio.sleep(0.2)
         return False
 
     async def aclose(self):
@@ -510,7 +520,13 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
         # window by accident, because the host spent ~19 s scanning before every push; now that it
         # does not, waiting has to be deliberate. Retried only for THIS failure -- everything else
         # is a real refusal and must surface immediately.
-        for attempt in range(3):
+        # Bounded by TIME, not by a retry count. Three tries 8 s apart looks like plenty and is
+        # not: starting ~3 s after the device booted, the attempts land at 3 s, 11 s and 19 s of
+        # uptime and the last one misses the 20 s gate by 0.6 s -- measured, and it fails the whole
+        # push. The window is a fixed property of the device, so wait it out from wherever we
+        # started rather than counting attempts.
+        gate_deadline = asyncio.get_event_loop().time() + OTA_CONFIRM_S + 8.0
+        while True:
             try:
                 ok = await O.push_image(
                     ml, payload, cmd_prefix="ota-ble ",
@@ -519,10 +535,11 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
                     on_progress=lambda s, t: progress_bar(s, t, "upload"))
                 break
             except O.OtaBleError as exc:
-                if "ROLLBACK_INVALID_STATE" not in str(exc) or attempt == 2:
+                if ("ROLLBACK_INVALID_STATE" not in str(exc)
+                        or asyncio.get_event_loop().time() >= gate_deadline):
                     raise
-                print("  device is still confirming its current image; waiting 8 s")
-                await asyncio.sleep(8)
+                print("  device is still confirming its current image; retrying in 4 s")
+                await asyncio.sleep(4)
         if ok:
             # Only now: this is the image the device will be running, and the
             # next delta needs a local copy of it to patch from.
