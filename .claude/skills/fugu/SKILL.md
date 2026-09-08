@@ -178,7 +178,15 @@ exists yet, `ioreg -l -r -c AppleUSBACMData` → `IOCalloutDevice` is the `/dev/
 `.venv/bin/python3 etc/ota_ble.py build-<tag>/fugu-firmware.bin -n <name> -y` — **pass the image
 positionally**, the default is the shared `build/` that another session may have rebuilt under you —
 **detached** (1.76 MB in 64-73 s over direct macOS BLE, measured five times 2026-09-06/09-08) and
-**one at a time per radio**. A multi-minute push means 20-byte writes, not a slow link: bleak's
+**one at a time per radio**. **`--xform delta` cuts that to ~36 s** and is worth using for any
+repeat push: it sends a ~4-6 % patch against the image the device is already running (esp-ota-ble
+`3f3349b`, measured on flu 2026-09-08 — transfer 37 s -> 11 s, wall 62 s -> 36 s; `--xform tamp`
+sends a 69 % compressed image, 50 s). Needs `detools` and `tamp` in `.venv` and a byte-exact copy
+of the running image: pushes are cached under `~/.cache/esp-ota-ble/images/`, and for the first
+delta to a board pass `--base-dir build-<tag>`. `--xform auto` (the default) falls back to raw
+when any of that is missing; naming `delta` or `tamp` explicitly does NOT fall back. Ask the
+device what it can do with `ota-ble info` (answers `OTAB INFO`/`BASE`/`XFORM`). Delta time is
+dominated by the on-device apply, not the patch, so a bigger patch costs almost nothing extra. A multi-minute push means 20-byte writes, not a slow link: bleak's
 BlueZ backend reports MTU 23 until asked, and the same image took 6m33s from farmgw that way vs
 1m11s once fixed (esp-ota-ble `040eb62` + `f9f25c08`, 2026-09-08) — that is also the likely
 explanation for the unattributed ~9 min seen on 2026-08-19. **farmgw is a second radio** for a
