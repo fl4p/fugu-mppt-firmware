@@ -183,8 +183,14 @@ BlueZ backend reports MTU 23 until asked, and the same image took 6m33s from far
 1m11s once fixed (esp-ota-ble `040eb62` + `f9f25c08`, 2026-09-08) — that is also the likely
 explanation for the unattributed ~9 min seen on 2026-08-19. **farmgw is a second radio** for a
 board out of the Mac's range, needing a one-off bond (`bluetoothctl --agent NoInputNoOutput --
-pair <mac>`; its default agent fails to register) — 1m11s with bleak, 1m24s with `bluek` as a
-drop-in. The version string is git-describe, so an uncommitted rebuild keeps the old string and
+pair <mac>`; its default agent fails to register) — 58-73 s, with bleak or with `bluek` as a
+drop-in; 6 interleaved runs 2026-09-08 could NOT separate the two stacks (means 61.5 vs 65.1 s
+against a 7-15 s within-stack spread), so do not read a stack choice into one fast run. Most of a
+push is the host idling on OTAB credits while the device writes flash (46.8 s of 77.8 s in gaps
+>5 ms), which is why the host stack barely matters and the chunk size dominates. **Leave >=20 s
+between back-to-back pushes**: since `3a0aeba1` the running image is PENDING_VERIFY until
+lfMarkOtaValid() confirms it at 20 s uptime, and `esp_ota_begin` refuses until then
+(`OTAB FAIL esp_ota_begin ESP_ERR_OTA_ROLLBACK_INVALID_STATE`). The version string is git-describe, so an uncommitted rebuild keeps the old string and
 the tool *skips* with a success-looking `☑️ skip:` — pass `-f` when the tree changed without a
 commit; a real push prints hundreds of progress lines. A failed/killed push leaves the device
 armed: `ota-ble abort` (the verb — docs say `otab`), retry. Post-OTA/`restart` the board is silent
