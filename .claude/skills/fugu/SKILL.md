@@ -187,11 +187,15 @@ delta to a board pass `--base-dir build-<tag>`. `--xform auto` (the default) fal
 when any of that is missing; naming `delta` or `tamp` explicitly does NOT fall back. Ask the
 device what it can do with `ota-ble info` (answers `OTAB INFO`/`BASE`/`XFORM`). Delta time is
 dominated by the on-device apply, not the patch, so a bigger patch costs almost nothing extra.
-Since `76eac0b` the host scans with a callback and stops on the first exact-name hit (the board is
-seen in 0.3-0.9 s; `discover()` used to burn a flat 15 s every push), so **a raw push is ~42 s and
-a delta ~21 s**. That removed the accidental spacing that used to carry back-to-back pushes past
-the 20 s PENDING_VERIFY gate — the tool now waits and retries on
-`ESP_ERR_OTA_ROLLBACK_INVALID_STATE`, so a fast repeat push costs an extra 8 s rather than failing. A multi-minute push means 20-byte writes, not a slow link: bleak's
+Since `76eac0b`/`e2faea2` the host scans with a callback and stops on the first exact-name hit (the
+board is seen in 0.3-0.9 s; `discover()` used to burn a flat 15 s every push), so **a raw push is
+~42 s and a delta ~19.5 s**. That removed the accidental spacing that used to carry back-to-back
+pushes past the 20 s PENDING_VERIFY gate — the tool now retries on
+`ESP_ERR_OTA_ROLLBACK_INVALID_STATE` until the window passes, so a fast repeat push costs up to
+~20 s extra rather than failing. A delta push is now within ~5 s of a hard floor: erase (6.2 s) and
+write (8.5 s) are both flash ops on ONE die, so they serialise and no amount of overlap removes
+them, and writing less is not an option because 403 of 433 4 KB sectors differ between two real
+builds. Do not expect further BLE-OTA speedups without changing what gets written to flash. A multi-minute push means 20-byte writes, not a slow link: bleak's
 BlueZ backend reports MTU 23 until asked, and the same image took 6m33s from farmgw that way vs
 1m11s once fixed (esp-ota-ble `040eb62` + `f9f25c08`, 2026-09-08) — that is also the likely
 explanation for the unattributed ~9 min seen on 2026-08-19. **farmgw is a second radio** for a
