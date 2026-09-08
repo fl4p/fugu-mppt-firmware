@@ -487,9 +487,12 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
         if xform != "raw":
             info = await O.query_info(ml, cmd_prefix="ota-ble ")
             if info is None:
-                print("  device does not support payload transforms; pushing raw")
+                # No answer is not the same fact as a refusal, even though both end in a raw push.
+                print("  device did not answer the info probe; pushing raw")
+            elif not info.get("xforms"):
+                print("  receiver predates payload transforms; pushing raw")
             else:
-                print(f"  device runs {info.get('run')}, offers {','.join(info.get('xforms', ()))}")
+                print(f"  device runs {info.get('run')}, offers {','.join(info['xforms'])}")
 
         wire_xform, payload = O.choose_payload(
             data, info, prefer=xform, base_dirs=base_dirs,
