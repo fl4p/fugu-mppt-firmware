@@ -95,7 +95,12 @@ idf.py -B build-<tag> build
 * For a variant without disturbing the shared `sdkconfig`: copy it to scratch, edit, then
   `idf.py -B build-<tag> -D SDKCONFIG=/path/to/sdkconfig.<tag> build`. Multiple defaults fragments
   must be **quoted** (`-DSDKCONFIG_DEFAULTS="a;b"` — unquoted, the shell eats the second one
-  silently); `idf.py set-config` does not exist; `SDKCONFIG` as an env var has no effect.
+  silently); `idf.py set-config` does not exist; `SDKCONFIG` as an env var has no effect. That
+  path is baked into the dir's `CMakeCache.txt`, so a build dir inherited from another session can
+  point at a scratchpad that no longer exists (observed 2026-09-08: `build-flu` → a deleted
+  `/private/tmp/claude-503/.../sdkconfig.flu`; the failure mode was not tested, the dir was
+  abandoned). `grep '^SDKCONFIG:' build-<tag>/CMakeCache.txt` before reusing an inherited dir — no
+  such line means it uses the repo `sdkconfig`.
 
 **Verify features against the built binary, not the config** — the config you think you passed is a
 proxy, the binary is the artifact:
