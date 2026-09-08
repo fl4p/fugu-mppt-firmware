@@ -113,16 +113,50 @@ class BleakLink:
     def set_notify(self, cb):
         self._cb = cb
 
+    # Scan bound, not scan duration -- see _find. Generous on purpose: a 15 s discover() once missed
+    # fugu-flu outright where a 30 s one found it at RSSI -69, same room, board fine (2026-09-03).
+    SCAN_TIMEOUT = 30.0
+    # After an exact name match, keep listening this long before committing, purely so two boards
+    # advertising the SAME name are still reported as ambiguous rather than silently picking one.
+    SCAN_SETTLE = 0.5
+
     @staticmethod
-    async def _find(name_or_addr):
+    async def _find(name_or_addr, timeout=None):
         from bleak import BleakScanner
+        timeout = BleakLink.SCAN_TIMEOUT if timeout is None else timeout
         if name_or_addr and re.fullmatch(r"[0-9A-Fa-f:\-]{11,}", name_or_addr):
-            return await BleakScanner.find_device_by_address(name_or_addr, timeout=15)
-        # Scan once and match locally. bleak's find_device_by_name keys off the advertised local_name,
-        # which CoreBluetooth frequently omits (it sets the cached d.name instead) — so it misses devices
-        # that discover() plainly sees. Match against both names here.
-        items = list((await BleakScanner.discover(timeout=15, return_adv=True)).values())
+            return await BleakScanner.find_device_by_address(name_or_addr, timeout=timeout)
+
+        # Collect sightings live and STOP EARLY once the name we want has appeared. discover() cannot
+        # do that -- it always sleeps out its whole timeout -- and that was pure waiting: measured
+        # 2026-09-08, fugu-flu is first seen 0.31/0.36/0.94 s into a scan, so a 15 s discover() spent
+        # ~14 s of every push on nothing. Matching still happens locally against BOTH names, because
+        # CoreBluetooth frequently omits the advertised local_name and sets only the cached d.name,
+        # which is why bleak's own find_device_by_name misses devices discover() plainly sees.
         names = lambda d, ad: [n for n in ((d.name or ""), (ad.local_name or "")) if n]
+        seen, exact = {}, asyncio.Event()
+
+        def on_seen(d, ad):
+            seen[d.address] = (d, ad)
+            if name_or_addr and name_or_addr in names(d, ad):
+                exact.set()
+
+        scanner = BleakScanner(detection_callback=on_seen)
+        await scanner.start()
+        try:
+            if name_or_addr:
+                await asyncio.wait_for(exact.wait(), timeout=timeout)
+                await asyncio.sleep(BleakLink.SCAN_SETTLE)
+            else:
+                # No name to wait for: nothing can end this scan early, and the ambiguity checks
+                # below are the whole point of it, so it has to run to completion.
+                await asyncio.sleep(timeout)
+        except asyncio.TimeoutError:
+            pass  # nothing matched exactly; fall through to the substring/ambiguity paths
+        finally:
+            await scanner.stop()
+
+        items = list(seen.values())
         if name_or_addr:
             hits = [d for d, ad in items if name_or_addr in names(d, ad)]  # prefer exact
             if not hits:
@@ -193,9 +227,12 @@ class BleakLink:
                 pass
 
     async def verify(self):
+        # Short per-attempt bound, not SCAN_TIMEOUT: this retries 20 times, so the coverage comes
+        # from the loop. A long bound here would only stretch the case where the device never
+        # comes back at all.
         for _ in range(20):
             await asyncio.sleep(2)
-            if await self._find(self.target):
+            if await self._find(self.target, timeout=10.0):
                 return True
         return False
 
@@ -421,15 +458,25 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
     try:
         await ml.write_cmd("ping")
 
-        # Skip the push if the device already runs this exact version.
-        rx_lines.clear()
-        await ml.write_cmd("uptime")
-        await asyncio.sleep(2)
-        dev_ver = parse_device_version(rx_lines)
-        print(f"  device version: {dev_ver or '?'}")
-        if local_ver and dev_ver == local_ver and not force:
-            print(f"  \u2611\ufe0f skip: already at {local_ver} (use --force to push anyway)")
-            return True
+        # Skip the push if the device already runs this exact version. Under --force the answer
+        # cannot change what we do, so do not spend a round trip asking.
+        if not force:
+            rx_lines.clear()
+            await ml.write_cmd("uptime")
+            # Wait for the ANSWER, not for a fixed delay. This used to be a flat 2 s sleep, which
+            # is most of a second-and-a-half more than the reply actually takes and was paid on
+            # every push.
+            dev_ver = None
+            deadline = asyncio.get_event_loop().time() + 3.0
+            while asyncio.get_event_loop().time() < deadline:
+                dev_ver = parse_device_version(rx_lines)
+                if dev_ver:
+                    break
+                await asyncio.sleep(0.05)
+            print(f"  device version: {dev_ver or '?'}")
+            if local_ver and dev_ver == local_ver:
+                print(f"  \u2611\ufe0f skip: already at {local_ver} (use --force to push anyway)")
+                return True
 
         # Ask what the device is running before deciding what to send it. A
         # delta needs the exact base image; tamp needs only that the receiver
@@ -455,11 +502,24 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
                   f"({100.0 * len(payload) / len(data):.1f}% of the image)")
 
         ml.set_line_handler(line)
-        ok = await O.push_image(
-            ml, payload, cmd_prefix="ota-ble ",
-            xform=wire_xform, out_size=out_size,
-            on_line=line,
-            on_progress=lambda s, t: progress_bar(s, t, "upload"))
+        # A freshly booted image is PENDING_VERIFY until the firmware confirms itself at 20 s
+        # uptime, and esp_ota_begin refuses until then. Back-to-back pushes used to clear that
+        # window by accident, because the host spent ~19 s scanning before every push; now that it
+        # does not, waiting has to be deliberate. Retried only for THIS failure -- everything else
+        # is a real refusal and must surface immediately.
+        for attempt in range(3):
+            try:
+                ok = await O.push_image(
+                    ml, payload, cmd_prefix="ota-ble ",
+                    xform=wire_xform, out_size=out_size,
+                    on_line=line,
+                    on_progress=lambda s, t: progress_bar(s, t, "upload"))
+                break
+            except O.OtaBleError as exc:
+                if "ROLLBACK_INVALID_STATE" not in str(exc) or attempt == 2:
+                    raise
+                print("  device is still confirming its current image; waiting 8 s")
+                await asyncio.sleep(8)
         if ok:
             # Only now: this is the image the device will be running, and the
             # next delta needs a local copy of it to patch from.
