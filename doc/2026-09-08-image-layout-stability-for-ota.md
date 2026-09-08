@@ -127,6 +127,35 @@ The residual 147 sectors are almost entirely `libmain` shifting **itself** — i
 (rejected: align=64 costs +295 KB and does not fit). One unexplained 32 KB `libnet80211`
 block at file `0x117000` still churns; not chased.
 
+
+## Erase granularity: 64 KB blocks, almost certainly
+
+The receiver's `eraseAhead()` erases in 64 KB chunks. A skip-identical check makes 4 KB
+sector erase tempting, since the sector *count* (147) is far below the sectors inside the
+touched *blocks* (19 x 16 = 304). But per-byte, sector erase is much less efficient:
+64 KB block erase measures 302 kB/s, while 4 KB sector erase at a typical 60 ms is
+68 kB/s -- **4.4x worse**. That wipes out the advantage.
+
+Setting the two schedules equal gives a crisp threshold:
+
+| variant | 64 KB schedule | sector granularity wins only if 4 KB erase is under |
+|---|---|---|
+| fragment only (230 sectors, 23 blocks) | 12.53 s | **34 ms** |
+| fragment + no-merge (147 sectors, 19 blocks) | 10.35 s | **50 ms** |
+
+Typical NOR 4 KB sector erase is 45-60 ms (spec maximum several hundred), and this part's
+64 KB erase measured 217 ms against a 150-300 ms typical band, i.e. mid-band. So sector
+granularity is marginal at best for the 147-sector case and clearly worse for 230.
+
+**Provisional, from datasheet-typical figures -- 4 KB erase on this part has NOT been
+measured.** That measurement is the one open question, and it is now a pass/fail rather
+than an exploration: erase a run of 4 KB sectors in the inactive OTA slot, time it, and
+compare against 50 ms. If it is above, keep the 64 KB schedule and the projection below
+stands; if it is below, sector granularity is worth building.
+
+Blocked 2026-09-08: `flu` was in use by another session (leg T of
+`plans/BENCH-flu-E-separation.md`, heat gun on D9), so the board was not taken.
+
 ## What this does NOT do on its own
 
 **Nothing, until the receiver skips identical sectors.** `esp_ota_write` currently writes
