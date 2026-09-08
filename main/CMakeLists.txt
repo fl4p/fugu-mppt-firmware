@@ -123,6 +123,7 @@ idf_component_register(SRCS
         ${BLE_SRC}
         ${TELE_CORE_SRC}
         INCLUDE_DIRS "." "../src"
+        LDFRAGMENTS "linker.lf"
         REQUIRES
         # if we start to list components here we need to list them all
         # put dependencies in component/Arduion-LiquidCrystal as only needed for linking
@@ -250,3 +251,4 @@ component_compile_options(
 #target_compile_options(__idf_FastLED PRIVATE -Wno-error=reorder)
 
 #component_compile_options(-fexceptions) # enable exceptions in menuconfig (CONFIG_COMPILER_CXX_EXCEPTIONS)!
+

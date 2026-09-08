@@ -1,0 +1,27 @@
+# Place the two archives that change on every build -- libmain.a (this firmware) and
+# libesp-ota-ble.a -- at the END of .flash.text and .flash.rodata.
+#
+# Why: ldgen emits the catch-all `*(... .text ...)` first and every explicitly mapped
+# archive after it (generation.py: get_node_output_commands before sorted(children)).
+# Today libmain's objects are scattered through the catch-all from 0x420015f4 to
+# 0x4211eff4 with 937 KB of stable IDF code interleaved, so a few added bytes of app
+# code shift most of the image and force ~82% of flash sectors to be rewritten on OTA.
+# Mapped last, app growth shifts only what follows it.
+#
+# The ALIGN(4) flag is what makes the placement "significant" -- an entry whose target
+# equals its basis' target emits nothing (generation.py:86). The image is already
+# 4-aligned here, so the flag itself costs nothing.
+
+[mapping:fugu_main_last]
+archive: libmain.a
+entries:
+    * (default);
+        text -> flash_text ALIGN(4),
+        rodata -> flash_rodata ALIGN(4)
+
+[mapping:fugu_ota_ble_last]
+archive: libesp-ota-ble.a
+entries:
+    * (default);
+        text -> flash_text ALIGN(4),
+        rodata -> flash_rodata ALIGN(4)
