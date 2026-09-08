@@ -10,6 +10,9 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#if defined(CONFIG_BT_NIMBLE_ENABLED)
+#include <host/ble_gap.h>
+#endif
 #include <BLESecurity.h>
 #include <os/os_mbuf.h> // os_msys_num_free(): peek NimBLE's free mbuf pool before notifying
 #if !defined(CONFIG_BLUEDROID_ENABLED)
@@ -124,6 +127,8 @@ static bool lastNotifyOk = true;             // set by TxCallbacks::onStatus, re
 static bool logDropped = false;
 static volatile bool txArmSettle = false;
 static volatile bool connParamsPending = false;
+static int phySetRc = 0;
+static time_ms phyReportAt = 0;
 static time_ms txConnectMs = 0;
 
 static constexpr time_ms TX_SETTLE_MS = 500;
@@ -148,11 +153,50 @@ static void bleTxDrain(time_ms nowMs) {
     std::lock_guard<std::recursive_mutex> lk(txMutex);
     if (txArmSettle) { txConnectMs = nowMs; txArmSettle = false; }
     if (nowMs - txConnectMs < TX_SETTLE_MS) return; // let pairing settle before touching the link
+    if (phyReportAt && millis() >= phyReportAt) {
+        phyReportAt = 0;
+#if defined(CONFIG_BT_NIMBLE_ENABLED) && defined(CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_2M_PHY)
+        uint8_t txPhy = 0, rxPhy = 0;
+        const int rrc = ble_gap_read_le_phy(bleServer->getConnId(), &txPhy, &rxPhy);
+        // set_rc==0 means only that the host ACCEPTED the request, not that the link moved.
+        // tx/rx: 1=1M, 2=2M, 3=coded.
+        ESP_LOGI(TAG, "phy: set_rc=%d read_rc=%d tx=%u rx=%u",
+                 phySetRc, rrc, (unsigned) txPhy, (unsigned) rxPhy);
+#endif
+    }
+
     if (connParamsPending) {
         // Deferred off the host connect callback — see the txArmSettle note for why.
         // 6..12 = 7.5..15ms interval, latency 0, supervision timeout 400 = 4s.
         connParamsPending = false;
         bleServer->requestConnParams(bleServer->getConnId(), 6, 12, 0, 400);
+#if defined(CONFIG_BT_NIMBLE_ENABLED) && defined(CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_2M_PHY)
+        // Ask for the 2M PHY, which doubles the on-air symbol rate.
+        //
+        // MEASURED, and it does NOT speed up an OTA push: 36.5/38.4/38.2 s on 2M against
+        // 38.3/35.9/35.6/39.2 s on 1M (flu, 1.76 MB, same host, 2026-09-08) -- indistinguishable.
+        // The link is not symbol-rate-bound: at the 15 ms connection interval the transfer moves
+        // ~830 B per connection event, which already fits comfortably in an event, so halving the
+        // air time of each packet buys nothing. What is left is connection events and credit
+        // round-trips. Kept anyway because it engages cleanly (verified tx=2 rx=2) and benefits
+        // latency-sensitive console/telemetry traffic, but do NOT expect it to make OTA faster,
+        // and do not re-derive that -- the numbers above are the answer.
+        //
+        // Must be a REQUEST, not just a default. LE Set Default PHY only states a preference for
+        // when the PEER starts the procedure; it never initiates one, so a central that never asks
+        // leaves the link on 1M. This actively runs the PHY update procedure.
+        //
+        // Deferred here for the same reason as the conn-params request above: issuing it from the
+        // host connect callback trips a controller assert. Best effort — a peer or controller that
+        // refuses simply stays on 1M, which is the pre-existing behaviour.
+        {
+            const uint16_t ch = bleServer->getConnId();
+            const int rc = ble_gap_set_prefered_le_phy(ch, BLE_GAP_LE_PHY_2M_MASK,
+                                                       BLE_GAP_LE_PHY_2M_MASK, 0);
+            phySetRc = rc;
+            phyReportAt = millis() + 3000; // see below
+        }
+#endif
     }
 
     // Chunk at the negotiated ATT MTU minus the 3-byte notify header (falls back to the 20-byte
