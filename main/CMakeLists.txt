@@ -252,3 +252,22 @@ component_compile_options(
 
 #component_compile_options(-fexceptions) # enable exceptions in menuconfig (CONFIG_COMPILER_CXX_EXCEPTIONS)!
 
+# Keep this component's string literals OUT of the linker's global merged string pool.
+# GCC emits string literals into SHF_MERGE|SHF_STRINGS sections (.rodata.<fn>.str1.4); ld
+# coalesces every such section in .flash.rodata into ONE blob (187 KB here) placed at its
+# first contributor -- near the START of rodata, and unaffected by EXCLUDE_FILE, so the
+# linker.lf placement cannot reach it. Adding one string literal to this component then
+# grew that early blob and shifted ~70% of .flash.rodata, which is what forces a full-image
+# OTA rewrite. -fno-merge-constants leaves the literals in ordinary per-function .rodata.*
+# sections, which linker.lf can and does place last.
+#
+# Cost: +14,352 B, ALL of it in .flash.rodata -- which leaves only ~2 KB below the 64 KB
+# MMU page boundary that pins the IROM file offset. Crossing it churns nearly every IROM
+# sector and eats ~64 KB of partition headroom. See
+# doc/2026-09-08-image-layout-stability-for-ota.md before letting rodata grow.
+#
+# The flag is broader than its name: GCC's -fmerge-constants covers identical string AND
+# floating-point constants across translation units, so this also disables pooling within
+# this component's own 26 TUs. It is NOT applied to libesp-ota-ble.a, whose merge sections
+# still join the early pool.
+target_compile_options(${COMPONENT_LIB} PRIVATE -fno-merge-constants)
