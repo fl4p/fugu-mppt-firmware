@@ -158,6 +158,12 @@ class BleakLink:
             try:
                 await self._cli.connect()
                 await self._cli.start_notify(TX_UUID, lambda _, p: self._cb(bytes(p)))
+                # Ask BlueZ for the MTU it negotiated. Without this bleak reports the
+                # 23-byte default and adapt_link() then chunks at 20 bytes: measured
+                # 2026-09-08, a 1.76 MB push from a Pi took 6m33s where the same image
+                # from a Mac took 64 s. usable_chunk() caps the result, which is what
+                # makes asking safe -- see acquire_bluez_mtu().
+                await O.acquire_bluez_mtu(self._cli)
                 self.mtu = self._cli.mtu_size
                 self.disconnected.clear()  # a failed attempt's disconnect may have set it
                 return
