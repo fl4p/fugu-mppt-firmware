@@ -180,13 +180,18 @@ positionally**, the default is the shared `build/` that another session may have
 **detached** (1.76 MB in 64-73 s over direct macOS BLE, measured five times 2026-09-06/09-08) and
 **one at a time per radio**. **`--xform delta` cuts that to ~36 s** and is worth using for any
 repeat push: it sends a ~4-6 % patch against the image the device is already running (esp-ota-ble
-`3f3349b`, measured on flu 2026-09-08 — transfer 37 s -> 11 s, wall 62 s -> 36 s; `--xform tamp`
-sends a 69 % compressed image, 50 s). Needs `detools` and `tamp` in `.venv` and a byte-exact copy
+`3f3349b`, measured on flu 2026-09-08 — **wall 62 s -> 21 s** with the host-side scan fix below;
+`--xform tamp` sends a 69 % compressed image, ~35 s). Needs `detools` and `tamp` in `.venv` and a byte-exact copy
 of the running image: pushes are cached under `~/.cache/esp-ota-ble/images/`, and for the first
 delta to a board pass `--base-dir build-<tag>`. `--xform auto` (the default) falls back to raw
 when any of that is missing; naming `delta` or `tamp` explicitly does NOT fall back. Ask the
 device what it can do with `ota-ble info` (answers `OTAB INFO`/`BASE`/`XFORM`). Delta time is
-dominated by the on-device apply, not the patch, so a bigger patch costs almost nothing extra. A multi-minute push means 20-byte writes, not a slow link: bleak's
+dominated by the on-device apply, not the patch, so a bigger patch costs almost nothing extra.
+Since `76eac0b` the host scans with a callback and stops on the first exact-name hit (the board is
+seen in 0.3-0.9 s; `discover()` used to burn a flat 15 s every push), so **a raw push is ~42 s and
+a delta ~21 s**. That removed the accidental spacing that used to carry back-to-back pushes past
+the 20 s PENDING_VERIFY gate — the tool now waits and retries on
+`ESP_ERR_OTA_ROLLBACK_INVALID_STATE`, so a fast repeat push costs an extra 8 s rather than failing. A multi-minute push means 20-byte writes, not a slow link: bleak's
 BlueZ backend reports MTU 23 until asked, and the same image took 6m33s from farmgw that way vs
 1m11s once fixed (esp-ota-ble `040eb62` + `f9f25c08`, 2026-09-08) — that is also the likely
 explanation for the unattributed ~9 min seen on 2026-08-19. **farmgw is a second radio** for a
