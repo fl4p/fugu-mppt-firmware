@@ -370,7 +370,7 @@ class ProxyLink:
             self._api = None
 
 
-async def push(bin_path, link, force=False, assume_yes=False):
+async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base_dirs=()):
     data = open(bin_path, "rb").read()
     sha = hashlib.sha256(data).hexdigest()
     local_ver = read_local_app_desc(bin_path)
@@ -431,11 +431,39 @@ async def push(bin_path, link, force=False, assume_yes=False):
             print(f"  \u2611\ufe0f skip: already at {local_ver} (use --force to push anyway)")
             return True
 
+        # Ask what the device is running before deciding what to send it. A
+        # delta needs the exact base image; tamp needs only that the receiver
+        # was built with it. Both fall back to a full raw push rather than
+        # failing, so a device on older firmware behaves exactly as before.
+        rx_lines.clear()
+        info = None
+        if xform != "raw":
+            info = await O.query_info(ml, cmd_prefix="ota-ble ")
+            if info is None:
+                print("  device does not support payload transforms; pushing raw")
+            else:
+                print(f"  device runs {info.get('run')}, offers {','.join(info.get('xforms', ()))}")
+
+        wire_xform, payload = O.choose_payload(
+            data, info, prefer=xform, base_dirs=base_dirs,
+            on_note=lambda m: print(f"  {m}"))
+        if wire_xform == "raw":
+            out_size = None
+        else:
+            out_size = len(data)
+            print(f"  {wire_xform}: {len(payload)} bytes on the wire "
+                  f"({100.0 * len(payload) / len(data):.1f}% of the image)")
+
         ml.set_line_handler(line)
         ok = await O.push_image(
-            ml, data, sha=sha, cmd_prefix="ota-ble ",
+            ml, payload, cmd_prefix="ota-ble ",
+            xform=wire_xform, out_size=out_size,
             on_line=line,
             on_progress=lambda s, t: progress_bar(s, t, "upload"))
+        if ok:
+            # Only now: this is the image the device will be running, and the
+            # next delta needs a local copy of it to patch from.
+            O.cache_image(data)
         if ok:
             print("\ndevice accepted the image and is rebooting; waiting for it to advertise again")
             if await link.verify():
@@ -488,12 +516,25 @@ def main():
     ap.add_argument("--address", help="target BLE address/MAC (direct or via --ble-proxy)")
     ap.add_argument("--proxy-password", default=os.environ.get("ESPHOME_API_PASSWORD", ""),
                     help="ESPHome API password for --ble-proxy (default: $ESPHOME_API_PASSWORD)")
+    ap.add_argument("--xform", choices=("auto", "raw", "tamp", "delta"), default="auto",
+                    help="wire payload: 'delta' sends a patch against the image the device is "
+                         "already running (~9%% of it), 'tamp' a compressed full image (~69%%), "
+                         "'raw' the image itself. 'auto' (default) takes the smallest one the "
+                         "device offers and the host can build, falling back to raw. 'delta' and "
+                         "'tamp' named explicitly do NOT fall back.")
+    ap.add_argument("--base-dir", action="append", default=[], metavar="DIR",
+                    help="also look here for the image the device is running, to use as a delta "
+                         "base (repeatable). Pushed images are remembered automatically; this is "
+                         "for the first delta to a device, whose image is still in a build tree.")
     args = ap.parse_args()
     args.name = args.name or args.name_opt  # positional takes precedence over -n/--name/$BLE_NAME
 
     if not os.path.exists(args.bin):
         print(f"no such file: {args.bin}"); return 1
-    ok = asyncio.run(push(args.bin, make_link(args), force=args.force, assume_yes=args.yes))
+    # The image being pushed usually sits beside the one the device is running.
+    base_dirs = list(args.base_dir) + [os.path.dirname(os.path.abspath(args.bin))]
+    ok = asyncio.run(push(args.bin, make_link(args), force=args.force, assume_yes=args.yes,
+                          xform=args.xform, base_dirs=base_dirs))
     print("OTA over BLE:", "✅ success (device rebooting)" if ok else "❌ failed")
     return 0 if ok else 1
 
