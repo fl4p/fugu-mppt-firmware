@@ -36,13 +36,16 @@ import hashlib
 # The link/protocol module ships with the device-side receiver.
 import os as _os, sys as _sys
 _HERE = _os.path.dirname(_os.path.abspath(__file__))
-for _cand in (_os.path.join(_HERE, "..", "..", "esp-ota-ble", "host"),
+for _cand in (_os.environ.get("ESP_OTA_BLE_HOST", ""),
+              _os.path.join(_HERE, "..", "..", "esp-ota-ble", "host"),
               _os.path.expanduser("~/dev/pv/esp-ota-ble/host"),
               _HERE):
-    if _os.path.isfile(_os.path.join(_cand, "esp_ota_ble.py")):
+    if all(_os.path.isfile(_os.path.join(_cand, name))
+           for name in ("esp_ota_ble.py", "esp_ota_ble_transport.py")):
         _sys.path.insert(0, _cand)
         break
 import esp_ota_ble as O
+import esp_ota_ble_transport as T
 import os
 import re
 import struct
@@ -106,17 +109,25 @@ def progress_bar(done, total, label, width=30):
 
 
 class BleakLink:
-    """Direct bleak GATT link to the device's NUS + OTA FW characteristics."""
+    """Direct GATT link using shared transport sizing and flow control."""
 
-    def __init__(self, name_or_addr):
+    def __init__(self, name_or_addr, options=None):
         self.target = name_or_addr
         self.mtu = 23
-        self.disconnected = asyncio.Event()
-        self._cli = None
         self._cb = None
+        self._link = T.DirectLink(RX_UUID, TX_UUID, FW_UUID, options=options)
+        self.disconnected = self._link.disconnected
+        self._link._feed = lambda payload: self._cb(bytes(payload)) if self._cb else None
 
     def set_notify(self, cb):
         self._cb = cb
+
+    @property
+    def chunk(self):
+        return self._link.chunk
+
+    async def prepare_transfer(self):
+        await self._link.prepare_transfer()
 
     # Scan bound, not scan duration -- see _find. Generous on purpose: a 15 s discover() once missed
     # fugu-flu outright where a 30 s one found it at RSSI -69, same room, board fine (2026-09-03).
@@ -126,11 +137,13 @@ class BleakLink:
     SCAN_SETTLE = 0.5
 
     @staticmethod
-    async def _find(name_or_addr, timeout=None):
+    async def _find(name_or_addr, timeout=None, *, scanner_cls=None, adapter=None):
         from bleak import BleakScanner
+        BleakScanner = scanner_cls or BleakScanner
+        scan_args = {"adapter": adapter} if adapter else {}
         timeout = BleakLink.SCAN_TIMEOUT if timeout is None else timeout
         if name_or_addr and re.fullmatch(r"[0-9A-Fa-f:\-]{11,}", name_or_addr):
-            return await BleakScanner.find_device_by_address(name_or_addr, timeout=timeout)
+            return await BleakScanner.find_device_by_address(name_or_addr, timeout=timeout, **scan_args)
 
         # Collect sightings live and STOP EARLY once the name we want has appeared. discover() cannot
         # do that -- it always sleeps out its whole timeout -- and that was pure waiting: measured
@@ -146,7 +159,7 @@ class BleakLink:
             if name_or_addr and name_or_addr in names(d, ad):
                 exact.set()
 
-        scanner = BleakScanner(detection_callback=on_seen)
+        scanner = BleakScanner(detection_callback=on_seen, **scan_args)
         await scanner.start()
         try:
             if name_or_addr:
@@ -182,68 +195,40 @@ class BleakLink:
         return fugu[0] if fugu else None
 
     async def open(self):
-        from bleak import BleakClient
-        dev = await self._find(self.target)
+        dev = await self._link.scan(self._find, self.target)
         if not dev:
             raise RuntimeError("no fugu BLE device found (advertising? ble service enabled?)")
-        self.target = dev.address  # pin to this exact device so verify() re-finds it after reboot
+        self.target = dev.address
         print(f"connecting to {dev.name or dev.address} ...")
-        # macOS/CoreBluetooth intermittently rejects connect or the notify subscription with CBATTError 17
-        # ("resources are insufficient") when a prior connection's CCCD wasn't released — dropping the link
-        # and retrying after a short settle clears it. Retry the whole connect+subscribe a few times.
-        last = None
-        for attempt in range(1, 4):
-            self._cli = BleakClient(dev, disconnected_callback=lambda _: self.disconnected.set())
-            try:
-                await self._cli.connect()
-                await self._cli.start_notify(TX_UUID, lambda _, p: self._cb(bytes(p)))
-                # Ask BlueZ for the MTU it negotiated. Without this bleak reports the
-                # 23-byte default and adapt_link() then chunks at 20 bytes: measured
-                # 2026-09-08, a 1.76 MB push from a Pi took 6m33s where the same image
-                # from a Mac took 64 s. usable_chunk() caps the result, which is what
-                # makes asking safe -- see acquire_bluez_mtu().
-                await O.acquire_bluez_mtu(self._cli)
-                self.mtu = self._cli.mtu_size
-                self.disconnected.clear()  # a failed attempt's disconnect may have set it
-                return
-            except Exception as e:
-                last = e
-                print(f"  connect attempt {attempt}/3 failed: {e}")
-                try:
-                    await self._cli.disconnect()
-                except Exception:
-                    pass
-                self._cli = None
-                if attempt < 3:
-                    await asyncio.sleep(2.0)
-        raise RuntimeError(f"could not establish BLE link after 3 attempts: {last}")
+        await self._link.open(dev)
+        self.mtu = self._link.mtu
 
     async def write_cmd(self, data):
-        await self._cli.write_gatt_char(RX_UUID, data, response=True)
+        await self._link.write_cmd(data)
 
     async def write_fw(self, data):
-        await self._cli.write_gatt_char(FW_UUID, data, response=False)
+        await self._link.write_fw(data)
 
     async def release(self):
-        if self._cli and self._cli.is_connected:
-            try:
-                await self._cli.disconnect()
-            except Exception:
-                pass
+        await self._link.release()
 
-    async def verify(self, total_timeout=45.0):
-        # Scan almost immediately and keep scanning, rather than sleeping 2 s before each of 20
-        # attempts. The board is silent for a while after the reboot, but "silent" is not a reason
-        # to stop looking -- it just means this scan finds nothing and the next one starts. The old
-        # shape spent at least 2 s every time even when the device was already back, which on a
-        # ~20 s delta push was pure tail latency.
-        loop = asyncio.get_event_loop()
-        deadline = loop.time() + total_timeout
-        await asyncio.sleep(0.3)  # let the disconnect settle before re-scanning
-        while loop.time() < deadline:
-            if await self._find(self.target, timeout=5.0):
-                return True
-            await asyncio.sleep(0.2)
+    async def verify(self, image=None, before=None, total_timeout=60.0):
+        if image is None or not before or not before.get("run") or not O.image_id(image):
+            raise O.OtaBleError("exact boot verification needs the image and previous slot")
+        await self.release()
+        deadline = asyncio.get_running_loop().time() + total_timeout
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                await self.open()
+                info = await O.query_info(O.adapt_link(self), cmd_prefix="ota-ble ")
+                if (info and info.get("base") == O.image_id(image) and info.get("run")
+                        and info["run"] != before["run"]):
+                    return True
+            except Exception as exc:
+                print("  verification retry:", exc)
+            finally:
+                await self.release()
+            await asyncio.sleep(.3)
         return False
 
     async def aclose(self):
@@ -493,9 +478,10 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
         # was built with it. Both fall back to a full raw push rather than
         # failing, so a device on older firmware behaves exactly as before.
         rx_lines.clear()
-        info = None
+        info = await O.query_info(ml, cmd_prefix="ota-ble ")
+        if isinstance(link, BleakLink) and (not info or not info.get("base") or not info.get("run") or not O.image_id(data)):
+            raise O.OtaBleError("image or running receiver identity is unverified")
         if xform != "raw":
-            info = await O.query_info(ml, cmd_prefix="ota-ble ")
             if info is None:
                 # No answer is not the same fact as a refusal, even though both end in a raw push.
                 print("  device did not answer the info probe; pushing raw")
@@ -541,13 +527,13 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
                 print("  device is still confirming its current image; retrying in 4 s")
                 await asyncio.sleep(4)
         if ok:
-            # Only now: this is the image the device will be running, and the
-            # next delta needs a local copy of it to patch from.
-            O.cache_image(data)
-        if ok:
             print("\ndevice accepted the image and is rebooting; waiting for it to advertise again")
-            if await link.verify():
-                print("  device is advertising again")
+            verified = (await link.verify(image=data, before=info) if isinstance(link, BleakLink)
+                        else await link.verify())
+            if verified:
+                print("  exact image verified on the new slot" if isinstance(link, BleakLink)
+                      else "  device is advertising again (proxy verification)")
+                O.cache_image(data)
             else:
                 # FAIL, do not just warn. Before the module conversion this
                 # returned False here, and it must keep doing so: the shared
@@ -568,13 +554,16 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
 
 
 def make_link(args):
+    options = T.from_arguments(args)
     if args.ble_proxy:
+        if options != T.Options():
+            raise ValueError("direct BLE tuning is unavailable through --ble-proxy")
         host, _, port = args.ble_proxy.partition(":")
         port = int(port) if port else ESPHOME_API_PORT
         target = args.address or f"name~{(args.name or 'fugu')!r}"
         print(f"OTA via ESPHome bluetooth_proxy {host}:{port} → BLE NUS ({target})")
         return ProxyLink(host, port, args.proxy_password, args.address, args.name or "fugu")
-    return BleakLink(args.address or args.name)
+    return BleakLink(args.address or args.name, options=options)
 
 
 def main():
@@ -606,6 +595,7 @@ def main():
                     help="also look here for the image the device is running, to use as a delta "
                          "base (repeatable). Pushed images are remembered automatically; this is "
                          "for the first delta to a device, whose image is still in a build tree.")
+    T.add_arguments(ap)
     args = ap.parse_args()
     args.name = args.name or args.name_opt  # positional takes precedence over -n/--name/$BLE_NAME
 
@@ -613,7 +603,11 @@ def main():
         print(f"no such file: {args.bin}"); return 1
     # The image being pushed usually sits beside the one the device is running.
     base_dirs = list(args.base_dir) + [os.path.dirname(os.path.abspath(args.bin))]
-    ok = asyncio.run(push(args.bin, make_link(args), force=args.force, assume_yes=args.yes,
+    try:
+        link = make_link(args)
+    except ValueError as exc:
+        ap.error(str(exc))
+    ok = asyncio.run(push(args.bin, link, force=args.force, assume_yes=args.yes,
                           xform=args.xform, base_dirs=base_dirs))
     print("OTA over BLE:", "✅ success (device rebooting)" if ok else "❌ failed")
     return 0 if ok else 1
