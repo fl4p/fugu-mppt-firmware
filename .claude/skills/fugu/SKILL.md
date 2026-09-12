@@ -173,6 +173,12 @@ exists yet, `ioreg -l -r -c AppleUSBACMData` → `IOCalloutDevice` is the `/dev/
 
 ## OTA
 
+**`esp-ota-ble` is NOT pinned: fugu builds whatever is in the sibling working tree.**
+`CMakeLists.txt:77` resolves it to `../esp-ota-ble` (and hard-errors if absent), so every commit
+below names a state of a tree that OTHER projects edit — node-prototype/farming share it, and
+uncommitted work there is in your next build. `git -C ../esp-ota-ble log -1 && git status -s` before
+trusting an OTA timing or attributing a change to a fugu commit.
+
 `etc/ota.py` (Wi-Fi; flags in `CLAUDE.md`) refuses non-interactively: dirty images, `WITH_NETW=n`,
 `WITH_VCONV=y` — commit or `git stash push -- <paths>` first. Over BLE:
 `.venv/bin/python3 etc/ota_ble.py build-<tag>/fugu-firmware.bin -n <name> -y` — **pass the image
