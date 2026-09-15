@@ -47,3 +47,6 @@
 [submodule "etc/idf-devtools"]
 	path = etc/idf-devtools
 	url = https://github.com/fl4p/idf-devtools.git
+[submodule "etc/adcscope"]
+	path = etc/adcscope
+	url = https://github.com/fl4p/adcscope.git

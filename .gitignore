@@ -47,12 +47,7 @@ etc/*/sdkconfig
 
 idf-export.sh
 
-etc/scope-client/*.csv
-
-etc/scope_client/__pycache__/
-/etc/scope_client/data/
-
-etc/scope_client/adaptive_noise_filter/__pycache__/
+etc/filter-studies/*/__pycache__/
 
 .idea/editor.xml
 
@@ -90,9 +85,6 @@ etc/bat-resistance/result.png
 build_ble/
 
 etc/bat-resistance/result60.png
-
-# fugu_scope.py local UI settings
-etc/scope_client/fugu_scope.yaml
 
 config/backup-*
 

@@ -39,7 +39,8 @@
     <mapping directory="$PROJECT_DIR$/components/esp32-semihosting-profiler/esp32-semihosting-profiler" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/etc/fugu" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/etc/idf-devtools" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/etc/scope_client/data" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/etc/adcscope" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/etc/adcscope/data" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/test/host-stub/arduino-shim" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/third_party/STM32CubeWB0" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/third_party/STM32CubeWB0/Drivers/CMSIS/Device/ST/STM32WB0X" vcs="Git" />

@@ -1,6 +1,6 @@
 // AUTO-GENERATED test fixture — DO NOT EDIT BY HAND.
 // Real Vout ADC samples captured from converter "fry" while a ~2 kW inverter ran on its
-// DC bus (midday 2026-06-06, etc/scope_client/fry/2000w-inverter-midday-20260606T131106Z).
+// DC bus (midday 2026-06-06, etc/adcscope/data/fry/2000w-inverter-midday-20260606T131106Z).
 // Raw 12-bit ADC counts, slice [8000:16192] of the vout channel.
 // Host-FFT dominant tone in this slice: 126.17 Hz (the inverter 2x-line ripple).
 #pragma once

@@ -257,7 +257,7 @@ Beyond the console, the firmware pushes structured data to external systems an a
 - **`sensor avg`**: one compact line of EWM averages — fast polling without opening a full
   telemetry session.
 - **Scope service**: raw ADC samples streamed over TCP for noise/ripple analysis. Used by
-  `etc/scope_client/` scripts.
+  `etc/adcscope/` (the adcscope submodule) and `etc/filter-studies/` scripts.
 - **`coredump get`**: streams the on-flash panic dump as base64 over the console. An agent can
   retrieve a crash dump without physical access and decode it host-side with the archived ELF.
   Pull over serial/telnet/MQTT — the BLE transport truncates the stream past ~6 KB, so it's not

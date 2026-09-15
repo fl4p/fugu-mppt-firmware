@@ -9,7 +9,7 @@
         <option value="$PROJECT_DIR$/managed_components/brianpugh__tamp/tamp/compressor.c" />
         <option value="$PROJECT_DIR$/managed_components/brianpugh__tamp/tamp/common.c" />
         <option value="$PROJECT_DIR$/etc" />
-        <option value="$PROJECT_DIR$/etc/scope_client" />
+        <option value="$PROJECT_DIR$/etc/adcscope" />
         <option value="$PROJECT_DIR$/managed_components/brianpugh__tamp/compressor_esp32.cpp" />
         <option value="$PROJECT_DIR$/managed_components/brianpugh__tamp/idf_component.yml" />
         <option value="$PROJECT_DIR$/managed_components/espressif__lan867x/idf_component.yml" />

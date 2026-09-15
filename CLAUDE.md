@@ -89,7 +89,7 @@ python3 etc/idf-devtools/elf_archive.py find --device flat -o fw.elf # extract a
 ```
 
 Only builds flashed *after* this was added are archived; older dumps still need their ELF passed to `esp-coredump`
-manually. After a fresh checkout run `git submodule update --init etc/idf-devtools`.
+manually. After a fresh checkout run `git submodule update --init etc/idf-devtools etc/adcscope`.
 
 The submodule is also the single home for the generic ESP-IDF host tools: `etc/idf-devtools/flash-diff.sh`
 (incremental `esptool --diff-with` flashing), `rts.py` (serial RTS/DTR reset), `nvs_dump.py` (NVS partition parser),
@@ -232,6 +232,12 @@ wraps `Console` for the PWM-aware `etc/ota.py`.
 In-firmware debug: `rtcount(label)` macros (`src/etc/rt.h`) accumulate per-section timings; `sprofiler` is a sampling
 profiler (only useful with OpenOCD attached, configured by `pprof.conf::sprofiler_hz`); `scope` streams raw ADC over TCP
 for noise debugging.
+
+The scope's host client is **`etc/adcscope`** — a submodule of `fl4p/adcscope`, a device-agnostic
+soft oscilloscope extracted from this repo. Run it via `./etc/scope.py` (a wrapper that registers
+the NAT/telnet discovery adapter for fry/flat and passes arguments through); the wire format is
+`etc/adcscope/PROTOCOL.md`. Capture datasets (`fl4p/fugu-data`) check out at `etc/adcscope/data/`.
+Filter-design studies that used to sit beside the client are now `etc/filter-studies/`.
 
 ## Conventions that aren't obvious from skimming
 
