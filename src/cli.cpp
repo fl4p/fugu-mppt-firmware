@@ -19,6 +19,9 @@
 #include <nvs.h>
 #include <ctime>
 #include <esp_ota_ops.h>
+#ifdef CONFIG_BOOTGUARD_ENABLE
+#include "bootguard.h"
+#endif
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <freertos/task.h>
@@ -588,6 +591,14 @@ static void cmdBootinfo(cmd *) {
              (unsigned) esp_get_free_heap_size(), (unsigned) esp_get_minimum_free_heap_size(),
              (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
     UART_LOG("uptime: %lu s, app %s", (uint32_t) (esp_timer_get_time() / 1000000), format_version());
+#ifdef CONFIG_BOOTGUARD_ENABLE
+    bootguard_status_t bg;
+    if (bootguard_get_status(&bg) == ESP_OK)
+        UART_LOG("bootguard: %s crashes=%u/%d trips=%u rom=0x%02x hint=%u", bg.guarded ? "on" : "off",
+                 bg.crashes, CONFIG_BOOTGUARD_MAX_CRASHES, bg.trips, bg.last_rom, bg.last_hint);
+    else
+        UART_LOG("bootguard: no record (stock bootloader?)");
+#endif
 }
 
 // heap [check]  — free / min-ever / largest-block per capability; `check` runs an integrity scan.

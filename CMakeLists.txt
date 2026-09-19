@@ -85,6 +85,24 @@ list(APPEND EXTRA_COMPONENT_DIRS "${ESP_OTA_BLE_DIR}")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
+# esp-bootguard (S3 only): the bootloader parks the chip in download mode after 3 crash resets.
+# The bootloader only reaches a board by serial flash (0x0), OTA leaves the old one in place.
+if (IDF_TARGET STREQUAL "esp32s3")
+    if (NOT ESP_BOOTGUARD_DIR)
+        if (DEFINED ENV{ESP_BOOTGUARD_DIR})
+            set(ESP_BOOTGUARD_DIR $ENV{ESP_BOOTGUARD_DIR})
+        else ()
+            set(ESP_BOOTGUARD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../esp/esp-bootguard")
+        endif ()
+    endif ()
+    if (NOT EXISTS "${ESP_BOOTGUARD_DIR}/bootloader_components")
+        message(FATAL_ERROR "esp-bootguard not found at ${ESP_BOOTGUARD_DIR} — clone "
+                "github.com/fl4p/esp-bootguard there or set ESP_BOOTGUARD_DIR.")
+    endif ()
+    list(APPEND EXTRA_COMPONENT_DIRS "${ESP_BOOTGUARD_DIR}/components")
+    idf_build_set_property(BOOTLOADER_EXTRA_COMPONENT_DIRS "${ESP_BOOTGUARD_DIR}/bootloader_components" APPEND)
+endif ()
+
 project(fugu-firmware)
 
 # arduino-esp32's CMakeLists.txt doesn't list esp_wifi / network_provisioning in REQUIRES even

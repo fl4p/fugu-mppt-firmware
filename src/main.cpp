@@ -56,6 +56,9 @@
 #include <esp_pm.h>
 #include <esp_timer.h>
 #include <esp_ota_ops.h>
+#ifdef CONFIG_BOOTGUARD_ENABLE
+#include "bootguard.h"
+#endif
 #include <driver/gpio.h>
 #include <dirent.h>
 
@@ -410,6 +413,9 @@ static void lfMarkOtaValid() {
     if (!timeLastSampler || (wallClockUs() - timeLastSampler) > 1000000ULL) return; // RT sampler alive?
 
     done = true;
+#ifdef CONFIG_BOOTGUARD_ENABLE
+    bootguard_mark_healthy();
+#endif
     const esp_partition_t *running = esp_ota_get_running_partition();
     esp_ota_img_states_t st;
     if (esp_ota_get_state_partition(running, &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY) {
