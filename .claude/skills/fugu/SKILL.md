@@ -149,7 +149,12 @@ responding to **neither** the app nor the bootloader (silent console, `chip_id` 
 not bricked; nothing was written. Recover by:
 
 1. retrying — a second `python -m esptool --chip esp32s3 -p PORT chip_id` often just connects; or
-2. manual download mode: hold **BOOT**, tap **EN/RESET**, release BOOT.
+2. manual download mode: hold **BOOT**, tap **EN/RESET**, release BOOT; or
+3. if `system_profiler SPUSBDataType` shows PID **0x4001** (native TinyUSB CDC, e.g. a foreign
+   S3 running MicroPython) rather than 0x1001 (USB-Serial-JTAG), DTR/RTS reset cannot work at all:
+   send `import machine; machine.bootloader()` to its REPL — it re-enumerates as 0x1001 in ROM
+   download mode; then use `--before no_reset` (2026-09-19). Erase the whole chip: its partition
+   table is foreign.
 
 The inverse also happens: a board stuck **in** download mode (replugged with BOOT held, or a
 hand-rolled DTR/RTS reset holding IO0 — never do that) — esptool works perfectly while the app
@@ -226,6 +231,7 @@ BLE-OTA'd board has nothing to decode against — archive it yourself right afte
 ## Provision a config profile
 
 ```bash
+. ./idf-export.sh   # else: FileNotFoundError 'parttool.py'
 ESPPORT=/dev/cu.usbmodemXXX ./provision.py config/lab/<profile>
 ```
 
