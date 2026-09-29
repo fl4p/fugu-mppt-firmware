@@ -172,7 +172,7 @@ shows the `?` warning pill.
 
 **When adding, renaming, or removing a key in firmware** the editor's tables
 (`META`, `FILE_META`, `FILE_KEYS`, `TYPE_KEYS`, `DEFAULTS`) and
-`doc/Configuration.md` must be updated together so the three sources don't
+`website/docs/reference/config/<file>.md` must be updated together so the three sources don't
 drift.
 
 **Automation:** `etc/config-tool/scrape_conf_keys.py` walks `src/` and `main/`

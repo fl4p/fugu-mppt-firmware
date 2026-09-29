@@ -220,7 +220,7 @@ UART_LOG("Charger: %s%s",
          chg.isLoadFollowing() ? " (load-following)" : "");
 ```
 
-#### `doc/Termination.md`
+#### `website/docs/guide/charging/termination.md`
 
 Add section on load-following mode.
 

@@ -16,7 +16,7 @@ Design: [docs/superpowers/specs/2026-05-23-virtual-converter-design.md](../../do
      - **B. Honor `*_ch`** — add `ADC_VConv::bind(name, ch)`; `setupSensors()` calls it per sensor; `getSample(ch)` dispatches via the binding table. Uniform with other backends; ~20 lines of plumbing.
      - **C. Encode quantity in selector string** — `vin_adc=vconv:vin`; backend parses the suffix and auto-assigns channels. Cleanest semantically, deviates hardest from convention, needs conf-editor tooling update.
      - Recommendation: A. Decide before step 5.
-6. `vconv.conf` parsing + wiring; update `doc/Configuration.md` + `etc/config-tool/conf-editor.html`.
+6. `vconv.conf` parsing + wiring; update `website/docs/reference/config/<file>.md` + `etc/config-tool/conf-editor.html`.
 7. `vconv` console command (`pv`, `bat`, `set`, dump).
 8. `config/lab/vconv_mock/` board config.
 9. `test/host-stub/vconv-test.cpp` — CCM steady-state, DCM boundary, PV IV-curve peak, cap time constant.

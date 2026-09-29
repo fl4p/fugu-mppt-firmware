@@ -1,0 +1,161 @@
+---
+title: Getting Started
+sidebar_position: 1
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+*this document is an LLM generated placeholder*
+
+# Getting Started
+
+Bringing up a board takes three steps:
+
+1. Build and flash the firmware.
+2. Flash the board configuration ([provisioning](provisioning.md)).
+3. Connect to the console and join Wi-Fi.
+
+## Quick start
+
+With [ESP-IDF 5.5 installed](#install-esp-idf) and exported, and a Fugu2 board on USB:
+
+<Tabs groupId="os">
+<TabItem value="unix" label="macOS / Linux" default>
+
+```bash
+git clone --recursive https://github.com/fl4p/fugu-mppt-firmware
+cd fugu-mppt-firmware
+export ESPPORT=/dev/ttyACM0           # macOS: /dev/cu.usbmodem…
+idf.py set-target esp32s3
+idf.py -p $ESPPORT flash
+./provision.py fmetal                 # board configuration
+python3 etc/fugu_console.py -p $ESPPORT     # interactive console
+```
+
+</TabItem>
+<TabItem value="windows" label="Windows">
+
+In the **ESP-IDF 5.5 PowerShell** (Start menu shortcut created by the installer), from the folder you keep projects
+in:
+
+```powershell
+git clone --recursive https://github.com/fl4p/fugu-mppt-firmware
+cd fugu-mppt-firmware
+$env:ESPPORT = "COM5"                 # see Device Manager → Ports (COM & LPT)
+idf.py set-target esp32s3
+idf.py -p $env:ESPPORT flash
+python provision.py fmetal            # board configuration
+python etc\fugu_console.py -p $env:ESPPORT  # interactive console
+```
+
+Prefer a short project folder such as `C:\src`: deep build paths can exceed the Windows path length limit. The ESP32-S3 USB port uses the USB CDC driver built into Windows 10 and 11.
+
+:::note
+The Windows steps follow Espressif's Windows tooling and have not been tested on Windows yet. Reports welcome.
+:::
+
+</TabItem>
+</Tabs>
+
+`flash` writes the bootloader, the partition table, the firmware and a mock-ADC configuration, which
+`provision.py` then replaces. Keep panel and battery disconnected until the board is provisioned. For later
+firmware updates use `app-flash`, which keeps the configuration.
+
+Then, in the console:
+
+```
+wifi-add <ssid>:<password>
+restart
+```
+
+The first build downloads the ESP-IDF components the firmware depends on, including
+[arduino-esp32](https://github.com/espressif/arduino-esp32) and the OTA-over-BLE receiver
+[esp-ota-ble](https://github.com/fl4p/esp-ota-ble), into `managed_components/`.
+
+## Install ESP-IDF
+
+Install ESP-IDF **v5.5** or newer, following Espressif's
+[Get Started guide](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32s3/get-started/index.html):
+
+<Tabs groupId="os">
+<TabItem value="unix" label="macOS / Linux" default>
+
+```bash
+git clone -b v5.5 --recursive https://github.com/espressif/esp-idf.git esp-idf-v5.5
+cd esp-idf-v5.5
+./install.sh esp32s3
+. ./export.sh
+```
+
+Source `export.sh` in every new shell before running `idf.py`.
+
+</TabItem>
+<TabItem value="windows" label="Windows">
+
+Use the [ESP-IDF Windows Installer](https://dl.espressif.com/dl/esp-idf/) and select ESP-IDF v5.5 with the
+`esp32s3` target. It installs Git, Python and the toolchain, and adds **ESP-IDF 5.5 PowerShell** and
+**ESP-IDF 5.5 CMD** shortcuts that open a shell with the environment exported.
+
+Manual alternative from a clone of ESP-IDF: `install.ps1 esp32s3`, then `. .\export.ps1` in every new PowerShell
+(`install.bat` / `export.bat` in CMD).
+
+</TabItem>
+</Tabs>
+
+:::tip
+If the IDF installer fails on your Python version, see
+[espressif/esp-idf#12322](https://github.com/espressif/esp-idf/issues/12322). ESP-IDF creates its own virtual
+environment from the system's default `python`.
+:::
+
+## Build
+
+The firmware uses [arduino-esp32](https://github.com/espressif/arduino-esp32) as an ESP-IDF component, pulled in by
+the IDF component manager on the first build.
+
+| Target | Command |
+|---|---|
+| ESP32-S3 (default) | `idf.py set-target esp32s3 && idf.py build` |
+| classic ESP32 | `idf.py -B build-esp32 set-target esp32 && idf.py -B build-esp32 build` |
+
+Use a separate build directory per target. Optional features (BLE, networking, MCPWM driver, …) are Kconfig
+options, see [Build Options](build-options.md).
+
+## Flash
+
+| Command | Writes |
+|---|---|
+| `idf.py -p $ESPPORT app-flash` | Application only; keeps the board configuration |
+| `idf.py -p $ESPPORT flash` | Bootloader, partition table, application **and** the littlefs image selected in `CMakeLists.txt` (`config/lab/dry_mock` on ESP32-S3, `config/fugu1/fugu1_esp32` on ESP32) |
+
+:::warning
+`idf.py flash` overwrites the configuration partition with the board image selected by `FUGU_LITTLEFS_SRC` in the
+top-level `CMakeLists.txt` (a mock-ADC configuration by default). On a configured device use `app-flash`,
+or point `CMakeLists.txt` at the right board first.
+:::
+
+`flash` and `app-flash` archive the build ELF under `elf-archive/` so coredumps can be decoded later, see
+[Debugging](../../development/debugging/index.md). Name the device with `FUGU_DEVICE=<name> idf.py flash` or `./flash.sh <name>`.
+
+## Connect
+
+`etc/fugu_console.py` talks to the device over any transport:
+
+```bash
+python3 etc/fugu_console.py -p /dev/cu.usbmodem1101        # serial
+python3 etc/fugu_console.py --ip <device-ip>               # telnet
+python3 etc/fugu_console.py --ble                          # BLE (NUS)
+python3 etc/fugu_console.py -p $ESPPORT -c status -c sensor  # one-shot commands
+```
+
+With no arguments it scans all transports for devices. The command set is documented in [Console](../../reference/console.md).
+
+Once Wi-Fi is up, telnet, FTP, MQTT and telemetry start automatically if enabled in their
+[configuration files](../../reference/config/index.md).
+
+## Next steps
+
+- [Provision](provisioning.md) a different board or your own hardware.
+- Set battery and charger parameters in [`charger.conf`](../../reference/config/charger.md).
+- Update devices in the field with [OTA](../updating/ota-wifi.md).

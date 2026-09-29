@@ -101,10 +101,10 @@ three (driver chip owns dead-time, both stay 0).
 
 ## Phase 4 — Docs + editor metadata (one commit, per CLAUDE.md rule)
 
-- `doc/Configuration.md` board.conf table: add both keys, note hl realized −1 tick and
+- `website/docs/reference/config/<file>.md` board.conf table: add both keys, note hl realized −1 tick and
   lh eating duty span.
-- `doc/Console.md` `dt` row: two-arg form, new report format.
-- `doc/mcpwm-sync-buck-driver.md` §dead-time (~lines 78–93, 158, 173): two values, the
+- `website/docs/reference/console.md` `dt` row: two-arg form, new report format.
+- `website/docs/internals/pwm-drivers.md` §dead-time (~lines 78–93, 158, 173): two values, the
   `hl==0 && lh>0` bypassed-but-reserved state.
 - `etc/config-tool/conf-editor.html`: add `pwm_deadtime_hl_ns`/`pwm_deadtime_lh_ns` to
   META + FILE_KEYS **by hand** — do NOT run `scrape_conf_keys.py --write` (it clobbers

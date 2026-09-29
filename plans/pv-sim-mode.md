@@ -8,7 +8,7 @@
 
 The power-loop rig feeds fbuck (MPPT DUT) from fboost. Today the "solar" source is a stiff
 external PSU / fixed-duty fboost — a CV source with no maximum power point, so the tracker
-can't actually be exercised (doc/Automated Bench Tests.md:14-27 points at external
+can't actually be exercised (website/docs/lab/automated-bench-tests.md:14-27 points at external
 Keysight/Chroma SAS gear). This feature makes fboost regulate its **output** along a PV I-V
 curve V = f(Iout), parameterized by Isc, Voc, k = Vmp/Voc, so fbuck sees a real MPP. It
 builds on the existing PSU constant-voltage mode (mode enum, RT-owned ticketed mailbox,
@@ -187,15 +187,15 @@ plus a **default-constructed PvModel** sanity test (derived constants valid with
 
 ### 5. Conf / docs / config-tool (three places together, per CLAUDE.md)
 
-- `doc/Configuration.md` converter.conf table: `mode` gains `pv`; new rows `pv_isc` (A),
+- `website/docs/reference/config/<file>.md` converter.conf table: `mode` gains `pv`; new rows `pv_isc` (A),
   `pv_voc` (V), `pv_k` (0.5–0.95, default 0.8), `pv_slew` (V/s, default 200),
   `pv_iout_span` (default 16).
 - `etc/config-tool/conf-editor.html`: add keys to `META` + converter.conf `FILE_KEYS`
   (regenerate via `etc/config-tool/scrape_conf_keys.py --write`).
-- `doc/Power Loop.md`: "PV-sim source" section (also fix the stale `vin_min=72` prose at
+- `website/docs/lab/power-loop.md`: "PV-sim source" section (also fix the stale `vin_min=72` prose at
   :31 — the actual fbuck lab profile has `vin_min=10.5`). Note the feasibility semantics
   (Vin rise truncates the curve via the floor clamp rather than latching, until Vin+0.5 ≥
-  Voc) and the pass-through caveat from D2b. `doc/Automated Bench Tests.md`: pointer that
+  Voc) and the pass-through caveat from D2b. `website/docs/lab/automated-bench-tests.md`: pointer that
   fboost PV-sim is the in-house SAS alternative.
 - New `config/lab/fboost_pv/conf/`: copy of fboost, `tracker.conf` without
   `target_duty_cycle`, `converter.conf` + `mode=pv`, `pv_isc=5`, `pv_voc=60`, `pv_k=0.8`.
@@ -281,5 +281,5 @@ first. Sequence:
 - `src/mppt.cpp` (per-tick law, Iout ceiling, boot `mode=pv` + calibration, telemetry `Vset`)
 - `src/cli.cpp` (cmdPv, status, OTA save/restore) + `src/selftest/measure_coil.cpp`
 - `src/main.cpp` (status token)
-- `doc/Configuration.md`, `doc/Power Loop.md`, `etc/config-tool/conf-editor.html`,
+- `website/docs/reference/config/<file>.md`, `website/docs/lab/power-loop.md`, `etc/config-tool/conf-editor.html`,
   `config/lab/fboost_pv/` (new), `test/test_pv_sim.cpp` (new), `test/host-stub/`

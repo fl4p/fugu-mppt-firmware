@@ -39,7 +39,7 @@ CoAp https://github.com/espressif/idf-extra-components/tree/master/coap (REST fo
 https://github.com/espressif/idf-extra-components/tree/master/network_provisioning
 
 # profiling
-see [performance profiling.md](performance%20profiling.md)
+see [performance profiling.md](../../website/docs/development/debugging/profiling.md)
 
 
 # ota

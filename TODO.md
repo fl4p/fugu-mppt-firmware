@@ -493,7 +493,7 @@ does the recharge_dod work?
 3. Full converter under load
    All of the above plus real Vin/Iin/Vout/Iout via PSU + e-load + current probe — closes the loop on
    duty/MPPT/protection too. Requires more wiring and a
-   bench rig from `doc/Automated Bench Tests.md`.
+   bench rig from `website/docs/lab/automated-bench-tests.md`.
 
 
 - update the tests for the charger.h

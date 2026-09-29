@@ -6,7 +6,7 @@ Scope: validate `src/pwm/mcpwm.h` (`MCPWM_SyncLeg`, `MCPWM_FaultBrake`,
 `MCPWM_Converter<N>`) on ESP32-S3 using only self-observation — no scope, no
 PicoScope, no signal generator, **no physical jumpers**.
 
-Reference: `doc/mcpwm-sync-buck-driver.md` (switch-cycle model, dead-time
+Reference: `website/docs/internals/pwm-drivers.md` (switch-cycle model, dead-time
 split, `update_cmp_on_tez = 1`, OST brake, interleaving). This spec does
 not duplicate the design — it only enumerates what to measure.
 

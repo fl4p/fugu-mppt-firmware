@@ -2,7 +2,7 @@
 """Console client for the Fugu MPPT firmware.
 
 Talks the device's string command protocol (the same one served on UART/USB-CDC/telnet/MQTT/BLE,
-see `doc/Console.md`) over any transport. Modes: one command or several (`-c`, repeatable; or
+see `website/docs/reference/console.md`) over any transport. Modes: one command or several (`-c`, repeatable; or
 `--stdin` to read newline-separated commands — both run over a single connection; stdin batch mode
 is auto-selected when no mode flag is given and stdin is piped), or — given a transport but no mode
 flag — an interactive REPL (the default). With *no arguments at all* it scans every transport for

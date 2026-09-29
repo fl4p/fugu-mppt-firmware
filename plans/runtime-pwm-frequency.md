@@ -188,10 +188,10 @@ Register next to `dt` at `cli.cpp:1897`, inside the same `HAVE_MCPWM` guard.
 
 ### 5. Docs
 
-- `doc/Console.md` — the verb, RAM-only, the refusal list, the `svc off bsync` prerequisite.
-- `doc/Configuration.md:44` — note that `pwm_freq` is the *boot* value and `pwm-freq` overrides it
+- `website/docs/reference/console.md` — the verb, RAM-only, the refusal list, the `svc off bsync` prerequisite.
+- `website/docs/reference/config/<file>.md:44` — note that `pwm_freq` is the *boot* value and `pwm-freq` overrides it
   for the session.
-- Add a line to `doc/dev-notes/beacon-sync.md` and `doc/dev-notes/wired-sync.md` recording that a
+- Add a line to `website/docs/internals/sync/beacon-sync.md` and `website/docs/internals/sync/wired-sync.md` recording that a
   runtime frequency change is refused while either sync owns the period.
 
 ## Files
@@ -203,7 +203,7 @@ Register next to `dt` at `cli.cpp:1897`, inside the same `HAVE_MCPWM` guard.
 | `src/mppt.h`, `src/mppt.cpp` | `MpptController::applyPendingPwmFreqRt()` — rescale `manualTarget`/`targetPwmCnt`, reset captured MPP |
 | `src/main.cpp:598` | call it from the RT loop |
 | `src/cli.cpp` | `pwm-freq` command + registration; `pwm-dump` reports realized freq + `period_ticks` |
-| `doc/Console.md`, `doc/Configuration.md`, `doc/dev-notes/{beacon,wired}-sync.md` | document |
+| `website/docs/reference/console.md`, `website/docs/reference/config/<file>.md`, `website/docs/internals/sync/{beacon,wired}-sync.md` | document |
 | `test/test_pwm.cpp` | tests below |
 
 ## Verification

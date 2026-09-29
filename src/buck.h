@@ -67,7 +67,7 @@ class SynchronousConverter {
      */
     static constexpr float InductivityDcBias = 0.95f;
 
-    // --- diode-emulation tuning (see doc/Diode Emulation.md) ---
+    // --- diode-emulation tuning (see website/docs/internals/diode-emulation.md) ---
     // DCM is entered when half the ripple exceeds the dc current (ΔI/2 > Io, i.e. ir > 2·Io).
     // Hysteresis: once in DCM, stay there until ir drops below 1.8·Io to avoid mode chatter.
     static constexpr float DcmEnterRippleRatio = 2.0f;

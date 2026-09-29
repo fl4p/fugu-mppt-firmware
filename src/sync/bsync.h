@@ -7,7 +7,7 @@
 // The local MCPWM period is dithered between {P, P+1} ticks (first-order sigma-delta, latching
 // on TEZ) to servo the switching phase onto a grid of period P+1/2 ticks in AP time, giving
 // zero average frequency drift between devices and ~µs bounded relative phase.
-// See doc/dev-notes/beacon-sync.md.
+// See website/docs/internals/sync/beacon-sync.md.
 
 #include <stdexcept> // both before buck.h: pwm/ledc.h expands ESP_ERROR_CHECK_THROW
 #include "util.h"

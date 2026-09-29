@@ -22,8 +22,8 @@ struct BatChargerParams {
     uint8_t n_cells = 0; // number of series cells, inferred from Vbat_max / cv_eoc
     float tail_c_rate = 0.05f; // [1/h] ratio of EOC tail current to capacity.
     // ^ LFP: 0.05. NCR (Sanyo NCR18650GA, 67mA on 3500mAh): ~0.02. EVE INR18650: 0.033. Higher = safer (terminates earlier).
-    float recharge_dod = 0.20f; // DoD-since-EoC to release termination. LFP  ~0.20. See doc/Termination.md.
-    float recharge_vfloor_band = 0.05f; // [V] cell-voltage drop below cv_min to release termination (fallback to DoD). See doc/Termination.md.
+    float recharge_dod = 0.20f; // DoD-since-EoC to release termination. LFP  ~0.20. See website/docs/guide/charging/termination.md.
+    float recharge_vfloor_band = 0.05f; // [V] cell-voltage drop below cv_min to release termination (fallback to DoD). See website/docs/guide/charging/termination.md.
     float vout_offset_max = 0.6f; // [V] worst-case Vout-sensor error to tolerate during terminated float.
     float partial_charge = 0.f; // SoC fraction to stop at between periodic full charges (0 = always charge to full)
     uint32_t full_charge_interval_s = 7 * 86400; // [s] charge to full (BMS balancing) at least this often
@@ -37,7 +37,7 @@ struct BatChargerParams {
     // The EOC feedback loop drives the highest cell (BMS, accurate) down to its target by lowering vpack_pin;
     // this is how far below the nominal float floor (Vbat_fallback, expressed in this converter's possibly-
     // offset Vout frame) it may pull. Without it a converter that reads Vout high pins a full pack above EOC
-    // and trickles current into it indefinitely. See doc/Termination.md.
+    // and trickles current into it indefinitely. See website/docs/guide/charging/termination.md.
 
     // Vbat_max doubles as the "battery not identified yet" flag (boot before auto-detect, a failed
     // detect, a bad `vset`). Test it here rather than for NAN at each use: a 0 or negative is just
@@ -193,7 +193,7 @@ public:
     bool update(float vcell_high, float ibat, float ahSinceFull) {
         // Termination line: at ibat = tail_c_rate * Cbat the cell sits at cv_eoc; at ibat = 0 it sits at cv_min.
         // r models the apparent cell resistance implied by that line (for 280Ah / 0.05 → ~20mΩ).
-        // See doc/Termination.md.
+        // See website/docs/guide/charging/termination.md.
         float r = (p.cv_eoc - p.cv_min) / (p.tail_c_rate * p.Cbat);
         float vo = ibat * r;
         _v_term = fminf(p.cv_min + fmaxf(0.f, vo), p.cv_eoc); // don't go beyond cv_eoc to avoid BMS cut-off

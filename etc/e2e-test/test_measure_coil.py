@@ -23,7 +23,7 @@ With ``--with-ls`` it additionally runs the LS-timing sweep on both and compares
 ``peak-ideal`` offset (looser: the Iout-vs-LS peak is shallow/noisy, see doc §6).
 
 This needs a **real converter with sun** (``Vin > Vout``), running firmware that has ``measure-coil``
-(see doc/Coil Inductance Measurement.md). A no-sun / no-DCM run is reported SKIP, not FAIL — the
+(see website/docs/lab/coil-inductance.md). A no-sun / no-DCM run is reported SKIP, not FAIL — the
 device prints ``need Vin>Vout`` / ``only N DCM pts`` and the script says the same. fugu139C and other
 mock-ADC bench devices produce synthetic numbers; don't use them.
 

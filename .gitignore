@@ -91,7 +91,7 @@ config/backup-*
 
 
 
-build-*
+/build-*
 test/host-stub/ftp/build/log/
 
 test/host-stub/ftp/build/

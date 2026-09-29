@@ -52,7 +52,7 @@ public:
     }
 };
 
-// One synchronous leg = one MCPWM operator. See doc/mcpwm-sync-buck-driver.md for the spec.
+// One synchronous leg = one MCPWM operator. See website/docs/internals/pwm-drivers.md for the spec.
 // HiLi:  HS on [0, hsOff],         LS on [hsOff, lsOff]   (MCPWM dead-time)
 // InEn:  IN on [0, hsOff],         EN on [0, lsOff]       (driver chip dead-time, dt 0/0)
 // Comparators latch on TEZ -> glitch-free, order-independent duty updates.
@@ -62,7 +62,7 @@ class MCPWM_SyncLeg {
     mcpwm_cmpr_handle_t  cmpHS_ = nullptr, cmpLS_ = nullptr;
     mcpwm_gen_handle_t   genHS_ = nullptr, genLS_ = nullptr;
 #if WITH_WSYNC
-    // wired inter-chip sync (see doc/dev-notes/wired-sync.md): leader pulse out / follower phase-reload in
+    // wired inter-chip sync (see website/docs/internals/sync/wired-sync.md): leader pulse out / follower phase-reload in
     mcpwm_oper_handle_t  syncOper_ = nullptr;
     mcpwm_cmpr_handle_t  syncCmp_  = nullptr, syncCmpA_ = nullptr;
     mcpwm_gen_handle_t   syncGen_  = nullptr;

@@ -1,7 +1,7 @@
 
 This configuration uses the ESP32 internal ADC for voltage and current sensing.
 
-Wiring described in [Internal ADC](../../../doc/Internal%20ADC.md)
+Wiring described in [Internal ADC](../../../website/docs/guide/hardware/internal-adc.md)
 
 
 ## ESP32-S3-WROOM-1

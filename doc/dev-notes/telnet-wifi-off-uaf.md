@@ -60,5 +60,5 @@ coredump`). Before the fix the same `wifi off` crashed instantly.
 
 Classic UART0 console RX is dead after an RTS reset, so the fuzz was driven over **telnet** (the
 serial-only fuzz scripts were monkeypatched onto `SocketTransport`; see
-`doc/Services.md` and the e2e notes). Coredump streaming over the console stalls ~13 KB, so pull the
+`website/docs/reference/services.md` and the e2e notes). Coredump streaming over the console stalls ~13 KB, so pull the
 partition over serial with `parttool.py` instead.

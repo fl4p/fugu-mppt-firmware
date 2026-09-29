@@ -7,10 +7,13 @@ description: Build, flash, provision and bring up Fugu MPPT firmware on the fboo
 
 Repo: `/Users/fab/dev/pv/fugu-mppt-firmware` (`git@github.com:fl4p/fugu-mppt-firmware.git`).
 
-**The repo's `doc/` is authoritative and maintained — do not duplicate it here.** `Console.md`,
-`Services.md`, `Configuration.md`, `Power Loop.md`, `Coil Inductance Measurement.md`,
-`Automated Bench Tests.md`, `Agentic Programming.md`, **`Bench Operations.md`** (the operational
-detail behind this file), plus root `CLAUDE.md`. This skill is the headline traps and sequence;
+**The repo's docs are authoritative and maintained — do not duplicate them here.** Published, generic docs
+live in `website/docs/` (`reference/console.md`, `reference/services.md`, `reference/config/`,
+`lab/power-loop.md`, `lab/coil-inductance.md`, `lab/automated-bench-tests.md`,
+`development/agentic-programming.md`, `lab/bench-operations.md`). They carry no device names, IPs or
+credentials. The lab-specific detail cut from them lives verbatim in `doc/lab/` (unpublished):
+**`doc/lab/bench-operations-lab.md`** (the operational detail behind this file — "Bench Operations" below means
+this file), `live-converters.md`, `coil-inductance-fry-flat.md`, `dcm-ringing-boards.md`. Plus root `CLAUDE.md`. This skill is the headline traps and sequence;
 when a line here says "details: Bench Operations", the evidence and full recipes are there.
 
 ## Maintaining this skill — read before you edit it
@@ -31,12 +34,12 @@ optional.
 1. **Never write a claim you did not verify.** If you inferred it, say so in the text
    ("suspected", "unconfirmed"). If you observed it, say what you observed. A guess stated flatly
    here will be believed and acted on months from now.
-2. **Grep the repo's `doc/` and the GitHub issues FIRST.** Most "discoveries" here are already
+2. **Grep the repo's `website/docs/`, `doc/` and the GitHub issues FIRST.** Most "discoveries" here are already
    documented — reverse-current in `measure-coil`, the `enabledDefault` mechanism, `FLASH_IN_PROJECT`
    were each "found" by an agent that had not looked. If a repo doc covers it, link the doc; do not
    restate it.
 3. **Operational content only.** Commands, sequences, ordering, traps, where things live. Firmware
-   behaviour, electrical findings and suspected bugs belong in the repo's `doc/*.md` or a GitHub
+   behaviour, electrical findings and suspected bugs belong in the repo's `website/docs/` (generic) or `doc/` (internal) or a GitHub
    issue — not here. If you think firmware has a defect, file an issue and link it from here in one
    line.
 4. **Correct in place; do not append.** Fix the wrong sentence. Never add a second line that
@@ -226,7 +229,7 @@ armed: `ota-ble abort` (the verb — docs say `otab`), retry. Post-OTA/`restart`
 ELF** (no `elf_archive` reference in it, unlike `etc/ota.py`), so a coredump pulled from a
 BLE-OTA'd board has nothing to decode against — archive it yourself right after a successful push:
 `python3 etc/idf-devtools/elf_archive.py archive <device> --method ota --build-dir build-<tag>`.
-`doc/OTA over BLE.md` + Bench Ops.
+`website/docs/guide/updating/ota-ble.md` + Bench Ops.
 
 ## Provision a config profile
 
@@ -256,7 +259,7 @@ board**. Details: Bench Operations.
 `wifi.conf` is gitignored repo-wide (it holds the lab PSK), so **no profile in a fresh clone has
 one** and a board provisioned from it comes up with no credentials — set them with
 `wifi-add <ssid>:<psk>` over serial/BLE, creds are in the global `~/.claude/CLAUDE.md`, not the repo.
-Keys: `doc/Configuration.md`. For the same reason, don't assert on `wifi.conf` in a host test.
+Keys: `website/docs/reference/config/<file>.md`. For the same reason, don't assert on `wifi.conf` in a host test.
 
 `open_output` vs plain `fbuck_lab_bench` is a real distinction: with the output open Vout floats
 toward Vin, so the battery profile's `vout_max=29` trips OV above ~30 V Vin. Only use `open_output`
@@ -323,7 +326,7 @@ match those unless you also update the invocation.
 A **bonded** Mac failing at subscribe with ATT code 3 ("Writing is not permitted") after a firmware
 change that altered the GATT layout is a stale macOS GATT cache, not a firmware bug. The cache is
 keyed by BLE address, so renaming doesn't help; the fix is toggling Bluetooth —
-`blueutil -p 0 && blueutil -p 1` (`doc/OTA over BLE.md`) — noting `blueutil` is **not installed**
+`blueutil -p 0 && blueutil -p 1` (`website/docs/guide/updating/ota-ble.md`) — noting `blueutil` is **not installed**
 by default on this Mac, and unpairing otherwise needs the GUI (ask the user).
 
 An **unbonded** host is the opposite case, ATT code 5/15 `Insufficient Authentication` on the first
@@ -338,7 +341,7 @@ from rapid reconnect cycles — `restart` the board, space out connects. Values 
 
 ## Console
 
-The client (`doc/Agentic Programming.md` has the design; traps in Bench Operations):
+The client (`website/docs/development/agentic-programming.md` has the design; traps in Bench Operations):
 
 ```bash
 timeout 30 .venv/bin/python3 etc/fugu_console.py -p PORT -c "status" -c "svc" | grep -a -v '^V='
@@ -346,7 +349,7 @@ timeout 90 .venv/bin/python3 etc/fugu_console.py --ble --name fugu-flu -c "statu
 ```
 
 **The BLE name is a `--name` VALUE, not positional.** `--ble fugu-flu` exits 2 with
-`unrecognized arguments: fugu-flu` — measured 2026-08-17; `doc/BTHome Advertising.md:169` still
+`unrecognized arguments: fugu-flu` — measured 2026-08-17; `website/docs/guide/telemetry/bthome.md:169` still
 shows that broken form. Allow ~90 s: the scan alone costs 10-20 s, so a 30 s timeout kills it.
 
 Not executable — always via `.venv/bin/python3`; always `timeout`-wrapped (it doesn't exit);
@@ -410,7 +413,7 @@ Ask first before: `bf`/`panel`, `dc`, `sweep`, `mppt`, `sync`, `psu`, `vset`/`is
 `pwm-freq <hz>` (with an argument — it retunes the live gate timing), `measure-coil`, `restart`,
 `ota`/`ota-ble`, `short-ls`, `adc-restart`, `adc-reset`. **`restart` is
 not a way to stop the converter**: `dc` is RAM-only, and a non-zero `tracker.conf::target_duty_cycle`
-(`doc/Configuration.md`) re-enters manual PWM at that duty within ~1 s of boot — flu came back
+(`website/docs/reference/config/<file>.md`) re-enters manual PWM at that duty within ~1 s of boot — flu came back
 switching at D=0.37 after a `dc 0` (2026-09-03). Read the duty back after every restart, and
 after every `dc`: **`pwm-dump`'s `hs_off` is the commanded count verbatim** (confirmed on four
 scripted steps, flu 2026-09-04) and is the only confirmation a `dc` landed. The argument is in
@@ -425,7 +428,7 @@ is gone after the next power-up with nothing in the status line saying it change
 
 ## Coil inductance
 
-`doc/Coil Inductance Measurement.md` already carries **measured** values from full duty sweeps
+`doc/lab/coil-inductance-fry-flat.md` already carries **measured** values from full duty sweeps
 (~550 DCM points each): **fry ≈ 79.8 µH** (IQR 16 %), **flat ≈ 50.9 µH** (IQR 11 %). The doc states
 the 1.57× difference is two different inductors, not measurement error, cross-checked against a
 battery shunt. Check there before measuring anything.
@@ -442,7 +445,7 @@ wide-spread result can be persisted. Read the IQR before trusting an applied val
 
 ## Power-loop rig
 
-fboost supplies fbuck's input; the rig recirculates. `doc/Power Loop.md` and
+fboost supplies fbuck's input; the rig recirculates. `website/docs/lab/power-loop.md` and
 `dcdc-tools/verifications/vin-sweep/BRIEF-power-loop-rig.md` are the references. Four standing traps:
 
 * **Low duty is the dangerous end.** Below fboost's count, fbuck boosts back into it and the

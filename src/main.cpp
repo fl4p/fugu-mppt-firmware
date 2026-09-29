@@ -745,7 +745,7 @@ static void wifiShutdownIfHot(float chipTempC) {
 // (slow ADC, blocked path, etc.). Requires the starvation to persist across TRIP_WINDOWS consecutive
 // lfPeriod (~3s) windows before backing off, so a one-off core-0 stall — e.g. console-command
 // log-alloc contention (a discovery/health poller sending ip/uptime tripped this on every poll, see
-// doc/dev-notes/Real-Time Latency.md) — can't trigger stopAndBackoff; only sustained starvation does.
+// website/docs/development/debugging/real-time-latency.md) — can't trigger stopAndBackoff; only sustained starvation does.
 // Per-sample OV/OC cutouts (mppt.protect) are independent and still fire every arriving sample.
 static void lfWatchdog(time_us nowUs, uint32_t dt, uint32_t sps, uint32_t nSamples) {
     static uint8_t starvedWindows = 0;

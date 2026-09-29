@@ -5,7 +5,7 @@ class String; // Arduino String (handleCommand); forward-declared to avoid pulli
 // Console command layer. setupCli() builds the SimpleCLI command table once at boot;
 // handleCommand() parses one whole input line (from UART/USB/telnet/BLE/MQTT — same string
 // protocol) through it and returns false on a parse error or handler-rejected input, true
-// otherwise. See doc/Console.md.
+// otherwise. See website/docs/reference/console.md.
 void setupCli();
 bool handleCommand(const String &inp);
 

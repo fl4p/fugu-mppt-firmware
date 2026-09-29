@@ -1,0 +1,74 @@
+---
+title: Testing
+sidebar_position: 6
+---
+
+*this document is an LLM generated placeholder*
+
+# Testing
+
+Four layers, from fastest to most hardware-dependent:
+
+| Layer | Where | Needs |
+|---|---|---|
+| Host unit tests | `test/host-stub/*-test.cpp` | A C++ compiler |
+| Host Python tests | `test/host_py/` | Python |
+| On-target unit tests | `test/test_*.cpp` (Unity) | An ESP32-S3 board |
+| End-to-end tests | `etc/e2e-test/` | A device over serial/telnet; some clusters need a power stage |
+
+For power-stage tests with a programmable supply and load, see [Automated Bench Tests](../lab/automated-bench-tests.md).
+
+## Host unit tests
+
+Each `test/host-stub/*-test.cpp` is self-contained; ESP-IDF and Arduino headers are shimmed in `test/host-stub/`.
+
+```bash
+clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src \
+    -o /tmp/service-test test/host-stub/service-test.cpp && /tmp/service-test
+```
+
+## On-target unit tests
+
+`RUN_TESTS=1` swaps `src/main.cpp` for `test/main.cpp` and builds the Unity suite:
+
+```bash
+RUN_TESTS=1 idf.py -B build-tests build
+RUN_TESTS=1 idf.py -B build-tests -p $ESPPORT flash
+python3 etc/fugu_console.py -p $ESPPORT      # resets the board and shows the Unity output
+```
+
+The PWM/MCPWM tests only run in an MCPWM build (`CONFIG_FUGU_WITH_MCPWM=y`); the software suite passes without it.
+
+`MAIN_SRC=<file>` replaces the application sources with one file that provides `setup()`/`loop()`, e.g.
+`MAIN_SRC=../test/main_ads_rate.cpp idf.py build`. The `test_*.cpp` files are not entry points; they run under
+`test/main.cpp` via `RUN_TESTS=1`.
+
+## End-to-end tests
+
+`etc/e2e-test/run_e2e.py` groups the `test_*.py` scripts into clusters by the setup they need, skips those whose
+prerequisites are missing, and exits non-zero on any failure.
+
+| Cluster | Setup | Safe on live converters |
+|---|---|:---:|
+| `console` | Any device, console only | Mostly: it runs `tasks`/`rt-stats`, which can starve the continuous-ADC DMA on a busy configuration |
+| `mock` | A mock-ADC build over serial | n/a |
+| `destructive` | Bench unit only: deliberately panics, reboots, fuzzes | **No** |
+| `power` | Real converter with coil; drives the half-bridge | **No** |
+| `wifi` | Controllable access point / router rig | No |
+
+```bash
+python etc/e2e-test/run_e2e.py --list
+python etc/e2e-test/run_e2e.py --cluster console --serial <serial-port>
+python etc/e2e-test/run_e2e.py --cluster console --telnet <device-ip>:23 --mqtt-host <broker-ip>
+python etc/e2e-test/run_e2e.py --cluster destructive --serial <serial-port> --with-fuzz
+```
+
+Tests needing extra setup read it from flags or the environment: `$MQTT_HOST`, `$RESTART_URL`, `$E2E_SSID`,
+`$E2E_OTHER_SSID`, `$E2E_PSK`, `$E2E_ROUTER`, `$E2E_ROUTER_WAN_IP`.
+
+## Without hardware
+
+- `config/lab/dry_mock` runs the firmware on any ESP32-S3 dev board with a sinusoidal mock ADC.
+- `CONFIG_FUGU_WITH_VCONV=y` with `config/lab/vconv_mock` closes the loop around a simulated converter, see
+  [Build Options](../guide/getting-started/build-options.md#control-loop-work-without-hardware).
+- `config/lab/wokwi_mock` runs in the [Wokwi](https://wokwi.com) simulator.

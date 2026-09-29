@@ -1,0 +1,29 @@
+.hero {
+  padding: 4rem 0 3rem;
+  text-align: center;
+  background: var(--ifm-color-emphasis-100);
+}
+
+.tagline {
+  font-size: 1.25rem;
+  margin-bottom: 2rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  display: block;
+  padding: 1.25rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+  color: inherit;
+}
+
+.card:hover {
+  border-color: var(--ifm-color-primary);
+  text-decoration: none;
+}

@@ -59,7 +59,7 @@ If a value in the spec is dimensionally inconsistent (e.g. "set L0 = 50" without
 - `IRAM_ATTR` required for anything called from the ADC continuous-mode ISR.
 - newlib-nano printf — no %hh, %ll, or C99-narrow specifiers; promote to 32-bit.
 - `vout` must remain the last sensor added in `setupSensors()`.
-- Config keys live in `.conf` files on littlefs; update `doc/Configuration.md` and `etc/config-tool/conf-editor.html` together when you add/rename/remove one.
+- Config keys live in `.conf` files on littlefs; update `website/docs/reference/config/<file>.md` and `etc/config-tool/conf-editor.html` together when you add/rename/remove one.
 - Throwing from the RT loop is forbidden — wrap in try/catch and call `stopAndBackoff`.
 - Prefer low memory and small code size; reuse existing data; expose a getter rather than duplicating a private member.
 - fry & flat are live power converters on solar panels and a battery — be careful with any code that drives them.
