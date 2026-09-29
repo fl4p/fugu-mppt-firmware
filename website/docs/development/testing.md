@@ -78,7 +78,49 @@ Tests needing extra setup read it from flags or the environment: `$MQTT_HOST`, `
 
 ## Without hardware
 
-- `config/lab/dry_mock` runs the firmware on any ESP32-S3 dev board with a sinusoidal mock ADC.
+- `config/lab/dry_mock` runs the firmware on any ESP32-S3 dev board with a sinusoidal mock ADC, see
+  [Mock ADC](#mock-adc).
 - `CONFIG_FUGU_WITH_VCONV=y` with `config/lab/vconv_mock` closes the loop around a simulated converter, see
   [Build Options](../guide/getting-started/build-options.md#control-loop-work-without-hardware).
 - `config/lab/wokwi_mock` runs in the [Wokwi](https://wokwi.com) simulator.
+
+### Mock ADC
+
+`config/lab/dry_mock` replaces all sensors with a fake ADC producing sinusoidal readings, so the control loop runs
+without a power stage. Use it to check the firmware, console, Wi-Fi and services on a new chip or build.
+
+```bash
+cp -r config/lab/dry_mock /tmp/mock
+cp config/fmetal/conf/charger.conf /tmp/mock/conf/   # dry_mock has no charger.conf
+rm -f /tmp/mock/conf/mqtt.conf                        # lab broker settings, not yours
+export ESPPORT=/dev/cu.usbmodemXXXX
+./provision.py /tmp/mock
+python3 etc/fugu_console.py -p $ESPPORT
+```
+
+The firmware requires `charger.conf::vout_max`. Without it, setup logs
+`error during sensor/converter/tracker setup: vout_max must be a positive finite voltage …` and the control loop
+does not start.
+
+In the console:
+
+```
+uptime
+sensor
+status
+wifi-add <ssid>:<password>
+restart
+```
+
+Check:
+
+- [ ] No `E (…)` error lines in the boot log. `board.conf expects MCU …` means the config does not match the chip,
+  see [ESP32 variants](../guide/hardware/esp32-variants.md).
+- [ ] `sensor` lists `vin`, `vout`, `iout` with changing values.
+- [ ] `ip` shows an address after the restart, and `svc list` shows the network services you expect.
+
+:::danger
+Never provision a mock configuration on a board that is wired to a panel, supply or battery. The protections act on
+the fake readings, not on the real voltages; `dry_mock` sets zero dead-time and its half-bridge pins may not match
+your board's.
+:::

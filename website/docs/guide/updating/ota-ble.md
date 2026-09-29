@@ -38,20 +38,11 @@ If the name/address is omitted it falls back to `$BLE_NAME`; without that, it pi
 peripheral advertising NUS and refuses to guess when several are in range. A name that matches several devices is
 rejected the same way.
 
-## GATT layout
+## GATT
 
-The OTA data rides the same Nordic UART Service (NUS) the BLE console uses; one extra characteristic
-is added for the firmware bytes:
-
-| Role | UUID | Properties |
-|------|------|------------|
-| Service (NUS) | `6E400001-B5A3-F393-E0A9-E50E24DCCA9E` | — |
-| RX (host→device) | `6E400002-…` | write / write-no-response — console commands |
-| TX (device→host) | `6E400003-…` | notify — console output + status (logs are mirrored here) |
-| FW (host→device) | `6E400004-…` | write-no-response — raw firmware bytes |
-
-The FW characteristic carries binary and bypasses the console line parser entirely. It requires the
-same pairing as RX (encrypted under `ble_security=justworks`/`passkey`).
+The OTA data rides the same Nordic UART Service the BLE console uses: commands go to RX, status comes back on TX,
+and the firmware bytes go to the extra FW characteristic (`6E400004-…`, write-no-response), which requires the same
+pairing as RX. See [GATT layout](../../reference/ble/gatt.md).
 
 ## Console commands
 

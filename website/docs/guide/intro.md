@@ -40,11 +40,9 @@ many boards and can be updated over the air.
 - **Tuning a device?** See the [configuration reference](../reference/config/index.md) and [console commands](../reference/console.md).
 - **Curious how it works?** Start with the [architecture overview](../internals/architecture.md).
 
-:::danger Use at your own risk
-
-If the battery or load is removed during conversion, expect an over-voltage transient at the output
-(measured: 36 V for 400 ms on a 28.5 V system). In a software or hardware failure the charger may put the full
-panel voltage on the battery terminals. Add over-voltage protection (TVS, crowbar, second DC/DC) where connected
-devices cannot tolerate that.
-
+:::caution
+A software or hardware failure can put the full panel voltage on the battery, and removing the battery during
+conversion causes an over-voltage transient at the output. Read [First Power-Up](getting-started/first-power-up.md)
+before connecting a panel or battery. The firmware comes without warranty ([Apache-2.0](../../../LICENSE)); use it
+at your own risk.
 :::

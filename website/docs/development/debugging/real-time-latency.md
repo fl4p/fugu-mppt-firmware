@@ -3,119 +3,81 @@ title: Real-time latency
 sidebar_position: 4
 ---
 
-# Real-time performance on ESP32 with Wi-Fi
+# Real-time latency
 
-With networking enabled, the ESP32 executes code that is not real-time capable and thus can block for a couple of
-milliseconds.
-Luckily, we have 2 cores, so we can use one core for all the non-RT and the other for the RT code.
+The converter control loop must respond to a load transient fast enough to keep output overshoot small. Latency here
+is the time from an input change to the PWM response, and for protection only the worst case counts, not the mean.
+With networking enabled the ESP32 runs code that can block for milliseconds, so the firmware splits the work across the
+two cores: the real-time (RT) loop owns core 1, and everything else runs on core 0.
 
-The DC-DC converter control loop needs to have a fast load transient response to minimize transient surge voltages at
-the output. Latency is the time between an input change and a response to this change at the output.
+This page covers what keeps the RT loop fast, what still stalls it from the other core, and how to measure it.
 
-A control loop might look like this:
+## Latency budget and watchdogs
 
-```
-void criticalTask() {
-  while(true) {
-    adcRead();
-    pwmWrite();
-    yield();
-  }
+`loopRT` (`src/main.cpp`) runs once per ADC sample: sampling, protection, the PD controllers, MPPT and the PWM update.
+Three supervisors on the same task detect a loop that falls behind:
+
+| Supervisor | Trips when | Action |
+|---|---|---|
+| Loop-rate watchdog (`lfWatchdog`) | Samples per second stay below `sensor.conf::expected_hz` for 3 consecutive ~3 s windows (outside calibration and manual PWM) | `Loop latency high (…), shutdown!`, `stopAndBackoff(4)` |
+| ADC stall watchdog | The ADC reports an error, or no fresh sample arrived for 200 ms outside calibration | `resetPeripherals()` at most every 300 ms; `ADC stall <n> ms, shutdown` and `stopAndBackoff(16)` if the stall persists > 800 ms; system restart after 60 s |
+| No-sample check | No sample at all 20 s after start | `Never got a sample! Please check ADC`, converter disabled; system restart once uptime passes 15 min |
+
+The per-sample OV/OC cutouts in `mppt.protect` are independent of these and run on every sample that arrives. The
+status line reports `lag=` in µs: the longest interval between two loop iterations while the converter was enabled,
+since the last `reset-lag` or periodic sweep.
+
+`expected_hz` is documented in [sensor.conf](../../reference/config/sensor.md); `0` disables the loop-rate watchdog.
+
+## RT loop structure
+
+The loop never sleeps voluntarily. It blocks on a task notification given by the ADC interrupt, which also lets the
+idle task run while the ADC converts. Simplified:
+
+```cpp
+void adcAlertIsr() {
+    vTaskNotifyGiveFromISR(rtTask, &woken);
+}
+
+void loopRT() {
+    while (true) {
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1))) { // clear-on-exit
+            adcRead();
+            protect();
+            updateControl();
+            pwmWrite();
+        }
+    }
+}
+
+void setup() {
+    xTaskCreatePinnedToCore(loopRT, "loopRt", 16384, nullptr, RT_PRIO, nullptr, RT_CORE); // RT_PRIO = 20
+    // Arduino loop() = network loop, core 0
 }
 ```
 
-Latency should be deterministic. it is the maximum.
-On a general purpose CPU, a lot of things can happen besides our critical task
+- **Task notifications, not semaphores.** `TaskNotification` (`src/etc/rt.h`) wraps them; FreeRTOS documents them as
+  faster than a binary semaphore.
+- **Clear on exit.** `wait()` calls `ulTaskNotifyTake(pdTRUE, …)` and treats any non-zero count as one wake-up, so
+  `read()` drains everything that accumulated. A decrement-by-one variant that returns true only for a count of exactly
+  one starves `read()` whenever notifications pile up, for example during the 1 s start-up delay that
+  `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` adds before the loop starts.
+- **No `yield()` or `vTaskDelay()` in the RT path.** Blocking on the ADC is the only wait.
+- **The 1 ms wait timeout is one tick.** It applies to the internal ADC; the INA226 backend derives its timeout from
+  the conversion time. `CONFIG_FREERTOS_HZ=1000` sets the shortest time a task can wait. Raising it to 10 kHz costs a
+  lot of scheduler overhead; 2 kHz would be the next step to evaluate.
+- **Priority 20.** `loopRT` sits above the lwIP TCP/IP task (18) but below the Wi-Fi and Bluetooth controller tasks
+  (23), which are pinned to core 0.
 
-## Real-time loop
+## Core layout and affinity
 
-Here's a rough pseudocode of how to achieve good real-time performance on the ESP32 while Wi-Fi is enabled:
+`RT_CORE` is `1` and `NON_RT_CORE` is `0` (`src/util.h`). The Arduino `loop()` on core 0 runs `loopNetwork_task`
+(console, Wi-Fi, telemetry, MQTT, `loopLF`) and asserts that it runs on core 0. Arduino's `loop()` is not suitable
+for RT work because the runtime does UART work between calls.
 
-```
-void adcAlertInterrupt() {
-  vTaskNotifyGiveFromISR(controlLoopTask);
-}
+`sdkconfig.defaults` pins every Arduino and network task to core 0:
 
-void controlLoop() {
-  while(true) {
-    ulTaskNotifyTake(pdFALSE, pdMS_TO_TICKS(1));
-    adcRead();
-    updateControl();
-    pwmWrite();
-  }
-}
-
-void networkLoop() {
-  // wifi stuff and everything else not RT-critical
-}
-
-
-void main() {
-    controlLoopTask = createTaskCore1(controLoop, {.prio=20});
-    networkLoopTask = createTaskCore0(networkLoop);
-}
-
-```
-
-* `controlLoop` is our time critical task. we want the response time, i.e. the time the uC takes to react on an analog
-  input change to the output, be less than 1 millisecond
-* `core1` is our real-time core, everything that is not related to the controlLoop or can block longer runs on `core0`
-* calling `ESP_LOGx(...)` usually writes `UART` and/or USB JTAG, which may block longer
-* use a (non-blocking) queue to defer calls from the `controlLoop` to `networkLoopTask` (e.g. logging)
-* `controlLoop` runs exclusively on `core1` with elevated priority
-* notice that `controlLoop` doesn't call `yield()` or `vTaskDelay()`. `ulTaskNotifyTake` will block while ADC is busy,
-  so FreeRTOS housekeeping (`IDLE` task) can run. TODO: specify housekeeping, what does idle task do?
-* instead of semaphores we use task notifications which are faster according to FreeRTOS documentation
-
-## ESP32(-S3) internal ADC
-
-With the esp-idf API `esp_adc/adc_continuous.h` we cannot program the ADC conversion time. It appears to be always
-working at the shortest possible time. This is why single shot measurements are quite noisy and it is better to use
-continuous DMA reading and averaging with the highest possible sampling rate (83kHz for ESP32-S3).
-
-Reading the DMA ring buffer from the "big" control loop might be to slow and we loose samples.
-It might be useful to add another critical loop with even higher priority than the control loop that just reads and
-averages the ADC samples.
-
-Additionally, in this adc averaging loop we can implement a fast shutdown path to further reduce the response time
-to OV or OC transients (load disconnect or short-circuit).
-
-**Landmine — a no-sample watchdog must not gate the read() that feeds it.** `ADC_ESP32_Cont` has a
-no-sample watchdog (`isGood()` returns false when the DMA delivered nothing for >1 s) so a stalled
-internal ADC halts the converter instead of running MPPT on a stale Vin. But `read()` is the *only*
-place that drains the DMA ring **and** refreshes the watchdog's `lastDataUs_`. An early version of
-`ADC_Sampler::_updateAdc` checked `isGood()` *before* `read()` and returned `AdcError` on a stale
-flag — so a single transient >1 s gap (e.g. a WiFi-reconnect storm starving the RT loop) latched the
-ADC dead forever: the gate blocked the only call that could clear it, and `resetPeripherals` couldn't
-reliably break out. Fix: for the `StreamedCallback` backend, **drain `read()` first** (a live DMA
-self-clears), then report `AdcError` from the watchdog afterwards. General rule: a liveness watchdog
-must never sit in front of the operation that proves liveness.
-
-**…but drain-first was necessary-not-sufficient — the real boot `ADC error` was `wait()` starving
-`read()`.** The reorder above still left every device tripping `E (….) main: ADC error` a second or
-two after boot. Root cause was *not* in the ADC code at all but in `TaskNotification::wait()`
-(`src/etc/rt.h`): it returned `ulTaskNotifyTake(pdFALSE, …) == 1`, i.e. true only when *exactly one*
-notification was pending. At boot `loopRT` arms the watchdog in `start()`, then sits in the
-`delay(1000)` under `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` before the drain loop spins up — so the
-conv-done ISR piles up *thousands* of notifications. `wait()` then returns false (`count != 1`),
-`hasData()` is false, `read()` is **never called**, `lastDataUs_` never refreshes, and the watchdog
-trips on its first `isGood()` (instrumented: `reads=0 hits=0 stale≈1100ms`). The drain-first reorder
-can't help when the thing gating the drain is `hasData()` itself. Fix: make `wait()` a proper
-clear-on-exit binary semaphore — `ulTaskNotifyTake(pdTRUE, …) != 0` — so any pending count reads as
-one wakeup and `read()` drains the whole ring. This also removes a latent steady-state bug (the old
-`==1` dropped a sample whenever ≥2 frames queued between iterations) and matches the FreeRTOS
-"as-binary-semaphore" pattern `TaskNotification` already cites. The pre-watchdog firmware
-build hid this: the same burst just cost a few harmless spin iterations.
-(Diagnostic gotcha: `%lld` in `ESP_LOG` corrupts args under newlib-nano — the first instrumentation
-pass printed impossible values; use 32-bit `%ld`/`%lu` casts. See *Configuration* / newlib notes.)
-
-## Set explicit core affinity
-
-```
-CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
-CONFIG_LWIP_TCPIP_TASK_AFFINITY=0x0
-CONFIG_PTHREAD_DEFAULT_CORE_NO_AFFINITY=0x0
-
+```ini
 CONFIG_ARDUINO_RUNNING_CORE=0
 CONFIG_ARDUINO_RUN_CORE0=y
 CONFIG_ARDUINO_EVENT_RUNNING_CORE=0
@@ -124,147 +86,236 @@ CONFIG_ARDUINO_SERIAL_EVENT_TASK_RUNNING_CORE=0
 CONFIG_ARDUINO_SERIAL_EVENT_RUN_CORE0=y
 CONFIG_ARDUINO_UDP_RUNNING_CORE=0
 CONFIG_ARDUINO_UDP_RUN_CORE0=y
+
+CONFIG_MQTT_TASK_CORE_SELECTION_ENABLED=y
+CONFIG_MQTT_USE_CORE_0=y
+
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+CONFIG_LWIP_TCPIP_TASK_AFFINITY=0x0
+CONFIG_MDNS_TASK_AFFINITY_CPU0=y
+CONFIG_MDNS_TASK_AFFINITY=0x0
+CONFIG_PTHREAD_DEFAULT_CORE_NO_AFFINITY=0x0
+
+CONFIG_ESP_TIMER_ISR_AFFINITY_CPU0=y
+CONFIG_ESP_TIMER_TASK_AFFINITY_CPU0=y
 ```
 
-* assume networking code runs on core0.
-* we want to run the latency -sensitive loop on core1.
-* arduino's loop() is not RT capable because it does UART stuff between calls (do not use)
-* so run arduino and the network on core0, and the loopRT on core1
+With BLE enabled, `sdkconfig.ble` adds `CONFIG_BT_CTRL_PINNED_TO_CORE_0=y` and `CONFIG_BT_NIMBLE_PINNED_TO_CORE_0=y`.
+The Wi-Fi task stays on its IDF default, core 0.
 
-## Why RT_CORE=1 (core1), not core0
+`src/etc/rt_core_check.h` turns placement drift into a build error: Arduino runtime, main task, esp_timer task and ISR,
+lwIP, mDNS, default pthread core, NimBLE host, Wi-Fi and MQTT tasks must all be off `RT_CORE`.
 
-ESP32-S3's two LX7 cores are functionally symmetric for a control loop, so the choice
-isn't about raw throughput. The concrete reason to keep RT on core1:
+### Why core 1
 
-- NVS / littlefs / OTA writes happen from core0 (services, console). Each flash write
-  briefly disables the CPU cache; non-IRAM code on *both* cores stalls during that
-  window (see below).
-- With RT on core1, core0's *CPU* work (services, console) never preempts the RT loop.
-  Flash writes are different: they disable the cache on both cores, so only IRAM code (the
-  ADC continuous-DMA ISR) keeps running. The RT loop, including protection, stalls for the
-  write; see
-  [Flash-cache disable stalls…](#flash-cache-disable-stalls-the-non-iram-rt-path-incl-the-alert-isr).
-- If RT moved to core0, every `set-config` / OTA chunk / coulomb-counter persist would
-  briefly steal cycles from the ADC/MPPT/PWM path.
+The two ESP32-S3 cores are symmetric, so the choice is about isolation, not throughput. The tasks that produce
+non-RT load (Wi-Fi, lwIP, MQTT, console, services, NVS/littlefs/OTA writers) run on core 0, and with the RT loop on
+core 1 their CPU time never preempts it. Flash writes are the exception; see
+[Flash-cache-disable windows](#flash-cache-disable-windows).
 
-Flipping RT_CORE to 0 would also require flipping every `CONFIG_*_PINNED_TO_CORE_0` and
-`CONFIG_*_AFFINITY_CPU0` to its `_1`/`CPU1` counterpart — significant sdkconfig churn for
-no gain. The `xPortGetCoreID() == 0` asserts in `loopNetwork_task` would also need to
-become `RT_CORE ^ 1`.
+Moving the RT loop to core 0 would mean flipping every `_CORE0`/`_CPU0`/`_PINNED_TO_CORE_0` setting above to its core-1
+counterpart and changing the core-0 assert in `loopNetwork_task`, for no gain.
 
-## esp_timer ISR placement
+## Interrupts
 
-Default in IDF is `CONFIG_ESP_TIMER_ISR_AFFINITY_CPU0` (ISR on PRO_CPU). An earlier sdkconfig
-flipped that to CPU1 so any `dispatch_method = ESP_TIMER_ISR` callbacks would run with
-RT-core latency. This firmware doesn't use ESP_TIMER_ISR dispatch anywhere — IDF's internal
-esp_timer consumers (Wi-Fi keepalives, MQTT, NimBLE GAP, FreeRTOS-timers-via-service-task)
-all dispatch to the task on CPU0. Net effect of the old placement: the RT path ate periodic
-timer-ISR preemption for callbacks that ran on the other core anyway.
+### esp_timer ISR
 
-Current setting: `CONFIG_ESP_TIMER_ISR_AFFINITY_CPU0=y` (ISR away from RT_CORE). Re-enable
-CPU1 affinity if a future safety callback (e.g. high-rate OV/OC watchdog) needs to dispatch
-in ISR context on the RT core.
+IDF defaults the esp_timer ISR to core 0, and the firmware keeps it there (`CONFIG_ESP_TIMER_ISR_AFFINITY_CPU0=y`). No
+code in the firmware uses `ESP_TIMER_ISR` dispatch; IDF's own esp_timer users (Wi-Fi, MQTT, NimBLE, FreeRTOS timers)
+dispatch to the esp_timer task on core 0. An ISR on the RT core would only add periodic preemption to the ADC/MPPT/PWM
+path. Move it to core 1 only if a future safety callback must run in ISR context on the RT core, and update the check
+in `rt_core_check.h` with it.
 
-The check macros in `src/etc/rt_core_check.h` enforce this and the other task placements
-at compile time — adding a Kconfig that drifts will fail the build.
+### GPIO alert ISR (INA226, ADS1x15)
 
-## GPIO alert ISR placement (INA226 / ADS)
+The INA226 and ADS1x15 backends attach a falling-edge interrupt on the ALERT pin whose handler notifies the RT task.
+On core 0 that notify is cross-core and has to raise a scheduler interrupt on core 1, which adds latency and jitter to
+the wake-up the RT loop blocks on. The handler belongs on `RT_CORE`.
 
-The INA226 (and ADS1x15) alert pin drives a GPIO interrupt whose handler does
-`vTaskNotifyGiveFromISR(loopRT)` to wake the RT sampler. If that GPIO ISR runs on **core0**, the
-notify is cross-core: it has to raise a scheduler interrupt on core1, adding latency and jitter to
-the wake path that the RT loop blocks on. We want the alert ISR on **RT_CORE** so the notify is
-local.
+The GPIO ISR is one shared service, not a per-pin interrupt. arduino-esp32's `attachInterrupt()` installs it lazily on
+first use, on the calling core, and the first call comes from `setupSensors()` in `setup()` on core 0. The firmware
+therefore installs the service on `RT_CORE` before any `attachInterrupt()` (`pinGpioIsrToRtCore()`, gated by
+`PIN_GPIO_ISR_TO_RT_CORE`, default `1`); the later lazy install is a no-op.
 
-The catch: the GPIO ISR is a single shared service, not per-pin. `arduino-esp32`'s
-`attachInterrupt()` *lazily* calls `gpio_install_isr_service()` on the first attach, pinning that
-shared service to whatever core called it. The first `attachInterrupt` happens in `setupSensors()`,
-which runs in `setup()` on **core0** — so by default every alert ISR lands on core0.
+Two constraints apply to that install:
 
-To control it we pre-install the service on RT_CORE *before* any `attachInterrupt` runs (gated by
-`PIN_GPIO_ISR_TO_RT_CORE` in `main.cpp`); the later lazy install is then a no-op.
+- **Use a pinned task, not `esp_ipc_call_blocking()`.** `gpio_install_isr_service()` performs its own
+  `esp_ipc_call_blocking()` to allocate the interrupt on the calling core. Called from inside an IPC callback on
+  `RT_CORE`, the core's single IPC worker waits on itself and `setup()` deadlocks permanently, before `loopRT` or any
+  network service exists. The firmware runs the install in a short-lived task pinned to `RT_CORE` that notifies
+  `setup()` when done.
+- **Install with flags `0`, not `ESP_INTR_FLAG_IRAM`.** `attachInterrupt()` registers arduino-esp32's
+  `__onPinInterrupt` dispatcher, which lives in flash. An IRAM service keeps firing while the flash cache is disabled
+  and then jumps into that dispatcher, which panics with `Cache disabled but cached memory region accessed`. A mock-ADC
+  configuration never attaches the interrupt and cannot reproduce this. With flags `0` the alert is masked for the
+  cache-off window. The core affinity comes from the installing task, not from the flag.
 
-**Landmine — do not wrap `gpio_install_isr_service()` in `esp_ipc_call_blocking(RT_CORE, …)`.**
-That function does its *own* internal `esp_ipc_call_blocking()` to the calling core (via
-`gpio_isr_register` → `esp_intr_alloc` on the target core). Calling it from inside an IPC callback on
-RT_CORE makes that core's single `ipc` worker wait on itself → **permanent deadlock in `setup()`**,
-before `loopRT` even exists, so nothing reboots it. This was diagnosed via JTAG (loopTask blocked in
-`esp_ipc_call_blocking`, `ipc1` blocked inside `gpio_install_isr_service`) and it silently bricked two
-field units after an OTA. The correct way to run it on RT_CORE is a **short-lived task pinned to
-RT_CORE** that calls `gpio_install_isr_service()` and notifies setup() when done — the `ipc` worker
-stays free, the nested IPC completes, and the ISR lands on RT_CORE.
+A late or missed alert starves the sampler, and the loop-rate watchdog then shuts the converter down. That shutdown is
+correct; the starvation is the fault to fix.
 
-**IRAM — do NOT install with `ESP_INTR_FLAG_IRAM`.** `attachInterrupt()` registers arduino-esp32's
-`__onPinInterrupt` dispatcher, which lives in flash (not IRAM). An IRAM-installed service keeps firing
-while the flash cache is disabled — i.e. during *any* flash write (coulomb/stats persist, config
-save, OTA) — and then jumps into that cached dispatcher, panicking with `Cache disabled but cached
-memory region accessed` (seen on a live converter the instant a flash op coincided with an INA226 alert; the
-mock-ADC bench never hits it because it has no `attachInterrupt`). Install with flags `0` instead: the
-alert is simply masked for the brief cache-off window. RT_CORE affinity comes from the installing
-task, independent of the flag, so latency in normal (cache-enabled) operation is unchanged.
+### IRAM requirements
 
-This couples to the loop-latency shutdowns seen on live converters: when INA226 alert edges are missed/late
-the RT sampler starves and the latency watchdog trips `stopAndBackoff`. Lower, deterministic wake
-latency (ISR local to RT_CORE) reduces that pressure — the watchdog itself is correct, the starvation
-is the bug.
+- The continuous-ADC conversion-done callback and everything it calls are `IRAM_ATTR`
+  (`s_conv_done_cb`, `ADC_ESP32_Cont::convDoneCallback`, `TaskNotification::notifyFromIsr`), and
+  `CONFIG_ADC_CONTINUOUS_ISR_IRAM_SAFE=y` is required; `adc_esp32_cont.cpp` fails the build without it. This ISR keeps
+  running during flash operations.
+- Anything reached from an IRAM-safe ISR must be in IRAM or DRAM. An ISR that calls into flash code must not be
+  installed as IRAM-safe.
 
-## Flash-cache disable stalls the non-IRAM RT path (incl. the alert ISR)
+## What stalls the RT core
 
-*During a core0 flash write core1 keeps running only its **IRAM-resident** code (the ADC
-continuous-DMA ISR).* A flash erase/write — littlefs (config
-read **or** write, the `get-config`/`set-config` path, coulomb/stats persist), NVS, OTA — disables
-the SPI-flash **cache globally** for its duration, and IDF parks the *other* core in IRAM while the
-op runs. So any **non-IRAM** code stalls too, on whichever core it's pinned to. Core pinning isolates
-the RT loop from core0's *CPU* work, not from a flash-cache-disable.
+Core pinning isolates the RT loop from core 0's CPU time. It does not isolate it from shared resources: the flash
+cache, kernel spinlocks and the heap lock.
 
-The INA226 sampling path is **non-IRAM**: the alert GPIO ISR is installed with flags `0` (it must be
-— see the IRAM note above), so it is **masked for the whole cache-off window**, and the I2C read in
-`loopRT` lives in flash. So *any* littlefs / NVS / OTA write — including a console `get-config`, which
-is why polling tools hurt (see the loop-latency section) — freezes the INA226 sampler for the op's
-duration. That's a sampler-starvation source distinct from missed alert edges, and another feeder of
-the loop-latency shutdowns. Pinning doesn't help; what helps is **fewer/shorter flash ops on the hot
-path** (persist cadence, avoid `get-config` storms) or moving OV/OC to the hardware
-INA226-alert→gate-driver shutdown (see *Off-loading critical parts*), which is immune to cache state.
+### Flash-cache-disable windows
 
-## Note about configTICK_RATE_HZ
+**Mechanism.** A littlefs read or write, an NVS commit, an OTA write or an erase disables the SPI-flash cache for its
+duration, and IDF parks the other core in IRAM while the operation runs. Only IRAM-resident code keeps running on
+core 1, which here is the continuous-ADC DMA ISR. The rest of the RT loop, including protection, stops. The INA226 path
+is entirely non-IRAM: its alert ISR is masked (flags `0`, see above) and its I2C read runs from flash, so every flash
+operation freezes the INA226 sampler for the operation's duration.
 
-defaults to 1000 (1tick = 1ms).
-this is the shortest amount of time a task can wait.
-not recommended to set to 10000, as it has a lot of overhead.
-consider 2000Hz ?
-https://www.esp32.com/viewtopic.php?t=1341#p6082
+**Sources in this firmware.** Console `get-config` and `set-config`, coulomb-counter and statistics persistence
+(`/littlefs/stats`), configuration saves, NVS and OTA.
 
-## wdt
+**What to do.** Keep flash operations off the hot path: persist at a low cadence and avoid scripts that poll
+`get-config`. Protection that must survive a flash operation belongs in hardware; see
+[Off-loading protection to hardware](#off-loading-protection-to-hardware).
 
-https://esp32.com/viewtopic.php?t=14477
+### Kernel critical sections from core 0
 
-## Links
+**Mechanism.** `uxTaskGetSystemState()`, used by the `tasks` and `rt-stats` console commands, walks every task control
+block under `taskENTER_CRITICAL(&xKernelLock)`. While core 0 holds that lock, the IRAM conversion-done callback on
+core 1 spins in `vTaskNotifyGiveFromISR()`, so the ADC driver's ISR cannot recycle DMA descriptors.
 
-https://github.com/MacLeod-D/ESp32-Fast-external-IRQs
+**Magnitude** (measured). About 1.16 ms for 8 tasks, scaling roughly linearly, so about 2 ms on a networked
+converter.
 
-https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/performance/speed.html#speed-targeted-optimizations
-"In general, it is not recommended to set task priorities higher than the built-in Bluetooth/802.15.4 operations as
-starving them of CPU may make the system unstable. For very short timing-critical operations that do not use the
-network, use an ISR or a very restricted task (with very short bursts of runtime only) at the highest priority (24).
-Choosing priority 19 allows lower-layer Bluetooth/802.15.4 functionality to run without delays, but still preempts the
-lwIP TCP/IP stack and other less time-critical internal functionality - this is the best option for time-critical tasks
-that do not perform network operations. Any task that does TCP/IP network operations should run at a lower priority than
-the lwIP TCP/IP task (18) to avoid priority-inversion issues."
+**What the firmware does.** Sizes the DMA frames to ride through about 1.9 ms (see
+[DMA descriptor headroom](#dma-descriptor-headroom)), and if the DMA still halts, the ADC stall watchdog restarts it
+without a converter backoff unless the stall persists past 800 ms.
 
-## esp32s2
+**What to avoid.** Running `tasks` or `rt-stats` repeatedly on a converter under load, and adding other calls that hold
+kernel locks for milliseconds on core 0.
 
-* core1 is more performant than core0
-* FastLED appears to have a significant lag (does it use bit banging?)
+### Heap-lock contention from logging and console commands
 
-## instrumentation profiling of code latency
+**Mechanism.** After `loggingEnableDefer()` (called just before the loop starts), `ESP_LOGx`, `UART_LOG` and
+`printf_mux` on core 1 do not write UART or USB. `enqueue_log()` (`src/logging.cpp`) formats into a heap buffer and
+queues it for core 0. That allocation (`new (std::nothrow) char[201]`, dropped on failure or when more than 200 entries
+are queued) takes the global heap lock. Whenever core 0 holds that lock for a long time, core 1 waits:
 
-`gcc -pg`
-https://stackoverflow.com/questions/7290131/how-does-gccs-pg-flag-work-in-relation-to-profilers
-implement mcount for ESP32 (see esp32-semihosting-profiler)
+- During boot, Wi-Fi, lwIP and MQTT-TLS bring-up make large allocations. The symptom is a one-shot spike in the
+  `adc.update.handleSensorCalib` rtcount label (max 9 ms at an early `maxNum`, mean about 1 µs): the first sensor
+  calibration completes with two or three back-to-back `ESP_LOGI` calls (`src/adc/sampling.h`), each a contended
+  allocation. It does not recur once boot allocation settles.
+- Every console command logs `received serial command`, prints its response and an `OK:` marker through the console
+  mux, which allocates. This stalled the RT loop below the watchdog floor for a whole window even for commands that
+  touch neither flash nor hardware (`hostname`, `ip`, `uptime`); a discovery or health poller sending those commands
+  shut the converter down on every poll.
 
-https://github.com/MacLeod-D/ESp32-Fast-external-IRQs
+**What the firmware does.** The loop-rate watchdog requires three consecutive starved windows before it backs off, so
+a single core-0 stall cannot trip it. This is a mitigation; the contention remains.
 
-## rtcount
+**Still open.** Replace the per-entry allocation with a preallocated ring, and keep lightweight commands off the heavy
+logging path.
+
+**What to avoid.** Logging from the RT loop in steady state, and polling a converter's console.
+
+### Logging on small-stack system tasks
+
+This does not stall the RT core, but it can hang a device in `setup()` where only a serial reflash recovers it.
+
+The boot-log backlog and remote log sinks are described in [Logging](logging.md). They route `ESP_LOGx` output
+through `vprintf_mux`, including output from system tasks.
+
+`vprintf_mux` formats into a 300-byte stack buffer and calls the sink callbacks. On the IDF Wi-Fi task, whose stack is
+3072 bytes (internal; IDF 5.5 has no `CONFIG_ESP_WIFI_TASK_STACK_SIZE`), a connect or reconnect burst through that path
+overflows the stack (`***ERROR*** A stack overflow in task wifi has been detected`) and the device reboot-loops
+before any network service starts. A board that never associates with
+a real access point does not reproduce it. The firmware guards against it in three places:
+
+- `vprintf_()` detects the Wi-Fi task by name (only in task context, checked with `xPortCanYield()`) and sends its
+  output to the default `vprintf` (UART only), bypassing `vprintf_mux`.
+- `enable_esp_log_to_telnet()` is called after `registerServices()`, late in `setup()`.
+- `CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096` gives the system event task, which also logs through the hook, room
+  for the same path.
+
+Any small-stack system task that logs through `vprintf_mux` has the same risk.
+
+## Internal ADC (continuous mode)
+
+`ADC_ESP32_Cont` (`src/adc/adc_esp32_cont.h`) drives ADC1 through the IDF continuous (DMA) driver.
+
+- **Conversion time is fixed.** `esp_adc/adc_continuous.h` does not expose it, and the ADC appears to run at its
+  shortest conversion time, which makes single-shot readings noisy. The firmware samples continuously at a high raw
+  rate (up to 83 kHz on the ESP32-S3) and averages in `read()`: `sensor.conf::esp32adc1_sr` sets the raw rate and
+  `esp32adc1_avg` (1–1023) the number of conversions per delivered sample.
+- **`read()` runs on the RT loop.** If the loop drains the DMA ring too slowly, samples are lost. A dedicated
+  higher-priority task that only drains and averages, with a fast OV/OC shutdown path of its own, would shorten the
+  response to a load disconnect or short circuit; the firmware does not have one.
+
+### DMA descriptor headroom
+
+The IDF driver keeps a fixed `INTERNAL_BUF_NUM = 5` frames of DMA descriptors. `max_store_buf_size` sizes only the
+software ring, and `flush_pool` does not help: a stalled conversion-done ISR starves the descriptors, not the pool.
+Headroom is therefore five frame times, set by `conv_frame_size = ADC1_READ_LEN / 2`:
+
+| `ADC1_READ_LEN` | `conv_frame_size` | Frame time at 83 kHz | DMA headroom (5 frames) | Conversion-done latency |
+|---|---|---|---|---|
+| 128 | 64 B | ~192 µs | ~0.96 ms | ~192 µs |
+| 256 (current) | 128 B | ~0.38 ms | ~1.9 ms | ~384 µs |
+
+At 64 B frames the headroom is shorter than a `uxTaskGetSystemState()` critical section, and the DMA halts until
+`resetPeripherals()` restarts it. With more than about 13 tasks the critical section can exceed 1.9 ms again; the ADC
+stall watchdog then recovers the DMA. `ADC1_READ_LEN` of 384 or 512 buys more headroom at the cost of more latency.
+Frame time scales inversely with `esp32adc1_sr`.
+
+### No-sample watchdog
+
+`isGood()` returns false when the DMA has delivered nothing for 250 ms (`kNoDataTimeoutUs`), so a stalled ADC halts
+the converter instead of running MPPT on a stale input voltage. `read()` is both the only DMA drain and the only place
+that refreshes the watchdog, so `ADC_Sampler::_updateAdc` calls `read()` first and checks `isGood()` afterwards. If
+the check came first, a single long gap would latch the ADC as dead permanently. The general rule: a liveness
+watchdog must never gate the operation that proves liveness.
+
+## Off-loading protection to hardware
+
+The INA226 can raise its ALERT output on bus over-voltage. Wired to the gate driver's shutdown input, it turns the
+converter off independently of the firmware, the flash cache and core scheduling. The INA226's shortest conversion time
+is 140 µs. The INA226 has a single ALERT pin, and the INA226 backend already uses it as the conversion-ready
+interrupt, so using it for over-voltage takes that interrupt away from sampling.
+
+## Measuring latency
+
+| Tool | Answers | Reference |
+|---|---|---|
+| `lag=` in the status line | Longest loop interval since the last `reset-lag` | [Console](../../reference/console.md) |
+| `rtcount("label")` + `reset-lag` | Which section of the RT loop is slow (count, total, mean, max, and the sample index of the max) | [rtcount](rtcount.md) |
+| `rt-stats` | CPU % per task and core over about 2 s | [Profiling](profiling.md) |
+| `tasks` | Task placement, priority, stack headroom | [Console](../../reference/console.md) |
+| Sampling profiler (`CONFIG_FUGU_WITH_SPROFILER`), SystemView, gprof | Where time goes on average | [Profiling](profiling.md) |
+
+`rt-stats` and `tasks` call `uxTaskGetSystemState()` and stall the ADC DMA for about 1–2 ms themselves; see
+[Kernel critical sections from core 0](#kernel-critical-sections-from-core-0).
+
+GCC's `-pg` instrumentation inserts a call to `mcount` (or `_mcount`, `__mcount`) at every function entry, and the
+target has to provide that function: the Espressif gprof component listed under [Profiling](profiling.md), or an
+implementation built on the esp32-semihosting-profiler.
+
+### Reading rtcount output
+
+For latency, sort by `max`: the maximum execution time of a block, not its mean, determines the response time. `maxNum`
+is the sample index at which the maximum occurred, so a small `maxNum` points to start-up. A label's time is measured
+from the previous `rtcount()` call, so a stall anywhere between two labels is attributed to the second.
+
+The dumps below were committed in November 2024, taken with an earlier rtcount that printed integer microseconds and a 32-bit
+`tot`. The current version prints fractional microseconds and adds `min`/`minNum` columns. Several labels show maxima
+of 32–38 ms. The console excerpt comes from a mock-ADC build of the same period, whose status line printed `lag` in
+ms; it shows `lag` jumping from 0.9 ms to 34.8 ms across a sweep start that also wrote `/littlefs/stats`.
+
+<details>
+<summary>Example rtcount dumps (committed November 2024)</summary>
 
 ```
 rtcount_print :
@@ -357,128 +408,45 @@ V=56.45/29.18 I= 1.5/ 2.83A  85.1W -34℃31℃ 1136sps  0㎅/s PWM(H|L|Lm)= 498|
 V=56.45/29.18 I= 1.6/ 2.96A  89.0W -34℃31℃ 1135sps  0㎅/s PW
 ```
 
-## Deferred logging still mallocs on the RT core
+</details>
 
-Logging from `loopRT` (core1) is deferred: once `loggingEnableDefer()` runs (just before the RT loop starts),
-`ESP_LOGx`/`UART_LOG`/`printf_mux` on core1 take the `enqueue_log()` path instead of writing UART/USB synchronously
-(`src/logging.cpp`). So the UART blocking is *not* on the RT path. But `enqueue_log()` still does `new char[l+1]` per
-entry, and `new` takes the global heap lock. During boot core0 is bringing up Wi-Fi/LWIP/MQTT-TLS with large
-allocations that hold that lock for milliseconds, so the core1 `new` can stall on it.
+## Checklist
 
-Symptom: a one-shot multi-ms spike in `adc.update.handleSensorCalib` (e.g. max=9ms at an early `maxNum`), mean ~1µs.
-The first sensor-calibration completion fires 2-3 `ESP_LOGI`s back-to-back (`src/adc/sampling.h`), each a contended
-`new`, all attributed to that one rtcount window. It does not recur once boot allocation traffic settles.
+- Pin nothing to core 1 except `loopRT` and short-lived setup tasks such as the GPIO ISR installer, and never move a
+  system task there; `rt_core_check.h` must keep building.
+- Do not call `vTaskDelay()`, `yield()` or anything that blocks on I/O from `loopRT`. Block only on the ADC.
+- Do not log from the RT loop in steady state. Deferred logging still allocates on core 1.
+- Do not allocate on the RT path. `rtcount` uses a fixed table for this reason.
+- Install an interrupt with `ESP_INTR_FLAG_IRAM` only if the handler and everything it calls is in IRAM; install
+  flash-resident handlers with flags `0`.
+- Install interrupts that wake the RT loop from a task on `RT_CORE`, never through `esp_ipc_call_blocking()` to the
+  same core.
+- Keep flash writes rare and short; do not poll `get-config`, `tasks` or `rt-stats` on a converter under load.
+- Put a liveness watchdog after the operation that proves liveness, never in front of it.
+- Keep heavy log formatting off small-stack system tasks.
+- Check a change with `rtcount` maxima and `lag=`, not with means.
 
-To remove it, get the allocation off the RT path: preallocated buffer pool / fixed-size ring for the async log queue
-instead of `new char[l+1]` per entry.
+## Further reading
 
-## Console commands trip the loop-latency watchdog
-
-**Symptom:** a live converter cycled `Loop latency high (<200 Hz), shutdown!` → `stopAndBackoff(5s)` →
-re-sweep + recalibrate, with no cache panics and no reboots — a symptom long attributed to INA226
-alert misses.
-
-**Root cause:** every shutdown fired ~1 s after a console command (`hostname`, `ip`, `uptime`,
-`getc`), including pure in-memory ones, so it is **not** a flash read. Handling a command on core0
-stalls the RT loop on core1 below the 200 Hz floor: the command's `received serial command` log, its
-response and the `OK:` marker run through the console mux and allocate, holding the heap lock long
-enough that core1's RT path stalls for a whole watchdog window (same contention as *Deferred logging
-still mallocs on the RT core* above). A discovery / health poller that sends `ip`/`hostname`/`uptime`
-therefore shut the converter down on every poll.
-
-**Rule / fixes:**
-
-- **Applied:** the loop-latency watchdog requires the low-sps condition to persist across 3
-  consecutive windows before `stopAndBackoff`, so a one-off core0 stall (a poll) can't trip it
-  (`lfWatchdog`). Per-sample OV/OC protection is unaffected. This is a mitigation.
-- Still open (removes the contention at the source): get the log-queue allocation off the RT path
-  (preallocated ring, as in *Deferred logging* above).
-- Still open: keep pollers off a converter's console, or have lightweight commands (`ip`/`uptime`)
-  avoid the heavy logging/alloc path.
-
-## Boot-log backlog → MQTT, and the wifi-task stack trap
-
-To make boot debuggable remotely, `logging.cpp` captures early log lines into an 8 KB buffer
-(`s_bootLog`) and replays them to each sink as it attaches (`addLogCallback`) — so MQTT, which can't
-connect until WiFi is up (well after `setup()`), still gets the boot sequence in `pv/log/<host>`. The
-buffer freezes on first attach; `") mqtt:"`-tagged lines are skipped so the one-shot replay isn't
-dropped by `mqttLogCallback`'s own filter.
-
-**Trap (bricked a board):** moving the `esp_log → vprintf_` hook (`enable_esp_log_to_telnet`) to the
-*start* of `setup()` — to capture the `setup()` body — routes the **wifi task**'s connect-time logging
-burst through `vprintf_mux`, whose `loc_buf[300]` stack buffer (plus `vsnprintf` + callback frames)
-overflows the wifi task's **3072-byte stack** → `***ERROR*** A stack overflow in task wifi has been
-detected` → reboot loop, hung *before* any service starts (no telnet / MQTT / BLE → serial reflash
-only). A mock-ADC bench board that never associates with a real AP boots clean and hides the bug.
-Post-setup reconnects (AP loss / a slow WPA handshake) overflow the same way once the hook is active.
-
-**Fix:** `vprintf_()` detects the wifi task (`pcTaskGetName`, guarded by `xPortCanYield()` so it's
-never called from an ISR) and routes it to the light default `old_vprintf` (UART only), bypassing
-`vprintf_mux` entirely, so connect *and reconnect* bursts are safe. (There is **no
-`CONFIG_ESP_WIFI_TASK_STACK_SIZE`** in IDF 5.5 — the 3072 B is internal.)
-
-Keeping `enable_esp_log_to_telnet()` **after** `registerServices()` is now belt-and-suspenders, not
-load-bearing. Generally: any small-stack system task (wifi 3072 B) that logs through `vprintf_mux`
-risks this — keep the heavy 300 B-buffer formatting path off those tasks.
-
-## Flash Cache
-
-* IRAM
-* https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/performance/speed.html#measuring-performance
-* https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/performance/speed.html#speed-targeted-optimizations
-* noflash https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/linker-script-generation.html
-    * https://github.com/espressif/esp-idf/blob/v4.2.2/components/freertos/linker.lf
-
-## GCC Instrumentation
-
-https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html
-
-* `-pg` flag
-* https://stackoverflow.com/a/7290284/2950527
-* inject call to mcount (or _mcount, or __mcount
-* https://www.math.utah.edu/docs/info/gprof_toc.html
-* https://docs-archive.freebsd.org/44doc/psd/18.gprof/paper.pdf
-
-## Off-loading critical parts
-
-The INA226 can be programmed to trigger an alert on bus over-voltage. this signal can be wired to the shut-down input of
-the gate driver to instantly turn off the DC-DC converter. The INA226 has a minimum conversion time of 140µs.
-
-run arduino:
-
-```
-CONFIG_ARDUINO_RUNNING_CORE=0
-CONFIG_ARDUINO_RUN_CORE0=y
-CONFIG_ARDUINO_EVENT_RUNNING_CORE=0
-CONFIG_ARDUINO_EVENT_RUN_CORE0=y
-CONFIG_ARDUINO_SERIAL_EVENT_TASK_RUNNING_CORE=0
-CONFIG_ARDUINO_SERIAL_EVENT_RUN_CORE0=y
-CONFIG_ARDUINO_UDP_RUNNING_CORE=0
-CONFIG_ARDUINO_UDP_RUN_CORE0=y
-```
-
-
-## Console `tasks` / `rt-stats` wedged the continuous-ADC DMA (2026-05-30)
-
-`uxTaskGetSystemState()` (used by the `tasks` and `rt-stats` console commands) walks every TCB under
-`taskENTER_CRITICAL(&xKernelLock)` — measured ~1.16 ms for 8 tasks, scaling ~linearly, so ~2 ms on a
-networked converter. While core 0 holds that lock, our IRAM `conv_done` callback on core 1 spins in
-`vTaskNotifyGiveFromISR()`, stalling the ADC driver ISR so it can't recycle DMA descriptors.
-
-The IDF continuous-ADC driver keeps a *fixed* `INTERNAL_BUF_NUM = 5` frames of DMA descriptors
-(independent of `max_store_buf_size`, which only sizes the software ring/pool). At the old
-`conv_frame_size = 64 B` that's only 5 × ~192 µs ≈ **0.96 ms** of headroom — less than the critical
-section — so the DMA ran dry and **halted**, recovering only via `resetPeripherals()` (stop+start).
-This is pre-existing (a 05-28 build reboots on `rt-stats`); the 05-29 no-sample watchdog merely made it
-visible. `flush_pool`/bigger `max_store_buf_size` do **not** help — the wedge is descriptor starvation,
-not pool overflow.
-
-Fix:
-- **A** — `conv_frame_size` raised to 128 B (`ADC1_READ_LEN` 128→256), giving 5 × ~0.38 ms ≈ 1.9 ms of
-  DMA headroom so the driver rides through the critical section. Cost: conv-done / OV-protection
-  latency rises from ~192 µs to ~384 µs. (A busier converter whose critical section exceeds ~1.9 ms
-  still wedges; the loopRT watchdog (B) then resets+recovers it without a converter backoff. Bump
-  `ADC1_READ_LEN` to 384/512 for more headroom at the cost of more latency.)
-- **B** — `loopRT` ADC watchdog unified + made transient-tolerant: a stall is reset promptly
-  (~300 ms throttle) and the converter is stopped only if it persists > ~800 ms (genuine dead ADC),
-  so a diagnostic-induced blip no longer trips a backoff on a live converter.
+- [ESP-IDF Speed Optimization, ESP32-S3](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/performance/speed.html):
+  measuring performance, targeted optimizations, the priorities of built-in tasks and IRAM-safe interrupt handlers.
+- [ESP-IDF Speed Optimization, choosing task priorities (ESP32-H2 edition)](https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/performance/speed.html#choosing-task-priorities-of-the-application):
+  the guidance behind `RT_PRIO = 20`. It recommends priority 19 for time-critical tasks that do no networking,
+  preempting lwIP (18), and the highest priority (24) only for very short bursts.
+- [ESP-IDF Linker Script Generation](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/linker-script-generation.html):
+  placing functions in IRAM with `noflash` fragments; the
+  [FreeRTOS `linker.lf` in ESP-IDF v4.2.2](https://github.com/espressif/esp-idf/blob/v4.2.2/components/freertos/linker.lf)
+  is a worked example.
+- [ESP32: 3 million external interrupts per second](https://github.com/MacLeod-D/ESp32-Fast-external-IRQs): fast
+  external-interrupt handling on the ESP32.
+- [Increasing RTOS Tick Rate, >1000Hz](https://www.esp32.com/viewtopic.php?t=1341#p6082) (ESP32 forum): raising
+  `CONFIG_FREERTOS_HZ` for sub-millisecond waits.
+- [Getting error message: "Task watchdog got triggered"](https://esp32.com/viewtopic.php?t=14477) (ESP32 forum):
+  task watchdog triggers with several FreeRTOS tasks.
+- [GCC Instrumentation Options](https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html): `-pg` and the other
+  instrumentation flags.
+- [How does GCC's `-pg` flag work in relation to profilers?](https://stackoverflow.com/a/7290284/2950527) (Stack
+  Overflow): how the inserted `mcount` calls feed gprof.
+- [GNU gprof manual](https://www.math.utah.edu/docs/info/gprof_toc.html) and
+  [gprof: a Call Graph Execution Profiler](https://docs-archive.freebsd.org/44doc/psd/18.gprof/paper.pdf) (Graham,
+  Kessler, McKusick): the profiler that `-pg` output is made for.

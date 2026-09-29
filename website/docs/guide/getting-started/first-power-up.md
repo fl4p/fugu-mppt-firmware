@@ -5,8 +5,9 @@ sidebar_position: 4
 
 # First Power-Up
 
-Bring a new board up in three stages — mock ADC, bench supply, real panel and battery — and only move on once the
-readings of the current stage make sense.
+Bring a new board up in two stages, a current-limited bench supply first and then the real panel and battery, and
+only move on once the readings of the first stage make sense. To try the firmware on a board without a power stage,
+see [Mock ADC](../../development/testing.md#mock-adc).
 
 :::danger High voltage and high current
 A solar array delivers its short-circuit current into a fault, and a battery delivers far more. A firmware or
@@ -16,59 +17,12 @@ fused wiring, keep a hand on a disconnect, and never leave a first bring-up unat
 
 ## Checklist
 
-```mermaid
-flowchart LR
-  A[1. Mock ADC<br/>no power stage] --> B[2. Bench PSU<br/>current-limited]
-  B --> C[3. Panel + battery]
-```
-
 | Stage | Config | Power | Verify |
 |---|---|---|---|
-| 1 | `config/lab/dry_mock` (copy) | USB only | firmware boots, console, Wi-Fi, services |
-| 2 | your board config | current-limited lab supply on the input | `sensor` readings match a multimeter, limits hold |
-| 3 | your board config | panel + battery (+ BMS) | charging, termination, telemetry |
+| 1 | your board config | current-limited lab supply on the input | boot log clean, `sensor` readings match a multimeter, limits hold |
+| 2 | your board config | panel + battery (+ BMS) | charging, termination, telemetry |
 
-## Stage 1: mock ADC
-
-`config/lab/dry_mock` replaces all sensors with a fake ADC producing sinusoidal readings, so the control loop runs
-without a power stage.
-
-```bash
-cp -r config/lab/dry_mock /tmp/mock
-cp config/fmetal/conf/charger.conf /tmp/mock/conf/   # dry_mock has no charger.conf
-rm -f /tmp/mock/conf/mqtt.conf                        # lab broker settings, not yours
-export ESPPORT=/dev/cu.usbmodemXXXX
-./provision.py /tmp/mock
-python3 etc/fugu_console.py -p $ESPPORT
-```
-
-The firmware requires `charger.conf::vout_max`. Without it, setup logs
-`error during sensor/converter/tracker setup: vout_max must be a positive finite voltage …` and the control loop
-does not start.
-
-In the console:
-
-```
-uptime
-sensor
-status
-wifi-add <ssid>:<password>
-restart
-```
-
-Check:
-
-- [ ] No `E (…)` error lines in the boot log. `board.conf expects MCU …` means the config does not match the chip,
-  see [ESP32 variants](../hardware/esp32-variants.md).
-- [ ] `sensor` lists `vin`, `vout`, `iout` with changing values.
-- [ ] `ip` shows an address after the restart, and `svc list` shows the network services you expect.
-
-:::danger
-Never provision a mock configuration on a board that is wired to a panel, supply or battery. The protections act on
-the fake readings, not on the real voltages.
-:::
-
-## Stage 2: bench supply
+## Stage 1: bench supply
 
 Provision your real board configuration (for Fugu2: `./provision.py fmetal`) and power the input from a lab supply.
 
@@ -88,6 +42,8 @@ Provision your real board configuration (for Fugu2: `./provision.py fmetal`) and
 
 With only the input supply connected and the output open:
 
+- [ ] No `E (…)` error lines in the boot log. `board.conf expects MCU …` means the config does not match the chip,
+  see [ESP32 variants](../hardware/esp32-variants.md).
 - [ ] `sensor`: Vin matches a multimeter within a few percent. If not, fix `vin_rh`/`vin_rl` in
   [`sensor.conf`](../../reference/config/sensor.md).
 - [ ] Current readings sit near zero; the sampler calibrates the zero-current offset at start.
@@ -104,7 +60,7 @@ steps; large positive jumps can cause current transients that destroy the switch
 converter. See [Operating modes](../operating-modes.md).
 :::
 
-## Stage 3: panel and battery
+## Stage 2: panel and battery
 
 - [ ] Connect the battery first, then the panel.
 - [ ] Confirm Vout in `sensor` equals the battery voltage before the first sweep.
@@ -113,10 +69,10 @@ converter. See [Operating modes](../operating-modes.md).
   that `status` shows a fresh `vcell_high`.
 - [ ] Add [telemetry](../telemetry/index.md) to watch the first days of operation.
 
-:::danger Battery disconnect
-If the battery or load is removed during conversion, expect an over-voltage transient at the output. A failed
-converter may put the full panel voltage on the output. Protect connected devices (TVS, crowbar, second DC/DC) where
-they cannot tolerate that.
+:::danger Output over-voltage
+If the battery or load is removed during conversion, expect an over-voltage transient at the output (measured: 36 V
+for 400 ms on a 28.5 V system). Add over-voltage protection (TVS, crowbar, second DC/DC) where connected devices
+cannot tolerate that or a converter failure that puts the full panel voltage on the output.
 :::
 
 ## Common scenarios

@@ -22,18 +22,8 @@ See [Lab config profiles](config-profiles.md) for what each profile under `confi
 
 ## Quick start: no power stage
 
-```bash
-idf.py build
-idf.py -p $ESPPORT flash
-cp -r config/lab/dry_mock /tmp/mock
-cp config/fmetal/conf/charger.conf /tmp/mock/conf/   # dry_mock has no charger.conf
-rm -f /tmp/mock/conf/mqtt.conf                        # lab broker settings, not yours
-./provision.py /tmp/mock
-python3 etc/fugu_console.py -p $ESPPORT
-```
-
 `dry_mock` selects the fake ADC (`sensor.conf::adc=fake`), which produces sinusoidal readings, so the control loop
-runs without any analog front end.
+runs without any analog front end. See [Mock ADC](../development/testing.md#mock-adc) for provisioning and the checks.
 
 ## Quick start: simulated converter
 

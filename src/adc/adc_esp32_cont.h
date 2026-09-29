@@ -24,7 +24,7 @@
 // 5*~0.38ms = ~1.9ms of headroom at 83kHz, so the DMA rides through instead of wedging. Cost:
 // conv_done/OV-protection latency rises ~one frame (192us->~384us). A busier (>~13 task) converter's
 // critical section can exceed 1.9ms; the loopRT watchdog then resets+recovers it. See
-// doc/dev-notes/Real-Time Latency.
+// website/docs/development/debugging/real-time-latency.md.
 #define ADC1_READ_LEN 256
 
 #define ADC_ATTEN_NA ((adc_atten_t)-1)
