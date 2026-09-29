@@ -263,6 +263,9 @@ def main():
     print(f"summary: {npass} passed, {nfail} failed, {nskip} skipped")
     if nfail:
         print("failed:", ", ".join(n for n, s in results if s == "FAIL"))
+    if not nfail and not npass and not o.dry_run:
+        print("nothing ran (all skipped): not a pass")
+        return 2
     return 1 if nfail else 0
 
 

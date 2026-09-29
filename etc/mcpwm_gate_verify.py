@@ -132,8 +132,13 @@ def parse_args(argv=None):
                     help="skip Phase 4 (fault brake)")
     ap.add_argument("--force-host", action="store_true",
                     help="bypass hostname allow-list (use for fry/flat ONLY when you know)")
+    ap.add_argument("--stage-disconnected", action="store_true",
+                    help="required: confirms the power stage has no source (PV, battery, PSU) and no stored charge")
     ap.add_argument("-v", "--verbose", action="store_true")
-    return ap.parse_args(argv)
+    args = ap.parse_args(argv)
+    if not args.stage_disconnected:
+        ap.error("drives near-full HS/LS duty; disconnect every power-stage source, then pass --stage-disconnected")
+    return args
 
 
 def print_results(phase, rows):
