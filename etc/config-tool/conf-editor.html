@@ -356,7 +356,7 @@ const META = {
   cv_eoc:{unit:"V",desc:"End-of-charge voltage of highest cell at tail current",type:"float"},
   cv_float:{unit:"V",desc:"Float cell voltage where termination line meets zero current",type:"float"},
   cv_ceiling:{unit:"V",desc:"Hard per-cell ceiling: latch termination if highest cell reaches it, regardless of current (backstops cv_eoc on imbalanced packs)",type:"float"},
-  vout_max_fallback:{unit:"V",desc:"Max output voltage when BMS data missing; 0 disables converter",type:"float"},
+  vout_max_fallback:{unit:"V",desc:"Max output voltage when BMS data missing, also the float target after termination; must be > 0",type:"float"},
   ibat_max:{unit:"A",desc:"Maximum battery charge current limit",type:"float"},
   bat_c:{unit:"Ah",desc:"Effective battery pack capacity",type:"float"},
   tail_c_rate:{unit:"C",desc:"End-of-charge tail current as fraction of capacity",type:"float"},

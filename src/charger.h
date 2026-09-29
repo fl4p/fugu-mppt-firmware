@@ -57,6 +57,7 @@ struct BatChargerParams {
         assert_throw(n_cells > 0, "vout_max must be >= cv_eoc (could not determine cell count)");
         float vout_fallback = n_cells * cv_min;
         Vbat_fallback = chargerConf.getFloat("vout_max_fallback", vout_fallback);
+        assert_throw(std::isfinite(Vbat_fallback) && Vbat_fallback > 0, "vout_max_fallback must be > 0");
         ESP_LOGI("charger", "N_cells=%u (Vbat_max=%.2f / cv_eoc=%.3f), Vbat_fallback=%.3fV cv_ceiling=%.3fV",
                  (unsigned) n_cells, Vbat_max, cv_eoc, Vbat_fallback, cv_ceiling);
 
@@ -73,6 +74,7 @@ struct BatChargerParams {
         assert_throw(recharge_vfloor_band >= 0.f, "recharge_vfloor_band must be >= 0");
         vout_offset_max = chargerConf.getFloat("vout_offset_max", 0.6f);
         assert_throw(vout_offset_max >= 0.f, "vout_offset_max must be >= 0");
+        assert_throw(Vbat_fallback > vout_offset_max, "vout_max_fallback must be > vout_offset_max");
         assert_throw(recharge_dod >= 0.f && recharge_dod < 1.f, "recharge_dod must be in [0, 1)");
         partial_charge = chargerConf.getFloat("partial_charge", 0.f);
         assert_throw(partial_charge >= 0.f && partial_charge < 1.f, "partial_charge must be in [0, 1)");
@@ -447,9 +449,11 @@ public:
         uint32_t frame = batSt.ibat_t;
         if (!authority || frame == _lastIbatFrameUs) return;
         _lastIbatFrameUs = frame;
+        // keep > 0: Vout_max() ignores a non-positive pin and would release to Vbat_max
         float floor = _partialHold && !_coldBlocked
                           ? params.n_cells * (params.cv_min - params.recharge_vfloor_band) - params.vout_offset_max
-                          : 0.f;
+                          : 0.1f;
+        floor = fmaxf(floor, 0.1f);
         float err = ibat - ibatTarget;
         float step = fabsf(err) > DEADBAND_A ? fminf(fmaxf(-err * GAIN_V_PER_A, -STEP_MAX_V), STEP_MAX_V) : 0.f;
         vpack_pin = fminf(fmaxf(vpack_pin + step, floor), params.Vbat_max);
@@ -592,8 +596,8 @@ public:
             _vPinFilt.reset();
             _fallbackGlide.reset();
             vpack_pin = _floatGlide.value(nowUs);
-        } else if (!batDataOk && params.Vbat_fallback >= 0) {
-            // missing bat data, and we have a fallback -> glide there
+        } else if (!batDataOk) {
+            // missing bat data -> glide to the fallback
             _vPinFilt.reset();
             _floatGlide.reset();
             if (!_fallbackGlide.active()) {
@@ -607,7 +611,7 @@ public:
             }
             vpack_pin = _fallbackGlide.value(nowUs);
         } else {
-            // bulk charging or (missing batData and no fallback)
+            // bulk charging
             _vPinFilt.reset();
             _fallbackGlide.reset();
             // ride the falling-edge glide if it's still ramping, otherwise jump
@@ -620,10 +624,14 @@ public:
         auto topic = mqttConf.getString("cell_voltages_max_topic", "");
         if (!topic.empty()) {
             _bmsCellSource = true;
-            if (params.Vbat_fallback > 0)
-                vpack_pin = params.Vbat_fallback;
+            vpack_pin = params.Vbat_fallback;
             MQTT.subscribeTopic(topic, [&](const char *dat, int len) {
-                batSt.setVcellHigh(strntof(dat, len));
+                float v = strntof(dat, len);
+                if (!std::isfinite(v) || v <= 0) {
+                    LOG_VALUE_IGNORED("charger", "Vcell_high", len, dat);
+                    return;
+                }
+                batSt.setVcellHigh(v);
                 ESP_LOGD("charger",
                          "avg(vbat)=%.3fV cv_max(mqtt)=%.3fV cv_term=%.3fV vbat_lim=%.3fV vbat_max=%.3fV",
                          batSt.vout_avg.get(),
