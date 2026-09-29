@@ -103,7 +103,8 @@ struct BatteryState {
     static constexpr uint8_t TEMP_SENSORS = 4; // max bat_temp_topic entries
 
     volatile float vcell_high = 0; // voltage of highest cell reported by BMS
-    volatile uint32_t vcell_high_t = 0; // 32-bit lower half of wallClockUs(). 32-bit single-store/load is atomic across cores on Xtensa; 64-bit would not be.
+    volatile uint32_t vcell_high_t = 0; // frame id, low 32 bits of wallClockUs()
+    volatile uint32_t vcell_high_ticks = 0; // freshness stamp, wallClockTicks(); the us frame id wraps every ~71.6 min
     volatile uint32_t ibat_t = 0; // last ibat frame, same clock as vcell_high_t
     volatile float temp[TEMP_SENSORS]{NAN, NAN, NAN, NAN}; // [°C] pack sensors from BMS
     volatile uint32_t temp_t[TEMP_SENSORS]{0, 0, 0, 0};
@@ -114,6 +115,7 @@ struct BatteryState {
     void setVcellHigh(const float &vcell_high_) {
         vcell_high = vcell_high_;
         vcell_high_t = static_cast<uint32_t>(wallClockUs());
+        vcell_high_ticks = wallClockTicks();
     }
 
     void setTemp(uint8_t i, float t) {
@@ -123,9 +125,10 @@ struct BatteryState {
     }
 
     [[nodiscard]] bool haveValidCellVoltage() const {
-        // Compare as 32-bit so the 71-minute wrap-around of vcell_high_t is handled correctly.
-        return vcell_high > 0 and (static_cast<uint32_t>(wallClockUs()) - vcell_high_t) < (VCELL_EXPIRATION_TIME_SEC * 1000000ULL);
+        return vcell_high > 0 and cellAgeTicks() < secToCoarseTicks(VCELL_EXPIRATION_TIME_SEC);
     }
+
+    [[nodiscard]] uint32_t cellAgeTicks() const { return wallClockTicks() - vcell_high_ticks; }
 
     // producer (MQTT task): smooth ibat here and publish a single lock-free
     // snapshot the loop-task consumer only loads. NAN until IBAT_MIN_SAMPLES seen.

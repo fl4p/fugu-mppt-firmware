@@ -11,6 +11,7 @@
 // is swapped to this file, so we provide our own definition. wallClockUs() reads it,
 // but nothing in tests writes — that's fine, time-based tests pass explicit timestamps.
 time_us loopWallClockUs_ = 0;
+volatile uint32_t loopWallTicks_ = 0;
 
 // Same swap: src/main.cpp owns the real nvs; telemetry.cpp (linked into the test
 // build) references it, so define it here too.
@@ -303,6 +304,8 @@ void test_telnet_command_is_deferred_then_runs_on_drain();
 void test_telnet_blank_command_is_dropped();
 // test_charger.cpp — empty MQTT payload survives all three BMS callbacks (#7 attack path)
 void test_mqtt_empty_payload_is_safe();
+// test_charger.cpp — a stale cell frame stays stale across the 32-bit us wrap
+void test_cell_voltage_stays_stale_across_us_wrap();
 // test_charger.cpp — releaseVoutPinning releases the Vout pin UP to Vbat_max, not down to fallback
 void test_release_vout_pinning_goes_to_vbat_max();
 // test_charger.cpp — EOC float floor drops below Vbat_fallback by vout_offset_max to absorb a Vout offset
@@ -535,6 +538,7 @@ void setup() {
     RUN_TEST(test_strntof_parses_nul_terminated);
     RUN_TEST(test_strntof_parses_unterminated_slice);
     RUN_TEST(test_mqtt_empty_payload_is_safe);
+    RUN_TEST(test_cell_voltage_stays_stale_across_us_wrap);
     RUN_TEST(test_release_vout_pinning_goes_to_vbat_max);
     RUN_TEST(test_eoc_floor_allows_vout_offset_correction);
     RUN_TEST(test_eoc_floor_zero_offset_stops_at_fallback);

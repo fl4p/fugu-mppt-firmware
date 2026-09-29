@@ -3,16 +3,16 @@
 #include <hal/adc_types.h>
 #include <esp_timer.h>
 #include <cmath>
+#include "../util.h"
 
 // Cached slow sensor with an explicit age, following the charger.h/BMS convention: a value that
 // nothing refreshed must not be indistinguishable from a measured one. A starved refresh path or a
 // failing sensor presents as stale; a sensor that is simply not fitted stays fresh-NaN, so the
 // pre-existing isnan policies apply to it unchanged.
 class SingleValueSensor {
-    // 32-bit lower half of esp_timer_get_time(), same reason as charger.h's vcell_high_t: written on
-    // core 0, read from the RT loop on core 1, and a 64-bit load/store is not atomic across cores on
-    // Xtensa. Unsigned wrap arithmetic keeps the age correct across the ~71.6 min rollover.
-    volatile uint32_t _lastGoodUs32 = 0;
+    // coarseTicks() of esp_timer_get_time(): written on core 0, read from the RT loop on core 1, and a
+    // 64-bit load/store is not atomic across cores on Xtensa.
+    volatile uint32_t _lastGoodTicks = 0;
     volatile bool _everGood = false;
 
 protected:
@@ -27,7 +27,7 @@ public:
     // Backstop only — the refresh runs every lfPeriod (3 s). Sized above the longest legitimate
     // core-0 stall (`sleep` caps at 60 s, an FTP passive-connect waits up to 2x30 s) so a healthy
     // board does not report staleness; the freezes this guards against lasted minutes.
-    static constexpr uint32_t EXPIRE_US = 90u * 1000000u;
+    static constexpr uint32_t EXPIRE_S = 90;
 
     virtual ~SingleValueSensor() = default;
 
@@ -36,15 +36,15 @@ public:
         // Stamp only on an actual update. A read that fails leaves the filters holding their old
         // finite value, so stamping unconditionally would keep a permanently failing sensor
         // "fresh" forever — the same stale-as-fresh defect through a different door.
-        if (!present()) { _everGood = true; _lastGoodUs32 = (uint32_t) esp_timer_get_time(); }
-        else if (std::isfinite(last())) { _everGood = true; _lastGoodUs32 = (uint32_t) esp_timer_get_time(); }
+        if (!present()) { _everGood = true; _lastGoodTicks = coarseTicks(esp_timer_get_time()); }
+        else if (std::isfinite(last())) { _everGood = true; _lastGoodTicks = coarseTicks(esp_timer_get_time()); }
         return v;
     }
 
     [[nodiscard]] virtual float last() const = 0; // raw cache, may be stale
 
     [[nodiscard]] bool fresh() const {
-        return _everGood && ((uint32_t) esp_timer_get_time() - _lastGoodUs32) < EXPIRE_US;
+        return _everGood && (coarseTicks(esp_timer_get_time()) - _lastGoodTicks) < secToCoarseTicks(EXPIRE_S);
     }
 
     // Use this wherever a stale reading would be acted on as a measurement.

@@ -342,6 +342,26 @@ void test_mqtt_empty_payload_is_safe() {
     TEST_ASSERT_EQUAL_FLOAT(0.0f, charger.batSt.coulombCounter.ahSinceFull()); // ibat untouched
 }
 
+// A stale cell frame must stay stale: the 32-bit us frame id wraps every 2^32 us (~71.6 min), which
+// used to make a stale value read fresh again for 180 s on every wrap.
+void test_cell_voltage_stays_stale_across_us_wrap() {
+    BatteryState bs;
+    loopWallClockUs_ = 5'000'000;
+    bs.setVcellHigh(3.40f);
+    TEST_ASSERT_TRUE(bs.haveValidCellVoltage());
+
+    loopWallClockUs_ = 5'000'000 + (BatteryState::VCELL_EXPIRATION_TIME_SEC - 3) * 1'000'000ULL;
+    TEST_ASSERT_TRUE(bs.haveValidCellVoltage());
+
+    loopWallClockUs_ = 5'000'000 + (BatteryState::VCELL_EXPIRATION_TIME_SEC + 2) * 1'000'000ULL;
+    TEST_ASSERT_FALSE(bs.haveValidCellVoltage());
+
+    for (int k = 1; k <= 3; ++k) {
+        loopWallClockUs_ = 5'000'000 + k * (1ULL << 32) + 1'000'000; // 1 s past the k-th wrap
+        TEST_ASSERT_FALSE(bs.haveValidCellVoltage());
+    }
+}
+
 // releaseVoutPinning must release the pack-voltage pin UP to Vbat_max (so a converter that lost
 // authority on a shared bus can climb back and re-take it), NOT down to Vbat_fallback — which would
 // pin it at the resting bus voltage and throttle a battery that isn't full.

@@ -72,6 +72,7 @@ LedIndicator led;
 MpptController mppt{adcSampler, sensors, converter, lcdService.lcd}; // lcd owned by lcdService
 
 time_us loopWallClockUs_ = 0;
+volatile uint32_t loopWallTicks_ = 0;
 
 time_us lastLoopTime = 0;
 
@@ -595,7 +596,7 @@ static void loopRT(void *arg) {
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error starting ADC sampler: %s", er.what());
         while (true) {
-            loopWallClockUs_ = esp_timer_get_time();
+            setWallClockUs(esp_timer_get_time());
             vTaskDelay(10);
         }
     }
@@ -619,7 +620,7 @@ static void loopRT(void *arg) {
 
     while (true) {
         rtcount("start");
-        loopWallClockUs_ = esp_timer_get_time();
+        setWallClockUs(esp_timer_get_time());
         rtcount("micros");
         auto &nowUs(loopWallClockUs_);
 
@@ -857,7 +858,7 @@ static void lfControl() {
     wifiShutdownIfHot(mppt.ucTemp.lastFresh());
 
     // Staleness fails open for the OTP (NaN > Temp_max is false), matching how a missing sensor has
-    // always been treated — so say so out loud instead. Only reachable now via a >EXPIRE_US core-0
+    // always been treated — so say so out loud instead. Only reachable now via a >EXPIRE_S core-0
     // stall or a sensor that stopped answering; either is worth a line in the log.
     static bool warnedStale = false;
     bool stale = !mppt.ntc.fresh() || !mppt.ucTemp.fresh();

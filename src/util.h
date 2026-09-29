@@ -9,10 +9,29 @@ using time_us = uint64_t; // monotonic microseconds, sourced from esp_timer_get_
 using time_ms = uint64_t; // monotonic milliseconds, derived from wallClockUs()
 
 extern time_us loopWallClockUs_;
+extern volatile uint32_t loopWallTicks_;
 
 inline const time_us &wallClockUs() { return loopWallClockUs_; }
 
 inline time_ms wallClockMs() { return loopWallClockUs_ / 1000ULL; }
+
+// 2^20 us (~1.05 s) ticks for cross-core freshness stamps: a 32-bit load/store is atomic on Xtensa,
+// and a 32-bit tick count wraps only after ~142 years, so a stale stamp can never read fresh again.
+inline uint32_t coarseTicks(time_us us) { return (uint32_t) (us >> 20); }
+constexpr uint32_t secToCoarseTicks(uint32_t s) { return (uint32_t) (((uint64_t) s * 1000000ULL) >> 20); }
+inline uint32_t coarseTicksToSec(uint32_t t) { return (uint32_t) (((uint64_t) t << 20) / 1000000ULL); }
+
+inline void setWallClockUs(time_us us) {
+    loopWallClockUs_ = us;
+    loopWallTicks_ = coarseTicks(us);
+}
+
+// Tear-free on core 0, unlike a 64-bit read of loopWallClockUs_. Still 0 in tests and the first ~1 s
+// of uptime, where the high word is 0 or not written concurrently, so derive it from the us clock.
+inline uint32_t wallClockTicks() {
+    uint32_t t = loopWallTicks_;
+    return t ? t : coarseTicks(loopWallClockUs_);
+}
 
 
 void scan_i2c();
