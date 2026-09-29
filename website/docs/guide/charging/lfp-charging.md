@@ -52,9 +52,9 @@ partition. Edit them with `set-config charger.conf <key> <value>` and then
 `vout_max` / `ibat_max` immediately but are lost on reboot.
 
 :::danger
-`vout_max_fallback=0` does **not** disable the converter, and `ibat_max` limits
-the converter output, not the battery current. A runtime current limit of 0 is
-not a stop. See the table below.
+`ibat_max` limits the converter output, not the battery current. A runtime
+current limit of 0 is not a stop. `vout_max_fallback` must be greater than
+`vout_offset_max`; `0` is rejected at boot. See the table below.
 :::
 
 | Key                  | Unit      | Range                              | Description |

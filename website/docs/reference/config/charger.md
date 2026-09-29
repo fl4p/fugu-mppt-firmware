@@ -13,7 +13,7 @@ Battery termination.
 | `cv_eoc`            | V    | float | 3.5        | End-of-charge voltage of highest cell at tail current          |
 | `cv_float`          | V    | float | 3.325      | Float cell voltage where termination line meets zero current   |
 | `cv_ceiling`        | V    | float | cv_eoc+0.05 | Hard per-cell ceiling: latch termination if highest cell reaches it, regardless of current (backstops cv_eoc on imbalanced packs) |
-| `vout_max_fallback` | V    | float | cells × `cv_float` | Max output voltage when BMS data is missing, also the float target after termination; must be positive. `0` does **not** disable the converter: a non-positive value is ignored and the limit returns to `vout_max` |
+| `vout_max_fallback` | V    | float | cells × `cv_float` | Max output voltage when BMS data is missing, also the float target after termination. Must be greater than `vout_offset_max`; otherwise setup fails and the converter stays off |
 | `ibat_max`          | A    | float | 20         | Maximum battery charge current limit                           |
 | `bat_c`             | Ah   | float | unset → termination line and EOC feedback disabled (see [LFP charging](../../guide/charging/lfp-charging.md)) | Effective battery pack capacity |
 | `tail_c_rate`       | C    | float | 0.05       | End-of-charge tail current as fraction of capacity             |

@@ -91,11 +91,10 @@ timeout applies to `ibat`).
 `Vbat_fallback` is `charger.conf::vout_max_fallback`, by default `N_cells × cv_float` — the float voltage, which does
 not overcharge a full pack. The effective limit is never above `charger.conf::vout_max`.
 
-:::danger
-The comments in the example `charger.conf` files say `vout_max_fallback=0` disables the converter when BMS data is
-missing. In the current code a `vout_max_fallback` ≤ 0 is ignored and the limit returns to `vout_max`. This applies
-both when BMS data is missing and to the float hold after termination with a healthy BMS, so the charger can keep
-charging a full pack towards `vout_max`. Keep `vout_max_fallback` a positive voltage.
+:::note
+`vout_max_fallback` must be greater than `vout_offset_max` (default 0.6 V). A smaller value, including `0`, is
+rejected at boot: setup fails and the converter stays off, with the console available to fix the file. There is no
+setting that stops the converter when BMS data is missing; it holds the fallback voltage instead.
 :::
 
 :::warning
