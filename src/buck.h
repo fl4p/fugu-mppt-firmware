@@ -1258,9 +1258,10 @@ public:
         ESP_LOGI("converter", "drv=%s f=%lu boost=%d pwmMax=%hu minLS=%hu minHS=%hu maxHS=%hu",
                  driverName, pwmFrequency, isBoost, driverPwmMax, pwmRectMin, pwmCtrlMin, pwmCtrlMax);
 
-        // rect_offset_ns is the fixed gate-drive/MOSFET turn-off delay; convert to counts the same
-        // way boot_refresh_ns is handled (ns -> counts via the tick rate), so the calibration is
-        // invariant to PWM resolution and fsw. Default 0 (no offset) when unset.
+        // rect_offset_ns is an empirical net timing correction of the LS window (edge delays, dead
+        // time, sensing error); convert to counts the same way boot_refresh_ns is handled (ns ->
+        // counts via the tick rate), so the calibration is invariant to PWM resolution and fsw.
+        // Default 0 (no offset) when unset.
         rectOnOffset = (int16_t) rectOffsetCountsFromNs(coilConf.getFloat("rect_offset_ns", 0.f), getPwmTickRate());
         logConfig();
     }

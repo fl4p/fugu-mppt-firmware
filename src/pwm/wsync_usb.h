@@ -124,8 +124,8 @@ inline bool wsyncCountWindow(uint8_t pin, uint32_t ms, int &edges, float &rateHz
 // Two windows within +-10% of nominal that also agree with each other. This bounds the RATE and
 // its stability over 40 ms; it does NOT prove per-pulse spacing -- two edge totals cannot tell
 // evenly spaced pulses from missing pulses plus compensating ringing. Proving regularity needs
-// edge timestamps (capture/RMT) and is still open; the external Schmitt buffer that
-// website/docs/internals/sync/wired-sync.md calls mandatory remains the real defence against a ringing line.
+// edge timestamps (capture/RMT) and is still open; the optional external Schmitt buffer
+// (website/docs/development/sync/wired-sync.md) is the real defence against a ringing line.
 inline WsyncProbeResult wsyncQualifyLine(uint8_t pin, float expectHz, uint32_t ms = 20) {
     WsyncProbeResult r{};
     int e1 = 0, e2 = 0;

@@ -61,7 +61,7 @@ class MCPWM_SyncLeg {
     mcpwm_cmpr_handle_t  cmpHS_ = nullptr, cmpLS_ = nullptr;
     mcpwm_gen_handle_t   genHS_ = nullptr, genLS_ = nullptr;
 #if WITH_WSYNC
-    // wired inter-chip sync (see website/docs/internals/sync/wired-sync.md): leader pulse out / follower phase-reload in
+    // wired inter-chip sync (see website/docs/development/sync/wired-sync.md): leader pulse out / follower phase-reload in
     mcpwm_oper_handle_t  syncOper_ = nullptr;
     mcpwm_cmpr_handle_t  syncCmp_  = nullptr, syncCmpA_ = nullptr;
     mcpwm_gen_handle_t   syncGen_  = nullptr;
@@ -302,10 +302,10 @@ public:
     // edge is not cosmetic: it re-phases the timer mid-cycle. The S3 has only the fixed-width
     // PIN filter (~2 IO-MUX clocks, ~25 ns at 80 MHz) -- not the flex filter, so a 200 ns window
     // is not reachable in hardware here. That rejects fast spikes only; slow ringing on the
-    // high-impedance bias node still needs the external Schmitt buffer. The filter's own
+    // high-impedance bias node needs the optional external Schmitt buffer. The filter's own
     // propagation delay is fixed and lands in what sync_phase_ns exists to trim out.
     void initSyncFilter(int gpio) {
-#if SOC_GPIO_SUPPORT_PIN_GLITCH_FILTER // classic ESP32 has none: only the external Schmitt buffer filters
+#if SOC_GPIO_SUPPORT_PIN_GLITCH_FILTER // classic ESP32 has none: only the optional external Schmitt buffer filters
         gpio_pin_glitch_filter_config_t fc = {
             .clk_src  = GLITCH_FILTER_CLK_SRC_DEFAULT,
             .gpio_num = (gpio_num_t) gpio,
