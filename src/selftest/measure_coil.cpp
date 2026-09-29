@@ -71,16 +71,8 @@ static void settleAndRead(uint16_t H, uint32_t dwellMs, Reading &out) {
     out = {medianN(vi, 5), medianN(vo, 5), medianN(io, 5), converter.getCtrlOnPwmCnt(), converter.inDCM()};
 }
 
-// Least-squares y = a + b*x + c*x^2 via 3x3 Gaussian elimination; false if singular.
-static bool quadfit3(const float *xs, const float *ys, int n, double &a, double &b, double &c) {
-    if (n < 3) return false;
-    double s[5] = {0, 0, 0, 0, 0}, rhs[3] = {0, 0, 0};
-    for (int i = 0; i < n; ++i) {
-        double x = xs[i], y = ys[i], xp = 1;
-        for (int k = 0; k < 5; ++k) { s[k] += xp; xp *= x; }
-        rhs[0] += y; rhs[1] += x * y; rhs[2] += x * x * y;
-    }
-    double M[3][4] = {{s[0], s[1], s[2], rhs[0]}, {s[1], s[2], s[3], rhs[1]}, {s[2], s[3], s[4], rhs[2]}};
+// Solve the augmented 3x3 system M in place (Gaussian elimination); false if singular.
+static bool solve3(double M[3][4]) {
     for (int i = 0; i < 3; ++i) {
         double p = M[i][i];
         if (fabs(p) < 1e-12) return false;
@@ -91,8 +83,32 @@ static bool quadfit3(const float *xs, const float *ys, int n, double &a, double 
                 for (int j = 0; j < 4; ++j) M[k][j] -= f * M[i][j];
             }
     }
-    a = M[0][3]; b = M[1][3]; c = M[2][3];
     return true;
+}
+
+// Least-squares fit of two half-parabolas sharing an apex (x0, y0): y = y0 - a*(x0-x)^2 left of x0,
+// y = y0 - b*(x-x0)^2 right of it, a, b >= 0. x0 is grid-searched over the interior of the (ascending) xs.
+static bool asymPeakFit(const float *xs, const float *ys, int n, float &x0Out, double &bOut) {
+    if (n < 5) return false;
+    double syy = 0, r0 = 0, bestSse = INFINITY;
+    for (int i = 0; i < n; ++i) { syy += (double) ys[i] * ys[i]; r0 += ys[i]; }
+    constexpr int GRID = 400;
+    for (int k = 0; k <= GRID; ++k) {
+        double x0 = xs[1] + (double) (xs[n - 2] - xs[1]) * k / GRID;
+        double su = 0, sv = 0, suu = 0, svv = 0, r1 = 0, r2 = 0;
+        int nl = 0, nr = 0;
+        for (int i = 0; i < n; ++i) {
+            double d = xs[i] - x0, q = d * d;
+            if (d < 0) { su += q; suu += q * q; r1 -= q * ys[i]; ++nl; }
+            else { sv += q; svv += q * q; r2 -= q * ys[i]; ++nr; }
+        }
+        if (nl < 2 || nr < 2) continue;
+        double M[3][4] = {{(double) n, -su, -sv, r0}, {-su, suu, 0, r1}, {-sv, 0, svv, r2}};
+        if (!solve3(M) || M[1][3] < 0 || M[2][3] < 0) continue;
+        double sse = syy - (M[0][3] * r0 + M[1][3] * r1 + M[2][3] * r2);
+        if (sse < bestSse) { bestSse = sse; x0Out = (float) x0; bOut = M[2][3]; }
+    }
+    return bestSse < INFINITY;
 }
 
 static void measWriteConf(const char *key, const char *val) {
@@ -213,27 +229,15 @@ static void sweepLs(const MeasArgs &a) {
     if (n < 4) { UART_LOG("measure-coil: too few points to locate peak"); return; }
     int pk = 0;
     for (int i = 1; i < n; ++i) if (Yio[i] > Yio[pk]) pk = i;
+    // The peak is strongly asymmetric (shallow body-diode side, steep reverse-current side); a single
+    // parabola is dragged toward the flat side.
     float ls_peak = Xls[pk], Lc = NAN;
-    float thr = 0.9f * Yio[pk];
-    int lo = pk; while (lo > 0 && Yio[lo - 1] >= thr) --lo;
-    int hi = pk; while (hi < n - 1 && Yio[hi + 1] >= thr) ++hi;
-    int wn = hi - lo + 1;
-    if (wn >= 5) {
-        float mx = 0;
-        for (int i = lo; i <= hi; ++i) mx += Xls[i];
-        mx /= wn;
-        float wx[MEAS_MAX_PTS];
-        for (int i = 0; i < wn; ++i) wx[i] = Xls[lo + i] - mx;
-        double aa, bb, cc;
-        if (quadfit3(wx, &Yio[lo], wn, aa, bb, cc) && cc < 0) {
-            double vtx = mx - bb / (2 * cc);
-            if (Xls[lo] <= vtx && vtx <= Xls[hi]) {
-                ls_peak = (float) vtx;
-                Lc = vo / (2.0f * (float) (-cc) * fsw * (float) pwmMax * (float) pwmMax);
-            }
-        }
-    }
-    UART_LOG("measure-coil: peak LS %.0f (Iout_peak %.3f A%s)", ls_peak, Yio[pk], Lc == Lc ? ", parabola" : ", raw argmax");
+    double bq = 0;
+    bool fitted = asymPeakFit(Xls, Yio, n, ls_peak, bq);
+    if (fitted && bq > 0)  // steep side: reverse charge ~ Vo*Vin/(2L(Vin-Vo)) * t^2 per period (V_f neglected)
+        Lc = vo * vi / (2.0f * (float) bq * fsw * (float) pwmMax * (float) pwmMax * (vi - vo));
+    UART_LOG("measure-coil: peak LS %.0f (Iout_peak %.3f A at raw argmax %.0f%s)", ls_peak, Yio[pk], Xls[pk],
+             fitted ? ", two-sided fit" : ", fit failed: raw argmax");
     UART_LOG("  ideal LS %.0f  auto LS %u  offset peak-ideal %+.0f ct (%+.1f%% HS)  peak-auto %+.0f ct",
              ideal_ls, auto_ls, ls_peak - ideal_ls, (ls_peak - ideal_ls) / hs * 100.0f, ls_peak - auto_ls);
     if (Lc == Lc) UART_LOG("  L (peak curvature) = %.1f uH (cross-check)", Lc * 1e6f);

@@ -210,15 +210,13 @@ a steep-edge HS where the peak is genuinely locatable; flat plateaus yield no re
 peak. Field values on two boards: +100 and +57 counts (at LEDC 12.5 ns/tick), different
 gate-driver / FET combinations.
 
-Both helpers locate the peak by fitting one parabola to all points within 10 % of the
-maximum. Because the early side is so flat, that window can cover most of the sweep, and a
-symmetric parabola across the asymmetric peak lands early. On the ideal model charted above
-(noise-free, 6.25 ns counts, default sweep of 0.5–1.4× the ideal window in 24 steps) the
-fitted peak is ≈ 576 counts against a true peak of ≈ 738 (about 1 µs early), while the raw
-maximum is 733; `--apply` would write about −174 counts. Narrowing the sweep reduces but does
-not remove this (0.9–1.1×: ≈ 28 counts early). Compare the fitted peak with the raw maximum
-in the printed table before trusting `--apply`; if they differ by more than a step or two,
-set `rect_offset_ns` from the raw maximum by hand.
+Both helpers locate the peak by fitting two half-parabolas that share an apex, one per side, which
+is the shape derived above: the early side is shallow, the reverse-current side steep. The apex is
+searched over the whole sweep. On the ideal model charted above (6.25 ns counts, default sweep of
+0.5–1.4× the ideal window in 24 steps) the fit lands within one count of the true peak; with 1 mA of
+measurement noise on a 0.25 A output the error stays around ±12 counts and leans early, the safe
+side. The steep side's curvature also gives the `L` cross-check. The printed table shows the raw
+maximum next to the fitted peak; on the flat side the raw maximum is not a good estimate.
 
 ### Implementation (`src/buck.h`)
 

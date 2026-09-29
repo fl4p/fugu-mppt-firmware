@@ -276,15 +276,34 @@ def _solve3(A, b):
     return [M[i][3] for i in range(3)]
 
 
-def quadfit(xs, ys):
-    """Least-squares y = a + b*x + c*x^2; returns (a, b, c) or None."""
-    if len(xs) < 3:
+def asym_peak_fit(xs, ys, grid=400):
+    """Least-squares fit of two half-parabolas sharing an apex (x0, y0):
+    y = y0 - a*(x0-x)^2 for x < x0, y = y0 - b*(x-x0)^2 for x >= x0, with a, b >= 0.
+    x0 is grid-searched over the interior of the sweep. Returns (x0, y0, a, b) or None."""
+    n, best = len(xs), None
+    if n < 5:
         return None
-    s = [sum(x ** k for x in xs) for k in range(5)]                      # sum x^0..x^4
-    rhs = [sum(y for y in ys), sum(x * y for x, y in zip(xs, ys)),
-           sum(x * x * y for x, y in zip(xs, ys))]
-    A = [[s[0], s[1], s[2]], [s[1], s[2], s[3]], [s[2], s[3], s[4]]]
-    return _solve3(A, rhs)
+    lo, hi = xs[1], xs[-2]
+    syy = sum(y * y for y in ys)
+    for k in range(grid + 1):
+        x0 = lo + (hi - lo) * k / grid
+        su = sv = suu = svv = r1 = r2 = 0.0
+        nl = nr = 0
+        for x, y in zip(xs, ys):
+            if x < x0:
+                u = (x0 - x) ** 2; su += u; suu += u * u; r1 -= u * y; nl += 1
+            else:
+                v = (x - x0) ** 2; sv += v; svv += v * v; r2 -= v * y; nr += 1
+        if nl < 2 or nr < 2:
+            continue
+        r0 = sum(ys)
+        p = _solve3([[n, -su, -sv], [-su, suu, 0.0], [-sv, 0.0, svv]], [r0, r1, r2])
+        if not p or p[1] < 0 or p[2] < 0:
+            continue
+        sse = syy - (p[0] * r0 + p[1] * r1 + p[2] * r2)
+        if best is None or sse < best[0]:
+            best = (sse, x0, p[0], p[1], p[2])
+    return best and best[1:]
 
 
 def ls_sweep(con, tap, hs, pwm_max, fsw, args):
@@ -340,29 +359,17 @@ def ls_sweep(con, tap, hs, pwm_max, fsw, args):
         return
     xs, ys = [r[0] for r in rows], [r[1] for r in rows]
     pk = max(range(len(ys)), key=lambda i: ys[i])
-    # Fit only the *contiguous* near-peak run: walk out from the argmax while still within 10 % of
-    # the peak. The low-LS plateau (body-diode floor) and the reverse-current cliff break the
-    # parabola's symmetry and otherwise push the vertex far outside the swept range.
-    thr = 0.9 * ys[pk]
-    lo_i = pk
-    while lo_i > 0 and ys[lo_i - 1] >= thr:
-        lo_i -= 1
-    hi_i = pk
-    while hi_i < len(ys) - 1 and ys[hi_i + 1] >= thr:
-        hi_i += 1
-    wx, wy = xs[lo_i:hi_i + 1], ys[lo_i:hi_i + 1]
+    # The peak is strongly asymmetric: a shallow body-diode side and a steep reverse-current side,
+    # both quadratic about the zero-crossing point. A single parabola is dragged toward the flat side.
+    fit = asym_peak_fit(xs, ys)
     ls_peak, Lc = float(xs[pk]), None
-    if len(wx) >= 5:
-        mx = sum(wx) / len(wx)
-        fit = quadfit([x - mx for x in wx], wy)
-        if fit and fit[2] < 0:
-            _, b, c = fit
-            vtx = mx - b / (2 * c)
-            if wx[0] <= vtx <= wx[-1]:  # reject an extrapolated vertex (curve not parabolic)
-                ls_peak, Lc = vtx, vo / (2 * (-c) * fsw * pwm_max ** 2)
+    if fit:
+        ls_peak, _, _, b = fit
+        if b > 0:  # steep side: reverse charge ~ Vo*Vin/(2L(Vin-Vo)) * t^2 per period (V_f neglected)
+            Lc = vo * vi / (2 * b * fsw * pwm_max ** 2 * (vi - vo))
     print()
-    print(f"peak LS  : {ls_peak:.0f}   (Iout_peak {ys[pk]:.3f} A, "
-          f"{'parabola on %d pts' % len(wx) if Lc else 'raw argmax, fit rejected'})")
+    print(f"peak LS  : {ls_peak:.0f}   (Iout_peak {ys[pk]:.3f} A at raw argmax {xs[pk]}, "
+          f"{'two-sided fit on %d pts' % len(xs) if fit else 'fit failed, raw argmax'})")
     print(f"ideal LS : {ideal_ls:.0f}   (rectCtrlRatio*HS from measured M)")
     print(f"auto  LS : {auto_ls}   (firmware applied)")
     print(f"offset   : peak-ideal {ls_peak - ideal_ls:+.0f} ct ({(ls_peak - ideal_ls) / hs * 100:+.1f}% of HS)"
@@ -370,7 +377,7 @@ def ls_sweep(con, tap, hs, pwm_max, fsw, args):
     if Lc:
         print(f"L (peak curvature) = {Lc * 1e6:.1f} uH   (cross-check; carries Iout gain like the duty sweep)")
     else:
-        print("  (curvature L skipped: peak too broad/asymmetric for a reliable fit)")
+        print("  (curvature L skipped: no two-sided fit)")
     print("  nonzero peak-ideal = fixed timing offset (dead-time / gate delay) for rectCtrlRatio")
 
     if getattr(args, "apply", False):
