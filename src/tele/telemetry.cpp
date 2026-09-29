@@ -96,6 +96,7 @@ bool add_ap(const std::string &ssid, const std::string &psk) {
     for (int i = 2; !wifiConf.getString(label, ssid).empty() &&
                     wifiConf.getString(label, ssid) != ssid && i < 10; ++i)
         label = base + std::to_string(i);
+    const bool known = wifiConf.getString(label, "") == ssid;
     // psk first: if the second write fails, an orphan _psk key is ignored by the loader,
     // while an orphan ssid key would be joined as an open network
     if (!wifiConf.add({{label + "_psk", psk}}, true) ||
@@ -103,7 +104,13 @@ bool add_ap(const std::string &ssid, const std::string &psk) {
         ESP_LOGE("tele", "failed to write %s", confPath);
         return false;
     }
-    ESP_LOGI("tele", "Added Wifi AP %s to %s", ssid.c_str(), confPath);
+    // WiFiMulti has no replace: a changed psk would leave the old entry in the list
+    if (known)
+        ESP_LOGI("tele", "Updated Wifi AP %s in %s, applies after restart", ssid.c_str(), confPath);
+    else if (wifiMulti.addAP(ssid.c_str(), psk.c_str()))
+        ESP_LOGI("tele", "Added Wifi AP %s to %s", ssid.c_str(), confPath);
+    else
+        ESP_LOGW("tele", "Stored Wifi AP %s, but it was rejected for this session", ssid.c_str());
     noSsid = false;
     return true;
 }

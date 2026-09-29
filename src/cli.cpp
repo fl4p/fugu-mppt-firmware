@@ -521,7 +521,7 @@ static void cmdWifiAdd(cmd *c) {
         CMD_FAIL_RETURN("wifi-add: expected ssid:password");
     std::string ssid = ssidAndPw.substring(0, i).c_str();
     auto psk = ssidAndPw.substring(i + 1);
-    ESP_LOGI("main", "adding wifi network %s (psk=%s)", ssid.c_str(), psk.c_str());
+    ESP_LOGI("main", "adding wifi network %s", ssid.c_str());
     if (!add_ap(ssid, psk.c_str()))
         CMD_FAIL_RETURN("wifi-add: not stored (bad chars or write error)");
 }
