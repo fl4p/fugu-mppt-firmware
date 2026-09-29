@@ -126,3 +126,4 @@
 - [Split dead-time (per-transition HL/LH)](project_split_deadtime_plan.md) — IMPLEMENTED 40b1676 (2026-08-26); on-target + fbuck bench validation still outstanding, don't OTA fry/flat yet
 - [LFP longevity research (9-05)](reference_lfp_longevity_research.md) — doc/LFP Longevity Research.md (codex-reviewed) + kb note + lit archive ~/dev/pv/ee/lit/bat; recharge_dod does NOT lower avg SoC, needs partial-charge ceiling; no EoC hold; 0 °C floor
 - [No feature/fix branches — always main](feedback_no_feature_branches_always_main.md) — commit unvalidated work to main too; flag it in the message, not the branch topology
+- [IDF 6 dual build (5.5 default)](project_idf6_dual_build.md) — 3c8a7fa; separate build dir+sdkconfig; CXX_FLAGS append trap; image-size safe set ed9f647 (254 KB free IDF 6)
