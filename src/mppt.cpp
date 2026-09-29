@@ -190,9 +190,9 @@ void MpptController::update() {
             controlValue = std::min(limitingControlValue * (sweepSpeed * 0.25f / 5.0f), sweepSpeed);
 
             // capture MPP during sweep, this will be our target afterward.
-            // Ignore sub-SweepMinPower samples so a marginal-light sweep can't "peak" at a
+            // Ignore sub-sweepMinPower() samples so a marginal-light sweep can't "peak" at a
             // near-max-duty phantom (dawn cold-start) and strand the converter there.
-            if (power_smooth > maxPowerPoint.power && power_smooth >= SweepMinPower) {
+            if (power_smooth > maxPowerPoint.power && power_smooth >= sweepMinPower()) {
                 maxPowerPoint.power = power_smooth;
                 maxPowerPoint.dutyCycle = converter.getCtrlOnPwmCnt();
                 maxPowerPoint.voltage = sensors.Vin->med3.get();
@@ -208,6 +208,10 @@ void MpptController::update() {
             _stopSweep(controlMode, limitingControl ? int(limitingControl - controlValues.begin()) : -1,
                        limitingControl);
             rtcount("mppt.update.stopSweep");
+            if (converter.disabled()) { // no-MPP backoff
+                ctrlState.mode = MpptControlMode::None;
+                return;
+            }
         }
     } else if (targetDutyCycle) {
         if (controlMode == MpptControlMode::None or controlMode == MpptControlMode::MPPT or
@@ -291,11 +295,14 @@ void MpptController::update() {
     }
     lastUs = nowUs;
 
-    if (converter.syncRectEnabled_() != aboveThres)
-        UART_LOG_ASYNC("Current %s threshold %.2f (pwm=%hu)", aboveThres ? "above" : "below", I_phys_smooth_min,
-                       converter.getCtrlOnPwmCnt());
-    bflow.enable((aboveThres || converter.boost() || g_app.psuMode()) && !(sensorPhysicalI->ewm.avg.get() < -0.05f && limits.reverse_current_paranoia));
-    converter.enableSyncRect(aboveThres);
+    // a shutdown in this tick (ctrl-nan, no-MPP) ends update() calls, so nothing would clear these again
+    if (active()) {
+        if (converter.syncRectEnabled_() != aboveThres)
+            UART_LOG_ASYNC("Current %s threshold %.2f (pwm=%hu)", aboveThres ? "above" : "below", I_phys_smooth_min,
+                           converter.getCtrlOnPwmCnt());
+        bflow.enable((aboveThres || converter.boost() || g_app.psuMode()) && !(sensorPhysicalI->ewm.avg.get() < -0.05f && limits.reverse_current_paranoia));
+        converter.enableSyncRect(aboveThres);
+    }
 
     rtcount("mppt.update.en");
 

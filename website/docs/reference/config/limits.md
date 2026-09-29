@@ -15,7 +15,7 @@ Protection cutouts.
 | `iin_max`                  | A    | float | —       | Maximum input current limit                       |
 | `iout_max`                 | A    | float | —       | Maximum output current limit                      |
 | `iout_short`               | A    | float | —       | Output short-circuit current threshold            |
-| `p_max`                    | W    | float | —       | Maximum power (used for thermal derating)         |
+| `p_max`                    | W    | float | —       | Maximum power; sets thermal derating and the sweep's minimum MPP power (0.2 %) |
 | `temp_max`                 | °C   | float | 90      | Maximum temperature before shutdown               |
 | `temp_derate`              | °C   | float | —       | Temperature where power derating begins           |
 | `reverse_current_paranoia` |      | bool  | 1       | Enable aggressive reverse-current protection      |

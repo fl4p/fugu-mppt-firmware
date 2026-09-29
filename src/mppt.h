@@ -214,7 +214,8 @@ private:
     // light (e.g. a dawn cold-start sweep) the "peak" is just noise at near-max duty; committing it
     // strands the converter there until it's driven to the opposite rail. Below it: no target, fall
     // back to normal MPPT / the next periodic re-sweep. MPPT still harvests sub-threshold light.
-    static constexpr float SweepMinPower = 5.0f; // W
+    static constexpr float SweepMinPowerFrac = 0.002f; // of p_max: 2 W at 1 kW
+    [[nodiscard]] float sweepMinPower() const { return limits.P_max * SweepMinPowerFrac; }
 
     Plot sweepPlot{};
 
@@ -442,8 +443,11 @@ public:
                 if (!inBackoff() || backoffSec > _backoffArmedSec) {
                     _backoffUntilUs = wallClockUs() + static_cast<time_us>(backoffSec) * 1000000ULL;
                     _backoffArmedSec = backoffSec;
-                    ESP_LOGW("mppt", "backoff %lus [%s]%s", (unsigned long) backoffSec, who,
-                             _sweeping ? " mid-sweep" : "");
+                    if (strcmp(who, "sweep-no-mpp"))
+                        ESP_LOGW("mppt", "backoff %lus [%s]%s", (unsigned long) backoffSec, who,
+                                 _sweeping ? " mid-sweep" : "");
+                    else
+                        ESP_LOGI("mppt", "backoff %lus [%s]", (unsigned long) backoffSec, who);
                 }
             }
             _sweeping = false;
@@ -1261,13 +1265,13 @@ public:
     void _stopSweep(MpptControlMode controlMode, int limIdx, CVP *limCtrl) {
         _sweeping = false;
 
-        if (maxPowerPoint.power < SweepMinPower) {
+        if (maxPowerPoint.power < sweepMinPower()) {
             // Marginal light: no real MPP found. Don't commit a phantom target (would strand the
             // converter at near-max duty). Drop the target and back off briefly; the converter then
             // resumes via normal MPPT / the next periodic re-sweep once there's real power.
             targetDutyCycle = 0;
             ESP_LOGI("mppt", "Stop sweep: no MPP (best %.2fW < %.1fW), backing off", maxPowerPoint.power,
-                     SweepMinPower);
+                     sweepMinPower());
             shutdownDcdc("sweep-no-mpp", 30);
             return;
         }

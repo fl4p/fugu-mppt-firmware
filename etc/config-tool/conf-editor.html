@@ -309,7 +309,7 @@ const META = {
   iin_max:{unit:"A",desc:"Maximum input current limit",type:"float"},
   iout_max:{unit:"A",desc:"Maximum output current limit",type:"float"},
   iout_short:{unit:"A",desc:"Output short-circuit current threshold",type:"float"},
-  p_max:{unit:"W",desc:"Maximum power (used for thermal derating)",type:"float"},
+  p_max:{unit:"W",desc:"Maximum power; sets thermal derating and the sweep's minimum MPP power (0.2 %)",type:"float"},
   temp_max:{unit:"°C",desc:"Maximum temperature before shutdown",type:"float"},
   temp_derate:{unit:"°C",desc:"Temperature where power derating begins",type:"float"},
   reverse_current_paranoia:{unit:"",desc:"Enable aggressive reverse-current protection",type:"bool"},

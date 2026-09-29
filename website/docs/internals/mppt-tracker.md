@@ -28,7 +28,7 @@ costs yield.
 stateDiagram-v2
     [*] --> Sweep: boot / sweep command / 30 min
     Sweep --> FadeToMPP: limiter active or max duty
-    Sweep --> Backoff: best power < 5 W
+    Sweep --> Backoff: best power < 0.2 % of p_max
     FadeToMPP --> Fast: target duty reached
     Fast --> Slow: no new MPP for 30 s
     Slow --> Fast: power change
@@ -43,13 +43,15 @@ A sweep (`startSweep()` in `src/mppt.h`):
 2. starts a sensor calibration (the periodic re-sweep doubles as periodic calibration),
 3. once calibration is done, raises the duty each tick. The step is capped by `sweep_speed` and scaled with the
    distance to the nearest limit, so the ramp slows down when approaching a V/I/P limit,
-4. records the sample with the highest smoothed power as the MPP. Samples below 5 W (`SweepMinPower`) are ignored,
+4. records the sample with the highest smoothed power as the MPP. Samples below 0.2 % of `limits.conf::p_max` (2 W at 1 kW, `sweepMinPower()`) are ignored,
    so a sweep in marginal light cannot "peak" at a near-maximum-duty phantom point.
 
 The sweep stops as soon as any limiter produces a control mode (CV, CC or CP), including the bounce at the maximum
 duty. The captured MPP duty becomes the target, and the loop fades to it with a bounded step before handing over to
-P&O. If the best captured power is below 5 W, no target is committed: the converter shuts down for 30 s and
-resumes through the normal start path.
+P&O. If the best captured power is below that floor, no target is committed: the converter shuts down for 30 s and
+resumes through the normal start path. This is not a fault: it is logged at info level as
+`backoff 30s [sweep-no-mpp]`. A source that cannot deliver it, such as a current-limited bench supply, repeats
+this cycle indefinitely.
 
 The sweep is also written to the LCD ("MPP Scan done") and logged as
 `Stop sweep ... MPP=(<W>,<duty>,<V>)`.
