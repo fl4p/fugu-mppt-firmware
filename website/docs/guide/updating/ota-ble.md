@@ -29,7 +29,8 @@ python -m etc.ota_ble build/fugu-firmware.bin fugu-esp32s3-XXXXXXXXXXXX
 ```
 
 `etc/ota_ble.py` connects, streams the image, waits for the device to confirm it has the whole image,
-finalizes, and confirms the device re-advertises after the reboot. Arguments:
+finalizes, confirms the device re-advertises after the reboot, and archives the build ELF for coredump
+decoding. Arguments:
 
 ```
 python -m etc.ota_ble [path-to.bin] [device-name-or-address]

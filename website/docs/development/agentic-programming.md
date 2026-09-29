@@ -262,7 +262,7 @@ The `-n` / `--dry-run` flag is the agent's first move: confirm the target device
 version, and what would change before committing. The before/after version table is printed at
 the end of a live run for verification.
 
-OTA archives the flashed ELF automatically (`etc/ota.py` calls `etc/idf-devtools/elf_archive.py`;
+OTA archives the flashed ELF automatically (`etc/ota.py` and `etc/ota_ble.py` call `etc/idf-devtools/elf_archive.py`;
 `idf_ext.py` does the same for serial flashes)
 so coredumps from any subsequently-flashed build can always be symbolicated — even months later.
 

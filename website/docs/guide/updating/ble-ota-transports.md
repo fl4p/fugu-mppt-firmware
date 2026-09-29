@@ -11,8 +11,11 @@ sidebar_position: 3
 host module from the esp-ota-ble component (`managed_components/esp-ota-ble/host`
 after the first build, or a local `../esp-ota-ble`); `ESP_OTA_BLE_HOST` overrides it.
 
-Append `--ble-backend native` to the normal Mac OTA invocation to use the
-native CoreBluetooth readiness queue. Linux can select `--ble-backend bumble`
+The default `--ble-backend auto` picks the native CoreBluetooth sender on macOS when the Xcode
+command line tools are installed, and Bleak everywhere else. The native sender waits for
+CoreBluetooth's readiness callback; Bleak can only poll `canSendWriteWithoutResponse`, which has
+been seen to stay false on a live link until the push fails with `CoreBluetooth remained
+unwritable`. Pass `--ble-backend bleak` to force Bleak. Linux can select `--ble-backend bumble`
 with `--adapter`, `--chunk`, `--ble-interval-ms` and `--ble-phy`.
 The nonstandard HCI experiment requires the separate
 `--experimental-hci-packet-size 251` flag and the specific tested controller.

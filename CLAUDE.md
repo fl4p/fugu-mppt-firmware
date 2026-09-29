@@ -79,7 +79,7 @@ boot-time stack/cache traps that cause such hangs.
 (github.com/fl4p/idf-devtools — generic ESP-IDF tooling); it keeps that ELF around per flash so a later coredump can
 still be symbolicated. `idf_ext.py` at the repo root is a thin shim delegating to it.
 
-- **OTA** (`etc/ota.py`) archives automatically after each verified-successful push.
+- **OTA** (`etc/ota.py`, `etc/ota_ble.py`) archives automatically after each verified-successful push.
 - **Serial:** `idf.py flash`/`app-flash` archive automatically — the `idf_ext.py` shim wraps the stock flash callback
   (so `idf.py flash monitor` still works; archiving happens before monitor). The device name comes from `$FUGU_DEVICE`,
   else the serial-port basename. `./flash.sh <device-name> [idf.py args]` is a thin wrapper that just sets

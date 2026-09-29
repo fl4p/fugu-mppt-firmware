@@ -25,6 +25,7 @@ class Integration(unittest.IsolatedAsyncioTestCase):
 
     async def test_proxy_defaults_survive_but_direct_tuning_is_rejected(self):
         self.assertIsInstance(P.make_link(self.args(ble_proxy='proxy.local')), P.ProxyLink)
+        self.assertIsInstance(P.make_link(self.args(ble_proxy='proxy.local', ble_backend='bleak')), P.ProxyLink)
         with self.assertRaises(ValueError):
             P.make_link(self.args(ble_proxy='proxy.local', ble_backend='native'))
 

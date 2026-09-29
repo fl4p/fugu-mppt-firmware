@@ -47,6 +47,8 @@ for _cand in (_os.environ.get("ESP_OTA_BLE_HOST", ""),
         break
 import esp_ota_ble as O
 import esp_ota_ble_transport as T
+_sys.path.insert(0, _os.path.join(_HERE, "idf-devtools"))
+import elf_archive
 import os
 import re
 import struct
@@ -403,7 +405,7 @@ class ProxyLink:
             self._api = None
 
 
-async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base_dirs=()):
+async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base_dirs=(), archive_as=None):
     data = open(bin_path, "rb").read()
     sha = hashlib.sha256(data).hexdigest()
     local_ver = read_local_app_desc(bin_path)
@@ -535,6 +537,12 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
                 print("  exact image verified on the new slot" if isinstance(link, BleakLink)
                       else "  device is advertising again (proxy verification)")
                 O.cache_image(data)
+                if archive_as:
+                    try:
+                        elf_archive.archive(archive_as, method="ota", version=local_ver, bin=bin_path,
+                                            build_dir=os.path.dirname(os.path.abspath(bin_path)))
+                    except Exception as e:
+                        print(f"  WARN: ELF archive failed for {archive_as}: {e}")
             else:
                 # FAIL, do not just warn. Before the module conversion this
                 # returned False here, and it must keep doing so: the shared
@@ -557,7 +565,7 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
 def make_link(args):
     options = T.from_arguments(args)
     if args.ble_proxy:
-        if options != T.Options():
+        if options.backend not in ("auto", "bleak") or options != T.Options(backend=options.backend):
             raise ValueError("direct BLE tuning is unavailable through --ble-proxy")
         host, _, port = args.ble_proxy.partition(":")
         port = int(port) if port else ESPHOME_API_PORT
@@ -609,7 +617,8 @@ def main():
     except ValueError as exc:
         ap.error(str(exc))
     ok = asyncio.run(push(args.bin, link, force=args.force, assume_yes=args.yes,
-                          xform=args.xform, base_dirs=base_dirs))
+                          xform=args.xform, base_dirs=base_dirs,
+                          archive_as=(args.name or "").removeprefix("fugu-") or None))
     print("OTA over BLE:", "✅ success (device rebooting)" if ok else "❌ failed")
     return 0 if ok else 1
 
