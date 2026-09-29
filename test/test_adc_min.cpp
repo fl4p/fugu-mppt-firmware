@@ -15,14 +15,16 @@
 #include <esp_log.h>
 #include <esp_err.h>
 #include <driver/gpio.h>
+#include <esp_rom_sys.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
 #include "util.h"   // RT_CORE, NON_RT_CORE
 #include "etc/rt.h" // RT_PRIO
 
-// A free GPIO used as a self-triggering interrupt source: driven as an output that feeds its own
-// input edge, so no external wiring is needed. Override per board if 21 is taken.
+// A GPIO used as a self-triggering interrupt source: driven as an output that feeds its own
+// input edge, so no external wiring is needed. 21 is the Fugu2 HS gate input, so pulses are ~1 us and
+// the pin idles LOW; still only run on a board without a powered power stage. Override per board.
 #ifndef TEST_ISR_GPIO
 #define TEST_ISR_GPIO 21
 #endif
@@ -31,6 +33,7 @@ static const char *TAG = "test_adc";
 
 static volatile int s_isrCore = -1;
 static volatile uint32_t s_isrCount = 0;
+static portMUX_TYPE s_pulseMux = portMUX_INITIALIZER_UNLOCKED;
 
 static void IRAM_ATTR onEdgeArg(void *) { s_isrCore = xPortGetCoreID(); ++s_isrCount; }
 static void onEdgeArduino() { s_isrCore = xPortGetCoreID(); ++s_isrCount; }
@@ -59,9 +62,11 @@ static esp_err_t installGpioIsrServiceOnCore(int core) {
 
 static void selfTrigger() {
     for (int i = 0; i < 8 && s_isrCount == 0; ++i) {
+        portENTER_CRITICAL(&s_pulseMux); // bound the high time; the latched edge fires the ISR after exit
+        gpio_set_level((gpio_num_t) TEST_ISR_GPIO, 1);
+        esp_rom_delay_us(1);
         gpio_set_level((gpio_num_t) TEST_ISR_GPIO, 0);
-        delayMicroseconds(50);
-        gpio_set_level((gpio_num_t) TEST_ISR_GPIO, 1); // rising edge -> ISR
+        portEXIT_CRITICAL(&s_pulseMux);
         delay(2);
     }
 }
