@@ -30,6 +30,8 @@
 #include "logging.h"
 #include "console.h"
 #include "conf.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_private/esp_gpio_reserve.h"
 #include "util.h"
 #include "buck.h"
 #include "mppt.h"
@@ -354,11 +356,48 @@ static void cmdFan(cmd *c) {
 
 static void cmdLed(cmd *c) { led.setRGB(Command(c).getArg(0).getValue().c_str()); }
 
+static bool argInt(Command &cc, int i, int &out) {
+    if (i >= cc.countArgs()) return false;
+    auto s = cc.getArg(i).getValue();
+    char *end;
+    long v = strtol(s.c_str(), &end, 10);
+    if (end == s.c_str() || *end) return false;
+    out = (int) v;
+    return true;
+}
+
+// Pins board.conf assigns (gates, driver enable, I2C, alerts, fan, LED) are off-limits for the pin diagnostics.
+static bool boardOwnsPin(int pin) {
+    try {
+        ConfFile board{"/littlefs/conf/board.conf", true};
+        for (auto k: {"pwm_hi", "pwm_li", "pwm_in", "pwm_en", "pwm_sd", "panel_sd", "panel_en", "pwm_fault_pin", "pwm_sync_pin",
+                      "i2c_sda", "i2c_scl", "ina22x_alert", "ads_alert", "fan_pwm", "led_WS2812", "led_simple"})
+            if (board.getLong(k, -1) == pin) return true;
+        return false;
+    } catch (...) {
+        return true;
+    }
+}
+
+// ADC1 pads may carry internal-ADC sense inputs (driving one blinds protection); flash/PSRAM pins are reserved.
+static bool freeOutputPin(int pin) {
+    if (pin < 0 || pin >= SOC_GPIO_PIN_COUNT || !GPIO_IS_VALID_OUTPUT_GPIO(pin) || esp_gpio_is_reserved(BIT64(pin)))
+        return false;
+    adc_unit_t unit;
+    adc_channel_t ch;
+    if (adc_oneshot_io_to_channel(pin, &unit, &ch) == ESP_OK && unit == ADC_UNIT_1)
+        return false;
+    return !boardOwnsPin(pin);
+}
+
 // Bench-only: `gpio <pin> <0|1>` -- direct digitalWrite test. Bypasses MCPWM/LEDC.
 static void cmdGpio(cmd *c) {
     Command cc(c);
-    auto pin = (uint8_t) cc.getArg(0).getValue().toInt();
-    auto val = (uint8_t) cc.getArg(1).getValue().toInt();
+    int pin, val;
+    if (cc.countArgs() != 2 || !argInt(cc, 0, pin) || !argInt(cc, 1, val) || (val != 0 && val != 1))
+        CMD_FAIL_RETURN("gpio <pin> <0|1>");
+    if (!freeOutputPin(pin))
+        CMD_FAIL_RETURN("gpio: pin %d invalid or assigned in board.conf", pin);
     pinMode(pin, OUTPUT);
     digitalWrite(pin, val);
     UART_LOG("gpio %u -> %u", (unsigned) pin, (unsigned) val);
@@ -371,8 +410,13 @@ static void cmdGpio(cmd *c) {
 #include "soc/io_mux_reg.h"
 #include "soc/mcpwm_reg.h"
 
+#define MT_CHECK(x) do { esp_err_t e_ = (x); if (e_ != ESP_OK) CMD_FAIL_RETURN("mcpwmtest: %s", esp_err_to_name(e_)); } while (0)
+
 static void cmdMcpwmTest(cmd *c) {
-    int pin = Command(c).getArg(0).getValue().toInt();
+    Command cc(c);
+    int pin;
+    if (!argInt(cc, 0, pin) || !freeOutputPin(pin))
+        CMD_FAIL_RETURN("mcpwmtest: pin invalid or assigned in board.conf");
     static mcpwm_timer_handle_t timer = nullptr;
     static mcpwm_oper_handle_t oper = nullptr;
     static mcpwm_cmpr_handle_t cmp = nullptr;
@@ -386,22 +430,22 @@ static void cmdMcpwmTest(cmd *c) {
         .resolution_hz = 80'000'000, .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
         .period_ticks = 2048, .intr_priority = 0, .flags = {}
     };
-    ESP_ERROR_CHECK(mcpwm_new_timer(&tc, &timer));
+    MT_CHECK(mcpwm_new_timer(&tc, &timer));
     mcpwm_operator_config_t oc = {.group_id = 0, .intr_priority = 0, .flags = {}};
-    ESP_ERROR_CHECK(mcpwm_new_operator(&oc, &oper));
-    ESP_ERROR_CHECK(mcpwm_operator_connect_timer(oper, timer));
+    MT_CHECK(mcpwm_new_operator(&oc, &oper));
+    MT_CHECK(mcpwm_operator_connect_timer(oper, timer));
     mcpwm_comparator_config_t cc2 = {.intr_priority = 0, .flags = {}};
-    ESP_ERROR_CHECK(mcpwm_new_comparator(oper, &cc2, &cmp));
-    ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(cmp, 1024));
+    MT_CHECK(mcpwm_new_comparator(oper, &cc2, &cmp));
+    MT_CHECK(mcpwm_comparator_set_compare_value(cmp, 1024));
     mcpwm_generator_config_t gc = {.gen_gpio_num = pin, .flags = {}};
-    ESP_ERROR_CHECK(mcpwm_new_generator(oper, &gc, &gen));
-    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_timer_event(gen,
+    MT_CHECK(mcpwm_new_generator(oper, &gc, &gen));
+    MT_CHECK(mcpwm_generator_set_action_on_timer_event(gen,
         MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, MCPWM_TIMER_EVENT_EMPTY, MCPWM_GEN_ACTION_HIGH)));
-    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(gen,
+    MT_CHECK(mcpwm_generator_set_action_on_compare_event(gen,
         MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, cmp, MCPWM_GEN_ACTION_LOW)));
-    ESP_ERROR_CHECK(mcpwm_timer_enable(timer));
-    ESP_ERROR_CHECK(mcpwm_timer_start_stop(timer, MCPWM_TIMER_START_NO_STOP));
-    UART_LOG("mcpwmtest: 1kHz 50%% on GPIO %d (group 1, isolated from buck driver)", pin);
+    MT_CHECK(mcpwm_timer_enable(timer));
+    MT_CHECK(mcpwm_timer_start_stop(timer, MCPWM_TIMER_START_NO_STOP));
+    UART_LOG("mcpwmtest: 1kHz 50%% on GPIO %d (group 0)", pin);
 }
 
 static void cmdSweep(cmd *) {
@@ -2007,7 +2051,10 @@ void setupCli() {
 #if WITH_PWM_DIAGNOSTICS
     cli.addSingleArgCmd("mcpwmtest", cmdMcpwmTest);
     cli.addSingleArgCmd("gpiodump", [](cmd *c) {
-        int pin = Command(c).getArg(0).getValue().toInt();
+        Command cc(c);
+        int pin;
+        if (!argInt(cc, 0, pin) || pin < 0 || pin >= SOC_GPIO_PIN_COUNT || !GPIO_IS_VALID_GPIO(pin))
+            CMD_FAIL_RETURN("gpiodump <pin>");
         // GPIO_ENABLE_REG (or _ENABLE1 for pin>=32) bit, GPIO_OUT_SEL signal, IO_MUX function
         uint32_t en = (pin < 32) ? REG_READ(GPIO_ENABLE_REG) : REG_READ(GPIO_ENABLE1_REG);
         uint32_t out_sel = REG_READ(GPIO_FUNC0_OUT_SEL_CFG_REG + (pin * 4));
@@ -2019,7 +2066,10 @@ void setupCli() {
                  pin, (unsigned) enable_bit, (unsigned) signal_idx, (unsigned) oen_sel, (unsigned long) io_mux);
     });
     cli.addSingleArgCmd("mcpwmdump", [](cmd *c) {
-        int grp = Command(c).getArg(0).getValue().toInt();
+        Command cc(c);
+        int grp;
+        if (!argInt(cc, 0, grp) || grp < 0 || grp > 1) // ESP32/-S3: 2 MCPWM groups
+            CMD_FAIL_RETURN("mcpwmdump <group 0|1>");
         uint32_t cfg0 = REG_READ(MCPWM_TIMER0_CFG0_REG(grp));
         uint32_t cfg1 = REG_READ(MCPWM_TIMER0_CFG1_REG(grp));
         uint32_t status = REG_READ(MCPWM_TIMER0_STATUS_REG(grp));
@@ -2048,8 +2098,16 @@ void setupCli() {
 #if WITH_LEDC
     cli.addBoundlessCmd("anaw", [](cmd *c) {
         Command cc(c);
-        int pin = cc.getArg(0).getValue().toInt();
-        int val = cc.getArg(1).getValue().toInt(); // 0..255
+        int pin, val;
+        if (!argInt(cc, 0, pin) || !argInt(cc, 1, val) || val < 0 || val > 255)
+            CMD_FAIL_RETURN("anaw <pin> <0..255>");
+        if (!freeOutputPin(pin))
+            CMD_FAIL_RETURN("anaw: pin %d invalid or assigned in board.conf", pin);
+        // analogWrite claims LEDC channel/timer 0, which the LEDC gate driver uses without Arduino knowing
+#if HAVE_MCPWM
+        if (!converter.mcpwmLeg())
+#endif
+            CMD_FAIL_RETURN("anaw: refused while the LEDC gate driver is active");
         analogWrite(pin, val);
         UART_LOG("anaw %d -> %d (Arduino LEDC)", pin, val);
     });

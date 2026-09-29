@@ -541,7 +541,11 @@ def phase4_fault_brake(con, scope, pc, board: dict, drv_pin: int) -> list[Result
         return rows
 
     # Pre-condition: fault driver low, both gates switching.
-    con.command(f"gpio {drv_pin} 0", timeout=2.0)
+    if not con.command(f"gpio {drv_pin} 0", timeout=2.0).ok:
+        rows.append(Result("fault_driver_pin", False,
+                           detail=f"`gpio {drv_pin}` refused (pin invalid, ADC1 or assigned in board.conf); "
+                                  "pass a free --fault-driver-pin"))
+        return rows
     con.command(f"dc {board['pwm_max']//2} {board['pwm_max']//4}", timeout=2.0)
     time.sleep(0.1)
     try:
