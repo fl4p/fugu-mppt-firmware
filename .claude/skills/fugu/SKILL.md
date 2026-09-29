@@ -225,10 +225,13 @@ lfMarkOtaValid() confirms it at 20 s uptime, and `esp_ota_begin` refuses until t
 the tool *skips* with a success-looking `☑️ skip:` — pass `-f` when the tree changed without a
 commit; a real push prints hundreds of progress lines. A failed/killed push leaves the device
 armed: `ota-ble abort` (the verb — docs say `otab`), retry. Post-OTA/`restart` the board is silent
-~10–15 s; scan misses and READY timeouts there are retryable. **`ota_ble.py` does NOT archive the
-ELF** (no `elf_archive` reference in it, unlike `etc/ota.py`), so a coredump pulled from a
-BLE-OTA'd board has nothing to decode against — archive it yourself right after a successful push:
-`python3 etc/idf-devtools/elf_archive.py archive <device> --method ota --build-dir build-<tag>`.
+~10–15 s; scan misses and READY timeouts there are retryable. `ota_ble.py` archives the ELF
+itself after the new slot verifies (device = BLE name minus `fugu-`, ELF from the image's own
+build dir); a `☑️ skip:` archives nothing. **On macOS the transport defaults to `native`**
+(`--ble-backend auto`): Bleak's `canSendWriteWithoutResponse` polling stuck false on a live link
+and killed 7/7 pushes to fmetal at 0.5–37 % (`CoreBluetooth remained unwritable`, 2026-09-29) while
+the device kept re-granting credit; native pushed the same image first try. `--ble-backend bleak`
+forces the old path.
 `website/docs/guide/updating/ota-ble.md` + Bench Ops.
 
 ## Provision a config profile
