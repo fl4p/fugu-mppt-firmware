@@ -50,7 +50,8 @@ Two distinct procedures:
 - **With a scope** — `python3 etc/mcpwm_gate_verify.py` drives the device over the console and captures both gates
   (channel A = `board.conf::pwm_hi`, channel B = `pwm_li`), then prints PASS/FAIL per assertion and exits with the
   number of failed rows. A free GPIO wired to `board.conf::pwm_fault_pin` exercises the fault brake; skip that with
-  `--skip-fault`.
+  `--skip-fault`. It refuses to start without `--stage-disconnected`, your confirmation that the stage is
+  disconnected.
 
 :::danger
 The verifier commands near-full HS duty and forced near-full LS on-time. Its hostname allow-list does not prove
@@ -60,8 +61,12 @@ GPIOs (`pwm_hi`/`pwm_li`), not the gates of a powered bridge.
 :::
 
 ```bash
-python3 etc/mcpwm_gate_verify.py --serial $ESPPORT
+python3 etc/mcpwm_gate_verify.py --serial $ESPPORT --stage-disconnected --fault-driver-pin <free-gpio>
 ```
+
+The fault driver pin must be free: not assigned in `board.conf`, not an ADC1 pad, not a reserved (flash/PSRAM) pin.
+The default, GPIO 14, is `pwm_li` on Fugu2 boards, so pass another pin there. The device refuses such a pin and the
+verifier reports it as a failed `fault_driver_pin` row.
 
 `etc/pico_pwm_duty.py` pairs with `test_mcpwm_endpoint_duty_scope` in `test/test_pwm.cpp`: the device dwells on a
 list of duties and prints sync markers, the script captures mid-dwell and prints a configured-vs-measured table.

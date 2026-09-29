@@ -32,8 +32,9 @@ clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src \
 `RUN_TESTS=1` swaps `src/main.cpp` for `test/main.cpp` and builds the Unity suite.
 
 :::danger Bare board only
-The Unity suite drives GPIO 1, 2, 4-9 and **21** as outputs (21 is the high-side gate input on Fugu2
-boards, left HIGH after the ISR tests), and `idf.py flash` overwrites the littlefs config with
+The Unity suite drives GPIO 1, 2, 4-9 and **21** as outputs. 21 is the high-side gate input on Fugu2
+boards; the ISR tests pulse it for about 1 µs and leave it LOW, but it still switches the gate. `idf.py flash`
+also overwrites the littlefs config with
 `config/lab/dry_mock`. Run it on a dev board or a Fugu board with the power stage unpowered (no PV, no
 battery). Use `app-flash` if the littlefs config must be kept.
 :::
@@ -56,7 +57,8 @@ The PWM/MCPWM tests only run in an MCPWM build (`CONFIG_FUGU_WITH_MCPWM=y`); the
 ## End-to-end tests
 
 `etc/e2e-test/run_e2e.py` groups the `test_*.py` scripts into clusters by the setup they need, skips those whose
-prerequisites are missing, and exits non-zero on any failure.
+prerequisites are missing, and exits 1 on any failure. A run where nothing passed or failed (everything skipped)
+exits 2: it is not a pass.
 
 | Cluster | Setup | Safe on live converters |
 |---|---|:---:|

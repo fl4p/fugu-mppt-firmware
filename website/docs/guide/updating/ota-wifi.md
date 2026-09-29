@@ -20,8 +20,10 @@ PYTHONPATH=. python etc/ota.py -n              # dry run: discover + show versio
 PYTHONPATH=. python etc/ota.py -m <hostname>   # update devices whose hostname matches
 ```
 
-Run from the repository root. `./ota.sh` is a shortcut that builds and updates **all** discovered devices (no `-m`);
-it also needs ESP-IDF exported. `etc/ota.py` discovers devices, serves `build/fugu-firmware.bin` on port 9000 with a
+Run from the repository root. `./ota.sh <args>` is a shortcut that runs `idf.py build`, then `etc/ota.py <args>`. It
+refuses to run (exit 2) unless the arguments contain `-n`/`--dry-run` or `-m`/`--match`, each as its own word, so
+it never updates every discovered device by accident. When `idf.py` is not on `PATH`, it sources
+`$IDF_PATH/export.sh`, or `../../esp/idf5.5/export.sh` if `IDF_PATH` is unset. `etc/ota.py` discovers devices, serves `build/fugu-firmware.bin` on port 9000 with a
 URL built from the host IP as the device sees it (so it also works when the device sits behind NAT), sends `ota <url>` to each
 device and prints a before/after version table.
 

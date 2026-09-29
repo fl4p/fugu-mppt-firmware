@@ -174,8 +174,9 @@ before any hardware is involved.
 For correctness that requires real hardware timing (ADC DMA, FreeRTOS tasks, MCPWM):
 
 :::danger Bare board only
-The Unity suite drives GPIO 1, 2, 4-9 and **21** as outputs (21 is the high-side gate input on Fugu2
-boards, left HIGH after the ISR tests), and `idf.py flash` overwrites the littlefs config with
+The Unity suite drives GPIO 1, 2, 4-9 and **21** as outputs. 21 is the high-side gate input on Fugu2
+boards; the ISR tests pulse it for about 1 µs and leave it LOW, but it still switches the gate. `idf.py flash`
+also overwrites the littlefs config with
 `config/lab/dry_mock`. Run it on a dev board or a Fugu board with the power stage unpowered (no PV, no
 battery). Use `app-flash` if the littlefs config must be kept.
 :::
@@ -204,7 +205,8 @@ those whose prerequisites aren't met:
 | `power` | Real converter + coil (sun/headroom), drives the half-bridge | `test_measure_coil.py` |
 | `wifi` | Controllable AP/router rig | `test_wifi_off_timeout.py`, `test_wifi_reconnect_storm.py`, `test_wifi_outage.py` (stick + roam modes), `test_wifi_outage_service_recovery.py` |
 
-Run `python etc/e2e-test/run_e2e.py --list` for the authoritative cluster/test mapping and each
+The runner exits 1 on any FAIL and 2 when nothing ran (every test skipped), so an all-SKIP run is never read as
+a pass. Run `python etc/e2e-test/run_e2e.py --list` for the authoritative cluster/test mapping and each
 test's exact transport and setup requirements.
 
 Run the non-destructive console cluster against any live device:
@@ -251,9 +253,9 @@ python3 etc/ota.py -m <name>          # live, scoped to hostnames matching <name
 python3 etc/ota.py -m <name> -f       # only if the same version must be re-pushed
 ```
 
-:::danger `./ota.sh` updates every device
-`./ota.sh` builds **and immediately OTAs every discovered device** (it runs `etc/ota.py` without `-n`
-or `-m`). Do not use it where more than one device is reachable.
+:::danger `./ota.sh` OTAs right after the build
+`./ota.sh <args>` builds, then runs `etc/ota.py <args>`. It refuses an unscoped run (exit 2 without `-n` or
+`-m`), but `./ota.sh -m <name>` pushes to every matching device immediately. Run `./ota.sh -n -m <name>` first.
 :::
 
 The `-n` / `--dry-run` flag is the agent's first move: confirm the target device, current

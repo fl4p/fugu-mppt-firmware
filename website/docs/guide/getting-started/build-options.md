@@ -24,9 +24,10 @@ echo 'CONFIG_FUGU_WITH_BLE=n' > my.frag
 SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-noble -D SDKCONFIG=build-noble/sdkconfig build
 ```
 
-The top-level `CMakeLists.txt` also reads the root `sdkconfig` to decide fragment layering, so run variant builds
-from a tree without a root `sdkconfig`, or use `etc/matrix_build.sh`, which builds each variant in its own project
-root.
+The top-level `CMakeLists.txt` also reads the live sdkconfig to decide fragment layering: the one given with
+`-D SDKCONFIG=`, else the root `sdkconfig`. With `-D SDKCONFIG=build-noble/sdkconfig` on every command, a root
+`sdkconfig` from another build does not leak into the variant. `etc/matrix_build.sh` builds each variant in its own
+project root.
 
 ## Feature flags
 

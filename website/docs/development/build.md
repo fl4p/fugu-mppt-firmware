@@ -29,7 +29,8 @@ Compile-time features are Kconfig options `CONFIG_FUGU_WITH_*` (menu **"Fugu MPP
 
 `sdkconfig` is generated and gitignored; the tracked sources are `sdkconfig.defaults` plus fragments. The top-level
 `CMakeLists.txt` resolves `CONFIG_FUGU_WITH_BLE`, `CONFIG_FUGU_WITH_NETW` and `CONFIG_FUGU_WITH_SPROFILER` *before*
-`project()` runs Kconfig, by reading the defaults chain and any existing `sdkconfig`, and then:
+`project()` runs Kconfig, by reading the defaults chain and then the live sdkconfig (later wins): the file given
+with `-DSDKCONFIG=<path>`, else the project-root `sdkconfig` if it exists. Then:
 
 | Condition | Effect |
 |---|---|
@@ -48,12 +49,14 @@ SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-myvariant build
 [Build options](../guide/getting-started/build-options.md#control-loop-work-without-hardware). If the generated
 `sdkconfig` looks wrong, delete it and rebuild.
 
-:::warning One sdkconfig per project root
-`-B` only moves the build directory. The generated `sdkconfig` stays in the project root and is shared by every
-build dir, so building a different target or variant rewrites it. `-DSDKCONFIG=<path>` moves the generated
-file, but the top `CMakeLists.txt` still reads the root `sdkconfig` to decide BLE/no-netw fragments and profiler
-exclusion. Also pass the variant's `CONFIG_FUGU_WITH_*` via `SDKCONFIG_DEFAULTS` and keep the root `sdkconfig`
-absent or consistent, or use a separate project root as `etc/matrix_build.sh` does.
+:::warning One sdkconfig per variant
+`-B` only moves the build directory. Without `-DSDKCONFIG` the generated `sdkconfig` stays in the project root and
+is shared by every build dir, so building a different target or variant rewrites it. Pass
+`-DSDKCONFIG=<build-dir>/sdkconfig` with every command of a variant: ESP-IDF then generates that file instead, and
+the top `CMakeLists.txt` reads it (not the root `sdkconfig`) to decide the BLE/no-netw fragments and the profiler
+exclusion. A relative path is taken from the project root. The fragment list still comes from `SDKCONFIG_DEFAULTS`,
+so pass the variant's `CONFIG_FUGU_WITH_*` there too. `etc/matrix_build.sh` goes further and builds each variant in
+its own project root.
 :::
 
 ## Build directories
@@ -63,7 +66,7 @@ absent or consistent, or use a separate project root as `etc/matrix_build.sh` do
 | `build/` | `idf.py build` | Default, ESP32-S3 |
 | `build-esp32/` | `idf.py -B build-esp32 set-target esp32`, then `idf.py -B build-esp32 build` | Classic ESP32 |
 | `build-tests/` | `RUN_TESTS=1 idf.py -B build-tests build` | Unity test runner, see [Testing](testing.md) |
-| `build-<variant>/` | `SDKCONFIG_DEFAULTS=… idf.py -B build-<variant> build` | Any other flag combination |
+| `build-<variant>/` | `SDKCONFIG_DEFAULTS=… idf.py -B build-<variant> -D SDKCONFIG=build-<variant>/sdkconfig build` | Any other flag combination |
 
 All `build-*` directories are gitignored.
 

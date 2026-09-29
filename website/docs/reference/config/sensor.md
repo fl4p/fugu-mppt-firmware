@@ -12,7 +12,7 @@ Global keys:
 | key                              | unit | type   | default | description                                                    |
 |----------------------------------|------|--------|---------|----------------------------------------------------------------|
 | `adc`                            |      | string | —       | Default ADC backend for all channels                           |
-| `expected_hz`                    | Hz   | byte   | 0       | Expected control-loop sample rate (lower-bound check; 0 = off). 0–255: larger values currently wrap modulo 256 (256 → 0 = off, 3900 → 60) |
+| `expected_hz`                    | Hz   | uint16 | 0       | Expected control-loop sample rate (lower-bound check; 0 = off), 0–65535. A value outside that range fails sensor setup at boot. The full value is enforced, e.g. `3900` in `config/lab/dry_mock` |
 | `power_conversion_eff`           |      | float  | 0.95    | Assumed converter efficiency for the virtual current sensor    |
 | `ignore_calibration_constraints` |      | bool   | 0       | Bypass ADC calibration sanity constraints                      |
 | `notch_adaptive`                 |      | bool   | 1       | Auto-tune the inverter-ripple notch to the tone measured on Vout (off = fixed at `notch_freq`) |

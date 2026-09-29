@@ -111,9 +111,10 @@ conf-check
 | `pv off` | Ramp to 0 duty and enter manual mode (deliberately not the MPPT fallback of `psu off` — this is a bench source). |
 | `pv` | Print PV-sim state: curve params, live setpoint/Vout/Iout, trip state. |
 
-`vset`, `iset`, `ovset` and `speed` currently parse a non-numeric argument as 0 without an error:
-`iset abc` sets the current limit to 0, `speed abc` sets speed 0, and `ovset abc` clears the explicit
-OV limit. Double-check the value you type.
+`vset`, `iset`, `ovset`, `speed`, `fan`, `psu`, `pv`, `dc` and `bf` parse each numeric argument as a whole token
+and reply `ERR` to anything else, leaving the setting unchanged: `ovset abc` no longer clears the OV limit, and
+`vset 24V` is rejected rather than read as 24. `ovset` without an argument is an error too; clear the limit with
+`ovset 0`.
 
 RAM only. To persist: `vset` → `charger.conf vout_max`, `iset` → `charger.conf ibat_max`, `psu <V>` → `converter.conf mode=psu` + `psu_vout`, `pv …` → `converter.conf mode=pv` + `pv_isc`/`pv_voc`/`pv_k`. `ovset` has no conf key; use `limits.conf vout_max` for a persistent hard limit.
 
@@ -121,7 +122,7 @@ RAM only. To persist: `vset` → `charger.conf vout_max`, `iset` → `charger.co
 
 | Command | Description |
 | --- | --- |
-| `dc <hs> [ls]` | Set the converter duty cycle directly and switch the charger to manual PWM mode (no tracking, protection still active). A non-zero duty enables sync rectification and the backflow switch unless `reverse_current_paranoia` is set. The optional `ls` pins the LS on-count instead of automatic diode emulation (bench only, reverse-current risk). |
+| `dc <hs> [ls]` | Set the converter duty cycle directly and switch the charger to manual PWM mode (no tracking, protection still active). A non-zero duty enables sync rectification and the backflow switch unless `reverse_current_paranoia` is set. The optional `ls` (a non-negative integer) pins the LS on-count instead of automatic diode emulation (bench only, reverse-current risk). |
 | `+<int>`, `-<int>` | Relative duty-cycle perturbation step. Available both in manual and tracking mode (to test tracker recovery). **Be careful with large positive jumps** — they can cause extreme current transients that destroy the switches. |
 | `mppt` | Switch back to MPP tracking mode (only valid while in manual PWM or PSU mode). |
 | `sweep` | Start a global MPP scan / search. Exits PSU mode if active. |
@@ -156,9 +157,11 @@ services. Each has its own state, log level, and `enabled` flag persisted in its
 ## Bench / Diagnostic Commands
 
 :::warning
-`gpio`, `mcpwmtest` and `anaw` drive pins directly, bypassing the converter state and every protection, and
-none of these commands validates its arguments. They are reachable over every console transport,
-including telnet, BLE and MQTT. On a board with a power stage attached they can switch a gate. Bench use only.
+`gpio`, `mcpwmtest` and `anaw` drive pins directly, bypassing the converter state and every protection. They
+refuse pins that `board.conf` assigns (gates, driver enable, I²C, alerts, fan, LED), ADC1 pads (which may carry
+internal-ADC sense inputs) and flash/PSRAM pins, and reject malformed arguments. `anaw` is also refused while
+the LEDC gate driver is active. Any other free pin is still driven, over every console transport including
+telnet, BLE and MQTT. Bench use only.
 :::
 
 | Command | Description |

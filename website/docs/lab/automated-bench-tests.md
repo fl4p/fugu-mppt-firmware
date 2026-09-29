@@ -255,20 +255,22 @@ Mirror the buck cases with Vin < Vout: OV on output, reverse current, MPP tracki
 telnet while capturing HS/LS gates on a PicoScope 2000. Asserts frequency, HS-duty
 linearity, LS pulse position/width across an HS × LS grid, dead-time + no shoot-through,
 and the hardware fault brake. Refuses to run against any host outside its bench/mock allow-list (bare `fugu` or
-`fugu-esp32s3-*` hostnames) unless `--force-host`.
+`fugu-esp32s3-*` hostnames) unless `--force-host`, and refuses to start at all without `--stage-disconnected`.
 
 :::danger
 The allow-list is a name check only. An unnamed board, including a real converter, reports the default
 `fugu-esp32s3-…` hostname and passes it, and the verifier then drives near-full gate duty. Disconnect the power
-stage (no panel, no battery) before running it.
+stage (no panel, no battery, no supply, caps discharged), then confirm it with `--stage-disconnected`.
 :::
 
-    python3 etc/mcpwm_gate_verify.py --serial <serial-port> [--skip-fault]
-    python3 etc/mcpwm_gate_verify.py --ip <device-ip> --port <telnet-port> [--skip-fault]
+    python3 etc/mcpwm_gate_verify.py --serial <serial-port> --stage-disconnected [--skip-fault]
+    python3 etc/mcpwm_gate_verify.py --ip <device-ip> --port <telnet-port> --stage-disconnected [--skip-fault]
 
 Wiring: Ch A on `board.conf::pwm_hi`, Ch B on `board.conf::pwm_li`, both DC-coupled at 5 V
-range. For Phase 4, also wire a free GPIO (default 14, set with `--fault-driver-pin`) to
-`board.conf::pwm_fault_pin`.
+range. For Phase 4, also wire a free GPIO (set with `--fault-driver-pin`, default 14) to
+`board.conf::pwm_fault_pin`. The pin must not be assigned in `board.conf`, an ADC1 pad or a reserved pin; the
+default 14 is `pwm_li` on Fugu2 boards. The device refuses such a pin (`gpio` fails) and the verifier reports a
+failed `fault_driver_pin` row and skips the brake test.
 
 ---
 

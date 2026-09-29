@@ -85,7 +85,7 @@ pushes are recorded in the [ELF archive](#elf_archivepy).
 ```bash
 PYTHONPATH=./ python3 etc/ota.py -n -m <hostname>   # dry run first
 PYTHONPATH=./ python3 etc/ota.py -m <hostname>
-./ota.sh                                                      # idf.py build, then ota.py
+./ota.sh -m <hostname>                                        # idf.py build, then ota.py with these args
 ```
 
 | Flag                  | Meaning                                                    |
@@ -95,7 +95,8 @@ PYTHONPATH=./ python3 etc/ota.py -m <hostname>
 | `-f`, `--force`       | Update even if the device already runs the local version   |
 
 :::warning
-Without `-m` every discovered device is updated. `ota.py` asks for confirmation (and refuses when not
+Without `-m` every discovered device is updated. `./ota.sh` forwards its arguments to `ota.py` and refuses
+(exit 2) unless they contain `-n` or `-m`. `ota.py` asks for confirmation (and refuses when not
 interactive) for a build without networking, a simulator (`CONFIG_FUGU_WITH_VCONV`) build, or an uncommitted
 (`-dirty`) build. See [OTA over Wi-Fi](../guide/updating/ota-wifi.md).
 :::
@@ -259,7 +260,8 @@ python3 etc/influx_binary_proxy.py --ble <name> --influx http://influxdb:8086 --
 ## run_e2e.py
 
 Runs the host-side end-to-end tests in `etc/e2e-test/`, grouped into clusters by rig requirement, and reports
-PASS/FAIL/SKIP (non-zero exit on any FAIL). Tests whose prerequisites are missing are skipped with the reason.
+PASS/FAIL/SKIP. Tests whose prerequisites are missing are skipped with the reason. Exit code: 1 on any FAIL,
+2 when nothing ran (all skipped, not with `--dry-run`), else 0.
 
 | Cluster       | Needs                                                                          |
 |---------------|--------------------------------------------------------------------------------|

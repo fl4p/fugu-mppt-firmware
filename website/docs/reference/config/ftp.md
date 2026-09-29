@@ -12,8 +12,8 @@ unset after that, **both** fall back to user `user` and the chip ID as password.
 
 :::warning
 FTP gives read-write access to `/littlefs/conf` (calibration, limits, Wi-Fi and MQTT secrets). Set both
-`ftp_user` and `ftp_pass`: the fallback password is printed in the `ftp` warning log, and the log is mirrored
-to the connected console transports (telnet, and MQTT `pv/log/<host>` while connected).
+`ftp_user` and `ftp_pass`: the fallback password is the chip ID, which is not secret. The `ftp` warning log
+says the fallback is in use (`using user=user, password = chip ID`) but does not print the password.
 :::
 
 | key         | unit | type   | default | description                          |
