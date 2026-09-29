@@ -32,7 +32,7 @@ dependencies:
   # OTA-over-BLE receiver. A local checkout via ESP_OTA_BLE_DIR (see top CMakeLists.txt) overrides this.
   esp-ota-ble:
     git: https://github.com/fl4p/esp-ota-ble.git
-    version: 63f3dcee3e60973076ea70e8733bd4641edb1993
+    version: d11c4a2176982b44bf8947ec3430f9ed6bfb00b6
   # esp-mqtt left IDF in 6.0
   espressif/mqtt:
     version: ^1.0.0
