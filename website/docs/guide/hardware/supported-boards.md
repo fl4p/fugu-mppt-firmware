@@ -58,7 +58,9 @@ Fugu2 is recommended for new builds.
   NTC channel).
 - `fugu_int_adc` replaces the ADS1015 with the ESP32's internal ADC. Wiring is in
   [Internal ADC](internal-adc.md). The folder only contains `board.conf`, `sensor.conf` and `limits.conf`; copy
-  `charger.conf`, `coil.conf` and `converter.conf` from `fugu1_esp32` before provisioning.
+  `charger.conf`, `coil.conf` and `converter.conf` from `fugu1_esp32` before provisioning. Also add
+  `pwm_freq=39000` and `pwm_driver_logic=InEn` to its `board.conf`, and `esp32adc1_sr=22000` and
+  `esp32adc1_avg=32` to its `sensor.conf`: the firmware has no defaults for these keys.
 
 :::note
 The `fugu1` sensor files set `conversion_eff`, but the firmware reads `power_conversion_eff`. The built-in default of

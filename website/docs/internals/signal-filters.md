@@ -67,7 +67,8 @@ IIR:
 ## Inverter-ripple notch
 
 An inverter on the DC bus draws ripple at twice the mains frequency (100 Hz for 50 Hz, 120 Hz for 60 Hz), which
-corrupts the MPPT power estimate. Every physical sensor has an IIR notch (biquad) at that frequency.
+corrupts the MPPT power estimate. Each physical sensor whose own sample rate allows it (f0 < 0.45·fs) gets an IIR
+notch (biquad) at that frequency. Slower channels get none, and the notch settings have no effect on them.
 
 By default the notch tunes itself (`sensor.conf::notch_adaptive=1`):
 

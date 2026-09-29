@@ -17,8 +17,9 @@ persisted enable flag.
 - **In scope:** core-0 subsystems that can be brought up and torn down independently.
 - **Out of scope:** the real-time control path on core 1 (ADC sampling, MPPT, protection, the
   synchronous-converter PWM). These are never stoppable and are not services.
-- **Wi-Fi is a precondition, not a service.** Services that need the network report `Failed` until
-  Wi-Fi is up, then self-heal (see *Wi-Fi dependency*).
+- **Wi-Fi is a precondition, not a service.** Services that need the network stay `Stopped` while
+  Wi-Fi is down (a manual `svc on` then reports `Failed`), then self-heal when it comes up (see
+  *Wi-Fi dependency*).
 
 ## ServiceState
 
@@ -83,7 +84,7 @@ A registry holding `Service*` (global instance `g_services`, an inline variable 
 - `registerService(Service*)` — appends and immediately calls the service's `loadConf()`.
 - `findByName(const char*)` — case-insensitive lookup.
 - `all()` — the registered services, for status listing.
-- `startEnabledAtBoot()` — starts every service whose persisted `enabled` flag is set.
+- `startEnabledAtBoot(bool networkUp)` — starts enabled services; network ones only if `networkUp`.
 - `startEnabledNetworkServices()` — restarts enabled network services that are not `Running`;
   called on the Wi-Fi-up edge.
 - `stopNetworkServices()` — stops the network services while the netif is still valid; called on the
@@ -102,8 +103,9 @@ from constructors — the filesystem is not mounted at static-init time). Regist
 
 ## Wi-Fi dependency
 
-Network services (`requiresNetwork == true`) return false from `onStart()` while Wi-Fi is down, so
-they report `Failed`. When Wi-Fi comes up, `loopNetwork_task` detects the rising edge and calls
+Network services (`requiresNetwork == true`) are skipped by `startEnabledAtBoot()` while Wi-Fi is down,
+so they stay `Stopped`. A manual start attempt without Wi-Fi (e.g. `svc on ftp`) returns false from
+`onStart()` and reports `Failed`. When Wi-Fi comes up, `loopNetwork_task` detects the rising edge and calls
 `startEnabledNetworkServices()`, which (re)starts them. MDNS is set up before they start.
 
 The **falling edge** is symmetric, and deliberately deferred: `wifi off` only sets `disableWifi` —

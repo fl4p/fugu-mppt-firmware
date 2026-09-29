@@ -17,15 +17,14 @@ Everything here was observed in bench sessions unless marked *inferred*.
 
 ## Toolchain & environment
 
-`. ./idf-export.sh` (repo root only — it sources the ESP-IDF `export.sh` by a relative path; adjust
-it to where your IDF lives) sets `IDF_TARGET=esp32s3` and enters IDF 5.5.1. Two side effects:
+Source ESP-IDF (`. $IDF_PATH/export.sh`, 5.5+) and run `idf.py set-target esp32s3` once per build
+dir. Afterwards, invoke repo tools with a Python that has their dependencies ([Host tools](../reference/host-tools.md)).
+`etc/fugu_console.py` has no exec bit, so call it through an interpreter:
+`python3 etc/fugu_console.py`.
 
-- It runs `deactivate`, dropping the repo venv. All repo Python tools must be invoked as
-  `.venv/bin/python3 etc/…` afterwards. `etc/fugu_console.py` has no exec bit, so
-  `python3 etc/fugu_console.py` fails with `Permission denied` regardless.
-- It exports `ESPPORT` from the **first** `/dev/cu.usbmodem*` glob match — a coin flip with more
-  than one board attached (one session flashed one board's build onto another board's port this
-  way). Always pass `-p` explicitly.
+Pass the port explicitly (`-p`). With several boards attached, a `$ESPPORT` guessed from a
+`/dev/cu.usbmodem*` glob picks the wrong one (one session flashed one board's build onto another
+board's port this way).
 
 `esptool` on PATH can resolve to a broken PlatformIO shim (`ModuleNotFoundError: esptool`);
 `python -m esptool …` after sourcing IDF always works. On S3, `chip_id` prints the efuse MAC
@@ -117,10 +116,11 @@ Canonical invocation (see [Agentic programming](../development/agentic-programmi
 tool's design):
 
 ```bash
-timeout 30 .venv/bin/python3 etc/fugu_console.py -p PORT -c "status" -c "svc" | grep -a -v '^V='
+timeout 30 python3 etc/fugu_console.py -p PORT -c "status" -c "svc" | grep -a -v '^V='
 ```
 
-- Wrap in `timeout N` — the client does not exit on its own. Pipe through `grep -a` (the stream
+- With `-c`/`--stdin` the client exits after the last reply. Use `timeout N` only as an overall
+  deadline against a stalled connect or scan. Pipe through `grep -a` (the stream
   carries non-UTF-8 bytes; plain grep prints "binary file matches" and nothing else) and
   `tr -d '\0'` where NULs break downstream tools.
 - Transport flags: `--ip host:port` is **one** argument (behind a NAT/port forward, confirm the
@@ -138,8 +138,6 @@ timeout 30 .venv/bin/python3 etc/fugu_console.py -p PORT -c "status" -c "svc" | 
   log-level raise + trigger + device-side `sleep 3` + read in a *single* `--stdin` script.
 - The client's per-command timeout is 4 s by default (overrides for `ota`, `scan-i2c`, `curl`,
   `ping`); a slow reply looks like a dead board.
-- Commands can be silently mode-dependent: `bf`/`dc`/`sync` are no-ops outside manual mode, with no
-  `ERR`. Verify the effect in the status line; absence of an error proves nothing.
 - The log line `received serial command: '<cmd>'` is printed by the shared dispatcher for **all**
   transports (serial, telnet, MQTT, BLE) — it never identifies the transport.
 - If basic verbs (`help`, `status`, `svc`, `hostname`) answer `unknown or unexpected command`, the
@@ -148,7 +146,14 @@ timeout 30 .venv/bin/python3 etc/fugu_console.py -p PORT -c "status" -c "svc" | 
   "device reports readiness to read but returned no data" and background loggers die silently.
   `lsof /dev/cu.usbmodemXXX` before opening (also catches your own stale monitor).
 - Smoke-test after a firmware change:
-  `.venv/bin/python3 etc/e2e-test/test_console_plan.py --serial PORT --mock` (PASS/FAIL per verb).
+  `python3 etc/e2e-test/test_console_plan.py --serial PORT --mock` (PASS/FAIL per verb).
+
+:::danger `dc` takes over from any mode
+`dc N` switches to manual PWM from any mode and drives duty N (`dc 0` stops conversion).
+`sync on|off|forced` and `bf 0|1` are rejected with `ERR` outside manual mode. A bare `sync` reports
+the rectifier state in any mode. Verify effects in the status line anyway, since batched replies can
+interleave.
+:::
 
 ## Editing config on a live board
 
@@ -162,7 +167,7 @@ timeout 30 .venv/bin/python3 etc/fugu_console.py -p PORT -c "status" -c "svc" | 
   `wifi-add`/`set-config wifi.conf …` a `restart` is required before the board will associate.
 - A checksum boot-loop (`Checksum failed. Calculated 0x.. read 0x..`) straight after a
   `provision.py` run was recovered by one full `idf.py flash`; the board was not dead.
-- Read a live config partition back with `.venv/bin/python3 etc/dump_littlefs.py <outdir>`
+- Read a live config partition back with `python3 etc/dump_littlefs.py <outdir>`
   (writes the raw image + extracted `conf/*.conf`; round-trips into `provision.py`). It goes
   through `parttool.py`, i.e. **it reboots the board** — never on a live converter; for one value
   use `get-config`.
@@ -193,7 +198,7 @@ code isn't running".
 non-interactively: dirty images, `WITH_NETW=n` builds, `WITH_VCONV=y` plant-sim builds. Scripted
 shells are not a tty, so commit — or `git stash push -- <unrelated paths>` — before a Wi-Fi OTA.
 
-Over BLE ([OTA over BLE](../guide/updating/ota-ble.md)): `.venv/bin/python3 etc/ota_ble.py -n <name> -y`.
+Over BLE ([OTA over BLE](../guide/updating/ota-ble.md)): `python3 etc/ota_ble.py -n <name> -y`.
 
 - The version string is `git describe`-derived: rebuilding an uncommitted tree does **not** change
   it, so the tool takes its skip path (`☑️ skip: already at <ver>`) and exits looking successful.

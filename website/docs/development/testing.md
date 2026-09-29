@@ -13,7 +13,7 @@ Four layers, from fastest to most hardware-dependent:
 |---|---|---|
 | Host unit tests | `test/host-stub/*-test.cpp` | A C++ compiler |
 | Host Python tests | `test/host_py/` | Python |
-| On-target unit tests | `test/test_*.cpp` (Unity) | An ESP32-S3 board |
+| On-target unit tests | `test/test_*.cpp` (Unity) | An ESP32-S3 board with no powered stage (drives gate pins) |
 | End-to-end tests | `etc/e2e-test/` | A device over serial/telnet; some clusters need a power stage |
 
 For power-stage tests with a programmable supply and load, see [Automated Bench Tests](../lab/automated-bench-tests.md).
@@ -29,13 +29,23 @@ clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src \
 
 ## On-target unit tests
 
-`RUN_TESTS=1` swaps `src/main.cpp` for `test/main.cpp` and builds the Unity suite:
+`RUN_TESTS=1` swaps `src/main.cpp` for `test/main.cpp` and builds the Unity suite.
+
+:::danger Bare board only
+The Unity suite drives GPIO 1, 2, 4-9 and **21** as outputs (21 is the high-side gate input on Fugu2
+boards, left HIGH after the ISR tests), and `idf.py flash` overwrites the littlefs config with
+`config/lab/dry_mock`. Run it on a dev board or a Fugu board with the power stage unpowered (no PV, no
+battery). Use `app-flash` if the littlefs config must be kept.
+:::
 
 ```bash
 RUN_TESTS=1 idf.py -B build-tests build
 RUN_TESTS=1 idf.py -B build-tests -p $ESPPORT flash
-python3 etc/fugu_console.py -p $ESPPORT      # resets the board and shows the Unity output
+python3 etc/fugu_console.py -p $ESPPORT      # then press RESET/EN to see the Unity output
 ```
+
+The suite runs once from `setup()`, so press the board's RESET/EN button after the console is open (or use
+`idf.py -p $ESPPORT flash monitor`, which resets and attaches in one step).
 
 The PWM/MCPWM tests only run in an MCPWM build (`CONFIG_FUGU_WITH_MCPWM=y`); the software suite passes without it.
 

@@ -38,7 +38,7 @@ working tree carried other uncommitted changes, so its absolute free % isn't a c
 - **`CONFIG_LWIP_IPV6=n`** — `~15–20 KB`. No `AF_INET6`/`in6_*` in source.
 - **`CONFIG_LIBC_NEWLIB_NANO_FORMAT=y`** — `~37–46 KB`. Audited all `src/` format strings for `%hh*`/`%ll*` first
   (newlib-nano silently misparses them).
-- **Make sprofiler build-time optional** — `~10 KB`. `WITH_SPROFILER=1`; top-level CMakeLists `EXCLUDE_COMPONENTS
+- **Make sprofiler build-time optional** — `~10 KB`. `WITH_SPROFILER=1` (now `CONFIG_FUGU_WITH_SPROFILER`); top-level CMakeLists `EXCLUDE_COMPONENTS
   esp32-semihosting-profiler` when unset.
 
 ### 2026-05-25 round (sdkconfig.defaults + CMakeLists.txt + main/idf_component.yml)

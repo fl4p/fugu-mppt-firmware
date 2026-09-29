@@ -72,7 +72,8 @@ has a rollback-enabled bootloader. An OTA writes only the app; a device that was
 current bootloader bricks instead of reverting. See [OTA updates](updating/ota-wifi.md#rollback-and-boot-watchdog).
 :::
 
-On ESP32-S3 builds the bootloader parks the chip in download mode after repeated crash resets, see
+On ESP32-S3, if the firmware was built with the optional esp-bootguard and that bootloader was flashed over serial,
+the bootloader parks the chip in download mode after repeated crash resets, see
 [ESP32 variants](hardware/esp32-variants.md#bootloader-s3-only).
 
 ## BLE
@@ -96,8 +97,9 @@ On ESP32-S3 builds the bootloader parks the chip in download mode after repeated
 
 ## FTP
 
-The FTP server exposes the littlefs partition when Wi-Fi is up. It accepts **one connection** and **no passive mode**:
-configure your client (e.g. FileZilla) with 1 simultaneous connection and active mode. Credentials come from NVS, or
+The FTP server exposes the littlefs partition when Wi-Fi is up. It accepts **one connection**: set your client (e.g.
+FileZilla) to 1 simultaneous connection. Passive mode uses data port 50009 (control port 21); allow both through any
+firewall/NAT. Credentials come from NVS, or
 `ftp_user`/`ftp_pass` in [`ftp.conf`](../reference/config/ftp.md).
 
 For single values prefer `set-config`, which needs no FTP.

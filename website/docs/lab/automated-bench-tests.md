@@ -39,8 +39,9 @@ conditions, without needing sun or a real battery.
   Telemetry goes to InfluxDB; the per-sample `scope` TCP stream is useful for transient capture.
 - **Config** — use `config/lab/fbuck_lab_bench` only with the 29 V battery/emulator setup. An
   open-output SW-node sweep must instead be provisioned with
-  `config/lab/fbuck_lab_bench_open_output`; its explicit name and separate complete profile guard
-  against carrying the 60 V open-output threshold back to a connected battery. Note
+  `config/lab/fbuck_lab_bench_open_output`; its explicit name and separate complete profile guard against carrying
+  the 60 V open-output threshold back to a connected battery (see
+  [Lab config profiles](config-profiles.md#battery-vs-open-output)). Note
   `reverse_current_paranoia` differs between configs and changes several thresholds below.
 
 Thresholds quoted below are from `config/fmetal/conf/limits.conf` /`charger.conf`
@@ -58,7 +59,8 @@ they are not compiled in.
 | `sync on/off/forced` | LS rectifier mode |
 | `bf 0/1` | backflow switch |
 | `fan N` | fan duty |
-| `set-config <file> <k> <v>` | edit a conf key live (e.g. lower a limit to provoke a trip safely) |
+| `set-config <file> <k> <v>` | write a conf key to flash. Most keys take effect at the next boot; `limits.conf` is read only at boot |
+| `ovset <V>` | live output-OV threshold (`0` clears it) |
 | `rt-stats`, `sensor` | timing / sensor readout for pass checks |
 
 ---
@@ -71,7 +73,8 @@ seconds and count `shutdown` / `Converter enabled` lines.
 ### 1.1 Vout > Vin shutdown in manual mode
 - **Setup**: Vin low or absent (e.g. PSU 8 V), output sink CV at 26 V (Vout > Vin).
 - **Action**: `dc 10`.
-- **Expected**: converter enables once, `protect()` trips on `Vout > 1.25·Vin`, logs one
+- **Expected**: converter enables once, `protect()` trips on `Vout(avg) > 1.25·(Vin(avg)+1 V)`, or
+  instantaneously `Vout > 2·(Vin+0.5 V)`, logs one
   `MPPT: Vout .. > Vin .., shutdown duty=..`, then stays off. `setTargetDutyCycle(0)` on the trip
   prevents re-fade.
 - **Pass**: exactly one enable/trip/disable cycle; no repeating warnings; unit stays in manual mode,
@@ -79,8 +82,13 @@ seconds and count `shutdown` / `Converter enabled` lines.
 - **Fail mode this guards**: pre-fix it re-faded every few ms (warning flood)
 
 ### 1.2 Output over-voltage (OV)
-- **Setup**: charging normally, then drive output sink **voltage** above
-  `min(Vbat_max·1.03, vout_max)`.
+- **Setup**: charging normally, then drive output sink **voltage** above the OV threshold. It is
+  `min(ovset, vout_max)` if an `ovset` is set. Otherwise it is
+  `min(base·(paranoia ? 1.03 : 1.5), vout_max)`, where the base is the PSU setpoint (`psu_vout` or `psu <V>`; PV-sim: `voc`) in
+  PSU/PV mode and `Vbat_max` otherwise, and `paranoia` is `limits.conf::reverse_current_paranoia`
+  (default 1). A bench profile with `reverse_current_paranoia=0` and a 29 V pack gives 43.5 V, not
+  29.9 V. Compute it from the unit's `limits.conf`, `charger.conf`, mode and `ovset`; `status` shows
+  `Vbat_max` and whether an explicit `ovset` is in force.
 - **Expected**: `shutdownDcdc()`, `Vout .. > .. + 5pct!` warning, LCD "OV shutdown". If condition
   persists >20 s and `autoDetectVout_max`, Vbat_max re-detects via calibration.
 - **Pass**: shutdown within one control tick of the threshold crossing; recovers when voltage drops.
@@ -225,7 +233,8 @@ seconds and count `shutdown` / `Converter enabled` lines.
 ## 6. Startup conditions
 
 ### 6.1 startCondition gating
-- Verify no start when: NTC/MCU > `Temp_derate`; supply < 9.5 V; or the Vin/Vout polarity is wrong
+- Verify no start when: NTC above `temp_max − 3` or MCU at/above `temp_max − 3` (87 °C with
+  `temp_max=90`); supply < 9.5 V; or the Vin/Vout polarity is wrong
   for the topology (buck needs Vin > Vout+1; boost needs Vin < Vout+1).
 
 ### 6.2 Cold/low-light start
@@ -267,8 +276,17 @@ range. For Phase 4, also wire a free GPIO (default 14, set with `--fault-driver-
 
 - Wrap each case as: set PSU + load → issue console command(s) → wait → read console/telemetry →
   assert. The PASS/FAIL/SKIP console exerciser in `etc/e2e-test/test_console_plan.py` is a model to extend.
-- For trip tests, prefer lowering a limit with `set-config limits.conf <key> <v>` to provoke a trip
-  at safe currents/voltages instead of driving real over-stress.
+- For trip tests, prefer lowering a limit to provoke a trip at safe currents/voltages instead of
+  driving real over-stress. `set-config` does not change the running limits, so a trip test right
+  after it still acts at the boot-time limit.
+
+:::warning Lowered limits need a restart
+`dc 0`, `set-config limits.conf <k> <v>`, `get-config` to read it back, `restart`, then confirm the
+new value before applying power. The value must still pass the `Limits` checks
+(`temp_derate < temp_max`, 20 < `temp_max` < 120). Restore the same way. Use `ovset` for a live
+output-OV threshold.
+:::
+
 - Always assert **single-trip** behavior (count log lines) — repeating storms are themselves a bug
   class (see 1.1).
 - Restore limits and `mppt` (auto mode) at the end of each case.

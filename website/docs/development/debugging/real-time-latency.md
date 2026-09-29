@@ -137,10 +137,13 @@ ESP32-S3's two LX7 cores are functionally symmetric for a control loop, so the c
 isn't about raw throughput. The concrete reason to keep RT on core1:
 
 - NVS / littlefs / OTA writes happen from core0 (services, console). Each flash write
-  briefly disables the CPU cache; code on the *same* core stalls during that window
-  unless it lives in IRAM.
-- With RT on core1, those writes don't dip the RT loop — core1 keeps executing the
-  `IRAM_ATTR`-marked ADC continuous-DMA ISR + RT code while core0 stalls.
+  briefly disables the CPU cache; non-IRAM code on *both* cores stalls during that
+  window (see below).
+- With RT on core1, core0's *CPU* work (services, console) never preempts the RT loop.
+  Flash writes are different: they disable the cache on both cores, so only IRAM code (the
+  ADC continuous-DMA ISR) keeps running. The RT loop, including protection, stalls for the
+  write; see
+  [Flash-cache disable stalls…](#flash-cache-disable-stalls-the-non-iram-rt-path-incl-the-alert-isr).
 - If RT moved to core0, every `set-config` / OTA chunk / coulomb-counter persist would
   briefly steal cycles from the ADC/MPPT/PWM path.
 
@@ -207,8 +210,8 @@ is the bug.
 
 ## Flash-cache disable stalls the non-IRAM RT path (incl. the alert ISR)
 
-*"Why RT_CORE=1" above says core1 keeps running during a core0 flash write — that is only true for
-the **IRAM-resident** code (the ADC continuous-DMA ISR).* A flash erase/write — littlefs (config
+*During a core0 flash write core1 keeps running only its **IRAM-resident** code (the ADC
+continuous-DMA ISR).* A flash erase/write — littlefs (config
 read **or** write, the `get-config`/`set-config` path, coulomb/stats persist), NVS, OTA — disables
 the SPI-flash **cache globally** for its duration, and IDF parks the *other* core in IRAM while the
 op runs. So any **non-IRAM** code stalls too, on whichever core it's pinned to. Core pinning isolates

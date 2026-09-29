@@ -50,7 +50,7 @@ Dark with the port enumerated = the chip is sitting in ROM download mode (see tr
 ## Build / flash
 
 ```bash
-. ./idf-export.sh
+. $IDF_PATH/export.sh   # ESP-IDF 5.5+
 cd etc/bsync-beacon
 idf.py set-target esp32s3     # once
 idf.py -p /dev/cu.usbmodemXXX flash
@@ -63,8 +63,8 @@ set-config bsync.conf bssid <node mac>
 set-config bsync.conf channel 13
 set-config bsync.conf hw_only 1
 set-config bsync.conf enabled 1
-wifi off          # NOT persisted — repeat after every reboot, else the STA
-svc rs bsync      # re-associates and drags the sniffer off the node's channel
+wifi off          # else the STA re-associates and drags the sniffer off the node's
+svc rs bsync      # channel; bare `wifi off` persists across reboots until `wifi on`
 ```
 
 ## Traps
@@ -72,7 +72,7 @@ svc rs bsync      # re-associates and drags the sniffer off the node's channel
 - **XIAO ROM download mode**: if the board was (re)plugged with BOOT held, esptool's RTS
   reset re-enters download mode forever (strap latched at power-on) — silent console, no
   beacons, port still enumerates. Recovery: replug **without** touching BOOT.
-- `ESPPORT` autodetect (idf-export.sh) can grab the node's port; always pass `-p` explicitly
-  when flashing converters, and never reset the node casually.
+- If your shell setup autodetects `ESPPORT`, it can pick the node's port; always pass `-p`
+  explicitly when flashing converters, and never reset the node casually.
 - A receiver associated to any AP cannot tune the sniffer channel — `wifi off` first
   (see beacon-sync.md).

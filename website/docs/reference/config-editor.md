@@ -32,8 +32,9 @@ python3 -m http.server 8000
    `OK:`/`ERR:` reply awaited.
 4. Optionally **Download .zip** as a backup.
 
-`set-config` persists each value to the file on flash; see [Configuration files](config/index.md) for when
-a key is applied.
+`set-config` persists each value to the file on flash; see
+[When changes take effect](config/index.md#when-changes-take-effect) for when a key is applied (most files
+need a reboot).
 
 ## Sources
 
@@ -64,7 +65,9 @@ probing hosts remembered for that broker with the `ip` command. Pick a device to
 - Files the firmware reads but the source lacks appear as faded tabs; fill a key to create the file.
 - Each row shows the key, a type pill (`byte`/`long`/`float`/`string`, the getter the firmware uses), unit,
   description and default. A `?` pill marks a key without curated metadata.
-- An empty field is **not set** and is removed from the file; `0` and an empty string are real values.
+- Clearing a field (or ×) deletes the key on upload. An existing empty value (`key=`) is kept if untouched,
+  but an empty value cannot be written. In a downloaded `.zip`, a hand-emptied existing key stays as `key=`;
+  use × to drop it. `0` is a real value.
 - **+ add key** appends an arbitrary key.
 - The **raw** section shows the serialized file. Comments, inline `# comments` and whitespace survive the
   round trip.
@@ -95,16 +98,17 @@ key-by-key against a local config folder, lets you pick which values to take, an
 confirmation. Needs the `ftp` service on the device.
 
 ```bash
-etc/config-tool/conf-tool.py --hosts '<hostname-regex>' --local-conf config/fmetal
+etc/config-tool/conf-tool.py --hosts '<hostname-regex>' --local-conf config/fmetal \
+    --user <user> --password <password>
 ```
 
 | Flag             | Default       | Meaning                                                   |
 |------------------|---------------|-----------------------------------------------------------|
 | `--hosts`        | `.+`          | Regex matched against discovered host name or IP          |
 | `--local-conf`   |               | Local config folder to diff against; omit to only download and view |
-| `--dl-dir`       | `./dl`        | Where downloaded configs are stored                       |
+| `--dl-dir`       | `etc/config-tool/dl` | Where downloaded configs are stored                       |
 | `--remote-conf`  | `conf`        | Remote subdirectory                                       |
-| `--user`, `--password` |         | FTP login                                                 |
+| `--user`, `--password` | `user`, `password` | FTP login. The defaults do not match a device without FTP credentials, which uses the chip ID as password; see [`ftp.conf`](config/ftp.md) |
 | `--timeout`      | `4.0`         | FTP timeout, s                                            |
 | `--view`         |               | Also print the downloaded files                           |
 | `--no-upload`    |               | Diff and merge, never upload                              |

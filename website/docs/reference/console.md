@@ -28,10 +28,10 @@ rejection message for invalid arguments / wrong context.
 | `wifi on`, `wifi off [minutes]` | Enable / disable Wi-Fi (and with it all network services). Disabling Wi-Fi usually increases the control-loop rate. Bare `wifi off` disables for good and clears the stored SSID in NVS — it persists across reboots (NVS `wifi_off`) until `wifi on`; `wifi off <minutes>` disables temporarily (RAM only, a reboot re-enables Wi-Fi) and re-enables after the timeout, keeping the stored SSID. |
 | `wifi-add <ssid>:<password>` | Store a new Wi-Fi network. |
 | `ip` | Show the local IP address. |
-| `hostname <hostname>` | Set the device hostname (persisted in NVS, applied on next boot). |
+| `hostname [name]` (alias `hn`) | Without an argument print the hostname; with one set it (persisted in NVS, applied on next boot). |
 | `ota <url>` | Download and flash a new app image from an HTTP(S) URL. Halts the converter and ADC during the update. |
 | `set-time <epoch_ms>` | Set the wall clock without NTP (epoch milliseconds; sets TZ to CET). For BLE-only telemetry; SNTP still runs when WiFi comes up and may step the clock. |
-| `tele-ble [0\|1]` *(needs `CONFIG_FUGU_WITH_BLE_TELE`)* | Start/stop the BLE telemetry stream on the NUS TELE characteristic (binary wire, tamp-compressed). Requires a set clock (`set-time`) and a connected BLE client; no argument prints status + dropped bytes. Host side: `etc/influx_binary_proxy.py --ble` or `etc/fugu_console.py --ble --tele`. |
+| `tele-ble [0\|1]` *(needs `CONFIG_FUGU_WITH_BLE_TELE`)* | Start/stop the BLE telemetry stream on the NUS TELE characteristic (binary wire, tamp-compressed). Requires the `ble` service running, a connected BLE client, a set clock (`set-time`), `tele.conf ble=1`, and either the `tele` service stopped or `tele.conf binary=1` + `svc rs tele`; no argument prints status + dropped bytes. Host side: `etc/influx_binary_proxy.py --ble` or `etc/fugu_console.py --ble --tele`. |
 | `curl [-X M] [-H k:v] [-d data] <url>` *(needs `CONFIG_FUGU_WITH_NETTOOLS`)* | Blocking HTTP(S) request — prints the status line and response body to the issuing console. TLS is verified against the mbedTLS certificate bundle. `-X` sets the method (GET/POST/PUT/DELETE/HEAD/PATCH); `-d` sends a request body (implies POST, defaults Content-Type to form-encoded unless a `-H Content-Type:…` is given); `-H` adds a header (up to 4, `key:value`). Flag values are single tokens — no spaces, so use compact JSON. The body is streamed and capped at 16 KB. |
 | `ping <host> [count]` *(needs `CONFIG_FUGU_WITH_NETTOOLS`)* | ICMP echo to an IPv4 host/IP (`count` 1–60, default 4). Prints per-reply lines (seq/ttl/time) and a sent/received/loss summary. |
 | `nslookup <host>` (alias `resolve`) *(needs `CONFIG_FUGU_WITH_NETTOOLS`)* | Print every IPv4 address the resolver returns for `<host>`. |
@@ -45,8 +45,8 @@ rejection message for invalid arguments / wrong context.
 | --- | --- |
 | `fan <float>` | Fan output, 0–100. Currently on/off only: above 10 it switches fully on. |
 | `led <RRGGBB>`, `led <RGB>` | Set the LED color in hex or short hex (e.g. `led 33ff33` or `led 3f3`). |
-| `sensor` | Dump per-sensor state (last/raw value, EWM average and std, adaptive-noise-filter stats). `sensor avg` prints one compact line of EWM averages (`sens: vin=… iout=… …`) for fast polling. The ANF line reads `(stale)` unless `anf on` is active (the filter is kept off the RT path by default). |
-| `anf [on\|off]` | Enable/disable the per-sample AdaptiveNoiseFilter, which feeds the noise/NSR stats in `sensor`. It's diagnostics-only and off by default to keep it out of the RT sample path; turn it on while inspecting sensor noise, off when done. |
+| `sensor` | Dump per-sensor state (last/raw value, EWM average and std, adaptive-noise-filter stats). `sensor avg` prints one compact line of EWM averages (`sens: vin=… iout=… …`) for fast polling. The ANF line reads `(stale)` unless the filter is enabled (it is kept off the RT path by default); since `anf on` does not currently work, it always reads `(stale)`. |
+| `anf [on\|off]` | **Currently not working:** `anf on`/`anf off` are rejected with `ERR:` (the command is registered without an argument); bare `anf` only prints the state. Intended: enable/disable the per-sample AdaptiveNoiseFilter, which feeds the noise/NSR stats in `sensor`. It's diagnostics-only and off by default to keep it out of the RT sample path; turn it on while inspecting sensor noise, off when done. |
 | `mem` | Display heap and PSRAM size (total and free). |
 | `heap [check]` | Per-capability heap report (INTERNAL / DMA / SPIRAM): free, minimum-ever-free, and largest free block (bytes) — fragmentation at a glance. `heap check` additionally runs `heap_caps_check_integrity_all` and prints `OK`/`CORRUPT`. |
 | `tasks` | FreeRTOS task table: name, state (run/rdy/blk/sus), priority, pinned core (0/1/any), and **minimum-ever free stack in bytes** (`uxTaskGetStackHighWaterMark`) — the value to watch for stack overflows. Complements `rt-stats` (which shows CPU %, not headroom). |
@@ -72,10 +72,10 @@ Hardware and runtime parameters live in `.conf` files on the device's littlefs p
 
 | Command | Description |
 | --- | --- |
-| `set-config <file> <key> <value>` | Set a key in a config file and persist it to flash. |
-| `del-config <file> <key>` | Remove a key; the whole line, including any inline comment, is deleted. |
-| `get-config <file> [<key>]` | Print a single key, or dump every key if `<key>` is omitted. |
-| `conf-check` | Re-read `charger.conf`/`limits.conf` and warn about keys no loader reads (typos / obsolete, e.g. `cv_min` where the firmware reads `cv_float`). Same check runs at boot for the parameter confs. |
+| `set-config <file> <key> <value>` (alias `setc`) | Set a key in a config file and persist it to flash. |
+| `del-config <file> <key>` (alias `delc`) | Remove a key; the whole line, including any inline comment, is deleted. |
+| `get-config <file> [<key>]` (alias `getc`) | Print a single key, or dump every key if `<key>` is omitted. |
+| `conf-check` (alias `confcheck`) | Re-read `charger.conf`/`limits.conf` and warn about keys no loader reads (typos / obsolete, e.g. `cv_min` where the firmware reads `cv_float`). Same check runs at boot for the parameter confs. |
 
 Examples:
 
@@ -100,7 +100,7 @@ conf-check
 | Command | Description |
 | --- | --- |
 | `status` | Print a charger/battery snapshot: termination state, effective limits (`Vbat_max`/`Vout_max`, `Ibat_lim`/`Iout_max`), the termination line (`v_term`/`cv_min`/`cv_eoc`/`Cbat`/`recharge_dod`) and the BMS feed (`vcell_high` with staleness, `ibat`, `ahSinceFull`, `vout_avg`). In PSU mode also prints the setpoint, trip count and escalation state. |
-| `vset <float>` | Set the battery max voltage (`Vbat_max`), range 0–999. Marks the setpoint as explicit so the persistent-OV auto-detect will not silently discard it. |
+| `vset <float>` | Set the battery max voltage (`Vbat_max`), range (0, 999]. Marks the setpoint as explicit so the persistent-OV auto-detect will not silently discard it. |
 | `iset <float>` | Set the battery current limit (`Ibat_lim`), range 0–999. |
 | `ovset <float>` | Set an independent hard output over-voltage trip limit, range 0–999. 0 clears it (reverts to the derived threshold: `Vbat_max` × 1.5, or × 1.03 with `reverse_current_paranoia`). When set, the OV threshold is `min(ovset, vout_max)` regardless of the CV setpoint. |
 | `psu <float>` | Enter PSU (constant-voltage) mode and set the output voltage setpoint. The limiter chain regulates Vout to the setpoint with CV/CC foldback — no MPPT tracker, no periodic sweep, no charger-layer battery semantics. Trips use a fast 100 ms auto-retry with escalation to a hard latch after repeated faults. Range-checks against `limits.conf::vout_max`. |
@@ -111,22 +111,27 @@ conf-check
 | `pv off` | Ramp to 0 duty and enter manual mode (deliberately not the MPPT fallback of `psu off` — this is a bench source). |
 | `pv` | Print PV-sim state: curve params, live setpoint/Vout/Iout, trip state. |
 
-These override the running charger parameters only; use `set-config charger.conf …` to persist.
+`vset`, `iset`, `ovset` and `speed` currently parse a non-numeric argument as 0 without an error:
+`iset abc` sets the current limit to 0, `speed abc` sets speed 0, and `ovset abc` clears the explicit
+OV limit. Double-check the value you type.
+
+RAM only. To persist: `vset` → `charger.conf vout_max`, `iset` → `charger.conf ibat_max`, `psu <V>` → `converter.conf mode=psu` + `psu_vout`, `pv …` → `converter.conf mode=pv` + `pv_isc`/`pv_voc`/`pv_k`. `ovset` has no conf key; use `limits.conf vout_max` for a persistent hard limit.
 
 ## Manual PWM Commands
 
 | Command | Description |
 | --- | --- |
-| `dc <int>` | Set the converter duty cycle directly and switch the charger to manual PWM mode (no tracking, protection still active). A non-zero duty enables sync rectification and the backflow switch unless `reverse_current_paranoia` is set. |
+| `dc <hs> [ls]` | Set the converter duty cycle directly and switch the charger to manual PWM mode (no tracking, protection still active). A non-zero duty enables sync rectification and the backflow switch unless `reverse_current_paranoia` is set. The optional `ls` pins the LS on-count instead of automatic diode emulation (bench only, reverse-current risk). |
 | `+<int>`, `-<int>` | Relative duty-cycle perturbation step. Available both in manual and tracking mode (to test tracker recovery). **Be careful with large positive jumps** — they can cause extreme current transients that destroy the switches. |
 | `mppt` | Switch back to MPP tracking mode (only valid while in manual PWM or PSU mode). |
 | `sweep` | Start a global MPP scan / search. Exits PSU mode if active. |
-| `speed <float>` | Set tracking speed scale, range 0–10 (default 1.0). |
-| `dt [hl_ns [lh_ns]]`, `deadtime …` | MCPWM hardware dead-time, one value per transition: **hl** = ctrl-off -> rect-on (mid-period, hardware RED), **lh** = rect-off -> ctrl-on (period wrap, reserved out of `pwmMax`). Without an argument it prints both, the realized hl gap, and the limits derived from them: `dt hl=200 ns (32 ct, gap 31 ct) lh=100 ns (16 ct) pwmMax=… minLS=… maxHS=…`. One argument sets both; two set them independently. It retunes from the RT core, quantized to the timer tick (6.25 ns at 39 kHz). HiLi + `pwm_driver=mcpwm` only — an InEn gate driver does its own dead-time. **RAM only**: persist with `set-config board.conf pwm_deadtime_hl_ns|pwm_deadtime_lh_ns <ns>` and reboot. The new delay and the duty clamp both latch on a period boundary (`update_dead_time_on_tez`) — usually the same one, and when a boundary falls between the two writes the intervening period runs the new dead-time against the old comparators, which keeps at least the old LS->HS band. Raising is allowed in any mode, but note it is an *unramped* duty step — at the ¹⁄₃₂ ceiling `maxHS` drops by ~190 counts in one control tick; **lowering either value requires manual PWM** (`dc N` first). Keep a scope on the switch node either way. |
+| `speed <float>` | Set tracking speed scale, range [0, 10) (default 1.0). |
+| `dt [hl_ns [lh_ns]]`, `deadtime …` | MCPWM hardware dead-time, one value per transition: **hl** = ctrl-off -> rect-on (mid-period, hardware RED), **lh** = rect-off -> ctrl-on (period wrap, reserved out of `pwmMax`). Without an argument it prints both, the realized hl gap, and the limits derived from them: `dt hl=200 ns (32 ct, gap 31 ct) lh=100 ns (16 ct) pwmMax=… minLS=… maxHS=…`. One argument sets both; two set them independently. It retunes from the RT core, quantized to the timer tick (6.25 ns at 39 kHz). HiLi + `pwm_driver=mcpwm` only — an InEn gate driver does its own dead-time. **RAM only**: persist with `set-config board.conf pwm_deadtime_hl_ns <ns>` and `set-config board.conf pwm_deadtime_lh_ns <ns>`, then reboot. The new delay and the duty clamp both latch on a period boundary (`update_dead_time_on_tez`) — usually the same one, and when a boundary falls between the two writes the intervening period runs the new dead-time against the old comparators, which keeps at least the old LS->HS band. Raising is allowed in any mode, but note it is an *unramped* duty step — at the ¹⁄₃₂ ceiling `maxHS` drops by ~190 counts in one control tick; **lowering either value requires manual PWM** (`dc N` first). Keep a scope on the switch node either way. |
 |  | Refusals, all of them shoot-through guards: **retuning only** — if the board booted with `pwm_deadtime_hl_ns=0` the submodule is bypassed, and arming it live would put the LS pin on the HS waveform between the two register writes, so `dt` refuses and you must set the conf key and reboot. **≥ 50 ns realized gap** — the HS generator spends one tick claiming its dead-time path, so the realized hl gap is one tick less than the configured value (1 tick would close it entirely). lh has no such offset and is realized one tick *wider*, since `cmpLS` is capped at `pwmMax-1`. The floor is a typo guard, not a tuned value: it is far below any dead-time we ship, and a gap that clears it is still not necessarily safe for a given FET and gate driver — that is yours to verify on the bench. **≤ ¹⁄₃₂ period** (800 ns at 39 kHz) per value — lh is reserved out of `pwmMax`, and hl pushes `minLS` up by the same amount, since it delays LS turn-on and the bootstrap-refresh pulse has to survive it. |
 | `pwm-freq [hz]`, `fsw …` | MCPWM switching frequency, changed **live, without a reboot**. Without an argument it reports the *realized* frequency and the timer period: `pwm-freq 38995.86 Hz period_ticks=4103 res=160000000 pwmMax=4089 hs_off=2499 maxHS=3758 nominal=39000`. `period_ticks` is the source of truth — the requested frequency is rounded to whole ticks, and `bestTiming()`'s own `actual_freq` is an integer divide that truncates. With an argument it sets the frequency from the RT core: the period register and both comparators latch on a period boundary, and the commanded duty is rescaled by `newPeriod/oldPeriod` so the operating **point** survives the change — that is the point of the verb, since on the power-loop rig a reboot of the buck collapses the loop. Works in any mode; the tracker's captured MPP and the manual duty target are rescaled with it. **RAM only**: persist with `set-config board.conf pwm_freq <hz>`, so a power cycle returns to a known frequency. `pwm_driver=mcpwm` only. |
 |  | Refusals, each leaving the converter untouched: outside 5–500 kHz; a frequency needing a different timer prescaler (unreachable on a 160 MHz source, where the prescaler is 1 across the whole range — which is also why the dead-time, `rect_offset_ns` and `boot_refresh_ns` stay correct in **ns** across a change); `fsw·L0·0.95` outside (1, 20) — the same window the boot assert enforces, so with `coil.conf::L0=80e-6` nothing below ~13.2 kHz is accepted; either dead-band above ¹⁄₃₂ of the **new** period, or the LS minimum above ¼ of it (both bite as the period shrinks, which is what caps the top of the range); wired sync armed (`sync_role`), whose pulse phase is baked in at init; and `bsync` Running, which dithers the same period register at 1 kHz around a nominal it cached at start — `svc off bsync` first. |
-| `measure-coil l0\|ls [steps\|hs] [dwell_ms] [apply]` | Measure the coil on-device by driving a DCM sweep (takes over manual PWM, restores MPPT when done). `l0` sweeps duty and reports the inductance (median over the DCM band); `ls` holds HS and sweeps the low-side count to find the `rect_offset_ns` timing. `apply` writes the result to `coil.conf`. Needs `Vin > Vout` (sun/headroom). Port of `etc/measure_coil.py`; see [Coil Inductance Measurement](../lab/coil-inductance.md). |
+| `measure-coil l0\|ls [steps\|hs] [dwell_ms] [apply]` *(needs `CONFIG_FUGU_WITH_MEASURE_COIL`)* | Measure the coil on-device by driving a DCM sweep (takes over manual PWM, then restores the previous mode: MPPT, manual duty, or PSU/PV). `l0` sweeps duty and reports the inductance (median over the DCM band); `ls` holds HS and sweeps the low-side count to find the `rect_offset_ns` timing. `apply` writes the result to `coil.conf`. Needs `Vin > Vout` (sun/headroom). Port of `etc/measure_coil.py`; see [Coil Inductance Measurement](../lab/coil-inductance.md). |
+| `short-ls` | Boost only, `Vin` ≈ 0 (e.g. for a controlled output discharge). Switches to manual PWM itself and holds the low side on. |
 
 The following commands require manual PWM mode:
 
@@ -134,7 +139,6 @@ The following commands require manual PWM mode:
 | --- | --- |
 | `sync [on\|1\|off\|0\|forced\|forced!]` | Disable/enable the low-side switch (diode emulation / synchronous rectification). `forced` requests forced-PWM mode. Some protections relax on the *request* (the `Vr-sensor-fail` test, because a board asking for forced PWM is telling you its current sensor is unusable); the diode-emulation behaviour changes only once the gate actually engages — with `converter.conf::fpwm_gate` on it stays diode-emulating until the duty is above the voltage ratio. `forced!` engages immediately, bypassing that gate. Bare `sync` reports the state and the duty the gate is waiting for, and is the one form that also works outside manual PWM. |
 | `bf <0\|1>`, `panel <0\|1>` | Disable/enable the backflow (panel) switch. When enabled it allows current to flow from output to input (battery to solar). Requires a configured backflow switch. |
-| `short-ls` | Short the low-side switch. Only valid in boost topology with `Vin` near zero (e.g. for a controlled output discharge). |
 
 ## Service Commands
 
@@ -143,11 +147,32 @@ services. Each has its own state, log level, and `enabled` flag persisted in its
 
 | Command | Description |
 | --- | --- |
-| `svc` / `svc list` | List all services with state, log level and enabled flag. |
+| `svc` / `svc list` (alias `service`) | List all services with state, log level and enabled flag. |
 | `svc on <name>` | Enable (persist) and start a service. |
 | `svc off <name>` | Disable (persist) and stop a service. |
-| `svc restart <name>` / `svc rs <name>` | Restart a service (stop then start); re-reads its conf. |
+| `svc restart <name>` / `svc rs <name>` | Restart a service (stop then start); re-reads its service-specific keys (not `enabled`/`log_level`; BLE security needs a reboot). See [When changes take effect](config/index.md#when-changes-take-effect). |
 | `svc log <name> <error\|warn\|info>` | Set and persist a service's log level. |
+
+## Bench / Diagnostic Commands
+
+:::warning
+`gpio`, `mcpwmtest` and `anaw` drive pins directly, bypassing the converter state and every protection, and
+none of these commands validates its arguments. They are reachable over every console transport,
+including telnet, BLE and MQTT. On a board with a power stage attached they can switch a gate. Bench use only.
+:::
+
+| Command | Description |
+| --- | --- |
+| `help`, `?` | Print the registered command list. |
+| `wsync [arm [off]]` | Wired-sync diagnostic: edge rate on the sync pin. `wsync arm` (with `CONFIG_FUGU_WITH_WSYNC`) makes the next boot probe the sync pin even with USB attached (one-shot, needs a restart); `arm off` clears it. |
+| `gpio <pin> <0\|1>` | Configure a pin as output and write it (drives the pin directly). |
+| `mcpwmtest <pin>` | Put a 50 % MCPWM test waveform on a pin (drives the pin directly; reboot to re-test). |
+| `gpiodump <pin>` | Print a pin's GPIO enable bit, output signal and IO_MUX register (read-only). |
+| `mcpwmdump <group>` | Print MCPWM timer 0 registers of a group (read-only). |
+| `pwm-dump` | Print the realized PWM frequency, period ticks and comparator positions. |
+| `anaw <pin> <0..255>` *(LEDC builds)* | Arduino `analogWrite` on a pin (drives the pin directly). |
+| `ota-ble …` *(needs `CONFIG_FUGU_WITH_BLE`)* | Device side of the OTA push over BLE; driven by the host tool, see [OTA over BLE](../guide/updating/ota-ble.md). |
+| `vconv [pv\|bat\|set …]` *(needs `CONFIG_FUGU_WITH_VCONV`)* | Inspect or change the virtual converter simulation. |
 
 ## Scripts
 

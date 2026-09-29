@@ -8,8 +8,10 @@ sidebar_position: 1
 # Beacon-sniffing MCPWM clock sync (`bsync`)
 
 Locks the switching clocks of multiple converters to a shared timebase recovered from 802.11
-beacons — **receive-only**: the device never associates or transmits, so it works with WiFi
-"off" (no TX bursts on the 3V3 rail during precision measurements). Implementation:
+beacons. The sync mechanism is **receive-only**: it needs neither association nor
+transmission, so it keeps working after `wifi off` (no TX bursts on the 3V3 rail during
+precision measurements). It does not turn the station link off by itself; for the radio-quiet
+state run `wifi off` (see below). Implementation:
 `src/sync/bsync.{h,cpp}`, driver hooks in `src/pwm/mcpwm.h` (`setPeriodTicks`, `count`,
 `update_period_on_empty`). The dedicated beacon source is documented in
 [bsync-beacon-node.md](beacon-node.md).
@@ -54,8 +56,15 @@ set-config bsync.conf bssid aa:bb:cc:dd:ee:ff   # the sync AP, same on all devic
 set-config bsync.conf channel 6
 set-config bsync.conf enabled 1
 svc on bsync
+wifi off                                         # radio-quiet: drop the STA link (see below)
 svc                                              # statusDetail: lock state, e, u, drift, counters
 ```
+
+:::warning
+A bare `wifi off` is persisted (NVS) and survives reboots until `wifi on`; `wifi off <minutes>`
+is temporary. After a bare `wifi off` the device is reachable only over a non-Wi-Fi console
+(USB/serial, or BLE if built in), so have one at hand before you send it over telnet or MQTT.
+:::
 
 `phase_us` shifts one device on the grid (e.g. half a period ≈ 12.8 µs for 180° interleave).
 Requires `converter.conf pwm_driver=mcpwm`.

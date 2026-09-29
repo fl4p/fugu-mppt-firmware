@@ -12,7 +12,7 @@ DWARF debug info. Two layers:
 
 - **Device** — `peek <addr> [len]` returns up to 256 raw bytes per request. Knows nothing about
   symbols or types.
-- **Host** (`etc/fugu_console.py` + `etc/peek_symbols.py`) — rewrites `peek <symbol>[.field…]`
+- **Host** (`etc/fugu_console.py` + `etc/idf-devtools/peek_symbols.py`) — rewrites `peek <symbol>[.field…]`
   to a numeric address before sending; renders `peek-struct <obj>` by issuing one or more
   `peek` requests and decoding the byte image against the build ELF's DWARF.
 
@@ -41,10 +41,19 @@ The (`addr`, `addr + len - 1`) interval must lie entirely in a single class of r
 | --- | --- | --- |
 | Internal RAM (DRAM/SRAM/RTC), DROM (flash-mapped const), external RAM (PSRAM) | `memcpy` | byte access; no alignment needed |
 | IROM / IRAM (executable, instruction-bus only) | 32-bit volatile load | `addr % 4 == 0` and `len % 4 == 0` |
+| Peripheral MMIO (S3 `0x60000000-0x600D1FFF`; ESP32 `0x3FF00000-0x3FF7FFFF`) | 32-bit volatile load | `addr % 4 == 0` and `len % 4 == 0`; not synchronised with the RT loop |
+
+Acceptance only means the range lies in a known region, not that the read is harmless:
+
+:::warning MMIO reads can crash or change state
+Reading a register of a clock-gated peripheral faults the bus (panic and reboot, which stops conversion on
+a converting device). FIFO, capture and `*_INT_ST` reads have side effects (UART/I2C FIFO pop, MCPWM
+capture, interrupt-status latches).
+:::
 
 Addresses outside these classes (or that straddle them) are rejected with
-`peek: 0x<addr> not safely readable`. IROM/IRAM with non-aligned addr or len is rejected with
-`peek: executable region needs 4-byte aligned addr+len`.
+`peek: 0x<addr> not safely readable`. Executable or MMIO ranges with non-aligned addr or len are rejected
+with `peek: executable region needs 4-byte aligned addr+len` (or `mmio region …`).
 
 ### 1.3 Output
 

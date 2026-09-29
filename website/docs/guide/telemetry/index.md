@@ -17,7 +17,10 @@ InfluxDB over Wi-Fi:
 ```
 set-config tele.conf influxdb_host <influxdb-ip>
 svc on tele
+restart
 ```
+
+Changing `influxdb_host` takes effect after a reboot.
 
 Home Assistant over MQTT:
 

@@ -18,7 +18,8 @@ cd fugu-mppt-firmware
 git submodule update --init --recursive   # after a pull, or if cloned without --recursive
 ```
 
-The build also needs two sibling checkouts, see [External repositories](#external-repositories).
+No sibling checkouts are required; local checkouts of esp-ota-ble / esp-bootguard are optional overrides, see
+[External repositories](#external-repositories).
 
 ## Top-level folders
 

@@ -45,7 +45,7 @@ pack lasts longest?
    still worth having, but the pack never leaves the top quarter. To move the average SoC down,
    the charger would have to stop short of full (an Ah-counted ceiling such as 70–80 % of `bat_c`
    from the last full charge) and go to 100 % only periodically for balancing. Implemented on
-   2026-09-07 as `partial_charge` / `full_charge_interval` (see `Termination.md`); not yet
+   2026-09-07 as `partial_charge` / `full_charge_interval` (see [Termination](../guide/charging/termination.md#partial-charge-ceiling-partial_charge)); not yet
    validated on a converter. Caveat from S5/S7: shallow cycles (10–20 % DoD) parked around
    50 % SoC showed a strong but partly reversible dip, and the journal version ranks that 50 %
    window worse than 25 % or 75 % for 20 % DoD cycles; mechanism deferred to a follow-up, absent
@@ -141,9 +141,11 @@ Mapped onto `charger.conf` and the termination logic in [LFP Charging](../guide/
 | storage | If the pack will idle for weeks, leave it at 30–50 % SoC (S3), cool (S1, S7: 0–10 °C storage showed almost no aging). | high |
 
 The firmware's existing structure (absorption → termination → DoD-gated recharge, no float) is
-consistent with the evidence as far as it goes, but it always charges to full, so the pack lives
-in the top window regardless of `recharge_dod`. The change the evidence points at is a
-partial-charge ceiling with periodic full charges. Independently of that, any path that re-tops
+consistent with the evidence as far as it goes. With the default `partial_charge=0` it charges
+to full every cycle, so the pack lives in the top window regardless of `recharge_dod`.
+`partial_charge` (with `full_charge_interval`) adds the Ah-counted ceiling with periodic full
+charges that the evidence points at. It needs a full charge since boot and fresh BMS data, and
+it is not yet validated on a converter; see [Termination](../guide/charging/termination.md#partial-charge-ceiling-partial_charge). Independently of that, any path that re-tops
 the pack daily when the load is small (e.g. an ungated periodic re-sweep dumping charge into a full pack) works against the cells.
 
 ## 4. Conflicts and dependencies
@@ -176,7 +178,7 @@ the pack daily when the load is small (e.g. an ungated periodic re-sweep dumping
   little SoC-range effect on LFP at 200 EFC. Neither overturns the high-SoC penalty from S1 and
   S8, but the exact idle-SoC target is cell-specific and mid-SoC parking of a *cycling* pack is
   not automatically benign.
-- **Dependencies.** S1 (Keil), S4/S5/S7 (Naumann), S18 (Spingler, not fetched) share the TUM
+- **Dependencies.** S1 (Keil) and S4/S5/S7 (Naumann) share the TUM
   group and, for S4/S5/S7, one data set; they count as one experimental line for the calendar-SoC
   plateau finding. S8 (Dahn group) is independent of TUM. S2 (Sandia) is independent of both. S10,
   S11, S12 are reviews and are not independent evidence of anything they relay.

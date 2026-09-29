@@ -49,8 +49,18 @@ input/output capacitance and per-channel noise.
 
 :::danger Driving a real half-bridge
 - **Current-limit the supply.** Bring up a new board, profile or firmware from a bench supply with a low current
-  limit, not from a panel or battery. In the power-loop rig the PSU current limit is the only backstop.
-- **Start with a mock profile** to check pins and sensor readings before enabling the power stage.
+  limit, not from a panel or battery.
+- **In the power-loop rig the PSU limit is not a loop-current limit.** It caps the power put into the loop, not the
+  loop current. Circulating current is set by the ratio mismatch and can reach tens of amps within that power
+  budget. The limit does nothing against returned energy or discharge of the bus capacitance. The firmware's
+  current-based trips are blind on that rig, but its voltage trips still act. Provide a separate way to break the
+  loop (switch or fuse sized for the loop current), and discharge the bus before rewiring. See
+  [Power-loop rig](power-loop.md#pitfalls).
+- **Mock profiles are logic-only.** Use them with the power stage disconnected to check console, services and
+  synthetic telemetry, never with a panel, supply or battery attached: `dry_mock` uses the fake ADC, drives PWM on
+  pins that are not your board's, and sets zero dead-time. Before first power, provision the real board profile
+  and compare `sensor` readings against a meter at a current-limited supply (see
+  [First power-up](../guide/getting-started/first-power-up.md)).
 - **Never OTA a `VCONV` build to a real converter.** It drives the simulation instead of the half-bridge; the
   converter outputs 0 W.
 - **Stop conversion before updating at high power.** Send `dc 0` first; an OTA reboots the device into the new

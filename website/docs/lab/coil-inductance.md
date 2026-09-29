@@ -186,8 +186,10 @@ own `rippleCurrent()`.
 Procedure:
 
 1. Read `fsw` from `board.conf::pwm_freq`; obtain `pwmCtrlMax` from the `dc` out-of-range reply and
-   derive the PWM period `pwmMax = pwmCtrlMax / (1 − MinDutyCycleLS)` (buck); read the current
-   `coil.conf::L0` for reference.
+   derive the PWM period as `pwmMax = pwmCtrlMax/(1−0.06)`; read the current `coil.conf::L0` for
+   reference. That model is stale (the firmware now reserves `boot_refresh_ns` plus dead-time), so
+   pass the real period with `--pwm-max` (the `pwmMax=` in the `converter: drv=… pwmMax=…` boot log
+   line, or from `pwm-dump`/`dt`) and `--fsw` if the frequency was changed.
 2. Read an idle status line for `M = Vout/Vin`; require `Vin > Vout` (buck headroom / sun).
 3. Sweep the high-side duty count `H` upward across the DCM band (`--lo`..`--hi` × `M·pwmMax`),
    holding each step `--dwell` seconds. `Vin`, `Vout`, `Iout` are read from the `sensor avg`
@@ -202,10 +204,9 @@ Procedure:
 5. Discard points below an `Iout` floor (sensor offset territory, §3) and report the median of the
    rest, plus an IQR spread. Restore MPPT (or `dc 0`) on exit.
 
-Robustness checks built in: `pwmMax` is cross-checked three ways (`pwmCtrlMax`, `pwmRectMin`, and
-the LEDC `clock/fsw` resolution must agree); a flat `L` vs `D` across the band confirms the duty
-scale (a duty/dead-time error would show as a trend); all-CCM points warn that `forced_pwm` may be
-on (which suppresses DCM).
+Built-in checks: all-CCM points warn that `forced_pwm` may be on (which suppresses DCM); `--bidir`
+compares up/down sweeps for settling. A wrong `pwmMax` biases `L` by a constant factor and is **not**
+detected.
 
 Limitations:
 
@@ -227,8 +228,9 @@ python etc/measure_coil.py -p <serial-port> --steps 12 --dwell 6
 
 ### On-device equivalent (`measure-coil`)
 
-The same two sweeps run **on the device** with no host, via the console command (`src/measure_coil.cpp`,
-a spawned non-RT-core task):
+The same two sweeps run **on the device** with no host, via the console command
+(`src/selftest/measure_coil.cpp`, a spawned non-RT-core task). Requires a build with
+`CONFIG_FUGU_WITH_MEASURE_COIL=y` (off by default):
 
 ```
 measure-coil l0 [steps] [dwell_ms] [apply]     # the §5 inductance sweep

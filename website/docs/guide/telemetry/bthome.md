@@ -64,7 +64,7 @@ Every object ID appears exactly once, so HA names entities directly (`voltage`, 
 
 Single u8, two nibbles:
 
-- **Low nibble (bits 0..3)** — MPPT phase, mapped from `MpptControlMode` (`src/mppt.h`): `0 = off`, `1 = sweep`, `2 = fast P&O`, `3 = slow P&O`, `4 = CV`, `5 = CC`, `6 = CP`, `7 = manualPwm`. Final enum mapping is finalised in the encoder; document the exact byte values in `doc/BLE.md` once the encoder lands.
+- **Low nibble (bits 0..3)** — MPPT phase, mapped from `MpptControlMode` (`src/mppt.h`): `0 = off`, `1 = sweep`, `2 = fast P&O`, `3 = slow P&O`, `4 = CV`, `5 = CC`, `6 = CP`, `7 = manualPwm`. Final enum mapping is finalised in the encoder; document the exact byte values on this page once the encoder lands.
 - **High nibble (bits 4..7)** — charger phase: `0 = idle`, `1 = bulk`, `2 = absorption/CV`, `3 = float`, `4 = terminated`, `5 = fault/backoff`. Derived from `mppt.charger.termCond`, `Vout_max()`, and the protection state.
 
 HA template helper example for users:

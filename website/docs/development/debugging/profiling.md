@@ -26,7 +26,7 @@ In this firmware:
     being preempted" or "who is hogging core 0.
 * rtcount (per-section instrumentation)
   *   Wrap any RT path with rtcount("name"); it uses the xtensa cycle counter to accumulate count/min/max/total per label. Already sprinkled through mppt.cpp,
-      sampling.h, main.cpp. Output is printed by rtcount_print(reset) — cli.cpp:213 calls it from the reset-lag command, so run reset-lag over serial/telnet/MQTT
+      sampling.h, main.cpp. Output is printed by rtcount_print(reset) — `cmdResetLag` in cli.cpp calls it from the reset-lag command, so run reset-lag over serial/telnet/MQTT
       to dump and zero the counters. Best for "which step in loopRTNewData is slow."
 
 
@@ -34,13 +34,11 @@ In this firmware:
 ## esp32-semihosting-profiler
 * https://github.com/espressif/esp-idf/blob/master/examples/storage/semihost_vfs/README.md
 
-> **Opt-in via `WITH_SPROFILER=1`.** Default builds exclude the `esp32-semihosting-profiler`
-> component to save flash (~6 KB) and DIRAM (~8 KB `.bss`). To profile, build with:
-> ```
-> idf.py menuconfig (enable CONFIG_FUGU_WITH_SPROFILER), then idf.py build
-> ```
-> The `reconfigure` is required: the env var toggles `EXCLUDE_COMPONENTS` in the top-level
-> `CMakeLists.txt`, which a plain `idf.py build` won't re-detect. `main.cpp` guards the profiler
+> **Opt-in via `CONFIG_FUGU_WITH_SPROFILER=y`** (`idf.py menuconfig` → "Fugu MPPT firmware", or an
+> sdkconfig fragment). Default builds exclude the `esp32-semihosting-profiler` component to save
+> flash (~6 KB) and DIRAM (~8 KB `.bss`). The top `CMakeLists.txt` reads this symbol before
+> `project()` to drop the component; run `idf.py reconfigure build` after toggling it. The legacy
+> `WITH_SPROFILER` env var is rejected. `main.cpp` guards the profiler
 > init with `#ifdef WITH_SPROFILER`, and `main/CMakeLists.txt` sets the matching compile def
 > (mirrors the `WITH_BLE` flag pattern).
 

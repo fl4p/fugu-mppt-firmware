@@ -17,8 +17,8 @@ console). From `vprintf_`:
 - **Core 1 (RT core)**, when `deferLogs` is set or the caller can't yield (ISR / critical section):
   the line is pushed onto a queue (`enqueue_log`) and drained later on core 0
   (`flush_async_uart_log`, called from the network loop). The RT loop must never block in
-  `uart_tx_char` (~5 ms for a 60-byte line at 115200 baud), so it never formats/writes the console
-  itself.
+  `uart_tx_char` (~5 ms for a 60-byte line at 115200 baud), so it formats into a heap buffer and
+  queues it, but never writes the console itself.
 - **The ESP-IDF `wifi` task** (detected via `pcTaskGetName`, guarded by `xPortCanYield()`): routed
   straight to `old_vprintf` (UART only), bypassing `vprintf_mux`. Its 3072 B stack can't absorb
   `vprintf_mux`'s 300 B `loc_buf` + mirror-sink frames during a connect/reconnect logging burst —
@@ -63,12 +63,14 @@ publish→log→publish feedback loop.
 
 Early boot logs (`setup()`, WiFi bring-up) happen before any remote sink exists — MQTT can't connect
 until WiFi is up, well after setup() logs. `s_bootLog` (8 KB) captures formatted lines until the
-first sink attaches; `addLogCallback` then replays the captured block to that sink in one shot and
-freezes the backlog. That's how the boot sequence reaches MQTT/telnet after the fact. `vprintf_`
-routes esp_log through this path from the very start of setup() so the capture sees the whole boot.
+first sink attaches; `addLogCallback` then freezes the backlog and replays it in one shot to sinks
+that ask for it. esp_log lines are captured from `enable_esp_log_to_telnet()` (after service
+registration) on; `UART_LOG` lines from the start of `setup()`. For earlier ESP_LOG output use the
+serial console.
 
-Note: a fresh console session therefore receives the entire boot backlog up front; a one-shot
-client (`fugu_console.py -c`) may need a longer read window before its command's reply.
+Only the MQTT mirror receives the backlog (on each fresh attach); telnet and BLE do not. The backlog
+freezes at the first sink attach, whichever sink that is. A one-shot MQTT client
+(`fugu_console.py --mqtt … -c`) may therefore need a longer read window before its command's reply.
 
 ## esp_log internals (reference)
 

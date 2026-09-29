@@ -16,8 +16,8 @@ The same points go to every enabled transport:
 | Transport          | Enable                                               | Wire                                                           |
 |--------------------|------------------------------------------------------|----------------------------------------------------------------|
 | UDP to InfluxDB    | `tele` service, [`tele.conf`](config/tele.md) `influxdb_host`, Wi-Fi up and clock synced (SNTP) | Line protocol to UDP port 8086, batched per datagram; `binary=1` sends the compressed binary wire instead |
-| BLE stream         | `CONFIG_FUGU_WITH_BLE_TELE`, `tele-ble 1`, clock set | Binary wire over the NUS TELE characteristic                   |
-| BLE advertising    | `CONFIG_FUGU_WITH_BLE_ADV`, `tele.conf` `adv_ms`     | 17-byte record with a subset of fields (see below)             |
+| BLE stream         | `CONFIG_FUGU_WITH_BLE_TELE`, `ble` service running, a connected client, `set-time`, `tele.conf` `ble=1`, and either `tele` stopped or `binary=1` (+ `svc rs tele`); then `tele-ble 1` | Binary wire over the NUS TELE characteristic                   |
+| BLE advertising    | `CONFIG_FUGU_WITH_BLE_ADV`, `ble` service running, `tele.conf` `adv_ms` | 17-byte record with a subset of fields (see below)             |
 
 The binary wire and BLE records are decoded back into line protocol by `etc/influx_binary_proxy.py`, see
 [Host tools](host-tools.md#influx_binary_proxypy).
@@ -45,10 +45,10 @@ A point is produced at most every 20 ms. Some fields are only included on every 
 
 | Field         | Unit   | Type  | Rate          | Meaning                                                                         |
 |---------------|--------|-------|---------------|---------------------------------------------------------------------------------|
-| `I`           | A      | float | every point   | Current of the physical current sensor: `Iout`, or `Iin` when `Iout` is virtual |
-| `Ui`          | V      | float | every point   | Input voltage `Vin` (median of 3)                                               |
-| `Uo`          | V      | float | every point   | Output voltage `Vout` (median of 3)                                             |
-| `P`           | W      | float | every point   | Power `I` × voltage on the same side (median of 3)                              |
+| `I`           | A      | float | every point   | Current of the physical current sensor: `Iout`, or `Iin` when `Iout` is virtual (median of 5) |
+| `Ui`          | V      | float | every point   | Input voltage `Vin` (median of 5)                                               |
+| `Uo`          | V      | float | every point   | Output voltage `Vout` (median of 5)                                             |
+| `P`           | W      | float | every point   | Power `I` × voltage on the same side (median of 5)                              |
 | `E`           | Wh     | float | every point   | Total energy counter                                                            |
 | `E_today`     | Wh     | float | every point   | Energy yield of the current day                                                 |
 | `pwm_duty`    | counts | int   | every point   | Control-switch on-time in PWM timer counts (high side in buck mode)             |

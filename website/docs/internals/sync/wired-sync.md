@@ -78,7 +78,7 @@ start on a wired-sync follower (the wire owns the period).
 ## Coupling circuit (DC-blocked, tolerates ~1 V static ground offset)
 
 **Not galvanic isolation, and no common-mode rejection above DC.** C1's reactance at the pulse
-edge is ~50 Ω against a ~6.6 k node, so a ground-to-ground *step* couples in essentially
+edge is ~50 Ω against a ~7.7 k node, so a ground-to-ground *step* couples in essentially
 unattenuated — a 2 V CM step with a ≤1 µs edge is indistinguishable from the sync pulse at the
 receiver. A static offset is rejected; a stiff conducted CM transient is not. For anything beyond
 a quiet bench, use a 1:1 pulse transformer or a digital isolator instead of this network.
@@ -86,28 +86,27 @@ a quiet bench, use a 1:1 pulse transformer or a digital isolator instead of this
 ```
   LEADER                                                      FOLLOWER
 
-                                                            3V3_follower
-                                                               │
-                                                              ┌┴┐
-                                                              │ │ R1
-                                                              │ │ 33k
-             100Ω           twisted pair        C1 1nF        └┬┘
-  GPIO ─────[████]───────────────────────────────┤├───────────●──────[████]───── GPIO
-  (out)                                                       │        1k        (sync in)
-                                                              ┌┴┐
-                                                              │ │ R2
-                                                              │ │ 10k
-                                                              └┬┘
-                                                               │
-  GND ───────────────────────────────────────────┤├───────────●───────────────── GND_follower
-             (pair return, ~1 V DC offset OK)   C2 10nF
+                                                            3V3_follower      3V3_follower
+                                                               │                  │ (+100 nF to GND)
+                                                              ┌┴┐            ┌────┴────┐
+                                                              │ │ R1         │74LVC1G17│
+                                                              │ │ 33k        │         │
+             100Ω           twisted pair        C1 1nF        └┬┘            │         │
+  GPIO ─────[████]───────────────────────────────┤├───────────●────[████]───►│A       Y├──── GPIO
+  (out)                                                       │      1k      └────┬────┘   (sync in)
+                                                              ┌┴┐                 │
+                                                              │ │ R2              │
+                                                              │ │ 10k             │
+                                                              └┬┘                 │
+                                                               │                  │
+  GND ───────────────────────────────────────────┤├───────────●───────────────────●────── GND_follower
+             (pair return, ~1 V DC offset OK)   C2 100nF (C0G/film ≥50 V)
 ```
 
 C1's follower-side pin lands on the bias node ● (junction of R1, R2 and the 1 k into the
-GPIO); C2's follower-side pin goes straight to follower GND. The two are NOT connected to each
+Schmitt buffer's input); C2's follower-side pin goes straight to follower GND. The two are NOT connected to each
 other. C2 is the pulse's return path: joining it to the bias node would force the return
-current through R2, killing the edge. R1/R2 bias the idle input to ~0.77 V (just under
-V_IL); a 3.3 V edge through C1 rides on top of that.
+current through R2, killing the edge. R1/R2 bias the idle node to ~0.77 V; a 3.3 V edge through C1 rides on top of that.
 
 Pin choice: any GPIO works via the matrix, but pick with boot behavior in mind. Leader out —
 IO0 is OK (the strap only samples at the leader's own reset and the AC-coupled wire can't
@@ -121,24 +120,21 @@ ROM boot chatter becomes a >period-rate spurious sync burst into a converting fo
   electrically **in series** with C1 for the pulse, so at 10 nF it is a 9 % series element, not the
   negligible "ground bond" it looks like — use **100 nF** (C_eff 0.99 nF). Film/C0G ≥50 V
   (class-2 ceramic capacitance sags with bias).
-- R1/R2 bias the follower input to **~0.64 V**, not the 0.77 V the bare divider suggests: the
-  sync-src config forces the internal pull-down on, and that ~45 k in series with the 1 k parallels
-  R2. V_IL,max is 0.25·VDD = 0.825 V, so the pull-down is what buys the margin. Over the 10–80 k
-  R_PD spread the idle sits at 0.41–0.69 V. R2 = 4.7 k makes it R_PD-independent.
-- Node Thevenin ~6.6 k, τ ≈ 6 µs. Over a 1 µs pulse the level droops 15 %, ending at ~3.4 V
-  against V_IH 2.475 V — 1.4× margin. The falling edge lands at **+0.17 V**, i.e. it does not
-  undershoot below ground at this pulse width, so no BAT54S is needed; the 1 k does carry ~0.3 mA
-  of ESD-clamp current on the rising edge and must stay.
+- With the buffer fitted, the node idles at the **bare-divider** value, 3.3·10/(33+10) ≈ **0.77 V**.
+  The internal pull-down the sync-src config forces on (`src/pwm/mcpwm.h`) now loads only the
+  buffer output, not the bias node. Check the idle level and the pulse against the 74LVC1G17's
+  V_T− / V_T+ at the follower's VCC (datasheet), not against the S3 pad's V_IL.
+- Node Thevenin 33k‖10k ≈ **7.7 k**; with C_eff 0.99 nF, τ ≈ 7.6 µs, so the level droops ≈ 12 %
+  over a 1 µs pulse.
 - **74LVC1G17 Schmitt buffer (follower 3V3) between bias node and GPIO — fit it.** The S3 pad has
-  no input hysteresis, and a slow or ringing edge on a 6.6 k node beside a switching stage will
+  no input hysteresis, and a slow or ringing edge on a high-impedance node beside a switching stage will
   multi-trigger. A false edge is not cosmetic; see the dead-time hazard below.
 - Route away from the power stage; if shielded, tie the shield on one side only.
 
 ## Interaction with bsync
 
-A `follower` follows the wire regardless of its own period register; running the beacon servo on a
-follower is pointless (its dither is overridden every cycle) — leave `bsync` for the leader or for
-wireless-only setups.
+`bsync` and `sync_role=follower` are mutually exclusive: the `bsync` service refuses to start on a
+follower. Run `bsync` on the leader, or in wireless-only setups.
 
 ## Bench checklist
 

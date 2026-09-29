@@ -21,8 +21,16 @@ idf.py set-target esp32s3 && idf.py build        # ESP32-S3: build/ + ./sdkconfi
 # classic ESP32: build-esp32/ + build-esp32/sdkconfig
 idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig set-target esp32
 idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig build
-idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig -p $ESPPORT app-flash
+idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig -p $ESPPORT flash
 ```
+
+On a blank chip use `flash`: `app-flash` writes no bootloader or partition table. `flash` also writes
+`config/fugu1/fugu1_esp32`, a real ADS1015 board configuration, not a mock.
+
+:::warning
+Keep panel and battery disconnected until the board is provisioned with the configuration of your hardware. Use
+`app-flash` for later updates, which keeps the configuration.
+:::
 
 Then provision a configuration whose `board.conf` says `mcu=esp32`, e.g. `./provision.py fugu1/fugu1_esp32`.
 

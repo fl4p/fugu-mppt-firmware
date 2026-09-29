@@ -94,8 +94,8 @@ With only the input supply connected and the output open:
   [`sensor.conf`](../../reference/config/sensor.md).
 - [ ] Current readings sit near zero; the sampler calibrates the zero-current offset at start.
 - [ ] `status` shows the limits you configured.
-- [ ] While idle the log names what blocks a start, e.g. `START blocked: Vin-Vout (Vin=24.1 Vout=0.0 …)`. A buck
-  needs Vin above Vout + 1 V, a boost Vout above Vin + 1 V.
+- [ ] While idle the log names what blocks a start, e.g. `START blocked: Vin-Vout (Vin=12.4 Vout=12.9 …)`. A buck
+  needs Vin above Vout + 1 V; a boost needs Vin below Vout + 1 V.
 
 Then connect a load or a second supply/battery simulator on the output and let the converter start. Watch `status`
 and the log; any protection trip is logged with its reason.

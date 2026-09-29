@@ -14,7 +14,7 @@ selected at boot by `converter.conf` and switched live from the [console](../ref
 Manual duty, forced PWM, PSU and PV-sim modes drive the half-bridge directly or regulate against a stiff source.
 A wrong duty or setpoint can push hundreds of amps through the switches or put the input voltage on the output.
 Use a current-limited supply for first tests, keep a scope on the switch node when changing timing, and know that
-`dc 0` stops the converter from any mode.
+`dc 0` stops the converter from any mode once it replies OK.
 :::
 
 ## Quick start
@@ -58,7 +58,7 @@ tracker. The Vout limit comes from the charger, see [LFP charging](charging/lfp-
 | Command | Effect |
 |---|---|
 | `sweep` | Start a global scan now (also leaves PSU mode) |
-| `speed <0–10>` | Tracking speed scale, default 1.0 |
+| `speed <s>` | Tracking speed scale, 0 ≤ s < 10, default 1.0 |
 | `+N` / `-N` | Perturb the duty by N counts, also while tracking (rejected in PSU mode) |
 
 ## Manual PWM
@@ -74,7 +74,8 @@ mppt            # resume tracking
 - `dc N` accepts 0 up to the driver's maximum count and prints the range when out of bounds. A non-zero duty is
   refused while the sensors calibrate. `dc 0` is accepted then too, but **not** while an on-device coil
   measurement runs (`CONFIG_FUGU_WITH_MEASURE_COIL`): every `dc` command is rejected with `dc: busy measuring`
-  until it finishes.
+  until it finishes. `dc 0` also fails with `RT transition timed out` if the control loop does not take it within
+  ~1 s. In both failure cases assume nothing was stopped: check the reply.
 - Protections stay active. A non-zero duty enables synchronous rectification and the backflow switch unless
   `limits.conf::reverse_current_paranoia` is set.
 - `sync`, `bf` and `short-ls` require manual mode, see [console](../reference/console.md#manual-pwm-commands).
@@ -106,7 +107,9 @@ psu_vout=24
 
 - The setpoint is range-checked against `limits.conf::vout_max`.
 - In boost topology the setpoint must exceed Vin by at least 0.5 V.
-- Trips retry after 100 ms and escalate to a hard latch after repeated faults. `psu <V>` again clears the latch.
+- Output over-voltage and supply under-voltage trips retry fast: within 60 s the first 4 trips retry after 100 ms,
+  trips 5-8 use the normal backoff, and the 9th latches the output off (`psu` shows the latch). Other faults use their
+  normal backoff. Any mode command (`psu <V>`, `psu off`, `mppt`, `dc`) clears the latch.
 - `+N`/`-N` are rejected; use `psu off` first.
 
 `config/psu_12v` is a different approach: MPPT mode with `forced_pwm=1` and the output voltage in
@@ -149,7 +152,7 @@ The [power-loop rig](../lab/power-loop.md) uses a boost in `mode=pv` as the sour
 | Goal | Commands |
 |---|---|
 | Stop conversion now | `dc 0` |
-| Stop before an OTA at high power | `dc 0`, then update; the reboot resumes the configured mode |
+| Stop before an OTA at high power | `dc 0`, confirm the OK reply (or `status`) before updating; the reboot resumes the configured mode |
 | Fixed output voltage from a battery | `topo=boost`, `mode=psu`, `psu_vout=<V>` |
 | Test a charger against a simulated panel | simulator: `mode=pv`; charger under test: normal MPPT |
 | Inspect the tracker | `+N`/`-N` while tracking, then watch it recover |

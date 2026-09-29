@@ -158,8 +158,8 @@ group plus one fault brake. Phase relationship:
 - Leg 0's timer publishes a sync source on TEZ (`mcpwm_new_timer_sync_src`).
 - Legs 1..N-1 take that sync and set `count_value = period_ticks × i / N`
   (`mcpwm_timer_set_phase_on_sync`), giving uniform 360°/N spacing.
-- Sync is one-shot at start; the timers run free afterward (sub-tick drift between
-  legs is below the comparator quantum and not corrected).
+- Leg 0's TEZ re-syncs legs 1..N-1 every period (the sync source stays connected), so the
+  phase offset is re-imposed each cycle. Changing leg 0's period changes all legs.
 - `setHsOff` / `setLsOff` fan out to all legs. Per-leg phase trimming is not in scope.
 
 `N = 1` is the same code with no sync source created.
@@ -195,7 +195,7 @@ group plus one fault brake. Phase relationship:
 | `pwm_sd` (optional)      | driver SD pin, driven high in `init`                       |
 | `pwm_deadtime_ns`        | HiLi dead-time in ns, both transitions; ignored when `InEn` |
 | `pwm_deadtime_hl_ns`     | HS→LS override (RED register, realized −1 tick)            |
-| `pwm_deadtime_lh_ns`     | LS→HS override (`pwmMax` reservation, realized exactly)    |
+| `pwm_deadtime_lh_ns`     | LS→HS override (`pwmMax` reservation; tightest realized band `dtLh + 1` tick) |
 | `pwm_fault_pin` (opt.)   | GPIO fault input pin                                       |
 | `pwm_fault_active_high`  | fault polarity (0/1); pull resistor set accordingly        |
 

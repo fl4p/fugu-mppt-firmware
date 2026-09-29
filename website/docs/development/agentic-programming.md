@@ -117,7 +117,8 @@ Why this is agentic-friendly:
 - **Reproducible.** The model is deterministic: identical inputs produce bit-identical outputs.
   Failures are repeatable; no flaky hardware.
 - **Self-contained.** `vconv.conf` (in `config/lab/vconv_mock/`) sets PV curve, battery, and
-  passives. An agent adjusts these via `set-config vconv.conf …` without a rebuild.
+  passives. An agent adjusts these via `set-config vconv.conf …` without a rebuild; `restart` to
+  apply.
 - **Observable.** The same `sensor avg`, `mppt`, `status`, `rt-stats`, and telemetry paths that
   work on a real converter work with vconv — including InfluxDB push, so time-series data from
   automated sweeps lands in the same dashboard.
@@ -171,6 +172,13 @@ before any hardware is involved.
 ## 5. On-Target Unity Tests
 
 For correctness that requires real hardware timing (ADC DMA, FreeRTOS tasks, MCPWM):
+
+:::danger Bare board only
+The Unity suite drives GPIO 1, 2, 4-9 and **21** as outputs (21 is the high-side gate input on Fugu2
+boards, left HIGH after the ISR tests), and `idf.py flash` overwrites the littlefs config with
+`config/lab/dry_mock`. Run it on a dev board or a Fugu board with the power stage unpowered (no PV, no
+battery). Use `app-flash` if the littlefs config must be kept.
+:::
 
 ```bash
 RUN_TESTS=1 idf.py -B build-tests build flash monitor
@@ -237,17 +245,23 @@ matching device to pull and flash the new image.
 Agent-safe workflow:
 
 ```bash
-./ota.sh                          # build, then:
-python etc/ota.py -n              # dry-run: show which devices would update + version delta
-python etc/ota.py -m <name>       # update only hostnames matching <name> after confirming
-python etc/ota.py -m <name> -f    # force even if version matches
+idf.py build                          # build only
+python3 etc/ota.py -n -m <name>       # dry-run, scoped: target + version delta
+python3 etc/ota.py -m <name>          # live, scoped to hostnames matching <name>
+python3 etc/ota.py -m <name> -f       # only if the same version must be re-pushed
 ```
+
+:::danger `./ota.sh` updates every device
+`./ota.sh` builds **and immediately OTAs every discovered device** (it runs `etc/ota.py` without `-n`
+or `-m`). Do not use it where more than one device is reachable.
+:::
 
 The `-n` / `--dry-run` flag is the agent's first move: confirm the target device, current
 version, and what would change before committing. The before/after version table is printed at
 the end of a live run for verification.
 
-OTA archives the flashed ELF automatically (via `idf_ext.py` + `etc/idf-devtools/elf_archive.py`)
+OTA archives the flashed ELF automatically (`etc/ota.py` calls `etc/idf-devtools/elf_archive.py`;
+`idf_ext.py` does the same for serial flashes)
 so coredumps from any subsequently-flashed build can always be symbolicated — even months later.
 
 ---
@@ -256,8 +270,10 @@ so coredumps from any subsequently-flashed build can always be symbolicated — 
 
 Beyond the console, the firmware pushes structured data to external systems an agent can query:
 
-- **InfluxDB** (UDP line protocol): every MPPT cycle's Vin, Iin, Vout, Iout, power, duty, MPPT
-  phase, charger state, BMS cell data. Measurement `mppt` at the configured InfluxDB host. Grafana
+- **InfluxDB** (UDP line protocol, measurement `mppt`): up to 50 points/s while Wi-Fi, an Influx
+  host and time sync are up: Vin (`Ui`), Vout (`Uo`), power-side current `I`, `P`, energy, HS duty.
+  MPPT state, temperatures, loop lag and LS duty come on a decimated subset. For sample-level
+  transients use the scope service. Grafana
   dashboards show real-time and historical behavior, so an agent can validate a parameter change
   by checking the time series rather than parsing console text.
 - **`sensor avg`**: one compact line of EWM averages — fast polling without opening a full
@@ -285,8 +301,9 @@ conf-check          # report unknown/obsolete keys
 get-config charger.conf
 ```
 
-An agent can iteratively tune, verify effects via `sensor avg` or telemetry, and persist changes
-without a rebuild or reflash cycle. The HTML config editor (`etc/config-tool/conf-editor.html`)
+`set-config` only rewrites the file; boot-time confs (including `limits.conf`) take effect after
+`restart`, see below. An agent can iteratively tune, restart, verify effects via `sensor avg` or
+telemetry, and persist changes without a rebuild or reflash cycle. The HTML config editor (`etc/config-tool/conf-editor.html`)
 provides a UI backed by the same `set-config`/`get-config` protocol.
 
 ---
@@ -297,9 +314,14 @@ Several mechanisms make it safer to let an agent drive the firmware:
 
 - **`-n` dry-run on OTA**: discover + version-check without flashing. Always `-n` first.
 - **`-m <name>` OTA targeting**: never update all devices by accident.
-- **Protection stack**: over-voltage, over-current, under-voltage, and loop-latency watchdogs
-  cut the converter independently of software. An agent that issues a reckless `dc 999` command
-  will trigger protection before hardware damage.
+- **Protection stack (software)**: the RT loop checks Vin/Vout over-voltage and Iin/Iout
+  over-current on every new sample, plus temperature, and calls `stopAndBackoff` on a violation.
+  These are firmware checks on sampled values: they run only while the RT loop runs, react one
+  sample late at best, and pause during flash-cache-disabled windows. Manual PWM (`dc`) disables
+  the supply-UV cutout and the loop-latency watchdog. A hardware OST brake exists only for the
+  MCPWM driver, and only when `board.conf::pwm_fault_pin` is wired and set (default off).
+  Protection does not guarantee against damage: bound every `dc`/`+N` command and use a
+  current-limited supply on the bench.
 - **OTA rollback**: `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` + a 30-second boot watchdog in
   `setup()`. A bad firmware image that hangs during setup reverts to the previous slot on the
   next reset — no physical recovery needed.
@@ -321,11 +343,13 @@ The firmware drives a real half-bridge; treat state-changing commands accordingl
   `tasks` walk the FreeRTOS task list and can starve the continuous-ADC DMA on a busy configuration; use them
   sparingly on a converting device. InfluxDB telemetry gives a passive view without any console
   round-trip. While diagnosing, stick to these.
-- **Config changes are low-risk and reversible.** `set-config` / `get-config` / `conf-check` edit
-  the littlefs partition in place without rebooting. Changes take effect on the next parameter
-  re-read cycle (charger: ~1 s; most others: at the next `svc restart` or reboot). Record the
-  current value with `get-config <file> <key>`, apply the change, observe the effect via telemetry
-  or `sensor avg`, and revert with `set-config <file> <key> <original>` if it is wrong.
+- **Config changes are reversible.** `set-config` / `get-config` / `conf-check` edit the littlefs
+  partition in place without rebooting. `set-config` only rewrites the file. `board`, `sensor`,
+  `limits`, `coil`, `converter`, `tracker`, `charger` and `vconv` confs are read once at boot: send
+  `restart` before evaluating the change (a lowered limit is not in force until then). Service confs
+  (`mqtt`, `tele`, `ftp`, `ble`, …) are re-read by `svc restart <name>`. Record the current value
+  with `get-config <file> <key>`, apply the change, restart, observe the effect via telemetry or
+  `sensor avg`, and revert with `set-config <file> <key> <original>` if it is wrong.
 - **PWM commands need care.** `dc <duty>`, `+N`, `-N`, `sweep` and `mppt` directly manipulate the
   half-bridge:
     - Only drive these in **manual PWM mode** (`dc <duty>` engages it; `mppt` exits it).
@@ -352,9 +376,17 @@ The firmware drives a real half-bridge; treat state-changing commands accordingl
 
 1. Flash a vconv build to a bench ESP32 (`config/lab/vconv_mock`).
 2. Adjust `vconv.conf` and charger/mppt conf via `set-config`.
-3. Run `etc/e2e-test/run_e2e.py --cluster mock` — physics tests pass on the virtual plant.
-4. Run host-side `test/host-stub/vconv-test` — unit tests pass.
-5. OTA the same firmware to the real converter with `ota.py -n` then `ota.py -m <name>`.
+3. `python etc/e2e-test/run_e2e.py --cluster mock --serial <port>` and require `N passed, 0 failed`
+   (an all-skipped run also exits 0): console-plan and Influx checks against the mock build.
+4. Physics: the host build from section 4 (`/tmp/vconv-test`).
+5. Rebuild for the target hardware with `CONFIG_FUGU_WITH_VCONV=n` and the board's PWM driver, in a
+   separate build dir/project root (see [Build](build.md)). Then `ota.py -n -m <name>`, then
+   `ota.py -m <name>`.
+
+   :::danger Never OTA the vconv image to hardware
+   A `CONFIG_FUGU_WITH_VCONV=y` image replaces the PWM driver with a simulator: the gate pins are never
+   driven, and the "validated" behaviour was measured against a simulated plant.
+   :::
 6. Watch InfluxDB or poll `sensor avg` to confirm behavior.
 
 ### Reproduce and fix a crash on a remote device

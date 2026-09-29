@@ -162,11 +162,32 @@ predicted point `rectCtrlRatio(M)·pwmCtrl` is the hardware offset.
 
 `measure-coil ls [hs]` (on-device) or `etc/measure_coil.py --ls-sweep --hs N` brackets the
 peak. `--apply` computes `peak − ideal − --apply-margin` (default 12 counts), converts it to
-time, and writes `coil.conf::rect_offset_ns`. Use
+time, and writes `coil.conf::rect_offset_ns`. The helper infers the timer period from
+`pwmCtrlMax/0.94`, which the current firmware no longer satisfies, so the written ns value can
+be off by a few percent. Pass `--pwm-max`, or check the `rect_offset=… ns (… ct)` boot log line
+after the reboot. Use
 a steep-edge HS where the peak is genuinely locatable; flat plateaus yield no reliable
 peak. Field values on two boards: +100 and +57 counts (at LEDC 12.5 ns/tick) — different
 boards, different gate-driver / FET combinations, as expected for an `L`- and
 `M`-independent constant.
+
+### Implementation (`src/buck.h`)
+
+The formulas above give the *ideal* LS on-time. What the firmware commands on top of that:
+
+| step | behaviour |
+|---|---|
+| CCM/DCM decision (`computeDCM`) | Enters DCM when `ΔI_L > 2.0·I_o`, leaves when `ΔI_L ≤ 1.8·I_o` (hysteresis). Always DCM when `I_o < 0.1 A`. Effective forced PWM overrides all of this (never DCM). |
+| M bias | Assumes a ±1 % error on each voltage and divides `M` by `0.99/1.01`, i.e. biases it ≈ 2 % toward the early-turn-off side, then clamps it off unity (`1 − 0.01` buck, `1 + 0.01` boost). This is the "turn off early" margin described above. |
+| low-current cut-off | In DCM the LS ratio is set to 0 when `I_o ≤ 0.01 A` or the low-side voltage is `< 1 V`; it stays off until `I_o ≥ 0.04 A`. |
+| DCM LS count | `pwmCtrl·ratio + rect_offset` counts, with first-order error-feedback dither of the rounding remainder (so the time-average tracks the ideal). |
+| CCM LS count | `pwmMax − pwmCtrl − 1` (complementary). |
+| final clamp | `[pwmRectMin, pwmMax − pwmCtrl − 1]`. On a buck `pwmRectMin` = `boot_refresh_ns` in ticks + the HS→LS dead time, for bootstrap refresh. |
+
+The ideal `t_on,LS` is therefore the **pre-clamp target**, not the commanded window. Because
+of the clamp, a buck with sync rect off (console `sync off`, or the low-current cut-off) still
+issues a `pwmRectMin` LS pulse every period; at zero load that pulse builds `V_o·t/L` of
+reverse current. Keep this in mind when comparing scope traces with the ideal triangle.
 
 ### Failure modes at the LS boundary
 
@@ -222,7 +243,7 @@ $$M_{CCM} = \frac{1}{1 - D}$$
 $$t_{on,HS} = t_{on,LS} \cdot \frac{1}{M - 1} = \frac{D}{f_{sw}} \cdot \frac{1}{M - 1}$$
 
 where `D` is now the LS (control) duty. Same `L`-cancellation, same `M → 1` sensitivity
-blow-up at the high-step-up corner.
+blow-up, here at the near-unity (low step-up) corner.
 
 References
 

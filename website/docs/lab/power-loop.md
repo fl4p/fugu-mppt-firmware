@@ -24,6 +24,8 @@ flowchart LR
 ```
 # boost/converter.conf:
 topo=boost
+forced_pwm=1
+pwm_driver=mcpwm
 
 # boost/charger.conf:
 vout_max=75
@@ -41,6 +43,7 @@ Enable forced pwm buck converter to prevent issues with CCM/DCM detection:
 # buck/converter.conf:
 topo=buck
 forced_pwm=1
+pwm_driver=mcpwm
 
 # buck/charger.conf:
 vout_max=29
@@ -52,10 +55,13 @@ vin_min=72      # only for the stiff-source setup: pins the operating "solar" vo
 vout_max=60
 ```
 
+Before closing the loop, read back each converter with a bare `sync` (expect `forced pwm armed`).
+
 
 * Device low-side current-sensor will not work (both buck & boost)
 * the power loop will work with only a little current from the external supply
-* put a low current limit on the external supply to protect the devices
+* put a low current limit on the external supply. It caps the power put into the loop, not the loop current
+  (see [Pitfalls](#pitfalls))
 
 ## Bring-up order
 
@@ -99,13 +105,21 @@ watts in that FET at the engage point. That is why the ramp is held while the ga
 reason.
 
 `converter.conf::fpwm_gate` (default on) does steps 2 and 3 by itself: `forced_pwm=1` is then a
-*request*, and the firmware holds the low side diode-emulating until the effective duty passes the
-measured ratio while the duty is still climbing, engaging once it is provably forward — or, if the
-duty settles at the ratio first (the normal boot state here, where the loop is still open and the
-converter parks at `D = Vout/Vin`), once it has stood still for `fpwm_gate_hold`. Either way it lets
-go on the way down, so `dc 0` also ramps down cleanly. A bare `sync` reports
-`armed`/`engaged` and the duty the gate is waiting for. See
+*request*, and the firmware holds the low side diode-emulating until the gate engages. A bare `sync`
+reports `armed`/`engaged` and the duty the gate is waiting for. See
 [converter.conf](../reference/config/converter.md#fpwm_gate-fpwm_gate_margin).
+
+:::danger The gate does not guarantee forward current
+`D₀` is the duty at zero coil current, `err` the worst-case error of the measured voltage ratio and
+`margin` is `fpwm_gate_margin`. While the duty is climbing the gate engages only above
+`D₀+err+margin` (provably forward). If the duty stands still for `fpwm_gate_hold` it engages from
+`D₀−err`, which can be below zero current.
+Once engaged it stays engaged down to `D₀−err−margin`. In this loop the output is always stiff, so
+expect reverse current of tens of amps at the settled engage point and during ramp-down (see
+*Know what the settled path costs* in
+[converter.conf](../reference/config/converter.md#fpwm_gate-fpwm_gate_margin)). Watch loop current
+with an independent clamp, and have a way to cut the PSU and the loop before starting.
+:::
 
 ## PV-sim source (solar-array-simulator)
 
@@ -121,8 +135,9 @@ Caveats specific to this rig:
   clamped to Vin+0.5 V, so the steep near-Isc branch is truncated. If Vin rises to
   within 0.5 V of Voc the feasibility latch shuts the mode down.
 * **Below the Vin floor no firmware limit controls the current**: the boost body diode
-  passes through at Vout ≈ Vin and these boards have no panel-disconnect switch. The
-  external supply's current limit is the real backstop — keep it low.
+  passes through at Vout ≈ Vin and these boards have no panel-disconnect switch. Keep the
+  external supply's current limit low, but it caps power, not loop current (see
+  [Pitfalls](#pitfalls)).
 * The emulated "solar" power recirculates through the loop; the external supply only
   covers losses. Watch the boost's Iin against `iin_max` when raising `pv_isc`.
 * A Vin rise mid-run truncates the curve silently (floor clamp) rather than faulting,
@@ -137,16 +152,21 @@ Caveats specific to this rig:
   reported currents on this rig.
 * **No reverse-current blocking in forced PWM.** Both converters run `forced_pwm=1`, the mode with
   no reverse-current blocking. While the buck duty is below `V_psu / V_bus` the buck runs
-  backwards, boosting the bus and feeding the external supply. Low duty is the dangerous end: a
-  reverse-current protection trip there is protection working, not a fault. Keep `fpwm_gate`
-  enabled so the low side stays diode-emulating until the duty is provably forward (see
-  [Bring-up order](#bring-up-order)).
+  backwards, boosting the bus and feeding the external supply. Low duty is the dangerous end, and
+  the current-based trips cannot be counted on here (the sensors read ~0). Keep `fpwm_gate`
+  enabled. It blocks the destructive ramp from 0, but it does not prove forward current: a settled
+  or descending duty may run in reverse (see [Bring-up order](#bring-up-order)).
 * **Shut down in reverse order**: bring the boost duty down first, then the buck to zero.
   Reversing it unloads a still-pumping boost into its reverse-current trip.
-* **The PSU current limit is the only backstop.** The loop recirculates its power and the external
-  supply only covers losses, so a low current limit on the supply is cheap. Below the boost's Vin
-  floor no firmware limit controls the current (body diode, no panel-disconnect switch), and the
-  current sensors cannot be trusted — the external supply's current limit is what stops a fault.
+
+:::danger The PSU current limit is not a loop-current limit
+Keep a low PSU current limit. It caps the power put into the loop, not the loop current.
+Circulating current is set by the ratio mismatch and can reach tens of amps within that power
+budget. The limit does nothing against returned energy or discharge of the bus capacitance. The
+firmware's current-based trips are blind on this rig, but its voltage trips still act. Provide a
+separate way to break the loop (switch or fuse sized for the loop current), watch loop current with
+an independent clamp, and discharge the bus before rewiring.
+:::
 
 ### Measurement traps
 

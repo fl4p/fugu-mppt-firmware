@@ -173,12 +173,19 @@ zero and DCM ringing never occurs. Options:
 - **Force CCM in firmware**: keep the LS FET on even at zero current, allowing negative
   inductor current (forced PWM). Eliminates DCM ringing entirely but introduces
   circulating current losses — at light loads this can be worse than the ringing.
-  **Already available in this firmware**: `sync forced` console command or
-  `forced_pwm=1` in `converter.conf` (`src/buck.h:453`). Sets `forcedPwm=true`, which
-  bypasses DCM detection (`computeDCM` returns false, `src/buck.h:721`) and keeps LS
-  on for the full complementary half-cycle.
-- **Lower inductance**: raises the critical load boundary (I_crit = ΔI_L / 2), extending
-  CCM to lower loads. Trade-off: higher ripple, larger core losses.
+  **Available in this firmware**: `converter.conf::forced_pwm=1`, or `sync forced` on the
+  console (manual PWM only, `dc N` first). With the default `fpwm_gate=1` this only
+  *requests* forced PWM: it takes effect once the duty reaches the voltage ratio (see
+  [`fpwm_gate`](../reference/config/converter.md#fpwm_gate-fpwm_gate_margin)). Once
+  effective (`forcedPwm_()` in `src/buck.h`), `computeDCM` returns false and the LS runs
+  complementary. `sync forced!` (or `fpwm_gate=0`) engages immediately — **only safe on an
+  output that cannot sink**: forced PWM lets the inductor current go negative.
+  At a light-load DCM point the duty is below the voltage ratio, so the gated
+  `sync forced`/`forced_pwm=1` does not engage there by itself.
+- **Higher inductance** (hardware): lowers the critical load boundary
+  (I_crit = ΔI_L / 2 ∝ 1/L), extending CCM to lower loads. Trade-offs: larger coil, more
+  copper loss, less saturation headroom, slower current slew. Lower inductance does the
+  opposite.
 
 ### 5. Pulse skipping / burst mode (firmware)
 

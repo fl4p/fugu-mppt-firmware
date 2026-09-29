@@ -74,8 +74,9 @@ when *either* of:
 - **Ah condition (primary)**: `ahSinceFull > recharge_dod * Cbat`. With the
   default `recharge_dod = 0.20` and a 280 Ah pack, this is ~56 Ah of net
   discharge before recharge is permitted.
-- **Voltage floor (fallback)**: `vcell_high < cv_min - 0.05 V` (3.32 V for
-  LFP). Catches integrator drift, wrong `Cbat`, missing BMS — anything that
+- **Voltage floor (fallback)**: `vcell_high < cv_min - recharge_vfloor_band`
+  (band default 0.05 V) for 4 consecutive BMS cell frames: 3.275 V with the
+  firmware defaults, 3.32 V with `cv_float=3.37`. Catches integrator drift, wrong `Cbat`, missing BMS — anything that
   would otherwise leave the charger stuck terminated while the pack is
   genuinely empty. Reliability beats elegance here.
 
@@ -83,9 +84,10 @@ On every termination event the integrator is re-zeroed, so it doesn't have to
 be a precise long-term SoC gauge — it's a "deficit since the last known full"
 counter that self-recalibrates each cycle.
 
-State is **RAM-only**. On reboot the counter starts at 0, and the next full
-charge re-establishes the reference. The first post-boot cycle releases on the
-voltage-floor fallback (same as the pre-Ah-counting behaviour).
+The counter and the termination latch are **RAM-only**. After a reboot the
+charger is not terminated, so it charges until termination latches again
+(within two cell frames if the pack is still full). That termination re-zeroes
+the counter, and from then on both release conditions apply as usual.
 
 `recharge_dod` is configurable via `charger.conf:recharge_dod`. Higher = release
 later (deeper discharges between full charges = fewer cycles but more time at
@@ -94,17 +96,25 @@ less time below 100 %). LFP off-grid systems commonly run 0.10–0.30.
 
 ## Related parameters
 
-- `cv_eoc` — absorption voltage (LFP: 3.65 V)
-- `cv_float` (loaded into `cv_min`) — float voltage (LFP: 3.37 V)
+- `cv_eoc` — absorption voltage (LFP: 3.65 V; firmware default 3.5 V)
+- `cv_float` (loaded into `cv_min`) — float voltage (LFP: 3.37 V; firmware
+  default 3.325 V)
+- `cv_ceiling` — hard per-cell ceiling, default `cv_eoc + 0.05`; latches
+  termination after 2 consecutive frames at or above it, regardless of current.
 - `bat_c` — effective pack capacity in Ah. For parallel packs, use the summed
   Ah (e.g. 2P 280 Ah → 560). The model assumes `Cbat` is the parallel-effective
   capacity.
 - `recharge_dod` — DoD threshold for releasing termination (see above).
 
-If `bat_c` is missing, `r` is non-finite and the impedance-compensation branch
-degrades to "absorption-only" — pack-voltage pinning still caps at `cv_eoc`
-via `Vbat_fallback`, so the charger is safe but does not fully charge. The Ah
-release condition is also disabled in that case; only the voltage floor remains.
+:::warning Set `bat_c` on any battery system
+If `bat_c` is missing, the termination line and the EOC feedback on the highest
+cell are disabled. The output is held at the pack-level `vout_max_fallback`
+(default `N_cells × cv_float`), open-loop on the Vout reading, like a stale BMS.
+Only the hard `cv_ceiling` latch can still flag termination, and it does not
+lower the output. The Ah recharge condition is disabled; only the voltage floor
+releases termination. The pack floats near `cv_float` per cell and does not
+reach full, and the highest cell is not individually limited.
+:::
 
 ## Absorption target vs. termination line
 
@@ -123,7 +133,7 @@ the line (`termCond.update()` runs once per cell frame).
 
 Recharge hysteresis alone keeps the pack in the 80–100 % window. To lower the
 average SoC — the best-evidenced LFP lifetime lever, see
-`LFP Longevity Research.md` — the charger can stop short of full:
+[LFP longevity](../../internals/lfp-longevity.md) — the charger can stop short of full:
 
 - After a termination (the only point where the Ah counter is known to be at
   zero), charging stops once `ahSinceFull <= (1 - partial_charge) * Cbat` and

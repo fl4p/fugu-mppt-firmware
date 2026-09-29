@@ -53,9 +53,10 @@ Two distinct procedures:
   `--skip-fault`.
 
 :::danger
-The verifier drives the gates up to near-full duty. Its hostname allow-list does not prove the power stage is
-disconnected: an unnamed real converter reports the default `fugu-esp32s3-…` hostname and passes. Disconnect panel
-and battery first.
+The verifier commands near-full HS duty and forced near-full LS on-time. Its hostname allow-list does not prove
+the power stage is disconnected: an unnamed real converter reports the default `fugu-esp32s3-…` hostname and passes.
+Disconnect the power stage first: no panel, battery or supply on Vin/Vout, bus caps discharged. Probe the MCU PWM
+GPIOs (`pwm_hi`/`pwm_li`), not the gates of a powered bridge.
 :::
 
 ```bash

@@ -50,8 +50,10 @@ SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-myvariant build
 
 :::warning One sdkconfig per project root
 `-B` only moves the build directory. The generated `sdkconfig` stays in the project root and is shared by every
-build dir, so building a different target or variant rewrites it. Give a variant its own file with
-`-DSDKCONFIG=<path>`, or use `etc/matrix_build.sh`, which isolates each variant.
+build dir, so building a different target or variant rewrites it. `-DSDKCONFIG=<path>` moves the generated
+file, but the top `CMakeLists.txt` still reads the root `sdkconfig` to decide BLE/no-netw fragments and profiler
+exclusion. Also pass the variant's `CONFIG_FUGU_WITH_*` via `SDKCONFIG_DEFAULTS` and keep the root `sdkconfig`
+absent or consistent, or use a separate project root as `etc/matrix_build.sh` does.
 :::
 
 ## Build directories

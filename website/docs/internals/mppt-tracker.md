@@ -79,7 +79,7 @@ direction reversed within the last 15 s (a tracker moving steadily in one direct
 the duty jumps back to the MPP duty captured in fast mode, because output-power measurement (e.g. with a hall
 sensor) can be too poor and non-linear for slow P&O alone.
 
-The console command `speed <0..10>` scales the tracker step (default 1.0).
+The console command `speed <x>` (0 ≤ x < 10) scales the tracker step (default 1.0).
 
 ## When the tracker does not sweep
 

@@ -25,13 +25,13 @@ identical `pwm_freq` on all converters. See [PWM Drivers](../pwm-drivers.md).
 
 | | Beacon sync (`bsync`) | Wired sync (`wsync`) |
 |---|---|---|
-| Kconfig | `CONFIG_FUGU_WITH_BSYNC` (default `y`, needs `FUGU_WITH_NETW` + `FUGU_WITH_MCPWM`) | `CONFIG_FUGU_WITH_WSYNC` (default `n`, needs `FUGU_WITH_MCPWM`) |
+| Kconfig | `CONFIG_FUGU_WITH_BSYNC` (default `y`, needs `FUGU_WITH_NETW` + `FUGU_WITH_MCPWM`; the `y` takes effect only because this repo's `sdkconfig.defaults` enables MCPWM) | `CONFIG_FUGU_WITH_WSYNC` (on in this repo's `sdkconfig.defaults`; bare Kconfig default `n`; needs `FUGU_WITH_MCPWM`). See [Build Options](../../guide/getting-started/build-options.md) |
 | Timebase | TSF timestamps of 802.11 beacons from one shared AP, received RX-only | Pulse from a leader converter, locked to its timer TEZ |
 | Actuation | Software servo (1 Hz) trims the period by dithering it between P and P+1 | Hardware: the follower reloads its timer counter on each sync edge |
 | Relative phase | ~±1–3 µs; ±0.5 µs p2p with a dedicated beacon node | Up to one timer tick (6.25 ns) |
 | Wiring | None | AC-coupled sync wire and a GPIO per board |
 | Configuration | [`bsync.conf`](../../reference/config/bsync.md): `bssid`, `channel`, `phase_us`, `enabled` | `board.conf` `pwm_sync_pin`; `converter.conf` `sync_role`, `sync_phase_deg`, `sync_phase_ns` |
-| Radio | Keeps the receiver on in unassociated STA mode, never transmits, also after `wifi off` | Not used |
+| Radio | Sniffs beacons receive-only; keeps the receiver on after `wifi off`. An associated STA link stays up and pins the channel unless `wifi off` | Not used |
 | Suited for | Frequency lock and coarse phase, no wiring | Degree-level phase, e.g. interleaved current sharing |
 
 ```mermaid
@@ -76,5 +76,5 @@ checklist.
 
 ## Combining both
 
-A `follower` follows the wire regardless of its own period, so running `bsync` on it has no effect. Use `bsync`
-on the leader, or in wireless-only setups.
+`bsync` and `sync_role=follower` are mutually exclusive: the `bsync` service refuses to start on a follower. Run
+`bsync` on the leader, or in wireless-only setups.

@@ -49,7 +49,15 @@ All payloads are a plain decimal number, e.g. `3.412`. Configure the topics in
 | `ibat_lim_topic` | charge current limit, A (≥ 0) | overrides `charger.conf::ibat_max` at runtime |
 | `bat_temp_topic` | pack temperature, °C; up to 4 comma-separated topics | `bat_temp_min` / `bat_temp_derate` / `bat_temp_max` policy |
 
-Non-numeric payloads are logged and ignored. Temperatures outside −40…100 °C drop that sensor.
+:::danger Payloads must be plain numbers
+On the current, limit and temperature topics only empty, `nan` or `inf` payloads (and negative values on
+`ibat_lim_topic`) are logged and ignored. Any other text (e.g. Home Assistant's `unavailable`) currently parses as
+**0** and is used, and a numeric prefix such as `3.4V` is accepted. A 0 °C pack temperature can clear a hot derate. On
+`cell_voltages_max_topic` a non-numeric payload marks the cell data invalid and the limit falls back to
+`Vbat_fallback`. Make sure the bridge never publishes non-numeric states to these topics.
+:::
+
+Temperatures outside −40…100 °C drop that sensor.
 
 ## How the data is used
 
@@ -83,9 +91,11 @@ timeout applies to `ibat`).
 `Vbat_fallback` is `charger.conf::vout_max_fallback`, by default `N_cells × cv_float` — the float voltage, which does
 not overcharge a full pack. The effective limit is never above `charger.conf::vout_max`.
 
-:::note
+:::danger
 The comments in the example `charger.conf` files say `vout_max_fallback=0` disables the converter when BMS data is
-missing. In the current code a fallback of 0 does not lower the limit; do not rely on it.
+missing. In the current code a `vout_max_fallback` ≤ 0 is ignored and the limit returns to `vout_max`. This applies
+both when BMS data is missing and to the float hold after termination with a healthy BMS, so the charger can keep
+charging a full pack towards `vout_max`. Keep `vout_max_fallback` a positive voltage.
 :::
 
 :::warning

@@ -14,12 +14,14 @@ For devices without Wi-Fi, see [OTA over BLE](ota-ble.md).
 ## Quick start
 
 ```bash
-./ota.sh                                          # build, serve build/ on :9000, update all devices
-PYTHONPATH=./ .venv/bin/python3 etc/ota.py -n     # dry run: discover + show versions only
-PYTHONPATH=./ .venv/bin/python3 etc/ota.py -m garage  # update devices whose hostname matches "garage"
+# ESP-IDF exported; once: python -m pip install zeroconf
+idf.py build
+PYTHONPATH=. python etc/ota.py -n              # dry run: discover + show versions only
+PYTHONPATH=. python etc/ota.py -m <hostname>   # update devices whose hostname matches
 ```
 
-Run from the repository root. `etc/ota.py` discovers devices, serves `build/fugu-firmware.bin` on port 9000 with a
+Run from the repository root. `./ota.sh` is a shortcut that builds and updates **all** discovered devices (no `-m`);
+it also needs ESP-IDF exported. `etc/ota.py` discovers devices, serves `build/fugu-firmware.bin` on port 9000 with a
 URL built from the host IP as the device sees it (so it also works when the device sits behind NAT), sends `ota <url>` to each
 device and prints a before/after version table.
 

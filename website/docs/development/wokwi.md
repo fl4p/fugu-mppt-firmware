@@ -31,7 +31,10 @@ there's `config/lab/wokwi_mock`
 
 [install](https://docs.wokwi.com/wokwi-ci/cli-installation)
 
---elf build/fugu.elf
+```bash
+wokwi-cli .                                   # reads wokwi.toml + diagram.json from the repo root
+# or explicitly: wokwi-cli --elf build/fugu-firmware.elf .
+```
 
 
 ## wokwi debug

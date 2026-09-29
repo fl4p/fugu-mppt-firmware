@@ -21,10 +21,12 @@ Non-interactively, for CI or variant builds, layer an sdkconfig fragment:
 
 ```bash
 echo 'CONFIG_FUGU_WITH_BLE=n' > my.frag
-SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-noble build
+SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-noble -D SDKCONFIG=build-noble/sdkconfig build
 ```
 
-`etc/matrix_build.sh` builds the common variants this way.
+The top-level `CMakeLists.txt` also reads the root `sdkconfig` to decide fragment layering, so run variant builds
+from a tree without a root `sdkconfig`, or use `etc/matrix_build.sh`, which builds each variant in its own project
+root.
 
 ## Feature flags
 
@@ -35,7 +37,7 @@ SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-noble build
 | `CONFIG_FUGU_WITH_BLE` | on | NimBLE console (NUS) and BLE OTA push, ~250 KB. Layers `sdkconfig.ble`. |
 | `CONFIG_FUGU_WITH_BLE_TELE` | off | Binary telemetry stream over a NUS notify characteristic. Needs `BLE`. |
 | `CONFIG_FUGU_WITH_BLE_ADV` | off | Connectionless telemetry in BLE advertising data. Needs `BLE`. |
-| `CONFIG_FUGU_WITH_LEDC` | on | LEDC gate driver, fan output and the `anaw` command. |
+| `CONFIG_FUGU_WITH_LEDC` | on | LEDC gate driver and the `anaw` command. |
 | `CONFIG_FUGU_WITH_MCPWM` | on\* | [MCPWM gate driver](../../internals/pwm-drivers.md): hardware dead-time, fault brake, glitch-free updates. With LEDC also on, `converter.conf::pwm_driver` picks the driver at runtime. |
 | `CONFIG_FUGU_WITH_WSYNC` | on\* | Wired MCPWM clock sync between converters. Needs `MCPWM`. |
 | `CONFIG_FUGU_WITH_BSYNC` | on | Beacon-sniffing MCPWM clock sync (`bsync` service). Needs `NETW` and `MCPWM`. |
@@ -88,7 +90,7 @@ CONFIG_FUGU_WITH_MCPWM=y
 CONFIG_FUGU_WITH_LEDC=n
 ```
 
-The fan and `anaw` stop working without LEDC.
+`anaw` is not available without LEDC. The fan output is a plain on/off GPIO and keeps working.
 
 ### Control-loop work without hardware
 

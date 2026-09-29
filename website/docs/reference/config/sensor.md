@@ -12,27 +12,27 @@ Global keys:
 | key                              | unit | type   | default | description                                                    |
 |----------------------------------|------|--------|---------|----------------------------------------------------------------|
 | `adc`                            |      | string | —       | Default ADC backend for all channels                           |
-| `expected_hz`                    | Hz   | int    | 0       | Expected control-loop sample rate (lower-bound check; 0 = off) |
+| `expected_hz`                    | Hz   | byte   | 0       | Expected control-loop sample rate (lower-bound check; 0 = off). 0–255: larger values currently wrap modulo 256 (256 → 0 = off, 3900 → 60) |
 | `power_conversion_eff`           |      | float  | 0.95    | Assumed converter efficiency for the virtual current sensor    |
 | `ignore_calibration_constraints` |      | bool   | 0       | Bypass ADC calibration sanity constraints                      |
 | `notch_adaptive`                 |      | bool   | 1       | Auto-tune the inverter-ripple notch to the tone measured on Vout (off = fixed at `notch_freq`) |
 | `notch_freq`                     | Hz   | float  | 100     | Notch frequency when not adaptive (2×mains: 100 = 50 Hz, 120 = 60 Hz) |
 | `notch_q`                        |      | float  | 20      | Notch quality factor (bandwidth ≈ `notch_freq`/`notch_q`)      |
 | `despike`                        |      | float  | 0       | Glitch-safe median outlier threshold (running mean-deviation units): 0 = off (legacy unconditional median); ~8 enables (lower = clips more). Passes dense load pulses through (unbiased current) but still clips impulse glitches |
-| `esp32adc1_sr`                   | Hz   | int    | —       | Internal ADC1 continuous-mode raw sample rate                  |
-| `esp32adc1_avg`                  |      | int    | —       | Internal ADC1 hardware averaging count per sample              |
+| `esp32adc1_sr`                   | Hz   | int    | —       | Internal ADC1 continuous-mode raw sample rate (required with `esp32adc1`) |
+| `esp32adc1_avg`                  |      | int    | —       | Software average of N raw conversions per delivered sample (1–1023, required with `esp32adc1`) |
 
 Per-channel keys, prefix `vin_` / `vout_` / `iin_` / `iout_` / `ntc_`:
 
-| suffix      | unit | type   | description                                                                    |
-|-------------|------|--------|--------------------------------------------------------------------------------|
-| `_adc`      |      | string | ADC backend for this channel                                                   |
-| `_ch`       |      | int    | ADC channel index (255 = absent)                                               |
-| `_rh`       | Ω    | float  | Voltage divider upper (high-side) resistor (voltage channels)                  |
-| `_rl`       | Ω    | float  | Voltage divider lower resistor (voltage channels)                              |
-| `_factor`   |      | float  | Linear scale factor raw ADC → physical, sign sets direction (current channels) |
-| `_midpoint` |      | float  | Zero/offset midpoint subtracted before scaling (current channels)              |
-| `_filt_len` |      | int    | Filter window length (samples)                                                 |
+| suffix      | unit | type   | default     | description                                                                    |
+|-------------|------|--------|-------------|--------------------------------------------------------------------------------|
+| `_adc`      |      | string | value of `adc` | ADC backend for this channel                                                |
+| `_ch`       |      | byte   | 255         | ADC channel index (255 = absent)                                               |
+| `_rh`       | Ω    | float  | —           | Voltage divider upper (high-side) resistor (voltage channels)                  |
+| `_rl`       | Ω    | float  | —           | Voltage divider lower resistor (voltage channels)                              |
+| `_factor`   |      | float  | 1           | Linear scale factor raw ADC → physical, sign sets direction (current channels) |
+| `_midpoint` |      | float  | 0           | Zero/offset midpoint subtracted before scaling (current channels)              |
+| `_filt_len` |      | int    | 10          | Filter window length (samples). Currently ignored for `ntc`, which uses a fixed 50 |
 
 See [Topology notes & examples](#notes--examples) below for worked ACS712 and bare-ESP32 configs.
 
@@ -47,18 +47,25 @@ There are four sensors (Vin, Vout, Iin, Iout). A topology can have one or two cu
 a single current sensor the other is computed from the voltage ratio and `power_conversion_eff`. The
 full key list is in the tables above.
 
-```
-adc = ina226         # ADC backend for all channels (ina226, ads1015, ads1115, esp32adc1)
+The example below mixes backends as the Fugu2 board image (`config/fmetal`) does. The channel
+numbers belong to that board: Vin on internal ADC1 channel 3, Vout and Iout on the INA226, which only
+has channel 0 (bus voltage) and channel 1 (shunt current).
 
-vin_ch = 2           # Vin ADC channel
+```
+adc = ina226         # default ADC backend for all channels (ina226, ads1015, ads1115, esp32adc1)
+esp32adc1_sr = 22000 # required when any channel uses esp32adc1
+esp32adc1_avg = 32
+
+vin_adc = esp32adc1  # per-channel backend override
+vin_ch = 3           # Vin: ADC1 channel 3
 vin_rh = 200e3       # voltage divider, upper (high-side) resistor
 vin_rl = 7.5e3       # voltage divider, lower resistor
 
-vout_ch = 0          # Vout ADC channel
+vout_ch = 0          # Vout: INA226 channel 0 (bus voltage)
 vout_rh = 47e3       # voltage divider, upper resistor
 vout_rl = 47e3       # voltage divider, lower resistor
 
-iout_ch = 1          # Iout ADC channel
+iout_ch = 1          # Iout: INA226 channel 1 (shunt)
 iout_factor = 1      # raw -> A scale (sign sets direction)
 iout_midpoint = 0    # zero offset
 iout_filt_len = 30   # filter window (samples)

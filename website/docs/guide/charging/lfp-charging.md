@@ -47,16 +47,23 @@ in a normal cycle.
 ## Configuration
 
 All charging parameters live in `charger.conf` on the device's storage
-partition. They can be edited from the console with `set-config` without
-re-flashing.
+partition. Edit them with `set-config charger.conf <key> <value>` and then
+`restart`: the file is read at boot only. `vset <V>` / `iset <A>` change
+`vout_max` / `ibat_max` immediately but are lost on reboot.
+
+:::danger
+`vout_max_fallback=0` does **not** disable the converter, and `ibat_max` limits
+the converter output, not the battery current. A runtime current limit of 0 is
+not a stop. See the table below.
+:::
 
 | Key                  | Unit      | Range                              | Description |
 | -------------------- | --------- | ---------------------------------- | ----------- |
 | `vout_max`           | V         | > 0                                | Nominal maximum pack voltage. Hard upper bound for the converter setpoint. Typical: ~14.6 V (4s LFP), ~29 V (8s), ~57 V (16s). |
 | `cv_eoc`             | V         | ≥ `cv_float`                       | End-of-charge voltage **per cell** (absorption ceiling). The charger keeps the highest cell at or below this. Typical LFP: 3.55–3.65. |
 | `cv_float`           | V         | 0 < `cv_float` ≤ `cv_eoc`          | Float voltage **per cell**, i.e. where the termination line crosses zero current. Typical LFP: 3.37. |
-| `vout_max_fallback`  | V         | ≥ 0                                | Pack-voltage limit used when BMS data is unavailable. Defaults to roughly the float voltage times the cell count. Set to 0 to disable the converter completely when BMS data is missing. |
-| `ibat_max`           | A         | > 0, hard-capped at `limits.conf:iout_max` | Maximum battery charge current. Note that the pack output current can legitimately exceed this when the charger is also supplying connected loads. Defaults to 20 A if unset. |
+| `vout_max_fallback`  | V         | > 0                                | Pack-voltage limit used when BMS data is unavailable, and the float target after termination. Default `N_cells × cv_float`. Must be a positive voltage: `0` does **not** disable the converter. A non-positive pin is ignored and the limit returns to `vout_max`, both when the BMS goes stale and during terminated float. |
+| `ibat_max`           | A         | > 0, capped at `limits.conf:iout_max` | Output-current limit of the converter (charge current plus any connected loads). The firmware does not compensate for loads, so with loads the battery receives less than this. Default 20 A. A runtime limit of 0 (`iset 0`, `ibat_lim_topic`) still allows 0.25 A; it is not a stop. |
 | `bat_c`              | Ah        | > 0 (pack-effective)               | Pack capacity. For parallel packs use the summed Ah (e.g. 2P × 280 Ah → 560). Used by both the termination line and the recharge hysteresis. If unset, both features degrade — see below. |
 | `tail_c_rate`        | unitless  | > 0                                | Ratio of "fully-charged" tail current to capacity. Default 0.05 (LFP). See the table further down for other chemistries. |
 | `recharge_dod`       | fraction  | 0 < x < 1                          | Depth of discharge below the last full-charge event at which the charger is permitted to recharge. Default 0.20. LFP off-grid typical: 0.10–0.30. |
@@ -90,14 +97,15 @@ $V_\text{EoC}$ regardless of current, and we want to stay below that line to
 avoid voltage transients.
 
 Termination latches when the **highest cell voltage** (reported by the BMS)
-rises above $V_\text{term}$ while the pack is being charged.
+rises above $V_\text{term}$ on two consecutive BMS cell frames while the pack
+is being charged.
 
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 410" font-family="sans-serif" font-size="12">
   <text x="300" y="20" text-anchor="middle" font-size="14" font-weight="bold">LFP cell termination line</text>
   <text x="300" y="38" text-anchor="middle" font-size="11" fill="#666">cv_float = 3.37, cv_eoc = 3.65, tail_c_rate = 0.05</text>
 
   <!-- still-charging region (above line) -->
-  <polygon points="80,350 80,50 560,50 560,100 500,100 164,350" fill="#c8e6c9" />
+  <polygon points="80,350 80,50 500,50 500,100 164,350" fill="#c8e6c9" />
 
   <!-- plot area border -->
   <rect x="80" y="50" width="480" height="300" fill="none" stroke="#999" />
@@ -127,7 +135,7 @@ rises above $V_\text{term}$ while the pack is being charged.
   <text x="20" y="200" text-anchor="middle" transform="rotate(-90 20 200)">Charge current (C-rate)</text>
 
   <!-- termination line -->
-  <polyline points="80,350 164,350 500,100 560,100" fill="none" stroke="#1565c0" stroke-width="2.5" />
+  <polyline points="80,350 164,350 500,100 500,50" fill="none" stroke="#1565c0" stroke-width="2.5" />
 
   <!-- labels -->
   <text x="170" y="130" fill="#2e7d32" font-weight="bold">still charging</text>
@@ -188,8 +196,10 @@ releases (charging is permitted again) when *either* of:
   `recharge_dod × bat_c`. With the default `recharge_dod = 0.20` and a
   280 Ah pack, that's about 56 Ah of net discharge before recharging is
   permitted.
-- **Voltage floor (fallback)** — the highest cell drops below
-  `cv_float − 0.05 V` (3.32 V for LFP defaults). This is well below normal
+- **Voltage floor (fallback)** — the highest cell stays below
+  `cv_float − recharge_vfloor_band` (band default 0.05 V) for 4 consecutive
+  BMS cell frames: 3.275 V with the firmware defaults, 3.32 V with
+  `cv_float=3.37`. This is well below normal
   LFP operating voltage and only trips when the pack is genuinely deep into
   discharge. It exists as a belt-and-suspenders catch for cases where the
   Ah counter cannot be trusted: wrong `bat_c`, BMS reporting bad current,
@@ -200,11 +210,11 @@ need to be a precise long-term state-of-charge gauge — it's a "discharge
 deficit since the last known full" counter that self-recalibrates each
 cycle.
 
-The counter is **RAM-only** — it doesn't survive a reboot. After a power
-cycle the counter starts at 0, and the next full charge re-establishes the
-reference. The first post-boot cycle therefore releases on the voltage-floor
-fallback only (the same behaviour the firmware had before Ah counting was
-added). All subsequent cycles benefit from the hysteresis.
+The counter and the termination latch are **RAM-only**. After a reboot the
+charger is not terminated, so it charges until termination latches again
+(within two cell frames if the pack is still full). That termination
+re-zeroes the counter, and from then on both release conditions apply as
+usual.
 
 **Tuning `recharge_dod`.** Higher values mean deeper discharges between full
 charges — fewer full cycles per year and more time at mid state-of-charge
@@ -214,20 +224,25 @@ systems, 0.10–0.30 is typical; 0.20 is a reasonable default.
 
 ## When `bat_c` is missing
 
-Both the termination line's slope and the recharge hysteresis threshold
-depend on `bat_c`. If it's not configured:
+:::warning
+Set `bat_c` on any battery system. Without it the termination line and the
+per-cell EOC feedback are disabled.
+:::
 
-- The termination line collapses to a step at `cv_eoc`. The charger
-  effectively only terminates when the highest cell crosses the EoC
-  voltage — absorption-only behaviour, no impedance compensation.
-- The Ah recharge condition is disabled; only the voltage floor
-  (`cv_float − 0.05 V`) can release termination.
+If `bat_c` is not configured:
 
-The result is a safe but conservative charger: the pack reaches full but
-the charger spends longer at the absorption ceiling than it needs to, and
-the recharge hysteresis no longer prevents top-of-charge micro-cycling
-beyond what the deeper voltage floor catches. The firmware logs a warning
-on boot if `bat_c` is unset.
+- The termination line and the EOC feedback on the highest cell are
+  disabled. The output is held at the pack-level `vout_max_fallback`
+  (default `N_cells × cv_float`), open-loop on the Vout reading, like a
+  stale BMS.
+- Only the hard `cv_ceiling` latch can still flag termination, and it does
+  not lower the output.
+- The Ah recharge condition is disabled; only the voltage floor releases
+  termination.
+
+The pack floats near `cv_float` per cell and does not reach full, and the
+highest cell is not individually limited. The firmware logs a warning on
+boot if `bat_c` is unset.
 
 ## When the BMS goes offline
 

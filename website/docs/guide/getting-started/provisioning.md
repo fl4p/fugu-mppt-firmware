@@ -18,8 +18,9 @@ export ESPPORT=/dev/cu.usbmodem1101   # Windows: set ESPPORT=COM3
 ./provision.py path/to/myboard        # or a directory containing conf/
 ```
 
-`provision.py` builds a littlefs image with `littlefs-python` (`pip install littlefs-python`) and writes it with
-ESP-IDF's `parttool.py`, so the IDF environment must be exported.
+`provision.py` builds a littlefs image with `littlefs-python` and writes it with ESP-IDF's `parttool.py`, so the IDF
+environment must be exported. Install the former once with `python -m pip install littlefs-python` in the exported
+ESP-IDF shell.
 
 ## Board configurations
 

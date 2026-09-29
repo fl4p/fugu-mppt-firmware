@@ -83,11 +83,15 @@ kHz, however only 83.3 kHz is possible with
 esp-idf (`SOC_ADC_SAMPLE_FREQ_THRES_HIGH` in `soc_caps.h`).
 ESP32 can do up to 2 MHz.
 
-We configure the ADC1 in continuous mode with a sampling rate of 83333 Hz (`adc_continuous_config`).
-This means that the ADC does 83.3k conversions per second. Reading more than one channel reduces the sampling rate per
-channel.
-We apply averaging of 32 samples to reduce the quite noisy readings.
-With 4 channels this gives 868 samples per second per channel (83333 / 3 / 32).
+ADC1 runs in continuous mode (`adc_continuous_config`). The sampling rate and averaging are set by
+`sensor.conf::esp32adc1_sr` and `esp32adc1_avg`; the shipped profiles mostly use 22000 Hz and 32, some lab profiles
+83333 Hz. The rate is shared by all channels in the conversion pattern, and averaging divides it further.
+
+Without an NTC channel on ADC1, each channel appears once per pattern: at 83333 Hz with averaging 32, three
+channels give ~868 samples/s per channel and four give ~651. With an NTC channel on ADC1, the other channels are
+added a second time to the pattern (if it fits), so with *n* channels in total each non-NTC channel gets
+2 · SR / ((2n − 1) · avg) and the NTC channel SR / ((2n − 1) · avg). The pattern is logged at boot
+(`pattern[i] = {...}`).
 
 On the ESP32-S3 we can achieve this theoretic rate, the ESP32 appears to be a bit slower (511 / 625 @ 80 kHz, 639 /
 781 @ 100khz ) and always at ~80% of the calculated rate. This ratio is constant across tested sampling rates 80k, 100k,

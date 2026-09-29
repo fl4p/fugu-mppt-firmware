@@ -29,6 +29,7 @@ cd fugu-mppt-firmware
 export ESPPORT=/dev/ttyACM0           # macOS: /dev/cu.usbmodem…
 idf.py set-target esp32s3
 idf.py -p $ESPPORT flash
+python -m pip install littlefs-python # needed by provision.py
 ./provision.py fmetal                 # board configuration
 python3 etc/fugu_console.py -p $ESPPORT     # interactive console
 ```
@@ -45,6 +46,7 @@ cd fugu-mppt-firmware
 $env:ESPPORT = "COM5"                 # see Device Manager → Ports (COM & LPT)
 idf.py set-target esp32s3
 idf.py -p $env:ESPPORT flash
+python -m pip install littlefs-python # needed by provision.py
 python provision.py fmetal            # board configuration
 python etc\fugu_console.py -p $env:ESPPORT  # interactive console
 ```
@@ -117,9 +119,9 @@ the IDF component manager on the first build.
 | Target | Command |
 |---|---|
 | ESP32-S3 (default) | `idf.py set-target esp32s3 && idf.py build` |
-| classic ESP32 | `idf.py -B build-esp32 set-target esp32 && idf.py -B build-esp32 build` |
+| classic ESP32 | `idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig set-target esp32 && idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig build` |
 
-Use a separate build directory per target. Optional features (BLE, networking, MCPWM driver, …) are Kconfig
+Use a separate build directory and `sdkconfig` per target, see [ESP32 variants](../hardware/esp32-variants.md#quick-start). Optional features (BLE, networking, MCPWM driver, …) are Kconfig
 options, see [Build Options](build-options.md).
 
 ## Flash

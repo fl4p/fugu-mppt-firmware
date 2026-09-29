@@ -10,7 +10,14 @@ sidebar_position: 8
 Python and shell tools under `etc/` and the repo root for talking to, updating, provisioning and testing devices
 from a PC.
 
-Run them from the repo root with the project virtualenv (`.venv/bin/python3`). Tools that call `idf.py`,
+Run them from the repo root with a Python 3 environment that has their dependencies, for example a virtualenv:
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install pyserial bleak paho-mqtt zeroconf requests rich tqdm tamp   # + aioesphomeapi for --ble-proxy
+```
+
+Keep `aioesphomeapi` out of the ESP-IDF Python environment; its dependencies break `idf.py`. Tools that call `idf.py`,
 `parttool.py` or `esptool` need a sourced ESP-IDF environment. Submodules: `git submodule update --init
 etc/idf-devtools etc/adcscope`.
 
@@ -48,7 +55,7 @@ python3 etc/fugu_console.py -p $ESPPORT --coredump get       # pull + decode a c
 | `-p`, `--port`                        | Serial port (default `$ESPPORT` or autodetect)                                 |
 | `-b`, `--baud`                        | Baud rate, default 115200                                                      |
 | `--ip HOST[:PORT]`                    | TCP/telnet                                                                     |
-| `--ble [NAME]`                        | BLE NUS, optionally filtered by advertised name                                |
+| `--ble`                               | BLE NUS; filter by advertised name with `--name`                               |
 | `--name`, `--address`                 | Name substring filter (BLE name or MQTT hostname), BLE address                 |
 | `--adapter hciN`                      | BlueZ adapter (Linux)                                                          |
 | `--ble-proxy HOST[:PORT]`             | BLE via an ESPHome `bluetooth_proxy` (plaintext API); `--proxy-password`       |
@@ -76,8 +83,8 @@ is free), sends `ota <url>` to each device that needs it, and prints a before/af
 pushes are recorded in the [ELF archive](#elf_archivepy).
 
 ```bash
-PYTHONPATH=./ .venv/bin/python3 etc/ota.py -n -m <hostname>   # dry run first
-PYTHONPATH=./ .venv/bin/python3 etc/ota.py -m <hostname>
+PYTHONPATH=./ python3 etc/ota.py -n -m <hostname>   # dry run first
+PYTHONPATH=./ python3 etc/ota.py -m <hostname>
 ./ota.sh                                                      # idf.py build, then ota.py
 ```
 

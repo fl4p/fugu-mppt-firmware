@@ -12,13 +12,12 @@ to the device over the existing BLE NUS link, and the device flashes it to the p
 with the native `esp_ota` API and reboots. This complements the Wi-Fi path (`ota <url>`, see the
 top-level docs / `ota.sh`), which *pulls* an image over HTTP and needs a network.
 
-Only present in **`WITH_BLE`** firmware builds, and only usable while the `ble` service is running.
+Only present in **`CONFIG_FUGU_WITH_BLE`** firmware builds, and only usable while the `ble` service is running.
 
 ## Quick start
 
 ```bash
-# 1. build a WITH_BLE image (ESP-IDF exported, see Getting started)
-idf.py menuconfig   # enable CONFIG_FUGU_WITH_BLE
+# 1. build (CONFIG_FUGU_WITH_BLE is on by default; ESP-IDF exported, see Getting started)
 idf.py build
 
 # 2. make sure the device advertises (ble service enabled). Over any console:
@@ -36,8 +35,9 @@ finalizes, and confirms the device re-advertises after the reboot. Arguments:
 python -m etc.ota_ble [path-to.bin] [device-name-or-address]
 ```
 
-If the name/address is omitted it falls back to `$BLE_NAME`, then to the first peripheral advertising
-the NUS service.
+If the name/address is omitted it falls back to `$BLE_NAME`; without that, it picks the single `fugu-*`
+peripheral advertising NUS and refuses to guess when several are in range. A name that matches several devices is
+rejected the same way.
 
 ## GATT layout
 
@@ -69,11 +69,12 @@ ota-ble abort                      cancel: esp_ota_abort, free staging, re-enabl
 
 ## Wire protocol
 
-Status is reported as `OTAB …` log lines on the TX notify channel (the device mirrors its logs to the
+The host picks how the image travels (`--xform auto|raw|tamp|delta`, default `auto`: whatever the device offers).
+The protocol below is the raw case. Status is reported as `OTAB …` log lines on the TX notify channel (the device mirrors its logs to the
 connected client, so these arrive as ordinary notifications):
 
 ```
-OTAB READY part=<label> size=<n>   armed; partition erased; ready to receive
+OTAB READY part=<label> size=<n> … armed and ready to receive (erasure proceeds during the transfer)
 OTAB CRED <G>                       credit: host may stream up to cumulative byte offset G
 OTAB PROG <written>/<size>          progress (also emitted once when written == size)
 OTAB OK rebooting                   verified + boot partition set; device reboots
@@ -85,7 +86,7 @@ End-to-end sequence:
 
 ```
 host  → RX : ota-ble begin <size> <sha>
-device→ TX : OTAB READY …            (only after the erase completes)
+device→ TX : OTAB READY …            (armed; erasure proceeds during the transfer)
 device→ TX : OTAB CRED <G>
 host  → FW : firmware bytes, in ATT-MTU-sized chunks, never exceeding the credit offset G
 device→ TX : OTAB CRED <G> / OTAB PROG …   (as bytes are flushed to flash)
@@ -96,18 +97,18 @@ device→ TX : OTAB OK rebooting        (then reboots)  — or OTAB FAIL <reason
 
 ## How it works (firmware)
 
-`src/etc/ota_ble.cpp` (+ `.h`), wired into `src/console_ble.cpp` and `src/cli.cpp`.
+The [esp-ota-ble](https://github.com/fl4p/esp-ota-ble) component, wired in by `src/tele/console_ble.cpp` and the
+`ota-ble` command in `src/cli.cpp`.
 
 - **Staging ring.** The FW characteristic's `onWrite` runs on the NimBLE host task and only *copies*
-  bytes into a small ring buffer (`RING_CAP`, 8 KB). It never touches flash — a multi-millisecond
+  bytes into a ring buffer: 256 KB in PSRAM when available, else 8 KB (logged as `OTAB RING <n>`). It never touches flash — a multi-millisecond
   flash stall on the host task would trip the BLE supervision timeout and drop the link.
 - **Draining.** `otaBleTick()` runs on the network loop (core 0, from `bleConsoleLoop`). It pulls
   slices out of the ring and calls `esp_ota_write` + a streaming `mbedtls_sha256_update`, outside the
   ring lock so the host task never blocks on flash.
 - **Flow control (credit window).** The ring capacity is the host's credit window. The device
-  advertises a cumulative high-water offset `G = written + RING_CAP` via `OTAB CRED`; the host streams
-  up to `G` and waits for a larger credit. Because BLE throughput (~tens of KB/s) is far below what an
-  8 KB window sustains, the credit round-trip never bottlenecks. A drop (write-no-response can overflow
+  advertises a cumulative high-water offset `G` via `OTAB CRED`; the host streams up to `G` and waits
+  for a larger credit. A drop (write-no-response can overflow
   controller buffers) is caught by the final SHA/length check, which forces a full retry.
 - **Integrity.** Streaming SHA-256 compared against the host-supplied digest, **and** `esp_ota_end`'s
   built-in image validation. Only then is the boot partition switched.
@@ -118,12 +119,13 @@ device→ TX : OTAB OK rebooting        (then reboots)  — or OTAB FAIL <reason
 
 ## Notes & gotchas
 
-- **Throughput / time.** ~32 KB/s in practice → roughly a minute for a ~1.8 MB image.
-- **No PSRAM, tight heap.** The 8 KB ring is allocated from PSRAM if present, else internal heap. On a
-  no-PSRAM board with a fragmented heap a larger ring fails to allocate (`OTAB FAIL no-mem`); 8 KB is
-  deliberately small for this reason.
+- **Throughput / time.** Depends on the ring size and on how much flash the push really writes (sectors that
+  already hold the right bytes are skipped). Bench pushes that rewrote the whole image measured ~13 kB/s with the
+  256 KB PSRAM ring and 2–7 kB/s with the 8 KB ring.
+- **No PSRAM, tight heap.** Without PSRAM the ring falls back to 8 KB of internal heap. If even that fails to
+  allocate, `begin` fails with `OTAB FAIL no-mem`.
 - **`begin` rejects oversized images.** `size` must be ≤ the passive partition size (the OTA slot is
-  `0x1c9000` ≈ 1.78 MB; the `WITH_BLE` image is a tight fit). A too-large image fails fast.
+  `0x1c9000` ≈ 1.78 MB; the `CONFIG_FUGU_WITH_BLE` image is a tight fit). A too-large image fails fast.
 - **macOS GATT cache.** CoreBluetooth caches a device's GATT by its (stable) BLE address. After a
   firmware change that alters the GATT — e.g. the first build that adds the FW characteristic — macOS
   keeps serving the stale service and bleak reports `Characteristic 6e400004-… was not found`. Flush
