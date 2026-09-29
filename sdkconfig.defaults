@@ -260,3 +260,20 @@ CONFIG_FUGU_WITH_WSYNC=y
 
 # IDF 6 made default warnings errors again (5.5 defaulted to y); arduino-esp32 includes IDF LL headers from C++
 CONFIG_COMPILER_DISABLE_DEFAULT_ERRORS=y
+
+# --- image-size safe set (doc/image-size-reduction.md) ---
+# The MBEDTLS_TLS_SERVER_AND_CLIENT=n line above does not pick another choice member; this does.
+CONFIG_MBEDTLS_TLS_CLIENT_ONLY=y
+# mqtt:// only; the websocket transports are dead code.
+CONFIG_MQTT_TRANSPORT_WEBSOCKET=n
+CONFIG_MQTT_TRANSPORT_WEBSOCKET_SECURE=n
+# only STA + queryHost/addService are used
+CONFIG_MDNS_ENABLE_CONSOLE_CLI=n
+CONFIG_MDNS_PREDEF_NETIF_AP=n
+CONFIG_MDNS_PREDEF_NETIF_ETH=n
+CONFIG_MDNS_ENABLE_BROWSE=n
+# PMS memory protection (hardening only). IDF 6 name / IDF 5.5 name.
+CONFIG_ESP_SYSTEM_MEMPROT=n
+CONFIG_ESP_SYSTEM_MEMPROT_FEATURE=n
+# assert() still aborts (backtrace + coredump), just without the file/line/expr string
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y

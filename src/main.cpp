@@ -427,7 +427,7 @@ static void lfMarkOtaValid() {
     }
 }
 
-void setup() {
+__attribute__((cold)) void setup() {
     consoleInit();
     setupCli();
     ESP_LOGI("main", "*** %s", format_version());
@@ -872,7 +872,7 @@ static void lfControl() {
 
 // One-line UART/MQTT/telnet status line. WITH_MEASURE_COIL skips it during the coil sweep so the
 // measurement output isn't intermixed with the status print.
-static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt) {
+__attribute__((cold)) static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt) {
 #ifdef WITH_MEASURE_COIL
     if (!sensors.Vin || isMeasuring()) return;
 #else
@@ -987,7 +987,7 @@ static void lfUpdateLed(time_us nowUs) {
     }
 }
 
-void loopLF(const time_us &nowUs, bool interim) {
+__attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
     auto &nSamples(sensors.Vout ? sensors.Vout->numSamples : lastNSamples);
     // The sps/throughput window keeps its OWN baseline: lastTimeOutUs is shared cadence state
     // that other code legitimately stomps (console.cpp pushes it per input byte to pause logs,

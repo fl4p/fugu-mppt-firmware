@@ -218,7 +218,7 @@ class SynchronousConverter {
     // useMcpwm at runtime; with a single driver the unreachable arm is #if'd out and the call
     // folds to the same code as before. MCPWM commits both comparators on TEZ (glitch-free,
     // order-independent); the LEDC path keeps its two-write ordering dance.
-    void drvInit(uint8_t pinCtrl, uint8_t pinRect, const ConfFile &boardConf,
+    __attribute__((cold)) void drvInit(uint8_t pinCtrl, uint8_t pinRect, const ConfFile &boardConf,
                  const std::string &syncRole, float syncPhaseNs) {
 #if !WITH_WSYNC
         (void) syncRole; (void) syncPhaseNs;
@@ -1106,7 +1106,7 @@ public:
         drvCommitLsOff(pwmCtrl, pwmRect);
     }
 
-    void init(const ConfFile &converterConf, const ConfFile &boardConf, const ConfFile &coilConf) {
+    __attribute__((cold)) void init(const ConfFile &converterConf, const ConfFile &boardConf, const ConfFile &coilConf) {
         auto topo = converterConf.getString("topo", "buck");
         assert_throw(topo == "buck" or topo == "boost", "");
         isBoost = topo == "boost";

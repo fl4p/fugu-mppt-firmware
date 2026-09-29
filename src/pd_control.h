@@ -72,7 +72,7 @@ inline float pdReadGain(const ConfFile &conf, const std::string &key, float def)
  * Applies conf keys `ctrl_<name>_{kp,kd,td}` on top of whatever gains ctrl already holds. An absent
  * key leaves that gain untouched, so a conf setting none of them is a no-op.
  */
-inline void pdLoadGains(const ConfFile &conf, PD_Control &ctrl, const char *name) {
+__attribute__((cold)) inline void pdLoadGains(const ConfFile &conf, PD_Control &ctrl, const char *name) {
     const std::string p = std::string("ctrl_") + name + "_";
     ctrl.Kp = pdReadGain(conf, p + "kp", ctrl.Kp);
     ctrl.Kd = pdReadGain(conf, p + "kd", ctrl.Kd);

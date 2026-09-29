@@ -140,3 +140,31 @@ littlefs_create_partition_image(littlefs ${FUGU_LITTLEFS_SRC}
         FLASH_IN_PROJECT
 )
 
+
+# Image size (doc/image-size-reduction.md): -Os on core-0-only components; RT-path components keep -O2
+set(FUGU_OS_COMPONENTS bt lwip espressif__mdns joltwallet__littlefs wpa_supplicant espressif__mqtt http_parser
+        esp_http_client esp-tls tcp_transport esp_https_ota SimpleFTPServer ESPTelnet SimpleCLI nvs_flash esp_netif
+        esp_wifi esp_event espcoredump esp-ota-ble tamp espressif__esp_delta_ota app_update esp_partition vfs esp_phy
+        esp_coex espressif__network_provisioning protocomm protobuf-c espressif__led_strip esp_driver_rmt esp_hal_rmt
+        console bootloader_support efuse esp_app_format Arduino-LiquidCrystal-I2C esp_security
+        mqtt wifi_provisioning)
+idf_build_get_property(_fugu_comps BUILD_COMPONENTS)
+foreach (_c ${FUGU_OS_COMPONENTS})
+    if (_c IN_LIST _fugu_comps)
+        idf_component_get_property(_l ${_c} COMPONENT_LIB)
+        get_target_property(_t ${_l} TYPE)
+        if (NOT _t STREQUAL "INTERFACE_LIBRARY")
+            target_compile_options(${_l} PRIVATE -Os)
+        endif ()
+    endif ()
+endforeach ()
+# arduino-esp32: -Os except the sources the RT loop calls into (I2C/Wire for INA226/ADS1x15, GPIO, micros/millis)
+idf_component_get_property(_al espressif__arduino-esp32 COMPONENT_LIB)
+idf_component_get_property(_ad espressif__arduino-esp32 COMPONENT_DIR)
+target_compile_options(${_al} PRIVATE -Os)
+set_source_files_properties(
+        ${_ad}/cores/esp32/esp32-hal-i2c-ng.c ${_ad}/cores/esp32/esp32-hal-i2c.c ${_ad}/cores/esp32/esp32-hal-gpio.c
+        ${_ad}/cores/esp32/esp32-hal-misc.c ${_ad}/cores/esp32/esp32-hal-periman.c ${_ad}/libraries/Wire/src/Wire.cpp
+        TARGET_DIRECTORY ${_al} PROPERTIES COMPILE_OPTIONS "-O2")
+# digitalWrite()'s RGB_BUILTIN branch drags in the Arduino RMT HAL (+ IDF RMT RX); the board has no RGB LED on a virtual pin
+target_compile_definitions(${_al} PRIVATE ESP32_ARDUINO_NO_RGB_BUILTIN)

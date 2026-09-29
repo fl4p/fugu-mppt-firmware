@@ -371,7 +371,7 @@ public:
         ucTemp.read();
     }
 
-    void begin(const ConfFile &trackerConf, const ConfFile &boardConf, const ConfFile &converterConf,
+    __attribute__((cold)) void begin(const ConfFile &trackerConf, const ConfFile &boardConf, const ConfFile &converterConf,
                const Limits &limits_, const TeleConf &tele_);
 
     [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }

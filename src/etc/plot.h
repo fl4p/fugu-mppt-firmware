@@ -45,7 +45,7 @@ struct Plot {
     Series pointsU{240};
     Series pointsD{240};
 
-    static void _plotSeries(Series &ser, const std::string &label) {
+    __attribute__((cold)) static void _plotSeries(Series &ser, const std::string &label) {
 #if !ASCII_PLOT_DISABLED
         auto &points(ser.vec);
         std::sort(points.begin(), points.end());

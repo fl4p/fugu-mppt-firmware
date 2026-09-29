@@ -45,7 +45,7 @@ struct BatChargerParams {
     // every output voltage as an over-voltage and locks the converter out of ever starting.
     [[nodiscard]] bool haveVbatMax() const { return std::isfinite(Vbat_max) && Vbat_max > 0; }
 
-    void load(const ConfFile &chargerConf) {
+    __attribute__((cold)) void load(const ConfFile &chargerConf) {
         Vbat_max = chargerConf.getFloat("vout_max", NAN, true);
         cv_eoc = chargerConf.getFloat("cv_eoc", 3.5f);
         cv_min = chargerConf.getFloat("cv_float", 3.325);
@@ -328,7 +328,7 @@ public:
 
     explicit BatteryCharger() = default;
 
-    void begin(const ConfFile &chargerConf) {
+    __attribute__((cold)) void begin(const ConfFile &chargerConf) {
         params.load(chargerConf);
         termCond.reset(); // propagate just-loaded cv_min into termCond's v_term (was NAN at ctor time)
     }
@@ -623,7 +623,7 @@ public:
     }
 
 
-    void beginMqtt(const ConfFile &mqttConf) {
+    __attribute__((cold)) void beginMqtt(const ConfFile &mqttConf) {
         auto topic = mqttConf.getString("cell_voltages_max_topic", "");
         if (!topic.empty()) {
             _bmsCellSource = true;
