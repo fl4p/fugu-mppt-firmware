@@ -66,3 +66,29 @@ def test_noisy_sweeps_stay_near_the_peak():
 
 def test_too_few_points():
     assert mc.asym_peak_fit([1, 2, 3, 4], [1, 2, 1, 0]) is None
+
+
+class _Con:
+    def __init__(self, line):
+        self.line = line
+
+    def command(self, cmd, timeout=0):
+        assert cmd == "pwm-dump"
+        return [self.line] if self.line else []
+
+
+def test_pwm_timing_mcpwm_uses_realized_period():
+    line = "freq=38995.86 nominal=39000 period_ticks=4103 pwmMax=4103 hs_off=0 ls_on=0 ls_off=0 fault=0 brake=0"
+    fsw, period, pwm_max = mc.query_pwm_timing(_Con(line))
+    assert (period, pwm_max) == (4103, 4103)
+    assert abs(fsw * period - 160e6) < 1e3  # the MCPWM resolution, as getPwmTickRate() returns
+
+
+def test_pwm_timing_ledc_falls_back_to_pwm_max():
+    line = "freq=39000.00 nominal=39000 period_ticks=0 pwmMax=2047 hs_off=0 ls_on=0 ls_off=0 fault=0 brake=0"
+    fsw, period, pwm_max = mc.query_pwm_timing(_Con(line))
+    assert (fsw, period, pwm_max) == (39000.0, 2047, 2047)
+
+
+def test_pwm_timing_absent():
+    assert mc.query_pwm_timing(_Con(None)) is None

@@ -202,10 +202,9 @@ firmware's predicted point `rectCtrlRatio(M)·pwmCtrl` is the timing correction.
 
 `measure-coil ls [hs]` (on-device) or `etc/measure_coil.py --ls-sweep --hs N` brackets the
 peak. `--apply` computes `peak − ideal − --apply-margin` (default 12 counts), converts it to
-time, and writes `coil.conf::rect_offset_ns`. The helper infers the timer period from
-`pwmCtrlMax/0.94`, which the current firmware no longer satisfies, so the written ns value can
-be off by a few percent. Pass `--pwm-max`, or check the `rect_offset=… ns (… ct)` boot log line
-after the reboot. Use
+time with the tick rate read from `pwm-dump` (the basis the firmware uses to convert it back), and
+writes `coil.conf::rect_offset_ns`. Check the `rect_offset=… ns (… ct)` boot log line after the
+reboot. Use
 a steep-edge HS where the peak is genuinely locatable; flat plateaus yield no reliable
 peak. Field values on two boards: +100 and +57 counts (at LEDC 12.5 ns/tick), different
 gate-driver / FET combinations.

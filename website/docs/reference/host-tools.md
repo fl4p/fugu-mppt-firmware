@@ -219,8 +219,8 @@ python etc/measure_coil.py -p $ESPPORT --steps 12 --i-max 1.5
 | Flag                              | Default | Meaning                                                       |
 |-----------------------------------|---------|---------------------------------------------------------------|
 | `-p` / `--ip` / `--ble [NAME]`    |         | Transport (one of)                                            |
-| `--fsw`                           | from `board.conf` | Switching frequency, Hz                             |
-| `--pwm-max`                       | derived | PWM period in counts                                          |
+| `--fsw`                           | from `pwm-dump` | Switching frequency as realized, Hz                   |
+| `--pwm-max`                       | from `pwm-dump` | PWM period in timer ticks                             |
 | `--steps`                         | 10      | Duty steps across the DCM band                                |
 | `--lo`, `--hi`                    | 0.25, 0.9 | Start/end duty as a fraction of the DCM boundary             |
 | `--i-max`                         | 2.0     | Abort a step above this Iout, A                               |

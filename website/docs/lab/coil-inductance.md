@@ -183,11 +183,12 @@ own `rippleCurrent()`.
 
 Procedure:
 
-1. Read `fsw` from `board.conf::pwm_freq`; obtain `pwmCtrlMax` from the `dc` out-of-range reply and
-   derive the PWM period as `pwmMax = pwmCtrlMax/(1−0.06)`; read the current `coil.conf::L0` for
-   reference. That model is stale (the firmware now reserves `boot_refresh_ns` plus dead-time), so
-   pass the real period with `--pwm-max` (the `pwmMax=` in the `converter: drv=… pwmMax=…` boot log
-   line, or from `pwm-dump`/`dt`) and `--fsw` if the frequency was changed.
+1. Read the realized switching frequency, the timer period and `pwmMax` from `pwm-dump`. The period is
+   both the duty basis and, with the frequency, the time per count, the same basis the firmware uses
+   (`period_ticks` on MCPWM, `pwmMax` on LEDC). Obtain `pwmCtrlMax` from the `dc` out-of-range reply as
+   the upper duty bound, and read the current `coil.conf::L0` for reference. Firmware without
+   `pwm-dump` falls back to `board.conf::pwm_freq` and `pwmCtrlMax/(1−0.06)` with a warning; pass
+   `--fsw` and `--pwm-max` in that case.
 2. Read an idle status line for `M = Vout/Vin`; require `Vin > Vout` (buck headroom / sun).
 3. Sweep the high-side duty count `H` upward across the DCM band (`--lo`..`--hi` × `M·pwmMax`),
    holding each step `--dwell` seconds. `Vin`, `Vout`, `Iout` are read from the `sensor avg`

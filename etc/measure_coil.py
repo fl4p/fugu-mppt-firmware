@@ -9,11 +9,12 @@ sensors back, each point yields
 
     L = (Vin - Vout) * Vin * D**2 / (2 * Vout * fsw * Iout)        [buck, DCM, Vout clamped]
 
-where D = pwmCtrl/pwmMax is the high-side on-fraction and fsw the switching frequency. This is the
+where D = pwmCtrl/period is the high-side on-fraction and fsw the switching frequency, both as
+realized by the driver (read from the `pwm-dump` console command). This is the
 inverse of the firmware's own rippleCurrent() (src/buck.h). We sweep duty upward from deep DCM
 toward the CCM/DCM boundary, fit L across the DCM points, and report the median.
 
-Caveats (see doc): result scales directly with the Iout calibration and with pwmMax; dead-time and
+Caveats (see doc): result scales directly with the Iout calibration and with the PWM period; dead-time and
 DCR bias L low by a few %. The reported L is the *physical* inductance — put it in coil.conf as L0
 (the firmware re-applies the 0.95 InductivityDcBias itself).
 
@@ -48,6 +49,8 @@ _V_RE = re.compile(r"V=\s*(-?\d+\.?\d*)/\s*(-?\d+\.?\d*)")
 _I_RE = re.compile(r"I=\s*(-?\d+\.?\d*)/\s*(-?\d+\.?\d*)A")
 _HLM_RE = re.compile(r"(CCM|DCM)\(H\|L\|Lm\)=\s*(\d+)\|\s*(\d+)\|\s*(\d+)")
 _RANGE_RE = re.compile(r"out of range \[0,(\d+)\]")
+# `pwm-dump` (src/cli.cpp): realized frequency, timer period and the driver's pwmMax
+_PWM_DUMP_RE = re.compile(r"freq=(\d+\.?\d*)\s+nominal=\d+\s+period_ticks=(\d+)\s+pwmMax=(\d+)")
 _CONF_RE = re.compile(r"=\s*'([^']*)'\s*$")
 # `sensor avg` (src/cli.cpp cmdSensor) prints one compact line: "sens: vin=24.5000 iout=1.2300 ...":
 _SENS_LINE_RE = re.compile(r"sens:\s")
@@ -135,6 +138,18 @@ def get_conf(con, file, key):
     return None
 
 
+def query_pwm_timing(con):
+    """(realized fsw Hz, period ticks, driver pwmMax) from `pwm-dump`, or None. The period matches the
+    firmware's getPwmTickRate() = fsw * period: MCPWM reports period_ticks; LEDC reports 0 there and
+    counts time in pwmMax ticks."""
+    for ln in con.command("pwm-dump", timeout=4.0):
+        m = _PWM_DUMP_RE.search(ln)
+        if m:
+            period, pwm_max = int(m.group(2)), int(m.group(3))
+            return float(m.group(1)), period or pwm_max, pwm_max
+    return None
+
+
 def query_pwm_ctrl_max(con):
     r = con.command("dc 999999999", timeout=4.0)
     for ln in r:
@@ -199,7 +214,7 @@ def safe_command(con, cmd, timeout=4.0):
         return False
 
 
-def run_sweep(con, tap, hvals, pwm_max, fsw, i_max, dwell, label="", plot_every=0):
+def run_sweep(con, tap, hvals, period, fsw, i_max, dwell, label="", plot_every=0):
     """Step the duty over `hvals`, measure L at each, return (rows, last_safe_H).
 
     Each row is (H, D, vin, vout, iout, mode, L, label). Stops on Iout exceeding `i_max` or on
@@ -214,7 +229,7 @@ def run_sweep(con, tap, hvals, pwm_max, fsw, i_max, dwell, label="", plot_every=
         s = steady_read(con, tap, dwell)
         if not s:
             continue
-        D = s["H"] / pwm_max
+        D = s["H"] / period
         vi, vo, io = s["vin"], s["vout"], s["iout"]
         L = (float("nan") if io <= 0.02 or vi <= vo
              else (vi - vo) * vi * D * D / (2.0 * vo * fsw * io))
@@ -306,7 +321,7 @@ def asym_peak_fit(xs, ys, grid=400):
     return best and best[1:]
 
 
-def ls_sweep(con, tap, hs, pwm_max, fsw, args):
+def ls_sweep(con, tap, hs, pwm_max, period, fsw, args):
     """Hold HS, sweep the low-side on-count, find the Iout peak = optimal LS (zero-crossing) timing.
 
     The peak location is gain-independent (a multiplicative Iout error doesn't move it); comparing it
@@ -331,7 +346,7 @@ def ls_sweep(con, tap, hs, pwm_max, fsw, args):
     ls_lo = max(pwm_rect_min, round(args.ls_lo * ideal_ls))
     ls_hi = min(pwm_max - hs, round(args.ls_hi * ideal_ls))
     step = max(1, (ls_hi - ls_lo) // max(1, args.ls_steps - 1))
-    print(f"HS={hs} D={hs / pwm_max:.3f} Vin={vi:.2f} Vout={vo:.2f}  "
+    print(f"HS={hs} D={hs / period:.3f} Vin={vi:.2f} Vout={vo:.2f}  "
           f"ideal_LS={ideal_ls:.0f} auto_LS={auto_ls}  sweep {ls_lo}..{ls_hi}")
     print(f"\n  {'LS':>5} {'Iout':>7} {'Vin':>6} {'Vout':>6} {'mode':>4}")
 
@@ -366,7 +381,7 @@ def ls_sweep(con, tap, hs, pwm_max, fsw, args):
     if fit:
         ls_peak, _, _, b = fit
         if b > 0:  # steep side: reverse charge ~ Vo*Vin/(2L(Vin-Vo)) * t^2 per period (V_f neglected)
-            Lc = vo * vi / (2 * b * fsw * pwm_max ** 2 * (vi - vo))
+            Lc = vo * vi / (2 * b * fsw * period ** 2 * (vi - vo))
     print()
     print(f"peak LS  : {ls_peak:.0f}   (Iout_peak {ys[pk]:.3f} A at raw argmax {xs[pk]}, "
           f"{'two-sided fit on %d pts' % len(xs) if fit else 'fit failed, raw argmax'})")
@@ -390,8 +405,8 @@ def ls_sweep(con, tap, hs, pwm_max, fsw, args):
         # by reverse-current pullback / transients and misreads as the min-LS floor).
         lim = pwm_max // 8
         new_off = max(-lim, min(lim, round(ls_peak - ideal_ls - args.apply_margin)))
-        # Store as a time (ns) so the calibration is independent of PWM resolution: counts/sec = fsw*pwmMax.
-        tick_rate = fsw * pwm_max
+        # Store as a time (ns) so the calibration is independent of PWM resolution: counts/sec = fsw*period.
+        tick_rate = fsw * period
         new_ns = round(new_off / tick_rate * 1e9)
         print(f"  --apply: coil.conf rect_offset_ns {cur} -> {new_ns}  "
               f"({new_off} ct @ {tick_rate / 1e6:.0f} MHz tick; peak-ideal {ls_peak - ideal_ls:+.0f} ct"
@@ -407,8 +422,8 @@ def main():
     g.add_argument("-p", "--port", help="serial port")
     g.add_argument("--ip", help="TCP/telnet host[:port]")
     g.add_argument("--ble", nargs="?", const="fugu", help="BLE NUS device name (default fugu)")
-    ap.add_argument("--fsw", type=float, help="switching freq Hz (default: read board.conf)")
-    ap.add_argument("--pwm-max", type=int, help="PWM period counts (default: derive from dc range)")
+    ap.add_argument("--fsw", type=float, help="switching freq Hz (default: realized, from pwm-dump)")
+    ap.add_argument("--pwm-max", type=int, help="PWM period in timer ticks (default: from pwm-dump)")
     ap.add_argument("--steps", type=int, default=10, help="duty steps across the DCM band")
     ap.add_argument("--lo", type=float, default=0.25, help="start duty as fraction of boundary M")
     ap.add_argument("--hi", type=float, default=0.9, help="end duty as fraction of boundary M")
@@ -420,7 +435,7 @@ def main():
                     help="print an ASCII L-vs-H plot every N points during the sweep")
     ap.add_argument("--ls-sweep", action="store_true",
                     help="hold HS, sweep low-side count; find the Iout peak (optimal LS timing)")
-    ap.add_argument("--hs", type=int, help="[--ls-sweep] HS count to hold (default: --lo*M*pwmMax)")
+    ap.add_argument("--hs", type=int, help="[--ls-sweep] HS count to hold (default: --lo*M*period)")
     ap.add_argument("--ls-steps", type=int, default=24, help="[--ls-sweep] number of LS steps")
     ap.add_argument("--ls-lo", type=float, default=0.5, help="[--ls-sweep] start LS / ideal_LS")
     ap.add_argument("--ls-hi", type=float, default=1.4, help="[--ls-sweep] end LS / ideal_LS")
@@ -438,17 +453,24 @@ def main():
         if not con.wait_ready(timeout=20):
             sys.exit("device not responding")
 
-        fsw = args.fsw or float(get_conf(con, "board.conf", "pwm_freq") or 0)
-        if not (5e3 < fsw < 5e5):
-            sys.exit(f"bad fsw={fsw}; pass --fsw")
         pwm_ctrl_max = query_pwm_ctrl_max(con)
         if not pwm_ctrl_max:
             sys.exit("could not read pwmCtrlMax (dc range)")
         print('args=', ', '.join(f'{k}={v}' for k, v in args.__dict__.items() if v))
-        pwm_max = args.pwm_max or round(pwm_ctrl_max / (1.0 - MIN_DUTY_LS))
+        timing = query_pwm_timing(con)
+        if timing:
+            fsw_rt, period_rt, pwm_max = timing
+        else:
+            fsw_rt = float(get_conf(con, "board.conf", "pwm_freq") or 0)
+            period_rt = pwm_max = round(pwm_ctrl_max / (1.0 - MIN_DUTY_LS))
+            print("WARNING: no pwm-dump (older firmware); period estimated from the dc range and fsw from"
+                  " board.conf. Times and L can be off by a few %; pass --fsw and --pwm-max.")
+        fsw, period = args.fsw or fsw_rt, args.pwm_max or period_rt
+        if not (5e3 < fsw < 5e5):
+            sys.exit(f"bad fsw={fsw}; pass --fsw")
         l0 = get_conf(con, "coil.conf", "L0")
-        print(f"fsw={fsw:.0f} Hz  pwmCtrlMax={pwm_ctrl_max}  pwmMax={pwm_max}"
-              f"  coil.conf L0={l0}")
+        print(f"fsw={fsw:.2f} Hz  period={period} ticks ({fsw * period / 1e6:.2f} MHz)  pwmMax={pwm_max}"
+              f"  pwmCtrlMax={pwm_ctrl_max}  coil.conf L0={l0}")
 
         idle = steady_read(con, tap, max(args.dwell, 4.0))
         if not idle:
@@ -464,16 +486,16 @@ def main():
                 sys.exit("aborted")
 
         if args.ls_sweep:
-            hs = args.hs or max(2, round(args.lo * (vout / vin) * pwm_max))
+            hs = args.hs or max(2, round(args.lo * (vout / vin) * period))
             try:
-                ls_sweep(con, tap, hs, pwm_max, fsw, args)
+                ls_sweep(con, tap, hs, pwm_max, period, fsw, args)
             finally:
                 safe_command(con, "mppt" if args.restore == "mppt" else "dc 0")
             return
 
         m0 = vout / vin
-        h_lo = max(2, round(args.lo * m0 * pwm_max))
-        h_hi = min(pwm_ctrl_max, round(args.hi * m0 * pwm_max))
+        h_lo = max(2, round(args.lo * m0 * period))
+        h_hi = min(pwm_ctrl_max, round(args.hi * m0 * period))
         if h_hi <= h_lo:
             sys.exit("empty duty band; check --lo/--hi")
         step = max(1, (h_hi - h_lo) // max(1, args.steps - 1))
@@ -483,12 +505,12 @@ def main():
         try:
             up_lbl = "up" if args.bidir else ""
             rows_up, safe_h = run_sweep(con, tap, range(h_lo, h_hi + 1, step),
-                                        pwm_max, fsw, args.i_max, args.dwell, up_lbl,
+                                        period, fsw, args.i_max, args.dwell, up_lbl,
                                         args.plot_every)
             rows += rows_up
             if args.bidir and safe_h:
                 rows_dn, _ = run_sweep(con, tap, range(safe_h, h_lo - 1, -step),
-                                       pwm_max, fsw, args.i_max, args.dwell, "dn")
+                                       period, fsw, args.i_max, args.dwell, "dn")
                 rows += rows_dn
         finally:
             safe_command(con, "mppt" if args.restore == "mppt" else "dc 0")
