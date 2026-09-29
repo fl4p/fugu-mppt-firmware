@@ -186,9 +186,7 @@ public:
             .direction = GPTIMER_COUNT_UP,
             .resolution_hz = RES_HZ, // 1 MHz ticks
             .intr_priority = 0, // GPTIMER_ALLOW_INTR_PRIORITY_MASK
-            .flags = {
-                .intr_shared = 0, .allow_pd = 0, .backup_before_sleep = 0, // backup_before_sleep is deprecated
-            }, // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/intr_alloc.html
+            .flags = {}, // all off; field set differs between IDF 5 and 6
         };
         ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &gptimer));
 

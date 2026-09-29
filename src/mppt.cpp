@@ -122,7 +122,7 @@ void MpptController::update() {
     for (auto &c: controlValues) {
         auto cv = c.crtl.update(c.actual, c.target, dtCtrl);
 
-        if (!isfinite(cv) && !converter.disabled() && converter.getDutyCycle() > 0.01f) {
+        if (!std::isfinite(cv) && !converter.disabled() && converter.getDutyCycle() > 0.01f) {
             ESP_LOGW("mppt", "Control value %f not finite act=%.3f tgt=%.3f idx=%i", cv, c.actual, c.target,
                      int(&c -controlValues.begin()));
             shutdownDcdc("ctrl-nan");

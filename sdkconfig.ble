@@ -30,6 +30,13 @@ CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 # BLE wrapper already calls ble_store_config_init() in BLEDevice::init(), so this is all that
 # is needed. Stored in the default NVS partition's "nimble_bond" namespace; up to MAX_BONDS (3).
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
+# IDF 6 NimBLE extras that default on
+CONFIG_BT_NIMBLE_DTM_MODE_TEST=n
+CONFIG_BT_NIMBLE_SVC_DIS_IEEE=n
+CONFIG_BT_NIMBLE_SVC_DIS_UDI=n
+CONFIG_BT_NIMBLE_CPFD_CAFD=n
+CONFIG_BT_NIMBLE_SM_SIGN_CNT=n
+CONFIG_BT_NIMBLE_RECONFIG_MTU=n
 
 # --- Radio power / thermals ---
 # Without modem sleep the BLE RF front-end and radio PLL stay powered continuously (they never

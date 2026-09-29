@@ -368,8 +368,9 @@ class SynchronousConverter {
                 // leader = self-check of its own pulse. Runs BEFORE the role init: enabling the
                 // pad's input/output here routes the matrix to plain GPIO, and initSyncOut must
                 // claim the output matrix LAST or the pulse never reaches the pad.
-                pcnt_unit_config_t upc = {.low_limit = -32768, .high_limit = wsyncCountMax,
-                                          .intr_priority = 0, .flags = {}};
+                pcnt_unit_config_t upc = {}; // IDF 6 added clk_src (0 = default)
+                upc.low_limit = -32768;
+                upc.high_limit = wsyncCountMax;
                 // accumulate across the 16-bit wrap: the hw counter resets to 0 at high_limit,
                 // so without this a noise-multiplied edge rate (>3.4x nominal at 39 kHz) wraps
                 // and reads back as a plausible healthy rate. The accumulator is maintained in
@@ -378,10 +379,8 @@ class SynchronousConverter {
                 upc.flags.accum_count = 1;
                 ESP_ERROR_CHECK(pcnt_new_unit(&upc, &wsyncPcnt_));
                 ESP_ERROR_CHECK(pcnt_unit_add_watch_point(wsyncPcnt_, wsyncCountMax));
-                pcnt_chan_config_t cpc = {.edge_gpio_num = syncPin, .level_gpio_num = -1,
-                                          .flags = {.invert_edge_input = 0, .invert_level_input = 0,
-                                                    .virt_edge_io_level = 0, .virt_level_io_level = 1,
-                                                    .io_loop_back = 0}};
+                pcnt_chan_config_t cpc = {.edge_gpio_num = syncPin, .level_gpio_num = -1, .flags = {}};
+                cpc.flags.virt_level_io_level = 1;
                 pcnt_channel_handle_t pch;
                 ESP_ERROR_CHECK(pcnt_new_channel(wsyncPcnt_, &cpc, &pch));
                 ESP_ERROR_CHECK(pcnt_channel_set_edge_action(pch, PCNT_CHANNEL_EDGE_ACTION_INCREASE,

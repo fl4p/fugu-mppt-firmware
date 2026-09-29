@@ -7,6 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is an ESP-IDF project (v5.5+) using `espressif/arduino-esp32` as a component. Target is `esp32s3` (also supports
 `esp32`).
 
+ESP-IDF 5.5 is the default. It also builds on ESP-IDF 6.0 (`FUGU_IDF=idf6.0.3 . ./idf-export.sh`, then `idf.py -B build-idf6
+-DSDKCONFIG=build-idf6/sdkconfig build`). `main/idf_component.yml` picks arduino-esp32 >=3.3.12 and the
+external `espressif/mqtt` there. Keep code compatible with both: IDF 6 driver config structs dropped
+fields (`io_loop_back`, pull flags) and added others, so zero-init (`= {}`) and assign instead of
+listing every field.
+
 Before any `idf.py` invocation, source ESP-IDF into the shell. The repo ships a helper:
 
 ```bash

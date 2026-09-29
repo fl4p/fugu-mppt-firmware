@@ -38,17 +38,13 @@ public:
         ESP_ERROR_CHECK_THROW(ledc_timer_config(&ledc_timer));
 
         // Prepare and then apply the LEDC PWM channel configuration
-        ledc_channel_config_t ledc_channel = {
-                .gpio_num       = pin,
-                .speed_mode     = ledcMode,
-                .channel        = (ledc_channel_t) channel,
-                .intr_type      = LEDC_INTR_DISABLE,
-                .timer_sel      = LEDC_TIMER_0,
-                .duty           = 0, // Set duty to 0%
-                .hpoint         = 0,
-                .sleep_mode     = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
-                .flags          = {.output_invert = 0},
-        };
+        // assigned, not designated: intr_type (deprecated) and deconfigure differ between IDF 5 and 6
+        ledc_channel_config_t ledc_channel = {};
+        ledc_channel.gpio_num = pin;
+        ledc_channel.speed_mode = ledcMode;
+        ledc_channel.channel = (ledc_channel_t) channel;
+        ledc_channel.timer_sel = LEDC_TIMER_0;
+        ledc_channel.sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD;
         ESP_ERROR_CHECK_THROW(ledc_channel_config(&ledc_channel));
     }
 

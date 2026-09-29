@@ -374,7 +374,7 @@ public:
 
     void restore(D v) {
         assert(value == 0);
-        if (isfinite(v))
+        if (std::isfinite(v))
             value = v;
     }
 };

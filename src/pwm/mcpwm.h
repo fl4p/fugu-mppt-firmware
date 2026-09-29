@@ -20,14 +20,12 @@ public:
             .group_id = group,
             .intr_priority = 0,
             .gpio_num = pin,
-            .flags = {
-                .active_level = (uint32_t) (activeHigh ? 1 : 0),
-                .io_loop_back = 0,
-                .pull_up      = (uint32_t) (activeHigh ? 0 : 1),
-                .pull_down    = (uint32_t) (activeHigh ? 1 : 0),
-            },
+            .flags = {}, // field set differs between IDF 5 and 6
         };
+        fc.flags.active_level = activeHigh;
         ESP_ERROR_CHECK(mcpwm_new_gpio_fault(&fc, &fault_));
+        // IDF 6 dropped the pull flags; pull towards the inactive level
+        ESP_ERROR_CHECK(gpio_set_pull_mode((gpio_num_t) pin, activeHigh ? GPIO_PULLDOWN_ONLY : GPIO_PULLUP_ONLY));
     }
 
     // OST brake on the operator + force both gens LOW on the brake event.
@@ -277,7 +275,7 @@ public:
         mcpwm_gpio_sync_src_config_t sc = {
             .group_id = group_,
             .gpio_num = gpio,
-            .flags = {.active_neg = 0, .io_loop_back = 0, .pull_up = 0, .pull_down = 1},
+            .flags = {}, // pull-down set below (IDF 6 dropped the pull flags)
         };
         ESP_ERROR_CHECK(mcpwm_new_gpio_sync_src(&sc, &syncIn_));
         // kill any legacy pad pull-up (e.g. U0RXD default): pull-up vs the sync-src pull-down

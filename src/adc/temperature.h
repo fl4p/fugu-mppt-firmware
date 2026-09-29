@@ -169,7 +169,7 @@ public:
 
 #if CONFIG_IDF_TARGET_ESP32S3
 
-#if ESP_IDF_VERSION_MAJOR == 5
+#if ESP_IDF_VERSION_MAJOR >= 5
 
 #include "driver/temperature_sensor.h"
 
@@ -178,7 +178,7 @@ public:
 #endif
 
 
-#if ESP_IDF_VERSION_MAJOR == 5
+#if ESP_IDF_VERSION_MAJOR >= 5
 
 class Esp32TempSensor : public SingleValueSensor {
     RunningMedian3<float> median3{};
@@ -234,7 +234,7 @@ public:
     [[nodiscard]] float last() const override { return ewma.get(); }
 };
 
-#else // ESP_IDF_VERSION_MAJOR == 5
+#else // ESP_IDF_VERSION_MAJOR >= 5
 /**
  * Reads ESP32 internal temperature sensor.
  * Don't use this in latency critical loops if WiFi is on!
@@ -290,7 +290,7 @@ public:
 
     [[nodiscard]] float last() const override { return ewma.get(); }
 };
-#endif // ESP_IDF_VERSION_MAJOR == 5
+#endif // ESP_IDF_VERSION_MAJOR >= 5
 
 #else
 

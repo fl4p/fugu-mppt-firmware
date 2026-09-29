@@ -125,7 +125,7 @@ target_link_libraries(${_arduino_lib} PUBLIC
         idf::esp_wifi idf::esp_event idf::esp_netif
         idf::espressif__network_provisioning)
 
-set (CMAKE_CXX_FLAGS "-fexceptions") # -mfp16-format=ieee
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions") # keep toolchain flags (IDF 6: picolibc specs). -mfp16-format=ieee
 
 if (IDF_TARGET STREQUAL "esp32")
     set(FUGU_LITTLEFS_SRC config/fugu1/fugu1_esp32)

@@ -124,16 +124,13 @@ public:
             .gpio_num      = gpio_num,
             .intr_priority = 0,
             .prescale      = 1,
-            .flags = {
-                .pos_edge             = 1,
-                .neg_edge             = 1,
-                .pull_up              = 0,
-                .pull_down            = 0,
-                .invert_cap_signal    = 0,
-                .io_loop_back         = io_loop_back ? 1u : 0u,
-                .keep_io_conf_at_exit = 0,
-            },
+            .flags = {}, // field set differs between IDF 5 and 6
         };
+        cconf.flags.pos_edge = 1;
+        cconf.flags.neg_edge = 1;
+#if ESP_IDF_VERSION_MAJOR < 6
+        cconf.flags.io_loop_back = io_loop_back;
+#endif
         ESP_ERROR_CHECK(mcpwm_new_capture_channel(timer.handle, &cconf, &handle));
         mcpwm_capture_event_callbacks_t cbs = { .on_cap = cap_isr };
         ESP_ERROR_CHECK(mcpwm_capture_channel_register_event_callbacks(

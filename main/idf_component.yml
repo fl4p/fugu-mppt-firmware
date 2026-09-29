@@ -21,12 +21,23 @@ dependencies:
   # 3.3.8 added BLEDevice::getLocalIRK() which calls ble_gap_read_local_irk(), a NimBLE GAP API not
   # present in ESP-IDF 5.5.1's bundled NimBLE -> build break for WITH_BLE. Cap below 3.3.8 until the
   # IDF NimBLE catches up. 3.3.7 is the last compatible release.
-  espressif/arduino-esp32: '>=3.3.2,<3.3.8'
+  # IDF 6 needs a newer arduino-esp32 (the 3.3.8 cap above only concerns 5.5.1's NimBLE).
+  espressif/arduino-esp32:
+    matches:
+      - if: "idf_version >=6.0"
+        version: '>=3.3.12'
+      - if: "idf_version <6.0"
+        version: '>=3.3.2,<3.3.8'
   joltwallet/littlefs: ^1.20.2
   # OTA-over-BLE receiver. A local checkout via ESP_OTA_BLE_DIR (see top CMakeLists.txt) overrides this.
   esp-ota-ble:
     git: https://github.com/fl4p/esp-ota-ble.git
     version: 63f3dcee3e60973076ea70e8733bd4641edb1993
+  # esp-mqtt left IDF in 6.0
+  espressif/mqtt:
+    version: ^1.0.0
+    rules:
+      - if: "idf_version >=6.0"
 
   # arduino-esp32 declares these as transitive deps but we don't use the Arduino libraries that
   # would compile them (RainMaker, Insights, PPP, WiFiProv-via-Zigbee, OpenThread, Matter, Modbus,

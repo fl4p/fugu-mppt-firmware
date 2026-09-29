@@ -145,6 +145,8 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
         case HTTP_EVENT_REDIRECT:
             ESP_LOGW(TAG, "HTTP_EVENT_REDIRECT");
             break;
+        default:
+            break;
     }
     return ESP_OK;
 }
@@ -191,8 +193,10 @@ bool doOta(const char *url) {
         .http_config = &config,
         .http_client_init_cb = nullptr,
         .bulk_flash_erase = false,
+#if ESP_IDF_VERSION_MAJOR < 6 || CONFIG_ESP_HTTPS_OTA_ENABLE_PARTIAL_DOWNLOAD
         .partial_http_download = false,
         .max_http_request_size = 0,
+#endif
         .buffer_caps = MALLOC_CAP_DEFAULT,
         .ota_resumption = false,
         .ota_image_bytes_written = 0,

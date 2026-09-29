@@ -63,8 +63,9 @@ struct WsyncProbeResult {
 // preempted caller overruns the delay, and dividing by the requested ms reports a healthy wire
 // as over-rate (same reason cmdWsync measures).
 inline bool wsyncCountWindow(uint8_t pin, uint32_t ms, int &edges, float &rateHz) {
-    pcnt_unit_config_t upc = {.low_limit = -32768, .high_limit = 32767,
-                              .intr_priority = 0, .flags = {}};
+    pcnt_unit_config_t upc = {}; // IDF 6 added clk_src (0 = default)
+    upc.low_limit = -32768;
+    upc.high_limit = 32767;
     // Accumulate across the wrap. A healthy 39 kHz line cannot reach 32767 in 20 ms, but the
     // counter RESETS at high_limit, so without this a fast train aliases down into the accept
     // band: (32768 + 780) / 20 ms ~ 1.68 MHz reads back as a plausible 39 kHz, and a 25 ns
@@ -76,10 +77,8 @@ inline bool wsyncCountWindow(uint8_t pin, uint32_t ms, int &edges, float &rateHz
 
     bool ok = false;
     pcnt_channel_handle_t ch = nullptr;
-    pcnt_chan_config_t cpc = {.edge_gpio_num = pin, .level_gpio_num = -1,
-                              .flags = {.invert_edge_input = 0, .invert_level_input = 0,
-                                        .virt_edge_io_level = 0, .virt_level_io_level = 1,
-                                        .io_loop_back = 0}};
+    pcnt_chan_config_t cpc = {.edge_gpio_num = pin, .level_gpio_num = -1, .flags = {}};
+    cpc.flags.virt_level_io_level = 1;
     if (pcnt_new_channel(unit, &cpc, &ch) == ESP_OK) {
         // pcnt_new_channel() unconditionally does gpio_pullup_en() + gpio_pulldown_dis()
         // (esp_driver_pcnt/src/pulse_cnt.c). The AC-coupled receiver biases against the
