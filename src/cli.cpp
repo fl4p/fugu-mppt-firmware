@@ -95,6 +95,27 @@ static SimpleCLI cli;
 static bool s_cmdFailed = false;
 #define CMD_FAIL_RETURN(...) do { ESP_LOGW("main", __VA_ARGS__); s_cmdFailed = true; return; } while (0)
 
+static bool argInt(Command &cc, int i, int &out) {
+    if (i >= cc.countArgs()) return false;
+    auto s = cc.getArg(i).getValue();
+    char *end;
+    long v = strtol(s.c_str(), &end, 10);
+    if (end == s.c_str() || *end) return false;
+    out = (int) v;
+    return true;
+}
+
+// Whole-token float parse; toFloat() would turn "abc" into 0 and "24V" into 24.
+static bool argFloat(Command &cc, int i, float &out) {
+    if (i >= cc.countArgs()) return false;
+    auto s = cc.getArg(i).getValue();
+    char *end;
+    float v = strtof(s.c_str(), &end);
+    if (end == s.c_str() || *end || !std::isfinite(v)) return false;
+    out = v;
+    return true;
+}
+
 static bool waitPsuCommand(uint32_t ticket, uint32_t timeoutMs = 1000) {
     const auto deadline = wallClockMs() + timeoutMs;
     while (!mppt.isPsuCommandDone(ticket) && wallClockMs() < deadline)
@@ -158,8 +179,9 @@ static void cmdBflow(cmd *c) {
         CMD_FAIL_RETURN("bf: only in manual PWM (use 'dc N' first)");
     if (!mppt.bflow)
         CMD_FAIL_RETURN("panel switch not configured");
-    auto newState = Command(c).getArg(0).getValue().toInt();
-    if (newState != 0 and newState != 1)
+    Command cc(c);
+    int newState;
+    if (!argInt(cc, 0, newState) or (newState != 0 and newState != 1))
         CMD_FAIL_RETURN("bf: expected 0|1");
     if (mppt.bflow.state() != newState)
         ESP_LOGI("main", "Set bflow state %i", (int) newState);
@@ -190,8 +212,8 @@ static void cmdDc(cmd *c) {
     auto v = cc.getArg(0).getValue();
     if (v.length() == 0)
         CMD_FAIL_RETURN("dc: expected <hs> [ls]");
-    auto dc = v.toInt();
-    if (dc < 0 || dc > converter.pwmCtrlMax || v.indexOf(',') != -1)
+    int dc;
+    if (!argInt(cc, 0, dc) || dc < 0 || dc > converter.pwmCtrlMax)
         CMD_FAIL_RETURN("dc: out of range [0,%i]", (int) converter.pwmCtrlMax);
 
     // `dc 0` is the shutdown escape hatch and must always work — a sweep runs its calibration
@@ -201,8 +223,8 @@ static void cmdDc(cmd *c) {
         CMD_FAIL_RETURN("dc: busy calibrating");
 
     int manualRect = -1;
-    if (cc.countArgs() >= 2 && dc > 0)
-        manualRect = cc.getArg(1).getValue().toInt();
+    if (cc.countArgs() >= 2 && dc > 0 && (!argInt(cc, 1, manualRect) || manualRect < 0))
+        CMD_FAIL_RETURN("dc: bad ls count");
 
     const auto ticket = mppt.requestPsuManual(dc, manualRect);
     if (!waitPsuCommand(ticket))
@@ -340,8 +362,9 @@ static void cmdShortLs(cmd *) {
 }
 
 static void cmdSpeed(cmd *c) {
-    float speedScale = Command(c).getArg(0).getValue().toFloat();
-    if (speedScale >= 0 && speedScale < 10) {
+    Command cc(c);
+    float speedScale;
+    if (argFloat(cc, 0, speedScale) && speedScale >= 0 && speedScale < 10) {
         mppt.speedScale = speedScale;
         ESP_LOGI("main", "Set tracker speed scale %.4f", speedScale);
     } else {
@@ -350,21 +373,13 @@ static void cmdSpeed(cmd *c) {
 }
 
 static void cmdFan(cmd *c) {
-    if (!mppt.fan.fanSet(Command(c).getArg(0).getValue().toFloat() * 0.01f))
+    Command cc(c);
+    float pct;
+    if (!argFloat(cc, 0, pct) || !mppt.fan.fanSet(pct * 0.01f))
         CMD_FAIL_RETURN("fan: set failed");
 }
 
 static void cmdLed(cmd *c) { led.setRGB(Command(c).getArg(0).getValue().c_str()); }
-
-static bool argInt(Command &cc, int i, int &out) {
-    if (i >= cc.countArgs()) return false;
-    auto s = cc.getArg(i).getValue();
-    char *end;
-    long v = strtol(s.c_str(), &end, 10);
-    if (end == s.c_str() || *end) return false;
-    out = (int) v;
-    return true;
-}
 
 // Pins board.conf assigns (gates, driver enable, I2C, alerts, fan, LED) are off-limits for the pin diagnostics.
 static bool boardOwnsPin(int pin) {
@@ -1548,7 +1563,10 @@ static void cmdConfCheck(cmd *) {
 }
 
 static void cmdVset(cmd *c) {
-    float v = Command(c).getArg(0).getValue().toFloat();
+    Command cc(c);
+    float v;
+    if (!argFloat(cc, 0, v))
+        CMD_FAIL_RETURN("vset: expected a number");
     // 0 is not "no limit": it clamps the OV threshold to ~0 and wedges the converter (issue #58).
     if (v > 0 and v <= 999) {
         mppt.charger.params.Vbat_max = v;
@@ -1558,14 +1576,20 @@ static void cmdVset(cmd *c) {
 }
 
 static void cmdIset(cmd *c) {
-    float v = Command(c).getArg(0).getValue().toFloat();
+    Command cc(c);
+    float v;
+    if (!argFloat(cc, 0, v))
+        CMD_FAIL_RETURN("iset: expected a number");
     if (v >= 0 and v <= 999) mppt.charger.params.Ibat_lim = v;
     else
         CMD_FAIL_RETURN("iset: out of range [0,999]");
 }
 
 static void cmdOvset(cmd *c) {
-    float v = Command(c).getArg(0).getValue().toFloat();
+    Command cc(c);
+    float v;
+    if (!argFloat(cc, 0, v))
+        CMD_FAIL_RETURN("ovset: expected a number");
     if (v > 0 and v <= 999) {
         const float requested = mppt.getRequestedPsuSetpoint();
         if (std::isfinite(requested) && requested >= 0.98f * v)
@@ -1601,8 +1625,8 @@ static void cmdPsu(cmd *c) {
             CMD_FAIL_RETURN("psu off: RT transition timed out");
         return;
     }
-    float v = arg.toFloat();
-    if (!std::isfinite(v) || v <= 0 || v > mppt.limits.Vout_max)
+    float v;
+    if (!argFloat(cc, 0, v) || v <= 0 || v > mppt.limits.Vout_max)
         CMD_FAIL_RETURN("psu: out of range (0,%.1f]", mppt.limits.Vout_max);
     const auto ticket = mppt.queuePsuSetpoint(v);
     if (!ticket)
@@ -1646,8 +1670,8 @@ static void cmdPv(cmd *c) {
     float isc, voc, k;
     bool rebase = true;
     if (arg == "scale") {
-        float s = n >= 2 ? cc.getArg(1).getValue().toFloat() : NAN;
-        if (!std::isfinite(s) || s <= 0 || s > 1.2f)
+        float s;
+        if (!argFloat(cc, 1, s) || s <= 0 || s > 1.2f)
             CMD_FAIL_RETURN("pv scale: expected (0,1.2]");
         float base = mppt.getPvBaseIsc();
         if (!mppt.getPvCurve(isc, voc, k) || !std::isfinite(base))
@@ -1655,9 +1679,9 @@ static void cmdPv(cmd *c) {
         isc = base * s;
         rebase = false;
     } else {
-        isc = arg.toFloat();
-        voc = n >= 2 ? cc.getArg(1).getValue().toFloat() : NAN;
-        k = n >= 3 ? cc.getArg(2).getValue().toFloat() : 0.8f;
+        k = 0.8f;
+        if (!argFloat(cc, 0, isc) || !argFloat(cc, 1, voc) || (n >= 3 && !argFloat(cc, 2, k)))
+            CMD_FAIL_RETURN("pv: expected <isc> <voc> [k]");
     }
     if (!MpptController::validPvParams(isc, voc, k))
         CMD_FAIL_RETURN("pv: expected isc>0 voc>0 k in [0.5,0.95]");
