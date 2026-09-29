@@ -23,6 +23,10 @@ dependencies:
   # IDF NimBLE catches up. 3.3.7 is the last compatible release.
   espressif/arduino-esp32: '>=3.3.2,<3.3.8'
   joltwallet/littlefs: ^1.20.2
+  # OTA-over-BLE receiver. A local checkout via ESP_OTA_BLE_DIR (see top CMakeLists.txt) overrides this.
+  esp-ota-ble:
+    git: https://github.com/fl4p/esp-ota-ble.git
+    version: 63f3dcee3e60973076ea70e8733bd4641edb1993
 
   # arduino-esp32 declares these as transitive deps but we don't use the Arduino libraries that
   # would compile them (RainMaker, Insights, PPP, WiFiProv-via-Zigbee, OpenThread, Matter, Modbus,

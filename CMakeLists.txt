@@ -67,21 +67,24 @@ endif ()
 # / etc.) are stubbed out via override_path in main/idf_component.yml. EXCLUDE_COMPONENTS doesn't
 # work for managed components, so the override-to-empty-stub is the next-best lever.
 
-# The OTA-over-BLE receiver lives outside this repo: it is shared with smart-shunt-fw, which is a
-# PlatformIO/Arduino build, so the module carries both a CMakeLists.txt and a library.json. Override
-# with -DESP_OTA_BLE_DIR=... or the env var if it is checked out elsewhere.
-if (NOT ESP_OTA_BLE_DIR)
-    if (DEFINED ENV{ESP_OTA_BLE_DIR})
-        set(ESP_OTA_BLE_DIR $ENV{ESP_OTA_BLE_DIR})
-    else ()
-        set(ESP_OTA_BLE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../esp-ota-ble")
+# The OTA-over-BLE receiver (fl4p/esp-ota-ble) is a git dependency in main/idf_component.yml. A local
+# checkout overrides it: -DESP_OTA_BLE_DIR=... or the env var, else ../esp-ota-ble if present.
+if (NOT ESP_OTA_BLE_DIR AND DEFINED ENV{ESP_OTA_BLE_DIR})
+    set(ESP_OTA_BLE_DIR $ENV{ESP_OTA_BLE_DIR})
+endif ()
+if (ESP_OTA_BLE_DIR)
+    if (NOT EXISTS "${ESP_OTA_BLE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "esp-ota-ble not found at ESP_OTA_BLE_DIR=${ESP_OTA_BLE_DIR}")
     endif ()
+elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../esp-ota-ble/CMakeLists.txt")
+    set(ESP_OTA_BLE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../esp-ota-ble")
 endif ()
-if (NOT EXISTS "${ESP_OTA_BLE_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR "esp-ota-ble not found at ${ESP_OTA_BLE_DIR} — clone it beside this repo or "
-            "set ESP_OTA_BLE_DIR. It provides the OTA-over-BLE receiver (ota_ble.h).")
+if (ESP_OTA_BLE_DIR)
+    message(STATUS "esp-ota-ble: local ${ESP_OTA_BLE_DIR}")
+    list(APPEND EXTRA_COMPONENT_DIRS "${ESP_OTA_BLE_DIR}")
+else ()
+    message(STATUS "esp-ota-ble: from main/idf_component.yml")
 endif ()
-list(APPEND EXTRA_COMPONENT_DIRS "${ESP_OTA_BLE_DIR}")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 

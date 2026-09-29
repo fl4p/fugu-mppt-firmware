@@ -38,6 +38,7 @@ import os as _os, sys as _sys
 _HERE = _os.path.dirname(_os.path.abspath(__file__))
 for _cand in (_os.environ.get("ESP_OTA_BLE_HOST", ""),
               _os.path.join(_HERE, "..", "..", "esp-ota-ble", "host"),
+              _os.path.join(_HERE, "..", "managed_components", "esp-ota-ble", "host"),
               _os.path.expanduser("~/dev/pv/esp-ota-ble/host"),
               _HERE):
     if all(_os.path.isfile(_os.path.join(_cand, name))
