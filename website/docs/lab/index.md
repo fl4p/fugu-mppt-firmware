@@ -61,8 +61,9 @@ input/output capacitance and per-channel noise.
   pins that are not your board's, and sets zero dead-time. Before first power, provision the real board profile
   and compare `sensor` readings against a meter at a current-limited supply (see
   [First power-up](../guide/getting-started/first-power-up.md)).
-- **Never OTA a `VCONV` build to a real converter.** It drives the simulation instead of the half-bridge; the
-  converter outputs 0 W.
+- **Never OTA a `VCONV` build to a real converter.** The half-bridge is never switched, so the converter stops
+  charging while looking healthy (real sensor readings, sweeps, repeated `Vr-sensor-fail`) and the loads drain the
+  battery. See [Build Options](../guide/getting-started/build-options.md).
 - **Stop conversion before updating at high power.** Send `dc 0` first; an OTA reboots the device into the new
   image. With `etc/ota.py`, always dry-run (`-n`) and scope the target (`-m REGEX`) first.
 - **Rollback needs the serial-flashed bootloader.** A board that has only ever been updated over the air keeps its

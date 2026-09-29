@@ -60,9 +60,11 @@ The Windows steps follow Espressif's Windows tooling and have not been tested on
 </TabItem>
 </Tabs>
 
+:::note
 `flash` writes the bootloader, the partition table, the firmware and a mock-ADC configuration, which
 `provision.py` then replaces. Keep panel and battery disconnected until the board is provisioned. For later
 firmware updates use `app-flash`, which keeps the configuration.
+:::
 
 Then, in the console:
 
@@ -70,10 +72,6 @@ Then, in the console:
 wifi-add <ssid>:<password>
 restart
 ```
-
-The first build downloads the ESP-IDF components the firmware depends on, including
-[arduino-esp32](https://github.com/espressif/arduino-esp32) and the OTA-over-BLE receiver
-[esp-ota-ble](https://github.com/fl4p/esp-ota-ble), into `managed_components/`.
 
 ## Install ESP-IDF
 
@@ -113,8 +111,10 @@ environment from the system's default `python`.
 
 ## Build
 
-The firmware uses [arduino-esp32](https://github.com/espressif/arduino-esp32) as an ESP-IDF component, pulled in by
-the IDF component manager on the first build.
+On the first build, the IDF component manager downloads the components the firmware depends on, including
+[arduino-esp32](https://github.com/espressif/arduino-esp32) and the OTA-over-BLE receiver
+[esp-ota-ble](https://github.com/fl4p/esp-ota-ble), into `managed_components/` of your checkout. This needs internet
+access on the build machine.
 
 | Target | Command |
 |---|---|

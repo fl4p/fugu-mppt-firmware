@@ -103,7 +103,9 @@ CONFIG_FUGU_WITH_MCPWM=n
 Provision `config/lab/vconv_mock`. On ESP32-S3 the MCPWM default cannot be overridden by a fragment alone;
 pass a dedicated sdkconfig with `-DSDKCONFIG=sdkconfig.vconv_s3`.
 
-:::danger
-Never OTA a `VCONV` build to a real converter: it drives a simulation instead of the half-bridge and
-the converter outputs 0 W.
+:::warning Never OTA a VCONV build to a real converter
+A `VCONV` build replaces the gate driver with a simulation, so the half-bridge is never switched and the converter
+stops charging. The sensors stay real, so the device looks healthy: it keeps sweeping, Vin sits at the panel's
+open-circuit voltage and the log repeats `Vr-sensor-fail`. Meanwhile the loads drain the battery. `etc/ota.py` warns
+about VCONV images and refuses them in non-interactive runs.
 :::
