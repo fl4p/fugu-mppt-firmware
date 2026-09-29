@@ -47,10 +47,16 @@ Two distinct procedures:
 - **Without instruments** — [`doc/pwm-test-spec1.md`](../../../doc/pwm-test-spec1.md) validates the MCPWM driver
   (`src/pwm/mcpwm.h`) using the internal GPIO-matrix loopback into the MCPWM capture channels (12.5 ns resolution).
   Runs as part of the on-target Unity suite in an MCPWM build, see [Testing](../development/testing.md).
-- **With a scope** — `etc/mcpwm_gate_verify.py` drives the device over the console and captures both gates
+- **With a scope** — `python3 etc/mcpwm_gate_verify.py` drives the device over the console and captures both gates
   (channel A = `board.conf::pwm_hi`, channel B = `pwm_li`), then prints PASS/FAIL per assertion and exits with the
   number of failed rows. A free GPIO wired to `board.conf::pwm_fault_pin` exercises the fault brake; skip that with
   `--skip-fault`.
+
+:::danger
+The verifier drives the gates up to near-full duty. Its hostname allow-list does not prove the power stage is
+disconnected: an unnamed real converter reports the default `fugu-esp32s3-…` hostname and passes. Disconnect panel
+and battery first.
+:::
 
 ```bash
 python3 etc/mcpwm_gate_verify.py --serial $ESPPORT

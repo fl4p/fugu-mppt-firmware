@@ -22,7 +22,7 @@ idf.py -p $ESPPORT app-flash       # firmware only, keeps the board config
 ## Feature flags
 
 Compile-time features are Kconfig options `CONFIG_FUGU_WITH_*` (menu **"Fugu MPPT firmware"**, defined in
-`main/Kconfig.projbuild`). The full table and the build environment variables (`RUN_TESTS`, `MAIN_SRC`, `FUGU_BAT_V`,
+`main/Kconfig.projbuild`). The full table and the build environment variables (`RUN_TESTS`, `MAIN_SRC`,
 `FUGU_DEVICE`) are in [Build options](../guide/getting-started/build-options.md).
 
 ## sdkconfig layering

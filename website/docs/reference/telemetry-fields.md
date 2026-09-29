@@ -56,7 +56,7 @@ A point is produced at most every 20 ms. Some fields are only included on every 
 | `mppt_state`  |        | int   | every 20th    | Control mode, see below                                                         |
 | `mcu_temp`    | °C     | float | every 40th    | MCU die temperature                                                             |
 | `ntc_temp`    | °C     | float | every 40th    | Board NTC temperature                                                           |
-| `lag`         | µs     | int   | every 40th    | Peak RT-loop lag; reset by `rt-stats` and at each periodic sweep                |
+| `lag`         | µs     | int   | every 40th    | Peak RT-loop lag; reset by `reset-lag` and at each periodic sweep                |
 | `pwm_ls_duty` | counts | int   | every 10th, converter enabled | Rectifier-switch on-time                                         |
 | `pwm_ls_max`  | counts | int   | every 10th, converter enabled | Maximum allowed rectifier on-time                                |
 | `pwm_dcm`     |        | bool  | every 10th, converter enabled | Converter operates in discontinuous conduction mode              |

@@ -60,7 +60,6 @@ Binary telemetry is not a build flag: it is `tele.conf::binary`.
 |---|---|
 | `RUN_TESTS=1` | Builds the Unity test runner (`test/main.cpp`) instead of the firmware, see [Testing](../../development/testing.md). |
 | `MAIN_SRC=<file>` | Builds a single file with `setup()`/`loop()` instead of the firmware, e.g. `MAIN_SRC=../test/main_ads_rate.cpp`. |
-| `FUGU_BAT_V=14.25\|28.5\|57` | Hardcodes the battery max voltage. Leave unset to read it from `charger.conf`. |
 | `FUGU_DEVICE=<name>` | Device name recorded in the ELF archive on flash. |
 
 ## sdkconfig layering

@@ -72,7 +72,9 @@ mppt            # resume tracking
 ```
 
 - `dc N` accepts 0 up to the driver's maximum count and prints the range when out of bounds. A non-zero duty is
-  refused while the sensors calibrate; `dc 0` always works.
+  refused while the sensors calibrate. `dc 0` is accepted then too, but **not** while an on-device coil
+  measurement runs (`CONFIG_FUGU_WITH_MEASURE_COIL`): every `dc` command is rejected with `dc: busy measuring`
+  until it finishes.
 - Protections stay active. A non-zero duty enables synchronous rectification and the backflow switch unless
   `limits.conf::reverse_current_paranoia` is set.
 - `sync`, `bf` and `short-ls` require manual mode, see [console](../reference/console.md#manual-pwm-commands).

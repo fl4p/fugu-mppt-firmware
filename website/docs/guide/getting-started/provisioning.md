@@ -15,7 +15,7 @@ Provisioning writes a board's configuration image to that partition. The firmwar
 ```bash
 export ESPPORT=/dev/cu.usbmodem1101   # Windows: set ESPPORT=COM3
 ./provision.py fmetal                 # board name under config/
-./provision.py config/lab/dry_mock    # or a directory containing conf/
+./provision.py path/to/myboard        # or a directory containing conf/
 ```
 
 `provision.py` builds a littlefs image with `littlefs-python` (`pip install littlefs-python`) and writes it with

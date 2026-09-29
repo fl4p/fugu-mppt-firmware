@@ -28,7 +28,7 @@ const config: Config = {
     '@docusaurus/theme-mermaid',
     [
       '@easyops-cn/docusaurus-search-local',
-      {hashed: true, indexBlog: false},
+      {hashed: 'filename', indexBlog: false},
     ],
   ],
   stylesheets: [

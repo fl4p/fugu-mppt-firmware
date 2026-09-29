@@ -19,7 +19,12 @@
   --ifm-color-primary-lightest: #9cdce8;
 }
 
-.markdown table {
-  display: table;
-  width: 100%;
+
+/* wide diagrams scroll on narrow screens instead of shrinking to unreadable text */
+.docusaurus-mermaid-container {
+  overflow-x: auto;
+}
+
+.docusaurus-mermaid-container svg {
+  min-width: 560px;
 }

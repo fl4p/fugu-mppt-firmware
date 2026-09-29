@@ -36,11 +36,11 @@ Console client for the firmware's text [command protocol](console.md). One comma
 BLE, and the MQTT broker in `$MQTT_HOST`) and prints how to connect, without connecting.
 
 ```bash
-etc/fugu_console.py                                  # discover devices
-etc/fugu_console.py -p $ESPPORT                      # REPL over serial
-etc/fugu_console.py --ip <host> -c status -c sensor  # two commands, one connection
-etc/fugu_console.py --ble <name> --stdin < cmds.txt  # batch over BLE
-etc/fugu_console.py -p $ESPPORT --coredump get       # pull + decode a coredump
+python3 etc/fugu_console.py                                  # discover devices
+python3 etc/fugu_console.py -p $ESPPORT                      # REPL over serial
+python3 etc/fugu_console.py --ip <host> -c status -c sensor  # two commands, one connection
+python3 etc/fugu_console.py --ble --name <name> --stdin < cmds.txt  # batch over BLE
+python3 etc/fugu_console.py -p $ESPPORT --coredump get       # pull + decode a coredump
 ```
 
 | Flag                                  | Meaning                                                                        |
@@ -234,9 +234,9 @@ Decodes the binary telemetry wire (`tele.conf` `binary=1`, the BLE stream, or th
 into InfluxDB line protocol, then prints or forwards it. See [Telemetry fields](telemetry-fields.md).
 
 ```bash
-etc/influx_binary_proxy.py --listen 0.0.0.0:8086                     # UDP, decode + print
-etc/influx_binary_proxy.py --adv --forward-udp 127.0.0.1:8089         # BLE advertisements
-etc/influx_binary_proxy.py --ble <name> --influx http://influxdb:8086 --db <db> --user <u> --password <p>
+python3 etc/influx_binary_proxy.py --listen 0.0.0.0:8086                     # UDP, decode + print
+python3 etc/influx_binary_proxy.py --adv --forward-udp 127.0.0.1:8089         # BLE advertisements
+python3 etc/influx_binary_proxy.py --ble <name> --influx http://influxdb:8086 --db <db> --user <u> --password <p>
 ```
 
 | Flag                       | Meaning                                                               |
@@ -246,7 +246,7 @@ etc/influx_binary_proxy.py --ble <name> --influx http://influxdb:8086 --db <db> 
 | `--ble-all`                | Pull from every device in range; `--scan-interval` (default 30 s)     |
 | `--adv`                    | Observe connectionless advertisements; `--verbose` prints each record |
 | `--forward-udp HOST:PORT`  | Forward decoded lines as UDP line protocol                            |
-| `--influx URL`             | Forward over HTTP; `--db`, `--user`, `--password`, `--precision` (default `ms`), `--insecure` |
+| `--influx URL`             | Forward over HTTP; `--db`, `--user`, `--password`, `--precision` (default `ms`) |
 | `--test BLOB`              | Offline decode self-test                                              |
 
 ## run_e2e.py

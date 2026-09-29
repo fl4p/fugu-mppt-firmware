@@ -73,7 +73,7 @@ with it.
 
 ```bash
 python3 etc/fugu_console.py --ble                        # first device whose name contains "fugu"
-python3 etc/fugu_console.py --ble <name>                 # filter by advertised name
+python3 etc/fugu_console.py --ble --name <name>          # filter by advertised name
 python3 etc/fugu_console.py --ble --address <ble-address>
 ```
 

@@ -18,7 +18,8 @@ Only present in **`WITH_BLE`** firmware builds, and only usable while the `ble` 
 
 ```bash
 # 1. build a WITH_BLE image (ESP-IDF exported, see Getting started)
-idf.py menuconfig (enable CONFIG_FUGU_WITH_BLE), then idf.py build
+idf.py menuconfig   # enable CONFIG_FUGU_WITH_BLE
+idf.py build
 
 # 2. make sure the device advertises (ble service enabled). Over any console:
 #      svc on ble           # or set ble.conf enabled=1 and reboot

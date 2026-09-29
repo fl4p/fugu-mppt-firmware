@@ -134,12 +134,6 @@ useful when iterating. FTP is also enabled when Wi-Fi is up (Filezilla, 1 connec
 the per-file reference table in `website/docs/reference/config/<file>.md`, and the editor metadata in
 `etc/config-tool/conf-editor.html` (`META` + `FILE_KEYS`).
 
-## Tests
-
-Unit tests live under `test/` and reuse the same firmware build, swapping `main.cpp` for `test/main.cpp` via
-`main/CMakeLists.txt`:
-
-```bash
 ## Documentation site
 
 `website/` is a Docusaurus site (GitHub Pages) with its pages in `website/docs/`: five sidebars (`guide/`,
@@ -150,13 +144,19 @@ lab procedures; that material goes to `doc/lab/` (unpublished, but the repo is p
 credentials). Check with `cd website && npm run build` (fails on broken links, including relative links to
 missing repo files). Math (`$…$`, `$$…$$`, KaTeX) and ```` ```mermaid ```` blocks render there.
 
+## Tests
+
+Unit tests live under `test/` and reuse the same firmware build, swapping `main.cpp` for `test/main.cpp` via
+`main/CMakeLists.txt`:
+
+```bash
 RUN_TESTS=1 idf.py -B build-tests build flash monitor
 ```
 
 To swap in a single alternate entry point without touching CMakeLists:
 
 ```bash
-MAIN_SRC=../test/test_buck.cpp idf.py build
+MAIN_SRC=../test/main_ads_rate.cpp idf.py build
 ```
 
 There's a tiny `test/host-stub/` for host-side compile checks, but the canonical test path is on-target via Unity.
@@ -265,8 +265,8 @@ Filter-design studies that used to sit beside the client are now `etc/filter-stu
 - `IRAM_ATTR` is required on anything called from the ADC continuous-mode ISR (sdkconfig has
   `CONFIG_ADC_CONTINUOUS_ISR_IRAM_SAFE=y`).
 - The firmware compiles as `gnu++20` (`component_compile_options(--std=gnu++20)` in `main/CMakeLists.txt`).
-- `FUGU_BAT_V` env var at build time hardcodes battery max voltage (14.25/28.5/57); leave unset to read from
-  `charger.conf`.
+- `FUGU_BAT_V` is passed as a compile definition by `main/CMakeLists.txt`, but no source reads it; the battery
+  max voltage always comes from `charger.conf::vout_max`.
 - `partitions.csv` defines two OTA slots (`ota_0`/`ota_1`) at ~1.87 MB each plus a 128 KB `littlefs` data partition at
   the end of flash. Don't grow OTA slots without re-checking 4 MB headroom.
 - When adding a sensor: register in `setupSensors()`, **`vout` must remain the last sensor added** (lowest latency for

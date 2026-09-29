@@ -118,8 +118,10 @@ two writes. Consequences:
 
 - Order of `setHsOff()` / `setLsOff()` **matters**. A TEZ between the two writes publishes a mixed pair, and in
   HiLi a pair with `cmpLS < cmpHS` turns both FETs on for most of a period (the LS generator has no TEZ action).
-  `src/buck.h` therefore writes LS first when HS widens and HS first when HS narrows, so every mixed pair keeps
-  `cmpLS >= cmpHS`. When the period changes too: comparators first when it shrinks, period first when it grows.
+  On a PWM-frequency change (`src/buck.h`, rescaling moves `cmpHS` by hundreds of counts) the writes are ordered:
+  LS first when HS widens, HS first when HS narrows, so every mixed pair keeps `cmpLS >= cmpHS`; comparators
+  first when the period shrinks, period first when it grows. The per-tick commit (`drvCommit`) always writes HS
+  then LS; there the step between ticks is small.
 - The wrong-direction race (write a smaller `cmpLS` after the counter has already passed
   it, the comparator event for the period is missed, LS stays HIGH to the wrap) cannot
   occur — the new value only takes effect at TEZ.
