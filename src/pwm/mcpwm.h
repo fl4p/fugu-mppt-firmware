@@ -4,6 +4,7 @@
 #include "driver/mcpwm_prelude.h"
 #if WITH_WSYNC
 #include "driver/gpio_filter.h"
+#include "soc/soc_caps.h"
 #endif
 #include "hal/mcpwm_ll.h"
 #include "esp_err.h"
@@ -304,12 +305,16 @@ public:
     // high-impedance bias node still needs the external Schmitt buffer. The filter's own
     // propagation delay is fixed and lands in what sync_phase_ns exists to trim out.
     void initSyncFilter(int gpio) {
+#if SOC_GPIO_SUPPORT_PIN_GLITCH_FILTER // classic ESP32 has none: only the external Schmitt buffer filters
         gpio_pin_glitch_filter_config_t fc = {
             .clk_src  = GLITCH_FILTER_CLK_SRC_DEFAULT,
             .gpio_num = (gpio_num_t) gpio,
         };
         ESP_ERROR_CHECK(gpio_new_pin_glitch_filter(&fc, &syncFilt_));
         ESP_ERROR_CHECK(gpio_glitch_filter_enable(syncFilt_));
+#else
+        (void) gpio;
+#endif
     }
 #endif // WITH_WSYNC
 
