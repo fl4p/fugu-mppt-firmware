@@ -15,7 +15,7 @@ Bench device identifiers:
 - BLE UUID (macOS CoreBluetooth): `C7513EAF-691F-DA42-411D-755D97AFD6BB` (advertised as `fugu-fbuck`)
 - Chip ID / auto device ID: `fugu-esp32s3-344082188534` (from efuse MAC, see tele_core.cpp:39 getChipId)
 - Hostname `fbuck` is stored in NVS, overrides the chip ID as the default device ID
-- Config: `config/lab/fbuck_lab_bench/`
+- Config: `config/lab/buck_bench/`
 
 **fboost**:
 - BLE UUID: `C839CEE8-3D60-F1B7-9278-2FF4F4870803` (advertised as `fugu-fboost`)

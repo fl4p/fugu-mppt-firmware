@@ -27,7 +27,7 @@ conditions, without needing sun or a real battery.
     a known **series resistance** so an MPP exists. A stiff CV source has no maximum power point —
     the tracker will just walk to the current limit.
   - In-house alternative: a second Fugu boost in **`mode=pv`** emulates the panel curve at its
-    output (`pv` console command, `config/lab/fboost_pv`) — see the PV-sim section in
+    output (`pv` console command, `config/lab/boost_pv`) — see the PV-sim section in
     [Power Loop.md](power-loop.md) for the rig caveats.
 - **Output sink** — an electronic load is the battery emulator:
   - **CV mode** = fixed pack voltage (charger sees a battery clamped at that voltage).
@@ -37,9 +37,9 @@ conditions, without needing sun or a real battery.
   (`-p <serial>` / `--ip <host>` / `--ble`), one command per step with `-c "<cmd>"` (repeatable),
   a batch of commands piped to `--stdin`, or the interactive REPL (the default with no mode flag).
   Telemetry goes to InfluxDB; the per-sample `scope` TCP stream is useful for transient capture.
-- **Config** — use `config/lab/fbuck_lab_bench` only with the 29 V battery/emulator setup. An
+- **Config** — use `config/lab/buck_bench` only with the 29 V battery/emulator setup. An
   open-output SW-node sweep must instead be provisioned with
-  `config/lab/fbuck_lab_bench_open_output`; its explicit name and separate complete profile guard against carrying
+  `config/lab/buck_bench_open_output`; its explicit name and separate complete profile guard against carrying
   the 60 V open-output threshold back to a connected battery (see
   [Lab config profiles](config-profiles.md#battery-vs-open-output)). Note
   `reverse_current_paranoia` differs between configs and changes several thresholds below.

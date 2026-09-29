@@ -13,7 +13,7 @@ implemented and committed 2026-08-15 (2440421), plan in `plans/pv-sim-mode.md`. 
 PSU machinery: per-tick Vset = PvModel::voltage(Iout_ewma) in `pvAdvanceSetpoint`
 (mppt.cpp), clamped [Vin+0.5, min(Voc, vout_max)], slew-limited (pv_slew, dt clamped 10 ms).
 OV threshold / feasibility / ovset pinned at Voc; Iout limiter capped 1.1·Isc; profile
-`config/lab/fboost_pv`. Codex review found 4 blockers pre-implementation (Isc not enforced,
+`config/lab/boost_pv`. Codex review found 4 blockers pre-implementation (Isc not enforced,
 setpoint jump on curve re-issue, ovset vs moving setpoint latch, vconv.cpp voc_ refs) — all
 fixed; boot mode=psu/pv now calibrates explicitly instead of relying on the fallback sweep.
 
@@ -25,4 +25,4 @@ was lock-held by another session's Coss sweep. On-target `RUN_TESTS` suite compi
 **Main open risk:** virtual-Iout coupling (Iout = Iin·Vin/Vout·eff on fboost) can ring near
 the curve knee — bench knobs are `pv_slew` down / `pv_iout_span` up. See
 [[fboost-rig-fixed-duty-2499]]: PV-sim conflicts with the pwr-metering rig's locked dc 2499;
-use runtime `pv` entry or the separate fboost_pv profile, never repurpose the fboost profile.
+use runtime `pv` entry or the separate boost_pv profile, never repurpose the boost_bench profile.

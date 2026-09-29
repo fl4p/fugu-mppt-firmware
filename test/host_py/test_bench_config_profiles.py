@@ -11,12 +11,12 @@ def _vout(profile):
 
 
 def test_battery_profile_keeps_the_29v_protection_reference():
-    assert _vout(ROOT / "config/lab/fbuck_lab_bench") == 29.0
+    assert _vout(ROOT / "config/lab/buck_bench") == 29.0
 
 
 def test_open_output_profile_is_complete_and_changes_only_the_charger_limit():
-    battery = ROOT / "config/lab/fbuck_lab_bench"
-    open_output = ROOT / "config/lab/fbuck_lab_bench_open_output"
+    battery = ROOT / "config/lab/buck_bench"
+    open_output = ROOT / "config/lab/buck_bench_open_output"
     # wifi.conf is gitignored (holds the lab PSK), so it is absent on a fresh clone.
     expected = {
         "board.conf", "charger.conf", "coil.conf", "converter.conf",

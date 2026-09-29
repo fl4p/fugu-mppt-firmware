@@ -51,7 +51,7 @@ vout_max=29
 # limits.conf:
 vin_max=85
 vin_min=72      # only for the stiff-source setup: pins the operating "solar" voltage
-                # (the bench buck profile config/lab/fbuck_lab_bench ships vin_min=10.5)
+                # (the bench buck profile config/lab/buck_bench ships vin_min=10.5)
 vout_max=60
 ```
 
@@ -127,7 +127,7 @@ A stiff CV source has no maximum power point, so the buck's tracker can't actual
 exercised. Instead run the boost in `mode=pv` (see [converter.conf](../reference/config/converter.md)
 and the `pv` console command): its output follows a PV curve V=f(Iout)
 with a real MPP at `pv_k`·`pv_voc`, and the buck tracks it like a panel. Bench boost
-profile: `config/lab/fboost_pv`; runtime entry without re-provisioning: `pv <isc> <voc> [k]`.
+profile: `config/lab/boost_pv`; runtime entry without re-provisioning: `pv <isc> <voc> [k]`.
 
 Caveats specific to this rig:
 

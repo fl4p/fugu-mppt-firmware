@@ -239,8 +239,8 @@ ESPPORT=/dev/cu.usbmodemXXX ./provision.py config/lab/<profile>
 ```
 
 Builds a littlefs image from the profile dir and writes it via `parttool.py` (so it needs bootloader
-entry too — same recovery as above). Profiles live in `config/`: `lab/fbuck_lab_bench`,
-`lab/fbuck_lab_bench_open_output`, `lab/fboost`, `fmetal`, `lab/dry_mock`, …
+entry too — same recovery as above). Profiles live in `config/`: `lab/buck_bench`,
+`lab/buck_bench_open_output`, `lab/boost_bench`, `fmetal`, `lab/dry_mock`, …
 
 Symptoms of **no config partition**: `ls /` fails, `ntc=-273℃`. (`0sps` is *not* a reliable
 symptom: a status-line bug — fixed in `6b83991` — produced it from any scripted console session,
@@ -261,7 +261,7 @@ one** and a board provisioned from it comes up with no credentials — set them 
 `wifi-add <ssid>:<psk>` over serial/BLE, creds are in the global `~/.claude/CLAUDE.md`, not the repo.
 Keys: `website/docs/reference/config/<file>.md`. For the same reason, don't assert on `wifi.conf` in a host test.
 
-`open_output` vs plain `fbuck_lab_bench` is a real distinction: with the output open Vout floats
+`open_output` vs plain `buck_bench` is a real distinction: with the output open Vout floats
 toward Vin, so the battery profile's `vout_max=29` trips OV above ~30 V Vin. Only use `open_output`
 for genuinely open-output sweeps.
 
@@ -331,7 +331,7 @@ by default on this Mac, and unpairing otherwise needs the GUI (ask the user).
 
 An **unbonded** host is the opposite case, ATT code 5/15 `Insufficient Authentication` on the first
 console write — it scans and connects fine, then every write fails. `ble_security` defaults to
-`justworks` (encrypted link) and the `fbuck_lab_bench*` profiles ship no `ble.conf`, so a freshly
+`justworks` (encrypted link) and the `buck_bench*` profiles ship no `ble.conf`, so a freshly
 provisioned board refuses writes from a Mac it has never paired with. Pair it, or drop the link
 encryption: `set-config ble.conf ble_security none` + **`restart`** — `svc rs`/`off`/`on ble` do
 NOT re-apply `ble.conf` (props are set once at stack init and the wrapper is not reinit-safe,
@@ -433,7 +433,7 @@ is gone after the next power-up with nothing in the status line saying it change
 the 1.57× difference is two different inductors, not measurement error, cross-checked against a
 battery shunt. Check there before measuring anything.
 
-Note `coil.conf::L0=40e-6` in both `fbuck_lab_bench*` profiles matches **neither** board and is
+Note `coil.conf::L0=40e-6` in both `buck_bench*` profiles matches **neither** board and is
 stale. A wrong `L0` also **stops the board booting** at low `pwm_freq`: `src/buck.h` asserts
 `pwm_freq * L0 * 0.95` in (1, 20) during init, so 40e-6 refuses below ~26.3 kHz and 80e-6 below
 ~13.2 kHz. A board silent after a `pwm_freq` change is this, not a bad flash — read `coil.conf`.

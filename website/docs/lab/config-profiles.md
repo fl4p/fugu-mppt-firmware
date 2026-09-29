@@ -28,13 +28,13 @@ the repository. `wifi.conf` is gitignored and absent on a fresh clone.
 | `wokwi_mock` | Wokwi simulator | Simulated ESP32-S3 | `adc=fake`, all network services enabled |
 | `wokwi_mock_esp32` | Wokwi simulator | Simulated classic ESP32 | As `wokwi_mock`, classic-ESP32 pins |
 | `f2_test` | Fugu2-style buck on a bench supply | Fugu2 pinout, INA226 on the output, internal ADC for Vin/NTC | `forced_pwm=1`, `fpwm_gate=0`, `limits.conf::vin_min=72`, `tracker.conf::target_duty_cycle=0.425` |
-| `fbuck_lab_bench` | Bench buck board, **battery / battery-emulator output** | Fugu2 pinout, INA226 (1.5 mΩ shunt) for Vout/Iout, internal ADC for Vin, 80 µH coil | `pwm_driver=mcpwm`, `pwm_deadtime_ns=200`, `sync_role=follower`, `charger.conf::vout_max=29`, `target_duty_cycle=0.37` |
-| `fbuck_lab_bench_open_output` | Same bench buck board, **open output** (switch-node sweeps) | As `fbuck_lab_bench`, nothing connected to the output | Identical to `fbuck_lab_bench` except `charger.conf::vout_max=60` |
-| `fbuck_lab_bench_no_ina226` | Bench buck board with the INA226 absent | Internal ADC for Vin/NTC, fake ADC for Vout/Iout | Per-channel `vout_adc=fake`, `iout_adc=fake` |
-| `fboost` | Bench boost board (input of a power loop) | Fugu2 pinout, INA226 on the low-voltage input, internal ADC for Vout | `topo=boost`, `forced_pwm=1`, `pwm_driver=mcpwm`, `sync_role=leader`, `sync_phase_deg=180`, `vout_max=75`, `notch_freq=0`, `target_duty_cycle=0.65` |
-| `fboost_pv` | Bench boost board as a solar-array simulator | As `fboost` | `converter.conf::mode=pv`, `pv_isc`, `pv_voc`, `pv_k`; no `target_duty_cycle` (a fixed duty would override `mode=pv`) |
+| `buck_bench` | Bench buck board, **battery / battery-emulator output** | Fugu2 pinout, INA226 (1.5 mΩ shunt) for Vout/Iout, internal ADC for Vin, 80 µH coil | `pwm_driver=mcpwm`, `pwm_deadtime_ns=200`, `sync_role=follower`, `charger.conf::vout_max=29`, `target_duty_cycle=0.37` |
+| `buck_bench_open_output` | Same bench buck board, **open output** (switch-node sweeps) | As `buck_bench`, nothing connected to the output | Identical to `buck_bench` except `charger.conf::vout_max=60` |
+| `buck_bench_no_ina226` | Bench buck board with the INA226 absent | Internal ADC for Vin/NTC, fake ADC for Vout/Iout | Per-channel `vout_adc=fake`, `iout_adc=fake` |
+| `boost_bench` | Bench boost board (input of a power loop) | Fugu2 pinout, INA226 on the low-voltage input, internal ADC for Vout | `topo=boost`, `forced_pwm=1`, `pwm_driver=mcpwm`, `sync_role=leader`, `sync_phase_deg=180`, `vout_max=75`, `notch_freq=0`, `target_duty_cycle=0.65` |
+| `boost_pv` | Bench boost board as a solar-array simulator | As `boost_bench` | `converter.conf::mode=pv`, `pv_isc`, `pv_voc`, `pv_k`; no `target_duty_cycle` (a fixed duty would override `mode=pv`) |
 
-The bench profiles (`fbuck_*`, `fboost*`, `f2_test`) set `limits.conf::reverse_current_paranoia=0`, which changes
+The bench profiles (`buck_bench*`, `boost_*`, `f2_test`) set `limits.conf::reverse_current_paranoia=0`, which changes
 several protection thresholds; see [limits.conf](../reference/config/limits.md). Several also set
 `tracker.conf::target_duty_cycle`, which boots into a hard-fixed duty (manual PWM, no MPPT).
 
@@ -46,8 +46,8 @@ time a battery is attached. The open-output case is therefore a separate, comple
 
 | Profile | `charger.conf::vout_max` | Use with |
 |---|:---:|---|
-| `config/lab/fbuck_lab_bench` | 29 V | Battery or battery emulator on the output |
-| `config/lab/fbuck_lab_bench_open_output` | 60 V | Nothing on the output |
+| `config/lab/buck_bench` | 29 V | Battery or battery emulator on the output |
+| `config/lab/buck_bench_open_output` | 60 V | Nothing on the output |
 
 `test/host_py/test_bench_config_profiles.py` guards this: the battery profile must keep 29 V, and the open-output
 profile must contain the same files with identical content except `charger.conf`. Edit both profiles together.
