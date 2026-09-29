@@ -10,7 +10,7 @@ re-write of [AngeloCasi/FUGU-ARDUINO-MPPT-FIRMWARE](https://github.com/AngeloCas
 and targets the [Fugu2](https://github.com/fl4p/Fugu2) hardware, while staying compatible with the
 [original Fugu design](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/).
 
-Topology, pins, sensors, limits and charger parameters are **not compiled in**. They live in
+Topology, pins, sensors, limits and charger parameters live in
 [configuration files](../reference/config/index.md) on the device's flash file system, so one firmware image serves
 many boards and can be updated over the air.
 
