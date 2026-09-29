@@ -119,7 +119,9 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
         throw std::runtime_error("no sensor conf");
     }
 
-    g_app.loopRateMin = sensConf.getByte("expected_hz", 0);
+    auto expectedHz = sensConf.getLong("expected_hz", 0);
+    assert_throw(expectedHz >= 0 && expectedHz <= 65535, "expected_hz out of range [0,65535]");
+    g_app.loopRateMin = (uint16_t) expectedHz;
     conversionEfficiency = sensConf.f("power_conversion_eff", 0.95f);
     assert_throw(conversionEfficiency > 0.5f and conversionEfficiency < 1.0f, "");
 
