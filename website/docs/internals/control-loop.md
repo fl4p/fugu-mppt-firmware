@@ -36,7 +36,7 @@ transient and should not damage hardware.
 
 ## MPPT algorithm
 
-Sweep, fast and slow perturb & observe, and sweep gating are described in [MPPT Tracker](mppt-tracker.md).
+Sweep, fast and slow perturb & observe, and sweep gating are described in [MPP Tracker](mppt-tracker.md).
 
 ## Noise versus speed
 

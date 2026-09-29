@@ -3,8 +3,6 @@ title: First Power-Up
 sidebar_position: 4
 ---
 
-*this document is an LLM generated placeholder*
-
 # First Power-Up
 
 Bring a new board up in three stages — mock ADC, bench supply, real panel and battery — and only move on once the

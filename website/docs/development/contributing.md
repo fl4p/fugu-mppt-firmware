@@ -3,8 +3,6 @@ title: Contributing
 sidebar_position: 11
 ---
 
-*this document is an LLM generated placeholder*
-
 # Contributing
 
 Contributions to hardware design, firmware and documentation are welcome. Open an

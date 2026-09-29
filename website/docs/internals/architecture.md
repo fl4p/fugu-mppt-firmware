@@ -3,8 +3,6 @@ title: Architecture
 sidebar_position: 1
 ---
 
-*this document is an LLM generated placeholder*
-
 # Architecture
 
 The firmware is an ESP-IDF application with Arduino as a component. It splits work between the two ESP32-S3
@@ -42,7 +40,7 @@ Every new ADC sample runs through `loopRTNewData` → `mppt.update()`:
 flowchart LR
   s[ADC_Sampler<br/>filters] --> p[Protection<br/>OV · OC · UV · temp]
   p --> c[PD limiters<br/>Vin · Iin · Vout · Iout · Power]
-  c --> t[MPPT tracker]
+  c --> t[MPP tracker]
   t --> b[SynchronousConverter<br/>diode emulation]
   b --> g[PWM]
 ```
@@ -51,7 +49,7 @@ flowchart LR
    `Vout` is sampled last so the controller reacts to it with minimum latency. See [Sensors](sensors.md).
 2. **Protection** (`mppt.protect`, `mppt.protectLf`): hard cut-outs; a violation calls `stopAndBackoff(seconds)`.
 3. **PD controllers** (`src/pd_control.h`): the smallest response wins. See [Control Loop](control-loop.md).
-4. **MPPT tracker** (`src/tracker.h`): global sweep, then fast and slow perturb & observe.
+4. **MPP tracker** (`src/tracker.h`): global sweep, then fast and slow perturb & observe.
 5. **Converter** (`src/buck.h`): computes the low-side on-time, see [Diode Emulation](diode-emulation.md).
 
 ## Configuration and state

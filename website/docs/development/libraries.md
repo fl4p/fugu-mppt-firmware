@@ -3,8 +3,6 @@ title: Libraries
 sidebar_position: 2
 ---
 
-*this document is an LLM generated placeholder*
-
 # Libraries
 
 Third-party code the firmware builds on, and where it is used. Managed components are declared in

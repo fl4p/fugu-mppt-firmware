@@ -4,6 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import repoLinks from './src/remark/repo-links.mjs';
+import docsLint from './src/remark/docs-lint.mjs';
 
 const repo = 'https://github.com/fl4p/fugu-mppt-firmware';
 
@@ -48,6 +49,7 @@ const config: Config = {
           editUrl: `${repo}/edit/main/website/`,
           beforeDefaultRemarkPlugins: [
             [repoLinks, {repoUrl: repo}],
+            docsLint,
           ],
           remarkPlugins: [remarkMath],
           rehypePlugins: [rehypeKatex],

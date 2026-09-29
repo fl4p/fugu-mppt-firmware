@@ -3,8 +3,6 @@ title: "Service Architecture"
 sidebar_position: 4
 ---
 
-*this document is an LLM generated placeholder*
-
 # Service Architecture
 
 A small, systemd-lite service layer (`src/service.h`) for the firmware's optional, non-real-time

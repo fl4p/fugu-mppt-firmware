@@ -3,8 +3,6 @@ title: OTA Updates
 sidebar_position: 1
 ---
 
-*this document is an LLM generated placeholder*
-
 # OTA Updates
 
 Devices update their firmware over Wi-Fi by downloading an image from an HTTP(S) URL into the inactive OTA slot.

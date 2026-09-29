@@ -3,8 +3,6 @@ title: "Charge Termination"
 sidebar_position: 2
 ---
 
-*this document is an LLM generated placeholder*
-
 
 # Charge Termination
 

@@ -3,8 +3,6 @@ title: Repo layout
 sidebar_position: 1
 ---
 
-*this document is an LLM generated placeholder*
-
 # Repo layout
 
 Where things live in the repository, which parts are git submodules, and which sibling repositories the build

@@ -3,7 +3,7 @@ title: "DCM Coil Ringing"
 sidebar_position: 8
 ---
 
-*this document is an LLM generated placeholder*
+import DcmRingingChart from '@site/src/components/DcmRingingChart';
 
 # DCM Coil Ringing
 
@@ -13,6 +13,8 @@ capacitance at the switch node — MOSFET C_oss, LS FET junction capacitance, PC
 capacitance — forming an LC tank. In a synchronous buck with diode emulation (this
 firmware, `src/buck.h`), the LS FET's C_oss is the dominant capacitance and the **main
 inductor L** is the tank inductance.
+
+<DcmRingingChart />
 
 **Not to be confused with the HF transition ring.** There are two distinct ringing
 phenomena on the switch node:

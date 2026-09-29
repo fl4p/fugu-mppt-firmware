@@ -3,8 +3,6 @@ title: "BTHome Advertising (proposal)"
 sidebar_position: 4
 ---
 
-*this document is an LLM generated placeholder*
-
 # BTHome v2 Advertising Spec — Charger Telemetry
 
 :::note Proposal — not implemented

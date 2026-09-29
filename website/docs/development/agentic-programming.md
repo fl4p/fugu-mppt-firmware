@@ -3,8 +3,6 @@ title: Agentic programming
 sidebar_position: 10
 ---
 
-*this document is an LLM generated placeholder*
-
 # Agentic Programming with Fugu MPPT Firmware
 
 This document describes how the firmware is designed to be driven by an LLM agent or scripted
@@ -98,7 +96,7 @@ no FreeRTOS, no ESP-IDF headers. It simulates:
 - Pluggable AC ripple models (sine inverter, |sin| rectifier, spiky China-inverter pulse)
 
 With `CONFIG_FUGU_WITH_VCONV=y` the firmware replaces the real PWM driver with `PWM_VConv` and
-the real ADC with `ADC_VConv`. The **complete control stack** — MPPT tracker, PD controllers,
+the real ADC with `ADC_VConv`. The **complete control stack** — MPP tracker, PD controllers,
 charger, protection — runs against the software plant on a real ESP32, with no physical power
 stage.
 

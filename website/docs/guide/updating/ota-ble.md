@@ -3,8 +3,6 @@ title: "OTA over BLE"
 sidebar_position: 2
 ---
 
-*this document is an LLM generated placeholder*
-
 # OTA over BLE (no Wi-Fi)
 
 Update the firmware over Bluetooth Low Energy when there is no network. The host **pushes** the image

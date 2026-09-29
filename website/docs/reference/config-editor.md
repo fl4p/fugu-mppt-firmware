@@ -3,8 +3,6 @@ title: Config editor
 sidebar_position: 2
 ---
 
-*this document is an LLM generated placeholder*
-
 # Config editor
 
 [`etc/config-tool/conf-editor.html`](https://github.com/fl4p/fugu-mppt-firmware/blob/main/etc/config-tool/conf-editor.html)

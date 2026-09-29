@@ -3,8 +3,6 @@ title: Debugging
 sidebar_position: 4
 ---
 
-*this document is an LLM generated placeholder*
-
 # Debugging
 
 The device prints every error and panic on the console. After a panic it stores a coredump in flash, which can be

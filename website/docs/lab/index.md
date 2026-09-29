@@ -3,8 +3,6 @@ title: Lab overview
 sidebar_position: 1
 ---
 
-*this document is an LLM generated placeholder*
-
 # Lab overview
 
 Pick the smallest setup that exercises what you are changing: most firmware work needs no power stage at all.

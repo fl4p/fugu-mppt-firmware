@@ -3,9 +3,12 @@ title: Multi-converter sync
 sidebar_position: 1
 ---
 
-*this document is an LLM generated placeholder*
-
 # Multi-converter sync
+
+:::note Experimental
+Multi-converter clock sync is a development feature with no production use case yet. It is kept for
+experiments with interleaved or paralleled converters.
+:::
 
 Several converters on the same bus can phase-lock their MCPWM switching clocks, wirelessly from Wi-Fi beacons
 (`bsync`, µs-class) or over a sync wire (`wsync`, ns-class).
@@ -19,7 +22,7 @@ switching nodes beat against each other. Locking the clocks gives:
 - a fixed, configurable phase between converters, e.g. 180° for interleaved operation.
 
 Both methods need the MCPWM gate driver (`CONFIG_FUGU_WITH_MCPWM=y`, `converter.conf` `pwm_driver=mcpwm`) and
-identical `pwm_freq` on all converters. See [PWM Drivers](../pwm-drivers.md).
+identical `pwm_freq` on all converters. See [PWM Drivers](../../internals/pwm-drivers.md).
 
 ## Methods compared
 

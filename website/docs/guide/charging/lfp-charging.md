@@ -3,8 +3,6 @@ title: "LFP Battery Charging"
 sidebar_position: 1
 ---
 
-*this document is an LLM generated placeholder*
-
 
 # LFP Battery Charging
 

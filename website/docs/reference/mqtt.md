@@ -3,8 +3,6 @@ title: MQTT topics
 sidebar_position: 5
 ---
 
-*this document is an LLM generated placeholder*
-
 # MQTT topics
 
 Topics the firmware publishes and subscribes to when the `mqtt` service is configured with a broker in
@@ -101,7 +99,7 @@ The charger subscribes to BMS values when the corresponding `mqtt.conf` key name
 | `bat_temp_topic`          | °C   | Comma-separated list, up to 4 topics. Drives the `bat_temp_*` policy in `charger.conf`; each sensor expires after 1 h |
 
 When `cell_voltages_max_topic` is set, the converter waits briefly for the first BMS frame before its start-up
-sweep, see [MPPT Tracker](../internals/mppt-tracker.md#when-the-tracker-does-not-sweep) and
+sweep, see [MPP Tracker](../internals/mppt-tracker.md#when-the-tracker-does-not-sweep) and
 [Charge Termination](../guide/charging/termination.md).
 
 ```ini title="mqtt.conf with a BMS publishing per-value topics"

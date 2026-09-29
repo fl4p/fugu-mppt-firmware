@@ -3,8 +3,6 @@ title: Build
 sidebar_position: 3
 ---
 
-*this document is an LLM generated placeholder*
-
 # Build
 
 How the ESP-IDF build is put together: feature flags, sdkconfig layering, build directories per target and variant,

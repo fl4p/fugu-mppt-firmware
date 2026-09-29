@@ -3,8 +3,6 @@ title: Operating Modes
 sidebar_position: 7
 ---
 
-*this document is an LLM generated placeholder*
-
 # Operating Modes
 
 The converter runs in one of three modes — MPPT, manual PWM or PSU (constant voltage, including the PV simulator) —
@@ -158,4 +156,4 @@ The [power-loop rig](../lab/power-loop.md) uses a boost in `mode=pv` as the sour
 | Inspect the tracker | `+N`/`-N` while tracking, then watch it recover |
 
 See also: [Console reference](../reference/console.md), [`converter.conf`](../reference/config/converter.md),
-[MPPT tracker internals](../internals/mppt-tracker.md), [Lab](../lab/index.md).
+[MPP tracker internals](../internals/mppt-tracker.md), [Lab](../lab/index.md).

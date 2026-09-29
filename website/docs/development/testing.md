@@ -3,8 +3,6 @@ title: Testing
 sidebar_position: 6
 ---
 
-*this document is an LLM generated placeholder*
-
 # Testing
 
 Four layers, from fastest to most hardware-dependent:

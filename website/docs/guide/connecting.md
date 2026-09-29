@@ -3,8 +3,6 @@ title: Connecting
 sidebar_position: 4
 ---
 
-*this document is an LLM generated placeholder*
-
 # Connecting
 
 The device serves one text [console](../reference/console.md) over serial, telnet, BLE and MQTT; the host client

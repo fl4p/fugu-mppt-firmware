@@ -3,14 +3,12 @@ title: "PWM Drivers (MCPWM)"
 sidebar_position: 7
 ---
 
-*this document is an LLM generated placeholder*
-
 # MCPWM synchronous-buck PWM driver
 
 Design spec for the MCPWM-based gate driver that replaces the LEDC implementation in
 `src/pwm/ledc.h`. Targets ESP32-S3 and classic ESP32 (ESP-IDF ≥ 5.5).
 
-## Why MCPWM
+## MCPWM vs LEDC
 
 LEDC has no hardware dead-time, no hardware fault input, no native multi-channel phase
 control, and forces a fixed 2048-tick period. MCPWM gives us all four: a per-operator
@@ -18,9 +16,9 @@ dead-time submodule, an OST brake driven by a GPIO fault, timer sync sources for
 interleaved legs, and a 16-bit period counter we can size to the available source
 clock.
 
-## Scope and non-goals
+## Scope
 
-In scope: edge-aligned (count-up) PWM, two-switch synchronous buck (HS + SR), hardware
+In scope: edge-aligned (count-up) PWM, two-switch synchronous buck (HS + LS), hardware
 dead-time, GPIO fault brake, N interleaved legs sharing one fault source.
 
 Out of scope: center-aligned (up-down) carriers — HS-at-TEZ alignment is what the
@@ -44,7 +42,7 @@ Generator actions (count-up direction only):
 | `HiLi` | HIGH at TEZ, LOW at cmpHS            | HIGH at **cmpHS**, LOW at cmpLS                    |
 | `InEn` | HIGH at TEZ, LOW at cmpHS  (= IN)    | HIGH at **TEZ**,  LOW at cmpLS   (= EN window)     |
 
-`HiLi` drives the HS and SR MOSFETs through a discrete gate driver with no built-in
+`HiLi` drives the HS and LS MOSFETs through a discrete gate driver with no built-in
 interlock — the MCPWM dead-time submodule is responsible for shoot-through prevention.
 `InEn` drives an integrated half-bridge driver (e.g. IR2814 family) where the chip
 inserts its own dead-time; MCPWM emits IN and an EN window only.

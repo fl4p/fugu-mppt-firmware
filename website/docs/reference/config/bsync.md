@@ -10,7 +10,7 @@ Beacon PWM-clock sync (service `bsync`, `CONFIG_FUGU_WITH_BSYNC` builds; needs N
 Frequency/phase-locks the MCPWM switching clock of multiple converters to a shared timebase
 recovered from sniffed 802.11 beacons (receive-only, no association/TX — usable while Wi-Fi is
 "off" for precision measurements). All participating devices must point `bssid`/`channel` at the
-*same* AP. See [Beacon Clock Sync](../../internals/sync/beacon-sync.md).
+*same* AP. See [Beacon Clock Sync](../../development/sync/beacon-sync.md).
 
 | key         | unit | type   | default | description                                                                |
 |-------------|------|--------|---------|----------------------------------------------------------------------------|

@@ -3,8 +3,6 @@ title: Build speed
 sidebar_position: 4
 ---
 
-*this document is an LLM generated placeholder*
-
 # Build speed
 
 ## Why a one-line edit triggers a multi-minute rebuild

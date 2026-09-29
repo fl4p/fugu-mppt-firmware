@@ -3,8 +3,6 @@ title: Build Options
 sidebar_position: 2
 ---
 
-*this document is an LLM generated placeholder*
-
 # Build Options
 
 Compile-time features are Kconfig options under **"Fugu MPPT firmware"** in `idf.py menuconfig`. Runtime behaviour

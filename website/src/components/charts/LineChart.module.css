@@ -1,0 +1,60 @@
+.root {
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --grid: #e6e6e3;
+  --zero: #b9b8b2;
+  --band: rgba(42, 120, 214, 0.06);
+  --text-secondary: #52514e;
+  --text-muted: #6f6e69;
+  margin: 1.5rem 0;
+}
+
+:root[data-theme='dark'] .root {
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --grid: #2e2e2c;
+  --zero: #55544f;
+  --band: rgba(57, 135, 229, 0.07);
+  --text-secondary: #c3c2b7;
+  --text-muted: #a2a198;
+}
+
+/* Narrow screens scroll the plot sideways instead of shrinking its labels below legibility. */
+.scroll { overflow-x: auto; }
+.svg { width: 100%; min-width: 680px; height: auto; display: block; touch-action: pan-x pan-y; font-family: var(--ifm-font-family-base); }
+.svg:focus { outline: none; }
+.svg:focus-visible { outline: 2px solid var(--ifm-color-primary); outline-offset: 2px; border-radius: 4px; }
+
+.grid { stroke: var(--grid); stroke-width: 1; }
+.zero { stroke: var(--zero); stroke-width: 1; }
+.band { fill: var(--band); }
+.ref { stroke: var(--zero); stroke-width: 1; stroke-dasharray: 3 3; }
+.cross { stroke: var(--text-muted); stroke-width: 1; }
+
+.s1, .s2, .s3 { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.s1 { stroke: var(--s1); }
+.s2 { stroke: var(--s2); }
+.s3 { stroke: var(--s3); }
+
+.d1, .d2, .d3 { stroke: var(--ifm-background-color); stroke-width: 2; }
+.d1 { fill: var(--s1); }
+.d2 { fill: var(--s2); }
+.d3 { fill: var(--s3); }
+
+.tick { fill: var(--text-muted); font-size: 11px; }
+.axis { fill: var(--text-secondary); font-size: 12px; }
+.note { fill: var(--text-muted); font-size: 11px; }
+.title { fill: var(--ifm-font-color-base); font-size: 12px; font-weight: 600; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem; }
+
+.key1, .key2, .key3 { display: inline-block; width: 14px; height: 2px; margin: 0 5px 3px 0; vertical-align: middle; }
+.key1 { background: var(--s1); }
+.key2 { background: var(--s2); }
+.key3 { background: var(--s3); }
+
+.readout { font-size: 0.85rem; color: var(--text-secondary); min-height: 1.4em; margin-top: 0.25rem; font-variant-numeric: tabular-nums; }
+.caption { font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.5rem; }
+.table { font-size: 0.85rem; margin-top: 0.5rem; }

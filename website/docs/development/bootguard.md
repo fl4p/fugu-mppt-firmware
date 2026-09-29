@@ -3,8 +3,6 @@ title: esp-bootguard (crash-loop guard)
 sidebar_position: 4.5
 ---
 
-*this document is an LLM generated placeholder*
-
 # esp-bootguard
 
 [esp-bootguard](https://github.com/fl4p/esp-bootguard) is an optional second-stage bootloader for the ESP32-S3 that

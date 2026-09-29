@@ -3,8 +3,6 @@ title: Lab config profiles
 sidebar_position: 2
 ---
 
-*this document is an LLM generated placeholder*
-
 # Lab config profiles
 
 `config/lab/` holds littlefs configuration images for bench and simulation setups. Each folder has a `conf/`

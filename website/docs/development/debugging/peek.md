@@ -3,8 +3,6 @@ title: peek / peek-struct
 sidebar_position: 3
 ---
 
-*this document is an LLM generated placeholder*
-
 # `peek` / `peek-struct` — Memory Inspection
 
 Read arbitrary memory on a running device and (optionally) interpret it through the build's

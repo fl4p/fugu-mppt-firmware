@@ -3,8 +3,6 @@ title: Partition layout
 sidebar_position: 7
 ---
 
-*this document is an LLM generated placeholder*
-
 # Partition layout
 
 The firmware uses a custom partition table ([`partitions.csv`](https://github.com/fl4p/fugu-mppt-firmware/blob/main/partitions.csv))

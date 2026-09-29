@@ -3,8 +3,6 @@ title: Telemetry fields
 sidebar_position: 6
 ---
 
-*this document is an LLM generated placeholder*
-
 # Telemetry fields
 
 The firmware writes one InfluxDB measurement, `mppt`, tagged with the device hostname. This page lists its fields.

@@ -3,8 +3,6 @@ title: Provisioning
 sidebar_position: 3
 ---
 
-*this document is an LLM generated placeholder*
-
 # Provisioning
 
 Board-specific settings live as `.conf` files on the `littlefs` partition under `/littlefs/conf/`.

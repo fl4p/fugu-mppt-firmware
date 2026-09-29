@@ -3,8 +3,6 @@ title: Coil inductance
 sidebar_position: 6
 ---
 
-*this document is an LLM generated placeholder*
-
 # Measuring the Coil Inductance (`coil.conf::L0`)
 
 The synchronous converter has no inductor-current probe. It still needs the coil inductance `L0`

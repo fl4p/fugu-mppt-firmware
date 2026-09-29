@@ -1,11 +1,9 @@
 ---
-title: MPPT Tracker
+title: MPP Tracker
 sidebar_position: 3
 ---
 
-*this document is an LLM generated placeholder*
-
-# MPPT Tracker
+# MPP Tracker
 
 The tracker finds and follows the maximum power point (MPP) of the solar input by moving the converter duty cycle.
 It runs inside the [control loop](control-loop.md) only while no limiter is active.

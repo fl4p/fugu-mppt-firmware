@@ -3,8 +3,6 @@ title: BMS Integration
 sidebar_position: 3
 ---
 
-*this document is an LLM generated placeholder*
-
 # BMS Integration
 
 The charger subscribes to battery data a BMS publishes over MQTT and regulates on the highest cell voltage instead of

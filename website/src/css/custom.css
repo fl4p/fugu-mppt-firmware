@@ -28,3 +28,6 @@
 .docusaurus-mermaid-container svg {
   min-width: 560px;
 }
+
+/* Wide display equations scroll inside the content column instead of widening the page. */
+.katex-display { overflow-x: auto; overflow-y: hidden; }

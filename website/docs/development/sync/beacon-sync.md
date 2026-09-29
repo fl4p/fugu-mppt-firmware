@@ -3,8 +3,6 @@ title: "Beacon Clock Sync (bsync)"
 sidebar_position: 1
 ---
 
-*this document is an LLM generated placeholder*
-
 # Beacon-sniffing MCPWM clock sync (`bsync`)
 
 Locks the switching clocks of multiple converters to a shared timebase recovered from 802.11

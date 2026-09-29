@@ -3,8 +3,6 @@ title: "Direct OTA Transport Selection"
 sidebar_position: 3
 ---
 
-*this document is an LLM generated placeholder*
-
 # Direct OTA transport selection
 
 `etc/ota_ble.py` accepts the shared esp-ota-ble transport controls. It loads the

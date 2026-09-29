@@ -3,8 +3,6 @@ title: Telemetry & Home Assistant
 sidebar_position: 1
 ---
 
-*this document is an LLM generated placeholder*
-
 # Telemetry & Home Assistant
 
 The firmware publishes live data four ways: MQTT with Home Assistant discovery, InfluxDB line protocol over UDP, a

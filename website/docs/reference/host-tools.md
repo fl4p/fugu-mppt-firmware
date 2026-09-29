@@ -3,8 +3,6 @@ title: Host tools
 sidebar_position: 8
 ---
 
-*this document is an LLM generated placeholder*
-
 # Host tools
 
 Python and shell tools under `etc/` and the repo root for talking to, updating, provisioning and testing devices

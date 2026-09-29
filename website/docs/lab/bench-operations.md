@@ -3,8 +3,6 @@ title: Bench operations
 sidebar_position: 3
 ---
 
-*this document is an LLM generated placeholder*
-
 # Bench Operations
 
 Operational detail for working Fugu boards on a bench from a macOS/Linux host: toolchain quirks,

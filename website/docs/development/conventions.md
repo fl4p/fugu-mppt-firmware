@@ -3,8 +3,6 @@ title: Coding conventions
 sidebar_position: 5
 ---
 
-*this document is an LLM generated placeholder*
-
 # Coding conventions
 
 Rules that are not obvious from reading the code. Most of them are enforced by the compiler or linker, the rest

@@ -145,6 +145,14 @@ lab procedures; that material goes to `doc/lab/` (unpublished, but the repo is p
 credentials). Check with `cd website && npm run build` (fails on broken links, including relative links to
 missing repo files). Math (`$…$`, `$$…$$`, KaTeX) and ```` ```mermaid ```` blocks render there.
 
+Published pages are **curated documentation, not research notes**. Keep the research record (search log,
+provenance, reviews, source access log) unpublished in `doc/research/` and write the page from it. No "Bottom
+line"/TL;DR lead heading, no process sections, no agent transcripts, no Codex/Claude mentions in prose.
+Literature-based pages are surveys: scope, findings per topic with `[n]` citations, implications, limitations, and a
+numbered References list whose bibliographic data is verified against the sources. The production build enforces
+the mechanical part (`website/src/remark/docs-lint.mjs`; the dev server only warns). Every doc review, by Codex,
+Astra or an agent, includes the criterion "reads as reference documentation, not notes or a transcript".
+
 ## Tests
 
 Unit tests live under `test/` and reuse the same firmware build, swapping `main.cpp` for `test/main.cpp` via
@@ -343,7 +351,8 @@ Find battery data in InfluxDB with `batmon()` in
 # Important
 
 - whenever you create a mark-down (.md) or other documentation file, put
-  "*this document is an LLM generated placeholder*" in the first line
+  "*this document is an LLM generated placeholder*" in the first line — except published pages under
+  `website/docs/`, which never carry it (the docs build rejects it)
 - no `#include <>` hints
 - when describing a function, interface or class, describe it with a local scope, not how it is used in the application
 - when writing code, focus on low memory usage and small code size. re-use data that is available and when in non-

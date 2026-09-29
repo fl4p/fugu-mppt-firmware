@@ -3,8 +3,6 @@ title: "Wired Clock Sync (wsync)"
 sidebar_position: 3
 ---
 
-*this document is an LLM generated placeholder*
-
 # Wired inter-chip MCPWM clock sync (`WITH_WSYNC`)
 
 ns-class alternative to the beacon servo (`bsync`, µs-class): one converter (leader) emits a
@@ -104,7 +102,7 @@ a quiet bench, use a 1:1 pulse transformer or a digital isolator instead of this
 ```
 
 C1's follower-side pin lands on the bias node ● (junction of R1, R2 and the 1 k into the
-Schmitt buffer's input); C2's follower-side pin goes straight to follower GND. The two are NOT connected to each
+optional Schmitt buffer's input, or straight into the GPIO without it); C2's follower-side pin goes straight to follower GND. The two are NOT connected to each
 other. C2 is the pulse's return path: joining it to the bias node would force the return
 current through R2, killing the edge. R1/R2 bias the idle node to ~0.77 V; a 3.3 V edge through C1 rides on top of that.
 
@@ -120,15 +118,17 @@ ROM boot chatter becomes a >period-rate spurious sync burst into a converting fo
   electrically **in series** with C1 for the pulse, so at 10 nF it is a 9 % series element, not the
   negligible "ground bond" it looks like — use **100 nF** (C_eff 0.99 nF). Film/C0G ≥50 V
   (class-2 ceramic capacitance sags with bias).
-- With the buffer fitted, the node idles at the **bare-divider** value, 3.3·10/(33+10) ≈ **0.77 V**.
-  The internal pull-down the sync-src config forces on (`src/pwm/mcpwm.h`) now loads only the
-  buffer output, not the bias node. Check the idle level and the pulse against the 74LVC1G17's
+- With the buffer fitted, the node idles at the **bare-divider** value, 3.3·10/(33+10) ≈ **0.77 V**:
+  the internal pull-down the sync-src config forces on (`src/pwm/mcpwm.h`) loads only the buffer output.
+  Without the buffer that pull-down sits in parallel with R2 and the node idles lower; check it against the
+  pad's V_IL. Check the idle level and the pulse against the 74LVC1G17's
   V_T− / V_T+ at the follower's VCC (datasheet), not against the S3 pad's V_IL.
 - Node Thevenin 33k‖10k ≈ **7.7 k**; with C_eff 0.99 nF, τ ≈ 7.6 µs, so the level droops ≈ 12 %
   over a 1 µs pulse.
-- **74LVC1G17 Schmitt buffer (follower 3V3) between bias node and GPIO — fit it.** The S3 pad has
-  no input hysteresis, and a slow or ringing edge on a high-impedance node beside a switching stage will
-  multi-trigger. A false edge is not cosmetic; see the dead-time hazard below.
+- **74LVC1G17 Schmitt buffer (follower 3V3) between bias node and GPIO — optional.** Without it, wire the
+  1 k straight to the GPIO. The S3 pad has no input hysteresis, so a slow or ringing edge on this
+  high-impedance node beside a switching stage can multi-trigger, and a false edge is not cosmetic (see the
+  dead-time hazard below). Fit the buffer for long or noisy lines, or when the bench checklist shows extra edges.
 - Route away from the power stage; if shielded, tie the shield on one side only.
 
 ## Interaction with bsync

@@ -3,8 +3,6 @@ title: "bsync Beacon Node"
 sidebar_position: 2
 ---
 
-*this document is an LLM generated placeholder*
-
 # bsync beacon node (`etc/bsync-beacon/`)
 
 A dedicated, always-on beacon source for [beacon-sync.md](beacon-sync.md): a minimal ESP-IDF

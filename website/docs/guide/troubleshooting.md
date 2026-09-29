@@ -3,8 +3,6 @@ title: Troubleshooting
 sidebar_position: 9
 ---
 
-*this document is an LLM generated placeholder*
-
 # Troubleshooting
 
 Answers to common problems, starting from what the device logs. The device prints every error and panic on the

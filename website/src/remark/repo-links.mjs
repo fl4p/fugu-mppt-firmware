@@ -8,7 +8,7 @@ const websiteDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const repoRoot = path.dirname(websiteDir);
 const docsDir = path.join(websiteDir, 'docs');
 // Internal material that the public site must not link to.
-const unpublished = ['doc/lab', 'doc/reviews', 'doc/superpowers', 'plans', '.claude',
+const unpublished = ['doc/lab', 'doc/research', 'doc/reviews', 'doc/superpowers', 'plans', '.claude',
   'doc/Test Cases.MD', 'doc/NOTES.MD', 'doc/vibe.md', 'doc/commerce.md', 'doc/web.MD'];
 
 export default function repoLinks({repoUrl}) {

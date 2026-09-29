@@ -3,8 +3,6 @@ title: ESP32-S3 vs classic ESP32
 sidebar_position: 2
 ---
 
-*this document is an LLM generated placeholder*
-
 # ESP32-S3 vs classic ESP32
 
 The firmware builds for the ESP32-S3 (default) and the classic ESP32 from the same source. The S3 is the primary
@@ -12,8 +10,13 @@ target; the classic ESP32 is kept for the original Fugu hardware.
 
 ## Quick start
 
-Give the classic target its own build directory **and** its own `sdkconfig`. The generated `sdkconfig` lives in the
-project root by default and records the target, so two build directories sharing it would fight over it:
+Building only for classic ESP32 works in the default `build/` too: `idf.py set-target esp32 && idf.py build`. If your
+shell exports `IDF_TARGET` (for example `esp32s3`), `set-target esp32` fails with "not consistent with target … in
+the environment"; unset it first.
+
+To keep both targets side by side, give the classic target its own build directory **and** its own `sdkconfig`. The
+generated `sdkconfig` lives in the project root by default and records the target, so two build directories
+sharing it would fight over it:
 
 ```bash
 idf.py set-target esp32s3 && idf.py build        # ESP32-S3: build/ + ./sdkconfig

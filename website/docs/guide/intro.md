@@ -3,8 +3,6 @@ title: Introduction
 sidebar_position: 1
 ---
 
-*this document is an LLM generated placeholder*
-
 # Fugu MPPT Firmware
 
 Firmware for ESP32 and ESP32-S3 based MPPT solar charge controllers and DC/DC converters. It started as a

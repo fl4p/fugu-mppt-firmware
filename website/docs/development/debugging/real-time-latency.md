@@ -458,7 +458,6 @@ CONFIG_ARDUINO_UDP_RUN_CORE0=y
 ```
 
 
-LLM > Do an ISR audit on RT performance/r
 ## Console `tasks` / `rt-stats` wedged the continuous-ADC DMA (2026-05-30)
 
 `uxTaskGetSystemState()` (used by the `tasks` and `rt-stats` console commands) walks every TCB under

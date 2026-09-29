@@ -3,8 +3,6 @@ title: Supported Boards
 sidebar_position: 1
 ---
 
-*this document is an LLM generated placeholder*
-
 # Supported Boards
 
 The firmware has no compiled-in board definition. A board is supported when a folder under

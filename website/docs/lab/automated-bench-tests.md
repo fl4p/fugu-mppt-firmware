@@ -3,8 +3,6 @@ title: Automated bench tests
 sidebar_position: 7
 ---
 
-*this document is an LLM generated placeholder*
-
 # Automated Bench Tests
 
 Test matrix for exercising the converter against a **programmable power supply** on the input and a
