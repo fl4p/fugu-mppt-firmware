@@ -41,7 +41,8 @@ configured.
 `etc/ota.py` discovers devices (scope-server broadcast + NAT-router scan, falls back to `fallback_hosts`), serves
 `build/fugu-firmware.bin` on :9000 with a URL built from *this* host's IP as the device sees it (so it works through the
 NAT router), sends `ota <url>` to each, then prints a before/after version table. Run it from the repo root
-(`PYTHONPATH=./ .venv/bin/python3 etc/ota.py`, or just `./ota.sh` to build first). Flags:
+(`PYTHONPATH=./ .venv/bin/python3 etc/ota.py`, or `./ota.sh -n|-m <regex>` to build first; it forwards its args to
+`ota.py` and refuses to run without `-n` or `-m`). Flags:
 
 - `-m REGEX` / `--match` — target only devices whose hostname matches (e.g. `-m flat` for a single board). **Always
   scope with `-m` when you don't intend to update every discovered device.**

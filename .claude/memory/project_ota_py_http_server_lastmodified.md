@@ -18,7 +18,7 @@ header → KeyError). The device download would 404 too.
 
 Fix: `lsof -nP -iTCP:9000 -sTCP:LISTEN`, check its cwd (`lsof -a -p <pid> -d cwd`), kill it, then
 `python3 -m http.server 9000 --bind 0.0.0.0` from repo root; verify `curl -sI http://<lan-ip>:9000/build/fugu-firmware.bin`
-returns 200 + Last-Modified. `./ota.sh` does this automatically (but ignores extra argv like `-f -m flat`).
+returns 200 + Last-Modified. `./ota.sh` does this automatically; it forwards its argv to ota.py and requires `-n` or `-m` (since 2026-09-29).
 
 Note: flat runs MCPWM. The MCPWM image is the **default `build/`** here because root `sdkconfig`
 has `CONFIG_FUGU_WITH_MCPWM=y` (gitignored); `build-mcpwm/` was a stale morning build. Verify the
