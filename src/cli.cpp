@@ -1107,7 +1107,7 @@ static void cmdWsync(cmd *c) {
         // One-shot, and it only skips the USB host pre-check -- the line still has to qualify,
         // so this cannot arm a follower against a leader that is not running.
         UART_LOG("wsync arm: %s. restart to apply",
-                 on ? "next boot probes the sync pin even with USB attached" : "cleared");
+                 on ? "next boot takes the USB sync pad even with a host attached" : "cleared");
         return;
     }
 #else

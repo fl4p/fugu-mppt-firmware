@@ -182,11 +182,27 @@ pad enable` — so the pad never returns to the PHY while its pulls are still be
 `wsync` reports the outcome (`mode=usb (no sync edges)`, `mode=usb (host active)`, …); without
 it a USB fallback is indistinguishable from a configured `sync_role=none`.
 
+A **leader** on a USB pad runs step 1 only: with no active host it disables the PHY pad and
+drives its pulse on D−; with a host it keeps USB and runs unsynced. There is nothing to qualify,
+so the leader keeps the pad for the whole run, and a host plugged in later gets no USB console
+until the next boot. Reach that board over BLE or Wi-Fi.
+
+### Two USB-only boards on one cable
+
+With both boards on a USB pad, a C-to-C data cable carries the sync on D− (the receptacle joins
+A7/B7, so either orientation works; a charge-only cable has no D− wire). The cable bypasses the
+coupling circuit above: it ties the two GNDs and the two VBUS nets together directly, and the
+pulse is DC-coupled. That is acceptable only when both converters share a ground reference with
+no DC offset between the boards, and when neither board can back-feed the other through VBUS.
+Otherwise put the coupling circuit on a USB-C breakout (D− = sync, GND via C2, VBUS and CC left
+open) and use the cable from there.
+
 ### Re-arming after the leader comes up late
 
 A board that booted with USB attached, or before its leader was running, stays in USB mode for
 that whole run — the pad decision is a boot-time one. `wsync arm` (over BLE) sets a **one-shot**
-NVS flag; the next boot skips the *USB host pre-check* only and runs the probe anyway. It never
+NVS flag; the next boot skips the *USB host pre-check* only and runs the probe anyway (a leader
+takes the pad unconditionally). It never
 skips qualification: `sync_role=follower` with no leader on the wire still falls back to USB.
 That is deliberate — a follower armed against a dead wire takes its first arbitrary-phase sync
 edge with the gates already switching, and the HS anomaly above is a double-length pulse into

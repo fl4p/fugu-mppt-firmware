@@ -315,13 +315,17 @@ class SynchronousConverter {
 #if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
             // Sync on a USB pad (boards with no GPIO header): the pad serves the USB-Serial-JTAG
             // PHY or the GPIO matrix, never both, so pick here and fall back to USB -- the
-            // recoverable state -- unless a leader is positively qualified.
-            if (syncFollower && wsyncPinIsUsb(syncPin)) {
+            // recoverable state -- unless a leader is positively qualified. A leader has nothing
+            // to qualify (it drives the line), it only yields the pad to an active host.
+            if (wsyncPinIsUsb(syncPin)) {
                 // `wsync arm` overrides only the host pre-check, never the qualification below:
                 // arming a follower with no leader is the hazard this whole path exists to avoid.
                 if (!wsyncArmRequest && usb_serial_jtag_is_connected()) {
                     // SOF activity, i.e. a host is really there. Never take the pad from it.
                     wsyncMode = WsyncMode::usb_host_active;
+                } else if (!syncFollower) {
+                    wsyncUsbPadEnable(false);
+                    wsyncMode = WsyncMode::leader;
                 } else {
                     if (wsyncArmRequest)
                         ESP_LOGI("converter", "%s", "wsync arm: probing the pad despite USB");
@@ -336,7 +340,7 @@ class SynchronousConverter {
                         wsyncMode = pr.edges ? WsyncMode::probe_bad_rate : WsyncMode::probe_no_edges;
                     }
                 }
-                if (wsyncMode != WsyncMode::armed_follower) {
+                if (wsyncMode != WsyncMode::armed_follower && wsyncMode != WsyncMode::leader) {
                     // Downgrade so the sync block below self-skips: wsyncFollower stays false,
                     // bsync is free to run, and `wsync` reports why via wsyncMode.
                     role = "none";

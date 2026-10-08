@@ -167,7 +167,7 @@ telnet, BLE and MQTT. Bench use only.
 | Command | Description |
 | --- | --- |
 | `help`, `?` | Print the registered command list. |
-| `wsync [arm [off]]` | Wired-sync diagnostic: edge rate on the sync pin. `wsync arm` (with `CONFIG_FUGU_WITH_WSYNC`) makes the next boot probe the sync pin even with USB attached (one-shot, needs a restart); `arm off` clears it. |
+| `wsync [arm [off]]` | Wired-sync diagnostic: edge rate on the sync pin. `wsync arm` (with `CONFIG_FUGU_WITH_WSYNC`) makes the next boot take a USB sync pad even with a host attached (one-shot, needs a restart); `arm off` clears it. |
 | `gpio <pin> <0\|1>` | Configure a pin as output and write it (drives the pin directly). |
 | `mcpwmtest <pin>` | Put a 50 % MCPWM test waveform on a pin (drives the pin directly; reboot to re-test). |
 | `gpiodump <pin>` | Print a pin's GPIO enable bit, output signal and IO_MUX register (read-only). |
