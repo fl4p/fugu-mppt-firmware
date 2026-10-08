@@ -54,50 +54,54 @@ config FUGU_WITH_BLE_ADV
         client is connected (non-connectable adv). tele.conf::adv_ms sets the refresh
         interval (0 = off). Host side: etc/influx_binary_proxy.py --adv.
 
-config FUGU_WITH_MCPWM
-    bool "MCPWM gate driver"
-    default n
-    help
-        Compile the MCPWM half-bridge gate driver (hardware dead-time, OST brake, glitch-free
-        comparator updates). See website/docs/internals/pwm-drivers.md. When both this and FUGU_WITH_LEDC
-        are on, the active driver is chosen at runtime from converter.conf::pwm_driver.
+menu "PWM drivers"
 
-config FUGU_WITH_WSYNC
-    bool "Wired inter-chip MCPWM clock sync"
-    default n
-    depends on FUGU_WITH_MCPWM
-    help
-        Hardware sync of the MCPWM switching clock between converters over an AC-coupled
-        wire: a leader emits a TEZ-locked pulse (converter.conf::sync_role=leader), followers
-        phase-reload their timer on its edge (sync_role=follower). Pin: board.conf::pwm_sync_pin.
-        See website/docs/internals/sync/wired-sync.md.
+    config FUGU_WITH_LEDC
+        bool "LEDC gate driver + fan PWM + anaw"
+        default y
+        help
+            Compile the LEDC half-bridge gate driver, plus everything else that uses the LEDC
+            peripheral: fan PWM (src/cooling.h) and the `anaw` console command. Turning this off
+            strips the whole LEDC driver (libesp_driver_ledc.a + esp32-hal-ledc, ~7 KB) — the fan
+            and `anaw` stop working — so build MCPWM-only converters without paying for LEDC.
+            At least one of FUGU_WITH_LEDC / FUGU_WITH_MCPWM must be on (unless FUGU_WITH_VCONV).
 
-config FUGU_WITH_BSYNC
-    bool "Beacon-sniffing MCPWM clock sync (bsync service)"
-    default y
-    depends on FUGU_WITH_NETW && FUGU_WITH_MCPWM
-    help
-        Phase/frequency-lock the MCPWM switching clock of multiple converters to a shared
-        timebase recovered from sniffed 802.11 beacons (RX-only, works unassociated).
-        Adds the `bsync` service + bsync.conf. See website/docs/internals/sync/beacon-sync.md.
+    config FUGU_WITH_MCPWM
+        bool "MCPWM gate driver"
+        default n
+        help
+            Compile the MCPWM half-bridge gate driver (hardware dead-time, OST brake, glitch-free
+            comparator updates). See website/docs/internals/pwm-drivers.md. When both this and FUGU_WITH_LEDC
+            are on, the active driver is chosen at runtime from converter.conf::pwm_driver.
 
-config FUGU_WITH_LEDC
-    bool "LEDC gate driver + fan PWM + anaw"
-    default y
-    help
-        Compile the LEDC half-bridge gate driver, plus everything else that uses the LEDC
-        peripheral: fan PWM (src/cooling.h) and the `anaw` console command. Turning this off
-        strips the whole LEDC driver (libesp_driver_ledc.a + esp32-hal-ledc, ~7 KB) — the fan
-        and `anaw` stop working — so build MCPWM-only converters without paying for LEDC.
-        At least one of FUGU_WITH_LEDC / FUGU_WITH_MCPWM must be on (unless FUGU_WITH_VCONV).
+    config FUGU_WITH_WSYNC
+        bool "Wired inter-chip MCPWM clock sync"
+        default n
+        depends on FUGU_WITH_MCPWM
+        help
+            Hardware sync of the MCPWM switching clock between converters over an AC-coupled
+            wire: a leader emits a TEZ-locked pulse (converter.conf::sync_role=leader), followers
+            phase-reload their timer on its edge (sync_role=follower). Pin: board.conf::pwm_sync_pin.
+            See website/docs/internals/sync/wired-sync.md.
 
-config FUGU_WITH_VCONV
-    bool "Virtual converter plant (simulation, no hardware)"
-    default n
-    depends on !FUGU_WITH_MCPWM
-    help
-        Replace the physical gate driver + ADC with a software converter plant (src/sim/vconv.*).
-        Mutually exclusive with the MCPWM driver.
+    config FUGU_WITH_BSYNC
+        bool "Beacon-sniffing MCPWM clock sync (bsync service)"
+        default y
+        depends on FUGU_WITH_NETW && FUGU_WITH_MCPWM
+        help
+            Phase/frequency-lock the MCPWM switching clock of multiple converters to a shared
+            timebase recovered from sniffed 802.11 beacons (RX-only, works unassociated).
+            Adds the `bsync` service + bsync.conf. See website/docs/internals/sync/beacon-sync.md.
+
+    config FUGU_WITH_VCONV
+        bool "Virtual converter plant (simulation, no hardware)"
+        default n
+        depends on !FUGU_WITH_MCPWM
+        help
+            Replace the physical gate driver + ADC with a software converter plant (src/sim/vconv.*).
+            Mutually exclusive with the MCPWM driver.
+
+endmenu # PWM drivers
 
 config FUGU_WITH_SPROFILER
     bool "Semihosting sampling profiler"
@@ -112,30 +116,34 @@ config FUGU_WITH_MEASURE_COIL
     help
         Compile the on-device coil L0/Ls sweep + `measure-coil` console command. Bench-only tool.
 
-config FUGU_WITH_INA226
-    bool "INA226 ADC driver"
-    default y
-    help
-        Compile the INA226 backend (sensor.conf `*_adc=ina226`) with its init self-test.
+menu "ADC drivers"
 
-config FUGU_WITH_ADS
-    bool "ADS1015/ADS1115 ADC driver"
-    default y
-    help
-        Compile the ADS1x15 backend (sensor.conf `*_adc=ads1015|ads1115`) with its init self-test.
+    config FUGU_WITH_INA226
+        bool "INA226 ADC driver"
+        default y
+        help
+            Compile the INA226 backend (sensor.conf `*_adc=ina226`) with its init self-test.
 
-config FUGU_INA226_MEASURED_RATE
-    bool "INA226: report measured conversion rate (not nominal)"
-    default y
-    depends on FUGU_WITH_INA226
-    help
-        ADC_INA226::getSamplingRate() normally returns the nominal rate derived from the
-        configured conversion time (1e6 / (2*conv_time_us)). Some INA226 chips (notably
-        counterfeit parts) convert faster than their datasheet timing, so the nominal rate
-        underestimates the real sample rate — which mistunes anything keyed to it (the
-        inverter-ripple notch's reported frequency, the expected_hz loop-rate watchdog).
-        When set, getSamplingRate() instead returns a rate measured over several conversions
-        at operational settings during init, so it reflects the chip's actual throughput.
-        No-op on boards without an INA226 (the measurement lives in ADC_INA226). Default on.
+    config FUGU_INA226_MEASURED_RATE
+        bool "INA226: report measured conversion rate (not nominal)"
+        default y
+        depends on FUGU_WITH_INA226
+        help
+            ADC_INA226::getSamplingRate() normally returns the nominal rate derived from the
+            configured conversion time (1e6 / (2*conv_time_us)). Some INA226 chips (notably
+            counterfeit parts) convert faster than their datasheet timing, so the nominal rate
+            underestimates the real sample rate — which mistunes anything keyed to it (the
+            inverter-ripple notch's reported frequency, the expected_hz loop-rate watchdog).
+            When set, getSamplingRate() instead returns a rate measured over several conversions
+            at operational settings during init, so it reflects the chip's actual throughput.
+            No-op on boards without an INA226 (the measurement lives in ADC_INA226). Default on.
+
+    config FUGU_WITH_ADS
+        bool "ADS1015/ADS1115 ADC driver"
+        default y
+        help
+            Compile the ADS1x15 backend (sensor.conf `*_adc=ads1015|ads1115`) with its init self-test.
+
+endmenu # ADC drivers
 
 endmenu
