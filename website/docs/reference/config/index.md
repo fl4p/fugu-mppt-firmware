@@ -27,7 +27,6 @@ Editing options:
 
 - `board`, `sensor`, `limits`, `coil`, `converter`, `charger`, `tracker` are read at boot: reboot
   after `set-config`. Console verbs (`vset`, `iset`, `dt`, `pwm-freq`, …) change RAM only.
-  (`adc-restart` re-initialises the ADC backends from `board.conf`, but nothing else is re-read.)
 - Service confs: `svc rs <name>` re-reads the service-specific keys. For `enabled` use
   `svc on|off`, and for `log_level` use `svc log`; a hand-edited value of either takes effect at
   the next boot.

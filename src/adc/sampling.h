@@ -272,6 +272,18 @@ private:
         }
     }
 
+    enum class AdcCmd : uint8_t { None, Reset, Restart };
+    std::atomic<AdcCmd> adcCmd_{AdcCmd::None};
+
+    void primeRt(AdcState &s) {
+        if (s.adc->readMode() == AdcReadMode::MuxedRoundRobin) {
+            s.cycleSensorsPos = 0;
+            s.adc->startReading(s.cycleSensors[s.cycleOrder[0]]->params.adcCh);
+        } else if (s.adc->readMode() != AdcReadMode::StreamedCallback) {
+            _readNext(s);
+        }
+    }
+
     void finishCalibrationRt() {
         calibrating_ = 0;
         auto state = CalibrationState::Active;
@@ -442,12 +454,8 @@ public:
             if (s.adc->readMode() == AdcReadMode::MuxedRoundRobin) {
                 assert_throw(!s.cycleSensors.empty(), "no sensors to cycle");
                 buildCycleOrder(s);
-                s.cycleSensorsPos = 0;
-                s.adc->startReading(s.cycleSensors[s.cycleOrder[0]]->params.adcCh);
-            } else if (s.adc->readMode() != AdcReadMode::StreamedCallback) {
-                _readNext(s); // SnapshotAllChannels: prime the first channel
             }
-            // StreamedCallback: driven by read(cb), nothing to prime
+            primeRt(s);
         }
 
 
@@ -712,13 +720,31 @@ public:
     [[nodiscard]] time_us getTimeLastCalibrationUs() const { return timeLastCalibration; }
 
 
-    void reInitADCs() {
-        ConfFile boardConf{"/littlefs/conf/board.conf"};
-        for (auto &s: adcStates) {
-            s.adc->deinit();
-            s.adc->init(boardConf);
-            s.adc->start();
+    // Any core. restart additionally clears the sensor filters (not the calibration).
+    void requestAdcReset(bool restart) {
+        auto want = restart ? AdcCmd::Restart : AdcCmd::Reset;
+        auto cur = adcCmd_.load(std::memory_order_relaxed);
+        while (cur < want && !adcCmd_.compare_exchange_weak(cur, want, std::memory_order_release)) {}
+    }
+
+    [[nodiscard]] bool adcResetPending() const { return adcCmd_.load(std::memory_order_relaxed) != AdcCmd::None; }
+
+    // RT task only, converter must be stopped
+    bool applyAdcResetRt() {
+        auto cmd = adcCmd_.exchange(AdcCmd::None, std::memory_order_acquire);
+        if (cmd == AdcCmd::None) return true;
+        ESP_LOGW("sampling", "ADC %s", cmd == AdcCmd::Restart ? "restart" : "reset");
+        bool ok;
+        try {
+            ok = resetPeripherals();
+            for (auto &s: adcStates) primeRt(s);
+        } catch (const std::exception &e) {
+            ESP_LOGE("sampling", "ADC reset failed: %s", e.what());
+            ok = false;
         }
+        if (cmd == AdcCmd::Restart)
+            for (auto &s: sensors) s->reset(false);
+        return ok;
     }
 
     bool resetPeripherals() {

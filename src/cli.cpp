@@ -1446,9 +1446,9 @@ static void cmdSensor(cmd *c) {
 static void cmdIp(cmd *) { UART_LOG("Local IP Address: %s", WiFi.localIP().toString().c_str()); }
 #endif
 
-static void cmdAdcRestart(cmd *) { adcSampler.reInitADCs(); }
+static void cmdAdcRestart(cmd *) { adcSampler.requestAdcReset(true); }
 
-static void cmdAdcReset(cmd *) { adcSampler.resetPeripherals(); }
+static void cmdAdcReset(cmd *) { adcSampler.requestAdcReset(false); }
 
 // anf [on|off] — the AdaptiveNoiseFilter is diagnostics-only (read by `sensor`); it's kept out of
 // the RT sample path by default. Enable it to populate the ANF/NSR stats, disable when done.

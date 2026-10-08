@@ -626,6 +626,13 @@ static void loopRT(void *arg) {
 
         time_ms nowMs = nowUs / 1000ULL;
 
+        if (unlikely(adcSampler.adcResetPending()) && !adcSampler.halted) {
+            stopAndBackoff(4);
+            adcSampler.applyAdcResetRt();
+            setWallClockUs(esp_timer_get_time());
+            if (timeLastSampler) timeLastSampler = nowUs; // grace for the stall watchdog
+        }
+
         rtcount("adc.update.pre");
         auto samplerRet = adcSampler.update();
         rtcount("adc.update");
