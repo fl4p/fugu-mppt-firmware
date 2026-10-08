@@ -43,7 +43,9 @@ project root.
 | `CONFIG_FUGU_WITH_VCONV` | off | Replaces gate driver and ADC with a simulated converter (`src/sim/vconv.*`). Excludes `MCPWM`. |
 | `CONFIG_FUGU_WITH_SPROFILER` | off | Semihosting sampling profiler; only useful with OpenOCD attached. |
 | `CONFIG_FUGU_WITH_MEASURE_COIL` | off | On-device [coil inductance measurement](../../lab/coil-inductance.md). |
-| `CONFIG_FUGU_INA226_MEASURED_RATE` | on | Report the INA226 sample rate measured at init instead of the datasheet value (some parts convert faster). |
+| `CONFIG_FUGU_WITH_INA226` | on | INA226 ADC backend (`sensor.conf` `*_adc=ina226`). A board config that selects it fails setup when off. |
+| `CONFIG_FUGU_WITH_ADS` | on | ADS1015/ADS1115 ADC backend (`*_adc=ads1015`/`ads1115`). A board config that selects it fails setup when off. |
+| `CONFIG_FUGU_INA226_MEASURED_RATE` | on | Report the INA226 sample rate measured at init instead of the datasheet value (some parts convert faster). Needs `INA226`. |
 
 \* The Kconfig default is off, but `sdkconfig.defaults` enables `MCPWM` and `WSYNC`, so a fresh build of this
 repository has them on.

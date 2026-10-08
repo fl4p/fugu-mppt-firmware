@@ -7,10 +7,14 @@
 #include <unordered_map>
 
 #include "adc.h"
+#if CONFIG_FUGU_WITH_ADS
 #include "ads.h"
+#endif
 #include "adc_esp32_cont.h"
 #include "mock.h"
+#if CONFIG_FUGU_WITH_INA226
 #include "ina226.h"
+#endif
 #include "sampling.h"
 #if WITH_VCONV
 #include "adc/vconv.h"
@@ -30,11 +34,16 @@ extern float conversionEfficiency;
 
 static AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &boardConf,
                                           const ConfFile &sensConf, const std::string &chnDebug) {
-    AsyncADC<float> *adc;
-    if (adcName == "ads1115" or adcName == "ads1015") {
+    AsyncADC<float> *adc = nullptr;
+    if (false) {
+#if CONFIG_FUGU_WITH_ADS
+    } else if (adcName == "ads1115" or adcName == "ads1015") {
         adc = new ADC_ADS(adcName == "ads1115");
+#endif
+#if CONFIG_FUGU_WITH_INA226
     } else if (adcName == "ina226") {
         adc = new ADC_INA226();
+#endif
     } else if (adcName == "esp32adc1") {
         // assert_throw(ntc_ch== 255, "adc1 conflicts ntc impl TODO fix");
         adc = new ADC_ESP32_Cont(sensConf);
@@ -46,7 +55,7 @@ static AsyncADC<float> *createAdcInstance(const std::string &adcName, const Conf
         adc = new ADC_VConv();
 #endif
     } else {
-        throw std::runtime_error("unknown ADC '" + adcName + "'" + " " + chnDebug);
+        throw std::runtime_error("unknown or disabled (Kconfig) ADC '" + adcName + "'" + " " + chnDebug);
     }
 
     if (!adc->init(boardConf)) {

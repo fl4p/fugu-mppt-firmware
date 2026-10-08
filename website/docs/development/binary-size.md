@@ -73,6 +73,11 @@ working tree carried other uncommitted changes, so its absolute free % isn't a c
 - **`src/web/server.cpp` trimmed** — was 36 lines of dead WebServer/SPIFFS/ArduinoOTA/AsyncTCP includes around one
   `MDNS.addService(...)` call. Now 6 lines.
 
+### 2026-10-08 round (ADC driver gating)
+
+- **`CONFIG_FUGU_WITH_INA226` / `CONFIG_FUGU_WITH_ADS` (default on)** — the INA226 and ADS1x15 backends with their
+  init self-tests. Both off saves ~13 KB (1,571,168 → 1,557,424 B, ESP32-S3) for boards on the internal ADC.
+
 ### 2026-05-25 round (gating)
 
 - **`WITH_MEASURE_COIL` (default off)** — drops `src/measure_coil.cpp` (~11 KB), the `measure-coil` console command,

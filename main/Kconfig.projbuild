@@ -112,9 +112,22 @@ config FUGU_WITH_MEASURE_COIL
     help
         Compile the on-device coil L0/Ls sweep + `measure-coil` console command. Bench-only tool.
 
+config FUGU_WITH_INA226
+    bool "INA226 ADC driver"
+    default y
+    help
+        Compile the INA226 backend (sensor.conf `*_adc=ina226`) with its init self-test.
+
+config FUGU_WITH_ADS
+    bool "ADS1015/ADS1115 ADC driver"
+    default y
+    help
+        Compile the ADS1x15 backend (sensor.conf `*_adc=ads1015|ads1115`) with its init self-test.
+
 config FUGU_INA226_MEASURED_RATE
     bool "INA226: report measured conversion rate (not nominal)"
     default y
+    depends on FUGU_WITH_INA226
     help
         ADC_INA226::getSamplingRate() normally returns the nominal rate derived from the
         configured conversion time (1e6 / (2*conv_time_us)). Some INA226 chips (notably
