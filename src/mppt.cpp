@@ -27,6 +27,14 @@ void MpptController::update() {
     // 0 on the first update after a reset: suppresses the D component instead of dividing by it
     const float dtCtrl = lastUs ? (float) (nowUs - lastUs) * 1e-6f : 0.f;
 
+    // only tracker/sweep-driven duty: a limiter's duty reacts to the disturbance it rejects
+    if (!converter.disabled() && !converter.boost() && !g_app.psuMode() && !sensors.Iout->isVirtual &&
+        !ctrlState._limiting && bflow.state())
+        outZ.add(sensors.Vout->med3.get(), sensors.Iout->med3.get(), converter.getCtrlOnPwmCnt(),
+                 (uint32_t) nowUs);
+    else
+        outZ.reset();
+
     if (converter.disabled() && !startCondition()) {
         bflow.enable(false);
         ctrlState.mode = MpptControlMode::None;
@@ -508,6 +516,9 @@ void MpptController::telemetry() {
     if ((_teleNumPoints % 20) == 0) {
         point.addField("pwm_dir_f", cntrlValue, 2);
         point.addField("mppt_state", int(ctrlState.mode));
+        float ro = outZ.get((uint32_t) wallClockUs());
+        if (std::isfinite(ro))
+            point.addField("Ro", ro * 1e3f, 2); // mΩ
     }
 
     if ((_teleNumPoints % 40) == 0) {

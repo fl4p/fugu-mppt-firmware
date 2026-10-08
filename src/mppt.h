@@ -25,6 +25,7 @@
 #include "etc/plot.h"
 #include "app_state.h"
 #include "math/pv_model.h"
+#include "out_impedance.h"
 
 struct Limits {
     const float Vin_max{};
@@ -340,6 +341,7 @@ public:
     BatteryCharger charger;
     BackflowDriver bflow{};
     SolarEnergyMeter meter{};
+    OutputImpedance outZ{};
     LvPgood lvPgood{};
     TempSensorGPIO_NTC ntc;
     Esp32TempSensor ucTemp;

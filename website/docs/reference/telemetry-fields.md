@@ -52,6 +52,7 @@ A point is produced at most every 20 ms. Some fields are only included on every 
 | `pwm_duty`    | counts | int   | every point   | Control-switch on-time in PWM timer counts (high side in buck mode)             |
 | `pwm_dir_f`   |        | float | every 20th    | Control value of the last loop iteration (sign = duty direction)                |
 | `mppt_state`  |        | int   | every 20th    | Control mode, see below                                                         |
+| `Ro`          | mΩ     | float | every 20th, when valid | Output source resistance (wiring and battery), estimated from the tracker's own duty steps; absent without recent steps (60 s), while a limiter is active, in PSU or boost mode, or when `Iout` is virtual |
 | `mcu_temp`    | °C     | float | every 40th    | MCU die temperature                                                             |
 | `ntc_temp`    | °C     | float | every 40th    | Board NTC temperature                                                           |
 | `lag`         | µs     | int   | every 40th    | Peak RT-loop lag; reset by `reset-lag` and at each periodic sweep                |
