@@ -272,7 +272,7 @@ private:
         }
     }
 
-    enum class AdcCmd : uint8_t { None, Reset, Restart };
+    enum class AdcCmd : uint32_t { None, Reset, Restart };
     std::atomic<AdcCmd> adcCmd_{AdcCmd::None};
 
     void primeRt(AdcState &s) {
@@ -729,6 +729,8 @@ public:
 
     [[nodiscard]] bool adcResetPending() const { return adcCmd_.load(std::memory_order_relaxed) != AdcCmd::None; }
 
+    void dropAdcReset() { adcCmd_.store(AdcCmd::None, std::memory_order_relaxed); }
+
     // RT task only, converter must be stopped
     bool applyAdcResetRt() {
         auto cmd = adcCmd_.exchange(AdcCmd::None, std::memory_order_acquire);
@@ -736,6 +738,9 @@ public:
         ESP_LOGW("sampling", "ADC %s", cmd == AdcCmd::Restart ? "restart" : "reset");
         bool ok;
         try {
+            // let an in-flight muxed conversion finish, else it lands on the re-primed channel/gain
+            for (auto &s: adcStates)
+                if (s.adc->readMode() == AdcReadMode::MuxedRoundRobin) s.adc->hasData();
             ok = resetPeripherals();
             for (auto &s: adcStates) primeRt(s);
         } catch (const std::exception &e) {

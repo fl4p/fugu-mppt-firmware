@@ -626,11 +626,18 @@ static void loopRT(void *arg) {
 
         time_ms nowMs = nowUs / 1000ULL;
 
-        if (unlikely(adcSampler.adcResetPending()) && !adcSampler.halted) {
-            stopAndBackoff(4);
-            adcSampler.applyAdcResetRt();
-            setWallClockUs(esp_timer_get_time());
-            if (timeLastSampler) timeLastSampler = nowUs; // grace for the stall watchdog
+        if (unlikely(adcSampler.adcResetPending())) {
+            if (adcSampler.halted) {
+                adcSampler.dropAdcReset();
+                ESP_LOGW("main", "ADC reset dropped, sampler halted");
+            } else {
+                stopAndBackoff(6); // >5 s: no PSU fast retry
+                bool ok = adcSampler.applyAdcResetRt();
+                setWallClockUs(esp_timer_get_time());
+                if (!ok) ESP_LOGE("main", "ADC reset failed");
+                stopAndBackoff(ok ? 6 : 30); // re-arm from the end of the reset
+                if (timeLastSampler) timeLastSampler = nowUs; // grace for the stall watchdog
+            }
         }
 
         rtcount("adc.update.pre");
