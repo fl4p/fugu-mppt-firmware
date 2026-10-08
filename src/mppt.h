@@ -14,6 +14,7 @@
 
 #include "buck.h"
 #include "pwm/backflow.h"
+#include "pwm/lv_pgood.h"
 #include "battery.h"
 #include "viz/lcd.h"
 #include "tracker.h"
@@ -339,6 +340,7 @@ public:
     BatteryCharger charger;
     BackflowDriver bflow{};
     SolarEnergyMeter meter{};
+    LvPgood lvPgood{};
     TempSensorGPIO_NTC ntc;
     Esp32TempSensor ucTemp;
     Fan fan{};
@@ -402,6 +404,7 @@ public:
     void shutdownDcdc(const char *who, uint32_t backoffSec = 5) {
         if (topologyConfig.backflowAtHV) {
             converter.disable();
+        lvPgood.release();
             bflow.enable(false);
         } else {
             bflow.enable(false);

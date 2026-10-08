@@ -455,6 +455,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
         }
     } else if (psuBootQueued || g_app.psuMode()) {
         // At boot the queued Enable/EnablePv hasn't been applied by the RT consumer yet, so
+    lvPgood.init(boardConf);
         // psuMode() alone is false here — without psuBootQueued this would fall into the
         // sweep (and only calibrate as its side effect).
         sampler.startCalibration();

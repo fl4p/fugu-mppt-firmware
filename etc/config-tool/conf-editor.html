@@ -282,6 +282,8 @@ const META = {
   pwm_en:{unit:"GPIO",desc:"Gate driver EN pin (InEn mode)",type:"int"},
   panel_en:{unit:"GPIO",desc:"Panel/input backflow enable switch pin",type:"int"},
   panel_sd:{unit:"GPIO",desc:"Panel/input backflow shutdown switch pin",type:"int"},
+  lv_pgood:{unit:"GPIO",desc:"LV power-good output; high disables the HV aux supply path. 255 = none",type:"int"},
+  lv_pgood_v:{unit:"V",desc:"LV voltage that must hold for 5 s before LV pgood asserts; releases 0.5 V below",type:"float"},
   led_WS2812:{unit:"GPIO",desc:"WS2812 status LED data pin",type:"int"},
   led_WS2812B:{unit:"GPIO",desc:"WS2812 LED data pin (alt key)",type:"int"},
   led_simple:{unit:"GPIO",desc:"Plain on/off status LED pin",type:"int"},
@@ -449,7 +451,7 @@ const CHAN_SUFFIX = {
 const FILE_KEYS = {
   "board.conf":["adc_fake_freq","ads_alert","boot_refresh_ns","fan_pwm","i2c_freq","i2c_port",
     "i2c_scl","i2c_sda","ina22x_addr","ina22x_alert","ina22x_conv_time_us","ina22x_range","ina22x_resistor",
-    "led_WS2812","led_WS2812B","led_simple","mcu","ntc_ch","panel_en","panel_sd",
+    "led_WS2812","led_WS2812B","led_simple","lv_pgood","lv_pgood_v","mcu","ntc_ch","panel_en","panel_sd",
     "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","pwm_driver_logic","pwm_en","pwm_fault_active_high","pwm_fault_pin",
     "pwm_freq","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin","skip_assert"],
   "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_sr","expected_hz",
@@ -485,11 +487,11 @@ const FILE_KEYS = {
 const TYPE_KEYS = {
   byte: new Set(["addr","ads_alert","cmd_input","enabled","expected_hz","fan_pwm","forced_pwm","fpwm_gate",
     "i2c_port","i2c_scl","i2c_sda","ignore_calibration_constraints","ina22x_addr","ina22x_alert",
-    "led_simple","notch_adaptive","ntc_ch","panel_en","panel_sd","pwm_en","pwm_fault_active_high","pwm_fault_pin",
+    "led_simple","lv_pgood","notch_adaptive","ntc_ch","panel_en","panel_sd","pwm_en","pwm_fault_active_high","pwm_fault_pin",
     "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert"]),
   long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq",
     "i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pwm_freq","sprofiler_hz","switch_delay"]),
-  float: new Set(["L0","bat_c","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","ibat_max","iin_max","psu_vout","rect_offset_ns",
+  float: new Set(["L0","bat_c","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","ibat_max","iin_max","psu_vout","rect_offset_ns",
      "ina22x_range","ina22x_resistor","iout_max","iout_short","notch_freq","notch_q","p_max","power_conversion_eff",
      "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
     "vin_max","vin_min","vout_max","vout_max_fallback","vout_offset_max",
@@ -510,7 +512,7 @@ const CHAN_SUFFIX_TYPE = { adc:"string", ch:"byte", rh:"float", rl:"float", fact
 const DEFAULTS = {
   // board.conf
   "adc_fake_freq":"3000","fan_pwm":"255","i2c_freq":"100000","i2c_port":"0","i2c_sda":"255",
-  "ina22x_addr":"0x40","ina22x_alert":"255","ina22x_conv_time_us":"1100","ina22x_range":"35.0","led_simple":"255",
+  "ina22x_addr":"0x40","ina22x_alert":"255","ina22x_conv_time_us":"1100","ina22x_range":"35.0","led_simple":"255","lv_pgood":"255","lv_pgood_v":"10.0",
   "mcu":"\"\"","ntc_ch":"255","panel_en":"0","panel_sd":"0","pwm_fault_active_high":"0",
   "pwm_fault_pin":"255","pwm_sd":"255","skip_assert":"0",
   // sensor.conf

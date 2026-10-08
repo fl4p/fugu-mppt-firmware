@@ -385,7 +385,7 @@ static void cmdLed(cmd *c) { led.setRGB(Command(c).getArg(0).getValue().c_str())
 static bool boardOwnsPin(int pin) {
     try {
         ConfFile board{"/littlefs/conf/board.conf", true};
-        for (auto k: {"pwm_hi", "pwm_li", "pwm_in", "pwm_en", "pwm_sd", "panel_sd", "panel_en", "pwm_fault_pin", "pwm_sync_pin",
+        for (auto k: {"pwm_hi", "pwm_li", "pwm_in", "pwm_en", "pwm_sd", "panel_sd", "panel_en", "lv_pgood", "pwm_fault_pin", "pwm_sync_pin",
                       "i2c_sda", "i2c_scl", "ina22x_alert", "ads_alert", "fan_pwm", "led_WS2812", "led_simple"})
             if (board.getLong(k, -1) == pin) return true;
         return false;

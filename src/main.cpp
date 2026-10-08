@@ -662,6 +662,7 @@ static void loopRT(void *arg) {
 
         if (adcStalled) {
             if (!adcStalledSinceMs) adcStalledSinceMs = nowMs;
+            mppt.lvPgood.release();
             if (nowMs - lastAdcResetMs > kAdcResetThrottleMs) { // restart a wedged DMA quickly
                 lastAdcResetMs = nowMs;
                 adcSampler.resetPeripherals();
@@ -1156,6 +1157,12 @@ static void loopRTNewData(time_ms nowMs) {
     }
 
 
+
+        if (haveNewSample) {
+            auto lv = converter.boost() ? sensors.Vin : sensors.Vout;
+            mppt.lvPgood.update(lv->med3.get(), lv->ewm.avg.get(), lv->numSamples, !mppt.inBackoff(),
+                                (uint32_t) nowMs);
+        }
     if (g_app.manualPwm()) {
         if (!converter.disabled())
             converter.pwmPerturb(0); // this will increase LS duty cycle if possible
