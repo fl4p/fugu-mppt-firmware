@@ -4,55 +4,35 @@ menu "Fugu MPPT firmware"
 # reads CONFIG_FUGU_WITH_* and re-emits the matching WITH_* compile define + selects the source
 # files / sdkconfig fragments. Toggle with `idf.py menuconfig` or an sdkconfig(.defaults) fragment.
 
-config FUGU_WITH_NETW
-    bool "Networking (WiFi / mDNS / MQTT / telemetry / HTTPS-OTA)"
-    default y
-    help
-        Compile the WiFi/mDNS/MQTT/telemetry/HTTPS-OTA path. When off, the firmware runs the
-        UART/USB/BLE consoles only and the linker garbage-collects wifi/lwip/mbedtls/esp-tls.
+menu "ADC drivers"
 
-if FUGU_WITH_NETW
+    config FUGU_WITH_INA226
+        bool "INA226 ADC driver"
+        default y
+        help
+            Compile the INA226 backend (sensor.conf `*_adc=ina226`) with its init self-test.
 
-config FUGU_WITH_NETTOOLS
-    bool "Network debug tools (curl / ping console commands)"
-    default n
-    select MBEDTLS_CERTIFICATE_BUNDLE
-    help
-        Compile the `curl <url>` (blocking HTTP(S) GET, prints the body) and `ping <host>`
-        console commands. Debug tools — they reuse the WiFi/HTTP/lwip stack already linked by
-        NETW, plus the mbedTLS certificate bundle (~50 KB flash) so HTTPS verifies.
+    config FUGU_INA226_MEASURED_RATE
+        bool "INA226: report measured conversion rate (not nominal)"
+        default y
+        depends on FUGU_WITH_INA226
+        help
+            ADC_INA226::getSamplingRate() normally returns the nominal rate derived from the
+            configured conversion time (1e6 / (2*conv_time_us)). Some INA226 chips (notably
+            counterfeit parts) convert faster than their datasheet timing, so the nominal rate
+            underestimates the real sample rate — which mistunes anything keyed to it (the
+            inverter-ripple notch's reported frequency, the expected_hz loop-rate watchdog).
+            When set, getSamplingRate() instead returns a rate measured over several conversions
+            at operational settings during init, so it reflects the chip's actual throughput.
+            No-op on boards without an INA226 (the measurement lives in ADC_INA226). Default on.
 
-endif # FUGU_WITH_NETW
+    config FUGU_WITH_ADS
+        bool "ADS1015/ADS1115 ADC driver"
+        default y
+        help
+            Compile the ADS1x15 backend (sensor.conf `*_adc=ads1015|ads1115`) with its init self-test.
 
-config FUGU_WITH_BLE
-    bool "BLE NUS console + OTA (NimBLE)"
-    default y
-    select BT_ENABLED
-    help
-        NimBLE console + OTA push. Adds ~250 KB flash. The NimBLE host selection and radio/thermal
-        tunings that Kconfig can't default from here live in sdkconfig.ble, layered by CMakeLists
-        when this is on.
-
-config FUGU_WITH_BLE_TELE
-    bool "BLE telemetry stream (binary wire over NUS notify)"
-    default n
-    depends on FUGU_WITH_BLE
-    help
-        Stream InfluxDB points (binary sym_line_protocol, tamp-compressed) over a NUS notify
-        characteristic — telemetry without WiFi. Host side: etc/influx_binary_proxy.py --ble
-        (BLE→InfluxDB bridge) or etc/fugu_console.py --tele. Enable on the device with the
-        `set-time` + `tele-ble 1` console commands.
-
-config FUGU_WITH_BLE_ADV
-    bool "BLE telemetry broadcast (advertising data)"
-    default n
-    depends on FUGU_WITH_BLE
-    help
-        Connectionless telemetry: a packed snapshot record in the advertisement's
-        manufacturer data, readable by any number of passive observers without connecting
-        (the NUS link is exclusive with MAX_CONNECTIONS=1). Keeps broadcasting while a
-        client is connected (non-connectable adv). tele.conf::adv_ms sets the refresh
-        interval (0 = off). Host side: etc/influx_binary_proxy.py --adv.
+endmenu # ADC drivers
 
 menu "PWM drivers"
 
@@ -103,6 +83,56 @@ menu "PWM drivers"
 
 endmenu # PWM drivers
 
+config FUGU_WITH_NETW
+    bool "Networking (WiFi / mDNS / MQTT / telemetry / HTTPS-OTA)"
+    default y
+    help
+        Compile the WiFi/mDNS/MQTT/telemetry/HTTPS-OTA path. When off, the firmware runs the
+        UART/USB/BLE consoles only and the linker garbage-collects wifi/lwip/mbedtls/esp-tls.
+
+if FUGU_WITH_NETW
+
+config FUGU_WITH_NETTOOLS
+    bool "Network debug tools (curl / ping console commands)"
+    default n
+    select MBEDTLS_CERTIFICATE_BUNDLE
+    help
+        Compile the `curl <url>` (blocking HTTP(S) GET, prints the body) and `ping <host>`
+        console commands. Debug tools — they reuse the WiFi/HTTP/lwip stack already linked by
+        NETW, plus the mbedTLS certificate bundle (~50 KB flash) so HTTPS verifies.
+
+endif # FUGU_WITH_NETW
+
+config FUGU_WITH_BLE
+    bool "BLE NUS console + OTA (NimBLE)"
+    default y
+    select BT_ENABLED
+    help
+        NimBLE console + OTA push. Adds ~250 KB flash. The NimBLE host selection and radio/thermal
+        tunings that Kconfig can't default from here live in sdkconfig.ble, layered by CMakeLists
+        when this is on.
+
+config FUGU_WITH_BLE_TELE
+    bool "BLE telemetry stream (binary wire over NUS notify)"
+    default n
+    depends on FUGU_WITH_BLE
+    help
+        Stream InfluxDB points (binary sym_line_protocol, tamp-compressed) over a NUS notify
+        characteristic — telemetry without WiFi. Host side: etc/influx_binary_proxy.py --ble
+        (BLE→InfluxDB bridge) or etc/fugu_console.py --tele. Enable on the device with the
+        `set-time` + `tele-ble 1` console commands.
+
+config FUGU_WITH_BLE_ADV
+    bool "BLE telemetry broadcast (advertising data)"
+    default n
+    depends on FUGU_WITH_BLE
+    help
+        Connectionless telemetry: a packed snapshot record in the advertisement's
+        manufacturer data, readable by any number of passive observers without connecting
+        (the NUS link is exclusive with MAX_CONNECTIONS=1). Keeps broadcasting while a
+        client is connected (non-connectable adv). tele.conf::adv_ms sets the refresh
+        interval (0 = off). Host side: etc/influx_binary_proxy.py --adv.
+
 config FUGU_WITH_SPROFILER
     bool "Semihosting sampling profiler"
     default n
@@ -115,35 +145,5 @@ config FUGU_WITH_MEASURE_COIL
     default n
     help
         Compile the on-device coil L0/Ls sweep + `measure-coil` console command. Bench-only tool.
-
-menu "ADC drivers"
-
-    config FUGU_WITH_INA226
-        bool "INA226 ADC driver"
-        default y
-        help
-            Compile the INA226 backend (sensor.conf `*_adc=ina226`) with its init self-test.
-
-    config FUGU_INA226_MEASURED_RATE
-        bool "INA226: report measured conversion rate (not nominal)"
-        default y
-        depends on FUGU_WITH_INA226
-        help
-            ADC_INA226::getSamplingRate() normally returns the nominal rate derived from the
-            configured conversion time (1e6 / (2*conv_time_us)). Some INA226 chips (notably
-            counterfeit parts) convert faster than their datasheet timing, so the nominal rate
-            underestimates the real sample rate — which mistunes anything keyed to it (the
-            inverter-ripple notch's reported frequency, the expected_hz loop-rate watchdog).
-            When set, getSamplingRate() instead returns a rate measured over several conversions
-            at operational settings during init, so it reflects the chip's actual throughput.
-            No-op on boards without an INA226 (the measurement lives in ADC_INA226). Default on.
-
-    config FUGU_WITH_ADS
-        bool "ADS1015/ADS1115 ADC driver"
-        default y
-        help
-            Compile the ADS1x15 backend (sensor.conf `*_adc=ads1015|ads1115`) with its init self-test.
-
-endmenu # ADC drivers
 
 endmenu
