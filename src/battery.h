@@ -41,3 +41,12 @@ inline float detectMaxBatteryVoltage(float openCircuitVoltage) {
     // not detectable
     return NAN;
 }
+
+// Battery disconnected under load (buck charger): Iout collapses, Vout jumps by more than dvMin and Vin
+// rises. *Avg are slow averages still holding the pre-step state. A bus step that drives Iout to ~0 with
+// the battery connected matches too.
+inline bool bmsCutoffSignature(float iout, float ioutAvg, float ioutMin,
+                               float vout, float voutAvg, float dvMin,
+                               float vin, float vinAvg) {
+    return ioutAvg > ioutMin && iout < ioutAvg * 0.25f && vout > voutAvg + dvMin && vin > vinAvg;
+}

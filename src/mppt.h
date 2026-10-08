@@ -589,6 +589,15 @@ public:
             return false;
         }
 
+        if (bmsCutoff()) {
+            ESP_LOGE("mppt", "BMS cut-off? Iout %.2f (avg %.2f) Vout %.2f (avg %.2f) Vin %.2f (avg %.2f)",
+                     sensors.Iout->med3.get(), sensors.Iout->ewm.avg.get(),
+                     sensors.Vout->med3.get(), sensors.Vout->ewm.avg.get(),
+                     sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
+            shutdownDcdc("BMS-cutoff", 30);
+            return false;
+        }
+
         // output over-voltage
         // An explicit `ovset` overrides the derived threshold (issue #59). Without it the threshold
         // is derived from Vbat_max × a factor (1.03 with reverse_current_paranoia, 1.5 without).
@@ -1235,6 +1244,16 @@ public:
     }
     [[nodiscard]] bool isPsuLatched() const {
         return psuLatched.load(std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] bool bmsCutoff() const {
+        if (converter.disabled() || converter.boost() || g_app.psuMode() || !charger.params.haveVbatMax())
+            return false;
+        return bmsCutoffSignature(sensors.Iout->med3.get(), sensors.Iout->ewm.avg.get(),
+                                  std::max(1.f, limits.Iout_max * 0.05f),
+                                  sensors.Vout->med3.get(), sensors.Vout->ewm.avg.get(),
+                                  charger.params.Vbat_max * 0.02f,
+                                  sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
     }
 
     [[nodiscard]] float computeOvThreshold() const {
