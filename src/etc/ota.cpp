@@ -3,6 +3,9 @@
 #include <esp_log.h>
 #include <esp_http_client.h>
 #include <esp_https_ota.h>
+#if CONFIG_FUGU_WITH_HTTPS
+#include <esp_crt_bundle.h>
+#endif
 
 #include "ota.h"
 #include "util.h"
@@ -174,11 +177,9 @@ bool doOta(const char *url) {
     esp_http_client_config_t config{};
     config.url = url,
             config.timeout_ms = 10000,
-#ifdef CONFIG_EXAMPLE_USE_CERT_BUNDLE
+#if CONFIG_FUGU_WITH_HTTPS
             config.crt_bundle_attach = esp_crt_bundle_attach;
-#else
-            config.cert_pem = 0, // (char *)server_cert_pem_start,
-#endif /* CONFIG_EXAMPLE_USE_CERT_BUNDLE */
+#endif
             config.event_handler = _ota_http_event_handler;
     config.keep_alive_enable = true;
     config.buffer_size = 1024; // DEFAULT_HTTP_BUF_SIZE=512

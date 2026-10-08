@@ -1149,6 +1149,7 @@ public:
             return;
         }
 
+#if WITH_PSU
         const float vin = sensors.Vin ? sensors.Vin->ewm.avg.get() : NAN;
         // For a PV curve the no-load operating point IS Voc, so Voc carries the feasibility check.
         auto error = validatePsuSetpoint(requested, limits.Vout_max, converter.boost(), vin,
@@ -1211,6 +1212,10 @@ public:
             ESP_LOGI("mppt", "PSU mode, vset=%.2fV", requested);
         }
         completePsuCommand(ticket, PsuSetpointError::None);
+#else
+        (void) requested; (void) pvIsc; (void) pvK; (void) pvRebase; (void) bootRequest;
+        completePsuCommand(ticket, PsuSetpointError::OutOfRange);
+#endif
     }
 
     // RT-only, PV-sim active: advance psuVsetpoint one tick along the curve.

@@ -50,7 +50,9 @@
 #endif
 #ifdef WITH_NETTOOLS
 #include <esp_http_client.h>
+#if CONFIG_FUGU_WITH_HTTPS
 #include <esp_crt_bundle.h>
+#endif
 #include <ping/ping_sock.h>
 #include <lwip/netdb.h>
 #include <lwip/ip_addr.h>
@@ -868,7 +870,9 @@ static void cmdCurl(cmd *c) {
     esp_http_client_config_t cfg{};
     cfg.url = url.c_str();
     cfg.timeout_ms = 10000;
+#if CONFIG_FUGU_WITH_HTTPS
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
+#endif
     cfg.method = m;
     esp_http_client_handle_t h = esp_http_client_init(&cfg);
     if (!h)
@@ -1603,6 +1607,7 @@ static void cmdOvset(cmd *c) {
         CMD_FAIL_RETURN("ovset: out of range [0,999] (0 = clear)");
 }
 
+#if WITH_PSU
 static void cmdPsu(cmd *c) {
     Command cc(c);
     auto arg = cc.countArgs() >= 1 ? cc.getArg(0).getValue() : String();
@@ -1697,6 +1702,7 @@ static void cmdPv(cmd *c) {
     ESP_LOGI("main", "PV-sim Isc=%.2fA Voc=%.2fV k=%.2f (MPP %.1fV/%.0fW)",
              isc, voc, k, k * voc, k * voc * m.current(k * voc));
 }
+#endif
 
 // status  — charger/battery snapshot: termination state, effective limits, termination line and BMS feed.
 static void cmdStatus(cmd *) {
@@ -2152,8 +2158,10 @@ void setupCli() {
     cli.addSingleArgCmd("vset", cmdVset);
     cli.addSingleArgCmd("iset", cmdIset);
     cli.addSingleArgCmd("ovset", cmdOvset);
+#if WITH_PSU
     cli.addBoundlessCmd("psu", cmdPsu);
     cli.addBoundlessCmd("pv", cmdPv); // pv <isc> <voc> [k] | scale <s> | off
+#endif
     cli.addCommand("status", cmdStatus);
 
     cli.addBoundlessCmd("hostname,hn", cmdHostname);

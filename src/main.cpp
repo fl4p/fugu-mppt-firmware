@@ -24,10 +24,14 @@
 #include "etc/network_shim.h"
 #ifdef WITH_NETW
 #include "tele/telemetry.h"
+#if WITH_FTP
 #include "tele/ftp_service.h"
+#endif
 #include "tele/telnet_service.h"
 #include "tele/telemetry_service.h"
+#if WITH_HA
 #include "tele/home_assistant.h"
+#endif
 #include "etc/ota.h"
 #endif
 #if WITH_SCOPE
@@ -328,17 +332,23 @@ static void registerServices() {
 #ifdef WITH_NETW
     MQTT.preStart = [](const ConfFile &mqttConf) {
         mppt.charger.beginMqtt(mqttConf);
+#if WITH_HA
         MQTT.onConnected = haMqttSendDiscovery;
+#endif
     };
+#if WITH_HA
     // Periodic HA power publish, throttled inside MqttService::onTick (only ticks while Running).
     MQTT.tickHook = [] {
         if (!mppt.sensorPhysicalI || !mppt.sensorPhysicalU) return; // sensor setup failed, mppt.begin() skipped
         float pow = mppt.sensorPhysicalI->ewm.avg.get() * mppt.sensorPhysicalU->ewm.avg.get();
         haMqttUpdate({.power = mppt.isSweeping() ? NAN : pow});
     };
+#endif
     g_services.registerService(&MQTT);
     g_services.registerService(&telemetryService);
+#if WITH_FTP
     g_services.registerService(&ftpService);
+#endif
     g_services.registerService(&telnetService);
 #endif
     g_services.registerService(&lcdService);

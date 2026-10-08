@@ -1,4 +1,7 @@
 #include <Arduino.h> // String
+#if CONFIG_FUGU_WITH_HTTPS
+#include <esp_crt_bundle.h>
+#endif
 #include "mqtt.h"
 #include "../conf.h"
 #include "../util.h"
@@ -146,7 +149,9 @@ void MqttService::init(const ConfFile &conf) {
     esp_mqtt_client_config_t mqtt_cfg{};
     mqtt_cfg.broker.address.uri = brokerUri.c_str();
     mqtt_cfg.task.stack_size = 8192; // default ~6 KB overflows during the transport-error storm on WiFi teardown
-    //mqtt_cfg.broker.verification.
+#if CONFIG_FUGU_WITH_HTTPS
+    mqtt_cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
+#endif
     if (!username.empty())mqtt_cfg.credentials.username = username.c_str();
     if (!password.empty())mqtt_cfg.credentials.authentication.password = password.c_str();
 

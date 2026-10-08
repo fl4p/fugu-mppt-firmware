@@ -407,6 +407,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     if (targetPwmCnt && (mode == "psu" || mode == "pv")) {
         ESP_LOGE("mppt", "tracker.conf::target_duty_cycle overrides converter.conf mode=%s",
                  mode.c_str());
+#if WITH_PSU
     } else if (mode == "psu") {
         float vout = converterConf.getFloat("psu_vout", 0.0f);
         if (!requestPsuSetpoint(vout, true)) {
@@ -431,6 +432,11 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
                      isc, voc, k);
             psuBootQueued = true;
         }
+#else
+    } else if (mode == "psu" || mode == "pv") {
+        ESP_LOGE("mppt", "converter.conf mode=%s needs CONFIG_FUGU_WITH_PSU, disabling", mode.c_str());
+        g_app.setupErr = true;
+#endif
     } else if (!mode.empty() && mode != "mppt" && !targetPwmCnt) {
         ESP_LOGE("mppt", "Unknown converter.conf mode '%s', disabling", mode.c_str());
         g_app.setupErr = true;

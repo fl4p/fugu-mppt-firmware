@@ -44,11 +44,8 @@ endif ()
 
 set(NETW_SRC
         "../src/tele/telemetry.cpp"
-        "../src/tele/ftp_service.cpp"
         "../src/tele/telnet_service.cpp"
         "../src/tele/mqtt.cpp"
-        "../src/tele/HAMqttDevice.cpp"
-        "../src/tele/home_assistant.cpp"
         "../src/web/server.cpp"
         "../src/etc/ota.cpp"
 )
@@ -70,6 +67,12 @@ set(BLE_SRC
         "../src/tele/console_ble.cpp"
 if (CONFIG_FUGU_WITH_SCOPE)
     list(APPEND NETW_SRC "../src/tele/scope_service.cpp")
+endif ()
+if (CONFIG_FUGU_WITH_FTP)
+    list(APPEND NETW_SRC "../src/tele/ftp_service.cpp")
+endif ()
+if (CONFIG_FUGU_WITH_HA)
+    list(APPEND NETW_SRC "../src/tele/HAMqttDevice.cpp" "../src/tele/home_assistant.cpp")
 endif ()
 )
 
@@ -150,6 +153,15 @@ endif ()
 if ($ENV{FUGU_BAT_V})
 if (CONFIG_FUGU_WITH_SCOPE)
     component_compile_definitions("WITH_SCOPE=1")
+endif ()
+if (CONFIG_FUGU_WITH_FTP)
+    component_compile_definitions("WITH_FTP=1")
+endif ()
+if (CONFIG_FUGU_WITH_HA)
+    component_compile_definitions("WITH_HA=1")
+endif ()
+if (CONFIG_FUGU_WITH_PSU)
+    component_compile_definitions("WITH_PSU=1")
 endif ()
     # 14.25, 28.5, 57
     component_compile_definitions("FUGU_BAT_V=$ENV{FUGU_BAT_V}")

@@ -73,6 +73,9 @@ menu "PWM drivers"
             timebase recovered from sniffed 802.11 beacons (RX-only, works unassociated).
             Adds the `bsync` service + bsync.conf. See website/docs/internals/sync/beacon-sync.md.
 
+    comment "Virtual converter plant needs the MCPWM gate driver off"
+        depends on FUGU_WITH_MCPWM
+
     config FUGU_WITH_VCONV
         bool "Virtual converter plant (simulation, no hardware)"
         default n
@@ -92,14 +95,23 @@ config FUGU_WITH_NETW
 
 if FUGU_WITH_NETW
 
+config FUGU_WITH_HTTPS
+    bool "TLS client (https:// OTA and curl, mqtts:// broker)"
+    default n
+    select ESP_HTTP_CLIENT_ENABLE_HTTPS
+    select MQTT_TRANSPORT_SSL
+    select MBEDTLS_CERTIFICATE_BUNDLE
+    help
+        TLS for the HTTP client and MQTT, servers verified against the mbedTLS CA bundle.
+        Off, only http:// and mqtt:// URLs work.
+
 config FUGU_WITH_NETTOOLS
     bool "Network debug tools (curl / ping console commands)"
     default n
-    select MBEDTLS_CERTIFICATE_BUNDLE
     help
-        Compile the `curl <url>` (blocking HTTP(S) GET, prints the body) and `ping <host>`
+        Compile the `curl <url>` (blocking HTTP GET, prints the body) and `ping <host>`
         console commands. Debug tools — they reuse the WiFi/HTTP/lwip stack already linked by
-        NETW, plus the mbedTLS certificate bundle (~50 KB flash) so HTTPS verifies.
+        NETW. https:// URLs need FUGU_WITH_HTTPS.
 
 config FUGU_WITH_SCOPE
     bool "ADC scope streamer (scope service, TCP port 24)"
@@ -107,6 +119,18 @@ config FUGU_WITH_SCOPE
     help
         Stream raw ADC samples over TCP for noise debugging (host client: etc/scope.py).
         Off drops the scope service and compiles every sampling-path hook to nothing.
+
+config FUGU_WITH_FTP
+    bool "FTP server for /littlefs/conf (ftp service)"
+    default y
+    help
+        Single-connection FTP server exposing the config partition while Wi-Fi is up.
+
+config FUGU_WITH_HA
+    bool "Home Assistant MQTT discovery"
+    default y
+    help
+        Publish Home Assistant discovery and power state on the MQTT broker.
 
 endif # FUGU_WITH_NETW
 
@@ -152,5 +176,12 @@ config FUGU_WITH_MEASURE_COIL
     default n
     help
         Compile the on-device coil L0/Ls sweep + `measure-coil` console command. Bench-only tool.
+
+config FUGU_WITH_PSU
+    bool "PSU / PV-simulator output modes (psu, pv commands)"
+    default y
+    help
+        Constant-voltage PSU mode and the PV-curve simulator: `psu`/`pv` console commands and
+        converter.conf mode=psu|pv. Off, a board configured for either mode refuses to start.
 
 endmenu
