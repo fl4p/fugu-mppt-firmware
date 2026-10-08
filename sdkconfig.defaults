@@ -164,8 +164,8 @@ CONFIG_PTHREAD_DEFAULT_CORE_NO_AFFINITY=0x0
 # esp_timer ISR on CPU0 (away from RT_CORE=1). Nothing in this firmware uses ESP_TIMER_ISR
 # dispatch, so the ISR's only job is timer-wheel bookkeeping + IPC to the task on CPU0;
 # putting it on RT_CORE just added periodic preemption to the ADC/MPPT/PWM hot path.
-# Re-enable CPU1 affinity here if a future safety callback needs ESP_TIMER_ISR dispatch.
-CONFIG_ESP_TIMER_SHOW_EXPERIMENTAL=y
+# Re-enable CPU1 affinity here if a future safety callback needs ESP_TIMER_ISR dispatch
+# (CPU1 needs CONFIG_ESP_TIMER_SHOW_EXPERIMENTAL=y).
 CONFIG_ESP_TIMER_ISR_AFFINITY_CPU0=y
 CONFIG_ESP_TIMER_TASK_AFFINITY_CPU0=y
 
