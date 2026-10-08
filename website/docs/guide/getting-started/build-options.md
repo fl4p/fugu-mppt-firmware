@@ -33,6 +33,7 @@ project root.
 |---|:---:|---|
 | `CONFIG_FUGU_WITH_NETW` | on | Wi-Fi, mDNS, MQTT, InfluxDB telemetry, HTTPS OTA, FTP, telnet. Off strips all of them (~700 KB); the UART/USB/BLE consoles remain. Layers `sdkconfig.no_netw` when off. |
 | `CONFIG_FUGU_WITH_NETTOOLS` | off | `curl`, `ping`, `nslookup`, `tcpconnect`, `netstat` console commands. Needs `NETW`. |
+| `CONFIG_FUGU_WITH_SCOPE` | on | Raw-ADC [scope](../../reference/host-tools.md#scopepy) streamer on TCP port 24. Needs `NETW`; off saves ~7 KB flash. |
 | `CONFIG_FUGU_WITH_BLE` | on | NimBLE console (NUS) and BLE OTA push, ~250 KB. Layers `sdkconfig.ble`. |
 | `CONFIG_FUGU_WITH_BLE_TELE` | off | Binary telemetry stream over a NUS notify characteristic. Needs `BLE`. |
 | `CONFIG_FUGU_WITH_BLE_ADV` | off | Connectionless telemetry in BLE advertising data. Needs `BLE`. |

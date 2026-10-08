@@ -477,12 +477,17 @@ public:
 };
 
 
-// RT/ADC sampling path uses this pointer to push samples. WITH_NETW=1: aims at
-// scopeService.scopeObj (defined in scope_service.cpp). WITH_NETW=0: stays nullptr — `if (scope)`
-// guards at every call site make the publish a no-op. Defining the stub inline here (instead of
-// in a separate WITH_NETW=0 TU) keeps scope.h self-contained.
-#ifdef WITH_NETW
+// RT/ADC sampling path pushes samples through `scope`. WITH_SCOPE: a pointer aimed at
+// scopeService.scopeObj (scope_service.cpp). Otherwise a no-op stub that tests false, so every
+// `if (scope)` call site compiles away (a constexpr nullptr would trip -Werror=nonnull).
+#if WITH_SCOPE
 extern Scope *scope;
 #else
-inline Scope *scope = nullptr;
+struct NoScope {
+    constexpr explicit operator bool() const { return false; }
+    constexpr const NoScope *operator->() const { return this; }
+    void addChannel(const void *, uint8_t, uint8_t, uint8_t, const char *) const {}
+    void addSample12(const void *, uint8_t, const uint16_t &) const {}
+};
+inline constexpr NoScope scope{};
 #endif

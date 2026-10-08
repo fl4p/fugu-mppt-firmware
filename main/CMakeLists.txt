@@ -46,7 +46,6 @@ set(NETW_SRC
         "../src/tele/telemetry.cpp"
         "../src/tele/ftp_service.cpp"
         "../src/tele/telnet_service.cpp"
-        "../src/tele/scope_service.cpp"
         "../src/tele/mqtt.cpp"
         "../src/tele/HAMqttDevice.cpp"
         "../src/tele/home_assistant.cpp"
@@ -69,6 +68,9 @@ endif ()
 
 set(BLE_SRC
         "../src/tele/console_ble.cpp"
+if (CONFIG_FUGU_WITH_SCOPE)
+    list(APPEND NETW_SRC "../src/tele/scope_service.cpp")
+endif ()
 )
 
 # CONFIG_FUGU_WITH_BLE (default y) compiles the NimBLE console + OTA path; the sdkconfig.ble layering
@@ -146,6 +148,9 @@ endif ()
 
 
 if ($ENV{FUGU_BAT_V})
+if (CONFIG_FUGU_WITH_SCOPE)
+    component_compile_definitions("WITH_SCOPE=1")
+endif ()
     # 14.25, 28.5, 57
     component_compile_definitions("FUGU_BAT_V=$ENV{FUGU_BAT_V}")
 endif ()

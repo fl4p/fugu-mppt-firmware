@@ -32,7 +32,9 @@ static LCD s_lcd{};
 MpptController mppt{s_adcSampler, s_sensors, s_converter, s_lcd};
 
 // RT/ADC path (temperature.h, mppt) reaches the scope streamer through this pointer; null = off.
+#if WITH_SCOPE
 Scope *scope = nullptr;
+#endif
 
 // More main.cpp-owned globals the netw objects reference: g_app (mode flags, via mppt.telemetry())
 // and lastTimeOutUs (telnet onConnect). test_security.cpp pulls telnet_service.cpp into the link,

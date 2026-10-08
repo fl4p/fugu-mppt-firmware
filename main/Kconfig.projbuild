@@ -101,6 +101,13 @@ config FUGU_WITH_NETTOOLS
         console commands. Debug tools — they reuse the WiFi/HTTP/lwip stack already linked by
         NETW, plus the mbedTLS certificate bundle (~50 KB flash) so HTTPS verifies.
 
+config FUGU_WITH_SCOPE
+    bool "ADC scope streamer (scope service, TCP port 24)"
+    default y
+    help
+        Stream raw ADC samples over TCP for noise debugging (host client: etc/scope.py).
+        Off drops the scope service and compiles every sampling-path hook to nothing.
+
 endif # FUGU_WITH_NETW
 
 config FUGU_WITH_BLE

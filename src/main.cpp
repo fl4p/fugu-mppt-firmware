@@ -27,9 +27,11 @@
 #include "tele/ftp_service.h"
 #include "tele/telnet_service.h"
 #include "tele/telemetry_service.h"
-#include "tele/scope_service.h"
 #include "tele/home_assistant.h"
 #include "etc/ota.h"
+#endif
+#if WITH_SCOPE
+#include "tele/scope_service.h"
 #endif
 #include "sync/bsync.h"
 #ifdef WITH_MEASURE_COIL
@@ -340,7 +342,7 @@ static void registerServices() {
     g_services.registerService(&telnetService);
 #endif
     g_services.registerService(&lcdService);
-#ifdef WITH_NETW
+#if WITH_SCOPE
     g_services.registerService(&scopeService);
 #endif
 #ifdef WITH_BLE
@@ -1236,7 +1238,7 @@ static void networkLoopTick() {
 // True while a TCP scope client is attached and its blocking netLoop() will provide the cooperative
 // yield this iteration; otherwise loopNetwork_task must yield explicitly.
 static bool scopeKeepsAwake() {
-#ifdef WITH_NETW
+#if WITH_SCOPE
     return scopeService.state() == ServiceState::Running && scopeService.hasClient();
 #else
     return false;
