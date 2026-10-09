@@ -27,6 +27,8 @@ public:
 protected:
     bool onStart() override {
         if (!WiFi.isConnected()) return false;          // UDP is connectionless, nothing to open
+        onStop();                                        // a failed tick leaves flushTask alive
+        mppt.tele = TeleConf{ConfFile{"/littlefs/conf/tele.conf"}};
         teleLoadWireConf();                              // pick text|binary from tele.conf (binary wire = tamp)
         teleUdpLoadCompressor();
         // A restarted service sends from a new UDP source port -> the proxy starts a fresh
