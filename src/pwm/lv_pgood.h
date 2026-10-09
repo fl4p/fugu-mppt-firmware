@@ -20,7 +20,7 @@ class LvPgood {
 
     uint8_t pin = 255;
     bool _state = false;
-    float vOn = 10.f;
+    float vOn = 10.5f;
     uint32_t goodSinceMs = 0, lastCallMs = 0, freshMs = 0, lastN = 0;
 
     void set(bool on) {
@@ -33,8 +33,8 @@ class LvPgood {
 public:
     void init(const ConfFile &board) {
         pin = board.getByte("lv_pgood", 255);
-        float v = board.getFloat("lv_pgood_v", 10.f);
-        vOn = std::isfinite(v) && v >= vOnMin ? v : 10.f;
+        float v = board.getFloat("lv_pgood_v", 10.5f);
+        vOn = std::isfinite(v) && v >= vOnMin ? v : 10.5f;
         if (pin == 255) return;
         if (!GPIO_IS_VALID_OUTPUT_GPIO(pin) || esp_gpio_is_reserved(BIT64(pin))) {
             ESP_LOGE("pgood", "lv_pgood pin %u unusable, disabled", pin);
