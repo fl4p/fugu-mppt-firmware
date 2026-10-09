@@ -319,6 +319,7 @@ void test_psu_ov_threshold_from_setpoint();
 void test_psu_ov_threshold_clamped_to_vout_max();
 void test_psu_ov_threshold_explicit_ovset_overrides();
 void test_psu_ov_threshold_no_setpoint_falls_back();
+void test_psu_ov_threshold_held_over_downward_retarget();
 void test_psu_trip_escalates_after_repeated_trips();
 void test_psu_trip_latches_after_many_trips();
 void test_psu_trip_sparse_does_not_escalate();
@@ -545,6 +546,7 @@ void setup() {
     RUN_TEST(test_psu_ov_threshold_clamped_to_vout_max);
     RUN_TEST(test_psu_ov_threshold_explicit_ovset_overrides);
     RUN_TEST(test_psu_ov_threshold_no_setpoint_falls_back);
+    RUN_TEST(test_psu_ov_threshold_held_over_downward_retarget);
     RUN_TEST(test_psu_setpoint_rejects_negative);
     RUN_TEST(test_psu_setpoint_rejects_zero);
     RUN_TEST(test_psu_setpoint_rejects_nan);

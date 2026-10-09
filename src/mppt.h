@@ -606,6 +606,13 @@ public:
         // Until the battery is identified, the hard configured ceiling is the only threshold we
         // have. Deriving one from an unusable Vbat_max instead would yield ~0 and trip OV on any
         // output voltage — and protectLf()'s re-detect never runs, because a trip returns before it.
+        // Release the downward-retarget hold once Vout is inside the new band (same 2 % margin
+        // as startBlockReason), or when PSU mode is gone.
+        if (std::isfinite(psuOvHoldBase)
+            && (!g_app.psuMode() || !std::isfinite(psuVsetpoint)
+                || sensors.Vout->last < 0.98f * psuVsetpoint
+                                        * (limits.reverse_current_paranoia ? 1.03f : 1.5f)))
+            psuOvHoldBase = NAN;
         auto ovTh = computeOvThreshold();
         //if (adcSampler.med3.s.chVout.get() > ovTh) {
         if (sensors.Vout->last > ovTh) {
@@ -886,6 +893,10 @@ public:
     }
 
     float psuVsetpoint = NAN; // PSU CV setpoint (V); NAN = not commanded
+    // OV base held over a downward PSU retarget: the old setpoint (or the measured Vout, if
+    // higher) until Vout has come down into the new band. Without it `psu 20` from 49 V
+    // derives a 30 V threshold at once and trips Vout-OV on the converter's own output.
+    float psuOvHoldBase = NAN;
     std::atomic<bool> psuEscalated{false};
     std::atomic<bool> psuLatched{false};
 
@@ -902,6 +913,10 @@ public:
 
     void setPsuSetpoint(float v) {
         if (!std::isfinite(v) || v <= 0 || v > limits.Vout_max) return;
+        float hold = g_app.psuMode() ? psuVsetpoint : NAN;
+        const float vout = sensors.Vout ? sensors.Vout->last : NAN;
+        if (std::isfinite(vout) && !(vout <= hold)) hold = vout;
+        psuOvHoldBase = (std::isfinite(hold) && hold > v) ? hold : NAN;
         VoutController.reset();
         psuVsetpoint = v;
         publishedPsuSetpoint.store(v, std::memory_order_release);
@@ -1116,6 +1131,7 @@ public:
             clearBackoff();
             converter.setManualRect(-1);
             psuVsetpoint = NAN;
+            psuOvHoldBase = NAN;
             publishedPsuSetpoint.store(NAN, std::memory_order_release);
             pvDeactivateRt();
             psuResetTripState();
@@ -1268,7 +1284,8 @@ public:
         if (std::isfinite(ovLimit) && ovLimit > 0)
             return std::min(ovLimit, limits.Vout_max);
         // PV-sim: pin the OV band to Voc so it doesn't follow the moving setpoint down the curve.
-        const float psuBase = pvSim.active ? pvSim.model.voc : psuVsetpoint;
+        float psuBase = pvSim.active ? pvSim.model.voc : psuVsetpoint;
+        if (!pvSim.active && psuOvHoldBase > psuBase) psuBase = psuOvHoldBase;
         if (g_app.psuMode() && std::isfinite(psuBase))
             return std::min(psuBase * (limits.reverse_current_paranoia ? 1.03f : 1.5f), limits.Vout_max);
         if (charger.params.haveVbatMax())

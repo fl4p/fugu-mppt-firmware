@@ -63,6 +63,21 @@ void test_psu_ov_threshold_no_setpoint_falls_back() {
     TEST_ASSERT_EQUAL_FLOAT(100.0f, ovTh);
 }
 
+void test_psu_ov_threshold_held_over_downward_retarget() {
+    // psu 49 -> psu 20 must not derive a 30 V threshold while the output is still at 49 V
+    setPsuMode();
+    setupLimits(100.0f, false);
+    mppt.setExplicitOvLimit(NAN);
+    mppt.charger.params.Vbat_max = NAN;
+    mppt.psuOvHoldBase = NAN;
+    mppt.psuVsetpoint = 49.0f;
+    mppt.setPsuSetpoint(20.0f);
+    TEST_ASSERT_EQUAL_FLOAT(20.0f, mppt.psuVsetpoint);
+    TEST_ASSERT_TRUE(mppt.computeOvThreshold() >= 49.0f * 1.5f - 0.01f);
+    mppt.psuOvHoldBase = NAN; // released (protect() does this once Vout is in the new band)
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 30.0f, mppt.computeOvThreshold());
+}
+
 // --- 2. Trip escalation ------------------------------------------------------
 
 static void simulateTrips(int n, time_us baseUs) {
