@@ -180,7 +180,7 @@ void test_pv_plain_psu_enable_reverts_to_cv() {
     TEST_ASSERT_TRUE(mppt.isPsuCommandDone(ticket));
     TEST_ASSERT_TRUE(g_app.psuMode());
     TEST_ASSERT_FALSE(mppt.pvSim.active);
-    TEST_ASSERT_EQUAL_FLOAT(50.0f, mppt.psuVsetpoint);
+    TEST_ASSERT_EQUAL_FLOAT(50.0f, mppt.psuTarget); // 60 -> 50 is a downward retarget: it slews
 }
 
 void test_pv_pending_overridden_by_manual() {

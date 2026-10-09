@@ -897,6 +897,13 @@ public:
     // higher) until Vout has come down into the new band. Without it `psu 20` from 49 V
     // derives a 30 V threshold at once and trips Vout-OV on the converter's own output.
     float psuOvHoldBase = NAN;
+    // Downward PSU retarget slews psuVsetpoint toward psuTarget at psuSlewDownVps
+    // (converter.conf::psu_slew_down). A step lets the CV loop pull the output down as fast as
+    // forced PWM allows, and a boost returns that charge to its INPUT: fboost, unloaded, 49 -> 20 V
+    // pumped its 10 V bench-supply rail to 19.8 V and latched psu-setpoint-infeasible (2026-10-09).
+    // Upward steps stay immediate.
+    float psuTarget = NAN;
+    float psuSlewDownVps = 2.0f;
     std::atomic<bool> psuEscalated{false};
     std::atomic<bool> psuLatched{false};
 
@@ -918,8 +925,19 @@ public:
         if (std::isfinite(vout) && !(vout <= hold)) hold = vout;
         psuOvHoldBase = (std::isfinite(hold) && hold > v) ? hold : NAN;
         VoutController.reset();
-        psuVsetpoint = v;
-        publishedPsuSetpoint.store(v, std::memory_order_release);
+        psuTarget = v;
+        // slew down only from an active plain-PSU setpoint; PV-sim owns its own slew
+        if (!(g_app.psuMode() && !pvSim.active && v < psuVsetpoint))
+            psuVsetpoint = v;
+        publishedPsuSetpoint.store(psuVsetpoint, std::memory_order_release);
+    }
+
+    // RT-only, plain PSU: advance psuVsetpoint one tick toward psuTarget (downward slew).
+    void psuAdvanceSetpoint(float dt) {
+        if (!(psuVsetpoint > psuTarget)) return;
+        dt = std::min(dt > 0 ? dt : 6e-4f, 0.01f); // same stale-dt clamp as pvAdvanceSetpoint
+        psuVsetpoint = std::max(psuTarget, psuVsetpoint - psuSlewDownVps * dt);
+        publishedPsuSetpoint.store(psuVsetpoint, std::memory_order_release);
     }
 
     // Shared boost headroom: setpoint feasibility gate and the PV-sim curve floor.
@@ -1131,6 +1149,7 @@ public:
             clearBackoff();
             converter.setManualRect(-1);
             psuVsetpoint = NAN;
+            psuTarget = NAN;
             psuOvHoldBase = NAN;
             publishedPsuSetpoint.store(NAN, std::memory_order_release);
             pvDeactivateRt();

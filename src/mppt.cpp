@@ -101,6 +101,8 @@ void MpptController::update() {
 
     if (g_app.psuMode() && pvSim.active)
         pvAdvanceSetpoint(sensors.Iout->med3.get(), sensors.Vin->ewm.avg.get(), dtCtrl);
+    else if (g_app.psuMode())
+        psuAdvanceSetpoint(dtCtrl);
 
     std::array<CVP, 5> controlValues{
         CVP{CV, VinController, {sensors.Vin->med3.get(), limits.Vin_min}},
@@ -442,6 +444,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
         g_app.setupErr = true;
     }
 
+    psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
 
     if (tele.influxdbHost) {

@@ -70,12 +70,29 @@ void test_psu_ov_threshold_held_over_downward_retarget() {
     mppt.setExplicitOvLimit(NAN);
     mppt.charger.params.Vbat_max = NAN;
     mppt.psuOvHoldBase = NAN;
+    mppt.pvSim.active = false;
     mppt.psuVsetpoint = 49.0f;
     mppt.setPsuSetpoint(20.0f);
-    TEST_ASSERT_EQUAL_FLOAT(20.0f, mppt.psuVsetpoint);
+    TEST_ASSERT_EQUAL_FLOAT(20.0f, mppt.psuTarget);
+    TEST_ASSERT_EQUAL_FLOAT(49.0f, mppt.psuVsetpoint); // slews, does not step
     TEST_ASSERT_TRUE(mppt.computeOvThreshold() >= 49.0f * 1.5f - 0.01f);
     mppt.psuOvHoldBase = NAN; // released (protect() does this once Vout is in the new band)
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 30.0f, mppt.computeOvThreshold());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 49.0f * 1.5f, mppt.computeOvThreshold());
+}
+
+void test_psu_downward_retarget_slews() {
+    setPsuMode();
+    setupLimits(100.0f, false);
+    mppt.pvSim.active = false;
+    mppt.psuSlewDownVps = 2.0f;
+    mppt.psuVsetpoint = 49.0f;
+    mppt.setPsuSetpoint(20.0f);
+    mppt.psuAdvanceSetpoint(0.01f);                      // one 10 ms tick: 0.02 V
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 48.98f, mppt.psuVsetpoint);
+    for (int i = 0; i < 2000; ++i) mppt.psuAdvanceSetpoint(0.01f); // 20 s at 2 V/s
+    TEST_ASSERT_EQUAL_FLOAT(20.0f, mppt.psuVsetpoint);     // lands on the target, no undershoot
+    mppt.setPsuSetpoint(35.0f);                          // upward is immediate
+    TEST_ASSERT_EQUAL_FLOAT(35.0f, mppt.psuVsetpoint);
 }
 
 // --- 2. Trip escalation ------------------------------------------------------
