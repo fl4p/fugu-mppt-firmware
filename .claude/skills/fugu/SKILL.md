@@ -234,8 +234,12 @@ included; that push needed a scratch copy of `ota_ble.py` with the check skipped
 version is yours to verify (`uptime`). **Crossing `48804755` (forced-PWM bring-up gate) on a
 board that boots into manual duty with no load is an OV event**: fboost (`target_duty_cycle
 0.6138`, unloaded) came up in diode emulation, pumped its output to 85 V and tripped Vout-OV
-(2026-10-09); the old image held 26 V in forced PWM. Check `converter.conf::fpwm_gate` and the
-load before such an OTA. **On macOS the transport defaults to `native`**
+(2026-10-09); the old image held 26 V in forced PWM. fboost now carries `fpwm_gate=0` and boots
+to 25.9 V again; set it (and bring Vout down to ~Vin before the `restart`, since forced PWM from
+duty 0 dumps a charged output into the input) or load the output before such an OTA. **`psu`/`vset`
+pinned at `pwm=1`, Vout = Vin − diode** is the Vin floor, not the regulator: `limits.conf::vin_min`
+above the source voltage holds the duty down in every mode except manual (fboost had 26 on a
+10 V Korad; now 9). **On macOS the transport defaults to `native`**
 (`--ble-backend auto`): Bleak's `canSendWriteWithoutResponse` polling stuck false on a live link
 and killed 7/7 pushes to fmetal at 0.5–37 % (`CoreBluetooth remained unwritable`, 2026-09-29) while
 the device kept re-granting credit; native pushed the same image first try. `--ble-backend bleak`
