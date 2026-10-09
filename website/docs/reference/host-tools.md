@@ -107,12 +107,14 @@ PYTHONPATH=./ python3 etc/ota.py -m <hostname>
 | `-m`, `--match REGEX` | Only devices whose hostname matches                         |
 | `-n`, `--dry-run`     | Show what would be updated, send nothing                   |
 | `-f`, `--force`       | Update even if the device already runs the local version   |
+| `--allow-driver-change` | Push non-interactively across a gate-driver change          |
 
 :::warning
 Without `-m`, `ota.py` updates every discovered device. `./ota.sh` forwards its arguments to `ota.py` and refuses
 (exit 2) unless they contain `-n` or `-m`. `ota.py` asks for confirmation (and refuses when not
-interactive) for a build without networking, a simulator (`CONFIG_FUGU_WITH_VCONV`) build, or an uncommitted
-(`-dirty`) build. See [OTA over Wi-Fi](../guide/updating/ota-wifi.md).
+interactive) for a build without networking, a simulator (`CONFIG_FUGU_WITH_VCONV`) build, an uncommitted
+(`-dirty`) build, or a gate driver that differs from the one the device runs (MCPWM vs. LEDC/VCONV, read with a
+no-argument `pwm-freq`) or can't be determined. See [OTA over Wi-Fi](../guide/updating/ota-wifi.md).
 :::
 
 ## ota_ble.py

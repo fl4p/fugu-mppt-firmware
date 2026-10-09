@@ -11,7 +11,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ota_build_flags import build_is_plant_sim, build_has_networking  # noqa: E402
+from ota_build_flags import (build_is_plant_sim, build_has_networking, build_gate_driver,  # noqa: E402
+                             parse_device_gate_driver, gate_driver_verdict)
 
 
 def _bin_with_config(tmp, cfg):
@@ -42,8 +43,53 @@ CASES = [
 ]
 
 
+# (label, cfg, want_driver) for build_gate_driver
+DRIVER_CASES = [
+    ("mcpwm build",        {"FUGU_WITH_MCPWM": True, "FUGU_GATE_LEDC": False, "FUGU_WITH_VCONV": False}, 'mcpwm'),
+    ("ledc build",         {"FUGU_WITH_MCPWM": False, "FUGU_GATE_LEDC": True, "FUGU_WITH_VCONV": False}, 'ledc'),
+    ("vconv build",        {"FUGU_WITH_MCPWM": False, "FUGU_GATE_LEDC": False, "FUGU_WITH_VCONV": True}, 'vconv'),
+    ("no driver key set",  {"FUGU_WITH_NETW": True},                                                      None),
+    ("missing sdkconfig",  None,                                                                          None),
+]
+
+MCPWM_LINE = 'pwm-freq 38995.86 Hz period_ticks=4103 res=160000000 pwmMax=4089 hs_off=2499 maxHS=3758 nominal=39000'
+# (label, lines, ok, rejected, want) for parse_device_gate_driver
+REPLY_CASES = [
+    ("mcpwm reply",          [MCPWM_LINE],                                                   True,  False, 'mcpwm'),
+    ("mcpwm amid status",    ['Vin=40.1 Vout=27.3 P=120', MCPWM_LINE],                       True,  False, 'mcpwm'),
+    ("ledc/vconv n/a",       ['W (1) main: pwm-freq: n/a, needs the MCPWM gate driver build'], False, True,  'other'),
+    ("old fw n/a wording",   ['pwm-freq: n/a, needs the MCPWM driver (converter.conf::pwm_driver)'], False, True, 'other'),
+    ("timeout",              [],                                                             False, False, None),
+    ("unknown command",      ['E (1) main: Unknown command pwm-freq'],                       False, True,  None),
+    ("ok without the line",  ['some status line'],                                           True,  False, None),
+]
+
+# (image, device, want) for gate_driver_verdict
+VERDICT_CASES = [
+    ('mcpwm', 'mcpwm', 'ok'), ('ledc', 'other', 'ok'), ('vconv', 'other', 'ok'),
+    ('mcpwm', 'other', 'mismatch'), ('ledc', 'mcpwm', 'mismatch'), ('vconv', 'mcpwm', 'mismatch'),
+    (None, 'mcpwm', 'unverified'), ('mcpwm', None, 'unverified'), (None, None, 'unverified'),
+]
+
+
 def main():
     fails = 0
+    for label, cfg, want in DRIVER_CASES:
+        with tempfile.TemporaryDirectory() as tmp:
+            got = build_gate_driver(_bin_with_config(tmp, cfg))
+        ok = got == want
+        fails += not ok
+        print(f"{'PASS' if ok else 'FAIL'}  driver {label}: {got}" + ("" if ok else f"  (want {want})"))
+    for label, lines, rok, rrej, want in REPLY_CASES:
+        got = parse_device_gate_driver(lines, rok, rrej)
+        ok = got == want
+        fails += not ok
+        print(f"{'PASS' if ok else 'FAIL'}  reply {label}: {got}" + ("" if ok else f"  (want {want})"))
+    for img, dev, want in VERDICT_CASES:
+        got = gate_driver_verdict(img, dev)
+        ok = got == want
+        fails += not ok
+        print(f"{'PASS' if ok else 'FAIL'}  verdict {img}->{dev}: {got}" + ("" if ok else f"  (want {want})"))
     for label, cfg, want_sim, want_netw in CASES:
         with tempfile.TemporaryDirectory() as tmp:
             binp = _bin_with_config(tmp, cfg)

@@ -24,7 +24,10 @@ Safety guards (read from the build's sdkconfig.json, see ota_build_flags.py):
 - a plant-sim build (CONFIG_FUGU_WITH_VCONV=y) warns hard: VCONV swaps the real PWM driver for a
   simulator (src/buck.h) so a real converter makes 0W while looking alive.
 - an uncommitted build (git-describe version ends in '-dirty') warns: the image maps to no commit.
-  All three require an interactive y/N and are refused non-interactively.
+- a gate-driver change (image MCPWM vs device LEDC/VCONV or the reverse, probed with a no-arg
+  `pwm-freq`) warns; so does a device whose driver can't be established.
+  All four require an interactive y/N and are refused non-interactively (the driver check unless
+  --allow-driver-change).
 
 """""
 import sys
@@ -55,7 +58,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'idf-devtools'))
 import elf_archive  # vendored submodule (github.com/fl4p/idf-devtools)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ota_build_flags import build_has_networking, build_is_plant_sim
+from ota_build_flags import (build_has_networking, build_is_plant_sim, build_gate_driver,
+                             parse_device_gate_driver, gate_driver_verdict)
 
 # CLion / PyCharm Run consoles report as a TTY but don't render ANSI escapes —
 # disable color/style so the boxes don't come out wrapped in raw \x1b[...m codes.
@@ -79,6 +83,8 @@ argp.add_argument('-n', '--dry-run', action='store_true',
                   help='only print what would be updated, do not send `ota`')
 argp.add_argument('-m', '--match', metavar='REGEX',
                   help='only act on devices whose name matches REGEX (re.search)')
+argp.add_argument('--allow-driver-change', action='store_true',
+                  help='push even if the image\'s gate driver differs from the device\'s or is unverified')
 # args/hosts are module globals populated by cli() (under __main__) so importing this module for
 # its helpers doesn't parse argv or hit the network.
 
@@ -160,6 +166,24 @@ async def fetch_version(addr, port, name, retry=False):
             time.sleep(2)
             return do_once()
         return out
+    return await asyncio.to_thread(do)
+
+
+async def fetch_gate_driver(addr, port):
+    """Running gate driver of a device via a no-arg (read-only) `pwm-freq`: 'mcpwm', 'other' or None."""
+    def do():
+        try:
+            st = SocketTransport(addr, port=port or SocketTransport.DEFAULT_PORT, timeout=5)
+            con = Console(st, eol='\n', wait_banner=True)
+        except Exception:
+            return None
+        try:
+            r = con.command('pwm-freq', timeout=5)
+            return parse_device_gate_driver(r, r.ok, r.rejected)
+        except Exception:
+            return None
+        finally:
+            con.close()
     return await asyncio.to_thread(do)
 
 
@@ -343,6 +367,18 @@ async def main():
               'built from a working tree with uncommitted changes. Commit or stash first so the '
               'firmware on the device maps to a real commit.')
 
+    img_drv = build_gate_driver(FIRMWARE_BIN)
+    dev_drv = await asyncio.gather(*[fetch_gate_driver(ip, port) for ip, port, _ in to_update])
+    drv_bad = []
+    for (_, _, name), dev in zip(to_update, dev_drv):
+        verdict = gate_driver_verdict(img_drv, dev)
+        if verdict != 'ok':
+            drv_bad.append(name)
+            dev_s = {'mcpwm': 'mcpwm', 'other': 'ledc/vconv'}.get(dev, 'unknown')
+            print(f'⚠️  gate driver {verdict.upper()} on {name}: image {img_drv or "unknown"}, '
+                  f'device {dev_s} (Kconfig FUGU_GATE_DRIVER; a wrong driver switches the '
+                  'half-bridge with the wrong timing and dead-time model).')
+
     if args.dry_run:
         print('dry-run, would update:')
         for _, _, name in to_update:
@@ -362,6 +398,15 @@ async def main():
             print('aborting: plant-sim (VCONV) image, refusing to OTA non-interactively')
             return False
         if input('really OTA a plant-sim build to these devices? [y/N] ').strip().lower() not in ('y', 'yes'):
+            print('aborted')
+            return False
+
+    if drv_bad and not args.allow_driver_change:
+        if not sys.stdin.isatty():
+            print('aborting: gate driver changes or is unverified on ' + ', '.join(drv_bad)
+                  + '; refusing non-interactively (--allow-driver-change to override)')
+            return False
+        if input('really OTA across a gate-driver change? [y/N] ').strip().lower() not in ('y', 'yes'):
             print('aborted')
             return False
 
