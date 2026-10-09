@@ -235,7 +235,7 @@ version is yours to verify (`uptime`). **Crossing `48804755` (forced-PWM bring-u
 board that boots into manual duty with no load is an OV event**: fboost (`target_duty_cycle
 0.6138`, unloaded) came up in diode emulation, pumped its output to 85 V and tripped Vout-OV
 (2026-10-09); the old image held 26 V in forced PWM. fboost now carries `fpwm_gate=0` and boots
-to 25.9 V again; set it (and bring Vout down to ~Vin before the `restart`, since forced PWM from
+to 25.9 V again; set it (and bring Vout down to ~Vin before a `restart` or OTA reboot, since forced PWM from
 duty 0 dumps a charged output into the input) or load the output before such an OTA. **`psu`/`vset`
 pinned at `pwm=1`, Vout = Vin − diode** is the Vin floor, not the regulator: `limits.conf::vin_min`
 above the source voltage holds the duty down in every mode except manual (fboost had 26 on a
