@@ -34,6 +34,12 @@ sys.path.insert(0, __file__.rsplit('/', 1)[0])  # etc/ on the path -> fugu packa
 from fugu.teledec import decode_payload, TeleStream, tamp
 
 
+def adapter_kw(args):
+    """--adapter for the scanners. Unset means hci0, which can be another process's controller
+    (a bumble HCI_USER_CHANNEL collector owns it exclusively and discovery is refused)."""
+    return {'adapter': args.adapter} if args.adapter else {}
+
+
 def make_fwd(args):
     if args.forward_udp:
         # Feed decoded lines to another line-protocol UDP listener (e.g. the rpi's
@@ -153,7 +159,7 @@ def serve_ble_all(args, fwd):
 
     async def scan():
         nus = BleTransport.NUS_SERVICE
-        devs = await BleakScanner.discover(timeout=12.0, return_adv=True)
+        devs = await BleakScanner.discover(timeout=12.0, return_adv=True, **adapter_kw(args))
         out = []
         for d, adv in devs.values():
             nm = d.name or adv.local_name or ""
@@ -228,7 +234,7 @@ def serve_adv(args, fwd):
             print(f"[{name}] seq={seq} P={p:.1f}W Ui={ui:.1f} Uo={uo:.1f}", file=sys.stderr)
 
     async def run():
-        scanner = BleakScanner(detection_callback=on_adv)
+        scanner = BleakScanner(detection_callback=on_adv, **adapter_kw(args))
         await scanner.start()
         print("observing telemetry broadcasts (BLE adv, mfr id 0xFFFF)…", file=sys.stderr)
         while True:
@@ -279,6 +285,8 @@ if __name__ == '__main__':
                     help='observe the connectionless telemetry broadcast (WITH_BLE_ADV, no connection)')
     ap.add_argument('--verbose', action='store_true', help='--adv: print each decoded record')
     ap.add_argument('--scan-interval', type=int, default=30, help='--ble-all rescan period (s)')
+    ap.add_argument('--adapter', metavar='hciN|MAC',
+                    help='Linux controller for --adv/--ble-all scans; a MAC survives re-enumeration')
     ap.add_argument('--address', action='store_true', help='--ble arg is a MAC address, not a name')
     ap.add_argument('--forward-udp', metavar='HOST:PORT',
                     help='forward decoded lines as UDP line-protocol datagrams (e.g. to a local relay)')
