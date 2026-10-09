@@ -227,7 +227,15 @@ commit; a real push prints hundreds of progress lines. A failed/killed push leav
 armed: `ota-ble abort` (the verb — docs say `otab`), retry. Post-OTA/`restart` the board is silent
 ~10–15 s; scan misses and READY timeouts there are retryable. `ota_ble.py` archives the ELF
 itself after the new slot verifies (device = BLE name minus `fugu-`, ELF from the image's own
-build dir); a `☑️ skip:` archives nothing. **On macOS the transport defaults to `native`**
+build dir); a `☑️ skip:` archives nothing. **An old receiver is refused**: a board whose
+`ota-ble info` answers no `run`/`base` (fboost on `fry-brk1-179`, 2026-10-09: `{'refused': True}`)
+fails direct pushes with `image or running receiver identity is unverified`, `--xform raw`
+included; that push needed a scratch copy of `ota_ble.py` with the check skipped, and then the
+version is yours to verify (`uptime`). **Crossing `48804755` (forced-PWM bring-up gate) on a
+board that boots into manual duty with no load is an OV event**: fboost (`target_duty_cycle
+0.6138`, unloaded) came up in diode emulation, pumped its output to 85 V and tripped Vout-OV
+(2026-10-09); the old image held 26 V in forced PWM. Check `converter.conf::fpwm_gate` and the
+load before such an OTA. **On macOS the transport defaults to `native`**
 (`--ble-backend auto`): Bleak's `canSendWriteWithoutResponse` polling stuck false on a live link
 and killed 7/7 pushes to fmetal at 0.5–37 % (`CoreBluetooth remained unwritable`, 2026-09-29) while
 the device kept re-granting credit; native pushed the same image first try. `--ble-backend bleak`
