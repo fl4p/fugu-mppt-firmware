@@ -23,7 +23,7 @@ switching nodes beat against each other. Locking the clocks gives two results:
 
 ## Requirements
 
-Both methods need the MCPWM gate driver (`CONFIG_FUGU_WITH_MCPWM=y`, `converter.conf` `pwm_driver=mcpwm`) and
+Both methods need the MCPWM gate driver (`CONFIG_FUGU_WITH_MCPWM=y`) and
 identical `pwm_freq` on all converters. See [PWM Drivers](../../internals/pwm-drivers.md).
 
 ## Methods compared
@@ -32,7 +32,7 @@ The following table compares the two methods.
 
 | | Beacon sync (`bsync`) | Wired sync (`wsync`) |
 |---|---|---|
-| Kconfig | `CONFIG_FUGU_WITH_BSYNC` (default `y`, needs `FUGU_WITH_NETW` + `FUGU_WITH_MCPWM`; the `y` takes effect only because this repo's `sdkconfig.defaults` enables MCPWM) | `CONFIG_FUGU_WITH_WSYNC` (on in this repo's `sdkconfig.defaults`; bare Kconfig default `n`; needs `FUGU_WITH_MCPWM`). See [Build Options](../../guide/getting-started/build-options.md) |
+| Kconfig | `CONFIG_FUGU_WITH_BSYNC` (default `y`, needs `FUGU_WITH_NETW` + the MCPWM gate driver, the S3 default) | `CONFIG_FUGU_WITH_WSYNC` (on in this repo's `sdkconfig.defaults`; bare Kconfig default `n`; needs `FUGU_WITH_MCPWM`). See [Build Options](../../guide/getting-started/build-options.md) |
 | Timebase | TSF timestamps of 802.11 beacons from one shared AP, received RX-only | Pulse from a leader converter, locked to its timer TEZ |
 | Actuation | Software servo (1 Hz) trims the period by dithering it between P and P+1 | Hardware: the follower reloads its timer counter on each sync edge |
 | Relative phase | ~±1–3 µs; ±0.5 µs p2p with a dedicated beacon node | Up to one timer tick (6.25 ns) |

@@ -31,7 +31,6 @@ Both converters run forced PWM. Configure the boost with these settings:
 # boost/converter.conf:
 topo=boost
 forced_pwm=1
-pwm_driver=mcpwm
 
 # boost/charger.conf:
 vout_max=75
@@ -49,7 +48,6 @@ issues with CCM/DCM detection, enable forced PWM on the buck converter as well:
 # buck/converter.conf:
 topo=buck
 forced_pwm=1
-pwm_driver=mcpwm
 
 # buck/charger.conf:
 vout_max=29

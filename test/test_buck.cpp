@@ -18,10 +18,7 @@
 static constexpr float kFsw = 39000.f;
 
 static void initConvEx(SynchronousConverter &c, const char *topo, const char *bootRefreshNs) {
-    // Pin the MCPWM driver so the diode-emulation math is exercised against it (the production
-    // driver on the s3 boards). Ignored on builds that compile only one driver.
     ConfFile converterConf{{{"topo", topo}}};
-    converterConf.set("pwm_driver", "mcpwm"); // exercise the diode-emulation math on the MCPWM driver
     ConfFile coilConf{{{"L0", "50e-6"}}};
     ConfFile boardConf = bootRefreshNs
         ? ConfFile{{
@@ -187,59 +184,6 @@ void test_boost_ratio_clamped_above_unity() {
     TEST_ASSERT_TRUE(std::isfinite(c.rectCtrlRatio(c.voltageRatio())));
     TEST_ASSERT_TRUE(c.rectCtrlRatio(c.voltageRatio()) >= 0.f);
 }
-
-#if defined(HAVE_MCPWM) && defined(HAVE_LEGACY)
-// Both drivers compiled: converter.conf::pwm_driver picks the active one at runtime. At the same
-// fsw the LEDC and MCPWM timers land on different resolutions, so pwmCounts() differs — a cheap
-// observable that the selected driver actually came up (rather than always falling to the default).
-static void initConvDriver(SynchronousConverter &c, const char *drv, int pinHi, int pinLi) {
-    ConfFile cc{{{"topo", "buck"}}};
-    cc.set("pwm_driver", drv);
-    ConfFile coil{{{"L0", "50e-6"}}};
-    ConfFile bc{{{"pwm_freq", "39000"}, {"pwm_driver_logic", "HiLi"}, {"skip_assert", "1"}}};
-    bc.set("pwm_hi", std::to_string(pinHi));
-    bc.set("pwm_li", std::to_string(pinLi));
-    c.init(cc, bc, coil);
-}
-
-void test_buck_pwm_driver_runtime_select() {
-    SynchronousConverter cl, cm;
-    initConvDriver(cl, "ledc", 1, 2);
-    initConvDriver(cm, "mcpwm", 4, 5);
-    TEST_ASSERT_TRUE(cl.pwmCounts() > 0);
-    TEST_ASSERT_TRUE(cm.pwmCounts() > 0);
-    // distinct resolutions -> the runtime choice took effect on each converter
-    TEST_ASSERT_TRUE(cm.pwmCounts() != cl.pwmCounts());
-    TEST_ASSERT_TRUE(cl.pwmCounts() < 2500);  // ledc ~2047 at 39 kHz
-    TEST_ASSERT_TRUE(cm.pwmCounts() > 3000);  // mcpwm ~4103 at 39 kHz
-}
-
-// Absent pwm_driver -> default ledc (an MCPWM board must opt in via converter.conf).
-void test_pwm_driver_defaults_to_ledc() {
-    SynchronousConverter c;
-    ConfFile cc{{{"topo", "buck"}}};   // no pwm_driver key
-    ConfFile coil{{{"L0", "50e-6"}}};
-    ConfFile bc{{{"pwm_freq", "39000"}, {"pwm_driver_logic", "HiLi"}, {"skip_assert", "1"}}};
-    bc.set("pwm_hi", "1");
-    bc.set("pwm_li", "2");
-    c.init(cc, bc, coil);
-    TEST_ASSERT_TRUE(c.pwmCounts() < 2500);   // ledc resolution, not mcpwm
-}
-
-// An unrecognized pwm_driver value is rejected (throws) rather than silently picking a driver.
-void test_pwm_driver_invalid_throws() {
-    SynchronousConverter c;
-    ConfFile cc{{{"topo", "buck"}}};
-    cc.set("pwm_driver", "bogus");
-    ConfFile coil{{{"L0", "50e-6"}}};
-    ConfFile bc{{{"pwm_freq", "39000"}, {"pwm_driver_logic", "HiLi"}, {"skip_assert", "1"}}};
-    bc.set("pwm_hi", "1");
-    bc.set("pwm_li", "2");
-    bool threw = false;
-    try { c.init(cc, bc, coil); } catch (const std::exception &) { threw = true; }
-    TEST_ASSERT_TRUE(threw);
-}
-#endif
 
 // ---- runtime switching-frequency change (console `pwm-freq`) --------------------------------
 

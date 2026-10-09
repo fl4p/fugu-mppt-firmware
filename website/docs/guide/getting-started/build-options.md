@@ -40,11 +40,10 @@ project root.
 | `CONFIG_FUGU_WITH_BLE` | on | NimBLE console (NUS) and BLE OTA push, ~250 KB. Layers `sdkconfig.ble`. |
 | `CONFIG_FUGU_WITH_BLE_TELE` | off | Binary telemetry stream over a NUS notify characteristic. Needs `BLE`. |
 | `CONFIG_FUGU_WITH_BLE_ADV` | off | Connectionless telemetry in BLE advertising data. Needs `BLE`. |
-| `CONFIG_FUGU_WITH_LEDC` | on | LEDC gate driver and the `anaw` command. |
-| `CONFIG_FUGU_WITH_MCPWM` | on\* | [MCPWM gate driver](../../internals/pwm-drivers.md): hardware dead-time, fault brake, glitch-free updates. With LEDC also on, `converter.conf::pwm_driver` picks the driver at runtime. |
+| `FUGU_GATE_DRIVER` | MCPWM\*\* | Gate driver, one per build: `CONFIG_FUGU_GATE_LEDC`, `CONFIG_FUGU_WITH_MCPWM` ([MCPWM](../../internals/pwm-drivers.md): hardware dead-time, fault brake, glitch-free updates, live `pwm-freq`/`dt`) or `CONFIG_FUGU_WITH_VCONV` (simulated converter in place of gate driver and ADC, `src/sim/vconv.*`). |
+| `CONFIG_FUGU_WITH_LEDC` | on | LEDC peripheral for the fan PWM and the `anaw` command. The LEDC gate driver turns it on. |
 | `CONFIG_FUGU_WITH_WSYNC` | on\* | Wired MCPWM clock sync between converters. Needs `MCPWM`. |
 | `CONFIG_FUGU_WITH_BSYNC` | on | Beacon-sniffing MCPWM clock sync (`bsync` service). Needs `NETW` and `MCPWM`. |
-| `CONFIG_FUGU_WITH_VCONV` | off | Replaces gate driver and ADC with a simulated converter (`src/sim/vconv.*`). Excludes `MCPWM`. |
 | `CONFIG_FUGU_WITH_SPROFILER` | off | Semihosting sampling profiler; only useful with OpenOCD attached. |
 | `CONFIG_FUGU_WITH_MEASURE_COIL` | off | On-device [coil inductance measurement](../../lab/coil-inductance.md). |
 | `CONFIG_FUGU_WITH_PSU` | on | PSU (constant-voltage) and PV-simulator output modes: `psu`/`pv` commands, `converter.conf` `mode=psu`/`pv`. A board config using either mode fails setup when off; off saves ~10 KB flash. |
@@ -52,10 +51,12 @@ project root.
 | `CONFIG_FUGU_WITH_ADS` | on | ADS1015/ADS1115 ADC backend (`*_adc=ads1015`/`ads1115`). A board config that selects it fails setup when off. |
 | `CONFIG_FUGU_INA226_MEASURED_RATE` | on | Report the INA226 sample rate measured at init instead of the datasheet value (some parts convert faster). Needs `INA226`. |
 
-\* The Kconfig default is off, but `sdkconfig.defaults` enables `MCPWM` and `WSYNC`, so a fresh build of this
-repository has them on.
+\* The Kconfig default is off, but `sdkconfig.defaults` enables `WSYNC`, so a fresh MCPWM build of this
+repository has it on.
 
-At least one of `LEDC` and `MCPWM` must be on, unless `VCONV` is.
+\*\* LEDC on the classic ESP32 target.
+
+The gate driver is one choice per build; `LEDC` alone only controls the fan PWM and `anaw`.
 
 :::note
 The old `WITH_*` environment variables are rejected; the build stops with an error pointing to Kconfig.
@@ -91,6 +92,8 @@ CONFIG_FUGU_WITH_NETW=n
 
 ### MCPWM converter without LEDC
 
+MCPWM is the default gate driver. To drop the LEDC peripheral as well, turn off `LEDC`:
+
 ```ini title="mcpwm.frag"
 CONFIG_FUGU_WITH_MCPWM=y
 CONFIG_FUGU_WITH_LEDC=n
@@ -102,11 +105,9 @@ CONFIG_FUGU_WITH_LEDC=n
 
 ```ini title="vconv.frag"
 CONFIG_FUGU_WITH_VCONV=y
-CONFIG_FUGU_WITH_MCPWM=n
 ```
 
-Provision `config/lab/vconv_mock`. On ESP32-S3 the MCPWM default cannot be overridden by a fragment alone;
-pass a dedicated sdkconfig with `-DSDKCONFIG=sdkconfig.vconv_s3`.
+Provision `config/lab/vconv_mock`.
 
 :::warning Never OTA a VCONV build to a real converter
 A `VCONV` build replaces the gate driver with a simulation, so the half-bridge is never switched and the converter

@@ -255,9 +255,6 @@ CONFIG_ARDUINO_SELECTIVE_SimpleBLE=n
 CONFIG_ARDUINO_SELECTIVE_RainMaker=n
 CONFIG_ARDUINO_SELECTIVE_OpenThread=n
 CONFIG_ARDUINO_SELECTIVE_Insights=n
-# MCPWM gate driver on by default: fleet (fry/flat) runs pwm_driver=mcpwm, and a regenerated
-# sdkconfig with MCPWM=n silently prunes FUGU_WITH_BSYNC (deps) — build succeeds without it.
-CONFIG_FUGU_WITH_MCPWM=y
 # wired sync compiled in by default; inert unless converter.conf::sync_role != none
 CONFIG_FUGU_WITH_WSYNC=y
 

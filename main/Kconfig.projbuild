@@ -36,27 +36,31 @@ endmenu # ADC drivers
 
 menu "PWM drivers"
 
-    config FUGU_WITH_LEDC
-        bool "LEDC gate driver + fan PWM + anaw"
-        default y
+    choice FUGU_GATE_DRIVER
+        prompt "Gate driver"
+        default FUGU_GATE_LEDC if IDF_TARGET_ESP32
+        default FUGU_WITH_MCPWM
         help
-            Compile the LEDC half-bridge gate driver, plus everything else that uses the LEDC
-            peripheral: fan PWM (src/cooling.h) and the `anaw` console command. Turning this off
-            strips the whole LEDC driver (libesp_driver_ledc.a + esp32-hal-ledc, ~7 KB) — the fan
-            and `anaw` stop working — so build MCPWM-only converters without paying for LEDC.
-            At least one of FUGU_WITH_LEDC / FUGU_WITH_MCPWM must be on (unless FUGU_WITH_VCONV).
+            Half-bridge gate driver, fixed at build time. See website/docs/internals/pwm-drivers.md.
 
-    comment "MCPWM gate driver needs the virtual converter plant off"
-        depends on FUGU_WITH_VCONV
+        config FUGU_GATE_LEDC
+            bool "LEDC"
+            select FUGU_WITH_LEDC
+            help
+                LEDC timer pair; software dead-time. Default on the classic ESP32.
 
-    config FUGU_WITH_MCPWM
-        bool "MCPWM gate driver"
-        default n
-        depends on !FUGU_WITH_VCONV
-        help
-            Compile the MCPWM half-bridge gate driver (hardware dead-time, OST brake, glitch-free
-            comparator updates). See website/docs/internals/pwm-drivers.md. When both this and FUGU_WITH_LEDC
-            are on, the active driver is chosen at runtime from converter.conf::pwm_driver.
+        config FUGU_WITH_MCPWM
+            bool "MCPWM"
+            help
+                Hardware dead-time, OST fault brake, glitch-free comparator updates, runtime
+                `pwm-freq`/`dt`. Needed by wired sync and bsync.
+
+        config FUGU_WITH_VCONV
+            bool "Virtual converter plant (simulation, no hardware)"
+            help
+                Software converter plant (src/sim/vconv.*) in place of gate driver and ADC
+                (sensor.conf adc=vconv). Drives no gates.
+    endchoice
 
     config FUGU_WITH_WSYNC
         bool "Wired inter-chip MCPWM clock sync"
@@ -77,13 +81,12 @@ menu "PWM drivers"
             timebase recovered from sniffed 802.11 beacons (RX-only, works unassociated).
             Adds the `bsync` service + bsync.conf. See website/docs/internals/sync/beacon-sync.md.
 
-    config FUGU_WITH_VCONV
-        bool "Virtual converter plant (simulation, no hardware)"
-        default n
+    config FUGU_WITH_LEDC
+        bool "LEDC fan PWM + anaw"
+        default y
         help
-            Replace the physical gate driver + ADC with a software converter plant (src/sim/vconv.*).
-            Turns the MCPWM driver off: with both compiled, pwm_driver=mcpwm would switch real
-            FETs from simulated measurements.
+            LEDC peripheral for the fan PWM (src/cooling.h) and the `anaw` console command. Off
+            strips libesp_driver_ledc.a + esp32-hal-ledc (~7 KB). The LEDC gate driver selects it.
 
 endmenu # PWM drivers
 

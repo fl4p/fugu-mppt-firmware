@@ -329,7 +329,6 @@ const META = {
   sync_role:{unit:"",desc:"Wired MCPWM clock sync (WITH_WSYNC): none, leader or follower",type:"enum"},
   sync_phase_deg:{unit:"deg",desc:"Leader only: pulse offset as an angle (180 = interleave); ignored on follower",type:"float"},
   sync_phase_ns:{unit:"ns",desc:"Leader only: additive trim on sync_phase_deg for wire propagation delay",type:"float"},
-  pwm_driver:{unit:"",desc:"Gate driver: ledc or mcpwm. Only consulted when the firmware compiles in both drivers (default ledc)",type:"enum"},
   boost:{unit:"",desc:"Legacy boost flag (replaced by topo=buck|boost)",type:"bool"},
   mode:{unit:"",desc:"Operating mode: mppt, psu or pv (solar-array-simulator output)",type:"enum"},
   psu_vout:{unit:"V",desc:"PSU mode output voltage setpoint (used when mode=psu)",type:"float"},
@@ -463,7 +462,7 @@ const FILE_KEYS = {
     "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
     "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td",
     "forced_pwm","fpwm_gate","fpwm_gate_hold","fpwm_gate_margin","mode","psu_vout","pv_iout_span","pv_isc","pv_k","pv_slew","pv_voc",
-    "pwm_driver","sync_phase_deg","sync_phase_ns","sync_role","topo"],
+    "sync_phase_deg","sync_phase_ns","sync_role","topo"],
   "charger.conf":["bat_c","bat_temp_derate","bat_temp_max","bat_temp_min","cv_ceiling","cv_eoc","cv_float","full_charge_interval","ibat_max",
     "partial_charge","recharge_dod","recharge_vfloor_band","tail_c_rate","vout_max","vout_max_fallback","vout_offset_max"],
   "tracker.conf":["sweep_speed","target_duty_cycle"],
@@ -500,7 +499,7 @@ const TYPE_KEYS = {
     "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td"]),
   string: new Set(["adc","ble_security","broker_uri","cell_voltages_max_topic","ftp_pass",
     "ftp_user","bat_temp_topic","ibat_lim_topic","ibat_topic","influxdb_host","log_level","mcu","mode","password",
-    "pwm_driver","pwm_driver_logic","topo","username"]),
+    "pwm_driver_logic","topo","username"]),
 };
 // SCRAPER:END TYPE_KEYS
 const CHAN_SUFFIX_TYPE = { adc:"string", ch:"byte", rh:"float", rl:"float", factor:"float", midpoint:"float", filt_len:"long" };
@@ -523,7 +522,7 @@ const DEFAULTS = {
   // coil.conf
   "rect_offset_ns":"0",
   // converter.conf
-  "forced_pwm":"0","fpwm_gate":"1","fpwm_gate_hold":"192","fpwm_gate_margin":"0.01","mode":"\"mppt\"","pwm_driver":"\"ledc\"","sync_phase_deg":"0","sync_phase_ns":"0","sync_role":"\"none\"","topo":"\"buck\"",
+  "forced_pwm":"0","fpwm_gate":"1","fpwm_gate_hold":"192","fpwm_gate_margin":"0.01","mode":"\"mppt\"","sync_phase_deg":"0","sync_phase_ns":"0","sync_role":"\"none\"","topo":"\"buck\"",
   "ctrl_vin_kp":"-100","ctrl_vin_kd":"-200","ctrl_vout_kp":"1500","ctrl_vout_kd":"12000",
   "ctrl_iin_kp":"100","ctrl_iin_kd":"200","ctrl_iout_kp":"200","ctrl_iout_kd":"400",
   "ctrl_power_kp":"20","ctrl_power_kd":"5",

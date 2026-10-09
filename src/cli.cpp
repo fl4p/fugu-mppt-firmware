@@ -345,7 +345,7 @@ static void cmdPwmFreq(cmd *c) {
                             (unsigned) ticks, (unsigned) converter.getPeriodTicks());
     }
     if (!converter.getPeriodTicks())
-        CMD_FAIL_RETURN("pwm-freq: n/a, needs the MCPWM driver (converter.conf::pwm_driver)");
+        CMD_FAIL_RETURN("pwm-freq: n/a, needs the MCPWM gate driver build");
     UART_LOG("pwm-freq %.2f Hz period_ticks=%u res=%lu pwmMax=%u hs_off=%u maxHS=%u nominal=%lu",
              converter.realizedFreqHz(), (unsigned) converter.getPeriodTicks(),
              (unsigned long) converter.getPwmResolutionHz(), (unsigned) converter.pwmMaxDriver(),

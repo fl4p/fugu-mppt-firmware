@@ -7,10 +7,9 @@
 #include <atomic>
 
 
-// Gate-driver back-ends. The MCPWM driver and a "legacy" LEDC-style driver (LEDC on real
-// hardware, or the VConv simulation plant / Mock) can both be compiled in. When both are
-// present the active one is picked at runtime from converter.conf::pwm_driver (default ledc);
-// when only one is compiled the dispatch below folds to a direct call. See the drv*() helpers.
+// Gate-driver back-ends: exactly one is compiled in (Kconfig choice FUGU_GATE_DRIVER). MCPWM,
+// or a "legacy" LEDC-style driver (LEDC on real hardware, the VConv simulation plant, or Mock).
+// The drv*() helpers keep the dispatch in one place; the unused arm is #if'd out.
 #ifndef MOCK
 
 #include <Arduino.h>
@@ -19,7 +18,7 @@
 #include "pwm/vconv.h"
 using LegacyPwm = PWM_VConv;
 #define HAVE_LEGACY 1
-#elif WITH_LEDC
+#elif WITH_LEDC_GATE
 #include "pwm/ledc.h"
 using LegacyPwm = PWM_ESP32_ledc;
 #define HAVE_LEGACY 1
@@ -45,7 +44,7 @@ using LegacyPwm = PWM_Mock;
 #endif
 
 #if !defined(HAVE_MCPWM) && !defined(HAVE_LEGACY)
-#error "no gate driver compiled: enable FUGU_WITH_LEDC and/or FUGU_WITH_MCPWM (or MOCK / WITH_VCONV)"
+#error "no gate driver compiled: pick one in Kconfig FUGU_GATE_DRIVER (or MOCK)"
 #endif
 
 #include "conf.h"
@@ -95,7 +94,7 @@ class SynchronousConverter {
     LegacyPwm legacyDrv;
 #endif
 #if defined(HAVE_MCPWM) && defined(HAVE_LEGACY)
-    bool useMcpwm = false; // converter.conf::pwm_driver, default ledc (legacy); set in init()
+#error "gate drivers are exclusive (Kconfig choice FUGU_GATE_DRIVER)"
 #elif defined(HAVE_MCPWM)
     static constexpr bool useMcpwm = true;
 #else
@@ -214,9 +213,8 @@ class SynchronousConverter {
     static constexpr uint32_t kFreqSeqMask = 0xfffu;    // 12 bits
 
     // ---- gate-driver dispatch ----------------------------------------------------------------
-    // One place per distinct driver operation. With both drivers compiled these branch on
-    // useMcpwm at runtime; with a single driver the unreachable arm is #if'd out and the call
-    // folds to the same code as before. MCPWM commits both comparators on TEZ (glitch-free,
+    // One place per distinct driver operation; only the compiled driver's arm exists and
+    // useMcpwm is a constant. MCPWM commits both comparators on TEZ (glitch-free,
     // order-independent); the LEDC path keeps its two-write ordering dance.
     __attribute__((cold)) void drvInit(uint8_t pinCtrl, uint8_t pinRect, const ConfFile &boardConf,
                  const std::string &syncRole, float syncPhaseNs) {
@@ -713,7 +711,7 @@ public:
     const char *requestDeadTimeNs(float hlNs, float lhNs, uint16_t &hlTicks, uint16_t &lhTicks) {
         const uint32_t hz = drvDtResolutionHz();
         const uint16_t period = drvPeriodTicks();
-        if (!hz || !period) return "needs the MCPWM driver (converter.conf::pwm_driver)";
+        if (!hz || !period) return "needs the MCPWM gate driver build";
         if (pwmEnLogic) return "InEn gate driver has its own dead-time (HiLi boards only)";
         // Arming a bypassed module puts both gates on the HS waveform between the two register
         // writes -- see MCPWM_SyncLeg::setDeadTimeTicks. Only retuning is safe.
@@ -867,7 +865,7 @@ public:
     const char *requestPwmFrequency(uint32_t hz, uint16_t &ticks) {
         const uint32_t res = drvDtResolutionHz();
         const uint16_t period = drvPeriodTicks();
-        if (!res || !period) return "needs the MCPWM driver (converter.conf::pwm_driver)";
+        if (!res || !period) return "needs the MCPWM gate driver build";
         // Serialise against a change still in flight. The CLI's 1 s timeout deliberately leaves the
         // old request queued, so a retry lands here: refusing it keeps one transaction in the
         // mailbox at a time, and stops this validation reading periodTicks (a plain uint16_t owned
@@ -1126,16 +1124,6 @@ public:
             ESP_LOGW("converter", "forced_pwm (gate %s, margin %.3f, hold %hu)",
                      fpwmGate ? "on" : "OFF", fpwmGateMargin, fpwmGateHold);
 
-#if defined(HAVE_MCPWM) && defined(HAVE_LEGACY)
-        {
-            // Both drivers compiled: pick at runtime. Default ledc — an MCPWM board must opt in.
-            auto drv = converterConf.getString("pwm_driver", "ledc");
-            if (drv != "mcpwm" && drv != "ledc")
-                throw std::runtime_error("unrecognized pwm_driver " + drv);
-            useMcpwm = (drv == "mcpwm");
-        }
-#endif
-
         coilL0 = coilConf.getFloat("L0");
         const float L0 = coilL0;
         // rectOnOffset is derived from coil.conf::rect_offset_ns after the driver is up (needs pwmMax
@@ -1197,7 +1185,7 @@ public:
         syncRole = converterConf.getString("sync_role", "none");
         if (syncRole != "none" && syncRole != "leader" && syncRole != "follower")
             throw std::runtime_error("unrecognized sync_role " + syncRole);
-        assert_throw(syncRole == "none" || useMcpwm, "sync_role needs pwm_driver=mcpwm");
+        assert_throw(syncRole == "none" || useMcpwm, "sync_role needs the MCPWM gate driver build");
         // phase as an angle (frequency-independent, 180 = interleave), plus an additive ns trim
         // for wire + receiver propagation delay, which is a time and does not scale with pwm_freq
         float periodNs = 1e9f / (float) pwmFrequency;
@@ -1217,6 +1205,9 @@ public:
         // survives the LEDC<->MCPWM resolution change without re-measuring.
         drvInit(pinCtrl, pinRect, boardConf, syncRole, syncPhaseNs);
         ESP_LOGI("converter", "gate driver: %s (pwmMax=%u)", driverName, (unsigned) driverPwmMax);
+        if (!converterConf.getString("pwm_driver", "").empty()) // obsolete: build-time choice now
+            ESP_LOGW("converter", "converter.conf::pwm_driver=%s ignored, gate driver is %s",
+                     converterConf.getString("pwm_driver", "").c_str(), driverName);
 
         if (pinSd != 255) {
             pinMode(pinSd, OUTPUT);

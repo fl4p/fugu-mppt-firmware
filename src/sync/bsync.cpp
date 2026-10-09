@@ -213,7 +213,7 @@ bool BeaconSyncService::onStart() {
     leg_ = converter.mcpwmLeg();
     if (!leg_ || !leg_->periodTicks) {
         leg_ = nullptr;
-        ESP_LOGE(name(), "needs the mcpwm gate driver (converter.conf pwm_driver=mcpwm)");
+        ESP_LOGE(name(), "needs the MCPWM gate driver build");
         return false;
     }
     if (converter.wsyncFollower) {

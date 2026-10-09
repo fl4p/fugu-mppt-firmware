@@ -57,7 +57,7 @@ interleaved current sharing needs a sync wire (MCPWM GPIO sync input).
 
 ## Setup
 
-Beacon sync requires `converter.conf pwm_driver=mcpwm`. Run these commands on each device:
+Beacon sync requires the MCPWM gate driver. Run these commands on each device:
 
 ```
 set-config bsync.conf bssid aa:bb:cc:dd:ee:ff   # the sync AP, same on all devices

@@ -240,11 +240,6 @@ void test_buck_bootstrap_min_default();
 void test_buck_bootstrap_min_scales_with_conf();
 void test_boost_bootstrap_min_is_zero();
 void test_boost_ratio_clamped_above_unity();
-#if defined(HAVE_MCPWM) && defined(HAVE_LEGACY)
-void test_buck_pwm_driver_runtime_select();
-void test_pwm_driver_defaults_to_ledc();
-void test_pwm_driver_invalid_throws();
-#endif
 void test_pwm_freq_prescaler_invariant();
 void test_pwm_freq_refusals();
 void test_pwm_freq_roundtrip_rescales_duty();
@@ -514,11 +509,6 @@ void setup() {
     RUN_TEST(test_buck_bootstrap_min_scales_with_conf);
     RUN_TEST(test_boost_bootstrap_min_is_zero);
     RUN_TEST(test_boost_ratio_clamped_above_unity);
-#if defined(HAVE_MCPWM) && defined(HAVE_LEGACY)
-    RUN_TEST(test_buck_pwm_driver_runtime_select);
-    RUN_TEST(test_pwm_driver_defaults_to_ledc);
-    RUN_TEST(test_pwm_driver_invalid_throws);
-#endif
     RUN_TEST(test_pwm_freq_prescaler_invariant);
     RUN_TEST(test_pwm_freq_refusals);
     RUN_TEST(test_pwm_freq_roundtrip_rescales_duty);

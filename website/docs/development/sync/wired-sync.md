@@ -37,7 +37,7 @@ Wired sync uses one Kconfig option and four conf keys:
 - `board.conf::pwm_sync_pin`: the sync GPIO. On the leader it's the pulse output; on the follower
   it's the sync input, pulled down.
 - `converter.conf::sync_role`: `none` (default), `leader`, or `follower`. Requires
-  `pwm_driver=mcpwm`.
+  the MCPWM gate driver.
 - `converter.conf::sync_phase_deg` (leader only): the pulse offset from the leader's own TEZ as an
   angle, which shifts the follower's period start (`180` = interleave, `0` = in phase). The angle
   doesn't depend on frequency, so it survives a `pwm_freq` change.

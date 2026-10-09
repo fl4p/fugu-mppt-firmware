@@ -409,7 +409,7 @@ read. `dt`/`deadtime`
 `scan-i2c`. `peek` is safe on RAM/DROM
 but now also reaches peripheral MMIO, where a clock-gated register is expected to fault the bus
 (unconfirmed) and FIFO/`*_INT_ST`/capture registers are read-destructive — check
-`SYSTEM_PERIP_CLK_EN0` (`peek 0x600C0018`) before peeking a peripheral: on a `pwm_driver=mcpwm`
+`SYSTEM_PERIP_CLK_EN0` (`peek 0x600C0018`) before peeking a peripheral: on an MCPWM-build
 board LEDC (bit 11) reads 0, PWM0 (bit 17) reads 1 (flu, 2026-08-19).
 
 Ask first before: `bf`/`panel`, `dc`, `sweep`, `mppt`, `sync`, `psu`, `vset`/`iset`/`ovset`,

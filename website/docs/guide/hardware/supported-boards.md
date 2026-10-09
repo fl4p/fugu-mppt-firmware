@@ -46,8 +46,7 @@ Configurations for development without a power stage (`config/lab/dry_mock`, `dr
 Fugu2 is the reference hardware. It has dual parallel high-side switches, a snubber, an INA226 current sensor, `HiLi`
 gate driver logic (`pwm_hi`, `pwm_li`, `pwm_sd`), a WS2812 status LED, and an input backflow switch on `panel_sd`.
 
-`converter.conf` sets `pwm_driver=mcpwm`. The firmware consults this key only when it's built with both
-`CONFIG_FUGU_WITH_LEDC` and `CONFIG_FUGU_WITH_MCPWM`. With one driver compiled in, the firmware uses that one. See
+It runs the MCPWM gate driver, the default for ESP32-S3 builds. See
 [Build Options](../getting-started/build-options.md).
 
 ### Original Fugu (`fugu1`)

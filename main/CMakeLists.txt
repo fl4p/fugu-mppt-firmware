@@ -62,9 +62,6 @@ endif ()
 if (NOT WITH_NETW)
     set(NETW_SRC "")
 endif ()
-
-set(BLE_SRC
-        "../src/tele/console_ble.cpp"
 if (CONFIG_FUGU_WITH_SCOPE)
     list(APPEND NETW_SRC "../src/tele/scope_service.cpp")
 endif ()
@@ -74,6 +71,9 @@ endif ()
 if (CONFIG_FUGU_WITH_HA)
     list(APPEND NETW_SRC "../src/tele/HAMqttDevice.cpp" "../src/tele/home_assistant.cpp")
 endif ()
+
+set(BLE_SRC
+        "../src/tele/console_ble.cpp"
 )
 
 # CONFIG_FUGU_WITH_BLE (default y) compiles the NimBLE console + OTA path; the sdkconfig.ble layering
@@ -102,7 +102,7 @@ if (CONFIG_FUGU_WITH_BLE_ADV)
 endif ()
 
 # CONFIG_FUGU_WITH_VCONV replaces the physical gate driver + ADC with a software converter plant
-# (src/sim/vconv.*). Kconfig turns the MCPWM driver off when it is on. See
+# (src/sim/vconv.*); one of the Kconfig gate-driver choices. See
 # docs/superpowers/specs/2026-05-23-virtual-converter-design.md.
 if (CONFIG_FUGU_WITH_VCONV)
     set(WITH_VCONV 1)
@@ -149,8 +149,6 @@ if (CONFIG_FUGU_WITH_NETTOOLS)
     component_compile_definitions("WITH_NETTOOLS=1")
 endif ()
 
-
-if ($ENV{FUGU_BAT_V})
 if (CONFIG_FUGU_WITH_SCOPE)
     component_compile_definitions("WITH_SCOPE=1")
 endif ()
@@ -163,6 +161,9 @@ endif ()
 if (CONFIG_FUGU_WITH_PSU)
     component_compile_definitions("WITH_PSU=1")
 endif ()
+
+
+if ($ENV{FUGU_BAT_V})
     # 14.25, 28.5, 57
     component_compile_definitions("FUGU_BAT_V=$ENV{FUGU_BAT_V}")
 endif ()
@@ -191,19 +192,22 @@ if (CONFIG_FUGU_WITH_BLE_TELE)
 endif ()
 
 # Gate-driver back-ends. CONFIG_FUGU_WITH_MCPWM (src/pwm/mcpwm.h): hardware dead-time, GPIO OST brake,
-# glitch-free comparator updates (see website/docs/internals/pwm-drivers.md). CONFIG_FUGU_WITH_LEDC (src/pwm/ledc.h):
-# the LEDC driver + fan PWM + the `anaw` command. With both on, the buck driver is picked at runtime from
-# converter.conf::pwm_driver; with LEDC off the whole LEDC peripheral (incl. esp32-hal-ledc) drops out.
+# glitch-free comparator updates (see website/docs/internals/pwm-drivers.md). CONFIG_FUGU_GATE_LEDC: the LEDC
+# gate driver (src/pwm/ledc.h); one gate driver per build (Kconfig choice). CONFIG_FUGU_WITH_LEDC: the LEDC
+# peripheral for fan PWM + `anaw`; with it off esp32-hal-ledc drops out.
 if (CONFIG_FUGU_WITH_MCPWM)
     component_compile_definitions("WITH_MCPWM=1")
 endif ()
 if (CONFIG_FUGU_WITH_LEDC)
     component_compile_definitions("WITH_LEDC=1")
 endif ()
+if (CONFIG_FUGU_GATE_LEDC)
+    component_compile_definitions("WITH_LEDC_GATE=1")
+endif ()
 if (CONFIG_FUGU_WITH_BSYNC)
     component_compile_definitions("WITH_BSYNC=1")
 elseif (CONFIG_FUGU_WITH_NETW AND NOT CONFIG_FUGU_WITH_MCPWM)
-    message(WARNING "bsync compiled out: FUGU_WITH_BSYNC pruned because FUGU_WITH_MCPWM is off")
+    message(STATUS "bsync compiled out: needs the MCPWM gate driver")
 endif ()
 if (CONFIG_FUGU_WITH_WSYNC)
     component_compile_definitions("WITH_WSYNC=1")
