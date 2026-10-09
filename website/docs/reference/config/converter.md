@@ -13,6 +13,7 @@ wired clock sync, and the control-loop gains. The following table lists its keys
 | `topo`       |      | enum  | buck    | Converter topology: `buck` or `boost`                      |
 | `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default), `psu` (constant-voltage supply; see `psu` console command) or `pv` (solar-array-simulator: output follows a PV curve; see `pv` console command) |
 | `psu_vout`   | V    | float | —       | PSU mode output voltage setpoint (used when `mode=psu`; range-checked against `vout_max`) |
+| `psu_slew_down` | V/s | float | 2   | PSU mode: a lower setpoint is approached at this rate (min 0.1); raising it is immediate. A boost returns the output charge to its input when it pulls Vout down, so a step can pump a supply that cannot sink. While Vout is above the new band the OV threshold stays at the old setpoint |
 | `pv_isc`     | A    | float | —       | PV-sim short-circuit current (`mode=pv`; also caps the Iout limiter at 1.1×) |
 | `pv_voc`     | V    | float | —       | PV-sim open-circuit voltage (range-checked against `vout_max`; carries the OV threshold and boost feasibility) |
 | `pv_k`       |      | float | 0.8     | PV-sim Vmp/Voc curve factor, valid range [0.5, 0.95] |
