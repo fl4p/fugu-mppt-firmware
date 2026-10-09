@@ -5,19 +5,21 @@ sidebar_position: 8
 
 # Host tools
 
-Python and shell tools under `etc/` and the repo root for talking to, updating, provisioning and testing devices
+The Python and shell tools under `etc/` and the repo root let you talk to, update, provision, and test devices
 from a PC.
 
-Run them from the repo root with a Python 3 environment that has their dependencies, for example a virtualenv:
+Run them from the repo root with a Python 3 environment that has their dependencies. For example, set up a virtualenv:
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install pyserial bleak paho-mqtt zeroconf requests rich tqdm tamp   # + aioesphomeapi for --ble-proxy
 ```
 
-Keep `aioesphomeapi` out of the ESP-IDF Python environment; its dependencies break `idf.py`. Tools that call `idf.py`,
-`parttool.py` or `esptool` need a sourced ESP-IDF environment. Submodules: `git submodule update --init
-etc/idf-devtools etc/adcscope`.
+Keep `aioesphomeapi` out of the ESP-IDF Python environment, because its dependencies break `idf.py`. Tools that call
+`idf.py`, `parttool.py`, or `esptool` need a sourced ESP-IDF environment. Initialize the submodules with
+`git submodule update --init etc/idf-devtools etc/adcscope`.
+
+The following table lists the tools and their purpose.
 
 | Tool                                                       | Purpose                                          |
 |------------------------------------------------------------|--------------------------------------------------|
@@ -36,9 +38,11 @@ etc/idf-devtools etc/adcscope`.
 
 ## fugu_console.py
 
-Console client for the firmware's text [command protocol](console.md). One command (`-c`), a batch from stdin
-(`--stdin`), or an interactive REPL. With no arguments at all it scans all transports (serial ports, mDNS, local
+`fugu_console.py` is a console client for the firmware's text [command protocol](console.md). It runs one command (`-c`), a batch from
+stdin (`--stdin`), or an interactive REPL. With no arguments at all it scans all transports (serial ports, mDNS, local
 BLE, and the MQTT broker in `$MQTT_HOST`) and prints how to connect, without connecting.
+
+The following examples cover discovery, the REPL, single commands, a batch, and a coredump:
 
 ```bash
 python3 etc/fugu_console.py                                  # discover devices
@@ -47,6 +51,8 @@ python3 etc/fugu_console.py --ip <host> -c status -c sensor  # two commands, one
 python3 etc/fugu_console.py --ble --name <name> --stdin < cmds.txt  # batch over BLE
 python3 etc/fugu_console.py -p $ESPPORT --coredump get       # pull + decode a coredump
 ```
+
+`fugu_console.py` accepts the following flags.
 
 | Flag                                  | Meaning                                                                        |
 |---------------------------------------|--------------------------------------------------------------------------------|
@@ -69,22 +75,32 @@ Transports and line handling live in the `etc/fugu` package ([fl4p/fugu-py](http
 
 ## fugu_health.py
 
-Runs read-only commands (`ip`, `status`, `mem`, `svc list`, `sensor`) and prints a verdict table. Never drives
-the converter. Takes the same transport flags as `fugu_console.py`, plus `--plain` (borderless table) and
-`--timeout` (per command, default 6 s). Needs `rich`.
+`fugu_health.py` runs read-only commands (`ip`, `status`, `mem`, `svc list`, `sensor`) and prints a verdict table.
+It never drives the converter. It takes the same transport flags as `fugu_console.py`, plus `--plain` (borderless
+table) and `--timeout` (per command, default 6 s). It needs `rich`.
 
 ## ota.py
 
-Updates devices over Wi-Fi. It discovers devices via mDNS, reads their running version over telnet, serves
-`build/fugu-firmware.bin` over HTTP on port 9000 (starting `python3 -m http.server` from the repo root if the port
-is free), sends `ota <url>` to each device that needs it, and prints a before/after version table. Successful
-pushes are recorded in the [ELF archive](#elf_archivepy).
+`ota.py` updates devices over Wi-Fi in the following steps:
+
+1. It discovers devices via mDNS.
+2. It reads their running version over telnet.
+3. It serves `build/fugu-firmware.bin` over HTTP on port 9000. If the port is free, it starts
+   `python3 -m http.server` from the repo root.
+4. It sends `ota <url>` to each device that needs it.
+5. It prints a before/after version table.
+
+`ota.py` records successful pushes in the [ELF archive](#elf_archivepy).
+
+Run a dry run first, then the update. The `./ota.sh` variant builds before it updates:
 
 ```bash
 PYTHONPATH=./ python3 etc/ota.py -n -m <hostname>   # dry run first
 PYTHONPATH=./ python3 etc/ota.py -m <hostname>
 ./ota.sh -m <hostname>                                        # idf.py build, then ota.py with these args
 ```
+
+`ota.py` accepts the following flags.
 
 | Flag                  | Meaning                                                    |
 |-----------------------|------------------------------------------------------------|
@@ -93,7 +109,7 @@ PYTHONPATH=./ python3 etc/ota.py -m <hostname>
 | `-f`, `--force`       | Update even if the device already runs the local version   |
 
 :::warning
-Without `-m` every discovered device is updated. `./ota.sh` forwards its arguments to `ota.py` and refuses
+Without `-m`, `ota.py` updates every discovered device. `./ota.sh` forwards its arguments to `ota.py` and refuses
 (exit 2) unless they contain `-n` or `-m`. `ota.py` asks for confirmation (and refuses when not
 interactive) for a build without networking, a simulator (`CONFIG_FUGU_WITH_VCONV`) build, or an uncommitted
 (`-dirty`) build. See [OTA over Wi-Fi](../guide/updating/ota-wifi.md).
@@ -101,13 +117,18 @@ interactive) for a build without networking, a simulator (`CONFIG_FUGU_WITH_VCON
 
 ## ota_ble.py
 
-Pushes an image over the BLE NUS link, for devices without Wi-Fi. Needs a `CONFIG_FUGU_WITH_BLE` build with the
-`ble` service on, `bleak` on the host and the `esp-ota-ble` host module (from `managed_components/` after the first
-build, a local `../esp-ota-ble`, or `$ESP_OTA_BLE_HOST`). Skips the push if the device already runs the image's version.
+`ota_ble.py` pushes an image over the BLE NUS link, for devices without Wi-Fi. It needs a `CONFIG_FUGU_WITH_BLE`
+build with the `ble` service on, `bleak` on the host, and the `esp-ota-ble` host module (from `managed_components/`
+after the first build, a local `../esp-ota-ble`, or `$ESP_OTA_BLE_HOST`). If the device already runs the image's
+version, it skips the push.
+
+The following command pushes the default image to a named device:
 
 ```bash
 python -m etc.ota_ble build/fugu-firmware.bin <name>
 ```
+
+`ota_ble.py` accepts the following arguments and flags.
 
 | Flag / argument                 | Meaning                                                                  |
 |---------------------------------|--------------------------------------------------------------------------|
@@ -125,14 +146,18 @@ and [BLE OTA transports](../guide/updating/ble-ota-transports.md).
 
 ## provision.py
 
-Builds a littlefs image from `config/<board>` (or any directory containing `conf/`) with `littlefs-python` and
-writes it to the `littlefs` partition with `parttool.py`. The firmware is not touched. Wrapper for
-`etc/idf-devtools/provision.py`.
+`provision.py` builds a littlefs image from `config/<board>` (or any directory containing `conf/`) with
+`littlefs-python` and writes it to the `littlefs` partition with `parttool.py`. It leaves the firmware untouched.
+The script is a wrapper for `etc/idf-devtools/provision.py`.
+
+The following commands provision the `fmetal` config over a serial port:
 
 ```bash
 export ESPPORT=/dev/ttyUSB0
 ./provision.py fmetal
 ```
+
+`provision.py` reads the following environment variables.
 
 | Env                   | Meaning                                                  |
 |-----------------------|----------------------------------------------------------|
@@ -146,27 +171,32 @@ See [Provisioning](../guide/getting-started/provisioning.md) and [Partition layo
 
 ## dump_littlefs.py
 
-Reads a littlefs partition over serial and unpacks it to a directory (default `littlefs-dump`), or unpacks an
-existing image with `--input`. Flags: `-p`/`--port` (default `$ESPPORT`), `--partition` (default `littlefs`),
+`dump_littlefs.py` reads a littlefs partition over serial and unpacks it to a directory (default `littlefs-dump`),
+or unpacks an existing image with `--input`. It accepts these flags: `-p`/`--port` (default `$ESPPORT`), `--partition` (default `littlefs`),
 `--input`, `--keep-image PATH`, `--block-size`.
 
 ## flash-diff.sh
 
-Wrapper around `esptool write-flash --diff-with` that re-writes only the flash sectors that changed since the last
-flash through the same port. Offsets and files come from `build/flasher_args.json`; with no file argument it
-flashes the app. Needs esptool ≥ 5.2 (ESP-IDF 5.5 bundles v4; install v5 separately).
+`flash-diff.sh` wraps `esptool write-flash --diff-with` to re-write only the flash sectors that changed since the
+last flash through the same port. It takes offsets and files from `build/flasher_args.json`. With no file argument,
+it flashes the app. It needs esptool ≥ 5.2. ESP-IDF 5.5 bundles v4, so install v5 separately.
+
+The following command flashes the app:
 
 ```bash
 etc/idf-devtools/flash-diff.sh -p $ESPPORT
 ```
 
-Env: `ESPTOOL_DIFF_CACHE` (default `build/.flash-diff`), `BUILD_DIR` (default `build`), `ESPTOOL`.
+`flash-diff.sh` reads these environment variables: `ESPTOOL_DIFF_CACHE` (default `build/.flash-diff`), `BUILD_DIR`
+(default `build`), and `ESPTOOL`.
 
 ## elf_archive.py
 
-Keeps one zstd-compressed ELF per unique build, deduplicated by the app ELF SHA-256, plus an `index.jsonl` flash
-log, so a later coredump can be decoded against the exact build. `idf.py flash`/`app-flash` and `ota.py`
-archive automatically; the archive lives in `$ELF_ARCHIVE_DIR` or `./elf-archive`.
+`elf_archive.py` keeps one zstd-compressed ELF per unique build, deduplicated by the app ELF SHA-256, plus an
+`index.jsonl` flash log, so a later coredump can be decoded against the exact build. `idf.py flash`/`app-flash` and
+`ota.py` archive automatically. The archive lives in `$ELF_ARCHIVE_DIR` or `./elf-archive`.
+
+The following commands decode a coredump, list the flash log, and extract an archived ELF:
 
 ```bash
 python3 etc/idf-devtools/elf_archive.py decode coredump.bin             # match by SHA in the dump
@@ -174,6 +204,8 @@ python3 etc/idf-devtools/elf_archive.py decode --device <name> core.bin # fallba
 python3 etc/idf-devtools/elf_archive.py list
 python3 etc/idf-devtools/elf_archive.py find --device <name> -o fw.elf
 ```
+
+Each subcommand accepts the following flags.
 
 | Subcommand | Flags                                                                               |
 |------------|-------------------------------------------------------------------------------------|
@@ -187,9 +219,9 @@ Set the device name for serial flashes with `FUGU_DEVICE=<name> idf.py flash`. S
 
 ## scope.py
 
-Launches the [adcscope](https://github.com/fl4p/adcscope) soft oscilloscope (`etc/adcscope` submodule) against
-the firmware's `scope` service, which streams raw ADC samples over TCP. Arguments are passed through to
-adcscope.
+`scope.py` launches the [adcscope](https://github.com/fl4p/adcscope) soft oscilloscope (`etc/adcscope` submodule)
+against the firmware's `scope` service, which streams raw ADC samples over TCP. It passes its arguments through to
+adcscope. The following flags are available.
 
 | Flag                      | Meaning                                                    |
 |---------------------------|------------------------------------------------------------|
@@ -203,8 +235,8 @@ adcscope.
 
 ## measure_coil.py
 
-Measures the coil inductance without a current probe from Vin, Vout and Iout at a series of low duty cycles in
-DCM, with the output clamped by a battery, and reports the median `L0`. `--ls-sweep` instead holds the high side
+`measure_coil.py` measures the coil inductance without a current probe. It uses Vin, Vout, and Iout at a series of
+low duty cycles in DCM, with the output clamped by a battery, and reports the median `L0`. `--ls-sweep` instead holds the high side
 and sweeps the low-side count to find the rectifier timing (`rect_offset_ns`). The on-device `measure-coil`
 command is a port of this script.
 
@@ -212,9 +244,13 @@ command is a port of this script.
 This drives the half-bridge (`dc`). Keep `--i-max` low and have a current-limited source.
 :::
 
+The following command runs 12 duty steps with a 1.5 A current limit:
+
 ```bash
 python etc/measure_coil.py -p $ESPPORT --steps 12 --i-max 1.5
 ```
+
+`measure_coil.py` accepts the following flags.
 
 | Flag                              | Default | Meaning                                                       |
 |-----------------------------------|---------|---------------------------------------------------------------|
@@ -236,14 +272,19 @@ See [Coil Inductance Measurement](../lab/coil-inductance.md).
 
 ## influx_binary_proxy.py
 
-Decodes the binary telemetry wire (`tele.conf` `binary=1`, the BLE stream, or the BLE advertising record) back
-into InfluxDB line protocol, then prints or forwards it. See [Telemetry fields](telemetry-fields.md).
+`influx_binary_proxy.py` decodes the binary telemetry wire (`tele.conf` `binary=1`, the BLE stream, or the BLE
+advertising record) back into InfluxDB line protocol, then prints or forwards it. See
+[Telemetry fields](telemetry-fields.md).
+
+The following commands decode UDP telemetry, BLE advertisements, and a BLE stream forwarded to InfluxDB:
 
 ```bash
 python3 etc/influx_binary_proxy.py --listen 0.0.0.0:8086                     # UDP, decode + print
 python3 etc/influx_binary_proxy.py --adv --forward-udp 127.0.0.1:8089         # BLE advertisements
 python3 etc/influx_binary_proxy.py --ble <name> --influx http://influxdb:8086 --db <db> --user <u> --password <p>
 ```
+
+`influx_binary_proxy.py` accepts the following flags.
 
 | Flag                       | Meaning                                                               |
 |----------------------------|-----------------------------------------------------------------------|
@@ -257,9 +298,11 @@ python3 etc/influx_binary_proxy.py --ble <name> --influx http://influxdb:8086 --
 
 ## run_e2e.py
 
-Runs the host-side end-to-end tests in `etc/e2e-test/`, grouped into clusters by rig requirement, and reports
-PASS/FAIL/SKIP. Tests whose prerequisites are missing are skipped with the reason. Exit code: 1 on any FAIL,
-2 when nothing ran (all skipped, not with `--dry-run`), else 0.
+`run_e2e.py` runs the host-side end-to-end tests in `etc/e2e-test/`, grouped into clusters by rig requirement, and
+reports PASS/FAIL/SKIP. It skips tests whose prerequisites are missing and gives the reason. It exits with 1 on any
+FAIL, 2 when nothing ran (all skipped, not with `--dry-run`), and 0 otherwise.
+
+The clusters have the following rig requirements.
 
 | Cluster       | Needs                                                                          |
 |---------------|--------------------------------------------------------------------------------|
@@ -269,10 +312,14 @@ PASS/FAIL/SKIP. Tests whose prerequisites are missing are skipped with the reaso
 | `power`       | A real converter with a coil; drives the half-bridge                           |
 | `wifi`        | A controllable AP/router                                                       |
 
+The following commands list the tests and run the `console` cluster over serial:
+
 ```bash
 python etc/e2e-test/run_e2e.py --list
 python etc/e2e-test/run_e2e.py --cluster console --serial $ESPPORT
 ```
+
+`run_e2e.py` accepts the following flags.
 
 | Flag                         | Meaning                                                              |
 |------------------------------|----------------------------------------------------------------------|

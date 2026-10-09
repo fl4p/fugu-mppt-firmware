@@ -5,12 +5,15 @@ sidebar_position: 16
 
 # bsync.conf
 
-Beacon PWM-clock sync (service `bsync`, `CONFIG_FUGU_WITH_BSYNC` builds; needs NETW + MCPWM). `enabled` (0/1) and `log_level` (`error`/`warn`/`info`) are the common service keys, see [Service Architecture](../services.md#per-service-conf-file).
+`bsync.conf` configures the beacon PWM-clock sync service, `bsync`. The service frequency- and phase-locks the MCPWM switching clock of multiple converters to a shared timebase recovered from sniffed 802.11 beacons. See [Beacon Clock Sync](../../development/sync/beacon-sync.md).
 
-Frequency/phase-locks the MCPWM switching clock of multiple converters to a shared timebase
-recovered from sniffed 802.11 beacons (receive-only, no association/TX — usable while Wi-Fi is
-"off" for precision measurements). All participating devices must point `bssid`/`channel` at the
-*same* AP. See [Beacon Clock Sync](../../development/sync/beacon-sync.md).
+The service exists only in `CONFIG_FUGU_WITH_BSYNC` builds, which need NETW and MCPWM.
+
+Sniffing is receive-only (no association or TX), so sync also works while Wi-Fi is "off" for precision measurements. All participating devices must point `bssid` and `channel` at the *same* AP.
+
+The keys `enabled` (0/1) and `log_level` (`error`, `warn`, or `info`) are common to all services. See [Service Architecture](../services.md#per-service-conf-file).
+
+The file accepts the following keys:
 
 | key         | unit | type   | default | description                                                                |
 |-------------|------|--------|---------|----------------------------------------------------------------------------|

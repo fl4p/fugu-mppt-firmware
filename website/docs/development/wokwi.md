@@ -3,50 +3,46 @@ title: Wokwi simulator
 sidebar_position: 7
 ---
 
-# Wokwi Simulator
-* configuration in `diagram.json` and `wokwi.toml`
-* start it from VS Code https://docs.wokwi.com/vscode/debugging#start-the-debugger
+# Wokwi simulator
 
+The firmware can run in the Wokwi simulator. The simulation is configured in `diagram.json` and `wokwi.toml`. For the
+options in `wokwi.toml`, see the [Wokwi project configuration](https://docs.wokwi.com/vscode/project-config) docs.
 
-diagram.json:
+`diagram.json` selects the simulated board, a classic ESP32 devkit:
+
 ```
- "parts": [ { "type": "board-esp32-s3-devkitc-1", "id": "esp", "top": 0, "left": 0, "attrs": {} } ],
- /*esp32*/: { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": -4.76, "attrs": {} },
- 
+ "parts": [ { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} } ],
 ```
 
+The image must therefore be an `esp32` build, while the project defaults to `esp32s3`. `wokwi.toml` loads the image
+from `build/`.
 
-https://docs.wokwi.com/guides/esp32-wifi#the-private-gateway
+## Board configuration
 
-https://docs.wokwi.com/vscode/project-config
+The `config/lab/wokwi_mock` configuration has these properties:
 
+* It connects to the mock WiFi. See the Wokwi docs on
+  [the private gateway](https://docs.wokwi.com/guides/esp32-wifi#the-private-gateway).
+* It uses a lower-frequency interrupt timer for better performance.
+* The simulation runs at a speed ratio of 14-28%, which is quite slow.
 
-there's `config/lab/wokwi_mock`
-* connects to the mock WiFi
-* lower frequency interrupt timer for better performance
-* speed-ratio of 14-28% (quite slow)
+## Wokwi CLI (CI)
 
-
-## wokwi cli (CI)
-
-[install](https://docs.wokwi.com/wokwi-ci/cli-installation)
+The Wokwi CLI runs the simulation from the command line, for example in CI. Follow the
+[CLI installation guide](https://docs.wokwi.com/wokwi-ci/cli-installation), then start the simulation from the repo root:
 
 ```bash
 wokwi-cli .                                   # reads wokwi.toml + diagram.json from the repo root
 # or explicitly: wokwi-cli --elf build/fugu-firmware.elf .
 ```
 
+## Debugging
 
-## wokwi debug
+Start the simulator and its debugger from VS Code, as described in
+[Start the debugger](https://docs.wokwi.com/vscode/debugging#start-the-debugger).
 
-in vscode:
-https://docs.wokwi.com/vscode/debugging#start-the-debugger
-
-
+To decode a backtrace, pass its `PC:SP` pairs to `xtensa-esp32-elf-addr2line` with the build ELF:
 
 ```
-
-xtensa-esp32-elf-addr2line -e build/fugu-firmware.elf
-
-0x4037eee5:0x3fcbefa0 0x4037eead:0x3fcbefc0 0x403879d1:0x3fcbefe0 0x40385794:0x3fcbf100 0x4037618d:0x3fcbf120 0x40376295:0x3fcbf140 0x403762c5:0x3fcbf170 0x40375eb0:0x3fcbf190 0x403792c9:0x3fcbf1b0 0x4212421a:0x3fcbf1d0 0x420cb03f:0x3fcbf200 0x420cb265:0x3fcbf220 0x420caea3:0x3fcbf240 0x420c990f:0x3fcbf260 0x420b8ab1:0x3fcbf280 0x420b8b6f:0x3fcbf2a0 0x420b6baa:0x3fcbf2c0 0x403885a5:0x3fcbf2e0 0x4037fc31:0x3fcbf310
+xtensa-esp32-elf-addr2line -pfiaC -e build/fugu-firmware.elf <pc>:<sp> <pc>:<sp> ...
 ```

@@ -6,11 +6,11 @@ sidebar_position: 7
 # Partition layout
 
 The firmware uses a custom partition table ([`partitions.csv`](https://github.com/fl4p/fugu-mppt-firmware/blob/main/partitions.csv))
-sized for **4 MB flash**: two OTA app slots, a config filesystem, a test filesystem and a coredump partition.
+sized for 4 MB flash: two OTA app slots, a config filesystem, a test filesystem, and a coredump partition.
 
 ## Flash map
 
-Offsets as resolved by `gen_esp32part.py` (partition table at `0x8000`, `CONFIG_PARTITION_TABLE_OFFSET`):
+The table below lists the offsets as `gen_esp32part.py` resolves them, with the partition table at `0x8000` (`CONFIG_PARTITION_TABLE_OFFSET`).
 
 | Name            | Type | Subtype    | Offset     | Size                  | Content                                              |
 |-----------------|------|------------|------------|-----------------------|------------------------------------------------------|
@@ -30,43 +30,44 @@ is a 28 KB gap between the end of `ota_0` (`0x1d9000`) and `ota_1`.
 
 ## OTA slots
 
-There is no `factory` partition. `ota_0` and `ota_1` alternate: an update is written to the inactive slot and
-`otadata` switches the boot slot. With `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` a new image must confirm itself
-once the real-time loop is healthy, otherwise the bootloader returns to the previous slot. See
-[OTA over Wi-Fi](../guide/updating/ota-wifi.md).
+`ota_0` and `ota_1` alternate, and there is no `factory` partition. An update is written to the inactive slot,
+and `otadata` switches the boot slot.
+
+With `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, a new image must confirm itself once the real-time loop is healthy.
+Otherwise the bootloader returns to the previous slot. See [OTA over Wi-Fi](../guide/updating/ota-wifi.md).
 
 Each slot holds at most 1,871,872 bytes. A build with BLE is close to this limit; check the app size in the
 `idf.py build` output and see [Binary size](../development/binary-size.md).
 
 :::warning
-Do not grow the OTA slots without re-checking the 4 MB headroom. Changing any offset moves the partitions after
+Re-check the 4 MB headroom before growing the OTA slots. Changing any offset moves the partitions after
 it, which wipes the on-device config on the next full flash.
 :::
 
 ## littlefs
 
 `littlefs` holds the board configuration. The top-level `CMakeLists.txt` builds an image from a `config/` folder
-and flashes it together with the firmware; `provision.py` writes it separately
-(see [Provisioning](../guide/getting-started/provisioning.md)). It is placed after the app slots
+and flashes it together with the firmware. `provision.py` writes it separately
+(see [Provisioning](../guide/getting-started/provisioning.md)). The partition sits after the app slots
 ([PR #13](https://github.com/fl4p/fugu-mppt-firmware/pull/13)).
 
-`littlefs_test` is formatted and mounted at `/littlefs_test` by the unit tests (`test/test_conf.cpp`,
-`test/test_meter.cpp`), isolated from the real config. 64 KB fits a daily energy-ring store (~14 KB) plus littlefs
+The unit tests (`test/test_conf.cpp`, `test/test_meter.cpp`) format `littlefs_test` and mount it at
+`/littlefs_test`, isolated from the real config. 64 KB fits a daily energy-ring store (~14 KB) plus littlefs
 block overhead.
 
 ## coredump
 
-`coredump` receives an ELF coredump on panic (`CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y`), which survives the
-reboot and can be read back with the `coredump` console command.
+`coredump` receives an ELF coredump on panic (`CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y`). The dump survives the
+reboot, and you can read it back with the `coredump` console command.
 
-It is appended **after** `littlefs` on purpose: every existing offset stays unchanged, so the OTA slots and the
+The partition is appended after `littlefs`, so every existing offset stays unchanged. The OTA slots and the
 on-device config of an existing device survive the table change. Inserting it before `littlefs` would shift
 `littlefs` and wipe the config.
 
 :::note
-The partition table is only written by a serial flash. A device that has only been updated over OTA keeps its old
+Only a serial flash writes the partition table. A device that has only been updated over OTA keeps its old
 table (and bootloader) until it is flashed over serial once. Omit the `littlefs` image in that flash to keep the
 config.
 :::
 
-Decode a dump with the ELF archive, see [Host tools](host-tools.md#elf_archivepy).
+To decode a dump with the ELF archive, see [Host tools](host-tools.md#elf_archivepy).

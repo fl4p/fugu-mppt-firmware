@@ -5,10 +5,12 @@ sidebar_position: 1
 
 # Repo layout
 
-Where things live in the repository, which parts are git submodules, and which sibling repositories the build
-expects.
+This page shows where things live in the repository, which parts are git submodules, and which sibling
+repositories the build expects.
 
 ## Quick start
+
+Clone the repository with its submodules:
 
 ```bash
 git clone --recursive https://github.com/fl4p/fugu-mppt-firmware
@@ -16,10 +18,12 @@ cd fugu-mppt-firmware
 git submodule update --init --recursive   # after a pull, or if cloned without --recursive
 ```
 
-No sibling checkouts are required; local checkouts of esp-ota-ble / esp-bootguard are optional overrides, see
-[External repositories](#external-repositories).
+The build needs only this clone. Local checkouts of esp-ota-ble and esp-bootguard are optional overrides (see
+[External repositories](#external-repositories)).
 
 ## Top-level folders
+
+The repository has these top-level folders:
 
 | Path | Contents |
 |---|---|
@@ -33,11 +37,13 @@ No sibling checkouts are required; local checkouts of esp-ota-ble / esp-bootguar
 | `plans/` | Implementation plans |
 | `website/` | This documentation site (Docusaurus); pages are in `website/docs/` |
 
-Root files: `CMakeLists.txt` (project, sdkconfig layering, littlefs image), `sdkconfig.defaults` and its fragments,
+The repository root holds these files: `CMakeLists.txt` (project, sdkconfig layering, littlefs image), `sdkconfig.defaults` and its fragments,
 `partitions.csv`, `provision.py`, `ota.sh`, `flash.sh`, `idf_ext.py` (ELF archiving on flash), `wokwi.toml` and
 `diagram.json` (Wokwi simulator).
 
 ## Tools in `etc/`
+
+The host tools in `etc/` include:
 
 | Path | Purpose |
 |---|---|
@@ -53,6 +59,8 @@ Root files: `CMakeLists.txt` (project, sdkconfig layering, littlefs image), `sdk
 
 ## Submodules
 
+The repository pins these git submodules:
+
 | Path | Repository | Purpose |
 |---|---|---|
 | `etc/fugu` | [fl4p/fugu-py](https://github.com/fl4p/fugu-py) | Python console transports (serial, socket, BLE, MQTT) and the `Console` line protocol used by the host tools |
@@ -62,7 +70,9 @@ Root files: `CMakeLists.txt` (project, sdkconfig layering, littlefs image), `sdk
 | `components/*` | various | ADS1x15, BusIO, INA226, LiquidCrystal I²C, SimpleCLI, SimpleFTPServer, ESPTelnet, ESPAsyncWebServer, semihosting profiler |
 
 The root `provision.py` is a thin wrapper that execs `etc/idf-devtools/provision.py`, so provisioning needs that
-submodule. The component libraries and their use are listed in [Libraries](libraries.md).
+submodule. [Libraries](libraries.md) lists the component libraries and their use.
+
+To fetch all pinned submodules, or only the host tools, run one of these commands:
 
 ```bash
 git submodule update --init --recursive            # the commits this repo pins
@@ -70,6 +80,8 @@ git submodule update --init etc/idf-devtools etc/adcscope   # only the host tool
 ```
 
 ## External repositories
+
+The build also uses these repositories, which are not submodules:
 
 | Repository | Default location | Override | Provides |
 |---|---|---|---|

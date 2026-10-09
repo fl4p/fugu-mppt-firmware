@@ -5,37 +5,35 @@ sidebar_position: 7
 
 # MCPWM synchronous-buck PWM driver
 
-Design spec for the MCPWM-based gate driver that replaces the LEDC implementation in
-`src/pwm/ledc.h`. Targets ESP32-S3 and classic ESP32 (ESP-IDF ≥ 5.5).
+This page specifies the MCPWM-based gate driver that replaces the LEDC implementation in
+`src/pwm/ledc.h`. It targets ESP32-S3 and classic ESP32 (ESP-IDF ≥ 5.5).
 
 ## MCPWM vs LEDC
 
-LEDC has no hardware dead-time, no hardware fault input, no native multi-channel phase
-control, and forces a fixed 2048-tick period. MCPWM gives us all four: a per-operator
-dead-time submodule, an OST brake driven by a GPIO fault, timer sync sources for
-interleaved legs, and a 16-bit period counter we can size to the available source
-clock.
+MCPWM has four features that LEDC lacks: a per-operator dead-time submodule, an OST brake
+driven by a GPIO fault, timer sync sources for interleaved legs, and a 16-bit period counter
+that we can size to the available source clock. LEDC has no hardware dead-time, no hardware
+fault input, and no native multi-channel phase control, and it forces a fixed 2048-tick period.
 
 ## Scope
 
-In scope: edge-aligned (count-up) PWM, two-switch synchronous buck (HS + LS), hardware
-dead-time, GPIO fault brake, N interleaved legs sharing one fault source.
+The driver covers edge-aligned (count-up) PWM, a two-switch synchronous buck (HS + LS),
+hardware dead-time, a GPIO fault brake, and N interleaved legs sharing one fault source.
 
-Out of scope: center-aligned (up-down) carriers — HS-at-TEZ alignment is what the
-existing buck controller and ADC sample timing assume. On-chip analog comparator faults —
-GPIO faults only.
+Center-aligned (up-down) carriers are out of scope, because the existing buck controller and
+ADC sample timing assume HS-at-TEZ alignment. On-chip analog comparator faults are also out of
+scope; the driver supports GPIO faults only.
 
 ## Switch-cycle model
 
-Count-up timer; one period = `period_ticks`. Per leg, two comparators schedule the two
-turn-off events; turn-on of HS is the period boundary (TEZ).
+The timer counts up, and one period is `period_ticks`. HS turns on at the period boundary
+(TEZ). Per leg, two comparators schedule the two turn-off events:
 
-Define:
 - `cmpHS` = HS turn-off count = `pwmCtrl` (controller duty)
 - `cmpLS` = LS turn-off count = `pwmCtrl + pwmRect` (rectifier on-time set by the
   diode-emulation logic in `buck.h`)
 
-Generator actions (count-up direction only):
+The generators act in the count-up direction only, as the following table shows:
 
 | Mode   | genHS                                | genLS                                              |
 |--------|--------------------------------------|----------------------------------------------------|
@@ -43,44 +41,49 @@ Generator actions (count-up direction only):
 | `InEn` | HIGH at TEZ, LOW at cmpHS  (= IN)    | HIGH at **TEZ**,  LOW at cmpLS   (= EN window)     |
 
 `HiLi` drives the HS and LS MOSFETs through a discrete gate driver with no built-in
-interlock — the MCPWM dead-time submodule is responsible for shoot-through prevention.
-`InEn` drives an integrated half-bridge driver (e.g. IR2814 family) where the chip
-inserts its own dead-time; MCPWM emits IN and an EN window only.
+interlock, so the MCPWM dead-time submodule is responsible for shoot-through prevention.
 
-Invariants the driver enforces (so the controller never has to think about them):
+`InEn` drives an integrated half-bridge driver (e.g. IR2814 family), and the chip inserts its
+own dead-time. MCPWM emits only IN and an EN window.
+
+The driver enforces these invariants, so the controller does not have to:
+
 - `cmpHS < cmpLS < pwmMax`
 - The LS conduction window never wraps past TEZ.
-- D = 0 and D = 1 are reached by forcing both gates, not by setting `cmpHS = 0` or
-  `cmpHS = period_ticks` (those produce one-tick glitches at the period boundary).
+- The driver reaches D = 0 and D = 1 by forcing both gates, not by setting `cmpHS = 0` or
+  `cmpHS = period_ticks`. Those values produce one-tick glitches at the period boundary.
 
 ## Timing — `bestTiming(fsw)`
 
-For a given switching frequency, pick the largest `period_ticks` that fits in 16 bits
-using the highest available source clock and an integer group prescaler. The result is
+For a given switching frequency, `bestTiming()` picks the largest `period_ticks` that fits in
+16 bits, using the highest available source clock and an integer group prescaler. The result is
 the highest duty resolution the hardware can give us at `fsw`.
 
-Source clock: `MCPWM_TIMER_CLK_SRC_DEFAULT` resolves to `PLL_F160M` = 160 MHz on both
+The source clock `MCPWM_TIMER_CLK_SRC_DEFAULT` resolves to `PLL_F160M` = 160 MHz on both
 ESP32-S3 and classic ESP32 in IDF 5.5.
 
-Algorithm (returns `resolution_hz`, `period_ticks`, `actual_freq`):
+The algorithm returns `resolution_hz`, `period_ticks`, and `actual_freq` in four steps:
+
 1. `presc = 1`; while `src_clk / presc / fsw > 65535`, increment `presc`.
 2. `resolution_hz = src_clk / presc`.
 3. `period_ticks = round(resolution_hz / fsw)`.
-4. `actual_freq = resolution_hz / period_ticks` (the frequency the timer actually
-   produces; may differ from requested by less than `0.5 · resolution_hz / period_ticks²`).
+4. `actual_freq = resolution_hz / period_ticks`. This is the frequency the timer actually
+   produces. It may differ from the requested frequency by less than
+   `0.5 · resolution_hz / period_ticks²`.
 
-Worked example: `fsw = 39 kHz`, `src_clk = 160 MHz` → `presc = 1`, `period_ticks ≈ 4103`,
-`resolution = 160 MHz`, `actual_freq = 160e6 / 4103 ≈ 38995.9 Hz` (the integer `actual_freq` is 38995) (~12-bit duty).
+For example, `fsw = 39 kHz` and `src_clk = 160 MHz` give `presc = 1`, `period_ticks ≈ 4103`,
+`resolution = 160 MHz`, and `actual_freq = 160e6 / 4103 ≈ 38995.9 Hz` (the integer `actual_freq`
+is 38995). That is about 12-bit duty.
 
-The driver exports `pwmMax`. After dead-time reservation (next section):
-`pwmMax = period_ticks - dtLhTicks`. The controller clamps all comparator writes
+The driver exports `pwmMax`, which is the period after the dead-time reservation described in the
+next section: `pwmMax = period_ticks - dtLhTicks`. The controller clamps all comparator writes
 to `[0, pwmMax - 1]`.
 
 ## Dead-time (HiLi)
 
-Each MCPWM operator has **one shared dead-time submodule** — the posedge / negedge
-delays in `mcpwm_dead_time_config_t` cannot be configured independently for both
-generators. We therefore split the two transitions:
+Each MCPWM operator has one shared dead-time submodule. The posedge and negedge delays in
+`mcpwm_dead_time_config_t` can't be configured independently for both generators. The driver
+therefore handles the two transitions with separate mechanisms:
 
 - **HS → LS (mid-period, at `cmpHS`):** delay the LS *rising* edge by `dtHlTicks` via
   `mcpwm_generator_set_dead_time(genLS, genLS, {posedge_delay_ticks = dtHlTicks})`. HS
@@ -90,58 +93,85 @@ generators. We therefore split the two transitions:
   `pwmMax = period_ticks - dtLhTicks`. Since the controller clamps `cmpLS ≤ pwmMax - 1`,
   LS goes low at least `dtLhTicks + 1` ticks before TEZ.
 
-The two mechanisms are independent — a RED register write versus a `pwmMax` reservation
-— so the two transitions carry **one value each**, and they need not be equal. `hl == 0
-&& lh > 0` is a legal state: the dead-time submodule stays bypassed (no path claim, so
-no 1-tick falling delay on HS, and `setDeadTimeTicks` still refuses to arm it later)
-while the wrap band is still reserved out of `pwmMax`.
+The two mechanisms are independent: one is a RED register write and the other a `pwmMax`
+reservation. Each transition therefore carries its own value, and the two values need not be
+equal. `hl == 0 && lh > 0` is a legal state. The dead-time submodule stays bypassed, so there is
+no path claim and no 1-tick falling delay on HS, and `setDeadTimeTicks` still refuses to arm it
+later. The wrap band is still reserved out of `pwmMax`.
 
-Conversion: `ticks = round(pwm_deadtime_{hl,lh}_ns × 1e-9 × resolution_hz)`, each key
-defaulting to `pwm_deadtime_ns`. Must use the true `resolution_hz` from `bestTiming()`,
-not `pwm_freq × period_ticks` (they only agree by accident when
-`period_ticks = resolution_hz / pwm_freq` exactly).
+The realized gaps differ from the configured values by one tick:
 
-The realized HS→LS gap is `dtHlTicks - 1`: claiming the dead-time path costs the HS
-generator a 1-tick FED (see `init()`). The LS→HS band is `period_ticks - cmpLS` and
-depends on no delay register; with every caller capping `cmpLS` at `pwmMax - 1` its
-tightest realized value is `dtLhTicks + 1`, i.e. one tick wider than configured.
+- The realized HS→LS gap is `dtHlTicks - 1`, because claiming the dead-time path costs the HS
+  generator a 1-tick FED (see `init()`).
+- The LS→HS band is `period_ticks - cmpLS` and depends on no delay register. With every caller
+  capping `cmpLS` at `pwmMax - 1`, its tightest realized value is `dtLhTicks + 1`, i.e. one tick
+  wider than configured.
 
-`InEn` mode passes `0, 0`; the half-bridge driver chip owns the dead-time.
+The driver converts nanoseconds to ticks with
+`ticks = round(pwm_deadtime_{hl,lh}_ns × 1e-9 × resolution_hz)`. Each key defaults to
+`pwm_deadtime_ns`. The conversion must use the true `resolution_hz` from `bestTiming()`, not
+`pwm_freq × period_ticks`. The two only agree by accident, when
+`period_ticks = resolution_hz / pwm_freq` exactly.
+
+`InEn` mode passes `0, 0`, because the half-bridge driver chip owns the dead-time.
 
 ## Comparator updates — TEZ-buffered
 
-Both comparators are created with `update_cmp_on_tez = true`. Writes to `cmpHS` and
-`cmpLS` are double-buffered and latched at the next TEZ. A write pair is atomic only if no TEZ falls between the
-two writes. Consequences:
+Both comparators are created with `update_cmp_on_tez = true`. Writes to `cmpHS` and `cmpLS` are
+double-buffered and latched at the next TEZ. A write pair is atomic only if no TEZ falls between
+the two writes. This has three consequences:
 
-- Order of `setHsOff()` / `setLsOff()` **matters**. A TEZ between the two writes publishes a mixed pair, and in
-  HiLi a pair with `cmpLS < cmpHS` turns both FETs on for most of a period (the LS generator has no TEZ action).
-  On a PWM-frequency change (`src/buck.h`, rescaling moves `cmpHS` by hundreds of counts) the writes are ordered:
-  LS first when HS widens, HS first when HS narrows, so every mixed pair keeps `cmpLS >= cmpHS`; comparators
-  first when the period shrinks, period first when it grows. The per-tick commit (`drvCommit`) always writes HS
-  then LS; there the step between ticks is small.
-- The wrong-direction race (write a smaller `cmpLS` after the counter has already passed
-  it, the comparator event for the period is missed, LS stays HIGH to the wrap) cannot
-  occur — the new value only takes effect at TEZ.
-- Worst-case update latency = one PWM period. At 39 kHz that is ≈ 26 µs, well inside
+- The order of `setHsOff()` / `setLsOff()` matters, because a TEZ between the two writes publishes
+  a mixed pair. The next section explains the hazard and the write order.
+- The wrong-direction race can't occur, because the new value only takes effect at TEZ. In that
+  race, firmware writes a smaller `cmpLS` after the counter has already passed it, the comparator
+  event for the period is missed, and LS stays HIGH to the wrap.
+- The worst-case update latency is one PWM period. At 39 kHz that is ≈ 26 µs, well inside
   the RT loop budget.
+
+## Invariant: a latched period must never have `cmpLS < cmpHS`
+
+In HiLi mode the LS generator has no TEZ action. It goes HIGH at `cmpHS` and LOW at `cmpLS`
+(`src/pwm/mcpwm.h`), so LS holds its level across the period wrap. A period that latches with
+`cmpLS < cmpHS` therefore runs as follows: the `cmpLS`→LOW event passes as a no-op, `cmpHS` drives
+LS HIGH, and at TEZ HS goes HIGH on top of it. Both FETs stay on for most of a period.
+
+`cmpHS` and `cmpLS` are two separate registers and both latch on TEZ, so a TEZ falling between the
+two writes publishes a *mixed* pair. Order the writes so the mixed pair stays ordered: when HS
+widens (`cmpHS` increasing), write `cmpLS` first; when HS narrows, write `cmpHS` first.
+
+The normal control path is safe without this because duty moves by a few counts per tick and
+`pwmRectMin` (~330 ct) covers the gap. The per-tick commit (`drvCommit`) always writes HS then LS,
+since the step between ticks is small.
+
+The order matters wherever `cmpHS` jumps by a large amount. On a PWM-frequency change
+(`src/buck.h`), `applyPendingPwmFreqRt()` rescales `cmpHS` by `newPeriod/oldPeriod`, which moves
+it by hundreds of counts. For example, a 75 → 39 kHz change at duty 0.61 moves `cmpHS` from 1281
+to 2464 against a stale `cmpLS` of 2100, giving 25.6 µs of shoot-through. On this path the
+writes are ordered: LS first when HS widens, HS first when HS narrows, so every mixed pair keeps
+`cmpLS >= cmpHS`. The comparators are written first when the period shrinks, and the period first
+when it grows.
 
 ## Fault brake (zero-CPU shutdown)
 
-One GPIO fault per MCPWM group, shared by all legs in that group:
+Each MCPWM group has one GPIO fault, shared by all legs in that group. The driver sets it up as
+follows:
+
 - `mcpwm_new_gpio_fault` with configurable `active_level` and matching pull resistor.
 - `mcpwm_operator_set_brake_on_fault` with `MCPWM_OPER_BRAKE_MODE_OST` (one-shot trip;
   latches until explicitly cleared).
 - On each generator, `mcpwm_generator_set_action_on_brake_event(..., GEN_ACTION_LOW)`
   so both gates go to the safe level the instant the fault asserts, with no CPU
   involvement.
-- Recovery is explicit (`mcpwm_operator_recover_from_fault`) — a fault never silently
-  clears, so any sensor-watchdog or driver-fault trip stays latched until firmware
+- Recovery is explicit (`mcpwm_operator_recover_from_fault`). A fault never clears
+  silently, so any sensor-watchdog or driver-fault trip stays latched until firmware
   decides to re-arm.
 
 ## Software-forced shutdown
 
-Distinct from the brake — used for normal disable / re-arm sequences from the RT path:
+The RT path uses a software force, separate from the brake, for normal disable and re-arm
+sequences:
+
 - `mcpwm_generator_set_force_level(g, 0, true)` on both generators (register write, no
   allocation, ISR-safe).
 - Released with `set_force_level(g, -1, true)`. Re-arm sequence: write both comparators
@@ -151,7 +181,7 @@ Distinct from the brake — used for normal disable / re-arm sequences from the 
 ## Interleaving — N legs
 
 `MCPWM_Converter<N>` holds an `std::array` of N legs (= N operators / N timers) in one
-group plus one fault brake. Phase relationship:
+group plus one fault brake. The legs keep their phase relationship as follows:
 
 - Leg 0's timer publishes a sync source on TEZ (`mcpwm_new_timer_sync_src`).
 - Legs 1..N-1 take that sync and set `count_value = period_ticks × i / N`
@@ -164,25 +194,29 @@ group plus one fault brake. Phase relationship:
 
 ## Public driver surface
 
+The driver exposes three classes.
+
 `MCPWM_FaultBrake`
-- `initGpio(group, pin, activeHigh)` — register the fault input.
-- `bindLeg(operator, genHS, genLS)` — install OST brake + LOW actions on this leg.
-- `recover(operator)` — clear the latched OST condition.
+- `initGpio(group, pin, activeHigh)`: register the fault input.
+- `bindLeg(operator, genHS, genLS)`: install OST brake + LOW actions on this leg.
+- `recover(operator)`: clear the latched OST condition.
 
 `MCPWM_SyncLeg`
-- `init(group, fsw, pinHS, pinLS, dtHlTicks, dtLhTicks, enLogic, fixedTicks = 0)` — build timer,
+- `init(group, fsw, pinHS, pinLS, dtHlTicks, dtLhTicks, enLogic, fixedTicks = 0)`: build timer,
   operator, comparators, generators, dead-time. `fixedTicks > 0` overrides
   `bestTiming()` (kept for migration / bit-identical replays; not the production path).
-- `setHsOff(uint16_t)`, `setLsOff(uint16_t)` — comparator writes (TEZ-buffered).
-- `start()` — enable + `START_NO_STOP`.
-- `forceShutdown()`, `clearForce()` — RT-safe force-level on both gates.
-- `pwmMax` — period after dead-time reservation; controller clamps to `[0, pwmMax - 1]`.
+- `setHsOff(uint16_t)`, `setLsOff(uint16_t)`: comparator writes (TEZ-buffered).
+- `start()`: enable + `START_NO_STOP`.
+- `forceShutdown()`, `clearForce()`: RT-safe force-level on both gates.
+- `pwmMax`: period after dead-time reservation; controller clamps to `[0, pwmMax - 1]`.
 
 `MCPWM_Converter<N>`
 - Same `init(...)` taking pin arrays of length N plus optional fault pin.
 - Fanned-out `setHsOff` / `setLsOff` / `forceShutdown` / `clearForce`.
 
 ## Configuration (`board.conf`)
+
+The driver reads these keys from `board.conf`:
 
 | key                      | meaning                                                    |
 |--------------------------|------------------------------------------------------------|
@@ -196,21 +230,3 @@ group plus one fault brake. Phase relationship:
 | `pwm_deadtime_lh_ns`     | LS→HS override (`pwmMax` reservation; tightest realized band `dtLh + 1` tick) |
 | `pwm_fault_pin` (opt.)   | GPIO fault input pin                                       |
 | `pwm_fault_active_high`  | fault polarity (0/1); pull resistor set accordingly        |
-
-## Invariant: a latched period must never have `cmpLS < cmpHS`
-
-In HiLi mode the LS generator has **no TEZ action** — it goes HIGH at `cmpHS` and LOW at `cmpLS`
-(`src/pwm/mcpwm.h`), so **LS holds its level across the period wrap**. A period that latches with
-`cmpLS < cmpHS` therefore runs: the `cmpLS`→LOW event passes as a no-op, `cmpHS` drives LS HIGH,
-and at TEZ HS goes HIGH on top of it — both FETs on for most of a period.
-
-`cmpHS` and `cmpLS` are two separate registers and both latch on TEZ, so a TEZ falling between the
-two writes publishes a *mixed* pair. Order the writes so the mixed pair stays ordered:
-
-* **HS widening** (`cmpHS` increasing) — write `cmpLS` first.
-* **HS narrowing** — write `cmpHS` first.
-
-The normal control path is safe without this because duty moves by a few counts per tick and
-`pwmRectMin` (~330 ct) covers the gap. It matters wherever `cmpHS` jumps by a large amount:
-`applyPendingPwmFreqRt()` rescales it by `newPeriod/oldPeriod`, so a 75 → 39 kHz change at duty
-0.61 moves `cmpHS` from 1281 to 2464 against a stale `cmpLS` of 2100 — 25.6 µs of shoot-through.

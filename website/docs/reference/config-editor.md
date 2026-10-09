@@ -6,11 +6,11 @@ sidebar_position: 2
 # Config editor
 
 [`etc/config-tool/conf-editor.html`](https://github.com/fl4p/fugu-mppt-firmware/blob/main/etc/config-tool/conf-editor.html)
-is a single-page browser editor for the board `.conf` files: read them from a device or an archive, edit with
-type/unit/default hints, then download a `.zip` or write only the changes back to the device.
+is a single-page browser editor for the board `.conf` files. It reads them from a device or an archive, lets you edit
+them with type, unit, and default hints, and then downloads a `.zip` or writes only the changes back to the device.
 
-It is one self-contained HTML file with no build step. The MQTT transport loads `mqtt.js` from a CDN; the other
-paths work offline.
+The editor is one self-contained HTML file with no build step. The MQTT transport loads `mqtt.js` from a CDN. The
+other paths work offline.
 
 ## Quick start
 
@@ -23,18 +23,21 @@ python3 -m http.server 8000
 # open http://localhost:8000/conf-editor.html
 ```
 
+To read, edit, and write back a device config over serial, follow these steps:
+
 1. Click **Connect serial (115200)** and pick the device port. The editor sends `hostname` and one
    `get-config <file>` per known file and opens a tab per file.
-2. Edit values. Changed fields get a "was: …" hint (click it to revert) and the tab a dirty dot.
-3. Click **Upload changes to device**. A confirmation lists every command, then each is sent and its
-   `OK:`/`ERR:` reply awaited.
-4. Optionally **Download .zip** as a backup.
+2. Edit values. Changed fields get a "was: …" hint (click it to revert), and the tab gets a dirty dot.
+3. Click **Upload changes to device**. A confirmation lists every command. The editor then sends each one and
+   awaits its `OK:`/`ERR:` reply.
+4. Optionally, click **Download .zip** to keep a backup.
 
-`set-config` persists each value to the file on flash; see
-[When changes take effect](config/index.md#when-changes-take-effect) for when a key is applied (most files
-need a reboot).
+`set-config` persists each value to the file on flash. Most files need a reboot before a key is applied. See
+[When changes take effect](config/index.md#when-changes-take-effect) for details.
 
 ## Sources
+
+The editor can load a config from any of these sources:
 
 | Source          | Button                                 | Notes                                                                 |
 |-----------------|----------------------------------------|-----------------------------------------------------------------------|
@@ -44,33 +47,39 @@ need a reboot).
 | Bluetooth (NUS) | **Connect Bluetooth**                  | Web Bluetooth, Nordic UART service; the OS may prompt for pairing     |
 | MQTT            | **Connect MQTT**                       | WebSocket broker URL (`ws://` / `wss://`); needs `mqtt.conf` `cmd_input=1` |
 
-Loading a source replaces the previous state, with one exception: after a live device read, opening a `.zip` or
-folder **overlays** it onto the device values. Every value that differs shows up as a pending change, so you can
-review what a stored config would alter before uploading it. A file included in the upload fully replaces that
-file (keys it omits are cleared); files it does not include are left untouched.
+Loading a source replaces the previous state, with one exception. After a live device read, opening a `.zip` or
+folder overlays it onto the device values. Every value that differs shows up as a pending change, so you can
+review what a stored config would alter before uploading it.
+
+A file included in the upload fully replaces that file, and keys it omits are cleared. Files it doesn't include are
+left untouched.
 
 ### MQTT scan
 
-**Connect MQTT** opens a dialog for broker URL, username and password (kept in browser `localStorage`).
-**Scan for devices** subscribes to `pv/log/#` for 5 s and lists every `<hostname>` seen publishing, after
-probing hosts remembered for that broker with the `ip` command. Pick a device to read its config. See
+**Connect MQTT** opens a dialog for the broker URL, username, and password, which are kept in browser
+`localStorage`. **Scan for devices** subscribes to `pv/log/#` for 5 s and probes the hosts remembered for that
+broker with the `ip` command. It lists every `<hostname>` seen publishing. Pick a device to read its config. See
 [MQTT topics](mqtt.md).
 
 ## Editing
 
-- One tab per conf file. Hardware/calibration files (`board`, `sensor`, `limits`, `coil`, `converter`) are
+The editor shows each file as a form with these features:
+
+- One tab per conf file. Hardware and calibration files (`board`, `sensor`, `limits`, `coil`, `converter`) are
   tinted red.
-- Files the firmware reads but the source lacks appear as faded tabs; fill a key to create the file.
+- Files the firmware reads but the source lacks appear as faded tabs. Fill a key to create the file.
 - Each row shows the key, a type pill (`byte`/`long`/`float`/`string`, the getter the firmware uses), unit,
-  description and default. A `?` pill marks a key without curated metadata.
+  description, and default. A `?` pill marks a key without curated metadata.
 - Clearing a field (or ×) deletes the key on upload. An existing empty value (`key=`) is kept if untouched,
-  but an empty value cannot be written. In a downloaded `.zip`, a hand-emptied existing key stays as `key=`;
-  use × to drop it. `0` is a real value.
+  but an empty value can't be written. In a downloaded `.zip`, a hand-emptied existing key stays as `key=`.
+  Use × to drop it. `0` is a real value.
 - **+ add key** appends an arbitrary key.
-- The **raw** section shows the serialized file. Comments, inline `# comments` and whitespace survive the
+- The **raw** section shows the serialized file. Comments, inline `# comments`, and whitespace survive the
   round trip.
 
 ## Saving
+
+The editor saves edits in two ways:
 
 | Action                        | Result                                                                                   |
 |-------------------------------|------------------------------------------------------------------------------------------|
@@ -78,27 +87,34 @@ probing hosts remembered for that broker with the `ip` command. Pick a device to
 | **Upload changes to device**  | `set-config <file> <key> <value>` per added or edited key, `del-config <file> <key>` per cleared key. Only changed fields are sent |
 
 :::warning
-Uploading edits `board.conf`, `sensor.conf` and `limits.conf` on a running converter. Wrong pin, divider or limit
+Uploading edits `board.conf`, `sensor.conf`, and `limits.conf` on a running converter. Wrong pin, divider, or limit
 values can damage hardware. Review the command list in the confirmation dialog.
 :::
 
 ## Device log
 
-Once connected, the **Device log** button opens a panel with the live console output (ANSI colours rendered,
-`OK:` green, `ERR:` red) and a command input that writes to the active transport. See
+Once you're connected, the **Device log** button opens a panel with the live console output and a command input
+that writes to the active transport. The panel renders ANSI colours and shows `OK:` in green and `ERR:` in red. See
 [Serial Console](console.md).
 
 ## conf-tool.py (FTP)
 
 [`etc/config-tool/conf-tool.py`](https://github.com/fl4p/fugu-mppt-firmware/blob/main/etc/config-tool/conf-tool.py)
-is a command-line companion: it discovers devices on the LAN, downloads `/littlefs/conf` over FTP, diffs it
-key-by-key against a local config folder, lets you pick which values to take, and uploads the merged files after
-confirmation. Needs the `ftp` service on the device.
+is a command-line companion to the editor. It needs the `ftp` service on the device. The tool performs these steps:
+
+1. Discovers devices on the LAN.
+2. Downloads `/littlefs/conf` over FTP.
+3. Diffs it key-by-key against a local config folder and lets you pick which values to take.
+4. Uploads the merged files after confirmation.
+
+A typical invocation looks like this:
 
 ```bash
 etc/config-tool/conf-tool.py --hosts '<hostname-regex>' --local-conf config/fmetal \
     --user <user> --password <password>
 ```
+
+The tool accepts these flags:
 
 | Flag             | Default       | Meaning                                                   |
 |------------------|---------------|-----------------------------------------------------------|
@@ -113,15 +129,17 @@ etc/config-tool/conf-tool.py --hosts '<hostname-regex>' --local-conf config/fmet
 
 ## Maintaining the metadata
 
-Key lists, types and defaults live in tables inside the HTML (`FILE_KEYS`, `TYPE_KEYS`, `DEFAULTS`, `META`,
-`FILE_META`). When a firmware conf key is added, renamed or removed, update these tables and the matching page
-under [Configuration files](config/index.md) together. `etc/config-tool/scrape_conf_keys.py` reports drift
-between `ConfFile::get*()` calls in `src/` and the editor tables:
+Key lists, types, and defaults live in tables inside the HTML (`FILE_KEYS`, `TYPE_KEYS`, `DEFAULTS`, `META`,
+`FILE_META`). When a firmware conf key is added, renamed, or removed, update these tables and the matching page
+under [Configuration files](config/index.md) together.
+
+`etc/config-tool/scrape_conf_keys.py` reports drift between `ConfFile::get*()` calls in `src/` and the editor
+tables:
 
 ```bash
 python3 etc/config-tool/scrape_conf_keys.py          # drift report
 python3 etc/config-tool/scrape_conf_keys.py --check  # non-zero exit on drift (CI)
 ```
 
-The full behaviour is specified in
-[`etc/config-tool/spec.md`](https://github.com/fl4p/fugu-mppt-firmware/blob/main/etc/config-tool/spec.md).
+[`etc/config-tool/spec.md`](https://github.com/fl4p/fugu-mppt-firmware/blob/main/etc/config-tool/spec.md) specifies
+the full behaviour.

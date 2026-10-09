@@ -5,10 +5,12 @@ sidebar_position: 3
 
 # Provisioning
 
-Board-specific settings live as `.conf` files on the `littlefs` partition under `/littlefs/conf/`.
-Provisioning writes a board's configuration image to that partition. The firmware image stays untouched.
+Provisioning writes a board's configuration image to the `littlefs` partition and leaves the firmware image untouched.
+Board-specific settings live as `.conf` files on that partition under `/littlefs/conf/`.
 
 ## Quick start
+
+To provision a device, set the serial port and pass a board name or a directory to `provision.py`:
 
 ```bash
 export ESPPORT=/dev/cu.usbmodem1101   # Windows: set ESPPORT=COM3
@@ -17,10 +19,14 @@ export ESPPORT=/dev/cu.usbmodem1101   # Windows: set ESPPORT=COM3
 ```
 
 `provision.py` builds a littlefs image with `littlefs-python` and writes it with ESP-IDF's `parttool.py`, so the IDF
-environment must be exported. Install the former once with `python -m pip install littlefs-python` in the exported
+environment must be exported.
+
+Install `littlefs-python` once with `python -m pip install littlefs-python` in the exported
 ESP-IDF shell.
 
 ## Board configurations
+
+Each folder under `config/` holds the configuration for one kind of hardware:
 
 | Folder | Hardware |
 |---|---|
@@ -35,6 +41,8 @@ ESP-IDF shell.
 | `config/lab/wokwi_mock` | [Wokwi](https://wokwi.com) ESP32-S3 simulator (`wokwi_mock_esp32` for classic ESP32) |
 
 ## Other ways to change the configuration
+
+Besides provisioning, you can change the configuration in these ways:
 
 | Method | Use when |
 |---|---|
@@ -61,8 +69,8 @@ only.
 
 ## Adding your own board
 
-1. Copy the closest folder under `config/`, e.g. `cp -r config/fmetal config/myboard`.
+1. Copy the closest folder under `config/`, for example `cp -r config/fmetal config/myboard`.
 2. Adjust pins in `board.conf`, divider ratios and channels in `sensor.conf`, and limits in `limits.conf`.
    Every key is described in the [configuration reference](../../reference/config/index.md).
 3. Start with a mock or dry configuration to check pins and sensor readings before enabling the power stage.
-4. `./provision.py myboard`.
+4. Run `./provision.py myboard`.

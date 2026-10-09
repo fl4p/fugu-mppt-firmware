@@ -3,15 +3,18 @@ title: Automated bench tests
 sidebar_position: 7
 ---
 
-# Automated Bench Tests
+# Automated bench tests
 
-Test matrix for exercising the converter against a **programmable power supply** on the input and a
-**programmable electronic load / sink** (or battery emulator) on the output. The goal is repeatable,
-scriptable coverage of the protection, control, MPPT, and charger paths under controlled load
-conditions, without needing sun or a real battery.
+This test matrix gives repeatable, scriptable coverage of the protection, control, MPPT, and charger
+paths under controlled load conditions, without needing sun or a real battery. It exercises the
+converter against a programmable power supply on the input and a programmable electronic load / sink
+(or battery emulator) on the output.
 
 
 ## Bench setup
+
+The converter under test sits between the input source and the output sink, and you control it over
+its console:
 
 ```
    [ PSU / PV-sim ] --Vin--> [ FUGU under test ] --Vout--> [ e-load / battery-sim ]
@@ -19,35 +22,39 @@ conditions, without needing sun or a real battery.
                               console (serial / telnet / BLE)
 ```
 
-- **Input source**
-  - For protection/transient tests a plain CV/CC bench PSU is enough (set V, set I-limit).
-  - For real MPPT tracking you need a **PV/solar-array simulator** (Keysight, Chroma) or a PSU with
-    a known **series resistance** so an MPP exists. A stiff CV source has no maximum power point —
-    the tracker will just walk to the current limit.
-  - In-house alternative: a second Fugu boost in **`mode=pv`** emulates the panel curve at its
-    output (`pv` console command, `config/lab/boost_pv`) — see the PV-sim section in
-    [Power Loop.md](power-loop.md) for the rig caveats.
-- **Output sink** — an electronic load is the battery emulator:
-  - **CV mode** = fixed pack voltage (charger sees a battery clamped at that voltage).
-  - **CC mode** = fixed sink current (defines the operating point / charge current).
-  - A **bidirectional source-sink** is required for reverse-current and battery-interrupt tests.
-- **Control / observation** — drive everything from `etc/fugu_console.py`
-  (`-p <serial>` / `--ip <host>` / `--ble`), one command per step with `-c "<cmd>"` (repeatable),
-  a batch of commands piped to `--stdin`, or the interactive REPL (the default with no mode flag).
-  Telemetry goes to InfluxDB; the per-sample `scope` TCP stream is useful for transient capture.
-- **Config** — use `config/lab/buck_bench` only with the 29 V battery/emulator setup. An
-  open-output SW-node sweep must instead be provisioned with
-  `config/lab/buck_bench_open_output`; its explicit name and separate complete profile guard against carrying
-  the 60 V open-output threshold back to a connected battery (see
-  [Lab config profiles](config-profiles.md#battery-vs-open-output)). Note
+The bench has four parts:
+
+- Input source:
+  - A plain CV/CC bench PSU is enough for protection and transient tests (set V, set I-limit).
+  - Real MPPT tracking needs a PV/solar-array simulator (Keysight, Chroma) or a PSU with a known
+    series resistance, so that an MPP exists. A stiff CV source has no maximum power point, and the
+    tracker just walks to the current limit.
+  - As an in-house alternative, a second Fugu boost in `mode=pv` emulates the panel curve at its
+    output (`pv` console command, `config/lab/boost_pv`). The PV-sim section of the
+    [power loop page](power-loop.md) lists the rig caveats.
+- Output sink: an electronic load acts as the battery emulator.
+  - CV mode sets a fixed pack voltage. The charger sees a battery clamped at that voltage.
+  - CC mode sets a fixed sink current, which defines the operating point and charge current.
+  - Reverse-current and battery-interrupt tests require a bidirectional source-sink.
+- Control and observation: drive everything from `etc/fugu_console.py`
+  (`-p <serial>` / `--ip <host>` / `--ble`). Send one command per step with `-c "<cmd>"`
+  (repeatable), pipe a batch of commands to `--stdin`, or use the interactive REPL (the default with
+  no mode flag). Telemetry goes to InfluxDB. The per-sample `scope` TCP stream is useful for
+  transient capture.
+- Config: use `config/lab/buck_bench` only with the 29 V battery/emulator setup. Provision an
+  open-output SW-node sweep with `config/lab/buck_bench_open_output` instead. Its explicit name and
+  separate complete profile guard against carrying the 60 V open-output threshold back to a
+  connected battery (see [Lab config profiles](config-profiles.md#battery-vs-open-output)).
   `reverse_current_paranoia` differs between configs and changes several thresholds below.
 
-Thresholds quoted below are from `config/fmetal/conf/limits.conf` /`charger.conf`
+The thresholds quoted below come from `config/fmetal/conf/limits.conf` /`charger.conf`
 (`vin_max=85`, `vout_max=60`, `iin_max=30`, `iout_max=32`, `temp_max=90`, `temp_derate=70`,
-`vout_max=29` pack, `cv_float=3.37`, `cv_eoc=3.57`). Read the actual conf on the unit under test —
-they are not compiled in.
+`vout_max=29` pack, `cv_float=3.37`, `cv_eoc=3.57`). These values aren't compiled in, so read the
+actual conf on the unit under test.
 
 ## Console commands used by the tests
+
+The tests use these console commands:
 
 | command | effect |
 |---|---|
@@ -65,7 +72,7 @@ they are not compiled in.
 
 ## 1. Protection / shutdown
 
-Each test should assert **a single trip event**, not a repeating storm. Capture the console for N
+Each test should assert a single trip event, not a repeating storm. Capture the console for N
 seconds and count `shutdown` / `Converter enabled` lines.
 
 ### 1.1 Vout > Vin shutdown in manual mode
@@ -77,10 +84,10 @@ seconds and count `shutdown` / `Converter enabled` lines.
   prevents re-fade.
 - **Pass**: exactly one enable/trip/disable cycle; no repeating warnings; unit stays in manual mode,
   converter disabled.
-- **Fail mode this guards**: pre-fix it re-faded every few ms (warning flood)
+- **Fail mode this guards**: before the fix it re-faded every few ms (warning flood).
 
 ### 1.2 Output over-voltage (OV)
-- **Setup**: charging normally, then drive output sink **voltage** above the OV threshold. It is
+- **Setup**: charging normally, then drive output sink voltage above the OV threshold. It is
   `min(ovset, vout_max)` if an `ovset` is set. Otherwise it is
   `min(base·(paranoia ? 1.03 : 1.5), vout_max)`, where the base is the PSU setpoint (`psu_vout` or `psu <V>`; PV-sim: `voc`) in
   PSU/PV mode and `Vbat_max` otherwise, and `paranoia` is `limits.conf::reverse_current_paranoia`
@@ -92,14 +99,14 @@ seconds and count `shutdown` / `Converter enabled` lines.
 - **Pass**: shutdown within one control tick of the threshold crossing; recovers when voltage drops.
 
 ### 1.3 Battery interrupt (load disconnect)
-- **Setup**: charging at moderate current, then **open the output** (sink off / relay).
+- **Setup**: charging at moderate current, then open the output (sink off / relay).
 - **Expected**: Vout spikes (target ≤ +10 %), OV protection catches it, slow recovery. Watch for
   overshoot beyond `vout_max` and any LS reverse-current event.
 - **Pass**: no sustained OV, no reverse-current trip latch-up; energy meter committed.
 
 ### 1.4 Input over-voltage
 - **Setup**: ramp PSU above `vin_max` (85 V).
-- **Expected**: `Vin .. > ..!` warning, shutdown. (Mind the board's absolute max — ramp gently.)
+- **Expected**: `Vin .. > ..!` warning, shutdown. (Mind the board's absolute max and ramp gently.)
 
 ### 1.5 Output over-current
 - **Setup**: sink in CC, step current above `iout_max·1.5` (instantaneous), or above
@@ -112,17 +119,17 @@ seconds and count `shutdown` / `Converter enabled` lines.
 - **Expected**: `Iin .. >1.3x lim .., shutdown`.
 
 ### 1.7 Supply under-voltage (board brownout)
-- **Setup**: lower **both** Vin and Vout below ~9 V (board derives its own supply from
-  max(Vin,Vout) − 0.3 V diode). Also check the `vin_min` (10.5 V) input floor in auto mode — at
+- **Setup**: lower both Vin and Vout below ~9 V (board derives its own supply from
+  max(Vin,Vout) − 0.3 V diode). Also check the `vin_min` (10.5 V) input floor in auto mode. At
   `Vin = vin_min` the unit should not start / should shut down.
 - **Expected**: `Supply under-voltage!`, shutdown, meter commit. `startCondition` uses a higher 9.5 V
   bar (hysteresis) so it won't immediately restart.
-- **Note**: manual mode passes `ignoreUV=true`, so this UV path is bypassed under `dc` — test in auto
+- **Note**: manual mode passes `ignoreUV=true`, so this UV path is bypassed under `dc`; test in auto
   mode.
 
 ### 1.8 Reverse current
-- **Setup**: bidirectional source-sink pushes current **into** the output (Vout source > converter).
-- **Expected**: progressive response — disable backflow switch, set LS to min duty, then on negative
+- **Setup**: bidirectional source-sink pushes current into the output (Vout source > converter).
+- **Expected**: progressive response: disable backflow switch, set LS to min duty, then on negative
   averaged current `Reverse avg current .., shutdown!`. Behavior depends on
   `reverse_current_paranoia`.
 
@@ -151,7 +158,7 @@ seconds and count `shutdown` / `Converter enabled` lines.
 - **Expected**: tracker re-converges to the new MPP without an OV/OC trip; measure settling time.
 
 ### 2.4 Periodic re-sweep
-- **Expected**: a fresh sweep ~every 30 min (or on major power change). Confirm it is **suppressed**
+- **Expected**: a fresh sweep ~every 30 min (or on major power change). Confirm it is suppressed
   while the battery is full / in CV (recharge-after-full guard).
 
 ### 2.5 Partial shading / multi-peak
@@ -178,7 +185,7 @@ seconds and count `shutdown` / `Converter enabled` lines.
 ### 3.3 CCM ↔ DCM transition
 - **Setup**: sweep load current down through the DCM boundary (set by Vin/Vout and coil L).
 - **Expected**: LS rectifier diode-emulation behaves (no reverse current); compare `CCM(H|L|Lm)`
-  counters against expectation. See [Diode Emulation.md](../internals/diode-emulation.md).
+  counters against expectation. See [Diode emulation](../internals/diode-emulation.md).
 
 ### 3.4 `sync` / `bf` mode coverage
 - Exercise `sync on/off/forced` and `bf 0/1` at a fixed `dc` operating point; verify reverse-current
@@ -189,7 +196,7 @@ seconds and count `shutdown` / `Converter enabled` lines.
 ## 4. Charger / CV-CC  *(battery emulator on output)*
 
 ### 4.0 CV with no battery (PV only)
-- **Setup**: input source only, **no battery / open output** (or sink in high-impedance).
+- **Setup**: input source only, no battery / open output (or sink in high-impedance).
 - **Expected**: output regulates to `Vout_max` (no pack to absorb current); converter holds CV at the
   output ceiling.
 
@@ -200,7 +207,7 @@ seconds and count `shutdown` / `Converter enabled` lines.
 ### 4.2 CV phase & taper
 - **Setup**: sink CV at/near `Vbat_max`.
 - **Expected**: enters CV, current tapers along the LFP termination line between `cv_float` and
-  `cv_eoc`. See [LFP Charging.md](../guide/charging/lfp-charging.md) / [Termination.md](../guide/charging/termination.md).
+  `cv_eoc`. See [LFP charging](../guide/charging/lfp-charging.md) and [Termination](../guide/charging/termination.md).
 
 ### 4.3 Termination
 - **Setup**: continue CV until tail current < `tail_c_rate·bat_c`.
@@ -208,7 +215,7 @@ seconds and count `shutdown` / `Converter enabled` lines.
 
 ### 4.4 Recharge-after-full
 - **Setup**: emulate a full pack (Vout clamped high), leave running ≥ 30 min.
-- **Expected**: periodic sweep is **gated off** while full/CV — no charge pulse into the full pack.
+- **Expected**: periodic sweep is gated off while full/CV, so there is no charge pulse into the full pack.
 
 ### 4.5 BMS cell-voltage coupling vs fallback
 - **Setup**: publish a high cell voltage over MQTT, then stop publishing (let it go stale > 180 s).
@@ -249,11 +256,14 @@ Mirror the buck cases with Vin < Vout: OV on output, reverse current, MPP tracki
 
 ## Automated gate-driver test
 
-`etc/mcpwm_gate_verify.py` — closed-loop PWM verifier. Drives the device over serial or
-telnet while capturing HS/LS gates on a PicoScope 2000. Asserts frequency, HS-duty
-linearity, LS pulse position/width across an HS × LS grid, dead-time + no shoot-through,
-and the hardware fault brake. Refuses to run against any host outside its bench/mock allow-list (bare `fugu` or
-`fugu-esp32s3-*` hostnames) unless `--force-host`, and refuses to start at all without `--stage-disconnected`.
+`etc/mcpwm_gate_verify.py` is a closed-loop PWM verifier. It drives the device over serial or
+telnet while capturing HS/LS gates on a PicoScope 2000. It asserts frequency, HS-duty linearity,
+LS pulse position/width across an HS × LS grid, dead-time and no shoot-through, and the hardware
+fault brake.
+
+The verifier refuses to run against any host outside its bench/mock allow-list (bare `fugu` or
+`fugu-esp32s3-*` hostnames) unless you pass `--force-host`. It refuses to start at all without
+`--stage-disconnected`.
 
 :::danger
 The allow-list is a name check only. An unnamed board, including a real converter, reports the default
@@ -261,23 +271,33 @@ The allow-list is a name check only. An unnamed board, including a real converte
 stage (no panel, no battery, no supply, caps discharged), then confirm it with `--stage-disconnected`.
 :::
 
+Run it over serial or telnet:
+
     python3 etc/mcpwm_gate_verify.py --serial <serial-port> --stage-disconnected [--skip-fault]
     python3 etc/mcpwm_gate_verify.py --ip <device-ip> --port <telnet-port> --stage-disconnected [--skip-fault]
 
-Wiring: Ch A on `board.conf::pwm_hi`, Ch B on `board.conf::pwm_li`, both DC-coupled at 5 V
+Wire Ch A to `board.conf::pwm_hi` and Ch B to `board.conf::pwm_li`, both DC-coupled at the 5 V
 range. For Phase 4, also wire a free GPIO (set with `--fault-driver-pin`, default 14) to
-`board.conf::pwm_fault_pin`. The pin must not be assigned in `board.conf`, an ADC1 pad or a reserved pin; the
-default 14 is `pwm_li` on Fugu2 boards. The device refuses such a pin (`gpio` fails) and the verifier reports a
-failed `fault_driver_pin` row and skips the brake test.
+`board.conf::pwm_fault_pin`.
+
+The fault-driver pin must not be assigned in `board.conf`, an ADC1 pad, or a reserved pin. The
+default 14 is `pwm_li` on Fugu2 boards. The device refuses such a pin (`gpio` fails), and the
+verifier then reports a failed `fault_driver_pin` row and skips the brake test.
 
 ---
 
 ## Automation notes
 
+Follow these practices when you script the cases:
+
 - Wrap each case as: set PSU + load → issue console command(s) → wait → read console/telemetry →
-  assert. The PASS/FAIL/SKIP console exerciser in `etc/e2e-test/test_console_plan.py` is a model to extend.
+  assert. The PASS/FAIL/SKIP console exerciser in `etc/e2e-test/test_console_plan.py` is a model to
+  extend.
+- Always assert single-trip behavior (count log lines). Repeating storms are themselves a bug class
+  (see 1.1).
+- Restore limits and `mppt` (auto mode) at the end of each case.
 - For trip tests, prefer lowering a limit to provoke a trip at safe currents/voltages instead of
-  driving real over-stress. `set-config` does not change the running limits, so a trip test right
+  driving real over-stress. `set-config` doesn't change the running limits, so a trip test right
   after it still acts at the boot-time limit.
 
 :::warning Lowered limits need a restart
@@ -286,7 +306,3 @@ new value before applying power. The value must still pass the `Limits` checks
 (`temp_derate < temp_max`, 20 < `temp_max` < 120). Restore the same way. Use `ovset` for a live
 output-OV threshold.
 :::
-
-- Always assert **single-trip** behavior (count log lines) — repeating storms are themselves a bug
-  class (see 1.1).
-- Restore limits and `mppt` (auto mode) at the end of each case.

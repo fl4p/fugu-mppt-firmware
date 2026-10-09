@@ -5,7 +5,7 @@ sidebar_position: 8
 
 # mqtt.conf
 
-Broker + BMS coupling.
+`mqtt.conf` sets the MQTT broker connection and the BMS topic subscriptions. It has the following keys.
 
 | key                       | unit | type   | default | description                                             |
 |---------------------------|------|--------|---------|---------------------------------------------------------|

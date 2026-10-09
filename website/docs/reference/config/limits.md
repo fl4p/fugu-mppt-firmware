@@ -5,7 +5,7 @@ sidebar_position: 3
 
 # limits.conf
 
-Protection cutouts.
+`limits.conf` holds the protection cutouts. The following table lists its keys.
 
 | key                        | unit | type  | default | description                                       |
 |----------------------------|------|-------|---------|---------------------------------------------------|

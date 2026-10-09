@@ -5,47 +5,60 @@ sidebar_position: 2
 
 # bsync beacon node (`etc/bsync-beacon/`)
 
-A dedicated, always-on beacon source for [beacon-sync.md](beacon-sync.md): a minimal ESP-IDF
-softAP (no Arduino, no fugu deps, ~160 LOC) whose hardware TBTT beacons are the shared
-timebase the converters' `bsync` service locks to. Replaces the household AP — quiet channel,
-full 10/s accept rate at the converters (vs 0.2–3/s next to a switching converter on a
-congested channel), no dependency on AP reboots/channel hops. The converters stay strictly
-RX-only; the node is the only transmitter and sits away from the analog front-ends.
+The beacon node is a dedicated, always-on beacon source for [beacon-sync.md](beacon-sync.md).
+Its hardware TBTT beacons are the shared timebase that the converters' `bsync` service locks
+to. The node is a minimal ESP-IDF softAP of ~160 LOC, with no Arduino and no fugu deps.
 
-Validated on a Seeed XIAO ESP32-S3; any S3 devkit works.
+The node replaces the household AP. Its channel is quiet, so the converters accept the full
+10/s, compared with 0.2–3/s next to a switching converter on a congested channel. AP reboots
+and channel hops no longer matter. The converters stay strictly RX-only. The node is the only
+transmitter and sits away from the analog front-ends.
+
+The node is validated on a Seeed XIAO ESP32-S3. Any S3 devkit works.
 
 ## Why beacons, why 100 TU
 
-Only the MAC's beacon engine inserts the TSF timestamp **in hardware at TX time** — that is
-what makes the timestamps µs-accurate with no software in the loop. Two consequences:
+Only the MAC's beacon engine inserts the TSF timestamp in hardware at TX time. This makes
+the timestamps µs-accurate with no software in the loop, and it has two consequences:
 
-- `wifi_ap_config_t::beacon_interval` is validated ≥100 TU (102.4 ms) by ESP-IDF, so 10/s is
-  the ceiling without patching the check or poking the TBTT register directly. Not worth it:
-  at 10/s the loop is stamp-noise-limited, not rate-limited (slow wander sits below the
-  per-beacon fast noise — see the campaign table in beacon-sync.md).
-- Raw-injected frames (`esp_wifi_80211_tx`) get their timestamp *field* hw-overwritten too
-  (verified: a sentinel-stamped injected beacon is accepted by the receiver's residual gate,
-  which a verbatim sentinel could never pass), but their TX *timing* is soft-scheduled — that
-  queueing jitter is not common-view-cancelled and measured ~4× worse slow wander. The
-  firmware still contains the 20 ms injector from that experiment; receivers filter it out
-  with `bsync.conf::hw_only=1` (frame length: full-IE beacon >80 B vs 47 B injected skeleton).
-  Production config keeps `hw_only=1`; the injector is slated for removal.
+- ESP-IDF validates `wifi_ap_config_t::beacon_interval` as ≥100 TU (102.4 ms), so 10/s is
+  the ceiling unless you patch the check or poke the TBTT register directly. Neither is
+  worth doing. At 10/s, stamp noise limits the loop, not the rate: slow wander sits below
+  the per-beacon fast noise (see the campaign table in beacon-sync.md).
+- The hardware also overwrites the timestamp *field* of raw-injected frames
+  (`esp_wifi_80211_tx`). This is verified: the receiver's residual gate accepts a
+  sentinel-stamped injected beacon, which a verbatim sentinel could never pass. The TX
+  *timing* of injected frames is soft-scheduled, though. Common view doesn't cancel that
+  queueing jitter, and the measured slow wander was ~4× worse.
+
+The firmware still contains the 20 ms injector from that experiment. Receivers filter it out
+with `bsync.conf::hw_only=1`, which tells the frames apart by length: a full-IE beacon is
+>80 B and the injected skeleton is 47 B. The production config keeps `hw_only=1`, and the
+injector is slated for removal.
 
 ## Firmware
 
-`main/main.c`: hidden-SSID softAP (`bsync-p0`, WPA2, nobody joins), channel `#define CHANNEL`
-(13), country `DE` (ch 12/13 legal), `esp_wifi_set_max_tx_power(84)`, DHCP server stopped
-after AP start (waits for the default `AP_START` handler to avoid the stop/start race) — the
-node emits beacons and nothing else. Console on USB-Serial/JTAG
-(`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` in sdkconfig.defaults).
+The firmware in `main/main.c` runs a hidden-SSID softAP (`bsync-p0`, WPA2) that nobody joins.
+It uses these settings:
 
-The boot banner prints the AP MAC — that is the `bssid` to configure on the converters
-(base MAC + 1).
+- channel `#define CHANNEL` (13)
+- country `DE`, where ch 12/13 are legal
+- `esp_wifi_set_max_tx_power(84)`
 
-**User LED** (GPIO 21): solid = app entered; 0.5 Hz blink = AP up + injector running.
-Dark with the port enumerated = the chip is sitting in ROM download mode (see traps).
+The firmware stops the DHCP server after the AP starts. It waits for the default `AP_START`
+handler first to avoid the stop/start race. The node emits beacons and nothing else.
 
-## Build / flash
+The console runs on USB-Serial/JTAG (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` in
+sdkconfig.defaults). The boot banner prints the AP MAC (base MAC + 1), which is the `bssid`
+to configure on the converters.
+
+The user LED (GPIO 21) is solid once the app is entered. It blinks at 0.5 Hz when the AP is
+up and the injector is running. If the LED stays dark while the port enumerates, the chip is
+sitting in ROM download mode (see [Traps](#traps)).
+
+## Build and flash
+
+Build and flash the node with ESP-IDF 5.5 or later:
 
 ```bash
 . $IDF_PATH/export.sh   # ESP-IDF 5.5+
@@ -55,6 +68,8 @@ idf.py -p /dev/cu.usbmodemXXX flash
 ```
 
 ## Receiver setup (per converter)
+
+Run these console commands on each converter.
 
 ```
 set-config bsync.conf bssid <node mac>
@@ -67,10 +82,11 @@ svc rs bsync      # channel; bare `wifi off` persists across reboots until `wifi
 
 ## Traps
 
-- **XIAO ROM download mode**: if the board was (re)plugged with BOOT held, esptool's RTS
-  reset re-enters download mode forever (strap latched at power-on) — silent console, no
-  beacons, port still enumerates. Recovery: replug **without** touching BOOT.
-- If your shell setup autodetects `ESPPORT`, it can pick the node's port; always pass `-p`
+- XIAO ROM download mode: if the board was (re)plugged with BOOT held, esptool's RTS reset
+  re-enters download mode forever, because the strap is latched at power-on. The console is
+  silent and no beacons go out, but the port still enumerates. To recover, replug without
+  touching BOOT.
+- If your shell setup autodetects `ESPPORT`, it can pick the node's port. Always pass `-p`
   explicitly when flashing converters, and never reset the node casually.
-- A receiver associated to any AP cannot tune the sniffer channel — `wifi off` first
+- A receiver associated to any AP can't tune the sniffer channel, so run `wifi off` first
   (see beacon-sync.md).

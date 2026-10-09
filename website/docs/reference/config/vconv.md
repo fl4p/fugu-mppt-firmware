@@ -5,10 +5,11 @@ sidebar_position: 18
 
 # vconv.conf
 
-Virtual converter plant (`CONFIG_FUGU_WITH_VCONV` builds, `sensor.conf` `adc = vconv`). Replaces the power stage and ADC with a simulated PV source, battery and passives; read by `src/adc/sensor_setup.cpp` and `src/adc/vconv.h`. Example: [`config/lab/vconv_mock`](../../../../config/lab/vconv_mock/conf/vconv.conf).
+`vconv.conf` configures the virtual converter plant, which replaces the power stage and ADC with a simulated PV source, battery, and passives. It applies to `CONFIG_FUGU_WITH_VCONV` builds with `sensor.conf` `adc = vconv`. `src/adc/sensor_setup.cpp` and `src/adc/vconv.h` read it. For an example, see [`config/lab/vconv_mock`](../../../../config/lab/vconv_mock/conf/vconv.conf).
 
-The inductor comes from `coil.conf::L0` and the topology from `converter.conf::topo` (`buck`/`boost`),
-not from this file.
+The simulation takes the inductor from `coil.conf::L0` and the topology from `converter.conf::topo` (`buck`/`boost`). This file doesn't set either.
+
+The file accepts the following keys.
 
 | key             | unit | type  | default | description                                                                 |
 |-----------------|------|-------|---------|-----------------------------------------------------------------------------|

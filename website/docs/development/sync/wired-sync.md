@@ -5,81 +5,91 @@ sidebar_position: 3
 
 # Wired inter-chip MCPWM clock sync (`WITH_WSYNC`)
 
-ns-class alternative to the beacon servo (`bsync`, µs-class): one converter (leader) emits a
-pulse hardware-locked to its MCPWM TEZ; followers hardware-reload their timer count on the pulse's
-rising edge. No software in the loop — relative jitter collapses to edge-detection dispersion
-(driver + coupling RC + input threshold, low single-digit ns, under one 6.25 ns tick), and a
-follower never free-runs more than one period from the leader, so crystal drift (±ppm) is absorbed
-as a sub-tick correction every cycle. The sync edge is resampled in the 160 MHz group clock, so
-relative jitter is up to one tick (6.25 ns), not under it.
+Wired sync locks a follower's MCPWM timer to a leader's with nanosecond-class jitter. The beacon
+servo (`bsync`) is the microsecond-class alternative. The leader emits a pulse that its hardware
+locks to the MCPWM TEZ event, and on the pulse's rising edge each follower's hardware reloads its
+timer count. No software runs in the loop.
 
-The follower runs its period **2 ticks short** (`wsyncLeadTicks`), so its own TEZ always fires
-before the leader's edge arrives and the sync only ever *truncates* an already-wrapped period.
-This is what makes the sync safe: the gates take their normal TEZ actions with the software-
-reserved LS→HS dead-band intact, and the sync itself drives only LS. It must never drive HS —
-that would switch HS on in the same clock it switches LS off, and the LS→HS band is not hardware
-dead-time (it comes from `pwmMax -= dtTicks`, which only holds at a real period boundary), so an
-out-of-phase edge would command zero dead time and 30–80 ns of cross-conduction. 2 ticks is
-~490 ppm at 39 kHz, against ~40 ppm worst-case crystal mismatch plus one tick of resync
-quantization.
+Edge-detection dispersion in the driver, the coupling RC, and the input threshold is in the low
+single-digit nanoseconds, under one 6.25 ns tick. The follower resamples the sync edge in the
+160 MHz group clock, so the relative jitter is up to one tick (6.25 ns). A follower never
+free-runs for more than one period, so the sync absorbs crystal drift (±ppm) as a sub-tick
+correction every cycle.
+
+The follower runs its period 2 ticks short (`wsyncLeadTicks`). Its own TEZ therefore fires before
+the leader's edge arrives, and the sync only truncates a period that has already wrapped. The gates
+take their normal TEZ actions with the software-reserved LS→HS dead band intact, and the sync
+drives only LS.
+
+The sync must not drive HS. An HS sync action would switch HS on in the same clock that switches
+LS off. The LS→HS band comes from `pwmMax -= dtTicks`, which holds only at a real period boundary,
+so it isn't hardware dead time. An out-of-phase edge would command zero dead time and 30–80 ns of
+cross-conduction.
+
+The 2-tick margin is ~490 ppm at 39 kHz. The worst-case crystal mismatch is ~40 ppm, plus one
+tick of resync quantization.
 
 ## Configuration
 
+Wired sync uses one Kconfig option and four conf keys:
+
 - Kconfig: `CONFIG_FUGU_WITH_WSYNC=y` (depends on `FUGU_WITH_MCPWM`).
-- `board.conf::pwm_sync_pin` — the sync GPIO (leader: pulse out; follower: sync in, pulled down).
-- `converter.conf::sync_role` — `none` (default) / `leader` / `follower`. Requires
+- `board.conf::pwm_sync_pin`: the sync GPIO. On the leader it's the pulse output; on the follower
+  it's the sync input, pulled down.
+- `converter.conf::sync_role`: `none` (default), `leader`, or `follower`. Requires
   `pwm_driver=mcpwm`.
-- `converter.conf::sync_phase_deg` — **leader only**: pulse offset from its own TEZ as an angle,
-  which shifts the follower's period start (`180` = interleave, `0` = in phase). Frequency-
-  independent, so it survives a `pwm_freq` change.
-- `converter.conf::sync_phase_ns` — **leader only**: additive trim on `sync_phase_deg`, for wire +
-  receiver propagation delay. That delay is a fixed time, not an angle, which is why it is a
-  separate key.
+- `converter.conf::sync_phase_deg` (leader only): the pulse offset from the leader's own TEZ as an
+  angle, which shifts the follower's period start (`180` = interleave, `0` = in phase). The angle
+  doesn't depend on frequency, so it survives a `pwm_freq` change.
+- `converter.conf::sync_phase_ns` (leader only): an additive trim on `sync_phase_deg` for wire and
+  receiver propagation delay. That delay is a fixed time rather than an angle, so it has its own
+  key.
 
-Both are ignored with a warning on a follower — its reload target is fixed at count 0, because
-any value past a live comparator would re-open the skipped-event hazard below.
+A follower ignores `sync_phase_deg` and `sync_phase_ns` and logs a warning. Its reload target is
+fixed at count 0, because any value past a live comparator would re-open the skipped-event hazard
+described under [Leader pulse and follower reload](#leader-pulse-and-follower-reload).
 
-The leader pulse is ~1 µs high once per period (default at TEZ), generated by a dedicated
-MCPWM operator on the same timer, so the gate-drive dead-time submodule is untouched. Both
-devices keep identical `pwm_freq`; the sync does not replace the period, it re-phases the
-follower each cycle.
+Both devices must use the same `pwm_freq`. The sync re-phases the follower every cycle and doesn't
+replace its period.
 
-On the follower the sync edge reloads the count to 0 and latches the comparator/period shadow
-registers (`update_cmp_on_sync`/`update_period_on_sync`/`update_dead_time_on_sync`), so a
-follower whose crystal runs slow — reloaded below its period every cycle, so its own TEZ never
-fires — still gets its shadow latching from the sync event.
+## Leader pulse and follower reload
 
-It is **not** a full TEZ substitute for the gates: only LS takes a sync action (below), so an
-arbitrary-phase jump does not land in a clean period-start state. See the pulse anomalies
-described further down; that is why the wire must be qualified before the follower is armed.
+The leader's pulse is high for ~1 µs once per period, at TEZ by default. A dedicated MCPWM operator
+on the same timer generates it, so the gate-drive dead-time submodule is untouched.
 
-Implementation note: only the **LS** generator gets a sync action
-(`mcpwm_generator_set_action_on_sync_event`); its LOW-at-sync is what prevents HS/LS overlap
-after a mid-cycle jump on HiLi hardware. There is deliberately **no HS action** — driving HS
-high on the sync edge would turn it on in the same clock that turns LS off, with zero dead
-time. HS turn-on stays with TEZ, which the follower always reaches first thanks to
-`wsyncLeadTicks`.
+On the follower, the sync edge reloads the count to 0 and latches the comparator and period shadow
+registers (`update_cmp_on_sync`, `update_period_on_sync`, and `update_dead_time_on_sync`). If the
+follower's crystal runs slow, the sync reloads the count below the period every cycle and the
+follower's own TEZ never fires. The follower still gets its shadow latching from the sync event.
 
-An arbitrary-phase edge is therefore not shoot-through, but it is not harmless either. On
-**HiLi** (`enLogic=0`, `board.conf::pwm_driver_logic=HiLi`) the sync action drives LS LOW: sync while HS is high
-forces LS low, leaves HS high, and resets the counter — so HS stays on for another full
-`cmpHS` interval, approaching twice its normal on-time. Sync while LS is high chops LS and
-skips the next HS pulse. On **InEn** (`enLogic=1`) the same action drives LS/EN *high*, so the
-anomaly differs; the reasoning above is HiLi-specific.
+For the gates, the sync is only a partial TEZ substitute. Only the LS generator has a sync action
+(`mcpwm_generator_set_action_on_sync_event`), so a jump at an arbitrary phase doesn't land in a
+clean period-start state. On HiLi hardware, the LOW-at-sync action prevents HS/LS overlap after a
+mid-cycle jump. HS has no sync action by design, for the dead-time reason above. HS turn-on stays
+with TEZ, which the follower always reaches first because of `wsyncLeadTicks`.
 
-This is why the sync input is armed before `start()`, with the gates idle, and why nothing may
-arm a follower that has not positively qualified a live leader.
+An arbitrary-phase edge therefore causes no shoot-through, but it still distorts the pulses. On
+HiLi (`enLogic=0`, `board.conf::pwm_driver_logic=HiLi`), the sync action drives LS low:
 
-`bsync` and `sync_role=follower` are mutually exclusive at runtime: the bsync service refuses to
-start on a wired-sync follower (the wire owns the period).
+- A sync while HS is high forces LS low, leaves HS high, and resets the counter. HS stays on for
+  another full `cmpHS` interval, which approaches twice its normal on-time.
+- A sync while LS is high chops LS and skips the next HS pulse.
+
+On InEn (`enLogic=1`), the same action drives LS/EN high, so the anomaly differs. The analysis above
+applies to HiLi only.
+
+For this reason the firmware arms the sync input before `start()`, while the gates are idle, and
+nothing may arm a follower that hasn't positively qualified a live leader.
 
 ## Coupling circuit (DC-blocked, tolerates ~1 V static ground offset)
 
-**Not galvanic isolation, and no common-mode rejection above DC.** C1's reactance at the pulse
-edge is ~50 Ω against a ~7.7 k node, so a ground-to-ground *step* couples in essentially
-unattenuated — a 2 V CM step with a ≤1 µs edge is indistinguishable from the sync pulse at the
-receiver. A static offset is rejected; a stiff conducted CM transient is not. For anything beyond
-a quiet bench, use a 1:1 pulse transformer or a digital isolator instead of this network.
+The network only blocks DC. It rejects a static ground offset but passes common-mode transients,
+and both sides share a galvanic path. C1's reactance at the pulse edge is ~50 Ω against a ~7.7 k
+node, so a ground-to-ground step couples in essentially unattenuated: at the receiver, a 2 V CM
+step with a ≤1 µs edge looks the same as the sync pulse. Outside a quiet bench, use a 1:1 pulse
+transformer or a digital isolator instead of this network.
+
+The network connects the leader's GPIO to the follower's sync input:
 
 ```
   LEADER                                                      FOLLOWER
@@ -101,124 +111,159 @@ a quiet bench, use a 1:1 pulse transformer or a digital isolator instead of this
              (pair return, ~1 V DC offset OK)   C2 100nF (C0G/film ≥50 V)
 ```
 
-C1's follower-side pin lands on the bias node ● (junction of R1, R2 and the 1 k into the
-optional Schmitt buffer's input, or straight into the GPIO without it); C2's follower-side pin goes straight to follower GND. The two are NOT connected to each
-other. C2 is the pulse's return path: joining it to the bias node would force the return
-current through R2, killing the edge. R1/R2 bias the idle node to ~0.77 V; a 3.3 V edge through C1 rides on top of that.
+C1's follower-side pin connects to the bias node ●. That node joins R1, R2, and the 1 k resistor,
+which feeds the optional Schmitt buffer's input, or the GPIO directly without the buffer. C2's
+follower-side pin goes straight to follower GND. C1 and C2 aren't connected to each other. C2 is
+the pulse's return path: joining it to the bias node would force the return current through R2 and
+block the edge. R1 and R2 bias the idle node to ~0.77 V, and a 3.3 V edge through C1 rides on top
+of that level.
 
-Pin choice: any GPIO works via the matrix, but pick with boot behavior in mind. Leader out —
-IO0 is OK (the strap only samples at the leader's own reset and the AC-coupled wire can't
-pull it; mind a BOOT button/debounce cap on that net). Follower in — never a strapping pin
-(IO0/3/45/46: the ~0.77 V bias and the pulse train can strap a rebooting follower into ROM
-download mode); U0RXD is a good choice (silent at boot, non-strapping — costs the UART
-serial-RX console on that device, USB/telnet/BLE unaffected). Avoid U0TXD on the LEADER:
-ROM boot chatter becomes a >period-rate spurious sync burst into a converting follower.
+Any GPIO works through the GPIO matrix, but boot behavior limits the choice of pins:
 
-- C1 couples the edge; C2 closes the HF return loop while standing off the DC ground offset. It is
-  electrically **in series** with C1 for the pulse, so at 10 nF it is a 9 % series element, not the
-  negligible "ground bond" it looks like — use **100 nF** (C_eff 0.99 nF). Film/C0G ≥50 V
-  (class-2 ceramic capacitance sags with bias).
-- With the buffer fitted, the node idles at the **bare-divider** value, 3.3·10/(33+10) ≈ **0.77 V**:
-  the internal pull-down the sync-src config forces on (`src/pwm/mcpwm.h`) loads only the buffer output.
-  Without the buffer that pull-down sits in parallel with R2 and the node idles lower; check it against the
-  pad's V_IL. Check the idle level and the pulse against the 74LVC1G17's
-  V_T− / V_T+ at the follower's VCC (datasheet), not against the S3 pad's V_IL.
-- Node Thevenin 33k‖10k ≈ **7.7 k**; with C_eff 0.99 nF, τ ≈ 7.6 µs, so the level droops ≈ 12 %
-  over a 1 µs pulse.
-- **74LVC1G17 Schmitt buffer (follower 3V3) between bias node and GPIO — optional.** Without it, wire the
-  1 k straight to the GPIO. The S3 pad has no input hysteresis, so a slow or ringing edge on this
-  high-impedance node beside a switching stage can multi-trigger, and a false edge is not cosmetic (see the
-  dead-time hazard below). Fit the buffer for long or noisy lines, or when the bench checklist shows extra edges.
-- Route away from the power stage; if shielded, tie the shield on one side only.
+- Leader output: IO0 is acceptable. The strap is sampled only at the leader's own reset, and the
+  AC-coupled wire can't pull it. Check that net for a BOOT button or debounce capacitor.
+- Follower input: don't use a strapping pin (IO0, IO3, IO45, or IO46). The ~0.77 V bias and the
+  pulse train can strap a rebooting follower into ROM download mode. U0RXD works well because it's
+  silent at boot and isn't a strapping pin. It costs that device's UART serial-RX console; USB,
+  telnet, and BLE still work.
+- Don't use U0TXD on the leader. Its ROM boot output reaches a converting follower as a burst of
+  spurious sync edges, faster than the period rate.
+
+Choose and fit the components as follows:
+
+- C1 couples the edge. C2 closes the high-frequency return loop while standing off the DC ground
+  offset. For the pulse, C2 is in series with C1, so at 10 nF it's a 9 % series element rather than
+  a negligible "ground bond". Use 100 nF (C_eff 0.99 nF), film or C0G, rated ≥50 V. Class-2 ceramic
+  capacitance drops with bias voltage.
+- With the buffer fitted, the node idles at the bare-divider value, 3.3·10/(33+10) ≈ 0.77 V. The
+  internal pull-down that the sync-source config forces on (`src/pwm/mcpwm.h`) loads only the
+  buffer output. Check the idle level and the pulse against the 74LVC1G17's V_T− and V_T+ at the
+  follower's VCC (datasheet), not against the S3 pad's V_IL.
+- Without the buffer, that pull-down is in parallel with R2 and the node idles lower. Check that
+  level against the pad's V_IL.
+- The node's Thevenin resistance is 33k‖10k ≈ 7.7 k. With C_eff 0.99 nF, τ ≈ 7.6 µs, so the level
+  droops ≈ 12 % over a 1 µs pulse.
+- The 74LVC1G17 Schmitt buffer, powered from the follower's 3V3, sits between the bias node and the
+  GPIO and is optional. Without it, wire the 1 k resistor straight to the GPIO. The S3 pad has no
+  input hysteresis, so a slow or ringing edge on this high-impedance node next to a switching stage
+  can trigger more than once. A false edge disturbs the gates, as described under
+  [Leader pulse and follower reload](#leader-pulse-and-follower-reload). Fit the buffer for long or
+  noisy lines, or when the bench checklist shows extra edges.
+- Route the pair away from the power stage. If the cable is shielded, connect the shield at one
+  end only.
 
 ## Interaction with bsync
 
-`bsync` and `sync_role=follower` are mutually exclusive: the `bsync` service refuses to start on a
-follower. Run `bsync` on the leader, or in wireless-only setups.
+`bsync` and `sync_role=follower` are mutually exclusive at runtime, because the wire owns the
+period. The `bsync` service refuses to start on a wired-sync follower. Run `bsync` on the leader,
+or in wireless-only setups.
 
 ## Bench checklist
 
-- [x] scope leader pulse: ~1 µs, every period, rigid to leader HS rising edge
-- [x] wire delivers: `wsync` on the follower reads the leader's rate (38.98 kHz), and 0.00 kHz
-      with the leader's `sync_role` set to `none` — the diagnostic has been seen to fire
+Ticked items have passed on the bench:
 
-`wsync` reports the **running** role (`wsync role=follower|leader`) before the count, because a
-leader counts its own outgoing pulse at exactly `pwm_freq` — identical to a locked follower — and
-`sync_role` is read once at boot, so the conf file can disagree with what the driver is doing. The
-count accumulates across the 16-bit PCNT wrap (`accum_count` + a high-limit watch point), so a
-noise-multiplied edge rate reads high instead of wrapping into a plausible healthy rate, and the
-rate is divided by the *measured* window, not the requested one. Host-side check:
-`FuguDevice.wsync_status()` in fugu-py, which is tri-state — it reports `None` (unverified)
-rather than a pass whenever the role, `pwm_freq` or the count cannot be established.
-- [ ] follower locks: both switch nodes stationary relative to each other, no beat
-- [ ] measure propagation delay (leader TEZ → follower reload) → subtract it via `sync_phase_ns`
-- [ ] pull the wire: follower free-runs (beat returns), reconnect → relock within one period
-- [ ] 1 V DC offset injected between grounds: no lock change, no DC current in the pair
+- [x] Scope the leader pulse: ~1 µs, every period, fixed relative to the leader's HS rising edge.
+- [x] Confirm that the wire delivers: `wsync` on the follower reads the leader's rate (38.98 kHz),
+      and 0.00 kHz with the leader's `sync_role` set to `none` (the diagnostic has been seen to
+      fire).
+- [ ] Confirm the follower locks: both switch nodes stay stationary relative to each other, with no
+      beat.
+- [ ] Measure the propagation delay (leader TEZ → follower reload) and subtract it with
+      `sync_phase_ns`.
+- [ ] Pull the wire: the follower free-runs and the beat returns. Reconnect it: the follower relocks
+      within one period.
+- [ ] Inject a 1 V DC offset between the grounds: the lock doesn't change, and no DC current flows
+      in the pair.
+
+`wsync` reports the running role (`wsync role=follower|leader`) before the count. A leader counts
+its own outgoing pulse at exactly `pwm_freq`, the same as a locked follower, and `sync_role` is read
+once at boot, so the conf file can disagree with what the driver is doing. The count accumulates
+across the 16-bit PCNT wrap (`accum_count` plus a high-limit watch point), so a noise-multiplied
+edge rate reads high instead of wrapping into a plausible healthy rate. `wsync` divides the count
+by the measured window, not the requested one.
+
+The host-side check is `FuguDevice.wsync_status()` in fugu-py. It's tri-state: it returns `None`
+(unverified) instead of a pass whenever it can't establish the role, `pwm_freq`, or the count.
 
 ## Sync on a USB pad (no GPIO header)
 
-A board that breaks out only USB and I2C has its sync wire arrives on **GPIO19 (USB D−)** — also half
-the USB-Serial-JTAG PHY. The pad serves the PHY or the GPIO matrix, never both, so `drvInit`
-picks at boot (`src/pwm/wsync_usb.h`). This engages only when `pwm_sync_pin` is a USB pin;
-pin 44 / pin 0 boards take the unchanged path.
+On a board that breaks out only USB and I2C, the sync wire arrives on GPIO19 (USB D−), which is
+also half of the USB-Serial-JTAG PHY. The pad can serve the PHY or the GPIO matrix, but not both,
+so `drvInit` chooses at boot (`src/pwm/wsync_usb.h`). This path runs only when `pwm_sync_pin` is a
+USB pin. Boards that use pin 44 or pin 0 take the unchanged path.
 
-1. If `usb_serial_jtag_is_connected()` (SOF activity, not just VBUS) — a host is really there,
-   leave the pad alone and run without wired sync.
-2. Otherwise disable the PHY pad and qualify the line: two 20 ms PCNT windows, both within
-   ±10% of `pwm_freq` and agreeing with each other.
-3. Qualified → keep the pad, arm the follower. Otherwise restore the pad and fall back to USB.
+At boot, a follower on a USB pad goes through these steps:
 
-Two details are load-bearing:
+1. If `usb_serial_jtag_is_connected()` reports SOF activity (not just VBUS), a host is present.
+   The firmware leaves the pad to USB and runs without wired sync.
+2. Otherwise, the firmware disables the PHY pad and qualifies the line. Two 20 ms PCNT windows
+   must both be within ±10% of `pwm_freq` and agree with each other.
+3. If the line qualifies, the firmware keeps the pad and arms the follower. Otherwise, it restores
+   the pad and falls back to USB.
 
-- The probe uses a **25 ns** PCNT glitch filter to match the MCPWM PIN filter. Qualifying
-  through a wider window would pass a line whose sub-window ringing then re-phases the timer.
-- `pcnt_new_channel()` unconditionally enables the pad **pull-up** and disables the pull-down,
-  which parks the AC-coupled node near mid-rail. The probe re-applies `GPIO_PULLDOWN_ONLY`
-  immediately, as `initSyncIn()` does for the operational path.
+The probe handles two pad details:
 
-Teardown order on the reject path is fixed — `stop → disable → del_channel → del_unit →
-pad enable` — so the pad never returns to the PHY while its pulls are still being touched.
+- It uses a 25 ns PCNT glitch filter to match the MCPWM PIN filter. A wider qualification window
+  would pass a line whose sub-window ringing then re-phases the timer.
+- `pcnt_new_channel()` always enables the pad pull-up and disables the pull-down, which parks the
+  AC-coupled node near mid-rail. The probe re-applies `GPIO_PULLDOWN_ONLY` immediately afterwards,
+  as `initSyncIn()` does on the operational path.
 
-`wsync` reports the outcome (`mode=usb (no sync edges)`, `mode=usb (host active)`, …); without
-it a USB fallback is indistinguishable from a configured `sync_role=none`.
+On the reject path, the teardown order is fixed (`stop → disable → del_channel → del_unit → pad
+enable`), so the pad never returns to the PHY while its pulls are still being changed.
 
-A **leader** on a USB pad runs step 1 only: with no active host it disables the PHY pad and
-drives its pulse on D−; with a host it keeps USB and runs unsynced. There is nothing to qualify,
-so the leader keeps the pad for the whole run, and a host plugged in later gets no USB console
-until the next boot. Reach that board over BLE or Wi-Fi.
+`wsync` reports the outcome (`mode=usb (no sync edges)`, `mode=usb (host active)`, …). Without that
+report, a USB fallback looks the same as a configured `sync_role=none`.
+
+A leader on a USB pad runs only step 1. With no active host, it disables the PHY pad and drives
+its pulse on D−. With a host, it keeps USB and runs unsynced. A leader has nothing to qualify, so it
+keeps the pad for the whole run, and a host plugged in later gets no USB console until the next
+boot. Reach that board over BLE or Wi-Fi.
 
 ### Two USB-only boards on one cable
 
-With both boards on a USB pad, a C-to-C data cable carries the sync on D− (the receptacle joins
-A7/B7, so either orientation works; a charge-only cable has no D− wire). The cable bypasses the
-coupling circuit above: it ties the two GNDs and the two VBUS nets together directly, and the
-pulse is DC-coupled. That is acceptable only when both converters share a ground reference with
-no DC offset between the boards, and when neither board can back-feed the other through VBUS.
-Otherwise put the coupling circuit on a USB-C breakout (D− = sync, GND via C2, VBUS and CC left
-open) and use the cable from there.
+If both boards use a USB pad, a C-to-C data cable carries the sync on D−. The receptacle joins A7
+and B7, so either orientation works. A charge-only cable has no D− wire.
+
+The cable bypasses the coupling circuit above: it connects the two GNDs and the two VBUS nets
+directly, and the pulse is DC-coupled. Use a direct cable only when both converters share a ground
+reference with no DC offset between the boards, and neither board can back-feed the other through
+VBUS. Otherwise, put the coupling circuit on a USB-C breakout (D− = sync, GND through C2, VBUS and
+CC left open) and connect the cable there.
 
 ### Re-arming after the leader comes up late
 
-A board that booted with USB attached, or before its leader was running, stays in USB mode for
-that whole run — the pad decision is a boot-time one. `wsync arm` (over BLE) sets a **one-shot**
-NVS flag; the next boot skips the *USB host pre-check* only and runs the probe anyway (a leader
-takes the pad unconditionally). It never
-skips qualification: `sync_role=follower` with no leader on the wire still falls back to USB.
-That is deliberate — a follower armed against a dead wire takes its first arbitrary-phase sync
-edge with the gates already switching, and the HS anomaly above is a double-length pulse into
-the half-bridge. `wsync arm off` clears a pending flag.
+The firmware decides the pad at boot. A board that booted with USB attached, or before its leader
+was running, therefore stays in USB mode for that whole run.
 
-The flag is read, cleared and committed in `setup()` *before* `converter.init()` runs, so a
-crash inside the probe returns to automatic mode rather than repeating the forced probe on every
-boot. A plain power cycle likewise returns to automatic. `KeyValueStorage::commit()` exists for
-this: `writeString()` only stages the `nvs_set_str`, which `esp_restart()` would discard.
+To retry, run `wsync arm` over BLE. It sets a one-shot NVS flag, and on the next boot the firmware
+skips only the USB host pre-check and runs the probe anyway. A leader takes the pad
+unconditionally. The flag doesn't skip qualification: with `sync_role=follower` and no leader on
+the wire, the board still falls back to USB, because a follower armed against a dead
+wire takes its first arbitrary-phase sync edge while the gates are already switching, and the HS
+anomaly described above puts a double-length pulse into the half-bridge. `wsync arm off` clears a
+pending flag.
 
-Bench-validated on such a USB-only board 2026-08-19: OTA over BLE, `pwm_sync_pin=19`, locked at 38.99–39.04 kHz
-across three windows against `pwm_freq=39000`, no ADC errors, sampler steady. Pointing the pin
-at D+ (GPIO20, unwired) correctly reported `mode=usb (no sync edges)` and restored USB.
+The firmware reads, clears, and commits the flag in `setup()` before `converter.init()` runs. A
+crash inside the probe therefore returns the board to automatic mode instead of repeating the
+forced probe on every boot. A plain power cycle also returns it to automatic mode.
+`KeyValueStorage::commit()` exists for this case: `writeString()` only stages the `nvs_set_str`,
+and `esp_restart()` would discard it.
 
-A runtime switching-frequency change (`pwm-freq`) is **refused while wired sync is armed** (leader, or a
-follower that qualified its line). The leader's pulse comparators are absolute ticks written once in
-`initSyncOut()`, a follower's period is baked `wsyncLeadTicks` short in `init()`, and both ends are
-assumed to run the same `pwm_freq` — none of which has a re-arm path. The refusal is on the *effective*
-mode, not on `sync_role`: a board whose follower probe fell back to USB has a free period and is allowed.
+The USB-pad path was bench-validated on a USB-only board on 2026-08-19: OTA over BLE,
+`pwm_sync_pin=19`, locked at 38.99–39.04 kHz across three windows against `pwm_freq=39000`, with
+no ADC errors and a steady sampler. With the pin pointed at D+ (GPIO20, not wired), `wsync`
+reported `mode=usb (no sync edges)` and the firmware restored USB.
+
+## Switching-frequency changes
+
+The firmware refuses a runtime switching-frequency change (`pwm-freq`) while wired sync is armed,
+on a leader or on a follower that qualified its line. Wired sync depends on three settings that
+have no re-arm path:
+
+- The leader's pulse comparators are absolute ticks that `initSyncOut()` writes once.
+- A follower's period is set `wsyncLeadTicks` short in `init()`.
+- Both ends assume the same `pwm_freq`.
+
+The refusal checks the effective mode, not `sync_role`. A board whose follower probe fell back to
+USB has a free-running period, so the change is allowed.

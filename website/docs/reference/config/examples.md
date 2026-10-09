@@ -7,7 +7,7 @@ sidebar_position: 19
 
 ## Bare ESP32-S3 example
 
-A minimal `sensor.conf` for an ESP32-S3 with no external ADC (the channel→GPIO comments are S3 mappings):
+This minimal `sensor.conf` runs the firmware on an ESP32-S3 with no external ADC. The channel→GPIO comments are S3 mappings.
 
 ```
 adc = esp32adc1
@@ -35,6 +35,6 @@ power_conversion_eff = 0.97
 ignore_calibration_constraints = 1  # skip noise/range checks (NOT for production!)
 ```
 
-This runs the firmware on a bare ESP32, useful for testing things other than the ADC and PWM. With
-the ADC pins left floating the readings are garbage with a high stddev, which is why
-`ignore_calibration_constraints = 1` is needed here.
+A bare ESP32 setup is useful for testing things other than the ADC and PWM. With the ADC pins left
+floating, the readings are garbage with a high stddev. That's why this example needs
+`ignore_calibration_constraints = 1`.

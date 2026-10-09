@@ -5,23 +5,27 @@ sidebar_position: 9
 
 # Troubleshooting
 
-Answers to common problems, starting from what the device logs. The device prints every error and panic on the
-console, so read the log first.
+This page lists common problems and their fixes, starting from what the device logs. The device prints every error
+and panic on the console, so read the log first.
 
 ## Quick start
+
+To collect the boot, status, sensor, service, and coredump information in one call, run:
 
 ```bash
 python3 etc/fugu_console.py -p $ESPPORT -c bootinfo -c status -c sensor -c "svc list" -c "coredump info"
 ```
 
-`bootinfo` shows the last reset reason (`PANIC`, `TASK_WDT`, `BROWNOUT`, …) and the OTA slot state; `coredump info`
-whether a crash dump is waiting.
+`bootinfo` shows the last reset reason (`PANIC`, `TASK_WDT`, `BROWNOUT`, …) and the OTA slot state. `coredump info`
+shows whether a crash dump is waiting.
 
 ## ADC and control loop
 
 :::danger
 Treat any ADC error in the log as critical. Without fresh samples the control loop and the protections are blind.
 :::
+
+The following table lists the ADC and control-loop log lines, what they mean, and what to check.
 
 | Log line | Meaning | Check |
 |---|---|---|
@@ -33,11 +37,11 @@ Treat any ADC error in the log as critical. Without fresh samples the control lo
 | `error during sensor/converter/tracker setup: …` | a config file is invalid; the control loop is not started | the message names the key |
 | `board.conf expects MCU …` | config for the other chip | [ESP32 variants](hardware/esp32-variants.md) |
 
-After a setup error the console and network stay up. Fix the file with `set-config` and `restart`.
+After a setup error, the console and network stay up. Fix the file with `set-config`, then `restart`.
 
 ## Crashes and coredumps
 
-After a panic the device stores a coredump in flash:
+After a panic, the device stores a coredump in flash. To fetch and decode it, run:
 
 ```bash
 python3 etc/fugu_console.py -p $ESPPORT --coredump get      # writes coredump.bin
@@ -45,36 +49,40 @@ python3 etc/idf-devtools/elf_archive.py decode coredump.bin
 ```
 
 The dump decodes only against the ELF of the exact build that crashed. Builds flashed with `idf.py flash`,
-`app-flash` or `etc/ota.py` are archived automatically. Over BLE, `coredump get` truncates at about 8 KB; use serial,
-telnet or MQTT. Details in [Debugging](../development/debugging/index.md#coredumps).
+`app-flash`, or `etc/ota.py` are archived automatically.
+
+Fetch the dump over serial, telnet, or MQTT. Over BLE, `coredump get` truncates at about 8 KB. For details, see
+[Debugging](../development/debugging/index.md#coredumps).
 
 ## Device does not boot (brick recovery)
 
-A device that hangs before Wi-Fi comes up can only be recovered over serial.
+You can recover a device that hangs before Wi-Fi comes up only over serial. To recover it, follow these steps:
 
 1. Put the chip in download mode: hold **BOOT** (GPIO0), press **RESET**, release BOOT.
-2. Flash bootloader and application. This also overwrites the configuration; back up `/littlefs/conf/` first
-   (FTP or the config editor) if you can still reach the device, and re-provision afterwards:
+2. If you can still reach the device, back up `/littlefs/conf/` first over FTP or with the config editor. Then
+   flash the bootloader and application:
 
    ```bash
    idf.py -p $ESPPORT flash      # also rewrites littlefs from CMakeLists.txt!
    ```
 
-   `idf.py flash` writes the littlefs image selected in the top-level `CMakeLists.txt`. Point it at your board, or
-   reprovision afterwards with `./provision.py <board>`.
+   `idf.py flash` also overwrites the configuration with the littlefs image selected in the top-level
+   `CMakeLists.txt`. Point it at your board, or reprovision afterwards with `./provision.py <board>`.
 3. Read the boot log with `python3 etc/fugu_console.py -p $ESPPORT`.
 
 :::warning Rollback needs the right bootloader
-An OTA image that resets before confirming itself healthy rolls back to the previous slot — but only if the device
-has a rollback-enabled bootloader. An OTA writes only the app; a device that was never serial-flashed with the
-current bootloader bricks instead of reverting. See [OTA updates](updating/ota-wifi.md#rollback-and-boot-watchdog).
+If the device has a rollback-enabled bootloader, an OTA image that resets before confirming itself healthy rolls
+back to the previous slot. An OTA writes only the app. A device that was never serial-flashed with the current
+bootloader bricks instead of reverting. See [OTA updates](updating/ota-wifi.md#rollback-and-boot-watchdog).
 :::
 
-On ESP32-S3, if the firmware was built with the optional esp-bootguard and that bootloader was flashed over serial,
-the bootloader parks the chip in download mode after repeated crash resets, see
+On ESP32-S3, the firmware can be built with the optional esp-bootguard. If that bootloader was flashed over serial,
+it parks the chip in download mode after repeated crash resets. See
 [ESP32 variants](hardware/esp32-variants.md#bootloader-s3-only).
 
 ## BLE
+
+The following table lists BLE symptoms and their fixes.
 
 | Symptom | Fix |
 |---|---|
@@ -84,6 +92,8 @@ the bootloader parks the chip in download mode after repeated crash resets, see
 | Weak link from the computer | Use an [ESPHome bluetooth_proxy](connecting.md#ble-through-an-esphome-proxy) near the device. |
 
 ## Wi-Fi and telnet
+
+The following table lists Wi-Fi and telnet symptoms and their fixes.
 
 | Symptom | Fix |
 |---|---|
@@ -95,14 +105,17 @@ the bootloader parks the chip in download mode after repeated crash resets, see
 
 ## FTP
 
-The FTP server exposes the littlefs partition when Wi-Fi is up. It accepts **one connection**: set your client (e.g.
-FileZilla) to 1 simultaneous connection. Passive mode uses data port 50009 (control port 21); allow both through any
-firewall/NAT. Credentials come from NVS, or
-`ftp_user`/`ftp_pass` in [`ftp.conf`](../reference/config/ftp.md).
+When Wi-Fi is up, the FTP server exposes the littlefs partition. It accepts one connection, so set your client, such
+as FileZilla, to 1 simultaneous connection.
 
-For single values prefer `set-config`, which needs no FTP.
+Passive mode uses data port 50009, and the control port is 21. Allow both through any firewall or NAT. Credentials
+come from NVS, or from `ftp_user`/`ftp_pass` in [`ftp.conf`](../reference/config/ftp.md).
+
+To change a single value, prefer `set-config`, which needs no FTP.
 
 ## Charging
+
+The following table lists charging symptoms and what to check.
 
 | Symptom | Check |
 |---|---|

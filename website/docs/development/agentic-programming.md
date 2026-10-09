@@ -3,30 +3,28 @@ title: Agentic programming
 sidebar_position: 10
 ---
 
-# Agentic Programming with Fugu MPPT Firmware
+# Agentic programming with Fugu MPPT firmware
 
-This document describes how the firmware is designed to be driven by an LLM agent or scripted
-automation — from rapid host-side iteration to safe interaction with real converters.
+An LLM agent or scripted automation can drive the firmware, from host-side iteration to
+interaction with real converters. This page describes the tools and safeguards for that work.
 
 ---
 
-## 1. Unified Text Console
+## 1. Unified text console
 
-The same line-oriented command protocol is served on every transport: **UART, USB-CDC, telnet,
-MQTT, and BLE NUS**. A command is a plain text line terminated with `\n` or `\r`; the device
-always replies with `OK: <cmd>` on success or `ERR: <cmd>` on failure — unambiguous, parseable,
-and transport-agnostic.
+Every transport serves the same line-oriented command protocol: UART, USB-CDC, telnet, MQTT,
+and BLE NUS. A command is a plain text line terminated with `\n` or `\r`. The device always
+replies with `OK: <cmd>` on success or `ERR: <cmd>` on failure.
 
-This matters for agents because:
+The shared protocol gives an agent these properties:
 
-- **No transport lock-in.** An agent can reach any device — lab bench over USB, field unit over
-  BLE or MQTT — without changing its command logic.
-- **Machine-readable replies.** `OK:`/`ERR:` are stable markers; the reply body is human-readable
-  but structured enough to regex-parse (e.g. `sensor avg` emits `sens: vin=… iout=… …` on one
-  line).
-- **Live config editing.** `set-config <file> <key> <value>` / `get-config` / `conf-check` let
-  an agent tune parameters and verify them without reflashing.
-- **Introspection without a debugger.** `peek <addr>` reads live memory; `fugu_console.py` extends
+- The command logic is the same for every device, whether it is a bench unit over USB or a field
+  unit over BLE or MQTT.
+- `OK:`/`ERR:` are stable markers. The reply body is human-readable but regular enough to parse
+  with a regex (e.g. `sensor avg` emits `sens: vin=… iout=… …` on one line).
+- `set-config <file> <key> <value>` / `get-config` / `conf-check` let an agent tune parameters
+  and verify them without reflashing.
+- `peek <addr>` reads live memory without a debugger. `fugu_console.py` extends
   this with DWARF-backed symbol resolution (`peek <symbol>[.field][+offset]` → numeric address →
   device read) and `peek-struct <symbol>` for typed object dumps. `tasks` shows stack headroom;
   `rt-stats` shows CPU load.
@@ -35,9 +33,10 @@ See [Console commands](../reference/console.md) for the full command reference.
 
 ### Batch / stdin mode
 
-`fugu_console.py --stdin` (or auto-activated when stdin is a pipe) accepts newline-separated
-commands over a **single connection** and tags each reply `=== <cmd> ===`. An agent can pipe a
-heredoc and parse sections deterministically:
+Batch mode is the preferred path for agents: one TCP/serial connection, ordered replies, and no
+interactive TTY. `fugu_console.py --stdin` accepts newline-separated commands over a single
+connection and tags each reply `=== <cmd> ===`. The mode also activates automatically when stdin
+is a pipe. An agent can pipe a heredoc and parse the sections deterministically:
 
 ```bash
 python etc/fugu_console.py -p <serial-port> --stdin <<'EOF'
@@ -48,17 +47,17 @@ sensor avg
 EOF
 ```
 
-`-c` runs one-or-more commands over a single connection with the same tagging. Blank lines and
-`#` comments are skipped. This is the preferred agent-facing path: one TCP/serial connect, ordered
-replies, no interactive TTY.
+`-c` runs one or more commands over a single connection with the same tagging. Blank lines and
+`#` comments are skipped.
 
 ---
 
-## 2. `fugu_console.py` and the `fugu` Package
+## 2. `fugu_console.py` and the `fugu` package
 
-`etc/fugu_console.py` is the host-side CLI, but the **transport and console mechanics live in a
-separate library** (`etc/fugu/`, github.com/fl4p/fugu-py). This separation makes the same
-primitives reusable in test scripts and fuzzers without spawning a subprocess.
+`etc/fugu_console.py` is the host-side CLI. The transport and console mechanics live in a
+separate library (`etc/fugu/`, github.com/fl4p/fugu-py), so test scripts and fuzzers can use the
+same primitives without spawning a subprocess. The following example sends one command over
+serial and checks the reply:
 
 ```python
 from fugu.transport import SerialTransport
@@ -71,14 +70,14 @@ assert reply.ok
 ```
 
 `Console.command()` returns a `Reply` with `.ok`, `.timed_out`, `.rejected`, and the response
-text — structured enough for an agent to act on without screen-scraping.
+text, so an agent can act on the result without screen-scraping.
 
-**Transport implementations** (`SerialTransport`, `SocketTransport`, `BleTransport`,
+The transport implementations (`SerialTransport`, `SocketTransport`, `BleTransport`,
 `EspHomeBleTransport`, `MqttTransport`) share the same interface. An agent switches from USB to
-BLE by changing one constructor call; the command loop is identical.
+BLE by changing one constructor call. The command loop stays identical.
 
-**Device discovery** — called with no arguments, `fugu_console.py` scans USB ports, mDNS scope
-broadcasts, configured telnet endpoints, and BLE advertisements, printing connection strings
+Called with no arguments, `fugu_console.py` discovers devices. It scans USB ports, mDNS scope
+broadcasts, configured telnet endpoints, and BLE advertisements, and prints connection strings
 for every live device. An agent can parse this output to auto-select a target without hardcoding
 a port.
 
@@ -86,8 +85,8 @@ a port.
 
 ## 3. VirtualConverter (vconv)
 
-`src/sim/vconv.h` is a **pure C++ physics model of a synchronous buck converter** — no Arduino,
-no FreeRTOS, no ESP-IDF headers. It simulates:
+`src/sim/vconv.h` is a physics model of a synchronous buck converter in plain C++, with no
+Arduino, FreeRTOS, or ESP-IDF headers. It simulates the following parts:
 
 - A single-diode PV source (Isc, Voc, fill-factor k)
 - Battery/load (Vbat, Rbat)
@@ -95,10 +94,10 @@ no FreeRTOS, no ESP-IDF headers. It simulates:
 - PWM gate timing (HS on-count, LS on-count, freq)
 - Pluggable AC ripple models (sine inverter, |sin| rectifier, spiky China-inverter pulse)
 
-With `CONFIG_FUGU_WITH_VCONV=y` the firmware replaces the real PWM driver with `PWM_VConv` and
-the real ADC with `ADC_VConv`. The **complete control stack** — MPP tracker, PD controllers,
-charger, protection — runs against the software plant on a real ESP32, with no physical power
-stage.
+With `CONFIG_FUGU_WITH_VCONV=y`, the firmware replaces the real PWM driver with `PWM_VConv` and
+the real ADC with `ADC_VConv`. The complete control stack (MPP tracker, PD controllers,
+charger, protection) runs against the software plant on a real ESP32, with no physical power
+stage. The diagram shows how the two shims connect to the model:
 
 ```
 ┌─────────────────┐  update_pwm()  ┌──────────────────────┐  getSample()  ┌───────────────┐
@@ -107,29 +106,29 @@ stage.
 └─────────────────┘                └──────────────────────┘               └───────────────┘
 ```
 
-Why this is agentic-friendly:
+The simulated plant has these properties for agent use:
 
-- **Safe to experiment on.** Changing MPPT parameters, protection thresholds, or diode-emulation
-  timing has no electrical consequence. An agent can iterate tuning loops on a bench ESP32 at
-  full speed before touching a live converter.
-- **Reproducible.** The model is deterministic: identical inputs produce bit-identical outputs.
-  Failures are repeatable; no flaky hardware.
-- **Self-contained.** `vconv.conf` (in `config/lab/vconv_mock/`) sets PV curve, battery, and
-  passives. An agent adjusts these via `set-config vconv.conf …` without a rebuild; `restart` to
-  apply.
-- **Observable.** The same `sensor avg`, `mppt`, `status`, `rt-stats`, and telemetry paths that
-  work on a real converter work with vconv — including InfluxDB push, so time-series data from
-  automated sweeps lands in the same dashboard.
+- Changing MPPT parameters, protection thresholds, or diode-emulation timing has no electrical
+  consequence, so an agent can iterate tuning loops on a bench ESP32 at full speed before
+  touching a live converter.
+- The model is deterministic: identical inputs produce bit-identical outputs, so failures are
+  repeatable.
+- `vconv.conf` (in `config/lab/vconv_mock/`) sets the PV curve, battery, and passives. An agent
+  adjusts these via `set-config vconv.conf …` without a rebuild, and `restart` applies them.
+- The `sensor avg`, `mppt`, `status`, `rt-stats`, and telemetry paths work as on a real
+  converter. This includes the InfluxDB push, so time-series data from automated sweeps lands in
+  the same dashboard.
 
-The vconv build runs on both ESP32-S3 (`vconv_mock`) and classic ESP32 (`vconv_mock_esp32`),
-holding MPP around 815 W in lab conditions, suitable for control-loop validation.
+The vconv build runs on both ESP32-S3 (`vconv_mock`) and classic ESP32 (`vconv_mock_esp32`) and
+holds MPP around 815 W in lab conditions, which is enough for control-loop validation.
 
 ---
 
-## 4. Host-Side Stubs (`test/host-stub/`)
+## 4. Host-side stubs (`test/host-stub/`)
 
-For the lowest-overhead feedback loop — no flash, no device, instant iteration — many firmware
-modules compile and run directly on a **macOS/Linux host** using thin stubs:
+Host-side stubs give the shortest feedback loop: no flashing and no device. Many firmware modules
+compile and run directly on a macOS/Linux host using thin stubs. The stub directory contains
+these files:
 
 ```
 test/host-stub/
@@ -140,7 +139,7 @@ test/host-stub/
 └── arduino-shim/      # full arduino-esp32 header surface (types only)
 ```
 
-Build and run a physics test without touching a device:
+The following command builds and runs a physics test without touching a device:
 
 ```bash
 clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src \
@@ -148,7 +147,7 @@ clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src \
     && /tmp/vconv-test
 ```
 
-Tests in `test/host-stub/` cover:
+The tests in `test/host-stub/` cover the following areas:
 
 | File | What it tests |
 |---|---|
@@ -162,14 +161,14 @@ Tests in `test/host-stub/` cover:
 | `plot-test.cpp` | `plot.h` Series rendering at small/degenerate N (heap-safety) |
 | `service-test.cpp` | `ServiceManager` state machine (boot without `wifi.conf`) |
 
-An agent can run these as part of a pre-flash verification step, catching physics regressions
-before any hardware is involved.
+An agent can run these before flashing to catch physics regressions without hardware.
 
 ---
 
-## 5. On-Target Unity Tests
+## 5. On-target Unity tests
 
-For correctness that requires real hardware timing (ADC DMA, FreeRTOS tasks, MCPWM):
+The on-target Unity tests check correctness that requires real hardware timing (ADC DMA,
+FreeRTOS tasks, MCPWM).
 
 :::danger Bare board only
 The Unity suite drives GPIO 1, 2, 4-9 and **21** as outputs. 21 is the high-side gate input on Fugu2
@@ -178,6 +177,8 @@ also overwrites the littlefs config with
 `config/lab/dry_mock`. Run it on a dev board or a Fugu board with the power stage unpowered (no PV, no
 battery). Use `app-flash` if the littlefs config must be kept.
 :::
+
+The following commands build and flash the test suite, or build a single entry point:
 
 ```bash
 RUN_TESTS=1 idf.py -B build-tests build flash monitor
@@ -190,10 +191,10 @@ can drive this flow and collect results over serial.
 
 ---
 
-## 6. E2E Test Harness (`etc/e2e-test/`)
+## 6. E2E test harness (`etc/e2e-test/`)
 
-`run_e2e.py` is a **cluster runner** that groups tests by their hardware requirements and skips
-those whose prerequisites aren't met:
+`run_e2e.py` is a cluster runner. It groups tests by their hardware requirements and skips
+those whose prerequisites aren't met. The clusters are:
 
 | Cluster | Requirement | Tests |
 |---|---|---|
@@ -203,46 +204,47 @@ those whose prerequisites aren't met:
 | `power` | Real converter + coil (sun/headroom), drives the half-bridge | `test_measure_coil.py` |
 | `wifi` | Controllable AP/router rig | `test_wifi_off_timeout.py`, `test_wifi_reconnect_storm.py`, `test_wifi_outage.py` (stick + roam modes), `test_wifi_outage_service_recovery.py` |
 
-The runner exits 1 on any FAIL and 2 when nothing ran (every test skipped), so an all-SKIP run is never read as
+The runner exits 1 on any FAIL and 2 when nothing ran (every test skipped), so an all-SKIP run never reads as
 a pass. Run `python etc/e2e-test/run_e2e.py --list` for the authoritative cluster/test mapping and each
 test's exact transport and setup requirements.
 
-Run the non-destructive console cluster against any live device:
+To run the non-destructive console cluster against any live device, use serial or telnet:
 
 ```bash
 python etc/e2e-test/run_e2e.py --cluster console --serial <serial-port>
 python etc/e2e-test/run_e2e.py --cluster console --telnet <device-ip>:23
 ```
 
-`_harness.py` provides shared primitives used by all test modules: `Results` (PASS/FAIL/SKIP
+`_harness.py` provides the shared primitives that all test modules use: `Results` (PASS/FAIL/SKIP
 bookkeeping), `wait_for(predicate, timeout)`, `EventLog` (timestamped parsed-event ring),
-`Recorder` (panic-marker detection), and `PANIC_MARKERS` — the set of strings that indicate a
+`Recorder` (panic-marker detection), and `PANIC_MARKERS`, the set of strings that indicate a
 crash in the console stream.
 
 ### Fuzz testing
 
 `fuzz_extreme.py` fires random commands (NaN/Inf arguments, garbage tokens, bursts with no
-pauses) for a configurable duration and fails if any `PANIC_MARKERS` appear or the device stops
-responding. It discovered a real bug: `wifi off N` over telnet triggered a use-after-free in
-lwIP (the netif was torn down under the socket, and `UART_LOG` then mirrored to it reentrant).
+pauses) for a configurable duration. It fails if any `PANIC_MARKERS` appear or the device stops
+responding. The following command runs it for 300 seconds:
 
 ```bash
 ESPPORT=<serial-port> FUZZ_DURATION=300 python etc/e2e-test/fuzz_extreme.py
 ```
 
+The fuzzer found a real bug: `wifi off N` over telnet triggered a use-after-free in lwIP. The
+netif was torn down under the socket, and `UART_LOG` then mirrored to it reentrant.
+
 `fuzz_sequences.py` tests structured sequences (service on/off/restart cycles, OTA round-trip,
-config edit + read-back) rather than pure random chaos.
+config edit + read-back) instead of random input.
 
 ---
 
-## 7. OTA Automation (`etc/ota.py`)
+## 7. OTA automation (`etc/ota.py`)
 
 `ota.py` discovers devices (mDNS scope broadcast, plus configured fallback hosts), serves the build
 binary over HTTP on port 9000 (using this host's IP as the device sees it, so it also works through
-a NAT), and tells each
-matching device to pull and flash the new image.
+a NAT), and tells each matching device to pull and flash the new image.
 
-Agent-safe workflow:
+An agent builds first, then runs a scoped dry run before the live push:
 
 ```bash
 idf.py build                          # build only
@@ -256,42 +258,42 @@ python3 etc/ota.py -m <name> -f       # only if the same version must be re-push
 `-m`), but `./ota.sh -m <name>` pushes to every matching device immediately. Run `./ota.sh -n -m <name>` first.
 :::
 
-The `-n` / `--dry-run` flag is the agent's first move: confirm the target device, current
-version, and what would change before committing. The before/after version table is printed at
-the end of a live run for verification.
+Run with `-n` / `--dry-run` first to confirm the target device, current version, and what would
+change. A live run prints a before/after version table at the end.
 
-OTA archives the flashed ELF automatically (`etc/ota.py` and `etc/ota_ble.py` call `etc/idf-devtools/elf_archive.py`;
-`idf_ext.py` does the same for serial flashes)
-so coredumps from any subsequently-flashed build can always be symbolicated — even months later.
+OTA archives the flashed ELF automatically, so a coredump from any build flashed since then can be
+symbolicated, even months later. `etc/ota.py` and `etc/ota_ble.py` call
+`etc/idf-devtools/elf_archive.py`, and `idf_ext.py` does the same for serial flashes.
 
 ---
 
-## 8. Live Telemetry and Observability
+## 8. Live telemetry and observability
 
-Beyond the console, the firmware pushes structured data to external systems an agent can query:
+Besides the console, the firmware offers these data paths that an agent can query:
 
-- **InfluxDB** (UDP line protocol, measurement `mppt`): up to 50 points/s while Wi-Fi, an Influx
-  host and time sync are up: Vin (`Ui`), Vout (`Uo`), power-side current `I`, `P`, energy, HS duty.
-  MPPT state, temperatures, loop lag and LS duty come on a decimated subset. For sample-level
-  transients use the scope service. Grafana
-  dashboards show real-time and historical behavior, so an agent can validate a parameter change
-  by checking the time series rather than parsing console text.
-- **`sensor avg`**: one compact line of EWM averages — fast polling without opening a full
+- InfluxDB (UDP line protocol, measurement `mppt`): while Wi-Fi, an Influx host, and time sync
+  are up, the firmware pushes up to 50 points/s of Vin (`Ui`), Vout (`Uo`), power-side current
+  `I`, `P`, energy, and HS duty. MPPT state, temperatures, loop lag, and LS duty come on a
+  decimated subset. For sample-level transients, use the scope service. Grafana dashboards show
+  real-time and historical behavior, so an agent can validate a parameter change by checking the
+  time series rather than parsing console text.
+- `sensor avg` prints one compact line of EWM averages, for fast polling without a full
   telemetry session.
-- **Scope service**: raw ADC samples streamed over TCP for noise/ripple analysis. Used by
+- The scope service streams raw ADC samples over TCP for noise/ripple analysis. It is used by
   `etc/adcscope/` (the adcscope submodule) and `etc/filter-studies/` scripts.
-- **`coredump get`**: streams the on-flash panic dump as base64 over the console. An agent can
+- `coredump get` streams the on-flash panic dump as base64 over the console. An agent can
   retrieve a crash dump without physical access and decode it host-side with the archived ELF.
-  Pull over serial/telnet/MQTT — the BLE transport truncates the stream past ~6 KB, so it's not
-  reliable for a full dump.
+  Serial, telnet and MQTT are the fastest transports. Over BLE, the command waits after each line until
+  the console's 8 KB transmit buffer drains below 2 KB. A client that stalls for more than 4 s still loses the
+  overflow.
 
 ---
 
-## 9. Config System
+## 9. Config system
 
 All hardware parameters (pin assignments, sensor scaling, voltage/current limits, coil
 inductance, MPPT settings, charger termination) live in flat `key=value` files on the device's
-littlefs partition, editable at runtime:
+littlefs partition. An agent can edit them at runtime:
 
 ```
 set-config coil.conf L0 50e-6
@@ -301,86 +303,92 @@ conf-check          # report unknown/obsolete keys
 get-config charger.conf
 ```
 
-`set-config` only rewrites the file; boot-time confs (including `limits.conf`) take effect after
-`restart`, see below. An agent can iteratively tune, restart, verify effects via `sensor avg` or
-telemetry, and persist changes without a rebuild or reflash cycle. The HTML config editor (`etc/config-tool/conf-editor.html`)
-provides a UI backed by the same `set-config`/`get-config` protocol.
+`set-config` only rewrites the file. Boot-time confs (including `limits.conf`) take effect after
+`restart`, as described in [Working with a real converter](#working-with-a-real-converter). An agent
+can iteratively tune, restart, verify effects via `sensor avg` or telemetry, and persist changes
+without a rebuild or reflash cycle.
+
+The HTML config editor (`etc/config-tool/conf-editor.html`) provides a UI backed by the same
+`set-config`/`get-config` protocol.
 
 ---
 
-## 10. Safety Guardrails for Agent Use
+## 10. Safety guardrails for agent use
 
-Several mechanisms make it safer to let an agent drive the firmware:
+The following mechanisms reduce the risk of letting an agent drive the firmware:
 
-- **`-n` dry-run on OTA**: discover + version-check without flashing. Always `-n` first.
-- **`-m <name>` OTA targeting**: never update all devices by accident.
-- **Protection stack (software)**: the RT loop checks Vin/Vout over-voltage and Iin/Iout
+- `-n` dry run on OTA: discover and version-check without flashing. Always run `-n` first.
+- `-m <name>` OTA targeting prevents updating all devices by accident.
+- Software protection stack: the RT loop checks Vin/Vout over-voltage and Iin/Iout
   over-current on every new sample, plus temperature, and calls `stopAndBackoff` on a violation.
-  These are firmware checks on sampled values: they run only while the RT loop runs, react one
+  These are firmware checks on sampled values. They run only while the RT loop runs, react one
   sample late at best, and pause during flash-cache-disabled windows. Manual PWM (`dc`) disables
   the supply-UV cutout and the loop-latency watchdog. A hardware OST brake exists only for the
   MCPWM driver, and only when `board.conf::pwm_fault_pin` is wired and set (default off).
-  Protection does not guarantee against damage: bound every `dc`/`+N` command and use a
+  Protection does not guarantee against damage. Bound every `dc`/`+N` command and use a
   current-limited supply on the bench.
-- **OTA rollback**: `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` + a 30-second boot watchdog in
+- OTA rollback: `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` and a 30-second boot watchdog in
   `setup()`. A bad firmware image that hangs during setup reverts to the previous slot on the
-  next reset — no physical recovery needed.
-- **`fuzz_extreme.py` "safe" pool**: dangerous commands (`adc-reset`, `adc-restart`) are
+  next reset, without physical recovery.
+- `fuzz_extreme.py` "safe" pool: dangerous commands (`adc-reset`, `adc-restart`) are
   segregated into `FUZZ_POOL=danger` so the default run explores everything else without
   wedging the ADC.
-- **Panic detection via `PANIC_MARKERS`**: the shared harness module defines the strings that
-  indicate a crash; any test or fuzzer checking for these exits with a non-zero status code.
-- **`coredump info`**: tells the agent whether a crash is pending before it starts work, and
+- Panic detection via `PANIC_MARKERS`: the shared harness module defines the strings that
+  indicate a crash. Any test or fuzzer that checks for these exits with a non-zero status code.
+- `coredump info` tells the agent whether a crash is pending before it starts work, and
   `coredump erase` clears it after retrieval.
 
 ### Working with a real converter
 
-The firmware drives a real half-bridge; treat state-changing commands accordingly.
+The firmware drives a real half-bridge, so treat state-changing commands with care. The
+following rules apply to a real converter:
 
-- **Confirm the target first.** Check `hostname` (and `ip`) before any state-changing command —
-  port numbers, IPs and forwarded mappings are not stable identifiers.
-- **Read-only commands:** `mem`, `bootinfo`, `status`, `sensor avg` and `coredump info`. `rt-stats` and
-  `tasks` walk the FreeRTOS task list and can starve the continuous-ADC DMA on a busy configuration; use them
-  sparingly on a converting device. InfluxDB telemetry gives a passive view without any console
-  round-trip. While diagnosing, stick to these.
-- **Config changes are reversible.** `set-config` / `get-config` / `conf-check` edit the littlefs
-  partition in place without rebooting. `set-config` only rewrites the file. `board`, `sensor`,
-  `limits`, `coil`, `converter`, `tracker`, `charger` and `vconv` confs are read once at boot: send
-  `restart` before evaluating the change (a lowered limit is not in force until then). Service confs
-  (`mqtt`, `tele`, `ftp`, `ble`, …) are re-read by `svc restart <name>`. Record the current value
-  with `get-config <file> <key>`, apply the change, restart, observe the effect via telemetry or
-  `sensor avg`, and revert with `set-config <file> <key> <original>` if it is wrong.
-- **PWM commands need care.** `dc <duty>`, `+N`, `-N`, `sweep` and `mppt` directly manipulate the
-  half-bridge:
-    - Only drive these in **manual PWM mode** (`dc <duty>` engages it; `mppt` exits it).
-    - Keep `+N` steps small (≤ 5) and watch Iin — large positive jumps cause current transients.
-    - Protection cuts out at `iout_max` and `vout_max`; the converter stops and backs off.
+- Confirm the target first. Check `hostname` (and `ip`) before any state-changing command.
+  Port numbers, IPs, and forwarded mappings are not stable identifiers.
+- While diagnosing, use only read-only commands: `mem`, `bootinfo`, `status`, `sensor avg`, and
+  `coredump info`. InfluxDB telemetry gives a passive view without any console round-trip.
+  `rt-stats` and `tasks` walk the FreeRTOS task list and can starve the continuous-ADC DMA on a
+  busy configuration, so use them sparingly on a converting device.
+- Config changes are reversible. `set-config` / `get-config` / `conf-check` edit the littlefs
+  partition in place without rebooting. `set-config` only rewrites the file. The firmware reads
+  the `board`, `sensor`, `limits`, `coil`, `converter`, `tracker`, `charger`, and `vconv` confs
+  once at boot, so send `restart` before evaluating the change. A lowered limit is not in force
+  until then. `svc restart <name>` re-reads service confs (`mqtt`, `tele`, `ftp`, `ble`, …).
+  Record the current value with `get-config <file> <key>`, apply the change, restart, observe the
+  effect via telemetry or `sensor avg`, and revert with `set-config <file> <key> <original>` if it
+  is wrong.
+- PWM commands need care. `dc <duty>`, `+N`, `-N`, `sweep`, and `mppt` directly manipulate the
+  half-bridge. Follow these rules:
+    - Only drive these in manual PWM mode (`dc <duty>` engages it; `mppt` exits it).
+    - Keep `+N` steps small (≤ 5) and watch Iin. Large positive jumps cause current transients.
+    - Protection cuts out at `iout_max` and `vout_max`. The converter stops and backs off.
     - `sync off` (diode emulation) is safer than `sync forced` (no reverse-current check).
-    - `measure-coil l0` / `measure-coil ls` uses a controlled DCM sweep and restores MPPT when
-      done — it is the intended on-device calibration path, not raw PWM stepping.
+    - For on-device calibration, use `measure-coil l0` / `measure-coil ls` instead of raw PWM
+      stepping. It uses a controlled DCM sweep and restores MPPT when done.
 
   Validate PWM command sequences on a vconv build first, then apply them to the real unit with
   telemetry open.
-- **OTA to a real converter** halts the converter and ADC during the flash write (~30 s). Validate
-  on vconv first, run `ota.py -n -m <name>` to confirm target and versions, then watch telemetry
-  for the version flip and healthy resumption of MPPT within ~60 s. Check the device log for
-  `ADC error`, `Loop latency high` or panic markers after every OTA. If `setup()` hangs for >30 s
-  the boot watchdog restarts into the prior slot; if the device reports the old version after
-  ~90 s, the new image has a bug.
+- An OTA to a real converter halts the converter and ADC during the flash write (~30 s). Validate
+  on vconv first, run `ota.py -n -m <name>` to confirm the target and versions, then watch
+  telemetry for the version flip and healthy resumption of MPPT within ~60 s. After every OTA,
+  check the device log for `ADC error`, `Loop latency high`, or panic markers. If `setup()` hangs
+  for >30 s, the boot watchdog restarts into the prior slot. If the device reports the old version
+  after ~90 s, the new image has a bug.
 
 ---
 
-## 11. Putting It Together: Typical Agent Flows
+## 11. Typical agent flows
 
 ### Tune a parameter, validate on vconv, then push to a real converter
 
 1. Flash a vconv build to a bench ESP32 (`config/lab/vconv_mock`).
-2. Adjust `vconv.conf` and charger/mppt conf via `set-config`.
-3. `python etc/e2e-test/run_e2e.py --cluster mock --serial <port>` and require `N passed, 0 failed`
-   (an all-skipped run also exits 0): console-plan and Influx checks against the mock build.
-4. Physics: the host build from section 4 (`/tmp/vconv-test`).
+2. Adjust `vconv.conf` and the charger/mppt confs via `set-config`.
+3. Run the console-plan and Influx checks against the mock build with
+   `python etc/e2e-test/run_e2e.py --cluster mock --serial <port>`, and require `N passed, 0 failed`
+   (an all-skipped run exits 2).
+4. Run the host physics test from section 4 (`/tmp/vconv-test`).
 5. Rebuild for the target hardware with `CONFIG_FUGU_WITH_VCONV=n` and the board's PWM driver, in a
-   separate build dir/project root (see [Build](build.md)). Then `ota.py -n -m <name>`, then
+   separate build dir/project root (see [Build](build.md)). Then run `ota.py -n -m <name>`, then
    `ota.py -m <name>`.
 
    :::danger Never OTA the vconv image to hardware
@@ -392,27 +400,30 @@ The firmware drives a real half-bridge; treat state-changing commands accordingl
 ### Reproduce and fix a crash on a remote device
 
 1. `python etc/fugu_console.py --mqtt <broker> --mqtt-port <port> --name <dev> -c "coredump info"`
-   — confirm a dump is present (the `--name` selects the device's topic on the broker).
+   confirms a dump is present (the `--name` selects the device's topic on the broker).
 2. `python etc/fugu_console.py --mqtt <broker> --mqtt-port <port> --name <dev> --coredump get`
-   — stream the dump and write `coredump.bin` (use serial/telnet/MQTT, not BLE — BLE truncates).
-3. `python etc/idf-devtools/elf_archive.py decode coredump.bin` — symbolicate against archived ELF.
-4. Apply fix, build, `ota.py -n -m <name>`, confirm version, `ota.py -m <name>`.
-5. Re-run step 1 — confirm the new run is clean.
+   streams the dump and writes `coredump.bin` (serial, telnet or MQTT are faster than BLE).
+3. `python etc/idf-devtools/elf_archive.py decode coredump.bin` symbolicates against the archived ELF.
+4. Apply the fix, build, run `ota.py -n -m <name>`, confirm the version, and run `ota.py -m <name>`.
+5. Re-run step 1 to confirm the new run is clean.
 
 ### Fuzz the input parser before a release
+
+Run the safe fuzz pool for 600 seconds:
 
 ```bash
 ESPPORT=<serial-port> FUZZ_DURATION=600 FUZZ_POOL=safe \
     python etc/e2e-test/fuzz_extreme.py
 ```
 
-Exit 0 = device alive. Exit 2 = panic seen — the trigger command and rolling log are printed.
+Exit 0 means the device is alive. Exit 2 means the fuzzer saw a panic and printed the trigger
+command and the rolling log.
 
 ---
 
-## Related Documents
+## Related documents
 
-- [Console commands](../reference/console.md) — full command reference
-- [Debugging](debugging/index.md) — coredump, ELF archive, peek
-- [Automated bench tests](../lab/automated-bench-tests.md) — on-target test setup
-- [`peek` command](debugging/peek.md) — live memory introspection
+- [Console commands](../reference/console.md): full command reference
+- [Debugging](debugging/index.md): coredump, ELF archive, peek
+- [Automated bench tests](../lab/automated-bench-tests.md): on-target test setup
+- [`peek` command](debugging/peek.md): live memory introspection

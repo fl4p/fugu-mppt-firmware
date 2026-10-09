@@ -5,42 +5,50 @@ sidebar_position: 0
 
 # Configuration files
 
-Hardware behavior and runtime options are **not compiled in**. They live as flat `key=value`
-`.conf` files on the device's `littlefs` partition under `/littlefs/conf/`, parsed by `ConfFile`
-(`src/conf.h`). Source-of-truth images per board live under `config/` (e.g. `config/fmetal`,
-`config/lab/wokwi_mock`).
+Hardware behavior and runtime options live in flat `key=value` `.conf` files on the device's
+`littlefs` partition under `/littlefs/conf/`, rather than being compiled in. `ConfFile`
+(`src/conf.h`) parses them. The source-of-truth image for each board lives under `config/` (e.g.
+`config/fmetal`, `config/lab/wokwi_mock`).
 
-Editing options:
+## Editing configuration
 
-- `set-config <file>.conf <key> <value>` from the serial / telnet / MQTT / BLE console (in place, no
-  re-flash)
-- `get-config <file>.conf <key>` reads one back. `get-config <file>.conf` reads the whole file
-- `del-config <file>.conf <key>` to remove a value
-- FTP when Wi-Fi is up (1 connection; passive mode (data port 50009) works from the same subnet only), or `etc/config-tool/conf-tool.py`.
-- The single-page editor `etc/config-tool/conf-editor.html` which can connect via serial, BLE or read from uploads.
-  Export as zip file.
+You can read and change the configuration in these ways:
+
+- `set-config <file>.conf <key> <value>` from the serial, telnet, MQTT, or BLE console edits a value
+  in place, without a re-flash.
+- `get-config <file>.conf <key>` reads one value back, and `get-config <file>.conf` reads the whole
+  file.
+- `del-config <file>.conf <key>` removes a value.
+- FTP works when Wi-Fi is up (1 connection; passive mode, data port 50009, works from the same
+  subnet only), or use `etc/config-tool/conf-tool.py`.
+- The single-page editor `etc/config-tool/conf-editor.html` connects via serial or BLE or reads
+  uploaded files, and exports a zip file.
 - `./provision.py <board>` writes a whole `config/<board>` image to the littlefs partition.
 
 ## When changes take effect
 
 `set-config` only rewrites the file. What applies the new value depends on the file:
 
-- `board`, `sensor`, `limits`, `coil`, `converter`, `charger`, `tracker` are read at boot: reboot
-  after `set-config`. Console verbs (`vset`, `iset`, `dt`, `pwm-freq`, …) change RAM only.
-- Service confs: `svc rs <name>` re-reads the service-specific keys. For `enabled` use
-  `svc on|off`, and for `log_level` use `svc log`; a hand-edited value of either takes effect at
-  the next boot.
-- A change to `ble.conf` security, passkey or the device name needs a reboot.
+- `board`, `sensor`, `limits`, `coil`, `converter`, `charger`, and `tracker` are read at boot, so
+  reboot after `set-config`. Console verbs (`vset`, `iset`, `dt`, `pwm-freq`, …) change RAM only.
+- For service confs, `svc rs <name>` re-reads the service-specific keys. To change `enabled`, use
+  `svc on|off`, and to change `log_level`, use `svc log`. A hand-edited value of either takes effect
+  at the next boot.
+- A change to `ble.conf` security, passkey, or the device name needs a reboot.
 
-Conventions used in the tables below:
+## Table conventions
 
-- **default** — the value the firmware uses when the key is absent. `—` means the key is
-  **required / board-specific** (no built-in default; usually a divider ratio, pin, or limit that
-  must come from the board image).
-- A missing **current** sensor (`iin`/`iout`) is replaced by a `VirtualSensor` derived from the
-  other side and `power_conversion_eff`; channel `255` means absent.
+The tables on the file pages use these conventions:
+
+- **default** is the value the firmware uses when the key is absent. `—` means the key is
+  required and board-specific: there is no built-in default, and the value (usually a divider
+  ratio, pin, or limit) must come from the board image.
+- Channel `255` means absent. The firmware replaces a missing current sensor (`iin`/`iout`) with a
+  `VirtualSensor` derived from the other side and `power_conversion_eff`.
 
 ## Files
+
+Each file has its own reference page:
 
 | File | Contents |
 |---|---|

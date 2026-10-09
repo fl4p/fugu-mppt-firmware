@@ -5,7 +5,7 @@ sidebar_position: 17
 
 # pprof.conf
 
-Sampling profiler.
+`pprof.conf` configures the sampling profiler. It has one key:
 
 | key            | unit | type | default | description                                                             |
 |----------------|------|------|---------|-------------------------------------------------------------------------|

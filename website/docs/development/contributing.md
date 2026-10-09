@@ -13,8 +13,9 @@ GitHub profile to share your experience.
 
 1. Follow the [coding conventions](conventions.md).
 2. Build both targets: `idf.py build` (ESP32-S3) and `idf.py -B build-esp32 build` (classic ESP32, after
-   `set-target esp32`). For changes touching feature flags, run `etc/matrix_build.sh`; see [Build](build.md).
-3. Run the tests that cover your change, see [Testing](testing.md):
+   `set-target esp32`). If your change touches feature flags, also run `etc/matrix_build.sh`. See [Build](build.md).
+3. Run the tests that cover your change. [Testing](testing.md) describes them, and this table shows which tests to run
+   for each kind of change:
 
 | Change | Run |
 |---|---|
@@ -29,17 +30,19 @@ GitHub profile to share your experience.
 
 ## Commit messages
 
-Keep them short and abstract: say what changed and why, not which functions were called.
+Keep commit messages short and abstract. Say what changed and why, not which functions were called. The following
+example shows the difference:
 
 | Instead of | Write |
 |---|---|
 | `keep retrying that same network via WiFi.reconnect() for wifi.conf::switch_delay seconds (default 30, 0=off)` | `keep retrying that same network for switch_delay seconds` |
 
-An optional area prefix is common, e.g. `ota_ble: …`, `doc: …`.
+An optional area prefix is common, for example `ota_ble: …` or `doc: …`.
 
 ## Documentation site
 
-The site is [Docusaurus](https://docusaurus.io) in `website/`; pages are Markdown files in `website/docs/`.
+The documentation site is a [Docusaurus](https://docusaurus.io) project in `website/`. Its pages are Markdown files
+in `website/docs/`. To preview or build the site, run these commands:
 
 ```bash
 cd website
@@ -51,9 +54,9 @@ npm run build    # static build, fails on broken links
 ### Add a page
 
 1. Create a `.md` file in the folder of the sidebar it belongs to (`guide/`, `reference/`, `internals/`, `lab/`,
-   `development/`). Sidebars are generated from the folder structure; a new sub-folder gets a `_category_.json`
-   with `label` and `position`.
-2. Start it with front matter:
+   `development/`). Docusaurus generates the sidebars from the folder structure. A new sub-folder gets a
+   `_category_.json` with `label` and `position`.
+2. Start the page with front matter:
 
    ```yaml
    ---
@@ -63,5 +66,5 @@ npm run build    # static build, fails on broken links
    ```
 
 3. Link other pages with relative `.md` paths. Relative links to repository files outside `website/docs/` (sources,
-   configs, scripts) are rewritten to GitHub URLs; a link to a missing file fails the build.
+   configs, scripts) are rewritten to GitHub URLs. A link to a missing file fails the build.
 4. Run `npm run build` before pushing.

@@ -5,10 +5,12 @@ sidebar_position: 5
 
 # MQTT topics
 
-Topics the firmware publishes and subscribes to when the `mqtt` service is configured with a broker in
-[`mqtt.conf`](config/mqtt.md).
+This page lists the topics the firmware publishes and subscribes to when the `mqtt` service has a broker configured
+in [`mqtt.conf`](config/mqtt.md).
 
 ## Quick start
+
+A minimal `mqtt.conf` sets the broker, its credentials, and command input:
 
 ```ini title="/littlefs/conf/mqtt.conf"
 broker_uri=mqtt://broker.local:1883
@@ -17,6 +19,8 @@ password=secret
 cmd_input=1
 ```
 
+With that file in place, you can follow the console log and send commands with the Mosquitto clients:
+
 ```bash
 # follow the console log
 mosquitto_sub -h broker.local -t 'pv/log/<hostname>'
@@ -24,10 +28,12 @@ mosquitto_sub -h broker.local -t 'pv/log/<hostname>'
 mosquitto_pub -h broker.local -t 'pv/log/<hostname>/cmd' -m 'status'
 ```
 
-The client connects asynchronously once Wi-Fi is up. Without `mqtt.conf` or with an empty `broker_uri` the
+The client connects asynchronously once Wi-Fi is up. Without `mqtt.conf`, or with an empty `broker_uri`, the
 service stays idle. `svc restart mqtt` reloads the file and re-subscribes.
 
 ## Placeholders
+
+The topic names on this page use these placeholders:
 
 | Placeholder    | Value                                                                                           |
 |----------------|-------------------------------------------------------------------------------------------------|
@@ -35,6 +41,8 @@ service stays idle. `svc restart mqtt` reloads the file and re-subscribes.
 | `<device-id>`  | `fugu-<target>-<MAC>`, e.g. `fugu-esp32s3-` followed by the eFuse MAC in upper-case hex         |
 
 ## Topic overview
+
+The firmware uses the following topics:
 
 | Topic                                              | Dir.      | Payload                   | Condition                          |
 |----------------------------------------------------|-----------|---------------------------|------------------------------------|
@@ -47,28 +55,28 @@ service stays idle. `svc restart mqtt` reloads the file and re-subscribes.
 | value of `ibat_lim_topic`                          | subscribe | charge current limit, A   | key set                            |
 | values of `bat_temp_topic` (up to 4)               | subscribe | pack temperature, °C      | key set                            |
 
-All subscriptions use QoS 0. In the Home Assistant topics `<device-id>` is lower-cased.
+All subscriptions use QoS 0. In the Home Assistant topics, `<device-id>` is lower-cased.
 
 ## Console over MQTT
 
-**`pv/log/<hostname>`** mirrors every console and log line (the same output as on UART and telnet) while the
-client is connected. Lines produced by the MQTT client itself are not mirrored.
+`pv/log/<hostname>` mirrors every console and log line (the same output as on UART and telnet) while the
+client is connected. The firmware doesn't mirror lines that the MQTT client itself logs.
 
-**`pv/log/<hostname>/cmd`** accepts one console command per message when `cmd_input=1`. The command runs on the
-network task, and the reply plus `OK: <cmd>` / `ERR: <cmd>` appear on the log topic. The command set is the
-[serial console](console.md).
+When `cmd_input=1`, `pv/log/<hostname>/cmd` accepts one console command per message. The command runs on the
+network task, and the reply plus `OK: <cmd>` or `ERR: <cmd>` appear on the log topic. The command set is the same
+as on the [serial console](console.md).
 
 :::warning
 With `cmd_input=1` anyone who can publish to the broker can control the converter (`dc`, `restart`, `ota`, …).
 Use broker authentication and ACLs.
 :::
 
-`etc/fugu_console.py --mqtt` uses these two topics, see [Host tools](host-tools.md).
+`etc/fugu_console.py --mqtt` uses these two topics. See [Host tools](host-tools.md).
 
 ## Home Assistant discovery
 
 The firmware announces one sensor through [MQTT discovery](https://www.home-assistant.io/integrations/sensor.mqtt/)
-(`src/tele/home_assistant.cpp`). The config payload uses abbreviated keys with `~` as the topic base:
+(`src/tele/home_assistant.cpp`). The config payload uses abbreviated keys, with `~` as the topic base:
 
 | Key            | Value                                   |
 |----------------|-----------------------------------------|
@@ -83,13 +91,16 @@ The firmware announces one sensor through [MQTT discovery](https://www.home-assi
 | `stat_t`       | `~/state`                               |
 | `dev`          | `{"name":"<hostname>","ids":["<device-id>"]}` |
 
-The state payload is the smoothed converter power as plain text, 3 decimals (0 decimals above 999 W). No state is
-published while a global sweep runs, so the entity can expire (`exp_aft`) during a sweep longer than 30 s.
+The state payload is the smoothed converter power as plain text, with 3 decimals (0 decimals above 999 W).
+
+The firmware publishes no state while a global sweep runs, so the entity can expire (`exp_aft`) during a sweep
+longer than 30 s.
 
 ## BMS inputs
 
 The charger subscribes to BMS values when the corresponding `mqtt.conf` key names a topic
-(`src/charger.h`, `beginMqtt`). Each payload is a plain decimal number; non-finite values are logged and ignored.
+(`src/charger.h`, `beginMqtt`). Each payload is a plain decimal number. The charger logs and ignores non-finite
+values. The keys have these effects:
 
 | Key                       | Unit | Effect                                                                                    |
 |---------------------------|------|-------------------------------------------------------------------------------------------|
@@ -99,8 +110,10 @@ The charger subscribes to BMS values when the corresponding `mqtt.conf` key name
 | `bat_temp_topic`          | °C   | Comma-separated list, up to 4 topics. Drives the `bat_temp_*` policy in `charger.conf`; each sensor expires after 1 h |
 
 When `cell_voltages_max_topic` is set, the converter waits briefly for the first BMS frame before its start-up
-sweep, see [MPP Tracker](../internals/mppt-tracker.md#when-the-tracker-does-not-sweep) and
+sweep. See [MPP Tracker](../internals/mppt-tracker.md#when-the-tracker-does-not-sweep) and
 [Charge Termination](../guide/charging/termination.md).
+
+This example `mqtt.conf` subscribes to a BMS that publishes each value on its own topic:
 
 ```ini title="mqtt.conf with a BMS publishing per-value topics"
 cell_voltages_max_topic=bms/cell_voltages/max

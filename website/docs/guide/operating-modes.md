@@ -5,17 +5,19 @@ sidebar_position: 7
 
 # Operating Modes
 
-The converter runs in one of three modes — MPPT, manual PWM or PSU (constant voltage, including the PV simulator) —
-selected at boot by `converter.conf` and switched live from the [console](../reference/console.md).
+The converter runs in one of three modes: MPPT, manual PWM, or PSU (constant voltage, including the PV simulator).
+`converter.conf` selects the mode at boot, and the [console](../reference/console.md) switches it live.
 
 :::danger Half-bridge safety
 Manual duty, forced PWM, PSU and PV-sim modes drive the half-bridge directly or regulate against a stiff source.
 A wrong duty or setpoint can push hundreds of amps through the switches or put the input voltage on the output.
-Use a current-limited supply for first tests, keep a scope on the switch node when changing timing, and know that
+Use a current-limited supply for first tests and keep a scope on the switch node when changing timing.
 `dc 0` stops the converter from any mode once it replies OK.
 :::
 
 ## Quick start
+
+These three commands show the state, stop the converter, and return to tracking:
 
 ```
 status          # current mode, limits, charger state
@@ -25,14 +27,18 @@ mppt            # back to automatic MPP tracking
 
 ## Modes
 
+The following table shows how to enter and leave each mode and what the mode regulates:
+
 | Mode | Enter | Leave | Regulates |
 |---|---|---|---|
 | MPPT (default) | boot with `mode` unset or `mode=mppt`; `mppt`; `psu off` | `dc N`, `psu <V>`, `pv …` | input power, within the limiters and charger voltage |
 | Manual PWM | `dc N`; `tracker.conf::target_duty_cycle` at boot; `pv off` | `mppt` | nothing: fixed duty, protections still active |
-| PSU | `psu <V>`; `mode=psu` at boot | `psu off`, `mppt`, `sweep` | Vout to the setpoint, CV/CC foldback |
+| PSU | `psu <V>`; `mode=psu` at boot | `psu off`, `mppt`, `sweep`, `dc N` (to manual) | Vout to the setpoint, CV/CC foldback |
 | PV simulator | `pv <isc> <voc> [k]`; `mode=pv` at boot | `pv off` (to manual), `mppt` | Vout along a PV curve V = f(Iout) |
 
 The topology (`converter.conf::topo=buck|boost`) is independent of the mode.
+
+The console commands move the converter between modes as follows:
 
 ```mermaid
 stateDiagram-v2
@@ -49,9 +55,12 @@ The tracker starts with a global sweep from duty 0 upwards, captures the maximum
 fast and later slow perturb-and-observe. A new sweep runs every 30 minutes unless the battery is full, and `sweep`
 starts one on demand.
 
-Five PD limiters (Vin, Iin, Vout, Iout, power) run on every sample; the most restrictive one wins and overrides the
-tracker. The Vout limit comes from the charger, see [LFP charging](charging/lfp-charging.md). Tracker settings are in
-[`tracker.conf`](../reference/config/tracker.md); gains in [`converter.conf`](../reference/config/converter.md).
+Five PD limiters (Vin, Iin, Vout, Iout, power) run on every sample. The most restrictive one wins and overrides the
+tracker. The Vout limit comes from the charger. For details, see [LFP charging](charging/lfp-charging.md). Tracker
+settings are in [`tracker.conf`](../reference/config/tracker.md), and gains are in
+[`converter.conf`](../reference/config/converter.md).
+
+These commands control the tracker:
 
 | Command | Effect |
 |---|---|
@@ -61,6 +70,8 @@ tracker. The Vout limit comes from the charger, see [LFP charging](charging/lfp-
 
 ## Manual PWM
 
+In manual mode, the converter holds a fixed duty that you set and step from the console:
+
 ```
 dc 200          # fixed duty of 200 counts, switches to manual mode
 +5              # step up
@@ -69,14 +80,18 @@ dc 0            # stop
 mppt            # resume tracking
 ```
 
-- `dc N` accepts 0 up to the driver's maximum count and prints the range when out of bounds. A non-zero duty is
-  refused while the sensors calibrate. `dc 0` is accepted then too, but **not** while an on-device coil
-  measurement runs (`CONFIG_FUGU_WITH_MEASURE_COIL`): every `dc` command is rejected with `dc: busy measuring`
-  until it finishes. `dc 0` also fails with `RT transition timed out` if the control loop does not take it within
-  ~1 s. In both failure cases assume nothing was stopped: check the reply.
-- Protections stay active. A non-zero duty enables synchronous rectification and the backflow switch unless
-  `limits.conf::reverse_current_paranoia` is set.
-- `sync`, `bf` and `short-ls` require manual mode, see [console](../reference/console.md#manual-pwm-commands).
+The following rules apply in manual mode:
+
+- `dc N` accepts 0 up to the driver's maximum count and prints the range when out of bounds.
+- While the sensors calibrate, a non-zero duty is refused, but `dc 0` is accepted.
+- While an on-device coil measurement runs (`CONFIG_FUGU_WITH_MEASURE_COIL`), every `dc` command, including `dc 0`,
+  is rejected with `dc: busy measuring` until the measurement finishes.
+- If the control loop does not take `dc 0` within ~1 s, it fails with `RT transition timed out`.
+- If `dc` fails in either of these cases, assume nothing was stopped. Check the reply.
+- Protections stay active. Unless `limits.conf::reverse_current_paranoia` is set, a non-zero duty enables synchronous
+  rectification and the backflow switch.
+- `sync` and `bf` require manual mode. `short-ls` works from any mode on a boost converter with `Vin` ≈ 0 and
+  switches to manual mode itself. See [console](../reference/console.md#manual-pwm-commands).
 - `tracker.conf::target_duty_cycle` (a fraction of the maximum duty) boots straight into manual mode at that duty.
   It overrides `mode=psu|pv`.
 
@@ -87,8 +102,10 @@ increments and watch `sensor`.
 
 ## PSU (constant voltage)
 
-The converter regulates its output to a setpoint, with no tracker, no periodic sweep and no battery logic. The
-limiter chain provides current and power foldback.
+In PSU mode, the converter regulates its output to a setpoint, with no tracker, no periodic sweep, and no battery
+logic. The limiter chain provides current and power foldback.
+
+These commands enter, inspect, and leave PSU mode:
 
 ```
 psu 24          # enter PSU mode at 24 V
@@ -96,27 +113,31 @@ psu             # print setpoint, trip count, latch state
 psu off         # back to MPPT
 ```
 
-Persist it in `converter.conf`:
+To persist PSU mode, set it in `converter.conf`:
 
 ```ini
 mode=psu
 psu_vout=24
 ```
 
+The following limits and fault rules apply in PSU mode:
+
 - The setpoint is range-checked against `limits.conf::vout_max`.
 - In boost topology the setpoint must exceed Vin by at least 0.5 V.
-- Output over-voltage and supply under-voltage trips retry fast: within 60 s the first 4 trips retry after 100 ms,
+- Output over-voltage and supply under-voltage trips retry fast. Within 60 s, the first 4 trips retry after 100 ms,
   trips 5-8 use the normal backoff, and the 9th latches the output off (`psu` shows the latch). Other faults use their
   normal backoff. Any mode command (`psu <V>`, `psu off`, `mppt`, `dc`) clears the latch.
-- `+N`/`-N` are rejected; use `psu off` first.
+- `+N`/`-N` are rejected. Use `psu off` first.
 
-`config/psu_12v` is a different approach: MPPT mode with `forced_pwm=1` and the output voltage in
-`charger.conf::vout_max`, see [Supported boards](hardware/supported-boards.md#12-v-power-supply).
+`config/psu_12v` uses MPPT mode instead, with `forced_pwm=1` and the output voltage set in
+`charger.conf::vout_max`. See [Supported boards](hardware/supported-boards.md#12-v-power-supply).
 
 ## PV simulator
 
-A PSU variant for bench work: the output follows a solar panel curve, with `Voc` at no load and the MPP at `k·Voc`,
-so another converter can track it like a real panel.
+The PV simulator is a PSU variant for bench work. The output follows a solar panel curve, with `Voc` at no load and
+the MPP at `k·Voc`, so another converter can track it like a real panel.
+
+These commands set, scale, inspect, and stop the simulated panel:
 
 ```
 pv 8 40         # Isc = 8 A, Voc = 40 V, k = 0.8
@@ -126,12 +147,16 @@ pv              # curve, live setpoint, trip state
 pv off          # ramp to duty 0, manual mode
 ```
 
+To start the simulator at boot, set the curve in `converter.conf`:
+
 ```ini title="converter.conf"
 mode=pv
 pv_isc=8
 pv_voc=40
 pv_k=0.8
 ```
+
+The simulator behaves as follows:
 
 - The setpoint moves along the curve, slew-limited by `pv_slew` (V/s) and clamped to
   [Vin + 0.5 V, min(Voc, `vout_max`)]. A boost can only emulate the part of the curve above Vin.
@@ -146,6 +171,8 @@ feeding the simulator low.
 The [power-loop rig](../lab/power-loop.md) uses a boost in `mode=pv` as the source for a buck under test.
 
 ## Common scenarios
+
+The following table lists the commands for common tasks:
 
 | Goal | Commands |
 |---|---|

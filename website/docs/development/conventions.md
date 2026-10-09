@@ -5,10 +5,12 @@ sidebar_position: 5
 
 # Coding conventions
 
-Rules that are not obvious from reading the code. Most of them are enforced by the compiler or linker, the rest
+The rules on this page aren't obvious from reading the code. The compiler or linker enforces most of them. The rest
 protect the real-time loop or the flash budget.
 
 ## Compiler and toolchain
+
+The build flags and the toolchain impose the following rules:
 
 | Rule | Why |
 |---|---|
@@ -22,26 +24,29 @@ protect the real-time loop or the flash budget.
 ## Real-time path
 
 The control loop (`loopRT`) runs alone on core 1 (`RT_CORE`) and blocks on the next ADC sample inside
-`adcSampler.update()`. See [Architecture](../internals/architecture.md).
+`adcSampler.update()`. See [Architecture](../internals/architecture.md). The following rules protect it:
 
-- **No `vTaskDelay` or other voluntary sleep** on the RT path.
-- **Nothing else on core 1.** `sdkconfig.defaults` pins the Arduino, lwIP and mDNS tasks to core 0; `loopRT` asserts
+- Don't call `vTaskDelay` or sleep voluntarily on the RT path.
+- Keep every other task off core 1. `sdkconfig.defaults` pins the Arduino, lwIP and mDNS tasks to core 0; `loopRT` asserts
   it runs on `RT_CORE`. Pin new tasks to core 0.
-- **`vout` is the last sensor added** in the sensor setup (`src/adc/sensor_setup.cpp`), so output over-voltage
+- `vout` is the last sensor added in the sensor setup (`src/adc/sensor_setup.cpp`), so output over-voltage
   protection sees the freshest sample. Add new sensors before it.
 
 ## Code style
 
-- **Low memory, small code.** Reuse data that already exists; in non-time-critical code, derive or cast rather than
-  store. Think twice before adding a member variable; expose an existing private member with a getter instead.
-- **Don't duplicate constants.** Never copy a `#define` into another file because the original header is not
-  included; move it to a header both already include (e.g. `src/util.h`).
-- **Minimal comments.** Keep them short and drop ones that restate a name or call.
-- **Vendored libraries** under `components/` are upstream code; discuss changes before making them.
+New code follows these style rules:
+
+- Keep memory use low and code small. Reuse data that already exists. In non-time-critical code, derive or cast
+  rather than store. Think twice before adding a member variable, and expose an existing private member with a getter
+  instead.
+- Don't duplicate constants. Never copy a `#define` into another file because the original header is not
+  included. Move it to a header both files already include (e.g. `src/util.h`).
+- Keep comments few and short, and drop ones that restate a name or call.
+- Vendored libraries under `components/` are upstream code. Discuss changes before making them.
 
 ## Configuration keys
 
-When you add, rename or remove a `.conf` key, update together:
+When you add, rename, or remove a `.conf` key, update both of these places together:
 
-1. the reference page for that file under [Configuration files](../reference/config/index.md);
-2. the editor metadata in `etc/config-tool/conf-editor.html` (`META` and `FILE_KEYS`).
+- The reference page for that file under [Configuration files](../reference/config/index.md).
+- The editor metadata in `etc/config-tool/conf-editor.html` (`META` and `FILE_KEYS`).

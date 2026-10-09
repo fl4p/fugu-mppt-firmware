@@ -5,7 +5,8 @@ sidebar_position: 5
 
 # converter.conf
 
-Topology.
+`converter.conf` sets the converter topology and operating mode, the gate driver, the forced-PWM gate,
+wired clock sync, and the control-loop gains. The following table lists its keys.
 
 | key          | unit | type  | default | description                                                |
 |--------------|------|-------|---------|------------------------------------------------------------|
@@ -33,7 +34,11 @@ Topology.
 ## Control-loop gains
 
 The five PD units in `src/mppt.h` limit duty against Vin (under-voltage), Vout (over-voltage / CV),
-Iin, Iout and power; the smallest response wins each tick. Compiled-in defaults:
+Iin, Iout, and power. Each unit produces a control value every tick, and the smallest response wins.
+Gains live here rather than in `charger.conf` because they are a property of the plant (L, output
+capacitance, `pwm_freq`, `pwmMax`, buck vs boost), not of the battery.
+
+The following table lists the compiled-in defaults:
 
 | unit    | `_kp` | `_kd` | error is relative to |
 |---------|-------|-------|----------------------|
@@ -43,34 +48,36 @@ Iin, Iout and power; the smallest response wins each tick. Compiled-in defaults:
 | `iout`  | 200   | 400   | derived `Iout_max` |
 | `power` | 20    | 5     | derived power limit |
 
-These are **not** the whole loop gain — the controller output is scaled into a duty slew rate by a
-per-path constant in `mppt.cpp`:
+A per-path constant in `mppt.cpp` scales the controller output into a duty slew rate, so these gains
+are not the whole loop gain. The following table lists that constant:
 
 | path | constant | effective scale |
 |------|----------|-----------------|
 | limiter (`update()`)  | `kCtrlSlewLimit` = 0.025 | 0.025 |
 
-The limiter path is the only duty-slew path: the five PD controllers (Vin, Vout, Iin, Iout, power)
-produce a control value each tick, the minimum wins, and `kCtrlSlewLimit` scales it into a duty
-step. In PSU mode the same chain runs — when no limiter binds, the Vout controller's output drives
-duty toward the setpoint (CV); when a current or power limit binds, it folds back (CC). `mode=pv`
-runs the identical chain, but the Vout setpoint is recomputed each tick from the PV curve
-V=f(Iout), clamped to [Vin+0.5, min(`pv_voc`, `vout_max`)] and slew-limited by `pv_slew`; the OV
-threshold and feasibility checks stay pinned at `pv_voc`, not the moving setpoint.
+The limiter path is the only duty-slew path. The minimum control value of the five PD controllers
+wins, and `kCtrlSlewLimit` scales it into a duty step.
 
-**`_kd` vs `_td`.** `_kd` multiplies the raw difference between consecutive samples, so its
-contribution to duty scales with the loop period: the same `_kd` is a *different* derivative gain
-at a different sample rate. Change `sensor.conf::esp32adc1_avg` or `esp32adc1_sr` and every `_kd`
-silently retunes. `_td` expresses the same thing as a time (`de/dt`), which is invariant. To port a
-board without changing its behaviour, set `_td = (_kd / _kp) * Ts` where `Ts` is that board's
-current control period (1 / the Vout sensor's sample rate — the loop runs once per Vout sample).
-Setting `_td` makes `_kd` unused. Both are logged at boot (`ctrl vout: Kp=… Td=…`).
+PSU mode runs the same chain. When no limiter binds, the Vout controller's output drives duty toward
+the setpoint (CV). When a current or power limit binds, it folds back (CC).
 
-Gains live here rather than in `charger.conf` because they are a property of the plant — L, output
-capacitance, `pwm_freq`, `pwmMax`, buck-vs-boost — not of the battery.
+`mode=pv` runs the identical chain, but it recomputes the Vout setpoint each tick from the PV curve
+V=f(Iout). The setpoint is clamped to [Vin+0.5, min(`pv_voc`, `vout_max`)] and slew-limited by
+`pv_slew`. The OV threshold and feasibility checks stay pinned at `pv_voc`, not at the moving setpoint.
 
+### `_kd` and `_td`
 
-## Notes & examples
+`_kd` multiplies the raw difference between consecutive samples, so its contribution to duty scales
+with the loop period. The same `_kd` is a *different* derivative gain at a different sample rate: if
+you change `sensor.conf::esp32adc1_avg` or `esp32adc1_sr`, every `_kd` silently retunes. `_td`
+expresses the same thing as a time (`de/dt`), which is invariant.
+
+To port a board without changing its behaviour, set `_td = (_kd / _kp) * Ts`, where `Ts` is that
+board's current control period. `Ts` is 1 / the Vout sensor's sample rate, since the loop runs once
+per Vout sample. Setting `_td` makes `_kd` unused. The firmware logs both at boot
+(`ctrl vout: Kp=… Td=…`).
+
+## Notes and examples
 
 ### `forced_pwm`
 
@@ -78,7 +85,8 @@ With the default value `0`, the converter runs in DCM under light load. The cont
 inductance (`coil.conf::L0`) plus the input and output voltages to decide whether to operate in DCM
 or CCM.
 
-Set to `1` to disable diode emulation and always run in CCM — *forced PWM* mode, with these
+Forced PWM is useful if you want to use the converter as power supply. Set `forced_pwm` to `1` to
+disable diode emulation and always run in CCM (*forced PWM* mode). This mode has the following
 characteristics:
 
 * less output noise, because the inductor never free-wheels
@@ -87,24 +95,26 @@ characteristics:
 * lower efficiency: reverse coil current shuttles energy back and forth between output and input
 * a buck converter in forced PWM can easily boost voltage from output back to input
 
-Forced PWM is useful if you want to use the converter as power supply.
-
 ### `fpwm_gate`, `fpwm_gate_margin`
 
+The gate keeps a forced-PWM duty ramp from pumping reverse current into a stiff output.
+
 The DC coil current in forced PWM is `(D·Vin − Vout) / R_loop`, and `R_loop` is only the coil DCR
-plus the two `Rds(on)` — milliohms. Zero current sits at `D = Vout/Vin` (boost: `D = 1 − Vin/Vout`),
+plus the two `Rds(on)`, in the milliohm range. Zero current sits at `D = Vout/Vin` (boost: `D = 1 − Vin/Vout`),
 so while a duty ramp is still *below* that ratio the converter pumps current backwards, out of the
-output and into the input. Against a stiff output — a supply, a battery, the input node of a
-[power loop](../../lab/power-loop.md) — that is hundreds of amps, and a ramp from duty 0 in forced PWM is
+output and into the input. Against a stiff output (a supply, a battery, the input node of a
+[power loop](../../lab/power-loop.md)) that is hundreds of amps, and a ramp from duty 0 in forced PWM is
 destructive.
 
 `fpwm_gate=1` (the default) keeps the low side diode-emulating until the duty has passed the
-measured ratio. Below that duty the body diode blocks, so the ramp cannot boost; the gate engages
+measured ratio. Below that duty the body diode blocks, so the ramp cannot boost. The gate engages
 once the converter is conducting forward in CCM, where diode and synchronous rectification share
 the same operating point and the transition is seamless.
 
-There are two ways to deserve forced PWM, because a duty that is still *moving* and a duty that has
-*settled* are different situations:
+#### Engagement and disengagement
+
+The gate has two engagement conditions, because a duty that is still *moving* and a duty that has
+*settled* are different situations. The thresholds are as follows:
 
     engage, duty moving   at  D ≥ D₀ + err + fpwm_gate_margin     ("forward")
     engage, duty settled  at  D ≥ D₀ − err                        ("settled")
@@ -113,58 +123,68 @@ There are two ways to deserve forced PWM, because a duty that is still *moving* 
 
 While the duty is climbing, the only safe test is *provably forward*: a ramp that has not reached
 its operating point may be climbing toward a stiff output, and engaging below `D₀` there is the
-destructive case. Once the duty has stopped moving for the whole `fpwm_gate_hold`, the picture
-changes — a settled converter with no load sits at `D == D₀` **by definition**, that being what zero
-current means. Refusing forced PWM there would refuse it exactly where it is both harmless and
-wanted: a bench converter parked at the ratio is steerable *only* in forced PWM, because diode
-emulation cannot pull the output down. So a settled duty engages from `D₀ − err`, having converged
-onto the ratio rather than ramping at it.
+destructive case.
+
+Once the duty has stopped moving for the whole `fpwm_gate_hold`, the gate applies the settled test instead. A settled
+converter with no load sits at `D == D₀` by definition, since that is what zero current means.
+Refusing forced PWM there would refuse it exactly where it is both harmless and wanted. A bench
+converter parked at the ratio is steerable *only* in forced PWM, because diode emulation cannot pull
+the output down. So a settled duty engages from `D₀ − err`, having converged onto the ratio rather
+than ramping at it.
 
 Disengage sits a margin below the converge floor so that steering by single counts does not chatter
-the gate, while a ramp away from the operating point still drops it promptly. That test is also
-re-run inside `pwmPerturb()` against the duty about to be committed, not only once per sample,
-because the control loop may step the duty all the way to zero in one go; when it fires there it
-also puts the rectifier back into diode emulation in the same call, rather than leaving one more
+the gate, while a ramp away from the operating point still drops it promptly. The control loop may
+step the duty all the way to zero in one step, so the firmware also re-runs that test inside
+`pwmPerturb()` against the duty about to be committed, not only once per sample. When the test fires
+there, the same call also puts the rectifier back into diode emulation, rather than leaving one more
 control interval of complementary low side behind.
 
-**Know what the settled path costs.** A still duty is evidence that the converter has settled, not
-that its output is floating — a stiff load, a manual target or plain quantisation can hold `D` below
-the true `D₀` just as well. On a stiff output the gate will then engage and *stay* engaged, and the
-reverse current is bounded in magnitude but **not in duration**: at 26.2 V / 70.5 V with
+#### Cost of the settled path
+
+A still duty shows that the converter has settled, but it doesn't show that its output is floating.
+A stiff load, a manual target, or plain quantisation can hold `D` below the true `D₀` just as well.
+On a stiff output the gate will then engage and *stay* engaged. The reverse current is bounded in
+magnitude but not in duration. At 26.2 V / 70.5 V with
 `R_loop ≈ 30 mΩ`, a fresh settled engagement at the converge floor allows ≈ −18 A, and an engaged
 gate may sit at the disengage floor at ≈ −41 A (≈ −59 A once worst-case ratio error is included).
-That is the deliberate price of being able to park a bench converter at the ratio in forced PWM,
-where it is steerable; `fpwm_gate_margin` is the knob, and a closed stiff loop wants it small.
+This is accepted so that a bench converter can be parked at the ratio in forced PWM, where it is
+steerable. `fpwm_gate_margin` is the knob, and a closed stiff loop wants it small.
 
-The margin is the price of the transition: the engagement current step is
+#### Margin, hold, and preconditions
+
+The margin sets the engagement current step, as follows:
 
     I_engage ≈ (r·kErr + fpwm_gate_margin) · Vin / R_loop      r = Vout/Vin (buck)
 
-— note the sensor-error term, which at `Vout/Vin = 0.4` is `0.008`, nearly as large as the default
-margin, so the real step is about twice what the margin alone suggests. On a 68 V bus with
+The sensor-error term at `Vout/Vin = 0.4` is `0.008`, nearly as large as the default margin, so the
+real step is about twice what the margin alone suggests. On a 68 V bus with
 `R_loop = 30 mΩ` that is roughly 40 A. Raise the margin only if reverse current at engagement is
-the bigger worry than forward current.
+a bigger concern than forward current.
 
-`fpwm_gate_hold` is counted in **fresh Vin/Vout samples**, not in control-loop passes: the gate is
-evaluated on every pass but only advances its counters when the sampler has actually produced new
-voltage data, so a stalled sensor cannot be mistaken for a settled operating point.
+`fpwm_gate_hold` is counted in fresh Vin/Vout samples, not in control-loop passes. The gate is
+evaluated on every pass, but it only advances its counters when the sampler has actually produced
+new voltage data. A stalled sensor therefore cannot be mistaken for a settled operating point.
 
-While the gate is counting out `fpwm_gate_hold`, the duty ramp is **held** (upward only; a retreat
-is never blocked) — in manual PWM and in the automatic control loop alike, so a gated boost running
-`mode=pv` or MPPT gets the same treatment. The point of the hold is that the voltage filters can
-settle: the gate compares an instantaneous duty against EWMA averages `vin_filt_len`/`vout_filt_len`
+While the gate is counting out `fpwm_gate_hold`, the duty ramp is held. The hold applies upward only,
+and a retreat is never blocked. It applies in manual PWM and in the automatic control loop alike, so
+a gated boost running `mode=pv` or MPPT gets the same treatment. The hold lets the voltage filters
+settle. The gate compares an instantaneous duty against EWMA averages `vin_filt_len`/`vout_filt_len`
 samples long, and on a moving duty that lag is a steady-state error, not noise. Sizing the hold
 below the filter length defeats it.
 
-The gate needs both side voltages above 0.1 V with `Vin > Vout` (buck) resp. `Vout > Vin` (boost);
-anything else is not a conversion ratio and it refuses to engage. A light or purely capacitive load,
-where `D == Vout/Vin` by definition, reaches forced PWM through the settled path once the duty stops
-moving — but only after `fpwm_gate_hold`, so a converter whose duty never settles (an active
-regulator hunting) will stay armed. `fpwm_gate=0` (as `config/psu_12v` does) removes the gate
-entirely; then never ramp the duty to 0 in forced PWM, because a complementary low side at duty ~0
-shorts the output to ground through the coil.
+The gate needs both side voltages above 0.1 V, with `Vin > Vout` (buck) or `Vout > Vin` (boost).
+Anything else is not a conversion ratio, and the gate refuses to engage.
 
-The console reports the state with a bare `sync` (`off`/`armed`/`arming`/`engaged`/`on (ungated)`)
-together with the threshold that currently applies, and `sync forced!` engages immediately, bypassing
-the gate until the next `disable()` — a shutdown, a sweep or `dc 0` makes forced PWM re-earn its
-engagement.
+A light or purely capacitive load, where `D == Vout/Vin` by definition, reaches forced PWM through
+the settled path once the duty stops moving. That happens only after `fpwm_gate_hold`, so a
+converter whose duty never settles (an active regulator hunting) will stay armed.
+
+`fpwm_gate=0` (as `config/psu_12v` does) removes the gate entirely. In that case, never ramp the duty
+to 0 in forced PWM, because a complementary low side at duty ~0 shorts the output to ground through
+the coil.
+
+#### Console
+
+A bare `sync` reports the state (`off`/`armed`/`arming`/`engaged`/`on (ungated)`) together with the
+threshold that currently applies. `sync forced!` engages immediately and bypasses the gate until the
+next `disable()`. After a shutdown, a sweep, or `dc 0`, forced PWM has to pass the gate again.

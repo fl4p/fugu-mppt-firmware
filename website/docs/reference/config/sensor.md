@@ -5,14 +5,14 @@ sidebar_position: 2
 
 # sensor.conf
 
-Channel map, divider ratios, calibration.
+`sensor.conf` sets the channel map, the divider ratios, and the calibration of the voltage and current sensors.
 
-Global keys:
+The following keys apply to all channels:
 
 | key                              | unit | type   | default | description                                                    |
 |----------------------------------|------|--------|---------|----------------------------------------------------------------|
 | `adc`                            |      | string | —       | Default ADC backend for all channels                           |
-| `expected_hz`                    | Hz   | uint16 | 0       | Expected control-loop sample rate (lower-bound check; 0 = off), 0–65535. A value outside that range fails sensor setup at boot. The full value is enforced, e.g. `3900` in `config/lab/dry_mock` |
+| `expected_hz`                    | Hz   | uint16 | 0       | Minimum control-loop sample rate for the loop-rate watchdog, 0–65535 (0 = off). If the samples per second stay below it for three consecutive ~3 s windows (outside calibration and manual PWM), the converter logs `Loop latency high (…), shutdown!` and backs off. A value outside the range fails sensor setup at boot. Set it below the rate the ADC settings deliver, e.g. `3900` in `config/lab/dry_mock` |
 | `power_conversion_eff`           |      | float  | 0.95    | Assumed converter efficiency for the virtual current sensor    |
 | `ignore_calibration_constraints` |      | bool   | 0       | Bypass ADC calibration sanity constraints                      |
 | `notch_adaptive`                 |      | bool   | 1       | Auto-tune the inverter-ripple notch to the tone measured on Vout (off = fixed at `notch_freq`) |
@@ -22,7 +22,7 @@ Global keys:
 | `esp32adc1_sr`                   | Hz   | int    | —       | Internal ADC1 continuous-mode raw sample rate (required with `esp32adc1`) |
 | `esp32adc1_avg`                  |      | int    | —       | Software average of N raw conversions per delivered sample (1–1023, required with `esp32adc1`) |
 
-Per-channel keys, prefix `vin_` / `vout_` / `iin_` / `iout_` / `ntc_`:
+The following per-channel keys take the prefix `vin_`, `vout_`, `iin_`, `iout_`, or `ntc_`:
 
 | suffix      | unit | type   | default     | description                                                                    |
 |-------------|------|--------|-------------|--------------------------------------------------------------------------------|
@@ -34,7 +34,7 @@ Per-channel keys, prefix `vin_` / `vout_` / `iin_` / `iout_` / `ntc_`:
 | `_midpoint` |      | float  | 0           | Zero/offset midpoint subtracted before scaling (current channels)              |
 | `_filt_len` |      | int    | 10          | Filter window length (samples). Currently ignored for `ntc`, which uses a fixed 50 |
 
-See [Topology notes & examples](#notes--examples) below for worked ACS712 and bare-ESP32 configs.
+For worked ACS712 and bare-ESP32 configs, see [Notes & examples](#notes--examples).
 
 
 ## Notes & examples
@@ -43,13 +43,13 @@ See [Topology notes & examples](#notes--examples) below for worked ACS712 and ba
 
 Configure the voltage and current sensors in `sensor.conf` to match your topology and chips.
 
-There are four sensors (Vin, Vout, Iin, Iout). A topology can have one or two current sensors; with
-a single current sensor the other is computed from the voltage ratio and `power_conversion_eff`. The
-full key list is in the tables above.
+There are four sensors: Vin, Vout, Iin, and Iout. A topology can have one or two current sensors.
+With a single current sensor, the firmware computes the other from the voltage ratio and
+`power_conversion_eff`. The tables above list all keys.
 
-The example below mixes backends as the Fugu2 board image (`config/fmetal`) does. The channel
-numbers belong to that board: Vin on internal ADC1 channel 3, Vout and Iout on the INA226, which only
-has channel 0 (bus voltage) and channel 1 (shunt current).
+The following example mixes backends as the Fugu2 board image (`config/fmetal`) does. The channel
+numbers belong to that board: Vin is on internal ADC1 channel 3, and Vout and Iout are on the INA226,
+which only has channel 0 (bus voltage) and channel 1 (shunt current).
 
 ```
 adc = ina226         # default ADC backend for all channels (ina226, ads1015, ads1115, esp32adc1)
@@ -81,21 +81,21 @@ power_conversion_eff = 0.97  # assumed efficiency for the virtual current sensor
 
 ### ADC
 
-Pick the ADC backend with `adc`, or per channel with `<chn>_adc`. Implemented:
+Pick the ADC backend with `adc`, or per channel with `<chn>_adc`. The firmware implements these backends:
 
 * `ina226`
 * `ads1115`
 * `ads1015`
-* `esp32adc1` — internal continuous-mode ADC, no external chip (see [Internal ADC.md](../../guide/hardware/internal-adc.md))
+* `esp32adc1`: internal continuous-mode ADC, no external chip (see [Internal ADC](../../guide/hardware/internal-adc.md))
 
-Not yet implemented:
+This backend is planned:
 
 * `ina228`
 
 ### Voltage sensors `vin`, `vout`
 
-Specify the resistor values of the ADC input voltage divider network.
-The firmware uses (hardcoded) ADC input impedance and resistor values to compute the gain.
+The firmware computes the gain of a voltage channel from the resistor values of the ADC input voltage
+divider and the hardcoded ADC input impedance. Specify both resistors, as in this example:
 
 ```
 vout_rh = 47e3    # upper resistor of voltage divider
@@ -104,11 +104,12 @@ vout_rl = 47e3    # lower resistor
 
 ### ACS712
 
-The ACS712 sensitivity is 66mV/A. Output is scaled with a 10k+3.3k voltage divider to match the ADC voltage range.
-This is encoded into `iin_factor`.
+The ACS712 sensitivity is 66mV/A. A 10k+3.3k voltage divider scales the output to match the ADC
+voltage range. `iin_factor` encodes both the sensitivity and the divider.
 
 Specify the ACS712 midpoint voltage with `iin_midpoint` (or `iout_midpoint`). This ACS712 has a
-2.5V midpoint, scaled through the same 10k + 3.3k divider: `2.5V * 10k/(10k+3.3k)`.
+2.5V midpoint, scaled through the same 10k + 3.3k divider: `2.5V * 10k/(10k+3.3k)`. The following
+example shows both keys:
 
 ```
 iin_factor=-20.15  # sensitivity = -1/0.066 * (10k+3.3k)/10k

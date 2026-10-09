@@ -10,10 +10,12 @@ A sensor represents an ADC channel, which is usually one physical pin, or two pi
 
 ## What the hardware must measure
 
+The hardware must measure the following signals.
+
 | Signal | Required | Notes |
 |---|---|---|
 | `Vout` | Yes | Battery voltage; should be precise and sampled fast to limit transients on load changes |
-| `Vin` | Yes | May be coarse (an 8-bit ADC can do if `Iout` is measured); needed for diode emulation in DCM and UV/OV shutdown |
+| `Vin` | Yes | May be coarse (an 8-bit ADC is enough if `Iout` is measured); needed for diode emulation in DCM and UV/OV shutdown |
 | `Iin` or `Iout` | At least one | The missing side is computed by a `VirtualSensor` from the voltage ratio and `power_conversion_eff` |
 | `ntc` | Optional | Heatsink temperature for derating |
 
@@ -23,6 +25,8 @@ A bidirectional current sensor allows boost operation (lower solar voltage to hi
 
 `AsyncADC<float>` (`src/adc/adc.h`) is the interface. "Asynchronous" means a conversion is requested and the code
 continues while it runs, so a slow ADC does not stall other work.
+
+The following backends implement this interface.
 
 | Backend | Hardware |
 |---|---|
@@ -35,6 +39,8 @@ continues while it runs, so a slow ADC does not stall other work.
 See the [configuration reference](../reference/config/sensor.md).
 
 ## Types
+
+The sensor layer consists of the following types.
 
 | Type | Role |
 |---|---|
@@ -49,4 +55,4 @@ See the [configuration reference](../reference/config/sensor.md).
 over-voltage protection relies on.
 :::
 
-Filtering (notch, moving median, EWM) is described in [Signal Filters](signal-filters.md).
+[Signal Filters](signal-filters.md) describes the filtering (notch, moving median, EWM).

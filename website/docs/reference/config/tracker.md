@@ -5,7 +5,7 @@ sidebar_position: 7
 
 # tracker.conf
 
-MPPT.
+`tracker.conf` configures the MPPT tracker. It has the following keys.
 
 | key                 | unit | type  | default | description                                                          |
 |---------------------|------|-------|---------|----------------------------------------------------------------------|

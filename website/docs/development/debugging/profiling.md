@@ -3,44 +3,52 @@ title: Profiling
 sidebar_position: 6
 ---
 
-# Profiling on esp32
+# Profiling on ESP32
 
-There are a couple of ways (instrumented and sampled):
+You can profile the ESP32 with instrumented or sampling methods. The main options are:
 
-* SEGGER SystemView (over ESP-IDF App Trace / JTAG) — the Espressif-blessed way. Enable CONFIG_APPTRACE_SV_ENABLE=y, attach a JTAG probe (built-in USB-JTAG
-   on the S3 works), open SystemView on the host. You get task/ISR timelines, context-switch traces, optional user markers. Docs: ESP-IDF Application Level
-   Tracing Library + SystemView Tracing. The closest thing to a "real" profiler on ESP-IDF.
-  * Tracealyzer (Percepio) — commercial, consumes the SystemView protocol, prettier UI. Same data path as #1.
-* GDB sampling — openocd + xtensa-esp32-elf-gdb, periodic bt for a poor-man's sampling profiler.
-* FreeRTOS runtime stats — vTaskGetRunTimeStats() / uxTaskGetSystemState(). Needs CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y +
-   CONFIG_FREERTOS_USE_TRACE_FACILITY=y. Zero hardware required. This is exactly what your rt-stats already wraps.
-* esp32-semihosting-profiler (integrated into this firmware `WITH_SPROFILER`)
-  * uses xtensa perfmon
+* SEGGER SystemView, over ESP-IDF App Trace and JTAG, is the method Espressif documents. Of the options here, it comes
+  closest to a full profiler on ESP-IDF. Enable `CONFIG_APPTRACE_SV_ENABLE=y`, attach a JTAG probe (the built-in USB-JTAG
+  on the S3 works), and open SystemView on the host. You get task and ISR timelines, context-switch traces, and optional
+  user markers. See the ESP-IDF Application Level Tracing Library and
+  [SystemView Tracing](https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/app_trace.html#app-trace-system-behaviour-analysis-with-segger-systemview).
+  * Tracealyzer (Percepio) is commercial. It consumes the SystemView protocol and has a nicer UI. It uses the same data
+    path as SystemView.
+* GDB sampling uses openocd and `xtensa-esp32-elf-gdb`, with a periodic `bt` as a poor-man's sampling profiler.
+* FreeRTOS runtime stats come from `vTaskGetRunTimeStats()` and `uxTaskGetSystemState()`. They need
+  `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y` and `CONFIG_FREERTOS_USE_TRACE_FACILITY=y`, but no hardware. The `rt-stats`
+  command wraps these.
+* esp32-semihosting-profiler is integrated into this firmware (`WITH_SPROFILER`) and uses xtensa perfmon.
 
+## Profiling tools in this firmware
 
-In this firmware:
-* sprofiler (sampling)
-* rt-stats (sampling)
-  * (src/etc/perf.h, src/cli.cpp:292)
-    Console command rt-stats spawns a one-shot task that samples FreeRTOS runtime stats over ~2 s and prints CPU% per task per core. Best for "is the RT loop
-    being preempted" or "who is hogging core 0.
-* rtcount (per-section instrumentation)
-  *   Wrap any RT path with rtcount("name"); it uses the xtensa cycle counter to accumulate count/min/max/total per label. Already sprinkled through mppt.cpp,
-      sampling.h, main.cpp. Output is printed by rtcount_print(reset) — `cmdResetLag` in cli.cpp calls it from the reset-lag command, so run reset-lag over serial/telnet/MQTT
-      to dump and zero the counters. Best for "which step in loopRTNewData is slow."
+The firmware has three built-in profiling tools:
 
-
+* sprofiler (sampling), described in [esp32-semihosting-profiler](#esp32-semihosting-profiler).
+* rt-stats (sampling), in `src/etc/perf.h` and `src/cli.cpp:292`. The console command `rt-stats` spawns a one-shot task
+  that samples FreeRTOS runtime stats over ~2 s and prints CPU% per task per core. Use it to check whether the RT loop is
+  being preempted, or which task is using most of core 0.
+* rtcount (per-section instrumentation). Wrap any RT path with `rtcount("name")`. It uses the xtensa cycle counter to
+  accumulate count, min, max, and total per label. Calls exist in `mppt.cpp`, `sampling.h`, and `main.cpp`.
+  `rtcount_print(reset)` prints the output, and `cmdResetLag` in `cli.cpp` calls it from the `reset-lag` command. To dump
+  and zero the counters, run `reset-lag` over serial, telnet, or MQTT. Use it to find which step in `loopRTNewData` is
+  slow.
 
 ## esp32-semihosting-profiler
-* https://github.com/espressif/esp-idf/blob/master/examples/storage/semihost_vfs/README.md
 
-> **Opt-in via `CONFIG_FUGU_WITH_SPROFILER=y`** (`idf.py menuconfig` → "Fugu MPPT firmware", or an
-> sdkconfig fragment). Default builds exclude the `esp32-semihosting-profiler` component to save
-> flash (~6 KB) and DIRAM (~8 KB `.bss`). The top `CMakeLists.txt` reads this symbol before
-> `project()` to drop the component; run `idf.py reconfigure build` after toggling it. The legacy
-> `WITH_SPROFILER` env var is rejected. `main.cpp` guards the profiler
-> init with `#ifdef WITH_SPROFILER`, and `main/CMakeLists.txt` sets the matching compile def
-> (mirrors the `WITH_BLE` flag pattern).
+The profiler builds on ESP-IDF semihosting. See the
+[semihost_vfs example](https://github.com/espressif/esp-idf/blob/master/examples/storage/semihost_vfs/README.md).
+
+The profiler is opt-in via `CONFIG_FUGU_WITH_SPROFILER=y`. Set it in `idf.py menuconfig` → "Fugu MPPT firmware", or in an
+sdkconfig fragment. Default builds exclude the `esp32-semihosting-profiler` component to save flash (~6 KB) and DIRAM
+(~8 KB `.bss`).
+
+The top `CMakeLists.txt` reads this symbol before `project()` to drop the component. Run `idf.py reconfigure build` after
+you toggle it. The legacy `WITH_SPROFILER` env var is rejected. `main.cpp` guards the profiler init with
+`#ifdef WITH_SPROFILER`, and `main/CMakeLists.txt` sets the matching compile def. This mirrors the `WITH_BLE` flag
+pattern.
+
+To capture a profile, create `pprof.conf`, run openocd and the monitor on the host, and then run the analysis script:
 
 ```
 # create /littlefs/conf/pprof.conf:
@@ -66,50 +74,53 @@ python3 ../components/esp32-semihosting-profiler/sprofiler.py
 ```
 
 ## gprof
-https://components.espressif.com/components/espressif/gprof
-https://github.com/espressif/esp-iot-solution/blob/master/components/gprof/src/esp_gprof.c
+
+Espressif provides a gprof component:
+
+* [espressif/gprof in the component registry](https://components.espressif.com/components/espressif/gprof)
+* [esp_gprof.c source](https://github.com/espressif/esp-iot-solution/blob/master/components/gprof/src/esp_gprof.c)
 
 ## Further options
-* vTaskGetRunTimeStats https://blog.drorgluska.com/2022/12/esp32-performance-profiling.html
-* xtensa_perfmon
-  https://github.com/pycom/pycom-esp-idf/blob/master/components/esp32/include/xtensa/xt_perfmon.h
-* esp_cpu_get_cycle_count()
 
-## vTask
-* example https://github.com/espressif/esp-idf/tree/master/examples/system/freertos/real_time_stats
-* CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
-* FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER ((Top) → Component config → FreeRTOS → Port → Choose the clock source for run time stats)
+Other building blocks for profiling are:
 
-https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-guides/app_trace.html#app-trace-system-behaviour-analysis-with-segger-systemview
+* `vTaskGetRunTimeStats`, described in [ESP32 performance profiling](https://blog.drorgluska.com/2022/12/esp32-performance-profiling.html).
+* xtensa_perfmon, declared in
+  [xt_perfmon.h](https://github.com/pycom/pycom-esp-idf/blob/master/components/esp32/include/xtensa/xt_perfmon.h).
+* `esp_cpu_get_cycle_count()`.
 
+## FreeRTOS runtime stats
 
+To use the FreeRTOS runtime stats, see the
+[real_time_stats example](https://github.com/espressif/esp-idf/tree/master/examples/system/freertos/real_time_stats). The
+relevant options are:
 
-## sdkconfig
-* CONFIG_ESP_EVENT_LOOP_PROFILING
-  Enables collections of statistics in the event loop library such as the number of events posted
-  to/recieved by an event loop, number of callbacks involved, number of events dropped to to a full event
-  loop queue, run time of event handlers, and number of times/run time of each event handler.
+* `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS`
+* `FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER` ((Top) → Component config → FreeRTOS → Port → Choose the clock source for run
+  time stats)
 
-* CONFIG_ESP_TIMER_PROFILING
-  If enabled, esp_timer_dump will dump information such as number of times the timer was started,
-  number of times the timer has triggered, and the total time it took for the callback to run.
-  This option has some effect on timer performance and the amount of memory used for timer
-  storage, and should only be used for debugging/testing purposes.
+## Profiling options in sdkconfig
 
+Two sdkconfig options enable profiling statistics in ESP-IDF components:
 
+* `CONFIG_ESP_EVENT_LOOP_PROFILING` enables collection of statistics in the event loop library. These include the number
+  of events posted to or received by an event loop, the number of callbacks involved, the number of events dropped to a
+  full event loop queue, the run time of event handlers, and the number of times and run time of each event handler.
+* `CONFIG_ESP_TIMER_PROFILING` makes `esp_timer_dump` dump information such as the number of times the timer was started,
+  the number of times the timer has triggered, and the total time it took for the callback to run. This option has some
+  effect on timer performance and the amount of memory used for timer storage, so use it only for debugging or testing.
 
-## GCC Instrumentation Profiling
+## GCC instrumentation profiling
 
--fprofile-arcs
+GCC can instrument code with `-fprofile-arcs`. It's an open question whether this works with ESP-IDF. See the
+[GCC instrumentation options](https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html).
 
-* does this actually work with esp-idf?
-  https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html
+## Related libraries
 
+These libraries and examples also relate to profiling on ESP32:
 
-
-ä libs
-https://github.com/espressif/idf-extra-components/tree/master/ccomp_timer
-https://github.com/espressif/esp-idf/tree/master/examples/system/perfmon
-https://github.com/LiluSoft/esp32-semihosting-profiler
-https://github.com/Carbon225/esp32-perfmon
-https://esp32.com/viewtopic.php?t=39619
+* [ccomp_timer](https://github.com/espressif/idf-extra-components/tree/master/ccomp_timer)
+* [perfmon example](https://github.com/espressif/esp-idf/tree/master/examples/system/perfmon)
+* [LiluSoft/esp32-semihosting-profiler](https://github.com/LiluSoft/esp32-semihosting-profiler)
+* [Carbon225/esp32-perfmon](https://github.com/Carbon225/esp32-perfmon)
+* [ESP32 forum thread](https://esp32.com/viewtopic.php?t=39619)

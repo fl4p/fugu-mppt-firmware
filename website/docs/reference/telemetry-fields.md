@@ -9,7 +9,7 @@ The firmware writes one InfluxDB measurement, `mppt`, tagged with the device hos
 
 ## Transports
 
-The same points go to every enabled transport:
+The firmware sends the same points to every enabled transport. The table lists what each transport needs and what it sends.
 
 | Transport          | Enable                                               | Wire                                                           |
 |--------------------|------------------------------------------------------|----------------------------------------------------------------|
@@ -17,14 +17,14 @@ The same points go to every enabled transport:
 | BLE stream         | `CONFIG_FUGU_WITH_BLE_TELE`, `ble` service running, a connected client, `set-time`, `tele.conf` `ble=1`, and either `tele` stopped or `binary=1` (+ `svc rs tele`); then `tele-ble 1` | Binary wire over the NUS TELE characteristic                   |
 | BLE advertising    | `CONFIG_FUGU_WITH_BLE_ADV`, `ble` service running, `tele.conf` `adv_ms` | 17-byte record with a subset of fields (see below)             |
 
-The binary wire and BLE records are decoded back into line protocol by `etc/influx_binary_proxy.py`, see
+`etc/influx_binary_proxy.py` decodes the binary wire and BLE records back into line protocol. See
 [Host tools](host-tools.md#influx_binary_proxypy).
 
 :::note
-Timestamps are epoch **milliseconds**. Configure the InfluxDB UDP listener (or the proxy's `--precision`) for `ms`.
+Timestamps are epoch milliseconds. Configure the InfluxDB UDP listener (or the proxy's `--precision`) for `ms`.
 :::
 
-Example line:
+A line looks like this:
 
 ```text
 mppt,device=<hostname> I=4.213,Ui=38.12,Uo=27.05,P=113.96,E=15230.4,E_today=412.7,pwm_duty=1432i 1727600000000
@@ -32,13 +32,15 @@ mppt,device=<hostname> I=4.213,Ui=38.12,Uo=27.05,P=113.96,E=15230.4,E_today=412.
 
 ## Tag
 
+Each point carries one tag.
+
 | Tag      | Value                                                                  |
 |----------|------------------------------------------------------------------------|
 | `device` | Device hostname (`hostname` console command; defaults to `fugu-<target>-<MAC>`) |
 
 ## Fields
 
-A point is produced at most every 20 ms. Some fields are only included on every n-th point, as listed in the
+The firmware produces a point at most every 20 ms. Some fields appear only on every n-th point, as given in the
 *Rate* column.
 
 | Field         | Unit   | Type  | Rate          | Meaning                                                                         |
@@ -66,6 +68,8 @@ Source: `MpptController::telemetry()` in [`src/mppt.cpp`](https://github.com/fl4
 
 ### `mppt_state`
 
+The `mppt_state` field reports the control mode.
+
 | Value | Mode    | Meaning                                         |
 |-------|---------|-------------------------------------------------|
 | 0     | `N/A`   | None                                            |
@@ -77,6 +81,8 @@ Source: `MpptController::telemetry()` in [`src/mppt.cpp`](https://github.com/fl4
 
 ### `cv_lim_idx`
 
+The `cv_lim_idx` field reports the limiter by index.
+
 | Value | Limiter      | Target                                              |
 |-------|--------------|-----------------------------------------------------|
 | 0     | `VinCTRL`    | `Vin` ≥ `Vin_min`                                   |
@@ -85,7 +91,7 @@ Source: `MpptController::telemetry()` in [`src/mppt.cpp`](https://github.com/fl4
 | 3     | `IoutCTRL`   | `Iout` ≤ charge current limit                       |
 | 4     | `PowerCTRL`  | Power ≤ thermal/`P_max` limit                       |
 
-See [Control Loop](../internals/control-loop.md).
+For the limiters, see [Control Loop](../internals/control-loop.md).
 
 ## BLE advertising record
 

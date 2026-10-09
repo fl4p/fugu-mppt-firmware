@@ -10,6 +10,8 @@ cores so that the real-time control loop never shares a core with networking.
 
 ## Task layout
 
+The diagram shows which tasks run on each core and how data flows between them.
+
 ```mermaid
 flowchart LR
   subgraph core1["Core 1 (RT core)"]
@@ -24,12 +26,14 @@ flowchart LR
   rt -. log queue .-> net
 ```
 
+The table lists what runs on each core and the rules that apply there.
+
 | Core | Runs | Rules |
 |---|---|---|
 | 1 | `loopRT`: sampling, protection, controllers, PWM | Nothing else is pinned here. The loop blocks on the next ADC sample; never add `vTaskDelay`. |
 | 0 | Arduino `loop()` → `loopNetwork_task`, Wi-Fi, lwIP, MQTT, `esp_timer` task | All [services](../reference/services.md) tick here. |
 
-`sdkconfig.defaults` pins Arduino, Wi-Fi/lwIP, mDNS, MQTT and the `esp_timer` task to core 0. `loopRT` checks its
+`sdkconfig.defaults` pins Arduino, Wi-Fi/lwIP, mDNS, MQTT, and the `esp_timer` task to core 0. `loopRT` checks its
 core at startup.
 
 ## Control pipeline
@@ -45,14 +49,16 @@ flowchart LR
   b --> g[PWM]
 ```
 
-1. **Sampling** (`src/adc/sampling.h`): async reads, round-robin over channels, with notch, median and EWM filters.
+1. **Sampling** (`src/adc/sampling.h`): async reads, round-robin over channels, with notch, median, and EWM filters.
    `Vout` is sampled last so the controller reacts to it with minimum latency. See [Sensors](sensors.md).
-2. **Protection** (`mppt.protect`, `mppt.protectLf`): hard cut-outs; a violation calls `stopAndBackoff(seconds)`.
+2. **Protection** (`mppt.protect`, `mppt.protectLf`): hard cut-outs. A violation calls `stopAndBackoff(seconds)`.
 3. **PD controllers** (`src/pd_control.h`): the smallest response wins. See [Control Loop](control-loop.md).
 4. **MPP tracker** (`src/tracker.h`): global sweep, then fast and slow perturb & observe.
-5. **Converter** (`src/buck.h`): computes the low-side on-time, see [Diode Emulation](diode-emulation.md).
+5. **Converter** (`src/buck.h`): computes the low-side on-time. See [Diode Emulation](diode-emulation.md).
 
 ## Configuration and state
+
+The firmware keeps configuration and state in three stores.
 
 | Store | Holds | Changed by |
 |---|---|---|
@@ -62,10 +68,12 @@ flowchart LR
 
 ## Flash layout
 
-`partitions.csv` defines two OTA slots (`ota_0`, `ota_1`, ~1.87 MB each), a 128 KB `littlefs` partition and a
+`partitions.csv` defines two OTA slots (`ota_0`, `ota_1`, ~1.87 MB each), a 128 KB `littlefs` partition, and a
 `coredump` partition. See [OTA Updates](../guide/updating/ota-wifi.md) for the rollback scheme.
 
 ## Source map
+
+The table maps source paths to their contents.
 
 | Path | Contents |
 |---|---|

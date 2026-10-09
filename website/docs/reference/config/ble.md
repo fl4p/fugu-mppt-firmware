@@ -5,7 +5,11 @@ sidebar_position: 15
 
 # ble.conf
 
-BLE/NUS console (service `ble`, `CONFIG_FUGU_WITH_BLE` builds). Off by default because it exposes the console. `enabled` (0/1) and `log_level` (`error`/`warn`/`info`) are the common service keys, see [Service Architecture](../services.md#per-service-conf-file).
+`ble.conf` configures the BLE/NUS console, which is the service `ble` in `CONFIG_FUGU_WITH_BLE` builds. The service is off by default because it exposes the console.
+
+`enabled` (0/1) and `log_level` (`error`/`warn`/`info`) are the common service keys. For how services use them, see [Service Architecture](../services.md#per-service-conf-file).
+
+The file has the following keys:
 
 | key            | unit | type   | default   | description                                                                 |
 |----------------|------|--------|-----------|-----------------------------------------------------------------------------|

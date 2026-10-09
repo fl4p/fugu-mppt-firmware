@@ -9,13 +9,17 @@ sidebar_position: 2
 directory with the [configuration files](../reference/config/index.md) that `./provision.py` writes to the device.
 
 :::warning Examples, not templates
-These profiles describe the maintainer's bench hardware. Pins, divider ratios, shunt values and limits must be
-checked against your board before use. Network settings (`wifi.conf`, `mqtt.conf`, `tele.conf`) are lab-specific:
-set your own SSID, broker and telemetry host with `set-config` after provisioning, and do not reuse the values in
-the repository. `wifi.conf` is gitignored and absent on a fresh clone.
+These profiles describe the maintainer's bench hardware. Check pins, divider ratios, shunt values, and limits
+against your board before use.
+
+The network settings (`wifi.conf`, `mqtt.conf`, `tele.conf`) are lab-specific. After provisioning, set your own SSID,
+broker, and telemetry host with `set-config`, and do not reuse the values in the repository. `wifi.conf` is gitignored
+and absent on a fresh clone.
 :::
 
 ## Profiles
+
+The following table lists each profile with its purpose, the hardware it assumes, and its notable keys.
 
 | Folder | Purpose | Hardware assumptions | Notable keys |
 |---|---|---|---|
@@ -33,28 +37,31 @@ the repository. `wifi.conf` is gitignored and absent on a fresh clone.
 | `boost_pv` | Bench boost board as a solar-array simulator | As `boost_bench` | `converter.conf::mode=pv`, `pv_isc`, `pv_voc`, `pv_k`; no `target_duty_cycle` (a fixed duty would override `mode=pv`) |
 
 The bench profiles (`buck_bench*`, `boost_*`, `f2_test`) set `limits.conf::reverse_current_paranoia=0`, which changes
-several protection thresholds; see [limits.conf](../reference/config/limits.md). Several also set
+several protection thresholds. See [limits.conf](../reference/config/limits.md). Several also set
 `tracker.conf::target_duty_cycle`, which boots into a hard-fixed duty (manual PWM, no MPPT).
 
 ## Battery vs open output
 
+The open-output case is a separate, complete profile rather than an override of the battery profile.
+
 With the output open, Vout floats toward Vin, so the 29 V battery reference in `charger.conf::vout_max` would stop a
 switch-node sweep above ~30 V. Raising it in the battery profile would also raise the protection threshold the next
-time a battery is attached. The open-output case is therefore a separate, complete profile rather than an override:
+time a battery is attached. The two profiles differ in `vout_max` and in what they expect on the output:
 
 | Profile | `charger.conf::vout_max` | Use with |
 |---|:---:|---|
 | `config/lab/buck_bench` | 29 V | Battery or battery emulator on the output |
 | `config/lab/buck_bench_open_output` | 60 V | Nothing on the output |
 
-`test/host_py/test_bench_config_profiles.py` guards this: the battery profile must keep 29 V, and the open-output
+`test/host_py/test_bench_config_profiles.py` guards this split. The battery profile must keep 29 V, and the open-output
 profile must contain the same files with identical content except `charger.conf`. Edit both profiles together.
 
 ## Common scenarios
 
 ### Provision a profile
 
-Copy the profile, fix what it lacks and remove the lab's network settings before provisioning:
+Before provisioning, copy the profile, fix what it lacks, and remove the lab's network settings. For example, with
+`dry_mock`:
 
 ```bash
 cp -r config/lab/dry_mock /tmp/mock
@@ -63,12 +70,12 @@ rm -f /tmp/mock/conf/mqtt.conf                        # lab broker settings, not
 ./provision.py /tmp/mock
 ```
 
-Then set your own network settings from the console: `wifi-add <ssid>:<password>` for Wi-Fi, and
-`set-config mqtt.conf <key> <value>` / `set-config tele.conf <key> <value>` for broker and telemetry host; see
+Then set your own network settings from the console. Use `wifi-add <ssid>:<password>` for Wi-Fi, and
+`set-config mqtt.conf <key> <value>` / `set-config tele.conf <key> <value>` for the broker and telemetry host. See
 [Provisioning](../guide/getting-started/provisioning.md).
 
 ### Derive a profile for your board
 
-Copy the closest profile to a new folder, then check `board.conf` pins, `sensor.conf` divider/shunt values,
-`coil.conf::L0` ([measure it](coil-inductance.md)) and `limits.conf` against your hardware before enabling the power
-stage.
+Copy the closest profile to a new folder. Before you enable the power stage, check these against your hardware:
+`board.conf` pins, `sensor.conf` divider/shunt values, `coil.conf::L0` ([measure it](coil-inductance.md)), and
+`limits.conf`.

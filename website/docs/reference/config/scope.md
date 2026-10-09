@@ -5,7 +5,11 @@ sidebar_position: 13
 
 # scope.conf
 
-Raw ADC streaming over TCP (service `scope`), for noise debugging. `enabled` (0/1) and `log_level` (`error`/`warn`/`info`) are the common service keys, see [Service Architecture](../services.md#per-service-conf-file).
+The `scope` service streams raw ADC data over TCP for noise debugging.
+
+This file holds the common service keys `enabled` (0/1) and `log_level` (`error`/`warn`/`info`). [Service Architecture](../services.md#per-service-conf-file) describes them.
+
+The following table lists the keys:
 
 | key         | unit | type | default | description                          |
 |-------------|------|------|---------|--------------------------------------|

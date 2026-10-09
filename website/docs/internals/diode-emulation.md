@@ -20,22 +20,22 @@ rect:  rectification switch  — LS in buck,  HS in boost
 
 ## Diode emulation
 
-The rectifier switch (LS in a buck) can be left off and the coil-discharge current will
-flow through its body diode. The converter then operates non-synchronously: trivial to
-control, but you pay the body-diode `V_f` loss every cycle.
+The rectifier switch (LS in a buck) can stay off, and the coil-discharge current then
+flows through its body diode. The converter operates non-synchronously. This is simple to
+control, but the converter pays the body-diode `V_f` loss every cycle.
 
 Synchronous operation turns the rect switch on for the window the body diode would
-otherwise conduct, shorting it out and removing the `V_f` loss. The cost is that the
-on-time has to be *right*: too long and the inductor current reverses (forced PWM —
-charge flows back from output to input); too short and the body diode picks up the
-remainder (small `V_f` loss, no danger).
+otherwise conduct, shorting it out and removing the `V_f` loss. The on-time then has to be
+correct. If it is too long, the inductor current reverses (forced PWM: charge flows back
+from output to input). If it is too short, the body diode carries the remainder (small
+`V_f` loss, no danger).
 
-**Diode emulation** in this firmware is the sensor-less computation of that on-time. In
+In this firmware, diode emulation is the sensor-less computation of that on-time. In
 CCM it is just `(1 − D)/f_sw`. In DCM it depends on the conversion ratio `M = V_o/V_i`.
 
 The alternative is a current sensor with hardware zero-cross detection (analog
 comparator into the gate driver `DIS`/`EN` pin, or fast ADC with µs-scale latency).
-This board doesn't have one, hence the sensor-less approach below.
+This board has no such sensor, so the firmware uses the sensor-less approach below.
 
 ### CCM / DCM decision
 
@@ -61,13 +61,17 @@ $$
 where `μ_i` is the initial permeability and `μ(H)` the permeability under dc bias. Core
 datasheets plot this ratio in percent, `%μ_i(H) = 100 · μ(H)/μ_i`.
 
-Implementing the full `μ(H)` model needs the core datasheet and a per-board geometry
-table. The firmware instead uses a flat margin: `L = L_0 · InductivityDcBias`
+The firmware uses a flat margin instead of the full `μ(H)` model, which would need the core
+datasheet and a per-board geometry table. The margin is `L = L_0 · InductivityDcBias`
 with `InductivityDcBias = 0.95` (`μ/μ_i` as a fraction, i.e. a 5 % reduction, `src/buck.h`).
-This is adequate because (a) the CCM/DCM boundary region is narrow in normal operation, (b) the saturation curve of well-chosen
-powder cores is flat through that region, and (c) the dc margin in CCM at high power is
-much larger than the ripple, so a few-percent `L` error doesn't shift the boundary far.
-`L_0` is per board (`coil.conf::L0`); `etc/measure_coil.py` measures it.
+The flat margin is adequate for three reasons:
+
+- The CCM/DCM boundary region is narrow in normal operation.
+- The saturation curve of well-chosen powder cores is flat through that region.
+- The dc margin in CCM at high power is much larger than the ripple, so a few-percent `L`
+  error doesn't shift the boundary far.
+
+`L_0` is per board (`coil.conf::L0`). `etc/measure_coil.py` measures it.
 
 The DCM conversion ratio (Erickson, *Fundamentals of Power Electronics*, 3e, pp. 145,
 597) is
@@ -76,8 +80,8 @@ $$
 M_{DCM} = \frac{2}{1 + \sqrt{1 + 4 R_e / R}}, \qquad R_e = \frac{2 L \cdot f_{sw}}{D^2}
 $$
 
-where `R` is the load. The firmware doesn't use `M_DCM` directly — it measures `V_o` and
-`V_i` — but the formula matters for understanding that in DCM `M ≠ D`.
+where `R` is the load. The formula shows that in DCM `M ≠ D`. The firmware measures `V_o`
+and `V_i` instead of using `M_DCM` directly.
 
 ### DCM rectifier on-time
 
@@ -104,9 +108,8 @@ $$
 t_{on,LS,\mathrm{DCM}} = \frac{D}{f_{sw}} \cdot \left(\frac{1}{M} - 1\right)
 $$
 
-**`L` cancels.** Any error in the inductance model only affects whether we *think* we're
-in DCM (the boundary check above), not the rect on-time itself. This is the load-bearing
-property — voltage measurements set the timing; inductance just sets the regime.
+`L` cancels. An error in the inductance model only affects whether the firmware decides it
+is in DCM (the boundary check above), not the rect on-time itself.
 
 Setting `M = D` (the CCM identity) recovers the CCM formula:
 
@@ -129,7 +132,7 @@ $$
 \frac{\Delta t_{on,LS}}{t_{on,LS}} \approx -\frac{1}{1 - M} \cdot \frac{\Delta M}{M}
 $$
 
-So, to first order:
+To first order, a 2 % error in `M` produces these errors in `t_on,LS`:
 
 | operating point | 2% M-error → t_on,LS error |
 |-----------------|----------------------------|
@@ -143,83 +146,89 @@ For finite errors the response is asymmetric: at `M = 0.95`, a +2 % error in `M`
 
 <MSensitivityChart />
 
-The sensitivity blows up as `M → 1` (low `V_i − V_o`, where the falling slope `V_o/L` is
-much steeper than the rising slope and small mistakes in the rising-slope estimate get
-amplified). The controller needs a wider margin at high `M` — better to turn LS off
-*slightly early* (pay a tiny body-diode `V_f` loss) than late (reverse current).
+The sensitivity grows without bound as `M → 1` (low `V_i − V_o`, where the falling slope
+`V_o/L` is much steeper than the rising slope and amplifies small mistakes in the
+rising-slope estimate). The controller therefore needs a wider margin at high `M`. Turning
+LS off slightly early costs a small body-diode `V_f` loss. Turning it off late causes reverse
+current.
 
 ### Timing correction (`rect_offset_ns`)
 
 The formula above gives the *ideal* zero-crossing time from the measured voltages. The LS
 window realized in hardware differs from it for reasons the voltage model does not see:
 
-- **edge delays** — gate-driver and FET propagation on both switches. A longer realized HS
-  pulse raises the peak current and moves the zero crossing later; a delayed LS turn-off moves
-  the actual turn-off later;
-- **dead time** — the commanded LS span starts at the HS turn-off, but the LS channel conducts
-  only after the HS→LS dead time (the body diode carries the current meanwhile);
-- **sensing error** — `V_i`/`V_o` errors shift `M` and with it the ideal window.
+- Edge delays: gate-driver and FET propagation on both switches. A longer realized HS
+  pulse raises the peak current and moves the zero crossing later. A delayed LS turn-off moves
+  the actual turn-off later.
+- Dead time: the commanded LS span starts at the HS turn-off, but the LS channel conducts
+  only after the HS→LS dead time (the body diode carries the current meanwhile).
+- Sensing error: `V_i`/`V_o` errors shift `M` and with it the ideal window.
 
-`coil.conf::rect_offset_ns` is an **empirical net correction** added to the computed LS
-window, `>0` = LS off later. It is found by measurement (below), not derived from any single
-effect, and its sign is whatever the measurement gives. A pure LS turn-off delay on its own
-would call for a *negative* value; measured values have been positive, so on those boards
-the other effects outweigh it. It is per board: gate driver, FETs, layout.
+`coil.conf::rect_offset_ns` is an empirical net correction that the firmware adds to the
+computed LS window, `>0` = LS off later. It comes from measurement (below), not from any
+single effect, and its sign is whatever the measurement gives. A pure LS turn-off delay on
+its own would call for a *negative* value. Measured values have been positive, so on those
+boards the other effects outweigh it. The value is per board, because it depends on the gate
+driver, FETs, and layout.
 
-The firmware adds it as a constant time, independent of `M` and of the HS on-time. That
-suits edge delays; a voltage-sensing error scales with `t_on,HS` instead, so a calibration is
-only exact near the operating point where it was measured.
+The firmware adds the correction as a constant time, independent of `M` and of the HS
+on-time. That suits edge delays. A voltage-sensing error scales with `t_on,HS` instead, so a
+calibration is only exact near the operating point where it was measured.
 
-It is stored as **nanoseconds** and converted to counts at boot (`ns·1e-9·tick_rate`, where
-the tick rate is the full timer period × fsw or the MCPWM peripheral resolution — the same
-basis as `boot_refresh_ns`). Storing a time rather than counts keeps the calibration valid
-across changes of PWM resolution and `pwm_freq`. (Concretely: at the LEDC-equivalent 2048
-counts/period at 39 kHz one count ≈ 12.5 ns, while MCPWM `bestTiming` gives ~4103
-counts/period from a 160 MHz source clock, ≈ 6.25 ns/count — so the same correction would
-*double* in counts between the two, which is exactly the breakage the ns form avoids.)
+The firmware stores the correction in nanoseconds and converts it to counts at boot (`ns·1e-9·tick_rate`, where
+the tick rate is the full timer period × fsw or the MCPWM peripheral resolution, the same
+basis as `boot_refresh_ns`). Storing a time instead of counts keeps the calibration valid
+across changes of PWM resolution and `pwm_freq`. At the LEDC-equivalent 2048
+counts/period at 39 kHz one count is ≈ 12.5 ns, while MCPWM `bestTiming` gives ~4103
+counts/period from a 160 MHz source clock, ≈ 6.25 ns/count. The same correction stored in
+counts would therefore be off by a factor of two after switching between the two drivers.
 
 #### Measuring it
 
-Hold a steep-edge HS duty in DCM and sweep LS on-time up from zero. Reading the
-converter's output charge per period as the measured `I_out` assumes that `V_in` and
-`V_out` stay stable and that the converter is in periodic steady state at every step (no
-net charging of the input or output capacitors). A current-regulated load, or a PV input
-whose voltage moves with the extracted power, can shift or hide the peak. Under those
-conditions `I_out`
+To measure the correction, hold a steep-edge HS duty in DCM and sweep LS on-time up from
+zero. The steep edge lets you locate the peak. Flat plateaus yield no reliable peak.
 
-1. **rises** as LS replaces the body diode (recovering the `V_f` loss);
-2. **peaks** when LS turns off exactly at the zero crossing (clean ideal triangle);
-3. **falls** as LS is held past zero and reverse current starts.
+Reading the converter's output charge per period as the measured `I_out` assumes that
+`V_in` and `V_out` stay stable and that the converter is in periodic steady state at every
+step (no net charging of the input or output capacitors). A current-regulated load, or a PV
+input whose voltage moves with the extracted power, can shift or hide the peak. Under those
+conditions, `I_out` goes through three phases as the LS on-time grows:
+
+1. It rises as LS replaces the body diode (recovering the `V_f` loss).
+2. It peaks when LS turns off exactly at the zero crossing (clean ideal triangle).
+3. It falls as LS is held past zero and reverse current starts.
 
 <LsSweepChart />
 
-The body-diode side is a broad plateau — turning LS off early just hands conduction
-back to the diode, a small `V_f` loss, no cliff. The late side also leaves the peak with
+The body-diode side is a broad plateau: turning LS off early hands conduction back to the
+diode at a small `V_f` loss, with no sharp drop. The late side also leaves the peak with
 zero slope, but the loss grows with the square of the overshoot and with a much larger
 coefficient (about 60× the early side in the charted example), so the drop steepens quickly.
-That asymmetry is what makes the peak locatable. The offset between the peak and the
+This asymmetry makes the peak locatable. The offset between the peak and the
 firmware's predicted point `rectCtrlRatio(M)·pwmCtrl` is the timing correction.
 
 `measure-coil ls [hs]` (on-device) or `etc/measure_coil.py --ls-sweep --hs N` brackets the
 peak. `--apply` computes `peak − ideal − --apply-margin` (default 12 counts), converts it to
 time with the tick rate read from `pwm-dump` (the basis the firmware uses to convert it back), and
-writes `coil.conf::rect_offset_ns`. Check the `rect_offset=… ns (… ct)` boot log line after the
-reboot. Use
-a steep-edge HS where the peak is genuinely locatable; flat plateaus yield no reliable
-peak. Field values on two boards: +100 and +57 counts (at LEDC 12.5 ns/tick), different
-gate-driver / FET combinations.
+writes `coil.conf::rect_offset_ns`. After the reboot, check the `rect_offset=… ns (… ct)` boot
+log line.
 
-Both helpers locate the peak by fitting two half-parabolas that share an apex, one per side, which
-is the shape derived above: the early side is shallow, the reverse-current side steep. The apex is
-searched over the whole sweep. On the ideal model charted above (6.25 ns counts, default sweep of
-0.5–1.4× the ideal window in 24 steps) the fit lands within one count of the true peak; with 1 mA of
-measurement noise on a 0.25 A output the error stays around ±12 counts and leans early, the safe
-side. The steep side's curvature also gives the `L` cross-check. The printed table shows the raw
-maximum next to the fitted peak; on the flat side the raw maximum is not a good estimate.
+Field values on two boards with different gate-driver / FET combinations are +100 and +57
+counts (at LEDC 12.5 ns/tick).
+
+Both helpers locate the peak by fitting two half-parabolas that share an apex, one per side.
+This is the shape derived above: the early side is shallow, the reverse-current side steep. The
+fit searches for the apex over the whole sweep. On the ideal model charted above (6.25 ns counts,
+default sweep of 0.5–1.4× the ideal window in 24 steps), the fit lands within one count of the
+true peak. With 1 mA of measurement noise on a 0.25 A output, the error stays around ±12 counts
+and leans early, the safe side. The steep side's curvature also gives the `L` cross-check. The
+printed table shows the raw maximum next to the fitted peak. On the flat side, the raw maximum
+is not a good estimate.
 
 ### Implementation (`src/buck.h`)
 
-The formulas above give the *ideal* LS on-time. What the firmware commands on top of that:
+The formulas above give the *ideal* LS on-time. The firmware applies the following steps on
+top of that value:
 
 | step | behaviour |
 |---|---|
@@ -231,7 +240,7 @@ The formulas above give the *ideal* LS on-time. What the firmware commands on to
 | final clamp | The limit is clamped to `[pwmRectMin, pwmMax − pwmCtrl − 1]`. On a buck `pwmRectMin` = `boot_refresh_ns` in ticks + the HS→LS dead time, for bootstrap refresh. |
 | commanded LS count (`pwmRect`) | Fades in toward the limit (+1 count per update at first, then 1/64 of the remaining gap), follows it down immediately, drops to `pwmRectMin` on a large duty decrease, and stays at `pwmRectMin` while sync rect is off. |
 
-The ideal `t_on,LS` is therefore the **pre-clamp target** of the limit, not the commanded
+The ideal `t_on,LS` is therefore the pre-clamp target of the limit, not the commanded
 window. The dither's average carries over to the command only once it has settled at the
 limit; while it ramps, or while a clamp is active, the average LS window differs from the
 ideal. The LS channel also conducts for less than the commanded span: the span starts at the
@@ -239,26 +248,28 @@ HS turn-off, and the HS→LS dead time passes before the LS turns on.
 
 Because of the clamp, a buck with sync rect off (console `sync off`) still issues a
 `pwmRectMin` LS pulse every period, and the low-current cut-off issues the larger of
-`pwmRectMin` and the offset. At zero load that pulse builds `V_o·t/L` of reverse current. Keep
-this in mind when comparing scope traces with the ideal triangle.
+`pwmRectMin` and the offset. At zero load that pulse builds `V_o·t/L` of reverse current.
+Account for this pulse when you compare scope traces with the ideal triangle.
 
 ### Failure modes at the LS boundary
 
 <LsTimingChart />
 
-Late: reverse current. Output charge is pulled back toward the input through the rect
-switch — efficiency loss plus an anti-boost effect that can lift `V_in`.
+An LS turn-off error has a different effect in each direction:
 
-Early: body diode conducts the remainder. Pure `V_f · I` loss, bounded, no instability.
+- Late: reverse current. Output charge is pulled back toward the input through the rect
+  switch. This costs efficiency and causes an anti-boost effect that can lift `V_in`.
+- Early: the body diode conducts the remainder. The only cost is a bounded `V_f · I` loss,
+  with no instability.
 
-The asymmetry is why the `M` bias leans toward the safe (early) side and why the measured
+This asymmetry is why the `M` bias leans toward the safe (early) side and why the measured
 `rect_offset_ns` is applied minus a margin. The bias protects only over the unclamped range:
 on a buck above `M ≈ 0.99`, wherever `pwmRectMin` exceeds the ideal window, and wherever the
 offset over-corrects, the commanded LS window is longer than ideal and some reverse current flows.
 
 ## Boost converter
 
-The roles flip — control switch is LS, rectifier is HS — but the derivation is the same.
+The roles flip (the control switch is LS, the rectifier is HS), but the derivation is the same.
 
 $$
 M_{CCM} = \frac{1}{1 - D}
@@ -268,8 +279,8 @@ $$
 t_{on,HS} = t_{on,LS} \cdot \frac{1}{M - 1} = \frac{D}{f_{sw}} \cdot \frac{1}{M - 1}
 $$
 
-where `D` is now the LS (control) duty. Same `L`-cancellation, same `M → 1` sensitivity
-blow-up, here at the near-unity (low step-up) corner.
+where `D` is now the LS (control) duty. `L` cancels in the same way, and the sensitivity
+grows without bound as `M → 1` in the same way, here at the near-unity (low step-up) corner.
 
 References
 
