@@ -46,9 +46,13 @@ menu "PWM drivers"
             and `anaw` stop working — so build MCPWM-only converters without paying for LEDC.
             At least one of FUGU_WITH_LEDC / FUGU_WITH_MCPWM must be on (unless FUGU_WITH_VCONV).
 
+    comment "MCPWM gate driver needs the virtual converter plant off"
+        depends on FUGU_WITH_VCONV
+
     config FUGU_WITH_MCPWM
         bool "MCPWM gate driver"
         default n
+        depends on !FUGU_WITH_VCONV
         help
             Compile the MCPWM half-bridge gate driver (hardware dead-time, OST brake, glitch-free
             comparator updates). See website/docs/internals/pwm-drivers.md. When both this and FUGU_WITH_LEDC
@@ -73,16 +77,13 @@ menu "PWM drivers"
             timebase recovered from sniffed 802.11 beacons (RX-only, works unassociated).
             Adds the `bsync` service + bsync.conf. See website/docs/internals/sync/beacon-sync.md.
 
-    comment "Virtual converter plant needs the MCPWM gate driver off"
-        depends on FUGU_WITH_MCPWM
-
     config FUGU_WITH_VCONV
         bool "Virtual converter plant (simulation, no hardware)"
         default n
-        depends on !FUGU_WITH_MCPWM
         help
             Replace the physical gate driver + ADC with a software converter plant (src/sim/vconv.*).
-            Mutually exclusive with the MCPWM driver.
+            Turns the MCPWM driver off: with both compiled, pwm_driver=mcpwm would switch real
+            FETs from simulated measurements.
 
 endmenu # PWM drivers
 

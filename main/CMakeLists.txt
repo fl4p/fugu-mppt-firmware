@@ -102,7 +102,7 @@ if (CONFIG_FUGU_WITH_BLE_ADV)
 endif ()
 
 # CONFIG_FUGU_WITH_VCONV replaces the physical gate driver + ADC with a software converter plant
-# (src/sim/vconv.*). Kconfig enforces mutual exclusion with the MCPWM driver. See
+# (src/sim/vconv.*). Kconfig turns the MCPWM driver off when it is on. See
 # docs/superpowers/specs/2026-05-23-virtual-converter-design.md.
 if (CONFIG_FUGU_WITH_VCONV)
     set(WITH_VCONV 1)
