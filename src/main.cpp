@@ -1182,15 +1182,14 @@ static void loopRTNewData(time_ms nowMs) {
             scope->addSample12(&mppt, 0,
                                (uint16_t) max(0.f, sensors.Vout->last / 60.0f *
                                                    2000.0f));
-    }
-
-
 
         if (haveNewSample) {
             auto lv = converter.boost() ? sensors.Vin : sensors.Vout;
             mppt.lvPgood.update(lv->med3.get(), lv->ewm.avg.get(), lv->numSamples, !mppt.inBackoff(),
                                 (uint32_t) nowMs);
         }
+    }
+
     if (g_app.manualPwm()) {
         if (!converter.disabled())
             converter.pwmPerturb(0); // this will increase LS duty cycle if possible
