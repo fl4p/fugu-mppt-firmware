@@ -25,6 +25,7 @@
 #include "etc/plot.h"
 #include "app_state.h"
 #include "math/pv_model.h"
+#include "conv_side.h"
 #include "out_impedance.h"
 
 struct Limits {
@@ -45,11 +46,16 @@ struct Limits {
     const bool reverse_current_paranoia{};
 
 
-    explicit Limits(const ConfFile &limits)
-        : Vin_max(limits.getFloat("vin_max")), Vin_min(limits.getFloat("vin_min")),
-          Vout_max(limits.getFloat("vout_max")),
-          Iin_max(limits.getFloat("iin_max")), Ishort(limits.getFloat("iout_short")),
-          Iout_max(limits.getFloat("iout_max")),
+    // Per-side hardware ratings (voltage and current ranges) also read from side aliases hv_max/lv_max,
+    // hv_i_max/lv_i_max, mapped by topo (conv_side.h). vin_min (source collapse floor), iout_short and
+    // p_max are role properties and stay role-named.
+    Limits(const ConfFile &limits, bool boost)
+        : Vin_max(limits.getFloat(pickSideKey(limits, "limits.conf", "vin_max", side(true, "max", boost), boost))),
+          Vin_min(limits.getFloat("vin_min")),
+          Vout_max(limits.getFloat(pickSideKey(limits, "limits.conf", "vout_max", side(false, "max", boost), boost))),
+          Iin_max(limits.getFloat(pickSideKey(limits, "limits.conf", "iin_max", side(true, "i_max", boost), boost))),
+          Ishort(limits.getFloat("iout_short")),
+          Iout_max(limits.getFloat(pickSideKey(limits, "limits.conf", "iout_max", side(false, "i_max", boost), boost))),
           P_max(limits.getFloat("p_max")), Temp_max(limits.getFloat("temp_max", 90.0f)),
           Temp_derate(limits.getFloat("temp_derate")),
           reverse_current_paranoia(limits.getByte("reverse_current_paranoia", 1) != 0) {
@@ -59,6 +65,8 @@ struct Limits {
         assert_throw(Temp_derate < Temp_max, "");
         assert_throw(20 < Temp_max and Temp_max < 120, "");
     }
+
+    explicit Limits(const ConfFile &limits) : Limits(limits, readTopoIsBoost()) {}
 
     Limits() = default;
 
@@ -72,6 +80,11 @@ struct Limits {
     }
 
     //Limits &operator=(const Limits& other) = default;
+
+private:
+    static std::string side(bool input, const char *what, bool boost) {
+        return std::string(sideOf(input, boost)) + '_' + what;
+    }
 };
 
 
