@@ -257,9 +257,14 @@ Builds a littlefs image from the profile dir and writes it via `parttool.py` (so
 entry too — same recovery as above). Profiles live in `config/`: `lab/buck_bench`,
 `lab/buck_bench_open_output`, `lab/boost_bench`, `fmetal` (Fugu2 buck), `lab/fmetal_boost`, `lab/dry_mock`, …
 
-`sensor.conf`/`limits.conf` keys are side-named (`hv_v_ch`, `lv_i_factor`, `hv_max`, `lv_i_max`) or legacy
-role-named (`vin_ch`, `iout_max`), never both in one file: a mixed file fails setup at boot. `get-config` the file
-before a `set-config` and use its form; a live board provisioned before the side keys is role-keyed.
+`sensor.conf`/`limits.conf` keys are side-named (`hv_v_ch`, `lv_i_factor`, `hv_max`, `lv_i_max`), mapped to roles by
+`converter.conf` `topo`. Firmware from the sensor-hv-lv change on no longer reads the old role keys: a leftover one
+fails sensor/limits setup at boot. **Before OTA-ing a live board to that firmware, migrate its configs**:
+`get-config converter.conf`, `get-config sensor.conf`, `get-config limits.conf` into a log, then
+`python3 etc/migrate_side_keys.py live board.log` prints the `set-config`/`del-config` lines to run over BLE/telnet
+(`--rollback` prints the inverse; `--topo` if converter.conf was not captured). OTA right after: the old firmware
+reboots into no sensors on migrated configs. Offline conf dirs: `etc/migrate_side_keys.py dir <dir>`. A board that
+already fails at boot with `... is no longer read; with topo=... use ...` needs the same migration.
 
 Symptoms of **no config partition**: `ls /` fails, `ntc=-273℃`. (`0sps` is *not* a reliable
 symptom: a status-line bug — fixed in `6b83991` — produced it from any scripted console session,
