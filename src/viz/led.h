@@ -35,15 +35,12 @@ public:
         //    ESP_LOGI("led", "k=%s", s.c_str());
 
         /// LED strip common configuration
-        led_strip_config_t strip_config = {
-                .strip_gpio_num = pin,  // The GPIO that connected to the LED strip's data line
-                .max_leds = 1,                 // The number of LEDs in the strip,
-                .led_model = LED_MODEL_WS2812, // LED strip model, it determines the bit timing
-                .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_RGB, // The color component format is G-R-B
-                .flags = {
-                        .invert_out = false, // don't invert the output signal
-                }
-        };
+        // zero-init: led_strip 3.1 added fields (timings)
+        led_strip_config_t strip_config = {};
+        strip_config.strip_gpio_num = pin;
+        strip_config.max_leds = 1;
+        strip_config.led_model = LED_MODEL_WS2812;
+        strip_config.color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_RGB;
 
 /// RMT backend specific configuration
         led_strip_rmt_config_t rmt_config = {
