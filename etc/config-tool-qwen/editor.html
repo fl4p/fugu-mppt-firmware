@@ -98,6 +98,10 @@
         .add-field {
             margin: 16px 0; display: flex; gap: 8px;
         }
+        .keyform-error {
+            margin-bottom: 12px; padding: 8px 12px; border-radius: 4px;
+            background: #f8d7da; color: #721c24; font-size: 13px;
+        }
         .add-field input {
             padding: 8px; border: 1px solid #ccc;
             border-radius: 4px; width: 200px;
@@ -233,6 +237,7 @@
             <p><strong>Open ZIP/Folder:</strong> Load configuration files from a ZIP archive or select .conf files</p>
             <p><strong>Edit:</strong> Each .conf file gets a tab. Change values and see the dot indicator.</p>
             <p><strong>Units:</strong> Displayed inside input fields (GPIO, Hz, Ω, V, A, etc.)</p>
+            <p><strong>Side keys:</strong> sensor.conf and limits.conf name channels and limits by side (hv_v_rh, lv_i_factor, hv_max, lv_i_max); converter.conf <code>topo</code> maps sides to roles. Legacy role keys (vin_rh, vout_max, ...) still load, but each file must use one form throughout.</p>
             <p><strong>Clear (×):</strong> Removes a value (shows "was: ..." below)</p>
             <p><strong>Serial:</strong> Connect via Web Serial API (115200 baud) to read/write configs</p>
             <p><strong>BLE:</strong> Connect via Nordic UART Service to read/write configs</p>
@@ -273,35 +278,24 @@ const FIELD_METADATA = {
     'esp32adc1_avg': { type: 'long', unit: '', desc: 'ESP32 ADC1 samples to average' },
     'expected_hz': { type: 'long', unit: 'Hz', desc: 'Expected control loop frequency' },
     'power_conversion_eff': { type: 'float', unit: '', desc: 'Power conversion efficiency (0-1)' },
-    'vout_adc': { type: 'string', unit: '', desc: 'Vout ADC backend (esp32adc1, ina226, ads1015)' },
-    'vout_ch': { type: 'long', unit: '', desc: 'Vout ADC channel' },
-    'vout_rh': { type: 'float', unit: 'Ω', desc: 'Vout voltage divider upper resistor' },
-    'vout_rl': { type: 'float', unit: 'Ω', desc: 'Vout voltage divider lower resistor' },
-    'vout_filt_len': { type: 'long', unit: '', desc: 'Vout filter length (samples)' },
-    'vin_adc': { type: 'string', unit: '', desc: 'Vin ADC backend' },
-    'vin_ch': { type: 'long', unit: '', desc: 'Vin ADC channel' },
-    'vin_rh': { type: 'float', unit: 'Ω', desc: 'Vin voltage divider upper resistor' },
-    'vin_rl': { type: 'float', unit: 'Ω', desc: 'Vin voltage divider lower resistor' },
-    'vin_filt_len': { type: 'long', unit: '', desc: 'Vin filter length' },
-    'iin_adc': { type: 'string', unit: '', desc: 'Iin ADC backend' },
-    'iin_ch': { type: 'long', unit: '', desc: 'Iin ADC channel' },
-    'iin_factor': { type: 'float', unit: '', desc: 'Iin scaling factor (negative for inverted)' },
-    'iin_filt_len': { type: 'long', unit: '', desc: 'Iin filter length' },
-    'iout_filt_len': { type: 'long', unit: '', desc: 'Iout filter length' },
+    // channel keys (hv_v_rh, lv_i_factor, legacy vin_rh, ...) resolve via CHANNELS below
     'ntc_adc': { type: 'string', unit: '', desc: 'NTC temperature ADC backend' },
     'ntc_ch': { type: 'long', unit: '', desc: 'NTC ADC channel' },
     'ntc_filt_len': { type: 'long', unit: '', desc: 'NTC filter length' },
     
-    // Limits config
-    'Vin_min': { type: 'float', unit: 'V', desc: 'Minimum input voltage' },
-    'Vin_max': { type: 'float', unit: 'V', desc: 'Maximum input voltage' },
-    'Vout_min': { type: 'float', unit: 'V', desc: 'Minimum output voltage' },
-    'Vout_max': { type: 'float', unit: 'V', desc: 'Maximum output voltage' },
-    'Iin_max': { type: 'float', unit: 'A', desc: 'Maximum input current' },
-    'Iout_max': { type: 'float', unit: 'A', desc: 'Maximum output current' },
-    'Power_max': { type: 'float', unit: 'W', desc: 'Maximum power' },
-    'Temp_max': { type: 'float', unit: '°C', desc: 'Maximum temperature' },
-    'Pwm_max': { type: 'float', unit: '', desc: 'Maximum PWM duty cycle' },
+    // Limits config (side keys; converter.conf topo maps them: buck in=HV out=LV, boost in=LV out=HV)
+    'hv_max': { type: 'float', unit: 'V', desc: 'Maximum HV-side voltage (Vin max in buck, Vout max in boost)' },
+    'lv_max': { type: 'float', unit: 'V', desc: 'Maximum LV-side voltage (Vout max in buck, Vin max in boost)' },
+    'hv_i_max': { type: 'float', unit: 'A', desc: 'Maximum HV-side current (Iin max in buck, Iout max in boost)' },
+    'lv_i_max': { type: 'float', unit: 'A', desc: 'Maximum LV-side current (Iout max in buck, Iin max in boost)' },
+    'vin_max': { type: 'float', unit: 'V', desc: 'Legacy role alias of hv_max (buck) / lv_max (boost)' },
+    'vout_max': { type: 'float', unit: 'V', desc: 'limits.conf: legacy role alias of lv_max (buck) / hv_max (boost); charger.conf: max charge voltage' },
+    'iin_max': { type: 'float', unit: 'A', desc: 'Legacy role alias of hv_i_max (buck) / lv_i_max (boost)' },
+    'iout_max': { type: 'float', unit: 'A', desc: 'Legacy role alias of lv_i_max (buck) / hv_i_max (boost)' },
+    'vin_min': { type: 'float', unit: 'V', desc: 'Minimum input voltage; below this the converter stops' },
+    'iout_short': { type: 'float', unit: 'A', desc: 'Output short-circuit current threshold' },
+    'p_max': { type: 'float', unit: 'W', desc: 'Maximum power' },
+    'temp_derate': { type: 'float', unit: '°C', desc: 'Temperature where power derating begins' },
     
     // Coil config
     'L0': { type: 'float', unit: 'H', desc: 'Coil inductance (DC bias)' },
@@ -346,6 +340,70 @@ const FIELD_METADATA = {
     'sprofiler_hz': { type: 'long', unit: 'Hz', desc: 'Sampling profiler frequency' },
     'rt_stats': { type: 'long', unit: '', desc: 'Real-time stats enable (0/1)' },
 };
+
+// Sensor channel keys: <channel>_<suffix>. Side channels are primary; vin/vout/iin/iout are
+// legacy role aliases. Side current factors are positive for HV->LV power.
+const CHANNELS = {
+    hv_v: 'HV-side voltage', lv_v: 'LV-side voltage',
+    hv_i: 'HV-side current (+ for HV→LV power)', lv_i: 'LV-side current (+ for HV→LV power)',
+    vin: 'Vin (legacy role alias)', vout: 'Vout (legacy role alias)',
+    iin: 'Iin (legacy role alias)', iout: 'Iout (legacy role alias)',
+};
+const CHANNEL_SUFFIXES = {
+    adc: { type: 'string', unit: '', desc: 'ADC backend' },
+    ch: { type: 'long', unit: '', desc: 'ADC channel (255 = absent)', def: '255' },
+    rh: { type: 'float', unit: 'Ω', desc: 'voltage divider upper resistor' },
+    rl: { type: 'float', unit: 'Ω', desc: 'voltage divider lower resistor' },
+    factor: { type: 'float', unit: '', desc: 'scale factor raw ADC → physical (sign sets direction)', def: '1.0' },
+    midpoint: { type: 'float', unit: '', desc: 'zero offset subtracted before scaling', def: '0.0' },
+    filt_len: { type: 'long', unit: '', desc: 'filter length (samples)', def: '10' },
+};
+const CHANNEL_RE = /^(hv_v|lv_v|hv_i|lv_i|vin|vout|iin|iout)_(adc|ch|rh|rl|factor|midpoint|filt_len)$/;
+
+function channelMetadata(key) {
+    const m = key.match(CHANNEL_RE);
+    if (!m) return null;
+    const s = CHANNEL_SUFFIXES[m[2]];
+    return { type: s.type, unit: s.unit, desc: `${CHANNELS[m[1]]}: ${s.desc}` + (s.def ? ` (default ${s.def})` : '') };
+}
+
+// src/conv_side.h: sensor.conf and limits.conf each name their mapped keys by side (hv_/lv_) or
+// by role, never both; the firmware refuses a mix. Side keys are offered unless the file is
+// already role-keyed.
+const chanKeys = chans => chans.flatMap(c => Object.keys(CHANNEL_SUFFIXES).map(s => `${c}_${s}`));
+const KEY_FORMS = {
+    'sensor.conf': { side: chanKeys(['hv_v', 'lv_v', 'hv_i', 'lv_i']), role: chanKeys(['vin', 'vout', 'iin', 'iout']) },
+    'limits.conf': { side: ['hv_max', 'lv_max', 'hv_i_max', 'lv_i_max'], role: ['vin_max', 'vout_max', 'iin_max', 'iout_max'] },
+};
+
+// Keys the file will be written with (a null value is a deleted key).
+function presentKeys(filename) {
+    return [...configFiles[filename].fields].filter(([, f]) => f.value !== null && f.value !== undefined).map(([k]) => k);
+}
+
+// The firmware's error for a file holding both forms, or ''.
+function keyFormError(filename, keys) {
+    const forms = KEY_FORMS[filename];
+    if (!forms) return '';
+    const side = keys.find(k => forms.side.includes(k)), role = keys.find(k => forms.role.includes(k));
+    return side && role ? `${filename}: mixes side key ${side} with role key ${role}; ` +
+        'use side keys (hv_/lv_) or role keys throughout, not both' : '';
+}
+
+// Mapped keys to suggest: role if the file has role keys and no side keys, else side.
+function offeredKeys(filename, keys) {
+    const forms = KEY_FORMS[filename];
+    if (!forms) return [];
+    const legacy = keys.some(k => forms.role.includes(k)) && !keys.some(k => forms.side.includes(k));
+    return legacy ? forms.role : forms.side;
+}
+
+function updateKeyFormError(filename) {
+    const el = document.getElementById(`keyform-${filename}`);
+    if (!el) return;
+    el.textContent = keyFormError(filename, presentKeys(filename));
+    el.style.display = el.textContent ? '' : 'none';
+}
 
 // State
 window.configFiles = {}; // filename -> { originalLines: [], fields: Map<key, {value, comment, lineIdx}> }
@@ -457,6 +515,8 @@ function getFieldMetadata(key, value) {
     if (FIELD_METADATA[key]) {
         return FIELD_METADATA[key];
     }
+    const chan = channelMetadata(key);
+    if (chan) return chan;
     
     // Infer from key pattern
     if (key.endsWith('_sd') || key.endsWith('_hi') || key.endsWith('_li') || 
@@ -522,6 +582,12 @@ function renderFileTab(filename) {
     
     const container = document.getElementById(`tab-${filename}`);
     container.innerHTML = '';
+
+    const formErr = document.createElement('div');
+    formErr.className = 'keyform-error';
+    formErr.id = `keyform-${filename}`;
+    container.appendChild(formErr);
+    updateKeyFormError(filename);
     
     // Sort fields: keep original order for existing, new ones at end
     const sortedKeys = [];
@@ -567,9 +633,12 @@ function renderFileTab(filename) {
     // Add field button
     const addRow = document.createElement('div');
     addRow.className = 'add-field';
+    const offered = offeredKeys(filename, presentKeys(filename)).filter(k => !fileData.fields.has(k));
     addRow.innerHTML = `
-        <input type="text" id="new-key-${filename}" placeholder="New key name">
+        <input type="text" id="new-key-${filename}" placeholder="${offered.length ? 'e.g. ' + offered[0] : 'New key name'}"
+               ${offered.length ? `list="new-key-list-${filename}"` : ''}>
         <button onclick="addField('${filename}')">+ Add Field</button>
+        ${offered.length ? `<datalist id="new-key-list-${filename}">${offered.map(k => `<option value="${k}">`).join('')}</datalist>` : ''}
     `;
     container.appendChild(addRow);
     
@@ -628,6 +697,7 @@ function onFieldChange(filename, key, newValue) {
     
     // Update raw view
     updateRawView(filename);
+    updateKeyFormError(filename);
     
     updateStatus();
 }
@@ -665,6 +735,7 @@ function clearField(filename, key) {
     if (dot) dot.style.display = 'inline-block';
     
     updateRawView(filename);
+    updateKeyFormError(filename);
     updateStatus();
 }
 
