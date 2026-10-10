@@ -35,23 +35,17 @@ require editing `sensor.conf`:
 | `hv_i_`         | Iin                      | Iout                      |
 | `lv_i_`         | Iout                     | Iin                       |
 
-The role prefixes `vin_`, `vout_`, `iin_`, and `iout_` remain as legacy aliases. They name the
-converter role directly, so a topology change means swapping them by hand. A file uses one form for
-all its voltage and current channels: if any side channel key (`hv_v_ch`, `lv_i_factor`, …) and any
-role channel key (`vin_ch`, `iout_factor`, …) are both set, sensor setup fails at boot
-(`sensor.conf: mixes side key hv_v_ch with role key iout_ch …`), even when they configure different
-channels. `ntc_` keys and keys outside the suffix table below do not count. With side keys, an
-unknown `converter.conf::topo` also fails sensor setup.
+An unknown `converter.conf::topo` fails sensor setup. The firmware no longer reads the old role
+prefixes (`vin_`, `vout_`, `iin_`, `iout_`): a file that still has one fails sensor setup at boot.
+See [Migrating from role keys](#migrating-from-role-keys).
 
-The `vconv` simulator's channels are fixed by role (`src/adc/vconv.h`: 0 = Vin, 1 = Vout, 2 = Iout,
-4 = NTC), so `vconv` profiles must use role keys: with side keys a `topo` change would move a
-simulated quantity to a different role. The `fake` mock profiles (`dry_mock`, `wokwi_mock`) keep role
-keys too; their channels are synthetic signals (`src/adc/mock.h`), not board sides.
+The `vconv` and `fake` simulators' channels are fixed by role (`src/adc/vconv.h`: 0 = Vin, 1 = Vout,
+2 = Iout, 4 = NTC; `src/adc/mock.h`), not by board side. Their profiles use the side key that plays
+that role under the profile's `topo`, so a `topo` change there means moving the channel numbers too.
 
 Current sign: a side current `_factor` is defined in the buck direction, positive when power flows
 from HV to LV. In boost the firmware negates it, so Iin and Iout stay positive for forward power
-flow. The same shunt therefore keeps the same `_factor` in both topologies. A legacy `iin_`/`iout_`
-factor is used as configured.
+flow. The same shunt therefore keeps the same `_factor` in both topologies.
 
 | suffix      | unit | type   | default     | description                                                                    |
 |-------------|------|--------|-------------|--------------------------------------------------------------------------------|
@@ -149,3 +143,41 @@ example shows both keys:
 hv_i_factor=-20.15  # sensitivity = -1/0.066 * (10k+3.3k)/10k
 hv_i_midpoint=1.88  # midpoint    = 2.5V * 10k/(10k+3.3k)
 ```
+
+## Migrating from role keys
+
+Firmware before the side keys read `vin_*`, `vout_*`, `iin_*`, `iout_*` here and `vin_max`,
+`vout_max`, `iin_max`, `iout_max` in [limits.conf](limits.md). The current firmware reads only
+side keys and stops sensor or limits setup on a leftover role key, naming its replacement:
+
+```
+sensor.conf: vout_ch is no longer read; with topo=boost use hv_v_ch
+```
+
+`etc/migrate_side_keys.py` converts both files under the board's `converter.conf::topo`
+(no `topo` = buck). In a boost it also flips the sign of the current `_factor`, because side
+factors are positive for HV → LV power. `vin_min`, `iout_short`, `p_max`, `ntc_*` and
+`charger.conf::vout_max` keep their names.
+
+- **Config directory** (profile or backup): rewrites `sensor.conf` and `limits.conf` in place,
+  keeping comments and order. Already migrated files stay unchanged; a role key next to its own
+  side key is refused. `--check` only reports.
+
+  ```
+  python3 etc/migrate_side_keys.py dir config/my_board
+  ```
+
+- **Live board**: migrate its configs *before* the OTA to the new firmware, otherwise sensor setup
+  fails at boot. Capture `get-config converter.conf`, `get-config sensor.conf` and
+  `get-config limits.conf` into a file, then print the console commands and run them over BLE or
+  telnet:
+
+  ```
+  python3 etc/migrate_side_keys.py live board.log      # set-config ... / del-config ... lines
+  python3 etc/migrate_side_keys.py live board.log --rollback
+  ```
+
+  The `set-config` lines come first, so an interrupted run leaves the role keys in place. The old
+  firmware reads the configs only at boot, so OTA right after migrating: rebooting the old
+  firmware on migrated configs leaves it without sensors. `--rollback` prints the inverse
+  sequence. Without a captured `converter.conf`, pass `--topo buck|boost`.

@@ -123,7 +123,7 @@ psu_vout=24
 The following limits and fault rules apply in PSU mode:
 
 - The setpoint is range-checked against the output voltage limit (`limits.conf::lv_max` in a buck, `hv_max` in a
-  boost, legacy `vout_max`).
+  boost).
 - In boost topology the setpoint must exceed Vin by at least 0.5 V.
 - Output over-voltage and supply under-voltage trips retry fast. Within 60 s, the first 4 trips retry after 100 ms,
   trips 5-8 use the normal backoff, and the 9th latches the output off (`psu` shows the latch). Other faults use their
@@ -160,7 +160,7 @@ pv_k=0.8
 The simulator behaves as follows:
 
 - The setpoint moves along the curve, slew-limited by `pv_slew` (V/s) and clamped to
-  [Vin + 0.5 V, min(Voc, Vout max)], where Vout max is `limits.conf::hv_max` in a boost (legacy `vout_max`). A boost can only emulate the part of the curve above Vin.
+  [Vin + 0.5 V, min(Voc, Vout max)], where Vout max is `limits.conf::hv_max` in a boost (`lv_max` in a buck). A boost can only emulate the part of the curve above Vin.
 - The Iout limiter is capped at 1.1 × Isc.
 - `pv off` goes to manual mode, not MPPT, since a simulator is a bench source.
 

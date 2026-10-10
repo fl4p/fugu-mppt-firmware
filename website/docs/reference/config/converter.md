@@ -23,7 +23,7 @@ wired clock sync, and the control-loop gains. The following table lists its keys
 | `fpwm_gate`  |      | bool  | 1       | Hold `forced_pwm` off until the duty reaches the voltage ratio (bring-up gate, see notes below) |
 | `fpwm_gate_margin` |  | float | 0.01    | Duty margin the gate requires on top of the measured ratio |
 | `fpwm_gate_hold` |    | long  | 192     | Samples the gate must see a passing duty before it engages (the ramp is held meanwhile) |
-| `vout_max`   | V    | float | —       | Ignored: no firmware reader, triggers an unknown-key warning at boot. Use `limits.conf` `lv_max` (buck) / `hv_max` (boost), legacy `vout_max` |
+| `vout_max`   | V    | float | —       | Ignored: no firmware reader, triggers an unknown-key warning at boot. Use `limits.conf` `lv_max` (buck) / `hv_max` (boost) |
 | `sync_role`  |      | enum  | none    | Wired MCPWM clock sync (`WITH_WSYNC`): `none`, `leader` (emit TEZ pulse on `board.conf::pwm_sync_pin`) or `follower` (phase-reload timer from that pin). See [Wired Clock Sync](../../development/sync/wired-sync.md) |
 | `sync_phase_deg` | ° | float | 0      | Leader only: pulse offset from its TEZ as an angle (= follower period-start shift; `180` for interleave). Ignored on a follower (reload fixed at 0) |
 | `sync_phase_ns` | ns | float | 0      | Leader only: additive trim on `sync_phase_deg`, for wire + receiver propagation delay (a time, so it does not scale with `pwm_freq`) |

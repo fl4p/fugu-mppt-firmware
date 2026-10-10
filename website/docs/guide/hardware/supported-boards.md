@@ -73,12 +73,12 @@ The `fugu1` sensor files set `conversion_eff`, but the firmware reads `power_con
 ### Solar boost
 
 The solar boost board uses the Fugu2 pinout with `converter.conf::topo=boost`. The INA226 moves to the low-voltage
-input side, and the internal ADC divider moves to the high-voltage output side. The limits are swapped accordingly
-(`vin_max=60`, `vout_max=85`).
+input side, and the internal ADC divider moves to the high-voltage output side. The limits are named by side:
+`lv_max=60` (input), `hv_max=85` (output).
 
-`config/solar-boost` keeps the legacy role keys (`vin_*`, `iin_*`, `vin_max`, …) because its wiring and current sign
-are unverified. With side-named keys (`hv_v_*`, `lv_v_*`, `hv_max`, `lv_max`) a verified board keeps the buck's sensor
-and limit entries and changes only `topo`; `config/lab/fmetal_boost` is an example.
+The wiring and current sign of `config/solar-boost` are unverified; its side keys were converted value-preserving from
+an older role-keyed profile. A verified board keeps the buck's sensor and limit entries and changes only `topo`;
+`config/lab/fmetal_boost` is an example.
 
 ### 12 V power supply
 

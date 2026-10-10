@@ -298,7 +298,7 @@ littlefs partition. An agent can edit them at runtime:
 ```
 set-config coil.conf L0 50e-6
 set-config charger.conf cv_eoc 3.53
-set-config limits.conf lv_i_max 35   # side key; a legacy role-keyed file takes iout_max
+set-config limits.conf lv_i_max 35   # side key (output current limit in a buck)
 conf-check          # report unknown/obsolete keys
 get-config charger.conf
 ```
@@ -362,7 +362,7 @@ following rules apply to a real converter:
     - Only drive these in manual PWM mode (`dc <duty>` engages it; `mppt` exits it).
     - Keep `+N` steps small (≤ 5) and watch Iin. Large positive jumps cause current transients.
     - Protection cuts out at the output current and voltage limits (`limits.conf` `lv_i_max`/`lv_max` in a
-      buck, legacy `iout_max`/`vout_max`). The converter stops and backs off.
+      buck, `hv_i_max`/`hv_max` in a boost). The converter stops and backs off.
     - `sync off` (diode emulation) is safer than `sync forced` (no reverse-current check).
     - For on-device calibration, use `measure-coil l0` / `measure-coil ls` instead of raw PWM
       stepping. It uses a controlled DCM sweep and restores MPPT when done.
