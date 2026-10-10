@@ -127,7 +127,7 @@ They reply `ERR` to anything else and leave the setting unchanged. For example, 
 limit, and the firmware rejects `vset 24V` rather than reading it as 24. `ovset` without an argument is also an
 error. To clear the limit, use `ovset 0`.
 
-The charger commands change RAM only. To persist a setting, set the matching conf key: `vset` → `charger.conf vout_max`, `iset` → `charger.conf ibat_max`, `psu <V>` → `converter.conf mode=psu` + `psu_vout`, `pv …` → `converter.conf mode=pv` + `pv_isc`/`pv_voc`/`pv_k`. `ovset` has no conf key. For a persistent hard limit, use `limits.conf vout_max`.
+The charger commands change RAM only. To persist a setting, set the matching conf key: `vset` → `charger.conf vout_max`, `iset` → `charger.conf ibat_max`, `psu <V>` → `converter.conf mode=psu` + `psu_vout`, `pv …` → `converter.conf mode=pv` + `pv_isc`/`pv_voc`/`pv_k`. `ovset` has no conf key. For a persistent hard limit, use the `limits.conf` output voltage limit (`lv_max` in a buck, `hv_max` in a boost; legacy `vout_max`).
 
 ## Manual PWM Commands
 
