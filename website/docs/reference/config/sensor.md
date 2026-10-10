@@ -36,10 +36,17 @@ require editing `sensor.conf`:
 | `lv_i_`         | Iout                     | Iin                       |
 
 The role prefixes `vin_`, `vout_`, `iin_`, and `iout_` remain as legacy aliases. They name the
-converter role directly, so a topology change means swapping them by hand. A channel must use one
-form: if any key of a role prefix and any key of the side prefix that maps to the same channel are
-both set, sensor setup fails at boot (`sensor.conf: channel vin set as both …`). Different channels
-may use different forms. An unknown `topo` also fails sensor setup.
+converter role directly, so a topology change means swapping them by hand. A file uses one form for
+all its voltage and current channels: if any side channel key (`hv_v_ch`, `lv_i_factor`, …) and any
+role channel key (`vin_ch`, `iout_factor`, …) are both set, sensor setup fails at boot
+(`sensor.conf: mixes side key hv_v_ch with role key iout_ch …`), even when they configure different
+channels. `ntc_` keys and keys outside the suffix table below do not count. With side keys, an
+unknown `converter.conf::topo` also fails sensor setup.
+
+The `vconv` simulator's channels are fixed by role (`src/adc/vconv.h`: 0 = Vin, 1 = Vout, 2 = Iout,
+4 = NTC), so `vconv` profiles must use role keys: with side keys a `topo` change would move a
+simulated quantity to a different role. The `fake` mock profiles (`dry_mock`, `wokwi_mock`) keep role
+keys too; their channels are synthetic signals (`src/adc/mock.h`), not board sides.
 
 Current sign: a side current `_factor` is defined in the buck direction, positive when power flows
 from HV to LV. In boost the firmware negates it, so Iin and Iout stay positive for forward power
@@ -70,7 +77,8 @@ assigns the roles. A converter can have one or two current sensors.
 With a single current sensor, the firmware computes the other from the voltage ratio and
 `power_conversion_eff`. The tables above list all keys.
 
-The following example mixes backends. The HV side voltage is on internal ADC1 channel 3. The LV side
+The following example mixes backends as the Fugu2 board image (`config/fmetal`) does. The channel
+numbers belong to that board: the HV side voltage is on internal ADC1 channel 3, and the LV side
 voltage and current are on the INA226, which only has channel 0 (bus voltage) and channel 1 (shunt
 current). The HV side has no current sensor.
 

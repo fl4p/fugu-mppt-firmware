@@ -17,9 +17,11 @@ maps them to the converter roles:
 | `hv_i_max` | Iin max                  | Iout max                  | `iin_max` (buck), `iout_max` (boost) |
 | `lv_i_max` | Iout max                 | Iin max                   | `iout_max` (buck), `iin_max` (boost) |
 
-The role keys `vin_max`, `vout_max`, `iin_max`, and `iout_max` still work as legacy aliases. Setting
-a limit in both forms, for example `vin_max` and `hv_max` in a buck, fails at boot
-(`limits.conf: both vin_max and hv_max set …`). `vin_min`, `iout_short`, and `p_max` describe the
+The role keys `vin_max`, `vout_max`, `iin_max`, and `iout_max` still work as legacy aliases. A file
+uses one form for all four: any side key next to any of these role keys fails at boot
+(`limits.conf: mixes side key hv_max with role key vout_max …`), even when they name different
+limits. A missing limit is reported under both names, for example
+`limits.conf: missing hv_max (or vin_max under topo=buck)`. `vin_min`, `iout_short`, and `p_max` describe the
 source, the output, and the power path, not a side, and keep their role names. The battery limit
 `charger.conf::vout_max` is also unaffected: the battery is always on the output.
 
