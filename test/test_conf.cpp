@@ -87,9 +87,9 @@ static void writeRemoveFixture() {
     TEST_ASSERT_NOT_NULL(f);
     fputs("# header comment\n"
           "\n"
-          "vin_adc=ads        # inline note on vin\n"
-          "vout_adc=esp32\n"
-          "iout_ch=3  # current channel\n"
+          "hv_v_adc=ads        # inline note on vin\n"
+          "lv_v_adc=esp32\n"
+          "lv_i_ch=3  # current channel\n"
           "# trailing comment\n"
           "foo=bar\n", f);
     fclose(f);
@@ -115,20 +115,20 @@ void test_conf_remove_drops_line_and_keeps_rest() {
     writeRemoveFixture();
 
     ConfFile conf{kRemovePath};
-    TEST_ASSERT_TRUE(conf.remove("vout_adc"));
+    TEST_ASSERT_TRUE(conf.remove("lv_v_adc"));
 
     auto txt = readFile(kRemovePath);
     // the whole line (key and value) is gone
-    TEST_ASSERT_FALSE(contains(txt, "vout_adc"));
+    TEST_ASSERT_FALSE(contains(txt, "lv_v_adc"));
     TEST_ASSERT_FALSE(contains(txt, "esp32"));
     // everything else is preserved verbatim: comment-only lines, inline comments, other keys
     TEST_ASSERT_TRUE(contains(txt, "# header comment"));
-    TEST_ASSERT_TRUE(contains(txt, "vin_adc=ads"));
+    TEST_ASSERT_TRUE(contains(txt, "hv_v_adc=ads"));
     TEST_ASSERT_TRUE(contains(txt, "# inline note on vin"));
     TEST_ASSERT_TRUE(contains(txt, "# trailing comment"));
     TEST_ASSERT_TRUE(contains(txt, "foo=bar"));
     // in-memory view is consistent: getter falls back to default
-    TEST_ASSERT_EQUAL_STRING("gone", conf.getString("vout_adc", std::string{"gone"}).c_str());
+    TEST_ASSERT_EQUAL_STRING("gone", conf.getString("lv_v_adc", std::string{"gone"}).c_str());
 }
 
 void test_conf_remove_strips_inline_comment_too() {
@@ -136,10 +136,10 @@ void test_conf_remove_strips_inline_comment_too() {
     writeRemoveFixture();
 
     ConfFile conf{kRemovePath};
-    TEST_ASSERT_TRUE(conf.remove("iout_ch"));
+    TEST_ASSERT_TRUE(conf.remove("lv_i_ch"));
 
     auto txt = readFile(kRemovePath);
-    TEST_ASSERT_FALSE(contains(txt, "iout_ch"));
+    TEST_ASSERT_FALSE(contains(txt, "lv_i_ch"));
     TEST_ASSERT_FALSE(contains(txt, "current channel")); // the line's inline comment goes with it
 }
 
