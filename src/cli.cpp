@@ -31,6 +31,10 @@
 #include "console.h"
 #include "conf.h"
 #include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali_scheme.h"
+#if CONFIG_IDF_TARGET_ESP32S3
+#include "esp_efuse_rtc_calib.h"
+#endif
 #include "esp_private/esp_gpio_reserve.h"
 #include "util.h"
 #include "buck.h"
@@ -2036,6 +2040,44 @@ static void cmdScriptSet(cmd *c) {
     UART_LOG("script-set: %s '%s' — %d lines", exists ? "overwritten" : "created", path.c_str(), lines);
 }
 
+#if CONFIG_IDF_TARGET_ESP32S3
+// adc-cal: what IDF's ADC1 calibration is built from on this chip. Read-only, no reset.
+// eFuse, per attenuation: the hardware offset code (loaded by the driver) and one factory point
+// (raw code at 850 mV) that sets IDF's first-step gain. Then, per attenuation, IDF's full
+// conversion (first-step line + the fixed family-wide curve) at every 256th code.
+static void cmdAdcCal(cmd *) {
+    const int ver = esp_efuse_rtc_calib_get_ver();
+    if (ver < ESP_EFUSE_ADC_CALIB_VER_MIN || ver > ESP_EFUSE_ADC_CALIB_VER_MAX)
+        CMD_FAIL_RETURN("adc-cal: eFuse calibration version %d not supported", ver);
+    UART_LOG("ADCCAL efuse_ver=%d", ver);
+    uint32_t calCode[4] = {}, calMv[4] = {};
+    for (int at = 0; at < 4; ++at) {
+        if (esp_efuse_rtc_calib_get_cal_voltage(ver, ADC_UNIT_1, at, &calCode[at], &calMv[at]) != ESP_OK
+            || !calCode[at])
+            CMD_FAIL_RETURN("adc-cal: no cal point for atten %d", at);
+        UART_LOG("ADCCAL adc1 atten=%d init_code=%lu cal_mv=%lu cal_code=%lu gain_uv_per_code=%.2f", at,
+                 (unsigned long) esp_efuse_rtc_calib_get_init_code(ver, ADC_UNIT_1, at),
+                 (unsigned long) calMv[at], (unsigned long) calCode[at], 1e3 * calMv[at] / calCode[at]);
+    }
+    for (int at = 0; at < 4; ++at) {
+        adc_cali_handle_t cal = nullptr;
+        adc_cali_curve_fitting_config_t conf{.unit_id = ADC_UNIT_1, .chan = ADC_CHANNEL_0,
+                                             .atten = (adc_atten_t) at, .bitwidth = ADC_BITWIDTH_12};
+        if (adc_cali_create_scheme_curve_fitting(&conf, &cal) != ESP_OK)
+            CMD_FAIL_RETURN("adc-cal: curve-fitting scheme unavailable for atten %d", at);
+        UART_LOG("ADCCAL table atten=%d code mv_idf mv_first_step curve_mv", at);
+        for (int code = 0; code <= 4096; code += 256) {
+            const int c = std::min(code, 4095);
+            int mv = 0;
+            adc_cali_raw_to_voltage(cal, c, &mv);
+            const float line = (float) c * calMv[at] / calCode[at];
+            UART_LOG("ADCCAL %d %4d %5d %8.1f %6.1f", at, c, mv, line, mv - line);
+        }
+        adc_cali_delete_scheme_curve_fitting(cal);
+    }
+}
+#endif
+
 static void cmdHelp(cmd *) { UART_LOG("%s", cli.toString().c_str()); }
 
 void setupCli() {
@@ -2051,6 +2093,9 @@ void setupCli() {
     cli.addCommand("rt-stats", cmdRtStats);
     cli.addCommand("tasks", cmdTasks);
     cli.addCommand("bootinfo", cmdBootinfo);
+#if CONFIG_IDF_TARGET_ESP32S3
+    cli.addCommand("adc-cal", cmdAdcCal);
+#endif
     cli.addBoundlessCmd("heap", cmdHeap);    // heap [check]
     cli.addBoundlessCmd("log", cmdLogLevel); // log <tag> <level>
     cli.addCommand("mem", cmdMem);

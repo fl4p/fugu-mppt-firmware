@@ -21,6 +21,7 @@ The following keys apply to all channels:
 | `despike`                        |      | float  | 0       | Glitch-safe median outlier threshold (running mean-deviation units): 0 = off (legacy unconditional median); ~8 enables (lower = clips more). Passes dense load pulses through (unbiased current) but still clips impulse glitches |
 | `esp32adc1_sr`                   | Hz   | int    | —       | Internal ADC1 continuous-mode raw sample rate (required with `esp32adc1`) |
 | `esp32adc1_avg`                  |      | int    | —       | Software average of N raw conversions per delivered sample (1–1023, required with `esp32adc1`) |
+| `esp32adc1_inl`                  |      | bool   | 0       | Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation only). It removes a ±0.2 V S-curve on a 28:1 divider between ~0.57 and ~2.66 V at the pin and tapers to zero outside that range. It has no gain or offset of its own, so set it together with each voltage channel's `_gain`/`_offset`. It applies to every ADC1 channel, including NTC and current |
 
 The following per-channel keys take a channel prefix. Name the voltage and current channels by the
 board side they measure: `hv_v_`, `lv_v_`, `hv_i_`, `lv_i_`. The temperature channel is `ntc_`.
@@ -53,6 +54,8 @@ flow. The same shunt therefore keeps the same `_factor` in both topologies.
 | `_ch`       |      | byte   | 255         | ADC channel index (255 = absent)                                               |
 | `_rh`       | Ω    | float  | —           | Voltage divider upper (high-side) resistor (voltage channels)                  |
 | `_rl`       | Ω    | float  | —           | Voltage divider lower resistor (voltage channels)                              |
+| `_gain`     |      | float  | 1           | Per-board gain on top of the divider (voltage channels): V = gain · V_div + offset |
+| `_offset`   | V    | float  | 0           | Per-board offset (voltage channels), see `_gain`                               |
 | `_factor`   |      | float  | 1           | Linear scale factor raw ADC → physical, sign sets direction (current channels) |
 | `_midpoint` |      | float  | 0           | Zero/offset midpoint subtracted before scaling (current channels)              |
 | `_filt_len` |      | int    | 10          | Filter window length (samples). Currently ignored for `ntc`, which uses a fixed 50 |
