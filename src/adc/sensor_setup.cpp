@@ -165,10 +165,12 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
                     adc->getInputImpedance(chNum)
                 );
                 // per-board calibration on top of the divider: V = gain * V_div + offset
-                const float gain = sensConf.f(chn + '_' + "gain", 1.f);
-                const float offset = sensConf.f(chn + '_' + "offset", 0.f);
-                assert_throw(gain > 0.5f && gain < 2.f, "v*_gain out of range (0.5, 2)");
-                assert_throw(std::isfinite(offset) && fabsf(offset) < 10.f, "v*_offset out of range (-10, 10) V");
+                const float gain = sensConf.f(key + '_' + "gain", 1.f);
+                const float offset = sensConf.f(key + '_' + "offset", 0.f);
+                if (!(gain > 0.5f && gain < 2.f))
+                    throw std::runtime_error("sensor.conf: " + key + "_gain out of range (0.5, 2)");
+                if (!(std::isfinite(offset) && fabsf(offset) < 10.f))
+                    throw std::runtime_error("sensor.conf: " + key + "_offset out of range (-10, 10) V");
                 lt.factor *= gain;
                 lt.midpoint -= offset / lt.factor;
             } else if (chn[0] == 'i') {

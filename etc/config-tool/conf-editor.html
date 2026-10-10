@@ -445,12 +445,14 @@ const CHAN_SUFFIX = {
   factor:{unit:"",desc:"Linear scale factor raw ADC → physical (sign sets direction)",type:"float"},
   midpoint:{unit:"",desc:"Zero/offset midpoint subtracted before scaling",type:"float"},
   filt_len:{unit:"",desc:"Filter window length (samples)",type:"int"},
+  gain:{unit:"",desc:"Per-board gain on top of the divider (voltage channels): V = gain · V_div + offset",type:"float"},
+  offset:{unit:"V",desc:"Per-board offset (voltage channels), see gain",type:"float"},
 };
 
 /* Role keys the firmware no longer reads (src/conv_side.h): sensor.conf vin_/vout_/iin_/iout_
    channel keys and limits.conf vin_max/vout_max/iin_max/iout_max. A file with one fails setup at
    boot; etc/migrate_side_keys.py migrates it. */
-const ROLE_CHAN_RE = /^(vin|vout|iin|iout)_(adc|ch|rh|rl|factor|midpoint|filt_len)$/;
+const ROLE_CHAN_RE = /^(vin|vout|iin|iout)_(adc|ch|rh|rl|factor|midpoint|filt_len|gain|offset)$/;
 const ROLE_LIMITS = ["vin_max","vout_max","iin_max","iout_max"];
 
 // Side key replacing role key `key` of `file` under the topo, or null if `key` is no removed role key.
@@ -546,7 +548,7 @@ const TYPE_KEYS = {
     "pwm_driver_logic","topo","username"]),
 };
 // SCRAPER:END TYPE_KEYS
-const CHAN_SUFFIX_TYPE = { adc:"string", ch:"byte", rh:"float", rl:"float", factor:"float", midpoint:"float", filt_len:"long" };
+const CHAN_SUFFIX_TYPE = { adc:"string", ch:"byte", rh:"float", rl:"float", factor:"float", midpoint:"float", filt_len:"long", gain:"float", offset:"float" };
 
 /* Default values mined from `ConfFile::get*(key, default)` calls in src/.
    Strings are kept quoted; absent entry = no default (key is required, or
@@ -591,7 +593,7 @@ const DEFAULTS = {
   "switch_delay":"30",
 };
 // SCRAPER:END DEFAULTS
-const CHAN_SUFFIX_DEFAULT = { ch:"255", factor:"1.0", midpoint:"0.0", filt_len:"10" };
+const CHAN_SUFFIX_DEFAULT = { ch:"255", factor:"1.0", midpoint:"0.0", filt_len:"10", gain:"1.0", offset:"0.0" };
 
 function lookupDefault(file, key){
   if (key in DEFAULTS) return DEFAULTS[key];

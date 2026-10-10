@@ -388,7 +388,7 @@ def patch_html(html, blocks):
 # META drift report (no rewriting)
 # ----------------------------------------------------------------------------
 META_KEY_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*\{', re.MULTILINE)
-CHAN_KEY_RE = re.compile(r'^(hv_v|lv_v|hv_i|lv_i|ntc)_(adc|ch|rh|rl|factor|midpoint|filt_len)$')
+CHAN_KEY_RE = re.compile(r'^(hv_v|lv_v|hv_i|lv_i|ntc)_(adc|ch|rh|rl|factor|midpoint|filt_len|gain|offset)$')
 
 
 def scrape_meta_keys(html):

@@ -34,7 +34,8 @@ inline bool isInputRole(const std::string &role) { return role[1] == 'i'; } // v
 // ---- sensor.conf
 
 // Suffixes a sensor channel is configured with (<channel>_<suffix>).
-inline constexpr const char *SensorKeySuffixes[] = {"_adc", "_ch", "_rh", "_rl", "_factor", "_midpoint", "_filt_len"};
+inline constexpr const char *SensorKeySuffixes[] = {"_adc", "_ch", "_rh", "_rl", "_factor", "_midpoint", "_filt_len",
+                                                             "_gain", "_offset"};
 inline constexpr const char *SensorRoleChannels[] = {"vin", "vout", "iin", "iout"}; // removed key prefixes
 
 // Key prefix role channel `chn` is read from: hv_v, lv_v, hv_i or lv_i. ntc has no side.

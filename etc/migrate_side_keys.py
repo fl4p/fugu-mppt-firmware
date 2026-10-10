@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 ROLE_CHANNELS = ("vin", "vout", "iin", "iout")
-SENSOR_SUFFIXES = ("adc", "ch", "rh", "rl", "factor", "midpoint", "filt_len")  # conv_side.h SensorKeySuffixes
+SENSOR_SUFFIXES = ("adc", "ch", "rh", "rl", "factor", "midpoint", "filt_len", "gain", "offset")  # conv_side.h SensorKeySuffixes
 LIMIT_KEYS = ("vin_max", "vout_max", "iin_max", "iout_max")
 
 
