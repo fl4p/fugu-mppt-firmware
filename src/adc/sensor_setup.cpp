@@ -92,7 +92,7 @@ static void configureVirtualConverter() {
     // told, or the Ctrl/Rect gate roles and the sim disagree. We run before converter.init(), so we
     // cannot ask the converter — reject an unrecognised value the same way it does rather than
     // silently modelling a buck while the firmware drives a boost.
-    const bool boost = readTopoIsBoost();
+    const bool boost = readTopoIsBoost("the vconv model");
     g_vconv.setBoost(boost);
 
     // Seed cap voltages near steady-state so the model doesn't start in the
@@ -140,12 +140,12 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
     std::unordered_map<std::string, p> params;
 
     auto defAdcName = sensConf.getString("adc", "");
-    const bool boost = readTopoIsBoost();
+    const bool sideKeys = sensorUsesSideKeys(sensConf);
+    const bool boost = sideKeys && readTopoIsBoost("sensor.conf side keys");
     std::unordered_map<std::string, AsyncADC<float> *> adcs{};
     for (auto chn_: {"ntc", "vin", "iin", "iout", "vout",}) {
         auto chn = std::string(chn_);
-        const auto sideChn = sensorSideChannel(sensConf, chn, boost);
-        const auto &key = sideChn.empty() ? chn : sideChn; // key prefix this channel is read from
+        const auto key = sensorKeyPrefix(chn, sideKeys, boost); // hv_v.. in a side-keyed sensor.conf
         auto chNum = sensConf.getByte(key + '_' + "ch", 255);
         auto an = sensConf.getString(key + '_' + "adc", defAdcName);
 
@@ -168,13 +168,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
                     sensConf.f(key + '_' + "factor", 1.f),
                     sensConf.f(key + '_' + "midpoint", 0.f)
                 };
-                // Side current factors use the buck direction: positive when power flows HV -> LV.
-                // A side's shunt sees the same physical current in either topo, but boost reverses
-                // the power flow (into the LV terminal, out of the HV one), so negate to keep Iin/Iout
-                // positive for forward power. E.g. one LV shunt: buck iout_factor=-1 == boost
-                // iin_factor=+1 == lv_i_factor=-1 in both.
-                if (!sideChn.empty() && boost)
-                    lt.factor = -lt.factor;
+                lt.factor = sensorCurrentFactor(lt.factor, sideKeys, boost); // boost negates side keys
             }
         }
 
