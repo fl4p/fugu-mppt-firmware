@@ -21,6 +21,7 @@ The following keys apply to all channels:
 | `despike`                        |      | float  | 0       | Glitch-safe median outlier threshold (running mean-deviation units): 0 = off (legacy unconditional median); ~8 enables (lower = clips more). Passes dense load pulses through (unbiased current) but still clips impulse glitches |
 | `esp32adc1_sr`                   | Hz   | int    | —       | Internal ADC1 continuous-mode raw sample rate (required with `esp32adc1`) |
 | `esp32adc1_avg`                  |      | int    | —       | Software average of N raw conversions per delivered sample (1–1023, required with `esp32adc1`) |
+| `esp32adc1_inl`                  |      | bool   | 1       | Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation only; about ±0.2 V of S-curve on a 28:1 divider). It carries no gain or offset, so calibrate each board with `_gain`/`_offset` |
 
 The following per-channel keys take the prefix `vin_`, `vout_`, `iin_`, `iout_`, or `ntc_`:
 
@@ -30,6 +31,8 @@ The following per-channel keys take the prefix `vin_`, `vout_`, `iin_`, `iout_`,
 | `_ch`       |      | byte   | 255         | ADC channel index (255 = absent)                                               |
 | `_rh`       | Ω    | float  | —           | Voltage divider upper (high-side) resistor (voltage channels)                  |
 | `_rl`       | Ω    | float  | —           | Voltage divider lower resistor (voltage channels)                              |
+| `_gain`     |      | float  | 1           | Per-board gain on top of the divider (voltage channels): V = gain · V_div + offset |
+| `_offset`   | V    | float  | 0           | Per-board offset (voltage channels), see `_gain`                               |
 | `_factor`   |      | float  | 1           | Linear scale factor raw ADC → physical, sign sets direction (current channels) |
 | `_midpoint` |      | float  | 0           | Zero/offset midpoint subtracted before scaling (current channels)              |
 | `_filt_len` |      | int    | 10          | Filter window length (samples). Currently ignored for `ntc`, which uses a fixed 50 |

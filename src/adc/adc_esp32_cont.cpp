@@ -1,5 +1,7 @@
 #include "adc_esp32_cont.h"
 
+#include <algorithm>
+
 #include "tele/scope.h"
 
 
@@ -93,6 +95,13 @@ void ADC_ESP32_Cont::start() {
 
     assert_throw(patLen > 0, "");
 
+    buildMvTable();
+#if !CONFIG_IDF_TARGET_ESP32S3
+    inlCorr_ = false; // the INL table is ESP32-S3 data
+#endif
+    if (maxAtten != ADC_ATTEN_DB_12) inlCorr_ = false; // fitted at 12 dB only
+    ESP_LOGI("adc_esp32", "INL correction %s", inlCorr_ ? "on" : "off");
+
     ESP_LOGI("adc_esp32", "ADC1 SR=%lu Hz, nCh=%lu, avg=%u, pattern=%lu => %.0f sps/ch", sr, chNum, avgNum, patLen,
              sr / chNum * ((float) (patLen == chNum ? patLen : (patLen + hasNtc)) / patLen) / avgNum);
 
@@ -118,6 +127,52 @@ void ADC_ESP32_Cont::start() {
     ESP_ERROR_CHECK_THROW(adc_continuous_start(handle));
 }
 
+void ADC_ESP32_Cont::buildMvTable() {
+    if (knotAtten_ == maxAtten) return; // resetPeripherals() re-enters start(); the table only depends on atten
+    auto cal = calByAtten[maxAtten];
+    assert_throw(cal != nullptr, "adc cali missing");
+    // Each knot is a least-squares line through the 64 integer conversions around it, evaluated at
+    // the knot: the integer-mV truncation averages out to a constant ~-0.5 mV (which a board's
+    // offset absorbs) and the second-step curve is smooth over 64 codes.
+    for (int k = 0; k < kKnots; ++k) {
+        const int c = k << kKnotShift;
+        const int lo = std::max(0, c - 32), hi = std::min(4095, c + 31);
+        double sx = 0, sy = 0, sxx = 0, sxy = 0;
+        const int n = hi - lo + 1;
+        for (int r = lo; r <= hi; ++r) {
+            int mv = 0;
+            adc_cali_raw_to_voltage(cal, r, &mv);
+            const double x = r - c;
+            sx += x, sy += mv, sxx += x * x, sxy += x * mv;
+        }
+        const double b = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+        mvKnot_[k] = (float) ((sy - b * sx) / n);
+    }
+    knotAtten_ = maxAtten;
+}
+
+float ADC_ESP32_Cont::rawToMv(float raw) const {
+    const float f = raw * (1.f / (1 << kKnotShift));
+    const int k = std::min((int) f, kKnots - 2);
+    return mvKnot_[k] + (f - (float) k) * (mvKnot_[k + 1] - mvKnot_[k]);
+}
+
+// Universal ESP32-S3 ADC1 INL at 12 dB, in pin mV, added to the IDF curve-fitting output. Fitted
+// jointly on two boards (fboost, fmetal; 200k/7.5k dividers) against an INA228 traced to an
+// HP3458A, 412 rungs 16.5..74.5 V, 2026-10-09/10 (pwr-metering ina228-u-4ref-dense). Legendre
+// P2..P5 only, so it carries no gain or offset of its own: a board's gain/offset stays in
+// sensor.conf <ch>_gain/<ch>_offset. Held out per board: ~100 -> ~37 mV rms input-referred.
+// Outside the fitted 571..2659 mV it holds its edge value rather than extrapolate.
+float ADC_ESP32_Cont::inlDelta(float mv) {
+    constexpr float kMid = 1615.f, kHalf = 1044.f;
+    constexpr float c[] = {-1.868178f, -15.276578f, 13.885663f, 34.574096f, -13.801880f, -12.758385f};
+    float x = (mv - kMid) * (1.f / kHalf);
+    x = x < -1.f ? -1.f : x > 1.f ? 1.f : x;
+    float y = c[5];
+    for (int i = 4; i >= 0; --i) y = y * x + c[i];
+    return y;
+}
+
 uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
     uint32_t ret_num = 0;
     // don't wait here, as we already do in haveData(), we dont want to block other ADCs
@@ -138,12 +193,11 @@ uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {
                 avgBuf[chan_num].agg += data;
 
                 if (avgBuf[chan_num].num == avgNum) {
-                    data = avgBuf[chan_num].agg / avgBuf[chan_num].num;
-                    if (scope)scope->addSample12(this, chan_num, data);
-                    int mv = 0;
-                    adc_cali_raw_to_voltage(calByAtten[attenByCh[chan_num]], data, &mv);
-                    float v = (float) mv * 1e-3f;
-                    newSampleCallback(chan_num, v);
+                    const float raw = (float) avgBuf[chan_num].agg / (float) avgBuf[chan_num].num;
+                    if (scope)scope->addSample12(this, chan_num, avgBuf[chan_num].agg / avgBuf[chan_num].num);
+                    float mv = rawToMv(raw);
+                    if (inlCorr_) mv += inlDelta(mv);
+                    newSampleCallback(chan_num, mv * 1e-3f);
                     avgBuf[chan_num].num = 0;
                     avgBuf[chan_num].agg = 0;
                 }

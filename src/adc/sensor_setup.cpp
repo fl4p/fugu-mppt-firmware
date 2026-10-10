@@ -162,6 +162,12 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
                     sensConf.getFloat(chn + '_' + "rl"),
                     adc->getInputImpedance(chNum)
                 );
+                // per-board calibration on top of the divider: V = gain * V_div + offset
+                const float gain = sensConf.f(chn + '_' + "gain", 1.f);
+                const float offset = sensConf.f(chn + '_' + "offset", 0.f);
+                assert_throw(gain > 0.5f && gain < 2.f, "v*_gain out of range (0.5, 2)");
+                lt.factor *= gain;
+                lt.midpoint -= offset / lt.factor;
             } else if (chn[0] == 'i') {
                 lt = {
                     sensConf.f(chn + '_' + "factor", 1.f),
@@ -190,9 +196,6 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
         //         Iin_ch,
         //         Vout_ch, Iout_ch, loopRateMin);
     }
-
-    //Vin_transform.factor *= sensConf.f("vin_calib", 1.f);
-    //Vout_transform.factor *= sensConf.f("vout_calib", 1.f);
 
     params.find("vin")->second.params.calibrationConstraints = {lim.Vin_max, 1.8f, false};
     params.find("vin")->second.params.unit = 'V';
