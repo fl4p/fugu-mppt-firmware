@@ -160,7 +160,7 @@ float ADC_ESP32_Cont::rawToMv(float raw) const {
 
 // Universal ESP32-S3 ADC1 INL at 12 dB, in pin mV, added to the IDF curve-fitting output. Fitted
 // jointly on two boards (fboost, fmetal: ch3, 200k/7.5k dividers) against an INA228 traced to an
-// HP3458A, 412 rungs 16.5..74.5 V, 2026-10-09/10; data, fit and plots in Fugu2
+// HP3458A, 412 rungs 16.5..73.4 V, 2026-10-09/10; data, fit and plots in Fugu2
 // doc/"ESP32 ADC Calibration.md". Legendre P2..P5 only, so inside the fitted 570..2658 mV it carries no gain or
 // offset of its own: a board's gain/offset goes in sensor.conf <ch>_gain/<ch>_offset. With
 // another board's curve and a 2-point gain/offset, ~100 -> ~40 mV rms input-referred.
