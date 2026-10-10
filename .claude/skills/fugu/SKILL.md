@@ -91,6 +91,14 @@ idf.py -B build-<tag> build
 ```
 
 * **Use a separate `-B` build dir.** The shared `build/` may be in use by another session.
+* **A clean `git worktree` (to build HEAD without peers' dirty edits) is not self-contained**:
+  `idf-export.sh` and `dependencies.lock` are gitignored (source the export from the main repo
+  root, then `cd`), and the `components/*` submodules need `git submodule update --init`. With no
+  lock, managed components resolve fresh and can be newer than the main tree's (`led_strip` 3.1 vs
+  3.0.3, 2026-10-10). Never copy a lock into a worktree that already built: the image boot-looped
+  flu in the RMT encoder, most likely app code compiled against the 3.0.3 header linked with the
+  stale 3.1 library objects (inferred; a clean rebuild fixed it). Delete `managed_components/`,
+  `dependencies.lock` and the build dir together.
 * Build options are Kconfig (`CONFIG_FUGU_WITH_*`), **not** env vars — the build errors out if a
   legacy `WITH_*` env var is set. `WITH_NETW` and `WITH_BLE` default **on**; `MCPWM`,
   `MEASURE_COIL`, `VCONV`, `SPROFILER` default **off**. The local `sdkconfig` is **gitignored** and
