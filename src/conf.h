@@ -352,6 +352,9 @@ public:
         return def;
     }
 
+    // Presence test; does not count as an access for warnUnknownKeys().
+    bool has(const std::string &key) const { return find_(key) != nullptr; }
+
     std::vector<std::string> keys() const {
         std::vector<std::string> keys{_map.size()};
         std::transform(_map.begin(), _map.end(), keys.begin(),

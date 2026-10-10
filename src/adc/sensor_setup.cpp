@@ -22,6 +22,7 @@
 #endif
 #include "../mppt.h"
 #include "../conf.h"
+#include "../conv_side.h"
 #include "../util.h"
 
 // Globals owned by main.cpp.
@@ -91,10 +92,7 @@ static void configureVirtualConverter() {
     // told, or the Ctrl/Rect gate roles and the sim disagree. We run before converter.init(), so we
     // cannot ask the converter — reject an unrecognised value the same way it does rather than
     // silently modelling a buck while the firmware drives a boost.
-    ConfFile conv{"/littlefs/conf/converter.conf"};
-    const std::string topo = conv.getString("topo", "buck");
-    assert_throw(topo == "buck" || topo == "boost", "vconv: converter.conf::topo must be buck|boost");
-    const bool boost = topo == "boost";
+    const bool boost = readTopoIsBoost();
     g_vconv.setBoost(boost);
 
     // Seed cap voltages near steady-state so the model doesn't start in the
@@ -142,11 +140,14 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
     std::unordered_map<std::string, p> params;
 
     auto defAdcName = sensConf.getString("adc", "");
+    const bool boost = readTopoIsBoost();
     std::unordered_map<std::string, AsyncADC<float> *> adcs{};
     for (auto chn_: {"ntc", "vin", "iin", "iout", "vout",}) {
         auto chn = std::string(chn_);
-        auto chNum = sensConf.getByte(chn + '_' + "ch", 255);
-        auto an = sensConf.getString(chn + '_' + "adc", defAdcName);
+        const auto sideChn = sensorSideChannel(sensConf, chn, boost);
+        const auto &key = sideChn.empty() ? chn : sideChn; // key prefix this channel is read from
+        auto chNum = sensConf.getByte(key + '_' + "ch", 255);
+        auto an = sensConf.getString(key + '_' + "adc", defAdcName);
 
         if (chNum != 255 && adcs.find(an) == adcs.end()) {
             adcs[an] = createAdcInstance(an, boardConf, sensConf, chn);
@@ -158,20 +159,27 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
         if (chNum != 255) {
             if (chn[0] == 'v') {
                 lt = adcVDiv(
-                    sensConf.f(chn + '_' + "rh"),
-                    sensConf.getFloat(chn + '_' + "rl"),
+                    sensConf.f(key + '_' + "rh"),
+                    sensConf.getFloat(key + '_' + "rl"),
                     adc->getInputImpedance(chNum)
                 );
             } else if (chn[0] == 'i') {
                 lt = {
-                    sensConf.f(chn + '_' + "factor", 1.f),
-                    sensConf.f(chn + '_' + "midpoint", 0.f)
+                    sensConf.f(key + '_' + "factor", 1.f),
+                    sensConf.f(key + '_' + "midpoint", 0.f)
                 };
+                // Side current factors use the buck direction: positive when power flows HV -> LV.
+                // A side's shunt sees the same physical current in either topo, but boost reverses
+                // the power flow (into the LV terminal, out of the HV one), so negate to keep Iin/Iout
+                // positive for forward power. E.g. one LV shunt: buck iout_factor=-1 == boost
+                // iin_factor=+1 == lv_i_factor=-1 in both.
+                if (!sideChn.empty() && boost)
+                    lt.factor = -lt.factor;
             }
         }
 
         auto constexpr DEFAULT_FILT_LEN = 10;
-        auto filtLen = (uint16_t) sensConf.getLong(chn + '_' + "filt_len", DEFAULT_FILT_LEN);
+        auto filtLen = (uint16_t) sensConf.getLong(key + '_' + "filt_len", DEFAULT_FILT_LEN);
 
         params.emplace(chn, p{
                            .params = SensorParams{
