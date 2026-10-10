@@ -33,14 +33,14 @@ Provision your real board configuration (for Fugu2: `./provision.py fmetal`) and
 
 Check the following items before you power the board:
 
-- [ ] Review [`limits.conf`](../../reference/config/limits.md) with `cat conf/limits.conf`. Set `vin_max`,
-  `vout_max`, `iin_max`, and `iout_max` to what your hardware and your battery tolerate, not to the example values.
+- [ ] Review [`limits.conf`](../../reference/config/limits.md) with `cat conf/limits.conf`. Set `hv_max`,
+  `lv_max`, `hv_i_max`, and `lv_i_max` to what your hardware and your battery tolerate, not to the example values.
 - [ ] `charger.conf::vout_max` matches the battery you will connect later
   ([LFP charging](../charging/lfp-charging.md)).
 - [ ] `coil.conf::L0` matches your inductor; diode emulation relies on it
   ([diode emulation](../../internals/diode-emulation.md)).
 - [ ] Supply voltage above `limits.conf::vin_min` (10.5 V in the examples, protects the board supply) and below
-  `vin_max`.
+  the input side's maximum (`hv_max` in a buck, `lv_max` in a boost).
 - [ ] Supply current limit set low (a few hundred mA) for the first run.
 
 ### Readings
@@ -49,7 +49,7 @@ With only the input supply connected and the output open, check the following re
 
 - [ ] No `E (…)` error lines in the boot log. `board.conf expects MCU …` means the config does not match the chip.
   See [ESP32 variants](../hardware/esp32-variants.md).
-- [ ] `sensor`: Vin matches a multimeter within a few percent. If not, fix `vin_rh`/`vin_rl` in
+- [ ] `sensor`: Vin matches a multimeter within a few percent. If not, fix that side's divider (`hv_v_rh`/`hv_v_rl` in a buck) in
   [`sensor.conf`](../../reference/config/sensor.md).
 - [ ] Current readings sit near zero. The sampler calibrates the zero-current offset at start.
 - [ ] `status` shows the limits you configured.

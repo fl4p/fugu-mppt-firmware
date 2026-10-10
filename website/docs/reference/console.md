@@ -79,25 +79,29 @@ Hardware and runtime parameters live in `.conf` files on the device's littlefs p
 | `set-config <file> <key> <value>` (alias `setc`) | Set a key in a config file and persist it to flash. |
 | `del-config <file> <key>` (alias `delc`) | Remove a key; the whole line, including any inline comment, is deleted. |
 | `get-config <file> [<key>]` (alias `getc`) | Print a single key, or dump every key if `<key>` is omitted. |
-| `conf-check` (alias `confcheck`) | Re-read `charger.conf`/`limits.conf` and warn about keys no loader reads (typos / obsolete, e.g. `cv_min` where the firmware reads `cv_float`). Same check runs at boot for the parameter confs. |
+| `conf-check` (alias `confcheck`) | Re-read `charger.conf`/`limits.conf` and warn about keys no loader reads (typos / obsolete, e.g. `cv_min` where the firmware reads `cv_float`), and print why a `limits.conf` does not load (e.g. a leftover role key, with its side replacement). Same check runs at boot for the parameter confs. |
 
 The following examples set, delete, read, and check keys:
 
 ```
 set-config coil.conf L0 50e-6
-set-config limits.conf iout_max 35
+set-config limits.conf lv_i_max 35
 set-config charger.conf vout_max 28.5
 set-config mqtt.conf broker_uri mqtt://<broker-ip>:1883
 set-config charger.conf cv_eoc 3.53
-set-config sensor.conf vout_filt_len 10
+set-config sensor.conf lv_v_filt_len 10
 
-del-config sensor.conf vout_filt_len
+del-config sensor.conf lv_v_filt_len
 
 get-config mqtt.conf broker_uri
 get-config converter.conf
 
 conf-check
 ```
+
+`sensor.conf` and `limits.conf` name their voltage and current keys by board side (`lv_i_max`,
+`lv_v_filt_len`); `converter.conf::topo` maps the sides to roles. A config from older firmware with role keys fails
+setup at boot until it is migrated; see [Migrating from role keys](config/sensor.md#migrating-from-role-keys).
 
 ## Charger Commands
 
@@ -108,11 +112,11 @@ These commands report the charger state and set battery limits, PSU mode, and PV
 | `status` | Print a charger/battery snapshot: termination state, effective limits (`Vbat_max`/`Vout_max`, `Ibat_lim`/`Iout_max`), the termination line (`v_term`/`cv_min`/`cv_eoc`/`Cbat`/`recharge_dod`) and the BMS feed (`vcell_high` with staleness, `ibat`, `ahSinceFull`, `vout_avg`). In PSU mode also prints the setpoint, trip count and escalation state. |
 | `vset <float>` | Set the battery max voltage (`Vbat_max`), range (0, 999]. Marks the setpoint as explicit so the persistent-OV auto-detect will not silently discard it. |
 | `iset <float>` | Set the battery current limit (`Ibat_lim`), range 0–999. |
-| `ovset <float>` | Set an independent hard output over-voltage trip limit, range 0–999. 0 clears it (reverts to the derived threshold: `Vbat_max` × 1.5, or × 1.03 with `reverse_current_paranoia`). When set, the OV threshold is `min(ovset, vout_max)` regardless of the CV setpoint. |
-| `psu <float>` | Enter PSU (constant-voltage) mode and set the output voltage setpoint. The limiter chain regulates Vout to the setpoint with CV/CC foldback, without the MPP tracker, periodic sweep or charger-layer battery semantics. Trips use a fast 100 ms auto-retry with escalation to a hard latch after repeated faults. Range-checks against `limits.conf::vout_max`. A lower setpoint is approached at `converter.conf::psu_slew_down` (2 V/s default). |
+| `ovset <float>` | Set an independent hard output over-voltage trip limit, range 0–999. 0 clears it (reverts to the derived threshold: `Vbat_max` × 1.5, or × 1.03 with `reverse_current_paranoia`). When set, the OV threshold is min(`ovset`, Vout max) (the `limits.conf` output voltage limit: `lv_max` in a buck, `hv_max` in a boost) regardless of the CV setpoint. |
+| `psu <float>` | Enter PSU (constant-voltage) mode and set the output voltage setpoint. The limiter chain regulates Vout to the setpoint with CV/CC foldback, without the MPP tracker, periodic sweep or charger-layer battery semantics. Trips use a fast 100 ms auto-retry with escalation to a hard latch after repeated faults. Range-checks against the output voltage limit (`limits.conf::lv_max` in a buck, `hv_max` in a boost). A lower setpoint is approached at `converter.conf::psu_slew_down` (2 V/s default). |
 | `psu off` | Exit PSU mode, return to MPPT tracking. |
 | `psu` | Print PSU mode state: setpoint, trip count, escalation/latch state. |
-| `pv <isc> <voc> [k]` | Enter PV-sim (solar-array-simulator) mode: the output follows the panel curve V=f(Iout) with `Voc` at no load and MPP at `k·Voc` (k default 0.8, range [0.5,0.95]). Runs on the PSU machinery (same trips/latch); the setpoint moves along the curve, slew-limited, clamped to [Vin+0.5, min(Voc, `vout_max`)]; a boost can only emulate the curve above Vin. The Iout limiter is capped at 1.1·Isc; **below the Vin floor the body diode passes current firmware cannot limit**, so keep the input supply's current limit low. Re-issuing while active updates the curve in place (no setpoint jump) and clears a trip latch/backoff, which makes it the escape hatch, as with `psu <V>`. |
+| `pv <isc> <voc> [k]` | Enter PV-sim (solar-array-simulator) mode: the output follows the panel curve V=f(Iout) with `Voc` at no load and MPP at `k·Voc` (k default 0.8, range [0.5,0.95]). Runs on the PSU machinery (same trips/latch); the setpoint moves along the curve, slew-limited, clamped to [Vin+0.5, min(Voc, Vout max)] (Vout max: `limits.conf::hv_max` in a boost, `lv_max` in a buck); a boost can only emulate the curve above Vin. The Iout limiter is capped at 1.1·Isc; **below the Vin floor the body diode passes current firmware cannot limit**, so keep the input supply's current limit low. Re-issuing while active updates the curve in place (no setpoint jump) and clears a trip latch/backoff, which makes it the escape hatch, as with `psu <V>`. |
 | `pv scale <s>` | Irradiance knob: re-apply the curve with `Isc = s ×` the last full `pv` command's Isc, s in (0,1.2]. Scales don't compound, and a scale does **not** clear a trip latch or fault backoff. |
 | `pv off` | Ramp to 0 duty and enter manual mode (deliberately not the MPPT fallback of `psu off`, since this is a bench source). |
 | `pv` | Print PV-sim state: curve params, live setpoint/Vout/Iout, trip state. |
@@ -122,7 +126,7 @@ They reply `ERR` to anything else and leave the setting unchanged. For example, 
 limit, and the firmware rejects `vset 24V` rather than reading it as 24. `ovset` without an argument is also an
 error. To clear the limit, use `ovset 0`.
 
-The charger commands change RAM only. To persist a setting, set the matching conf key: `vset` → `charger.conf vout_max`, `iset` → `charger.conf ibat_max`, `psu <V>` → `converter.conf mode=psu` + `psu_vout`, `pv …` → `converter.conf mode=pv` + `pv_isc`/`pv_voc`/`pv_k`. `ovset` has no conf key. For a persistent hard limit, use `limits.conf vout_max`.
+The charger commands change RAM only. To persist a setting, set the matching conf key: `vset` → `charger.conf vout_max`, `iset` → `charger.conf ibat_max`, `psu <V>` → `converter.conf mode=psu` + `psu_vout`, `pv …` → `converter.conf mode=pv` + `pv_isc`/`pv_voc`/`pv_k`. `ovset` has no conf key. For a persistent hard limit, use the `limits.conf` output voltage limit (`lv_max` in a buck, `hv_max` in a boost).
 
 ## Manual PWM Commands
 

@@ -26,6 +26,7 @@ Files map roughly to spec sections (`../spec.md`):
 | ---- | ------------ |
 | `parse.test.js`      | §2.5 (conf parser), §2.3 (`<not set>` / `0` / `""` semantics via serialize) |
 | `meta.test.js`       | §4 (`META`, `FILE_META`, channel prefixes, ssid patterns) |
+| `sidekeys.test.js`   | §4.1 (side keys, removed role keys flagged for migration) |
 | `zip.test.js`        | §1 (ZIP reader/writer), §3 (download path: `-edited` vs dated `-backup`) |
 | `load.test.js`       | §1 (loading clears state), §1.1 (upload overlays a device read), §2.1 (synthetic tabs, tab order) |
 | `edit.test.js`       | §2.2 (rows, "was: …" incl. "(not set)", clear button), §2.1 (dirty dot) |

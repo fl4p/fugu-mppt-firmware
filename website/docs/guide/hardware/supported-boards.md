@@ -73,8 +73,12 @@ The `fugu1` sensor files set `conversion_eff`, but the firmware reads `power_con
 ### Solar boost
 
 The solar boost board uses the Fugu2 pinout with `converter.conf::topo=boost`. The INA226 moves to the low-voltage
-input side, and the internal ADC divider moves to the high-voltage output side. The limits are swapped accordingly
-(`vin_max=60`, `vout_max=85`).
+input side, and the internal ADC divider moves to the high-voltage output side. The limits are named by side:
+`lv_max=60` (input), `hv_max=85` (output).
+
+The wiring and current sign of `config/solar-boost` are unverified; its side keys were converted value-preserving from
+an older role-keyed profile. A verified board keeps the buck's sensor and limit entries and changes only `topo`;
+`config/lab/fmetal_boost` is an example.
 
 ### 12 V power supply
 
@@ -82,7 +86,7 @@ The 12 V power supply uses the Fugu2 pinout and runs as a regulated supply rathe
 differs from Fugu2 as follows:
 
 - `forced_pwm=1` for tight output regulation, `fpwm_gate=0`.
-- Output voltage is `charger.conf::vout_max` (12 V); `limits.conf::vout_max=16` is the hard cutout.
+- Output voltage is `charger.conf::vout_max` (12 V); `limits.conf::lv_max=16` (the output side in a buck) is the hard cutout.
 
 :::danger
 With `fpwm_gate=0`, never ramp the duty to 0 in forced PWM: a complementary low side at duty ~0 shorts the output

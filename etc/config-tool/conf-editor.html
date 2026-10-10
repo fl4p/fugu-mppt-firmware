@@ -42,6 +42,7 @@
   .tab.sensitive { color:#d97a7a; }
   .tab.sensitive:hover, .tab.sensitive.active { color:#f0a0a0; }
   .tab .dot { color:var(--warn); margin-left:6px; }
+  .tab.rolekey { color:var(--warn); }
   #panes { padding:18px 22px 60px; }
   .pane { display:none; }
   .pane.active { display:block; }
@@ -87,6 +88,7 @@
   details.raw pre { margin:0; padding:12px; background:#0a0d12; border-top:1px solid var(--line);
                     overflow:auto; font-size:12px; }
   .err { color:var(--warn); }
+  .keyform { margin-bottom:12px; font-size:13px; }
   .pill { font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:20px; padding:2px 9px; }
   #uploadlog { position:fixed; right:16px; bottom:16px; width:min(560px,92vw); max-height:50vh; overflow:auto;
     background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px;
@@ -306,10 +308,11 @@ const META = {
   iin_min_supply_voltage:{unit:"V",desc:"Legacy: min supply voltage for current sensor",type:"float"},
 
   // limits.conf
-  vin_max:{unit:"V",desc:"Maximum input voltage before protection cutout",type:"float"},
+  hv_max:{unit:"V",desc:"Maximum HV-side voltage before protection cutout (Vin max in buck, Vout max in boost)",type:"float"},
+  lv_max:{unit:"V",desc:"Maximum LV-side voltage before protection cutout (Vout max in buck, Vin max in boost)",type:"float"},
+  hv_i_max:{unit:"A",desc:"Maximum HV-side current (Iin max in buck, Iout max in boost)",type:"float"},
+  lv_i_max:{unit:"A",desc:"Maximum LV-side current (Iout max in buck, Iin max in boost)",type:"float"},
   vin_min:{unit:"V",desc:"Minimum input voltage; below this converter stops",type:"float"},
-  iin_max:{unit:"A",desc:"Maximum input current limit",type:"float"},
-  iout_max:{unit:"A",desc:"Maximum output current limit",type:"float"},
   iout_short:{unit:"A",desc:"Output short-circuit current threshold",type:"float"},
   p_max:{unit:"W",desc:"Maximum power; sets thermal derating and the sweep's minimum MPP power (0.2 %)",type:"float"},
   temp_max:{unit:"°C",desc:"Maximum temperature before shutdown",type:"float"},
@@ -423,15 +426,17 @@ const META = {
 
 // vout_max means slightly different things per file
 const FILE_META = {
-  "limits.conf":   { vout_max:{unit:"V",desc:"Maximum output voltage before protection cutout",type:"float"} },
   "charger.conf":  { vout_max:{unit:"V",desc:"Max pack/output charge-target voltage",type:"float"} },
-  "converter.conf":{ vout_max:{unit:"V",desc:"Legacy output voltage limit (real one is in limits.conf)",type:"float"} },
+  "converter.conf":{ vout_max:{unit:"V",desc:"Not read (old output voltage limit; now limits.conf lv_max in buck, hv_max in boost)",type:"float"} },
 };
 const META_VOUT_MAX = {unit:"V",desc:"Maximum output voltage",type:"float"};
 
-// channel-prefixed sensor keys (vin_/vout_/iin_/iout_/ntc_ + suffix)
-const CHAN_PREFIX = { vin:"Vin (input voltage)", vout:"Vout (output voltage)",
-                      iin:"Iin (input current)", iout:"Iout (output current)", ntc:"NTC (temperature)" };
+// channel-prefixed sensor keys (side hv_v_/lv_v_/hv_i_/lv_i_, ntc_ + suffix).
+// converter.conf topo maps sides to roles: buck in=HV out=LV, boost in=LV out=HV.
+const CHAN_PREFIX = { hv_v:"HV-side voltage", lv_v:"LV-side voltage",
+                      hv_i:"HV-side current (+ for HV→LV power)", lv_i:"LV-side current (+ for HV→LV power)",
+                      ntc:"NTC (temperature)" };
+const CHAN_RE = /^(hv_v|lv_v|hv_i|lv_i|ntc)_(.+)$/;
 const CHAN_SUFFIX = {
   adc:{unit:"",desc:"ADC backend for this channel",type:"string"},
   ch:{unit:"",desc:"ADC channel index (255 = absent)",type:"int"},
@@ -441,6 +446,45 @@ const CHAN_SUFFIX = {
   midpoint:{unit:"",desc:"Zero/offset midpoint subtracted before scaling",type:"float"},
   filt_len:{unit:"",desc:"Filter window length (samples)",type:"int"},
 };
+
+/* Role keys the firmware no longer reads (src/conv_side.h): sensor.conf vin_/vout_/iin_/iout_
+   channel keys and limits.conf vin_max/vout_max/iin_max/iout_max. A file with one fails setup at
+   boot; etc/migrate_side_keys.py migrates it. */
+const ROLE_CHAN_RE = /^(vin|vout|iin|iout)_(adc|ch|rh|rl|factor|midpoint|filt_len)$/;
+const ROLE_LIMITS = ["vin_max","vout_max","iin_max","iout_max"];
+
+// Side key replacing role key `key` of `file` under the topo, or null if `key` is no removed role key.
+function sideKeyFor(file, key, boost){
+  const base = file.split("/").pop();
+  const side = role => (role[1]==="i") !== boost ? "hv" : "lv";   // vin/iin play the input
+  const m = base==="sensor.conf" && key.match(ROLE_CHAN_RE);
+  if (m) return `${side(m[1])}_${m[1][0]}_${m[2]}`;
+  if (base==="limits.conf" && ROLE_LIMITS.includes(key)) return side(key)+(key[0]==="i" ? "_i_max" : "_max");
+  return null;
+}
+
+// topo of the converter.conf next to `path` ("buck" when it has none, as the firmware reads it).
+function topoFor(path){
+  const f = state && state.files[path.slice(0, path.length-path.split("/").pop().length)+"converter.conf"];
+  const l = f && f.model && f.model.lines.filter(l=>l.key==="topo").pop();
+  return (l && l.value) || (f && f.extras && String(f.extras.topo||"").trim()) || "buck";
+}
+
+// The firmware's setup error for the first role key among `keys`, or "".
+function roleKeyError(file, keys, topo){
+  const boost = topo === "boost";
+  for (const k of keys){
+    const s = sideKeyFor(file, k, boost);
+    if (!s) continue;
+    const flip = boost && /^i(in|out)_factor$/.test(k) ? " with the sign flipped (side factors are positive HV->LV)" : "";
+    return `${file.split("/").pop()}: ${k} is no longer read; with topo=${topo} use ${s}${flip}. `+
+           `Migrate the file with etc/migrate_side_keys.py.`;
+  }
+  return "";
+}
+
+// Side channel keys offered by the add-key input (FILE_KEYS has no channel keys: they are built at runtime).
+const ADD_KEY_HINTS = { "sensor.conf": ["hv_v","lv_v","hv_i","lv_i"].flatMap(c => Object.keys(CHAN_SUFFIX).map(s => c+"_"+s)) };
 
 /* Every key the firmware actually reads per file (mined from src/), so the
    editor can surface fields even when the uploaded .conf omits them.
@@ -455,8 +499,8 @@ const FILE_KEYS = {
     "pwm_freq","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin","skip_assert"],
   "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_sr","expected_hz",
     "ignore_calibration_constraints","notch_adaptive","notch_freq","notch_q","ntc_ch","power_conversion_eff"],
-  "limits.conf":["iin_max","iout_max","iout_short","p_max","reverse_current_paranoia",
-    "temp_derate","temp_max","vin_max","vin_min","vout_max"],
+  "limits.conf":["hv_i_max","hv_max","iout_short","lv_i_max","lv_max",
+    "p_max","reverse_current_paranoia","temp_derate","temp_max","vin_min"],
   "coil.conf":["L0","rect_offset_ns"],
   "converter.conf":["ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
     "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
@@ -490,10 +534,10 @@ const TYPE_KEYS = {
     "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert"]),
   long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq",
     "i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pwm_freq","sprofiler_hz","switch_delay"]),
-  float: new Set(["L0","bat_c","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","ibat_max","iin_max","psu_vout","rect_offset_ns",
-     "ina22x_range","ina22x_resistor","iout_max","iout_short","notch_freq","notch_q","p_max","power_conversion_eff",
+  float: new Set(["L0","bat_c","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","hv_i_max","hv_max","ibat_max","psu_vout","rect_offset_ns",
+     "ina22x_range","ina22x_resistor","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max","power_conversion_eff",
      "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
-    "vin_max","vin_min","vout_max","vout_max_fallback","vout_offset_max",
+    "vin_min","vout_max","vout_max_fallback","vout_offset_max",
     "ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
     "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
     "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td"]),
@@ -551,14 +595,14 @@ const CHAN_SUFFIX_DEFAULT = { ch:"255", factor:"1.0", midpoint:"0.0", filt_len:"
 
 function lookupDefault(file, key){
   if (key in DEFAULTS) return DEFAULTS[key];
-  const m = key.match(/^(vin|vout|iin|iout|ntc)_(.+)$/);
+  const m = key.match(CHAN_RE);
   if (m && (m[2] in CHAN_SUFFIX_DEFAULT)) return CHAN_SUFFIX_DEFAULT[m[2]];
   return undefined;
 }
 
 function lookupType(key){
   for (const t of ["byte","long","float","string"]) if (TYPE_KEYS[t].has(key)) return t;
-  const m = key.match(/^(vin|vout|iin|iout|ntc)_(.+)$/);
+  const m = key.match(CHAN_RE);
   if (m && CHAN_SUFFIX_TYPE[m[2]]) return CHAN_SUFFIX_TYPE[m[2]];
   if (/^ssid_.+$/.test(key)) return "string";
   return "";
@@ -566,10 +610,13 @@ function lookupType(key){
 
 function lookupMeta(file, key, inlineComment) {
   const base = file.split("/").pop();
+  const side = sideKeyFor(file, key, false);
+  if (side) return {unit:"", type:"", removed:true, desc:`No longer read: role key, migrate to ${side} (buck) / `+
+                    `${sideKeyFor(file, key, true)} (boost) with etc/migrate_side_keys.py`};
   if (FILE_META[base] && FILE_META[base][key]) return FILE_META[base][key];
   if (key === "vout_max") return META_VOUT_MAX;
   if (META[key]) return META[key];
-  const m = key.match(/^(vin|vout|iin|iout|ntc)_(.+)$/);
+  const m = key.match(CHAN_RE);
   if (m && CHAN_SUFFIX[m[2]]) {
     const s = CHAN_SUFFIX[m[2]];
     return { unit:s.unit, desc:CHAN_PREFIX[m[1]] + ": " + s.desc, type:s.type };
@@ -829,6 +876,8 @@ function renderApp(){
     const label = path.split("/").pop().replace(/\.conf$/,"");
     t.className="tab"+(path===state.active?" active":"")+(state.files[path].isNew?" new":"")+(SENSITIVE.has(label)?" sensitive":"");
     t.title=path+(state.files[path].isNew?" (not on device — fill a key to create)":"")+(SENSITIVE.has(label)?" — sensitive (hardware/calibration)":"");
+    const roleErr = state.files[path].isConf ? roleKeyError(path, fileKeys(state.files[path]), topoFor(path)) : "";
+    if (roleErr){ t.className += " rolekey"; t.title += " — needs migration: " + roleErr; }
     t.textContent = label;
     const dot=document.createElement("span"); dot.className="dot"; dot.dataset.path=path;
     dot.style.display="none"; dot.textContent="●"; t.appendChild(dot);
@@ -847,6 +896,15 @@ function renderPane(){
   const pathEl=document.createElement("div"); pathEl.className="path"; pathEl.textContent=path;
   pane.appendChild(pathEl);
 
+  // a removed role key (conv_side.h) fails setup at boot: say so above the rows
+  const formErr=document.createElement("div"); formErr.className="err keyform";
+  function refreshKeyForm(){
+    formErr.textContent = roleKeyError(path, fileKeys(f), topoFor(path));
+    formErr.style.display = formErr.textContent ? "" : "none";
+  }
+  refreshKeyForm();
+  pane.appendChild(formErr);
+
   const unitInputs = [];  // [input, unitSpan] pairs to size after layout
 
   function makeRow(key, value, comment, isExtra){
@@ -863,7 +921,7 @@ function renderPane(){
               ty.charAt(0).toUpperCase()+ty.slice(1)+'()">'+ty+'</span>' : "")
       + (meta ? "" : ' <span class="nometa" title="no metadata found in firmware">?</span>');
     left.appendChild(k);
-    const d = document.createElement("div"); d.className="desc";
+    const d = document.createElement("div"); d.className="desc"+(meta && meta.removed ? " err" : "");
     let desc = meta ? meta.desc : "(no description found)";
     const def = lookupDefault(path, key);
     if (def !== undefined) desc += "  ·  default: " + def;
@@ -915,7 +973,7 @@ function renderPane(){
       row.classList.toggle("changed", show);
     };
     inp.oninput = isExtra
-      ? ()=>{ f.extras[key]=inp.value; row.classList.toggle("filled", inp.value.trim()!==""); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); }
+      ? ()=>{ f.extras[key]=inp.value; row.classList.toggle("filled", inp.value.trim()!==""); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); refreshKeyForm(); }
       : ()=>{ setConfValue(model,key,inp.value); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); };
     updateOrig(); updateClearVis();
 
@@ -940,6 +998,14 @@ function renderPane(){
   // add-key (arbitrary)
   const add=document.createElement("div"); add.className="addkey";
   const ki=document.createElement("input"); ki.placeholder="new key";
+  // suggest the side channel keys the file does not list yet
+  const offered=(ADD_KEY_HINTS[path.split("/").pop()]||[]).filter(k=>!f.order.includes(k));
+  if (offered.length){
+    const dl=document.createElement("datalist"); dl.id="addkey-list";
+    for (const k of offered){ const o=document.createElement("option"); o.value=k; dl.appendChild(o); }
+    ki.setAttribute("list", dl.id); ki.placeholder="new key, e.g. "+offered[0];
+    add.appendChild(dl);
+  }
   const vi=document.createElement("input"); vi.placeholder="value";
   const ab=document.createElement("button"); ab.textContent="+ add key";
   ab.onclick=()=>{ const key=ki.value.trim(); if(!key) return;
@@ -960,6 +1026,12 @@ function renderPane(){
 
   // size each unit-bearing input's right padding to its suffix width
   for (const [inp,u] of unitInputs) inp.style.paddingRight = (u.offsetWidth + 16) + "px";
+}
+
+// Keys the file will be written with: its lines plus filled-in extras.
+function fileKeys(f){
+  return [...f.model.lines.filter(l=>l.key!=null).map(l=>l.key),
+          ...Object.keys(f.extras||{}).filter(k=>String(f.extras[k]).trim()!=="")];
 }
 
 // Keys whose current value differs from what the file loaded with: present

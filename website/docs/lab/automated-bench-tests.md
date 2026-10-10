@@ -47,10 +47,12 @@ The bench has four parts:
   connected battery (see [Lab config profiles](config-profiles.md#battery-vs-open-output)).
   `reverse_current_paranoia` differs between configs and changes several thresholds below.
 
-The thresholds quoted below come from `config/fmetal/conf/limits.conf` /`charger.conf`
-(`vin_max=85`, `vout_max=60`, `iin_max=30`, `iout_max=32`, `temp_max=90`, `temp_derate=70`,
-`vout_max=29` pack, `cv_float=3.37`, `cv_eoc=3.57`). These values aren't compiled in, so read the
-actual conf on the unit under test.
+The thresholds quoted below come from `config/fmetal/conf/limits.conf` / `charger.conf`, the Fugu2 buck
+(`hv_max=85`, `lv_max=60`, `hv_i_max=30`, `lv_i_max=32`, `temp_max=90`, `temp_derate=70`,
+`vout_max=29` pack, `cv_float=3.37`, `cv_eoc=3.57`). Below, `Vin_max`, `Vout_max`, `Iin_max`, and `Iout_max`
+name the role limits the firmware derives from the side keys: in a buck 85, 60, 30, and 32
+([limits.conf](../reference/config/limits.md)). These values aren't compiled in, so read the actual conf on the
+unit under test.
 
 ## Console commands used by the tests
 
@@ -88,8 +90,8 @@ seconds and count `shutdown` / `Converter enabled` lines.
 
 ### 1.2 Output over-voltage (OV)
 - **Setup**: charging normally, then drive output sink voltage above the OV threshold. It is
-  `min(ovset, vout_max)` if an `ovset` is set. Otherwise it is
-  `min(base·(paranoia ? 1.03 : 1.5), vout_max)`, where the base is the PSU setpoint (`psu_vout` or `psu <V>`; PV-sim: `voc`) in
+  `min(ovset, Vout_max)` if an `ovset` is set. Otherwise it is
+  `min(base·(paranoia ? 1.03 : 1.5), Vout_max)`, where the base is the PSU setpoint (`psu_vout` or `psu <V>`; PV-sim: `voc`) in
   PSU/PV mode and `Vbat_max` otherwise, and `paranoia` is `limits.conf::reverse_current_paranoia`
   (default 1). A bench profile with `reverse_current_paranoia=0` and a 29 V pack gives 43.5 V, not
   29.9 V. Compute it from the unit's `limits.conf`, `charger.conf`, mode and `ovset`; `status` shows
@@ -101,21 +103,21 @@ seconds and count `shutdown` / `Converter enabled` lines.
 ### 1.3 Battery interrupt (load disconnect)
 - **Setup**: charging at moderate current, then open the output (sink off / relay).
 - **Expected**: Vout spikes (target ≤ +10 %), OV protection catches it, slow recovery. Watch for
-  overshoot beyond `vout_max` and any LS reverse-current event.
+  overshoot beyond `Vout_max` and any LS reverse-current event.
 - **Pass**: no sustained OV, no reverse-current trip latch-up; energy meter committed.
 
 ### 1.4 Input over-voltage
-- **Setup**: ramp PSU above `vin_max` (85 V).
+- **Setup**: ramp PSU above `Vin_max` (85 V).
 - **Expected**: `Vin .. > ..!` warning, shutdown. (Mind the board's absolute max and ramp gently.)
 
 ### 1.5 Output over-current
-- **Setup**: sink in CC, step current above `iout_max·1.5` (instantaneous), or above
-  `iout_max·1.25` sustained (med3) / `1.15` averaged (ewm).
+- **Setup**: sink in CC, step current above `Iout_max·1.5` (instantaneous), or above
+  `Iout_max·1.25` sustained (med3) / `1.15` averaged (ewm).
 - **Expected**: `Iout .. >lim .., shutdown`. Verify each of the three thresholds (last/med3/ewm)
   trips on its own time-scale.
 
 ### 1.6 Input over-current
-- **Setup**: low Vin, high duty so Iin climbs above `iin_max·1.3`.
+- **Setup**: low Vin, high duty so Iin climbs above `Iin_max·1.3`.
 - **Expected**: `Iin .. >1.3x lim .., shutdown`.
 
 ### 1.7 Supply under-voltage (board brownout)

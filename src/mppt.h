@@ -25,6 +25,7 @@
 #include "etc/plot.h"
 #include "app_state.h"
 #include "math/pv_model.h"
+#include "conv_side.h"
 #include "out_impedance.h"
 
 struct Limits {
@@ -45,11 +46,15 @@ struct Limits {
     const bool reverse_current_paranoia{};
 
 
-    explicit Limits(const ConfFile &limits)
-        : Vin_max(limits.getFloat("vin_max")), Vin_min(limits.getFloat("vin_min")),
-          Vout_max(limits.getFloat("vout_max")),
-          Iin_max(limits.getFloat("iin_max")), Ishort(limits.getFloat("iout_short")),
-          Iout_max(limits.getFloat("iout_max")),
+    // The per-side hardware ratings are named by side (hv_max/lv_max, hv_i_max/lv_i_max) and mapped
+    // to roles by topo (conv_side.h). The old role names throw.
+    Limits(const ConfFile &limits, bool boost)
+        : Vin_max((rejectLimitRoleKeys(limits, boost), readMappedLimit(limits, "vin_max", boost))),
+          Vin_min(limits.getFloat("vin_min")),
+          Vout_max(readMappedLimit(limits, "vout_max", boost)),
+          Iin_max(readMappedLimit(limits, "iin_max", boost)),
+          Ishort(limits.getFloat("iout_short")),
+          Iout_max(readMappedLimit(limits, "iout_max", boost)),
           P_max(limits.getFloat("p_max")), Temp_max(limits.getFloat("temp_max", 90.0f)),
           Temp_derate(limits.getFloat("temp_derate")),
           reverse_current_paranoia(limits.getByte("reverse_current_paranoia", 1) != 0) {
@@ -59,6 +64,8 @@ struct Limits {
         assert_throw(Temp_derate < Temp_max, "");
         assert_throw(20 < Temp_max and Temp_max < 120, "");
     }
+
+    explicit Limits(const ConfFile &limits) : Limits(limits, readTopoIsBoost("limits.conf")) {}
 
     Limits() = default;
 
@@ -399,7 +406,7 @@ public:
 
     // Default backoff blocks startCondition() so MPPT doesn't re-poke pwmPerturb()
     // every tick after a protection trip — otherwise OV/OC violations spam the log
-    // and toggle the converter at sample rate (see Vin-OV regression with Voc>vin_max).
+    // and toggle the converter at sample rate (see Vin-OV regression with Voc>Vin_max).
     // Callers that want immediate-recovery semantics (calibration done, user `dc 0`)
     // must pass 0 explicitly. `who` tags the trip path in the backoff log so a
     // stuck post-sweep state names the responsible protect.

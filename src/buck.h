@@ -138,7 +138,7 @@ class SynchronousConverter {
     bool fpwmGate = true; // converter.conf::fpwm_gate, 0 disables (engage forced PWM immediately)
     float fpwmGateMargin = 0.01f; // duty margin above the ratio required to engage
     // Consecutive passing samples before engaging. Sized against the VOLTAGE FILTER, not against
-    // noise: protect() feeds the gate EWMA averages (vin/vout_filt_len, 60 by default) while the
+    // noise: protect() feeds the gate EWMA averages (Vin/Vout _filt_len, 60 by default) while the
     // duty it compares them to is instantaneous. On a sustained ramp that lag is a steady-state
     // error, not a transient - a bus sagging under the rising load reports Vin too high, which
     // understates the zero-current duty and would engage early, into reverse current. The hold is

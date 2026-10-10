@@ -10,8 +10,9 @@ test('lookupType resolves the four ConfFile::get* buckets and channel suffixes',
   assert.equal(window.lookupType('pwm_freq'),        'long');
   assert.equal(window.lookupType('L0'),              'float');
   assert.equal(window.lookupType('mcu'),             'string');
-  assert.equal(window.lookupType('vin_factor'),      'float');    // channel-suffix table
-  assert.equal(window.lookupType('iout_ch'),         'byte');
+  assert.equal(window.lookupType('hv_v_rh'),         'float');    // channel-suffix table
+  assert.equal(window.lookupType('lv_i_ch'),         'byte');
+  assert.equal(window.lookupType('hv_max'),          'float');
   assert.equal(window.lookupType('ssid_caravan'),    'string');   // wifi pattern
   assert.equal(window.lookupType('not_a_real_key'),  '');         // unknown
 });
@@ -22,20 +23,21 @@ test('lookupMeta returns META entry with unit/desc and respects per-file overrid
   assert.ok(mcu, 'expected META[mcu] to be present');
   assert.equal(mcu.type, 'string');
 
-  // FILE_META override: limits.conf and charger.conf give different descriptions
-  const vmaxLim = window.lookupMeta('conf/limits.conf',  'vout_max', '');
+  // FILE_META override: converter.conf and charger.conf give vout_max different descriptions.
+  // limits.conf's vout_max is a removed role key (sidekeys.test.js).
+  const vmaxConv = window.lookupMeta('conf/converter.conf', 'vout_max', '');
   const vmaxChg = window.lookupMeta('conf/charger.conf', 'vout_max', '');
-  assert.equal(vmaxLim.unit, 'V');
+  assert.equal(vmaxConv.unit, 'V');
   assert.equal(vmaxChg.unit, 'V');
-  assert.notEqual(vmaxLim.desc, vmaxChg.desc);
+  assert.notEqual(vmaxConv.desc, vmaxChg.desc);
 });
 
 test('channel-prefixed sensor key falls through to CHAN_PREFIX/SUFFIX synthesis', async () => {
   const { window } = await loadEditor();
-  const m = window.lookupMeta('conf/sensor.conf', 'vin_rh', '');
+  const m = window.lookupMeta('conf/sensor.conf', 'hv_v_rh', '');
   assert.ok(m);
   assert.equal(m.unit, 'Ω');
-  assert.match(m.desc, /Vin/);                       // channel prefix injected
+  assert.match(m.desc, /HV-side voltage/);           // channel prefix injected
 });
 
 test('wifi ssid pattern returns string meta; *_psk is the password variant', async () => {
@@ -70,13 +72,13 @@ test('lookupDefault returns the firmware-scraped default for known keys', async 
   assert.equal(window.lookupDefault('conf/converter.conf', 'topo'),           '"buck"');
   assert.equal(window.lookupDefault('conf/ble.conf',     'ble_security'),     '"justworks"');
   // channel-suffix table
-  assert.equal(window.lookupDefault('conf/sensor.conf',  'vin_factor'),       '1.0');
-  assert.equal(window.lookupDefault('conf/sensor.conf',  'iout_midpoint'),    '0.0');
+  assert.equal(window.lookupDefault('conf/sensor.conf',  'hv_v_factor'),      '1.0');
+  assert.equal(window.lookupDefault('conf/sensor.conf',  'lv_i_midpoint'),    '0.0');
   assert.equal(window.lookupDefault('conf/sensor.conf',  'ntc_filt_len'),     '10');
   // required keys (no default) → undefined
   assert.equal(window.lookupDefault('conf/board.conf',   'pwm_freq'),         undefined);
   assert.equal(window.lookupDefault('conf/coil.conf',    'L0'),               undefined);
-  assert.equal(window.lookupDefault('conf/limits.conf',  'vin_max'),          undefined);
+  assert.equal(window.lookupDefault('conf/limits.conf',  'hv_max'),           undefined);
 });
 
 test('row description renders " · default: <value>" when a default is known', async () => {

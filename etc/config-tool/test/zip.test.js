@@ -15,7 +15,7 @@ test('writeZip + readZip round-trip preserves file names and bytes', async () =>
   const enc = new TextEncoder();
   const input = {
     'config/conf/board.conf'  : enc.encode('mcu=esp32s3\n'),
-    'config/conf/limits.conf' : enc.encode('vin_max=80\nvout_max=60\n'),
+    'config/conf/limits.conf' : enc.encode('hv_max=80\nlv_max=60\n'),
     'config/raw.bin'          : new Uint8Array([0,1,2,3,4,5]),
   };
   const blob = window.writeZip(input);

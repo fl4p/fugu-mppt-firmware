@@ -208,8 +208,11 @@ The RT loop never sleeps voluntarily — it blocks waiting for the next ADC samp
 `AsyncADC<float>` (`src/adc/adc.h`) is the interface; implementations: `ADC_ADS` (ADS1x15), `ADC_INA226`,
 `ADC_ESP32_Cont` (continuous internal ADC DMA), `ADC_Fake` (sinusoidal mock). `setupSensors()` in `src/adc/sensor_setup.cpp` builds the
 `Sensor` instances for `vin`/`iin`/`iout`/`vout`/`ntc` from `sensor.conf`: `<chn>_adc` picks the backend, `<chn>_ch`
-picks the channel (255 = absent), and a missing current sensor is replaced by a `VirtualSensor` computing it from the
-other side and `power_conversion_eff`. `LinearTransform{factor, midpoint}` scales raw ADC → physical units (auto-derived
+picks the channel (255 = absent). Hardware profiles name channels by side (`hv_v_`, `lv_v_`, `hv_i_`, `lv_i_`), mapped to
+roles by `converter.conf::topo` in `src/conv_side.h` (same for `limits.conf` `hv_max`/`lv_max`/`hv_i_max`/`lv_i_max`);
+the old role keys fail setup with their replacement (`etc/migrate_side_keys.py` migrates configs; live boards before the
+OTA). `vconv`/`fake` mock channels are fixed by role, so their profiles use the side key of that role under their topo. A
+missing current sensor is replaced by a `VirtualSensor` computing it from the other side and `power_conversion_eff`. `LinearTransform{factor, midpoint}` scales raw ADC → physical units (auto-derived
 from `*_rh`/`*_rl` for voltage dividers).
 
 ### Charger / battery termination
