@@ -26,7 +26,8 @@ Usage:
     python -m etc.ota_ble --ble-proxy 192.168.1.231 --address AA:BB:..    # via ESPHome proxy (by MAC)
 
 Skips the push if the device already reports the image's version (probed via `uptime` over the
-BLE console); pass --force to push regardless. Requires: pip install bleak (and aioesphomeapi for
+BLE console); pass --force to push regardless. Asks before pushing across a gate-driver change
+(image vs. a read-only `pwm-freq` probe; --allow-driver-change to skip). Requires: pip install bleak (and aioesphomeapi for
 --ble-proxy).
 """
 import argparse
@@ -49,6 +50,8 @@ import esp_ota_ble as O
 import esp_ota_ble_transport as T
 _sys.path.insert(0, _os.path.join(_HERE, "idf-devtools"))
 import elf_archive
+_sys.path.append(_HERE)
+from ota_build_flags import build_gate_driver, parse_device_gate_driver, gate_driver_verdict
 import os
 import re
 import struct
@@ -405,7 +408,26 @@ class ProxyLink:
             self._api = None
 
 
-async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base_dirs=(), archive_as=None):
+async def probe_gate_driver(ml, rx_lines, timeout=3.0):
+    """Running gate driver via a no-arg (read-only) `pwm-freq`: 'mcpwm', 'other' or None."""
+    rx_lines.clear()
+    await ml.write_cmd("pwm-freq")
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        for i, l in enumerate(rx_lines):
+            ok, err = "OK: pwm-freq" in l, "ERR: pwm-freq" in l
+            if ok or err:
+                return parse_device_gate_driver(rx_lines[:i], ok, err)
+        await asyncio.sleep(0.05)
+    return None
+
+
+async def confirm(prompt):
+    return (await asyncio.to_thread(input, prompt)).strip().lower() in ("y", "yes")
+
+
+async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base_dirs=(), archive_as=None,
+               allow_driver_change=False):
     data = open(bin_path, "rb").read()
     sha = hashlib.sha256(data).hexdigest()
     local_ver = read_local_app_desc(bin_path)
@@ -475,6 +497,23 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
             if local_ver and dev_ver == local_ver:
                 print(f"  \u2611\ufe0f skip: already at {local_ver} (use --force to push anyway)")
                 return True
+
+        # A wrong gate driver switches the half-bridge with the wrong timing and dead-time model.
+        img_drv = build_gate_driver(bin_path)
+        dev_drv = await probe_gate_driver(ml, rx_lines)
+        verdict = gate_driver_verdict(img_drv, dev_drv)
+        if verdict != "ok":
+            dev_s = {"mcpwm": "mcpwm", "other": "ledc/vconv"}.get(dev_drv, "unknown")
+            print(f"⚠️  gate driver {verdict.upper()}: image {img_drv or 'unknown'}, device {dev_s} "
+                  "(Kconfig FUGU_GATE_DRIVER)")
+            if allow_driver_change:
+                print("    --allow-driver-change given, proceeding anyway.")
+            elif not sys.stdin.isatty():
+                print("    non-interactive; aborting (pass --allow-driver-change to override).")
+                return False
+            elif not await confirm("    Continue anyway? [y/N] "):
+                print("    aborted.")
+                return False
 
         # Ask what the device is running before deciding what to send it. A
         # delta needs the exact base image; tamp needs only that the receiver
@@ -588,6 +627,9 @@ def main():
                     help="push even if the device already reports this version")
     ap.add_argument("-y", "--yes", action="store_true",
                     help="skip the confirmation prompt for a non-BLE image")
+    ap.add_argument("--allow-driver-change", action="store_true",
+                    help="push even if the image's gate driver differs from the device's, or "
+                         "either can't be determined")
     ap.add_argument("--ble-proxy", metavar="HOST[:PORT]",
                     help="reach the device through an ESPHome bluetooth_proxy at this host "
                          "(plaintext API, no noise); scans by name unless --address is given")
@@ -618,7 +660,8 @@ def main():
         ap.error(str(exc))
     ok = asyncio.run(push(args.bin, link, force=args.force, assume_yes=args.yes,
                           xform=args.xform, base_dirs=base_dirs,
-                          archive_as=(args.name or "").removeprefix("fugu-") or None))
+                          archive_as=(args.name or "").removeprefix("fugu-") or None,
+                          allow_driver_change=args.allow_driver_change))
     print("OTA over BLE:", "✅ success (device rebooting)" if ok else "❌ failed")
     return 0 if ok else 1
 

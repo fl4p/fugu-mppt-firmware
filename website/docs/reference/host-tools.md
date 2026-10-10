@@ -122,7 +122,8 @@ no-argument `pwm-freq`) or can't be determined. See [OTA over Wi-Fi](../guide/up
 `ota_ble.py` pushes an image over the BLE NUS link, for devices without Wi-Fi. It needs a `CONFIG_FUGU_WITH_BLE`
 build with the `ble` service on, `bleak` on the host, and the `esp-ota-ble` host module (from `managed_components/`
 after the first build, a local `../esp-ota-ble`, or `$ESP_OTA_BLE_HOST`). If the device already runs the image's
-version, it skips the push.
+version, it skips the push. Like `ota.py`, it asks before pushing an image whose gate driver differs from the
+device's, or when either side can't be determined.
 
 The following command pushes the default image to a named device:
 
@@ -138,6 +139,7 @@ python -m etc.ota_ble build/fugu-firmware.bin <name>
 | `name`, `-n`, `--name`          | Device name or BLE address filter (default `$BLE_NAME`)                  |
 | `-f`, `--force`                 | Push even if the version matches                                         |
 | `-y`, `--yes`                   | Skip the confirmation for an image built without BLE                     |
+| `--allow-driver-change`         | Push without asking across a gate-driver change                          |
 | `--address`                     | Target BLE address                                                       |
 | `--ble-proxy HOST[:PORT]`       | Via an ESPHome `bluetooth_proxy`; `--proxy-password`                     |
 | `--xform auto\|raw\|tamp\|delta` | Payload: delta against the running image, compressed, or raw. `auto` picks the smallest supported |
