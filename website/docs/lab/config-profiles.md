@@ -32,7 +32,7 @@ The following table lists each profile with its purpose, the hardware it assumes
 | `f2_test` | Fugu2-style buck on a bench supply | Fugu2 pinout, INA226 on the output, internal ADC for Vin/NTC | `forced_pwm=1`, `fpwm_gate=0`, `limits.conf::vin_min=72`, `tracker.conf::target_duty_cycle=0.425` |
 | `buck_bench` | Bench buck board, **battery / battery-emulator output** | Fugu2 pinout, INA226 (1.5 mΩ shunt) for Vout/Iout, internal ADC for Vin, 80 µH coil | `pwm_deadtime_ns=200`, `sync_role=follower`, `charger.conf::vout_max=29`, `target_duty_cycle=0.37` |
 | `buck_bench_open_output` | Same bench buck board, **open output** (switch-node sweeps) | As `buck_bench`, nothing connected to the output | Identical to `buck_bench` except `charger.conf::vout_max=60` |
-| `buck_bench_no_ina226` | Bench buck board with the INA226 absent | Internal ADC for Vin/NTC, fake ADC for Vout/Iout | Per-channel `vout_adc=fake`, `iout_adc=fake` |
+| `buck_bench_no_ina226` | Bench buck board with the INA226 absent | Internal ADC for Vin/NTC, fake ADC for Vout/Iout | Per-channel `lv_v_adc=fake`, `lv_i_adc=fake` |
 | `boost_bench` | Bench boost board (input of a power loop) | Fugu2 pinout, INA226 on the low-voltage input, internal ADC for Vout | `topo=boost`, `forced_pwm=1`, `sync_role=leader`, `sync_phase_deg=180`, `vout_max=75`, `notch_freq=0`, `target_duty_cycle=0.65` |
 | `boost_pv` | Bench boost board as a solar-array simulator | As `boost_bench` | `converter.conf::mode=pv`, `pv_isc`, `pv_voc`, `pv_k`; no `target_duty_cycle` (a fixed duty would override `mode=pv`) |
 

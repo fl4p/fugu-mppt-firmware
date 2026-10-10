@@ -73,8 +73,8 @@ The `fugu1` sensor files set `conversion_eff`, but the firmware reads `power_con
 ### Solar boost
 
 The solar boost board uses the Fugu2 pinout with `converter.conf::topo=boost`. The INA226 moves to the low-voltage
-input side, and the internal ADC divider moves to the high-voltage output side. The limits are swapped accordingly
-(`vin_max=60`, `vout_max=85`).
+input side, and the internal ADC divider moves to the high-voltage output side. With side-named keys (`hv_v_*`, `lv_v_*`,
+`hv_max`, `lv_max`) the sensor and limit entries stay the same as for the buck; only `topo` changes.
 
 ### 12 V power supply
 

@@ -47,8 +47,9 @@ The bench has four parts:
   connected battery (see [Lab config profiles](config-profiles.md#battery-vs-open-output)).
   `reverse_current_paranoia` differs between configs and changes several thresholds below.
 
-The thresholds quoted below come from `config/fmetal/conf/limits.conf` /`charger.conf`
-(`vin_max=85`, `vout_max=60`, `iin_max=30`, `iout_max=32`, `temp_max=90`, `temp_derate=70`,
+The thresholds quoted below are the Fugu2 buck values in `limits.conf` / `charger.conf`
+(`hv_max=85` = `vin_max`, `lv_max=60` = `vout_max`, `hv_i_max=30` = `iin_max`, `lv_i_max=32` = `iout_max`,
+`temp_max=90`, `temp_derate=70`,
 `vout_max=29` pack, `cv_float=3.37`, `cv_eoc=3.57`). These values aren't compiled in, so read the
 actual conf on the unit under test.
 

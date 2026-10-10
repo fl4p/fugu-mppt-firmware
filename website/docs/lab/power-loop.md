@@ -38,7 +38,7 @@ vout_max=75
 
 # boost/limits.conf:
 vin_min=27 
-vout_max=80
+hv_max=80
 ```
 
 A current sensor on the low side (GND) shows a current that is much lower than the actual current flowing. To prevent
@@ -53,10 +53,10 @@ forced_pwm=1
 vout_max=29
 
 # buck/limits.conf:
-vin_max=85
+hv_max=85
 vin_min=72      # only for the stiff-source setup: pins the operating "solar" voltage
                 # (the bench buck profile config/lab/buck_bench ships vin_min=10.5)
-vout_max=60
+lv_max=60
 ```
 
 Before closing the loop, read back each converter with a bare `sync` (expect `forced pwm armed`).
