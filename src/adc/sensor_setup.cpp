@@ -140,12 +140,12 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
     std::unordered_map<std::string, p> params;
 
     auto defAdcName = sensConf.getString("adc", "");
-    const bool sideKeys = sensorUsesSideKeys(sensConf);
-    const bool boost = sideKeys && readTopoIsBoost("sensor.conf side keys");
+    const bool boost = readTopoIsBoost("sensor.conf");
+    rejectSensorRoleKeys(sensConf, boost);
     std::unordered_map<std::string, AsyncADC<float> *> adcs{};
     for (auto chn_: {"ntc", "vin", "iin", "iout", "vout",}) {
         auto chn = std::string(chn_);
-        const auto key = sensorKeyPrefix(chn, sideKeys, boost); // hv_v.. in a side-keyed sensor.conf
+        const auto key = sensorKeyPrefix(chn, boost); // hv_v, lv_v, hv_i, lv_i by topo
         auto chNum = sensConf.getByte(key + '_' + "ch", 255);
         auto an = sensConf.getString(key + '_' + "adc", defAdcName);
 
@@ -168,7 +168,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
                     sensConf.f(key + '_' + "factor", 1.f),
                     sensConf.f(key + '_' + "midpoint", 0.f)
                 };
-                lt.factor = sensorCurrentFactor(lt.factor, sideKeys, boost); // boost negates side keys
+                lt.factor = sensorCurrentFactor(lt.factor, boost); // boost negates
             }
         }
 

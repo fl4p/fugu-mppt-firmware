@@ -46,17 +46,15 @@ struct Limits {
     const bool reverse_current_paranoia{};
 
 
-    // Per-side hardware ratings (voltage and current ranges) may be named by side instead: hv_max/lv_max,
-    // hv_i_max/lv_i_max, mapped by topo (conv_side.h). All four in one form or the other.
-    Limits(const ConfFile &limits, bool boost) : Limits(limits, limitsUseSideKeys(limits), boost) {}
-
-    Limits(const ConfFile &limits, bool sideKeys, bool boost)
-        : Vin_max(readMappedLimit(limits, "vin_max", sideKeys, boost)),
+    // The per-side hardware ratings are named by side (hv_max/lv_max, hv_i_max/lv_i_max) and mapped
+    // to roles by topo (conv_side.h). The old role names throw.
+    Limits(const ConfFile &limits, bool boost)
+        : Vin_max((rejectLimitRoleKeys(limits, boost), readMappedLimit(limits, "vin_max", boost))),
           Vin_min(limits.getFloat("vin_min")),
-          Vout_max(readMappedLimit(limits, "vout_max", sideKeys, boost)),
-          Iin_max(readMappedLimit(limits, "iin_max", sideKeys, boost)),
+          Vout_max(readMappedLimit(limits, "vout_max", boost)),
+          Iin_max(readMappedLimit(limits, "iin_max", boost)),
           Ishort(limits.getFloat("iout_short")),
-          Iout_max(readMappedLimit(limits, "iout_max", sideKeys, boost)),
+          Iout_max(readMappedLimit(limits, "iout_max", boost)),
           P_max(limits.getFloat("p_max")), Temp_max(limits.getFloat("temp_max", 90.0f)),
           Temp_derate(limits.getFloat("temp_derate")),
           reverse_current_paranoia(limits.getByte("reverse_current_paranoia", 1) != 0) {
