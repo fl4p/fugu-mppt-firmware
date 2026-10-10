@@ -174,7 +174,7 @@ though both `L0` and `Iout` are wrong. This has the following consequences:
 - On a board with a biased sensor, the self-measured `L0` (e.g. the inflated value) gives correct
   diode emulation; substituting the physically true `L0` would mistime it.
 - The cancellation is local to diode emulation. Everything that uses `Iout` in an absolute sense
-  (reported power, energy metering, charge-termination current, the `iout_max` cutout) stays wrong
+  (reported power, energy metering, charge-termination current, the output current cutout `lv_i_max` (legacy `iout_max`)) stays wrong
   by `g`.
 - Only the linear gain cancels. A sensor offset or nonlinearity does not.
 - `L0` and the sensor are coupled. Fixing the sensor calibration requires updating `L0` to the

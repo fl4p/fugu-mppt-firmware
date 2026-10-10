@@ -22,7 +22,7 @@ static int g_fail = 0;
 #define CHECK(cond, msg) do { if (!(cond)) { printf("  FAIL: %s\n", msg); ++g_fail; } } while (0)
 
 static constexpr float kVbat = 26.6f;
-static constexpr uint32_t kSpan = 20;     // sensor.conf vin_filt_len
+static constexpr uint32_t kSpan = 20;     // sensor.conf Vin _filt_len (hv_v_filt_len in a buck)
 static constexpr int kSps = 170;          // Vin per-channel rate (~511sps / 3)
 
 static const float kVocRamp[] = {

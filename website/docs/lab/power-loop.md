@@ -133,7 +133,7 @@ The following caveats are specific to this rig:
   and these boards have no panel-disconnect switch. Keep the external supply's current limit low, but it caps power,
   not loop current (see [Pitfalls](#pitfalls)).
 * The emulated "solar" power recirculates through the loop, and the external supply only covers losses. Watch the
-  boost's Iin against `iin_max` when raising `pv_isc`.
+  boost's Iin against `lv_i_max` (Iin max in a boost) when raising `pv_isc`.
 
 ## Pitfalls
 

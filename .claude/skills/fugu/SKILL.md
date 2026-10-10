@@ -255,7 +255,11 @@ ESPPORT=/dev/cu.usbmodemXXX ./provision.py config/lab/<profile>
 
 Builds a littlefs image from the profile dir and writes it via `parttool.py` (so it needs bootloader
 entry too — same recovery as above). Profiles live in `config/`: `lab/buck_bench`,
-`lab/buck_bench_open_output`, `lab/boost_bench`, `fmetal`, `lab/dry_mock`, …
+`lab/buck_bench_open_output`, `lab/boost_bench`, `fmetal` (Fugu2 buck), `lab/fmetal_boost`, `lab/dry_mock`, …
+
+`sensor.conf`/`limits.conf` keys are side-named (`hv_v_ch`, `lv_i_factor`, `hv_max`, `lv_i_max`) or legacy
+role-named (`vin_ch`, `iout_max`), never both in one file: a mixed file fails setup at boot. `get-config` the file
+before a `set-config` and use its form; a live board provisioned before the side keys is role-keyed.
 
 Symptoms of **no config partition**: `ls /` fails, `ntc=-273℃`. (`0sps` is *not* a reliable
 symptom: a status-line bug — fixed in `6b83991` — produced it from any scripted console session,

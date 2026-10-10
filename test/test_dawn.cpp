@@ -16,7 +16,7 @@
 // other clauses (backoff / temp / calibration), which the on-device "START blocked:" log now names.
 
 static constexpr float kVbat = 26.6f;         // Vout (battery) over the window
-static constexpr uint32_t kSpan = 20;         // sensor.conf vin_filt_len / vout_filt_len
+static constexpr uint32_t kSpan = 20;         // sensor.conf Vin/Vout _filt_len (hv_v_/lv_v_filt_len in a buck)
 static constexpr int kSps = 170;              // Vin per-channel rate (~511sps / 3 channels)
 
 // Measured Voc ramp after the dawn step (06:10:30 onward), volts. Monotone 48->67.

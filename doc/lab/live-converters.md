@@ -55,7 +55,7 @@ always active and cuts the converter independently of config.
 
 - Only drive these in **manual PWM mode** (`dc <duty>` engages it; `mppt` exits it).
 - Keep `+N` steps small (≤ 5) and watch Iin — large positive jumps cause current transients.
-- Protection cuts out at `iout_max` and `vout_max`; the converter stops and backs off.
+- Protection cuts out at the output limits (`limits.conf` `lv_i_max`/`lv_max` in a buck, `hv_i_max`/`hv_max` in a boost; legacy `iout_max`/`vout_max`); the converter stops and backs off.
 - `sync off` (diode emulation) is safer than `sync forced` (no reverse-current check).
 - `measure-coil l0` / `measure-coil ls` uses a controlled DCM sweep and restores MPPT when
   done — it is the intended on-device calibration path, not raw PWM stepping.
