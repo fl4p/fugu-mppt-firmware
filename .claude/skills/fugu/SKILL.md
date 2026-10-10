@@ -78,7 +78,9 @@ ESP-IDF is **not on PATH** and `which idf.py` finds nothing. Enter the env with 
 
 It `deactivate`s any venv — invoke repo Python tools as `.venv/bin/python3 etc/…` afterwards — and
 it exports `ESPPORT` from the **first** `/dev/cu.usbmodem*` match, a coin flip with two boards
-attached (this has flashed the wrong board): always pass `-p` explicitly. Bare `esptool` can be a
+attached (this has flashed the wrong board): always pass `-p` explicitly, and `export ESPPORT=` to
+the same port, since idf.py refuses a `-p` that differs from `ESPPORT` (`Option "port" ... already
+defined`, 2026-10-10). Bare `esptool` can be a
 broken PlatformIO shim; `python -m esptool` after sourcing always works. The vendored IDF carries a
 local NimBLE patch (`etc/patches/`) that **an IDF update silently reverts** — reapply after bumps.
 
@@ -153,7 +155,11 @@ not bricked; nothing was written. Recover by:
 
 1. retrying — a second `python -m esptool --chip esp32s3 -p PORT chip_id` often just connects; or
 2. manual download mode: hold **BOOT**, tap **EN/RESET**, release BOOT; or
-3. if `system_profiler SPUSBDataType` shows PID **0x4001** (native TinyUSB CDC, e.g. a foreign
+3. PID **0x4003** "Fugu MPPT" is a fugu board running a `CONFIG_FUGU_WITH_USB_MSC` image (CDC
+   console + `FUGU_CONF` drive): esptool's reset on that port works, but the board comes back as
+   0x1001 under a NEW port name, so the first run ends in a serial error and you flash again on the
+   new port (`website/docs/guide/usb-drive.md`, verified on flu 2026-10-10);
+4. if `system_profiler SPUSBDataType` shows PID **0x4001** (native TinyUSB CDC, e.g. a foreign
    S3 running MicroPython) rather than 0x1001 (USB-Serial-JTAG), DTR/RTS reset cannot work at all:
    send `import machine; machine.bootloader()` to its REPL — it re-enumerates as 0x1001 in ROM
    download mode; then use `--before no_reset` (2026-09-19). Erase the whole chip: its partition
