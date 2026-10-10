@@ -64,6 +64,7 @@ FILE_VAR_OVERRIDES = {
     'src/service.h':             {'c': None},
     'src/adc/vconv.h':           {'vconvConf': None},
     'src/sensor_setup.cpp':      {'vc': None, 'coil': None},
+    'src/conv_side.h':           {'conv': 'converter.conf'},   # readTopoIsBoost()
 }
 
 # Service base class reads these two keys from EVERY service's own conf file.
@@ -91,7 +92,10 @@ EXTRA_KEYS = {
         ('i2c_scl',    'long', None),
     ],
     'limits.conf': [
-        # Limits(): key picked at runtime by pickSideKey() (side alias or legacy role key)
+        # Limits() reads these via readMappedLimit() (src/conv_side.h), which builds the key at
+        # runtime: the side alias from limitSideKey() or the legacy role key, never both per file.
+        # Sensor channel keys (hv_v_rh, vin_rh, ...) are built at runtime too; the editor knows
+        # them by pattern (CHAN_RE / KEY_FORMS), not from FILE_KEYS.
         ('hv_max',   'float', None),
         ('lv_max',   'float', None),
         ('hv_i_max', 'float', None),

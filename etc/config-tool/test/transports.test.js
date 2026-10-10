@@ -136,7 +136,7 @@ test('importFromDevice retries a lost reply but treats an empty OK as absent', a
     if (file === 'board.conf')  return { mcu: 'esp32s3' };          // present
     if (file === 'limits.conf') {                                    // dropped once, recovers
       if (attempts[file] < 2) throw new Error('timeout');
-      return { vin_max: '85' };
+      return { hv_max: '85' };
     }
     if (file === 'coil.conf')   throw new Error('timeout');          // permanently lost
     return {};                                                       // genuinely absent (fast OK)

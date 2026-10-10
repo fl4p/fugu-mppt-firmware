@@ -87,6 +87,7 @@
   details.raw pre { margin:0; padding:12px; background:#0a0d12; border-top:1px solid var(--line);
                     overflow:auto; font-size:12px; }
   .err { color:var(--warn); }
+  .keyform { margin-bottom:12px; font-size:13px; }
   .pill { font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:20px; padding:2px 9px; }
   #uploadlog { position:fixed; right:16px; bottom:16px; width:min(560px,92vw); max-height:50vh; overflow:auto;
     background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px;
@@ -450,6 +451,48 @@ const CHAN_SUFFIX = {
   filt_len:{unit:"",desc:"Filter window length (samples)",type:"int"},
 };
 
+/* Side vs role key forms (src/conv_side.h). sensor.conf and limits.conf each name their mapped
+   keys by side (hv_/lv_) or by role (vin_/vout_/iin_/iout_), never both; the firmware throws on a
+   mix. The editor offers the side form unless the file already uses role keys. */
+const chanKeys = chans => chans.flatMap(c => Object.keys(CHAN_SUFFIX).map(s => c+"_"+s));
+const KEY_FORMS = {
+  "sensor.conf": { side:chanKeys(["hv_v","lv_v","hv_i","lv_i"]), role:chanKeys(["vin","vout","iin","iout"]) },
+  "limits.conf": { side:["hv_max","lv_max","hv_i_max","lv_i_max"], role:["vin_max","vout_max","iin_max","iout_max"] },
+};
+
+// {side, role}: the first key of each form among `keys`, or null if `keys` is not a mix.
+function keyFormConflict(file, keys){
+  const forms = KEY_FORMS[file.split("/").pop()];
+  if (!forms) return null;
+  const side = keys.find(k => forms.side.includes(k)), role = keys.find(k => forms.role.includes(k));
+  return side && role ? {side, role} : null;
+}
+
+// The firmware's error for a mixed file, or "".
+function keyFormError(file, keys){
+  const c = keyFormConflict(file, keys);
+  return c ? `${file.split("/").pop()}: mixes side key ${c.side} with role key ${c.role}; `+
+             `use side keys (hv_/lv_) or role keys throughout, not both` : "";
+}
+
+// Keys of the form a file should be offered: role if it already has role keys and no side keys,
+// else side. `null` for files without mapped keys.
+function offeredKeyForm(file, keys){
+  const forms = KEY_FORMS[file.split("/").pop()];
+  if (!forms) return null;
+  const legacy = keys.some(k => forms.role.includes(k)) && !keys.some(k => forms.side.includes(k));
+  return legacy ? forms.role : forms.side;
+}
+
+// FILE_KEYS[file] minus the mapped keys of the form not offered (see offeredKeyForm).
+function suggestedKeys(file, keys){
+  const all = FILE_KEYS[file.split("/").pop()] || [];
+  const forms = KEY_FORMS[file.split("/").pop()];
+  if (!forms) return [...all];
+  const offered = offeredKeyForm(file, keys);
+  return all.filter(k => offered.includes(k) || !(forms.side.includes(k) || forms.role.includes(k)));
+}
+
 /* Every key the firmware actually reads per file (mined from src/), so the
    editor can surface fields even when the uploaded .conf omits them.
    wifi.conf is pattern-based (ssid_<name>/_psk) so it has no fixed list.
@@ -732,7 +775,7 @@ function load(files, sourceName){
       // stable display order: keys present in the file first, then remaining
       // firmware-known keys. Keeps rows from jumping when toggled set/unset.
       const order = model.lines.filter(l=>l.key!=null).map(l=>l.key);
-      for (const k of (FILE_KEYS[base]||[])) if (!order.includes(k)) order.push(k);
+      for (const k of suggestedKeys(base, order)) if (!order.includes(k)) order.push(k);
       // value each key had in the file, so we can show "was: …" after edits/deletes
       const original = {};
       for (const l of model.lines) if (l.key!=null && !(l.key in original)) original[l.key]=l.value;
@@ -749,7 +792,7 @@ function load(files, sourceName){
   const have = new Set(confPaths.map(p=>p.split("/").pop()));
   for (const base of Object.keys(FILE_KEYS)){
     if (have.has(base)) continue;
-    map[prefix+base] = { isConf:true, model:parseConf(""), extras:{}, order:[...FILE_KEYS[base]], original:{}, isNew:true };
+    map[prefix+base] = { isConf:true, model:parseConf(""), extras:{}, order:suggestedKeys(base, []), original:{}, isNew:true };
   }
   // synthetic (not present in the source) tabs go to the right; within each
   // group keep the fixed TAB_ORDER ranking.
@@ -777,7 +820,7 @@ function mergeUpload(files, sourceName){
       const ref = state.confPaths[0] || "conf/board.conf";
       target = ref.slice(0, -ref.split("/").pop().length) + base;
       state.files[target] = { isConf:true, model:parseConf(""), extras:{},
-                              order:[...(FILE_KEYS[base]||[])], original:{}, isNew:true };
+                              order:[], original:{}, isNew:true };
       state.confPaths.push(target);
     }
     const f = state.files[target];
@@ -791,6 +834,11 @@ function mergeUpload(files, sourceName){
     for (const key of Object.keys(f.original)){
       if (!uploadKeys.has(key)){ removeConfKey(f.model, key); f.extras[key] = ""; }
     }
+    // <not set> placeholders follow the key form (side/role) the file now has
+    const keep = new Set([...fileKeys(f), ...Object.keys(f.original)]);
+    const offered = suggestedKeys(base, fileKeys(f));
+    f.order = f.order.filter(k => keep.has(k) || offered.includes(k));
+    for (const k of offered) if (!f.order.includes(k)) f.order.push(k);
   }
   state.confPaths.sort((a,b)=>{
     const an=state.files[a].isNew?1:0, bn=state.files[b].isNew?1:0;
@@ -854,6 +902,15 @@ function renderPane(){
 
   const pathEl=document.createElement("div"); pathEl.className="path"; pathEl.textContent=path;
   pane.appendChild(pathEl);
+
+  // side/role mix (conv_side.h): the firmware refuses the file, so say so above the rows
+  const formErr=document.createElement("div"); formErr.className="err keyform";
+  function refreshKeyForm(){
+    formErr.textContent = keyFormError(path, fileKeys(f));
+    formErr.style.display = formErr.textContent ? "" : "none";
+  }
+  refreshKeyForm();
+  pane.appendChild(formErr);
 
   const unitInputs = [];  // [input, unitSpan] pairs to size after layout
 
@@ -923,7 +980,7 @@ function renderPane(){
       row.classList.toggle("changed", show);
     };
     inp.oninput = isExtra
-      ? ()=>{ f.extras[key]=inp.value; row.classList.toggle("filled", inp.value.trim()!==""); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); }
+      ? ()=>{ f.extras[key]=inp.value; row.classList.toggle("filled", inp.value.trim()!==""); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); refreshKeyForm(); }
       : ()=>{ setConfValue(model,key,inp.value); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); };
     updateOrig(); updateClearVis();
 
@@ -948,6 +1005,14 @@ function renderPane(){
   // add-key (arbitrary)
   const add=document.createElement("div"); add.className="addkey";
   const ki=document.createElement("input"); ki.placeholder="new key";
+  // suggest the mapped keys of the offered form (side unless the file is role-keyed)
+  const offered=(offeredKeyForm(path, fileKeys(f))||[]).filter(k=>!f.order.includes(k));
+  if (offered.length){
+    const dl=document.createElement("datalist"); dl.id="addkey-list";
+    for (const k of offered){ const o=document.createElement("option"); o.value=k; dl.appendChild(o); }
+    ki.setAttribute("list", dl.id); ki.placeholder="new key, e.g. "+offered[0];
+    add.appendChild(dl);
+  }
   const vi=document.createElement("input"); vi.placeholder="value";
   const ab=document.createElement("button"); ab.textContent="+ add key";
   ab.onclick=()=>{ const key=ki.value.trim(); if(!key) return;
@@ -968,6 +1033,12 @@ function renderPane(){
 
   // size each unit-bearing input's right padding to its suffix width
   for (const [inp,u] of unitInputs) inp.style.paddingRight = (u.offsetWidth + 16) + "px";
+}
+
+// Keys the file will be written with: its lines plus filled-in extras.
+function fileKeys(f){
+  return [...f.model.lines.filter(l=>l.key!=null).map(l=>l.key),
+          ...Object.keys(f.extras||{}).filter(k=>String(f.extras[k]).trim()!=="")];
 }
 
 // Keys whose current value differs from what the file loaded with: present

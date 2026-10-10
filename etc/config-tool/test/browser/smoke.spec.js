@@ -84,7 +84,7 @@ test('drag-drop folder upload via webkitGetAsEntry loads the dropped tree', asyn
     const root = fakeDir('myconf', [
       fakeDir('conf', [
         fakeFile('board.conf',  'mcu=esp32s3\npwm_freq=39000\n'),
-        fakeFile('limits.conf', 'vin_max=80\nvout_max=60\n'),
+        fakeFile('limits.conf', 'hv_max=80\nlv_max=60\n'),
       ]),
     ]);
     const items = [{ webkitGetAsEntry: () => root }];

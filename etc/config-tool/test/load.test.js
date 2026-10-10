@@ -103,7 +103,7 @@ test('applyUpload after a device read overlays values, keeping the device baseli
   // overlay a backup that changes pwm_freq, omits i2c_sda, and adds limits.conf
   window.applyUpload(mkFiles({
     'conf/board.conf':  'mcu=esp32s3\npwm_freq=40000\n',
-    'conf/limits.conf': 'vin_max=85\n',
+    'conf/limits.conf': 'hv_max=85\n',
   }), 'backup-fry');
 
   const board = window._state.files['conf/board.conf'];
@@ -126,7 +126,7 @@ test('applyUpload after a device read overlays values, keeping the device baseli
 
   // a file the device didn't have gets the overlay value as an addition ("was: (not set)")
   const limits = window._state.files['conf/limits.conf'];
-  const lch = window.changedFields(limits).find(c => c.key === 'vin_max');
+  const lch = window.changedFields(limits).find(c => c.key === 'hv_max');
   assert.equal(lch.cur, '85');
   assert.equal(lch.orig, undefined);
 

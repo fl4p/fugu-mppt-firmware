@@ -155,20 +155,40 @@ Two compile-time tables, both hand-mined from the firmware source:
   / getString`. Determines the type pill.
 * `META[key]` — `{unit, desc, type}` shared across files.
 * `FILE_META[file][key]` — per-file overrides (e.g. `vout_max` differs between
-  `limits.conf`, `charger.conf` and `converter.conf`).
+  `limits.conf`, where it is the legacy role alias of `lv_max`/`hv_max`,
+  `charger.conf` and `converter.conf`).
 * `DEFAULTS[key]` + `CHAN_SUFFIX_DEFAULT[suffix]` — default values scraped
   from `ConfFile::get*(key, default)` calls in `src/`. When present, the row's
   description is suffixed with " · default: \<value\>". Strings are kept
   quoted (`""`, `"buck"`) so the value's type is unambiguous. Keys without
-  a hard-coded default (`L0`, `pwm_freq`, `vin_max`, …) are treated as
+  a hard-coded default (`L0`, `pwm_freq`, `hv_max`, …) are treated as
   required by the firmware and left unannotated.
-* Channel-prefixed sensor keys (`vin_`, `vout_`, `iin_`, `iout_`, `ntc_`) plus
-  a suffix table for `adc / ch / rh / rl / factor / midpoint / filt_len`.
+* Channel-prefixed sensor keys (side `hv_v_`, `lv_v_`, `hv_i_`, `lv_i_`; legacy
+  role `vin_`, `vout_`, `iin_`, `iout_`; and `ntc_`) plus a suffix table for
+  `adc / ch / rh / rl / factor / midpoint / filt_len`.
 * `wifi.conf` is pattern-based — keys matching `ssid_<name>` and
   `ssid_<name>_psk` are treated as string SSID / passkey pairs.
 
 When a key has no entry in any of these tables, the row still renders, but
 shows the `?` warning pill.
+
+### 4.1 Side and role keys
+
+`sensor.conf` channels and the four mapped `limits.conf` limits can be named by
+side (`hv_v_*`, `lv_v_*`, `hv_i_*`, `lv_i_*`; `hv_max`, `lv_max`, `hv_i_max`,
+`lv_i_max`) or by legacy role (`vin_*`, `vout_*`, `iin_*`, `iout_*`; `vin_max`,
+`vout_max`, `iin_max`, `iout_max`). `converter.conf` `topo` maps one to the
+other (`src/conv_side.h`). Each file uses one form throughout; the firmware
+refuses a mix. `vin_min`, `iout_short`, `p_max` and `ntc_*` are outside the rule.
+
+* Placeholders and add-key suggestions offer the side form, unless the file
+  already has role keys and no side keys; then they offer the role form, so a
+  legacy file is never nudged into a mix. Legacy files load and serialize
+  unchanged.
+* A file holding both forms shows the firmware's error above its rows, naming
+  one key of each form:
+  `limits.conf: mixes side key hv_max with role key vout_max; use side keys (hv_/lv_) or role keys throughout, not both`.
+  It updates as extras are filled; it does not block download or upload.
 
 **When adding, renaming, or removing a key in firmware** the editor's tables
 (`META`, `FILE_META`, `FILE_KEYS`, `TYPE_KEYS`, `DEFAULTS`) and
