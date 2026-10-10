@@ -1552,22 +1552,24 @@ static void cmdGetConfig(cmd *c) {
 // e.g. cv_min when the firmware reads cv_float). Reuses the real loaders (pure: no hardware side
 // effects) so the recognized-key set never drifts. Unlike the boot-time check this runs in console
 // context, so the warnings reach the telnet/MQTT client that issued the command.
+bool confCheck(const char *chargerPath, const char *limitsPath) {
+    bool ok = true;
+    auto check = [&](const char *path, auto &&load) {
+        struct stat st;
+        if (!path || stat(path, &st) != 0) return;
+        ConfFile cf{path, true}; // an empty file still goes through the loader (missing keys throw)
+        try { load(cf); }
+        catch (const std::exception &e) { ok = false; UART_LOG("%s: %s", path, e.what()); }
+        catch (...) { ok = false; UART_LOG("%s: load failed", path); }
+        cf.warnUnknownKeys();
+    };
+    check(chargerPath, [](const ConfFile &cf) { BatChargerParams p; p.load(cf); });
+    check(limitsPath, [](const ConfFile &cf) { Limits l{cf}; (void) l; });
+    return ok;
+}
+
 static void cmdConfCheck(cmd *) {
-    {
-        ConfFile cf{"/littlefs/conf/charger.conf", true};
-        if (cf) {
-            try { BatChargerParams p; p.load(cf); } catch (...) {}
-            cf.warnUnknownKeys();
-        }
-    }
-    {
-        ConfFile cf{"/littlefs/conf/limits.conf", true};
-        if (cf) {
-            try { Limits l{cf}; (void) l; }
-            catch (const std::exception &e) { UART_LOG("conf-check: limits.conf does not load: %s", e.what()); }
-            cf.warnUnknownKeys();
-        }
-    }
+    confCheck("/littlefs/conf/charger.conf", "/littlefs/conf/limits.conf");
     UART_LOG("conf-check done");
 }
 

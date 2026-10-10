@@ -33,6 +33,12 @@ dependencies:
   esp-ota-ble:
     git: https://github.com/fl4p/esp-ota-ble.git
     version: d11c4a2176982b44bf8947ec3430f9ed6bfb00b6
+  # CONFIG_FUGU_WITH_USB_MSC: plain TinyUSB, not esp_tinyusb (its CONFIG_TINYUSB_{CDC,MSC}_ENABLED
+  # switch on arduino-esp32's USB*.cpp and its own class callbacks collide with src/usb/usb_dev.cpp).
+  espressif/tinyusb:
+    version: '>=0.19.0~3,<0.22'
+    rules:
+      - if: "$CONFIG{FUGU_WITH_USB_MSC} == True"
   # esp-mqtt left IDF in 6.0
   espressif/mqtt:
     version: ^1.0.0

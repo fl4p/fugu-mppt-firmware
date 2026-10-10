@@ -1,0 +1,4 @@
+# Layered for CONFIG_FUGU_WITH_USB_MSC=y builds (see top-level CMakeLists.txt). The OTG controller
+# owns the USB PHY, so the USB-Serial-JTAG secondary console must be off (src/usb/usb_dev.cpp
+# refuses to build otherwise). Defaults only apply to a fresh sdkconfig.
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

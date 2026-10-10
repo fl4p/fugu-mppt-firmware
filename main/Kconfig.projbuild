@@ -168,6 +168,16 @@ config FUGU_WITH_BLE_ADV
         client is connected (non-connectable adv). tele.conf::adv_ms sets the refresh
         interval (0 = off). Host side: etc/influx_binary_proxy.py --adv.
 
+config FUGU_WITH_USB_MSC
+    bool "USB config drive + CDC console (TinyUSB)"
+    default n
+    help
+        ESP32-S3 only, excludes FUGU_WITH_WSYNC (checked in main/CMakeLists.txt: no `depends on`,
+        the idf_component.yml rule needs the symbol to exist in every build). The S3 enumerates as a composite USB device: a CDC console and a FAT drive showing
+        /littlefs/conf. Host edits are validated and written back on eject. Takes the USB PHY
+        from USB-Serial-JTAG (no USB JTAG; flashing resets into the ROM download mode via the
+        CDC port). sdkconfig.usb_msc is layered by CMakeLists when this is on.
+
 config FUGU_WITH_SPROFILER
     bool "Semihosting sampling profiler"
     default n

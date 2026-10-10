@@ -9,6 +9,10 @@ class String; // Arduino String (handleCommand); forward-declared to avoid pulli
 void setupCli();
 bool handleCommand(const String &inp);
 
+// Runs the charger/limits loaders on the given files (nullptr or absent file = skip; an empty file
+// is checked), logs loader errors and unknown keys. false if a loader rejected its file.
+bool confCheck(const char *chargerPath, const char *limitsPath);
+
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
 // Stamp a wall-clock estimate of the crash time on the first synced boot after a new dump appears.
 // Idempotent; safe to call every low-frequency tick. No-op once stamped or when no dump exists.

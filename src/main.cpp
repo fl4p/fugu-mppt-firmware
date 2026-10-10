@@ -38,6 +38,9 @@
 #include "tele/scope_service.h"
 #endif
 #include "sync/bsync.h"
+#ifdef WITH_USB_MSC
+#include "usb/usb_dev.h"
+#endif
 #ifdef WITH_MEASURE_COIL
 #include "selftest/measure_coil.h"
 #endif
@@ -454,6 +457,10 @@ __attribute__((cold)) void setup() {
         g_app.setupErr = true;
     }
 
+#ifdef WITH_USB_MSC
+    usbDevBegin();
+#endif
+
 #ifdef WITH_SPROFILER
     try {
         ConfFile pprofConf{"/littlefs/conf/pprof.conf", true};
@@ -537,7 +544,7 @@ __attribute__((cold)) void setup() {
     // WiFi connects routes the wifi task's connect-time logging burst through vprintf_mux's 300B
     // stack buffer, overflowing the 3072B wifi task stack (this bricked flat). So the boot-log
     // backlog captures from here on, not the setup() body — accept that over the brick.
-#ifdef WITH_NETW
+#if defined(WITH_NETW) || defined(WITH_USB_MSC)
     enable_esp_log_to_telnet();
 #endif
 
@@ -862,7 +869,9 @@ static void lfStuckWatchdog() {
 // Low-frequency control reads (RT-adjacent, not in the ADC fast path): NTC + chip temp,
 // charger termination state, and the thermal-cap WiFi cutoff.
 static void lfControl() {
-#if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
+#ifdef WITH_USB_MSC
+    g_app.usbConnected = usbCdcConnected();
+#elif CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
     g_app.usbConnected = usb_serial_jtag_is_connected();
 #endif
     mppt.ntc.read();
@@ -1262,6 +1271,19 @@ static void loopNetwork_task(void *arg) {
     auto nowMs(wallClockMs());
 
     loopUart(nowMs);
+#ifdef WITH_USB_MSC
+    switch (usbDevPoll()) {
+        case UsbEvent::ConfCommitted:
+            if (mppt.active()) UART_LOG("conf changed, restart to apply");
+            else systemRestart();
+            break;
+        case UsbEvent::EnterDownload:
+            converter.disable();
+            usbEnterDownload();
+        default:
+            break;
+    }
+#endif
     flush_async_uart_log();
     process_queued_tasks();
 

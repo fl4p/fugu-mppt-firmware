@@ -46,6 +46,7 @@ project root.
 | `CONFIG_FUGU_WITH_BSYNC` | on | Beacon-sniffing MCPWM clock sync (`bsync` service). Needs `NETW` and `MCPWM`. |
 | `CONFIG_FUGU_WITH_SPROFILER` | off | Semihosting sampling profiler; only useful with OpenOCD attached. |
 | `CONFIG_FUGU_WITH_MEASURE_COIL` | off | On-device [coil inductance measurement](../../lab/coil-inductance.md). |
+| `CONFIG_FUGU_WITH_USB_MSC` | off | ESP32-S3 only: [USB config drive](../usb-drive.md) plus a CDC console on the USB port, instead of USB-Serial-JTAG. Excludes `WSYNC`. Layers `sdkconfig.usb_msc`. |
 | `CONFIG_FUGU_WITH_PSU` | on | PSU (constant-voltage) and PV-simulator output modes: `psu`/`pv` commands, `converter.conf` `mode=psu`/`pv`. A board config using either mode fails setup when off; off saves ~10 KB flash. |
 | `CONFIG_FUGU_WITH_INA226` | on | INA226 ADC backend (`sensor.conf` `*_adc=ina226`). A board config that selects it fails setup when off. |
 | `CONFIG_FUGU_WITH_ADS` | on | ADS1015/ADS1115 ADC backend (`*_adc=ads1015`/`ads1115`). A board config that selects it fails setup when off. |
@@ -79,6 +80,7 @@ Binary telemetry is not a build flag: it is `tele.conf::binary`.
 2. `sdkconfig.defaults.esp32` (classic ESP32 target only)
 3. `sdkconfig.ble` when `CONFIG_FUGU_WITH_BLE=y`
 4. `sdkconfig.no_netw` when `CONFIG_FUGU_WITH_NETW=n`
+5. `sdkconfig.usb_msc` when `CONFIG_FUGU_WITH_USB_MSC=y`
 
 Delete `sdkconfig` to regenerate it if it looks wrong.
 

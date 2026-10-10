@@ -18,7 +18,7 @@ Before any `idf.py` invocation, source ESP-IDF into the shell. The repo ships a 
 ```bash
 . ./idf-export.sh          # sources ../../esp/idf5.5/export.sh, sets IDF_TARGET=esp32s3, autodetects $ESPPORT
 idf.py set-target esp32s3  # only needed once per build dir
-idf.py build               # feature flags live in Kconfig now (CONFIG_FUGU_WITH_*, idf.py menuconfig -> "Fugu MPPT firmware"): BLE/NETW default on, NETTOOLS/MCPWM/VCONV/SPROFILER/MEASURE_COIL off (NETTOOLS depends on NETW). The old WITH_* env vars are rejected. Binary telemetry is a tele.conf setting, not a build flag
+idf.py build               # feature flags live in Kconfig now (CONFIG_FUGU_WITH_*, idf.py menuconfig -> "Fugu MPPT firmware"): BLE/NETW default on, NETTOOLS/MCPWM/VCONV/SPROFILER/MEASURE_COIL/USB_MSC off (NETTOOLS depends on NETW; USB_MSC = S3 USB config drive, website/docs/guide/usb-drive.md). The old WITH_* env vars are rejected. Binary telemetry is a tele.conf setting, not a build flag
 idf.py -p $ESPPORT app-flash
 ./etc/fugu_console.py -p ESPPORT # see cli docs, it supports --stdin and -c
 ```
@@ -290,7 +290,8 @@ Filter-design studies that used to sit beside the client are now `etc/filter-stu
   instead.
 - `sdkconfig` is gitignored — it's a generated artifact that varies with target + `WITH_*` flags + IDF version.
   Source of truth is `sdkconfig.defaults` (+ `sdkconfig.defaults.esp32` overlay, `sdkconfig.ble` when
-  `CONFIG_FUGU_WITH_BLE=y`, `sdkconfig.no_netw` when `CONFIG_FUGU_WITH_NETW=n` — layered by the top
+  `CONFIG_FUGU_WITH_BLE=y`, `sdkconfig.no_netw` when `CONFIG_FUGU_WITH_NETW=n`, `sdkconfig.usb_msc` when
+  `CONFIG_FUGU_WITH_USB_MSC=y` — layered by the top
   `CMakeLists.txt`). Delete `sdkconfig` to force regeneration if it ever looks wrong.
 - if you want to `git revert` but there are local dirty files, do a `git stash` before and `git stash pop` after
 - **Never ever run `git reset --hard`**

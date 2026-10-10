@@ -26,7 +26,8 @@ Compile-time features are Kconfig options `CONFIG_FUGU_WITH_*` (menu **"Fugu MPP
 ## sdkconfig layering
 
 `sdkconfig` is generated and gitignored; the tracked sources are `sdkconfig.defaults` plus fragments. The top-level
-`CMakeLists.txt` resolves `CONFIG_FUGU_WITH_BLE`, `CONFIG_FUGU_WITH_NETW` and `CONFIG_FUGU_WITH_SPROFILER` *before*
+`CMakeLists.txt` resolves `CONFIG_FUGU_WITH_BLE`, `CONFIG_FUGU_WITH_NETW`, `CONFIG_FUGU_WITH_USB_MSC` and
+`CONFIG_FUGU_WITH_SPROFILER` *before*
 `project()` runs Kconfig, by reading the defaults chain and then the live sdkconfig (later wins): the file given
 with `-DSDKCONFIG=<path>`, else the project-root `sdkconfig` if it exists. Then:
 
@@ -34,6 +35,7 @@ with `-DSDKCONFIG=<path>`, else the project-root `sdkconfig` if it exists. Then:
 |---|---|
 | `CONFIG_FUGU_WITH_BLE=y` | appends `sdkconfig.ble` (NimBLE host and radio tuning) |
 | `CONFIG_FUGU_WITH_NETW=n` | appends `sdkconfig.no_netw` |
+| `CONFIG_FUGU_WITH_USB_MSC=y` | appends `sdkconfig.usb_msc` (USB-Serial-JTAG console off); `main/idf_component.yml` adds `espressif/tinyusb` |
 | `CONFIG_FUGU_WITH_SPROFILER=n` | excludes the `esp32-semihosting-profiler` component |
 | target `esp32` | ESP-IDF adds `sdkconfig.defaults.esp32` |
 

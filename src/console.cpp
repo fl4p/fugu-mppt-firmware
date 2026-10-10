@@ -16,6 +16,9 @@
 #include <hal/uart_types.h>
 #include "logging.h"
 #include "console.h"
+#ifdef WITH_USB_MSC
+#include "usb/usb_dev.h"
+#endif
 
 #include <driver/esp_private/usb_serial_jtag_vfs.h>
 //#include "../vfs/private_include/esp_vfs_private.h"
@@ -97,7 +100,9 @@ int uartWrite(const char *buf, size_t len) {
 }
 
 int console_read_usb(char *buf, size_t len) {
-#if CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+#ifdef WITH_USB_MSC
+    return usbCdcRead(buf, len);
+#elif CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
     return esp_vfs_usb_serial_jtag_get_vfs()->read(0, buf, len);
 #else
     return 0;
@@ -105,7 +110,9 @@ int console_read_usb(char *buf, size_t len) {
 }
 
 int console_write_usb(const char *buf, size_t len) {
-#if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
+#ifdef WITH_USB_MSC
+    return usbCdcWrite(buf, len);
+#elif CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
     auto r = esp_vfs_usb_serial_jtag_get_vfs()->write(0, buf, len);
     usb_serial_jtag_ll_txfifo_flush();
     return r;

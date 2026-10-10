@@ -40,6 +40,9 @@ else ()
     if (CONFIG_FUGU_WITH_MEASURE_COIL)
         list(APPEND MAIN_SRC "../src/selftest/measure_coil.cpp")
     endif ()
+    if (CONFIG_FUGU_WITH_USB_MSC)
+        list(APPEND MAIN_SRC "../src/usb/usb_dev.cpp" "../src/usb/vfat.cpp")
+    endif ()
 endif ()
 
 set(NETW_SRC
@@ -148,7 +151,6 @@ endif ()
 if (CONFIG_FUGU_WITH_NETTOOLS)
     component_compile_definitions("WITH_NETTOOLS=1")
 endif ()
-
 if (CONFIG_FUGU_WITH_SCOPE)
     component_compile_definitions("WITH_SCOPE=1")
 endif ()
@@ -228,6 +230,20 @@ if (CONFIG_FUGU_WITH_MEASURE_COIL)
     component_compile_definitions("WITH_MEASURE_COIL=1")
 endif ()
 
+# CONFIG_FUGU_WITH_USB_MSC: CDC console + emulated FAT config drive on espressif/tinyusb (pulled in
+# by idf_component.yml only for this flag). TinyUSB finds its config header through this include dir.
+if (CONFIG_FUGU_WITH_USB_MSC)
+    if (NOT CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_FUGU_WITH_WSYNC)
+        message(FATAL_ERROR "FUGU_WITH_USB_MSC needs an ESP32-S3 and FUGU_WITH_WSYNC off (both use the USB pads)")
+    endif ()
+    component_compile_definitions("WITH_USB_MSC=1")
+    idf_component_get_property(_tusb_lib espressif__tinyusb COMPONENT_LIB)
+    target_include_directories(${_tusb_lib} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../src/usb")
+elseif (CONFIG_IDF_TARGET_ESP32S3 AND CONFIG_ESP_CONSOLE_SECONDARY_NONE)
+    # sdkconfig.usb_msc only seeds a fresh sdkconfig; switching the flag off keeps its console choice
+    message(WARNING "USB-Serial-JTAG console is off (left over from FUGU_WITH_USB_MSC?): delete sdkconfig to restore it")
+endif ()
+
 # Per-file optimization: keep -O2 (CONFIG_COMPILER_OPTIMIZATION_PERF default) on the RT path —
 # main.cpp (loopRT itself), mppt.cpp (mppt.update per ADC sample), adc_esp32_cont.cpp (DMA ISR
 # helpers). Everything else in libmain is cold: console + cli, services, telemetry, setup helpers,
@@ -252,6 +268,9 @@ if (WITH_BLE)
 endif ()
 if (CONFIG_FUGU_WITH_MEASURE_COIL)
     list(APPEND _size_opt_srcs ../src/selftest/measure_coil.cpp)
+endif ()
+if (CONFIG_FUGU_WITH_USB_MSC)
+    list(APPEND _size_opt_srcs ../src/usb/usb_dev.cpp ../src/usb/vfat.cpp)
 endif ()
 list(APPEND _size_opt_srcs ${TELE_CORE_SRC})
 set_source_files_properties(${_size_opt_srcs} PROPERTIES COMPILE_OPTIONS "-Os")
