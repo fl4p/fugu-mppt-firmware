@@ -406,7 +406,7 @@ public:
 
     // Default backoff blocks startCondition() so MPPT doesn't re-poke pwmPerturb()
     // every tick after a protection trip — otherwise OV/OC violations spam the log
-    // and toggle the converter at sample rate (see Vin-OV regression with Voc>vin_max).
+    // and toggle the converter at sample rate (see Vin-OV regression with Voc>Vin_max).
     // Callers that want immediate-recovery semantics (calibration done, user `dc 0`)
     // must pass 0 explicitly. `who` tags the trip path in the backoff log so a
     // stuck post-sweep state names the responsible protect.
