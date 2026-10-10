@@ -285,7 +285,7 @@ const META = {
   panel_en:{unit:"GPIO",desc:"Panel/input backflow enable switch pin",type:"int"},
   panel_sd:{unit:"GPIO",desc:"Panel/input backflow shutdown switch pin",type:"int"},
   lv_pgood:{unit:"GPIO",desc:"LV power-good output; high disables the HV aux supply path. 255 = none",type:"int"},
-  lv_pgood_v:{unit:"V",desc:"LV voltage that must hold for 5 s before LV pgood asserts; releases 0.5 V below",type:"float"},
+  lv_pgood_v:{unit:"V",desc:"LV pgood release point; asserts after LV held 0.5 V above it for 5 s",type:"float"},
   led_WS2812:{unit:"GPIO",desc:"WS2812 status LED data pin",type:"int"},
   led_WS2812B:{unit:"GPIO",desc:"WS2812 LED data pin (alt key)",type:"int"},
   led_simple:{unit:"GPIO",desc:"Plain on/off status LED pin",type:"int"},

@@ -11,16 +11,16 @@
 /**
  * Drives the LV power-good output. High = the LV terminal is a good aux supply source,
  * which disables the HV aux supply path. Low (and the pin's pull-down) = HV path enabled.
- * Asserts after the LV voltage stayed >= vOn for holdMs of continuous fresh samples. Releases at
- * once below vOn - hyst, on a non-finite or stale reading, or on release().
+ * Asserts after the LV voltage stayed >= vOff + hyst for holdMs of continuous fresh samples. Releases at
+ * once below vOff, on a non-finite or stale reading, or on release().
  */
 class LvPgood {
-    static constexpr float hyst = 0.5f, vOnMin = 5.f;
+    static constexpr float hyst = 0.5f, vOffMin = 5.f;
     static constexpr uint32_t holdMs = 5000, staleMs = 500, gapMs = 200;
 
     uint8_t pin = 255;
     bool _state = false;
-    float vOn = 10.5f;
+    float vOff = 10.5f;
     uint32_t goodSinceMs = 0, lastCallMs = 0, freshMs = 0, lastN = 0;
 
     void set(bool on) {
@@ -34,7 +34,7 @@ public:
     void init(const ConfFile &board) {
         pin = board.getByte("lv_pgood", 255);
         float v = board.getFloat("lv_pgood_v", 10.5f);
-        vOn = std::isfinite(v) && v >= vOnMin ? v : 10.5f;
+        vOff = std::isfinite(v) && v >= vOffMin ? v : 10.5f;
         if (pin == 255) return;
         if (!GPIO_IS_VALID_OUTPUT_GPIO(pin) || esp_gpio_is_reserved(BIT64(pin))) {
             ESP_LOGE("pgood", "lv_pgood pin %u unusable, disabled", pin);
@@ -55,12 +55,12 @@ public:
             freshMs = nowMs;
         }
         if (!allow || nowMs - freshMs > staleMs || !std::isfinite(vLvFast) || !std::isfinite(vLvAvg)
-            || vLvFast < vOn - hyst) {
+            || vLvFast < vOff) {
             release();
             return;
         }
         if (_state) return;
-        if (vLvFast < vOn || vLvAvg < vOn) {
+        if (vLvFast < vOff + hyst || vLvAvg < vOff + hyst) {
             goodSinceMs = 0;
             return;
         }
