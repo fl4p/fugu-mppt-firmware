@@ -306,10 +306,14 @@ const META = {
   iin_min_supply_voltage:{unit:"V",desc:"Legacy: min supply voltage for current sensor",type:"float"},
 
   // limits.conf
-  vin_max:{unit:"V",desc:"Maximum input voltage before protection cutout",type:"float"},
+  hv_max:{unit:"V",desc:"Maximum HV-side voltage before protection cutout (Vin max in buck, Vout max in boost)",type:"float"},
+  lv_max:{unit:"V",desc:"Maximum LV-side voltage before protection cutout (Vout max in buck, Vin max in boost)",type:"float"},
+  hv_i_max:{unit:"A",desc:"Maximum HV-side current (Iin max in buck, Iout max in boost)",type:"float"},
+  lv_i_max:{unit:"A",desc:"Maximum LV-side current (Iout max in buck, Iin max in boost)",type:"float"},
+  vin_max:{unit:"V",desc:"Legacy role alias of hv_max (buck) / lv_max (boost): maximum input voltage",type:"float"},
   vin_min:{unit:"V",desc:"Minimum input voltage; below this converter stops",type:"float"},
-  iin_max:{unit:"A",desc:"Maximum input current limit",type:"float"},
-  iout_max:{unit:"A",desc:"Maximum output current limit",type:"float"},
+  iin_max:{unit:"A",desc:"Legacy role alias of hv_i_max (buck) / lv_i_max (boost): maximum input current",type:"float"},
+  iout_max:{unit:"A",desc:"Legacy role alias of lv_i_max (buck) / hv_i_max (boost): maximum output current",type:"float"},
   iout_short:{unit:"A",desc:"Output short-circuit current threshold",type:"float"},
   p_max:{unit:"W",desc:"Maximum power; sets thermal derating and the sweep's minimum MPP power (0.2 %)",type:"float"},
   temp_max:{unit:"°C",desc:"Maximum temperature before shutdown",type:"float"},
@@ -423,15 +427,19 @@ const META = {
 
 // vout_max means slightly different things per file
 const FILE_META = {
-  "limits.conf":   { vout_max:{unit:"V",desc:"Maximum output voltage before protection cutout",type:"float"} },
+  "limits.conf":   { vout_max:{unit:"V",desc:"Legacy role alias of lv_max (buck) / hv_max (boost): maximum output voltage",type:"float"} },
   "charger.conf":  { vout_max:{unit:"V",desc:"Max pack/output charge-target voltage",type:"float"} },
   "converter.conf":{ vout_max:{unit:"V",desc:"Legacy output voltage limit (real one is in limits.conf)",type:"float"} },
 };
 const META_VOUT_MAX = {unit:"V",desc:"Maximum output voltage",type:"float"};
 
-// channel-prefixed sensor keys (vin_/vout_/iin_/iout_/ntc_ + suffix)
-const CHAN_PREFIX = { vin:"Vin (input voltage)", vout:"Vout (output voltage)",
-                      iin:"Iin (input current)", iout:"Iout (output current)", ntc:"NTC (temperature)" };
+// channel-prefixed sensor keys (side hv_v_/lv_v_/hv_i_/lv_i_, legacy role vin_/vout_/iin_/iout_, ntc_ + suffix).
+// converter.conf topo maps sides to roles: buck in=HV out=LV, boost in=LV out=HV.
+const CHAN_PREFIX = { hv_v:"HV-side voltage", lv_v:"LV-side voltage",
+                      hv_i:"HV-side current (+ for HV→LV power)", lv_i:"LV-side current (+ for HV→LV power)",
+                      vin:"Vin (legacy role alias)", vout:"Vout (legacy role alias)",
+                      iin:"Iin (legacy role alias)", iout:"Iout (legacy role alias)", ntc:"NTC (temperature)" };
+const CHAN_RE = /^(hv_v|lv_v|hv_i|lv_i|vin|vout|iin|iout|ntc)_(.+)$/;
 const CHAN_SUFFIX = {
   adc:{unit:"",desc:"ADC backend for this channel",type:"string"},
   ch:{unit:"",desc:"ADC channel index (255 = absent)",type:"int"},
@@ -455,8 +463,8 @@ const FILE_KEYS = {
     "pwm_freq","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin","skip_assert"],
   "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_sr","expected_hz",
     "ignore_calibration_constraints","notch_adaptive","notch_freq","notch_q","ntc_ch","power_conversion_eff"],
-  "limits.conf":["iin_max","iout_max","iout_short","p_max","reverse_current_paranoia",
-    "temp_derate","temp_max","vin_max","vin_min","vout_max"],
+  "limits.conf":["hv_i_max","hv_max","iin_max","iout_max","iout_short","lv_i_max","lv_max",
+    "p_max","reverse_current_paranoia","temp_derate","temp_max","vin_max","vin_min","vout_max"],
   "coil.conf":["L0","rect_offset_ns"],
   "converter.conf":["ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
     "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
@@ -490,8 +498,8 @@ const TYPE_KEYS = {
     "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert"]),
   long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq",
     "i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pwm_freq","sprofiler_hz","switch_delay"]),
-  float: new Set(["L0","bat_c","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","ibat_max","iin_max","psu_vout","rect_offset_ns",
-     "ina22x_range","ina22x_resistor","iout_max","iout_short","notch_freq","notch_q","p_max","power_conversion_eff",
+  float: new Set(["L0","bat_c","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","hv_i_max","hv_max","ibat_max","iin_max","psu_vout","rect_offset_ns",
+     "ina22x_range","ina22x_resistor","iout_max","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max","power_conversion_eff",
      "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
     "vin_max","vin_min","vout_max","vout_max_fallback","vout_offset_max",
     "ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
@@ -551,14 +559,14 @@ const CHAN_SUFFIX_DEFAULT = { ch:"255", factor:"1.0", midpoint:"0.0", filt_len:"
 
 function lookupDefault(file, key){
   if (key in DEFAULTS) return DEFAULTS[key];
-  const m = key.match(/^(vin|vout|iin|iout|ntc)_(.+)$/);
+  const m = key.match(CHAN_RE);
   if (m && (m[2] in CHAN_SUFFIX_DEFAULT)) return CHAN_SUFFIX_DEFAULT[m[2]];
   return undefined;
 }
 
 function lookupType(key){
   for (const t of ["byte","long","float","string"]) if (TYPE_KEYS[t].has(key)) return t;
-  const m = key.match(/^(vin|vout|iin|iout|ntc)_(.+)$/);
+  const m = key.match(CHAN_RE);
   if (m && CHAN_SUFFIX_TYPE[m[2]]) return CHAN_SUFFIX_TYPE[m[2]];
   if (/^ssid_.+$/.test(key)) return "string";
   return "";
@@ -569,7 +577,7 @@ function lookupMeta(file, key, inlineComment) {
   if (FILE_META[base] && FILE_META[base][key]) return FILE_META[base][key];
   if (key === "vout_max") return META_VOUT_MAX;
   if (META[key]) return META[key];
-  const m = key.match(/^(vin|vout|iin|iout|ntc)_(.+)$/);
+  const m = key.match(CHAN_RE);
   if (m && CHAN_SUFFIX[m[2]]) {
     const s = CHAN_SUFFIX[m[2]];
     return { unit:s.unit, desc:CHAN_PREFIX[m[1]] + ": " + s.desc, type:s.type };

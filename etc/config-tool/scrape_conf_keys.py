@@ -90,6 +90,17 @@ EXTRA_KEYS = {
         # depending on context — keep as long
         ('i2c_scl',    'long', None),
     ],
+    'limits.conf': [
+        # Limits(): key picked at runtime by pickSideKey() (side alias or legacy role key)
+        ('hv_max',   'float', None),
+        ('lv_max',   'float', None),
+        ('hv_i_max', 'float', None),
+        ('lv_i_max', 'float', None),
+        ('vin_max',  'float', None),
+        ('vout_max', 'float', None),
+        ('iin_max',  'float', None),
+        ('iout_max', 'float', None),
+    ],
     'lcd.conf': [
         # read via `ConfFile{_confPath}.getByte("addr", 0)` — temporary, not a var
         ('addr', 'byte', '0'),
@@ -378,7 +389,7 @@ def patch_html(html, blocks):
 # META drift report (no rewriting)
 # ----------------------------------------------------------------------------
 META_KEY_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*\{', re.MULTILINE)
-CHAN_KEY_RE = re.compile(r'^(vin|vout|iin|iout|ntc)_(adc|ch|rh|rl|factor|midpoint|filt_len)$')
+CHAN_KEY_RE = re.compile(r'^(hv_v|lv_v|hv_i|lv_i|vin|vout|iin|iout|ntc)_(adc|ch|rh|rl|factor|midpoint|filt_len)$')
 
 
 def scrape_meta_keys(html):
@@ -396,7 +407,7 @@ def scrape_meta_keys(html):
 
 def has_meta(key, meta_keys):
     if key in meta_keys: return True
-    if CHAN_KEY_RE.match(key): return True       # vin_/vout_/iin_/iout_/ntc_ + suffix
+    if CHAN_KEY_RE.match(key): return True       # hv_v_/lv_v_/hv_i_/lv_i_ (or legacy vin_/...)/ntc_ + suffix
     if key.startswith('ssid_'): return True       # wifi.conf is pattern-based
     return False
 

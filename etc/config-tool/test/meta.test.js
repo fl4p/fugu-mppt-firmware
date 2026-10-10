@@ -12,6 +12,9 @@ test('lookupType resolves the four ConfFile::get* buckets and channel suffixes',
   assert.equal(window.lookupType('mcu'),             'string');
   assert.equal(window.lookupType('vin_factor'),      'float');    // channel-suffix table
   assert.equal(window.lookupType('iout_ch'),         'byte');
+  assert.equal(window.lookupType('hv_v_rh'),         'float');    // side-named channel
+  assert.equal(window.lookupType('lv_i_ch'),         'byte');
+  assert.equal(window.lookupType('hv_max'),          'float');
   assert.equal(window.lookupType('ssid_caravan'),    'string');   // wifi pattern
   assert.equal(window.lookupType('not_a_real_key'),  '');         // unknown
 });
