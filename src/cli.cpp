@@ -1559,7 +1559,8 @@ static void cmdConfCheck(cmd *) {
     {
         ConfFile cf{"/littlefs/conf/limits.conf", true};
         if (cf) {
-            try { Limits l{cf}; (void) l; } catch (...) {}
+            try { Limits l{cf}; (void) l; }
+            catch (const std::exception &e) { UART_LOG("conf-check: limits.conf does not load: %s", e.what()); }
             cf.warnUnknownKeys();
         }
     }
