@@ -23,14 +23,13 @@ test('lookupMeta returns META entry with unit/desc and respects per-file overrid
   assert.ok(mcu, 'expected META[mcu] to be present');
   assert.equal(mcu.type, 'string');
 
-  // FILE_META override: limits.conf and charger.conf give different descriptions.
-  // KEEP vout_max: limits.conf's is the legacy role alias of lv_max/hv_max, charger.conf's is
-  // its own role key; the per-file override exists only for that name.
-  const vmaxLim = window.lookupMeta('conf/limits.conf',  'vout_max', '');
+  // FILE_META override: converter.conf and charger.conf give vout_max different descriptions.
+  // limits.conf's vout_max is a removed role key (sidekeys.test.js).
+  const vmaxConv = window.lookupMeta('conf/converter.conf', 'vout_max', '');
   const vmaxChg = window.lookupMeta('conf/charger.conf', 'vout_max', '');
-  assert.equal(vmaxLim.unit, 'V');
+  assert.equal(vmaxConv.unit, 'V');
   assert.equal(vmaxChg.unit, 'V');
-  assert.notEqual(vmaxLim.desc, vmaxChg.desc);
+  assert.notEqual(vmaxConv.desc, vmaxChg.desc);
 });
 
 test('channel-prefixed sensor key falls through to CHAN_PREFIX/SUFFIX synthesis', async () => {

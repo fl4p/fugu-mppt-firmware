@@ -92,18 +92,13 @@ EXTRA_KEYS = {
         ('i2c_scl',    'long', None),
     ],
     'limits.conf': [
-        # Limits() reads these via readMappedLimit() (src/conv_side.h), which builds the key at
-        # runtime: the side alias from limitSideKey() or the legacy role key, never both per file.
-        # Sensor channel keys (hv_v_rh, vin_rh, ...) are built at runtime too; the editor knows
-        # them by pattern (CHAN_RE / KEY_FORMS), not from FILE_KEYS.
+        # Limits() reads these via readMappedLimit() (src/conv_side.h), which builds the side key
+        # from limitSideKey() at runtime. Sensor channel keys (hv_v_rh, ...) are built at runtime
+        # too; the editor knows them by pattern (CHAN_RE), not from FILE_KEYS.
         ('hv_max',   'float', None),
         ('lv_max',   'float', None),
         ('hv_i_max', 'float', None),
         ('lv_i_max', 'float', None),
-        ('vin_max',  'float', None),
-        ('vout_max', 'float', None),
-        ('iin_max',  'float', None),
-        ('iout_max', 'float', None),
     ],
     'lcd.conf': [
         # read via `ConfFile{_confPath}.getByte("addr", 0)` — temporary, not a var
@@ -393,7 +388,7 @@ def patch_html(html, blocks):
 # META drift report (no rewriting)
 # ----------------------------------------------------------------------------
 META_KEY_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*\{', re.MULTILINE)
-CHAN_KEY_RE = re.compile(r'^(hv_v|lv_v|hv_i|lv_i|vin|vout|iin|iout|ntc)_(adc|ch|rh|rl|factor|midpoint|filt_len)$')
+CHAN_KEY_RE = re.compile(r'^(hv_v|lv_v|hv_i|lv_i|ntc)_(adc|ch|rh|rl|factor|midpoint|filt_len)$')
 
 
 def scrape_meta_keys(html):
@@ -404,14 +399,14 @@ def scrape_meta_keys(html):
         keys.update(META_KEY_RE.findall(m.group(1)))
     fm = re.search(r'const FILE_META = \{([\s\S]*?)^\};', html, re.MULTILINE)
     if fm:
-        # FILE_META lines look like:  "limits.conf": { vout_max:{...} }
+        # FILE_META lines look like:  "charger.conf": { vout_max:{...} }
         keys.update(re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*\{[^{}]*unit', fm.group(1)))
     return keys
 
 
 def has_meta(key, meta_keys):
     if key in meta_keys: return True
-    if CHAN_KEY_RE.match(key): return True       # hv_v_/lv_v_/hv_i_/lv_i_ (or legacy vin_/...)/ntc_ + suffix
+    if CHAN_KEY_RE.match(key): return True       # hv_v_/lv_v_/hv_i_/lv_i_/ntc_ + suffix
     if key.startswith('ssid_'): return True       # wifi.conf is pattern-based
     return False
 
