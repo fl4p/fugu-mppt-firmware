@@ -1,6 +1,7 @@
 #include "adc_esp32_cont.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "tele/scope.h"
 
@@ -132,8 +133,8 @@ void ADC_ESP32_Cont::buildMvTable() {
     auto cal = calByAtten[maxAtten];
     assert_throw(cal != nullptr, "adc cali missing");
     // Each knot is a least-squares line through the 64 integer conversions around it, evaluated at
-    // the knot: the integer-mV truncation averages out to a constant ~-0.5 mV (which a board's
-    // offset absorbs) and the second-step curve is smooth over 64 codes.
+    // the knot. The second-step curve is smooth over 64 codes; IDF's own integer math stays in (about
+    // -1.2 mV, near constant, which a board's offset absorbs), only our raw-average floor is gone.
     for (int k = 0; k < kKnots; ++k) {
         const int c = k << kKnotShift;
         const int lo = std::max(0, c - 32), hi = std::min(4095, c + 31);
@@ -158,19 +159,24 @@ float ADC_ESP32_Cont::rawToMv(float raw) const {
 }
 
 // Universal ESP32-S3 ADC1 INL at 12 dB, in pin mV, added to the IDF curve-fitting output. Fitted
-// jointly on two boards (fboost, fmetal; 200k/7.5k dividers) against an INA228 traced to an
-// HP3458A, 412 rungs 16.5..74.5 V, 2026-10-09/10 (pwr-metering ina228-u-4ref-dense). Legendre
-// P2..P5 only, so it carries no gain or offset of its own: a board's gain/offset stays in
-// sensor.conf <ch>_gain/<ch>_offset. Held out per board: ~100 -> ~37 mV rms input-referred.
-// Outside the fitted 571..2659 mV it holds its edge value rather than extrapolate.
+// jointly on two boards (fboost, fmetal: ch3, 200k/7.5k dividers) against an INA228 traced to an
+// HP3458A, 412 rungs 16.5..74.5 V, 2026-10-09/10; data, fit and plots in pwr-metering
+// doc/esp32-adc/. Legendre P2..P5 only, so inside the fitted 570..2658 mV it carries no gain or
+// offset of its own: a board's gain/offset goes in sensor.conf <ch>_gain/<ch>_offset. With
+// another board's curve and a 2-point gain/offset, ~100 -> ~40 mV rms input-referred.
+// Outside the fitted range nothing was measured: the edge value tapers to 0 over kTaper.
 float ADC_ESP32_Cont::inlDelta(float mv) {
-    constexpr float kMid = 1615.f, kHalf = 1044.f;
-    constexpr float c[] = {-1.868178f, -15.276578f, 13.885663f, 34.574096f, -13.801880f, -12.758385f};
-    float x = (mv - kMid) * (1.f / kHalf);
-    x = x < -1.f ? -1.f : x > 1.f ? 1.f : x;
+    constexpr float kMid = 1614.f, kHalf = 1044.f, kTaper = 0.25f; // kTaper in x: 261 mV
+    constexpr float c[] = {-1.857867f, -15.291911f, 13.835471f, 34.598457f, -13.769783f, -12.756713f};
+    float x = (mv - kMid) * (1.f / kHalf), w = 1.f;
+    if (x < -1.f || x > 1.f) {
+        w = 1.f - (fabsf(x) - 1.f) * (1.f / kTaper);
+        if (w <= 0.f) return 0.f;
+        x = x < 0.f ? -1.f : 1.f;
+    }
     float y = c[5];
     for (int i = 4; i >= 0; --i) y = y * x + c[i];
-    return y;
+    return y * w;
 }
 
 uint32_t ADC_ESP32_Cont::read(SampleCallback &&newSampleCallback) {

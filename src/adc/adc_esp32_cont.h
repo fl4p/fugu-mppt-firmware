@@ -60,13 +60,13 @@ private:
 
     ChAvgBuf avgBuf[adc_channel_t::ADC_CHANNEL_9 + 1]{};
 
-    // raw code -> mV at maxAtten, knots every 64 codes. adc_cali_raw_to_voltage() takes an integer
-    // code and returns integer mV (two truncations, ~25 mV input-referred through a 28:1 divider);
-    // the table lets a fractional code average be converted without either. Built once in start().
+    // raw code -> mV at maxAtten, knots every 64 codes. adc_cali_raw_to_voltage() only takes an
+    // integer code, so the code average used to be floored first (-0.37 mV, ~10 mV input-referred
+    // on 28:1, plus a staircase); the table converts the fractional average. Built once in start().
     static constexpr int kKnotShift = 6, kKnots = (4096 >> kKnotShift) + 1;
     float mvKnot_[kKnots]{};
     adc_atten_t knotAtten_ = ADC_ATTEN_NA;
-    bool inlCorr_ = true;
+    bool inlCorr_ = false; // opt-in: shifts readings by up to +-0.23 V on 28:1, calibrate with it
 
     void buildMvTable();
     float rawToMv(float raw) const;
@@ -81,7 +81,7 @@ public:
         // ChAvgBuf::num is 10-bit: avgNum>=1024 would wrap before reaching the count and starve the
         // channel; agg is 22-bit and holds 1023*4095 with margin, so 1..1023 is safe.
         assert_throw(avgNum >= 1 && avgNum <= 1023, "esp32adc1_avg must be 1..1023");
-        inlCorr_ = sensConf.getByte("esp32adc1_inl", 1);
+        inlCorr_ = sensConf.getByte("esp32adc1_inl", 0);
     }
 
     bool init(const ConfFile &boardConf) override {

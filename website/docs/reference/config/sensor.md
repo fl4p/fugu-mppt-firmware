@@ -21,7 +21,7 @@ The following keys apply to all channels:
 | `despike`                        |      | float  | 0       | Glitch-safe median outlier threshold (running mean-deviation units): 0 = off (legacy unconditional median); ~8 enables (lower = clips more). Passes dense load pulses through (unbiased current) but still clips impulse glitches |
 | `esp32adc1_sr`                   | Hz   | int    | —       | Internal ADC1 continuous-mode raw sample rate (required with `esp32adc1`) |
 | `esp32adc1_avg`                  |      | int    | —       | Software average of N raw conversions per delivered sample (1–1023, required with `esp32adc1`) |
-| `esp32adc1_inl`                  |      | bool   | 1       | Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation only; about ±0.2 V of S-curve on a 28:1 divider). It carries no gain or offset, so calibrate each board with `_gain`/`_offset` |
+| `esp32adc1_inl`                  |      | bool   | 0       | Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation only). It removes a ±0.2 V S-curve on a 28:1 divider between ~0.57 and ~2.66 V at the pin and tapers to zero outside that range. It has no gain or offset of its own, so set it together with each voltage channel's `_gain`/`_offset`. It applies to every ADC1 channel, including NTC and current |
 
 The following per-channel keys take the prefix `vin_`, `vout_`, `iin_`, `iout_`, or `ntc_`:
 

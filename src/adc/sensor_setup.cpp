@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <esp_heap_caps.h>
 
+#include <cmath>
 #include <string>
 #include <unordered_map>
 
@@ -166,6 +167,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
                 const float gain = sensConf.f(chn + '_' + "gain", 1.f);
                 const float offset = sensConf.f(chn + '_' + "offset", 0.f);
                 assert_throw(gain > 0.5f && gain < 2.f, "v*_gain out of range (0.5, 2)");
+                assert_throw(std::isfinite(offset) && fabsf(offset) < 10.f, "v*_offset out of range (-10, 10) V");
                 lt.factor *= gain;
                 lt.midpoint -= offset / lt.factor;
             } else if (chn[0] == 'i') {
