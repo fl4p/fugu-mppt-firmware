@@ -88,8 +88,11 @@ inline void rejectLimitRoleKeys(const ConfFile &lim, bool boost) {
 // Value of the side key that plays role limit `roleKey`.
 inline float readMappedLimit(const ConfFile &lim, const std::string &roleKey, bool boost) {
     const auto key = limitSideKey(roleKey, boost);
-    if (!lim.has(key))
-        throw std::runtime_error("limits.conf: missing " + key + " (" + roleKey + " under topo=" +
+    if (!lim.has(key)) {
+        std::string role = roleKey.substr(0, roleKey.size() - 4); // vin_max -> "Vin max"
+        role[0] = (char) (role[0] - 'a' + 'A');
+        throw std::runtime_error("limits.conf: missing " + key + " (" + role + " max under topo=" +
                                  (boost ? "boost" : "buck") + ")");
+    }
     return lim.getFloat(key);
 }

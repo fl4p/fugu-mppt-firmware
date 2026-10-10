@@ -115,7 +115,7 @@ int main() {
 
     // a missing side limit names the key and the role it plays
     EXPECT(thrown([&] { readMappedLimit(ConfFile{{"lv_max", "60"}}, "vout_max", true); }) ==
-           "limits.conf: missing hv_max (vout_max under topo=boost)");
+           "limits.conf: missing hv_max (Vout max under topo=boost)");
 
     if (failures) {
         std::printf("%d failure(s)\n", failures);
