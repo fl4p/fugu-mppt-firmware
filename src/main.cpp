@@ -59,6 +59,7 @@
 #endif
 
 #include "storage/key-value.h"
+#include "conf_hash.h"
 #include "app_state.h"
 
 #include <esp_task_wdt.h>
@@ -456,6 +457,9 @@ __attribute__((cold)) void setup() {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
         g_app.setupErr = true;
     }
+    // Fingerprint the config as loaded at boot (conf-hash compares it with the current files to
+    // reveal set-config writes not yet applied by a restart). Read-only, before any conf is parsed.
+    confHashCaptureBoot();
 
 #ifdef WITH_USB_MSC
     usbDevBegin();

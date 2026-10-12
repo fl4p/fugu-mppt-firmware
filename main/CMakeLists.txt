@@ -125,6 +125,7 @@ idf_component_register(SRCS
         "../src/adc/adc_esp32_cont.cpp"
         "../src/viz/lcd.cpp"
         "../src/console.cpp"
+        "../src/conf_hash.cpp"
         "../src/etc/rt.cpp"
         "../src/math/float16.cpp"
         ${NETW_SRC}

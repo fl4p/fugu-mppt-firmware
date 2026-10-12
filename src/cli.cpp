@@ -7,6 +7,7 @@
 #include <WiFi.h>
 #endif
 #include <cmath>
+#include <cinttypes>
 #include <cstring>
 #include <cstdio>
 #include <dirent.h>
@@ -48,6 +49,7 @@
 #include "service.h"
 #include "viz/led.h"
 #include "storage/key-value.h"
+#include "conf_hash.h"
 #ifdef WITH_NETW
 #include "tele/telemetry.h"     // connect_wifi_async, add_ap
 #include "etc/ota.h"            // doOta
@@ -1548,6 +1550,46 @@ static void cmdGetConfig(cmd *c) {
     }
 }
 
+// conf-hash — read-only fingerprint of the configuration, so a bench run can record exactly which
+// config a board ran with (definition: conf_hash.h, host reference: etc/conf_hash.py). One fact per
+// line; any read failure prints `sha256=unknown ... error=<msg>` and fails the command, never a hash
+// of a partial read. `boot` is the same conf hash taken at mount time during boot: if it differs
+// from `sha256`, set-config writes are waiting for a restart. The output is a dozen short lines,
+// well inside the BLE console's log-FIFO share, so it is logged line by line like get-config.
+static void cmdConfHash(cmd *) {
+    bool failed = false;
+    const auto &boot = confHashBoot();
+    const std::string bootHex = boot.ok ? confHashHex(boot.sha, 32) : "unknown";
+
+    ConfHashResult now;
+    if (confHashCompute(now, true)) {
+        UART_LOG("conf sha256=%s boot=%s files=%" PRIu32 " bytes=%" PRIu64 " excluded=%s",
+                 confHashHex(now.sha, 32).c_str(), bootHex.c_str(), now.files, now.bytes, CONF_HASH_EXCLUDED);
+        for (const auto &f: now.perFile)
+            UART_LOG("conf-file %s sha256=%s bytes=%" PRIu32, f.relpath.c_str(),
+                     confHashHex(f.sha, 8).c_str(), f.bytes);
+    } else {
+        failed = true;
+        UART_LOG("conf sha256=unknown boot=%s excluded=%s error=%s", bootHex.c_str(), CONF_HASH_EXCLUDED,
+                 now.err.c_str());
+    }
+    if (!boot.ok)
+        UART_LOG("conf-boot error=%s", boot.err.c_str());
+
+    NvsHashResult nv;
+    if (nvsHashCompute(nv, "storage")) {
+        UART_LOG("nvs sha256=%s keys=%" PRIu32 " unreadable=0 ns=storage", confHashHex(nv.sha, 32).c_str(), nv.keys);
+    } else {
+        failed = true;
+        UART_LOG("nvs sha256=unknown keys=%" PRIu32 " unreadable=%" PRIu32 " ns=storage error=%s",
+                 nv.keys, nv.unreadable, nv.err.c_str());
+        for (const auto &k: nv.unreadableKeys)
+            UART_LOG("nvs-unreadable %s", k.c_str());
+    }
+    if (failed)
+        CMD_FAIL_RETURN("conf-hash: failed, see error= above");
+}
+
 // conf-check — re-read the parameter confs and warn about keys no loader reads (typos / obsolete,
 // e.g. cv_min when the firmware reads cv_float). Reuses the real loaders (pure: no hardware side
 // effects) so the recognized-key set never drifts. Unlike the boot-time check this runs in console
@@ -2216,6 +2258,7 @@ void setupCli() {
     cli.addBoundlessCmd("set-config,setc", cmdSetConfig);
     cli.addBoundlessCmd("del-config,delc", cmdDelConfig);
     cli.addBoundlessCmd("get-config,getc", cmdGetConfig);
+    cli.addCommand("conf-hash,confhash", cmdConfHash);
     cli.addBoundlessCmd("conf-check,confcheck", cmdConfCheck);
     cli.addBoundlessCmd("service,svc", cmdService);
     cli.addSingleArgCmd("sleep", cmdSleep);
