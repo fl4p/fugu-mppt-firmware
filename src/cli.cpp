@@ -1552,8 +1552,9 @@ static void cmdGetConfig(cmd *c) {
 
 // conf-hash — read-only fingerprint of the configuration, so a bench run can record exactly which
 // config a board ran with (definition: conf_hash.h, host reference: etc/conf_hash.py). One fact per
-// line; any read failure prints `sha256=unknown ... error=<msg>` and fails the command, never a hash
-// of a partial read. `boot` is the same conf hash taken at mount time during boot: if it differs
+// line. Secret values (passkey, passwords, PSKs) are redacted before hashing, see conf_hash.h, and
+// `redacted=` counts them. Any read failure prints `sha256=unknown ... error=<msg>` and fails the
+// command, never a hash of a partial read. `boot` is the same conf hash taken at mount time during boot: if it differs
 // from `sha256`, set-config writes are waiting for a restart. The output is a dozen short lines,
 // well inside the BLE console's log-FIFO share, so it is logged line by line like get-config.
 static void cmdConfHash(cmd *) {
@@ -1563,11 +1564,12 @@ static void cmdConfHash(cmd *) {
 
     ConfHashResult now;
     if (confHashCompute(now, true)) {
-        UART_LOG("conf sha256=%s boot=%s files=%" PRIu32 " bytes=%" PRIu64 " excluded=%s",
-                 confHashHex(now.sha, 32).c_str(), bootHex.c_str(), now.files, now.bytes, CONF_HASH_EXCLUDED);
+        UART_LOG("conf sha256=%s boot=%s files=%" PRIu32 " bytes=%" PRIu64 " redacted=%" PRIu32 " excluded=%s",
+                 confHashHex(now.sha, 32).c_str(), bootHex.c_str(), now.files, now.bytes, now.redacted,
+                 CONF_HASH_EXCLUDED);
         for (const auto &f: now.perFile)
-            UART_LOG("conf-file %s sha256=%s bytes=%" PRIu32, f.relpath.c_str(),
-                     confHashHex(f.sha, 8).c_str(), f.bytes);
+            UART_LOG("conf-file %s sha256=%s bytes=%" PRIu32 " redacted=%" PRIu32, f.relpath.c_str(),
+                     confHashHex(f.sha, 8).c_str(), f.bytes, f.redacted);
     } else {
         failed = true;
         UART_LOG("conf sha256=unknown boot=%s excluded=%s error=%s", bootHex.c_str(), CONF_HASH_EXCLUDED,
@@ -1578,11 +1580,12 @@ static void cmdConfHash(cmd *) {
 
     NvsHashResult nv;
     if (nvsHashCompute(nv, "storage")) {
-        UART_LOG("nvs sha256=%s keys=%" PRIu32 " unreadable=0 ns=storage", confHashHex(nv.sha, 32).c_str(), nv.keys);
+        UART_LOG("nvs sha256=%s keys=%" PRIu32 " redacted=%" PRIu32 " unreadable=0 ns=storage",
+                 confHashHex(nv.sha, 32).c_str(), nv.keys, nv.redacted);
     } else {
         failed = true;
-        UART_LOG("nvs sha256=unknown keys=%" PRIu32 " unreadable=%" PRIu32 " ns=storage error=%s",
-                 nv.keys, nv.unreadable, nv.err.c_str());
+        UART_LOG("nvs sha256=unknown keys=%" PRIu32 " redacted=%" PRIu32 " unreadable=%" PRIu32
+                 " ns=storage error=%s", nv.keys, nv.redacted, nv.unreadable, nv.err.c_str());
         for (const auto &k: nv.unreadableKeys)
             UART_LOG("nvs-unreadable %s", k.c_str());
     }

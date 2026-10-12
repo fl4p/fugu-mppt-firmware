@@ -80,7 +80,7 @@ Hardware and runtime parameters live in `.conf` files on the device's littlefs p
 | `set-config <file> <key> <value>` (alias `setc`) | Set a key in a config file and persist it to flash. |
 | `del-config <file> <key>` (alias `delc`) | Remove a key; the whole line, including any inline comment, is deleted. |
 | `get-config <file> [<key>]` (alias `getc`) | Print a single key, or dump every key if `<key>` is omitted. |
-| `conf-hash` (alias `confhash`) | Read-only fingerprint of the configuration: SHA-256 over the files in `/littlefs/conf` (now and as loaded at boot), one hash per file, and a hash of the app's NVS namespace. See [Config fingerprint](#config-fingerprint). |
+| `conf-hash` (alias `confhash`) | Read-only fingerprint of the configuration: SHA-256 over the files in `/littlefs/conf` (now and as loaded at boot), one hash per file, and a hash of the app's NVS namespace, with secret values redacted. See [Config fingerprint](#config-fingerprint). |
 | `conf-check` (alias `confcheck`) | Re-read `charger.conf`/`limits.conf` and warn about keys no loader reads (typos / obsolete, e.g. `cv_min` where the firmware reads `cv_float`), and print why a `limits.conf` does not load (e.g. a leftover role key, with its side replacement). Same check runs at boot for the parameter confs. |
 
 The following examples set, delete, read, and check keys:
@@ -111,9 +111,9 @@ setup at boot until it is migrated; see [Migrating from role keys](config/sensor
 output has one fact per line:
 
 ```
-conf sha256=<64 hex> boot=<64 hex|unknown> files=<N> bytes=<M> excluded=wifi.conf
-conf-file <relpath> sha256=<first 16 hex> bytes=<n>      (one line per hashed file)
-nvs sha256=<64 hex> keys=<K> unreadable=0 ns=storage
+conf sha256=<64 hex> boot=<64 hex|unknown> files=<N> bytes=<M> redacted=<R> excluded=wifi.conf
+conf-file <relpath> sha256=<first 16 hex> bytes=<n> redacted=<r>   (one line per hashed file)
+nvs sha256=<64 hex> keys=<K> redacted=<S> unreadable=0 ns=storage
 ```
 
 - `sha256` is computed over the files in `/littlefs/conf` as they are on flash when the command
@@ -121,33 +121,48 @@ nvs sha256=<64 hex> keys=<K> unreadable=0 ns=storage
   device is running with a config that `set-config`/`del-config` (or a file upload) has since
   changed, and a restart is needed to apply it. `boot=unknown` means the boot-time hash could not
   be computed, and a `conf-boot error=<reason>` line follows.
-- `wifi.conf` is always excluded, because it holds the Wi-Fi passphrase and a published hash of a
-  short passphrase can be brute-forced offline.
-- The `conf-file` hash is plain SHA-256 of the file's bytes, so a mismatch can be traced to one file
-  with `sha256sum`.
-- The `nvs` hash covers only the firmware's own NVS namespace `storage` (hostname and a few Wi-Fi and boot
-  flags). Other namespaces, such as the Wi-Fi driver's stored credentials, are
-  not included.
+- Secret values are never hashed, because a published hash of a short secret (a 6-digit BLE
+  passkey, a dictionary password) can be brute-forced offline. `wifi.conf` is excluded entirely.
+  In every other file, the value of each secret key is replaced by `<redacted>` before hashing (see
+  the definition below), and `redacted=` counts the replaced values. Changing only a secret value
+  therefore does not change any hash.
+- The `conf-file` hash is SHA-256 of the file's **redacted** content, and `bytes=` is the redacted
+  length. It equals `sha256sum` of the file only when that line shows `redacted=0`.
+- The `nvs` hash covers only the firmware's own NVS namespace `storage` (hostname and a few Wi-Fi,
+  FTP and boot settings). Entries with a secret key are not read; `redacted=` counts them. Other
+  namespaces, such as the Wi-Fi driver's stored credentials, are not included.
 
 Any read error is reported, never hashed: the affected line prints `sha256=unknown ... error=<reason>`
 (for NVS also `nvs-unreadable <key>:<type>:<error>` lines), and the command fails. A missing
 `/littlefs/conf` is an error, not the hash of an empty set.
 
-The hash is byte-exact over the files, not over parsed keys, so a host can recompute it from a
+The hash is computed over the file bytes, not over parsed keys, so a host can recompute it from a
 backup or a littlefs dump. `etc/conf_hash.py <dir>` is the reference implementation; it prints the
 same `conf` and `conf-file` lines (without `boot=`). `<dir>` may be the conf directory or a directory
 containing `conf/` (a profile under `config/`, or the output of `etc/dump_littlefs.py`).
+
+A key is a **secret key** if, compared case-insensitively, it contains `pass`, `psk`, `passkey`,
+`password`, `secret` or `token`, or ends in `_key`. Today this matches `ble_passkey` (`ble.conf`),
+`password` (`mqtt.conf`), `ftp_pass` (`ftp.conf` and NVS) and `wifi_psk` (NVS).
 
 The `conf` hash is defined as follows:
 
 1. Take every regular file below `/littlefs/conf`, recursively, as a `/`-separated path relative
    to it, except the top-level `wifi.conf`.
 2. Sort the paths bytewise.
-3. For each file, feed `<relpath>` `\0` `<length in decimal>` `\0` `<raw bytes>` into one SHA-256.
+3. Redact each file line by line (lines end at `\n`, which is kept). As the config parser does,
+   the text before the first `#` is live. If it contains `=`, the key is the text before the first
+   `=` and the value the text after it, both with surrounding whitespace trimmed. If the key is a
+   secret key, the value bytes are replaced by `<redacted>`, or `<redacted>` is inserted right after
+   the `=` if the value is empty. All other bytes, including inline comments, stay as they are.
+   Commented-out lines such as `# ble_passkey=123456` are not live and stay verbatim.
+4. For each file, feed `<relpath>` `\0` `<length of the redacted content, decimal>` `\0`
+   `<redacted content>` into one SHA-256.
 
 The `nvs` hash sorts the entries by key and feeds `<key>` `\0` `<type>` `\0` `<length in decimal>`
 `\0` `<value bytes>` for each, where `<type>` is one of `u8 i8 u16 i16 u32 i32 u64 i64 str blob`,
-integers are little-endian at their native width, and strings exclude the terminating NUL.
+integers are little-endian at their native width, and strings exclude the terminating NUL. An
+entry with a secret key feeds only `<key>` `\0` `redacted`.
 
 ## Charger Commands
 

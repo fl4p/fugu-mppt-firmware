@@ -120,6 +120,55 @@ bool collect(const std::string &root, const std::string &rel, int depth,
     return ok;
 }
 
+// --- secret redaction -------------------------------------------------------------------------
+
+constexpr size_t READ_BUF = 512;
+
+struct RedactStats {
+    uint64_t rawBytes = 0;
+    uint64_t outBytes = 0;
+    uint32_t redacted = 0;
+};
+
+// Stream the redacted content of a file into a and b (either may be null), line by line.
+bool redactFile(const std::string &full, uint8_t *buf, Sha256 *a, Sha256 *b, RedactStats &st,
+                std::string &err) {
+    st = RedactStats{};
+    FILE *f = fopen(full.c_str(), "rb");
+    if (!f) { err = "open " + full + ": " + strerror(errno); return false; }
+    struct stat fs;
+    if (fstat(fileno(f), &fs) != 0) {
+        err = "fstat " + full + ": " + strerror(errno);
+        fclose(f);
+        return false;
+    }
+    std::string line, red;
+    auto emit = [&]() {
+        if (confRedactLine(line, red)) st.redacted++;
+        if (a) a->updateStr(red);
+        if (b) b->updateStr(red);
+        st.outBytes += red.size();
+        line.clear();
+    };
+    bool ok = true;
+    for (;;) {
+        size_t n = fread(buf, 1, READ_BUF, f);
+        st.rawBytes += n;
+        for (size_t i = 0; i < n; ++i) {
+            line.push_back((char) buf[i]);
+            // Split exactly where ConfFile's fgets(buf, 256) does: after '\n' or 255 bytes.
+            if (buf[i] == '\n' || line.size() == CONF_LINE_CHUNK) emit();
+        }
+        if (n < READ_BUF) break;
+    }
+    if (ok && ferror(f)) { err = "read error " + full; ok = false; }
+    fclose(f);
+    if (!ok) return false;
+    if (!line.empty()) emit(); // last line without '\n'
+    if (st.rawBytes != (uint64_t) fs.st_size) { err = "size changed while reading " + full; return false; }
+    return true;
+}
+
 ConfHashResult s_boot = [] {
     ConfHashResult r;
     r.err = "not computed";
@@ -158,46 +207,33 @@ bool confHashCompute(ConfHashResult &out, bool perFile) {
     // std::string's operator< compares via char_traits<char>, i.e. as unsigned char: bytewise.
     std::sort(files.begin(), files.end());
 
-    constexpr size_t BUF = 1024;
-    std::unique_ptr<uint8_t[]> buf(new(std::nothrow) uint8_t[BUF]);
+    std::unique_ptr<uint8_t[]> buf(new(std::nothrow) uint8_t[READ_BUF]);
     if (!buf) return fail("out of memory");
 
     Sha256 all;
     for (const auto &rel: files) {
         const std::string full = root + "/" + rel;
-        FILE *f = fopen(full.c_str(), "rb");
-        if (!f) return fail("open " + full + ": " + strerror(errno));
-        struct stat fs;
-        if (fstat(fileno(f), &fs) != 0) {
-            int e = errno;
-            fclose(f);
-            return fail("fstat " + full + ": " + strerror(e));
-        }
-        const uint64_t size = (uint64_t) fs.st_size;
+        // Two passes: the redacted length is hashed before the redacted content, and the content is
+        // streamed line by line rather than buffered. Both passes must see the same file.
+        RedactStats p1, p2;
+        if (!redactFile(full, buf.get(), nullptr, nullptr, p1, err)) return fail(err);
         all.updateStr(rel);
         all.updateNul();
-        all.updateDec(size);
+        all.updateDec(p1.outBytes);
         all.updateNul();
         Sha256 one;
-        uint64_t total = 0;
-        for (;;) {
-            size_t n = fread(buf.get(), 1, BUF, f);
-            if (n) { all.update(buf.get(), n); one.update(buf.get(), n); total += n; }
-            if (n < BUF) break;
-        }
-        bool rdErr = ferror(f) != 0;
-        fclose(f);
-        if (rdErr) return fail("read error " + full);
-        // The length was hashed before the content; a file that changed size under us would make
-        // the hash describe neither the old nor the new file.
-        if (total != size) return fail("size changed while reading " + full);
+        if (!redactFile(full, buf.get(), &all, &one, p2, err)) return fail(err);
+        if (p1.rawBytes != p2.rawBytes || p1.outBytes != p2.outBytes || p1.redacted != p2.redacted)
+            return fail("file changed while reading " + full);
         ConfHashFile cf;
         cf.relpath = rel;
-        cf.bytes = (uint32_t) size;
+        cf.bytes = (uint32_t) p2.outBytes;
+        cf.redacted = p2.redacted;
         if (!one.finish(cf.sha)) return fail("sha256 failed");
         if (perFile) out.perFile.push_back(std::move(cf));
         out.files++;
-        out.bytes += size;
+        out.bytes += p2.outBytes;
+        out.redacted += p2.redacted;
     }
     if (!all.finish(out.sha)) return fail("sha256 failed");
     out.ok = true;
@@ -294,6 +330,13 @@ bool nvsHashCompute(NvsHashResult &out, const char *ns) {
     Sha256 sha;
     std::string v;
     for (const auto &en: entries) {
+        if (confHashIsSecretKey(en.key)) { // never read: contributes only  key '\0' "redacted"
+            sha.updateStr(en.key);
+            sha.updateNul();
+            sha.update("redacted", 8);
+            out.redacted++;
+            continue;
+        }
         const char *tn = nvsTypeName(en.type);
         e = tn ? nvsReadValue(h, en.key.c_str(), en.type, v) : ESP_ERR_NOT_SUPPORTED;
         if (e != ESP_OK) {

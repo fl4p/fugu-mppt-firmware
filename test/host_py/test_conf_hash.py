@@ -57,13 +57,14 @@ class ConfHashTest(unittest.TestCase):
         self.assertEqual(conf_hash.list_files(self.conf), EXPECTED_ORDER)
 
     def test_digest_matches_definition(self):
-        sha, files, total = conf_hash.conf_hash(self.conf)
+        sha, files, total, redacted = conf_hash.conf_hash(self.conf)
+        self.assertEqual(redacted, 0)
         self.assertEqual(sha, _by_hand(self.conf))
         # Frozen value: a change here is a change of the wire definition shared with the firmware.
         self.assertEqual(sha, "280be720036dbc75cd7420b7c96ea303e097c576eca66ba6f27d439b411417df")
         self.assertEqual(total, sum(len((self.conf / r).read_bytes()) for r in EXPECTED_ORDER))
         self.assertEqual([f[0] for f in files], EXPECTED_ORDER)
-        self.assertEqual(dict((r, s) for r, s, _ in files)["board.conf"],
+        self.assertEqual(dict((r, s) for r, s, _, _ in files)["board.conf"],
                          hashlib.sha256(b"mcu=esp32s3\n").hexdigest())
 
     def test_wifi_conf_does_not_affect_hash(self):
@@ -99,7 +100,7 @@ class ConfHashTest(unittest.TestCase):
         e = self.dir / "empty"
         e.mkdir()
         (e / "wifi.conf").write_bytes(b"psk=x\n")
-        self.assertEqual(conf_hash.conf_hash(e), (hashlib.sha256(b"").hexdigest(), [], 0))
+        self.assertEqual(conf_hash.conf_hash(e), (hashlib.sha256(b"").hexdigest(), [], 0, 0))
 
     def test_resolve_profile_dir_and_cli_lines(self):
         self.assertEqual(conf_hash.resolve_conf_dir(self.dir), self.conf)
@@ -109,9 +110,9 @@ class ConfHashTest(unittest.TestCase):
             self.assertEqual(conf_hash.main([str(self.dir)]), 0)
         lines = out.getvalue().splitlines()
         sha = _by_hand(self.conf)
-        self.assertRegex(lines[0], r"^conf sha256=[0-9a-f]{64} files=6 bytes=\d+ excluded=wifi\.conf$")
+        self.assertRegex(lines[0], r"^conf sha256=[0-9a-f]{64} files=6 bytes=\d+ redacted=0 excluded=wifi\.conf$")
         self.assertIn(f"sha256={sha} ", lines[0])
-        self.assertEqual(lines[1], "conf-file Z.conf sha256=%s bytes=8"
+        self.assertEqual(lines[1], "conf-file Z.conf sha256=%s bytes=8 redacted=0"
                          % hashlib.sha256(b"\x00\xff raw\r\n").hexdigest()[:16])
         self.assertEqual(len(lines), 1 + len(EXPECTED_ORDER))
 
@@ -142,6 +143,111 @@ class NvsHashTest(unittest.TestCase):
         self.assertEqual(conf_hash.nvs_hash([]), hashlib.sha256(b"").hexdigest())
         self.assertEqual(conf_hash.nvs_hash([("wsync_arm", "str", "")]),
                          hashlib.sha256(b"wsync_arm\0str\x000\0").hexdigest())
+
+
+class RedactionTest(unittest.TestCase):
+    SECRET_A = (b"# ble_passkey=111111\n"          # commented: not live, hashed verbatim
+                b"ble_security=passkey\n"
+                b"ble_passkey = 123456 \r\n"
+                b"password=hunter2 # inline comment kept\n"
+                b"ftp_pass=\n"
+                b"API_TOKEN=abc\n"
+                b"cloud_key=k1")
+    SECRET_B = SECRET_A.replace(b"123456", b"999999").replace(b"hunter2", b"correct horse") \
+        .replace(b"ftp_pass=\n", b"ftp_pass=secret2\n").replace(b"=abc", b"=zz").replace(b"=k1", b"=k2")
+    # Written out by hand from the definition: only the live secret values are replaced.
+    EXPECTED = (b"# ble_passkey=111111\n"
+                b"ble_security=passkey\n"
+                b"ble_passkey = <redacted> \r\n"
+                b"password=<redacted> # inline comment kept\n"
+                b"ftp_pass=<redacted>\n"
+                b"API_TOKEN=<redacted>\n"
+                b"cloud_key=<redacted>")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _dir(self, name, content, extra=b"vout_max=29\n"):
+        d = self.root / name
+        d.mkdir()
+        (d / "ble.conf").write_bytes(content)
+        (d / "charger.conf").write_bytes(extra)
+        return d
+
+    def test_long_lines_split_like_fgets(self):
+        # ConfFile's fgets(buf, 256) parses this as a 255-byte chunk and then "password=hunter2\n".
+        data = b"x=" + b"a" * 253 + b"password=hunter2\n"
+        self.assertEqual(conf_hash.redact(data), (b"x=" + b"a" * 253 + b"password=<redacted>\n", 1))
+
+    def test_text_after_nul_is_not_live(self):
+        self.assertEqual(conf_hash.redact(b"x=1\0password=2\n"), (b"x=1\0password=2\n", 0))
+        self.assertEqual(conf_hash.redact(b"psk=1\0#x\n"), (b"psk=<redacted>\0#x\n", 1))
+
+    def test_secret_keys(self):
+        for k in ["ble_passkey", "password", "ftp_pass", "wifi_psk", "API_TOKEN", "my_secret", "cloud_key",
+                  "Password"]:
+            self.assertTrue(conf_hash.is_secret_key(k), k)
+        for k in ["ftp_user", "username", "ble_security", "hostname", "broker_uri", "keys", "key_x",
+                  "vout_max"]:
+            self.assertFalse(conf_hash.is_secret_key(k), k)
+
+    def test_redacted_stream_matches_definition(self):
+        self.assertEqual(conf_hash.redact(self.SECRET_A), (self.EXPECTED, 5))
+        self.assertEqual(conf_hash.redact(self.SECRET_B), (self.EXPECTED, 5))
+
+    def test_secret_values_do_not_affect_hash_and_length_is_redacted(self):
+        a = conf_hash.conf_hash(self._dir("a", self.SECRET_A))
+        b = conf_hash.conf_hash(self._dir("b", self.SECRET_B))
+        self.assertEqual(a, b)
+        sha, files, total, redacted = a
+        self.assertEqual(redacted, 5)
+        self.assertEqual(files[0], ("ble.conf", hashlib.sha256(self.EXPECTED).hexdigest(),
+                                    len(self.EXPECTED), 5))
+        h = hashlib.sha256()
+        h.update(b"ble.conf\0" + str(len(self.EXPECTED)).encode() + b"\0" + self.EXPECTED)
+        h.update(b"charger.conf\0" + b"12\0" + b"vout_max=29\n")
+        self.assertEqual(sha, h.hexdigest())
+        self.assertEqual(total, len(self.EXPECTED) + 12)
+
+    def test_commented_secret_is_hashed_verbatim(self):
+        a = conf_hash.conf_hash(self._dir("a", self.SECRET_A))[0]
+        b = conf_hash.conf_hash(self._dir("b", self.SECRET_A.replace(b"111111", b"222222")))[0]
+        self.assertNotEqual(a, b)
+
+    def test_non_secret_change_still_changes_hash(self):
+        a = conf_hash.conf_hash(self._dir("a", self.SECRET_A))[0]
+        b = conf_hash.conf_hash(self._dir("b", self.SECRET_A.replace(b"ble_security=passkey",
+                                                                   b"ble_security=justworks")))[0]
+        c = conf_hash.conf_hash(self._dir("c", self.SECRET_A, extra=b"vout_max=28\n"))[0]
+        self.assertNotEqual(a, b)
+        self.assertNotEqual(a, c)
+
+    def test_cli_reports_redaction(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(conf_hash.main([str(self._dir("a", self.SECRET_A))]), 0)
+        lines = out.getvalue().splitlines()
+        self.assertRegex(lines[0], r" redacted=5 excluded=wifi\.conf$")
+        self.assertRegex(lines[1], r"^conf-file ble\.conf sha256=[0-9a-f]{16} bytes=%d redacted=5$"
+                         % len(self.EXPECTED))
+        self.assertTrue(lines[2].endswith(" redacted=0"))
+
+
+class NvsRedactionTest(unittest.TestCase):
+    def test_secret_entries_contribute_key_only(self):
+        a = [("hostname", "str", "dev1"), ("wifi_psk", "str", "pw-one"), ("ftp_pass", "str", "x")]
+        b = [("hostname", "str", "dev1"), ("wifi_psk", "str", "a much longer pw"), ("ftp_pass", "str", "")]
+        h = hashlib.sha256()
+        h.update(b"ftp_pass\0redacted")
+        h.update(b"hostname\0str\x004\0dev1")
+        h.update(b"wifi_psk\0redacted")
+        self.assertEqual(conf_hash.nvs_hash(a), h.hexdigest())
+        self.assertEqual(conf_hash.nvs_hash(b), h.hexdigest())
+        self.assertNotEqual(conf_hash.nvs_hash(a), conf_hash.nvs_hash([("hostname", "str", "dev2")] + a[1:]))
 
 
 if __name__ == "__main__":
