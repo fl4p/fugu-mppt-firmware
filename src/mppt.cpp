@@ -542,11 +542,16 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     pdLoadGains(converterConf, IoutCurrentController, "iout");
     pdLoadGains(converterConf, powerController, "power");
 
-    float frac = trackerConf.getFloat("target_duty_cycle", 0.0f);
-    if (std::isfinite(frac) && frac > 0.0f && frac <= 1.0f)
-        targetPwmCnt = (uint16_t) std::round(frac * (float) converter.pwmMaxDriver());
-    else
-        targetPwmCnt = 0;
+    // tracker.conf::target_duty_cycle boots into manual PWM at that fixed duty (0-1 of
+    // pwmMaxDriver). An EXPLICIT 0 boots into manual PWM at duty 0 -- converter off, as after
+    // `dc 0` -- so a bench board stays still on power-up; only an ABSENT key boots into MPPT.
+    // (Before, 0 read as "unset" and the board swept on every power-up.)
+    const float frac = trackerConf.getFloat("target_duty_cycle", NAN);
+    const bool fixedDuty = std::isfinite(frac) && frac >= 0.0f && frac <= 1.0f;
+    targetPwmCnt = fixedDuty ? (uint16_t) std::round(frac * (float) converter.pwmMaxDriver()) : 0;
+    const bool bootManualZero = fixedDuty && !targetPwmCnt;
+    if (!fixedDuty && !std::isnan(frac))
+        ESP_LOGE("mppt", "tracker.conf::target_duty_cycle=%.3f outside [0,1], ignored (MPPT)", frac);
 
     if (targetPwmCnt) {
         g_app.opMode = OpMode::Manual;
@@ -554,11 +559,15 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
                            std::memory_order_relaxed);
         ESP_LOGW("mppt", "target duty cycle PWM=%hu, manual mode (fixed duty), pwmMaxDriver=%u",
                  targetPwmCnt, (unsigned) converter.pwmMaxDriver());
+    } else if (bootManualZero) {
+        g_app.opMode = OpMode::Manual;
+        manualTarget.store(0, std::memory_order_relaxed);
+        ESP_LOGW("mppt", "target_duty_cycle=0: manual mode at duty 0 (converter off, no sweep)");
     }
 
     auto mode = converterConf.getString("mode", "");
     bool psuBootQueued = false;
-    if (targetPwmCnt && (mode == "psu" || mode == "pv")) {
+    if ((targetPwmCnt || bootManualZero) && (mode == "psu" || mode == "pv")) {
         ESP_LOGE("mppt", "tracker.conf::target_duty_cycle overrides converter.conf mode=%s",
                  mode.c_str());
 #if WITH_PSU
@@ -591,7 +600,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
         ESP_LOGE("mppt", "converter.conf mode=%s needs CONFIG_FUGU_WITH_PSU, disabling", mode.c_str());
         g_app.setupErr = true;
 #endif
-    } else if (!mode.empty() && mode != "mppt" && !targetPwmCnt) {
+    } else if (!mode.empty() && mode != "mppt" && !targetPwmCnt && !bootManualZero) {
         ESP_LOGE("mppt", "Unknown converter.conf mode '%s', disabling", mode.c_str());
         g_app.setupErr = true;
     }
@@ -634,6 +643,10 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
             converter.enableSyncRect(true);
             bflow.enable(true);
         }
+    } else if (bootManualZero) {
+        // Nothing switches, so this is the zero-current calibration the sweep would have run.
+        // Sync rect and back-flow stay off until a `dc N` / `sync` asks for them.
+        sampler.startCalibration();
     } else if (psuBootQueued || g_app.psuMode()) {
         // At boot the queued Enable/EnablePv hasn't been applied by the RT consumer yet, so
         // psuMode() alone is false here — without psuBootQueued this would fall into the

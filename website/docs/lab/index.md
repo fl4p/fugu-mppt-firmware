@@ -60,7 +60,7 @@ input/output capacitance, and per-channel noise.
   old bootloader and will not revert from a bad image. See [OTA over Wi-Fi](../guide/updating/ota-wifi.md).
 - Match the profile to the output. An open-output profile raises the output over-voltage threshold. Never keep
   it on a board with a battery attached (see [Lab config profiles](config-profiles.md#battery-vs-open-output)).
-- Watch for fixed-duty profiles. `tracker.conf::target_duty_cycle > 0` boots straight into a hard-fixed duty with no
+- Watch for fixed-duty profiles. `tracker.conf::target_duty_cycle` boots straight into a hard-fixed duty (an explicit 0: converter off) with no
   PD control or MPPT tracking.
 - If the battery or load is removed during conversion, expect an over-voltage transient.
 :::

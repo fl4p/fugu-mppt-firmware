@@ -619,7 +619,7 @@ is skipped while termination is active and the BMS data is fresh, and it waits u
 decision. A fresh-to-stale BMS edge re-arms that wait at most once per 10 min, so a flapping BMS
 cannot block the sweep indefinitely. See [Charge Termination](../guide/charging/termination.md).
 
-`tracker.conf::target_duty_cycle > 0` skips the sweep entirely and holds a fixed duty (manual PWM).
+`tracker.conf::target_duty_cycle` (any value in [0, 1], including an explicit 0) skips the sweep entirely and holds a fixed duty (manual PWM); 0 holds the converter off.
 
 ## Configuration
 
@@ -630,7 +630,7 @@ The tracker reads these keys from `tracker.conf`:
 | [`sweep_speed`](../reference/config/tracker.md)                      | 4.0     | Sweep speed; scales the per-tick cap and the limit-tracking gain (min 0.1) |
 | [`sweep_pace`](../reference/config/tracker.md)                       | 4.0     | Largest sweep speed-up where Vin moves slowly; 1 = off |
 | [`sweep_verify`](../reference/config/tracker.md)                     | 0.10    | [Sweep verdict](#sweep-verdict) tolerance; 0 = off   |
-| [`target_duty_cycle`](../reference/config/tracker.md)                | 0.0     | Fixed duty fraction; > 0 disables sweep and P&O      |
+| [`target_duty_cycle`](../reference/config/tracker.md)                | absent  | Fixed duty fraction; if set (0 included) disables sweep and P&O |
 | [`scan_interval`](../reference/config/tracker.md)                    | 300     | Partial peak scan period [s]; 0 = triggered only     |
 | [`scan_trigger`](../reference/config/tracker.md)                     | 1       | Also scan after a sustained Vin or power change      |
 

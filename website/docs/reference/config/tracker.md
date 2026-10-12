@@ -9,7 +9,7 @@ sidebar_position: 7
 
 | key                 | unit | type  | default | description                                                          |
 |---------------------|------|-------|---------|----------------------------------------------------------------------|
-| `target_duty_cycle` |      | float | 0.0     | Fixed duty cycle fraction (0–1 of pwmMaxDriver); if > 0 enters manual PWM mode with hard-fixed duty (no PD control, no MPPT tracking) |
+| `target_duty_cycle` |      | float | absent  | Fixed duty cycle fraction (0–1 of pwmMaxDriver); if set, boots into manual PWM mode with hard-fixed duty (no PD control, no MPPT tracking); an explicit `0` boots manual at duty 0 (converter off). Absent: MPPT |
 | `sweep_speed`       |      | float | 4.0     | Global-sweep speed; scales both per-tick cap and limit-tracking gain (clamp ≥ 0.1) |
 | `sweep_pace`        |      | float | 4.0     | Largest [sweep](../../internals/mppt-tracker.md#global-sweep) speed-up where Vin moves slowly with the duty (near Voc, and towards the Vin floor), 1..8; 1 = off (a ramp linear in duty). Bounded further by the sensor filter delay: none at low sample rates with long filters |
 | `sweep_verify`      |      | float | 0.10    | [Sweep verdict](../../internals/mppt-tracker.md#sweep-verdict): flag a sweep when a return-pass probe differs from the down-pass power at its maximum, or the settled landing power from the MPP it aimed at, by more than this fraction. A flagged sweep does not teach `pv_substrings` and can start a peak scan, or one re-sweep when it recorded one maximum and `pv_substrings` is 0. 0 = off |

@@ -96,6 +96,7 @@ The following rules apply in manual mode:
 - `sync` and `bf` require manual mode. `short-ls` works from any mode on a boost converter with `Vin` ≈ 0 and
   switches to manual mode itself. See [console](../reference/console.md#manual-pwm-commands).
 - `tracker.conf::target_duty_cycle` (a fraction of the maximum duty) boots straight into manual mode at that duty.
+  An explicit `0` boots into manual mode at duty 0 (converter off, as after `dc 0`); only an absent key boots MPPT.
   It overrides `mode=psu|pv`.
 
 :::warning
