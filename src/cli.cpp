@@ -1552,11 +1552,13 @@ static void cmdGetConfig(cmd *c) {
 
 // conf-hash — read-only fingerprint of the configuration, so a bench run can record exactly which
 // config a board ran with (definition: conf_hash.h, host reference: etc/conf_hash.py). One fact per
-// line. Secret values (passkey, passwords, PSKs) are redacted before hashing, see conf_hash.h, and
-// `redacted=` counts them. Any read failure prints `sha256=unknown ... error=<msg>` and fails the
-// command, never a hash of a partial read. `boot` is the same conf hash taken at mount time during boot: if it differs
-// from `sha256`, set-config writes are waiting for a restart. The output is a dozen short lines,
-// well inside the BLE console's log-FIFO share, so it is logged line by line like get-config.
+// line. Secrets (passkey, passwords, PSKs, URI userinfo) are redacted before hashing and counted in
+// `redacted=`. Any read failure prints `sha256=unknown ... error=<msg>` and fails the command, never
+// a hash of a partial read. `boot` is the same conf hash taken at mount time during boot; if it
+// differs from `sha256`, the conf files changed since boot. That does not by itself mean a restart
+// is pending: `svc on/off`, log-level changes and `measure-coil ... apply` write files and apply
+// live, and lazily read files (e.g. ftp.conf) take effect without one. The output is a dozen short
+// lines, well inside the BLE console's log-FIFO share, so it is logged line by line like get-config.
 static void cmdConfHash(cmd *) {
     bool failed = false;
     const auto &boot = confHashBoot();

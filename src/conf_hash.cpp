@@ -1,9 +1,9 @@
-// Configuration fingerprint (`conf-hash`). Definition and rationale: conf_hash.h.
-// Host reference implementation: etc/conf_hash.py. Strictly read-only.
+// Configuration fingerprint (`conf-hash`). Definition: conf_hash.h; pure parts: conf_hash_core.h;
+// host reference: etc/conf_hash.py. Strictly read-only. Builds on the host (without ESP_PLATFORM)
+// for test/host-stub/conf-hash-test.cpp, which supplies a software Sha256 (sha256_host.h).
 
 #include "conf_hash.h"
 
-#include <algorithm>
 #include <cerrno>
 #include <cinttypes>
 #include <cstdio>
@@ -13,12 +13,12 @@
 #include <new>
 #include <sys/stat.h>
 
+#ifdef ESP_PLATFORM
 #include <esp_idf_version.h>
 #include <esp_log.h>
 #include <esp_littlefs.h>
 #include <nvs.h>
 #include <nvs_flash.h>
-
 // IDF 5.x ships mbedTLS 3 with the public mbedtls/sha256.h. IDF 6 (mbedTLS 4 / TF-PSA-Crypto) made
 // that header private; the PSA hash API is the public interface there.
 #if ESP_IDF_VERSION_MAJOR < 6
@@ -26,10 +26,14 @@
 #else
 #include <psa/crypto.h>
 #endif
-
-static const char *TAG = "confhash";
+#else
+#include "sha256_host.h" // test/host-stub
+#endif
 
 namespace {
+
+#ifdef ESP_PLATFORM
+const char *TAG = "confhash";
 
 class Sha256 {
 #if ESP_IDF_VERSION_MAJOR < 6
@@ -67,17 +71,18 @@ public:
 #endif
     Sha256(const Sha256 &) = delete;
     Sha256 &operator=(const Sha256 &) = delete;
-
-    void updateStr(const std::string &s) { update(s.data(), s.size()); }
-    void updateNul() { update("", 1); }
-    void updateDec(uint64_t v) {
-        char b[24];
-        int n = snprintf(b, sizeof(b), "%" PRIu64, v);
-        update(b, (size_t) n);
-    }
 };
+#endif
 
-constexpr int MAX_DEPTH = 8;
+// littlefs has no symlinks, and the IDF VFS has no lstat(); on a host copy, lstat() makes a symlink
+// an error instead of following it (the Python reference does the same).
+int statNoFollow(const char *p, struct stat *st) {
+#ifdef ESP_PLATFORM
+    return stat(p, st);
+#else
+    return lstat(p, st);
+#endif
+}
 
 // Collect regular files below root/rel, recursively, as root-relative '/' paths.
 bool collect(const std::string &root, const std::string &rel, int depth,
@@ -100,15 +105,16 @@ bool collect(const std::string &root, const std::string &rel, int depth,
         const std::string r = rel.empty() ? std::string(e->d_name) : rel + "/" + e->d_name;
         const std::string full = root + "/" + r;
         struct stat st;
-        if (stat(full.c_str(), &st) != 0) {
+        if (statNoFollow(full.c_str(), &st) != 0) {
             err = "stat " + full + ": " + strerror(errno);
             ok = false;
             break;
         }
         if (S_ISDIR(st.st_mode)) {
-            if (depth >= MAX_DEPTH) { err = "too deep: " + full; ok = false; break; }
+            if (depth >= CONF_HASH_MAX_DEPTH) { err = "too deep: " + full; ok = false; break; }
             if (!collect(root, r, depth + 1, out, err)) { ok = false; break; }
         } else if (S_ISREG(st.st_mode)) {
+            if (confHashIsStaging(r)) { err = "staging file present: " + r; ok = false; break; }
             if (r != CONF_HASH_EXCLUDED) out.push_back(r);
         } else {
             err = "not a regular file: " + full;
@@ -120,20 +126,18 @@ bool collect(const std::string &root, const std::string &rel, int depth,
     return ok;
 }
 
-// --- secret redaction -------------------------------------------------------------------------
-
 constexpr size_t READ_BUF = 512;
 
-struct RedactStats {
+struct FileStats {
     uint64_t rawBytes = 0;
     uint64_t outBytes = 0;
     uint32_t redacted = 0;
 };
 
-// Stream the redacted content of a file into a and b (either may be null), line by line.
-bool redactFile(const std::string &full, uint8_t *buf, Sha256 *a, Sha256 *b, RedactStats &st,
+// Stream a file's redacted content into a and b (either may be null).
+bool redactFile(const std::string &full, uint8_t *buf, Sha256 *a, Sha256 *b, FileStats &st,
                 std::string &err) {
-    st = RedactStats{};
+    st = FileStats{};
     FILE *f = fopen(full.c_str(), "rb");
     if (!f) { err = "open " + full + ": " + strerror(errno); return false; }
     struct stat fs;
@@ -142,58 +146,42 @@ bool redactFile(const std::string &full, uint8_t *buf, Sha256 *a, Sha256 *b, Red
         fclose(f);
         return false;
     }
-    std::string line, red;
-    auto emit = [&]() {
-        if (confRedactLine(line, red)) st.redacted++;
-        if (a) a->updateStr(red);
-        if (b) b->updateStr(red);
-        st.outBytes += red.size();
-        line.clear();
+    ConfHashRedactor red;
+    auto emit = [&](const std::string &s) {
+        if (a) a->update(s.data(), s.size());
+        if (b) b->update(s.data(), s.size());
+        st.outBytes += s.size();
     };
-    bool ok = true;
     for (;;) {
         size_t n = fread(buf, 1, READ_BUF, f);
         st.rawBytes += n;
-        for (size_t i = 0; i < n; ++i) {
-            line.push_back((char) buf[i]);
-            // Split exactly where ConfFile's fgets(buf, 256) does: after '\n' or 255 bytes.
-            if (buf[i] == '\n' || line.size() == CONF_LINE_CHUNK) emit();
-        }
-        if (n < READ_BUF) break;
+        red.feed(buf, n, emit);
+        if (n < READ_BUF || red.tooLong) break;
     }
-    if (ok && ferror(f)) { err = "read error " + full; ok = false; }
+    const bool rdErr = ferror(f) != 0;
     fclose(f);
-    if (!ok) return false;
-    if (!line.empty()) emit(); // last line without '\n'
+    if (rdErr) { err = "read error " + full; return false; }
+    if (red.tooLong) { err = "line too long in " + full; return false; }
+    red.finish(emit);
+    st.redacted = red.redacted;
     if (st.rawBytes != (uint64_t) fs.st_size) { err = "size changed while reading " + full; return false; }
     return true;
 }
 
+#ifdef ESP_PLATFORM
 ConfHashResult s_boot = [] {
     ConfHashResult r;
     r.err = "not computed";
     return r;
 }();
+#endif
 
 } // namespace
 
-std::string confHashHex(const uint8_t *b, size_t n) {
-    static const char *hx = "0123456789abcdef";
-    std::string s(n * 2, '0');
-    for (size_t i = 0; i < n; ++i) {
-        s[2 * i] = hx[b[i] >> 4];
-        s[2 * i + 1] = hx[b[i] & 0xf];
-    }
-    return s;
-}
-
-bool confHashCompute(ConfHashResult &out, bool perFile) {
+bool confHashComputeAt(ConfHashResult &out, bool perFile, const std::string &root) {
     out = ConfHashResult{};
     auto fail = [&](std::string m) { out.ok = false; out.err = std::move(m); out.perFile.clear(); return false; };
 
-    if (!esp_littlefs_mounted("littlefs"))
-        return fail("littlefs not mounted");
-    const std::string root = CONF_HASH_ROOT;
     struct stat st;
     if (stat(root.c_str(), &st) != 0)
         return fail("missing " + root);
@@ -204,8 +192,7 @@ bool confHashCompute(ConfHashResult &out, bool perFile) {
     std::string err;
     if (!collect(root, "", 0, files, err))
         return fail(err);
-    // std::string's operator< compares via char_traits<char>, i.e. as unsigned char: bytewise.
-    std::sort(files.begin(), files.end());
+    confHashSortPaths(files);
 
     std::unique_ptr<uint8_t[]> buf(new(std::nothrow) uint8_t[READ_BUF]);
     if (!buf) return fail("out of memory");
@@ -215,12 +202,9 @@ bool confHashCompute(ConfHashResult &out, bool perFile) {
         const std::string full = root + "/" + rel;
         // Two passes: the redacted length is hashed before the redacted content, and the content is
         // streamed line by line rather than buffered. Both passes must see the same file.
-        RedactStats p1, p2;
+        FileStats p1, p2;
         if (!redactFile(full, buf.get(), nullptr, nullptr, p1, err)) return fail(err);
-        all.updateStr(rel);
-        all.updateNul();
-        all.updateDec(p1.outBytes);
-        all.updateNul();
+        confHashFrame(all, rel, p1.outBytes);
         Sha256 one;
         if (!redactFile(full, buf.get(), &all, &one, p2, err)) return fail(err);
         if (p1.rawBytes != p2.rawBytes || p1.outBytes != p2.outBytes || p1.redacted != p2.redacted)
@@ -238,6 +222,17 @@ bool confHashCompute(ConfHashResult &out, bool perFile) {
     if (!all.finish(out.sha)) return fail("sha256 failed");
     out.ok = true;
     return true;
+}
+
+#ifdef ESP_PLATFORM
+
+bool confHashCompute(ConfHashResult &out, bool perFile) {
+    if (!esp_littlefs_mounted("littlefs")) {
+        out = ConfHashResult{};
+        out.err = "littlefs not mounted";
+        return false;
+    }
+    return confHashComputeAt(out, perFile, CONF_HASH_ROOT);
 }
 
 static const char *nvsTypeName(nvs_type_t t) {
@@ -298,7 +293,7 @@ static esp_err_t nvsReadValue(nvs_handle_t h, const char *key, nvs_type_t t, std
 bool nvsHashCompute(NvsHashResult &out, const char *ns) {
     out = NvsHashResult{};
     struct Entry { std::string key; nvs_type_t type; };
-    std::vector<Entry> entries;
+    std::vector<Entry> found;
 
     nvs_iterator_t it = nullptr;
     esp_err_t e = nvs_entry_find(NVS_DEFAULT_PART_NAME, ns, NVS_TYPE_ANY, &it);
@@ -306,7 +301,7 @@ bool nvsHashCompute(NvsHashResult &out, const char *ns) {
         nvs_entry_info_t info;
         e = nvs_entry_info(it, &info);
         if (e != ESP_OK) break;
-        entries.push_back({std::string(info.key, strnlen(info.key, sizeof(info.key))), info.type});
+        found.push_back({std::string(info.key, strnlen(info.key, sizeof(info.key))), info.type});
         e = nvs_entry_next(&it);
     }
     nvs_release_iterator(it);
@@ -314,12 +309,11 @@ bool nvsHashCompute(NvsHashResult &out, const char *ns) {
         out.err = std::string("nvs iterate: ") + esp_err_to_name(e);
         return false;
     }
-    std::sort(entries.begin(), entries.end(), [](const Entry &a, const Entry &b) { return a.key < b.key; });
-    out.keys = (uint32_t) entries.size();
+    out.keys = (uint32_t) found.size();
 
     nvs_handle_t h = 0;
     bool open = false;
-    if (!entries.empty()) {
+    if (!found.empty()) {
         e = nvs_open(ns, NVS_READONLY, &h);
         if (e != ESP_OK) {
             out.err = std::string("nvs_open: ") + esp_err_to_name(e);
@@ -327,34 +321,27 @@ bool nvsHashCompute(NvsHashResult &out, const char *ns) {
         }
         open = true;
     }
-    Sha256 sha;
-    std::string v;
-    for (const auto &en: entries) {
-        if (confHashIsSecretKey(en.key)) { // never read: contributes only  key '\0' "redacted"
-            sha.updateStr(en.key);
-            sha.updateNul();
-            sha.update("redacted", 8);
-            out.redacted++;
-            continue;
+    std::vector<ConfHashNvsEntry> entries;
+    for (const auto &en: found) {
+        ConfHashNvsEntry ce;
+        ce.key = en.key;
+        if (!confHashIsSecretKey(en.key)) { // a secret is never read
+            const char *tn = nvsTypeName(en.type);
+            e = tn ? nvsReadValue(h, en.key.c_str(), en.type, ce.value) : ESP_ERR_NOT_SUPPORTED;
+            if (e != ESP_OK) {
+                char b[96];
+                snprintf(b, sizeof(b), "%s:0x%02x:%s", en.key.c_str(), (unsigned) en.type, esp_err_to_name(e));
+                out.unreadableKeys.emplace_back(b);
+                out.unreadable++;
+                continue;
+            }
+            ce.type = tn;
         }
-        const char *tn = nvsTypeName(en.type);
-        e = tn ? nvsReadValue(h, en.key.c_str(), en.type, v) : ESP_ERR_NOT_SUPPORTED;
-        if (e != ESP_OK) {
-            char b[96];
-            snprintf(b, sizeof(b), "%s:0x%02x:%s", en.key.c_str(), (unsigned) en.type, esp_err_to_name(e));
-            out.unreadableKeys.emplace_back(b);
-            out.unreadable++;
-            continue;
-        }
-        sha.updateStr(en.key);
-        sha.updateNul();
-        sha.update(tn, strlen(tn));
-        sha.updateNul();
-        sha.updateDec(v.size());
-        sha.updateNul();
-        sha.updateStr(v);
+        entries.push_back(std::move(ce));
     }
     if (open) nvs_close(h);
+    Sha256 sha;
+    out.redacted = confHashNvsEntries(sha, std::move(entries));
     if (!sha.finish(out.sha)) { out.err = "sha256 failed"; return false; }
     if (out.unreadable) { out.err = "unreadable entries"; return false; }
     out.ok = true;
@@ -370,3 +357,5 @@ void confHashCaptureBoot() {
 }
 
 const ConfHashResult &confHashBoot() { return s_boot; }
+
+#endif // ESP_PLATFORM
