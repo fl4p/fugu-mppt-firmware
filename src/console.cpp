@@ -21,6 +21,19 @@
 #endif
 
 #include <driver/esp_private/usb_serial_jtag_vfs.h>
+#include <esp_idf_version.h>
+
+// The USB-Serial-JTAG VFS ops struct holds read/read_p and write/write_p in unions. Since IDF v6.0.1
+// (esp-idf ece7bf6af6) the driver fills the context-pointer members, so calling the context-less
+// ->read(fd, ..) shifts every argument (buf lands in fd -> assert(fd == USJ_LOCAL_FD)).
+// IDF <= v6.0 (incl. 5.5.x) fills the context-less members. The driver ignores ctx.
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 1)
+#define USJ_VFS_READ(buf, len) esp_vfs_usb_serial_jtag_get_vfs()->read_p(nullptr, 0, buf, len)
+#define USJ_VFS_WRITE(buf, len) esp_vfs_usb_serial_jtag_get_vfs()->write_p(nullptr, 0, buf, len)
+#else
+#define USJ_VFS_READ(buf, len) esp_vfs_usb_serial_jtag_get_vfs()->read(0, buf, len)
+#define USJ_VFS_WRITE(buf, len) esp_vfs_usb_serial_jtag_get_vfs()->write(0, buf, len)
+#endif
 //#include "../vfs/private_include/esp_vfs_private.h"
 
 QueueHandle_t uart_queue;
@@ -103,7 +116,7 @@ int console_read_usb(char *buf, size_t len) {
 #ifdef WITH_USB_MSC
     return usbCdcRead(buf, len);
 #elif CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
-    return esp_vfs_usb_serial_jtag_get_vfs()->read(0, buf, len);
+    return USJ_VFS_READ(buf, len);
 #else
     return 0;
 #endif
@@ -113,7 +126,7 @@ int console_write_usb(const char *buf, size_t len) {
 #ifdef WITH_USB_MSC
     return usbCdcWrite(buf, len);
 #elif CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
-    auto r = esp_vfs_usb_serial_jtag_get_vfs()->write(0, buf, len);
+    auto r = USJ_VFS_WRITE(buf, len);
     usb_serial_jtag_ll_txfifo_flush();
     return r;
 #else
