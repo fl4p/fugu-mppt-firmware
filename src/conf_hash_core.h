@@ -42,22 +42,24 @@ inline bool confHashIsSpace(char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r' || c == '\0';
 }
 
-// URI userinfo: scanning left to right, for every "://" the authority runs to the next '/', '?',
-// '#', '\n' or the end; if it contains '@', everything from after "://" up to the LAST '@' in it is
-// replaced by the marker, and scanning resumes right after the marker (else right after "://").
-// Returns the number of replacements.
+// URI userinfo, deliberately over-redacting: scanning left to right, for every "://", if there is
+// any '@' later on the same line (up to the next '\n' or the end), everything from after "://" up
+// to the LAST such '@' is replaced by the marker and scanning resumes right after the marker (else
+// right after "://"). Unencoded '/', '?' or '#' in a hand-written password are thus still covered;
+// an '@' in a path or query, or a second URI on the line, is swallowed too. Returns the number of
+// replacements.
 inline uint32_t confHashRedactUris(std::string &s) {
     uint32_t n = 0;
     const size_t ml = strlen(CONF_HASH_REDACTED_MARKER);
     size_t pos = 0, p;
     while ((p = s.find("://", pos)) != std::string::npos) {
         const size_t a = p + 3;
-        size_t e = s.find_first_of("/?#\n", a);
+        size_t e = s.find('\n', a);
         if (e == std::string::npos) e = s.size();
         size_t at = std::string::npos;
         for (size_t i = e; i > a; --i)
             if (s[i - 1] == '@') { at = i - 1; break; }
-        pos = a; // keep scanning inside this authority too: "a://x@h b://y@g" has two userinfos
+        pos = a;
         if (at != std::string::npos) {
             s.replace(a, at - a, CONF_HASH_REDACTED_MARKER);
             pos = a + ml;
@@ -67,20 +69,31 @@ inline uint32_t confHashRedactUris(std::string &s) {
     return n;
 }
 
-// Redact one line, given WITHOUT its '\n'. The candidate is the line after a leading run of
-// whitespace and '#' (so commented-out lines are treated like live ones). If the candidate contains
-// '=' and trim(text before the first '=') is a secret key, everything after that '=' to the end of
-// the line (a trailing '\r' included) becomes the marker. Otherwise URI userinfo is redacted
-// anywhere in the line. Returns the number of replacements.
+// Redact one line, given WITHOUT its '\n'. For each '=' in the line, left to right: let left = all
+// line bytes before it. If ASCII-lowercased left CONTAINS a secret substring, or left with trailing
+// whitespace removed ENDS WITH the secret suffix, everything after this '=' to the end of the line
+// (a trailing '\r' included) becomes the marker, and the line is done. This is a superset of every
+// way the firmware can see a key on the line: the logical-line key, a commented-out key, and the
+// key at the start of a later fgets(buf, 256) chunk of a long line (ConfFile parses each 255-byte
+// chunk as its own line). It over-redacts, e.g. `note=about passwords=here`. If no '=' qualifies,
+// URI userinfo is redacted in the line. Returns the number of replacements.
 inline uint32_t confHashRedactLine(std::string &line) {
-    size_t c = 0;
-    while (c < line.size() && (confHashIsSpace(line[c]) || line[c] == '#')) ++c;
-    const size_t eq = line.find('=', c);
-    if (eq != std::string::npos) {
-        size_t ka = c, kb = eq;
-        while (ka < kb && confHashIsSpace(line[ka])) ++ka;
-        while (kb > ka && confHashIsSpace(line[kb - 1])) --kb;
-        if (confHashIsSecretKey(line.substr(ka, kb - ka))) {
+    std::string lower(line);
+    for (auto &ch: lower)
+        if (ch >= 'A' && ch <= 'Z') ch = (char) (ch - 'A' + 'a');
+    const size_t sl = strlen(CONF_HASH_SECRET_SUFFIX);
+    for (size_t eq = lower.find('='); eq != std::string::npos; eq = lower.find('=', eq + 1)) {
+        bool secret = false;
+        for (const char *sub: CONF_HASH_SECRET_SUBSTRINGS) {
+            const size_t f = lower.find(sub);
+            if (f != std::string::npos && f + strlen(sub) <= eq) { secret = true; break; }
+        }
+        if (!secret) {
+            size_t kb = eq;
+            while (kb > 0 && confHashIsSpace(lower[kb - 1])) --kb;
+            secret = kb >= sl && lower.compare(kb - sl, sl, CONF_HASH_SECRET_SUFFIX) == 0;
+        }
+        if (secret) {
             line.replace(eq + 1, std::string::npos, CONF_HASH_REDACTED_MARKER);
             return 1;
         }

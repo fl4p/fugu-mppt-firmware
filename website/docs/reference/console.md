@@ -153,21 +153,25 @@ A key is a **secret key** if, after ASCII lowercasing, it contains `pass`, `psk`
 `password` (`mqtt.conf`), `ftp_pass` (`ftp.conf` and NVS) and `wifi_psk` (NVS). "Whitespace" below
 means the bytes space, `\t`, `\n`, `\v`, `\f`, `\r` and NUL.
 
-**URI redaction** of a byte string: scan left to right for `://`. The authority runs from after
-`://` to the next `/`, `?`, `#`, `\n` or the end of the string. If it contains `@`, the bytes from
-after `://` up to the last `@` in it are replaced by `<redacted>`, and scanning resumes right after
-`<redacted>`; otherwise it resumes right after `://`. For example
-`broker_uri=mqtt://u:p@host:1883` becomes `broker_uri=mqtt://<redacted>@host:1883`, while
-`http://host/a@b` is unchanged.
+**URI redaction** of a byte string: scan left to right for `://`. If an `@` follows it before
+the next `\n` (or the end of the string), the bytes from after `://` up to the last such `@` are
+replaced by `<redacted>`, and scanning resumes right after `<redacted>`; otherwise it resumes right
+after `://`. For example `broker_uri=mqtt://u:p@host:1883` becomes
+`broker_uri=mqtt://<redacted>@host:1883`. This deliberately over-redacts so that a hand-written
+password containing an unencoded `/`, `?` or `#` is still covered: an `@` in a path or query
+(`http://host/a@b` becomes `http://<redacted>@b`), or a second URI later on the same line, is
+swallowed too.
 
-**Line redaction** of one line (without its `\n`):
+**Line redaction** of one line (without its `\n`): for each `=` in the line, from left to right,
+look at all bytes before it. If, ASCII-lowercased, they contain a secret substring (`pass`, `psk`,
+`passkey`, `password`, `secret`, `token`), or, with trailing whitespace removed, they end in `_key`,
+everything after that `=` to the end of the line (including a trailing `\r`) is replaced by
+`<redacted>` and the line is done. If no `=` qualifies, URI redaction is applied to the whole line.
 
-1. The candidate is the line after its leading run of whitespace and `#` characters, so a
-   commented-out line such as `# ble_passkey=123456` is treated like a live one.
-2. If the candidate contains `=` and the text before its first `=`, with whitespace trimmed at both
-   ends, is a secret key, everything after that `=` to the end of the line (including a trailing
-   `\r`) is replaced by `<redacted>`.
-3. Otherwise URI redaction is applied to the whole line.
+This rule covers every way the firmware can read a key from the line: the normal key, a
+commented-out line such as `# ble_passkey=123456`, and a key that starts a later 255-byte chunk of
+a long line (the config parser reads lines in 255-byte pieces). It over-redacts on purpose, for
+example `note=about passwords=here` becomes `note=about passwords=<redacted>`.
 
 Each replacement counts once toward `redacted=`.
 

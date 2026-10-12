@@ -21,7 +21,9 @@ Definition (see src/conf_hash.h for the normative text):
           in ".new" (USB-drive commit staging) is an error. Symlinks and other non-regular entries
           are errors (they are not followed; littlefs has none).
   order   relative path, bytewise ascending
-  content each file split into lines at b"\\n" only (kept), each line redacted by redact_line();
+  content each file split into lines at b"\\n" only (kept), each line redacted by redact_line()
+          (secret rule: any '=' whose preceding bytes contain a secret substring or end in _key
+          redacts the rest of the line; else URI userinfo up to the last '@' on the line);
           a line over 4096 bytes (excluding b"\\n") is an error
   sha256  SHA-256 over, per file in order:  relpath b"\\0" decimal(len(content)) b"\\0" content
 The per-file hash is SHA-256 of the redacted content: it equals `sha256sum` of the file only when
@@ -67,9 +69,9 @@ def is_secret_key(key) -> bool:
 
 
 def redact_uris(s: bytes):
-    """Left to right, for each b"://" the authority runs to the next '/', '?', '#', '\\n' or the end;
-    if it contains '@', everything after b"://" up to the last '@' in it becomes the marker and
-    scanning resumes after the marker (else right after b"://")."""
+    """Over-redacting URI userinfo: left to right, for each b"://", if any '@' follows on the same
+    line (up to the next b"\\n" or the end), everything after b"://" up to the LAST such '@' becomes
+    the marker and scanning resumes after the marker (else right after b"://")."""
     n = 0
     pos = 0
     while True:
@@ -77,13 +79,11 @@ def redact_uris(s: bytes):
         if p < 0:
             return s, n
         a = p + 3
-        e = len(s)
-        for i in range(a, len(s)):
-            if s[i:i + 1] in (b"/", b"?", b"#", b"\n"):
-                e = i
-                break
+        e = s.find(b"\n", a)
+        if e < 0:
+            e = len(s)
         at = s.rfind(b"@", a, e)
-        pos = a  # keep scanning inside this authority too
+        pos = a
         if at >= 0:
             s = s[:a] + MARKER + s[at:]
             pos = a + len(MARKER)
@@ -91,13 +91,19 @@ def redact_uris(s: bytes):
 
 
 def redact_line(line: bytes):
-    """Redact one line given WITHOUT its b"\\n". Returns (line, n_redactions)."""
-    c = 0
-    while c < len(line) and (line[c] in _SPACE or line[c] == ord("#")):
-        c += 1
-    eq = line.find(b"=", c)
-    if eq >= 0 and is_secret_key(line[c:eq].strip(_SPACE)):
-        return line[:eq + 1] + MARKER, 1
+    """Redact one line given WITHOUT its b"\\n". Returns (line, n_redactions).
+
+    For each b"=" left to right, left = the line bytes before it; if left.lower() (ASCII) contains a
+    secret substring, or left with trailing whitespace removed ends with b"_key", everything after
+    this b"=" becomes the marker. A superset of the firmware's logical-line and fgets-chunk views of
+    a key; over-redaction is accepted. Otherwise URI userinfo is redacted."""
+    lower = line.lower()
+    eq = lower.find(b"=")
+    while eq >= 0:
+        left = lower[:eq]
+        if any(s in left for s in SECRET_SUBSTRINGS) or left.rstrip(_SPACE).endswith(SECRET_SUFFIX):
+            return line[:eq + 1] + MARKER, 1
+        eq = lower.find(b"=", eq + 1)
     return redact_uris(line)
 
 

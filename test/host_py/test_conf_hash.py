@@ -64,15 +64,28 @@ REDACT_VECTORS = [
     (b"username=bob\n", b"username=bob\n", 0),
     (b"broker_uri=mqtt://u:p@host:1883\n", b"broker_uri=mqtt://<redacted>@host:1883\n", 1),
     (b"broker_uri=mqtt://host:1883\n", b"broker_uri=mqtt://host:1883\n", 0),
-    (b"u=http://host/a@b?c@d\n", b"u=http://host/a@b?c@d\n", 0),
-    (b"u=mqtt://a@b@host/x@y\n", b"u=mqtt://<redacted>@host/x@y\n", 1),
+    (b"u=http://host/a@b?c@d\n", b"u=http://<redacted>@d\n", 1),
+    (b"u=mqtt://a@b@host/x@y\n", b"u=mqtt://<redacted>@y\n", 1),
     (b"# old=mqtt://u:p@h#x\n", b"# old=mqtt://<redacted>@h#x\n", 1),
-    (b"u=a://x@h b://y@g\n", b"u=a://<redacted>@h b://<redacted>@g\n", 2),
-    (b"u=file:///p@q\n", b"u=file:///p@q\n", 0),
-    (b"u=mqtt://h#frag@x\n", b"u=mqtt://h#frag@x\n", 0),
-    (b"u=a://longuserinfo1234@h b://y@g\n", b"u=a://<redacted>@h b://<redacted>@g\n", 2),
+    (b"u=a://x@h b://y@g\n", b"u=a://<redacted>@g\n", 1),
+    (b"u=file:///p@q\n", b"u=file://<redacted>@q\n", 1),
+    (b"u=mqtt://h#frag@x\n", b"u=mqtt://<redacted>@x\n", 1),
+    (b"u=a://longuserinfo1234@h b://y@g\n", b"u=a://<redacted>@g\n", 1),
+    (b"broker_uri=mqtt://u:pa/ss@host\n", b"broker_uri=mqtt://<redacted>@host\n", 1),
+    (b"broker_uri=mqtt://u:pa?ss@host\n", b"broker_uri=mqtt://<redacted>@host\n", 1),
+    (b"broker_uri=mqtt://u:pa#ss@host\n", b"broker_uri=mqtt://<redacted>@host\n", 1),
+    (b"u=a://h/x b://y@g\n", b"u=a://<redacted>@g\n", 1),
+    (b"u=a://x@h\nv=b://y@g", b"u=a://<redacted>@h\nv=b://<redacted>@g", 2),
+    (b"u=a://h b://g\n", b"u=a://h b://g\n", 0),
     (b"no equals password here\n", b"no equals password here\n", 0),
     (b"x=1\npsk=2", b"x=1\npsk=<redacted>", 1),
+    # Parser differential: ConfFile's fgets(buf, 256) sees "password"/"cloud_key" as a live key at
+    # the start of the second 255-byte chunk.
+    (b"a=" + b"x" * 253 + b"password=hunter2\n", b"a=" + b"x" * 253 + b"password=<redacted>\n", 1),
+    (b"# a=" + b"x" * 251 + b"password=hunter2\n", b"# a=" + b"x" * 251 + b"password=<redacted>\n", 1),
+    (b"a=" + b"x" * 253 + b"cloud_key = k1\n", b"a=" + b"x" * 253 + b"cloud_key =<redacted>\n", 1),
+    (b"note=about passwords=here\n", b"note=about passwords=<redacted>\n", 1),  # over-redaction
+    (b"x=api_KEY\t=v\n", b"x=api_KEY\t=<redacted>\n", 1),
 ]
 
 SECRET_DIR_FILES = {
@@ -236,6 +249,11 @@ class RedactionTest(unittest.TestCase):
     def test_vectors(self):
         for src, exp, n in REDACT_VECTORS:
             self.assertEqual(conf_hash.redact(src), (exp, n), src)
+
+    def test_uri_rule_stops_at_newline_in_a_value(self):
+        # NVS string values are redacted as a whole; '\n' bounds the '@' search like a line end.
+        self.assertEqual(conf_hash.redact_uris(b"a://x@h\nb://y@g"), (b"a://<redacted>@h\nb://<redacted>@g", 2))
+        self.assertEqual(conf_hash.redact_uris(b"a://x\n@g"), (b"a://x\n@g", 0))
 
     def test_secret_keys(self):
         for k in ["ble_passkey", "password", "ftp_pass", "wifi_psk", "API_TOKEN", "my_secret", "cloud_key",

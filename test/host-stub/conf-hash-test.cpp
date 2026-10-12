@@ -114,20 +114,36 @@ int main() {
         {"username=bob\n", "username=bob\n", 0},
         {"broker_uri=mqtt://u:p@host:1883\n", "broker_uri=mqtt://<redacted>@host:1883\n", 1},
         {"broker_uri=mqtt://host:1883\n", "broker_uri=mqtt://host:1883\n", 0},
-        {"u=http://host/a@b?c@d\n", "u=http://host/a@b?c@d\n", 0},
-        {"u=mqtt://a@b@host/x@y\n", "u=mqtt://<redacted>@host/x@y\n", 1},
+        {"u=http://host/a@b?c@d\n", "u=http://<redacted>@d\n", 1},
+        {"u=mqtt://a@b@host/x@y\n", "u=mqtt://<redacted>@y\n", 1},
         {"# old=mqtt://u:p@h#x\n", "# old=mqtt://<redacted>@h#x\n", 1},
-        {"u=a://x@h b://y@g\n", "u=a://<redacted>@h b://<redacted>@g\n", 2},
-        {"u=file:///p@q\n", "u=file:///p@q\n", 0},
-        {"u=mqtt://h#frag@x\n", "u=mqtt://h#frag@x\n", 0},
-        {"u=a://longuserinfo1234@h b://y@g\n", "u=a://<redacted>@h b://<redacted>@g\n", 2},
+        {"u=a://x@h b://y@g\n", "u=a://<redacted>@g\n", 1},
+        {"u=file:///p@q\n", "u=file://<redacted>@q\n", 1},
+        {"u=mqtt://h#frag@x\n", "u=mqtt://<redacted>@x\n", 1},
+        {"u=a://longuserinfo1234@h b://y@g\n", "u=a://<redacted>@g\n", 1},
+        {"broker_uri=mqtt://u:pa/ss@host\n", "broker_uri=mqtt://<redacted>@host\n", 1},
+        {"broker_uri=mqtt://u:pa?ss@host\n", "broker_uri=mqtt://<redacted>@host\n", 1},
+        {"broker_uri=mqtt://u:pa#ss@host\n", "broker_uri=mqtt://<redacted>@host\n", 1},
+        {"u=a://h/x b://y@g\n", "u=a://<redacted>@g\n", 1},
+        {"u=a://x@h\nv=b://y@g", "u=a://<redacted>@h\nv=b://<redacted>@g", 2},
+        {"u=a://h b://g\n", "u=a://h b://g\n", 0},
         {"no equals password here\n", "no equals password here\n", 0},
         {"x=1\npsk=2", "x=1\npsk=<redacted>", 1},
+        {"a=" + std::string(253, 'x') + "password=hunter2\n", "a=" + std::string(253, 'x') + "password=<redacted>\n", 1},
+        {"# a=" + std::string(251, 'x') + "password=hunter2\n", "# a=" + std::string(251, 'x') + "password=<redacted>\n", 1},
+        {"a=" + std::string(253, 'x') + "cloud_key = k1\n", "a=" + std::string(253, 'x') + "cloud_key =<redacted>\n", 1},
+        {"note=about passwords=here\n", "note=about passwords=<redacted>\n", 1},
+        {"x=api_KEY\t=v\n", "x=api_KEY\t=<redacted>\n", 1},
     };
     for (const auto &v: vectors) {
         uint32_t n = 0;
         const std::string got = redactAll(v.in, n);
         check(got == v.out && n == v.n, "redact: " + v.in.substr(0, 60) + " -> " + got.substr(0, 60));
+    }
+    {
+        std::string v = "a://x@h\nb://y@g", w = "a://x\n@g";
+        check(confHashRedactUris(v) == 2 && v == "a://<redacted>@h\nb://<redacted>@g", "uri: value with newline");
+        check(confHashRedactUris(w) == 0 && w == "a://x\n@g", "uri: '@' after newline not used");
     }
     for (const char *k: {"ble_passkey", "password", "ftp_pass", "wifi_psk", "API_TOKEN", "my_secret",
                          "cloud_key", "Password", "api_Key"})

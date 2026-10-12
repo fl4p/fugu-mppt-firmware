@@ -15,14 +15,14 @@
 //   order   relative path, bytewise ascending
 //   content each file split into lines at '\n' only (the '\n' is kept); each line redacted by
 //           confHashRedactLine (conf_hash_core.h):
-//             - candidate = the line after its leading run of whitespace (" \t\n\v\f\r\0") and '#',
-//               so a commented-out line is treated like a live one;
-//             - if the candidate contains '=' and trim(text before the first '=') is a secret key
-//               (confHashIsSecretKey), everything after that '=' up to the '\n' (a trailing '\r'
-//               included) is replaced by "<redacted>";
-//             - otherwise URI userinfo is redacted anywhere in the line: for each "://", the
-//               authority runs to the next '/', '?', '#' or end of line; if it contains '@', the
-//               text from after "://" to the last '@' in it is replaced by "<redacted>".
+//             - for each '=' left to right, if the ASCII-lowercased bytes before it contain a secret
+//               substring, or end (after trailing whitespace) in "_key", everything after that '='
+//               up to the '\n' (a trailing '\r' included) becomes "<redacted>" and the line is
+//               done. A superset of the firmware's views of a key (logical line, commented-out
+//               line, start of a later 255-byte fgets chunk); over-redacts by design;
+//             - otherwise URI userinfo is redacted: for each "://", if an '@' follows on the same
+//               line, the text from after "://" to the LAST such '@' becomes "<redacted>"
+//               (over-redacts an '@' in a path/query, covers '/', '?', '#' in a password).
 //           A line longer than 4096 bytes (excluding '\n') is an error.
 //   sha256  SHA-256 over, per file in order:  relpath '\0' decimal(len) '\0' content
 //           where len is the length of the REDACTED content.
