@@ -56,8 +56,8 @@ void MpptController::update() {
     rtcount("mppt.update.meterAdd");
 
 
-    float ntcTemp = ntc.lastFresh();
-    if (ucTemp.lastFresh() > ntcTemp) ntcTemp = ucTemp.lastFresh();
+    // fmaxf drops a NaN operand: chip temp stands in for an absent NTC, NaN only if both are.
+    float ntcTemp = fmaxf(ntc.lastFresh(), ucTemp.lastFresh());
 
     fan.fanUpdateTemp(ntcTemp, power_smooth);
     rtcount("mppt.update.thermals");
