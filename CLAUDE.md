@@ -7,16 +7,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is an ESP-IDF project (v5.5+) using `espressif/arduino-esp32` as a component. Target is `esp32s3` (also supports
 `esp32`).
 
-ESP-IDF 5.5 is the default. It also builds on ESP-IDF 6.0 (`FUGU_IDF=idf6.0.3 . ./idf-export.sh`, then `idf.py -B build-idf6
--DSDKCONFIG=build-idf6/sdkconfig build`). `main/idf_component.yml` picks arduino-esp32 >=3.3.12 and the
-external `espressif/mqtt` there. Keep code compatible with both: IDF 6 driver config structs dropped
+ESP-IDF 6.0 (6.0.3) is the default. It also builds on ESP-IDF 5.5 (`FUGU_IDF=idf5.5 . ./idf-export.sh`, then `idf.py -B build-idf55
+-DSDKCONFIG=build-idf55/sdkconfig build`). `main/idf_component.yml` picks arduino-esp32 >=3.3.12 and the
+external `espressif/mqtt` on IDF 6, <3.3.8 on IDF 5.5. Keep code compatible with both: IDF 6 driver config structs dropped
 fields (`io_loop_back`, pull flags) and added others, so zero-init (`= {}`) and assign instead of
 listing every field.
 
 Before any `idf.py` invocation, source ESP-IDF into the shell. The repo ships a helper:
 
 ```bash
-. ./idf-export.sh          # sources ../../esp/idf5.5/export.sh, sets IDF_TARGET=esp32s3, autodetects $ESPPORT
+. ./idf-export.sh          # sources ../../esp/idf6.0.3/export.sh, sets IDF_TARGET=esp32s3, autodetects $ESPPORT
 idf.py set-target esp32s3  # only needed once per build dir
 idf.py build               # feature flags live in Kconfig now (CONFIG_FUGU_WITH_*, idf.py menuconfig -> "Fugu MPPT firmware"): BLE/NETW default on, NETTOOLS/MCPWM/VCONV/SPROFILER/MEASURE_COIL/USB_MSC off (NETTOOLS depends on NETW; USB_MSC = S3 USB config drive, website/docs/guide/usb-drive.md). The old WITH_* env vars are rejected. Binary telemetry is a tele.conf setting, not a build flag
 idf.py -p $ESPPORT app-flash

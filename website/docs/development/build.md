@@ -11,7 +11,7 @@ and how to keep rebuilds fast. Installing ESP-IDF is covered in [Getting started
 ## Quick start
 
 ```bash
-. $IDF_PATH/export.sh              # ESP-IDF 5.5+, once per shell
+. $IDF_PATH/export.sh              # ESP-IDF 6.0 (5.5 also works), once per shell
 idf.py set-target esp32s3          # once per build dir
 idf.py build
 idf.py -p $ESPPORT app-flash       # firmware only, keeps the board config

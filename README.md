@@ -64,15 +64,15 @@ This version works with the original Fugu design. Mind the voltage divider value
 
 ## Building with ESP-IDF
 
-Follow [Espressif's Get Started guide](https://docs.espressif.com/projects/esp-idf/en/v5.1.4/esp32/get-started/index.html)
-to install ESP-IDF v5.5. You can follow these commands: (make sure you have all the prerequisites from
+Follow [Espressif's Get Started guide](https://docs.espressif.com/projects/esp-idf/en/v6.0.3/esp32s3/get-started/index.html)
+to install ESP-IDF v6.0.3 (v5.5 also works). You can follow these commands: (make sure you have all the prerequisites from
 the Espressif guide, and you might have to downgrade python to 3.9 if running into issues
 like [this](https://github.com/espressif/esp-idf/issues/12322), note that esp-idf will create a new python virtual
 environment with your system's default python version `python --version`):
 
 ```
-git clone -b v5.5 --recursive https://github.com/espressif/esp-idf.git esp-idf-v5.5
-cd esp-idf-v5.5
+git clone -b v6.0.3 --recursive https://github.com/espressif/esp-idf.git esp-idf-v6.0.3
+cd esp-idf-v6.0.3
 ./install.sh esp32s3 # windows: install.bat esp32s3
  . ./export.sh       # windows: export.bat
 ```

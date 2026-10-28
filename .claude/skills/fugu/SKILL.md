@@ -70,7 +70,7 @@ either (`brew services start …` was noticed and objected to).
 ## Toolchain
 
 ESP-IDF is **not on PATH** and `which idf.py` finds nothing. Enter the env with the repo wrapper,
-**from the repo root only** (it sources IDF 5.5.1 by relative path):
+**from the repo root only** (it sources `../../esp/idf6.0.3` by relative path; `FUGU_IDF=idf5.5` selects 5.5):
 
 ```bash
 . ./idf-export.sh
@@ -83,11 +83,10 @@ the same port, since idf.py refuses a `-p` that differs from `ESPPORT` (`Option 
 defined`, 2026-10-10). Bare `esptool` can be a
 broken PlatformIO shim; `python -m esptool` after sourcing always works. The vendored IDF carries a
 local NimBLE patch (`etc/patches/`) that **an IDF update silently reverts** — reapply after bumps.
-`idf.py not found` after sourcing is the export failing, not PATH; read its output. On 2026-10-28
-`~/dev/esp/idf5.5` was gone (only `idf6`, `idf6.0.3`), and Homebrew's `python3` had moved to 3.15,
-which has no IDF env (`python_env/idf6.0_py3.15_env ... not found`). What worked:
-`FUGU_IDF=idf6.0.3 IDF_PYTHON_ENV_PATH=~/.espressif/python_env/idf6.0_py3.14_env . ./idf-export.sh`
-plus the IDF 6 build form from `CLAUDE.md`. Report a missing IDF to the user; don't work around it silently.
+`idf.py not found` after sourcing means the export failed, not PATH; read its output. A Homebrew `python3`
+bump leaves IDF with no env for it (`python_env/idf6.0_py3.15_env ... not found`, 2026-10-28); fix:
+`IDF_PATH=~/dev/esp/idf6.0.3 python3 ~/dev/esp/idf6.0.3/tools/idf_tools.py install-python-env`. A build
+dir configured under the old env then needs `idf.py fullclean`.
 
 ## Build
 

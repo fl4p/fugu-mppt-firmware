@@ -14,7 +14,7 @@ trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT
 if ! which idf.py ; then
   export IDF_TARGET=esp32s3
   deactivate 2> /dev/null || true
-  . "${IDF_PATH:-../../esp/idf5.5}/export.sh"
+  . "${IDF_PATH:-../../esp/idf6.0.3}/export.sh"
 fi
 
 
