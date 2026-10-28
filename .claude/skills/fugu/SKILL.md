@@ -83,6 +83,11 @@ the same port, since idf.py refuses a `-p` that differs from `ESPPORT` (`Option 
 defined`, 2026-10-10). Bare `esptool` can be a
 broken PlatformIO shim; `python -m esptool` after sourcing always works. The vendored IDF carries a
 local NimBLE patch (`etc/patches/`) that **an IDF update silently reverts** — reapply after bumps.
+`idf.py not found` after sourcing is the export failing, not PATH; read its output. On 2026-10-28
+`~/dev/esp/idf5.5` was gone (only `idf6`, `idf6.0.3`), and Homebrew's `python3` had moved to 3.15,
+which has no IDF env (`python_env/idf6.0_py3.15_env ... not found`). What worked:
+`FUGU_IDF=idf6.0.3 IDF_PYTHON_ENV_PATH=~/.espressif/python_env/idf6.0_py3.14_env . ./idf-export.sh`
+plus the IDF 6 build form from `CLAUDE.md`. Report a missing IDF to the user; don't work around it silently.
 
 ## Build
 
@@ -154,6 +159,15 @@ Check the partition table matches **before every flash to a port not just verifi
 reports e.g. `ota_0 @0x010000 (1828KB)` against the build's `Smallest app partition is 0x1c9000`
 (= 1828 KB). esptool does *not* check: it wrote the 1.7 MB fugu app over a foreign S3's 1448 KB
 app partition and 216 KB of its data, reporting `Hash of data verified. Done`.
+Old images don't have `bootinfo` (they answer `unknown or unexpected command`). Read the table with
+`python -m esptool -p PORT read-flash 0x8000 0xc00 pt.bin` and
+`$IDF_PATH/components/partition_table/gen_esp32part.py pt.bin`. If it is an older layout (one seen
+2026-10-28: 1700K slots, littlefs at 0x36b000, no coredump), app-flash would leave the board on that
+table. To migrate it without `dry_mock`, back up the old littlefs and NVS with `read-flash`. Then
+`write-flash` bootloader, partition table, `ota_data_initial.bin` and the app from the build dir.
+Next, `erase-region 0x3b9000 0x20000` (the new littlefs), run `provision.py <profile>`, and archive
+the ELF yourself (`etc/idf-devtools/elf_archive.py archive <name> --method serial --build-dir build-<tag>`),
+because raw esptool doesn't archive it. Ask the user which profile to use.
 
 ### When esptool can't reset the board
 
