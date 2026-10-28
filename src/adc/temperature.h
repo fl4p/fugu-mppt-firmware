@@ -31,6 +31,8 @@ public:
 
     virtual ~SingleValueSensor() = default;
 
+    [[nodiscard]] bool fitted() const { return present(); }
+
     float read() {
         float v = readImpl();
         // Stamp only on an actual update. A read that fails leaves the filters holding their old

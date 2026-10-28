@@ -56,8 +56,10 @@ void MpptController::update() {
     rtcount("mppt.update.meterAdd");
 
 
-    // fmaxf drops a NaN operand: chip temp stands in for an absent NTC, NaN only if both are.
-    float ntcTemp = fmaxf(ntc.lastFresh(), ucTemp.lastFresh());
+    // Chip temp stands in only for an unfitted NTC; a fitted one reading NaN keeps the 25% derate.
+    const float ntcFresh = ntc.lastFresh();
+    float ntcTemp = !ntc.fitted() ? ucTemp.lastFresh()
+                    : std::isnan(ntcFresh) ? ntcFresh : fmaxf(ntcFresh, ucTemp.lastFresh());
 
     fan.fanUpdateTemp(ntcTemp, power_smooth);
     rtcount("mppt.update.thermals");
