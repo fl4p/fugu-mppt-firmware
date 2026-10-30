@@ -116,6 +116,7 @@ struct BatteryState {
         vcell_high = vcell_high_;
         vcell_high_t = static_cast<uint32_t>(wallClockUs());
         vcell_high_ticks = wallClockTicks();
+        coulombCounter.sampleOnCellFrame(vcell_high_ticks);
     }
 
     void setTemp(uint8_t i, float t) {
@@ -348,7 +349,7 @@ public:
         _lastTermFrameUs = frame;
 
         bool wasTerm = bool(termCond);
-        termCond.update(batSt.vcell_high, ibat, batSt.coulombCounter.ahSinceFull());
+        termCond.update(batSt.vcell_high, ibat, batSt.coulombCounter.updateDepth());
         // the line needs VTERM_STREAK_REQ frames to latch, so the boot sweep must not trust
         // "not terminated" before that many have been seen
         if (_termEvals < UINT8_MAX) ++_termEvals;
@@ -428,7 +429,7 @@ public:
             _partialHold = false;
             return;
         }
-        float ah = batSt.coulombCounter.ahSinceFull();
+        float ah = batSt.coulombCounter.deficit();
         float ceilAh = (1.f - params.partial_charge) * params.Cbat;
         if (!_partialHold && ah <= ceilAh) {
             _partialHold = true;
@@ -471,7 +472,7 @@ public:
         if (std::isfinite(_hotScale)) t = fminf(t, params.Ibat_lim * _hotScale);
         if (_partialHold) {
             float ceilAh = (1.f - params.partial_charge) * params.Cbat;
-            t = fminf(t, fminf(fmaxf((batSt.coulombCounter.ahSinceFull() - ceilAh) * 0.5f, -1.f), 1.f));
+            t = fminf(t, fminf(fmaxf((batSt.coulombCounter.deficit() - ceilAh) * 0.5f, -1.f), 1.f));
         }
         return t;
     }
@@ -671,6 +672,18 @@ public:
                 batSt.setTemp(i, t);
             });
         }
+
+        // BMS remaining charge [Ah]: a deficit shared by all chargers on this BMS
+        topic = mqttConf.getString("bat_charge_topic", "");
+        if (!topic.empty())
+            MQTT.subscribeTopic(topic, [&](const char *dat, int len) {
+                float ah = strntof(dat, len);
+                if (!std::isfinite(ah) || ah < 0) {
+                    LOG_VALUE_IGNORED("charger", "bat_charge", len, dat);
+                    return;
+                }
+                batSt.coulombCounter.setBmsCharge(ah, wallClockTicks());
+            });
 
         topic = mqttConf.getString("ibat_lim_topic", "");
         if (!topic.empty())

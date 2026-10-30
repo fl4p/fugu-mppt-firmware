@@ -156,6 +156,7 @@ void test_coulomb_counter_markfull_resets();
 void test_coulomb_counter_drops_gap_over_maxdt();
 void test_mqtt_vcell_message_updates_state();
 void test_mqtt_ibat_message_drives_coulomb_counter();
+void test_mqtt_bat_charge_drives_deficit();
 void test_mqtt_ibat_lim_accepts_valid();
 void test_mqtt_ibat_lim_rejects_negative();
 void test_mqtt_ibat_lim_rejects_nan();
@@ -416,6 +417,7 @@ void setup() {
     // charger.h — MQTT callback integration
     RUN_TEST(test_mqtt_vcell_message_updates_state);
     RUN_TEST(test_mqtt_ibat_message_drives_coulomb_counter);
+    RUN_TEST(test_mqtt_bat_charge_drives_deficit);
     RUN_TEST(test_mqtt_ibat_lim_accepts_valid);
     RUN_TEST(test_mqtt_ibat_lim_rejects_negative);
     RUN_TEST(test_mqtt_ibat_lim_rejects_nan);

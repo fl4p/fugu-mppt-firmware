@@ -85,6 +85,18 @@ when either of these conditions holds:
   otherwise leave the charger stuck terminated while the pack is genuinely
   empty.
 
+With `mqtt.conf:bat_charge_topic` set, the charger takes the deficit from the
+BMS remaining-charge counter instead, as long as that value is fresh (a frame
+within the last 120 s). The charge is sampled on every cell frame, and the
+reference is the sample on the frame that latched termination. Chargers that
+share one BMS therefore compute the same deficit and release on the same cell
+frame. With independent integrators, small differences let one charger release
+first. Its charging then pulls the other's deficit back below the threshold, so
+that one stays terminated until the next full charge. The release compares the
+deepest deficit since the last full charge, so a sibling that starts charging
+cannot undo a release that is already due. If the BMS charge goes stale, the
+integrator takes over.
+
 The charger re-zeroes the integrator on every termination event. The
 integrator counts the "deficit since the last known full" and recalibrates
 itself each cycle, so it does not have to be a precise long-term SoC gauge.

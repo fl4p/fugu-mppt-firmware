@@ -1,0 +1,105 @@
+connecting to 127.0.0.1:12232 (telnet)
+=== hostname ===
+I (464019017) main: received serial command: 'hostname'
+Hostname: fry
+V=75.2/26.69 I=-0.00/-0.01A  -0.1W 23℃35℃ 514sps  0㎅/s DCM(H|L|Lm)=   0|   0|  40 st=   CV,0 lag=71520㎲ N=30397260 rssi=-48
+=== version ===
+I (464019216) main: received serial command: 'version'
+E (464019224) main: Command not found at 'version'
+=== get-config sensor.conf ===
+I (464019442) main: received serial command: 'get-config sensor.conf'
+I (464019460) main: Conf '/littlefs/conf/sensor.conf:ntc_adc' = 'esp32adc1'
+I (464019464) main: Conf '/littlefs/conf/sensor.conf:iout_filt_len' = '20'
+I (464019467) main: Conf '/littlefs/conf/sensor.conf:iout_ch' = '1'
+I (464019472) main: Conf '/littlefs/conf/sensor.conf:iout_adc' = 'ina226'
+I (464019478) main: Conf '/littlefs/conf/sensor.conf:iin_filt_len' = '20'
+I (464019485) main: Conf '/littlefs/conf/sensor.conf:ntc_filt_len' = '20'
+I (464019491) main: Conf '/littlefs/conf/sensor.conf:iout_factor' = '-1.0'
+I (464019498) main: Conf '/littlefs/conf/sensor.conf:vout_filt_len' = '20'
+I (464019506) main: Conf '/littlefs/conf/sensor.conf:esp32adc1_sr' = '22000'
+I (464019522) main: Conf '/littlefs/conf/sensor.conf:esp32adc1_avg' = '32'
+I (464019525) main: Conf '/littlefs/conf/sensor.conf:vout_rl' = '42137'
+I (464019532) main: Conf '/littlefs/conf/sensor.conf:vin_adc' = 'esp32adc1'
+I (464019535) main: Conf '/littlefs/conf/sensor.conf:vin_ch' = '3'
+I (464019540) main: Conf '/littlefs/conf/sensor.conf:expected_hz' = '200'
+I (464019547) main: Conf '/littlefs/conf/sensor.conf:vin_rh' = '200e3'
+I (464019552) main: Conf '/littlefs/conf/sensor.conf:vin_rl' = '7.5e3'
+I (464019558) main: Conf '/littlefs/conf/sensor.conf:ntc_ch' = '7'
+I (464019564) main: Conf '/littlefs/conf/sensor.conf:vin_filt_len' = '20'
+I (464019571) main: Conf '/littlefs/conf/sensor.conf:power_conversion_eff' = '0.97'
+I (464019610) main: Conf '/littlefs/conf/sensor.conf:vout_ch' = '0'
+I (464019614) main: Conf '/littlefs/conf/sensor.conf:vout_adc' = 'ina226'
+I (464019622) main: Conf '/littlefs/conf/sensor.conf:vout_rh' = '47e3'
+I (464019627) main: Conf '/littlefs/conf/sensor.conf:despike' = '0'
+V=75.2/26.69 I=0.00/ 0.00A   0.1W 23℃35℃ 340sps  0㎅/s DCM(H|L|Lm)=   0|   0|  40 st=   CV,0 lag=71520㎲ N=30397561 rssi=-48
+=== get-config board.conf ===
+I (464019943) main: received serial command: 'get-config board.conf'
+I (464019968) main: Conf '/littlefs/conf/board.conf:led_WS2812' = '1'
+I (464019973) main: Conf '/littlefs/conf/board.conf:panel_sd' = '40'
+I (464019976) main: Conf '/littlefs/conf/board.conf:pwm_sd' = '47'
+I (464019980) main: Conf '/littlefs/conf/board.conf:mcu' = 'esp32s3'
+I (464019985) main: Conf '/littlefs/conf/board.conf:pwm_freq' = '39000'
+I (464019991) main: Conf '/littlefs/conf/board.conf:i2c_scl' = '2'
+I (464019997) main: Conf '/littlefs/conf/board.conf:i2c_port' = '0'
+I (464020003) main: Conf '/littlefs/conf/board.conf:i2c_freq' = '800000'
+I (464020009) main: Conf '/littlefs/conf/board.conf:ina22x_alert' = '41'
+I (464020027) main: Conf '/littlefs/conf/board.conf:i2c_sda' = '42'
+I (464020033) main: Conf '/littlefs/conf/board.conf:ina22x_resistor' = '0.5e-3'
+I (464020039) main: Conf '/littlefs/conf/board.conf:pwm_hi' = '21'
+I (464020047) main: Conf '/littlefs/conf/board.conf:ina22x_addr' = '0b1000000'
+I (464020054) main: Conf '/littlefs/conf/board.conf:ina22x_range' = '35'
+I (464020058) main: Conf '/littlefs/conf/board.conf:pwm_driver_logic' = 'HiLi'
+I (464020062) main: Conf '/littlefs/conf/board.conf:pwm_li' = '14'
+V=75.3/26.69 I=-0.00/-0.01A  -0.3W 23℃35℃ 164sps  0㎅/s DCM(H|L|Lm)=   0|   0|  40 st=   CV,0 lag=71520㎲ N=30397783 rssi=-48
+=== get-config converter.conf ===
+I (464020291) main: received serial command: 'get-config converter.conf'
+I (464020306) main: Conf '/littlefs/conf/converter.conf:forced_pwm' = '0'
+I (464020309) main: Conf '/littlefs/conf/converter.conf:topo' = 'buck'
+I (464020313) main: Conf '/littlefs/conf/converter.conf:pwm_driver' = 'ledc'
+V=75.2/26.70 I=-0.01/-0.01A  -0.4W 23℃35℃ 77sps  0㎅/s DCM(H|L|Lm)=   0|   0|  40 st=   CV,0 lag=71520㎲ N=30397912 rssi=-48
+=== get-config charger.conf ===
+I (464020559) main: received serial command: 'get-config charger.conf'
+I (464020579) main: Conf '/littlefs/conf/charger.conf:recharge_dod' = '0.15'
+I (464020582) main: Conf '/littlefs/conf/charger.conf:cv_float' = '3.35'
+I (464020586) main: Conf '/littlefs/conf/charger.conf:bat_c' = '280'
+I (464020590) main: Conf '/littlefs/conf/charger.conf:ibat_max' = '100'
+I (464020597) main: Conf '/littlefs/conf/charger.conf:tail_c_rate' = '0.05'
+I (464020603) main: Conf '/littlefs/conf/charger.conf:cv_eoc' = '3.5'
+I (464020609) main: Conf '/littlefs/conf/charger.conf:vout_max' = '29'
+V=75.2/26.70 I=-0.01/-0.03A  -0.6W 23℃36℃ 76sps  0㎅/s DCM(H|L|Lm)=   0|   0|  40 st=   CV,0 lag=71520㎲ N=30398064 rssi=-48
+=== sensor ===
+I (464020950) main: received serial command: 'sensor'
+
+Sensor `vin` (ch3, physical):
+  num=27378509  last= 75.303 V   prev= 75.303 V  raw=  2.6830
+  EWM(  20):  avg=  75.294 V   std*= 0.0081 V  std%=  0.011 %
+  ANF(span=  20):  Nstd=    -nan   Sstd=   -nan   NSR=   -nan  (stale — run `anf on`)
+
+Sensor `iin` (ch255, virtual):
+  num=40454622  last= -0.012     prev= -0.012    raw= -0.0121
+  EWM(  20):  avg=   0.006     std*= 0.0056    std%=100.257 %
+  ANF(span=  20):  Nstd=    -nan   Sstd=   -nan   NSR=   -nan  (stale — run `anf on`)
+
+Sensor `iout` (ch1, physical):
+  num=30398304  last= -0.018 A   prev= -0.018 A  raw=  0.6099
+  EWM(  20):  avg=  -0.002 A   std*= 0.0020 A  std%=112.126 %
+  ANF(span=  20):  Nstd=    -nan   Sstd=   -nan   NSR=   -nan  (stale — run `anf on`)
+
+Sensor `ntc` (ch7, physical):
+  num=13689280  last=  1.588 C   prev=  1.588 C  raw=  1.5880
+  EWM(  50):  avg=   1.589 C   std*= 0.0004 C  std%=  0.026 %
+  ANF(span=  50):  Nstd=    -nan   Sstd=   -nan   NSR=   -nan  (stale — run `anf on`)
+
+Sensor `vout` (ch0, physical):
+  num=30398360  last= 26.697 V   prev= 26.689 V  raw= 12.2912
+  EWM(  20):  avg=  26.691 V   std*= 0.0028 V  std%=  0.011 %
+  ANF(span=  20):  Nstd=    -nan   Sstd=   -nan   NSR=   -nan  (stale — run `anf on`)
+V=75.2/26.69 I=0.00/ 0.01A   0.3W 23℃36℃ 126sps  0㎅/s DCM(H|L|Lm)=   0|   0|  40 st=   CV,0 lag=71520㎲ N=30398392 rssi=-48
+=== status ===
+I (464021459) main: received serial command: 'status'
+Charger: TERMINATED (float)
+  Vbat_max=29.00V Vout_max=26.20V  Ibat_lim=39.0A Iout_max=39.0A
+  v_term=3.382V cv_min=3.350 cv_eoc=3.500  Cbat=280.0Ah recharge_dod=0.15
+  BMS vcell_high=3.334V (ok, 6s ago)  ibat=3.01A  ahSinceFull=41.58Ah  vout_avg=26.63V
+  DoD since full: 15% / 15% to recharge
+V=75.3/26.69 I=0.00/ 0.01A   0.3W 23℃36℃ 55sps  0㎅/s DCM(H|L|Lm)=   0|   0|  40 st=   CV,0 lag=71520㎲ N=30398554 rssi=-48

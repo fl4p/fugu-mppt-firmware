@@ -274,6 +274,34 @@ void test_mqtt_ibat_message_drives_coulomb_counter() {
     TEST_ASSERT_TRUE(charger.batSt.coulombCounter.ahSinceFull() > 0.0f);
 }
 
+// The BMS remaining charge, sampled on cell frames, replaces the integrator and is measured from
+// the charge at the last full; invalid payloads are ignored.
+void test_mqtt_bat_charge_drives_deficit() {
+    BatteryCharger charger;
+    charger.params = makeLfpParams();
+    ConfFile mqttConf{{{"cell_voltages_max_topic", "test/vcell_c"}}};
+    mqttConf.set("bat_charge_topic", "test/charge");
+    charger.beginMqtt(mqttConf);
+
+    setWallClockUs(10'000'000ULL);
+    MQTT._invokeForTest("test/charge", "200.00", 6);
+    MQTT._invokeForTest("test/vcell_c", "3.400", 5);
+    charger.batSt.coulombCounter.markFull();
+    TEST_ASSERT_TRUE(charger.batSt.coulombCounter.bmsSource());
+
+    MQTT._invokeForTest("test/charge", "-1", 2);
+    MQTT._invokeForTest("test/charge", "nan", 3);
+    MQTT._invokeForTest("test/charge", "185.5", 5);
+    MQTT._invokeForTest("test/vcell_c", "3.300", 5);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 14.5f, charger.batSt.coulombCounter.deficit());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 14.5f, charger.batSt.coulombCounter.updateDepth());
+
+    // no charge frame for > BMS_CHARGE_EXPIRE_S: the next cell frame drops the BMS source
+    setWallClockUs(loopWallClockUs_ + (CoulombCounter::BMS_CHARGE_EXPIRE_S + 5) * 1'000'000ULL);
+    MQTT._invokeForTest("test/vcell_c", "3.300", 5);
+    TEST_ASSERT_FALSE(charger.batSt.coulombCounter.bmsSource());
+}
+
 void test_mqtt_ibat_lim_accepts_valid() {
     BatteryCharger charger;
     charger.params = makeLfpParams();

@@ -1779,12 +1779,13 @@ static void cmdStatus(cmd *) {
         UART_LOG("  OV limit=derived from Vbat_max%s", p.vbatMaxExplicit ? " (vset locked)" : "");
     UART_LOG("  v_term=%.3fV cv_min=%.3f cv_eoc=%.3f  Cbat=%.1fAh recharge_dod=%.2f",
              chg.termCond.v_term(), p.cv_min, p.cv_eoc, p.Cbat, p.recharge_dod);
-    float ah = bs.coulombCounter.ahSinceFull();
-    UART_LOG("  BMS vcell_high=%.3fV (%s, %lus ago)  ibat=%.2fA (%s, %lus ago)  ahSinceFull=%.2fAh  vout_avg=%.2fV",
+    UART_LOG("  BMS vcell_high=%.3fV (%s, %lus ago)  ibat=%.2fA (%s, %lus ago)  ahSinceFull=%.2fAh (%s)  vout_avg=%.2fV",
              bs.vcell_high, vcOk ? "ok" : "stale/na", ageS,
-             bs.ibatSmoothed(), chg.ibatFresh() ? "ok" : "stale/na", (unsigned long) chg.ibatAgeS(), ah, bs.vout_avg.get());
+             bs.ibatSmoothed(), chg.ibatFresh() ? "ok" : "stale/na", (unsigned long) chg.ibatAgeS(),
+             bs.coulombCounter.deficit(), bs.coulombCounter.bmsSource() ? "bms" : "ibat", bs.vout_avg.get());
     if ((bool) chg.termCond && std::isfinite(p.Cbat) && p.Cbat > 0.f && p.recharge_dod > 0.f)
-        UART_LOG("  DoD since full: %.0f%% / %.0f%% to recharge", ah / p.Cbat * 100.f, p.recharge_dod * 100.f);
+        UART_LOG("  DoD since full: %.0f%% / %.0f%% to recharge", bs.coulombCounter.depth() / p.Cbat * 100.f,
+                 p.recharge_dod * 100.f);
     if (p.partial_charge > 0.f) {
         time_us lf = chg.lastFullUs();
         if (lf)
