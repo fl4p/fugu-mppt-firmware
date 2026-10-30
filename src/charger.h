@@ -286,6 +286,7 @@ class BatteryCharger {
     // doesn't step the converter setpoint.
     LinearGlide _floatGlide{5'000'000};
     bool _wasTerminated = false;
+    bool _termJoin = false; // terminated without authority, joined at float because the pack discharges
 
     // Integrator step gate: advance vpack_pin only on a fresh BMS frame so the
     // step rate matches the cell-voltage update rate (otherwise loopLF at 1 Hz
@@ -496,6 +497,7 @@ public:
 
         bool batDataOk = batSt.haveValidCellVoltage() and std::isfinite(params.Cbat);
         bool nowTerm = bool(termCond);
+        if (!nowTerm) _termJoin = false;
         auto nowUs = wallClockUs();
 
         // Absorption target: hold the highest cell at cv_eoc and let the current taper; the
@@ -539,10 +541,17 @@ public:
                 // bus and regulates termination). Pin at the EOC float floor so this converter targets the
                 // resting full-pack voltage and sits at ~0 current; it re-takes the bus once termination
                 // releases (recharge) via the branch below.
-                float floor = params.Vbat_fallback - params.vout_offset_max;
-                if (std::isnan(vpack_pin) || vpack_pin > floor + 0.01f)
-                    ESP_LOGW("charger", "no Vout authority (terminated): yield %.3f -> %.3f", vpack_pin, floor);
-                vpack_pin = floor;
+                // While the pack discharges, nothing covers the load: join at the float target the
+                // sibling holds. A fixed target, so a disabled converter cannot wind it up.
+                constexpr float JOIN_A = 1.0f, LEAVE_A = 0.5f;
+                bool fresh = ibatFresh();
+                if (!fresh || ibat > LEAVE_A) _termJoin = false;
+                else if (ibat < -JOIN_A) _termJoin = true;
+                float target = _termJoin ? params.Vbat_fallback : params.Vbat_fallback - params.vout_offset_max;
+                if (std::isnan(vpack_pin) || fabsf(vpack_pin - target) > 0.01f)
+                    ESP_LOGW("charger", "no Vout authority (terminated): %s %.3f -> %.3f (ibat %.1fA)",
+                             _termJoin ? "join" : "yield", vpack_pin, target, ibat);
+                vpack_pin = target;
                 _vPinFilt.reset();
                 _fallbackGlide.reset();
                 _floatGlide.reset();
@@ -597,9 +606,10 @@ public:
             // balancing mode / float
             // terminated float: hold an absolute target, ignore feedback/EWMA
             // this keep LFP float, with a small charge current, considered unhealthy for an extended period of time
+            // No glide when termination latched without authority: hold the float target directly.
             _vPinFilt.reset();
             _fallbackGlide.reset();
-            vpack_pin = _floatGlide.value(nowUs);
+            vpack_pin = _floatGlide.active() ? _floatGlide.value(nowUs) : params.Vbat_fallback;
         } else if (!batDataOk) {
             // missing bat data -> glide to the fallback
             _vPinFilt.reset();

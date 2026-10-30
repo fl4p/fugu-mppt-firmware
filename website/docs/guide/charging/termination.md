@@ -112,6 +112,25 @@ time at mid-SoC. A lower value releases sooner: more frequent topping, more
 cycle wear, and less time below 100 %. LFP off-grid systems commonly run
 0.10–0.30.
 
+## Parallel chargers on one pack
+
+When several chargers feed one pack and the pack is terminated, usually only
+one of them drives the bus. A converter drives the bus while it is enabled
+and above its minimum duty. The others sit at minimum duty, and charging into
+a full pack would only fight that converter. A charger that does not drive
+the bus therefore pins its target at the float floor
+(`vout_max_fallback - vout_offset_max`) and delivers no current.
+
+While the BMS reports the pack discharging (pack current below −1 A), the load
+is larger than what the driving charger supplies. The idle charger then joins
+at the float target (`vout_max_fallback`) and helps cover the load. It returns
+to the floor once the pack current rises above +0.5 A, or when the BMS current
+goes stale. The join target is fixed, so a converter that is off overnight
+does not build up a higher setpoint.
+
+Set `bat_charge_topic` so that all chargers leave termination together (see
+[Recharge hysteresis](#recharge-hysteresis-dod-based-release)).
+
 ## Related parameters
 
 These parameters also shape termination:

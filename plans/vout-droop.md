@@ -290,3 +290,26 @@ Deploy (needs Fab):
 - set `mqtt.conf bat_charge_topic` on fry and flat;
 - OTA both. Their June firmware is far behind `main`, so follow the `-n`/`-m` OTA procedure,
   `dc 0` at high power, and confirm in the after-table.
+
+## Firmware fix 2: join at float while a terminated pack discharges (implemented 2026-10-30, not deployed)
+
+- **Join.** A terminated unit without Vout authority still yields to the float floor
+  (`Vbat_fallback - vout_offset_max`) when the pack is idle or charging. When the BMS reports the
+  pack discharging (`ibat` < −1 A), it now joins at `Vbat_fallback` instead. It leaves above
+  +0.5 A, or when `ibat` is stale.
+- **No windup.** The join target is fixed, not integrated, so a disabled converter cannot wind it
+  up overnight (review finding 2).
+- **No re-injection.** It never targets `Vbat_max`, the cause of the re-injection limit cycle in
+  `12d5876`.
+- **Latent bug fixed.** When termination latched without authority, no float glide was started.
+  Regaining authority while still terminated then read an inactive glide: `NAN` after boot, which
+  `Vout_max()` turns into `Vbat_max` (29 V) into a full pack. The float branch now uses
+  `Vbat_fallback` when the glide is inactive.
+- **Host test** `test/host-stub/charger-term-test.cpp`. It compiles `charger.h` with the new
+  `test/host-stub/mqtt_client.h` stub. All six cases pass. Against the committed `charger.h`
+  (dde86a7), three fail: no join (26.20 V), no hysteresis, and **29.00 V** after regaining
+  authority. The last one confirms the latent bug.
+- **Not addressed.** A *disabled* terminated converter is still not restarted (`src/main.cpp`
+  start gate), so the join only helps a unit that is enabled at minimum duty. flat's Vout sense
+  error still makes it the driving unit and lets it trickle at real float + ~0.3 V; that needs
+  the hardware fix.
