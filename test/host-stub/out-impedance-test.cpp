@@ -174,6 +174,45 @@ static void test_stale() {
     CHECK(fresh && std::isnan(r.est()), "stale value still reported");
 }
 
+// Near the CV boundary the Vout limiter is positive (not "limiting") but caps the tracker's step,
+// so the duty follows Kp*(Vset-Vout): a closed loop on Vout. Bus disturbances then correlate dV
+// and dD. tickGate=true feeds whenever the limiter is >= 0 (the gating that read about -60 mOhm on
+// a live converter); otherwise only when the tracker step is below the cap, with hold() else.
+static float cvBoundary(bool tickGate) {
+    Rig r(27.f, 0.02f, 0.003f, 0.01f);
+    r.charge(8.f);
+    r.z = OutputImpedance{};
+    const float vset = r.v.getVout() + 0.01f;
+    std::uniform_real_distribution<float> u(0, 1);
+    float duty = r.ctrl;
+    for (long i = 0; i < kTickHz * 180L; ++i) {
+        if (i % (kTickHz / 10) == 0 && u(r.rng) < 0.3f)
+            r.v.setBat(r.vbat + (u(r.rng) - 0.5f) * 0.3f, r.rbat);
+        r.step(false);
+        if ((r.tick - 1) % kChannels != 3) continue;
+        const float lim = 2000.f * (vset - r.vout.get()) / vset; // Vout PD output, counts per update
+        const float trk = 0.05f;                                  // tracker wants more power
+        const bool free = trk < lim;
+        if (tickGate ? lim >= 0 : free)
+            r.z.add(r.vout.get(), r.iout.get(), r.ctrl, r.now());
+        else if (tickGate)
+            r.z.reset();
+        else
+            r.z.hold(r.now());
+        duty += std::min(trk, lim);
+        r.setCtrl((uint16_t) std::lround(duty));
+    }
+    return r.est();
+}
+
+static void test_cv_boundary() {
+    float eOld = cvBoundary(true), eNew = cvBoundary(false);
+    printf("%-34s tick gate %.2f mOhm, cap gate + hold %.2f mOhm\n", "CV boundary + bus noise", eOld * 1e3f,
+           eNew * 1e3f);
+    CHECK(std::isnan(eNew) || std::fabs(eNew - 0.02f) < 0.005f, "CV boundary produced a biased estimate");
+    CHECK(!(std::fabs(eOld - 0.02f) < 0.005f), "scenario no longer biases the tick gate (test lost its teeth)");
+}
+
 int main() {
     test_estimate("clean 20 mOhm", 0.02f, 0, 0, 0, 0, 0, 0.05f);
     test_estimate("clean 5 mOhm", 0.005f, 0, 0, 0, 0, 0, 0.05f);
@@ -189,6 +228,7 @@ int main() {
     test_nan_sample_recovers();
     test_gap();
     test_stale();
+    test_cv_boundary();
     printf(g_fail ? "FAILED (%d)\n" : "OK\n", g_fail);
     return g_fail != 0;
 }

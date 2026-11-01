@@ -197,6 +197,7 @@ private:
     struct {
         MpptControlMode mode: 3 = MpptControlMode::None;
         bool _limiting: 1 = false; // control limited (no MPPT)
+        bool _trackerFree: 1 = false; // last duty step came from the tracker, below every limiter
         uint8_t limIdx: 4 = 15;
     } ctrlState;
 

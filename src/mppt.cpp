@@ -27,13 +27,13 @@ void MpptController::update() {
     // 0 on the first update after a reset: suppresses the D component instead of dividing by it
     const float dtCtrl = lastUs ? (float) (nowUs - lastUs) * 1e-6f : 0.f;
 
-    // only tracker/sweep-driven duty: a limiter's duty reacts to the disturbance it rejects
+    // only uncapped tracker steps: a limiter's duty reacts to the disturbance it rejects
     if (!converter.disabled() && !converter.boost() && !g_app.psuMode() && !sensors.Iout->isVirtual &&
-        !ctrlState._limiting && bflow.state())
+        ctrlState._trackerFree && bflow.state())
         outZ.add(sensors.Vout->med3.get(), sensors.Iout->med3.get(), converter.getCtrlOnPwmCnt(),
                  (uint32_t) nowUs);
     else
-        outZ.reset();
+        outZ.hold((uint32_t) nowUs);
 
     if (converter.disabled() && !startCondition()) {
         bflow.enable(false);
@@ -269,6 +269,7 @@ void MpptController::update() {
 
     // always cap control value
     // TODO instead of capping, use fade-to-target. the tracker might return big jumps
+    ctrlState._trackerFree = controlMode == MpptControlMode::MPPT && controlValue < limitingControlValue;
     controlValue = std::min(controlValue, limitingControlValue);
     ctrlState.mode = controlMode;
     cntrlValue = controlValue;

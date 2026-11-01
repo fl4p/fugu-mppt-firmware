@@ -10,13 +10,14 @@
  * step dD as instrument. Voltage changes from other sources on the bus move I as well (through the
  * converter's input characteristic) but are uncorrelated with the own duty steps, so they don't
  * bias R; current noise doesn't attenuate it either. Block differencing removes slow drift.
- * get() is NAN without recent, sufficiently correlated excitation.
+ * get() is NAN without recent, sufficiently correlated excitation. hold() suspends the fit for
+ * HOLD_US, for periods where the duty is not an independent input (closed-loop regulation).
  */
 class OutputImpedance {
     float sV = 0, sI = 0, sD = 0;   // current block sums
     float vPrev = NAN, iPrev = NAN, dPrev = NAN; // previous block means
     float svd = 0, sid = 0, sdd = 0, sii = 0;
-    uint32_t blockStartUs = 0, lastUs = 0, lastStepUs = 0;
+    uint32_t blockStartUs = 0, lastUs = 0, lastStepUs = 0, holdUs = 0;
     uint16_t nBlk = 0;
     uint16_t nSteps = 0;            // accepted steps, saturating
     float r = NAN;
@@ -24,6 +25,7 @@ class OutputImpedance {
 public:
     static constexpr uint32_t BLOCK_US = 20000;
     static constexpr uint32_t STALE_US = 60'000'000;
+    static constexpr uint32_t HOLD_US = 2'000'000;
     static constexpr uint16_t MIN_STEPS = 32;
     static constexpr float FORGET = 1.f - 1.f / 256.f;
     static constexpr float MIN_CORR2 = 0.25f; // squared correlation of dI and dD
@@ -35,11 +37,17 @@ public:
         vPrev = iPrev = dPrev = NAN;
     }
 
+    void hold(uint32_t nowUs) {
+        reset();
+        holdUs = nowUs;
+    }
+
     // d: duty (PWM counts) commanded during the sample
     void add(float v, float i, float d, uint32_t nowUs) {
-        if (!std::isfinite(v) || !std::isfinite(i) || nowUs - lastUs > 2 * BLOCK_US) reset();
+        const bool bad = !std::isfinite(v) || !std::isfinite(i) || nowUs - holdUs < HOLD_US;
+        if (bad || nowUs - lastUs > 2 * BLOCK_US) reset();
         lastUs = nowUs;
-        if (!std::isfinite(v) || !std::isfinite(i)) return;
+        if (bad) return;
 
         if (!nBlk) blockStartUs = nowUs;
         sV += v;
