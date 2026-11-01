@@ -384,6 +384,7 @@ const META = {
   cell_voltages_max_topic:{unit:"",desc:"Topic for BMS highest cell voltage",type:"string"},
   ibat_topic:{unit:"",desc:"Topic for battery current from BMS",type:"string"},
   ibat_lim_topic:{unit:"",desc:"Topic for battery charge current limit",type:"string"},
+  bat_voltage_topic:{unit:"",desc:"Topic for the BMS pack voltage (batmon-ha: <dev>/soc/total_voltage); wire resistance fit, telemetry Rc/Rb",type:"string"},
   bat_charge_topic:{unit:"",desc:"Topic for BMS remaining charge in Ah (batmon-ha: <dev>/mosfet_status/capacity_ah); shared deficit since full for parallel chargers",type:"string"},
   bat_temp_topic:{unit:"",desc:"Up to 4 comma-separated BMS pack temperature topics (batmon-ha: <dev>/temperatures/1,<dev>/temperatures/2)",type:"string"},
   cmd_input:{unit:"",desc:"Accept console commands over MQTT (pv/log/<host>/cmd)",type:"bool"},
@@ -513,7 +514,7 @@ const FILE_KEYS = {
   "charger.conf":["bat_c","bat_temp_derate","bat_temp_max","bat_temp_min","cv_ceiling","cv_eoc","cv_float","full_charge_interval","ibat_max",
     "partial_charge","recharge_dod","recharge_vfloor_band","tail_c_rate","vout_max","vout_max_fallback","vout_offset_max"],
   "tracker.conf":["sweep_speed","target_duty_cycle"],
-  "mqtt.conf":["bat_charge_topic","bat_temp_topic","broker_uri","cell_voltages_max_topic","cmd_input","enabled","ibat_lim_topic",
+  "mqtt.conf":["bat_charge_topic","bat_temp_topic","bat_voltage_topic","broker_uri","cell_voltages_max_topic","cmd_input","enabled","ibat_lim_topic",
     "ibat_topic","log_level","password","username"],
   "tele.conf":["adv_ms","binary","ble","enabled","influxdb_host","log_level"],
   "ftp.conf":["enabled","ftp_pass","ftp_user","log_level"],
@@ -545,7 +546,7 @@ const TYPE_KEYS = {
     "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
     "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td"]),
   string: new Set(["adc","ble_security","broker_uri","cell_voltages_max_topic","ftp_pass",
-    "ftp_user","bat_charge_topic","bat_temp_topic","ibat_lim_topic","ibat_topic","influxdb_host","log_level","mcu","mode","password",
+    "ftp_user","bat_charge_topic","bat_temp_topic","bat_voltage_topic","ibat_lim_topic","ibat_topic","influxdb_host","log_level","mcu","mode","password",
     "pwm_driver_logic","topo","username"]),
 };
 // SCRAPER:END TYPE_KEYS
@@ -579,7 +580,7 @@ const DEFAULTS = {
   // tracker.conf
   "sweep_speed":"4.0","target_duty_cycle":"0.0",
   // mqtt.conf
-  "bat_charge_topic":"\"\"","broker_uri":"\"\"","cell_voltages_max_topic":"\"\"","cmd_input":"0","enabled":"1",
+  "bat_charge_topic":"\"\"","bat_voltage_topic":"\"\"","broker_uri":"\"\"","cell_voltages_max_topic":"\"\"","cmd_input":"0","enabled":"1",
   "ibat_lim_topic":"\"\"","ibat_topic":"\"\"","log_level":"\"info\"","password":"\"\"",
   "username":"\"\"",
   // tele.conf

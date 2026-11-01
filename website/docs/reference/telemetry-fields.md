@@ -55,6 +55,7 @@ The firmware produces a point at most every 20 ms. Some fields appear only on ev
 | `pwm_dir_f`   |        | float | every 20th    | Control value of the last loop iteration (sign = duty direction)                |
 | `mppt_state`  |        | int   | every 20th    | Control mode, see below                                                         |
 | `Ro`          | mΩ     | float | every 20th, when valid | Output source resistance (wiring and battery), estimated from the tracker's own duty steps; absent without recent steps (60 s), while a limiter caps the tracker and for 2 s after, during sweeps, in PSU or boost mode, or when `Iout` is virtual |
+| `Rc`, `Rb`    | mΩ     | float | every 20th, when valid | Converter-to-bus and bus-to-pack resistance, fitted per pack-voltage frame from the output-to-pack voltage drop against output and battery current (`mqtt.conf` `bat_voltage_topic`, `ibat_topic`); a constant voltage offset is fitted out. Absent until about 200 frames fit with a residual below 40 mV, and after an hour without frames |
 | `mcu_temp`    | °C     | float | every 40th    | MCU die temperature                                                             |
 | `ntc_temp`    | °C     | float | every 40th    | Board NTC temperature                                                           |
 | `lag`         | µs     | int   | every 40th    | Peak RT-loop lag; reset by `reset-lag` and at each periodic sweep                |

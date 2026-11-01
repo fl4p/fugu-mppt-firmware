@@ -213,6 +213,52 @@ static void test_cv_boundary() {
     CHECK(!(std::fabs(eOld - 0.02f) < 0.005f), "scenario no longer biases the tick gate (test lost its teeth)");
 }
 
+// WireResistance on synthetic BMS frames (4 s): currents correlated like a shared PV bus,
+// pack voltage quantised to 10 mV. offDrift: a non-constant output-voltage error (flat-like).
+static void wireCase(const char *name, float sigV, float offDrift, int frames, bool expectValid) {
+    WireResistance w;
+    std::mt19937 rng{3};
+    std::normal_distribution<float> n(0, 1);
+    const float r1 = 0.012f, r2 = 0.003f, a = 0.025f;
+    float sun = 5, off = 0;
+    for (int k = 0; k < frames; ++k) {
+        sun = std::clamp(sun + n(rng) * 0.4f, 0.3f, 14.f);
+        float i1 = sun, i2 = 1.8f * sun - 2.f + n(rng) * 1.5f; // sibling charger + loads
+        off = std::clamp(off + n(rng) * offDrift, -2.f, 0.f);
+        float vpack = std::round((26.6f + 0.02f * i2) / 0.01f) * 0.01f;
+        float vout = 26.6f + 0.02f * i2 + a + r1 * i1 + r2 * i2 + off + n(rng) * sigV;
+        w.add(vout - vpack, i1, i2, (uint32_t) (k * 4));
+    }
+    const uint32_t t = (uint32_t) (frames * 4);
+    printf("%-34s R1 %6.2f R2 %6.2f mOhm  sigma %5.1f mV\n", name, w.own(t) * 1e3f, w.shared(t) * 1e3f,
+           w.residual() * 1e3f);
+    if (expectValid)
+        CHECK(std::fabs(w.own(t) - r1) < 0.0015f && std::fabs(w.shared(t) - r2) < 0.0015f, name);
+    else
+        CHECK(std::isnan(w.own(t)) && std::isnan(w.shared(t)), name);
+}
+
+static void test_wire() {
+    wireCase("wire: fry-like", 0.012f, 0, 3000, true);
+    wireCase("wire: too few frames", 0.012f, 0, 150, false);
+    wireCase("wire: flat-like offset drift", 0.012f, 0.03f, 3000, false);
+    wireCase("wire: flat-like noise 150 mV", 0.15f, 0, 3000, false);
+    WireResistance w;
+    for (int k = 0; k < 400; ++k) w.add(0.025f, 5.f, 7.f, (uint32_t) (k * 4)); // currents never vary
+    CHECK(std::isnan(w.own(1600)), "wire: constant currents gave a value");
+    printf("%-34s R1 %6.2f mOhm\n", "wire: constant currents", w.own(1600) * 1e3f);
+    WireResistance v;
+    std::mt19937 rng{4};
+    std::uniform_real_distribution<float> u(0, 14);
+    for (int k = 0; k < 2000; ++k) {
+        float i1 = u(rng), i2 = 1.5f * i1 + u(rng) * 0.3f;
+        v.add(0.025f + 0.012f * i1 + 0.003f * i2, i1, i2, (uint32_t) (k * 4));
+    }
+    bool fresh = std::isfinite(v.own(8000)), stale = std::isnan(v.own(8000 + WireResistance::STALE_S + 1));
+    printf("%-34s fresh %d, stale after STALE_S %d\n", "wire: staleness", fresh, stale);
+    CHECK(fresh && stale, "wire: staleness");
+}
+
 int main() {
     test_estimate("clean 20 mOhm", 0.02f, 0, 0, 0, 0, 0, 0.05f);
     test_estimate("clean 5 mOhm", 0.005f, 0, 0, 0, 0, 0, 0.05f);
@@ -229,6 +275,7 @@ int main() {
     test_gap();
     test_stale();
     test_cv_boundary();
+    test_wire();
     printf(g_fail ? "FAILED (%d)\n" : "OK\n", g_fail);
     return g_fail != 0;
 }

@@ -5,6 +5,7 @@
 #include "console.h"
 #include "etc/coulomb_counter.h"
 #include "etc/linear_glide.h"
+#include "out_impedance.h"
 #include "tele/mqtt.h"
 #include "util.h"
 
@@ -106,6 +107,9 @@ struct BatteryState {
     volatile uint32_t vcell_high_t = 0; // frame id, low 32 bits of wallClockUs()
     volatile uint32_t vcell_high_ticks = 0; // freshness stamp, wallClockTicks(); the us frame id wraps every ~71.6 min
     volatile uint32_t ibat_t = 0; // last ibat frame, same clock as vcell_high_t
+    volatile float ibat_raw = NAN; // last ibat frame, unsmoothed
+    volatile float vpack = NAN; // [V] BMS pack voltage
+    volatile uint32_t vpack_t = 0; // last vpack frame, same clock as vcell_high_t
     volatile float temp[TEMP_SENSORS]{NAN, NAN, NAN, NAN}; // [°C] pack sensors from BMS
     volatile uint32_t temp_t[TEMP_SENSORS]{0, 0, 0, 0};
 
@@ -135,6 +139,7 @@ struct BatteryState {
     // snapshot the loop-task consumer only loads. NAN until IBAT_MIN_SAMPLES seen.
     void updateBatCurrent(const float &ibat) {
         _ibatEwma.add(ibat);
+        ibat_raw = ibat;
         ibat_t = static_cast<uint32_t>(wallClockUs());
         if (_ibatSamples < IBAT_MIN_SAMPLES) ++_ibatSamples;
         if (_ibatSamples >= IBAT_MIN_SAMPLES)
@@ -310,6 +315,8 @@ class BatteryCharger {
     uint32_t _ibatLastT = 0, _tempLastT[BatteryState::TEMP_SENSORS]{};
     time_us _ibatSeenUs = 0, _tempSeenUs[BatteryState::TEMP_SENSORS]{};
     float _tempMin = NAN, _tempMax = NAN; // over fresh sensors, NAN when none
+    uint32_t _wireLastT = 0;
+    float _wirePrevI = NAN;
 
     static constexpr float BAT_TEMP_HYST = 2.f; // [°C] cold-block release band
     static constexpr time_us TEMP_EXPIRE_US = 3600ULL * 1000000ULL; // policy off without a frame (as without a sensor)
@@ -326,6 +333,7 @@ public:
     BatChargerParams params{};
     Li_ChgTerminationCondition termCond{params};
     BatteryState batSt{};
+    WireResistance wire{};
 
 
     explicit BatteryCharger() = default;
@@ -695,6 +703,18 @@ public:
                 batSt.coulombCounter.setBmsCharge(ah, wallClockTicks());
             });
 
+        topic = mqttConf.getString("bat_voltage_topic", "");
+        if (!topic.empty())
+            MQTT.subscribeTopic(topic, [&](const char *dat, int len) {
+                float v = strntof(dat, len);
+                if (!std::isfinite(v) || v <= 0) {
+                    LOG_VALUE_IGNORED("charger", "Vpack", len, dat);
+                    return;
+                }
+                batSt.vpack = v;
+                batSt.vpack_t = static_cast<uint32_t>(wallClockUs());
+            });
+
         topic = mqttConf.getString("ibat_lim_topic", "");
         if (!topic.empty())
             MQTT.subscribeTopic(topic, [&](const char *dat, int len) {
@@ -715,6 +735,18 @@ public:
         _updateTempLimit();
         _updatePartialHold();
         _updatePackVoltagePinning(voutAuthority);
+    }
+
+    // One wire fit sample per pack-voltage frame, while switching at a current that held steady
+    // since the previous frame (BMS and converter samples are seconds apart).
+    void updateWire(float vout, float iout, bool switching) {
+        const uint32_t t = batSt.vpack_t;
+        if (t == _wireLastT) return;
+        _wireLastT = t;
+        const bool use = switching && iout > 0.3f && std::abs((int32_t) (t - batSt.ibat_t)) < 2000000;
+        if (use && std::fabs(iout - _wirePrevI) < 0.5f)
+            wire.add(vout - batSt.vpack, iout, batSt.ibat_raw, (uint32_t) (wallClockUs() / 1000000));
+        _wirePrevI = use ? iout : NAN;
     }
 
     [[nodiscard]] bool partialHold() const { return _partialHold; }

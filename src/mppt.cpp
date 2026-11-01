@@ -531,6 +531,12 @@ void MpptController::telemetry() {
         float ro = outZ.get((uint32_t) wallClockUs());
         if (std::isfinite(ro))
             point.addField("Ro", ro * 1e3f, 2); // mΩ
+        const uint32_t nowS = (uint32_t) (wallClockUs() / 1000000);
+        const float rc = charger.wire.own(nowS), rb = charger.wire.shared(nowS);
+        if (std::isfinite(rc)) {
+            point.addField("Rc", rc * 1e3f, 2); // mΩ
+            point.addField("Rb", rb * 1e3f, 2);
+        }
     }
 
     if ((_teleNumPoints % 40) == 0) {

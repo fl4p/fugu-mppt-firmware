@@ -903,6 +903,7 @@ static void lfControl() {
                                    && mppt.converter.getCtrlOnPwmCnt() > minAuthorityPwm
                                    && currentShowsAuthority;
         mppt.charger.update(vout, iout, voutAuthority);
+        mppt.charger.updateWire(vout, iout, !mppt.converter.disabled());
     }
     wifiShutdownIfHot(mppt.ucTemp.lastFresh());
 

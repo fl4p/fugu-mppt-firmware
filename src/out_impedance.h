@@ -79,3 +79,60 @@ public:
 
     [[nodiscard]] uint16_t steps() const { return nSteps; }
 };
+
+/**
+ * Wire resistances from an external pack voltage: exponentially-forgetting least squares of
+ * dv = a + R1·i1 + R2·i2, with dv the own output voltage minus the pack voltage, i1 the own
+ * output current and i2 the battery current. a absorbs a constant calibration offset. Results are
+ * NAN until the fit has enough weight and both its residual and the standard error of R1 are small,
+ * so a sensor whose error is not a constant offset reports nothing rather than a resistance.
+ * Also NAN after STALE_S without a sample.
+ */
+class WireResistance {
+    double s[6]{}; // XᵀX upper triangle, x = (1, i1, i2): 00 01 02 11 12 22
+    double xy[3]{}, yy = 0;
+    float r1 = NAN, r2 = NAN, sigma = NAN;
+    uint32_t lastS = 0;
+
+public:
+    static constexpr double FORGET = 1. - 1. / 2048.;
+    static constexpr double MIN_WEIGHT = 200;
+    static constexpr float MAX_SIGMA = 0.04f; // [V] residual
+    static constexpr float MAX_SE = 0.002f;   // [Ω] standard error of R1
+    static constexpr uint32_t STALE_S = 3600;
+
+    void add(float dv, float i1, float i2, uint32_t nowS) {
+        if (!std::isfinite(dv) || !std::isfinite(i1) || !std::isfinite(i2)) return;
+        lastS = nowS;
+        const double x[3]{1, i1, i2};
+        for (int k = 0, a = 0; a < 3; ++a)
+            for (int b = a; b < 3; ++b, ++k) s[k] = s[k] * FORGET + x[a] * x[b];
+        for (int a = 0; a < 3; ++a) xy[a] = xy[a] * FORGET + x[a] * dv;
+        yy = yy * FORGET + (double) dv * dv;
+        solve();
+    }
+
+    [[nodiscard]] float own(uint32_t nowS) const { return nowS - lastS > STALE_S ? NAN : r1; }    // R1 [Ω]
+    [[nodiscard]] float shared(uint32_t nowS) const { return nowS - lastS > STALE_S ? NAN : r2; } // R2 [Ω]
+    [[nodiscard]] float residual() const { return sigma; }
+
+private:
+    void solve() {
+        r1 = r2 = sigma = NAN;
+        const double a = s[0], b = s[1], c = s[2], d = s[3], e = s[4], f = s[5];
+        if (a < MIN_WEIGHT) return;
+        const double c00 = d * f - e * e, c01 = c * e - b * f, c02 = b * e - c * d;
+        const double det = a * c00 + b * c01 + c * c02;
+        if (!(std::fabs(det) > 1e-9 * a * d * f)) return; // singular: currents never varied
+        const double c11 = a * f - c * c, c12 = b * c - a * e, c22 = a * d - b * b;
+        const double p0 = (c00 * xy[0] + c01 * xy[1] + c02 * xy[2]) / det;
+        const double p1 = (c01 * xy[0] + c11 * xy[1] + c12 * xy[2]) / det;
+        const double p2 = (c02 * xy[0] + c12 * xy[1] + c22 * xy[2]) / det;
+        const double sse = yy - (p0 * xy[0] + p1 * xy[1] + p2 * xy[2]);
+        const double s2 = (sse > 0 ? sse : 0) / (a - 3);
+        sigma = (float) std::sqrt(s2);
+        if (!(sigma <= MAX_SIGMA) || !(std::sqrt(s2 * c11 / det) <= MAX_SE)) return;
+        r1 = (float) p1;
+        r2 = (float) p2;
+    }
+};
