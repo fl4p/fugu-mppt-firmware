@@ -99,10 +99,11 @@ class EWMA_nPass {
     float_t_alpha alpha;
 public:
 
-    float_t y[passes] = {std::numeric_limits<float_t>::quiet_NaN()};
+    float_t y[passes];
 
     explicit EWMA_nPass(uint32_t span) {
         updateSpan(span);
+        reset();
     }
 
     void updateSpan(float span) {

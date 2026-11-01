@@ -198,6 +198,7 @@ void test_ewma_ignores_nan();
 void test_ewma_converges_to_constant();
 void test_ewma_reset_and_span();
 void test_ewma_npass_converges_to_constant();
+void test_ewma_npass_nan_until_first_sample();
 void test_median3_first_sample_passthrough();
 void test_median3_rejects_spike();
 void test_median3_picks_middle();
@@ -460,6 +461,7 @@ void setup() {
     RUN_TEST(test_ewma_converges_to_constant);
     RUN_TEST(test_ewma_reset_and_span);
     RUN_TEST(test_ewma_npass_converges_to_constant);
+    RUN_TEST(test_ewma_npass_nan_until_first_sample);
     RUN_TEST(test_median3_first_sample_passthrough);
     RUN_TEST(test_median3_rejects_spike);
     RUN_TEST(test_median3_picks_middle);

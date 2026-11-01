@@ -46,6 +46,13 @@ void test_ewma_npass_converges_to_constant() {
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 7.f, e.get()); // get() == last pass
 }
 
+void test_ewma_npass_nan_until_first_sample() {
+    EWMA_nPass<2, float> e{15};
+    TEST_ASSERT_TRUE(std::isnan(e.get()));
+    e.add(27.f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 27.f, e.get()); // every pass seeds on the first sample
+}
+
 // ---------------------------------------------------------------- RunningMedian3
 void test_median3_first_sample_passthrough() {
     RunningMedian3<float> m;

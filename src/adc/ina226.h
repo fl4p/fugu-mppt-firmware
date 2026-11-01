@@ -29,6 +29,7 @@ class ADC_INA226 : public AsyncADC<float> {
     uint16_t convUs_ = 1100;
     uint32_t alertTimeoutMs_ = 4;
     uint32_t measuredPairUs_ = 0; // measured CVRF interval (Vbus+I pair); 0 = not measured
+    uint32_t lastAlertUs_ = 0;    // last sample or MASK_EN poll (micros)
 
 public:
 
@@ -417,12 +418,21 @@ public:
     bool hasData() override {
         static uint32_t numTimeouts = 0, numRecovered = 0;
 
-        if (!new_data && !taskNotification.wait(alertTimeoutMs_)) {
+        if (!new_data)
+            taskNotification.wait(alertTimeoutMs_);
+
+        if (!new_data) {
             // Missed the ALERT edge. The GPIO ISR is deliberately non-IRAM, so it's masked while
             // the flash cache is off (config/coulomb persist, OTA); a dropped edge would otherwise
             // stall the RT sampler until the loop-latency watchdog shuts the converter down. Poll
             // the chip instead: reading MASK_EN reports CVRF *and* clears+re-arms the alert, so a
             // missed edge degrades to a late sample rather than a starvation event.
+            // The task notification is shared with the other ADCs, whose ISRs keep the wait from
+            // timing out, so the poll is paced by the time since the last sample instead.
+            uint32_t now = micros();
+            if (now - lastAlertUs_ < alertTimeoutMs_ * 1000)
+                return false;
+            lastAlertUs_ = now;
             ++numTimeouts;
             uint16_t me = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG, 2);
             overflow = (me >> 2) & 0x0001;
@@ -436,11 +446,8 @@ public:
             return false;
         }
 
-        // we might get a task notification from other ADCs
-        if (!new_data)
-            return false;
-
         new_data = false;
+        lastAlertUs_ = micros();
 
         uint16_t value = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG, 2);
         overflow = (value >> 2) & 0x0001; // MATH overflow, only current/power data invalid (Vbus ok)

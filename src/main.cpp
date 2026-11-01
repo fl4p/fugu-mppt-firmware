@@ -685,9 +685,15 @@ static void loopRT(void *arg) {
         // legitimately withholds fresh samples, so it's excluded from the timeLastSampler arm.
         constexpr time_ms kAdcResetThrottleMs = 300, kAdcSustainedMs = 800, kAdcRestartMs = 60000;
         static time_ms adcStalledSinceMs = 0, lastAdcResetMs = 0;
+        static bool wasCalibrating = false;
+
+        // calibration withholds NewData; give the first post-calibration sample the usual window
+        bool calibrating = adcSampler.isCalibrating();
+        if (wasCalibrating && !calibrating && timeLastSampler) timeLastSampler = nowUs;
+        wasCalibrating = calibrating;
 
         bool adcStalled = samplerRet == ADC_Sampler::UpdateRet::AdcError ||
-                          (samplerRet != ADC_Sampler::UpdateRet::NewData && !adcSampler.isCalibrating() &&
+                          (samplerRet != ADC_Sampler::UpdateRet::NewData && !calibrating &&
                            timeLastSampler && nowUs - timeLastSampler > 200000);
 
         if (adcStalled) {
@@ -695,6 +701,9 @@ static void loopRT(void *arg) {
             mppt.lvPgood.release();
             if (nowMs - lastAdcResetMs > kAdcResetThrottleMs) { // restart a wedged DMA quickly
                 lastAdcResetMs = nowMs;
+                ESP_LOGW("main", "ADC stall (%s, last sample %lu ms ago), resetting",
+                         samplerRet == ADC_Sampler::UpdateRet::AdcError ? "AdcError" : "stale",
+                         (unsigned long) (timeLastSampler ? (nowUs - timeLastSampler) / 1000 : 0));
                 adcSampler.resetPeripherals();
             }
             if (nowMs - adcStalledSinceMs > kAdcSustainedMs && !converter.disabled() && !mppt.inBackoff()) {
