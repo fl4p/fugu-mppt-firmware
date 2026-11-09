@@ -27,13 +27,8 @@ void MpptController::update() {
     // 0 on the first update after a reset: suppresses the D component instead of dividing by it
     const float dtCtrl = lastUs ? (float) (nowUs - lastUs) * 1e-6f : 0.f;
 
-    // only uncapped tracker steps: a limiter's duty reacts to the disturbance it rejects
-    if (!converter.disabled() && !converter.boost() && !g_app.psuMode() && !sensors.Iout->isVirtual &&
-        ctrlState._trackerFree && bflow.state())
-        outZ.add(sensors.Vout->med3.get(), sensors.Iout->med3.get(), converter.getCtrlOnPwmCnt(),
-                 (uint32_t) nowUs);
-    else
-        outZ.hold((uint32_t) nowUs);
+    // a sweep that ends other than through _stopSweep (trip, abort, restart) is dropped here
+    if (!_sweeping || sampler.isCalibrating()) outZ.reset();
 
     if (converter.disabled() && !startCondition()) {
         bflow.enable(false);
@@ -215,6 +210,11 @@ void MpptController::update() {
 
             float d = converter.getDutyCycle();
             sweepPlot.pointsD.add(d, power, 1.0f);
+
+            // ascending ramp only: the move back to the MPP runs after _stopSweep
+            if (!converter.disabled() && !converter.boost() && !g_app.psuMode() && !sensors.Iout->isVirtual &&
+                bflow.state())
+                outZ.add(sensors.Vout->med3.get(), sensors.Iout->med3.get(), (uint32_t) nowUs);
             rtcount("mppt.update.sweeping");
         } else {
             _stopSweep(controlMode, limitingControl ? int(limitingControl - controlValues.begin()) : -1,
@@ -269,7 +269,6 @@ void MpptController::update() {
 
     // always cap control value
     // TODO instead of capping, use fade-to-target. the tracker might return big jumps
-    ctrlState._trackerFree = controlMode == MpptControlMode::MPPT && controlValue < limitingControlValue;
     controlValue = std::min(controlValue, limitingControlValue);
     ctrlState.mode = controlMode;
     cntrlValue = controlValue;
@@ -528,10 +527,10 @@ void MpptController::telemetry() {
     if ((_teleNumPoints % 20) == 0) {
         point.addField("pwm_dir_f", cntrlValue, 2);
         point.addField("mppt_state", int(ctrlState.mode));
-        float ro = outZ.get((uint32_t) wallClockUs());
+        const uint32_t nowS = (uint32_t) (wallClockUs() / 1000000);
+        float ro = outZ.get(nowS);
         if (std::isfinite(ro))
             point.addField("Ro", ro * 1e3f, 2); // mΩ
-        const uint32_t nowS = (uint32_t) (wallClockUs() / 1000000);
         const float rc = charger.wire.own(nowS), rb = charger.wire.shared(nowS);
         if (std::isfinite(rc)) {
             point.addField("Rc", rc * 1e3f, 2); // mΩ

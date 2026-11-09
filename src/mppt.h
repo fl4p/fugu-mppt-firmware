@@ -197,7 +197,6 @@ private:
     struct {
         MpptControlMode mode: 3 = MpptControlMode::None;
         bool _limiting: 1 = false; // control limited (no MPPT)
-        bool _trackerFree: 1 = false; // last duty step came from the tracker, below every limiter
         uint8_t limIdx: 4 = 15;
     } ctrlState;
 
@@ -1350,6 +1349,11 @@ public:
         }
 
         targetDutyCycle = maxPowerPoint.dutyCycle;
+
+        auto z = outZ.finish((uint32_t) (wallClockUs() / 1000000));
+        if (z.n)
+            ESP_LOGI("mppt", "Ro fit %s: %.2f+-%.2f mOhm res %.0f mV span %.1f A n %hu", z.ok ? "ok" : "rejected",
+                     z.r * 1e3f, z.se * 1e3f, z.res * 1e3f, z.span, z.n);
 
         ESP_LOGI("mppt",
                  "Stop sweep %.2fs mode=%s (lim=%i tgt=%.2f act=%.2f) PWM=%hu MPP=(%.1fW,%hu,%.1fV)",

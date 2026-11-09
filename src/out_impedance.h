@@ -1,83 +1,97 @@
 #pragma once
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 
 /**
- * Online estimate of the output source resistance R = dV/dI (wiring + battery ohmic part).
- * Samples are averaged into fixed-length blocks; differences of consecutive block means enter an
- * exponentially-forgetting instrumental-variable fit R = Σ(dV·dD) / Σ(dI·dD), with the duty
- * step dD as instrument. Voltage changes from other sources on the bus move I as well (through the
- * converter's input characteristic) but are uncorrelated with the own duty steps, so they don't
- * bias R; current noise doesn't attenuate it either. Block differencing removes slow drift.
- * get() is NAN without recent, sufficiently correlated excitation. hold() suspends the fit for
- * HOLD_US, for periods where the duty is not an independent input (closed-loop regulation).
+ * Output source resistance R = dV/dI (wiring, BMS path, battery ohmic part) from one monotonic
+ * current ramp: a least-squares line V = a + R·I over BLOCK_US block means of the samples between
+ * reset() and finish(). The result replaces the previous one only if the fit passes the span,
+ * residual and standard-error gates; get() is NAN once it is older than STALE_S.
+ * add()/reset()/finish() run on one core; get() may run on another.
  */
 class OutputImpedance {
-    float sV = 0, sI = 0, sD = 0;   // current block sums
-    float vPrev = NAN, iPrev = NAN, dPrev = NAN; // previous block means
-    float svd = 0, sid = 0, sdd = 0, sii = 0;
-    uint32_t blockStartUs = 0, lastUs = 0, lastStepUs = 0, holdUs = 0;
-    uint16_t nBlk = 0;
-    uint16_t nSteps = 0;            // accepted steps, saturating
-    float r = NAN;
+    float bV = 0, bI = 0;           // open block sums, relative to (v0, i0)
+    float v0 = 0, i0 = 0;
+    uint32_t blkUs = 0;
+    uint16_t nBlk = 0, n = 0;
+    double sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0;
+    float iMin = 0, iMax = 0;
+    std::atomic<float> r{NAN};
+    std::atomic<uint32_t> rS{0};    // finish() time of r [s]
+
+    void closeBlock() {
+        const float k = 1.f / (float) nBlk;
+        const double x = bI * k, y = bV * k;
+        nBlk = 0;
+        bV = bI = 0;
+        if (!n++) iMin = iMax = (float) x;
+        else if (x < iMin) iMin = (float) x;
+        else if (x > iMax) iMax = (float) x;
+        sx += x;
+        sy += y;
+        sxx += x * x;
+        sxy += x * y;
+        syy += y * y;
+    }
 
 public:
-    static constexpr uint32_t BLOCK_US = 20000;
-    static constexpr uint32_t STALE_US = 60'000'000;
-    static constexpr uint32_t HOLD_US = 2'000'000;
-    static constexpr uint16_t MIN_STEPS = 32;
-    static constexpr float FORGET = 1.f - 1.f / 256.f;
-    static constexpr float MIN_CORR2 = 0.25f; // squared correlation of dI and dD
+    static constexpr uint32_t BLOCK_US = 100'000;
+    static constexpr uint32_t STALE_S = 6 * 3600; // sweeps run every 30 min while charging only
+    static constexpr uint16_t MIN_N = 20;
+    static constexpr float MIN_SPAN = 3.f;     // [A]
+    static constexpr float MAX_RES = 0.04f;    // residual RMS [V]
+    static constexpr float MAX_SE = 0.003f;    // standard error of R [Ω]
 
-    // drops the open block and the difference reference, keeps the fit
-    void reset() {
-        sV = sI = sD = 0;
-        nBlk = 0;
-        vPrev = iPrev = dPrev = NAN;
+    struct Fit {
+        float r, se, res, span;
+        uint16_t n;
+        bool ok;
+    };
+
+    void reset() { n = nBlk = 0; }
+
+    void add(float v, float i, uint32_t nowUs) {
+        if (!std::isfinite(v) || !std::isfinite(i)) return;
+        if (!n && !nBlk) {
+            v0 = v;
+            i0 = i;
+            bV = bI = 0;
+            sx = sy = sxx = sxy = syy = 0;
+        } else if (nBlk && nowUs - blkUs >= BLOCK_US) closeBlock();
+        if (!nBlk) blkUs = nowUs;
+        bV += v - v0;
+        bI += i - i0;
+        ++nBlk;
     }
 
-    void hold(uint32_t nowUs) {
+    // evaluates the ramp since reset(), publishes R if it passes the gates, then resets
+    Fit finish(uint32_t nowS) {
+        if (nBlk) closeBlock();
+        Fit f{NAN, NAN, NAN, n ? iMax - iMin : 0.f, n, false};
+        if (n >= 3) {
+            const double m = n, cxx = sxx - sx * sx / m, cxy = sxy - sx * sy / m, cyy = syy - sy * sy / m;
+            const double b = cxy / cxx, ssr = std::fmax(cyy - b * cxy, 0.);
+            f.r = (float) b;
+            f.res = (float) std::sqrt(ssr / (m - 2));
+            f.se = (float) std::sqrt(ssr / (m - 2) / cxx);
+            f.ok = n >= MIN_N && f.span >= MIN_SPAN && f.res <= MAX_RES && f.se <= MAX_SE && f.r > 0 &&
+                   std::isfinite(f.r);
+        }
+        if (f.ok) {
+            r.store(f.r, std::memory_order_relaxed);
+            rS.store(nowS ? nowS : 1, std::memory_order_release);
+        }
         reset();
-        holdUs = nowUs;
-    }
-
-    // d: duty (PWM counts) commanded during the sample
-    void add(float v, float i, float d, uint32_t nowUs) {
-        const bool bad = !std::isfinite(v) || !std::isfinite(i) || nowUs - holdUs < HOLD_US;
-        if (bad || nowUs - lastUs > 2 * BLOCK_US) reset();
-        lastUs = nowUs;
-        if (bad) return;
-
-        if (!nBlk) blockStartUs = nowUs;
-        sV += v;
-        sI += i;
-        sD += d;
-        if (++nBlk < 2 || nowUs - blockStartUs < BLOCK_US) return;
-
-        const float n = (float) nBlk;
-        float vm = sV / n, im = sI / n, dm = sD / n;
-        sV = sI = sD = 0;
-        nBlk = 0;
-        float dV = vm - vPrev, dI = im - iPrev, dD = dm - dPrev;
-        vPrev = vm;
-        iPrev = im;
-        dPrev = dm;
-        if (!(std::fabs(dD) >= 0.5f)) return; // no own step (or first block, NAN)
-
-        svd = svd * FORGET + dV * dD;
-        sid = sid * FORGET + dI * dD;
-        sdd = sdd * FORGET + dD * dD;
-        sii = sii * FORGET + dI * dI;
-        lastStepUs = nowUs;
-        if (nSteps < 0xffff) ++nSteps;
-        r = (nSteps >= MIN_STEPS && sid > 0 && sid * sid >= MIN_CORR2 * sdd * sii) ? svd / sid : NAN;
+        return f;
     }
 
     // [Ω]
-    [[nodiscard]] float get(uint32_t nowUs) const { return nowUs - lastStepUs > STALE_US ? NAN : r; }
-
-    [[nodiscard]] uint16_t steps() const { return nSteps; }
+    [[nodiscard]] float get(uint32_t nowS) const {
+        const uint32_t t = rS.load(std::memory_order_acquire);
+        return t && nowS - t <= STALE_S ? r.load(std::memory_order_relaxed) : NAN;
+    }
 };
 
 /**

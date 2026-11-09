@@ -1,216 +1,133 @@
-// Host test for OutputImpedance (out_impedance.h) against the VirtualConverter plant driven by
-// P&O-like duty steps. Sensor filters mirror Sensor::add_sample (med5).
+// Host test for out_impedance.h: OutputImpedance on synthetic sweeps V = Vbat + R·I + error,
+// WireResistance on synthetic BMS frames.
 //
-//   clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src test/host-stub/out-impedance-test.cpp \
-//       src/sim/vconv.cpp -o /tmp/out-impedance-test && /tmp/out-impedance-test
+//   clang++ -std=gnu++17 -O2 -fexceptions -I test/host-stub -I src test/host-stub/out-impedance-test.cpp \
+//       -o /tmp/out-impedance-test && /tmp/out-impedance-test
 //
-#include <cassert>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
-#include <algorithm>
 #include <random>
-using std::isnan;
-using std::min;
-using std::max;
-#define likely(x) (x)
-#include "mock.h"
-#include "math/statmath.h"
-#include "sim/vconv.h"
+#include <algorithm>
 #include "out_impedance.h"
 
 static int g_fail = 0;
 #define CHECK(cond, msg) do { if (!(cond)) { printf("  FAIL: %s\n", msg); ++g_fail; } } while (0)
 
-static constexpr uint32_t kFsw = 39000;
-static constexpr uint16_t kPmax = 2047;
-static constexpr int kTickHz = 3000;
-static constexpr int kChannels = 4;
-struct Rig {
-    VirtualConverter v;
-    RunningMedian5<float> vout{}, iout{};
-    OutputImpedance z;
-    std::mt19937 rng{1};
-    float sigV, sigI, lsbV;
-    float vbat, rbat;
-    uint16_t ctrl = 0;
-    long tick = 0;
-    bool nanOnce = false;
-
-    Rig(float vbat_, float rbat_, float sigV_, float sigI_, float lsbV_ = 0)
-        : sigV(sigV_), sigI(sigI_), lsbV(lsbV_), vbat(vbat_), rbat(rbat_) {
-        v.setPv(13.f, 76.f, 0.85f);
-        v.setBat(vbat, rbat);
-        v.setPassives(470e-6f, 470e-6f, 50e-6f);
-        v.setVin(76.f);
-        v.setVout(vbat);
-    }
-
-    uint32_t now() const { return (uint32_t) (tick * 1000000LL / kTickHz); }
-
-    float est() const { return z.get(now()); }
-
-    float noise(float s) { return s > 0 ? std::normal_distribution<float>(0, s)(rng) : 0.f; }
-
-    float quant(float x) const { return lsbV > 0 ? std::round(x / lsbV) * lsbV : x; }
-
-    void setCtrl(uint16_t c) {
-        ctrl = c;
-        v.setPwm({kPmax, c, (uint16_t) (kPmax - c - 20), kFsw});
-    }
-
-    void step(bool feed = true) {
-        v.stepSeconds(1.f / kTickHz, kFsw);
-        switch (tick++ % kChannels) {
-            case 1: iout.next(v.getIoutAvg() + noise(sigI)); break;
-            case 3:
-                vout.next(quant(v.getVout() + noise(sigV)));
-                if (feed) {
-                    z.add(nanOnce ? NAN : vout.get(), iout.get(), ctrl, now());
-                    nanOnce = false;
-                }
-                break;
-            default: break;
-        }
-    }
-
-    void charge(float iTarget) {
-        for (uint16_t c = 200; c < kPmax / 2; c += 5) {
-            setCtrl(c);
-            for (int i = 0; i < 200; ++i) step();
-            if (v.getIoutAvg() >= iTarget) break;
-        }
-        for (int i = 0; i < kTickHz; ++i) step();
-    }
-
-    // P&O: +-dc counts every 100 ms, random direction (dc=0: fixed duty);
-    // busStep: random Vbat jumps (loads, other sources) with probability busP per 100 ms
-    void perturb(float seconds, int dc, float busStep = 0, float busP = 0.5f) {
-        std::uniform_int_distribution<int> coin(0, 1);
-        std::uniform_real_distribution<float> u(0, 1);
-        const uint16_t c0 = ctrl;
-        for (int t = 0; t < seconds * 10; ++t) {
-            if (dc)
-                setCtrl((uint16_t) std::clamp<int>(ctrl + (coin(rng) ? dc : -dc), c0 - 10 * dc, c0 + 10 * dc));
-            if (busStep > 0 && u(rng) < busP)
-                v.setBat(vbat + (coin(rng) ? busStep : -busStep), rbat);
-            for (int i = 0; i < kTickHz / 10; ++i) step();
-        }
-    }
+struct Sweep {
+    float vbat = 27.f, r = 0.02f;
+    float i0 = 0.f, i1 = 15.f;      // ramp start/end current
+    float seconds = 10.f, hz = 1000.f;
+    float sigV = 0.005f, sigI = 0.02f;
+    float bend = 0;                 // duty-correlated Vout error amplitude [V], nonlinear in the ramp
+    float quad = 0;                 // Vout error growing with the square of the ramp [V], biases R
+    int nanEvery = 0;
+    uint32_t seed = 1;
 };
 
-static void report(const char *name, const Rig &r, float rbat) {
-    printf("%-34s R %5.2f mOhm -> est %6.2f mOhm (%u steps)\n", name, rbat * 1e3f, r.est() * 1e3f, r.z.steps());
-}
+static uint32_t g_us = 0;
 
-static void test_estimate(const char *name, float rbat, float sigV, float sigI, float lsbV, float busStep,
-                          float busP, float tol) {
-    Rig r(27.f, rbat, sigV, sigI, lsbV);
-    r.charge(10.f);
-    r.perturb(120, 6, busStep, busP);
-    report(name, r, rbat);
-    float e = r.est();
-    CHECK(std::isfinite(e) && std::fabs(e - rbat) <= tol * rbat, name);
-}
-
-// no own duty steps: bus disturbances and current noise must not produce a value
-static void test_no_excitation(const char *name, float sigI, float busStep) {
-    Rig r(27.f, 0.02f, 0.003f, sigI);
-    r.charge(10.f);
-    r.z = OutputImpedance{};
-    r.perturb(60, 0, busStep, 0.5f);
-    report(name, r, 0.02f);
-    CHECK(std::isnan(r.est()), name);
-}
-
-// a degrading terminal: R jumps 5 -> 15 mOhm under P&O, the estimate must follow
-static void test_tracks_rise() {
-    Rig r(27.f, 0.005f, 0.002f, 0.01f, 0.00125f);
-    r.charge(10.f);
-    r.perturb(60, 6);
-    float e0 = r.est();
-    r.rbat = 0.015f;
-    r.v.setBat(r.vbat, r.rbat);
-    int t = -1;
-    for (int s = 1; s <= 120 && t < 0; ++s) {
-        r.perturb(1, 6);
-        if (r.est() > 0.01f) t = s;
+static OutputImpedance::Fit run(OutputImpedance &z, const Sweep &s, uint32_t nowS) {
+    std::mt19937 rng{s.seed};
+    std::normal_distribution<float> nv(0, s.sigV > 0 ? s.sigV : 1e-9f), ni(0, s.sigI > 0 ? s.sigI : 1e-9f);
+    const int n = (int) (s.seconds * s.hz);
+    z.reset();
+    for (int k = 0; k < n; ++k) {
+        const float x = (float) k / (float) (n - 1);
+        const float i = s.i0 + (s.i1 - s.i0) * x;
+        float v = s.vbat + s.r * i + s.bend * std::sin(3.14159f * x) + s.quad * x * x + nv(rng);
+        if (s.nanEvery && k % s.nanEvery == 0) v = NAN;
+        z.add(v, i + ni(rng), g_us);
+        g_us += (uint32_t) (1e6f / s.hz);
     }
-    printf("%-34s est %.2f mOhm, > 10 mOhm after %d s\n", "rise 5 -> 15 mOhm", e0 * 1e3f, t);
-    CHECK(t > 0 && t <= 60, "rise not tracked within 60 s");
+    return z.finish(nowS);
 }
 
-static void test_nan_sample_recovers() {
-    Rig r(27.f, 0.02f, 0.003f, 0.01f);
-    r.charge(10.f);
-    r.perturb(30, 6);
-    r.nanOnce = true;
-    r.perturb(30, 6);
-    report("NaN Vout sample, then P&O", r, 0.02f);
-    CHECK(std::isfinite(r.est()) && std::fabs(r.est() - 0.02f) < 0.003f, "NaN sample poisoned the fit");
+static void report(const char *name, const OutputImpedance::Fit &f) {
+    printf("%-36s %-8s R %6.2f mOhm  SE %5.2f  res %5.1f mV  span %5.2f A  n %u\n", name, f.ok ? "publish" : "reject",
+           f.r * 1e3f, f.se * 1e3f, f.res * 1e3f, f.span, f.n);
 }
 
-// caller stops feeding for 10 min while Vbat and current change; no bogus step on resume
-static void test_gap() {
-    Rig r(27.f, 0.02f, 0.003f, 0.01f);
-    r.charge(10.f);
-    r.perturb(60, 6);
-    r.vbat += 0.4f;
-    r.v.setBat(r.vbat, r.rbat);
-    r.setCtrl(r.ctrl - 60);
-    for (long i = 0; i < kTickHz * 600L; ++i) r.step(false);
-    r.perturb(0.5f, 6);
-    report("10 min gap, then P&O", r, 0.02f);
-    CHECK(std::isfinite(r.est()) && std::fabs(r.est() - 0.02f) < 0.002f, "gap injected a bogus step");
+static void test_recovers(const char *name, Sweep s, float tol) {
+    OutputImpedance z;
+    auto f = run(z, s, 1000);
+    report(name, f);
+    CHECK(f.ok && std::fabs(z.get(1000) - s.r) <= tol, name);
+    CHECK(std::fabs(f.r - s.r) <= 4 * f.se + 1e-4f, "R outside 4 SE");
+}
+
+static void test_rejects(const char *name, Sweep s) {
+    OutputImpedance z;
+    auto f = run(z, s, 1000);
+    report(name, f);
+    CHECK(!f.ok && std::isnan(z.get(1000)), name);
+}
+
+// a rejected sweep must keep the previous good value
+static void test_keeps_previous() {
+    OutputImpedance z;
+    Sweep good;
+    run(z, good, 1000);
+    Sweep bad;
+    bad.bend = 0.2f;
+    bad.r = 0.05f;
+    auto f = run(z, bad, 2000);
+    report("bad after good", f);
+    CHECK(!f.ok && std::fabs(z.get(2000) - good.r) < 1e-3f, "rejected sweep replaced the previous value");
+    Sweep small;
+    small.i1 = 0.1f;
+    run(z, small, 2100);
+    CHECK(std::fabs(z.get(2100) - good.r) < 1e-3f, "night sweep replaced the previous value");
 }
 
 static void test_stale() {
-    Rig r(27.f, 0.02f, 0.003f, 0.01f);
-    r.charge(10.f);
-    r.perturb(30, 6);
-    bool fresh = std::isfinite(r.est());
-    for (long i = 0; i < kTickHz * 70L; ++i) r.step();
-    printf("%-34s fresh %d, after 70 s idle est %.2f mOhm\n", "stale after excitation stops", fresh, r.est() * 1e3f);
-    CHECK(fresh && std::isnan(r.est()), "stale value still reported");
+    OutputImpedance z;
+    CHECK(std::isnan(z.get(0)) && std::isnan(z.get(100000)), "value before any sweep");
+    run(z, Sweep{}, 1000);
+    const bool fresh = std::isfinite(z.get(1000 + OutputImpedance::STALE_S));
+    const bool stale = std::isnan(z.get(1001 + OutputImpedance::STALE_S));
+    printf("%-36s fresh %d, stale after %u s %d\n", "staleness", fresh, OutputImpedance::STALE_S + 1, stale);
+    CHECK(fresh && stale, "staleness");
 }
 
-// Near the CV boundary the Vout limiter is positive (not "limiting") but caps the tracker's step,
-// so the duty follows Kp*(Vset-Vout): a closed loop on Vout. Bus disturbances then correlate dV
-// and dD. tickGate=true feeds whenever the limiter is >= 0 (the gating that read about -60 mOhm on
-// a live converter); otherwise only when the tracker step is below the cap, with hold() else.
-static float cvBoundary(bool tickGate) {
-    Rig r(27.f, 0.02f, 0.003f, 0.01f);
-    r.charge(8.f);
-    r.z = OutputImpedance{};
-    const float vset = r.v.getVout() + 0.01f;
-    std::uniform_real_distribution<float> u(0, 1);
-    float duty = r.ctrl;
-    for (long i = 0; i < kTickHz * 180L; ++i) {
-        if (i % (kTickHz / 10) == 0 && u(r.rng) < 0.3f)
-            r.v.setBat(r.vbat + (u(r.rng) - 0.5f) * 0.3f, r.rbat);
-        r.step(false);
-        if ((r.tick - 1) % kChannels != 3) continue;
-        const float lim = 2000.f * (vset - r.vout.get()) / vset; // Vout PD output, counts per update
-        const float trk = 0.05f;                                  // tracker wants more power
-        const bool free = trk < lim;
-        if (tickGate ? lim >= 0 : free)
-            r.z.add(r.vout.get(), r.iout.get(), r.ctrl, r.now());
-        else if (tickGate)
-            r.z.reset();
-        else
-            r.z.hold(r.now());
-        duty += std::min(trk, lim);
-        r.setCtrl((uint16_t) std::lround(duty));
+// a sweep aborted by a trip: the caller resets instead of finishing; the next sweep starts clean
+static void test_abort() {
+    OutputImpedance z;
+    Sweep s;
+    s.r = 0.03f;
+    s.i1 = 10.f;
+    for (int k = 0; k < 5000; ++k) z.add(30.f, (float) k * 1e-3f, g_us += 1000);
+    z.reset();
+    auto f = run(z, s, 1000);
+    report("abort, then clean sweep", f);
+    CHECK(f.ok && std::fabs(f.r - s.r) < 1e-3f && f.res < 0.002f, "aborted ramp leaked into the next fit");
+    z.reset();
+    auto e = z.finish(1001);
+    CHECK(!e.ok && e.n == 0 && std::fabs(z.get(1001) - s.r) < 1e-3f, "empty finish");
+}
+
+// residual and span gates must not flip back to publish as the data gets worse
+static void test_monotonic() {
+    bool rejected = false, flip = false;
+    for (float b = 0; b <= 2.f; b += 0.01f) {
+        OutputImpedance z;
+        Sweep s;
+        s.bend = b;
+        bool ok = run(z, s, 1000).ok;
+        if (!ok) rejected = true;
+        else if (rejected) flip = true;
     }
-    return r.est();
-}
-
-static void test_cv_boundary() {
-    float eOld = cvBoundary(true), eNew = cvBoundary(false);
-    printf("%-34s tick gate %.2f mOhm, cap gate + hold %.2f mOhm\n", "CV boundary + bus noise", eOld * 1e3f,
-           eNew * 1e3f);
-    CHECK(std::isnan(eNew) || std::fabs(eNew - 0.02f) < 0.005f, "CV boundary produced a biased estimate");
-    CHECK(!(std::fabs(eOld - 0.02f) < 0.005f), "scenario no longer biases the tick gate (test lost its teeth)");
+    for (float sig: {0.f, 0.01f, 0.05f, 0.2f, 1.f, 5.f}) {
+        OutputImpedance z;
+        Sweep s;
+        s.sigV = sig;
+        s.hz = 10;
+        bool ok = run(z, s, 1000).ok;
+        if (!ok) rejected = true;
+        else if (rejected && sig > 0.05f) flip = true;
+    }
+    printf("%-36s %s\n", "monotonic in error", flip ? "FLIP" : "ok");
+    CHECK(!flip, "worse data published again");
 }
 
 // WireResistance on synthetic BMS frames (4 s): currents correlated like a shared PV bus,
@@ -260,21 +177,68 @@ static void test_wire() {
 }
 
 int main() {
-    test_estimate("clean 20 mOhm", 0.02f, 0, 0, 0, 0, 0, 0.05f);
-    test_estimate("clean 5 mOhm", 0.005f, 0, 0, 0, 0, 0, 0.05f);
-    test_estimate("INA226-like 5 mOhm", 0.005f, 0.002f, 0.01f, 0.00125f, 0, 0, 0.15f);
-    test_estimate("noisy 20 mOhm", 0.02f, 0.01f, 0.05f, 0, 0, 0, 0.15f);
-    test_estimate("Iout noise 0.6A, 20 mOhm", 0.02f, 0.003f, 0.6f, 0, 0, 0, 0.25f);
-    test_estimate("bus steps 0.2V p=.05, 20 mOhm", 0.02f, 0.003f, 0.01f, 0, 0.2f, 0.05f, 0.25f);
-    test_estimate("bus steps 0.5V p=.02, 20 mOhm", 0.02f, 0.003f, 0.01f, 0, 0.5f, 0.02f, 0.25f);
-    test_no_excitation("no P&O, quiet", 0.01f, 0);
-    test_no_excitation("no P&O, Iout noise 0.6A", 0.6f, 0);
-    test_no_excitation("no P&O, bus steps 0.5V", 0.01f, 0.5f);
-    test_tracks_rise();
-    test_nan_sample_recovers();
-    test_gap();
+    test_recovers("20 mOhm, 0-15 A, 1 kHz", Sweep{}, 0.0005f);
+    Sweep s;
+    s.r = 0.005f;
+    s.sigV = 0.002f;
+    test_recovers("5 mOhm, INA226-like noise", s, 0.0005f);
+    s = Sweep{};
+    s.hz = 2.5f;
+    s.seconds = 10.f;
+    s.r = 0.0235f;
+    s.sigV = 0.025f;
+    test_recovers("23.5 mOhm, 2.5 Hz, res 25 mV", s, 0.003f);
+    s = Sweep{};
+    s.i1 = 3.5f;
+    test_recovers("span 3.5 A", s, 0.001f);
+    s = Sweep{};
+    s.nanEvery = 7;
+    test_recovers("NaN every 7th sample", s, 0.0005f);
+
+    s = Sweep{};
+    s.i0 = -0.1f;
+    s.i1 = 0.1f;
+    test_rejects("night sweep, span 0.2 A", s);
+    s.i0 = 0;
+    s.i1 = 2.5f;
+    test_rejects("span 2.5 A", s);
+    s = Sweep{};
+    s.bend = 0.2f;
+    test_rejects("duty-correlated error 0.2 V", s);
+    s.bend = -0.2f;
+    test_rejects("duty-correlated error -0.2 V", s);
+    s = Sweep{};
+    s.hz = 2.5f;
+    s.seconds = 6.f;
+    test_rejects("n < 20", s);
+    s = Sweep{};
+    s.hz = 2.5f;
+    s.sigV = 0.06f;
+    test_rejects("residual 60 mV", s);
+    s = Sweep{};
+    s.r = -0.01f;
+    test_rejects("negative slope", s);
+    s = Sweep{};
+    s.nanEvery = 1;
+    test_rejects("all NaN", s);
+    s = Sweep{};
+    s.i1 = 0;
+    test_rejects("no current change", s);
+
+    // known-bad calibration: a 20 mOhm path read through a Vout channel whose gain error grows with
+    // duty (+0.15 V at mid-ramp, 0 at the ends) must not be published as a resistance
+    s = Sweep{};
+    s.bend = 0.15f;
+    test_rejects("known-bad Vout calibration", s);
+    // same with an error that grows with duty (+0.6 V at the end), which would bias R by ~+40 mOhm
+    s = Sweep{};
+    s.quad = 0.6f;
+    test_rejects("known-bad, error 0.6 V * x^2", s);
+
+    test_keeps_previous();
     test_stale();
-    test_cv_boundary();
+    test_abort();
+    test_monotonic();
     test_wire();
     printf(g_fail ? "FAILED (%d)\n" : "OK\n", g_fail);
     return g_fail != 0;
