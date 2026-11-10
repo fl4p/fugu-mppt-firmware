@@ -16,6 +16,7 @@
 #include <esp_memory_utils.h>
 #include <esp_core_dump.h>
 #include <esp_partition.h>
+#include <esp_flash_partitions.h>
 #include <esp_system.h>
 #include <nvs.h>
 #include <ctime>
@@ -658,6 +659,9 @@ static void cmdBootinfo(cmd *) {
              (unsigned) esp_get_free_heap_size(), (unsigned) esp_get_minimum_free_heap_size(),
              (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
     UART_LOG("uptime: %lu s, app %s", (uint32_t) (esp_timer_get_time() / 1000000), format_version());
+    char bl[112];
+    bootloaderInfo(ESP_PRIMARY_BOOTLOADER_OFFSET, bl, sizeof(bl));
+    UART_LOG("bootloader: %s", bl);
 #ifdef CONFIG_BOOTGUARD_ENABLE
     bootguard_status_t bg;
     if (bootguard_get_status(&bg) == ESP_OK)
@@ -703,11 +707,30 @@ static void cmdLogLevel(cmd *c) {
 static void cmdUptime(cmd *);
 
 #ifdef WITH_NETW
+static bool conversionStopped() {
+    return g_app.manualPwm() && mppt.getManualTarget() == 0 && converter.disabled();
+}
+
+// ota <url> | ota bootloader <url>
 static void cmdOta(cmd *c) {
     cmdUptime(c);
     auto url = Command(c).getArg(0).getValue();
     if (url.length() == 0)
         CMD_FAIL_RETURN("ota: expected url");
+    if (url.startsWith("bootloader")) {
+        url.remove(0, 10);
+        url.trim();
+        if (url.length() == 0)
+            CMD_FAIL_RETURN("ota: expected bootloader <url>");
+        if (!conversionStopped())
+            CMD_FAIL_RETURN("ota: conversion running, stop it first (dc 0)");
+        adcSampler.halted = true;
+        const char *err = doOtaBootloader(url.c_str(), conversionStopped);
+        adcSampler.halted = false;
+        if (err)
+            CMD_FAIL_RETURN("ota: bootloader: %s", err);
+        return;
+    }
 
     auto savedMode = g_app.opMode.load();
     const float savedPsuSetpoint = mppt.getPsuSetpoint();

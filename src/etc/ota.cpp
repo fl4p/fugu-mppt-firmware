@@ -7,7 +7,25 @@
 #include <esp_crt_bundle.h>
 #endif
 
+#include <esp_flash.h>
+#include <esp_flash_partitions.h>
+#include <esp_flash_encrypt.h>
+#include <esp_efuse.h>
+#include <spi_flash_mmap.h>
+#include <esp_secure_boot.h>
+#include <esp_image_format.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
+#include <algorithm>
+#include <cstring>
+#if __has_include(<esp_private/esp_flash_internal.h>)
+#include <esp_private/esp_flash_internal.h>
+#else
+#include <esp_flash_internal.h>
+#endif
+
 #include "ota.h"
+#include "sha256.h"
 #include "util.h"
 
 constexpr auto OTA_TIMEOUT_SECONDS = 2 * 60;
@@ -91,6 +109,8 @@ void doOta(String url) {
     }
 }
 
+const char *doOtaBootloader(const char *, bool (*)()) { return "not supported in this build"; }
+
 #else
 
 #define TAG "ota"
@@ -171,23 +191,16 @@ void otaWatchdog(void *arg) {
 }
 
 
-bool doOta(const char *url) {
-    //ESP_LOGE("ota", "Not available. Enable CONFIG_MBEDTLS_PSK_MODES");
-
+static esp_err_t httpOta(const char *url, const esp_partition_t *staging, const esp_partition_t *final) {
     esp_http_client_config_t config{};
-    config.url = url,
-            config.timeout_ms = 10000,
+    config.url = url;
+    config.timeout_ms = 10000;
 #if CONFIG_FUGU_WITH_HTTPS
-            config.crt_bundle_attach = esp_crt_bundle_attach;
+    config.crt_bundle_attach = esp_crt_bundle_attach;
 #endif
-            config.event_handler = _ota_http_event_handler;
+    config.event_handler = _ota_http_event_handler;
     config.keep_alive_enable = true;
     config.buffer_size = 1024; // DEFAULT_HTTP_BUF_SIZE=512
-#ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_BIND_IF
-    config.if_name = &ifr;
-#endif
-
-
     config.skip_cert_common_name_check = true;
 
     esp_https_ota_config_t ota_config = {
@@ -202,30 +215,24 @@ bool doOta(const char *url) {
         .ota_resumption = false,
         .ota_image_bytes_written = 0,
         .partition{
-            /*!< Details of staging and final partitions for OTA update */
-            .staging = nullptr,
-            /*!< New image will be downloaded in this staging partition. If NULL then a free app partition (passive app partition) is selected as the staging partition. */
-            .final = nullptr,
-            /*!< Final destination partition. Its type/subtype will be used for verification. If set to NULL, staging partition shall be set as the final partition. */
+            .staging = staging, // nullptr: passive app slot
+            .final = final,
             .finalize_with_copy = false,
-            /*!< Flag to copy the staging image to the final partition at the end of OTA update */
         },
     };
     ESP_LOGI("ota", "Attempting to download update from %s", config.url);
 
-
-    //otaInProgress = true;
     TaskHandle_t wdTask = nullptr;
     xTaskCreate(otaWatchdog, "otaWD", 4096, NULL, 20, &wdTask);
-    if (!wdTask) {
-        ESP_LOGE("ota", "Firmware upgrade failed");
-        return false;
-    }
-
+    if (!wdTask)
+        return ESP_ERR_NO_MEM;
     esp_err_t ret = esp_https_ota(&ota_config);
     vTaskDelete(wdTask);
+    return ret;
+}
 
-    if (ret == ESP_OK) {
+bool doOta(const char *url) {
+    if (httpOta(url, nullptr, nullptr) == ESP_OK) {
         ESP_LOGI("ota", "OTA Succeed, Rebooting...");
         consoleFlush(); // get the result out over a buffered console before the reboot tears the link down
         systemRestart();
@@ -234,6 +241,124 @@ bool doOta(const char *url) {
     ESP_LOGE("ota", "Firmware upgrade failed");
     consoleFlush();
     return false;
+}
+
+static bool flashSha(uint32_t off, uint32_t len, uint8_t out[32]) {
+    Sha256 h;
+    uint8_t b[256];
+    for (uint32_t i = 0; i < len; i += sizeof(b)) {
+        const uint32_t n = std::min<uint32_t>(sizeof(b), len - i);
+        if (esp_flash_read(nullptr, b, off + i, n) != ESP_OK) return false;
+        h.update(b, n);
+    }
+    return h.finish(out);
+}
+
+static void dangerousWriteProtection(bool on) {
+    esp_flash_set_dangerous_write_protection(esp_flash_default_chip, on);
+}
+
+static const char *blStageAndCopy(const char *url, const esp_partition_t *prim, const esp_partition_t *stage,
+                                  bool (*convOff)()) {
+    if (url) {
+        const esp_err_t e = httpOta(url, stage, prim);
+        dangerousWriteProtection(true); // esp_ota_set_final_partition() lifts it for the rest of the uptime
+        if (e != ESP_OK) return "download or image check failed";
+    }
+
+    char info[112];
+    uint32_t len = 0, phys = 0;
+    if (!bootloaderInfo(stage->address, info, sizeof(info), &len)) return "staged image does not verify";
+    ESP_LOGI("ota", "new bootloader: %s", info);
+
+    esp_image_header_t nh{}, ch{};
+    uint8_t a[32], b[32];
+    if (esp_flash_read(nullptr, &nh, stage->address, sizeof(nh)) != ESP_OK
+        || esp_flash_read(nullptr, &ch, ESP_PRIMARY_BOOTLOADER_OFFSET, sizeof(ch)) != ESP_OK
+        || esp_flash_get_physical_size(esp_flash_default_chip, &phys) != ESP_OK)
+        return "flash read failed";
+    if (nh.magic != ESP_IMAGE_HEADER_MAGIC || nh.chip_id != CONFIG_IDF_FIRMWARE_CHIP_ID)
+        return "not a bootloader for this chip";
+    // IDF checks only the 8-bit checksum of a bootloader (esptool may patch its header), so check the hash here
+    if (!nh.hash_appended || len <= sizeof(nh) + 32 || len > ESP_BOOTLOADER_SIZE) return "no SHA-256 or bad length";
+    if (!flashSha(stage->address, len - 32, a) || esp_flash_read(nullptr, b, stage->address + len - 32, 32) != ESP_OK
+        || memcmp(a, b, 32))
+        return "SHA-256 mismatch";
+    if (nh.spi_mode != ch.spi_mode || nh.spi_size >= ESP_IMAGE_FLASH_SIZE_MAX || (0x100000u << nh.spi_size) > phys)
+        return "flash mode/size in the image header does not match this device";
+
+    if (!flashSha(ESP_PRIMARY_BOOTLOADER_OFFSET, len, a) || !flashSha(stage->address, len, b))
+        return "flash read failed";
+    if (!memcmp(a, b, 32)) {
+        g_restartBlocked = false;
+        ESP_LOGI("ota", "bootloader identical, not written");
+        return nullptr;
+    }
+    if (!convOff()) return "conversion running again, not written";
+
+    ESP_LOGW("ota", "writing bootloader (%u bytes), do not reset or power off", (unsigned) len);
+    consoleFlush();
+    bool ok = false;
+    g_restartBlocked = true;
+    dangerousWriteProtection(false);
+    for (int i = 0; i < 3 && !ok; ++i)
+        ok = esp_partition_copy(prim, 0, stage, 0, len) == ESP_OK && flashSha(ESP_PRIMARY_BOOTLOADER_OFFSET, len, a)
+             && !memcmp(a, b, 32);
+    dangerousWriteProtection(true);
+    if (!ok) return "BOOTLOADER WRITE FAILED, do not reset or power off, retry the update";
+    g_restartBlocked = false;
+    ESP_LOGI("ota", "bootloader written and verified, active after the next reset");
+    return nullptr;
+}
+
+const char *doOtaBootloader(const char *url, bool (*convOff)()) {
+#if ESP_IDF_VERSION_MAJOR >= 6
+    if (esp_efuse_is_flash_encryption_enabled() || esp_secure_boot_enabled())
+#else
+    if (esp_flash_encryption_enabled() || esp_secure_boot_enabled())
+#endif
+        return "flash encryption or secure boot enabled";
+    esp_ota_img_states_t st;
+    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &st) == ESP_OK
+        && st == ESP_OTA_IMG_PENDING_VERIFY)
+        return "running app not yet confirmed (rollback pending)";
+    if (!convOff()) return "conversion running, stop it first (dc 0)";
+
+    // staging: unallocated flash after the last partition, keeps the passive slot's rollback image
+    uint32_t stageOff = 0, flashSize = 0;
+    for (auto it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, nullptr); it;
+         it = esp_partition_next(it)) {
+        const esp_partition_t *p = esp_partition_get(it);
+        if (p->flash_chip == esp_flash_default_chip) stageOff = std::max<uint32_t>(stageOff, p->address + p->size);
+    }
+    stageOff = (stageOff + SPI_FLASH_SEC_SIZE - 1) & ~(SPI_FLASH_SEC_SIZE - 1);
+    if (esp_flash_get_size(esp_flash_default_chip, &flashSize) != ESP_OK
+        || stageOff + ESP_BOOTLOADER_SIZE > flashSize)
+        return "no free flash after the last partition for staging";
+
+    const esp_partition_t *prim = esp_partition_find_first(ESP_PARTITION_TYPE_BOOTLOADER,
+                                                           ESP_PARTITION_SUBTYPE_BOOTLOADER_PRIMARY, nullptr);
+    const esp_partition_t *stage = nullptr;
+    const bool ownPrim = !prim;
+    if (ownPrim && esp_partition_register_external(nullptr, ESP_PRIMARY_BOOTLOADER_OFFSET, ESP_BOOTLOADER_SIZE,
+                                                   "blprim", ESP_PARTITION_TYPE_BOOTLOADER,
+                                                   ESP_PARTITION_SUBTYPE_BOOTLOADER_PRIMARY, &prim) != ESP_OK)
+        return "cannot register the bootloader region";
+    const char *err;
+    if (prim->address != ESP_PRIMARY_BOOTLOADER_OFFSET)
+        err = "unexpected bootloader partition";
+    else if (esp_partition_register_external(nullptr, stageOff, ESP_BOOTLOADER_SIZE, "blstage",
+                                             ESP_PARTITION_TYPE_BOOTLOADER, ESP_PARTITION_SUBTYPE_BOOTLOADER_OTA,
+                                             &stage) != ESP_OK)
+        err = "cannot register the staging region";
+    else {
+        ESP_LOGI("ota", "staging bootloader at 0x%x", (unsigned) stageOff);
+        err = blStageAndCopy(url, prim, stage, convOff);
+        esp_partition_deregister_external(stage);
+    }
+    if (ownPrim) esp_partition_deregister_external(prim);
+    consoleFlush();
+    return err;
 }
 
 

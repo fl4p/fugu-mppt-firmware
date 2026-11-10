@@ -36,6 +36,7 @@ import argparse
 import asyncio
 import atexit
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -74,6 +75,7 @@ _rich_console = RichConsole(color_system=None if _in_jb_run else 'auto',
 HTTP_PORT = 9000
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIRMWARE_BIN = os.path.join(REPO_ROOT, 'build', 'fugu-firmware.bin')
+BOOTLOADER_BIN = os.path.join(REPO_ROOT, 'build', 'bootloader', 'bootloader.bin')
 APP_DESC_MAGIC = 0xABCD5432
 
 argp = argparse.ArgumentParser(description='Push an OTA build to all discovered devices.')
@@ -83,6 +85,9 @@ argp.add_argument('-n', '--dry-run', action='store_true',
                   help='only print what would be updated, do not send `ota`')
 argp.add_argument('-m', '--match', metavar='REGEX',
                   help='only act on devices whose name matches REGEX (re.search)')
+argp.add_argument('--bootloader', action='store_true',
+                  help='push build/bootloader/bootloader.bin instead of the app (conversion must be stopped '
+                       'with `dc 0`; a power loss during the final copy bricks the device)')
 argp.add_argument('--allow-driver-change', action='store_true',
                   help='push even if the image\'s gate driver differs from the device\'s or is unverified')
 # args/hosts are module globals populated by cli() (under __main__) so importing this module for
@@ -103,6 +108,123 @@ def read_local_app_desc(bin_path):
         return data[off+rel:off+rel+n].split(b'\x00', 1)[0].decode('utf-8', 'replace')
     return dict(version=s(0x10, 32), project=s(0x30, 32),
                 time=s(0x50, 16), date=s(0x60, 16), idf=s(0x70, 32))
+
+
+def read_local_bootloader(bin_path):
+    """Describe a bootloader .bin like the device's `bootinfo` line; None if it is not a valid one."""
+    try:
+        with open(bin_path, 'rb') as f:
+            d = f.read()
+    except FileNotFoundError:
+        return None
+    if len(d) < 32 + 80 + 32 or d[0] != 0xE9 or not d[23]:
+        return None  # no magic or no appended SHA-256
+    if hashlib.sha256(d[:-32]).digest() != d[-32:]:
+        return None
+    desc = d[32:112]
+    if desc[0] == 0x50:
+        s = lambda a, n: desc[a:a + n].split(b'\x00', 1)[0].decode('utf-8', 'replace')
+        text = f"idf {s(8, 32)} v{struct.unpack('<I', desc[4:8])[0]}, {s(40, 24)}"
+    else:
+        text = 'no descriptor (old IDF)'
+    sha = d[-32:-24].hex()
+    return dict(text=f'{text}, len {len(d)}, sha {sha}', sha=sha)
+
+
+RE_BOOTLOADER_LINE = re.compile(r'bootloader:\s+(.*?)\s*$')
+
+
+async def fetch_bootloader(addr, port):
+    """`bootloader:` line of the device's `bootinfo`, or an error string in brackets."""
+    def do():
+        try:
+            st = SocketTransport(addr, port=port or SocketTransport.DEFAULT_PORT, timeout=5)
+            con = Console(st, eol='\n', wait_banner=True)
+        except Exception as e:
+            return f'[{type(e).__name__}: {e}]'
+        try:
+            r = con.command('bootinfo', timeout=5)
+            for l in r:
+                if m := RE_BOOTLOADER_LINE.search(l):
+                    return m.group(1)
+            return '[no bootloader line, old firmware?]'
+        except Exception as e:
+            return f'[{type(e).__name__}: {e}]'
+        finally:
+            con.close()
+    return await asyncio.to_thread(do)
+
+
+async def push_bootloader(addr, port, name):
+    """Send `ota bootloader <url>` and wait for the device's OK/ERR; True on OK."""
+    def do():
+        st = SocketTransport(addr, port=port or SocketTransport.DEFAULT_PORT, timeout=10)
+        con = Console(st, eol='\n', wait_banner=True, on_line=lambda l: print(f'{name}: {l}'))
+        try:
+            url = f'http://{st.sock.getsockname()[0]}:{HTTP_PORT}/build/bootloader/bootloader.bin'
+            return con.command(f'ota bootloader {url}', timeout=180).ok
+        finally:
+            con.close()
+    try:
+        return await asyncio.to_thread(do)
+    except Exception as e:
+        print(f'{name}: {type(e).__name__}: {e}')
+        return False
+
+
+async def bootloader_main():
+    local = read_local_bootloader(BOOTLOADER_BIN)
+    if not local:
+        print(f'{BOOTLOADER_BIN}: missing, or not a bootloader with a valid appended SHA-256')
+        return False
+    print(f"local bootloader: {local['text']}")
+    cur = await asyncio.gather(*[fetch_bootloader(ip, port) for ip, port, _ in hosts])
+    print_table([dict(name=n, cur=c, new=local['text']) for (_, _, n), c in zip(hosts, cur)], [
+        ('name', 'NAME', {'no_wrap': True, 'min_width': 14}),
+        ('cur', 'CURRENT BOOTLOADER', {'min_width': 40}),
+        ('new', 'NEW BOOTLOADER', {'min_width': 40}),
+    ], title='bootloaders:')
+    to_update = []
+    for h, c in zip(hosts, cur):
+        if c.startswith('['):
+            print(f' ❌ skip {h[2]}: {c}')
+        elif f"sha {local['sha']}" in c and not args.force:
+            print(f' ☑️ skip {h[2]}: already has this bootloader')
+        else:
+            to_update.append(h)
+    if not to_update:
+        print('nothing to update')
+        return True
+    if args.dry_run:
+        print('dry-run, would update the bootloader of:')
+        for _, _, name in to_update:
+            print(f'  - {name}')
+        return True
+
+    print('⚠️  the final copy rewrites the bootloader region in place: a reset or power loss during it '
+          '(typically half a second) leaves the device unbootable until it is reflashed over serial. '
+          'The device refuses unless conversion was stopped with `dc 0`.')
+    if not sys.stdin.isatty():
+        print('aborting: refusing a bootloader update non-interactively')
+        return False
+    names = ', '.join(n for *_, n in to_update)
+    if input(f'update the bootloader of {names}? [y/N] ').strip().lower() not in ('y', 'yes'):
+        print('aborted')
+        return False
+
+    ensure_http_server()
+    ok = {}
+    for ip, port, name in to_update:  # one at a time, stop at the first failure
+        ok[name] = await push_bootloader(ip, port, name)
+        if not ok[name]:
+            break
+    after = await asyncio.gather(*[fetch_bootloader(ip, port) for ip, port, _ in to_update])
+    print('verify:')
+    for (_, _, name), c in zip(to_update, after):
+        ok[name] = bool(ok.get(name)) and f"sha {local['sha']}" in c
+        print(f"  {name}: {'✅' if ok[name] else '❌'} {c}")
+    print('the new bootloader runs after the next reset (`restart`); `bootinfo` reads it from flash.')
+    return all(ok.values())
 
 
 # build_has_networking() / build_is_plant_sim() (read sdkconfig.json) live in ota_build_flags.py
@@ -490,7 +612,7 @@ def cli():
             print(f'no devices match {args.match!r}')
             sys.exit(1)
     print(hosts)
-    sys.exit(0 if asyncio.run(main()) else 1)
+    sys.exit(0 if asyncio.run(bootloader_main() if args.bootloader else main()) else 1)
 
 
 if __name__ == '__main__':

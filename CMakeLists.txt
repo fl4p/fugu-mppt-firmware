@@ -98,7 +98,7 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 # esp-bootguard (S3 only, optional dev tool): the bootloader parks the chip in download mode after 3 crash
 # resets. Used when found at the default path or ESP_BOOTGUARD_DIR, else the stock bootloader is built.
-# The bootloader only reaches a board by serial flash (0x0), OTA leaves the old one in place.
+# An app OTA leaves the old bootloader in place; `ota bootloader <url>` or a serial flash replaces it.
 if (IDF_TARGET STREQUAL "esp32s3")
     if (NOT ESP_BOOTGUARD_DIR AND DEFINED ENV{ESP_BOOTGUARD_DIR})
         set(ESP_BOOTGUARD_DIR $ENV{ESP_BOOTGUARD_DIR})
