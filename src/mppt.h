@@ -516,6 +516,7 @@ public:
     // Single source of truth for startCondition(); also logged while idle in START.
     [[nodiscard]] const char *startBlockReason() const {
         if (psuLatched) return "psu-latch";
+        if (converter.startInhibited()) return "conf-save";
         if (g_app.psuMode()) {
             const auto feasibility = currentPsuFeasibility();
             if (feasibility == PsuSetpointError::BoostBelowInput)

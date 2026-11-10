@@ -586,19 +586,19 @@ void MpptController::telemetry() {
 extern SynchronousConverter converter;
 extern MpptController mppt;
 
-// Each intermediate file state reads as uncalibrated: rect_offset_cal=0 goes first, =1 last. Stops
-// (false, retried) if the converter starts between the writes.
+// Each intermediate file state reads as uncalibrated: rect_offset_cal=0 goes first, =1 last. Runs
+// under the RT persist lock (no converter start); stops (false, retried) if the lock expired.
 bool rectCalPersist(int counts, bool calibrated) {
     char buf[16];
     snprintf(buf, sizeof(buf), "%.0f", rectOffsetNsFromCounts(counts, converter.getPwmTickRate()));
     auto &rc = mppt.rectCal;
     ConfFile conf{"/littlefs/conf/coil.conf"};
-    bool ok = !rc.converterOn();
+    bool ok = rc.persistLocked();
     if (ok) conf.remove("rect_offset"); // legacy count-based key
-    ok = ok && !rc.converterOn() && conf.add({{"rect_offset_cal", "0"}}, true);
-    ok = ok && !rc.converterOn() && conf.add({{"rect_offset_ns", buf}}, true);
-    ok = ok && !rc.converterOn() && conf.add({{"rect_offset_drv", converter.drvName()}}, true);
-    ok = ok && (!calibrated || (!rc.converterOn() && conf.add({{"rect_offset_cal", "1"}}, true)));
+    ok = ok && rc.persistLocked() && conf.add({{"rect_offset_cal", "0"}}, true);
+    ok = ok && rc.persistLocked() && conf.add({{"rect_offset_ns", buf}}, true);
+    ok = ok && rc.persistLocked() && conf.add({{"rect_offset_drv", converter.drvName()}}, true);
+    ok = ok && (!calibrated || (rc.persistLocked() && conf.add({{"rect_offset_cal", "1"}}, true)));
     if (!ok) ESP_LOGW("rectcal", "coil.conf not written (converter started or write failed), retrying");
     return ok;
 }
