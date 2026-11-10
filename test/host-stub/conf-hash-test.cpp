@@ -7,6 +7,7 @@
 //       test/host-stub/conf-hash-test.cpp && /tmp/conf-hash-test
 
 #include "../../src/conf_hash.cpp"
+#include "../../src/conf.h"
 
 #include <cstdlib>
 #include <string>
@@ -77,6 +78,20 @@ int main() {
         check(!confHashComputeAt(r, false, c) && r.err == "staging file present: board.conf.new",
               "staging file fails: " + r.err);
         unlink((c + "/board.conf.new").c_str());
+
+        // boot after a reset mid ConfFile write: the stage fails the hash until the cleanup, which runs
+        // first and leaves the USB drive's .new alone; the boot hash is then that of the files
+        put(c + "/board.conf.cft", "mcu=esp32\n");
+        check(!confHashComputeAt(r, false, c) && r.err == "staging file present: board.conf.cft",
+              "conffile stage fails: " + r.err);
+        put(c + "/board.conf.new", "x=1\n");
+        check(confDropStaging(c.c_str()) && access((c + "/board.conf.cft").c_str(), F_OK) != 0
+              && access((c + "/board.conf.new").c_str(), F_OK) == 0, "boot cleanup");
+        unlink((c + "/board.conf.new").c_str());
+        ConfHashResult b;
+        check(confHashComputeAt(b, false, c)
+              && confHashHex(b.sha, 32) == "280be720036dbc75cd7420b7c96ea303e097c576eca66ba6f27d439b411417df",
+              "boot hash after the cleanup: " + b.err);
         symlink(c.c_str(), (c + "/sub/loop").c_str());
         check(!confHashComputeAt(r, false, c) && r.err.find("not a regular file") == 0, "symlink fails");
         unlink((c + "/sub/loop").c_str());

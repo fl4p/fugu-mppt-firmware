@@ -459,6 +459,8 @@ __attribute__((cold)) void setup() {
     if (!mountLFS()) {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
         g_app.setupErr = true;
+    } else if (!confDropStaging("/littlefs/conf")) {
+        ESP_LOGE("main", "stale conf stage left in /littlefs/conf");
     }
     // Fingerprint the config as loaded at boot (conf-hash compares it with the current files to
     // reveal set-config writes not yet applied by a restart). Read-only, before any conf is parsed.
@@ -488,7 +490,6 @@ __attribute__((cold)) void setup() {
 
     // A malformed board.conf must not abort setup() (which would reboot and re-read the same bad
     // file → boot loop). Fall back to an empty config and run the safe-idle path via g_app.setupErr.
-    confDropStaging("/littlefs/conf");
     ConfFile boardConf = loadConfSafe("/littlefs/conf/board.conf");
 
     if (!boardConf) {

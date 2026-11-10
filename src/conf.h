@@ -18,6 +18,7 @@
 #include <esp_log.h>
 
 #include "console.h"
+#include "conf_stage.h"
 
 
 #define TAG "conf"
@@ -128,32 +129,35 @@ public:
     }
 
 private:
-    // The file's lines without line ends; false if it exists but cannot be read completely.
+    // The file's lines without line ends; false if it exists but cannot be read completely or holds a NUL.
     bool readLines_(std::vector<std::string> &lines) const {
         errno = 0;
         FILE *f = fopen(path, "r");
         if (!f) return errno == ENOENT;
+        std::string all;
         char buf[256];
-        std::string line;
-        while (fgets(buf, sizeof(buf), f)) {
-            line += buf;
-            if (line.back() != '\n') continue; // longer than buf, or the last line
-            while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
-            lines.push_back(std::move(line));
-            line.clear();
+        for (size_t n; (n = fread(buf, 1, sizeof(buf), f)) > 0;) all.append(buf, n);
+        bool ok = !ferror(f);
+        if (fclose(f) != 0) ok = false;
+        if (ok && all.find('\0') != std::string::npos) {
+            errno = EINVAL;
+            ok = false;
         }
-        if (!line.empty()) {
-            while (line.back() == '\r') line.pop_back();
-            lines.push_back(std::move(line));
+        for (size_t i = 0; ok && i < all.size();) {
+            size_t e = all.find('\n', i);
+            if (e == std::string::npos) e = all.size();
+            size_t l = e;
+            while (l > i && all[l - 1] == '\r') --l;
+            lines.emplace_back(all, i, l - i);
+            i = e + 1;
         }
-        const bool ok = !ferror(f);
-        return fclose(f) == 0 && ok;
+        return ok;
     }
 
-    // Writes <path>.new and renames it over path (atomic on littlefs), so a reset leaves either file
-    // complete. A stale .new is never read; confDropStaging() removes it at boot.
+    // Writes <path>.cft and renames it over path (atomic on littlefs), so a reset leaves either file
+    // complete. A stale .cft is never read; confDropStaging() removes it at boot.
     bool writeLines_(const std::vector<std::string> &lines) const {
-        const std::string tmp = std::string(path) + ".new";
+        const std::string tmp = std::string(path) + CONF_FILE_STAGE_SUFFIX;
         FILE *f = fopen(tmp.c_str(), "w");
         bool ok = f != nullptr;
         for (size_t i = 0; ok && i < lines.size(); ++i)
@@ -171,6 +175,7 @@ private:
     // Rewrites the file with keys [vb, ve) set and key `drop` removed. False, with the file and the
     // in-memory view unchanged, on an I/O failure or when only dropping a key that is absent.
     bool rewrite_(const KV *vb, const KV *ve, bool overwrite, const char *drop) {
+        ConfWriteLock lock;
         std::vector<std::string> lines;
         if (!readLines_(lines)) {
             ESP_LOGE("store", "cannot read %s (errno %d)", path, errno);
@@ -430,18 +435,27 @@ public:
 
 #undef TAG
 
-// Boot: removes <name>.new files a reset left in dir during a ConfFile write or a USB-drive commit.
-inline void confDropStaging(const char *dir) {
+// Boot, before anything reads or hashes dir: removes the stages a reset left during a ConfFile write.
+// False if one cannot be removed.
+inline bool confDropStaging(const char *dir) {
     DIR *d = opendir(dir);
-    if (!d) return;
+    if (!d) return true;
     std::vector<std::string> stale;
+    const size_t sl = strlen(CONF_FILE_STAGE_SUFFIX);
     for (dirent *e; (e = readdir(d));) {
         const size_t n = strlen(e->d_name);
-        if (n > 4 && !strcmp(e->d_name + n - 4, ".new")) stale.push_back(std::string(dir) + "/" + e->d_name);
+        if (n > sl && !strcmp(e->d_name + n - sl, CONF_FILE_STAGE_SUFFIX))
+            stale.push_back(std::string(dir) + "/" + e->d_name);
     }
     closedir(d);
+    bool ok = true;
     for (auto &f: stale) {
-        ESP_LOGW("conf", "removing stale %s", f.c_str());
-        unlink(f.c_str());
+        if (unlink(f.c_str()) == 0) {
+            ESP_LOGW("conf", "removed stale %s", f.c_str());
+        } else {
+            ESP_LOGE("conf", "cannot remove stale %s (errno %d)", f.c_str(), errno);
+            ok = false;
+        }
     }
+    return ok;
 }

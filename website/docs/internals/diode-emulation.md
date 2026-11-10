@@ -272,10 +272,13 @@ The control loop then blocks converter starts until the write is done: it grants
 the low-frequency task admits the write within milliseconds and rewrites `coil.conf` once, and
 starts are allowed again as soon as it finishes, however long the write takes. A grant that is not
 admitted within 8 s is withdrawn. Only starts are blocked; protection and shutdown are not. The new
-`coil.conf` is written to `coil.conf.new` and renamed over the old file, which LittleFS does
+`coil.conf` is written to `coil.conf.cft` and renamed over the old file, which LittleFS does
 atomically, so a reset during the save leaves either the old or the new file complete; a leftover
-`.new` file is deleted at boot. Every `.conf` write uses this path. A failed or withdrawn save is retried a minute later; successful writes are at
-least 10 minutes apart. What is
+`.cft` file is deleted at boot. Console configuration commands (`set-config`, `del-config`,
+`svc`) write the same way; FTP uploads and the USB config drive have their own write paths. On a
+bench ESP32-S3 the save, including the rename, took about 0.4 s (about 0.05 s for an in-place
+rewrite), so a start that falls into a save is delayed by that much. A failed or withdrawn save is
+retried a minute later; successful writes are at least 10 minutes apart. What is
 written is always the offset in use at that moment together with its state: if the backstop
 below has shortened a fresh result before it was saved, the shorter value is saved as
 uncalibrated.
