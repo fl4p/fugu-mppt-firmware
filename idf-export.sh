@@ -9,7 +9,7 @@
 #   idf.py -B build-idf55 -DSDKCONFIG=build-idf55/sdkconfig build
 # An ESPPORT already set is kept; otherwise the first USB serial port is picked (pass -p with 2+ boards).
 
-if [ -n "$ZSH_VERSION" ]; then
+if [ -n "${ZSH_VERSION:-}" ]; then
     eval '_fugu_src=${(%):-%x}'
 else
     _fugu_src=${BASH_SOURCE[0]:-$PWD/idf-export.sh}
@@ -20,9 +20,9 @@ _fugu_main=${_fugu_main:+$(dirname "$_fugu_main")}
 _fugu_main=${_fugu_main:-$_fugu_root}
 
 _fugu_idf=
-_fugu_prev=$IDF_PATH
-[ -n "$FUGU_IDF" ] && _fugu_prev=
-for _d in "$FUGU_IDF_PATH" "${FUGU_ESP_DIR:+$FUGU_ESP_DIR/${FUGU_IDF:-idf6.0.3}}" \
+_fugu_prev=${IDF_PATH:-}
+[ -n "${FUGU_IDF:-}" ] && _fugu_prev=
+for _d in "${FUGU_IDF_PATH:-}" "${FUGU_ESP_DIR:+$FUGU_ESP_DIR/${FUGU_IDF:-idf6.0.3}}" \
           "$_fugu_main/../../esp/${FUGU_IDF:-idf6.0.3}" "$_fugu_prev"; do
     if [ -n "$_d" ] && [ -f "$_d/export.sh" ]; then
         _fugu_idf=$(cd "$_d" && pwd)
@@ -43,7 +43,7 @@ else
         echo "  git -C '$_fugu_root' submodule update --init --recursive" >&2
     fi
 
-    if [ -z "$ESPPORT" ]; then
+    if [ -z "${ESPPORT:-}" ]; then
         ESPPORT=$(find /dev -maxdepth 1 \( -name 'cu.usbmodem*' -o -name 'cu.usbserial*' \) 2>/dev/null | sort | head -n1)
         [ -n "$ESPPORT" ] && export ESPPORT
     fi
