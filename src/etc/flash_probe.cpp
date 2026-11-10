@@ -117,6 +117,15 @@ static IRAM_ATTR __attribute__((noinline)) uint8_t fsProbeLocked(spi_flash_host_
     return FsSupported;
 }
 
+// The caller runs from flash, so cache off/on must happen in IRAM.
+static IRAM_ATTR __attribute__((noinline)) uint8_t fsProbeIram(spi_flash_host_inst_t *h, uint32_t sector, uint32_t ref,
+                                                             uint32_t tpu, FlashSusProbe &r) {
+    spi_flash_disable_interrupts_caches_and_other_cpu();
+    uint8_t o = fsProbeLocked(h, sector, ref, tpu, r);
+    spi_flash_enable_interrupts_caches_and_other_cpu();
+    return o;
+}
+
 static uint8_t fsRun(FlashSusProbe &r) {
     const esp_partition_t *run = esp_ota_get_running_partition();
     const esp_partition_t *p = esp_ota_get_next_update_partition(nullptr);
@@ -134,15 +143,17 @@ static uint8_t fsRun(FlashSusProbe &r) {
         if (end + 0x1000 > sector) return FsImage; // + room for a signature block
     }
 
+    // a blank sector erases in a few ms on some chips, too fast to tell from an aborted erase
+    uint8_t z[256] = {};
+    for (uint32_t o = 0; o < 0x1000; o += sizeof(z))
+        if (esp_flash_write(nullptr, z, sector + o, sizeof(z)) != ESP_OK) return FsPrep;
+
     if (esp_flash_read(nullptr, s_ref, run->address, FS_REF_LEN) != ESP_OK) return FsRefRead;
 
     spi_flash_host_inst_t *h = esp_flash_default_chip->host;
     uint32_t tpu = esp_rom_get_cpu_ticks_per_us();
     if (tpu < 10 || tpu > 400) return FsRefRead;
-    spi_flash_disable_interrupts_caches_and_other_cpu();
-    uint8_t o = fsProbeLocked(h, sector, run->address, tpu, r);
-    spi_flash_enable_interrupts_caches_and_other_cpu();
-    return o;
+    return fsProbeIram(h, sector, run->address, tpu, r);
 }
 
 void flashSuspendProbe() {
@@ -179,7 +190,7 @@ int flashSusProbeFmt(char *buf, size_t n) {
     static const char *const names[FsOutcomeCount] = {
         "unprobed", "supported", "unsupported(busy)", "unsupported(no-sus-bit)", "untested(no-slot)",
         "untested(image)", "untested(wel)", "untested(no-busy)", "untested(ref-read)", "error(timeout)",
-        "error(data)", "error(sus-stuck)", "error(short)", "error(crash)", "n/a",
+        "error(data)", "error(sus-stuck)", "error(short)", "error(crash)", "n/a", "untested(prep)",
     };
     const auto &r = s_fsp;
     const char *nm = r.outcome < FsOutcomeCount ? names[r.outcome] : "unprobed";

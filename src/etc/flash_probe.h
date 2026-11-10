@@ -21,6 +21,7 @@ enum FlashSusOutcome : uint8_t {
     FsShort,        // erase finished implausibly fast
     FsCrashed,      // reset during the probe
     FsNA,
+    FsPrep,         // programming the scratch sector failed
     FsOutcomeCount,
 };
 
