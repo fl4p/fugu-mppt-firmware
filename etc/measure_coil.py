@@ -150,6 +150,15 @@ def query_pwm_timing(con):
     return None
 
 
+def query_gate_driver(con):
+    """Active gate driver name (`rect-cal status` drv=...), or None on firmware without it."""
+    for ln in con.command("rect-cal status", timeout=4.0):
+        m = re.search(r"\bdrv=(\w+)", ln)
+        if m:
+            return m.group(1)
+    return None
+
+
 def query_pwm_ctrl_max(con):
     r = con.command("dc 999999999", timeout=4.0)
     for ln in r:
@@ -412,6 +421,13 @@ def ls_sweep(con, tap, hs, pwm_max, period, fsw, args):
               f"({new_off} ct @ {tick_rate / 1e6:.0f} MHz tick; peak-ideal {ls_peak - ideal_ls:+.0f} ct"
               f" - margin {args.apply_margin} ct; effective next boot)")
         safe_command(con, f"set-config coil.conf rect_offset_ns {new_ns}")
+        # The firmware ignores rect_offset_ns unless rect_offset_drv names the active gate driver.
+        drv = query_gate_driver(con)
+        if drv:
+            safe_command(con, f"set-config coil.conf rect_offset_drv {drv}")
+            safe_command(con, "set-config coil.conf rect_offset_cal 1")
+        else:
+            print("  WARNING: gate driver unknown (no rect-cal status); rect_offset_drv not set")
         print(f"  readback rect_offset_ns = {get_conf(con, 'coil.conf', 'rect_offset_ns')}")
 
 

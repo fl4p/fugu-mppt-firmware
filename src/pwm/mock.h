@@ -10,6 +10,8 @@ public:
     uint16_t pwmMax;
 
     uint16_t v;
+    const char *name = "mock";
+    static inline uint16_t pwmMaxOverride = 0; // host tests: emulate another driver resolution
 
     PWM_Mock() : pwmMax(0) {}
 
@@ -17,10 +19,12 @@ public:
         // see idf5.3 ledc_find_suitable_duty_resolution()
         uint32_t div = 80000000 / freq;
         auto resolution = std::min((int) log2(div), 14);
-        auto pm = ((2 << (resolution - 1)) - 1);
+        auto pm = pwmMaxOverride ? pwmMaxOverride : ((2 << (resolution - 1)) - 1);
         if (pwmMax == 0) pwmMax = pm;
         assert(pm == pwmMax);
     }
+
+    void stop(int, uint8_t) {}
 
     void update_pwm(int channel, uint32_t duty) {
         v = duty;

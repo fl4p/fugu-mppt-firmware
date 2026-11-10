@@ -75,6 +75,7 @@ public:
     void setPassives(float c_in, float c_out, float l) { cIn_ = c_in; cOut_ = c_out; l_ = l; }
     void setVin(float v)  { vIn_ = v; }
     void setVout(float v) { vOut_ = v; }
+    void setDiodeVf(float v) { diodeVf_ = v; } // LS body-diode drop in the dead/off phase
     [[nodiscard]] float getVin()  const { return vIn_; }
     [[nodiscard]] float getVout() const { return vOut_; }
     [[nodiscard]] float getIL()   const { return iLEnd_; }
@@ -132,6 +133,7 @@ private:
     float cIn_  = 470e-6f;
     float cOut_ = 470e-6f;
     float l_    = 50e-6f;
+    float diodeVf_ = 0.0f;
 
     // State
     float vIn_   = 0.0f;

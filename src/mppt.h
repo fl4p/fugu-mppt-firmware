@@ -27,6 +27,9 @@
 #include "math/pv_model.h"
 #include "conv_side.h"
 #include "out_impedance.h"
+#include "rect_cal.h"
+
+bool rectCalPersist(int counts, bool calibrated); // coil.conf, core 0
 
 struct Limits {
     const float Vin_max{};
@@ -1155,6 +1158,7 @@ public:
             abortSweep();
             clearBackoff();
             converter.setManualRect(-1);
+            rectCal.drop();
             psuVsetpoint = NAN;
             psuTarget = NAN;
             psuOvHoldBase = NAN;
@@ -1237,6 +1241,7 @@ public:
         abortSweep();
         clearBackoff();
         converter.setManualRect(-1);
+        rectCal.drop();
         psuResetTripState();
         if (pvCmd) {
             pvSim.model.set(pvIsc, requested, pvK);
@@ -1371,4 +1376,33 @@ public:
 
     void update(); // normal update
     void updateManual(); // manual mode
+
+    // rect_offset self-calibration and backstop (rect_cal.h)
+    RectCalCtl<SynchronousConverter> rectCal{};
+
+    RectCalIn rectCalIn(uint32_t nowUs) const {
+        return {nowUs, sensors.Vin->last, sensors.Vout->last, sensors.Iout->last, sensors.Vin->ewm.avg.get(),
+                sensors.Vout->ewm.avg.get(), sensors.Iout->ewm.avg.get(), sensorPhysicalI->ewm.avg.get(),
+                fminf(sensorPhysicalI->ewm.avg.get(), std::max(sensorPhysicalI->last, sensorPhysicalI->previous)),
+                g_app.opMode.load() == OpMode::Mppt && !sampler.isCalibrating(), _sweeping, bflow.state(),
+                ctrlState._limiting, !sensors.Iout->isVirtual};
+    }
+
+    // RT, once per new sample, before protect()
+    void rectCalRt() {
+        if (!sensorPhysicalI) return;
+        if (const uint16_t hs = rectCal.rt(converter, rectCalIn((uint32_t) wallClockUs()))) setAutoRampTarget(hs);
+    }
+
+    void rectCalLf(); // core 0
+
+private:
+    // RT: in update() after protect() and the limiters; true while the run holds HS/LS.
+    bool rectCalHold(const time_us &nowUs, float limitingControlValue) {
+        if (!sensorPhysicalI || !rectCal.cal.running()) return false;
+        uint16_t hs;
+        const bool held = rectCal.hold(converter, rectCalIn((uint32_t) nowUs), limitingControlValue, hs);
+        if (hs) setAutoRampTarget(hs);
+        return held;
+    }
 };

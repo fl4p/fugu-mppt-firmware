@@ -164,7 +164,7 @@ void VirtualConverter::stepOneCycleBuck(float T) {
     float areaOff = 0.0f;
     if (tOff > 0.0f) {
         if (c > 0.0f) {
-            const float slope = -vOut_ * invL_;     // <= 0; zero iff vOut_ == 0
+            const float slope = -(vOut_ + diodeVf_) * invL_;     // <= 0; zero iff vOut_ + diodeVf_ == 0
             if (slope < 0.0f) {
                 const float tZero = -c / slope;
                 if (tZero < tOff) {

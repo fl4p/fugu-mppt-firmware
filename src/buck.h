@@ -116,6 +116,8 @@ class SynchronousConverter {
     float rectDitherErr = 0; // carried LS-count rounding remainder (DCM error-feedback dither)
     bool rectDither = true; // false: plain round() (fallback)
     int16_t rectOnOffset = 0; // DCM LS-count dead-time/gate-delay offset (counts; >0 = LS off later, toward zero crossing)
+    bool rectCalNeeded = false; // rect_offset not calibrated on the active driver
+    std::atomic<uint8_t> lsClampCount{0}; // bumped by syncRectMinDuty() and disable() (also core 0)
 
     bool syncRectOffHyst = false; // latched: sync rect disabled by low current, needs 4x to re-arm
     float outInVoltageRatio = 0; // M
@@ -1065,6 +1067,11 @@ public:
 
     void setRectOnOffset(int o) { rectOnOffset = (int16_t) o; } // DCM LS dead-time offset, counts
 
+    [[nodiscard]] const char *drvName() const { return driverName; }
+    [[nodiscard]] bool rectOffsetNeedsCal() const { return rectCalNeeded; }
+    void setRectOffsetNeedsCal(bool v) { rectCalNeeded = v; }
+    [[nodiscard]] uint8_t lsClamps() const { return lsClampCount.load(std::memory_order_relaxed); }
+
     // Comparator counts per second = fsw * the full timer period. Used to convert the physical
     // rect_offset_ns / boot_refresh_ns <-> counts independent of driver resolution. It is the FULL
     // period, not pwmMax: the dead-time is carved out of pwmMax but does not change how long a tick
@@ -1084,8 +1091,9 @@ public:
     // Emitted from init() (boot serial) and re-fired once MQTT is up (so it lands in the MQTT/telnet
     // log too — init() runs during setup(), before those sinks exist).
     void logConfig() const {
-        ESP_LOGI("converter", "Coil L0=%.1f µH rect_offset=%.0f ns (%d ct)",
-                 coilL0 * 1e6f, rectOffsetNsFromCounts(rectOnOffset, getPwmTickRate()), rectOnOffset);
+        ESP_LOGI("converter", "Coil L0=%.1f µH rect_offset=%.0f ns (%d ct, %s)",
+                 coilL0 * 1e6f, rectOffsetNsFromCounts(rectOnOffset, getPwmTickRate()), rectOnOffset,
+                 rectCalNeeded ? "uncalibrated" : driverName);
     }
 
     [[nodiscard]] float voltageRatio() const { return outInVoltageRatio; } // M
@@ -1257,7 +1265,14 @@ public:
         // time, sensing error); convert to counts the same way boot_refresh_ns is handled (ns ->
         // counts via the tick rate), so the calibration is invariant to PWM resolution and fsw.
         // Default 0 (no offset) when unset.
-        rectOnOffset = (int16_t) rectOffsetCountsFromNs(coilConf.getFloat("rect_offset_ns", 0.f), getPwmTickRate());
+        const float offNs = coilConf.getFloat("rect_offset_ns", 0.f);
+        const std::string offDrv = coilConf.getString("rect_offset_drv", "");
+        const bool drvOk = rectOffsetDriverMatches(offDrv.c_str(), driverName);
+        if (!drvOk && offNs != 0.f)
+            ESP_LOGW("converter", "rect_offset_ns=%.0f was measured on driver '%s', not %s: using 0, needs rect-cal",
+                     offNs, offDrv.c_str(), driverName);
+        rectCalNeeded = !drvOk || !coilConf.getByte("rect_offset_cal", 1);
+        rectOnOffset = drvOk ? (int16_t) rectOffsetCountsFromNs(offNs, getPwmTickRate()) : 0;
         logConfig();
     }
 
@@ -1377,6 +1392,7 @@ public:
 
 
     void disable() {
+        lsClampCount.fetch_add(1, std::memory_order_relaxed);
         if (pinSd != 255)digitalWrite(pinSd, 1);
         drvShutdown();
 
@@ -1708,6 +1724,7 @@ public:
      * Boost converter has a min duty cycle of 0 (HS)
      */
     void syncRectMinDuty() {
+        lsClampCount.fetch_add(1, std::memory_order_relaxed);
         if (pwmRect > pwmRectMin) {
             if (pwmRect > pwmRectMin + pwmRectMin / 2) {
                 ESP_LOGW("dcdc", "set sync-rect PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmRect,

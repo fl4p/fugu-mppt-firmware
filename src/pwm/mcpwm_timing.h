@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <cmath>
+#include <cstring>
 
 struct PwmTiming {
     uint32_t resolution_hz;
@@ -32,4 +33,10 @@ static inline int rectOffsetCountsFromNs(float ns, float tickRateHz) {
 }
 static inline float rectOffsetNsFromCounts(int counts, float tickRateHz) {
     return tickRateHz > 0.f ? (float) counts * 1e9f / tickRateHz : 0.f;
+}
+
+// rect_offset_ns is only valid on the gate driver it was measured on (coil.conf rect_offset_drv):
+// its net LS-timing correction includes that driver's dead time and edge delays.
+static inline bool rectOffsetDriverMatches(const char *storedDrv, const char *activeDrv) {
+    return storedDrv && *storedDrv && activeDrv && !strcmp(storedDrv, activeDrv);
 }

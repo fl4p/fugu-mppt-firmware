@@ -477,6 +477,26 @@ static void cmdSweep(cmd *) {
         CMD_FAIL_RETURN("sweep: RT transition timed out");
 }
 
+// rect-cal [status|abort] — self-calibrate the DCM low-side timing offset (rect_cal.h)
+static void cmdRectCal(cmd *c) {
+    Command cc(c);
+    const String sub = cc.countArgs() ? cc.getArg(0).getValue() : String("");
+    auto &rc = mppt.rectCal;
+    if (sub == "status") { rc.status(converter); return; }
+    if (sub == "abort") {
+        if (!rc.cal.running()) CMD_FAIL_RETURN("rect-cal: not running");
+        rc.abortReq.store(true);
+        return;
+    }
+    if (sub.length()) CMD_FAIL_RETURN("rect-cal: expected [status|abort]");
+    if (!rc.requestStart()) CMD_FAIL_RETURN("rect-cal: already running");
+    for (int i = 0; i < 100 && rc.cal.get() == RectCal::Idle; ++i) delay(10);
+    const auto st = rc.cal.get();
+    if (st != RectCal::Run)
+        CMD_FAIL_RETURN("rect-cal: refused: %s", st == RectCal::Fail ? rc.cal.why : "no RT response");
+    ESP_LOGI("main", "rect-cal: running at hs=%u (~30 s), see rect-cal status", rc.cal.hs);
+}
+
 static void cmdResetLag(cmd *) {
     g_app.maxLoopLag = 0;
 #if CAPTURE_LOOP_DT
@@ -2135,6 +2155,7 @@ void setupCli() {
     cli.addCommand("mppt", cmdMppt);
     cli.addCommand("short-ls", cmdShortLs);
     cli.addCommand("sweep", cmdSweep);
+    cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [status|abort]
     cli.addCommand("reset-lag", cmdResetLag);
     cli.addCommand("scan-i2c", cmdScanI2c);
     cli.addBoundlessCmd("ls", cmdLs);   // ls [path] (littlefs)

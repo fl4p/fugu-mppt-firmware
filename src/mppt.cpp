@@ -173,6 +173,11 @@ void MpptController::update() {
         }
     }
 
+    if (rectCalHold(nowUs, limitingControlValue)) {
+        lastUs = nowUs;
+        return;
+    }
+
     // bounce at pwm boundary
     if (converter.getCtrlOnPwmCnt() == converter.pwmCtrlMax) {
         controlMode = MpptControlMode::CV;
@@ -536,6 +541,7 @@ void MpptController::telemetry() {
         point.addField("mcu_temp", ucTemp.lastFresh(), 1); // TODO to frequent
         point.addField("ntc_temp", ntc.lastFresh(), 1); // TODO to frequent
         point.addField("lag", (int) g_app.maxLoopLag); // peak RT-loop lag (µs), resets on rt-stats
+        point.addField("rect_off", rectCal.offset()); // counts
     }
 
     point.addField("pwm_duty", converter.getCtrlOnPwmCnt());
@@ -575,4 +581,30 @@ void MpptController::telemetry() {
     _lastPointWrite = wallClockUs();
     _teleNumPoints++;
 #endif
+}
+
+extern SynchronousConverter converter;
+extern MpptController mppt;
+
+// Each intermediate file state reads as uncalibrated: rect_offset_cal=0 goes first, =1 last. Stops
+// (false, retried) if the converter starts between the writes.
+bool rectCalPersist(int counts, bool calibrated) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%.0f", rectOffsetNsFromCounts(counts, converter.getPwmTickRate()));
+    auto &rc = mppt.rectCal;
+    ConfFile conf{"/littlefs/conf/coil.conf"};
+    bool ok = !rc.converterOn();
+    if (ok) conf.remove("rect_offset"); // legacy count-based key
+    ok = ok && !rc.converterOn() && conf.add({{"rect_offset_cal", "0"}}, true);
+    ok = ok && !rc.converterOn() && conf.add({{"rect_offset_ns", buf}}, true);
+    ok = ok && !rc.converterOn() && conf.add({{"rect_offset_drv", converter.drvName()}}, true);
+    ok = ok && (!calibrated || (!rc.converterOn() && conf.add({{"rect_offset_cal", "1"}}, true)));
+    if (!ok) ESP_LOGW("rectcal", "coil.conf not written (converter started or write failed), retrying");
+    return ok;
+}
+
+void MpptController::rectCalLf() {
+    if (!sensorPhysicalI) return;
+    rectCal.lf(converter, (uint32_t) (wallClockUs() / 1000000),
+               sensorPhysicalI->ewm.avg.get() * sensorPhysicalU->ewm.avg.get());
 }

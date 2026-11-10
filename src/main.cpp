@@ -248,6 +248,9 @@ static void setupConverterAndMppt(const ConfFile &boardConf, const Limits &lim, 
 
             mppt.charger.begin(chargerConf);
             converter.init(converterConf, boardConf, coilConf);
+            mppt.rectCal.autoRun = coilConf.getByte("rect_cal_auto", 1);
+            mppt.rectCal.persist = rectCalPersist;
+            mppt.rectCal.init(converter.getRectOnOffset(), !converter.rectOffsetNeedsCal());
             chargerConf.warnUnknownKeys();
             coilConf.warnUnknownKeys();
         }
@@ -1051,6 +1054,7 @@ __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
     lfStuckWatchdog();
     lfControl();
     lfMarkOtaValid();
+    mppt.rectCalLf();
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     coredumpStampIfNew();
 #endif
@@ -1095,8 +1099,10 @@ static void loopRTNewData(time_ms nowMs) {
     // and share the same RT-owned transition path.
     mppt.applyPendingPsuCommandRt(haveNewSample);
 
-    if (haveNewSample)
+    if (haveNewSample) {
         timeLastSampler = wallClockUs();
+        mppt.rectCalRt();
+    }
 
     // auto range current sense ADC channel TODO add hysteresis
     /* float adcRangeBound = 2.0f;

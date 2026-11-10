@@ -246,7 +246,7 @@ measure-coil ls [hs]    [dwell_ms] [apply]     # the §6 LS-timing / rect_offset
 It reads `Vin`/`Vout`/`Iout` directly from each sensor's `ewm.avg` (the same DC average the host
 medians off the `sensor avg` line), uses `pwmMaxDriver()` for the exact PWM period (no
 `MinDutyCycleLS` reconstruction), and applies the identical formula, `Iout` floor, and median/IQR.
-`apply` writes `coil.conf::L0` (next boot) or `rect_offset_ns` (also live). Like the script, it
+`apply` writes `coil.conf::L0` (next boot) or `rect_offset_ns` with `rect_offset_drv` and `rect_offset_cal=1` (live at once; written once the converter is off). Like the script, it
 reports the physical inductance. It was validated against the script on one Fugu2 board (board A
 of §7) to within ~2 % (≈50 µH).
 
