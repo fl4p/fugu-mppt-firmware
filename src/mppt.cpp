@@ -586,25 +586,25 @@ void MpptController::telemetry() {
 extern SynchronousConverter converter;
 extern MpptController mppt;
 
-// Each intermediate file state reads as uncalibrated: rect_offset_cal=0 goes first, =1 last. Runs
-// under the RT persist lock (no converter start); stops (false, retried) if the lock expired.
+// One rewrite of coil.conf (littlefs keeps the old file until close), under the admitted persist lock.
 bool rectCalPersist(int counts, bool calibrated) {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%.0f", rectOffsetNsFromCounts(counts, converter.getPwmTickRate()));
-    auto &rc = mppt.rectCal;
+    char ns[16];
+    snprintf(ns, sizeof(ns), "%.0f", rectOffsetNsFromCounts(counts, converter.getPwmTickRate()));
     ConfFile conf{"/littlefs/conf/coil.conf"};
-    bool ok = rc.persistLocked();
-    if (ok) conf.remove("rect_offset"); // legacy count-based key
-    ok = ok && rc.persistLocked() && conf.add({{"rect_offset_cal", "0"}}, true);
-    ok = ok && rc.persistLocked() && conf.add({{"rect_offset_ns", buf}}, true);
-    ok = ok && rc.persistLocked() && conf.add({{"rect_offset_drv", converter.drvName()}}, true);
-    ok = ok && (!calibrated || (rc.persistLocked() && conf.add({{"rect_offset_cal", "1"}}, true)));
-    if (!ok) ESP_LOGW("rectcal", "coil.conf not written (converter started or write failed), retrying");
+    const bool ok = conf.update({{"rect_offset_ns", ns}, {"rect_offset_drv", converter.drvName()},
+                                 {"rect_offset_cal", calibrated ? "1" : "0"}}, "rect_offset"); // legacy count key
+    if (!ok) ESP_LOGW("rectcal", "coil.conf write failed, retrying");
     return ok;
 }
 
 void MpptController::rectCalLf() {
     if (!sensorPhysicalI) return;
-    rectCal.lf(converter, (uint32_t) (wallClockUs() / 1000000),
-               sensorPhysicalI->ewm.avg.get() * sensorPhysicalU->ewm.avg.get());
+    const auto nowS = (uint32_t) (wallClockUs() / 1000000);
+    rectCal.lf(converter, nowS, sensorPhysicalI->ewm.avg.get() * sensorPhysicalU->ewm.avg.get());
+    if (!rectCal.saveRequested() || !converter.disabled()) return;
+    for (int i = 0; i < 10 && rectCal.saveRequested(); ++i) vTaskDelay(pdMS_TO_TICKS(2)); // RT grants per sample
+    const auto t0 = (uint32_t) wallClockUs();
+    rectCal.trySave(nowS);
+    rectCal.cancelSave(); // not granted yet: a grant must not wait for the next LF pass
+    if (const auto dt = (uint32_t) wallClockUs() - t0; dt > 1000) ESP_LOGI("rectcal", "save took %lu us", (unsigned long) dt);
 }

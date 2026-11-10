@@ -268,10 +268,13 @@ once. Writing it to `coil.conf` (`rect_offset_ns`, `rect_offset_drv`, `rect_offs
 until the converter has been off without interruption for 10 s with a valid output-power reading
 below 1 W, typically at night: a flash write that erases a sector stalls both cores, including the
 control loop, for tens of milliseconds. Any converter start, however short, restarts the 10 s.
-The control loop then blocks converter starts while the write runs, for at most 8 s; a write
-still running after that loses the lock, the converter may start again, and the whole save is
-repeated later. A failed or interrupted write is retried a minute later;
-successful writes are at least 10 minutes apart. What is
+The control loop then blocks converter starts until the write is done: it grants the request,
+the low-frequency task admits the write within milliseconds and rewrites `coil.conf` once, and
+starts are allowed again as soon as it finishes, however long the write takes. A grant that is not
+admitted within 8 s is withdrawn. Only starts are blocked; protection and shutdown are not. LittleFS
+keeps the previous file until the new one is closed, so a reset during the write leaves the old
+values, never a mix. A failed or withdrawn save is retried a minute later; successful writes are at
+least 10 minutes apart. What is
 written is always the offset in use at that moment together with its state: if the backstop
 below has shortened a fresh result before it was saved, the shorter value is saved as
 uncalibrated.

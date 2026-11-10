@@ -114,7 +114,18 @@ public:
     // duplicate lines of a key being written are collapsed to one. Genuinely new keys are appended.
     // Returns false on any I/O failure (cannot open / short write / fsync error) instead of
     // aborting — a failed config write must never panic-reboot the device.
-    bool add(KVList values, bool overwrite = false) {
+    bool add(KVList values, bool overwrite = false) { return rewrite_(values.begin(), values.end(), overwrite, nullptr); }
+
+    // add() for runtime C strings, in one rewrite; drop: a key whose lines are removed (nullptr: none).
+    bool update(std::initializer_list<std::pair<const char *, const char *>> values, const char *drop = nullptr) {
+        std::vector<KV> v;
+        v.reserve(values.size());
+        for (auto &p: values) v.emplace_back(p.first, p.second);
+        return rewrite_(v.data(), v.data() + v.size(), true, drop);
+    }
+
+private:
+    bool rewrite_(const KV *vb, const KV *ve, bool overwrite, const char *drop) {
         // read current file into lines (stripping the trailing newline)
         std::vector<std::string> lines;
         if (FILE *fr = fopen(path, "r")) {
@@ -134,12 +145,12 @@ public:
             return false;
         };
         auto findVal = [&](const std::string &k) -> const std::string * {
-            for (auto &p: values) if (p.first == k) return &p.second;
+            for (auto *p = vb; p != ve; ++p) if (p->first == k) return &p->second;
             return nullptr;
         };
 
         std::vector<std::string> out;
-        out.reserve(lines.size() + values.size());
+        out.reserve(lines.size() + (ve - vb));
 
         for (auto &line: lines) {
             auto ic = line.find_first_of('#');
@@ -153,6 +164,7 @@ public:
             }
 
             auto key = trim(code.substr(0, ie));
+            if (drop && key == drop) continue;
             auto *vp = findVal(key);
             if (!vp) {
                 out.push_back(line); // a key we're not touching
@@ -173,8 +185,8 @@ public:
             writtenKeys.push_back(key);
         }
 
-        for (auto &[key, val]: values)
-            if (!isWritten(key)) out.push_back(key + "=" + val);
+        for (auto *p = vb; p != ve; ++p)
+            if (!isWritten(p->first)) out.push_back(p->first + "=" + p->second);
 
         FILE *f = fopen(path, "w");
         if (f == nullptr) {
@@ -200,10 +212,13 @@ public:
 
         fclose(f);
 
-        for (auto &[key, val]: values) set_(key, val); // keep in-memory view consistent
+        for (auto *p = vb; p != ve; ++p) set_(p->first, p->second); // keep in-memory view consistent
+        if (drop) _map.erase(std::remove_if(_map.begin(), _map.end(), [&](const KV &p) { return p.first == drop; }),
+                             _map.end());
         return true;
     }
 
+public:
     // Remove a key by rewriting the file without its line(s). The whole line is dropped, including
     // any trailing inline comment. Comment-only and blank lines are kept verbatim. Returns true if
     // the key was present and the file was rewritten; false if absent or on any I/O failure.

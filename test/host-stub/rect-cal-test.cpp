@@ -88,20 +88,20 @@ static void initConv(SynchronousConverter &c, const char *offNs = nullptr, const
 static bool g_saveOk = true;
 static int g_saveCalls = 0;
 static std::vector<std::pair<int, bool>> g_saved;
-// Like rectCalPersist: four file writes, each only while the persist lock is held. g_writeHook runs
-// before each check, standing in for RT activity during the write (start attempts, rt() calls).
+// Like rectCalPersist: one coil.conf rewrite. g_writeHook(0) runs before it, g_writeHook(1) after it,
+// standing in for RT activity while core 0 is inside the write (start attempts, rt() calls, delays).
 static Ctl *g_ctl = nullptr;
 static SynchronousConverter *g_conv = nullptr;
 static std::function<void(int)> g_writeHook;
-static int g_writes = 0, g_poweredWrites = 0;
+static int g_writes = 0, g_poweredWrites = 0, g_unadmitted = 0;
 static bool fakePersist(int o, bool cal) {
     ++g_saveCalls;
-    for (int w = 0; g_ctl && w < 4; ++w) {
-        if (g_writeHook) g_writeHook(w);
-        if (!g_ctl->persistLocked()) return false;
-        ++g_writes;
-        if (g_conv && !g_conv->disabled()) ++g_poweredWrites;
-    }
+    if (g_writeHook) g_writeHook(0);
+    ++g_writes;
+    if (g_ctl && !g_ctl->persistLocked()) ++g_unadmitted;
+    if (g_conv && !g_conv->disabled()) ++g_poweredWrites;
+    if (g_writeHook) g_writeHook(1);
+    if (g_conv && !g_conv->disabled()) ++g_poweredWrites;
     if (!g_saveOk) return false;
     g_saved.emplace_back(o, cal);
     return true;
@@ -403,13 +403,27 @@ static void stopConv(Host &h) {
     h.ctl.rt(h.c, h.in());
 }
 
-// RT (rt() at 10 Hz) and LF (lf() once a second) for `seconds` without the plant, converter as is.
-static void idle(Host &h, double seconds, float pOut) {
+// MpptController::rectCalLf: lf(), then, for a pending request with the converter off, a short wait
+// in which RT samples, the admitted write and the withdrawal of an ungranted request.
+static void lfPass(Host &h, float pOut) {
+    const auto nowS = (uint32_t) h.r.t;
+    h.ctl.lf(h.c, nowS, pOut);
+    if (!h.ctl.saveRequested() || !h.c.disabled()) return;
+    for (int i = 0; i < 10 && h.ctl.saveRequested(); ++i) {
+        h.r.t += 0.002;
+        h.ctl.rt(h.c, h.in());
+    }
+    h.ctl.trySave(nowS);
+    h.ctl.cancelSave();
+}
+
+// RT (rt() at 10 Hz) and LF (lfPass() every lfS) for `seconds` without the plant, converter as is.
+static void idle(Host &h, double seconds, float pOut, double lfS = 1.0) {
     for (double t1 = h.r.t + seconds; h.r.t < t1;) {
-        const auto s0 = (uint32_t) h.r.t;
+        const auto k0 = (int64_t) (h.r.t / lfS);
         h.r.t += 0.1;
         h.ctl.rt(h.c, h.in());
-        if ((uint32_t) h.r.t != s0) h.ctl.lf(h.c, (uint32_t) h.r.t, pOut);
+        if ((int64_t) (h.r.t / lfS) != k0) lfPass(h, pOut);
     }
 }
 
@@ -540,10 +554,11 @@ static void testPersistence() {
     g_ctl = nullptr; g_conv = nullptr;
 }
 
-// R3-1: the persist lock. Starts are refused while it is held, it is granted only after continuous off
-// time (a start/stop pulse between two samples restarts it) and it expires after LockMaxUs.
+// R3-1/R4-1: the persist lock. Granted only after continuous off time (a start/stop pulse between two
+// samples restarts it); starts are refused from the grant until the admitted write is done, however
+// long it takes; a grant that is not admitted expires after LockMaxUs and the save is retried.
 static void testPersistLock() {
-    g_saved.clear(); g_saveCalls = 0; g_saveOk = true; g_writes = g_poweredWrites = 0;
+    g_saved.clear(); g_saveCalls = 0; g_saveOk = true; g_writes = g_poweredWrites = g_unadmitted = 0;
     Host h(3.f, 80, 0.f, 0.f, -40);
     g_ctl = &h.ctl; g_conv = &h.c;
     h.op = (uint16_t) (0.6f * VBAT / VOC * PM);
@@ -557,7 +572,7 @@ static void testPersistLock() {
     idle(h, 9, 0.f);
     CHECK(g_saveCalls == 0, "saved %.1f s after an on/off pulse", h.r.t - pulse);
 
-    // start attempts during every write: refused, no powered write
+    // start attempts before and after the write: refused
     int blocked = 0;
     g_writeHook = [&](int) {
         h.c.pwmPerturb(10);
@@ -566,34 +581,122 @@ static void testPersistLock() {
         h.ctl.rt(h.c, h.in());
     };
     idle(h, 3, 0.f);
-    CHECK(g_saved.size() == 1 && g_poweredWrites == 0 && blocked == 4 && h.r.t - pulse >= 10.0,
+    CHECK(g_saved.size() == 1 && g_poweredWrites == 0 && blocked == 2 && h.r.t - pulse >= 10.0,
           "lock: saves %zu powered %d blocked %d at %.1f s after pulse", g_saved.size(), g_poweredWrites, blocked,
           h.r.t - pulse);
     g_writeHook = nullptr;
-    idle(h, 0.3, 0.f);
+    // after the final write: released at the next sample, saved state truthful
+    h.ctl.rt(h.c, h.in());
     h.c.pwmPerturb(10);
-    CHECK(!h.c.disabled(), "start still refused after the save");
+    CHECK(!h.c.disabled() && !h.ctl.unsaved(), "start refused / unsaved after the save");
 
-    // a slow write: the lock expires after LockMaxUs, the write stops and the converter can start
+    // an admitted write that outlasts LockMaxUs keeps starts blocked to its end and reports success
     h.c.disable();
-    h.ctl.requestSave();
-    idle(h, Ctl::SaveMinS, 0.f); // rate limit; the save happens in here, nothing pending afterwards
+    idle(h, Ctl::SaveMinS, 0.f); // rate limit
     h.ctl.requestSave();
     g_saved.clear();
-    const int writesBefore = g_writes, callsBefore = g_saveCalls;
+    int slowBlocked = 0, hooks = 0;
     g_writeHook = [&](int) {
-        h.r.t += 3.0; // 3 s per write
+        h.r.t += 9.0; // > LockMaxUs inside the write
         h.ctl.rt(h.c, h.in());
+        h.c.pwmPerturb(10);
+        slowBlocked += h.c.disabled();
+        ++hooks;
     };
-    while (g_saveCalls == callsBefore && h.r.t < 5000) idle(h, 1, 0.f);
-    h.c.pwmPerturb(10); // the expired lock must not block a start
-    const bool started = !h.c.disabled();
-    CHECK(g_saved.empty() && g_writes - writesBefore == 2 && started && g_poweredWrites == 0,
-          "slow write: saves %zu writes %d started %d powered %d", g_saved.size(), g_writes - writesBefore, started,
-          g_poweredWrites);
+    idle(h, 2, 0.f);
     g_writeHook = nullptr;
+    CHECK(hooks == 2 && slowBlocked == 2 && g_saved.size() == 1 && !h.ctl.unsaved() && g_poweredWrites == 0,
+          "slow write: hooks %d blocked %d saves %zu unsaved %d powered %d", hooks, slowBlocked, g_saved.size(),
+          h.ctl.unsaved(), g_poweredWrites);
+    h.ctl.rt(h.c, h.in());
+    h.c.pwmPerturb(10);
+    CHECK(!h.c.disabled(), "start refused after the slow write");
+
+    // a grant core 0 never admits (core 0 stalled): expires after LockMaxUs, no write, retried
+    h.c.disable();
+    idle(h, Ctl::SaveMinS, 0.f);
+    h.ctl.requestSave();
+    const int calls0 = g_saveCalls;
+    h.ctl.lf(h.c, (uint32_t) h.r.t, 0.f); // request without the wrapper's admit
+    h.r.t += 0.001;
+    h.ctl.rt(h.c, h.in());
+    CHECK(h.c.startInhibited(), "not granted");
+    h.r.t += Ctl::LockMaxUs * 1e-6 - 0.01;
+    h.ctl.rt(h.c, h.in());
+    CHECK(h.c.startInhibited(), "grant expired early");
+    h.r.t += 0.01;
+    h.ctl.rt(h.c, h.in());
+    h.c.pwmPerturb(10);
+    const bool startedAfterExpiry = !h.c.disabled();
+    h.ctl.trySave((uint32_t) h.r.t); // the stalled core 0 resumes: nothing to admit
+    CHECK(startedAfterExpiry && g_saveCalls == calls0 && h.ctl.unsaved(),
+          "expiry: started %d calls %d unsaved %d", startedAfterExpiry, g_saveCalls - calls0, h.ctl.unsaved());
+    h.c.disable();
+    idle(h, Ctl::SaveRetryS - 5, 0.f);
+    CHECK(g_saveCalls == calls0, "retried before SaveRetryS");
+    idle(h, 20, 0.f);
+    CHECK(g_saveCalls == calls0 + 1 && !h.ctl.unsaved(), "not saved after the expired grant");
+    CHECK(g_unadmitted == 0 && g_poweredWrites == 0, "unadmitted %d powered %d", g_unadmitted, g_poweredWrites);
     g_ctl = nullptr; g_conv = nullptr;
-    printf("persist lock: ok (pulse resets off time, 4/4 starts refused during a save, slow write released)\n");
+    printf("persist lock: ok (pulse resets off time, starts refused through an admitted 18 s write, "
+           "unadmitted grant expires and retries)\n");
+}
+
+// rectCalPersist's single rewrite: runtime values, legacy key dropped, other lines and comments kept.
+static void testConfUpdate() {
+    const char *path = "/tmp/rect-cal-test-coil.conf";
+    FILE *f = fopen(path, "w");
+    fputs("# coil\nL0=50e-6\nrect_offset=12\nrect_offset_ns=-200  # old\nrect_cal_auto=0\n", f);
+    fclose(f);
+    std::string ns = "-138", drv = "vconv";
+    ConfFile w{path};
+    CHECK(w.update({{"rect_offset_ns", ns.c_str()}, {"rect_offset_drv", drv.c_str()}, {"rect_offset_cal", "1"}},
+                   "rect_offset"), "update failed");
+    ConfFile r{path};
+    CHECK(r.getString("rect_offset_ns", "") == "-138" && r.getString("rect_offset_drv", "") == "vconv"
+          && r.getByte("rect_offset_cal", 0) == 1 && r.getString("rect_offset", "gone") == "gone"
+          && r.getString("L0", "") == "50e-6" && r.getByte("rect_cal_auto", 1) == 0, "conf update content");
+    f = fopen(path, "r");
+    char buf[512] = {};
+    fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    CHECK(strstr(buf, "# coil\n") && strstr(buf, "rect_offset_ns=-138  # old\n"), "conf update layout: %s", buf);
+    remove(path);
+}
+
+// On-target sequence: rect-cal while converting, `dc 0` (manual ramp to pwmCtrlMin, then disable),
+// LF every 3 s; saved within IdleUs plus one LF period, MPPT can start again right after. Also with
+// core 0 stalled (console `sleep`) through the whole off time: saved in the first LF pass after it.
+static void testDc0Save() {
+    for (const double stall: {0.0, 25.0}) {
+        g_saved.clear(); g_saveCalls = 0; g_saveOk = true; g_writes = g_poweredWrites = g_unadmitted = 0;
+        Host h(3.f, 80, 0.f, 0.f);
+        g_ctl = &h.ctl; g_conv = &h.c; g_writeHook = nullptr;
+        float truth;
+        CHECK(calibrate(h, truth), "cal failed: %s", h.ctl.cal.why);
+        h.lfAt = 1e9;
+        const int16_t step = (int16_t) std::max(1, (int) std::lround((float) h.c.pwmMaxDriver() / 512.f));
+        while (!h.c.disabled()) { // updateManual() with target 0, one sample per ms
+            h.r.t += 0.001;
+            h.ctl.rt(h.c, h.in());
+            if (h.c.getCtrlOnPwmCnt() <= h.c.pwmCtrlMin) h.c.disable();
+            else h.c.pwmPerturb((int16_t) -step);
+        }
+        const double off = h.r.t;
+        for (double t1 = h.r.t + stall; h.r.t < t1;) { h.r.t += 0.1; h.ctl.rt(h.c, h.in()); }
+        while (h.ctl.unsaved() && h.r.t - off < 60) idle(h, 0.1, 0.f, 3.0);
+        const double took = h.r.t - off;
+        CHECK(!h.ctl.unsaved() && g_saved.size() == 1 && g_saved[0].first == h.ctl.offset() && g_saved[0].second,
+              "dc 0 (stall %.0f s): unsaved after %.1f s (%zu saves)", stall, took, g_saved.size());
+        CHECK(took <= std::max(stall, 10.0) + 3.0 + 0.2, "dc 0 (stall %.0f s): saved after %.1f s", stall, took);
+        h.ctl.rt(h.c, h.in());
+        CHECK(!h.c.startInhibited(), "dc 0: start still inhibited after the save");
+        h.c.pwmPerturb(10);
+        CHECK(!h.c.disabled() && g_poweredWrites == 0 && g_unadmitted == 0, "dc 0: restart %d powered %d unadmitted %d",
+              !h.c.disabled(), g_poweredWrites, g_unadmitted);
+        printf("dc 0 save: stall %.0f s -> saved %.1f s after the stop, restart ok\n", stall, took);
+    }
+    g_ctl = nullptr; g_conv = nullptr;
 }
 
 // R3-2: the backstop stays armed over long uptimes (2^31 and 2^32 us) and re-holds after a restart.
@@ -683,7 +786,11 @@ static void testThreads(double seconds) {
     const auto t0 = std::chrono::steady_clock::now();
     while (std::chrono::steady_clock::now() - t0 < std::chrono::duration<double>(seconds)) {
         fits += h.ctl.cal.get() == RectCal::Fit;
-        h.ctl.lf(h.c, nowS.load() + 600, p.load());
+        const uint32_t s = nowS.load() + 600;
+        h.ctl.lf(h.c, s, p.load());
+        for (int i = 0; i < 10 && h.ctl.saveRequested(); ++i) std::this_thread::sleep_for(std::chrono::microseconds(100));
+        h.ctl.trySave(s);
+        h.ctl.cancelSave();
         saves = g_saveCalls;
         const auto st = h.ctl.cal.get();
         if ((st == RectCal::Done || st == RectCal::Fail) && h.ctl.cal.seq != seen) {
@@ -732,6 +839,8 @@ int main(int argc, char **argv) {
     testSchedule();
     testPersistence();
     testPersistLock();
+    testDc0Save();
+    testConfUpdate();
     testBackstopUptime();
     testBackstopEligibility();
 
