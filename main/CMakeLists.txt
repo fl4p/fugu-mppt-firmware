@@ -26,7 +26,7 @@ if ($ENV{RUN_TESTS})
             # VCONV_SRC stays empty in test builds -> no duplicate symbol.
             "../src/sim/vconv.cpp"
     )
-elseif ($ENV{MAIN_SRC})
+elseif (DEFINED ENV{MAIN_SRC})
     set(MAIN_SRC $ENV{MAIN_SRC})
 else ()
     # cli.cpp, bsync.cpp and measure_coil.cpp extern main.cpp's globals, so they're only built

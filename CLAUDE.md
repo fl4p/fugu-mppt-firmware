@@ -68,7 +68,17 @@ next reset:
 the rollback bootloader via **serial** is protected, but one that's only ever been app-OTA'd keeps its old (
 pre-rollback)
 bootloader and will **brick, not revert**, on a bad image. To put rollback on a converter, do a full **serial** flash
-(bootloader + app, omitting littlefs to keep its config) once; OTAs after that self-revert. A bricked device (hung in
+(bootloader + app, omitting littlefs to keep its config) once, or push the bootloader over Wi-Fi (below); OTAs after that
+self-revert.
+
+**Bootloader OTA (unsafe, no recovery bootloader on S3).** `ota bootloader <url>` (host: `etc/ota.py --bootloader -m
+<name>`, `-n` shows current vs new from the `bootinfo` `bootloader:` line). Refuses unless conversion was stopped with
+`dc 0` (manual target 0, converter disabled), the app is confirmed, flash encryption/secure boot are off. Stages the
+image in unallocated flash after the last partition (never the passive slot), checks chip id, appended SHA-256 (IDF only
+checks the 8-bit checksum of bootloaders), flash mode and size; skips an identical image, then erases only the sectors
+it needs at 0x0 and reads back (3 tries; on failure `systemRestart()` refuses until a retry succeeds). A reset or power
+loss during that copy (~0.5 s) bricks the board until serial reflash.
+Dangerous-write protection stays on except around the copy. Test: `test/main_bl_ota.cpp` + `test/bl_ota_qemu.py`. A bricked device (hung in
 `setup()` before WiFi/services) can only be recovered by serial — see [website/docs/development/debugging/real-time-latency.md] for the
 boot-time stack/cache traps that cause such hangs.
 

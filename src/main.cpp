@@ -1339,6 +1339,10 @@ static void restartCloseTelnet() {
 
 void systemRestart() {
     converter.disable();
+    if (g_restartBlocked) {
+        ESP_LOGE("main", "restart refused: bootloader region not verified");
+        return;
+    }
     UART_LOG("Rebooting");
     restartCloseTelnet();
     g_services.stopAll(); // tear down enabled services while WiFi is still up (see mqtt_task overflow)
