@@ -321,7 +321,10 @@ const META = {
 
   // coil.conf
   L0:{unit:"H",desc:"Coil inductance (for ripple-current computation)",type:"float"},
-  rect_offset_ns:{unit:"ns",desc:"DCM low-side turn-off delay (gate-drive/MOSFET dead-time comp; >0 = LS off later). Stored as time so it survives a PWM-resolution change. See measure-coil ls --apply",type:"float"},
+  rect_offset_ns:{unit:"ns",desc:"DCM low-side turn-off delay (gate-drive/MOSFET dead-time comp; >0 = LS off later). Stored as time so it survives a PWM-resolution change. Used only if rect_offset_drv names the active gate driver. Written by rect-cal / measure-coil ls apply",type:"float"},
+  rect_offset_drv:{unit:"",desc:"Gate driver rect_offset_ns was measured on (mcpwm|ledc); absent or different = offset ignored (0), needs rect-cal",type:"string"},
+  rect_cal_auto:{unit:"",desc:"Auto-run rect-cal while the offset is uncalibrated (max once a day, not in the first 10 min)",type:"bool"},
+  rect_offset_cal:{unit:"",desc:"0 = rect_offset_ns is a runtime-backstop reduction, not a measurement: used, but still counts as uncalibrated",type:"bool"},
 
   // converter.conf
   topo:{unit:"",desc:"Converter topology: buck or boost",type:"enum"},
@@ -505,7 +508,7 @@ const FILE_KEYS = {
     "ignore_calibration_constraints","notch_adaptive","notch_freq","notch_q","ntc_ch","power_conversion_eff"],
   "limits.conf":["hv_i_max","hv_max","iout_short","lv_i_max","lv_max",
     "p_max","reverse_current_paranoia","temp_derate","temp_max","vin_min"],
-  "coil.conf":["L0","rect_offset_ns"],
+  "coil.conf":["L0","rect_cal_auto","rect_offset_cal","rect_offset_drv","rect_offset_ns"],
   "converter.conf":["ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
     "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
     "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td",
@@ -532,7 +535,7 @@ const FILE_KEYS = {
    (getByte/getLong/getFloat/getString), determined by grepping src/. */
 // SCRAPER:BEGIN TYPE_KEYS
 const TYPE_KEYS = {
-  byte: new Set(["addr","ads_alert","cmd_input","enabled","expected_hz","fan_pwm","forced_pwm","fpwm_gate",
+  byte: new Set(["addr","ads_alert","cmd_input","enabled","expected_hz","fan_pwm","forced_pwm","fpwm_gate","rect_cal_auto","rect_offset_cal",
     "i2c_port","i2c_scl","i2c_sda","ignore_calibration_constraints","ina22x_addr","ina22x_alert",
     "led_simple","lv_pgood","notch_adaptive","ntc_ch","panel_en","panel_sd","pwm_en","pwm_fault_active_high","pwm_fault_pin",
     "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert"]),
@@ -547,7 +550,7 @@ const TYPE_KEYS = {
     "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td"]),
   string: new Set(["adc","ble_security","broker_uri","cell_voltages_max_topic","ftp_pass",
     "ftp_user","bat_charge_topic","bat_temp_topic","bat_voltage_topic","ibat_lim_topic","ibat_topic","influxdb_host","log_level","mcu","mode","password",
-    "pwm_driver_logic","topo","username"]),
+    "pwm_driver_logic","rect_offset_drv","topo","username"]),
 };
 // SCRAPER:END TYPE_KEYS
 const CHAN_SUFFIX_TYPE = { adc:"string", ch:"byte", rh:"float", rl:"float", factor:"float", midpoint:"float", filt_len:"long", gain:"float", offset:"float" };
@@ -568,7 +571,7 @@ const DEFAULTS = {
   // limits.conf
   "reverse_current_paranoia":"1","temp_max":"90.0",
   // coil.conf
-  "rect_offset_ns":"0",
+  "rect_offset_ns":"0","rect_cal_auto":"1","rect_offset_cal":"1",
   // converter.conf
   "forced_pwm":"0","fpwm_gate":"1","fpwm_gate_hold":"192","fpwm_gate_margin":"0.01","mode":"\"mppt\"","sync_phase_deg":"0","sync_phase_ns":"0","sync_role":"\"none\"","topo":"\"buck\"",
   "ctrl_vin_kp":"-100","ctrl_vin_kd":"-200","ctrl_vout_kp":"1500","ctrl_vout_kd":"12000",
