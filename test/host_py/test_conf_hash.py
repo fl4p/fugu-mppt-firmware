@@ -200,6 +200,11 @@ class ConfHashTest(unittest.TestCase):
             self.assertRegex(out.getvalue(), r"^conf sha256=unknown excluded=wifi\.conf error=.+\n$")
         self.assertIn("staging file present: board.conf.new", out.getvalue())
 
+    def test_conffile_stage_is_an_error(self):
+        (self.conf / "board.conf.cft").write_bytes(b"x=1\n")
+        with self.assertRaisesRegex(conf_hash.ConfHashError, "staging file present: board.conf.cft"):
+            conf_hash.conf_hash(self.conf)
+
     def test_symlink_is_an_error_not_followed(self):
         os.symlink(self.conf, self.conf / "sub" / "loop")
         with self.assertRaisesRegex(conf_hash.ConfHashError, "not a regular file"):

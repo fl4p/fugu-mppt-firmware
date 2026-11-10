@@ -9,7 +9,7 @@
 //
 //   files   every regular file below the conf root, recursively (more than 8 nested directory
 //           levels is an error), as a '/'-separated path relative to the root, except the top-level "wifi.conf"
-//           (all secrets). A file whose name ends in ".new" (ConfFile/USB-drive commit staging) is an error:
+//           (all secrets). A file whose name ends in ".new" or ".cft" (USB-drive / ConfFile staging) is an error:
 //           a hash taken mid-commit is not a stable state. Anything else (e.g. a symlink on a host
 //           copy; littlefs has none) is an error.
 //   order   relative path, bytewise ascending

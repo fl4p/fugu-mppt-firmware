@@ -1,4 +1,4 @@
-// Host test for ConfFile writes (src/conf.h): staged <path>.new + rename, with faults injected at each
+// Host test for ConfFile writes (src/conf.h): staged <path>.cft + rename, with faults injected at each
 // file-API boundary. Error mode: the call fails (EIO). Reset mode: execution stops there (throws), as
 // a reset would; the boot cleanup then runs. Either way the old file and its other keys must survive.
 //
@@ -104,7 +104,7 @@ static bool exists(const std::string &p) { return access(p.c_str(), F_OK) == 0; 
 int main() {
     char tmpl[] = "/tmp/conf-write-test-XXXXXX";
     const std::string dir = mkdtemp(tmpl);
-    const std::string path = dir + "/coil.conf", staged = path + ".new";
+    const std::string path = dir + "/coil.conf", staged = path + ".cft", usbStage = path + ".new";
 
     for (int r = 0; r < 2; ++r)
         for (int fi = None; fi < NFaults; ++fi) {
@@ -142,6 +142,38 @@ int main() {
         }
 
     g_reset = false;
+
+    // the USB drive's stage is neither touched by a failed write nor by the boot cleanup
+    put(path, kOrig);
+    put(usbStage, "usb=1\n");
+    {
+        ConfFile c{path.c_str()};
+        g_fault = Rename;
+        CHECK(!c.update({{"a", "1"}}) && slurp(usbStage) == "usb=1\n", "failed write touched the USB stage");
+        g_fault = None;
+        CHECK(c.update({{"a", "1"}}) && slurp(usbStage) == "usb=1\n", "write touched the USB stage");
+    }
+    CHECK(confDropStaging(dir.c_str()) && exists(usbStage), "boot cleanup removed the USB stage");
+    unlink(usbStage.c_str());
+
+    // a CR-only last line without LF, CRLF and a last line without LF
+    for (const char *in: {"a=1\n\r", "a=1\r\n\r\r", "a=1\r\nb=2"}) {
+        put(path, in);
+        ConfFile c{path.c_str()};
+        CHECK(c.update({{"x", "1"}}) && ConfFile{path.c_str()}.getByte("a", 0) == 1
+              && ConfFile{path.c_str()}.getByte("x", 0) == 1, "line ends %zu", strlen(in));
+    }
+    CHECK(slurp(path) == "a=1\nb=2\nx=1\n", "CRLF rewrite: %s", slurp(path).c_str());
+    // an embedded NUL: rejected, file unchanged
+    for (size_t at: {0, 3, 7}) {
+        std::string bin = "a=1\nb=2\n";
+        bin.insert(at, 1, '\0');
+        FILE *f = fopen(path.c_str(), "wb");
+        fwrite(bin.data(), 1, bin.size(), f);
+        fclose(f);
+        ConfFile c{path.c_str()};
+        CHECK(!c.update({{"x", "1"}}) && slurp(path) == bin && !exists(staged), "NUL at %zu accepted", at);
+    }
 
     // missing file: created
     unlink(path.c_str());

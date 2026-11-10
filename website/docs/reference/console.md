@@ -137,10 +137,10 @@ nvs sha256=<64 hex> keys=<K> redacted=<S> unreadable=0 ns=storage
 
 Any problem is reported, never hashed: the affected line prints `sha256=unknown ... error=<reason>`
 (for NVS also `nvs-unreadable <key>:<type>:<error>` lines), and the command fails. This includes a
-missing `/littlefs/conf` (an error, not the hash of an empty set) and a `<name>.new` file, which a
-configuration write or the USB config drive leaves while it commits an edit: a hash taken mid-commit
-would not describe a stable configuration, so run the command again once the commit has finished.
-A `.new` file left by a reset is deleted at the next boot.
+missing `/littlefs/conf` (an error, not the hash of an empty set) and a staged `<name>.new` (USB
+config drive) or `<name>.cft` (configuration write) file, present while an edit is committed: a hash
+taken mid-commit would not describe a stable configuration, so run the command again once the commit
+has finished. A `.cft` file left by a reset is deleted at the next boot, before the boot hash is taken.
 
 `etc/conf_hash.py <dir>` is the host reference implementation. It prints the same `conf` and
 `conf-file` lines (without `boot=`), or the same `sha256=unknown ... error=` line and exit code 1.
@@ -181,7 +181,7 @@ Each replacement counts once toward `redacted=`.
 
 1. Take every regular file below `/littlefs/conf`, recursively, as a `/`-separated path relative to
    it. More than 8 levels of nested directories, a symlink or other non-regular entry,
-   or a file whose name ends in `.new` is an error. The top-level `wifi.conf` is skipped.
+   or a file whose name ends in `.new` or `.cft` is an error. The top-level `wifi.conf` is skipped.
 2. Sort the paths bytewise.
 3. Split each file into lines at `\n` only, keeping the `\n`, and apply line redaction to each
    line. A line longer than 4096 bytes, not counting `\n`, is an error. The result is the file's

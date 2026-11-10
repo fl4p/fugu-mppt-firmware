@@ -72,9 +72,9 @@ static void settleAndRead(uint16_t H, uint32_t dwellMs, Reading &out) {
     out = {medianN(vi, 5), medianN(vo, 5), medianN(io, 5), converter.getCtrlOnPwmCnt(), converter.inDCM()};
 }
 
-static void measWriteConf(const char *key, const char *val) {
+static bool measWriteConf(const char *key, const char *val) {
     ConfFile conf{"/littlefs/conf/coil.conf"};
-    conf.add({{key, val}}, true);
+    return conf.add({{key, val}}, true);
 }
 
 static void sweepL0(const MeasArgs &a) {
@@ -126,8 +126,8 @@ static void sweepL0(const MeasArgs &a) {
     if (a.apply) {
         char buf[24];
         snprintf(buf, sizeof(buf), "%.6e", med);
-        measWriteConf("L0", buf);
-        UART_LOG("  applied coil.conf L0=%s (effective next boot)", buf);
+        if (measWriteConf("L0", buf)) UART_LOG("  applied coil.conf L0=%s (effective next boot)", buf);
+        else UART_LOG("  measure-coil: FAILED to write coil.conf L0=%s", buf);
     }
 }
 

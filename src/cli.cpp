@@ -1575,9 +1575,9 @@ static void cmdSetConfig(cmd *c) {
     for (int i = 3; i < cc.countArgs(); ++i) val += " " + cc.getArg(i).getValue();
     ConfFile conf{fn.c_str()};
     auto oldVal = conf.getString(key.c_str(), "");
-    ESP_LOGI("main", "Setting conf '%s:%s' = '%s' (was %s)", fn.c_str(), key.c_str(), val.c_str(), oldVal.c_str());
-    if (oldVal != val.c_str())
-        conf.add({{key.c_str(), val.c_str()}}, true);
+    if (oldVal != val.c_str() && !conf.add({{key.c_str(), val.c_str()}}, true))
+        CMD_FAIL_RETURN("set-config: cannot write %s, '%s' unchanged", fn.c_str(), key.c_str());
+    ESP_LOGI("main", "Set conf '%s:%s' = '%s' (was %s)", fn.c_str(), key.c_str(), val.c_str(), oldVal.c_str());
 }
 
 
@@ -1589,10 +1589,11 @@ static void cmdDelConfig(cmd *c) {
     auto fn = confFile(cc.getArg(0).getValue());
     auto key = cc.getArg(1).getValue();
     ConfFile conf{fn.c_str()};
-    if (conf.remove(key.c_str()))
-        ESP_LOGI("main", "Deleted conf '%s:%s'", fn.c_str(), key.c_str());
-    else
+    if (!conf.has(key.c_str()))
         CMD_FAIL_RETURN("del-config: key '%s' not found in %s", key.c_str(), fn.c_str());
+    if (!conf.remove(key.c_str()))
+        CMD_FAIL_RETURN("del-config: cannot write %s, '%s' kept", fn.c_str(), key.c_str());
+    ESP_LOGI("main", "Deleted conf '%s:%s'", fn.c_str(), key.c_str());
 }
 
 // get-config <file> [key]  — print one key, or dump the whole file.
@@ -1906,18 +1907,19 @@ static void cmdService(cmd *c) {
     if (!s)
         CMD_FAIL_RETURN("svc: unknown '%s'", name.c_str());
 
-    if (sub == "on") {
-        s->setEnabledPersist(true);
-        if (!s->start()) UART_LOG("start failed (state=%s)", stateStr(s->state()));
-    } else if (sub == "off") {
-        s->setEnabledPersist(false);
-        s->stop();
+    if (sub == "on" || sub == "off") {
+        const bool on = sub == "on";
+        if (!s->setEnabledPersist(on))
+            CMD_FAIL_RETURN("svc: cannot save %s state, '%s' unchanged", sub.c_str(), name.c_str());
+        if (!on) s->stop();
+        else if (!s->start()) UART_LOG("start failed (state=%s)", stateStr(s->state()));
     } else if (sub == "restart" || sub == "rs") {
         s->restart();
     } else if (sub == "log") {
         if (n < 3)
             CMD_FAIL_RETURN("svc log: expected <error|warn|info>");
-        s->setLogLevel(strToLevel(cc.getArg(2).getValue().c_str()), /*persist*/ true);
+        if (!s->setLogLevel(strToLevel(cc.getArg(2).getValue().c_str()), /*persist*/ true))
+            CMD_FAIL_RETURN("svc log: cannot save the level, '%s' unchanged", name.c_str());
     } else {
         CMD_FAIL_RETURN("svc: unknown subcommand '%s'", sub.c_str());
     }

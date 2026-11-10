@@ -154,11 +154,11 @@ void test_conf_remove_missing_key_returns_false() {
     TEST_ASSERT_EQUAL_STRING(before.c_str(), readFile(kRemovePath).c_str()); // file untouched
 }
 
-// update() replaces the file through <path>.new + rename on littlefs; a stale .new is removed at boot.
+// update() replaces the file through <path>.cft + rename on littlefs; a stale .cft is removed at boot.
 void test_conf_update_staged_rename() {
     TEST_ASSERT_TRUE(mountLFS("littlefs_test", true));
     writeRemoveFixture();
-    const std::string staged = std::string(kRemovePath) + ".new";
+    const std::string staged = std::string(kRemovePath) + CONF_FILE_STAGE_SUFFIX;
 
     ConfFile conf{kRemovePath};
     TEST_ASSERT_TRUE(conf.update({{"foo", "baz"}, {"new_key", "1"}}, "lv_v_adc"));
@@ -174,7 +174,7 @@ void test_conf_update_staged_rename() {
     fputs("foo=stale\n", f);
     fclose(f);
     TEST_ASSERT_EQUAL_STRING("baz", ConfFile{kRemovePath}.getString("foo", std::string{}).c_str());
-    confDropStaging("/littlefs_test");
+    TEST_ASSERT_TRUE(confDropStaging("/littlefs_test"));
     TEST_ASSERT_NULL(fopen(staged.c_str(), "r"));
     TEST_ASSERT_EQUAL_STRING(txt.c_str(), readFile(kRemovePath).c_str());
 }
