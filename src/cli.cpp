@@ -22,6 +22,7 @@
 #include <esp_ota_ops.h>
 #include <esp_flash.h>
 #include <esp_chip_info.h>
+#include "etc/flash_probe.h"
 #ifdef CONFIG_BOOTGUARD_ENABLE
 #include "bootguard.h"
 #endif
@@ -672,6 +673,9 @@ static void cmdBootinfo(cmd *) {
 #else
              "off");
 #endif
+    char fsb[128];
+    flashSusProbeFmt(fsb, sizeof(fsb));
+    UART_LOG("%s", fsb);
 #ifdef CONFIG_BOOTGUARD_ENABLE
     bootguard_status_t bg;
     if (bootguard_get_status(&bg) == ESP_OK)

@@ -73,6 +73,7 @@
 #include <dirent.h>
 
 #include "etc/rt_core_check.h"
+#include "etc/flash_probe.h"
 
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
@@ -448,6 +449,7 @@ __attribute__((cold)) void setup() {
     setupCli();
     ESP_LOGI("main", "*** %s", format_version());
     bootWatchdogArm();
+    flashSuspendProbe();
 
     rtcount_test_cycle_counter();
 
