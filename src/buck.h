@@ -118,6 +118,8 @@ class SynchronousConverter {
     int16_t rectOnOffset = 0; // DCM LS-count dead-time/gate-delay offset (counts; >0 = LS off later, toward zero crossing)
     bool rectCalNeeded = false; // rect_offset not calibrated on the active driver
     std::atomic<uint8_t> lsClampCount{0}; // bumped by syncRectMinDuty() and disable() (also core 0)
+    std::atomic<uint16_t> enables{0};      // bumped by each start in pwmPerturb()
+    std::atomic<bool> startInhibit{false}; // pwmPerturb() does not start the converter
 
     bool syncRectOffHyst = false; // latched: sync rect disabled by low current, needs 4x to re-arm
     float outInVoltageRatio = 0; // M
@@ -1071,6 +1073,9 @@ public:
     [[nodiscard]] bool rectOffsetNeedsCal() const { return rectCalNeeded; }
     void setRectOffsetNeedsCal(bool v) { rectCalNeeded = v; }
     [[nodiscard]] uint8_t lsClamps() const { return lsClampCount.load(std::memory_order_relaxed); }
+    [[nodiscard]] uint16_t enableCount() const { return enables.load(std::memory_order_acquire); }
+    [[nodiscard]] bool startInhibited() const { return startInhibit.load(std::memory_order_acquire); }
+    void inhibitStart(bool v) { startInhibit.store(v, std::memory_order_seq_cst); }
 
     // Comparator counts per second = fsw * the full timer period. Used to convert the physical
     // rect_offset_ns / boot_refresh_ns <-> counts independent of driver resolution. It is the FULL
@@ -1313,6 +1318,8 @@ public:
     void pwmPerturb(int16_t direction) {
         bool enabling = unlikely(disabled() and direction > 0);
         if (enabling) {
+            if (startInhibit.load(std::memory_order_seq_cst)) return;
+            enables.fetch_add(1, std::memory_order_acq_rel);
             UART_LOG("Converter enabled");
             if (pinSd != 255) digitalWrite(pinSd, 0);
         }

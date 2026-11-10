@@ -265,10 +265,13 @@ failed fit or `|peak − ideal| > 2.5 µs`. Otherwise the applied offset is
 offset, because a large offset comes from large unmodelled delays; a fixed fraction of
 `learned` would move toward a longer LS when `learned` is negative. The result takes effect at
 once. Writing it to `coil.conf` (`rect_offset_ns`, `rect_offset_drv`, `rect_offset_cal`) waits
-until the converter has been off for 10 s with a valid output-power reading below 1 W, typically
-at night: a flash write that erases a sector stalls both cores, including the control loop, for
-tens of milliseconds. The write is abandoned if the converter starts in between, and retried a
-minute later, as is a failed write; successful writes are at least 10 minutes apart. What is
+until the converter has been off without interruption for 10 s with a valid output-power reading
+below 1 W, typically at night: a flash write that erases a sector stalls both cores, including the
+control loop, for tens of milliseconds. Any converter start, however short, restarts the 10 s.
+The control loop then blocks converter starts while the write runs, for at most 8 s; a write
+still running after that loses the lock, the converter may start again, and the whole save is
+repeated later. A failed or interrupted write is retried a minute later;
+successful writes are at least 10 minutes apart. What is
 written is always the offset in use at that moment together with its state: if the backstop
 below has shortened a fresh result before it was saved, the shorter value is saved as
 uncalibrated.

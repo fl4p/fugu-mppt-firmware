@@ -255,15 +255,18 @@ struct RectCalIn {
  * limiters, drop() on a mode change that takes LS/HS over. Core 0: lf(), requestStart(), post(),
  * status(). Commands go core 0 -> RT in atomics; the RT owns the converter and the active offset,
  * and publishes it with its calibrated flag in one word (offset(), activeCalibrated()). coil.conf
- * always gets that published pair, never a value core 0 kept aside, and only while the converter
- * has been off for IdleS: a flash erase stalls both cores for tens of ms.
+ * always gets that published pair, never a value core 0 kept aside, and only under a persist lock:
+ * a flash erase stalls both cores for tens of ms. Core 0 requests the lock; RT grants it once the
+ * converter has been off without any start for IdleS, then inhibits converter starts until core 0
+ * releases it or LockMaxUs passes (a slow write can delay a start, not block it).
  */
 template<class Conv>
 class RectCalCtl {
 public:
     static constexpr uint32_t StartupUs = 2000000; // backstop disarmed after converter start
     static constexpr uint32_t BootDelayS = 600, RetryS = 600, DayS = 24 * 3600;
-    static constexpr uint32_t IdleS = 10, SaveRetryS = 60, SaveMinS = 600; // coil.conf save gating
+    static constexpr uint32_t IdleUs = 10000000, LockMaxUs = 8000000; // persist lock: off time, hold limit
+    static constexpr uint32_t SaveRetryS = 60, SaveMinS = 600;
     static constexpr float IdleW = 5.f; // auto start above, saves need |pOut| below IdleW / 5
     static constexpr uint8_t Confirm = 2; // backstop triggers before a reduced offset is saved
 
@@ -275,7 +278,8 @@ public:
 
     [[nodiscard]] int offset() const { return (int16_t) (act.load(std::memory_order_acquire) & 0xffff); }
     [[nodiscard]] bool activeCalibrated() const { return act.load(std::memory_order_acquire) & CalBit; }
-    [[nodiscard]] bool converterOn() const { return convOn.load(std::memory_order_acquire); }
+    // core 0: converter starts are inhibited by RT for this persist request (check before each write)
+    [[nodiscard]] bool persistLocked() const { return lockAck.load(std::memory_order_acquire); }
 
     // setup, before the RT loop runs
     void init(int off, bool calibrated) { act.store(word(off, calibrated), std::memory_order_release); }
@@ -330,6 +334,7 @@ public:
                 cal.start(in.nowUs, hs, c.getRectOnPwmMin(), pm - hs - 1);
             }
         }
+        persistLock(c, in.nowUs);
         backstop(c, in);
         return back;
     }
@@ -399,14 +404,16 @@ public:
             if (confirms >= Confirm) dirty = true;
         }
 
-        // Save the RT-published pair once any posted value is applied, the converter has been off for
-        // IdleS and the power reading confirms it (NaN does not).
+        // Save the RT-published pair once any posted value is applied, the power reading confirms the
+        // converter is off (NaN does not) and RT has granted the persist lock.
         if (saveReq.exchange(false, std::memory_order_acq_rel)) dirty = true;
-        const bool off = !converterOn() && std::fabs(pOut) < IdleW / 5;
-        if (!off) offSince = 0;
-        else if (!offSince) offSince = nowS | 1;
-        if (dirty && offSince && (int32_t) (nowS - offSince) >= (int32_t) IdleS && !pend.load(std::memory_order_acquire)
-            && (int32_t) (nowS - saveAt) >= 0) {
+        bool want = dirty && std::fabs(pOut) < IdleW / 5 && !pend.load(std::memory_order_acquire)
+                    && (int32_t) (nowS - saveAt) >= 0;
+        const bool asked = lockReq.load(std::memory_order_relaxed);
+        if (want && asked && !persistLocked() && (int32_t) (nowS - reqS) >= 20) want = false; // re-arm a spent lock
+        if (want && !asked) reqS = nowS;
+        lockReq.store(want, std::memory_order_release);
+        if (want && persistLocked()) {
             const uint32_t a = act.load(std::memory_order_acquire);
             const int o = (int16_t) (a & 0xffff);
             const bool cl = a & CalBit;
@@ -418,6 +425,7 @@ public:
             } else {
                 saveAt = nowS + SaveRetryS;
             }
+            lockReq.store(false, std::memory_order_release);
         }
 
         const bool steady = pOut > IdleW && std::fabs(pOut - pPrev) < 0.1f * pOut;
@@ -461,17 +469,20 @@ private:
     RectBackstop bs{};
     std::atomic<uint32_t> act{0};  // RT: active offset (low 16 bits) | CalBit
     std::atomic<uint32_t> pend{0}; // core 0 -> RT: word() | PendBit | firesSeen << 18, 0: none
-    std::atomic<bool> convOn{true}, saveReq{false};
+    std::atomic<bool> lockReq{false}, lockAck{false}, saveReq{false};
     // RT
     bool owns = false;    // manualRect is held by the run
     uint16_t hsPrev = 0;  // HS before the run (0: none)
     uint8_t clamps = 0;   // converter LS-clamp count at start
-    uint32_t upSince = 0; // converter enabled since (0: off)
+    uint32_t upT0 = 0, offT0 = 0, lockT0 = 0; // start of: start-up hold, off time, lock
+    uint16_t enSeen = 0;                        // converter enable count at offT0
+    bool upPending = false, upDone = false;     // start-up hold running / over until the next stop
+    bool offDone = false, lockHeld = false, lockSpent = false;
     // core 0
     bool dirty = false; // act differs from coil.conf
     uint8_t seenSeq = 0;
     uint16_t seenFires = 0, confirms = 0;
-    uint32_t nextAuto = BootDelayS, saveAt = 0, offSince = 0;
+    uint32_t nextAuto = BootDelayS, saveAt = 0, reqS = 0;
     float pPrev = 0;
 
     void setOff(Conv &c, int off, bool calibrated) {
@@ -492,12 +503,36 @@ private:
         return h;
     }
 
+    // RT: off time must be continuous (any start, even one between two samples, restarts it).
+    void persistLock(Conv &c, uint32_t nowUs) {
+        const uint16_t en = c.enableCount();
+        if (!c.disabled() || en != enSeen) enSeen = en, offT0 = nowUs, offDone = false;
+        else if (!offDone && nowUs - offT0 >= IdleUs) offDone = true;
+        const bool want = lockReq.load(std::memory_order_acquire);
+        if (!want) lockSpent = false;
+        if (lockHeld && (!want || nowUs - lockT0 >= LockMaxUs)) {
+            lockAck.store(false, std::memory_order_release);
+            c.inhibitStart(false);
+            lockHeld = false;
+            lockSpent = want; // expired: a new request is needed
+        } else if (want && !lockHeld && !lockSpent && offDone) {
+            c.inhibitStart(true);
+            if (c.disabled() && c.enableCount() == en) {
+                lockHeld = true;
+                lockT0 = nowUs;
+                lockAck.store(true, std::memory_order_release);
+            } else {
+                c.inhibitStart(false);
+            }
+        }
+    }
+
     void backstop(Conv &c, const RectCalIn &in) {
         const bool on = !c.disabled();
-        if (on != convOn.load(std::memory_order_relaxed)) convOn.store(on, std::memory_order_release);
-        if (!on) upSince = 0;
-        else if (!upSince) upSince = in.nowUs | 1;
-        const bool armed = on && in.mppt && !cal.running() && (int32_t) (in.nowUs - upSince) >= (int32_t) StartupUs && !c.boost()
+        if (!on) upPending = upDone = false;
+        else if (!upPending) upPending = true, upT0 = in.nowUs;
+        else if (!upDone && in.nowUs - upT0 >= StartupUs) upDone = true;
+        const bool armed = on && upDone && in.mppt && !cal.running() && !c.boost()
                            && c.inDCM() && c.syncRectEnabled_() && !c.manualRect_() && !c.forcedPwm_()
                            && in.vin > in.vout + 1.f;
         const uint16_t pm = c.pwmMaxDriver();
