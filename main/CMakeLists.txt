@@ -127,6 +127,7 @@ idf_component_register(SRCS
         "../src/console.cpp"
         "../src/conf_hash.cpp"
         "../src/etc/rt.cpp"
+        "../src/etc/flash_probe.cpp"
         "../src/math/float16.cpp"
         ${NETW_SRC}
         ${BLE_SRC}
