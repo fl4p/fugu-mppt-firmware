@@ -15,7 +15,7 @@
 
 constexpr const char *CONF_HASH_ROOT = "/littlefs/conf";
 constexpr const char *CONF_HASH_EXCLUDED = "wifi.conf";      // top-level only; it is all secrets
-constexpr const char *CONF_HASH_STAGING_SUFFIX = ".new";     // USB-drive commit staging (usb_dev.cpp)
+constexpr const char *CONF_HASH_STAGING_SUFFIX = ".new";     // ConfFile write / USB-drive commit staging
 constexpr const char *CONF_HASH_REDACTED_MARKER = "<redacted>";
 constexpr int CONF_HASH_MAX_DEPTH = 8;                       // max nested directory levels
 constexpr size_t CONF_HASH_MAX_LINE = 4096;                  // longer line (excluding '\n') = error

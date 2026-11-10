@@ -601,10 +601,9 @@ void MpptController::rectCalLf() {
     if (!sensorPhysicalI) return;
     const auto nowS = (uint32_t) (wallClockUs() / 1000000);
     rectCal.lf(converter, nowS, sensorPhysicalI->ewm.avg.get() * sensorPhysicalU->ewm.avg.get());
-    if (!rectCal.saveRequested() || !converter.disabled()) return;
-    for (int i = 0; i < 10 && rectCal.saveRequested(); ++i) vTaskDelay(pdMS_TO_TICKS(2)); // RT grants per sample
     const auto t0 = (uint32_t) wallClockUs();
-    rectCal.trySave(nowS);
-    rectCal.cancelSave(); // not granted yet: a grant must not wait for the next LF pass
-    if (const auto dt = (uint32_t) wallClockUs() - t0; dt > 1000) ESP_LOGI("rectcal", "save took %lu us", (unsigned long) dt);
+    const bool was = rectCal.unsaved();
+    rectCal.saveNow(converter, nowS, [] { vTaskDelay(pdMS_TO_TICKS(2)); });
+    if (was && !rectCal.unsaved())
+        ESP_LOGI("rectcal", "save took %lu us", (unsigned long) ((uint32_t) wallClockUs() - t0));
 }
