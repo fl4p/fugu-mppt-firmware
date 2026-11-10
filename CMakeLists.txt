@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 
+# A fresh clone/worktree has empty submodule dirs; IDF then fails with a misleading "Failed to resolve component".
+file(GLOB _fugu_busio "${CMAKE_CURRENT_SOURCE_DIR}/components/Adafruit_BusIO/*")
+if (NOT _fugu_busio)
+    message(FATAL_ERROR "Submodules are not checked out. Run: git submodule update --init --recursive")
+endif ()
+
 # Feature flags moved from WITH_* env vars to Kconfig (main/Kconfig.projbuild, CONFIG_FUGU_WITH_*).
 # Reject stale env usage so an old `WITH_BLE=0 idf.py build` can't silently build the feature *on*.
 foreach (_legacy WITH_BLE WITH_NETW WITH_SPROFILER WITH_VCONV WITH_MCPWM WITH_MEASURE_COIL WITH_WSYNC WITH_USB_MSC)
