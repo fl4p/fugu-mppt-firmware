@@ -674,7 +674,13 @@ static void loopRT(void *arg) {
         converter.applyPendingDeadTimeRt();
         mppt.applyPendingPwmFreqRt();
 
-        if (adcSampler.halted) continue;
+        static bool wasHalted = false;
+        if (adcSampler.halted) {
+            wasHalted = true;
+            continue;
+        }
+        if (wasHalted && timeLastSampler) timeLastSampler = nowUs; // grace for the stall watchdog
+        wasHalted = false;
 
         if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure)
             stopAndBackoff(4);
