@@ -20,6 +20,8 @@
 #include <nvs.h>
 #include <ctime>
 #include <esp_ota_ops.h>
+#include <esp_flash.h>
+#include <esp_chip_info.h>
 #ifdef CONFIG_BOOTGUARD_ENABLE
 #include "bootguard.h"
 #endif
@@ -658,6 +660,18 @@ static void cmdBootinfo(cmd *) {
              (unsigned) esp_get_free_heap_size(), (unsigned) esp_get_minimum_free_heap_size(),
              (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
     UART_LOG("uptime: %lu s, app %s", (uint32_t) (esp_timer_get_time() / 1000000), format_version());
+    esp_chip_info_t ci;
+    esp_chip_info(&ci);
+    uint32_t fid = 0, fsz = 0;
+    esp_flash_read_id(nullptr, &fid);
+    esp_flash_get_size(nullptr, &fsz);
+    UART_LOG("chip: model=%d rev=%u.%u  flash: jedec=%06lx %luKB auto-suspend=%s", (int) ci.model,
+             ci.revision / 100, ci.revision % 100, (unsigned long) fid, (unsigned long) (fsz / 1024),
+#ifdef CONFIG_SPI_FLASH_AUTO_SUSPEND
+             "on");
+#else
+             "off");
+#endif
 #ifdef CONFIG_BOOTGUARD_ENABLE
     bootguard_status_t bg;
     if (bootguard_get_status(&bg) == ESP_OK)
