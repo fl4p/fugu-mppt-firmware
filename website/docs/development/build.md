@@ -91,8 +91,9 @@ board use `idf.py app-flash`. Both commands archive the build ELF for later core
 | `esp32-noble` | esp32 | off | on |
 
 Logs go to `build-matrix-logs/<name>.log`; the summary lists exit code and `fugu-firmware.bin` size per variant.
-The script sources `./idf-export.sh`, a local, gitignored helper that sources ESP-IDF's `export.sh`; create your own
-or source ESP-IDF before running it.
+The script sources `./idf-export.sh`, which sources ESP-IDF's `export.sh` from `FUGU_IDF_PATH`, from
+`$FUGU_ESP_DIR/<version>`, or from `../../esp/<version>` relative to the main checkout (default version `idf6.0.3`,
+`FUGU_IDF` picks another).
 
 ## Build speed and size
 
