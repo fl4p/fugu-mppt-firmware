@@ -1061,6 +1061,11 @@ __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
     lfStuckWatchdog();
     lfControl();
     lfMarkOtaValid();
+    static bool lagReported = false;
+    if (!lagReported && esp_timer_get_time() > 7200ll * 1000000) {
+        lagReported = true;
+        handleCommand("reset-lag");
+    }
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     coredumpStampIfNew();
 #endif
