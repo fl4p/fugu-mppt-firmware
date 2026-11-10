@@ -490,6 +490,7 @@ __attribute__((cold)) void setup() {
 
     // A malformed board.conf must not abort setup() (which would reboot and re-read the same bad
     // file → boot loop). Fall back to an empty config and run the safe-idle path via g_app.setupErr.
+    confDropStaging("/littlefs/conf");
     ConfFile boardConf = loadConfSafe("/littlefs/conf/board.conf");
 
     if (!boardConf) {

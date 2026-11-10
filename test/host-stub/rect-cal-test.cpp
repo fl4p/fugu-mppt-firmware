@@ -403,18 +403,14 @@ static void stopConv(Host &h) {
     h.ctl.rt(h.c, h.in());
 }
 
-// MpptController::rectCalLf: lf(), then, for a pending request with the converter off, a short wait
-// in which RT samples, the admitted write and the withdrawal of an ungranted request.
+// MpptController::rectCalLf: lf(), then saveNow() whose wait lets RT sample (2 ms on target).
 static void lfPass(Host &h, float pOut) {
     const auto nowS = (uint32_t) h.r.t;
     h.ctl.lf(h.c, nowS, pOut);
-    if (!h.ctl.saveRequested() || !h.c.disabled()) return;
-    for (int i = 0; i < 10 && h.ctl.saveRequested(); ++i) {
+    h.ctl.saveNow(h.c, nowS, [&] {
         h.r.t += 0.002;
         h.ctl.rt(h.c, h.in());
-    }
-    h.ctl.trySave(nowS);
-    h.ctl.cancelSave();
+    });
 }
 
 // RT (rt() at 10 Hz) and LF (lfPass() every lfS) for `seconds` without the plant, converter as is.
@@ -637,6 +633,30 @@ static void testPersistLock() {
     idle(h, 20, 0.f);
     CHECK(g_saveCalls == calls0 + 1 && !h.ctl.unsaved(), "not saved after the expired grant");
     CHECK(g_unadmitted == 0 && g_poweredWrites == 0, "unadmitted %d powered %d", g_unadmitted, g_poweredWrites);
+    // R5-2: RT grants between lf() and saveNow(): admitted in the same pass, no wait
+    h.c.disable();
+    idle(h, Ctl::SaveMinS, 0.f);
+    h.ctl.requestSave();
+    const int calls1 = g_saveCalls;
+    int waits = 0;
+    h.ctl.lf(h.c, (uint32_t) h.r.t, 0.f);
+    h.ctl.rt(h.c, h.in()); // the grant lands before saveNow() checks the state
+    h.ctl.saveNow(h.c, (uint32_t) h.r.t, [&] { ++waits; });
+    h.ctl.rt(h.c, h.in());
+    CHECK(g_saveCalls == calls1 + 1 && !h.ctl.unsaved() && !h.c.startInhibited() && waits == 0,
+          "early grant: calls %d unsaved %d inhibited %d waits %d", g_saveCalls - calls1, h.ctl.unsaved(),
+          h.c.startInhibited(), waits);
+    // a request RT does not grant in the wait (off time not over): withdrawn, nothing inhibited after
+    idle(h, Ctl::SaveMinS, 0.f);
+    h.ctl.requestSave();
+    h.c.pwmPerturb(1);
+    h.c.disable();
+    h.ctl.rt(h.c, h.in());
+    h.ctl.lf(h.c, (uint32_t) h.r.t, 0.f);
+    h.ctl.saveNow(h.c, (uint32_t) h.r.t, [&] { ++waits; h.r.t += 0.002; h.ctl.rt(h.c, h.in()); });
+    h.ctl.rt(h.c, h.in());
+    CHECK(waits == 10 && !h.ctl.saveRequested() && !h.c.startInhibited() && h.ctl.unsaved(),
+          "ungranted: waits %d requested %d inhibited %d", waits, h.ctl.saveRequested(), h.c.startInhibited());
     g_ctl = nullptr; g_conv = nullptr;
     printf("persist lock: ok (pulse resets off time, starts refused through an admitted 18 s write, "
            "unadmitted grant expires and retries)\n");
@@ -788,9 +808,7 @@ static void testThreads(double seconds) {
         fits += h.ctl.cal.get() == RectCal::Fit;
         const uint32_t s = nowS.load() + 600;
         h.ctl.lf(h.c, s, p.load());
-        for (int i = 0; i < 10 && h.ctl.saveRequested(); ++i) std::this_thread::sleep_for(std::chrono::microseconds(100));
-        h.ctl.trySave(s);
-        h.ctl.cancelSave();
+        h.ctl.saveNow(h.c, s, [] { std::this_thread::sleep_for(std::chrono::microseconds(100)); });
         saves = g_saveCalls;
         const auto st = h.ctl.cal.get();
         if ((st == RectCal::Done || st == RectCal::Fail) && h.ctl.cal.seq != seen) {

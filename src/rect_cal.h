@@ -299,6 +299,15 @@ public:
     // any core-0 task: save the active offset at the next opportunity (after post())
     void requestSave() { saveReq.store(true, std::memory_order_release); }
 
+    // core 0, after lf(): finish a save request in this pass. Waits (wait(): RT gets to sample) while
+    // the request is pending, then admits a grant, whenever RT gave it, and withdraws what is left.
+    template<class Wait>
+    void saveNow(const Conv &c, uint32_t nowS, Wait &&wait) {
+        for (int i = 0; i < 10 && c.disabled() && saveRequested(); ++i) wait();
+        trySave(nowS);
+        cancelSave();
+    }
+
     // core 0: withdraw a request or an unadmitted grant
     void cancelSave() {
         uint8_t s = lk.load(std::memory_order_acquire);

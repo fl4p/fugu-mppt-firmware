@@ -18,7 +18,7 @@ etc/dump_littlefs.py), `conf/` is hashed instead. The hashed directory is printe
 Definition (see src/conf_hash.h for the normative text):
   files   every regular file below the conf dir, recursively (more than 8 nested directory
           levels is an error), as a '/'-separated relative path, except the top-level wifi.conf. A file ending
-          in ".new" (USB-drive commit staging) is an error. Symlinks and other non-regular entries
+          in ".new" (config-write / USB-drive commit staging) is an error. Symlinks and other non-regular entries
           are errors (they are not followed; littlefs has none).
   order   relative path, bytewise ascending
   content each file split into lines at b"\\n" only (kept), each line redacted by redact_line()

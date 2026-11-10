@@ -137,9 +137,10 @@ nvs sha256=<64 hex> keys=<K> redacted=<S> unreadable=0 ns=storage
 
 Any problem is reported, never hashed: the affected line prints `sha256=unknown ... error=<reason>`
 (for NVS also `nvs-unreadable <key>:<type>:<error>` lines), and the command fails. This includes a
-missing `/littlefs/conf` (an error, not the hash of an empty set) and a `<name>.new` file, which the
-USB config drive leaves while it commits an edit: a hash taken mid-commit would not describe a
-stable configuration, so run the command again once the commit has finished.
+missing `/littlefs/conf` (an error, not the hash of an empty set) and a `<name>.new` file, which a
+configuration write or the USB config drive leaves while it commits an edit: a hash taken mid-commit
+would not describe a stable configuration, so run the command again once the commit has finished.
+A `.new` file left by a reset is deleted at the next boot.
 
 `etc/conf_hash.py <dir>` is the host reference implementation. It prints the same `conf` and
 `conf-file` lines (without `boot=`), or the same `sha256=unknown ... error=` line and exit code 1.
