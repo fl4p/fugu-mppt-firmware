@@ -129,8 +129,9 @@ static bool argFloat(Command &cc, int i, float &out) {
 }
 
 static bool waitPsuCommand(uint32_t ticket, uint32_t timeoutMs = 1000) {
-    const auto deadline = wallClockMs() + timeoutMs;
-    while (!mppt.isPsuCommandDone(ticket) && wallClockMs() < deadline)
+    // not wallClockMs(): only loopRT advances it, so without a running RT loop this never times out
+    const int64_t deadline = esp_timer_get_time() + (int64_t) timeoutMs * 1000;
+    while (!mppt.isPsuCommandDone(ticket) && esp_timer_get_time() < deadline)
         delay(1);
     if (mppt.isPsuCommandDone(ticket)) return true;
     if (mppt.cancelPsuCommand(ticket)) return false;
