@@ -760,10 +760,14 @@ public:
                 return false;
             }
 
-            if (converter.getDutyCycle() > 0.33f) {
-                // in case the current sensor is wrong
+            // in case the current sensor is wrong: a DCM duty bounds the current by itself
+            constexpr float BflowOpenMaxDcmCurrent = 1.f; // A
+            float iDcm;
+            if (converter.getDutyCycle() > 0.33f &&
+                !((iDcm = converter.dcmCurrent(sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get())) <
+                  BflowOpenMaxDcmCurrent)) {
                 if (!converter.disabled())
-                    ESP_LOGE("MPPT", "High duty cycle with open backflow switch!");
+                    ESP_LOGE("MPPT", "High duty cycle with open backflow switch! (Idcm=%.2f)", iDcm);
                 shutdownDcdc("highD-bflowOpen");
                 return false;
             }

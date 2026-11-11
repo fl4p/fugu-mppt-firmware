@@ -79,6 +79,8 @@ class SynchronousConverter {
     static constexpr float SyncRectOffVoltage = 1.0f; // V
     // Minimum side voltage for the M=vl/vh (buck) / vh/vl (boost) ratio to be trustworthy.
     static constexpr float MinRatioVoltage = 0.1f; // V
+    // Per-sensor worst-case voltage error used for every Vl/Vh ratio decision.
+    static constexpr float VoltageMaxErr = 0.01f;
     // M clamp: floor keeps rectCtrlRatio() finite (no div-by-zero); UnityRatioMargin keeps M off
     // 1.0 so rectCtrlRatio() stays finite and positive on both sides.
     static constexpr float MinVoltageRatio = 1e-2f;
@@ -1417,6 +1419,19 @@ public:
     }
 
 
+    /**
+     * Buck average coil current implied by the duty and the side voltages, assuming DCM:
+     * I = D² · vh · (vh - vl) / (2 · fsw·L · vl). NAN unless D is below M = vl/vh by the worst-case
+     * ratio error (at D >= M the current is set by loop resistance, not by D), for a boost, or for
+     * unusable voltages. Over-estimates with an extra diode drop in the output path.
+     */
+    [[nodiscard]] float dcmCurrent(float vh, float vl) const {
+        if (isBoost || !(vl > MinRatioVoltage && vh > vl)) return NAN;
+        const float d = dutyCtrlEff();
+        if (!(d < vl / vh * (1.f - VoltageMaxErr) / (1.f + VoltageMaxErr))) return NAN;
+        return d * d * vh * (vh - vl) / (2.f * fL * vl);
+    }
+
     [[nodiscard]] inline float rippleCurrent(float hv, float lv) const {
         // this does not consider dc bias, just a constant 0.95 inductivity factor
         return lv / fL * (1.0f - lv / hv);
@@ -1481,7 +1496,7 @@ public:
         // computation of t_onCtrl and t_onRect ratio is quite error sensitive
         // e.g. at VR=0.64 a -5% error causes a 13% deviation of pwmMaxLs !
         // so we do some proper error computation here
-        constexpr float voltageMaxErr = 0.01f; // inc -> safer, less efficient
+        constexpr float voltageMaxErr = VoltageMaxErr; // inc -> safer, less efficient
 
         // WCEF = worst case error factor
         // compute the worst case error (Vout estimated too low, Vin too high => VR estimated too low)
@@ -1573,7 +1588,7 @@ public:
             // not dZero*kErr (which would be too small by r/(1-r)).
             // Exact worst case on a ratio of two independently measured voltages, the SAME model
             // computeSyncRectRatio() uses (voltageMaxErr / voltageRatioWCEF) - keep the two in step.
-            constexpr float kErr = (1.f + 0.01f) / (1.f - 0.01f) - 1.f;
+            constexpr float kErr = (1.f + VoltageMaxErr) / (1.f - VoltageMaxErr) - 1.f;
             const float r = vl / vh;
             const float dZero = isBoost ? (1.f - r) : r; // duty at zero DC coil current
             const float err = r * kErr;

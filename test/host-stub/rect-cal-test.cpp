@@ -148,7 +148,7 @@ struct Host {
         const float iF = std::min(iEwm, std::max(last, prev));
         if ((last < -1 && prev < -1) || (sr && iF < -0.05f)) { bflow = false; c.syncRectMinDuty(); }
         if (fault) fault(*this);
-        if (sr && !bflow && c.getDutyCycle() > 0.33f) { tripped = true; c.disable(); return; }
+        if (sr && !bflow && c.getDutyCycle() > 0.33f && !(c.dcmCurrent(viEwm, voEwm) < 1.f)) { tripped = true; c.disable(); return; }
 
         uint16_t b = 0;
         held = ctl.hold(c, in(), 0.f, b);
