@@ -30,6 +30,9 @@ public:
 
     [[nodiscard]] float pvCurrent(float v) const { return pv_.current(v); }
 
+    // Open backflow switch at the PV input: its body diode passes only forward PV current.
+    void setPvBlocking(bool b) { pvBlocking_ = b; }
+
     void setBat(float vbat, float rbat) {
         vbat_ = vbat;
         // Guard against r_bat → 0: divides in stepOneCycle (BE coefficient and
@@ -121,6 +124,7 @@ private:
     bool boost_ = false;
 
     PvModel pv_;
+    bool pvBlocking_ = false;
 
     // Battery + passives
     float vbat_ = 28.0f;

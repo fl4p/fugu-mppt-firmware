@@ -79,7 +79,7 @@ void VirtualConverter::stepOneCycle(float T) {
     // phase math handles V_out → 0 (phase-2/3 slopes go to zero, coil idles).
     constexpr float kVMin = 1e-4f;
     if (vIn_ < kVMin || pmax == 0 || L <= 0.0f) {
-        const float Ipv = pvCurrent(vIn_);
+        const float Ipv = pvBlocking_ ? std::max(0.f, pvCurrent(vIn_)) : pvCurrent(vIn_);
         vIn_  += Ipv * T * invCin_;
         vOut_ = (vOut_ + aOut_ * vBatEff) * inv1pAout_;
         if (vIn_  < 0.0f) vIn_  = 0.0f;
@@ -101,7 +101,7 @@ void VirtualConverter::stepOneCycle(float T) {
     // bounded). V_out: backward-Euler — unconditionally stable, lets r_bat go
     // arbitrarily small without crossing the T/(R·C)=2 cliff (short-circuit case).
     //   V_out_new = (V_out + T·I_out_avg/C_out + a·V_bat) / (1 + a),   a = T/(R_bat·C_out)
-    const float Ipv = pvCurrent(vIn_);
+    const float Ipv = pvBlocking_ ? std::max(0.f, pvCurrent(vIn_)) : pvCurrent(vIn_);
 
     vIn_ += (Ipv - iInAvg_) * T * invCin_;
     vOut_ = (vOut_ + (T * iOutAvg_) * invCout_ + aOut_ * vBatEff) * inv1pAout_;
