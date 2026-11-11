@@ -763,11 +763,12 @@ public:
             // in case the current sensor is wrong: a DCM duty bounds the current by itself
             constexpr float BflowOpenMaxDcmCurrent = 1.f; // A
             float iDcm = NAN;
+            const float vi = sensors.Vin->ewm.avg.get(), vo = sensors.Vout->ewm.avg.get();
             if (converter.getDutyCycle() > 0.33f &&
-                !((iDcm = converter.dcmCurrent(sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get())) <
-                  BflowOpenMaxDcmCurrent)) {
+                !((iDcm = converter.dcmCurrent(vi, vo)) < BflowOpenMaxDcmCurrent)) {
                 // a sweep at the ratio limit with <0.05 A has no more power to find: end it, not a fault
-                if (_sweeping && std::isnan(iDcm)) {
+                if (_sweeping && std::isnan(iDcm) && vo > 1.f && vi > vo &&
+                    std::max(sensorPhysicalI->ewm.avg.get(), sensorPhysicalI->last) < 0.05f) {
                     ESP_LOGI("mppt", "Sweep at D=%.2f with open backflow switch, ending it", converter.getDutyCycle());
                     _stopSweep(MpptControlMode::Sweep, -1, nullptr);
                     if (converter.disabled()) ctrlState.mode = MpptControlMode::None; // no-MPP backoff
