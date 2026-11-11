@@ -35,6 +35,10 @@ highD-bflowOpen trip rate.
 - RT/LF glue is a copy of `main.cpp` (`loopRT`, `loopRTNewData`, `stopAndBackoff`, `lfControl`
   charger part, `lfStuckWatchdog`); PSU/manual paths, ADC-stall and loop-latency watchdogs, telemetry,
   LCD and rect-cal persistence are left out. `esp_restart()` rebuilds the firmware objects in place.
-- The gate driver is `PWM_Mock`: MCPWM dead time, gate delays and the backflow switch are not in the
-  plant (an open backflow switch does not block forward current; vconv models the LS body diode).
+- The gate driver is `PWM_Mock`: no MCPWM dead time or gate delays. The backflow switch is modelled
+  as an ideal blocking diode at the PV input while open (`VirtualConverter::setPvBlocking`).
+- Reverse power pumped by the LS keep-alive pulse at near-zero current charges C_in up to the plant's
+  1.05·Voc Vin clamp, which absorbs it. That clamp is a plant artifact: it shows as negative energy at
+  dusk and hides a possible Vin rise toward Vin-OV.
+- `scenarios.sh OLD NEW [hours]` runs the low-light scenario set against two builds.
 - Core-0 tasks (`enqueue_task`) run right after each RT pass.

@@ -16,7 +16,7 @@
 #include <string>
 
 #include "mppt.h"
-#include "sim/vconv.h"
+#include "../../../src/sim/vconv.h" // plant always from this tree, firmware from $SRC
 #include "viz/lcd.h"
 
 // ---- sim clock + log -------------------------------------------------------------------------
@@ -382,6 +382,7 @@ int main(int argc, char **argv) {
         const float frac = (float) ((double) g_simUs / (double) endUs);
         const float isc = std::isfinite(S.iscEnd) ? S.isc + (S.iscEnd - S.isc) * frac : S.isc;
         g_vconv.setPv(isc, S.voc, S.pvK);
+        g_vconv.setPvBlocking(!mppt.bflow.state());
         const bool on = !converter.disabled();
         g_vconv.setPwm({4103, on ? converter.getCtrlOnPwmCnt() : (uint16_t) 0,
                         on ? converter.getRectOnPwmCnt() : (uint16_t) 0, fsw});
@@ -436,5 +437,10 @@ int main(int argc, char **argv) {
     }
     for (auto &e: g_events) printf("event \"%s\": %d (%.1f/h)\n", e.first.c_str(), e.second, e.second / h);
     printf("reboots: %d\nhighD-bflowOpen trips: %d (%.1f/h)\n", g_reboots, trips, trips / h);
+    const double trk = nConv ? sumVin / nConv : NAN;
+    printf("RESULT trips/h=%.1f mid/h=%.1f stopAndBackoff/h=%.1f sweeps/h=%.1f W=%.2f Vin=%.1f tracking=%.0f%% reboots=%d\n",
+           trips / h, g_backoffs["highD-bflowOpen (mid-sweep)"] / h,
+           (g_backoffs["stopAndBackoff"] + g_backoffs["stopAndBackoff (mid-sweep)"]) / h, g_events["Start sweep"] / h,
+           energy / (h * 3600), trk, 100.0 * (double) nConv * dtUs * 1e-6 / (h * 3600), g_reboots);
     return 0;
 }
