@@ -211,6 +211,17 @@ Over BLE (`OTA over BLE.md`): `.venv/bin/python3 etc/ota_ble.py -n <name> -y`.
   `pv/log/<name>/cmd` on the havan broker while serving the image with
   `python3 -m http.server 9000` from the repo root; prove the path with `uptime` first.
 
+### OTA through a relay host
+
+When this Mac cannot reach the device LAN directly (macOS Local Network privacy, off-site), serve
+the image from a host that can: `OTA_RELAY_IP=<relay LAN IP> etc/ota-via-relay.sh [bin]`.
+It copies the image to the relay over ssh (`$OTA_RELAY_SSH`, default `$NAT_TUNNEL_HOST`),
+checks its sha256, starts `http.server` there for `$OTA_RELAY_TTL` s (600) and prints the
+sha256 and the `ota <url>` line. Send that line through the console (e.g. the
+`etc/nat-tunnel.sh up` telnet ports with `fugu_console.py --ip 127.0.0.1:<port>`), after the
+usual `hostname` check and the live-converter rules above. `etc/ota-via-relay.sh stop` ends the
+server early. `OTA_RELAY_*` may also be set in `etc/nat.env`.
+
 ## Verifying what a board is running
 
 Every bench build is `-dirty`, so two sessions' builds carry near-identical `git describe` strings —
