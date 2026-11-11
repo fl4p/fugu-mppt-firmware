@@ -547,13 +547,14 @@ def resolve_command_mode(explicit_cmds, use_stdin, want_coredump, stdin_is_tty):
     return read_stdin, active, delimit
 
 
-def dispatch_command(con: Console, cmd: str, elf_path: str | None) -> None:
+def dispatch_command(con: Console, cmd: str, elf_path: str | None):
     """Send `cmd` to the device, intercepting host-side verbs first.
 
     `sym <pattern>` never goes on the wire — it lists matching ELF symbols locally.
     `peek <symbol>[+off] [len]` is rewritten to `peek 0x<addr> <len>` before send.
     `peek-struct <symbol>[.field…]` reads the byte image via repeated `peek`s and renders
     each DWARF-described member with its decoded value.
+    Returns the device Reply, or None for host-side verbs.
     """
     head = cmd.strip().split(None, 1)
     verb = head[0] if head else ""
@@ -570,8 +571,13 @@ def dispatch_command(con: Console, cmd: str, elf_path: str | None) -> None:
         except (KeyError, FileNotFoundError, ValueError) as e:
             print(f"peek: {e}", file=sys.stderr)
             return
-    for ln in con.command(cmd, timeout=_timeout_for(cmd)):
-        print(ln)
+    timeout = _timeout_for(cmd)
+    reply = con.command(cmd, timeout=timeout, echo=print)
+    if reply.dropped:
+        print(f"({cmd}: connection closed before the reply ended)", file=sys.stderr)
+    elif reply.timed_out:
+        print(f"({cmd}: no OK/ERR within {timeout:g} s)", file=sys.stderr)
+    return reply
 
 
 def _install_readline_history(path: str = "~/.fugu_console_history", maxlen: int = 1000) -> None:
@@ -883,6 +889,9 @@ def main():
                          "`get` streams it (base64), decodes to coredump.bin and runs esp-coredump, "
                          "`erase` clears it")
     args = ap.parse_args()
+    # keep replies visible when stdout is a file and the run is killed (e.g. by `timeout`)
+    sys.stdout.reconfigure(line_buffering=True)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
     if len(sys.argv) == 1:  # no arguments: search every transport, don't connect
         return discover_devices()
@@ -916,7 +925,10 @@ def main():
             for cmd in commands:
                 if delimit:
                     print(f"=== {cmd} ===")
-                dispatch_command(con, cmd, elf_path)
+                reply = dispatch_command(con, cmd, elf_path)
+                if reply is not None and reply.dropped:
+                    # a reboot is the expected end of ota/restart
+                    return 0 if cmd.split()[0] in ("ota", "restart") else 1
             return 0
         if args.coredump:
             return pull_coredump(con, args.coredump, elf_path)
