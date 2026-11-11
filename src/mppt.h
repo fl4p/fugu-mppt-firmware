@@ -767,8 +767,8 @@ public:
             if (converter.getDutyCycle() > 0.33f &&
                 !((iDcm = converter.dcmCurrent(vi, vo)) < BflowOpenMaxDcmCurrent)) {
                 // a sweep at the ratio limit with <0.05 A has no more power to find: end it, not a fault
-                if (_sweeping && std::isnan(iDcm) && vo > 1.f && vi > vo &&
-                    std::max(sensorPhysicalI->ewm.avg.get(), sensorPhysicalI->last) < 0.05f) {
+                if (_sweeping && std::isnan(iDcm) && !converter.boost() && !converter.forcedPwm_() && vo > 1.f &&
+                    vi > vo && sensorPhysicalI->ewm.avg.get() < 0.05f && sensorPhysicalI->last < 0.05f) {
                     ESP_LOGI("mppt", "Sweep at D=%.2f with open backflow switch, ending it", converter.getDutyCycle());
                     _stopSweep(MpptControlMode::Sweep, -1, nullptr);
                     if (converter.disabled()) { // no-MPP backoff
