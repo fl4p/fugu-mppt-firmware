@@ -771,15 +771,18 @@ public:
                     std::max(sensorPhysicalI->ewm.avg.get(), sensorPhysicalI->last) < 0.05f) {
                     ESP_LOGI("mppt", "Sweep at D=%.2f with open backflow switch, ending it", converter.getDutyCycle());
                     _stopSweep(MpptControlMode::Sweep, -1, nullptr);
-                    if (converter.disabled()) ctrlState.mode = MpptControlMode::None; // no-MPP backoff
-                    else if (targetDutyCycle)
-                        converter.pwmPerturb((int16_t) ((int) targetDutyCycle - (int) converter.getCtrlOnPwmCnt()));
+                    if (converter.disabled()) { // no-MPP backoff
+                        ctrlState.mode = MpptControlMode::None;
+                        return false;
+                    }
+                    // MPP committed: drop to it and keep protecting; returning false would stopAndBackoff()
+                    converter.pwmPerturb((int16_t) ((int) targetDutyCycle - (int) converter.getCtrlOnPwmCnt()));
+                } else {
+                    if (!converter.disabled())
+                        ESP_LOGE("MPPT", "High duty cycle with open backflow switch! (Idcm=%.2f)", iDcm);
+                    shutdownDcdc("highD-bflowOpen");
                     return false;
                 }
-                if (!converter.disabled())
-                    ESP_LOGE("MPPT", "High duty cycle with open backflow switch! (Idcm=%.2f)", iDcm);
-                shutdownDcdc("highD-bflowOpen");
-                return false;
             }
         }
 
