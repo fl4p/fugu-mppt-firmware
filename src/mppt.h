@@ -766,6 +766,15 @@ public:
             if (converter.getDutyCycle() > 0.33f &&
                 !((iDcm = converter.dcmCurrent(sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get())) <
                   BflowOpenMaxDcmCurrent)) {
+                // a sweep at the ratio limit with <0.05 A has no more power to find: end it, not a fault
+                if (_sweeping && std::isnan(iDcm)) {
+                    ESP_LOGI("mppt", "Sweep at D=%.2f with open backflow switch, ending it", converter.getDutyCycle());
+                    _stopSweep(MpptControlMode::Sweep, -1, nullptr);
+                    if (converter.disabled()) ctrlState.mode = MpptControlMode::None; // no-MPP backoff
+                    else if (targetDutyCycle)
+                        converter.pwmPerturb((int16_t) ((int) targetDutyCycle - (int) converter.getCtrlOnPwmCnt()));
+                    return false;
+                }
                 if (!converter.disabled())
                     ESP_LOGE("MPPT", "High duty cycle with open backflow switch! (Idcm=%.2f)", iDcm);
                 shutdownDcdc("highD-bflowOpen");
