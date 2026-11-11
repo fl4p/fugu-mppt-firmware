@@ -1421,14 +1421,14 @@ public:
 
     /**
      * Buck average coil current implied by the duty and the side voltages, assuming DCM:
-     * I = D² · vh · (vh - vl) / (2 · fsw·L · vl). NAN unless D is below M = vl/vh by the worst-case
-     * ratio error (at D >= M the current is set by loop resistance, not by D), for a boost, or for
-     * unusable voltages. Over-estimates with an extra diode drop in the output path.
+     * I = D² · vh · (vh - vl) / (2 · fsw·L · vl). NAN for a boost, unusable voltages, or D not below
+     * 0.9·M, M = vl/vh (at D >= M the current is set by loop resistance, not by D; the 10% covers
+     * ratio error and gate delay). Over-estimates with diode drops in the current path.
      */
     [[nodiscard]] float dcmCurrent(float vh, float vl) const {
         if (isBoost || !(vl > MinRatioVoltage && vh > vl)) return NAN;
         const float d = dutyCtrlEff();
-        if (!(d < vl / vh * (1.f - VoltageMaxErr) / (1.f + VoltageMaxErr))) return NAN;
+        if (!(d < 0.9f * vl / vh)) return NAN;
         return d * d * vh * (vh - vl) / (2.f * fL * vl);
     }
 

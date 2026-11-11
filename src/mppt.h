@@ -762,7 +762,7 @@ public:
 
             // in case the current sensor is wrong: a DCM duty bounds the current by itself
             constexpr float BflowOpenMaxDcmCurrent = 1.f; // A
-            float iDcm;
+            float iDcm = NAN;
             if (converter.getDutyCycle() > 0.33f &&
                 !((iDcm = converter.dcmCurrent(sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get())) <
                   BflowOpenMaxDcmCurrent)) {
