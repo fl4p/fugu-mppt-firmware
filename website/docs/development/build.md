@@ -46,8 +46,14 @@ SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-myvariant build
 ```
 
 `sdkconfig.vconv_s3` is the prepared fragment for a virtual-converter build on ESP32-S3; see
-[Build options](../guide/getting-started/build-options.md#control-loop-work-without-hardware). If the generated
-`sdkconfig` looks wrong, delete it and rebuild.
+[Build options](../guide/getting-started/build-options.md#control-loop-work-without-hardware). Build it in its own
+directory with its own `sdkconfig`:
+
+```bash
+SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" idf.py -B build-vconv -DSDKCONFIG=build-vconv/sdkconfig build
+```
+
+If the generated `sdkconfig` looks wrong, delete it and rebuild.
 
 :::warning One sdkconfig per variant
 `-B` only moves the build directory. Without `-DSDKCONFIG` the generated `sdkconfig` stays in the project root and
