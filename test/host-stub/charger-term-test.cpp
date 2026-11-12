@@ -106,7 +106,61 @@ static void test_not_terminated_releases_high() {
     CHECK(std::fabs(c.Vout_max() - 29.f) < 0.02f, "no authority, not full: release to Vbat_max, got %.3f", c.Vout_max());
 }
 
+// cell frames stop while bulk charging at vout; returns the pin after `sec` seconds of staleness.
+// releaseEvery: a stuck-watchdog pin release every n s; voutAfter: bus once frames stop
+static float staleAfter(float vcell, float vout, int sec, bool term = false, int releaseEvery = 0,
+                        float voutAfter = NAN, float *maxPin = nullptr) {
+    BatteryCharger c; c.params = params(); setWallClockUs(1'000'000ULL);
+    if (term) latch(c, true); else c.termCond.reset();
+    for (int i = 0; i < 40; ++i) {
+        setWallClockUs(loopWallClockUs_ + 4'000'000ULL);
+        c.batSt.setVcellHigh(vcell);
+        c.batSt.updateBatCurrent(term ? 0.f : 20.f);
+        c.update(vout, 0.f, true);
+    }
+    if (std::isfinite(voutAfter)) vout = voutAfter;
+    float hi = 0;
+    for (int t = 1; t <= sec; ++t) {
+        setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
+        if (releaseEvery && t % releaseEvery == 0) c.releaseVoutPinning("test");
+        c.update(t > 200 && releaseEvery ? c.Vout_max() : vout, 0.f, true); // bus follows the cap
+        // settled value: just before the next release (a release jumps to Vbat_max and glides back, as before)
+        if (t > 200 && (!releaseEvery || t % releaseEvery == releaseEvery - 1)) hi = std::max(hi, c.Vout_max());
+    }
+    if (maxPin) *maxPin = hi;
+    return c.Vout_max();
+}
+
+static float rampAt(int sec) { // expected cap: 27.4 V at 180 s ramping to 26.8 V at 780 s
+    return 27.4f - 0.6f * std::min(1.f, std::max(0.f, (sec * 1.f - 180.f) / 600.f));
+}
+
+static void test_stale_cells_hold_bus() {
+    float v = staleAfter(3.38f, 27.3f, 120);
+    CHECK(v > 28.9f, "fresh within expiry: bulk pin, got %.3f", v);
+    for (int sec: {200, 400, 700}) {
+        v = staleAfter(3.38f, 27.3f, sec);
+        CHECK(std::fabs(v - rampAt(sec)) < 0.04f, "gap %d s: ramp %.3f, got %.3f", sec, rampAt(sec), v);
+    }
+    v = staleAfter(3.38f, 27.3f, 800);
+    CHECK(std::fabs(v - 26.8f) < 0.02f, "long gap: float fallback, got %.3f", v);
+    v = staleAfter(3.40f, 27.3f, 200);
+    CHECK(std::fabs(v - 26.8f) < 0.02f, "cell at cv_min + 0.05: float fallback, got %.3f", v);
+    v = staleAfter(3.45f, 27.3f, 200);
+    CHECK(std::fabs(v - 26.8f) < 0.02f, "cell above the plateau: float fallback, got %.3f", v);
+    v = staleAfter(3.38f, 26.5f, 200);
+    CHECK(std::fabs(v - 26.8f) < 0.02f, "bus below float: never under the fallback, got %.3f", v);
+    v = staleAfter(3.36f, 27.3f, 200, true);
+    CHECK(std::fabs(v - 26.8f) < 0.02f, "terminated: float fallback, got %.3f", v);
+    float hi = 0;
+    staleAfter(3.38f, 27.3f, 760, false, 36, NAN, &hi);
+    CHECK(hi <= 27.4f + 0.01f, "pin releases must not ratchet the cap, max %.3f", hi);
+    v = staleAfter(3.38f, 27.3f, 200, false, 0, 27.0f);
+    CHECK(v < 27.4f - 0.05f, "bus dropping as the gap begins: lower cap, got %.3f", v);
+}
+
 int main() {
+    test_stale_cells_hold_bus();
     test_idle_full_pack_yields();
     test_discharging_pack_joins_with_hysteresis();
     test_join_never_exceeds_float();
