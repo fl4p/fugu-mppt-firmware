@@ -14,6 +14,11 @@ public:
         ESP_ERROR_CHECK(dsps_biquad_gen_notch_f32(coeffs, f, gain, Q));
     }
 
+    // DC steady state for input x (direct form II), so a level step doesn't ring
+    void seed(float x) {
+        w_lpf[0] = w_lpf[1] = x / (1.f + coeffs[3] + coeffs[4]);
+    }
+
     void filter(const float *in, float *out, int len) {
         ESP_ERROR_CHECK(dsps_biquad_f32(in, out, len, coeffs, w_lpf));
     }

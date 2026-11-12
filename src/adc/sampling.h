@@ -129,7 +129,10 @@ struct Sensor {
         last = v;
         lastRaw = x;
 
-        if (notchFilter)notchFilter->filter(&last, &v, 1);
+        if (notchFilter) {
+            if (!numSamples) notchFilter->seed(last);
+            notchFilter->filter(&last, &v, 1);
+        }
         float m = med3.next(v); // always feed the median window so it tracks the signal
         if (despikeK > 0.f) {
             float dev = fabsf(v - m);
