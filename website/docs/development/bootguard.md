@@ -51,6 +51,7 @@ The guard and the firmware work together as follows:
 
 Keep these limits in mind when you use the guard:
 
-- The bootloader only reaches a board by serial flash. An OTA update replaces the app, not the bootloader.
+- An app OTA replaces the app, not the bootloader. The bootloader reaches a board by serial flash or by the
+  separate [bootloader update](../guide/updating/ota-wifi.md#bootloader-update) over Wi-Fi.
 - A board parked in download mode after a trip waits for esptool. Flash a fixed image, or leave download mode with
   `esptool.py -p $ESPPORT --after hard_reset chip_id`.

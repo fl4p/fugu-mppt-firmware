@@ -168,6 +168,11 @@ void MpptController::update() {
         }
     }
 
+    if (rectCalHold(nowUs, limitingControlValue)) {
+        lastUs = nowUs;
+        return;
+    }
+
     // bounce at pwm boundary
     if (converter.getCtrlOnPwmCnt() == converter.pwmCtrlMax) {
         controlMode = MpptControlMode::CV;
@@ -548,6 +553,7 @@ void MpptController::telemetry() {
         point.addField("mcu_temp", ucTemp.lastFresh(), 1); // TODO to frequent
         point.addField("ntc_temp", ntc.lastFresh(), 1); // TODO to frequent
         point.addField("lag", (int) g_app.maxLoopLag); // peak RT-loop lag (µs), resets on rt-stats
+        point.addField("rect_off", rectCal.offset()); // counts
     }
 
     point.addField("pwm_duty", converter.getCtrlOnPwmCnt());
@@ -587,4 +593,29 @@ void MpptController::telemetry() {
     _lastPointWrite = wallClockUs();
     _teleNumPoints++;
 #endif
+}
+
+extern SynchronousConverter converter;
+extern MpptController mppt;
+
+// One rewrite of coil.conf (littlefs keeps the old file until close), under the admitted persist lock.
+bool rectCalPersist(int counts, bool calibrated) {
+    char ns[16];
+    snprintf(ns, sizeof(ns), "%.0f", rectOffsetNsFromCounts(counts, converter.getPwmTickRate()));
+    ConfFile conf{"/littlefs/conf/coil.conf"};
+    const bool ok = conf.update({{"rect_offset_ns", ns}, {"rect_offset_drv", converter.drvName()},
+                                 {"rect_offset_cal", calibrated ? "1" : "0"}}, "rect_offset"); // legacy count key
+    if (!ok) ESP_LOGW("rectcal", "coil.conf write failed, retrying");
+    return ok;
+}
+
+void MpptController::rectCalLf() {
+    if (!sensorPhysicalI) return;
+    const auto nowS = (uint32_t) (wallClockUs() / 1000000);
+    rectCal.lf(converter, nowS, sensorPhysicalI->ewm.avg.get() * sensorPhysicalU->ewm.avg.get());
+    const auto t0 = (uint32_t) wallClockUs();
+    const bool was = rectCal.unsaved();
+    rectCal.saveNow(converter, nowS, [] { vTaskDelay(pdMS_TO_TICKS(2)); });
+    if (was && !rectCal.unsaved())
+        ESP_LOGI("rectcal", "save took %lu us", (unsigned long) ((uint32_t) wallClockUs() - t0));
 }

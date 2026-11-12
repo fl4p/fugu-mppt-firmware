@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 
+# A fresh clone/worktree has empty submodule dirs; IDF then fails with a misleading "Failed to resolve component".
+file(GLOB _fugu_busio "${CMAKE_CURRENT_SOURCE_DIR}/components/Adafruit_BusIO/*")
+if (NOT _fugu_busio)
+    message(FATAL_ERROR "Submodules are not checked out. Run: git submodule update --init --recursive")
+endif ()
+
 # Feature flags moved from WITH_* env vars to Kconfig (main/Kconfig.projbuild, CONFIG_FUGU_WITH_*).
 # Reject stale env usage so an old `WITH_BLE=0 idf.py build` can't silently build the feature *on*.
 foreach (_legacy WITH_BLE WITH_NETW WITH_SPROFILER WITH_VCONV WITH_MCPWM WITH_MEASURE_COIL WITH_WSYNC WITH_USB_MSC)
@@ -98,7 +104,7 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 # esp-bootguard (S3 only, optional dev tool): the bootloader parks the chip in download mode after 3 crash
 # resets. Used when found at the default path or ESP_BOOTGUARD_DIR, else the stock bootloader is built.
-# The bootloader only reaches a board by serial flash (0x0), OTA leaves the old one in place.
+# An app OTA leaves the old bootloader in place; `ota bootloader <url>` or a serial flash replaces it.
 if (IDF_TARGET STREQUAL "esp32s3")
     if (NOT ESP_BOOTGUARD_DIR AND DEFINED ENV{ESP_BOOTGUARD_DIR})
         set(ESP_BOOTGUARD_DIR $ENV{ESP_BOOTGUARD_DIR})

@@ -45,7 +45,6 @@ etc/*/sdkconfig
 
 .wifi
 
-idf-export.sh
 
 etc/filter-studies/*/__pycache__/
 

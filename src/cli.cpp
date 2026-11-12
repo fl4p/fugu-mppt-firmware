@@ -16,12 +16,14 @@
 #include <esp_memory_utils.h>
 #include <esp_core_dump.h>
 #include <esp_partition.h>
+#include <esp_flash_partitions.h>
 #include <esp_system.h>
 #include <nvs.h>
 #include <ctime>
 #include <esp_ota_ops.h>
 #include <esp_flash.h>
 #include <esp_chip_info.h>
+#include "etc/flash_probe.h"
 #ifdef CONFIG_BOOTGUARD_ENABLE
 #include "bootguard.h"
 #endif
@@ -128,8 +130,9 @@ static bool argFloat(Command &cc, int i, float &out) {
 }
 
 static bool waitPsuCommand(uint32_t ticket, uint32_t timeoutMs = 1000) {
-    const auto deadline = wallClockMs() + timeoutMs;
-    while (!mppt.isPsuCommandDone(ticket) && wallClockMs() < deadline)
+    // not wallClockMs(): only loopRT advances it, so without a running RT loop this never times out
+    const int64_t deadline = esp_timer_get_time() + (int64_t) timeoutMs * 1000;
+    while (!mppt.isPsuCommandDone(ticket) && esp_timer_get_time() < deadline)
         delay(1);
     if (mppt.isPsuCommandDone(ticket)) return true;
     if (mppt.cancelPsuCommand(ticket)) return false;
@@ -480,6 +483,26 @@ static void cmdSweep(cmd *) {
         CMD_FAIL_RETURN("sweep: RT transition timed out");
 }
 
+// rect-cal [status|abort] — self-calibrate the DCM low-side timing offset (rect_cal.h)
+static void cmdRectCal(cmd *c) {
+    Command cc(c);
+    const String sub = cc.countArgs() ? cc.getArg(0).getValue() : String("");
+    auto &rc = mppt.rectCal;
+    if (sub == "status") { rc.status(converter); return; }
+    if (sub == "abort") {
+        if (!rc.cal.running()) CMD_FAIL_RETURN("rect-cal: not running");
+        rc.abortReq.store(true);
+        return;
+    }
+    if (sub.length()) CMD_FAIL_RETURN("rect-cal: expected [status|abort]");
+    if (!rc.requestStart()) CMD_FAIL_RETURN("rect-cal: already running");
+    for (int i = 0; i < 100 && rc.cal.get() == RectCal::Idle; ++i) delay(10);
+    const auto st = rc.cal.get();
+    if (st != RectCal::Run)
+        CMD_FAIL_RETURN("rect-cal: refused: %s", st == RectCal::Fail ? rc.cal.why : "no RT response");
+    ESP_LOGI("main", "rect-cal: running at hs=%u (~30 s), see rect-cal status", rc.cal.hs);
+}
+
 static void cmdResetLag(cmd *) {
     g_app.maxLoopLag = 0;
 #if CAPTURE_LOOP_DT
@@ -673,6 +696,12 @@ static void cmdBootinfo(cmd *) {
 #else
              "off");
 #endif
+    char fsb[128];
+    flashSusProbeFmt(fsb, sizeof(fsb));
+    UART_LOG("%s", fsb);
+    char bl[112];
+    bootloaderInfo(ESP_PRIMARY_BOOTLOADER_OFFSET, bl, sizeof(bl));
+    UART_LOG("bootloader: %s", bl);
 #ifdef CONFIG_BOOTGUARD_ENABLE
     bootguard_status_t bg;
     if (bootguard_get_status(&bg) == ESP_OK)
@@ -718,11 +747,30 @@ static void cmdLogLevel(cmd *c) {
 static void cmdUptime(cmd *);
 
 #ifdef WITH_NETW
+static bool conversionStopped() {
+    return g_app.manualPwm() && mppt.getManualTarget() == 0 && converter.disabled();
+}
+
+// ota <url> | ota bootloader <url>
 static void cmdOta(cmd *c) {
     cmdUptime(c);
     auto url = Command(c).getArg(0).getValue();
     if (url.length() == 0)
         CMD_FAIL_RETURN("ota: expected url");
+    if (url.startsWith("bootloader")) {
+        url.remove(0, 10);
+        url.trim();
+        if (url.length() == 0)
+            CMD_FAIL_RETURN("ota: expected bootloader <url>");
+        if (!conversionStopped())
+            CMD_FAIL_RETURN("ota: conversion running, stop it first (dc 0)");
+        adcSampler.halted = true;
+        const char *err = doOtaBootloader(url.c_str(), conversionStopped);
+        adcSampler.halted = false;
+        if (err)
+            CMD_FAIL_RETURN("ota: bootloader: %s", err);
+        return;
+    }
 
     auto savedMode = g_app.opMode.load();
     const float savedPsuSetpoint = mppt.getPsuSetpoint();
@@ -1528,9 +1576,9 @@ static void cmdSetConfig(cmd *c) {
     for (int i = 3; i < cc.countArgs(); ++i) val += " " + cc.getArg(i).getValue();
     ConfFile conf{fn.c_str()};
     auto oldVal = conf.getString(key.c_str(), "");
-    ESP_LOGI("main", "Setting conf '%s:%s' = '%s' (was %s)", fn.c_str(), key.c_str(), val.c_str(), oldVal.c_str());
-    if (oldVal != val.c_str())
-        conf.add({{key.c_str(), val.c_str()}}, true);
+    if (oldVal != val.c_str() && !conf.add({{key.c_str(), val.c_str()}}, true))
+        CMD_FAIL_RETURN("set-config: cannot write %s, '%s' unchanged", fn.c_str(), key.c_str());
+    ESP_LOGI("main", "Set conf '%s:%s' = '%s' (was %s)", fn.c_str(), key.c_str(), val.c_str(), oldVal.c_str());
 }
 
 
@@ -1542,10 +1590,11 @@ static void cmdDelConfig(cmd *c) {
     auto fn = confFile(cc.getArg(0).getValue());
     auto key = cc.getArg(1).getValue();
     ConfFile conf{fn.c_str()};
-    if (conf.remove(key.c_str()))
-        ESP_LOGI("main", "Deleted conf '%s:%s'", fn.c_str(), key.c_str());
-    else
+    if (!conf.has(key.c_str()))
         CMD_FAIL_RETURN("del-config: key '%s' not found in %s", key.c_str(), fn.c_str());
+    if (!conf.remove(key.c_str()))
+        CMD_FAIL_RETURN("del-config: cannot write %s, '%s' kept", fn.c_str(), key.c_str());
+    ESP_LOGI("main", "Deleted conf '%s:%s'", fn.c_str(), key.c_str());
 }
 
 // get-config <file> [key]  — print one key, or dump the whole file.
@@ -1885,18 +1934,19 @@ static void cmdService(cmd *c) {
     if (!s)
         CMD_FAIL_RETURN("svc: unknown '%s'", name.c_str());
 
-    if (sub == "on") {
-        s->setEnabledPersist(true);
-        if (!s->start()) UART_LOG("start failed (state=%s)", stateStr(s->state()));
-    } else if (sub == "off") {
-        s->setEnabledPersist(false);
-        s->stop();
+    if (sub == "on" || sub == "off") {
+        const bool on = sub == "on";
+        if (!s->setEnabledPersist(on))
+            CMD_FAIL_RETURN("svc: cannot save %s state, '%s' unchanged", sub.c_str(), name.c_str());
+        if (!on) s->stop();
+        else if (!s->start()) UART_LOG("start failed (state=%s)", stateStr(s->state()));
     } else if (sub == "restart" || sub == "rs") {
         s->restart();
     } else if (sub == "log") {
         if (n < 3)
             CMD_FAIL_RETURN("svc log: expected <error|warn|info>");
-        s->setLogLevel(strToLevel(cc.getArg(2).getValue().c_str()), /*persist*/ true);
+        if (!s->setLogLevel(strToLevel(cc.getArg(2).getValue().c_str()), /*persist*/ true))
+            CMD_FAIL_RETURN("svc log: cannot save the level, '%s' unchanged", name.c_str());
     } else {
         CMD_FAIL_RETURN("svc: unknown subcommand '%s'", sub.c_str());
     }
@@ -1932,7 +1982,7 @@ static void cmdMeasureCoil(cmd *c) {
 // vconv                           dump state
 // vconv pv <isc> <voc> [k]        update PV params
 // vconv bat <vbat>                update battery voltage
-// vconv set <key> <value>         in-memory setter (c_in, c_out, r_bat, l, vbat_ac_amp, vbat_ac_freq, vbat_ac_shape)
+// vconv set <key> <value>         in-memory setter (c_in, c_out, r_bat, l, vbat_ac_amp, vbat_ac_freq, vbat_ac_shape, diode_vf)
 static void cmdVconv(cmd *c) {
     Command cc(c);
     int n = cc.countArgs();
@@ -1989,6 +2039,7 @@ static void cmdVconv(cmd *c) {
         else if (key == "vbat_ac_amp")  g_vconv.setBatRipple(v, g_vconv.getVbatAcFreq(), g_vconv.getVbatAcShape());
         else if (key == "vbat_ac_freq") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), v, g_vconv.getVbatAcShape());
         else if (key == "vbat_ac_shape") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), g_vconv.getVbatAcFreq(), (int) v);
+        else if (key == "diode_vf") g_vconv.setDiodeVf(v);
         else CMD_FAIL_RETURN("vconv set: unknown key '%s'", key.c_str());
         UART_LOG("vconv: %s=%.6g", key.c_str(), v);
     } else {
@@ -2177,6 +2228,7 @@ void setupCli() {
     cli.addCommand("mppt", cmdMppt);
     cli.addCommand("short-ls", cmdShortLs);
     cli.addCommand("sweep", cmdSweep);
+    cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [status|abort]
     cli.addCommand("reset-lag", cmdResetLag);
     cli.addCommand("scan-i2c", cmdScanI2c);
     cli.addBoundlessCmd("ls", cmdLs);   // ls [path] (littlefs)

@@ -13,10 +13,14 @@ external `espressif/mqtt` on IDF 6, <3.3.8 on IDF 5.5. Keep code compatible with
 fields (`io_loop_back`, pull flags) and added others, so zero-init (`= {}`) and assign instead of
 listing every field.
 
-Before any `idf.py` invocation, source ESP-IDF into the shell. The repo ships a helper:
+Before any `idf.py` invocation, source ESP-IDF into the shell with the tracked helper. It works from any git worktree
+(it finds `../../esp/idf6.0.3` relative to the main checkout via `git rev-parse --git-common-dir`; override with
+`FUGU_IDF_PATH=<idf dir>` or `FUGU_ESP_DIR=<dir of idf versions>`). A fresh clone or worktree needs the submodules
+first; without them CMake stops with "Submodules are not checked out".
 
 ```bash
-. ./idf-export.sh          # sources ../../esp/idf6.0.3/export.sh, sets IDF_TARGET=esp32s3, autodetects $ESPPORT
+git submodule update --init --recursive   # once per fresh clone/worktree
+. ./idf-export.sh          # sources ESP-IDF, sets IDF_TARGET=esp32s3, sets $ESPPORT to the first USB port unless already set
 idf.py set-target esp32s3  # only needed once per build dir
 idf.py build               # feature flags live in Kconfig now (CONFIG_FUGU_WITH_*, idf.py menuconfig -> "Fugu MPPT firmware"): BLE/NETW default on, NETTOOLS/MCPWM/VCONV/SPROFILER/MEASURE_COIL/USB_MSC off (NETTOOLS depends on NETW; USB_MSC = S3 USB config drive, website/docs/guide/usb-drive.md). The old WITH_* env vars are rejected. Binary telemetry is a tele.conf setting, not a build flag
 idf.py -p $ESPPORT app-flash
@@ -27,6 +31,8 @@ idf.py -p $ESPPORT app-flash
 `idf_ext.py`). Name the device with `FUGU_DEVICE=<name> idf.py flash` or `./flash.sh <name>` (see "ELF archive" below).
 
 Default build target is `esp32s3`, for `esp32` target use another build dir: `idf.py -B build-esp32`.
+Simulated-converter build on the S3 (provision `config/lab/vconv_mock`):
+`idf.py -B build-vconv -DSDKCONFIG=build-vconv/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" build`.
 
 The top-level `CMakeLists.txt` invokes `littlefs_create_partition_image(... FLASH_IN_PROJECT)` so the **board config
 selected by `FUGU_LITTLEFS_SRC` (`config/lab/dry_mock` on esp32s3, `config/fugu1/fugu1_esp32` on esp32) is flashed
@@ -68,7 +74,17 @@ next reset:
 the rollback bootloader via **serial** is protected, but one that's only ever been app-OTA'd keeps its old (
 pre-rollback)
 bootloader and will **brick, not revert**, on a bad image. To put rollback on a converter, do a full **serial** flash
-(bootloader + app, omitting littlefs to keep its config) once; OTAs after that self-revert. A bricked device (hung in
+(bootloader + app, omitting littlefs to keep its config) once, or push the bootloader over Wi-Fi (below); OTAs after that
+self-revert.
+
+**Bootloader OTA (unsafe, no recovery bootloader on S3).** `ota bootloader <url>` (host: `etc/ota.py --bootloader -m
+<name>`, `-n` shows current vs new from the `bootinfo` `bootloader:` line). Refuses unless conversion was stopped with
+`dc 0` (manual target 0, converter disabled), the app is confirmed, flash encryption/secure boot are off. Stages the
+image in unallocated flash after the last partition (never the passive slot), checks chip id, appended SHA-256 (IDF only
+checks the 8-bit checksum of bootloaders), flash mode and size; skips an identical image, then erases only the sectors
+it needs at 0x0 and reads back (3 tries; on failure `systemRestart()` refuses until a retry succeeds). A reset or power
+loss during that copy (~0.5 s) bricks the board until serial reflash.
+Dangerous-write protection stays on except around the copy. Test: `test/main_bl_ota.cpp` + `test/bl_ota_qemu.py`. A bricked device (hung in
 `setup()` before WiFi/services) can only be recovered by serial — see [website/docs/development/debugging/real-time-latency.md] for the
 boot-time stack/cache traps that cause such hangs.
 
@@ -322,7 +338,13 @@ When connected to the 192.168.1.x network, these devices might be behind a NAT r
 | 192.168.4.5 | 192.168.1.231:235    |
 
 IP addresses can change (not static), so always confirm the hostname in the telnet banner.
-Check etc/nat.env for up-to-date addresses.
+Check etc/nat.env for up-to-date addresses (gitignored: a worktree has none, so `fugu_console.py` discovery skips NAT
+there; copy it from the main checkout).
+
+Off the LAN, or when this Mac's agents get "No route to host" for every 192.168.x address (macOS Local Network
+privacy for the app hosting the agent, not a network fault; the Tailscale route is not affected), tunnel through havan:
+`etc/nat-tunnel.sh up` forwards the NAT ports to `127.0.0.1:12232`..`12235` (`status`, `down`; jump host
+`NAT_TUNNEL_HOST`, default ssh alias `havan-ts`). Then `etc/fugu_console.py --ip 127.0.0.1:12232` and check `hostname`.
 
 **IMPORTANT: fry & flat are both real power converters connected to solar panels and a battery.
 Driving their Half-Bridge must be taken with care!**

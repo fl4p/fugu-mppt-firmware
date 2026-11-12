@@ -30,6 +30,9 @@ public:
 
     [[nodiscard]] float pvCurrent(float v) const { return pv_.current(v); }
 
+    // Open backflow switch at the PV input: its body diode passes only forward PV current.
+    void setPvBlocking(bool b) { pvBlocking_ = b; }
+
     void setBat(float vbat, float rbat) {
         vbat_ = vbat;
         // Guard against r_bat → 0: divides in stepOneCycle (BE coefficient and
@@ -75,6 +78,7 @@ public:
     void setPassives(float c_in, float c_out, float l) { cIn_ = c_in; cOut_ = c_out; l_ = l; }
     void setVin(float v)  { vIn_ = v; }
     void setVout(float v) { vOut_ = v; }
+    void setDiodeVf(float v) { diodeVf_ = v; } // LS body-diode drop in the dead/off phase
     [[nodiscard]] float getVin()  const { return vIn_; }
     [[nodiscard]] float getVout() const { return vOut_; }
     [[nodiscard]] float getIL()   const { return iLEnd_; }
@@ -120,6 +124,7 @@ private:
     bool boost_ = false;
 
     PvModel pv_;
+    bool pvBlocking_ = false;
 
     // Battery + passives
     float vbat_ = 28.0f;
@@ -132,6 +137,7 @@ private:
     float cIn_  = 470e-6f;
     float cOut_ = 470e-6f;
     float l_    = 50e-6f;
+    float diodeVf_ = 0.0f;
 
     // State
     float vIn_   = 0.0f;

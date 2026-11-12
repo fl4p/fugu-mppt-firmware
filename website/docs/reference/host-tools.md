@@ -268,7 +268,7 @@ python etc/measure_coil.py -p $ESPPORT --steps 12 --i-max 1.5
 | `--bidir`                         |         | Sweep up and down, compare                                    |
 | `--plot-every N`                  | 0       | ASCII L plot every N points                                   |
 | `--ls-sweep`                      |         | Low-side timing sweep; with `--hs`, `--ls-steps` (24), `--ls-lo` (0.5), `--ls-hi` (1.4) |
-| `--apply`, `--apply-margin`       | 12      | With `--ls-sweep`: write `coil.conf` `rect_offset_ns`, keeping a margin in counts |
+| `--apply`, `--apply-margin`       | 12      | With `--ls-sweep`: write `coil.conf` `rect_offset_ns` (and `rect_offset_drv`, the active gate driver, and `rect_offset_cal=1`), keeping a margin in counts |
 | `--restore mppt\|off`             | `mppt`  | State when done                                               |
 | `--yes`                           |         | Skip the confirmation                                         |
 

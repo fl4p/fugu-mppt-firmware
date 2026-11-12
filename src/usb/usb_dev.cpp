@@ -21,6 +21,7 @@
 #include <tusb.h>
 
 #include "vfat.h"
+#include "../conf_stage.h"
 #include "cli.h"
 #include "logging.h"
 
@@ -264,7 +265,12 @@ extern "C" bool tud_msc_start_stop_cb(uint8_t lun, uint8_t, bool start, bool loa
         return true;
     }
     if (!s_vol || s_ejected) return true;
-    switch (commit()) {
+    Commit r;
+    {
+        ConfWriteLock lock;
+        r = commit();
+    }
+    switch (r) {
         case Commit::Applied:
             s_restartAfterStatus = true;
             break;

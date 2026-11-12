@@ -57,3 +57,10 @@ T absdiff(const T &lhs, const T &rhs) {
 
 
 float strntof(const char *dat, int len);
+
+// Set while the bootloader region is being rewritten, and left set if that failed: systemRestart() refuses.
+extern volatile bool g_restartBlocked;
+
+// Describe the bootloader image at flash `offset` (IDF version, build date, length, appended SHA-256
+// prefix) into buf, its length into *len. False if the image does not verify.
+bool bootloaderInfo(uint32_t offset, char *buf, unsigned n, uint32_t *len = nullptr);

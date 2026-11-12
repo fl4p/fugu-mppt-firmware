@@ -183,6 +183,16 @@ counts/period at 39 kHz one count is ≈ 12.5 ns, while MCPWM `bestTiming` gives
 counts/period from a 160 MHz source clock, ≈ 6.25 ns/count. The same correction stored in
 counts would therefore be off by a factor of two after switching between the two drivers.
 
+Storing a time does not make the value portable between gate drivers, though: the dead time
+and edge delays it absorbs belong to the driver it was measured on. A value carried over to
+another driver can hold the LS past the zero crossing. In DCM near `D ≈ M` the output current
+then collapses and reverses as the duty rises, which opens the backflow switch during a global
+sweep. `coil.conf::rect_offset_drv` therefore records the driver (`mcpwm`, `ledc`) next to the
+value. At boot the firmware uses `rect_offset_ns` only if `rect_offset_drv` names the active
+driver; otherwise it uses 0, logs a warning and marks the offset as uncalibrated. A value with
+`rect_offset_cal=0` (a backstop reduction, not a measurement) is used but also counts as
+uncalibrated.
+
 #### Measuring it
 
 To measure the correction, hold a steep-edge HS duty in DCM and sweep LS on-time up from
@@ -224,6 +234,85 @@ true peak. With 1 mA of measurement noise on a 0.25 A output, the error stays ar
 and leans early, the safe side. The steep side's curvature also gives the `L` cross-check. The
 printed table shows the raw maximum next to the fitted peak. On the flat side, the raw maximum
 is not a good estimate.
+
+#### Self-calibration (`rect-cal`)
+
+The firmware runs the same LS sweep itself, starting from a DCM operating point in MPPT mode
+(`src/rect_cal.h`). It first lowers HS to `0.55·M` of the period and holds it there. That point
+draws well below the panel's MPP current, so `V_i` sits on the flat, voltage-source part of the
+PV curve. At the MPPT operating point itself the panel limits the power, the LS window hardly
+changes the output current, and in simulation the peak landed up to ~200 counts late, toward
+a longer LS. The firmware then computes the ideal window from the averaged voltages
+(`(V_i/V_o − 1)·HS`, without the worst-case ratio margin) and steps LS from 0.5× to 1.4× of it
+in 24 steps. Each step settles for 150 ms and averages `I_out` for 500 ms.
+Between steps, a reference LS of 0.6× ideal is held for 400 ms. Each point is the step's
+current minus the mean of the two references around it, which cancels slow changes of the
+source, such as irradiance. Each point is placed relative to the ideal window of its own averaged
+`V_i`/`V_o`, so a small voltage drift moves the coordinate with the zero crossing instead of
+reading as a timing error. If `V_i` or `V_o` of any reference or step deviates more than 2% from
+the value at the start, the run is rejected. The sweep stops once it has passed the peak (above ideal and
+0.2·`I_out` below the best point) or when the average current turns negative. It is aborted,
+and the LS returned to diode emulation, on a limiter, a mode change, a sweep, `rect-cal abort`,
+after 32 s, and on any protection action: a shutdown, the backflow switch or sync rect turned
+off, or the LS clamped to its minimum. The protection check runs right before each LS update of
+the run, after the protection pass of the same sample, so the run never raises an LS that a
+protection has just lowered. Afterwards HS fades back to the operating point it started from.
+
+The peak is located with the two-half-parabola fit above. The run is rejected, and the
+previous value kept, with fewer than 5 points, the maximum at the first or last point, a
+failed fit or `|peak − ideal| > 2.5 µs`. Otherwise the applied offset is
+`learned − max(125 ns, 0.3·|learned|)`, always toward a shorter LS. The margin grows with the
+offset, because a large offset comes from large unmodelled delays; a fixed fraction of
+`learned` would move toward a longer LS when `learned` is negative. The result takes effect at
+once. Writing it to `coil.conf` (`rect_offset_ns`, `rect_offset_drv`, `rect_offset_cal`) waits
+until the converter has been off without interruption for 10 s with a valid output-power reading
+below 1 W, typically at night: a flash write that erases a sector stalls both cores, including the
+control loop, for tens of milliseconds. Any converter start, however short, restarts the 10 s.
+The control loop then blocks converter starts until the write is done: it grants the request,
+the low-frequency task admits the write within milliseconds and rewrites `coil.conf` once, and
+starts are allowed again as soon as it finishes, however long the write takes. A grant that is not
+admitted within 8 s is withdrawn. Only starts are blocked; protection and shutdown are not. The new
+`coil.conf` is written to `coil.conf.cft` and renamed over the old file, which LittleFS does
+atomically, so a reset during the save leaves either the old or the new file complete; a leftover
+`.cft` file is deleted at boot. Console configuration commands (`set-config`, `del-config`,
+`svc`) write the same way; FTP uploads and the USB config drive have their own write paths. On a
+bench ESP32-S3 the save, including the rename, took about 0.4 s (about 0.05 s for an in-place
+rewrite), so a start that falls into a save is delayed by that much. A failed or withdrawn save is
+retried a minute later; successful writes are at least 10 minutes apart. What is
+written is always the offset in use at that moment together with its state: if the backstop
+below has shortened a fresh result before it was saved, the shorter value is saved as
+uncalibrated.
+
+Preconditions for a run: buck topology, converter on in MPPT mode (not sweeping, not PSU/PV-sim
+or manual PWM, no forced PWM, no limiter active), DCM, sync rect and backflow switch on,
+`V_i > V_o + 1 V`, a physical `I_out` sensor reading 0.3–4 A and an HS count above `0.55·M`.
+At the lowered HS it further needs more than 0.15 A and an LS headroom of at least 1.15× ideal
+below the period. With `coil.conf::rect_cal_auto=1` (default) the firmware starts a
+run by itself while the offset is uncalibrated, at most once a day, not in the first 10 minutes
+after boot and only at a steady operating point above 5 W. A refused start is retried after
+10 minutes.
+
+#### Runtime backstop
+
+In DCM with sync rect on, a stored offset that is too long shows a distinct signature: the
+output current collapses towards zero while the HS duty rises towards `D = M`, and `V_i` rises
+because less power is drawn from the panel. A global sweep past the MPP does not do this,
+because the panel current rises towards `I_sc` as `V_i` falls; a source drop such as a cloud
+lowers `V_i`. When the current (the protection's fast filter) drops below 25% of the peak seen
+on the rising duty run, with that peak above 0.5 A, HS above 0.8·M and `V_i` 0.5% above its
+value at the peak, the firmware shortens the in-RAM offset: a positive offset drops to 0, a
+zero or negative one by 125 ns, at most once per 2 s. It never lengthens the offset and stops
+at the lowest value a calibration can apply, −(2.5 µs + 0.75 µs); an offset already below that
+stays. The backstop is armed only in MPPT mode (including sweeps; not in PSU/PV-sim or manual
+PWM, not during a calibration run) and from 2 s after the converter starts; its peak history
+is cleared whenever it is disarmed.
+
+Each trigger marks the offset uncalibrated in RAM, so that the automatic calibration runs
+again. After the second trigger the reduced value is written to `coil.conf` (with the converter
+off, as above) with `rect_offset_cal=0`, so after a reboot it is used but still counts as
+uncalibrated.
+
+The active offset is published as the `rect_off` telemetry field (counts).
 
 ### Implementation (`src/buck.h`)
 

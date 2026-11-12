@@ -11,6 +11,7 @@
 #include "../mppt.h"
 #include "../adc/sampling.h"
 #include "../app_state.h"
+#include "../math/asym_peak_fit.h"
 
 // Components owned by main.cpp (same extern coupling as cli.cpp; this TU is built only with the
 // real main, never the test mains). Mode flags live in g_app (app_state.h).
@@ -71,49 +72,9 @@ static void settleAndRead(uint16_t H, uint32_t dwellMs, Reading &out) {
     out = {medianN(vi, 5), medianN(vo, 5), medianN(io, 5), converter.getCtrlOnPwmCnt(), converter.inDCM()};
 }
 
-// Solve the augmented 3x3 system M in place (Gaussian elimination); false if singular.
-static bool solve3(double M[3][4]) {
-    for (int i = 0; i < 3; ++i) {
-        double p = M[i][i];
-        if (fabs(p) < 1e-12) return false;
-        for (int j = 0; j < 4; ++j) M[i][j] /= p;
-        for (int k = 0; k < 3; ++k)
-            if (k != i) {
-                double f = M[k][i];
-                for (int j = 0; j < 4; ++j) M[k][j] -= f * M[i][j];
-            }
-    }
-    return true;
-}
-
-// Least-squares fit of two half-parabolas sharing an apex (x0, y0): y = y0 - a*(x0-x)^2 left of x0,
-// y = y0 - b*(x-x0)^2 right of it, a, b >= 0. x0 is grid-searched over the interior of the (ascending) xs.
-static bool asymPeakFit(const float *xs, const float *ys, int n, float &x0Out, double &bOut) {
-    if (n < 5) return false;
-    double syy = 0, r0 = 0, bestSse = INFINITY;
-    for (int i = 0; i < n; ++i) { syy += (double) ys[i] * ys[i]; r0 += ys[i]; }
-    constexpr int GRID = 400;
-    for (int k = 0; k <= GRID; ++k) {
-        double x0 = xs[1] + (double) (xs[n - 2] - xs[1]) * k / GRID;
-        double su = 0, sv = 0, suu = 0, svv = 0, r1 = 0, r2 = 0;
-        int nl = 0, nr = 0;
-        for (int i = 0; i < n; ++i) {
-            double d = xs[i] - x0, q = d * d;
-            if (d < 0) { su += q; suu += q * q; r1 -= q * ys[i]; ++nl; }
-            else { sv += q; svv += q * q; r2 -= q * ys[i]; ++nr; }
-        }
-        if (nl < 2 || nr < 2) continue;
-        double M[3][4] = {{(double) n, -su, -sv, r0}, {-su, suu, 0, r1}, {-sv, 0, svv, r2}};
-        if (!solve3(M) || M[1][3] < 0 || M[2][3] < 0) continue;
-        double sse = syy - (M[0][3] * r0 + M[1][3] * r1 + M[2][3] * r2);
-        if (sse < bestSse) { bestSse = sse; x0Out = (float) x0; bOut = M[2][3]; }
-    }
-    return bestSse < INFINITY;
-}
-
-static void measWriteConf(const char *key, const char *val) {
+static bool measWriteConf(const char *key, const char *val) {
     ConfFile conf{"/littlefs/conf/coil.conf"};
-    conf.add({{key, val}}, true);
+    return conf.add({{key, val}}, true);
 }
 
 static void sweepL0(const MeasArgs &a) {
@@ -165,8 +126,8 @@ static void sweepL0(const MeasArgs &a) {
     if (a.apply) {
         char buf[24];
         snprintf(buf, sizeof(buf), "%.6e", med);
-        measWriteConf("L0", buf);
-        UART_LOG("  applied coil.conf L0=%s (effective next boot)", buf);
+        if (measWriteConf("L0", buf)) UART_LOG("  applied coil.conf L0=%s (effective next boot)", buf);
+        else UART_LOG("  measure-coil: FAILED to write coil.conf L0=%s", buf);
     }
 }
 
@@ -245,15 +206,11 @@ static void sweepLs(const MeasArgs &a) {
         if (!(pk > 0 && pk < n - 1)) { UART_LOG("  apply skipped: peak at sweep edge; widen sweep"); return; }
         int lim = pwmMax / 8;
         int new_off = constrain((int) lroundf(ls_peak - ideal_ls - 12.0f), -lim, lim);
-        converter.setRectOnOffset(new_off);   // live (counts)
-        // Persist as a time so the calibration survives a driver-resolution change.
-        float ns = rectOffsetNsFromCounts(new_off, converter.getPwmTickRate());
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%.0f", ns);
-        ConfFile conf{"/littlefs/conf/coil.conf"};
-        conf.remove("rect_offset");           // drop any legacy count-based key
-        conf.add({{"rect_offset_ns", buf}}, true);
-        UART_LOG("  applied coil.conf rect_offset_ns=%s (%d ct, effective now + next boot)", buf, new_off);
+        mppt.rectCal.post(new_off, true); // applied by the RT loop
+        mppt.rectCal.requestSave();       // coil.conf once the converter is off
+        converter.setRectOffsetNeedsCal(false);
+        UART_LOG("  applied rect_offset %.0f ns (%d ct, %s); saved to coil.conf once the converter is off",
+                 rectOffsetNsFromCounts(new_off, converter.getPwmTickRate()), new_off, converter.drvName());
     }
 }
 

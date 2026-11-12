@@ -79,6 +79,8 @@ class SynchronousConverter {
     static constexpr float SyncRectOffVoltage = 1.0f; // V
     // Minimum side voltage for the M=vl/vh (buck) / vh/vl (boost) ratio to be trustworthy.
     static constexpr float MinRatioVoltage = 0.1f; // V
+    // Per-sensor worst-case voltage error used for every Vl/Vh ratio decision.
+    static constexpr float VoltageMaxErr = 0.01f;
     // M clamp: floor keeps rectCtrlRatio() finite (no div-by-zero); UnityRatioMargin keeps M off
     // 1.0 so rectCtrlRatio() stays finite and positive on both sides.
     static constexpr float MinVoltageRatio = 1e-2f;
@@ -116,6 +118,10 @@ class SynchronousConverter {
     float rectDitherErr = 0; // carried LS-count rounding remainder (DCM error-feedback dither)
     bool rectDither = true; // false: plain round() (fallback)
     int16_t rectOnOffset = 0; // DCM LS-count dead-time/gate-delay offset (counts; >0 = LS off later, toward zero crossing)
+    bool rectCalNeeded = false; // rect_offset not calibrated on the active driver
+    std::atomic<uint8_t> lsClampCount{0}; // bumped by syncRectMinDuty() and disable() (also core 0)
+    std::atomic<uint16_t> enables{0};      // bumped by each start in pwmPerturb()
+    std::atomic<bool> startInhibit{false}; // pwmPerturb() does not start the converter
 
     bool syncRectOffHyst = false; // latched: sync rect disabled by low current, needs 4x to re-arm
     float outInVoltageRatio = 0; // M
@@ -1065,6 +1071,14 @@ public:
 
     void setRectOnOffset(int o) { rectOnOffset = (int16_t) o; } // DCM LS dead-time offset, counts
 
+    [[nodiscard]] const char *drvName() const { return driverName; }
+    [[nodiscard]] bool rectOffsetNeedsCal() const { return rectCalNeeded; }
+    void setRectOffsetNeedsCal(bool v) { rectCalNeeded = v; }
+    [[nodiscard]] uint8_t lsClamps() const { return lsClampCount.load(std::memory_order_relaxed); }
+    [[nodiscard]] uint16_t enableCount() const { return enables.load(std::memory_order_acquire); }
+    [[nodiscard]] bool startInhibited() const { return startInhibit.load(std::memory_order_acquire); }
+    void inhibitStart(bool v) { startInhibit.store(v, std::memory_order_seq_cst); }
+
     // Comparator counts per second = fsw * the full timer period. Used to convert the physical
     // rect_offset_ns / boot_refresh_ns <-> counts independent of driver resolution. It is the FULL
     // period, not pwmMax: the dead-time is carved out of pwmMax but does not change how long a tick
@@ -1084,8 +1098,9 @@ public:
     // Emitted from init() (boot serial) and re-fired once MQTT is up (so it lands in the MQTT/telnet
     // log too — init() runs during setup(), before those sinks exist).
     void logConfig() const {
-        ESP_LOGI("converter", "Coil L0=%.1f µH rect_offset=%.0f ns (%d ct)",
-                 coilL0 * 1e6f, rectOffsetNsFromCounts(rectOnOffset, getPwmTickRate()), rectOnOffset);
+        ESP_LOGI("converter", "Coil L0=%.1f µH rect_offset=%.0f ns (%d ct, %s)",
+                 coilL0 * 1e6f, rectOffsetNsFromCounts(rectOnOffset, getPwmTickRate()), rectOnOffset,
+                 rectCalNeeded ? "uncalibrated" : driverName);
     }
 
     [[nodiscard]] float voltageRatio() const { return outInVoltageRatio; } // M
@@ -1257,7 +1272,14 @@ public:
         // time, sensing error); convert to counts the same way boot_refresh_ns is handled (ns ->
         // counts via the tick rate), so the calibration is invariant to PWM resolution and fsw.
         // Default 0 (no offset) when unset.
-        rectOnOffset = (int16_t) rectOffsetCountsFromNs(coilConf.getFloat("rect_offset_ns", 0.f), getPwmTickRate());
+        const float offNs = coilConf.getFloat("rect_offset_ns", 0.f);
+        const std::string offDrv = coilConf.getString("rect_offset_drv", "");
+        const bool drvOk = rectOffsetDriverMatches(offDrv.c_str(), driverName);
+        if (!drvOk && offNs != 0.f)
+            ESP_LOGW("converter", "rect_offset_ns=%.0f was measured on driver '%s', not %s: using 0, needs rect-cal",
+                     offNs, offDrv.c_str(), driverName);
+        rectCalNeeded = !drvOk || !coilConf.getByte("rect_offset_cal", 1);
+        rectOnOffset = drvOk ? (int16_t) rectOffsetCountsFromNs(offNs, getPwmTickRate()) : 0;
         logConfig();
     }
 
@@ -1298,6 +1320,8 @@ public:
     void pwmPerturb(int16_t direction) {
         bool enabling = unlikely(disabled() and direction > 0);
         if (enabling) {
+            if (startInhibit.load(std::memory_order_seq_cst)) return;
+            enables.fetch_add(1, std::memory_order_acq_rel);
             UART_LOG("Converter enabled");
             if (pinSd != 255) digitalWrite(pinSd, 0);
         }
@@ -1377,6 +1401,7 @@ public:
 
 
     void disable() {
+        lsClampCount.fetch_add(1, std::memory_order_relaxed);
         if (pinSd != 255)digitalWrite(pinSd, 1);
         drvShutdown();
 
@@ -1393,6 +1418,19 @@ public:
         fpwmPublish(false);
     }
 
+
+    /**
+     * Buck average coil current implied by the duty and the side voltages, assuming DCM:
+     * I = D² · vh · (vh - vl) / (2 · fsw·L · vl). NAN for a boost, unusable voltages, or D not below
+     * 0.9·M, M = vl/vh (at D >= M the current is set by loop resistance, not by D; the 10% covers
+     * ratio error and gate delay). Over-estimates with diode drops in the current path.
+     */
+    [[nodiscard]] float dcmCurrent(float vh, float vl) const {
+        if (isBoost || !(vl > MinRatioVoltage && vh > vl)) return NAN;
+        const float d = dutyCtrlEff();
+        if (!(d < 0.9f * vl / vh)) return NAN;
+        return d * d * vh * (vh - vl) / (2.f * fL * vl);
+    }
 
     [[nodiscard]] inline float rippleCurrent(float hv, float lv) const {
         // this does not consider dc bias, just a constant 0.95 inductivity factor
@@ -1458,7 +1496,7 @@ public:
         // computation of t_onCtrl and t_onRect ratio is quite error sensitive
         // e.g. at VR=0.64 a -5% error causes a 13% deviation of pwmMaxLs !
         // so we do some proper error computation here
-        constexpr float voltageMaxErr = 0.01f; // inc -> safer, less efficient
+        constexpr float voltageMaxErr = VoltageMaxErr; // inc -> safer, less efficient
 
         // WCEF = worst case error factor
         // compute the worst case error (Vout estimated too low, Vin too high => VR estimated too low)
@@ -1550,7 +1588,7 @@ public:
             // not dZero*kErr (which would be too small by r/(1-r)).
             // Exact worst case on a ratio of two independently measured voltages, the SAME model
             // computeSyncRectRatio() uses (voltageMaxErr / voltageRatioWCEF) - keep the two in step.
-            constexpr float kErr = (1.f + 0.01f) / (1.f - 0.01f) - 1.f;
+            constexpr float kErr = (1.f + VoltageMaxErr) / (1.f - VoltageMaxErr) - 1.f;
             const float r = vl / vh;
             const float dZero = isBoost ? (1.f - r) : r; // duty at zero DC coil current
             const float err = r * kErr;
@@ -1708,6 +1746,7 @@ public:
      * Boost converter has a min duty cycle of 0 (HS)
      */
     void syncRectMinDuty() {
+        lsClampCount.fetch_add(1, std::memory_order_relaxed);
         if (pwmRect > pwmRectMin) {
             if (pwmRect > pwmRectMin + pwmRectMin / 2) {
                 ESP_LOGW("dcdc", "set sync-rect PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmRect,

@@ -74,6 +74,7 @@
 #include <dirent.h>
 
 #include "etc/rt_core_check.h"
+#include "etc/flash_probe.h"
 
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
@@ -249,6 +250,9 @@ static void setupConverterAndMppt(const ConfFile &boardConf, const Limits &lim, 
 
             mppt.charger.begin(chargerConf);
             converter.init(converterConf, boardConf, coilConf);
+            mppt.rectCal.autoRun = coilConf.getByte("rect_cal_auto", 1);
+            mppt.rectCal.persist = rectCalPersist;
+            mppt.rectCal.init(converter.getRectOnOffset(), !converter.rectOffsetNeedsCal());
             chargerConf.warnUnknownKeys();
             coilConf.warnUnknownKeys();
         }
@@ -475,6 +479,7 @@ __attribute__((cold)) void setup() {
     setupCli();
     ESP_LOGI("main", "*** %s", format_version());
     bootWatchdogArm();
+    flashSuspendProbe();
 
     rtcount_test_cycle_counter();
 
@@ -483,6 +488,8 @@ __attribute__((cold)) void setup() {
     if (!mountLFS()) {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
         g_app.setupErr = true;
+    } else if (!confDropStaging("/littlefs/conf")) {
+        ESP_LOGE("main", "stale conf stage left in /littlefs/conf");
     }
     // Fingerprint the config as loaded at boot (conf-hash compares it with the current files to
     // reveal set-config writes not yet applied by a restart). Read-only, before any conf is parsed.
@@ -702,7 +709,13 @@ static void loopRT(void *arg) {
         converter.applyPendingDeadTimeRt();
         mppt.applyPendingPwmFreqRt();
 
-        if (adcSampler.halted) continue;
+        static bool wasHalted = false;
+        if (adcSampler.halted) {
+            wasHalted = true;
+            continue;
+        }
+        if (wasHalted && timeLastSampler) timeLastSampler = nowUs; // grace for the stall watchdog
+        wasHalted = false;
 
         if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure)
             stopAndBackoff(4);
@@ -1144,6 +1157,7 @@ __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
         lagReported = true;
         handleCommand("reset-lag");
     }
+    mppt.rectCalLf();
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     coredumpStampIfNew();
 #endif
@@ -1188,8 +1202,10 @@ static void loopRTNewData(time_ms nowMs) {
     // and share the same RT-owned transition path.
     mppt.applyPendingPsuCommandRt(haveNewSample);
 
-    if (haveNewSample)
+    if (haveNewSample) {
         timeLastSampler = wallClockUs();
+        mppt.rectCalRt();
+    }
 
     // auto range current sense ADC channel TODO add hysteresis
     /* float adcRangeBound = 2.0f;
@@ -1415,6 +1431,10 @@ static void restartCloseTelnet() {
 
 void systemRestart() {
     converter.disable();
+    if (g_restartBlocked) {
+        ESP_LOGE("main", "restart refused: bootloader region not verified");
+        return;
+    }
     UART_LOG("Rebooting");
     restartCloseTelnet();
     g_services.stopAll(); // tear down enabled services while WiFi is still up (see mqtt_task overflow)

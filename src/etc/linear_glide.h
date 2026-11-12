@@ -42,6 +42,12 @@ public:
         return _from + (_to - _from) * ((float) dt / (float) _durUs);
     }
 
+    // 0..1 over the duration. Precondition: active()
+    [[nodiscard]] float progress(time_us nowUs) const {
+        time_us dt = nowUs - _startUs;
+        return dt >= _durUs ? 1.f : (float) dt / (float) _durUs;
+    }
+
     void reset() { _startUs = 0; }
 
     [[nodiscard]] uint32_t durationUs() const { return _durUs; }

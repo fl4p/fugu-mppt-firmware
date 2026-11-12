@@ -27,6 +27,9 @@
 #include "math/pv_model.h"
 #include "conv_side.h"
 #include "out_impedance.h"
+#include "rect_cal.h"
+
+bool rectCalPersist(int counts, bool calibrated); // coil.conf, core 0
 
 struct Limits {
     const float Vin_max{};
@@ -513,6 +516,7 @@ public:
     // Single source of truth for startCondition(); also logged while idle in START.
     [[nodiscard]] const char *startBlockReason() const {
         if (psuLatched) return "psu-latch";
+        if (converter.startInhibited()) return "conf-save";
         if (g_app.psuMode()) {
             const auto feasibility = currentPsuFeasibility();
             if (feasibility == PsuSetpointError::BoostBelowInput)
@@ -762,12 +766,29 @@ public:
                 return false;
             }
 
-            if (converter.getDutyCycle() > 0.33f) {
-                // in case the current sensor is wrong
-                if (!converter.disabled())
-                    ESP_LOGE("MPPT", "High duty cycle with open backflow switch!");
-                shutdownDcdc("highD-bflowOpen");
-                return false;
+            // in case the current sensor is wrong: a DCM duty bounds the current by itself
+            constexpr float BflowOpenMaxDcmCurrent = 1.f; // A
+            float iDcm = NAN;
+            const float vi = sensors.Vin->ewm.avg.get(), vo = sensors.Vout->ewm.avg.get();
+            if (converter.getDutyCycle() > 0.33f &&
+                !((iDcm = converter.dcmCurrent(vi, vo)) < BflowOpenMaxDcmCurrent)) {
+                // a sweep at the ratio limit with <0.05 A has no more power to find: end it, not a fault
+                if (_sweeping && std::isnan(iDcm) && !converter.boost() && !converter.forcedPwm_() && vo > 1.f &&
+                    vi > vo && sensorPhysicalI->ewm.avg.get() < 0.05f && sensorPhysicalI->last < 0.05f) {
+                    ESP_LOGI("mppt", "Sweep at D=%.2f with open backflow switch, ending it", converter.getDutyCycle());
+                    _stopSweep(MpptControlMode::Sweep, -1, nullptr);
+                    if (converter.disabled()) { // no-MPP backoff
+                        ctrlState.mode = MpptControlMode::None;
+                        return false;
+                    }
+                    // MPP committed: drop to it and keep protecting; returning false would stopAndBackoff()
+                    converter.pwmPerturb((int16_t) ((int) targetDutyCycle - (int) converter.getCtrlOnPwmCnt()));
+                } else {
+                    if (!converter.disabled())
+                        ESP_LOGE("MPPT", "High duty cycle with open backflow switch! (Idcm=%.2f)", iDcm);
+                    shutdownDcdc("highD-bflowOpen");
+                    return false;
+                }
             }
         }
 
@@ -1161,6 +1182,7 @@ public:
             abortSweep();
             clearBackoff();
             converter.setManualRect(-1);
+            rectCal.drop();
             psuVsetpoint = NAN;
             psuTarget = NAN;
             psuOvHoldBase = NAN;
@@ -1243,6 +1265,7 @@ public:
         abortSweep();
         clearBackoff();
         converter.setManualRect(-1);
+        rectCal.drop();
         psuResetTripState();
         if (pvCmd) {
             pvSim.model.set(pvIsc, requested, pvK);
@@ -1382,4 +1405,33 @@ public:
 
     void update(); // normal update
     void updateManual(); // manual mode
+
+    // rect_offset self-calibration and backstop (rect_cal.h)
+    RectCalCtl<SynchronousConverter> rectCal{};
+
+    RectCalIn rectCalIn(uint32_t nowUs) const {
+        return {nowUs, sensors.Vin->last, sensors.Vout->last, sensors.Iout->last, sensors.Vin->ewm.avg.get(),
+                sensors.Vout->ewm.avg.get(), sensors.Iout->ewm.avg.get(), sensorPhysicalI->ewm.avg.get(),
+                fminf(sensorPhysicalI->ewm.avg.get(), std::max(sensorPhysicalI->last, sensorPhysicalI->previous)),
+                g_app.opMode.load() == OpMode::Mppt && !sampler.isCalibrating(), _sweeping, bflow.state(),
+                ctrlState._limiting, !sensors.Iout->isVirtual};
+    }
+
+    // RT, once per new sample, before protect()
+    void rectCalRt() {
+        if (!sensorPhysicalI) return;
+        if (const uint16_t hs = rectCal.rt(converter, rectCalIn((uint32_t) wallClockUs()))) setAutoRampTarget(hs);
+    }
+
+    void rectCalLf(); // core 0
+
+private:
+    // RT: in update() after protect() and the limiters; true while the run holds HS/LS.
+    bool rectCalHold(const time_us &nowUs, float limitingControlValue) {
+        if (!sensorPhysicalI || !rectCal.cal.running()) return false;
+        uint16_t hs;
+        const bool held = rectCal.hold(converter, rectCalIn((uint32_t) nowUs), limitingControlValue, hs);
+        if (hs) setAutoRampTarget(hs);
+        return held;
+    }
 };

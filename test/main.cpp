@@ -292,6 +292,7 @@ void test_conf_operator_bool();
 void test_conf_remove_drops_line_and_keeps_rest();
 void test_conf_remove_strips_inline_comment_too();
 void test_conf_remove_missing_key_returns_false();
+void test_conf_update_staged_rename();
 
 // test_security.cpp — strntof OOB (#7), NVS readString boot-loop (#8), telnet defer/UAF (#9)
 void test_strntof_empty_returns_nan_no_oob();
@@ -530,6 +531,7 @@ void setup() {
     RUN_TEST(test_conf_remove_drops_line_and_keeps_rest);
     RUN_TEST(test_conf_remove_strips_inline_comment_too);
     RUN_TEST(test_conf_remove_missing_key_returns_false);
+    RUN_TEST(test_conf_update_staged_rename);
 
     // security/robustness fixes: strntof OOB (#7), NVS readString boot-loop (#8), telnet defer (#9)
     RUN_TEST(test_strntof_empty_returns_nan_no_oob);

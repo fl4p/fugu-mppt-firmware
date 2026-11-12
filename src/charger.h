@@ -292,6 +292,8 @@ class BatteryCharger {
     // doesn't step the converter setpoint.
     LinearGlide _floatGlide{5'000'000};
     bool _wasTerminated = false;
+    float _staleCap = NAN; // [V] bus cap latched for the cell-data gap that began at _staleCapTicks
+    uint32_t _staleCapTicks = 0;
     bool _termJoin = false; // terminated without authority, joined at float because the pack discharges
 
     // Integrator step gate: advance vpack_pin only on a fresh BMS frame so the
@@ -488,7 +490,7 @@ public:
         return t;
     }
 
-    void _updatePackVoltagePinning(bool voutAuthority = true, float vbat = INFINITY) {
+    void _updatePackVoltagePinning(bool voutAuthority = true, float vbat = INFINITY, float voutNow = NAN) {
         // Pack-voltage-pinning regimes (first match wins):
         //   1) EOC feedback — cells above v_eoc: closed loop on vcell_high → v_eoc.
         //      Doubles as the over-target corrector during terminated float; pulls
@@ -499,7 +501,7 @@ public:
         //      (unhealthy for an extended period of time, so only when explicitly
         //      requested).
         //   2) Terminated float — open-loop hold at Vbat_fallback.
-        //   3) BMS-stale — glide to Vbat_fallback.
+        //   3) BMS-stale — glide to Vbat_fallback (after a plateau reading: from the bus voltage, over 10 min).
         //   4) Bulk — push to Vbat_max (or ride the falling-edge glide).
         // Termination transitions are glided to avoid stepping the setpoint.
 
@@ -624,16 +626,38 @@ public:
             // missing bat data -> glide to the fallback
             _vPinFilt.reset();
             _floatGlide.reset();
+            // A cell-data gap after a plateau reading: cap at the bus voltage it left, ramping down to the
+            // float voltage over STALE_HOLD_SEC, instead of dropping below a charging pack at once.
+            // The cap is latched once per gap so a pin release cannot raise it.
+            constexpr float STALE_HOLD_CELL_MARGIN = 0.05f, STALE_HOLD_HEADROOM = 0.1f; // [V]
+            constexpr uint32_t STALE_HOLD_SEC = 600;
+            const uint32_t age = batSt.cellAgeTicks(),
+                    t0 = secToCoarseTicks(BatteryState::VCELL_EXPIRATION_TIME_SEC),
+                    span = secToCoarseTicks(STALE_HOLD_SEC);
+            float from = std::isfinite(vpack_pin) ? vpack_pin : params.Vbat_fallback;
+            if (_staleCapTicks != batSt.vcell_high_ticks) {
+                _staleCapTicks = batSt.vcell_high_ticks;
+                const float bus = fminf(batSt.vout_avg.get(), voutNow); // voutNow NAN: the average alone
+                _staleCap = (!nowTerm && std::isfinite(params.Cbat) && batSt.vcell_high > 0 &&
+                             batSt.vcell_high < params.cv_min + STALE_HOLD_CELL_MARGIN &&
+                             std::isfinite(batSt.vout_avg.get()) && bus > 0 && age < t0 + span)
+                                ? fmaxf(params.Vbat_fallback, fminf(from, bus + STALE_HOLD_HEADROOM))
+                                : NAN;
+            }
+            float to = params.Vbat_fallback;
+            if (std::isfinite(_staleCap) && !nowTerm)
+                to -= (params.Vbat_fallback - _staleCap) *
+                        (1.f - fminf(1.f, (float) (age > t0 ? age - t0 : 0) / (float) span));
             if (!_fallbackGlide.active()) {
                 // entering fallback — capture current pin as the glide origin
-                float from = std::isfinite(vpack_pin) ? vpack_pin : params.Vbat_fallback;
-                _fallbackGlide.start(from, params.Vbat_fallback, nowUs);
+                _fallbackGlide.start(from, to, nowUs);
                 auto what = !batSt.haveValidCellVoltage() ? "Cell Voltage" : "Pack Capacity";
-                ESP_LOGW("charger", "%s n/a, gliding vpPin %.3fV -> %.3fV over %ums",
-                         what, from, params.Vbat_fallback,
-                         (unsigned) (_fallbackGlide.durationUs() / 1000));
+                ESP_LOGW("charger", "%s n/a, gliding vpPin %.3fV -> %.3fV over %ums%s",
+                         what, from, to, (unsigned) (_fallbackGlide.durationUs() / 1000),
+                         std::isfinite(_staleCap) ? ", then to the fallback" : "");
             }
-            vpack_pin = _fallbackGlide.value(nowUs);
+            const float g0 = _fallbackGlide.from();
+            vpack_pin = g0 + (to - g0) * _fallbackGlide.progress(nowUs);
         } else {
             // bulk charging
             _vPinFilt.reset();
@@ -736,7 +760,7 @@ public:
         _updateTermination();
         _updateTempLimit();
         _updatePartialHold();
-        _updatePackVoltagePinning(voutAuthority);
+        _updatePackVoltagePinning(voutAuthority, INFINITY, vout);
     }
 
     // One wire fit sample per pack-voltage frame, while switching at a current that held steady

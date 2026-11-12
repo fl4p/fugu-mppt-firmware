@@ -109,6 +109,13 @@ CONFIG_FUGU_WITH_LEDC=n
 CONFIG_FUGU_WITH_VCONV=y
 ```
 
+On ESP32-S3 the repository ships this fragment as `sdkconfig.vconv_s3`. Build it in a separate build directory with
+its own `sdkconfig`:
+
+```bash
+SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" idf.py -B build-vconv -DSDKCONFIG=build-vconv/sdkconfig build
+```
+
 Provision `config/lab/vconv_mock`.
 
 :::warning Never OTA a VCONV build to a real converter

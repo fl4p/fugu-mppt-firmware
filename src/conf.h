@@ -1,7 +1,9 @@
 #pragma once
 
 
+#include <cerrno>
 #include <cstdio>
+#include <dirent.h>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -16,6 +18,7 @@
 #include <esp_log.h>
 
 #include "console.h"
+#include "conf_stage.h"
 
 
 #define TAG "conf"
@@ -112,20 +115,71 @@ public:
     // duplicate lines. Existing keys keep their position; their inline comment (`# ...` after the
     // value) is preserved. Comment-only lines and blank lines are kept verbatim. Pre-existing
     // duplicate lines of a key being written are collapsed to one. Genuinely new keys are appended.
-    // Returns false on any I/O failure (cannot open / short write / fsync error) instead of
-    // aborting — a failed config write must never panic-reboot the device.
-    bool add(KVList values, bool overwrite = false) {
-        // read current file into lines (stripping the trailing newline)
+    // The new file replaces the old one atomically (see writeLines_). Returns false, with the file
+    // and the in-memory view unchanged, on any I/O failure instead of aborting — a failed config
+    // write must never panic-reboot the device.
+    bool add(KVList values, bool overwrite = false) { return rewrite_(values.begin(), values.end(), overwrite, nullptr); }
+
+    // add() for runtime C strings, in one rewrite; drop: a key whose lines are removed (nullptr: none).
+    bool update(std::initializer_list<std::pair<const char *, const char *>> values, const char *drop = nullptr) {
+        std::vector<KV> v;
+        v.reserve(values.size());
+        for (auto &p: values) v.emplace_back(p.first, p.second);
+        return rewrite_(v.data(), v.data() + v.size(), true, drop);
+    }
+
+private:
+    // The file's lines without line ends; false if it exists but cannot be read completely or holds a NUL.
+    bool readLines_(std::vector<std::string> &lines) const {
+        errno = 0;
+        FILE *f = fopen(path, "r");
+        if (!f) return errno == ENOENT;
+        std::string all;
+        char buf[256];
+        for (size_t n; (n = fread(buf, 1, sizeof(buf), f)) > 0;) all.append(buf, n);
+        bool ok = !ferror(f);
+        if (fclose(f) != 0) ok = false;
+        if (ok && all.find('\0') != std::string::npos) {
+            errno = EINVAL;
+            ok = false;
+        }
+        for (size_t i = 0; ok && i < all.size();) {
+            size_t e = all.find('\n', i);
+            if (e == std::string::npos) e = all.size();
+            size_t l = e;
+            while (l > i && all[l - 1] == '\r') --l;
+            lines.emplace_back(all, i, l - i);
+            i = e + 1;
+        }
+        return ok;
+    }
+
+    // Writes <path>.cft and renames it over path (atomic on littlefs), so a reset leaves either file
+    // complete. A stale .cft is never read; confDropStaging() removes it at boot.
+    bool writeLines_(const std::vector<std::string> &lines) const {
+        const std::string tmp = std::string(path) + CONF_FILE_STAGE_SUFFIX;
+        FILE *f = fopen(tmp.c_str(), "w");
+        bool ok = f != nullptr;
+        for (size_t i = 0; ok && i < lines.size(); ++i)
+            ok = fputs(lines[i].c_str(), f) >= 0 && fputc('\n', f) != EOF;
+        ok = ok && fflush(f) == 0 && fsync(fileno(f)) == 0;
+        if (f && fclose(f) != 0) ok = false;
+        ok = ok && rename(tmp.c_str(), path) == 0;
+        if (!ok) {
+            ESP_LOGE("store", "cannot write %s (errno %d)", path, errno);
+            if (f) unlink(tmp.c_str());
+        }
+        return ok;
+    }
+
+    // Rewrites the file with keys [vb, ve) set and key `drop` removed. False, with the file and the
+    // in-memory view unchanged, on an I/O failure or when only dropping a key that is absent.
+    bool rewrite_(const KV *vb, const KV *ve, bool overwrite, const char *drop) {
+        ConfWriteLock lock;
         std::vector<std::string> lines;
-        if (FILE *fr = fopen(path, "r")) {
-            char buf[256];
-            while (fgets(buf, sizeof(buf), fr)) {
-                std::string line(buf);
-                while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
-                    line.pop_back();
-                lines.push_back(line);
-            }
-            fclose(fr);
+        if (!readLines_(lines)) {
+            ESP_LOGE("store", "cannot read %s (errno %d)", path, errno);
+            return false;
         }
 
         std::vector<std::string> writtenKeys;
@@ -134,12 +188,13 @@ public:
             return false;
         };
         auto findVal = [&](const std::string &k) -> const std::string * {
-            for (auto &p: values) if (p.first == k) return &p.second;
+            for (auto *p = vb; p != ve; ++p) if (p->first == k) return &p->second;
             return nullptr;
         };
 
         std::vector<std::string> out;
-        out.reserve(lines.size() + values.size());
+        out.reserve(lines.size() + (ve - vb));
+        bool dropped = false;
 
         for (auto &line: lines) {
             auto ic = line.find_first_of('#');
@@ -153,6 +208,10 @@ public:
             }
 
             auto key = trim(code.substr(0, ie));
+            if (drop && key == drop) {
+                dropped = true;
+                continue;
+            }
             auto *vp = findVal(key);
             if (!vp) {
                 out.push_back(line); // a key we're not touching
@@ -173,94 +232,23 @@ public:
             writtenKeys.push_back(key);
         }
 
-        for (auto &[key, val]: values)
-            if (!isWritten(key)) out.push_back(key + "=" + val);
+        for (auto *p = vb; p != ve; ++p)
+            if (!isWritten(p->first)) out.push_back(p->first + "=" + p->second);
 
-        FILE *f = fopen(path, "w");
-        if (f == nullptr) {
-            ESP_LOGE("store", "Cannot write %s", path);
-            return false;
-        }
-        for (auto &line: out) {
-            if (!line.empty() && fwrite(line.c_str(), line.length(), 1, f) != 1) {
-                ESP_LOGE("store", "short write to %s", path);
-                fclose(f);
-                return false;
-            }
-            fputc('\n', f);
-        }
+        if (vb == ve && !dropped) return false;
+        if (!writeLines_(out)) return false;
 
-#ifndef CONFIG_LITTLEFS_FLUSH_FILE_EVERY_WRITE
-        if (fsync(fileno(f)) != 0) {
-            ESP_LOGE("store", "fsync failed for %s", path);
-            fclose(f);
-            return false;
-        }
-#endif
-
-        fclose(f);
-
-        for (auto &[key, val]: values) set_(key, val); // keep in-memory view consistent
+        for (auto *p = vb; p != ve; ++p) set_(p->first, p->second); // keep in-memory view consistent
+        if (drop) _map.erase(std::remove_if(_map.begin(), _map.end(), [&](const KV &p) { return p.first == drop; }),
+                             _map.end());
         return true;
     }
 
+public:
     // Remove a key by rewriting the file without its line(s). The whole line is dropped, including
     // any trailing inline comment. Comment-only and blank lines are kept verbatim. Returns true if
     // the key was present and the file was rewritten; false if absent or on any I/O failure.
-    bool remove(const std::string &key) {
-        std::vector<std::string> lines;
-        if (FILE *fr = fopen(path, "r")) {
-            char buf[256];
-            while (fgets(buf, sizeof(buf), fr)) {
-                std::string line(buf);
-                while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
-                    line.pop_back();
-                lines.push_back(line);
-            }
-            fclose(fr);
-        }
-
-        std::vector<std::string> out;
-        out.reserve(lines.size());
-        bool removed = false;
-        for (auto &line: lines) {
-            auto ic = line.find_first_of('#');
-            std::string code = (ic == std::string::npos) ? line : line.substr(0, ic);
-            auto ie = code.find_first_of('=');
-            if (ie != std::string::npos && trim(code.substr(0, ie)) == key) {
-                removed = true;
-                continue; // drop this line entirely (incl. inline comment)
-            }
-            out.push_back(line);
-        }
-
-        // keep in-memory view consistent regardless of file state
-        _map.erase(std::remove_if(_map.begin(), _map.end(), [&](const KV &p) { return p.first == key; }), _map.end());
-        if (!removed) return false;
-
-        FILE *f = fopen(path, "w");
-        if (f == nullptr) {
-            ESP_LOGE("store", "Cannot write %s", path);
-            return false;
-        }
-        for (auto &line: out) {
-            if (!line.empty() && fwrite(line.c_str(), line.length(), 1, f) != 1) {
-                ESP_LOGE("store", "short write to %s", path);
-                fclose(f);
-                return false;
-            }
-            fputc('\n', f);
-        }
-#ifndef CONFIG_LITTLEFS_FLUSH_FILE_EVERY_WRITE
-        if (fsync(fileno(f)) != 0) {
-            ESP_LOGE("store", "fsync failed for %s", path);
-            fclose(f);
-            return false;
-        }
-#endif
-        fclose(f);
-        return true;
-    }
+    bool remove(const std::string &key) { return rewrite_(nullptr, nullptr, true, key.c_str()); }
 
     // Append-only insert: just tacks `key=val` onto the end without reading/rewriting the file.
     // Faster than add() (one open + sequential write, no parse), but it does NOT update existing
@@ -446,3 +434,28 @@ public:
 };
 
 #undef TAG
+
+// Boot, before anything reads or hashes dir: removes the stages a reset left during a ConfFile write.
+// False if one cannot be removed.
+inline bool confDropStaging(const char *dir) {
+    DIR *d = opendir(dir);
+    if (!d) return true;
+    std::vector<std::string> stale;
+    const size_t sl = strlen(CONF_FILE_STAGE_SUFFIX);
+    for (dirent *e; (e = readdir(d));) {
+        const size_t n = strlen(e->d_name);
+        if (n > sl && !strcmp(e->d_name + n - sl, CONF_FILE_STAGE_SUFFIX))
+            stale.push_back(std::string(dir) + "/" + e->d_name);
+    }
+    closedir(d);
+    bool ok = true;
+    for (auto &f: stale) {
+        if (unlink(f.c_str()) == 0) {
+            ESP_LOGW("conf", "removed stale %s", f.c_str());
+        } else {
+            ESP_LOGE("conf", "cannot remove stale %s (errno %d)", f.c_str(), errno);
+            ok = false;
+        }
+    }
+    return ok;
+}

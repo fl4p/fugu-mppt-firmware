@@ -13,9 +13,11 @@
 #include <string>
 #include <vector>
 
+#include "conf_stage.h"
+
 constexpr const char *CONF_HASH_ROOT = "/littlefs/conf";
 constexpr const char *CONF_HASH_EXCLUDED = "wifi.conf";      // top-level only; it is all secrets
-constexpr const char *CONF_HASH_STAGING_SUFFIX = ".new";     // USB-drive commit staging (usb_dev.cpp)
+constexpr const char *CONF_HASH_STAGING_SUFFIX = ".new";     // USB-drive commit staging; ConfFile stages as CONF_FILE_STAGE_SUFFIX
 constexpr const char *CONF_HASH_REDACTED_MARKER = "<redacted>";
 constexpr int CONF_HASH_MAX_DEPTH = 8;                       // max nested directory levels
 constexpr size_t CONF_HASH_MAX_LINE = 4096;                  // longer line (excluding '\n') = error
@@ -155,8 +157,11 @@ inline std::string confHashHex(const uint8_t *b, size_t n) {
 inline void confHashSortPaths(std::vector<std::string> &paths) { std::sort(paths.begin(), paths.end()); }
 
 inline bool confHashIsStaging(const std::string &rel) {
-    const size_t sl = strlen(CONF_HASH_STAGING_SUFFIX);
-    return rel.size() >= sl && rel.compare(rel.size() - sl, sl, CONF_HASH_STAGING_SUFFIX) == 0;
+    for (const char *sfx: {CONF_HASH_STAGING_SUFFIX, CONF_FILE_STAGE_SUFFIX}) {
+        const size_t sl = strlen(sfx);
+        if (rel.size() >= sl && rel.compare(rel.size() - sl, sl, sfx) == 0) return true;
+    }
+    return false;
 }
 
 // Per-file framing header, fed before the redacted content:  relpath '\0' decimal(len) '\0'

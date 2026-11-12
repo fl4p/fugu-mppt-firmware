@@ -46,8 +46,14 @@ SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-myvariant build
 ```
 
 `sdkconfig.vconv_s3` is the prepared fragment for a virtual-converter build on ESP32-S3; see
-[Build options](../guide/getting-started/build-options.md#control-loop-work-without-hardware). If the generated
-`sdkconfig` looks wrong, delete it and rebuild.
+[Build options](../guide/getting-started/build-options.md#control-loop-work-without-hardware). Build it in its own
+directory with its own `sdkconfig`:
+
+```bash
+SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" idf.py -B build-vconv -DSDKCONFIG=build-vconv/sdkconfig build
+```
+
+If the generated `sdkconfig` looks wrong, delete it and rebuild.
 
 :::warning One sdkconfig per variant
 `-B` only moves the build directory. Without `-DSDKCONFIG` the generated `sdkconfig` stays in the project root and
@@ -91,8 +97,9 @@ board use `idf.py app-flash`. Both commands archive the build ELF for later core
 | `esp32-noble` | esp32 | off | on |
 
 Logs go to `build-matrix-logs/<name>.log`; the summary lists exit code and `fugu-firmware.bin` size per variant.
-The script sources `./idf-export.sh`, a local, gitignored helper that sources ESP-IDF's `export.sh`; create your own
-or source ESP-IDF before running it.
+The script sources `./idf-export.sh`, which sources ESP-IDF's `export.sh` from `FUGU_IDF_PATH`, from
+`$FUGU_ESP_DIR/<version>`, or from `../../esp/<version>` relative to the main checkout (default version `idf6.0.3`,
+`FUGU_IDF` picks another).
 
 ## Build speed and size
 

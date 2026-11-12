@@ -114,22 +114,26 @@ public:
         }
     }
 
-    // Set the runtime log level (applies via esp_log_level_set, optionally persists to conf).
-    void setLogLevel(esp_log_level_t lvl, bool persist = true) {
-        _logLevel = lvl;
-        esp_log_level_set(_name, lvl);
+    // Set the runtime log level (applies via esp_log_level_set, optionally persists to conf first).
+    // False, level unchanged, if it cannot be persisted.
+    bool setLogLevel(esp_log_level_t lvl, bool persist = true) {
         if (persist) {
             ConfFile c{_confPath, true};
-            c.add({{"log_level", levelToStr(lvl)}}, true);
+            if (!c.add({{"log_level", levelToStr(lvl)}}, true)) return false;
         }
+        _logLevel = lvl;
+        esp_log_level_set(_name, lvl);
         ESP_LOGI("service", "'%s' log level -> %s", _name, levelToStr(lvl));
+        return true;
     }
 
     // Persist the desired enabled state to the conf file (does not start/stop).
-    void setEnabledPersist(bool en) {
-        _enabled = en;
+    // False, state unchanged, if it cannot be persisted.
+    bool setEnabledPersist(bool en) {
         ConfFile c{_confPath, true};
-        c.add({{"enabled", en ? "1" : "0"}}, true);
+        if (!c.add({{"enabled", en ? "1" : "0"}}, true)) return false;
+        _enabled = en;
+        return true;
     }
 
     // Read enabled + log_level from the conf file. Called once at registration (in setup(), outside

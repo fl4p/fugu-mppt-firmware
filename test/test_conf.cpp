@@ -153,3 +153,28 @@ void test_conf_remove_missing_key_returns_false() {
 
     TEST_ASSERT_EQUAL_STRING(before.c_str(), readFile(kRemovePath).c_str()); // file untouched
 }
+
+// update() replaces the file through <path>.cft + rename on littlefs; a stale .cft is removed at boot.
+void test_conf_update_staged_rename() {
+    TEST_ASSERT_TRUE(mountLFS("littlefs_test", true));
+    writeRemoveFixture();
+    const std::string staged = std::string(kRemovePath) + CONF_FILE_STAGE_SUFFIX;
+
+    ConfFile conf{kRemovePath};
+    TEST_ASSERT_TRUE(conf.update({{"foo", "baz"}, {"new_key", "1"}}, "lv_v_adc"));
+    auto txt = readFile(kRemovePath);
+    TEST_ASSERT_TRUE(contains(txt, "foo=baz"));
+    TEST_ASSERT_TRUE(contains(txt, "new_key=1"));
+    TEST_ASSERT_TRUE(contains(txt, "hv_v_adc=ads"));
+    TEST_ASSERT_FALSE(contains(txt, "lv_v_adc"));
+    TEST_ASSERT_TRUE(readFile(staged.c_str()).empty());
+
+    FILE *f = fopen(staged.c_str(), "w");
+    TEST_ASSERT_NOT_NULL(f);
+    fputs("foo=stale\n", f);
+    fclose(f);
+    TEST_ASSERT_EQUAL_STRING("baz", ConfFile{kRemovePath}.getString("foo", std::string{}).c_str());
+    TEST_ASSERT_TRUE(confDropStaging("/littlefs_test"));
+    TEST_ASSERT_NULL(fopen(staged.c_str(), "r"));
+    TEST_ASSERT_EQUAL_STRING(txt.c_str(), readFile(kRemovePath).c_str());
+}
