@@ -31,6 +31,10 @@ void MqttService::subscribeTopic(const std::string &topic, MqttMsgCallback fn) {
     }
 }
 
+bool MqttService::publish(const char *topic, const char *payload, int qos, bool retain) {
+    return mqttConnected && client && esp_mqtt_client_publish(client, topic, payload, 0, qos, retain) >= 0;
+}
+
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     auto svc = (MqttService *) handler_args;
     svc->_handleEvent(base, event_id, event_data);

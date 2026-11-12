@@ -37,6 +37,9 @@ public:
 
     void subscribeTopic(const std::string &topic, MqttMsgCallback fn);
 
+    // false while disconnected or when the client rejects it
+    bool publish(const char *topic, const char *payload, int qos, bool retain);
+
     void init(const ConfFile &conf);
     void close();
 

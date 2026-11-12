@@ -203,6 +203,8 @@ These commands report the charger state and set battery limits, PSU mode, and PV
 | Command | Description |
 | --- | --- |
 | `status` | Print a charger/battery snapshot: termination state, effective limits (`Vbat_max`/`Vout_max`, `Ibat_lim`/`Iout_max`), the termination line (`v_term`/`cv_min`/`cv_eoc`/`Cbat`/`recharge_dod`) and the BMS feed (`vcell_high` with staleness, `ibat`, `ahSinceFull`, `vout_avg`). In PSU mode also prints the setpoint, trip count and escalation state. |
+| `wire` | Print the output wire-fault protection state: mode, level and effective level, trip latch, `wf`, excess power, current cap, the learned baseline (days, learning, `Rc`, offset, `Rb`, `Ro`), each estimate's ΔR and excess power with its freshness, the reference current and today's sample counts. See [limits.conf](config/limits.md#output-wire-fault-protection). |
+| `wire-reset` | Clear the wire-fault trip latch and the learned baseline; learning restarts. The cleared baseline is written to NVS the next time the converter is stopped. |
 | `vset <float>` | Set the battery max voltage (`Vbat_max`), range (0, 999]. Marks the setpoint as explicit so the persistent-OV auto-detect will not silently discard it. |
 | `iset <float>` | Set the battery current limit (`Ibat_lim`), range 0–999. |
 | `ovset <float>` | Set an independent hard output over-voltage trip limit, range 0–999. 0 clears it (reverts to the derived threshold: `Vbat_max` × 1.5, or × 1.03 with `reverse_current_paranoia`). When set, the OV threshold is min(`ovset`, Vout max) (the `limits.conf` output voltage limit: `lv_max` in a buck, `hv_max` in a boost) regardless of the CV setpoint. |

@@ -59,6 +59,7 @@
 #endif
 
 #include "storage/key-value.h"
+#include "tele/alert.h"
 #include "conf_hash.h"
 #include "app_state.h"
 
@@ -443,6 +444,32 @@ static void lfMarkOtaValid() {
     }
 }
 
+__attribute__((cold)) static void wireGuardConf(const ConfFile &c) {
+    auto &w = mppt.charger.wireGuard.conf;
+    w.mode = c.getByte("wire_protect", 1);
+    w.pWarn = c.getFloat("wire_p_warn", 2.f);
+    w.pDerate = c.getFloat("wire_p_derate", 4.f);
+    w.pTrip = c.getFloat("wire_p_trip", 8.f);
+    w.drMin = c.getFloat("wire_dr_min", 4.f) * 1e-3f;
+    w.rMax = c.getFloat("wire_r_max", 0.f) * 1e-3f;
+    assert_throw(w.mode <= 2, "wire_protect must be 0, 1 or 2");
+    assert_throw(w.pWarn > 0 && w.pWarn <= w.pDerate && w.pDerate <= w.pTrip,
+                 "need 0 < wire_p_warn <= wire_p_derate <= wire_p_trip");
+    assert_throw(w.drMin > 0 && w.rMax >= 0, "need wire_dr_min > 0, wire_r_max >= 0");
+}
+
+__attribute__((cold)) static void wireGuardLoad() {
+    auto &g = mppt.charger.wireGuard;
+    if (!g.conf.mode) return;
+    WireGuard::Blob b;
+    nvs.open();
+    const bool have = nvs.readBlob("wire", &b, sizeof b);
+    nvs.close();
+    if (have && !g.load(&b, sizeof b)) ESP_LOGW("wire", "stored baseline rejected, learning again");
+    else if (have) ESP_LOGI("wire", "baseline: %u days, Rc %.2f mOhm, Ro %.2f mOhm", g.dayCount(),
+                            g.baseRc() * 1e3f, g.baseRo() * 1e3f);
+}
+
 __attribute__((cold)) void setup() {
     consoleInit();
     setupCli();
@@ -510,11 +537,14 @@ __attribute__((cold)) void setup() {
     try {
         ConfFile limitsConf{"/littlefs/conf/limits.conf"};
         lim = Limits{limitsConf};
+        wireGuardConf(limitsConf);
         limitsConf.warnUnknownKeys();
     } catch (const std::runtime_error &er) {
         logConfErr("limits.conf", er);
         g_app.setupErr = true;
     }
+
+    wireGuardLoad();
 
 #if PIN_GPIO_ISR_TO_RT_CORE
     // Must run before setupConverterAndMppt → setupSensors → ADC_INA226/ADS::init → attachInterrupt.
@@ -879,6 +909,52 @@ static void lfStuckWatchdog() {
     esp_restart();
 }
 
+static void wireAlert(const WireGuard &g) {
+    const int8_t a = g.alertLevel();
+    if (a == WireGuard::WF_UNVERIFIED) {
+        alert("wire", AlertLevel::Unverified, "no wire data on the last %u charging days", WireGuard::UNV_DAYS + 1);
+        return;
+    }
+    const auto f = g.fastPath();
+    alert("wire", (AlertLevel) a, "Pw %.1fW dR %.1fmOhm (%s)%s%s", g.pw(), (f.fresh ? f.dr : g.rcPath().dr) * 1e3f,
+          f.fresh ? "fast" : "slow", g.armed() ? "" : " warn-only", g.rbWarn() ? ", shared path up" : "");
+}
+
+std::atomic<bool> g_wireResetReq{false};
+
+// Baseline save: only with the converter off, a flash write stalls the RT loop for tens of ms.
+static void lfWireGuard(float iout) {
+    auto &g = mppt.charger.wireGuard;
+    if (!g.conf.mode) return;
+    if (g_wireResetReq.exchange(false)) g.reset();
+    const uint32_t nowS = (uint32_t) (wallClockUs() / 1000000);
+    const auto &w = mppt.charger.wire;
+    const bool running = !mppt.converter.disabled();
+    static bool first = true;
+    static uint8_t lastLvl = 0;
+    static bool lastRb = false;
+    if (g.tick(nowS, iout, running, w.own(nowS), w.offset(nowS), w.shared(nowS), mppt.outZ.get(nowS),
+               mppt.outZ.stamp()) || first) {
+        first = false;
+        wireAlert(g);
+    }
+    if (g.level() != lastLvl || g.rbWarn() != lastRb) {
+        ESP_LOGW("wire", "level %u -> %u%s, shared %d, Pw %.1f W, cap %.1f A", lastLvl, g.level(),
+                 g.armed() ? "" : " (warn only)", (int) g.rbWarn(), g.pw(), g.ioutCap());
+        lastLvl = g.level();
+        lastRb = g.rbWarn();
+    }
+    static uint32_t lastTryS = 0;
+    if (g.saveDue(running) && (!lastTryS || nowS - lastTryS >= 600)) {
+        lastTryS = nowS;
+        nvs.open();
+        const bool ok = nvs.writeBlob("wire", &g.blob(), sizeof(WireGuard::Blob)) && nvs.tryCommit();
+        nvs.close();
+        if (ok) g.saved();
+        else ESP_LOGE("wire", "baseline save failed");
+    }
+}
+
 // Low-frequency control reads (RT-adjacent, not in the ADC fast path): NTC + chip temp,
 // charger termination state, and the thermal-cap WiFi cutoff.
 static void lfControl() {
@@ -904,7 +980,9 @@ static void lfControl() {
                                    && currentShowsAuthority;
         mppt.charger.update(vout, iout, voutAuthority);
         mppt.charger.updateWire(vout, iout, !mppt.converter.disabled());
+        lfWireGuard(iout);
     }
+    alertTick();
     wifiShutdownIfHot(mppt.ucTemp.lastFresh());
 
     // Staleness fails open for the OTP (NaN > Temp_max is false), matching how a missing sensor has

@@ -92,6 +92,9 @@ public:
         const uint32_t t = rS.load(std::memory_order_acquire);
         return t && nowS - t <= STALE_S ? r.load(std::memory_order_relaxed) : NAN;
     }
+
+    // finish() time of the value get() returns, 0 = none; changes once per qualifying sweep
+    [[nodiscard]] uint32_t stamp() const { return rS.load(std::memory_order_acquire); }
 };
 
 /**
@@ -105,7 +108,7 @@ public:
 class WireResistance {
     double s[6]{}; // XᵀX upper triangle, x = (1, i1, i2): 00 01 02 11 12 22
     double xy[3]{}, yy = 0;
-    float r1 = NAN, r2 = NAN, sigma = NAN;
+    float r0 = NAN, r1 = NAN, r2 = NAN, sigma = NAN;
     uint32_t lastS = 0;
 
 public:
@@ -128,11 +131,12 @@ public:
 
     [[nodiscard]] float own(uint32_t nowS) const { return nowS - lastS > STALE_S ? NAN : r1; }    // R1 [Ω]
     [[nodiscard]] float shared(uint32_t nowS) const { return nowS - lastS > STALE_S ? NAN : r2; } // R2 [Ω]
+    [[nodiscard]] float offset(uint32_t nowS) const { return nowS - lastS > STALE_S ? NAN : r0; } // a [V]
     [[nodiscard]] float residual() const { return sigma; }
 
 private:
     void solve() {
-        r1 = r2 = sigma = NAN;
+        r0 = r1 = r2 = sigma = NAN;
         const double a = s[0], b = s[1], c = s[2], d = s[3], e = s[4], f = s[5];
         if (a < MIN_WEIGHT) return;
         const double c00 = d * f - e * e, c01 = c * e - b * f, c02 = b * e - c * d;
@@ -146,6 +150,7 @@ private:
         const double s2 = (sse > 0 ? sse : 0) / (a - 3);
         sigma = (float) std::sqrt(s2);
         if (!(sigma <= MAX_SIGMA) || !(std::sqrt(s2 * c11 / det) <= MAX_SE)) return;
+        r0 = (float) p0;
         r1 = (float) p1;
         r2 = (float) p2;
     }

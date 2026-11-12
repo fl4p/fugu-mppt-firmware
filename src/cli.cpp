@@ -93,6 +93,7 @@ extern KeyValueStorage nvs;
 void systemRestart();
 
 void stopAndBackoff(uint32_t secondsDelay);
+extern std::atomic<bool> g_wireResetReq;
 
 void loopLF(const time_us &nowUs, bool interim); // both call sites pass interim explicitly
 
@@ -1772,6 +1773,32 @@ static void cmdPv(cmd *c) {
 }
 #endif
 
+static void cmdWire(cmd *) {
+    const auto &g = mppt.charger.wireGuard;
+    static const char *const lvl[]{"ok", "warn", "derate", "trip"};
+    if (!g.conf.mode) {
+        UART_LOG("wire: off (limits.conf wire_protect=0)");
+        return;
+    }
+    UART_LOG("wire: %s, level %s (effective %s)%s%s, wf=%d Pw=%.2fW cap=%.1fA", g.armed() ? "armed" : "warn only",
+             lvl[g.level()], lvl[g.effLevel()], g.tripped() ? " TRIPPED" : "", g.rbWarn() ? ", shared path up" : "",
+             g.wf(), g.pw(), g.ioutCap());
+    UART_LOG("  baseline: %u days%s, Rc %.2f a %.1fmV Rb %.2f Ro %.2f mOhm, unverified days %u",
+             g.dayCount(), g.learning() ? " (learning)" : "", g.baseRc() * 1e3f, g.baseA() * 1e3f,
+             g.baseRb() * 1e3f, g.baseRo() * 1e3f, g.blob().unvDays);
+    const char *names[]{"fast", "Rc", "Ro", "Rb"};
+    const WireGuard::PathView pv[]{g.fastPath(), g.rcPath(), g.roPath(), g.rbPath()};
+    for (int i = 0; i < 4; ++i)
+        UART_LOG("  %-4s %s dR %.2f mOhm Pw %.2f W", names[i], pv[i].fresh ? "fresh" : "stale", pv[i].dr * 1e3f,
+                 pv[i].pw);
+    UART_LOG("  Iref %.1fA, today %u Rc samples, %u sweeps", g.iRef(), g.daySamples(), g.daySweeps());
+}
+
+static void cmdWireReset(cmd *) {
+    g_wireResetReq = true;
+    UART_LOG("wire: latch and baseline cleared, learning restarts");
+}
+
 // status  — charger/battery snapshot: termination state, effective limits, termination line and BMS feed.
 static void cmdStatus(cmd *) {
     auto &chg = mppt.charger;
@@ -2273,6 +2300,8 @@ void setupCli() {
     cli.addBoundlessCmd("pv", cmdPv); // pv <isc> <voc> [k] | scale <s> | off
 #endif
     cli.addCommand("status", cmdStatus);
+    cli.addCommand("wire", cmdWire);
+    cli.addCommand("wire-reset", cmdWireReset);
 
     cli.addBoundlessCmd("hostname,hn", cmdHostname);
     cli.addBoundlessCmd("set-config,setc", cmdSetConfig);

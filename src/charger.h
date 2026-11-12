@@ -8,6 +8,7 @@
 #include "out_impedance.h"
 #include "tele/mqtt.h"
 #include "util.h"
+#include "wire_guard.h"
 
 struct BatChargerParams {
     float Vbat_max = NAN; // [V] max bat pack voltage = output voltage
@@ -334,6 +335,7 @@ public:
     Li_ChgTerminationCondition termCond{params};
     BatteryState batSt{};
     WireResistance wire{};
+    WireGuard wireGuard{};
 
 
     explicit BatteryCharger() = default;
@@ -744,8 +746,10 @@ public:
         if (t == _wireLastT) return;
         _wireLastT = t;
         const bool use = switching && iout > 0.3f && std::abs((int32_t) (t - batSt.ibat_t)) < 2000000;
-        if (use && std::fabs(iout - _wirePrevI) < 0.5f)
+        if (use && std::fabs(iout - _wirePrevI) < 0.5f) {
             wire.add(vout - batSt.vpack, iout, batSt.ibat_raw, (uint32_t) (wallClockUs() / 1000000));
+            wireGuard.frame(vout - batSt.vpack, iout, batSt.ibat_raw);
+        }
         _wirePrevI = use ? iout : NAN;
     }
 
@@ -800,6 +804,8 @@ public:
         auto lim = params.Ibat_lim;
 
         if (std::isfinite(ioutLim)) lim = min(lim, ioutLim);
+        const float wireCap = wireGuard.ioutCap();
+        if (std::isfinite(wireCap)) lim = min(lim, wireCap);
         return fmaxf(lim, IOUT_LIM_FLOOR); // the CC limiter normalizes by its setpoint; 0 (e.g. ibat_lim_topic) would divide by 0
     }
 };

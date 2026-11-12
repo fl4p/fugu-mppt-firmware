@@ -48,6 +48,7 @@ The firmware uses the following topics:
 |----------------------------------------------------|-----------|---------------------------|------------------------------------|
 | `pv/log/<hostname>`                                | publish   | console / log lines       | always while connected             |
 | `pv/log/<hostname>/cmd`                            | subscribe | console command           | `cmd_input=1`                      |
+| `pv/alert/<hostname>/<source>`                     | publish   | alert JSON, retained, QoS 1 | on a state change of the source    |
 | `homeassistant/sensor/<device-id>-power/config`    | publish   | HA discovery JSON, retained | on connect, then every 1000 state updates |
 | `homeassistant/sensor/<device-id>-power/state`     | publish   | power in W                | every 3 s, not during a sweep      |
 | value of `cell_voltages_max_topic`                 | subscribe | highest cell voltage, V   | key set                            |
@@ -56,6 +57,27 @@ The firmware uses the following topics:
 | values of `bat_temp_topic` (up to 4)               | subscribe | pack temperature, °C      | key set                            |
 
 All subscriptions use QoS 0. In the Home Assistant topics, `<device-id>` is lower-cased.
+
+## Alerts
+
+Each alert source has its own retained topic `pv/alert/<hostname>/<source>`, so a subscriber sees the
+current state of every source after its own restart, and one source clearing doesn't hide another.
+The payload is
+
+```json
+{"lvl":"warn","msg":"Pw 2.6W dR 4.3mOhm (fast)","t":1794490551}
+```
+
+with `lvl` one of `ok`, `warn`, `derate`, `trip` and `unverified`, a short human-readable `msg`, and
+`t` the device's Unix time (seconds since boot until the clock is set). `ok` clears the alert. The
+firmware publishes on a change of the level and once after boot, logs the same line, and republishes
+every source after an MQTT reconnect. A state change while MQTT is down is published once it is up.
+
+| Source | Levels | Meaning |
+|--------|--------|---------|
+| `wire` | `ok`, `warn`, `derate`, `trip`, `unverified` | Output wire-fault protection, see [limits.conf](config/limits.md#output-wire-fault-protection) |
+
+A Home Assistant automation on `pv/alert/+/+` can notify on any level other than `ok`.
 
 ## Console over MQTT
 

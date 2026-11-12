@@ -349,7 +349,7 @@ void MpptController::updateManual() {
 
     const int16_t rampStep = std::max(1, (int) std::lround((float) converter.pwmMaxDriver() / 512.f));
 
-    if (inBackoff()) {
+    if (inBackoff() || charger.wireGuard.tripped()) {
         if (!converter.disabled()) converter.disable();
         return;
     }
@@ -535,6 +535,12 @@ void MpptController::telemetry() {
         if (std::isfinite(rc)) {
             point.addField("Rc", rc * 1e3f, 2); // mΩ
             point.addField("Rb", rb * 1e3f, 2);
+        }
+        const auto &wg = charger.wireGuard;
+        if (wg.conf.mode) {
+            point.addField("wf", (int) wg.wf());
+            const float pw = wg.pw();
+            if (std::isfinite(pw)) point.addField("Pw", pw, 2);
         }
     }
 

@@ -58,6 +58,23 @@ public:
         ESP_ERROR_CHECK(err);
     }
 
+    // false when absent or not exactly len bytes
+    bool readBlob(const char *key, void *out, size_t len) {
+        size_t n = len;
+        return nvs_get_blob(my_handle, key, out, &n) == ESP_OK && n == len;
+    }
+
+    bool writeBlob(const char *key, const void *data, size_t len) {
+        return nvs_set_blob(my_handle, key, data, len) == ESP_OK;
+    }
+
+    bool erase(const char *key) {
+        const auto err = nvs_erase_key(my_handle, key);
+        return err == ESP_OK || err == ESP_ERR_NVS_NOT_FOUND;
+    }
+
+    bool tryCommit() { return nvs_commit(my_handle) == ESP_OK; }
+
     // nvs_set_* only stages the write; without this the value is lost on esp_restart().
     void commit() {
         ESP_ERROR_CHECK(nvs_commit(my_handle));

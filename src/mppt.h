@@ -521,6 +521,7 @@ public:
                 return "psu-ov-conflict";
         }
         if (inBackoff()) return "backoff";
+        if (charger.wireGuard.tripped()) return "wire-trip";
         if (ntc.lastFresh() > limits.Temp_max - 3 || !(ucTemp.lastFresh() < limits.Temp_max - 3)) return "temp";
         if (!g_app.psuMode() &&
             !(converter.boost()
@@ -567,6 +568,11 @@ public:
 
         if (ntc.lastFresh() > limits.Temp_max || ucTemp.lastFresh() > limits.Temp_max) {
             ESP_LOGE("mppt", "Temp %.1f (or mcu %.1f) > %.1f°C, shutdown", ntc.last(), ucTemp.last(), limits.Temp_max);
+            return false;
+        }
+
+        if (charger.wireGuard.tripped()) {
+            ESP_LOGE("mppt", "wire fault trip, shutdown (wire-reset to clear)");
             return false;
         }
 
