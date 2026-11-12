@@ -58,6 +58,14 @@ NAT router), sends `ota <url>` to each, then prints a before/after version table
 **Always `-n` first, and `-m <name>` to target, before OTAing `fry`/`flat`** — they're live converters and an OTA
 reboots them into the new image. Confirm versions in the after-table.
 
+**One device over the MQTT console (preferred for fry/flat):** `.venv/bin/python3 etc/ota_mqtt.py --name flat -n`, then
+without `-n` (`--bin` for another image). It reads the broker and credentials from `etc/mqtt.env` (main checkout's as
+fallback), tunnels through `havan-ts` when the broker is not directly reachable, stages the image on the relay with
+`etc/ota-via-relay.sh` when this host cannot serve it, locks onto the exact hostname, sends `ota <url>`, and then checks
+`bootinfo` for the image's version on the other slot with a reset uptime. A failed or silent download is retried once.
+It refuses non-interactively when the running image is still `PENDING_VERIFY`. `fugu_console.py --mqtt` (bare = `$MQTT_HOST`)
+takes its credentials from the same file and returns from `ota` at `OTA Succeed` or a failure line.
+
 **OTA safety net (rollback + boot watchdog).** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` makes a freshly-OTA'd image
 boot as `ESP_OTA_IMG_PENDING_VERIFY`. The app must confirm itself or the bootloader reverts to the previous slot on the
 next reset:

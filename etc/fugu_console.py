@@ -27,6 +27,7 @@ Examples:
     python etc/fugu_console.py --ble-proxy 192.168.1.50  # BLE via ESPHome bluetooth_proxy (by name)
     python etc/fugu_console.py --ble-proxy 192.168.1.50 --address AA:BB:CC:DD:EE:FF  # by MAC
     python etc/fugu_console.py --mqtt 192.168.1.134 --mqtt-port 1882 -c "svc list"   # over MQTT
+    python etc/fugu_console.py --mqtt --name flat -c bootinfo  # broker + credentials from etc/mqtt.env
     python etc/fugu_console.py --mqtt 192.168.1.134 --mqtt-readonly  # passive log monitor (REPL)
     python etc/fugu_console.py -c "svc list"             # run one command, print the reply
     python etc/fugu_console.py --ip 192.168.4.2 -c status -c sensor   # several commands, one connection
@@ -37,8 +38,10 @@ import argparse
 import asyncio
 import glob
 import os
+import queue
 import re
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -46,12 +49,12 @@ import time
 try:  # works both as `python etc/fugu_console.py` and `python -m etc.fugu_console`
     from fugu.transport import (SerialTransport, SocketTransport, BleTransport,
                                 EspHomeBleTransport, MqttTransport)
-    from fugu.console import Console
+    from fugu.console import Console, Reply, REJECT
     from fugu.discover import discover_scope_servers
 except ImportError:
     from etc.fugu.transport import (SerialTransport, SocketTransport, BleTransport,
                                     EspHomeBleTransport, MqttTransport)
-    from etc.fugu.console import Console
+    from etc.fugu.console import Console, Reply, REJECT
     from etc.fugu.discover import discover_scope_servers
 
 # `peek <symbol>` resolver + `sym <pattern>` need the build ELF; the implementation lives in the
@@ -65,14 +68,31 @@ _PORT_GLOBS = [
 ]
 
 
+def etc_file(name):
+    """Path of the gitignored `etc/<name>` (mqtt.env, nat.env); a git worktree without one falls
+    back to the main checkout's copy."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, name)
+    if os.path.exists(path):
+        return path
+    try:
+        common = subprocess.run(["git", "-C", here, "rev-parse", "--path-format=absolute",
+                                 "--git-common-dir"], capture_output=True, text=True,
+                                timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return path
+    alt = os.path.join(os.path.dirname(common), "etc", name) if common else ""
+    return alt if alt and os.path.exists(alt) else path
+
+
 def load_env_file(path=None):
-    """Populate os.environ from a KEY=VALUE file (default `mqtt.env` beside this script).
+    """Populate os.environ from a KEY=VALUE file (default `etc_file("mqtt.env")`).
 
     Shell-set vars win — only keys not already in the environment are filled, so an explicit
     `MQTT_HOST=… fugu_console.py` or exported value overrides the file.
     """
     if path is None:
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mqtt.env")
+        path = etc_file("mqtt.env")
     try:
         with open(path) as f:
             for line in f:
@@ -146,7 +166,7 @@ def nat_endpoints():
     """
     out = []
     if not os.environ.get("NAT_TELNET"):
-        load_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "nat.env"))  # NAT_TELNET
+        load_env_file(etc_file("nat.env"))  # NAT_TELNET
     for ep in (os.environ.get("NAT_TELNET") or "").split(","):
         ep = ep.strip()
         if not ep:
@@ -288,7 +308,7 @@ def scan_ble_proxy(timeout=8.0):
     peripheral in range. None when no `$BLE_PROXY` is set or `aioesphomeapi` isn't installed.
     """
     if not os.environ.get("BLE_PROXY"):
-        load_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "nat.env"))  # BLE_PROXY
+        load_env_file(etc_file("nat.env"))  # BLE_PROXY
     proxy = os.environ.get("BLE_PROXY")
     if not proxy:
         return None
@@ -437,9 +457,9 @@ def discover_devices():
 
 # Per-command timeout overrides (seconds), keyed by command verb (first token). The default 4 s
 # fits most commands; the I2C bus scan is slower, and `ota <url>` blocks until the firmware
-# finishes downloading and reboots (or its 10 s connect timeout fires + recovery) — ~40 s for a
-# successful flash, so 180 s gives comfortable headroom.
-TIMEOUT_OVERRIDE = {"scan-i2c": 12.0, "ota": 180.0, "curl": 15.0, "ping": 8.0, "tcpconnect": 8.0, "run": 180.0}
+# finishes downloading and reboots; run_ota() returns at `OTA Succeed`/a failure line, so this only
+# bounds a download that says nothing (the firmware's own OTA watchdog fires at 300 s).
+TIMEOUT_OVERRIDE = {"scan-i2c": 12.0, "ota": 330.0, "curl": 15.0, "ping": 8.0, "tcpconnect": 8.0, "run": 180.0}
 
 
 def _timeout_for(cmd: str, default: float = 4.0) -> float:
@@ -450,6 +470,75 @@ def _timeout_for(cmd: str, default: float = 4.0) -> float:
         except (IndexError, ValueError):
             return default
     return TIMEOUT_OVERRIDE.get(verb, default)
+
+
+_OTA_PROGRESS_RE = re.compile(r"Download Progress:\s*(\d+)\s*%")
+_OTA_FAIL = ("Firmware upgrade failed", "main: ota:", "Ota timeout", "HTTP_UPDATE_FAILED")
+
+
+def is_app_ota(cmd: str) -> bool:
+    """`ota <url>` (ends in a reboot on success), not `ota bootloader <url>` (ends in OK/ERR)."""
+    head = cmd.split()
+    return len(head) >= 2 and head[0] == "ota" and head[1] != "bootloader"
+
+
+def classify_ota_line(line: str, cmd: str):
+    """'succeeded', 'failed' or None for one console line seen while `cmd` (an app OTA) runs."""
+    if "OTA Succeed" in line:
+        return "succeeded"
+    if "ERR: " + cmd in line or REJECT in line or any(s in line for s in _OTA_FAIL):
+        return "failed"
+    return None
+
+
+def run_ota(con: Console, cmd: str, timeout: float = 330.0, silence: float | None = None,
+            echo=None):
+    """Send an app `ota <url>` and wait for its outcome instead of an OK/ERR that never comes.
+
+    Returns (outcome, lines, pct): outcome is 'succeeded' (`OTA Succeed`, the device reboots),
+    'failed' (a failure line), 'dropped' (link went down), 'silent' (no line for `silence` s) or
+    'timeout'; pct is the last download progress seen (-1 if none).
+    """
+    got: "queue.Queue[str]" = queue.Queue()
+    prev = con.on_line
+
+    def tap(line):
+        got.put(line)
+        if prev:
+            prev(line)
+
+    if getattr(con, "_needs_banner", False):  # same telnet handshake settle as Console.command()
+        con._needs_banner = False
+        con.wait_for_banner()
+    con.on_line = tap
+    lines, pct = [], -1
+    try:
+        con.drain()
+        con.write(cmd + con.eol)
+        t0 = last = time.monotonic()
+        while True:
+            now = time.monotonic()
+            if now - t0 > timeout:
+                return "timeout", lines, pct
+            if silence and now - last > silence:
+                return "silent", lines, pct
+            try:
+                line = got.get(timeout=0.5)
+            except queue.Empty:
+                if not con.is_alive():
+                    return "dropped", lines, pct
+                continue
+            last = time.monotonic()
+            lines.append(line)
+            if echo:
+                echo(line)
+            if m := _OTA_PROGRESS_RE.search(line):
+                pct = int(m.group(1))
+            if outcome := classify_ota_line(line, cmd):
+                return outcome, lines, pct
+    finally:
+        con.on_line = prev
+        con.drain()
 
 
 _PEEK_TYPED_RE = re.compile(r"peek\s+0x[0-9a-fA-F]+\s+=\s+0x([0-9a-fA-F]+)")
@@ -572,6 +661,15 @@ def dispatch_command(con: Console, cmd: str, elf_path: str | None):
             print(f"peek: {e}", file=sys.stderr)
             return
     timeout = _timeout_for(cmd)
+    if is_app_ota(cmd):
+        outcome, lines, _ = run_ota(con, cmd, timeout=timeout, echo=print)
+        if outcome in ("timeout", "silent"):
+            print(f"({cmd}: no outcome within {timeout:g} s)", file=sys.stderr)
+        # the `App:` line `ota` prints is the version running BEFORE the update
+        print(f"(ota {outcome}; check the running version with `bootinfo` after the reboot)",
+              file=sys.stderr)
+        return Reply(lines, ok=outcome == "succeeded", rejected=outcome == "failed",
+                     timed_out=outcome in ("timeout", "silent"), dropped=outcome == "dropped")
     reply = con.command(cmd, timeout=timeout, echo=print)
     if reply.dropped:
         print(f"({cmd}: connection closed before the reply ended)", file=sys.stderr)
@@ -863,7 +961,10 @@ def main():
     ap.add_argument("--proxy-password", default=os.environ.get("ESPHOME_API_PASSWORD", ""),
                     help="ESPHome API password for --ble-proxy (default: $ESPHOME_API_PASSWORD)")
     ap.add_argument("--ip", help="use TCP/telnet to this address instead of serial")
-    ap.add_argument("--mqtt", metavar="BROKER", help="use MQTT via this broker host instead of serial")
+    ap.add_argument("--mqtt", metavar="BROKER", nargs="?", const=os.environ.get("MQTT_HOST"),
+                    help="use MQTT via this broker host instead of serial (bare --mqtt: $MQTT_HOST); "
+                         "port and credentials default to $MQTT_PORT/$MQTT_USER/$MQTT_PASS from "
+                         "etc/mqtt.env (the main checkout's when a worktree has none)")
     ap.add_argument("--mqtt-port", type=int, default=int(os.environ.get("MQTT_PORT", "1883")),
                     help="MQTT broker port (default: $MQTT_PORT or 1883)")
     ap.add_argument("--mqtt-user", default=os.environ.get("MQTT_USER", "pv"), help="MQTT username")
@@ -895,6 +996,9 @@ def main():
 
     if len(sys.argv) == 1:  # no arguments: search every transport, don't connect
         return discover_devices()
+    if "--mqtt" in sys.argv and not args.mqtt:
+        print("--mqtt without a broker needs $MQTT_HOST (etc/mqtt.env)", file=sys.stderr)
+        return 1
 
     if args.tele and not args.ble:
         print("--tele requires --ble", file=sys.stderr)
@@ -926,6 +1030,8 @@ def main():
                 if delimit:
                     print(f"=== {cmd} ===")
                 reply = dispatch_command(con, cmd, elf_path)
+                if reply is not None and is_app_ota(cmd):
+                    return 0 if reply.ok or reply.dropped else 1  # the device reboots on success
                 if reply is not None and reply.dropped:
                     # a reboot is the expected end of ota/restart
                     return 0 if cmd.split()[0] in ("ota", "restart") else 1
