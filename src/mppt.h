@@ -773,9 +773,9 @@ public:
             if (converter.getDutyCycle() > 0.33f &&
                 !((iDcm = converter.dcmCurrent(vi, vo)) < BflowOpenMaxDcmCurrent)) {
                 // a sweep at the ratio limit with <0.05 A has no more power to find: end it, not a fault.
-                // At dawn the PV collapses to the battery voltage, so Vin may read up to 10% below Vout
+                // Vin can't really sit below Vout here; the 5% margin covers Vin sensor error at PV collapse
                 if (_sweeping && std::isnan(iDcm) && !converter.boost() && !converter.forcedPwm_() && vo > 1.f &&
-                    vi > 0.9f * vo && sensorPhysicalI->ewm.avg.get() < 0.05f && sensorPhysicalI->last < 0.05f) {
+                    vi > 0.95f * vo && sensorPhysicalI->ewm.avg.get() < 0.05f && sensorPhysicalI->last < 0.05f) {
                     ESP_LOGI("mppt", "Sweep at D=%.2f with open backflow switch, ending it", converter.getDutyCycle());
                     _stopSweep(MpptControlMode::Sweep, -1, nullptr);
                     if (converter.disabled()) { // no-MPP backoff

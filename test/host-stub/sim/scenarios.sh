@@ -19,6 +19,11 @@ run off-0.61_n0.01 isc=0.1 voc=66 pv_k=0.7 vbat=25.6 iout_off=-0.61 noise_iout=0
 run dawn-collapse_0.01 isc=0.01 voc=66 pv_k=0.7 vbat=25.6 noise_iout=0.01 vin_k=0.9
 # a lying current sensor in bright light must still trip
 run iout-lies_3 isc=3 voc=66 pv_k=0.7 vbat=25.6 iout_k=0.01
+run dawn-ramp_0.005-1 isc=0.005 isc_end=1 voc=66 pv_k=0.7 vbat=25.6 noise_iout=0.01 vin_k=0.9
+# Vin reading far below Vout is not plausible: must trip
+run vin-low_0.8 isc=0.01 voc=66 pv_k=0.7 vbat=25.6 noise_iout=0.01 vin_k=0.8
+# double fault inside the band (current reads 10x low, Vin 10% low): ~0.2 W in the body diode, accepted
+run iout-lies-band_0.3 isc=0.3 voc=66 pv_k=0.7 vbat=25.6 iout_k=0.1 vin_k=0.9
 wait
 for f in "$D"/*.old; do
     n=$(basename "$f" .old)
