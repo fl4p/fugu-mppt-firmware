@@ -16,7 +16,7 @@ SRC=/other/worktree/src test/host-stub/sim/build.sh /tmp/sim-x   # firmware from
 
 Arguments (`key=value`): `isc voc pv_k` (PV curve), `isc_end` (linear Isc ramp over the run),
 `vbat r_bat` (battery), `L` (coil, H; also coil.conf L0), `noise_iout noise_vin noise_vout`
-(Gaussian sigma per ADC sample), `iout_off` (raw Iout offset, removed by the sweep-start
+(Gaussian sigma per ADC sample), `vin_k`, `iout_k` (Vin/Iout sensor gain error), `iout_off` (raw Iout offset, removed by the sweep-start
 calibration), `sps` (ADC rate, default 500), `hours`, `seed`, `v` (0 summary, 1 warnings + sweep and
 backoff lines, 2 everything incl. a 3 s status line). `<file>.<key>=<value>` overrides a conf key,
 e.g. `tracker.sweep_speed=8` or `sensor.filt_len=10`.

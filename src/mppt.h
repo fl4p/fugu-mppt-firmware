@@ -772,9 +772,10 @@ public:
             const float vi = sensors.Vin->ewm.avg.get(), vo = sensors.Vout->ewm.avg.get();
             if (converter.getDutyCycle() > 0.33f &&
                 !((iDcm = converter.dcmCurrent(vi, vo)) < BflowOpenMaxDcmCurrent)) {
-                // a sweep at the ratio limit with <0.05 A has no more power to find: end it, not a fault
+                // a sweep at the ratio limit with <0.05 A has no more power to find: end it, not a fault.
+                // At dawn the PV collapses to the battery voltage, so Vin may read up to 10% below Vout
                 if (_sweeping && std::isnan(iDcm) && !converter.boost() && !converter.forcedPwm_() && vo > 1.f &&
-                    vi > vo && sensorPhysicalI->ewm.avg.get() < 0.05f && sensorPhysicalI->last < 0.05f) {
+                    vi > 0.9f * vo && sensorPhysicalI->ewm.avg.get() < 0.05f && sensorPhysicalI->last < 0.05f) {
                     ESP_LOGI("mppt", "Sweep at D=%.2f with open backflow switch, ending it", converter.getDutyCycle());
                     _stopSweep(MpptControlMode::Sweep, -1, nullptr);
                     if (converter.disabled()) { // no-MPP backoff
@@ -785,7 +786,7 @@ public:
                     converter.pwmPerturb((int16_t) ((int) targetDutyCycle - (int) converter.getCtrlOnPwmCnt()));
                 } else {
                     if (!converter.disabled())
-                        ESP_LOGE("MPPT", "High duty cycle with open backflow switch! (Idcm=%.2f)", iDcm);
+                        ESP_LOGE("MPPT", "High duty cycle with open backflow switch! (Idcm=%.2f Vin=%.2f Vout=%.2f)", iDcm, vi, vo);
                     shutdownDcdc("highD-bflowOpen");
                     return false;
                 }

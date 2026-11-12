@@ -108,7 +108,7 @@ void LCD::displayMessageF(const std::string &, uint16_t, ...) {}
 // ---- scenario --------------------------------------------------------------------------------
 struct Scn {
     float isc = 0.1f, voc = 66.f, pvK = 0.7f, vbat = 25.6f, rbat = 0.05f, L = 80e-6f;
-    float nIout = 0.f, nVin = 0.f, nVout = 0.f, ioutOff = 0.f;
+    float nIout = 0.f, nVin = 0.f, nVout = 0.f, ioutOff = 0.f, vinK = 1.f, ioutK = 1.f;
     float hours = 1.f, sps = 500.f;
     float iscEnd = NAN; // linear irradiance ramp to this Isc over the run
     uint32_t seed = 1;
@@ -136,9 +136,9 @@ public:
     float getInputImpedance(uint8_t) override { return 1e9f; }
     float getSample() override {
         switch (ch_) {
-            case 0: return g_vconv.getVin() + S.nVin * nd_(rng_);
+            case 0: return g_vconv.getVin() * S.vinK + S.nVin * nd_(rng_);
             case 1: return g_vconv.getVout() + S.nVout * nd_(rng_);
-            case 2: return g_vconv.getIoutAvg() + S.ioutOff + S.nIout * nd_(rng_);
+            case 2: return g_vconv.getIoutAvg() * S.ioutK + S.ioutOff + S.nIout * nd_(rng_);
             case 4: return 1.65f; // NTC 25 C
             default: return 0.f;
         }
@@ -352,7 +352,7 @@ int main(int argc, char **argv) {
         float seed = (float) S.seed, verb = (float) g_verbose;
         argf(a, "isc", S.isc); argf(a, "voc", S.voc); argf(a, "pv_k", S.pvK); argf(a, "vbat", S.vbat);
         argf(a, "r_bat", S.rbat); argf(a, "L", S.L); argf(a, "noise_iout", S.nIout); argf(a, "noise_vin", S.nVin);
-        argf(a, "noise_vout", S.nVout); argf(a, "iout_off", S.ioutOff); argf(a, "hours", S.hours);
+        argf(a, "noise_vout", S.nVout); argf(a, "vin_k", S.vinK); argf(a, "iout_k", S.ioutK); argf(a, "iout_off", S.ioutOff); argf(a, "hours", S.hours);
         argf(a, "sps", S.sps); argf(a, "isc_end", S.iscEnd); argf(a, "seed", seed); argf(a, "v", verb);
         S.seed = (uint32_t) seed;
         g_verbose = (int) verb;

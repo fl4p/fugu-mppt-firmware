@@ -15,6 +15,10 @@ run dusk_0.01 isc=0.01 voc=66 pv_k=0.7 vbat=25.6
 run dusk_0.01_n0.01 isc=0.01 voc=66 pv_k=0.7 vbat=25.6 noise_iout=0.01
 run ramp_0.15-0.005_n0.01 isc=0.15 isc_end=0.005 voc=66 pv_k=0.7 vbat=25.6 noise_iout=0.01
 run off-0.61_n0.01 isc=0.1 voc=66 pv_k=0.7 vbat=25.6 iout_off=-0.61 noise_iout=0.01
+# dawn: Vin collapses to ~Vout (the model's input clamp stops ~9% above it, vin_k=0.9 stands in)
+run dawn-collapse_0.01 isc=0.01 voc=66 pv_k=0.7 vbat=25.6 noise_iout=0.01 vin_k=0.9
+# a lying current sensor in bright light must still trip
+run iout-lies_3 isc=3 voc=66 pv_k=0.7 vbat=25.6 iout_k=0.01
 wait
 for f in "$D"/*.old; do
     n=$(basename "$f" .old)
