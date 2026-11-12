@@ -55,6 +55,13 @@ SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" idf.py -B build-vconv
 
 If the generated `sdkconfig` looks wrong, delete it and rebuild.
 
+The defaults only seed options that the existing `sdkconfig` does not set yet, so a changed or newly added default
+is ignored in a build directory that already has one. Configure then prints a warning listing each key whose
+`sdkconfig` value contradicts the defaults chain (`sdkconfig.defaults*`, their `.<target>` variants and the appended
+fragments), with the fix: delete that `sdkconfig` and reconfigure. A fresh `sdkconfig` can contradict a default by
+itself, when another option `select`s the symbol or the default value is invalid; those keys are recorded in
+`<sdkconfig>.fugu-baseline` when the file is generated and are not reported.
+
 :::warning One sdkconfig per variant
 `-B` only moves the build directory. Without `-DSDKCONFIG` the generated `sdkconfig` stays in the project root and
 is shared by every build dir, so building a different target or variant rewrites it. Pass
@@ -70,7 +77,7 @@ its own project root.
 | Directory | Command | Purpose |
 |---|---|---|
 | `build/` | `idf.py build` | Default, ESP32-S3 |
-| `build-esp32/` | `idf.py -B build-esp32 set-target esp32`, then `idf.py -B build-esp32 build` | Classic ESP32 |
+| `build-esp32/` | `IDF_TARGET=esp32 idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig build` | Classic ESP32 |
 | `build-tests/` | `RUN_TESTS=1 idf.py -B build-tests build` | Unity test runner, see [Testing](testing.md) |
 | `build-<variant>/` | `SDKCONFIG_DEFAULTS=… idf.py -B build-<variant> -D SDKCONFIG=build-<variant>/sdkconfig build` | Any other flag combination |
 

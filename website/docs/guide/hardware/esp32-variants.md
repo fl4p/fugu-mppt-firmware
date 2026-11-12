@@ -23,12 +23,14 @@ in `build-esp32/`:
 idf.py set-target esp32s3 && idf.py build        # ESP32-S3: build/ + ./sdkconfig
 
 # classic ESP32: build-esp32/ + build-esp32/sdkconfig
-idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig set-target esp32
-idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig build
-idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig -p $ESPPORT flash
+IDF_TARGET=esp32 idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig build
+IDF_TARGET=esp32 idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig -p $ESPPORT flash
 ```
 
-Pass the same `-B` and `-D SDKCONFIG=` pair to every classic-ESP32 command. Running `set-target` on a directory to
+Pass the same `IDF_TARGET=esp32` prefix and `-B`/`-D SDKCONFIG=` pair to every classic-ESP32 command. The prefix
+selects the target of a new build directory, so no `set-target` is needed, and it overrides an `IDF_TARGET` your shell
+may export: ESP-IDF refuses both `-D IDF_TARGET=esp32` and an `esp32` build directory while the environment says
+`esp32s3`. Running `set-target` on a directory to
 switch it back and forth regenerates `sdkconfig` and forces a full rebuild.
 
 On a blank chip, use `flash`, because `app-flash` writes no bootloader or partition table. `flash` also writes
