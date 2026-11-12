@@ -31,7 +31,7 @@ These commands manage the network, firmware updates, the clock, and resets.
 | `wifi-add <ssid>:<password>` | Store a new Wi-Fi network. |
 | `ip` | Show the local IP address. |
 | `hostname [name]` (alias `hn`) | Without an argument print the hostname; with one set it (persisted in NVS, applied on next boot). |
-| `ota <url>` | Download and flash a new app image from an HTTP(S) URL. Halts the converter and ADC during the update. |
+| `ota <url>` | Download and flash a new app image from an HTTP(S) URL. Halts the converter and ADC during the update. On failure it prints `ota: update failed: <error> at <n> % (<bytes>/<size> B) after <t> s`, restores the previous mode and replies `ERR`; these lines are replayed to a console (MQTT, telnet) that reconnects within 120 s. |
 | `ota bootloader <url>` | Download a bootloader image, verify it and write it to the bootloader region; active after the next reset. Requires conversion stopped with `dc 0`. See [bootloader update](../guide/updating/ota-wifi.md#bootloader-update). |
 | `set-time <epoch_ms>` | Set the wall clock without NTP (epoch milliseconds; sets TZ to CET). For BLE-only telemetry; SNTP still runs when WiFi comes up and may step the clock. |
 | `tele-ble [0\|1]` *(needs `CONFIG_FUGU_WITH_BLE_TELE`)* | Start/stop the BLE telemetry stream on the NUS TELE characteristic (binary wire, tamp-compressed). Requires the `ble` service running, a connected BLE client, a set clock (`set-time`), `tele.conf ble=1`, and either the `tele` service stopped or `tele.conf binary=1` + `svc rs tele`; no argument prints status + dropped bytes. Host side: `etc/influx_binary_proxy.py --ble` or `etc/fugu_console.py --ble --tele`. |

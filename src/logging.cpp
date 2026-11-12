@@ -5,6 +5,7 @@
 #include <ESPTelnet.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>   // pcTaskGetName (wifi-task bypass in vprintf_)
+#include <esp_timer.h>
 
 #include "etc/readerwriterqueue.h"
 
@@ -67,6 +68,21 @@ static void bootLogCapture(const char *str, int len) {
     portEXIT_CRITICAL(&logCbMux);
 }
 
+// Retained lines: a result that must survive a sink outage (e.g. the MQTT session dropping with the
+// same network fault that failed an OTA). Replayed to every sink attaching within kRetainUs.
+static constexpr int64_t kRetainUs = 120 * 1000000LL;
+static char s_retain[256];
+static size_t s_retainLen = 0;
+static int64_t s_retainUs = 0;
+
+static size_t copyRetained(char *out) {
+    portENTER_CRITICAL(&logCbMux);
+    size_t n = esp_timer_get_time() - s_retainUs < kRetainUs ? s_retainLen : 0;
+    memcpy(out, s_retain, n);
+    portEXIT_CRITICAL(&logCbMux);
+    return n;
+}
+
 // Copy the sink table into `out` (must hold kMaxLogCallbacks) under the lock; returns the count.
 static int snapshotLogCallbacks(LogCallback *out) {
     portENTER_CRITICAL(&logCbMux);
@@ -104,6 +120,30 @@ void addLogCallback(LogCallback callback, bool replayBootLog) {
     // Replay the captured boot backlog to the freshly-attached sink (outside the lock; capture is
     // frozen so s_bootLog is stable). One call = one message for MQTT.
     if (replayLen) callback(s_bootLog, (uint16_t) replayLen);
+    if (!dup && !full) {
+        char r[sizeof(s_retain)];
+        if (size_t n = copyRetained(r)) callback(r, (uint16_t) n);
+    }
+}
+
+void logRetained(const char *fmt, ...) {
+    char b[sizeof(s_retain)];
+    va_list args;
+    va_start(args, fmt);
+    int l = vsnprintf(b, sizeof(b) - 1, fmt, args);
+    va_end(args);
+    if (l <= 0) return;
+    if (l > (int) sizeof(b) - 2) l = sizeof(b) - 2;
+    b[l++] = '\n';
+    b[l] = 0;
+    const auto now = esp_timer_get_time();
+    portENTER_CRITICAL(&logCbMux);
+    if (now - s_retainUs >= kRetainUs || s_retainLen + l > sizeof(s_retain)) s_retainLen = 0;
+    memcpy(s_retain + s_retainLen, b, l);
+    s_retainLen += l;
+    s_retainUs = now;
+    portEXIT_CRITICAL(&logCbMux);
+    printf_mux("%s", b);
 }
 
 void removeLogCallback(LogCallback callback) {
@@ -324,7 +364,16 @@ static int vprintf_(const char *fmt, va_list argptr) {
     return vprintf_mux(fmt, argptr);
 }
 
+void logCmdResult(bool ok, const char *cmd, int64_t startUs) {
+    if (esp_timer_get_time() - startUs > 5000000) logRetained("%s: %s", ok ? "OK" : "ERR", cmd);
+    else UART_LOG("%s: %s", ok ? "OK" : "ERR", cmd);
+}
+
 void set_logging_telnet(ESPTelnet *telnet) {
+    if (telnet && !log_telnet) {
+        char r[sizeof(s_retain)];
+        if (size_t n = copyRetained(r)) telnet->write((uint8_t *) r, n);
+    }
     log_telnet = telnet;
     ESP_LOGI("log", "%s telnet logging", telnet ? "Enabled" : "Disabled");
 }

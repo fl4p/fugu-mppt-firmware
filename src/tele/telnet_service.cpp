@@ -22,8 +22,8 @@ void telnetDispatchCommandAsync(const char *line) {
         String inp(cmd.c_str());
         inp.trim();
         if (!inp.length()) return;
-        bool ok = handleCommand(inp);
-        UART_LOG("%s: %s", ok ? "OK" : "ERR", inp.c_str());
+        const auto t0 = esp_timer_get_time();
+        logCmdResult(handleCommand(inp), inp.c_str(), t0);
     });
 }
 
