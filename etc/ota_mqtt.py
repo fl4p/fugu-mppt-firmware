@@ -210,6 +210,9 @@ def parse_hostname(lines):
 def confirm(prompt, args):
     if args.dry_run:
         return True
+    if args.yes:
+        print(f'{prompt}: accepted (--yes)')
+        return True
     if not sys.stdin.isatty():
         print(f'aborting: {prompt} (refused non-interactively)')
         return False
@@ -310,6 +313,8 @@ def main():
                     help='s to wait for bootinfo after the download ended (120)')
     ap.add_argument('--no-driver-check', action='store_true',
                     help='skip the gate-driver probe (a no-arg `pwm-freq`)')
+    ap.add_argument('--yes', action='store_true',
+                    help='accept the guard prompts (plant-sim image, unconfirmed running image, ...)')
     ap.add_argument('--allow-driver-change', action='store_true',
                     help='push even if the gate driver differs or is unverified')
     args = ap.parse_args()
