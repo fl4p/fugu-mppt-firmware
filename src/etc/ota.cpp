@@ -28,7 +28,7 @@
 #include "sha256.h"
 #include "util.h"
 
-constexpr auto OTA_TIMEOUT_SECONDS = 2 * 60;
+constexpr auto OTA_TIMEOUT_SECONDS = 5 * 60;
 
 void systemRestart();
 void consoleFlush(); // push progress over a buffered console (BLE) during the blocking download
