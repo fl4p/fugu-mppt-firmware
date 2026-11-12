@@ -121,7 +121,13 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
         return LinearTransform{(Rh + rl) / rl, 0.f};
     };
 
+#if WITH_VCONV
+    // a separate sim sensor map keeps a real board's sensor.conf untouched
+    const bool simConf = (bool) ConfFile{"/littlefs/conf/sensor.vconv.conf"};
+    ConfFile sensConf{simConf ? "/littlefs/conf/sensor.vconv.conf" : "/littlefs/conf/sensor.conf"};
+#else
     ConfFile sensConf{"/littlefs/conf/sensor.conf"};
+#endif
 
     if (!sensConf) {
         throw std::runtime_error("no sensor conf");

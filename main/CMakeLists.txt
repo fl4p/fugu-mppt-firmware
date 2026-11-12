@@ -115,8 +115,11 @@ else ()
     set(VCONV_SRC "")
 endif ()
 
+# profiling builds keep the RT path in flash so rtprof sees all of it
 if (CONFIG_FUGU_WITH_RTPROF)
     set(RTPROF_SRC "../src/etc/rtprof.cpp")
+else ()
+    set(RT_IRAM_LF "rt_iram.lf")
 endif ()
 
 idf_component_register(SRCS
@@ -138,7 +141,7 @@ idf_component_register(SRCS
         ${BLE_SRC}
         ${TELE_CORE_SRC}
         INCLUDE_DIRS "." "../src"
-        LDFRAGMENTS "linker.lf" "rt_iram.lf"
+        LDFRAGMENTS "linker.lf" ${RT_IRAM_LF}
         REQUIRES
         # if we start to list components here we need to list them all
         # put dependencies in component/Arduion-LiquidCrystal as only needed for linking
