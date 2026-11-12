@@ -24,6 +24,9 @@
 #include <esp_flash.h>
 #include <esp_chip_info.h>
 #include "etc/flash_probe.h"
+#if WITH_RTPROF
+#include "etc/rtprof.h"
+#endif
 #ifdef CONFIG_BOOTGUARD_ENABLE
 #include "bootguard.h"
 #endif
@@ -2231,6 +2234,12 @@ void setupCli() {
     cli.addCommand("sweep", cmdSweep);
     cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [status|abort]
     cli.addCommand("reset-lag", cmdResetLag);
+#if WITH_RTPROF
+    cli.addCommand("rtprof", [](cmd *c) {
+        if (Command(c).countArgs() && Command(c).getArg(0).getValue() == "clear") rtprofClear();
+        else rtprofDump();
+    });
+#endif
     cli.addCommand("scan-i2c", cmdScanI2c);
     cli.addBoundlessCmd("ls", cmdLs);   // ls [path] (littlefs)
     cli.addBoundlessCmd("cat", cmdCat); // cat <file> (littlefs)

@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Map an `rtprof` dump (console log) to functions: samples, size, archive(object).
+
+  etc/rtprof_map.py <log> <elf> [--map <map>] [--min N]
+"""
+import argparse, bisect, collections, os, re, subprocess, sys
+
+ap = argparse.ArgumentParser()
+ap.add_argument('log')
+ap.add_argument('elf')
+ap.add_argument('--map')
+ap.add_argument('--min', type=int, default=1, help='minimum samples per function')
+ap.add_argument('--nm', default='xtensa-esp32s3-elf-nm')
+a = ap.parse_args()
+
+pcs = collections.Counter()
+for l in open(a.log, errors='replace'):
+    i = l.find('rtp ')
+    if i < 0:
+        continue
+    for m in re.finditer(r'([0-9a-f]{8}):(\d+)', l[i:]):
+        pcs[int(m.group(1), 16)] += int(m.group(2))
+if not pcs:
+    sys.exit('no rtp lines')
+
+syms = []
+for l in subprocess.run([a.nm, '-S', '--defined-only', a.elf], capture_output=True, text=True, check=True).stdout.splitlines():
+    p = l.split()
+    if len(p) == 4 and p[2] in 'tTwW':
+        syms.append((int(p[0], 16), int(p[1], 16), p[3]))
+syms.sort()
+starts = [s[0] for s in syms]
+
+obj = {}
+mp = a.map or os.path.splitext(a.elf)[0] + '.map'
+if os.path.exists(mp):
+    cur = None
+    for l in open(mp, errors='replace'):
+        m = re.match(r'^ \.(?:text|literal)\.(\S+)\s*$', l)
+        if m:
+            cur = m.group(1)
+            continue
+        m = re.match(r'^ \.(?:text|literal)\.(\S+)\s+0x[0-9a-f]+\s+0x[0-9a-f]+\s+(\S+)', l)
+        if m:
+            obj.setdefault(m.group(1), m.group(2))
+            cur = None
+            continue
+        if cur:
+            m = re.match(r'^\s+0x[0-9a-f]+\s+0x[0-9a-f]+\s+(\S+)', l)
+            if m:
+                obj.setdefault(cur, m.group(1))
+            cur = None
+
+fn = collections.Counter()
+info = {}
+unk = 0
+for pc, n in pcs.items():
+    i = bisect.bisect_right(starts, pc - 3) - 1  # return address points past the call
+    if i < 0 or not (syms[i][0] <= pc - 3 < syms[i][0] + max(syms[i][1], 1)):
+        unk += n
+        continue
+    s = syms[i]
+    fn[s[2]] += n
+    info[s[2]] = s
+
+rows = [(n, info[f][1], f, obj.get(f, '?')) for f, n in fn.items() if n >= a.min]
+rows.sort(key=lambda r: -r[0])
+tot = sum(r[1] for r in rows)
+print(f'{len(rows)} functions, {tot} B ({tot / 1024:.1f} KB) text; unmapped samples {unk}')
+for n, size, f, o in rows:
+    print(f'{n:8d} {size:6d}  {o}  {f}')

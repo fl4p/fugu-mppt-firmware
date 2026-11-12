@@ -245,7 +245,7 @@ static uint8_t asRun(FlashSusProbe &r, uint32_t sector) {
     if (ms > 2000) return AsSlow;
     if (n < 10 || rd.nE < 10 * AS_BURST) return AsNoOverlap;
     if (!asVerify(rd, run->address)) return AsData;
-    if (stall > 5000) return AsStall;
+    if (stall > 1000) return AsStall;
     uint32_t b[64];
     for (uint32_t o = 0; o < 0x1000; o += sizeof(b)) {
         if (esp_flash_read(nullptr, b, sector + o, sizeof(b)) != ESP_OK) return AsNotErased;

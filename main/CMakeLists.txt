@@ -115,6 +115,10 @@ else ()
     set(VCONV_SRC "")
 endif ()
 
+if (CONFIG_FUGU_WITH_RTPROF)
+    set(RTPROF_SRC "../src/etc/rtprof.cpp")
+endif ()
+
 idf_component_register(SRCS
         ${MAIN_SRC}
         ${VCONV_SRC}
@@ -128,6 +132,7 @@ idf_component_register(SRCS
         "../src/conf_hash.cpp"
         "../src/etc/rt.cpp"
         "../src/etc/flash_probe.cpp"
+        ${RTPROF_SRC}
         "../src/math/float16.cpp"
         ${NETW_SRC}
         ${BLE_SRC}
@@ -226,6 +231,10 @@ endif ()
 # EXCLUDE_COMPONENTS the esp32-semihosting-profiler component so its flash + ~8 KB .bss is dropped.
 if (CONFIG_FUGU_WITH_SPROFILER)
     component_compile_definitions("WITH_SPROFILER=1")
+endif ()
+
+if (CONFIG_FUGU_WITH_RTPROF)
+    component_compile_definitions("WITH_RTPROF=1")
 endif ()
 
 if (CONFIG_FUGU_WITH_MEASURE_COIL)

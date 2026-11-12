@@ -75,6 +75,9 @@
 
 #include "etc/rt_core_check.h"
 #include "etc/flash_probe.h"
+#if WITH_RTPROF
+#include "etc/rtprof.h"
+#endif
 #include <fugu_flash_chip.h>
 
 
@@ -599,6 +602,9 @@ __attribute__((cold)) void setup() {
 
     if (!g_app.setupErr) {
         xTaskCreatePinnedToCore(loopRT, "loopRt", 4096 * 4, NULL, RT_PRIO, NULL, RT_CORE);
+#if WITH_RTPROF
+        rtprofStart(2000);
+#endif
     } else {
         led.setHexShort(0x200);
     }

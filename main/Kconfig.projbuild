@@ -185,6 +185,13 @@ config FUGU_WITH_SPROFILER
         Compile the semihosting sampling profiler (only useful with OpenOCD attached). When off the
         whole esp32-semihosting-profiler component is excluded (flash + ~8 KB .bss).
 
+config FUGU_WITH_RTPROF
+    bool "Core-1 call-stack sampler (rtprof command)"
+    default n
+    help
+        Debug build: a 2 kHz timer ISR on core 1 counts the flash-resident return addresses of the
+        interrupted stack; `rtprof` dumps them, `rtprof clear` resets. Map with etc/rtprof_map.py.
+
 config FUGU_WITH_MEASURE_COIL
     bool "On-device coil inductance measurement"
     default n
