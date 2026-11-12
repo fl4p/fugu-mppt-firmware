@@ -607,9 +607,11 @@ public:
             // self-clears), then report AdcError when still stale (a truly dead DMA -> backoff +
             // resetPeripherals), independent of hd so the safety halt is preserved.
             if (hd) {
-                adc->read([&](uint8_t ch, float v) {
-                    auto cr = _addSensorSample(state.sensorByCh[ch], v);
-                    if (cr > calibRes) calibRes = cr;
+                // one-pointer capture: fits std::function's local buffer, no heap alloc per read
+                struct { ADC_Sampler *s; AdcState *st; UpdateRet *r; } cx{this, &state, &calibRes};
+                adc->read([c = &cx](uint8_t ch, float v) {
+                    auto cr = c->s->_addSensorSample(c->st->sensorByCh[ch], v);
+                    if (cr > *c->r) *c->r = cr;
                 });
                 rtcount("adc.update.read");
             }

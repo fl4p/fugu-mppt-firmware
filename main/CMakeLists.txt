@@ -138,7 +138,7 @@ idf_component_register(SRCS
         ${BLE_SRC}
         ${TELE_CORE_SRC}
         INCLUDE_DIRS "." "../src"
-        LDFRAGMENTS "linker.lf"
+        LDFRAGMENTS "linker.lf" "rt_iram.lf"
         REQUIRES
         # if we start to list components here we need to list them all
         # put dependencies in component/Arduion-LiquidCrystal as only needed for linking
