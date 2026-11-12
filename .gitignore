@@ -16,6 +16,7 @@ web-flash/*.bin
 dependencies.lock
 
 /sdkconfig
+/sdkconfig.fugu-baseline
 sdkconfig.old
 sdkconfig.bak
 

@@ -1,4 +1,7 @@
-# Source me (bash or zsh): `. ./idf-export.sh`. Works from the main checkout and any git worktree.
+# Source me (bash or zsh): `. ./idf-export.sh [target]`. Works from the main checkout and any git worktree.
+#
+# IDF_TARGET: the target argument (`. ./idf-export.sh esp32`), else an IDF_TARGET already exported, else esp32s3.
+# (`IDF_TARGET=esp32 . ./idf-export.sh` does not stick: a prefix assignment on `.` is undone when it returns.)
 #
 # ESP-IDF location, first match wins:
 #   $FUGU_IDF_PATH                      explicit IDF directory
@@ -34,7 +37,8 @@ if [ -z "$_fugu_idf" ]; then
     echo "idf-export.sh: ESP-IDF '${FUGU_IDF:-idf6.0.3}' not found in $_fugu_main/../../esp;" \
          "set FUGU_IDF_PATH=<idf dir> or FUGU_ESP_DIR=<dir with idf versions>" >&2
 else
-    export IDF_TARGET=esp32s3
+    case "${1:-}" in esp32*) IDF_TARGET=$1 ;; esac
+    export IDF_TARGET=${IDF_TARGET:-esp32s3}
     deactivate 2>/dev/null || true
     . "$_fugu_idf/export.sh"
 
@@ -47,6 +51,6 @@ else
         ESPPORT=$(find /dev -maxdepth 1 \( -name 'cu.usbmodem*' -o -name 'cu.usbserial*' \) 2>/dev/null | sort | head -n1)
         [ -n "$ESPPORT" ] && export ESPPORT
     fi
-    echo "IDF: $_fugu_idf  port: ${ESPPORT:-none}"
+    echo "IDF: $_fugu_idf  target: $IDF_TARGET  port: ${ESPPORT:-none}"
 fi
 unset _fugu_src _fugu_root _fugu_main _fugu_idf _fugu_prev _d

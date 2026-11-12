@@ -20,7 +20,7 @@ first; without them CMake stops with "Submodules are not checked out".
 
 ```bash
 git submodule update --init --recursive   # once per fresh clone/worktree
-. ./idf-export.sh          # sources ESP-IDF, sets IDF_TARGET=esp32s3, sets $ESPPORT to the first USB port unless already set
+. ./idf-export.sh          # sources ESP-IDF, sets IDF_TARGET (arg `esp32`, else an exported IDF_TARGET, else esp32s3), sets $ESPPORT to the first USB port unless already set
 idf.py set-target esp32s3  # only needed once per build dir
 idf.py build               # feature flags live in Kconfig now (CONFIG_FUGU_WITH_*, idf.py menuconfig -> "Fugu MPPT firmware"): BLE/NETW default on, NETTOOLS/MCPWM/VCONV/SPROFILER/MEASURE_COIL/USB_MSC off (NETTOOLS depends on NETW; USB_MSC = S3 USB config drive, website/docs/guide/usb-drive.md). The old WITH_* env vars are rejected. Binary telemetry is a tele.conf setting, not a build flag
 idf.py -p $ESPPORT app-flash
@@ -30,7 +30,10 @@ idf.py -p $ESPPORT app-flash
 `idf.py flash`/`app-flash` automatically archive the build ELF for later coredump symbolication (via the project's
 `idf_ext.py`). Name the device with `FUGU_DEVICE=<name> idf.py flash` or `./flash.sh <name>` (see "ELF archive" below).
 
-Default build target is `esp32s3`, for `esp32` target use another build dir: `idf.py -B build-esp32`.
+Default build target is `esp32s3`. Classic `esp32`: own build dir and sdkconfig, target from the environment
+(`IDF_TARGET=esp32 . ./idf-export.sh` does not stick; `-DIDF_TARGET=esp32` alone clashes with the exported esp32s3):
+`. ./idf-export.sh esp32 && idf.py -B build-esp32 -DSDKCONFIG=build-esp32/sdkconfig build`, or prefix each command
+with `IDF_TARGET=esp32` in an esp32s3 shell.
 Simulated-converter build on the S3 (provision `config/lab/vconv_mock`):
 `idf.py -B build-vconv -DSDKCONFIG=build-vconv/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" build`.
 
@@ -316,7 +319,9 @@ Filter-design studies that used to sit beside the client are now `etc/filter-stu
   Source of truth is `sdkconfig.defaults` (+ `sdkconfig.defaults.esp32` overlay, `sdkconfig.ble` when
   `CONFIG_FUGU_WITH_BLE=y`, `sdkconfig.no_netw` when `CONFIG_FUGU_WITH_NETW=n`, `sdkconfig.usb_msc` when
   `CONFIG_FUGU_WITH_USB_MSC=y` — layered by the top
-  `CMakeLists.txt`). Delete `sdkconfig` to force regeneration if it ever looks wrong.
+  `CMakeLists.txt`). Delete `sdkconfig` to force regeneration if it ever looks wrong. An existing sdkconfig wins over
+  the defaults, so a changed default is ignored there; configure prints a WARNING listing such keys (mismatches a
+  fresh sdkconfig already has are recorded in `<sdkconfig>.fugu-baseline` and not reported).
 - if you want to `git revert` but there are local dirty files, do a `git stash` before and `git stash pop` after
 - **Never ever run `git reset --hard`**
 - if you cannot find the `timeout` command, run `brew install coreutils` and try again
