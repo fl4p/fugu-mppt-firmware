@@ -5,8 +5,9 @@
 #include <esp_system.h>
 #include <esp_log.h>
 #include <sdkconfig.h>
+#include <fugu_flash_chip.h>
 
-#define FS_MAGIC 0xF5A50001u
+#define FS_MAGIC 0xF5A50002u
 
 static FlashSusProbe s_fsp;
 
@@ -18,6 +19,13 @@ static FlashSusProbe s_fsp;
 #include <esp_cpu.h>
 #include <esp_rom_sys.h>
 #include <esp_private/cache_utils.h>
+#include <cstring>
+#include <esp_partition.h>
+#include <esp_timer.h>
+#include <esp_app_desc.h>
+#include <esp_rtc_time.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #if __has_include(<esp_flash_chips/spi_flash_chip_driver.h>)
 #include <esp_flash_chips/spi_flash_chip_driver.h>
 #include <esp_flash_chips/spi_flash_defs.h>
@@ -126,12 +134,110 @@ static IRAM_ATTR __attribute__((noinline)) uint8_t fsProbeIram(spi_flash_host_in
     return o;
 }
 
-static uint8_t fsRun(FlashSusProbe &r) {
+static bool fsFill(uint32_t sector) {
+    uint8_t z[256] = {};
+    for (uint32_t o = 0; o < 0x1000; o += sizeof(z))
+        if (esp_flash_write(nullptr, z, sector + o, sizeof(z)) != ESP_OK) return false;
+    return true;
+}
+
+// Reads one new cache line from a 256 KB flash window every ~50 us, timing each read.
+struct AsReader {
+    const volatile uint32_t *p;
+    volatile bool run, done;
+    volatile uint32_t n;      // reads done
+    uint32_t maxCyc, bad, ref;
+};
+
+#define AS_WIN (256 * 1024)
+#define AS_STRIDE 8 // words: one 32-byte line per read
+
+static void asReaderTask(void *a) {
+    auto &r = *(AsReader *) a;
+    uint32_t sum = 0, i = 0;
+    while (r.run) {
+        uint32_t t0 = esp_cpu_get_cycle_count();
+        sum += r.p[i];
+        uint32_t dt = esp_cpu_get_cycle_count() - t0;
+        if (dt > r.maxCyc) r.maxCyc = dt;
+        r.n = r.n + 1;
+        i += AS_STRIDE;
+        if (i >= AS_WIN / 4) {
+            if (sum != r.ref) ++r.bad;
+            sum = i = 0;
+        }
+        esp_rom_delay_us(50);
+    }
+    r.done = true;
+    vTaskDelete(nullptr);
+}
+
+static uint8_t asRun(FlashSusProbe &r, uint32_t sector) {
+    if (!fugu_flash_sus_built()) return AsNotBuilt;
+    if (r.outcome != FsSupported) return AsProbeFailed;
+    const esp_partition_t *run = esp_ota_get_running_partition();
+    if (!run || run->size < AS_WIN) return AsTask;
+    const void *map = nullptr;
+    esp_partition_mmap_handle_t mh;
+    if (esp_partition_mmap(run, 0, AS_WIN, ESP_PARTITION_MMAP_DATA, &map, &mh) != ESP_OK) return AsTask;
+    if (!fsFill(sector)) {
+        esp_partition_munmap(mh);
+        return AsTask;
+    }
+
+    static AsReader rd;
+    rd = {};
+    rd.p = (const volatile uint32_t *) map;
+    for (uint32_t i = 0; i < AS_WIN / 4; i += AS_STRIDE) rd.ref += rd.p[i];
+    rd.run = true;
+    TaskHandle_t th = nullptr;
+    xTaskCreatePinnedToCore(asReaderTask, "fsAuto", 2048, &rd, configMAX_PRIORITIES - 1, &th, !xPortGetCoreID());
+    if (!th) {
+        esp_partition_munmap(mh);
+        return AsTask;
+    }
+    vTaskDelay(pdMS_TO_TICKS(20)); // reader warm, one full window pass
+    rd.maxCyc = 0;
+
+    fugu_flash_sus_set(true);
+    const uint32_t n0 = rd.n;
+    const int64_t t0 = esp_timer_get_time();
+    esp_err_t err = esp_flash_erase_region(nullptr, sector, 0x1000);
+    const int64_t t1 = esp_timer_get_time();
+    const uint32_t n1 = rd.n;
+    fugu_flash_sus_set(false);
+
+    rd.run = false;
+    for (int i = 0; i < 50 && !rd.done; ++i) vTaskDelay(1);
+    esp_partition_munmap(mh);
+
+    const uint32_t tpu = esp_rom_get_cpu_ticks_per_us();
+    const uint32_t ms = (uint32_t) ((t1 - t0) / 1000), stall = rd.maxCyc / (tpu ? tpu : 1), n = n1 - n0;
+    r.autoEraseMs = ms > 0xffff ? 0xffff : ms;
+    r.autoStallUs = stall > 0xffff ? 0xffff : stall;
+    r.autoReads = n > 0xffff ? 0xffff : n;
+
+    if (!rd.done) return AsTask;
+    if (err != ESP_OK) return AsErase;
+    if (ms > 2000) return AsSlow;
+    if (rd.bad) return AsData;
+    if (stall > 1000) return AsStall;
+    if (n < 10) return AsNoOverlap;
+    uint32_t b[64];
+    for (uint32_t o = 0; o < 0x1000; o += sizeof(b)) {
+        if (esp_flash_read(nullptr, b, sector + o, sizeof(b)) != ESP_OK) return AsNotErased;
+        for (uint32_t w : b)
+            if (w != 0xFFFFFFFFu) return AsNotErased;
+    }
+    return AsPass;
+}
+
+static uint8_t fsRun(FlashSusProbe &r, uint32_t &sector) {
     const esp_partition_t *run = esp_ota_get_running_partition();
     const esp_partition_t *p = esp_ota_get_next_update_partition(nullptr);
     if (!run || !p || p == run || p->size < 0x10000 || (p->address & 0xFFF) || (p->size & 0xFFF))
         return FsNoSlot;
-    uint32_t sector = p->address + p->size - 0x1000;
+    sector = p->address + p->size - 0x1000;
 
     uint32_t magic = 0;
     if (esp_flash_read(nullptr, &magic, p->address, sizeof(magic)) != ESP_OK) return FsRefRead;
@@ -144,9 +250,7 @@ static uint8_t fsRun(FlashSusProbe &r) {
     }
 
     // a blank sector erases in a few ms on some chips, too fast to tell from an aborted erase
-    uint8_t z[256] = {};
-    for (uint32_t o = 0; o < 0x1000; o += sizeof(z))
-        if (esp_flash_write(nullptr, z, sector + o, sizeof(z)) != ESP_OK) return FsPrep;
+    if (!fsFill(sector)) return FsPrep;
 
     if (esp_flash_read(nullptr, s_ref, run->address, FS_REF_LEN) != ESP_OK) return FsRefRead;
 
@@ -160,19 +264,37 @@ void flashSuspendProbe() {
     auto rr = esp_reset_reason();
     bool soft = rr == ESP_RST_SW || rr == ESP_RST_PANIC || rr == ESP_RST_INT_WDT || rr == ESP_RST_TASK_WDT ||
                 rr == ESP_RST_WDT || rr == ESP_RST_BROWNOUT;
-    // soft resets reuse the last result: a reboot loop must not wear the scratch sector
+    uint32_t fw;
+    memcpy(&fw, esp_app_get_description()->app_elf_sha256, sizeof(fw));
+    const uint32_t nowS = (uint32_t) (esp_rtc_get_time_us() / 1000000);
+    // a soft reset of the same firmware within the hour reuses the last result: a reboot loop must not
+    // wear the scratch sector, and a crash during the test must not repeat
     for (size_t i = 0; i < sizeof(s_rtc) / 4; ++i) ((uint32_t *) &s_fsp)[i] = s_rtc[i];
-    if (soft && s_fsp.magic == FS_MAGIC && s_fsp.outcome < FsOutcomeCount && s_fsp.outcome != FsUnprobed) {
+    // a crash while suspend was active: stay off until power-on or new firmware
+    if (soft && s_fsp.magic == FS_MAGIC && s_fsp.fwTag == fw && s_fsp.autoOut == AsPass && rr != ESP_RST_SW &&
+        rr != ESP_RST_BROWNOUT)
+        s_fsp.autoOut = AsCrashed;
+    const bool crashed = s_fsp.outcome == FsCrashed || s_fsp.autoOut == AsCrashed;
+    if (soft && s_fsp.magic == FS_MAGIC && s_fsp.outcome < FsOutcomeCount && s_fsp.outcome != FsUnprobed &&
+        s_fsp.autoOut < AsAutoCount && s_fsp.fwTag == fw && (crashed || nowS - s_fsp.testedS < 3600)) {
         s_fsp.cached = 1;
+        fsSave();
     } else {
         s_fsp = {};
         s_fsp.magic = FS_MAGIC;
+        s_fsp.fwTag = fw;
+        s_fsp.testedS = nowS;
         s_fsp.outcome = FsCrashed; // kept if the probe itself resets the chip
+        s_fsp.autoOut = AsCrashed;
         fsSave();
-        s_fsp.outcome = fsRun(s_fsp);
+        uint32_t sector = 0;
+        s_fsp.outcome = fsRun(s_fsp, sector);
+        fsSave();
+        s_fsp.autoOut = asRun(s_fsp, sector);
         fsSave();
     }
-    char buf[128];
+    fugu_flash_sus_set(s_fsp.autoOut == AsPass);
+    char buf[200];
     flashSusProbeFmt(buf, sizeof(buf));
     ESP_LOGI("flash", "%s", buf);
 }
@@ -192,16 +314,19 @@ int flashSusProbeFmt(char *buf, size_t n) {
         "untested(image)", "untested(wel)", "untested(no-busy)", "untested(ref-read)", "error(timeout)",
         "error(data)", "error(sus-stuck)", "error(short)", "error(crash)", "n/a", "untested(prep)",
     };
+    static const char *const autoNames[AsAutoCount] = {
+        "untested", "pass", "not-built", "probe-failed", "error(erase)", "fail(slow)", "fail(stall)",
+        "fail(data)", "fail(no-overlap)", "fail(not-erased)", "error(crash)", "error(task)",
+    };
     const auto &r = s_fsp;
     const char *nm = r.outcome < FsOutcomeCount ? names[r.outcome] : "unprobed";
     if (r.outcome == FsNA || r.outcome == FsUnprobed)
         return snprintf(buf, n, "flash-suspend: %s", nm);
-    uint32_t caps = 0;
-#if CONFIG_IDF_TARGET_ESP32S3
-    if (esp_flash_default_chip->chip_drv->get_chip_caps)
-        caps = esp_flash_default_chip->chip_drv->get_chip_caps(esp_flash_default_chip);
-#endif
-    return snprintf(buf, n, "flash-suspend: %s tsus=%uus erase=%luus sr1=%02x/%02x sr2=%02x/%02x idf-cap=%u%s", nm,
+    return snprintf(buf, n, "flash-suspend: %s tsus=%uus erase=%luus sr1=%02x/%02x sr2=%02x/%02x; auto: %s "
+                            "erase=%ums stall=%uus reads=%u -> %s%s", nm,
                     (unsigned) r.susUs, (unsigned long) r.eraseUs, (unsigned) r.sr1Busy, (unsigned) r.sr1Sus,
-                    (unsigned) r.sr2Sus, (unsigned) r.sr2End, (unsigned) (caps & 1), r.cached ? " (cached)" : "");
+                    (unsigned) r.sr2Sus, (unsigned) r.sr2End,
+                    r.autoOut < AsAutoCount ? autoNames[r.autoOut] : "?", (unsigned) r.autoEraseMs,
+                    (unsigned) r.autoStallUs, (unsigned) r.autoReads,
+                    fugu_flash_sus_on() ? "active" : "caches-off", r.cached ? " (cached)" : "");
 }

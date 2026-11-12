@@ -1,0 +1,7 @@
+# Flash auto-suspend: a flash erase/program no longer freezes the RT core (~55 ms per sector erase).
+# Used only after the boot self-test passes (src/etc/flash_probe.cpp); until then, and on failure,
+# flash ops disable the caches as before (components/fugu_flash_chip).
+CONFIG_SPI_FLASH_AUTO_SUSPEND=y
+# ZB25VQ32 (fry/flat): tSUS 20 us, resume->suspend 128 us (SFDP); 100 is the Kconfig max
+CONFIG_SPI_FLASH_SUSPEND_TSUS_VAL_US=100
+CONFIG_SPI_FLASH_OVERRIDE_CHIP_DRIVER_LIST=y

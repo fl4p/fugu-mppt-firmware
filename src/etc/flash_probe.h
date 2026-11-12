@@ -25,6 +25,23 @@ enum FlashSusOutcome : uint8_t {
     FsOutcomeCount,
 };
 
+// Hardware auto-suspend test: a sector erase with caches on while the other core reads flash.
+enum FlashAutoOutcome : uint8_t {
+    AsUntested = 0,
+    AsPass,
+    AsNotBuilt,     // build without auto-suspend, or the flash guard is not installed
+    AsProbeFailed,  // the 75h probe above did not pass
+    AsErase,        // erase returned an error
+    AsSlow,         // erase took > 2 s
+    AsStall,        // a flash read stalled > 1 ms
+    AsData,         // flash read wrong data during the erase
+    AsNoOverlap,    // the reader made no progress during the erase
+    AsNotErased,    // sector not blank afterwards
+    AsCrashed,      // reset during the test
+    AsTask,
+    AsAutoCount,
+};
+
 struct FlashSusProbe {
     uint32_t magic;
     uint32_t eraseUs;   // sector erase busy time, suspend window excluded
@@ -32,6 +49,10 @@ struct FlashSusProbe {
     uint8_t outcome;
     uint8_t sr1Busy, sr1Sus, sr2Sus, sr2End;
     uint8_t cached;     // result kept from before a soft reset
+    uint8_t autoOut;
+    uint16_t autoEraseMs, autoStallUs, autoReads; // reads completed during the erase (saturating)
+    uint32_t fwTag;     // firmware the result belongs to
+    uint32_t testedS;   // RTC time of the test
 };
 
 void flashSuspendProbe();

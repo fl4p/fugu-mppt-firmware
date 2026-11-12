@@ -75,6 +75,7 @@
 
 #include "etc/rt_core_check.h"
 #include "etc/flash_probe.h"
+#include <fugu_flash_chip.h>
 
 
 ADC_Sampler adcSampler{}; // schedules async ADC reading
@@ -380,6 +381,13 @@ static void registerServices() {
 // slot since this image was never confirmed.
 static constexpr int BOOT_WATCHDOG_TIMEOUT_S = 30;
 static constexpr uint32_t OTA_VALIDATE_UPTIME_MS = 20000;
+static constexpr uint32_t OTA_CONFIRM_DEADLINE_MS = 2 * 3600 * 1000;
+
+// A flash erase/program now won't stall the RT loop at power: auto-suspend passed its boot self-test,
+// or the converter is off or near idle.
+bool flashWriteSafe() {
+    return fugu_flash_sus_on() || converter.disabled() || std::fabs(mppt.meter.rtPower.load(std::memory_order_relaxed)) < 5.f;
+}
 static esp_timer_handle_t s_bootWdt = nullptr;
 
 static void bootWatchdogFire(void *) {
@@ -430,14 +438,19 @@ extern "C" bool verifyRollbackLater() { return true; }
 // core 0 (one-shot otadata flash write). Non-pending state (normal flash) → cheap skip. Until this
 // runs, a reset reverts to the previous slot — that's the rollback safety net.
 static void lfMarkOtaValid() {
-    static bool done = false;
+    static bool done = false, healthy = false;
     if (done || millis() < OTA_VALIDATE_UPTIME_MS) return;
-    if (!timeLastSampler || (wallClockUs() - timeLastSampler) > 1000000ULL) return; // RT sampler alive?
+    if (!healthy) {
+        if (!timeLastSampler || (wallClockUs() - timeLastSampler) > 1000000ULL) return; // RT sampler alive?
+        healthy = true;
+#ifdef CONFIG_BOOTGUARD_ENABLE
+        bootguard_mark_healthy();
+#endif
+    }
+    // without flash auto-suspend the otadata erase stalls the RT loop ~60 ms: wait for low power
+    if (!flashWriteSafe() && millis() < OTA_CONFIRM_DEADLINE_MS) return;
 
     done = true;
-#ifdef CONFIG_BOOTGUARD_ENABLE
-    bootguard_mark_healthy();
-#endif
     const esp_partition_t *running = esp_ota_get_running_partition();
     esp_ota_img_states_t st;
     if (esp_ota_get_state_partition(running, &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY) {

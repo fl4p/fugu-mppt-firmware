@@ -696,7 +696,7 @@ static void cmdBootinfo(cmd *) {
 #else
              "off");
 #endif
-    char fsb[128];
+    char fsb[200];
     flashSusProbeFmt(fsb, sizeof(fsb));
     UART_LOG("%s", fsb);
     char bl[112];

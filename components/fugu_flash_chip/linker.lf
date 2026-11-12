@@ -1,0 +1,4 @@
+[mapping:fugu_flash_chip]
+archive: libfugu_flash_chip.a
+entries:
+    flash_chip (noflash)
