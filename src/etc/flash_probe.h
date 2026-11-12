@@ -33,7 +33,7 @@ enum FlashAutoOutcome : uint8_t {
     AsProbeFailed,  // the 75h probe above did not pass
     AsErase,        // erase returned an error
     AsSlow,         // erase took > 2 s
-    AsStall,        // a flash read stalled > 1 ms
+    AsStall,        // a burst of 8 flash reads stalled > 1 ms
     AsData,         // flash read wrong data during the erase
     AsNoOverlap,    // the reader made no progress during the erase
     AsNotErased,    // sector not blank afterwards
@@ -50,7 +50,7 @@ struct FlashSusProbe {
     uint8_t sr1Busy, sr1Sus, sr2Sus, sr2End;
     uint8_t cached;     // result kept from before a soft reset
     uint8_t autoOut;
-    uint16_t autoEraseMs, autoStallUs, autoReads; // reads completed during the erase (saturating)
+    uint16_t autoEraseMs, autoStallUs, autoReads; // read bursts completed during the erase (saturating)
     uint32_t fwTag;     // firmware the result belongs to
     uint32_t testedS;   // RTC time of the test
 };

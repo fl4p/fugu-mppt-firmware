@@ -438,27 +438,38 @@ extern "C" bool verifyRollbackLater() { return true; }
 // core 0 (one-shot otadata flash write). Non-pending state (normal flash) → cheap skip. Until this
 // runs, a reset reverts to the previous slot — that's the rollback safety net.
 static void lfMarkOtaValid() {
-    static bool done = false, healthy = false;
+    static bool done = false, healthy = false, deferred = false;
     if (done || millis() < OTA_VALIDATE_UPTIME_MS) return;
+    if (!timeLastSampler || (wallClockUs() - timeLastSampler) > 1000000ULL) return; // RT sampler alive?
     if (!healthy) {
-        if (!timeLastSampler || (wallClockUs() - timeLastSampler) > 1000000ULL) return; // RT sampler alive?
         healthy = true;
 #ifdef CONFIG_BOOTGUARD_ENABLE
         bootguard_mark_healthy();
 #endif
     }
+    if (!deferred) {
+        esp_ota_img_states_t st;
+        if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &st) != ESP_OK ||
+            st != ESP_OTA_IMG_PENDING_VERIFY) {
+            done = true;
+            return;
+        }
+    }
     // without flash auto-suspend the otadata erase stalls the RT loop ~60 ms: wait for low power
-    if (!flashWriteSafe() && millis() < OTA_CONFIRM_DEADLINE_MS) return;
+    if (!flashWriteSafe()) {
+        if (millis() < OTA_CONFIRM_DEADLINE_MS) {
+            if (!deferred) ESP_LOGW("main", "OTA confirm deferred until output < 5 W (a reset now rolls back)");
+            deferred = true;
+            return;
+        }
+        ESP_LOGW("main", "OTA confirm deadline, writing at power");
+    }
 
     done = true;
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    esp_ota_img_states_t st;
-    if (esp_ota_get_state_partition(running, &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY) {
-        if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK)
-            ESP_LOGI("main", "OTA image confirmed valid (rollback cancelled)");
-        else
-            ESP_LOGE("main", "failed to confirm OTA image valid");
-    }
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK)
+        ESP_LOGI("main", "OTA image confirmed valid (rollback cancelled)");
+    else
+        ESP_LOGE("main", "failed to confirm OTA image valid");
 }
 
 __attribute__((cold)) static void wireGuardConf(const ConfFile &c) {

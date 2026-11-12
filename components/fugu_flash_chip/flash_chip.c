@@ -34,6 +34,11 @@ static DRAM_ATTR volatile bool s_sus;
 #include "spi_flash_chip_th.h"
 #endif
 #include "esp_private/cache_utils.h"
+#include "hal/spi_flash_hal.h"
+
+// Wait after suspend and after resume (the S3 has one register for both). ZB25VQ32: resume to next
+// suspend >= 128 us (SFDP); Kconfig caps SPI_FLASH_SUSPEND_TSUS_VAL_US at 100, the HAL field takes 255.
+#define FUGU_FLASH_TSUS_US 130
 
 spi_flash_caps_t spi_flash_chip_generic_get_caps(esp_flash_t *chip);
 
@@ -69,9 +74,11 @@ static DRAM_ATTR esp_flash_os_functions_t s_os;
 static DRAM_ATTR const esp_flash_os_functions_t *s_orig;
 static DRAM_ATTR bool s_opOff; // the running op disabled the caches; ops are serialized by s_orig->start
 
+static DRAM_ATTR esp_err_t (*s_susSetup)(esp_flash_t *);
+
 static esp_err_t wStart(void *arg, uint32_t flags) {
     esp_err_t e = s_orig->start(arg, flags);
-    s_opOff = !s_sus;
+    s_opOff = e == ESP_OK && !s_sus;
     if (s_opOff) spi_flash_disable_interrupts_caches_and_other_cpu();
     return e;
 }
@@ -88,6 +95,12 @@ static spi_flash_caps_t capsSus(esp_flash_t *chip) {
     return (s_caps ? s_caps(chip) : 0) | SPI_FLASH_CHIP_CAP_SUSPEND;
 }
 
+// the HAL rewrites the delay register from tsus_val before every operation
+static esp_err_t susSetup(esp_flash_t *chip) {
+    ((spi_flash_hal_context_t *) chip->host)->tsus_val = FUGU_FLASH_TSUS_US;
+    return s_susSetup(chip);
+}
+
 // Runs inside IDF's detection start/end; the os_func swap is safe there because wEnd only re-enables
 // caches that wStart disabled.
 static esp_err_t dispatchProbe(esp_flash_t *chip, uint32_t id) {
@@ -95,10 +108,12 @@ static esp_err_t dispatchProbe(esp_flash_t *chip, uint32_t id) {
         const spi_flash_chip_t *d = s_stock[i];
         chip->chip_drv = d;
         if (d->probe(chip, id) != ESP_OK) continue;
+        if (s_drv.probe) return ESP_OK; // another chip after the main flash: stock driver, no guard
         memcpy(&s_drv, d, sizeof(s_drv));
         s_caps = d->get_chip_caps;
         s_drv.get_chip_caps = capsSus;
-        if (!s_drv.sus_setup) s_drv.sus_setup = spi_flash_chip_generic_suspend_cmd_conf;
+        s_susSetup = d->sus_setup ? d->sus_setup : spi_flash_chip_generic_suspend_cmd_conf;
+        s_drv.sus_setup = susSetup;
         chip->chip_drv = &s_drv;
 #if CONFIG_SPI_FLASH_AUTO_SUSPEND
         if (chip->os_func && chip->os_func != &s_os && chip->os_func->start && chip->os_func->end) {

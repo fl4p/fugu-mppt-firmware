@@ -141,35 +141,56 @@ static bool fsFill(uint32_t sector) {
     return true;
 }
 
-// Reads one new cache line from a 256 KB flash window every ~50 us, timing each read.
+// Reads bursts of AS_BURST new cache lines from a 256 KB flash window every ~100 us and times each
+// burst. While `erasing`, it sums the words it reads, for a check against an uncached re-read.
 struct AsReader {
     const volatile uint32_t *p;
-    volatile bool run, done;
-    volatile uint32_t n;      // reads done
-    uint32_t maxCyc, bad, ref;
+    volatile bool run, done, erasing;
+    volatile uint32_t n;      // bursts done
+    uint32_t maxCyc;
+    uint32_t i0, nE, sumE;    // first word index, words read and their sum while erasing
 };
 
 #define AS_WIN (256 * 1024)
 #define AS_STRIDE 8 // words: one 32-byte line per read
+#define AS_BURST 8
 
 static void asReaderTask(void *a) {
     auto &r = *(AsReader *) a;
-    uint32_t sum = 0, i = 0;
+    uint32_t i = 0;
+    bool was = false;
     while (r.run) {
-        uint32_t t0 = esp_cpu_get_cycle_count();
-        sum += r.p[i];
+        const bool e = r.erasing;
+        if (e && !was) r.i0 = i;
+        was |= e;
+        uint32_t t0 = esp_cpu_get_cycle_count(), s = 0;
+        for (int k = 0; k < AS_BURST; ++k) {
+            s += r.p[i];
+            if ((i += AS_STRIDE) >= AS_WIN / 4) i = 0;
+        }
         uint32_t dt = esp_cpu_get_cycle_count() - t0;
         if (dt > r.maxCyc) r.maxCyc = dt;
-        r.n = r.n + 1;
-        i += AS_STRIDE;
-        if (i >= AS_WIN / 4) {
-            if (sum != r.ref) ++r.bad;
-            sum = i = 0;
+        if (e) {
+            r.sumE += s;
+            r.nE += AS_BURST;
         }
-        esp_rom_delay_us(50);
+        r.n = r.n + 1;
+        esp_rom_delay_us(100);
     }
     r.done = true;
     vTaskDelete(nullptr);
+}
+
+// sum of the words the reader saw while erasing, read again over SPI1 (no cache)
+static bool asVerify(const AsReader &r, uint32_t base) {
+    uint32_t sum = 0, i = r.i0;
+    for (uint32_t k = 0; k < r.nE; ++k) {
+        uint32_t w;
+        if (esp_flash_read(nullptr, &w, base + i * 4, 4) != ESP_OK) return false;
+        sum += w;
+        if ((i += AS_STRIDE) >= AS_WIN / 4) i = 0;
+    }
+    return sum == r.sumE;
 }
 
 static uint8_t asRun(FlashSusProbe &r, uint32_t sector) {
@@ -188,7 +209,6 @@ static uint8_t asRun(FlashSusProbe &r, uint32_t sector) {
     static AsReader rd;
     rd = {};
     rd.p = (const volatile uint32_t *) map;
-    for (uint32_t i = 0; i < AS_WIN / 4; i += AS_STRIDE) rd.ref += rd.p[i];
     rd.run = true;
     TaskHandle_t th = nullptr;
     xTaskCreatePinnedToCore(asReaderTask, "fsAuto", 2048, &rd, configMAX_PRIORITIES - 1, &th, !xPortGetCoreID());
@@ -196,19 +216,22 @@ static uint8_t asRun(FlashSusProbe &r, uint32_t sector) {
         esp_partition_munmap(mh);
         return AsTask;
     }
-    vTaskDelay(pdMS_TO_TICKS(20)); // reader warm, one full window pass
+    vTaskDelay(pdMS_TO_TICKS(20));
     rd.maxCyc = 0;
 
     fugu_flash_sus_set(true);
+    rd.erasing = true;
     const uint32_t n0 = rd.n;
     const int64_t t0 = esp_timer_get_time();
     esp_err_t err = esp_flash_erase_region(nullptr, sector, 0x1000);
     const int64_t t1 = esp_timer_get_time();
     const uint32_t n1 = rd.n;
+    rd.erasing = false;
     fugu_flash_sus_set(false);
 
     rd.run = false;
     for (int i = 0; i < 50 && !rd.done; ++i) vTaskDelay(1);
+    if (!rd.done) return AsTask; // keep the mapping: the reader may still use it
     esp_partition_munmap(mh);
 
     const uint32_t tpu = esp_rom_get_cpu_ticks_per_us();
@@ -217,12 +240,11 @@ static uint8_t asRun(FlashSusProbe &r, uint32_t sector) {
     r.autoStallUs = stall > 0xffff ? 0xffff : stall;
     r.autoReads = n > 0xffff ? 0xffff : n;
 
-    if (!rd.done) return AsTask;
     if (err != ESP_OK) return AsErase;
     if (ms > 2000) return AsSlow;
-    if (rd.bad) return AsData;
+    if (n < 10 || rd.nE < 10 * AS_BURST) return AsNoOverlap;
+    if (!asVerify(rd, run->address)) return AsData;
     if (stall > 1000) return AsStall;
-    if (n < 10) return AsNoOverlap;
     uint32_t b[64];
     for (uint32_t o = 0; o < 0x1000; o += sizeof(b)) {
         if (esp_flash_read(nullptr, b, sector + o, sizeof(b)) != ESP_OK) return AsNotErased;
