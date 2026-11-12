@@ -17,8 +17,13 @@ class BackflowDriver {
 
 public:
     void init(const ConfFile &pin) {
+#if WITH_VCONV
+        // simulated plant: keep the logical state, never drive a real board's panel switch
+        panelEN = panelSD = 0;
+#else
         panelEN = pin.getByte("panel_en", 0);
         panelSD = pin.getByte("panel_sd", 0);
+#endif
 
         if (panelEN) {
             assert(!panelSD);
