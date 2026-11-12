@@ -55,5 +55,8 @@ struct FlashSusProbe {
     uint32_t testedS;   // RTC time of the test
 };
 
+// worst RT loop gap [us]: [0] overlapping a flash op, [1] otherwise; cleared by reset-lag
+extern uint32_t g_flashLagUs[2];
+
 void flashSuspendProbe();
 int flashSusProbeFmt(char *buf, size_t n);

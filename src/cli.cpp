@@ -505,6 +505,7 @@ static void cmdRectCal(cmd *c) {
 
 static void cmdResetLag(cmd *) {
     g_app.maxLoopLag = 0;
+    g_flashLagUs[0] = g_flashLagUs[1] = 0;
 #if CAPTURE_LOOP_DT
     g_app.maxLoopDT = 0;
 #endif

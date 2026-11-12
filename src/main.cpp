@@ -809,6 +809,13 @@ static void loopRT(void *arg) {
 
         auto lag = nowUs - lastLoopTime;
         if (lastLoopTime && lag > g_app.maxLoopLag && !converter.disabled()) g_app.maxLoopLag = lag;
+        {
+            static uint32_t fseq = 0;
+            const uint32_t sq = fugu_flash_seq;
+            auto &m = g_flashLagUs[(sq != fseq || (sq & 1)) ? 0 : 1];
+            if (lastLoopTime && lag > m) m = lag;
+            fseq = sq;
+        }
         lastLoopTime = nowUs;
 
 #if CAPTURE_LOOP_DT
