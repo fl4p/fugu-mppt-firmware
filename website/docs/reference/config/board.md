@@ -14,6 +14,7 @@ sidebar_position: 1
 | `i2c_sda`               | GPIO | int    | 255     | I2C SDA pin; 255 = no I2C                      |
 | `i2c_scl`               | GPIO | int    | —       | I2C SCL pin (required when `i2c_sda` is set)   |
 | `i2c_freq`              | Hz   | int    | 100000  | I2C bus clock frequency                        |
+| `i2c_hs_freq`           | Hz   | int    | 0       | INA226 sample-read clock (esp32s3); 0 = read through Wire at `i2c_freq`. Reads drive the I2C controller directly; above 400 kHz each read enters I2C high-speed mode (controller code at ≤400 kHz). Self-tested at boot, falls back to Wire |
 | `i2c_port`              |      | int    | 0       | INA226 bus index. Only 0 is implemented; any other value fails INA226 init |
 | `ina22x_alert`          | GPIO | int    | —       | INA226 ALERT pin                               |
 | `ina22x_addr`           |      | int    | 0x40    | INA226 I2C address                             |

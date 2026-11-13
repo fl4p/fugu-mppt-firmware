@@ -29,6 +29,7 @@ entries:
     main:_ZTV10PD_Control (noflash)
     main:_ZTV25PD_Control_SmoothSetpoint (noflash)
     sensor_setup:_ZTV10ADC_INA226 (noflash)
+    sensor_setup:_ZN10ADC_INA2267readRegEhRb (noflash)
     adc_esp32_cont:_ZTV14ADC_ESP32_Cont (noflash)
     adc_esp32_cont:_ZN14ADC_ESP32_Cont8inlDeltaEf (noflash)
 

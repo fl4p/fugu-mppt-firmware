@@ -5,6 +5,7 @@
 #include "sampling.h"
 
 #include "i2c.h"
+#include "i2c_hs.h"
 #include "conf.h"
 #include "etc/rt.h"
 #include "ina226_conv_time.h"
@@ -30,6 +31,22 @@ class ADC_INA226 : public AsyncADC<float> {
     uint32_t alertTimeoutMs_ = 4;
     uint32_t measuredPairUs_ = 0; // measured CVRF interval (Vbus+I pair); 0 = not measured
     uint32_t lastAlertUs_ = 0;    // last sample or MASK_EN poll (micros)
+#if CONFIG_IDF_TARGET_ESP32S3
+    I2cHs hs_;
+#endif
+
+    uint16_t readReg(uint8_t reg, bool &ok) {
+#if CONFIG_IDF_TARGET_ESP32S3
+        uint16_t v;
+        if (hs_.on() && hs_.read16((uint8_t) ina226.i2cAddress, reg, v, hs_.code())) {
+            ok = true;
+            return v;
+        }
+        if (hs_.on() && !(hs_.fails & (hs_.fails - 1)))
+            ESP_LOGW("ina22x", "HS read failures: %lu", hs_.fails);
+#endif
+        return ina226.readRegister(reg, ok, 2);
+    }
 
 public:
 
@@ -87,11 +104,38 @@ public:
         if (!resetPeripherals())
             return false;
 
+        if (auto hsHz = boardConf.getLong("i2c_hs_freq", 0))
+            beginHs(boardConf.getLong("i2c_freq", 100000), hsHz);
+
         //ESP_LOGI("ina226", "ina226.calVal2=%d", ina226.calVal);
         //ina226.setResistorRange(resistor, range);
         //ina226.writeRegister(INA226_WE::INA226_CAL_REG, ina226.calVal);
 
         return true;
+    }
+
+    void beginHs(uint32_t fsHz, uint32_t hsHz) {
+#if CONFIG_IDF_TARGET_ESP32S3
+        if (!hs_.begin(fsHz, hsHz)) {
+            ESP_LOGE("ina22x", "HS mode: clock setup failed");
+            return;
+        }
+        // DEVICE_ID with and without the HS controller code; any mismatch of the mode used keeps Wire
+        for (bool code: {false, true}) {
+            uint32_t bad = 0, t0 = micros();
+            for (int i = 0; i < 200; ++i) {
+                uint16_t v = 0;
+                if (!hs_.read16((uint8_t) ina226.i2cAddress, INA22x_DEVICE_ID_CMD, v, code) || v != 0x2260) ++bad;
+            }
+            ESP_LOGI("ina22x", "HS %lu Hz %s code: %lu/200 bad, %lu us/read, code ACKs %lu", hsHz,
+                     code ? "with" : "without", bad, (micros() - t0) / 200, hs_.codeAcks);
+            if (code == hs_.code() && (bad || hs_.codeAcks)) hs_.end();
+        }
+        hs_.fails = 0;
+        if (!hs_.on()) ESP_LOGE("ina22x", "HS mode self-test failed, using Wire");
+#else
+        ESP_LOGW("ina22x", "i2c_hs_freq: HS mode is esp32s3 only");
+#endif
     }
 
     float getSamplingRate(uint8_t channel) override {
@@ -435,7 +479,9 @@ public:
                 return false;
             lastAlertUs_ = now;
             ++numTimeouts;
-            uint16_t me = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG, 2);
+            bool rok;
+            uint16_t me = readReg(INA226_WE::INA226_MASK_EN_REG, rok);
+            if (!rok) return false;
             overflow = (me >> 2) & 0x0001;
             if ((me >> 3) & 0x0001) {
                 if (++numRecovered % 20000 == 0)
@@ -450,7 +496,9 @@ public:
         new_data = false;
         lastAlertUs_ = micros();
 
-        uint16_t value = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG, 2);
+        bool rok;
+        uint16_t value = readReg(INA226_WE::INA226_MASK_EN_REG, rok);
+        if (!rok) return false;
         overflow = (value >> 2) & 0x0001; // MATH overflow, only current/power data invalid (Vbus ok)
         bool convAlert = (value >> 3) & 0x0001;
         bool limitAlert = (value >> 4) & 0x0001;
@@ -472,7 +520,7 @@ public:
         bool success;
         switch (readChannel) {
             case ChVBus: {
-                uint16_t raw = ina226.readRegister(INA226_WE::INA226_BUS_REG, success, 2);
+                uint16_t raw = readReg(INA226_WE::INA226_BUS_REG, success);
                 if (!success) {
                     ESP_LOGW("ina22x", "failure reading register");
                     return NAN;
@@ -481,7 +529,7 @@ public:
                 return (float) raw * 0.00125f;
             }
             case ChI: {
-                auto raw = static_cast<int16_t>(ina226.readRegister(INA226_WE::INA226_CURRENT_REG, success, 2));
+                auto raw = static_cast<int16_t>(readReg(INA226_WE::INA226_CURRENT_REG, success));
                 if (!success) {
                     ESP_LOGW("ina22x", "failure reading register");
                     return NAN;
