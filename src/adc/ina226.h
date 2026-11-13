@@ -7,6 +7,7 @@
 #include "i2c.h"
 #include "i2c_hs.h"
 #include "conf.h"
+#include "logging.h"
 #include "etc/rt.h"
 #include "ina226_conv_time.h"
 
@@ -33,6 +34,8 @@ class ADC_INA226 : public AsyncADC<float> {
     uint32_t lastAlertUs_ = 0;    // last sample or MASK_EN poll (micros)
 #if CONFIG_IDF_TARGET_ESP32S3
     I2cHs hs_;
+    uint32_t hsHz_ = 0;
+    uint16_t hsTest_[2][2]{}; // self-test {bad of 200, us/read} without / with HS code
 #endif
 
     uint16_t readReg(uint8_t reg, bool &ok) {
@@ -127,14 +130,25 @@ public:
                 uint16_t v = 0;
                 if (!hs_.read16((uint8_t) ina226.i2cAddress, INA22x_DEVICE_ID_CMD, v, code) || v != 0x2260) ++bad;
             }
-            ESP_LOGI("ina22x", "HS %lu Hz %s code: %lu/200 bad, %lu us/read, code ACKs %lu", hsHz,
-                     code ? "with" : "without", bad, (micros() - t0) / 200, hs_.codeAcks);
+            hsTest_[code][0] = bad;
+            hsTest_[code][1] = (micros() - t0) / 200;
             if (code == hs_.code() && (bad || hs_.codeAcks)) hs_.end();
         }
         hs_.fails = 0;
-        if (!hs_.on()) ESP_LOGE("ina22x", "HS mode self-test failed, using Wire");
+        hsHz_ = hsHz;
+        printHs();
 #else
         ESP_LOGW("ina22x", "i2c_hs_freq: HS mode is esp32s3 only");
+#endif
+    }
+
+    void printHs() {
+#if CONFIG_IDF_TARGET_ESP32S3
+        if (hsHz_)
+            UART_LOG("ina22x: i2c_hs_freq=%lu %s%s, self-test bad/us: plain %u/%u, HS code %u/%u; "
+                     "code ACKs %lu, read failures %lu", hsHz_, hs_.on() ? "on" : "OFF (using Wire)",
+                     hs_.code() ? " HS" : "", hsTest_[0][0], hsTest_[0][1], hsTest_[1][0], hsTest_[1][1],
+                     hs_.codeAcks, hs_.fails);
 #endif
     }
 
@@ -563,6 +577,10 @@ public:
     }
 };
 
+
+void ina226PrintInfo() {
+    if (ina226_instance) ina226_instance->printHs();
+}
 
 void IRAM_ATTR ina226_alert() {
     if (ina226_instance)

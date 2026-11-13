@@ -1508,6 +1508,8 @@ static void cmdMem(cmd *) {
     UART_LOG("Free PSRAM:  %9ld", ESP.getFreePsram());
 }
 
+void ina226PrintInfo();
+
 static void cmdSensor(cmd *c) {
     if (Command(c).countArgs() >= 1) {
         // `sensor avg`: one compact line of EWM averages, for fast polling
@@ -1535,6 +1537,7 @@ static void cmdSensor(cmd *c) {
                  sqrt(s->anf.ewmN.nvar() / s->anf.ewmS.nvar()),
                  Sensor::anfEnabled ? "" : "  (stale — run `anf on`)");
     }
+    ina226PrintInfo();
 }
 
 #ifdef WITH_NETW
