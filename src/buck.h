@@ -490,6 +490,16 @@ class SynchronousConverter {
 #endif
     }
 
+public:
+    // Gates low from ISR context (register writes only); state is left to disable().
+    void IRAM_ATTR isrForceOff() {
+#if HAVE_MCPWM
+        if (useMcpwm) mcpwmDrv.forceShutdown();
+#endif
+    }
+
+private:
+
     // Force both gates low / park duty at 0.
     void drvShutdown() {
 #if HAVE_MCPWM

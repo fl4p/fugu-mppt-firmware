@@ -10,6 +10,8 @@
 #include "logging.h"
 #include "etc/rt.h"
 #include "ina226_conv_time.h"
+#include "esp_rom_sys.h"
+#include "esp_timer.h"
 
 class ADC_INA226;
 
@@ -32,6 +34,13 @@ class ADC_INA226 : public AsyncADC<float> {
     uint32_t alertTimeoutMs_ = 4;
     uint32_t measuredPairUs_ = 0; // measured CVRF interval (Vbus+I pair); 0 = not measured
     uint32_t lastAlertUs_ = 0;    // last sample or MASK_EN poll (micros)
+    uint16_t ovRaw_ = 0;          // BOL limit in bus LSBs (board.conf ina22x_ov), 0 = conversion-ready alert
+    volatile bool ovArmed_ = false;
+    uint8_t ovMiss_ = 0;          // CVRF polls without a conversion since the last sample
+    uint16_t ovLead_ = 20;        // us, how early the next poll is scheduled
+    uint32_t ovPolls_ = 0, ovMisses_ = 0;
+    volatile uint32_t ovIsrCount_ = 0;
+    esp_timer_handle_t pollTimer_ = nullptr; // wakes the RT task shortly before a CVRF poll is due
 #if CONFIG_IDF_TARGET_ESP32S3
     I2cHs hs_;
     uint32_t hsHz_ = 0;
@@ -143,6 +152,10 @@ public:
     }
 
     void printHs() {
+        if (ovRaw_)
+            UART_LOG("ina22x: bus OV alert %s at %.3f V (pin), ISR trips %lu, poll period %lu us lead %u us, "
+                     "polls %lu misses %lu", ovArmed_ ? "armed" : "NOT armed", ovRaw_ * 1.25e-3f, ovIsrCount_,
+                     pairUs(), ovLead_, ovPolls_, ovMisses_);
 #if CONFIG_IDF_TARGET_ESP32S3
         if (hsHz_)
             UART_LOG("ina22x: i2c_hs_freq=%lu %s%s, self-test bad/us: plain %u/%u, HS code %u/%u; "
@@ -189,9 +202,19 @@ public:
 
 
 
+        ovArmed_ = false;
         ina226.reset_INA226();         //in case the device is already/still initialized
 
         vTaskDelay(2);
+
+        if (ovRaw_ && measuredPairUs_) {
+            // runtime re-init in OV mode: re-arm without the alert self-tests and rate measurement
+            ina226.setAverage(AVERAGE_1);
+            ina226.setConversionTime(convSetting_, convSetting_);
+            ina226.setMeasureMode(CONTINUOUS);
+            ina226.writeRegister(INA226_WE::INA226_CAL_REG, ina226.calVal);
+            return armOv();
+        }
 
         new_data = false;
 
@@ -252,9 +275,46 @@ public:
         else
             ESP_LOGW("ina22x", "rate measurement timed out, using nominal %.0f SPS", ina226SampleRate(convUs_));
 #endif
+        if (ovRaw_) armOv();
 
         return true;
     }
+
+    // Switch ALERT from conversion-ready to a latched bus over-voltage alert at `busV` (chip pin volts).
+    void setBusOvLimit(float busV) {
+        assert_throw(busV > 0 && busV < 36, "ina22x_ov out of the INA226 bus range");
+        ovRaw_ = (uint16_t) lroundf(busV / 1.25e-3f);
+        assert_throw(armOv(), "ina22x_ov: arming the INA226 bus OV alert failed");
+    }
+
+    bool armOv() {
+        if (!pollTimer_) {
+            esp_timer_create_args_t a = {};
+            a.callback = [](void *p) { ((ADC_INA226 *) p)->taskNotification.notify(); };
+            a.arg = this;
+            a.dispatch_method = ESP_TIMER_TASK;
+            a.name = "ina_poll";
+            ESP_ERROR_CHECK(esp_timer_create(&a, &pollTimer_));
+        }
+        ina226.writeRegister(INA226_WE::INA226_ALERT_LIMIT_REG, ovRaw_);
+        ina226.writeRegister(INA226_WE::INA226_MASK_EN_REG, 0x2001); // BOL | LEN
+        bool ok1, ok2;
+        auto lim = ina226.readRegister(INA226_WE::INA226_ALERT_LIMIT_REG, ok1);
+        auto me = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG, ok2);
+        if (!ok1 || !ok2 || lim != ovRaw_ || (me & 0xFC03) != 0x2001) {
+            ESP_LOGE("ina22x", "bus OV alert arm failed (limit 0x%04x, mask 0x%04x)", lim, me);
+            g_hwOvTrip = true;
+            return false;
+        }
+        g_hwOvTrip = false;
+        lastAlertUs_ = micros();
+        ovMiss_ = 0;
+        ovArmed_ = true;
+        ESP_LOGI("ina22x", "ALERT = bus OV > %.3f V (pin), polling CVRF every %lu us", ovRaw_ * 1.25e-3f, pairUs());
+        return true;
+    }
+
+    [[nodiscard]] uint32_t pairUs() const { return measuredPairUs_ ? measuredPairUs_ : 2u * convUs_; }
 
 #if CONFIG_FUGU_INA226_MEASURED_RATE
     // Average n CVRF intervals (one Vbus+I conversion pair each) at the current operational
@@ -468,14 +528,63 @@ public:
         readChannel = channel;
     }
 
-    void alertNewDataFromISR() {
-        new_data = true;
+    void IRAM_ATTR alertNewDataFromISR() {
+        if (ovArmed_) {
+            if (g_hwOvIsrHook) g_hwOvIsrHook();
+            g_hwOvTrip = true;
+            ovIsrCount_ = ovIsrCount_ + 1;
+        } else
+            new_data = true;
         g_isrCore[1] = (uint8_t) xPortGetCoreID();
         taskNotification.notifyFromIsr();
     }
 
+    // OV mode: ALERT carries only BOL, so conversions are found by polling CVRF once per pair period.
+    // The poll lead grows while polls hit without a miss (late) and shrinks after a miss (early).
+    // Misses retry after 100 us; after 8 in a row, or a failed read, the next poll is a period away.
+    // Far from due, the task sleeps on the ADC notification it shares with the other ADCs, which may
+    // consume pollTimer_'s wake-up (set 300 us early); within 400 us of due it busy-waits instead.
+    bool pollConversion() {
+        const uint32_t P = pairUs();
+        auto rem = (int32_t) (lastAlertUs_ + P - micros());
+        if (rem > 400) {
+            if (!esp_timer_is_active(pollTimer_)) esp_timer_start_once(pollTimer_, rem - 300);
+            taskNotification.wait(alertTimeoutMs_);
+            rem = (int32_t) (lastAlertUs_ + P - micros());
+            if (rem > 400) return false;
+        }
+        if (rem > 0) esp_rom_delay_us(rem);
+        uint32_t now = micros();
+        bool rok;
+        uint16_t me = readReg(INA226_WE::INA226_MASK_EN_REG, rok);
+        ++ovPolls_;
+        if (!rok) {
+            lastAlertUs_ = now;
+            return false;
+        }
+        if ((me & 0xFC03) != 0x2001) { // chip lost its alert config (reset/brown-out): fail safe
+            g_hwOvTrip = true;
+            armOv();
+            return false;
+        }
+        if (me & 0x10) g_hwOvTrip = true; // AFF, latched until this read
+        overflow = (me >> 2) & 0x0001;
+        if (!(me & 0x08)) {
+            ++ovMisses_;
+            lastAlertUs_ = now - P + (++ovMiss_ > 8 ? P : 100);
+            return false;
+        }
+        if (ovMiss_) { if (ovLead_ > 20) ovLead_ -= 10; }
+        else if (ovLead_ < 300) ovLead_ += 20;
+        ovMiss_ = 0;
+        lastAlertUs_ = now - ovLead_;
+        return true;
+    }
+
     bool hasData() override {
         static uint32_t numTimeouts = 0, numRecovered = 0;
+
+        if (ovArmed_) return pollConversion();
 
         if (!new_data)
             taskNotification.wait(alertTimeoutMs_);

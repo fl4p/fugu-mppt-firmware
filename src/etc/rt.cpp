@@ -107,6 +107,8 @@ esp_err_t esp_intr_dump_(FILE *stream) {
 
 
 DRAM_ATTR uint8_t g_isrCore[2] = {0xff, 0xff};
+DRAM_ATTR volatile bool g_hwOvTrip = false;
+DRAM_ATTR void (*volatile g_hwOvIsrHook)() = nullptr;
 
 void rtcount(const char *l) {
     static unsigned long t0 = 0;

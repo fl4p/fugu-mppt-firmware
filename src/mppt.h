@@ -586,6 +586,15 @@ public:
     bool protect(bool ignoreUV) {
         auto nowMs = wallClockMs();
 
+        if (unlikely(g_hwOvTrip)) {
+            g_hwOvTrip = false;
+            RT_COLD(
+            ESP_LOGE("mppt", "INA226 bus OV alert, Vin %.2f Vout %.2f", sensors.Vin->last, sensors.Vout->last);
+            shutdownDcdc("hw-OV");
+            );
+            return false;
+        }
+
         if (g_app.psuMode()) {
             const auto feasibility = currentPsuFeasibility();
             if (feasibility == PsuSetpointError::BoostBelowInput

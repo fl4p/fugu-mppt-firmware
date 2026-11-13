@@ -153,6 +153,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
     const bool boost = readTopoIsBoost("sensor.conf");
     rejectSensorRoleKeys(sensConf, boost);
     std::unordered_map<std::string, AsyncADC<float> *> adcs{};
+    float busOv = boardConf.getFloat("ina22x_ov", 0); // consumed by the ina226 bus channel
     for (auto chn_: {"ntc", "vin", "iin", "iout", "vout",}) {
         auto chn = std::string(chn_);
         const auto key = sensorKeyPrefix(chn, boost); // hv_v, lv_v, hv_i, lv_i by topo
@@ -182,6 +183,12 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
                     throw std::runtime_error("sensor.conf: " + key + "_offset out of range (-10, 10) V");
                 lt.factor *= gain;
                 lt.midpoint -= offset / lt.factor;
+#if CONFIG_FUGU_WITH_INA226
+                if (an == "ina226" && chNum == ADC_INA226::ChVBus && busOv != 0) {
+                    ((ADC_INA226 *) adc)->setBusOvLimit(lt.apply_inverse(busOv));
+                    busOv = 0;
+                }
+#endif
             } else if (chn[0] == 'i') {
                 lt = {
                     sensConf.f(key + '_' + "factor", 1.f),
@@ -212,6 +219,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
         //         Vout_ch, Iout_ch, loopRateMin);
     }
 
+    assert_throw(busOv == 0, "ina22x_ov needs an ina226 bus voltage channel");
     params.find("vin")->second.params.calibrationConstraints = {lim.Vin_max, 1.8f, false};
     params.find("vin")->second.params.unit = 'V';
     params.find("vin")->second.params.rawTelemetry = true;

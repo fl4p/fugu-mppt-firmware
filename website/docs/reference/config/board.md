@@ -21,6 +21,7 @@ sidebar_position: 1
 | `ina22x_resistor`       | Ω    | float  | —       | INA226 current-sense shunt resistance          |
 | `ina22x_range`          | A    | float  | 35      | INA226 max current range for PGA config        |
 | `ina22x_conv_time_us`   | µs   | int    | 1100     | INA226 per-conversion time (rounded up to nearest device step); lower = faster/noisier |
+| `ina22x_ov`             | V    | float  | 0       | INA226 bus over-voltage limit, in volts of the sensor on the INA226 bus channel (after its divider; the LV side, which is the battery only in buck topology). When set, ALERT is a latched over-voltage alert: its ISR forces the gates off (MCPWM gate driver only) and the converter backs off; conversions are then polled instead of signalled. Set it above the highest normal voltage. 0 = ALERT is the conversion-ready strobe |
 | `pwm_freq`              | Hz   | int    | —       | Converter PWM switching frequency at boot; the `pwm-freq` console verb changes it live for the session without persisting |
 | `pwm_driver_logic`      |      | enum   | —       | Gate driver logic: `HiLi` or `InEn`            |
 | `pwm_hi`                | GPIO | int    | —       | High-side gate driver pin (HiLi mode)          |

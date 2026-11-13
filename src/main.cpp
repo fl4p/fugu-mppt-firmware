@@ -84,6 +84,7 @@
 ADC_Sampler adcSampler{}; // schedules async ADC reading
 VIinVout<const Sensor *> sensors{nullptr, nullptr, nullptr, nullptr};
 SynchronousConverter converter; // buck or boost
+static void IRAM_ATTR hwOvIsr() { converter.isrForceOff(); }
 LedIndicator led;
 MpptController mppt{adcSampler, sensors, converter, lcdService.lcd}; // lcd owned by lcdService
 
@@ -259,6 +260,11 @@ static void setupConverterAndMppt(const ConfFile &boardConf, const Limits &lim, 
 
             mppt.charger.begin(chargerConf);
             converter.init(converterConf, boardConf, coilConf);
+            g_hwOvIsrHook = hwOvIsr;
+#ifndef HAVE_MCPWM
+            if (boardConf.getFloat("ina22x_ov", 0) > 0)
+                ESP_LOGW("main", "ina22x_ov: gate driver is not MCPWM, the alert ISR cannot force the gates off");
+#endif
             mppt.rectCal.autoRun = coilConf.getByte("rect_cal_auto", 1);
             mppt.rectCal.persist = rectCalPersist;
             mppt.rectCal.init(converter.getRectOnOffset(), !converter.rectOffsetNeedsCal());
@@ -1282,6 +1288,8 @@ static void loopRTNewData(time_ms nowMs) {
             : sensors.Iin->transform.apply_inverse(30.f)
     ); */
 
+
+    if (mppt.converter.disabled()) g_hwOvTrip = false; // an alert while not switching must not trip the next start
 
     if (unlikely(adcSampler.isCalibrating())) {
         mppt.shutdownDcdc("calib", 0); // calibration must resume MPPT immediately on completion
