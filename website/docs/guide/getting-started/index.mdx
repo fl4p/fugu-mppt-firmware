@@ -122,7 +122,7 @@ The build command depends on the target:
 | Target | Command |
 |---|---|
 | ESP32-S3 (default) | `idf.py set-target esp32s3 && idf.py build` |
-| classic ESP32 | `idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig set-target esp32 && idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig build` |
+| classic ESP32 | `IDF_TARGET=esp32 idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig build` |
 
 Use a separate build directory and `sdkconfig` for each target. For details, see
 [ESP32 variants](../hardware/esp32-variants.md#quick-start).

@@ -69,11 +69,12 @@ either (`brew services start …` was noticed and objected to).
 
 ## Toolchain
 
-ESP-IDF is **not on PATH** and `which idf.py` finds nothing. Enter the env with the repo wrapper,
-**from the repo root only** (it sources `../../esp/idf6.0.3` by relative path; `FUGU_IDF=idf5.5` selects 5.5):
+ESP-IDF is **not on PATH** and `which idf.py` finds nothing. Enter the env with the repo wrapper (tracked; it finds
+`../../esp/idf6.0.3` relative to the main checkout, so worktrees work too; `FUGU_IDF=idf5.5` selects 5.5):
 
 ```bash
-. ./idf-export.sh
+. ./idf-export.sh          # IDF_TARGET: an already exported one is kept, else esp32s3
+. ./idf-export.sh esp32    # classic ESP32 (`IDF_TARGET=esp32 . ./idf-export.sh` does not stick)
 ```
 
 It `deactivate`s any venv — invoke repo Python tools as `.venv/bin/python3 etc/…` afterwards — and
@@ -96,8 +97,7 @@ idf.py -B build-<tag> build
 
 * **Use a separate `-B` build dir.** The shared `build/` may be in use by another session.
 * **A clean `git worktree` (to build HEAD without peers' dirty edits) is not self-contained**:
-  `idf-export.sh` and `dependencies.lock` are gitignored (source the export from the main repo
-  root, then `cd`), and the `components/*` submodules need `git submodule update --init`. With no
+  `dependencies.lock` is gitignored, and the `components/*` submodules need `git submodule update --init`. With no
   lock, managed components resolve fresh and can be newer than the main tree's (`led_strip` 3.1 vs
   3.0.3, 2026-10-10). Never copy a lock into a worktree that already built: the image boot-looped
   flu in the RMT encoder, most likely app code compiled against the 3.0.3 header linked with the

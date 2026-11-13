@@ -27,6 +27,7 @@
 #include "ota.h"
 #include "sha256.h"
 #include "util.h"
+#include "logging.h"
 
 constexpr auto OTA_TIMEOUT_SECONDS = 5 * 60;
 
@@ -115,11 +116,12 @@ const char *doOtaBootloader(const char *, bool (*)()) { return "not supported in
 
 #define TAG "ota"
 
+static int contentLen = 0;
+static int contentReceived = 0;
+static uint8_t lastPct = 0;
+
 esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
-    static int contentLen = 0;
-    static int contentReceived = 0;
     static time_us tStart = 0;
-    static uint8_t lastPct = 0;
 
     switch (evt->event_id) {
         case HTTP_EVENT_ERROR:
@@ -144,7 +146,7 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
             ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
             contentReceived += evt->data_len;
             {
-                uint8_t pct = contentReceived * 100 / contentLen;
+                uint8_t pct = contentLen > 0 ? contentReceived * 100 / contentLen : 0;
                 if (lastPct != pct) {
                     ESP_LOGI("ota", "Download Progress: %4d %%", pct);
                     lastPct = pct;
@@ -221,6 +223,7 @@ static esp_err_t httpOta(const char *url, const esp_partition_t *staging, const 
         },
     };
     ESP_LOGI("ota", "Attempting to download update from %s", config.url);
+    contentLen = contentReceived = lastPct = 0;
 
     TaskHandle_t wdTask = nullptr;
     xTaskCreate(otaWatchdog, "otaWD", 4096, NULL, 20, &wdTask);
@@ -232,13 +235,17 @@ static esp_err_t httpOta(const char *url, const esp_partition_t *staging, const 
 }
 
 bool doOta(const char *url) {
-    if (httpOta(url, nullptr, nullptr) == ESP_OK) {
+    const auto t0 = wallClockUs();
+    const esp_err_t e = httpOta(url, nullptr, nullptr);
+    if (e == ESP_OK) {
         ESP_LOGI("ota", "OTA Succeed, Rebooting...");
         consoleFlush(); // get the result out over a buffered console before the reboot tears the link down
         systemRestart();
         return true;
     }
-    ESP_LOGE("ota", "Firmware upgrade failed");
+    logRetained("E (%lu) ota: update failed: %s at %d %% (%d/%d B) after %.1f s, old image kept",
+                (unsigned long) esp_log_timestamp(), esp_err_to_name(e), lastPct, contentReceived, contentLen,
+                (wallClockUs() - t0) * 1e-6f);
     consoleFlush();
     return false;
 }

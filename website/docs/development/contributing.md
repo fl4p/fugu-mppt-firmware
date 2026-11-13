@@ -12,8 +12,8 @@ GitHub profile to share your experience.
 ## Before you open a pull request
 
 1. Follow the [coding conventions](conventions.md).
-2. Build both targets: `idf.py build` (ESP32-S3) and `idf.py -B build-esp32 build` (classic ESP32, after
-   `set-target esp32`). If your change touches feature flags, also run `etc/matrix_build.sh`. See [Build](build.md).
+2. Build both targets: `idf.py build` (ESP32-S3) and
+   `IDF_TARGET=esp32 idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig build` (classic ESP32). If your change touches feature flags, also run `etc/matrix_build.sh`. See [Build](build.md).
 3. Run the tests that cover your change. [Testing](testing.md) describes them, and this table shows which tests to run
    for each kind of change:
 

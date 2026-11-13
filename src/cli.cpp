@@ -765,8 +765,6 @@ static void cmdLogLevel(cmd *c) {
     UART_LOG("log: %s -> %s", tag.c_str(), lvl.c_str());
 }
 
-static void cmdUptime(cmd *);
-
 #ifdef WITH_NETW
 static bool conversionStopped() {
     return g_app.manualPwm() && mppt.getManualTarget() == 0 && converter.disabled();
@@ -774,10 +772,10 @@ static bool conversionStopped() {
 
 // ota <url> | ota bootloader <url>
 static void cmdOta(cmd *c) {
-    cmdUptime(c);
     auto url = Command(c).getArg(0).getValue();
     if (url.length() == 0)
         CMD_FAIL_RETURN("ota: expected url");
+    UART_LOG("ota: running %s, downloading %s", format_version(), url.c_str());
     if (url.startsWith("bootloader")) {
         url.remove(0, 10);
         url.trim();
@@ -814,6 +812,7 @@ static void cmdOta(cmd *c) {
 
     // OTA failed — resume the prior operating mode
     adcSampler.halted = false;
+    bool restored = true;
     if (savedMode == OpMode::Psu) {
         // A PV curve must be restored as the curve, not as a CV pin at the saved
         // instantaneous setpoint. rebase=false: the saved Isc may be a scaled one, and a
@@ -823,19 +822,21 @@ static void cmdOta(cmd *c) {
                                                     false, false)
                                 : mppt.queuePsuSetpoint(savedPsuSetpoint);
         if (!ticket || !waitPsuCommand(ticket)
-            || mppt.getPsuCommandError(ticket) != PsuSetpointError::None)
-            ESP_LOGE("main", "ota: failed to restore PSU mode: %s",
+            || mppt.getPsuCommandError(ticket) != PsuSetpointError::None) {
+            restored = false;
+            ESP_LOGE("main", "ota: PSU restore: %s",
                      psuErrorText(ticket ? mppt.getPsuCommandError(ticket)
                                          : mppt.getLastPsuRequestError()));
+        }
     } else if (savedMode == OpMode::Manual) {
-        const auto ticket = mppt.requestPsuManual(savedManualTarget, -1);
-        if (!waitPsuCommand(ticket)) ESP_LOGE("main", "ota: failed to restore manual mode");
+        restored = waitPsuCommand(mppt.requestPsuManual(savedManualTarget, -1));
     } else {
-        const auto ticket = mppt.requestPsuOff();
-        if (!waitPsuCommand(ticket)) ESP_LOGE("main", "ota: failed to restore MPPT mode");
+        restored = waitPsuCommand(mppt.requestPsuOff());
     }
-    if (!ok)
-        CMD_FAIL_RETURN("ota: update failed");
+    const char *mode = savedMode == OpMode::Psu ? "PSU" : savedMode == OpMode::Manual ? "manual" : "MPPT";
+    if (restored) logRetained("I (%lu) ota: %s mode restored", (unsigned long) esp_log_timestamp(), mode);
+    else logRetained("E (%lu) ota: failed to restore %s mode", (unsigned long) esp_log_timestamp(), mode);
+    if (!ok) s_cmdFailed = true;
 }
 #endif
 

@@ -57,3 +57,10 @@ typedef void (*LogCallback)(const char *str, uint16_t len);
 void addLogCallback(LogCallback callback, bool replayBootLog = true);
 
 void removeLogCallback(LogCallback callback);
+
+// Log one line to every sink and keep it for 120 s; it is replayed to each log callback or telnet
+// client attaching in that window (a sink that was down when the line was emitted still gets it).
+void logRetained(const char *format, ...) __attribute__ ((format (printf, 1, 2)));
+
+// Console completion marker "OK: <cmd>" / "ERR: <cmd>"; retained when the command ran longer than 5 s.
+void logCmdResult(bool ok, const char *cmd, int64_t startUs);
