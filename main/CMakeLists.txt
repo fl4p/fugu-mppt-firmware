@@ -120,7 +120,7 @@ if (CONFIG_FUGU_WITH_RTPROF)
     set(RTPROF_SRC "../src/etc/rtprof.cpp")
 endif ()
 if (NOT "$ENV{FUGU_RT_FLASH}")
-    set(RT_IRAM_LF "rt_iram.lf")
+    set(RT_IRAM_LF "rt_iram.lf" "rt_iram_extra.lf")
 endif ()
 
 idf_component_register(SRCS

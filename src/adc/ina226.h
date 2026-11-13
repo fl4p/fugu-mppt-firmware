@@ -412,6 +412,7 @@ public:
 
     void alertNewDataFromISR() {
         new_data = true;
+        g_isrCore[1] = (uint8_t) xPortGetCoreID();
         taskNotification.notifyFromIsr();
     }
 

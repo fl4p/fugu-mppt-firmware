@@ -60,7 +60,10 @@ static AsyncADC<float> *createAdcInstance(const std::string &adcName, const Conf
         throw std::runtime_error("unknown or disabled (Kconfig) ADC '" + adcName + "'" + " " + chnDebug);
     }
 
-    if (!adc->init(boardConf)) {
+    // the ADC's DMA/alert interrupts must live on the RT core: core 0 stalls on cache misses during a flash erase
+    bool ok = false;
+    runOnCore(RT_CORE, [&] { ok = adc->init(boardConf); });
+    if (!ok) {
         delete adc;
         throw std::runtime_error("failed to initialize ADC " + adcName);
     }

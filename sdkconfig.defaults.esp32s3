@@ -5,3 +5,11 @@ CONFIG_SPI_FLASH_AUTO_SUSPEND=y
 # ZB25VQ32 (fry/flat): tSUS 20 us, resume->suspend 128 us (SFDP); 100 is the Kconfig max
 CONFIG_SPI_FLASH_SUSPEND_TSUS_VAL_US=100
 CONFIG_SPI_FLASH_OVERRIDE_CHIP_DRIVER_LIST=y
+
+# The RT loop runs from IRAM (main/rt_iram.lf) so a flash erase cannot stall it. Pay for that RAM here:
+# the Wi-Fi RX/TX speed-ups and the BLE controller go to flash (Espressif recommends auto-suspend with the latter).
+# CONFIG_ESP_WIFI_IRAM_OPT is not set
+# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
+CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY=y
+# a core-0 task that misses the cache inside a kernel critical section would hold the kernel lock over the miss
+CONFIG_FREERTOS_IN_IRAM=y

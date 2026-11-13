@@ -33,7 +33,8 @@ if a.check:
         if len(p) == 3:
             addr[p[2]] = int(p[0], 16)
     ents = re.findall(r'^\s+\S+:(\S+) \(noflash\)', open(a.check).read(), re.M)
-    bad = [f for f in ents if not (0x40370000 <= addr.get(f, 0) < 0x403e0000)]
+    # esp32s3 internal RAM: IRAM for code, DRAM for (noflash) rodata such as vtables
+    bad = [f for f in ents if not (0x3fc88000 <= addr.get(f, 0) < 0x403e0000)]
     for f in bad:
         print(f'{"missing" if f not in addr else "in flash":8s} {f}')
     print(f'{len(ents)} symbol entries, {len(bad)} not in IRAM', file=sys.stderr)
@@ -66,8 +67,12 @@ for l in subprocess.run([a.nm, '-S', '--defined-only', a.elf], capture_output=Tr
     p = l.split()
     if len(p) == 4 and p[2] in 'tTwW':
         syms.append((int(p[0], 16), int(p[1], 16), p[3]))
+    elif len(p) == 3 and p[1] in 'tTwW' and not p[2].startswith('.'):  # assembly: no size
+        syms.append((int(p[0], 16), 0, p[2]))
 syms.sort()
 starts = [s[0] for s in syms]
+# a sizeless symbol runs up to the next one
+syms = [(a_, sz or (syms[k + 1][0] - a_ if k + 1 < len(syms) else 1), n_) for k, (a_, sz, n_) in enumerate(syms)]
 
 obj = {}
 mp = a.map or os.path.splitext(a.elf)[0] + '.map'
@@ -95,8 +100,11 @@ fn = collections.Counter()
 info = {}
 unk = 0
 for pc, n in pcs.items():
-    i = bisect.bisect_right(starts, pc - 3) - 1  # return address points past the call
-    if i < 0 or not (syms[i][0] <= pc - 3 < syms[i][0] + max(syms[i][1], 1)):
+    # a return address points past the call; one inside the first instruction is an interrupted pc
+    i = bisect.bisect_right(starts, pc) - 1
+    q = pc if i >= 0 and pc - syms[i][0] < 3 else pc - 3
+    i = bisect.bisect_right(starts, q) - 1
+    if i < 0 or not (syms[i][0] <= q < syms[i][0] + max(syms[i][1], 1)):
         unk += n
         continue
     s = syms[i]

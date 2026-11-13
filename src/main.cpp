@@ -175,7 +175,9 @@ static void setupI2C(const ConfFile &boardConf, bool &noI2C) {
                     g_app.setupErr = true;
                 }
             ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, boardConf.getByte("i2c_scl"), i2c_freq);
-            if (!Wire.begin(i2c_sda, (uint8_t) boardConf.getLong("i2c_scl"), i2c_freq)) {
+            bool wireOk = false; // I2C interrupt on the RT core, see setupSensors()
+            runOnCore(RT_CORE, [&] { wireOk = Wire.begin(i2c_sda, (uint8_t) boardConf.getLong("i2c_scl"), i2c_freq); });
+            if (!wireOk) {
                 ESP_LOGE("main", "Failed to initialize Wire");
                 g_app.setupErr = true;
             }

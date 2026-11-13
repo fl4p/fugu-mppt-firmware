@@ -218,6 +218,9 @@ public:
 
     float getInputImpedance(uint8_t ch) override { return 500e3; } //  500k ESP ADC impedance?
 
-    bool IRAM_ATTR convDoneCallback() { return notification.notifyFromIsr(); }
+    bool IRAM_ATTR convDoneCallback() {
+        g_isrCore[0] = (uint8_t) xPortGetCoreID();
+        return notification.notifyFromIsr();
+    }
 };
 

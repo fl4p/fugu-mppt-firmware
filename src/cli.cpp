@@ -506,13 +506,13 @@ static void cmdRectCal(cmd *c) {
     ESP_LOGI("main", "rect-cal: running at hs=%u (~30 s), see rect-cal status", rc.cal.hs);
 }
 
-static void cmdResetLag(cmd *) {
+static void cmdResetLag(cmd *c) {
     g_app.maxLoopLag = 0;
     g_flashLagUs[0] = g_flashLagUs[1] = 0;
 #if CAPTURE_LOOP_DT
     g_app.maxLoopDT = 0;
 #endif
-    rtcount_print(true);
+    if (!Command(c).countArgs()) rtcount_print(true);
 }
 
 #ifdef WITH_NETW
@@ -2233,7 +2233,7 @@ void setupCli() {
     cli.addCommand("short-ls", cmdShortLs);
     cli.addCommand("sweep", cmdSweep);
     cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [status|abort]
-    cli.addCommand("reset-lag", cmdResetLag);
+    cli.addBoundlessCmd("reset-lag", cmdResetLag); // reset-lag [q]: q skips the rt-stats print
 #if WITH_RTPROF
     cli.addBoundlessCmd("rtprof", [](cmd *c) { // rtprof [clear|all]
         const String a = Command(c).countArgs() ? Command(c).getArg(0).getValue() : String();

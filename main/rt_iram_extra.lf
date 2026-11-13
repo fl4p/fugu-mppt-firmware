@@ -1,0 +1,48 @@
+# RT-loop code rtprof_map.py cannot place by itself: interrupt handlers (rtprof samples tasks only)
+# and assembly objects
+
+[mapping:rt_extra_arduino]
+archive: libespressif__arduino-esp32.a
+entries:
+    esp32-hal-gpio:__onPinInterrupt (noflash)
+    esp32-hal-misc:millis (noflash)
+    Wire:_ZTV7TwoWire (noflash)
+
+[mapping:rt_extra_dsp]
+archive: libespressif__esp-dsp.a
+entries:
+    dsps_biquad_f32_ae32 (noflash)
+
+[mapping:rt_extra_gcc]
+archive: libgcc.a
+entries:
+    _sqrtf (noflash)
+
+# short per-iteration helpers the sampler rarely catches, and the vtables the loop dispatches through
+[mapping:rt_extra_main]
+archive: libmain.a
+entries:
+    main:_ZN8AsyncADCIfE6isGoodEv (noflash)
+    main:_ZTV15Esp32TempSensor (noflash)
+    main:_ZTV18TempSensorGPIO_NTC (noflash)
+    main:_ZTV10PD_Control (noflash)
+    main:_ZTV25PD_Control_SmoothSetpoint (noflash)
+    sensor_setup:_ZTV10ADC_INA226 (noflash)
+    adc_esp32_cont:_ZTV14ADC_ESP32_Cont (noflash)
+
+[mapping:rt_extra_system]
+archive: libesp_system.a
+entries:
+    task_wdt_impl_timergroup:esp_task_wdt_impl_timer_feed (noflash)
+
+[mapping:rt_extra_hal_i2c]
+archive: libesp_hal_i2c.a
+entries:
+    i2c_hal:i2c_hal_master_set_scl_timeout_val (noflash)
+
+[mapping:rt_extra_libc]
+archive: libc.a
+entries:
+    libm_math_sf_ceil (noflash)
+    libm_common_sf_lround (noflash)
+    libm_common_sf_round (noflash)

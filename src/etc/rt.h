@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <exception>
 #include <stdexcept>
 #include <esp_attr.h> // IRAM_ATTR
 #include <esp_cpu.h>  // esp_cpu_get_cycle_count
@@ -84,6 +85,31 @@ void rtcount(const char *l);
 
 void rtcount_print(bool reset);
 
+// core that last ran the internal-ADC / alert-pin interrupt (0xff: none yet)
+extern uint8_t g_isrCore[2];
+
+// Runs fn on a task pinned to `core` and waits for it, so interrupts allocated inside land on that
+// core. Exceptions are rethrown in the caller.
+template<class F>
+void runOnCore(BaseType_t core, F &&fn, uint32_t stack = 8192) {
+    struct Ctx {
+        F *fn;
+        TaskHandle_t caller;
+        std::exception_ptr ex;
+    } ctx{&fn, xTaskGetCurrentTaskHandle(), nullptr};
+    if (xPortGetCoreID() != core && xTaskCreatePinnedToCore([](void *a) {
+        auto *c = (Ctx *) a;
+        try { (*c->fn)(); } catch (...) { c->ex = std::current_exception(); }
+        xTaskNotifyGive(c->caller);
+        vTaskDelete(nullptr);
+    }, "onCore", stack, &ctx, uxTaskPriorityGet(nullptr), nullptr, core) == pdPASS) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (ctx.ex) std::rethrow_exception(ctx.ex);
+    } else {
+        fn();
+    }
+}
+
 class TaskNotification {
     // https://www.freertos.org/Documentation/02-Kernel/02-Kernel-features/03-Direct-to-task-notifications/02-As-binary-semaphore
     // notifications are faster than semaphores!
@@ -104,7 +130,7 @@ public:
      * @param ms
      * @return false on timeout
      */
-    inline bool wait(uint32_t ms) {
+    __attribute__((always_inline)) inline bool wait(uint32_t ms) {
         return waitCount(ms) != 0;
     }
 
@@ -112,7 +138,7 @@ public:
     // clear-on-exit (pdTRUE): a burst that accumulated while the reader wasn't draining reads as one
     // wakeup carrying the full count. The old (pdFALSE, ==1) decrement-by-one returned false whenever
     // >1 had accumulated, starving read().
-    inline uint32_t waitCount(uint32_t ms) {
+    __attribute__((always_inline)) inline uint32_t waitCount(uint32_t ms) {
         void(this);
         //assert(readingTask and readingTask == xTaskGetCurrentTaskHandle());
         return ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(ms));
