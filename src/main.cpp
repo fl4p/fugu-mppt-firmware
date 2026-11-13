@@ -606,7 +606,8 @@ __attribute__((cold)) void setup() {
     setupConverterAndMppt(boardConf, lim, teleConf, noI2C);
 
     if (!g_app.setupErr) {
-        xTaskCreatePinnedToCore(loopRT, "loopRt", 4096 * 4, NULL, RT_PRIO, NULL, RT_CORE);
+        // 1.8 KB used; log formatting runs on core 0
+        xTaskCreatePinnedToCore(loopRT, "loopRt", 8192, NULL, RT_PRIO, NULL, RT_CORE);
 #if WITH_RTPROF
         rtprofStart(2000);
 #endif
