@@ -18,6 +18,7 @@ ap.add_argument('--merge', action='append', default=[], help='existing .lf whose
 ap.add_argument('--lf', help='write ldgen mapping fragments placing these functions in IRAM (noflash)')
 ap.add_argument('--skip-archive', action='append', default=[], help='archive basename to leave out of --lf')
 ap.add_argument('--check', help='.lf to verify against the ELF instead of mapping a dump')
+ap.add_argument('--unverified', action='store_true', help='accept a dump without the samples/entries/elf header')
 a = ap.parse_args()
 
 if not shutil.which(a.nm):
@@ -37,28 +38,46 @@ if a.check:
     bad = [f for f in ents if not (0x3fc88000 <= addr.get(f, 0) < 0x403e0000)]
     for f in bad:
         print(f'{"missing" if f not in addr else "in flash":8s} {f}')
-    print(f'{len(ents)} symbol entries, {len(bad)} not in IRAM', file=sys.stderr)
+    objs = re.findall(r'^\s+([^:\s]+) \(noflash\)', open(a.check).read(), re.M)
+    print(f'{len(ents)} symbol entries, {len(bad)} not in IRAM; {len(objs)} whole-object entries not checked', file=sys.stderr)
+    if not ents and not objs:
+        sys.exit(f'{a.check}: no (noflash) entries found')
     sys.exit(1 if bad else 0)
 
 pcs = collections.Counter()
 total = 0
+headers = 0
+declared = None
+verified = False
 for l in open(a.log, errors='replace'):
     m = re.search(r'rtprof samples=(\d+)', l)
     if m:
+        headers += 1
         total = int(m.group(1))
-        m = re.search(r'elf=([0-9a-f]+)', l)
+        m = re.search(r'entries=(\d+)', l)
+        declared = int(m.group(1)) if m else None
+        m = re.search(r'elf=(\S*)', l)
         if m:
+            if not re.fullmatch(r'[0-9a-f]{8,64}', m.group(1)):
+                sys.exit(f'dump header has a malformed elf= field: {m.group(1)!r}')
             got = hashlib.sha256(open(a.elf, 'rb').read()).hexdigest()
             if not got.startswith(m.group(1)):
                 sys.exit(f'{a.elf} is {got[:8]}, dump is from elf={m.group(1)}: '
                          f'etc/idf-devtools/elf_archive.py find --sha {m.group(1)} -o <elf>')
-        else:
-            print('warning: dump has no elf= sha, ELF match unverified', file=sys.stderr)
+            verified = True
     i = l.find('rtp ')
     if i < 0:
         continue
     for m in re.finditer(r'([0-9a-f]{8}):(\d+)', l[i:]):
         pcs[int(m.group(1), 16)] += int(m.group(2))
+if headers > 1:
+    sys.exit(f'{headers} dumps in one log: split it, counts and totals would mix')
+if declared is not None and declared != len(pcs):
+    sys.exit(f'truncated dump: header says {declared} entries, parsed {len(pcs)}')
+if not verified:
+    if not a.unverified:
+        sys.exit('dump has no header with an elf= sha: cannot tell that this ELF matches (--unverified to map anyway)')
+    print('warning: ELF match unverified', file=sys.stderr)
 if not pcs:
     sys.exit('no rtp lines')
 
@@ -149,9 +168,14 @@ if a.lf:
             m = re.match(r'archive:\s*(\S+)', l)
             if m:
                 ar = m.group(1)
+            if ar in a.skip_archive:
+                continue
             m = re.match(r'\s+([^:\s]+):(\S+) \(noflash\)', l)
             if m and ar:
-                by[ar].add((m.group(1), m.group(2)))
+                if m.group(2) in info or any(sy[2] == m.group(2) for sy in syms):
+                    by[ar].add((m.group(1), m.group(2)))
+                else:
+                    print(f'dropped from {mf} (not in this ELF): {m.group(2)}', file=sys.stderr)
             m = re.match(r'\s+([^:\s]+) \(noflash\)', l)
             if m and ar:
                 by[ar].add((m.group(1), None))
