@@ -81,6 +81,8 @@ public:
     void setDiodeVf(float v) { diodeVf_ = v; } // LS body-diode drop in the dead/off phase
     [[nodiscard]] float getVin()  const { return vIn_; }
     [[nodiscard]] float getVout() const { return vOut_; }
+    // per-cycle Vout maximum since the last call
+    float takeVoutMax() { float m = vOutMax_; vOutMax_ = vOut_; return m; }
     [[nodiscard]] float getIL()   const { return iLEnd_; }
     [[nodiscard]] float getIsc()  const { return pv_.isc; }
     [[nodiscard]] float getVoc()  const { return pv_.voc; }
@@ -142,6 +144,7 @@ private:
     // State
     float vIn_   = 0.0f;
     float vOut_  = 0.0f;
+    float vOutMax_ = 0.0f;
     float iLEnd_ = 0.0f;
     PwmState pwm_{};
     float iInAvg_  = 0.0f;

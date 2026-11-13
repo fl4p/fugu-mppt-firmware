@@ -105,6 +105,7 @@ void VirtualConverter::stepOneCycle(float T) {
 
     vIn_ += (Ipv - iInAvg_) * T * invCin_;
     vOut_ = (vOut_ + (T * iOutAvg_) * invCout_ + aOut_ * vBatEff) * inv1pAout_;
+    if (vOut_ > vOutMax_) vOutMax_ = vOut_;
 
     if (vIn_ < 0.0f) vIn_ = 0.0f;
     const float vInMax = pv_.voc * 1.05f;

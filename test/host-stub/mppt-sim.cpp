@@ -13,6 +13,7 @@
 //   /tmp/mppt-sim <scenario>   # sanity | a | b | c | d-cloud | d-cloud-ramp | d-bus04 | d-bus08 | d-bus12 |
 //                              # d-noise | e | e-bleed; suffix -p0 = limits.conf reverse_current_paranoia=0
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
+//   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
 //
 #include <cmath>
 #include <cstdio>
@@ -348,6 +349,11 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
         fclose(f);
     }
     if (!vconvOverrides.empty()) writeConf(confDir, "vconv.conf", vconvOverrides);
+    // pin the ADC tick to a board rate (SIM_ADC_HZ, default ~fmetal's 451 Hz) instead of the mock's
+    const char *hzEnv = getenv("SIM_ADC_HZ");
+    const int hz = hzEnv ? atoi(hzEnv) : 450;
+    writeConf(confDir, "vconv.conf", {{"adc_freq", std::to_string(hz)}});
+    writeConf(confDir, "sensor.conf", {{"expected_hz", std::to_string(hz * 4 / 5)}});
     if (paranoia0) writeConf(confDir, "limits.conf", {{"reverse_current_paranoia", "0"}});
 
     // setup(): the parts of setupConverterAndMppt() that the RT path needs
@@ -400,6 +406,7 @@ static void probeDetector(Probe &p) {
 static Probe probeStart() {
     Probe p{};
     p.t0 = tNow();
+    g_vconv.takeVoutMax();
     p.ioutBefore = sensors.Iout->ewm.avg.get();
     p.voutBefore = sensors.Vout->ewm.avg.get();
     p.vinBefore = sensors.Vin->ewm.avg.get();
@@ -436,7 +443,8 @@ static void run(double sec, double traceEvery, Probe *probe = nullptr, double fi
         }
         if (probe) {
             probe->voutPeakSensor = std::max(probe->voutPeakSensor, sensors.Vout->last);
-            probe->voutPeakPlant = std::max(probe->voutPeakPlant, g_vconv.getVout());
+            float vMax = g_vconv.takeVoutMax();
+            if (tNow() - probe->t0 < 1.0) probe->voutPeakPlant = std::max(probe->voutPeakPlant, vMax);
             if (wasOn && !on && probe->firstOffT < 0) probe->firstOffT = tNow();
             if ((tNow() - probe->t0) * 1e3 < fineMs) traceLine("  ");
         }
@@ -466,7 +474,7 @@ static void report(const char *name, const Probe &p) {
            " 3-of-4 %u, all %u; min iout/avg %.3f, max dVout/dvMin %.2f\n",
            p.nOn, p.nC[0], p.nC[1], p.nC[2], p.nC[3], p.nThree, p.nAll, p.minIRatio, p.maxDvRatio);
     if (p.firstOffT >= 0) printf("== converter first off at +%.1f ms\n", (p.firstOffT - p.t0) * 1e3);
-    printf("== peak Vout: sensor(last) %.3f V, plant %.3f V\n", p.voutPeakSensor, p.voutPeakPlant);
+    printf("== peak Vout: sensor(last) %.3f V, plant (per PWM cycle, 1 s) %.3f V\n", p.voutPeakSensor, p.voutPeakPlant);
 }
 
 static void settle(double sec) {
