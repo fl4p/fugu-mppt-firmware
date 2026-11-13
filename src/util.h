@@ -5,6 +5,9 @@
 #define RT_CORE 1
 #define NON_RT_CORE 0
 
+// runs the statements out of line, so they stay out of the caller's text (rt_iram.lf)
+#define RT_COLD(...) ([&]() __attribute__((noinline, cold)) { __VA_ARGS__ })()
+
 using time_us = uint64_t; // monotonic microseconds, sourced from esp_timer_get_time()
 using time_ms = uint64_t; // monotonic milliseconds, derived from wallClockUs()
 

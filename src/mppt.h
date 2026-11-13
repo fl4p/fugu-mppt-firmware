@@ -590,12 +590,14 @@ public:
             const auto feasibility = currentPsuFeasibility();
             if (feasibility == PsuSetpointError::BoostBelowInput
                 || feasibility == PsuSetpointError::OvLimitConflict) {
+                RT_COLD(
                 if (!psuLatched.exchange(true, std::memory_order_relaxed)) {
                     ESP_LOGE("mppt", "active PSU setpoint %.2f V became infeasible (Vin %.2f V, OV %.2f V)",
                              psuVsetpoint, sensors.Vin ? sensors.Vin->ewm.avg.get() : NAN,
                              getExplicitOvLimit());
                     shutdownDcdc("psu-setpoint-infeasible", 30);
                 }
+                );
                 return false;
             }
         }
@@ -603,17 +605,21 @@ public:
         // input over-voltage
         if (sensors.Vin->last > limits.Vin_max) {
             // input over-voltage
+            RT_COLD(
             ESP_LOGW("mppt", "Vin %.1f > %.1f!", sensors.Vin->last, limits.Vin_max);
             shutdownDcdc("Vin-OV");
+            );
             return false;
         }
 
         if (bmsCutoff()) {
+            RT_COLD(
             ESP_LOGE("mppt", "BMS cut-off? Iout %.2f (avg %.2f) Vout %.2f (avg %.2f) Vin %.2f (avg %.2f)",
                      sensors.Iout->med3.get(), sensors.Iout->ewm.avg.get(),
                      sensors.Vout->med3.get(), sensors.Vout->ewm.avg.get(),
                      sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get());
             shutdownDcdc("BMS-cutoff", 30);
+            );
             return false;
         }
 
@@ -633,6 +639,7 @@ public:
         auto ovTh = computeOvThreshold();
         //if (adcSampler.med3.s.chVout.get() > ovTh) {
         if (sensors.Vout->last > ovTh) {
+            RT_COLD(
             //  && sensors.Vout->previous > ovTh * 0.9f
             bool wasDisabled = converter.disabled();
             shutdownDcdc("Vout-OV");
@@ -662,9 +669,10 @@ public:
                 }
             }
 
-            enqueue_task([&] {
+            enqueue_task([this, vout, ovTh] {
                 lcd.displayMessageF("OV shutdown!\nVout=%.1fV max=%.1fV", 10000, vout, ovTh);
             });
+            );
 
             return false;
         }
@@ -672,10 +680,12 @@ public:
 
         // input over current
         if (sensors.Iin->last > limits.Iin_max * 1.3f && !converter.disabled()) {
+            RT_COLD(
             shutdownDcdc("Iin-OC");
             ESP_LOGW("mppt", "Iin %.1f >1.3x lim (Iout=%.1f Vin=%.2f), shutdown",
                      sensors.Iin->last,
                      sensors.Iout->last, sensors.Vin->last);
+            );
             return false;
         }
 
@@ -684,13 +694,16 @@ public:
              or sensors.Iout->med3.get() > limits.Iout_max * 1.25f
              or sensors.Iout->ewm.avg.get() > limits.Iout_max * 1.15f
             ) and not converter.disabled()) {
+            RT_COLD(
             shutdownDcdc("Iout-OC", 30);
             ESP_LOGW("mppt", "Iout %.2f (med %.2f avg %.2f) >lim %.2f, shutdown", sensors.Iout->last,
                      sensors.Iout->med3.get(), sensors.Iout->ewm.avg.get(), limits.Iout_max);
+            );
             return false;
         }
 
         if (sensorPhysicalI->last < -1 && sensorPhysicalI->previous < -1 && !converter.forcedPwm_()) {
+            RT_COLD(
             if (sensors.Iout->ewm.avg.get() > 10) {
                 //buck.halfDutyCycle();
                 shutdownDcdc("revI-highAvg");
@@ -702,26 +715,33 @@ public:
                 bflow.enable(false); // reverse current
                 converter.syncRectMinDuty();
             }
+            );
         }
 
         if (sensorPhysicalI->ewm.avg.get() < -1 /*&& !converter.forcedPwm_()*/) {
+            RT_COLD(
             if (!converter.disabled())
                 ESP_LOGE("MPPT", "Reverse avg current %.1f A, shutdown!", sensorPhysicalI->ewm.avg.get());
             shutdownDcdc("revI-ewm");
+            );
             return false;
         }
 
         if (!converter.boost()) {
             if (sensors.Vout->ewm.avg.get() > (sensors.Vin->ewm.avg.get() + 1.0f) * 1.25f) {
+                RT_COLD(
                 if (!converter.disabled())
                     ESP_LOGE("MPPT", "Vout %.1f > Vin %.1f, shutdown duty=%i", sensors.Vout->ewm.avg.get(),
                          sensors.Vin->ewm.avg.get(), (int) converter.getCtrlOnPwmCnt());
                 shutdownDcdc("Vout>Vin-avg");
+                );
                 return false;
             }
             if (sensors.Vout->last > (sensors.Vin->last + .5f) * 2) {
+                RT_COLD(
                 ESP_LOGE("MPPT", "Vout %.1f > 2x Vin %.1f, shutdown", sensors.Vout->last, sensors.Vin->last);
                 shutdownDcdc("Vout>2Vin");
+                );
                 return false;
             }
 
@@ -729,6 +749,7 @@ public:
             auto currentFilt = fminf(sensorPhysicalI->ewm.avg.get(),
                                      std::max(sensorPhysicalI->last, sensorPhysicalI->previous));
             if (currentFilt < -0.05f && limits.reverse_current_paranoia) {
+                RT_COLD(
                 if (converter.getRectOnPwmCnt() > converter.getRectOnPwmMax() / 2 &&
                     converter.getRectOnPwmCnt() > (converter.pwmRectMin + converter.pwmCtrlMax / 20)) {
                     ESP_LOGW("MPPT", "Low I, set LS min duty (ewm(%s)=%.2f, max=%.2f)",
@@ -742,16 +763,19 @@ public:
                     ESP_LOGW("MPPT", "Low current %.2f, disable sync rect", currentFilt);
                 converter.syncRectMinDuty();
                 bflow.enable(false); // low current
+                );
             }
         } else {
             // TODO Vin
         }
 
         if (sensors.Iout->ewm.avg.get() > limits.Ishort and sensors.Vout->ewm.avg.get() < 1) {
+            RT_COLD(
             if (!converter.disabled())
                 ESP_LOGE("MPPT", "Output short circuit detected! (V=%.2f, I= %.1fA)",
                      sensors.Vout->ewm.avg.get(), sensors.Iout->ewm.avg.get());
             shutdownDcdc("short", 30);
+            );
             return false;
         }
 
@@ -760,9 +784,11 @@ public:
         constexpr auto BflowMinDutyCycle = 0.1f;
         if (bflow && (!bflow.state() || converter.getDutyCycle() < BflowMinDutyCycle)) {
             if (sensorPhysicalI->ewm.avg.get() > 6) {
+                RT_COLD(
                 if (!converter.disabled())
                     ESP_LOGE("MPPT", "High-current through open backflow switch!");
                 shutdownDcdc("highI-bflowOpen");
+                );
                 return false;
             }
 
@@ -776,8 +802,10 @@ public:
                 // Vin can't really sit below Vout here; the 5% margin covers Vin sensor error at PV collapse
                 if (_sweeping && std::isnan(iDcm) && !converter.boost() && !converter.forcedPwm_() && vo > 1.f &&
                     vi > 0.95f * vo && sensorPhysicalI->ewm.avg.get() < 0.05f && sensorPhysicalI->last < 0.05f) {
+                    RT_COLD(
                     ESP_LOGI("mppt", "Sweep at D=%.2f with open backflow switch, ending it", converter.getDutyCycle());
                     _stopSweep(MpptControlMode::Sweep, -1, nullptr);
+                    );
                     if (converter.disabled()) { // no-MPP backoff
                         ctrlState.mode = MpptControlMode::None;
                         return false;
@@ -785,9 +813,11 @@ public:
                     // MPP committed: drop to it and keep protecting; returning false would stopAndBackoff()
                     converter.pwmPerturb((int16_t) ((int) targetDutyCycle - (int) converter.getCtrlOnPwmCnt()));
                 } else {
+                    RT_COLD(
                     if (!converter.disabled())
                         ESP_LOGE("MPPT", "High duty cycle with open backflow switch! (Idcm=%.2f Vin=%.2f Vout=%.2f)", iDcm, vi, vo);
                     shutdownDcdc("highD-bflowOpen");
+                    );
                     return false;
                 }
             }
@@ -795,9 +825,11 @@ public:
 
         if (!converter.syncRectEnabled_()) {
             if (sensorPhysicalI->ewm.avg.get() > 6) {
+                RT_COLD(
                 if (!converter.disabled())
                     ESP_LOGE("MPPT", "High current without sync rectification!");
                 shutdownDcdc("highI-noSyncRect");
+                );
                 return false;
             }
         }
@@ -829,6 +861,7 @@ public:
                  : (converter.getDutyCycle() * 0.8f) > vr)
             and limits.reverse_current_paranoia
             and !(g_app.psuMode() && vOut > 0.5f * psuVsetpoint && vOut < psuVsetpoint)) {
+            RT_COLD(
             if (!converter.disabled())
                 ESP_LOGE("MPPT",
                      "Buck D=%d%% but Vout(%.2f,vr=%.2f) Iout(%.2f,last=%.2f) low! sensor/HB fail",
@@ -838,6 +871,7 @@ public:
             );
 
             shutdownDcdc("Vr-sensor-fail");
+            );
             return false;
         }
 
@@ -902,6 +936,7 @@ public:
             converter.ackPendingPwmFreqRt();
             return;
         }
+        RT_COLD(
         const uint16_t hi = converter.pwmCtrlMax;
         auto rescale = [r, hi](uint16_t v) {
             return (uint16_t) std::min<int32_t>(std::lround((float) v * r), hi);
@@ -919,6 +954,7 @@ public:
         // Last: the console returns as soon as this lands, and the next command it dispatches must
         // find every count already in the new period's scale.
         converter.ackPendingPwmFreqRt();
+        );
     }
 
     // One-shot automatic ramp target (consumed by update() sweep/MPP fade path).
@@ -1157,6 +1193,10 @@ public:
     // RT-CORE ONLY. Console code posts a mailbox command; this is the single writer for the
     // controller resets, trip counters, sweep/backoff state and PSU setpoint transition.
     void applyPendingPsuCommandRt(bool freshTelemetry = true) {
+        if (pendingPsuCommandWord.load(std::memory_order_acquire)) applyPendingPsuCommandSlow(freshTelemetry);
+    }
+
+    __attribute__((noinline, cold)) void applyPendingPsuCommandSlow(bool freshTelemetry) {
         const uint32_t seqBefore = psuMailboxSeq.load(std::memory_order_acquire);
         if (seqBefore & 1u) return;
         auto word = pendingPsuCommandWord.load(std::memory_order_acquire);

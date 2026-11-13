@@ -8,9 +8,9 @@ entries:
 [mapping:rtprof_libc]
 archive: libc.a
 entries:
-    libm_common_sf_fmax:fmaxf (noflash)
-    libm_common_sf_fmin:fminf (noflash)
-    libm_common_sf_issignaling:__issignalingf (noflash)
+    libm_common_sf_fmax (noflash)
+    libm_common_sf_fmin (noflash)
+    libm_common_sf_issignaling (noflash)
 
 [mapping:rtprof_libesp_adc]
 archive: libesp_adc.a
@@ -71,6 +71,7 @@ entries:
     Wire:_ZN7TwoWire5writeEh (noflash)
     Wire:_ZN7TwoWire8setClockEm (noflash)
     Wire:_ZN7TwoWire9availableEv (noflash)
+    esp32-hal-gpio:__digitalWrite (noflash)
     esp32-hal-i2c-ng:i2cAddDeviceIfNeeded (noflash)
     esp32-hal-i2c-ng:i2cWriteReadNonStop (noflash)
     esp32-hal-misc:micros (noflash)
@@ -105,24 +106,21 @@ entries:
     main:_ZN11ADC_Sampler16_addSensorSampleEP6Sensorf (noflash)
     main:_ZN11ADC_Sampler17handleSensorCalibER6Sensor (noflash)
     main:_ZN11ADC_Sampler6updateEv (noflash)
-    main:_ZN14MpptController24applyPendingPsuCommandRtEb (noflash)
     main:_ZN14MpptController9protectLfEb (noflash)
+    main:_ZN20SynchronousConverter10pwmPerturbEs (noflash)
     main:_ZN20SynchronousConverter19updateForcedPwmGateEffb (noflash)
     main:_ZN20SynchronousConverter20computeSyncRectRatioEfff (noflash)
-    main:_ZN20SynchronousConverter21applyPendingPwmFreqRtEv (noflash)
-    main:_ZN20SynchronousConverter22applyPendingDeadTimeRtEv (noflash)
     main:_ZN25PD_Control_SmoothSetpoint6updateEfff (noflash)
+    main:_ZN5Scope11addSample12EPKvhRKt (noflash)
     main:_ZN6Sensor10add_sampleEf (noflash)
+    main:_ZNK14MpptController16startBlockReasonEv (noflash)
     main:_ZNSt17_Function_handlerIFvRKhfEZN11ADC_Sampler10_updateAdcERNS3_8AdcStateEEUlhfE_E10_M_managerERSt9_Any_dataRKS8_St18_Manager_operation (noflash)
     main:_ZNSt17_Function_handlerIFvRKhfEZN11ADC_Sampler10_updateAdcERNS3_8AdcStateEEUlhfE_E9_M_invokeERKSt9_Any_dataS1_Of (noflash)
     mppt:_ZN14MpptController6updateEv (noflash)
-    mppt:_ZN20SynchronousConverter10pwmPerturbEs (noflash)
-    mppt:_ZNK14MpptController16startBlockReasonEv (noflash)
     rt:_Z7rtcountPKc (noflash)
     sensor_setup:_ZN10ADC_INA22612startReadingEh (noflash)
     sensor_setup:_ZN10ADC_INA2267hasDataEv (noflash)
     sensor_setup:_ZN10ADC_INA2269getSampleEv (noflash)
-    sensor_setup:_ZN5Scope11addSample12EPKvhRKt (noflash)
     sensor_setup:_ZN9INA226_WE12readRegisterEhRbh (noflash)
     sensor_setup:_ZN9INA226_WE12readRegisterEhh (noflash)
     sensor_setup:_ZNK10ADC_INA2268readModeEv (noflash)
@@ -132,6 +130,6 @@ entries:
 [mapping:rtprof_libstdc__]
 archive: libstdc++.a
 entries:
-    del_op:_ZdlPv (noflash)
-    del_ops:_ZdlPvj (noflash)
-    new_op:_Znwj (noflash)
+    del_op (noflash)
+    del_ops (noflash)
+    new_op (noflash)

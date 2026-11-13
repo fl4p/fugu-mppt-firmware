@@ -766,6 +766,11 @@ public:
     // little wide for the dead-time still in force, which is harmless (more rectifier conduction,
     // still inside the unchanged pwmMax) and cannot happen for a request that passed the producer.
     void applyPendingDeadTimeRt() {
+        if (dtReqWord.load(std::memory_order_acquire) != dtAckWord.load(std::memory_order_relaxed))
+            applyPendingDeadTimeSlow();
+    }
+
+    __attribute__((noinline, cold)) void applyPendingDeadTimeSlow() {
         const uint32_t req = dtReqWord.load(std::memory_order_acquire);
         if (req == dtAckWord.load(std::memory_order_relaxed)) return;
         const auto hl = (uint16_t) ((req >> 11) & kDtTickMask);
@@ -929,6 +934,12 @@ public:
     // counts that this transaction has not finished with — and the outer rescale would then
     // multiply that fresh value by the ratio a second time.
     float applyPendingPwmFreqRt() {
+        if (freqReqWord.load(std::memory_order_acquire) == freqAckWord.load(std::memory_order_relaxed))
+            return 0.f;
+        return applyPendingPwmFreqSlow();
+    }
+
+    __attribute__((noinline, cold)) float applyPendingPwmFreqSlow() {
         const uint32_t req = freqReqWord.load(std::memory_order_acquire);
         if (req == freqAckWord.load(std::memory_order_relaxed)) return 0.f;
         // Latched before any early-out below, so a refused request is still acknowledged and the

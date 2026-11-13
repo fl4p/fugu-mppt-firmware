@@ -717,6 +717,7 @@ static void loopRT(void *arg) {
         time_ms nowMs = nowUs / 1000ULL;
 
         if (unlikely(adcSampler.adcResetPending())) {
+            RT_COLD(
             if (adcSampler.halted) {
                 adcSampler.dropAdcReset();
                 ESP_LOGW("main", "ADC reset dropped, sampler halted");
@@ -728,6 +729,7 @@ static void loopRT(void *arg) {
                 stopAndBackoff(ok ? 6 : 30); // re-arm from the end of the reset
                 if (timeLastSampler) timeLastSampler = nowUs; // grace for the stall watchdog
             }
+            );
         }
 
         rtcount("adc.update.pre");
@@ -770,6 +772,7 @@ static void loopRT(void *arg) {
                            timeLastSampler && nowUs - timeLastSampler > 200000);
 
         if (adcStalled) {
+            RT_COLD(
             if (!adcStalledSinceMs) adcStalledSinceMs = nowMs;
             mppt.lvPgood.release();
             if (nowMs - lastAdcResetMs > kAdcResetThrottleMs) { // restart a wedged DMA quickly
@@ -785,6 +788,7 @@ static void loopRT(void *arg) {
                 stopAndBackoff(16);
             }
             if (nowMs - adcStalledSinceMs > kAdcRestartMs) systemRestart();
+            );
         } else {
             adcStalledSinceMs = 0;
         }
@@ -795,17 +799,21 @@ static void loopRT(void *arg) {
             // RT core and disable/ramp the converter.
             mppt.applyPendingPsuCommandRt(false);
             if (adcSampler.isCalibrating() && mppt.boardPowerSupplyUnderVoltage()) {
+                RT_COLD(
                 ESP_LOGW("main", "Board power supply UV %.2f!", mppt.boardPowerSupplyVoltage());
                 adcSampler.cancelCalibration();
+                );
             }
 
             if (!timeLastSampler and nowMs > 20000) {
+                RT_COLD(
                 converter.disable();
                 ESP_LOGE("main", "Never got a sample! Please check ADC");
                 if (nowMs > (1000 * 60 * 15)) {
                     systemRestart();
                 }
                 delay(5000);
+                );
             }
         } else {
             loopRTNewData(nowMs);
@@ -1281,6 +1289,7 @@ static void loopRTNewData(time_ms nowMs) {
                 stopAndBackoff(4);
             }
         } else if (wallClockUs() > delayStartUntil && mppt.startCondition()) {
+            RT_COLD(
             if (g_app.psuMode()) {
                 mppt.bflow.enable(true);
                 converter.pwmPerturb(1);
@@ -1326,6 +1335,7 @@ static void loopRTNewData(time_ms nowMs) {
                     delayStartUntil = wallClockUs() + 4 * 1000000ULL;
                 }
             }
+            );
         }
 
         if (scope && sensors.Vout && haveNewSample)
