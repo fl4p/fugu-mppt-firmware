@@ -1,12 +1,19 @@
 #include "logging.h"
 
 #include <cstring>
+#include <esp_attr.h>
 #include <new>
 #include <ESPTelnet.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>   // pcTaskGetName (wifi-task bypass in vprintf_)
 
+// without the queue's debug-only reentrancy guard: its out-of-line constructor would run from flash on the RT core
+#pragma push_macro("NDEBUG")
+#undef NDEBUG
+#define NDEBUG
 #include "etc/readerwriterqueue.h"
+#pragma pop_macro("NDEBUG")
+#include <cassert>
 #include "util.h"
 #include <soc/soc.h>
 
@@ -190,7 +197,8 @@ void removeLogCallback(LogCallback callback) {
 }
 
 
-static int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appendBreak = false, bool timestamp = false) {
+// IRAM: the RT core logs through here while a flash op runs
+__attribute__((flatten)) static IRAM_ATTR int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appendBreak = false, bool timestamp = false) {
     assert((xPortGetCoreID() == 1)); // ensure RT core
 
     if (uart_async_log_queue.size_approx() > 200) return -1;
@@ -253,7 +261,7 @@ void enqueue_telnet_log(const char *fmt, size_t l, const va_list &args) {
 }*/
 
 
-void UART_LOG(const char *fmt, ...) {
+IRAM_ATTR void UART_LOG(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     if (xPortGetCoreID() == 1 && deferLogs) {
@@ -266,7 +274,7 @@ void UART_LOG(const char *fmt, ...) {
     va_end(args);
 }
 
-void printf_mux(const char *fmt, ...) {
+IRAM_ATTR void printf_mux(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     if (xPortGetCoreID() == 1 && deferLogs) {
@@ -405,7 +413,7 @@ static int vprintf_mux(const char *fmt, va_list argptr) {
 }
 
 
-static int vprintf_(const char *fmt, va_list argptr) {
+static IRAM_ATTR int vprintf_(const char *fmt, va_list argptr) {
     // Defer to the core0 flush only FROM core1 (the RT core, or when it can't yield — critical
     // section/ISR). enqueue_log() asserts core1, so core0 must always take the synchronous
     // vprintf_mux path; this also makes it safe to route esp_log here from the very start of setup()

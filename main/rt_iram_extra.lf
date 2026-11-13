@@ -49,3 +49,15 @@ entries:
     libm_math_sf_ceil (noflash)
     libm_common_sf_lround (noflash)
     libm_common_sf_round (noflash)
+
+# esp_log's level check, on the way to the log hook
+[mapping:rt_extra_log]
+archive: liblog.a
+entries:
+    log_level:esp_log_is_tag_loggable (noflash)
+    log_binary_heap (noflash)
+
+[mapping:rt_extra_stdcpp]
+archive: libstdc++.a
+entries:
+    new_opnt (noflash)
