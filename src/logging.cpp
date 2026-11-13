@@ -44,6 +44,7 @@ struct RawLog {
     int32_t ndx;
     uint32_t reg[6];  // register-passed argument area
     uint32_t stk[32]; // stack-passed arguments
+    char str[40];     // copies of %s arguments
 };
 
 // layout of the Xtensa (windowed ABI) va_list, which C++ cannot access by member
@@ -54,11 +55,15 @@ struct XtVaList {
 };
 static_assert(sizeof(va_list) == sizeof(XtVaList));
 
-enum RawLogFlags : uint8_t { RawLogSet = 1, RawLogBreak = 2, RawLogStamp = 4 };
+enum RawLogFlags : uint8_t { RawLogSet = 1, RawLogBreak = 2, RawLogStamp = 4, RawLogStrings = 8 };
 
-// A deferred %s may point at memory that is gone by now; keep only strings in flash.
-static void rawLogCheckStrings(RawLog &r) {
+// %s arguments that do not point into flash: copy the string into the capture (copy, on the logging
+// core while it is still valid) or, when that was skipped, drop it (the memory may be gone by now).
+// No libc calls and no tables: this also runs on the RT core.
+static IRAM_ATTR void rawLogStrings(RawLog &r, bool copy) {
+    static DRAM_ATTR char gone[] = "?";
     int32_t ndx = r.ndx;
+    size_t used = 0;
     auto arg = [&](int size) -> uint32_t * {
         if (size == 8) ndx = (ndx + 7) & ~7;
         ndx += size;
@@ -71,22 +76,27 @@ static void rawLogCheckStrings(RawLog &r) {
     for (const char *p = r.fmt; *p; ++p) {
         if (*p != '%') continue;
         if (*++p == '%') continue;
-        while (*p && strchr("-+ #0123456789.lhzjt*", *p)) {
-            if (*p == '*') arg(4);
-            ++p;
-        }
+        for (char c; (c = *p) && (c == '-' || c == '+' || c == ' ' || c == '#' || c == '.' || c == '*'
+                                  || (c >= '0' && c <= '9') || c == 'l' || c == 'h' || c == 'z' || c == 'j' || c == 't'); ++p)
+            if (c == '*') arg(4);
         if (!*p) break;
-        if (strchr("fFeEgGaA", *p)) arg(8);
+        const char c = (char) (*p | 0x20);
+        if (c == 'f' || c == 'e' || c == 'g' || c == 'a') arg(8);
         else if (*p == 's') {
             uint32_t *a = arg(4);
-            static const char gone[] = "?";
-            if (a && !(*a >= SOC_DROM_LOW && *a < SOC_DROM_HIGH)) *a = (uint32_t) gone;
+            if (!a || !*a || (*a >= SOC_DROM_LOW && *a < SOC_DROM_HIGH)) continue;
+            const char *src = (const char *) *a;
+            *a = (uint32_t) gone;
+            if (!copy || used + 2 > sizeof(r.str)) continue;
+            *a = (uint32_t) &r.str[used];
+            while (*src && used + 1 < sizeof(r.str)) r.str[used++] = *src++;
+            r.str[used++] = 0;
         } else arg(4);
     }
 }
 
 static int rawLogFormat(RawLog &r, uint8_t flags, char *out, size_t n) {
-    rawLogCheckStrings(r);
+    if (!(flags & RawLogStrings)) rawLogStrings(r, false);
     int len = (flags & RawLogStamp) ? snprintf(out, n, "(%lu): ", (unsigned long) r.us) : 0;
     const XtVaList x{(int32_t *) ((char *) r.stk - 32), (int32_t *) r.reg, r.ndx};
     va_list ap;
@@ -201,23 +211,26 @@ void removeLogCallback(LogCallback callback) {
 __attribute__((flatten)) static IRAM_ATTR int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appendBreak = false, bool timestamp = false) {
     assert((xPortGetCoreID() == 1)); // ensure RT core
 
-    if (uart_async_log_queue.size_approx() > 200) return -1;
+    if (uart_async_log_queue.size_approx() > 64) return -1;
 #ifdef __XTENSA__
-    if (flashOpActive() || g_rawLogForce) { // formatting runs from flash: leave it to the flush on core 0
-        auto r = new(std::nothrow) RawLog;
-        if (!r) return -1;
-        r->fmt = fmt;
-        r->us = micros();
-        XtVaList x;
-        memcpy(&x, &args, sizeof(x));
-        r->ndx = x.ndx;
-        memcpy(r->reg, x.reg, sizeof(r->reg));
-        memcpy(r->stk, (const char *) x.stk + 32, sizeof(r->stk));
-        uart_async_log_queue.enqueue(AsyncLogEntry{(char *) r, 0, false, (uint8_t) (RawLogSet | (appendBreak ? RawLogBreak : 0)
-                                                                              | (timestamp ? RawLogStamp : 0))});
-        return 0;
-    }
-#endif
+    // Never format here: float formatting costs ~0.4 ms, and runs from flash. The flush on core 0 does it.
+    auto r = new(std::nothrow) RawLog;
+    if (!r) return -1;
+    r->fmt = fmt;
+    r->us = micros();
+    XtVaList x;
+    memcpy(&x, &args, sizeof(x));
+    r->ndx = x.ndx;
+    memcpy(r->reg, x.reg, sizeof(r->reg));
+    memcpy(r->stk, (const char *) x.stk + 32, sizeof(r->stk));
+    // reading the format string is a flash data access: not while a flash op runs
+    const bool strings = !flashOpActive() && !g_rawLogForce;
+    if (strings) rawLogStrings(*r, true);
+    uart_async_log_queue.enqueue(AsyncLogEntry{(char *) r, 0, false, (uint8_t) (RawLogSet | (appendBreak ? RawLogBreak : 0)
+                                                                          | (timestamp ? RawLogStamp : 0)
+                                                                          | (strings ? RawLogStrings : 0))});
+    return 0;
+#else
     auto buf = new(std::nothrow) char[l + 1]; // RT path: drop the line on OOM, never throw/abort
     if (!buf) return -1;
     int len = 0;
@@ -238,13 +251,14 @@ __attribute__((flatten)) static IRAM_ATTR int enqueue_log(const char *fmt, size_
     }
     uart_async_log_queue.enqueue(AsyncLogEntry{buf, (uint16_t) len, false});
     return len;
+#endif
 }
 
 /*
 void enqueue_telnet_log(const char *s, int len) {
     assert((xPortGetCoreID() == 1));
 
-    if (uart_async_log_queue.size_approx() > 200) return;
+    if (uart_async_log_queue.size_approx() > 64) return;
     auto buf = new char[len + 1];
     strncpy(buf, s, len + 1);
     uart_async_log_queue.enqueue(AsyncLogEntry{buf, (uint16_t) len, true});
@@ -254,7 +268,7 @@ void enqueue_telnet_log(const char *s, int len) {
 void enqueue_telnet_log(const char *fmt, size_t l, const va_list &args) {
     assert((xPortGetCoreID() == 1));
 
-    if (uart_async_log_queue.size_approx() > 200) return;
+    if (uart_async_log_queue.size_approx() > 64) return;
     auto buf = new char[l + 1];
     auto len = vsnprintf(buf, l + 1, fmt, args);
     uart_async_log_queue.enqueue(AsyncLogEntry{buf, (uint16_t) len, true});
