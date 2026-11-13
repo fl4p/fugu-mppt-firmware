@@ -14,6 +14,7 @@
 //                              # d-noise | e | e-bleed; suffix -p0 = limits.conf reverse_current_paranoia=0
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
+//   SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" /tmp/mppt-sim a   # board overrides
 //
 #include <cmath>
 #include <cstdio>
@@ -354,6 +355,18 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
     const int hz = hzEnv ? atoi(hzEnv) : 450;
     writeConf(confDir, "vconv.conf", {{"adc_freq", std::to_string(hz)}});
     writeConf(confDir, "sensor.conf", {{"expected_hz", std::to_string(hz * 4 / 5)}});
+    // SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" appends board overrides
+    if (const char *c = getenv("SIM_CONF")) {
+        std::string all = c;
+        for (size_t i = 0, j; i < all.size(); i = j + 1) {
+            j = all.find(',', i);
+            if (j == std::string::npos) j = all.size();
+            std::string kv = all.substr(i, j - i);
+            size_t colon = kv.find(':'), eq = kv.find('=');
+            if (colon != std::string::npos && eq != std::string::npos && eq > colon)
+                writeConf(confDir, kv.substr(0, colon).c_str(), {{kv.substr(colon + 1, eq - colon - 1), kv.substr(eq + 1)}});
+        }
+    }
     if (paranoia0) writeConf(confDir, "limits.conf", {{"reverse_current_paranoia", "0"}});
 
     // setup(): the parts of setupConverterAndMppt() that the RT path needs
