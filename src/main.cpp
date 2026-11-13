@@ -1309,7 +1309,7 @@ static void loopRTNewData(time_ms nowMs) {
             } else {
                 stopAndBackoff(4);
             }
-        } else if (wallClockUs() > delayStartUntil && mppt.startCondition()) {
+        } else if (!flashOpActive() && wallClockUs() > delayStartUntil && mppt.startCondition()) { // start runs from flash
             RT_COLD(
             if (g_app.psuMode()) {
                 mppt.bflow.enable(true);

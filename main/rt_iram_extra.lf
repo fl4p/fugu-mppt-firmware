@@ -62,3 +62,18 @@ entries:
 archive: libstdc++.a
 entries:
     new_opnt (noflash)
+
+# shutdown path: a protection trip must not wait for flash
+[mapping:rt_extra_shutdown]
+archive: libmain.a
+entries:
+    main:_ZN14MpptController12shutdownDcdcEPKcm (noflash)
+    main:_ZN20SynchronousConverter7disableEv (noflash)
+    main:_ZN14BackflowDriver6enableEb (noflash)
+    main:_Z14stopAndBackoffm (noflash)
+    main:_ZN14MpptController10_stopSweepE15MpptControlModeiPNS_3CVPE (noflash)
+
+[mapping:rt_extra_mcpwm]
+archive: libesp_driver_mcpwm.a
+entries:
+    mcpwm_gen:mcpwm_generator_set_force_level (noflash)
