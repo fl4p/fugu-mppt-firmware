@@ -150,6 +150,7 @@ struct AsReader {
     volatile bool run, done, erasing;
     volatile uint32_t n;      // bursts done
     uint32_t maxCyc;
+    uint32_t maxRdCyc;        // slowest single read
     uint32_t i0, nE, sumE;    // first word index, words read and their sum while erasing
 };
 
@@ -167,7 +168,10 @@ static void asReaderTask(void *a) {
         was |= e;
         uint32_t t0 = esp_cpu_get_cycle_count(), s = 0;
         for (int k = 0; k < AS_BURST; ++k) {
+            const uint32_t t1 = esp_cpu_get_cycle_count();
             s += r.p[i];
+            const uint32_t d1 = esp_cpu_get_cycle_count() - t1;
+            if (d1 > r.maxRdCyc) r.maxRdCyc = d1;
             if ((i += AS_STRIDE) >= AS_WIN / 4) i = 0;
         }
         uint32_t dt = esp_cpu_get_cycle_count() - t0;
@@ -220,6 +224,7 @@ static uint8_t asRun(FlashSusProbe &r, uint32_t sector) {
     }
     vTaskDelay(pdMS_TO_TICKS(20));
     rd.maxCyc = 0;
+    rd.maxRdCyc = 0;
 
     fugu_flash_sus_set(true);
     rd.erasing = true;
@@ -246,8 +251,9 @@ static uint8_t asRun(FlashSusProbe &r, uint32_t sector) {
     if (ms > 2000) return AsSlow;
     if (n < 10 || rd.nE < 10 * AS_BURST) return AsNoOverlap;
     if (!asVerify(rd, run->address)) return AsData;
-    // the reader forces AS_BURST misses back to back; the RT path is in IRAM (rt_iram.lf) and takes single ones
-    if (stall > AS_BURST * 400) return AsStall;
+    // the reader forces AS_BURST misses back to back; the RT path is in IRAM (rt_iram.lf) and takes single
+    // ones, so each one counts: 600 us leaves the ADC DMA (1.9 ms) three of them
+    if (stall > AS_BURST * 400 || rd.maxRdCyc / (tpu ? tpu : 1) > 600) return AsStall;
     uint32_t b[64];
     for (uint32_t o = 0; o < 0x1000; o += sizeof(b)) {
         if (esp_flash_read(nullptr, b, sector + o, sizeof(b)) != ESP_OK) return AsNotErased;

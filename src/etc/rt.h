@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <esp_attr.h> // IRAM_ATTR
 #include <esp_cpu.h>  // esp_cpu_get_cycle_count
+#include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h> // TaskHandle_t, task notifications
 
@@ -106,6 +107,7 @@ void runOnCore(BaseType_t core, F &&fn, uint32_t stack = 8192) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (ctx.ex) std::rethrow_exception(ctx.ex);
     } else {
+        if (xPortGetCoreID() != core) ESP_LOGW("rt", "runOnCore(%d): no task, running on core %d", (int) core, (int) xPortGetCoreID());
         fn();
     }
 }

@@ -56,6 +56,7 @@ archive: liblog.a
 entries:
     log_level:esp_log_is_tag_loggable (noflash)
     log_binary_heap (noflash)
+    log_linked_list (noflash)
 
 [mapping:rt_extra_stdcpp]
 archive: libstdc++.a

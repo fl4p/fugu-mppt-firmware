@@ -12,7 +12,8 @@
 
 #include "logging.h"
 
-static constexpr uint32_t N = CONFIG_FUGU_RTPROF_SLOTS; // power of two
+static constexpr uint32_t N = CONFIG_FUGU_RTPROF_SLOTS;
+static_assert(N >= 64 && (N & (N - 1)) == 0, "FUGU_RTPROF_SLOTS must be a power of two");
 static DRAM_ATTR uint32_t s_pc[N], s_n[N];
 static DRAM_ATTR volatile uint32_t s_samples, s_lost, s_task;
 static unsigned s_hz;

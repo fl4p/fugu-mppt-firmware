@@ -196,6 +196,7 @@ config FUGU_WITH_RTPROF
 config FUGU_RTPROF_SLOTS
     int "rtprof table slots (power of two, 8 bytes each)"
     depends on FUGU_WITH_RTPROF
+    range 64 16384
     default 4096
 
 config FUGU_WITH_MEASURE_COIL

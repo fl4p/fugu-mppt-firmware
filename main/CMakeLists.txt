@@ -119,7 +119,8 @@ endif ()
 if (CONFIG_FUGU_WITH_RTPROF)
     set(RTPROF_SRC "../src/etc/rtprof.cpp")
 endif ()
-if (NOT "$ENV{FUGU_RT_FLASH}")
+# S3 only: the classic ESP32 has no IRAM to spare and no flash auto-suspend
+if (CONFIG_IDF_TARGET_ESP32S3 AND NOT "$ENV{FUGU_RT_FLASH}")
     set(RT_IRAM_LF "rt_iram.lf" "rt_iram_extra.lf")
 endif ()
 

@@ -45,7 +45,7 @@ struct RawLog {
     int32_t ndx;
     uint32_t reg[6];  // register-passed argument area
     uint32_t stk[32]; // stack-passed arguments
-    char str[40];     // copies of %s arguments
+    char str[80];     // copies of %s arguments
 };
 
 // layout of the Xtensa (windowed ABI) va_list, which C++ cannot access by member
@@ -77,12 +77,17 @@ static IRAM_ATTR void rawLogStrings(RawLog &r, bool copy) {
     for (const char *p = r.fmt; *p; ++p) {
         if (*p != '%') continue;
         if (*++p == '%') continue;
+        int wide = 0; // ll, j, L: an 8-byte argument
         for (char c; (c = *p) && (c == '-' || c == '+' || c == ' ' || c == '#' || c == '.' || c == '*'
-                                  || (c >= '0' && c <= '9') || c == 'l' || c == 'h' || c == 'z' || c == 'j' || c == 't'); ++p)
+                                  || (c >= '0' && c <= '9') || c == 'l' || c == 'h' || c == 'z' || c == 'j' || c == 't'
+                                  || c == 'L'); ++p) {
             if (c == '*') arg(4);
+            else if (c == 'l') ++wide;
+            else if (c == 'j' || c == 'L') wide = 2;
+        }
         if (!*p) break;
         const char c = (char) (*p | 0x20);
-        if (c == 'f' || c == 'e' || c == 'g' || c == 'a') arg(8);
+        if (c == 'f' || c == 'e' || c == 'g' || c == 'a' || (wide >= 2 && *p != 's')) arg(8);
         else if (*p == 's') {
             uint32_t *a = arg(4);
             if (!a || !*a || (*a >= SOC_DROM_LOW && *a < SOC_DROM_HIGH)) continue;
@@ -266,9 +271,12 @@ __attribute__((flatten)) static IRAM_ATTR int enqueue_log(const char *fmt, size_
     // reading the format string is a flash data access: not while a flash op runs
     const bool strings = !flashOpActive() && !g_rawLogForce;
     if (strings) rawLogStrings(*r, true);
-    uart_async_log_queue.enqueue(AsyncLogEntry{(char *) r, 0, false, (uint8_t) (RawLogSet | (appendBreak ? RawLogBreak : 0)
-                                                                          | (timestamp ? RawLogStamp : 0)
-                                                                          | (strings ? RawLogStrings : 0))});
+    if (!uart_async_log_queue.enqueue(AsyncLogEntry{(char *) r, 0, false, (uint8_t) (RawLogSet | (appendBreak ? RawLogBreak : 0)
+                                                                               | (timestamp ? RawLogStamp : 0)
+                                                                               | (strings ? RawLogStrings : 0))})) {
+        delete r;
+        return -1;
+    }
     return 0;
 #else
     auto buf = new(std::nothrow) char[l + 1]; // RT path: drop the line on OOM, never throw/abort
