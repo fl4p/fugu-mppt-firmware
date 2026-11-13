@@ -121,6 +121,9 @@ static void loopNetwork_task(void *arg);
 static void loopRT(void *arg); // this is the critical one
 
 static void loopRTNewData(time_ms nowMs);
+#if WITH_RTPROF
+volatile uint8_t g_rtLogTest = 0;
+#endif
 
 #ifdef WITH_NETW
 // arduino-esp32's WiFiGeneric.cpp:298 calls esp_netif_create_default_wifi_ap() unconditionally,
@@ -734,6 +737,21 @@ static void loopRT(void *arg) {
             );
         }
 
+#if WITH_RTPROF
+        if (unlikely(g_rtLogTest)) {
+            RT_COLD(
+            const uint8_t k = --g_rtLogTest;
+            g_rawLogForce = k & 1;
+            static const char lit[] = "lit";
+            char tmp[8] = "stack";
+            ESP_LOGI("rtlog", "%s i=%d f=%.2f s=%s u=%lu g=%.3f t=%s x=%x a=%.1f b=%.1f c=%.1f h=%hu e=%d",
+                     g_rawLogForce ? "raw" : "fmt", -42 - k, 3.14159f, lit, 4000000000UL, 1e-3, tmp, 0xbeef,
+                     1.5f, -2.5f, 1234.5f, (uint16_t) 65000, 7);
+            UART_LOG("%s uartlog i=%d f=%.2f s=%s", g_rawLogForce ? "raw" : "fmt", k, 2.5f, lit);
+            g_rawLogForce = false;
+            );
+        }
+#endif
         rtcount("adc.update.pre");
         auto samplerRet = adcSampler.update();
         rtcount("adc.update");

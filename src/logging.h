@@ -27,6 +27,9 @@
 // ESPTelnet *log_telnet = nullptr;
 
 void loggingEnableDefer();
+
+// test hook: capture every RT-core log line raw, as during a flash op
+extern bool g_rawLogForce;
 void enable_esp_log_to_telnet();
 // esp_log_set_vprintf
 

@@ -702,7 +702,7 @@ public:
                 if (snr >= NOTCH_SNR_MIN) {
                     // slew toward the estimate so a single noisy block can't yank the notch
                     float target = notchFreq + 0.5f * (hz - notchFreq);
-                    if (fabsf(target - notchFreq) > 0.3f) {
+                    if (fabsf(target - notchFreq) > 0.3f && !flashOpActive()) { // else the next block retunes
                         notchFreq = target;
                         retuneNotches(notchFreq);
                         ESP_LOGI("sampling", "ripple notch -> %.1fHz (snr=%.0f)", notchFreq, snr);

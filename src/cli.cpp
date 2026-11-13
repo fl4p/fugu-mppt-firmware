@@ -26,6 +26,7 @@
 #include "etc/flash_probe.h"
 #if WITH_RTPROF
 #include "etc/rtprof.h"
+extern volatile uint8_t g_rtLogTest;
 #endif
 #ifdef CONFIG_BOOTGUARD_ENABLE
 #include "bootguard.h"
@@ -717,6 +718,22 @@ static void cmdBootinfo(cmd *) {
 }
 
 // heap [check]  — free / min-ever / largest-block per capability; `check` runs an integrity scan.
+// interrupt table per core (source, level, shared), to check which core serves a peripheral
+static void cmdIntr(cmd *) {
+    char *buf = nullptr;
+    size_t len = 0;
+    FILE *f = open_memstream(&buf, &len);
+    if (!f) return;
+    esp_intr_dump(f);
+    fclose(f);
+    for (char *l = buf, *e; l && *l; l = e ? e + 1 : nullptr) {
+        e = strchr(l, '\n');
+        if (e) *e = 0;
+        if (!strstr(l, "Reserved") && !strstr(l, "Free") && !strstr(l, "CPU-internal")) UART_LOG("%s", l);
+    }
+    free(buf);
+}
+
 static void cmdHeap(cmd *c) {
     UART_LOG("heap (bytes):  free / min-ever / largest-block");
     struct { const char *n; uint32_t caps; } pools[] = {
@@ -2233,8 +2250,10 @@ void setupCli() {
     cli.addCommand("short-ls", cmdShortLs);
     cli.addCommand("sweep", cmdSweep);
     cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [status|abort]
+    cli.addCommand("intr", cmdIntr);
     cli.addBoundlessCmd("reset-lag", cmdResetLag); // reset-lag [q]: q skips the rt-stats print
 #if WITH_RTPROF
+    cli.addCommand("rtlog-test", [](cmd *) { g_rtLogTest = 4; }); // formatted and raw-captured RT log lines
     cli.addBoundlessCmd("rtprof", [](cmd *c) { // rtprof [clear|all]
         const String a = Command(c).countArgs() ? Command(c).getArg(0).getValue() : String();
         if (a == "clear" || a == "all") rtprofClear(a == "all");

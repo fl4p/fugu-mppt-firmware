@@ -7,6 +7,8 @@
 #include <freertos/task.h>   // pcTaskGetName (wifi-task bypass in vprintf_)
 
 #include "etc/readerwriterqueue.h"
+#include "util.h"
+#include <soc/soc.h>
 
 
 //struct ConcurrentQueueMinMemTraits : public moodycamel::ConcurrentQueueDefaultTraits {
@@ -22,7 +24,76 @@ struct AsyncLogEntry {
     char *str;
     uint16_t len;
     bool telnetOnly = false;
+    uint8_t raw = 0; // RawLogFlags; str then points to a RawLog
 };
+
+bool g_rawLogForce = false;
+
+#ifdef __XTENSA__
+// A log call captured without formatting: the format pointer and the argument words of its va_list.
+struct RawLog {
+    const char *fmt;
+    uint32_t us;
+    int32_t ndx;
+    uint32_t reg[6];  // register-passed argument area
+    uint32_t stk[32]; // stack-passed arguments
+};
+
+// layout of the Xtensa (windowed ABI) va_list, which C++ cannot access by member
+struct XtVaList {
+    int32_t *stk; // stack arguments, the first one at index 32
+    int32_t *reg; // the six register-passed words
+    int32_t ndx;  // byte index of the next argument
+};
+static_assert(sizeof(va_list) == sizeof(XtVaList));
+
+enum RawLogFlags : uint8_t { RawLogSet = 1, RawLogBreak = 2, RawLogStamp = 4 };
+
+// A deferred %s may point at memory that is gone by now; keep only strings in flash.
+static void rawLogCheckStrings(RawLog &r) {
+    int32_t ndx = r.ndx;
+    auto arg = [&](int size) -> uint32_t * {
+        if (size == 8) ndx = (ndx + 7) & ~7;
+        ndx += size;
+        if (ndx > 24 && ndx < 32 + size) ndx = 32 + size;
+        const int32_t at = ndx - size;
+        if (at < 24) return &r.reg[at / 4];
+        const int32_t i = (at - 32) / 4;
+        return i >= 0 && i + size / 4 <= (int32_t) (sizeof(r.stk) / 4) ? &r.stk[i] : nullptr;
+    };
+    for (const char *p = r.fmt; *p; ++p) {
+        if (*p != '%') continue;
+        if (*++p == '%') continue;
+        while (*p && strchr("-+ #0123456789.lhzjt*", *p)) {
+            if (*p == '*') arg(4);
+            ++p;
+        }
+        if (!*p) break;
+        if (strchr("fFeEgGaA", *p)) arg(8);
+        else if (*p == 's') {
+            uint32_t *a = arg(4);
+            static const char gone[] = "?";
+            if (a && !(*a >= SOC_DROM_LOW && *a < SOC_DROM_HIGH)) *a = (uint32_t) gone;
+        } else arg(4);
+    }
+}
+
+static int rawLogFormat(RawLog &r, uint8_t flags, char *out, size_t n) {
+    rawLogCheckStrings(r);
+    int len = (flags & RawLogStamp) ? snprintf(out, n, "(%lu): ", (unsigned long) r.us) : 0;
+    const XtVaList x{(int32_t *) ((char *) r.stk - 32), (int32_t *) r.reg, r.ndx};
+    va_list ap;
+    memcpy(&ap, &x, sizeof(ap));
+    const size_t cap = n - len - 2;
+    int l = vsnprintf(out + len, cap, r.fmt, ap);
+    if (l < 0) l = 0;
+    if ((size_t) l >= cap) l = (int) cap - 1;
+    len += l;
+    if (flags & RawLogBreak) out[len++] = '\n';
+    out[len] = 0;
+    return len;
+}
+#endif
 
 //static std::deque<AsyncLogEntry> uart_async_log_queue;
 
@@ -123,6 +194,22 @@ static int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appe
     assert((xPortGetCoreID() == 1)); // ensure RT core
 
     if (uart_async_log_queue.size_approx() > 200) return -1;
+#ifdef __XTENSA__
+    if (flashOpActive() || g_rawLogForce) { // formatting runs from flash: leave it to the flush on core 0
+        auto r = new(std::nothrow) RawLog;
+        if (!r) return -1;
+        r->fmt = fmt;
+        r->us = micros();
+        XtVaList x;
+        memcpy(&x, &args, sizeof(x));
+        r->ndx = x.ndx;
+        memcpy(r->reg, x.reg, sizeof(r->reg));
+        memcpy(r->stk, (const char *) x.stk + 32, sizeof(r->stk));
+        uart_async_log_queue.enqueue(AsyncLogEntry{(char *) r, 0, false, (uint8_t) (RawLogSet | (appendBreak ? RawLogBreak : 0)
+                                                                              | (timestamp ? RawLogStamp : 0))});
+        return 0;
+    }
+#endif
     auto buf = new(std::nothrow) char[l + 1]; // RT path: drop the line on OOM, never throw/abort
     if (!buf) return -1;
     int len = 0;
@@ -242,6 +329,14 @@ void flush_async_uart_log() {
     constexpr int kMaxPerCall = 32;
     AsyncLogEntry entry;
     for (int i = 0; i < kMaxPerCall && uart_async_log_queue.try_dequeue(entry); ++i) {
+#ifdef __XTENSA__
+        char rawBuf[224];
+        RawLog *raw = entry.raw ? (RawLog *) entry.str : nullptr;
+        if (raw) {
+            entry.len = (uint16_t) rawLogFormat(*raw, entry.raw, rawBuf, sizeof(rawBuf));
+            entry.str = rawBuf;
+        }
+#endif
         if (!entry.telnetOnly) {
             printf_old("%s", entry.str); // entry.str is data, not a format string (it may contain %)
         }
@@ -255,6 +350,12 @@ void flush_async_uart_log() {
 
         bootLogCapture(entry.str, entry.len);
 
+#ifdef __XTENSA__
+        if (raw) {
+            delete raw;
+            continue;
+        }
+#endif
         delete[] entry.str;
     }
 }

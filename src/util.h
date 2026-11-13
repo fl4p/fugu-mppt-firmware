@@ -3,6 +3,15 @@
 #include <cstdint>
 
 #define RT_CORE 1
+
+#if __has_include(<fugu_flash_chip.h>)
+#include <fugu_flash_chip.h>
+// A flash erase/program is running. On the RT core, work that executes from flash (float formatting,
+// rarely-run code) then costs one erase-suspend per cache line and should wait.
+inline bool flashOpActive() { return fugu_flash_seq & 1; }
+#else
+inline bool flashOpActive() { return false; }
+#endif
 #define NON_RT_CORE 0
 
 // runs the statements out of line, so they stay out of the caller's text (rt_iram.lf)
