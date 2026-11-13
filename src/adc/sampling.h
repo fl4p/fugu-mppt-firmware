@@ -174,21 +174,21 @@ struct PhysicalSensor : public Sensor {
 
     // Tunes (or creates) the notch to f0Hz. Skipped when f0 is above this sensor's Nyquist
     // (a notch can't be placed there); the caller scales f0 by each sensor's own fs.
-    void retuneNotch(float f0Hz, float Q, float gain) {
+    void retuneNotch(float f0Hz, float Q, float amp) {
         if (notchFs <= 0) return;
         float fNorm = f0Hz / notchFs;
         if (fNorm <= 0 || fNorm >= 0.45f) return;
         try {
             if (!notchFilter) notchFilter = new NotchFilter();
-            notchFilter->begin(fNorm, gain, Q); // preserves filter state -> glitch-free retune
+            notchFilter->tune(fNorm, amp, Q); // preserves filter state -> glitch-free retune
         } catch (const std::exception &ex) {
             ESP_LOGE("sampling", "error %s", ex.what());
         }
     }
 
-    void createNotchFilter(float fs, float f0Hz, float Q, float gain) {
+    void createNotchFilter(float fs, float f0Hz, float Q, float amp) {
         notchFs = fs;
-        retuneNotch(f0Hz, Q, gain);
+        retuneNotch(f0Hz, Q, amp);
         ESP_LOGI("sampling", "%s notch fs=%.1fHz f0=%.1fHz Q=%.0f", params.teleName.c_str(), fs, f0Hz, Q);
     }
 };
@@ -313,17 +313,18 @@ public:
     // concurrently with filter().
     bool notchAdaptive = true;
     float notchFreq = 100.0f;          // active/fixed notch frequency [Hz]
-    float notchQ = 20.0f, notchGain = -30.0f;
+    float notchQ = 20.0f, notchAmp = 0.177828f; // amp: NotchFilter::gainAmp(-30 dB)
     static constexpr float NOTCH_SNR_MIN = 15.0f; // min peak/mean ratio to trust an estimate
     RippleFreqDetector<61> rippleDet{};
     const Sensor *rippleSrc = nullptr; // channel fed to the detector (Vout)
     float rippleSnr = 0;
+    uint8_t notchRetunePos_ = 0xff; // next sensor to retune, past the end = none pending
 
     void configureNotch(bool adaptive, float freqHz, float Q, float gain) {
         notchAdaptive = adaptive;
         notchFreq = freqHz;
         notchQ = Q;
-        notchGain = gain;
+        notchAmp = NotchFilter::gainAmp(gain);
     }
 
     void setRippleSource(const Sensor *s) { rippleSrc = s; }
@@ -354,10 +355,6 @@ public:
     [[nodiscard]] float getNotchFreq() const { return notchFreq; }
     [[nodiscard]] float getRippleSnr() const { return rippleSnr; }
 
-    void retuneNotches(float f0Hz) {
-        for (auto s: realSensors)
-            ((PhysicalSensor *) s)->retuneNotch(f0Hz, notchQ, notchGain);
-    }
 
 
     AdcState &getAdcState(AsyncADC<float> *adc) {
@@ -465,7 +462,7 @@ public:
         for (auto &s: sensors) {
             if (s->isVirtual) continue;
             auto ps = (PhysicalSensor *) s;
-            ps->createNotchFilter(effectiveSampleRate(ps), notchFreq, notchQ, notchGain);
+            ps->createNotchFilter(effectiveSampleRate(ps), notchFreq, notchQ, notchAmp);
         }
 
         if (notchAdaptive && rippleSrc) {
@@ -695,18 +692,24 @@ public:
             }
         }
 
-        if (notchAdaptive && rippleDet.configured()) {
+        if (notchRetunePos_ < realSensors.size()) {
+            // one sensor per sample: retuning all at once took about 0.45 ms
+            if (!flashOpActive()) {
+                ((PhysicalSensor *) realSensors[notchRetunePos_++])->retuneNotch(notchFreq, notchQ, notchAmp);
+                rtcount("adc.update.retuneNotch");
+            }
+        } else if (notchAdaptive && rippleDet.configured()) {
             float hz, snr;
             if (rippleDet.poll(hz, snr)) {
+                rtcount("adc.update.ripplePoll");
                 rippleSnr = snr;
                 if (snr >= NOTCH_SNR_MIN) {
                     // slew toward the estimate so a single noisy block can't yank the notch
                     float target = notchFreq + 0.5f * (hz - notchFreq);
                     if (fabsf(target - notchFreq) > 0.3f && !flashOpActive()) { // else the next block retunes
                         notchFreq = target;
-                        retuneNotches(notchFreq);
+                        notchRetunePos_ = 0;
                         ESP_LOGI("sampling", "ripple notch -> %.1fHz (snr=%.0f)", notchFreq, snr);
-                        rtcount("adc.update.retuneNotch");
                     }
                 }
             }
