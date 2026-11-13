@@ -1,7 +1,7 @@
 #pragma once
 
 // 16-bit register read on I2C0 (ESP32-S3 only), driving the controller registers directly between
-// Wire transactions, polled. With `code`, I2C high-speed mode: controller code 0x08 at <=400 kHz,
+// Wire transactions, polled. With `code`, I2C high-speed mode: controller code 0x08 at <=380 kHz,
 // END (SCL held low), HS timing, Sr + register read, STOP (which ends HS mode). Holds the Wire lock.
 
 #include "sdkconfig.h"
@@ -64,7 +64,8 @@ public:
                                      ESP_CLK_TREE_SRC_FREQ_PRECISION_CACHED, &src);
         lock_ = LockOf::get(Wire);
         code_ = hsHz > 400000;
-        on_ = src && calc(src, std::min<uint32_t>(fsHz, 400000), fs_) &&
+        // controller code at <=380 kHz: the HAL's 50 % duty gives t(LOW) 1.25 us at 400 kHz, F/S needs 1.3
+        on_ = src && calc(src, std::min<uint32_t>(fsHz, 380000), fs_) &&
               calc(src, std::clamp<uint32_t>(hsHz, 100000, 3400000), hs_);
         fs_[NREG - 1] = I2C0.filter_cfg.val;
         return on_;
