@@ -127,7 +127,10 @@ if a.lf:
     by = collections.defaultdict(set)
     for n, size, f, o in rows:
         m = re.match(r'(?:.*/)?(lib[^/(]+\.a)\(([^)]+)\)$', o)
-        if not m or not re.fullmatch(r'[A-Za-z0-9_.]+', f) or m.group(1) in a.skip_archive:
+        if not m or not re.fullmatch(r'[A-Za-z0-9_.]+', f):
+            print(f'not placed (no object or unsupported name, use IRAM_ATTR): {n} {f}', file=sys.stderr)
+            continue
+        if m.group(1) in a.skip_archive:
             continue
         stem = re.sub(r'(\.(c|cpp|cc|S))?\.(obj|o)$', '', m.group(2))
         # ldgen has no symbol info for toolchain archives: place the whole (single-function) object

@@ -2235,8 +2235,9 @@ void setupCli() {
     cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [status|abort]
     cli.addCommand("reset-lag", cmdResetLag);
 #if WITH_RTPROF
-    cli.addCommand("rtprof", [](cmd *c) {
-        if (Command(c).countArgs() && Command(c).getArg(0).getValue() == "clear") rtprofClear();
+    cli.addBoundlessCmd("rtprof", [](cmd *c) { // rtprof [clear|all]
+        const String a = Command(c).countArgs() ? Command(c).getArg(0).getValue() : String();
+        if (a == "clear" || a == "all") rtprofClear(a == "all");
         else rtprofDump();
     });
 #endif

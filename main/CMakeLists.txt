@@ -115,10 +115,11 @@ else ()
     set(VCONV_SRC "")
 endif ()
 
-# profiling builds keep the RT path in flash so rtprof sees all of it
+# FUGU_RT_FLASH=1 keeps the RT path in flash, for a first rtprof profile of all of it
 if (CONFIG_FUGU_WITH_RTPROF)
     set(RTPROF_SRC "../src/etc/rtprof.cpp")
-else ()
+endif ()
+if (NOT "$ENV{FUGU_RT_FLASH}")
     set(RT_IRAM_LF "rt_iram.lf")
 endif ()
 

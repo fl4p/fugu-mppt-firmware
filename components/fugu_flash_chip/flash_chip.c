@@ -79,7 +79,7 @@ static DRAM_ATTR esp_err_t (*s_susSetup)(esp_flash_t *);
 
 static esp_err_t wStart(void *arg, uint32_t flags) {
     esp_err_t e = s_orig->start(arg, flags);
-    if (e == ESP_OK) ++fugu_flash_seq;
+    if (e == ESP_OK) fugu_flash_seq |= 1;
     s_opOff = e == ESP_OK && !s_sus;
     if (s_opOff) spi_flash_disable_interrupts_caches_and_other_cpu();
     return e;
@@ -90,7 +90,7 @@ static esp_err_t wEnd(void *arg) {
         s_opOff = false;
         spi_flash_enable_interrupts_caches_and_other_cpu();
     }
-    ++fugu_flash_seq;
+    if (fugu_flash_seq & 1) ++fugu_flash_seq;
     return s_orig->end(arg);
 }
 

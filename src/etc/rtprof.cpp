@@ -12,15 +12,16 @@
 
 #include "logging.h"
 
-static constexpr uint32_t N = 4096;
+static constexpr uint32_t N = CONFIG_FUGU_RTPROF_SLOTS; // power of two
 static DRAM_ATTR uint32_t s_pc[N], s_n[N];
 static DRAM_ATTR volatile uint32_t s_samples, s_lost, s_task;
 static unsigned s_hz;
+static DRAM_ATTR volatile bool s_all;
 
-static inline bool inFlash(uint32_t pc) { return pc >= 0x42000000u && pc < 0x44000000u; }
+static inline bool inFlash(uint32_t pc) { return s_all || (pc >= 0x42000000u && pc < 0x44000000u); }
 
 static IRAM_ATTR void put(uint32_t pc) {
-    uint32_t h = ((pc >> 2) * 2654435761u) >> 20;
+    uint32_t h = ((pc >> 2) * 2654435761u) >> (32 - __builtin_ctz(N));
     for (int k = 0; k < 16; ++k, h = (h + 1) & (N - 1)) {
         if (s_pc[h] == pc) { ++s_n[h]; return; }
         if (!s_pc[h]) { s_pc[h] = pc; s_n[h] = 1; return; }
@@ -70,7 +71,8 @@ void rtprofStart(unsigned hz) {
     xTaskCreatePinnedToCore(startTask, "rtprof", 3072, nullptr, 1, nullptr, 1);
 }
 
-void rtprofClear() {
+void rtprofClear(bool all) {
+    s_all = all;
     memset(s_pc, 0, sizeof(s_pc));
     memset(s_n, 0, sizeof(s_n));
     s_samples = s_lost = s_task = 0;

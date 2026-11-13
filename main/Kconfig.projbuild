@@ -190,7 +190,13 @@ config FUGU_WITH_RTPROF
     default n
     help
         Debug build: a 2 kHz timer ISR on core 1 counts the flash-resident return addresses of the
-        interrupted stack; `rtprof` dumps them, `rtprof clear` resets. Map with etc/rtprof_map.py.
+        interrupted stack; `rtprof` dumps them, `rtprof clear` resets, `rtprof all` resets and counts
+        IRAM/ROM addresses too. Map with etc/rtprof_map.py.
+
+config FUGU_RTPROF_SLOTS
+    int "rtprof table slots (power of two, 8 bytes each)"
+    depends on FUGU_WITH_RTPROF
+    default 4096
 
 config FUGU_WITH_MEASURE_COIL
     bool "On-device coil inductance measurement"
