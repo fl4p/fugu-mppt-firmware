@@ -439,7 +439,7 @@ def discover_devices():
 # fits most commands; the I2C bus scan is slower, and `ota <url>` blocks until the firmware
 # finishes downloading and reboots (or its 10 s connect timeout fires + recovery) — ~40 s for a
 # successful flash, so 180 s gives comfortable headroom.
-TIMEOUT_OVERRIDE = {"scan-i2c": 12.0, "ota": 180.0, "curl": 15.0, "ping": 8.0, "tcpconnect": 8.0, "run": 180.0}
+TIMEOUT_OVERRIDE = {"scan-i2c": 12.0, "ota": 180.0, "curl": 15.0, "ping": 8.0, "tcpconnect": 8.0, "run": 180.0, "rtprof": 60.0}
 
 
 def _timeout_for(cmd: str, default: float = 4.0) -> float:

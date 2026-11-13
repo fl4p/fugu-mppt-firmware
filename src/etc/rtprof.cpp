@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <driver/gptimer.h>
+#include <esp_app_desc.h>
 #include <esp_attr.h>
 #include <esp_debug_helpers.h>
 #include <esp_cpu_utils.h>
@@ -78,8 +79,10 @@ void rtprofClear() {
 void rtprofDump() {
     unsigned used = 0;
     for (auto p : s_pc) used += p != 0;
-    UART_LOG("rtprof samples=%lu task=%lu lost=%lu entries=%u", (unsigned long) s_samples,
-             (unsigned long) s_task, (unsigned long) s_lost, used);
+    char sha[9];
+    esp_app_get_elf_sha256(sha, sizeof(sha));
+    UART_LOG("rtprof samples=%lu task=%lu lost=%lu entries=%u elf=%s", (unsigned long) s_samples,
+             (unsigned long) s_task, (unsigned long) s_lost, used, sha);
     char line[200];
     int l = 0;
     for (uint32_t i = 0; i < N; ++i) {
