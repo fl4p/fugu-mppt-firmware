@@ -146,9 +146,9 @@ public:
 #if CONFIG_IDF_TARGET_ESP32S3
         if (hsHz_)
             UART_LOG("ina22x: i2c_hs_freq=%lu %s%s, self-test bad/us: plain %u/%u, HS code %u/%u; "
-                     "code ACKs %lu, read failures %lu", hsHz_, hs_.on() ? "on" : "OFF (using Wire)",
+                     "code ACKs %lu, read failures %lu (last 0x%lx)", hsHz_, hs_.on() ? "on" : "OFF (using Wire)",
                      hs_.code() ? " HS" : "", hsTest_[0][0], hsTest_[0][1], hsTest_[1][0], hsTest_[1][1],
-                     hs_.codeAcks, hs_.fails);
+                     hs_.codeAcks, hs_.fails, hs_.lastErr);
 #endif
     }
 

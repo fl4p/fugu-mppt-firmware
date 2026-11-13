@@ -53,7 +53,7 @@ class I2cHs {
     static uint32_t wait(uint32_t mask);
 
 public:
-    uint32_t fails = 0, codeAcks = 0;
+    uint32_t fails = 0, codeAcks = 0, lastErr = 0; // lastErr: int_raw error bits
 
     bool on() const { return on_; }
     bool code() const { return code_; } // HS mode, only needed above 400 kHz
@@ -142,7 +142,10 @@ IRAM_ATTR bool I2cHs::read16(uint8_t addr, uint8_t reg, uint16_t &val, bool code
         hw->int_clr.val = I2C_LL_INTR_MASK;
     }
     if (lock_) xSemaphoreGive(lock_);
-    if (r) ++fails;
+    if (r) {
+        ++fails;
+        lastErr = r;
+    }
     return !r;
 }
 
