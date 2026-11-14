@@ -174,6 +174,9 @@ class Li_ChgTerminationCondition {
     static constexpr uint8_t VFLOOR_STREAK_REQ = 4; // consecutive sub-threshold BMS frames to release on voltage
     static constexpr uint8_t VCEIL_STREAK_REQ = 2; // consecutive over-ceiling frames to latch (ignore 1-frame I·R spikes)
     static constexpr uint8_t VTERM_STREAK_REQ = 2; // consecutive over-line frames to latch
+    // The cell voltage relaxes over minutes after a drop in charge current (cloud), the line would drop
+    // at once: place the line with the decaying peak of the current instead.
+    static constexpr float ILINE_TAU_S = 120.f;
 
     const BatChargerParams &p;
     bool terminated = false;
@@ -181,6 +184,8 @@ class Li_ChgTerminationCondition {
     uint8_t _vfloorStreak = 0; // sustained sub-threshold counter (transient I·R sag → 1-frame dips, ignore)
     uint8_t _ceilStreak = 0; // sustained over-ceiling counter (transient charge I·R spike → 1-frame, ignore)
     uint8_t _lineStreak = 0;
+    float _iHold = 0; // recent peak of ibat, decaying with ILINE_TAU_S
+    time_us _iHoldUs = 0;
 
 public:
     [[nodiscard]] float v_term() const { return _v_term; }
@@ -196,6 +201,7 @@ public:
     void reset() {
         terminated = false;
         _v_term = p.cv_min;
+        _iHoldUs = 0;
         _vfloorStreak = 0;
         _ceilStreak = 0;
         _lineStreak = 0;
@@ -207,7 +213,10 @@ public:
         // r models the apparent cell resistance implied by that line (for 280Ah / 0.05 → ~20mΩ).
         // See website/docs/guide/charging/termination.md.
         float r = (p.cv_eoc - p.cv_min) / (p.tail_c_rate * p.Cbat);
-        float vo = ibat * r;
+        auto now = wallClockUs();
+        _iHold = fmaxf(ibat, _iHoldUs ? _iHold * expf((float) (now - _iHoldUs) * (-1e-6f / ILINE_TAU_S)) : ibat);
+        _iHoldUs = now;
+        float vo = _iHold * r;
         _v_term = fminf(p.cv_min + fmaxf(0.f, vo), p.cv_eoc); // don't go beyond cv_eoc to avoid BMS cut-off
         float iBatFloor = -p.tail_c_rate * p.Cbat * 0.02f;
 

@@ -159,7 +159,32 @@ static void test_stale_cells_hold_bus() {
     CHECK(v < 27.4f - 0.05f, "bus dropping as the gap begins: lower cap, got %.3f", v);
 }
 
+// 11-14: a cloud cut the charge current from ~45 A to ~1 A; the highest cell was still relaxing
+// (3.362 V) and the line had dropped to cv_min at once, so both chargers latched "full".
+static void test_cloud_dip_does_not_latch() {
+    BatteryCharger c; c.params = params(); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    frames(c, 3.41f, 45.f, 150, true);
+    CHECK(!(bool) c.termCond, "bulk at 45 A below cv_eoc keeps charging");
+    frames(c, 3.362f, 1.f, 25, true); // 100 s into the dip
+    CHECK(!(bool) c.termCond, "relaxing cell in a dip does not latch");
+    frames(c, 3.345f, 1.f, 150, true);
+    CHECK(!(bool) c.termCond, "relaxed below cv_min: still charging");
+}
+
+static void test_low_current_above_line_still_latches() {
+    BatteryCharger c; c.params = params(); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    frames(c, 3.41f, 45.f, 150, true);
+    frames(c, 3.362f, 1.f, 90, true); // 6 min: line back at ~3.37
+    CHECK(!(bool) c.termCond, "not yet at 6 min");
+    frames(c, 3.375f, 1.f, 60, true);
+    CHECK((bool) c.termCond, "a cell that stays above the line at tail current latches");
+}
+
 int main() {
+    test_cloud_dip_does_not_latch();
+    test_low_current_above_line_still_latches();
     test_stale_cells_hold_bus();
     test_idle_full_pack_yields();
     test_discharging_pack_joins_with_hysteresis();
