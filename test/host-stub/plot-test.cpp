@@ -50,18 +50,33 @@ void section(const char *name) {
 
 constexpr float NF = std::numeric_limits<float>::quiet_NaN();
 
-// Fill a Series by pushing directly to vec — bypasses Series::add's
-// minimum-spacing filter so tests get N points regardless of x spacing.
-void fillSeries(Series &s, std::initializer_list<std::pair<float, float>> pts) {
-    s.vec.clear();
-    for (auto &p : pts) s.vec.push_back(p);
+// The block the RT side would append to (allocated by begin(), as on core 0 before a sweep).
+PlotPoints *block(Plot &p) {
+    p.begin();
+    return p.collecting.load();
 }
 
-// One render cycle through Plot::plot() — exercises the same code path the
-// firmware hits when _stopSweep() enqueues the chart.
+// Fill a series directly, bypassing Plot::addPoint's minimum-spacing filter so tests get N points
+// regardless of x spacing.
+void fill(Plot &p, int s, std::initializer_list<std::pair<float, float>> pts) {
+    auto b = block(p);
+    b->n[s] = 0;
+    for (auto &q : pts) b->p[s][b->n[s]++] = q;
+}
+void fillU(Plot &p, std::initializer_list<std::pair<float, float>> pts) { fill(p, 0, pts); }
+void fillD(Plot &p, std::initializer_list<std::pair<float, float>> pts) { fill(p, 1, pts); }
+void pushU(Plot &p, float x, float y) { auto b = block(p); b->p[0][b->n[0]++] = {x, y}; }
+void pushD(Plot &p, float x, float y) { auto b = block(p); b->p[1][b->n[1]++] = {x, y}; }
+
+// One render cycle as in the firmware: the RT side hands the block over at the sweep end, the
+// core-0 task charts and frees it.
 void doPlot(Plot &p) {
+    p.handOver();
     p.plot();
 }
+
+// the block was charted and freed
+bool plotted(const Plot &p) { return !p.handed.load() && !p.collecting.load(); }
 
 } // namespace
 
@@ -74,21 +89,19 @@ void doPlot(Plot &p) {
 void test_one_point_short_circuits() {
     section("one_point_short_circuits");
     Plot p;
-    fillSeries(p.pointsU, {{75.21f, 174.07f}});
-    fillSeries(p.pointsD, {{0.30f, 174.07f}});
+    fillU(p, {{75.21f, 174.07f}});
+    fillD(p, {{0.30f, 174.07f}});
     doPlot(p);
-    EXPECT(p.pointsU.vec.empty()); // _plotSeries::ser.clear() ran
-    EXPECT(p.pointsD.vec.empty());
+    EXPECT(plotted(p));
 }
 
 void test_two_points_short_circuits() {
     section("two_points_short_circuits");
     Plot p;
-    fillSeries(p.pointsU, {{75.21f, 174.07f}, {76.00f, 0.37f}});
-    fillSeries(p.pointsD, {{0.30f, 174.07f}, {0.45f, 0.37f}});
+    fillU(p, {{75.21f, 174.07f}, {76.00f, 0.37f}});
+    fillD(p, {{0.30f, 174.07f}, {0.45f, 0.37f}});
     doPlot(p);
-    EXPECT(p.pointsU.vec.empty());
-    EXPECT(p.pointsD.vec.empty());
+    EXPECT(plotted(p));
 }
 
 // ------------------------------------------------------------------
@@ -102,19 +115,18 @@ void test_three_points_user_scenario() {
     // Reproduces "Grouping 3 V points (75.21,174.07)~(76.00,0.37)" from the
     // panic log. Middle point invented at 75.6V / 92W to match the visible
     // plateau in the rendered chart.
-    fillSeries(p.pointsU, {
+    fillU(p, {
         {75.21f, 174.07f},
         {75.60f,  92.00f},
         {76.00f,   0.37f},
     });
-    fillSeries(p.pointsD, {
+    fillD(p, {
         {0.30f, 174.07f},
         {0.38f,  92.00f},
         {0.45f,   0.37f},
     });
     doPlot(p);
-    EXPECT(p.pointsU.vec.empty());
-    EXPECT(p.pointsD.vec.empty());
+    EXPECT(plotted(p));
 }
 
 void test_three_points_collinear_x() {
@@ -122,38 +134,36 @@ void test_three_points_collinear_x() {
     // All x equal → binW == 0; the binning while-loop's `it->first < x + 0`
     // never advances `it` past the first point. Must not OOB write.
     Plot p;
-    fillSeries(p.pointsU, {
+    fillU(p, {
         {75.0f, 100.0f},
         {75.0f,  50.0f},
         {75.0f,  10.0f},
     });
-    fillSeries(p.pointsD, {
+    fillD(p, {
         {0.50f, 100.0f},
         {0.50f,  50.0f},
         {0.50f,  10.0f},
     });
     doPlot(p);
-    EXPECT(p.pointsU.vec.empty());
-    EXPECT(p.pointsD.vec.empty());
+    EXPECT(plotted(p));
 }
 
 void test_three_points_constant_y() {
     section("three_points_constant_y");
     // range == 0 in ascii::Plot → fallback range=1, rows=1.
     Plot p;
-    fillSeries(p.pointsU, {
+    fillU(p, {
         {1.0f, 42.0f},
         {2.0f, 42.0f},
         {3.0f, 42.0f},
     });
-    fillSeries(p.pointsD, {
+    fillD(p, {
         {0.1f, 42.0f},
         {0.2f, 42.0f},
         {0.3f, 42.0f},
     });
     doPlot(p);
-    EXPECT(p.pointsU.vec.empty());
-    EXPECT(p.pointsD.vec.empty());
+    EXPECT(plotted(p));
 }
 
 // ------------------------------------------------------------------
@@ -168,12 +178,11 @@ void test_four_random_points() {
     float x = 60.0f;
     for (int i = 0; i < 4; ++i) {
         x += 0.5f + (rng() % 100) * 0.01f;
-        p.pointsU.vec.emplace_back(x, yDist(rng));
-        p.pointsD.vec.emplace_back(x * 0.01f, yDist(rng));
+        pushU(p, x, yDist(rng));
+        pushD(p, x * 0.01f, yDist(rng));
     }
     doPlot(p);
-    EXPECT(p.pointsU.vec.empty());
-    EXPECT(p.pointsD.vec.empty());
+    EXPECT(plotted(p));
 }
 
 void test_five_random_points() {
@@ -184,12 +193,11 @@ void test_five_random_points() {
     float x = 60.0f;
     for (int i = 0; i < 5; ++i) {
         x += 0.5f + (rng() % 100) * 0.01f;
-        p.pointsU.vec.emplace_back(x, yDist(rng));
-        p.pointsD.vec.emplace_back(x * 0.01f, yDist(rng));
+        pushU(p, x, yDist(rng));
+        pushD(p, x * 0.01f, yDist(rng));
     }
     doPlot(p);
-    EXPECT(p.pointsU.vec.empty());
-    EXPECT(p.pointsD.vec.empty());
+    EXPECT(plotted(p));
 }
 
 // ------------------------------------------------------------------
@@ -209,12 +217,11 @@ void test_stress_random_small_N() {
         float x = 50.0f + (rng() % 1000) * 0.01f;
         for (int i = 0; i < n; ++i) {
             x += 0.1f + (rng() % 100) * 0.005f;
-            p.pointsU.vec.emplace_back(x, yDist(rng));
-            p.pointsD.vec.emplace_back(x * 0.013f, yDist(rng));
+            pushU(p, x, yDist(rng));
+            pushD(p, x * 0.013f, yDist(rng));
         }
         doPlot(p);
-        EXPECT(p.pointsU.vec.empty());
-        EXPECT(p.pointsD.vec.empty());
+        EXPECT(plotted(p));
     }
 }
 
@@ -228,41 +235,66 @@ void test_stress_random_small_N() {
 void test_three_points_with_nan_y() {
     section("three_points_with_nan_y");
     Plot p;
-    fillSeries(p.pointsU, {
+    fillU(p, {
         {1.0f, 100.0f},
         {2.0f, NF},
         {3.0f,  50.0f},
     });
-    fillSeries(p.pointsD, {
+    fillD(p, {
         {0.1f, 100.0f},
         {0.2f, NF},
         {0.3f,  50.0f},
     });
     doPlot(p);
-    EXPECT(p.pointsU.vec.empty());
+    EXPECT(plotted(p));
 }
 
 // ------------------------------------------------------------------
-//  Re-use: reserve() -> add() -> plot() -> reserve() -> add() -> plot()
-//  catches any state that leaks between cycles (e.g. an iterator into
-//  freed storage held across the ser.clear() inside _plotSeries).
+//  Re-use: begin() -> add -> handOver() -> plot() repeated catches any
+//  state that leaks between cycles (e.g. a block freed while still
+//  referenced).
 // ------------------------------------------------------------------
 
 void test_repeated_render_cycles() {
     section("repeated_render_cycles");
     Plot p;
     for (int cycle = 0; cycle < 10; ++cycle) {
-        p.reserve(); // clears + reserves
         for (int i = 0; i < 3 + (cycle % 3); ++i) {
             float x = 70.0f + cycle * 0.5f + i * 0.7f;
             float y = 10.0f + cycle + i * 13.0f;
-            p.pointsU.vec.emplace_back(x, y);
-            p.pointsD.vec.emplace_back(x * 0.01f, y);
+            pushU(p, x, y);
+            pushD(p, x * 0.01f, y);
         }
         doPlot(p);
-        EXPECT(p.pointsU.vec.empty());
-        EXPECT(p.pointsD.vec.empty());
+        EXPECT(plotted(p));
     }
+}
+
+// ------------------------------------------------------------------
+//  RT side: add() without a block drops the point, the spacing filter
+//  and the capacity cap hold, restart() empties, handOver() only once.
+// ------------------------------------------------------------------
+
+void test_rt_add_and_handover() {
+    section("rt_add_and_handover");
+    Plot p;
+    p.add(70.f, 0.5f, 100.f, 80.f); // no block yet
+    EXPECT(!p.handOver());
+    auto b = block(p);
+    for (int i = 0; i < 1000; ++i) p.add(40.f + i * 0.04f, i * 0.001f, (float) i, 80.f);
+    EXPECT(b->n[0] > 3 && b->n[0] <= PlotPoints::Cap);
+    EXPECT(b->n[1] > 3 && b->n[1] <= PlotPoints::Cap);
+    p.add(40.f + 999 * 0.04f, 0.999f, 1.f, 80.f); // too close to the last point
+    EXPECT(b->p[0][b->n[0] - 1].second != 1.f);
+    p.restart();
+    EXPECT(b->n[0] == 0 && b->n[1] == 0);
+    for (int i = 0; i < 10; ++i) p.add(60.f + i, 0.1f * i, 50.f + i, 80.f);
+    EXPECT(p.handOver());
+    EXPECT(!p.handOver()); // still pending
+    p.add(70.f, 0.5f, 100.f, 80.f); // stopped collecting
+    EXPECT(b->n[0] == 10);
+    p.plot();
+    EXPECT(plotted(p));
 }
 
 // ------------------------------------------------------------------
@@ -280,6 +312,7 @@ int main() {
     test_three_points_with_nan_y();
     test_repeated_render_cycles();
     test_stress_random_small_N();
+    test_rt_add_and_handover();
 
     std::printf("\nplot-test: %d checks, %d failures\n", g_run, g_fail);
     return g_fail == 0 ? 0 : 1;

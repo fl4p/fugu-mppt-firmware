@@ -84,6 +84,10 @@ void printf_mux(const char *fmt, ...) {
 // core-0 task queue, drained after each RT pass
 static std::deque<std::function<void()>> g_tasks;
 void enqueue_task(std::function<void(void)> &&fn) { g_tasks.push_back(std::move(fn)); }
+bool rt_defer(RtDeferredFn fn, void *ctx, float a, float b) {
+    g_tasks.push_back([=] { fn(ctx, a, b); });
+    return true;
+}
 void process_queued_tasks() {
     while (!g_tasks.empty()) {
         auto f = std::move(g_tasks.front());

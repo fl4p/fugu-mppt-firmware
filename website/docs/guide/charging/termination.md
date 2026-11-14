@@ -32,6 +32,11 @@ The charger declares termination when the highest reported cell voltage
 crosses `v_term`. Like the ceiling, the line trigger needs two consecutive BMS
 cell frames above the line (`termCond.update()` runs once per cell frame).
 
+The current that places the line is the recent peak of the battery current, decaying with a time
+constant of 2 minutes, not the instantaneous value. When the charge current drops suddenly, for example
+under a passing cloud, the cell voltage needs minutes to relax, and an instantaneous line would
+drop below it at once and end the charge early.
+
 ## The `tail_c_rate` parameter
 
 `tail_c_rate` is the C-rate at which the cell is considered "fully charged",

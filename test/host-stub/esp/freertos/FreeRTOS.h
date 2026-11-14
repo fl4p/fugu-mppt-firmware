@@ -12,3 +12,5 @@ typedef struct { int x; } portMUX_TYPE;
 #define portMUX_INITIALIZER_UNLOCKED {0}
 #define portENTER_CRITICAL(m) do {} while (0)
 #define portEXIT_CRITICAL(m) do {} while (0)
+#define pdPASS 1
+#define portMAX_DELAY 0xffffffffu

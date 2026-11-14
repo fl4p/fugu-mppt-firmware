@@ -151,11 +151,23 @@ void MpptController::update() {
     MpptControlMode controlMode = MpptControlMode::None;
     float controlValue = 0;
 
+    // A limiter that only touches (D-term on a ripple crest) must not steer the tracker: resetting its
+    // direction on every touch and an upward step on every release walked the duty up through the MPP.
+    // After a touch the following loops give back what the touch took and the tracker carries on.
+    const uint32_t nowMs = (uint32_t) (nowUs / 1000);
+    const bool limSustained = ctrlState._limiting && nowMs - _limitSinceMs > 250;
+    bool keepTracker = false;
+
     if (limitingControlValue < 0) {
         // limit condition
         controlMode = limitingControl->mode;
         controlValue = limitingControlValue;
 
+        if (!ctrlState._limiting) _limitSinceMs = nowMs, _limitPert = 0, ctrlState._limReal = false;
+        // past the limit (P term): the duty stays taken and the tracker restarts, as for a long limit
+        if (limitingControl->crtl.Kp * limitingControl->crtl._prevE < 0 || g_app.psuMode())
+            ctrlState._limReal = true, _limitPert = 0;
+        keepTracker = !limSustained && !ctrlState._limReal;
         ctrlState._limiting = true;
         auto limIdx = (int) (limitingControl - controlValues.begin());
         ctrlState.limIdx = limIdx;
@@ -166,8 +178,11 @@ void MpptController::update() {
             // recover from limit condition
             ctrlState._limiting = false;
             ctrlState.limIdx = 15;
-            controlMode = MpptControlMode::MPPT;
-            controlValue = limitingControlValue;
+            if (limSustained || ctrlState._limReal) {
+                controlMode = MpptControlMode::MPPT;
+                controlValue = limitingControlValue;
+                _limitPert = 0;
+            }
         }
     }
 
@@ -213,11 +228,7 @@ void MpptController::update() {
                 maxPowerPoint.voltage = sensors.Vin->med3.get();
             }
 
-            auto u = sensors.Vin->med3.get();
-            sweepPlot.pointsU.add(u, power, limits.Vin_max);
-
-            float d = converter.getDutyCycle();
-            sweepPlot.pointsD.add(d, power, 1.0f);
+            sweepPlot.add(sensors.Vin->med3.get(), converter.getDutyCycle(), power, limits.Vin_max);
 
             // ascending ramp only: the move back to the MPP runs after _stopSweep
             if (!converter.disabled() && !converter.boost() && !g_app.psuMode() && !sensors.Iout->isVirtual &&
@@ -269,7 +280,7 @@ void MpptController::update() {
             controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get());
             controlValue *= speedScale;
         }
-    } else {
+    } else if (!keepTracker) {
         // tracker.resetTracker(power_smooth, controlValue > 0);
         tracker.resetDirection(controlValue > 0);
     }
@@ -294,7 +305,18 @@ void MpptController::update() {
 
         // constrain the buck step, this will slow down control for lower loop rates:
         // this causes very slow load response time, but works well when battery is connected
-        fp = constrain(fp, -(float) converter.getCtrlOnPwmCnt(), 16.0f * (float) converter.pwmCtrlMax / 2000.f);
+        const float fpMax = 16.0f * (float) converter.pwmCtrlMax / 2000.f;
+        if (ctrlState._limiting) {
+            if (!ctrlState._limReal)
+                _limitPert += std::max(fp, (float) converter.getCtrlOnPwmMin() - (float) converter.getCtrlOnPwmCnt());
+        } else if (_limitPert < 0) {
+            // no faster than the limiters allow
+            float back = std::min(-_limitPert, std::min(fpMax, limitingControlValue * kCtrlSlewLimit *
+                                                                   (float) converter.pwmCtrlMax * dtCtrl));
+            fp += back;
+            _limitPert += back;
+        }
+        fp = constrain(fp, -(float) converter.getCtrlOnPwmCnt(), fpMax);
         // Same hold as updateManual(): while the forced-PWM gate is counting, the duty must stand
         // still or it outruns both the hold and the EWMA voltages the gate is judging it against.
         // Upward only - a limiter or the tracker must always be able to back off.

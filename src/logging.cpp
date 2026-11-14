@@ -1,5 +1,6 @@
 #include "logging.h"
 
+#include <atomic>
 #include <cstring>
 #include <esp_attr.h>
 #include <new>
@@ -27,13 +28,6 @@
 static int vprintf_(const char *fmt, va_list argptr);
 
 static int vprintf_mux(const char *fmt, va_list argptr);
-
-struct AsyncLogEntry {
-    char *str;
-    uint16_t len;
-    bool telnetOnly = false;
-    uint8_t raw = 0; // RawLogFlags; str then points to a RawLog
-};
 
 bool g_rawLogForce = false;
 
@@ -118,10 +112,35 @@ static int rawLogFormat(RawLog &r, uint8_t flags, char *out, size_t n) {
 }
 #endif
 
-//static std::deque<AsyncLogEntry> uart_async_log_queue;
+// RT-core log lines: a fixed ring filled on core 1 (no heap), drained in order by the core-0 flush.
+// A slot is claimed with interrupts masked (an ISR on core 1 may log too) and published by `flags`.
+struct RtLogSlot {
+    std::atomic<uint8_t> flags; // RawLogFlags, 0 = free or being written
+#ifdef __XTENSA__
+    RawLog r;
+#else
+    uint16_t len;
+    char str[230];
+#endif
+};
+static constexpr uint32_t kRtLogSlots = 16;
+static RtLogSlot s_rtLog[kRtLogSlots];
+static std::atomic<uint32_t> s_rtLogHead{0}, s_rtLogTail{0};
+static volatile uint32_t s_rtLogDropped = 0;
 
-//static moodycamel::ConcurrentQueue<AsyncLogEntry, ConcurrentQueueMinMemTraits> uart_async_log_queue{1};
-static moodycamel::ReaderWriterQueue<AsyncLogEntry> uart_async_log_queue{};
+static IRAM_ATTR RtLogSlot *rtLogClaim() {
+    const UBaseType_t irq = portSET_INTERRUPT_MASK_FROM_ISR();
+    const uint32_t h = s_rtLogHead.load(std::memory_order_relaxed);
+    RtLogSlot *slot = nullptr;
+    if (h - s_rtLogTail.load(std::memory_order_acquire) < kRtLogSlots) {
+        slot = &s_rtLog[h % kRtLogSlots];
+        s_rtLogHead.store(h + 1, std::memory_order_release);
+    } else {
+        s_rtLogDropped = s_rtLogDropped + 1;
+    }
+    portCLEAR_INTERRUPT_MASK_FROM_ISR(irq);
+    return slot;
+}
 
 ESPTelnet *log_telnet = nullptr;
 
@@ -256,11 +275,11 @@ void removeLogCallback(LogCallback callback) {
 __attribute__((flatten)) static IRAM_ATTR int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appendBreak = false, bool timestamp = false) {
     assert((xPortGetCoreID() == 1)); // ensure RT core
 
-    if (uart_async_log_queue.size_approx() > 64) return -1;
+    RtLogSlot *slot = rtLogClaim();
+    if (!slot) return -1;
 #ifdef __XTENSA__
     // Never format here: float formatting costs ~0.4 ms, and runs from flash. The flush on core 0 does it.
-    auto r = new(std::nothrow) RawLog;
-    if (!r) return -1;
+    RawLog *r = &slot->r;
     r->fmt = fmt;
     r->us = micros();
     XtVaList x;
@@ -271,24 +290,21 @@ __attribute__((flatten)) static IRAM_ATTR int enqueue_log(const char *fmt, size_
     // reading the format string is a flash data access: not while a flash op runs
     const bool strings = !flashOpActive() && !g_rawLogForce;
     if (strings) rawLogStrings(*r, true);
-    if (!uart_async_log_queue.enqueue(AsyncLogEntry{(char *) r, 0, false, (uint8_t) (RawLogSet | (appendBreak ? RawLogBreak : 0)
-                                                                               | (timestamp ? RawLogStamp : 0)
-                                                                               | (strings ? RawLogStrings : 0))})) {
-        delete r;
-        return -1;
-    }
+    slot->flags.store((uint8_t) (RawLogSet | (appendBreak ? RawLogBreak : 0) | (timestamp ? RawLogStamp : 0)
+                                 | (strings ? RawLogStrings : 0)), std::memory_order_release);
     return 0;
 #else
-    auto buf = new(std::nothrow) char[l + 1]; // RT path: drop the line on OOM, never throw/abort
-    if (!buf) return -1;
+    (void) l;
+    char *buf = slot->str;
+    const size_t n = sizeof(slot->str);
     int len = 0;
     if (timestamp) {
-        len = snprintf(buf, l + 1, "(%lu): ", micros());
-        if (len <= 0) return len;
+        len = snprintf(buf, n, "(%lu): ", micros());
+        if (len < 0) len = 0;
     }
-    size_t cap = l + 1 - len - size_t(appendBreak);
+    size_t cap = n - len - size_t(appendBreak);
     auto r2 = vsnprintf(buf + len, cap, fmt, args);
-    if (r2 <= 0) return len; // error or empty
+    if (r2 < 0) r2 = 0;
     // vsnprintf returns the untruncated length; clamp so buf[len]='\n' stays in bounds.
     if ((size_t) r2 >= cap) r2 = (int) cap - 1;
     len += r2;
@@ -297,7 +313,8 @@ __attribute__((flatten)) static IRAM_ATTR int enqueue_log(const char *fmt, size_
         buf[len + 1] = 0;
         len += 1;
     }
-    uart_async_log_queue.enqueue(AsyncLogEntry{buf, (uint16_t) len, false});
+    slot->len = (uint16_t) len;
+    slot->flags.store(1, std::memory_order_release);
     return len;
 #endif
 }
@@ -395,38 +412,40 @@ void flush_async_uart_log() {
     // a vconv saturation that spams Vin-OV warnings every sample), the while-loop never
     // sees an empty queue and core-0 sits inside flush past TASK_WDT_TIMEOUT_S → reset.
     // 32 entries ≈ 160 ms worst-case; the remainder drains on the next loop tick after
-    // vTaskDelay(1). RT-side cap at queue>200 already drops overflow.
+    // vTaskDelay(1). A full ring drops on the RT side.
     constexpr int kMaxPerCall = 32;
-    AsyncLogEntry entry;
-    for (int i = 0; i < kMaxPerCall && uart_async_log_queue.try_dequeue(entry); ++i) {
+    for (int i = 0; i < kMaxPerCall; ++i) {
+        const uint32_t t = s_rtLogTail.load(std::memory_order_relaxed);
+        if (t == s_rtLogHead.load(std::memory_order_acquire)) break;
+        RtLogSlot &slot = s_rtLog[t % kRtLogSlots];
+        const uint8_t flags = slot.flags.load(std::memory_order_acquire);
+        if (!flags) break; // claimed, still being written
 #ifdef __XTENSA__
-        char rawBuf[224];
-        RawLog *raw = entry.raw ? (RawLog *) entry.str : nullptr;
-        if (raw) {
-            entry.len = (uint16_t) rawLogFormat(*raw, entry.raw, rawBuf, sizeof(rawBuf));
-            entry.str = rawBuf;
-        }
+        char buf[224];
+        const char *str = buf;
+        const uint16_t len = (uint16_t) rawLogFormat(slot.r, flags, buf, sizeof(buf));
+#else
+        const char *str = slot.str;
+        const uint16_t len = slot.len;
 #endif
-        if (!entry.telnetOnly) {
-            printf_old("%s", entry.str); // entry.str is data, not a format string (it may contain %)
-        }
+        printf_old("%s", str); // str is data, not a format string (it may contain %)
 
         if (log_telnet)
-            log_telnet->write((uint8_t *) entry.str, entry.len);
+            log_telnet->write((uint8_t *) str, len);
 
         LogCallback cbs[kMaxLogCallbacks];
         int n = snapshotLogCallbacks(cbs);
-        for (int i = 0; i < n; ++i) cbs[i](entry.str, entry.len);
+        for (int k = 0; k < n; ++k) cbs[k](str, len);
 
-        bootLogCapture(entry.str, entry.len);
+        bootLogCapture(str, len);
 
-#ifdef __XTENSA__
-        if (raw) {
-            delete raw;
-            continue;
-        }
-#endif
-        delete[] entry.str;
+        slot.flags.store(0, std::memory_order_relaxed);
+        s_rtLogTail.store(t + 1, std::memory_order_release);
+    }
+    static uint32_t reported = 0;
+    if (const uint32_t d = s_rtLogDropped; d != reported) {
+        reported = d;
+        ESP_LOGW("log", "%lu RT log lines dropped (ring full)", (unsigned long) d);
     }
 }
 
@@ -549,6 +568,45 @@ void enqueue_task(std::function<void(void)> &&fn) {
     tq.add(std::move(fn));
 }
 
+// Calls handed from the RT core (or any core/ISR) to core 0 without heap: a fixed ring under a spinlock.
+struct RtDeferred {
+    RtDeferredFn fn;
+    void *ctx;
+    float a, b;
+};
+static constexpr uint8_t kRtDeferSlots = 8;
+static RtDeferred s_rtDefer[kRtDeferSlots];
+static uint8_t s_rtDeferHead = 0, s_rtDeferLen = 0;
+static uint32_t s_rtDeferDropped = 0;
+static portMUX_TYPE s_rtDeferMux = portMUX_INITIALIZER_UNLOCKED;
+
+IRAM_ATTR bool rt_defer(RtDeferredFn fn, void *ctx, float a, float b) {
+    portENTER_CRITICAL_SAFE(&s_rtDeferMux);
+    const bool ok = s_rtDeferLen < kRtDeferSlots;
+    if (ok) s_rtDefer[(s_rtDeferHead + s_rtDeferLen++) % kRtDeferSlots] = {fn, ctx, a, b};
+    else ++s_rtDeferDropped;
+    portEXIT_CRITICAL_SAFE(&s_rtDeferMux);
+    return ok;
+}
+
 void process_queued_tasks() {
+    for (;;) {
+        RtDeferred d;
+        portENTER_CRITICAL(&s_rtDeferMux);
+        const bool any = s_rtDeferLen != 0;
+        if (any) {
+            d = s_rtDefer[s_rtDeferHead];
+            s_rtDeferHead = (s_rtDeferHead + 1) % kRtDeferSlots;
+            --s_rtDeferLen;
+        }
+        portEXIT_CRITICAL(&s_rtDeferMux);
+        if (!any) break;
+        d.fn(d.ctx, d.a, d.b);
+    }
+    static uint32_t reported = 0;
+    if (const uint32_t n = s_rtDeferDropped; n != reported) {
+        reported = n;
+        ESP_LOGW("log", "%lu RT deferred calls dropped (ring full)", (unsigned long) n);
+    }
     tq.work();
 }

@@ -42,6 +42,11 @@ void flush_async_uart_log();
 void process_queued_tasks();
 void enqueue_task(std::function<void(void)> &&fn);
 
+// Queues fn(ctx, a, b) for process_queued_tasks() on core 0, without heap. Any core, also from an
+// ISR. False when the fixed ring is full (the call is dropped and counted).
+typedef void (*RtDeferredFn)(void *ctx, float a, float b);
+bool rt_defer(RtDeferredFn fn, void *ctx, float a = 0, float b = 0);
+
 class ESPTelnet;
 void set_logging_telnet(ESPTelnet *telnet);
 

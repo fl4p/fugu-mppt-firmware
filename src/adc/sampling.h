@@ -171,19 +171,16 @@ struct PhysicalSensor : public Sensor {
     }
 
     float notchFs = 0; // sample rate this sensor's notch was tuned for
+    NotchFilter notchStore{}; // notchFilter points here once tuned (no heap on the RT core)
 
-    // Tunes (or creates) the notch to f0Hz. Skipped when f0 is above this sensor's Nyquist
+    // Tunes (or enables) the notch to f0Hz. Skipped when f0 is above this sensor's Nyquist
     // (a notch can't be placed there); the caller scales f0 by each sensor's own fs.
     void retuneNotch(float f0Hz, float Q, float amp) {
         if (notchFs <= 0) return;
         float fNorm = f0Hz / notchFs;
         if (fNorm <= 0 || fNorm >= 0.45f) return;
-        try {
-            if (!notchFilter) notchFilter = new NotchFilter();
-            notchFilter->tune(fNorm, amp, Q); // preserves filter state -> glitch-free retune
-        } catch (const std::exception &ex) {
-            ESP_LOGE("sampling", "error %s", ex.what());
-        }
+        notchStore.tune(fNorm, amp, Q); // preserves filter state -> glitch-free retune
+        notchFilter = &notchStore;
     }
 
     void createNotchFilter(float fs, float f0Hz, float Q, float amp) {

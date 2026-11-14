@@ -209,6 +209,22 @@ config FUGU_RTPROF_SLOTS
     range 64 16384
     default 4096
 
+config FUGU_RT_ALLOC_COUNT
+    bool "Count heap allocations of the RT task"
+    default y if IDF_TARGET_ESP32S3
+    select HEAP_USE_HOOKS
+    help
+        Counts mallocs and frees made by the loopRt task (heap hooks; one call and a task compare per
+        heap operation). `rt-stats` and `bootinfo` print the counts; steady state must be zero.
+
+config FUGU_RT_ALLOC_TRACE
+    bool "Record call stacks of RT-task heap allocations"
+    depends on FUGU_RT_ALLOC_COUNT
+    default n
+    help
+        Also keeps a short backtrace of the first 8 distinct RT-task heap allocation or free sites
+        (fixed table, ~350 bytes). Resolve the printed addresses with addr2line against the ELF.
+
 config FUGU_WITH_MEASURE_COIL
     bool "On-device coil inductance measurement"
     default n

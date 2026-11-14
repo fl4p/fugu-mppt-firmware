@@ -200,6 +200,7 @@ private:
     struct {
         MpptControlMode mode: 3 = MpptControlMode::None;
         bool _limiting: 1 = false; // control limited (no MPPT)
+        bool _limReal: 1 = false; // the current limit condition went past its limit
         uint8_t limIdx: 4 = 15;
     } ctrlState;
 
@@ -214,6 +215,8 @@ public:
 
 private:
     bool _sweeping = false; // global scan
+    uint32_t _limitSinceMs = 0; // start of the current limit condition
+    float _limitPert = 0; // duty counts the current limit condition has taken
 
 
     struct {
@@ -414,6 +417,7 @@ public:
     // must pass 0 explicitly. `who` tags the trip path in the backoff log so a
     // stuck post-sweep state names the responsible protect.
     void shutdownDcdc(const char *who, uint32_t backoffSec = 5) {
+        _limitPert = 0;
         if (topologyConfig.backflowAtHV) {
             converter.disable();
         lvPgood.release();
@@ -492,6 +496,7 @@ public:
         bool changed = charger.releaseVoutPinning(why);
         VoutController.reset();
         ctrlState._limiting = false;
+        _limitPert = 0;
         ctrlState.limIdx = 15;
         if (ctrlState.mode == MpptControlMode::CV) ctrlState.mode = MpptControlMode::None;
         targetDutyCycle = 0;
@@ -550,7 +555,7 @@ public:
                 ESP_LOGW("mppt", "Supply under-voltage! Vin %.1f and Vout %.1f < 10", sensors.Vin->last,
                      sensors.Vout->last);
             shutdownDcdc("supply-UV");
-            enqueue_task([&] { meter.commit(); });
+            rt_defer([](void *m, float, float) { ((MpptController *) m)->meter.commit(); }, this);
             return false;
         }
 
@@ -562,7 +567,7 @@ public:
             if (std::isnan(detectedVout_max)) {
                 ESP_LOGW("mppt", "Unable to detect battery voltage Vout=%.2fV", vout);
                 converter.disable();
-                enqueue_task([&] { sampler.startCalibration(); });
+                rt_defer([](void *s, float, float) { ((ADC_Sampler *) s)->startCalibration(); }, &sampler);
                 return false;
             } else {
                 ESP_LOGI("mppt", "Detected max battery voltage %.2fV (from Vout=%.2fV)", detectedVout_max, vout);
@@ -678,9 +683,9 @@ public:
                 }
             }
 
-            enqueue_task([this, vout, ovTh] {
-                lcd.displayMessageF("OV shutdown!\nVout=%.1fV max=%.1fV", 10000, vout, ovTh);
-            });
+            rt_defer([](void *l, float v, float th) {
+                ((LCD *) l)->displayMessageF("OV shutdown!\nVout=%.1fV max=%.1fV", 10000, v, th);
+            }, &lcd, vout, ovTh);
             );
 
             return false;
@@ -898,6 +903,7 @@ public:
 
         converter.disable();
         ctrlState._limiting = false;
+        _limitPert = 0;
         targetDutyCycle = 0;
 
         VinController.reset();
@@ -913,14 +919,16 @@ public:
 
         sampler.startCalibration();
 
-        enqueue_task([&] {
+        sweepPlot.restart();
+        rt_defer([](void *c, float, float) {
+            auto m = (MpptController *) c;
+            m->sweepPlot.begin();
             rtcount_en = false;
             vTaskDelay(10);
-            sweepPlot.reserve();
-            meter.commit(); // not real-time safe
-            lcd.periodicInit(); // not real-time safe
+            m->meter.commit(); // not real-time safe
+            m->lcd.periodicInit(); // not real-time safe
             rtcount_en = true;
-        });
+        }, this);
     }
 
     // Called from the console task (core 0). Stores the target only; the RT loop
@@ -1442,11 +1450,13 @@ public:
                  converter.getCtrlOnPwmCnt(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage
         );
 
-        enqueue_task([&] {
+        sweepPlot.handOver();
+        rt_defer([](void *c, float p, float v) {
+            auto m = (MpptController *) c;
             // TODO replace displayMessageF with a general message callback call
-            lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, maxPowerPoint.power, maxPowerPoint.voltage);
-            sweepPlot.plot();
-        });
+            m->lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, p, v);
+            m->sweepPlot.plot();
+        }, this, maxPowerPoint.power, maxPowerPoint.voltage);
     }
 
     void telemetry();
