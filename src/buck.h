@@ -152,27 +152,13 @@ class SynchronousConverter {
     // only a defence against it because MpptController::updateManual() FREEZES the ramp while the
     // gate is arming (forcedPwmGateArming()), so the filters actually catch up during the wait.
     uint16_t fpwmGateHold = 192; // converter.conf::fpwm_gate_hold
-    // The gate state lives on the RT core. Other cores only PUBLISH a request, as one word so the
-    // sequence and its payload cannot be observed apart: [31:1] seq, [0] immediate. Two publishers
-    // exist (the console, and disable() which is reachable from core 0 via startSweep), so the word
-    // is written with a compare-exchange, never a plain store.
-    static constexpr uint32_t kFpwmImmediate = 1u;
-
-    // Publish a gate request: bump the sequence and set the payload in ONE word, so the RT core
-    // cannot pair a new sequence with someone else's payload.
-    void fpwmPublish(bool immediate) {
-        uint32_t cur = fpwmReqWord.load(std::memory_order_relaxed), next;
-        do {
-            next = ((cur & ~kFpwmImmediate) + 2u) | (immediate ? kFpwmImmediate : 0u);
-        } while (!fpwmReqWord.compare_exchange_weak(cur, next, std::memory_order_release,
-                                                    std::memory_order_relaxed));
-    }
-
-    std::atomic<uint32_t> fpwmReqWord{0};
+    // The gate state lives on the RT core. Other cores only post a request, payload: immediate. Two
+    // producers (the console, and disable() which is reachable from core 0 via startSweep); the
+    // latest post wins.
+    ReqSlot<1> fpwmReq;
     std::atomic<bool> fpwmEngaged{false}; // gate output, RT-written, read from both cores
     std::atomic<bool> fpwmUngated{false}; // `sync forced!` override in effect
     std::atomic<uint16_t> fpwmGateCnt{0}; // RT-written; read from core 0 by forcedPwmGateArming()
-    uint32_t fpwmAckWord = 0; // RT only
     // Consecutive FRESH voltage samples with pwmCtrl unchanged. Atomic because the console reads it
     // through forcedPwmGateArming()/forcedPwmEngageDuty() on core 0.
     std::atomic<uint16_t> fpwmStillCnt{0};
@@ -609,7 +595,7 @@ public:
     // sink, e.g. an open output on the bench).
     void forcedPwm_(bool forced, bool immediate = false) {
         forcedPwm.store(forced, std::memory_order_relaxed);
-        fpwmPublish(forced && immediate);
+        fpwmReq.post(forced && immediate);
     }
 
     [[nodiscard]] bool syncRectEnabled_() const { return syncRectEnabled; }
@@ -1408,10 +1394,10 @@ public:
         pwmRect = 0;
         syncRectEnabled = false;
         // A restart ramps from 0 again and must re-earn forced PWM - including an `sync forced!`
-        // override. disable() is reachable from core 0 (startSweep), so go through the request word
+        // override. disable() is reachable from core 0 (startSweep), so go through the request slot
         // rather than the RT-owned state.
         fpwmEngaged.store(false, std::memory_order_relaxed);
-        fpwmPublish(false);
+        fpwmReq.post(0);
     }
 
 
@@ -1624,13 +1610,11 @@ public:
             if (n < 0xffff) fpwmStillCnt.store((uint16_t) (n + 1), std::memory_order_relaxed);
         }
 
-        // Consume a request (core 0 console, or disable() from either core). Sequence and payload
-        // come from one word, so they cannot be mismatched.
-        const uint32_t req = fpwmReqWord.load(std::memory_order_acquire);
-        if (req != fpwmAckWord) {
-            fpwmAckWord = req;
+        // Consume a request (core 0 console, or disable() from either core)
+        if (const uint32_t req = fpwmReq.peek()) {
+            fpwmReq.clear(req);
             fpwmGateCnt.store(0, std::memory_order_relaxed);
-            const bool ungated = forcedPwmRequested() && (req & kFpwmImmediate);
+            const bool ungated = forcedPwmRequested() && ReqSlot<1>::payload(req);
             fpwmUngated.store(ungated, std::memory_order_relaxed);
             fpwmEngaged.store(ungated, std::memory_order_relaxed);
         }
