@@ -165,22 +165,36 @@ struct Snap {
     bool on;
 };
 
+// post[i] is a plain (non-atomic) shadow written inside write i and read only after a successful read
+// of it, so TSan flags it unless end() release pairs with enter() acquire. TSan ignores standalone
+// fences, so begin()/still() ordering cannot be checked this way (a fence-paired shadow is reported
+// even when correct).
 static void seqlockThreads() {
+    constexpr int Writes = 300000;
+    std::vector<int> post(Writes);
     SeqLock<Snap> sl{{0, 0, 0, false}};
     std::atomic<bool> stop{false};
     std::thread writer([&] {
-        for (int i = 1; i < 300000; ++i) sl.write({(float) i, (float) i * 2, -i, (i & 1) != 0});
+        for (int i = 1; i < Writes; ++i) {
+            sl.begin();
+            post[i] = i;
+            sl.put({(float) i, (float) i * 2, -i, (i & 1) != 0});
+            sl.end();
+        }
         stop = true;
     });
     std::atomic<long> good{0}, bad{0};
     auto reader = [&] {
-        Snap v{};
-        while (!stop.load(std::memory_order_relaxed))
-            if (sl.tryRead(v)) {
-                const int i = -v.c;
-                if (v.a != (float) i || v.b != (float) i * 2 || v.on != ((i & 1) != 0)) ++bad;
-                else ++good;
-            }
+        while (!stop.load(std::memory_order_relaxed)) {
+            const uint32_t s = sl.enter();
+            if (s & 1u) continue;
+            const Snap v = sl.get();
+            if (!sl.still(s)) continue;
+            const int i = -v.c;
+            if (i < 0 || i >= Writes) { ++bad; continue; }
+            if (v.a != (float) i || v.b != (float) i * 2 || v.on != ((i & 1) != 0) || post[i] != i) ++bad;
+            else ++good;
+        }
     };
     std::thread r(reader);
     reader();

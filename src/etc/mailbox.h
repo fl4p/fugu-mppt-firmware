@@ -8,9 +8,11 @@
 
 /**
  * Latest-value request slot: any number of producers, one consumer. One word holds
- * tag << PayloadBits | payload; the tag is never 0, so 0 means empty and every post is a new word.
- * A post replaces an untaken one. The consumer applies peek() and then clear()s exactly that word;
- * clear() fails if a newer post replaced it, which then stays pending. A producer withdraws its own
+ * tag << PayloadBits | payload; the tag is never 0, so 0 means empty. Tags wrap (ReqSlot<31> has a
+ * single tag value), so a post identical to the word being applied may be absorbed by that ack; a
+ * different payload is never hidden. A post replaces an untaken one. The consumer applies peek() and
+ * then clear()s exactly that word; clear() fails if a different word replaced it, which then stays
+ * pending. A producer withdraws its own
  * post with the same clear(). idle() (acquire) sees everything the consumer did before clear().
  */
 template<unsigned PayloadBits>
