@@ -507,6 +507,9 @@ __attribute__((cold)) static void wireGuardLoad() {
 }
 
 __attribute__((cold)) void setup() {
+#ifdef WITH_NETW
+    bootLogBegin();
+#endif
     consoleInit();
     setupCli();
     ESP_LOGI("main", "*** %s", format_version());
@@ -619,8 +622,8 @@ __attribute__((cold)) void setup() {
 
     // esp_log -> vprintf_mux (telnet/MQTT/boot-log sinks). Kept LATE on purpose: hooking it before
     // WiFi connects routes the wifi task's connect-time logging burst through vprintf_mux's 300B
-    // stack buffer, overflowing the 3072B wifi task stack (this bricked flat). So the boot-log
-    // backlog captures from here on, not the setup() body — accept that over the brick.
+    // stack buffer, overflowing the 3072B wifi task stack (this bricked flat). So esp_log lines
+    // reach the boot-log backlog from here on; UART_LOG lines since bootLogBegin().
 #if defined(WITH_NETW) || defined(WITH_USB_MSC)
     enable_esp_log_to_telnet();
 #endif

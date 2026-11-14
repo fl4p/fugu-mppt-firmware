@@ -152,9 +152,9 @@ static LogCallback logCallbacks[kMaxLogCallbacks] = {};
 static int logCallbackCount = 0;
 static portMUX_TYPE logCbMux = portMUX_INITIALIZER_UNLOCKED;
 
-// Boot-log backlog: captures log lines from enable_esp_log_to_telnet() on, so the first sink that
-// asks for a replay — typically MQTT, which can't connect until WiFi is up — gets the boot sequence.
-// Heap buffer allocated there (core 0, setup()), so capture never allocates; closes when full, freed
+// Boot-log backlog: captures log lines from bootLogBegin() on, so the first sink that asks for a
+// replay — typically MQTT, which can't connect until WiFi is up — gets the boot sequence.
+// Heap buffer allocated there (top of setup()), so capture never allocates; closes when full, freed
 // when a replay sink attaches or after kBootLogKeepUs. Sinks attaching with replayBootLog=false leave
 // it alone. Guarded by logCbMux; s_bootLogOpen implies s_bootLog != nullptr. mqtt-tagged lines are
 // skipped so the one-shot replay isn't dropped by mqttLogCallback's ") mqtt:" filter.
@@ -553,6 +553,9 @@ void enable_esp_log_to_telnet() {
     old_vprintf = esp_log_set_vprintf(&vprintf_);
     if (!old_vprintf)
         old_vprintf = &vprintf;
+}
+
+void bootLogBegin() {
     if (char *b = s_bootLog ? nullptr : (char *) malloc(kBootLogSize)) {
         portENTER_CRITICAL(&logCbMux);
         s_bootLog = b;
