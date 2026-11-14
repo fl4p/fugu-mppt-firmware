@@ -1,0 +1,2 @@
+# RT-task heap allocation call-site trace (see main/Kconfig.projbuild FUGU_RT_ALLOC_TRACE)
+CONFIG_FUGU_RT_ALLOC_TRACE=y

@@ -51,6 +51,8 @@ project root.
 | `CONFIG_FUGU_WITH_INA226` | on | INA226 ADC backend (`sensor.conf` `*_adc=ina226`). A board config that selects it fails setup when off. |
 | `CONFIG_FUGU_WITH_ADS` | on | ADS1015/ADS1115 ADC backend (`*_adc=ads1015`/`ads1115`). A board config that selects it fails setup when off. |
 | `CONFIG_FUGU_INA226_MEASURED_RATE` | on | Report the INA226 sample rate measured at init instead of the datasheet value (some parts convert faster). Needs `INA226`. |
+| `CONFIG_FUGU_RT_ALLOC_COUNT` | on (S3) | Count heap allocations and frees made by the control-loop task; `rt-stats` and `bootinfo` print them. Selects `CONFIG_HEAP_USE_HOOKS`. |
+| `CONFIG_FUGU_RT_ALLOC_TRACE` | off | Also record the call stacks of the first 8 distinct control-loop heap operations. Layer `sdkconfig.rt_alloc_trace` to enable. |
 
 \* The Kconfig default is off, but `sdkconfig.defaults` enables `WSYNC`, so a fresh MCPWM build of this
 repository has it on.

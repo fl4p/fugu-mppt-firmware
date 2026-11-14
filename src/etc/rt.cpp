@@ -1,6 +1,9 @@
 #include <Arduino.h> // micros()
+#include <cstring>
+#include <esp_timer.h>
 #include "rt.h"
 #include "logging.h"
+#include "util.h" // RT_CORE
 
 volatile bool rtcount_en = true;
 
@@ -183,6 +186,103 @@ void rtcount_print(bool reset) {
     rtcount_en = true;
 }
 
+
+#if CONFIG_FUGU_RT_ALLOC_COUNT
+#include <esp_heap_caps.h>
+#if CONFIG_FUGU_RT_ALLOC_TRACE
+#include <esp_debug_helpers.h>
+#include <esp_cpu_utils.h>
+#endif
+
+static TaskHandle_t s_rtAllocTask = nullptr;
+static volatile uint32_t s_rtAllocs = 0, s_rtFrees = 0, s_rtAllocLastMs = 0;
+
+#if CONFIG_FUGU_RT_ALLOC_TRACE
+struct RtAllocSite {
+    uint32_t pc[8]; // return addresses, innermost first (the hook and heap_caps frames included)
+    uint32_t n, size, firstMs;
+    bool free;
+};
+static constexpr uint8_t kRtAllocSites = 8;
+static RtAllocSite s_rtAllocSite[kRtAllocSites];
+static uint8_t s_rtAllocNumSites = 0;
+
+static IRAM_ATTR void rtAllocTrace(bool isFree, size_t size, uint32_t ms) {
+    uint32_t pc[8]{};
+    esp_backtrace_frame_t f{};
+    esp_backtrace_get_start(&f.pc, &f.sp, &f.next_pc);
+    for (int i = 0; i < 8; ++i) {
+        pc[i] = esp_cpu_process_stack_pc(f.pc);
+        if (!f.next_pc || !esp_backtrace_get_next_frame(&f)) break;
+    }
+    for (uint8_t i = 0; i < s_rtAllocNumSites; ++i) {
+        auto &st = s_rtAllocSite[i];
+        if (st.free == isFree && !memcmp(st.pc, pc, sizeof(pc))) {
+            ++st.n;
+            return;
+        }
+    }
+    if (s_rtAllocNumSites >= kRtAllocSites) return;
+    auto &st = s_rtAllocSite[s_rtAllocNumSites];
+    memcpy(st.pc, pc, sizeof(pc));
+    st.n = 1;
+    st.size = size;
+    st.firstMs = ms;
+    st.free = isFree;
+    ++s_rtAllocNumSites;
+}
+#endif
+
+static IRAM_ATTR inline bool rtAllocMine() {
+    return s_rtAllocTask && xPortGetCoreID() == RT_CORE && xTaskGetCurrentTaskHandle() == s_rtAllocTask;
+}
+
+// placement (HEAP_IRAM_ATTR) comes from the declaration in esp_heap_caps.h
+extern "C" void esp_heap_trace_alloc_hook(void *, size_t size, uint32_t) {
+    if (!rtAllocMine()) return;
+    s_rtAllocs = s_rtAllocs + 1;
+    s_rtAllocLastMs = (uint32_t) (esp_timer_get_time() / 1000);
+#if CONFIG_FUGU_RT_ALLOC_TRACE
+    rtAllocTrace(false, size, s_rtAllocLastMs);
+#else
+    (void) size;
+#endif
+}
+
+extern "C" void esp_heap_trace_free_hook(void *) {
+    if (!rtAllocMine()) return;
+    s_rtFrees = s_rtFrees + 1;
+    s_rtAllocLastMs = (uint32_t) (esp_timer_get_time() / 1000);
+#if CONFIG_FUGU_RT_ALLOC_TRACE
+    rtAllocTrace(true, 0, s_rtAllocLastMs);
+#endif
+}
+
+void rtAllocBegin() { s_rtAllocTask = xTaskGetCurrentTaskHandle(); }
+
+void rtAllocPrint() {
+    static uint32_t prevAllocs = 0, prevFrees = 0;
+    const uint32_t a = s_rtAllocs, f = s_rtFrees;
+    UART_LOG("rt-alloc: %lu allocs, %lu frees by loopRt (+%lu/+%lu since last print), last at %lu ms",
+             (unsigned long) a, (unsigned long) f, (unsigned long) (a - prevAllocs), (unsigned long) (f - prevFrees),
+             (unsigned long) s_rtAllocLastMs);
+    prevAllocs = a;
+    prevFrees = f;
+#if CONFIG_FUGU_RT_ALLOC_TRACE
+    for (uint8_t i = 0; i < s_rtAllocNumSites; ++i) {
+        const auto &st = s_rtAllocSite[i];
+        UART_LOG("  #%u %s size=%lu n=%lu first=%lu ms: %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx", i,
+                 st.free ? "free " : "alloc", (unsigned long) st.size, (unsigned long) st.n, (unsigned long) st.firstMs,
+                 st.pc[0], st.pc[1], st.pc[2], st.pc[3], st.pc[4], st.pc[5], st.pc[6], st.pc[7]);
+    }
+    if (s_rtAllocNumSites)
+        UART_LOG("  resolve: xtensa-esp32s3-elf-addr2line -pfiaC -e build/fugu-firmware.elf <addresses>");
+#endif
+}
+#else
+void rtAllocBegin() {}
+void rtAllocPrint() {}
+#endif
 
 void rtcount_test_cycle_counter() {
     auto t0 = micros();
