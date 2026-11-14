@@ -83,8 +83,9 @@ The receiver is an InfluxDB 1.x UDP input on port 8086, or any relay that accept
 ### Binary wire
 
 `binary=1` replaces text line protocol with a symbol-table encoding (`src/tele/sym_line_protocol.h`), always
-tamp-compressed, several times smaller. A plain InfluxDB can't read it, so put `etc/influx_binary_proxy.py` in
-between. The proxy can print the decoded points, forward them to a UDP relay, or write them to InfluxDB over HTTP:
+tamp-compressed, several times smaller. It needs a build with `CONFIG_FUGU_WITH_TELE_BINARY` (`CONFIG_FUGU_WITH_BLE_TELE`
+turns it on); other builds log a warning and keep the text wire. A plain InfluxDB can't read it, so put
+`etc/influx_binary_proxy.py` in between. The proxy can print the decoded points, forward them to a UDP relay, or write them to InfluxDB over HTTP:
 
 ```bash
 python3 etc/influx_binary_proxy.py --listen 0.0.0.0:8086                        # decode and print

@@ -3,7 +3,6 @@ dependencies:
   espressif/esp-dsp: '*'
   espressif/led_strip: ^3.0.0
   espressif/mdns: '*'
-  brianpugh/tamp: ^1.6.0
   ## Required IDF version
   idf:
     version: '>=5.5'
@@ -29,6 +28,8 @@ dependencies:
       - if: "idf_version <6.0"
         version: '>=3.3.2,<3.3.8'
   joltwallet/littlefs: ^1.20.2
+  # esp-ota-ble asks for the registry tamp; the vendored components/tamp is the one built.
+  brianpugh/tamp: { override_path: ../components/tamp }
   # OTA-over-BLE receiver. A local checkout via ESP_OTA_BLE_DIR (see top CMakeLists.txt) overrides this.
   esp-ota-ble:
     git: https://github.com/fl4p/esp-ota-ble.git

@@ -2,7 +2,7 @@
 #include <unistd.h>
 
 #include "../../src/tele/scope.h"
-#include "../../managed_components/brianpugh__tamp/tamp/compressor.h"
+#include "../../components/tamp/tamp/_c_src/tamp/compressor.h"
 
 int main() {
 

@@ -148,13 +148,17 @@ static LogCallback logCallbacks[kMaxLogCallbacks] = {};
 static int logCallbackCount = 0;
 static portMUX_TYPE logCbMux = portMUX_INITIALIZER_UNLOCKED;
 
-// Boot-log backlog: captures early log lines (before any remote sink exists) so the first sink to
-// attach — typically MQTT, which can't connect until WiFi is up, well after setup() logs — gets the
-// boot sequence replayed. Closes on first attach (or when full); guarded by logCbMux. mqtt-tagged
-// lines are skipped so the one-shot replay isn't dropped by mqttLogCallback's ") mqtt:" filter.
-static char s_bootLog[8192];
+// Boot-log backlog: captures log lines from bootLogBegin() on, so the first sink that asks for a
+// replay — typically MQTT, which can't connect until WiFi is up — gets the boot sequence.
+// Heap buffer allocated there (top of setup()), so capture never allocates; closes when full, freed
+// when a replay sink attaches or after kBootLogKeepUs. Sinks attaching with replayBootLog=false leave
+// it alone. Guarded by logCbMux; s_bootLogOpen implies s_bootLog != nullptr. mqtt-tagged lines are
+// skipped so the one-shot replay isn't dropped by mqttLogCallback's ") mqtt:" filter.
+static constexpr size_t kBootLogSize = 8192;
+static constexpr int64_t kBootLogKeepUs = 30 * 60 * 1000000LL;
+static char *s_bootLog = nullptr;
 static size_t s_bootLogLen = 0;
-static bool s_bootLogOpen = true;
+static bool s_bootLogOpen = false;
 
 static void bootLogCapture(const char *str, int len) {
     if (!s_bootLogOpen || len <= 0) return;
@@ -162,18 +166,25 @@ static void bootLogCapture(const char *str, int len) {
     portENTER_CRITICAL(&logCbMux);
     if (s_bootLogOpen) {
         // Hard guard: if s_bootLogLen is ever out of range (corrupted by an external wild write),
-        // the room/`s_bootLog + s_bootLogLen` math would scribble a log line at a wild address —
-        // observed clobbering the adjacent global `mppt` .bss object. Bail instead of amplifying.
-        if (s_bootLogLen > sizeof(s_bootLog)) {
+        // the room/`s_bootLog + s_bootLogLen` math would scribble a log line at a wild address.
+        if (s_bootLogLen > kBootLogSize) {
             s_bootLogOpen = false;
         } else {
-            size_t room = sizeof(s_bootLog) - s_bootLogLen;
+            size_t room = kBootLogSize - s_bootLogLen;
             if ((size_t) len > room) { len = (int) room; s_bootLogOpen = false; } // fill remainder, then close
             memcpy(s_bootLog + s_bootLogLen, str, len);
             s_bootLogLen += len;
         }
     }
     portEXIT_CRITICAL(&logCbMux);
+}
+
+// Close the backlog and detach its buffer (caller frees). Call under logCbMux.
+static char *bootLogTake() {
+    s_bootLogOpen = false;
+    char *b = s_bootLog;
+    s_bootLog = nullptr;
+    return b;
 }
 
 // Retained lines: a result that must survive a sink outage (e.g. the MQTT session dropping with the
@@ -220,14 +231,17 @@ void addLogCallback(LogCallback callback, bool replayBootLog) {
         if (logCallbackCount >= kMaxLogCallbacks) full = true;
         else logCallbacks[logCallbackCount++] = callback;
     }
-    // Freeze the backlog on any first attach (a later sink must not capture a partial tail),
-    // but only hand it to sinks that asked for it.
-    if (!dup && !full) { if (replayBootLog) replayLen = s_bootLogLen; s_bootLogOpen = false; }
+    // The first replay sink takes the backlog (a later one must not get a partial tail).
+    char *boot = nullptr;
+    if (!dup && !full && replayBootLog) {
+        boot = bootLogTake();
+        if (boot) replayLen = s_bootLogLen;
+    }
     portEXIT_CRITICAL(&logCbMux);
     if (full) ESP_LOGW("log", "log callback table full, dropping"); // log outside the lock
-    // Replay the captured boot backlog to the freshly-attached sink (outside the lock; capture is
-    // frozen so s_bootLog is stable). One call = one message for MQTT.
-    if (replayLen) callback(s_bootLog, (uint16_t) replayLen);
+    // Replay outside the lock; the buffer is detached, so nothing writes it. One call = one MQTT message.
+    if (replayLen) callback(boot, (uint16_t) replayLen);
+    free(boot);
     if (!dup && !full) {
         char r[sizeof(s_retain)];
         if (size_t n = copyRetained(r)) callback(r, (uint16_t) n);
@@ -438,6 +452,12 @@ void flush_async_uart_log() {
         slot.flags.store(0, std::memory_order_relaxed);
         s_rtLogTail.store(t + 1, std::memory_order_release);
     }
+    if (s_bootLog && esp_timer_get_time() > kBootLogKeepUs) { // no replay sink attached in time
+        portENTER_CRITICAL(&logCbMux);
+        char *b = bootLogTake();
+        portEXIT_CRITICAL(&logCbMux);
+        free(b);
+    }
     static uint32_t reported = 0;
     if (const uint32_t d = s_rtLogDropped; d != reported) {
         reported = d;
@@ -529,6 +549,15 @@ void enable_esp_log_to_telnet() {
     old_vprintf = esp_log_set_vprintf(&vprintf_);
     if (!old_vprintf)
         old_vprintf = &vprintf;
+}
+
+void bootLogBegin() {
+    if (char *b = s_bootLog ? nullptr : (char *) malloc(kBootLogSize)) {
+        portENTER_CRITICAL(&logCbMux);
+        s_bootLog = b;
+        s_bootLogOpen = true;
+        portEXIT_CRITICAL(&logCbMux);
+    }
 }
 
 

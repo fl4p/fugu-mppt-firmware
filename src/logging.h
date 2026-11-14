@@ -31,6 +31,8 @@ void loggingEnableDefer();
 // test hook: capture every RT-core log line raw, as during a flash op
 extern bool g_rawLogForce;
 void enable_esp_log_to_telnet();
+// Allocate and open the boot-log backlog (replayed to the first replayBootLog sink). Call once, early.
+void bootLogBegin();
 // esp_log_set_vprintf
 
 void UART_LOG(const char *format, ...)  __attribute__ ((format (printf, 1, 2)));

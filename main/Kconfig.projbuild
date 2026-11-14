@@ -161,11 +161,20 @@ config FUGU_WITH_BLE_TELE
     bool "BLE telemetry stream (binary wire over NUS notify)"
     default n
     depends on FUGU_WITH_BLE
+    select FUGU_WITH_TELE_BINARY
     help
         Stream InfluxDB points (binary sym_line_protocol, tamp-compressed) over a NUS notify
         characteristic — telemetry without WiFi. Host side: etc/influx_binary_proxy.py --ble
         (BLE→InfluxDB bridge) or etc/fugu_console.py --tele. Enable on the device with the
         `set-time` + `tele-ble 1` console commands.
+
+config FUGU_WITH_TELE_BINARY
+    bool "Binary telemetry wire (symbol table + tamp)"
+    default n
+    depends on FUGU_WITH_NETW || FUGU_WITH_BLE_TELE
+    help
+        Compiles the binary sym_line_protocol wire and the tamp compressor, chosen at runtime by
+        tele.conf binary=1. Without it the UDP wire is text only. Selected by FUGU_WITH_BLE_TELE.
 
 config FUGU_WITH_BLE_ADV
     bool "BLE telemetry broadcast (advertising data)"

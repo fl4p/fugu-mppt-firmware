@@ -13,8 +13,10 @@
 #include "../conf.h"
 #include "../storage/key-value.h"
 
+#ifdef WITH_TELE_BINARY
 SymbolTable g_symtab;                    // shared interning table for the binary wire (telemetry.h)
 bool g_teleBinary = false;               // set by teleLoadWireConf; default = text
+#endif
 
 bool timeSynced = false;
 
@@ -52,7 +54,12 @@ const char *getChipId() {
 // The UDP path additionally caches its compressor (teleUdpLoadCompressor in telemetry.cpp).
 void teleLoadWireConf() {
     ConfFile conf{"/littlefs/conf/tele.conf"};
+#ifdef WITH_TELE_BINARY
     g_teleBinary = conf.getLong("binary", 0) != 0;
+#else
+    if (conf.getLong("binary", 0))
+        ESP_LOGW("tele", "binary=1 needs CONFIG_FUGU_WITH_TELE_BINARY, using text");
+#endif
 #ifdef WITH_BLE_TELE
     if (teleBleStreaming()) g_teleBinary = true;   // BLE stream requires the binary wire
 #endif

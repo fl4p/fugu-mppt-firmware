@@ -88,14 +88,15 @@ else ()
     set(BLE_SRC "")
 endif ()
 
-# WiFi-free telemetry core (point queue, symbol table, wire conf, tamp) — needed by the UDP path
-# (NETW) and the BLE stream (CONFIG_FUGU_WITH_BLE_TELE, adds src/tele/tele_ble.cpp to BLE_SRC).
+# WiFi-free telemetry core (point queue, symbol table, wire conf) — needed by the UDP path (NETW) and
+# the BLE stream (CONFIG_FUGU_WITH_BLE_TELE, adds src/tele/tele_ble.cpp to BLE_SRC). tamp only with
+# the binary wire (CONFIG_FUGU_WITH_TELE_BINARY).
 set(TELE_CORE_SRC "")
 if (WITH_NETW OR CONFIG_FUGU_WITH_BLE_TELE)
-    set(TELE_CORE_SRC
-            "../src/tele/tele_core.cpp"
-            "../src/tele/tamp_compress.cpp"
-    )
+    set(TELE_CORE_SRC "../src/tele/tele_core.cpp")
+endif ()
+if (CONFIG_FUGU_WITH_TELE_BINARY)
+    list(APPEND TELE_CORE_SRC "../src/tele/tamp_compress.cpp")
 endif ()
 if (CONFIG_FUGU_WITH_BLE_TELE)
     list(APPEND BLE_SRC "../src/tele/tele_ble.cpp")
@@ -200,6 +201,9 @@ if (WITH_BLE)
 endif ()
 if (CONFIG_FUGU_WITH_BLE_ADV)
     component_compile_definitions("WITH_BLE_ADV=1")
+endif ()
+if (CONFIG_FUGU_WITH_TELE_BINARY)
+    component_compile_definitions("WITH_TELE_BINARY=1")
 endif ()
 if (CONFIG_FUGU_WITH_BLE_TELE)
     component_compile_definitions("WITH_BLE_TELE=1")

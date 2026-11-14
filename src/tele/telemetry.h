@@ -3,7 +3,6 @@
 //#include "../adc/sampling.h"
 //#include "../store.h"
 #include <string>
-#include <variant>
 
 class String; // Arduino String (handleCommand); avoid dragging <Arduino.h> into every includer
 
@@ -33,6 +32,9 @@ void wifiLoop(bool connect = false);
 
 
 #include "line_protocol.h"
+
+#ifdef WITH_TELE_BINARY
+#include <variant>
 #include "sym_line_protocol.h"
 
 // Telemetry wire is chosen at boot from tele.conf::binary (0=text, 1=binary).
@@ -60,6 +62,16 @@ public:
     std::string takeWire() { return std::visit([](auto &p) { return p.takeWire(); }, v_); }
     bool isBinary() const { return v_.index() == 1; }
 };
+
+#else
+constexpr bool g_teleBinary = false;  // text-only build (no CONFIG_FUGU_WITH_TELE_BINARY)
+
+class TelePoint : public LineProtocol {
+public:
+    using LineProtocol::LineProtocol;
+    bool isBinary() const { return false; }
+};
+#endif
 
 inline TelePoint makeTelePoint(const char *measurement) { return TelePoint(measurement); }
 
