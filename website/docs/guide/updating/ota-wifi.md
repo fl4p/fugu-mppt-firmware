@@ -22,8 +22,8 @@ PYTHONPATH=. python etc/ota.py -m <hostname>   # update devices whose hostname m
 
 `./ota.sh <args>` is a shortcut that runs `idf.py build`, then `etc/ota.py <args>`. It refuses to run (exit 2)
 unless the arguments contain `-n`/`--dry-run` or `-m`/`--match`, each as its own word, so it never updates every
-discovered device by accident. When `idf.py` is not on `PATH`, it sources `$IDF_PATH/export.sh`, or
-`../../esp/idf6.0.3/export.sh` if `IDF_PATH` is unset.
+discovered device by accident. When `idf.py` is not on `PATH`, it sources the repository's `idf-export.sh` for
+the `esp32s3` target.
 
 `etc/ota.py` discovers devices and serves `build/fugu-firmware.bin` on port 9000. It builds the URL from the host IP
 as the device sees it, so the update also works when the device sits behind NAT. It then sends `ota <url>` to each
