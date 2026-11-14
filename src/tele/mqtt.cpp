@@ -190,18 +190,21 @@ bool MqttService::onStart() {
     // Console-command input over MQTT (output is mirrored to pv/log/<hostname> by mqttLogCallback).
     if (conf.getByte("cmd_input", 0)) {
         subscribeTopic("pv/log/" + getHostname(true) + "/cmd", [](const char *data, int len) {
-            std::string cmd(data, len);
             // Defer to loopNetwork_task (where process_queued_tasks runs). Running handleCommand
             // inline here executes on the MQTT client event callback (mqtt_task); a teardown command
             // (svc rs/off mqtt, wifi off, restart) would then stop/destroy the client + clear the
             // handler map from inside its own event while this std::function is executing -> UAF.
-            enqueue_task([cmd]() {
-                String inp(cmd.c_str());
-                inp.trim();
-                if (!inp.length()) return;
-                const auto t0 = esp_timer_get_time();
-                logCmdResult(handleCommand(inp), inp.c_str(), t0);
-            });
+            try {
+                enqueue_task([cmd = std::string(data, len)]() {
+                    String inp(cmd.c_str());
+                    inp.trim();
+                    if (!inp.length()) return;
+                    const auto t0 = esp_timer_get_time();
+                    logCmdResult(handleCommand(inp), inp.c_str(), t0);
+                });
+            } catch (const std::bad_alloc &) {
+                ESP_LOGW(TAG, "cmd dropped (OOM)");
+            }
         });
     }
 

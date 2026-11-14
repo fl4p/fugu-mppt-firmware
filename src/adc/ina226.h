@@ -19,8 +19,6 @@ void ina226_alert();
 
 ADC_INA226 *ina226_instance = nullptr;
 
-int console_read_usb(char *buf, size_t len); //debug console
-
 class ADC_INA226 : public AsyncADC<float> {
     INA226_WE ina226;
     volatile bool new_data = false;
@@ -357,31 +355,9 @@ public:
         ina226.enableConvReadyAlert();
     } */
 
-    void debugMode() {
-        bool debug = true;
-        if (debug) ESP_LOGI("ina22x", "Entering debug console");
-        while (debug) {
-            char buf[10];
-            auto r = console_read_usb(buf, sizeof buf);
-            if (r == 1) {
-                buf[r] = 0;
-                //
-                bool ok = true;
-                if (buf[0] == 'r') ina226.reset_INA226();
-                else if (buf[0] == 'm') ina226.readAndClearFlags();
-                else if (buf[0] == 'a') ina226.enableConvReadyAlert();
-                else if (buf[0] == 'c') ina226.setMeasureMode(CONTINUOUS);
-                else if (buf[0] == 't') ina226.setMeasureMode(TRIGGERED);
-                else if (buf[0] == 'l') ina226.enableAlertLatch();
-                else if (buf[0] == 'v') ESP_LOGI("ina22x", "V=%.3f", ina226.getBusVoltage_V());
-                else if (buf[0] == 'x') break;
-                else ok = false;
-                if (ok) ESP_LOGI("ina22x", "console cmd %s", buf);
-                //else ESP_LOGW("ina225", "unknown");
-            }
-            vTaskDelay(1);
-        }
-        ESP_LOGI("ina22x", "exit debug mode");
+    bool strayAlert() {
+        if (new_data) ESP_LOGE("ina22x", "stray alert signal");
+        return new_data;
     }
 
     bool testConvReadyAlert(uint8_t addr, uint8_t alertPin) {
@@ -395,9 +371,11 @@ public:
         delay(5);
         if (new_data) {
             ESP_LOGW("ina22x", "unexpected new data");
-            debugMode();
+            ina226.readAndClearFlags();
+            new_data = false;
+            delay(1);
+            if (strayAlert()) return false;
         }
-        //assert(!new_data);
 
         if (digitalRead(alertPin) != HIGH) {
             ESP_LOGE("ina22x", "Alert pin %u not pulled up, short to ground?", alertPin);
@@ -408,10 +386,10 @@ public:
         //auto bus = (i2c_port_t) 0;
 
         ina226.startSingleMeasurement();
-        assert(!new_data); // test disabled ConvReadyAlert
+        if (strayAlert()) return false; // test disabled ConvReadyAlert
 
         ina226.enableConvReadyAlert();
-        assert(!new_data);
+        if (strayAlert()) return false;
         ina226.startSingleMeasurement();
         //assert(new_data); // TODO enable!adc-reset-peripherals test enabled ConvReadyAlert
         new_data = false;
@@ -422,7 +400,7 @@ public:
         auto confReg = ina226.readRegister(INA226_WE::INA226_CONF_REG, ok);
         if (!ok) return false;
 
-        assert(!new_data);
+        if (strayAlert()) return false;
 
         auto t0 = micros();
 
@@ -432,7 +410,12 @@ public:
         ina226.startSingleMeasurementNoWait();
         auto tWrite = micros();
 
-        while (!new_data) {} // busy wait
+        while (!new_data) {
+            if (micros() - tWrite > 100000) {
+                ESP_LOGE("ina22x", "no conversion-ready alert");
+                return false;
+            }
+        }
         auto tBusyWait = micros();
 
         ina226.readAndClearFlags();
@@ -466,7 +449,10 @@ public:
         //assert(ina226.getBusVoltage_V() == voltage);
 
         // the busyWait time is ~ (convTime_I + convTime_U) * AvgSamples
-        assert ((tBusyWait - tWrite) < (100 + (140 + 10) * 2 * 4));
+        if ((tBusyWait - tWrite) >= (100 + (140 + 10) * 2 * 4)) {
+            ESP_LOGE("ina22x", "conversion-ready alert late (%lu us)", tBusyWait - tWrite);
+            return false;
+        }
 
         ESP_LOGI("ina22x", "Single-shot timings: sendTrigger=%lu busyWait=%lu read=%lu tReadIV=%lu (us)",
                  tWrite - t0, tBusyWait - tWrite, tRead - tBusyWait, tReadI - tRead);
@@ -489,8 +475,6 @@ public:
         ina226.enableConvReadyAlert();
         auto regME = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG);
         assert(!(regME & 0x0001)); // alert latch disabled
-
-        //debugMode();
 
         regME = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG);
         assert(!(regME & 0x0001)); // alert latch disabled
