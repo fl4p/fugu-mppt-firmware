@@ -23,11 +23,14 @@
  * measured against a reference LS (0.6x ideal) sampled before and after it, which cancels linear
  * drift, and is placed relative to the ideal count of its own Vin/Vout. Each window current is
  * scaled to the Init voltages with the DCM current model I ~ Vin*(Vin-Vout)/Vout (D fixed), so a
- * bus voltage change does not read as a current step. Vin must stay within StiffV of Init (panel
+ * bus voltage change does not read as a current step. Vin of a reference stays within StiffV of Init (panel
  * stiffness), Vout within VoutDrift (a shared battery bus moves); a step's voltages must lie on
- * the line through its two references within JumpV, which rejects a voltage step that the model
- * scaling cannot fully remove. learned = peak - ideal (counts) is the net timing error of driver,
- * gate and sensing.
+ * the line through its two references within JumpV/JumpVo, which rejects a voltage step that the model
+ * scaling cannot fully remove; a step that fails is measured again (MaxRetry). Vin may rise above
+ * that by what the step's own measured (unscaled) current drop explains on a panel below its MPP
+ * (SpvMax). The fit
+ * places the zero crossing where the current bends down, independent of a sloped baseline.
+ * learned = peak - ideal (counts) is the net timing error of driver, gate and sensing.
  *
  * Ownership: the RT core writes the payload in start()/refuse() (from Idle) and during Run, core 0
  * in Fit. Each hand-off is a release store of `state`; the other side reads it with acquire before
@@ -46,7 +49,11 @@ public:
     static constexpr float MinMarginNs = 125.f;  // applied margin floor (20 ct at 160 MHz)
     static constexpr float StiffV = 0.02f;       // max Vin deviation from Init (fraction)
     static constexpr float VoutDrift = 0.05f;    // max Vout deviation from Init (fraction)
-    static constexpr float JumpV = 0.003f;       // max step V off its references' mean (fraction of Init)
+    static constexpr float JumpV = 0.003f;       // max step Vin off its references' mean (fraction)
+    static constexpr float JumpVo = 0.002f;      // same for Vout (a bus can swing in step with the run)
+    static constexpr float SpvMax = 0.25f;       // PV slope bound |dV/dI| * I/V below the MPP (1 at the MPP)
+    static constexpr float KneeMinA = 0.01f;     // fitted bend at the last point, at least
+    static constexpr uint8_t MaxRetry = 6;       // steps re-measured after a voltage step
     static constexpr float SettleI = 0.02f;      // Init windows agree: |dI| <= SettleI A + SettleI * I
 
     std::atomic<uint8_t> state{Idle};
@@ -54,9 +61,14 @@ public:
     uint16_t hs = 0;      // 0 after a refused start
     uint8_t n = 0, seq = 0; // seq: counts starts and refusals
     int16_t learned = 0, applied = 0;
-    float ideal = 0, peak = 0; // peak: fitted LS count of the current maximum
+    float ideal = 0, peak = 0; // peak: fitted LS count of the zero crossing (knee)
     float dv = 0; // largest relative Vin/Vout deviation from Init
     float xs[Steps]{}, ys[Steps]{};
+    int8_t jvi[Steps]{}, jvo[Steps]{}; // step Vin/Vout off its references' mean (0.01 %)
+    uint8_t retries = 0;
+    // last voltage check: deviation (fraction), Vin allowance (fraction), reference (V), LS count
+    float jdi = 0, jdo = 0, jallow = 0, jrefVi = 0, jrefVo = 0;
+    uint16_t jls = 0;
 
     [[nodiscard]] State get() const { return (State) state.load(std::memory_order_acquire); }
     [[nodiscard]] bool running() const { return get() == Run; }
@@ -80,6 +92,7 @@ public:
     void start(uint32_t nowUs, uint16_t hs_, uint16_t lsMin_, uint16_t lsCap_) {
         hs = hs_; lsMin = lsMin_; lsCap = lsCap_;
         n = 0; k = 0; ideal = peak = dv = 0; ymax = -INFINITY; learned = applied = 0; why = "";
+        retries = 0; jdi = jdo = jallow = jrefVi = jrefVo = 0; jls = 0;
         phase = Init; ls = lsMin; prevOk = false;
         t0 = tPh = nowUs;
         clearAcc();
@@ -148,29 +161,44 @@ public:
         }
         const float dIn = std::fabs(vi / vi0 - 1.f), dOut = std::fabs(vo / vo0 - 1.f);
         dv = std::max(dv, std::max(dIn, dOut));
-        if (!(dIn <= StiffV)) return fail("Vin shift");
-        if (!(dOut <= VoutDrift)) return fail("Vout shift");
+        // a step window's Vin is judged against its references (a knee raises Vin on a soft panel)
+        if (!(dIn <= StiffV) && phase == Ref) return vfail("Vin shift", vi, vo, vi0, vo0);
+        if (!(dOut <= VoutDrift)) return vfail("Vout shift", vi, vo, vi0, vo0);
         const float r = g0 / dcmShape(vi, vo); // current at the Init voltages
-        if (!(r > 0.8f && r < 1.25f)) return fail("V shift");
+        if (!(r > 0.8f && r < 1.25f)) return vfail("V shift", vi, vo, vi0, vo0);
+        const float raw = i;
         i *= r;
         if (phase == Meas) {
-            meas = i; measVi = vi; measVo = vo;
+            meas = i; measRaw = raw; measVi = vi; measVo = vo;
             measX = (float) ls_ - ((vi / vo - 1.f) * (float) hs - ideal);
             nextPhase(nowUs, Ref, ref);
             return ls;
         }
+        bool redo = false;
         if (k) {
-            // windows are equally spaced: a linear drift puts the step on its references' mean
-            if (!(std::fabs(measVi - 0.5f * (refVi + vi)) <= JumpV * vi0
-                  && std::fabs(measVo - 0.5f * (refVo + vo)) <= JumpV * vo0))
-                return fail("V step");
-            const float y = meas - 0.5f * (refPrev + i);
-            xs[n] = measX; ys[n] = y; ++n;
-            ymax = std::max(ymax, y);
-            if (meas < -0.05f || (measX > ideal && y < ymax - 0.2f * std::fabs(meas)))
-                return finish();
+            // windows are equally spaced: a linear drift puts the step on its references' mean. The measured
+            // (unscaled) current drop lowers the input power by dRaw/mid and raises Vin by up to SpvMax times that.
+            const float mid = 0.5f * (refPrev + i), y = meas - mid, dRaw = 0.5f * (rawPrev + raw) - measRaw;
+            jrefVi = 0.5f * (refVi + vi); jrefVo = 0.5f * (refVo + vo); jls = ls_;
+            jdi = measVi / jrefVi - 1.f; jdo = measVo / jrefVo - 1.f;
+            jallow = JumpV + (dRaw > 0 && mid > 0.1f ? SpvMax * dRaw / mid : 0.f);
+            if (!(jdi >= -JumpV && jdi <= jallow && std::fabs(jdo) <= JumpVo)) {
+                if (retries >= MaxRetry) return fail("V step");
+                ++retries; redo = true;
+            } else {
+                xs[n] = measX; ys[n] = y;
+                jvi[n] = pct100(jdi); jvo[n] = pct100(jdo);
+                ++n;
+                ymax = std::max(ymax, y);
+                if (meas < -0.05f || (measX > ideal && y < ymax - 0.2f * std::fabs(meas)))
+                    return finish();
+            }
         }
-        refPrev = i; refVi = vi; refVo = vo;
+        refPrev = i; rawPrev = raw; refVi = vi; refVo = vo;
+        if (redo) {
+            nextPhase(nowUs, Meas, ls_);
+            return ls;
+        }
         for (;;) {
             if (k >= Steps) return finish();
             const float x = (LsLo + (LsHi - LsLo) * (float) k++ / (float) (Steps - 1)) * ideal;
@@ -186,13 +214,10 @@ public:
     // Peak fit and margin, not RT-safe (double-precision grid search). tickRate converts the ns limits.
     bool fit(float tickRate) {
         if (get() != Fit) return false;
-        int pk = 0;
-        for (int j = 1; j < n; ++j) if (ys[j] > ys[pk]) pk = j;
-        float x0 = n ? xs[pk] : 0;
-        double b = 0;
-        const char *e = n < 5 ? "few points"
-                        : (pk == 0 || pk == n - 1) ? "peak at edge"
-                        : !asymPeakFit(xs, ys, n, x0, b) ? "fit"
+        // zero crossing = where the current bends down (reverse current), whatever the baseline slope
+        float x0 = 0, drop = 0, rms = 0;
+        const char *e = n < 6 ? "few points"
+                        : !kneeFit(xs, ys, n, x0, drop, rms) || !(drop >= std::max(KneeMinA, 4.f * rms)) ? "no knee"
                         : !(std::fabs(x0 - ideal) <= (float) pwmCountsFromNs(PlausibleNs, tickRate)) ? "implausible"
                         : nullptr;
         if (e) {
@@ -217,7 +242,7 @@ private:
     uint32_t ns = 0;
     bool prevOk = false; // Init: a previous window is stored
     float si = 0, sv = 0, so = 0, refPrev = 0, meas = 0, measX = 0, ymax = 0, vi0 = 0, vo0 = 0, g0 = 0;
-    float refVi = 0, refVo = 0, measVi = 0, measVo = 0;
+    float refVi = 0, refVo = 0, measVi = 0, measVo = 0, rawPrev = 0, measRaw = 0; // raw: unscaled current
 
     void clearAcc() { si = sv = so = 0; ns = 0; }
 
@@ -227,6 +252,13 @@ private:
     void nextPhase(uint32_t nowUs, Phase p, int lsCount) {
         phase = p; ls = lsCount; tPh = nowUs;
         clearAcc();
+    }
+
+    static int8_t pct100(float f) { return (int8_t) std::clamp(std::lround(1e4f * f), -127L, 127L); }
+
+    int vfail(const char *reason, float vi, float vo, float rvi, float rvo) {
+        jdi = vi / rvi - 1.f; jdo = vo / rvo - 1.f; jallow = 0; jrefVi = rvi; jrefVo = rvo; jls = ls;
+        return fail(reason);
     }
 
     int fail(const char *reason) {
@@ -524,14 +556,21 @@ public:
                  activeCalibrated() ? "" : ", uncalibrated", fires.load(std::memory_order_relaxed), dirty);
         if (s == RectCal::Run) ESP_LOGI("rectcal", "hs=%u", cal.hs);
         if ((s != RectCal::Done && s != RectCal::Fail) || !cal.hs) return;
-        ESP_LOGI("rectcal", "last: hs=%u ideal=%.0f peak=%.0f learned=%+d applied=%+d ct, dV %.1f%%, %u pts", cal.hs,
-                 cal.ideal, cal.peak, cal.learned, cal.applied, 100.f * cal.dv, cal.n);
+        ESP_LOGI("rectcal", "last: hs=%u ideal=%.0f peak=%.0f learned=%+d applied=%+d ct, dV %.1f%%, %u pts, %u redone",
+                 cal.hs, cal.ideal, cal.peak, cal.learned, cal.applied, 100.f * cal.dv, cal.n, cal.retries);
+        if (s == RectCal::Fail && cal.jrefVi > 0) {
+            const bool st = cal.jallow > 0; // step vs its references, else window vs Init
+            ESP_LOGI("rectcal", "at LS %u: Vin %+.2f%% (%+.2f..%+.2f) Vout %+.2f%% (+-%.2f) vs %s %.2f/%.2f V", cal.jls,
+                     100.f * cal.jdi, -100.f * (st ? RectCal::JumpV : RectCal::StiffV),
+                     100.f * (st ? cal.jallow : RectCal::StiffV), 100.f * cal.jdo,
+                     100.f * (st ? RectCal::JumpVo : RectCal::VoutDrift), st ? "refs" : "Init", cal.jrefVi, cal.jrefVo);
+        }
         char buf[128];
         int len = 0;
         for (int i = 0; i < cal.n; ++i) {
-            len += snprintf(buf + len, sizeof(buf) - len, " %.0f:%+.3f", cal.xs[i], cal.ys[i]);
-            if (len > (int) sizeof(buf) - 20 || i == cal.n - 1) {
-                ESP_LOGI("rectcal", "LS:dI%s", buf);
+            len += snprintf(buf + len, sizeof(buf) - len, " %.0f:%+.3f/%d/%d", cal.xs[i], cal.ys[i], cal.jvi[i], cal.jvo[i]);
+            if (len > (int) sizeof(buf) - 28 || i == cal.n - 1) {
+                ESP_LOGI("rectcal", "LS:dI/Vin/Vout%s", buf);
                 len = 0;
             }
         }

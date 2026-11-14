@@ -101,7 +101,9 @@ void VirtualConverter::stepOneCycle(float T) {
     // bounded). V_out: backward-Euler — unconditionally stable, lets r_bat go
     // arbitrarily small without crossing the T/(R·C)=2 cliff (short-circuit case).
     //   V_out_new = (V_out + T·I_out_avg/C_out + a·V_bat) / (1 + a),   a = T/(R_bat·C_out)
-    const float Ipv = pvBlocking_ ? std::max(0.f, pvCurrent(vIn_)) : pvCurrent(vIn_);
+    float Ipv = pvBlocking_ ? std::max(0.f, pvCurrent(vIn_)) : pvCurrent(vIn_);
+    // above Voc the panel diode sinks what the HS body diode pumps back (curve slope at Voc)
+    if (inputPump_ && !pvBlocking_ && vIn_ > pv_.voc) Ipv -= (vIn_ - pv_.voc) * pv_.isc * pv_.alpha / pv_.voc;
 
     vIn_ += (Ipv - iInAvg_) * T * invCin_;
     vOut_ = (vOut_ + (T * iOutAvg_) * invCout_ + aOut_ * vBatEff) * inv1pAout_;
@@ -198,7 +200,7 @@ void VirtualConverter::stepOneCycleBuck(float T) {
         }
     }
 
-    iInAvg_  = areaHS * invT_;
+    iInAvg_  = (areaHS + (inputPump_ && c < 0.0f ? areaOff : 0.0f)) * invT_;
     iOutAvg_ = (areaHS + areaLS + areaOff) * invT_;
     iLEnd_ = cEnd;
     // DCM := "coil is at zero at cycle end". c!=0 means phase 3 drove it down;

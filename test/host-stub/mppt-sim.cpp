@@ -26,10 +26,13 @@
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
 //   SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" /tmp/mppt-sim a   # board overrides
 //   rect-cal (rectCalRt/rectCalLf wired as in main.cpp; the automatic start is off, SIM_RCAL_AUTO=1 enables it):
-//     rcal         `rect-cal force` at full power (CCM), LS body-diode drop 0.7 V, sensor noise
+//     rcal         `rect-cal force` at full power (CCM), LS body-diode drop 0.7 V, reverse current pumped
+//                  back to the input, sensor noise
 //     rcal-bus     same, battery +2.5 % linear over 30 s from the start (shared bus)
 //     rcal-cloud   same, Isc x0.7 and Voc -1.8 % step 12 s after the start
 //     rcal-ov      same, Vin trip (hv_max) 2 % above Voc: the run must stop short of it
+//     rcal-low     same, a cloud 0.2 s after the start: Isc 2 A, Voc -3 % (soft panel, knee lifts Vin)
+//     rcal-low-bus rcal-low on a swinging bus (+-0.4 % / 23 s, +-0.2 % / 7.3 s, 0.15 % steps every 2-6 s)
 //
 #include <algorithm>
 #include <cmath>
@@ -40,6 +43,7 @@
 #include <vector>
 #include <filesystem>
 #include <functional>
+#include <random>
 #include <unistd.h>
 
 #include "adc/sampling.h"
@@ -832,10 +836,20 @@ static int runRectCal(const std::string &name, const std::string &sc) {
     int stepMax = 0, lsOffMin = 0;
     uint16_t hsPrev = hs0;
     const uint8_t clamps0 = converter.lsClamps();
+    std::mt19937 busRng{7};
+    std::uniform_real_distribution<float> busU{0.f, 1.f};
+    double busNext = 0;
+    float busStep = 0;
     while (tNow() - p.t0 < 60) {
         const double t = tNow() - p.t0;
         if (sc == "rcal-bus") g_vconv.setBat(vbat0 * (1.f + 0.025f * (float) std::min(1.0, t / 30.0)), g_vconv.getRbat());
         if (sc == "rcal-cloud" && t >= 12.0) g_vconv.setPv(isc0 * 0.7f, voc0 * 0.982f, g_vconv.getPvK());
+        if (sc.rfind("rcal-low", 0) == 0 && t >= 0.2) g_vconv.setPv(2.f, voc0 * 0.97f, g_vconv.getPvK());
+        if (sc == "rcal-low-bus") {
+            while (t >= busNext) busNext += 2.0 + 4.0 * busU(busRng), busStep = (busU(busRng) - 0.5f) * 0.003f;
+            g_vconv.setBat(vbat0 * (1.f + 0.004f * (float) std::sin(6.2832 * t / 23.) + 0.002f * (float) std::sin(6.2832 * t / 7.3)
+                                    + busStep), g_vconv.getRbat());
+        }
         run(0.0022, 0, &p);
         const auto st = rc.cal.get();
         if (st == RectCal::Run) {
@@ -860,8 +874,8 @@ static int runRectCal(const std::string &name, const std::string &sc) {
            rc.cal.get() == RectCal::Done ? "done" : "failed", rc.cal.get() == RectCal::Fail ? ": " : "",
            rc.cal.get() == RectCal::Fail ? rc.cal.why : "", tEnd, rc.cal.hs, tCal, hs0, dcm0 ? "DCM" : "CCM", stepMax,
            lsOffMin, (unsigned) (uint8_t) (converter.lsClamps() - clamps0));
-    printf("== rect-cal: ideal %.0f peak %.0f learned %+d applied %+d ct (truth 0), %u pts, dV %.2f%%, offset now %d ct\n",
-           rc.cal.ideal, rc.cal.peak, rc.cal.learned, rc.cal.applied, rc.cal.n, 100 * rc.cal.dv, rc.offset());
+    printf("== rect-cal: ideal %.0f peak %.0f learned %+d applied %+d ct (truth 0), %u pts, %u redone, dV %.2f%%, offset now %d ct\n",
+           rc.cal.ideal, rc.cal.peak, rc.cal.learned, rc.cal.applied, rc.cal.n, rc.cal.retries, 100 * rc.cal.dv, rc.offset());
     printf("== plant: min Iout avg %.2f A (during the run %.2f A), min coil current at cycle end %.3f A, max Vin %.2f V\n",
            iMin, iRunMin, ilMin, vinMax);
     printf("== after: HS %u (before %u), P %.0f W (before %.0f W), %s, manual LS %d\n", converter.getCtrlOnPwmCnt(), hs0,
@@ -901,7 +915,7 @@ static int simMain(int argc, char **argv) {
     if (rcal) ov = {{"noise_iout", "0.01"}, {"noise_vout", "0.005"}, {"noise_vin", "0.05"}};
     if (sc == "rcal-ov") setenv("SIM_CONF", "limits.conf:hv_max=77.5", 1);
     boot(ov, p0);
-    if (rcal) g_vconv.setDiodeVf(0.7f);
+    if (rcal) g_vconv.setDiodeVf(0.7f), g_vconv.setInputPump(true);
     if (isWx) return runWx(name, wx);
     if (sc.rfind("shade", 0) == 0) g_vconv.setPvShade(0.68f);
 

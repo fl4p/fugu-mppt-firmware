@@ -33,6 +33,7 @@ inline void digitalWrite(uint8_t, int) {}
 #include "../../src/buck.h"
 #include "../../src/rect_cal.h"
 #include "../../src/sim/vconv.h"
+#include "rect_cal_plant.h"
 
 void assertPinState(uint8_t, bool, const char *, bool) {}
 static bool g_quiet = true, g_trace = false, g_verbose = false;
@@ -60,7 +61,7 @@ struct Rig {
 
     Rig(float isc, int hidden, float voutBias, float drift) : hidden(hidden), voutBias(voutBias), isc0(isc), drift(drift) {
         p.setPv(isc, VOC, K); p.setBat(VBAT, 0.03f); p.setPassives(470e-6f, 470e-6f, LREAL);
-        p.setVin(VOC); p.setVout(VBAT); p.setDiodeVf(0.7f);
+        p.setVin(VOC); p.setVout(VBAT); p.setDiodeVf(0.7f); p.setInputPump(true);
     }
     void apply(uint16_t hs, uint16_t ls) {
         int eff = (hs && ls) ? std::min<int>(ls + hidden, PM - hs - 1) : 0;
@@ -336,7 +337,7 @@ static void testDisturbance() {
     const float zc = (60.f / 26.7f - 1.f) * 1200;
     struct Case { const char *name; float dipVo, dipVi; bool reject; };
     const Case cases[] = {{"Vout dip 1%", -0.01f, 0, true}, {"Vout dip 0.5%", -0.005f, 0, true},
-                          {"Vin dip 0.5%", 0, -0.005f, true}, {"Vout dip 0.2%", -0.002f, 0, false},
+                          {"Vin dip 0.5%", 0, -0.005f, true}, {"Vout dip 0.3%", -0.003f, 0, true}, {"Vout dip 0.15%", -0.0015f, 0, false},
                           {"Vin dip 0.2%", 0, -0.002f, false}};
     RectCal ref;
     fixtureDcm(ref, [](uint32_t, int, bool, float &, float &) {});
@@ -366,6 +367,62 @@ static void testDisturbance() {
               100 * tot, cal.get(), cal.why, cal.learned);
         printf("disturbance 'Vout drift %+.1f%%': %s %s learned %d (true -80), dV %.2f%%\n", 100 * tot,
                cal.get() == RectCal::Done ? "done" : "failed", cal.why, cal.learned, 100 * cal.dv);
+    }
+}
+
+// Field runs (80 uH, low light, shared bus): knee 30x steeper than the lossless model, baseline falling
+// 15 mA over the sweep, the knee lifts Vin on a soft panel, the bus swings. Runs 1 and 3 must calibrate,
+// run 2 (cloud) must not. Then bounds for disturbances that pass the voltage checks: a bus square wave
+// below JumpVo near the step cycle (plant 0x and 2x the model's voltage sensitivity), and a Vin rise
+// confined to the steps past the crossing, which the knee allowance admits: it may only make the
+// learned offset earlier (shorter LS).
+static void testField() {
+    const float tr = 160e6f;
+    struct F { const char *name; float vi; uint16_t hs; float rpv; bool cloud; } fs[] = {
+        {"run 1", 72.8f, 1111, 5.4f, false}, {"run 3", 71.9f, 1125, 8.4f, false}, {"run 2 cloud", 71.7f, 1178, 5.4f, true},
+        {"run 1 stiff", 72.8f, 1111, 0.f, false}};
+    for (const auto &f: fs) {
+        int done = 0, lo = 999, hi = -999;
+        const char *why = "";
+        for (uint32_t seed = 1; seed <= 10; ++seed) {
+            RcPlant p = fieldPlant(f.vi, 26.f, f.hs, f.rpv, seed);
+            if (f.cloud) {
+                auto e = p.ext;
+                p.ext = [e](double t, int ls, float &vi, float &vo) { e(t, ls, vi, vo); if (t > 3) vi *= 1.f - 0.002f * (float) (t - 3); };
+            }
+            RectCal c;
+            runPlant(c, p, tr, seed);
+            if (c.get() == RectCal::Done) ++done, lo = std::min(lo, c.learned - 16), hi = std::max(hi, c.learned - 16);
+            else why = c.why;
+        }
+        if (f.cloud) CHECK(done == 0 && !strcmp(why, "Vin shift"), "%s: %d/10 learned, '%s'", f.name, done, why);
+        else CHECK(done == 10 && lo >= -10 && hi <= 10, "%s: %d/10 done, err %d..%d ('%s')", f.name, done, lo, hi, why);
+        printf("field %-12s %2d/10 done, err %+d..%+d ct %s\n", f.name, done, done ? lo : 0, done ? hi : 0, why);
+    }
+    int lo = 999, hi = -999, done = 0, tot = 0;
+    for (float vexp: {0.f, 2.f})
+        for (double P = 0.9; P <= 2.3001; P += 0.1)
+            for (int ph = 0; ph < 8; ++ph) {
+                RcPlant p{};
+                p.vi0 = 60; p.vo0 = 26.7f; p.hs = 1200; p.i0 = 1.47f; p.kE = 9.5e-9f; p.vExp = vexp;
+                p.ext = [=](double t, int, float &, float &vo) { vo *= 1.f + 0.0019f * (std::sin(6.2832 * t / P + ph * 0.7854) >= 0 ? 1.f : -1.f); };
+                RectCal c;
+                runPlant(c, p, tr, 1 + ph);
+                ++tot;
+                if (c.get() == RectCal::Done) ++done, lo = std::min<int>(lo, c.learned), hi = std::max<int>(hi, c.learned);
+            }
+    CHECK(lo >= -30 && hi <= 30, "bus square 0.19%%: err %d..%d", lo, hi);
+    printf("field bus square 0.19%% 0.9..2.3 s, plant 0x/2x: %d/%d done, err %+d..%+d ct\n", done, tot, lo, hi);
+    const float zc = (60.f / 26.7f - 1.f) * 1200;
+    for (float rise: {0.002f, 0.005f, 0.007f, 0.01f, 0.015f, 0.02f}) {
+        RcPlant p{};
+        p.vi0 = 60; p.vo0 = 26.7f; p.hs = 1200; p.i0 = 1.47f; p.kE = 9.5e-9f; p.vExp = 0;
+        p.ext = [=](double, int ls, float &vi, float &) { if (ls >= zc + 100 && ls <= zc + 300) vi *= 1.f + rise; };
+        RectCal c;
+        runPlant(c, p, tr);
+        CHECK(c.get() != RectCal::Done || c.learned <= 5, "Vin +%.1f%% past the crossing: learned %d", 100 * rise, c.learned);
+        printf("field Vin +%.1f%% on steps past the crossing (plant 0x): %s %s learned %d\n", 100 * rise,
+               c.get() == RectCal::Done ? "done" : "failed", c.why, c.learned);
     }
 }
 
@@ -457,6 +514,7 @@ static void testForce() {
                   "irradiance step: %s learned %d truth %.0f", f.ok ? "done" : h.ctl.cal.why, h.ctl.cal.learned, f.truth);
         printf("force, %s at +12 s: %s learned %d truth %.0f (%d pts, dV %.2f%%)\n", vocDrop ? "cloud step" : "Isc step",
                f.ok ? "done" : h.ctl.cal.why, f.ok ? h.ctl.cal.learned : 0, f.truth, h.ctl.cal.n, 100 * h.ctl.cal.dv);
+        if (g_verbose) h.ctl.status(h.c);
     }
 }
 
@@ -1060,6 +1118,7 @@ int main(int argc, char **argv) {
     testShrinkMonotone();
     testVoltageBaseline();
     testDisturbance();
+    testField();
     testForce();
     testForceProtection();
     testProtectionWins();
@@ -1136,9 +1195,11 @@ int main(int argc, char **argv) {
                     float truth = 0;
                     const bool ok = calibrate(h, truth, opFrac);
                     const RectCal &cal = h.ctl.cal;
+                    // Isc 1 A: the knee lifts Vin 2-3.5 % (energy pumped back to the input); the knot fit then
+                    // lands up to ~35 ct early, which shortens the LS (safe side)
                     if (ok)
-                        CHECK(std::fabs(cal.learned - truth) <= 20.f, "op %.2fM Isc %.0f: learned %d truth %.0f", opFrac,
-                              isc, cal.learned, truth);
+                        CHECK(cal.learned - truth <= 20.f && cal.learned - truth >= (isc < 2 ? -35.f : -20.f),
+                              "op %.2fM Isc %.0f: learned %d truth %.0f", opFrac, isc, cal.learned, truth);
                     printf("op %.2fM Isc %3.0f hidden %3d vb %4.1f: %-26s learned %4d truth %4.0f err %+4.0f (%d pts, "
                            "dV %.2f%%)\n", opFrac, isc, hidden, vb, ok ? "ok" : cal.why, cal.learned, truth,
                            ok ? cal.learned - truth : 0.f, cal.n, 100.f * cal.dv);

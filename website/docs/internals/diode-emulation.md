@@ -291,6 +291,12 @@ peak current) but does not steepen the curve, so the calibration point stays at 
 that has not yet passed the zero crossing shows only the early side, a few mA in total, which is
 within the noise of a short run.
 
+These are lossless estimates. On an 80 µH board at low irradiance, the measured late side was
+about 30 times steeper (−20 to −70 mA at 70 counts past the ideal window, −160 mA at 140 counts),
+and the early side fell by 10–15 mA across the sweep instead of rising by a few mA. The run
+therefore assumes neither the size of the knee nor a flat early side (see *Locating the zero
+crossing* below).
+
 **Voltage changes.** In DCM at fixed HS the output current is
 `D²·V_i·(V_i − V_o)/(2·f_sw·L·V_o)`. 1% of `V_o` changes it by about 1.5–2.2% (13–19 mA at the
 calibration point), more than the signal within 100 counts of the peak. A step of the battery
@@ -299,20 +305,43 @@ voltage changes out of the result:
 
 - Every window current is scaled to the voltages of the settling window with that model,
   `I·g(V_i0, V_o0)/g(V_i, V_o)` with `g = V_i·(V_i − V_o)/V_o`.
-- The averaged `V_i` and `V_o` of each step must lie within 0.3% of the mean of its two
-  references (`V step`). The windows are equally spaced, so a linear drift passes this check and
-  a step does not. Below 0.3% the scaling leaves at most a few mA even if the real current reacts
-  30% more strongly to the voltage than the model.
+- The averaged `V_o` of each step must lie within 0.2% of the mean of its two references, and
+  `V_i` within 0.3%. The windows are equally spaced, so a linear drift passes this check and a
+  step does not. A step that fails is measured again, up to 6 times per run, so a single bus
+  transient costs about one second; the seventh failure ends the run (`V step`).
 
-`V_i` must stay within 2% of the settling value (`Vin shift`): a source whose voltage moves with
-the drawn current is not stiff, and a cloud lowers `V_oc` by about 2% for a 30% drop in
-irradiance. `V_o` may drift by up to 5% (`Vout shift`): on a battery bus shared with other
-chargers and loads, `V_o` moves with their current, independent of the run. A scaled current
-that changes by more than 25% against the settling window fails the run (`V shift`). In
-simulation, a 1% `V_o` dip during the steps 100–200 counts past the zero crossing made a fit
-without the step check learn a positive offset (+36 counts, a later LS turn-off); with the check
-the run is rejected. A linear `V_o` drift of ±2.5% over 30 s is accepted and learned within a few
-counts.
+The knee itself moves `V_i`. Reverse current lowers the power drawn from the panel by the
+fraction `ΔI/I` of the measured (unscaled) output current drop, and on the PV curve
+`ΔV_i/V_i = S·ΔI/I` with `S = |dV/dI|·I/V`, the panel's slope relative to its static
+resistance. `S` is 1 at the MPP and smaller on the voltage-source side where the run operates:
+about 0.05–0.07 at an `I_sc` of 1.5–2 A with 0.6 A drawn near a 76 V `V_oc`. There, a 160 mA knee
+lifts `V_i` by 0.4%, and the next step by about 1%, so a fixed 0.3% limit rejects exactly the
+signal the run looks for. A step's `V_i` may therefore exceed its references by 0.3% plus
+`0.25·ΔI/I`, but only upward and only by what the step's own measured current drop explains. A
+model error cannot create that allowance: if the plant current does not follow `V_i` at all, the
+raw current shows no drop and the limit stays 0.3%. `V_o` gets no allowance: the knee moves it by
+`R_bus·ΔI`, under 0.1% for a 0.4 A knee on a 40 mΩ bus.
+
+`V_i` of the reference windows must stay within 2% of the settling value (`Vin shift`): a cloud
+lowers `V_oc` by about 2% for a 30% drop in irradiance. `V_o` may drift by up to 5% (`Vout
+shift`): on a battery bus shared with other chargers and loads, `V_o` moves with their current,
+independent of the run. A scaled current that changes by more than 25% against the settling
+window fails the run (`V shift`).
+
+In simulation:
+
+- A 1% (also 0.5% and 0.3%) `V_o` dip during the steps 100–200 counts past the zero crossing is
+  rejected. Without the step check, a fit learned +36 counts (a later LS turn-off) from the 1% dip.
+- A 0.19% `V_o` square wave, just under the limit, with periods of 0.9–2.3 s against the 1.05 s
+  step cycle and a plant 0× or 2× as sensitive to voltage as the model, biases the result by −17
+  to +24 counts. After the applied margin (below), the worst case leaves the LS 4 counts (25 ns)
+  late, where the reverse current is well below 1 mA.
+- A `V_i` rise confined to the steps past the crossing, with a plant that does not follow `V_i`,
+  is learned toward a shorter LS (−22 counts at 0.2%) or rejected (0.5% and above).
+- A linear `V_o` drift of ±2.5% over 30 s is learned within a few counts.
+- Replicas of three low-irradiance runs (soft panel, 30× knee, falling early side, swinging bus)
+  calibrate within ±5 counts. Before these changes they all ended with `V step`. A cloud that
+  moves `V_i` by 2.6% still ends the run with `Vin shift`.
 
 **Aborts.** The run is aborted, and the LS returned to diode emulation, on a limiter, a mode
 change, a sweep, `rect-cal abort`, the input voltage near its trip, leaving DCM or a change of HS
@@ -323,9 +352,15 @@ that a protection has just lowered. Afterwards HS fades back to the operating po
 from, unless the backflow switch is open (reverse-current guard) or the mode changed; then the
 tracker continues from where the run stopped.
 
-The peak is located with the two-half-parabola fit above. The run is rejected, and the
-previous value kept, with fewer than 5 points, the maximum at the first or last point, a
-failed fit or `|peak − ideal| > 2.5 µs`. Otherwise the applied offset is
+**Locating the zero crossing.** The run fits a line with a downward quadratic bend from `x_0`
+on, `y = c_0 + c_1·d + c_2·min(0, d)² + c_3·max(0, d)²` with `d = x − x_0`, `c_2 ≤ 0` and
+`c_3 < c_2`, and searches `x_0` over the sweep. The line takes any slope of the early side, so
+`x_0` is where the curve starts to bend down, not where it is highest. With a falling early side,
+the maximum sits at the start of the sweep and a peak fit lands far before the crossing (about
+−190 counts on the 80 µH field data, where the bend fit finds −9 and +47). The run is rejected,
+and the previous value kept, with fewer than 6 points, no bend (`no knee`: the bend at the last
+point under 10 mA or under 4× the residual RMS) or `|x_0 − ideal| > 2.5 µs`. Otherwise the
+applied offset is
 `learned − max(125 ns, 0.3·|learned|)`, always toward a shorter LS. The margin grows with the
 offset, because a large offset comes from large unmodelled delays; a fixed fraction of
 `learned` would move toward a longer LS when `learned` is negative. The result takes effect at
