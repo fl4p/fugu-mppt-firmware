@@ -198,23 +198,20 @@ class SynchronousConverter {
     ReqSlot<22> dtReq;
     static constexpr uint32_t kDtTickMask = 0x7ffu;   // 11 bits, >= 65535/32
 
-    // Runtime switching-frequency change (console `pwm-freq`), same mailbox contract as the
-    // dead-time above: ONE core-0 producer, applied on the RT core so periodTicks/pwmMax and the
-    // gate comparators never move under the control path. Latest-value mailbox, not a queue.
-    // [31:20] seq (never 0 once posted), [19:0] the requested frequency in Hz — the producer bounds
-    // it under 500 kHz, so it fits.
+    // Runtime switching-frequency change (console `pwm-freq`), same contract as the dead-time
+    // above: ONE core-0 producer, applied on the RT core so periodTicks/pwmMax and the gate
+    // comparators never move under the control path. Payload [19:0]: the requested frequency in Hz
+    // — the producer bounds it under 500 kHz, so it fits.
     //
     // The NOMINAL Hz is what travels, not the period: pwmFrequency and fL (the ripple basis, and so
     // the CCM/DCM decision) are written from it, and the period is a pure function of it at a fixed
     // prescaler. Carrying the period and the Hz in separate words would let a second request posted
-    // after the CLI's 1 s ack timeout give up pair request N's period with request N+1's Hz — the
-    // exact tear the dead-time mailbox packs its triple into one word to avoid.
-    std::atomic<uint32_t> freqReqWord{0}, freqAckWord{0};
+    // after the CLI's 1 s ack timeout give up pair request N's period with request N+1's Hz.
+    ReqSlot<20> freqReq;
     // The request being applied, held between applyPendingPwmFreqRt() and ackPendingPwmFreqRt().
     // RT-core only, so a plain word. 0 = nothing part-applied.
     uint32_t freqApplying = 0;
     static constexpr uint32_t kFreqHzMask = 0xfffffu;   // 20 bits, >= 500000
-    static constexpr uint32_t kFreqSeqMask = 0xfffu;    // 12 bits
 
     // ---- gate-driver dispatch ----------------------------------------------------------------
     // One place per distinct driver operation; only the compiled driver's arm exists and
@@ -907,34 +904,29 @@ public:
         if (!isBoost && (long) rectRefreshTicks + hl > t / 4)
             return "would leave too little duty range next to the LS minimum";
         ticks = (uint16_t) t;
-        uint32_t seq = ((freqReqWord.load(std::memory_order_relaxed) >> 20) + 1) & kFreqSeqMask;
-        if (!seq) seq = 1;
-        freqReqWord.store((seq << 20) | (hz & kFreqHzMask), std::memory_order_release);
+        freqReq.post(hz);
         return nullptr;
     }
 
-    [[nodiscard]] bool pwmFreqIdle() const {
-        return freqAckWord.load(std::memory_order_acquire) == freqReqWord.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] bool pwmFreqIdle() const { return freqReq.idle(); }
 
     // RT-CORE ONLY. Applies a queued frequency change and returns the count-domain scale that was
     // applied, 0 when nothing changed — duty targets held outside this class (MpptController's
     // manualTarget and its two captured MPPs) are raw counts and must be rescaled by it.
     //
     // This does NOT acknowledge the request: the caller must rescale the counts it owns and then
-    // call ackPendingPwmFreqRt(). The console treats ack==req as completion and returns, so an ack
+    // call ackPendingPwmFreqRt(). The console treats the ack as completion and returns, so an ack
     // published here would let the next queued command (`+N`, `dc`) write a target in NEW-period
     // counts that this transaction has not finished with — and the outer rescale would then
     // multiply that fresh value by the ratio a second time.
     float applyPendingPwmFreqRt() {
-        if (freqReqWord.load(std::memory_order_acquire) == freqAckWord.load(std::memory_order_relaxed))
-            return 0.f;
+        if (!freqReq.peek()) return 0.f;
         return applyPendingPwmFreqSlow();
     }
 
     __attribute__((noinline, cold)) float applyPendingPwmFreqSlow() {
-        const uint32_t req = freqReqWord.load(std::memory_order_acquire);
-        if (req == freqAckWord.load(std::memory_order_relaxed)) return 0.f;
+        const uint32_t req = freqReq.peek();
+        if (!req) return 0.f;
         // Latched before any early-out below, so a refused request is still acknowledged and the
         // console gets an answer instead of timing out.
         freqApplying = req;
@@ -1042,7 +1034,7 @@ public:
     // it only after every count-domain value the caller owns has been rescaled.
     void ackPendingPwmFreqRt() {
         if (!freqApplying) return;
-        freqAckWord.store(freqApplying, std::memory_order_release);
+        freqReq.clear(freqApplying);
         freqApplying = 0;
     }
 
