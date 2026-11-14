@@ -324,40 +324,65 @@ void testG_be_stability() {
     }
 }
 
-// ----- H: Reverse-pump charge balance -----------------------------------------
+// ----- H: energy balance ------------------------------------------------------
 //
-// SPEC NOTE: model's iInAvg = areaHS/T (phase-1 only). In the reverse-pump
-// regime the HS body-diode contribution during phase 3 is NOT included, so
-// strict Vin·iInAvg + Vout·iOutAvg = 0 won't hold. We assert (a) iInAvg < 0 (b)
-// iOutAvg < 0 (sign-wise reverse current both sides) (c) all quantities finite.
-// Quantitative balance is deferred until the model accounts for areaOff in
-// iInAvg, or the spec clarifies what iInAvg represents.
-void testH_reverse_pump_balance() {
-    section("H: Reverse-pump regime sign + finite");
+// The plant must not create or destroy energy. With ideal switches and diodes (Vf = 0, no ring) the
+// coil returns all it stores, so in a pinned steady state Vin*Iin = Vout*Iout exactly: CCM, DCM, and
+// forced reverse current that returns through the HS body diode. With Vf > 0 the only loss is the
+// LS body diode (Vf times its charge), so Pin >= Pout.
+static void balance(float vin, float vout, uint16_t ctrl, uint16_t rect, float vf, float &pin, float &pout) {
     VirtualConverter v;
-    rig(v, 40.0f, 20.0f, 200, 700);   // pwmRect well past zero-crossing
-    runPinned(v, 200, 40.0f, 20.0f);
-    EXPECT(std::isfinite(v.getIinAvg()));
-    EXPECT(std::isfinite(v.getIoutAvg()));
-    EXPECT(std::isfinite(v.getIL()));
-    EXPECT(v.getIinAvg() < 0.0f);
-    EXPECT(v.getIoutAvg() < 0.0f);
+    rig(v, vin, vout, ctrl, rect);
+    v.setDiodeVf(vf);
+    runPinned(v, 400, vin, vout);
+    double qi = 0, qo = 0;
+    for (int i = 0; i < 200; ++i) { runPinned(v, 1, vin, vout); qi += v.getIinAvg(), qo += v.getIoutAvg(); }
+    pin = (float) (vin * qi / 200), pout = (float) (vout * qo / 200);
 }
 
-// ----- I: iInAvg sign + magnitude in reverse regime --------------------------
+void testH_energy_balance() {
+    section("H: energy balance");
+    struct Op { float vin, vout; uint16_t ctrl, rect; } ops[] = {
+        {40, 20, 200, 300}, // reverse current through the HS body diode (pwmRect past the zero crossing)
+        {40, 20, 200, 150}, // DCM, LS short
+        {40, 20, 200, 205}, // DCM, LS just past the crossing
+        {40, 20, 500, 499}, // CCM
+        {78, 27, 150, 600}, // reverse, high ratio
+        {78, 27, 300, 650}, // LS at the off-time limit (1 - Vout/Vin): reverse current barely returns
+    };
+    float worst = 0;
+    for (auto &o: ops) {
+        float pin, pout;
+        balance(o.vin, o.vout, o.ctrl, o.rect, 0.0f, pin, pout);
+        const float err = (pin - pout) / std::max(std::fabs(pin), std::fabs(pout));
+        worst = std::max(worst, std::fabs(err));
+        EXPECT(std::isfinite(pin) && std::isfinite(pout));
+        EXPECT(std::fabs(err) < 2e-3f);
+        float pinD, poutD;
+        balance(o.vin, o.vout, o.ctrl, o.rect, 0.7f, pinD, poutD);
+        EXPECT(pinD - poutD >= -2e-3f * std::fabs(poutD));
+        std::printf("  Vin %.0f Vout %.0f HS %u LS %u: Vf 0: Pin %.3f W Pout %.3f W (%+.1e) | Vf 0.7: loss %.3f W\n", o.vin,
+                    o.vout, o.ctrl, o.rect, pin, pout, err, pinD - poutD);
+    }
+    std::printf("  worst |Pin-Pout|/P at Vf 0: %.1e\n", worst);
+}
+
+// ----- I: iInAvg in the reverse regime -----------------------------------------
 //
-// iInAvg = (a + b)·tHS/(2T). Verify against analytic given observed iLEnd (=a in
-// pinned-SS). Independent of the H balance question.
+// iInAvg = HS area + the phase-3 charge the HS body diode returns (c < 0, slope (Vin-Vout)/L).
 void testI_iinavg_reverse() {
     section("I: iInAvg analytic match (reverse)");
     VirtualConverter v;
     const float vin = 40.0f, vout = 20.0f;
     rig(v, vin, vout, 200, 700);
     runPinned(v, 200, vin, vout);
-    const float tHS = (200.0f / kPmax) * kT;
+    const float tHS = (200.0f / kPmax) * kT, tLS = (700.0f / kPmax) * kT, tOff = kT - tHS - tLS;
     const float a = v.getIL();                    // SS: a == iLEnd
     const float b = a + (vin - vout) / kL * tHS;
-    const float iIn_analytic = (a + b) * 0.5f * tHS / kT;
+    const float c = b - vout / kL * tLS;
+    const float tz = std::min(tOff, -c * kL / (vin - vout));
+    const float iIn_analytic = ((a + b) * 0.5f * tHS + (c + 0.5f * (vin - vout) / kL * tz) * tz) / kT;
+    EXPECT(c < 0.0f);
     EXPECT_REL(v.getIinAvg(), iIn_analytic, 0.01f);
 }
 
@@ -999,7 +1024,7 @@ int main() {
     testE_saturation();
     testF_charge_balance();
     testG_be_stability();
-    testH_reverse_pump_balance();
+    testH_energy_balance();
     testI_iinavg_reverse();
     testJ_dcm_boundary();
     testK_phase_wrap();

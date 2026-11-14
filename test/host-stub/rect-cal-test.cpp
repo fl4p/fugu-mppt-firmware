@@ -62,7 +62,7 @@ struct Rig {
 
     Rig(float isc, int hidden, float voutBias, float drift) : hidden(hidden), voutBias(voutBias), isc0(isc), drift(drift) {
         p.setPv(isc, VOC, K); p.setBat(VBAT, 0.03f); p.setPassives(470e-6f, 470e-6f, LREAL);
-        p.setVin(VOC); p.setVout(VBAT); p.setDiodeVf(0.7f); p.setInputPump(true);
+        p.setVin(VOC); p.setVout(VBAT); p.setDiodeVf(0.7f);
     }
     void apply(uint16_t hs, uint16_t ls) {
         int eff = (hs && ls) ? std::min<int>(ls + hidden, PM - hs - 1) : 0;

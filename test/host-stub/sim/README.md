@@ -37,8 +37,8 @@ highD-bflowOpen trip rate.
   LCD and rect-cal persistence are left out. `esp_restart()` rebuilds the firmware objects in place.
 - The gate driver is `PWM_Mock`: no MCPWM dead time or gate delays. The backflow switch is modelled
   as an ideal blocking diode at the PV input while open (`VirtualConverter::setPvBlocking`).
-- Reverse power pumped by the LS keep-alive pulse at near-zero current charges C_in up to the plant's
-  1.05·Voc Vin clamp, which absorbs it. That clamp is a plant artifact: it shows as negative energy at
-  dusk and hides a possible Vin rise toward Vin-OV.
+- Reverse power pumped back through the HS body diode returns to C_in; above Voc the panel sinks it.
+  With the backflow switch open it charges C_in up to the plant's 1.05·Voc Vin clamp, which absorbs
+  it. That clamp is a plant artifact: it hides a possible Vin rise toward Vin-OV.
 - `scenarios.sh OLD NEW [hours]` runs the low-light scenario set against two builds.
 - Core-0 tasks (`enqueue_task`) run right after each RT pass.

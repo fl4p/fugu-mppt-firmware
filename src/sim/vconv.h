@@ -58,8 +58,6 @@ public:
 
     // Open backflow switch at the PV input: its body diode passes only forward PV current.
     void setPvBlocking(bool b) { pvBlocking_ = b; }
-    // buck: reverse coil current through the HS body diode returns to C_in; the panel sinks it above Voc
-    void setInputPump(bool b) { inputPump_ = b; }
 
     void setBat(float vbat, float rbat) {
         vbat_ = vbat;
@@ -165,7 +163,6 @@ private:
     float pvG_[kPvSubMax] = {1.f, 1.f, 1.f};    // substring factors, strongest first
     float pvInvW_[kPvSubMax] = {1.f, 1.f, 1.f}; // 1 / Voc share of the m+1 strongest
     bool pvBlocking_ = false;
-    bool inputPump_ = false;
 
     // Battery + passives
     float vbat_ = 28.0f;

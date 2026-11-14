@@ -26,8 +26,7 @@
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
 //   SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" /tmp/mppt-sim a   # board overrides
 //   rect-cal (rectCalRt/rectCalLf wired as in main.cpp; the automatic start is off, SIM_RCAL_AUTO=1 enables it):
-//     rcal         `rect-cal force` at full power (CCM), LS body-diode drop 0.7 V, reverse current pumped
-//                  back to the input, sensor noise
+//     rcal         `rect-cal force` at full power (CCM), LS body-diode drop 0.7 V, sensor noise
 //     rcal-bus     same, battery +2.5 % linear over 30 s from the start (shared bus)
 //     rcal-cloud   same, Isc x0.7 and Voc -1.8 % step 12 s after the start
 //     rcal-ov      same, Vin trip (hv_max) 2 % above Voc: the run must stop short of it
@@ -1197,7 +1196,7 @@ static int simMain(int argc, char **argv) {
     if (sc == "rcal-ov") setenv("SIM_CONF", "limits.conf:hv_max=77.5", 1);
     if (sc == "rcal-sun") setenv("SIM_CONF", "coil.conf:L0=80e-6", 1);
     boot(ov, p0);
-    if (rcal) g_vconv.setDiodeVf(0.7f), g_vconv.setInputPump(true);
+    if (rcal) g_vconv.setDiodeVf(0.7f);
     if (sc == "rcal-sun") g_vconv.setRing(5e-9f, 40.f), g_vconv.setPv(5.6f, 79.6f, 0.78f);
     if (g_ring) {
         g_vconv.setPassives(g_vconv.getCin(), g_vconv.getCout(), g_ring->lPlant);
