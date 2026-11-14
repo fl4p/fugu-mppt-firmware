@@ -12,10 +12,21 @@
 //   test/host-stub/mppt-sim.sh [scenario ...]   # builds /tmp/mppt-sim, runs the scenarios (default all)
 //   /tmp/mppt-sim <scenario>   # sanity | a | b | c | d-cloud | d-cloud-ramp | d-bus04 | d-bus08 | d-bus12 |
 //                              # d-noise | e | e-bleed; suffix -p0 = limits.conf reverse_current_paranoia=0
+//                              # shade | shade-cv: half-shaded string (two peaks)
+//   weather scenarios (PV string of 1..3 substrings, irradiance played from a time series; "== SUMMARY" line):
+//     wx-cloud          recorded cloudy quarter hour (flat, 2026-11-14 11:20 UTC), full sun <-> cloud
+//     wx-cloud-cv       same with the battery at the Vout cap in full sun; -ripple adds 100 Hz bus ripple
+//     wx-shade2, wx-shade3            static partial shade, 2 / 3 power peaks
+//     wx-shade2-move, wx-shade3-move  shade moves, the global maximum changes peak after the boot sweep
+//     wx-shade-cloud    shaded substring under the cloud series (second peak comes and goes)
+//     wx-dawn, wx-dusk  irradiance through the start threshold
+//     wx-sweep-fall, wx-sweep-rise, wx-sweep-shade   cloud edge during a sweep (-shade: two peaks)
+//   SIM_T=600 wx run length [s], SIM_TR=5 wx trace interval [s], SIM_V=1 firmware log in wx/shade runs
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
 //   SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" /tmp/mppt-sim a   # board overrides
 //
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -59,6 +70,7 @@ struct Trip {
     unsigned sec;
 };
 static std::vector<Trip> g_trips;
+static std::vector<double> g_sweepT; // "Start sweep" log times
 static std::vector<std::string> g_logSince; // log lines after the scenario event
 static double g_eventT = -1;
 static double g_fineT0 = 0, g_fineT1 = 0; // env SIM_FINE=t0,t1: per-tick sensor trace window
@@ -72,6 +84,7 @@ static void logHook(char lvl, const char *tag, const char *msg) {
     unsigned sec;
     char who[64];
     if (sscanf(msg, "backoff %us [%63[^]]]", &sec, who) == 2) g_trips.push_back({tNow(), who, sec});
+    if (!strcmp(msg, "Start sweep")) g_sweepT.push_back(tNow());
     char line[640];
     snprintf(line, sizeof line, "%9.4f %c %-8s %s", tNow(), lvl, tag, msg);
     if (g_eventT >= 0 && g_logSince.size() < 400) g_logSince.emplace_back(line);
@@ -495,6 +508,290 @@ static void settle(double sec) {
     traceLine("settled ");
 }
 
+// ---- weather scenarios (wx-*) ----
+using Track = std::vector<std::pair<float, float>>; // (t [s], value): piecewise linear, held outside
+
+static float trackAt(const Track &tr, double t, float dflt) {
+    if (tr.empty()) return dflt;
+    if (t <= tr.front().first) return tr.front().second;
+    if (t >= tr.back().first) return tr.back().second;
+    size_t i = 1;
+    while (tr[i].first < t) ++i;
+    return tr[i - 1].second + (tr[i].second - tr[i - 1].second) * ((float) t - tr[i - 1].first) / (tr[i].first - tr[i - 1].first);
+}
+
+// flat, 2026-11-14 11:20:00..11:35:00 UTC: P / 776 W (1 s means, reduced to 2 % max error)
+static const Track kCloud1120 = {
+    {0, 0.948f}, {10, 0.943f}, {12, 0.890f}, {14, 0.922f}, {16, 0.630f}, {17, 0.540f}, {18, 0.521f}, {20, 0.387f},
+    {25, 0.285f}, {36, 0.249f}, {42, 0.248f}, {48, 0.294f}, {49, 0.328f}, {50, 0.452f}, {52, 0.571f}, {54, 0.784f},
+    {56, 0.703f}, {57, 0.712f}, {59, 0.953f}, {61, 0.946f}, {63, 0.834f}, {64, 0.894f}, {65, 0.892f}, {66, 0.815f},
+    {67, 0.794f}, {68, 0.889f}, {69, 0.768f}, {70, 0.563f}, {73, 0.522f}, {75, 0.441f}, {77, 0.505f}, {79, 0.504f},
+    {81, 0.435f}, {85, 0.397f}, {89, 0.438f}, {91, 0.539f}, {93, 0.762f}, {94, 0.807f}, {95, 0.911f}, {96, 0.940f},
+    {101, 0.892f}, {110, 0.901f}, {113, 0.870f}, {114, 0.902f}, {119, 0.883f}, {187, 0.924f}, {189, 0.917f}, {191,
+    0.807f}, {192, 0.799f}, {194, 0.880f}, {196, 0.814f}, {197, 0.863f}, {198, 0.826f}, {205, 0.932f}, {211,
+    0.955f}, {212, 0.940f}, {213, 0.876f}, {215, 0.892f}, {217, 0.652f}, {218, 0.615f}, {222, 0.369f}, {223,
+    0.337f}, {225, 0.392f}, {226, 0.346f}, {228, 0.461f}, {229, 0.354f}, {230, 0.328f}, {232, 0.365f}, {233,
+    0.423f}, {234, 0.513f}, {235, 0.659f}, {236, 0.669f}, {237, 0.557f}, {240, 0.521f}, {241, 0.549f}, {243,
+    0.879f}, {244, 0.974f}, {251, 0.947f}, {253, 0.900f}, {254, 0.932f}, {258, 0.940f}, {293, 0.927f}, {296,
+    0.909f}, {298, 0.830f}, {299, 0.830f}, {301, 0.890f}, {303, 0.904f}, {304, 0.877f}, {306, 0.920f}, {314,
+    0.892f}, {315, 0.916f}, {319, 0.909f}, {323, 0.869f}, {324, 0.907f}, {329, 0.913f}, {332, 0.877f}, {336,
+    0.937f}, {342, 0.920f}, {347, 0.942f}, {349, 0.888f}, {351, 0.926f}, {353, 0.817f}, {355, 0.883f}, {356,
+    0.850f}, {357, 0.740f}, {358, 0.672f}, {360, 0.688f}, {362, 0.574f}, {363, 0.558f}, {364, 0.669f}, {367,
+    0.569f}, {369, 0.577f}, {370, 0.548f}, {372, 0.419f}, {375, 0.344f}, {384, 0.302f}, {389, 0.340f}, {390,
+    0.380f}, {391, 0.465f}, {393, 0.548f}, {396, 0.524f}, {397, 0.607f}, {398, 0.801f}, {399, 0.937f}, {401,
+    0.982f}, {406, 0.979f}, {408, 0.948f}, {415, 0.969f}, {418, 0.920f}, {420, 0.971f}, {429, 0.947f}, {431,
+    0.983f}, {438, 0.991f}, {441, 0.978f}, {442, 0.939f}, {443, 0.978f}, {447, 0.989f}, {450, 0.956f}, {451,
+    0.983f}, {457, 0.983f}, {458, 0.944f}, {463, 0.987f}, {468, 0.942f}, {471, 0.999f}, {472, 0.968f}, {474,
+    1.000f}, {478, 0.985f}, {480, 0.932f}, {482, 0.991f}, {483, 0.956f}, {486, 0.684f}, {488, 0.570f}, {490,
+    0.572f}, {491, 0.640f}, {492, 0.628f}, {495, 0.446f}, {496, 0.463f}, {501, 0.382f}, {508, 0.399f}, {512,
+    0.502f}, {513, 0.497f}, {514, 0.553f}, {516, 0.828f}, {518, 0.963f}, {519, 0.963f}, {521, 0.890f}, {522,
+    0.964f}, {523, 0.972f}, {525, 0.864f}, {526, 0.662f}, {527, 0.531f}, {528, 0.550f}, {530, 0.688f}, {532,
+    0.661f}, {533, 0.737f}, {534, 0.904f}, {535, 0.962f}, {536, 0.956f}, {537, 0.926f}, {538, 0.809f}, {539,
+    0.782f}, {540, 0.839f}, {542, 0.810f}, {544, 0.626f}, {545, 0.606f}, {547, 0.830f}, {548, 0.842f}, {549,
+    0.662f}, {550, 0.432f}, {551, 0.379f}, {563, 0.311f}, {569, 0.325f}, {570, 0.350f}, {572, 0.480f}, {573,
+    0.647f}, {574, 0.738f}, {576, 0.645f}, {578, 0.617f}, {586, 0.722f}, {587, 0.760f}, {589, 0.734f}, {590,
+    0.812f}, {591, 0.799f}, {594, 0.533f}, {597, 0.378f}, {602, 0.272f}, {606, 0.239f}, {620, 0.247f}, {630,
+    0.302f}, {635, 0.368f}, {638, 0.455f}, {642, 0.469f}, {646, 0.284f}, {656, 0.229f}, {808, 0.111f}, {899, 0.116f}
+};
+
+struct Wx {
+    float voc = 70, k = 0.78f, pClear = 776; // clear-sky string: Voc, Vmpp/Voc, MPP power
+    uint8_t n = 1;                           // series substrings
+    float w[3] = {1, 0, 0};                  // their Voc shares
+    Track cloud, sub[3];                     // irradiance factor of the whole string / per substring
+    bool beamShade = false;                  // shade blocks the beam only: substring gets min(cloud, sub)
+    float vocLog = 0;                        // Voc(t) = voc + vocLog * ln(irradiance)
+    float vbat = 26.6f, rbat = 0.036f;
+    Track vbatT;                             // battery EMF profile
+    double sweepAt = -1, statsFrom = 0, T = 600;
+    float isc = 0, g[3] = {1, 1, 1}, vocNow = 0;
+
+    void init() {
+        PvModel m;
+        m.set(1, voc, k);
+        float best = 0;
+        for (float v = 1; v < voc; v += 0.05f) best = std::max(best, v * m.current(v));
+        isc = pClear / best;
+        vocNow = voc;
+        g_vconv.setPv(isc, voc, k);
+        g_vconv.setBat(vbat, rbat);
+    }
+
+    void apply(double t) {
+        const float c = trackAt(cloud, t, 1);
+        float gMax = 0;
+        for (uint8_t i = 0; i < n; ++i) {
+            const float s = trackAt(sub[i], t, 1);
+            g[i] = beamShade ? std::min(c, s) : c * s;
+            gMax = std::max(gMax, g[i]);
+        }
+        g_vconv.setPvString(n, g, n > 1 ? w : nullptr);
+        if (vocLog > 0) {
+            const float v = std::max(1.f, voc + vocLog * std::log(std::max(gMax, 1e-30f)));
+            if (std::fabs(v - vocNow) > 1e-3f) g_vconv.setPv(isc, vocNow = v, k);
+        }
+        if (!vbatT.empty()) g_vconv.setBat(trackAt(vbatT, t, vbat), rbat);
+    }
+};
+
+struct Peak {
+    float v, p;
+};
+
+// local maxima of the plant's P(V) in ascending V; valley[i] separates peak i and i+1
+static int pvPeaks(Peak pk[4], float valley[4]) {
+    int n = 0;
+    float p0 = 0;
+    bool rising = true;
+    for (float v = 1; v < g_vconv.getVoc() + 0.2f && n < 4; v += 0.1f) {
+        const float p = v * g_vconv.pvCurrent(v);
+        if (rising && p < p0) pk[n++] = {v - 0.1f, p0}, rising = false;
+        else if (!rising && p > p0) valley[n - 1] = v - 0.1f, rising = true;
+        p0 = p;
+    }
+    return n;
+}
+
+static int runWx(const std::string &name, Wx &wx) {
+    if (const char *e = getenv("SIM_T")) wx.T = atof(e);
+    g_verbose = getenv("SIM_V") != nullptr;
+    const double trEvery = getenv("SIM_TR") ? atof(getenv("SIM_TR")) : wx.T / 60;
+    wx.init();
+    wx.apply(0);
+    printf("# %s: clear-sky MPP %.0f W, Isc %.2f A, Voc %.0f V, %u substring(s), bat %.2f V / %.3f ohm, %.0f s\n",
+           name.c_str(), wx.pClear, wx.isc, wx.voc, (unsigned) wx.n, wx.vbat, wx.rbat, wx.T);
+    printf("#        t  g(substrings)     | PLANT Vin   Ppv | GMPP V     P  peaks | CTRL state D lim\n");
+
+    enum { OFF, SWEEP, LIMIT, WRONG, TRACK, NCAT };
+    double eG = 0, eUse = 0, ePv = 0, eOut = 0, eCtl = 0, tCat[NCAT] = {}, loss[NCAT] = {}, tStat = 0;
+    struct Span { // vOp..pG: at the largest gap
+        double t0, t1, lost;
+        float vOp, pOp, vG, pG;
+    };
+    std::vector<Span> wrong;
+    bool inWrong = false;
+    Peak pk[4];
+    float valley[4], key[4] = {-1, -1, -1, -1};
+    int nPk = 0, maxPk = 0;
+
+    for (double nextTr = 0; tNow() < wx.T;) {
+        const double tb = tNow();
+        wx.apply(tb);
+        if (wx.sweepAt >= 0 && tb >= wx.sweepAt) {
+            printf("%9.2f >>> sweep requested\n", tb);
+            mppt.startSweep();
+            wx.sweepAt = -1;
+        }
+        run(0.02, 0);
+        const double dt = tNow() - tb;
+
+        const float now[4] = {wx.g[0], wx.g[1], wx.g[2], wx.vocNow};
+        if (memcmp(now, key, sizeof key)) nPk = pvPeaks(pk, valley), memcpy(key, now, sizeof key);
+        // reference: highest peak a buck can reach (above the output voltage)
+        const float vReach = g_vconv.getVout() * 1.05f, vin = g_vconv.getVin();
+        int iG = -1, iOp = 0, nReach = 0;
+        for (int i = 0; i < nPk; ++i) {
+            if (pk[i].v < vReach) continue;
+            ++nReach;
+            if (iG < 0 || pk[i].p > pk[iG].p) iG = i;
+        }
+        while (iOp + 1 < nPk && vin > valley[iOp]) ++iOp;
+        const float pG = iG < 0 ? 0 : pk[iG].p, pPv = vin * g_vconv.pvCurrent(vin);
+        const bool on = !converter.disabled();
+        const bool sweeping = mppt.getState() == MpptControlMode::Sweep;
+        const bool isWrong = on && !sweeping && iG >= 0 && iOp != iG && pG > pk[iOp].p * 1.02f;
+
+        if (tb >= nextTr) {
+            printf("%9.2f  %.3f %.3f %.3f | %5.1f %6.1f | %5.1f %6.1f  %d(%d) | %-11s %4u %2u%s\n", tNow(), wx.g[0],
+                   wx.n > 1 ? wx.g[1] : 0.f, wx.n > 2 ? wx.g[2] : 0.f, vin, pPv, iG < 0 ? 0.f : pk[iG].v, pG, nPk, nReach,
+                   modeStr(), converter.getCtrlOnPwmCnt(), (unsigned) mppt.teleSnap().limIdx, isWrong ? "  WRONG PEAK" : "");
+            nextTr += trEvery;
+        }
+        if (tb < wx.statsFrom) continue;
+
+        maxPk = std::max(maxPk, nReach);
+        tStat += dt;
+        eG += pG * dt;
+        // what the battery takes at the controller's Vout cap
+        const float vCap = mppt.charger.Vout_max();
+        eUse += std::min(pG, std::max(0.f, vCap * (vCap - g_vconv.getVbat()) / g_vconv.getRbat())) * dt;
+        eOut += g_vconv.getVout() * g_vconv.getIoutAvg() * dt;
+        ePv += pPv * dt;
+        const float pCtl = sensors.Vout->ewm.avg.get() * sensors.Iout->ewm.avg.get();
+        if (std::isfinite(pCtl)) eCtl += pCtl * dt;
+        const int cat = !on ? OFF : sweeping ? SWEEP
+                        : mppt.teleSnap().limIdx != 15 ? LIMIT : isWrong ? WRONG : TRACK;
+        tCat[cat] += dt;
+        loss[cat] += (pG - pPv) * dt;
+        if (isWrong) {
+            if (!inWrong) wrong.push_back({tb, 0, 0, 0, 0, 0, 0});
+            auto &w = wrong.back();
+            if (w.pOp <= 0 || pG * w.pOp > w.pG * pk[iOp].p) w.vOp = pk[iOp].v, w.pOp = pk[iOp].p, w.vG = pk[iG].v, w.pG = pG;
+            wrong.back().t1 = tNow();
+            wrong.back().lost += (pG - pPv) * dt;
+        }
+        inWrong = isWrong;
+    }
+
+    std::string trips;
+    size_t nTrips = 0;
+    {
+        std::vector<std::pair<std::string, int>> byName;
+        for (auto &t: g_trips) {
+            if (t.t < wx.statsFrom) continue;
+            ++nTrips;
+            auto it = std::find_if(byName.begin(), byName.end(), [&](auto &p) { return p.first == t.who; });
+            if (it == byName.end()) byName.emplace_back(t.who, 1);
+            else ++it->second;
+        }
+        for (auto &[who, cnt]: byName) trips += (trips.empty() ? "" : ", ") + who + " x" + std::to_string(cnt);
+    }
+    size_t nSweeps = 0;
+    for (double t: g_sweepT) nSweeps += t >= wx.statsFrom;
+    double tWrong = 0;
+    for (auto &s: wrong) tWrong += s.t1 - s.t0;
+    const double pc = eG > 0 ? 100 / eG : 0;
+    const char *hz = getenv("SIM_ADC_HZ");
+    printf("\n== %s @%s Hz, %.0f s, up to %d reachable peak(s)\n", name.c_str(), hz ? hz : "450", tStat, maxPk);
+    printf("== PLANT TRUTH: PV energy %.2f Wh = %.1f %% of the reachable GMPP (%.2f Wh), %.1f %% of what the battery"
+           " takes below the Vout cap (%.2f Wh); lost %% of GMPP while off %.1f / sweep %.1f / limiter %.1f /"
+           " wrong peak %.1f / tracking %.1f; on a non-global peak %.1f s, off %.1f s; output energy %.2f Wh\n",
+           ePv / 3600, ePv * pc, eG / 3600, eUse > 0 ? 100 * ePv / eUse : 0, eUse / 3600, loss[OFF] * pc, loss[SWEEP] * pc,
+           loss[LIMIT] * pc, loss[WRONG] * pc, loss[TRACK] * pc, tWrong, tCat[OFF], eOut / 3600);
+    printf("== CONTROLLER: %zu sweeps, limiter active %.1f %% of the time, sweeping %.1f %%, %zu trips [%s],"
+           " measured output energy %.2f Wh\n", nSweeps, 100 * tCat[LIMIT] / tStat, 100 * tCat[SWEEP] / tStat, nTrips,
+           trips.c_str(), eCtl / 3600);
+    // plant truth: harvest, wrong-peak, off; controller: sweeps, limiter, trips
+    printf("== SUMMARY %-18s %5s Hz | harvest %5.1f %% of GMPP, %5.1f %% of cap-limited | wrong-peak %6.1f s | off %6.1f s |"
+           " sweeps %2zu | limiter %4.1f %% | trips %zu [%s]\n", name.c_str(), hz ? hz : "450", ePv * pc,
+           eUse > 0 ? 100 * ePv / eUse : 0, tWrong, tCat[OFF], nSweeps, 100 * tCat[LIMIT] / tStat, nTrips, trips.c_str());
+    size_t shown = 0;
+    for (auto &s: wrong) {
+        if (s.t1 - s.t0 < 2 || ++shown > 12) continue;
+        printf("==   wrong peak t=%.1f..%.1f s: on the %.1f V peak (%.1f W) while the %.1f V peak gives %.1f W (up to +%.0f %%),"
+               " %.2f Wh lost\n", s.t0, s.t1, s.vOp, s.pOp, s.vG, s.pG, 100 * (s.pG / s.pOp - 1), s.lost / 3600);
+    }
+    shown = 0;
+    for (double t: g_sweepT) if (t >= wx.statsFrom && ++shown <= 12) printf("==   sweep at t=%.1f s\n", t);
+    shown = 0;
+    for (auto &t: g_trips)
+        if (t.t >= wx.statsFrom && ++shown <= 12) printf("==   trip at t=%.1f s [%s] %us\n", t.t, t.who.c_str(), t.sec);
+    if (nTrips > 12) printf("==   ... %zu trips total\n", nTrips);
+    return 0;
+}
+
+// wx-* scenario table; false = unknown name
+static bool wxScenario(const std::string &sc, Wx &wx) {
+    // fry-like string: Voc 80 V, peaks near 68 V (all), 57 V and 30 V (substrings bypassed)
+    auto fry = [&](float pClear) { wx.voc = 80, wx.k = 0.86f, wx.pClear = pClear; };
+    if (sc == "wx-cloud") {
+        wx.cloud = kCloud1120, wx.T = 900;
+    } else if (sc == "wx-cloud-cv" || sc == "wx-cloud-cv-ripple") {
+        // battery high enough that full sun runs into the Vout cap and every cloud releases it
+        wx.cloud = kCloud1120, wx.T = 900, wx.vbat = 28.2f;
+    } else if (sc == "wx-shade2" || sc == "wx-shade2-move") {
+        // 57 V peak 19 % above the 68 V peak (fry, mornings); -move: starts unshaded
+        fry(215), wx.n = 2, wx.w[0] = 0.79f, wx.w[1] = 0.21f;
+        if (sc == "wx-shade2") wx.sub[1] = {{0, 0.664f}};
+        else wx.sub[1] = {{120, 1}, {420, 0.664f}}, wx.T = 2400;
+    } else if (sc == "wx-shade3" || sc == "wx-shade3-move") {
+        fry(300), wx.n = 3, wx.w[0] = 0.44f, wx.w[1] = 0.40f, wx.w[2] = 0.16f;
+        if (sc == "wx-shade3") {
+            wx.sub[1] = {{0, 0.75f}}, wx.sub[2] = {{0, 0.5f}}; // global = middle peak
+        } else {
+            // global 30 V peak -> 68 V peak 64 % above it
+            wx.sub[1] = wx.sub[2] = {{120, 0.3f}, {420, 0.72f}}, wx.T = 2400;
+        }
+    } else if (sc == "wx-shade-cloud") {
+        // beam shade on one substring under the cloud series: every cloud removes the second peak
+        fry(615), wx.n = 2, wx.w[0] = 0.79f, wx.w[1] = 0.21f;
+        wx.cloud = kCloud1120, wx.sub[1] = {{0, 0.664f}}, wx.beamShade = true, wx.T = 900;
+    } else if (sc == "wx-dawn" || sc == "wx-dusk") {
+        // irradiance through the start threshold, doubling every 350 s (flat 2026-11-14 06:59..07:34 UTC)
+        // ln(irradiance): below the start threshold, 500 s up to a 1.8 W MPP, then doubling
+        wx.vocLog = 2.6f, wx.T = 2200;
+        for (float t = 0; t <= wx.T; t += 10) {
+            const float lg = t < 120 ? -17.7f + t / 120 * 5.7f : t < 620 ? -12 + (t - 120) / 500 * 6.2f
+                                                                 : -5.8f + (t - 620) / 350 * 0.6931f;
+            wx.cloud.emplace_back(sc == "wx-dawn" ? t : (float) wx.T - t, std::exp(lg));
+        }
+        if (sc == "wx-dusk") std::reverse(wx.cloud.begin(), wx.cloud.end());
+    } else if (sc == "wx-sweep-fall" || sc == "wx-sweep-rise") {
+        // cloud edge (73 % in 10 s) starting 2 s into a sweep
+        const bool fall = sc == "wx-sweep-fall";
+        wx.cloud = {{62, fall ? 1 : 0.27f}, {72, fall ? 0.27f : 1}};
+        wx.sweepAt = wx.statsFrom = 60, wx.T = 240;
+    } else if (sc == "wx-sweep-shade") {
+        // two peaks, the 68 V one 10 % higher; a rising cloud edge during the sweep favours the later 54 V one
+        fry(615), wx.n = 2, wx.w[0] = 0.79f, wx.w[1] = 0.21f, wx.sub[1] = {{0, 0.87f}};
+        wx.cloud = {{62, 0.27f}, {72, 1}};
+        wx.sweepAt = wx.statsFrom = 60, wx.T = 660;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 int main(int argc, char **argv) {
     std::string sc = argc > 1 ? argv[1] : "sanity";
     g_simLogHook = logHook;
@@ -514,7 +811,15 @@ int main(int argc, char **argv) {
             ov.insert(ov.end(), {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}});
         }
     }
+    Wx wx;
+    const bool isWx = sc.rfind("wx-", 0) == 0;
+    if (isWx && !wxScenario(sc, wx)) {
+        printf("unknown scenario %s\n", sc.c_str());
+        return 1;
+    }
+    if (sc == "wx-cloud-cv-ripple") ov = {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}};
     boot(ov, p0);
+    if (isWx) return runWx(name, wx);
     if (sc.rfind("shade", 0) == 0) g_vconv.setPvShade(0.68f);
 
     if (sc == "sanity") {

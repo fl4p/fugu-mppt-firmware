@@ -28,14 +28,32 @@ public:
     // PV source curve (math/pv_model.h).
     void setPv(float isc, float voc, float k) { pv_.set(isc, voc, k); }
 
-    // Partial shade: half of the string (bypassed below its own current) delivers `shade` x Isc,
-    // which gives a second power peak near Voc/2. 1 = unshaded.
-    void setPvShade(float shade) { pvShade_ = shade; }
+    // PV string of n (1..3) series substrings, each with a bypass diode: g[i] scales the Isc of
+    // substring i, w[i] is its share of Voc (null = equal shares). Gives up to n power peaks.
+    // Approximation: the conducting substrings share the voltage by w, no bypass-diode drop.
+    void setPvString(uint8_t n, const float *g, const float *w = nullptr) {
+        pvN_ = n < 1 ? 1 : n > kPvSubMax ? kPvSubMax : n;
+        uint8_t o[kPvSubMax] = {0, 1, 2};
+        std::sort(o, o + pvN_, [g](uint8_t a, uint8_t b) { return g[a] > g[b]; });
+        float sum = 0;
+        for (uint8_t m = 0; m < pvN_; ++m) {
+            sum += w ? w[o[m]] : 1.f / (float) pvN_;
+            pvG_[m] = g[o[m]];
+            pvInvW_[m] = m + 1 == pvN_ ? 1.f : 1.f / sum;
+        }
+    }
 
+    // Partial shade: half of the string delivers `shade` x Isc. 1 = unshaded.
+    void setPvShade(float shade) {
+        const float g[2] = {1.f, shade};
+        setPvString(shade >= 1.f ? 1 : 2, g);
+    }
+
+    // String current at voltage v: best of "the m strongest substrings conduct, the rest bypassed".
     [[nodiscard]] float pvCurrent(float v) const {
-        float i = pv_.current(v);
-        if (pvShade_ >= 1.f) return i;
-        return std::max(i * pvShade_, pv_.current(2 * v));
+        float i = pvG_[pvN_ - 1] * pv_.current(v);
+        for (uint8_t m = 0; m + 1 < pvN_; ++m) i = std::max(i, pvG_[m] * pv_.current(v * pvInvW_[m]));
+        return i;
     }
 
     // Open backflow switch at the PV input: its body diode passes only forward PV current.
@@ -134,7 +152,10 @@ private:
     bool boost_ = false;
 
     PvModel pv_;
-    float pvShade_ = 1.f;
+    static constexpr uint8_t kPvSubMax = 3;
+    uint8_t pvN_ = 1;
+    float pvG_[kPvSubMax] = {1.f, 1.f, 1.f};    // substring factors, strongest first
+    float pvInvW_[kPvSubMax] = {1.f, 1.f, 1.f}; // 1 / Voc share of the m+1 strongest
     bool pvBlocking_ = false;
 
     // Battery + passives
