@@ -200,6 +200,7 @@ private:
     struct {
         MpptControlMode mode: 3 = MpptControlMode::None;
         bool _limiting: 1 = false; // control limited (no MPPT)
+        bool _limReal: 1 = false; // the current limit condition went past its limit
         uint8_t limIdx: 4 = 15;
     } ctrlState;
 
@@ -416,6 +417,7 @@ public:
     // must pass 0 explicitly. `who` tags the trip path in the backoff log so a
     // stuck post-sweep state names the responsible protect.
     void shutdownDcdc(const char *who, uint32_t backoffSec = 5) {
+        _limitPert = 0;
         if (topologyConfig.backflowAtHV) {
             converter.disable();
         lvPgood.release();
@@ -494,6 +496,7 @@ public:
         bool changed = charger.releaseVoutPinning(why);
         VoutController.reset();
         ctrlState._limiting = false;
+        _limitPert = 0;
         ctrlState.limIdx = 15;
         if (ctrlState.mode == MpptControlMode::CV) ctrlState.mode = MpptControlMode::None;
         targetDutyCycle = 0;
@@ -891,6 +894,7 @@ public:
 
         converter.disable();
         ctrlState._limiting = false;
+        _limitPert = 0;
         targetDutyCycle = 0;
 
         VinController.reset();

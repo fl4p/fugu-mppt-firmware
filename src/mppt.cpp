@@ -163,8 +163,11 @@ void MpptController::update() {
         controlMode = limitingControl->mode;
         controlValue = limitingControlValue;
 
-        if (!ctrlState._limiting) _limitSinceMs = nowMs, _limitPert = 0;
-        keepTracker = !limSustained;
+        if (!ctrlState._limiting) _limitSinceMs = nowMs, _limitPert = 0, ctrlState._limReal = false;
+        // past the limit (P term): the duty stays taken and the tracker restarts, as for a long limit
+        if (limitingControl->crtl.Kp * limitingControl->crtl._prevE < 0 || g_app.psuMode())
+            ctrlState._limReal = true, _limitPert = 0;
+        keepTracker = !limSustained && !ctrlState._limReal;
         ctrlState._limiting = true;
         auto limIdx = (int) (limitingControl - controlValues.begin());
         ctrlState.limIdx = limIdx;
@@ -175,7 +178,7 @@ void MpptController::update() {
             // recover from limit condition
             ctrlState._limiting = false;
             ctrlState.limIdx = 15;
-            if (limSustained) {
+            if (limSustained || ctrlState._limReal) {
                 controlMode = MpptControlMode::MPPT;
                 controlValue = limitingControlValue;
                 _limitPert = 0;
@@ -308,11 +311,12 @@ void MpptController::update() {
         // this causes very slow load response time, but works well when battery is connected
         const float fpMax = 16.0f * (float) converter.pwmCtrlMax / 2000.f;
         if (ctrlState._limiting) {
-            // past the limit (P term) the duty stays taken, a D-only brake below it is given back
-            if (limitingControl->crtl.Kp * limitingControl->crtl._prevE < 0) _limitPert = 0;
-            else _limitPert += std::max(fp, -(float) converter.getCtrlOnPwmCnt());
+            if (!ctrlState._limReal)
+                _limitPert += std::max(fp, (float) converter.getCtrlOnPwmMin() - (float) converter.getCtrlOnPwmCnt());
         } else if (_limitPert < 0) {
-            float back = std::min(-_limitPert, fpMax);
+            // no faster than the limiters allow
+            float back = std::min(-_limitPert, std::min(fpMax, limitingControlValue * kCtrlSlewLimit *
+                                                                   (float) converter.pwmCtrlMax * dtCtrl));
             fp += back;
             _limitPert += back;
         }
