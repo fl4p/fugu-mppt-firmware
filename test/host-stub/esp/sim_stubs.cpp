@@ -114,3 +114,5 @@ void MqttService::_invokeForTest(const std::string &, const char *, int) {}
 // sensor_setup.cpp can construct it for adc=esp32adc1; never selected by the vconv board config.
 void ADC_ESP32_Cont::start() { abort(); }
 uint32_t ADC_ESP32_Cont::read(SampleCallback &&) { abort(); }
+
+volatile bool g_hwOvTrip = false;
