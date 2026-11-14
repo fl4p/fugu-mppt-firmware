@@ -25,6 +25,11 @@
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
 //   SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" /tmp/mppt-sim a   # board overrides
+//   rect-cal (rectCalRt/rectCalLf wired as in main.cpp; the automatic start is off, SIM_RCAL_AUTO=1 enables it):
+//     rcal         `rect-cal force` at full power (CCM), LS body-diode drop 0.7 V, sensor noise
+//     rcal-bus     same, battery +2.5 % linear over 30 s from the start (shared bus)
+//     rcal-cloud   same, Isc x0.7 and Voc -1.8 % step 12 s after the start
+//     rcal-ov      same, Vin trip (hv_max) 2 % above Voc: the run must stop short of it
 //
 #include <algorithm>
 #include <cmath>
@@ -112,8 +117,10 @@ static void loopRTNewData(time_ms nowMs) {
     auto nSamples = sensors.Vout->numSamples;
     bool haveNewSample = (nSamples - lastMpptUpdateNumSamples) > 0;
     mppt.applyPendingPsuCommandRt(haveNewSample);
-    if (haveNewSample)
+    if (haveNewSample) {
         timeLastSampler = wallClockUs();
+        mppt.rectCalRt();
+    }
 
     if (unlikely(adcSampler.isCalibrating())) {
         mppt.shutdownDcdc("calib", 0);
@@ -322,6 +329,7 @@ static void loopLF(time_us nowUs) {
     lfWatchdog(nowUs, dt, sps, nSamples);
     lfStuckWatchdog();
     lfControl();
+    mppt.rectCalLf();
     lastTimeOutUs = wallClockUs();
     lastNSamples = nSamples;
     lastWindowUs = nowUs;
@@ -404,6 +412,9 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
     ConfFile converterConf{"/littlefs/conf/converter.conf"};
     mppt.charger.begin(chargerConf);
     converter.init(converterConf, boardConf, coilConf);
+    mppt.rectCal.autoRun = getenv("SIM_RCAL_AUTO") && coilConf.getByte("rect_cal_auto", 1);
+    mppt.rectCal.persist = rectCalPersist;
+    mppt.rectCal.init(converter.getRectOnOffset(), !converter.rectOffsetNeedsCal());
     ConfFile trackerConf{"/littlefs/conf/tracker.conf", true};
     mppt.begin(trackerConf, boardConf, converterConf, lim, TeleConf{});
     if (g_app.setupErr) { printf("setupErr\n"); exit(2); }
@@ -803,6 +814,63 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
     return true;
 }
 
+// rect-cal force at full power: ramp-down, calibration, ramp back, against the plant. Reports trips,
+// the learned offset (no gate delay in the plant: the truth is 0), the ramp and the power after.
+static int runRectCal(const std::string &name, const std::string &sc) {
+    settle(60);
+    printf("# trips during settle: %zu\n", g_trips.size());
+    auto &rc = mppt.rectCal;
+    const uint16_t hs0 = converter.getCtrlOnPwmCnt();
+    const float p0 = sensors.Vout->ewm.avg.get() * sensors.Iout->ewm.avg.get();
+    const bool dcm0 = converter.inDCM();
+    Probe p = probeStart();
+    const float vbat0 = g_vconv.getVbat(), isc0 = g_vconv.getIsc(), voc0 = g_vconv.getVoc();
+    if (!rc.requestStart(true)) { printf("requestStart refused\n"); return 1; }
+    printf("%9.4f >>> rect-cal force at HS %u, %s, P %.0f W\n", tNow(), hs0, dcm0 ? "DCM" : "CCM", p0);
+    double tCal = -1, tEnd = -1;
+    float iMin = INFINITY, ilMin = INFINITY, vinMax = 0, iRunMin = INFINITY;
+    int stepMax = 0, lsOffMin = 0;
+    uint16_t hsPrev = hs0;
+    const uint8_t clamps0 = converter.lsClamps();
+    while (tNow() - p.t0 < 60) {
+        const double t = tNow() - p.t0;
+        if (sc == "rcal-bus") g_vconv.setBat(vbat0 * (1.f + 0.025f * (float) std::min(1.0, t / 30.0)), g_vconv.getRbat());
+        if (sc == "rcal-cloud" && t >= 12.0) g_vconv.setPv(isc0 * 0.7f, voc0 * 0.982f, g_vconv.getPvK());
+        run(0.0022, 0, &p);
+        const auto st = rc.cal.get();
+        if (st == RectCal::Run) {
+            const uint16_t hs = converter.getCtrlOnPwmCnt();
+            stepMax = std::max(stepMax, std::abs((int) hs - (int) hsPrev));
+            hsPrev = hs;
+            if (hs > rc.cal.hs && converter.manualRect_() && converter.getRectOnPwmCnt() != converter.getRectOnPwmMin())
+                ++lsOffMin;
+            if (tCal < 0 && hs == rc.cal.hs) tCal = t;
+            iRunMin = std::min(iRunMin, g_vconv.getIoutAvg());
+        }
+        iMin = std::min(iMin, g_vconv.getIoutAvg());
+        ilMin = std::min(ilMin, g_vconv.getIL());
+        vinMax = std::max(vinMax, g_vconv.getVin());
+        if (tEnd < 0 && (st == RectCal::Done || st == RectCal::Fail)) tEnd = t;
+        if (tEnd >= 0 && t > tEnd + 15) break;
+    }
+    report(name.c_str(), p);
+    const float p1 = sensors.Vout->ewm.avg.get() * sensors.Iout->ewm.avg.get();
+    printf("== rect-cal: %s%s%s after %.1f s; cal HS %u reached at +%.2f s (from %u, %s), max HS step %d/sample, "
+           "LS off its minimum during the ramp: %d samples, LS clamps %u\n",
+           rc.cal.get() == RectCal::Done ? "done" : "failed", rc.cal.get() == RectCal::Fail ? ": " : "",
+           rc.cal.get() == RectCal::Fail ? rc.cal.why : "", tEnd, rc.cal.hs, tCal, hs0, dcm0 ? "DCM" : "CCM", stepMax,
+           lsOffMin, (unsigned) (uint8_t) (converter.lsClamps() - clamps0));
+    printf("== rect-cal: ideal %.0f peak %.0f learned %+d applied %+d ct (truth 0), %u pts, dV %.2f%%, offset now %d ct\n",
+           rc.cal.ideal, rc.cal.peak, rc.cal.learned, rc.cal.applied, rc.cal.n, 100 * rc.cal.dv, rc.offset());
+    printf("== plant: min Iout avg %.2f A (during the run %.2f A), min coil current at cycle end %.3f A, max Vin %.2f V\n",
+           iMin, iRunMin, ilMin, vinMax);
+    printf("== after: HS %u (before %u), P %.0f W (before %.0f W), %s, manual LS %d\n", converter.getCtrlOnPwmCnt(), hs0,
+           p1, p0, modeStr(), converter.manualRect_());
+    printf("\n== log after event (first %zu lines):\n", g_logSince.size());
+    for (size_t i = 0; i < g_logSince.size() && i < 60; ++i) printf("   %s\n", g_logSince[i].c_str());
+    return 0;
+}
+
 static int simMain(int argc, char **argv) {
     std::string sc = argc > 1 ? argv[1] : "sanity";
     g_simLogHook = logHook;
@@ -829,7 +897,11 @@ static int simMain(int argc, char **argv) {
         return 1;
     }
     if (sc == "wx-cloud-cv-ripple") ov = {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}};
+    const bool rcal = sc.rfind("rcal", 0) == 0;
+    if (rcal) ov = {{"noise_iout", "0.01"}, {"noise_vout", "0.005"}, {"noise_vin", "0.05"}};
+    if (sc == "rcal-ov") setenv("SIM_CONF", "limits.conf:hv_max=77.5", 1);
     boot(ov, p0);
+    if (rcal) g_vconv.setDiodeVf(0.7f);
     if (isWx) return runWx(name, wx);
     if (sc.rfind("shade", 0) == 0) g_vconv.setPvShade(0.68f);
 
@@ -911,6 +983,8 @@ static int simMain(int argc, char **argv) {
         Probe p = probeStart();
         run(300, 10.0, &p);
         report(name.c_str(), p);
+    } else if (rcal) {
+        return runRectCal(name, sc);
     } else {
         printf("unknown scenario %s\n", sc.c_str());
         return 1;

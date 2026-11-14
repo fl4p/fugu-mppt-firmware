@@ -237,26 +237,91 @@ is not a good estimate.
 
 #### Self-calibration (`rect-cal`)
 
-The firmware runs the same LS sweep itself, starting from a DCM operating point in MPPT mode
-(`src/rect_cal.h`). It first lowers HS to `0.55·M` of the period and holds it there. That point
-draws well below the panel's MPP current, so `V_i` sits on the flat, voltage-source part of the
-PV curve. At the MPPT operating point itself the panel limits the power, the LS window hardly
-changes the output current, and in simulation the peak landed up to ~200 counts late, toward
-a longer LS. The firmware then computes the ideal window from the averaged voltages
-(`(V_i/V_o − 1)·HS`, without the worst-case ratio margin) and steps LS from 0.5× to 1.4× of it
-in 24 steps. Each step settles for 150 ms and averages `I_out` for 500 ms.
-Between steps, a reference LS of 0.6× ideal is held for 400 ms. Each point is the step's
-current minus the mean of the two references around it, which cancels slow changes of the
-source, such as irradiance. Each point is placed relative to the ideal window of its own averaged
-`V_i`/`V_o`, so a small voltage drift moves the coordinate with the zero crossing instead of
-reading as a timing error. If `V_i` or `V_o` of any reference or step deviates more than 2% from
-the value at the start, the run is rejected. The sweep stops once it has passed the peak (above ideal and
-0.2·`I_out` below the best point) or when the average current turns negative. It is aborted,
-and the LS returned to diode emulation, on a limiter, a mode change, a sweep, `rect-cal abort`,
-after 32 s, and on any protection action: a shutdown, the backflow switch or sync rect turned
-off, or the LS clamped to its minimum. The protection check runs right before each LS update of
-the run, after the protection pass of the same sample, so the run never raises an LS that a
-protection has just lowered. Afterwards HS fades back to the operating point it started from.
+The firmware runs the same LS sweep itself (`src/rect_cal.h`). It lowers HS to `0.55·M` of the
+period and holds it there. That point draws well below the panel's MPP current, so `V_i` sits on
+the flat, voltage-source part of the PV curve near `V_oc`. At the MPPT operating point itself the
+panel limits the power, the LS window hardly changes the output current, and in simulation the
+peak landed up to ~200 counts late, toward a longer LS.
+
+**Starting a run.** `rect-cal` starts from a DCM operating point at 0.3–4 A. `rect-cal force`
+starts from any MPPT operating point above the calibration HS, including CCM at full power. Both
+take the duty over from the tracker and ramp HS to the calibration point by `pwmMax/512` counts
+per control sample (about 0.3 s from a full-power operating point at ~450 samples/s). Before the
+first HS step the LS is pinned at its minimum (`pwmRectMin`), and it stays there through the ramp
+and the settling phase. The converter is then a non-synchronous buck: the body diode carries the
+freewheel current and no reverse current can build, however fast the current falls through the
+CCM/DCM boundary and however late the CCM/DCM decision follows it. Lowering the duty only moves
+every limiter away from its limit (power, currents and `V_o` fall, `V_i` rises), so the ramp cannot
+make a limiter act. `V_i` rises toward `V_oc`; the run stops at 97% of the input over-voltage trip
+(`limits.conf::hv_max`) before the trip itself.
+
+**Settling.** At the calibration HS the run waits until the converter reports DCM and two
+consecutive 0.5 s windows (each after 150 ms settling) agree: `I_out` within 0.02 A + 2%, `V_i`
+and `V_o` within 0.3%. It gives up after 12 s from the start (`not in DCM`, `unsettled`).
+
+**Sweep.** The firmware computes the ideal window from the averaged voltages of the last settling
+window (`(V_i/V_o − 1)·HS`, without the worst-case ratio margin) and steps LS from 0.5× to 1.4× of
+it in 24 steps. Each step settles for 150 ms and averages `I_out` for 500 ms. Between steps, a
+reference LS of 0.6× ideal is held for 400 ms. Each point is the step's current minus the mean of
+the two references around it, which cancels any change of the source that is linear in time, such
+as slowly changing irradiance. Each point is placed relative to the ideal window of its own
+averaged `V_i`/`V_o`, so a voltage drift moves the coordinate with the zero crossing instead of
+reading as a timing error. The sweep stops once it has passed the peak (above ideal and
+0.2·`I_out` below the best point) or when the average current turns negative.
+
+**Signal size.** With the LS held `Δt` past the inductor zero crossing, reverse current builds to
+`V_o·Δt/L` and returns through the HS body diode at the slope `(V_i − V_o)/L`. The output loses
+
+$$
+\Delta I_{out} \approx \frac{f_{sw}\, V_o\, V_i}{2 L\,(V_i - V_o)}\,\Delta t^2 .
+$$
+
+With the LS turned off `Δt` early, the body diode carries the rest of the fall at the slope
+`(V_o + V_f)/L`, and the output loses only `ΔI_out ≈ f_sw·V_f·Δt²/(2L)`, 60–90× less at `V_f` = 0.7 V. Neither
+term depends on the operating current: the peak is located by the curvature of the late side,
+which is set by `L`, `V_i` and `V_o`. With 6.25 ns counts and `V_o` = 26.5–27.8 V:
+
+| `L` | `V_i` | `I_out` at the calibration point | 50 counts late | 100 counts late | 200 counts late | 1.4× ideal | early side, 0.5× ideal |
+|---|---|---|---|---|---|---|---|
+| 56 µH | 51–70 V | 0.9–1.2 A | 1.4–2.1 mA | 5.8–8.3 mA | 23–33 mA | 140–186 mA | 2.5–4.7 mA |
+| 80 µH | 62–78 V | 0.7–0.9 A | 1.0–1.2 mA | 3.8–4.8 mA | 15–19 mA | 118–139 mA | 2.6–3.7 mA |
+
+A higher operating current widens the swept range in counts (the ideal window scales with the
+peak current) but does not steepen the curve, so the calibration point stays at `0.55·M`. A sweep
+that has not yet passed the zero crossing shows only the early side, a few mA in total, which is
+within the noise of a short run.
+
+**Voltage changes.** In DCM at fixed HS the output current is
+`D²·V_i·(V_i − V_o)/(2·f_sw·L·V_o)`. 1% of `V_o` changes it by about 1.5–2.2% (13–19 mA at the
+calibration point), more than the signal within 100 counts of the peak. A step of the battery
+voltage during one measurement window would therefore read as a current peak. Two measures keep
+voltage changes out of the result:
+
+- Every window current is scaled to the voltages of the settling window with that model,
+  `I·g(V_i0, V_o0)/g(V_i, V_o)` with `g = V_i·(V_i − V_o)/V_o`.
+- The averaged `V_i` and `V_o` of each step must lie within 0.3% of the mean of its two
+  references (`V step`). The windows are equally spaced, so a linear drift passes this check and
+  a step does not. Below 0.3% the scaling leaves at most a few mA even if the real current reacts
+  30% more strongly to the voltage than the model.
+
+`V_i` must stay within 2% of the settling value (`Vin shift`): a source whose voltage moves with
+the drawn current is not stiff, and a cloud lowers `V_oc` by about 2% for a 30% drop in
+irradiance. `V_o` may drift by up to 5% (`Vout shift`): on a battery bus shared with other
+chargers and loads, `V_o` moves with their current, independent of the run. A scaled current
+that changes by more than 25% against the settling window fails the run (`V shift`). In
+simulation, a 1% `V_o` dip during the steps 100–200 counts past the zero crossing made a fit
+without the step check learn a positive offset (+36 counts, a later LS turn-off); with the check
+the run is rejected. A linear `V_o` drift of ±2.5% over 30 s is accepted and learned within a few
+counts.
+
+**Aborts.** The run is aborted, and the LS returned to diode emulation, on a limiter, a mode
+change, a sweep, `rect-cal abort`, the input voltage near its trip, leaving DCM or a change of HS
+during the sweep, after 45 s, and on any protection action: a shutdown, the backflow switch or
+sync rect turned off, or the LS clamped to its minimum. The protection check runs right before each
+LS update of the run, after the protection pass of the same sample, so the run never raises an LS
+that a protection has just lowered. Afterwards HS fades back to the operating point it started
+from, unless the backflow switch is open (reverse-current guard) or the mode changed; then the
+tracker continues from where the run stopped.
 
 The peak is located with the two-half-parabola fit above. The run is rejected, and the
 previous value kept, with fewer than 5 points, the maximum at the first or last point, a
@@ -284,13 +349,13 @@ below has shortened a fresh result before it was saved, the shorter value is sav
 uncalibrated.
 
 Preconditions for a run: buck topology, converter on in MPPT mode (not sweeping, not PSU/PV-sim
-or manual PWM, no forced PWM, no limiter active), DCM, sync rect and backflow switch on,
-`V_i > V_o + 1 V`, a physical `I_out` sensor reading 0.3–4 A and an HS count above `0.55·M`.
-At the lowered HS it further needs more than 0.15 A and an LS headroom of at least 1.15× ideal
-below the period. With `coil.conf::rect_cal_auto=1` (default) the firmware starts a
-run by itself while the offset is uncalibrated, at most once a day, not in the first 10 minutes
-after boot and only at a steady operating point above 5 W. A refused start is retried after
-10 minutes.
+or manual PWM, no forced PWM, no limiter active), sync rect and backflow switch on,
+`V_i > V_o + 1 V`, a physical `I_out` sensor reading at least 0.3 A and an HS count above
+`0.55·M`. `rect-cal` further needs DCM and at most 4 A. At the calibration point the run further
+needs more than 0.15 A and an LS headroom of at least 1.15× ideal below the period. With
+`coil.conf::rect_cal_auto=1` (default) the firmware starts a run (`rect-cal`, not `force`) by
+itself while the offset is uncalibrated, at most once a day, not in the first 10 minutes after
+boot and only at a steady operating point above 5 W. A refused start is retried after 10 minutes.
 
 #### Runtime backstop
 
