@@ -3,7 +3,6 @@
 
 #include "../adc/sampling.h"
 #include "line_protocol.h"
-#include "../web/server.h"
 #include "../store.h"
 
 #include <WiFiMulti.h>

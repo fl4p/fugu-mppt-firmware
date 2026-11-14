@@ -49,7 +49,6 @@ set(NETW_SRC
         "../src/tele/telemetry.cpp"
         "../src/tele/telnet_service.cpp"
         "../src/tele/mqtt.cpp"
-        "../src/web/server.cpp"
         "../src/etc/ota.cpp"
 )
 
