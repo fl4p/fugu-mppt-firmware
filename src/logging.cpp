@@ -532,23 +532,23 @@ void enable_esp_log_to_telnet() {
 }
 
 
-// Multi-producer: heap-allocated Fn* through a FreeRTOS queue. Alloc failure or a full queue drops
-// the task and counts it, never panics (callers re-issue their work).
+// Multi-producer (tasks only): heap-allocated Fn* through a FreeRTOS queue. Alloc failure or a full
+// queue drops the task and logs it, never panics.
 class TaskQueue {
     typedef std::function<void(void)> Fn;
-    static constexpr UBaseType_t kLen = 16;
+    static constexpr UBaseType_t kLen = 32;
     StaticQueue_t qs;
     uint8_t buf[kLen * sizeof(Fn *)];
     QueueHandle_t q = xQueueCreateStatic(kLen, sizeof(Fn *), buf, &qs);
     std::atomic<uint32_t> dropped_{0};
-    uint32_t reported_ = 0;
 
 public:
     void add(Fn &&fn) {
         Fn *p = new(std::nothrow) Fn(std::move(fn));
         if (!p || xQueueSend(q, &p, 0) != pdTRUE) {
+            ESP_LOGW("log", "task queue %s, %lu deferred tasks dropped", p ? "full" : "OOM",
+                     (unsigned long) ++dropped_);
             delete p;
-            ++dropped_;
         }
     }
 
@@ -556,10 +556,6 @@ public:
         Fn *p;
         while (xQueueReceive(q, &p, 0) == pdTRUE)
             std::unique_ptr<Fn>(p)->operator()();
-        if (uint32_t d = dropped_; d != reported_) {
-            reported_ = d;
-            ESP_LOGW("log", "task queue full/OOM, %lu deferred tasks dropped", (unsigned long) d);
-        }
     }
 };
 
