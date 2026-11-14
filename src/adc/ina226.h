@@ -17,8 +17,6 @@ void ina226_alert();
 
 ADC_INA226 *ina226_instance = nullptr;
 
-int console_read_usb(char *buf, size_t len); //debug console
-
 class ADC_INA226 : public AsyncADC<float> {
     INA226_WE ina226;
     volatile bool new_data = false;
@@ -293,33 +291,6 @@ public:
         ina226.enableConvReadyAlert();
     } */
 
-    void debugMode() {
-        bool debug = true;
-        if (debug) ESP_LOGI("ina22x", "Entering debug console");
-        while (debug) {
-            char buf[10];
-            auto r = console_read_usb(buf, sizeof buf);
-            if (r == 1) {
-                buf[r] = 0;
-                //
-                bool ok = true;
-                if (buf[0] == 'r') ina226.reset_INA226();
-                else if (buf[0] == 'm') ina226.readAndClearFlags();
-                else if (buf[0] == 'a') ina226.enableConvReadyAlert();
-                else if (buf[0] == 'c') ina226.setMeasureMode(CONTINUOUS);
-                else if (buf[0] == 't') ina226.setMeasureMode(TRIGGERED);
-                else if (buf[0] == 'l') ina226.enableAlertLatch();
-                else if (buf[0] == 'v') ESP_LOGI("ina22x", "V=%.3f", ina226.getBusVoltage_V());
-                else if (buf[0] == 'x') break;
-                else ok = false;
-                if (ok) ESP_LOGI("ina22x", "console cmd %s", buf);
-                //else ESP_LOGW("ina225", "unknown");
-            }
-            vTaskDelay(1);
-        }
-        ESP_LOGI("ina22x", "exit debug mode");
-    }
-
     bool testConvReadyAlert(uint8_t addr, uint8_t alertPin) {
 
         ina226.setAverage(AVERAGE_4);
@@ -331,7 +302,7 @@ public:
         delay(5);
         if (new_data) {
             ESP_LOGW("ina22x", "unexpected new data");
-            debugMode();
+            new_data = false;
         }
         //assert(!new_data);
 
@@ -425,8 +396,6 @@ public:
         ina226.enableConvReadyAlert();
         auto regME = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG);
         assert(!(regME & 0x0001)); // alert latch disabled
-
-        //debugMode();
 
         regME = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG);
         assert(!(regME & 0x0001)); // alert latch disabled
