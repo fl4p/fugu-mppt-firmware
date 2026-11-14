@@ -291,6 +291,11 @@ public:
         ina226.enableConvReadyAlert();
     } */
 
+    bool strayAlert() {
+        if (new_data) ESP_LOGE("ina22x", "stray alert signal");
+        return new_data;
+    }
+
     bool testConvReadyAlert(uint8_t addr, uint8_t alertPin) {
 
         ina226.setAverage(AVERAGE_4);
@@ -302,9 +307,11 @@ public:
         delay(5);
         if (new_data) {
             ESP_LOGW("ina22x", "unexpected new data");
+            ina226.readAndClearFlags();
             new_data = false;
+            delay(1);
+            if (strayAlert()) return false;
         }
-        //assert(!new_data);
 
         if (digitalRead(alertPin) != HIGH) {
             ESP_LOGE("ina22x", "Alert pin %u not pulled up, short to ground?", alertPin);
@@ -315,10 +322,10 @@ public:
         //auto bus = (i2c_port_t) 0;
 
         ina226.startSingleMeasurement();
-        assert(!new_data); // test disabled ConvReadyAlert
+        if (strayAlert()) return false; // test disabled ConvReadyAlert
 
         ina226.enableConvReadyAlert();
-        assert(!new_data);
+        if (strayAlert()) return false;
         ina226.startSingleMeasurement();
         //assert(new_data); // TODO enable!adc-reset-peripherals test enabled ConvReadyAlert
         new_data = false;
@@ -329,7 +336,7 @@ public:
         auto confReg = ina226.readRegister(INA226_WE::INA226_CONF_REG, ok);
         if (!ok) return false;
 
-        assert(!new_data);
+        if (strayAlert()) return false;
 
         auto t0 = micros();
 
@@ -339,7 +346,12 @@ public:
         ina226.startSingleMeasurementNoWait();
         auto tWrite = micros();
 
-        while (!new_data) {} // busy wait
+        while (!new_data) {
+            if (micros() - tWrite > 100000) {
+                ESP_LOGE("ina22x", "no conversion-ready alert");
+                return false;
+            }
+        }
         auto tBusyWait = micros();
 
         ina226.readAndClearFlags();
@@ -373,7 +385,10 @@ public:
         //assert(ina226.getBusVoltage_V() == voltage);
 
         // the busyWait time is ~ (convTime_I + convTime_U) * AvgSamples
-        assert ((tBusyWait - tWrite) < (100 + (140 + 10) * 2 * 4));
+        if ((tBusyWait - tWrite) >= (100 + (140 + 10) * 2 * 4)) {
+            ESP_LOGE("ina22x", "conversion-ready alert late (%lu us)", tBusyWait - tWrite);
+            return false;
+        }
 
         ESP_LOGI("ina22x", "Single-shot timings: sendTrigger=%lu busyWait=%lu read=%lu tReadIV=%lu (us)",
                  tWrite - t0, tBusyWait - tWrite, tRead - tBusyWait, tReadI - tRead);
