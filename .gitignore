@@ -49,7 +49,7 @@ etc/*/sdkconfig
 
 etc/filter-studies/*/__pycache__/
 
-.idea/editor.xml
+.idea/
 
 wifi.conf
 mqtt.conf
@@ -69,8 +69,6 @@ test/host-stub/*-test
 *.log
 
 doc/dev-notes/tmp
-
-etc/plotest
 
 .cache/
 __pycache__

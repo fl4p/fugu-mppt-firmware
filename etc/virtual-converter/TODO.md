@@ -2,7 +2,7 @@
 
 # VirtualConverter — TODO
 
-Design: [docs/superpowers/specs/2026-05-23-virtual-converter-design.md](../../doc/superpowers/specs/2026-05-23-virtual-converter-design.md)
+Design: [doc/superpowers/specs/2026-05-23-virtual-converter-design.md](../../doc/superpowers/specs/2026-05-23-virtual-converter-design.md)
 
 ## v1 — buck, single PV string, ideal switches
 

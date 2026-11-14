@@ -2,12 +2,6 @@ import datetime
 
 import requests
 
-fallback_hosts = [
-    # (ip, port, name),
-    # ('192.168.4.3', 0, 'flat'),
-    # ('192.168.4.2', 0, 'fry'), # 192.168.4.3
-]
-
 """
 
 1. build (idf.py build)
@@ -601,7 +595,6 @@ def cli():
     args = argp.parse_args()
     hosts = discover_scope_hosts(match=args.match)
     hosts += asyncio.run(scan_nat_async(reachable_only=True))
-    hosts = hosts or fallback_hosts
     if not hosts:
         print('no hosts discovered!')
         sys.exit(1)

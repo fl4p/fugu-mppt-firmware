@@ -262,16 +262,11 @@ Candidate fixes (ranked):
 ┌─────────────────────────────────────────┬──────┬───────────────────────────────────────────────────────────────────────────────────┐
 │ File (HEAD)               │ Line │ Use │
 ├─────────────────────────────────────────┼──────┼───────────────────────────────────────────────────────────────────────────────────┤
-│ etc/mqtt_client.py │ 52 │ username_pw_set("pv", "<redacted>") — MQTT broker │
-├─────────────────────────────────────────┼──────┼───────────────────────────────────────────────────────────────────────────────────┤
-│ etc/mqtt-console-logger/mqtt_console.py │ 57 │ same MQTT broker password │
-├─────────────────────────────────────────┼──────┼───────────────────────────────────────────────────────────────────────────────────┤
-│ etc/micropython-relay/relay.py │ 51 │ InfluxDB token for influx.fabi.me (openpe:<redacted>) — different service, same
-│
-│ │ │ password │
+│ etc/mqtt-console-logger/mqtt_console.py │ 57 │ MQTT broker password │
 └─────────────────────────────────────────┴──────┴───────────────────────────────────────────────────────────────────────────────────┘
 
-So the secret is reused across your MQTT broker and an InfluxDB instance, and both are exposed in the current public
+etc/mqtt_client.py (same MQTT password) and etc/micropython-relay/relay.py (InfluxDB token for influx.fabi.me, same
+password) are deleted from the tree but remain in history. So the secret is reused across your MQTT broker and an InfluxDB instance, and both are exposed in the current public
 tree (not just
 history). Rotate <redacted> on both services — that's the only fix that matters once something's been public.
 

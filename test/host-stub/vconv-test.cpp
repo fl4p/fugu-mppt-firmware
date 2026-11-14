@@ -1,5 +1,5 @@
 // Host-side unit tests for src/sim/vconv.{h,cpp} and src/pwm/vconv.h.
-// Punch list A-T from docs/superpowers/specs/2026-05-23-virtual-converter-design.md.
+// Punch list A-T from doc/superpowers/specs/2026-05-23-virtual-converter-design.md.
 //
 // Build & run:
 //   clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src \

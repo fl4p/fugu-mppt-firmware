@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MCPWM gate-drive automated verifier. See docs/superpowers/specs/2026-05-23-pwm-gate-verifier-design.md.
+"""MCPWM gate-drive automated verifier. See doc/superpowers/specs/2026-05-23-pwm-gate-verifier-design.md.
 
 Drives the device via console + captures HS/LS gates on a PicoScope 2000. Reports
 PASS/FAIL per assertion and exits with the failed-row count.

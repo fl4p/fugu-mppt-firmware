@@ -10,7 +10,7 @@
 // no FreeRTOS.
 // Wire-up (PWM input, ADC output, conf parsing) lives in src/pwm/vconv.h,
 // src/adc/vconv.h, and src/sensor_setup.cpp. Spec:
-// docs/superpowers/specs/2026-05-23-virtual-converter-design.md
+// doc/superpowers/specs/2026-05-23-virtual-converter-design.md
 class VirtualConverter {
 public:
     struct PwmState {

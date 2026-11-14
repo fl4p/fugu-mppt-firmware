@@ -106,7 +106,7 @@ endif ()
 
 # CONFIG_FUGU_WITH_VCONV replaces the physical gate driver + ADC with a software converter plant
 # (src/sim/vconv.*); one of the Kconfig gate-driver choices. See
-# docs/superpowers/specs/2026-05-23-virtual-converter-design.md.
+# doc/superpowers/specs/2026-05-23-virtual-converter-design.md.
 if (CONFIG_FUGU_WITH_VCONV)
     set(WITH_VCONV 1)
     set(VCONV_SRC "../src/sim/vconv.cpp")
