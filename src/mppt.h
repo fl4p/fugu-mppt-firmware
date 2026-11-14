@@ -98,13 +98,6 @@ struct TeleConf {
     }
 };
 
-struct MpptParams : public BatChargerParams {
-    float Vin_max = 80.f;
-    float Vin_min = 10.5f;
-    float Iin_max = 30.f;
-    float P_max = 800.f;
-};
-
 enum class MpptControlMode : uint8_t {
     None = 0,
     CV,
@@ -151,10 +144,6 @@ inline constexpr std::array<const char *, (size_t) MpptControlMode::Max> MpptSta
 };
 
 
-struct TopologyConfig {
-    bool backflowAtHV = false; //backflow switch is at solar input
-};
-
 template<typename T_NUM, T_NUM max = std::numeric_limits<T_NUM>::max()>
 struct MinSampler {
     T_NUM min{max};
@@ -165,25 +154,8 @@ struct MinSampler {
 
     bool empty() const { return min == max; }
 
-    const T_NUM &get(bool &empty) const {
-        if (min == max) empty = true;
-        return min;
-    }
-
     const T_NUM &get() const {
         return min;
-    }
-
-    bool tryGet(T_NUM &out) const {
-        if (min == max)return false;
-        out = min;
-        return true;
-    }
-
-    T_NUM pop(bool &empty) {
-        auto r = get(empty);
-        reset();
-        return r;
     }
 
     T_NUM pop() {
@@ -320,22 +292,13 @@ public:
     Tracker tracker{};
 
 private:
-    TopologyConfig topologyConfig;
-
     uint8_t ledPinSimple = 255;
 
     uint16_t targetPwmCnt = 0; // config-derived boot duty; cleared on mppt/sweep to allow tracking
 
     float sweepSpeed = 4.0f; // global-sweep speed (tracker.conf::sweep_speed)
 
-    struct flags_ {
-        bool autoDetectVout_max: 1 = true;
-    };
-
-    flags_ flags;
-
 public:
-    //MpptParams params;
     Limits limits{};
     TeleConf tele{};
     BatteryCharger charger;
@@ -405,14 +368,8 @@ public:
     // stuck post-sweep state names the responsible protect.
     void shutdownDcdc(const char *who, uint32_t backoffSec = 5) {
         _limitPert = 0;
-        if (topologyConfig.backflowAtHV) {
-            converter.disable();
-        lvPgood.release();
-            bflow.enable(false);
-        } else {
-            bflow.enable(false);
-            converter.disable();
-        }
+        bflow.enable(false);
+        converter.disable();
         if (backoffSec) {
             // PSU fast-retry: only for transient faults (Vout-OV, supply-UV). Other faults
             // (sensor-fail, revI, highI) keep their normal backoff even in PSU mode.
@@ -655,7 +612,7 @@ public:
             );
 
 
-            if (flags.autoDetectVout_max && !g_app.psuMode() && nowMs - lastTimeProtectPassed > 20000) {
+            if (!g_app.psuMode() && nowMs - lastTimeProtectPassed > 20000) {
                 // Persistent OV: auto-detect Vout_max by clearing the setpoint so protectLf()
                 // re-detects it. But an explicitly commanded `vset` setpoint must not be silently
                 // discarded — that widens the protection threshold (to the board ceiling) with no

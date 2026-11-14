@@ -484,7 +484,6 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
         // sampler.onNewSample = dcdcDataChanged;  // runs on the RT sampler task — would cross
         // tasks into teleBleEnqueue (single-task invariant, see tele_ble.cpp) if re-enabled
     }
-    //flags.noPanelSwitch = boardConf
 
 
     ledPinSimple = boardConf.getByte("led_simple", 255);

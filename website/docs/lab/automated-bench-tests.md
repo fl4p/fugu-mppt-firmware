@@ -97,7 +97,7 @@ seconds and count `shutdown` / `Converter enabled` lines.
   29.9 V. Compute it from the unit's `limits.conf`, `charger.conf`, mode and `ovset`; `status` shows
   `Vbat_max` and whether an explicit `ovset` is in force.
 - **Expected**: `shutdownDcdc()`, `Vout .. > .. + 5pct!` warning, LCD "OV shutdown". If condition
-  persists >20 s and `autoDetectVout_max`, Vbat_max re-detects via calibration.
+  persists >20 s, Vbat_max re-detects via calibration.
 - **Pass**: shutdown within one control tick of the threshold crossing; recovers when voltage drops.
 
 ### 1.3 Battery interrupt (load disconnect)

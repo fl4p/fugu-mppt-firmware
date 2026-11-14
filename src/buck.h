@@ -117,7 +117,6 @@ class SynchronousConverter {
     int32_t manualRect = -1; // >=0: hold LS at this count (bench), -1: auto diode emulation
     float pwmRectRatioDCM = 0; // t_onRect/t_onCtrl when in DCM
     float rectDitherErr = 0; // carried LS-count rounding remainder (DCM error-feedback dither)
-    bool rectDither = true; // false: plain round() (fallback)
     int16_t rectOnOffset = 0; // DCM LS-count dead-time/gate-delay offset (counts; >0 = LS off later, toward zero crossing)
     bool rectCalNeeded = false; // rect_offset not calibrated on the active driver
     std::atomic<uint8_t> lsClampCount{0}; // bumped by syncRectMinDuty() and disable() (also core 0)
@@ -1294,14 +1293,10 @@ public:
             // and the true zero crossing (measure_coil.py --ls-sweep). >0 turns LS off later,
             // recovering body-diode loss but eating reverse-current margin; default 0 = unchanged.
             float ideal = (float) pwmCtrl * pwmRectRatioDCM + (float) rectOnOffset;
-            if (rectDither) {
-                float v = ideal + rectDitherErr;
-                long ls = std::lround(v);
-                if (advanceDither) rectDitherErr = v - (float) ls;
-                pwmRectMax = (uint16_t) std::max<long>(0, ls);
-            } else {
-                pwmRectMax = (uint16_t) std::round(ideal);
-            }
+            float v = ideal + rectDitherErr;
+            long ls = std::lround(v);
+            if (advanceDither) rectDitherErr = v - (float) ls;
+            pwmRectMax = (uint16_t) std::max<long>(0, ls);
         } else {
             // CCM
             pwmRectMax = driverPwmMax - pwmCtrl - 1;   // -1: keep cmpLS < period (timer-wrap)
