@@ -34,6 +34,14 @@
 //     rcal-low     same, a cloud 0.2 s after the start: Isc 2 A, Voc -3 % (soft panel, knee lifts Vin)
 //     rcal-sun     80 uH board, Isc 5.6 A / Voc 79.6 V, 5 nF switch node ringing at Q 40 (non-monotonic late side)
 //     rcal-low-bus rcal-low on a swinging bus (+-0.4 % / 23 s, +-0.2 % / 7.3 s, 0.15 % steps every 2-6 s)
+//   switch-node ring (DCM Iout ripple vs duty; vconv.conf ring_f/ring_q), board = fry | flat (L0, L, ring f, Q
+//   fitted to field sweeps), suffix -off = same board with the ring disabled, -damped = ring at Q 0.5 (no
+//   oscillation, but the ring branch: node charge, and the HS body diode returns clamp charge to the input):
+//     ring-sweep-<board>   ~150-180 W morning sun, global sweep at 60 s: ripple seen in the sweep, chosen peak
+//     ring-weak-<board>    steady ~45 W, the whole operating range in DCM: does P&O sit on a ripple maximum
+//     ring-coil-<board>    `measure-coil l0` flow (old 10-step median, new 48-step ring fit) against the plant,
+//                          then the MPPT restore; -weak: at ~40 W (soft source)
+//   SIM_RING=fry|flat|fry-off|flat-damped|... applies a board to any other scenario (e.g. wx-dawn, wx-dusk)
 //
 #include <algorithm>
 #include <cmath>
@@ -54,6 +62,7 @@
 #include "app_state.h"
 #include "sim/vconv.h"
 #include "sim_alloc.h"
+#include "selftest/coil_fit.h"
 
 // ---- globals owned by main.cpp on target ----
 ADC_Sampler adcSampler{};
@@ -87,6 +96,40 @@ static double g_eventT = -1;
 static double g_fineT0 = 0, g_fineT1 = 0; // env SIM_FINE=t0,t1: per-tick sensor trace window
 static double g_rampSec = 0, g_rampT0 = 0, g_rampFrom = 0, g_rampTo = 0; // linear Isc ramp
 static bool g_verbose = true;
+
+// ---- switch-node ring board (ring-* scenarios, SIM_RING) ----
+struct RingBoard {
+    const char *name;
+    float l0Conf, lPlant, f, q; // coil.conf L0, plant L, ring frequency at lPlant, quality factor
+};
+static const RingBoard kRingBoards[] = {{"fry", 80e-6f, 76e-6f, 254e3f, 25}, {"flat", 56e-6f, 51e-6f, 326e3f, 15}};
+static const RingBoard *g_ring = nullptr;
+static bool g_ringOn = false, g_ringDamped = false; // damped: Q 0.5, ring branch without oscillation
+static void (*g_tickHook)() = nullptr; // called after every RT iteration of run()
+
+// "...-fry[-off]" / "...-flat[-off]" or SIM_RING: pick the board; returns the name without the suffix
+static std::string ringBoardFrom(std::string sc) {
+    const char *env = getenv("SIM_RING");
+    std::string tag = sc;
+    if (sc.rfind("ring-", 0) != 0) {
+        if (!env) return sc;
+        tag = std::string("x-") + env;
+    }
+    g_ringOn = !(tag.size() > 4 && tag.compare(tag.size() - 4, 4, "-off") == 0);
+    if (!g_ringOn) tag.resize(tag.size() - 4);
+    g_ringDamped = tag.size() > 7 && tag.compare(tag.size() - 7, 7, "-damped") == 0;
+    if (g_ringDamped) tag.resize(tag.size() - 7);
+    for (auto &b: kRingBoards) {
+        const std::string sfx = std::string("-") + b.name;
+        if (tag.size() > sfx.size() && tag.compare(tag.size() - sfx.size(), sfx.size(), sfx) == 0) {
+            g_ring = &b;
+            if (sc.rfind("ring-", 0) == 0) sc = tag.substr(0, tag.size() - sfx.size());
+            return sc;
+        }
+    }
+    printf("ring board? %s\n", tag.c_str());
+    exit(1);
+}
 
 static double tNow() { return (double) esp_timer_get_time() * 1e-6; }
 
@@ -405,6 +448,11 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
         }
     }
     if (paranoia0) writeConf(confDir, "limits.conf", {{"reverse_current_paranoia", "0"}});
+    if (g_ring) {
+        char l0[24];
+        snprintf(l0, sizeof l0, "%g", g_ring->l0Conf);
+        writeConf(confDir, "coil.conf", {{"L0", l0}});
+    }
 
     // setup(): the parts of setupConverterAndMppt() that the RT path needs
     ConfFile boardConf{"/littlefs/conf/board.conf"};
@@ -482,6 +530,7 @@ static void run(double sec, double traceEvery, Probe *probe = nullptr, double fi
         }
         bool onBefore = !converter.disabled();
         loopRTIter();
+        if (g_tickHook) g_tickHook();
         if (probe && onBefore) probeDetector(*probe);
         if ((wallClockUs() - lastLfWorkUs) >= lfPeriod or !lastLfWorkUs) {
             loopLF(wallClockUs());
@@ -639,12 +688,142 @@ static int pvPeaks(Peak pk[4], float valley[4]) {
     return n;
 }
 
+// ---- switch-node ring analysis (ring-* scenarios) ----
+struct SweepPt {
+    uint16_t h;
+    float vin, vout, iout, ioutSensor;
+};
+static std::vector<SweepPt> g_sweepPts;
+static uint16_t g_sweepEndH = 0;
+static double g_sweepEndT = -1, g_ringRecFrom = 0; // first sweep starting after g_ringRecFrom
+
+static void ringTick() {
+    static bool was = false;
+    static uint16_t last = 0;
+    const bool sw = mppt.getState() == MpptControlMode::Sweep && !converter.disabled();
+    const uint16_t h = converter.getCtrlOnPwmCnt();
+    if (sw && h > last && g_sweepEndT < 0 && tNow() >= g_ringRecFrom)
+        g_sweepPts.push_back({h, g_vconv.getVin(), g_vconv.getVout(), g_vconv.getIoutAvg(), sensors.Iout->ewm.avg.get()});
+    if (was && !sw && g_sweepEndT < 0 && !g_sweepPts.empty() && tNow() >= g_ringRecFrom) g_sweepEndT = tNow();
+    if (g_sweepEndT >= 0 && !g_sweepEndH && tNow() >= g_sweepEndT + 2.0) g_sweepEndH = h; // after the slew to the MPP
+    if (!sw) last = 0;
+    else last = std::max(last, h);
+    was = sw;
+}
+
+// steady PV power versus HS count at the present PV/battery: a copy of the plant stepped to equilibrium at
+// each count, LS as the firmware sets it in DCM (voltage ratio with its 1 % worst-case margins)
+static std::vector<std::pair<uint16_t, float>> staticCurve(uint16_t hi, uint16_t step) {
+    VirtualConverter v = g_vconv;
+    const uint16_t pmax = v.getPwm().pwmMax, lsMin = converter.getRectOnPwmMin();
+    std::vector<std::pair<uint16_t, float>> out;
+    for (uint16_t h = step; h <= hi; h += step) {
+        for (int k = 0; k < 3; ++k) {
+            const float r = v.getVin() / v.getVout() * (0.99f / 1.01f) - 1.f;
+            long ls = std::max<long>(lsMin, std::lround(h * std::max(0.f, r)));
+            v.setPwmCount(0, h), v.setPwmCount(1, (uint32_t) std::min<long>(ls, pmax - h - 1));
+            v.stepSeconds(0.08f, 39000);
+        }
+        out.emplace_back(h, v.getVin() * v.pvCurrent(v.getVin()));
+    }
+    return out;
+}
+
+// local maxima of P(count) within +-w points above 50 % of the maximum
+static std::vector<std::pair<uint16_t, float>> localMaxima(const std::vector<std::pair<uint16_t, float>> &c, int w) {
+    std::vector<std::pair<uint16_t, float>> m;
+    float pMax = 0;
+    for (auto &p: c) pMax = std::max(pMax, p.second);
+    for (int i = 0; i < (int) c.size(); ++i) {
+        bool top = c[i].second > 0.5f * pMax;
+        for (int j = std::max(0, i - w); top && j <= std::min((int) c.size() - 1, i + w); ++j)
+            if (c[j].second > c[i].second) top = false;
+        if (top) m.push_back(c[i]);
+    }
+    return m;
+}
+
+static float curveAt(const std::vector<std::pair<uint16_t, float>> &c, uint16_t h) {
+    float best = 0;
+    int d = 1 << 30;
+    for (auto &p: c) if (std::abs((int) p.first - (int) h) < d) d = std::abs((int) p.first - (int) h), best = p.second;
+    return best;
+}
+
+static void ringSweepReport() {
+    const uint16_t pmax = g_vconv.getPwm().pwmMax;
+    const float fsw = (float) converter.getPwmFrequency(), tick = 1.f / (fsw * (float) pmax), L = g_vconv.getL();
+    float d[coilfit::kMaxPts], vi[coilfit::kMaxPts], vo[coilfit::kMaxPts], io[coilfit::kMaxPts];
+    std::vector<float> rLo, rHi, sLo, sHi;
+    int n = 0;
+    const size_t stride = std::max<size_t>(1, g_sweepPts.size() / 200);
+    std::vector<SweepPt> dcm;
+    for (auto &p: g_sweepPts) {
+        const float D = (float) p.h / (float) pmax, cf = D * p.vin / p.vout;
+        if (cf > 0.85f || cf < 0.1f || p.iout < 0.05f) continue;
+        dcm.push_back(p);
+        const float ideal = (p.vin - p.vout) * p.vin * D * D / (2 * p.vout * fsw * L);
+        (cf < 0.5f ? rLo : rHi).push_back(p.iout / ideal - 1);
+        (cf < 0.5f ? sLo : sHi).push_back(p.ioutSensor / ideal - 1);
+    }
+    // thin to <= kMaxPts evenly for the ring fit
+    for (size_t k = 0; k < dcm.size() && n < coilfit::kMaxPts; k += std::max<size_t>(1, dcm.size() / coilfit::kMaxPts)) {
+        auto &p = dcm[k];
+        d[n] = (float) p.h / (float) pmax, vi[n] = p.vin, vo[n] = p.vout, io[n] = p.iout, ++n;
+    }
+    (void) stride;
+    auto pp = [](std::vector<float> v) {
+        if (v.size() < 5) return 0.f;
+        std::sort(v.begin(), v.end());
+        return v[(size_t) (0.95 * (double) (v.size() - 1))] - v[(size_t) (0.05 * (double) (v.size() - 1))];
+    };
+    const auto f = coilfit::fit(d, vi, vo, io, n, fsw);
+    float ratio = 0;
+    for (int i = 0; i < n; ++i) ratio += vi[i] / vo[i] / (float) n;
+    const float N = f.f > 0 ? 1.f / (f.f * tick * ratio) : 0;
+    printf("== RING sweep: %zu rising-duty ticks, %zu in DCM; plant Iout vs ideal DCM, p-p (5-95 %%): conduction <0.5"
+           " %.0f %%, 0.5..0.85 %.0f %% (sensor ewm %.0f / %.0f %%)\n", g_sweepPts.size(), dcm.size(), 100 * pp(rLo),
+           100 * pp(rHi), 100 * pp(sLo), 100 * pp(sHi));
+    printf("== RING sweep fit: ring %.0f kHz (plant %.0f), period %.0f counts here = %.0f at 6.25 ns/count, Vin/Vout %.2f,"
+           " ripple +-%.0f %%, %.1f periods; L from the sweep %.1f uH (plant %.1f)\n", f.f * 1e-3f,
+           g_vconv.getRingF() * 1e-3f, N, N * tick / 6.25e-9f, ratio, 100 * f.amp, f.periods, f.L * 1e6f, L * 1e6f);
+}
+
+static void ringStaticReport(const char *what, const std::vector<double> &dutyHist) {
+    const uint16_t hi = converter.pwmCtrlMax;
+    const auto c = staticCurve(hi, 2);
+    float pMax = 0;
+    uint16_t hMax = 0;
+    for (auto &p: c) if (p.second > pMax) pMax = p.second, hMax = p.first;
+    const auto lm = localMaxima(c, 3);
+    printf("== RING static P(count) now: max %.1f W at %u; %zu local maxima above 50 %%:", pMax, hMax, lm.size());
+    for (size_t i = 0; i < lm.size() && i < 12; ++i) printf(" %u:%.1f%%", lm[i].first, 100 * lm[i].second / pMax);
+    printf("\n");
+    if (g_sweepEndT >= 0)
+        printf("== RING sweep chose count %u (t=%.1f + 2 s): static P there %.1f %% of the max (max at %u)\n", g_sweepEndH,
+               g_sweepEndT, 100 * curveAt(c, g_sweepEndH) / pMax, hMax);
+    if (!dutyHist.empty()) {
+        double tot = 0;
+        for (double x: dutyHist) tot += x;
+        std::vector<std::pair<double, int>> top;
+        for (int b = 0; b < (int) dutyHist.size(); ++b) if (dutyHist[b] > 0) top.emplace_back(dutyHist[b], b);
+        std::sort(top.rbegin(), top.rend());
+        printf("== RING %s: time at count (4-count bins):", what);
+        for (size_t i = 0; i < top.size() && i < 6; ++i)
+            printf(" %d: %.0f%% (static P %.1f%%)", top[i].second * 4 + 2, 100 * top[i].first / tot,
+                   100 * curveAt(c, (uint16_t) (top[i].second * 4 + 2)) / pMax);
+        printf("\n");
+    }
+}
+
 static int runWx(const std::string &name, Wx &wx) {
     if (const char *e = getenv("SIM_T")) wx.T = atof(e);
     g_verbose = getenv("SIM_V") != nullptr;
     const double trEvery = getenv("SIM_TR") ? atof(getenv("SIM_TR")) : wx.T / 60;
     wx.init();
     wx.apply(0);
+    std::vector<double> dutyHist;
+    if (g_ring) g_tickHook = ringTick, dutyHist.assign(1024, 0.0), g_ringRecFrom = std::max(0.0, wx.sweepAt);
     printf("# %s: clear-sky MPP %.0f W, Isc %.2f A, Voc %.0f V, %u substring(s), bat %.2f V / %.3f ohm, %.0f s\n",
            name.c_str(), wx.pClear, wx.isc, wx.voc, (unsigned) wx.n, wx.vbat, wx.rbat, wx.T);
     printf("#        t  g(substrings)     | PLANT Vin   Ppv | GMPP V     P  peaks | CTRL state D lim\n");
@@ -695,6 +874,7 @@ static int runWx(const std::string &name, Wx &wx) {
             nextTr += trEvery;
         }
         if (tb < wx.statsFrom) continue;
+        if (g_ring && on && !sweeping) dutyHist[std::min<size_t>(1023, converter.getCtrlOnPwmCnt() / 4)] += dt;
 
         maxPk = std::max(maxPk, nReach);
         tStat += dt;
@@ -764,6 +944,11 @@ static int runWx(const std::string &name, Wx &wx) {
     for (auto &t: g_trips)
         if (t.t >= wx.statsFrom && ++shown <= 12) printf("==   trip at t=%.1f s [%s] %us\n", t.t, t.who.c_str(), t.sec);
     if (nTrips > 12) printf("==   ... %zu trips total\n", nTrips);
+    if (g_ring) {
+        g_tickHook = nullptr;
+        if (!g_sweepPts.empty()) ringSweepReport();
+        ringStaticReport("tracking", dutyHist);
+    }
     return 0;
 }
 
@@ -808,6 +993,12 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         const bool fall = sc == "wx-sweep-fall";
         wx.cloud = {{62, fall ? 1 : 0.27f}, {72, fall ? 0.27f : 1}};
         wx.sweepAt = wx.statsFrom = 60, wx.T = 240;
+    } else if (sc == "ring-sweep" || sc == "ring-weak") {
+        // field-like string at the board's morning Voc; -sweep: a global sweep at 60 s in ~150-180 W sun
+        const bool fry = !strcmp(g_ring->name, "fry");
+        wx.voc = fry ? 78 : 70, wx.k = 0.86f, wx.vbat = fry ? 26.8f : 26.3f;
+        if (sc == "ring-sweep") wx.pClear = fry ? 150 : 180, wx.sweepAt = wx.statsFrom = 60, wx.T = 150;
+        else wx.pClear = 45, wx.statsFrom = 150, wx.T = 900;
     } else if (sc == "wx-sweep-shade") {
         // two peaks, the 68 V one 10 % higher; a rising cloud edge during the sweep favours the later 54 V one
         fry(615), wx.n = 2, wx.w[0] = 0.79f, wx.w[1] = 0.21f, wx.sub[1] = {{0, 0.87f}};
@@ -889,6 +1080,91 @@ static int runRectCal(const std::string &name, const std::string &sc) {
     return 0;
 }
 
+// `measure-coil l0` against the plant: mirrors measureCoilTask()/sweepL0() of src/selftest/measure_coil.cpp
+// (the console task's waits become simulated time), estimator shared through selftest/coil_fit.h.
+static bool simPsuWait(uint32_t ticket) {
+    for (int i = 0; i < 1000 && !mppt.isPsuCommandDone(ticket); ++i) run(0.001, 0);
+    return mppt.isPsuCommandDone(ticket);
+}
+
+static float med5(float *a) { return coilfit::detail::median(a, 5); }
+
+static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
+    const double t0 = tNow();
+    coilfit::Result res;
+    if (!simPsuWait(mppt.requestPsuManual(0, -1))) printf("  measure: RT transition timed out\n");
+    const float fsw = (float) converter.getPwmFrequency();
+    const uint16_t pwmMax = converter.pwmMaxDriver();
+    const float iMaxLim = std::min(2.0f, mppt.limits.Iout_max);
+    const float vin0 = sensors.Vin->ewm.avg.get(), vout0 = sensors.Vout->ewm.avg.get();
+    int lo, hi, step;
+    if (coilfit::band(vin0, vout0, pwmMax, converter.pwmCtrlMax, steps, lo, hi, step)) {
+        float d[coilfit::kMaxPts], vi[coilfit::kMaxPts], vo[coilfit::kMaxPts], io[coilfit::kMaxPts];
+        int n = 0;
+        float iMaxSeen = 0;
+        for (int H = lo; H <= hi && n < coilfit::kMaxPts; H += step) {
+            mppt.setManualTarget((uint16_t) H);
+            const double dl = tNow() + std::max<uint32_t>(dwellMs, 3000) * 1e-3 + H * 4e-3;
+            while (converter.getCtrlOnPwmCnt() != H && tNow() < dl) run(0.02, 0);
+            run(dwellMs * 1e-3, 0);
+            float a[5], b[5], c[5];
+            for (int k = 0; k < 5; ++k) {
+                a[k] = sensors.Vin->ewm.avg.get(), b[k] = sensors.Vout->ewm.avg.get(), c[k] = sensors.Iout->ewm.avg.get();
+                run(0.05, 0);
+            }
+            if (converter.disabled()) { printf("  measure: converter disabled; aborting\n"); break; }
+            const float vin = med5(a), vout = med5(b), iout = med5(c), D = (float) converter.getCtrlOnPwmCnt() / pwmMax;
+            const bool dcm = converter.inDCM(), ok = iout > 0.02f && vin > vout;
+            if (dcm && ok) d[n] = D, vi[n] = vin, vo[n] = vout, io[n] = iout, ++n, iMaxSeen = std::max(iMaxSeen, iout);
+            if (iout > iMaxLim || !dcm) break;
+        }
+        const float floor = std::max(0.15f, 0.2f * iMaxSeen);
+        int nk = 0;
+        for (int i = 0; i < n; ++i)
+            if (io[i] >= floor) d[nk] = d[i], vi[nk] = vi[i], vo[nk] = vo[i], io[nk] = io[i], ++nk;
+        res = coilfit::fit(d, vi, vo, io, nk, fsw);
+    }
+    // restore as the task does: ramp down, wait for the disable, back to MPPT
+    mppt.setManualTarget(0);
+    for (double dl = tNow() + 10.0; !converter.disabled() && tNow() < dl;) run(0.01, 0);
+    const bool off = converter.disabled();
+    if (!simPsuWait(off ? mppt.requestPsuOff() : mppt.requestPsuSweep())) printf("  measure: MPPT restore timed out\n");
+    secs = tNow() - t0;
+    return res;
+}
+
+static int runRingCoil(const std::string &name, bool weak) {
+    Wx wx;
+    const bool fry = !strcmp(g_ring->name, "fry");
+    wx.voc = fry ? 78 : 70, wx.k = 0.86f, wx.vbat = fry ? 26.8f : 26.3f, wx.pClear = weak ? 40 : 150;
+    wx.init();
+    g_verbose = getenv("SIM_V") != nullptr;
+    settle(45);
+    const float Lt = g_vconv.getL();
+    const char *tags[2] = {"old (10 steps, 3 s, median)", "new (48 steps, 1 s, ring fit)"};
+    for (int m = 0; m < 2; ++m) {
+        double secs = 0;
+        const auto r = simMeasureL0(m ? 48 : 10, m ? 1000 : 3000, secs);
+        const float L = m ? r.L : r.Lmed;
+        printf("== RING coil %s: L %.2f uH = %+.1f %% vs plant %.2f uH (%d DCM pts, %.0f s); fit: ring %.0f kHz"
+               " (plant %.0f), ripple +-%.0f %%, %.1f periods, median of points %.2f uH (%+.1f %%)\n", tags[m], L * 1e6f,
+               100 * (L / Lt - 1), Lt * 1e6f, r.n, secs, r.f * 1e-3f, g_vconv.getRingF() * 1e-3f, 100 * r.amp, r.periods,
+               r.Lmed * 1e6f, 100 * (r.Lmed / Lt - 1));
+        // does MPPT come back on its own?
+        const double tr = tNow();
+        double tOn = -1;
+        while (tNow() - tr < 40) {
+            run(0.05, 0);
+            if (tOn < 0 && !converter.disabled()) tOn = tNow() - tr;
+        }
+        const float v = g_vconv.getVin();
+        printf("== RING coil restore: converter %s (first on after %.1f s), %s, PV %.1f W\n",
+               converter.disabled() ? "OFF" : "running", tOn, modeStr(), v * g_vconv.pvCurrent(v));
+    }
+    printf("== SUMMARY %s: see RING coil lines\n", name.c_str());
+    return 0;
+}
+
 static int simMain(int argc, char **argv) {
     std::string sc = argc > 1 ? argv[1] : "sanity";
     g_simLogHook = logHook;
@@ -897,6 +1173,7 @@ static int simMain(int argc, char **argv) {
     const bool p0 = sc.size() > 3 && sc.compare(sc.size() - 3, 3, "-p0") == 0;
     const std::string name = sc;
     if (p0) sc.resize(sc.size() - 3);
+    sc = ringBoardFrom(sc);
     std::vector<std::pair<std::string, std::string>> ov;
     if (sc == "b") ov = {{"isc", "1.6"}};
     if (sc == "c") ov = {{"v_bat", "28.7"}};
@@ -909,7 +1186,7 @@ static int simMain(int argc, char **argv) {
         }
     }
     Wx wx;
-    const bool isWx = sc.rfind("wx-", 0) == 0;
+    const bool isWx = sc.rfind("wx-", 0) == 0 || sc == "ring-sweep" || sc == "ring-weak";
     if (isWx && !wxScenario(sc, wx)) {
         printf("unknown scenario %s\n", sc.c_str());
         return 1;
@@ -922,6 +1199,15 @@ static int simMain(int argc, char **argv) {
     boot(ov, p0);
     if (rcal) g_vconv.setDiodeVf(0.7f), g_vconv.setInputPump(true);
     if (sc == "rcal-sun") g_vconv.setNodeRing(5e-9f, 40.f), g_vconv.setPv(5.6f, 79.6f, 0.78f);
+    if (g_ring) {
+        g_vconv.setPassives(g_vconv.getCin(), g_vconv.getCout(), g_ring->lPlant);
+        g_vconv.setRing(g_ringOn ? g_ring->f : 0.f, g_ringDamped ? 0.5f : g_ring->q);
+        g_vconv.setDiodeVf(0.7f);
+        printf("# ring board %s: coil.conf L0 %.0f uH, plant L %.0f uH, ring %s (%.0f kHz, Q %.1f, node C %.2f nF)\n",
+               g_ring->name, g_ring->l0Conf * 1e6f, g_ring->lPlant * 1e6f, g_ringOn ? (g_ringDamped ? "damped" : "on") : "OFF", g_ring->f * 1e-3f,
+               g_ringDamped ? 0.5f : g_ring->q, 1e9f / (39.478418f * g_ring->f * g_ring->f * g_ring->lPlant));
+    }
+    if (sc == "ring-coil" || sc == "ring-coil-weak") return runRingCoil(name, sc == "ring-coil-weak");
     if (isWx) return runWx(name, wx);
     if (sc.rfind("shade", 0) == 0) g_vconv.setPvShade(0.68f);
 
