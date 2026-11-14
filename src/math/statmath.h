@@ -3,60 +3,11 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
-#include <deque>
 
 #include "../util.h"
 
 template<class T>
 inline T abs(T x) { return x < 0 ? -x : x; }
-
-template<class float_t_alpha=float_t>
-class EWMASpan {
-protected:
-public:
-    float_t_alpha alpha;
-    explicit EWMASpan(uint32_t span) { updateSpan(span); }
-    void updateSpan(uint32_t span) { alpha = (2.f / (float_t) (span + 1)); }
-
-    [[nodiscard]] uint32_t span() const { return uint32_t(2.f / alpha) - 1; }
-};
-
-
-template<size_t channels, size_t passes, class float_t=float, class float_t_alpha=float_t>
-class EWMA_nCh_nPass : public EWMASpan<float_t_alpha> {
-/**
- * Implement exponential weighted moving average
- */
-public:
-    float_t y[channels][passes] = {{std::numeric_limits<float_t>::quiet_NaN()}};
-
-    explicit EWMA_nCh_nPass(uint32_t span) : EWMASpan<float_t_alpha>(span) {
-    }
-
-    inline void add(uint8_t ch, const float_t &x) {
-        for (int i = 0; i < passes; ++i) {
-            if (unlikely(isnan(x))) return;
-            if (unlikely(isnan(y[ch][i]))) y[ch][i] = x;
-            y[i] = (1 - EWMASpan<float_t_alpha>::alpha) * y[ch][i] + EWMASpan<float_t_alpha>::alpha * x;
-            x = y[i];
-        }
-    }
-
-    inline void addVector(const float_t *x) {
-        for (int c = 0; c < channels; ++c) {
-            add(c, x[c]);
-        }
-    }
-
-    inline const float_t &get(uint8_t channel) const { return y[channel][passes - 1]; }
-
-    inline void reset() {
-        for (int c = 0; c < channels; ++c)
-            for (int i = 0; i < passes; ++i)
-                y[c][i] = std::numeric_limits<float_t>::quiet_NaN();
-    }
-};
-
 
 template<class float_t=float, class float_t_alpha=float_t>
 class EWMA {
@@ -173,18 +124,6 @@ public:
     inline const float_t &nvar() const { return std.get(); }
 };
 
-template<typename float_t=float>
-class PctChange {
-    float_t _last = NAN;
-
-public:
-    inline float next(float x) {
-        float_t pct = (x - _last) / _last;
-        _last = x;
-        return pct;
-    }
-};
-
 template<int span, typename float_t=float>
 class EWMA_N {
     float_t y = std::numeric_limits<float_t>::quiet_NaN();
@@ -285,26 +224,6 @@ public:
     }
 };
 
-/*
-template<typename RandomAccessIter, typename comp>
-inline size_t median_of_three(const RandomAccessIter &array, size_t l, size_t m, size_t r)  {
-    return comp(array[l], array[m]) ? ( comp(array[m], array[r]) ? m : ( comp( array[l], array[r]) ? r : l ) )
-                                    : ( comp(array[r], array[m]) ? m : ( comp( array[r], array[l] ) ? r : l ) );
-}
-
-inline size_t pseudo_median_of_nine( const RandomAccessIterator &array, const quick_sort_range &range ) const {
-    size_t offset = range.size/8u;
-    return median_of_three(array,
-                           median_of_three(array, 0, offset, offset*2),
-                           median_of_three(array, offset*3, offset*4, offset*5),
-                           median_of_three(array, offset*6, offset*7, range.size - 1) );
-
-}
-*/
-
-
-
-
 // Not packed: a packed layout would put the next field at offset 6, causing
 // any subsequent MeanAccumulator (or float member) in a containing struct to
 // be misaligned. On Xtensa this means unaligned-load traps / slow paths, and
@@ -380,21 +299,3 @@ public:
     }
 };
 
-
-template<typename float_t =float>
-class RollingMean {
-    std::deque<float_t> q;
-    float_t sum_;
-
-public:
-    explicit RollingMean(size_t len) : q(len, 0), sum_(0) {}
-
-    void add(float_t x) {
-        sum_ += x - q.pop_front();
-        q.push_back(x);
-    }
-
-    inline void mean() const { return sum_ / q.size(); }
-
-    inline void sum() const { return sum_; }
-};

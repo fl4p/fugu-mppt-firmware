@@ -171,16 +171,7 @@ public:
 
 #if CONFIG_IDF_TARGET_ESP32S3
 
-#if ESP_IDF_VERSION_MAJOR >= 5
-
 #include "driver/temperature_sensor.h"
-
-#else
-#include "driver/temp_sensor.h"
-#endif
-
-
-#if ESP_IDF_VERSION_MAJOR >= 5
 
 class Esp32TempSensor : public SingleValueSensor {
     RunningMedian3<float> median3{};
@@ -236,63 +227,6 @@ public:
     [[nodiscard]] float last() const override { return ewma.get(); }
 };
 
-#else // ESP_IDF_VERSION_MAJOR >= 5
-/**
- * Reads ESP32 internal temperature sensor.
- * Don't use this in latency critical loops if WiFi is on!
- */
-class Esp32TempSensor : public SingleValueSensor {
-    RunningMedian3<float> median3{};
-    EWMA<float> ewma{40};
-
-    //temperature_sensor_handle_t temp_handle = NULL;
-    float tsens_out = NAN;
-    temp_sensor_config_t conf{.dac_offset = TSENS_DAC_L2, .clk_div = 6};
-
-public:
-    Esp32TempSensor() {
-        /*temperature_sensor_config_t temp_sensor = {
-                .range_min = 20,
-                .range_max = 100,
-        };
-        ESP_ERROR_CHECK(temperature_sensor_install(&temp_sensor, &temp_handle));
-
-        ESP_ERROR_CHECK(temperature_sensor_enable(temp_handle));
-         */
-        ESP_ERROR_CHECK(temp_sensor_set_config(conf));
-        ESP_ERROR_CHECK(temp_sensor_start());
-    }
-
-    void begin() {
-    }
-
-    float readImpl() override {
-        // This has very poor real-time performance if WiFi is enabled (probably using ADC0?)
-        if (temp_sensor_read_celsius(&tsens_out) != ESP_OK) {
-            conf.dac_offset = (temp_sensor_dac_offset_t)((conf.dac_offset + 1) % TSENS_DAC_MAX);
-            return NAN;
-        }
-
-        temp_sensor_dac_offset_t os = TSENS_DAC_L2;
-        if (tsens_out > (conf.dac_offset != TSENS_DAC_L1 ? 75.f : 70.f)) {
-            os = TSENS_DAC_L1;
-        } else if (tsens_out < -5) {
-            os = TSENS_DAC_L3;
-        }
-
-        if (os != conf.dac_offset) {
-            ESP_LOGI("temp", "Updating temp dac offset %i", (int) conf.dac_offset);
-            conf.dac_offset = os;
-        }
-
-        ewma.add(median3.next(tsens_out));
-
-        return ewma.get();
-    }
-
-    [[nodiscard]] float last() const override { return ewma.get(); }
-};
-#endif // ESP_IDF_VERSION_MAJOR >= 5
 
 #else
 

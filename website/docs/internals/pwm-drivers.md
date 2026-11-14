@@ -180,7 +180,7 @@ sequences:
 
 ## Interleaving — N legs
 
-`MCPWM_Converter<N>` holds an `std::array` of N legs (= N operators / N timers) in one
+`MCPWM_Converter<N>` (in `test/test_pwm.cpp`, not used by the firmware) holds an `std::array` of N legs (= N operators / N timers) in one
 group plus one fault brake. The legs keep their phase relationship as follows:
 
 - Leg 0's timer publishes a sync source on TEZ (`mcpwm_new_timer_sync_src`).
@@ -194,7 +194,7 @@ group plus one fault brake. The legs keep their phase relationship as follows:
 
 ## Public driver surface
 
-The driver exposes three classes.
+The driver exposes two classes; the test-only `MCPWM_Converter<N>` wraps them.
 
 `MCPWM_FaultBrake`
 - `initGpio(group, pin, activeHigh)`: register the fault input.
@@ -210,7 +210,7 @@ The driver exposes three classes.
 - `forceShutdown()`, `clearForce()`: RT-safe force-level on both gates.
 - `pwmMax`: period after dead-time reservation; controller clamps to `[0, pwmMax - 1]`.
 
-`MCPWM_Converter<N>`
+`MCPWM_Converter<N>` (test only)
 - Same `init(...)` taking pin arrays of length N plus optional fault pin.
 - Fanned-out `setHsOff` / `setLsOff` / `forceShutdown` / `clearForce`.
 

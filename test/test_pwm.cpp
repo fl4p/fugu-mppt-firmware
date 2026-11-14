@@ -13,6 +13,7 @@
 #include <stdexcept>            // util.h's ESP_ERROR_CHECK_THROW uses std::runtime_error
 #include <optional>
 #include <algorithm>
+#include <array>
 #include <driver/mcpwm_cap.h>
 #include <driver/gpio.h>
 #include <esp_rom_gpio.h>
@@ -43,6 +44,53 @@ static const char *TAG_PWM = "pwm_rig";
 #ifndef PWM_LS_PIN_2
 #define PWM_LS_PIN_2 9  // Test 12 — leg-1 LS
 #endif
+
+// N interleaved synchronous legs, timers phase-shifted by period/N, one shared fault.
+template <int N>
+class MCPWM_Converter {
+    std::array<MCPWM_SyncLeg, N> legs_;
+    MCPWM_FaultBrake fault_;
+    mcpwm_sync_handle_t sync_ = nullptr;
+
+public:
+    uint16_t pwmMax = 0;
+
+    void init(int group, uint32_t freq, const int (&pinHS)[N], const int (&pinLS)[N],
+              uint32_t dtHlTicks, uint32_t dtLhTicks, bool enLogic, uint32_t fixedTicks,
+              int faultPin = -1, bool faultActiveHigh = false) {
+        for (int i = 0; i < N; ++i)
+            legs_[i].init(group, freq, pinHS[i], pinLS[i], dtHlTicks, dtLhTicks, enLogic, fixedTicks);
+        pwmMax = legs_[0].pwmMax;
+
+        if (faultPin >= 0) {
+            fault_.initGpio(group, faultPin, faultActiveHigh);
+            for (auto &l : legs_) fault_.bindLeg(l.oper(), l.genHS(), l.genLS());
+        }
+
+        if (N > 1) {
+            mcpwm_timer_sync_src_config_t sc = {
+                .timer_event = MCPWM_TIMER_EVENT_EMPTY,
+                .flags = {.propagate_input_sync = 0},
+            };
+            ESP_ERROR_CHECK(mcpwm_new_timer_sync_src(legs_[0].timer(), &sc, &sync_));
+            for (int i = 1; i < N; ++i) {
+                mcpwm_timer_sync_phase_config_t pc = {
+                    .sync_src    = sync_,
+                    // phase is a fraction of the true timer period, not the dt-reduced pwmMax
+                    .count_value = (uint32_t) ((uint32_t) legs_[0].periodTicks * i / N),
+                    .direction   = MCPWM_TIMER_DIRECTION_UP,
+                };
+                ESP_ERROR_CHECK(mcpwm_timer_set_phase_on_sync(legs_[i].timer(), &pc));
+            }
+        }
+        for (auto &l : legs_) l.start();
+    }
+
+    void setHsOff(uint16_t c) { for (auto &l : legs_) l.setHsOff(c); }
+    void setLsOff(uint16_t c) { for (auto &l : legs_) l.setLsOff(c); }
+    __attribute__((always_inline)) inline void forceShutdown() { for (auto &l : legs_) l.forceShutdown(); }
+    void clearForce()         { for (auto &l : legs_) l.clearForce(); }
+};
 
 static constexpr int       kTestPin = PWM_TEST_PIN;
 static constexpr int       kHsPin    = PWM_HS_PIN;

@@ -9,9 +9,6 @@ class AdaptiveNoiseFilter {
 
     float targetNSR = NAN;
     EWMA_nPass<PASSES, float> ewma{1};
-    //EWMA_nCh_nPass<2, 1,
-
-
 
 public:
     EWM<false, float> ewmN{1};

@@ -18,16 +18,7 @@ extern "C" {
 #include "freertos/semphr.h"
 #include "esp_err.h"
 
-#define NUM_OF_SPIN_TASKS   6
-#define SPIN_ITER           500000  //Actual CPU cycles used will depend on compiler optimization
-#define SPIN_TASK_PRIO      2
-#define STATS_TASK_PRIO     3
-#define STATS_TICKS         pdMS_TO_TICKS(1000)
 #define ARRAY_SIZE_OFFSET   5   //Increase this if print_real_time_stats returns ESP_ERR_INVALID_SIZE
-
-//static char task_names[NUM_OF_SPIN_TASKS][configMAX_TASK_NAME_LEN];
-static SemaphoreHandle_t sync_spin_task;
-static SemaphoreHandle_t sync_stats_task;
 
 /**
  * @brief   Function to print the CPU usage of tasks over a given duration.
@@ -156,17 +147,6 @@ exit: //Common return path
     free(start_array);
     free(end_array);
     return ret;
-}
-
-static void spin_task(void *arg) {
-    xSemaphoreTake(sync_spin_task, portMAX_DELAY);
-    while (1) {
-        //Consume CPU cycles
-        for (int i = 0; i < SPIN_ITER; i++) {
-            __asm__ __volatile__("NOP");
-        }
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
 }
 }
 #else
