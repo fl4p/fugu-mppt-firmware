@@ -1,0 +1,2 @@
+# on-device coil measurement (measure-coil); otherwise the default build
+CONFIG_FUGU_WITH_MEASURE_COIL=y
