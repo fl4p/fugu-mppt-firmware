@@ -32,7 +32,7 @@ The following table compares the two methods.
 
 | | Beacon sync (`bsync`) | Wired sync (`wsync`) |
 |---|---|---|
-| Kconfig | `CONFIG_FUGU_WITH_BSYNC` (default `y`, needs `FUGU_WITH_NETW` + the MCPWM gate driver, the S3 default) | `CONFIG_FUGU_WITH_WSYNC` (on in this repo's `sdkconfig.defaults`; bare Kconfig default `n`; needs `FUGU_WITH_MCPWM`). See [Build Options](../../guide/getting-started/build-options.md) |
+| Kconfig | `CONFIG_FUGU_WITH_BSYNC` (default `n`, needs `FUGU_WITH_NETW` + the MCPWM gate driver, the S3 default) | `CONFIG_FUGU_WITH_WSYNC` (on in this repo's `sdkconfig.defaults`; bare Kconfig default `n`; needs `FUGU_WITH_MCPWM`). See [Build Options](../../guide/getting-started/build-options.md) |
 | Timebase | TSF timestamps of 802.11 beacons from one shared AP, received RX-only | Pulse from a leader converter, locked to its timer TEZ |
 | Actuation | Software servo (1 Hz) trims the period by dithering it between P and P+1 | Hardware: the follower reloads its timer counter on each sync edge |
 | Relative phase | ~±1–3 µs; ±0.5 µs p2p with a dedicated beacon node | Up to one timer tick (6.25 ns) |

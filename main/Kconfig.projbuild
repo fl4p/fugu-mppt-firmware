@@ -84,7 +84,7 @@ menu "PWM drivers"
 
     config FUGU_WITH_BSYNC
         bool "Beacon-sniffing MCPWM clock sync (bsync service)"
-        default y
+        default n
         depends on FUGU_WITH_NETW && FUGU_WITH_MCPWM
         help
             Phase/frequency-lock the MCPWM switching clock of multiple converters to a shared
