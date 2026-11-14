@@ -20,8 +20,13 @@ void VirtualConverter::stepOneCycle(float T) {
     // Rebuild reciprocals only when an input changes; the steady N-cycle loop then divides nothing
     // (LX7 has no hw float divide, so each `/` was a software __divsf3). 6 compares << 18 divisions.
     if (T != cycT_ || pmax != cycPmax_ || l_ != cycL_ || cIn_ != cycCin_ ||
-        cOut_ != cycCout_ || rbat_ != cycRbat_) {
+        cOut_ != cycCout_ || rbat_ != cycRbat_ || ringF_ != cycRingF_) {
         cycT_ = T; cycPmax_ = pmax; cycL_ = l_; cycCin_ = cIn_; cycCout_ = cOut_; cycRbat_ = rbat_;
+        cycRingF_ = ringF_;
+        ringW_ = (ringF_ > 0.0f && l_ > 0.0f) ? kTwoPi * ringF_ : 0.0f;
+        ringZ0_ = ringW_ * l_;
+        ringC_ = ringW_ > 0.0f ? 1.0f / (ringW_ * ringZ0_) : 0.0f;
+        ringA_ = ringW_ / (2.0f * ringQ_);
         invL_    = (l_   > 0.0f) ? 1.0f / l_   : 0.0f;
         invCin_  = (cIn_ > 0.0f) ? 1.0f / cIn_ : 0.0f;
         invCout_ = (cOut_> 0.0f) ? 1.0f / cOut_: 0.0f;
@@ -162,8 +167,25 @@ void VirtualConverter::stepOneCycleBuck(float T) {
 
     // Phase 3: both off. c > 0: LS body diode. c < 0: HS body diode (rev pump).
     float cEnd = c;
-    float areaOff = 0.0f;
-    if (tOff > 0.0f) {
+    float areaOff = 0.0f, areaRingIn = 0.0f;
+    bool ringing = false;
+    if (ringW_ > 0.0f && tOff > 0.0f && tHS > 0.0f && vOut_ > 0.0f && vIn_ > vOut_) {
+        // switch-node ring: LS body diode carries c > 0 to zero, then the node rings until HS turn-on
+        float x = -vOut_, t = tOff;
+        if (c > 0.0f) {
+            const float tZero = c * l_ / (vOut_ + diodeVf_);
+            if (tZero >= tOff) {
+                cEnd = c - (vOut_ + diodeVf_) * invL_ * tOff;
+                areaOff = trapArea(c, cEnd, tOff);
+                t = 0.0f;
+            } else {
+                areaOff = 0.5f * c * tZero;
+                t -= tZero;
+                x = -(vOut_ + diodeVf_);
+            }
+        }
+        if (t > 0.0f) areaOff += ringOff(x, c > 0.0f ? 0.0f : c, t, cEnd, areaRingIn), ringing = true;
+    } else if (tOff > 0.0f) {
         if (c > 0.0f) {
             const float slope = -(vOut_ + diodeVf_) * invL_;     // <= 0; zero iff vOut_ + diodeVf_ == 0
             if (slope < 0.0f) {
@@ -198,12 +220,65 @@ void VirtualConverter::stepOneCycleBuck(float T) {
         }
     }
 
-    iInAvg_  = areaHS * invT_;
+    iInAvg_  = (areaHS + areaRingIn) * invT_;
     iOutAvg_ = (areaHS + areaLS + areaOff) * invT_;
     iLEnd_ = cEnd;
     // DCM := "coil is at zero at cycle end". c!=0 means phase 3 drove it down;
     // a==0 covers the staying-idle case (prior cycle ended at zero too).
-    dcm_ = (cEnd == 0.0f) && (c != 0.0f || a == 0.0f);
+    dcm_ = ringing || ((cEnd == 0.0f) && (c != 0.0f || a == 0.0f));
+}
+
+// Switch-node ring in the buck's dead phase (both switches off, coil current near zero): the coil
+// L and the node capacitance C (both FETs' Coss, winding, layout) ring about Vout. State x = Vnode -
+// Vout, i = coil current toward the output; KCL C dx/dt = -i, KVL L di/dt = x. Damped harmonic:
+//   x(s) = A e^(-a s) cos(w s + p),  i(s) = (A/Z0) e^(-a s) sin(w s + p),  Z0 = w L,  a = w/(2Q)
+// (the a/w = 1/(2Q) term of i is dropped: < 3 % at Q >= 20). Body diodes clamp the node at -Vf
+// (LS) and Vin + Vf (HS): the coil then ramps its current to zero at the clamp voltage and the ring
+// restarts from rest. Only the first extremum on each side is tested for a clamp, later ones are
+// smaller. Charge to the output over the ring: int i ds = -C dx. Linear C, constant w and Q; the
+// node charge the HS draws from the input at turn-on (C (Vin - Vnode) per cycle) and the 1/2 C Vin^2
+// the HS turn-off delivers to the output are not modelled; the node energy left at turn-on (<= 1/2 C
+// (2 Vout)^2 per cycle) is dropped, of the order of the real turn-on loss. Returns the charge to the output over t, iEnd = coil current at t (the
+// HS turn-on current of the next cycle: its phase is what modulates the energy per cycle), qIn =
+// charge the HS body diode returns to the input while clamped (<= 0, input-current sign).
+float VirtualConverter::ringOff(float x, float i, float t, float &iEnd, float &qIn) const {
+    constexpr float kPi = kTwoPi * 0.5f;
+    const float xLo = -(vOut_ + diodeVf_), xHi = vIn_ + diodeVf_ - vOut_;
+    float q = 0.0f;
+    for (int k = 0; k < 4; ++k) {
+        const float amp = std::sqrt(x * x + i * i * ringZ0_ * ringZ0_);
+        if (amp < 1e-6f) break;
+        const float p = std::atan2(i * ringZ0_, x);
+        float sHit = t, xc = 0.0f;
+        for (int side = 0; side < 2; ++side) {
+            const float lim = side ? xHi : -xLo; // |clamp level|
+            float th = (side ? 0.0f : kPi) - p;  // phase to the next extremum on that side
+            th -= kTwoPi * std::floor(th / kTwoPi);
+            const float sExt = th / ringW_;
+            const float aExt = amp * std::exp(-ringA_ * sExt);
+            if (aExt <= lim * 1.0001f) continue;
+            const float s = std::max(0.0f, sExt - std::acos(lim / aExt) / ringW_);
+            if (s < sHit) sHit = s, xc = side ? xHi : xLo;
+        }
+        const float e = std::exp(-ringA_ * sHit), th = ringW_ * sHit + p;
+        const float x1 = amp * e * std::cos(th), i1 = amp * e * std::sin(th) / ringZ0_;
+        q += ringC_ * (x - x1);
+        t -= sHit;
+        if (xc == 0.0f) { iEnd = i1; return q; }
+        // clamped: coil voltage xc ramps the current back to zero
+        const float tz = std::fabs(i1) * l_ / std::fabs(xc);
+        if (tz >= t) {
+            iEnd = i1 + xc / l_ * t;
+            if (xc > 0.0f) qIn += 0.5f * (i1 + iEnd) * t;
+            return q + 0.5f * (i1 + iEnd) * t;
+        }
+        if (xc > 0.0f) qIn += 0.5f * i1 * tz;
+        q += 0.5f * i1 * tz;
+        t -= tz;
+        x = xc, i = 0.0f;
+    }
+    iEnd = 0.0f;
+    return q;
 }
 
 // Boost: inductor in series with the INPUT. Ctrl = LS (charges the coil to ground),

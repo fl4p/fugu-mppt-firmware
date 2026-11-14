@@ -105,6 +105,11 @@ public:
     void setVin(float v)  { vIn_ = v; }
     void setVout(float v) { vOut_ = v; }
     void setDiodeVf(float v) { diodeVf_ = v; } // LS body-diode drop in the dead/off phase
+    // Buck DCM switch-node ring: L0 against the node capacitance C = 1/((2*pi*f)^2*L), quality
+    // factor q. f <= 0 disables it (default).
+    void setRing(float f, float q) { ringF_ = f; ringQ_ = q > 0.5f ? q : 0.5f; cycRingF_ = -1.0f; }
+    [[nodiscard]] float getRingF() const { return ringF_; }
+    [[nodiscard]] float getRingQ() const { return ringQ_; }
     [[nodiscard]] float getVin()  const { return vIn_; }
     [[nodiscard]] float getVout() const { return vOut_; }
     // per-cycle Vout maximum since the last call
@@ -196,9 +201,14 @@ private:
     // the rotation step changes; |sin| / custom shapes still go through the function pointer.
     float oscS_ = 0.0f, oscC_ = 1.0f, rotS_ = 0.0f, rotC_ = 1.0f, oscStep_ = -1.0f;
 
+    // switch-node ring (setRing): f, Q; cached omega, Z0 = omega*L, C = 1/(omega*Z0), decay rate
+    float ringF_ = 0.0f, ringQ_ = 20.0f, cycRingF_ = -1.0f;
+    float ringW_ = 0.0f, ringZ0_ = 0.0f, ringC_ = 0.0f, ringA_ = 0.0f;
+
     void stepOneCycle(float T);
     void stepOneCycleBuck(float T);
     void stepOneCycleBoost(float T);
+    float ringOff(float x, float i, float t, float &iEnd, float &qIn) const;
 };
 
 // Singleton. Defined in src/sim/vconv.cpp.

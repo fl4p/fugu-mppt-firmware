@@ -7,7 +7,8 @@
 // L = (Vin-Vout)*Vin*D^2 / (2*Vout*fsw*Iout). See website/docs/lab/coil-inductance.md.
 //
 // ls=false -> L0 duty sweep (arg1 = steps, 0 = default); ls=true -> LS-timing sweep (arg1 = hs,
-// 0 = auto). apply writes the result to coil.conf. Returns false if a run is already in progress.
+// 0 = auto), dwellMs 0 = default (L0 1 s, LS 3 s). apply writes the result to coil.conf. Returns false if a
+// run is already in progress.
 bool measureCoilStart(bool ls, bool apply, int arg1, uint32_t dwellMs);
 
 bool isMeasuring() ;

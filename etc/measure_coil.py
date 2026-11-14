@@ -12,7 +12,9 @@ sensors back, each point yields
 where D = pwmCtrl/period is the high-side on-fraction and fsw the switching frequency, both as
 realized by the driver (read from the `pwm-dump` console command). This is the
 inverse of the firmware's own rippleCurrent() (src/buck.h). We sweep duty upward from deep DCM
-toward the CCM/DCM boundary, fit L across the DCM points, and report the median.
+toward the CCM/DCM boundary and fit L across the DCM points. The switch node rings after the coil
+current reaches zero, which makes the per-point L oscillate with the dead time; fit_l0() fits that
+periodic term (ring frequency scanned) and reports the mean over whole ring periods.
 
 Caveats (see doc): result scales directly with the Iout calibration and with the PWM period; dead-time and
 DCR bias L low by a few %. The reported L is the *physical* inductance — put it in coil.conf as L0
@@ -29,6 +31,7 @@ Examples:
 """
 
 import argparse
+import math
 import os
 import re
 import statistics
@@ -40,8 +43,11 @@ try:
     from fugu.transport import SerialTransport, SocketTransport, BleTransport
     from fugu.console import Console
 except ImportError:
-    from etc.fugu.transport import SerialTransport, SocketTransport, BleTransport
-    from etc.fugu.console import Console
+    try:
+        from etc.fugu.transport import SerialTransport, SocketTransport, BleTransport
+        from etc.fugu.console import Console
+    except ImportError:  # estimator-only use (etc/test_measure_coil_fit.py) without the fugu package
+        SerialTransport = SocketTransport = BleTransport = Console = None
 
 # Status line (src/main.cpp loopLF):
 #   V=24.5/27.30 I= 1.2/ 1.50A   40.9W 25C40C 400sps 0/s DCM(H|L|Lm)= 240| 120| 130 st= MPPT,1 ...
@@ -82,6 +88,113 @@ class StatusTap:
 
 def median(xs):
     return statistics.median(xs) if xs else float("nan")
+
+
+# --- L0 estimator (src/selftest/coil_fit.h is the on-device copy: keep the two identical) ---------
+FIT_MIN_PTS = 16
+RING_F_LO, RING_F_HI = 80e3, 1.2e6  # ring frequency search range, Hz
+
+
+def _ring_solve(y, t, f, nh):
+    """Least squares y ~ c0 + sum_h a_h cos(2 pi h f t) + b_h sin(...); returns (rss, c)."""
+    p = 1 + 2 * nh
+    N = [[0.0] * (p + 1) for _ in range(p)]
+    for yi, ti in zip(y, t):
+        w = 2 * math.pi * f * ti
+        a = [1.0, math.cos(w), math.sin(w)]
+        if nh > 1:
+            a += [math.cos(2 * w), math.sin(2 * w)]
+        for r in range(p):
+            for k in range(p):
+                N[r][k] += a[r] * a[k]
+            N[r][p] += a[r] * yi
+    for k in range(p):
+        piv = max(range(k, p), key=lambda r: abs(N[r][k]))
+        if abs(N[piv][k]) < 1e-9:
+            return math.inf, None
+        N[k], N[piv] = N[piv], N[k]
+        for r in range(p):
+            if r != k:
+                m = N[r][k] / N[k][k]
+                N[r] = [N[r][j] - m * N[k][j] for j in range(p + 1)]
+    c = [N[k][p] / N[k][k] for k in range(p)]
+    rss = 0.0
+    for yi, ti in zip(y, t):
+        w = 2 * math.pi * f * ti
+        e = yi - c[0] - c[1] * math.cos(w) - c[2] * math.sin(w)
+        if nh > 1:
+            e -= c[3] * math.cos(2 * w) + c[4] * math.sin(2 * w)
+        rss += e * e
+    return rss, c
+
+
+def fit_l0(pts, fsw):
+    """L from DCM points [(D, Vin, Vout, Iout), ...] (doc: coil-inductance.md, "Switch-node ringing").
+
+    Per point 1/L = 2*Vout*fsw*Iout / ((Vin-Vout)*Vin*D^2). The switch-node ring makes 1/L_i periodic
+    in the dead time t = (1 - D*Vin/Vout)/fsw; fit c0 + harmonics of a scanned ring frequency f and
+    return L = 1/c0, the mean over whole ring periods. Below FIT_MIN_PTS points or without a
+    significant (>= 1 %) periodic term: the median of the points (f = 0)."""
+    y, t = [], []
+    for d, vi, vo, io in pts:
+        x = (vi - vo) * vi * d * d
+        if x > 0 and io > 0 and vo > 0:
+            y.append(2 * vo * fsw * io / x)
+            t.append((1 - d * vi / vo) / fsw)
+    n = len(y)
+    r = dict(L=float("nan"), Lmed=float("nan"), f=0.0, amp=0.0, periods=0.0, se=float("nan"), n=n, nh=0)
+    if n < 3:
+        return r
+    ymed = statistics.median(y)
+    r["L"] = r["Lmed"] = 1 / ymed
+    if n < FIT_MIN_PTS:
+        return r
+    y = [v / ymed for v in y]
+    y0 = sum(y) / n
+    rss0 = sum((v - y0) ** 2 for v in y)
+    span = max(t) - min(t)
+    ts = sorted(t)
+    dt = statistics.median([b - a for a, b in zip(ts, ts[1:])])
+    if not (span > 0 and dt > 0):
+        return r
+    nh = 2 if n >= 24 else 1
+    f_lo, f_hi = max(RING_F_LO, 1 / span), min(RING_F_HI, 0.45 / dt)
+    if not f_hi > f_lo:
+        return r
+    df, best, f_best = 0.1 / span, math.inf, 0.0
+    f = f_lo
+    while f < f_hi:
+        e, _ = _ring_solve(y, t, f, nh)
+        if e < best:
+            best, f_best = e, f
+        f += df
+    for _ in range(2):  # refine around the grid minimum
+        f0 = f_best
+        for j in range(-5, 6):
+            e, _ = _ring_solve(y, t, f0 + j * df * 0.2, nh)
+            if e < best:
+                best, f_best = e, f0 + j * df * 0.2
+        df *= 0.2
+    if not best < 0.5 * rss0:
+        return r
+    _, c = _ring_solve(y, t, f_best, nh)
+    if not c[1] ** 2 + c[2] ** 2 > 1e-4 * c[0] ** 2:  # < 1 % ripple: no ring
+        return r
+    p = 1 + 2 * nh
+    r.update(L=1 / (c[0] * ymed), f=f_best, amp=math.hypot(c[1], c[2]) / c[0], periods=span * f_best,
+             se=math.sqrt(best / (n - p) / n) / c[0], nh=nh)
+    return r
+
+
+def report_l0(r, L_ref=None):
+    """Result lines shared in wording with the device (`L = ... uH` is parsed by the e2e test)."""
+    if r["f"]:
+        c_nf = 1e9 / ((2 * math.pi * r["f"]) ** 2 * r["L"])
+        return (f"L = {r['L'] * 1e6:.2f} uH  (ring fit, {r['n']} DCM pts, +-{r['se'] * 100:.1f}%; "
+                f"ring {r['f'] / 1e3:.0f} kHz = {c_nf:.1f} nF node C, ripple +-{r['amp'] * 100:.0f}%, "
+                f"{r['periods']:.1f} periods; median of points {r['Lmed'] * 1e6:.2f} uH)")
+    return (f"L = {r['L'] * 1e6:.2f} uH  (median of {r['n']} DCM pts; ring not resolved: "
+            f"{'too few points' if r['n'] < FIT_MIN_PTS else 'no periodic term'}, expect up to +-5%)")
 
 
 def ascii_plot(rows, width=58, height=15):
@@ -440,11 +553,12 @@ def main():
     g.add_argument("--ble", nargs="?", const="fugu", help="BLE NUS device name (default fugu)")
     ap.add_argument("--fsw", type=float, help="switching freq Hz (default: realized, from pwm-dump)")
     ap.add_argument("--pwm-max", type=int, help="PWM period in timer ticks (default: from pwm-dump)")
-    ap.add_argument("--steps", type=int, default=10, help="duty steps across the DCM band")
+    ap.add_argument("--steps", type=int, default=48,
+                    help="duty steps across the DCM band (>= 16 to resolve the switch-node ring)")
     ap.add_argument("--lo", type=float, default=0.25, help="start duty as fraction of boundary M")
     ap.add_argument("--hi", type=float, default=0.9, help="end duty as fraction of boundary M")
     ap.add_argument("--i-max", type=float, default=2.0, help="abort a step if Iout exceeds this (A)")
-    ap.add_argument("--dwell", type=float, default=5.0, help="seconds to settle per step (>3 s)")
+    ap.add_argument("--dwell", type=float, default=3.0, help="seconds to settle per step (>= 3 s: one status line)")
     ap.add_argument("--bidir", action="store_true",
                     help="sweep up then back down; compare L at matched duties (settle-check)")
     ap.add_argument("--plot-every", type=int, default=0,
@@ -536,18 +650,17 @@ def main():
         imax = max((r[4] for r in rows if r[5] == "DCM"), default=0.0)
         ifloor = max(0.15, 0.2 * imax)
         dcm = [r for r in rows if r[5] == "DCM" and r[6] == r[6] and r[4] >= ifloor]
-        ls = sorted(r[6] for r in dcm)
         print()
-        if len(ls) < 3:
-            print(f"only {len(ls)} DCM points above {ifloor:.2f} A; widen the band or wait for sun")
+        if len(dcm) < 3:
+            print(f"only {len(dcm)} DCM points above {ifloor:.2f} A; widen the band or wait for sun")
             if all(r[5] == "CCM" for r in rows) and rows:
                 print("all points CCM -> forced_pwm may be on (converter.conf); DCM needed")
             return
-        med = median(ls)
-        q1, q3 = ls[len(ls) // 4], ls[(3 * len(ls)) // 4]  # rough IQR
-        spread = (q3 - q1) / med * 100.0
-        print(f"L = {med * 1e6:.2f} uH   ({len(ls)} DCM pts, Iout>={ifloor:.2f}A, IQR {spread:.0f}%)")
-        print(f"  -> set coil.conf L0={med:.3e}   (was {l0})")
+        fit = fit_l0([(r[1], r[2], r[3], r[4]) for r in dcm], fsw)
+        ls = sorted(r[6] for r in dcm)
+        q1, q3 = ls[len(ls) // 4], ls[(3 * len(ls)) // 4]  # rough IQR of the per-point values
+        print(report_l0(fit) + f"  Iout>={ifloor:.2f}A, IQR {(q3 - q1) / fit['Lmed'] * 100.0:.0f}%")
+        print(f"  -> set coil.conf L0={fit['L']:.3e}   (was {l0})")
         print("  note: scales with Iout calibration & pwmMax; dead-time/DCR bias ~few % low")
         if args.bidir:
             bidir_verdict(rows, ifloor)

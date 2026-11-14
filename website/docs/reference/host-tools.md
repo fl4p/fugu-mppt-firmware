@@ -261,10 +261,10 @@ python etc/measure_coil.py -p $ESPPORT --steps 12 --i-max 1.5
 | `-p` / `--ip` / `--ble [NAME]`    |         | Transport (one of)                                            |
 | `--fsw`                           | from `pwm-dump` | Switching frequency as realized, Hz                   |
 | `--pwm-max`                       | from `pwm-dump` | PWM period in timer ticks                             |
-| `--steps`                         | 10      | Duty steps across the DCM band                                |
+| `--steps`                         | 48      | Duty steps across the DCM band (the ring fit needs ≥ 16 DCM points) |
 | `--lo`, `--hi`                    | 0.25, 0.9 | Start/end duty as a fraction of the DCM boundary             |
 | `--i-max`                         | 2.0     | Abort a step above this Iout, A                               |
-| `--dwell`                         | 5.0     | Settle time per step, s                                       |
+| `--dwell`                         | 3.0     | Settle time per step, s                                       |
 | `--bidir`                         |         | Sweep up and down, compare                                    |
 | `--plot-every N`                  | 0       | ASCII L plot every N points                                   |
 | `--ls-sweep`                      |         | Low-side timing sweep; with `--hs`, `--ls-steps` (24), `--ls-lo` (0.5), `--ls-hi` (1.4) |

@@ -23,6 +23,8 @@ The file accepts the following keys.
 | `vbat_ac_shape` |      | int   | 0       | 0 = sine (inverter), 1 = full-wave \|sin\| (rectifier load), 2 = spiky pulse |
 | `c_in`          | F    | float | 470e-6  | Input capacitance                                                           |
 | `c_out`         | F    | float | 470e-6  | Output capacitance                                                          |
+| `ring_f`        | Hz   | float | 0       | Buck DCM switch-node ring frequency at `L0`; 0 = off. Node capacitance C = 1/((2πf)²·L0). See [Coil inductance](../../lab/coil-inductance.md#switch-node-ringing-in-dcm) |
+| `ring_q`        |      | float | 20      | Quality factor of that ring (amplitude decays as e^(−πf·t/Q))               |
 | `adc_freq`      | Hz   | int   | 3000    | Sampling tick (falls back to `board.conf::adc_fake_freq`, then 3000)        |
 | `noise_vin`     | V    | float | 0       | Gaussian ADC noise σ on Vin; 0 = deterministic                              |
 | `noise_vout`    | V    | float | 0       | Gaussian ADC noise σ on Vout                                                |

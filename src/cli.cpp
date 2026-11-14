@@ -1997,8 +1997,8 @@ static void cmdMeasureCoil(cmd *c) {
     bool apply = nArgs >= 2 && cc.getArg(nArgs - 1).getValue() == "apply";
     int numArgs = apply ? nArgs - 1 : nArgs; // positional count excluding trailing 'apply'
     int arg1 = numArgs >= 2 ? cc.getArg(1).getValue().toInt() : 0;
-    uint32_t dwellMs = numArgs >= 3 ? (uint32_t) cc.getArg(2).getValue().toInt() : 3000;
-    if (dwellMs < 200) dwellMs = 200;
+    uint32_t dwellMs = numArgs >= 3 ? (uint32_t) cc.getArg(2).getValue().toInt() : 0; // 0: per-mode default
+    if (dwellMs && dwellMs < 200) dwellMs = 200;
     if (!converter.deadTimeIdle())
         CMD_FAIL_RETURN("measure-coil: a dead-time change is still queued");
     if (!measureCoilStart(ls, apply, arg1, dwellMs))
@@ -2068,6 +2068,8 @@ static void cmdVconv(cmd *c) {
         else if (key == "vbat_ac_freq") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), v, g_vconv.getVbatAcShape());
         else if (key == "vbat_ac_shape") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), g_vconv.getVbatAcFreq(), (int) v);
         else if (key == "diode_vf") g_vconv.setDiodeVf(v);
+        else if (key == "ring_f")   g_vconv.setRing(v, g_vconv.getRingQ());
+        else if (key == "ring_q")   g_vconv.setRing(g_vconv.getRingF(), v);
         else CMD_FAIL_RETURN("vconv set: unknown key '%s'", key.c_str());
         UART_LOG("vconv: %s=%.6g", key.c_str(), v);
     } else {
