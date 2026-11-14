@@ -90,7 +90,6 @@ entries:
     queue:xQueueSemaphoreTake (noflash)
     tasks:prvIdleTask (noflash)
     tasks:ulTaskGenericNotifyTake (noflash)
-    tasks:uxTaskGetSystemState (noflash)
     tasks:xTaskGetCurrentTaskHandle (noflash)
 
 [mapping:rtprof_libmain]

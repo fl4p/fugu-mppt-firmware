@@ -849,6 +849,7 @@ static void loopRT(void *arg) {
 
         auto lag = nowUs - lastLoopTime;
         if (lastLoopTime && lag > g_app.maxLoopLag && !converter.disabled()) g_app.maxLoopLag = lag;
+        if (lastLoopTime && lag > g_app.cmdLoopLag) g_app.cmdLoopLag = lag;
         {
             static uint32_t fseq = 0;
             const uint32_t sq = fugu_flash_seq;

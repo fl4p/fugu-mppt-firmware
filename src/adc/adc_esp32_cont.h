@@ -19,11 +19,11 @@
 
 // conv_frame_size = ADC1_READ_LEN/2 sets the DMA EOF granularity. The driver keeps a fixed
 // INTERNAL_BUF_NUM (5) frames of DMA descriptors, so DMA survival under an ISR stall = 5 * frame
-// time. A console uxTaskGetSystemState() (tasks/rt-stats) holds taskENTER_CRITICAL ~1.2ms (8 tasks),
-// during which our conv_done callback can't recycle descriptors. At 128B frames (here) that's
+// time. A core-0 kernel critical section (e.g. uxTaskGetSystemState(), ~1-2 ms; tasks/rt-stats no longer
+// call it) blocks our conv_done callback from recycling descriptors. At 128B frames (here) that's
 // 5*~0.38ms = ~1.9ms of headroom at 83kHz, so the DMA rides through instead of wedging. Cost:
-// conv_done/OV-protection latency rises ~one frame (192us->~384us). A busier (>~13 task) converter's
-// critical section can exceed 1.9ms; the loopRT watchdog then resets+recovers it. See
+// conv_done/OV-protection latency rises ~one frame (192us->~384us). A longer critical section wedges
+// it; the loopRT watchdog then resets+recovers it. See
 // website/docs/development/debugging/real-time-latency.md.
 #define ADC1_READ_LEN 256
 

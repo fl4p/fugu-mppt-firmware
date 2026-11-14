@@ -578,7 +578,7 @@ void MpptController::telemetry() {
     if ((_teleNumPoints % 40) == 0) {
         point.addField("mcu_temp", ucTemp.lastFresh(), 1); // TODO to frequent
         point.addField("ntc_temp", ntc.lastFresh(), 1); // TODO to frequent
-        point.addField("lag", (int) g_app.maxLoopLag); // peak RT-loop lag (µs), resets on rt-stats
+        point.addField("lag", (int) g_app.maxLoopLag); // peak RT-loop lag (µs), resets on reset-lag
         point.addField("rect_off", rectCal.offset()); // counts
         point.addField("heap", (int) heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
         point.addField("heap_min", (int) heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT));

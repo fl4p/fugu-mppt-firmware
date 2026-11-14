@@ -624,32 +624,17 @@ static void cmdCat(cmd *c) {
     fclose(f);
 }
 
-// tasks  — FreeRTOS task table: state, priority, pinned core, and min-ever free stack (bytes).
-// StackType_t is uint8_t on ESP32, so the high-water mark is already in bytes.
-static const char *taskStateStr(eTaskState s) {
-    switch (s) {
-        case eRunning: return "run";
-        case eReady: return "rdy";
-        case eBlocked: return "blk";
-        case eSuspended: return "sus";
-        case eDeleted: return "del";
-        default: return "?";
-    }
-}
+// tasks  — FreeRTOS task table: state, priority, pinned core, min-ever free stack (bytes). perf.h def.
+extern void print_task_table();
+
+// Max RT-loop gap while the command ran, the self-check that a diagnostic does not stall core 1.
+static void cmdLoopLagBegin() { g_app.cmdLoopLag = 0; }
+static void cmdLoopLagPrint() { UART_LOG("loop gap during command: max %lu us", (unsigned long) g_app.cmdLoopLag); }
+
 static void cmdTasks(cmd *) {
-    UBaseType_t n = uxTaskGetNumberOfTasks();
-    TaskStatus_t *arr = (TaskStatus_t *) malloc(sizeof(TaskStatus_t) * (n + 4));
-    if (!arr) { ESP_LOGE("main", "tasks: oom"); return; }
-    n = uxTaskGetSystemState(arr, n + 4, nullptr);
-    UART_LOG("%-16s %-4s %3s %4s %9s", "NAME", "STAT", "PRI", "CORE", "STKFREE_B");
-    for (UBaseType_t i = 0; i < n; ++i) {
-        const TaskStatus_t &t = arr[i];
-        BaseType_t core = xTaskGetCoreID(t.xHandle);
-        const char *coreStr = (core == tskNO_AFFINITY) ? "any" : (core == 0 ? "0" : "1");
-        UART_LOG("%-16s %-4s %3u %4s %9u", t.pcTaskName, taskStateStr(t.eCurrentState),
-                 (unsigned) t.uxCurrentPriority, coreStr, (unsigned) t.usStackHighWaterMark);
-    }
-    free(arr);
+    cmdLoopLagBegin();
+    print_task_table();
+    cmdLoopLagPrint();
 }
 
 // bootinfo  — last reset reason, running OTA slot + rollback verify state, heap headroom, uptime.
@@ -1185,8 +1170,10 @@ static void cmdNetstat(cmd *) {
 extern void print_real_time_stats_blocking();
 
 static void cmdRtStats(cmd *) {
+    cmdLoopLagBegin();
     print_real_time_stats_blocking();
     rtAllocPrint();
+    cmdLoopLagPrint();
 }
 
 // wired-sync diagnostic: edge rate on the sync pin (PCNT). Leader = self-check of its own
