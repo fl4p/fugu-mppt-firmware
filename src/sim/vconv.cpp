@@ -164,7 +164,30 @@ void VirtualConverter::stepOneCycleBuck(float T) {
 
     // Phase 3: both off. c > 0: LS body diode. c < 0: HS body diode (rev pump).
     float cEnd = c;
-    float areaOff = 0.0f;
+    float areaOff = 0.0f, areaPump = 0.0f;
+    if (tOff > 0.0f && cn_ > 0.0f) {
+        // L-C_node ring between the diode clamps, parallel damping (Q at the ring); the coil current
+        // at HS turn-on carries into the next cycle, the hard turn-on charges C_node from the input
+        const float z0 = std::sqrt(l_ / cn_), gp = 1.0f / (ringQ_ * z0);
+        const int nSt = std::max(1, (int) (tOff / 10e-9f));
+        const float h = tOff / (float) nSt, hc = h / cn_;
+        float i = c, v = tLS > 0.0f ? 0.0f : vIn_;
+        const float vHi = vIn_ + diodeVf_, vLo = -diodeVf_;
+        for (int k = 0; k < nSt; ++k) {
+            i += (v - vOut_) * invL_ * h;
+            v -= (i + (v - vOut_) * gp) * hc;
+            if (v > vHi) { v = vHi; areaPump += i * h; }
+            else if (v < vLo) v = vLo;
+            areaOff += i * h;
+        }
+        areaPump += cn_ * (vIn_ - v) * (inputPump_ ? 1.0f : 0.0f);
+        cEnd = i;
+        iInAvg_ = (areaHS + (inputPump_ ? areaPump : 0.0f)) * invT_;
+        iOutAvg_ = (areaHS + areaLS + areaOff) * invT_;
+        iLEnd_ = cEnd;
+        dcm_ = c <= 0.0f || std::fabs(cEnd) < 0.5f * std::fabs(b);
+        return;
+    }
     if (tOff > 0.0f) {
         if (c > 0.0f) {
             const float slope = -(vOut_ + diodeVf_) * invL_;     // <= 0; zero iff vOut_ + diodeVf_ == 0

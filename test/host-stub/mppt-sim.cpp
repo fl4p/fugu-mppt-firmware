@@ -32,6 +32,7 @@
 //     rcal-cloud   same, Isc x0.7 and Voc -1.8 % step 12 s after the start
 //     rcal-ov      same, Vin trip (hv_max) 2 % above Voc: the run must stop short of it
 //     rcal-low     same, a cloud 0.2 s after the start: Isc 2 A, Voc -3 % (soft panel, knee lifts Vin)
+//     rcal-sun     80 uH board, Isc 5.6 A / Voc 79.6 V, 5 nF switch node ringing at Q 40 (non-monotonic late side)
 //     rcal-low-bus rcal-low on a swinging bus (+-0.4 % / 23 s, +-0.2 % / 7.3 s, 0.15 % steps every 2-6 s)
 //
 #include <algorithm>
@@ -876,6 +877,9 @@ static int runRectCal(const std::string &name, const std::string &sc) {
            lsOffMin, (unsigned) (uint8_t) (converter.lsClamps() - clamps0));
     printf("== rect-cal: ideal %.0f peak %.0f learned %+d applied %+d ct (truth 0), %u pts, %u redone, dV %.2f%%, offset now %d ct\n",
            rc.cal.ideal, rc.cal.peak, rc.cal.learned, rc.cal.applied, rc.cal.n, rc.cal.retries, 100 * rc.cal.dv, rc.offset());
+    printf("== rect-cal points (LS - ideal : dI A):");
+    for (int i = 0; i < rc.cal.n; ++i) printf(" %.0f:%+.3f", rc.cal.xs[i] - rc.cal.ideal, rc.cal.ys[i]);
+    printf("\n");
     printf("== plant: min Iout avg %.2f A (during the run %.2f A), min coil current at cycle end %.3f A, max Vin %.2f V\n",
            iMin, iRunMin, ilMin, vinMax);
     printf("== after: HS %u (before %u), P %.0f W (before %.0f W), %s, manual LS %d\n", converter.getCtrlOnPwmCnt(), hs0,
@@ -914,8 +918,10 @@ static int simMain(int argc, char **argv) {
     const bool rcal = sc.rfind("rcal", 0) == 0;
     if (rcal) ov = {{"noise_iout", "0.01"}, {"noise_vout", "0.005"}, {"noise_vin", "0.05"}};
     if (sc == "rcal-ov") setenv("SIM_CONF", "limits.conf:hv_max=77.5", 1);
+    if (sc == "rcal-sun") setenv("SIM_CONF", "coil.conf:L0=80e-6", 1);
     boot(ov, p0);
     if (rcal) g_vconv.setDiodeVf(0.7f), g_vconv.setInputPump(true);
+    if (sc == "rcal-sun") g_vconv.setNodeRing(5e-9f, 40.f), g_vconv.setPv(5.6f, 79.6f, 0.78f);
     if (isWx) return runWx(name, wx);
     if (sc.rfind("shade", 0) == 0) g_vconv.setPvShade(0.68f);
 

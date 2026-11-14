@@ -60,6 +60,8 @@ public:
     void setPvBlocking(bool b) { pvBlocking_ = b; }
     // buck: reverse coil current through the HS body diode returns to C_in; the panel sinks it above Voc
     void setInputPump(bool b) { inputPump_ = b; }
+    // buck: switch-node capacitance (F) and ring Q while both switches are off; 0: ideal clamp at zero current
+    void setNodeRing(float cn, float q) { cn_ = cn; ringQ_ = q; }
 
     void setBat(float vbat, float rbat) {
         vbat_ = vbat;
@@ -160,6 +162,7 @@ private:
     float pvInvW_[kPvSubMax] = {1.f, 1.f, 1.f}; // 1 / Voc share of the m+1 strongest
     bool pvBlocking_ = false;
     bool inputPump_ = false;
+    float cn_ = 0.0f, ringQ_ = 40.0f;
 
     // Battery + passives
     float vbat_ = 28.0f;
