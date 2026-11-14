@@ -505,7 +505,7 @@ static void cmdRectCal(cmd *c) {
     const auto st = rc.cal.get();
     if (st != RectCal::Run)
         CMD_FAIL_RETURN("rect-cal: refused: %s", st == RectCal::Fail ? rc.cal.why : "no RT response");
-    ESP_LOGI("main", "rect-cal: running at hs=%u (up to 45 s), see rect-cal status", rc.cal.hs);
+    ESP_LOGI("main", "rect-cal: running at hs=%u (up to 60 s), see rect-cal status", rc.cal.hs);
 }
 
 static void cmdResetLag(cmd *c) {

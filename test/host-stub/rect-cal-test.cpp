@@ -37,6 +37,7 @@ inline void digitalWrite(uint8_t, int) {}
 
 void assertPinState(uint8_t, bool, const char *, bool) {}
 static bool g_quiet = true, g_trace = false, g_verbose = false;
+static float g_inoise = 0.01f; // Iout sensor noise rms (A)
 void UART_LOG(const char *fmt, ...) {
     if (g_quiet) return;
     va_list ap; va_start(ap, fmt); vprintf(fmt, ap); va_end(ap); putchar('\n');
@@ -54,7 +55,7 @@ using Ctl = RectCalCtl<SynchronousConverter>;
 struct Rig {
     VirtualConverter p{};
     int hidden;
-    float voutBias, isc0, drift, voc = VOC;
+    float voutBias, isc0, drift, voc = VOC, k = K;
     double t = 0;
     std::mt19937 rng{1};
     std::normal_distribution<float> nd{0.f, 1.f};
@@ -67,19 +68,20 @@ struct Rig {
         int eff = (hs && ls) ? std::min<int>(ls + hidden, PM - hs - 1) : 0;
         p.setPwm({PM, hs, (uint16_t) std::max(0, eff), FSW});
     }
-    void step() { t += 1.0 / SPS; p.setPv(isc0 * (1.f + drift * (float) t), voc, K); p.stepSeconds(1.f / SPS, FSW); }
+    void step() { t += 1.0 / SPS; p.setPv(isc0 * (1.f + drift * (float) t), voc, k); p.stepSeconds(1.f / SPS, FSW); }
     uint32_t us() const { return (uint32_t) (uint64_t) (t * 1e6); } // wraps like the firmware clock
-    float iout() { return p.getIoutAvg() + 0.01f * nd(rng); }
+    float iout() { return p.getIoutAvg() + g_inoise * nd(rng); }
     float vin() { return p.getVin() + 0.05f * nd(rng); }
     float vout() { return p.getVout() + voutBias + 0.01f * nd(rng); }
 };
 
+static const char *g_L0 = "56e-6"; // coil.conf L0 the converter model uses
 static void initConv(SynchronousConverter &c, const char *offNs = nullptr, const char *offDrv = nullptr,
                      const char *offCal = nullptr) {
     ConfFile conv{}; conv.set("topo", "buck");
     ConfFile board{}; board.set("pwm_freq", "39000"); board.set("pwm_driver_logic", "HiLi");
     board.set("pwm_hi", "21"); board.set("pwm_li", "14"); board.set("pwm_sd", "47"); board.set("skip_assert", "1");
-    ConfFile coil{}; coil.set("L0", "56e-6");
+    ConfFile coil{}; coil.set("L0", g_L0);
     if (offNs) coil.set("rect_offset_ns", offNs);
     if (offDrv) coil.set("rect_offset_drv", offDrv);
     if (offCal) coil.set("rect_offset_cal", offCal);
@@ -118,6 +120,7 @@ struct Host {
     bool bflow = false, sr = false, mppt = true, sweeping = false, tripped = false, held = false;
     uint16_t op = 0, rampTo = 0;
     int lsAfterHold = -1, lsRaw = -1; // pinned LS / LS count right after hold()
+    int guard = 0; // samples on which the reverse-current guard acted
     double lfAt = 0;
     std::function<void(Host &)> fault; // runs inside protect(), before hold()
 
@@ -147,7 +150,7 @@ struct Host {
         if (uint16_t b = ctl.rt(c, in())) rampTo = b;
 
         const float iF = std::min(iEwm, std::max(last, prev));
-        if ((last < -1 && prev < -1) || (sr && iF < -0.05f)) { bflow = false; c.syncRectMinDuty(); }
+        if ((last < -1 && prev < -1) || (sr && iF < -0.05f)) { bflow = false; c.syncRectMinDuty(); ++guard; }
         if (fault) fault(*this);
         if (sr && !bflow && c.getDutyCycle() > 0.33f && !(c.dcmCurrent(viEwm, voEwm) < 1.f)) { tripped = true; c.disable(); return; }
 
@@ -352,8 +355,9 @@ static void testDisturbance() {
             CHECK(cal.get() == RectCal::Fail && !strcmp(cal.why, "V step"), "%s: state %d why '%s' learned %d", k.name,
                   cal.get(), cal.why, cal.learned);
         else
-            CHECK(cal.get() == RectCal::Done && std::abs(cal.learned) <= 20, "%s: state %d why '%s' learned %d", k.name,
-                  cal.get(), cal.why, cal.learned);
+            // a dip past the crossing reads as an earlier knee: up to -35 ct, the safe side
+            CHECK(cal.get() == RectCal::Done && cal.learned <= 20 && cal.learned >= -35, "%s: state %d why '%s' learned %d",
+                  k.name, cal.get(), cal.why, cal.learned);
         printf("disturbance '%s': %s %s learned %d\n", k.name, cal.get() == RectCal::Done ? "done" : "failed", cal.why,
                cal.learned);
     }
@@ -411,7 +415,9 @@ static void testField() {
                 ++tot;
                 if (c.get() == RectCal::Done) ++done, lo = std::min<int>(lo, c.learned), hi = std::max<int>(hi, c.learned);
             }
-    CHECK(lo >= -30 && hi <= 30, "bus square 0.19%%: err %d..%d", lo, hi);
+    // the sweep stops 2 steps past the knee: fewer points on its far side than a full sweep, so
+    // more spread; after the margin the LS ends at most 20 ct (125 ns) past the crossing
+    CHECK(lo >= -45 && hi <= 40, "bus square 0.19%%: err %d..%d", lo, hi);
     printf("field bus square 0.19%% 0.9..2.3 s, plant 0x/2x: %d/%d done, err %+d..%+d ct\n", done, tot, lo, hi);
     const float zc = (60.f / 26.7f - 1.f) * 1200;
     for (float rise: {0.002f, 0.005f, 0.007f, 0.01f, 0.015f, 0.02f}) {
@@ -516,6 +522,58 @@ static void testForce() {
                f.ok ? "done" : h.ctl.cal.why, f.ok ? h.ctl.cal.learned : 0, f.truth, h.ctl.cal.n, 100 * h.ctl.cal.dv);
         if (g_verbose) h.ctl.status(h.c);
     }
+}
+
+// Full sun on the 80 uH board (field run 4): CCM at 57 V / 10 A, the hold sits near Voc (78 V). The
+// plant has a 5 nF switch node ringing at Q 40 (fitted to the four field runs) and the LS conducts 35 ct
+// longer than commanded. Past the zero crossing the output current is flat until the reverse current
+// lifts the node to Vin (~170 ct here), then drops steeply, recovers and turns positive near
+// LS = 1.25x ideal; at (1 - Vo/Vi) of the period the reverse current no longer returns to zero before HS
+// turns on and grows every cycle (the field guard trip). The run must stop after the knee and never reach
+// the guard. The knee fit lands between the zero crossing (-35) and the clamp onset (~+50); the applied
+// offset must not be later than the crossing by more than 20 ct (40 mA reverse at 80 uH).
+static void testFullSun() {
+    g_L0 = "80e-6";
+    int lo = 999, hi = -999, alo = 999, ahi = -999, done = 0, guards = 0, trips = 0, lsMaxPast = -999;
+    for (uint32_t seed = 1; seed <= 6; ++seed) {
+        Host h(5.6f, 35, 0.f, 0.f);
+        h.r.rng.seed(seed);
+        h.r.voc = 79.6f;
+        h.r.p.setPv(5.6f, 79.6f, K); h.r.p.setBat(26.45f, 0.04f); h.r.p.setPassives(470e-6f, 470e-6f, 80e-6f);
+        h.r.p.setVin(79.6f); h.r.p.setVout(26.45f); h.r.p.setNodeRing(5e-9f, 40.f);
+        h.vi = h.viEwm = 79.6f; h.vo = h.voEwm = 26.45f;
+        h.op = (uint16_t) (26.45f / 57.f * PM);
+        h.run(8);
+        CHECK(!h.c.inDCM() && h.iEwm > 8.f, "full sun: not CCM before the run (I %.2f, Vin %.1f)", h.iEwm, h.viEwm);
+        const int g0 = h.guard;
+        CHECK(h.ctl.requestStart(true), "requestStart(force)");
+        for (double t1 = h.r.t + 70; h.r.t < t1 && !h.tripped;) {
+            h.tick();
+            if (h.state() == RectCal::Run && h.c.manualRect_() && h.ctl.cal.ideal > 0)
+                lsMaxPast = std::max(lsMaxPast, (int) h.c.getRectOnPwmCnt() - (int) lroundf(h.ctl.cal.ideal));
+            if (h.state() == RectCal::Done || h.state() == RectCal::Fail) break;
+        }
+        const RectCal &cal = h.ctl.cal;
+        guards += h.guard - g0; trips += h.tripped;
+        if (cal.get() == RectCal::Done) {
+            ++done; lo = std::min<int>(lo, cal.learned); hi = std::max<int>(hi, cal.learned);
+            alo = std::min<int>(alo, cal.applied); ahi = std::max<int>(ahi, cal.applied);
+        }
+        printf("full sun seed %u: %s%s hs=%u ideal=%.0f learned %+d applied %+d (%u pts, %u redone), guard %d\n", seed,
+               cal.get() == RectCal::Done ? "done" : "failed: ", cal.get() == RectCal::Done ? "" : cal.why, cal.hs, cal.ideal,
+               cal.learned, cal.applied, cal.n, cal.retries, h.guard - g0);
+        if (seed == 1 && g_verbose) {
+            for (int i = 0; i < cal.n; ++i) printf(" %.0f:%+.3f", cal.xs[i] - cal.ideal, cal.ys[i]);
+            printf("\n");
+        }
+    }
+    g_L0 = "56e-6";
+    CHECK(done == 6 && guards == 0 && trips == 0, "full sun: %d/6 done, guard %d, trips %d", done, guards, trips);
+    CHECK(done && alo >= -35 - 45 && ahi <= -35 + 20 && hi - lo <= 10, "full sun: applied %d..%d, learned %d..%d", alo, ahi,
+          lo, hi);
+    CHECK(lsMaxPast <= 200, "full sun: LS reached ideal%+d", lsMaxPast);
+    printf("full sun: %d/6 done, learned %+d..%+d ct, applied %+d..%+d ct (zero crossing -35 ct), LS at most %+d ct past "
+           "ideal, guard %d\n", done, lo, hi, alo, ahi, lsMaxPast, guards);
 }
 
 // Protection during the ramp-down from CCM: aborted, LS back to diode emulation, no ramp back when the
@@ -1121,6 +1179,7 @@ int main(int argc, char **argv) {
     testField();
     testForce();
     testForceProtection();
+    testFullSun();
     testProtectionWins();
     testAbortAndModes();
     testSchedule();

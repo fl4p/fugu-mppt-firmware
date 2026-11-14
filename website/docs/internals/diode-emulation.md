@@ -266,8 +266,15 @@ reference LS of 0.6× ideal is held for 400 ms. Each point is the step's current
 the two references around it, which cancels any change of the source that is linear in time, such
 as slowly changing irradiance. Each point is placed relative to the ideal window of its own
 averaged `V_i`/`V_o`, so a voltage drift moves the coordinate with the zero crossing instead of
-reading as a timing error. The sweep stops once it has passed the peak (above ideal and
-0.2·`I_out` below the best point) or when the average current turns negative.
+reading as a timing error.
+
+The sweep stops at the bend: once two consecutive steps each lie at least 10 mA below the step
+before and 20 mA below the best point so far. It then measures 10 more points spread evenly over
+the four coarse intervals before the first of those two steps, never later than it, which places
+points about every 20–30 counts where the bend starts. It also stops when the average current turns
+negative. The LS never exceeds the ideal window by more than 2.5 µs, nor 90% of the off-time
+volt-second limit `(1 − V_o/V_i)·T` (see *Switch-node ringing* below); a run whose cap leaves less
+than half of that 2.5 µs beyond the ideal window fails with `LS headroom`.
 
 **Signal size.** With the LS held `Δt` past the inductor zero crossing, reverse current builds to
 `V_o·Δt/L` and returns through the HS body diode at the slope `(V_i − V_o)/L`. The output loses
@@ -343,9 +350,47 @@ In simulation:
   calibrate within ±5 counts. Before these changes they all ended with `V step`. A cloud that
   moves `V_i` by 2.6% still ends the run with `Vin shift`.
 
+**Switch-node ringing.** While both switches are off, the inductor rings with the switch-node
+capacitance `C_n` (FET output capacitances, driver and layout) at `Z_0 = √(L/C_n)`. In DCM this is
+the familiar ring around `V_o`. When the LS turns off with a reverse current `I_r`, the node swings
+up from 0 V; it reaches `V_i`, where the HS body diode clamps it and the remaining current returns
+to the input, only if `I_r·Z_0 ≥ √((V_i − V_o)² − V_o²)`. A smaller reverse current rings back
+into the inductor instead and is not lost. The steep part of the late side therefore starts a fixed
+reverse current after the zero crossing, about 0.35 A at `V_i` = 78 V, `V_o` = 26.5 V and
+`Z_0` = 126 Ω (80 µH, 5 nF), which is 170 counts of 6.25 ns. The coil current left over from
+the ring when HS turns on shifts the next switching period. This tilts the early side down by a few
+mA and, past the bend, makes the curve non-monotonic: the loss reaches a minimum about 250 counts
+past the crossing, recovers, and turns into a gain around 1.2× ideal. A model with this node
+(fitted `C_n` = 5 nF, Q = 40, and an LS that conducts 35–70 counts longer than commanded)
+reproduces three field sweeps on an 80 µH board within 3–18 mA rms, including both tails.
+
+Two consequences follow for the run:
+
+- The bend fit locates where the steep loss starts, between the zero crossing and the clamp onset.
+  Points past the loss minimum pull the fit far early (the full field sweep does not fit at all;
+  truncated two points past the bend it lands within the expected range), which is why the
+  sweep stops two steps after the bend. On the ringing model the run learns 15 counts before the
+  ideal window against a zero crossing at −35 counts, and the applied offset (after the margin)
+  lands on the crossing.
+- An LS longer than the off-time `(1 − V_o/V_i)·T` leaves reverse current in the inductor when
+  HS turns on. The converter then runs as a synchronous buck backward from the battery, and the
+  reverse current grows by several amperes within a few periods until the reverse-current guard
+  clamps the LS. Because the calibration HS is set from the voltages before the ramp, while `V_i`
+  rises toward `V_oc` afterward, this limit can sit at only 1.3× the ideal window, inside a
+  0.5–1.4× sweep. The 90% cap keeps the sweep below it.
+
+With the cap and the stop rule, the LS ends at most 2.5 µs past the ideal window, so the peak
+reverse current is bounded by `V_o·2.5 µs/L` plus the LS turn-off delay: about 1 A at 80 µH and
+1.5 A at 51 µH with `V_o` = 26.5 V. A sweep that stops two coarse steps past the bend reaches
+about half of that. On a replica of a full-sun run at 78 V, 20 runs per noise level learned within
+a standard deviation of 1.3 counts at 10 mA of sensor noise per sample and 3.3 counts at 30 mA,
+without a guard action. At 100 mA the bend is lost in the noise in 3 of 20 runs (`no knee`).
+Without the 10 extra points the spread rises to 1.8 and 4.7 counts and the result moves 26 counts
+earlier.
+
 **Aborts.** The run is aborted, and the LS returned to diode emulation, on a limiter, a mode
 change, a sweep, `rect-cal abort`, the input voltage near its trip, leaving DCM or a change of HS
-during the sweep, after 45 s, and on any protection action: a shutdown, the backflow switch or
+during the sweep, after 60 s, and on any protection action: a shutdown, the backflow switch or
 sync rect turned off, or the LS clamped to its minimum. The protection check runs right before each
 LS update of the run, after the protection pass of the same sample, so the run never raises an LS
 that a protection has just lowered. Afterwards HS fades back to the operating point it started

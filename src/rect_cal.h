@@ -17,9 +17,12 @@
  * no reverse current whatever the CCM/DCM state) and held there: a low DCM point draws well below
  * the panel's MPP current, so Vin stays on the flat, voltage-source part of the PV curve and does
  * not move with the LS window. Init waits for DCM and two consecutive windows that agree. Then
- * the LS count is stepped from 0.5x to 1.4x the ideal DCM freewheel count
- * ideal = (Vin/Vout - 1) * HS. Output current peaks where the LS turns off at the inductor zero
- * crossing: shorter leaves the tail to the body diode, longer draws reverse current. Each step is
+ * the LS count is stepped up from 0.5x the ideal DCM freewheel count ideal = (Vin/Vout - 1) * HS.
+ * Output current is flat until the LS outlasts the inductor zero crossing, then bends down (reverse
+ * current). Past the bend the switch-node ring makes the curve non-monotonic, so the sweep stops after
+ * two consecutive drops and then fills the four coarse intervals before the first drop with Fine
+ * points. The LS never exceeds ideal + lateMax, nor CcmFrac of the off-time limit (1 - Vo/Vi) of the
+ * period, beyond which the reverse current no longer returns to zero within a period. Each step is
  * measured against a reference LS (0.6x ideal) sampled before and after it, which cancels linear
  * drift, and is placed relative to the ideal count of its own Vin/Vout. Each window current is
  * scaled to the Init voltages with the DCM current model I ~ Vin*(Vin-Vout)/Vout (D fixed), so a
@@ -41,9 +44,9 @@ class RectCal {
 public:
     enum State : uint8_t { Idle, Run, Fit, Done, Fail };
 
-    static constexpr int Steps = 24;
+    static constexpr int Steps = 24, Fine = 10, MaxPts = Steps + Fine; // coarse grid, fine pass at the knee
     static constexpr uint32_t SettleUs = 150000, InitUs = 500000, RefUs = 250000, MeasUs = 500000;
-    static constexpr uint32_t TimeoutUs = 45000000, SettleMaxUs = 12000000; // run, ramp + Init (from start)
+    static constexpr uint32_t TimeoutUs = 60000000, SettleMaxUs = 12000000; // run, ramp + Init (from start)
     static constexpr float LsLo = 0.5f, LsHi = 1.4f, LsRef = 0.6f, HsFrac = 0.55f;
     static constexpr float PlausibleNs = 2500.f; // |learned| above this is rejected (400 ct at 160 MHz)
     static constexpr float MinMarginNs = 125.f;  // applied margin floor (20 ct at 160 MHz)
@@ -54,6 +57,9 @@ public:
     static constexpr float SpvMax = 0.25f;       // PV slope bound |dV/dI| * I/V below the MPP (1 at the MPP)
     static constexpr float KneeMinA = 0.01f;     // fitted bend at the last point, at least
     static constexpr uint8_t MaxRetry = 6;       // steps re-measured after a voltage step
+    // knee: 2 consecutive steps each StepDrop below the previous and KneeDrop below the best (A)
+    static constexpr float KneeDrop = 0.02f, StepDrop = 0.01f;
+    static constexpr float CcmFrac = 0.9f; // LS cap: this fraction of the off-time volt-second limit (1 - Vo/Vi)
     static constexpr float SettleI = 0.02f;      // Init windows agree: |dI| <= SettleI A + SettleI * I
 
     std::atomic<uint8_t> state{Idle};
@@ -63,8 +69,8 @@ public:
     int16_t learned = 0, applied = 0;
     float ideal = 0, peak = 0; // peak: fitted LS count of the zero crossing (knee)
     float dv = 0; // largest relative Vin/Vout deviation from Init
-    float xs[Steps]{}, ys[Steps]{};
-    int8_t jvi[Steps]{}, jvo[Steps]{}; // step Vin/Vout off its references' mean (0.01 %)
+    float xs[MaxPts]{}, ys[MaxPts]{}; // fit() sorts them by LS
+    int8_t jvi[MaxPts]{}, jvo[MaxPts]{}; // step Vin/Vout off its references' mean (0.01 %)
     uint8_t retries = 0;
     // last voltage check: deviation (fraction), Vin allowance (fraction), reference (V), LS count
     float jdi = 0, jdo = 0, jallow = 0, jrefVi = 0, jrefVo = 0;
@@ -89,8 +95,9 @@ public:
         return running() ? std::clamp((int) hs - (int) hsNow, -maxStep, maxStep) : 0;
     }
 
-    void start(uint32_t nowUs, uint16_t hs_, uint16_t lsMin_, uint16_t lsCap_) {
-        hs = hs_; lsMin = lsMin_; lsCap = lsCap_;
+    // lateMax: farthest LS past ideal the sweep may go (counts, the plausible |learned|)
+    void start(uint32_t nowUs, uint16_t hs_, uint16_t lsMin_, uint16_t lsCap_, uint16_t lateMax_ = 400) {
+        hs = hs_; lsMin = lsMin_; lsCap = lsCap_; lateMax = lateMax_; fine = false; drops = 0; kf = 0;
         n = 0; k = 0; ideal = peak = dv = 0; ymax = -INFINITY; learned = applied = 0; why = "";
         retries = 0; jdi = jdo = jallow = jrefVi = jrefVo = 0; jls = 0;
         phase = Init; ls = lsMin; prevOk = false;
@@ -154,7 +161,10 @@ public:
             vi0 = vi; vo0 = vo;
             g0 = dcmShape(vi, vo);
             ideal = (vi / vo - 1.f) * (float) hs;
-            if ((float) lsCap < 1.15f * ideal) return fail("LS headroom");
+            // past (1 - Vo/Vi) of the period the reverse current cannot return to zero before HS turns on:
+            // it grows every cycle (synchronous buck run backwards from the battery)
+            capX = std::min({(float) lsCap, CcmFrac * (1.f - vo / vi) * (float) (lsCap + hs + 1), ideal + (float) lateMax});
+            if (capX < ideal + 0.5f * (float) lateMax) return fail("LS headroom");
             ref = (uint16_t) std::max<float>(lsMin, LsRef * ideal);
             nextPhase(nowUs, Ref, ref);
             return ls;
@@ -189,9 +199,18 @@ public:
                 xs[n] = measX; ys[n] = y;
                 jvi[n] = pct100(jdi); jvo[n] = pct100(jdo);
                 ++n;
+                const bool down = n > 1 && y <= std::min(ys[n - 2] - StepDrop, ymax - KneeDrop);
                 ymax = std::max(ymax, y);
-                if (meas < -0.05f || (measX > ideal && y < ymax - 0.2f * std::fabs(meas)))
-                    return finish();
+                drops = down ? drops + 1 : 0;
+                if (meas < -0.05f) return finish();
+                if (drops >= 2 && !fine) {
+                    // the knot lies within 4 coarse steps before the first drop (sharp knee: the last one,
+                    // quadratic: 2-3): Fine steps across them, never past the first drop
+                    if (n < 6 || n + Fine > MaxPts) return finish();
+                    fg = (xs[n - 2] - xs[n - 6]) / (float) Fine;
+                    f0 = xs[n - 6] + 0.5f * fg;
+                    fine = true;
+                }
             }
         }
         refPrev = i; rawPrev = raw; refVi = vi; refVo = vo;
@@ -200,9 +219,9 @@ public:
             return ls;
         }
         for (;;) {
-            if (k >= Steps) return finish();
-            const float x = (LsLo + (LsHi - LsLo) * (float) k++ / (float) (Steps - 1)) * ideal;
-            if (x > (float) lsCap) return finish();
+            if (fine ? kf >= Fine : k >= Steps) return finish();
+            const float x = fine ? f0 + fg * (float) kf++ : (LsLo + (LsHi - LsLo) * (float) k++ / (float) (Steps - 1)) * ideal;
+            if (x > capX) return finish();
             if (x < (float) lsMin) continue;
             ls_ = (uint16_t) std::lround(x);
             break;
@@ -214,6 +233,11 @@ public:
     // Peak fit and margin, not RT-safe (double-precision grid search). tickRate converts the ns limits.
     bool fit(float tickRate) {
         if (get() != Fit) return false;
+        for (int j = 1; j < n; ++j) // insertion sort by LS, the fine pass interleaves
+            for (int m = j; m > 0 && xs[m] < xs[m - 1]; --m) {
+                std::swap(xs[m], xs[m - 1]); std::swap(ys[m], ys[m - 1]);
+                std::swap(jvi[m], jvi[m - 1]); std::swap(jvo[m], jvo[m - 1]);
+            }
         // zero crossing = where the current bends down (reverse current), whatever the baseline slope
         float x0 = 0, drop = 0, rms = 0;
         const char *e = n < 6 ? "few points"
@@ -236,7 +260,10 @@ private:
     enum Phase : uint8_t { Init, Ref, Meas };
     Phase phase = Init;
     int ls = -1;
-    uint16_t lsMin = 0, lsCap = 0, ref = 0, ls_ = 0;
+    uint16_t lsMin = 0, lsCap = 0, ref = 0, ls_ = 0, lateMax = 400;
+    bool fine = false;      // fine pass around the knee
+    uint8_t drops = 0, kf = 0;
+    float capX = 0, f0 = 0, fg = 0; // LS cap, fine pass start and step
     uint8_t k = 0;
     uint32_t t0 = 0, tPh = 0;
     uint32_t ns = 0;
@@ -448,7 +475,8 @@ public:
                 hsPrev = c.getCtrlOnPwmCnt();
                 clamps = c.lsClamps();
                 bs.reset();
-                cal.start(in.nowUs, hs, c.getRectOnPwmMin(), pm - hs - 1);
+                cal.start(in.nowUs, hs, c.getRectOnPwmMin(), pm - hs - 1,
+                          (uint16_t) pwmCountsFromNs(RectCal::PlausibleNs, c.getPwmTickRate()));
             }
         }
         persistLock(c, in.nowUs);
