@@ -304,18 +304,22 @@ the `Iout` gain (§3), so it does not cross-check the sensor.
 
 In DCM the coil current reaches zero before the high side turns on again. Both switches are then
 off, and the coil `L` rings with the switch-node capacitance `C` about `Vout`. `C` is the output
-capacitance of both transistors plus the winding and layout capacitance. With `x = Vnode − Vout`
-and `i` the coil current toward the output, KCL and KVL give
+capacitance of both transistors plus the winding and layout capacitance. With `x = Vnode − Vout`,
+`i` the coil current toward the output and the losses lumped into a conductance `1/(Q·Z0)` across
+the node, KCL and KVL give
 
 $$
-C\,\frac{dx}{dt} = -i, \qquad L\,\frac{di}{dt} = x, \qquad
+C\,\frac{dx}{dt} = -i - \frac{x}{Q Z_0}, \qquad L\,\frac{di}{dt} = x, \qquad
 f_r = \frac{1}{2\pi\sqrt{LC}}, \qquad Z_0 = \sqrt{L/C}, \qquad \alpha = \frac{\pi f_r}{Q}.
 $$
 
 The ring starts with the node at the low-side body-diode drop, `x ≈ −(Vout + Vf)`, and decays as
-$x = A\,e^{-\alpha t}\cos(2\pi f_r t + \varphi)$, $i = (A/Z_0)\,e^{-\alpha t}\sin(2\pi f_r t + \varphi)$.
+$x = A\,e^{-\alpha t}\cos(2\pi f_r t + \varphi)$, $i \approx (A/Z_0)\,e^{-\alpha t}\sin(2\pi f_r t + \varphi)$.
 When `Vin < 2·Vout`, the first upswing reaches `Vin + Vf` and the high-side body diode clamps it,
-returning a little charge to the input.
+returning a little charge to the input. The same ring, started by a reverse current at low-side
+turn-off, shapes the late side of the rect-cal sweep, see *Switch-node ringing* in [Diode emulation,
+self-calibration](../internals/diode-emulation.md#self-calibration-rect-cal). The converter model implements it
+with `vconv.conf::ring_c` and `ring_q`, see [vconv.conf](../reference/config/vconv.md#switch-node-ring).
 
 The high side turns on after the dead time
 
@@ -422,8 +426,9 @@ The fit removes the oscillating part of the ring. The following effects move the
 | `InductivityDcBias` (0.95) | not applied to the measurement; the firmware applies it to `L0` | none |
 
 The two capacitive terms act like a current-sensor offset (§3): they matter most at the
-low-current end of the band, which the `Iout` floor partly excludes. The converter model does not
-include the transition term or gate delays, so the accuracy figures above do not cover them. A
+low-current end of the band, which the `Iout` floor partly excludes. The converter model includes
+the first term but not the transition term (it discharges the node through the low side at its
+turn-on, a loss) or gate delays, so the accuracy figures above do not cover them. A
 current-probe or LCR-meter reference (§2) is needed to quantify them on a given board.
 
 ### Effect on MPPT

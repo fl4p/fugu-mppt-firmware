@@ -351,27 +351,30 @@ In simulation:
   moves `V_i` by 2.6% still ends the run with `Vin shift`.
 
 **Switch-node ringing.** While both switches are off, the inductor rings with the switch-node
-capacitance `C_n` (FET output capacitances, driver and layout) at `Z_0 = √(L/C_n)`. In DCM this is
-the familiar ring around `V_o`. When the LS turns off with a reverse current `I_r`, the node swings
-up from 0 V; it reaches `V_i`, where the HS body diode clamps it and the remaining current returns
-to the input, only if `I_r·Z_0 ≥ √((V_i − V_o)² − V_o²)`. A smaller reverse current rings back
-into the inductor instead and is not lost. The steep part of the late side therefore starts a fixed
-reverse current after the zero crossing, about 0.35 A at `V_i` = 78 V, `V_o` = 26.5 V and
-`Z_0` = 126 Ω (80 µH, 5 nF), which is 170 counts of 6.25 ns. The coil current left over from
-the ring when HS turns on shifts the next switching period. This tilts the early side down by a few
-mA and, past the bend, makes the curve non-monotonic: the loss reaches a minimum about 250 counts
-past the crossing, recovers, and turns into a gain around 1.2× ideal. A model with this node
-(fitted `C_n` = 5 nF, Q = 40, and an LS that conducts 35–70 counts longer than commanded)
-reproduces three field sweeps on an 80 µH board within 3–18 mA rms, including both tails.
+capacitance `C` (FET output capacitances, driver and layout) at `Z_0 = √(L/C)`; the mechanism and
+the field fits of `C` and `Q` are in [Switch-node ringing in
+DCM](../lab/coil-inductance.md#switch-node-ringing-in-dcm). In DCM this is the ring around `V_o`
+that ripples `I_out` against the duty. When the LS turns off with a reverse current `I_r`, the node
+swings up from 0 V; it reaches `V_i`, where the HS body diode clamps it and the remaining current
+returns to the input, only if `I_r·Z_0 ≥ √((V_i − V_o)² − V_o²)`. A smaller reverse current rings
+back into the inductor instead and is not lost. The steep part of the late side therefore starts a
+fixed reverse current after the zero crossing, about 0.35 A at `V_i` = 78 V, `V_o` = 26.5 V and
+`Z_0` = 126 Ω (80 µH, 5 nF), which is 170 counts of 6.25 ns. The coil current left over from the
+ring when HS turns on shifts the next switching period. This tilts the early side by a few mA and,
+past the bend, makes the curve non-monotonic: the loss reaches a minimum about 250 counts past the
+crossing, recovers, and turns into a gain around 1.2× ideal. The converter model with this node
+(`C` = 5 nF, `Q` = 40, and an LS that conducts 35–70 counts longer than commanded) reproduces three
+field sweeps on an 80 µH board within 3–18 mA rms, including both tails; the model and its
+parameters are described in [vconv.conf](../reference/config/vconv.md#switch-node-ring).
 
 Two consequences follow for the run:
 
 - The bend fit locates where the steep loss starts, between the zero crossing and the clamp onset.
   Points past the loss minimum pull the fit far early (the full field sweep does not fit at all;
   truncated two points past the bend it lands within the expected range), which is why the
-  sweep stops two steps after the bend. On the ringing model the run learns 15 counts before the
-  ideal window against a zero crossing at −35 counts, and the applied offset (after the margin)
-  lands on the crossing.
+  sweep stops two steps after the bend. On the ringing model the run learns 11–13 counts before
+  the ideal window against a zero crossing at −35 counts, and the applied offset (after the margin)
+  lands within 4 counts of the crossing.
 - An LS longer than the off-time `(1 − V_o/V_i)·T` leaves reverse current in the inductor when
   HS turns on. The converter then runs as a synchronous buck backward from the battery, and the
   reverse current grows by several amperes within a few periods until the reverse-current guard
@@ -383,8 +386,9 @@ With the cap and the stop rule, the LS ends at most 2.5 µs past the ideal windo
 reverse current is bounded by `V_o·2.5 µs/L` plus the LS turn-off delay: about 1 A at 80 µH and
 1.5 A at 51 µH with `V_o` = 26.5 V. A sweep that stops two coarse steps past the bend reaches
 about half of that. On a replica of a full-sun run at 78 V, 20 runs per noise level learned within
-a standard deviation of 1.3 counts at 10 mA of sensor noise per sample and 3.3 counts at 30 mA,
-without a guard action. At 100 mA the bend is lost in the noise in 3 of 20 runs (`no knee`).
+a standard deviation of 2.0 counts at 10 mA of sensor noise per sample and 3.3 counts at 30 mA,
+without a guard action. At 100 mA the bend is lost in the noise in 2 of 20 runs (`no knee`, `few
+points`).
 Without the 10 extra points the spread rises to 1.8 and 4.7 counts and the result moves 26 counts
 earlier.
 

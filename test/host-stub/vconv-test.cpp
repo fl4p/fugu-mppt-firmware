@@ -93,7 +93,7 @@ void runPinned(VirtualConverter &v, int n, float vin, float vout) {
 //
 // DCM with the ring on: the coil current at HS turn-on follows the ring phase, so steady Iout
 // versus HS count ripples with a period of Vout/(f*tick*Vin) counts (the dead time shrinks by
-// tick*Vin/Vout per count). Off (f=0) the plant is the unchanged ideal model.
+// tick*Vin/Vout per count). Off (C=0) the plant is the unchanged ideal model.
 static float ringIout(VirtualConverter &v, uint16_t pmax, uint16_t n, float vin, float vout) {
     const uint16_t ls = (uint16_t) std::lround(n * (vin / vout * 0.98f - 1.f));
     v.setPwm(VirtualConverter::PwmState{pmax, n, ls, kFreq});
@@ -107,11 +107,12 @@ void testR2_ring() {
     section("R2 switch-node ring");
     constexpr uint16_t pm = 4103;
     const float vin = 78.f, vout = 27.f, L = 76e-6f, fr = 254e3f, tick = 1.f / (kFreq * (float) pm);
+    const float C = 1 / (4 * 9.8696f * fr * fr * L);
     VirtualConverter off, on;
     rig(off, vin, vout, 0, 0, 1, 1, L);
     rig(on, vin, vout, 0, 0, 1, 1, L);
     off.setDiodeVf(0.7f), on.setDiodeVf(0.7f);
-    on.setRing(fr, 25);
+    on.setRing(C, 25);
     VirtualConverter zero;
     rig(zero, vin, vout, 0, 0, 1, 1, L);
     zero.setDiodeVf(0.7f), zero.setRing(0, 25);
@@ -144,13 +145,15 @@ void testR2_ring() {
     // HS body-diode clamp (Vin < 2 Vout) and heavy damping: finite, ripple vanishes at Q = 0.5
     VirtualConverter lo;
     rig(lo, 40, vout, 0, 0, 1, 1, L);
-    lo.setDiodeVf(0.7f), lo.setRing(fr, 25);
+    lo.setDiodeVf(0.7f), lo.setRing(C, 25);
     for (uint16_t n = 1000; n <= 2600; n += 50) EXPECT(std::isfinite(ringIout(lo, pm, n, 40, vout)));
-    // energy: never Pout > Pin. The extra loss over the ring-free plant is the node energy the model
-    // drops at HS turn-on, at most 1/2 C Vnode^2 per cycle with the node below min(2 Vout, Vin) + Vf;
-    // without the clamp charge returned to the input, the 40 V case exceeds that by ~C Vout (Vin-2Vout)
-    const float C = 1 / (4 * 9.8696f * fr * fr * L);
-    auto pNode = [&](float vi) { const float vn = std::min(vi, 2 * vout) + 0.7f; return 0.5f * C * vn * vn * kFreq; };
+    // energy: never Pout > Pin. The node is hard-switched at both edges: the LS dumps 1/2 C Vin^2 at
+    // its turn-on, the HS charges it from the ring voltage to Vin (1/2 C (Vin - Vnode)^2 <= 1/2 C (Vin +
+    // Vf)^2), and G takes at most the ring's start energy 1/2 C (Vout + Vf)^2, all per cycle
+    auto pLs = [&](float vi) { return 0.5f * C * vi * vi * kFreq; };
+    auto pNode = [&](float vi) {
+        return pLs(vi) + 0.5f * C * ((vi + 0.7f) * (vi + 0.7f) + (vout + 0.7f) * (vout + 0.7f)) * kFreq;
+    };
     float effMax = 0, lossOn = 0, lossLo = 0;
     VirtualConverter loOff;
     rig(loOff, 40, vout, 0, 0, 1, 1, L);
@@ -166,14 +169,14 @@ void testR2_ring() {
         if (n <= 1300) lossOn = std::max(lossOn, loss(on, n, vin) - loss(off, n, vin)); // DCM band at 78 V
         lossLo = std::max(lossLo, loss(lo, n, 40) - loss(loOff, n, 40));
     }
-    std::printf("  ring Pout/Pin max %.4f, extra loss max %.3f W (78 V, bound %.3f) %.3f W (40 V, bound %.3f)\n",
-                effMax, lossOn, pNode(vin), lossLo, pNode(40));
+    std::printf("  ring Pout/Pin max %.4f, extra loss max %.3f W (78 V, LS dump %.3f, bound %.3f) %.3f W (40 V, LS dump"
+                " %.3f, bound %.3f)\n", effMax, lossOn, pLs(vin), pNode(vin), lossLo, pLs(40), pNode(40));
     EXPECT(effMax <= 1.0f);
-    EXPECT(lossOn <= 1.15f * pNode(vin));
-    EXPECT(lossLo <= 1.15f * pNode(40));
+    EXPECT(lossOn >= 0.95f * pLs(vin) && lossOn <= pNode(vin));
+    EXPECT(lossLo >= 0.95f * pLs(40) && lossLo <= pNode(40));
     VirtualConverter damp;
     rig(damp, vin, vout, 0, 0, 1, 1, L);
-    damp.setDiodeVf(0.7f), damp.setRing(fr, 0.5f);
+    damp.setDiodeVf(0.7f), damp.setRing(C, 0.5f);
     // no oscillation left, only the node charge C*Vout per cycle the coil draws from the output
     float dMin = 1, dMax = -1;
     for (uint16_t n = 400; n <= 1200; n += 40) {

@@ -48,7 +48,7 @@ static std::vector<Pt> sweep(std::mt19937 &rng, float L, float fr, float q, floa
     v.setBat(vbat, 0.03f);
     v.setPassives(940e-6f, 470e-6f, L);
     v.setDiodeVf(0.7f);
-    v.setRing(fr, q);
+    v.setRing(1 / (39.478418f * fr * fr * L), q);
     v.setPwmMax(kPmax), v.setPwmFreq(kFsw);
     v.setVin(voc), v.setVout(vbat);
     const bool soft = isc < 5;

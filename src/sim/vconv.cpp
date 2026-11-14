@@ -20,13 +20,16 @@ void VirtualConverter::stepOneCycle(float T) {
     // Rebuild reciprocals only when an input changes; the steady N-cycle loop then divides nothing
     // (LX7 has no hw float divide, so each `/` was a software __divsf3). 6 compares << 18 divisions.
     if (T != cycT_ || pmax != cycPmax_ || l_ != cycL_ || cIn_ != cycCin_ ||
-        cOut_ != cycCout_ || rbat_ != cycRbat_ || ringF_ != cycRingF_) {
+        cOut_ != cycCout_ || rbat_ != cycRbat_ || ringC_ != cycRingC_) {
         cycT_ = T; cycPmax_ = pmax; cycL_ = l_; cycCin_ = cIn_; cycCout_ = cOut_; cycRbat_ = rbat_;
-        cycRingF_ = ringF_;
-        ringW_ = (ringF_ > 0.0f && l_ > 0.0f) ? kTwoPi * ringF_ : 0.0f;
-        ringZ0_ = ringW_ * l_;
-        ringC_ = ringW_ > 0.0f ? 1.0f / (ringW_ * ringZ0_) : 0.0f;
-        ringA_ = ringW_ / (2.0f * ringQ_);
+        cycRingC_ = ringC_;
+        if (ringC_ > 0.0f && l_ > 0.0f) {
+            const float w0 = 1.0f / std::sqrt(l_ * ringC_), r = 0.25f / (ringQ_ * ringQ_);
+            ringA_ = 0.5f * w0 / ringQ_;
+            ringWd_ = w0 * std::sqrt(std::max(1.0f - r, 1e-4f));
+            ringInvWd_ = 1.0f / ringWd_;
+            ringInvC_ = 1.0f / ringC_;
+        }
         invL_    = (l_   > 0.0f) ? 1.0f / l_   : 0.0f;
         invCin_  = (cIn_ > 0.0f) ? 1.0f / cIn_ : 0.0f;
         invCout_ = (cOut_> 0.0f) ? 1.0f / cOut_: 0.0f;
@@ -169,47 +172,16 @@ void VirtualConverter::stepOneCycleBuck(float T) {
 
     // Phase 3: both off. c > 0: LS body diode. c < 0: HS body diode (rev pump).
     float cEnd = c;
-    float areaOff = 0.0f, areaPump = 0.0f, areaRingIn = 0.0f;
-    bool ringing = false;
-    if (tOff > 0.0f && cn_ > 0.0f) {
-        // L-C_node ring between the diode clamps, parallel damping (Q at the ring); the coil current
-        // at HS turn-on carries into the next cycle, the hard turn-on charges C_node from the input
-        const float z0 = std::sqrt(l_ / cn_), gp = 1.0f / (cnQ_ * z0);
-        const int nSt = std::max(1, (int) (tOff / 10e-9f));
-        const float h = tOff / (float) nSt, hc = h / cn_;
-        float i = c, v = tLS > 0.0f ? 0.0f : vIn_;
-        const float vHi = vIn_ + diodeVf_, vLo = -diodeVf_;
-        for (int k = 0; k < nSt; ++k) {
-            i += (v - vOut_) * invL_ * h;
-            v -= (i + (v - vOut_) * gp) * hc;
-            if (v > vHi) { v = vHi; areaPump += i * h; }
-            else if (v < vLo) v = vLo;
-            areaOff += i * h;
-        }
-        areaPump += cn_ * (vIn_ - v) * (inputPump_ ? 1.0f : 0.0f);
+    float areaOff = 0.0f, areaRingIn = 0.0f;
+    bool ring = false, zero = false;
+    if (ringC_ > 0.0f && tOff > 0.0f && tHS > 0.0f && vOut_ > 0.0f && vIn_ > vOut_) {
+        // switch-node ring from the node voltage the last switch left (LS: 0, HS: Vin); the HS turn-on
+        // charges the node back to Vin from the input
+        float x = (tLS > 0.0f ? 0.0f : vIn_) - vOut_, i = c;
+        areaOff = ringOff(x, i, tOff, areaRingIn, zero);
+        areaRingIn += ringC_ * std::max(0.0f, vIn_ - vOut_ - x);
         cEnd = i;
-        iInAvg_ = (areaHS + (inputPump_ ? areaPump : 0.0f)) * invT_;
-        iOutAvg_ = (areaHS + areaLS + areaOff) * invT_;
-        iLEnd_ = cEnd;
-        dcm_ = c <= 0.0f || std::fabs(cEnd) < 0.5f * std::fabs(b);
-        return;
-    }
-    if (ringW_ > 0.0f && tOff > 0.0f && tHS > 0.0f && vOut_ > 0.0f && vIn_ > vOut_) {
-        // switch-node ring: LS body diode carries c > 0 to zero, then the node rings until HS turn-on
-        float x = -vOut_, t = tOff;
-        if (c > 0.0f) {
-            const float tZero = c * l_ / (vOut_ + diodeVf_);
-            if (tZero >= tOff) {
-                cEnd = c - (vOut_ + diodeVf_) * invL_ * tOff;
-                areaOff = trapArea(c, cEnd, tOff);
-                t = 0.0f;
-            } else {
-                areaOff = 0.5f * c * tZero;
-                t -= tZero;
-                x = -(vOut_ + diodeVf_);
-            }
-        }
-        if (t > 0.0f) areaOff += ringOff(x, c > 0.0f ? 0.0f : c, t, cEnd, areaRingIn), ringing = true;
+        ring = true;
     } else if (tOff > 0.0f) {
         if (c > 0.0f) {
             const float slope = -(vOut_ + diodeVf_) * invL_;     // <= 0; zero iff vOut_ + diodeVf_ == 0
@@ -245,64 +217,87 @@ void VirtualConverter::stepOneCycleBuck(float T) {
         }
     }
 
-    iInAvg_  = (areaHS + (ringing ? areaRingIn : (inputPump_ && c < 0.0f ? areaOff : 0.0f))) * invT_;
+    iInAvg_  = (areaHS + (ring ? areaRingIn : (inputPump_ && c < 0.0f ? areaOff : 0.0f))) * invT_;
     iOutAvg_ = (areaHS + areaLS + areaOff) * invT_;
     iLEnd_ = cEnd;
     // DCM := "coil is at zero at cycle end". c!=0 means phase 3 drove it down;
     // a==0 covers the staying-idle case (prior cycle ended at zero too).
-    dcm_ = ringing || ((cEnd == 0.0f) && (c != 0.0f || a == 0.0f));
+    dcm_ = ring ? zero : (cEnd == 0.0f) && (c != 0.0f || a == 0.0f);
 }
 
-// Switch-node ring in the buck's dead phase (both switches off, coil current near zero): the coil
-// L and the node capacitance C (both FETs' Coss, winding, layout) ring about Vout. State x = Vnode -
-// Vout, i = coil current toward the output; KCL C dx/dt = -i, KVL L di/dt = x. Damped harmonic:
-//   x(s) = A e^(-a s) cos(w s + p),  i(s) = (A/Z0) e^(-a s) sin(w s + p),  Z0 = w L,  a = w/(2Q)
-// (the a/w = 1/(2Q) term of i is dropped: < 3 % at Q >= 20). Body diodes clamp the node at -Vf
-// (LS) and Vin + Vf (HS): the coil then ramps its current to zero at the clamp voltage and the ring
-// restarts from rest. Only the first extremum on each side is tested for a clamp, later ones are
-// smaller. Charge to the output over the ring: int i ds = -C dx. Linear C, constant w and Q; the
-// node charge the HS draws from the input at turn-on (C (Vin - Vnode) per cycle) and the 1/2 C Vin^2
-// the HS turn-off delivers to the output are not modelled; the node energy left at turn-on (<= 1/2 C
-// (2 Vout)^2 per cycle) is dropped, of the order of the real turn-on loss. Returns the charge to the output over t, iEnd = coil current at t (the
-// HS turn-on current of the next cycle: its phase is what modulates the energy per cycle), qIn =
-// charge the HS body diode returns to the input while clamped (<= 0, input-current sign).
-float VirtualConverter::ringOff(float x, float i, float t, float &iEnd, float &qIn) const {
+// Switch-node ring while both buck switches are off: coil L, node capacitance C (FET Coss, winding,
+// layout), damping conductance G = 1/(Q Z0) from the node to the output. x = Vnode - Vout, i = coil
+// current toward the output:
+//   C dx/dt = -i - G x,  L di/dt = x
+//   x(s) = e^(-a s) (x0 cos(wd s) + B sin(wd s)),  B = -(a x0 + i0/C) / wd,
+//   a = w0/(2Q),  wd = w0 sqrt(1 - 1/(4Q^2))
+// so a free segment moves C (x0 - x1) to the output (coil and G). The body diodes clamp x at
+// -(Vout + Vf) (LS) and Vin + Vf - Vout (HS); clamped, the coil current ramps to zero at that
+// voltage and the ring restarts from rest. x is monotonic between its extrema, so each half-period is tested for a clamp
+// while the envelope can still reach one. Advances x, i by t; returns the charge to the output, adds
+// the charge the HS body diode returns to the input to qIn (<= 0); zero: the coil current reached zero.
+float VirtualConverter::ringOff(float &x, float &i, float t, float &qIn, bool &zero) const {
     constexpr float kPi = kTwoPi * 0.5f;
-    const float xLo = -(vOut_ + diodeVf_), xHi = vIn_ + diodeVf_ - vOut_;
+    const float xLo = -(vOut_ + diodeVf_), xHi = vIn_ + diodeVf_ - vOut_, lim = std::min(-xLo, xHi);
+    const float C = ringC_, a = ringA_, wd = ringWd_, iwd = ringInvWd_;
     float q = 0.0f;
-    for (int k = 0; k < 4; ++k) {
-        const float amp = std::sqrt(x * x + i * i * ringZ0_ * ringZ0_);
-        if (amp < 1e-6f) break;
-        const float p = std::atan2(i * ringZ0_, x);
-        float sHit = t, xc = 0.0f;
-        for (int side = 0; side < 2; ++side) {
-            const float lim = side ? xHi : -xLo; // |clamp level|
-            float th = (side ? 0.0f : kPi) - p;  // phase to the next extremum on that side
-            th -= kTwoPi * std::floor(th / kTwoPi);
-            const float sExt = th / ringW_;
-            const float aExt = amp * std::exp(-ringA_ * sExt);
-            if (aExt <= lim * 1.0001f) continue;
-            const float s = std::max(0.0f, sExt - std::acos(lim / aExt) / ringW_);
-            if (s < sHit) sHit = s, xc = side ? xHi : xLo;
+    for (int seg = 0; seg < 8; ++seg) {
+        const float x0 = x, i0 = i;
+        const float B = -(a * x0 + i0 * ringInvC_) * iwd, Bi = C * (wd * x0 - a * B);
+        auto at = [&](float s, float &xs, float &is) {
+            const float e = std::exp(-a * s), cs = std::cos(wd * s), sn = std::sin(wd * s);
+            xs = e * (x0 * cs + B * sn), is = e * (i0 * cs + Bi * sn);
+        };
+        // phases of the first zero of i and of dx/ds (x extremum), both pi-periodic
+        auto first = [](float y, float z) {
+            float th = std::atan2(y, z);
+            th -= kPi * std::floor(th / kPi);
+            return th < 1e-4f ? th + kPi : th;
+        };
+        const float thI = first(-i0, Bi), th = first(a * x0 - wd * B, -a * B - wd * x0);
+        const float env = std::sqrt(x0 * x0 + B * B);
+        float s0 = 0.0f, xs0 = x0, sHit = -1.0f, xc = 0.0f;
+        for (int k = 0; seg < 7 && k < 64 && s0 < t && env * std::exp(-a * s0) > lim; ++k) {
+            const float s1 = std::min(t, (th + kPi * (float) k) * iwd);
+            float xs1, is1;
+            at(s1, xs1, is1);
+            if (xs1 > xHi || xs1 < xLo) {
+                xc = xs1 > xHi ? xHi : xLo;
+                // monotonic on [s0, s1]: secant start, safeguarded Newton (dx/ds = -(i + G x)/C)
+                float lo = s0, hi = s1, s = s0 + (s1 - s0) * (xc - xs0) / (xs1 - xs0);
+                for (int n = 0; n < 4; ++n) {
+                    float xs, is;
+                    at(s, xs, is);
+                    if ((xs - xc) * (xs1 - xc) > 0.0f) hi = s; else lo = s;
+                    const float ig = is + 2.0f * a * C * xs;
+                    const float sn = ig != 0.0f ? s + (xs - xc) * C / ig : 0.5f * (lo + hi);
+                    s = sn > lo && sn < hi ? sn : 0.5f * (lo + hi);
+                }
+                sHit = s;
+                break;
+            }
+            s0 = s1, xs0 = xs1;
         }
-        const float e = std::exp(-ringA_ * sHit), th = ringW_ * sHit + p;
-        const float x1 = amp * e * std::cos(th), i1 = amp * e * std::sin(th) / ringZ0_;
-        q += ringC_ * (x - x1);
-        t -= sHit;
-        if (xc == 0.0f) { iEnd = i1; return q; }
-        // clamped: coil voltage xc ramps the current back to zero
+        if (sHit < 0.0f) {
+            at(t, x, i);
+            if (thI * iwd < t) zero = true;
+            return q + C * (x0 - x);
+        }
+        float i1;
+        at(sHit, x, i1);
+        q += C * (x0 - xc);
+        x = xc, t -= sHit;
         const float tz = std::fabs(i1) * l_ / std::fabs(xc);
         if (tz >= t) {
-            iEnd = i1 + xc / l_ * t;
-            if (xc > 0.0f) qIn += 0.5f * (i1 + iEnd) * t;
-            return q + 0.5f * (i1 + iEnd) * t;
+            i = i1 + xc * invL_ * t;
+            const float dq = 0.5f * (i1 + i) * t;
+            if (xc > 0.0f) qIn += dq;
+            return q + dq;
         }
-        if (xc > 0.0f) qIn += 0.5f * i1 * tz;
-        q += 0.5f * i1 * tz;
-        t -= tz;
-        x = xc, i = 0.0f;
+        const float dq = 0.5f * i1 * tz;
+        if (xc > 0.0f) qIn += dq;
+        q += dq, t -= tz, i = 0.0f, zero = true;
     }
-    iEnd = 0.0f;
     return q;
 }
 

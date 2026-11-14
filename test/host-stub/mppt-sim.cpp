@@ -34,7 +34,7 @@
 //     rcal-low     same, a cloud 0.2 s after the start: Isc 2 A, Voc -3 % (soft panel, knee lifts Vin)
 //     rcal-sun     80 uH board, Isc 5.6 A / Voc 79.6 V, 5 nF switch node ringing at Q 40 (non-monotonic late side)
 //     rcal-low-bus rcal-low on a swinging bus (+-0.4 % / 23 s, +-0.2 % / 7.3 s, 0.15 % steps every 2-6 s)
-//   switch-node ring (DCM Iout ripple vs duty; vconv.conf ring_f/ring_q), board = fry | flat (L0, L, ring f, Q
+//   switch-node ring (DCM Iout ripple vs duty; vconv.conf ring_c/ring_q), board = fry | flat (L0, L, ring f, Q
 //   fitted to field sweeps), suffix -off = same board with the ring disabled, -damped = ring at Q 0.5 (no
 //   oscillation, but the ring branch: node charge, and the HS body diode returns clamp charge to the input):
 //     ring-sweep-<board>   ~150-180 W morning sun, global sweep at 60 s: ripple seen in the sweep, chosen peak
@@ -1198,10 +1198,10 @@ static int simMain(int argc, char **argv) {
     if (sc == "rcal-sun") setenv("SIM_CONF", "coil.conf:L0=80e-6", 1);
     boot(ov, p0);
     if (rcal) g_vconv.setDiodeVf(0.7f), g_vconv.setInputPump(true);
-    if (sc == "rcal-sun") g_vconv.setNodeRing(5e-9f, 40.f), g_vconv.setPv(5.6f, 79.6f, 0.78f);
+    if (sc == "rcal-sun") g_vconv.setRing(5e-9f, 40.f), g_vconv.setPv(5.6f, 79.6f, 0.78f);
     if (g_ring) {
         g_vconv.setPassives(g_vconv.getCin(), g_vconv.getCout(), g_ring->lPlant);
-        g_vconv.setRing(g_ringOn ? g_ring->f : 0.f, g_ringDamped ? 0.5f : g_ring->q);
+        g_vconv.setRing(g_ringOn ? 1 / (39.478418f * g_ring->f * g_ring->f * g_ring->lPlant) : 0.f, g_ringDamped ? 0.5f : g_ring->q);
         g_vconv.setDiodeVf(0.7f);
         printf("# ring board %s: coil.conf L0 %.0f uH, plant L %.0f uH, ring %s (%.0f kHz, Q %.1f, node C %.2f nF)\n",
                g_ring->name, g_ring->l0Conf * 1e6f, g_ring->lPlant * 1e6f, g_ringOn ? (g_ringDamped ? "damped" : "on") : "OFF", g_ring->f * 1e-3f,

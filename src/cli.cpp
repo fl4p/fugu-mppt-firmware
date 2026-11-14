@@ -2010,7 +2010,7 @@ static void cmdMeasureCoil(cmd *c) {
 // vconv                           dump state
 // vconv pv <isc> <voc> [k]        update PV params
 // vconv bat <vbat>                update battery voltage
-// vconv set <key> <value>         in-memory setter (c_in, c_out, r_bat, l, vbat_ac_amp, vbat_ac_freq, vbat_ac_shape, diode_vf)
+// vconv set <key> <value>         in-memory setter (c_in, c_out, r_bat, l, vbat_ac_amp, vbat_ac_freq, vbat_ac_shape, diode_vf, ring_c, ring_q)
 static void cmdVconv(cmd *c) {
     Command cc(c);
     int n = cc.countArgs();
@@ -2068,8 +2068,8 @@ static void cmdVconv(cmd *c) {
         else if (key == "vbat_ac_freq") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), v, g_vconv.getVbatAcShape());
         else if (key == "vbat_ac_shape") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), g_vconv.getVbatAcFreq(), (int) v);
         else if (key == "diode_vf") g_vconv.setDiodeVf(v);
-        else if (key == "ring_f")   g_vconv.setRing(v, g_vconv.getRingQ());
-        else if (key == "ring_q")   g_vconv.setRing(g_vconv.getRingF(), v);
+        else if (key == "ring_c")   g_vconv.setRing(v, g_vconv.getRingQ());
+        else if (key == "ring_q")   g_vconv.setRing(g_vconv.getRingC(), v);
         else CMD_FAIL_RETURN("vconv set: unknown key '%s'", key.c_str());
         UART_LOG("vconv: %s=%.6g", key.c_str(), v);
     } else {

@@ -60,8 +60,6 @@ public:
     void setPvBlocking(bool b) { pvBlocking_ = b; }
     // buck: reverse coil current through the HS body diode returns to C_in; the panel sinks it above Voc
     void setInputPump(bool b) { inputPump_ = b; }
-    // buck: switch-node capacitance (F) and ring Q while both switches are off; 0: ideal clamp at zero current
-    void setNodeRing(float cn, float q) { cn_ = cn; cnQ_ = q; }
 
     void setBat(float vbat, float rbat) {
         vbat_ = vbat;
@@ -109,10 +107,11 @@ public:
     void setVin(float v)  { vIn_ = v; }
     void setVout(float v) { vOut_ = v; }
     void setDiodeVf(float v) { diodeVf_ = v; } // LS body-diode drop in the dead/off phase
-    // Buck DCM switch-node ring: L0 against the node capacitance C = 1/((2*pi*f)^2*L), quality
-    // factor q. f <= 0 disables it (default).
-    void setRing(float f, float q) { ringF_ = f; ringQ_ = q > 0.5f ? q : 0.5f; cycRingF_ = -1.0f; }
-    [[nodiscard]] float getRingF() const { return ringF_; }
+    // Buck switch-node ring while both switches are off: node capacitance c (F) against the coil,
+    // quality factor q; ring frequency 1/(2*pi*sqrt(L*c)). c <= 0 disables it (default).
+    void setRing(float c, float q) { ringC_ = c > 0.0f ? c : 0.0f; ringQ_ = q > 0.5f ? q : 0.5f; cycRingC_ = -1.0f; }
+    [[nodiscard]] float getRingC() const { return ringC_; }
+    [[nodiscard]] float getRingF() const { return ringC_ > 0.0f ? 1.0f / (6.2831853f * std::sqrt(l_ * ringC_)) : 0.0f; }
     [[nodiscard]] float getRingQ() const { return ringQ_; }
     [[nodiscard]] float getVin()  const { return vIn_; }
     [[nodiscard]] float getVout() const { return vOut_; }
@@ -167,7 +166,6 @@ private:
     float pvInvW_[kPvSubMax] = {1.f, 1.f, 1.f}; // 1 / Voc share of the m+1 strongest
     bool pvBlocking_ = false;
     bool inputPump_ = false;
-    float cn_ = 0.0f, cnQ_ = 40.0f;
 
     // Battery + passives
     float vbat_ = 28.0f;
@@ -207,14 +205,14 @@ private:
     // the rotation step changes; |sin| / custom shapes still go through the function pointer.
     float oscS_ = 0.0f, oscC_ = 1.0f, rotS_ = 0.0f, rotC_ = 1.0f, oscStep_ = -1.0f;
 
-    // switch-node ring (setRing): f, Q; cached omega, Z0 = omega*L, C = 1/(omega*Z0), decay rate
-    float ringF_ = 0.0f, ringQ_ = 20.0f, cycRingF_ = -1.0f;
-    float ringW_ = 0.0f, ringZ0_ = 0.0f, ringC_ = 0.0f, ringA_ = 0.0f;
+    // switch-node ring (setRing): C, Q; cached decay rate, damped angular frequency and reciprocals
+    float ringC_ = 0.0f, ringQ_ = 20.0f, cycRingC_ = -1.0f;
+    float ringA_ = 0.0f, ringWd_ = 0.0f, ringInvWd_ = 0.0f, ringInvC_ = 0.0f;
 
     void stepOneCycle(float T);
     void stepOneCycleBuck(float T);
     void stepOneCycleBoost(float T);
-    float ringOff(float x, float i, float t, float &iEnd, float &qIn) const;
+    float ringOff(float &x, float &i, float t, float &qIn, bool &zero) const;
 };
 
 // Singleton. Defined in src/sim/vconv.cpp.

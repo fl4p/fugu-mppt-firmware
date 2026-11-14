@@ -540,7 +540,7 @@ static void testFullSun() {
         h.r.rng.seed(seed);
         h.r.voc = 79.6f;
         h.r.p.setPv(5.6f, 79.6f, K); h.r.p.setBat(26.45f, 0.04f); h.r.p.setPassives(470e-6f, 470e-6f, 80e-6f);
-        h.r.p.setVin(79.6f); h.r.p.setVout(26.45f); h.r.p.setNodeRing(5e-9f, 40.f);
+        h.r.p.setVin(79.6f); h.r.p.setVout(26.45f); h.r.p.setRing(5e-9f, 40.f);
         h.vi = h.viEwm = 79.6f; h.vo = h.voEwm = 26.45f;
         h.op = (uint16_t) (26.45f / 57.f * PM);
         h.run(8);
