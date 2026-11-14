@@ -29,40 +29,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from etc.fugu.console import Console  # noqa: E402
 from etc.fugu.transport import MqttTransport  # noqa: E402
 from etc.fugu_console import etc_file, load_env_file, run_ota  # noqa: E402
-from ota_common import (build_has_networking, build_is_plant_sim, build_gate_driver,  # noqa: E402
-                             parse_device_gate_driver, gate_driver_verdict)
+from ota_common import (archive_elf, bootinfo_row, build_gate_driver,  # noqa: E402
+                        build_has_networking, build_is_plant_sim, device_driver_label,
+                        gate_driver_verdict, image_is_dirty, is_current, is_pending_verify, judge,
+                        parse_bootinfo, parse_device_gate_driver, print_table, read_local_app_desc)
+from ota_common import confirm as yes_no  # noqa: E402
+import rich  # noqa: E402,F401  (result table; fail before the OTA, not after it)
 
-RE_BOOT_UPTIME = re.compile(r'uptime:\s*(\d+)\s*s,\s*app\s+(\S+)\s+v\S+\s+(\S+)\s+\(built (.+?),\s*IDF\s+(\S+)\)')
-RE_BOOT_RUNNING = re.compile(r'running:\s*(\S+)\s+@\S+\s+\(\S+\)\s+rollback=(\S+)')
 RE_HOSTNAME = re.compile(r'Hostname:\s*(\S+)')
 RE_OTA_URL = re.compile(r'^ota\s+(https?://\S+)\s*$', re.M)
 OTA_BUDGET = 330.0  # firmware OTA watchdog (300 s) + margin
-REBOOT_SLACK = 5.0
-
-
-def parse_bootinfo(lines):
-    """{uptime, project, version, built, idf, partition, rollback} from a `bootinfo` reply, or None
-    without the uptime line."""
-    out = {}
-    for l in lines:
-        if m := RE_BOOT_UPTIME.search(l):
-            out.update(uptime=int(m[1]), project=m[2], version=m[3], built=m[4], idf=m[5])
-        elif m := RE_BOOT_RUNNING.search(l):
-            out.update(partition=m[1], rollback=m[2])
-    return out if 'uptime' in out else None
-
-
-def judge(before, after, image_version, elapsed):
-    """('ok'|'old-image'|'no-reboot', text) for a `bootinfo` read `elapsed` s after `ota` was sent."""
-    rebooted = after['uptime'] < elapsed + REBOOT_SLACK
-    slot = after.get('partition'), before.get('partition')
-    if not rebooted:
-        return 'no-reboot', f"still running {after['version']} (uptime {after['uptime']} s, no reboot)"
-    if after['version'] != image_version:
-        return 'old-image', f"rebooted into {after['version']}, not {image_version}"
-    if None not in slot and slot[0] == slot[1]:
-        return 'old-image', f'rebooted but still on slot {slot[0]} (rollback?)'
-    return 'ok', f"running {after['version']} from {after.get('partition', '?')}"
 
 
 def is_relevant(line):
@@ -187,11 +163,6 @@ class ExactMqtt(MqttTransport):
             super()._on_message(client, userdata, msg)
 
 
-def read_app_desc(bin_path):
-    from ota import read_local_app_desc  # heavy import (rich, requests); only when run
-    return read_local_app_desc(bin_path)
-
-
 def ask(con, cmd, parse, budget):
     """Repeat `cmd` until `parse(reply)` is truthy or `budget` s pass (a busy console, e.g. one
     blocked in another client's `sleep`, answers late or drops the command)."""
@@ -210,19 +181,14 @@ def parse_hostname(lines):
 def confirm(prompt, args):
     if args.dry_run:
         return True
-    if args.yes:
-        print(f'{prompt}: accepted (--yes)')
-        return True
-    if not sys.stdin.isatty():
-        print(f'aborting: {prompt} (refused non-interactively)')
-        return False
-    return input(f'{prompt} — proceed? [y/N] ').strip().lower() in ('y', 'yes')
+    return yes_no(f'{prompt} — proceed? [y/N] ', f'aborting: {prompt} (refused non-interactively)',
+                  accept=args.yes and f'{prompt}: accepted (--yes)')
 
 
 def guards(args, con, image, before):
     """ota.py's image safety checks plus the device's rollback state; False aborts."""
     ok = True
-    if before.get('rollback') == 'PENDING_VERIFY':
+    if is_pending_verify(before):
         print('⚠️  the running image is not confirmed yet (PENDING_VERIFY): this OTA overwrites the '
               'other slot, which holds the last confirmed image (the rollback target)')
         ok = ok and confirm('unconfirmed running image', args)
@@ -232,7 +198,7 @@ def guards(args, con, image, before):
     if build_is_plant_sim(args.bin):
         print('⛔  PLANT-SIMULATION image (CONFIG_FUGU_WITH_VCONV=y): a real converter makes 0 W')
         ok = ok and confirm('plant-sim image', args)
-    if 'dirty' in image['version']:
+    if image_is_dirty(image['version']):
         print(f"⚠️  uncommitted build {image['version']}")
         ok = ok and confirm('dirty image', args)
     if not args.no_driver_check:
@@ -241,7 +207,7 @@ def guards(args, con, image, before):
         img = build_gate_driver(args.bin)
         verdict = gate_driver_verdict(img, dev)
         if verdict != 'ok':
-            print(f'⚠️  gate driver {verdict.upper()}: image {img or "unknown"}, device {dev or "unknown"}')
+            print(f'⚠️  gate driver {verdict.upper()}: image {img or "unknown"}, device {device_driver_label(dev)}')
             ok = ok and (args.allow_driver_change or confirm('gate-driver change', args))
     return ok
 
@@ -268,14 +234,6 @@ def attempt(con, url, image_version, before):
             return ('ok' if verdict == 'ok' else 'failed'), text, info
         time.sleep(3)
     return 'lost', f'no bootinfo reply within {budget:.0f} s after `ota` ({outcome})', None
-
-
-def row(label, info):
-    if not info:
-        return dict(state=label, uptime='-', version='-', slot='-', rollback='-')
-    return dict(state=label, uptime=f"{info['uptime']} s" if 'uptime' in info else '',
-                version=info.get('version', ''), slot=info.get('partition', ''),
-                rollback=info.get('rollback', ''))
 
 
 def main():
@@ -324,7 +282,7 @@ def main():
     if not args.broker:
         print('no broker: set MQTT_HOST in etc/mqtt.env or pass --broker')
         return 2
-    image = read_app_desc(args.bin)
+    image = read_local_app_desc(args.bin)
     if not image:
         print(f'{args.bin}: missing or no app descriptor')
         return 2
@@ -377,16 +335,15 @@ def main():
         if before['project'] != image['project']:
             print(f"project mismatch: device {before['project']}, image {image['project']}")
             return 2
-        if before['version'] == image['version'] and not args.force:
+        if is_current(image['version'], before['version']) and not args.force:
             print(f"already at {image['version']} (-f to push anyway)")
             return 0
         if not guards(args, con, image, before):
             return 1
 
-        rows = [row('before', before)]
+        rows = [bootinfo_row('before', before)]
 
         def table(*extra):
-            from ota import print_table
             print_table(rows + list(extra) + [dict(state='image', version=image['version'])],
                         [('state', 'STATE'), ('uptime', 'UPTIME', {'justify': 'right'}),
                          ('version', 'VERSION', {'no_wrap': True}), ('slot', 'SLOT'),
@@ -409,16 +366,10 @@ def main():
             if result != 'failed':
                 break
             before = after or before
-        table(row('after', after))
+        table(bootinfo_row('after', after))
         if result == 'ok':
             print(f'✅ {args.name}: {text}')
-            try:
-                sys.path.insert(0, os.path.join(REPO_ROOT, 'etc', 'idf-devtools'))
-                import elf_archive
-                elf_archive.archive(args.name, method='ota-mqtt', version=image['version'],
-                                    bin=args.bin, build_dir=os.path.dirname(args.bin))
-            except Exception as e:
-                print(f'WARN: ELF archive failed: {e}')
+            archive_elf(args.name, 'ota-mqtt', image['version'], args.bin)
             return 0
         print(f'❌ {args.name}: {text}')
         return 1
