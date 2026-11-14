@@ -590,8 +590,8 @@ public:
             taskNotification.wait(alertTimeoutMs_);
 
         if (!new_data) {
-            // Missed the ALERT edge. The GPIO ISR is deliberately non-IRAM, so it's masked while
-            // the flash cache is off (config/coulomb persist, OTA); a dropped edge would otherwise
+            // Missed the ALERT edge. Without FUGU_GPIO_ISR_IRAM the GPIO ISR is masked while the
+            // flash cache is off (config/coulomb persist, OTA); a dropped edge would otherwise
             // stall the RT sampler until the loop-latency watchdog shuts the converter down. Poll
             // the chip instead: reading MASK_EN reports CVRF *and* clears+re-arms the alert, so a
             // missed edge degrades to a late sample rather than a starvation event.

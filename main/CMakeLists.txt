@@ -327,3 +327,7 @@ component_compile_options(
 # this component's own 26 TUs. It is NOT applied to libesp-ota-ble.a, whose merge sections
 # still join the early pool.
 target_compile_options(${COMPONENT_LIB} PRIVATE -fno-merge-constants)
+# GPIO ISR service with ESP_INTR_FLAG_IRAM: only where its handler chain is IRAM-resident (rt_iram_extra.lf)
+if (RT_IRAM_LF)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE FUGU_GPIO_ISR_IRAM=1)
+endif ()

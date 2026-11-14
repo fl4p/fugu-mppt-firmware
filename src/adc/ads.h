@@ -12,7 +12,7 @@ class ADC_ADS;
 
 ADC_ADS *ads_inst = nullptr;
 
-void ICACHE_RAM_ATTR AdsAlertISR();
+void AdsAlertISR();
 
 /**
  * Implementation for ADS1x15 ADC. Uses ALERT pin for conversion ready notification interrupt.
@@ -213,7 +213,7 @@ public:
         }
         */
 
-    inline void alertNewDataFromISR() {
+    void IRAM_ATTR alertNewDataFromISR() {
         newData = true;
         taskNotification.notifyFromIsr();
     }
@@ -256,6 +256,6 @@ public:
 };
 
 
-void ICACHE_RAM_ATTR AdsAlertISR() {
+void IRAM_ATTR AdsAlertISR() {
     if (ads_inst) ads_inst->alertNewDataFromISR();
 }
