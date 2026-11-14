@@ -7,9 +7,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import lfilter_zi
 
+DATA = __import__('os').path.join(__import__('os').path.dirname(__file__), '../../adcscope/data/filter-study-anf/')
+
 fs = 450.0  # Sample frequency (Hz)
 
-y = pd.read_csv('iout_50hz_inverter_noise.csv')['0']
+y = pd.read_csv(DATA + 'iout_50hz_inverter_noise.csv')['0']
 
 #y = (y-y.mean()) / y.mean()
 

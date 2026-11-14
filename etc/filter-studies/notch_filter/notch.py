@@ -23,7 +23,8 @@ f0 = 50.0*2  # Frequency to be removed from signal (Hz)
 
 y = np.array([1 + 0.1 * math.sin(2 * math.pi * i / fs * f0) for i in range(1000)])
 
-y = pd.read_csv('vout_50hz_inverter.csv')['0'].values
+DATA = __import__('os').path.join(__import__('os').path.dirname(__file__), '../../adcscope/data/filter-study-notch/')
+y = pd.read_csv(DATA + 'vout_50hz_inverter.csv')['0'].values
 
 Q = 30.0  # Quality factor
 b, a = signal.iirnotch(f0, Q, fs)

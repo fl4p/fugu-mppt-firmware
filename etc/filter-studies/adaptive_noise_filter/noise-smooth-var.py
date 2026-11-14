@@ -1,7 +1,9 @@
 import pandas as pd
 from matplotlib import pyplot as plt
 
-y = pd.read_csv('iout_50hz_inverter_noise.csv')['0']
+DATA = __import__('os').path.join(__import__('os').path.dirname(__file__), '../../adcscope/data/filter-study-anf/')
+
+y = pd.read_csv(DATA + 'iout_50hz_inverter_noise.csv')['0']
 
 n_free = y.rolling(40).mean().rolling(40).mean()
 n = y - n_free

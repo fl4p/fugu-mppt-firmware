@@ -4,17 +4,19 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from anf import AdaptiveLengthFilter
 
-y = pd.read_csv('iout_50hz_inverter_noise.csv')['0']
-#y = pd.read_csv('../../notch-filter/vout_50hz_inverter.csv')['0']
-y = pd.read_csv('vin1.csv')['0']
-#y2 = pd.read_csv('vin.csv')['0']
-#y3 = pd.read_csv('iout_50hz_inverter_noise.csv')['0']
-#y3 = pd.read_csv('../vout_filt.csv')['0']
-y3 = pd.read_csv('../data/china-inverter-1kw-load/iout.csv')['0']
+DATA = __import__('os').path.join(__import__('os').path.dirname(__file__), '../../adcscope/data/filter-study-anf/')
 
-y3 = pd.read_csv('../data/pv8A-inv500W/iout.csv')['0']
-y3 = pd.read_csv('../data/var-inverter/iout_452hz.csv')['0']
-y3 = pd.read_csv('../data/heater500w-off-on/iout_454hz.csv')['0']
+y = pd.read_csv(DATA + 'iout_50hz_inverter_noise.csv')['0']
+#y = pd.read_csv('../../notch-filter/vout_50hz_inverter.csv')['0']
+y = pd.read_csv(DATA + 'vin1.csv')['0']
+#y2 = pd.read_csv(DATA + 'vin.csv')['0']
+#y3 = pd.read_csv(DATA + 'iout_50hz_inverter_noise.csv')['0']
+#y3 = pd.read_csv('../vout_filt.csv')['0']
+y3 = pd.read_csv(DATA + '../china-inverter-1kw-load/iout.csv')['0']
+
+y3 = pd.read_csv(DATA + '../pv8A-inv500W/iout.csv')['0']
+y3 = pd.read_csv(DATA + '../var-inverter/iout_452hz.csv')['0']
+y3 = pd.read_csv(DATA + '../heater500w-off-on/iout_454hz.csv')['0']
 
 y = pd.concat([y3], axis=0)
 
