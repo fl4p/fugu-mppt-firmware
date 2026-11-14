@@ -507,7 +507,15 @@ int main(int argc, char **argv) {
     if (sc == "b") ov = {{"isc", "1.6"}};
     if (sc == "c") ov = {{"v_bat", "28.7"}};
     if (sc == "d-noise") ov = {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}};
+    if (sc.rfind("shade", 0) == 0) {
+        ov = {{"isc", "6.5"}, {"voc", "78"}};
+        // shade-cv: battery near the Vout cap with inverter ripple, so the Vout limiter touches now and then
+        if (sc == "shade-cv") {
+            ov.insert(ov.end(), {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}});
+        }
+    }
     boot(ov, p0);
+    if (sc.rfind("shade", 0) == 0) g_vconv.setPvShade(0.68f);
 
     if (sc == "sanity") {
         Probe p = probeStart();
@@ -557,6 +565,32 @@ int main(int argc, char **argv) {
         printf("%9.4f >>> Vbat +%.1f V -> %.2f V\n", tNow(), dv, g_vconv.getVbat());
         run(30, 1.0, &p, 25);
         report(name.c_str(), p);
+    } else if (sc.rfind("shade", 0) == 0) {
+        // two-peak curve; report where the tracker sits and the power against the higher peak
+        float pk[2] = {0, 0}, vk[2] = {0, 0};
+        for (float v = 5; v < g_vconv.getVoc(); v += 0.1f) {
+            int k = v > g_vconv.getVoc() * 0.6f;
+            if (v * g_vconv.pvCurrent(v) > pk[k]) pk[k] = v * g_vconv.pvCurrent(v), vk[k] = v;
+        }
+        printf("== peaks: %.0f W at %.1f V, %.0f W at %.1f V\n", pk[0], vk[0], pk[1], vk[1]);
+        const double T = getenv("SIM_T") ? atof(getenv("SIM_T")) : 600;
+        double eW = 0, tLow = 0, t0 = tNow(), tLeft = -1;
+        uint32_t nLim = 0, n = 0;
+        g_verbose = getenv("SIM_V") != nullptr;
+        for (double tEnd = tNow() + T, nextTr = tNow(); tNow() < tEnd;) {
+            double tb = tNow();
+            run(0.02, 0);
+            double dt = tNow() - tb;
+            eW += g_vconv.getVin() * g_vconv.pvCurrent(g_vconv.getVin()) * dt;
+            if (g_vconv.getVin() < g_vconv.getVoc() * 0.6f) { tLow += dt; if (tLeft < 0) tLeft = tNow() - t0; }
+            ++n; if (mppt.teleSnap().limIdx != 15) ++nLim;
+            if (tNow() >= nextTr) { traceLine(); nextTr += T / 40; }
+        }
+        float best = std::max(pk[0], pk[1]);
+        printf("\n== %s: mean PV power %.1f W = %.1f %% of the higher peak; %.0f s of %.0f s on the low-voltage side"
+               " (first at +%.0f s); limiter active in %.1f %% of 20 ms slices; %zu trips\n", name.c_str(), eW / T,
+               100 * eW / T / best, tLow, T, tLeft, 100.0 * nLim / n, g_trips.size());
+        return 0;
     } else if (sc == "d-noise") {
         Probe p = probeStart();
         run(300, 10.0, &p);

@@ -151,11 +151,20 @@ void MpptController::update() {
     MpptControlMode controlMode = MpptControlMode::None;
     float controlValue = 0;
 
+    // A limiter that only touches (D-term on a ripple crest) must not steer the tracker: resetting its
+    // direction on every touch and an upward step on every release walked the duty up through the MPP.
+    // After a touch the following loops give back what the touch took and the tracker carries on.
+    const uint32_t nowMs = (uint32_t) (nowUs / 1000);
+    const bool limSustained = ctrlState._limiting && nowMs - _limitSinceMs > 250;
+    bool keepTracker = false;
+
     if (limitingControlValue < 0) {
         // limit condition
         controlMode = limitingControl->mode;
         controlValue = limitingControlValue;
 
+        if (!ctrlState._limiting) _limitSinceMs = nowMs, _limitPert = 0;
+        keepTracker = !limSustained;
         ctrlState._limiting = true;
         auto limIdx = (int) (limitingControl - controlValues.begin());
         ctrlState.limIdx = limIdx;
@@ -166,8 +175,11 @@ void MpptController::update() {
             // recover from limit condition
             ctrlState._limiting = false;
             ctrlState.limIdx = 15;
-            controlMode = MpptControlMode::MPPT;
-            controlValue = limitingControlValue;
+            if (limSustained) {
+                controlMode = MpptControlMode::MPPT;
+                controlValue = limitingControlValue;
+                _limitPert = 0;
+            }
         }
     }
 
@@ -269,7 +281,7 @@ void MpptController::update() {
             controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get());
             controlValue *= speedScale;
         }
-    } else {
+    } else if (!keepTracker) {
         // tracker.resetTracker(power_smooth, controlValue > 0);
         tracker.resetDirection(controlValue > 0);
     }
@@ -294,7 +306,17 @@ void MpptController::update() {
 
         // constrain the buck step, this will slow down control for lower loop rates:
         // this causes very slow load response time, but works well when battery is connected
-        fp = constrain(fp, -(float) converter.getCtrlOnPwmCnt(), 16.0f * (float) converter.pwmCtrlMax / 2000.f);
+        const float fpMax = 16.0f * (float) converter.pwmCtrlMax / 2000.f;
+        if (ctrlState._limiting) {
+            // past the limit (P term) the duty stays taken, a D-only brake below it is given back
+            if (limitingControl->crtl.Kp * limitingControl->crtl._prevE < 0) _limitPert = 0;
+            else _limitPert += std::max(fp, -(float) converter.getCtrlOnPwmCnt());
+        } else if (_limitPert < 0) {
+            float back = std::min(-_limitPert, fpMax);
+            fp += back;
+            _limitPert += back;
+        }
+        fp = constrain(fp, -(float) converter.getCtrlOnPwmCnt(), fpMax);
         // Same hold as updateManual(): while the forced-PWM gate is counting, the duty must stand
         // still or it outruns both the hold and the EWMA voltages the gate is judging it against.
         // Upward only - a limiter or the tracker must always be able to back off.

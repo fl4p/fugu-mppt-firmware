@@ -28,7 +28,15 @@ public:
     // PV source curve (math/pv_model.h).
     void setPv(float isc, float voc, float k) { pv_.set(isc, voc, k); }
 
-    [[nodiscard]] float pvCurrent(float v) const { return pv_.current(v); }
+    // Partial shade: half of the string (bypassed below its own current) delivers `shade` x Isc,
+    // which gives a second power peak near Voc/2. 1 = unshaded.
+    void setPvShade(float shade) { pvShade_ = shade; }
+
+    [[nodiscard]] float pvCurrent(float v) const {
+        float i = pv_.current(v);
+        if (pvShade_ >= 1.f) return i;
+        return std::max(i * pvShade_, pv_.current(2 * v));
+    }
 
     // Open backflow switch at the PV input: its body diode passes only forward PV current.
     void setPvBlocking(bool b) { pvBlocking_ = b; }
@@ -126,6 +134,7 @@ private:
     bool boost_ = false;
 
     PvModel pv_;
+    float pvShade_ = 1.f;
     bool pvBlocking_ = false;
 
     // Battery + passives

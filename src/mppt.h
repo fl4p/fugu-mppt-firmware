@@ -214,6 +214,8 @@ public:
 
 private:
     bool _sweeping = false; // global scan
+    uint32_t _limitSinceMs = 0; // start of the current limit condition
+    float _limitPert = 0; // duty counts the current limit condition has taken
 
 
     struct {
