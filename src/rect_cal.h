@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "math/asym_peak_fit.h"
 #include "pwm/mcpwm_timing.h"
+#include "etc/mailbox.h"
 
 /**
  * Self-calibration of the buck DCM low-side timing offset (rect_offset).
@@ -291,8 +292,7 @@ public:
     // core 0: an offset for RT to apply. firesSeen: backstop count the value was derived after; if RT
     // has shrunk the offset since, it applies the shorter of both, uncalibrated.
     void post(int off, bool calibrated, uint16_t firesSeen) {
-        pend.store(word(off, calibrated) | PendBit | ((uint32_t) (firesSeen & 0x3fff) << 18),
-                   std::memory_order_release);
+        pend.post(word(off, calibrated) | ((uint32_t) (firesSeen & 0x3fff) << 17));
     }
     void post(int off, bool calibrated) { post(off, calibrated, fires.load(std::memory_order_acquire)); }
 
@@ -345,12 +345,12 @@ public:
 
     // RT, each new sample before protect(). Returns an HS count to ramp back to after a run, 0: none.
     uint16_t rt(Conv &c, const RectCalIn &in) {
-        if (uint32_t p = pend.load(std::memory_order_acquire)) {
-            const bool stale = ((p >> 18) & 0x3fff) != (fires.load(std::memory_order_relaxed) & 0x3fffu);
+        if (const uint32_t p = pend.peek()) {
+            const bool stale = ((p >> 17) & 0x3fff) != (fires.load(std::memory_order_relaxed) & 0x3fffu);
             const int off = (int16_t) (p & 0xffff);
             if (stale) setOff(c, std::min<int>(off, c.getRectOnOffset()), false);
             else setOff(c, off, p & CalBit);
-            pend.compare_exchange_strong(p, 0, std::memory_order_acq_rel);
+            pend.clear(p);
         }
         if (cal.running()) {
             const char *why = abortReq.load(std::memory_order_relaxed) ? "aborted"
@@ -445,7 +445,7 @@ public:
         // Save the RT-published pair once any posted value is applied, the power reading confirms the
         // converter is off (NaN does not) and RT has granted the persist lock.
         if (saveReq.exchange(false, std::memory_order_acq_rel)) dirty = true;
-        const bool want = dirty && std::fabs(pOut) < IdleW / 5 && !pend.load(std::memory_order_acquire)
+        const bool want = dirty && std::fabs(pOut) < IdleW / 5 && pend.idle()
                           && (int32_t) (nowS - saveAt) >= 0;
         const uint8_t l = lk.load(std::memory_order_acquire);
         if (l == Expired) {
@@ -493,12 +493,12 @@ public:
     [[nodiscard]] bool unsaved() const { return dirty; }
 
 private:
-    static constexpr uint32_t CalBit = 1u << 16, PendBit = 1u << 17;
+    static constexpr uint32_t CalBit = 1u << 16;
     static uint32_t word(int off, bool calibrated) { return (uint16_t) (int16_t) off | (calibrated ? CalBit : 0); }
 
     RectBackstop bs{};
     std::atomic<uint32_t> act{0};  // RT: active offset (low 16 bits) | CalBit
-    std::atomic<uint32_t> pend{0}; // core 0 -> RT: word() | PendBit | firesSeen << 18, 0: none
+    ReqSlot<31> pend; // core 0 -> RT: word() | firesSeen << 17
     std::atomic<bool> saveReq{false};
     std::atomic<uint8_t> lk{Idle}; // persist lock state
     // RT
