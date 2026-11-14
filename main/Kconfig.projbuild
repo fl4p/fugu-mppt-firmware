@@ -26,6 +26,16 @@ menu "ADC drivers"
             at operational settings during init, so it reflects the chip's actual throughput.
             No-op on boards without an INA226 (the measurement lives in ADC_INA226). Default on.
 
+    config FUGU_GPIO_ISR_IRAM
+        bool "GPIO ISR service in IRAM (ADC alerts live during caches-off flash writes)"
+        default n
+        depends on IDF_TARGET_ESP32S3
+        help
+            Installs the GPIO ISR service with ESP_INTR_FLAG_IRAM, so the INA226/ADS alert ISRs (and
+            the ina22x_ov gate trip) keep running while a flash write disables the cache. Only
+            effective where rt_iram_extra.lf places the arduino dispatcher in IRAM (not with
+            FUGU_RT_FLASH). Not yet tested on the caches-off path.
+
     config FUGU_WITH_ADS
         bool "ADS1015/ADS1115 ADC driver"
         default y
