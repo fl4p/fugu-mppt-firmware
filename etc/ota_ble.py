@@ -48,23 +48,21 @@ for _cand in (_os.environ.get("ESP_OTA_BLE_HOST", ""),
         break
 import esp_ota_ble as O
 import esp_ota_ble_transport as T
-_sys.path.insert(0, _os.path.join(_HERE, "idf-devtools"))
-import elf_archive
 _sys.path.append(_HERE)
-from ota_build_flags import build_gate_driver, parse_device_gate_driver, gate_driver_verdict
+from ota_common import (archive_elf, build_gate_driver, confirm, device_driver_label,
+                        gate_driver_verdict, is_current, parse_device_gate_driver,
+                        parse_device_version, read_local_app_desc, require_elf_archive)
 import os
 import re
-import struct
 import sys
+
+require_elf_archive()  # vendored submodule (etc/idf-devtools); fail before any push
 
 NUS_SVC = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # write: console commands
 TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # notify: status/log mirror
 FW_UUID = "6e400004-b5a3-f393-e0a9-e50e24dcca9e"  # write-no-response: firmware bytes
 ESPHOME_API_PORT = 6053
-
-APP_DESC_MAGIC = 0xABCD5432
-RE_APP_LINE = re.compile(r'App:\s+(\S+)\s+v\S+\s+(\S+)\s+\(built (.+),\s+IDF\s+(\S+)\)')
 
 # Strings present only in a WITH_BLE build: the otab receiver + NUS console (both #ifdef WITH_BLE) and
 # the NimBLE host (absent when CONFIG_BT_ENABLED is off). Flashing an image missing all of these over
@@ -80,27 +78,6 @@ OTA_CONFIRM_S = 20.0
 def image_has_ble(data):
     """Heuristic: does this firmware image look like a BLE-enabled (WITH_BLE) build?"""
     return any(sig in data for sig in BLE_SIGNATURES)
-
-
-def read_local_app_desc(bin_path):
-    """Parse the firmware version string out of a .bin's esp_app_desc_t, or None."""
-    try:
-        with open(bin_path, 'rb') as f:
-            data = f.read(0x200)
-    except FileNotFoundError:
-        return None
-    off = data.find(struct.pack('<I', APP_DESC_MAGIC))
-    if off < 0:
-        return None
-    return data[off + 0x10:off + 0x30].split(b'\x00', 1)[0].decode('utf-8', 'replace')
-
-
-def parse_device_version(lines):
-    """Pull the version from the App: line of an `uptime` reply, or None."""
-    for l in lines:
-        if m := RE_APP_LINE.search(l):
-            return m.group(2)
-    return None
 
 
 def progress_bar(done, total, label, width=30):
@@ -422,15 +399,11 @@ async def probe_gate_driver(ml, rx_lines, timeout=3.0):
     return None
 
 
-async def confirm(prompt):
-    return (await asyncio.to_thread(input, prompt)).strip().lower() in ("y", "yes")
-
-
 async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base_dirs=(), archive_as=None,
                allow_driver_change=False):
     data = open(bin_path, "rb").read()
     sha = hashlib.sha256(data).hexdigest()
-    local_ver = read_local_app_desc(bin_path)
+    local_ver = (read_local_app_desc(bin_path) or {}).get("version")
     print(f"image {bin_path}: {len(data)} bytes, sha256={sha}, version={local_ver}")
 
     # Pushing a non-BLE image over BLE bricks the BLE console/OTA on the device (serial or WiFi to
@@ -439,13 +412,10 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
         print("⚠️  this image looks like a build WITHOUT BLE (no NUS console / otab receiver found).")
         print("    Flashing it over BLE will disable the BLE console and BLE-OTA on the device —")
         print("    you'd then need serial or WiFi to recover it.")
-        if assume_yes:
-            print("    -y/--yes given, proceeding anyway.")
-        elif not sys.stdin.isatty():
-            print("    non-interactive; aborting (pass -y/--yes to override).")
-            return False
-        elif input("    Continue anyway? [y/N] ").strip().lower() not in ("y", "yes"):
-            print("    aborted.")
+        if not confirm("    Continue anyway? [y/N] ",
+                       "    non-interactive; aborting (pass -y/--yes to override).",
+                       accept=assume_yes and "    -y/--yes given, proceeding anyway.",
+                       aborted="    aborted."):
             return False
 
     # THE PROTOCOL NOW COMES FROM THE SHARED MODULE in the esp-ota-ble repo -
@@ -494,7 +464,7 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
                     break
                 await asyncio.sleep(0.05)
             print(f"  device version: {dev_ver or '?'}")
-            if local_ver and dev_ver == local_ver:
+            if is_current(local_ver, dev_ver):
                 print(f"  \u2611\ufe0f skip: already at {local_ver} (use --force to push anyway)")
                 return True
 
@@ -503,16 +473,14 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
         dev_drv = await probe_gate_driver(ml, rx_lines)
         verdict = gate_driver_verdict(img_drv, dev_drv)
         if verdict != "ok":
-            dev_s = {"mcpwm": "mcpwm", "other": "ledc/vconv"}.get(dev_drv, "unknown")
-            print(f"⚠️  gate driver {verdict.upper()}: image {img_drv or 'unknown'}, device {dev_s} "
-                  "(Kconfig FUGU_GATE_DRIVER)")
-            if allow_driver_change:
-                print("    --allow-driver-change given, proceeding anyway.")
-            elif not sys.stdin.isatty():
-                print("    non-interactive; aborting (pass --allow-driver-change to override).")
-                return False
-            elif not await confirm("    Continue anyway? [y/N] "):
-                print("    aborted.")
+            print(f"⚠️  gate driver {verdict.upper()}: image {img_drv or 'unknown'}, "
+                  f"device {device_driver_label(dev_drv)} (Kconfig FUGU_GATE_DRIVER)")
+            # off the event loop: the link stays serviced while the prompt waits
+            if not await asyncio.to_thread(
+                    confirm, "    Continue anyway? [y/N] ",
+                    "    non-interactive; aborting (pass --allow-driver-change to override).",
+                    accept=allow_driver_change and "    --allow-driver-change given, proceeding anyway.",
+                    aborted="    aborted."):
                 return False
 
         # Ask what the device is running before deciding what to send it. A
@@ -577,11 +545,7 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
                       else "  device is advertising again (proxy verification)")
                 O.cache_image(data)
                 if archive_as:
-                    try:
-                        elf_archive.archive(archive_as, method="ota", version=local_ver, bin=bin_path,
-                                            build_dir=os.path.dirname(os.path.abspath(bin_path)))
-                    except Exception as e:
-                        print(f"  WARN: ELF archive failed for {archive_as}: {e}")
+                    archive_elf(archive_as, "ota", local_ver, bin_path, indent="  ")
             else:
                 # FAIL, do not just warn. Before the module conversion this
                 # returned False here, and it must keep doing so: the shared

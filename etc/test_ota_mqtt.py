@@ -60,7 +60,7 @@ class Bootinfo(unittest.TestCase):
 
 class Guards(unittest.TestCase):
     def test_unconfirmed_running_image_refused_non_interactively(self):
-        a = NS(bin='/nonexistent/fugu-firmware.bin', no_driver_check=True, dry_run=False)
+        a = NS(bin='/nonexistent/fugu-firmware.bin', no_driver_check=True, dry_run=False, yes=False)
         img = dict(version='v1')
         stdin = sys.stdin
         sys.stdin = open(os.devnull)

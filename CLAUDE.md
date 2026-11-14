@@ -43,7 +43,7 @@ together with the firmware** by `idf.py flash`. To target a different board, eit
 `CMakeLists.txt` before `idf.py flash`, or use `app-flash` and provision the littlefs partition separately (see
 below).
 
-**OTA update over Wi-Fi:** `./ota.sh` builds, serves `build/` over HTTP on port 9000, then runs `etc/ota.py` which tells
+**OTA update over Wi-Fi:** `./ota.sh` builds, then runs `etc/ota.py`, which serves `build/` over HTTP on port 9000 and tells
 the device (via MQTT/serial) to pull the new image. The device must already have network and an `ota.conf`/MQTT broker
 configured.
 
