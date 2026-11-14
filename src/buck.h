@@ -51,6 +51,7 @@ using LegacyPwm = PWM_Mock;
 #include "util.h"
 #include "logging.h"
 #include "pwm/mcpwm_timing.h"   // rectOffset{Counts,Ns} helpers (no hardware deps)
+#include "etc/mailbox.h"
 
 /**
  * Synchronous buck or boost converter
@@ -186,19 +187,16 @@ class SynchronousConverter {
     uint16_t rectRefreshTicks = 0; // bootstrap-refresh pulse in timer ticks; pwmRectMin minus dead-time
 
     // Runtime dead-time change (console `dt`), posted from core 0 and applied on the RT core so
-    // pwmMax and the gate comparators never move under the control path. One word — [31:22] seq,
-    // [21:11] hl, [10:0] lh — so the triple is a coherent snapshot; ack==req means idle. seq
-    // (never 0 once posted) rather than a sentinel tick count, so "no request" is not a valid
-    // dead-time. 11 bits per value is enough: both are producer-clamped to periodTicks/32 <= 2047.
+    // pwmMax and the gate comparators never move under the control path. Payload [21:11] hl,
+    // [10:0] lh, so the pair is coherent; 11 bits each suffice, both are producer-clamped to
+    // periodTicks/32 <= 2047. Idle once the RT core has applied and acked it.
     //
-    // This is a latest-value MAILBOX, not a queue, and it assumes ONE producer: a second post
-    // overwrites an unapplied request instead of being rejected or queued. That holds today because
-    // every console transport (UART, USB-CDC, telnet, MQTT, BLE) dispatches on core 0 through the
-    // same handleCommand(), and `dt` waits for the ack before returning. A second producer, or a
-    // post issued after the CLI's 1 s ack timeout gave up, would silently drop the older request.
-    std::atomic<uint32_t> dtReqWord{0}, dtAckWord{0};
+    // Latest value, not a queue: a second post overwrites an unapplied request. That is safe with
+    // ONE producer: every console transport (UART, USB-CDC, telnet, MQTT, BLE) dispatches on core 0
+    // through handleCommand(), and `dt` waits for the ack. A post issued after the CLI's 1 s ack
+    // timeout gave up silently replaces the older request.
+    ReqSlot<22> dtReq;
     static constexpr uint32_t kDtTickMask = 0x7ffu;   // 11 bits, >= 65535/32
-    static constexpr uint32_t kDtSeqMask  = 0x3ffu;   // 10 bits
 
     // Runtime switching-frequency change (console `pwm-freq`), same mailbox contract as the
     // dead-time above: ONE core-0 producer, applied on the RT core so periodTicks/pwmMax and the
@@ -750,15 +748,11 @@ public:
             return "would leave too little duty range next to the LS minimum";
         hlTicks = (uint16_t) hl;
         lhTicks = (uint16_t) lh;
-        uint32_t seq = ((dtReqWord.load(std::memory_order_relaxed) >> 22) + 1) & kDtSeqMask;
-        if (!seq) seq = 1;
-        dtReqWord.store((seq << 22) | ((uint32_t) hlTicks << 11) | lhTicks, std::memory_order_release);
+        dtReq.post(((uint32_t) hlTicks << 11) | lhTicks);
         return nullptr;
     }
 
-    [[nodiscard]] bool deadTimeIdle() const {
-        return dtAckWord.load(std::memory_order_acquire) == dtReqWord.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] bool deadTimeIdle() const { return dtReq.idle(); }
 
     // RT-CORE ONLY. Applies a queued dead-time change, pulling the live comparators inside the new
     // envelope. The clamp is split around the driver write -- widening before, capping after; see
@@ -766,13 +760,12 @@ public:
     // little wide for the dead-time still in force, which is harmless (more rectifier conduction,
     // still inside the unchanged pwmMax) and cannot happen for a request that passed the producer.
     void applyPendingDeadTimeRt() {
-        if (dtReqWord.load(std::memory_order_acquire) != dtAckWord.load(std::memory_order_relaxed))
-            applyPendingDeadTimeSlow();
+        if (dtReq.peek()) applyPendingDeadTimeSlow();
     }
 
     __attribute__((noinline, cold)) void applyPendingDeadTimeSlow() {
-        const uint32_t req = dtReqWord.load(std::memory_order_acquire);
-        if (req == dtAckWord.load(std::memory_order_relaxed)) return;
+        const uint32_t req = dtReq.peek();
+        if (!req) return;
         const auto hl = (uint16_t) ((req >> 11) & kDtTickMask);
         const auto lh = (uint16_t) (req & kDtTickMask);
 #if HAVE_MCPWM
@@ -852,7 +845,7 @@ public:
             }
         }
 #endif
-        dtAckWord.store(req, std::memory_order_release);
+        dtReq.clear(req);
     }
 
     // True timer period in ticks (0 on drivers without one) and the tick rate it counts at.
