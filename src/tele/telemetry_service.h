@@ -35,7 +35,9 @@ protected:
         // symbol table; burst the full table so it isn't blind until the 120 s heartbeat.
         // (g_symtab is shared: the burst also lands on a concurrent BLE stream — harmless,
         // the decoder tolerates repeated tables; costs it a few hundred bytes.)
+#ifdef WITH_TELE_BINARY
         g_symtab.forceResend();
+#endif
         xTaskCreatePinnedToCore(flushTask, "teleflush", 4096, this, 1, &_flushTask, 0);
         g_teleUdpActive = true;
         return true;
