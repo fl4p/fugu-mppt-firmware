@@ -32,9 +32,12 @@ from etc.fugu_console import etc_file, load_env_file, run_ota  # noqa: E402
 from ota_common import (archive_elf, bootinfo_row, build_gate_driver,  # noqa: E402
                         build_has_networking, build_is_plant_sim, device_driver_label,
                         gate_driver_verdict, image_is_dirty, is_current, is_pending_verify, judge,
-                        parse_bootinfo, parse_device_gate_driver, print_table, read_local_app_desc)
+                        parse_bootinfo, parse_device_gate_driver, print_table, read_local_app_desc,
+                        require_elf_archive)
 from ota_common import confirm as yes_no  # noqa: E402
 import rich  # noqa: E402,F401  (result table; fail before the OTA, not after it)
+
+require_elf_archive()  # vendored submodule (etc/idf-devtools); fail before any OTA
 
 RE_HOSTNAME = re.compile(r'Hostname:\s*(\S+)')
 RE_OTA_URL = re.compile(r'^ota\s+(https?://\S+)\s*$', re.M)
