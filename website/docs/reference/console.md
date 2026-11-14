@@ -81,7 +81,7 @@ Hardware and runtime parameters live in `.conf` files on the device's littlefs p
 | `set-config <file> <key> <value>` (alias `setc`) | Set a key in a config file and persist it to flash. |
 | `del-config <file> <key>` (alias `delc`) | Remove a key; the whole line, including any inline comment, is deleted. |
 | `get-config <file> [<key>]` (alias `getc`) | Print a single key, or dump every key if `<key>` is omitted. |
-| `conf-hash` (alias `confhash`) | Read-only fingerprint of the configuration: SHA-256 over the files in `/littlefs/conf` (now and as loaded at boot), one hash per file, and a hash of the app's NVS namespace, with secret values redacted. See [Config fingerprint](#config-fingerprint). |
+| `conf-hash` (alias `confhash`) | Read-only fingerprint of the configuration: SHA-256 over the `*.conf` files in `/littlefs/conf` (now and as loaded at boot), one hash per file, with secret values redacted. See [Config fingerprint](#config-fingerprint). |
 | `conf-check` (alias `confcheck`) | Re-read `charger.conf`/`limits.conf` and warn about keys no loader reads (typos / obsolete, e.g. `cv_min` where the firmware reads `cv_float`), and print why a `limits.conf` does not load (e.g. a leftover role key, with its side replacement). Same check runs at boot for the parameter confs. |
 
 The following examples set, delete, read, and check keys:
@@ -108,95 +108,41 @@ setup at boot until it is migrated; see [Migrating from role keys](config/sensor
 
 ### Config fingerprint
 
-`conf-hash` lets a host record exactly which configuration a device ran with. It writes nothing. The
-output has one fact per line:
+`conf-hash` lets a host record which configuration a device ran with. It writes nothing. Output:
 
 ```
-conf sha256=<64 hex> boot=<64 hex|unknown> files=<N> bytes=<M> redacted=<R> excluded=wifi.conf
-conf-file <relpath> sha256=<first 16 hex> bytes=<n> redacted=<r>   (one line per hashed file)
-nvs sha256=<64 hex> keys=<K> redacted=<S> unreadable=0 ns=storage
+conf-file <name> sha256=<first 16 hex>   (one line per hashed file)
+conf sha256=<64 hex> boot=<64 hex|unknown> files=<N>
 ```
 
-- `sha256` is computed over the files in `/littlefs/conf` as they are on flash when the command
-  runs. `boot` is the same hash taken when littlefs was mounted during boot. If they differ, the
-  config files have changed since boot. That alone does not mean a restart is pending: `svc on/off`,
-  service log-level changes and `measure-coil ... apply` write their conf file and take effect
-  immediately, and files read on demand (for example `ftp.conf`) also apply without a restart.
-  `boot=unknown` means the boot-time hash could not be computed, and a `conf-boot error=<reason>`
-  line follows.
-- Secrets are never hashed, because a published hash of a short secret (a 6-digit BLE passkey, a
-  dictionary password) can be brute-forced offline. `wifi.conf` is excluded entirely; in all other
-  files and in NVS, secret values and URI credentials are replaced by `<redacted>` before hashing
-  (see the definition below), and `redacted=` counts the replacements. Changing only a secret
-  therefore does not change any hash.
-- The `conf-file` hash is SHA-256 of the file's **redacted** content, and `bytes=` is the redacted
-  length. It equals `sha256sum` of the file only when that line shows `redacted=0`.
-- The `nvs` hash covers only the firmware's own NVS namespace `storage` (hostname and a few Wi-Fi,
-  FTP and boot settings). Other namespaces, such as the Wi-Fi driver's stored credentials, are not
-  included.
+- `sha256` covers the `*.conf` files at the top level of `/littlefs/conf` as they are when the
+  command runs. `boot` is the same hash taken when littlefs was mounted during boot. If they differ,
+  the files changed since boot. That alone does not mean a restart is pending: `svc on/off`, log-level
+  changes and `measure-coil ... apply` write their conf file and take effect immediately.
+- The hash appears in console logs, which can be mirrored over MQTT, so secrets are not hashed: an
+  unsalted hash of a 6-digit BLE passkey or a dictionary password could be brute-forced offline.
+  `wifi.conf` is skipped, and secret values and URI credentials in the other files are replaced
+  by `<redacted>` first, as are user names, since the rest of `mqtt.conf` and `ftp.conf` is
+  predictable. Changing only a secret therefore does not change the hash.
+- The `conf-file` hash is SHA-256 of the file's redacted content. It equals `sha256sum` of the file
+  when nothing in it was redacted.
+- A read error prints `conf sha256=unknown boot=... error=<reason>` and the command fails.
 
-Any problem is reported, never hashed: the affected line prints `sha256=unknown ... error=<reason>`
-(for NVS also `nvs-unreadable <key>:<type>:<error>` lines), and the command fails. This includes a
-missing `/littlefs/conf` (an error, not the hash of an empty set) and a staged `<name>.new` (USB
-config drive) or `<name>.cft` (configuration write) file, present while an edit is committed: a hash
-taken mid-commit would not describe a stable configuration, so run the command again once the commit
-has finished. A `.cft` file left by a reset is deleted at the next boot, before the boot hash is taken.
-
-`etc/conf_hash.py <dir>` is the host reference implementation. It prints the same `conf` and
-`conf-file` lines (without `boot=`), or the same `sha256=unknown ... error=` line and exit code 1.
-`<dir>` is the conf directory; if it has no `*.conf` file at its top level but has a `conf/`
-subdirectory (a profile under `config/`, or the output of `etc/dump_littlefs.py`), `conf/` is
-hashed instead. The script prints the directory it hashed.
+`etc/conf_hash.py <dir>` computes the same lines on a host (without `boot=`). `<dir>` is a conf
+directory, or a profile under `config/` or an `etc/dump_littlefs.py` dump that contains `conf/`.
 
 #### Definition
 
-A key is a **secret key** if, after ASCII lowercasing, it contains `pass`, `psk`, `passkey`,
-`password`, `secret` or `token`, or ends in `_key`. Today this matches `ble_passkey` (`ble.conf`),
-`password` (`mqtt.conf`), `ftp_pass` (`ftp.conf` and NVS) and `wifi_psk` (NVS). "Whitespace" below
-means the bytes space, `\t`, `\n`, `\v`, `\f`, `\r` and NUL.
-
-**URI redaction** of a byte string: scan left to right for `://`. If an `@` follows it before
-the next `\n` (or the end of the string), the bytes from after `://` up to the last such `@` are
-replaced by `<redacted>`, and scanning resumes right after `<redacted>`; otherwise it resumes right
-after `://`. For example `broker_uri=mqtt://u:p@host:1883` becomes
-`broker_uri=mqtt://<redacted>@host:1883`. This deliberately over-redacts so that a hand-written
-password containing an unencoded `/`, `?` or `#` is still covered: an `@` in a path or query
-(`http://host/a@b` becomes `http://<redacted>@b`), or a second URI later on the same line, is
-swallowed too.
-
-**Line redaction** of one line (without its `\n`): for each `=` in the line, from left to right,
-look at all bytes before it. If, ASCII-lowercased, they contain a secret substring (`pass`, `psk`,
-`passkey`, `password`, `secret`, `token`), or, with trailing whitespace removed, they end in `_key`,
-everything after that `=` to the end of the line (including a trailing `\r`) is replaced by
-`<redacted>` and the line is done. If no `=` qualifies, URI redaction is applied to the whole line.
-
-This rule covers every way the firmware can read a key from the line: the normal key, a
-commented-out line such as `# ble_passkey=123456`, and a key that starts a later 255-byte chunk of
-a long line (the config parser reads lines in 255-byte pieces). It over-redacts on purpose, for
-example `note=about passwords=here` becomes `note=about passwords=<redacted>`.
-
-Each replacement counts once toward `redacted=`.
-
-**The `conf` hash:**
-
-1. Take every regular file below `/littlefs/conf`, recursively, as a `/`-separated path relative to
-   it. More than 8 levels of nested directories, a symlink or other non-regular entry,
-   or a file whose name ends in `.new` or `.cft` is an error. The top-level `wifi.conf` is skipped.
-2. Sort the paths bytewise.
-3. Split each file into lines at `\n` only, keeping the `\n`, and apply line redaction to each
-   line. A line longer than 4096 bytes, not counting `\n`, is an error. The result is the file's
-   redacted content.
-4. Feed, for each file in order, `<relpath>` `\0` `<length of the redacted content, decimal ASCII>`
-   `\0` `<redacted content>` into one SHA-256.
-
-The per-file hash is SHA-256 of the file's redacted content.
-
-**The `nvs` hash** sorts the entries of namespace `storage` by key. An entry with a secret key is
-not read and feeds only `<key>` `\0` `redacted`. Any other entry feeds `<key>` `\0` `<type>` `\0`
-`<length in decimal>` `\0` `<value bytes>`, where `<type>` is one of
-`u8 i8 u16 i16 u32 i32 u64 i64 str blob`, integers are little-endian at their native width, blobs
-are raw, and strings exclude the terminating NUL and have URI redaction applied (the length is that
-of the redacted value).
+1. Take the regular files named `*.conf` directly in `/littlefs/conf`, except `wifi.conf`, and sort
+   the names bytewise.
+2. Split each file at `\n` and redact each line. A line longer than 255 bytes becomes `<redacted>`.
+   Otherwise, if the line contains `://` and a later `@`, the bytes between `://` and the last `@`
+   become `<redacted>`. Then, if the line, ASCII-lowercased, contains `pass`, `psk`, `secret`,
+   `token`, `_key` or `user`, everything after the first `=` that follows that word becomes
+   `<redacted>`. For example `broker_uri=mqtt://u:p@host:1883` becomes
+   `broker_uri=mqtt://<redacted>@host:1883`, and `# ble_passkey=123456` becomes
+   `# ble_passkey=<redacted>`.
+3. Feed `<name>` `\0` `<redacted content>` `\0` for each file, in order, into one SHA-256.
 
 ## Charger Commands
 

@@ -1641,49 +1641,20 @@ static void cmdGetConfig(cmd *c) {
     }
 }
 
-// conf-hash — read-only fingerprint of the configuration, so a bench run can record exactly which
-// config a board ran with (definition: conf_hash.h, host reference: etc/conf_hash.py). One fact per
-// line. Secrets (passkey, passwords, PSKs, URI userinfo) are redacted before hashing and counted in
-// `redacted=`. Any read failure prints `sha256=unknown ... error=<msg>` and fails the command, never
-// a hash of a partial read. `boot` is the same conf hash taken at mount time during boot; if it
-// differs from `sha256`, the conf files changed since boot. That does not by itself mean a restart
-// is pending: `svc on/off`, log-level changes and `measure-coil ... apply` write files and apply
-// live, and lazily read files (e.g. ftp.conf) take effect without one. The output is a dozen short
-// lines, well inside the BLE console's log-FIFO share, so it is logged line by line like get-config.
+// conf-hash — fingerprint of the conf files (definition: conf_hash.h), now and as loaded at boot.
 static void cmdConfHash(cmd *) {
-    bool failed = false;
-    const auto &boot = confHashBoot();
-    const std::string bootHex = boot.ok ? confHashHex(boot.sha, 32) : "unknown";
-
-    ConfHashResult now;
-    if (confHashCompute(now, true)) {
-        UART_LOG("conf sha256=%s boot=%s files=%" PRIu32 " bytes=%" PRIu64 " redacted=%" PRIu32 " excluded=%s",
-                 confHashHex(now.sha, 32).c_str(), bootHex.c_str(), now.files, now.bytes, now.redacted,
-                 CONF_HASH_EXCLUDED);
-        for (const auto &f: now.perFile)
-            UART_LOG("conf-file %s sha256=%s bytes=%" PRIu32 " redacted=%" PRIu32, f.relpath.c_str(),
-                     confHashHex(f.sha, 8).c_str(), f.bytes, f.redacted);
-    } else {
-        failed = true;
-        UART_LOG("conf sha256=unknown boot=%s excluded=%s error=%s", bootHex.c_str(), CONF_HASH_EXCLUDED,
-                 now.err.c_str());
+    const uint8_t *boot = confHashBoot();
+    const std::string bootHex = boot ? confHashHex(boot, 32) : "unknown";
+    uint8_t sha[32];
+    std::string err;
+    const int files = confHash(CONF_HASH_ROOT, sha, err, [](const char *name, const uint8_t *s) {
+        UART_LOG("conf-file %s sha256=%s", name, confHashHex(s, 8).c_str());
+    });
+    if (files < 0) {
+        UART_LOG("conf sha256=unknown boot=%s error=%s", bootHex.c_str(), err.c_str());
+        CMD_FAIL_RETURN("conf-hash failed");
     }
-    if (!boot.ok)
-        UART_LOG("conf-boot error=%s", boot.err.c_str());
-
-    NvsHashResult nv;
-    if (nvsHashCompute(nv, "storage")) {
-        UART_LOG("nvs sha256=%s keys=%" PRIu32 " redacted=%" PRIu32 " unreadable=0 ns=storage",
-                 confHashHex(nv.sha, 32).c_str(), nv.keys, nv.redacted);
-    } else {
-        failed = true;
-        UART_LOG("nvs sha256=unknown keys=%" PRIu32 " redacted=%" PRIu32 " unreadable=%" PRIu32
-                 " ns=storage error=%s", nv.keys, nv.redacted, nv.unreadable, nv.err.c_str());
-        for (const auto &k: nv.unreadableKeys)
-            UART_LOG("nvs-unreadable %s", k.c_str());
-    }
-    if (failed)
-        CMD_FAIL_RETURN("conf-hash: failed, see error= above");
+    UART_LOG("conf sha256=%s boot=%s files=%d", confHashHex(sha, 32).c_str(), bootHex.c_str(), files);
 }
 
 // conf-check — re-read the parameter confs and warn about keys no loader reads (typos / obsolete,

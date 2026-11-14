@@ -1,88 +1,27 @@
 #pragma once
 
-// Configuration fingerprint for the `conf-hash` console command. Strictly read-only.
-//
-// Computed over the file bytes under /littlefs/conf (not over parsed keys), with secrets redacted,
-// so a host can recompute it from a backup directory. etc/conf_hash.py is the host reference;
-// test/host-stub/conf-hash-test.cpp (this code) and test/host_py/test_conf_hash.py pin the same
-// frozen digests. Definition:
-//
-//   files   every regular file below the conf root, recursively (more than 8 nested directory
-//           levels is an error), as a '/'-separated path relative to the root, except the top-level "wifi.conf"
-//           (all secrets). A file whose name ends in ".new" or ".cft" (USB-drive / ConfFile staging) is an error:
-//           a hash taken mid-commit is not a stable state. Anything else (e.g. a symlink on a host
-//           copy; littlefs has none) is an error.
-//   order   relative path, bytewise ascending
-//   content each file split into lines at '\n' only (the '\n' is kept); each line redacted by
-//           confHashRedactLine (conf_hash_core.h):
-//             - for each '=' left to right, if the ASCII-lowercased bytes before it contain a secret
-//               substring, or end (after trailing whitespace) in "_key", everything after that '='
-//               up to the '\n' (a trailing '\r' included) becomes "<redacted>" and the line is
-//               done. A superset of the firmware's views of a key (logical line, commented-out
-//               line, start of a later 255-byte fgets chunk); over-redacts by design;
-//             - otherwise URI userinfo is redacted: for each "://", if an '@' follows on the same
-//               line, the text from after "://" to the LAST such '@' becomes "<redacted>"
-//               (over-redacts an '@' in a path/query, covers '/', '?', '#' in a password).
-//           A line longer than 4096 bytes (excluding '\n') is an error.
-//   sha256  SHA-256 over, per file in order:  relpath '\0' decimal(len) '\0' content
-//           where len is the length of the REDACTED content.
-//
-// The per-file hash is SHA-256 of the same redacted content: it equals `sha256sum` of the file only
-// when the file had nothing redacted (redacted=0).
-//
-// The NVS hash covers only the app namespace "storage" (key-value.h): entries sorted by key, each
-// contributing  key '\0' typename '\0' decimal(len) '\0' value  (typename u8 i8 u16 i16 u32 i32 u64
-// i64 str blob; integers little-endian at native width, strings without the NUL, blobs raw; URI
-// userinfo redacted in str values, len being the redacted length). An entry with a secret key is
-// never read and contributes only  key '\0' "redacted".
+// `conf-hash`: SHA-256 over the top-level *.conf files of a dir except wifi.conf, sorted bytewise,
+// each fed as  name '\0' redacted-content '\0'.  Redaction per line (split at '\n'): a line over
+// 255 bytes becomes "<redacted>". Otherwise the bytes between the first "://" and the last '@'
+// after it become "<redacted>"; then, if the ASCII-lowercased result contains pass, psk, secret,
+// token, _key or user, everything after the first '=' following that word does too.
+// Host twin: etc/conf_hash.py.
 
-#include "conf_hash_core.h"
-
+#include <cstddef>
 #include <cstdint>
 #include <string>
-#include <vector>
 
-struct ConfHashFile {
-    std::string relpath;
-    uint32_t bytes = 0;         // redacted length
-    uint32_t redacted = 0;      // redactions in this file
-    uint8_t sha[32]{};
-};
+constexpr const char *CONF_HASH_ROOT = "/littlefs/conf";
 
-struct ConfHashResult {
-    bool ok = false;
-    std::string err;            // set iff !ok; no hash is valid then
-    uint8_t sha[32]{};
-    uint32_t files = 0;
-    uint64_t bytes = 0;         // sum of redacted lengths
-    uint32_t redacted = 0;
-    std::vector<ConfHashFile> perFile; // only filled when requested
-};
+std::string confHashHex(const uint8_t *b, size_t n);
 
-struct NvsHashResult {
-    bool ok = false;            // false on any error or any unreadable entry; sha is then invalid
-    std::string err;
-    uint8_t sha[32]{};
-    uint32_t keys = 0;          // entries found in the namespace (readable + unreadable)
-    uint32_t unreadable = 0;
-    uint32_t redacted = 0;      // secret-key entries + URI userinfos
-    std::vector<std::string> unreadableKeys; // "key:type:err" for the report
-};
-
-// Hash the directory tree at root (no mount check). Returns out.ok; on failure out.err says why and
-// no hash or per-file entry is valid (a partial read is never reported as a hash).
-bool confHashComputeAt(ConfHashResult &out, bool perFile, const std::string &root);
+// Returns the number of hashed files, or -1 with err set. perFile gets each file's redacted-content hash.
+int confHash(const char *dir, uint8_t sha[32], std::string &err,
+             void (*perFile)(const char *name, const uint8_t *sha) = nullptr);
 
 #ifdef ESP_PLATFORM
-// Hashes CONF_HASH_ROOT after checking that littlefs is mounted.
-bool confHashCompute(ConfHashResult &out, bool perFile);
-
-// Opens the namespace NVS_READONLY; never writes. Returns out.ok.
-bool nvsHashCompute(NvsHashResult &out, const char *ns = "storage");
-
-// Called once from setup() right after the littlefs mount, before any conf file is read.
 void confHashCaptureBoot();
 
-// Boot-time result; ok=false (with err) if it was not computed or failed.
-const ConfHashResult &confHashBoot();
+// Hash captured at boot, nullptr if it failed.
+const uint8_t *confHashBoot();
 #endif
