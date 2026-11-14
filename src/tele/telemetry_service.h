@@ -36,7 +36,10 @@ protected:
         // (g_symtab is shared: the burst also lands on a concurrent BLE stream — harmless,
         // the decoder tolerates repeated tables; costs it a few hundred bytes.)
         g_symtab.forceResend();
-        xTaskCreatePinnedToCore(flushTask, "teleflush", 4096, this, 1, &_flushTask, 0);
+        if (xTaskCreatePinnedToCore(flushTask, "teleflush", 4096, this, 1, &_flushTask, 0) != pdPASS) {
+            _flushTask = nullptr;
+            return false;
+        }
         g_teleUdpActive = true;
         return true;
     }

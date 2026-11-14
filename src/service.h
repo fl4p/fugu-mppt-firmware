@@ -212,6 +212,17 @@ public:
                 s->start();
     }
 
+    // Start enabled network services that are Failed again; returns how many were tried.
+    int retryFailedNetworkServices() {
+        int n = 0;
+        for (auto *s: _services)
+            if (s->requiresNetwork() && s->enabled() && s->state() == ServiceState::Failed) {
+                s->start();
+                ++n;
+            }
+        return n;
+    }
+
     // Stop network-requiring services while the netif is still valid — symmetric to
     // startEnabledNetworkServices(), called on the WiFi-down edge before WiFi.disconnect(). Releases
     // each service's sockets + log sink before lwip is deinited (tearing down after deinit was a UAF).

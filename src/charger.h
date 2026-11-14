@@ -681,7 +681,7 @@ public:
         auto topic = mqttConf.getString("cell_voltages_max_topic", "");
         if (!topic.empty()) {
             _bmsCellSource = true;
-            vpack_pin = params.Vbat_fallback;
+            if (std::isnan(vpack_pin)) vpack_pin = params.Vbat_fallback; // an MQTT restart keeps the live pin
             MQTT.subscribeTopic(topic, [&](const char *dat, int len) {
                 float v = strntof(dat, len);
                 if (!std::isfinite(v) || v <= 0) {

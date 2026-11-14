@@ -27,10 +27,14 @@ public:
 private:
     std::unordered_map<std::string, MqttMsgCallback> mqttMsgHandlers{};
     bool mqttConnected = false;
+    bool _configured = false;
     time_ms _lastTickMs = 0;
 
 public:
     bool isConnected()const  { return mqttConnected; }
+
+    // A broker_uri was set by the last onStart().
+    bool configured() const { return _configured; }
 
     std::string statusDetail() const override { return isConnected() ? "connected" : ""; }
     void (*onConnected)() = nullptr;
@@ -40,7 +44,8 @@ public:
     // false while disconnected or when the client rejects it
     bool publish(const char *topic, const char *payload, int qos, bool retain);
 
-    void init(const ConfFile &conf);
+    // Creates and starts the client; false if that fails (nothing left allocated). True without a broker.
+    bool init(const ConfFile &conf);
     void close();
 
     bool onStart() override;

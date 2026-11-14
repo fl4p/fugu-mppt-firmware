@@ -35,7 +35,7 @@ protected:
     void onTick() override;
 
 private:
-    void setupTelnet();
+    bool setupTelnet();
 
     void closeConnection();
 

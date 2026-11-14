@@ -99,7 +99,7 @@ void LCD::updateValues(const LcdValues &) {}
 
 MqttService MQTT;
 void MqttService::subscribeTopic(const std::string &, MqttMsgCallback) {}
-void MqttService::init(const ConfFile &) {}
+bool MqttService::init(const ConfFile &) { return true; }
 void MqttService::close() {}
 bool MqttService::onStart() { return false; }
 void MqttService::onStop() {}

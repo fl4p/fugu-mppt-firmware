@@ -5,6 +5,7 @@
 #ifdef WITH_BLE_TELE
 #include "tele/tele_ble.h"    // teleBleStreaming gate
 #endif
+#include <esp_heap_caps.h>
 
 
 constexpr auto withDebugFields = false;
@@ -583,6 +584,8 @@ void MpptController::telemetry() {
         point.addField("ntc_temp", ntc.lastFresh(), 1); // TODO to frequent
         point.addField("lag", (int) g_app.maxLoopLag); // peak RT-loop lag (µs), resets on rt-stats
         point.addField("rect_off", rectCal.offset()); // counts
+        point.addField("heap", (int) heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
+        point.addField("heap_min", (int) heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT));
     }
 
     point.addField("pwm_duty", converter.getCtrlOnPwmCnt());

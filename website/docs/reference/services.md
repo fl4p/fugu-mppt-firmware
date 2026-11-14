@@ -93,6 +93,8 @@ inline variable in `src/service.h`. It provides these methods:
 - `startEnabledAtBoot(bool networkUp)`: starts enabled services; network ones only if `networkUp`.
 - `startEnabledNetworkServices()`: restarts enabled network services that are not `Running`;
   called on the Wi-Fi-up edge.
+- `retryFailedNetworkServices()`: starts enabled network services that are `Failed` again; called
+  every 30 s while Wi-Fi is up (see [Network watchdog](#network-watchdog)).
 - `stopNetworkServices()`: stops the network services while the netif is still valid; called on the
   Wi-Fi-down edge, before `WiFi.disconnect()`.
 - `tickAll()`: ticks every service.
@@ -121,6 +123,43 @@ next tick (`stopNetworkServices()` then `WiFi.disconnect()`), outside any input 
 Tearing down inline was a use-after-free: a `wifi off` arriving over telnet deinitialised the netif under its own
 socket, and the command's confirmation log, mirrored to that telnet client, then wrote to freed lwip
 pbufs.
+
+## Network watchdog
+
+The network loop evaluates a watchdog once per second (`src/etc/net_guard.h`, wired in
+`src/main.cpp`). It acts only while Wi-Fi is connected and not switched off with `wifi off`; a
+Wi-Fi outage restarts all of its timers.
+
+- **Failed services**: every 30 s, enabled network services in state `Failed` are started again.
+  A service whose start failed for lack of heap therefore recovers once memory is available,
+  without waiting for the next Wi-Fi-up edge.
+- **Stale MQTT client**: when `mqtt` is `Running` with a broker configured but has not been
+  connected for more than 120 s, the service is restarted, at most once every 120 s. The warning
+  log line includes the free heap. The restart runs from the network loop, never from the MQTT
+  client's own task.
+- **Last-resort reboot**: the device restarts when MQTT (enabled, broker configured) has been
+  disconnected for more than 10 minutes *and* the free heap has stayed below 12 KB for at least a
+  minute. A broker that is merely down never triggers it, because the heap condition does not
+  hold. The reboot is skipped within the first 5 minutes of uptime, during a flash write or a
+  BLE firmware upload, and while restarts are blocked after a bootloader update. If the restart
+  does not happen, the condition re-arms after another 10 minutes.
+
+`mqtt` reports `Failed` when its client cannot be created or its task cannot be started, instead
+of showing `Running` without a client. Each `onStart()` releases a client left over from an
+earlier attempt, because `start()` on a `Failed` service calls `onStart()` without `onStop()`.
+
+### Heap diagnostics
+
+These diagnostics are always on:
+
+- A failed-allocation hook records the size, capabilities, heap function, task name, free heap
+  and a short backtrace of the most recent failure. It neither allocates nor blocks; the
+  low-frequency loop on core 0 prints the record (the first five, then at most one every 10 s,
+  with the number of failures since the last report). Symbolicate the backtrace addresses
+  against the build ELF.
+- A warning when the free heap is below 8 KB, at most once a minute.
+- Telemetry fields `heap` and `heap_min` (free and minimum-ever free heap in bytes) on every 40th
+  point.
 
 ## File layout
 
@@ -157,10 +196,10 @@ The following table lists each service's conf file, network dependency, and hook
 
 | Name | Conf | Network | `onStart` | `onStop` | `onTick` |
 |---|---|---|---|---|---|
-| `mqtt` | `mqtt.conf` | yes | read conf, run the `preStart` hook (charger BMS subscriptions + `onConnected`), then `init()` | `close()` | — (the MQTT client runs its own task) |
-| `tele` | `tele.conf` | yes (disabled by default) | require Wi-Fi (UDP is connectionless), load the wire format, spawn the flush task | delete the flush task | produce InfluxDB points (the flush task sends them) |
+| `mqtt` | `mqtt.conf` | yes | release a leftover client, read conf, run the `preStart` hook (charger BMS subscriptions + `onConnected`), then `init()` (fails if the client cannot be created or started) | `close()` | — (the MQTT client runs its own task) |
+| `tele` | `tele.conf` | yes (disabled by default) | require Wi-Fi (UDP is connectionless), load the wire format, spawn the flush task (fails if it cannot be created) | delete the flush task | produce InfluxDB points (the flush task sends them) |
 | `ftp` | `ftp.conf` | yes | require Wi-Fi, then `ftpBegin()` | `ftpEnd()` | `ftpHandle()` |
-| `telnet` | `telnet.conf` | yes | require Wi-Fi, then `setupTelnet()` | `telnetStop()` (drops the log sink) | `telnetLoop()` |
+| `telnet` | `telnet.conf` | yes | require Wi-Fi, then `setupTelnet()` (fails if the server does not start) | `telnetStop()` (drops the log sink) | `telnetLoop()` |
 | `lcd` | `lcd.conf` | no (disabled by default) | `lcd.init()` if not already initialised | — | refresh the display |
 | `scope` | `scope.conf` | yes | require Wi-Fi, then begin the TCP server | end the server | accept clients, then pump (the pump blocks ~1 tick and serves as the loop's yield) |
 | `ble` | `ble.conf` | no (disabled by default) | begin NUS with `ble_security` / `ble_passkey` | end NUS | drive the RX queue |

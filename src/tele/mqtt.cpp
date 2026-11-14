@@ -137,14 +137,16 @@ static void mqttLogCallback(const char *str, uint16_t len) {
 }
 
 
-void MqttService::init(const ConfFile &conf) {
-    if (!conf)return;
+bool MqttService::init(const ConfFile &conf) {
+    _configured = false;
+    if (!conf) return true;
 
     auto brokerUri = conf.getString("broker_uri", "");
     auto username = conf.getString("username", "");
     auto password = conf.getString("password", "");
 
-    if (brokerUri.empty())return;
+    if (brokerUri.empty()) return true;
+    _configured = true;
 
     ESP_LOGI(TAG, "connecting to broker %s@%s (pw %u chars)", username.c_str(), brokerUri.c_str(),
              password.length());
@@ -160,10 +162,20 @@ void MqttService::init(const ConfFile &conf) {
     if (!password.empty())mqtt_cfg.credentials.authentication.password = password.c_str();
 
     client = esp_mqtt_client_init(&mqtt_cfg);
-    assert_throw(client, "");
-    /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
+    if (!client) {
+        ESP_LOGE(TAG, "client init failed, heap %u", (unsigned) esp_get_free_heap_size());
+        return false;
+    }
     esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, mqtt_event_handler, &MQTT);
-    esp_mqtt_client_start(client);
+    // fails without heap for the task: a client that never runs would sit "Running" forever
+    if (esp_err_t e = esp_mqtt_client_start(client); e != ESP_OK) {
+        ESP_LOGE(TAG, "client start failed (%s), heap %u", esp_err_to_name(e), (unsigned) esp_get_free_heap_size());
+        esp_mqtt_client_unregister_event(client, MQTT_EVENT_ANY, mqtt_event_handler);
+        esp_mqtt_client_destroy(client);
+        client = nullptr;
+        return false;
+    }
+    return true;
 }
 
 void MqttService::close() {
@@ -180,6 +192,8 @@ void MqttService::close() {
 }
 
 bool MqttService::onStart() {
+    close(); // a Failed service is started again without onStop()
+    _configured = false;
     ConfFile conf{_confPath, /*no_warn_if_not_open*/ true};
     if (!conf) {
         ESP_LOGI(TAG, "no mqtt.conf - mqtt idle");
@@ -205,8 +219,7 @@ bool MqttService::onStart() {
         });
     }
 
-    init(conf);                   // connection is async; client task runs on its own
-    return true;
+    return init(conf);            // connection is async; client task runs on its own
 }
 
 void MqttService::onStop() {

@@ -137,6 +137,7 @@ idf_component_register(SRCS
         "../src/conf_hash.cpp"
         "../src/etc/rt.cpp"
         "../src/etc/flash_probe.cpp"
+        "../src/etc/heap_diag.cpp"
         ${RTPROF_SRC}
         "../src/math/float16.cpp"
         ${NETW_SRC}
