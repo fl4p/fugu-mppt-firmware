@@ -86,6 +86,11 @@ void rtcount(const char *l);
 
 void rtcount_print(bool reset);
 
+// Heap operations of the RT task (CONFIG_FUGU_RT_ALLOC_COUNT, heap hooks). rtAllocBegin() selects the
+// calling task; rtAllocPrint() writes the counts (and, with CONFIG_FUGU_RT_ALLOC_TRACE, the call sites).
+void rtAllocBegin();
+void rtAllocPrint();
+
 // core that last ran the internal-ADC / alert-pin interrupt (0xff: none yet)
 extern uint8_t g_isrCore[2];
 

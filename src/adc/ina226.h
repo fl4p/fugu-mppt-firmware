@@ -172,10 +172,11 @@ public:
         auto addr = (uint8_t) ina226.i2cAddress;
 
         bool ok = false;
+        // a throw here would allocate on the RT core (stall recovery): fail the reset instead
         auto mfrId = ina226.readRegister(INA22x_MANUFACTURER_ID_CMD, ok);
-        assert_throw(ok, "");
+        if (!ok) return false;
         auto deviceId = ina226.readRegister( INA22x_DEVICE_ID_CMD, ok);
-        assert_throw(ok, "");
+        if (!ok) return false;
         ESP_LOGI("ina22x", "MfrID: 0x%04X, DeviceID: 0x%04X", mfrId, deviceId);
 
         if (deviceId != 0x2260) {
@@ -355,7 +356,7 @@ public:
         //auto confReg = i2c_read_short(bus, addr, INA226_WE::INA226_CONF_REG, true, 100);
         bool ok;
         auto confReg = ina226.readRegister(INA226_WE::INA226_CONF_REG, ok);
-        assert_throw(ok, "");
+        if (!ok) return false;
 
         assert(!new_data);
 

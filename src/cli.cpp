@@ -688,6 +688,7 @@ static void cmdBootinfo(cmd *) {
     UART_LOG("heap: free=%u min-ever=%u largest=%u",
              (unsigned) esp_get_free_heap_size(), (unsigned) esp_get_minimum_free_heap_size(),
              (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+    rtAllocPrint();
     UART_LOG("uptime: %lu s, app %s", (uint32_t) (esp_timer_get_time() / 1000000), format_version());
     esp_chip_info_t ci;
     esp_chip_info(&ci);
@@ -1184,6 +1185,7 @@ extern void print_real_time_stats_blocking();
 
 static void cmdRtStats(cmd *) {
     print_real_time_stats_blocking();
+    rtAllocPrint();
 }
 
 // wired-sync diagnostic: edge rate on the sync pin (PCNT). Leader = self-check of its own

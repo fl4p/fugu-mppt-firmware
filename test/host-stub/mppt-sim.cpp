@@ -43,6 +43,7 @@
 #include "mppt.h"
 #include "app_state.h"
 #include "sim/vconv.h"
+#include "sim_alloc.h"
 
 // ---- globals owned by main.cpp on target ----
 ADC_Sampler adcSampler{};
@@ -174,7 +175,7 @@ static void loopRTNewData(time_ms nowMs) {
 }
 
 // one iteration of loopRT's while(true) body
-static void loopRTIter() {
+static void loopRTIterBody() {
     setWallClockUs(esp_timer_get_time());
     auto &nowUs(loopWallClockUs_);
     time_ms nowMs = nowUs / 1000ULL;
@@ -236,6 +237,16 @@ static void loopRTIter() {
     auto lag = nowUs - lastLoopTime;
     if (lastLoopTime && lag > g_app.maxLoopLag && !converter.disabled()) g_app.maxLoopLag = lag;
     lastLoopTime = nowUs;
+}
+
+// SIM_NOALLOC=<s>: heap use inside the RT iteration after <s> simulated seconds fails the run
+static double g_noAllocAfter = -1;
+
+static void loopRTIter() {
+    g_simRtAlloc.armed = g_noAllocAfter >= 0 && tNow() >= g_noAllocAfter;
+    g_simRtAlloc.active = true;
+    loopRTIterBody();
+    g_simRtAlloc.active = false;
 }
 
 // ---- replicated loopLF control work (core 0 on target, every lfPeriod) ----
@@ -792,7 +803,7 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
     return true;
 }
 
-int main(int argc, char **argv) {
+static int simMain(int argc, char **argv) {
     std::string sc = argc > 1 ? argv[1] : "sanity";
     g_simLogHook = logHook;
     if (const char *f = getenv("SIM_FINE")) sscanf(f, "%lf,%lf", &g_fineT0, &g_fineT1);
@@ -908,4 +919,20 @@ int main(int argc, char **argv) {
     printf("\n== log after event (first %zu lines):\n", g_logSince.size());
     for (size_t i = 0; i < g_logSince.size() && i < 60; ++i) printf("   %s\n", g_logSince[i].c_str());
     return 0;
+}
+
+int main(int argc, char **argv) {
+    g_simRtAlloc.now = tNow;
+    if (const char *e = getenv("SIM_NOALLOC")) g_noAllocAfter = atof(e);
+    int rc = simMain(argc, argv);
+    auto &a = g_simRtAlloc;
+    printf("== rt-alloc: %llu allocs, %llu frees in the RT iteration (%s)", (unsigned long long) a.allocs,
+           (unsigned long long) a.frees, a.mallocHooked ? "new/delete + malloc zone" : "new/delete only");
+    if (g_noAllocAfter >= 0)
+        printf("; after %.0f s: %llu allocs, %llu frees, %d sites", g_noAllocAfter, (unsigned long long) a.armedAllocs,
+               (unsigned long long) a.armedFrees, a.nSites);
+    printf("\n");
+    fflush(stdout);
+    if (g_noAllocAfter >= 0 && (a.armedAllocs || a.armedFrees)) return rc ? rc : 3;
+    return rc;
 }

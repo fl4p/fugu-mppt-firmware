@@ -13,6 +13,7 @@
 #include "viz/lcd.h"
 #include "tele/mqtt.h"
 #include "adc/adc_esp32_cont.h"
+#include "sim_alloc.h"
 
 #undef fopen
 
@@ -46,7 +47,9 @@ FILE *sim_fopen(const char *path, const char *mode) {
     return fopen(path, mode);
 }
 
+// target RT logging captures the line raw, formatting happens on core 0: not counted here
 static void emit(char lvl, const char *tag, const char *fmt, va_list ap) {
+    SimAllocPause pause;
     char buf[512];
     vsnprintf(buf, sizeof buf, fmt, ap);
     if (g_simLogHook) g_simLogHook(lvl, tag, buf);
@@ -78,6 +81,7 @@ void enable_esp_log_to_telnet() {}
 void flush_async_uart_log() {}
 void process_queued_tasks() {}
 void enqueue_task(std::function<void(void)> &&) {} // LCD messages, meter commits, deferred calibration
+bool rt_defer(RtDeferredFn, void *, float, float) { return true; } // same: core-0 work is not simulated
 void addLogCallback(LogCallback, bool) {}
 void removeLogCallback(LogCallback) {}
 void set_logging_telnet(ESPTelnet *) {}

@@ -686,6 +686,7 @@ void stopAndBackoff(uint32_t secondsDelay) {
 
 static void loopRT(void *arg) {
     // low-latency control loop task
+    rtAllocBegin();
 
     try {
         adcSampler.begin();
