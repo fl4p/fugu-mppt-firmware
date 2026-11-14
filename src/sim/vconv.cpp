@@ -9,6 +9,23 @@ inline float trapArea(float y0, float y1, float t) {
     return 0.5f * (y0 + y1) * t;
 }
 constexpr float kTwoPi = 6.28318530717958647692f;
+
+// free ring segment x(s) = e^(-a s) (x0 cos + B sin)(wd s), i(s) = e^(-a s) (i0 cos + Bi sin)(wd s)
+struct RingSeg {
+    float a, wd, x0, B, i0, Bi;
+    __attribute__((noinline)) void at(float s, float &x, float &i) const {
+        const float e = std::exp(-a * s), cs = std::cos(wd * s), sn = std::sin(wd * s);
+        x = e * (x0 * cs + B * sn), i = e * (i0 * cs + Bi * sn);
+    }
+};
+
+// first phase in (0, pi] where y cos + z sin... = 0, i.e. atan2(y, z) mod pi
+__attribute__((noinline)) float firstZero(float y, float z) {
+    constexpr float kPi = kTwoPi * 0.5f;
+    float th = std::atan2(y, z);
+    th -= kPi * std::floor(th / kPi);
+    return th < 1e-4f ? th + kPi : th;
+}
 }
 
 void VirtualConverter::stepOneCycle(float T) {
@@ -248,31 +265,23 @@ float VirtualConverter::ringOff(float &x, float &i, float t, float &qIn, bool &z
     float q = 0.0f;
     for (int seg = 0; seg < 8; ++seg) {
         const float x0 = x, i0 = i;
-        const float B = -(a * x0 + i0 * ringInvC_) * iwd, Bi = C * (wd * x0 - a * B);
-        auto at = [&](float s, float &xs, float &is) {
-            const float e = std::exp(-a * s), cs = std::cos(wd * s), sn = std::sin(wd * s);
-            xs = e * (x0 * cs + B * sn), is = e * (i0 * cs + Bi * sn);
-        };
-        // phases of the first zero of i and of dx/ds (x extremum), both pi-periodic
-        auto first = [](float y, float z) {
-            float th = std::atan2(y, z);
-            th -= kPi * std::floor(th / kPi);
-            return th < 1e-4f ? th + kPi : th;
-        };
-        const float thI = first(-i0, Bi), th = first(a * x0 - wd * B, -a * B - wd * x0);
+        const float B = -(a * x0 + i0 * ringInvC_) * iwd;
+        const RingSeg g{a, wd, x0, B, i0, C * (wd * x0 - a * B)};
+        // phases of the first zero of i and of dx/ds (x extremum)
+        const float thI = firstZero(-i0, g.Bi), th = firstZero(a * x0 - wd * B, -a * B - wd * x0);
         const float env = std::sqrt(x0 * x0 + B * B);
         float s0 = 0.0f, xs0 = x0, sHit = -1.0f, xc = 0.0f;
         for (int k = 0; seg < 7 && k < 64 && s0 < t && env * std::exp(-a * s0) > lim; ++k) {
             const float s1 = std::min(t, (th + kPi * (float) k) * iwd);
             float xs1, is1;
-            at(s1, xs1, is1);
+            g.at(s1, xs1, is1);
             if (xs1 > xHi || xs1 < xLo) {
                 xc = xs1 > xHi ? xHi : xLo;
                 // monotonic on [s0, s1]: secant start, safeguarded Newton (dx/ds = -(i + G x)/C)
                 float lo = s0, hi = s1, s = s0 + (s1 - s0) * (xc - xs0) / (xs1 - xs0);
                 for (int n = 0; n < 4; ++n) {
                     float xs, is;
-                    at(s, xs, is);
+                    g.at(s, xs, is);
                     if ((xs - xc) * (xs1 - xc) > 0.0f) hi = s; else lo = s;
                     const float ig = is + 2.0f * a * C * xs;
                     const float sn = ig != 0.0f ? s + (xs - xc) * C / ig : 0.5f * (lo + hi);
@@ -284,12 +293,12 @@ float VirtualConverter::ringOff(float &x, float &i, float t, float &qIn, bool &z
             s0 = s1, xs0 = xs1;
         }
         if (sHit < 0.0f) {
-            at(t, x, i);
+            g.at(t, x, i);
             if (thI * iwd < t) zero = true;
             return q + C * (x0 - x);
         }
         float i1;
-        at(sHit, x, i1);
+        g.at(sHit, x, i1);
         q += C * (x0 - xc);
         x = xc, t -= sHit;
         const float tz = std::fabs(i1) * l_ / std::fabs(xc);
