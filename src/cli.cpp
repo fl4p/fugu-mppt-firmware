@@ -487,7 +487,7 @@ static void cmdSweep(cmd *) {
         CMD_FAIL_RETURN("sweep: RT transition timed out");
 }
 
-// rect-cal [status|abort] — self-calibrate the DCM low-side timing offset (rect_cal.h)
+// rect-cal [force|status|abort] — self-calibrate the DCM low-side timing offset (rect_cal.h)
 static void cmdRectCal(cmd *c) {
     Command cc(c);
     const String sub = cc.countArgs() ? cc.getArg(0).getValue() : String("");
@@ -498,13 +498,14 @@ static void cmdRectCal(cmd *c) {
         rc.abortReq.store(true);
         return;
     }
-    if (sub.length()) CMD_FAIL_RETURN("rect-cal: expected [status|abort]");
-    if (!rc.requestStart()) CMD_FAIL_RETURN("rect-cal: already running");
+    const bool force = sub == "force";
+    if (sub.length() && !force) CMD_FAIL_RETURN("rect-cal: expected [force|status|abort]");
+    if (!rc.requestStart(force)) CMD_FAIL_RETURN("rect-cal: already running");
     for (int i = 0; i < 100 && rc.cal.get() == RectCal::Idle; ++i) delay(10);
     const auto st = rc.cal.get();
     if (st != RectCal::Run)
         CMD_FAIL_RETURN("rect-cal: refused: %s", st == RectCal::Fail ? rc.cal.why : "no RT response");
-    ESP_LOGI("main", "rect-cal: running at hs=%u (~30 s), see rect-cal status", rc.cal.hs);
+    ESP_LOGI("main", "rect-cal: running at hs=%u (up to 45 s), see rect-cal status", rc.cal.hs);
 }
 
 static void cmdResetLag(cmd *c) {
@@ -2255,7 +2256,7 @@ void setupCli() {
     cli.addCommand("mppt", cmdMppt);
     cli.addCommand("short-ls", cmdShortLs);
     cli.addCommand("sweep", cmdSweep);
-    cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [status|abort]
+    cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [force|status|abort]
     cli.addCommand("intr", cmdIntr);
     cli.addBoundlessCmd("reset-lag", cmdResetLag); // reset-lag [q]: q skips the rt-stats print
 #if WITH_RTPROF

@@ -1465,7 +1465,7 @@ public:
                 sensors.Vout->ewm.avg.get(), sensors.Iout->ewm.avg.get(), sensorPhysicalI->ewm.avg.get(),
                 fminf(sensorPhysicalI->ewm.avg.get(), std::max(sensorPhysicalI->last, sensorPhysicalI->previous)),
                 g_app.opMode.load() == OpMode::Mppt && !sampler.isCalibrating(), _sweeping, bflow.state(),
-                ctrlState._limiting, !sensors.Iout->isVirtual};
+                ctrlState._limiting, !sensors.Iout->isVirtual, limits.Vin_max};
     }
 
     // RT, once per new sample, before protect()
@@ -1478,7 +1478,7 @@ public:
 
 private:
     // RT: in update() after protect() and the limiters; true while the run holds HS/LS.
-    bool rectCalHold(const time_us &nowUs, float limitingControlValue) {
+    __attribute__((always_inline)) bool rectCalHold(const time_us &nowUs, float limitingControlValue) {
         if (!sensorPhysicalI || !rectCal.cal.running()) return false;
         uint16_t hs;
         const bool held = rectCal.hold(converter, rectCalIn((uint32_t) nowUs), limitingControlValue, hs);
