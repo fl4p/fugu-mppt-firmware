@@ -1,5 +1,3 @@
-import datetime
-
 import requests
 
 """
@@ -13,7 +11,7 @@ import requests
 
 idf.py build
 
-Safety guards (read from the build's sdkconfig.json, see ota_build_flags.py):
+Safety guards (read from the build's sdkconfig.json, see ota_common.py):
 - a no-network build (CONFIG_FUGU_WITH_NETW=n) warns; devices lose Wi-Fi after OTA.
 - a plant-sim build (CONFIG_FUGU_WITH_VCONV=y) warns hard: VCONV swaps the real PWM driver for a
   simulator (src/buck.h) so a real converter makes 0W while looking alive.
@@ -29,19 +27,11 @@ sys.path.insert(0, ".")
 import argparse
 import asyncio
 import atexit
-import datetime
-import hashlib
-import json
 import os
 import re
 import socket
-import struct
 import subprocess
-import sys
 import time
-
-from rich.console import Console as RichConsole
-from rich.table import Table
 
 from etc.fugu.console import Console
 from etc.fugu.discover import discover_scope_servers
@@ -49,28 +39,20 @@ from etc.fugu.fugu import FuguDevice
 from etc.fugu.transport import SocketTransport
 from etc.fugu_console import scan_nat_async
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'idf-devtools'))
-import elf_archive  # vendored submodule (github.com/fl4p/idf-devtools)
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ota_common import (build_has_networking, build_is_plant_sim, build_gate_driver,
-                             parse_device_gate_driver, gate_driver_verdict)
+from ota_common import (archive_elf, build_gate_driver, build_has_networking,  # noqa: E402
+                        build_is_plant_sim, confirm, device_driver_label, fmt_uptime,
+                        gate_driver_verdict, image_is_dirty, is_current, parse_bootloader_line,
+                        parse_device_app, parse_device_gate_driver, parse_uptime, print_table,
+                        read_local_app_desc, read_local_bootloader, require_elf_archive,
+                        verify_versions)
 
-# CLion / PyCharm Run consoles report as a TTY but don't render ANSI escapes —
-# disable color/style so the boxes don't come out wrapped in raw \x1b[...m codes.
-# Also fix width to a wide value: with force_terminal=False rich would default to
-# 80 cols and squash the table, but JB's run console happily prints long lines.
-_in_jb_run = bool(os.environ.get('PYCHARM_HOSTED'))
-_rich_console = RichConsole(color_system=None if _in_jb_run else 'auto',
-                            force_terminal=False if _in_jb_run else None,
-                            highlight=not _in_jb_run,
-                            width=200 if _in_jb_run else None)
+require_elf_archive()  # vendored submodule (github.com/fl4p/idf-devtools); fail before any OTA
 
 HTTP_PORT = 9000
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIRMWARE_BIN = os.path.join(REPO_ROOT, 'build', 'fugu-firmware.bin')
 BOOTLOADER_BIN = os.path.join(REPO_ROOT, 'build', 'bootloader', 'bootloader.bin')
-APP_DESC_MAGIC = 0xABCD5432
 
 argp = argparse.ArgumentParser(description='Push an OTA build to all discovered devices.')
 argp.add_argument('-f', '--force', action='store_true',
@@ -88,46 +70,6 @@ argp.add_argument('--allow-driver-change', action='store_true',
 # its helpers doesn't parse argv or hit the network.
 
 
-def read_local_app_desc(bin_path):
-    """Parse esp_app_desc_t from the start of a firmware .bin: {project, version, date, time, idf}."""
-    try:
-        with open(bin_path, 'rb') as f:
-            data = f.read(0x200)
-    except FileNotFoundError:
-        return None
-    off = data.find(struct.pack('<I', APP_DESC_MAGIC))
-    if off < 0:
-        return None
-    def s(rel, n):
-        return data[off+rel:off+rel+n].split(b'\x00', 1)[0].decode('utf-8', 'replace')
-    return dict(version=s(0x10, 32), project=s(0x30, 32),
-                time=s(0x50, 16), date=s(0x60, 16), idf=s(0x70, 32))
-
-
-def read_local_bootloader(bin_path):
-    """Describe a bootloader .bin like the device's `bootinfo` line; None if it is not a valid one."""
-    try:
-        with open(bin_path, 'rb') as f:
-            d = f.read()
-    except FileNotFoundError:
-        return None
-    if len(d) < 32 + 80 + 32 or d[0] != 0xE9 or not d[23]:
-        return None  # no magic or no appended SHA-256
-    if hashlib.sha256(d[:-32]).digest() != d[-32:]:
-        return None
-    desc = d[32:112]
-    if desc[0] == 0x50:
-        s = lambda a, n: desc[a:a + n].split(b'\x00', 1)[0].decode('utf-8', 'replace')
-        text = f"idf {s(8, 32)} v{struct.unpack('<I', desc[4:8])[0]}, {s(40, 24)}"
-    else:
-        text = 'no descriptor (old IDF)'
-    sha = d[-32:-24].hex()
-    return dict(text=f'{text}, len {len(d)}, sha {sha}', sha=sha)
-
-
-RE_BOOTLOADER_LINE = re.compile(r'bootloader:\s+(.*?)\s*$')
-
-
 async def fetch_bootloader(addr, port):
     """`bootloader:` line of the device's `bootinfo`, or an error string in brackets."""
     def do():
@@ -137,11 +79,8 @@ async def fetch_bootloader(addr, port):
         except Exception as e:
             return f'[{type(e).__name__}: {e}]'
         try:
-            r = con.command('bootinfo', timeout=5)
-            for l in r:
-                if m := RE_BOOTLOADER_LINE.search(l):
-                    return m.group(1)
-            return '[no bootloader line, old firmware?]'
+            line = parse_bootloader_line(con.command('bootinfo', timeout=5))
+            return line if line is not None else '[no bootloader line, old firmware?]'
         except Exception as e:
             return f'[{type(e).__name__}: {e}]'
         finally:
@@ -198,12 +137,9 @@ async def bootloader_main():
     print('⚠️  the final copy rewrites the bootloader region in place: a reset or power loss during it '
           '(typically half a second) leaves the device unbootable until it is reflashed over serial. '
           'The device refuses unless conversion was stopped with `dc 0`.')
-    if not sys.stdin.isatty():
-        print('aborting: refusing a bootloader update non-interactively')
-        return False
     names = ', '.join(n for *_, n in to_update)
-    if input(f'update the bootloader of {names}? [y/N] ').strip().lower() not in ('y', 'yes'):
-        print('aborted')
+    if not confirm(f'update the bootloader of {names}? [y/N] ',
+                   'aborting: refusing a bootloader update non-interactively', aborted='aborted'):
         return False
 
     ensure_http_server()
@@ -219,23 +155,6 @@ async def bootloader_main():
         print(f"  {name}: {'✅' if ok[name] else '❌'} {c}")
     print('the new bootloader runs after the next reset (`restart`); `bootinfo` reads it from flash.')
     return all(ok.values())
-
-
-# build_has_networking() / build_is_plant_sim() (read sdkconfig.json) live in ota_build_flags.py
-# so they stay host-unit-testable without this module's network/argparse import side effects.
-
-
-RE_APP_LINE = re.compile(r'App:\s+(\S+)\s+v\S+\s+(\S+)\s+\(built (.+),\s+IDF\s+(\S+)\)')
-
-
-def parse_device_app(lines):
-    """Pull {project, version, built, idf} from the App: line of an `uptime` reply, or None."""
-    for l in lines:
-        m = RE_APP_LINE.search(l)
-        if m:
-            return dict(project=m.group(1), version=m.group(2),
-                        built=m.group(3), idf=m.group(4))
-    return None
 
 
 def ensure_http_server():
@@ -264,10 +183,7 @@ async def fetch_version(addr, port, name, retry=False):
             reply = con.command('uptime', timeout=5)
             if reply.timed_out:
                 return dict(uptime=None, app=None, error='timeout')
-            up = None
-            for l in reply:
-                if m := re.search(r'Uptime:\s*(\d+)', l):
-                    up = int(m.group(1)); break
+            up = parse_uptime(reply)
             app = parse_device_app(reply)
             if up is None and app is None:
                 return dict(uptime=None, app=None, error='no uptime info in reply')
@@ -301,27 +217,6 @@ async def fetch_gate_driver(addr, port):
         finally:
             con.close()
     return await asyncio.to_thread(do)
-
-
-def fmt_uptime(seconds):
-    """Seconds → human-readable hours (e.g. 6789 → '1.89h'); None → '-'.
-    Uses datetime.timedelta as the canonical parse."""
-    if seconds is None:
-        return '-'
-    td = datetime.timedelta(seconds=int(seconds))
-    return f'{td.total_seconds() / 3600:.2f}h'
-
-
-def print_table(rows, cols, title=None):
-    """rows: list of dicts. cols: list of (key, header, kw) tuples;
-    kw is per-column kwargs for Table.add_column (no_wrap, min_width, etc.)."""
-    t = Table(title=title, show_header=True, header_style='bold')
-    for col in cols:
-        k, h, kw = (*col, {})[:3] if len(col) == 2 else col
-        t.add_column(h, **kw)
-    for r in rows:
-        t.add_row(*(str(r.get(k, '')) for k, *_ in cols))
-    _rich_console.print(t)
 
 
 async def print_versions(hosts, title='installed firmware versions:', settle=0.0, retry=False):
@@ -453,7 +348,7 @@ async def main():
         to_update = []
         for h in hosts:
             dev = before.get(h[2])
-            if dev and dev.get('version') == local['version']:
+            if is_current(local['version'], dev and dev.get('version')):
                 print(f" ☑️ skip {h[2]}: already at {local['version']}")
             else:
                 to_update.append(h)
@@ -477,7 +372,7 @@ async def main():
     # The natural version-match skip already keeps a rebuild of the *same* dirty version off devices;
     # we only reach here when this image would actually land (--force, or a device on another
     # version), so warn loudly: uncommitted firmware can't be reproduced or bisected later.
-    dirty = bool(local) and 'dirty' in local['version']
+    dirty = bool(local) and image_is_dirty(local['version'])
     if dirty:
         print(f'⚠️  UNCOMMITTED BUILD: local image is "{local["version"]}" (git-describe --dirty) — '
               'built from a working tree with uncommitted changes. Commit or stash first so the '
@@ -490,7 +385,7 @@ async def main():
         verdict = gate_driver_verdict(img_drv, dev)
         if verdict != 'ok':
             drv_bad.append(name)
-            dev_s = {'mcpwm': 'mcpwm', 'other': 'ledc/vconv'}.get(dev, 'unknown')
+            dev_s = device_driver_label(dev)
             print(f'⚠️  gate driver {verdict.upper()} on {name}: image {img_drv or "unknown"}, '
                   f'device {dev_s} (Kconfig FUGU_GATE_DRIVER; a wrong driver switches the '
                   'half-bridge with the wrong timing and dead-time model).')
@@ -501,38 +396,23 @@ async def main():
             print(f'  - {name}')
         return True
 
-    if netw is False:
-        if not sys.stdin.isatty():
-            print('aborting: no-network image, refusing to OTA non-interactively')
-            return False
-        if input('proceed anyway? [y/N] ').strip().lower() not in ('y', 'yes'):
-            print('aborted')
-            return False
-
-    if sim:
-        if not sys.stdin.isatty():
-            print('aborting: plant-sim (VCONV) image, refusing to OTA non-interactively')
-            return False
-        if input('really OTA a plant-sim build to these devices? [y/N] ').strip().lower() not in ('y', 'yes'):
-            print('aborted')
-            return False
-
-    if drv_bad and not args.allow_driver_change:
-        if not sys.stdin.isatty():
-            print('aborting: gate driver changes or is unverified on ' + ', '.join(drv_bad)
-                  + '; refusing non-interactively (--allow-driver-change to override)')
-            return False
-        if input('really OTA across a gate-driver change? [y/N] ').strip().lower() not in ('y', 'yes'):
-            print('aborted')
-            return False
-
-    if dirty:
-        if not sys.stdin.isatty():
-            print('aborting: uncommitted (dirty) image, refusing to OTA non-interactively')
-            return False
-        if input('really OTA an uncommitted (dirty) build? [y/N] ').strip().lower() not in ('y', 'yes'):
-            print('aborted')
-            return False
+    if netw is False and not confirm(
+            'proceed anyway? [y/N] ',
+            'aborting: no-network image, refusing to OTA non-interactively', aborted='aborted'):
+        return False
+    if sim and not confirm(
+            'really OTA a plant-sim build to these devices? [y/N] ',
+            'aborting: plant-sim (VCONV) image, refusing to OTA non-interactively', aborted='aborted'):
+        return False
+    if drv_bad and not args.allow_driver_change and not confirm(
+            'really OTA across a gate-driver change? [y/N] ',
+            'aborting: gate driver changes or is unverified on ' + ', '.join(drv_bad)
+            + '; refusing non-interactively (--allow-driver-change to override)', aborted='aborted'):
+        return False
+    if dirty and not confirm(
+            'really OTA an uncommitted (dirty) build? [y/N] ',
+            'aborting: uncommitted (dirty) image, refusing to OTA non-interactively', aborted='aborted'):
+        return False
 
     ensure_http_server()
     time.sleep(1)
@@ -545,24 +425,14 @@ async def main():
                                  settle=3.0, retry=True)
 
     if local:
-        print('verify:')
-        for _, _, name in to_update:
-            dev = after.get(name)
-            got = dev.get('version') if dev else None
-            if got == local['version']:
-                print(f'  {name}: ✅ {got}')
-            else:
-                print(f'  {name}: ❌ got {got!r}, expected {local["version"]!r}')
+        for name, ok in verify_versions([n for *_, n in to_update], after, local['version']).items():
+            if not ok:
                 res[name] = False
 
     # archive the flashed ELF per device so a later coredump can be symbolicated
     for name, ok in res.items():
         if ok:
-            try:
-                elf_archive.archive(name, method='ota',
-                                    version=local['version'] if local else None)
-            except Exception as e:
-                print(f'  WARN: ELF archive failed for {name}: {e}')
+            archive_elf(name, 'ota', local['version'] if local else None, indent='  ')
 
     return all(res.values())
 
