@@ -122,7 +122,8 @@ conf sha256=<64 hex> boot=<64 hex|unknown> files=<N>
 - The hash appears in console logs, which can be mirrored over MQTT, so secrets are not hashed: an
   unsalted hash of a 6-digit BLE passkey or a dictionary password could be brute-forced offline.
   `wifi.conf` is skipped, and secret values and URI credentials in the other files are replaced
-  by `<redacted>` first. Changing only a secret therefore does not change the hash.
+  by `<redacted>` first, as are user names, since the rest of `mqtt.conf` and `ftp.conf` is
+  predictable. Changing only a secret therefore does not change the hash.
 - The `conf-file` hash is SHA-256 of the file's redacted content. It equals `sha256sum` of the file
   when nothing in it was redacted.
 - A read error prints `conf sha256=unknown boot=... error=<reason>` and the command fails.
@@ -134,10 +135,11 @@ directory, or a profile under `config/` or an `etc/dump_littlefs.py` dump that c
 
 1. Take the regular files named `*.conf` directly in `/littlefs/conf`, except `wifi.conf`, and sort
    the names bytewise.
-2. Split each file at `\n` and redact each line: if the line, ASCII-lowercased, contains `pass`,
-   `psk`, `secret`, `token` or `_key`, everything after the first `=` that follows that word becomes
-   `<redacted>`. Otherwise, if the line contains `://` and a later `@`, the bytes between `://` and
-   the last `@` become `<redacted>`. For example `broker_uri=mqtt://u:p@host:1883` becomes
+2. Split each file at `\n` and redact each line. A line longer than 255 bytes becomes `<redacted>`.
+   Otherwise, if the line contains `://` and a later `@`, the bytes between `://` and the last `@`
+   become `<redacted>`. Then, if the line, ASCII-lowercased, contains `pass`, `psk`, `secret`,
+   `token`, `_key` or `user`, everything after the first `=` that follows that word becomes
+   `<redacted>`. For example `broker_uri=mqtt://u:p@host:1883` becomes
    `broker_uri=mqtt://<redacted>@host:1883`, and `# ble_passkey=123456` becomes
    `# ble_passkey=<redacted>`.
 3. Feed `<name>` `\0` `<redacted content>` `\0` for each file, in order, into one SHA-256.

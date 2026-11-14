@@ -1,5 +1,8 @@
 """Pins `conf-hash`: etc/conf_hash.py against a hand-built digest, and against the firmware's
-src/conf_hash.cpp (host build of test/host-stub/conf-hash-test.cpp) on every config/ profile."""
+src/conf_hash.cpp (host build of test/host-stub/conf-hash-test.cpp) on every config/ profile.
+
+Run: .venv/bin/python3 test/host_py/test_conf_hash.py -v
+"""
 import hashlib
 import subprocess
 import sys
@@ -20,10 +23,16 @@ REDACT_VECTORS = [
     (b"cloud_key=k\n", b"cloud_key=<redacted>\n"),
     (b"x=api_KEY\t=v\n", b"x=api_KEY\t=<redacted>\n"),
     (b"note=about passwords=here\n", b"note=about passwords=<redacted>\n"),
-    (b"a=" + b"x" * 253 + b"password=hunter2\n", b"a=" + b"x" * 253 + b"password=<redacted>\n"),
+    (b"a=" + b"x" * 200 + b"password=hunter2\n", b"a=" + b"x" * 200 + b"password=<redacted>\n"),
+    (b"a=" + b"x" * 253 + b"password=hunter2\n", b"<redacted>\n"),
+    (b"x" * 255 + b"\n" + b"y" * 256, b"x" * 255 + b"\n<redacted>"),
     (b"ble_security=passkey\n", b"ble_security=passkey\n"),
     (b"no equals password here\n", b"no equals password here\n"),
-    (b"username=bob\n", b"username=bob\n"),
+    (b"username=bob\n", b"username=<redacted>\n"),
+    (b"ftp_user=bob\n", b"ftp_user=<redacted>\n"),
+    (b"broker_uri=mqtt://u:my_token=abc@host\n", b"broker_uri=mqtt://<redacted>@host\n"),
+    (b"broker_uri=mqtt://u:pw@host # token=x\n", b"broker_uri=mqtt://<redacted>@host # token=<redacted>\n"),
+    (b"broker_uri=mqtts://u:pw@host/?psk=1\n", b"broker_uri=mqtts://<redacted>@host/?psk=<redacted>\n"),
     (b"broker_uri=mqtt://u:p@host:1883\n", b"broker_uri=mqtt://<redacted>@host:1883\n"),
     (b"broker_uri=mqtt://u:pa/ss@host\n", b"broker_uri=mqtt://<redacted>@host\n"),
     (b"broker_uri=mqtt://host:1883\n", b"broker_uri=mqtt://host:1883\n"),

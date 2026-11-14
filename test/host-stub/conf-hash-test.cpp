@@ -6,15 +6,8 @@
 
 int main(int argc, char **argv) {
     if (argc != 2) return 2;
-    if (!strcmp(argv[1], "-r")) {
-        std::string in;
-        char b[256];
-        size_t n;
-        while ((n = fread(b, 1, sizeof(b), stdin)) > 0) in.append(b, n);
-        const std::string out = confHashRedact(in);
-        fwrite(out.data(), 1, out.size(), stdout);
-        return 0;
-    }
+    if (!strcmp(argv[1], "-r"))
+        return redactStream(stdin, [](const char *p, size_t k) { fwrite(p, 1, k, stdout); }) ? 0 : 1;
     uint8_t sha[32];
     std::string err;
     const int files = confHash(argv[1], sha, err, [](const char *name, const uint8_t *s) {

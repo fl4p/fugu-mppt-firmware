@@ -7,31 +7,34 @@ prints the device's `conf-file <name> sha256=<16 hex>` lines and `conf sha256=<6
 (the device line also has `boot=`). DIR is a conf dir, or a profile root / littlefs dump with a
 `conf/` subdir. Definition: SHA-256 over the top-level *.conf files except wifi.conf, sorted
 bytewise, each fed as  name '\\0' redacted-content '\\0'.  The per-file hash is over the redacted
-content. Redaction per line (split at '\\n'): if the ASCII-lowercased line contains a SECRET word,
-everything after the first '=' following it becomes <redacted>; otherwise the bytes between the
-first '://' and the last '@' after it do.
+content. Redaction per line (split at '\\n'): a line over MAX_LINE bytes becomes <redacted>.
+Otherwise the bytes between the first '://' and the last '@' after it become <redacted>; then, if
+the ASCII-lowercased result contains a SECRET word, everything after the first '=' following it does.
 """
 import hashlib
 import os
 import sys
 
 EXCLUDED = b"wifi.conf"
-SECRET = (b"pass", b"psk", b"secret", b"token", b"_key")
+SECRET = (b"pass", b"psk", b"secret", b"token", b"_key", b"user")
 MARKER = b"<redacted>"
+MAX_LINE = 255
 
 
 def redact_line(line: bytes) -> bytes:
+    if len(line) > MAX_LINE:
+        return MARKER
+    a = line.find(b"://")
+    if a >= 0:
+        at = line.rfind(b"@", a + 3)
+        if at >= 0:
+            line = line[:a + 3] + MARKER + line[at:]
     lo = line.lower()
     ends = [lo.find(w) + len(w) for w in SECRET if w in lo]
     if ends:
         eq = line.find(b"=", min(ends))
         if eq >= 0:
-            return line[:eq + 1] + MARKER
-    a = line.find(b"://")
-    if a >= 0:
-        at = line.rfind(b"@", a + 3)
-        if at >= 0:
-            return line[:a + 3] + MARKER + line[at:]
+            line = line[:eq + 1] + MARKER
     return line
 
 
