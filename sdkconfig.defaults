@@ -178,15 +178,8 @@ CONFIG_ESP_TIMER_TASK_AFFINITY_CPU0=y
 #CONFIG_SPIRAM_USE_MALLOC=y
 #CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
-# --- TEMP DIAGNOSTIC: catch the WiFi-NVS heap-handle corruptor (fry panic 2026-05-29) ---
-# fry crashed in wifi_nvs_compare_cfg_diff->nvs_get_u8 because the WiFi NVS handle object's
-# vtable pointer was overwritten with a stack/interrupt return address (_xt_lowint1) — memory
-# corruption, not bad flash. Comprehensive heap poisoning fills + canary-guards every block and
-# aborts (with a backtrace) on the next heap op touching one whose canary/fill was clobbered —
-# catching the writer whether it's a stack-overflow-into-heap or a use-after-free.
-# Remove once root-caused (adds per-malloc/free overhead). (ESP_SYSTEM_HW_STACK_GUARD would be a
-# nice complement but its SOC_ASSIST_DEBUG_SUPPORTED dep resolves false in this build.)
-CONFIG_HEAP_POISONING_COMPREHENSIVE=y
+# Explicit (IDF default) so the drift check flags sdkconfigs still on the 2026-05-29 diagnostic.
+CONFIG_HEAP_POISONING_DISABLED=y
 
 
 CONFIG_ADC_CONTINUOUS_ISR_IRAM_SAFE=y

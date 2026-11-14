@@ -625,10 +625,8 @@ __attribute__((cold)) void setup() {
     enable_esp_log_to_telnet();
 #endif
 
-#if CONFIG_HEAP_POISONING_COMPREHENSIVE
-    ESP_LOGW("main", "HEAP_POISONING=COMPREHENSIVE: every alloc has head/tail canaries + fill, expect 5-10%% perf hit and ~16B/alloc RAM cost. Debug-only.");
-#elif CONFIG_HEAP_POISONING_LIGHT
-    ESP_LOGW("main", "HEAP_POISONING=LIGHT: every alloc has tail canary, free() asserts on overrun. Debug-only — revert sdkconfig when done.");
+#if !CONFIG_HEAP_POISONING_DISABLED
+    ESP_LOGW("main", "heap poisoning on: per-alloc RAM + CPU cost, debug builds only");
 #endif
 
     bootWatchdogDisarm();
