@@ -36,6 +36,7 @@ class ADC_INA226 : public AsyncADC<float> {
     uint32_t lastAlertUs_ = 0;    // last sample or MASK_EN poll (micros)
     uint16_t ovRaw_ = 0;          // BOL limit in bus LSBs (board.conf ina22x_ov), 0 = conversion-ready alert
     volatile bool ovArmed_ = false;
+    uint32_t ovArmFails_ = 0;
     uint8_t ovMiss_ = 0;          // CVRF polls without a conversion since the last sample
     uint16_t ovLead_ = 20;        // us, how early the next poll is scheduled
     uint32_t ovPolls_ = 0, ovMisses_ = 0;
@@ -207,14 +208,7 @@ public:
 
         vTaskDelay(2);
 
-        if (ovRaw_ && measuredPairUs_) {
-            // runtime re-init in OV mode: re-arm without the alert self-tests and rate measurement
-            ina226.setAverage(AVERAGE_1);
-            ina226.setConversionTime(convSetting_, convSetting_);
-            ina226.setMeasureMode(CONTINUOUS);
-            ina226.writeRegister(INA226_WE::INA226_CAL_REG, ina226.calVal);
-            return armOv();
-        }
+        if (ovRaw_) return armOv(); // runtime re-init in OV mode: no alert self-tests, ALERT edges mean OV
 
         new_data = false;
 
@@ -275,18 +269,19 @@ public:
         else
             ESP_LOGW("ina22x", "rate measurement timed out, using nominal %.0f SPS", ina226SampleRate(convUs_));
 #endif
-        if (ovRaw_) armOv();
-
         return true;
     }
 
     // Switch ALERT from conversion-ready to a latched bus over-voltage alert at `busV` (chip pin volts).
     void setBusOvLimit(float busV) {
         assert_throw(busV > 0 && busV < 36, "ina22x_ov out of the INA226 bus range");
+        ina226.writeRegister(INA226_WE::INA226_MASK_EN_REG, 0); // no CNVR edge may read as OV
         ovRaw_ = (uint16_t) lroundf(busV / 1.25e-3f);
         assert_throw(armOv(), "ina22x_ov: arming the INA226 bus OV alert failed");
     }
 
+    // Writes the full operating config (it also restores a chip that reset itself) and verifies it.
+    // Never clears g_hwOvTrip; on failure it sets it and stays disarmed, pollConversion() retries.
     bool armOv() {
         if (!pollTimer_) {
             esp_timer_create_args_t a = {};
@@ -296,18 +291,27 @@ public:
             a.name = "ina_poll";
             ESP_ERROR_CHECK(esp_timer_create(&a, &pollTimer_));
         }
+        ovArmed_ = false;
+        lastAlertUs_ = micros();
+        ina226.setAverage(AVERAGE_1);
+        ina226.setConversionTime(convSetting_, convSetting_);
+        ina226.setMeasureMode(CONTINUOUS);
+        ina226.writeRegister(INA226_WE::INA226_CAL_REG, ina226.calVal);
         ina226.writeRegister(INA226_WE::INA226_ALERT_LIMIT_REG, ovRaw_);
         ina226.writeRegister(INA226_WE::INA226_MASK_EN_REG, 0x2001); // BOL | LEN
-        bool ok1, ok2;
-        auto lim = ina226.readRegister(INA226_WE::INA226_ALERT_LIMIT_REG, ok1);
-        auto me = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG, ok2);
-        if (!ok1 || !ok2 || lim != ovRaw_ || (me & 0xFC03) != 0x2001) {
-            ESP_LOGE("ina22x", "bus OV alert arm failed (limit 0x%04x, mask 0x%04x)", lim, me);
+        bool ok1, ok2, ok3;
+        auto cal = ina226.readRegister(INA226_WE::INA226_CAL_REG, ok1);
+        auto lim = ina226.readRegister(INA226_WE::INA226_ALERT_LIMIT_REG, ok2);
+        auto me = ina226.readRegister(INA226_WE::INA226_MASK_EN_REG, ok3);
+        if (ok3 && (me & 0x10)) g_hwOvTrip = true; // AFF cleared by this read: keep the evidence
+        if (!ok1 || !ok2 || !ok3 || cal != ina226.calVal || lim != ovRaw_ || (me & 0xFC03) != 0x2001) {
             g_hwOvTrip = true;
+            ++ovArmFails_;
+            if (!(ovArmFails_ & (ovArmFails_ - 1)))
+                ESP_LOGE("ina22x", "bus OV alert arm failed #%lu (cal 0x%04x limit 0x%04x mask 0x%04x)",
+                         ovArmFails_, cal, lim, me);
             return false;
         }
-        g_hwOvTrip = false;
-        lastAlertUs_ = micros();
         ovMiss_ = 0;
         ovArmed_ = true;
         ESP_LOGI("ina22x", "ALERT = bus OV > %.3f V (pin), polling CVRF every %lu us", ovRaw_ * 1.25e-3f, pairUs());
@@ -529,7 +533,7 @@ public:
     }
 
     void IRAM_ATTR alertNewDataFromISR() {
-        if (ovArmed_) {
+        if (ovRaw_) {
             if (g_hwOvIsrHook) g_hwOvIsrHook();
             g_hwOvTrip = true;
             ovIsrCount_ = ovIsrCount_ + 1;
@@ -547,6 +551,16 @@ public:
     bool pollConversion() {
         const uint32_t P = pairUs();
         auto rem = (int32_t) (lastAlertUs_ + P - micros());
+        if (!ovArmed_) { // lost arm (reset, I2C error, chip reset): trip until a re-arm succeeds, once per period
+            g_hwOvTrip = true;
+            if (rem > 0) {
+                if (!esp_timer_is_active(pollTimer_)) esp_timer_start_once(pollTimer_, rem);
+                taskNotification.wait(alertTimeoutMs_);
+                return false;
+            }
+            if (!armOv()) return false;
+            rem = (int32_t) (lastAlertUs_ + P - micros());
+        }
         if (rem > 400) {
             if (!esp_timer_is_active(pollTimer_)) esp_timer_start_once(pollTimer_, rem - 300);
             taskNotification.wait(alertTimeoutMs_);
@@ -562,9 +576,10 @@ public:
             lastAlertUs_ = now;
             return false;
         }
-        if ((me & 0xFC03) != 0x2001) { // chip lost its alert config (reset/brown-out): fail safe
+        if ((me & 0xFC03) != 0x2001) { // chip lost its config (reset/brown-out): trip, re-arm next period
             g_hwOvTrip = true;
-            armOv();
+            ovArmed_ = false;
+            lastAlertUs_ = now;
             return false;
         }
         if (me & 0x10) g_hwOvTrip = true; // AFF, latched until this read
@@ -584,7 +599,7 @@ public:
     bool hasData() override {
         static uint32_t numTimeouts = 0, numRecovered = 0;
 
-        if (ovArmed_) return pollConversion();
+        if (ovRaw_) return pollConversion();
 
         if (!new_data)
             taskNotification.wait(alertTimeoutMs_);

@@ -409,7 +409,7 @@ public:
     }
 
     // Immediate, register-only: force both gates LOW (safe), hold until cleared.
-    void forceShutdown() {
+    __attribute__((always_inline)) inline void forceShutdown() { // also inlined into the IRAM OV ISR
         if (genHS_) mcpwm_generator_set_force_level(genHS_, 0, true);
         if (genLS_) mcpwm_generator_set_force_level(genLS_, 0, true);
     }
@@ -490,6 +490,6 @@ public:
 
     void setHsOff(uint16_t c) { for (auto &l : legs_) l.setHsOff(c); }
     void setLsOff(uint16_t c) { for (auto &l : legs_) l.setLsOff(c); }
-    void forceShutdown()      { for (auto &l : legs_) l.forceShutdown(); }
+    __attribute__((always_inline)) inline void forceShutdown() { for (auto &l : legs_) l.forceShutdown(); }
     void clearForce()         { for (auto &l : legs_) l.clearForce(); }
 };
