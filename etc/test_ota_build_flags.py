@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host unit tests for ota.py's build-flag guards (plant-sim / networking detection).
+"""Host unit tests for ota_common.py's build-flag guards (plant-sim / networking detection).
 
 Pure logic, no device or network — run with plain `python3 etc/test_ota_build_flags.py`.
 Guards the OTA pusher from flashing a bench VCONV (plant-sim) image to a real converter.
@@ -11,8 +11,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ota_build_flags import (build_is_plant_sim, build_has_networking, build_gate_driver,  # noqa: E402
-                             parse_device_gate_driver, gate_driver_verdict)
+from ota_common import (build_is_plant_sim, build_has_networking, build_gate_driver,  # noqa: E402
+                        parse_device_gate_driver, gate_driver_verdict)
 
 
 def _bin_with_config(tmp, cfg):

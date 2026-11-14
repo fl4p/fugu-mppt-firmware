@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from etc.fugu.console import Console  # noqa: E402
 from etc.fugu.transport import MqttTransport  # noqa: E402
 from etc.fugu_console import etc_file, load_env_file, run_ota  # noqa: E402
-from ota_build_flags import (build_has_networking, build_is_plant_sim, build_gate_driver,  # noqa: E402
+from ota_common import (build_has_networking, build_is_plant_sim, build_gate_driver,  # noqa: E402
                              parse_device_gate_driver, gate_driver_verdict)
 
 RE_BOOT_UPTIME = re.compile(r'uptime:\s*(\d+)\s*s,\s*app\s+(\S+)\s+v\S+\s+(\S+)\s+\(built (.+?),\s*IDF\s+(\S+)\)')

@@ -53,7 +53,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'idf-devtools'))
 import elf_archive  # vendored submodule (github.com/fl4p/idf-devtools)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ota_build_flags import (build_has_networking, build_is_plant_sim, build_gate_driver,
+from ota_common import (build_has_networking, build_is_plant_sim, build_gate_driver,
                              parse_device_gate_driver, gate_driver_verdict)
 
 # CLion / PyCharm Run consoles report as a TTY but don't render ANSI escapes —

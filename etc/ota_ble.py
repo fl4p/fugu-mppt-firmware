@@ -51,7 +51,7 @@ import esp_ota_ble_transport as T
 _sys.path.insert(0, _os.path.join(_HERE, "idf-devtools"))
 import elf_archive
 _sys.path.append(_HERE)
-from ota_build_flags import build_gate_driver, parse_device_gate_driver, gate_driver_verdict
+from ota_common import build_gate_driver, parse_device_gate_driver, gate_driver_verdict
 import os
 import re
 import struct
