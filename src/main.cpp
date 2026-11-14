@@ -1516,8 +1516,8 @@ void systemRestart() {
     //throw std::runtime_error("reboot");
     if (esp_cpu_dbgr_is_attached()) return;
 
-    enqueue_task([] {
+    rt_defer([](void *, float, float) {
         ESP_LOGE("main", "Restart after WDT trigger");
         systemRestart();
-    });
+    }, nullptr);
 }

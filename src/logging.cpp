@@ -9,12 +9,8 @@
 #include <freertos/task.h>   // pcTaskGetName (wifi-task bypass in vprintf_)
 #include <esp_timer.h>
 
-// without the queue's debug-only reentrancy guard: its out-of-line constructor would run from flash on the RT core
-#pragma push_macro("NDEBUG")
-#undef NDEBUG
-#define NDEBUG
-#include "etc/readerwriterqueue.h"
-#pragma pop_macro("NDEBUG")
+#include <freertos/queue.h>
+#include <memory>
 #include <cassert>
 #include "util.h"
 #include <soc/soc.h>
@@ -536,28 +532,33 @@ void enable_esp_log_to_telnet() {
 }
 
 
+// Multi-producer: heap-allocated Fn* through a FreeRTOS queue. Alloc failure or a full queue drops
+// the task and counts it, never panics (callers re-issue their work).
 class TaskQueue {
     typedef std::function<void(void)> Fn;
-    moodycamel::ReaderWriterQueue<Fn> q{1};
-    volatile uint32_t dropped_ = 0, reported_ = 0;
+    static constexpr UBaseType_t kLen = 16;
+    StaticQueue_t qs;
+    uint8_t buf[kLen * sizeof(Fn *)];
+    QueueHandle_t q = xQueueCreateStatic(kLen, sizeof(Fn *), buf, &qs);
+    std::atomic<uint32_t> dropped_{0};
+    uint32_t reported_ = 0;
 
 public:
-    inline void add(Fn &&fn) {
-        // enqueue() mallocs a new block when full: on a tight heap that fails. All callers
-        // re-issue their work on later ticks — drop, never panic the RT loop over an alloc
-        // (took fboost down when BLE + a log storm exhausted the heap, coredump 8-05).
-        if (!q.enqueue(std::move(fn)))
+    void add(Fn &&fn) {
+        Fn *p = new(std::nothrow) Fn(std::move(fn));
+        if (!p || xQueueSend(q, &p, 0) != pdTRUE) {
+            delete p;
             ++dropped_;
+        }
     }
 
-    inline void work() {
-        Fn fn;
-        while (q.try_dequeue(fn)) {
-            fn();
-        }
+    void work() {
+        Fn *p;
+        while (xQueueReceive(q, &p, 0) == pdTRUE)
+            std::unique_ptr<Fn>(p)->operator()();
         if (uint32_t d = dropped_; d != reported_) {
             reported_ = d;
-            ESP_LOGW("log", "task queue OOM, %lu deferred tasks dropped", (unsigned long) d);
+            ESP_LOGW("log", "task queue full/OOM, %lu deferred tasks dropped", (unsigned long) d);
         }
     }
 };
