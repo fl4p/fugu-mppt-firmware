@@ -51,6 +51,7 @@ using LegacyPwm = PWM_Mock;
 #include "util.h"
 #include "logging.h"
 #include "pwm/mcpwm_timing.h"   // rectOffset{Counts,Ns} helpers (no hardware deps)
+#include "etc/mailbox.h"
 
 /**
  * Synchronous buck or boost converter
@@ -151,27 +152,13 @@ class SynchronousConverter {
     // only a defence against it because MpptController::updateManual() FREEZES the ramp while the
     // gate is arming (forcedPwmGateArming()), so the filters actually catch up during the wait.
     uint16_t fpwmGateHold = 192; // converter.conf::fpwm_gate_hold
-    // The gate state lives on the RT core. Other cores only PUBLISH a request, as one word so the
-    // sequence and its payload cannot be observed apart: [31:1] seq, [0] immediate. Two publishers
-    // exist (the console, and disable() which is reachable from core 0 via startSweep), so the word
-    // is written with a compare-exchange, never a plain store.
-    static constexpr uint32_t kFpwmImmediate = 1u;
-
-    // Publish a gate request: bump the sequence and set the payload in ONE word, so the RT core
-    // cannot pair a new sequence with someone else's payload.
-    void fpwmPublish(bool immediate) {
-        uint32_t cur = fpwmReqWord.load(std::memory_order_relaxed), next;
-        do {
-            next = ((cur & ~kFpwmImmediate) + 2u) | (immediate ? kFpwmImmediate : 0u);
-        } while (!fpwmReqWord.compare_exchange_weak(cur, next, std::memory_order_release,
-                                                    std::memory_order_relaxed));
-    }
-
-    std::atomic<uint32_t> fpwmReqWord{0};
+    // The gate state lives on the RT core. Other cores only post a request, payload: immediate. Two
+    // producers (the console, and disable() which is reachable from core 0 via startSweep); the
+    // latest post wins.
+    ReqSlot<1> fpwmReq;
     std::atomic<bool> fpwmEngaged{false}; // gate output, RT-written, read from both cores
     std::atomic<bool> fpwmUngated{false}; // `sync forced!` override in effect
     std::atomic<uint16_t> fpwmGateCnt{0}; // RT-written; read from core 0 by forcedPwmGateArming()
-    uint32_t fpwmAckWord = 0; // RT only
     // Consecutive FRESH voltage samples with pwmCtrl unchanged. Atomic because the console reads it
     // through forcedPwmGateArming()/forcedPwmEngageDuty() on core 0.
     std::atomic<uint16_t> fpwmStillCnt{0};
@@ -186,37 +173,31 @@ class SynchronousConverter {
     uint16_t rectRefreshTicks = 0; // bootstrap-refresh pulse in timer ticks; pwmRectMin minus dead-time
 
     // Runtime dead-time change (console `dt`), posted from core 0 and applied on the RT core so
-    // pwmMax and the gate comparators never move under the control path. One word — [31:22] seq,
-    // [21:11] hl, [10:0] lh — so the triple is a coherent snapshot; ack==req means idle. seq
-    // (never 0 once posted) rather than a sentinel tick count, so "no request" is not a valid
-    // dead-time. 11 bits per value is enough: both are producer-clamped to periodTicks/32 <= 2047.
+    // pwmMax and the gate comparators never move under the control path. Payload [21:11] hl,
+    // [10:0] lh, so the pair is coherent; 11 bits each suffice, both are producer-clamped to
+    // periodTicks/32 <= 2047. Idle once the RT core has applied and acked it.
     //
-    // This is a latest-value MAILBOX, not a queue, and it assumes ONE producer: a second post
-    // overwrites an unapplied request instead of being rejected or queued. That holds today because
-    // every console transport (UART, USB-CDC, telnet, MQTT, BLE) dispatches on core 0 through the
-    // same handleCommand(), and `dt` waits for the ack before returning. A second producer, or a
-    // post issued after the CLI's 1 s ack timeout gave up, would silently drop the older request.
-    std::atomic<uint32_t> dtReqWord{0}, dtAckWord{0};
+    // Latest value, not a queue: a second post overwrites an unapplied request. That is safe with
+    // ONE producer: every console transport (UART, USB-CDC, telnet, MQTT, BLE) dispatches on core 0
+    // through handleCommand(), and `dt` waits for the ack. A post issued after the CLI's 1 s ack
+    // timeout gave up silently replaces the older request.
+    ReqSlot<22> dtReq;
     static constexpr uint32_t kDtTickMask = 0x7ffu;   // 11 bits, >= 65535/32
-    static constexpr uint32_t kDtSeqMask  = 0x3ffu;   // 10 bits
 
-    // Runtime switching-frequency change (console `pwm-freq`), same mailbox contract as the
-    // dead-time above: ONE core-0 producer, applied on the RT core so periodTicks/pwmMax and the
-    // gate comparators never move under the control path. Latest-value mailbox, not a queue.
-    // [31:20] seq (never 0 once posted), [19:0] the requested frequency in Hz — the producer bounds
-    // it under 500 kHz, so it fits.
+    // Runtime switching-frequency change (console `pwm-freq`), same contract as the dead-time
+    // above: ONE core-0 producer, applied on the RT core so periodTicks/pwmMax and the gate
+    // comparators never move under the control path. Payload [19:0]: the requested frequency in Hz
+    // — the producer bounds it under 500 kHz, so it fits.
     //
     // The NOMINAL Hz is what travels, not the period: pwmFrequency and fL (the ripple basis, and so
     // the CCM/DCM decision) are written from it, and the period is a pure function of it at a fixed
     // prescaler. Carrying the period and the Hz in separate words would let a second request posted
-    // after the CLI's 1 s ack timeout give up pair request N's period with request N+1's Hz — the
-    // exact tear the dead-time mailbox packs its triple into one word to avoid.
-    std::atomic<uint32_t> freqReqWord{0}, freqAckWord{0};
+    // after the CLI's 1 s ack timeout give up pair request N's period with request N+1's Hz.
+    ReqSlot<20> freqReq;
     // The request being applied, held between applyPendingPwmFreqRt() and ackPendingPwmFreqRt().
     // RT-core only, so a plain word. 0 = nothing part-applied.
     uint32_t freqApplying = 0;
     static constexpr uint32_t kFreqHzMask = 0xfffffu;   // 20 bits, >= 500000
-    static constexpr uint32_t kFreqSeqMask = 0xfffu;    // 12 bits
 
     // ---- gate-driver dispatch ----------------------------------------------------------------
     // One place per distinct driver operation; only the compiled driver's arm exists and
@@ -624,7 +605,7 @@ public:
     // sink, e.g. an open output on the bench).
     void forcedPwm_(bool forced, bool immediate = false) {
         forcedPwm.store(forced, std::memory_order_relaxed);
-        fpwmPublish(forced && immediate);
+        fpwmReq.post(forced && immediate);
     }
 
     [[nodiscard]] bool syncRectEnabled_() const { return syncRectEnabled; }
@@ -760,15 +741,11 @@ public:
             return "would leave too little duty range next to the LS minimum";
         hlTicks = (uint16_t) hl;
         lhTicks = (uint16_t) lh;
-        uint32_t seq = ((dtReqWord.load(std::memory_order_relaxed) >> 22) + 1) & kDtSeqMask;
-        if (!seq) seq = 1;
-        dtReqWord.store((seq << 22) | ((uint32_t) hlTicks << 11) | lhTicks, std::memory_order_release);
+        dtReq.post(((uint32_t) hlTicks << 11) | lhTicks);
         return nullptr;
     }
 
-    [[nodiscard]] bool deadTimeIdle() const {
-        return dtAckWord.load(std::memory_order_acquire) == dtReqWord.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] bool deadTimeIdle() const { return dtReq.idle(); }
 
     // RT-CORE ONLY. Applies a queued dead-time change, pulling the live comparators inside the new
     // envelope. The clamp is split around the driver write -- widening before, capping after; see
@@ -776,13 +753,12 @@ public:
     // little wide for the dead-time still in force, which is harmless (more rectifier conduction,
     // still inside the unchanged pwmMax) and cannot happen for a request that passed the producer.
     void applyPendingDeadTimeRt() {
-        if (dtReqWord.load(std::memory_order_acquire) != dtAckWord.load(std::memory_order_relaxed))
-            applyPendingDeadTimeSlow();
+        if (dtReq.peek()) applyPendingDeadTimeSlow();
     }
 
     __attribute__((noinline, cold)) void applyPendingDeadTimeSlow() {
-        const uint32_t req = dtReqWord.load(std::memory_order_acquire);
-        if (req == dtAckWord.load(std::memory_order_relaxed)) return;
+        const uint32_t req = dtReq.peek();
+        if (!req) return;
         const auto hl = (uint16_t) ((req >> 11) & kDtTickMask);
         const auto lh = (uint16_t) (req & kDtTickMask);
 #if HAVE_MCPWM
@@ -862,7 +838,7 @@ public:
             }
         }
 #endif
-        dtAckWord.store(req, std::memory_order_release);
+        dtReq.clear(req);
     }
 
     // True timer period in ticks (0 on drivers without one) and the tick rate it counts at.
@@ -924,34 +900,29 @@ public:
         if (!isBoost && (long) rectRefreshTicks + hl > t / 4)
             return "would leave too little duty range next to the LS minimum";
         ticks = (uint16_t) t;
-        uint32_t seq = ((freqReqWord.load(std::memory_order_relaxed) >> 20) + 1) & kFreqSeqMask;
-        if (!seq) seq = 1;
-        freqReqWord.store((seq << 20) | (hz & kFreqHzMask), std::memory_order_release);
+        freqReq.post(hz);
         return nullptr;
     }
 
-    [[nodiscard]] bool pwmFreqIdle() const {
-        return freqAckWord.load(std::memory_order_acquire) == freqReqWord.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] bool pwmFreqIdle() const { return freqReq.idle(); }
 
     // RT-CORE ONLY. Applies a queued frequency change and returns the count-domain scale that was
     // applied, 0 when nothing changed — duty targets held outside this class (MpptController's
     // manualTarget and its two captured MPPs) are raw counts and must be rescaled by it.
     //
     // This does NOT acknowledge the request: the caller must rescale the counts it owns and then
-    // call ackPendingPwmFreqRt(). The console treats ack==req as completion and returns, so an ack
+    // call ackPendingPwmFreqRt(). The console treats the ack as completion and returns, so an ack
     // published here would let the next queued command (`+N`, `dc`) write a target in NEW-period
     // counts that this transaction has not finished with — and the outer rescale would then
     // multiply that fresh value by the ratio a second time.
     float applyPendingPwmFreqRt() {
-        if (freqReqWord.load(std::memory_order_acquire) == freqAckWord.load(std::memory_order_relaxed))
-            return 0.f;
+        if (!freqReq.peek()) return 0.f;
         return applyPendingPwmFreqSlow();
     }
 
     __attribute__((noinline, cold)) float applyPendingPwmFreqSlow() {
-        const uint32_t req = freqReqWord.load(std::memory_order_acquire);
-        if (req == freqAckWord.load(std::memory_order_relaxed)) return 0.f;
+        const uint32_t req = freqReq.peek();
+        if (!req) return 0.f;
         // Latched before any early-out below, so a refused request is still acknowledged and the
         // console gets an answer instead of timing out.
         freqApplying = req;
@@ -1059,7 +1030,7 @@ public:
     // it only after every count-domain value the caller owns has been rescaled.
     void ackPendingPwmFreqRt() {
         if (!freqApplying) return;
-        freqAckWord.store(freqApplying, std::memory_order_release);
+        freqReq.clear(freqApplying);
         freqApplying = 0;
     }
 
@@ -1433,10 +1404,10 @@ public:
         pwmRect = 0;
         syncRectEnabled = false;
         // A restart ramps from 0 again and must re-earn forced PWM - including an `sync forced!`
-        // override. disable() is reachable from core 0 (startSweep), so go through the request word
+        // override. disable() is reachable from core 0 (startSweep), so go through the request slot
         // rather than the RT-owned state.
         fpwmEngaged.store(false, std::memory_order_relaxed);
-        fpwmPublish(false);
+        fpwmReq.post(0);
     }
 
 
@@ -1649,13 +1620,11 @@ public:
             if (n < 0xffff) fpwmStillCnt.store((uint16_t) (n + 1), std::memory_order_relaxed);
         }
 
-        // Consume a request (core 0 console, or disable() from either core). Sequence and payload
-        // come from one word, so they cannot be mismatched.
-        const uint32_t req = fpwmReqWord.load(std::memory_order_acquire);
-        if (req != fpwmAckWord) {
-            fpwmAckWord = req;
+        // Consume a request (core 0 console, or disable() from either core)
+        if (const uint32_t req = fpwmReq.peek()) {
+            fpwmReq.clear(req);
             fpwmGateCnt.store(0, std::memory_order_relaxed);
-            const bool ungated = forcedPwmRequested() && (req & kFpwmImmediate);
+            const bool ungated = forcedPwmRequested() && ReqSlot<1>::payload(req);
             fpwmUngated.store(ungated, std::memory_order_relaxed);
             fpwmEngaged.store(ungated, std::memory_order_relaxed);
         }

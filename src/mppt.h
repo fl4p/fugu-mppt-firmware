@@ -23,6 +23,7 @@
 #include "metering.h"
 #include "charger.h"
 #include "etc/plot.h"
+#include "etc/mailbox.h"
 #include "app_state.h"
 #include "math/pv_model.h"
 #include "conv_side.h"
@@ -124,6 +125,18 @@ enum class PsuSetpointError : uint8_t {
 
 enum class PsuCommand : uint8_t {
     None = 0, Enable, DisableMppt, DisableManual, StartSweep, ShortLowSide, EnablePv
+};
+
+struct PsuReq {
+    float v = NAN, isc = NAN, k = NAN; // v: PSU setpoint or PV Voc
+    int32_t rect = -1;
+    uint16_t duty = 0;
+    bool rebase = false, boot = false;
+};
+
+struct PvCurve {
+    float isc, voc, k;
+    bool active;
 };
 
 
@@ -240,56 +253,41 @@ private:
     uint32_t _backoffArmedSec = 0; // length of the running backoff, so a repeat can't extend it
     time_ms psuTripWindowStart = 0;
     std::atomic<uint8_t> psuTripCount{0};
-    std::atomic<float> pendingPsuSetpoint{NAN};
-    // [31:8] request ticket, [7:0] PsuCommand. One atomic word binds the action to its
-    // completion identity, so a later request cannot make an earlier RT completion wake it.
-    std::atomic<uint32_t> pendingPsuCommandWord{0};
-    std::atomic<uint32_t> nextPsuTicket{0};
+    // PSU/PV mailbox. The command word's tag is the request ticket, its payload the PsuCommand, so
+    // a later request cannot make an earlier RT completion wake it. The payload is posted in the
+    // same seqlock window as the command, so the RT core never pairs one with another's payload.
+    SeqLock<PsuReq> psuReq; // read only along with a posted command
+    ReqSlot<8> psuCmd;
     // More than one non-RT producer can wait concurrently. A single "last completed" ticket
     // loses A when B completes before A is scheduled. Keep a bounded result slot per ticket;
     // there are currently at most two producers (console and measure-coil), with ample margin.
     static constexpr size_t PsuResultSlots = 8;
     std::array<std::atomic<uint32_t>, PsuResultSlots> completedPsuResults{};
-    std::atomic<uint32_t> psuMailboxSeq{0};
     portMUX_TYPE psuMailboxMux = portMUX_INITIALIZER_UNLOCKED;
     std::atomic<PsuSetpointError> lastPsuRequestError{PsuSetpointError::None};
-    std::atomic<bool> pendingPsuBootRequest{false};
     std::atomic<float> publishedPsuSetpoint{NAN};
     // Runtime console setting: both CLI and RT protection read it, so it cannot live in the
     // otherwise single-core charger params object as an ordinary float.
     std::atomic<float> explicitOvLimit{NAN};
-    std::atomic<uint16_t> pendingManualTarget{0};
-    std::atomic<int> pendingManualRect{-1};
-    std::atomic<float> pendingPvIsc{NAN}, pendingPvVoc{NAN}, pendingPvK{NAN};
-    std::atomic<bool> pendingPvRebase{false};
-    // Published PV curve snapshot for non-RT readers (status/OTA/measure-coil). Seqlock
-    // (odd = write in progress) so a concurrent curve update can't yield a mixed set.
-    std::atomic<uint32_t> pvPubSeq{0};
-    std::atomic<float> pvPubIsc{NAN}, pvPubVoc{NAN}, pvPubK{NAN};
-    std::atomic<bool> pvPubActive{false};
+    // Published PV curve for non-RT readers (status/OTA/measure-coil); RT is the only writer.
+    SeqLock<PvCurve> pvPub{{NAN, NAN, NAN, false}};
     std::atomic<float> pvBaseIsc{NAN}; // last full `pv` Isc, reference for `pv scale`
     unsigned short _teleNumPoints = 0;
 
     const VIinVout<const Sensor *> &sensors;
 
-    void lockPsuMailbox() {
+    uint32_t postPsuCommand(PsuCommand command, const PsuReq &req = {}) {
         // Producers can be separate tasks on NON_RT_CORE (console, OTA and measure-coil).
         // A plain atomic spin lock can deadlock if a higher-priority producer preempts its
         // owner on that same core. The IDF port mux disables local preemption while owned;
-        // the RT consumer never takes it and only observes the odd/even sequence below.
+        // the RT consumer never takes it and only observes the seqlock.
         portENTER_CRITICAL(&psuMailboxMux);
-        psuMailboxSeq.fetch_add(1, std::memory_order_acq_rel);
-    }
-
-    uint32_t postPsuCommand(PsuCommand command) {
-        uint32_t ticket = (nextPsuTicket.fetch_add(1, std::memory_order_relaxed) + 1) & 0x00ffffffu;
-        if (ticket == 0)
-            ticket = (nextPsuTicket.fetch_add(1, std::memory_order_relaxed) + 1) & 0x00ffffffu;
-        pendingPsuCommandWord.store((ticket << 8) | static_cast<uint8_t>(command),
-                                    std::memory_order_release);
-        psuMailboxSeq.fetch_add(1, std::memory_order_release);
+        psuReq.begin();
+        psuReq.put(req);
+        const uint32_t w = psuCmd.post(static_cast<uint8_t>(command));
+        psuReq.end();
         portEXIT_CRITICAL(&psuMailboxMux);
-        return ticket;
+        return ReqSlot<8>::tag(w);
     }
 
     void completePsuCommand(uint32_t ticket, PsuSetpointError error) {
@@ -297,18 +295,7 @@ private:
             (ticket << 8) | static_cast<uint8_t>(error), std::memory_order_release);
     }
 
-    // RT-only seqlock writer for the published PV curve snapshot. The release fence after the
-    // odd-marking increment is load-bearing: a release RMW alone does not keep the payload
-    // stores from becoming visible before it.
-    void publishPvState(bool active, float isc, float voc, float k) {
-        pvPubSeq.fetch_add(1, std::memory_order_relaxed);
-        std::atomic_thread_fence(std::memory_order_release);
-        pvPubActive.store(active, std::memory_order_relaxed);
-        pvPubIsc.store(isc, std::memory_order_relaxed);
-        pvPubVoc.store(voc, std::memory_order_relaxed);
-        pvPubK.store(k, std::memory_order_relaxed);
-        pvPubSeq.fetch_add(1, std::memory_order_release);
-    }
+    void publishPvState(bool active, float isc, float voc, float k) { pvPub.write({isc, voc, k, active}); }
 
     void pvDeactivateRt() {
         if (!pvSim.active) return;
@@ -1057,10 +1044,10 @@ public:
             lastPsuRequestError.store(precheck, std::memory_order_relaxed);
             return 0;
         }
-        lockPsuMailbox();
-        pendingPsuSetpoint.store(v, std::memory_order_relaxed);
-        pendingPsuBootRequest.store(bootRequest, std::memory_order_relaxed);
-        return postPsuCommand(PsuCommand::Enable);
+        PsuReq r;
+        r.v = v;
+        r.boot = bootRequest;
+        return postPsuCommand(PsuCommand::Enable, r);
     }
 
     [[nodiscard]] bool requestPsuSetpoint(float v, bool bootRequest = false) {
@@ -1087,15 +1074,15 @@ public:
             lastPsuRequestError.store(precheck, std::memory_order_relaxed);
             return 0;
         }
-        lockPsuMailbox();
-        pendingPvIsc.store(isc, std::memory_order_relaxed);
-        pendingPvVoc.store(voc, std::memory_order_relaxed);
-        pendingPvK.store(k, std::memory_order_relaxed);
+        PsuReq r;
+        r.v = voc;
+        r.isc = isc;
+        r.k = k;
         // The base is committed by the RT consumer on success — a producer-side store would
         // survive an RT-side rejection and corrupt a later `pv scale`.
-        pendingPvRebase.store(rebase, std::memory_order_relaxed);
-        pendingPsuBootRequest.store(bootRequest, std::memory_order_relaxed);
-        return postPsuCommand(PsuCommand::EnablePv);
+        r.rebase = rebase;
+        r.boot = bootRequest;
+        return postPsuCommand(PsuCommand::EnablePv, r);
     }
 
     // Coherent read of the published curve. Returns active; outputs are NAN when never set.
@@ -1104,63 +1091,38 @@ public:
     // the final fallback (possibly-mixed read) only fires if RT died mid-publish — better than
     // wedging the caller forever.
     bool getPvCurve(float &isc, float &voc, float &k) const {
-        uint32_t s1, s2;
-        bool active;
-        for (int tries = 0; tries < 64; ++tries) {
+        PvCurve c;
+        bool ok = false;
+        for (int tries = 0; tries < 64 && !ok; ++tries) {
             if (tries >= 8) vTaskDelay(1);
-            s1 = pvPubSeq.load(std::memory_order_acquire);
-            if (s1 & 1u) continue;
-            active = pvPubActive.load(std::memory_order_relaxed);
-            isc = pvPubIsc.load(std::memory_order_relaxed);
-            voc = pvPubVoc.load(std::memory_order_relaxed);
-            k = pvPubK.load(std::memory_order_relaxed);
-            std::atomic_thread_fence(std::memory_order_acquire);
-            s2 = pvPubSeq.load(std::memory_order_relaxed);
-            if (s1 == s2) return active;
+            ok = pvPub.tryRead(c);
         }
-        active = pvPubActive.load(std::memory_order_relaxed);
-        isc = pvPubIsc.load(std::memory_order_relaxed);
-        voc = pvPubVoc.load(std::memory_order_relaxed);
-        k = pvPubK.load(std::memory_order_relaxed);
-        return active;
+        if (!ok) c = pvPub.get();
+        isc = c.isc;
+        voc = c.voc;
+        k = c.k;
+        return c.active;
     }
 
-    [[nodiscard]] bool isPvActive() const {
-        return pvPubActive.load(std::memory_order_relaxed);
-    }
+    [[nodiscard]] bool isPvActive() const { return pvPub.get().active; }
     [[nodiscard]] float getPvBaseIsc() const {
         return pvBaseIsc.load(std::memory_order_relaxed);
     }
 
-    [[nodiscard]] uint32_t requestPsuOff() {
-        lockPsuMailbox();
-        pendingPsuBootRequest.store(false, std::memory_order_relaxed);
-        return postPsuCommand(PsuCommand::DisableMppt);
-    }
+    [[nodiscard]] uint32_t requestPsuOff() { return postPsuCommand(PsuCommand::DisableMppt); }
 
     [[nodiscard]] uint32_t requestPsuManual(uint16_t duty, int manualRect) {
-        lockPsuMailbox();
-        pendingManualTarget.store(duty, std::memory_order_relaxed);
-        pendingManualRect.store(manualRect, std::memory_order_relaxed);
-        pendingPsuBootRequest.store(false, std::memory_order_relaxed);
-        return postPsuCommand(PsuCommand::DisableManual);
+        PsuReq r;
+        r.duty = duty;
+        r.rect = manualRect;
+        return postPsuCommand(PsuCommand::DisableManual, r);
     }
 
-    [[nodiscard]] uint32_t requestPsuSweep() {
-        lockPsuMailbox();
-        pendingPsuBootRequest.store(false, std::memory_order_relaxed);
-        return postPsuCommand(PsuCommand::StartSweep);
-    }
+    [[nodiscard]] uint32_t requestPsuSweep() { return postPsuCommand(PsuCommand::StartSweep); }
 
-    [[nodiscard]] uint32_t requestPsuShortLowSide() {
-        lockPsuMailbox();
-        pendingPsuBootRequest.store(false, std::memory_order_relaxed);
-        return postPsuCommand(PsuCommand::ShortLowSide);
-    }
+    [[nodiscard]] uint32_t requestPsuShortLowSide() { return postPsuCommand(PsuCommand::ShortLowSide); }
 
-    [[nodiscard]] bool hasPendingPsuCommand() const {
-        return pendingPsuCommandWord.load(std::memory_order_acquire) != 0;
-    }
+    [[nodiscard]] bool hasPendingPsuCommand() const { return !psuCmd.idle(); }
     [[nodiscard]] bool isPsuCommandDone(uint32_t ticket) const {
         if (ticket == 0) return false;
         return (completedPsuResults[ticket % PsuResultSlots].load(std::memory_order_acquire) >> 8)
@@ -1175,11 +1137,8 @@ public:
                : PsuSetpointError::None;
     }
     bool cancelPsuCommand(uint32_t ticket) {
-        uint32_t expected = (ticket << 8)
-                            | (pendingPsuCommandWord.load(std::memory_order_acquire) & 0xffu);
-        if ((expected >> 8) != ticket) return false;
-        return pendingPsuCommandWord.compare_exchange_strong(expected, 0,
-                                                             std::memory_order_acq_rel);
+        const uint32_t w = psuCmd.peek();
+        return w && ReqSlot<8>::tag(w) == ticket && psuCmd.clear(w);
     }
     [[nodiscard]] float getPsuSetpoint() const {
         return publishedPsuSetpoint.load(std::memory_order_acquire);
@@ -1191,16 +1150,13 @@ public:
         explicitOvLimit.store(v, std::memory_order_release);
     }
     [[nodiscard]] float getRequestedPsuSetpoint() const {
-        const auto command = static_cast<PsuCommand>(
-            pendingPsuCommandWord.load(std::memory_order_acquire) & 0xffu);
-        if (command == PsuCommand::Enable)
-            return pendingPsuSetpoint.load(std::memory_order_relaxed);
-        if (command == PsuCommand::EnablePv)
-            return pendingPvVoc.load(std::memory_order_relaxed);
+        const auto command = static_cast<PsuCommand>(ReqSlot<8>::payload(psuCmd.peek()));
+        if (command == PsuCommand::Enable || command == PsuCommand::EnablePv)
+            return psuReq.get().v;
         // PV-sim active: the commanded top of the curve, not the moving setpoint — `ovset`
         // validates against this, and an OV limit inside (moving-Vset, Voc) would latch.
-        if (pvPubActive.load(std::memory_order_relaxed))
-            return pvPubVoc.load(std::memory_order_relaxed);
+        const PvCurve c = pvPub.get();
+        if (c.active) return c.voc;
         return getPsuSetpoint();
     }
     [[nodiscard]] uint16_t getManualTarget() const {
@@ -1210,31 +1166,26 @@ public:
     // RT-CORE ONLY. Console code posts a mailbox command; this is the single writer for the
     // controller resets, trip counters, sweep/backoff state and PSU setpoint transition.
     void applyPendingPsuCommandRt(bool freshTelemetry = true) {
-        if (pendingPsuCommandWord.load(std::memory_order_acquire)) applyPendingPsuCommandSlow(freshTelemetry);
+        if (psuCmd.peek()) applyPendingPsuCommandSlow(freshTelemetry);
     }
 
     __attribute__((noinline, cold)) void applyPendingPsuCommandSlow(bool freshTelemetry) {
-        const uint32_t seqBefore = psuMailboxSeq.load(std::memory_order_acquire);
-        if (seqBefore & 1u) return;
-        auto word = pendingPsuCommandWord.load(std::memory_order_acquire);
+        const uint32_t seq = psuReq.enter();
+        if (seq & 1u) return;
+        const uint32_t word = psuCmd.peek();
         if (word == 0) return;
-        const auto command = static_cast<PsuCommand>(word & 0xffu);
-        const uint32_t ticket = word >> 8;
+        const auto command = static_cast<PsuCommand>(ReqSlot<8>::payload(word));
+        const uint32_t ticket = ReqSlot<8>::tag(word);
         // An Enable needs the current Vin for boost feasibility. Off/manual/sweep remain
         // available during ADC loss, but stale telemetry must never be used to energize.
         const bool pvCmd = command == PsuCommand::EnablePv;
         if ((command == PsuCommand::Enable || pvCmd) && !freshTelemetry) return;
-        const float requested = pvCmd ? pendingPvVoc.load(std::memory_order_relaxed)
-                                      : pendingPsuSetpoint.load(std::memory_order_relaxed);
-        const float pvIsc = pendingPvIsc.load(std::memory_order_relaxed);
-        const float pvK = pendingPvK.load(std::memory_order_relaxed);
-        const bool pvRebase = pendingPvRebase.load(std::memory_order_relaxed);
-        const uint16_t manualDuty = pendingManualTarget.load(std::memory_order_relaxed);
-        const int manualRect = pendingManualRect.load(std::memory_order_relaxed);
-        const bool bootRequest = pendingPsuBootRequest.load(std::memory_order_relaxed);
-        if (psuMailboxSeq.load(std::memory_order_acquire) != seqBefore) return;
-        if (!pendingPsuCommandWord.compare_exchange_strong(word, 0, std::memory_order_acq_rel))
-            return;
+        const PsuReq r = psuReq.get();
+        if (!psuReq.still(seq) || !psuCmd.clear(word)) return;
+        const float requested = r.v, pvIsc = r.isc, pvK = r.k;
+        const bool pvRebase = r.rebase, bootRequest = r.boot;
+        const uint16_t manualDuty = r.duty;
+        const int manualRect = r.rect;
 
         if (command != PsuCommand::Enable && !pvCmd) {
             abortSweep();
