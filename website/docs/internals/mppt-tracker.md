@@ -16,8 +16,8 @@ Tracking runs in three phases:
    becomes active (input undervoltage, output overvoltage, overcurrent, power limit) or the duty reaches its maximum.
 2. Fast tracking: perturb & observe (P&O) around the captured MPP.
 3. Slow tracking: P&O with a lower rate, smaller steps, and a smaller mean tracking error. A new power maximum,
-   a major drop in power (clouds, partial shading), a limiter, or a drift of Vin away from where slow tracking
-   started switches back to fast tracking.
+   a major drop in power (clouds, partial shading), a limiter, or 45 s without a direction reversal switches
+   back to fast tracking.
 
 A new global sweep runs every 30 minutes so the tracker does not stay on a local maximum, which happens with
 partially shaded strings. A sweep takes 20–60 s, depending on the loop rate. Sweeping too often or too slowly
@@ -38,7 +38,7 @@ stateDiagram-v2
     Sweep --> Backoff: best power < 0.2 % of p_max
     FadeToMPP --> Fast: target duty reached
     Fast --> Slow: no new MPP for 30 s, reversed since the last takeover
-    Slow --> Fast: new MPP / MPP reset / Vin off by 4 % / limiter
+    Slow --> Fast: new MPP / MPP reset / 45 s without reversal / limiter
     Backoff --> Sweep: next start
 ```
 
@@ -110,7 +110,8 @@ The window lasts until both of these hold, but never longer than 1 s:
 | ADS1015, three muxed channels         | 120 Hz | 60  | 1 s (capped from 1.6 s) |
 
 A limiter hand-back starts the window but does not count as a reversal. It is a takeover for the slow-mode
-condition below, so the tracker continues in fast mode after a derate, a CV hold, or a sweep.
+condition below: it ends slow mode, and the tracker continues in fast mode for at least 30 s after a derate,
+a CV hold, or a sweep.
 
 The 1 s cap bounds a leg that the tracker walks without judging power. In simulation, a 1.5 s window
 harvested less than a fixed 150 ms window, because the excursion it allows costs more than the filter lag
@@ -140,28 +141,21 @@ all of these hold:
 - Power is above 2 W (0.5 W to stay, hysteresis).
 - No new MPP was recorded for 30 s.
 - The last takeover is more than 30 s ago, and the direction reversed since then. A takeover is a limiter
-  hand-back (which includes the end of a sweep and the start-up) or slow mode leaving its Vin band.
+  hand-back, which includes the end of the fade after a sweep and the start-up.
+- The last reversal is less than 45 s ago.
 
-Slow mode ends on a new MPP record (a 0.5 % gain, or the first period after a reset) and when the period mean
-of Vin is more than 4 % away from its value at entry (`Slow mode left at Vin <V>, entered at <V>`). The band
-bounds how far slow P&O can walk away from where it started without a power drop large enough to reset the record:
-on a moving MPP, or on a slow periodic power change that the 2 Hz slow-mode evaluation picks up as a power step
-in either direction. The MPP record reset is evaluated before the entry, so the tracker does not enter slow mode
-in the same period in which the record is about to be reset.
+Slow mode ends on a new MPP record (a 0.5 % gain, or the first period after a reset), on a takeover, and 45 s
+after the last reversal. Moving one way for that long means the MPP has moved. A slow-mode pass across its power
+band near the MPP takes about 35 s, so a limit of 15 s dropped back to fast mode every 20 to 60 s.
 
-In simulation with sensor noise recorded on running converters, a 0.5 % power modulation at 0.2 Hz walked slow
-P&O up to 12 % of Vin away from the MPP without the band and lost about 2 % of harvest; the band keeps it within
-about 7 % and the loss at 0.5 %. In steady light the band costs at most 0.06 % of harvest.
+The MPP record reset is evaluated before the entry, so the tracker does not enter slow mode in the same period in
+which the record is about to be reset. The 5-minute record reset also ends slow mode: the record is at least 30 s
+old at entry, so a slow-mode episode lasts at most about 270 s.
 
-There is no time limit on slow mode: in simulation, ending it 45 s or 90 s after the last reversal made no
-difference once the Vin band is in place, and ending it after 15 s cost 0.03 to 0.3 % of harvest in steady or
-slowly changing light.
-
-On entry to slow mode the duty steps towards the duty of the recorded MPP, by at most 2 % of the current duty
-(`Slow mode, duty <from> -> <to> (MPP duty <d>, P=<W>)`). Output-power measurement (for example, with a hall sensor)
-can be too poor and non-linear for slow P&O alone. In simulation the bounded step harvested 0.01 to 0.07 % more
-than no step in most cases and up to 0.5 % more under a periodic power change. An unbounded jump to the recorded
-duty, which is at least 30 s old, lost 0.05 % in clouds and 0.17 % in light falling by 5 % per minute.
+On entry to slow mode the tracker returns the distance from the current duty to the duty of the recorded MPP
+in place of a step. The control loop applies it like any control value, scaled with the slew rate and the
+loop period and capped by the limiters, so the duty moves by a small fraction of that distance. The log shows
+the duty before and after that tick (`Slow mode, duty <from> -> <to> (<step>, MPP duty <d>, P=<W>)`).
 
 The console command `speed <x>` (0 ≤ x < 10) scales the tracker step (default 1.0).
 

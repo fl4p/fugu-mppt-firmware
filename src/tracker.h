@@ -25,12 +25,11 @@ struct Tracker {
     time_ms _time = 0;
     time_ms _timeLastReverse = 0;
     time_ms _timeSettle = 0; // settle window start: reversal or limiter hand-back
-    time_ms _timeTakeover = 0; // limiter hand-back or slow mode left its Vin band
+    time_ms _timeTakeover = 0; // limiter hand-back
 
     float _curPower = 0.0;
     float _lastPower = 0.0;
     float _lastVin = 0.0;
-    float _slowVin = 0; // Vin at slow-mode entry
 
     MeanAccumulator _powerBuf{};
     MeanAccumulator _vinBuf{};
@@ -66,7 +65,7 @@ struct Tracker {
     }
 
     // settleMs(): step settling time [ms] of the filter on powerSample, called once per tracker period.
-    // Returns the control value; on slow-mode entry instead a duty step [counts] towards the MPP duty.
+    // Returns the control value; on slow-mode entry the distance [counts] to the MPP duty.
     template<class SettleMs>
     float update(float powerSample, uint16_t dutyCycle, float vin, SettleMs settleMs) {
         auto now = wallClockMs();
@@ -129,27 +128,15 @@ struct Tracker {
             if (newMax) m = {power, now, dutyCycle, vin};
 
             // slow mode: no new MPP for 30 s, a reversal since the last takeover and 30 s after it. Ends on a new
-            // MPP (also after a reset) or when Vin leaves a 4 % band around the entry Vin
-            bool slow = power > (slowMode ? 0.5f : 2.f) && !newMax && _timeLastReverse > _timeTakeover;
-            if (!slowMode) {
-                slow = slow && now - m.timestamp > 1000 * 30 && now - _timeTakeover > 1000 * 30;
-            } else if (slow && std::abs(vin - _slowVin) > 0.04f * _slowVin) {
-                slow = false;
-                _timeTakeover = now;
-                ESP_LOGI("mppt", "Slow mode left at Vin %.2f, entered at %.2f", vin, _slowVin);
-            }
+            // MPP (also after a reset) or 45 s without a reversal
+            bool slow = power > (slowMode ? 0.5f : 2.f) && !newMax && _timeLastReverse > _timeTakeover &&
+                        now - _timeLastReverse < 1000 * 45;
+            if (!slowMode) slow = slow && now - m.timestamp > 1000 * 30 && now - _timeTakeover > 1000 * 30;
             bool enter = slow && !slowMode;
             setSlowMode(slow);
-            if (enter) {
-                _slowVin = vin;
-                // the MPP duty is the better reference where a poor or non-linear output current measurement
-                // misleads the slow P&O: step towards it, by at most 2 % of the duty
-                float d = 0.02f * dutyCycle;
-                d = std::clamp((float) m.dutyCycle - (float) dutyCycle, -d, d);
-                ESP_LOGI("mppt", "Slow mode, duty %hu -> %.0f (MPP duty %hu, P=%.2f)", dutyCycle, dutyCycle + d,
-                         m.dutyCycle, power);
-                return d;
-            }
+            // the MPP duty is a reference where a poor or non-linear output current measurement misleads the slow
+            // P&O: the caller applies the distance like a control value, i.e. a fraction of it
+            if (enter) return (float) m.dutyCycle - (float) dutyCycle;
         }
 
         float speed = slowMode ? .02f : .5f;
