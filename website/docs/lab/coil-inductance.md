@@ -207,11 +207,14 @@ The script runs these steps:
    converter in DCM and the current bounded. The sweep stops when the firmware reports CCM or
    `Iout` exceeds `--i-max`.
 4. Per point compute `D = H/pwmMax` and `L = (Vin−Vout)·Vin·D² / (2·Vout·fsw·Iout)`.
-5. Discard points below an `Iout` floor (sensor offset territory, §3). Fit the remaining points
+5. Read `Iout` with the converter off (`dc 0`) before and after the sweep and subtract this zero
+   from the points, interpolated in sweep order (see [`Iout` zero](#iout-zero-during-the-sweep)).
+6. Discard points below an `Iout` floor (sensor offset territory, §3). Fit the remaining points
    with the switch-node ring model of §7 and report `L = 1/c0`, its standard error, the ring
    frequency and the median of the points for comparison. With fewer than 16 points, or when no
-   periodic term of at least 1 % is found, report the median and IQR instead. Restore MPPT (or
-   `dc 0`) on exit.
+   periodic term of at least 1 % is found, report the median and IQR instead. Report `L` as a
+   function of the peak coil current (§7, [Peak-current dependence](#peak-current-dependence)).
+   Restore MPPT (or `dc 0`) on exit.
 
 The script has two built-in checks. If all points are CCM, it warns that `forced_pwm` may be on
 (which suppresses DCM). `--bidir` compares up/down sweeps for settling. A wrong `pwmMax` biases `L`
@@ -219,10 +222,12 @@ by a constant factor, and the script doesn't detect it.
 
 The method has these limitations:
 
-- Low bias only. Measurements are taken well below the boundary current, so the result is the
-  near-unbiased small-signal inductance. The method cannot trace the DC-bias curve: pushing the
-  current up crosses into CCM, where the transfer ratio no longer depends on `L`. For the bias
-  curve use a scoped CCM-ripple measurement or an LCR meter with bias injection (§2).
+- Low bias only. The peak coil current stays below the DCM/CCM boundary, and the `Iout` limit of
+  the sweep (2 A or the configured output limit) stops it at about 85–90 % of the boundary
+  current. The `L(Ipk)` report therefore covers only the start of the DC-bias curve, a factor of
+  about 2–2.5 in peak current. Beyond the boundary the transfer ratio no longer depends on `L`.
+  For the full bias curve use a scoped CCM-ripple measurement or an LCR meter with bias injection
+  (§2).
 - The result scales with the `Iout` calibration (§3) and with `pwmMax`. The remaining biases
   (switching transitions, gate delays, node charge) are listed in §7. Together they can move `L` a
   few percent, mostly low, and most at the low-current end of the band.
@@ -262,6 +267,22 @@ with the script to within ~2 % on board A of §8.
 
 For a tight result, use many small steps. Otherwise the i-max abort leaves only the low end of the
 band sampled, and the ring fit falls back to the median.
+
+After the result line the command prints the `Iout` zero and the peak-current dependence:
+
+```
+measure-coil: L = 73.72 uH  (ring fit, 36 DCM pts, Iout>=0.43A, +-0.4%; ring 245 kHz = 5.7 nF node C, ...)
+measure-coil: Iout zero +0.001/-0.003 A (off, before/after), subtracted
+measure-coil: L(Ipk) 2.0-2.9A 74.71uH+-1.7% | 2.9-3.8A 73.70uH+-1.0% | 3.8-4.7A 72.76uH+-0.7%
+measure-coil: L(Ipk) line: 77.61 uH at 0 A, slope -1.50 +-0.66 %/A over 2.0-4.7 A
+```
+
+The `Iout zero` line gives the current read with the converter off before and after the sweep. If
+it moved by more than 0.02 A, the line ends with `DISTURBED`, and `apply` does not write `L0`. The
+`L(Ipk)` lines give `L` per bin of peak coil current with its standard error, and a straight line:
+`L` extrapolated to zero current and the slope relative to it. A slope within two standard errors
+of zero is marked `(no significant slope)`. Both lines are omitted when the band covers fewer than
+about 1.6 ring periods. The host script prints the same lines.
 
 ## 6. Synchronous-rectifier timing and the `Iout` peak
 
@@ -385,15 +406,20 @@ Each DCM point gives `y_i = 1/L_i = 2·Vout·fsw·Iout / ((Vin−Vout)·Vin·D²
 `t_i = (1 − D·Vin/Vout)/fsw` from its own measured voltages. The estimator fits
 
 $$
-y_i = c_0 + \sum_{h=1}^{H}\left[a_h\cos(2\pi h f t_i) + b_h\sin(2\pi h f t_i)\right]
+y_i = c_0 + \sum_{h=1}^{H}\left[a_h\cos(2\pi h f t_i) + b_h\sin(2\pi h f t_i)\right] + s\,x_i
 $$
 
 by linear least squares at each trial frequency `f`, with `H = 2` from 24 points (`H = 1` from 16).
+Here $x_i = I_{pk,i} - \overline{I_{pk}}$ is the peak coil current $I_{pk} = (V_{in}-V_{out})\,D/(f_{sw} L)$
+relative to its mean. The linear term absorbs a dependence of `L` on the current, which a
+frequency scan without it would otherwise fit as a ring of about one period over the band.
 The frequency is scanned from `max(80 kHz, 1/span)` to `min(1.2 MHz, 0.45/Δt)` in steps of
 `0.1/span`, then refined twice around the best value. Here `span` is the range of `t_i` and `Δt`
-their median spacing. The result is `L = 1/c0`, the mean of `1/L` over whole ring periods. The fit
-is accepted only if it halves the residual against a constant and the first harmonic is at least
-1 % of `c0`; otherwise the median of the points is returned. Fitting `1/L` rather than `L` keeps the
+their median spacing. The result is `L = 1/c0`, the mean of `1/L` over whole ring periods at the mean
+peak current. At the chosen frequency a final fit adds the envelope terms $x_i(a\cos + b\sin)$ of
+the first harmonic, because the ring decays over the dead time and its amplitude changes along the
+band. The fit is accepted only if it halves the residual against a straight line in $x_i$ and the
+first harmonic is at least 1 % of `c0`; otherwise the median of the points is returned. Fitting `1/L` rather than `L` keeps the
 model linear in `Iout`, so a ripple of `Iout` maps to an additive term.
 
 Because the coordinate is the dead time computed from measured voltages, a soft source (a PV array
@@ -409,8 +435,54 @@ whose `Vin` sags as the current rises) does not smear the ring. The estimator de
 
 On synthetic sweeps from the converter model with the ring enabled (random `L` 40–100 µH, `C`
 3–8 nF, `Q` 10–40, stiff and soft sources, sensor noise), the 10-step median scatters 2–4 % rms
-(95th percentile 4–7 %). The 48-step fit scatters 0.8–1.3 % rms (95th percentile 1.2–1.8 %), and
+(95th percentile 4–7 %). The 48-step fit scatters 0.8–1.3 % rms (95th percentile 1.3–2.0 %), and
 the fitted ring frequency is within 1 %.
+
+### Peak-current dependence {#peak-current-dependence}
+
+The slope `s` of the final fit gives `L` as a function of the peak current. With the line
+linearized in `L` at the mean current, the report gives `L(0)` and `k = (dL/dIpk)/L(0)` in %/A. The
+peak current of each point is recomputed with `L(Ipk)` of the line before a second fit, so that a
+falling `L` does not stretch the current axis. The bins hold equal numbers of points sorted by
+`Ipk`. There are at most five bins of at least six points, and each spans at least about 0.8 ring
+periods so that the ring does not alias into a bin. A bin's value is the mean of the
+ring-corrected `1/L_i`.
+
+An `Iout` offset `δ` biases each point by $\delta/I_{out}$, most at low current, and so produces
+an apparent slope. The standard errors of `k` and of the bins include two such offsets: the
+uncertainty of the measured zero (at least 2 mA), and the net node charge per cycle (see
+[Remaining biases](#remaining-biases)), bounded by
+$C f_{sw} \max\!\left(V_{out},\ V_{in}^2/(2V_{out}) - V_{out}\right)$ with `C` from the
+fitted ring. The second term dominates at typical operating points. It makes the stated error
+larger than the scatter on the converter model, which includes only the ring part of the node
+charge. On that model ($L = L_0(1 - k\,I_{pk})$ per switching cycle; ring 200–400 kHz, `Q` 10–40;
+stiff and soft sources; 400 sweeps per case):
+
+| plant slope | slope error mean / rms | reported significant |
+|-------------|------------------------|----------------------|
+| 0 %/A       | −0.3 / 0.4 %/A         | 0 % (false positives) |
+| −1 %/A      | −0.3 / 0.3 %/A         | 40–45 %              |
+| −3 %/A      | −0.2 / 0.2 %/A         | 100 %                |
+
+The −0.3 %/A offset is the ring's node charge. Delays that lengthen the effective on-time act like
+a positive `Iout` offset at low current, so a measured slope also contains timing effects. The
+sweep cannot separate them from the coil's DC bias. A slope of order +1 %/A, with `L` rising with
+the current, points to such offsets rather than to the core.
+
+### `Iout` zero during the sweep {#iout-zero-during-the-sweep}
+
+An error in the current sensor's zero biases `L` by $-\delta/I_{out}$ per point. A stale offset
+calibration of −0.12 A, for example from a calibration taken while the current was still decaying
+after high-power operation, raises `L` by about 14 % in the model. The ring fit absorbs part of the
+smooth bias pattern, and the stated error stays below 1 %. Both sweeps therefore read `Iout` with
+the converter off before and after the sweep (one dwell, at least 2 s on the device). They subtract
+the zero interpolated over the points in sweep order, and add half the difference (at least 2 mA)
+to the uncertainty. A zero that moved by more than 0.02 A marks the run as disturbed: the zero
+drifted during the sweep, and the interpolation is only an approximation. On the model, a
+correction of a constant −0.12 A error leaves +0.4 % mean error, and a −0.12 A error decaying with
+a 20 s time constant is flagged in all runs. A change of the PV source during the sweep (a −40 %
+irradiance ramp) does not bias the result, because every point uses its own measured `Vin` and
+`Vout`.
 
 ### Remaining biases
 

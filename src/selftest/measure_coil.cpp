@@ -73,6 +73,35 @@ static void settleAndRead(uint16_t H, uint32_t dwellMs, Reading &out) {
     out = {medianN(vi, 5), medianN(vo, 5), medianN(io, 5), converter.getCtrlOnPwmCnt(), converter.inDCM()};
 }
 
+// Iout with the converter off: ramp down, settle, median of 5 EWM reads (NAN: still on)
+static float readZero(uint32_t dwellMs) {
+    mppt.setManualTarget(0);
+    const time_ms deadline = wallClockMs() + 10000;
+    while (!converter.disabled() && wallClockMs() < deadline)
+        vTaskDelay(pdMS_TO_TICKS(10));
+    if (!converter.disabled()) return NAN;
+    vTaskDelay(pdMS_TO_TICKS(dwellMs));
+    float io[5];
+    for (int k = 0; k < 5; ++k) {
+        io[k] = sensors.Iout->ewm.avg.get();
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    return medianN(io, 5);
+}
+
+static void logSplit(const coilfit::Result &f) {
+    if (f.k != f.k) return;
+    char b[200];
+    int o = snprintf(b, sizeof(b), "measure-coil: L(Ipk)");
+    for (int i = 0; i < f.nb && o < (int) sizeof(b); ++i)
+        o += snprintf(b + o, sizeof(b) - o, "%s %.1f-%.1fA %.2fuH+-%.1f%%", i ? " |" : "", f.lo[i], f.hi[i],
+                      f.Lb[i] * 1e6f, f.seb[i] * 100.0f);
+    UART_LOG("%s", b);
+    UART_LOG("measure-coil: L(Ipk) line: %.2f uH at 0 A, slope %+.2f +-%.2f %%/A over %.1f-%.1f A%s", f.L0 * 1e6f,
+             f.k * 100.0f, f.kse * 100.0f, f.lo[0], f.hi[f.nb - 1],
+             fabsf(f.k) < 2 * f.kse ? " (no significant slope)" : "");
+}
+
 static bool measWriteConf(const char *key, const char *val) {
     ConfFile conf{"/littlefs/conf/coil.conf"};
     return conf.add({{key, val}}, true);
@@ -95,11 +124,12 @@ static float sweepL0(const MeasArgs &a) {
 
     UART_LOG("measure-coil L0: fsw=%.0f pwmMax=%u band %d..%d step %d  Vin=%.2f Vout=%.2f M=%.3f",
              fsw, pwmMax, h_lo, h_hi, step, vin0, vout0, vout0 / vin0);
+    const uint32_t zDwell = max<uint32_t>(a.dwellMs, 2000);
+    const float z0 = readZero(zDwell);
+    if (z0 != z0) { UART_LOG("measure-coil: converter did not stop for the Iout zero"); return NAN; }
     UART_LOG("      H      D    Vin   Vout   Iout mode    L_uH");
-
     float d[MEAS_MAX_PTS], vi[MEAS_MAX_PTS], vo[MEAS_MAX_PTS], io[MEAS_MAX_PTS];
     int n = 0;
-    float iMaxSeen = 0;
     for (int H = h_lo; H <= h_hi && n < MEAS_MAX_PTS; H += step) {
         Reading r{};
         settleAndRead((uint16_t) H, a.dwellMs, r);
@@ -112,17 +142,21 @@ static float sweepL0(const MeasArgs &a) {
         if (r.dcm && L == L) {
             d[n] = D, vi[n] = r.vin, vo[n] = r.vout, io[n] = r.iout;
             ++n;
-            if (r.iout > iMaxSeen) iMaxSeen = r.iout;
         }
         if (r.iout > iMaxLim) { UART_LOG("  Iout %.2f > %.2f; stopping", r.iout, iMaxLim); break; }
         if (!r.dcm) { UART_LOG("  entered CCM; stopping"); break; }
     }
+    const float z1 = readZero(zDwell);
+    const bool disturbed = !(fabsf(z1 - z0) <= coilfit::kZeroTol); // also: z1 unread
+    const float zsig = coilfit::zeroCorrect(io, n, z0, z1 == z1 ? z1 : z0);
+    float iMaxSeen = 0;
+    for (int i = 0; i < n; ++i) iMaxSeen = max(iMaxSeen, io[i]);
     float ifloor = max(0.15f, 0.2f * iMaxSeen);
     int nk = 0;
     for (int i = 0; i < n; ++i)
         if (io[i] >= ifloor) d[nk] = d[i], vi[nk] = vi[i], vo[nk] = vo[i], io[nk] = io[i], ++nk;
     if (nk < 3) { UART_LOG("measure-coil: only %d DCM pts above %.2f A; widen band or wait for sun", nk, ifloor); return NAN; }
-    const auto f = coilfit::fit(d, vi, vo, io, nk, fsw);
+    const auto f = coilfit::fit(d, vi, vo, io, nk, fsw, zsig);
     if (f.f > 0)
         UART_LOG("measure-coil: L = %.2f uH  (ring fit, %d DCM pts, Iout>=%.2fA, +-%.1f%%; ring %.0f kHz = %.1f nF node C,"
                  " ripple +-%.0f%%, %.1f periods; median of points %.2f uH)", f.L * 1e6f, f.n, ifloor, f.se * 100.0f,
@@ -130,6 +164,10 @@ static float sweepL0(const MeasArgs &a) {
     else
         UART_LOG("measure-coil: L = %.2f uH  (median of %d DCM pts, Iout>=%.2fA; ring not resolved: %s, expect up to +-5%%)",
                  f.L * 1e6f, f.n, ifloor, f.n < coilfit::kMinFitPts ? "too few points" : "no periodic term");
+    UART_LOG("measure-coil: Iout zero %+.3f/%+.3f A (off, before/after), subtracted%s", z0, z1,
+             disturbed ? "; DISTURBED: moved > 0.02 A, L not for coil.conf" : "");
+    logSplit(f);
+    if (disturbed) return NAN;
     UART_LOG("  -> coil.conf L0=%.6e   note: scales with Iout cal & pwmMax; dead-time/DCR ~few %% low", f.L);
     return f.L;
 }
