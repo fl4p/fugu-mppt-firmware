@@ -36,7 +36,7 @@ else ()
         list(APPEND MAIN_SRC "../src/sync/bsync.cpp")
     endif ()
     # CONFIG_FUGU_WITH_MEASURE_COIL compiles in the on-device coil inductance sweep + `measure-coil`
-    # console command (src/selftest/measure_coil.cpp). Bench-only tool — saves ~11 KB in production builds.
+    # console command (src/selftest/measure_coil.cpp). Bench-only tool — saves ~16 KB in production builds.
     if (CONFIG_FUGU_WITH_MEASURE_COIL)
         list(APPEND MAIN_SRC "../src/selftest/measure_coil.cpp")
     endif ()

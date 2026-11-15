@@ -93,96 +93,157 @@ def median(xs):
 # --- L0 estimator (src/selftest/coil_fit.h is the on-device copy: keep the two identical) ---------
 FIT_MIN_PTS = 16
 RING_F_LO, RING_F_HI = 80e3, 1.2e6  # ring frequency search range, Hz
+MAX_BINS, MIN_BIN_PTS = 5, 6
+ZERO_TOL, ZERO_NOISE = 0.02, 0.002  # Iout zero: drift that marks a run disturbed, read noise floor, A
 
 
-def _ring_solve(y, t, f, nh):
-    """Least squares y ~ c0 + sum_h a_h cos(2 pi h f t) + b_h sin(...); returns (rss, c)."""
-    p = 1 + 2 * nh
-    N = [[0.0] * (p + 1) for _ in range(p)]
-    for yi, ti in zip(y, t):
+def zero_correct(iout, z0, z1):
+    """Subtract the Iout zero read with the converter off before (z0) and after (z1) the sweep, interpolated
+    over the points in sweep order; returns (corrected, zero uncertainty)."""
+    n = len(iout)
+    out = [io - (z0 + (z1 - z0) * i / max(1, n - 1)) for i, io in enumerate(iout)]
+    return out, max(ZERO_NOISE, 0.5 * abs(z1 - z0))
+
+
+def _ring(c, w, x, nh):
+    if not nh:
+        return 0.0
+    cw, sw = math.cos(w), math.sin(w)
+    v = c[1] * cw + c[2] * sw + x * (c[2 * nh + 2] * cw + c[2 * nh + 3] * sw)
+    if nh > 1:
+        v += c[3] * (cw * cw - sw * sw) + c[4] * 2 * sw * cw
+    return v
+
+
+def _ring_solve(y, t, x, f, nh, env=False):
+    """Least squares y ~ 1, cos/sin(2 pi h f t) (h <= nh), x [, x*cos, x*sin if env]; returns
+    (rss, c, (A^T A)^-1 of the x coefficient)."""
+    sx = 1 + 2 * nh
+    p = sx + (3 if nh and env else 1)
+    N = [[0.0] * (p + 2) for _ in range(p)]
+    for yi, ti, xi in zip(y, t, x):
         w = 2 * math.pi * f * ti
-        a = [1.0, math.cos(w), math.sin(w)]
+        cw, sw = math.cos(w), math.sin(w)
+        a = [1.0, cw, sw]
         if nh > 1:
-            a += [math.cos(2 * w), math.sin(2 * w)]
+            a += [cw * cw - sw * sw, 2 * sw * cw]
+        a = a[:sx] + [xi]
+        if nh and env:
+            a += [xi * cw, xi * sw]
         for r in range(p):
             for k in range(p):
                 N[r][k] += a[r] * a[k]
             N[r][p] += a[r] * yi
+    N[sx][p + 1] = 1.0
     for k in range(p):
         piv = max(range(k, p), key=lambda r: abs(N[r][k]))
         if abs(N[piv][k]) < 1e-9:
-            return math.inf, None
+            return math.inf, None, None
         N[k], N[piv] = N[piv], N[k]
         for r in range(p):
             if r != k:
                 m = N[r][k] / N[k][k]
-                N[r] = [N[r][j] - m * N[k][j] for j in range(p + 1)]
-    c = [N[k][p] / N[k][k] for k in range(p)]
-    rss = 0.0
-    for yi, ti in zip(y, t):
-        w = 2 * math.pi * f * ti
-        e = yi - c[0] - c[1] * math.cos(w) - c[2] * math.sin(w)
-        if nh > 1:
-            e -= c[3] * math.cos(2 * w) + c[4] * math.sin(2 * w)
-        rss += e * e
-    return rss, c
+                N[r] = [N[r][j] - m * N[k][j] for j in range(p + 2)]
+    c = [N[k][p] / N[k][k] for k in range(p)] + [0.0] * (8 - p)
+    vx = N[sx][p + 1] / N[sx][sx]
+    rss = sum((yi - c[0] - _ring(c, 2 * math.pi * f * ti, xi, nh) - c[sx] * xi) ** 2 for yi, ti, xi in zip(y, t, x))
+    return rss, c, vx
 
 
-def fit_l0(pts, fsw):
+def fit_l0(pts, fsw, zsig=0.0):
     """L from DCM points [(D, Vin, Vout, Iout), ...] (doc: coil-inductance.md, "Switch-node ringing").
 
     Per point 1/L = 2*Vout*fsw*Iout / ((Vin-Vout)*Vin*D^2). The switch-node ring makes 1/L_i periodic
-    in the dead time t = (1 - D*Vin/Vout)/fsw; fit c0 + harmonics of a scanned ring frequency f and
-    return L = 1/c0, the mean over whole ring periods. Below FIT_MIN_PTS points or without a
-    significant (>= 1 %) periodic term: the median of the points (f = 0)."""
-    y, t = [], []
-    for d, vi, vo, io in pts:
-        x = (vi - vo) * vi * d * d
-        if x > 0 and io > 0 and vo > 0:
-            y.append(2 * vo * fsw * io / x)
-            t.append((1 - d * vi / vo) / fsw)
+    in the dead time t = (1 - D*Vin/Vout)/fsw; fit c0 + harmonics of a scanned ring frequency f + s*x, x the
+    peak coil current Ipk = (Vin-Vout)*D/(fsw*L) minus its mean, and return L = 1/c0, the mean over whole
+    ring periods. Below FIT_MIN_PTS points or without a significant (>= 1 %) periodic term: the median of
+    the points (f = 0). Also L(Ipk): the line (L0 at Ipk -> 0, k = dL/dIpk / L0 with its se kse, which
+    includes the Iout zero uncertainty zsig and the node charge per cycle) and bins of the ring-corrected
+    points [(Ipk lo, Ipk hi, L, se), ...]."""
+    ok = [(d, vi, vo, io) for d, vi, vo, io in pts if (vi - vo) * vi * d * d > 0 and io > 0 and vo > 0]
+    y = [2 * vo * fsw * io / ((vi - vo) * vi * d * d) for d, vi, vo, io in ok]
+    t = [(1 - d * vi / vo) / fsw for d, vi, vo, io in ok]
+    x = [(vi - vo) * d / fsw for d, vi, vo, io in ok]
     n = len(y)
-    r = dict(L=float("nan"), Lmed=float("nan"), f=0.0, amp=0.0, periods=0.0, se=float("nan"), n=n, nh=0)
+    nan = float("nan")
+    r = dict(L=nan, Lmed=nan, f=0.0, amp=0.0, periods=0.0, se=nan, n=n, nh=0, L0=nan, k=nan, kse=nan, bins=[])
     if n < 3:
         return r
     ymed = statistics.median(y)
     r["L"] = r["Lmed"] = 1 / ymed
     if n < FIT_MIN_PTS:
         return r
+    zi = sum(1 / p[3] for p in ok) / n
+    vm = sum(max(vo, vi * vi / (2 * vo) - vo) for d, vi, vo, io in ok) / n
     y = [v / ymed for v in y]
-    y0 = sum(y) / n
-    rss0 = sum((v - y0) ** 2 for v in y)
+    x = [v * ymed for v in x]
+    xm = sum(x) / n
+    x = [v - xm for v in x]
+    rss0, _, _ = _ring_solve(y, t, x, 0.0, 0)
     span = max(t) - min(t)
     ts = sorted(t)
     dt = statistics.median([b - a for a, b in zip(ts, ts[1:])])
-    if not (span > 0 and dt > 0):
-        return r
     nh = 2 if n >= 24 else 1
-    f_lo, f_hi = max(RING_F_LO, 1 / span), min(RING_F_HI, 0.45 / dt)
-    if not f_hi > f_lo:
+    best, f_best = math.inf, 0.0
+    if span > 0 and dt > 0:
+        f_lo, f_hi = max(RING_F_LO, 1 / span), min(RING_F_HI, 0.45 / dt)
+        if f_hi > f_lo:
+            df = 0.1 / span
+            f = f_lo
+            while f < f_hi:
+                e, _, _ = _ring_solve(y, t, x, f, nh)
+                if e < best:
+                    best, f_best = e, f
+                f += df
+            for _ in range(2):  # refine around the grid minimum
+                f0 = f_best
+                for j in range(-5, 6):
+                    e, _, _ = _ring_solve(y, t, x, f0 + j * df * 0.2, nh)
+                    if e < best:
+                        best, f_best = e, f0 + j * df * 0.2
+                df *= 0.2
+    rss = math.inf
+    if best < 0.5 * rss0:
+        rss, c, vs = _ring_solve(y, t, x, f_best, nh, True)
+        if c is not None and c[1] ** 2 + c[2] ** 2 > 1e-4 * c[0] ** 2:  # >= 1 % ripple: ring
+            r.update(L=1 / (c[0] * ymed), f=f_best, amp=math.hypot(c[1], c[2]) / c[0], periods=span * f_best, nh=nh)
+    nh = r["nh"]
+    if not nh:
+        rss, c, vs = _ring_solve(y, t, x, 0.0, 0, True)
+    sx = 1 + 2 * nh
+    p = sx + (3 if nh else 1)
+    if not (rss < math.inf and c[0] > 0):
         return r
-    df, best, f_best = 0.1 / span, math.inf, 0.0
-    f = f_lo
-    while f < f_hi:
-        e, _ = _ring_solve(y, t, f, nh)
-        if e < best:
-            best, f_best = e, f
-        f += df
-    for _ in range(2):  # refine around the grid minimum
-        f0 = f_best
-        for j in range(-5, 6):
-            e, _ = _ring_solve(y, t, f0 + j * df * 0.2, nh)
-            if e < best:
-                best, f_best = e, f0 + j * df * 0.2
-        df *= 0.2
-    if not best < 0.5 * rss0:
+    x = [(v + xm) * (1 + c[sx] * v / c[0]) for v in x]  # Ipk at L(Ipk) of the line, refit
+    xm = sum(x) / n
+    x = [v - xm for v in x]
+    rss, c, vs = _ring_solve(y, t, x, r["f"], nh, True)
+    if not (rss < math.inf and c[0] > 0):
         return r
-    _, c = _ring_solve(y, t, f_best, nh)
-    if not c[1] ** 2 + c[2] ** 2 > 1e-4 * c[0] ** 2:  # < 1 % ripple: no ring
+    sig = math.sqrt(rss / (n - p))
+    if nh:
+        r["se"] = math.hypot(sig / math.sqrt(n) / c[0], zsig * zi)
+    dy = [yi / p_[3] for yi, p_ in zip(y, ok)]  # dy/dIout
+    ez, cz, _ = _ring_solve(dy, t, x, r["f"], nh, True)
+    if not ez < math.inf:
         return r
-    p = 1 + 2 * nh
-    r.update(L=1 / (c[0] * ymed), f=f_best, amp=math.hypot(c[1], c[2]) / c[0], periods=span * f_best,
-             se=math.sqrt(best / (n - p) / n) / c[0], nh=nh)
+    rho, g = r["L"] * ymed, c[0] + c[sx] * xm
+    zt = math.hypot(zsig, vm * fsw / ((2 * math.pi * r["f"]) ** 2 * r["L"]) if r["f"] > 0 else 0.0)
+    r.update(L0=g / (c[0] * c[0] * ymed), k=-c[sx] * rho / g,
+             kse=math.hypot(sig * math.sqrt(vs), cz[sx] * zt) * rho / g)
+    pts_ = sorted(((xi + xm) / rho, yi - _ring(c, 2 * math.pi * r["f"] * ti, xi, nh), zi_)
+                  for xi, yi, ti, zi_ in zip(x, y, t, dy))
+    nb = min(MAX_BINS, n // MIN_BIN_PTS)
+    if r["f"] > 0:
+        nb = min(nb, int(r["periods"] * 1.25))
+    if nb < 2:  # under ~1.6 ring periods the slope is not separable from the ring
+        r.update(L0=nan, k=nan, kse=nan)
+    else:
+        for b in range(nb):
+            seg = pts_[b * n // nb:(b + 1) * n // nb]
+            u = sum(q[1] for q in seg) / len(seg)
+            z = sum(q[2] for q in seg) / len(seg)
+            r["bins"].append((seg[0][0], seg[-1][0], 1 / (u * ymed), math.hypot(sig / math.sqrt(len(seg)), z * zt) / u))
     return r
 
 
@@ -195,6 +256,38 @@ def report_l0(r, L_ref=None):
                 f"{r['periods']:.1f} periods; median of points {r['Lmed'] * 1e6:.2f} uH)")
     return (f"L = {r['L'] * 1e6:.2f} uH  (median of {r['n']} DCM pts; ring not resolved: "
             f"{'too few points' if r['n'] < FIT_MIN_PTS else 'no periodic term'}, expect up to +-5%)")
+
+
+def report_split(r):
+    """L(Ipk) lines, same wording as the device ([] without the split)."""
+    if not r["bins"] or r["k"] != r["k"]:
+        return []
+    bins = " | ".join(f"{lo:.1f}-{hi:.1f}A {L * 1e6:.2f}uH+-{se * 100:.1f}%" for lo, hi, L, se in r["bins"])
+    sig = abs(r["k"]) < 2 * r["kse"]
+    return [f"L(Ipk) {bins}",
+            f"L(Ipk) line: {r['L0'] * 1e6:.2f} uH at 0 A, slope {r['k'] * 100:+.2f} +-{r['kse'] * 100:.2f} %/A over "
+            f"{r['bins'][0][0]:.1f}-{r['bins'][-1][1]:.1f} A{' (no significant slope)' if sig else ''}"]
+
+
+def report_zero(z0, z1):
+    """Iout zero line, and whether the run is disturbed (zero moved during the sweep)."""
+    bad = abs(z1 - z0) > ZERO_TOL
+    return (f"Iout zero {z0:+.3f}/{z1:+.3f} A (off, before/after), subtracted"
+            + (f"; DISTURBED: moved > {ZERO_TOL:.2f} A, L not for coil.conf" if bad else "")), bad
+
+
+def read_zero(con, dwell):
+    """Iout with the converter off (`dc 0`): median of the `sensor avg` iout over the dwell (None if unread)."""
+    if not safe_command(con, "dc 0"):
+        return None
+    time.sleep(min(2.0, 0.4 * dwell))
+    t_end, xs = time.monotonic() + dwell, []
+    while time.monotonic() < t_end:
+        a = read_sensor_avgs(con)
+        if "iout" in a:
+            xs.append(a["iout"])
+        time.sleep(0.1)
+    return median(xs) if xs else None
 
 
 def ascii_plot(rows, width=58, height=15):
@@ -631,6 +724,8 @@ def main():
         step = max(1, (h_hi - h_lo) // max(1, args.steps - 1))
 
         rows = []
+        z0 = read_zero(con, max(args.dwell, 2.0))
+        z1 = None
         print(f"\n  {'':1}{'H':>5} {'D':>6} {'Vin':>6} {'Vout':>6} {'Iout':>6} {'mode':>4} {'L_uH':>7}")
         try:
             up_lbl = "up" if args.bidir else ""
@@ -642,9 +737,17 @@ def main():
                 rows_dn, _ = run_sweep(con, tap, range(safe_h, h_lo - 1, -step),
                                        period, fsw, args.i_max, args.dwell, "dn")
                 rows += rows_dn
+            z1 = read_zero(con, args.dwell)
         finally:
             safe_command(con, "mppt" if args.restore == "mppt" else "dc 0")
 
+        zsig, disturbed = 0.0, z0 is None or z1 is None
+        if not disturbed:  # Iout zero read with the converter off before/after the sweep
+            ios, zsig = zero_correct([r[4] for r in rows], z0, z1)
+            rows = [r[:4] + (io,) + r[5:] for r, io in zip(rows, ios)]
+            zline, disturbed = report_zero(z0, z1)
+        else:
+            zline = "Iout zero not read; DISTURBED: L not for coil.conf"
         # fit only points whose current is well above the Iout offset/quantization floor; near
         # zero current a small sensor offset blows the estimate up (L proportional to 1/Iout).
         imax = max((r[4] for r in rows if r[5] == "DCM"), default=0.0)
@@ -656,11 +759,14 @@ def main():
             if all(r[5] == "CCM" for r in rows) and rows:
                 print("all points CCM -> forced_pwm may be on (converter.conf); DCM needed")
             return
-        fit = fit_l0([(r[1], r[2], r[3], r[4]) for r in dcm], fsw)
+        fit = fit_l0([(r[1], r[2], r[3], r[4]) for r in dcm], fsw, zsig)
         ls = sorted(r[6] for r in dcm)
-        q1, q3 = ls[len(ls) // 4], ls[(3 * len(ls)) // 4]  # rough IQR of the per-point values
+        q1, q3 = ls[len(ls) // 4], ls[(3 * len(ls)) // 4]  # rough IQR of the per-point values (uncorrected)
         print(report_l0(fit) + f"  Iout>={ifloor:.2f}A, IQR {(q3 - q1) / fit['Lmed'] * 100.0:.0f}%")
-        print(f"  -> set coil.conf L0={fit['L']:.3e}   (was {l0})")
+        for ln in [zline] + report_split(fit):
+            print(ln)
+        if not disturbed:
+            print(f"  -> set coil.conf L0={fit['L']:.3e}   (was {l0})")
         print("  note: scales with Iout calibration & pwmMax; dead-time/DCR bias ~few % low")
         if args.bidir:
             bidir_verdict(rows, ifloor)

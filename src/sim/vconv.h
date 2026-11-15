@@ -105,6 +105,8 @@ public:
     void setVin(float v)  { vIn_ = v; }
     void setVout(float v) { vOut_ = v; }
     void setDiodeVf(float v) { diodeVf_ = v; } // LS body-diode drop in the dead/off phase
+    // Buck DC bias: L = L0 * (1 - k*|Ipk|), Ipk the previous cycle's peak (k in 1/A, 0 = off). The ring keeps L0.
+    void setLBias(float k) { lK_ = k; }
     // Buck switch-node ring while both switches are off: node capacitance c (F) against the coil,
     // quality factor q; ring frequency 1/(2*pi*sqrt(L*c)). c <= 0 disables it (default).
     void setRing(float c, float q) { ringC_ = c > 0.0f ? c : 0.0f; ringQ_ = q > 0.5f ? q : 0.5f; cycRingC_ = -1.0f; }
@@ -176,6 +178,7 @@ private:
     float cOut_ = 470e-6f;
     float l_    = 50e-6f;
     float diodeVf_ = 0.0f;
+    float lK_ = 0.0f, iPk_ = 0.0f;
 
     // State
     float vIn_   = 0.0f;

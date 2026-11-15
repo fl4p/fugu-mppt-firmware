@@ -5,8 +5,8 @@ src/selftest/coil_fit.h, on synthetic DCM sweeps with a switch-node ring term.
 Each dataset is a 48-step sweep (or 10 steps, the ring-unresolved fallback) of a buck at known L:
 Iout = DCM transfer * (1 + ripple(t)), t = (1 - D*Vin/Vout)/fsw the dead time, ripple a zero-mean
 Kepler-warped (sawtooth-like) damped sinusoid of 200..400 kHz with +-10..25 % amplitude, plus sensor noise and a
-sagging Vin. Checks: Python and C++ agree on L and the ring frequency; the fit is within 3 % of the
-true L where the median of the points is not.
+sagging Vin. Checks: Python and C++ agree on L, the ring frequency and the L(Ipk) split (L0, slope and
+its se, bins); the fit is within 3 % of the true L where the median of the points is not.
 
     .venv/bin/python3 etc/test_measure_coil_fit.py      # builds /tmp/coil-fit-test with clang++
 """
@@ -74,18 +74,30 @@ def main():
     out = subprocess.run([exe, "--fit", path], check=True, capture_output=True, text=True).stdout.split("\n")
     os.unlink(path)
     fails, e_fit, e_med = 0, [], []
+    n_split = 0
     for (L, fr, pts), line in zip(sets, out):
         py = fit_l0(pts, FSW)
-        cl, cf, cmed = (float(x) for x in line.split())
-        if abs(cl / py["L"] - 1) > 1e-3 or (py["f"] > 0) != (cf > 0) or (cf > 0 and abs(cf / py["f"] - 1) > 2e-3):
+        v = [float(x) for x in line.split()]
+        cl, cf, cmed, cl0, ck, ckse, cnb = v[:7]
+        cb = [v[7 + 4 * b:11 + 4 * b] for b in range(int(cnb))]
+        bad = abs(cl / py["L"] - 1) > 1e-3 or (py["f"] > 0) != (cf > 0) or (cf > 0 and abs(cf / py["f"] - 1) > 2e-3)
+        if py["k"] == py["k"]:  # split: L 0.1 %, slope 0.05 %/A + 5 % of its se, se 5 %, same bins
+            n_split += 1
+            bad |= (abs(cl0 / py["L0"] - 1) > 1e-3 or abs(ck - py["k"]) > 5e-4 + 0.05 * py["kse"] or abs(ckse / py["kse"] - 1) > 0.05
+                    or len(cb) != len(py["bins"])
+                    or any(abs(c[2] / q[2] - 1) > 1e-3 or abs(c[0] - q[0]) > 1e-3 for c, q in zip(cb, py["bins"])))
+        elif ck == ck:
+            bad = True
+        if bad:
             fails += 1
-            print(f"  PARITY FAIL: py L {py['L'] * 1e6:.3f} f {py['f']:.0f}  c++ L {cl * 1e6:.3f} f {cf:.0f}")
+            print(f"  PARITY FAIL: py L {py['L'] * 1e6:.3f} f {py['f']:.0f} k {py['k']:.5f}+-{py['kse']:.5f} "
+                  f"bins {len(py['bins'])}  c++ L {cl * 1e6:.3f} f {cf:.0f} k {ck:.5f}+-{ckse:.5f} bins {len(cb)}")
         if len(pts) >= 30:
             e_fit.append(py["L"] / L - 1)
             e_med.append(py["Lmed"] / L - 1)
     rms = lambda e: math.sqrt(sum(x * x for x in e) / len(e))
     worst = max(abs(x) for x in e_fit)
-    print(f"parity: {len(sets) - fails}/{len(sets)} datasets agree (L 0.1 %, f 0.2 %)")
+    print(f"parity: {len(sets) - fails}/{len(sets)} datasets agree (L 0.1 %, f 0.2 %; L(Ipk) split on {n_split})")
     print(f"accuracy over {len(e_fit)} 48-step sweeps: median of points rms {rms(e_med) * 100:.1f} % "
           f"(worst {max(abs(x) for x in e_med) * 100:.1f} %), ring fit rms {rms(e_fit) * 100:.2f} % (worst {worst * 100:.1f} %)")
     ok = fails == 0 and worst < 0.03 and rms(e_fit) < rms(e_med)
