@@ -22,8 +22,13 @@
 //     wx-dawn, wx-dusk  irradiance through the start threshold
 //     wx-low, wx-mid    steady light rising slowly, MPP 2 -> 20 W in 30 min / 55 -> 110 W in 10 min, sensor noise
 //     wx-sweep-fall, wx-sweep-rise, wx-sweep-shade   cloud edge during a sweep (-shade: two peaks)
+//     wx-sun-fry, wx-sun-flat   steady sun, MPP SIM_P W (default 70), the board's L, string and Vin (fry ~64 V, flat ~55 V)
+//   SIM_NOISE=fry|flat|<file.fnz>  replay sensor noise measured on a converter (test/host-stub/noise/, made by
+//     noise_profile.py; looped): residuals added to Vin/Vout/Iout, Iout's scaled by Iout/Iout(capture)^SIM_NOISE_EXP (default 1),
+//     x SIM_NOISE_GAIN, starting SIM_NOISE_OFS s into the profile; INA226 LSB quantisation, the boards' filt_len 20, SIM_ADC_HZ defaults to the capture rate
 //   SIM_T=600 wx run length [s], SIM_TR=5 wx trace interval [s], SIM_V=1 firmware log in wx/shade runs
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
+//   SIM_PDUMP=<file>  per RT tick float32 t, Iout ewm, Vout ewm, HS count, slow mode, PV power; SIM_HOLD=t: wx runs hold the duty from t [s]
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
 //   SIM_PHASE_US=500 /tmp/mppt-sim a          # a/b/c/e: plant runs n us past the event before the next ADC tick
 //   SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" /tmp/mppt-sim a   # board overrides
@@ -96,6 +101,7 @@ static std::vector<Trip> g_trips;
 static std::vector<double> g_sweepT; // "Start sweep" log times
 static std::vector<std::string> g_logSince; // log lines after the scenario event
 static double g_eventT = -1;
+static std::vector<double> g_slowDownT; // "Near MPP, slow-down" log times
 static double g_fineT0 = 0, g_fineT1 = 0; // env SIM_FINE=t0,t1: per-tick sensor trace window
 static double g_rampSec = 0, g_rampT0 = 0, g_rampFrom = 0, g_rampTo = 0; // linear Isc ramp
 static bool g_verbose = true;
@@ -109,6 +115,7 @@ static const RingBoard kRingBoards[] = {{"fry", 80e-6f, 76e-6f, 254e3f, 25}, {"f
 static const RingBoard *g_ring = nullptr;
 static bool g_ringOn = false, g_ringDamped = false; // damped: Q 0.5, ring branch without oscillation
 static void (*g_tickHook)() = nullptr; // called after every RT iteration of run()
+static FILE *g_pDump = nullptr; // SIM_PDUMP=<file>: per tick t, Iout ewm, Vout ewm, HS count (float32)
 
 // "...-fry[-off]" / "...-flat[-off]" or SIM_RING: pick the board; returns the name without the suffix
 static std::string ringBoardFrom(std::string sc) {
@@ -136,12 +143,61 @@ static std::string ringBoardFrom(std::string sc) {
 
 static double tNow() { return (double) esp_timer_get_time() * 1e-6; }
 
+// ---- measured sensor noise (SIM_NOISE) ----
+float (*g_simSenseHook)(uint8_t ch, float x) = nullptr;
+static struct {
+    float fs[3], lsb[3], iRef = 1, gain = 1, exp = 1;
+    uint64_t ofs = 0; // ticks
+    std::vector<int16_t> v[3]; // vin, vout, iout (ADC_VConv channels 0..2)
+} g_noise;
+
+static float noiseHook(uint8_t ch, float x) {
+    if (ch > 2) return x;
+    const auto &v = g_noise.v[ch];
+    // by ADC tick: a channel at the tick rate replays sample for sample (a skipped or repeated sample is a
+    // phase step in the ripple, which the notch passes)
+    const uint64_t tick = esp_timer_get_time() / g_simTickUs + g_noise.ofs;
+    const float k = g_noise.fs[ch] * g_simTickUs * 1e-6f;
+    const size_t i = (size_t) (std::fabs(k - 1) < 0.01f ? tick : (uint64_t) ((double) tick * k)) % v.size();
+    float r = (float) v[i] * g_noise.lsb[ch] * g_noise.gain;
+    if (ch == 0) return x + r;
+    if (ch == 2) r *= std::pow(std::max(x, 0.f) / g_noise.iRef, g_noise.exp);
+    const float q = ch == 1 ? 0.0025f : 35.f / 32768; // INA226 bus (x2 divider) and current LSB
+    return std::round((x + r) / q) * q;
+}
+
+static void noiseLoad(const char *name) {
+    std::string p = name;
+    if (p.find('/') == std::string::npos) p = std::string(SIM_REPO_ROOT) + "/test/host-stub/noise/" + p + ".fnz";
+    FILE *f = ::fopen(p.c_str(), "rb");
+    char magic[4];
+    if (!f || fread(magic, 1, 4, f) != 4 || memcmp(magic, "FNZ1", 4) || fread(&g_noise.iRef, 4, 1, f) != 1) {
+        printf("SIM_NOISE: cannot read %s\n", p.c_str());
+        exit(1);
+    }
+    for (int c = 0; c < 3; ++c) {
+        uint32_t n = 0;
+        if (fread(&g_noise.fs[c], 4, 1, f) != 1 || fread(&g_noise.lsb[c], 4, 1, f) != 1 || fread(&n, 4, 1, f) != 1 || !n) exit(1);
+        g_noise.v[c].resize(n);
+        if (fread(g_noise.v[c].data(), 2, n, f) != n) exit(1);
+    }
+    fclose(f);
+    if (const char *e = getenv("SIM_NOISE_GAIN")) g_noise.gain = atof(e);
+    if (const char *e = getenv("SIM_NOISE_EXP")) g_noise.exp = atof(e);
+    if (const char *e = getenv("SIM_NOISE_OFS")) g_noise.ofs = (uint64_t) (atof(e) * g_noise.fs[2]);
+    if (!getenv("SIM_ADC_HZ")) setenv("SIM_ADC_HZ", std::to_string(std::lround(g_noise.fs[2])).c_str(), 1);
+    g_simSenseHook = noiseHook;
+    printf("# noise %s: %.0f s at %.0f Hz, Iout ref %.2f A, gain %.2f, exp %.2f\n", p.c_str(),
+           g_noise.v[2].size() / g_noise.fs[2], g_noise.fs[2], g_noise.iRef, g_noise.gain, g_noise.exp);
+}
+
 static void logHook(char lvl, const char *tag, const char *msg) {
     // backoff log of MpptController::shutdownDcdc: "backoff %lus [%s]..."
     unsigned sec;
     char who[64];
     if (sscanf(msg, "backoff %us [%63[^]]]", &sec, who) == 2) g_trips.push_back({tNow(), who, sec});
     if (!strcmp(msg, "Start sweep")) g_sweepT.push_back(tNow());
+    if (!strncmp(msg, "Near MPP, slow-down", 19)) g_slowDownT.push_back(tNow());
     char line[640];
     snprintf(line, sizeof line, "%9.4f %c %-8s %s", tNow(), lvl, tag, msg);
     if (g_eventT >= 0 && g_logSince.size() < 400) g_logSince.emplace_back(line);
@@ -438,6 +494,8 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
     const int hz = hzEnv ? atoi(hzEnv) : 450;
     writeConf(confDir, "vconv.conf", {{"adc_freq", std::to_string(hz)}});
     writeConf(confDir, "sensor.conf", {{"expected_hz", std::to_string(hz * 4 / 5)}});
+    if (g_simSenseHook)
+        writeConf(confDir, "sensor.conf", {{"hv_v_filt_len", "20"}, {"lv_v_filt_len", "20"}, {"lv_i_filt_len", "20"}, {"hv_i_filt_len", "20"}});
     // SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" appends board overrides
     if (const char *c = getenv("SIM_CONF")) {
         std::string all = c;
@@ -534,6 +592,12 @@ static void run(double sec, double traceEvery, Probe *probe = nullptr, double fi
         bool onBefore = !converter.disabled();
         loopRTIter();
         if (g_tickHook) g_tickHook();
+        if (g_pDump) {
+            const float r[6] = {(float) tNow(), sensors.Iout->ewm.avg.get(), sensors.Vout->ewm.avg.get(),
+                                (float) converter.getCtrlOnPwmCnt(), (float) mppt.tracker.slowMode,
+                                g_vconv.getVin() * g_vconv.pvCurrent(g_vconv.getVin())};
+            fwrite(r, 4, 6, g_pDump);
+        }
         if (probe && onBefore) probeDetector(*probe);
         if ((wallClockUs() - lastLfWorkUs) >= lfPeriod or !lastLfWorkUs) {
             loopLF(wallClockUs());
@@ -842,10 +906,18 @@ static int runWx(const std::string &name, Wx &wx) {
     Peak pk[4];
     float valley[4], key[4] = {-1, -1, -1, -1};
     int nPk = 0, maxPk = 0;
+    // tracker steady state: duty and Vin while tracking, slow-mode time, reversals, slow-mode entries
+    double dN = 0, dS = 0, dS2 = 0, vS = 0, vS2 = 0, tSlow = 0;
+    float dMin = 1e9f, dMax = 0, vMin = 1e9f, vMax = 0;
+    uint32_t nRev = 0, nSlowIn = 0;
+    time_ms lastRev = 0;
+    bool wasSlow = false;
+    double holdAt = getenv("SIM_HOLD") ? atof(getenv("SIM_HOLD")) : -1; // tracker output x0 from then on
 
     for (double nextTr = 0; tNow() < wx.T;) {
         const double tb = tNow();
         wx.apply(tb);
+        if (holdAt >= 0 && tb >= holdAt) mppt.speedScale = 0, holdAt = -1;
         if (wx.sweepAt >= 0 && tb >= wx.sweepAt) {
             printf("%9.2f >>> sweep requested\n", tb);
             mppt.startSweep();
@@ -893,6 +965,15 @@ static int runWx(const std::string &name, Wx &wx) {
                         : mppt.teleSnap().limIdx != 15 ? LIMIT : isWrong ? WRONG : TRACK;
         tCat[cat] += dt;
         loss[cat] += (pG - pPv) * dt;
+        const auto &trk = mppt.tracker;
+        if (cat == TRACK) {
+            const float d = converter.getCtrlOnPwmCnt();
+            dN += dt, dS += d * dt, dS2 += d * d * dt, vS += vin * dt, vS2 += vin * vin * dt;
+            dMin = std::min(dMin, d), dMax = std::max(dMax, d), vMin = std::min(vMin, vin), vMax = std::max(vMax, vin);
+        }
+        if (trk.slowMode) tSlow += dt;
+        nSlowIn += trk.slowMode && !wasSlow, wasSlow = trk.slowMode;
+        nRev += trk._timeLastReverse != lastRev, lastRev = trk._timeLastReverse;
         if (isWrong) {
             if (!inWrong) wrong.push_back({tb, 0, 0, 0, 0, 0, 0});
             auto &w = wrong.back();
@@ -935,6 +1016,18 @@ static int runWx(const std::string &name, Wx &wx) {
     printf("== SUMMARY %-18s %5s Hz | harvest %5.1f %% of GMPP, %5.1f %% of cap-limited | wrong-peak %6.1f s | off %6.1f s |"
            " sweeps %2zu | limiter %4.1f %% | trips %zu [%s]\n", name.c_str(), hz ? hz : "450", ePv * pc,
            eUse > 0 ? 100 * ePv / eUse : 0, tWrong, tCat[OFF], nSweeps, 100 * tCat[LIMIT] / tStat, nTrips, trips.c_str());
+    {
+        size_t nLogged = 0;
+        for (double t: g_slowDownT) nLogged += t >= wx.statsFrom;
+        const double dm = dN > 0 ? dS / dN : 0, vm = dN > 0 ? vS / dN : 0, k = 1000.0 / converter.pwmCtrlMax;
+        printf("== TRACKER %-18s tracking %.0f s: duty mean %.0f rms %.1f p-p %.0f counts of %u (%.2f / %.1f permille),"
+               " Vin mean %.2f rms %.3f p-p %.2f V | tracking loss %.2f %% | slow %.1f %% of the time, %u entries"
+               " (%zu logged, every %.0f s) | %.1f reversals/min | harvest %.2f %%\n", name.c_str(), dN, dm,
+               std::sqrt(std::max(0.0, dS2 / std::max(dN, 1e-9) - dm * dm)), dMax - dMin, converter.pwmCtrlMax,
+               std::sqrt(std::max(0.0, dS2 / std::max(dN, 1e-9) - dm * dm)) * k, (dMax - dMin) * k, vm,
+               std::sqrt(std::max(0.0, vS2 / std::max(dN, 1e-9) - vm * vm)), vMax - vMin, loss[TRACK] * pc,
+               100 * tSlow / tStat, nSlowIn, nLogged, nLogged ? tStat / nLogged : 0.0, nRev * 60 / tStat, ePv * pc);
+    }
     size_t shown = 0;
     for (auto &s: wrong) {
         if (s.t1 - s.t0 < 2 || ++shown > 12) continue;
@@ -998,6 +1091,13 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         const float g0 = (low ? 2.5f : 61.f) / wx.pClear, r = low ? 10.f : 2.f, tr = low ? 1800 : 600;
         wx.vocLog = 2.6f, wx.T = low ? 1860 : 1260;
         for (float t = 0; t <= wx.T; t += 10) wx.cloud.emplace_back(t, g0 * std::pow(r, std::clamp(t - 60, 0.f, tr) / tr));
+    } else if (sc == "wx-sun-fry" || sc == "wx-sun-flat") {
+        // steady sun, MPP SIM_P W; fry: Vin ~64 V at 70 W, flat: ~55 V
+        const float p = getenv("SIM_P") ? atof(getenv("SIM_P")) : 70;
+        if (sc == "wx-sun-fry") fry(615), wx.vocLog = 2.6f;
+        float g = p / wx.pClear;
+        for (int i = 0; i < 6; ++i) g = p / wx.pClear * wx.voc / (wx.voc + wx.vocLog * std::log(g));
+        wx.cloud = {{0, g}}, wx.vbat = 26.1f, wx.statsFrom = 120, wx.T = 900;
     } else if (sc == "wx-sweep-fall" || sc == "wx-sweep-rise") {
         // cloud edge (73 % in 10 s) starting 2 s into a sweep
         const bool fall = sc == "wx-sweep-fall";
@@ -1197,6 +1297,10 @@ static int simMain(int argc, char **argv) {
     const std::string name = sc;
     if (p0) sc.resize(sc.size() - 3);
     if (sc == "rcal-flat") setenv("SIM_RING", "flat", 0), setenv("SIM_ADC_HZ", "1470", 0);
+    if (sc == "wx-sun-fry") setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
+    if (sc == "wx-sun-flat") setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
+    if (const char *n = getenv("SIM_NOISE"); n && *n) noiseLoad(n);
+    if (const char *f = getenv("SIM_PDUMP")) g_pDump = ::fopen(f, "wb");
     sc = ringBoardFrom(sc);
     std::vector<std::pair<std::string, std::string>> ov;
     if (sc == "b") ov = {{"isc", "1.6"}};

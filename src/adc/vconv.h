@@ -18,6 +18,9 @@
 // ADC_Fake. Optional per-channel zero-mean Gaussian noise is added in
 // getSample (Box-Muller on xorshift32).
 class ADC_VConv;
+#ifdef FUGU_HOST_SIM
+extern float (*g_simSenseHook)(uint8_t ch, float x); // host sim: measured sensor noise
+#endif
 
 static bool adc_vconv_periodic_timer_callback(void *arg);
 
@@ -84,6 +87,9 @@ public:
             default: x = 0.0f; break;
         }
         if (sigma > 0.0f) x += sigma * gaussian01();
+#ifdef FUGU_HOST_SIM
+        if (g_simSenseHook) x = g_simSenseHook(readingChannel_, x);
+#endif
         if (scope) scope->addSample12(this, readingChannel_, x / 3.0f * 4000.0f);
         return x;
     }
