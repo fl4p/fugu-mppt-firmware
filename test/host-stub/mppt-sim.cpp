@@ -1025,7 +1025,7 @@ static int runRectCal(const std::string &name, const std::string &sc) {
     if (!rc.requestStart(true)) { printf("requestStart refused\n"); return 1; }
     printf("%9.4f >>> rect-cal force at HS %u, %s, P %.0f W\n", tNow(), hs0, dcm0 ? "DCM" : "CCM", p0);
     double tCal = -1, tEnd = -1;
-    float iMin = INFINITY, ilMin = INFINITY, vinMax = 0, iRunMin = INFINITY;
+    float iMin = INFINITY, ilMin = INFINITY, vinMax = 0, iRunMin = INFINITY, ilAfter = INFINITY;
     int stepMax = 0, lsOffMin = 0;
     uint16_t hsPrev = hs0;
     const uint8_t clamps0 = converter.lsClamps();
@@ -1065,6 +1065,7 @@ static int runRectCal(const std::string &name, const std::string &sc) {
         ilMin = std::min(ilMin, g_vconv.getIL());
         vinMax = std::max(vinMax, g_vconv.getVin());
         if (tEnd < 0 && (st == RectCal::Done || st == RectCal::Fail)) tEnd = t;
+        if (tEnd >= 0 && t > tEnd + 3) ilAfter = std::min(ilAfter, g_vconv.getIL());
         if (tEnd >= 0 && t > tEnd + 15) break;
     }
     report(name.c_str(), p);
@@ -1079,12 +1080,17 @@ static int runRectCal(const std::string &name, const std::string &sc) {
     printf("== rect-cal points (LS - ideal : dI A):");
     for (int i = 0; i < rc.cal.n; ++i) printf(" %.0f:%+.3f", rc.cal.xs[i] - rc.cal.ideal, rc.cal.ys[i]);
     printf("\n");
-    printf("== plant: min Iout avg %.2f A (during the run %.2f A), min coil current at cycle end %.3f A, max Vin %.2f V\n",
-           iMin, iRunMin, ilMin, vinMax);
+    printf("== plant: min Iout avg %.2f A (during the run %.2f A), min coil current at cycle end %.3f A (from 3 s after "
+           "the run %.3f A), max Vin %.2f V\n", iMin, iRunMin, ilMin, ilAfter, vinMax);
     printf("== after: HS %u (before %u), P %.0f W (before %.0f W), %s, manual LS %d\n", converter.getCtrlOnPwmCnt(), hs0,
            p1, p0, modeStr(), converter.manualRect_());
     printf("\n== log after event (first %zu lines):\n", g_logSince.size());
     for (size_t i = 0; i < g_logSince.size() && i < 60; ++i) printf("   %s\n", g_logSince[i].c_str());
+    // a positive offset holds the LS past the zero crossing wherever Vin <= 2 Vout: never applied
+    if (rc.cal.get() == RectCal::Done && (rc.cal.applied > 0 || rc.offset() > 0)) {
+        printf("FAIL: positive offset applied (%+d ct, active %+d ct)\n", rc.cal.applied, rc.offset());
+        return 1;
+    }
     return 0;
 }
 

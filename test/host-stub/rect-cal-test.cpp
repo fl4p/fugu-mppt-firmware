@@ -279,7 +279,9 @@ static void testFieldData() {
         c.ideal = f.ideal;
         c.state.store(RectCal::Fit);
         c.fit(160e6f);
-        CHECK(c.get() == RectCal::Done && c.peak <= f.bend, "field %s recorded: '%s' peak %.0f", f.name, c.why, c.peak);
+        // two-sided: the fit learns 74-90 ct before the last flat point (the onset of the bend)
+        CHECK(c.get() == RectCal::Done && c.peak <= f.bend && c.peak >= f.bend - 100, "field %s recorded: '%s' peak %.0f",
+              f.name, c.why, c.peak);
         if (f.ideal == 1732) CHECK(c.learned <= -158, "field %s recorded: learned %d, was -160", f.name, c.learned);
         printf("field %s recorded (%u pts): %s%s peak %.0f learned %+d applied %+d\n", f.name, c.n,
                c.get() == RectCal::Done ? "done" : "failed: ", c.why, c.peak, c.learned, c.applied);
@@ -293,6 +295,7 @@ static void testFieldData() {
                     return pts[j - 1].second + (pts[j].second - pts[j - 1].second) * (x - pts[j - 1].first) / (pts[j].first - pts[j - 1].first);
             return pts.back().second;
         };
+        float pLo = INFINITY, pHi = -INFINITY;
         for (int seed = 0; seed <= 8; ++seed) {
             const float noise = seed ? 0.003f : 0.f;
             std::mt19937 rng(seed);
@@ -309,13 +312,118 @@ static void testFieldData() {
                 ls = r.feed(us, f.hs, vi, vo, i, true);
             }
             r.fit(160e6f);
-            CHECK(r.get() == RectCal::Done && r.peak <= f.bend + 10 && lsMax <= f.ideal + 120 && r.n >= 20,
+            CHECK(r.get() == RectCal::Done && r.peak <= f.bend + 10 && r.peak >= f.bend - 100 && lsMax <= f.ideal + 120 && r.n >= 20,
                   "field %s replay seed %d: '%s' peak %.0f, LS max ideal%+.0f, %u pts", f.name, seed, r.why, r.peak,
                   lsMax - f.ideal, r.n);
             if (seed <= 2)
                 printf("field %s replay seed %d: %s%s peak %.0f learned %+d, LS max ideal%+.0f, %u pts\n", f.name, seed,
                        r.get() == RectCal::Done ? "done" : "failed: ", r.why, r.peak, r.learned, lsMax - f.ideal, r.n);
+            pLo = std::min(pLo, r.peak), pHi = std::max(pHi, r.peak);
         }
+        printf("field %s replay seeds 0-8: peak bend%+.0f..%+.0f\n", f.name, pLo - f.bend, pHi - f.bend);
+    }
+}
+
+// flat (51 uH, 1470 sps) 2026-11-15, twice "failed: V step" right at ideal: Iout rises 50 mA with LS before the
+// knee, and past ideal-ish the Vout reading jumps (+0.40/+0.26 %, Vin -0.12/-0.10 %) on every retry at that LS,
+// a reading that follows the LS (the bus cannot). Replay: recorded points (LS, dI, Vin/Vout off their references,
+// 0.01 %) up to the last one, then flat until an assumed knee 40 ct before ideal and quadratic past it; the
+// voltage offsets are reading-only (the plant current does not follow them).
+struct FlatRun { const char *name; uint16_t hs; float vi, vo, dvi, dvo; std::vector<float> ls, y, jvi, jvo; };
+static const FlatRun g_flatRuns[] = {
+    {"run 1", 1026, 67.18f, 25.95f, -0.0012f, 0.0040f,
+     {818, 882, 946, 1010, 1074, 1139, 1201, 1266, 1329, 1395, 1458, 1521, 1585},
+     {-.014f, -.011f, 0, -.001f, .008f, .011f, .015f, .015f, .021f, .030f, .031f, .036f, .036f},
+     {1, 1, 1, 1, 0, -2, -1, -2, -4, -4, -4, -4, -5}, {-2, -3, -1, 0, 2, 3, -2, 2, 3, 9, 3, 1, 2}},
+    {"run 2", 1025, 67.30f, 26.00f, -0.0010f, 0.0026f,
+     {817, 880, 946, 1008, 1074, 1137, 1200, 1265, 1328, 1394, 1457, 1521, 1583},
+     {-.016f, -.011f, .001f, .001f, .009f, .011f, .016f, .015f, .021f, .029f, .031f, .036f, .036f},
+     {2, 0, 0, -1, -1, -2, -2, -3, -3, -4, -5, -5, -5}, {-2, -4, -1, -2, 3, 1, -2, 2, 2, 8, 3, 1, -1}},
+};
+
+static float interp(const std::vector<float> &xs, const std::vector<float> &ys, float x) {
+    if (x <= xs.front()) return ys.front();
+    for (size_t j = 1; j < xs.size(); ++j)
+        if (x <= xs[j]) return ys[j - 1] + (ys[j] - ys[j - 1]) * (x - xs[j - 1]) / (xs[j] - xs[j - 1]);
+    return ys.back();
+}
+
+static void testFlatField() {
+    for (const auto &f: g_flatRuns) {
+        const float ideal = (f.vi / f.vo - 1.f) * (float) f.hs, knee = ideal - 40, art = ideal - 10;
+        int done = 0, lo = 999, hi = -999, lsMax = 0, apMax = -999;
+        for (uint32_t seed = 0; seed <= 8; ++seed) {
+            std::mt19937 rng(seed);
+            std::uniform_real_distribution<float> u(-1.f, 1.f);
+            std::normal_distribution<float> nd(0.f, 1.f);
+            RectCal r;
+            r.start(0, f.hs, 16, PM - f.hs - 1);
+            int ls = r.lsHold(), lsPrev = -1, ref = -2;
+            float e = 0, eo = 0;
+            for (uint32_t us = 0; r.running() && us < 60000000; us += 680) {
+                if (ls != lsPrev) e = (seed ? 0.003f : 0.f) * u(rng), eo = 0.0003f * u(rng), lsPrev = ls;
+                if (ref == -2 && ls != 16) ref = ls; // the first held LS after Init is the reference
+                const bool step = ls != 16 && ls != ref;
+                lsMax = std::max(lsMax, ls);
+                const float x = (float) ls;
+                float y = ls == 16 ? 0.f : x <= f.ls.back() ? interp(f.ls, f.y, x) : f.y.back();
+                if (x > knee) y -= 6e-6f * (x - knee) * (x - knee);
+                float vi = f.vi, vo = f.vo;
+                if (step) {
+                    vi *= 1.f + (x >= art ? f.dvi : 1e-4f * interp(f.ls, f.jvi, x));
+                    vo *= 1.f + (x >= art ? f.dvo + eo : 1e-4f * interp(f.ls, f.jvo, x));
+                }
+                ls = r.feed(us, f.hs, vi + 0.03f * nd(rng), vo + 0.005f * nd(rng), 1.6f + y + e + 0.01f * nd(rng), true);
+            }
+            r.fit(160e6f);
+            const bool ok = r.get() == RectCal::Done;
+            if (ok) ++done, lo = std::min<int>(lo, r.learned), hi = std::max<int>(hi, r.learned), apMax = std::max<int>(apMax, r.applied);
+            CHECK(ok && r.peak <= knee + 10 && r.peak >= knee - 110 && r.applied <= 0,
+                  "flat %s seed %u: %s '%s' peak %.0f (knee %.0f) applied %d, %u pts, %u redone", f.name, seed,
+                  ok ? "done" : "failed", r.why, r.peak, knee, r.applied, r.n, r.retries);
+            if (seed <= 2 || !ok) {
+                printf("flat %s seed %u: %s%s peak %.0f learned %+d applied %+d (knee %+.0f), %u pts, %u redone\n", f.name,
+                       seed, ok ? "done" : "failed: ", r.why, r.peak, r.learned, r.applied, knee - ideal, r.n, r.retries);
+                if (g_verbose) {
+                    for (int i = 0; i < r.n; ++i) printf(" %.0f:%+.3f/%d", r.xs[i], r.ys[i], r.jvo[i]);
+                    printf("\n");
+                }
+            }
+        }
+        // the drop shows two coarse steps past this steep knee, the step after it is one more
+        CHECK(lsMax <= ideal + 160, "flat %s: LS max ideal%+.0f", f.name, lsMax - ideal);
+        printf("flat %s: %d/9 done, learned %+d..%+d (knee %+.0f), applied at most %+d, LS max ideal%+.0f\n", f.name, done,
+               lo, hi, knee - ideal, apMax, lsMax - ideal);
+    }
+}
+
+// One coarse window 25 mA low (not repeatable), flat curve until ideal-35, then -0.5 mA/ct. A glitch before the
+// knee must not end the sweep: its step back up has it measured again. At the step just before the knee (12) the
+// real drop follows and confirms it, the fit learns up to 75 ct early; on the drop step (13) the drop is only deeper.
+static void testGlitch() {
+    const uint16_t hs = 900;
+    const float ideal = 1700, vo = 26.7f, vi = vo * (1.f + ideal / hs);
+    int clean = 0;
+    for (int g = -1; g < 14; ++g) {
+        RectCal r;
+        r.start(0, hs, 16, PM - hs - 1);
+        int ls = r.lsHold(), step = -1, prev = -1, lsMax = 0;
+        for (uint32_t us = 0; r.running() && us < 60000000; us += 2304) {
+            if (ls != prev) { prev = ls; if (ls != 16 && ls != (int) (0.6f * ideal)) ++step; }
+            lsMax = std::max(lsMax, ls);
+            float y = ls > ideal - 35 ? -0.0005f * ((float) ls - (ideal - 35)) : 0.f;
+            if (step == g && ls != (int) (0.6f * ideal)) y -= 0.025f;
+            ls = r.feed(us, hs, vi, vo, 2.f + (ls == 16 ? 0.f : y), true);
+        }
+        r.fit(160e6f);
+        const bool ok = r.get() == RectCal::Done;
+        if (g < 0) clean = r.learned;
+        // step 0 (first point, no drop rule) tilts the baseline: 14 ct later, still before the knee
+        CHECK(ok && (g >= 12 ? r.learned >= clean - 80 && r.learned <= clean + 5
+                             : g == 0 ? r.learned <= clean + 20 : std::abs(r.learned - clean) <= 5),
+              "glitch at step %d: '%s' learned %d (clean %d)", g, r.why, r.learned, clean);
+        printf("glitch at coarse step %2d: %s%s learned %+d, LS max ideal%+.0f, %u pts\n", g, ok ? "done" : "failed: ", r.why,
+               r.learned, lsMax - ideal, r.n);
     }
 }
 
@@ -374,6 +482,12 @@ static void testVoltageBaseline() {
     const int floor = RectCal::floorCounts(cv.getPwmTickRate());
     CHECK(d.get() == RectCal::Done && d.applied >= floor && RectBackstop::shrink(d.applied, 20, floor) <= d.applied,
           "learned %d applied %d floor %d", d.learned, d.applied, floor);
+    // a knee 80 ct late (node lag at Vin > 2 Vout) learns a positive offset: never applied
+    RectCal late;
+    fixture(late, 60, 26.7f, 60, 26.7f, 80.f);
+    CHECK(late.get() == RectCal::Done && late.learned >= 60 && late.applied == 0 && late.clamped,
+          "late knee: state %d learned %d applied %d clamped %d", late.get(), late.learned, late.applied, late.clamped);
+    printf("late knee +80: learned %+d applied %+d%s\n", late.learned, late.applied, late.clamped ? " (clamped)" : "");
     printf("voltage baseline: Vin+10%% '%s', Vout+3%% learned %d, Vout+5.6%% '%s', Vin+1.5%% learned %d (no step %d), "
            "tail learned %d applied %d floor %d\n", a.why, b.learned, b2.why, c.learned, c0.learned, d.learned, d.applied, floor);
 }
@@ -650,7 +764,8 @@ static void testFullSun() {
 
 // Switch-node ring of fry/flat (230 ct period: 50.9 uH, 1.03 nF) at Q 3..40: past the crossing the current
 // dips, rings back above the baseline and drops again. The old sweep never saw two drops in a row, ran to
-// the cap and learned up to +252 ct (truth -35). Must fail or apply at most 20 ct late (as full sun).
+// the cap and learned up to +252 ct (truth -35). Must fail or apply at most 20 ct late (as full sun) and learn
+// at most 25 ct early.
 static void testRingBack() {
     g_L0 = "50.9e-6";
     for (float q: {3.f, 5.f, 10.f, 40.f})
@@ -669,10 +784,17 @@ static void testRingBack() {
                 if (h.state() == RectCal::Done || h.state() == RectCal::Fail) break;
             }
             const RectCal &cal = h.ctl.cal;
-            CHECK(!h.tripped && (cal.get() == RectCal::Fail || (cal.get() == RectCal::Done && cal.applied <= -35 + 20)),
+            // two-sided: Q 3 learns up to 33 ct late (applied 13 late), Q 40 up to 14 ct early; Q 5 has a 6 mA first
+            // dip below the 10 mA knee bound and may fail
+            CHECK(!h.tripped && (cal.get() == RectCal::Fail || (cal.get() == RectCal::Done && cal.applied <= -35 + 20
+                                                                  && cal.learned >= -35 - 25)),
                   "ring Q %.0f seed %u: state %d '%s' applied %d", q, seed, cal.get(), cal.why, cal.applied);
             printf("ring 230 ct Q %2.0f seed %u: %s%s learned %+d applied %+d (truth -35, %u pts)\n", q, seed,
                    cal.get() == RectCal::Done ? "done" : "failed: ", cal.why, cal.learned, cal.applied, cal.n);
+            if (g_verbose) {
+                for (int i = 0; i < cal.n; ++i) printf(" %.0f:%+.3f", cal.xs[i] - cal.ideal, cal.ys[i]);
+                printf("\n");
+            }
         }
     g_L0 = "56e-6";
 }
@@ -1285,6 +1407,8 @@ int main(int argc, char **argv) {
     testDriverRule();
     testShrinkMonotone();
     testFieldData();
+    testFlatField();
+    testGlitch();
     testVoltageBaseline();
     testDisturbance();
     testField();
