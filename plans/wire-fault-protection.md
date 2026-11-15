@@ -189,10 +189,135 @@ Results:
 - Synthetic faults on November currents (11–19 A): +6 mΩ never warned; +15 mΩ warned after
   10 h and derated after 3.5 days. At 28 A (host test) detection takes 5–60 min.
 
-Follow-ups before `wire_protect=2`:
+Follow-ups before `wire_protect=2` (status 2026-11-15 below):
 1. A current-independent warning (e.g. `Rc`/`Ro` ≥ baseline + 8 mΩ for a day), so a degrading
-   connection is reported on low-current days.
+   connection is reported on low-current days. **Done 2026-11-15.**
 2. False-alarm margin at high current: on 11-04 the fast path showed an apparent +3.4–4.5 mΩ at
    18.7 A (offset drift against the baseline), which would warn at 22 A and approach the derate
    level at 30 A. Observe the warn-only phase over high-current days, and consider fitting the
-   baseline jointly instead of three separate medians.
+   baseline jointly instead of three separate medians. **Done 2026-11-15 (offset regression).**
+
+## Offset drift and day warning (2026-11-15)
+
+### Field observation
+
+fry, 2026-11-13 11:30–14:00 UTC: telemetry `Pw` 2.2–3.2 W at `Iout` 12–18 A (about +7 mΩ apparent),
+no real fault; `wf` stayed 0 only because of the learning phase. On 11-14/11-15 the device's `Pw`
+reached 6.7/6.9 W. The device's baseline then rested on one partial afternoon (11-12 14:12 onward,
+a = 23 mV, Rc 12.2 mΩ).
+
+`Pw` sat at exactly 2.16185 W from 12:39 to 13:50 on 11-13 while `Iout` moved between 3 and 20 A:
+`pw()` reported the worst path that was still *fresh*, and freshness counts charging minutes (15 for
+the fast path, 60 for `Rc`, 360 for `Ro`). Cloud transients left too few steady BMS frames for new
+fast-path minutes, and `WireResistance` failed its residual gate (σ > 40 mV, telemetry `Rc` absent from
+12:28), so a held `Rc`-path value was published for 70 minutes. Holding is right for the level (a
+night must not release it) but wrong for telemetry.
+
+### What the data shows
+
+Frames rebuilt from InfluxDB (fry 11-04..11-15, BMS V/A paired within 2 s, converter 1 s means,
+`Iout` ≥ 5 A, steady current; 11 950 frames). Pooled fit dv = a + Rc·I + Rb·Ib: a 10.1 mV, Rc 14.46,
+Rb 1.47 mΩ, residual σ 39 mV (17–44 mV per day; cloudy days are worst).
+
+- Pinning Rb and fitting e = c + k·I per day (e = residual against the pooled fit): the offset c
+  ranges −54..+63 mV between days, the slope k only −2.7..+4.7 mΩ. A 2048-frame running fit gives
+  c −84..+38 mV, k −2..+5 mΩ. The drift is mostly offset, not resistance.
+- The offset is not a pure function of time: it correlates with pack voltage (pooled +48 mV/V, per
+  day 29–106 mV/V, about a 0.2 % gain mismatch between the converter's Vout sense and the BMS), which
+  makes it current-correlated within a morning ramp. Not modelled (collinear with I and Ib); a Vout gain
+  calibration against the BMS would remove much of it at the source.
+- 11-14 shows an offset step of about +40 mV from the morning on (+35 mV at 6 A at 08:30), which a
+  fixed baseline offset turns into excess resistance at every current.
+
+### Design choice
+
+The fast path now takes its offset from a forgetting regression of the one-minute frame sums of
+(dv − Rb_base·Ib) against Iout (7 sums in doubles, memory `OFS_TAU` = 120 minutes with frames), and
+subtracts only its intercept: e = mean(dv − Rb_base·Ib) − c_fit − Rc_base·I. Why this and not the
+alternatives:
+
+- **Slow offset tracking from low-current frames** absorbs ΔR·I_low of a real fault and needs a
+  separate low-current gate. The intercept of a regression over current is the same idea without
+  that bias: a resistance change goes into the slope, which stays in the graded quantity.
+- **Grading by slope alone** (ΔR from a fit of e vs Iout over a window) is blind to a step at
+  constant current and has ±3 mΩ noise per window; it is kept as the slow `Rc` path instead (the
+  regression's slope against Rc_base, graded at the reference current).
+- **A jointly fitted baseline** fixes the triple's consistency but not the drift, which is the bulk
+  (offset range 120 mV vs. slope range 7 mΩ).
+
+Guards around the regression:
+- It is used only with ≥ 150 frames and ≥ 4 A² variance of Iout (else the fast path has no value,
+  which can end in `unverified`), and only while |c_fit − a_base| ≤ 0.15 V.
+- A minute that lies off the regression line by ≥ `wire_p_warn`/2 (power) is a step, not drift, and
+  is not folded in; nothing is folded while a level is held. With only a grade gate (fold unless the
+  minute grades above ok) a +3 mΩ step at 28 A tilted the line, lowered the intercept and warned after 25 min; without the hold gate a +15 mΩ
+  fault folded in through its low-current minutes and the intercept rose by 28 mV in 3.5 h (fast ΔR
+  15 → 11 mΩ).
+- Known limitation: a step large enough to be excluded at all currents above ~8 A leaves only
+  low-current minutes for the regression; after about a day of such data it is no longer separable
+  and the fast path reports nothing (held level stays, alert goes `unverified` if nothing is held).
+
+τ was chosen on the replay (fast-path max Pw over 11-04..11-15): 60 min 1.48 W but day warnings
+during learning, 120 min 1.61 W, 240 min 1.91 W, 480 min 2.39 W, 960 min 2.62 W.
+
+Other changes:
+- **Day warning (follow-up 1):** at day close, after learning, the median fast-path ΔR of the day
+  (decimating 16-sample buffer; without BMS data: median Ro − Ro_base) ≥ 2·`wire_dr_min` sets a
+  warning that never derates or trips, persists in the blob's spare byte (`flags`, no version bump),
+  and clears after a judged day below 1.5·`wire_dr_min`. No new conf key. Replay day medians after
+  learning: −3.3..+1.8 mΩ (threshold 8).
+- **Unverified alert (task 3):** `alertLevel()` is gone; the alert follows `wf()`, which is -1 when no
+  level is held and no path has data (or none for more than 3 charging days). At boot the alert now
+  says `unverified` until the first verdict.
+- **Telemetry `Pw`:** only from a path that produced a value within 2 minutes (`PW_AGE_S`); held
+  values still drive the level but are no longer published.
+- The `Rb` path's cap uses the offset-corrected excess drop; the `Rc` path no longer uses the
+  `WireResistance` offset at all (that fit is still the baseline source and telemetry).
+- RAM +120 B (`sizeof(WireGuard)` 576 → 696).
+
+### Replay (fry, `test/host-stub/wire-guard-replay.cpp`, data from `etc/wire_replay_fetch.py`)
+
+Clean data 11-04..11-15 (natural learning from 11-04, levels as with `wire_protect=2`):
+
+| | before | after |
+|---|---|---|
+| fast-path Pw max | 2.57 W (11-14 12:03, 22.6 A, ΔR 5.2 mΩ) | 1.67 W |
+| fast minutes ≥ warn (Pw and ΔR) | 1 | 0 |
+| minutes at level ≥ 1 / any warning | 0 / 0 | 0 / 0 |
+| `Rc`-path Pw max | 3.95 W (11-14, held into 11-15) | 1.44 W (11-05, learning), ≤ 0.56 W after |
+| `Ro`-path Pw max (unchanged code) | 4.11 W | 4.11 W |
+| day warnings | – | 0 |
+
+From the deploy time (11-12 14:12, the device's one-afternoon baseline): fast 3.12 → 2.16 W, `Rc`
+path 4.14 → 0.51 W, `Ro` path 5.80 W (unchanged); the device itself reported up to 6.9 W.
+
+Injected series resistance at real currents (≤ 24.6 A), minutes to warn / derate / trip, before → after:
+
+| onset | +6 mΩ | +15 mΩ |
+|---|---|---|
+| 11-12 10:00 | 1556 / – / – → same | 69 / 81 / 1559 → 69 / 81 / 1556 |
+| 11-13 10:00 | 116 / – / – → 1424 / – / – | 46 / 94 / 119 → 46 / 116 / 1763 |
+| 11-14 09:00 | 117 / – / – → same | 37 / 98 / 146 → 39 / 98 / 383 |
+| 11-14 12:00 | 203 / – / – → same | 203 / 203 / 203 → same |
+
+The replay doesn't apply the derate cap to the recorded current, so a trip here comes from the
+over-derate rule at ≥ 18.3 A. Where "after" is slower, "before" was helped by the positive offset
+drift of 11-13/11-14 (day medians of the fast ΔR for the +6 mΩ run, 11-13..11-15: before 5.9, 10.1,
+9.8; after 4.7, 5.1, 2.6 mΩ). At ≤ 19 A a +6 mΩ fault dissipates ≤ 2.2 W, at the warn threshold.
+
+Host test (`test/host-stub/wire-guard-test.cpp`, all pass): 30/120 mV offset ramps, ±30 mV waves and
+their combination at 30 A raise nothing (the old guard derates on +120 mV and on ramp+wave); +6/+15 mΩ
+on top of the drift warn/trip within 5.1 min; +3 mΩ below the floor stays silent; monotonic over
+0..30 mΩ (fast and all paths) and over 0..20 mΩ at 12 A for the day warning (+10 mΩ and above warn by
+day, never cap); day warning from Ro without BMS, cleared after repair, persisted; `wf`/alert
+unverified at boot and after 2 days of lost data while charging; `Pw` absent 3 min after data stops.
+
+Open:
+- The `Ro` path reached 4.1 W (7-day baseline) and 5.8 W (one-afternoon baseline) on 11-14 in the
+  replay. It did not warn (3 consecutive qualifying sweeps needed), but on 11-14 there were 30 sweeps
+  within one hour (10:01–10:59), so 3 consecutive sweeps cover only a few minutes. The replay's sweep
+  fits are noisier than the device's (device `Ro` 20.3–23.0 mΩ that day). Consider spacing or a
+  median over sweeps before `wire_protect=2`.
+- The device is still learning (since 11-12) with a baseline of one partial afternoon; the new code
+  keeps the blob layout, so the learned days carry over.
+- Field check of the new fast path over high-current days before `wire_protect=2`.

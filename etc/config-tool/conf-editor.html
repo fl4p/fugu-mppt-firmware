@@ -324,7 +324,7 @@ const META = {
   wire_p_warn:{unit:"W",desc:"Excess wiring power that raises a warning",type:"float"},
   wire_p_derate:{unit:"W",desc:"Excess wiring power that caps Iout at sqrt(wire_p_derate/ΔR)",type:"float"},
   wire_p_trip:{unit:"W",desc:"Excess wiring power that stops the converter until wire-reset or reboot",type:"float"},
-  wire_dr_min:{unit:"mΩ",desc:"Minimum excess resistance for any wire-fault level",type:"float"},
+  wire_dr_min:{unit:"mΩ",desc:"Minimum excess resistance for any wire-fault level; twice this as a day median warns",type:"float"},
   wire_r_max:{unit:"mΩ",desc:"Absolute cap on the learned converter-to-pack resistance baseline, 0 = none",type:"float"},
 
   // coil.conf
