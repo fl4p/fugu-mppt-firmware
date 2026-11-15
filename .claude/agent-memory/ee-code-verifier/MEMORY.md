@@ -12,3 +12,22 @@
 - [PD Td + dt plumbing traps](project_pd_control_td_and_dt_traps.md) — Td<0 flips the D sign unchecked, Kp=0 kills D, conf accepts nan/inf gains, lastUs != last controller call
 - [vconv L-Cout is forward-Euler unstable](project_vconv_forward_euler_lc_instability.md) — unstable when ζ < ω0·T/4 (light load); state clamps only bound the blow-up; pre-existing in buck too
 - [vconv boost floor/ceiling semantics](project_vconv_boost_floor_and_ceiling.md) — Vout≥Vin only while reverse current is blocked; D=1 breaks it; vOutMax=8·voc clips the D=0.9 point
+- [MCPWM dead-time regs are IMMEDIATE, not TEZ-shadowed](project_mcpwm_deadtime_update_method_immediate.md) — operator flags={} → update_at_once; shrinking dt mid-flight can give a 0-tick HS→LS gap; fix = update_dead_time_on_tez=1
+- [39 kHz MCPWM tick arithmetic + realized-edge model](project_mcpwm_39khz_tick_arithmetic.md) — period 4103 / 6.25 ns, HS=cmpHS+1, LS=[cmpHS+dt, cmpLS]; worked pwmRectMin numbers; CAP rig (12.5 ns) can't resolve the (dt-1) artifact
+- [cmpHS must never be raised before cmpLS](project_mcpwm_cmphs_before_cmpls_shootthrough.md) — LS gate has no TEZ action and holds across the wrap; a TEZ between the two comparator writes = both gates high for most of a period (25.6 µs worked case)
+- [Normalized PD controllers: never feed a 0 limit](project_normalized_ctrl_zero_setpoint.md) — Iout_max()=0 divides by ~0 in the CVP array; ctrl-nan shutdown or a silent skip. Clamp to a positive floor.
+- [Arduino LEDC use steals the gate LEDC timer0/ch0](project_arduino_ledc_collides_with_gate_ledc.md) — `anaw`/analogWrite retimes live HS/LS PWM -> shoot-through; pin guards cannot fix it
+- [update() tail re-enables bflow after in-loop shutdown](project_update_tail_reenables_bflow.md) — sweep-no-mpp fixed by early return; ctrl-nan path still re-enables bflow (boost: always)
+- [LV_PGOOD aux-supply physics](project_lv_pgood_aux_supply_physics.md) — asserting only removes HV path; release always safe; +12V rail drops out on 12 V packs; NaN threshold asserts
+- [Ro estimator bias on shared bus](project_out_impedance_exogenous_bias.md) — bus steps give dV/dI≈-0.7 Ω samples, noise → 0; needs duty-step instrumental variable
+- [dcmCurrent bflow guard margins](project_dcm_current_bflow_guard.md) — highD-bflowOpen NAN gate is the only CCM catch below ~33 V Vin
+- [Sweep-end jump at ratio limit](project_sweep_end_ratio_limit_jump.md) — protect() jumps to MPP in one step; ungated forced PWM reverse kick; headline sim scenario skips it
+- [Stale-cell hold ratchets via release](project_stale_cell_hold_ratchet.md) — vout_avg-derived stale pin re-arms higher after stuck-watchdog release; τ(vout_avg)≈90 s; pack cap ≠ cell cap
+- [S3 flash auto-suspend facts](project_s3_flash_autosuspend_facts.md) — no HW SUS check on S3, one tSUS/tRS reg (102 us < ZB 128 us), os_func reset points, self-test data-check unreachable
+- [ina22x_ov BOL hw-OV review facts](project_ina226_bol_hw_ov_review.md) — GPIO ISR non-IRAM; protect() skipped while disabled -> stale flag; reset disarms with converter running
+- [CV pin needs tracker reset on P-exceeded touches](project_cv_pin_needs_tracker_reset.md) — short-touch keepTracker cut CV-cap Iout ~7% in sim c; filter on D-only, not duration
+- [rect-cal signal physics + field knee](project_rectcal_signal_physics.md) — knee = node-ring clamp onset (5 nF/Q40), not zero crossing; CCM runaway at (1-Vo/Vi)T; soft-panel Vin rise
+- [RT header code outlined to flash](project_rt_comdat_outlined_to_flash.md) — inline RT helpers become flash COMDAT when they grow; --check misses it; nm + always_inline
+- [DCM switch-node ring = Iout ripple vs duty](project_dcm_switch_node_ring.md) — field f/Q/C per board, N law, mean biases (turn-off ½CVin² → L low), ring-fit estimator
+- [vconv reverse-pump energy leak](project_vconv_reverse_pump_energy_leak.md) — c<0 HS-diode charge not credited to iIn; wx-dawn 94.5 % is an artifact (~80 % when fixed)
+- [rect-cal/measure-coil pre-flight 11-14](project_rectcal_preflight_review_1114.md) — applied lands late on replicas; no discard cmd; HS from pre-ramp Vin; measure-coil traps

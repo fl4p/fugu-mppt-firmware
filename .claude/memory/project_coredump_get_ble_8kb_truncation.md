@@ -1,6 +1,6 @@
 ---
 name: project-coredump-get-ble-8kb-truncation
-description: "`coredump get` truncates at ~5952 B over BLE (8KB TX FIFO drop); pull via MQTT/telnet, or pace the loop"
+description: "`coredump get` over BLE used to truncate at ~5952 B; pacing fix committed (not HW-tested over BLE); MQTT/telnet still safest"
 metadata: 
   node_type: memory
   type: project
@@ -17,9 +17,9 @@ No host-side retry fixes it; esp-coredump then can't parse the partial.
 **Workarounds, easiest first:**
 - Pull over **MQTT or telnet** instead — message-framed / large TCP buffer, no 8 KB cap, comes whole.
   See [[project-flat-console-via-havan-mqtt-broker]].
-- Firmware fix (written on `main`, uncommitted as of 2026-05-29, never flashed because MQTT worked):
-  added `bleConsoleAwaitTxDrain(lowWater,timeoutMs)` to console_ble.* (pumps `bleTxDrain`+`vTaskDelay`
-  until backlog < lowWater) and call it per-line in the get loop. No-op on UART/telnet/MQTT.
+- Firmware fix COMMITTED (33ac4e40, 265f7881; verified 2026-10-09): `cli.cpp` calls
+  `bleConsoleAwaitTxDrain(2048, 4000)` per line, so BLE should now deliver the whole dump.
+  Not yet confirmed over BLE on hardware; a >4 s TX stall still drops the tail.
 
 Decoding a dev `-dirty` build: the saved ELF won't SHA-match flat's (different relink → esp-coredump
 "coredump SHA256 != app SHA256"). Same commit = same code addresses, so bypass the gate: temporarily

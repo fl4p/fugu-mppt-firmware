@@ -25,3 +25,5 @@ has `CONFIG_FUGU_WITH_MCPWM=y` (gitignored); `build-mcpwm/` was a stale morning 
 image driver via `build/config/sdkconfig.h` before OTAing a converter. Dirty builds are refused
 non-interactively by the dirty-guard (ota.py:340) — commit + stash WIP for a clean git-describe.
 See [[project_mcpwm_validated_on_live_flat]].
+
+Update 2026-11-14 (oe-ota): ota.sh no longer starts a server; ota.py ensure_http_server() starts one on :9000 when free, and reuses whatever already listens there (a stale server from another dir still gives 404 → KeyError).
