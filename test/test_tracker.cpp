@@ -223,3 +223,106 @@ void test_tracker_long_limit_release_stays_fast() {
     t.update(118.f, 100, 50.f, kSettleMs); // within 15 % of the 2 min old MPP
     TEST_ASSERT_FALSE(t.slowMode);
 }
+
+// Steady 98 W at Vin 50 after a takeover at 1.0 s: MPP record 100 W at duty 800 (1.1 s), a reversal at 2.1 s.
+static void toSteady(Tracker &t) {
+    loopWallClockUs_ = 1'000'000;
+    t.resetTracker(0.f, true);
+    t.resetDirection(true, 50.f);
+    advanceMs(100);
+    t.update(100.f, 800, 50.f, kSettleMs);
+    advanceMs(1000);
+    t.update(98.f, 810, 50.f, kSettleMs);
+}
+
+// Ticks every 100 ms up to toMs (absolute); returns the value of the slow-mode entry tick, else NAN.
+static float runTo(Tracker &t, uint64_t toMs, float p = 98.f) {
+    float entry = NAN;
+    while (loopWallClockUs_ < toMs * 1000) {
+        advanceMs(100);
+        bool s = t.slowMode;
+        float r = t.update(p, 810, 50.f, kSettleMs);
+        if (t.slowMode && !s) entry = r;
+    }
+    return entry;
+}
+
+// Slow mode after 30 s without a new MPP; the entry returns the distance [counts] to the MPP duty.
+void test_tracker_slow_entry_after_30s() {
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    toSteady(t);
+    TEST_ASSERT_TRUE(t._timeLastReverse == 2100);
+    TEST_ASSERT_TRUE(std::isnan(runTo(t, 30'900)));
+    TEST_ASSERT_FALSE(t.slowMode);
+    TEST_ASSERT_EQUAL_FLOAT(-10.f, runTo(t, 31'500));
+    TEST_ASSERT_TRUE(t.slowMode);
+    TEST_ASSERT_EQUAL_FLOAT(2.f, t.frequency);
+}
+
+// No slow mode without a reversal after the takeover; a hand-back restarts the 30 s wait and needs a new reversal.
+void test_tracker_slow_entry_needs_reversal_after_takeover() {
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    loopWallClockUs_ = 1'000'000;
+    t.resetTracker(0.f, true);
+    t.resetDirection(true, 50.f);
+    runTo(t, 40'000, 100.f); // no reversal
+    TEST_ASSERT_FALSE(t.slowMode);
+    t.resetDirection(false, 50.f); // hand-back at 40 s: not a reversal
+    runTo(t, 42'000, 98.f); // inside the settle window: no reversal
+    runTo(t, 42'100, 96.f); // reversal inside the 30 s wait
+    TEST_ASSERT_TRUE(t._timeLastReverse > t._timeTakeover);
+    runTo(t, 70'000, 96.f);
+    TEST_ASSERT_FALSE(t.slowMode);
+    runTo(t, 70'200, 96.f);
+    TEST_ASSERT_TRUE(t.slowMode);
+}
+
+// A hand-back (limiter release, end of the fade after a sweep, start-up) ends slow mode; re-entry needs a
+// reversal and 30 s after the last hand-back.
+void test_tracker_handback_ends_slow_mode() {
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    toSteady(t);
+    runTo(t, 32'000);
+    TEST_ASSERT_TRUE(t.slowMode);
+    t.resetDirection(true, 50.f); // limiter hand-back
+    TEST_ASSERT_FALSE(t.slowMode);
+    TEST_ASSERT_EQUAL_FLOAT(30.f, t.frequency);
+    for (int i = 0; i < 50; ++i) { // fade to the sweep MPP: hand-back every tick for 5 s
+        advanceMs(100);
+        t.resetDirection(true, 50.f);
+    }
+    runTo(t, 38'000); // no reversal yet
+    TEST_ASSERT_FALSE(t.slowMode);
+    runTo(t, 39'000, 96.f); // reversal at 38.1 s
+    runTo(t, 67'000, 96.f); // 30 s after the last hand-back (37 s) not yet passed
+    TEST_ASSERT_FALSE(t.slowMode);
+    runTo(t, 68'000, 96.f);
+    TEST_ASSERT_TRUE(t.slowMode);
+}
+
+// The MPP record reset (below 85 % once 30 s old) is evaluated before the entry: the reset and the new record in
+// the same period keep the tracker in fast mode.
+void test_tracker_reset_before_entry() {
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    toSteady(t);
+    runTo(t, 40'000, 80.f); // the drop falls into the settle window of the 2.1 s reversal: no new reversal
+    TEST_ASSERT_FALSE(t.slowMode);
+    TEST_ASSERT_EQUAL_FLOAT(80.f, t.maxPowerPoint.power);
+    TEST_ASSERT_TRUE(t.maxPowerPoint.timestamp > 31'000);
+}
+
+// Slow mode ends 45 s after the last reversal.
+void test_tracker_slow_mode_ends_45s_after_reversal() {
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    toSteady(t); // reversal at 2.1 s
+    runTo(t, 46'500);
+    TEST_ASSERT_TRUE(t.slowMode);
+    runTo(t, 48'000);
+    TEST_ASSERT_FALSE(t.slowMode);
+    TEST_ASSERT_TRUE(std::isnan(runTo(t, 100'000))); // no re-entry without a reversal
+}

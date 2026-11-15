@@ -158,7 +158,8 @@ void MpptController::update() {
     //                                        [](const CVP &a, const CVP &b) { return a.second < b.second; });
 
     MpptControlMode controlMode = MpptControlMode::None;
-    float controlValue = 0, dutyStep = 0;
+    float controlValue = 0;
+    bool slowEntry = false;
 
     // A limiter that only touches (D-term on a ripple crest) must not steer the tracker: resetting its
     // direction on every touch and an upward step on every release walked the duty up through the MPP.
@@ -291,7 +292,7 @@ void MpptController::update() {
             controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get(),
                                           [this] { return powerSettleMs(); });
             controlValue *= speedScale;
-            if (tracker.slowMode && !slow) dutyStep = controlValue, controlValue = 0; // slow-mode entry: counts
+            slowEntry = tracker.slowMode && !slow;
         }
     } else if (!keepTracker) {
         // tracker.resetTracker(power_smooth, controlValue > 0);
@@ -308,7 +309,7 @@ void MpptController::update() {
 
     if (lastUs) {
         // normalize the control value to pwmMax and scale it with update rate to fix buck slope rate
-        auto fp = controlValue * kCtrlSlewLimit * (float) converter.pwmCtrlMax * dtCtrl + dutyStep;
+        auto fp = controlValue * kCtrlSlewLimit * (float) converter.pwmCtrlMax * dtCtrl;
         if (!_sweeping && converter.getCtrlOnPwmCnt() < converter.pwmCtrlMin * 2) {
             // slow-down control loop for low duty cycles (low-load condition)
             // TODO does this makes sense? the aim here is to stabilize Vout in low/no-load condition
@@ -334,7 +335,11 @@ void MpptController::update() {
         // still or it outruns both the hold and the EWMA voltages the gate is judging it against.
         // Upward only - a limiter or the tracker must always be able to back off.
         if (fp > 0 && converter.forcedPwmGateArming()) fp = 0;
+        const uint16_t d0 = converter.getCtrlOnPwmCnt();
         converter.pwmPerturbFractional(fp);
+        if (slowEntry)
+            ESP_LOGI("mppt", "Slow mode, duty %hu -> %hu (%+.2f, MPP duty %hu, P=%.2f)", d0, converter.getCtrlOnPwmCnt(),
+                     fp, tracker.maxPowerPoint.dutyCycle, tracker._curPower);
 
         if (controlValue < -80 and fp < -0.01 and converter.getCtrlOnPwmCnt() > converter.getCtrlOnPwmMin()) {
             UART_LOG_ASYNC(
