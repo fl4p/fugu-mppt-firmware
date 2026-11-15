@@ -181,14 +181,18 @@ void VirtualConverter::stepOneCycleBuck(float T) {
     const float tLS = dLS * T;
     const float tOff = T - tHS - tLS;
 
+    float invL = invL_;
+    if (lK_ != 0.0f) invL /= std::max(0.1f, 1.0f - lK_ * iPk_);
+
     // Phase 1: HS on. dI/dt = (Vin - Vout) / L.
     const float a = iLEnd_;
-    const float b = (tHS > 0.0f) ? (a + (vIn_ - vOut_) * invL_ * tHS) : a;
+    const float b = (tHS > 0.0f) ? (a + (vIn_ - vOut_) * invL * tHS) : a;
+    iPk_ = std::fabs(b);
     const float areaHS = trapArea(a, b, tHS);
 
     // Phase 2: LS on. Signed trapezoid; no mode decision -- firmware picks
     // pwmRect to land near zero, forced-PWM commands past it.
-    const float c = (tLS > 0.0f) ? (b - vOut_ * invL_ * tLS) : b;
+    const float c = (tLS > 0.0f) ? (b - vOut_ * invL * tLS) : b;
     const float areaLS = trapArea(b, c, tLS);
 
     // Phase 3: both off. c > 0: LS body diode. c < 0: HS body diode (rev pump).
@@ -205,7 +209,7 @@ void VirtualConverter::stepOneCycleBuck(float T) {
         ring = true;
     } else if (tOff > 0.0f) {
         if (c > 0.0f) {
-            const float slope = -(vOut_ + diodeVf_) * invL_;     // <= 0; zero iff vOut_ + diodeVf_ == 0
+            const float slope = -(vOut_ + diodeVf_) * invL;     // <= 0; zero iff vOut_ + diodeVf_ == 0
             if (slope < 0.0f) {
                 const float tZero = -c / slope;
                 if (tZero < tOff) {
@@ -221,7 +225,7 @@ void VirtualConverter::stepOneCycleBuck(float T) {
                 areaOff = c * tOff;
             }
         } else if (c < 0.0f) {
-            const float slope = (vIn_ - vOut_) * invL_;
+            const float slope = (vIn_ - vOut_) * invL;
             if (slope > 0.0f) {
                 const float tZero = -c / slope;
                 if (tZero < tOff) {

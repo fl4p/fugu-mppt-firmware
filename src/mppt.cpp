@@ -134,8 +134,10 @@ void MpptController::update() {
     CVP *limitingControl = nullptr;
     float limitingControlValue = std::numeric_limits<float>::infinity();
 
+    bool past = false;
     for (auto &c: controlValues) {
         auto cv = c.crtl.update(c.actual, c.target, dtCtrl);
+        past |= (c.crtl.Kp != 0 ? c.crtl.Kp : c.crtl.Kd) * c.crtl._prevE < 0; // past its limit, D aside
 
         if (!std::isfinite(cv) && !converter.disabled() && converter.getDutyCycle() > 0.01f) {
             RT_COLD(
@@ -163,6 +165,7 @@ void MpptController::update() {
     // After a touch the following loops give back what the touch took and the tracker carries on.
     const uint32_t nowMs = (uint32_t) (nowUs / 1000);
     const bool limSustained = ctrlState._limiting && nowMs - _limitSinceMs > 250;
+    ctrlState._limPast = past;
     bool keepTracker = false;
 
     if (limitingControlValue < 0) {
@@ -193,7 +196,7 @@ void MpptController::update() {
         }
     }
 
-    if (rectCalHold(nowUs, limitingControlValue)) {
+    if (rectCalHold(nowUs)) {
         lastUs = nowUs;
         return;
     }

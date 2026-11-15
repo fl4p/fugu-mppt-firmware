@@ -34,6 +34,8 @@
 //     rcal-ov      same, Vin trip (hv_max) 2 % above Voc: the run must stop short of it
 //     rcal-low     same, a cloud 0.2 s after the start: Isc 2 A, Voc -3 % (soft panel, knee lifts Vin)
 //     rcal-sun     80 uH board, Isc 5.6 A / Voc 79.6 V, 5 nF switch node ringing at Q 40 (non-monotonic late side)
+//     rcal-flat    flat (51 uH, 326 kHz ring, 1470 sps), ~390 W at Vin ~55 V, Vout +0.6 V for 2 ms every 1-3 s:
+//                  D-only Vout limiter touches below the cap must not abort the run
 //     rcal-low-bus rcal-low on a swinging bus (+-0.4 % / 23 s, +-0.2 % / 7.3 s, 0.15 % steps every 2-6 s)
 //   switch-node ring (DCM Iout ripple vs duty; vconv.conf ring_c/ring_q), board = fry | flat (L0, L, ring f, Q
 //   fitted to field sweeps), suffix -off = same board with the ring disabled, -damped = ring at Q 0.5 (no
@@ -1032,7 +1034,7 @@ static int runRectCal(const std::string &name, const std::string &sc) {
     if (!rc.requestStart(true)) { printf("requestStart refused\n"); return 1; }
     printf("%9.4f >>> rect-cal force at HS %u, %s, P %.0f W\n", tNow(), hs0, dcm0 ? "DCM" : "CCM", p0);
     double tCal = -1, tEnd = -1;
-    float iMin = INFINITY, ilMin = INFINITY, vinMax = 0, iRunMin = INFINITY;
+    float iMin = INFINITY, ilMin = INFINITY, vinMax = 0, iRunMin = INFINITY, ilAfter = INFINITY;
     int stepMax = 0, lsOffMin = 0;
     uint16_t hsPrev = hs0;
     const uint8_t clamps0 = converter.lsClamps();
@@ -1045,6 +1047,13 @@ static int runRectCal(const std::string &name, const std::string &sc) {
         if (sc == "rcal-bus") g_vconv.setBat(vbat0 * (1.f + 0.025f * (float) std::min(1.0, t / 30.0)), g_vconv.getRbat());
         if (sc == "rcal-cloud" && t >= 12.0) g_vconv.setPv(isc0 * 0.7f, voc0 * 0.982f, g_vconv.getPvK());
         if (sc.rfind("rcal-low", 0) == 0 && t >= 0.2) g_vconv.setPv(2.f, voc0 * 0.97f, g_vconv.getPvK());
+        // bus transients: Vout +0.6 V for 2 ms every 1-3 s, D-only Vout limiter touches far below the 29 V cap
+        // as logged on flat 2026-11-15 (ctrl -92, act 26.7, tgt 29); too short to move a window average
+        if (sc == "rcal-flat") {
+            busStep = t >= busNext ? 0.6f : 0.f;
+            while (t >= busNext) busNext += 1.0 + 2.0 * busU(busRng);
+            g_vconv.setBat(vbat0 + busStep, g_vconv.getRbat());
+        }
         if (sc == "rcal-low-bus") {
             while (t >= busNext) busNext += 2.0 + 4.0 * busU(busRng), busStep = (busU(busRng) - 0.5f) * 0.003f;
             g_vconv.setBat(vbat0 * (1.f + 0.004f * (float) std::sin(6.2832 * t / 23.) + 0.002f * (float) std::sin(6.2832 * t / 7.3)
@@ -1065,6 +1074,7 @@ static int runRectCal(const std::string &name, const std::string &sc) {
         ilMin = std::min(ilMin, g_vconv.getIL());
         vinMax = std::max(vinMax, g_vconv.getVin());
         if (tEnd < 0 && (st == RectCal::Done || st == RectCal::Fail)) tEnd = t;
+        if (tEnd >= 0 && t > tEnd + 3) ilAfter = std::min(ilAfter, g_vconv.getIL());
         if (tEnd >= 0 && t > tEnd + 15) break;
     }
     report(name.c_str(), p);
@@ -1079,12 +1089,17 @@ static int runRectCal(const std::string &name, const std::string &sc) {
     printf("== rect-cal points (LS - ideal : dI A):");
     for (int i = 0; i < rc.cal.n; ++i) printf(" %.0f:%+.3f", rc.cal.xs[i] - rc.cal.ideal, rc.cal.ys[i]);
     printf("\n");
-    printf("== plant: min Iout avg %.2f A (during the run %.2f A), min coil current at cycle end %.3f A, max Vin %.2f V\n",
-           iMin, iRunMin, ilMin, vinMax);
+    printf("== plant: min Iout avg %.2f A (during the run %.2f A), min coil current at cycle end %.3f A (from 3 s after "
+           "the run %.3f A), max Vin %.2f V\n", iMin, iRunMin, ilMin, ilAfter, vinMax);
     printf("== after: HS %u (before %u), P %.0f W (before %.0f W), %s, manual LS %d\n", converter.getCtrlOnPwmCnt(), hs0,
            p1, p0, modeStr(), converter.manualRect_());
     printf("\n== log after event (first %zu lines):\n", g_logSince.size());
     for (size_t i = 0; i < g_logSince.size() && i < 60; ++i) printf("   %s\n", g_logSince[i].c_str());
+    // a positive offset holds the LS past the zero crossing wherever Vin <= 2 Vout: never applied
+    if (rc.cal.get() == RectCal::Done && (rc.cal.applied > 0 || rc.offset() > 0)) {
+        printf("FAIL: positive offset applied (%+d ct, active %+d ct)\n", rc.cal.applied, rc.offset());
+        return 1;
+    }
     return 0;
 }
 
@@ -1181,6 +1196,7 @@ static int simMain(int argc, char **argv) {
     const bool p0 = sc.size() > 3 && sc.compare(sc.size() - 3, 3, "-p0") == 0;
     const std::string name = sc;
     if (p0) sc.resize(sc.size() - 3);
+    if (sc == "rcal-flat") setenv("SIM_RING", "flat", 0), setenv("SIM_ADC_HZ", "1470", 0);
     sc = ringBoardFrom(sc);
     std::vector<std::pair<std::string, std::string>> ov;
     if (sc == "b") ov = {{"isc", "1.6"}};
@@ -1203,6 +1219,7 @@ static int simMain(int argc, char **argv) {
     if (sc == "wx-cloud-cv-ripple") ov = {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}};
     const bool rcal = sc.rfind("rcal", 0) == 0;
     if (rcal) ov = {{"noise_iout", "0.01"}, {"noise_vout", "0.005"}, {"noise_vin", "0.05"}};
+    if (sc == "rcal-flat") ov.insert(ov.end(), {{"isc", "7.5"}, {"voc", "66"}, {"v_bat", "26.7"}});
     if (sc == "rcal-ov") setenv("SIM_CONF", "limits.conf:hv_max=77.5", 1);
     if (sc == "rcal-sun") setenv("SIM_CONF", "coil.conf:L0=80e-6", 1);
     boot(ov, p0);

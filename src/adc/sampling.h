@@ -79,9 +79,12 @@ struct Sensor {
     uint32_t despikeTrips = 0;                      // cumulative clips (diagnostic + WARN)
     EWM<false, float> ewm; // filter residual noise
     MeanAccumulator calibBuffer{}; // for offset calibration
+    float calibSq = 0, calibPrevMean = 0, calibPrevSd = 0; // zero settle check, offset sensors
 
     float calibrationAvg = 0; // stores the mean value from calibBuffer
     bool calibrationComplete = false;
+    bool calibLoaded = false; // offset sensor carried current when calibration started
+    uint8_t calibBlocks = 0;
 
     const bool isVirtual;
 
@@ -103,10 +106,14 @@ struct Sensor {
         despikeScale = 0;
         ewm.reset();
         if (resetCalibration) {
-            if (calibrationAvg != 0)
+            // an offset sensor keeps its zero (not applied until calibrated) as the fallback
+            if (calibrationAvg != 0 && !params.calibrationConstraints.calibrateOffset) {
                 ESP_LOGI("sensor", "%s reset calibration", params.teleName.c_str());
-            calibrationAvg = 0;
+                calibrationAvg = 0;
+            }
             calibBuffer.clear();
+            calibSq = 0;
+            calibBlocks = 0;
             calibrationComplete = false;
         }
     }
@@ -119,7 +126,7 @@ struct Sensor {
         //    ESP_LOGW("s", "not-finite sensor val %f (name=%s, x=%f) ", v, params.teleName.c_str(), x);
         //}
 
-        if (params.calibrationConstraints.calibrateOffset) {
+        if (params.calibrationConstraints.calibrateOffset && calibrationComplete) {
             //ESP_LOGI("sensor", "%s %.4f offset=%.4f std=%.4f n=%u", params.teleName.c_str(), v, calibrationAvg,
             //         ewm.std.get(), numSamples);
             v -= calibrationAvg;
@@ -242,9 +249,9 @@ private:
     enum class CalibrationState : uint32_t { Idle, StartRequested, Active, CancelRequested, Cancelling };
     std::atomic<CalibrationState> calibrationState_{CalibrationState::Idle};
     uint8_t calibrating_ = 0; // remaining sensors; RT task only
-    time_us timeLastCalibration = 0;
+    time_us timeLastCalibration = 0, calibStartUs_ = 0;
 
-    void applyCalibrationCommandRt() {
+    __attribute__((always_inline)) void applyCalibrationCommandRt() {
         auto state = calibrationState_.load(std::memory_order_acquire);
         if (state == CalibrationState::StartRequested) {
             if (!calibrationState_.compare_exchange_strong(
@@ -252,7 +259,9 @@ private:
                 return;
 
             calibrating_ = realSensors.size();
+            calibStartUs_ = wallClockUs();
             for (auto &ch: sensors) {
+                ch->calibLoaded = fabsf(ch->ewm.avg.get()) > ch->params.calibrationConstraints.maxAbsValue; // NaN: boot
                 ch->reset(true);
                 if (!ch->isVirtual)
                     static_cast<PhysicalSensor *>(ch)->adc->reset(ch->params.adcCh);
@@ -265,6 +274,7 @@ private:
             ESP_LOGI("mppt", "Cancel calibration");
             calibrating_ = 0;
             for (auto &ch: sensors) ch->reset(false);
+            keepOffsetsRt();
 
             state = CalibrationState::Cancelling;
             calibrationState_.compare_exchange_strong(
@@ -284,7 +294,15 @@ private:
         }
     }
 
+    // an offset sensor left uncalibrated goes back to its previous zero
+    __attribute__((always_inline)) void keepOffsetsRt() {
+        for (auto &ch: realSensors)
+            if (ch->params.calibrationConstraints.calibrateOffset && ch->calibrationAvg != 0)
+                ch->calibrationComplete = true;
+    }
+
     void finishCalibrationRt() {
+        keepOffsetsRt();
         calibrating_ = 0;
         auto state = CalibrationState::Active;
         calibrationState_.compare_exchange_strong(
@@ -496,19 +514,58 @@ public:
         AdcError,
     };
 
+    static constexpr uint16_t kZeroBlock = 50;
+    static constexpr time_us kZeroWaitUs = 400000, kZeroSettleUs = 1200000;
+
     UpdateRet handleSensorCalib(Sensor &sensor) {
         if (calibrationState_.load(std::memory_order_acquire) == CalibrationState::Active &&
             !sensor.calibrationComplete && sensor.numSamples >= 100) {
-            // calibZeroCurrent = ewm.s.chIin.avg.get();
+            auto &constrains{sensor.params.calibrationConstraints};
             sensor.calibBuffer.add(sensor.last);
+            float avg;
+            bool keep = false;
+            if (constrains.calibrateOffset) {
+                // a load-dependent tail follows the stop: after load wait kZeroWaitUs, then take the zero once
+                // a block agrees in mean and noise with all blocks before it; else keep the old zero
+                const time_us dt = wallClockUs() - calibStartUs_;
+                if (sensor.calibLoaded && dt < kZeroWaitUs) {
+                    sensor.calibBuffer.clear();
+                    return UpdateRet::NoNewData;
+                }
+                sensor.calibSq += sensor.last * sensor.last;
+                if (sensor.calibBuffer.num < kZeroBlock) return UpdateRet::NoNewData;
+                const float m = sensor.calibBuffer.getMean(), pm = sensor.calibPrevMean, psd = sensor.calibPrevSd;
+                const float sd = sqrtf(fmaxf(sensor.calibSq / kZeroBlock - m * m, 0.f));
+                const uint8_t j = sensor.calibBlocks;
+                sensor.calibBuffer.clear();
+                sensor.calibSq = 0;
+                const float sdMax = constrains.maxAbsValue * .05f, f = constrains.maxAbsValue * .001f,
+                        tol = fmaxf(constrains.maxAbsValue * (1.f / 400),
+                                    2.5f * sqrtf((sd * sd + psd * psd / (float) j) / kZeroBlock));
+                const bool settled = j > sensor.calibLoaded && (ignoreCalibrationConstraints ||
+                        (fabsf(m - pm) <= tol && sd <= sdMax && sd <= 1.5f * psd + f && psd <= 1.5f * sd + f));
+                if (!settled && (!j || dt < kZeroSettleUs) && j < 255) {
+                    sensor.calibPrevMean = (pm * j + m) / (j + 1);
+                    sensor.calibPrevSd = sqrtf((psd * psd * j + sd * sd) / (j + 1));
+                    ++sensor.calibBlocks;
+                    return UpdateRet::NoNewData;
+                }
+                if (!settled) {
+                    keep = sensor.calibrationAvg != 0;
+                    ESP_LOGW("sampler", "Sensor %s zero not settled (%.4f, before %.4f), %s %.4f",
+                             sensor.params.teleName.c_str(), m, pm, keep ? "keeping" : "taking",
+                             keep ? sensor.calibrationAvg : m);
+                }
+                avg = keep ? sensor.calibrationAvg : settled ? (pm * j + m) / (j + 1) : m;
+            } else {
+                if (sensor.calibBuffer.num <= 100) return UpdateRet::NoNewData;
+                avg = sensor.calibBuffer.pop();
+            }
 
-            if (sensor.calibBuffer.num > 100) {
-                auto avg = sensor.calibBuffer.pop(); //sensor.ewm.avg.get();
+            {
                 auto std = sensor.ewm.std.get();
 
-                auto &constrains{sensor.params.calibrationConstraints};
-
-                if (!ignoreCalibrationConstraints && (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue)) {
+                if (!keep && !ignoreCalibrationConstraints && (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue)) {
                     ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, stdn=%.6f)",
                              sensor.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, sensor.last, std);
                     finishCalibrationRt();
@@ -516,7 +573,7 @@ public:
                     return UpdateRet::CalibFailure;
                 }
 
-                if (!ignoreCalibrationConstraints &&
+                if (!keep && !ignoreCalibrationConstraints &&
                     (std::abs(avg) < 1e-9f or std::isfinite(std)) // std can be non-finite for 0 values
                     and std * std::abs(avg) > constrains.maxStddev) {
                     ESP_LOGE("sampler", "Calibration failed, %s stddev %.6f > %.6f (last=%.6f, avg=%.6f)",
@@ -540,7 +597,7 @@ public:
                 ESP_LOGI("sampler", "Sensor %s calibration: avg=%.4f std=%.6f", sensor.params.teleName.c_str(), avg,
                          std);
 
-                if (sensor.params.calibrationConstraints.calibrateOffset)
+                if (constrains.calibrateOffset && !keep)
                     ESP_LOGI("sampler", "Sensor %s offset-calibrated: %.6f", sensor.params.teleName.c_str(), avg);
 
                 --calibrating_;

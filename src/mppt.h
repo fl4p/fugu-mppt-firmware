@@ -186,6 +186,7 @@ private:
         MpptControlMode mode: 3 = MpptControlMode::None;
         bool _limiting: 1 = false; // control limited (no MPPT)
         bool _limReal: 1 = false; // the current limit condition went past its limit
+        bool _limPast: 1 = false; // any limiter past its limit this update (rect-cal)
         uint8_t limIdx: 4 = 15;
     } ctrlState;
 
@@ -1383,7 +1384,7 @@ public:
                 sensors.Vout->ewm.avg.get(), sensors.Iout->ewm.avg.get(), sensorPhysicalI->ewm.avg.get(),
                 fminf(sensorPhysicalI->ewm.avg.get(), std::max(sensorPhysicalI->last, sensorPhysicalI->previous)),
                 g_app.opMode.load() == OpMode::Mppt && !sampler.isCalibrating(), _sweeping, bflow.state(),
-                ctrlState._limiting, !sensors.Iout->isVirtual, limits.Vin_max};
+                ctrlState._limPast || (ctrlState._limiting && ctrlState._limReal), !sensors.Iout->isVirtual, limits.Vin_max};
     }
 
     // RT, once per new sample, before protect()
@@ -1396,10 +1397,10 @@ public:
 
 private:
     // RT: in update() after protect() and the limiters; true while the run holds HS/LS.
-    __attribute__((always_inline)) bool rectCalHold(const time_us &nowUs, float limitingControlValue) {
+    __attribute__((always_inline)) bool rectCalHold(const time_us &nowUs) {
         if (!sensorPhysicalI || !rectCal.cal.running()) return false;
         uint16_t hs;
-        const bool held = rectCal.hold(converter, rectCalIn((uint32_t) nowUs), limitingControlValue, hs);
+        const bool held = rectCal.hold(converter, rectCalIn((uint32_t) nowUs), hs);
         if (hs) setAutoRampTarget(hs);
         return held;
     }
