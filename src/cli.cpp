@@ -80,6 +80,9 @@ extern volatile uint8_t g_rtLogTest;
 #if WITH_VCONV
 #include "sim/vconv.h"
 #endif
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+#include "etc/pwr_knobs.h"
+#endif
 
 #include "app_state.h"
 
@@ -2385,6 +2388,19 @@ void setupCli() {
 #endif
 #if WITH_VCONV
     cli.addBoundlessCmd("vconv", cmdVconv); // vconv [pv|bat|set ...]
+#endif
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+    cli.addBoundlessCmd("pwr", [](cmd *c) {
+        Command cc(c);
+        String s[4];
+        const char *a[4];
+        const int n = std::min(cc.countArgs(), 4);
+        for (int i = 0; i < n; ++i) {
+            s[i] = cc.getArg(i).getValue();
+            a[i] = s[i].c_str();
+        }
+        if (!pwrCommand(n, a)) s_cmdFailed = true;
+    });
 #endif
 }
 

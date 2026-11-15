@@ -33,6 +33,9 @@ extern MpptController mppt;
 extern float conversionEfficiency;
 
 #include "../app_state.h"
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+#include "../etc/pwr_knobs.h"
+#endif
 
 static AsyncADC<float> *createAdcInstance(const std::string &adcName, const ConfFile &boardConf,
                                           const ConfFile &sensConf, const std::string &chnDebug) {
@@ -52,6 +55,9 @@ static AsyncADC<float> *createAdcInstance(const std::string &adcName, const Conf
         ((ADC_ESP32_Cont *) adc)->setNtcCh(sensConf.getByte("ntc_ch", 255));
     } else if (adcName == "fake") {
         adc = new ADC_Fake();
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+        g_pwrFakeAdc = (ADC_Fake *) adc;
+#endif
 #if WITH_VCONV
     } else if (adcName == "vconv") {
         adc = new ADC_VConv();

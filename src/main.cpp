@@ -81,6 +81,9 @@
 #if WITH_RTPROF
 #include "etc/rtprof.h"
 #endif
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+#include "etc/pwr_knobs.h"
+#endif
 #include <fugu_flash_chip.h>
 
 
@@ -661,11 +664,14 @@ void loop() {
     loopNetwork_task(nullptr);
 }
 
+#ifdef CONFIG_PM_ENABLE
+esp_pm_lock_handle_t s_cli_pm_lock = nullptr; // held after RT start; `pwr pm` releases it
+#endif
+
 static esp_err_t disable_cpu_power_saving(void) {
     esp_err_t ret = ESP_OK;
 
 #ifdef CONFIG_PM_ENABLE
-    static esp_pm_lock_handle_t s_cli_pm_lock = nullptr;
 
     ret = esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "noPwrSave", &s_cli_pm_lock);
     if (ret == ESP_OK) {
@@ -1493,6 +1499,9 @@ static void networkLoopTick() {
         time_ms nowMs = wallClockMs();
         if (converting) lastActiveMs = nowMs;
         int8_t want = (nowMs - lastActiveMs > 5u * 60 * 1000) ? 1 : 0;
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+        if (pwrWifiPsManual()) psMode = want;
+#endif
         if (wifiUp && want != psMode) {
             psMode = want;
             wifiSetPowerSave(want);

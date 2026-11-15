@@ -253,4 +253,13 @@ config FUGU_WITH_PSU
         Constant-voltage PSU mode and the PV-curve simulator: `psu`/`pv` console commands and
         converter.conf mode=psu|pv. Off, a board configured for either mode refuses to start.
 
+config FUGU_WITH_PWR_KNOBS
+    bool "Runtime power knobs (pwr command, experiment tool)"
+    default n
+    help
+        `pwr` console command: CPU frequency, PM/DFS/light sleep (with PM_ENABLE), WiFi power save,
+        listen interval and TX power, BLE advertising interval, telemetry point interval, die
+        temperature. Changes are not persisted; a reboot restores the defaults. sdkconfig.pwr
+        enables it, sdkconfig.pm adds power management with auto light sleep.
+
 endmenu

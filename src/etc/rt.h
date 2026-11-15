@@ -262,6 +262,23 @@ public:
     void stop() {
         ESP_ERROR_CHECK(gptimer_stop(gptimer));
     }
+
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+    // Running timer only. Restarts the period from 0 (a shrunk alarm may already be behind the count).
+    esp_err_t setFreq(uint32_t requestedHz) {
+        uint32_t n = requestedHz ? 1000000 / requestedHz : 1000000;
+        if (n < 2) n = 2;
+        gptimer_alarm_config_t a = {};
+        a.alarm_count = n;
+        a.flags.auto_reload_on_alarm = 1;
+        esp_err_t e = gptimer_stop(gptimer);
+        if (e == ESP_OK) e = gptimer_set_raw_count(gptimer, 0);
+        if (e == ESP_OK) e = gptimer_set_alarm_action(gptimer, &a);
+        if (e == ESP_OK) hz = 1000000 / n;
+        esp_err_t s = gptimer_start(gptimer);
+        return e != ESP_OK ? e : s;
+    }
+#endif
 };
 
 static bool IRAM_ATTR

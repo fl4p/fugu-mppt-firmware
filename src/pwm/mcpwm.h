@@ -9,6 +9,10 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "mcpwm_timing.h"
+#include "sdkconfig.h"
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+#include <atomic>
+#endif
 
 // One GPIO fault per group, shared by all legs. OST brake latches gates LOW in HW.
 class MCPWM_FaultBrake {
@@ -406,6 +410,33 @@ public:
         ESP_ERROR_CHECK(mcpwm_timer_enable(timer_));
         ESP_ERROR_CHECK(mcpwm_timer_start_stop(timer_, MCPWM_TIMER_START_NO_STOP));
     }
+
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+private:
+    std::atomic<bool> timerOff_{false};
+public:
+    [[nodiscard]] bool timerOff() const { return timerOff_.load(); }
+
+    // Gates forced low, timer stopped and disabled: releases the group's PM lock.
+    esp_err_t timerSuspend() {
+        if (timerOff_) return ESP_OK;
+        forceShutdown();
+        timerOff_ = true;
+        esp_err_t e = mcpwm_timer_start_stop(timer_, MCPWM_TIMER_STOP_EMPTY);
+        if (e == ESP_OK) e = mcpwm_timer_disable(timer_);
+        if (e != ESP_OK) timerOff_ = false;
+        return e;
+    }
+
+    // Force is left as is; clearForce() stays with the converter's enable path.
+    esp_err_t timerResume() {
+        if (!timerOff_) return ESP_OK;
+        esp_err_t e = mcpwm_timer_enable(timer_);
+        if (e == ESP_OK) e = mcpwm_timer_start_stop(timer_, MCPWM_TIMER_START_NO_STOP);
+        if (e == ESP_OK) timerOff_ = false;
+        return e;
+    }
+#endif
 
     // Immediate, register-only: force both gates LOW (safe), hold until cleared.
     __attribute__((always_inline)) inline void forceShutdown() { // also inlined into the IRAM OV ISR

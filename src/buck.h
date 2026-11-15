@@ -427,6 +427,9 @@ class SynchronousConverter {
         if (useMcpwm) {
             mcpwmDrv.setHsOff(pwmCtrl);
             mcpwmDrv.setLsOff(pwmCtrl + pwmRect);
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+            if (enabling && mcpwmDrv.timerOff() && mcpwmDrv.timerResume() != ESP_OK) return; // `pwr pwm 0`
+#endif
             if (enabling) mcpwmDrv.clearForce(); // release the boot/disable force latch
             (void) largerDecrease; (void) direction;
             return;
