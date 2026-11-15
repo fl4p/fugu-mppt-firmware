@@ -133,7 +133,9 @@ Fast and slow mode use these parameters:
 | Min. power step, rel.  | 1.5 %     | 0.15 %    |
 
 The tracker enters slow mode when power is above 2 W (0.5 W to stay, hysteresis), no new MPP was found for 30 s,
-and the direction reversed within the last 15 s. A tracker that moves steadily in one direction stays in fast mode.
+and the direction reversed within the last 45 s. A tracker that moves steadily in one direction stays in fast mode.
+At the slow-mode step, one pass across the band in which the power drops by the slow-mode threshold takes about
+35 s; with a shorter limit the tracker fell back to fast mode in the middle of that pass.
 
 On entry to slow mode, the duty jumps back to the MPP duty captured in fast mode. Output-power measurement (for
 example, with a hall sensor) can be too poor and non-linear for slow P&O alone.

@@ -170,7 +170,9 @@ struct Tracker {
         // slow-mode condition:
         if (powerSample > (slowMode ? 0.5f : 2.f) // hysteresis
             and now - maxPowerPoint.timestamp > 1000 * 30 // if we didn't find a new maxPower for 15s
-            and now - _timeLastReverse < 1000 * 15 // if we move in one direction for more than 15s, don't slow down
+            // moving one way for longer than this: the MPP moved, don't slow down. A slow-mode sweep across its
+            // power band near the MPP takes ~35 s, so 15 s dropped back to normal mode every 20-60 s
+            and now - _timeLastReverse < 1000 * 45
            // and false
                 ) {
             speed = .02f; // 0.02
