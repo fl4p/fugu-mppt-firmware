@@ -187,7 +187,7 @@ void MpptController::update() {
         }
     }
 
-    if (rectCalHold(nowUs, limitingControlValue)) {
+    if (rectCalHold(nowUs)) {
         lastUs = nowUs;
         return;
     }

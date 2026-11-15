@@ -19,10 +19,11 @@
  * not move with the LS window. Init waits for DCM and two consecutive windows that agree. Then
  * the LS count is stepped up from 0.5x the ideal DCM freewheel count ideal = (Vin/Vout - 1) * HS.
  * Output current is flat until the LS outlasts the inductor zero crossing, then bends down (reverse
- * current). Past the bend the switch-node ring makes the curve non-monotonic, so the sweep stops after
- * two consecutive drops and then fills the four coarse intervals before the first drop with Fine
- * points. The LS never exceeds ideal + lateMax, nor CcmFrac of the off-time limit (1 - Vo/Vi) of the
- * period, beyond which the reverse current no longer returns to zero within a period. Each step is
+ * current). Past the bend the switch-node ring makes the curve non-monotonic, so the sweep stops one
+ * step after the first clear drop and then fills the four coarse intervals before the drop with Fine
+ * points; the fit ends where the current turns back up. The LS never exceeds ideal + lateMax, nor
+ * CcmFrac of the off-time limit (1 - Vo/Vi) of the period, beyond which the reverse current no longer
+ * returns to zero within a period. Each step is
  * measured against a reference LS (0.6x ideal) sampled before and after it, which cancels linear
  * drift, and is placed relative to the ideal count of its own Vin/Vout. Each window current is
  * scaled to the Init voltages with the DCM current model I ~ Vin*(Vin-Vout)/Vout (D fixed), so a
@@ -201,16 +202,17 @@ public:
                 ++n;
                 const bool down = n > 1 && y <= std::min(ys[n - 2] - StepDrop, ymax - KneeDrop);
                 ymax = std::max(ymax, y);
-                drops = down ? drops + 1 : 0;
                 if (meas < -0.05f) return finish();
-                if (drops >= 2 && !fine) {
-                    // the knot lies within 4 coarse steps before the first drop (sharp knee: the last one,
-                    // quadratic: 2-3): Fine steps across them, never past the first drop
+                if (drops && !fine) {
+                    // one step past a clear drop (the ring can turn the current back up): the knot lies within
+                    // 4 coarse steps before the drop (sharp knee: the last one, quadratic: 2-3): Fine steps
+                    // across them, never past the drop
                     if (n < 6 || n + Fine > MaxPts) return finish();
                     fg = (xs[n - 2] - xs[n - 6]) / (float) Fine;
                     f0 = xs[n - 6] + 0.5f * fg;
                     fine = true;
                 }
+                drops = down;
             }
         }
         refPrev = i; rawPrev = raw; refVi = vi; refVo = vo;
@@ -238,10 +240,22 @@ public:
                 std::swap(xs[m], xs[m - 1]); std::swap(ys[m], ys[m - 1]);
                 std::swap(jvi[m], jvi[m - 1]); std::swap(jvo[m], jvo[m - 1]);
             }
+        // the ring can turn the current back up past the bend: the fit ends at the first point StepDrop above
+        // the lowest since the highest, once two points in a row were KneeDrop/2 below the highest (a flat tail
+        // stays, it keeps the knee early)
+        int m = 1, low = 0;
+        bool dip = false;
+        for (float hi = ys[0], lo = ys[0]; m < n; ++m) {
+            if (dip && ys[m] > lo + StepDrop) break;
+            low = ys[m] <= hi - 0.5f * KneeDrop ? low + 1 : 0;
+            dip |= low >= 2;
+            if (ys[m] > hi) hi = lo = ys[m], dip = false;
+            else lo = std::min(lo, ys[m]);
+        }
         // zero crossing = where the current bends down (reverse current), whatever the baseline slope
         float x0 = 0, drop = 0, rms = 0;
-        const char *e = n < 6 ? "few points"
-                        : !kneeFit(xs, ys, n, x0, drop, rms) || !(drop >= std::max(KneeMinA, 4.f * rms)) ? "no knee"
+        const char *e = m < 6 ? "few points"
+                        : !kneeFit(xs, ys, m, x0, drop, rms) || !(drop >= std::max(KneeMinA, 4.f * rms)) ? "no knee"
                         : !(std::fabs(x0 - ideal) <= (float) pwmCountsFromNs(PlausibleNs, tickRate)) ? "implausible"
                         : nullptr;
         if (e) {
@@ -262,7 +276,7 @@ private:
     int ls = -1;
     uint16_t lsMin = 0, lsCap = 0, ref = 0, ls_ = 0, lateMax = 400;
     bool fine = false;      // fine pass around the knee
-    uint8_t drops = 0, kf = 0;
+    uint8_t drops = 0, kf = 0; // drops: the last coarse step was a clear drop
     float capX = 0, f0 = 0, fg = 0; // LS cap, fine pass start and step
     uint8_t k = 0;
     uint32_t t0 = 0, tPh = 0;
@@ -347,7 +361,7 @@ struct RectCalIn {
     bool mppt;     // MPPT mode (not PSU/PV-sim/manual duty), no ADC calibration
     bool sweeping; // global MPPT sweep
     bool bflow;    // backflow switch closed
-    bool limiting; // a PD limiter is active
+    bool limiting; // a PD limiter is past its limit (P term), not a D-only touch
     bool iSensor;  // physical Iout sensor (not virtual)
     float vinMax;  // input over-voltage trip (V)
 };
@@ -484,15 +498,15 @@ public:
         return back;
     }
 
-    // RT, in the MPPT update: pins LS (at its minimum until Init is done), ramps HS to the
+    // RT, in the MPPT update after the limiters: pins LS (at its minimum until Init is done), ramps HS to the
     // calibration point by pwmMax/512 per sample and holds it. Returns true while update() must stop
     // here; back: HS count to ramp back to after the run (0: none).
-    __attribute__((always_inline)) bool hold(Conv &c, const RectCalIn &in, float limitingControlValue, uint16_t &back) {
+    __attribute__((always_inline)) bool hold(Conv &c, const RectCalIn &in, uint16_t &back) {
         back = 0;
         if (!cal.running()) return false;
         if (protectedSince(c, in)) {
             cal.abort("protection");
-        } else if (limitingControlValue < 0) {
+        } else if (in.limiting) {
             cal.abort("limiting");
         } else if (in.vin > VinMaxFrac * in.vinMax) {
             cal.abort("Vin near max");

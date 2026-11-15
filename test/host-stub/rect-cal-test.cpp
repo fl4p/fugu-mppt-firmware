@@ -117,7 +117,7 @@ struct Host {
     Ctl own{};
     Ctl &ctl;
     float iEwm = 0, viEwm = VOC, voEwm = VBAT, last = 0, prev = 0, vi = VOC, vo = VBAT, io = 0, vinMax = 90.f;
-    bool bflow = false, sr = false, mppt = true, sweeping = false, tripped = false, held = false;
+    bool bflow = false, sr = false, mppt = true, sweeping = false, tripped = false, held = false, lim = false;
     uint16_t op = 0, rampTo = 0;
     int lsAfterHold = -1, lsRaw = -1; // pinned LS / LS count right after hold()
     int guard = 0; // samples on which the reverse-current guard acted
@@ -136,7 +136,7 @@ struct Host {
     }
     RectCalIn in() const {
         return {r.us(), vi, vo, io, viEwm, voEwm, iEwm, iEwm, std::min(iEwm, std::max(last, prev)), mppt, sweeping,
-                bflow, false, true, vinMax};
+                bflow, lim, true, vinMax};
     }
     float pOut() const { return iEwm * voEwm; }
     void tick() {
@@ -155,7 +155,7 @@ struct Host {
         if (sr && !bflow && c.getDutyCycle() > 0.33f && !(c.dcmCurrent(viEwm, voEwm) < 1.f)) { tripped = true; c.disable(); return; }
 
         uint16_t b = 0;
-        held = ctl.hold(c, in(), 0.f, b);
+        held = ctl.hold(c, in(), b);
         lsAfterHold = c.manualRect_() ? c.getRectOnPwmCnt() : -1;
         lsRaw = c.getRectOnPwmCnt();
         if (!held) {
@@ -247,6 +247,78 @@ static void testDriverRule() {
 }
 
 // Finding 3: shrink() never lengthens LS; fit()'s lowest applied value is the backstop floor.
+// fry field runs (160 MHz), points in run order. 113 W: coarse, then the fine pass; full sun 446/300 W: the
+// old sweep ran to the cap, the current turns back up past the bend (ring-back). bend: last point before the
+// visible drop, the fit must not learn later than it.
+struct FieldRun { const char *name; uint16_t hs; float ideal, bend; std::vector<float> xs, ys; };
+static const FieldRun g_fieldRuns[] = {
+    {"113 W", 905, 1732, 1646,
+     {866, 933, 1001, 1068, 1136, 1204, 1272, 1340, 1406, 1474, 1542, 1611, 1676, 1743, 1811,
+      1486, 1512, 1539, 1566, 1593, 1619, 1646, 1673, 1701, 1726},
+     {.002f, -.001f, .001f, 0, .001f, .001f, .001f, -.001f, -.002f, -.003f, -.005f, -.004f, -.012f, -.046f, -.058f,
+      -.002f, -.002f, -.005f, -.002f, -.005f, -.004f, -.005f, -.011f, -.020f, -.031f}},
+    {"446 W", 896, 1773, 1651,
+     {885, 955, 1021, 1090, 1160, 1230, 1300, 1371, 1441, 1512, 1582, 1651, 1722, 1793, 1865, 1939, 2014, 2089, 2164},
+     {.001f, -.001f, -.001f, -.000f, -.002f, -.002f, -.002f, -.003f, -.003f, -.004f, -.004f, -.004f, -.012f, -.049f,
+      -.055f, .008f, .102f, .179f, .199f}},
+    {"300 W", 912, 1746, 1640,
+     {873, 941, 1008, 1077, 1147, 1217, 1290, 1360, 1431, 1501, 1570, 1640, 1709, 1779, 1850, 1921, 1994, 2064, 2132},
+     {.001f, -.000f, .002f, -.000f, .001f, -.000f, .001f, .000f, -.001f, -.003f, -.004f, -.002f, -.015f, -.066f, -.072f,
+      -.013f, .080f, .166f, .201f}},
+};
+
+// The recorded points through fit(), then the run replayed through feed() against the piecewise-linear curve of
+// those points (+-noise A, uniform): the sweep stops one coarse step past the first clear drop, does the fine
+// pass and learns no later than the visible bend.
+static void testFieldData() {
+    for (const auto &f: g_fieldRuns) {
+        RectCal c;
+        c.n = (uint8_t) f.xs.size();
+        std::copy(f.xs.begin(), f.xs.end(), c.xs);
+        std::copy(f.ys.begin(), f.ys.end(), c.ys);
+        c.ideal = f.ideal;
+        c.state.store(RectCal::Fit);
+        c.fit(160e6f);
+        CHECK(c.get() == RectCal::Done && c.peak <= f.bend, "field %s recorded: '%s' peak %.0f", f.name, c.why, c.peak);
+        if (f.ideal == 1732) CHECK(c.learned <= -158, "field %s recorded: learned %d, was -160", f.name, c.learned);
+        printf("field %s recorded (%u pts): %s%s peak %.0f learned %+d applied %+d\n", f.name, c.n,
+               c.get() == RectCal::Done ? "done" : "failed: ", c.why, c.peak, c.learned, c.applied);
+        std::vector<std::pair<float, float>> pts;
+        for (size_t j = 0; j < f.xs.size(); ++j) pts.emplace_back(f.xs[j], f.ys[j]);
+        std::sort(pts.begin(), pts.end());
+        auto curve = [&](float x) {
+            if (x <= pts.front().first) return pts.front().second;
+            for (size_t j = 1; j < pts.size(); ++j)
+                if (x <= pts[j].first)
+                    return pts[j - 1].second + (pts[j].second - pts[j - 1].second) * (x - pts[j - 1].first) / (pts[j].first - pts[j - 1].first);
+            return pts.back().second;
+        };
+        for (int seed = 0; seed <= 8; ++seed) {
+            const float noise = seed ? 0.003f : 0.f;
+            std::mt19937 rng(seed);
+            std::uniform_real_distribution<float> u(-noise, noise);
+            const float vo = 26.7f, vi = vo * (1.f + f.ideal / (float) f.hs);
+            RectCal r;
+            r.start(0, f.hs, 16, PM - f.hs - 1);
+            int ls = r.lsHold(), lsMax = 0, lsPrev = -1;
+            float e = 0;
+            for (uint32_t us = 0; r.running() && us < 60000000; us += 2304) {
+                if (ls != lsPrev) e = u(rng), lsPrev = ls; // one noise value per window
+                lsMax = std::max(lsMax, ls);
+                const float i = 2.f + (ls == 16 ? 0.f : curve((float) ls) + e);
+                ls = r.feed(us, f.hs, vi, vo, i, true);
+            }
+            r.fit(160e6f);
+            CHECK(r.get() == RectCal::Done && r.peak <= f.bend + 10 && lsMax <= f.ideal + 120 && r.n >= 20,
+                  "field %s replay seed %d: '%s' peak %.0f, LS max ideal%+.0f, %u pts", f.name, seed, r.why, r.peak,
+                  lsMax - f.ideal, r.n);
+            if (seed <= 2)
+                printf("field %s replay seed %d: %s%s peak %.0f learned %+d, LS max ideal%+.0f, %u pts\n", f.name, seed,
+                       r.get() == RectCal::Done ? "done" : "failed: ", r.why, r.peak, r.learned, lsMax - f.ideal, r.n);
+        }
+    }
+}
+
 static void testShrinkMonotone() {
     SynchronousConverter c{}; initConv(c);
     const float tr = c.getPwmTickRate();
@@ -576,6 +648,35 @@ static void testFullSun() {
            "ideal, guard %d\n", done, lo, hi, alo, ahi, lsMaxPast, guards);
 }
 
+// Switch-node ring of fry/flat (230 ct period: 50.9 uH, 1.03 nF) at Q 3..40: past the crossing the current
+// dips, rings back above the baseline and drops again. The old sweep never saw two drops in a row, ran to
+// the cap and learned up to +252 ct (truth -35). Must fail or apply at most 20 ct late (as full sun).
+static void testRingBack() {
+    g_L0 = "50.9e-6";
+    for (float q: {3.f, 5.f, 10.f, 40.f})
+        for (uint32_t seed = 1; seed <= 2; ++seed) {
+            Host h(5.6f, 35, 0.f, 0.f);
+            h.r.rng.seed(seed);
+            h.r.voc = 79.6f;
+            h.r.p.setPv(5.6f, 79.6f, K); h.r.p.setBat(26.7f, 0.04f); h.r.p.setPassives(470e-6f, 470e-6f, 50.9e-6f);
+            h.r.p.setVin(79.6f); h.r.p.setVout(26.7f); h.r.p.setRing(1.03e-9f, q);
+            h.vi = h.viEwm = 79.6f; h.vo = h.voEwm = 26.7f;
+            h.op = (uint16_t) (26.7f / 57.f * PM);
+            h.run(8);
+            CHECK(h.ctl.requestStart(true), "requestStart(force)");
+            for (double t1 = h.r.t + 70; h.r.t < t1 && !h.tripped;) {
+                h.tick();
+                if (h.state() == RectCal::Done || h.state() == RectCal::Fail) break;
+            }
+            const RectCal &cal = h.ctl.cal;
+            CHECK(!h.tripped && (cal.get() == RectCal::Fail || (cal.get() == RectCal::Done && cal.applied <= -35 + 20)),
+                  "ring Q %.0f seed %u: state %d '%s' applied %d", q, seed, cal.get(), cal.why, cal.applied);
+            printf("ring 230 ct Q %2.0f seed %u: %s%s learned %+d applied %+d (truth -35, %u pts)\n", q, seed,
+                   cal.get() == RectCal::Done ? "done" : "failed: ", cal.why, cal.learned, cal.applied, cal.n);
+        }
+    g_L0 = "56e-6";
+}
+
 // Protection during the ramp-down from CCM: aborted, LS back to diode emulation, no ramp back when the
 // reverse-current guard opened the backflow switch; shutdown; Vin close to its trip. At HS -200 (D 0.47)
 // an open backflow switch trips highD-bflowOpen (shutdown), near the calibration point (D < 0.33) not.
@@ -688,6 +789,15 @@ static void testAbortAndModes() {
     CHECK(h.state() == RectCal::Fail && !strcmp(h.ctl.cal.why, "not in MPPT mode") && !h.c.manualRect_() && !h.rampTo,
           "mode: state %d why '%s' rampTo %u", h.state(), h.ctl.cal.why, h.rampTo);
     h.mppt = true;
+    h.ctl.requestStart();
+    h.run(4);
+    h.lim = true; // a limiter past its limit (D-only touches never reach RectCalIn::limiting)
+    h.tick();
+    CHECK(h.state() == RectCal::Fail && !strcmp(h.ctl.cal.why, "limiting") && !h.c.manualRect_(), "limit: '%s'",
+          h.ctl.cal.why);
+    CHECK(h.ctl.requestStart() && (h.tick(), h.state() == RectCal::Fail && !strcmp(h.ctl.cal.why, "limiting")),
+          "start while limiting: '%s'", h.ctl.cal.why);
+    h.lim = false;
     h.ctl.requestStart();
     h.run(4);
     h.ctl.drop();
@@ -1174,12 +1284,14 @@ int main(int argc, char **argv) {
     g_verbose = argc == 2 && !strcmp(argv[1], "-v");
     testDriverRule();
     testShrinkMonotone();
+    testFieldData();
     testVoltageBaseline();
     testDisturbance();
     testField();
     testForce();
     testForceProtection();
     testFullSun();
+    testRingBack();
     testProtectionWins();
     testAbortAndModes();
     testSchedule();
