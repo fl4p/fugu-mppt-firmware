@@ -24,6 +24,7 @@ struct Tracker {
     bool _direction = false; //true => increase duty cycle/decrease solar voltage
     time_ms _time = 0;
     time_ms _timeLastReverse = 0;
+    time_ms _timeSettle = 0; // settle window start: reversal or limiter hand-back
 
     float _curPower = 0.0;
     float _lastPower = 0.0;
@@ -55,18 +56,19 @@ struct Tracker {
         //avgPower.reset();
     }
 
-    // limiter hand-back: a reversal at vin, starts the settle window
+    // limiter hand-back: starts the settle window at vin
     void resetDirection(bool direction, float vin) {
         _direction = direction;
         _time = wallClockMs();
-        _timeLastReverse = _time;
-        _lastVin = vin;
+        _timeSettle = _time;
+        if (!isnan(vin)) _lastVin = vin;
         //maxPowerPoint.power = 0;
         //avgPower.reset();
     }
 
-    // settleMs: step settling time of the filter on powerSample
-    float update(float powerSample, uint16_t dutyCycle, float vin, float settleMs) {
+    // settleMs(): step settling time [ms] of the filter on powerSample, called once per tracker period
+    template<class SettleMs>
+    float update(float powerSample, uint16_t dutyCycle, float vin, SettleMs settleMs) {
         auto now = wallClockMs();
 
         //avgPower.add(powerSample);
@@ -93,8 +95,8 @@ struct Tracker {
                 // charge/discharge, which lags the duty by ~C*V/(2.5*I) in low light: the reference follows the
                 // power until the filter has settled and Vin is back at the reversal point. At most 1 s: the
                 // excursion of a longer blind leg costs more than the lag
-                auto sinceRev = now - _timeLastReverse;
-                if (sinceRev < 1000 && ((float) sinceRev < settleMs || (_direction ? vin > _lastVin : vin < _lastVin))) {
+                auto since = now - _timeSettle;
+                if (since < 1000 && ((float) since < settleMs() || (_direction ? vin > _lastVin : vin < _lastVin))) {
                     _lastPower = power;
                 } else if ((
                         absDp >= minPowerStep
@@ -120,7 +122,7 @@ struct Tracker {
 
                 if(rev) {
                     _direction = !_direction;
-                    _timeLastReverse = now;
+                    _timeLastReverse = _timeSettle = now;
                     _lastVin = vin;
                 }
             }

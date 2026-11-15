@@ -91,11 +91,11 @@ and the re-reversals after a turn walked Vin down in the same way.
 
 The window lasts until both of these hold, but never longer than 1 s:
 
-- The power filter has settled. Each power sensor (current and voltage) has a 2-pass EWMA with span $N$, so
-  each pass has a time constant of $\tau \approx (N-1)/2$ samples. Its step response reaches 99 % after
-  $6.64\,\tau$. At the sensor's sample rate $f_s$, the settling time is
-  $t_f = 6.64 \cdot \frac{N-1}{2 f_s}$. The slower of the two sensors sets $t_f$. The sample rate is the one the
-  sampler uses to tune the sensor's notch filter.
+- The power filter has settled. Each power sensor (current and voltage) has a median of 5, which delays a
+  step by 2 samples, and a 2-pass EWMA with span $N$, so each pass has a time constant of $\tau \approx N/2$
+  samples. The EWMA step response reaches 99 % after $6.64\,\tau$. At the sensor's sample rate $f_s$, the
+  settling time is $t_f = (3.32\,N + 2) / f_s$. The slower of the two sensors sets $t_f$. The sample rate is
+  the one the sampler uses to tune the sensor's notch filter.
 - Vin is back at the voltage of the reversal. In low light the input capacitor makes Vin lag the duty by
   about $C V / (2.5\, I)$, for example 0.34 s with 470 µF at 2 W and 60 V. Vin keeps moving in the old
   direction for a moment, then turns. When it gets back to the reversal voltage, the capacitor current has
@@ -103,10 +103,13 @@ The window lasts until both of these hold, but never longer than 1 s:
 
 | Power sensor profile                  | $f_s$  | $N$ | $t_f$   |
 |---------------------------------------|--------|-----|---------|
-| INA226, 1.1 ms conversion             | 450 Hz | 20  | 140 ms  |
-| INA226 at its slowest rate            | 200 Hz | 20  | 315 ms  |
-| INA226, filter length 60              | 450 Hz | 60  | 435 ms  |
+| INA226, 1.1 ms conversion             | 450 Hz | 20  | 152 ms  |
+| INA226 at its slowest rate            | 200 Hz | 20  | 342 ms  |
+| INA226, filter length 60              | 450 Hz | 60  | 447 ms  |
 | ADS1015, three muxed channels         | 120 Hz | 60  | 1 s (capped from 1.6 s) |
+
+A limiter hand-back starts the window but does not count as a reversal for the slow-mode condition below,
+so a release after a long derate or CV hold continues in fast mode.
 
 The 1 s cap bounds a leg that the tracker walks without judging power. In simulation, a 1.5 s window
 harvested less than a fixed 150 ms window, because the excursion it allows costs more than the filter lag
@@ -114,7 +117,8 @@ does.
 
 Slow mode evaluates every 500 ms, so the filter part of the window rarely covers an evaluation there. Skipping
 the first slow-mode evaluation after each reversal made no measurable difference in simulation, so slow mode
-uses the same rule.
+uses the same rule. The Vin condition has no deadband: ending the window 0.1 % of Vin early lost about 1 % of
+harvest at 2 to 20 W, and ending it 0.1 % late made no measurable difference.
 
 The tracker keeps its own MPP record. It resets the record after 5 min, or when the current power is below 85 % of
 the recorded MPP and the record is more than 30 s old.

@@ -18,7 +18,7 @@
 
 static void advanceMs(unsigned long ms) { loopWallClockUs_ += ms * 1000ULL; }
 
-static constexpr float kSettleMs = 150; // power-filter settling (fmetal)
+static float kSettleMs() { return 150; } // power-filter settling (fmetal)
 
 // power < 1: tracker forces direction=true (pump more power) regardless of prior direction.
 void test_tracker_low_power_forces_pump() {
@@ -137,12 +137,12 @@ void test_tracker_settle_window_follows_filter() {
     auto &t = *tp;
     t.resetTracker(100.f, /*direction=*/true);
     advanceMs(100);
-    t.update(90.f, 100, 0.f, 400);   // reverse
+    t.update(90.f, 100, 0.f, [] { return 400.f; });   // reverse
     advanceMs(300);
-    t.update(80.f, 100, 0.f, 400);   // 300 ms < 400 ms: ignored
+    t.update(80.f, 100, 0.f, [] { return 400.f; });   // 300 ms < 400 ms: ignored
     TEST_ASSERT_FALSE(t._direction);
     advanceMs(200);
-    t.update(70.f, 100, 0.f, 400);
+    t.update(70.f, 100, 0.f, [] { return 400.f; });
     TEST_ASSERT_TRUE(t._direction);
 }
 
@@ -153,20 +153,20 @@ void test_tracker_settle_waits_for_vin() {
     auto &t = *tp;
     t.resetTracker(100.f, /*direction=*/true);
     advanceMs(100);
-    t.update(90.f, 100, 50.f, 0);    // reverse at Vin 50, Vin should rise now
+    t.update(90.f, 100, 50.f, [] { return 0.f; });    // reverse at Vin 50, Vin should rise now
     TEST_ASSERT_FALSE(t._direction);
     advanceMs(100);
-    t.update(80.f, 100, 49.f, 0);    // Vin still falling: ignored
+    t.update(80.f, 100, 49.f, [] { return 0.f; });    // Vin still falling: ignored
     TEST_ASSERT_FALSE(t._direction);
     advanceMs(100);
-    t.update(70.f, 100, 50.2f, 0);   // Vin back: decide
+    t.update(70.f, 100, 50.2f, [] { return 0.f; });   // Vin back: decide
     TEST_ASSERT_TRUE(t._direction);
     // Vin never comes back: decisions resume after 1 s
     advanceMs(500);
-    t.update(60.f, 100, 50.5f, 0);
+    t.update(60.f, 100, 50.5f, [] { return 0.f; });
     TEST_ASSERT_TRUE(t._direction);
     advanceMs(600);
-    t.update(50.f, 100, 50.5f, 0);
+    t.update(50.f, 100, 50.5f, [] { return 0.f; });
     TEST_ASSERT_FALSE(t._direction);
 }
 
@@ -201,4 +201,25 @@ void test_tracker_vin_band_symmetric() {
     d = t._direction;
     TEST_ASSERT_TRUE(d == step(39.85f));    // 1.95 V < 5 % of 39.85 (5 % of 37.9 would reverse here)
     TEST_ASSERT_TRUE(d != step(39.95f));
+}
+
+// A long limit (derate, CV hold) is not a reversal: on release near a stale MPP the tracker stays in fast mode,
+// and a NaN Vin at hand-back keeps the Vin reference.
+void test_tracker_long_limit_release_stays_fast() {
+    loopWallClockUs_ = 1'000'000;
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    t.resetTracker(100.f, /*direction=*/true);
+    for (int i = 0; i <= 20; ++i) {
+        advanceMs(100);
+        t.update(100.f + (float) i, 100, 50.f, kSettleMs); // climbing: new MPP each period
+    }
+    for (int i = 0; i < 1200; ++i) { // 2 min limiter
+        advanceMs(100);
+        t.resetDirection(false, i == 1199 ? NAN : 50.f);
+    }
+    TEST_ASSERT_EQUAL_FLOAT(50.f, t._lastVin);
+    advanceMs(100);
+    t.update(118.f, 100, 50.f, kSettleMs); // within 15 % of the 2 min old MPP
+    TEST_ASSERT_FALSE(t.slowMode);
 }

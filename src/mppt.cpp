@@ -287,7 +287,8 @@ void MpptController::update() {
             controlValue = limitingControlValue;
         } else {
             controlMode = MpptControlMode::MPPT;
-            controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get(), powerSettleMs());
+            controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get(),
+                                          [this] { return powerSettleMs(); });
             controlValue *= speedScale;
         }
     } else if (!keepTracker) {

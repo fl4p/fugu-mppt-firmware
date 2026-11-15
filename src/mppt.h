@@ -345,11 +345,11 @@ public:
 
     [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }
 
-    // 99 % step settling of the slower power sensor's 2-pass EWMA: 6.64 tau, tau = (span-1)/2 samples
+    // 99 % step settling of the slower power sensor: 2-pass EWMA 6.64 tau (tau ~ span/2 samples) + median-of-5 delay
     [[nodiscard]] float powerSettleMs() const {
         auto ms = [](const Sensor *s) {
             float fs = static_cast<const PhysicalSensor *>(s)->notchFs;
-            return fs > 0 ? 3320.f * ((float) s->ewm.span() - 1.f) / fs : 1000.f;
+            return fs > 0 ? (3320.f * (float) s->ewm.span() + 2000.f) / fs : 1000.f;
         };
         return std::max(ms(sensorPhysicalI), ms(sensorPhysicalU));
     }
