@@ -34,6 +34,7 @@ The following table lists the ADC and control-loop log lines, what they mean, an
 | `ina22x: <n> timeout!` | the INA226 alert did not arrive in time | `ina22x_alert` pin, `ina22x_conv_time_us` |
 | `Loop latency high (…), shutdown!` | control loop slower than `sensor.conf::expected_hz` | `expected_hz` too high for the ADC settings, or a blocked RT path |
 | `Calibration failed, <sensor> …` | a sensor was not at rest during zero-current calibration | load or input connected at boot, wrong `_midpoint` |
+| `Sensor <sensor> zero not settled #<n>: <checks> …` | after a stop, the current-sensor zero did not settle within 1.2 s; the previous zero is kept. `<checks>` names the failed tests (`mean`: the reading still moves, `noise`: noise above 5 % of the zero limit, `ratio`: noise changed between blocks) with their numbers. From the fourth calibration in a row, a zero whose mean is stable is taken without the noise tests (`zero taken w/o noise check`) | the unsettled count in `sensor`; a slow current decay after high-power stops, or a noisy current sensor |
 | `error during sensor/converter/tracker setup: …` | a config file is invalid; the control loop is not started | the message names the key |
 | `board.conf expects MCU …` | config for the other chip | [ESP32 variants](hardware/esp32-variants.md) |
 

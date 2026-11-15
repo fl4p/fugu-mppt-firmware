@@ -1518,6 +1518,8 @@ static void cmdSensor(cmd *c) {
                  s->isVirtual ? "virtual" : "physical");
         UART_LOG("  num=%6lu  last=%7.3f %c   prev=%7.3f %c  raw=%8.4f", s->numSamples, s->last, u, s->previous, u,
                  s->lastRaw);
+        if (s->params.calibrationConstraints.calibrateOffset)
+            UART_LOG("  zero=%7.4f %c  unsettled=%u (in a row)", s->calibrationAvg, u, s->zeroMiss);
         UART_LOG("  EWM(%4lu):  avg= %7.3f %c   std*=%7.4f %c  std%%=%7.3f %%", s->ewm.span(),
                  s->ewm.avg.get(), u,
                  sqrt(s->ewm.std.get()) * abs(s->ewm.avg.get()), u,

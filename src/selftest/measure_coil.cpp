@@ -91,15 +91,17 @@ static float readZero(uint32_t dwellMs) {
 
 static void logSplit(const coilfit::Result &f) {
     if (f.k != f.k) return;
-    char b[200];
-    int o = snprintf(b, sizeof(b), "measure-coil: L(Ipk)");
+    char b[240];
+    int o = snprintf(b, sizeof(b), "measure-coil: L(Ipk), +-noise/offsets:");
     for (int i = 0; i < f.nb && o < (int) sizeof(b); ++i)
-        o += snprintf(b + o, sizeof(b) - o, "%s %.1f-%.1fA %.2fuH+-%.1f%%", i ? " |" : "", f.lo[i], f.hi[i],
-                      f.Lb[i] * 1e6f, f.seb[i] * 100.0f);
+        o += snprintf(b + o, sizeof(b) - o, "%s %.1f-%.1fA %.2fuH+-%.1f/%.1f%%", i ? " |" : "", f.lo[i], f.hi[i],
+                      f.Lb[i] * 1e6f, f.seb[i] * 100.0f, f.sysb[i] * 100.0f);
     UART_LOG("%s", b);
-    UART_LOG("measure-coil: L(Ipk) line: %.2f uH at 0 A, slope %+.2f +-%.2f %%/A over %.1f-%.1f A%s", f.L0 * 1e6f,
-             f.k * 100.0f, f.kse * 100.0f, f.lo[0], f.hi[f.nb - 1],
-             fabsf(f.k) < 2 * f.kse ? " (no significant slope)" : "");
+    const float w = f.ksys + 2 * f.kse, lo = f.k - w;
+    snprintf(b, sizeof(b), lo < 0 ? "drop <= %.1f %%/A" : "no drop resolved", -lo * 100.0f);
+    UART_LOG("measure-coil: L(Ipk) slope %+.2f +-%.2f %%/A over %.1f-%.1f A, Iout/on-time offsets add up to +-%.2f: "
+             "coil %+.2f..%+.2f %%/A, %s", f.k * 100.0f, f.kse * 100.0f, f.lo[0], f.hi[f.nb - 1], f.ksys * 100.0f,
+             lo * 100.0f, (f.k + w) * 100.0f, b);
 }
 
 static bool measWriteConf(const char *key, const char *val) {
@@ -129,7 +131,8 @@ static float sweepL0(const MeasArgs &a) {
     if (z0 != z0) { UART_LOG("measure-coil: converter did not stop for the Iout zero"); return NAN; }
     UART_LOG("      H      D    Vin   Vout   Iout mode    L_uH");
     float d[MEAS_MAX_PTS], vi[MEAS_MAX_PTS], vo[MEAS_MAX_PTS], io[MEAS_MAX_PTS];
-    int n = 0;
+    uint8_t row[MEAS_MAX_PTS]; // sweep position of each point, for the zero interpolation
+    int n = 0, rows = 0;
     for (int H = h_lo; H <= h_hi && n < MEAS_MAX_PTS; H += step) {
         Reading r{};
         settleAndRead((uint16_t) H, a.dwellMs, r);
@@ -140,15 +143,16 @@ static float sweepL0(const MeasArgs &a) {
         UART_LOG("  %5u %6.3f %6.2f %6.2f %6.3f  %3s %7.2f", r.H, D, r.vin, r.vout, r.iout,
                  r.dcm ? "DCM" : "CCM", L * 1e6f);
         if (r.dcm && L == L) {
-            d[n] = D, vi[n] = r.vin, vo[n] = r.vout, io[n] = r.iout;
+            d[n] = D, vi[n] = r.vin, vo[n] = r.vout, io[n] = r.iout, row[n] = (uint8_t) rows;
             ++n;
         }
+        ++rows;
         if (r.iout > iMaxLim) { UART_LOG("  Iout %.2f > %.2f; stopping", r.iout, iMaxLim); break; }
         if (!r.dcm) { UART_LOG("  entered CCM; stopping"); break; }
     }
     const float z1 = readZero(zDwell);
     const bool disturbed = !(fabsf(z1 - z0) <= coilfit::kZeroTol); // also: z1 unread
-    const float zsig = coilfit::zeroCorrect(io, n, z0, z1 == z1 ? z1 : z0);
+    const float zsig = coilfit::zeroCorrect(io, n, z0, z1 == z1 ? z1 : z0, row, rows);
     float iMaxSeen = 0;
     for (int i = 0; i < n; ++i) iMaxSeen = max(iMaxSeen, io[i]);
     float ifloor = max(0.15f, 0.2f * iMaxSeen);
@@ -156,11 +160,13 @@ static float sweepL0(const MeasArgs &a) {
     for (int i = 0; i < n; ++i)
         if (io[i] >= ifloor) d[nk] = d[i], vi[nk] = vi[i], vo[nk] = vo[i], io[nk] = io[i], ++nk;
     if (nk < 3) { UART_LOG("measure-coil: only %d DCM pts above %.2f A; widen band or wait for sun", nk, ifloor); return NAN; }
-    const auto f = coilfit::fit(d, vi, vo, io, nk, fsw, zsig);
+    const float ton = max(coilfit::kOnTimeMin, max(converter.getDeadTimeHlNs(), converter.getDeadTimeLhNs()) * 1e-9f);
+    const auto f = coilfit::fit(d, vi, vo, io, nk, fsw, zsig, ton);
     if (f.f > 0)
-        UART_LOG("measure-coil: L = %.2f uH  (ring fit, %d DCM pts, Iout>=%.2fA, +-%.1f%%; ring %.0f kHz = %.1f nF node C,"
-                 " ripple +-%.0f%%, %.1f periods; median of points %.2f uH)", f.L * 1e6f, f.n, ifloor, f.se * 100.0f,
-                 f.f * 1e-3f, 1e9f / (39.478418f * f.f * f.f * f.L), f.amp * 100.0f, f.periods, f.Lmed * 1e6f);
+        UART_LOG("measure-coil: L = %.2f uH  (ring fit, %d DCM pts, Iout>=%.2fA, +-%.1f%% noise +-%.1f%% syst; ring %.0f kHz"
+                 " = %.1f nF node C, ripple +-%.0f%%, %.1f periods; median of points %.2f uH)", f.L * 1e6f, f.n, ifloor,
+                 f.se * 100.0f, f.sys * 100.0f, f.f * 1e-3f, 1e9f / (39.478418f * f.f * f.f * f.L), f.amp * 100.0f,
+                 f.periods, f.Lmed * 1e6f);
     else
         UART_LOG("measure-coil: L = %.2f uH  (median of %d DCM pts, Iout>=%.2fA; ring not resolved: %s, expect up to +-5%%)",
                  f.L * 1e6f, f.n, ifloor, f.n < coilfit::kMinFitPts ? "too few points" : "no periodic term");
