@@ -4,7 +4,8 @@
 
 Follow-up to `doc/research/vconv-vs-spice.md` (the SPICE cross-check; its artifacts are in `/tmp/vconv-spice/`).
 Step 1: fix the buck plant in `src/sim/vconv.cpp`, make the tracker scenarios run on it, check it against the SPICE
-numbers, and re-run the tracker commits de37d33, ed5ffe5, 9e1dd13, 8b68511 and 738cc16 on it. No tracker code was
+numbers, and re-run the tracker commits de37d33, ed5ffe5, 9e1dd13, 8b68511 and 738cc16 on it. Section 4 rebases the
+work onto main 9dc0351 and compares main's tracker with 738cc16 and pre. No tracker code was
 changed. Nothing was flashed or sent to a device.
 
 ## 1. Plant changes
@@ -221,7 +222,8 @@ LS zero-crossing shift (+40..90 counts in SPICE), return fraction of reverse ene
 
 ## 3. Tracker commits on the corrected plant
 
-All numbers in this section come from one sweep run on the Linux host pgx93 (`results2-pgx93.tsv`, 958 runs,
+This section ran on the e11399d plant, before the rebase; section 4 shows the later plant fix changes none of its
+rows. All numbers in this section come from one sweep run on the Linux host pgx93 (`results2-pgx93.tsv`, 958 runs,
 0 errors after one retry of 56 runs that hit a missing remote build stamp). mppt-sim output on pgx93 is not
 bit-identical to macOS (libm differs), so a pgx93 run is a different noise realisation of the same case. No Mac rows
 are mixed in, and every variant of a paired comparison ran on pgx93. The remote binaries were built from the same
@@ -420,7 +422,135 @@ Every disputed cell; pre → main only where its mean is below −0.15 pp or one
 | wx-sweep-fall | 1 | 90.1 | - | - | - | - | 90.2 | +0.10 |
 | mean of scenarios | | 91.36 | - | - | - | - | 95.61 | |
 
-## 4. Limitations
+## 4. Rebased onto main 9dc0351 (branch `sim-plant-spice-r`)
+
+f42c3a6 and e11399d were cherry-picked onto main 9dc0351, followed by a third commit with the review follow-ups
+(energy-leak fix and audit, symmetric ripple band, `kCcmRef` check in `extract.py`, `t_sw` loss only at a real HS
+turn-off). Sections 1-3 describe the plant as of e11399d; section 3's tracker numbers ran on that plant.
+
+**Conflict.** Only `test/host-stub/mppt-sim.cpp` conflicted: main had generalised the board defaults to any `wx-*-fry`
+/ `wx-*-flat` scenario (ring off, the board's ADC rate) for its new wx-ramp and wx-wob scenarios, and this branch had
+added the `SIM_RING=fry` default for the other wx scenarios. Both were kept; the suffix rules run first, so the new
+scenarios keep their board plant with the ring off. Main did not touch `src/sim/vconv.*` or `src/adc/vconv.h`, and
+`setLBias` and the noise-replay hook predate the branch, so the plant merged without change.
+
+**Checks on the rebased tree.**
+
+| check | result |
+|---|---|
+| host tests: vconv-test, dcm-current, rect-cal, coil-fit, izero, bms-cutoff, dawn | pass (vconv 1309 / 1309, izero 511 / 511) |
+| `vconv-spice-check.sh` | pass; the self-tests (ideal plant, `t_sw` × 2, `ring_q` 60) fail as intended; energy audit passes |
+| defaults-off identity against 9dc0351 with `SIM_RING=ideal` | 33 scenarios identical; rcal-\* differ by design (diode drop on the HS return); board-suffix scenarios identical except wx-sun-fry (divergence from 825 s) and wx-wob-fry (from 675 s; 97.9 vs 97.8 % harvest), which run the fitted board plant |
+| esp32s3 default build, VCONV build | build, no new warnings in the plant or sensor setup |
+| on-target Unity suite (`RUN_TESTS=1`, incl. test_tracker and test_vconv) | not run: the suite builds, but in QEMU (esp32s3, DIO flash) it panics with a coprocessor exception in a static constructor (`MpptController` in `test/main.cpp`) before Unity starts; neither file is touched by the branch. The tracker code is main's, unchanged |
+
+**Effect of the follow-up plant fix on the trackers.** The energy-leak fix changed nothing in the tracker runs: pre
+and 738cc16 rebuilt on the fixed plant give the same row, field for field, on every key of section 3 (270 and 284
+keys). The leak sat at low HS counts with no LS phase, which the scenarios do not reach for long.
+
+### Main's tracker (v7main) against 738cc16 and pre
+
+Variants, all on the 311c13fb plant and run on pgx93 only (`results4-pgx93.tsv`, 1086 runs, 0 errors after retries):
+pre (d62bb11 tracker) and 738cc16 rebuilt as in section 3 with main's wx-ramp/wx-wob harness added, and main 9dc0351
+itself. Main's tracker differs from 738cc16 by e18ff4b and b0c1055 (reset before slow-mode entry, a limiter hand-back
+ends slow mode, 45 s limit). Keys: every seed and offset of section 3 for pre and main, plus main's steady-sun
+scenarios wx-sun, wx-ramp and wx-wob on each board plant (ring off, the board's ADC rate): noise-free, measured noise at
+offsets 0-16 s (step 2), and the slow-wander noise profiles (`fry-wander`, `flat-wander`) at 0 / 6 / 13 s.
+
+Mean of scenarios (the nine of section 3; the three steady-sun scenarios per board). pre has 14 more runs here than in
+section 3 (it now has every key of 738cc16), hence 93.23 / 89.84 instead of 93.24 / 89.86:
+
+| plant, noise | pre | 738cc16 | main 9dc0351 | main − 738cc16 |
+|---|--:|--:|--:|--:|
+| fry, Gaussian | 93.17 | 95.49 | 95.66 | +0.17 |
+| fry, measured | 93.23 | 95.63 | 95.89 | +0.26 |
+| flat, Gaussian | 92.63 | 95.48 | 95.77 | +0.29 |
+| flat, measured | 89.84 | 93.52 | 93.51 | −0.01 |
+| fry-hq, Gaussian | 93.13 | 95.30 | 95.42 | +0.12 |
+| flat-hq, Gaussian | 91.36 | 95.61 | 95.69 | +0.08 |
+| fry, steady sun, noise-free | 99.40 | 98.37 | 98.53 | +0.16 |
+| fry, steady sun, measured | 99.40 | 99.22 | 99.33 | +0.11 |
+| fry, steady sun, wander | 99.40 | 99.23 | 99.37 | +0.14 |
+| flat, steady sun, noise-free | 98.93 | 98.40 | 98.80 | +0.40 |
+| flat, steady sun, measured | 99.13 | 99.26 | 99.21 | −0.05 |
+| flat, steady sun, wander | 99.18 | 99.52 | 99.21 | −0.31 |
+
+**main vs 738cc16, paired by seed and offset.** No scenario is worse beyond the seed spread (flag: mean below −0.1 pp
+and below −2 standard errors of the pairs). The largest gains are on the cap-limited scenarios: fry wx-cloud-cv with
+measured noise +1.27 pp (9 of 9 offsets better), which more than undoes 738cc16's −0.49 pp there (section 3), and
+wx-cloud-cv-ripple +0.4..+1.0 pp on every plant. Negative means, none of them flagged:
+
+| plant, noise | scenario | n | mean | worst | best | pairs worse by > 0.1 |
+|---|---|--:|--:|--:|--:|--:|
+| flat, wander | wx-wob-flat | 3 | −0.83 | −1.3 | +0.0 | 2 |
+| flat-hq, Gaussian | wx-low-slow | 9 | −0.32 | −2.3 | +1.1 | 5 |
+| flat, measured | wx-dusk | 3 | −0.17 | −0.7 | +0.2 | 1 |
+| fry, Gaussian | wx-low | 9 | −0.13 | −1.8 | +0.5 | 4 |
+| flat, measured | wx-wob-flat | 9 | −0.10 | −1.7 | +0.8 | 4 |
+| flat, wander | wx-ramp-flat | 3 | −0.10 | −0.2 | +0.0 | 1 |
+| flat, measured | wx-low | 18 | −0.09 | −1.1 | +1.0 | 7 |
+| fry-hq, Gaussian | wx-low | 9 | −0.09 | −2.6 | +1.7 | 4 |
+
+wx-wob-flat with wander noise has 3 offsets of an overlapping capture; it is the case to re-run with more offsets
+before calling it either way.
+
+**main vs pre, paired.** Main is better on every scenario of section 3 and on wx-sun and wx-ramp, but **worse on
+wx-wob on both boards** (0.5 % irradiance wobble at 0.2 Hz):
+
+| plant, noise | n | pre | 738cc16 | main | main − pre (worst) | pairs worse |
+|---|--:|--:|--:|--:|--:|--:|
+| fry, noise-free | 1 | 99.7 | 95.6 | 96.0 | −3.7 | 1 / 1 |
+| fry, measured | 9 | 99.31 | 98.10 | 98.44 | −0.87 (−2.3) | 6 / 9 |
+| fry, wander | 3 | 99.23 | 98.27 | 98.67 | −0.57 (−1.1) | 2 / 3 |
+| flat, noise-free | 1 | 99.5 | 95.4 | 96.6 | −2.9 | 1 / 1 |
+| flat, measured | 9 | 99.17 | 98.14 | 98.04 | −1.12 (−2.2) | 9 / 9 |
+| flat, wander | 3 | 99.10 | 98.83 | 98.00 | −1.10 (−1.7) | 3 / 3 |
+
+The loss is already present at 738cc16, so it comes from the tracker commits between pre and 738cc16 (de37d33 …
+738cc16), not from main's later changes, which recover part of it on fry. The intermediate variants were not run on
+wx-wob, so which commit it is remains open.
+
+#### Steady-sun scenarios (harvest % of GMPP)
+
+| board, noise | scenario | n | pre | 738cc16 | main |
+|---|---|--:|--:|--:|--:|
+| fry, noise-free | wx-sun-fry | 1 | 99.5 | 99.9 | 99.9 |
+| | wx-ramp-fry | 1 | 99.0 | 99.6 | 99.7 |
+| | wx-wob-fry | 1 | 99.7 | 95.6 | 96.0 |
+| fry, measured | wx-sun-fry | 9 | 99.50 ±0 | 99.87 (99.8..99.9) | 99.89 (99.8..99.9) |
+| | wx-ramp-fry | 9 | 99.40 (99.3..99.5) | 99.69 (99.6..99.7) | 99.67 (99.6..99.7) |
+| | wx-wob-fry | 9 | 99.31 (98.5..99.9) | 98.10 (96.4..99.1) | 98.44 (96.7..99.5) |
+| fry, wander | wx-sun-fry | 3 | 99.47 (99.4..99.6) | 99.83 (99.8..99.9) | 99.80 ±0 |
+| | wx-ramp-fry | 3 | 99.50 (99.4..99.6) | 99.60 ±0 | 99.63 (99.6..99.7) |
+| | wx-wob-fry | 3 | 99.23 (99.0..99.5) | 98.27 (96.5..99.5) | 98.67 (98.4..99.0) |
+| flat, noise-free | wx-sun-flat | 1 | 99.5 | 99.9 | 99.9 |
+| | wx-ramp-flat | 1 | 97.8 | 99.9 | 99.9 |
+| | wx-wob-flat | 1 | 99.5 | 95.4 | 96.6 |
+| flat, measured | wx-sun-flat | 9 | 99.54 (99.3..99.6) | 99.87 (99.8..99.9) | 99.82 (99.7..99.9) |
+| | wx-ramp-flat | 9 | 98.68 (98.3..99.0) | 99.78 (99.7..99.9) | 99.78 (99.6..99.9) |
+| | wx-wob-flat | 9 | 99.17 (98.7..99.9) | 98.14 (96.9..99.3) | 98.04 (97.6..98.5) |
+| flat, wander | wx-sun-flat | 3 | 99.60 (99.5..99.7) | 99.90 ±0 | 99.90 ±0 |
+| | wx-ramp-flat | 3 | 98.83 (98.7..99.0) | 99.83 (99.8..99.9) | 99.73 (99.7..99.8) |
+| | wx-wob-flat | 3 | 99.10 (98.5..99.9) | 98.83 (97.8..99.4) | 98.00 (97.8..98.2) |
+
+#### Section-3 scenarios, main (harvest % of GMPP; pre and 738cc16 are unchanged from section 3)
+
+| scenario | fry G | fry M | flat G | flat M | fry-hq G | flat-hq G |
+|---|--:|--:|--:|--:|--:|--:|
+| wx-dawn | 97.30 | 97.20 | 97.30 | 97.33 | 96.50 | 98.30 |
+| wx-low | 97.81 | 98.46 | 98.24 | 98.14 | 96.81 | 97.36 |
+| wx-low-slow | 98.51 | 98.44 | 98.47 | 98.49 | 98.31 | 97.98 |
+| wx-mid | 99.60 | 99.60 | 99.63 | 99.70 | 99.60 | 99.60 |
+| wx-dusk | 98.50 | 98.50 | 98.70 | 98.37 | 98.40 | 98.50 |
+| wx-cloud | 98.60 | 98.57 | 98.50 | 98.60 | 98.50 | 98.40 |
+| wx-cloud-cv | 92.60 | 92.38 | 92.80 | 83.18 | 92.60 | 92.80 |
+| wx-cloud-cv-ripple | 87.91 | 89.64 | 88.12 | 77.28 | 87.93 | 88.03 |
+| wx-sweep-fall | 90.10 | 90.23 | 90.20 | 90.47 | 90.10 | 90.20 |
+| mean | 95.66 | 95.89 | 95.77 | 93.51 | 95.42 | 95.69 |
+
+G: Gaussian scenario noise, M: measured noise replay; n as in section 3.
+
+## 5. Limitations
 
 - Q is the dominant unknown for the dawn ripple; field Q and the undamped-bench Q bracket it. Results on `-hq` are
   given for that reason.
