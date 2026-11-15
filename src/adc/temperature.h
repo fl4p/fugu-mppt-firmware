@@ -225,6 +225,13 @@ public:
     }
 
     [[nodiscard]] float last() const override { return ewma.get(); }
+
+    // unfiltered, bypasses median/EWMA state
+    float readRaw() {
+        float t = NAN;
+        if (temp_sensor) temperature_sensor_get_celsius(temp_sensor, &t);
+        return t;
+    }
 };
 
 

@@ -32,6 +32,11 @@ private:
     TaskNotification taskNotification{};
 
     PeriodicTimer periodic_timer{};
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+    uint16_t waitMs = 10;
+#else
+    static constexpr uint16_t waitMs = 10;
+#endif
 
 public:
     bool init(const ConfFile &boardConf) override {
@@ -94,8 +99,17 @@ public:
     }
 
     bool hasData() override {
-        return taskNotification.wait(10);
+        return taskNotification.wait(waitMs);
     }
+
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+    // `pwr rt`: hasData() waits 1.5 periods so slow rates do not add 10 ms timeout wakes
+    esp_err_t setRate(uint32_t hz) {
+        esp_err_t e = periodic_timer.setFreq(hz);
+        if (e == ESP_OK) waitMs = std::max<uint32_t>(10, 1500 / periodic_timer.freq());
+        return e;
+    }
+#endif
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
     }

@@ -10,6 +10,12 @@
 
 constexpr auto withDebugFields = false;
 
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+uint32_t g_teleMinPointUs = 20'000; // `pwr tele`
+#else
+static constexpr uint32_t g_teleMinPointUs = 20'000;
+#endif
+
 // Controller output -> duty slew rate [normalized duty per second]. The loop gain of a controller
 // is Kp * this, so keep it named rather than as a literal buried in the update path.
 // updateCV() additionally applies a low-duty gate factor on top (see there).
@@ -541,7 +547,7 @@ void MpptController::telemetry() {
     if ((!netReady && !bleReady) || sampler.halted)
         return;
 
-    if (wallClockUs() - _lastPointWrite < 20'000) {
+    if (wallClockUs() - _lastPointWrite < g_teleMinPointUs) {
         return;
     }
 
