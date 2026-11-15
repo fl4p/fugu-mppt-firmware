@@ -158,7 +158,7 @@ void MpptController::update() {
     //                                        [](const CVP &a, const CVP &b) { return a.second < b.second; });
 
     MpptControlMode controlMode = MpptControlMode::None;
-    float controlValue = 0;
+    float controlValue = 0, dutyStep = 0;
 
     // A limiter that only touches (D-term on a ripple crest) must not steer the tracker: resetting its
     // direction on every touch and an upward step on every release walked the duty up through the MPP.
@@ -287,9 +287,11 @@ void MpptController::update() {
             controlValue = limitingControlValue;
         } else {
             controlMode = MpptControlMode::MPPT;
+            const bool slow = tracker.slowMode;
             controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get(),
                                           [this] { return powerSettleMs(); });
             controlValue *= speedScale;
+            if (tracker.slowMode && !slow) dutyStep = controlValue, controlValue = 0; // slow-mode entry: counts
         }
     } else if (!keepTracker) {
         // tracker.resetTracker(power_smooth, controlValue > 0);
@@ -306,7 +308,7 @@ void MpptController::update() {
 
     if (lastUs) {
         // normalize the control value to pwmMax and scale it with update rate to fix buck slope rate
-        auto fp = controlValue * kCtrlSlewLimit * (float) converter.pwmCtrlMax * dtCtrl;
+        auto fp = controlValue * kCtrlSlewLimit * (float) converter.pwmCtrlMax * dtCtrl + dutyStep;
         if (!_sweeping && converter.getCtrlOnPwmCnt() < converter.pwmCtrlMin * 2) {
             // slow-down control loop for low duty cycles (low-load condition)
             // TODO does this makes sense? the aim here is to stabilize Vout in low/no-load condition

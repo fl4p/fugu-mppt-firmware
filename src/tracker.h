@@ -14,7 +14,7 @@ struct MPP {
 /**
  * Implement local MPP tracking perturb / observe.
  * If it doesn't find a new MPP for some time, it'll switch into slow mode.
- * Slow mode uses longer smoothing filters, a lower update frequency and a slower perturbation speed
+ * Slow mode uses a lower update frequency, smaller power thresholds and a slower perturbation speed
  */
 struct Tracker {
     float minPowerStep = 1.0f;
@@ -25,27 +25,21 @@ struct Tracker {
     time_ms _time = 0;
     time_ms _timeLastReverse = 0;
     time_ms _timeSettle = 0; // settle window start: reversal or limiter hand-back
+    time_ms _timeTakeover = 0; // limiter hand-back or slow mode left its Vin band
 
     float _curPower = 0.0;
     float _lastPower = 0.0;
     float _lastVin = 0.0;
-
-
-    //EWMA<float> avgPower{200};
+    float _slowVin = 0; // Vin at slow-mode entry
 
     MeanAccumulator _powerBuf{};
     MeanAccumulator _vinBuf{};
-
-    //RunningMedian3<float> med3{};
-    //bool _sweeping = false;
-    //unsigned long _lastSweepTime = 0;
 
     MPP maxPowerPoint;
 
     float dP = NAN;
 
     bool slowMode = false;
-    //unsigned long slowModeTime = false;
 
     void resetTracker(float power, bool direction) {
         _direction = direction;
@@ -53,26 +47,30 @@ struct Tracker {
         _lastPower = power;
         maxPowerPoint.power = 0;
         maxPowerPoint.vin = 0;
-        //avgPower.reset();
     }
 
-    // limiter hand-back: starts the settle window at vin
+    void setSlowMode(bool slow) {
+        slowMode = slow;
+        frequency = slow ? 2 : 30;
+        minPowerStep = slow ? 0.5f : 1.0f;
+        minPowerStepRel = slow ? 0.0015f : 0.015f;
+    }
+
+    // limiter hand-back: starts the settle window at vin, fast mode; slow mode waits for a reversal and 30 s
     void resetDirection(bool direction, float vin) {
         _direction = direction;
         _time = wallClockMs();
-        _timeSettle = _time;
+        _timeSettle = _timeTakeover = _time;
         if (!isnan(vin)) _lastVin = vin;
-        //maxPowerPoint.power = 0;
-        //avgPower.reset();
+        setSlowMode(false);
     }
 
-    // settleMs(): step settling time [ms] of the filter on powerSample, called once per tracker period
+    // settleMs(): step settling time [ms] of the filter on powerSample, called once per tracker period.
+    // Returns the control value; on slow-mode entry instead a duty step [counts] towards the MPP duty.
     template<class SettleMs>
     float update(float powerSample, uint16_t dutyCycle, float vin, SettleMs settleMs) {
         auto now = wallClockMs();
 
-        //avgPower.add(powerSample);
-        //_powerBuf.add(slowMode ? avgPower.get() : powerSample);
         _powerBuf.add(powerSample);
         _vinBuf.add(vin);
 
@@ -82,7 +80,6 @@ struct Tracker {
             auto vin = _vinBuf.pop();
 
             _curPower = power;
-            //auto power = pwmPowerTable[dutyCycle].get();
             dP = power - _lastPower;
 
             if (power < 1) {
@@ -98,17 +95,10 @@ struct Tracker {
                 auto since = now - _timeSettle;
                 if (since < 1000 && ((float) since < settleMs() || (_direction ? vin > _lastVin : vin < _lastVin))) {
                     _lastPower = power;
-                } else if ((
-                        absDp >= minPowerStep
-                        or (abs(_lastPower) > (minPowerStep * 1) and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel)
-                        //or (_timeLastReverse - now > ) // TODO scheduled reversal?
-                )
-                    //and (!slowMode || (now - _timeLastReverse) > 6000)
-                        ) {
+                } else if (absDp >= minPowerStep
+                           or (abs(_lastPower) > minPowerStep and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel)) {
                     _lastPower = power;
-                    if (dP < 0  ) {
-                     rev = true;
-                    }
+                    if (dP < 0) rev = true;
                 }
 
                 // cloud recovery
@@ -120,86 +110,49 @@ struct Tracker {
                     rev = true;
                 }
 
-                if(rev) {
+                if (rev) {
                     _direction = !_direction;
                     _timeLastReverse = _timeSettle = now;
                     _lastVin = vin;
                 }
             }
 
-            // TODO does this help?:
-            //if (power > _lastPower)
-            //    _lastPower = power;
-
-            // invalidate MPP every 5min ..
-            if (now - maxPowerPoint.timestamp > 1000 * 60 * 5 and maxPowerPoint.power > 0) {
-                maxPowerPoint.power = 0;
-                maxPowerPoint.vin = 0;
-                ESP_LOGI("mppt", "Reset maxPower to 0");
+            // MPP record: invalid after 5 min, or below 85 % once 30 s old; evaluated before the slow-mode
+            // entry, which waits on the same 30 s
+            auto &m = maxPowerPoint;
+            if (m.power > 0 && (now - m.timestamp > 1000 * 60 * 5 ||
+                                (power < m.power * 0.85f && now - m.timestamp > 1000 * 30))) {
+                ESP_LOGI("mppt", "Reset maxPower %.2f (P=%.2f)", m.power, power);
+                m.power = 0;
             }
+            bool newMax = power > m.power * 1.005f;
+            if (newMax) m = {power, now, dutyCycle, vin};
 
-            // .. or if cur power is at 85%
-            if (power < maxPowerPoint.power * 0.85f && now - maxPowerPoint.timestamp > 1000 * 30 and
-                maxPowerPoint.power > 0) {
-                maxPowerPoint.power = 0;
-                maxPowerPoint.vin = 0;
-                ESP_LOGI("mppt", "Reset maxPower to 0 (<%.3f * 90%%)", power);
-            }
-
-            // capture MPP
-            if (power > maxPowerPoint.power * 1.005f) {
-                maxPowerPoint.power = power;
-                maxPowerPoint.vin = vin;
-                maxPowerPoint.timestamp = now;
-                maxPowerPoint.dutyCycle = dutyCycle;
-                //ESP_LOGI("mppt", "New maxPower %.2f", maxPowerPoint.power);
-            }
-
-
-            //// slow-down if we are near 5% of maxPower
-            //if (maxPowerPoint.power > 1.f && (std::abs(power - maxPowerPoint.power) / maxPowerPoint.power) < 0.05f) {
-            //    speed = .25f;
-            //}
-        } else {
-
-            //speed = .05f;
-        }
-
-        float speed = 1.f;
-
-        // slow-mode condition:
-        if (powerSample > (slowMode ? 0.5f : 2.f) // hysteresis
-            and now - maxPowerPoint.timestamp > 1000 * 30 // if we didn't find a new maxPower for 15s
-            // moving one way for longer than this: the MPP moved, don't slow down. A slow-mode sweep across its
-            // power band near the MPP takes ~35 s, so 15 s dropped back to normal mode every 20-60 s
-            and now - _timeLastReverse < 1000 * 45
-           // and false
-                ) {
-            speed = .02f; // 0.02
-            frequency = 2;
-            minPowerStep = 0.5f; // 0.75 is too small ?
-            minPowerStepRel = 0.0015f;
+            // slow mode: no new MPP for 30 s, a reversal since the last takeover and 30 s after it. Ends on a new
+            // MPP (also after a reset) or when Vin leaves a 4 % band around the entry Vin
+            bool slow = power > (slowMode ? 0.5f : 2.f) && !newMax && _timeLastReverse > _timeTakeover;
             if (!slowMode) {
-                auto d = (float) maxPowerPoint.dutyCycle - (float) dutyCycle;
-                if (abs(d) > 5)
-                    ESP_LOGI("mppt", "Near MPP, slow-down, set dutyCycle %hu (powerSample=%.2f)",
-                             maxPowerPoint.dutyCycle, powerSample);
-                slowMode = true;
-                //avgPower.reset();
-                // out power measurement with hall sensor is poor and non-linear, so in slow-mode we might stay in a
-                // local maximum. this work-around captures MPP duty cycle during normal mode
+                slow = slow && now - m.timestamp > 1000 * 30 && now - _timeTakeover > 1000 * 30;
+            } else if (slow && std::abs(vin - _slowVin) > 0.04f * _slowVin) {
+                slow = false;
+                _timeTakeover = now;
+                ESP_LOGI("mppt", "Slow mode left at Vin %.2f, entered at %.2f", vin, _slowVin);
+            }
+            bool enter = slow && !slowMode;
+            setSlowMode(slow);
+            if (enter) {
+                _slowVin = vin;
+                // the MPP duty is the better reference where a poor or non-linear output current measurement
+                // misleads the slow P&O: step towards it, by at most 2 % of the duty
+                float d = 0.02f * dutyCycle;
+                d = std::clamp((float) m.dutyCycle - (float) dutyCycle, -d, d);
+                ESP_LOGI("mppt", "Slow mode, duty %hu -> %.0f (MPP duty %hu, P=%.2f)", dutyCycle, dutyCycle + d,
+                         m.dutyCycle, power);
                 return d;
             }
-        } else {
-            // normal-mode
-            speed = .5f;
-            frequency = 30;
-            minPowerStep = 1.0f; // not lower than 0.5f, maybe better 0.75f-1.0f
-            minPowerStepRel = 0.015f;
-            slowMode = false;
-            //avgPower.reset();
         }
 
+        float speed = slowMode ? .02f : .5f;
         return _direction ? speed : -speed;
     }
 };
