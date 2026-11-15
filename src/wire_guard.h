@@ -16,12 +16,17 @@ struct WireGuardConf {
 
 /**
  * Output wire-fault guard: compares the output-path resistance against a per-board baseline and
- * grades the excess power ΔR·I² into ok/warn/derate/trip. Three paths: per-frame excess drop
- * against the frozen baseline fit (frame(), judged on 1-min means at Iout >= I_MIN), the slow
- * fit Rc and the per-sweep Ro (tick()). The slow paths are graded at the peak current of the last
- * 1-2 charging hours. The baseline is the median of up to DAYS accepted day medians; a day's
- * median above baseline + drMin is rejected. Freshness ages in charging minutes, so a night
- * neither releases nor invalidates the last verdict. Trip latches until reset() or reboot.
+ * grades the excess power ΔR·I² into ok/warn/derate/trip. Three paths: per-frame drop against the
+ * baseline Rc/Rb (frame(), judged on 1-min means at Iout >= I_MIN), the slope of those drops
+ * against Iout, and the per-sweep Ro (tick()). The voltage offset between converter and BMS drifts,
+ * so the fast path takes it from a slow regression of the frame drops against Iout instead of the
+ * baseline: an offset carries no current, a resistance shows as slope. Minutes off that regression
+ * line by pWarn/2 (steps) don't enter it. The slope and Ro paths are graded at the peak current of
+ * the last 1-2 charging hours. A day whose median fast-path ΔR (without BMS: Ro) is 2·drMin above
+ * baseline warns regardless of current, never more. The baseline is the median of up to DAYS
+ * accepted day medians; a day's median above baseline + drMin is rejected. Freshness ages in
+ * charging minutes, so a night neither releases nor invalidates the last verdict. Trip latches
+ * until reset() or reboot.
  * ioutCap() and tripped() may be read from another core; everything else is single-core.
  */
 class WireGuard {
@@ -38,13 +43,19 @@ public:
     static constexpr uint32_t DAY_MIN_S = 12 * 3600, DAY_MAX_S = 36 * 3600;
     static constexpr uint16_t UNV_CHARGE_MIN = 30; // a charging day: this much time at Iout >= I_MIN
     static constexpr uint8_t UNV_DAYS = 3;
+    static constexpr uint16_t OFS_TAU = 120;   // [fast minutes] memory of the offset regression
+    static constexpr float OFS_W_MIN = 150;    // [frames] in that regression before it is used
+    static constexpr float OFS_VAR_MIN = 4.f;  // [A²] current spread needed to tell offset from slope
+    static constexpr float OFS_MAX = 0.15f;    // [V] |offset − baseline a| beyond this: no verdict
+    static constexpr uint32_t PW_AGE_S = 120;  // pw() reports values at most this old
 
     static constexpr int16_t NONE = INT16_MIN;
 
     // persisted baseline, ring buffers of day medians: R in 10 µΩ, a in 0.1 mV. anc*: lowest
     // baseline since learning ended; later days must stay within drMin/2 of it (no creep-in).
+    // flags bit 0: day warning, from the median excess resistance of the last judged day.
     struct Blob {
-        uint8_t ver, hRc, nRc, hRo, nRo, days, unvDays, _r;
+        uint8_t ver, hRc, nRc, hRo, nRo, days, unvDays, flags;
         int16_t ancRc, ancRo;
         int16_t rc[DAYS], a[DAYS], rb[DAYS], ro[DAYS];
     };
@@ -80,19 +91,17 @@ public:
         if (!conf.mode || !std::isfinite(dv) || !std::isfinite(iout) || !std::isfinite(ibat)) return;
         if (std::fabs(ibat) > ibMinute) ibMinute = std::fabs(ibat);
         if (iout < I_MIN) return;
-        se += dv - (bA + rcBase() * iout + bRb * ibat);
-        si += iout;
-        sib += ibat;
-        ++nf;
+        const float x[7]{1, iout, iout * iout, dv, iout * dv, ibat, iout * ibat};
+        for (uint8_t k = 0; k < 7; ++k) ms[k] += x[k];
     }
 
     /**
      * Every loop tick. rc/a/rb: the slow fit (NAN = none), ro + roStamp: the latest sweep value and
-     * its time stamp (a new stamp = a new sweep). Returns true when wf() or alertLevel() may have
-     * changed.
+     * its time stamp (a new stamp = a new sweep). Returns true when wf() changed.
      */
     bool tick(uint32_t nowS, float iout, bool running, float rc, float a, float rb, float ro, uint32_t roStamp) {
         if (!conf.mode) return false;
+        tS = nowS;
         if (!winS) winS = dayS = runS = nowS;
         if (running) runS = nowS;
         if (std::isfinite(iout)) { iSum += iout; ++iN; }
@@ -107,12 +116,11 @@ public:
             dLastS = nowS;
             daySample(dRc, dA, dRb, nD, &dStep);
         }
-        const auto prevAl = alertLevel();
         const auto prevWf = wf();
         if (nowS - winS >= 60) minute(nowS);
         if ((!running && nowS - runS >= NIGHT_S && nowS - dayS >= DAY_MIN_S) || nowS - dayS >= DAY_MAX_S)
             closeDay(nowS);
-        return prevAl != alertLevel() || prevWf != wf();
+        return prevWf != wf();
     }
 
     // [A] output current cap, NAN = none
@@ -125,26 +133,22 @@ public:
     [[nodiscard]] uint8_t level() const { return lvl; }
     [[nodiscard]] uint8_t effLevel() const { return armed() ? lvl : std::min<uint8_t>(lvl, Warn); }
     [[nodiscard]] bool rbWarn() const { return rbLvl; }
+    [[nodiscard]] bool dayWarn() const { return h.flags & 1; }
     [[nodiscard]] bool anyFresh() const { return fresh(fast) || fresh(rcP) || fresh(roP); }
     [[nodiscard]] bool unverifiedLong() const { return h.unvDays > UNV_DAYS; }
 
-    // telemetry: 0..3 level, WF_UNVERIFIED while no path can judge and nothing is held
+    // telemetry and alert: 0..3 level, WF_UNVERIFIED while nothing is held and no path can judge
+    // or there was no data on the last UNV_DAYS charging days
     [[nodiscard]] int8_t wf() const {
-        const uint8_t l = std::max<uint8_t>(effLevel(), rbLvl);
-        return !l && !anyFresh() ? WF_UNVERIFIED : (int8_t) l;
+        const uint8_t l = std::max({effLevel(), rbLvl, (uint8_t) dayWarn()});
+        return !l && (!anyFresh() || unverifiedLong()) ? WF_UNVERIFIED : (int8_t) l;
     }
 
-    // alert state: the held level, or "unverified" after UNV_DAYS charging days without data
-    [[nodiscard]] int8_t alertLevel() const {
-        const uint8_t l = std::max<uint8_t>(effLevel(), rbLvl);
-        return !l && unverifiedLong() ? WF_UNVERIFIED : (int8_t) l;
-    }
-
-    // [W] excess power of the worst fresh path, NAN when none
+    // [W] excess power of the worst path that produced a value within PW_AGE_S, NAN when none
     [[nodiscard]] float pw() const {
         float p = NAN;
         for (auto *q: {&fast, &rcP, &roP})
-            if (fresh(*q) && !(q->pw <= p)) p = q->pw;
+            if (fresh(*q) && tS - q->at <= PW_AGE_S && !(q->pw <= p)) p = q->pw;
         return p;
     }
 
@@ -157,6 +161,9 @@ public:
     [[nodiscard]] float baseA() const { return bA; }
     [[nodiscard]] float baseRb() const { return bRb; }
     [[nodiscard]] float baseRo() const { return bRo; }
+    // offset regression: [V] offset against baseline a, [Ω] slope against baseline Rc; NAN = not separable
+    [[nodiscard]] float ofs() const { return ofsA - bA; }
+    [[nodiscard]] float slope() const { return ofsR - rcBase(); }
     [[nodiscard]] float iRef() const { return std::max(ioPk[0], ioPk[1]); }
     [[nodiscard]] uint8_t dayCount() const { return h.days; }
     [[nodiscard]] uint8_t daySamples() const { return nD; }
@@ -177,7 +184,7 @@ private:
     struct Path {
         uint16_t stale; // [charging minutes]
         float dr = NAN, pw = NAN;
-        uint32_t cm = 0; // charging minute of the last value
+        uint32_t cm = 0, at = 0; // charging minute and time of the last value
         bool has = false;
         Hist hist{};
         explicit Path(uint16_t s) : stale(s) {}
@@ -197,15 +204,18 @@ private:
     uint32_t roSeen = 0;
     bool roNew = false;
 
-    float se = 0, si = 0, sib = 0, iSum = 0, ibMinute = 0;
-    uint8_t nf = 0;
+    // frame sums of this minute, and their forgetting sum over minutes: 1, i, i², dv, i·dv, ib, i·ib
+    float ms[7]{};
+    double rg[7]{};
+    float ofsA = NAN, ofsR = NAN; // [V], [Ω] last separable intercept and slope of dv − bRb·ib over Iout
+    float iSum = 0, ibMinute = 0;
     uint16_t iN = 0;
-    uint32_t winS = 0, cm = 0;
+    uint32_t winS = 0, cm = 0, tS = 0;
     float ioPk[2]{}, ibPk[2]{}; // peak minute current: current / previous charging hour
     uint8_t pkMin = 0;
 
-    int16_t dRc[DAY_N]{}, dA[DAY_N]{}, dRb[DAY_N]{}, dRo[DAY_N]{};
-    uint8_t nD = 0, nDRo = 0;
+    int16_t dRc[DAY_N]{}, dA[DAY_N]{}, dRb[DAY_N]{}, dRo[DAY_N]{}, dDr[DAY_N]{}; // dDr: fast-path dR
+    uint8_t nD = 0, nDRo = 0, nDr = 0, drStep = 1, drSkip = 0;
     uint16_t dChargeMin = 0, dFastN = 0, dFastHi = 0; // fast-path minutes today, of which dR >= drMin/2
     bool dFast = false;
     uint32_t dStep = DAY_SAMPLE_S, dLastS = 0, dayS = 0, runS = 0;
@@ -274,8 +284,28 @@ private:
         p.dr = dr;
         p.pw = dr * iref * iref;
         p.cm = cm;
+        p.at = tS;
         p.has = true;
         p.hist.push(gradeOf(p.pw, p.dr, 1));
+    }
+
+    // intercept and slope of (dv − bRb·ib) over Iout; false while the currents don't separate them
+    [[nodiscard]] bool ofsFit(float &a, float &r) const {
+        const double w = rg[0];
+        if (!(w >= OFS_W_MIN) || !std::isfinite(bRb)) return false;
+        const double mi = rg[1] / w, var = rg[2] / w - mi * mi;
+        if (!(var >= OFS_VAR_MIN)) return false;
+        const double my = (rg[3] - bRb * rg[5]) / w, miy = (rg[4] - bRb * rg[6]) / w;
+        r = (float) ((miy - mi * my) / var);
+        a = (float) (my - r * mi);
+        return std::fabs(a - bA) <= OFS_MAX;
+    }
+
+    void dayDr(float dr) {
+        if (++drSkip < drStep) return;
+        drSkip = 0;
+        if (nDr == DAY_N) { compact(dDr, nDr); nDr /= 2; drStep *= 2; }
+        dDr[nDr++] = q(dr, 1e5f);
     }
 
     void minute(uint32_t nowS) {
@@ -296,12 +326,21 @@ private:
         }
         ibMinute = 0;
 
-        const bool op = nf >= MIN_FRAMES;
-        const float i = op ? si / nf : NAN, ib = op ? sib / nf : NAN, e = op ? se / nf : NAN;
-        if (op && std::isfinite(e) && (paths & 1)) {
+        const float n = ms[0];
+        const bool op = n >= MIN_FRAMES;
+        const float i = op ? ms[1] / n : NAN, ib = op ? ms[5] / n : NAN;
+        float a = NAN, r = NAN;
+        const bool sep = ofsFit(a, r);
+        ofsA = sep ? a : NAN;
+        ofsR = sep ? r : NAN;
+        // [V] excess drop of this minute: the offset comes from the regression, its slope stays in
+        const float e = op && sep ? (ms[3] - bRb * ms[5]) / n - a - rcBase() * i : NAN;
+        if (std::isfinite(e)) dayDr(e / i);
+        if (std::isfinite(e) && (paths & 1)) {
             fast.dr = e / i;
             fast.pw = e * i;
             fast.cm = cm;
+            fast.at = nowS;
             fast.has = true;
             dFast = true;
             fast.hist.push(gradeOf(fast.pw, fast.dr, 1));
@@ -309,22 +348,24 @@ private:
             if (fast.dr >= 0.5f * conf.drMin) ++dFastHi;
             overDerate = armed() && lvl == Derate && fast.pw >= conf.pDerate * OVER_DERATE ? overDerate + 1 : 0;
         }
-        se = si = sib = 0;
-        nf = 0;
+        // a minute off the regression line by pWarn/2 is a step, not drift: it must not pull the line
+        // along (a fault step would tilt it and inflate or hide itself), slower changes are learned.
+        // Nothing is learned while a level is held, so a found fault can't fade into the offset.
+        if (op && lvl == Ok && !(std::fabs(e - (r - rcBase()) * i) * i >= 0.5f * conf.pWarn)) {
+            constexpr double l = 1. - 1. / OFS_TAU;
+            for (uint8_t k = 0; k < 7; ++k) rg[k] = rg[k] * l + ms[k];
+        }
+        std::fill(ms, ms + 7, 0.f);
 
         // a sweep before the first charging minute (boot sweep) waits for a reference current
         if (roNew && (!std::isfinite(bRo) || iRef() >= I_MIN)) {
             roNew = false;
             if (paths & 4) slow(roP, roIn - bRo, iRef());
         }
-        if (std::isfinite(rcIn)) {
-            // R1 and R2 trade off when output and battery current move together, so judge the whole
-            // fit against the baseline at this minute's operating point instead of R1 alone
-            const float ex = op ? (aIn - bA) + (rcIn - rcBase()) * i + (rbIn - bRb) * ib : NAN; // [V]
-            if (paths & 2) slow(rcP, ex / i, iRef());
-            // Rb only up to what the total excess drop supports, so an R1/R2 trade-off alone can't warn
-            if (std::fabs(ib) >= I_MIN) slow(rbP, std::fmin(rbIn - bRb, ex / std::fabs(ib)), std::max(ibPk[0], ibPk[1]));
-        }
+        if (op && sep && (paths & 2)) slow(rcP, r - rcBase(), iRef());
+        // Rb only up to what the excess drop supports, so an R1/R2 trade-off alone can't warn
+        if (std::isfinite(rcIn) && std::isfinite(e) && std::fabs(ib) >= I_MIN)
+            slow(rbP, std::fmin(rbIn - bRb, e / std::fabs(ib)), std::max(ibPk[0], ibPk[1]));
 
         for (auto *p: {&fast, &rcP, &roP, &rbP})
             if (p->has && !fresh(*p)) *p = Path{p->stale};
@@ -371,6 +412,13 @@ private:
 
     void closeDay(uint32_t nowS) {
         dayS = nowS;
+        // current-independent check on the day's median excess resistance: the fast path's, else Ro.
+        // Not while learning, the baseline may still be one odd day.
+        const float dr = learning() ? NAN
+                         : nDr >= 4 ? median(dDr, nDr) / 1e5f
+                         : nDRo >= 2 ? median(dRo, nDRo) / 1e5f - bRo : NAN;
+        if (dr >= 2 * conf.drMin) h.flags |= 1;
+        else if (dr < 2 * conf.drMin * HYST) h.flags &= ~1;
         bool data = false;
         if (nD >= 4) {
             data = true;
@@ -398,7 +446,8 @@ private:
             if (h.days < 255) ++h.days;
             h.unvDays = 0;
         } else if (dChargeMin >= UNV_CHARGE_MIN && h.unvDays < 255) ++h.unvDays;
-        nD = nDRo = 0;
+        nD = nDRo = nDr = drSkip = 0;
+        drStep = 1;
         dStep = DAY_SAMPLE_S;
         dChargeMin = dFastN = dFastHi = 0;
         dFast = false;

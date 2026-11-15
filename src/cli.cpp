@@ -1826,6 +1826,8 @@ static void cmdWire(cmd *) {
     for (int i = 0; i < 4; ++i)
         UART_LOG("  %-4s %s dR %.2f mOhm Pw %.2f W", names[i], pv[i].fresh ? "fresh" : "stale", pv[i].dr * 1e3f,
                  pv[i].pw);
+    UART_LOG("  offset %.1fmV slope %.2fmOhm vs baseline, day dR warn %d", g.ofs() * 1e3f, g.slope() * 1e3f,
+             (int) g.dayWarn());
     UART_LOG("  Iref %.1fA, today %u Rc samples, %u sweeps", g.iRef(), g.daySamples(), g.daySweeps());
 }
 

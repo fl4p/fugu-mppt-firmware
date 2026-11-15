@@ -69,7 +69,8 @@ The payload is
 ```
 
 with `lvl` one of `ok`, `warn`, `derate`, `trip` and `unverified`, a short human-readable `msg`, and
-`t` the device's Unix time (seconds since boot until the clock is set). `ok` clears the alert. The
+`t` the device's Unix time (seconds since boot until the clock is set). `ok` clears the alert;
+`unverified` means the source has no data to judge, which is not `ok`. The
 firmware publishes on a change of the level and once after boot, logs the same line, and republishes
 every source after an MQTT reconnect. A state change while MQTT is down is published once it is up.
 

@@ -1005,14 +1005,17 @@ static void lfStuckWatchdog() {
 }
 
 static void wireAlert(const WireGuard &g) {
-    const int8_t a = g.alertLevel();
+    const int8_t a = g.wf();
     if (a == WireGuard::WF_UNVERIFIED) {
-        alert("wire", AlertLevel::Unverified, "no wire data on the last %u charging days", WireGuard::UNV_DAYS + 1);
+        if (g.unverifiedLong())
+            alert("wire", AlertLevel::Unverified, "no wire data on the last %u charging days", WireGuard::UNV_DAYS + 1);
+        else alert("wire", AlertLevel::Unverified, "no fresh wire data");
         return;
     }
     const auto f = g.fastPath();
-    alert("wire", (AlertLevel) a, "Pw %.1fW dR %.1fmOhm (%s)%s%s", g.pw(), (f.fresh ? f.dr : g.rcPath().dr) * 1e3f,
-          f.fresh ? "fast" : "slow", g.armed() ? "" : " warn-only", g.rbWarn() ? ", shared path up" : "");
+    alert("wire", (AlertLevel) a, "Pw %.1fW dR %.1fmOhm (%s)%s%s%s", g.pw(), (f.fresh ? f.dr : g.rcPath().dr) * 1e3f,
+          f.fresh ? "fast" : "slow", g.armed() ? "" : " warn-only", g.rbWarn() ? ", shared path up" : "",
+          g.dayWarn() ? ", day dR up" : "");
 }
 
 std::atomic<bool> g_wireResetReq{false};

@@ -43,7 +43,7 @@ fails setup at boot with its replacement, for example
 | `wire_p_warn`              | W    | float | 2       | Excess wiring power that raises a warning         |
 | `wire_p_derate`            | W    | float | 4       | Excess wiring power that caps the output current at √(`wire_p_derate`/ΔR) |
 | `wire_p_trip`              | W    | float | 8       | Excess wiring power that stops the converter until `wire-reset` or a reboot |
-| `wire_dr_min`              | mΩ   | float | 4       | Minimum excess resistance ΔR for any level        |
+| `wire_dr_min`              | mΩ   | float | 4       | Minimum excess resistance ΔR for any level; twice this ΔR as a day's median raises the day warning |
 | `wire_r_max`               | mΩ   | float | 0       | Absolute cap on the learned converter-to-pack resistance baseline; 0 = none |
 
 ## Output wire-fault protection
@@ -61,20 +61,28 @@ on the board itself and grades the excess power:
 The ΔR floor keeps normal temperature drift of the copper (about 0.4 %/K) from raising a level at high
 current. Three estimates feed the grading:
 
-- **Excess drop per BMS frame.** The output-to-pack voltage drop minus what the baseline fit predicts
-  for the present output and battery current, averaged over one minute while `Iout` ≥ 5 A. Needs the
-  pack voltage and battery current over MQTT (`mqtt.conf` `bat_voltage_topic`, `ibat_topic`). A level
-  needs 5 consecutive one-minute means above its threshold.
-- **Slow fit.** The running converter-to-pack fit (telemetry `Rc`, `Rb`) evaluated at the present
-  operating point against the baseline fit. Evaluated once a minute; a level needs 30 consecutive
-  minutes above its threshold.
+- **Excess drop per BMS frame.** The output-to-pack voltage drop minus the baseline resistances times
+  the present output and battery current, minus a voltage offset, averaged over one minute while
+  `Iout` ≥ 5 A. Needs the pack voltage and battery current over MQTT (`mqtt.conf`
+  `bat_voltage_topic`, `ibat_topic`). A level needs 5 consecutive one-minute means above its
+  threshold.
+- **Slope.** The slope of those drops against the output current, against the baseline resistance.
+  Evaluated once a minute; a level needs 30 consecutive minutes above its threshold.
+
+The converter's and the BMS's voltage readings differ by an offset that drifts by tens of millivolts
+over hours and days. Against a fixed offset that drift would read as excess resistance at high current,
+so the offset comes from a running regression of the one-minute drops against the output current
+(memory of about 120 minutes with output current): an offset carries no current, a resistance shows
+as slope. The regression needs at least 2 A of spread in the output current before the excess drop and
+the slope are evaluated. A minute that lies off the regression line by half of `wire_p_warn` (a step)
+doesn't enter it, and nothing enters it while a level is held, so a fault can't fade into the offset.
 - **Sweep fit.** The output resistance of each qualifying sweep (telemetry `Ro`) against its own
   baseline. Needs no BMS data. A level needs 3 consecutive qualifying sweeps above its threshold.
 
-The slow fit and the sweep fit are graded at the highest one-minute output current of the last one to
+The slope and the sweep fit are graded at the highest one-minute output current of the last one to
 two charging hours. Any estimate can raise the level. A level drops only after every estimate that
 still has data has stayed below 75 % of the thresholds for 30 minutes. A trip never drops by itself.
-An estimate counts as having data until 15 (excess drop), 60 (slow fit) or 360 (sweep fit) charging
+An estimate counts as having data until 15 (excess drop), 60 (slope) or 360 (sweep fit) charging
 minutes pass without a new value; time without output current does not age it, so a night neither
 releases nor invalidates the day's verdict.
 
@@ -90,7 +98,15 @@ learning.
 A rise of the shared bus-to-pack resistance (`Rb`) only warns: the chargers can't relieve that
 section while a load discharges the pack through it. When the output and battery currents move
 together (a single charger, steady loads), the converter can't tell a fault in the shared section
-from one in its own wire, and the excess-drop and slow-fit estimates grade it as its own.
+from one in its own wire, and the excess-drop and slope estimates grade it as its own.
 
-When no estimate has data (no BMS data and no qualifying sweep), telemetry `wf` reports -1 and the
-level holds. After more than 3 charging days without any data the MQTT alert reports `unverified`.
+On days with little current a fault can stay below `wire_p_warn`. At the end of each day after the
+learning phase, the median excess resistance of the day's one-minute excess drops (without BMS data:
+of the day's sweep fits against their baseline) is checked on its own: at 2 × `wire_dr_min` or more
+it raises a warning, regardless of current. The day warning never derates or trips, survives a
+reboot, and clears after a judged day below 1.5 × `wire_dr_min`.
+
+When no estimate has data (no BMS data and no qualifying sweep) and no level is held, telemetry `wf`
+reports -1 and the MQTT alert reports `unverified`, also after more than 3 charging days without any
+data; a held level stays. Missing data never reads as `ok`. Telemetry `Pw` is sent only from an
+estimate that produced a value within the last 2 minutes.
