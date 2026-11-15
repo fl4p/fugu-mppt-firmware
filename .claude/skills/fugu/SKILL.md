@@ -135,7 +135,8 @@ On a running board the same check is one console verb: a feature's command answe
 **Identify the target first, and re-verify after every replug** — the port↔board mapping *swaps*
 (four observed incidents incl. flashing a foreign S3 — Bench Operations). Cheapest check, no board
 touch: `system_profiler SPUSBDataType` prints each S3's **efuse MAC as its USB Serial Number**;
-then console `hostname`/banner; `python -m esptool -p PORT chip_id` (resets the board) last.
+map it to a board by grepping the MAC in `~/.claude/skills/lock/aliases.conf` (`lock.sh resolve
+<name>` only echoes a registered name back and rejects a MAC: it identifies nothing); then console `hostname`/banner; `python -m esptool -p PORT chip_id` (resets the board) last.
 esptool errors reading like link noise (`Invalid head of packet`, `Corrupt data`, ROM boot-loop)
 can mean *wrong device* — check identity before blaming cables.
 
