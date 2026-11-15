@@ -238,6 +238,8 @@ The following commands print help and inspect or drive hardware on the bench.
 
 ## Scripts
 
+These commands exist only in builds with `CONFIG_FUGU_WITH_SCRIPTS` (off by default).
+
 Console scripts are plain text files stored on the device's littlefs partition under
 `/littlefs/scripts/`. Each line is a console command, with the same syntax as typing it. Lines starting
 with `#` are comments, and the firmware skips blank lines. To add a script, upload it via FTP to

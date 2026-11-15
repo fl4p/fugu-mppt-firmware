@@ -249,6 +249,10 @@ if (CONFIG_FUGU_WITH_MEASURE_COIL)
     component_compile_definitions("WITH_MEASURE_COIL=1")
 endif ()
 
+if (CONFIG_FUGU_WITH_SCRIPTS)
+    component_compile_definitions("WITH_SCRIPTS=1")
+endif ()
+
 # CONFIG_FUGU_WITH_USB_MSC: CDC console + emulated FAT config drive on espressif/tinyusb (pulled in
 # by idf_component.yml only for this flag). TinyUSB finds its config header through this include dir.
 if (CONFIG_FUGU_WITH_USB_MSC)

@@ -2047,6 +2047,7 @@ static void cmdVconv(cmd *c) {
 #endif
 
 // --- Scripts ---------------------------------------------------------------------------------
+#ifdef WITH_SCRIPTS
 
 static const char *SCRIPTS_DIR = "/littlefs/scripts";
 
@@ -2179,6 +2180,7 @@ static void cmdScriptSet(cmd *c) {
     fclose(f);
     UART_LOG("script-set: %s '%s' — %d lines", exists ? "overwritten" : "created", path.c_str(), lines);
 }
+#endif // WITH_SCRIPTS
 
 #if CONFIG_IDF_TARGET_ESP32S3
 // adc-cal: what IDF's ADC1 calibration is built from on this chip. Read-only, no reset.
@@ -2369,10 +2371,12 @@ void setupCli() {
     cli.addCommand("conf-hash,confhash", cmdConfHash);
     cli.addBoundlessCmd("conf-check,confcheck", cmdConfCheck);
     cli.addBoundlessCmd("service,svc", cmdService);
+#ifdef WITH_SCRIPTS
     cli.addSingleArgCmd("sleep", cmdSleep);
     cli.addSingleArgCmd("run", cmdRun);
     cli.addCommand("scripts", cmdScripts);
     cli.addBoundlessCmd("script-set,script", cmdScriptSet);
+#endif
 #ifdef WITH_BLE
     cli.addBoundlessCmd("ota-ble", cmdOtaBle);
 #endif

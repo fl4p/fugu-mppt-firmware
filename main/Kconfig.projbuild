@@ -240,6 +240,12 @@ config FUGU_WITH_MEASURE_COIL
     help
         Compile the on-device coil L0/Ls sweep + `measure-coil` console command. Bench-only tool.
 
+config FUGU_WITH_SCRIPTS
+    bool "On-device console scripts (run, sleep, scripts, script-set)"
+    default n
+    help
+        Stored console command sequences under /littlefs/scripts/.
+
 config FUGU_WITH_PSU
     bool "PSU / PV-simulator output modes (psu, pv commands)"
     default y
