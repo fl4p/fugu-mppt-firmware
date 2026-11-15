@@ -225,7 +225,7 @@ void VirtualConverter::stepOneCycleBuck(float T) {
     // HS turn-off: the channel current falls linearly in tSw_, the edge C takes the rest until the node reaches
     // 0 V at t1 = sqrt(2 cn Vin tSw / b). E/Vin = b^2 tSw^2 / (24 cn Vin) for t1 >= tSw, else
     // b tSw / 2 - 2/3 b t1 + cn Vin / 2
-    if (tSw_ > 0.0f && tHS > 0.0f && b > 0.0f) {
+    if (tSw_ > 0.0f && tHS > 0.0f && tHS < T && b > 0.0f) {
         const float h = 2.0f * cn_ * vIn_;
         qIn += b * tSw_ <= h ? b * b * swK_ * invVin_
                              : b * (0.5f * tSw_) - (2.0f / 3.0f) * std::sqrt(h * tSw_ * b) + 0.25f * h;
@@ -281,8 +281,9 @@ void VirtualConverter::stepOneCycleBuck(float T) {
         if (c < 0.0f) qIn += areaOff; // reverse current through the HS body diode returns to the input
         vNode = cEnd > 0.0f ? -diodeVf_ : cEnd < 0.0f ? vIn_ + diodeVf_ : vOut_;
     }
-    // the HS turn-on charges the edge C back to Vin from the input
-    if (tHS > 0.0f) qIn += cn_ * std::max(0.0f, vIn_ - vNode);
+    // the HS turn-on charges the node back to Vin from the input: the edge C, or the ring C when the free ring
+    // started at the HS turn-off (no LS phase) and so discharged the full ring C
+    if (tHS > 0.0f) qIn += (ring && tLS <= 0.0f ? ringCe_ : cn_) * std::max(0.0f, vIn_ - vNode);
 
     iInAvg_  = (areaHS + qIn) * invT_;
     iOutAvg_ = (areaHS + areaDd + areaLS + areaOff) * invT_;

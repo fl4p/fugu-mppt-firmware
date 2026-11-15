@@ -166,7 +166,7 @@ void check(bool ok, const char *what) {
     if (!ok) ++g_fail, printf("FAIL: %s\n", what);
 }
 
-// field Q: ripple 0.75..1.02 x the bench with that damping (Brp); where Brp was not run, between half its estimate
+// field Q: ripple 0.80..0.98 x the bench with that damping (Brp); where Brp was not run, between half its estimate
 // and B. -hq: 0.7..1.05 x B
 void dawn(bool hq) {
     printf("\n## dawn, %s (stiff Vin, Vout 26.5 V, firmware DCM LS rule, 45-count HS steps, Pout > 1 W)\n",
@@ -184,8 +184,8 @@ void dawn(bool hq) {
         // Brp estimate where it was not run: its ratio to B at 45 V on the same board
         float rp = r.ampRp;
         for (auto &q: kDawnRef) if (std::isnan(rp) && !strcmp(q.board, r.board) && q.vin == 45) rp = r.ampB * q.ampRp / q.ampB;
-        const float aLo = hq ? 0.7f * r.ampB : std::isnan(r.ampRp) ? 0.5f * rp : 0.75f * rp;
-        const float aHi = hq ? 1.05f * r.ampB : std::isnan(r.ampRp) ? r.ampB : 1.02f * rp;
+        const float aLo = hq ? 0.7f * r.ampB : std::isnan(r.ampRp) ? 0.5f * rp : 0.80f * rp;
+        const float aHi = hq ? 1.05f * r.ampB : std::isnan(r.ampRp) ? r.ampB : 0.98f * rp;
         char m[96];
         snprintf(m, sizeof m, "%s-%.0f ripple amp %.3f outside %.3f..%.3f", r.board, r.vin, s.amp, aLo, aHi);
         check(s.amp >= aLo && s.amp <= aHi, m);
@@ -321,7 +321,7 @@ void ccm() {
         err += std::fabs(eta - r.eta);
         char m[64];
         snprintf(m, sizeof m, "%s %.0f V %.1f A CCM eta %.2f %%", r.board, r.vin, r.iout, 100 * eta);
-        // r_*/t_sw are effective values fitted with the avalanche loss inside: -0.2 pp .. +0.15 pp + avalanche share
+        // -0.2 pp .. +0.15 pp + the avalanche share: at 3.8 A r_*/t_sw (fitted at the higher currents) cannot carry it
         check(eta - r.eta >= -0.002 && eta - r.eta <= 0.0015f + r.pAval / r.pout, m);
     }
     printf("  mean |plant - SPICE| %.2f pp\n", 100 * err / (sizeof kCcmRef / sizeof kCcmRef[0]));

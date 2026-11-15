@@ -1,6 +1,7 @@
 #!/bin/bash
 # vconv plant (fry/flat board parameters) against the LTspice bench numbers; see vconv-spice-check.cpp.
-# The fitted plant must pass; the known-bad plants below must fail (self-test of the bands).
+# The fitted plant must pass, the energy audit (Pout <= Pin) must pass, and the known-bad plants below must fail
+# (self-test of the bands).
 #   test/host-stub/vconv-spice-check.sh [-v]
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT=${OUT:-/tmp/vconv-spice-check}
@@ -8,6 +9,8 @@ clang++ -std=gnu++20 -O2 -I "$ROOT/src" "$ROOT/test/host-stub/vconv-spice-check.
 "$OUT" "$@"
 rc=$?
 [ $rc = 0 ] || { echo "fitted plant: FAIL"; exit 1; }
+clang++ -std=gnu++20 -O2 -I "$ROOT/src" "$ROOT/test/host-stub/vconv-energy-audit.cpp" "$ROOT/src/sim/vconv.cpp" -o "$OUT-audit" || exit 2
+"$OUT-audit" || { echo "energy audit: FAIL"; exit 1; }
 [ -n "$SIM_PLANT" ] && exit 0
 bad=0
 while read -r name plant; do

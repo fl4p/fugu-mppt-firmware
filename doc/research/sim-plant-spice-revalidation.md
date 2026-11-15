@@ -101,7 +101,7 @@ Bands (fitted plant inside, each known-bad plant outside):
 
 | check | band |
 |---|---|
-| dawn ripple, field Q | 0.75..1.02 × Brp where Brp was run; elsewhere 0.5 × (Brp estimated from its ratio to B at 45 V) .. 1.0 × B |
+| dawn ripple, field Q | 0.80..0.98 × Brp where Brp was run (fitted plant 0.85-0.93, the band centred on it); elsewhere 0.5 × (Brp estimated from its ratio to B at 45 V) .. 1.0 × B |
 | dawn ripple, -hq | 0.7..1.05 × B |
 | dawn η 8-30 W | min(B, Brp) − 0.6 pp .. max + 0.3 pp; without Brp, B − 1.0 pp .. B + 0.3 pp |
 | dawn η 1-3 W | mean \|plant − B\| ≤ 0.045 |
@@ -111,12 +111,28 @@ Bands (fitted plant inside, each known-bad plant outside):
 | CCM η | −0.2 pp .. +0.15 pp + the SPICE avalanche loss share (`ccm.csv`; the plant has no avalanche term) |
 
 Self-tests in the script (each must fail): the ideal plant (40 checks out of band, among them P2 rms 7.2 / 7.4 % and
-CCM 30 V / 3 A at 100 %), `t_sw` × 2 (6 checks: CCM η at 60 V 11.3 / 22.6 A, flat-55 η 8-30 W) and `ring_q` 60 on both
-boards (3 checks: fry-35, fry-45, flat-45 ripple above 1.02 × Brp). Each also fails with the change on one board only.
+CCM 30 V / 3 A at 100 %), `t_sw` × 2 (6 checks: CCM η at flat 60 V 3.8 / 11.3 / 22.6 A and fry 60 V 11.3 / 22.6 A,
+flat-55 η 8-30 W) and `ring_q` 60 on both boards (3 checks: ripple fry-35 0.182 vs ≤ 0.171, fry-45 0.242 vs ≤ 0.219,
+flat-45 0.179 vs ≤ 0.101, i.e. 6 %, 10 % and 77 % above the band). Each also fails with the change on one board only.
+The fry margins cannot be made larger without tuning the band to the bad case: on fry, Q 25 → 60 raises the dawn
+ripple by only 12-22 %, and the band's lower edge already sits 5 % (fry-35) below the fitted plant; `ring_q` 40 fails
+the same three checks. The script also builds and runs `vconv-energy-audit.cpp` (below).
 `ring_ct` = 1 **passes** every band and cannot be made to fail without a band tuned to it: it moves dawn η 1-3 W
 closer to B (mean error 0.024 vs 0.033) and CCM η at 75 V / 3.8 A closer to SPICE (99.03 vs 99.13 %, SPICE 98.75). The
 fry/flat bench rows do not constrain `ring_ct`; 0.75 rests on the flu bench's rise transit alone. `ring_ct` 0.5 and
-`t_sw` 50 ns fail (CCM 30 V / 3 A), `t_sw` 150 ns passes.
+`t_sw` 50 ns fail, but on a single check each (CCM 30 V / 3 A); `t_dead` 92 ns fails only fry-30 ripple, at the band
+edge (0.137 vs 0.137); `t_sw` 150 ns passes. These are weak constraints. `SIM_PLANT` L overrides are not exercised by
+the check: it runs the bench's coil and scales the ring C to keep the board's ring frequency, so a changed plant L
+cancels out.
+
+**Energy audit** (`test/host-stub/vconv-energy-audit.cpp`, run by the script): stiff Vin 10-90 V and Vout 26.5 V, HS
+over the whole range in 37-count steps, LS 0 / 20 / 40 / 320 / 1000 counts and synchronous CCM, for the ideal, fry,
+fry-hq, flat and flat-hq plants (7560 points each); it fails when Pout − Pin exceeds 0.1 mW + 1e-5·|Pin| or a value is
+not finite. The e11399d4 plant fails it (up to +8.6 mW on fry, +10.5 mW on fry-hq at 30 V, HS 38-75, LS 0): with no
+LS phase the free ring discharged the full ring C from Vin to the output, while the HS turn-on only paid back
+`ring_ct`·C. The HS turn-on now pays back the ring C when the ring started at the HS turn-off; all five plants pass
+(worst +0.01 mW on the ideal plant, float rounding). The fix does not change any value of the SPICE check. The `t_sw`
+turn-off loss is no longer charged when the HS is on for the whole period.
 
 ### Dawn: Pout(HS) ripple, falling steps, efficiency (stiff Vin, Vout 26.5 V, 45-count HS steps)
 
@@ -227,7 +243,7 @@ depend on the seed as well. Coverage:
 | pre and main, fry/flat, noisy scenarios | 9 seeds (d, 1-8); wx-mid 3 | offsets 0/6/13 s × 6 seeds (d, 1-5) = 18; wx-mid 3 offsets, seed d |
 | pre and main, -hq plants, noisy scenarios | 3 seeds, except wx-low and wx-low-slow 9 | - |
 | disputed cells: 9e1dd13 (v3, v4) on wx-low, wx-low-slow, wx-dusk; 8b68511 (v4, v5) on wx-low-slow; 738cc16 (v5, main) on wx-cloud-cv; all four plants | 9 seeds for noisy scenarios | 18 for noisy scenarios |
-| noise-free scenarios | 1 run (deterministic) | 3 offsets; wx-cloud-cv on v5/main 9 offsets (0-16 s, step 2) |
+| noise-free scenarios | 1 run (deterministic) | 3 offsets; wx-cloud-cv on v5/main 9 offsets (0-16 s, step 2; on fry's ~10 s capture these overlap and are not 9 independent samples) |
 
 A seed has no effect on a noise-free scenario, so wx-dusk and wx-cloud-cv with Gaussian noise are single
 deterministic runs, and their regression calls rest on the measured-noise offsets.
@@ -262,7 +278,7 @@ of the -hq plants (fry-hq 4 of 9 seeds worse, worst −1.2, mean +0.29; flat-hq 
   wx-low-slow (98.5 → 97.5, with a reversal-rate mechanism) came from a single Gaussian seed (`SIM_SEED=1`) on the Mac.
   It does not hold across seeds, and the mechanism is withdrawn.
 - **738cc16** (45 s slow-mode hold) is **worse on fry wx-cloud-cv with measured fry noise**: −0.49 pp, 9 of 9 offsets
-  worse (−0.2..−0.8), 91.60 → 91.11. Flat measured and all Gaussian runs: 0.0 to +0.1. On wx-low-slow it is
+  worse (−0.2..−0.8), 91.60 → 91.11; the offsets are overlapping windows of a ~10 s capture, not independent samples. Flat measured and all Gaussian runs: 0.0 to +0.1. On wx-low-slow it is
   identical to 8b68511 everywhere.
 - **ed5ffe5** (only its effect into 9e1dd13 was re-run; vs pre it includes de37d33): wx-low, wx-low-slow and wx-dusk
   rise 1.5-6.5 pp over pre on every plant and noise.

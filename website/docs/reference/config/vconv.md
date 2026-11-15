@@ -87,7 +87,8 @@ All keys in this section default to 0 (ideal, lossless switches) and apply to th
   faster than the free ring (nonlinear Coss).
 - **Turn-off loss** (`t_sw`): the high-side channel current falls linearly in `t_sw` while the node
   capacitance takes the rest. Small currents turn off almost without loss
-  (`I²·t_sw²/(24·C)`), large ones approach `½·Vin·I·t_sw`.
+  (`I²·t_sw²/(24·ring_ct·C)`, C the node capacitance at that Vin), large ones approach
+  `½·Vin·I·t_sw`. A high-side pulse that fills the whole period has no turn-off and no such loss.
 - **Conduction** (`r_hs`, `r_ls`): a voltage drop `R·i` against the coil while that switch conducts,
   so the loss lowers the delivered current at a given duty. The loss is `R·∫i²`: the part from the
   current ripple, `R·t·ΔI²/12`, is paid from the input.

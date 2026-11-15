@@ -62,7 +62,9 @@ with open(f"{out}/near_boundary.csv", "w") as f:
             print("near", b, h, l, p, r)
 p2 = json.load(open(f"{R}/p2.json"))["b"]
 pmap = {(x["board"], x["hs"], x["ls"]): x["pout"] for x in p2}
-emb = re.findall(r'\{"(fry|flat)", (\d+), (\d+), (\d+), ([\d.]+)f\}', cpp.split("kP2Ref[]")[1].split("};")[0])
+p2src = "\n".join(l for l in cpp.split("kP2Ref[]")[1].split("};")[0].splitlines() if not l.strip().startswith("//"))
+emb = re.findall(r'\{"(fry|flat)", (\d+), (\d+), (\d+), ([\d.]+)f\}', p2src)
+print("p2 rows embedded:", len(emb))
 with open(f"{out}/p2.csv", "w") as f:
     f.write("board,vin,vout,hs,ls,pout_W\n")
     for b, v, h, l, p in emb:
@@ -80,5 +82,18 @@ with open(f"{out}/ccm.csv", "w") as f:
             continue
         av = re.search(r"avalanche ([\d.]+)", c[12])
         f.write(f"{c[0]},{c[1]},{c[2]},{c[3]},{c[7]},{av.group(1) if av else ''}\n")
+# CCM constants in the check: {board, vin, iout, eta, pAval, pout} against ccm.csv
+ccm = {}
+for ln in open(f"{out}/ccm.csv").read().splitlines()[1:]:
+    c = ln.split(",")
+    ccm[(c[0].split("-")[0], float(c[1]), float(c[2]))] = (float(c[4]) / 100, float(c[5] or 0), float(c[3]))
+emb = re.findall(r'\{"(fry|flat)", (\d+), ([\d.]+)f, ([\d.]+)f, ([\d.]+)f?, (\d+)\}', cpp.split("kCcmRef[]")[1].split("};")[0])
+print("ccm rows embedded:", len(emb), "of", len(ccm))
+if len(emb) != len(ccm):
+    bad += 1
+for bd, v, i, eta, av, po in emb:
+    r = ccm[(bd, float(v), float(i))]
+    if not (close(float(eta), r[0], 5e-5) and close(float(av), r[1], 1e-3) and close(float(po), r[2], 0.5)):
+        print("ccm", bd, v, i, (eta, av, po), r)
 print("mismatches:", bad)
 sys.exit(1 if bad else 0)
