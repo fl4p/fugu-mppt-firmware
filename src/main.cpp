@@ -1460,7 +1460,8 @@ static int8_t s_wifiPs = -1; // -1 unset, 0 MIN_MODEM, 1 MAX_MODEM
 #endif
 
 static struct {
-    uint16_t cpuMhz, advMs, teleMs, bootMhz; // 0 = that part off
+    uint16_t cpuMhz, advMs, bootMhz; // 0 = that part off
+    uint32_t teleMs;
     bool on, suspended, hold;
 } s_idle{};
 
@@ -1486,8 +1487,8 @@ static void idleProfileSetup(const ConfFile &boardConf) {
     s_idle.advMs = std::clamp(loadConfSafe("/littlefs/conf/ble.conf", false, true).getLong("idle_adv_ms", 1000), 0L,
                               10240L);
     if (s_idle.advMs && s_idle.advMs < 20) s_idle.advMs = 20;
-    s_idle.teleMs = std::clamp(loadConfSafe("/littlefs/conf/tele.conf", false, true).getLong("idle_interval_ms", 5000),
-                               0L, 60000L);
+    s_idle.teleMs = std::clamp(loadConfSafe("/littlefs/conf/tele.conf", false, true).getLong("idle_interval_ms", 900000),
+                               0L, 3600000L);
 }
 
 static bool cpuSetMhz(uint32_t mhz) {

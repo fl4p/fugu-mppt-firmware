@@ -574,7 +574,8 @@ void MpptController::telemetry() {
     point.addField("E", meter.totalEnergy.get(), 1);
     point.addField("E_today", meter.dailyEnergyMeter.today.energyYield, 1);
 
-    if ((_teleNumPoints % 20) == 0) {
+    const bool all = teleSparse();
+    if (all || (_teleNumPoints % 20) == 0) {
         point.addField("pwm_dir_f", cntrlValue, 2);
         point.addField("mppt_state", int(ctrlState.mode));
         const uint32_t nowS = (uint32_t) (wallClockUs() / 1000000);
@@ -594,7 +595,7 @@ void MpptController::telemetry() {
         }
     }
 
-    if ((_teleNumPoints % 40) == 0) {
+    if (all || (_teleNumPoints % 40) == 0) {
         point.addField("mcu_temp", ucTemp.lastFresh(), 1); // TODO to frequent
         point.addField("ntc_temp", ntc.lastFresh(), 1); // TODO to frequent
         point.addField("lag", (int) g_app.maxLoopLag); // peak RT-loop lag (µs), resets on reset-lag
@@ -604,9 +605,9 @@ void MpptController::telemetry() {
     }
 
     point.addField("pwm_duty", converter.getCtrlOnPwmCnt());
-    if (g_app.psuMode() && (_teleNumPoints % 10) == 0)
+    if (g_app.psuMode() && (all || (_teleNumPoints % 10) == 0))
         point.addField("Vset", getPsuSetpoint(), 2); // moving in PV-sim, constant in plain PSU
-    if (!converter.disabled() && (_teleNumPoints % 10) == 0) {
+    if (!converter.disabled() && (all || (_teleNumPoints % 10) == 0)) {
         point.addField("pwm_ls_duty", converter.getRectOnPwmCnt());
         point.addField("pwm_ls_max", converter.getRectOnPwmMax());
         point.addField("pwm_dcm", converter.inDCM());

@@ -22,6 +22,7 @@
 #include "compress.h"
 #include "../conf.h"
 #include "tele_core.h"
+#include "../etc/idle_profile.h"
 static Compressor *s_teleCompressor = nullptr;   // cached compressor for the binary wire
 
 
@@ -327,8 +328,8 @@ void TelemetryService::flushTask(void *arg) {
 
 // Sends AT MOST ONE datagram per call, and ONLY when the batch is full (~MSS). flushTask calls
 // this at a fixed cadence, so full datagrams leave one-at-a-time rather than bursting — back-to-
-// back UDP sends drop more, especially across NAT. A partially-filled batch waits for more points
-// (latency is acceptable); no small datagrams go on the wire.
+// back UDP sends drop more, especially across NAT. A partially-filled batch waits for more points,
+// unless points are sparse (teleSparse): then it leaves at once.
 void TelemetryService::flushQueue(const IPAddress &addr) {
     if (noSsid) return;
     constexpr auto port = 8086;
@@ -346,7 +347,7 @@ void TelemetryService::flushQueue(const IPAddress &addr) {
                 }
                 batch += frame;
             }
-            // batch not full -> hold for more points
+            if (teleSparse()) sendBinaryBatch(addr, port, comp, batch);
         } catch (const std::bad_alloc &) {
             // Heap exhausted (fragmentation during a WiFi flap). Telemetry is non-critical: drop the
             // batch and free its buffer rather than let the throw escape the task and panic the device.
@@ -365,6 +366,7 @@ void TelemetryService::flushQueue(const IPAddress &addr) {
             }
             msg += lp.c_str(); msg += '\n';
         }
+        if (msg.length() && teleSparse()) udpFlushString(addr, port, msg);
     }
 }
 

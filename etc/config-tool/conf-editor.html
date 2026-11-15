@@ -406,7 +406,7 @@ const META = {
   binary:{unit:"",desc:"1 = binary symbol-table wire (sym_line_protocol.h, tamp-compressed); 0 = text influx. Needs CONFIG_FUGU_WITH_TELE_BINARY (or BLE_TELE); other builds send text",type:"bool"},
   ble:{unit:"",desc:"Allow the BLE telemetry stream (tele-ble command; needs CONFIG_FUGU_WITH_BLE_TELE)",type:"bool"},
   adv_ms:{unit:"ms",desc:"BLE advertising telemetry broadcast refresh (CONFIG_FUGU_WITH_BLE_ADV), 0=off, min 100",type:"int"},
-  idle_interval_ms:{unit:"ms",desc:"Min telemetry point interval while the idle power profile is on (else 20 ms), max 60000, 0 = unchanged",type:"int"},
+  idle_interval_ms:{unit:"ms",desc:"Min telemetry point interval while the idle power profile is on (else 20 ms), default 900000 (15 min), max 3600000; at >= 1 s every point carries all fields and is sent unbatched; 0 = unchanged",type:"int"},
 
   // ftp.conf (nvs takes precedence; conf is the fallback)
   ftp_user:{unit:"",desc:"FTP username for config access over LAN",type:"string"},

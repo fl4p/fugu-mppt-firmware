@@ -40,10 +40,17 @@ so there's no scan cost to trim.
 nothing else active (PSU, manual duty > 0, sweep/ADC calibration, rect-cal, measure-coil, bsync, HTTP or
 BLE OTA, USB drive), it sets: CPU `board.conf::idle_cpu_mhz` (default 80), connectable BLE adv
 `ble.conf::idle_adv_ms` (default 1000), telemetry point interval `tele.conf::idle_interval_ms`
-(default 5000). 0 disables a part. It leaves on the first network-loop pass that sees any of these
+(default 900000 = 15 min, max 3600000). 0 disables a part. It leaves on the first network-loop pass that sees any of these
 active; WiFi PS keeps its own >= 10 W predicate. Log: `idle profile on: cpu 80 MHz, adv 1000 ms,
-tele 5000 ms, WiFi MAX_MODEM` / `idle profile off (converter): ...`. Any `pwr` cpu/pm/ble-adv/tele/
+tele 900000 ms, WiFi MAX_MODEM` / `idle profile off (converter): ...`. Any `pwr` cpu/pm/ble-adv/tele/
 wifi-ps knob suspends it until reboot.
+
+While `g_teleMinPointUs >= 1 s` (`teleSparse()`, idle profile or `pwr tele`), every point carries the
+fields otherwise sent every 10th/20th/40th point (temperatures, lag, heap, mppt_state, Ro/Rc/Rb, ...), and
+the UDP flush task sends a partial batch at once instead of holding it until ~MSS fills (which at
+15 min/point would have held points for hours). Entering idle right after a 20 ms point means the
+next point comes one full interval later; on leaving idle the next point goes out immediately. Every
+sparse binary point also carries the full symbol table (120 s heartbeat).
 
 Bench S3 die temperature vs 160 MHz / MIN_MODEM / default adv: adv 1000 ms -2.0 K, 80 MHz -1.9 K,
 MAX_MODEM within noise, all combined (plus a slower RT loop) -5.1 K; both radios off -6.2 K.

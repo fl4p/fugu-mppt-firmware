@@ -336,9 +336,9 @@ static int pwrSet(int argc, const char *const *argv) {
     if (!strcmp(k, "locks")) return argc == 1 ? locksPrint(locksDump()) : -1;
 #endif
     if (!strcmp(k, "tele")) {
-        if (argc != 2 || !argNum(argv[1], v) || v < 20 || v > 60000) return -1;
+        if (argc != 2 || !argNum(argv[1], v) || v < 20 || v > 3600000) return -1;
         idleProfileSuspend();
-        g_teleMinPointUs = v * 1000;
+        g_teleMinPointUs = (uint32_t) v * 1000u;
         return 0;
     }
 #ifdef WITH_NETW
@@ -396,7 +396,7 @@ bool pwrCommand(int argc, const char *const *argv) {
     const int rc = argc ? pwrSet(argc, argv) : 0;
     if (rc < 0) {
         UART_LOG("usage: pwr [cpu 80|160|240 | pm <max> <min> <ls 0|1> [secs 10..3600] | pm off | wifi-ps none|min|max [li]"
-                 " | wifi-tx <dBm 2..21> | ble-adv <ms 20..10240, 0=default> | tele <ms 20..60000> | pwm 0|1 | rt <hz>"
+                 " | wifi-tx <dBm 2..21> | ble-adv <ms 20..10240, 0=default> | tele <ms 20..3600000> | pwm 0|1 | rt <hz>"
                  " | rt-src gp|esp | netloop <ms 1..1000>"
 #ifdef CONFIG_PM_ENABLE
                  " | locks | pmwin"
