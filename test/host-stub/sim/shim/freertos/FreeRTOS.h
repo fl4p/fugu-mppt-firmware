@@ -19,6 +19,8 @@ typedef struct { int dummy; } portMUX_TYPE;
 #define portEXIT_CRITICAL(m) (void) (m)
 #define xPortGetCoreID() 1
 inline void vTaskDelay(TickType_t) {}
+inline void vTaskDelete(TaskHandle_t) {}
+inline UBaseType_t uxTaskPriorityGet(TaskHandle_t) { return 0; }
 inline TaskHandle_t xTaskGetCurrentTaskHandle() { return nullptr; }
 inline uint32_t ulTaskNotifyTake(BaseType_t, TickType_t) { return 1; }
 inline void vTaskNotifyGiveFromISR(TaskHandle_t, BaseType_t *w) { *w = 0; }
