@@ -54,7 +54,6 @@ _sys.path.append(_HERE)
 from ota_build_flags import build_gate_driver, parse_device_gate_driver, gate_driver_verdict
 import os
 import re
-import struct
 import sys
 
 NUS_SVC = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
@@ -63,12 +62,15 @@ TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # notify: status/log mirror
 FW_UUID = "6e400004-b5a3-f393-e0a9-e50e24dcca9e"  # write-no-response: firmware bytes
 ESPHOME_API_PORT = 6053
 
-APP_DESC_MAGIC = 0xABCD5432
 RE_APP_LINE = re.compile(r'App:\s+(\S+)\s+v\S+\s+(\S+)\s+\(built (.+),\s+IDF\s+(\S+)\)')
 
 # Strings present only in a WITH_BLE build: the otab receiver + NUS console (both #ifdef WITH_BLE) and
 # the NimBLE host (absent when CONFIG_BT_ENABLED is off). Flashing an image missing all of these over
 # BLE would disable the very console/OTA path we're using — so we warn before doing it.
+#
+# ANY of them, not all: they are alternatives, and a build that carries one carries BLE. The node's
+# marker set is read with mode="all" because its two markers are both required. That difference is
+# why O.image_keeps_the_push_path() takes the quantifier as an argument instead of picking one.
 BLE_SIGNATURES = (b"OTAB CRED", b"OTAB READY", b"(NUS console)", b"BLE_HS")
 
 # Seconds a freshly booted image stays PENDING_VERIFY before the firmware confirms it. Until then
@@ -79,20 +81,13 @@ OTA_CONFIRM_S = 20.0
 
 def image_has_ble(data):
     """Heuristic: does this firmware image look like a BLE-enabled (WITH_BLE) build?"""
-    return any(sig in data for sig in BLE_SIGNATURES)
+    return O.image_keeps_the_push_path(data, BLE_SIGNATURES, mode="any")
 
 
-def read_local_app_desc(bin_path):
-    """Parse the firmware version string out of a .bin's esp_app_desc_t, or None."""
-    try:
-        with open(bin_path, 'rb') as f:
-            data = f.read(0x200)
-    except FileNotFoundError:
-        return None
-    off = data.find(struct.pack('<I', APP_DESC_MAGIC))
-    if off < 0:
-        return None
-    return data[off + 0x10:off + 0x30].split(b'\x00', 1)[0].decode('utf-8', 'replace')
+# Lifted 2026-09-10 into the shared module, which the node had its own copy of. Kept as local
+# names so the call sites below read the same as they always did.
+read_local_app_desc = O.read_local_app_desc
+progress_bar = O.progress_bar
 
 
 def parse_device_version(lines):
@@ -101,17 +96,6 @@ def parse_device_version(lines):
         if m := RE_APP_LINE.search(l):
             return m.group(2)
     return None
-
-
-def progress_bar(done, total, label, width=30):
-    frac = done / total if total else 0
-    filled = int(frac * width)
-    bar = "#" * filled + "-" * (width - filled)
-    sys.stdout.write(f"\r  {label} [{bar}] {frac * 100:5.1f}% {done}/{total}")
-    sys.stdout.flush()
-    if done >= total:
-        sys.stdout.write("\n")
-        sys.stdout.flush()
 
 
 class BleakLink:
