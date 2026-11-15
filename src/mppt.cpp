@@ -87,8 +87,14 @@ void MpptController::update() {
     // timer would stall under the same livelock that startCondition() guards against.
     bool batteryFull = charger.chargeHold() || ctrlState.mode == MpptControlMode::CV;
     // the sweep start runs from flash: let a flash op finish first
-    if (!g_app.psuMode() && !_sweeping && !batteryFull && !inBackoff() && !flashOpActive() && (nowUs - sampler.getTimeLastCalibrationUs()) > (30 * 60000000)) {
-        ESP_LOGI("mppt", "periodic sweep & sensor calibration");
+    // P&O cannot see the MPP in low light (power steps below its thresholds) and drifts toward Vout:
+    // re-sweep once power has doubled since a low-power sweep's MPP (< 5 % of p_max)
+    const auto sinceSweepUs = nowUs - sampler.getTimeLastCalibrationUs();
+    const bool grew = maxPowerPoint.power >= sweepMinPower() && maxPowerPoint.power < 25 * sweepMinPower() &&
+                      power_smooth > 2 * maxPowerPoint.power && sinceSweepUs > 120 * 1000000;
+    if (!g_app.psuMode() && !_sweeping && !batteryFull && !inBackoff() && !flashOpActive() &&
+        (grew || sinceSweepUs > 30 * 60000000)) {
+        ESP_LOGI("mppt", "%s sweep & sensor calibration", grew ? "power-doubled" : "periodic");
         g_app.maxLoopLag = 0; // restart the lag window so telemetry tracks per-sweep peak, not all-time
         startSweep();
         rtcount("mppt.update.startSweep");

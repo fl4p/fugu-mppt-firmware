@@ -22,11 +22,16 @@ A new global sweep runs every 30 minutes so the tracker does not stay on a local
 partially shaded strings. A sweep takes 20–60 s, depending on the loop rate. Sweeping too often or too slowly
 costs yield.
 
+In low light, power changes between P&O steps stay below the tracker's thresholds, and P&O drifts toward the
+battery voltage, far below the MPP. If the last sweep captured less than 5 % of `limits.conf::p_max`, the
+tracker therefore starts another sweep once power has doubled since that sweep, at most every 2 minutes. At
+dawn this adds a few short sweeps while the power is still low.
+
 The following state diagram shows the transitions between the phases:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Sweep: boot / sweep command / 30 min
+    [*] --> Sweep: boot / sweep command / 30 min / low-light power x2
     Sweep --> FadeToMPP: limiter active or max duty
     Sweep --> Backoff: best power < 0.2 % of p_max
     FadeToMPP --> Fast: target duty reached
