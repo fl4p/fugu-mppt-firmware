@@ -37,6 +37,7 @@ using LegacyPwm = PWM_ESP32_ledc;
 
 #else // MOCK
 
+#include "esp_attr.h"
 #include "pwm/mock.h"
 using LegacyPwm = PWM_Mock;
 #define HAVE_LEGACY 1
