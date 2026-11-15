@@ -16,7 +16,7 @@ foreach (_legacy WITH_BLE WITH_NETW WITH_SPROFILER WITH_VCONV WITH_MCPWM WITH_ME
     endif ()
 endforeach ()
 
-# Three flags must act *before* project() runs Kconfig (sdkconfig fragment layering,
+# Four flags must act *before* project() runs Kconfig (sdkconfig fragment layering,
 # EXCLUDE_COMPONENTS), so they can't read CONFIG_* directly. Resolve them by reading the same
 # CONFIG_FUGU_* symbols out of the sdkconfig defaults chain (+ any live sdkconfig). main/CMakeLists
 # reads CONFIG_FUGU_* normally for everything that happens after project().

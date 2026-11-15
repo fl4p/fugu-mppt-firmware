@@ -10,24 +10,29 @@ Compile-time features are Kconfig options under **"Fugu MPPT firmware"** in `idf
 
 ## Quick start
 
+To toggle features interactively, open menuconfig and then build:
+
 ```bash
 idf.py menuconfig          # Fugu MPPT firmware -> toggle features
 idf.py build
 ```
 
-Non-interactively, for CI or variant builds, layer an sdkconfig fragment:
+For CI or variant builds, layer an sdkconfig fragment instead of using menuconfig:
 
 ```bash
 echo 'CONFIG_FUGU_WITH_BLE=n' > my.frag
 SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-noble -D SDKCONFIG=build-noble/sdkconfig build
 ```
 
-The top-level `CMakeLists.txt` also reads the live sdkconfig to decide fragment layering: the one given with
-`-D SDKCONFIG=`, else the root `sdkconfig`. With `-D SDKCONFIG=build-noble/sdkconfig` on every command, a root
-`sdkconfig` from another build does not leak into the variant. `etc/matrix_build.sh` builds each variant in its own
-project root.
+The top-level `CMakeLists.txt` also reads the live sdkconfig to decide fragment layering. That's the one given with
+`-D SDKCONFIG=`, or else the root `sdkconfig`. If you pass `-D SDKCONFIG=build-noble/sdkconfig` on every command, a root
+`sdkconfig` from another build doesn't leak into the variant.
+
+`etc/matrix_build.sh` builds each variant in its own project root.
 
 ## Feature flags
+
+The following table lists each feature option, its default, and what it does:
 
 | Kconfig option | Default | What it does |
 |---|:---:|---|
@@ -46,8 +51,8 @@ project root.
 | `CONFIG_FUGU_WITH_BSYNC` | off | Beacon-sniffing MCPWM clock sync (`bsync` service). Needs `NETW` and `MCPWM`. |
 | `CONFIG_FUGU_WITH_SPROFILER` | off | Semihosting sampling profiler; only useful with OpenOCD attached. |
 | `CONFIG_FUGU_WITH_MEASURE_COIL` | off | On-device [coil inductance measurement](../../lab/coil-inductance.md). |
-| `CONFIG_FUGU_WITH_USB_MSC` | off | ESP32-S3 only: [USB config drive](../usb-drive.md) plus a CDC console on the USB port, instead of USB-Serial-JTAG. Excludes `WSYNC`. Layers `sdkconfig.usb_msc`. |
 | `CONFIG_FUGU_WITH_PSU` | on | PSU (constant-voltage) and PV-simulator output modes: `psu`/`pv` commands, `converter.conf` `mode=psu`/`pv`. A board config using either mode fails setup when off; off saves ~10 KB flash. |
+| `CONFIG_FUGU_WITH_USB_MSC` | off | ESP32-S3 only: [USB config drive](../usb-drive.md) plus a CDC console on the USB port, instead of USB-Serial-JTAG. Excludes `WSYNC`. Layers `sdkconfig.usb_msc`. |
 | `CONFIG_FUGU_WITH_INA226` | on | INA226 ADC backend (`sensor.conf` `*_adc=ina226`). A board config that selects it fails setup when off. |
 | `CONFIG_FUGU_WITH_ADS` | on | ADS1015/ADS1115 ADC backend (`*_adc=ads1015`/`ads1115`). A board config that selects it fails setup when off. |
 | `CONFIG_FUGU_INA226_MEASURED_RATE` | on | Report the INA226 sample rate measured at init instead of the datasheet value (some parts convert faster). Needs `INA226`. |
@@ -57,14 +62,16 @@ repository has it on.
 
 \*\* LEDC on the classic ESP32 target.
 
-The gate driver is one choice per build; `LEDC` alone only controls the fan PWM and `anaw`.
+Unless `VCONV` is on, at least one of `LEDC` and `MCPWM` must be on.
 
 :::note
-The old `WITH_*` environment variables are rejected; the build stops with an error pointing to Kconfig.
-Binary telemetry is not a build flag: it is `tele.conf::binary`.
+The build rejects the old `WITH_*` environment variables and stops with an error pointing to Kconfig.
+Binary telemetry is a configuration setting, `tele.conf::binary`, rather than a build flag.
 :::
 
 ## Environment variables
+
+The build also reads these environment variables:
 
 | Variable | Effect |
 |---|---|
@@ -74,7 +81,7 @@ Binary telemetry is not a build flag: it is `tele.conf::binary`.
 
 ## sdkconfig layering
 
-`sdkconfig` is generated and not tracked. The top-level `CMakeLists.txt` layers:
+`sdkconfig` is a generated file and isn't tracked. The top-level `CMakeLists.txt` layers these fragments in order:
 
 1. `sdkconfig.defaults`
 2. `sdkconfig.defaults.esp32` (classic ESP32 target only)
@@ -82,11 +89,13 @@ Binary telemetry is not a build flag: it is `tele.conf::binary`.
 4. `sdkconfig.no_netw` when `CONFIG_FUGU_WITH_NETW=n`
 5. `sdkconfig.usb_msc` when `CONFIG_FUGU_WITH_USB_MSC=y`
 
-Delete `sdkconfig` to regenerate it if it looks wrong.
+If `sdkconfig` looks wrong, delete it to regenerate it.
 
 ## Common scenarios
 
 ### Minimal BLE-only image
+
+To build an image without network features, turn off `NETW`:
 
 ```ini title="noble.frag"
 CONFIG_FUGU_WITH_NETW=n
@@ -101,9 +110,11 @@ CONFIG_FUGU_WITH_MCPWM=y
 CONFIG_FUGU_WITH_LEDC=n
 ```
 
-`anaw` is not available without LEDC. The fan output is a plain on/off GPIO and keeps working.
+Without LEDC, the `anaw` command isn't available. The fan output is a plain on/off GPIO and keeps working.
 
 ### Control-loop work without hardware
+
+To run the control loop against a simulated converter, pick `VCONV` as the gate driver:
 
 ```ini title="vconv.frag"
 CONFIG_FUGU_WITH_VCONV=y
@@ -121,6 +132,6 @@ Provision `config/lab/vconv_mock`.
 :::warning Never OTA a VCONV build to a real converter
 A `VCONV` build replaces the gate driver with a simulation, so the half-bridge is never switched and the converter
 stops charging. The sensors stay real, so the device looks healthy: it keeps sweeping, Vin sits at the panel's
-open-circuit voltage and the log repeats `Vr-sensor-fail`. Meanwhile the loads drain the battery. `etc/ota.py` warns
+open-circuit voltage, and the log repeats `Vr-sensor-fail`. Meanwhile the loads drain the battery. `etc/ota.py` warns
 about VCONV images and refuses them in non-interactive runs.
 :::

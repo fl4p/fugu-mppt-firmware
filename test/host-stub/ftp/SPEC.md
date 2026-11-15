@@ -3,9 +3,9 @@
 # FTP e2e test spec
 
 End-to-end regression tests for the vendored
-[SimpleFTPServer](../../../components/SimpleFTPServer/SimpleFTPServer/)
+[SimpleFTPServer](../../../components/SimpleFTPServer/SimpleFTPServer)
 fork. The lib is compiled as a plain host binary against
-[arduino-host-shim](../arduino-shim/), bound to `127.0.0.1` on hardcoded
+[arduino-host-shim](../arduino-shim), bound to `127.0.0.1` on hardcoded
 ports, and driven over real TCP from the same process.
 
 ## Run

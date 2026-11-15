@@ -156,7 +156,7 @@ reads its own conf file for `enabled` (0/1) and `log_level` (error/warn/info): `
 `ftp.conf`, `telnet.conf`, `lcd.conf`, `scope.conf`.
 
 `set-config <file>.conf <key> <value>` from the serial/telnet/MQTT console edits these in place without re-flashing —
-useful when iterating. FTP is also enabled when Wi-Fi is up (Filezilla, 1 connection, no passive mode).
+useful when iterating. FTP is also enabled when Wi-Fi is up (Filezilla, 1 connection; passive data port 50009, active mode also works).
 
 **When you add, rename, or remove a `.conf` key**, update all three sources together so they don't drift:
 the per-file reference table in `website/docs/reference/config/<file>.md`, and the editor metadata in
@@ -340,6 +340,24 @@ You can connect to devices:
 - BLE (NUS Console)
     - pushing an update over BLE can be unreliable. better to start a local server to serve the image and invoke the
       `ota <url>` command via the ble console. this will work even when the device is behind the NAT.
+
+## A converter went silent: use the BLE backup link
+
+No log line on `pv/fugu_console.log`, no MQTT console reply and no fresh InfluxDB point does **not** mean the
+converter is down, and it is not a reason to wait. BLE keeps working when Wi-Fi, MQTT or the heap are gone
+(2026-11-14: flat had Wi-Fi and an IP but no MQTT task after its heap ran out; BMS data went stale, the cap fell back
+to 26.8 V and it sat at 1 W for 11 minutes until someone looked over BLE). After about 2 minutes of silence, do this
+before anything else, and tell Fab what you find:
+
+1. Direct BLE from this Mac: `.venv/bin/python3 etc/fugu_console.py --ble flat -c hostname -c bootinfo -c status
+   -c "svc list" -c tasks -c heap` (advertised names `fugu-flat`, `fugu-fry`). Put all commands in one call: every
+   connect costs the device several KB of heap, and back-to-back connects can hang.
+2. Weak link (RSSI below about -85 dBm, connect or replies time out): go through the ESPHome proxy,
+   `etc/fugu_console.py --ble-proxy <host> --name fugu-flat -c ...` with `<host>` from `etc/nat.env::BLE_PROXY`.
+   If this Mac has no route to it, tunnel through havan (`ssh -f -N -L 16053:<host>:6053 havan-ts`, then
+   `--ble-proxy 127.0.0.1:16053`). If the proxy does not answer either, say so; do not skip step 1.
+3. Read before acting: `heap` (free / min-ever), `svc list` (mqtt, tele), `tasks` (is there an mqtt task), `status`
+   (BMS data age), the `V=` line. Then recover with the smallest step (`svc restart mqtt`, else `restart`).
 
 When connected to the 192.168.1.x network, these devices might be behind a NAT router:
 
