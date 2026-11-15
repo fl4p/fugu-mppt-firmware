@@ -14,6 +14,7 @@
 //                              # d-noise | e | e-bleed; suffix -p0 = limits.conf reverse_current_paranoia=0
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
+//   SIM_PHASE_US=500 /tmp/mppt-sim a          # a/b/c/e: plant runs n us past the event before the next ADC tick
 //   SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" /tmp/mppt-sim a   # board overrides
 //
 #include <cmath>
@@ -529,6 +530,7 @@ int main(int argc, char **argv) {
         // e-bleed: open battery but a 1 kOhm residual output load (hypothetical divider/aux drain)
         g_vconv.setBat(0, sc == "e-bleed" ? 1e3f : 1e9f);
         printf("%9.4f >>> vconv bat open (r=%g)\n", tNow(), g_vconv.getRbat());
+        if (const char *ph = getenv("SIM_PHASE_US")) g_vconv.stepSeconds(atof(ph) * 1e-6f, 39000);
         run(e ? 120 : 6, e ? 2.0 : 0.5, &p, 25);
         report(name.c_str(), p);
         if (e) {
