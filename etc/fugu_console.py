@@ -23,7 +23,7 @@ Examples:
     python etc/fugu_console.py                           # discover devices on all transports
     python etc/fugu_console.py -p /dev/cu.usbmodem1101   # interactive REPL over serial (default)
     python etc/fugu_console.py --ip 192.168.4.2          # interactive REPL over TCP/telnet
-    python etc/fugu_console.py --ble                     # interactive REPL over BLE
+    python etc/fugu_console.py --ble fry                 # interactive REPL over BLE by device name
     python etc/fugu_console.py --ble-proxy 192.168.1.50  # BLE via ESPHome bluetooth_proxy (by name)
     python etc/fugu_console.py --ble-proxy 192.168.1.50 --address AA:BB:CC:DD:EE:FF  # by MAC
     python etc/fugu_console.py --mqtt 192.168.1.134 --mqtt-port 1882 -c "svc list"   # over MQTT
@@ -905,6 +905,10 @@ def pull_coredump(con, action, elf_path):
     return 0
 
 
+def _ble_target_name(args):
+    return args.ble if isinstance(args.ble, str) else args.name
+
+
 def make_transport(args):
     if args.ble_proxy:
         host, _, port = args.ble_proxy.partition(":")
@@ -914,7 +918,8 @@ def make_transport(args):
         return EspHomeBleTransport(host, proxy_port=port, password=args.proxy_password,
                                    address=args.address, name=args.name)
     if args.ble:
-        print(f"scanning for BLE NUS (name contains {args.name!r}) …")
+        name = _ble_target_name(args)
+        print(f"scanning for BLE NUS (name contains {name!r}) …")
         tele_cb = None
         if getattr(args, "tele", False):
             try:
@@ -924,7 +929,7 @@ def make_transport(args):
             stream = TeleStream(on_error=lambda e: print(f"tele decode error: {e} (resync)",
                                                          file=sys.stderr))
             tele_cb = lambda data: [print("tele| " + ln) for ln in stream.feed(data)]
-        return BleTransport(name=args.name, address=args.address, tele_cb=tele_cb,
+        return BleTransport(name=name, address=args.address, tele_cb=tele_cb,
                             adapter=args.adapter)
     if args.mqtt:
         ro = " (read-only)" if args.mqtt_readonly else ""
@@ -942,12 +947,12 @@ def make_transport(args):
     return SerialTransport(port, baud=args.baud, timeout=0.2)
 
 
-def main():
-    load_env_file()  # fill MQTT_* from etc/mqtt.env (shell-set vars still win)
+def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Console client + exerciser for Fugu MPPT firmware")
     ap.add_argument("-p", "--port", default=None, help="serial port (default: $ESPPORT or autodetect)")
     ap.add_argument("-b", "--baud", type=int, default=115200, help="baud rate (default 115200)")
-    ap.add_argument("--ble", action="store_true", help="use the BLE NUS transport instead of serial")
+    ap.add_argument("--ble", nargs="?", const=True, metavar="NAME",
+                    help="use BLE NUS instead of serial; optionally filter by advertised name")
     ap.add_argument("--name", default="fugu",
                     help="device-name substring filter (with --ble: advertised name; with --mqtt: hostname)")
     ap.add_argument("--address", help="BLE address to connect to (with --ble / --ble-proxy)")
@@ -989,7 +994,12 @@ def main():
                     help="pull the saved panic core dump: `info` (default) shows presence/size, "
                          "`get` streams it (base64), decodes to coredump.bin and runs esp-coredump, "
                          "`erase` clears it")
-    args = ap.parse_args()
+    return ap.parse_args(argv)
+
+
+def main():
+    load_env_file()  # fill MQTT_* from etc/mqtt.env (shell-set vars still win)
+    args = parse_args()
     # keep replies visible when stdout is a file and the run is killed (e.g. by `timeout`)
     sys.stdout.reconfigure(line_buffering=True)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))

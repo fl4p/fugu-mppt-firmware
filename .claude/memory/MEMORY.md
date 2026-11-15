@@ -1,14 +1,14 @@
-- [Shared-bus termination fix deployed (6-15)](project_shared_bus_termination_fix_deployed.md) — fry/flat no longer trickle a full pack; boot-sweep gating + BMS stale guard fixed c6ac56b..179879d (NOT yet OTA'd); all builds are debug (HEAP_POISONING in sdkconfig.defaults:170); details in file
-- [MCPWM dead-time LS min-pulse "missing" signal](project_mcpwm_deadtime_ls_minpulse.md) — fbuck LS at ~0A = 300ns keep-alive (minLS=80 − 200ns dt), not a bug; HiLi dtTicks>0 swap path hw-validated 8-4
-- [bsync: beacon-sniffing MCPWM clock sync](project_bsync_beacon_pwm_sync.md) — BENCH-VALIDATED 8-4 single-device (locked ±2µs @70V, survives wifi off); TSF unusable unassociated → rx-clock/esp_timer bridge + drift feedforward; 2-device test open
-- [Runtime-selectable LEDC/MCPWM gate driver](project_runtime_selectable_pwm_driver.md) — pick via converter.conf::pwm_driver (default ledc); set mcpwm on fry/flat BEFORE OTAing a both-image
-- [In-mem ConfFile multi-pair miscompile](project_conffile_inmem_multipair_miscompile.md) — ConfFile{{...}} w/ 2+ pairs + runtime const char* throws length_error; use ConfFile::set()
-- [fry CV-floor latch = stale firmware (RESOLVED 6-10)](project_fry_cv_floor_latch_stale_firmware.md) — midday drop-outs were pre-fix fw; fixed by OTA; elf_archive was stale for fry
-- [flat .bss corruption root cause](project_tracker_pwmtable_oob_mcpwm.md) — Tracker pwm tables sized [2048] indexed by raw pwm count; MCPWM pwmMax~4103 overruns into mppt tail
-- [MCPWM validated on live flat (2026-06-08)](project_mcpwm_validated_on_live_flat.md) — ~335W full power, lag 76ms→3ms, pwmMax 2047→4103; store rect_offset as ns not counts
+- [Shared-bus termination fix deployed (6-15)](project_shared_bus_termination_fix_deployed.md) — fry/flat no longer trickle a full pack
+- [MCPWM dead-time LS min-pulse "missing" signal](project_mcpwm_deadtime_ls_minpulse.md) — fbuck LS at ~0A = 300ns keep-alive (minLS=80 − 200ns dt), not a bug
+- [bsync: beacon-sniffing MCPWM clock sync](project_bsync_beacon_pwm_sync.md) — BENCH-VALIDATED 8-4 single-device (locked ±2µs @70V, survives wifi off)
+- [Gate driver is a build-time choice](project_runtime_selectable_pwm_driver.md) — Kconfig FUGU_GATE_DRIVER (MCPWM default); fry+flat on MCPWM since 11-08/09
+- [In-mem ConfFile multi-pair miscompile](project_conffile_inmem_multipair_miscompile.md) — ConfFile{{...}} w/ 2+ pairs + runtime const char* throws length_error
+- [fry CV-floor latch = stale firmware (RESOLVED 6-10)](project_fry_cv_floor_latch_stale_firmware.md) — midday drop-outs were pre-fix fw; fixed by OTA
+- [flat .bss corruption root cause](project_tracker_pwmtable_oob_mcpwm.md) — Tracker pwm tables sized [2048] indexed by raw pwm count
+- [MCPWM validated on live flat (2026-06-08)](project_mcpwm_validated_on_live_flat.md) — ~335W full power, lag 76ms→3ms, pwmMax 2047→4103
 - [e2e-test layout](project_e2e_test_layout.md) — etc/e2e-test/, custom subprocess runner, not pytest
 - [ota.py Last-Modified KeyError](project_ota_py_http_server_lastmodified.md) — ota.py needs http.server :9000 from REPO ROOT; stale server → 404 → KeyError
-- [flat dawn floor-stuck after reboot](project_flat_dawn_floor_stuck_after_reboot.md) — bogus dawn boot-sweep captured MPP at 4010/1.3W; fix = don't capture MPP at negligible power
+- [flat dawn floor-stuck after reboot](project_flat_dawn_floor_stuck_after_reboot.md) — bogus dawn boot-sweep captured MPP at 4010/1.3W
 - [vconv on esp32-classic](project_vconv_on_esp32_classic.md) — sdkconfig.esp32vconv + vconv_mock_esp32; holds MPP ~815W
 - [VCONV build OTA'd to live converter = 0W](project_vconv_build_otad_to_live_converter.md) — WITH_VCONV swaps PwmDriver→sim; check sdkconfig before OTAing fry/flat
 - [`wifi off N` over telnet = pbuf UAF crash](project_telnet_wifi_off_pbuf_uaf.md) — disconnect kills netif under telnet socket, UART_LOG mirror → reentrant lwip free
@@ -27,11 +27,11 @@
 - [Inverter-fed topology requires Vout notch](project_inverter_fed_topology.md) — 100 Hz ripple is volts at kW on inverter DC bus; battery is the only sink
 - [esptool --diff-with needs v5.2+](project_esptool_diff_with.md) — IDF 5.5 ships 4.11; install v5 standalone outside the venv
 - [BLE NUS console implemented](project_ble_nus_console.md) — WITH_BLE, ~1.86 MB, fits 1.87 MB OTA slot (tight)
-- [arduino-esp32 capped <3.3.8](project_arduino_esp32_ble_version_cap.md) — 3.3.8 BLE calls ble_gap_read_local_irk(), absent in IDF 5.5.1 NimBLE
+- [arduino-esp32 capped <3.3.8](project_arduino_esp32_ble_version_cap.md) — IDF 5.5 only (IDF 6: >=3.3.12); 3.3.8 BLE calls ble_gap_read_local_irk()
 - [BLE notify needs backpressure](project_ble_notify_backpressure.md) — use txBuf FIFO + bleTxDrain + onStatus, never looped notify()
 - [BLE "garbage bytes" = client per-packet UTF-8 decode](project_ble_utf8_glyph_split_client_decode.md) — fixed w/ streaming TextDecoder in conf-editor
-- [Recharge-after-full = periodic sweep](project_recharge_after_full_periodic_sweep.md) — 30-min re-sweep dumps charge into full pack; sweep gated on termCond/CV (mppt.cpp:64)
-- [Chargers share one BMS; flat Vout low](project_charger_shared_bms_and_flat_vout_cal.md) — all on bat_caravan; flat reads ~0.35V low, fry well-calibrated
+- [Recharge-after-full = periodic sweep](project_recharge_after_full_periodic_sweep.md) — 30-min re-sweep dumps charge into full pack
+- [Chargers share one BMS; flat Vout low while switching](project_charger_shared_bms_and_flat_vout_cal.md) — flat reads 0.3-0.45 V low only when converting
 - [CLI extracted to cli.cpp/cli.h](project_cli_extracted_to_cli_cpp.md) — cli.cpp only in non-test CMake branch (externs main.cpp globals)
 - [perf.h non-inline ODR landmine](project_perf_h_noninline_odr.md) — only one TU may include perf.h
 - [BLE ran S3 hot; modem sleep was off](project_ble_modem_sleep_thermal.md) — +9°C; CONFIG_BT_CTRL_MODEM_SLEEP in sdkconfig.ble; measure w/ etc/chiptemp.py
@@ -40,13 +40,13 @@
 - [clangd LSP for xtensa](project_clangd_xtensa_lsp.md) — .clangd strips xtensa-only flags; query-driver resolves newlib headers
 - [InfluxDB line protocol now in-house](project_influxdb_lineprotocol_inhouse.md) — src/tele/line_protocol.h; vendored submodule removed
 - [Binary line protocol + tamp](project_binary_lineprotocol_and_tamp.md) — sym_line_protocol.h 2.6-4x vs text (~13x w/ tamp); NOT yet wired into telemetry.cpp
-- [BLE telemetry stream + adv broadcast](project_ble_telemetry_stream.md) — WITH_BLE_TELE (NUS 0005, set-time+tele-ble 1, rpi bridge) + WITH_BLE_ADV (connectionless mfr-adv record, --adv); both bench-validated 8-05; NEVER enable NIMBLE_EXT_ADV (silent ENOTSUP)
+- [BLE telemetry stream + adv broadcast](project_ble_telemetry_stream.md) — WITH_BLE_TELE (NUS 0005, set-time+tele-ble 1, rpi bridge) + WITH_BLE_ADV (connectionless mfr-a
 - [Creds in gitignored env files](reference_creds_env_files.md) — etc/influx.env + etc/mqtt.env; source, don't hardcode
 - [InfluxDB timestamps were "lu" (obsolete)](project_influxdb_timestamp_llu_bug.md) — newlib %llu lesson; lib removed
-- [OTA-over-BLE push (no WiFi)](project_ota_over_ble.md) — OTA firmware push over BLE — protocol, partition budget, operational gotchas (parallel, stale-state, version-skip, GATT cache)
+- [OTA-over-BLE push (no WiFi)](project_ota_over_ble.md) — OTA firmware push over BLE — protocol, partition budget, operational gotchas (parallel, stale-state
 - [fugu-py is a separate repo](project_fugu_py_shared_console.md) — etc/fugu = fl4p/fugu-py; transports + Console there; firmware verb is `svc`
-- [Diode-emulation tests TODO](project_diode_emulation_tests_todo.md) — Diode-emulation unit tests status; boot_refresh_ns was silently regressed 1500→500 ns and the test was tautological — both found/fixed 2026-08-11, committed 452761c6 (final default 2000 ns)
-- [Stick-to-wifi: reboot preempts reconnect](project_stick_wifi_reboot_preempts.md) — router restart reboots fry/flat ~3s after AP loss; stick fix moot while device reboots first
+- [Diode-emulation tests TODO](project_diode_emulation_tests_todo.md) — Diode-emulation unit tests status; boot_refresh_ns was silently regressed 1500→500 ns and the test
+- [Stick-to-wifi: reboot preempts reconnect](project_stick_wifi_reboot_preempts.md) — router restart reboots fry/flat ~3s after AP loss
 - [fry vs flat 1.57x coil-L gap = different coils](project_fry_ina226_undereads_157.md) — fry 79.8µH (KS184), flat 50.9µH (KS130); both INA226s fine; set L0 per board
 - [PicoScope ps2000 headless capture](project_picoscope_ps2000_capture.md) — x86_64 dylib via Rosetta+ctypes; etc/pico_capture.py; buffer cap 3968
 - [BLE code-3 = stale macOS GATT cache](project_ble_stale_gatt_cache.md) — unpair to fix; fry is weak-signal, bond is load-bearing
@@ -58,12 +58,12 @@
 - [fry ADC HW healthy in isolation](project_fry_adc_hw_healthy_in_isolation.md) — stalls are integration/timing, not dead silicon
 - [MCPWM ACTION_END() trips missing-field-initializers](project_mcpwm_action_end_macro_trap.md) — use singular set_action_on_*_event APIs
 - [NAT router (192.168.1.173) wedges, fork has fix](project_nat_router_lockup_and_fork.md) — STA stuck but AP alive; web-UI hit revives
-- [OTA transfer wedges the NAT router](project_ota_transfer_wedges_nat_router.md) — confirm `ping 192.168.1.231` before declaring a converter dead; FIXED via liveness watchdog
+- [OTA transfer wedges the NAT router](project_ota_transfer_wedges_nat_router.md) — confirm `ping 192.168.1.231` before declaring a converter dead
 - [Router liveness watchdog (self-recovery)](project_router_liveness_watchdog.md) — reboots itself on sustained upstream-LAN loss; `GET/POST /liveness`
 - [fl4p/esp32_nat_router_extended fork branches](reference_fl4p_nat_router_fork.md) — liveness-watchdog, upload-firmware-button, all-fixes; s3 needs 4MB flashsize
 - [Verify chip + firmware before flashing](feedback_verify_chip_before_flash.md) — `esptool chip_id` + serial banner; fugu units look identical to NAT router on USB
 - [Flash policy](feedback_confirm_before_flashing.md) — bench units: flash without asking (8-04); fry/flat: still confirm first
-- [Stop conversion before OTAing fry/flat at high power](project_fugu_ota_stop_conversion_high_power.md) — `dc 0` first (drops load + disables loop-latency watchdog); reboot auto-resumes
+- [OTA at high power](project_fugu_ota_stop_conversion_high_power.md) — superseded: app `ota` stops conversion itself, no manual dc 0
 - [classic-ESP32 IRAM overflow + overlay](project_esp32_iram_overlay.md) — build in build-esp32/, not shared build/
 - [Wokwi CI token](reference_wokwi_cli_token.md) — WOKWI_CLI_TOKEN; ~/.wokwi/user.tok is a license, not the CI token
 - [Wokwi runs on classic ESP32](project_wokwi_esp32_setup.md) — BLE off via sdkconfig frag; telnet forward unreliable for e2e
@@ -71,7 +71,7 @@
 - [peek console command](project_peek_console_command.md) — `peek <addr> [len]`; symbol→addr host-side
 - [MCPWM dt needs two set_dead_time calls](project_mcpwm_dt_pair_two_calls.md) — asymmetric configs need per-generator call; HS bypass = 1-tick FED trick
 - [MCPWM CAP ISRs reorder close edges](project_mcpwm_cap_isr_reorder.md) — sort the ring by ts before sequential analysis
-- [gpio_install_isr_service nested-IPC deadlock](project_gpio_isr_install_nested_ipc_deadlock.md) — use a pinned task, not esp_ipc_call_blocking(same core); bricked fry/flat at boot
+- [gpio_install_isr_service nested-IPC deadlock](project_gpio_isr_install_nested_ipc_deadlock.md) — use a pinned task, not esp_ipc_call_blocking(same core)
 - [Bad OTA bricks permanently](project_no_ota_rollback_no_boot_watchdog.md) — pre-rollback lesson; see CLAUDE.md OTA safety net
 - [Boot-log early hook overflows wifi task](project_bootlog_hook_wifi_stack_overflow.md) — keep enable_esp_log_to_telnet LATE; don't OTA bleeding-edge to live converters
 - [ESPHome BLE proxy → fry/flat](reference_esphome_ble_proxy.md) — nimble-proxy @192.168.1.231; fugu_console.py --ble-proxy; bypasses macOS bonds
@@ -82,7 +82,7 @@
 - [ping task stack overflow via UART_LOG](project_ping_task_stack_uart_log.md) — set task_stack_size=6144
 - [nettools getaddrinfo needs WiFi up](project_nettools_getaddrinfo_needs_wifi_up.md) — gate on WiFi.status()==WL_CONNECTED
 - [Reach flat console/coredump/OTA via MQTT](project_flat_console_via_havan_mqtt_broker.md) — broker 192.168.1.200:1882, topic pv/log/flat (+/cmd); OTA recipe in file
-- [coredump get truncates at 8KB over BLE](project_coredump_get_ble_8kb_truncation.md) — pull over MQTT/telnet instead
+- [coredump get truncates at 8KB over BLE](project_coredump_get_ble_8kb_truncation.md) — pacing fix committed (not BLE HW-tested); MQTT/telnet still safest
 - [ADC no-sample watchdog deadlock](project_adc_nosample_watchdog_deadlock.md) — read() gated on isGood() but read() clears the watchdog; drain before judging
 - [sys_evt task stack overflow on WiFi flap](project_sysevt_task_stack_overflow.md) — 2304B sys_evt overflow via vprintf_mux; bumped EVENT_TASK_STACK to 4096
 - [fry/flat May 29 crashes = 3 firmware bugs](project_fry_flat_may29_crash_rootcause.md) — deadlock + stack overflow, NOT hardware damage (my wrong call recorded)
@@ -95,35 +95,56 @@
 - [mppt telemetry in InfluxDB](reference_mppt_telemetry_influx.md) — `mppt` at tm.fabi.me/ha_van (NOT open_pe); console log UTC+1 vs device UTC
 - [teleflush bad_alloc panic](project_teleflush_bad_alloc_panic.md) — unguarded std::bad_alloc in flushQueue terminates device; needs try/catch
 - [Adaptive inverter-ripple notch](project_adaptive_ripple_notch.md) — Goertzel auto-tune notch (fixed 100Hz was the bug); not yet flashed
-- [EOC feedback death-spiral (FIXED in code 9-07, not OTA-validated)](project_eoc_feedback_death_spiral.md) — EOC target now cv_eoc/cv_min, not v_term(ibat); termCond per cell frame, 2-frame line debounce
+- [EOC feedback death-spiral (FIXED in code 9-07, not OTA-validated)](project_eoc_feedback_death_spiral.md) — EOC target now cv_eoc/cv_min, not v_term(ibat)
 - [flat BMS-flap sweep block (FIXED 9-07, not validated)](project_flat_bms_flap_permanent_sweep_block.md) — bmsBootDeadline no longer re-armed on fresh→stale
-- [Load-following plan for terminated chargers](project_load_following_plan.md) — Phase 2 superseded by `partial_charge` hold (9-07); Phase 1 shared-bus asymmetry still open
+- [Load-following plan for terminated chargers](project_load_following_plan.md) — Phase 2 superseded by `partial_charge` hold (9-07)
 - [voutAuthority asymmetry on shared bus](project_voutauthority_asymmetry_shared_bus.md) — both terminated → one floats, other floors at 0W; confirmed 6-30, 7-7
 - [BMS MQTT topic publish rates](reference_bms_mqtt_topic_rates.md) — ibat ~4s, cell_voltages/max ~12s, separate topics
-- [rpi BLE timeouts = shared WiFi/BT radio; USB adapter fixes it](project_rpi_ble_connect_scan_contention.md) — 20/30@3.2s → 30/30@0.4s; select adapter by MAC 10:20:BA:05:4C:8E, hciN moves
-- [nRF52840 USB dongle HCI compatibility for rpi BLE](reference_nrf52840_dongle_hci_compat.md) — Which nRF52840 USB dongles work as BlueZ HCI adapters: Seeed MDK works (needs hci_usb flash), Ezurio BL654 USB does not (locked to smartBASIC). Also: common non-nRF USB BT dongles that work plug-and-play.
-- [target_duty_cycle enters manualPwm at boot with persistent manualTarget](project_target_duty_cycle_conf_key.md) — tracker.conf::target_duty_cycle (fraction of pwmMaxDriver) enters manualPwm at boot with hard-fixed duty via persistent manualTarget; startSweep() skip was the key fix; clearBootTarget() on mppt/sweep/ota-fail/measure-coil; duty_max is dead
-- [SimpleCLI semicolon parsing behavior](reference_simplecli_semicolon_parsing.md) — SimpleCLI parser treats ;; as line delimiter but single ; stays in word tokens — key for script-set command design
+- [rpi BLE timeouts = shared WiFi/BT radio; USB adapter fixes it](project_rpi_ble_connect_scan_contention.md) — 20/30@3.2s → 30/30@0.4s; select adapter by MAC 10:20:BA:05
+- [nRF52840 USB dongle HCI compatibility for rpi BLE](reference_nrf52840_dongle_hci_compat.md) — Which nRF52840 USB dongles work as BlueZ HCI adapters: Seeed MDK works (n
+- [target_duty_cycle enters manualPwm at boot with persistent manualTarget](project_target_duty_cycle_conf_key.md) — tracker.conf::target_duty_cycle (fraction of pwmMaxDr
+- [SimpleCLI semicolon parsing behavior](reference_simplecli_semicolon_parsing.md) — SimpleCLI parser treats ;; as line delimiter but single
 - [fbuck/fboost device identities](reference_fbuck_fboost_ble_addresses.md) — fbuck/fboost BLE UUIDs, chip IDs, and how to connect to these bench devices
-- [fboost rig requires fixed duty 2499 for measurements](project_fboost_rig_fixed_duty_2499.md) — fboost must be at exactly 2499 PWM counts (target_duty_cycle=0.6138) for rig measurements; acquisition software refuses to run otherwise
-- [fbuck/fboost telemetry via rpi.local BLE relay](reference_fbuck_telemetry_host.md) — fbuck/fboost rig telemetry path: BLE ADV → rpi.local (192.168.178.26) influx_binary_proxy → influxdb-udp-relay → influx.fabi.me:8086/open_pe; rpi.local must be up; query with etc/influx.env creds
-- [Don't send state-changing commands to devices during diagnosis](feedback_dont_touch_devices_during_diagnosis.md) — When investigating a device problem, only send read-only commands (status, sensor, get-config, rt-stats); ask before any state-changing command (bf, dc, sweep, mppt, +N, -N, fan, sync, restart, ota)
-- [MCPWM resolution-dependent audit: only boot_refresh_ns regressed](project_mcpwm_resolution_audit_clear.md) — Comprehensive audit 2026-08-11: boot_refresh_ns (500→2000) was the ONLY silent LEDC→MCPWM resolution regression; ±4 ramp and 32 fade-in also fixed. All committed in 452761c6.
-- [DCM coil ringing reduction techniques and sources](reference_dcm_ringing_reduction.md) — Practical techniques to reduce inductor/switch-node ringing in a buck converter in DCM, with key source URLs and RC snubber design procedure
-- [DCM ring frequency is per-board (flu measured 320 kHz)](project_dcm_ring_frequency_active_damping_feasibility.md) — f_r is set by how many FETs sit on the node. MEASURED: flu 320 kHz, T_ring/4 ~780 ns. The ~1.3-2 MHz / 125-192 ns figure is an UNVERIFIED estimate for fry/flat only; fbuck is unmeasured (3.34 nF retracted 2026-09-06). MCPWM has only 2 comparators/operator, so LS re-trigger damping needs another mechanism; LEDC cannot do it either. Canonical: doc/DCM Ringing.md
-- [macOS ESP32-S3 USB-JTAG serial port enumeration instability](macos_esp32s3_usb_jtag_port_enumeration.md) — ESP32-S3 USB-JTAG/serial (VID 0x303a) /dev/cu.usbmodem* port can disappear and re-enumerate with a different suffix on macOS; idf-export.sh auto-detection fails; workaround
-- [PSU constant-voltage mode (vconv-validated, real-HW gate driver broken)](project_psu_mode_implemented.md) — PSU mode implemented 2026-08-12; 11 review bugs fixed; vconv fully validated; real-HW testing found bflow/startCondition/Vr-sensor-fail/duty-cap issues (all fixed); bench device gate driver supply confirmed broken — need different board for real-HW validation
-- [vconv build on ESP32-S3 (sdkconfig gotcha)](project_vconv_on_esp32s3.md) — How to build CONFIG_FUGU_WITH_VCONV on ESP32-S3; the non-obvious -DSDKCONFIG trick needed because Kconfig depends-on makes MCPWM=y un-overridable via defaults fragments
-- [IDF adc_continuous_config requires uniform attenuation per ADC unit](project_adc_uniform_atten_requirement.md) — IDF adc_continuous_config rejects mixed attenuation across ADC1 channels with ESP_ERR_INVALID_ARG; fixed by normalizing all channels to maxAtten in adc_esp32_cont.h
-- [Bench ESP32-S3 fugu-esp32s3-* is a Fugu2 board](reference_bench_s3_fugu2_board.md) — Bench ESP32-S3 (MAC 34:85:18:82:40:28, hostname fugu-esp32s3-284082188534) is a Fugu2 board (same pins as fmetal); INA226 at 0x40 works, internal ADC works after atten-normalization fix
-- [Test with console commands before flashing](feedback_test_before_flashing.md) — User preference: verify hypotheses on current firmware via console commands before flashing a new build
-- [Use provision.sh for config-only changes, don't full flash](feedback_use_provision_sh_for_config_only.md) — When only the littlefs config changed (not firmware), use ./provision.sh <config> not idf.py flash
-- [PV-sim output mode implemented (8-15)](project_pv_sim_mode_implemented.md) — mode=pv/`pv` cmd on PSU machinery, commit 2440421; bench validation pending (port was locked)
+- [fboost rig requires fixed duty 2499 for measurements](project_fboost_rig_fixed_duty_2499.md) — fboost must be at exactly 2499 PWM counts (target_duty_cycle=0.6138) for
+- [fbuck/fboost telemetry via rpi.local BLE relay](reference_fbuck_telemetry_host.md) — fbuck/fboost rig telemetry path: BLE ADV → rpi.local (192.168.178.26) influx_binar
+- [Don't send state-changing commands to devices during diagnosis](feedback_dont_touch_devices_during_diagnosis.md) — When investigating a device problem
+- [MCPWM resolution-dependent audit: only boot_refresh_ns regressed](project_mcpwm_resolution_audit_clear.md) — Comprehensive audit 2026-08-11: boot_refresh_ns (500→2000)
+- [DCM coil ringing reduction techniques and sources](reference_dcm_ringing_reduction.md) — Practical techniques to reduce inductor/switch-node ringing in a buck converte
+- [DCM ring frequency is per-board (flu measured 320 kHz)](project_dcm_ring_frequency_active_damping_feasibility.md) — f_r is set by how many FETs sit on the node
+- [macOS ESP32-S3 USB-JTAG serial port enumeration instability](macos_esp32s3_usb_jtag_port_enumeration.md) — ESP32-S3 USB-JTAG/serial (VID 0x303a) /dev/cu.usbmodem* port
+- [PSU constant-voltage mode (vconv-validated, real-HW gate driver broken)](project_psu_mode_implemented.md) — PSU mode implemented 2026-08-12; 11 review bugs fixed
+- [vconv build on ESP32-S3](project_vconv_on_esp32s3.md) — OBSOLETE trick since 1e5c022: a fragment with CONFIG_FUGU_WITH_VCONV=y now suffices
+- [IDF adc_continuous_config requires uniform attenuation per ADC unit](project_adc_uniform_atten_requirement.md) — IDF adc_continuous_config rejects mixed attenuation ac
+- [Bench ESP32-S3 fugu-esp32s3-* is a Fugu2 board](reference_bench_s3_fugu2_board.md) — Bench ESP32-S3 (MAC 34:85:18:82:40:28, hostname fugu-esp32s3-284082188534) is a Fu
+- [Test with console commands before flashing](feedback_test_before_flashing.md) — User preference: verify hypotheses on current firmware via console commands before flas
+- [Use provision.sh for config-only changes, don't full flash](feedback_use_provision_sh_for_config_only.md) — When only the littlefs config changed (not firmware)
+- [PV-sim output mode implemented (8-15)](project_pv_sim_mode_implemented.md) — mode=pv/`pv` cmd on PSU machinery, commit 2440421
 - [conf-editor scraper clobbers FILE_KEYS](project_conf_editor_scraper_clobbers.md) — scrape_conf_keys.py --write drops ctrl_*/bsync/ble/tele keys; hand-edit instead
 - [codex exec stdin hang](reference_codex_exec_stdin_hang.md) — background `codex exec` blocks on stdin forever; always `< /dev/null`, no tail pipe
-- [PCNT forces pull-UP on its edge pin](project_pcnt_new_channel_forces_pullup.md) — pcnt_new_channel() enables pull-up + disables pull-down; re-apply GPIO_PULLDOWN_ONLY after it on AC-coupled lines
-- [codex DNS in the sandbox is intermittent](reference_codex_no_resolver_in_sandbox.md) — PROBE with a one-liner first; it worked fine 2026-08-26. If blocked: run from a real Terminal, tee to a file
-- [Split dead-time (per-transition HL/LH)](project_split_deadtime_plan.md) — IMPLEMENTED 40b1676 (2026-08-26); on-target + fbuck bench validation still outstanding, don't OTA fry/flat yet
-- [LFP longevity research (9-05)](reference_lfp_longevity_research.md) — doc/LFP Longevity Research.md (codex-reviewed) + kb note + lit archive ~/dev/pv/ee/lit/bat; recharge_dod does NOT lower avg SoC, needs partial-charge ceiling; no EoC hold; 0 °C floor
-- [No feature/fix branches — always main](feedback_no_feature_branches_always_main.md) — commit unvalidated work to main too; flag it in the message, not the branch topology
-- [IDF 6 dual build (5.5 default)](project_idf6_dual_build.md) — 3c8a7fa; separate build dir+sdkconfig; CXX_FLAGS append trap; image-size safe set ed9f647 (254 KB free IDF 6)
+- [PCNT forces pull-UP on its edge pin](project_pcnt_new_channel_forces_pullup.md) — pcnt_new_channel() enables pull-up + disables pull-down
+- [codex DNS in the sandbox is intermittent](reference_codex_no_resolver_in_sandbox.md) — PROBE with a one-liner first; it worked fine 2026-08-26
+- [Split dead-time (per-transition HL/LH)](project_split_deadtime_plan.md) — IMPLEMENTED 40b1676 (2026-08-26); on-target + fbuck bench validation still outstanding
+- [LFP longevity research (9-05)](reference_lfp_longevity_research.md) — doc/LFP Longevity Research.md (codex-reviewed) + kb note + lit archive ~/dev/pv/ee/lit/bat
+- [No feature/fix branches — always main](feedback_no_feature_branches_always_main.md) — commit unvalidated work to main too; flag it in the message
+- [IDF 6 dual build (5.5 default)](project_idf6_dual_build.md) — 3c8a7fa; separate build dir+sdkconfig; CXX_FLAGS append trap
+- [External comms port plan](project_ext_comms_port_plan.md) — VE.Direct-pinout port + CAN/RS-485 adapters; HW plan in Fugu2 repo, FW deferred
+- [Published docs: no scratchpad structure](feedback_published_docs_no_scratchpad.md) — website/docs pages are curated surveys/reference
+- [USB config drive (issue #40)](project_usb_msc_config_drive.md) — CONFIG_FUGU_WITH_USB_MSC: emulated FAT over conf/, commit on eject; bench-tested on flu/macOS 10-10
+- [No --unidiff-zero partial staging](feedback_no_unidiff_zero_partial_staging.md) — broke HEAD CMake (acbb6b5); replay onto HEAD + build staged tree in an isolated workt
+- [~/dev/kb/ knowledge-base notes are auto-pushed and must be read before deriving](reference_kb_notes_dirs.md) — User maintains curated kb notes (e.g. ~/dev/kb/esp32/
+- [havan via Tailscale](reference_havan_tailscale_route.md) — off-site: ssh -o HostKeyAlias=havan.local 100.64.0.10, tunnel NAT telnet ports
+- [Backflow high-duty trip accepted](project_bflow_highduty_trip_accepted.md) — join-at-float nuisance trip on fry/flat; Fab: leave it (11-04)
+- [Ro tracker-step estimator not viable; Rc works](project_ro_tracker_step_not_viable.md) — #47 field result 11-08: fry Rc ~15 mΩ stable; Ro SE ~200 mΩ, flat garbage
+- [flat MCPWM sweep loop = rect_offset](project_flat_mcpwm_sweep_loop_rect_offset.md) — midday re-sweeps looped after MCPWM; rect_offset_ns 875->0 on 11-09
+- [Board build details: HW Stories](reference_hw_stories_build_details.md) — ~/dev/ee/hw/Fugu2/HW Stories/<board>.md: as-built parts, unfitted parts, incidents per board
+- [Flash writes stall RT loop (measured)](project_flash_write_rt_stall_measured.md) — fry 11-10: append ~+1 ms, erase/compaction 33-65 ms peak lag
+- [rect-cal deployed, never run](project_rectcal_ota_deployed_1111.md) — fry+flat on main eecc43a (11-12 14:50); rect_cal_auto=0, offset 0 ns uncalibrated
+- [highD-bflowOpen trips](project_highd_bflowopen_lowlight_trip.md) — low-light fix 3e0539c; dawn fix eecc43a (sweep-end Vin>0.95 Vout) OTA.d 11-12
+- [Stale-cell fallback ramp](project_stale_cell_fallback_ramp.md) — BMS gaps dropped cap below charging pack (fry 0 W 11-12); dc8bb77 bus-cap ramp, OTA'd 11-12 (08cf227)
+- [OTA via MQTT console](project_ota_via_mqtt_console.md) — `ota` stops conversion itself (no dc 0); a failed OTA may log nothing, check bootinfo
+- [Wire-fault guard warn-only (1b96f1f)](project_wire_guard_warn_only.md) — #47 guard on main, deployed fry+flat 11-12 (c0bf8e0), warn only
+- [Tracking-loss budget (11-14)](project_tracking_loss_budget_1114.md) — dither ~0.6 %, sweeps ~0.25 %; big loss = wrong local peak until next sweep (fry run-away after Vout-limiter touches, unreproduced)
+- [INA226 OV-alert knob (ina22x_ov)](project_ina226_ov_alert_knob.md) — on main bd1f472, fry-tested; IRAM GPIO ISR behind Kconfig FUGU_GPIO_ISR_IRAM (off, untested, unreviewed)
+- [BLE backup link when a converter is silent](feedback_ble_backup_link_when_offline.md) — check over BLE within ~2 min (direct, then nimble proxy); procedure in CLAUDE.md
+- [Delegate implementation to Opus agents](feedback_delegate_implementation_to_opus_agents.md) — code changes go to model=opus subagents; I brief, verify, commit, deploy
+- [Flash auto-suspend live result](project_flash_autosuspend_live_result.md) — flash-autosus 72c449f (not on main) on fry+flat as 504; 11-14 not a clean <1 ms day (heap incident 6.2 ms, rt-stats 2.6 ms); rect-cal force loop pending

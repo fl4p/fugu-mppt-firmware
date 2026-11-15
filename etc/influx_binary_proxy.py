@@ -17,7 +17,7 @@ Usage:
       --user openpe --password ... --precision ms           # decode + forward
   influx_binary_proxy.py --test path/to/blob.bin            # offline self-test
 """
-import argparse, socket, sys, time
+import argparse, socket, ssl, sys, time
 
 def use_bluek():
     """Shadow bleak with fl4p/bluek (kernel-direct, no bluetoothd D-Bus races; connections die
@@ -49,13 +49,18 @@ def make_fwd(args):
         return None
     import urllib.request, base64
     url = f"{args.influx}/write?db={args.db}&precision={args.precision}"
+    ssl_context = None
+    if args.insecure:
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
     hdr = {}
     if args.user:
         hdr['Authorization'] = 'Basic ' + base64.b64encode(f'{args.user}:{args.password}'.encode()).decode()
     def fwd(lines):
         data = '\n'.join(lines).encode()
         req = urllib.request.Request(url, data=data, headers=hdr, method='POST')
-        try: urllib.request.urlopen(req, timeout=5).read()
+        try: urllib.request.urlopen(req, timeout=5, context=ssl_context).read()
         except Exception as e: print(f"forward error: {e}", file=sys.stderr)
     return fwd
 
@@ -285,6 +290,8 @@ if __name__ == '__main__':
     ap.add_argument('--influx'); ap.add_argument('--db', default='open_pe')
     ap.add_argument('--user'); ap.add_argument('--password', default='')
     ap.add_argument('--precision', default='ms')
+    ap.add_argument('--insecure', action='store_true',
+                    help='disable TLS certificate verification for --influx')
     ap.add_argument('--test', metavar='BLOB')
     a = ap.parse_args()
     fwd = make_fwd(a)

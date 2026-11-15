@@ -5,7 +5,7 @@
 #include "line_protocol.h"
 #include "../store.h"
 
-#include <WiFiMulti.h>
+#include <WiFi.h>
 //#include <WiFiUdp.h>
 #include <ESPmDNS.h>
 
@@ -25,7 +25,41 @@
 static Compressor *s_teleCompressor = nullptr;   // cached compressor for the binary wire
 
 
-WiFiMulti wifiMulti;
+// ssid, psk. Replaces WiFiMulti, whose fixed 100-300 ms/channel scan dwell starves a connected BLE
+// link: the S3 controller then asserts in the connection-update procedure (INT_WDT reset).
+static std::vector<std::pair<std::string, std::string>> s_aps;
+
+static void addAp(const std::string &ssid, const std::string &psk) {
+    for (auto &ap: s_aps)
+        if (ap.first == ssid) {
+            ap.second = psk;
+            return;
+        }
+    s_aps.emplace_back(ssid, psk);
+}
+
+// Scan at the driver's default dwell (coexistence-safe), join the strongest configured AP.
+static wl_status_t wifiRun() {
+    if (WiFi.status() == WL_CONNECTED) return WL_CONNECTED;
+    WiFi.setScanActiveMinTime(0);
+    const int n = WiFi.scanNetworks(false, false, false, 0);
+    int best = -1, bestAp = -1;
+    for (int i = 0; i < n; ++i)
+        for (size_t k = 0; k < s_aps.size(); ++k)
+            if (s_aps[k].first == WiFi.SSID(i).c_str() && (best < 0 || WiFi.RSSI(i) > WiFi.RSSI(best))) {
+                best = i;
+                bestAp = (int) k;
+            }
+    if (best < 0) {
+        WiFi.scanDelete();
+        return WL_NO_SSID_AVAIL;
+    }
+    const auto &ap = s_aps[bestAp];
+    WiFi.begin(ap.first.c_str(), ap.second.empty() ? nullptr : ap.second.c_str(), WiFi.channel(best),
+               WiFi.BSSID(best));
+    WiFi.scanDelete();
+    return (wl_status_t) WiFi.waitForConnectResult(5000);
+}
 //WiFiUDP udp;
 AsyncUDP asyncUdp;
 
@@ -56,7 +90,7 @@ void wifi_load_conf() {
     auto psk_def = nvs.readString("wifi_psk", "");
     nvs.close();
     if (!ssid_def.empty()) {
-        wifiMulti.addAP(ssid_def.c_str(), psk_def.c_str());
+        addAp(ssid_def, psk_def);
         noSsid = false;
     }
 
@@ -65,12 +99,9 @@ void wifi_load_conf() {
             auto ssid = wifiConf.getString(k); // keep the string alive; .c_str() on the temp dangled
             auto psk = wifiConf.c(k + "_psk", "");
             if (ssid == ssid_def and psk == psk_def) continue;
-            if (!wifiMulti.addAP(ssid.c_str(), psk)) {
-                ESP_LOGW("tele", "Failed to add ap  %s", ssid.c_str());
-            } else {
-                ESP_LOGI("tele", "Add WiFi SSID %s (psk %s)", ssid.c_str(), psk ? "***" : "<none>");
-                noSsid = false;
-            }
+            addAp(ssid, psk ? psk : "");
+            ESP_LOGI("tele", "Add WiFi SSID %s (psk %s)", ssid.c_str(), psk && *psk ? "***" : "<none>");
+            noSsid = false;
         }
     }
 }
@@ -103,13 +134,8 @@ bool add_ap(const std::string &ssid, const std::string &psk) {
         ESP_LOGE("tele", "failed to write %s", confPath);
         return false;
     }
-    // WiFiMulti has no replace: a changed psk would leave the old entry in the list
-    if (known)
-        ESP_LOGI("tele", "Updated Wifi AP %s in %s, applies after restart", ssid.c_str(), confPath);
-    else if (wifiMulti.addAP(ssid.c_str(), psk.c_str()))
-        ESP_LOGI("tele", "Added Wifi AP %s to %s", ssid.c_str(), confPath);
-    else
-        ESP_LOGW("tele", "Stored Wifi AP %s, but it was rejected for this session", ssid.c_str());
+    addAp(ssid, psk);
+    ESP_LOGI("tele", "%s Wifi AP %s in %s", known ? "Updated" : "Added", ssid.c_str(), confPath);
     noSsid = false;
     return true;
 }
@@ -214,7 +240,7 @@ bool wait_for_wifi() {
     if (!disconnectedSince) disconnectedSince = millis();
 
     // While the AP we last held may just be rebooting, keep retrying that same network (via the
-    // station's stored config) instead of roaming to another configured AP. wifiMulti.run() rescans
+    // station's stored config) instead of roaming to another configured AP. wifiRun() rescans
     // and picks the strongest visible AP, so only fall back to it once switch_delay has elapsed.
     bool stick = wifiSwitchDelayMs and !prevSsid.empty()
                  and (millis() - disconnectedSince < wifiSwitchDelayMs);
@@ -226,7 +252,7 @@ bool wait_for_wifi() {
     ESP_LOGI("tele", "Connecting WiFi...");
     auto t_start = millis();
     if (stick) WiFi.reconnect();
-    while ((stick ? WiFi.status() : static_cast<wl_status_t>(wifiMulti.run())) != WL_CONNECTED) {
+    while ((stick ? WiFi.status() : wifiRun()) != WL_CONNECTED) {
         delay(50);
         if (millis() - t_start > 6000) {
             ESP_LOGW("tele", "WiFi connection timeout");

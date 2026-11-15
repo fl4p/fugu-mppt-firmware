@@ -67,6 +67,10 @@ ESPHOME_API_PORT = 6053
 # Strings present only in a WITH_BLE build: the otab receiver + NUS console (both #ifdef WITH_BLE) and
 # the NimBLE host (absent when CONFIG_BT_ENABLED is off). Flashing an image missing all of these over
 # BLE would disable the very console/OTA path we're using — so we warn before doing it.
+#
+# ANY of them, not all: they are alternatives, and a build that carries one carries BLE. The node's
+# marker set is read with mode="all" because its two markers are both required. That difference is
+# why O.image_keeps_the_push_path() takes the quantifier as an argument instead of picking one.
 BLE_SIGNATURES = (b"OTAB CRED", b"OTAB READY", b"(NUS console)", b"BLE_HS")
 
 # Seconds a freshly booted image stays PENDING_VERIFY before the firmware confirms it. Until then
@@ -77,7 +81,7 @@ OTA_CONFIRM_S = 20.0
 
 def image_has_ble(data):
     """Heuristic: does this firmware image look like a BLE-enabled (WITH_BLE) build?"""
-    return any(sig in data for sig in BLE_SIGNATURES)
+    return O.image_keeps_the_push_path(data, BLE_SIGNATURES, mode="any")
 
 
 def progress_bar(done, total, label, width=30):

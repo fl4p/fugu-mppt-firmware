@@ -1461,6 +1461,19 @@ static void loopNetwork_task(void *arg) {
     //ESP_LOGI("main", "Net loop running on core %i", xPortGetCoreID());
     assert(xPortGetCoreID() == 0);
 
+    // loopRT is the ONLY writer of loopWallClockUs_, and it is never created when setup() failed
+    // (the g_app.setupErr gate on xTaskCreatePinnedToCore above). wallClockMs() then stays frozen
+    // forever and every consumer pacing off it stops silently -- no error, no log. The one that
+    // bites is bleTxDrain(): its TX_SETTLE_MS window can never expire, so the BLE console accepts
+    // commands, dispatches them and produces the reply, then emits ZERO notifications. The console
+    // dies exactly when it is most needed, on a board too broken to bring up its converter.
+    // otaBleTick/teleBleTick/teleAdvTick pace off the same value and stop with it.
+    // MEASURED 2026-09-10, S3 with no charger.conf: loopWallClockUs_ pinned at 224388 us across
+    // 17 s of uptime; adding this line it tracks uptime again and notifications resume.
+    // Guarded by setupErr so it can never race loopRT -- the guard is true only when loopRT does
+    // not exist. Cheap: one esp_timer_get_time() per network-loop iteration, and only when broken.
+    if (g_app.setupErr) setWallClockUs(esp_timer_get_time());
+
     auto nowMs(wallClockMs());
 
     loopUart(nowMs);

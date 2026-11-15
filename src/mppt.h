@@ -303,9 +303,9 @@ public:
     TeleConf tele{};
     BatteryCharger charger;
     BackflowDriver bflow{};
+    LvPgood lvPgood{};
     SolarEnergyMeter meter{};
     OutputImpedance outZ{};
-    LvPgood lvPgood{};
     TempSensorGPIO_NTC ntc;
     Esp32TempSensor ucTemp;
     Fan fan{};
@@ -368,6 +368,7 @@ public:
     // stuck post-sweep state names the responsible protect.
     void shutdownDcdc(const char *who, uint32_t backoffSec = 5) {
         _limitPert = 0;
+        lvPgood.release();
         bflow.enable(false);
         converter.disable();
         if (backoffSec) {

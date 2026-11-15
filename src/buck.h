@@ -1130,6 +1130,7 @@ public:
             ESP_LOGW("converter", "forced_pwm (gate %s, margin %.3f, hold %hu)",
                      fpwmGate ? "on" : "OFF", fpwmGateMargin, fpwmGateHold);
 
+
         coilL0 = coilConf.getFloat("L0");
         const float L0 = coilL0;
         // rectOnOffset is derived from coil.conf::rect_offset_ns after the driver is up (needs pwmMax

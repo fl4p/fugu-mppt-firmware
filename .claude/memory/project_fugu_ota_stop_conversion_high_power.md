@@ -36,3 +36,5 @@ trigger `ota <url>` (persistent HTTP server from repo root + MQTT trigger,
 `App: ...115-g1c3613b8` banner + it's converting again. fry/flat lose ~5min of production each.
 Alternative when not urgent: OTA at **dawn/dusk** (low power, light RT loop) — no manual stop needed.
 Relates to [[project_ina226_timeout_loop_latency_shutdown]] (same RT-starvation watchdog).
+
+**Superseded (11-12):** the app `ota` command now stops conversion itself and restores the mode on failure; see [[project_ota_via_mqtt_console]]. Manual `dc 0` is unnecessary and skips that restore.
