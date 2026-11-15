@@ -20,6 +20,7 @@
 //     wx-shade2-move, wx-shade3-move  shade moves, the global maximum changes peak after the boot sweep
 //     wx-shade-cloud    shaded substring under the cloud series (second peak comes and goes)
 //     wx-dawn, wx-dusk  irradiance through the start threshold
+//     wx-low, wx-mid    steady light rising slowly, MPP 2 -> 20 W in 30 min / 55 -> 110 W in 10 min, sensor noise
 //     wx-sweep-fall, wx-sweep-rise, wx-sweep-shade   cloud edge during a sweep (-shade: two peaks)
 //   SIM_T=600 wx run length [s], SIM_TR=5 wx trace interval [s], SIM_V=1 firmware log in wx/shade runs
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
@@ -988,6 +989,13 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
             wx.cloud.emplace_back(sc == "wx-dawn" ? t : (float) wx.T - t, std::exp(lg));
         }
         if (sc == "wx-dusk") std::reverse(wx.cloud.begin(), wx.cloud.end());
+    } else if (sc == "wx-low" || sc == "wx-mid") {
+        // steady light rising slowly after the boot sweep, with sensor noise: MPP 2 -> 20 W in 30 min (x2 per 9 min),
+        // 55 -> 110 W in 10 min (x2 per 10 min, dawn rate) then 10 min level
+        const bool low = sc == "wx-low";
+        const float g0 = (low ? 2.5f : 61.f) / wx.pClear, r = low ? 10.f : 2.f, tr = low ? 1800 : 600;
+        wx.vocLog = 2.6f, wx.T = low ? 1860 : 1260;
+        for (float t = 0; t <= wx.T; t += 10) wx.cloud.emplace_back(t, g0 * std::pow(r, std::clamp(t - 60, 0.f, tr) / tr));
     } else if (sc == "wx-sweep-fall" || sc == "wx-sweep-rise") {
         // cloud edge (73 % in 10 s) starting 2 s into a sweep
         const bool fall = sc == "wx-sweep-fall";
@@ -1191,6 +1199,7 @@ static int simMain(int argc, char **argv) {
         printf("unknown scenario %s\n", sc.c_str());
         return 1;
     }
+    if (sc == "wx-low" || sc == "wx-mid") ov = {{"noise_iout", sc == "wx-low" ? "0.02" : "0.04"}, {"noise_vout", "0.03"}};
     if (sc == "wx-cloud-cv-ripple") ov = {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}};
     const bool rcal = sc.rfind("rcal", 0) == 0;
     if (rcal) ov = {{"noise_iout", "0.01"}, {"noise_vout", "0.005"}, {"noise_vin", "0.05"}};

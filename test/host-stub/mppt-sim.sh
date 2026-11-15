@@ -11,7 +11,7 @@ clang++ -std=gnu++20 -O2 -fexceptions -Wno-format -Wno-deprecated-volatile \
     "$ROOT/src/mppt.cpp" "$ROOT/src/adc/sensor_setup.cpp" "$ROOT/src/sim/vconv.cpp" "$ROOT/src/math/float16.cpp" -o "$OUT"
 [ $# -eq 0 ] && set -- sanity a b c d-cloud d-cloud-ramp d-bus04 d-bus08 d-bus12 d-noise e e-bleed a-p0 b-p0 c-p0 e-p0 d-cloud-p0 d-cloud-ramp-p0 d-bus12-p0 d-noise-p0 \
     wx-cloud wx-cloud-cv wx-cloud-cv-ripple wx-shade2 wx-shade3 wx-shade2-move wx-shade3-move wx-shade-cloud \
-    wx-dawn wx-dusk wx-sweep-fall wx-sweep-rise wx-sweep-shade rcal rcal-bus rcal-cloud rcal-ov rcal-low rcal-low-bus rcal-sun
+    wx-dawn wx-dusk wx-low wx-mid wx-sweep-fall wx-sweep-rise wx-sweep-shade rcal rcal-bus rcal-cloud rcal-ov rcal-low rcal-low-bus rcal-sun
 for s in "$@"; do
     echo "######## $s"
     "$OUT" "$s"

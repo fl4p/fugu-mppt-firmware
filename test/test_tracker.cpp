@@ -108,3 +108,38 @@ void test_tracker_converges_to_peak() {
     // converged near the peak (deadband near the flat top bounds the residual dither)
     TEST_ASSERT_INT_WITHIN(120, peak, duty);
 }
+
+// Within 150 ms of a reversal the filtered power still reflects the old direction: no power-based
+// decision, the reference follows the power instead.
+void test_tracker_settles_after_reversal() {
+    loopWallClockUs_ = 1'000'000;
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    t.resetTracker(100.f, /*direction=*/true);
+    advanceMs(100);
+    t.update(90.f, 100, 0.f);   // reverse
+    TEST_ASSERT_FALSE(t._direction);
+    advanceMs(50);
+    t.update(80.f, 100, 0.f);   // drop inside the settle window: ignored
+    TEST_ASSERT_FALSE(t._direction);
+    TEST_ASSERT_EQUAL_FLOAT(80.f, t._lastPower);
+    advanceMs(200);
+    t.update(70.f, 100, 0.f);   // drop against the settled reference
+    TEST_ASSERT_TRUE(t._direction);
+}
+
+// The 5 % Vin band is 5 % of its higher end in both directions, so a down leg followed by an up leg
+// returns to the start instead of ratcheting down by 0.25 % per cycle.
+void test_tracker_vin_band_symmetric() {
+    loopWallClockUs_ = 1'000'000;
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    t.resetTracker(10.f, /*direction=*/true);
+    auto step = [&](float vin) { advanceMs(200); t.update(10.f, 100, vin); return t._direction; };
+    bool d = step(40.f);                    // primes _lastVin (0 -> 40 reverses)
+    TEST_ASSERT_TRUE(d == step(38.1f));     // 1.9 V < 5 % of 40
+    TEST_ASSERT_TRUE(d != step(37.9f));
+    d = t._direction;
+    TEST_ASSERT_TRUE(d == step(39.85f));    // 1.95 V < 5 % of 39.85 (5 % of 37.9 would reverse here)
+    TEST_ASSERT_TRUE(d != step(39.95f));
+}

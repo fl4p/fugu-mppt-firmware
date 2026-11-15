@@ -84,7 +84,11 @@ struct Tracker {
                 auto absDp = std::abs(dP);
                 bool rev = false;
 
-                if ((
+                // for 150 ms after a reversal the filtered power still shows the old direction and the input
+                // cap's charge/discharge: the reference follows it, a decision on it re-reverses with a bias
+                if (now - _timeLastReverse < 150) {
+                    _lastPower = power;
+                } else if ((
                         absDp >= minPowerStep
                         or (abs(_lastPower) > (minPowerStep * 1) and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel)
                         //or (_timeLastReverse - now > ) // TODO scheduled reversal?
@@ -101,7 +105,8 @@ struct Tracker {
                 // when vin changed 5% since last reversal, reverse.
                 // we might be tracking on a light intensity transient
                 // and end up at a voltage far away from MPP
-                if((abs(vin - _lastVin) / (_lastVin + 0.1f)) > 0.05f) {
+                // 5 % of the higher end, so down and up legs are equal (5 % of each start ratchets down)
+                if (abs(vin - _lastVin) > 0.05f * std::max(vin, _lastVin)) {
                     rev = true;
                 }
 

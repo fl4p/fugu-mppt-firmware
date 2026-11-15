@@ -22,10 +22,11 @@ A new global sweep runs every 30 minutes so the tracker does not stay on a local
 partially shaded strings. A sweep takes 20–60 s, depending on the loop rate. Sweeping too often or too slowly
 costs yield.
 
-In low light, power changes between P&O steps stay below the tracker's thresholds, and P&O drifts toward the
-battery voltage, far below the MPP. If the last sweep captured less than 5 % of `limits.conf::p_max`, the
-tracker therefore starts another sweep once power has doubled since that sweep, at most every 2 minutes. At
-dawn this adds a few short sweeps while the power is still low.
+In low light, power changes between P&O steps stay below the tracker's thresholds, so P&O cannot follow an
+MPP that moves while the light changes (see [Perturb & observe](#perturb--observe)). If the last sweep
+captured less than 5 % of `limits.conf::p_max`, the tracker therefore starts another sweep once power has
+doubled since that sweep, at most every 2 minutes. At dawn this adds a few short sweeps while the power is
+still low.
 
 The following state diagram shows the transitions between the phases:
 
@@ -70,9 +71,20 @@ At the end of a sweep, the firmware writes "MPP Scan done" to the LCD and logs
 mean with the last reference power. These rules set the direction:
 
 - If the power change exceeds the absolute or relative threshold and is negative, the direction reverses.
+- For 150 ms after a reversal, the tracker does not judge the power change. The reference power follows the
+  measurement instead. The filtered power still lags behind the old direction, and the input capacitor
+  discharges while Vin falls and charges while it rises, so the output power dips right after a turn toward
+  higher Vin. A decision in that window would reverse again, mostly toward lower Vin.
 - If Vin moved by more than 5 % since the last reversal, the direction reverses as well. This handles cloud
-  recovery, because tracking a light transient can drift far from the MPP.
+  recovery, because tracking a light transient can drift far from the MPP. The 5 % refers to the higher of the
+  two voltages, so a leg down and the following leg up have the same length.
 - Below 1 W, the tracker always increases duty.
+
+In low light the power change across one 5 % leg near the MPP is about 1 % of the power, below the
+thresholds and close to the current-sensor noise. The tracker then oscillates within the 5 % band around
+where it is. Both rules above keep that oscillation free of a bias toward the battery voltage: with a band
+measured from each leg's start (5 % down, then 5 % of the lower voltage up), every cycle ended 0.25 % lower,
+and the re-reversals after a turn walked Vin down in the same way.
 
 The tracker keeps its own MPP record. It resets the record after 5 min, or when the current power is below 85 % of
 the recorded MPP and the record is more than 30 s old.

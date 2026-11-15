@@ -280,6 +280,8 @@ void test_tracker_keeps_direction_on_power_rise();
 void test_tracker_deadband_ignores_small_drop();
 void test_tracker_cloud_recovery_reverses_on_vin_jump();
 void test_tracker_converges_to_peak();
+void test_tracker_settles_after_reversal();
+void test_tracker_vin_band_symmetric();
 
 // conf.h
 void test_conf_getlong_bases();
@@ -500,6 +502,8 @@ void setup() {
     RUN_TEST(test_tracker_deadband_ignores_small_drop);
     RUN_TEST(test_tracker_cloud_recovery_reverses_on_vin_jump);
     RUN_TEST(test_tracker_converges_to_peak);
+    RUN_TEST(test_tracker_settles_after_reversal);
+    RUN_TEST(test_tracker_vin_band_symmetric);
 
     // buck.h — diode-emulation / sync-rect math
     RUN_TEST(test_buck_ripple_current);
