@@ -100,7 +100,6 @@ entries:
     adc_esp32_cont:_ZN14ADC_ESP32_Cont6isGoodEv (noflash)
     adc_esp32_cont:_ZN14ADC_ESP32_Cont7hasDataEv (noflash)
     adc_esp32_cont:_ZNK14ADC_ESP32_Cont8readModeEv (noflash)
-    logging:_ZNSt8functionIFvvEEC2EOS1_ (noflash)
     main:_ZL6loopRTPv (noflash)
     main:_ZN10PD_Control6updateEfff (noflash)
     main:_ZN10RectCalCtlI20SynchronousConverterE2rtERS0_RK9RectCalIn (noflash)
