@@ -43,7 +43,7 @@ public:
 
         rngState_ = 0x9E3779B9u; // deterministic seed -> tests stay reproducible
 #ifdef FUGU_HOST_SIM
-        if (const char *e = getenv("SIM_SEED")) rngState_ = 0x9E3779B9u ^ ((uint32_t) atol(e) * 0x85EBCA6Bu) | 1u;
+        if (const char *e = getenv("SIM_SEED")) rngState_ = (0x9E3779B9u ^ ((uint32_t) atol(e) * 0x85EBCA6Bu)) | 1u;
 #endif
         periodicTimer_.begin(adcFreq_, &adc_vconv_periodic_timer_callback, this);
         periodicTimer_.start();

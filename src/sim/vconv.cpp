@@ -19,6 +19,15 @@ struct RingSeg {
     }
 };
 
+// coil current i through a body diode for t at slope di/dt, stopping at zero; area = its charge
+__attribute__((noinline)) float diodeRun(float i, float t, float slope, float &area) {
+    if (i * slope >= 0.0f) return area = i * t, i;
+    const float tZero = -i / slope;
+    if (tZero < t) return area = 0.5f * i * tZero, 0.0f;
+    const float e = i + slope * t;
+    return area = trapArea(i, e, t), e;
+}
+
 // first phase in (0, pi] where y cos + z sin... = 0, i.e. atan2(y, z) mod pi
 __attribute__((noinline)) float firstZero(float y, float z) {
     constexpr float kPi = kTwoPi * 0.5f;
@@ -36,18 +45,28 @@ void VirtualConverter::stepOneCycle(float T) {
 
     // Rebuild reciprocals only when an input changes; the steady N-cycle loop then divides nothing
     // (LX7 has no hw float divide, so each `/` was a software __divsf3). 6 compares << 18 divisions.
+    // Vin-dependent terms (node C, 1/Vin of the loss charges) follow Vin in 1 % steps
     const bool nl = ringV_ > 0.0f && vIn_ > 1.0f;
+    const bool vt = vIn_ > 1.0f && (ringV_ > 0.0f || tSw_ > 0.0f || rHs_ > 0.0f || rLs_ > 0.0f);
     if (T != cycT_ || pmax != cycPmax_ || l_ != cycL_ || cIn_ != cycCin_ || cOut_ != cycCout_ || rbat_ != cycRbat_ ||
-        ringC_ != cycRingC_ || (nl && std::fabs(vIn_ - cycRingV_) > 0.01f * vIn_)) {
+        ringC_ != cycRingC_ || (vt && std::fabs(vIn_ - cycRingV_) > 0.01f * vIn_)) {
         cycT_ = T; cycPmax_ = pmax; cycL_ = l_; cycCin_ = cIn_; cycCout_ = cOut_; cycRbat_ = rbat_;
         cycRingC_ = ringC_, cycRingV_ = vIn_;
+        invVin_ = vIn_ > 1e-3f ? 1.0f / vIn_ : 0.0f;
         ringCe_ = nl && ringC_ > 0.0f ? ringC_ * std::pow(ringV_ / vIn_, ringExp_) : ringC_;
+        cn_ = ringCt_ * ringCe_;
         if (ringCe_ > 0.0f && l_ > 0.0f) {
             const float w0 = 1.0f / std::sqrt(l_ * ringCe_), r = 0.25f / (ringQ_ * ringQ_);
             ringA_ = 0.5f * w0 / ringQ_;
             ringWd_ = w0 * std::sqrt(std::max(1.0f - r, 1e-4f));
             ringInvWd_ = 1.0f / ringWd_;
             ringInvC_ = 1.0f / ringCe_;
+        }
+        if (cn_ > 0.0f && l_ > 0.0f) {
+            // undamped edge swing over the HS->LS dead time
+            const float z = std::sqrt(l_ / cn_), wt = std::max(0.0f, tDead_ - tHsExt_) / std::sqrt(l_ * cn_);
+            edgeZ_ = z, edgeInvZ_ = 1.0f / z, edgeCos_ = std::cos(wt), edgeSin_ = std::sin(wt);
+            swK_ = tSw_ * tSw_ / (24.0f * cn_);
         }
         invL_    = (l_   > 0.0f) ? 1.0f / l_   : 0.0f;
         invCin_  = (cIn_ > 0.0f) ? 1.0f / cIn_ : 0.0f;
@@ -182,72 +201,88 @@ void VirtualConverter::stepOneCycleBuck(float T) {
     const float tH = (float) pwm_.pwmCtrl * invPmax_ * T, tL = (float) pwm_.pwmRect * invPmax_ * T;
     const bool lsOn = tL > std::max(tDead_, tHsExt_);
     const float hsDelay = lsOn ? std::max(0.0f, tDead_ - (T - tH - tL)) : 0.0f;
-    const float tHS = tH > 0.0f ? std::max(0.0f, tH + tHsExt_ - hsDelay) : 0.0f;
+    const float tHS = tH > 0.0f ? std::min(T, std::max(0.0f, tH + tHsExt_ - hsDelay)) : 0.0f;
     const float tDd = lsOn ? std::max(0.0f, tDead_ - tHsExt_) : 0.0f;
     const float tLS = lsOn ? tL - std::max(tDead_, tHsExt_) : 0.0f;
     const float tOff = std::max(0.0f, T - tHS - tDd - tLS);
 
-    // body-diode freewheel for t: i > 0 LS diode (node -Vf), i < 0 HS diode (node Vin + Vf), stops at zero
-    auto diode = [&](float i, float t, float &area) {
-        const float slope = i > 0.0f ? -(vOut_ + diodeVf_) * invL : (vIn_ + diodeVf_ - vOut_) * invL;
-        if (i * slope >= 0.0f) return area = i * t, i;
-        const float tZero = -i / slope;
-        if (tZero < t) return area = 0.5f * i * tZero, 0.0f;
-        const float e = i + slope * t;
-        return area = trapArea(i, e, t), e;
-    };
+    // body-diode freewheel: i > 0 LS diode (node -Vf), i < 0 HS diode (node Vin + Vf)
+    const float slP = -(vOut_ + diodeVf_) * invL, slN = (vIn_ + diodeVf_ - vOut_) * invL;
+    auto diode = [slP, slN](float i, float t, float &area) { return diodeRun(i, t, i > 0.0f ? slP : slN, area); };
 
-    // Phase 1: HS on. dI/dt = (Vin - Vout - rHs*i) / L.
+    // Phase 1: HS on. dI/dt = (Vin - Vout - rHs*i) / L. The current drop uses the mean current; the ripple part of
+    // R*int(i^2), R*t*(b-a)^2/12, is paid from the input. Switch losses below are charges at Vin.
     const float a = iLEnd_;
     const float dv = vIn_ - vOut_;
     float b = a + dv * invL * tHS;
-    b = a + (dv - rHs_ * 0.5f * (a + b)) * invL * tHS;
+    float qIn = 0.0f;
+    if (rHs_ > 0.0f) {
+        b = a + (dv - rHs_ * 0.5f * (a + b)) * invL * tHS;
+        qIn += rHs_ * tHS * (b - a) * (b - a) * (1.0f / 12.0f) * invVin_;
+    }
     iPk_ = std::fabs(b);
     const float areaHS = trapArea(a, b, tHS);
-    // HS turn-off, paid from the input: the channel current falls linearly in tSw_, the node C takes the rest
-    // until the node reaches 0 V (at t1)
-    float qIn = 0.0f;
+    // HS turn-off: the channel current falls linearly in tSw_, the edge C takes the rest until the node reaches
+    // 0 V at t1 = sqrt(2 cn Vin tSw / b). E/Vin = b^2 tSw^2 / (24 cn Vin) for t1 >= tSw, else
+    // b tSw / 2 - 2/3 b t1 + cn Vin / 2
     if (tSw_ > 0.0f && tHS > 0.0f && b > 0.0f) {
-        const float cn = ringCt_ * ringCe_, t1 = std::sqrt(2.0f * cn * vIn_ * tSw_ / b), u = std::min(t1, tSw_);
-        const float e = (t1 > 0.0f ? b * b * u * u * u * (1.0f / 3.0f - 0.25f * u / tSw_) / (2.0f * cn * tSw_) : 0.0f) +
-                        0.5f * b * (tSw_ - u) * (tSw_ - u) * vIn_ / tSw_;
-        qIn = e / vIn_;
+        const float h = 2.0f * cn_ * vIn_;
+        qIn += b * tSw_ <= h ? b * b * swK_ * invVin_
+                             : b * (0.5f * tSw_) - (2.0f / 3.0f) * std::sqrt(h * tSw_ * b) + 0.25f * h;
     }
 
-    // dead time HS off -> LS on: body diode; a positive current swings the node down first and takes over
-    // its energy, the rest is lost when the LS turns on hard
+    // dead time HS off -> LS on. A positive current swings the node down along the undamped L-cn resonance; it
+    // clamps at the LS body diode (-Vf) or, if it gets there late, the LS turns on hard and the rest of the node
+    // energy is lost
     float areaDd = 0.0f, b1 = b;
     if (tDd > 0.0f) {
-        if (ringCe_ > 0.0f && b > 0.0f) {
-            const float ct = ringCt_ * ringCe_, f = std::min(1.0f, b * tDd / (ct * (vIn_ + diodeVf_)));
-            b1 = std::sqrt(b * b + ct * vIn_ * vIn_ * f * (2.0f - f) * invL);
+        if (cn_ > 0.0f && b > 0.0f) {
+            const float xLo = -(vOut_ + diodeVf_), x1 = dv * edgeCos_ - b * edgeZ_ * edgeSin_;
+            if (x1 > xLo) {
+                b1 = b * edgeCos_ + dv * edgeInvZ_ * edgeSin_;
+                areaDd = cn_ * (dv - x1);
+            } else {
+                // clamped: current from the swing energy, swing time from its mean current
+                b1 = std::sqrt(b * b + cn_ * (dv * dv - xLo * xLo) * invL_);
+                const float q = cn_ * (dv - xLo), tHit = std::min(tDd, 2.0f * q / (b + b1));
+                b1 = diode(b1, tDd - tHit, areaDd);
+                areaDd += q;
+            }
+        } else {
+            b1 = diode(b, tDd, areaDd);
+            if (b < 0.0f) qIn += areaDd;
         }
-        b1 = diode(b1, tDd, areaDd);
-        if (b < 0.0f) qIn += areaDd;
     }
 
     // Phase 2: LS on. Signed trapezoid; no mode decision -- firmware picks
     // pwmRect to land near zero, forced-PWM commands past it.
     float c = b1 - vOut_ * invL * tLS;
-    c = b1 - (vOut_ + rLs_ * 0.5f * (b1 + c)) * invL * tLS;
+    if (rLs_ > 0.0f) {
+        c = b1 - (vOut_ + rLs_ * 0.5f * (b1 + c)) * invL * tLS;
+        qIn += rLs_ * tLS * (c - b1) * (c - b1) * (1.0f / 12.0f) * invVin_;
+    }
     const float areaLS = trapArea(b1, c, tLS);
 
     // Phase 3: both off. c > 0: LS body diode. c < 0: HS body diode (rev pump).
     float cEnd = c;
     float areaOff = 0.0f;
     bool ring = false, zero = false;
+    // node voltage when the HS turns on next
+    float vNode = lsOn ? 0.0f : vIn_;
     if (ringCe_ > 0.0f && tOff > 0.0f && tHS > 0.0f && vOut_ > 0.0f && vIn_ > vOut_) {
-        // switch-node ring from the node voltage the last switch left (LS: 0, HS: Vin); the HS turn-on
-        // charges the node back to Vin from the input
+        // switch-node ring from the node voltage the last switch left (LS: 0, HS: Vin)
         float x = (tLS > 0.0f ? 0.0f : vIn_) - vOut_, i = c;
         areaOff = ringOff(x, i, tOff, qIn, zero);
-        qIn += ringCt_ * ringCe_ * std::max(0.0f, dv - x);
+        vNode = x + vOut_;
         cEnd = i;
         ring = true;
     } else if (tOff > 0.0f) {
         cEnd = diode(c, tOff, areaOff);
         if (c < 0.0f) qIn += areaOff; // reverse current through the HS body diode returns to the input
+        vNode = cEnd > 0.0f ? -diodeVf_ : cEnd < 0.0f ? vIn_ + diodeVf_ : vOut_;
     }
+    // the HS turn-on charges the edge C back to Vin from the input
+    if (tHS > 0.0f) qIn += cn_ * std::max(0.0f, vIn_ - vNode);
 
     iInAvg_  = (areaHS + qIn) * invT_;
     iOutAvg_ = (areaHS + areaDd + areaLS + areaOff) * invT_;

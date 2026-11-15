@@ -1,7 +1,7 @@
 // vconv buck plant (src/sim/vconv.cpp) with the fry/flat board parameters (plant_boards.h) against the LTspice
 // half-bridge bench numbers of doc/research/vconv-vs-spice.md: dawn Pout(HS) ripple, falling-step share and
 // efficiency, DCM near Vin ~ Vout, the ~100 W DCM/CCM staircase and CCM efficiency. Prints the tables and
-// exits 1 when a check is out of its band.
+// exits 1 when a check is out of its band. The reference rows below are doc/research/vconv-spice-data/*.csv.
 //   test/host-stub/vconv-spice-check.sh [-v]        SIM_PLANT="fry:t_sw=30e-9" overrides board fields
 #include "sim/vconv.h"
 #include "plant_boards.h"
@@ -143,7 +143,7 @@ DawnStats dawnSet(const PlantBoard *b, const char *board, float vin) {
     return s;
 }
 
-// SPICE reference (doc/research/vconv-vs-spice.md section 2): B = bench, Brp = bench with the board's Q
+// SPICE reference (vconv-spice-data/dawn.csv): B = bench, Brp = bench with the board's Q
 struct DawnRef {
     const char *board;
     float vin, ampB, perB, negB, eta13B, eta830B, ampRp, negRp, eta13Rp, eta830Rp;
@@ -166,7 +166,8 @@ void check(bool ok, const char *what) {
     if (!ok) ++g_fail, printf("FAIL: %s\n", what);
 }
 
-// field Q: ripple between the bench with that damping (Brp) and the undamped bench (B); -hq: near B
+// field Q: ripple 0.75..1.02 x the bench with that damping (Brp); where Brp was not run, between half its estimate
+// and B. -hq: 0.7..1.05 x B
 void dawn(bool hq) {
     printf("\n## dawn, %s (stiff Vin, Vout 26.5 V, firmware DCM LS rule, 45-count HS steps, Pout > 1 W)\n",
            hq ? "high-Q plant (-hq)" : "field-Q plant");
@@ -180,16 +181,17 @@ void dawn(bool hq) {
         printf("%-4s-%-3.0f | %17.3f %6.3f %8.3f %5.3f | %13.0f %4.0f | %20.2f %5.2f %4.2f %4.2f | %16.3f %6.3f %5.3f %5.3f |"
                " %17.4f %5.3f %5.3f\n", r.board, r.vin, i.amp, s.amp, r.ampB, r.ampRp, s.period, r.perB, i.neg, s.neg, r.negB,
                r.negRp, i.eta13, s.eta13, r.eta13B, r.eta13Rp, s.eta830, r.eta830B, r.eta830Rp);
-        // field Q: 0.6 x the damped bench; where it was not run, from its ratio to B at 45 V on the same board
+        // Brp estimate where it was not run: its ratio to B at 45 V on the same board
         float rp = r.ampRp;
         for (auto &q: kDawnRef) if (std::isnan(rp) && !strcmp(q.board, r.board) && q.vin == 45) rp = r.ampB * q.ampRp / q.ampB;
-        const float aLo = hq ? 0.6f * r.ampB : 0.6f * rp;
+        const float aLo = hq ? 0.7f * r.ampB : std::isnan(r.ampRp) ? 0.5f * rp : 0.75f * rp;
+        const float aHi = hq ? 1.05f * r.ampB : std::isnan(r.ampRp) ? r.ampB : 1.02f * rp;
         char m[96];
-        snprintf(m, sizeof m, "%s-%.0f ripple amp %.3f outside %.3f..%.3f", r.board, r.vin, s.amp, aLo, 1.3f * r.ampB);
-        check(s.amp >= aLo && s.amp <= 1.3f * r.ampB, m);
+        snprintf(m, sizeof m, "%s-%.0f ripple amp %.3f outside %.3f..%.3f", r.board, r.vin, s.amp, aLo, aHi);
+        check(s.amp >= aLo && s.amp <= aHi, m);
         if (!std::isnan(s.eta830) && !std::isnan(r.eta830B)) {
             // without a damped bench run: the damping costs 0.5-1.4 pp at 35-45 V
-            const float eLo = std::isnan(r.eta830Rp) ? r.eta830B - 0.015f : lo(r.eta830B, r.eta830Rp) - 0.006f;
+            const float eLo = std::isnan(r.eta830Rp) ? r.eta830B - 0.010f : lo(r.eta830B, r.eta830Rp) - 0.006f;
             snprintf(m, sizeof m, "%s-%.0f eta 8-30 W %.4f outside %.4f..%.4f", r.board, r.vin, s.eta830, eLo,
                      hi(r.eta830B, r.eta830Rp) + 0.003f);
             check(s.eta830 >= eLo && s.eta830 <= hi(r.eta830B, r.eta830Rp) + 0.003f, m);
@@ -200,10 +202,10 @@ void dawn(bool hq) {
     printf("falling-step share: plant mean %.2f (%d of %d sets > 0), SPICE B mean 0.26, Brp 0.00-0.17; eta 1-3 W mean"
            " |plant - B| %.3f\n", negSum / nNeg, nNegPos, nNeg, e13Err / nE);
     check(negSum / nNeg >= (hq ? 0.10 : 0.05) && negSum / nNeg <= 0.45 && nNegPos >= 3, "falling-step share");
-    check(e13Err / nE <= 0.06, "eta 1-3 W");
+    check(e13Err / nE <= 0.045, "eta 1-3 W");
 }
 
-// DCM near Vin ~ Vout, LS near its minimum pulse: SPICE B Pout (bench L 80 / 51 uH, Vout 26.5 V)
+// DCM near Vin ~ Vout, LS near its minimum pulse: SPICE B Pout (bench L 80 / 51 uH, Vout 26.5 V), near_boundary.csv
 struct NearRef {
     const char *board;
     int hs, ls;
@@ -232,11 +234,11 @@ void nearBoundary() {
         printf("%-4s mean Pout vs SPICE: ideal %+.0f %%, plant %+.0f %%\n", bn, 100 * (ri / n - 1), 100 * (rs / n - 1));
         char m[64];
         snprintf(m, sizeof m, "%s near-boundary Pout %+.0f %%", bn, 100 * (rs / n - 1));
-        check(std::fabs(rs / n - 1) <= 0.3, m);
+        check(std::fabs(rs / n - 1) <= 0.15, m);
     }
 }
 
-// ~100 W at the DCM/CCM boundary, firmware DCM LS rule (SPICE B, undamped)
+// ~100 W at the DCM/CCM boundary, firmware DCM LS rule (SPICE B, undamped), p2.csv
 struct P2Ref {
     const char *board;
     float vin;
@@ -274,19 +276,21 @@ void p2() {
                100 * ei / n, 100 * std::sqrt(ei2 / n), 100 * es / n, 100 * std::sqrt(es2 / n), 100 * ets / n);
         char m[64];
         snprintf(m, sizeof m, "%s P2 rms %.1f %%", bn, 100 * std::sqrt(es2 / n));
-        check(std::fabs(es / n) <= 0.06 && std::sqrt(es2 / n) <= 0.10, m);
+        check(std::fabs(es / n) <= 0.03 && std::sqrt(es2 / n) <= 0.05, m);
     }
 }
 
-// CCM, synchronous (LS = pmax - HS - 1), soft battery so the current settles: SPICE B efficiency incl. coil DCR
+// CCM, synchronous (LS = pmax - HS - 1), soft battery so the current settles: SPICE B efficiency incl. coil DCR and
+// the avalanche loss where ccm.csv lists it (W at ~Pout); the plant has no avalanche term
 struct CcmRef {
     const char *board;
-    float vin, iout, eta;
+    float vin, iout, eta, pAval, pout;
 };
 const CcmRef kCcmRef[] = {
-    {"flat", 60, 3.8f, .9894f}, {"flat", 60, 11.3f, .9888f}, {"flat", 60, 22.6f, .9838f}, {"flat", 30, 3.0f, .9952f},
-    {"flat", 30, 11.3f, .9931f}, {"fry", 75, 3.8f, .9875f}, {"fry", 60, 11.3f, .9911f}, {"fry", 60, 22.6f, .9874f},
-    {"fry", 30, 3.0f, .9954f}, {"fry", 30, 11.3f, .9948f},
+    {"flat", 60, 3.8f, .9894f, .36f, 101}, {"flat", 60, 11.3f, .9888f, .83f, 299}, {"flat", 60, 22.6f, .9838f, 1.74f, 599},
+    {"flat", 30, 3.0f, .9952f, 0, 80}, {"flat", 30, 11.3f, .9931f, .27f, 299}, {"fry", 75, 3.8f, .9875f, .37f, 101},
+    {"fry", 60, 11.3f, .9911f, .36f, 299}, {"fry", 60, 22.6f, .9874f, .77f, 599}, {"fry", 30, 3.0f, .9954f, 0, 80},
+    {"fry", 30, 11.3f, .9948f, 0, 299},
 };
 
 void ccm() {
@@ -317,7 +321,8 @@ void ccm() {
         err += std::fabs(eta - r.eta);
         char m[64];
         snprintf(m, sizeof m, "%s %.0f V %.1f A CCM eta %.2f %%", r.board, r.vin, r.iout, 100 * eta);
-        check(std::fabs(eta - r.eta) <= 0.005, m);
+        // r_*/t_sw are effective values fitted with the avalanche loss inside: -0.2 pp .. +0.15 pp + avalanche share
+        check(eta - r.eta >= -0.002 && eta - r.eta <= 0.0015f + r.pAval / r.pout, m);
     }
     printf("  mean |plant - SPICE| %.2f pp\n", 100 * err / (sizeof kCcmRef / sizeof kCcmRef[0]));
 }

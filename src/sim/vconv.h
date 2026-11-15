@@ -104,7 +104,7 @@ public:
     void setPassives(float c_in, float c_out, float l) { cIn_ = c_in; cOut_ = c_out; l_ = l; }
     void setVin(float v)  { vIn_ = v; }
     void setVout(float v) { vOut_ = v; }
-    void setDiodeVf(float v) { diodeVf_ = v; } // LS body-diode drop in the dead/off phase
+    void setDiodeVf(float v) { diodeVf_ = v; } // body-diode drop (LS and HS) in the dead/off phases
     // Buck DC bias: L = L0 * (1 - k*|Ipk|), Ipk the previous cycle's peak (k in 1/A, 0 = off). The ring keeps L0.
     void setLBias(float k) { lK_ = k; }
     // Buck switch-node ring while both switches are off: node capacitance c (F) against the coil,
@@ -115,7 +115,7 @@ public:
     // Buck switch timing and losses (0 = ideal): dead time before each rising gate edge, HS on-time extension
     // (turn-off minus turn-on delay), conduction resistance while HS / LS conducts, HS turn-off current fall time
     void setSwitching(float tDead, float tHsExt, float rHs, float rLs, float tSw) {
-        tDead_ = tDead, tHsExt_ = tHsExt, rHs_ = rHs, rLs_ = rLs, tSw_ = tSw;
+        tDead_ = tDead, tHsExt_ = tHsExt, rHs_ = rHs, rLs_ = rLs, tSw_ = tSw, cycRingC_ = -1.0f;
     }
     [[nodiscard]] float getRingC() const { return ringC_; }
     [[nodiscard]] float getRingF() const { return ringCe_ > 0.0f ? 1.0f / (6.2831853f * std::sqrt(l_ * ringCe_)) : 0.0f; }
@@ -216,6 +216,8 @@ private:
     float ringC_ = 0.0f, ringQ_ = 20.0f, cycRingC_ = -1.0f, ringV_ = 0.0f, ringExp_ = 0.0f, ringCe_ = 0.0f, cycRingV_ = 0.0f, ringCt_ = 1.0f;
     float ringA_ = 0.0f, ringWd_ = 0.0f, ringInvWd_ = 0.0f, ringInvC_ = 0.0f;
     float tDead_ = 0.0f, tHsExt_ = 0.0f, rHs_ = 0.0f, rLs_ = 0.0f, tSw_ = 0.0f;
+    // cached: 1/Vin, edge C, its impedance and cos/sin of the dead-time swing angle, tSw^2/(24 edge C)
+    float invVin_ = 0.0f, cn_ = 0.0f, edgeZ_ = 0.0f, edgeInvZ_ = 0.0f, edgeCos_ = 1.0f, edgeSin_ = 0.0f, swK_ = 0.0f;
 
     void stepOneCycle(float T);
     void stepOneCycleBuck(float T);

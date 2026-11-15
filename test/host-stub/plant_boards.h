@@ -1,6 +1,7 @@
 #pragma once
 // Host-sim plants of the field boards, fitted to the LTspice half-bridge bench
-// (doc/research/sim-plant-spice-revalidation.md). Each field maps to a vconv.conf key.
+// (doc/research/sim-plant-spice-revalidation.md, reference rows in doc/research/vconv-spice-data/). Each field maps
+// to a vconv.conf key.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -15,7 +16,7 @@ struct PlantBoard {
     float qHigh; // Q of the "-hq" variant: ripple of the undamped bench (no core loss)
     float vf, tDead, tHsExt, rHs, rLs, tSw; // diode_vf, t_dead, t_hs_ext, r_hs, r_ls, t_sw
 
-    [[nodiscard]] float ringC() const { return 1.f / (39.478418f * ringF * ringF * lPlant); }
+    [[nodiscard]] float ringC() const { return ringF > 0 ? 1.f / (39.478418f * ringF * ringF * lPlant) : 0.f; }
 
     // vconv.conf pairs; ring = false: ring_c 0, the rest stays
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> conf(bool ring = true) const {
@@ -44,7 +45,7 @@ inline PlantBoard highQ(PlantBoard b) {
     return b;
 }
 
-// SIM_PLANT="fry:t_sw=30e-9,flat:r_hs=0.02" overrides fields (tuning)
+// SIM_PLANT="fry:t_sw=30e-9,flat:r_hs=0.02" overrides fields (tuning); "fry:ideal=1" drops ring, diode, timing and losses
 inline void plantBoardsFromEnv() {
     const char *e = getenv("SIM_PLANT");
     if (!e) return;
@@ -59,7 +60,8 @@ inline void plantBoardsFromEnv() {
         const std::string k = kv.substr(c + 1, q - c - 1);
         const float v = (float) atof(kv.c_str() + q + 1);
         if (!b) continue;
-        if (k == "L") b->lPlant = v;
+        if (k == "ideal") b->ringF = b->vf = b->tDead = b->tHsExt = b->rHs = b->rLs = b->tSw = 0;
+        else if (k == "L") b->lPlant = v;
         else if (k == "ring_f") b->ringF = v;
         else if (k == "ring_v") b->ringV = v;
         else if (k == "ring_cexp") b->ringCexp = v;

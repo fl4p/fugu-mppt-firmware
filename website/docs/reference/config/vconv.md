@@ -79,18 +79,22 @@ All keys in this section default to 0 (ideal, lossless switches) and apply to th
   pulse shorter than the dead time is swallowed. When the idle time before the next high-side pulse
   is shorter than `t_dead`, that pulse starts late, as in synchronous CCM.
 - **Node energy**: with `ring_c > 0` the high side charges the node from the input at turn-on,
-  `ring_ct·C·(Vin − Vnode)`. At turn-off a positive coil current swings the node down during the
-  dead time and takes its energy; what the current cannot swing in time is lost when the low side
-  turns on. `ring_ct` < 1 accounts for a rise transit that is faster than the free ring (nonlinear
-  Coss).
+  `ring_ct·C·(Vin − Vnode)`, for every pulse whatever the node voltage it starts from. At turn-off a
+  positive coil current swings the node down during the dead time along the undamped resonance of
+  the coil with `ring_ct·C`, so a small current first gains current while the node is still above
+  `Vout`. If the node reaches `−diode_vf` the body diode clamps it; if not, the rest of the node
+  energy is lost when the low side turns on. `ring_ct` < 1 accounts for a rise transit that is
+  faster than the free ring (nonlinear Coss).
 - **Turn-off loss** (`t_sw`): the high-side channel current falls linearly in `t_sw` while the node
   capacitance takes the rest. Small currents turn off almost without loss
   (`I²·t_sw²/(24·C)`), large ones approach `½·Vin·I·t_sw`.
 - **Conduction** (`r_hs`, `r_ls`): a voltage drop `R·i` against the coil while that switch conducts,
-  so the loss lowers the delivered current at a given duty.
+  so the loss lowers the delivered current at a given duty. The loss is `R·∫i²`: the part from the
+  current ripple, `R·t·ΔI²/12`, is paid from the input.
 - **Diode drop** (`diode_vf`): both ring clamps, the dead-time freewheel, and the reverse current
   that returns to the input through the high-side body diode (node at `Vin + diode_vf`).
 
-Parameter sets for two field boards, fitted to an LTspice half-bridge bench, are in
-`test/host-stub/plant_boards.h`; `test/host-stub/vconv-spice-check.sh` compares the plant with that
-bench.
+`r_hs`, `r_ls` and `t_sw` are effective values: they also carry losses the plant has no term for,
+such as avalanche loss at the switch-node overshoot. Parameter sets for two field boards, fitted to
+an LTspice half-bridge bench, are in `test/host-stub/plant_boards.h`;
+`test/host-stub/vconv-spice-check.sh` compares the plant with that bench.
