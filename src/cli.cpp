@@ -2399,9 +2399,9 @@ void setupCli() {
 #if CONFIG_FUGU_WITH_PWR_KNOBS
     cli.addBoundlessCmd("pwr", [](cmd *c) {
         Command cc(c);
-        String s[4];
-        const char *a[4];
-        const int n = std::min(cc.countArgs(), 4);
+        String s[5];
+        const char *a[5];
+        const int n = std::min(cc.countArgs(), 5);
         for (int i = 0; i < n; ++i) {
             s[i] = cc.getArg(i).getValue();
             a[i] = s[i].c_str();

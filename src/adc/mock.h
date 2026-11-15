@@ -7,6 +7,9 @@
 #include "etc/rt.h"
 #include "tele/scope.h"
 #include "../util.h"
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+#include <esp_timer.h>
+#endif
 
 
 const time_us &wallClockUs();
@@ -34,6 +37,7 @@ private:
     PeriodicTimer periodic_timer{};
 #if CONFIG_FUGU_WITH_PWR_KNOBS
     uint16_t waitMs = 10;
+    esp_timer_handle_t escTimer = nullptr;
 #else
     static constexpr uint16_t waitMs = 10;
 #endif
@@ -86,6 +90,9 @@ public:
     }
 
     void deinit() override {
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+        if (escTimer) { esp_timer_stop(escTimer); esp_timer_delete(escTimer); escTimer = nullptr; }
+#endif
         periodic_timer.destroy();
     }
 
@@ -105,10 +112,43 @@ public:
 #if CONFIG_FUGU_WITH_PWR_KNOBS
     // `pwr rt`: hasData() waits 1.5 periods so slow rates do not add 10 ms timeout wakes
     esp_err_t setRate(uint32_t hz) {
-        esp_err_t e = periodic_timer.setFreq(hz);
+        esp_err_t e;
+        if (escTimer) {
+            const uint32_t us = std::max<uint32_t>(2, 1000000 / std::max<uint32_t>(hz, 1));
+            e = esp_timer_restart(escTimer, us);
+            if (e == ESP_OK) periodic_timer.hz = 1000000 / us;
+        } else e = periodic_timer.setFreq(hz);
         if (e == ESP_OK) waitMs = std::max<uint32_t>(10, 1500 / periodic_timer.freq());
         return e;
     }
+
+    // `pwr rt-src`: esp_timer (task dispatch) instead of the GPTimer, which holds APB_FREQ_MAX while enabled
+    esp_err_t setEspSource(bool on) {
+        if (on == (escTimer != nullptr)) return ESP_OK;
+        if (!taskNotification.subscribed()) return ESP_ERR_INVALID_STATE;
+        esp_err_t e;
+        if (on) {
+            esp_timer_create_args_t a = {};
+            a.callback = [](void *p) { ((ADC_Fake *) p)->taskNotification.notify(); };
+            a.arg = this;
+            a.name = "adcFake";
+            esp_timer_handle_t t = nullptr;
+            e = esp_timer_create(&a, &t);
+            if (e == ESP_OK) e = esp_timer_start_periodic(t, 1000000 / periodic_timer.freq());
+            if (e == ESP_OK) e = periodic_timer.suspend();
+            if (e == ESP_OK) escTimer = t;
+            else if (t) { esp_timer_stop(t); esp_timer_delete(t); }
+            return e;
+        }
+        e = periodic_timer.setFreq(periodic_timer.freq(), true);
+        if (e != ESP_OK) return e;
+        esp_timer_stop(escTimer);
+        esp_timer_delete(escTimer);
+        escTimer = nullptr;
+        return ESP_OK;
+    }
+
+    [[nodiscard]] bool espSource() const { return escTimer; }
 #endif
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {

@@ -1,10 +1,12 @@
 #include "pwr_knobs.h"
 
 #include <Arduino.h>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <esp_pm.h>
+#include <esp_timer.h>
 
 #include "logging.h"
 #include "mppt.h"
@@ -23,9 +25,24 @@ extern MpptController mppt;
 extern SynchronousConverter converter;
 extern VIinVout<const Sensor *> sensors;
 ADC_Fake *g_pwrFakeAdc = nullptr;
+uint16_t g_pwrNetLoopMs = 1;
 #ifdef CONFIG_PM_ENABLE
 extern esp_pm_lock_handle_t s_cli_pm_lock;
 static bool s_lockReleased = false;
+
+// `pwr pm ... <secs>` window. The esp_timer alarm also bounds every automatic light sleep
+// (vApplicationSleep sleeps at most until esp_timer_get_next_alarm_for_wake_up()).
+enum : uint8_t { WIN_IDLE, WIN_RUN, WIN_DUE, WIN_TIMER_REVERTED };
+static struct {
+    esp_timer_handle_t timer;
+    esp_pm_config_t prev, cfg;
+    bool prevLockReleased;
+    std::atomic<uint8_t> st;
+    uint16_t secs, n;
+    int64_t t0Us, lastUs;
+    float sum, mn, mx, ring[12]; // ring: last 60 s at 5 s
+} s_win;
+static char s_winLine[160];
 #endif
 static bool argNum(const char *s, long &out) {
     char *end;
@@ -49,12 +66,13 @@ static void pwrStatus() {
 #ifdef WITH_BLE
     snprintf(adv, sizeof adv, "%u", (unsigned) bleConsoleAdvMs());
 #endif
-    char pm[24] = "-/-/- lock=-";
+    char pm[40] = "-/-/- lock=-";
 #ifdef CONFIG_PM_ENABLE
     esp_pm_config_t pc = {};
     esp_pm_get_configuration(&pc);
-    snprintf(pm, sizeof pm, "%d/%d/%d lock=%d", pc.max_freq_mhz, pc.min_freq_mhz, (int) pc.light_sleep_enable,
-             (int) (s_cli_pm_lock && !s_lockReleased));
+    const long left = s_win.st == WIN_RUN ? s_win.secs - (long) ((esp_timer_get_time() - s_win.t0Us) / 1000000) : -1;
+    snprintf(pm, sizeof pm, "%d/%d/%d lock=%d win=%ld", pc.max_freq_mhz, pc.min_freq_mhz, (int) pc.light_sleep_enable,
+             (int) (s_cli_pm_lock && !s_lockReleased), left);
 #endif
 #if CONFIG_IDF_TARGET_ESP32S3
     const float t = mppt.ucTemp.readRaw();
@@ -67,9 +85,10 @@ static void pwrStatus() {
 #endif
     auto *vo = (const PhysicalSensor *) sensors.Vout;
     const float rt = vo && !vo->isVirtual ? vo->adc->getSamplingRate(vo->params.adcCh) : NAN;
-    UART_LOG("pwr: cpu=%lu apb=%lu %s adv=%s tele=%lu idle=%d pm=%s pwm=%c rt=%.0f T=%.2f", (unsigned long) getCpuFrequencyMhz(),
-             (unsigned long) getApbFrequency(), w, adv, (unsigned long) (g_teleMinPointUs / 1000), (int) idleProfileOn(), pm,
-             pwm, rt, t);
+    UART_LOG("pwr: cpu=%lu apb=%lu %s adv=%s tele=%lu idle=%d pm=%s pwm=%c rt=%.0f rtsrc=%s nl=%u T=%.2f",
+             (unsigned long) getCpuFrequencyMhz(), (unsigned long) getApbFrequency(), w, adv,
+             (unsigned long) (g_teleMinPointUs / 1000), (int) idleProfileOn(), pm, pwm, rt,
+             !g_pwrFakeAdc ? "-" : g_pwrFakeAdc->espSource() ? "esp" : "gp", (unsigned) g_pwrNetLoopMs, t);
 }
 
 #ifdef CONFIG_PM_ENABLE
@@ -123,27 +142,124 @@ static int rtSet(long hz) {
 }
 
 #ifdef CONFIG_PM_ENABLE
-static int pmLocks() {
+// lock + mode stats; the SLEEP mode row and sleep counts only appear while light sleep is enabled
+static char *locksDump() {
     char *buf = nullptr;
     size_t len = 0;
     FILE *f = open_memstream(&buf, &len);
-    if (!f) { UART_LOG("pwr: locks: no memory"); return 1; }
+    if (!f) return nullptr;
     esp_pm_dump_locks(f);
     fclose(f);
-    for (char *l = buf, *n; l && *l; l = n) {
+    return buf;
+}
+
+static int locksPrint(char *buf) {
+    if (!buf) { UART_LOG("pwr: locks: no memory"); return 1; }
+    for (char *l = buf, *n; *l; l = n) {
         n = strchr(l, '\n');
         if (n) *n++ = 0;
         if (*l) UART_LOG("%s", l);
+        if (!n) break;
     }
     free(buf);
     return 0;
 }
+
+static void pmRevert() {
+    esp_pm_config_t c = s_win.prev;
+    c.light_sleep_enable = false;
+    pmSet(c.max_freq_mhz, c.min_freq_mhz, false);
+    if (!s_win.prevLockReleased && s_lockReleased && s_cli_pm_lock && esp_pm_lock_acquire(s_cli_pm_lock) == ESP_OK)
+        s_lockReleased = false;
+}
+
+// esp_timer task: flag the end for pwrTick(); 10 s later revert here if the network loop did not
+static void winTimerCb(void *) {
+    uint8_t e = WIN_RUN;
+    if (s_win.st.compare_exchange_strong(e, WIN_DUE)) esp_timer_start_once(s_win.timer, 10000000);
+    else if (e == WIN_DUE && s_win.st.compare_exchange_strong(e, WIN_TIMER_REVERTED)) pmRevert();
+}
+
+static void winSample(int64_t now) {
+    s_win.lastUs = now;
+    const float t = mppt.ucTemp.readRaw();
+    if (!std::isfinite(t)) return;
+    s_win.ring[s_win.n % 12] = t;
+    s_win.sum += t;
+    s_win.mn = s_win.n ? std::min(s_win.mn, t) : t;
+    s_win.mx = s_win.n ? std::max(s_win.mx, t) : t;
+    ++s_win.n;
+}
+
+static int winStart(long secs) {
+    if (!s_win.timer) {
+        esp_timer_create_args_t a = {};
+        a.callback = winTimerCb;
+        a.name = "pwrWin";
+        if (esp_timer_create(&a, &s_win.timer) != ESP_OK) return 1;
+    }
+    s_win.secs = secs;
+    s_win.n = 0;
+    s_win.sum = 0;
+    s_win.t0Us = esp_timer_get_time();
+    esp_pm_get_configuration(&s_win.cfg);
+    winSample(s_win.t0Us);
+    s_win.st = WIN_RUN;
+    if (esp_timer_start_once(s_win.timer, secs * 1000000ULL) != ESP_OK) {
+        s_win.st = WIN_IDLE;
+        pmRevert();
+        return 1;
+    }
+    UART_LOG("pwr: pmwin start secs=%ld cfg=%d/%d/%d", secs, s_win.cfg.max_freq_mhz, s_win.cfg.min_freq_mhz,
+             (int) s_win.cfg.light_sleep_enable);
+    return locksPrint(locksDump());
+}
+
+static void winEnd(uint8_t st) {
+    char *dump = st == WIN_DUE ? locksDump() : nullptr;
+    uint8_t e = WIN_DUE;
+    const bool timerReverted = !(st == WIN_DUE && s_win.st.compare_exchange_strong(e, WIN_IDLE));
+    if (!timerReverted) pmRevert();
+    esp_timer_stop(s_win.timer);
+    if (!dump) dump = locksDump();
+    const int64_t now = esp_timer_get_time();
+    const uint16_t k = std::min<uint16_t>(s_win.n, 12);
+    float last = 0;
+    for (uint16_t i = 0; i < k; ++i) last += s_win.ring[i];
+    snprintf(s_winLine, sizeof s_winLine,
+             "pwr: pmwin secs=%u dt=%.1f n=%u Tmean=%.2f Tlast60=%.2f Tmin=%.2f Tmax=%.2f cfg=%d/%d/%d rev=%s",
+             (unsigned) s_win.secs, (now - s_win.t0Us) * 1e-6f, (unsigned) s_win.n,
+             s_win.n ? s_win.sum / s_win.n : NAN, k ? last / k : NAN, s_win.n ? s_win.mn : NAN,
+             s_win.n ? s_win.mx : NAN, s_win.cfg.max_freq_mhz, s_win.cfg.min_freq_mhz,
+             (int) s_win.cfg.light_sleep_enable, timerReverted ? "timer" : "loop");
+    s_win.st = WIN_IDLE;
+    UART_LOG("%s", s_winLine);
+    locksPrint(dump);
+    pwrStatus();
+}
 #endif
+
+void pwrTick() {
+#ifdef CONFIG_PM_ENABLE
+    const uint8_t st = s_win.st;
+    if (st == WIN_RUN) {
+        const int64_t now = esp_timer_get_time();
+        if (now - s_win.lastUs >= 5000000) winSample(now);
+    } else if (st != WIN_IDLE) winEnd(st);
+#endif
+}
 
 // 0 ok, 1 failed (reported), -1 usage
 static int pwrSet(int argc, const char *const *argv) {
     const char *k = argv[0];
     long v = 0;
+#ifdef CONFIG_PM_ENABLE
+    const bool winBusy = s_win.st != WIN_IDLE;
+    if (winBusy && (!strcmp(k, "cpu") || (!strcmp(k, "pm") && !(argc == 2 && !strcmp(argv[1], "off"))))) {
+        UART_LOG("pwr: pm window running, `pwr pm off` ends it");
+        return 1;
+    }
+#endif
     if (!strcmp(k, "cpu")) {
         if (argc != 2 || !argNum(argv[1], v) || (v != 80 && v != 160 && v != 240)) return -1;
         idleProfileSuspend();
@@ -156,20 +272,53 @@ static int pwrSet(int argc, const char *const *argv) {
 #ifdef CONFIG_PM_ENABLE
     if (!strcmp(k, "pm")) {
         if (argc == 2 && !strcmp(argv[1], "off")) {
+            if (winBusy) {
+                uint8_t e = WIN_RUN;
+                s_win.st.compare_exchange_strong(e, WIN_DUE);
+                winEnd(s_win.st);
+                return 0;
+            }
             if (s_lockReleased && s_cli_pm_lock && esp_pm_lock_acquire(s_cli_pm_lock) == ESP_OK)
                 s_lockReleased = false;
             return s_lockReleased;
         }
-        long mn, ls;
-        if (argc != 4 || !argNum(argv[1], v) || !argNum(argv[2], mn) || !argNum(argv[3], ls) || ls < 0 || ls > 1)
+        long mn, ls, secs = 0;
+        if ((argc != 4 && argc != 5) || !argNum(argv[1], v) || !argNum(argv[2], mn) || !argNum(argv[3], ls) || ls < 0
+            || ls > 1 || (argc == 5 && (!argNum(argv[4], secs) || secs < 10 || secs > 3600)))
             return -1;
+#if !CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION
+        if (ls && !secs) { UART_LOG("pwr: light sleep drops USB here, give a window (secs)"); return 1; }
+#endif
         idleProfileSuspend();
+        esp_pm_get_configuration(&s_win.prev);
+        s_win.prevLockReleased = s_lockReleased;
         if (!pmSet(v, mn, ls)) return 1;
         if (!s_lockReleased && s_cli_pm_lock && esp_pm_lock_release(s_cli_pm_lock) == ESP_OK)
             s_lockReleased = true;
+        return secs ? winStart(secs) : 0;
+    }
+    if (!strcmp(k, "pmwin")) {
+        if (argc != 1) return -1;
+        if (s_win.st == WIN_RUN)
+            UART_LOG("pwr: pmwin running secs=%u elapsed=%ld n=%u", (unsigned) s_win.secs,
+                     (long) ((esp_timer_get_time() - s_win.t0Us) / 1000000), (unsigned) s_win.n);
+        UART_LOG("%s", *s_winLine ? s_winLine : "pwr: pmwin none");
         return 0;
     }
 #endif
+    if (!strcmp(k, "netloop")) {
+        if (argc != 2 || !argNum(argv[1], v) || v < 1 || v > 1000) return -1;
+        g_pwrNetLoopMs = v;
+        return 0;
+    }
+    if (!strcmp(k, "rt-src")) {
+        if (argc != 2 || (strcmp(argv[1], "gp") && strcmp(argv[1], "esp"))) return -1;
+        if (!g_pwrFakeAdc) { UART_LOG("pwr: rt-src not supported (adc is not fake)"); return 1; }
+        const esp_err_t e = g_pwrFakeAdc->setEspSource(argv[1][0] == 'e');
+        if (e == ESP_OK) return 0;
+        UART_LOG("pwr: rt-src: %s", esp_err_to_name(e));
+        return 1;
+    }
     if (!strcmp(k, "pwm")) {
         if (argc != 2 || !argNum(argv[1], v) || v < 0 || v > 1) return -1;
 #if HAVE_MCPWM
@@ -184,7 +333,7 @@ static int pwrSet(int argc, const char *const *argv) {
         return rtSet(v);
     }
 #ifdef CONFIG_PM_ENABLE
-    if (!strcmp(k, "locks")) return argc == 1 ? pmLocks() : -1;
+    if (!strcmp(k, "locks")) return argc == 1 ? locksPrint(locksDump()) : -1;
 #endif
     if (!strcmp(k, "tele")) {
         if (argc != 2 || !argNum(argv[1], v) || v < 20 || v > 60000) return -1;
@@ -246,10 +395,11 @@ static int pwrSet(int argc, const char *const *argv) {
 bool pwrCommand(int argc, const char *const *argv) {
     const int rc = argc ? pwrSet(argc, argv) : 0;
     if (rc < 0) {
-        UART_LOG("usage: pwr [cpu 80|160|240 | pm <max> <min> <ls 0|1> | pm off | wifi-ps none|min|max [li]"
+        UART_LOG("usage: pwr [cpu 80|160|240 | pm <max> <min> <ls 0|1> [secs 10..3600] | pm off | wifi-ps none|min|max [li]"
                  " | wifi-tx <dBm 2..21> | ble-adv <ms 20..10240, 0=default> | tele <ms 20..60000> | pwm 0|1 | rt <hz>"
+                 " | rt-src gp|esp | netloop <ms 1..1000>"
 #ifdef CONFIG_PM_ENABLE
-                 " | locks"
+                 " | locks | pmwin"
 #endif
                  "]");
         return false;

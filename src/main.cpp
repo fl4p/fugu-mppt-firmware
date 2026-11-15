@@ -1687,10 +1687,18 @@ static void loopNetwork_task(void *arg) {
         lastLfWorkUs = wallClockUs();
     }
 
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+    pwrTick();
+#endif
+
     // Preserve the cooperative yield: scope's netLoop() blocks ~1 tick when a client is attached
     // and serves as the yield; otherwise we must yield explicitly.
     if (!scopeKeepsAwake())
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+        vTaskDelay(pdMS_TO_TICKS(g_pwrNetLoopMs));
+#else
         vTaskDelay(pdMS_TO_TICKS(1));
+#endif
 }
 
 // Give the telnet client a chance to drain a FIN before we wipe the stack. stopAll() would slam

@@ -175,6 +175,9 @@ public:
     void notify() {
         xTaskNotifyGive(readingTask);
     }
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+    [[nodiscard]] bool subscribed() const { return readingTask; }
+#endif
 };
 
 
@@ -264,14 +267,21 @@ public:
     }
 
 #if CONFIG_FUGU_WITH_PWR_KNOBS
-    // Running timer only. Restarts the period from 0 (a shrunk alarm may already be behind the count).
-    esp_err_t setFreq(uint32_t requestedHz) {
+    // stop + disable: releases the driver's APB_FREQ_MAX pm lock
+    esp_err_t suspend() {
+        esp_err_t e = gptimer_stop(gptimer);
+        return e == ESP_OK ? gptimer_disable(gptimer) : e;
+    }
+
+    // Running timer, or a suspended one with resume. Restarts the period from 0 (a shrunk alarm may
+    // already be behind the count).
+    esp_err_t setFreq(uint32_t requestedHz, bool resume = false) {
         uint32_t n = requestedHz ? 1000000 / requestedHz : 1000000;
         if (n < 2) n = 2;
         gptimer_alarm_config_t a = {};
         a.alarm_count = n;
         a.flags.auto_reload_on_alarm = 1;
-        esp_err_t e = gptimer_stop(gptimer);
+        esp_err_t e = resume ? gptimer_enable(gptimer) : gptimer_stop(gptimer);
         if (e == ESP_OK) e = gptimer_set_raw_count(gptimer, 0);
         if (e == ESP_OK) e = gptimer_set_alarm_action(gptimer, &a);
         if (e == ESP_OK) hz = 1000000 / n;
