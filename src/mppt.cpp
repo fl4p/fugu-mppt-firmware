@@ -287,12 +287,12 @@ void MpptController::update() {
             controlValue = limitingControlValue;
         } else {
             controlMode = MpptControlMode::MPPT;
-            controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get());
+            controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get(), powerSettleMs());
             controlValue *= speedScale;
         }
     } else if (!keepTracker) {
         // tracker.resetTracker(power_smooth, controlValue > 0);
-        tracker.resetDirection(controlValue > 0);
+        tracker.resetDirection(controlValue > 0, sensors.Vin->ewm.avg.get());
     }
     rtcount("mppt.update.tracker");
 

@@ -47,21 +47,26 @@ struct Tracker {
     //unsigned long slowModeTime = false;
 
     void resetTracker(float power, bool direction) {
-        resetDirection(direction);
+        _direction = direction;
+        _time = wallClockMs();
         _lastPower = power;
         maxPowerPoint.power = 0;
         maxPowerPoint.vin = 0;
         //avgPower.reset();
     }
 
-    void resetDirection(bool direction) {
+    // limiter hand-back: a reversal at vin, starts the settle window
+    void resetDirection(bool direction, float vin) {
         _direction = direction;
         _time = wallClockMs();
+        _timeLastReverse = _time;
+        _lastVin = vin;
         //maxPowerPoint.power = 0;
         //avgPower.reset();
     }
 
-    float update(float powerSample, uint16_t dutyCycle, float vin) {
+    // settleMs: step settling time of the filter on powerSample
+    float update(float powerSample, uint16_t dutyCycle, float vin, float settleMs) {
         auto now = wallClockMs();
 
         //avgPower.add(powerSample);
@@ -84,9 +89,12 @@ struct Tracker {
                 auto absDp = std::abs(dP);
                 bool rev = false;
 
-                // for 150 ms after a reversal the filtered power still shows the old direction and the input
-                // cap's charge/discharge: the reference follows it, a decision on it re-reverses with a bias
-                if (now - _timeLastReverse < 150) {
+                // after a reversal the filtered power still shows the old direction and the input cap's
+                // charge/discharge, which lags the duty by ~C*V/(2.5*I) in low light: the reference follows the
+                // power until the filter has settled and Vin is back at the reversal point. At most 1 s: the
+                // excursion of a longer blind leg costs more than the lag
+                auto sinceRev = now - _timeLastReverse;
+                if (sinceRev < 1000 && ((float) sinceRev < settleMs || (_direction ? vin > _lastVin : vin < _lastVin))) {
                     _lastPower = power;
                 } else if ((
                         absDp >= minPowerStep

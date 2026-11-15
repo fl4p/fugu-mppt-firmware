@@ -281,6 +281,9 @@ void test_tracker_deadband_ignores_small_drop();
 void test_tracker_cloud_recovery_reverses_on_vin_jump();
 void test_tracker_converges_to_peak();
 void test_tracker_settles_after_reversal();
+void test_tracker_settle_window_follows_filter();
+void test_tracker_settle_waits_for_vin();
+void test_tracker_handback_starts_window();
 void test_tracker_vin_band_symmetric();
 
 // conf.h
@@ -503,6 +506,9 @@ void setup() {
     RUN_TEST(test_tracker_cloud_recovery_reverses_on_vin_jump);
     RUN_TEST(test_tracker_converges_to_peak);
     RUN_TEST(test_tracker_settles_after_reversal);
+    RUN_TEST(test_tracker_settle_window_follows_filter);
+    RUN_TEST(test_tracker_settle_waits_for_vin);
+    RUN_TEST(test_tracker_handback_starts_window);
     RUN_TEST(test_tracker_vin_band_symmetric);
 
     // buck.h — diode-emulation / sync-rect math

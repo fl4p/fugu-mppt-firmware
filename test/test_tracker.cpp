@@ -18,6 +18,8 @@
 
 static void advanceMs(unsigned long ms) { loopWallClockUs_ += ms * 1000ULL; }
 
+static constexpr float kSettleMs = 150; // power-filter settling (fmetal)
+
 // power < 1: tracker forces direction=true (pump more power) regardless of prior direction.
 void test_tracker_low_power_forces_pump() {
     loopWallClockUs_ = 1'000'000;
@@ -25,7 +27,7 @@ void test_tracker_low_power_forces_pump() {
     auto &t = *tp;
     t.resetTracker(0.f, /*direction=*/false);
     advanceMs(100);
-    float step = t.update(0.5f, 100, 0.f);
+    float step = t.update(0.5f, 100, 0.f, kSettleMs);
     TEST_ASSERT_TRUE(t._direction);
     TEST_ASSERT_TRUE(step > 0.f);
 }
@@ -37,7 +39,7 @@ void test_tracker_reverses_on_power_drop() {
     auto &t = *tp;
     t.resetTracker(100.f, /*direction=*/true);
     advanceMs(100);
-    float step = t.update(90.f, 100, 0.f);   // dP = -10
+    float step = t.update(90.f, 100, 0.f, kSettleMs);   // dP = -10
     TEST_ASSERT_FALSE(t._direction);
     TEST_ASSERT_TRUE(step < 0.f);
 }
@@ -49,7 +51,7 @@ void test_tracker_keeps_direction_on_power_rise() {
     auto &t = *tp;
     t.resetTracker(100.f, /*direction=*/true);
     advanceMs(100);
-    float step = t.update(110.f, 100, 0.f);  // dP = +10
+    float step = t.update(110.f, 100, 0.f, kSettleMs);  // dP = +10
     TEST_ASSERT_TRUE(t._direction);
     TEST_ASSERT_TRUE(step > 0.f);
 }
@@ -61,7 +63,7 @@ void test_tracker_deadband_ignores_small_drop() {
     auto &t = *tp;
     t.resetTracker(100.f, /*direction=*/true);
     advanceMs(100);
-    float step = t.update(99.5f, 100, 0.f);  // dP=-0.5: abs<1.0 and 0.5/105 < 0.015
+    float step = t.update(99.5f, 100, 0.f, kSettleMs);  // dP=-0.5: abs<1.0 and 0.5/105 < 0.015
     TEST_ASSERT_TRUE(t._direction);
     TEST_ASSERT_TRUE(step > 0.f);
 }
@@ -74,12 +76,12 @@ void test_tracker_cloud_recovery_reverses_on_vin_jump() {
     auto &t = *tp;
     t.resetTracker(100.f, /*direction=*/true);
     advanceMs(100);
-    t.update(100.f, 100, 30.f);  // primes _lastVin (0->30 reverses once); dir now false
+    t.update(100.f, 100, 30.f, kSettleMs);  // primes _lastVin (0->30 reverses once); dir now false
     advanceMs(100);
-    t.update(105.f, 100, 30.f);  // vin stable, power up -> no reversal, dir stays false
+    t.update(105.f, 100, 30.f, kSettleMs);  // vin stable, power up -> no reversal, dir stays false
     TEST_ASSERT_FALSE(t._direction);
     advanceMs(100);
-    t.update(106.f, 100, 33.f);  // vin 30->33 = ~10% -> reverse despite rising power
+    t.update(106.f, 100, 33.f, kSettleMs);  // vin 30->33 = ~10% -> reverse despite rising power
     TEST_ASSERT_TRUE(t._direction);
 }
 
@@ -100,7 +102,7 @@ void test_tracker_converges_to_peak() {
     t.resetTracker(P(duty), /*direction=*/true);
     for (int i = 0; i < 140; ++i) {
         advanceMs(100);
-        float step = t.update(P(duty), (uint16_t) duty, 0.f);
+        float step = t.update(P(duty), (uint16_t) duty, 0.f, kSettleMs);
         duty += (step > 0.f ? 1 : -1) * 8;
         if (duty < 0) duty = 0;
         if (duty > 2047) duty = 2047;
@@ -117,14 +119,71 @@ void test_tracker_settles_after_reversal() {
     auto &t = *tp;
     t.resetTracker(100.f, /*direction=*/true);
     advanceMs(100);
-    t.update(90.f, 100, 0.f);   // reverse
+    t.update(90.f, 100, 0.f, kSettleMs);   // reverse
     TEST_ASSERT_FALSE(t._direction);
     advanceMs(50);
-    t.update(80.f, 100, 0.f);   // drop inside the settle window: ignored
+    t.update(80.f, 100, 0.f, kSettleMs);   // drop inside the settle window: ignored
     TEST_ASSERT_FALSE(t._direction);
     TEST_ASSERT_EQUAL_FLOAT(80.f, t._lastPower);
     advanceMs(200);
-    t.update(70.f, 100, 0.f);   // drop against the settled reference
+    t.update(70.f, 100, 0.f, kSettleMs);   // drop against the settled reference
+    TEST_ASSERT_TRUE(t._direction);
+}
+
+// The window is the caller's filter settling time, not a constant.
+void test_tracker_settle_window_follows_filter() {
+    loopWallClockUs_ = 1'000'000;
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    t.resetTracker(100.f, /*direction=*/true);
+    advanceMs(100);
+    t.update(90.f, 100, 0.f, 400);   // reverse
+    advanceMs(300);
+    t.update(80.f, 100, 0.f, 400);   // 300 ms < 400 ms: ignored
+    TEST_ASSERT_FALSE(t._direction);
+    advanceMs(200);
+    t.update(70.f, 100, 0.f, 400);
+    TEST_ASSERT_TRUE(t._direction);
+}
+
+// The window lasts until Vin is back at the reversal point (the input cap lags the duty), at most 1 s.
+void test_tracker_settle_waits_for_vin() {
+    loopWallClockUs_ = 1'000'000;
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    t.resetTracker(100.f, /*direction=*/true);
+    advanceMs(100);
+    t.update(90.f, 100, 50.f, 0);    // reverse at Vin 50, Vin should rise now
+    TEST_ASSERT_FALSE(t._direction);
+    advanceMs(100);
+    t.update(80.f, 100, 49.f, 0);    // Vin still falling: ignored
+    TEST_ASSERT_FALSE(t._direction);
+    advanceMs(100);
+    t.update(70.f, 100, 50.2f, 0);   // Vin back: decide
+    TEST_ASSERT_TRUE(t._direction);
+    // Vin never comes back: decisions resume after 1 s
+    advanceMs(500);
+    t.update(60.f, 100, 50.5f, 0);
+    TEST_ASSERT_TRUE(t._direction);
+    advanceMs(600);
+    t.update(50.f, 100, 50.5f, 0);
+    TEST_ASSERT_FALSE(t._direction);
+}
+
+// A limiter hand-back (resetDirection) starts the window like a reversal.
+void test_tracker_handback_starts_window() {
+    loopWallClockUs_ = 1'000'000;
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    t.resetTracker(100.f, /*direction=*/true);
+    advanceMs(2000);
+    t.resetDirection(false, 50.f);
+    advanceMs(100);
+    t.update(80.f, 100, 50.f, kSettleMs);   // stale reference, inside the window: ignored
+    TEST_ASSERT_FALSE(t._direction);
+    TEST_ASSERT_EQUAL_FLOAT(80.f, t._lastPower);
+    advanceMs(100);
+    t.update(70.f, 100, 50.f, kSettleMs);
     TEST_ASSERT_TRUE(t._direction);
 }
 
@@ -135,7 +194,7 @@ void test_tracker_vin_band_symmetric() {
     auto tp = std::make_unique<Tracker>();
     auto &t = *tp;
     t.resetTracker(10.f, /*direction=*/true);
-    auto step = [&](float vin) { advanceMs(200); t.update(10.f, 100, vin); return t._direction; };
+    auto step = [&](float vin) { advanceMs(200); t.update(10.f, 100, vin, kSettleMs); return t._direction; };
     bool d = step(40.f);                    // primes _lastVin (0 -> 40 reverses)
     TEST_ASSERT_TRUE(d == step(38.1f));     // 1.9 V < 5 % of 40
     TEST_ASSERT_TRUE(d != step(37.9f));
