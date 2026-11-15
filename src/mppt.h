@@ -29,7 +29,7 @@
 #include "out_impedance.h"
 #include "rect_cal.h"
 
-bool rectCalPersist(int counts, bool calibrated); // coil.conf, core 0
+bool rectCalPersist(int counts, uint8_t cal); // coil.conf, core 0
 
 struct Limits {
     const float Vin_max{};

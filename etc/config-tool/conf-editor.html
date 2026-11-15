@@ -330,8 +330,8 @@ const META = {
   L0:{unit:"H",desc:"Coil inductance (for ripple-current computation)",type:"float"},
   rect_offset_ns:{unit:"ns",desc:"DCM low-side turn-off delay (gate-drive/MOSFET dead-time comp; >0 = LS off later). Stored as time so it survives a PWM-resolution change. Used only if rect_offset_drv names the active gate driver. Written by rect-cal / measure-coil ls apply",type:"float"},
   rect_offset_drv:{unit:"",desc:"Gate driver rect_offset_ns was measured on (mcpwm|ledc); absent or different = offset ignored (0), needs rect-cal",type:"string"},
-  rect_cal_auto:{unit:"",desc:"Auto-run rect-cal while the offset is uncalibrated (max once a day, not in the first 10 min)",type:"bool"},
-  rect_offset_cal:{unit:"",desc:"0 = rect_offset_ns is a runtime-backstop reduction, not a measurement: used, but still counts as uncalibrated",type:"bool"},
+  rect_cal_auto:{unit:"",desc:"Auto-run rect-cal while the offset is uncalibrated (max once a day, not in the first 10 min) or a bound (rect_offset_cal=2, only below Vin = 2 Vout)",type:"bool"},
+  rect_offset_cal:{unit:"",desc:"1 = rect_offset_ns is a measurement. 0 = a runtime-backstop reduction: used, but counts as uncalibrated. 2 = a bound: rect-cal found the knee at or past the ideal window and kept the shorter of 0 and the previous offset; rect_cal_auto retries only below Vin = 2 Vout, not within a week of a bound result (since boot)",type:"int"},
 
   // converter.conf
   topo:{unit:"",desc:"Converter topology: buck or boost",type:"enum"},

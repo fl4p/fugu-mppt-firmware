@@ -191,7 +191,7 @@ sweep. `coil.conf::rect_offset_drv` therefore records the driver (`mcpwm`, `ledc
 value. At boot the firmware uses `rect_offset_ns` only if `rect_offset_drv` names the active
 driver; otherwise it uses 0, logs a warning and marks the offset as uncalibrated. A value with
 `rect_offset_cal=0` (a backstop reduction, not a measurement) is used but also counts as
-uncalibrated.
+uncalibrated; `rect_offset_cal=2` marks a bound from a calibration run (see *Bounds* below).
 
 #### Measuring it
 
@@ -268,11 +268,13 @@ as slowly changing irradiance. Each point is placed relative to the ideal window
 averaged `V_i`/`V_o`, so a voltage drift moves the coordinate with the zero crossing instead of
 reading as a timing error.
 
-The sweep stops at the bend: once two consecutive steps each lie at least 10 mA below the step
-before and 20 mA below the best point so far. It then measures 10 more points spread evenly over
-the four coarse intervals before the first of those two steps, never later than it, which places
-points about every 20–30 counts where the bend starts. It also stops when the average current turns
-negative. The LS never exceeds the ideal window by more than 2.5 µs, nor 90% of the off-time
+The coarse sweep stops one step after the first clear drop, a step at least 10 mA below the step
+before and 20 mA below the best point so far. If the step after it is still 10 mA below the best
+point, the drop stands. If it is back up, the drop is measured again: a second low reading confirms
+it (a ring dip keeps the lower of both), otherwise it was an outlier, its point is replaced and the
+coarse sweep continues. After a confirmed drop the run measures 10 more points spread evenly over
+the four coarse intervals before the drop, never later than it, which places points about every
+20–30 counts where the bend starts. The sweep also stops when the average current turns negative. The LS never exceeds the ideal window by more than 2.5 µs, nor 90% of the off-time
 volt-second limit `(1 − V_o/V_i)·T` (see *Switch-node ringing* below); a run whose cap leaves less
 than half of that 2.5 µs beyond the ideal window fails with `LS headroom`.
 
@@ -315,7 +317,10 @@ voltage changes out of the result:
 - The averaged `V_o` of each step must lie within 0.2% of the mean of its two references, and
   `V_i` within 0.3%. The windows are equally spaced, so a linear drift passes this check and a
   step does not. A step that fails is measured again, up to 6 times per run, so a single bus
-  transient costs about one second; the seventh failure ends the run (`V step`).
+  transient costs about one second; the seventh failure ends the run (`V step`). A `V_o` reading
+  that is off by more than 0.2% on both tries at the same LS, in the same direction and within
+  0.2% of each other, while `V_i` passes, follows the LS window rather than the bus and ends the
+  run at once (`sense follows LS`, see *Sense path* below).
 
 The knee itself moves `V_i`. Reverse current lowers the power drawn from the panel by the
 fraction `ΔI/I` of the measured (unscaled) output current drop, and on the PV curve
@@ -338,7 +343,8 @@ window fails the run (`V shift`).
 In simulation:
 
 - A 1% (also 0.5% and 0.3%) `V_o` dip during the steps 100–200 counts past the zero crossing is
-  rejected. Without the step check, a fit learned +36 counts (a later LS turn-off) from the 1% dip.
+  rejected; since it repeats at each LS it ends the run with `sense follows LS`. Without the step
+  check, a fit learned +36 counts (a later LS turn-off) from the 1% dip.
 - A 0.19% `V_o` square wave, just under the limit, with periods of 0.9–2.3 s against the 1.05 s
   step cycle and a plant 0× or 2× as sensitive to voltage as the model, biases the result by −17
   to +24 counts. After the applied margin (below), the worst case leaves the LS 4 counts (25 ns)
@@ -349,6 +355,24 @@ In simulation:
 - Replicas of three low-irradiance runs (soft panel, 30× knee, falling early side, swinging bus)
   calibrate within ±5 counts. Before these changes they all ended with `V step`. A cloud that
   moves `V_i` by 2.6% still ends the run with `Vin shift`.
+
+**Sense path.** Before the zero crossing the LS window can only raise `I_out` by the body-diode
+loss it recovers, a few mA (0.3% of the current or less between 0.5× and 1× ideal), and reverse
+current only lowers it. A current reading that climbs with the LS window therefore comes from the
+sense path: switching noise coupled into a current/voltage monitor that samples during the LS
+on-time. Such a monitor usually disturbs its voltage channel as well, so a run that trusts neither
+reading is refused rather than corrected. Once both of two consecutive coarse points up to the
+ideal window read more than `20 mA + 0.4%·I` (`I`: the settling current) above the higher of the
+first two points, the run ends with `Iout follows LS`. The bound grows with the current because
+the diode loss does; the switch-node ring adds 10–15 mA on an 80 µH board and noise does not
+scale. `rect-cal status` prints the largest rise and its bound.
+
+On a 51 µH board whose shared current/voltage monitor has no input filter, three field runs at
+about 1.6–1.7 A rose by 36–52 mA between 0.5× and 1× ideal and never dropped; past ideal the `V_o`
+reading rose by up to 1.3% on every retry. Replayed, each run ends with `Iout follows LS` at
+0.73–0.93× ideal, and with `sense follows LS` within 0.07× of ideal when only the `V_o` reading
+follows the LS. Three runs on an 80 µH board rose by at most 2.3 mA, the simulated scenarios by
+at most 12 mA.
 
 **Switch-node ringing.** While both switches are off, the inductor rings with the switch-node
 capacitance `C` (FET output capacitances, driver and layout) at `Z_0 = √(L/C)`; the mechanism and
@@ -372,7 +396,7 @@ Two consequences follow for the run:
 - The bend fit locates where the steep loss starts, between the zero crossing and the clamp onset.
   Points past the loss minimum pull the fit far early (the full field sweep does not fit at all;
   truncated two points past the bend it lands within the expected range), which is why the
-  sweep stops two steps after the bend. On the ringing model the run learns 11–13 counts before
+  sweep stops one step after the first clear drop and the fit ends at the floor of the first dip. On the ringing model the run learns 11–13 counts before
   the ideal window against a zero crossing at −35 counts, and the applied offset (after the margin)
   lands within 4 counts of the crossing.
 - An LS longer than the off-time `(1 − V_o/V_i)·T` leaves reverse current in the inductor when
@@ -384,8 +408,8 @@ Two consequences follow for the run:
 
 With the cap and the stop rule, the LS ends at most 2.5 µs past the ideal window, so the peak
 reverse current is bounded by `V_o·2.5 µs/L` plus the LS turn-off delay: about 1 A at 80 µH and
-1.5 A at 51 µH with `V_o` = 26.5 V. A sweep that stops two coarse steps past the bend reaches
-about half of that. On a replica of a full-sun run at 78 V, 20 runs per noise level learned within
+1.5 A at 51 µH with `V_o` = 26.5 V. A sweep that stops one coarse step past the first clear drop
+reaches about half of that. On a replica of a full-sun run at 78 V, 20 runs per noise level learned within
 a standard deviation of 2.0 counts at 10 mA of sensor noise per sample and 3.3 counts at 30 mA,
 without a guard action. At 100 mA the bend is lost in the noise in 2 of 20 runs (`no knee`, `few
 points`).
@@ -406,14 +430,32 @@ on, `y = c_0 + c_1·d + c_2·min(0, d)² + c_3·max(0, d)²` with `d = x − x_0
 `c_3 < c_2`, and searches `x_0` over the sweep. The line takes any slope of the early side, so
 `x_0` is where the curve starts to bend down, not where it is highest. With a falling early side,
 the maximum sits at the start of the sweep and a peak fit lands far before the crossing (about
-−190 counts on the 80 µH field data, where the bend fit finds −9 and +47). The run is rejected,
-and the previous value kept, with fewer than 6 points, no bend (`no knee`: the bend at the last
-point under 10 mA or under 4× the residual RMS) or `|x_0 − ideal| > 2.5 µs`. Otherwise the
-applied offset is
-`learned − max(125 ns, 0.3·|learned|)`, always toward a shorter LS. The margin grows with the
-offset, because a large offset comes from large unmodelled delays; a fixed fraction of
-`learned` would move toward a longer LS when `learned` is negative. The result takes effect at
-once. Writing it to `coil.conf` (`rect_offset_ns`, `rect_offset_drv`, `rect_offset_cal`) waits
+−190 counts on the 80 µH field data, where the bend fit finds −9 and +47).
+
+Past the bend the ring can turn the current back up, and the points of a recovery pull the
+quadratic, and with it `x_0`, early. Once two consecutive points lie at least 10 mA below the
+highest point and a later one rises 10 mA above the lowest point since, the fit uses the points up
+to that lowest one, the floor of the first dip. A dip followed by a recovery smaller than 10 mA is
+fitted in full. Ending at the floor leaves few points past the bend: on a knee followed within 60
+counts by a dip floor and a partial recovery of 4–8 mA, the fit lands between 210 counts before
+and 17 counts after the knee (ending after the recovery instead, 17 to 240 counts before it).
+
+The run is rejected, and the previous value kept, with fewer than 6 points, no bend (`no knee`:
+the bend at the last point under 10 mA or under 4× the residual RMS) or `|x_0 − ideal| > 2.5 µs`.
+Otherwise the applied offset is `learned − max(125 ns, 0.3·|learned|)`, or
+`learned − max(250 ns, 0.3·|learned|)` when the fit ended at a dip floor, always toward a shorter
+LS. With the larger floor the partial-recovery case above applies at least 23 counts (6.25 ns
+each) before the knee. The margin grows with the offset, because a large offset comes from large
+unmodelled delays; a fixed fraction of `learned` would move toward a longer LS when `learned` is
+negative. The result takes effect at once.
+
+**Bounds.** Above `V_i = 2·V_o` the reverse current must first lift the switch node to `V_i`
+before it is lost, which puts the knee after the zero crossing by a lag that the node capacitance
+sets. A result whose applied offset would be positive (`learned` more than the margin past ideal)
+is therefore a bound, not a measurement: the run applies the shorter of 0 and the offset in use,
+never a positive one, and never a value that moves an active negative offset later. A measured
+negative offset stays as it is and keeps its state. Otherwise the value is stored with
+`rect_offset_cal=2`, which `rect-cal status` shows as `bound` also after a reboot. Writing it to `coil.conf` (`rect_offset_ns`, `rect_offset_drv`, `rect_offset_cal`) waits
 until the converter has been off without interruption for 10 s with a valid output-power reading
 below 1 W, typically at night: a flash write that erases a sector stalls both cores, including the
 control loop, for tens of milliseconds. Any converter start, however short, restarts the 10 s.
@@ -428,9 +470,9 @@ atomically, so a reset during the save leaves either the old or the new file com
 bench ESP32-S3 the save, including the rename, took about 0.4 s (about 0.05 s for an in-place
 rewrite), so a start that falls into a save is delayed by that much. A failed or withdrawn save is
 retried a minute later; successful writes are at least 10 minutes apart. What is
-written is always the offset in use at that moment together with its state: if the backstop
-below has shortened a fresh result before it was saved, the shorter value is saved as
-uncalibrated.
+written is always the offset in use at that moment together with its state (measured, bound or
+uncalibrated): if the backstop below has shortened a fresh result before it was saved, the shorter
+value is saved as uncalibrated.
 
 Preconditions for a run: buck topology, converter on in MPPT mode (not sweeping, not PSU/PV-sim
 or manual PWM, no forced PWM, no limiter active), sync rect and backflow switch on,
@@ -440,6 +482,15 @@ needs more than 0.15 A and an LS headroom of at least 1.15× ideal below the per
 `coil.conf::rect_cal_auto=1` (default) the firmware starts a run (`rect-cal`, not `force`) by
 itself while the offset is uncalibrated, at most once a day, not in the first 10 minutes after
 boot and only at a steady operating point above 5 W. A refused start is retried after 10 minutes.
+A bound is retried only while the operating `V_i` is below `2·V_o` (the calibration point sits
+higher on the PV curve, so this is necessary, not sufficient) and not within 7 days of a bound
+result since boot: a board that always operates above `2·V_o` gives a bound on every run and
+would otherwise spend a run of 35–40 s every day.
+
+A run ends without a result, and the previous value stays, on any refusal or failure: `not in
+DCM`, `unsettled`, `low I`, `LS headroom`, `Vin shift`, `Vout shift`, `V shift`, `V step`,
+`sense follows LS`, `Iout follows LS`, `few points`, `no knee`, `implausible`, an abort, or
+`timeout`.
 
 #### Runtime backstop
 
