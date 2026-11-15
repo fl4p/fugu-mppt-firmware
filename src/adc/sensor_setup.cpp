@@ -98,6 +98,10 @@ static void configureVirtualConverter() {
     float L0 = coil.f("L0", 50e-6f);
     g_vconv.setPassives(vc.f("c_in", 470e-6f), vc.f("c_out", 470e-6f), L0);
     g_vconv.setRing(vc.f("ring_c", 0.0f), vc.f("ring_q", 20.0f));
+    g_vconv.setRingNode(vc.f("ring_v", 0.0f), vc.f("ring_cexp", 0.6f), vc.f("ring_ct", 1.0f));
+    g_vconv.setDiodeVf(vc.f("diode_vf", 0.0f));
+    g_vconv.setSwitching(vc.f("t_dead", 0.0f), vc.f("t_hs_ext", 0.0f), vc.f("r_hs", 0.0f), vc.f("r_ls", 0.0f),
+                         vc.f("t_sw", 0.0f));
 
     // Topology comes from converter.conf, not vconv.conf: the plant must match whatever buck.h was
     // told, or the Ctrl/Rect gate roles and the sim disagree. We run before converter.init(), so we

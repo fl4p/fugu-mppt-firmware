@@ -25,6 +25,15 @@ The file accepts the following keys.
 | `c_out`         | F    | float | 470e-6  | Output capacitance                                                          |
 | `ring_c`        | F    | float | 0       | Buck switch-node capacitance; 0 = off. Rings with the coil at f = 1/(2π·√(L0·C)) while both switches are off, see [Switch-node ring](#switch-node-ring) |
 | `ring_q`        |      | float | 20      | Quality factor of that ring (amplitude decays as e^(−πf·t/Q))               |
+| `ring_v`        | V    | float | 0       | Input voltage at which `ring_c` applies; > 0 makes the node capacitance scale as (`ring_v`/Vin)^`ring_cexp`, 0 = constant |
+| `ring_cexp`     |      | float | 0.6     | Exponent of that scaling (MOSFET Coss falls with voltage)                   |
+| `ring_ct`       |      | float | 1       | Share of the node capacitance that the hard switch edges charge and discharge, see [Switch losses and timing](#switch-losses-and-timing) |
+| `diode_vf`      | V    | float | 0       | Body-diode forward drop on both clamps, in the dead time and on the reverse-current return to the input |
+| `t_dead`        | s    | float | 0       | Dead time before each rising gate edge (HS off → LS on, LS off → HS on); the coil freewheels through a body diode |
+| `t_hs_ext`      | s    | float | 0       | High-side on-time extension (turn-off minus turn-on delay)                  |
+| `r_hs`          | Ω    | float | 0       | Resistance in series with the coil while the high side conducts (Rds(on), coil DCR, input-cap ESR share) |
+| `r_ls`          | Ω    | float | 0       | Resistance in series with the coil while the low side conducts             |
+| `t_sw`          | s    | float | 0       | High-side turn-off current fall time; the loss is paid from the input       |
 | `adc_freq`      | Hz   | int   | 3000    | Sampling tick (falls back to `board.conf::adc_fake_freq`, then 3000)        |
 | `noise_vin`     | V    | float | 0       | Gaussian ADC noise σ on Vin; 0 = deterministic                              |
 | `noise_vout`    | V    | float | 0       | Gaussian ADC noise σ on Vout                                                |
@@ -59,3 +68,29 @@ late-side tails of rect-cal sweeps. The ring shapes two measurements:
   self-calibration](../../internals/diode-emulation.md#self-calibration-rect-cal).
 
 The console command `vconv set ring_c <F>` / `vconv set ring_q <Q>` changes them at runtime.
+
+## Switch losses and timing
+
+All keys in this section default to 0 (ideal, lossless switches) and apply to the buck plant only.
+
+- **Dead time** (`t_dead`): the gate driver delays each rising edge. After the high side turns off,
+  the coil current freewheels through the low-side body diode (node at `−diode_vf`) until the low
+  side turns on; the low-side window shrinks by `t_dead` and its end does not move. A low-side
+  pulse shorter than the dead time is swallowed. When the idle time before the next high-side pulse
+  is shorter than `t_dead`, that pulse starts late, as in synchronous CCM.
+- **Node energy**: with `ring_c > 0` the high side charges the node from the input at turn-on,
+  `ring_ct·C·(Vin − Vnode)`. At turn-off a positive coil current swings the node down during the
+  dead time and takes its energy; what the current cannot swing in time is lost when the low side
+  turns on. `ring_ct` < 1 accounts for a rise transit that is faster than the free ring (nonlinear
+  Coss).
+- **Turn-off loss** (`t_sw`): the high-side channel current falls linearly in `t_sw` while the node
+  capacitance takes the rest. Small currents turn off almost without loss
+  (`I²·t_sw²/(24·C)`), large ones approach `½·Vin·I·t_sw`.
+- **Conduction** (`r_hs`, `r_ls`): a voltage drop `R·i` against the coil while that switch conducts,
+  so the loss lowers the delivered current at a given duty.
+- **Diode drop** (`diode_vf`): both ring clamps, the dead-time freewheel, and the reverse current
+  that returns to the input through the high-side body diode (node at `Vin + diode_vf`).
+
+Parameter sets for two field boards, fitted to an LTspice half-bridge bench, are in
+`test/host-stub/plant_boards.h`; `test/host-stub/vconv-spice-check.sh` compares the plant with that
+bench.

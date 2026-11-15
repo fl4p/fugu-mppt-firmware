@@ -36,16 +36,18 @@ void VirtualConverter::stepOneCycle(float T) {
 
     // Rebuild reciprocals only when an input changes; the steady N-cycle loop then divides nothing
     // (LX7 has no hw float divide, so each `/` was a software __divsf3). 6 compares << 18 divisions.
-    if (T != cycT_ || pmax != cycPmax_ || l_ != cycL_ || cIn_ != cycCin_ ||
-        cOut_ != cycCout_ || rbat_ != cycRbat_ || ringC_ != cycRingC_) {
+    const bool nl = ringV_ > 0.0f && vIn_ > 1.0f;
+    if (T != cycT_ || pmax != cycPmax_ || l_ != cycL_ || cIn_ != cycCin_ || cOut_ != cycCout_ || rbat_ != cycRbat_ ||
+        ringC_ != cycRingC_ || (nl && std::fabs(vIn_ - cycRingV_) > 0.01f * vIn_)) {
         cycT_ = T; cycPmax_ = pmax; cycL_ = l_; cycCin_ = cIn_; cycCout_ = cOut_; cycRbat_ = rbat_;
-        cycRingC_ = ringC_;
-        if (ringC_ > 0.0f && l_ > 0.0f) {
-            const float w0 = 1.0f / std::sqrt(l_ * ringC_), r = 0.25f / (ringQ_ * ringQ_);
+        cycRingC_ = ringC_, cycRingV_ = vIn_;
+        ringCe_ = nl && ringC_ > 0.0f ? ringC_ * std::pow(ringV_ / vIn_, ringExp_) : ringC_;
+        if (ringCe_ > 0.0f && l_ > 0.0f) {
+            const float w0 = 1.0f / std::sqrt(l_ * ringCe_), r = 0.25f / (ringQ_ * ringQ_);
             ringA_ = 0.5f * w0 / ringQ_;
             ringWd_ = w0 * std::sqrt(std::max(1.0f - r, 1e-4f));
             ringInvWd_ = 1.0f / ringWd_;
-            ringInvC_ = 1.0f / ringC_;
+            ringInvC_ = 1.0f / ringCe_;
         }
         invL_    = (l_   > 0.0f) ? 1.0f / l_   : 0.0f;
         invCin_  = (cIn_ > 0.0f) ? 1.0f / cIn_ : 0.0f;
@@ -172,79 +174,83 @@ void VirtualConverter::stepOneCycle(float T) {
 
 // Buck: inductor in series with the OUTPUT. Ctrl = HS, Rect = LS.
 void VirtualConverter::stepOneCycleBuck(float T) {
-    const uint16_t ctrl = pwm_.pwmCtrl;
-    const uint16_t rect = pwm_.pwmRect;
-
-    const float dHS = (float) ctrl * invPmax_;
-    const float dLS = (float) rect * invPmax_;
-    const float tHS = dHS * T;
-    const float tLS = dLS * T;
-    const float tOff = T - tHS - tLS;
-
     float invL = invL_;
     if (lK_ != 0.0f) invL /= std::max(0.1f, 1.0f - lK_ * iPk_);
 
-    // Phase 1: HS on. dI/dt = (Vin - Vout) / L.
+    // realised gate windows: tDead_ before each rising edge (an LS pulse shorter than that is swallowed), the HS
+    // turns off tHsExt_ late; from HS turn-on to the next one is T
+    const float tH = (float) pwm_.pwmCtrl * invPmax_ * T, tL = (float) pwm_.pwmRect * invPmax_ * T;
+    const bool lsOn = tL > std::max(tDead_, tHsExt_);
+    const float hsDelay = lsOn ? std::max(0.0f, tDead_ - (T - tH - tL)) : 0.0f;
+    const float tHS = tH > 0.0f ? std::max(0.0f, tH + tHsExt_ - hsDelay) : 0.0f;
+    const float tDd = lsOn ? std::max(0.0f, tDead_ - tHsExt_) : 0.0f;
+    const float tLS = lsOn ? tL - std::max(tDead_, tHsExt_) : 0.0f;
+    const float tOff = std::max(0.0f, T - tHS - tDd - tLS);
+
+    // body-diode freewheel for t: i > 0 LS diode (node -Vf), i < 0 HS diode (node Vin + Vf), stops at zero
+    auto diode = [&](float i, float t, float &area) {
+        const float slope = i > 0.0f ? -(vOut_ + diodeVf_) * invL : (vIn_ + diodeVf_ - vOut_) * invL;
+        if (i * slope >= 0.0f) return area = i * t, i;
+        const float tZero = -i / slope;
+        if (tZero < t) return area = 0.5f * i * tZero, 0.0f;
+        const float e = i + slope * t;
+        return area = trapArea(i, e, t), e;
+    };
+
+    // Phase 1: HS on. dI/dt = (Vin - Vout - rHs*i) / L.
     const float a = iLEnd_;
-    const float b = (tHS > 0.0f) ? (a + (vIn_ - vOut_) * invL * tHS) : a;
+    const float dv = vIn_ - vOut_;
+    float b = a + dv * invL * tHS;
+    b = a + (dv - rHs_ * 0.5f * (a + b)) * invL * tHS;
     iPk_ = std::fabs(b);
     const float areaHS = trapArea(a, b, tHS);
+    // HS turn-off, paid from the input: the channel current falls linearly in tSw_, the node C takes the rest
+    // until the node reaches 0 V (at t1)
+    float qIn = 0.0f;
+    if (tSw_ > 0.0f && tHS > 0.0f && b > 0.0f) {
+        const float cn = ringCt_ * ringCe_, t1 = std::sqrt(2.0f * cn * vIn_ * tSw_ / b), u = std::min(t1, tSw_);
+        const float e = (t1 > 0.0f ? b * b * u * u * u * (1.0f / 3.0f - 0.25f * u / tSw_) / (2.0f * cn * tSw_) : 0.0f) +
+                        0.5f * b * (tSw_ - u) * (tSw_ - u) * vIn_ / tSw_;
+        qIn = e / vIn_;
+    }
+
+    // dead time HS off -> LS on: body diode; a positive current swings the node down first and takes over
+    // its energy, the rest is lost when the LS turns on hard
+    float areaDd = 0.0f, b1 = b;
+    if (tDd > 0.0f) {
+        if (ringCe_ > 0.0f && b > 0.0f) {
+            const float ct = ringCt_ * ringCe_, f = std::min(1.0f, b * tDd / (ct * (vIn_ + diodeVf_)));
+            b1 = std::sqrt(b * b + ct * vIn_ * vIn_ * f * (2.0f - f) * invL);
+        }
+        b1 = diode(b1, tDd, areaDd);
+        if (b < 0.0f) qIn += areaDd;
+    }
 
     // Phase 2: LS on. Signed trapezoid; no mode decision -- firmware picks
     // pwmRect to land near zero, forced-PWM commands past it.
-    const float c = (tLS > 0.0f) ? (b - vOut_ * invL * tLS) : b;
-    const float areaLS = trapArea(b, c, tLS);
+    float c = b1 - vOut_ * invL * tLS;
+    c = b1 - (vOut_ + rLs_ * 0.5f * (b1 + c)) * invL * tLS;
+    const float areaLS = trapArea(b1, c, tLS);
 
     // Phase 3: both off. c > 0: LS body diode. c < 0: HS body diode (rev pump).
     float cEnd = c;
-    float areaOff = 0.0f, areaRingIn = 0.0f;
+    float areaOff = 0.0f;
     bool ring = false, zero = false;
-    if (ringC_ > 0.0f && tOff > 0.0f && tHS > 0.0f && vOut_ > 0.0f && vIn_ > vOut_) {
+    if (ringCe_ > 0.0f && tOff > 0.0f && tHS > 0.0f && vOut_ > 0.0f && vIn_ > vOut_) {
         // switch-node ring from the node voltage the last switch left (LS: 0, HS: Vin); the HS turn-on
         // charges the node back to Vin from the input
         float x = (tLS > 0.0f ? 0.0f : vIn_) - vOut_, i = c;
-        areaOff = ringOff(x, i, tOff, areaRingIn, zero);
-        areaRingIn += ringC_ * std::max(0.0f, vIn_ - vOut_ - x);
+        areaOff = ringOff(x, i, tOff, qIn, zero);
+        qIn += ringCt_ * ringCe_ * std::max(0.0f, dv - x);
         cEnd = i;
         ring = true;
     } else if (tOff > 0.0f) {
-        if (c > 0.0f) {
-            const float slope = -(vOut_ + diodeVf_) * invL;     // <= 0; zero iff vOut_ + diodeVf_ == 0
-            if (slope < 0.0f) {
-                const float tZero = -c / slope;
-                if (tZero < tOff) {
-                    areaOff = 0.5f * c * tZero;
-                    cEnd = 0.0f;
-                } else {
-                    cEnd = c + slope * tOff;
-                    areaOff = trapArea(c, cEnd, tOff);
-                }
-            } else {
-                // V_out == 0 (short): no back-EMF, body diode passes c through unchanged.
-                cEnd = c;
-                areaOff = c * tOff;
-            }
-        } else if (c < 0.0f) {
-            const float slope = (vIn_ - vOut_) * invL;
-            if (slope > 0.0f) {
-                const float tZero = -c / slope;
-                if (tZero < tOff) {
-                    areaOff = 0.5f * c * tZero;
-                    cEnd = 0.0f;
-                } else {
-                    cEnd = c + slope * tOff;
-                    areaOff = trapArea(c, cEnd, tOff);
-                }
-            } else {
-                cEnd = c;
-                areaOff = c * tOff;
-            }
-        }
+        cEnd = diode(c, tOff, areaOff);
+        if (c < 0.0f) qIn += areaOff; // reverse current through the HS body diode returns to the input
     }
 
-    // reverse current through the HS body diode (c < 0) returns to the input
-    iInAvg_  = (areaHS + (ring ? areaRingIn : (c < 0.0f ? areaOff : 0.0f))) * invT_;
-    iOutAvg_ = (areaHS + areaLS + areaOff) * invT_;
+    iInAvg_  = (areaHS + qIn) * invT_;
+    iOutAvg_ = (areaHS + areaDd + areaLS + areaOff) * invT_;
     iLEnd_ = cEnd;
     // DCM := "coil is at zero at cycle end". c!=0 means phase 3 drove it down;
     // a==0 covers the staying-idle case (prior cycle ended at zero too).
@@ -265,7 +271,7 @@ void VirtualConverter::stepOneCycleBuck(float T) {
 float VirtualConverter::ringOff(float &x, float &i, float t, float &qIn, bool &zero) const {
     constexpr float kPi = kTwoPi * 0.5f;
     const float xLo = -(vOut_ + diodeVf_), xHi = vIn_ + diodeVf_ - vOut_, lim = std::min(-xLo, xHi);
-    const float C = ringC_, a = ringA_, wd = ringWd_, iwd = ringInvWd_;
+    const float C = ringCe_, a = ringA_, wd = ringWd_, iwd = ringInvWd_;
     float q = 0.0f;
     for (int seg = 0; seg < 8; ++seg) {
         const float x0 = x, i0 = i;

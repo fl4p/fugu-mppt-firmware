@@ -55,7 +55,10 @@
 //     ring-weak-<board>    steady ~45 W, the whole operating range in DCM: does P&O sit on a ripple maximum
 //     ring-coil-<board>    `measure-coil l0` flow (old 10-step median, new 48-step ring fit) against the plant,
 //                          then the MPPT restore; -weak: at ~40 W (soft source)
-//   SIM_RING=fry|flat|fry-off|flat-damped|... applies a board to any other scenario (e.g. wx-dawn, wx-dusk)
+//   SIM_RING=fry|flat|fry-hq|fry-off|flat-damped|... applies a board plant (test/host-stub/plant_boards.h: ring, diode
+//     drop, dead time, conduction and switching loss, fitted to the LTspice bench) to any other scenario; wx-* default
+//     to fry, SIM_RING=ideal = the lossless vconv_mock plant without ring. -hq: Q of the undamped bench (more ripple)
+//   SIM_PLANT="fry:ring_q=40,..." overrides board fields
 //
 #include <algorithm>
 #include <cmath>
@@ -77,6 +80,7 @@
 #include "sim/vconv.h"
 #include "sim_alloc.h"
 #include "selftest/coil_fit.h"
+#include "plant_boards.h"
 
 // ---- globals owned by main.cpp on target ----
 ADC_Sampler adcSampler{};
@@ -112,34 +116,39 @@ static double g_fineT0 = 0, g_fineT1 = 0; // env SIM_FINE=t0,t1: per-tick sensor
 static double g_rampSec = 0, g_rampT0 = 0, g_rampFrom = 0, g_rampTo = 0; // linear Isc ramp
 static bool g_verbose = true;
 
-// ---- switch-node ring board (ring-* scenarios, SIM_RING) ----
-struct RingBoard {
-    const char *name;
-    float l0Conf, lPlant, f, q; // coil.conf L0, plant L, ring frequency at lPlant, quality factor
-};
-static const RingBoard kRingBoards[] = {{"fry", 80e-6f, 76e-6f, 254e3f, 25}, {"flat", 56e-6f, 51e-6f, 326e3f, 15}};
-static const RingBoard *g_ring = nullptr;
+// ---- board plant (ring-* scenarios, SIM_RING; wx-* default to fry) ----
+static PlantBoard g_board;
+static const PlantBoard *g_ring = nullptr;
 static bool g_ringOn = false, g_ringDamped = false; // damped: Q 0.5, ring branch without oscillation
 static void (*g_tickHook)() = nullptr; // called after every RT iteration of run()
 static FILE *g_pDump = nullptr; // SIM_PDUMP=<file>: per tick t, Iout ewm, Vout ewm, HS count (float32)
 
-// "...-fry[-off]" / "...-flat[-off]" or SIM_RING: pick the board; returns the name without the suffix
+static bool cutSuffix(std::string &t, const char *sfx) {
+    const size_t n = strlen(sfx);
+    if (t.size() <= n || t.compare(t.size() - n, n, sfx)) return false;
+    t.resize(t.size() - n);
+    return true;
+}
+
+// "...-fry[-hq][-off]" / "...-flat[-damped]" or SIM_RING: pick the board; returns the name without the suffix
 static std::string ringBoardFrom(std::string sc) {
+    plantBoardsFromEnv();
     const char *env = getenv("SIM_RING");
     std::string tag = sc;
     if (sc.rfind("ring-", 0) != 0) {
-        if (!env) return sc;
+        if (!env || !strcmp(env, "ideal")) return sc;
         tag = std::string("x-") + env;
     }
-    g_ringOn = !(tag.size() > 4 && tag.compare(tag.size() - 4, 4, "-off") == 0);
-    if (!g_ringOn) tag.resize(tag.size() - 4);
-    g_ringDamped = tag.size() > 7 && tag.compare(tag.size() - 7, 7, "-damped") == 0;
-    if (g_ringDamped) tag.resize(tag.size() - 7);
-    for (auto &b: kRingBoards) {
+    g_ringOn = !cutSuffix(tag, "-off");
+    g_ringDamped = cutSuffix(tag, "-damped");
+    const bool hq = cutSuffix(tag, "-hq");
+    for (auto &b: kPlantBoards) {
         const std::string sfx = std::string("-") + b.name;
-        if (tag.size() > sfx.size() && tag.compare(tag.size() - sfx.size(), sfx.size(), sfx) == 0) {
-            g_ring = &b;
-            if (sc.rfind("ring-", 0) == 0) sc = tag.substr(0, tag.size() - sfx.size());
+        if (cutSuffix(tag, sfx.c_str())) {
+            g_board = hq ? highQ(b) : b;
+            if (g_ringDamped) g_board.ringQ = 0.5f;
+            g_ring = &g_board;
+            if (sc.rfind("ring-", 0) == 0) sc = tag;
             return sc;
         }
     }
@@ -502,6 +511,7 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
     writeConf(confDir, "sensor.conf", {{"expected_hz", std::to_string(hz * 4 / 5)}});
     if (g_simSenseHook)
         writeConf(confDir, "sensor.conf", {{"hv_v_filt_len", "20"}, {"lv_v_filt_len", "20"}, {"lv_i_filt_len", "20"}, {"hv_i_filt_len", "20"}});
+    if (g_ring) writeConf(confDir, "vconv.conf", g_ring->conf(g_ringOn)); // ring_c is at the plant L, set after boot
     // SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" appends board overrides
     if (const char *c = getenv("SIM_CONF")) {
         std::string all = c;
@@ -1322,6 +1332,7 @@ static int simMain(int argc, char **argv) {
         setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
     if (sc.rfind("wx-", 0) == 0 && sc.size() > 5 && sc.compare(sc.size() - 5, 5, "-flat") == 0)
         setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
+    if (sc.rfind("wx-", 0) == 0) setenv("SIM_RING", "fry", 0); // tracker scenarios: a field board's plant
     if (const char *n = getenv("SIM_NOISE"); n && *n) noiseLoad(n);
     if (const char *f = getenv("SIM_PDUMP")) g_pDump = ::fopen(f, "wb");
     sc = ringBoardFrom(sc);
@@ -1360,11 +1371,11 @@ static int simMain(int argc, char **argv) {
     if (sc == "rcal-sun") g_vconv.setRing(5e-9f, 40.f), g_vconv.setPv(5.6f, 79.6f, 0.78f);
     if (g_ring) {
         g_vconv.setPassives(g_vconv.getCin(), g_vconv.getCout(), g_ring->lPlant);
-        g_vconv.setRing(g_ringOn ? 1 / (39.478418f * g_ring->f * g_ring->f * g_ring->lPlant) : 0.f, g_ringDamped ? 0.5f : g_ring->q);
-        g_vconv.setDiodeVf(0.7f);
-        printf("# ring board %s: coil.conf L0 %.0f uH, plant L %.0f uH, ring %s (%.0f kHz, Q %.1f, node C %.2f nF)\n",
-               g_ring->name, g_ring->l0Conf * 1e6f, g_ring->lPlant * 1e6f, g_ringOn ? (g_ringDamped ? "damped" : "on") : "OFF", g_ring->f * 1e-3f,
-               g_ringDamped ? 0.5f : g_ring->q, 1e9f / (39.478418f * g_ring->f * g_ring->f * g_ring->lPlant));
+        printf("# board plant %s: coil.conf L0 %.0f uH, plant L %.0f uH, ring %s (%.0f kHz at %.0f V, Q %.1f, node C %.2f nF),"
+               " Vf %.2f V, dead %.0f ns, R %.0f/%.0f mOhm, t_sw %.0f ns\n", g_ring->name, g_ring->l0Conf * 1e6f,
+               g_ring->lPlant * 1e6f, g_ringOn ? (g_ringDamped ? "damped" : "on") : "OFF", g_ring->ringF * 1e-3f, g_ring->ringV,
+               g_ring->ringQ, g_ring->ringC() * 1e9f, g_ring->vf, g_ring->tDead * 1e9f, g_ring->rHs * 1e3f, g_ring->rLs * 1e3f,
+               g_ring->tSw * 1e9f);
     }
     if (sc == "ring-coil" || sc == "ring-coil-weak") return runRingCoil(name, sc == "ring-coil-weak");
     if (isWx) return runWx(name, wx);
