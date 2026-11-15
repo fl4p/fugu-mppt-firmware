@@ -24,9 +24,14 @@
 //     wx-low-slow       wx-low with power-sensor filter length 60 (slow sensor profile; SIM_ADC_HZ=200 for ADS-like rates)
 //     wx-sweep-fall, wx-sweep-rise, wx-sweep-shade   cloud edge during a sweep (-shade: two peaks)
 //     wx-sun-fry, wx-sun-flat   steady sun, MPP SIM_P W (default 70), the board's L, string and Vin (fry ~64 V, flat ~55 V)
+//     wx-ramp-fry, wx-ramp-flat wx-sun with irradiance changing SIM_RAMP %/min (default 2, exponential) from 120 s
+//     wx-wob-fry, wx-wob-flat   wx-sun with irradiance x (1 + a sin 2 pi f t), SIM_WOB=a,f (default 0.005,0.2)
 //   SIM_NOISE=fry|flat|<file.fnz>  replay sensor noise measured on a converter (test/host-stub/noise/, made by
 //     noise_profile.py; looped): residuals added to Vin/Vout/Iout, Iout's scaled by Iout/Iout(capture)^SIM_NOISE_EXP (default 1),
 //     x SIM_NOISE_GAIN, starting SIM_NOISE_OFS s into the profile; INA226 LSB quantisation, the boards' filt_len 20, SIM_ADC_HZ defaults to the capture rate
+//     fry-wander, flat-wander, fry3-wander: Iout keeps its slow wander below 0.3 Hz (noise_profile.py --keep-slow;
+//     fry3: a capture with 3 % p-p at ~0.2 Hz). The == TRACKER line ends with the tracking loss in J, the part in slow
+//     mode and the largest Vin offset from the MPP in slow mode
 //   SIM_T=600 wx run length [s], SIM_TR=5 wx trace interval [s], SIM_V=1 firmware log in wx/shade runs
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
 //   SIM_PDUMP=<file>  per RT tick float32 t, Iout ewm, Vout ewm, HS count, slow mode, PV power; SIM_HOLD=t: wx runs hold the duty from t [s]
@@ -102,7 +107,7 @@ static std::vector<Trip> g_trips;
 static std::vector<double> g_sweepT; // "Start sweep" log times
 static std::vector<std::string> g_logSince; // log lines after the scenario event
 static double g_eventT = -1;
-static std::vector<double> g_slowDownT; // "Near MPP, slow-down" log times
+static std::vector<double> g_slowDownT; // "Slow mode, duty" log times (slow-mode entries)
 static double g_fineT0 = 0, g_fineT1 = 0; // env SIM_FINE=t0,t1: per-tick sensor trace window
 static double g_rampSec = 0, g_rampT0 = 0, g_rampFrom = 0, g_rampTo = 0; // linear Isc ramp
 static bool g_verbose = true;
@@ -198,7 +203,7 @@ static void logHook(char lvl, const char *tag, const char *msg) {
     char who[64];
     if (sscanf(msg, "backoff %us [%63[^]]]", &sec, who) == 2) g_trips.push_back({tNow(), who, sec});
     if (!strcmp(msg, "Start sweep")) g_sweepT.push_back(tNow());
-    if (!strncmp(msg, "Near MPP, slow-down", 19)) g_slowDownT.push_back(tNow());
+    if (!strncmp(msg, "Slow mode, duty", 15)) g_slowDownT.push_back(tNow());
     char line[640];
     snprintf(line, sizeof line, "%9.4f %c %-8s %s", tNow(), lvl, tag, msg);
     if (g_eventT >= 0 && g_logSince.size() < 400) g_logSince.emplace_back(line);
@@ -709,6 +714,7 @@ struct Wx {
     Track vbatT;                             // battery EMF profile
     double sweepAt = -1, statsFrom = 0, T = 600;
     float isc = 0, g[3] = {1, 1, 1}, vocNow = 0;
+    float ramp = 0, wobA = 0, wobF = 0;      // irradiance x exp(ramp (t - 120 s)), x (1 + wobA sin(2 pi wobF t))
 
     void init() {
         PvModel m;
@@ -722,7 +728,8 @@ struct Wx {
     }
 
     void apply(double t) {
-        const float c = trackAt(cloud, t, 1);
+        const float c = trackAt(cloud, t, 1) * std::exp(ramp * (float) std::max(0.0, t - 120)) *
+                        (1 + wobA * (float) std::sin(6.283185 * wobF * t));
         float gMax = 0;
         for (uint8_t i = 0; i < n; ++i) {
             const float s = trackAt(sub[i], t, 1);
@@ -908,7 +915,8 @@ static int runWx(const std::string &name, Wx &wx) {
     float valley[4], key[4] = {-1, -1, -1, -1};
     int nPk = 0, maxPk = 0;
     // tracker steady state: duty and Vin while tracking, slow-mode time, reversals, slow-mode entries
-    double dN = 0, dS = 0, dS2 = 0, vS = 0, vS2 = 0, tSlow = 0;
+    double dN = 0, dS = 0, dS2 = 0, vS = 0, vS2 = 0, tSlow = 0, lossSlow = 0;
+    float slowDvMax = 0; // largest |Vin - Vmpp| / Vmpp in slow mode
     float dMin = 1e9f, dMax = 0, vMin = 1e9f, vMax = 0;
     uint32_t nRev = 0, nSlowIn = 0;
     time_ms lastRev = 0;
@@ -972,7 +980,10 @@ static int runWx(const std::string &name, Wx &wx) {
             dN += dt, dS += d * dt, dS2 += d * d * dt, vS += vin * dt, vS2 += vin * vin * dt;
             dMin = std::min(dMin, d), dMax = std::max(dMax, d), vMin = std::min(vMin, vin), vMax = std::max(vMax, vin);
         }
-        if (trk.slowMode) tSlow += dt;
+        if (trk.slowMode) {
+            tSlow += dt;
+            if (cat == TRACK && iG >= 0) lossSlow += (pG - pPv) * dt, slowDvMax = std::max(slowDvMax, std::fabs(vin / pk[iG].v - 1));
+        }
         nSlowIn += trk.slowMode && !wasSlow, wasSlow = trk.slowMode;
         nRev += trk._timeLastReverse != lastRev, lastRev = trk._timeLastReverse;
         if (isWrong) {
@@ -1023,11 +1034,13 @@ static int runWx(const std::string &name, Wx &wx) {
         const double dm = dN > 0 ? dS / dN : 0, vm = dN > 0 ? vS / dN : 0, k = 1000.0 / converter.pwmCtrlMax;
         printf("== TRACKER %-18s tracking %.0f s: duty mean %.0f rms %.1f p-p %.0f counts of %u (%.2f / %.1f permille),"
                " Vin mean %.2f rms %.3f p-p %.2f V | tracking loss %.2f %% | slow %.1f %% of the time, %u entries"
-               " (%zu logged, every %.0f s) | %.1f reversals/min | harvest %.2f %%\n", name.c_str(), dN, dm,
+               " (%zu logged, every %.0f s) | %.1f reversals/min | harvest %.2f %% | tracking loss %.0f J, in slow mode"
+               " %.0f J, slow-mode Vin up to %.1f %% off the MPP\n", name.c_str(), dN, dm,
                std::sqrt(std::max(0.0, dS2 / std::max(dN, 1e-9) - dm * dm)), dMax - dMin, converter.pwmCtrlMax,
                std::sqrt(std::max(0.0, dS2 / std::max(dN, 1e-9) - dm * dm)) * k, (dMax - dMin) * k, vm,
                std::sqrt(std::max(0.0, vS2 / std::max(dN, 1e-9) - vm * vm)), vMax - vMin, loss[TRACK] * pc,
-               100 * tSlow / tStat, nSlowIn, nLogged, nLogged ? tStat / nLogged : 0.0, nRev * 60 / tStat, ePv * pc);
+               100 * tSlow / tStat, nSlowIn, nLogged, nLogged ? tStat / nLogged : 0.0, nRev * 60 / tStat, ePv * pc,
+               loss[TRACK], lossSlow, 100 * slowDvMax);
     }
     size_t shown = 0;
     for (auto &s: wrong) {
@@ -1092,10 +1105,15 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         const float g0 = (low ? 2.5f : 61.f) / wx.pClear, r = low ? 10.f : 2.f, tr = low ? 1800 : 600;
         wx.vocLog = 2.6f, wx.T = low ? 1860 : 1260;
         for (float t = 0; t <= wx.T; t += 10) wx.cloud.emplace_back(t, g0 * std::pow(r, std::clamp(t - 60, 0.f, tr) / tr));
-    } else if (sc == "wx-sun-fry" || sc == "wx-sun-flat") {
+    } else if (sc.rfind("wx-sun-", 0) == 0 || sc.rfind("wx-ramp-", 0) == 0 || sc.rfind("wx-wob-", 0) == 0) {
         // steady sun, MPP SIM_P W; fry: Vin ~64 V at 70 W, flat: ~55 V
         const float p = getenv("SIM_P") ? atof(getenv("SIM_P")) : 70;
-        if (sc == "wx-sun-fry") fry(615), wx.vocLog = 2.6f;
+        if (sc.compare(sc.size() - 4, 4, "-fry") == 0) fry(615), wx.vocLog = 2.6f;
+        if (sc.rfind("wx-ramp-", 0) == 0) wx.ramp = (getenv("SIM_RAMP") ? atof(getenv("SIM_RAMP")) : 2) / 6000;
+        if (sc.rfind("wx-wob-", 0) == 0) {
+            wx.wobA = 0.005f, wx.wobF = 0.2f;
+            if (const char *e = getenv("SIM_WOB")) sscanf(e, "%f,%f", &wx.wobA, &wx.wobF);
+        }
         float g = p / wx.pClear;
         for (int i = 0; i < 6; ++i) g = p / wx.pClear * wx.voc / (wx.voc + wx.vocLog * std::log(g));
         wx.cloud = {{0, g}}, wx.vbat = 26.1f, wx.statsFrom = 120, wx.T = 900;
@@ -1298,8 +1316,10 @@ static int simMain(int argc, char **argv) {
     const std::string name = sc;
     if (p0) sc.resize(sc.size() - 3);
     if (sc == "rcal-flat") setenv("SIM_RING", "flat", 0), setenv("SIM_ADC_HZ", "1470", 0);
-    if (sc == "wx-sun-fry") setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
-    if (sc == "wx-sun-flat") setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
+    if (sc.rfind("wx-", 0) == 0 && sc.size() > 4 && sc.compare(sc.size() - 4, 4, "-fry") == 0)
+        setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
+    if (sc.rfind("wx-", 0) == 0 && sc.size() > 5 && sc.compare(sc.size() - 5, 5, "-flat") == 0)
+        setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
     if (const char *n = getenv("SIM_NOISE"); n && *n) noiseLoad(n);
     if (const char *f = getenv("SIM_PDUMP")) g_pDump = ::fopen(f, "wb");
     sc = ringBoardFrom(sc);

@@ -12,6 +12,8 @@ duty jumps: their power steps are plant behaviour, the sim makes its own). Sever
 concatenated, but a join between two is a step in the ripple's phase and frequency that the adaptive
 notch passes as a power transient: one continuous capture is the clean profile. The sim loops it; the
 loop length is a whole number of ripple periods and its last second fades into the first.
+--keep-slow keeps Iout's content below fc too (only its linear trend is removed): the slow wander of the
+current, which at a steady duty is light or measurement, not the tracker (pick a capture whose Vin hardly moves).
 
 File (little endian): 'FNZ1', float iRef [A], then per channel vin, vout, iout: float fs [Hz],
 float lsb, uint32 n, int16[n] (value = n * lsb).
@@ -40,6 +42,7 @@ def main():
     ap.add_argument("--vin", type=float, help="V per scope unit (no telemetry)")
     ap.add_argument("--vout", type=float, help="V per scope unit (no telemetry)")
     ap.add_argument("--fc", type=float, default=0.3)
+    ap.add_argument("--keep-slow", action="store_true")
     a = ap.parse_args()
     res = {c: [] for c in CH}
     fs = {}
@@ -61,7 +64,8 @@ def main():
             x, f = raw[c]
             x = x[:int(dur * f)] * k[c]
             sos = signal.butter(2, a.fc, "lowpass", fs=f, output="sos")
-            res[c].append((x - signal.sosfiltfilt(sos, x))[int(t0 * f):int(t1 * f)])
+            seg = slice(int(t0 * f), int(t1 * f))
+            res[c].append(signal.detrend(x[seg]) if a.keep_slow and c == "iout" else (x - signal.sosfiltfilt(sos, x))[seg])
             fs.setdefault(c, []).append(f)
             if c == "iout" and not tel:
                 irefs.append(x.mean())
