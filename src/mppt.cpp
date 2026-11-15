@@ -6,15 +6,12 @@
 #include "tele/tele_ble.h"    // teleBleStreaming gate
 #endif
 #include <esp_heap_caps.h>
+#include "etc/idle_profile.h"
 
 
 constexpr auto withDebugFields = false;
 
-#if CONFIG_FUGU_WITH_PWR_KNOBS
-uint32_t g_teleMinPointUs = 20'000; // `pwr tele`
-#else
-static constexpr uint32_t g_teleMinPointUs = 20'000;
-#endif
+uint32_t g_teleMinPointUs = kTeleMinPointUs; // idle profile, `pwr tele`
 
 // Controller output -> duty slew rate [normalized duty per second]. The loop gain of a controller
 // is Kp * this, so keep it named rather than as a literal buried in the update path.

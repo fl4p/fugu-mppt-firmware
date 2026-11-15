@@ -16,6 +16,7 @@ UsbEvent usbDevPoll();
 // Switches the PHY back to USB-Serial-JTAG and restarts into the ROM download mode.
 [[noreturn]] void usbEnterDownload();
 
+bool usbDriveMounted(); // drive offered to the host and not ejected
 bool usbCdcConnected();
 int usbCdcRead(char *buf, size_t len);
 int usbCdcWrite(const char *buf, size_t len);

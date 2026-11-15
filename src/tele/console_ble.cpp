@@ -79,6 +79,7 @@ static volatile bool deviceConnected = false;
 // (logical service running) state; `bleInited` tracks the one-time stack bring-up.
 static bool bleInited = false;
 static bool bleStarted = false;
+static uint16_t advMs = 0; // connectable adv interval, 0 = stack default
 
 // Single-producer (NimBLE host task, onWrite) / single-consumer (network loop, bleRead) byte queue.
 static moodycamel::ReaderWriterQueue<char> rxQueue{256};
@@ -435,6 +436,23 @@ void bleConsoleResumeAdv() {
     if (bleStarted) BLEDevice::startAdvertising();
 }
 
+// The params stick to the wrapper's advertising object, so every later start (onDisconnect, the
+// tele_adv reconciler, `svc on ble`) uses them; tele_adv's non-connectable advert has its own.
+bool bleConsoleSetAdvMs(uint16_t ms) {
+    if (!bleInited || bleConsoleConnected() || teleAdvOwnsAdv()) return false;
+    auto *adv = BLEDevice::getAdvertising();
+    adv->setMinInterval(ms * 8 / 5); // 0.625 ms units
+    adv->setMaxInterval(ms * 8 / 5);
+    if (bleStarted && adv->isAdvertising()) {
+        adv->stop();
+        BLEDevice::startAdvertising();
+    }
+    advMs = ms;
+    return true;
+}
+
+uint16_t bleConsoleAdvMs() { return advMs; }
+
 const char *bleConsoleName() { return advName.c_str(); }
 
 size_t bleConsoleChunk() {
@@ -475,6 +493,10 @@ size_t bleConsoleChunk() { return 20; }
 bool bleConsoleLinkSettled() { return false; }
 
 void bleConsoleResumeAdv() {}
+
+bool bleConsoleSetAdvMs(uint16_t) { return false; }
+
+uint16_t bleConsoleAdvMs() { return 0; }
 
 const char *bleConsoleName() { return ""; }
 

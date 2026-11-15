@@ -45,3 +45,4 @@ sidebar_position: 1
 | `fan_pwm`               | GPIO | int    | 255     | Cooling fan PWM pin; 255 = off                 |
 | `ads_alert`             | GPIO | int    | —       | ADS1x15 ALERT/RDY pin                          |
 | `adc_fake_freq`         | Hz   | int    | 3000    | Mock ADC tick rate; every channel is sampled each tick |
+| `idle_cpu_mhz`          | MHz  | int    | 80      | CPU clock of the idle power profile, which starts after the converter and every maintenance task (PSU or manual duty, sweep, rect-cal, coil measurement, OTA, bsync, USB drive) have been off for 5 min, and ends on the first network-loop pass that sees one of them active. The boot clock is restored on exit. Allowed: 80, 160, 240; any other value fails setup. A value that needs a different PLL than the boot clock (240 MHz on the ESP32) is ignored with a warning. 0 = keep the boot clock |

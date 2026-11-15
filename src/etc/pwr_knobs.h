@@ -4,5 +4,4 @@
 class ADC_Fake;
 extern ADC_Fake *g_pwrFakeAdc; // set by setupSensors() when sensor.conf uses adc=fake
 
-bool pwrWifiPsManual(); // a manual `pwr wifi-ps` disables the day/night switcher until reboot
 bool pwrCommand(int argc, const char *const *argv);

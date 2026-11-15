@@ -84,6 +84,8 @@
 #if CONFIG_FUGU_WITH_PWR_KNOBS
 #include "etc/pwr_knobs.h"
 #endif
+#include "etc/idle_profile.h"
+#include <soc/rtc.h>
 #include <fugu_flash_chip.h>
 
 
@@ -521,6 +523,8 @@ __attribute__((cold)) static void wireGuardLoad() {
                             g.baseRc() * 1e3f, g.baseRo() * 1e3f);
 }
 
+static void idleProfileSetup(const ConfFile &boardConf);
+
 __attribute__((cold)) void setup() {
 #ifdef WITH_NETW
     bootLogBegin();
@@ -588,6 +592,7 @@ __attribute__((cold)) void setup() {
 
     bool noI2C = true;
     setupI2C(boardConf, noI2C);
+    idleProfileSetup(boardConf);
 
     TeleConf teleConf = setupNetworkAtBoot();
 
@@ -1450,6 +1455,117 @@ static void netGuardTick(bool wifiUp) {
 }
 #endif
 
+#ifdef WITH_NETW
+static int8_t s_wifiPs = -1; // -1 unset, 0 MIN_MODEM, 1 MAX_MODEM
+#endif
+
+static struct {
+    uint16_t cpuMhz, advMs, teleMs, bootMhz; // 0 = that part off
+    bool on, suspended, hold;
+} s_idle{};
+
+bool idleProfileOn() { return s_idle.on; }
+
+// board.conf idle_cpu_mhz, ble.conf idle_adv_ms, tele.conf idle_interval_ms
+static void idleProfileSetup(const ConfFile &boardConf) {
+    const long mhz = boardConf.getLong("idle_cpu_mhz", 80);
+    if (mhz && mhz != 80 && mhz != 160 && mhz != 240) {
+        ESP_LOGE("main", "board.conf idle_cpu_mhz=%ld: expected 0, 80, 160 or 240", mhz);
+        g_app.setupErr = true;
+        return;
+    }
+    rtc_cpu_freq_config_t cur, idle;
+    rtc_clk_cpu_freq_get_config(&cur);
+    s_idle.bootMhz = cur.freq_mhz;
+    s_idle.cpuMhz = mhz;
+    // a different PLL (classic ESP32: 240 MHz) is not a divider switch, it stops the PLL clocks
+    if (mhz && (!rtc_clk_cpu_freq_mhz_to_config(mhz, &idle) || idle.source_freq_mhz != cur.source_freq_mhz)) {
+        ESP_LOGW("main", "idle_cpu_mhz=%ld needs a PLL change from %lu MHz, CPU stays", mhz, (unsigned long) cur.freq_mhz);
+        s_idle.cpuMhz = 0;
+    }
+    s_idle.advMs = std::clamp(loadConfSafe("/littlefs/conf/ble.conf", false, true).getLong("idle_adv_ms", 1000), 0L,
+                              10240L);
+    if (s_idle.advMs && s_idle.advMs < 20) s_idle.advMs = 20;
+    s_idle.teleMs = std::clamp(loadConfSafe("/littlefs/conf/tele.conf", false, true).getLong("idle_interval_ms", 5000),
+                               0L, 60000L);
+}
+
+static bool cpuSetMhz(uint32_t mhz) {
+#ifdef CONFIG_PM_ENABLE
+    esp_pm_config_t c = {};
+    c.max_freq_mhz = mhz;
+    c.min_freq_mhz = mhz;
+    return esp_pm_configure(&c) == ESP_OK;
+#else
+    return setCpuFrequencyMhz(mhz);
+#endif
+}
+
+static void idleProfileSet(bool on, const char *why) {
+    s_idle.on = on;
+    if (s_idle.cpuMhz) cpuSetMhz(on ? s_idle.cpuMhz : s_idle.bootMhz);
+    if (s_idle.teleMs) g_teleMinPointUs = on ? s_idle.teleMs * 1000u : kTeleMinPointUs;
+#ifdef WITH_BLE
+    if (s_idle.advMs) bleConsoleSetAdvMs(on ? s_idle.advMs : 0); // with a client: retried by the tick
+#endif
+    const char *wifi = "-";
+#ifdef WITH_NETW
+    if (s_wifiPs >= 0) wifi = s_wifiPs ? "MAX_MODEM" : "MIN_MODEM";
+#endif
+    char adv[24] = "-";
+#ifdef WITH_BLE
+    if (*bleConsoleName()) {
+        const uint16_t a = on ? s_idle.advMs : 0;
+        snprintf(adv, sizeof adv, "%u ms%s", (unsigned) bleConsoleAdvMs(), bleConsoleAdvMs() == a ? "" : " (pending)");
+    }
+#endif
+    UART_LOG("idle profile %s%s%s: cpu %lu MHz, adv %s, tele %lu ms, WiFi %s", on ? "on" : "off", why ? " " : "",
+             why ? why : "", (unsigned long) getCpuFrequencyMhz(), adv, (unsigned long) (g_teleMinPointUs / 1000), wifi);
+}
+
+void idleProfileSuspend() {
+    if (s_idle.on) idleProfileSet(false, "(pwr knob)");
+    s_idle.suspended = true;
+}
+
+void idleProfileHold(bool hold) {
+    s_idle.hold = hold;
+    if (hold && s_idle.on) idleProfileSet(false, "(ota)");
+}
+
+// what keeps the profile off; nullptr = idle
+static const char *idleBlocker() {
+    if (mppt.active()) return "(converter)";
+    if (g_app.psuMode()) return "(psu)";
+    if (g_app.manualPwm() && mppt.getManualTarget()) return "(manual duty)";
+    if (mppt.rectCal.cal.running()) return "(rect-cal)";
+    if (converter.bsyncOwnsPeriod) return "(bsync)";
+    if (s_idle.hold) return "(ota)";
+#ifdef WITH_BLE
+    if (otaBleActive()) return "(ota)";
+#endif
+#ifdef WITH_MEASURE_COIL
+    if (isMeasuring()) return "(measure-coil)";
+#endif
+#ifdef WITH_USB_MSC
+    if (usbDriveMounted()) return "(usb drive)";
+#endif
+    return nullptr;
+}
+
+static void idleProfileTick(time_ms nowMs) {
+    static time_ms busyMs = 0;
+    if (s_idle.suspended) return;
+    const char *why = idleBlocker();
+    if (why) busyMs = nowMs;
+    const bool want = nowMs - busyMs > 5u * 60 * 1000;
+    if (want != s_idle.on) idleProfileSet(want, why);
+#ifdef WITH_BLE
+    else if (s_idle.advMs && bleConsoleAdvMs() != (want ? s_idle.advMs : 0))
+        bleConsoleSetAdvMs(want ? s_idle.advMs : 0);
+#endif
+}
+
 // Per-tick WiFi + network-service work for loopNetwork_task. Handles auto-reenable timer, the
 // temp-gated wifiLoop, and self-healing network services on the WiFi-up edge.
 static void networkLoopTick() {
@@ -1487,9 +1603,8 @@ static void networkLoopTick() {
         // self-heal: bring up enabled network services on the WiFi-up edge (they fail to start
         // at boot when WiFi isn't connected yet). _wifiConnected() has set up MDNS by now.
         static bool wifiWasUp = false;
-        static int8_t psMode = -1; // -1 unset, 0 MIN_MODEM, 1 MAX_MODEM
         bool wifiUp = wifiIsConnected();
-        if (wifiUp && !wifiWasUp) { g_services.startEnabledNetworkServices(); psMode = -1; } // connect reset PS to MIN
+        if (wifiUp && !wifiWasUp) { g_services.startEnabledNetworkServices(); s_wifiPs = -1; } // connect reset PS to MIN
         wifiWasUp = wifiUp;
         netGuardTick(wifiUp);
 
@@ -1499,11 +1614,10 @@ static void networkLoopTick() {
         time_ms nowMs = wallClockMs();
         if (converting) lastActiveMs = nowMs;
         int8_t want = (nowMs - lastActiveMs > 5u * 60 * 1000) ? 1 : 0;
-#if CONFIG_FUGU_WITH_PWR_KNOBS
-        if (pwrWifiPsManual()) psMode = want;
-#endif
-        if (wifiUp && want != psMode) {
-            psMode = want;
+        if (s_idle.suspended) s_wifiPs = want;
+        if (converter.bsyncOwnsPeriod) s_wifiPs = -1; // bsync holds WIFI_PS_NONE, re-assert after it stops
+        else if (wifiUp && want != s_wifiPs) {
+            s_wifiPs = want;
             wifiSetPowerSave(want);
             UART_LOG("WiFi power save: %s", want ? "MAX_MODEM (night/idle)" : "MIN_MODEM (active)");
         }
@@ -1539,6 +1653,7 @@ static void loopNetwork_task(void *arg) {
     if (g_app.setupErr) setWallClockUs(esp_timer_get_time());
 
     auto nowMs(wallClockMs());
+    idleProfileTick(nowMs); // first: a converter start leaves the profile before any long job below
 
     loopUart(nowMs);
 #ifdef WITH_USB_MSC

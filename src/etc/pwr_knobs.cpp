@@ -15,26 +15,18 @@
 #include <esp_wifi.h>
 #endif
 #ifdef WITH_BLE
-#include <BLEDevice.h>
 #include "tele/console_ble.h"
 #endif
+#include "idle_profile.h"
 
 extern MpptController mppt;
 extern SynchronousConverter converter;
 extern VIinVout<const Sensor *> sensors;
 ADC_Fake *g_pwrFakeAdc = nullptr;
-extern uint32_t g_teleMinPointUs;
 #ifdef CONFIG_PM_ENABLE
 extern esp_pm_lock_handle_t s_cli_pm_lock;
 static bool s_lockReleased = false;
 #endif
-static bool s_psManual = false;
-#ifdef WITH_BLE
-static uint16_t s_advMs = 0; // 0 = NimBLE default 30..60 ms
-#endif
-
-bool pwrWifiPsManual() { return s_psManual; }
-
 static bool argNum(const char *s, long &out) {
     char *end;
     out = strtol(s, &end, 10);
@@ -55,7 +47,7 @@ static void pwrStatus() {
 #endif
     char adv[8] = "-";
 #ifdef WITH_BLE
-    snprintf(adv, sizeof adv, "%u", (unsigned) s_advMs);
+    snprintf(adv, sizeof adv, "%u", (unsigned) bleConsoleAdvMs());
 #endif
     char pm[24] = "-/-/- lock=-";
 #ifdef CONFIG_PM_ENABLE
@@ -75,8 +67,9 @@ static void pwrStatus() {
 #endif
     auto *vo = (const PhysicalSensor *) sensors.Vout;
     const float rt = vo && !vo->isVirtual ? vo->adc->getSamplingRate(vo->params.adcCh) : NAN;
-    UART_LOG("pwr: cpu=%lu apb=%lu %s adv=%s tele=%lu pm=%s pwm=%c rt=%.0f T=%.2f", (unsigned long) getCpuFrequencyMhz(),
-             (unsigned long) getApbFrequency(), w, adv, (unsigned long) (g_teleMinPointUs / 1000), pm, pwm, rt, t);
+    UART_LOG("pwr: cpu=%lu apb=%lu %s adv=%s tele=%lu idle=%d pm=%s pwm=%c rt=%.0f T=%.2f", (unsigned long) getCpuFrequencyMhz(),
+             (unsigned long) getApbFrequency(), w, adv, (unsigned long) (g_teleMinPointUs / 1000), (int) idleProfileOn(), pm,
+             pwm, rt, t);
 }
 
 #ifdef CONFIG_PM_ENABLE
@@ -153,6 +146,7 @@ static int pwrSet(int argc, const char *const *argv) {
     long v = 0;
     if (!strcmp(k, "cpu")) {
         if (argc != 2 || !argNum(argv[1], v) || (v != 80 && v != 160 && v != 240)) return -1;
+        idleProfileSuspend();
 #ifdef CONFIG_PM_ENABLE
         return pmSet(v, v, false) ? 0 : 1;
 #else
@@ -169,6 +163,7 @@ static int pwrSet(int argc, const char *const *argv) {
         long mn, ls;
         if (argc != 4 || !argNum(argv[1], v) || !argNum(argv[2], mn) || !argNum(argv[3], ls) || ls < 0 || ls > 1)
             return -1;
+        idleProfileSuspend();
         if (!pmSet(v, mn, ls)) return 1;
         if (!s_lockReleased && s_cli_pm_lock && esp_pm_lock_release(s_cli_pm_lock) == ESP_OK)
             s_lockReleased = true;
@@ -193,6 +188,7 @@ static int pwrSet(int argc, const char *const *argv) {
 #endif
     if (!strcmp(k, "tele")) {
         if (argc != 2 || !argNum(argv[1], v) || v < 20 || v > 60000) return -1;
+        idleProfileSuspend();
         g_teleMinPointUs = v * 1000;
         return 0;
     }
@@ -216,7 +212,7 @@ static int pwrSet(int argc, const char *const *argv) {
             UART_LOG("pwr: listen_interval=%ld %s, takes effect after reconnect (a fresh connect resets it)",
                      v, esp_err_to_name(e));
         }
-        s_psManual = true;
+        idleProfileSuspend();
         if (WiFi.setSleep(ps) && e == ESP_OK) return 0;
         UART_LOG("pwr: wifi-ps failed");
         return 1;
@@ -238,16 +234,10 @@ static int pwrSet(int argc, const char *const *argv) {
         if (argc != 2 || !argNum(argv[1], v) || (v && (v < 20 || v > 10240))) return -1;
         if (!*bleConsoleName()) { UART_LOG("pwr: BLE not started"); return 1; }
         if (bleConsoleConnected()) { UART_LOG("pwr: refused while a BLE client is connected"); return 1; }
-        auto *adv = BLEDevice::getAdvertising();
-        const uint16_t u = v * 8 / 5; // 0.625 ms units, 0 = stack default
-        adv->setMinInterval(u);
-        adv->setMaxInterval(u);
-        s_advMs = v;
-        if (adv->isAdvertising()) {
-            adv->stop();
-            BLEDevice::startAdvertising();
-        }
-        return 0;
+        idleProfileSuspend();
+        if (bleConsoleSetAdvMs(v)) return 0;
+        UART_LOG("pwr: ble-adv refused");
+        return 1;
     }
 #endif
     return -1;

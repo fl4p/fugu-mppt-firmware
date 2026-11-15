@@ -61,6 +61,7 @@ extern volatile uint8_t g_rtLogTest;
 #ifdef WITH_NETW
 #include "tele/telemetry.h"     // connect_wifi_async, add_ap
 #include "etc/ota.h"            // doOta
+#include "etc/idle_profile.h"
 #endif
 #ifdef WITH_NETTOOLS
 #include <esp_http_client.h>
@@ -774,13 +775,16 @@ static void cmdOta(cmd *c) {
         if (!conversionStopped())
             CMD_FAIL_RETURN("ota: conversion running, stop it first (dc 0)");
         adcSampler.halted = true;
+        idleProfileHold(true);
         const char *err = doOtaBootloader(url.c_str(), conversionStopped);
+        idleProfileHold(false);
         adcSampler.halted = false;
         if (err)
             CMD_FAIL_RETURN("ota: bootloader: %s", err);
         return;
     }
 
+    idleProfileHold(true); // full CPU clock for the download
     auto savedMode = g_app.opMode.load();
     const float savedPsuSetpoint = mppt.getPsuSetpoint();
     const uint16_t savedManualTarget = mppt.getManualTarget();
@@ -792,8 +796,10 @@ static void cmdOta(cmd *c) {
     // Latch manual mode (also disables the !manualPwm-gated watchdogs) and ramp the converter
     // to 0, then wait for it to actually disable so the supply is settled when flashing begins.
     const auto stopTicket = mppt.requestPsuManual(0, -1);
-    if (!waitPsuCommand(stopTicket))
+    if (!waitPsuCommand(stopTicket)) {
+        idleProfileHold(false);
         CMD_FAIL_RETURN("ota: RT shutdown transition timed out");
+    }
     for (int i = 0; i < 100 && !converter.disabled(); ++i) delay(100); // <=10s for the ramp
     delay(500);                 // let the output coil/caps de-energize
     adcSampler.halted = true;   // disable ADC reading
@@ -801,6 +807,7 @@ static void cmdOta(cmd *c) {
     bool ok = doOta(url.c_str()); // reboots on success and never returns
 
     // OTA failed — resume the prior operating mode
+    idleProfileHold(false);
     adcSampler.halted = false;
     bool restored = true;
     if (savedMode == OpMode::Psu) {

@@ -1,6 +1,7 @@
 #include <Arduino.h> // micros()
 #include <cstring>
 #include <esp_timer.h>
+#include <esp_rom_sys.h>
 #include "rt.h"
 #include "logging.h"
 #include "util.h" // RT_CORE
@@ -162,7 +163,7 @@ void rtcount_print(bool reset) {
         vTaskDelay(100);
     }
 
-    constexpr float mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ; // cycles -> µs
+    const float mhz = esp_rom_get_cpu_ticks_per_us(); // cycles -> µs (the idle profile lowers the clock)
 
     UART_LOG("rtcount_print : (µs)");
     UART_LOG("%-30s %9s %9s %8s %8s %6s %8s %6s", "key", "num", "tot", "mean", "max", "maxNum", "min", "minNum");

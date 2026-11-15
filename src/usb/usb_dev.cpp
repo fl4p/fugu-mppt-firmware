@@ -233,6 +233,8 @@ static Commit commit() {
 
 extern "C" void tud_mount_cb() { buildVolume(); }
 
+bool usbDriveMounted() { return s_vol && !s_ejected; }
+
 extern "C" void tud_umount_cb() { dropVolume(); }
 
 static bool ready(uint8_t lun) {
