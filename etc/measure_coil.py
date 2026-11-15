@@ -94,15 +94,17 @@ def median(xs):
 FIT_MIN_PTS = 16
 RING_F_LO, RING_F_HI = 80e3, 1.2e6  # ring frequency search range, Hz
 MAX_BINS, MIN_BIN_PTS = 5, 6
+ON_TIME_MIN = 50e-9  # on-time offset bound (s) when the dead time is shorter
+GAIN_TOL = 0.01  # assumed Iout gain tolerance (shunt), relative
 ZERO_TOL, ZERO_NOISE = 0.02, 0.002  # Iout zero: drift that marks a run disturbed, read noise floor, A
 
 
 def zero_correct(iout, z0, z1):
     """Subtract the Iout zero read with the converter off before (z0) and after (z1) the sweep, interpolated
-    over the points in sweep order; returns (corrected, zero uncertainty)."""
+    over the sweep rows in order; returns (corrected, zero uncertainty, 1 sigma)."""
     n = len(iout)
     out = [io - (z0 + (z1 - z0) * i / max(1, n - 1)) for i, io in enumerate(iout)]
-    return out, max(ZERO_NOISE, 0.5 * abs(z1 - z0))
+    return out, math.hypot(ZERO_NOISE, 0.2887 * abs(z1 - z0))  # read noise, drift bound |z1-z0|/2 as uniform
 
 
 def _ring(c, w, x, nh):
@@ -117,10 +119,10 @@ def _ring(c, w, x, nh):
 
 def _ring_solve(y, t, x, f, nh, env=False):
     """Least squares y ~ 1, cos/sin(2 pi h f t) (h <= nh), x [, x*cos, x*sin if env]; returns
-    (rss, c, (A^T A)^-1 of the x coefficient)."""
+    (rss, c, ((A^T A)^-1 of c0, of the x coefficient))."""
     sx = 1 + 2 * nh
     p = sx + (3 if nh and env else 1)
-    N = [[0.0] * (p + 2) for _ in range(p)]
+    N = [[0.0] * (p + 3) for _ in range(p)]
     for yi, ti, xi in zip(y, t, x):
         w = 2 * math.pi * f * ti
         cw, sw = math.cos(w), math.sin(w)
@@ -134,7 +136,7 @@ def _ring_solve(y, t, x, f, nh, env=False):
             for k in range(p):
                 N[r][k] += a[r] * a[k]
             N[r][p] += a[r] * yi
-    N[sx][p + 1] = 1.0
+    N[0][p + 1] = N[sx][p + 2] = 1.0
     for k in range(p):
         piv = max(range(k, p), key=lambda r: abs(N[r][k]))
         if abs(N[piv][k]) < 1e-9:
@@ -143,37 +145,38 @@ def _ring_solve(y, t, x, f, nh, env=False):
         for r in range(p):
             if r != k:
                 m = N[r][k] / N[k][k]
-                N[r] = [N[r][j] - m * N[k][j] for j in range(p + 2)]
+                N[r] = [N[r][j] - m * N[k][j] for j in range(p + 3)]
     c = [N[k][p] / N[k][k] for k in range(p)] + [0.0] * (8 - p)
-    vx = N[sx][p + 1] / N[sx][sx]
+    v = (N[0][p + 1] / N[0][0], N[sx][p + 2] / N[sx][sx])
     rss = sum((yi - c[0] - _ring(c, 2 * math.pi * f * ti, xi, nh) - c[sx] * xi) ** 2 for yi, ti, xi in zip(y, t, x))
-    return rss, c, vx
+    return rss, c, v
 
 
-def fit_l0(pts, fsw, zsig=0.0):
+def fit_l0(pts, fsw, zsig=0.0, ton=ON_TIME_MIN):
     """L from DCM points [(D, Vin, Vout, Iout), ...] (doc: coil-inductance.md, "Switch-node ringing").
 
     Per point 1/L = 2*Vout*fsw*Iout / ((Vin-Vout)*Vin*D^2). The switch-node ring makes 1/L_i periodic
     in the dead time t = (1 - D*Vin/Vout)/fsw; fit c0 + harmonics of a scanned ring frequency f + s*x, x the
     peak coil current Ipk = (Vin-Vout)*D/(fsw*L) minus its mean, and return L = 1/c0, the mean over whole
     ring periods. Below FIT_MIN_PTS points or without a significant (>= 1 %) periodic term: the median of
-    the points (f = 0). Also L(Ipk): the line (L0 at Ipk -> 0, k = dL/dIpk / L0 with its se kse, which
-    includes the Iout zero uncertainty zsig and the node charge per cycle) and bins of the ring-corrected
-    points [(Ipk lo, Ipk hi, L, se), ...]."""
+    the points (f = 0). Errors, relative: se (noise: residuals, Iout zero uncertainty zsig) and sys (1 sigma of
+    the node charge, the on-time offset bound ton, the Iout gain, ring-model mismatch). Also L(Ipk): the
+    apparent slope k = dL/dIpk / L(Ipk -> 0) with its noise kse and the slope the Iout/on-time offset bounds can
+    produce ksys, and bins of the ring-corrected points [(Ipk lo, Ipk hi, L, se, offset bound), ...]."""
     ok = [(d, vi, vo, io) for d, vi, vo, io in pts if (vi - vo) * vi * d * d > 0 and io > 0 and vo > 0]
     y = [2 * vo * fsw * io / ((vi - vo) * vi * d * d) for d, vi, vo, io in ok]
     t = [(1 - d * vi / vo) / fsw for d, vi, vo, io in ok]
     x = [(vi - vo) * d / fsw for d, vi, vo, io in ok]
     n = len(y)
     nan = float("nan")
-    r = dict(L=nan, Lmed=nan, f=0.0, amp=0.0, periods=0.0, se=nan, n=n, nh=0, L0=nan, k=nan, kse=nan, bins=[])
+    r = dict(L=nan, Lmed=nan, f=0.0, amp=0.0, periods=0.0, se=nan, sys=nan, n=n, nh=0, k=nan, kse=nan, ksys=nan,
+             bins=[])
     if n < 3:
         return r
     ymed = statistics.median(y)
     r["L"] = r["Lmed"] = 1 / ymed
     if n < FIT_MIN_PTS:
         return r
-    zi = sum(1 / p[3] for p in ok) / n
     vm = sum(max(vo, vi * vi / (2 * vo) - vo) for d, vi, vo, io in ok) / n
     y = [v / ymed for v in y]
     x = [v * ymed for v in x]
@@ -204,12 +207,12 @@ def fit_l0(pts, fsw, zsig=0.0):
                 df *= 0.2
     rss = math.inf
     if best < 0.5 * rss0:
-        rss, c, vs = _ring_solve(y, t, x, f_best, nh, True)
+        rss, c, v = _ring_solve(y, t, x, f_best, nh, True)
         if c is not None and c[1] ** 2 + c[2] ** 2 > 1e-4 * c[0] ** 2:  # >= 1 % ripple: ring
             r.update(L=1 / (c[0] * ymed), f=f_best, amp=math.hypot(c[1], c[2]) / c[0], periods=span * f_best, nh=nh)
     nh = r["nh"]
     if not nh:
-        rss, c, vs = _ring_solve(y, t, x, 0.0, 0, True)
+        rss, c, v = _ring_solve(y, t, x, 0.0, 0, True)
     sx = 1 + 2 * nh
     p = sx + (3 if nh else 1)
     if not (rss < math.inf and c[0] > 0):
@@ -217,33 +220,44 @@ def fit_l0(pts, fsw, zsig=0.0):
     x = [(v + xm) * (1 + c[sx] * v / c[0]) for v in x]  # Ipk at L(Ipk) of the line, refit
     xm = sum(x) / n
     x = [v - xm for v in x]
-    rss, c, vs = _ring_solve(y, t, x, r["f"], nh, True)
+    rss, c, v = _ring_solve(y, t, x, r["f"], nh, True)
     if not (rss < math.inf and c[0] > 0):
         return r
     sig = math.sqrt(rss / (n - p))
-    if nh:
-        r["se"] = math.hypot(sig / math.sqrt(n) / c[0], zsig * zi)
-    dy = [yi / p_[3] for yi, p_ in zip(y, ok)]  # dy/dIout
+    # offsets as responses of the fit: dy/dIout, dy/dton (see coil_fit.h)
+    dy = [yi / p_[3] for yi, p_ in zip(y, ok)]
+    dd = [2 * fsw * yi / p_[0] for yi, p_ in zip(y, ok)]
     ez, cz, _ = _ring_solve(dy, t, x, r["f"], nh, True)
-    if not ez < math.inf:
+    ed, cd, _ = _ring_solve(dd, t, x, r["f"], nh, True)
+    if not (ez < math.inf and ed < math.inf):
         return r
+    e = [yi - c[0] - _ring(c, 2 * math.pi * r["f"] * ti, xi, nh) - c[sx] * xi for yi, ti, xi in zip(y, t, x)]
+    a = min(0.9, max(0.0, sum(u * w for u, w in zip(e[1:], e)) / rss))  # residuals correlated: ring-model mismatch
+    infl = math.sqrt((1 + a) / (1 - a))
+    zn = vm * fsw / ((2 * math.pi * r["f"]) ** 2 * r["L"]) if r["f"] > 0 else 0.0
+    sn = sig * math.sqrt(v[0]) / c[0]
+    if nh:
+        bz, bd = cz[0] / c[0] * zn, cd[0] / c[0] * ton
+        r.update(se=math.hypot(sn, cz[0] / c[0] * zsig),
+                 sys=math.sqrt((bz * bz + bd * bd + GAIN_TOL ** 2) / 3 + sn * sn * (infl * infl - 1)))
     rho, g = r["L"] * ymed, c[0] + c[sx] * xm
-    zt = math.hypot(zsig, vm * fsw / ((2 * math.pi * r["f"]) ** 2 * r["L"]) if r["f"] > 0 else 0.0)
-    r.update(L0=g / (c[0] * c[0] * ymed), k=-c[sx] * rho / g,
-             kse=math.hypot(sig * math.sqrt(vs), cz[sx] * zt) * rho / g)
-    pts_ = sorted(((xi + xm) / rho, yi - _ring(c, 2 * math.pi * r["f"] * ti, xi, nh), zi_)
-                  for xi, yi, ti, zi_ in zip(x, y, t, dy))
+    r.update(k=-c[sx] * rho / g, kse=math.hypot(sig * math.sqrt(v[1]) * infl, cz[sx] * zsig) * rho / g,
+             ksys=(abs(cz[sx]) * zn + abs(cd[sx]) * ton) * rho / g)
+    pts_ = sorted(((xi + xm) / rho, yi - _ring(c, 2 * math.pi * r["f"] * ti, xi, nh), zi_, di_)
+                  for xi, yi, ti, zi_, di_ in zip(x, y, t, dy, dd))
     nb = min(MAX_BINS, n // MIN_BIN_PTS)
     if r["f"] > 0:
         nb = min(nb, int(r["periods"] * 1.25))
     if nb < 2:  # under ~1.6 ring periods the slope is not separable from the ring
-        r.update(L0=nan, k=nan, kse=nan)
+        r.update(k=nan, kse=nan, ksys=nan)
     else:
         for b in range(nb):
             seg = pts_[b * n // nb:(b + 1) * n // nb]
             u = sum(q[1] for q in seg) / len(seg)
             z = sum(q[2] for q in seg) / len(seg)
-            r["bins"].append((seg[0][0], seg[-1][0], 1 / (u * ymed), math.hypot(sig / math.sqrt(len(seg)), z * zt) / u))
+            zd = sum(q[3] for q in seg) / len(seg)
+            r["bins"].append((seg[0][0], seg[-1][0], 1 / (u * ymed), math.hypot(sig / math.sqrt(len(seg)), z * zsig) / u,
+                              (z * zn + zd * ton) / u))
     return r
 
 
@@ -251,8 +265,8 @@ def report_l0(r, L_ref=None):
     """Result lines shared in wording with the device (`L = ... uH` is parsed by the e2e test)."""
     if r["f"]:
         c_nf = 1e9 / ((2 * math.pi * r["f"]) ** 2 * r["L"])
-        return (f"L = {r['L'] * 1e6:.2f} uH  (ring fit, {r['n']} DCM pts, +-{r['se'] * 100:.1f}%; "
-                f"ring {r['f'] / 1e3:.0f} kHz = {c_nf:.1f} nF node C, ripple +-{r['amp'] * 100:.0f}%, "
+        return (f"L = {r['L'] * 1e6:.2f} uH  (ring fit, {r['n']} DCM pts, +-{r['se'] * 100:.1f}% noise "
+                f"+-{r['sys'] * 100:.1f}% syst; ring {r['f'] / 1e3:.0f} kHz = {c_nf:.1f} nF node C, ripple +-{r['amp'] * 100:.0f}%, "
                 f"{r['periods']:.1f} periods; median of points {r['Lmed'] * 1e6:.2f} uH)")
     return (f"L = {r['L'] * 1e6:.2f} uH  (median of {r['n']} DCM pts; ring not resolved: "
             f"{'too few points' if r['n'] < FIT_MIN_PTS else 'no periodic term'}, expect up to +-5%)")
@@ -262,11 +276,13 @@ def report_split(r):
     """L(Ipk) lines, same wording as the device ([] without the split)."""
     if not r["bins"] or r["k"] != r["k"]:
         return []
-    bins = " | ".join(f"{lo:.1f}-{hi:.1f}A {L * 1e6:.2f}uH+-{se * 100:.1f}%" for lo, hi, L, se in r["bins"])
-    sig = abs(r["k"]) < 2 * r["kse"]
-    return [f"L(Ipk) {bins}",
-            f"L(Ipk) line: {r['L0'] * 1e6:.2f} uH at 0 A, slope {r['k'] * 100:+.2f} +-{r['kse'] * 100:.2f} %/A over "
-            f"{r['bins'][0][0]:.1f}-{r['bins'][-1][1]:.1f} A{' (no significant slope)' if sig else ''}"]
+    bins = " | ".join(f"{lo:.1f}-{hi:.1f}A {L * 1e6:.2f}uH+-{se * 100:.1f}/{sy * 100:.1f}%" for lo, hi, L, se, sy in r["bins"])
+    w = r["ksys"] + 2 * r["kse"]
+    lo = r["k"] - w
+    return [f"L(Ipk), +-noise/offsets: {bins}",
+            f"L(Ipk) slope {r['k'] * 100:+.2f} +-{r['kse'] * 100:.2f} %/A over {r['bins'][0][0]:.1f}-{r['bins'][-1][1]:.1f} A, "
+            f"Iout/on-time offsets add up to +-{r['ksys'] * 100:.2f}: coil {lo * 100:+.2f}..{(r['k'] + w) * 100:+.2f} %/A, "
+            + (f"drop <= {-lo * 100:.1f} %/A" if lo < 0 else "no drop resolved")]
 
 
 def report_zero(z0, z1):
@@ -276,17 +292,25 @@ def report_zero(z0, z1):
             + (f"; DISTURBED: moved > {ZERO_TOL:.2f} A, L not for coil.conf" if bad else "")), bad
 
 
-def read_zero(con, dwell):
-    """Iout with the converter off (`dc 0`): median of the `sensor avg` iout over the dwell (None if unread)."""
+def read_zero(con, tap, dwell):
+    """Iout with the converter off, as the firmware reads it: `dc 0`, wait for a status line with H = 0
+    (converter disabled, at most 10 s plus one status period), then the dwell, then the median of 5 `sensor avg`
+    iout reads 50 ms apart (None if the converter did not stop or nothing was read)."""
+    t0 = time.monotonic()
     if not safe_command(con, "dc 0"):
         return None
-    time.sleep(min(2.0, 0.4 * dwell))
-    t_end, xs = time.monotonic() + dwell, []
-    while time.monotonic() < t_end:
+    while not any(p[4] == 0 for p in tap.collect(t0)):
+        if time.monotonic() > t0 + 14.0:
+            print("  converter did not stop for the Iout zero")
+            return None
+        time.sleep(0.2)
+    time.sleep(dwell)
+    xs = []
+    for _ in range(5):
         a = read_sensor_avgs(con)
         if "iout" in a:
             xs.append(a["iout"])
-        time.sleep(0.1)
+        time.sleep(0.05)
     return median(xs) if xs else None
 
 
@@ -363,6 +387,18 @@ def query_gate_driver(con):
         if m:
             return m.group(1)
     return None
+
+
+def query_dead_time(con):
+    """Configured dead time (larger of hl/lh, s) from `dt`; 0 when bypassed, absent or unread."""
+    try:
+        for ln in con.command("dt", timeout=4.0):
+            m = re.search(r"dt hl=(\d+\.?\d*) ns.*lh=(\d+\.?\d*) ns", ln)
+            if m:
+                return max(float(m.group(1)), float(m.group(2))) * 1e-9
+    except Exception:
+        pass
+    return 0.0
 
 
 def query_pwm_ctrl_max(con):
@@ -668,6 +704,8 @@ def main():
                     help="[--ls-sweep --apply] counts to keep below the Iout peak (reverse-current safety)")
     ap.add_argument("--restore", choices=["mppt", "off"], default="mppt",
                     help="what to do when done (default: re-enable MPPT)")
+    ap.add_argument("--ton-ns", type=float,
+                    help="bound of the HS on-time offset for the stated error (default: dead time, at least 50 ns)")
     ap.add_argument("--yes", action="store_true", help="skip the 'this moves power' confirmation")
     args = ap.parse_args()
 
@@ -724,7 +762,8 @@ def main():
         step = max(1, (h_hi - h_lo) // max(1, args.steps - 1))
 
         rows = []
-        z0 = read_zero(con, max(args.dwell, 2.0))
+        z_dwell = max(args.dwell, 2.0)  # firmware: max(dwell, 2 s)
+        z0 = read_zero(con, tap, z_dwell)
         z1 = None
         print(f"\n  {'':1}{'H':>5} {'D':>6} {'Vin':>6} {'Vout':>6} {'Iout':>6} {'mode':>4} {'L_uH':>7}")
         try:
@@ -737,7 +776,7 @@ def main():
                 rows_dn, _ = run_sweep(con, tap, range(safe_h, h_lo - 1, -step),
                                        period, fsw, args.i_max, args.dwell, "dn")
                 rows += rows_dn
-            z1 = read_zero(con, args.dwell)
+            z1 = read_zero(con, tap, z_dwell)
         finally:
             safe_command(con, "mppt" if args.restore == "mppt" else "dc 0")
 
@@ -759,7 +798,8 @@ def main():
             if all(r[5] == "CCM" for r in rows) and rows:
                 print("all points CCM -> forced_pwm may be on (converter.conf); DCM needed")
             return
-        fit = fit_l0([(r[1], r[2], r[3], r[4]) for r in dcm], fsw, zsig)
+        ton = args.ton_ns * 1e-9 if args.ton_ns is not None else max(ON_TIME_MIN, query_dead_time(con))
+        fit = fit_l0([(r[1], r[2], r[3], r[4]) for r in dcm], fsw, zsig, ton)
         ls = sorted(r[6] for r in dcm)
         q1, q3 = ls[len(ls) // 4], ls[(3 * len(ls)) // 4]  # rough IQR of the per-point values (uncorrected)
         print(report_l0(fit) + f"  Iout>={ifloor:.2f}A, IQR {(q3 - q1) / fit['Lmed'] * 100.0:.0f}%")
