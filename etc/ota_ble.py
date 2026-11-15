@@ -49,7 +49,7 @@ for _cand in (_os.environ.get("ESP_OTA_BLE_HOST", ""),
 import esp_ota_ble as O
 import esp_ota_ble_transport as T
 _sys.path.append(_HERE)
-from ota_common import (archive_elf, build_gate_driver, confirm, device_driver_label,
+from ota_common import (archive_elf, build_gate_driver, build_is_plant_sim, confirm, device_driver_label,
                         gate_driver_verdict, is_current, parse_device_gate_driver,
                         parse_device_version, read_local_app_desc, require_elf_archive)
 import os
@@ -418,6 +418,16 @@ async def push(bin_path, link, force=False, assume_yes=False, xform="auto", base
                        aborted="    aborted."):
             return False
 
+    sim = build_is_plant_sim(bin_path)
+    if sim is not False:
+        print("⛔  PLANT-SIMULATION image (CONFIG_FUGU_WITH_VCONV=y): a real converter makes 0 W" if sim else
+              "⚠️  cannot tell whether this is a plant-simulation image (no config/sdkconfig.json in the image directory)")
+        if not confirm("    Continue anyway? [y/N] ",
+                       "    non-interactive; aborting (pass -y/--yes to override).",
+                       accept=assume_yes and "    -y/--yes given, proceeding anyway.",
+                       aborted="    aborted."):
+            return False
+
     # THE PROTOCOL NOW COMES FROM THE SHARED MODULE in the esp-ota-ble repo -
     # the same repo as the device-side receiver this is talking to. What is
     # left here is fugu's own: the BLE-image guard above, the version probe
@@ -590,7 +600,7 @@ def main():
     ap.add_argument("-f", "--force", action="store_true",
                     help="push even if the device already reports this version")
     ap.add_argument("-y", "--yes", action="store_true",
-                    help="skip the confirmation prompt for a non-BLE image")
+                    help="skip the confirmation prompts (non-BLE image, plant-sim image)")
     ap.add_argument("--allow-driver-change", action="store_true",
                     help="push even if the image's gate driver differs from the device's, or "
                          "either can't be determined")
