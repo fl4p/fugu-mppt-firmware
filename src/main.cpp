@@ -1536,7 +1536,8 @@ void idleProfileHold(bool hold) {
 
 // what keeps the profile off; nullptr = idle
 static const char *idleBlocker() {
-    if (mppt.active()) return "(converter)";
+    // a sweep armed for the next start keeps mppt.active() true all night
+    if (!converter.disabled() || adcSampler.isCalibrating()) return "(converter)";
     if (g_app.psuMode()) return "(psu)";
     if (g_app.manualPwm() && mppt.getManualTarget()) return "(manual duty)";
     if (mppt.rectCal.cal.running()) return "(rect-cal)";
