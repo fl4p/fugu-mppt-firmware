@@ -89,6 +89,104 @@ void runPinned(VirtualConverter &v, int n, float vin, float vout) {
     v.setVout(vout);
 }
 
+// ----- R2: switch-node ring (setRing) -----------------------------------------
+//
+// DCM with the ring on: the coil current at HS turn-on follows the ring phase, so steady Iout
+// versus HS count ripples with a period of Vout/(f*tick*Vin) counts (the dead time shrinks by
+// tick*Vin/Vout per count). Off (C=0) the plant is the unchanged ideal model.
+static float ringIout(VirtualConverter &v, uint16_t pmax, uint16_t n, float vin, float vout) {
+    const uint16_t ls = (uint16_t) std::lround(n * (vin / vout * 0.98f - 1.f));
+    v.setPwm(VirtualConverter::PwmState{pmax, n, ls, kFreq});
+    runPinned(v, 300, vin, vout);
+    double s = 0;
+    for (int i = 0; i < 100; ++i) { runPinned(v, 1, vin, vout); s += v.getIoutAvg(); }
+    return (float) (s / 100);
+}
+
+void testR2_ring() {
+    section("R2 switch-node ring");
+    constexpr uint16_t pm = 4103;
+    const float vin = 78.f, vout = 27.f, L = 76e-6f, fr = 254e3f, tick = 1.f / (kFreq * (float) pm);
+    const float C = 1 / (4 * 9.8696f * fr * fr * L);
+    VirtualConverter off, on;
+    rig(off, vin, vout, 0, 0, 1, 1, L);
+    rig(on, vin, vout, 0, 0, 1, 1, L);
+    off.setDiodeVf(0.7f), on.setDiodeVf(0.7f);
+    on.setRing(C, 25);
+    VirtualConverter zero;
+    rig(zero, vin, vout, 0, 0, 1, 1, L);
+    zero.setDiodeVf(0.7f), zero.setRing(0, 25);
+    EXPECT_NEAR(ringIout(zero, pm, 700, vin, vout), ringIout(off, pm, 700, vin, vout), 1e-7);
+
+    std::vector<float> r;
+    std::vector<int> crest;
+    float rMax = 0, iMax = 0;
+    for (uint16_t n = 300; n <= 1300; n += 4) {
+        const float i1 = ringIout(on, pm, n, vin, vout), i0 = ringIout(off, pm, n, vin, vout);
+        EXPECT(std::isfinite(i1));
+        r.push_back(i1 / i0 - 1);
+        rMax = std::max(rMax, std::fabs(r.back()));
+        iMax = std::max(iMax, std::fabs(on.getIL()));
+    }
+    for (size_t k = 2; k + 2 < r.size(); ++k)
+        if (r[k] > r[k - 1] && r[k] >= r[k + 1] && r[k] > r[k - 2] && r[k] >= r[k + 2] && r[k] > 0.03f)
+            crest.push_back(300 + 4 * (int) k);
+    const float nPred = vout / (fr * tick * vin);
+    EXPECT(crest.size() >= 3);
+    if (crest.size() >= 3)
+        EXPECT_REL((float) (crest.back() - crest.front()) / (float) (crest.size() - 1), nPred, 0.12);
+    std::printf("  ring %.0f kHz: crests every %.0f counts (predicted %.0f), |dI/I| max %.2f, |iL at turn-on| max %.3f A\n",
+                fr * 1e-3, crest.size() > 1 ? (float) (crest.back() - crest.front()) / (float) (crest.size() - 1) : 0.f,
+                nPred, rMax, iMax);
+    EXPECT(rMax > 0.05f && rMax < 0.5f);
+    // the ring current cannot exceed the undamped amplitude (Vout+Vf)/Z0 by much (clamp restarts)
+    EXPECT(iMax < 1.5f * (vout + 0.7f) / (2 * 3.14159265f * fr * L));
+
+    // HS body-diode clamp (Vin < 2 Vout) and heavy damping: finite, ripple vanishes at Q = 0.5
+    VirtualConverter lo;
+    rig(lo, 40, vout, 0, 0, 1, 1, L);
+    lo.setDiodeVf(0.7f), lo.setRing(C, 25);
+    for (uint16_t n = 1000; n <= 2600; n += 50) EXPECT(std::isfinite(ringIout(lo, pm, n, 40, vout)));
+    // energy: never Pout > Pin. The node is hard-switched at both edges: the LS dumps 1/2 C Vin^2 at
+    // its turn-on, the HS charges it from the ring voltage to Vin (1/2 C (Vin - Vnode)^2 <= 1/2 C (Vin +
+    // Vf)^2), and G takes at most the ring's start energy 1/2 C (Vout + Vf)^2, all per cycle
+    auto pLs = [&](float vi) { return 0.5f * C * vi * vi * kFreq; };
+    auto pNode = [&](float vi) {
+        return pLs(vi) + 0.5f * C * ((vi + 0.7f) * (vi + 0.7f) + (vout + 0.7f) * (vout + 0.7f)) * kFreq;
+    };
+    float effMax = 0, lossOn = 0, lossLo = 0;
+    VirtualConverter loOff;
+    rig(loOff, 40, vout, 0, 0, 1, 1, L);
+    loOff.setDiodeVf(0.7f);
+    auto loss = [&](VirtualConverter &v, uint16_t n, float vi) {
+        ringIout(v, pm, n, vi, vout);
+        double qi = 0, qo = 0;
+        for (int i = 0; i < 100; ++i) { runPinned(v, 1, vi, vout); qi += v.getIinAvg(), qo += v.getIoutAvg(); }
+        if (qi > 1e-3) effMax = std::max(effMax, (float) (vout * qo / (vi * qi)));
+        return (float) ((vi * qi - vout * qo) / 100);
+    };
+    for (uint16_t n = 300; n <= 2600; n += 100) {
+        if (n <= 1300) lossOn = std::max(lossOn, loss(on, n, vin) - loss(off, n, vin)); // DCM band at 78 V
+        lossLo = std::max(lossLo, loss(lo, n, 40) - loss(loOff, n, 40));
+    }
+    std::printf("  ring Pout/Pin max %.4f, extra loss max %.3f W (78 V, LS dump %.3f, bound %.3f) %.3f W (40 V, LS dump"
+                " %.3f, bound %.3f)\n", effMax, lossOn, pLs(vin), pNode(vin), lossLo, pLs(40), pNode(40));
+    EXPECT(effMax <= 1.0f);
+    EXPECT(lossOn >= 0.95f * pLs(vin) && lossOn <= pNode(vin));
+    EXPECT(lossLo >= 0.95f * pLs(40) && lossLo <= pNode(40));
+    VirtualConverter damp;
+    rig(damp, vin, vout, 0, 0, 1, 1, L);
+    damp.setDiodeVf(0.7f), damp.setRing(C, 0.5f);
+    // no oscillation left, only the node charge C*Vout per cycle the coil draws from the output
+    float dMin = 1, dMax = -1;
+    for (uint16_t n = 400; n <= 1200; n += 40) {
+        const float d = ringIout(damp, pm, n, vin, vout) / ringIout(off, pm, n, vin, vout) - 1;
+        dMin = std::min(dMin, d), dMax = std::max(dMax, d);
+    }
+    std::printf("  Q 0.5: dI/I %.3f .. %.3f\n", dMin, dMax);
+    EXPECT(dMax - dMin < 0.03f && dMax <= 0.0f);
+}
+
 // ----- A: CCM volt-second balance --------------------------------------------
 //
 // In settled CCM the steady-state ratio Vout/Vin = tHS/(tHS+tLS). We can't drive
@@ -226,40 +324,65 @@ void testG_be_stability() {
     }
 }
 
-// ----- H: Reverse-pump charge balance -----------------------------------------
+// ----- H: energy balance ------------------------------------------------------
 //
-// SPEC NOTE: model's iInAvg = areaHS/T (phase-1 only). In the reverse-pump
-// regime the HS body-diode contribution during phase 3 is NOT included, so
-// strict Vin·iInAvg + Vout·iOutAvg = 0 won't hold. We assert (a) iInAvg < 0 (b)
-// iOutAvg < 0 (sign-wise reverse current both sides) (c) all quantities finite.
-// Quantitative balance is deferred until the model accounts for areaOff in
-// iInAvg, or the spec clarifies what iInAvg represents.
-void testH_reverse_pump_balance() {
-    section("H: Reverse-pump regime sign + finite");
+// The plant must not create or destroy energy. With ideal switches and diodes (Vf = 0, no ring) the
+// coil returns all it stores, so in a pinned steady state Vin*Iin = Vout*Iout exactly: CCM, DCM, and
+// forced reverse current that returns through the HS body diode. With Vf > 0 the only loss is the
+// LS body diode (Vf times its charge), so Pin >= Pout.
+static void balance(float vin, float vout, uint16_t ctrl, uint16_t rect, float vf, float &pin, float &pout) {
     VirtualConverter v;
-    rig(v, 40.0f, 20.0f, 200, 700);   // pwmRect well past zero-crossing
-    runPinned(v, 200, 40.0f, 20.0f);
-    EXPECT(std::isfinite(v.getIinAvg()));
-    EXPECT(std::isfinite(v.getIoutAvg()));
-    EXPECT(std::isfinite(v.getIL()));
-    EXPECT(v.getIinAvg() < 0.0f);
-    EXPECT(v.getIoutAvg() < 0.0f);
+    rig(v, vin, vout, ctrl, rect);
+    v.setDiodeVf(vf);
+    runPinned(v, 400, vin, vout);
+    double qi = 0, qo = 0;
+    for (int i = 0; i < 200; ++i) { runPinned(v, 1, vin, vout); qi += v.getIinAvg(), qo += v.getIoutAvg(); }
+    pin = (float) (vin * qi / 200), pout = (float) (vout * qo / 200);
 }
 
-// ----- I: iInAvg sign + magnitude in reverse regime --------------------------
+void testH_energy_balance() {
+    section("H: energy balance");
+    struct Op { float vin, vout; uint16_t ctrl, rect; } ops[] = {
+        {40, 20, 200, 300}, // reverse current through the HS body diode (pwmRect past the zero crossing)
+        {40, 20, 200, 150}, // DCM, LS short
+        {40, 20, 200, 205}, // DCM, LS just past the crossing
+        {40, 20, 500, 499}, // CCM
+        {78, 27, 150, 600}, // reverse, high ratio
+        {78, 27, 300, 650}, // LS at the off-time limit (1 - Vout/Vin): reverse current barely returns
+    };
+    float worst = 0;
+    for (auto &o: ops) {
+        float pin, pout;
+        balance(o.vin, o.vout, o.ctrl, o.rect, 0.0f, pin, pout);
+        const float err = (pin - pout) / std::max(std::fabs(pin), std::fabs(pout));
+        worst = std::max(worst, std::fabs(err));
+        EXPECT(std::isfinite(pin) && std::isfinite(pout));
+        EXPECT(std::fabs(err) < 2e-3f);
+        float pinD, poutD;
+        balance(o.vin, o.vout, o.ctrl, o.rect, 0.7f, pinD, poutD);
+        EXPECT(pinD - poutD >= -2e-3f * std::fabs(poutD));
+        std::printf("  Vin %.0f Vout %.0f HS %u LS %u: Vf 0: Pin %.3f W Pout %.3f W (%+.1e) | Vf 0.7: loss %.3f W\n", o.vin,
+                    o.vout, o.ctrl, o.rect, pin, pout, err, pinD - poutD);
+    }
+    std::printf("  worst |Pin-Pout|/P at Vf 0: %.1e\n", worst);
+}
+
+// ----- I: iInAvg in the reverse regime -----------------------------------------
 //
-// iInAvg = (a + b)·tHS/(2T). Verify against analytic given observed iLEnd (=a in
-// pinned-SS). Independent of the H balance question.
+// iInAvg = HS area + the phase-3 charge the HS body diode returns (c < 0, slope (Vin-Vout)/L).
 void testI_iinavg_reverse() {
     section("I: iInAvg analytic match (reverse)");
     VirtualConverter v;
     const float vin = 40.0f, vout = 20.0f;
     rig(v, vin, vout, 200, 700);
     runPinned(v, 200, vin, vout);
-    const float tHS = (200.0f / kPmax) * kT;
+    const float tHS = (200.0f / kPmax) * kT, tLS = (700.0f / kPmax) * kT, tOff = kT - tHS - tLS;
     const float a = v.getIL();                    // SS: a == iLEnd
     const float b = a + (vin - vout) / kL * tHS;
-    const float iIn_analytic = (a + b) * 0.5f * tHS / kT;
+    const float c = b - vout / kL * tLS;
+    const float tz = std::min(tOff, -c * kL / (vin - vout));
+    const float iIn_analytic = ((a + b) * 0.5f * tHS + (c + 0.5f * (vin - vout) / kL * tz) * tz) / kT;
+    EXPECT(c < 0.0f);
     EXPECT_REL(v.getIinAvg(), iIn_analytic, 0.01f);
 }
 
@@ -901,7 +1024,7 @@ int main() {
     testE_saturation();
     testF_charge_balance();
     testG_be_stability();
-    testH_reverse_pump_balance();
+    testH_energy_balance();
     testI_iinavg_reverse();
     testJ_dcm_boundary();
     testK_phase_wrap();
@@ -913,6 +1036,7 @@ int main() {
     testP_determinism();
     testQ_ncycle_equivalence();
     testR_dcm_voltsec();
+    testR2_ring();
     testS_degenerate();
     testT_mains_ripple();
     testU_spiky_ripple();

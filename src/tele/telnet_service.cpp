@@ -44,8 +44,7 @@ void TelnetService::beginClose() {
 
 bool TelnetService::onStart() {
     if (!WiFi.isConnected()) return false;
-    setupTelnet();
-    return true;
+    return setupTelnet();
 }
 
 void TelnetService::onStop() {
@@ -58,7 +57,7 @@ void TelnetService::onStop() {
 
 void TelnetService::onTick() { telnet.loop(); }
 
-void TelnetService::setupTelnet() {
+bool TelnetService::setupTelnet() {
     telnet.onConnect(onConnect);
     telnet.onDisconnect(onDisconnect);
     telnet.onInputReceived([](String str) {
@@ -81,9 +80,10 @@ void TelnetService::setupTelnet() {
     if (telnet.begin(23)) {
         MDNS.addService("telnet", "tcp", 23);
         ESP_LOGI("telnet", "Telnet server running.");
-    } else {
-        ESP_LOGE("telnet", "Telnet server start error");
+        return true;
     }
+    ESP_LOGE("telnet", "Telnet server start error");
+    return false;
 }
 
 void TelnetService::onConnect(String ip) {

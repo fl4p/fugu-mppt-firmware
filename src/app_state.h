@@ -29,6 +29,7 @@ struct AppState {
     bool setupErr = false;
     uint16_t loopRateMin = 0;
     uint32_t maxLoopLag = 0; // peak RT-loop lag (µs), a time delta, not a timestamp
+    uint32_t cmdLoopLag = 0; // peak RT-loop lag (µs) since a console command zeroed it, converter on or off
 #if CAPTURE_LOOP_DT
     uint32_t maxLoopDT = 0; // peak loop dt (µs), a time delta
 #endif

@@ -15,9 +15,9 @@ between:
 
   1. ``etc/measure_coil.py`` as a subprocess (opens and closes its own connection); parse ``L = N uH``.
   2. open a ``FuguDevice``, send ``measure-coil l0 …``, watch the streamed result for ``L = N uH``,
-     wait for ``done, MPPT restored``, close.
-  3. assert ``|L_dev - L_host| / mean <= --tol`` (default 20% — each sweep has ~10-16% IQR and the
-     sun drifts between the two runs).
+     wait for ``done, mode restored``, close.
+  3. assert ``|L_dev - L_host| / mean <= --tol`` (default 10%: both fit the switch-node ring over a
+     48-step sweep, ~1-2 % each; the old 10-step median scattered +-5 %, plus sensor drift between runs).
 
 With ``--with-ls`` it additionally runs the LS-timing sweep on both and compares ``peak LS`` and the
 ``peak-ideal`` offset (looser: the Iout-vs-LS peak is shallow/noisy, see doc §6).
@@ -30,7 +30,7 @@ mock-ADC bench devices produce synthetic numbers; don't use them.
 Usage
 -----
     python etc/e2e-test/test_measure_coil.py --ip 192.168.4.2
-    python etc/e2e-test/test_measure_coil.py --ip 192.168.1.173:232 --steps 14 --with-ls
+    python etc/e2e-test/test_measure_coil.py --ip 192.168.1.173:232 --steps 48 --with-ls
     python etc/e2e-test/test_measure_coil.py --serial /dev/cu.usbmodem1201 --tol 0.25
 """
 import argparse
@@ -48,6 +48,7 @@ from fugu.transport import SerialTransport, SocketTransport
 from fugu.fugu import FuguDevice
 from _harness import Results, wait_for
 
+_DONE_RE = re.compile(r"measure-coil: done, (MPPT|mode) restored")
 _L_RE = re.compile(r"L = ([\d.]+)\s*uH")                       # both: "L = 49.69 uH"
 _PEAK_RE = re.compile(r"peak LS\s*:?\s*(\d+)")                 # host "peak LS  : 553", dev "peak LS 560"
 _OFFSET_RE = re.compile(r"peak-ideal\s*([+-]?\d+)\s*ct")       # both: "peak-ideal +87 ct"
@@ -112,12 +113,13 @@ def run_device(dev, tap, mode, steps_or_hs, dwell_ms, args):
     reply = dev.console.command(f"measure-coil {mode} {arg1} {dwell_ms}".strip(), timeout=6.0)
     if not reply.ok:
         return None, f"command rejected: {reply.text.strip()}"
-    # the sweep streams over many seconds; wait for the terminal "done, MPPT restored" line.
-    deadline = (steps_or_hs or 24) * (dwell_ms / 1000.0 + 1.5) + 60
-    got = wait_for(lambda: any("done, MPPT restored" in s for s in tap.since(t0)),
+    # the sweep streams over many seconds; wait for the terminal "done, ... restored" line
+    # (older firmware: "done, MPPT restored", current: "done, mode restored").
+    deadline = (steps_or_hs or 48) * (dwell_ms / 1000.0 + 0.2) + 60
+    got = wait_for(lambda: any(_DONE_RE.search(s) for s in tap.since(t0)),
                    min(max(deadline, 90), args.dev_timeout))
     text = "\n".join(tap.since(t0))
-    return text, (None if got else "no 'done, MPPT restored' before timeout")
+    return text, (None if got else "no 'done, ... restored' before timeout")
 
 
 def parse_l(text):
@@ -215,15 +217,16 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--ip", help="TCP/telnet host[:port] (e.g. 192.168.4.2 or 192.168.1.173:232)")
     g.add_argument("--serial", metavar="DEV", help="serial port")
-    ap.add_argument("--steps", type=int, default=14, help="L0 duty steps (both tools)")
+    ap.add_argument("--steps", type=int, default=48, help="L0 duty steps (both tools; the ring fit needs >= 16 points)")
     ap.add_argument("--hs", type=int, default=300, help="[--with-ls] high-side count to hold")
-    ap.add_argument("--dwell-ms", type=int, default=4000, help="per-step settle, ms (host gets ms/1000 s)")
-    ap.add_argument("--tol", type=float, default=0.20, help="max relative L0 disagreement (default 0.20)")
+    ap.add_argument("--dwell-ms", type=int, default=3000,
+                    help="per-step settle, ms, both tools (host gets ms/1000 s and needs >= 3 s for the console average)")
+    ap.add_argument("--tol", type=float, default=0.10, help="max relative L0 disagreement (default 0.10)")
     ap.add_argument("--ls-tol", type=int, default=40, help="[--with-ls] max peak/offset disagreement, counts")
     ap.add_argument("--with-ls", action="store_true", help="also compare the LS-timing/rect_offset sweep")
     ap.add_argument("--gap", type=float, default=15.0, help="seconds between the two runs (slot release + settle)")
-    ap.add_argument("--host-timeout", type=float, default=240.0, help="host subprocess timeout (s)")
-    ap.add_argument("--dev-timeout", type=float, default=240.0, help="device sweep wait timeout (s)")
+    ap.add_argument("--host-timeout", type=float, default=400.0, help="host subprocess timeout (s)")
+    ap.add_argument("--dev-timeout", type=float, default=400.0, help="device sweep wait timeout (s)")
     args = ap.parse_args()
 
     print(f"target={'ip ' + args.ip if args.ip else 'serial ' + args.serial}  steps={args.steps} "

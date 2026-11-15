@@ -33,9 +33,11 @@ inline void digitalWrite(uint8_t, int) {}
 #include "../../src/buck.h"
 #include "../../src/rect_cal.h"
 #include "../../src/sim/vconv.h"
+#include "rect_cal_plant.h"
 
 void assertPinState(uint8_t, bool, const char *, bool) {}
 static bool g_quiet = true, g_trace = false, g_verbose = false;
+static float g_inoise = 0.01f; // Iout sensor noise rms (A)
 void UART_LOG(const char *fmt, ...) {
     if (g_quiet) return;
     va_list ap; va_start(ap, fmt); vprintf(fmt, ap); va_end(ap); putchar('\n');
@@ -53,7 +55,7 @@ using Ctl = RectCalCtl<SynchronousConverter>;
 struct Rig {
     VirtualConverter p{};
     int hidden;
-    float voutBias, isc0, drift;
+    float voutBias, isc0, drift, voc = VOC, k = K;
     double t = 0;
     std::mt19937 rng{1};
     std::normal_distribution<float> nd{0.f, 1.f};
@@ -66,19 +68,20 @@ struct Rig {
         int eff = (hs && ls) ? std::min<int>(ls + hidden, PM - hs - 1) : 0;
         p.setPwm({PM, hs, (uint16_t) std::max(0, eff), FSW});
     }
-    void step() { t += 1.0 / SPS; p.setPv(isc0 * (1.f + drift * (float) t), VOC, K); p.stepSeconds(1.f / SPS, FSW); }
+    void step() { t += 1.0 / SPS; p.setPv(isc0 * (1.f + drift * (float) t), voc, k); p.stepSeconds(1.f / SPS, FSW); }
     uint32_t us() const { return (uint32_t) (uint64_t) (t * 1e6); } // wraps like the firmware clock
-    float iout() { return p.getIoutAvg() + 0.01f * nd(rng); }
+    float iout() { return p.getIoutAvg() + g_inoise * nd(rng); }
     float vin() { return p.getVin() + 0.05f * nd(rng); }
     float vout() { return p.getVout() + voutBias + 0.01f * nd(rng); }
 };
 
+static const char *g_L0 = "56e-6"; // coil.conf L0 the converter model uses
 static void initConv(SynchronousConverter &c, const char *offNs = nullptr, const char *offDrv = nullptr,
                      const char *offCal = nullptr) {
     ConfFile conv{}; conv.set("topo", "buck");
     ConfFile board{}; board.set("pwm_freq", "39000"); board.set("pwm_driver_logic", "HiLi");
     board.set("pwm_hi", "21"); board.set("pwm_li", "14"); board.set("pwm_sd", "47"); board.set("skip_assert", "1");
-    ConfFile coil{}; coil.set("L0", "56e-6");
+    ConfFile coil{}; coil.set("L0", g_L0);
     if (offNs) coil.set("rect_offset_ns", offNs);
     if (offDrv) coil.set("rect_offset_drv", offDrv);
     if (offCal) coil.set("rect_offset_cal", offCal);
@@ -113,10 +116,11 @@ struct Host {
     SynchronousConverter c{};
     Ctl own{};
     Ctl &ctl;
-    float iEwm = 0, viEwm = VOC, voEwm = VBAT, last = 0, prev = 0, vi = VOC, vo = VBAT, io = 0;
+    float iEwm = 0, viEwm = VOC, voEwm = VBAT, last = 0, prev = 0, vi = VOC, vo = VBAT, io = 0, vinMax = 90.f;
     bool bflow = false, sr = false, mppt = true, sweeping = false, tripped = false, held = false;
     uint16_t op = 0, rampTo = 0;
     int lsAfterHold = -1, lsRaw = -1; // pinned LS / LS count right after hold()
+    int guard = 0; // samples on which the reverse-current guard acted
     double lfAt = 0;
     std::function<void(Host &)> fault; // runs inside protect(), before hold()
 
@@ -132,7 +136,7 @@ struct Host {
     }
     RectCalIn in() const {
         return {r.us(), vi, vo, io, viEwm, voEwm, iEwm, iEwm, std::min(iEwm, std::max(last, prev)), mppt, sweeping,
-                bflow, false, true};
+                bflow, false, true, vinMax};
     }
     float pOut() const { return iEwm * voEwm; }
     void tick() {
@@ -146,7 +150,7 @@ struct Host {
         if (uint16_t b = ctl.rt(c, in())) rampTo = b;
 
         const float iF = std::min(iEwm, std::max(last, prev));
-        if ((last < -1 && prev < -1) || (sr && iF < -0.05f)) { bflow = false; c.syncRectMinDuty(); }
+        if ((last < -1 && prev < -1) || (sr && iF < -0.05f)) { bflow = false; c.syncRectMinDuty(); ++guard; }
         if (fault) fault(*this);
         if (sr && !bflow && c.getDutyCycle() > 0.33f && !(c.dcmCurrent(viEwm, voEwm) < 1.f)) { tripped = true; c.disable(); return; }
 
@@ -262,30 +266,34 @@ static void testShrinkMonotone() {
 static void fixture(RectCal &cal, float vi0, float vo0, float vi1, float vo1, float timingErr = 0.f) {
     const uint16_t hs = 1200;
     cal.start(0, hs, 16, PM - hs - 1);
-    int ls = -1;
+    int ls = cal.lsHold();
     bool init = true;
-    for (uint32_t us = 0; cal.running() && us < 40000000; us += 2304) {
-        if (ls >= 0) init = false;
+    for (uint32_t us = 0; cal.running() && us < 60000000; us += 2304) {
+        if (ls != 16) init = false;
         const float vi = init ? vi0 : vi1, vo = init ? vo0 : vo1;
         const float zc = (vi / vo - 1.f) * hs + timingErr;
-        const float x = ls < 0 ? 0.6f * zc : (float) ls;
+        const float x = init ? 0.6f * zc : (float) ls;
         const float i = 2.f - (x < zc ? 1.5e-6f : 6e-6f) * (x - zc) * (x - zc); // asymmetric parabola
-        ls = cal.feed(us, hs, vi, vo, i);
+        ls = cal.feed(us, hs, vi, vo, i, true);
     }
     SynchronousConverter c{}; initConv(c);
     cal.fit(c.getPwmTickRate());
 }
 
-// Finding 1: a voltage step after Init must not become a timing correction.
+// Finding 1: a voltage step after Init must not become a timing correction. Vin is held to StiffV
+// (panel stiffness), Vout only to VoutDrift: a shared battery bus moves, and the coordinate follows it.
 static void testVoltageBaseline() {
-    RectCal a, b, c, d;
+    RectCal a, b, b2, c, d;
     fixture(a, 60, 26.7f, 66, 26.7f);
-    CHECK(a.get() == RectCal::Fail && !strcmp(a.why, "V shift"), "Vin 60->66: state %d why '%s' learned %d", a.get(),
+    CHECK(a.get() == RectCal::Fail && !strcmp(a.why, "Vin shift"), "Vin 60->66: state %d why '%s' learned %d", a.get(),
           a.why, a.learned);
-    fixture(b, 60, 26.7f, 60, 27.5f);
-    CHECK(b.get() == RectCal::Fail && !strcmp(b.why, "V shift"), "Vout 26.7->27.5: state %d why '%s'", b.get(), b.why);
     RectCal c0;
     fixture(c0, 60, 26.7f, 60, 26.7f);
+    fixture(b, 60, 26.7f, 60, 27.5f); // +3 %: accepted, coordinate follows the step's own ideal
+    CHECK(b.get() == RectCal::Done && std::abs(b.learned - c0.learned) <= 5, "Vout 26.7->27.5: state %d why '%s' learned %d (%d)",
+          b.get(), b.why, b.learned, c0.learned);
+    fixture(b2, 60, 26.7f, 60, 28.2f); // +5.6 %
+    CHECK(b2.get() == RectCal::Fail && !strcmp(b2.why, "Vout shift"), "Vout 26.7->28.2: state %d why '%s'", b2.get(), b2.why);
     fixture(c, 60, 26.7f, 60.9f, 26.7f); // 1.5 %: accepted, coordinate follows the step's own ideal (+40 ct)
     CHECK(c0.get() == RectCal::Done && c.get() == RectCal::Done && std::abs(c.learned - c0.learned) <= 5,
           "Vin +1.5%%: state %d learned %d, without step %d (%s)", c.get(), c.learned, c0.learned, c.why);
@@ -294,8 +302,323 @@ static void testVoltageBaseline() {
     const int floor = RectCal::floorCounts(cv.getPwmTickRate());
     CHECK(d.get() == RectCal::Done && d.applied >= floor && RectBackstop::shrink(d.applied, 20, floor) <= d.applied,
           "learned %d applied %d floor %d", d.learned, d.applied, floor);
-    printf("voltage baseline: Vin+10%% '%s', Vout+3%% '%s', Vin+1.5%% learned %d (no step %d), tail learned %d applied %d floor %d\n",
-           a.why, b.why, c.learned, c0.learned, d.learned, d.applied, floor);
+    printf("voltage baseline: Vin+10%% '%s', Vout+3%% learned %d, Vout+5.6%% '%s', Vin+1.5%% learned %d (no step %d), "
+           "tail learned %d applied %d floor %d\n", a.why, b.learned, b2.why, c.learned, c0.learned, d.learned, d.applied, floor);
+}
+
+// DCM fixture with the physical current shape of a flat-like point (56 uH, Vin 60, Vout 26.7, HS
+// 1200 of 4103: I0 1.47 A, ideal 1497 ct): body-diode side 9.5e-9 A/ct^2, reverse-current side
+// 6.5e-7 A/ct^2 (see the self-calibration section of diode-emulation.md). The plant current scales
+// with the DCM model to the power vExp (1.3: 30 % more V sensitivity than the run normalises with).
+// v(us, ls, init, vi, vo) sets the voltages; zero crossing at the true ideal + timingErr.
+using VFn = std::function<void(uint32_t, int, bool, float &, float &)>;
+static void fixtureDcm(RectCal &cal, const VFn &v, float timingErr = 0.f, float vExp = 1.3f) {
+    const uint16_t hs = 1200;
+    cal.start(0, hs, 16, PM - hs - 1);
+    int ls = cal.lsHold();
+    bool init = true;
+    const float g0 = 60.f * (60.f - 26.7f) / 26.7f;
+    for (uint32_t us = 0; cal.running() && us < 60000000; us += 2304) {
+        if (ls != 16) init = false;
+        float vi = 60.f, vo = 26.7f;
+        v(us, ls, init, vi, vo);
+        const float zc = (vi / vo - 1.f) * hs + timingErr;
+        const float x = init ? 0.6f * zc : (float) ls;
+        const float i = 1.47f * std::pow(vi * (vi - vo) / vo / g0, vExp) - (x < zc ? 9.5e-9f : 6.5e-7f) * (x - zc) * (x - zc);
+        ls = cal.feed(us, hs, vi, vo, i, true);
+    }
+    SynchronousConverter c{}; initConv(c);
+    cal.fit(c.getPwmTickRate());
+}
+
+// Known-bad: a bus-voltage dip during the steps 100..200 ct past the zero crossing raises the DCM
+// current there above the true peak. Without the step check (old code, see the report) the fit puts
+// the peak inside the dip and learns a positive offset, i.e. a later LS turn-off and reverse current.
+// Must be rejected; a dip below JumpV must not move the result beyond the test tolerance, and a slow
+// linear drift of the same total size must be accepted.
+static void testDisturbance() {
+    const float zc = (60.f / 26.7f - 1.f) * 1200;
+    struct Case { const char *name; float dipVo, dipVi; bool reject; };
+    const Case cases[] = {{"Vout dip 1%", -0.01f, 0, true}, {"Vout dip 0.5%", -0.005f, 0, true},
+                          {"Vin dip 0.5%", 0, -0.005f, true}, {"Vout dip 0.3%", -0.003f, 0, true}, {"Vout dip 0.15%", -0.0015f, 0, false},
+                          {"Vin dip 0.2%", 0, -0.002f, false}};
+    RectCal ref;
+    fixtureDcm(ref, [](uint32_t, int, bool, float &, float &) {});
+    CHECK(ref.get() == RectCal::Done && std::abs(ref.learned) <= 20, "clean: state %d why '%s' learned %d", ref.get(),
+          ref.why, ref.learned);
+    for (const auto &k: cases) {
+        RectCal cal;
+        fixtureDcm(cal, [&](uint32_t, int ls, bool init, float &vi, float &vo) {
+            if (!init && ls >= zc + 100 && ls <= zc + 200) vi *= 1.f + k.dipVi, vo *= 1.f + k.dipVo;
+        });
+        if (k.reject)
+            CHECK(cal.get() == RectCal::Fail && !strcmp(cal.why, "V step"), "%s: state %d why '%s' learned %d", k.name,
+                  cal.get(), cal.why, cal.learned);
+        else
+            // a dip past the crossing reads as an earlier knee: up to -35 ct, the safe side
+            CHECK(cal.get() == RectCal::Done && cal.learned <= 20 && cal.learned >= -35, "%s: state %d why '%s' learned %d",
+                  k.name, cal.get(), cal.why, cal.learned);
+        printf("disturbance '%s': %s %s learned %d\n", k.name, cal.get() == RectCal::Done ? "done" : "failed", cal.why,
+               cal.learned);
+    }
+    // slow linear Vout drift +2.5 % over the sweep (and a -2.5 % one), with the true offset at -80 ct
+    for (float tot: {0.025f, -0.025f}) {
+        RectCal cal;
+        fixtureDcm(cal, [&](uint32_t us, int, bool init, float &, float &vo) {
+            if (!init) vo *= 1.f + tot * std::min(1.f, (float) us * 1e-6f / 30.f);
+        }, -80.f);
+        CHECK(cal.get() == RectCal::Done && std::abs(cal.learned + 80) <= 20, "Vout drift %+.1f%%: state %d why '%s' learned %d",
+              100 * tot, cal.get(), cal.why, cal.learned);
+        printf("disturbance 'Vout drift %+.1f%%': %s %s learned %d (true -80), dV %.2f%%\n", 100 * tot,
+               cal.get() == RectCal::Done ? "done" : "failed", cal.why, cal.learned, 100 * cal.dv);
+    }
+}
+
+// Field runs (80 uH, low light, shared bus): knee 30x steeper than the lossless model, baseline falling
+// 15 mA over the sweep, the knee lifts Vin on a soft panel, the bus swings. Runs 1 and 3 must calibrate,
+// run 2 (cloud) must not. Then bounds for disturbances that pass the voltage checks: a bus square wave
+// below JumpVo near the step cycle (plant 0x and 2x the model's voltage sensitivity), and a Vin rise
+// confined to the steps past the crossing, which the knee allowance admits: it may only make the
+// learned offset earlier (shorter LS).
+static void testField() {
+    const float tr = 160e6f;
+    struct F { const char *name; float vi; uint16_t hs; float rpv; bool cloud; } fs[] = {
+        {"run 1", 72.8f, 1111, 5.4f, false}, {"run 3", 71.9f, 1125, 8.4f, false}, {"run 2 cloud", 71.7f, 1178, 5.4f, true},
+        {"run 1 stiff", 72.8f, 1111, 0.f, false}};
+    for (const auto &f: fs) {
+        int done = 0, lo = 999, hi = -999;
+        const char *why = "";
+        for (uint32_t seed = 1; seed <= 10; ++seed) {
+            RcPlant p = fieldPlant(f.vi, 26.f, f.hs, f.rpv, seed);
+            if (f.cloud) {
+                auto e = p.ext;
+                p.ext = [e](double t, int ls, float &vi, float &vo) { e(t, ls, vi, vo); if (t > 3) vi *= 1.f - 0.002f * (float) (t - 3); };
+            }
+            RectCal c;
+            runPlant(c, p, tr, seed);
+            if (c.get() == RectCal::Done) ++done, lo = std::min(lo, c.learned - 16), hi = std::max(hi, c.learned - 16);
+            else why = c.why;
+        }
+        if (f.cloud) CHECK(done == 0 && !strcmp(why, "Vin shift"), "%s: %d/10 learned, '%s'", f.name, done, why);
+        else CHECK(done == 10 && lo >= -10 && hi <= 10, "%s: %d/10 done, err %d..%d ('%s')", f.name, done, lo, hi, why);
+        printf("field %-12s %2d/10 done, err %+d..%+d ct %s\n", f.name, done, done ? lo : 0, done ? hi : 0, why);
+    }
+    int lo = 999, hi = -999, done = 0, tot = 0;
+    for (float vexp: {0.f, 2.f})
+        for (double P = 0.9; P <= 2.3001; P += 0.1)
+            for (int ph = 0; ph < 8; ++ph) {
+                RcPlant p{};
+                p.vi0 = 60; p.vo0 = 26.7f; p.hs = 1200; p.i0 = 1.47f; p.kE = 9.5e-9f; p.vExp = vexp;
+                p.ext = [=](double t, int, float &, float &vo) { vo *= 1.f + 0.0019f * (std::sin(6.2832 * t / P + ph * 0.7854) >= 0 ? 1.f : -1.f); };
+                RectCal c;
+                runPlant(c, p, tr, 1 + ph);
+                ++tot;
+                if (c.get() == RectCal::Done) ++done, lo = std::min<int>(lo, c.learned), hi = std::max<int>(hi, c.learned);
+            }
+    // the sweep stops 2 steps past the knee: fewer points on its far side than a full sweep, so
+    // more spread; after the margin the LS ends at most 20 ct (125 ns) past the crossing
+    CHECK(lo >= -45 && hi <= 40, "bus square 0.19%%: err %d..%d", lo, hi);
+    printf("field bus square 0.19%% 0.9..2.3 s, plant 0x/2x: %d/%d done, err %+d..%+d ct\n", done, tot, lo, hi);
+    const float zc = (60.f / 26.7f - 1.f) * 1200;
+    for (float rise: {0.002f, 0.005f, 0.007f, 0.01f, 0.015f, 0.02f}) {
+        RcPlant p{};
+        p.vi0 = 60; p.vo0 = 26.7f; p.hs = 1200; p.i0 = 1.47f; p.kE = 9.5e-9f; p.vExp = 0;
+        p.ext = [=](double, int ls, float &vi, float &) { if (ls >= zc + 100 && ls <= zc + 300) vi *= 1.f + rise; };
+        RectCal c;
+        runPlant(c, p, tr);
+        CHECK(c.get() != RectCal::Done || c.learned <= 5, "Vin +%.1f%% past the crossing: learned %d", 100 * rise, c.learned);
+        printf("field Vin +%.1f%% on steps past the crossing (plant 0x): %s %s learned %d\n", 100 * rise,
+               c.get() == RectCal::Done ? "done" : "failed", c.why, c.learned);
+    }
+}
+
+// rect-cal force from MPPT in CCM near the MPP (~12 A): the LS is pinned at its minimum before the
+// first HS step and stays there through the ramp-down and Init; no protection acts; the run
+// calibrates and HS ramps back. dist(h, t): disturbance per tick (t: s since the start).
+struct ForceRun { bool ok; float truth, iMin; int lsBad, stepMax; uint16_t hsOp, hsEnd; uint8_t clamps; double tCal; };
+static ForceRun forceRun(Host &h, const std::function<void(Host &, double)> &dist = nullptr) {
+    ForceRun f{false, NAN, INFINITY, 0, 0, 0, 0, 0, -1};
+    h.op = (uint16_t) (VBAT / (0.80f * VOC) * PM);
+    h.run(8);
+    f.hsOp = h.c.getCtrlOnPwmCnt();
+    CHECK(!h.c.inDCM() && h.iEwm > 6.f, "not CCM at high current before the run: dcm %d I %.2f", h.c.inDCM(), h.iEwm);
+    CHECK(h.ctl.requestStart(), "requestStart");
+    h.tick();
+    CHECK(h.state() == RectCal::Fail && !strcmp(h.ctl.cal.why, "not in DCM"), "plain start from CCM: '%s'", h.ctl.cal.why);
+    const uint8_t clamps0 = h.c.lsClamps();
+    CHECK(h.ctl.requestStart(true), "requestStart(force)");
+    const double t0 = h.r.t;
+    h.fault = [&](Host &x) { if (dist) dist(x, x.r.t - t0); };
+    uint16_t hsPrev = h.c.getCtrlOnPwmCnt();
+    for (double t1 = h.r.t + 60; h.r.t < t1 && !h.tripped;) {
+        const auto s0 = h.state();
+        h.tick();
+        const uint16_t hsNow = h.c.getCtrlOnPwmCnt();
+        if (h.state() == RectCal::Run) {
+            f.stepMax = std::max(f.stepMax, std::abs((int) hsNow - (int) hsPrev));
+            if (hsNow > h.ctl.cal.hs && h.lsAfterHold != h.c.getRectOnPwmMin()) ++f.lsBad; // ramp: LS at min
+            f.iMin = std::min(f.iMin, h.r.p.getIoutAvg());
+            if (f.tCal < 0 && hsNow == h.ctl.cal.hs) f.tCal = h.r.t - t0;
+        }
+        hsPrev = hsNow;
+        if (s0 == RectCal::Run && h.state() != RectCal::Run)
+            f.truth = h.r.p.getVin() * (1.f / h.r.p.getVout() - 1.f / (h.r.p.getVout() + h.r.voutBias)) * (float) h.ctl.cal.hs
+                      - (float) h.r.hidden;
+        if (h.state() == RectCal::Done || h.state() == RectCal::Fail) break;
+    }
+    h.fault = nullptr;
+    f.ok = h.state() == RectCal::Done;
+    f.clamps = (uint8_t) (h.c.lsClamps() - clamps0);
+    h.run(3);
+    f.hsEnd = h.c.getCtrlOnPwmCnt();
+    CHECK(!h.c.manualRect_() && !h.tripped, "LS pinned %d / tripped %d after the run", h.c.manualRect_(), h.tripped);
+    return f;
+}
+
+static void testForce() {
+    for (int hidden: {0, 80, 160})
+        for (float vb: {0.f, -0.8f}) {
+            Host h(11.5f, hidden, vb, 0.f);
+            const ForceRun f = forceRun(h);
+            const RectCal &cal = h.ctl.cal;
+            CHECK(f.ok && std::fabs(cal.learned - f.truth) <= 20.f, "force hidden %d vb %.1f: %s learned %d truth %.0f", hidden,
+                  vb, f.ok ? "done" : cal.why, cal.learned, f.truth);
+            CHECK(f.lsBad == 0 && f.stepMax <= (int) PM / 512 && f.clamps == 0 && f.iMin > 0.f,
+                  "force ramp: LS off min %d ticks, max HS step %d, LS clamps %u, min Iout %.2f A", f.lsBad, f.stepMax, f.clamps,
+                  f.iMin);
+            CHECK(std::abs((int) f.hsEnd - (int) f.hsOp) <= 8, "HS %u not restored to %u", f.hsEnd, f.hsOp);
+            printf("force from CCM: hidden %3d vb %4.1f: HS %u -> %u at +%.2f s, %s learned %d truth %.0f (%d pts, dV %.2f%%), "
+                   "min Iout %.2f A, back to %u\n", hidden, vb, f.hsOp, cal.hs, f.tCal, f.ok ? "done" : cal.why, cal.learned,
+                   f.truth, cal.n, 100 * cal.dv, f.iMin, f.hsEnd);
+        }
+
+    // battery bus: Vout +2.5 % / -2.5 % linear over 30 s from the start (second charger, loads): accepted
+    for (float tot: {0.025f, -0.025f}) {
+        Host h(11.5f, 80, 0.f, 0.f);
+        const ForceRun f = forceRun(h, [tot](Host &x, double t) {
+            x.r.p.setBat(VBAT * (1.f + tot * (float) std::min(1.0, t / 30.0)), 0.03f);
+        });
+        const RectCal &cal = h.ctl.cal;
+        CHECK(f.ok && std::fabs(cal.learned - f.truth) <= 20.f, "Vout drift %+.1f%%: %s learned %d truth %.0f", 100 * tot,
+              f.ok ? "done" : cal.why, cal.learned, f.truth);
+        printf("force, Vout drift %+.1f%% over 30 s: %s learned %d truth %.0f (dV %.2f%%)\n", 100 * tot,
+               f.ok ? "done" : cal.why, cal.learned, f.truth, 100 * cal.dv);
+    }
+
+    // irradiance step at the stiff point (Isc x0.7, Voc kept): Vin hardly moves, the scaling covers it.
+    // cloud (Isc x0.7, Voc -1.8 %, i.e. the cell-voltage drop of 30 % less light): rejected.
+    for (bool vocDrop: {false, true}) {
+        Host h(11.5f, 80, 0.f, 0.f);
+        const ForceRun f = forceRun(h, [vocDrop](Host &x, double t) {
+            if (t >= 12.0) x.r.isc0 = 11.5f * 0.7f, x.r.voc = vocDrop ? VOC * 0.982f : VOC;
+        });
+        if (vocDrop)
+            CHECK(!f.ok && (!strcmp(h.ctl.cal.why, "V step") || !strcmp(h.ctl.cal.why, "Vin shift")), "cloud: %s",
+                  f.ok ? "learned" : h.ctl.cal.why);
+        else
+            CHECK(f.ok ? std::fabs(h.ctl.cal.learned - f.truth) <= 20.f : !strcmp(h.ctl.cal.why, "V step"),
+                  "irradiance step: %s learned %d truth %.0f", f.ok ? "done" : h.ctl.cal.why, h.ctl.cal.learned, f.truth);
+        printf("force, %s at +12 s: %s learned %d truth %.0f (%d pts, dV %.2f%%)\n", vocDrop ? "cloud step" : "Isc step",
+               f.ok ? "done" : h.ctl.cal.why, f.ok ? h.ctl.cal.learned : 0, f.truth, h.ctl.cal.n, 100 * h.ctl.cal.dv);
+        if (g_verbose) h.ctl.status(h.c);
+    }
+}
+
+// Full sun on the 80 uH board (field run 4): CCM at 57 V / 10 A, the hold sits near Voc (78 V). The
+// plant has a 5 nF switch node ringing at Q 40 (fitted to the four field runs) and the LS conducts 35 ct
+// longer than commanded. Past the zero crossing the output current is flat until the reverse current
+// lifts the node to Vin (~170 ct here), then drops steeply, recovers and turns positive near
+// LS = 1.25x ideal; at (1 - Vo/Vi) of the period the reverse current no longer returns to zero before HS
+// turns on and grows every cycle (the field guard trip). The run must stop after the knee and never reach
+// the guard. The knee fit lands between the zero crossing (-35) and the clamp onset (~+50); the applied
+// offset must not be later than the crossing by more than 20 ct (40 mA reverse at 80 uH).
+static void testFullSun() {
+    g_L0 = "80e-6";
+    int lo = 999, hi = -999, alo = 999, ahi = -999, done = 0, guards = 0, trips = 0, lsMaxPast = -999;
+    for (uint32_t seed = 1; seed <= 6; ++seed) {
+        Host h(5.6f, 35, 0.f, 0.f);
+        h.r.rng.seed(seed);
+        h.r.voc = 79.6f;
+        h.r.p.setPv(5.6f, 79.6f, K); h.r.p.setBat(26.45f, 0.04f); h.r.p.setPassives(470e-6f, 470e-6f, 80e-6f);
+        h.r.p.setVin(79.6f); h.r.p.setVout(26.45f); h.r.p.setRing(5e-9f, 40.f);
+        h.vi = h.viEwm = 79.6f; h.vo = h.voEwm = 26.45f;
+        h.op = (uint16_t) (26.45f / 57.f * PM);
+        h.run(8);
+        CHECK(!h.c.inDCM() && h.iEwm > 8.f, "full sun: not CCM before the run (I %.2f, Vin %.1f)", h.iEwm, h.viEwm);
+        const int g0 = h.guard;
+        CHECK(h.ctl.requestStart(true), "requestStart(force)");
+        for (double t1 = h.r.t + 70; h.r.t < t1 && !h.tripped;) {
+            h.tick();
+            if (h.state() == RectCal::Run && h.c.manualRect_() && h.ctl.cal.ideal > 0)
+                lsMaxPast = std::max(lsMaxPast, (int) h.c.getRectOnPwmCnt() - (int) lroundf(h.ctl.cal.ideal));
+            if (h.state() == RectCal::Done || h.state() == RectCal::Fail) break;
+        }
+        const RectCal &cal = h.ctl.cal;
+        guards += h.guard - g0; trips += h.tripped;
+        if (cal.get() == RectCal::Done) {
+            ++done; lo = std::min<int>(lo, cal.learned); hi = std::max<int>(hi, cal.learned);
+            alo = std::min<int>(alo, cal.applied); ahi = std::max<int>(ahi, cal.applied);
+        }
+        printf("full sun seed %u: %s%s hs=%u ideal=%.0f learned %+d applied %+d (%u pts, %u redone), guard %d\n", seed,
+               cal.get() == RectCal::Done ? "done" : "failed: ", cal.get() == RectCal::Done ? "" : cal.why, cal.hs, cal.ideal,
+               cal.learned, cal.applied, cal.n, cal.retries, h.guard - g0);
+        if (seed == 1 && g_verbose) {
+            for (int i = 0; i < cal.n; ++i) printf(" %.0f:%+.3f", cal.xs[i] - cal.ideal, cal.ys[i]);
+            printf("\n");
+        }
+    }
+    g_L0 = "56e-6";
+    CHECK(done == 6 && guards == 0 && trips == 0, "full sun: %d/6 done, guard %d, trips %d", done, guards, trips);
+    CHECK(done && alo >= -35 - 45 && ahi <= -35 + 20 && hi - lo <= 10, "full sun: applied %d..%d, learned %d..%d", alo, ahi,
+          lo, hi);
+    CHECK(lsMaxPast <= 200, "full sun: LS reached ideal%+d", lsMaxPast);
+    printf("full sun: %d/6 done, learned %+d..%+d ct, applied %+d..%+d ct (zero crossing -35 ct), LS at most %+d ct past "
+           "ideal, guard %d\n", done, lo, hi, alo, ahi, lsMaxPast, guards);
+}
+
+// Protection during the ramp-down from CCM: aborted, LS back to diode emulation, no ramp back when the
+// reverse-current guard opened the backflow switch; shutdown; Vin close to its trip. At HS -200 (D 0.47)
+// an open backflow switch trips highD-bflowOpen (shutdown), near the calibration point (D < 0.33) not.
+static void testForceProtection() {
+    struct Case { const char *name; int below; std::function<void(Host &)> act; bool rampBack; };
+    const Case cases[] = {
+        {"revI: LS clamp + bflow open", 200, [](Host &x) { x.bflow = false; x.c.syncRectMinDuty(); }, false},
+        {"revI: LS clamp + bflow open", 820, [](Host &x) { x.bflow = false; x.c.syncRectMinDuty(); }, false},
+        {"LS clamp only", 200, [](Host &x) { x.c.syncRectMinDuty(); }, true},
+        {"shutdown", 200, [](Host &x) { x.c.disable(); }, false},
+    };
+    for (const auto &k: cases) {
+        Host h(11.5f, 80, 0.f, 0.f);
+        h.op = (uint16_t) (VBAT / (0.80f * VOC) * PM);
+        h.run(8);
+        const uint16_t hsOp = h.c.getCtrlOnPwmCnt();
+        h.ctl.requestStart(true);
+        h.tick();
+        while (h.state() == RectCal::Run && h.c.getCtrlOnPwmCnt() > hsOp - k.below) h.tick();
+        const uint16_t hsAt = h.c.getCtrlOnPwmCnt();
+        bool fired = false;
+        h.fault = [&](Host &x) { if (!fired) { fired = true; k.act(x); } };
+        h.tick();
+        h.fault = nullptr;
+        // the RT loop calls rt() on every new sample, also with the converter off
+        if (h.tripped || h.c.disabled()) { uint16_t b = h.ctl.rt(h.c, h.in()); if (b) h.rampTo = b; }
+        CHECK(h.state() == RectCal::Fail && !strcmp(h.ctl.cal.why, "protection") && !h.c.manualRect_(),
+              "%s: state %d why '%s' manualRect %d", k.name, h.state(), h.ctl.cal.why, h.c.manualRect_());
+        CHECK(k.rampBack ? h.rampTo == hsOp : !h.rampTo, "%s: rampTo %u (op %u)", k.name, h.rampTo, hsOp);
+        printf("force protection '%s' at HS %u (from %u, cal %u): %s%s, LS %u, rampTo %u\n", k.name, hsAt, hsOp,
+               h.ctl.cal.hs, h.ctl.cal.why, h.tripped ? " (highD-bflowOpen shutdown)" : "", h.c.getRectOnPwmCnt(), h.rampTo);
+    }
+    Host h(11.5f, 80, 0.f, 0.f);
+    h.vinMax = VOC * 1.0f; // trip at Voc: the run must stop at 0.97 Voc
+    h.op = (uint16_t) (VBAT / (0.80f * VOC) * PM);
+    h.run(8);
+    h.ctl.requestStart(true);
+    h.tick();
+    float vMax = 0;
+    while (h.state() == RectCal::Run && h.r.t < 120) { h.tick(); vMax = std::max(vMax, h.vi); }
+    CHECK(h.state() == RectCal::Fail && !strcmp(h.ctl.cal.why, "Vin near max") && !h.c.manualRect_(), "Vin max: '%s'",
+          h.ctl.cal.why);
+    printf("force near Vin trip (%.1f V): %s at Vin %.1f V\n", h.vinMax, h.ctl.cal.why, vMax);
 }
 
 // Finding 2: protection during a run aborts it and the run never re-raises LS.
@@ -379,7 +702,7 @@ static void testSchedule() {
     c.pwmPerturb(400);
     Ctl ctl{};
     ctl.persist = fakePersist;
-    RectCalIn in{1000, 60, 26.7f, 1, 60, 26.7f, 1, 1, 1, false, false, true, false, true}; // not MPPT: refused
+    RectCalIn in{1000, 60, 26.7f, 1, 60, 26.7f, 1, 1, 1, false, false, true, false, true, 90.f}; // not MPPT: refused
     auto lf = [&](uint32_t s) { ctl.lf(c, s, 30.f); ctl.rt(c, in); ctl.lf(c, s, 30.f); };
     lf(599);
     CHECK(ctl.cal.seq == 0, "started in the boot delay");
@@ -852,6 +1175,11 @@ int main(int argc, char **argv) {
     testDriverRule();
     testShrinkMonotone();
     testVoltageBaseline();
+    testDisturbance();
+    testField();
+    testForce();
+    testForceProtection();
+    testFullSun();
     testProtectionWins();
     testAbortAndModes();
     testSchedule();
@@ -926,9 +1254,11 @@ int main(int argc, char **argv) {
                     float truth = 0;
                     const bool ok = calibrate(h, truth, opFrac);
                     const RectCal &cal = h.ctl.cal;
+                    // Isc 1 A: the knee lifts Vin 2-3.5 % (energy pumped back to the input); the knot fit then
+                    // lands up to ~35 ct early, which shortens the LS (safe side)
                     if (ok)
-                        CHECK(std::fabs(cal.learned - truth) <= 20.f, "op %.2fM Isc %.0f: learned %d truth %.0f", opFrac,
-                              isc, cal.learned, truth);
+                        CHECK(cal.learned - truth <= 20.f && cal.learned - truth >= (isc < 2 ? -35.f : -20.f),
+                              "op %.2fM Isc %.0f: learned %d truth %.0f", opFrac, isc, cal.learned, truth);
                     printf("op %.2fM Isc %3.0f hidden %3d vb %4.1f: %-26s learned %4d truth %4.0f err %+4.0f (%d pts, "
                            "dV %.2f%%)\n", opFrac, isc, hidden, vb, ok ? "ok" : cal.why, cal.learned, truth,
                            ok ? cal.learned - truth : 0.f, cal.n, 100.f * cal.dv);

@@ -13,6 +13,7 @@
 #include <memory>
 #include <cassert>
 #include "util.h"
+#include "etc/mpsc_ring.h"
 #include <soc/soc.h>
 
 
@@ -26,6 +27,9 @@ static int vprintf_(const char *fmt, va_list argptr);
 static int vprintf_mux(const char *fmt, va_list argptr);
 
 bool g_rawLogForce = false;
+
+// RawLogLow: an ESP_LOG I/D/V line, given up first when the ring is full
+enum RawLogFlags : uint8_t { RawLogSet = 1, RawLogBreak = 2, RawLogStamp = 4, RawLogStrings = 8, RawLogLow = 16 };
 
 #ifdef __XTENSA__
 // A log call captured without formatting: the format pointer and the argument words of its va_list.
@@ -46,7 +50,6 @@ struct XtVaList {
 };
 static_assert(sizeof(va_list) == sizeof(XtVaList));
 
-enum RawLogFlags : uint8_t { RawLogSet = 1, RawLogBreak = 2, RawLogStamp = 4, RawLogStrings = 8 };
 
 // %s arguments that do not point into flash: copy the string into the capture (copy, on the logging
 // core while it is still valid) or, when that was skipped, drop it (the memory may be gone by now).
@@ -108,10 +111,9 @@ static int rawLogFormat(RawLog &r, uint8_t flags, char *out, size_t n) {
 }
 #endif
 
-// RT-core log lines: a fixed ring filled on core 1 (no heap), drained in order by the core-0 flush.
-// A slot is claimed with interrupts masked (an ISR on core 1 may log too) and published by `flags`.
-struct RtLogSlot {
-    std::atomic<uint8_t> flags; // RawLogFlags, 0 = free or being written
+// RT-core log lines: a fixed lock-free ring filled on any core (no heap), drained in order by the
+// core-0 flush. A producer masks interrupts on its core from claim to publish.
+struct RtLogLine {
 #ifdef __XTENSA__
     RawLog r;
 #else
@@ -119,24 +121,7 @@ struct RtLogSlot {
     char str[230];
 #endif
 };
-static constexpr uint32_t kRtLogSlots = 16;
-static RtLogSlot s_rtLog[kRtLogSlots];
-static std::atomic<uint32_t> s_rtLogHead{0}, s_rtLogTail{0};
-static volatile uint32_t s_rtLogDropped = 0;
-
-static IRAM_ATTR RtLogSlot *rtLogClaim() {
-    const UBaseType_t irq = portSET_INTERRUPT_MASK_FROM_ISR();
-    const uint32_t h = s_rtLogHead.load(std::memory_order_relaxed);
-    RtLogSlot *slot = nullptr;
-    if (h - s_rtLogTail.load(std::memory_order_acquire) < kRtLogSlots) {
-        slot = &s_rtLog[h % kRtLogSlots];
-        s_rtLogHead.store(h + 1, std::memory_order_release);
-    } else {
-        s_rtLogDropped = s_rtLogDropped + 1;
-    }
-    portCLEAR_INTERRUPT_MASK_FROM_ISR(irq);
-    return slot;
-}
+static MpscRing<RtLogLine, 16> s_rtLog;
 
 ESPTelnet *log_telnet = nullptr;
 
@@ -281,52 +266,52 @@ void removeLogCallback(LogCallback callback) {
 }
 
 
-// IRAM: the RT core logs through here while a flash op runs
-__attribute__((flatten)) static IRAM_ATTR int enqueue_log(const char *fmt, size_t l, const va_list &args, bool appendBreak = false, bool timestamp = false) {
-    assert((xPortGetCoreID() == 1)); // ensure RT core
-
-    RtLogSlot *slot = rtLogClaim();
-    if (!slot) return -1;
+// IRAM: the RT core logs through here while a flash op runs. Any core: an unpinned task may have
+// migrated since its core test, the ring is safe for producers on both cores.
+// esplog: fmt is an ESP_LOG format ("I (%lu) %s: ..."), its first char is the level.
+__attribute__((flatten)) static IRAM_ATTR int enqueue_log(const char *fmt, const va_list &args, bool appendBreak = false,
+                                                         bool timestamp = false, bool esplog = false) {
+    uint32_t flags = RawLogSet | (appendBreak ? RawLogBreak : 0) | (timestamp ? RawLogStamp : 0);
 #ifdef __XTENSA__
-    // Never format here: float formatting costs ~0.4 ms, and runs from flash. The flush on core 0 does it.
-    RawLog *r = &slot->r;
-    r->fmt = fmt;
-    r->us = micros();
-    XtVaList x;
-    memcpy(&x, &args, sizeof(x));
-    r->ndx = x.ndx;
-    memcpy(r->reg, x.reg, sizeof(r->reg));
-    memcpy(r->stk, (const char *) x.stk + 32, sizeof(r->stk));
-    // reading the format string is a flash data access: not while a flash op runs
+    // reading the format string is a flash data access: not while a flash op runs (level unknown then)
     const bool strings = !flashOpActive() && !g_rawLogForce;
-    if (strings) rawLogStrings(*r, true);
-    slot->flags.store((uint8_t) (RawLogSet | (appendBreak ? RawLogBreak : 0) | (timestamp ? RawLogStamp : 0)
-                                 | (strings ? RawLogStrings : 0)), std::memory_order_release);
-    return 0;
+    if (strings) flags |= RawLogStrings;
 #else
-    (void) l;
-    char *buf = slot->str;
-    const size_t n = sizeof(slot->str);
-    int len = 0;
-    if (timestamp) {
-        len = snprintf(buf, n, "(%lu): ", micros());
-        if (len < 0) len = 0;
-    }
-    size_t cap = n - len - size_t(appendBreak);
-    auto r2 = vsnprintf(buf + len, cap, fmt, args);
-    if (r2 < 0) r2 = 0;
-    // vsnprintf returns the untruncated length; clamp so buf[len]='\n' stays in bounds.
-    if ((size_t) r2 >= cap) r2 = (int) cap - 1;
-    len += r2;
-    if (appendBreak) {
-        buf[len] = '\n';
-        buf[len + 1] = 0;
-        len += 1;
-    }
-    slot->len = (uint16_t) len;
-    slot->flags.store(1, std::memory_order_release);
-    return len;
+    const bool strings = true;
 #endif
+    if (strings && esplog && (fmt[0] == 'I' || fmt[0] == 'D' || fmt[0] == 'V') && fmt[1] == ' ') flags |= RawLogLow;
+    const UBaseType_t irq = portSET_INTERRUPT_MASK_FROM_ISR();
+    auto *slot = s_rtLog.claim((flags & RawLogLow) ? 0 : RawLogLow);
+    if (slot) {
+#ifdef __XTENSA__
+        // Never format here: float formatting costs ~0.4 ms, and runs from flash. The flush on core 0 does it.
+        RawLog *r = &slot->v.r;
+        r->fmt = fmt;
+        r->us = micros();
+        XtVaList x;
+        memcpy(&x, &args, sizeof(x));
+        r->ndx = x.ndx;
+        memcpy(r->reg, x.reg, sizeof(r->reg));
+        memcpy(r->stk, (const char *) x.stk + 32, sizeof(r->stk));
+        if (strings) rawLogStrings(*r, true);
+#else
+        char *buf = slot->v.str;
+        const size_t n = sizeof(slot->v.str);
+        int len = timestamp ? snprintf(buf, n, "(%lu): ", micros()) : 0;
+        if (len < 0) len = 0;
+        const size_t cap = n - len - size_t(appendBreak);
+        int r2 = vsnprintf(buf + len, cap, fmt, args);
+        if (r2 < 0) r2 = 0;
+        if ((size_t) r2 >= cap) r2 = (int) cap - 1;
+        len += r2;
+        if (appendBreak) buf[len++] = '\n';
+        buf[len] = 0;
+        slot->v.len = (uint16_t) len;
+#endif
+        s_rtLog.publish(slot, flags);
+    }
+    portCLEAR_INTERRUPT_MASK_FROM_ISR(irq);
+    return slot ? 0 : -1;
 }
 
 /*
@@ -355,7 +340,7 @@ IRAM_ATTR void UART_LOG(const char *fmt, ...) {
     va_start(args, fmt);
     if (xPortGetCoreID() == 1 && deferLogs) {
         // RT core1: defer all log to core0
-        enqueue_log(fmt, 200, args, true, true);
+        enqueue_log(fmt, args, true, true);
     } else {
         vprintf_mux(fmt, args);
         vprintf_mux("\n", va_list{});
@@ -368,7 +353,7 @@ IRAM_ATTR void printf_mux(const char *fmt, ...) {
     va_start(args, fmt);
     if (xPortGetCoreID() == 1 && deferLogs) {
         // RT core1: defer all log to core0
-        enqueue_log(fmt, 200, args, false);
+        enqueue_log(fmt, args);
     } else {
         vprintf_mux(fmt, args);
     }
@@ -416,41 +401,36 @@ static int printf_old(const char *fmt, ...) {
 }
 
 void flush_async_uart_log() {
-    // Cap entries drained per call so the network loop can pet the TWDT.
-    // printf_old() blocks in uart_tx_char waiting on FIFO room: at 115200 baud a 60-byte
-    // line costs ~5 ms, and if the RT core keeps enqueueing faster than UART drains (e.g.
-    // a vconv saturation that spams Vin-OV warnings every sample), the while-loop never
-    // sees an empty queue and core-0 sits inside flush past TASK_WDT_TIMEOUT_S → reset.
-    // 32 entries ≈ 160 ms worst-case; the remainder drains on the next loop tick after
-    // vTaskDelay(1). A full ring drops on the RT side.
+    // Two passes: format every ready line into s_out and free its slot (memory speed), then run the
+    // slow sinks (UART ~5 ms/line at 115200, telnet, MQTT/BLE mirrors) from the copy. kMaxPerCall
+    // bounds the time in here so the network loop can pet the TWDT (32 lines ~ 160 ms); the rest
+    // drains on the next tick. A full ring drops on the producer side. Single consumer: s_out is static.
     constexpr int kMaxPerCall = 32;
-    for (int i = 0; i < kMaxPerCall; ++i) {
-        const uint32_t t = s_rtLogTail.load(std::memory_order_relaxed);
-        if (t == s_rtLogHead.load(std::memory_order_acquire)) break;
-        RtLogSlot &slot = s_rtLog[t % kRtLogSlots];
-        const uint8_t flags = slot.flags.load(std::memory_order_acquire);
-        if (!flags) break; // claimed, still being written
+    constexpr size_t kLine = 224;
+    static char s_out[2048];
+    static uint16_t s_len[kMaxPerCall];
+    int n = 0;
+    for (size_t used = 0; n < kMaxPerCall && used + kLine <= sizeof(s_out); used += s_len[n++] + 1) {
+        uint32_t flags;
+        auto *slot = s_rtLog.front(flags);
+        if (!slot) break; // empty, or the oldest line is still being written
 #ifdef __XTENSA__
-        char buf[224];
-        const char *str = buf;
-        const uint16_t len = (uint16_t) rawLogFormat(slot.r, flags, buf, sizeof(buf));
+        s_len[n] = (uint16_t) rawLogFormat(slot->v.r, (uint8_t) flags, s_out + used, kLine);
 #else
-        const char *str = slot.str;
-        const uint16_t len = slot.len;
+        s_len[n] = slot->v.len;
+        memcpy(s_out + used, slot->v.str, slot->v.len + 1);
 #endif
+        s_rtLog.pop();
+    }
+    for (int i = 0, off = 0; i < n; off += s_len[i++] + 1) {
+        const char *str = s_out + off;
+        const uint16_t len = s_len[i];
         printf_old("%s", str); // str is data, not a format string (it may contain %)
-
-        if (log_telnet)
-            log_telnet->write((uint8_t *) str, len);
-
+        if (log_telnet) log_telnet->write((uint8_t *) str, len);
         LogCallback cbs[kMaxLogCallbacks];
-        int n = snapshotLogCallbacks(cbs);
-        for (int k = 0; k < n; ++k) cbs[k](str, len);
-
+        const int ncb = snapshotLogCallbacks(cbs);
+        for (int k = 0; k < ncb; ++k) cbs[k](str, len);
         bootLogCapture(str, len);
-
-        slot.flags.store(0, std::memory_order_relaxed);
-        s_rtLogTail.store(t + 1, std::memory_order_release);
     }
     if (s_bootLog && esp_timer_get_time() > kBootLogKeepUs) { // no replay sink attached in time
         portENTER_CRITICAL(&logCbMux);
@@ -459,7 +439,7 @@ void flush_async_uart_log() {
         free(b);
     }
     static uint32_t reported = 0;
-    if (const uint32_t d = s_rtLogDropped; d != reported) {
+    if (const uint32_t d = s_rtLog.dropped.load(std::memory_order_relaxed); d != reported) {
         reported = d;
         ESP_LOGW("log", "%lu RT log lines dropped (ring full)", (unsigned long) d);
     }
@@ -512,11 +492,10 @@ static int vprintf_mux(const char *fmt, va_list argptr) {
 
 static IRAM_ATTR int vprintf_(const char *fmt, va_list argptr) {
     // Defer to the core0 flush only FROM core1 (the RT core, or when it can't yield — critical
-    // section/ISR). enqueue_log() asserts core1, so core0 must always take the synchronous
-    // vprintf_mux path; this also makes it safe to route esp_log here from the very start of setup()
+    // section/ISR). Core 0 takes the synchronous vprintf_mux path; this also makes it safe to route esp_log here from the very start of setup()
     // (so boot-log capture sees the setup() body). core1 behaviour is unchanged.
     if (xPortGetCoreID() == 1 && (deferLogs || !xPortCanYield())) {
-        return enqueue_log(fmt, 200, argptr);
+        return enqueue_log(fmt, argptr, false, false, true);
     }
     // The ESP-IDF wifi task has only a 3072B stack; vprintf_mux's 300B loc_buf + mirror-sink frames
     // overflow it on connect/reconnect once this hook is active (post-setup reconnects bricked
@@ -594,43 +573,35 @@ void enqueue_task(std::function<void(void)> &&fn) {
     tq.add(std::move(fn));
 }
 
-// Calls handed from the RT core (or any core/ISR) to core 0 without heap: a fixed ring under a spinlock.
+// Calls handed from the RT core (or any core/ISR) to core 0 without heap: a lock-free ring, so the
+// RT core never waits for the consumer (which runs from flash).
 struct RtDeferred {
     RtDeferredFn fn;
     void *ctx;
     float a, b;
 };
-static constexpr uint8_t kRtDeferSlots = 8;
-static RtDeferred s_rtDefer[kRtDeferSlots];
-static uint8_t s_rtDeferHead = 0, s_rtDeferLen = 0;
-static uint32_t s_rtDeferDropped = 0;
-static portMUX_TYPE s_rtDeferMux = portMUX_INITIALIZER_UNLOCKED;
+static MpscRing<RtDeferred, 8> s_rtDefer;
 
-IRAM_ATTR bool rt_defer(RtDeferredFn fn, void *ctx, float a, float b) {
-    portENTER_CRITICAL_SAFE(&s_rtDeferMux);
-    const bool ok = s_rtDeferLen < kRtDeferSlots;
-    if (ok) s_rtDefer[(s_rtDeferHead + s_rtDeferLen++) % kRtDeferSlots] = {fn, ctx, a, b};
-    else ++s_rtDeferDropped;
-    portEXIT_CRITICAL_SAFE(&s_rtDeferMux);
-    return ok;
+__attribute__((flatten)) IRAM_ATTR bool rt_defer(RtDeferredFn fn, void *ctx, float a, float b) {
+    const UBaseType_t irq = portSET_INTERRUPT_MASK_FROM_ISR();
+    auto *slot = s_rtDefer.claim();
+    if (slot) {
+        slot->v = {fn, ctx, a, b};
+        s_rtDefer.publish(slot, 1);
+    }
+    portCLEAR_INTERRUPT_MASK_FROM_ISR(irq);
+    return slot;
 }
 
 void process_queued_tasks() {
-    for (;;) {
-        RtDeferred d;
-        portENTER_CRITICAL(&s_rtDeferMux);
-        const bool any = s_rtDeferLen != 0;
-        if (any) {
-            d = s_rtDefer[s_rtDeferHead];
-            s_rtDeferHead = (s_rtDeferHead + 1) % kRtDeferSlots;
-            --s_rtDeferLen;
-        }
-        portEXIT_CRITICAL(&s_rtDeferMux);
-        if (!any) break;
+    uint32_t flags;
+    while (auto *slot = s_rtDefer.front(flags)) {
+        const RtDeferred d = slot->v;
+        s_rtDefer.pop();
         d.fn(d.ctx, d.a, d.b);
     }
     static uint32_t reported = 0;
-    if (const uint32_t n = s_rtDeferDropped; n != reported) {
+    if (const uint32_t n = s_rtDefer.dropped.load(std::memory_order_relaxed); n != reported) {
         reported = n;
         ESP_LOGW("log", "%lu RT deferred calls dropped (ring full)", (unsigned long) n);
     }

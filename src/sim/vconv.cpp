@@ -9,6 +9,23 @@ inline float trapArea(float y0, float y1, float t) {
     return 0.5f * (y0 + y1) * t;
 }
 constexpr float kTwoPi = 6.28318530717958647692f;
+
+// free ring segment x(s) = e^(-a s) (x0 cos + B sin)(wd s), i(s) = e^(-a s) (i0 cos + Bi sin)(wd s)
+struct RingSeg {
+    float a, wd, x0, B, i0, Bi;
+    __attribute__((noinline)) void at(float s, float &x, float &i) const {
+        const float e = std::exp(-a * s), cs = std::cos(wd * s), sn = std::sin(wd * s);
+        x = e * (x0 * cs + B * sn), i = e * (i0 * cs + Bi * sn);
+    }
+};
+
+// first phase in (0, pi] where y cos + z sin... = 0, i.e. atan2(y, z) mod pi
+__attribute__((noinline)) float firstZero(float y, float z) {
+    constexpr float kPi = kTwoPi * 0.5f;
+    float th = std::atan2(y, z);
+    th -= kPi * std::floor(th / kPi);
+    return th < 1e-4f ? th + kPi : th;
+}
 }
 
 void VirtualConverter::stepOneCycle(float T) {
@@ -20,8 +37,16 @@ void VirtualConverter::stepOneCycle(float T) {
     // Rebuild reciprocals only when an input changes; the steady N-cycle loop then divides nothing
     // (LX7 has no hw float divide, so each `/` was a software __divsf3). 6 compares << 18 divisions.
     if (T != cycT_ || pmax != cycPmax_ || l_ != cycL_ || cIn_ != cycCin_ ||
-        cOut_ != cycCout_ || rbat_ != cycRbat_) {
+        cOut_ != cycCout_ || rbat_ != cycRbat_ || ringC_ != cycRingC_) {
         cycT_ = T; cycPmax_ = pmax; cycL_ = l_; cycCin_ = cIn_; cycCout_ = cOut_; cycRbat_ = rbat_;
+        cycRingC_ = ringC_;
+        if (ringC_ > 0.0f && l_ > 0.0f) {
+            const float w0 = 1.0f / std::sqrt(l_ * ringC_), r = 0.25f / (ringQ_ * ringQ_);
+            ringA_ = 0.5f * w0 / ringQ_;
+            ringWd_ = w0 * std::sqrt(std::max(1.0f - r, 1e-4f));
+            ringInvWd_ = 1.0f / ringWd_;
+            ringInvC_ = 1.0f / ringC_;
+        }
         invL_    = (l_   > 0.0f) ? 1.0f / l_   : 0.0f;
         invCin_  = (cIn_ > 0.0f) ? 1.0f / cIn_ : 0.0f;
         invCout_ = (cOut_> 0.0f) ? 1.0f / cOut_: 0.0f;
@@ -104,6 +129,12 @@ void VirtualConverter::stepOneCycle(float T) {
     const float Ipv = pvBlocking_ ? std::max(0.f, pvCurrent(vIn_)) : pvCurrent(vIn_);
 
     vIn_ += (Ipv - iInAvg_) * T * invCin_;
+    // above Voc the panel diode sinks what the HS body diode pumps back (curve slope at Voc), implicit:
+    // a stiff panel's slope would make the explicit step unstable
+    if (!pvBlocking_ && vIn_ > pv_.voc) {
+        const float k = T * invCin_ * pv_.isc * pv_.alpha / pv_.voc;
+        vIn_ = (vIn_ + k * pv_.voc) / (1.0f + k);
+    }
     vOut_ = (vOut_ + (T * iOutAvg_) * invCout_ + aOut_ * vBatEff) * inv1pAout_;
     if (vOut_ > vOutMax_) vOutMax_ = vOut_;
 
@@ -162,8 +193,17 @@ void VirtualConverter::stepOneCycleBuck(float T) {
 
     // Phase 3: both off. c > 0: LS body diode. c < 0: HS body diode (rev pump).
     float cEnd = c;
-    float areaOff = 0.0f;
-    if (tOff > 0.0f) {
+    float areaOff = 0.0f, areaRingIn = 0.0f;
+    bool ring = false, zero = false;
+    if (ringC_ > 0.0f && tOff > 0.0f && tHS > 0.0f && vOut_ > 0.0f && vIn_ > vOut_) {
+        // switch-node ring from the node voltage the last switch left (LS: 0, HS: Vin); the HS turn-on
+        // charges the node back to Vin from the input
+        float x = (tLS > 0.0f ? 0.0f : vIn_) - vOut_, i = c;
+        areaOff = ringOff(x, i, tOff, areaRingIn, zero);
+        areaRingIn += ringC_ * std::max(0.0f, vIn_ - vOut_ - x);
+        cEnd = i;
+        ring = true;
+    } else if (tOff > 0.0f) {
         if (c > 0.0f) {
             const float slope = -(vOut_ + diodeVf_) * invL_;     // <= 0; zero iff vOut_ + diodeVf_ == 0
             if (slope < 0.0f) {
@@ -198,12 +238,81 @@ void VirtualConverter::stepOneCycleBuck(float T) {
         }
     }
 
-    iInAvg_  = areaHS * invT_;
+    // reverse current through the HS body diode (c < 0) returns to the input
+    iInAvg_  = (areaHS + (ring ? areaRingIn : (c < 0.0f ? areaOff : 0.0f))) * invT_;
     iOutAvg_ = (areaHS + areaLS + areaOff) * invT_;
     iLEnd_ = cEnd;
     // DCM := "coil is at zero at cycle end". c!=0 means phase 3 drove it down;
     // a==0 covers the staying-idle case (prior cycle ended at zero too).
-    dcm_ = (cEnd == 0.0f) && (c != 0.0f || a == 0.0f);
+    dcm_ = ring ? zero : (cEnd == 0.0f) && (c != 0.0f || a == 0.0f);
+}
+
+// Switch-node ring while both buck switches are off: coil L, node capacitance C (FET Coss, winding,
+// layout), damping conductance G = 1/(Q Z0) from the node to the output. x = Vnode - Vout, i = coil
+// current toward the output:
+//   C dx/dt = -i - G x,  L di/dt = x
+//   x(s) = e^(-a s) (x0 cos(wd s) + B sin(wd s)),  B = -(a x0 + i0/C) / wd,
+//   a = w0/(2Q),  wd = w0 sqrt(1 - 1/(4Q^2))
+// so a free segment moves C (x0 - x1) to the output (coil and G). The body diodes clamp x at
+// -(Vout + Vf) (LS) and Vin + Vf - Vout (HS); clamped, the coil current ramps to zero at that
+// voltage and the ring restarts from rest. x is monotonic between its extrema, so each half-period is tested for a clamp
+// while the envelope can still reach one. Advances x, i by t; returns the charge to the output, adds
+// the charge the HS body diode returns to the input to qIn (<= 0); zero: the coil current reached zero.
+float VirtualConverter::ringOff(float &x, float &i, float t, float &qIn, bool &zero) const {
+    constexpr float kPi = kTwoPi * 0.5f;
+    const float xLo = -(vOut_ + diodeVf_), xHi = vIn_ + diodeVf_ - vOut_, lim = std::min(-xLo, xHi);
+    const float C = ringC_, a = ringA_, wd = ringWd_, iwd = ringInvWd_;
+    float q = 0.0f;
+    for (int seg = 0; seg < 8; ++seg) {
+        const float x0 = x, i0 = i;
+        const float B = -(a * x0 + i0 * ringInvC_) * iwd;
+        const RingSeg g{a, wd, x0, B, i0, C * (wd * x0 - a * B)};
+        // phases of the first zero of i and of dx/ds (x extremum)
+        const float thI = firstZero(-i0, g.Bi), th = firstZero(a * x0 - wd * B, -a * B - wd * x0);
+        const float env = std::sqrt(x0 * x0 + B * B);
+        float s0 = 0.0f, xs0 = x0, sHit = -1.0f, xc = 0.0f;
+        for (int k = 0; seg < 7 && k < 64 && s0 < t && env * std::exp(-a * s0) > lim; ++k) {
+            const float s1 = std::min(t, (th + kPi * (float) k) * iwd);
+            float xs1, is1;
+            g.at(s1, xs1, is1);
+            if (xs1 > xHi || xs1 < xLo) {
+                xc = xs1 > xHi ? xHi : xLo;
+                // monotonic on [s0, s1]: secant start, safeguarded Newton (dx/ds = -(i + G x)/C)
+                float lo = s0, hi = s1, s = s0 + (s1 - s0) * (xc - xs0) / (xs1 - xs0);
+                for (int n = 0; n < 4; ++n) {
+                    float xs, is;
+                    g.at(s, xs, is);
+                    if ((xs - xc) * (xs1 - xc) > 0.0f) hi = s; else lo = s;
+                    const float ig = is + 2.0f * a * C * xs;
+                    const float sn = ig != 0.0f ? s + (xs - xc) * C / ig : 0.5f * (lo + hi);
+                    s = sn > lo && sn < hi ? sn : 0.5f * (lo + hi);
+                }
+                sHit = s;
+                break;
+            }
+            s0 = s1, xs0 = xs1;
+        }
+        if (sHit < 0.0f) {
+            g.at(t, x, i);
+            if (thI * iwd < t) zero = true;
+            return q + C * (x0 - x);
+        }
+        float i1;
+        g.at(sHit, x, i1);
+        q += C * (x0 - xc);
+        x = xc, t -= sHit;
+        const float tz = std::fabs(i1) * l_ / std::fabs(xc);
+        if (tz >= t) {
+            i = i1 + xc * invL_ * t;
+            const float dq = 0.5f * (i1 + i) * t;
+            if (xc > 0.0f) qIn += dq;
+            return q + dq;
+        }
+        const float dq = 0.5f * i1 * tz;
+        if (xc > 0.0f) qIn += dq;
+        q += dq, t -= tz, i = 0.0f, zero = true;
+    }
+    return q;
 }
 
 // Boost: inductor in series with the INPUT. Ctrl = LS (charges the coil to ground),

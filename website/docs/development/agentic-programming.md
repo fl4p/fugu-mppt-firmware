@@ -347,8 +347,8 @@ following rules apply to a real converter:
   Port numbers, IPs, and forwarded mappings are not stable identifiers.
 - While diagnosing, use only read-only commands: `mem`, `bootinfo`, `status`, `sensor avg`, and
   `coredump info`. InfluxDB telemetry gives a passive view without any console round-trip.
-  `rt-stats` and `tasks` walk the FreeRTOS task list and can starve the continuous-ADC DMA on a
-  busy configuration, so use them sparingly on a converting device.
+  `rt-stats` and `tasks` are read-only too; their last line, `loop gap during command`, shows whether they
+  delayed the control loop.
 - Config changes are reversible. `set-config` / `get-config` / `conf-check` edit the littlefs
   partition in place without rebooting. `set-config` only rewrites the file. The firmware reads
   the `board`, `sensor`, `limits`, `coil`, `converter`, `tracker`, `charger`, and `vconv` confs

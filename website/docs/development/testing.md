@@ -64,7 +64,7 @@ The following table lists the clusters, their setup, and whether they're safe to
 
 | Cluster | Setup | Safe on live converters |
 |---|---|:---:|
-| `console` | Any device, console only | Mostly: it runs `tasks`/`rt-stats`, which can starve the continuous-ADC DMA on a busy configuration |
+| `console` | Any device, console only | Mostly: it runs `tasks`/`rt-stats`; check their `loop gap during command` line |
 | `mock` | A mock-ADC build over serial | n/a |
 | `destructive` | Bench unit only: deliberately panics, reboots, fuzzes | **No** |
 | `power` | Real converter with coil; drives the half-bridge | **No** |

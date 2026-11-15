@@ -487,7 +487,7 @@ static void cmdSweep(cmd *) {
         CMD_FAIL_RETURN("sweep: RT transition timed out");
 }
 
-// rect-cal [status|abort] — self-calibrate the DCM low-side timing offset (rect_cal.h)
+// rect-cal [force|status|abort] — self-calibrate the DCM low-side timing offset (rect_cal.h)
 static void cmdRectCal(cmd *c) {
     Command cc(c);
     const String sub = cc.countArgs() ? cc.getArg(0).getValue() : String("");
@@ -498,13 +498,14 @@ static void cmdRectCal(cmd *c) {
         rc.abortReq.store(true);
         return;
     }
-    if (sub.length()) CMD_FAIL_RETURN("rect-cal: expected [status|abort]");
-    if (!rc.requestStart()) CMD_FAIL_RETURN("rect-cal: already running");
+    const bool force = sub == "force";
+    if (sub.length() && !force) CMD_FAIL_RETURN("rect-cal: expected [force|status|abort]");
+    if (!rc.requestStart(force)) CMD_FAIL_RETURN("rect-cal: already running");
     for (int i = 0; i < 100 && rc.cal.get() == RectCal::Idle; ++i) delay(10);
     const auto st = rc.cal.get();
     if (st != RectCal::Run)
         CMD_FAIL_RETURN("rect-cal: refused: %s", st == RectCal::Fail ? rc.cal.why : "no RT response");
-    ESP_LOGI("main", "rect-cal: running at hs=%u (~30 s), see rect-cal status", rc.cal.hs);
+    ESP_LOGI("main", "rect-cal: running at hs=%u (up to 60 s), see rect-cal status", rc.cal.hs);
 }
 
 static void cmdResetLag(cmd *c) {
@@ -623,32 +624,17 @@ static void cmdCat(cmd *c) {
     fclose(f);
 }
 
-// tasks  — FreeRTOS task table: state, priority, pinned core, and min-ever free stack (bytes).
-// StackType_t is uint8_t on ESP32, so the high-water mark is already in bytes.
-static const char *taskStateStr(eTaskState s) {
-    switch (s) {
-        case eRunning: return "run";
-        case eReady: return "rdy";
-        case eBlocked: return "blk";
-        case eSuspended: return "sus";
-        case eDeleted: return "del";
-        default: return "?";
-    }
-}
+// tasks  — FreeRTOS task table: state, priority, pinned core, min-ever free stack (bytes). perf.h def.
+extern void print_task_table();
+
+// Max RT-loop gap while the command ran, the self-check that a diagnostic does not stall core 1.
+static void cmdLoopLagBegin() { g_app.cmdLoopLag = 0; }
+static void cmdLoopLagPrint() { UART_LOG("loop gap during command: max %lu us", (unsigned long) g_app.cmdLoopLag); }
+
 static void cmdTasks(cmd *) {
-    UBaseType_t n = uxTaskGetNumberOfTasks();
-    TaskStatus_t *arr = (TaskStatus_t *) malloc(sizeof(TaskStatus_t) * (n + 4));
-    if (!arr) { ESP_LOGE("main", "tasks: oom"); return; }
-    n = uxTaskGetSystemState(arr, n + 4, nullptr);
-    UART_LOG("%-16s %-4s %3s %4s %9s", "NAME", "STAT", "PRI", "CORE", "STKFREE_B");
-    for (UBaseType_t i = 0; i < n; ++i) {
-        const TaskStatus_t &t = arr[i];
-        BaseType_t core = xTaskGetCoreID(t.xHandle);
-        const char *coreStr = (core == tskNO_AFFINITY) ? "any" : (core == 0 ? "0" : "1");
-        UART_LOG("%-16s %-4s %3u %4s %9u", t.pcTaskName, taskStateStr(t.eCurrentState),
-                 (unsigned) t.uxCurrentPriority, coreStr, (unsigned) t.usStackHighWaterMark);
-    }
-    free(arr);
+    cmdLoopLagBegin();
+    print_task_table();
+    cmdLoopLagPrint();
 }
 
 // bootinfo  — last reset reason, running OTA slot + rollback verify state, heap headroom, uptime.
@@ -1184,8 +1170,10 @@ static void cmdNetstat(cmd *) {
 extern void print_real_time_stats_blocking();
 
 static void cmdRtStats(cmd *) {
+    cmdLoopLagBegin();
     print_real_time_stats_blocking();
     rtAllocPrint();
+    cmdLoopLagPrint();
 }
 
 // wired-sync diagnostic: edge rate on the sync pin (PCNT). Leader = self-check of its own
@@ -1967,8 +1955,8 @@ static void cmdMeasureCoil(cmd *c) {
     bool apply = nArgs >= 2 && cc.getArg(nArgs - 1).getValue() == "apply";
     int numArgs = apply ? nArgs - 1 : nArgs; // positional count excluding trailing 'apply'
     int arg1 = numArgs >= 2 ? cc.getArg(1).getValue().toInt() : 0;
-    uint32_t dwellMs = numArgs >= 3 ? (uint32_t) cc.getArg(2).getValue().toInt() : 3000;
-    if (dwellMs < 200) dwellMs = 200;
+    uint32_t dwellMs = numArgs >= 3 ? (uint32_t) cc.getArg(2).getValue().toInt() : 0; // 0: per-mode default
+    if (dwellMs && dwellMs < 200) dwellMs = 200;
     if (!converter.deadTimeIdle())
         CMD_FAIL_RETURN("measure-coil: a dead-time change is still queued");
     if (!measureCoilStart(ls, apply, arg1, dwellMs))
@@ -1980,7 +1968,7 @@ static void cmdMeasureCoil(cmd *c) {
 // vconv                           dump state
 // vconv pv <isc> <voc> [k]        update PV params
 // vconv bat <vbat>                update battery voltage
-// vconv set <key> <value>         in-memory setter (c_in, c_out, r_bat, l, vbat_ac_amp, vbat_ac_freq, vbat_ac_shape, diode_vf)
+// vconv set <key> <value>         in-memory setter (c_in, c_out, r_bat, l, vbat_ac_amp, vbat_ac_freq, vbat_ac_shape, diode_vf, ring_c, ring_q)
 static void cmdVconv(cmd *c) {
     Command cc(c);
     int n = cc.countArgs();
@@ -2038,6 +2026,8 @@ static void cmdVconv(cmd *c) {
         else if (key == "vbat_ac_freq") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), v, g_vconv.getVbatAcShape());
         else if (key == "vbat_ac_shape") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), g_vconv.getVbatAcFreq(), (int) v);
         else if (key == "diode_vf") g_vconv.setDiodeVf(v);
+        else if (key == "ring_c")   g_vconv.setRing(v, g_vconv.getRingQ());
+        else if (key == "ring_q")   g_vconv.setRing(g_vconv.getRingC(), v);
         else CMD_FAIL_RETURN("vconv set: unknown key '%s'", key.c_str());
         UART_LOG("vconv: %s=%.6g", key.c_str(), v);
     } else {
@@ -2228,7 +2218,7 @@ void setupCli() {
     cli.addCommand("mppt", cmdMppt);
     cli.addCommand("short-ls", cmdShortLs);
     cli.addCommand("sweep", cmdSweep);
-    cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [status|abort]
+    cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [force|status|abort]
     cli.addCommand("intr", cmdIntr);
     cli.addBoundlessCmd("reset-lag", cmdResetLag); // reset-lag [q]: q skips the rt-stats print
 #if WITH_RTPROF

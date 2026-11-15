@@ -2,166 +2,195 @@
 
 #include "logging.h" // printf_mux
 
-#ifdef CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+#include <cinttypes>
+#include <cstdlib>
+#include <cstring>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/freertos_debug.h"
+#include "esp_memory_utils.h"
+#include "esp_attr.h"
+#include "util.h" // flashOpActive
 
 #ifndef CONFIG_FREERTOS_USE_TRACE_FACILITY
 #error "CONFIG_FREERTOS_USE_TRACE_FACILITY not enabled"
 #endif
 
+// Task tables without uxTaskGetSystemState(). That call holds the kernel lock, with interrupts masked on
+// the calling core, while it counts every task's untouched stack byte by byte (~40 ns/byte at 160 MHz,
+// ~2 ms for ~17 tasks), and core 1 spins on the same lock in every notify, block and tick.
+//
+// Here the lists are walked only under the kernel lock, in chunks. A chunk resumes at a list index
+// (an integer, never a list pointer) from that list's head, copies up to kTaskChunk tasks not seen yet
+// (no stack scan) and releases the lock at that count or at the end of the list. No list pointer
+// survives a release, so a task deleted or relinked between chunks cannot leave a dangling iterator; it
+// can only be missed or met twice, which the "seen" check and the task count catch.
+struct TaskRow {
+    TaskHandle_t h;
+    uint32_t rt;
+    const uint8_t *stk, *stkEnd; // stack bounds, copied under the lock
+    uint8_t prio, state;
+    int8_t core;
+    char name[configMAX_TASK_NAME_LEN];
+};
+static constexpr int kMaxTaskRows = 32, kTaskChunk = 2;
 
-extern "C" {
-#include <stdio.h>
-#include <stdlib.h>
-#include <inttypes.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/semphr.h"
-#include "esp_err.h"
+#if !CONFIG_FREERTOS_SMP && configNUMBER_OF_CORES > 1
+#include "esp_private/freertos_idf_additions_priv.h" // prvTakeKernelLock: taskENTER_CRITICAL(&xKernelLock)
+#define TASKS_LOCK() prvTakeKernelLock()
+#define TASKS_UNLOCK() prvReleaseKernelLock()
+#else
+#define TASKS_LOCK() vTaskSuspendAll()
+#define TASKS_UNLOCK() xTaskResumeAll()
+#endif
 
-#define ARRAY_SIZE_OFFSET   5   //Increase this if print_real_time_stats returns ESP_ERR_INVALID_SIZE
-
-/**
- * @brief   Function to print the CPU usage of tasks over a given duration.
- *
- * This function will measure and print the CPU usage of tasks over a specified
- * number of ticks (i.e. real time stats). This is implemented by simply calling
- * uxTaskGetSystemState() twice separated by a delay, then calculating the
- * differences of task run times before and after the delay.
- *
- * @note    If any tasks are added or removed during the delay, the stats of
- *          those tasks will not be printed.
- * @note    This function should be called from a high priority task to minimize
- *          inaccuracies with delays.
- * @note    When running in dual core mode, each core will correspond to 50% of
- *          the run time.
- *
- * @param   xTicksToWait    Period of stats measurement
- *
- * @return
- *  - ESP_OK                Success
- *  - ESP_ERR_NO_MEM        Insufficient memory to allocated internal arrays
- *  - ESP_ERR_INVALID_SIZE  Insufficient array size for uxTaskGetSystemState. Trying increasing ARRAY_SIZE_OFFSET
- *  - ESP_ERR_INVALID_STATE Delay duration too short
- */
-static esp_err_t print_real_time_stats(TickType_t xTicksToWait) {
-    TaskStatus_t *start_array = NULL, *end_array = NULL;
-    UBaseType_t start_array_size, end_array_size;
-    uint32_t start_run_time, end_run_time;
-    esp_err_t ret;
-    uint32_t total_elapsed_time;
-
-    //Allocate array to store current task states
-    start_array_size = uxTaskGetNumberOfTasks() + ARRAY_SIZE_OFFSET;
-    start_array = (decltype(start_array)) malloc(sizeof(TaskStatus_t) * start_array_size);
-    if (start_array == NULL) {
-        ret = ESP_ERR_NO_MEM;
-        goto exit;
+// One locked chunk from list index *list: copies up to kTaskChunk unseen tasks into rows[n..]; returns the
+// new n, or -1 if a flash op is in progress. Leaves in *list where to resume (all ones: walk complete) and
+// in *want the task count read under the same lock. IRAM, as is all it calls (CONFIG_FREERTOS_IN_IRAM), but xTaskGetNext reads its table of
+// non-ready lists from flash rodata: one cache line, a ~1 us miss, or ~260 us while an erase is suspended.
+// Hence the flash check under the lock: with interrupts masked on core 0 no op can start there, and one
+// starting on core 1 blocks on this lock taking the flash mutex (pvTaskIncrementMutexHeldCount).
+static IRAM_ATTR NOINLINE_ATTR int taskChunk(TaskRow *rows, int n, int max, UBaseType_t *list, int *want) {
+    int added = 0;
+    TaskIterator_t it = {};
+    it.uxCurrentListIndex = *list;
+    TASKS_LOCK();
+    if (flashOpActive()) {
+        TASKS_UNLOCK();
+        return -1;
     }
-    //Get current task states
-    start_array_size = uxTaskGetSystemState(start_array, start_array_size, &start_run_time);
-    if (start_array_size == 0) {
-        ret = ESP_ERR_INVALID_SIZE;
-        goto exit;
-    }
-
-    vTaskDelay(xTicksToWait);
-
-    //Allocate array to store tasks states post delay
-    end_array_size = uxTaskGetNumberOfTasks() + ARRAY_SIZE_OFFSET;
-    end_array = (decltype(end_array)) malloc(sizeof(TaskStatus_t) * end_array_size);
-    if (end_array == NULL) {
-        ret = ESP_ERR_NO_MEM;
-        goto exit;
-    }
-    //Get post delay task states
-    end_array_size = uxTaskGetSystemState(end_array, end_array_size, &end_run_time);
-    if (end_array_size == 0) {
-        ret = ESP_ERR_INVALID_SIZE;
-        goto exit;
-    }
-
-    //Calculate total_elapsed_time in units of run time stats clock period.
-    total_elapsed_time = (end_run_time - start_run_time);
-    if (total_elapsed_time == 0) {
-        ret = ESP_ERR_INVALID_STATE;
-        goto exit;
-    }
-
-    {
-        // CORE% is per-core: total_elapsed_time is one core's worth of ticks, so a
-        // core-pinned task reads 0..100% of its own core (idle = 100% - sum on that core).
-        struct Row { const char *name; uint32_t rt; uint32_t pct; const char *core; };
-        Row *rows = (Row *) malloc(sizeof(Row) * start_array_size);
-        int nrows = 0;
-        //Match each task in start_array to those in the end_array
-        for (int i = 0; i < start_array_size; i++) {
-            TaskHandle_t h = start_array[i].xHandle;
-            int k = -1;
-            for (int j = 0; j < end_array_size; j++) {
-                if (start_array[i].xHandle == end_array[j].xHandle) {
-                    k = j;
-                    //Mark that task have been matched by overwriting their handles
-                    start_array[i].xHandle = NULL;
-                    end_array[j].xHandle = NULL;
-                    break;
-                }
-            }
-            if (k >= 0 && rows) {
-                uint32_t et = end_array[k].ulRunTimeCounter - start_array[i].ulRunTimeCounter;
-                BaseType_t c = xTaskGetCoreID(h);
-                rows[nrows].name = start_array[i].pcTaskName;
-                rows[nrows].rt = et;
-                rows[nrows].pct = (uint32_t) (((uint64_t) et * 100) / total_elapsed_time);
-                rows[nrows].core = (c == tskNO_AFFINITY) ? "any" : (c == 0 ? "0" : "1");
-                ++nrows;
+    *want = (int) uxTaskGetNumberOfTasks();
+    int r = 0;
+    for (int k = 0; k < 2 * kMaxTaskRows && added < kTaskChunk && n < max && (r = xTaskGetNext(&it)) != -1; ++k) {
+        const TaskHandle_t h = it.pxTaskHandle;
+        *list = (UBaseType_t) r;
+        if (h) {
+            int i = 0;
+            while (i < n && rows[i].h != h) ++i;
+            if (i == n) {
+                TaskRow &w = rows[n++];
+                ++added;
+                TaskStatus_t st;
+                vTaskGetInfo(h, &st, pdFALSE, eInvalid); // pdFALSE: no stack scan
+                TaskSnapshot_t sn;
+                vTaskGetSnapshot(h, &sn);
+                w.h = h;
+                w.rt = (uint32_t) st.ulRunTimeCounter;
+                w.stk = (const uint8_t *) st.pxStackBase;
+                w.stkEnd = (const uint8_t *) sn.pxEndOfStack;
+                w.prio = (uint8_t) st.uxCurrentPriority;
+                w.state = (uint8_t) st.eCurrentState;
+                const BaseType_t c = xTaskGetCoreID(h);
+                w.core = (int8_t) (c == tskNO_AFFINITY ? -1 : c);
+                size_t j = 0;
+                for (; j + 1 < sizeof(w.name) && st.pcTaskName[j]; ++j) w.name[j] = st.pcTaskName[j];
+                w.name[j] = 0;
             }
         }
-        //Sort by CPU time, busiest first (insertion sort, ~15 rows)
-        for (int i = 1; i < nrows; ++i) {
-            Row key = rows[i];
-            int j = i - 1;
-            for (; j >= 0 && rows[j].rt < key.rt; --j) rows[j + 1] = rows[j];
-            rows[j + 1] = key;
-        }
-        printf_mux("%-16s %4s %10s %5s\n", "TASK", "CORE", "RUN_TIME", "CORE%");
-        for (int i = 0; i < nrows; ++i)
-            printf_mux("%-16s %4s %10" PRIu32 " %4" PRIu32 "%%\n",
-                       rows[i].name, rows[i].core, rows[i].rt, rows[i].pct);
-        free(rows);
-    }
-
-    //Print unmatched tasks
-    for (int i = 0; i < start_array_size; i++) {
-        if (start_array[i].xHandle != NULL) {
-            printf_mux("| %s | Deleted\n", start_array[i].pcTaskName);
+        if (!it.pxNextListItem) { // that was the list's last task
+            *list = (UBaseType_t) r + 1;
+            break;
         }
     }
-    for (int i = 0; i < end_array_size; i++) {
-        if (end_array[i].xHandle != NULL) {
-            printf_mux("| %s | Created\n", end_array[i].pcTaskName);
-        }
-    }
-    ret = ESP_OK;
-
-exit: //Common return path
-    free(start_array);
-    free(end_array);
-    return ret;
+    TASKS_UNLOCK();
+    if (r == -1) *list = ~(UBaseType_t) 0; // walked past the last list
+    return n;
 }
+
+// Fills rows; repeats the chunked walk (bounded) while tasks are missing. Sleeps >= 1 ms between chunks,
+// longer than one RT iteration, so an RT iteration waits for at most one chunk. Waits out flash ops
+// (max ~1 s).
+static int taskRows(TaskRow *rows, int max) {
+    int n = 0, want = 0, busy = 0;
+    for (int pass = 0; pass < 3; ++pass) {
+        UBaseType_t list = 0;
+        for (int c = 0; c < 4 * max && list != ~(UBaseType_t) 0 && n < max;) {
+            const int r = taskChunk(rows, n, max, &list, &want);
+            if (r >= 0) { n = r; ++c; }
+            else if (++busy > 500) break;
+            vTaskDelay(2);
+        }
+        if (n >= want || busy > 500) break;
+    }
+    if (n < want || !want) printf_mux("(%d of %d tasks listed%s)\n", n, want, busy > 500 ? ", flash busy" : "");
+    return n;
+}
+
+static const char *taskCoreStr(const TaskRow &r) { return r.core < 0 ? "any" : (r.core == 0 ? "0" : "1"); }
+
+// Untouched (0xa5-filled) bytes from the stack's low end, bounded by its copied extent. Runs without a
+// lock; if the task was deleted since the copy, the memory is freed heap (still mapped) and the value is
+// meaningless but the read is safe.
+static unsigned stackFree(const TaskRow &r) {
+    if (!esp_ptr_byte_accessible(r.stk) || !esp_ptr_byte_accessible(r.stkEnd - 1) || r.stkEnd <= r.stk
+        || r.stkEnd - r.stk > 65536)
+        return 0;
+    const uint8_t *p = r.stk;
+    while (p < r.stkEnd && *p == 0xa5) ++p;
+    return (unsigned) (p - r.stk);
+}
+
+// tasks: state, priority, pinned core and min-ever free stack (bytes).
+void print_task_table() {
+    static const char st[][4] = {"run", "rdy", "blk", "sus", "del", "?"};
+    auto *rows = (TaskRow *) malloc(sizeof(TaskRow) * kMaxTaskRows);
+    if (!rows) { printf_mux("tasks: oom\n"); return; }
+    const int n = taskRows(rows, kMaxTaskRows);
+    printf_mux("%-16s %-4s %3s %4s %9s\n", "NAME", "STAT", "PRI", "CORE", "STKFREE_B");
+    for (int i = 0; i < n; ++i) {
+        const TaskRow &r = rows[i];
+        printf_mux("%-16s %-4s %3u %4s %9u\n", r.name, st[r.state < 5 ? r.state : 5], (unsigned) r.prio,
+                   taskCoreStr(r), stackFree(r));
+    }
+    free(rows);
+}
+
+#ifdef CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+// CPU share per task over `ms`, busiest first. CORE% is per core: the elapsed time is one core's worth,
+// so a pinned task reads 0..100 % of its own core (idle = 100 % - sum on that core).
+static void print_real_time_stats(uint32_t ms) {
+    auto *a = (TaskRow *) malloc(sizeof(TaskRow) * 2 * kMaxTaskRows);
+    if (!a) { printf_mux("rt-stats: oom\n"); return; }
+    TaskRow *b = a + kMaxTaskRows;
+    const uint32_t t0 = (uint32_t) portGET_RUN_TIME_COUNTER_VALUE();
+    const int na = taskRows(a, kMaxTaskRows);
+    vTaskDelay(pdMS_TO_TICKS(ms));
+    int nb = taskRows(b, kMaxTaskRows);
+    const uint32_t total = (uint32_t) portGET_RUN_TIME_COUNTER_VALUE() - t0;
+    for (int j = 0; j < nb;) {
+        int i = 0;
+        while (i < na && !(a[i].h == b[j].h && !strcmp(a[i].name, b[j].name))) ++i;
+        if (i == na) {
+            printf_mux("| %s | Created\n", b[j].name);
+            b[j] = b[--nb];
+            continue;
+        }
+        b[j].rt -= a[i].rt;
+        a[i].h = nullptr;
+        ++j;
+    }
+    for (int i = 1; i < nb; ++i) { // busiest first
+        const TaskRow key = b[i];
+        int j = i - 1;
+        for (; j >= 0 && b[j].rt < key.rt; --j) b[j + 1] = b[j];
+        b[j + 1] = key;
+    }
+    printf_mux("%-16s %4s %10s %5s\n", "TASK", "CORE", "RUN_TIME", "CORE%");
+    for (int i = 0; i < nb; ++i)
+        printf_mux("%-16s %4s %10" PRIu32 " %4" PRIu32 "%%\n", b[i].name, taskCoreStr(b[i]), b[i].rt,
+                   total ? (uint32_t) ((uint64_t) b[i].rt * 100 / total) : 0);
+    for (int i = 0; i < na; ++i)
+        if (a[i].h) printf_mux("| %s | Deleted\n", a[i].name);
+    free(a);
 }
 #else
-inline esp_err_t print_real_time_stats(TickType_t xTicksToWait) {
+static void print_real_time_stats(uint32_t) {
     printf_mux("CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS not enabled\n");
-    return ESP_FAIL;
 }
 #endif
 
-// Run the 2s stats measurement synchronously in the caller's (console) task. Blocking keeps it
-// serialized by the console dispatcher — no detached task to pile up when `rt-stats` is spammed
-// (which SW-reset the device) — and the `OK:` reply lands *after* the table, so scripted callers
-// actually capture the output. The vTaskDelay inside yields, so core0 housekeeping and the task WDT
-// keep running during the window; the RT loop on core1 is unaffected. (perf.h has a single includer
-// per the ODR note; cli.cpp calls this extern.)
+// Synchronous in the console task, so concurrent rt-stats are serialized by the dispatcher and the `OK:`
+// reply follows the table. Single includer (main.cpp); cli.cpp calls these extern.
 void print_real_time_stats_blocking() {
-    print_real_time_stats(pdMS_TO_TICKS(2000));
+    print_real_time_stats(2000);
 }

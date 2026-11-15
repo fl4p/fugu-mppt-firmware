@@ -14,15 +14,26 @@
 /**
  * Self-calibration of the buck DCM low-side timing offset (rect_offset).
  *
- * HS is lowered to HsFrac*M of the period and held there: a low DCM point draws well below the
- * panel's MPP current, so Vin stays on the flat, voltage-source part of the PV curve and does not
- * move with the LS window (at an MPPT operating point it does, and the peak shifts by hundreds of
- * counts). Then the LS count is stepped from 0.5x to 1.4x the ideal DCM freewheel count
- * ideal = (Vin/Vout - 1) * HS. Output current peaks where the LS turns off at the inductor zero
- * crossing: shorter leaves the tail to the body diode, longer draws reverse current. Each step is
- * measured against a reference LS (0.6x ideal) sampled before and after it, which cancels source
- * drift, and is placed relative to the ideal count of its own Vin/Vout, so a voltage change does
- * not read as a timing error. Vin and Vout must stay within StiffV of their Init values.
+ * HS is ramped to HsFrac*M of the period with the LS pinned at its minimum (body-diode freewheel,
+ * no reverse current whatever the CCM/DCM state) and held there: a low DCM point draws well below
+ * the panel's MPP current, so Vin stays on the flat, voltage-source part of the PV curve and does
+ * not move with the LS window. Init waits for DCM and two consecutive windows that agree. Then
+ * the LS count is stepped up from 0.5x the ideal DCM freewheel count ideal = (Vin/Vout - 1) * HS.
+ * Output current is flat until the LS outlasts the inductor zero crossing, then bends down (reverse
+ * current). Past the bend the switch-node ring makes the curve non-monotonic, so the sweep stops after
+ * two consecutive drops and then fills the four coarse intervals before the first drop with Fine
+ * points. The LS never exceeds ideal + lateMax, nor CcmFrac of the off-time limit (1 - Vo/Vi) of the
+ * period, beyond which the reverse current no longer returns to zero within a period. Each step is
+ * measured against a reference LS (0.6x ideal) sampled before and after it, which cancels linear
+ * drift, and is placed relative to the ideal count of its own Vin/Vout. Each window current is
+ * scaled to the Init voltages with the DCM current model I ~ Vin*(Vin-Vout)/Vout (D fixed), so a
+ * bus voltage change does not read as a current step. Vin of a reference stays within StiffV of Init (panel
+ * stiffness), Vout within VoutDrift (a shared battery bus moves); a step's voltages must lie on
+ * the line through its two references within JumpV/JumpVo, which rejects a voltage step that the model
+ * scaling cannot fully remove; a step that fails is measured again (MaxRetry). Vin may rise above
+ * that by what the step's own measured (unscaled) current drop explains on a panel below its MPP
+ * (SpvMax). The fit
+ * places the zero crossing where the current bends down, independent of a sloped baseline.
  * learned = peak - ideal (counts) is the net timing error of driver, gate and sensing.
  *
  * Ownership: the RT core writes the payload in start()/refuse() (from Idle) and during Run, core 0
@@ -34,22 +45,37 @@ class RectCal {
 public:
     enum State : uint8_t { Idle, Run, Fit, Done, Fail };
 
-    static constexpr int Steps = 24;
+    static constexpr int Steps = 24, Fine = 10, MaxPts = Steps + Fine; // coarse grid, fine pass at the knee
     static constexpr uint32_t SettleUs = 150000, InitUs = 500000, RefUs = 250000, MeasUs = 500000;
-    static constexpr uint32_t TimeoutUs = 32000000;
+    static constexpr uint32_t TimeoutUs = 60000000, SettleMaxUs = 12000000; // run, ramp + Init (from start)
     static constexpr float LsLo = 0.5f, LsHi = 1.4f, LsRef = 0.6f, HsFrac = 0.55f;
     static constexpr float PlausibleNs = 2500.f; // |learned| above this is rejected (400 ct at 160 MHz)
     static constexpr float MinMarginNs = 125.f;  // applied margin floor (20 ct at 160 MHz)
-    static constexpr float StiffV = 0.02f;       // max Vin and Vout deviation from Init (fraction)
+    static constexpr float StiffV = 0.02f;       // max Vin deviation from Init (fraction)
+    static constexpr float VoutDrift = 0.05f;    // max Vout deviation from Init (fraction)
+    static constexpr float JumpV = 0.003f;       // max step Vin off its references' mean (fraction)
+    static constexpr float JumpVo = 0.002f;      // same for Vout (a bus can swing in step with the run)
+    static constexpr float SpvMax = 0.25f;       // PV slope bound |dV/dI| * I/V below the MPP (1 at the MPP)
+    static constexpr float KneeMinA = 0.01f;     // fitted bend at the last point, at least
+    static constexpr uint8_t MaxRetry = 6;       // steps re-measured after a voltage step
+    // knee: 2 consecutive steps each StepDrop below the previous and KneeDrop below the best (A)
+    static constexpr float KneeDrop = 0.02f, StepDrop = 0.01f;
+    static constexpr float CcmFrac = 0.9f; // LS cap: this fraction of the off-time volt-second limit (1 - Vo/Vi)
+    static constexpr float SettleI = 0.02f;      // Init windows agree: |dI| <= SettleI A + SettleI * I
 
     std::atomic<uint8_t> state{Idle};
     const char *why = ""; // failure reason
     uint16_t hs = 0;      // 0 after a refused start
     uint8_t n = 0, seq = 0; // seq: counts starts and refusals
     int16_t learned = 0, applied = 0;
-    float ideal = 0, peak = 0; // peak: fitted LS count of the current maximum
+    float ideal = 0, peak = 0; // peak: fitted LS count of the zero crossing (knee)
     float dv = 0; // largest relative Vin/Vout deviation from Init
-    float xs[Steps]{}, ys[Steps]{};
+    float xs[MaxPts]{}, ys[MaxPts]{}; // fit() sorts them by LS
+    int8_t jvi[MaxPts]{}, jvo[MaxPts]{}; // step Vin/Vout off its references' mean (0.01 %)
+    uint8_t retries = 0;
+    // last voltage check: deviation (fraction), Vin allowance (fraction), reference (V), LS count
+    float jdi = 0, jdo = 0, jallow = 0, jrefVi = 0, jrefVo = 0;
+    uint16_t jls = 0;
 
     [[nodiscard]] State get() const { return (State) state.load(std::memory_order_acquire); }
     [[nodiscard]] bool running() const { return get() == Run; }
@@ -70,10 +96,12 @@ public:
         return running() ? std::clamp((int) hs - (int) hsNow, -maxStep, maxStep) : 0;
     }
 
-    void start(uint32_t nowUs, uint16_t hs_, uint16_t lsMin_, uint16_t lsCap_) {
-        hs = hs_; lsMin = lsMin_; lsCap = lsCap_;
+    // lateMax: farthest LS past ideal the sweep may go (counts, the plausible |learned|)
+    void start(uint32_t nowUs, uint16_t hs_, uint16_t lsMin_, uint16_t lsCap_, uint16_t lateMax_ = 400) {
+        hs = hs_; lsMin = lsMin_; lsCap = lsCap_; lateMax = lateMax_; fine = false; drops = 0; kf = 0;
         n = 0; k = 0; ideal = peak = dv = 0; ymax = -INFINITY; learned = applied = 0; why = "";
-        phase = Init; ls = -1;
+        retries = 0; jdi = jdo = jallow = jrefVi = jrefVo = 0; jls = 0;
+        phase = Init; ls = lsMin; prevOk = false;
         t0 = tPh = nowUs;
         clearAcc();
         ++seq;
@@ -85,59 +113,116 @@ public:
         fail(reason);
     }
 
-    void abort(const char *reason) {
+    // RT: feed(), abort() and RectCalCtl::hold() are inlined into IRAM callers (rt(), update())
+    __attribute__((always_inline)) void abort(const char *reason) {
         if (running()) fail(reason);
     }
 
-    // Returns the LS count to hold, -1 to leave LS to diode emulation. The sweep starts once HS
-    // has reached the calibration point.
-    int feed(uint32_t nowUs, uint16_t hsNow, float vin, float vout, float iout) {
+    // LS count the run holds now (lsMin until Init is done), -1: none
+    [[nodiscard]] int lsHold() const { return running() ? ls : -1; }
+
+    // dcm: the converter is in DCM. Returns the LS count to hold, -1 to leave LS to diode emulation.
+    // The sweep starts once HS has reached the calibration point, DCM holds and Init has settled.
+    __attribute__((always_inline)) int feed(uint32_t nowUs, uint16_t hsNow, float vin, float vout, float iout, bool dcm) {
         if (!running()) return -1;
         if (nowUs - t0 > TimeoutUs) return fail("timeout");
-        if (hsNow != hs) {
-            if (phase != Init) return fail("HS moved");
-            tPh = nowUs;
-            clearAcc();
-            return ls;
+        if (phase == Init) {
+            if (hsNow != hs || !dcm) {
+                if (nowUs - t0 > SettleMaxUs) return fail(hsNow != hs ? "HS ramp" : "not in DCM");
+                tPh = nowUs;
+                clearAcc();
+                prevOk = false;
+                return ls;
+            }
+        } else if (hsNow != hs) {
+            return fail("HS moved");
+        } else if (!dcm) {
+            return fail("left DCM");
         }
         const uint32_t dt = nowUs - tPh;
         if (dt < SettleUs) return ls;
         si += iout; sv += vin; so += vout; ++ns;
         if (dt < SettleUs + (phase == Init ? InitUs : phase == Ref ? RefUs : MeasUs)) return ls;
 
-        const float i = si / (float) ns, vi = sv / (float) ns, vo = so / (float) ns;
+        float i = si / (float) ns;
+        const float vi = sv / (float) ns, vo = so / (float) ns;
         if (!std::isfinite(i + vi + vo)) return fail("bad sample");
         if (phase == Init) {
             if (!(vo > 0.5f && vi > vo + 1.f)) return fail("Vin<=Vout");
+            // settled: two consecutive windows agree (refPrev/vi0/vo0 hold the previous one)
+            if (!(prevOk && std::fabs(i - refPrev) <= SettleI * (1.f + std::fabs(i))
+                  && std::fabs(vi / vi0 - 1.f) <= JumpV && std::fabs(vo / vo0 - 1.f) <= JumpV)) {
+                if (nowUs - t0 > SettleMaxUs) return fail("unsettled");
+                refPrev = i; vi0 = vi; vo0 = vo; prevOk = true;
+                tPh = nowUs;
+                clearAcc();
+                return ls;
+            }
             if (!(i > 0.15f)) return fail("low I");
             vi0 = vi; vo0 = vo;
+            g0 = dcmShape(vi, vo);
             ideal = (vi / vo - 1.f) * (float) hs;
-            if ((float) lsCap < 1.15f * ideal) return fail("LS headroom");
+            // past (1 - Vo/Vi) of the period the reverse current cannot return to zero before HS turns on:
+            // it grows every cycle (synchronous buck run backwards from the battery)
+            capX = std::min({(float) lsCap, CcmFrac * (1.f - vo / vi) * (float) (lsCap + hs + 1), ideal + (float) lateMax});
+            if (capX < ideal + 0.5f * (float) lateMax) return fail("LS headroom");
             ref = (uint16_t) std::max<float>(lsMin, LsRef * ideal);
             nextPhase(nowUs, Ref, ref);
             return ls;
         }
-        const float d = std::max(std::fabs(vi / vi0 - 1.f), std::fabs(vo / vo0 - 1.f));
-        dv = std::max(dv, d);
-        if (!(d <= StiffV)) return fail("V shift");
+        const float dIn = std::fabs(vi / vi0 - 1.f), dOut = std::fabs(vo / vo0 - 1.f);
+        dv = std::max(dv, std::max(dIn, dOut));
+        // a step window's Vin is judged against its references (a knee raises Vin on a soft panel)
+        if (!(dIn <= StiffV) && phase == Ref) return vfail("Vin shift", vi, vo, vi0, vo0);
+        if (!(dOut <= VoutDrift)) return vfail("Vout shift", vi, vo, vi0, vo0);
+        const float r = g0 / dcmShape(vi, vo); // current at the Init voltages
+        if (!(r > 0.8f && r < 1.25f)) return vfail("V shift", vi, vo, vi0, vo0);
+        const float raw = i;
+        i *= r;
         if (phase == Meas) {
-            meas = i;
+            meas = i; measRaw = raw; measVi = vi; measVo = vo;
             measX = (float) ls_ - ((vi / vo - 1.f) * (float) hs - ideal);
             nextPhase(nowUs, Ref, ref);
             return ls;
         }
+        bool redo = false;
         if (k) {
-            const float y = meas - 0.5f * (refPrev + i);
-            xs[n] = measX; ys[n] = y; ++n;
-            ymax = std::max(ymax, y);
-            if (meas < -0.05f || (measX > ideal && y < ymax - 0.2f * std::fabs(meas)))
-                return finish();
+            // windows are equally spaced: a linear drift puts the step on its references' mean. The measured
+            // (unscaled) current drop lowers the input power by dRaw/mid and raises Vin by up to SpvMax times that.
+            const float mid = 0.5f * (refPrev + i), y = meas - mid, dRaw = 0.5f * (rawPrev + raw) - measRaw;
+            jrefVi = 0.5f * (refVi + vi); jrefVo = 0.5f * (refVo + vo); jls = ls_;
+            jdi = measVi / jrefVi - 1.f; jdo = measVo / jrefVo - 1.f;
+            jallow = JumpV + (dRaw > 0 && mid > 0.1f ? SpvMax * dRaw / mid : 0.f);
+            if (!(jdi >= -JumpV && jdi <= jallow && std::fabs(jdo) <= JumpVo)) {
+                if (retries >= MaxRetry) return fail("V step");
+                ++retries; redo = true;
+            } else {
+                xs[n] = measX; ys[n] = y;
+                jvi[n] = pct100(jdi); jvo[n] = pct100(jdo);
+                ++n;
+                const bool down = n > 1 && y <= std::min(ys[n - 2] - StepDrop, ymax - KneeDrop);
+                ymax = std::max(ymax, y);
+                drops = down ? drops + 1 : 0;
+                if (meas < -0.05f) return finish();
+                if (drops >= 2 && !fine) {
+                    // the knot lies within 4 coarse steps before the first drop (sharp knee: the last one,
+                    // quadratic: 2-3): Fine steps across them, never past the first drop
+                    if (n < 6 || n + Fine > MaxPts) return finish();
+                    fg = (xs[n - 2] - xs[n - 6]) / (float) Fine;
+                    f0 = xs[n - 6] + 0.5f * fg;
+                    fine = true;
+                }
+            }
         }
-        refPrev = i;
+        refPrev = i; rawPrev = raw; refVi = vi; refVo = vo;
+        if (redo) {
+            nextPhase(nowUs, Meas, ls_);
+            return ls;
+        }
         for (;;) {
-            if (k >= Steps) return finish();
-            const float x = (LsLo + (LsHi - LsLo) * (float) k++ / (float) (Steps - 1)) * ideal;
-            if (x > (float) lsCap) return finish();
+            if (fine ? kf >= Fine : k >= Steps) return finish();
+            const float x = fine ? f0 + fg * (float) kf++ : (LsLo + (LsHi - LsLo) * (float) k++ / (float) (Steps - 1)) * ideal;
+            if (x > capX) return finish();
             if (x < (float) lsMin) continue;
             ls_ = (uint16_t) std::lround(x);
             break;
@@ -149,13 +234,15 @@ public:
     // Peak fit and margin, not RT-safe (double-precision grid search). tickRate converts the ns limits.
     bool fit(float tickRate) {
         if (get() != Fit) return false;
-        int pk = 0;
-        for (int j = 1; j < n; ++j) if (ys[j] > ys[pk]) pk = j;
-        float x0 = n ? xs[pk] : 0;
-        double b = 0;
-        const char *e = n < 5 ? "few points"
-                        : (pk == 0 || pk == n - 1) ? "peak at edge"
-                        : !asymPeakFit(xs, ys, n, x0, b) ? "fit"
+        for (int j = 1; j < n; ++j) // insertion sort by LS, the fine pass interleaves
+            for (int m = j; m > 0 && xs[m] < xs[m - 1]; --m) {
+                std::swap(xs[m], xs[m - 1]); std::swap(ys[m], ys[m - 1]);
+                std::swap(jvi[m], jvi[m - 1]); std::swap(jvo[m], jvo[m - 1]);
+            }
+        // zero crossing = where the current bends down (reverse current), whatever the baseline slope
+        float x0 = 0, drop = 0, rms = 0;
+        const char *e = n < 6 ? "few points"
+                        : !kneeFit(xs, ys, n, x0, drop, rms) || !(drop >= std::max(KneeMinA, 4.f * rms)) ? "no knee"
                         : !(std::fabs(x0 - ideal) <= (float) pwmCountsFromNs(PlausibleNs, tickRate)) ? "implausible"
                         : nullptr;
         if (e) {
@@ -174,17 +261,32 @@ private:
     enum Phase : uint8_t { Init, Ref, Meas };
     Phase phase = Init;
     int ls = -1;
-    uint16_t lsMin = 0, lsCap = 0, ref = 0, ls_ = 0;
+    uint16_t lsMin = 0, lsCap = 0, ref = 0, ls_ = 0, lateMax = 400;
+    bool fine = false;      // fine pass around the knee
+    uint8_t drops = 0, kf = 0;
+    float capX = 0, f0 = 0, fg = 0; // LS cap, fine pass start and step
     uint8_t k = 0;
     uint32_t t0 = 0, tPh = 0;
     uint32_t ns = 0;
-    float si = 0, sv = 0, so = 0, refPrev = 0, meas = 0, measX = 0, ymax = 0, vi0 = 0, vo0 = 0;
+    bool prevOk = false; // Init: a previous window is stored
+    float si = 0, sv = 0, so = 0, refPrev = 0, meas = 0, measX = 0, ymax = 0, vi0 = 0, vo0 = 0, g0 = 0;
+    float refVi = 0, refVo = 0, measVi = 0, measVo = 0, rawPrev = 0, measRaw = 0; // raw: unscaled current
 
     void clearAcc() { si = sv = so = 0; ns = 0; }
+
+    // DCM output current at fixed D over its constant factor D^2/(2 fsw L): Vin (Vin - Vout) / Vout [V]
+    static float dcmShape(float vi, float vo) { return vi * (vi - vo) / vo; }
 
     void nextPhase(uint32_t nowUs, Phase p, int lsCount) {
         phase = p; ls = lsCount; tPh = nowUs;
         clearAcc();
+    }
+
+    static int8_t pct100(float f) { return (int8_t) std::clamp(std::lround(1e4f * f), -127L, 127L); }
+
+    int vfail(const char *reason, float vi, float vo, float rvi, float rvo) {
+        jdi = vi / rvi - 1.f; jdo = vo / rvo - 1.f; jallow = 0; jrefVi = rvi; jrefVo = rvo; jls = ls;
+        return fail(reason);
     }
 
     int fail(const char *reason) {
@@ -248,6 +350,7 @@ struct RectCalIn {
     bool bflow;    // backflow switch closed
     bool limiting; // a PD limiter is active
     bool iSensor;  // physical Iout sensor (not virtual)
+    float vinMax;  // input over-voltage trip (V)
 };
 
 /**
@@ -271,12 +374,13 @@ public:
     enum : uint8_t { Idle, Req, Granted, Admitted, Expired };
     static constexpr uint32_t SaveRetryS = 60, SaveMinS = 600;
     static constexpr float IdleW = 5.f; // auto start above, saves need |pOut| below IdleW / 5
+    static constexpr float VinMaxFrac = 0.97f; // run aborts above this fraction of the Vin trip
     static constexpr uint8_t Confirm = 2; // backstop triggers before a reduced offset is saved
 
     RectCal cal{};
     bool autoRun = true; // coil.conf rect_cal_auto
     bool (*persist)(int counts, bool calibrated) = nullptr; // core 0, writes coil.conf
-    std::atomic<bool> startReq{false}, abortReq{false};
+    std::atomic<bool> startReq{false}, abortReq{false}, forceReq{false};
     std::atomic<uint16_t> fires{0};    // backstop triggers that shrank the offset
 
     [[nodiscard]] int offset() const { return (int16_t) (act.load(std::memory_order_acquire) & 0xffff); }
@@ -333,12 +437,14 @@ public:
         }
     }
 
-    // core 0: request a run; false while one is running or being fitted.
-    bool requestStart() {
+    // core 0: request a run; false while one is running or being fitted. force: start from any MPPT
+    // operating point above the calibration HS, also CCM at high current.
+    bool requestStart(bool force = false) {
         uint8_t s = cal.state.load(std::memory_order_acquire);
         if (s == RectCal::Run || s == RectCal::Fit) return false;
         if (s != RectCal::Idle && !cal.state.compare_exchange_strong(s, RectCal::Idle, std::memory_order_acq_rel))
             return false;
+        forceReq.store(force, std::memory_order_relaxed);
         startReq.store(true, std::memory_order_release);
         return true;
     }
@@ -361,7 +467,7 @@ public:
         const uint16_t back = cal.running() ? 0 : end(c, in);
         if (startReq.exchange(false, std::memory_order_acq_rel) && cal.get() == RectCal::Idle) {
             const uint16_t pm = c.pwmMaxDriver();
-            const char *why = block(c, in, true);
+            const char *why = block(c, in, true, forceReq.load(std::memory_order_relaxed));
             const uint16_t hs = why ? 0 : RectCal::calHs(in.vinAvg, in.voutAvg, pm);
             if (!why && (hs > c.getCtrlOnPwmCnt() || hs <= c.getCtrlOnPwmMin())) why = "HS below calibration point";
             if (why) cal.refuse(why);
@@ -369,7 +475,8 @@ public:
                 hsPrev = c.getCtrlOnPwmCnt();
                 clamps = c.lsClamps();
                 bs.reset();
-                cal.start(in.nowUs, hs, c.getRectOnPwmMin(), pm - hs - 1);
+                cal.start(in.nowUs, hs, c.getRectOnPwmMin(), pm - hs - 1,
+                          (uint16_t) pwmCountsFromNs(RectCal::PlausibleNs, c.getPwmTickRate()));
             }
         }
         persistLock(c, in.nowUs);
@@ -377,23 +484,23 @@ public:
         return back;
     }
 
-    // RT, in the MPPT update: ramps HS to the calibration point, holds it and pins LS. Returns true
-    // while update() must stop here; back: HS count to ramp back to after the run (0: none).
-    bool hold(Conv &c, const RectCalIn &in, float limitingControlValue, uint16_t &back) {
+    // RT, in the MPPT update: pins LS (at its minimum until Init is done), ramps HS to the
+    // calibration point by pwmMax/512 per sample and holds it. Returns true while update() must stop
+    // here; back: HS count to ramp back to after the run (0: none).
+    __attribute__((always_inline)) bool hold(Conv &c, const RectCalIn &in, float limitingControlValue, uint16_t &back) {
         back = 0;
         if (!cal.running()) return false;
         if (protectedSince(c, in)) {
             cal.abort("protection");
         } else if (limitingControlValue < 0) {
             cal.abort("limiting");
+        } else if (in.vin > VinMaxFrac * in.vinMax) {
+            cal.abort("Vin near max");
         } else {
+            pin(c, cal.lsHold()); // before the first HS step: no complementary LS window on the way down
             const int step = cal.hsStep(c.getCtrlOnPwmCnt(), std::max(1, c.pwmMaxDriver() / 512));
             if (step) c.pwmPerturb((int16_t) step);
-            const int ls = cal.feed(in.nowUs, c.getCtrlOnPwmCnt(), in.vin, in.vout, in.iout);
-            if (ls >= 0 && !protectedSince(c, in)) {
-                if (!c.manualRect_() || ls != c.getRectOnPwmCnt()) c.setManualRect(ls);
-                owns = true;
-            }
+            pin(c, cal.feed(in.nowUs, c.getCtrlOnPwmCnt(), in.vin, in.vout, in.iout, c.inDCM()));
             if (cal.running()) return true;
         }
         back = end(c, in);
@@ -401,7 +508,7 @@ public:
     }
 
     // RT: a mode change that sets manualRect and the duty itself takes over without end().
-    void drop() {
+    __attribute__((always_inline)) void drop() {
         cal.abort("mode change");
         owns = false;
         hsPrev = 0;
@@ -477,14 +584,21 @@ public:
                  activeCalibrated() ? "" : ", uncalibrated", fires.load(std::memory_order_relaxed), dirty);
         if (s == RectCal::Run) ESP_LOGI("rectcal", "hs=%u", cal.hs);
         if ((s != RectCal::Done && s != RectCal::Fail) || !cal.hs) return;
-        ESP_LOGI("rectcal", "last: hs=%u ideal=%.0f peak=%.0f learned=%+d applied=%+d ct, dV %.1f%%, %u pts", cal.hs,
-                 cal.ideal, cal.peak, cal.learned, cal.applied, 100.f * cal.dv, cal.n);
+        ESP_LOGI("rectcal", "last: hs=%u ideal=%.0f peak=%.0f learned=%+d applied=%+d ct, dV %.1f%%, %u pts, %u redone",
+                 cal.hs, cal.ideal, cal.peak, cal.learned, cal.applied, 100.f * cal.dv, cal.n, cal.retries);
+        if (s == RectCal::Fail && cal.jrefVi > 0) {
+            const bool st = cal.jallow > 0; // step vs its references, else window vs Init
+            ESP_LOGI("rectcal", "at LS %u: Vin %+.2f%% (%+.2f..%+.2f) Vout %+.2f%% (+-%.2f) vs %s %.2f/%.2f V", cal.jls,
+                     100.f * cal.jdi, -100.f * (st ? RectCal::JumpV : RectCal::StiffV),
+                     100.f * (st ? cal.jallow : RectCal::StiffV), 100.f * cal.jdo,
+                     100.f * (st ? RectCal::JumpVo : RectCal::VoutDrift), st ? "refs" : "Init", cal.jrefVi, cal.jrefVo);
+        }
         char buf[128];
         int len = 0;
         for (int i = 0; i < cal.n; ++i) {
-            len += snprintf(buf + len, sizeof(buf) - len, " %.0f:%+.3f", cal.xs[i], cal.ys[i]);
-            if (len > (int) sizeof(buf) - 20 || i == cal.n - 1) {
-                ESP_LOGI("rectcal", "LS:dI%s", buf);
+            len += snprintf(buf + len, sizeof(buf) - len, " %.0f:%+.3f/%d/%d", cal.xs[i], cal.ys[i], cal.jvi[i], cal.jvo[i]);
+            if (len > (int) sizeof(buf) - 28 || i == cal.n - 1) {
+                ESP_LOGI("rectcal", "LS:dI/Vin/Vout%s", buf);
                 len = 0;
             }
         }
@@ -526,10 +640,17 @@ private:
         return c.lsClamps() != clamps || c.disabled() || !in.bflow || !c.syncRectEnabled_();
     }
 
+    void pin(Conv &c, int ls) {
+        if (ls < 0) return;
+        if (!c.manualRect_() || ls != c.getRectOnPwmCnt()) c.setManualRect(ls);
+        owns = true;
+    }
+
+    // HS ramps back unless a mode change or the reverse-current guard (backflow switch open) intervened
     uint16_t end(Conv &c, const RectCalIn &in) {
         if (owns) c.setManualRect(-1);
         owns = false;
-        const uint16_t h = (!c.disabled() && in.mppt && !in.sweeping) ? hsPrev : 0;
+        const uint16_t h = (!c.disabled() && in.mppt && !in.sweeping && in.bflow) ? hsPrev : 0;
         hsPrev = 0;
         return h;
     }
@@ -580,7 +701,7 @@ private:
         fires.fetch_add(1, std::memory_order_release);
     }
 
-    static const char *block(const Conv &c, const RectCalIn &in, bool starting) {
+    static const char *block(const Conv &c, const RectCalIn &in, bool starting, bool force = false) {
         if (c.disabled()) return "converter off";
         if (c.boost()) return "boost";
         if (!in.mppt) return "not in MPPT mode";
@@ -592,8 +713,8 @@ private:
         if (c.manualRect_()) return "manual LS";
         if (!c.deadTimeIdle()) return "dead-time change queued";
         if (in.limiting) return "limiting";
-        if (!c.inDCM()) return "not in DCM";
-        if (!(in.ioutAvg >= 0.3f && in.ioutAvg <= 4.f)) return "Iout outside 0.3..4 A";
+        if (!force && !c.inDCM()) return "not in DCM";
+        if (!(in.ioutAvg >= 0.3f && (force || in.ioutAvg <= 4.f))) return force ? "Iout below 0.3 A" : "Iout outside 0.3..4 A";
         if (!(in.vinAvg > in.voutAvg + 1.f)) return "Vin<=Vout+1";
         return nullptr;
     }

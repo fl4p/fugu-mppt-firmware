@@ -190,19 +190,36 @@ that must survive a flash operation belongs in hardware. See
 
 ### Kernel critical sections from core 0
 
-`uxTaskGetSystemState()`, used by the `tasks` and `rt-stats` console commands, walks every task control
-block under `taskENTER_CRITICAL(&xKernelLock)`. While core 0 holds that lock, the IRAM conversion-done callback on
-core 1 spins in `vTaskNotifyGiveFromISR()`, so the ADC driver's ISR cannot recycle DMA descriptors.
+All FreeRTOS kernel data is guarded by one spinlock, `xKernelLock`. Taking it masks interrupts on the calling
+core, and the other core spins on it in every kernel call: the conversion-done callback and the INA226 alert
+handler in `vTaskNotifyGiveFromISR()`, the RT task in `ulTaskNotifyTake()`, and the core-1 tick. A core-0
+critical section of length *S* therefore delays the next RT iteration by up to *S*.
 
-The measured critical section lasts about 1.16 ms for 8 tasks and scales roughly linearly, so it lasts about 2 ms on a
-networked converter.
+`uxTaskGetSystemState()` holds that lock while it fills a record for every task, including the stack high-water
+mark, which it counts byte by byte over each task's untouched stack. That scan costs about 6–7 cycles per byte
+(about 40 ns at 160 MHz) and dominates: with about 17 tasks it held the lock for about 2 ms, and the loop gap
+rose from one sample period to 2.6 ms. The kernel is in IRAM (`CONFIG_FREERTOS_IN_IRAM`), so a flash operation
+does not lengthen it; the time is the scan itself.
 
-The firmware sizes the DMA frames to ride through about 1.9 ms (see
-[DMA descriptor headroom](#dma-descriptor-headroom)). If the DMA still halts, the ADC stall watchdog restarts it
-without a converter backoff unless the stall persists past 800 ms.
+`tasks` and `rt-stats` therefore do not call it. They walk the task lists themselves under the kernel lock
+(`prvTakeKernelLock()`), in chunks: a chunk restarts at a list index from that list's head, copies at most two
+tasks not seen yet with `vTaskGetInfo(…, pdFALSE, …)` (no stack scan), and releases the lock at that count or at
+the end of the list. No list pointer is kept across a release, so a task created or deleted between chunks can
+only be missed or seen twice; the commands deduplicate, repeat the walk, and print `(n of m tasks listed)` if
+tasks are still missing. They sleep at least 1 ms between chunks, so one control-loop iteration waits for at
+most one chunk.
 
-Avoid running `tasks` or `rt-stats` repeatedly on a converter under load, and avoid adding other calls that hold
-kernel locks for milliseconds on core 0.
+The walk reads a small table in flash (`xTaskGetNext()` keeps its list of non-ready lists in `.rodata`). A cache
+miss there costs about 1 µs, but about 260 µs while a flash erase is suspended. A chunk therefore checks under
+the lock that no flash operation is in progress and otherwise retries later; no new operation can start while
+the lock is held.
+
+The stack high-water mark in `tasks` is counted outside the lock, over the stack bounds copied in the chunk.
+`uxTaskGetStackHighWaterMark()` is not used, because it dereferences the task handle, which may already be
+stale.
+
+Do not add calls that hold the kernel lock for long on core 0: `uxTaskGetSystemState()`, `vTaskList()` and
+`vTaskGetRunTimeStats()` all scan every stack under it.
 
 ### Heap-lock contention from logging and console commands
 
@@ -273,9 +290,9 @@ Headroom is therefore five frame times, set by `conv_frame_size = ADC1_READ_LEN 
 | 128 | 64 B | ~192 µs | ~0.96 ms | ~192 µs |
 | 256 (current) | 128 B | ~0.38 ms | ~1.9 ms | ~384 µs |
 
-At 64 B frames the headroom is shorter than a `uxTaskGetSystemState()` critical section, and the DMA halts until
-`resetPeripherals()` restarts it. With more than about 13 tasks, the critical section can exceed 1.9 ms again, and the
-ADC stall watchdog then recovers the DMA. `ADC1_READ_LEN` of 384 or 512 buys more headroom at the cost of more latency.
+At 64 B frames the headroom is shorter than a 1–2 ms kernel critical section on core 0 (such as a
+`uxTaskGetSystemState()` call), and the DMA halts until `resetPeripherals()` restarts it. Above 1.9 ms the ADC stall
+watchdog recovers the DMA. `ADC1_READ_LEN` of 384 or 512 buys more headroom at the cost of more latency.
 Frame time scales inversely with `esp32adc1_sr`.
 
 ### No-sample watchdog
@@ -305,8 +322,8 @@ Each tool answers a different question about latency:
 | `tasks` | Task placement, priority, stack headroom | [Console](../../reference/console.md) |
 | Sampling profiler (`CONFIG_FUGU_WITH_SPROFILER`), SystemView, gprof | Where time goes on average | [Profiling](profiling.md) |
 
-`rt-stats` and `tasks` call `uxTaskGetSystemState()` and stall the ADC DMA for about 1–2 ms themselves. See
-[Kernel critical sections from core 0](#kernel-critical-sections-from-core-0).
+`rt-stats` and `tasks` read the task counters a few tasks at a time and print the longest loop gap seen while they
+ran. See [Kernel critical sections from core 0](#kernel-critical-sections-from-core-0).
 
 GCC's `-pg` instrumentation inserts a call to `mcount` (or `_mcount`, `__mcount`) at every function entry, and the
 target has to provide that function: the Espressif gprof component listed under [Profiling](profiling.md), or an
@@ -432,7 +449,7 @@ Check every change that touches the RT core against these rules:
   flash-resident handlers with flags `0`.
 - Install interrupts that wake the RT loop from a task on `RT_CORE`, never through `esp_ipc_call_blocking()` to the
   same core.
-- Keep flash writes rare and short. Do not poll `get-config`, `tasks` or `rt-stats` on a converter under load.
+- Keep flash writes rare and short. Do not poll `get-config` on a converter under load.
 - Put a liveness watchdog after the operation that proves liveness, never in front of it.
 - Keep heavy log formatting off small-stack system tasks.
 - Check a change with `rtcount` maxima and `lag=`, not with means.

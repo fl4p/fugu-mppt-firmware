@@ -75,6 +75,9 @@
 
 #include "etc/rt_core_check.h"
 #include "etc/flash_probe.h"
+#include "etc/heap_diag.h"
+#include "etc/net_guard.h"
+#include <ota_ble.h>
 #if WITH_RTPROF
 #include "etc/rtprof.h"
 #endif
@@ -523,6 +526,7 @@ __attribute__((cold)) void setup() {
     setupCli();
     ESP_LOGI("main", "*** %s", format_version());
     bootWatchdogArm();
+    heapDiagBegin();
     flashSuspendProbe();
 
     rtcount_test_cycle_counter();
@@ -855,6 +859,7 @@ static void loopRT(void *arg) {
 
         auto lag = nowUs - lastLoopTime;
         if (lastLoopTime && lag > g_app.maxLoopLag && !converter.disabled()) g_app.maxLoopLag = lag;
+        if (lastLoopTime && lag > g_app.cmdLoopLag) g_app.cmdLoopLag = lag;
         {
             static uint32_t fseq = 0;
             const uint32_t sq = fugu_flash_seq;
@@ -1235,6 +1240,7 @@ __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
         handleCommand("reset-lag");
     }
     mppt.rectCalLf();
+    heapDiagLf((uint32_t) wallClockMs());
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     coredumpStampIfNew();
 #endif
@@ -1391,6 +1397,50 @@ static void loopRTNewData(time_ms nowMs) {
 }
 
 
+#ifdef WITH_NETW
+// Once a second: retry Failed network services, restart a stale MQTT client, and as a last resort
+// reboot when MQTT stays down with the heap exhausted (a down broker alone never reboots).
+static void netGuardTick(bool wifiUp) {
+    static NetGuard guard;
+    static uint32_t lastMs = 0;
+    const auto nowMs = (uint32_t) wallClockMs();
+    if (nowMs - lastMs < 1000) return;
+    lastMs = nowMs;
+
+    const auto st = MQTT.state();
+    NetGuardIn in{};
+    in.nowMs = nowMs;
+    in.freeHeap = esp_get_free_heap_size();
+    // walks every block with the heap locked: only while it can matter
+    in.largest = MQTT.isConnected() ? NetGuard::kHeapUnknown
+                                    : (uint32_t) heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    in.wifiUp = wifiUp;
+    in.mqttActive = MQTT.enabled() && MQTT.configured() && st != ServiceState::Stopped;
+    in.mqttRunning = st == ServiceState::Running;
+    in.mqttConnected = MQTT.isConnected();
+    in.rebootOk = esp_timer_get_time() > 300LL * 1000000 && !flashOpActive() && !g_restartBlocked
+#ifdef WITH_BLE
+                  && !otaBleActive()
+#endif
+            ;
+    const uint8_t a = guard.step(in);
+    if (a & NG_REBOOT) {
+        ESP_LOGE("main", "mqtt down %lu s with heap %lu B (largest %lu, min %lu): restarting",
+                 (unsigned long) (guard.downMs(nowMs) / 1000), (unsigned long) in.freeHeap,
+                 (unsigned long) in.largest, (unsigned long) esp_get_minimum_free_heap_size());
+        systemRestart();
+        return;
+    }
+    if (a & NG_RESTART_MQTT) {
+        ESP_LOGW("main", "mqtt disconnected %lu s, restarting it (heap %lu B, largest %lu)",
+                 (unsigned long) (guard.downMs(nowMs) / 1000), (unsigned long) in.freeHeap,
+                 (unsigned long) in.largest);
+        MQTT.restart();
+    }
+    if (a & NG_RETRY_FAILED) g_services.retryFailedNetworkServices();
+}
+#endif
+
 // Per-tick WiFi + network-service work for loopNetwork_task. Handles auto-reenable timer, the
 // temp-gated wifiLoop, and self-healing network services on the WiFi-up edge.
 static void networkLoopTick() {
@@ -1408,6 +1458,7 @@ static void networkLoopTick() {
     // log mirror (a use-after-free). Latched so it runs once per down edge.
     static bool wifiTorndown = false;
     if (g_app.disableWifi) {
+        netGuardTick(false);
         if (!wifiTorndown) {
             g_services.stopNetworkServices();
             disconnect_wifi(true);
@@ -1431,6 +1482,7 @@ static void networkLoopTick() {
         bool wifiUp = wifiIsConnected();
         if (wifiUp && !wifiWasUp) { g_services.startEnabledNetworkServices(); psMode = -1; } // connect reset PS to MIN
         wifiWasUp = wifiUp;
+        netGuardTick(wifiUp);
 
         // Night = not converting for a while: drop to MAX_MODEM to cut standby battery draw. Back to
         // MIN_MODEM the instant PV power returns so daytime console/MQTT/OTA stay responsive.

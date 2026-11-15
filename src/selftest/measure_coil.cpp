@@ -12,6 +12,7 @@
 #include "../adc/sampling.h"
 #include "../app_state.h"
 #include "../math/asym_peak_fit.h"
+#include "coil_fit.h"
 
 // Components owned by main.cpp (same extern coupling as cli.cpp; this TU is built only with the
 // real main, never the test mains). Mode flags live in g_app (app_state.h).
@@ -19,7 +20,7 @@ extern SynchronousConverter converter;
 extern MpptController mppt;
 extern VIinVout<const Sensor *> sensors;
 
-static constexpr int MEAS_MAX_PTS = 64;
+static constexpr int MEAS_MAX_PTS = coilfit::kMaxPts;
 
 struct MeasArgs {
     bool ls;        // false = L0 duty sweep, true = LS-timing sweep
@@ -77,27 +78,26 @@ static bool measWriteConf(const char *key, const char *val) {
     return conf.add({{key, val}}, true);
 }
 
-static void sweepL0(const MeasArgs &a) {
+// returns the inductance to persist (NAN: none)
+static float sweepL0(const MeasArgs &a) {
     float fsw = (float) converter.getPwmFrequency();
     uint16_t pwmMax = converter.pwmMaxDriver();
-    uint16_t pwmCtrlMax = converter.pwmCtrlMax;
     float iMaxLim = min(2.0f, mppt.limits.Iout_max);
 
     float vin0 = sensors.Vin->ewm.avg.get(), vout0 = sensors.Vout->ewm.avg.get();
-    if (vin0 <= vout0 + 1.0f) { UART_LOG("measure-coil: need Vin>Vout+1 (Vin=%.2f Vout=%.2f)", vin0, vout0); return; }
-    float M = vout0 / vin0;
-    int steps = a.arg1 > 0 ? a.arg1 : 10;
-    if (steps > MEAS_MAX_PTS) steps = MEAS_MAX_PTS;
-    int h_lo = max(2, (int) lroundf(0.25f * M * pwmMax));
-    int h_hi = min((int) pwmCtrlMax, (int) lroundf(0.9f * M * pwmMax));
-    if (h_hi <= h_lo) { UART_LOG("measure-coil: empty duty band (%d..%d)", h_lo, h_hi); return; }
-    int step = max(1, (h_hi - h_lo) / max(1, steps - 1));
+    if (vin0 <= vout0 + 1.0f) { UART_LOG("measure-coil: need Vin>Vout+1 (Vin=%.2f Vout=%.2f)", vin0, vout0); return NAN; }
+    int steps = a.arg1 > 0 ? min(a.arg1, MEAS_MAX_PTS) : 48;
+    int h_lo, h_hi, step;
+    if (!coilfit::band(vin0, vout0, pwmMax, converter.pwmCtrlMax, steps, h_lo, h_hi, step)) {
+        UART_LOG("measure-coil: empty duty band");
+        return NAN;
+    }
 
     UART_LOG("measure-coil L0: fsw=%.0f pwmMax=%u band %d..%d step %d  Vin=%.2f Vout=%.2f M=%.3f",
-             fsw, pwmMax, h_lo, h_hi, step, vin0, vout0, M);
+             fsw, pwmMax, h_lo, h_hi, step, vin0, vout0, vout0 / vin0);
     UART_LOG("      H      D    Vin   Vout   Iout mode    L_uH");
 
-    float Ls[MEAS_MAX_PTS], Io[MEAS_MAX_PTS];
+    float d[MEAS_MAX_PTS], vi[MEAS_MAX_PTS], vo[MEAS_MAX_PTS], io[MEAS_MAX_PTS];
     int n = 0;
     float iMaxSeen = 0;
     for (int H = h_lo; H <= h_hi && n < MEAS_MAX_PTS; H += step) {
@@ -109,26 +109,29 @@ static void sweepL0(const MeasArgs &a) {
                   : (r.vin - r.vout) * r.vin * D * D / (2.0f * r.vout * fsw * r.iout);
         UART_LOG("  %5u %6.3f %6.2f %6.2f %6.3f  %3s %7.2f", r.H, D, r.vin, r.vout, r.iout,
                  r.dcm ? "DCM" : "CCM", L * 1e6f);
-        if (r.dcm && L == L) { Ls[n] = L; Io[n] = r.iout; ++n; if (r.iout > iMaxSeen) iMaxSeen = r.iout; }
+        if (r.dcm && L == L) {
+            d[n] = D, vi[n] = r.vin, vo[n] = r.vout, io[n] = r.iout;
+            ++n;
+            if (r.iout > iMaxSeen) iMaxSeen = r.iout;
+        }
         if (r.iout > iMaxLim) { UART_LOG("  Iout %.2f > %.2f; stopping", r.iout, iMaxLim); break; }
         if (!r.dcm) { UART_LOG("  entered CCM; stopping"); break; }
     }
     float ifloor = max(0.15f, 0.2f * iMaxSeen);
-    float kept[MEAS_MAX_PTS];
     int nk = 0;
-    for (int i = 0; i < n; ++i) if (Io[i] >= ifloor) kept[nk++] = Ls[i];
-    if (nk < 3) { UART_LOG("measure-coil: only %d DCM pts above %.2f A; widen band or wait for sun", nk, ifloor); return; }
-    float med = medianN(kept, nk);              // sorts kept[]
-    float q1 = kept[nk / 4], q3 = kept[(3 * nk) / 4];
-    UART_LOG("measure-coil: L = %.2f uH  (%d DCM pts, Iout>=%.2fA, IQR %.0f%%)", med * 1e6f, nk, ifloor,
-             (q3 - q1) / med * 100.0f);
-    UART_LOG("  -> coil.conf L0=%.6e   note: scales with Iout cal & pwmMax; dead-time/DCR ~few %% low", med);
-    if (a.apply) {
-        char buf[24];
-        snprintf(buf, sizeof(buf), "%.6e", med);
-        if (measWriteConf("L0", buf)) UART_LOG("  applied coil.conf L0=%s (effective next boot)", buf);
-        else UART_LOG("  measure-coil: FAILED to write coil.conf L0=%s", buf);
-    }
+    for (int i = 0; i < n; ++i)
+        if (io[i] >= ifloor) d[nk] = d[i], vi[nk] = vi[i], vo[nk] = vo[i], io[nk] = io[i], ++nk;
+    if (nk < 3) { UART_LOG("measure-coil: only %d DCM pts above %.2f A; widen band or wait for sun", nk, ifloor); return NAN; }
+    const auto f = coilfit::fit(d, vi, vo, io, nk, fsw);
+    if (f.f > 0)
+        UART_LOG("measure-coil: L = %.2f uH  (ring fit, %d DCM pts, Iout>=%.2fA, +-%.1f%%; ring %.0f kHz = %.1f nF node C,"
+                 " ripple +-%.0f%%, %.1f periods; median of points %.2f uH)", f.L * 1e6f, f.n, ifloor, f.se * 100.0f,
+                 f.f * 1e-3f, 1e9f / (39.478418f * f.f * f.f * f.L), f.amp * 100.0f, f.periods, f.Lmed * 1e6f);
+    else
+        UART_LOG("measure-coil: L = %.2f uH  (median of %d DCM pts, Iout>=%.2fA; ring not resolved: %s, expect up to +-5%%)",
+                 f.L * 1e6f, f.n, ifloor, f.n < coilfit::kMinFitPts ? "too few points" : "no periodic term");
+    UART_LOG("  -> coil.conf L0=%.6e   note: scales with Iout cal & pwmMax; dead-time/DCR ~few %% low", f.L);
+    return f.L;
 }
 
 static void sweepLs(const MeasArgs &a) {
@@ -216,7 +219,9 @@ static void sweepLs(const MeasArgs &a) {
 
 static void measureCoilTask(void *arg) {
     auto a = *(const MeasArgs *) arg;
+    if (!a.dwellMs) a.dwellMs = a.ls ? 3000 : 1000; // L0: 48 x ~1.3 s, about a minute
     auto savedMode = g_app.opMode.load();
+    float l0 = NAN;
     const float savedPsuSetpoint = mppt.getPsuSetpoint();
     const uint16_t savedManualTarget = mppt.getManualTarget();
     float savedPvIsc, savedPvVoc, savedPvK;
@@ -227,13 +232,23 @@ static void measureCoilTask(void *arg) {
     } else if (!sensors.Vin || !sensors.Vout || !sensors.Iout) {
         UART_LOG("measure-coil: missing Vin/Vout/Iout sensor");
     } else {
-        if (a.ls) sweepLs(a); else sweepL0(a);
+        if (a.ls) sweepLs(a); else l0 = sweepL0(a);
     }
     converter.setManualRect(-1);
     mppt.setManualTarget(0); // RT core ramps down and disables (avoids cross-core LEDC race)
-    time_ms doneDeadline = wallClockMs() + 2000;
+    // pwmMax/512 counts per sample: ~0.4 s from the top of the band at 450 sps, longer on a slow sampler
+    time_ms doneDeadline = wallClockMs() + 10000;
     while (!converter.disabled() && wallClockMs() < doneDeadline)
         vTaskDelay(pdMS_TO_TICKS(10));
+    const bool off = converter.disabled();
+    if (!off) UART_LOG("measure-coil: converter still on after the ramp-down");
+    if (a.apply && l0 == l0 && !off) UART_LOG("  measure-coil: L0 not applied (converter still on)");
+    else if (a.apply && l0 == l0) { // flash write with the converter off (it stalls the RT loop)
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%.6e", l0);
+        if (measWriteConf("L0", buf)) UART_LOG("  applied coil.conf L0=%s (effective next boot)", buf);
+        else UART_LOG("  measure-coil: FAILED to write coil.conf L0=%s", buf);
+    }
     if (savedMode == OpMode::Psu) {
         // rebase=false: don't let a restore of a scaled curve become the `pv scale` reference
         const auto ticket = savedPvActive
@@ -247,7 +262,10 @@ static void measureCoilTask(void *arg) {
         const auto ticket = mppt.requestPsuManual(savedManualTarget, -1);
         if (!waitPsuCommand(ticket)) UART_LOG("measure-coil: manual mode restore failed");
     } else {
-        const auto ticket = mppt.requestPsuOff();
+        // converter off: MPPT restarts through the normal start conditions (global sweep). Still on (the
+        // ramp-down stalled): a sweep request disables it on the RT core and re-acquires the MPP, instead
+        // of handing P&O a low duty with a stale tracker.
+        const auto ticket = off ? mppt.requestPsuOff() : mppt.requestPsuSweep();
         if (!waitPsuCommand(ticket)) UART_LOG("measure-coil: MPPT mode restore failed");
     }
     s_measureBusy.store(false);

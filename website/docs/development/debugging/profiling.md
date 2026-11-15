@@ -15,9 +15,11 @@ You can profile the ESP32 with instrumented or sampling methods. The main option
   * Tracealyzer (Percepio) is commercial. It consumes the SystemView protocol and has a nicer UI. It uses the same data
     path as SystemView.
 * GDB sampling uses openocd and `xtensa-esp32-elf-gdb`, with a periodic `bt` as a poor-man's sampling profiler.
-* FreeRTOS runtime stats come from `vTaskGetRunTimeStats()` and `uxTaskGetSystemState()`. They need
-  `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y` and `CONFIG_FREERTOS_USE_TRACE_FACILITY=y`, but no hardware. The `rt-stats`
-  command wraps these.
+* FreeRTOS runtime stats come from the per-task run-time counters (`vTaskGetRunTimeStats()`, `uxTaskGetSystemState()`,
+  `vTaskGetInfo()`). They need `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y` and `CONFIG_FREERTOS_USE_TRACE_FACILITY=y`,
+  but no hardware. The `rt-stats` command reads them a few tasks at a time with `vTaskGetInfo()`, because the other two
+  hold the kernel lock for milliseconds (see
+  [Kernel critical sections from core 0](real-time-latency.md#kernel-critical-sections-from-core-0)).
 * esp32-semihosting-profiler is integrated into this firmware (`WITH_SPROFILER`) and uses xtensa perfmon.
 
 ## Profiling tools in this firmware
@@ -25,8 +27,9 @@ You can profile the ESP32 with instrumented or sampling methods. The main option
 The firmware has three built-in profiling tools:
 
 * sprofiler (sampling), described in [esp32-semihosting-profiler](#esp32-semihosting-profiler).
-* rt-stats (sampling), in `src/etc/perf.h` and `src/cli.cpp:292`. The console command `rt-stats` spawns a one-shot task
-  that samples FreeRTOS runtime stats over ~2 s and prints CPU% per task per core. Use it to check whether the RT loop is
+* rt-stats (sampling), in `src/etc/perf.h` and `src/cli.cpp`. The console command `rt-stats` samples the FreeRTOS
+  run-time counters over ~2 s in the console task and prints CPU% per task per core, then the longest control-loop
+  gap seen meanwhile. Use it to check whether the RT loop is
   being preempted, or which task is using most of core 0.
 * rtcount (per-section instrumentation). Wrap any RT path with `rtcount("name")`. It uses the xtensa cycle counter to
   accumulate count, min, max, and total per label. Calls exist in `mppt.cpp`, `sampling.h`, and `main.cpp`.

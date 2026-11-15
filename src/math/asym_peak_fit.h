@@ -42,3 +42,64 @@ inline bool asymPeakFit(const float *xs, const float *ys, int n, float &x0Out, d
     }
     return bestSse < INFINITY;
 }
+
+// Least-squares knee over ascending xs: y = c0 + c1*d + c2*min(0,d)^2 + c3*max(0,d)^2, d = (x - x0) / span,
+// c2 <= 0 (left side straight or bending down, as the body-diode loss does), c3 < c2 (the curve bends down
+// at x0). x0 is grid-searched with >= 3 points left and >= 2 right of it. The line takes any baseline
+// slope, so x0 is the onset of the bend. Out: x0, drop = (c2 - c3) * d(xs[n-1])^2 (bend at the last point),
+// rms residual. Written only on success.
+inline bool kneeFit(const float *xs, const float *ys, int n, float &x0Out, float &dropOut, float &rmsOut) {
+    if (n < 6) return false;
+    const double span = (double) xs[n - 1] - xs[0];
+    if (!(span > 0)) return false;
+    double best = INFINITY;
+    constexpr int GRID = 400;
+    for (int g = 0; g <= GRID; ++g) {
+        const double x0 = xs[2] + ((double) xs[n - 2] - xs[2]) * g / GRID;
+        int nr = 0;
+        for (int i = 0; i < n; ++i) nr += xs[i] > x0;
+        if (nr < 2 || n - nr < 3) continue;
+        double c[4] = {};
+        for (int m = 4; m >= 3; --m) { // m = 3: c2 = 0 (constraint active)
+            double A[4][5] = {};
+            for (int i = 0; i < n; ++i) {
+                const double d = (xs[i] - x0) / span, f[4] = {1, d, d < 0 ? d * d : 0, d > 0 ? d * d : 0};
+                const double fm[4] = {f[0], f[1], m == 4 ? f[2] : f[3], f[3]};
+                for (int j = 0; j < m; ++j) {
+                    for (int k = 0; k < m; ++k) A[j][k] += fm[j] * fm[k];
+                    A[j][m] += fm[j] * ys[i];
+                }
+            }
+            bool ok = true;
+            for (int i = 0; i < m && ok; ++i) { // Gauss-Jordan
+                const double p = A[i][i];
+                if (std::fabs(p) < 1e-12) { ok = false; break; }
+                for (int j = 0; j <= m; ++j) A[i][j] /= p;
+                for (int k = 0; k < m; ++k)
+                    if (k != i) {
+                        const double f = A[k][i];
+                        for (int j = 0; j <= m; ++j) A[k][j] -= f * A[i][j];
+                    }
+            }
+            if (!ok) break;
+            if (m == 4) { c[0] = A[0][4]; c[1] = A[1][4]; c[2] = A[2][4]; c[3] = A[3][4]; }
+            else { c[0] = A[0][3]; c[1] = A[1][3]; c[2] = 0; c[3] = A[2][3]; }
+            if (c[2] <= 0) break;
+        }
+        if (!(c[2] <= 0 && c[3] < c[2])) continue;
+        double sse = 0;
+        for (int i = 0; i < n; ++i) {
+            const double d = (xs[i] - x0) / span;
+            const double e = ys[i] - (c[0] + c[1] * d + (d < 0 ? c[2] : c[3]) * d * d);
+            sse += e * e;
+        }
+        if (sse < best) {
+            best = sse;
+            const double dl = (xs[n - 1] - x0) / span;
+            x0Out = (float) x0;
+            dropOut = (float) ((c[2] - c[3]) * dl * dl);
+            rmsOut = (float) std::sqrt(sse / (n - 4));
+        }
+    }
+    return best < INFINITY;
+}

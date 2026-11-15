@@ -38,7 +38,10 @@ protected:
 #ifdef WITH_TELE_BINARY
         g_symtab.forceResend();
 #endif
-        xTaskCreatePinnedToCore(flushTask, "teleflush", 4096, this, 1, &_flushTask, 0);
+        if (xTaskCreatePinnedToCore(flushTask, "teleflush", 4096, this, 1, &_flushTask, 0) != pdPASS) {
+            _flushTask = nullptr;
+            return false;
+        }
         g_teleUdpActive = true;
         return true;
     }
