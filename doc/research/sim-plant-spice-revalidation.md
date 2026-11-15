@@ -491,8 +491,8 @@ wx-cloud-cv-ripple +0.4..+1.0 pp on every plant. Negative means, none of them fl
 | flat, measured | wx-low | 18 | −0.09 | −1.1 | +1.0 | 7 |
 | fry-hq, Gaussian | wx-low | 9 | −0.09 | −2.6 | +1.7 | 4 |
 
-wx-wob-flat with wander noise has 3 offsets of an overlapping capture; it is the case to re-run with more offsets
-before calling it either way.
+wx-wob-flat with wander noise had 3 offsets; at 10 offsets (below) it is −0.11 pp (−1.3..+0.9, 5 of 10 worse,
+standard error 0.24), within the spread.
 
 **main vs pre, paired.** Main is better on every scenario of section 3 and on wx-sun and wx-ramp, but **worse on
 wx-wob on both boards** (0.5 % irradiance wobble at 0.2 Hz):
@@ -501,14 +501,60 @@ wx-wob on both boards** (0.5 % irradiance wobble at 0.2 Hz):
 |---|--:|--:|--:|--:|--:|--:|
 | fry, noise-free | 1 | 99.7 | 95.6 | 96.0 | −3.7 | 1 / 1 |
 | fry, measured | 9 | 99.31 | 98.10 | 98.44 | −0.87 (−2.3) | 6 / 9 |
-| fry, wander | 3 | 99.23 | 98.27 | 98.67 | −0.57 (−1.1) | 2 / 3 |
+| fry, wander | 10 | 99.48 | 98.29 | 98.88 | −0.60 (−2.2) | 8 / 10 |
 | flat, noise-free | 1 | 99.5 | 95.4 | 96.6 | −2.9 | 1 / 1 |
 | flat, measured | 9 | 99.17 | 98.14 | 98.04 | −1.12 (−2.2) | 9 / 9 |
-| flat, wander | 3 | 99.10 | 98.83 | 98.00 | −1.10 (−1.7) | 3 / 3 |
+| flat, wander | 10 | 99.36 | 98.54 | 98.43 | −0.93 (−1.7) | 8 / 10 |
 
 The loss is already present at 738cc16, so it comes from the tracker commits between pre and 738cc16 (de37d33 …
-738cc16), not from main's later changes, which recover part of it on fry. The intermediate variants were not run on
-wx-wob, so which commit it is remains open.
+738cc16), not from main's later changes, which recover part of it. It is 9e1dd13 (next section).
+
+### wx-wob regression: 9e1dd13 (settle window)
+
+All seven tracker states on the 000eeac plant, wx-wob-fry and wx-wob-flat, pgx93 only: noise-free, measured noise at
+offsets 0-16 s (step 2) and wander noise at the same 9 offsets (10 for pre, 738cc16 and main, which also have 13 s).
+Harvest % of GMPP, and the paired step across each commit (mean, worst..best, pairs worse by > 0.1 pp):
+
+| board, noise | pre | +de37d33 | +ed5ffe5 | +9e1dd13 | +8b68511 | 738cc16 | main | 9e1dd13 step |
+|---|--:|--:|--:|--:|--:|--:|--:|---|
+| fry, noise-free | 99.7 | 99.7 | 99.8 | 95.6 | 95.6 | 95.6 | 96.0 | −4.2 |
+| fry, measured (9) | 99.31 | 99.31 | 99.64 | 98.10 | 98.10 | 98.10 | 98.44 | −1.54 (−3.3..−0.5), 9 / 9 |
+| fry, wander (9-10) | 99.48 | 99.53 | 99.62 | 98.23 | 98.23 | 98.29 | 98.88 | −1.39 (−3.3..+0.2), 6 / 9 |
+| flat, noise-free | 99.5 | 99.5 | 99.7 | 95.4 | 95.4 | 95.4 | 96.6 | −4.3 |
+| flat, measured (9) | 99.17 | 99.17 | 99.83 | 98.14 | 98.14 | 98.14 | 98.04 | −1.69 (−2.9..−0.6), 9 / 9 |
+| flat, wander (9-10) | 99.36 | 99.30 | 99.76 | 98.44 | 98.44 | 98.54 | 98.43 | −1.31 (−2.3..−0.5), 9 / 9 |
+
+de37d33 changes nothing here, ed5ffe5 gains 0.1-0.7 pp, 8b68511 and 738cc16 change nothing (738cc16's wander mean
+moves only by its extra 13 s offset), and main recovers 0.4-1.2 pp noise-free but is still 3-4 pp below ed5ffe5. The
+whole loss is in the 9e1dd13 step, on every pair of both boards with measured noise.
+
+**Mechanism** (noise-free runs, harness-only instrumentation that replicates the window rule from the tracker's public
+state; tracker code unchanged):
+
+| | fry +ed5ffe5 | fry +9e1dd13 | flat +ed5ffe5 | flat +9e1dd13 |
+|---|--:|--:|--:|--:|
+| tracking loss | 0.15 % | 4.43 % | 0.32 % | 4.64 % |
+| reversals/min | 35.1 | 23.2 | 32.2 | 23.8 |
+| filter settle time (`powerSettleMs`) | 150 ms fixed | 13 ms | 150 ms fixed | 5 ms |
+| settle windows, mean length | 455, 150 ms | 265, 580 ms | 417, 150 ms | 225, 642 ms |
+| windows that hit the 1 s cap | 0 | 129 (49 %) | 0 | 113 (50 %) |
+| share of Vin-up legs in the window | 8.3 % | 22.8 % | 8.0 % | 21.4 % |
+| share of Vin-down legs in the window | 9.3 % | 12.0 % | 8.0 % | 9.2 % |
+| mean Vin-up / Vin-down leg | 2.13 / 1.81 s | 4.45 / 1.50 s | 2.44 / 1.86 s | 3.88 / 1.94 s |
+| time on Vin-up / Vin-down legs | 411 / 369 s | 556 / 224 s | 388 / 392 s | 597 / 183 s |
+| mean Vin while tracking | 63.66 V | 67.15 V | 55.52 V | 58.69 V |
+| duty mean, p-p (counts) | 844, 57 | 774, 161 | 842, 95 | 763, 241 |
+| slow mode, share of time | 92.3 % | 90.6 % | 92.3 % | 85.4 % |
+| re-sweeps, wrong-peak time | 0, 0 s | 0, 0 s | 0, 0 s | 0, 0 s |
+
+On these board plants the filter settles in 5-13 ms, so 9e1dd13's window is held open almost entirely by its second
+condition, "Vin not yet back past the reversal voltage". The 0.2 Hz wobble moves Vin by more than one tracker step
+does (Vin p-p 3.7-4.2 V at ed5ffe5), so after half the reversals Vin does not come back within the window and it runs
+to the 1 s cap, with the reference following the power. The blind time falls mostly on legs toward higher Vin (Vin-up
+legs 22.8 % blind against 12.0 % for Vin-down on fry), those legs last 2-3 times longer, and the operating point drifts
+3.2-3.5 V above the MPP side where ed5ffe5 sits (duty 70-80 counts lower, duty p-p ×2.5-2.8). There are no
+re-sweeps, no wrong-peak time and no limiter time; slow mode is on about as often. The whole loss is tracking loss.
+Steady sun without wobble (wx-sun-fry) also reaches the cap (35 of 103 windows) but loses nothing there (99.4 → 99.5 %).
 
 #### Steady-sun scenarios (harvest % of GMPP)
 
