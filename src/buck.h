@@ -119,7 +119,7 @@ class SynchronousConverter {
     float pwmRectRatioDCM = 0; // t_onRect/t_onCtrl when in DCM
     float rectDitherErr = 0; // carried LS-count rounding remainder (DCM error-feedback dither)
     int16_t rectOnOffset = 0; // DCM LS-count dead-time/gate-delay offset (counts; >0 = LS off later, toward zero crossing)
-    bool rectCalNeeded = false; // rect_offset not calibrated on the active driver
+    uint8_t rectCalLevel = 1; // coil.conf rect_offset_cal on the active driver: 0 uncalibrated, 1 measured, 2 bound
     std::atomic<uint8_t> lsClampCount{0}; // bumped by syncRectMinDuty() and disable() (also core 0)
     std::atomic<uint16_t> enables{0};      // bumped by each start in pwmPerturb()
     std::atomic<bool> startInhibit{false}; // pwmPerturb() does not start the converter
@@ -1064,8 +1064,10 @@ public:
     void setRectOnOffset(int o) { rectOnOffset = (int16_t) o; } // DCM LS dead-time offset, counts
 
     [[nodiscard]] const char *drvName() const { return driverName; }
-    [[nodiscard]] bool rectOffsetNeedsCal() const { return rectCalNeeded; }
-    void setRectOffsetNeedsCal(bool v) { rectCalNeeded = v; }
+    [[nodiscard]] bool rectOffsetNeedsCal() const { return !rectCalLevel; }
+    void setRectOffsetNeedsCal(bool v) { rectCalLevel = !v; }
+    [[nodiscard]] uint8_t rectOffsetCal() const { return rectCalLevel; }
+    void setRectOffsetCal(uint8_t v) { rectCalLevel = v; }
     [[nodiscard]] uint8_t lsClamps() const { return lsClampCount.load(std::memory_order_relaxed); }
     [[nodiscard]] uint16_t enableCount() const { return enables.load(std::memory_order_acquire); }
     [[nodiscard]] bool startInhibited() const { return startInhibit.load(std::memory_order_acquire); }
@@ -1092,7 +1094,7 @@ public:
     void logConfig() const {
         ESP_LOGI("converter", "Coil L0=%.1f µH rect_offset=%.0f ns (%d ct, %s)",
                  coilL0 * 1e6f, rectOffsetNsFromCounts(rectOnOffset, getPwmTickRate()), rectOnOffset,
-                 rectCalNeeded ? "uncalibrated" : driverName);
+                 !rectCalLevel ? "uncalibrated" : rectCalLevel == 2 ? "bound" : driverName);
     }
 
     [[nodiscard]] float voltageRatio() const { return outInVoltageRatio; } // M
@@ -1271,7 +1273,8 @@ public:
         if (!drvOk && offNs != 0.f)
             ESP_LOGW("converter", "rect_offset_ns=%.0f was measured on driver '%s', not %s: using 0, needs rect-cal",
                      offNs, offDrv.c_str(), driverName);
-        rectCalNeeded = !drvOk || !coilConf.getByte("rect_offset_cal", 1);
+        const uint8_t lv = coilConf.getByte("rect_offset_cal", 1);
+        rectCalLevel = drvOk ? (lv == 2 ? 2 : lv ? 1 : 0) : 0;
         rectOnOffset = drvOk ? (int16_t) rectOffsetCountsFromNs(offNs, getPwmTickRate()) : 0;
         logConfig();
     }

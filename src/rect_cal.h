@@ -23,7 +23,8 @@
  * current). Past the bend the switch-node ring makes the curve non-monotonic, so the sweep stops one
  * step after the first clear drop (if that step is back up, the drop is measured again: an outlier
  * is replaced, a ring dip stays) and then fills the four coarse intervals before the drop with Fine
- * points; the fit ends at the floor of the first dip. The LS never exceeds ideal + lateMax, nor
+ * points; the fit ends at the floor of the first dip, which can put the knee late on a partial recovery:
+ * such a result gets the larger margin floor DipMarginNs. The LS never exceeds ideal + lateMax, nor
  * CcmFrac of the off-time limit (1 - Vo/Vi) of the period, beyond which the reverse current no longer
  * returns to zero within a period. Each step is
  * measured against a reference LS (0.6x ideal) sampled before and after it, which cancels linear
@@ -32,13 +33,15 @@
  * bus voltage change does not read as a current step. Vin of a reference stays within StiffV of Init (panel
  * stiffness), Vout within VoutDrift (a shared battery bus moves); a step's voltages must lie on
  * the line through its two references within JumpV/JumpVo, which rejects a voltage step that the model
- * scaling cannot fully remove; a step that fails is measured again (MaxRetry). A Vout reading high on
- * both tries at one LS follows the LS, not the bus: it is taken with its references' Vout. Vin may rise above
+ * scaling cannot fully remove; a step that fails is measured again (MaxRetry). Vin may rise above
  * that by what the step's own measured (unscaled) current drop explains on a panel below its MPP
- * (SpvMax). The fit
- * places the zero crossing where the current bends down, independent of a sloped baseline.
+ * (SpvMax). A sense path that follows the LS window ends the run: a Vout reading off its references by
+ * the same amount on both tries at one LS, or an Iout reading that rises by more than IoutLs (+ IoutLsA
+ * per A) before the ideal count (the diode-to-channel gain is a few mA, reverse current only lowers it).
+ * The fit places the zero crossing where the current bends down, independent of a sloped baseline.
  * learned = peak - ideal (counts) is the net timing error of driver, gate and sensing, plus the time the
- * reverse current needs to lift the node to Vin when Vin > 2 Vout: a positive result is applied as 0.
+ * reverse current needs to lift the node to Vin when Vin > 2 Vout: a positive result is a bound
+ * (clamped), not a measurement.
  *
  * Ownership: the RT core writes the payload in start()/refuse() (from Idle) and during Run, core 0
  * in Fit. Each hand-off is a release store of `state`; the other side reads it with acquire before
@@ -55,6 +58,7 @@ public:
     static constexpr float LsLo = 0.5f, LsHi = 1.4f, LsRef = 0.6f, HsFrac = 0.55f;
     static constexpr float PlausibleNs = 2500.f; // |learned| above this is rejected (400 ct at 160 MHz)
     static constexpr float MinMarginNs = 125.f;  // applied margin floor (20 ct at 160 MHz)
+    static constexpr float DipMarginNs = 250.f;  // same when the fit ended at a dip floor (40 ct)
     static constexpr float StiffV = 0.02f;       // max Vin deviation from Init (fraction)
     static constexpr float VoutDrift = 0.05f;    // max Vout deviation from Init (fraction)
     static constexpr float JumpV = 0.003f;       // max step Vin off its references' mean (fraction)
@@ -66,19 +70,21 @@ public:
     static constexpr float KneeDrop = 0.02f, StepDrop = 0.01f;
     static constexpr float CcmFrac = 0.9f; // LS cap: this fraction of the off-time volt-second limit (1 - Vo/Vi)
     static constexpr float SettleI = 0.02f;      // Init windows agree: |dI| <= SettleI A + SettleI * I
-    static constexpr float VoutLs = 0.01f;       // max Vout reading offset that follows the LS (see feed())
+    static constexpr float IoutLs = 0.02f, IoutLsA = 0.004f; // max Iout rise before ideal: A + per A of Init current
 
     std::atomic<uint8_t> state{Idle};
     const char *why = ""; // failure reason
     uint16_t hs = 0;      // 0 after a refused start
     uint8_t n = 0, seq = 0; // seq: counts starts and refusals
     int16_t learned = 0, applied = 0;
-    bool clamped = false; // the fit asked for a positive offset, applied 0
+    bool clamped = false; // the fit asked for a positive offset: a bound, applied as min(0, active offset)
+    bool cut = false;     // the fit ended at the floor of a dip
     float ideal = 0, peak = 0; // peak: fitted LS count of the zero crossing (knee)
     float dv = 0; // largest relative Vin/Vout deviation from Init
+    float rise = 0, iLs = 0; // Iout rise before ideal on two points in a row, its bound (A)
     float xs[MaxPts]{}, ys[MaxPts]{}; // fit() sorts them by LS
     int8_t jvi[MaxPts]{}, jvo[MaxPts]{}; // step Vin/Vout off its references' mean (0.01 %)
-    uint8_t retries = 0, voLs = 0; // voLs: steps taken with their references' Vout (Vout reading follows the LS)
+    uint8_t retries = 0;
     // last voltage check: deviation (fraction), Vin allowance (fraction), reference (V), LS count
     float jdi = 0, jdo = 0, jallow = 0, jrefVi = 0, jrefVo = 0;
     uint16_t jls = 0;
@@ -105,8 +111,8 @@ public:
     // lateMax: farthest LS past ideal the sweep may go (counts, the plausible |learned|)
     void start(uint32_t nowUs, uint16_t hs_, uint16_t lsMin_, uint16_t lsCap_, uint16_t lateMax_ = 400) {
         hs = hs_; lsMin = lsMin_; lsCap = lsCap_; lateMax = lateMax_; fine = false; drops = 0; kf = 0;
-        n = 0; k = 0; ideal = peak = dv = 0; ymax = -INFINITY; learned = applied = 0; clamped = false; why = "";
-        retries = voLs = 0; jdi = jdo = jallow = jrefVi = jrefVo = voHi = 0; jls = 0;
+        n = 0; k = 0; ideal = peak = dv = rise = iLs = 0; ymax = -INFINITY; learned = applied = 0; clamped = cut = false; why = "";
+        retries = 0; jdi = jdo = jallow = jrefVi = jrefVo = voHi = 0; jls = 0;
         phase = Init; ls = lsMin; prevOk = false;
         t0 = tPh = nowUs;
         clearAcc();
@@ -165,7 +171,7 @@ public:
                 return ls;
             }
             if (!(i > 0.15f)) return fail("low I");
-            vi0 = vi; vo0 = vo;
+            vi0 = vi; vo0 = vo; iLs = IoutLs + IoutLsA * i;
             g0 = dcmShape(vi, vo);
             ideal = (vi / vo - 1.f) * (float) hs;
             // past (1 - Vo/Vi) of the period the reverse current cannot return to zero before HS turns on:
@@ -199,36 +205,34 @@ public:
             jrefVi = 0.5f * (refVi + vi); jrefVo = 0.5f * (refVo + vo); jls = ls_;
             jdi = measVi / jrefVi - 1.f; jdo = measVo / jrefVo - 1.f;
             jallow = JumpV + (dRaw > 0 && mid > 0.1f ? SpvMax * dRaw / mid : 0.f);
-            const bool viOk = jdi >= -JumpV && jdi <= jallow;
-            // Vout read high at this LS twice: a reading that follows the LS window (switching noise in the sense
-            // path), the bus does not. Scaled with the references' Vout, which reads the current lower (safe side).
-            const bool voRep = viOk && jdo > JumpVo && jdo <= VoutLs && std::fabs(jdo - voHi) <= JumpVo;
+            const bool viOk = jdi >= -JumpV && jdi <= jallow, voOff = std::fabs(jdo) > JumpVo;
+            // Vout off by the same amount on both tries at this LS: the reading follows the LS window (the bus
+            // does not), and so may the Iout reading of the same sense path
+            if (viOk && voOff && jdo * voHi > 0 && std::fabs(jdo - voHi) <= JumpVo) return fail("sense follows LS");
             voHi = 0;
-            if (!(viOk && (voRep || std::fabs(jdo) <= JumpVo))) {
+            if (!viOk || voOff) {
                 if (retries >= MaxRetry) return fail("V step");
                 ++retries; redo = true;
-                if (viOk && jdo > JumpVo) voHi = jdo;
+                if (viOk) voHi = jdo;
             } else {
-                float yy = y, xx = measX;
-                if (voRep) {
-                    yy = measRaw * g0 / dcmShape(measVi, jrefVo) - mid;
-                    xx = (float) ls_ - ((measVi / jrefVo - 1.f) * (float) hs - ideal);
-                    --retries; ++voLs;
-                }
-                const bool low = yy <= ymax - 0.5f * KneeDrop;
+                const bool low = y <= ymax - 0.5f * KneeDrop;
                 bool go = false;
                 if (drops == 2) {
                     // the drop measured again: still low (a ring dip): the lower value, else it was an outlier
                     const int d = n - 2;
-                    if (low) ys[d] = std::min(ys[d], yy);
-                    else xs[d] = xx, ys[d] = yy, jvi[d] = pct100(jdi), jvo[d] = pct100(jdo), ymax = std::max(ymax, yy);
+                    if (low) ys[d] = std::min(ys[d], y);
+                    else xs[d] = measX, ys[d] = y, jvi[d] = pct100(jdi), jvo[d] = pct100(jdo), ymax = std::max(ymax, y);
                     go = low; drops = 0;
                 } else {
-                    xs[n] = xx; ys[n] = yy;
+                    xs[n] = measX; ys[n] = y;
                     jvi[n] = pct100(jdi); jvo[n] = pct100(jdo);
                     ++n;
-                    const bool down = n > 1 && yy <= std::min(ys[n - 2] - StepDrop, ymax - KneeDrop);
-                    ymax = std::max(ymax, yy);
+                    // a reading that climbs before the ideal count on two points in a row
+                    if (!fine && n > 3 && measX <= ideal
+                        && (rise = std::max(rise, std::min(y, ys[n - 2]) - std::max(ys[0], ys[1]))) > iLs)
+                        return fail("Iout follows LS");
+                    const bool down = n > 1 && y <= std::min(ys[n - 2] - StepDrop, ymax - KneeDrop);
+                    ymax = std::max(ymax, y);
                     if (meas < -0.05f) return finish();
                     if (!fine) {
                         if (!drops) drops = down, lsD = ls_;
@@ -275,9 +279,9 @@ public:
         // highest and one rises StepDrop above the lowest since, the fit ends at that lowest point (the dip floor
         // after it is no quadratic: it pulled the knee early)
         int m = 1, low = 0, at = 0;
-        bool dip = false;
+        bool dip = cut = false;
         for (float hi = ys[0], lo = ys[0]; m < n; ++m) {
-            if (dip && ys[m] > lo + StepDrop) { m = at + 1; break; }
+            if (dip && ys[m] > lo + StepDrop) { m = at + 1; cut = true; break; }
             low = ys[m] <= hi - 0.5f * KneeDrop ? low + 1 : 0;
             dip |= low >= 2;
             if (ys[m] > hi) hi = lo = ys[m], dip = false;
@@ -293,10 +297,12 @@ public:
             fail(e);
             return false;
         }
-        const float l = x0 - ideal, a = l - std::max((float) pwmCountsFromNs(MinMarginNs, tickRate), 0.3f * std::fabs(l));
+        const float l = x0 - ideal;
+        const float a = l - std::max((float) pwmCountsFromNs(cut ? DipMarginNs : MinMarginNs, tickRate), 0.3f * std::fabs(l));
         learned = (int16_t) std::lround(l);
         // the knee is the onset of loss: past Vin = 2 Vout the reverse current first lifts the node to Vin, which
-        // puts the knee after the zero crossing, by a lag the node capacitance sets. Never later than the ideal.
+        // puts the knee after the zero crossing, by a lag the node capacitance sets. Never later than the ideal:
+        // a positive result only bounds the offset (lf() applies min(0, active)).
         clamped = a > 0;
         applied = clamped ? 0 : (int16_t) std::lround(a);
         peak = x0;
@@ -319,7 +325,7 @@ private:
     bool prevOk = false; // Init: a previous window is stored
     float si = 0, sv = 0, so = 0, refPrev = 0, meas = 0, measX = 0, ymax = 0, vi0 = 0, vo0 = 0, g0 = 0;
     float refVi = 0, refVo = 0, measVi = 0, measVo = 0, rawPrev = 0, measRaw = 0; // raw: unscaled current
-    float voHi = 0; // Vout offset of the last attempt at this LS, if it failed high only
+    float voHi = 0; // Vout offset of the last attempt at this LS, if only Vout failed
 
     void clearAcc() { si = sv = so = 0; ns = 0; }
 
@@ -418,7 +424,7 @@ template<class Conv>
 class RectCalCtl {
 public:
     static constexpr uint32_t StartupUs = 2000000; // backstop disarmed after converter start
-    static constexpr uint32_t BootDelayS = 600, RetryS = 600, DayS = 24 * 3600;
+    static constexpr uint32_t BootDelayS = 600, RetryS = 600, DayS = 24 * 3600, BoundRetryS = 7 * DayS;
     static constexpr uint32_t IdleUs = 10000000, LockMaxUs = 8000000; // persist lock: off time, grant limit
     enum : uint8_t { Idle, Req, Granted, Admitted, Expired };
     static constexpr uint32_t SaveRetryS = 60, SaveMinS = 600;
@@ -428,7 +434,7 @@ public:
 
     RectCal cal{};
     bool autoRun = true; // coil.conf rect_cal_auto
-    bool (*persist)(int counts, bool calibrated) = nullptr; // core 0, writes coil.conf
+    bool (*persist)(int counts, uint8_t cal) = nullptr; // core 0, writes coil.conf (cal: rect_offset_cal)
     std::atomic<bool> startReq{false}, abortReq{false}, forceReq{false};
     std::atomic<uint16_t> fires{0};    // backstop triggers that shrank the offset
 
@@ -457,7 +463,7 @@ public:
     template<class Wait>
     void saveNow(const Conv &c, uint32_t nowS, Wait &&wait) {
         for (int i = 0; i < 10 && c.disabled() && saveRequested(); ++i) wait();
-        trySave(nowS);
+        trySave(c, nowS);
         cancelSave();
     }
 
@@ -468,16 +474,17 @@ public:
     }
 
     // core 0: write the RT-published pair if RT granted the lock. RT cannot revoke the admitted write.
-    void trySave(uint32_t nowS) {
+    // A calibrated value keeps the converter's measured/bound state (set on core 0 with its post()).
+    void trySave(const Conv &c, uint32_t nowS) {
         uint8_t s = Granted;
         if (!lk.compare_exchange_strong(s, Admitted, std::memory_order_acq_rel)) return;
         const uint32_t a = act.load(std::memory_order_acquire);
         const int o = (int16_t) (a & 0xffff);
-        const bool cl = a & CalBit;
+        const uint8_t cl = a & CalBit ? std::max<uint8_t>(1, c.rectOffsetCal()) : 0;
         const bool ok = persist && persist(o, cl);
         lk.store(Idle, std::memory_order_release);
         if (ok) {
-            ESP_LOGI("rectcal", "saved rect_offset %d ct%s", o, cl ? "" : " (uncalibrated)");
+            ESP_LOGI("rectcal", "saved rect_offset %d ct%s", o, cl == 1 ? "" : cl ? " (bound)" : " (uncalibrated)");
             dirty = false;
             confirms = 0;
             saveAt = nowS + SaveMinS;
@@ -565,17 +572,24 @@ public:
     }
 
     // core 0, periodic: fit, apply, log, deferred save, auto schedule. nowS: seconds since boot,
-    // pOut: output power (W).
-    void lf(Conv &c, uint32_t nowS, float pOut) {
+    // pOut: output power (W), vr: Vin/Vout.
+    void lf(Conv &c, uint32_t nowS, float pOut, float vr = 0) {
         const float tr = c.getPwmTickRate();
         if (cal.get() == RectCal::Fit && cal.fit(tr)) {
+            // a clamped fit is a bound: the active offset if shorter, else 0; a measured shorter one stays measured
+            const int o = offset();
+            const bool keep = cal.clamped && o < 0 && activeCalibrated() && c.rectOffsetCal() == 1;
+            if (cal.clamped) cal.applied = (int16_t) std::min(0, o), nextAuto = nowS + BoundRetryS;
             ESP_LOGI("rectcal", "done: hs=%u ideal=%.0f peak=%.0f learned=%+d ct, applied %+d ct%s (%.0f ns, %s, %u pts)",
-                     cal.hs, cal.ideal, cal.peak, cal.learned, cal.applied, cal.clamped ? " (clamped)" : "",
+                     cal.hs, cal.ideal, cal.peak, cal.learned, cal.applied,
+                     keep ? " (bound, measured offset kept)" : cal.clamped ? " (bound)" : "",
                      rectOffsetNsFromCounts(cal.applied, tr), c.drvName(), cal.n);
-            post(cal.applied, true, seenFires);
-            c.setRectOffsetNeedsCal(false);
-            dirty = true;
-            confirms = 0;
+            if (!keep) {
+                post(cal.applied, true, seenFires);
+                c.setRectOffsetCal(cal.clamped ? 2 : 1);
+                dirty = true;
+                confirms = 0;
+            }
         }
         const uint8_t s = cal.get();
         if ((s == RectCal::Done || s == RectCal::Fail) && cal.seq != seenSeq) {
@@ -612,13 +626,16 @@ public:
         } else if (!want) {
             cancelSave();
         }
-        trySave(nowS);
+        trySave(c, nowS);
 
         const bool steady = pOut > IdleW && std::fabs(pOut - pPrev) < 0.1f * pOut;
         pPrev = pOut;
-        if (autoRun && c.rectOffsetNeedsCal() && steady && (int32_t) (nowS - nextAuto) >= 0 && requestStart()) {
+        // a bound (knee at or past ideal, as the node lift puts it above Vin = 2 Vout) is retried only below that
+        const uint8_t lv = c.rectOffsetCal();
+        if (autoRun && (!lv || (lv == 2 && vr > 0 && vr < 2.f)) && steady && (int32_t) (nowS - nextAuto) >= 0
+            && requestStart()) {
             nextAuto = nowS + DayS;
-            ESP_LOGI("rectcal", "auto calibration (rect_offset uncalibrated on %s)", c.drvName());
+            ESP_LOGI("rectcal", "auto calibration (rect_offset %s on %s)", lv ? "bound" : "uncalibrated", c.drvName());
         }
     }
 
@@ -630,12 +647,14 @@ public:
         ESP_LOGI("rectcal", "state=%s%s%s auto=%d needed=%d drv=%s offset=%d ct (%.0f ns%s) backstop=%u unsaved=%d",
                  names[s], s == RectCal::Fail ? ": " : "", s == RectCal::Fail ? cal.why : "", autoRun,
                  c.rectOffsetNeedsCal(), c.drvName(), o, rectOffsetNsFromCounts(o, c.getPwmTickRate()),
-                 activeCalibrated() ? "" : ", uncalibrated", fires.load(std::memory_order_relaxed), dirty);
+                 !activeCalibrated() ? ", uncalibrated" : c.rectOffsetCal() == 2 ? ", bound" : "",
+                 fires.load(std::memory_order_relaxed), dirty);
         if (s == RectCal::Run) ESP_LOGI("rectcal", "hs=%u", cal.hs);
         if ((s != RectCal::Done && s != RectCal::Fail) || !cal.hs) return;
-        ESP_LOGI("rectcal", "last: hs=%u ideal=%.0f peak=%.0f learned=%+d applied=%+d ct%s, dV %.1f%%, %u pts, %u redone, "
-                 "%u Vout-by-LS", cal.hs, cal.ideal, cal.peak, cal.learned, cal.applied, cal.clamped ? " (clamped)" : "",
-                 100.f * cal.dv, cal.n, cal.retries, cal.voLs);
+        ESP_LOGI("rectcal", "last: hs=%u ideal=%.0f peak=%.0f learned=%+d applied=%+d ct%s%s, dV %.1f%%, Iout rise %.0f mA "
+                 "(max %.0f), %u pts, %u redone", cal.hs, cal.ideal, cal.peak, cal.learned, cal.applied,
+                 cal.clamped ? " (bound)" : "", cal.cut ? " (fit to dip floor)" : "", 100.f * cal.dv, 1e3f * cal.rise,
+                 1e3f * cal.iLs, cal.n, cal.retries);
         if (s == RectCal::Fail && cal.jrefVi > 0) {
             const bool st = cal.jallow > 0; // step vs its references, else window vs Init
             ESP_LOGI("rectcal", "at LS %u: Vin %+.2f%% (%+.2f..%+.2f) Vout %+.2f%% (+-%.2f) vs %s %.2f/%.2f V", cal.jls,

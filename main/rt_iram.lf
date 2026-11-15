@@ -106,6 +106,7 @@ entries:
     main:_ZN11ADC_Sampler10_updateAdcERNS_8AdcStateE (noflash)
     main:_ZN11ADC_Sampler16_addSensorSampleEP6Sensorf (noflash)
     main:_ZN11ADC_Sampler17handleSensorCalibER6Sensor (noflash)
+    main:_ZN11ADC_Sampler9logZeroRtERK6SensorjPKf (noflash)
     main:_ZN11ADC_Sampler6updateEv (noflash)
     main:_ZN14MpptController9protectLfEb (noflash)
     main:_ZN20SynchronousConverter10pwmPerturbEs (noflash)

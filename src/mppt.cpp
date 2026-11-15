@@ -643,12 +643,13 @@ extern SynchronousConverter converter;
 extern MpptController mppt;
 
 // One rewrite of coil.conf (littlefs keeps the old file until close), under the admitted persist lock.
-bool rectCalPersist(int counts, bool calibrated) {
-    char ns[16];
+bool rectCalPersist(int counts, uint8_t cal) {
+    char ns[16], cs[4];
     snprintf(ns, sizeof(ns), "%.0f", rectOffsetNsFromCounts(counts, converter.getPwmTickRate()));
+    snprintf(cs, sizeof(cs), "%u", cal);
     ConfFile conf{"/littlefs/conf/coil.conf"};
     const bool ok = conf.update({{"rect_offset_ns", ns}, {"rect_offset_drv", converter.drvName()},
-                                 {"rect_offset_cal", calibrated ? "1" : "0"}}, "rect_offset"); // legacy count key
+                                 {"rect_offset_cal", cs}}, "rect_offset"); // legacy count key
     if (!ok) ESP_LOGW("rectcal", "coil.conf write failed, retrying");
     return ok;
 }
@@ -656,7 +657,8 @@ bool rectCalPersist(int counts, bool calibrated) {
 void MpptController::rectCalLf() {
     if (!sensorPhysicalI) return;
     const auto nowS = (uint32_t) (wallClockUs() / 1000000);
-    rectCal.lf(converter, nowS, sensorPhysicalI->ewm.avg.get() * sensorPhysicalU->ewm.avg.get());
+    rectCal.lf(converter, nowS, sensorPhysicalI->ewm.avg.get() * sensorPhysicalU->ewm.avg.get(),
+               sensors.Vin->ewm.avg.get() / sensors.Vout->ewm.avg.get());
     const auto t0 = (uint32_t) wallClockUs();
     const bool was = rectCal.unsaved();
     rectCal.saveNow(converter, nowS, [] { vTaskDelay(pdMS_TO_TICKS(2)); });
