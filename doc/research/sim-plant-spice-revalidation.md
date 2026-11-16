@@ -675,8 +675,11 @@ Review of 51b3fa8 found two gaps:
   hold in slow mode below a power threshold P (P = 1, 2, 3 and 5 W; scratch knob, results-wexp2-pgx93.tsv). It
   changed nothing measurable: fry wx-dusk with measured noise +0.00 / −0.01 / +0.06 / +0.11 pp, flat −0.02..+0.01;
   wx-wob unchanged; wx-low and wx-low-slow within ±0.2. So the wx-dusk cost of 51b3fa8 does not come from the
-  region where the lag exceeds a slow period, and no threshold was adopted. The real reason the missing hold costs
-  little is the slow step: 25 times smaller than a fast one and 15 times less frequent.
+  region where the lag exceeds a slow period, and no threshold was adopted. The missing hold costs little because the
+  slow-mode slew is 25 times slower than in fast mode (the control value is a rate, so this ratio already includes
+  the decision rate; per decision a fast step is about 1.7 counts and a slow one about 1.0 count, against a 10 times
+  smaller slow threshold). The input-cap power $C V \, dV/dt$ scales with the slew: a few mW in slow mode, against
+  a 10.5 mW threshold at 2 W.
 - **Slow power filters.** With a filter that settles in more than 500 ms, the filter half of the window still
   covered the first slow decision, so the wx-wob problem returned. With filter length 60 at `SIM_ADC_HZ` 200 (settle
   about 1 s), wx-wob-fry noise-free gave 95.3 % on both 1604eaf and 51b3fa8.
@@ -706,9 +709,56 @@ keys. Slow-filter keys, harvest % of GMPP. Paired deltas give the mean, worst..b
 | flat, measured | wx-dusk | 9 | 96.31 | 96.21 | −0.10 (−1.0..+0.8), 4 |
 | fry / flat, measured | wx-dawn | 9 | 95.69 / 94.38 | 95.69 / 94.38 | 0.00 |
 
-(wx-low with this filter is the wx-low-slow scenario and gives the same rows.) The slow-filter case repeats the trade
+(wx-low with this filter is the wx-low-slow scenario: the 54 slow-filter wx-low runs equal their wx-low-slow
+twins, so they are listed and counted once. At `SIM_ADC_HZ` 200 the sensors' 100 Hz notch sits at the Nyquist
+frequency, which a board does not run; section 5.2 repeats the case at 120 Hz.) Without the window the tracker
+reverses more often on these plants: wx-dusk 21.5 → 28.0 reversals/min (fry, measured; flat 21.6 → 25.3), wx-wob
+26 → 43 /min (fry), 22.5 → 36 /min (flat). The slow-filter case repeats the trade
 of 51b3fa8: wx-wob gains 0.2 to 4.4 pp, while wx-dusk loses up to 0.8 pp on fry (a single noise-free run; −0.28 pp
 with measured noise, within the spread of −1.4..+0.6). No paired mean is worse beyond the spread.
+
+### 5.2 ADS1015-like power filter and low duty
+
+The slow-filter case of 5.1 ran the power filter on the output side at 200 Hz. The ADS1015 profiles in
+`config/fugu1` measure the input side: `hv_i` with filter length 60, `hv_v` and `lv_v` 20, `lv_i` virtual, so the
+tracker's power comes from Iin·Vin. For this the sim ADC gained an Iin channel (channel 3, `vconv.conf:noise_iin`),
+and the steady-sun scenarios take `SIM_VOC` and `SIM_VBAT`. Profile "ads": that sensor setup at `SIM_ADC_HZ` 120,
+Gaussian noise 0.01 A on Iin, 0.05 V on Vin and 0.01 V on Vout, seeds d and 1-8. Low duty: `SIM_VOC` 116 V,
+`SIM_VBAT` 12.6 V, `hv_max` 130 V (D ≈ 0.13 at the MPP), with the ads profile and with the boards' INA226 profile
+and measured noise (offsets 0-16 s). 51b3fa8's rule against dfde81e's, both on this harness, pgx93 only
+(`results8-pgx93.tsv`, tag `wobfix3-ads`, 288 runs). Flag: mean below −0.1 pp and below −2 standard errors.
+
+| profile | scenario | n | 51b3fa8 | dfde81e | dfde − 51b3 (worst..best), worse | rev/min | Vin [V] |
+|---|---|--:|--:|--:|---|---|---|
+| ads | fry wx-wob | 9 | 98.78 | 99.46 | +0.68 (−0.5..+2.1), 1, better | 22.2 → 34.2 | 62.8 → 62.9 |
+| ads | flat wx-wob | 9 | 99.38 | 99.87 | +0.49 (−0.3..+1.2), 1, better | 20.9 → 33.2 | 55.5 → 54.5 |
+| ads | fry wx-sun | 9 | 99.87 | 99.87 | 0.00 (−0.1..+0.1), 3 | 9.3 → 9.6 | 64.3 → 64.2 |
+| ads | fry wx-dusk | 9 | 97.98 | 97.68 | −0.30 (−1.1..+0.7), 5 | 23.3 → 27.9 | 42.6 → 42.0 |
+| ads | flat wx-dusk | 9 | 96.96 | 96.57 | −0.39 (−1.6..+1.2), 6 | 23.4 → 28.0 | 41.4 → 40.8 |
+| ads | fry / flat wx-dawn | 9 | 96.04 / 94.73 | same | 0.00 | 18.4 / 17.2 | |
+| ads | fry wx-low | 9 | 95.00 | 95.03 | +0.03 (−0.4..+0.9), 2 | 30.1 → 29.7 | |
+| ads | flat wx-low | 9 | 94.46 | 94.41 | −0.04 (−0.4..0.0), 1 | 27.0 → 26.9 | |
+| ads | fry wx-cloud-cv | 9 | 91.94 | 91.96 | +0.01 | 19.8 → 21.0 | |
+| ads, low D | fry wx-sun | 9 | 93.59 | 92.61 | −0.98 (−2.9..+2.1), 6 | 30.0 → 33.2 | 88.7 → 88.2 |
+| ads, low D | fry wx-ramp | 9 | 80.72 | 80.54 | −0.18 (−1.0..+0.9), 4 | 49.3 → 49.0 | 72.9 → 72.7 |
+| ads, low D | fry wx-wob | 9 | 74.81 | 86.31 | +11.5 (−9.2..+20.5), 1 | 32.1 → 38.8 | 67.4 → 78.6 |
+| INA226, low D | fry wx-sun / wx-ramp / wx-wob | 9 | 99.88 / 99.60 / 99.19 | same | 0.00 | 15.0 / 56.7 / 42.5 | 94.9 / 95.2 / 94.3 |
+
+No scenario is worse beyond the spread. wx-wob gains on both boards, wx-dusk loses 0.3-0.4 pp on average (5-6 of 9
+seeds, up to −1.6), as in 5.1. At low duty the predicted false re-reversals near the MPP do not show up as a
+significant loss: wx-sun −0.98 pp has a spread of −2.9..+2.1 (standard error 0.54), and wx-wob gains 11.5 pp.
+With the INA226 profile both rules give identical results at low duty, because the filter settles in a few ms
+and neither rule holds for Vin in slow mode.
+
+The low-duty runs with the ads profile track poorly under either rule: Vin averages 67-89 V against about 95 V on
+the INA226 profile, and harvest is 75-94 %. That is a separate weakness of the slow input-side filter at low duty
+(not caused by the settle window) and is not investigated here.
+
+The proposed middle ground, holding in slow mode until min(settleMs, ~one period), gives the same decisions as
+dfde81e: slow decisions come more than 500 ms apart (`now − _time > 1000/frequency`) and the window starts at a
+decision, so a hold capped at one period never covers the next decision. The window keeps 51b3fa8's behaviour only
+when the hold exceeds one period, which is 51b3fa8's rule. Neither alternative is a clear win, so dfde81e's rule
+stays; only its rationale changed (comment and tracker page).
 
 ## 6. Limitations
 

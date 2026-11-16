@@ -10,7 +10,7 @@
 #include "tele/scope.h"
 
 // AsyncADC backend that reads from the VirtualConverter singleton (g_vconv).
-// Channel mapping (fixed): 0=Vin, 1=Vout, 2=Iout, 4=NTC. Iin is left as a
+// Channel mapping (fixed): 0=Vin, 1=Vout, 2=Iout, 3=Iin, 4=NTC. Profiles usually leave Iin a
 // VirtualSensor (computed from the other side + power_conversion_eff).
 //
 // On every periodic timer tick we step the plant by (1/adc_freq) seconds and
@@ -38,6 +38,7 @@ public:
         noiseVin_  = vconvConf.f("noise_vin",  0.0f);
         noiseVout_ = vconvConf.f("noise_vout", 0.0f);
         noiseIout_ = vconvConf.f("noise_iout", 0.0f);
+        noiseIin_  = vconvConf.f("noise_iin",  0.0f);
         noiseNtc_  = vconvConf.f("noise_ntc",  0.0f);
         ntcConst_  = vconvConf.f("ntc_v",      0.9f); // 25 °C equivalent
 
@@ -86,6 +87,7 @@ public:
             case 0: x = g_vconv.getVin();     sigma = noiseVin_;  break;
             case 1: x = g_vconv.getVout();    sigma = noiseVout_; break;
             case 2: x = g_vconv.getIoutAvg(); sigma = noiseIout_; break;
+            case 3: x = g_vconv.getIinAvg();  sigma = noiseIin_;  break;
             case 4: x = ntcConst_;            sigma = noiseNtc_;  break;
             default: x = 0.0f; break;
         }
@@ -109,7 +111,7 @@ private:
     static constexpr uint32_t kMaxCatchupTicks = 8; // bound the per-call plant catch-up after a stall
     uint8_t readingChannel_ = 0;
     uint32_t adcFreq_ = 3000;
-    float noiseVin_ = 0.0f, noiseVout_ = 0.0f, noiseIout_ = 0.0f, noiseNtc_ = 0.0f;
+    float noiseVin_ = 0.0f, noiseVout_ = 0.0f, noiseIout_ = 0.0f, noiseIin_ = 0.0f, noiseNtc_ = 0.0f;
     float ntcConst_ = 0.9f;
     TaskNotification taskNotification_{};
     PeriodicTimer periodicTimer_{};

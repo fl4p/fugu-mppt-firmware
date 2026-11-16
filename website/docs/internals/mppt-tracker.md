@@ -121,10 +121,14 @@ Slow mode has no settle window. It evaluates every 500 ms, so a window there can
 any window that covers one skips it: the leg runs a whole period longer, and twice as long in total. In
 simulation that happened when changing light kept Vin from coming back to the reversal voltage, and with power
 filters that settle in more than 500 ms (filter length 60 at a low sample rate). Under an irradiance wobble of
-0.5 % at 0.2 Hz, it cost 3 to 4 % of harvest. Without the window, the first slow evaluation compares against a
-reference that still carries the filter lag and the input-capacitor current. That costs little, because a slow
-step is 25 times smaller than a fast one and comes 15 times less often, so the capacitor current it causes is
-small against the 0.15 % power threshold. The trade-off in simulation was 0.1 to 0.5 % of harvest at dusk.
+0.5 % at 0.2 Hz it cost 3 to 4 % of harvest without sensor noise and 0.2 to 1.7 % with measured sensor noise.
+Without the window, the first slow evaluation compares against a reference that still carries the filter lag
+and the input-capacitor current. That costs little because the slow-mode slew is 25 times slower than in fast
+mode. The capacitor power $C V \, dV/dt$ scales with the slew. In slow mode it is a few mW (470 µF at 60 V), below
+the slow-mode threshold of 0.15 % of $(P + 5\,\text{W})$, which is 10.5 mW at 2 W. The trade-off in simulation was at dusk: 0.1 to 0.5 % of
+harvest on average, up to 0.8 % in a single run with a slow power filter, and up to 1.4 % for single noise
+realisations. Without the window the tracker also reverses more often (with a slow filter, 21.5 to 28 reversals
+per minute at dusk).
 
 The Vin condition has no deadband: ending the window 0.1 % of Vin early lost about 1 % of
 harvest at 2 to 20 W, and ending it 0.1 % late made no measurable difference.

@@ -1119,6 +1119,7 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         // steady sun, MPP SIM_P W; fry: Vin ~64 V at 70 W, flat: ~55 V
         const float p = getenv("SIM_P") ? atof(getenv("SIM_P")) : 70;
         if (sc.compare(sc.size() - 4, 4, "-fry") == 0) fry(615), wx.vocLog = 2.6f;
+        if (const char *e = getenv("SIM_VOC")) wx.voc = atof(e);
         if (sc.rfind("wx-ramp-", 0) == 0) wx.ramp = (getenv("SIM_RAMP") ? atof(getenv("SIM_RAMP")) : 2) / 6000;
         if (sc.rfind("wx-wob-", 0) == 0) {
             wx.wobA = 0.005f, wx.wobF = 0.2f;
@@ -1126,7 +1127,7 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         }
         float g = p / wx.pClear;
         for (int i = 0; i < 6; ++i) g = p / wx.pClear * wx.voc / (wx.voc + wx.vocLog * std::log(g));
-        wx.cloud = {{0, g}}, wx.vbat = 26.1f, wx.statsFrom = 120, wx.T = 900;
+        wx.cloud = {{0, g}}, wx.vbat = getenv("SIM_VBAT") ? atof(getenv("SIM_VBAT")) : 26.1f, wx.statsFrom = 120, wx.T = 900;
     } else if (sc == "wx-sweep-fall" || sc == "wx-sweep-rise") {
         // cloud edge (73 % in 10 s) starting 2 s into a sweep
         const bool fall = sc == "wx-sweep-fall";
