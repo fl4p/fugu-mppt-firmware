@@ -170,6 +170,23 @@ void test_tracker_settle_waits_for_vin() {
     TEST_ASSERT_FALSE(t._direction);
 }
 
+// Slow mode does not wait for Vin: its 500 ms period outlasts the input-cap lag.
+void test_tracker_slow_mode_settle_ignores_vin() {
+    loopWallClockUs_ = 1'000'000;
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    t.resetTracker(100.f, /*direction=*/true);
+    t.maxPowerPoint = {200.f, wallClockMs(), 100, 50.f};
+    t.setSlowMode(true);
+    advanceMs(600);
+    t.update(90.f, 100, 50.f, [] { return 0.f; });    // reverse at Vin 50
+    TEST_ASSERT_FALSE(t._direction);
+    advanceMs(600);
+    t.update(80.f, 100, 49.f, [] { return 0.f; });    // Vin not back, but slow mode decides
+    TEST_ASSERT_TRUE(t.slowMode);
+    TEST_ASSERT_TRUE(t._direction);
+}
+
 // A limiter hand-back (resetDirection) starts the window like a reversal.
 void test_tracker_handback_starts_window() {
     loopWallClockUs_ = 1'000'000;

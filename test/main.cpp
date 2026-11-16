@@ -283,6 +283,7 @@ void test_tracker_converges_to_peak();
 void test_tracker_settles_after_reversal();
 void test_tracker_settle_window_follows_filter();
 void test_tracker_settle_waits_for_vin();
+void test_tracker_slow_mode_settle_ignores_vin();
 void test_tracker_handback_starts_window();
 void test_tracker_long_limit_release_stays_fast();
 void test_tracker_vin_band_symmetric();
@@ -509,6 +510,7 @@ void setup() {
     RUN_TEST(test_tracker_settles_after_reversal);
     RUN_TEST(test_tracker_settle_window_follows_filter);
     RUN_TEST(test_tracker_settle_waits_for_vin);
+    RUN_TEST(test_tracker_slow_mode_settle_ignores_vin);
     RUN_TEST(test_tracker_handback_starts_window);
     RUN_TEST(test_tracker_long_limit_release_stays_fast);
     RUN_TEST(test_tracker_vin_band_symmetric);

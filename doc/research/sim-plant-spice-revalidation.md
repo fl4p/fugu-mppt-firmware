@@ -596,7 +596,71 @@ Steady sun without wobble (wx-sun-fry) also reaches the cap (35 of 103 windows) 
 
 G: Gaussian scenario noise, M: measured noise replay; n as in section 3.
 
-## 5. Limitations
+## 5. wx-wob fix: no Vin hold in slow mode
+
+**Mechanism behind the fix.** In slow mode the tracker decides every 500 ms (2 Hz). A window opened at a reversal
+can only end at a decision, so main's 1 s Vin hold either ends at the first slow decision or skips it and waits for
+the second, which doubles the leg. In wx-wob the light keeps Vin from coming back about half the time, so these
+skips happen often. A sweep of a hold cap max(F, k·settle) on pgx93 showed the cliff: F ≤ 500 ms recovers wx-wob in
+full, F ≥ 550 ms equals main (k 0 or 2 makes no difference). Capping the hold at 150-400 ms in fast mode as well
+cost 0.2-0.5 pp on wx-dusk, wx-low and flat wx-cloud-cv.
+
+**Change** (`src/tracker.h`): the Vin condition of the settle window applies in fast mode only:
+`since < 1000 && (since < settleMs() || (!slowMode && <Vin not back>))`. In slow mode the window is the filter
+settling time. A 500 ms period already outlasts the input-cap lag of the low-light cases the condition was added for
+(0.34 s in the tracker documentation). New unit test `test_tracker_slow_mode_settle_ignores_vin`; it fails on main's
+rule. Simulator only, not tested on hardware.
+
+**Validation** (pgx93 only, `results6-pgx93.tsv`, 1230 runs, tag `wobfix-val`): ed5ffe5 (pre-9e1dd13, section 3
+construction on this plant), main 1604eaf and wob-fix. The keys are those of section 4, with 9 seeds on
+wx-cloud-cv-ripple for every plant, 9 offsets for wx-dawn, wx-dusk and wx-cloud-cv with measured noise, and 9
+wander offsets for wx-wob.
+
+Mean of scenarios (harvest % of GMPP):
+
+| plant, noise | ed5ffe5 | main | wob-fix |
+|---|--:|--:|--:|
+| fry, Gaussian | 95.12 | 95.66 | 95.67 |
+| fry, measured | 95.23 | 95.88 | 95.83 |
+| flat, Gaussian | 95.17 | 95.77 | 95.75 |
+| flat, measured | 92.79 | 93.50 | 93.48 |
+| fry-hq, Gaussian | 95.00 | 95.42 | 95.36 |
+| flat-hq, Gaussian | 95.13 | 95.69 | 95.72 |
+| fry, steady sun (noise-free / measured / wander) | 99.57 / 99.59 / 99.56 | 98.53 / 99.33 / 99.43 | 99.80 / 99.73 / 99.70 |
+| flat, steady sun (noise-free / measured / wander) | 99.43 / 99.69 / 99.76 | 98.80 / 99.21 / 99.36 | 99.47 / 99.81 / 99.80 |
+
+Key scenarios. Paired deltas give the mean, the worst..best range and the number of pairs worse by > 0.1 pp:
+
+| board, noise | scenario | n | ed5ffe5 | main | wob-fix | wob-fix − main | wob-fix − ed5ffe5 |
+|---|---|--:|--:|--:|--:|---|---|
+| fry, noise-free | wx-wob | 1 | 99.8 | 96.0 | 99.8 | +3.8 | 0.0 |
+| fry, measured | wx-wob | 9 | 99.64 | 98.44 | 99.66 | +1.21 (−0.2..+3.1), 1 | +0.02 |
+| fry, wander | wx-wob | 9 | 99.62 | 98.87 | 99.63 | +0.77 (−0.1..+2.1), 1 | +0.01 |
+| flat, noise-free | wx-wob | 1 | 99.7 | 96.6 | 99.5 | +2.9 | −0.2 |
+| flat, measured | wx-wob | 9 | 99.83 | 98.04 | 99.79 | +1.74 (+1.3..+2.2), 0 | −0.04 |
+| flat, wander | wx-wob | 9 | 99.76 | 98.46 | 99.83 | +1.38 (+0.7..+2.2), 0 | +0.07 |
+| fry, Gaussian | wx-low-slow | 9 | 96.64 | 98.51 | 98.49 | −0.02 (−0.3..+0.2), 3 | +1.84 (+1.0..+4.7), 0 |
+| fry, measured | wx-low-slow | 18 | 97.14 | 98.44 | 98.44 | +0.01 (−0.3..+0.4), 4 | +1.30 |
+| flat, Gaussian | wx-low-slow | 9 | 97.37 | 98.47 | 98.57 | +0.10 (−0.2..+1.0), 2 | +1.20 |
+| flat, measured | wx-low-slow | 18 | 97.93 | 98.49 | 98.40 | −0.09 (−0.9..+1.3), 8 | +0.47 |
+| fry-hq, Gaussian | wx-low-slow | 9 | 95.98 | 98.31 | 98.14 | −0.17 (−2.2..+0.4), 2 | +2.17 |
+| flat-hq, Gaussian | wx-low-slow | 9 | 95.78 | 97.98 | 98.02 | +0.04 (−0.7..+0.6), 3 | +2.24 |
+| fry, measured | wx-dusk | 9 | 98.18 | 98.37 | 98.07 | **−0.30 (−0.7..+0.1), 7** | −0.11 (−0.2..+0.1), 4 |
+| flat, measured | wx-dusk | 9 | 98.21 | 98.31 | 98.31 | 0.00 (−0.4..+0.6), 3 | +0.10 |
+| fry / flat, noise-free | wx-dusk | 1 | 97.7 / 98.2 | 98.5 / 98.7 | 98.4 / 98.6 | −0.1 / −0.1 | +0.7 / +0.4 |
+| fry-hq / flat-hq, noise-free | wx-dusk | 1 | 98.1 / 98.2 | 98.4 / 98.5 | 97.9 / 98.2 | **−0.5 / −0.3** | −0.2 / 0.0 |
+| flat, noise-free | wx-ramp | 1 | 99.3 | 99.9 | 99.1 | **−0.8** | −0.2 |
+| flat, measured / wander | wx-ramp | 9 / 3 | 99.64 / 99.83 | 99.78 / 99.73 | 99.81 / 99.70 | +0.03 / −0.03 | +0.17 / −0.13 |
+
+wob-fix recovers all of 9e1dd13's wx-wob loss (wob-fix − ed5ffe5 is within ±0.2 pp) and keeps its wx-low-slow
+gain (wob-fix − main within ±0.2 pp on every plant). The cost is on wx-dusk, where main's slow-mode Vin hold helped:
+−0.30 pp on fry with measured noise (7 of 9 offsets worse) and −0.1..−0.5 pp in the noise-free runs. The wob-fix
+dusk results stay at or above ed5ffe5's, except fry-hq (−0.2) and fry measured (−0.11). The noise-free flat wx-ramp
+−0.8 pp is a single deterministic run; with measured noise or wander the difference is ±0.03 pp. No other scenario
+is worse than main beyond the spread; the other paired means against main lie within ±0.3 pp (largest: fry wx-low
+with Gaussian noise +0.29, fry-hq wx-low-slow −0.17).
+
+## 6. Limitations
 
 - Q is the dominant unknown for the dawn ripple; field Q and the undamped-bench Q bracket it. Results on `-hq` are
   given for that reason.

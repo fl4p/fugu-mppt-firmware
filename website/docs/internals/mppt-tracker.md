@@ -101,6 +101,9 @@ The window lasts until both of these hold, but never longer than 1 s:
   about $C V / (2.5\, I)$, for example 0.34 s with 470 µF at 2 W and 60 V. Vin keeps moving in the old
   direction for a moment, then turns. When it gets back to the reversal voltage, the capacitor current has
   mostly reversed. This measures the plant lag directly, so the capacitance does not need to be configured.
+  This condition applies in fast mode only. A slow-mode period (500 ms) already outlasts the lag, and the
+  window can only end at a period boundary: when changing light keeps Vin from coming back, the wait would
+  skip a whole period and double the leg.
 
 | Power sensor profile                  | $f_s$  | $N$ | $t_f$   |
 |---------------------------------------|--------|-----|---------|
