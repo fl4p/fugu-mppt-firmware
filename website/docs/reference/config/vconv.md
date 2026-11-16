@@ -38,6 +38,7 @@ The file accepts the following keys.
 | `noise_vin`     | V    | float | 0       | Gaussian ADC noise σ on Vin; 0 = deterministic                              |
 | `noise_vout`    | V    | float | 0       | Gaussian ADC noise σ on Vout                                                |
 | `noise_iout`    | A    | float | 0       | Gaussian ADC noise σ on Iout                                                |
+| `noise_iin`     | A    | float | 0       | Gaussian ADC noise σ on Iin (channel 3)                                     |
 | `noise_ntc`     |      | float | 0       | Gaussian ADC noise σ on the NTC channel                                     |
 | `ntc_v`         |      | float | 0.9     | Constant NTC channel value (25 °C equivalent)                               |
 
