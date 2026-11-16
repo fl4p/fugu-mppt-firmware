@@ -93,8 +93,8 @@ inline variable in `src/service.h`. It provides these methods:
 - `startEnabledAtBoot(bool networkUp)`: starts enabled services; network ones only if `networkUp`.
 - `startEnabledNetworkServices()`: restarts enabled network services that are not `Running`;
   called on the Wi-Fi-up edge.
-- `retryFailedNetworkServices()`: starts enabled network services that are `Failed` again; called
-  every 30 s while Wi-Fi is up (see [Network watchdog](#network-watchdog)).
+- `retryFailedNetworkServices()`: starts enabled network services that are `Failed` or `Stopped`
+  again; called every 30 s while Wi-Fi is up (see [Network watchdog](#network-watchdog)).
 - `stopNetworkServices()`: stops the network services while the netif is still valid; called on the
   Wi-Fi-down edge, before `WiFi.disconnect()`.
 - `tickAll()`: ticks every service.
@@ -130,23 +130,40 @@ The network loop evaluates a watchdog once per second (`src/etc/net_guard.h`, wi
 `src/main.cpp`). It acts only while Wi-Fi is connected and not switched off with `wifi off`; a
 Wi-Fi outage restarts all of its timers.
 
-- **Failed services**: every 30 s, enabled network services in state `Failed` are started again.
-  A service whose start failed for lack of heap therefore recovers once memory is available,
-  without waiting for the next Wi-Fi-up edge.
-- **Stale MQTT client**: when `mqtt` is `Running` with a broker configured but has not been
-  connected for more than 120 s, the service is restarted, at most once every 120 s. The warning
-  log line includes the free heap. The restart runs from the network loop, never from the MQTT
-  client's own task.
-- **Last-resort reboot**: the device restarts when MQTT (enabled, broker configured) has been
-  disconnected for more than 10 minutes *and* the free heap has stayed below 12 KB for at least a
-  minute. A broker that is merely down never triggers it, because the heap condition does not
-  hold. The reboot is skipped within the first 5 minutes of uptime, during a flash write or a
-  BLE firmware upload, and while restarts are blocked after a bootloader update. If the restart
-  does not happen, the condition re-arms after another 10 minutes.
+- **Failed services**: every 30 s, enabled network services in state `Failed` or `Stopped` are
+  started again. A service whose start failed for lack of heap therefore recovers once memory is
+  available, without waiting for the next Wi-Fi-up edge. `svc off` persists `enabled = 0`, so a
+  service stopped on purpose stays stopped.
+- **MQTT re-init**: when `mqtt` is `Running` with a broker configured but has not been connected
+  for more than 120 s, the service is restarted (client destroyed and created again, subscriptions
+  rebuilt). The gap to the next re-init doubles each time (120 s, 240 s, 480 s, ...) up to 30
+  minutes, so re-inits happen at about 2, 6, 14 and 30 minutes of downtime, then every 30 minutes;
+  a connect resets the sequence. The client
+  itself retries the connection every 10 s in between. A `Failed` service is restarted by the 30 s
+  retry instead. The warning log line carries the re-init count and the free heap. The restart runs
+  from the network loop, never from the MQTT client's own task.
+- **Reboot**: the device restarts through the normal restart path when MQTT (enabled, broker
+  configured, `Running` or `Failed`) has not been connected for more than 15 minutes, or for more
+  than 10 minutes while the free heap has stayed below 12 KB (or the largest free block below 9 KB)
+  for at least a minute. The reboot is skipped within the first 5 minutes of uptime, during a flash
+  write or a BLE firmware upload, and while restarts are blocked after a bootloader update. If the
+  restart does not happen, the condition re-arms after another 10 or 15 minutes.
+- **Reboot hold**: a guard reboot sets a flag in RTC memory, which survives software resets but not
+  a power cycle. While the flag is set, the guard does not reboot again until the uptime exceeds
+  6 hours; the first MQTT connect clears it. A broker that stays down for days therefore causes at
+  most one guard reboot every 6 hours.
+
+`bootinfo` prints a `netguard:` line with the current MQTT downtime, the re-init count since boot,
+the guard reboots since power-on and whether the reboot hold is set.
 
 `mqtt` reports `Failed` when its client cannot be created or its task cannot be started, instead
 of showing `Running` without a client. Each `onStart()` releases a client left over from an
-earlier attempt, because `start()` on a `Failed` service calls `onStart()` without `onStop()`.
+earlier attempt, because `start()` on a `Failed` service calls `onStart()` without `onStop()`. Every
+teardown clears the connected flag after the client task has stopped: a connect that completes while
+`esp_mqtt_client_stop()` waits still dispatches `MQTT_EVENT_CONNECTED`, and the task then exits
+without a `MQTT_EVENT_DISCONNECTED`. A start that throws (for example from a subscription hook)
+releases everything it allocated and leaves the service `Failed` and retryable. The connected
+state, which `svc list` shows in its last column, requires a `Running` service with a live client.
 
 ### Heap diagnostics
 
@@ -243,7 +260,7 @@ firmware's littlefs partition.
 `handleCommand()`, which UART, USB-CDC, telnet, and MQTT share, dispatches these commands:
 
 - `svc` or `svc list`: table of name, state, log level, and enabled flag (the `mqtt` row
-  also indicates a live connection).
+  also shows `connected` while it is `Running` with a live connection).
 - `svc on <name>`: persist `enabled = 1` and start.
 - `svc off <name>`: persist `enabled = 0` and stop.
 - `svc restart <name>` (alias `svc rs <name>`): stop then start.

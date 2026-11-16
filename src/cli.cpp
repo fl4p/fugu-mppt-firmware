@@ -101,6 +101,7 @@ extern KeyValueStorage nvs;
 
 // Defined in main.cpp (non-static so we can reach them from here).
 void systemRestart();
+void netGuardPrint();
 
 void stopAndBackoff(uint32_t secondsDelay);
 extern std::atomic<bool> g_wireResetReq;
@@ -679,6 +680,9 @@ static void cmdBootinfo(cmd *) {
              (unsigned) esp_get_free_heap_size(), (unsigned) esp_get_minimum_free_heap_size(),
              (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
     rtAllocPrint();
+#ifdef WITH_NETW
+    netGuardPrint();
+#endif
     UART_LOG("uptime: %lu s, app %s", (uint32_t) (esp_timer_get_time() / 1000000), format_version());
     esp_chip_info_t ci;
     esp_chip_info(&ci);

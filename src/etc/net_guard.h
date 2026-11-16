@@ -13,6 +13,7 @@ struct NetGuardIn {
     bool mqttRunning;   // state Running
     bool mqttConnected;
     bool rebootOk;      // uptime and no OTA or flash operation in progress
+    bool rebootHeld;    // an earlier guard reboot was not followed by an MQTT connect (survives the reset)
 };
 
 enum NetGuardAct : uint8_t { NG_RETRY_FAILED = 1, NG_RESTART_MQTT = 2, NG_REBOOT = 4 };
@@ -20,19 +21,23 @@ enum NetGuardAct : uint8_t { NG_RETRY_FAILED = 1, NG_RESTART_MQTT = 2, NG_REBOOT
 class NetGuard {
 public:
     static constexpr uint32_t kHeapUnknown = UINT32_MAX;
-    static constexpr uint32_t kRetryMs = 30000;        // Failed network services
-    static constexpr uint32_t kMqttStaleMs = 120000;   // disconnected -> restart mqtt, also its retry period
-    static constexpr uint32_t kRebootMs = 600000;      // disconnected + low heap -> reboot
+    static constexpr uint32_t kRetryMs = 30000;          // Failed/Stopped enabled network services
+    static constexpr uint32_t kMqttStaleMs = 120000;     // disconnected -> first mqtt re-init, then doubling gaps
+    static constexpr uint32_t kRestartMaxMs = 1800000;   // longest gap between re-inits
+    static constexpr uint32_t kRebootMs = 900000;        // disconnected -> reboot
+    static constexpr uint32_t kRebootLowHeapMs = 600000; // disconnected + low heap -> reboot
+    static constexpr uint32_t kRebootHoldMs = 6 * 3600000u; // after a guard reboot without a connect
     static constexpr uint32_t kHeapLow = 12 * 1024;
     static constexpr uint32_t kBlockLow = 9 * 1024;    // the mqtt task stack needs 8 KB in one block
     static constexpr uint32_t kHeapLowHoldMs = 60000;  // heap must stay low this long
 
-    // Bit set of NetGuardAct. NG_REBOOT re-arms only after another kRebootMs.
+    // Bit set of NetGuardAct. NG_REBOOT re-arms after another reboot delay if the device lives on.
     uint8_t step(const NetGuardIn &in) {
         const uint32_t now = in.nowMs;
         if (!_primed) {
             _primed = true;
-            _retryAt = _okAt = _restartAt = _heapOkAt = now;
+            _retryAt = _bootAt = _heapOkAt = now;
+            mqttOk(now);
         }
         uint8_t a = 0;
 
@@ -46,16 +51,22 @@ public:
                          (in.largest != kHeapUnknown && in.largest < kBlockLow);
         if (!low) _heapOkAt = now;
 
-        if (!in.wifiUp || !in.mqttActive || in.mqttConnected) _okAt = now;
+        if (!in.wifiUp || !in.mqttActive || in.mqttConnected) mqttOk(now);
         const uint32_t down = now - _okAt;
 
-        if (in.mqttRunning && down > kMqttStaleMs && now - _restartAt > kMqttStaleMs) {
-            _restartAt = now;
+        // a (re)start of a non-Running service is a re-init too
+        if (!in.mqttRunning) _restartDown = down + _gap;
+        else if (down > _restartDown) {
+            _gap = _gap * 2 > kRestartMaxMs ? kRestartMaxMs : _gap * 2;
+            _restartDown = down + _gap;
+            ++reinits;
             a |= NG_RESTART_MQTT;
         }
 
-        if (in.rebootOk && down > kRebootMs && now - _heapOkAt >= kHeapLowHoldMs) {
-            _okAt = now;
+        const bool held = in.rebootHeld && now - _bootAt < kRebootHoldMs;
+        if (in.rebootOk && !held &&
+            (down > kRebootMs || (down > kRebootLowHeapMs && now - _heapOkAt >= kHeapLowHoldMs))) {
+            mqttOk(now);
             a |= NG_REBOOT;
         }
         return a;
@@ -63,8 +74,15 @@ public:
 
     uint32_t downMs(uint32_t now) const { return now - _okAt; }
 
+    uint16_t reinits = 0; // NG_RESTART_MQTT since boot
+
 private:
-    uint32_t _retryAt = 0, _okAt = 0, _restartAt = 0, _heapOkAt = 0;
+    void mqttOk(uint32_t now) {
+        _okAt = now;
+        _gap = _restartDown = kMqttStaleMs;
+    }
+
+    uint32_t _retryAt = 0, _okAt = 0, _restartDown = 0, _gap = 0, _heapOkAt = 0, _bootAt = 0;
     bool _primed = false;
 };
 

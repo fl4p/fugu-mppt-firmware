@@ -21,14 +21,11 @@ static void log_error_if_nonzero(const char *message, int error_code) {
     }
 }
 
+// Called from onStart() before the client exists; while connected it subscribes at once.
 void MqttService::subscribeTopic(const std::string &topic, MqttMsgCallback fn) {
-    // TODO lock?
-    assert_throw(!mqttConnected, "");
     mqttMsgHandlers[topic] = std::move(fn);
-    if (mqttConnected) {
-        ESP_LOGI(TAG, "Subscribe to '%s", topic.c_str());
-        assert_throw(esp_mqtt_client_subscribe(client, topic.c_str(), 0) != 1, "");
-    }
+    if (isConnected() && esp_mqtt_client_subscribe(client, topic.c_str(), 0) < 0)
+        ESP_LOGW(TAG, "subscribe '%s' failed", topic.c_str());
 }
 
 bool MqttService::publish(const char *topic, const char *payload, int qos, bool retain) {
@@ -63,6 +60,7 @@ void MqttService::_handleEvent(esp_event_base_t base, int32_t event_id, void *ev
         }
         break;
 
+        case MQTT_EVENT_BEFORE_CONNECT: // also clears a DISCONNECTED event dropped for lack of heap
         case MQTT_EVENT_DISCONNECTED:
             mqttConnected = false;
             removeLogCallback(mqttLogCallback);
@@ -180,49 +178,56 @@ bool MqttService::init(const ConfFile &conf) {
 
 void MqttService::close() {
     if (client) {
-        if (isConnected()) esp_mqtt_client_disconnect(client);
-        mqttConnected = false;
+        if (mqttConnected) esp_mqtt_client_disconnect(client);
+        // stop() waits for an in-flight connect, whose CONNECTED event still sets the flag
         esp_mqtt_client_stop(client);
         esp_mqtt_client_unregister_event(client, MQTT_EVENT_ANY, mqtt_event_handler);
         esp_mqtt_client_destroy(client);
         client = nullptr; // else a restart with empty broker_uri (init() early-returns) leaves it dangling
     }
+    mqttConnected = false;
     removeLogCallback(mqttLogCallback); // drop the sink; stop may not fire MQTT_EVENT_DISCONNECTED
     mqttMsgHandlers.clear(); // onStart/preStart rebuilds subscriptions, so a restart honors conf (e.g. cmd_input)
 }
 
 bool MqttService::onStart() {
     close(); // a Failed service is started again without onStop()
-    _configured = false;
     ConfFile conf{_confPath, /*no_warn_if_not_open*/ true};
+    _configured = conf && !conf.getString("broker_uri", "").empty(); // set before a throw below
     if (!conf) {
         ESP_LOGI(TAG, "no mqtt.conf - mqtt idle");
         return true; // nothing configured: idle is OK, not Failed
     }
-    if (preStart) preStart(conf); // charger BMS subscriptions + onConnected (wired by main.cpp)
+    try {
+        if (preStart) preStart(conf); // charger BMS subscriptions + onConnected (wired by main.cpp)
 
-    // Console-command input over MQTT (output is mirrored to pv/log/<hostname> by mqttLogCallback).
-    if (conf.getByte("cmd_input", 0)) {
-        subscribeTopic("pv/log/" + getHostname(true) + "/cmd", [](const char *data, int len) {
-            // Defer to loopNetwork_task (where process_queued_tasks runs). Running handleCommand
-            // inline here executes on the MQTT client event callback (mqtt_task); a teardown command
-            // (svc rs/off mqtt, wifi off, restart) would then stop/destroy the client + clear the
-            // handler map from inside its own event while this std::function is executing -> UAF.
-            try {
-                enqueue_task([cmd = std::string(data, len)]() {
-                    String inp(cmd.c_str());
-                    inp.trim();
-                    if (!inp.length()) return;
-                    const auto t0 = esp_timer_get_time();
-                    logCmdResult(handleCommand(inp), inp.c_str(), t0);
-                });
-            } catch (const std::bad_alloc &) {
-                ESP_LOGW(TAG, "cmd dropped (OOM)");
-            }
-        });
+        // Console-command input over MQTT (output is mirrored to pv/log/<hostname> by mqttLogCallback).
+        if (conf.getByte("cmd_input", 0)) {
+            subscribeTopic("pv/log/" + getHostname(true) + "/cmd", [](const char *data, int len) {
+                // Defer to loopNetwork_task (where process_queued_tasks runs). Running handleCommand
+                // inline here executes on the MQTT client event callback (mqtt_task); a teardown command
+                // (svc rs/off mqtt, wifi off, restart) would then stop/destroy the client + clear the
+                // handler map from inside its own event while this std::function is executing -> UAF.
+                try {
+                    enqueue_task([cmd = std::string(data, len)]() {
+                        String inp(cmd.c_str());
+                        inp.trim();
+                        if (!inp.length()) return;
+                        const auto t0 = esp_timer_get_time();
+                        logCmdResult(handleCommand(inp), inp.c_str(), t0);
+                    });
+                } catch (const std::bad_alloc &) {
+                    ESP_LOGW(TAG, "cmd dropped (OOM)");
+                }
+            });
+        }
+        if (init(conf)) return true; // connection is async; client task runs on its own
+    } catch (...) {
+        close();
+        throw;
     }
-
-    return init(conf);            // connection is async; client task runs on its own
+    close();
+    return false;
 }
 
 void MqttService::onStop() {

@@ -31,7 +31,8 @@ private:
     time_ms _lastTickMs = 0;
 
 public:
-    bool isConnected()const  { return mqttConnected; }
+    // The client reported CONNECTED, still exists, and the service is Running.
+    bool isConnected() const { return mqttConnected && client && _state == ServiceState::Running; }
 
     // A broker_uri was set by the last onStart().
     bool configured() const { return _configured; }

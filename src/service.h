@@ -212,11 +212,11 @@ public:
                 s->start();
     }
 
-    // Start enabled network services that are Failed again; returns how many were tried.
+    // Start enabled network services that are Failed or Stopped again; returns how many were tried.
     int retryFailedNetworkServices() {
         int n = 0;
         for (auto *s: _services)
-            if (s->requiresNetwork() && s->enabled() && s->state() == ServiceState::Failed) {
+            if (s->requiresNetwork() && s->enabled() && s->state() != ServiceState::Running) {
                 s->start();
                 ++n;
             }

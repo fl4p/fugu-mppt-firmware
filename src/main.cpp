@@ -1412,10 +1412,27 @@ static void loopRTNewData(time_ms nowMs) {
 
 
 #ifdef WITH_NETW
-// Once a second: retry Failed network services, restart a stale MQTT client, and as a last resort
-// reboot when MQTT stays down with the heap exhausted (a down broker alone never reboots).
+static NetGuard s_guard;
+// Survives esp_restart(): magic | kNgHold (guard reboot, no MQTT connect since) | guard reboots since power-on.
+static RTC_NOINIT_ATTR uint32_t s_ngRtc;
+static constexpr uint32_t kNgMagic = 0x4e470000, kNgHold = 0x8000;
+
+static uint32_t ngRtc() {
+    if ((s_ngRtc & 0xffff0000) != kNgMagic) s_ngRtc = kNgMagic;
+    return s_ngRtc;
+}
+
+void netGuardPrint() {
+    const uint32_t r = ngRtc();
+    UART_LOG("netguard: mqtt down %lu s, re-inits %u, guard reboots %lu since power-on%s",
+             (unsigned long) (s_guard.downMs((uint32_t) wallClockMs()) / 1000), s_guard.reinits,
+             (unsigned long) (r & 0x7fff), (r & kNgHold) ? ", reboot held" : "");
+}
+
+// Once a second: retry Failed/Stopped network services, re-init a disconnected MQTT client with
+// growing gaps, and reboot when MQTT stays down (at most once per kRebootHoldMs without a connect).
 static void netGuardTick(bool wifiUp) {
-    static NetGuard guard;
+    auto &guard = s_guard;
     static uint32_t lastMs = 0;
     const auto nowMs = (uint32_t) wallClockMs();
     if (nowMs - lastMs < 1000) return;
@@ -1437,17 +1454,22 @@ static void netGuardTick(bool wifiUp) {
                   && !otaBleActive()
 #endif
             ;
+    const uint32_t r = ngRtc();
+    in.rebootHeld = r & kNgHold;
+    if (in.rebootHeld && in.mqttConnected) s_ngRtc = r & ~kNgHold;
     const uint8_t a = guard.step(in);
     if (a & NG_REBOOT) {
-        ESP_LOGE("main", "mqtt down %lu s with heap %lu B (largest %lu, min %lu): restarting",
+        s_ngRtc = kNgMagic | kNgHold | ((r + 1) & 0x7fff);
+        ESP_LOGE("main", "mqtt down %lu s with heap %lu B (largest %lu, min %lu): guard reboot #%lu",
                  (unsigned long) (guard.downMs(nowMs) / 1000), (unsigned long) in.freeHeap,
-                 (unsigned long) in.largest, (unsigned long) esp_get_minimum_free_heap_size());
+                 (unsigned long) in.largest, (unsigned long) esp_get_minimum_free_heap_size(),
+                 (unsigned long) (s_ngRtc & 0x7fff));
         systemRestart();
         return;
     }
     if (a & NG_RESTART_MQTT) {
-        ESP_LOGW("main", "mqtt disconnected %lu s, restarting it (heap %lu B, largest %lu)",
-                 (unsigned long) (guard.downMs(nowMs) / 1000), (unsigned long) in.freeHeap,
+        ESP_LOGW("main", "mqtt disconnected %lu s, re-init #%u (heap %lu B, largest %lu)",
+                 (unsigned long) (guard.downMs(nowMs) / 1000), guard.reinits, (unsigned long) in.freeHeap,
                  (unsigned long) in.largest);
         MQTT.restart();
     }

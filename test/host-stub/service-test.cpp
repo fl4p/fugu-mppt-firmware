@@ -192,6 +192,47 @@ void test_stopall_stops_running_only() {
     assert(b.stopCount == 1);
 }
 
+// start fails once (e.g. no heap for the client), then succeeds: the periodic retry restores it
+void test_retry_after_failed_start() {
+    ServiceManager mgr;
+    FakeService net{"net", true};
+    mgr.registerService(&net);
+    net.startResult = false;
+    mgr.startEnabledAtBoot(true);
+    assert(net.state() == ServiceState::Failed);
+    net.startResult = true;
+    assert(mgr.retryFailedNetworkServices() == 1);
+    assert(net.state() == ServiceState::Running);
+}
+
+// a throwing start leaves it Failed and retryable; restart() of a Failed service works
+void test_throw_then_restart() {
+    ServiceManager mgr;
+    FakeService net{"net", true};
+    mgr.registerService(&net);
+    net.throwOnStart = true;
+    mgr.startEnabledAtBoot(true);
+    assert(net.state() == ServiceState::Failed);
+    net.throwOnStart = false;
+    assert(net.restart() && net.state() == ServiceState::Running);
+    assert(net.stopCount == 1);
+}
+
+// enabled but Stopped network services are retried too; disabled ones and local ones are not
+void test_retry_starts_stopped_enabled() {
+    ServiceManager mgr;
+    FakeService net{"net", true}, off{"off", true, false}, loc{"loc", false};
+    mgr.registerService(&net);
+    mgr.registerService(&off);
+    mgr.registerService(&loc);
+    mgr.startEnabledAtBoot(false); // net stays Stopped
+    assert(net.state() == ServiceState::Stopped);
+    int n = mgr.retryFailedNetworkServices();
+    std::printf("retry with an enabled Stopped service: %d started\n", n);
+    assert(n == 1 && net.state() == ServiceState::Running);
+    assert(off.startCount == 0 && loc.startCount == 1);
+}
+
 }  // namespace
 
 int main() {
@@ -205,6 +246,9 @@ int main() {
     test_disabled_services_never_start();
     test_tick_only_running();
     test_stopall_stops_running_only();
+    test_retry_after_failed_start();
+    test_throw_then_restart();
+    test_retry_starts_stopped_enabled();
 
     std::printf("OK: all service tests passed\n");
     return 0;

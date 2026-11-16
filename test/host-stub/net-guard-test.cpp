@@ -100,6 +100,12 @@ void test_failed_service_retried() {
     assert(net.state() == ServiceState::Running);
     assert(mgr.retryFailedNetworkServices() == 0);
     assert(net.startCount == 3);
+
+    // Stopped but enabled (e.g. a restart whose stop ran but whose start never did) is started too
+    net.stop();
+    assert(mgr.retryFailedNetworkServices() == 1 && net.state() == ServiceState::Running);
+    off.stop();
+    assert(mgr.retryFailedNetworkServices() == 0); // disabled stays Stopped
 }
 
 void test_retry_period() {
@@ -113,12 +119,35 @@ void test_mqtt_restart_after_120s() {
     auto c = run(g, 0, 121 * S);
     assert(c.restart == 0);
     c = run(g, 121 * S, 2 * S);
-    assert(c.restart == 1);
-    // no faster than every 120 s
-    c = run(g, 123 * S, 119 * S);
+    assert(c.restart == 1 && g.reinits == 1);
+    // then the gap doubles: 240 s, 480 s, ...
+    c = run(g, 123 * S, 238 * S);
     assert(c.restart == 0);
-    c = run(g, 242 * S, 2 * S);
-    assert(c.restart == 1 && c.firstRestart == 0);
+    c = run(g, 361 * S, 2 * S);
+    assert(c.restart == 1 && c.firstRestart == 1 * S);
+    c = run(g, 363 * S, 481 * S);
+    assert(c.restart == 1 && c.firstRestart == 480 * S); // at 843 s
+}
+
+// a connect resets the backoff
+void test_mqtt_restart_backoff_resets_on_connect() {
+    NetGuard g;
+    auto c = run(g, 0, 13 * MIN);
+    assert(c.restart == 2);
+    c = run(g, 13 * MIN, 1 * S, [](NetGuardIn &in) { in.mqttConnected = true; });
+    c = run(g, 13 * MIN + S, 122 * S);
+    assert(c.restart == 1 && c.firstRestart == 120 * S); // 121 s after the connect
+}
+
+// a Failed service is restarted by the 30 s retry, not by NG_RESTART_MQTT; the gap counts from Running
+void test_mqtt_restart_waits_after_failed() {
+    NetGuard g;
+    auto c = run(g, 0, 5 * MIN, [](NetGuardIn &in) { in.mqttRunning = false; });
+    assert(c.restart == 0);
+    c = run(g, 5 * MIN, 120 * S);
+    assert(c.restart == 0);
+    c = run(g, 7 * MIN, 2 * S);
+    assert(c.restart == 1);
 }
 
 void test_mqtt_no_restart_wifi_down_or_disabled() {
@@ -155,15 +184,64 @@ void test_failed_mqtt_not_restarted_but_counts_for_reboot() {
     assert(c.reboot == 1);
 }
 
-void test_broker_down_healthy_heap_never_reboots() {
+void test_broker_down_healthy_heap_reboots_after_15min() {
     NetGuard g;
-    auto c = run(g, 0, 60 * MIN);
+    auto c = run(g, 0, 15 * MIN);
+    assert(c.restart == 3); // 121, 362, 843 s
     assert(c.reboot == 0);
-    assert(c.restart == 29); // 120 s down, then every ~121 s
-    // heap at the threshold is not low
+    c = run(g, 15 * MIN, 2 * S);
+    assert(c.reboot == 1 && c.firstReboot == 1 * S); // 901 s
+    // heap at the threshold is not low: the 15 min rule, not the 10 min one
     NetGuard g2;
-    c = run(g2, 0, 60 * MIN, [](NetGuardIn &in) { in.freeHeap = NetGuard::kHeapLow; });
-    assert(c.reboot == 0);
+    c = run(g2, 0, 15 * MIN + 2 * S, [](NetGuardIn &in) { in.freeHeap = NetGuard::kHeapLow; });
+    assert(c.reboot == 1 && c.firstReboot == 901 * S);
+}
+
+// (d) broker down for 3 h (8 h): esp-mqtt keeps reconnecting, the guard re-inits with backoff and
+// reboots once; the persisted hold then blocks another reboot for 6 h of uptime.
+struct Episode { int restart = 0, reboot = 0, boots = 1; };
+
+Episode brokerDown(uint32_t totalMs, uint32_t connectAtMs = UINT32_MAX) {
+    Episode e;
+    bool held = false; // the RTC flag
+    uint32_t t = 0;
+    while (t < totalMs) {
+        NetGuard g; // a fresh boot
+        uint32_t boot = t;
+        for (; t < totalMs; t += S) {
+            auto in = base(t - boot);
+            in.rebootOk = t - boot > 5 * MIN;
+            in.rebootHeld = held;
+            if (t >= connectAtMs) { in.mqttConnected = true; held = false; }
+            uint8_t a = g.step(in);
+            if (a & NG_RESTART_MQTT) ++e.restart;
+            if (a & NG_REBOOT) { ++e.reboot; held = true; t += 10 * S; break; } // ~10 s to reboot
+        }
+        if (t < totalMs) ++e.boots;
+    }
+    return e;
+}
+
+void test_broker_down_3h_bounded() {
+    auto e = brokerDown(180 * MIN);
+    std::printf("broker down 3 h: %d re-inits, %d reboots\n", e.restart, e.reboot);
+    assert(e.reboot == 1);
+    assert(e.restart == 3 + 8); // 2/6/14 min, reboot at 15 min; then 2/6/14/30/60/90/120/150 min
+    e = brokerDown(8 * 60 * MIN);
+    std::printf("broker down 8 h: %d re-inits, %d reboots\n", e.restart, e.reboot);
+    assert(e.reboot == 2); // 15 min, then 6 h after that boot
+    // a connect clears the hold: the next outage may reboot again at once
+    e = brokerDown(60 * MIN, 30 * MIN);
+    assert(e.reboot == 1);
+}
+
+// the 2026-11-16 state after the fix: Failed (start keeps failing), configured, not connected,
+// healthy heap: retried every 30 s and rebooted at 15 min
+void test_failed_mqtt_healthy_heap_reboots() {
+    NetGuard g;
+    auto c = run(g, 0, 16 * MIN, [](NetGuardIn &in) { in.mqttRunning = false; in.freeHeap = 50 * 1024; in.largest = 25 * 1024; });
+    assert(c.retry == 31 && c.restart == 0);
+    assert(c.reboot == 1 && c.firstReboot == 901 * S);
 }
 
 void test_low_heap_reboots_once() {
@@ -178,10 +256,10 @@ void test_low_heap_must_persist() {
     // healthy heap until 9.5 min, then low: the 60 s hold delays the reboot to ~10.5 min
     auto c = run(g, 0, 15 * MIN, [](NetGuardIn &in) { if (in.nowMs < 570 * S) in.freeHeap = HEAP_OK; else in.freeHeap = HEAP_LOW; });
     assert(c.reboot == 1 && c.firstReboot == 629 * S);
-    // a short dip (30 s every 5 min) never reboots
+    // a short dip (30 s every 5 min) does not bring the low-heap reboot forward
     NetGuard g2;
-    c = run(g2, 0, 60 * MIN, [](NetGuardIn &in) { in.freeHeap = (in.nowMs / S) % 300 < 30 ? HEAP_LOW : HEAP_OK; });
-    assert(c.reboot == 0);
+    c = run(g2, 0, 15 * MIN + 2 * S, [](NetGuardIn &in) { in.freeHeap = (in.nowMs / S) % 300 < 30 ? HEAP_LOW : HEAP_OK; });
+    assert(c.reboot == 1 && c.firstReboot == 901 * S);
 }
 
 void test_no_reboot_when_not_ok_or_heap_unknown() {
@@ -193,8 +271,17 @@ void test_no_reboot_when_not_ok_or_heap_unknown() {
     assert(c.reboot == 1 && c.firstReboot == 0);
 
     NetGuard g2;
-    c = run(g2, 0, 60 * MIN, [](NetGuardIn &in) { in.freeHeap = NetGuard::kHeapUnknown; });
+    c = run(g2, 0, 15 * MIN, [](NetGuardIn &in) { in.freeHeap = NetGuard::kHeapUnknown; });
     assert(c.reboot == 0);
+}
+
+// held: no reboot for 6 h of uptime, low heap or not; then allowed
+void test_reboot_held() {
+    NetGuard g;
+    auto c = run(g, 0, 6 * 60 * MIN, [](NetGuardIn &in) { in.freeHeap = HEAP_LOW; in.rebootHeld = true; });
+    assert(c.reboot == 0 && c.restart > 0);
+    c = run(g, 6 * 60 * MIN, 2 * S, [](NetGuardIn &in) { in.rebootHeld = true; });
+    assert(c.reboot == 1 && c.firstReboot == 0);
 }
 
 // the 2026-11 outage: free above 12 KB but no 8 KB block for the mqtt task stack
@@ -208,19 +295,19 @@ void test_fragmented_heap_reboots_once() {
     assert(c.reboot == 0);
 }
 
-void test_normal_heap_broker_down_no_reboot() {
+void test_normal_heap_broker_down_no_early_reboot() {
     NetGuard g;
-    auto c = run(g, 0, 60 * MIN, [](NetGuardIn &in) { in.freeHeap = 28 * 1024; in.largest = 11200; });
+    auto c = run(g, 0, 15 * MIN, [](NetGuardIn &in) { in.freeHeap = 28 * 1024; in.largest = 11200; });
     assert(c.reboot == 0);
     // block exactly at the threshold is not low
     NetGuard g2;
-    c = run(g2, 0, 60 * MIN, [](NetGuardIn &in) { in.largest = NetGuard::kBlockLow; });
+    c = run(g2, 0, 15 * MIN, [](NetGuardIn &in) { in.largest = NetGuard::kBlockLow; });
     assert(c.reboot == 0);
 }
 
-void test_largest_unknown_no_reboot() {
+void test_largest_unknown_no_early_reboot() {
     NetGuard g;
-    auto c = run(g, 0, 60 * MIN, [](NetGuardIn &in) { in.freeHeap = 13700; in.largest = NetGuard::kHeapUnknown; });
+    auto c = run(g, 0, 15 * MIN, [](NetGuardIn &in) { in.freeHeap = 13700; in.largest = NetGuard::kHeapUnknown; });
     assert(c.reboot == 0);
 }
 
@@ -270,17 +357,22 @@ int main() {
     test_failed_service_retried();
     test_retry_period();
     test_mqtt_restart_after_120s();
+    test_mqtt_restart_backoff_resets_on_connect();
+    test_mqtt_restart_waits_after_failed();
     test_mqtt_no_restart_wifi_down_or_disabled();
     test_mqtt_flapping_wifi_resets_count();
     test_mqtt_connected_or_unconfigured_no_action();
     test_failed_mqtt_not_restarted_but_counts_for_reboot();
-    test_broker_down_healthy_heap_never_reboots();
+    test_broker_down_healthy_heap_reboots_after_15min();
+    test_broker_down_3h_bounded();
+    test_failed_mqtt_healthy_heap_reboots();
+    test_reboot_held();
     test_low_heap_reboots_once();
     test_low_heap_must_persist();
     test_no_reboot_when_not_ok_or_heap_unknown();
     test_fragmented_heap_reboots_once();
-    test_normal_heap_broker_down_no_reboot();
-    test_largest_unknown_no_reboot();
+    test_normal_heap_broker_down_no_early_reboot();
+    test_largest_unknown_no_early_reboot();
     test_reboot_wifi_down_resets();
     test_reboot_refused_rearms_after_10min();
     test_clock_wrap();
