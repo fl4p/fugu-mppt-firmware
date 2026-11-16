@@ -626,8 +626,8 @@ Mean of scenarios (harvest % of GMPP):
 | flat, measured | 92.79 | 93.50 | 93.48 |
 | fry-hq, Gaussian | 95.00 | 95.42 | 95.36 |
 | flat-hq, Gaussian | 95.13 | 95.69 | 95.72 |
-| fry, steady sun (noise-free / measured / wander) | 99.57 / 99.59 / 99.56 | 98.53 / 99.33 / 99.43 | 99.80 / 99.73 / 99.70 |
-| flat, steady sun (noise-free / measured / wander) | 99.43 / 99.69 / 99.76 | 98.80 / 99.21 / 99.36 | 99.47 / 99.81 / 99.80 |
+| fry, mean of wx-sun, wx-ramp and wx-wob (noise-free / measured / wander) | 99.57 / 99.59 / 99.56 | 98.53 / 99.33 / 99.43 | 99.80 / 99.73 / 99.70 |
+| flat, mean of wx-sun, wx-ramp and wx-wob (noise-free / measured / wander) | 99.43 / 99.69 / 99.76 | 98.80 / 99.21 / 99.36 | 99.47 / 99.81 / 99.80 |
 
 Key scenarios. Paired deltas give the mean, the worst..best range and the number of pairs worse by > 0.1 pp:
 
@@ -658,7 +658,57 @@ gain (wob-fix − main within ±0.2 pp on every plant). The cost is on wx-dusk, 
 dusk results stay at or above ed5ffe5's, except fry-hq (−0.2) and fry measured (−0.11). The noise-free flat wx-ramp
 −0.8 pp is a single deterministic run; with measured noise or wander the difference is ±0.03 pp. No other scenario
 is worse than main beyond the spread; the other paired means against main lie within ±0.3 pp (largest: fry wx-low
-with Gaussian noise +0.29, fry-hq wx-low-slow −0.17).
+with Gaussian noise +0.29, fry-hq wx-low-slow −0.17). flat wx-low is −0.13 pp with Gaussian noise (5 of 9 seeds
+worse) and −0.12 pp with measured noise (7 of 18), about one standard error each, so not a regression.
+
+Without wx-wob, the mean of wx-sun and wx-ramp (noise-free / measured / wander) is, for fry, 99.45 / 99.56 / 99.53
+at ed5ffe5, 99.80 / 99.78 / 99.72 at main and 99.80 / 99.77 / 99.73 at wob-fix; for flat 99.30 / 99.61 / 99.77,
+99.90 / 99.80 / 99.82 and 99.45 / 99.82 / 99.78 (the noise-free flat drop is the single wx-ramp run above). The
+rise of the table rows from main to wob-fix comes from wx-wob.
+
+### 5.1 Follow-up: no settle window in slow mode
+
+Review of 51b3fa8 found two gaps:
+
+- **Rationale.** The comment said the 500 ms slow period outlasts the input-cap lag. The lag $C V / (2.5 I)$ is
+  0.68 s at 1 W and 1.36 s at 0.5 W (470 µF, 60 V), and slow mode runs down to 0.5 W. A pgx93 sweep kept the Vin
+  hold in slow mode below a power threshold P (P = 1, 2, 3 and 5 W; scratch knob, results-wexp2-pgx93.tsv). It
+  changed nothing measurable: fry wx-dusk with measured noise +0.00 / −0.01 / +0.06 / +0.11 pp, flat −0.02..+0.01;
+  wx-wob unchanged; wx-low and wx-low-slow within ±0.2. So the wx-dusk cost of 51b3fa8 does not come from the
+  region where the lag exceeds a slow period, and no threshold was adopted. The real reason the missing hold costs
+  little is the slow step: 25 times smaller than a fast one and 15 times less frequent.
+- **Slow power filters.** With a filter that settles in more than 500 ms, the filter half of the window still
+  covered the first slow decision, so the wx-wob problem returned. With filter length 60 at `SIM_ADC_HZ` 200 (settle
+  about 1 s), wx-wob-fry noise-free gave 95.3 % on both 1604eaf and 51b3fa8.
+
+Change (`src/tracker.h`): slow mode has no settle window at all (`!slowMode && since < 1000 && (filter || Vin)`).
+New unit test case `test_tracker_slow_mode_settle_ignores_filter` (settleMs 900 ms); it fails on 51b3fa8.
+
+Validation on pgx93 (`results7-pgx93.tsv`, tag `wobfix2-val`): the new rule on every key of `results6`, and on
+slow-filter keys (filter length 60, `SIM_ADC_HZ` 200) for 1604eaf, 51b3fa8 and the new rule. On the normal plants
+(INA226 filter length 20 at 513-1469 Hz, settle 5-13 ms) the new rule gives the same result as 51b3fa8 on all 410
+keys. Slow-filter keys, harvest % of GMPP. Paired deltas give the mean, worst..best range and pairs worse by
+> 0.1 pp; 1604eaf and 51b3fa8 are identical here:
+
+| board, noise | scenario | n | 1604eaf / 51b3fa8 | new | new − 51b3fa8 |
+|---|---|--:|--:|--:|---|
+| fry, noise-free | wx-wob | 1 | 95.3 | 99.7 | +4.4 |
+| fry, measured | wx-wob | 9 | 99.44 | 99.60 | +0.16 (−0.3..+0.7), 1 |
+| fry, wander | wx-wob | 9 | 99.42 | 99.62 | +0.20 (−0.1..+0.7), 1 |
+| flat, noise-free | wx-wob | 1 | 98.7 | 99.7 | +1.0 |
+| flat, measured | wx-wob | 9 | 99.19 | 99.77 | +0.58 (0.0..+1.3), 0 |
+| flat, wander | wx-wob | 9 | 99.48 | 99.63 | +0.16 (−0.3..+0.7), 3 |
+| fry, Gaussian | wx-low-slow | 9 | 96.98 | 96.88 | −0.10 (−0.8..+1.2), 4 |
+| flat, Gaussian | wx-low-slow | 9 | 97.12 | 97.14 | +0.02 (−0.3..+0.4), 2 |
+| fry, noise-free | wx-dusk | 1 | 96.3 | 95.5 | **−0.8** |
+| fry, measured | wx-dusk | 9 | 97.46 | 97.18 | −0.28 (−1.4..+0.6), 4 |
+| flat, noise-free | wx-dusk | 1 | 95.8 | 96.2 | +0.4 |
+| flat, measured | wx-dusk | 9 | 96.31 | 96.21 | −0.10 (−1.0..+0.8), 4 |
+| fry / flat, measured | wx-dawn | 9 | 95.69 / 94.38 | 95.69 / 94.38 | 0.00 |
+
+(wx-low with this filter is the wx-low-slow scenario and gives the same rows.) The slow-filter case repeats the trade
+of 51b3fa8: wx-wob gains 0.2 to 4.4 pp, while wx-dusk loses up to 0.8 pp on fry (a single noise-free run; −0.28 pp
+with measured noise, within the spread of −1.4..+0.6). No paired mean is worse beyond the spread.
 
 ## 6. Limitations
 

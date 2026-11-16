@@ -90,11 +90,12 @@ struct Tracker {
                 // after a reversal the filtered power still shows the old direction and the input cap's
                 // charge/discharge, which lags the duty by ~C*V/(2.5*I) in low light: the reference follows the
                 // power until the filter has settled and Vin is back at the reversal point. At most 1 s: the
-                // excursion of a longer blind leg costs more than the lag. Not in slow mode: its 500 ms period
-                // outlasts the lag, and a Vin that light changes keeps from coming back would skip a whole period
+                // excursion of a longer blind leg costs more than the lag. Not in slow mode: a window there can only
+                // end at a 500 ms decision, so it skips a whole period and doubles the leg, while a slow step is 25x
+                // smaller, so the lag and filter error it would cover are small
                 auto since = now - _timeSettle;
-                if (since < 1000 && ((float) since < settleMs() ||
-                                     (!slowMode && (_direction ? vin > _lastVin : vin < _lastVin)))) {
+                if (!slowMode && since < 1000 &&
+                    ((float) since < settleMs() || (_direction ? vin > _lastVin : vin < _lastVin))) {
                     _lastPower = power;
                 } else if (absDp >= minPowerStep
                            or (abs(_lastPower) > minPowerStep and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel)) {

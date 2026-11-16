@@ -90,7 +90,7 @@ and the re-reversals after a turn walked Vin down in the same way.
 
 ### Settle window
 
-The window lasts until both of these hold, but never longer than 1 s:
+The window applies in fast mode and lasts until both of these hold, but never longer than 1 s:
 
 - The power filter has settled. Each power sensor (current and voltage) has a median of 5, which delays a
   step by 2 samples, and a 2-pass EWMA with span $N$, so each pass has a time constant of $\tau \approx N/2$
@@ -101,9 +101,6 @@ The window lasts until both of these hold, but never longer than 1 s:
   about $C V / (2.5\, I)$, for example 0.34 s with 470 µF at 2 W and 60 V. Vin keeps moving in the old
   direction for a moment, then turns. When it gets back to the reversal voltage, the capacitor current has
   mostly reversed. This measures the plant lag directly, so the capacitance does not need to be configured.
-  This condition applies in fast mode only. A slow-mode period (500 ms) already outlasts the lag, and the
-  window can only end at a period boundary: when changing light keeps Vin from coming back, the wait would
-  skip a whole period and double the leg.
 
 | Power sensor profile                  | $f_s$  | $N$ | $t_f$   |
 |---------------------------------------|--------|-----|---------|
@@ -120,9 +117,16 @@ The 1 s cap bounds a leg that the tracker walks without judging power. In simula
 harvested less than a fixed 150 ms window, because the excursion it allows costs more than the filter lag
 does.
 
-Slow mode evaluates every 500 ms, so the filter part of the window rarely covers an evaluation there. Skipping
-the first slow-mode evaluation after each reversal made no measurable difference in simulation, so slow mode
-uses the same rule. The Vin condition has no deadband: ending the window 0.1 % of Vin early lost about 1 % of
+Slow mode has no settle window. It evaluates every 500 ms, so a window there can only end at an evaluation, and
+any window that covers one skips it: the leg runs a whole period longer, and twice as long in total. In
+simulation that happened when changing light kept Vin from coming back to the reversal voltage, and with power
+filters that settle in more than 500 ms (filter length 60 at a low sample rate). Under an irradiance wobble of
+0.5 % at 0.2 Hz, it cost 3 to 4 % of harvest. Without the window, the first slow evaluation compares against a
+reference that still carries the filter lag and the input-capacitor current. That costs little, because a slow
+step is 25 times smaller than a fast one and comes 15 times less often, so the capacitor current it causes is
+small against the 0.15 % power threshold. The trade-off in simulation was 0.1 to 0.5 % of harvest at dusk.
+
+The Vin condition has no deadband: ending the window 0.1 % of Vin early lost about 1 % of
 harvest at 2 to 20 W, and ending it 0.1 % late made no measurable difference.
 
 The tracker keeps its own MPP record. It resets the record after 5 min, or when the current power is below 85 % of
