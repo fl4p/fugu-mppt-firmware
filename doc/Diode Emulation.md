@@ -1,4 +1,5 @@
-> **Moved.** This is the old version of this note, kept for existing links. The maintained version is [Diode Emulation](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/diode-emulation) ([source](../website/docs/internals/diode-emulation.md)).
+> **Moved and outdated.** This is the old version of this note, kept for existing links. Its field values and
+> `rect_offset` model are superseded, and `InductivityDcBias` is now a 0.95 multiplier. The maintained version is [Diode Emulation](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/diode-emulation) ([source](../website/docs/internals/diode-emulation.md)).
 
 # Nomenclature
 

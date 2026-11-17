@@ -15,23 +15,28 @@ step with a voltage setpoint.
 
 ```mermaid
 flowchart TD
-  wait([New Vout sample]) --> running{Converter<br/>running?}
+  wait([New Vout sample]) --> calib{ADC<br/>calibrating?}
+  calib -- yes --> hold[Hold the<br/>converter off]
+  calib -- no --> running{Switching, sweeping<br/>or manual PWM?}
+  running -- yes --> protect{Protection: Vin/Vout OV,<br/>Iin/Iout OC, reverse<br/>current, supply UV,<br/>temperature, ...}
   running -- no --> start[Start the converter<br/>with a sweep when<br/>start conditions allow]
-  running -- yes --> protect{Protection: Vout OV,<br/>Iout OC, Vin UV,<br/>temperature}
   protect -- violation --> backoff[Disable converter,<br/>back off]
   protect -- ok --> manual{Manual<br/>PWM?}
-  manual -- yes --> ramp[Ramp duty toward<br/>the manual target]
   manual -- no --> meter[Energy meter,<br/>thermal power limit]
-  meter --> due{Periodic<br/>sweep due?}
+  manual -- yes --> ramp[Ramp duty toward<br/>the manual target]
+  meter --> due{Sweep due? Periodic<br/>or power doubled}
   due -- no --> pd["$$\begin{gathered}\text{Update PD controllers}\cr u_k,\ k \in \{V_{in}, V_{out}, I_{in}, I_{out}, P\}\end{gathered}$$"]
-  due -- yes --> sweepStart[Start sweep]
-  pd --> lowest{"$$\textstyle\min_k u_k \lt 0$$"}
-  lowest -- yes --> limit[Limiter mode CV, CC or CP,<br/>a running sweep ends]
+  due -- yes --> sweepStart[Start sweep: converter off,<br/>sensor calibration, then<br/>ramp from minimum duty]
+  pd --> lowest{"$$\begin{gathered}\textstyle\min_k u_k \lt 0\ \text{or}\cr \text{duty at max?}\end{gathered}$$"}
   lowest -- no --> sweeping{Sweeping?}
-  sweeping -- yes --> sweepStep[Sweep step,<br/>record the MPP]
-  sweeping -- no --> tracker[Tracker perturb-<br/>and-observe step]
+  lowest -- yes --> limit[Limiter mode<br/>CV, CC or CP,<br/>step down; a<br/>sweep ends here]
+  sweeping -- yes --> sweepStep[Sweep step,<br/>record<br/>the MPP]
+  sweeping -- no --> target{MPP duty<br/>target set?}
+  target -- yes --> fade[Ramp toward<br/>the sweep's<br/>MPP duty]
+  target -- no --> tracker[Tracker<br/>perturb-and-<br/>observe step]
   limit --> step
   sweepStep --> step
+  fade --> step
   tracker --> step
   step["Cap the step at $$\;\textstyle\min_k u_k\;$$<br/>scale by loop time"] --> pwm[Update PWM duty]
   pwm --> sync[Enable sync rectifier and<br/>backflow switch above<br/>the current threshold]
@@ -60,9 +65,9 @@ MPPT halts and the duty cycle decreases in proportion to the control value.
 The controller gains are set in [`converter.conf`](../reference/config/converter.md#control-loop-gains).
 
 :::caution Known issue
-During power-derating / overload, `IoutCTRL` and/or `PowerCTRL` decrease the duty cycle, which can raise the solar voltage and so
-increase conversion power. The converter might run into the hard limits, shuts down, and back-off restarts. The situation is
-transient and should not damage hardware.
+During thermal derating or an overload, `IoutCTRL` or `PowerCTRL` lowers the duty cycle. Below the MPP voltage this
+raises the solar voltage and the conversion power. The converter can then reach a hard limit, shut down, and restart
+with a sweep after the back-off. The situation is transient and should not damage hardware.
 :::
 
 ## MPPT algorithm
