@@ -33,6 +33,7 @@ Files map roughly to spec sections (`../spec.md`):
 | `console.test.js`    | §7 (device-log panel, ANSI rendering, tail-follow, command input) |
 | `transports.test.js` | §5 (`sendCommand`, `getConfig`, `importFromDevice` retry-on-timeout), §5.3 (MQTT scan modal + topics) |
 | `teledec_{tamp,payload,framing}.test.js` | `../teledec.js` (binary telemetry decoder, no jsdom) against `fixtures/tele_fixtures.json`; regenerate with `/path/to/repo/.venv/bin/python3 test/gen_tele_fixtures.py` (tamp 2.3.0, expected lines from `etc/fugu/teledec.py`) |
+| `sweepcurve.test.js` | `../teledec.js` `sc:` sweep-curve lines (`parseScLine`, `SweepCurveParser`) |
 | `browser/smoke.spec.js` | CDN sanity (real `mqtt@5` + `ansi-to-html` load); real-layout tail-follow; folder drag-drop via `webkitGetAsEntry` |
 
 ## Adding tests

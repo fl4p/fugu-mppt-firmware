@@ -301,9 +301,88 @@
     const ANSI_RE = /\x1b\[[0-9;?]*[ -\/]*[@-~]/g;
     function stripAnsi(s) { return s.replace(ANSI_RE, ''); }
 
+    // --- sweep curve console lines ------------------------------------------------------------
+    //   sc: t=<epoch_s> n=<N> mpp=<W>,<V> sweeping=0|1
+    //   sc: V P V P ...      (repeated)
+    //   sc: end   |   sc: none
+    const SC_RE = /(?:^|[^A-Za-z0-9_])sc:\s*(.*?)\s*$/;
+    const NUM_RE = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$|^[-+]?(?:inf|nan)$/i;
+
+    // Returns null for a non-`sc:` line, else {kind: 'header'|'data'|'end'|'none'|'invalid', ...}.
+    function parseScLine(line) {
+        const m = SC_RE.exec(stripAnsi(line));
+        if (!m) return null;
+        const body = m[1];
+        if (body === 'end' || body === 'none') return {kind: body};
+        if (/(?:^|\s)t=/.test(body)) {
+            const kv = {};
+            for (const tok of body.split(/\s+/)) {
+                const e = tok.indexOf('=');
+                if (e > 0) kv[tok.slice(0, e)] = tok.slice(e + 1);
+            }
+            const mpp = (kv.mpp || '').split(',');
+            const h = {kind: 'header', t: Number(kv.t), n: Number(kv.n),
+                mpp: {P: Number(mpp[0]), V: Number(mpp[1])}, sweeping: kv.sweeping === '1'};
+            if (!Number.isFinite(h.t) || !Number.isInteger(h.n) || h.n < 0 || mpp.length !== 2 ||
+                !NUM_RE.test(mpp[0]) || !NUM_RE.test(mpp[1])) return {kind: 'invalid', text: body};
+            return h;
+        }
+        const vals = [];
+        let truncated = false;
+        for (const tok of body ? body.split(/\s+/) : []) {
+            if (!NUM_RE.test(tok)) { truncated = true; break; }
+            vals.push(Number(tok));
+        }
+        if (vals.length % 2) truncated = true;
+        const points = [];
+        for (let i = 0; i + 1 < vals.length; i += 2) points.push({V: vals[i], P: vals[i + 1]});
+        if (!points.length && !truncated) return {kind: 'invalid', text: body};
+        return {kind: 'data', points, truncated};
+    }
+
+    // Assembles one curve from header, data and `end` lines. feed() returns undefined until a
+    // curve finishes, then {complete, curve, reason}; `sc: none` gives {complete: true, curve: null}.
+    class SweepCurveParser {
+        constructor() { this.cur = null; }
+
+        _finish(reason) {
+            const c = this.cur;
+            this.cur = null;
+            const curve = {t: c.t, n: c.n, mpp: c.mpp, sweeping: c.sweeping, points: c.points};
+            if (!reason && c.points.length !== c.n) reason = 'short';
+            if (!reason && c.truncated) reason = 'truncated';
+            return reason ? {complete: false, curve, reason} : {complete: true, curve};
+        }
+
+        feed(line) {
+            const p = parseScLine(line);
+            if (!p) return undefined;
+            switch (p.kind) {
+                case 'header': {
+                    const prev = this.cur ? this._finish('restart') : undefined;
+                    this.cur = {t: p.t, n: p.n, mpp: p.mpp, sweeping: p.sweeping, points: [], truncated: false};
+                    return prev;
+                }
+                case 'data':
+                    if (this.cur) {
+                        this.cur.points.push(...p.points);
+                        if (p.truncated) this.cur.truncated = true;
+                    }
+                    return undefined;
+                case 'end':
+                    return this.cur ? this._finish() : undefined;
+                case 'none':
+                    this.cur = null;
+                    return {complete: true, curve: null};
+                default:
+                    return undefined;
+            }
+        }
+    }
+
     return {
         RECORD_MAGIC, MAX_RECORD, DT, DT_WIDTH,
         readVarint, cstr, f16ToF32, fmtG, tampInitDictionary, tampDecompress,
-        decodePayload, pointToLine, TeleStream, stripAnsi,
+        decodePayload, pointToLine, TeleStream, stripAnsi, parseScLine, SweepCurveParser,
     };
 });
