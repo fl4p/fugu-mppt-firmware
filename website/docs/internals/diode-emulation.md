@@ -152,6 +152,106 @@ rising-slope estimate). The controller therefore needs a wider margin at high `M
 LS off slightly early costs a small body-diode `V_f` loss. Turning it off late causes reverse
 current.
 
+### Reverse-current drain near `D = M`
+
+The window above assumes the coil current is zero when HS turns on. In DCM the switch node rings
+after the zero crossing, so HS turns on into a ring current $i_0$ of up to about $V_o/Z_0$
+($Z_0 = \sqrt{L/C}$, $C$ the switch-node capacitance). Starting from $i_0$, the current reaches
+zero after
+
+$$
+t_{on,LS} = t_{on,HS} \cdot \left(\frac{1}{M} - 1\right) + i_0 \cdot \frac{L}{V_o}
+$$
+
+so the crossing moves by up to $\sqrt{LC}$ (0.5–0.7 µs in the board models) with a phase that
+depends on the off-time. A ratio reading error moves it by $t_{on,HS} \cdot \Delta M / M^2$, about
+$(\Delta M/M) \cdot T$ near `D = M`. The `M` bias keeps the window $0.02 \cdot t_{on,HS}/M$ early,
+about $0.02 \cdot T$ (0.5 µs at 39 kHz) near `D = M`.
+
+Conduction past the crossing by $\delta$ builds a reverse current $V_o \delta / L$. After LS turns off it
+drains through the HS body diode at $(V_i - V_o)/L$, which takes
+
+$$
+t_{drain} = \delta \cdot \frac{M}{1 - M} = \frac{\delta}{r}, \qquad r = \frac{1}{M} - 1
+$$
+
+Near `D = M` the off-time after the window is short, and at high `M` the drain is slow (9 $\delta$
+at `M = 0.9`). Reverse current left at the next HS turn-on lowers the next peak, moves the next
+crossing earlier and makes the next window later still. The converter then settles in a
+forced-CCM-like state with a negative mean output current. With a stiff source and battery the
+board models showed this from a ratio reading 1.5 % off (−0.13 A, two models), 2 % off (−0.21 to
+−0.39 A, all four), 2.5 % off (−1.5 to −1.9 A) and 3 % off (down to −9.7 A).
+
+The firmware therefore ends the DCM window early enough that the drain of a late-conduction budget
+$t_{late}$ finishes before the next HS turn-on:
+
+$$
+t_{on,LS} \le T - t_{on,HS} - \frac{t_{late}}{r_{WCE}}, \qquad
+t_{late} = \max\left(\left(1 - \frac{1 - e}{1 + e}\right) \cdot T,\; 0.7\ \mu s\right)
+$$
+
+with $r_{WCE}$ the window ratio from the biased `M` and $e$ = 1 % the assumed error per voltage
+reading (`VoltageMaxErr`). The first term is the time the `M` bias keeps the window early near
+`D = M`, so the budget covers a ratio error the size of the margin again; it is 0.5 µs at 39 kHz.
+The second term covers the ring-current shift $\sqrt{LC} = 1/(2\pi f_{ring})$, which is a fixed time
+and does not scale with the period: 0.68 µs at the lowest measured ring frequency of the boards,
+233 kHz. The firmware configuration has no ring frequency or node capacitance, so the floor is a
+constant. At 39 kHz the floor sets the budget (2.7 % of the period); below about 28 kHz the
+fraction does.
+
+With exact readings the limit binds for
+
+$$
+\frac{D}{M_{WCE}} > 1 - \frac{t_{late}}{T \cdot r_{WCE}}
+$$
+
+which at 39 kHz is the range above these fractions of `D = M`:
+
+| `M` | 0.5 | 0.6 | 0.7 | 0.8 | 0.85 | 0.9 | 0.95 |
+|---|---|---|---|---|---|---|---|
+| limit binds from `D/M` | 0.99 | 0.98 | 0.95 | 0.90 | 0.84 | 0.71 | 0.14 |
+
+At low `M` it binds only in the last percent of HS counts below `D = M`; above `M` ≈ 0.9 it binds in
+most of the DCM range, and above about 0.93 the LS minimum pulse is longer than the limit. Where
+the limit would leave less than the LS minimum pulse, the minimum pulse is issued.
+
+Checked over the whole DCM range (`V_o` = 26.8 and 29.2 V, `V_i` from `V_o + 0.6` V to 80 V,
+every HS count from 200 to `D = M`, stiff source and battery) on the four board models, with
+readings of `V_o` up to 4 % low or `V_i` up to 2.5 % high, both together, and timing offsets of 0 to
++125 ns. Points with the reading error past the margin, before → after (count of points where the
+window, LS above its minimum pulse, drives the mean output current negative; most negative value;
+offset 0; the 1–1.5 % rows are from an earlier sweep with a 0.02·T budget alone, which the
+floor only lengthens):
+
+| reading error | before, per model | after |
+|---|---|---|
+| none, `V_o` −1 % or `V_i` +1 % | 0–10 points, ≥ −0.01 A | 0 |
+| `V_o` −1.5 % or `V_i` +1.5 % | 760–880 points, −0.13 A (two models) | 0 |
+| `V_o` −2 % | 1220–3610 points, −0.38 to −0.39 A | 0 |
+| `V_i` +2.5 % | 4440–7150 points, −1.5 to −1.8 A | 0 |
+| `V_o` −3 % | 8840–11370 points, −6.7 to −9.7 A | 0 |
+| `V_o` −2 % and `V_i` +2 % | 16580–18500 points, −27 to −38 A | 0 |
+| `V_o` −4 % | 17230–19100 points, −29 to −40 A | 0–10 points, ≥ −0.01 A |
+
+No point turned a non-negative mean current negative. A budget of $0.0198 \cdot T$ alone (no time
+floor) leaves points negative once the total ratio error exceeds about 3 %: `V_o` −2 % and `V_i`
++2 % together give down to −0.22 A, `V_o` −4 % down to −0.35 to −0.56 A. Past about 4 % the floor
+also runs out.
+
+The limit also lowers the stiff-source DCM gain near `D = M`: the body diode carries the tail of the
+falling current, whose extra $V_f$ ends it sooner, so the mean output current at the same HS count
+drops by up to 2 A in the board models. The MPPT and voltage loops close around this. Cost with
+exact readings, from the plant efficiency at the points where the limit changes the LS count: at
+most 0.01–0.04 percentage points at `M` < 0.5, 0.03–0.20 at `M` = 0.5–0.7, 0.13–0.51 at 0.7–0.8 and
+0.20–0.55 at 0.8–0.9, where the DCM output power is at most a few tens of watts; the mean extra loss
+over those points is below 10 mW. In closed-loop PV simulations near `V_i ≈ V_o` (low-voltage
+strings, partial shade, dawn, dusk, low light, a battery at the voltage cap) the harvest changed by
+−1.2 to +0.7 percentage points in single runs, with identical protection trips. Over eight noise
+seeds the low-light scenario moved from 98.1 ± 0.4 to 97.8 ± 0.7 % and the slow low-light scenario
+from 98.5 ± 0.2 to 98.5 ± 0.1 %. The dusk scenario does not depend on the seed and dropped from
+98.4 to 97.7 %; its result moves by a similar amount (97.6–98.6 %) with a 2 % `V_i` gain error and no
+change to the limit, so a single run does not separate the two.
+
 ### Timing correction (`rect_offset_ns`)
 
 The formula above gives the *ideal* zero-crossing time from the measured voltages. The LS
@@ -518,9 +618,8 @@ LS minimum pulse to `D = M`) on four board models, with offsets of +63, +125 and
 of `V_o` 0 to 2.5% low or `V_i` up to 2.5% high: an offset never reaches the complementary limit and
 never turns the mean output current negative where offset 0 keeps it positive. Against offset 0 it
 lowers the mean output current by at most 0.12 A at +125 ns and `V_o` 1.7% low, 0.17 A at 2% low,
-and 0.42 A at 2.5% low. The window without an offset is not covered by this: with `V_o` read 1.5% low
-it already drives the mean output current negative near `D = M` in two of the models (−0.12 A), at
-2% low in all four (−0.37 to −0.42 A), and at 2.5% low by up to −2.4 A.
+and 0.42 A at 2.5% low. The window without an offset has its own drain limit (see
+*Reverse-current drain near `D = M`*); it applies on top of the offset rule.
 
 The run applies a late result up to +125 ns, and only from a calibration point below `V_i = 2·V_o`
 (see *Bounds*). In the board models with exact voltage readings, +125 ns leaves at most 0.06–0.14 A
@@ -608,7 +707,7 @@ top of that value:
 | CCM/DCM decision (`computeDCM`) | Enters DCM when `ΔI_L > 2.0·I_o`, leaves when `ΔI_L ≤ 1.8·I_o` (hysteresis). Always DCM when `I_o < 0.1 A`. Effective forced PWM overrides all of this (never DCM). |
 | M bias | Assumes a ±1 % error on each voltage and divides `M` by `0.99/1.01`, i.e. biases it ≈ 2 % toward the early-turn-off side, then clamps it off unity (`≤ 0.99` buck, `≥ 1.01` boost). On a buck the full bias applies up to `M ≈ 0.97`; between 0.97 and 0.99 the clamp eats into it; above 0.99 the clamped `M` is *below* the true one and the LS window comes out longer than ideal (at `M = 0.995` the ratio is 0.0101 against an ideal 0.0050, ≈ 2×). |
 | low-current cut-off | In DCM the LS ratio is set to 0 when `I_o ≤ 0.01 A` or the low-side voltage is `< 1 V`; it stays at 0 until `I_o ≥ 0.04 A` and the voltage is back at `≥ 1 V`. The offset is still added, so the target becomes `rect_offset` counts. |
-| DCM LS limit (`pwmRectMax`) | `pwmCtrl·ratio + rect_offset` counts, with first-order error-feedback dither of the rounding remainder (so the limit's time-average tracks the unrounded target). |
+| DCM LS limit (`pwmRectMax`) | `pwmCtrl·ratio + rect_offset` counts, at most `pwmMax − pwmCtrl − 1 − late/ratio`, `late` the larger of `LateDrainBudget·pwmMax` (≈ 0.0198, from `VoltageMaxErr`) and `LateDrainMinNs` = 700 ns (the drain limit near `D = M`), with first-order error-feedback dither of the rounding remainder (so the limit's time-average tracks the unrounded target). |
 | CCM LS limit | `pwmMax − pwmCtrl − 1` (complementary). |
 | final clamp | The limit is clamped to `[pwmRectMin, pwmMax − pwmCtrl − 1]`. On a buck `pwmRectMin` = `boot_refresh_ns` in ticks + the HS→LS dead time, for bootstrap refresh. |
 | commanded LS count (`pwmRect`) | Fades in toward the limit (+1 count per update at first, then 1/64 of the remaining gap), follows it down immediately, drops to `pwmRectMin` on a large duty decrease, and stays at `pwmRectMin` while sync rect is off. |
@@ -623,6 +722,18 @@ Because of the clamp, a buck with sync rect off (console `sync off`) still issue
 `pwmRectMin` LS pulse every period, and the low-current cut-off issues the larger of
 `pwmRectMin` and the offset. At zero load that pulse builds `V_o·t/L` of reverse current.
 Account for this pulse when you compare scope traces with the ideal triangle.
+
+The minimum pulse is not covered by the drain limit. With the default `boot_refresh_ns` of 2 µs at
+39 kHz it is 7.8 % of the period. Near `D = M` its reverse current cannot drain before the next HS
+turn-on once $M > 1 - t_{min}/T$ = 0.92 (`V_i` below about 1.085·`V_o`). That carry-over estimate
+is approximate: each period the pulse also pumps charge from the battery back into the input, even
+where no reverse current carries over, and the board models go negative from `M` ≈ 0.92 at every
+HS count and from `M` ≈ 0.865–0.9 at HS counts up to about 1200 (30 % duty).
+Above `M` ≈ 0.92 the converter runs as a boost from the battery into the input. With a stiff source this is a large reverse current (hundreds of amps in the board models). With a PV
+input it lifts `V_i` to about $V_o/(1 - t_{min}/T)$; a nearly dark panel that cannot absorb it below
+`V_oc` lets the input rise until the panel conducts, and the reverse-current protection stops the
+converter. Below it, the pulse drives the mean current negative only at light load and low HS counts,
+where it exceeds twice the ideal window (in the board models down to −0.27 A at `M` = 0.9 and low duty).
 
 ### Failure modes at the LS boundary
 
