@@ -5,6 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fugu MPPT dashboard</title>
+<link rel="icon" href="data:,">
 <style>
   :root {
     --bg:#0e1116; --panel:#161b22; --panel2:#1c232c; --line:#2a3340;
@@ -70,6 +71,31 @@
   form.console input { flex:1; min-width:0; background:var(--bg); color:var(--fg); border:1px solid var(--line);
     border-radius:6px; padding:5px 8px; font-family:ui-monospace,monospace; font-size:12px; }
   form.console input:focus { outline:none; border-color:var(--accent); }
+  /* P-vs-Vin chart: dark chart tokens, series-1 blue for the curve, slot-2 orange for "now" */
+  .chartwrap { --series-1:#3987e5; --series-2:#d95926; --grid:#2a3340; --axis:#3a4552; --surface:var(--panel); }
+  .chartbar { display:flex; gap:10px; align-items:center; font-size:11px; color:var(--muted); flex-wrap:wrap; }
+  .chartbar .caption { color:var(--fg); }
+  .chartbar .spacer { flex:1; }
+  .chartbar .key { display:inline-flex; align-items:center; gap:4px; }
+  .chartbar .key i { display:inline-block; }
+  .chartbar .k-line i { width:14px; height:2px; background:var(--series-1); border-radius:1px; }
+  .chartbar .k-trace i { width:14px; height:2px; background:var(--series-1); opacity:.35; }
+  .chartbar .k-ring i { width:8px; height:8px; border:2px solid var(--series-1); border-radius:50%; }
+  .chartbar .k-dot i { width:8px; height:8px; background:var(--series-2); border-radius:50%; }
+  .chartbar button.refresh { padding:1px 8px; font-size:12px; }
+  svg.chart { width:100%; height:auto; display:block; }
+  svg.chart .grid line { stroke:var(--grid); stroke-width:1; }
+  svg.chart .base { stroke:var(--axis); stroke-width:1; }
+  svg.chart text { fill:var(--muted); font-size:9px; font-variant-numeric:tabular-nums; }
+  svg.chart text.empty { font-size:11px; }
+  svg.chart path.curve { fill:none; stroke:var(--series-1); stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
+  svg.chart path.trace { fill:none; stroke:var(--series-1); stroke-opacity:.35; stroke-width:1.5; stroke-linejoin:round; }
+  svg.chart circle.mpp { fill:none; stroke:var(--series-1); stroke-width:2; }
+  svg.chart circle.mpp-halo { fill:none; stroke:var(--surface); stroke-width:4; }
+  svg.chart circle.live { fill:var(--series-2); stroke:var(--surface); stroke-width:2; }
+  svg.chart .hover line { stroke:var(--muted); stroke-width:1; }
+  svg.chart .hover text { fill:var(--fg); font-size:10px; }
+  svg.chart .hover circle { fill:var(--fg); stroke:var(--surface); stroke-width:2; }
 </style>
 </head>
 <body>
@@ -789,7 +815,7 @@ function createCard(dev){
     inp.value = dev.histIdx < h.length ? h[dev.histIdx] : "";
   };
   lw.append(bar, log, form);
-  c.append(top, k, rate, rc, lw);
+  c.append(top, k, rate, rc, createChart(dev), lw);
   $("cards").append(c);
   dev.el = c;
   dev.logReset = true;
@@ -880,8 +906,157 @@ function renderCard(dev){
   }
   q(dev, ".rate").textContent = parts.join("  |  ");
   renderAge(dev);
+  renderChart(dev);
   renderLog(dev);
   q(dev, "form.console input").disabled = !canSend(dev);
+}
+
+/* ---------------------------------------------------------------------------------------------
+   P-vs-Vin chart: last sweep curve, MPP ring, live operating point, faint witnessed-sweep trace
+--------------------------------------------------------------------------------------------- */
+const SVGNS = "http://www.w3.org/2000/svg";
+const CH = { w:320, h:170, l:34, r:10, t:12, b:22 };
+
+function svgEl(tag, attrs, cls){
+  const e = document.createElementNS(SVGNS, tag);
+  if (cls) e.setAttribute("class", cls);
+  for (const k in attrs || {}) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+function niceTicks(lo, hi, n){
+  if (!(hi > lo)) hi = lo + 1;
+  const raw = (hi - lo) / n, p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
+  const step = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p;
+  const a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step;
+  const ticks = [];
+  for (let v = a; v <= b + step / 2; v += step) ticks.push(+v.toFixed(9));
+  return { lo:a, hi:b, ticks, step };
+}
+
+function createChart(dev){
+  const w = el("div", "chartwrap");
+  const bar = el("div", "chartbar");
+  const keys = [["k-line", "last sweep"], ["k-trace", "witnessed"], ["k-ring", "MPP"], ["k-dot", "now"]].map(([c, t]) => {
+    const s = el("span", "key " + c); s.append(el("i"), document.createTextNode(t)); return s;
+  });
+  const rb = el("button", "refresh", "↻");
+  rb.title = "fetch the last sweep curve";
+  rb.onclick = () => { requestCurve(dev); scheduleRender(dev); };
+  bar.append(el("span", "caption"), el("span", "spacer"), ...keys, rb);
+  const svg = svgEl("svg", { viewBox:`0 0 ${CH.w} ${CH.h}`, role:"img", "aria-label":"power over input voltage" }, "chart");
+  svg.append(svgEl("g", {}, "grid"), svgEl("line", {}, "base"), svgEl("g", {}, "ylab"), svgEl("g", {}, "xlab"),
+             svgEl("path", { d:"" }, "trace"), svgEl("path", { d:"" }, "curve"),
+             svgEl("circle", { r:5 }, "mpp-halo"), svgEl("circle", { r:5 }, "mpp"), svgEl("circle", { r:4 }, "live"));
+  const empty = svgEl("text", { x:CH.w / 2, y:CH.h / 2, "text-anchor":"middle" }, "empty");
+  const hov = svgEl("g", { visibility:"hidden" }, "hover");
+  hov.append(svgEl("line", { y1:CH.t, y2:CH.h - CH.b }), svgEl("circle", { r:3 }),
+             svgEl("text", { x:CH.w - CH.r, y:CH.t - 2, "text-anchor":"end" }));
+  svg.append(empty, hov);
+  svg.addEventListener("pointermove", (e) => chartHover(dev, svg, e));
+  svg.addEventListener("pointerleave", () => show(hov, false));
+  w.append(bar, svg);
+  return w;
+}
+
+const show = (e, on) => e.setAttribute("visibility", on ? "visible" : "hidden");
+
+function renderChart(dev){
+  const svg = q(dev, "svg.chart"), t = dev.tele;
+  const curve = dev.curve ? dev.curve.points.filter(p => Number.isFinite(p.V) && Number.isFinite(p.P)) : [];
+  const trace = dev.sweepTrace;
+  const live = Number.isFinite(t.Ui) && Number.isFinite(t.P) ? { V:t.Ui, P:t.P } : null;
+  const mpp = dev.curve && Number.isFinite(dev.curve.mpp.V) && dev.curve.mpp.P > 0 ? dev.curve.mpp : null;
+  renderCaption(dev);
+  const empty = svg.querySelector("text.empty");
+  const all = curve.concat(trace, live ? [live] : [], mpp ? [mpp] : []);
+  if (!all.length){
+    empty.textContent = dev.curveNone ? "no sweep recorded since boot" : "no sweep curve yet";
+    show(empty, true);
+    for (const s of ["path.curve", "path.trace"]) svg.querySelector(s).setAttribute("d", "");
+    for (const s of ["circle.mpp", "circle.mpp-halo", "circle.live"]) show(svg.querySelector(s), false);
+    for (const s of ["g.grid", "g.ylab", "g.xlab"]) svg.querySelector(s).replaceChildren();
+    show(svg.querySelector("line.base"), false);
+    dev.chartKey = null; dev.chartScale = null;
+    return;
+  }
+  show(empty, false);
+  const vs = all.map(p => p.V), ps = all.map(p => p.P);
+  let vlo = Math.min(...vs), vhi = Math.max(...vs);
+  if (vhi - vlo < 2){ vlo -= 1; vhi += 1; }
+  const xd = niceTicks(vlo, vhi, 5), yd = niceTicks(0, Math.max(1, ...ps), 4);
+  const X = (v) => CH.l + (v - xd.lo) / (xd.hi - xd.lo) * (CH.w - CH.l - CH.r);
+  const Y = (p) => CH.h - CH.b - Math.max(0, p) / yd.hi * (CH.h - CH.t - CH.b);
+  dev.chartScale = { X, Y, pts: curve.length ? curve : trace };
+  const key = xd.lo + "," + xd.hi + "," + yd.hi + "," + dev.ver;
+  if (key !== dev.chartKey){
+    dev.chartKey = key;
+    const grid = svg.querySelector("g.grid"), yl = svg.querySelector("g.ylab"), xl = svg.querySelector("g.xlab");
+    grid.replaceChildren(); yl.replaceChildren(); xl.replaceChildren();
+    for (const v of yd.ticks){
+      if (v > 0) grid.append(svgEl("line", { x1:CH.l, x2:CH.w - CH.r, y1:Y(v), y2:Y(v) }));
+      const tx = svgEl("text", { x:CH.l - 4, y:Y(v) + 3, "text-anchor":"end" });
+      tx.textContent = v === yd.hi ? v + " W" : String(v);
+      yl.append(tx);
+    }
+    for (const v of xd.ticks){
+      const tx = svgEl("text", { x:X(v), y:CH.h - CH.b + 12, "text-anchor":"middle" });
+      tx.textContent = v === xd.hi ? v + " V" : String(v);
+      xl.append(tx);
+    }
+    const base = svg.querySelector("line.base");
+    base.setAttribute("x1", CH.l); base.setAttribute("x2", CH.w - CH.r);
+    base.setAttribute("y1", Y(0)); base.setAttribute("y2", Y(0));
+    show(base, true);
+    const d = (pts) => pts.map((p, i) => (i ? "L" : "M") + X(p.V).toFixed(1) + " " + Y(p.P).toFixed(1)).join("");
+    svg.querySelector("path.curve").setAttribute("d", d(curve));
+    svg.querySelector("path.trace").setAttribute("d", d(trace));
+    for (const s of ["circle.mpp-halo", "circle.mpp"]){
+      const c = svg.querySelector(s);
+      show(c, !!mpp);
+      if (mpp){ c.setAttribute("cx", X(mpp.V).toFixed(1)); c.setAttribute("cy", Y(mpp.P).toFixed(1)); }
+    }
+  }
+  const lc = svg.querySelector("circle.live");
+  show(lc, !!live);
+  if (live){ lc.setAttribute("cx", X(live.V).toFixed(1)); lc.setAttribute("cy", Y(live.P).toFixed(1)); }
+}
+
+function fmtSweepTime(ts){
+  const d = new Date(ts * 1000), n = new Date(now());
+  const hm = d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" });
+  return d.toDateString() === n.toDateString() ? hm : d.toLocaleDateString() + " " + hm;
+}
+
+function renderCaption(dev){
+  const c = dev.curve, parts = [];
+  if (c){
+    if (c.t > 0) parts.push("sweep " + fmtSweepTime(c.t));
+    if (c.mpp.P > 0) parts.push("MPP " + c.mpp.P.toFixed(1) + " W @ " + c.mpp.V.toFixed(1) + " V");
+    if (c.sweeping) parts.push("sweeping");
+  } else if (dev.curveNone) parts.push("no sweep recorded");
+  if (dev.tele.state === 5) parts.push("sweep in progress");
+  if (dev.curveReq) parts.push("loading…");
+  else if (dev.curveErr) parts.push(dev.curveErr);
+  q(dev, ".chartbar .caption").textContent = parts.join(" · ");
+  q(dev, "button.refresh").disabled = !!dev.curveReq || !canSend(dev);
+}
+
+// Crosshair snaps to the nearest curve point (or the witnessed trace when no curve is known).
+function chartHover(dev, svg, e){
+  const s = dev.chartScale, hov = svg.querySelector("g.hover");
+  if (!s || !s.pts.length){ show(hov, false); return; }
+  const r = svg.getBoundingClientRect();
+  if (!r.width) return;
+  const x = (e.clientX - r.left) / r.width * CH.w;
+  let best = s.pts[0], bd = Infinity;
+  for (const p of s.pts){ const dd = Math.abs(s.X(p.V) - x); if (dd < bd){ bd = dd; best = p; } }
+  const px = s.X(best.V), py = s.Y(best.P);
+  const [ln, dot, tx] = hov.children;
+  ln.setAttribute("x1", px); ln.setAttribute("x2", px);
+  dot.setAttribute("cx", px); dot.setAttribute("cy", py);
+  tx.textContent = best.P.toFixed(1) + " W · " + best.V.toFixed(1) + " V";
+  show(hov, true);
 }
 
 function renderLog(dev){
@@ -925,6 +1100,7 @@ function tick(){
       if (L.state === "idle" && dev.mqtt.firstAt && t - dev.mqtt.firstAt >= LEASE_WAIT_MS){
         if (!dev.mqtt.teleSeen) lease(dev);
         else L.state = "relay";
+        if (!dev.curve && !dev.curveNone) requestCurve(dev);
       } else if ((L.state === "on" || L.state === "no-reply") && t - L.at >= RENEW_MS){
         lease(dev);
       }

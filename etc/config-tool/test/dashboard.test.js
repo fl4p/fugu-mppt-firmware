@@ -14,6 +14,8 @@ const text = (window, host, sel) => card(window, host).querySelector(sel).textCo
 // page-realm arrays/objects fail deepStrictEqual on prototype; copy into this realm
 const plain = (x) => JSON.parse(JSON.stringify(x));
 const pubs = (client, topic) => [...client._publishes.filter(p => !topic || p.topic === topic).map(p => p.msg)];
+// without the sweep-curve fetch issued 5 s after discovery
+const lpubs = (client, topic) => pubs(client, topic).filter(m => m !== 'sweep-curve');
 
 async function withBroker(extra = {}) {
   const env = await loadDash({ storage: { 'mqtt-url': URL, ...extra } });
@@ -135,7 +137,7 @@ test('pv/tele message renders KPIs; kWh above 1000 Wh; mode name; relay without 
   assert.match(text(window, 'fry', '.rate'), /^MQTT relay /);
   // telemetry within 5 s of discovery: never leased
   c.add(6000); Dash.tick(); await settle();
-  assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), []);
+  assert.deepEqual(lpubs(client, 'pv/log/fry/cmd'), []);
 });
 
 test('lease: tele-mqtt 120 after 5 s without telemetry; on-reply; renew every 60 s; re-lease on reconnect', async () => {
@@ -143,9 +145,9 @@ test('lease: tele-mqtt 120 after 5 s without telemetry; on-reply; renew every 60
   const c = clock(window);
   log(client, 'flat', ['I (1) main: boot']);
   c.add(4000); Dash.tick();
-  assert.deepEqual(pubs(client, 'pv/log/flat/cmd'), []);
+  assert.deepEqual(lpubs(client, 'pv/log/flat/cmd'), []);
   c.add(1500); Dash.tick();
-  assert.deepEqual(pubs(client, 'pv/log/flat/cmd'), ['tele-mqtt 120']);
+  assert.deepEqual(lpubs(client, 'pv/log/flat/cmd'), ['tele-mqtt 120']);
   log(client, 'flat', ['tele-mqtt: on, 120 s left, dropped 0 B', 'OK: tele-mqtt 120']);
   await settle();
   Dash.flush();
@@ -153,22 +155,22 @@ test('lease: tele-mqtt 120 after 5 s without telemetry; on-reply; renew every 60
   assert.equal(b.dataset.state, 'on');
   assert.match(b.title, /120 s left/);
   c.add(30000); Dash.tick();
-  assert.equal(pubs(client, 'pv/log/flat/cmd').length, 1);
+  assert.equal(lpubs(client, 'pv/log/flat/cmd').length, 1);
   c.add(31000); Dash.tick();
-  assert.equal(pubs(client, 'pv/log/flat/cmd').length, 2);
+  assert.equal(lpubs(client, 'pv/log/flat/cmd').length, 2);
   log(client, 'flat', ['tele-mqtt: on, 120 s left, dropped 3 B', 'OK: tele-mqtt 120']);
   await settle();
   // renewal on an incoming record once 60 s have passed
   c.add(61000);
   client.emit('message', 'pv/tele/flat', mqttMsg([{ fields: { P: 1 }, ts: c.get() }]));
-  assert.equal(pubs(client, 'pv/log/flat/cmd').length, 3);
+  assert.equal(lpubs(client, 'pv/log/flat/cmd').length, 3);
   log(client, 'flat', ['OK: tele-mqtt 120']);
   await settle();
   Dash.flush();
   assert.match(text(window, 'flat', '.rate'), /^MQTT [\d.]+ pt\/s · dropped 3 B$/);
   // broker reconnect re-leases
   client.emit('connect');
-  assert.equal(pubs(client, 'pv/log/flat/cmd').filter(m => m === 'tele-mqtt 120').length, 4);
+  assert.equal(lpubs(client, 'pv/log/flat/cmd').filter(m => m === 'tele-mqtt 120').length, 4);
   assert.ok(!pubs(client).includes('tele-mqtt 0'));
 });
 
@@ -179,14 +181,14 @@ test('lease: clock refusal sends set-time once and retries', async () => {
   c.add(5000); Dash.tick();
   log(client, 'fry', ['W (5) main: tele-mqtt: clock not set (send `set-time <epoch_ms>` or wait for SNTP)', 'ERR: tele-mqtt 120']);
   await settle();
-  assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['tele-mqtt 120', `set-time ${c.get()}`, 'tele-mqtt 120']);
+  assert.deepEqual(lpubs(client, 'pv/log/fry/cmd'), ['tele-mqtt 120', `set-time ${c.get()}`, 'tele-mqtt 120']);
   log(client, 'fry', ['W (6) main: tele-mqtt: clock not set', 'ERR: tele-mqtt 120']);
   await settle();
   Dash.flush();
   const b = card(window, 'fry').querySelector('.badge.mqtt');
   assert.equal(b.dataset.state, 'refused');
   assert.match(b.title, /clock not set/);
-  assert.equal(pubs(client, 'pv/log/fry/cmd').length, 3);
+  assert.equal(lpubs(client, 'pv/log/fry/cmd').length, 3);
 });
 
 test('lease: firmware without tele-mqtt is treated as relay-fed; other reasons shown', async () => {
@@ -202,7 +204,7 @@ test('lease: firmware without tele-mqtt is treated as relay-fed; other reasons s
   assert.match(card(window, 'old').querySelector('.badge.mqtt').title, /relay-fed/);
   assert.equal(card(window, 'busy').querySelector('.badge.mqtt').title, 'low heap');
   c.add(120000); Dash.tick();
-  assert.equal(pubs(client, 'pv/log/old/cmd').length, 1, 'unsupported is not retried');
+  assert.equal(lpubs(client, 'pv/log/old/cmd').length, 1, 'unsupported is not retried');
 });
 
 test('lease: no reply shows no-reply on the badge', async () => {
