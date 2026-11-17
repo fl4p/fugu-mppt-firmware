@@ -170,6 +170,32 @@ the duty before and after that tick (`Slow mode, duty <from> -> <to> (<step>, MP
 
 The console command `speed <x>` (0 ≤ x < 10) scales the tracker step (default 1.0).
 
+### Steady-state efficiency and noise
+
+A simplified model shows how measurement noise limits P&O in steady light. Near the MPP the power curve is
+$P(x) = P_m(1 - c\,x^2)$ with $x = (V - V_m)/V_m$. The single-diode model gives $c \approx 1 + V_m/(2 n V_t)$
+per cell, about 9 for crystalline silicon, independent of the number of cells in series. The model assumes a fixed
+curve (constant irradiance and temperature) and independent noise in each period's power reading.
+
+- Without noise, P&O with step $\delta = \Delta V / V_m$ oscillates around the MPP with efficiency
+  $\eta = 1 - c\,\delta^2/2$. For steps of about one PWM count this loss is negligible.
+- With noise larger than the per-step power change, and $\sigma$ the relative noise of each period-averaged power
+  reading, the operating point performs a random walk with a drift toward the MPP. The stationary variance of $x$
+  is $\sqrt{\pi}\,\sigma/(4c)$, so $\eta \approx 1 - \tfrac{\sqrt{\pi}}{4}\,\sigma \approx 1 - 0.44\,\sigma$.
+  Step size and curvature cancel. The approximation ignores the direction persistence of P&O and holds to within
+  about a factor of 2.
+- With a relative decision threshold $\theta$, the point wanders within $P > P_m(1 - \theta)$ and
+  $\eta \approx 1 - \theta/3$. Keeping false reversals rare needs $\theta \approx k\sqrt{2}\,\sigma$ with
+  $k \approx 2\ldots3$, so $\eta \approx 1 - (0.9\ldots1.4)\,\sigma$. The threshold costs steady-state efficiency
+  but protects against walk-off driven by noise and changing irradiance, which this model does not include.
+
+Averaging sets $\sigma = \sigma_\text{raw}/\sqrt{N}$ with $N \approx f_s T_d$ (sample rate times decision period);
+filters and correlated noise reduce the effective $N$. At low power $\sigma$ grows as $1/P$, so dawn, dusk and low
+light dominate the steady-state loss. A longer decision period lowers $\sigma$ but follows changing irradiance more
+slowly, which is a separate loss. With the relative thresholds above, $\theta/3$ is about 0.05 % in slow mode and
+0.5 % in fast mode. The threshold is relative to $P + 5\,\text{W}$, and the absolute threshold applies when it is
+smaller, so the effective $\theta$ is larger at low power and smaller at high power.
+
 ## When the tracker does not sweep
 
 The tracker skips the periodic re-sweep under these conditions:
