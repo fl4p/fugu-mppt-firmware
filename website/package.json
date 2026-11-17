@@ -2,7 +2,9 @@
   "name": "fugu-docs",
   "private": true,
   "scripts": {
+    "prestart": "node scripts/copy-tools.mjs",
     "start": "docusaurus start",
+    "prebuild": "node scripts/copy-tools.mjs",
     "build": "docusaurus build",
     "serve": "docusaurus serve",
     "clear": "docusaurus clear"
