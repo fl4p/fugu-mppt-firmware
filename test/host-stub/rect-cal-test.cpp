@@ -313,6 +313,61 @@ static void testDrainGap() {
            worst, cut);
 }
 
+// The drain limit is a no-op where it does not bind: mid-M, exact readings, every 7th HS count over the DCM range. Where
+// the window leaves more than the drain of the budget the LS is the plain window (floor or ceil of HS * ratio, the dither),
+// and the limit binds only near D = M.
+static void testDrainNoop() {
+    const float vi = 60.f, vo = 30.f;
+    int n = 0, bad = 0, bound = 0, firstBound = PM;
+    for (int hs = 200; hs <= (int) (vo / vi * PM); hs += 7) {
+        SynchronousConverter c{}; initConv(c);
+        c.enableSyncRect(true);
+        c.pwmPerturb((int16_t) hs);
+        for (int k = 0; k < 300; ++k) { c.updateSyncRectMaxDuty(vi, vo, 0.05f); c.pwmPerturb(0); }
+        const float r = 1.f / c.voltageRatio() - 1.f, w = (float) hs * r, comp = (float) (PM - hs - 1);
+        const int ls = c.getRectOnPwmMax(), lsMin = c.getRectOnPwmMin(); // the limit (the LS fades up to it)
+        if (w <= (float) lsMin + 1) continue;
+        ++n;
+        if (r * (comp - w) > c.lateDrainCounts() + r) { // clear of the limit by a count
+            if (ls != (int) std::floor(w) && ls != (int) std::ceil(w)) ++bad;
+        } else {
+            ++bound, firstBound = std::min(firstBound, hs);
+            if (comp - (float) ls + 1.f < c.lateDrainCounts() / r) ++bad; // binds: the drain fits
+        }
+    }
+    const float dm = (float) firstBound / (vo / vi * PM);
+    CHECK(bad == 0 && n > 100 && bound > 0 && dm > 0.95f, "drain no-op: %d of %d points off, %d bound from D/M %.3f", bad, n,
+          bound, dm);
+    printf("drain no-op: %d points, %d bound (from D/M %.3f), %d off\n", n, bound, dm, bad);
+}
+
+// Boost (ctrl = LS, rect = HS, ratio 1/(M-1)): the same limit, Vin read 2 % high near the DCM boundary D = 1 - 1/M. The
+// rect window must leave the drain of the budget before the next ctrl turn-on wherever it is above its minimum.
+static void testDrainBoost() {
+    const float vl = 20.f * 1.02f, vh = 30.f; // boost: vin = low side
+    int n = 0, bad = 0, bound = 0;
+    const int top = (int) ((1.f - 20.f / 30.f) * PM);
+    for (int ls = top - 300; ls <= top; ls += 3) {
+        SynchronousConverter c{};
+        ConfFile conv{}; conv.set("topo", "boost");
+        ConfFile board{}; board.set("pwm_freq", "39000"); board.set("pwm_driver_logic", "HiLi");
+        board.set("pwm_hi", "21"); board.set("pwm_li", "14"); board.set("pwm_sd", "47"); board.set("skip_assert", "1");
+        ConfFile coil{}; coil.set("L0", g_L0);
+        c.init(conv, board, coil);
+        c.enableSyncRect(true);
+        c.pwmPerturb((int16_t) ls);
+        for (int k = 0; k < 300; ++k) { c.updateSyncRectMaxDuty(vl, vh, 0.05f); c.pwmPerturb(0); }
+        const float r = 1.f / (c.voltageRatio() - 1.f), comp = (float) (PM - ls - 1);
+        const int hs = c.getRectOnPwmMax();
+        if (hs <= c.getRectOnPwmMin()) continue;
+        ++n;
+        if (comp - (float) hs + 1.f < c.lateDrainCounts() / r) ++bad;
+        bound += (float) hs < (float) ls * r - 1.f;
+    }
+    CHECK(bad == 0 && n > 50 && bound > 3, "drain boost: %d of %d points without the drain gap, %d bound", bad, n, bound);
+    printf("drain boost: %d points, %d bound, %d without the drain gap\n", n, bound, bad);
+}
+
 static void testDriverRule() {
     SynchronousConverter c{};
     const int ct875 = (int) std::lround(875e-9 * 39000.0 * PM);
@@ -1639,6 +1694,8 @@ int main(int argc, char **argv) {
     testDriverRule();
     testLateGap();
     testDrainGap();
+    testDrainNoop();
+    testDrainBoost();
     testShrinkMonotone();
     testFieldData();
     testFlatField();

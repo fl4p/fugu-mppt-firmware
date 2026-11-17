@@ -88,8 +88,11 @@ class SynchronousConverter {
     static constexpr float MinVoltageRatio = 1e-2f;
     static constexpr float MaxBoostRatio = 10.f;
     static constexpr float UnityRatioMargin = 1e-2f;
-    // DCM: late LS conduction (fraction of the period) whose drain through the HS body diode must end before the next HS
-    static constexpr float LateDrainBudget = 0.02f;
+    // DCM: late LS conduction whose drain through the HS body diode must end before the next HS. The larger of the WCE
+    // ratio margin's time near D = M (a reading error that size again) and the ring current's crossing shift at HS
+    // turn-on, sqrt(L*C_node) = 1/(2 pi f_ring): 0.68 us at the lowest measured board ring, 233 kHz.
+    static constexpr float LateDrainBudget = 1.f - (1.f - VoltageMaxErr) / (1.f + VoltageMaxErr); // of the period
+    static constexpr float LateDrainMinNs = 700.f;
 
 
 #if HAVE_MCPWM
@@ -174,6 +177,7 @@ class SynchronousConverter {
     float fL = NAN; // fsw * L
     float coilL0 = 0; // retained from coil.conf so logConfig() can re-emit the config line
     uint16_t rectRefreshTicks = 0; // bootstrap-refresh pulse in timer ticks; pwmRectMin minus dead-time
+    uint16_t lateDrainTicks = 0; // LateDrainMinNs in timer ticks
 
     // Runtime dead-time change (console `dt`), posted from core 0 and applied on the RT core so
     // pwmMax and the gate comparators never move under the control path. Payload [21:11] hl,
@@ -1117,6 +1121,11 @@ public:
 
     [[nodiscard]] float voltageRatio() const { return outInVoltageRatio; } // M
 
+    // DCM late-conduction budget whose drain must end before the next HS, in counts
+    [[nodiscard]] float lateDrainCounts() const {
+        return std::max((float) driverPwmMax * LateDrainBudget, (float) lateDrainTicks);
+    }
+
     [[nodiscard]] bool manualRect_() const { return manualRect >= 0; }
 
     // Bench: pin the low-side on-count to `ls`, held against the auto diode-emulation logic
@@ -1268,6 +1277,7 @@ public:
         // (286 counts at 200 ns on fbuck — under the 300-count floor above).
         auto bootRefreshNs = boardConf.getFloat("boot_refresh_ns", 2000.f);
         rectRefreshTicks = isBoost ? 0 : (uint16_t) std::ceil(bootRefreshNs * 1e-9f * getPwmTickRate());
+        lateDrainTicks = (uint16_t) std::ceil(LateDrainMinNs * 1e-9f * getPwmTickRate());
         pwmRectMin = isBoost ? 0 : (uint16_t) (rectRefreshTicks + drvDtHlTicks());
         // Boost: cap max duty at 90% so the LS FET always turns off to release inductor energy
         // -1: cmpLS must stay under the period, so the widest LS span at max duty is
@@ -1330,10 +1340,10 @@ public:
                 ideal = r < 0.25f ? base
                                   : std::min(ideal, std::max(base, comp - (float) (driverPwmMax >> 5) - (float) rectOnOffset / r));
             // The window itself: a ratio reading error past the WCE margin, or the ring current at HS turn-on, puts the
-            // zero crossing before LS off. Leave the drain of LateDrainBudget*T of late conduction (budget/ratio) before
-            // the next HS, else the reverse current carries over and near D = M the mean current turns negative.
-            // Binds only near D = M; the divide runs only there.
-            const float late = (float) driverPwmMax * LateDrainBudget;
+            // zero crossing before LS off. Leave the drain (late/ratio) of the late-conduction budget before the next
+            // HS, else the reverse current carries over and near D = M the mean current turns negative. Binds for
+            // D/M_WCE > 1 - late/(T*ratio); the divide runs only there.
+            const float late = lateDrainCounts();
             if (r > 0 && r * (comp - ideal) < late) ideal = comp - late / r;
             float v = ideal + rectDitherErr;
             long ls = std::lround(v);
