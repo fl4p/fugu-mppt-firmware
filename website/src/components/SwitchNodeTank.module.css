@@ -1,0 +1,39 @@
+.root {
+  --par: #d9480f;
+  --tank: #2a78d6;
+  --muted: #6f6e69;
+  margin: 1.5rem 0;
+}
+
+:root[data-theme='dark'] .root {
+  --par: #f08c4a;
+  --tank: #4d94ea;
+  --muted: #a2a198;
+}
+
+.scroll { overflow-x: auto; }
+
+.svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  min-width: 600px;
+  max-width: 820px;
+  margin: 0 auto;
+  font-family: var(--ifm-font-family-base);
+  font-size: 14px;
+  fill: currentColor;
+}
+
+.wire path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.wire .plate { stroke-width: 2.4; }
+.wire .fill { fill: currentColor; }
+.dot { fill: currentColor; }
+.par path { stroke: var(--par); }
+.parText { fill: var(--par); }
+.wire path.tank { stroke: var(--tank); stroke-width: 2.4; }
+.tankText { fill: var(--tank); font-style: italic; }
+.wire path.node { stroke-width: 2.4; }
+.nodeText { font-weight: 600; }
+.muted { fill: var(--muted); font-size: 12px; }
+.note { font-size: 13px; }

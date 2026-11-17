@@ -4,6 +4,7 @@ sidebar_position: 8
 ---
 
 import DcmRingingChart from '@site/src/components/DcmRingingChart';
+import SwitchNodeTank from '@site/src/components/SwitchNodeTank';
 
 # DCM Coil Ringing
 
@@ -13,8 +14,15 @@ at the switch node (MOSFET C_oss, LS FET junction capacitance, and PCB trace cap
 forms an LC tank. In a synchronous buck with diode emulation (this firmware, `src/buck.h`), the
 LS FET's C_oss is the dominant capacitance and the main inductor L is the tank inductance.
 
+The schematic shows the power stage during the ring. Both gates are held off, so each FET reduces to its body
+diode and its output capacitance C_oss (C_ds + C_gd). C_in and C_out are AC ground at the ring frequency, so the
+HS and LS C_oss and the PCB capacitance all sit in parallel from the switch node to ground and form C_sw. The HS
+body diode clamps the node one diode drop above V_in.
+
+<SwitchNodeTank />
+
 This page covers what happens *after* the LS FET turns off at the zero crossing. The companion
-page [Diode Emulation](diode-emulation.md) covers the ZCD timing.
+page [Diode Emulation](diode-emulation.md) covers the ZCD (Zero-cross detection) timing.
 
 <DcmRingingChart />
 
@@ -55,8 +63,10 @@ which is precisely where this ring lives.
 
 A valid measurement of C_sw follows three rules.
 
-1. Run the converter in diode emulation, not forced PWM. Forced PWM holds the LS on through the
-   zero crossing and abolishes the ring entirely.
+1. Run the converter in DCM, which means diode emulation at a load below the CCM boundary
+   (I_out < ΔI_L/2). Above that boundary the coil current never reaches zero and there is no ring.
+   Forced PWM holds the LS on through the zero crossing (forced CCM) and suppresses the ring at any
+   load.
 2. Trigger on the LS gate's falling edge. The LS gate is ground-referenced and driven every cycle
    regardless of what the power stage does, so it is the only sound arming point.
 
