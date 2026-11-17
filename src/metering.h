@@ -124,13 +124,16 @@ public:
 
     long timeLastPower = 0;
 
-    void restore(float todayEnergy_, long timeLastPower_) {
+    static float sanePinMax(float p) { return (p >= 0 && p < 1e5f) ? p : 0; }
+
+    void restore(float todayEnergy_, long timeLastPower_, float pinMax) {
         store.load();
         timeLastPower = timeLastPower_;
 
         // maybe continue the day
         if (todayEnergy_ > 2) {
             today.energyYield = todayEnergy_;
+            today.pinMax = sanePinMax(pinMax);
             time_t now;
             for (auto i = 0; i < 20; ++i) {
                 now = std::time(nullptr);
@@ -197,7 +200,9 @@ struct PersistentState {
     double totalEnergy = 0;
     std::time_t timeLastPower = 0;
     float todayEnergy = 0;
+    float todayPinMax = 0;
 };
+static_assert(sizeof(PersistentState) == 32, "stats file layout changed");
 
 
 struct SolarEnergyMeter {
@@ -211,7 +216,8 @@ struct SolarEnergyMeter {
             [](const PersistentState &a, const PersistentState &b) {
                 return std::abs(a.totalEnergy - b.totalEnergy) < 5
                        && a.bootCount == b.bootCount
-                       && std::abs(a.todayEnergy - b.todayEnergy) < 5;
+                       && std::abs(a.todayEnergy - b.todayEnergy) < 5
+                       && std::abs(a.todayPinMax - b.todayPinMax) < 5;
             },
             1000 * 60 * 2
     };
@@ -227,7 +233,7 @@ struct SolarEnergyMeter {
         if (flash.load()) {
             auto &stat(flash.getFlashValue());
             totalEnergy.restore(stat.totalEnergy);
-            dailyEnergyMeter.restore(stat.todayEnergy, stat.timeLastPower);
+            dailyEnergyMeter.restore(stat.todayEnergy, stat.timeLastPower, stat.todayPinMax);
             ESP_LOGI("mppt", "Restored: totalE=%.2f boot=%lu dailyE=%.2f",
                      totalEnergy.get(),
                      stat.bootCount, stat.todayEnergy);
@@ -261,6 +267,7 @@ struct SolarEnergyMeter {
         stats.totalEnergy = totalEnergy.get();
         stats.timeLastPower = dailyEnergyMeter.timeLastPower;
         stats.todayEnergy = dailyEnergyMeter.today.energyYield;
+        stats.todayPinMax = dailyEnergyMeter.today.pinMax;
         if (increaseBootCounter)++stats.bootCount;
         flash.update(stats);
     }

@@ -578,6 +578,7 @@ void MpptController::telemetry() {
     if (all || (_teleNumPoints % 20) == 0) {
         point.addField("pwm_dir_f", cntrlValue, 2);
         point.addField("mppt_state", int(ctrlState.mode));
+        point.addField("P_max_today", meter.dailyEnergyMeter.today.pinMax, 1);
         const uint32_t nowS = (uint32_t) (wallClockUs() / 1000000);
         float ro = outZ.get(nowS);
         if (std::isfinite(ro))

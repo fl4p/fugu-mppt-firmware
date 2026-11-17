@@ -100,3 +100,40 @@ void test_meter_storage() {
     TEST_ASSERT_EQUAL(1, store2->getAllDays().size());
     TEST_ASSERT_EQUAL(2.5f, store2->getAllDays()[0].energyYield);
 }
+
+// runs after test_meter_storage, which mounts /littlefs_test
+void test_meter_persistent_state() {
+    const char *fn = "/littlefs_test/test_stats";
+
+    PersistentState ref{};
+    ref.bootCount = 7;
+    ref.totalEnergy = 123.5;
+    ref.timeLastPower = 1700000000;
+    ref.todayEnergy = 4.25f;
+    uint8_t blob[sizeof(PersistentState)];
+    memcpy(blob, &ref, sizeof(blob));
+    memset(blob + sizeof(blob) - 4, 0xFF, 4);
+    FILE *f = fopen(fn, "wb");
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_EQUAL(1, fwrite(blob, sizeof(blob), 1, f));
+    fclose(f);
+
+    {
+        FlashValueStore<PersistentState> st{fn};
+        TEST_ASSERT_TRUE(st.load(true));
+        const auto &v = st.getFlashValue();
+        TEST_ASSERT_EQUAL(7, v.bootCount);
+        TEST_ASSERT_FLOAT_WITHIN(1e-6f, 4.25f, v.todayEnergy);
+        TEST_ASSERT_EQUAL_FLOAT(0.f, DailyEnergyMeter::sanePinMax(v.todayPinMax));
+    }
+
+    ref.todayPinMax = 312.5f;
+    {
+        FlashValueStore<PersistentState> st{fn};
+        TEST_ASSERT_TRUE(st.update(ref));
+    }
+    FlashValueStore<PersistentState> st2{fn};
+    TEST_ASSERT_TRUE(st2.load(true));
+    TEST_ASSERT_EQUAL_FLOAT(312.5f, DailyEnergyMeter::sanePinMax(st2.getFlashValue().todayPinMax));
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 4.25f, st2.getFlashValue().todayEnergy);
+}

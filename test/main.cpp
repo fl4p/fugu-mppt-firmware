@@ -86,6 +86,8 @@ void test_meter();
 
 void test_meter_storage();
 
+void test_meter_persistent_state();
+
 void test_LinearTransform();
 
 // test_ADCSampler() body is currently #if 0'd in test/test_sampler.cpp — skip
@@ -634,6 +636,7 @@ void setup() {
 
     RUN_TEST(test_meter);
     RUN_TEST(test_meter_storage);
+    RUN_TEST(test_meter_persistent_state);
 
     RUN_TEST(test_LinearTransform);
     // RUN_TEST(test_ADCSampler); // body is #if 0'd in test_sampler.cpp
