@@ -24,6 +24,7 @@
 #include "etc/network_shim.h"
 #ifdef WITH_NETW
 #include "tele/telemetry.h"
+#include "tele/tele_mqtt.h"
 #if WITH_FTP
 #include "tele/ftp_service.h"
 #endif
@@ -95,6 +96,9 @@ SynchronousConverter converter; // buck or boost
 static void IRAM_ATTR hwOvIsr() { converter.isrForceOff(); }
 LedIndicator led;
 MpptController mppt{adcSampler, sensors, converter, lcdService.lcd}; // lcd owned by lcdService
+#ifdef WITH_TELE_MQTT
+void teleProducePoint() { mppt.telemetry(); }
+#endif
 
 time_us loopWallClockUs_ = 0;
 volatile uint32_t loopWallTicks_ = 0;
@@ -1859,6 +1863,7 @@ static void loopNetwork_task(void *arg) {
 
     // ftp / telnet / telemetry / lcd / scope ticks (only the Running ones do work)
     g_services.tickAll();
+    teleMqttTick(nowMs);
 
 
     // Control cadence is fixed and console-independent; the status line keeps its own (slower when

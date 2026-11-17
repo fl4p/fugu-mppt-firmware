@@ -76,6 +76,9 @@ endif ()
 if (CONFIG_FUGU_WITH_HA)
     list(APPEND NETW_SRC "../src/tele/HAMqttDevice.cpp" "../src/tele/home_assistant.cpp")
 endif ()
+if (CONFIG_FUGU_WITH_TELE_MQTT)
+    list(APPEND NETW_SRC "../src/tele/tele_mqtt.cpp")
+endif ()
 
 set(BLE_SRC
         "../src/tele/console_ble.cpp"
@@ -210,6 +213,9 @@ if (CONFIG_FUGU_WITH_TELE_BINARY)
 endif ()
 if (CONFIG_FUGU_WITH_BLE_TELE)
     component_compile_definitions("WITH_BLE_TELE=1")
+endif ()
+if (CONFIG_FUGU_WITH_TELE_MQTT)
+    component_compile_definitions("WITH_TELE_MQTT=1")
 endif ()
 
 # Gate-driver back-ends. CONFIG_FUGU_WITH_MCPWM (src/pwm/mcpwm.h): hardware dead-time, GPIO OST brake,

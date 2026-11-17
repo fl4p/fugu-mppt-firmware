@@ -77,6 +77,7 @@ extern volatile uint8_t g_rtLogTest;
 #endif
 #include <ota_ble.h>            // otaBleSubmitCommand (OTA push over BLE, esp-ota-ble component)
 #include "tele/tele_ble.h"      // teleBleSetStreaming/teleBleStreaming (BLE telemetry stream)
+#include "tele/tele_mqtt.h"
 #include <sys/time.h>
 #if WITH_VCONV
 #include "sim/vconv.h"
@@ -917,6 +918,26 @@ static void cmdTeleBle(cmd *c) {
     }
     UART_LOG("tele-ble: %s (dropped %u B)", teleBleStreaming() ? "on" : "off",
              (unsigned) teleBleDropped());
+}
+#endif
+
+#ifdef WITH_TELE_MQTT
+// tele-mqtt [seconds]  — lease the MQTT telemetry stream (0 stops); no arg prints status.
+static void cmdTeleMqtt(cmd *c) {
+    auto v = Command(c).getArg(0).getValue();
+    if (v.length()) {
+        char *end;
+        unsigned long s = strtoul(v.c_str(), &end, 10);
+        if (*end || s > 3600)
+            CMD_FAIL_RETURN("tele-mqtt: expected 0..3600 s");
+        if (const char *err = teleMqttLease(s))
+            CMD_FAIL_RETURN("tele-mqtt: %s", err);
+    }
+    if (teleMqttActive())
+        UART_LOG("tele-mqtt: on, %u s left, dropped %u B", (unsigned) teleMqttLeaseLeftS(wallClockMs()),
+                 (unsigned) teleMqttDropped());
+    else
+        UART_LOG("tele-mqtt: off");
 }
 #endif
 
@@ -2419,6 +2440,9 @@ void setupCli() {
 #endif
 #ifdef WITH_BLE_TELE
     cli.addSingleArgCmd("tele-ble", cmdTeleBle);
+#endif
+#ifdef WITH_TELE_MQTT
+    cli.addSingleArgCmd("tele-mqtt", cmdTeleMqtt);
 #endif
 #ifdef WITH_MEASURE_COIL
     cli.addBoundlessCmd("measure-coil", cmdMeasureCoil); // measure-coil l0|ls [steps|hs] [dwell_ms] [apply]

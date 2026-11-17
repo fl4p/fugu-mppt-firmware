@@ -5,6 +5,7 @@
 #ifdef WITH_BLE_TELE
 #include "tele/tele_ble.h"    // teleBleStreaming gate
 #endif
+#include "tele/tele_mqtt.h"
 #include <esp_heap_caps.h>
 #include "etc/idle_profile.h"
 
@@ -546,7 +547,7 @@ void MpptController::telemetry() {
 #else
     constexpr bool bleReady = false;
 #endif
-    if ((!netReady && !bleReady) || sampler.halted)
+    if ((!netReady && !bleReady && !teleMqttActive()) || sampler.halted)
         return;
 
     if (wallClockUs() - _lastPointWrite < g_teleMinPointUs) {

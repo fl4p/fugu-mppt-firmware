@@ -99,6 +99,8 @@ PLAN = [
     # --- BLE telemetry stream (CONFIG_FUGU_WITH_BLE_TELE; default off -> unknown cmd -> SKIP) ----
     ("tele-ble", "tele-ble", GROUP_ALWAYS, True),  # status only; `tele-ble 1` needs a BLE client
     # `set-time <ms>` intentionally omitted: it steps the device wall clock.
+    # --- MQTT telemetry lease (CONFIG_FUGU_WITH_TELE_MQTT; default off -> unknown cmd -> SKIP) --
+    ("tele-mqtt", "tele-mqtt", GROUP_ALWAYS, True),
     # --- ADC backend re-init (brief; safe on a mock) ----------------------------------------
     ("adc-restart", None, GROUP_MOCK, True),
     ("adc-reset", None, GROUP_MOCK, True),
@@ -126,6 +128,8 @@ PLAN = [
     ("psu off", None, GROUP_MOCK, False),  # exit PSU mode back to MPPT
     # --- network / NVS / reboot (opt-in only) -----------------------------------------------
     ("wifi on", None, GROUP_NET, False),
+    ("tele-mqtt 20", "lease", GROUP_NET, True),  # needs CONFIG_FUGU_WITH_TELE_MQTT + a connected broker
+    ("tele-mqtt 0", "off", GROUP_NET, True),
     ("hostname fugu-test", None, GROUP_NET, False),
     # `ota <url>` and `wifi off`/`wifi-add` intentionally omitted: they flash/reboot or wipe NVS.
     # `wifi off <minutes>` (temporary, keeps the SSID) has its own test: test_wifi_off_timeout.py

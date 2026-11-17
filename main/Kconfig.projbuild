@@ -146,6 +146,15 @@ config FUGU_WITH_HA
     help
         Publish Home Assistant discovery and power state on the MQTT broker.
 
+config FUGU_WITH_TELE_MQTT
+    bool "MQTT telemetry sink (tele-mqtt lease)"
+    default n
+    select FUGU_WITH_TELE_BINARY
+    help
+        MQTT telemetry sink: `tele-mqtt <s>` leases a binary telemetry stream on pv/tele/<host>
+        (uncompressed sym_line_protocol frames). Off by default; a relay republishing the UDP wire
+        covers the fleet.
+
 endif # FUGU_WITH_NETW
 
 config FUGU_WITH_BLE

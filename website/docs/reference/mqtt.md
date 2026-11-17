@@ -49,6 +49,7 @@ The firmware uses the following topics:
 | `pv/log/<hostname>`                                | publish   | console / log lines       | always while connected             |
 | `pv/log/<hostname>/cmd`                            | subscribe | console command           | `cmd_input=1`                      |
 | `pv/alert/<hostname>/<source>`                     | publish   | alert JSON, retained, QoS 1 | on a state change of the source    |
+| `pv/tele/<hostname>`                               | publish   | binary telemetry, QoS 0   | while a `tele-mqtt` lease runs     |
 | `homeassistant/sensor/<device-id>-power/config`    | publish   | HA discovery JSON, retained | on connect, then every 1000 state updates |
 | `homeassistant/sensor/<device-id>-power/state`     | publish   | power in W                | every 3 s, not during a sweep      |
 | value of `cell_voltages_max_topic`                 | subscribe | highest cell voltage, V   | key set                            |
@@ -95,6 +96,23 @@ Use broker authentication and ACLs.
 :::
 
 `etc/fugu_console.py --mqtt` uses these two topics. See [Host tools](host-tools.md).
+
+## Telemetry stream
+
+With the build option `CONFIG_FUGU_WITH_TELE_MQTT`, the `tele-mqtt <seconds>` console command leases a
+telemetry stream on `pv/tele/<hostname>` for up to 3600 s. Each message is `<cid><payload>`, byte-identical to one
+UDP telemetry datagram of the binary wire: `cid` is `0` (uncompressed), and the payload is a sequence of
+length-prefixed `sym_line_protocol` frames (symbol table and data points). The firmware batches points for up to
+0.5 s or 1 KB per message. A repeated `tele-mqtt <seconds>` renews the lease to that many seconds from now, `tele-mqtt 0` ends it,
+and the stream also ends when the `mqtt` service stops.
+
+The lease needs a set clock, a connected broker, the binary wire if the UDP telemetry service is running
+(`tele.conf binary=1`), and 16 KB of free heap. The stream switches the telemetry wire to binary while it runs.
+A message starts with the full symbol table after the lease starts and after every reconnect, so a subscriber can
+decode from its first message. `etc/fugu/teledec.py` (`decode_payload`) decodes a message.
+
+A host-side relay that republishes the UDP telemetry wire may publish the same topic for devices built without
+the option.
 
 ## Home Assistant discovery
 

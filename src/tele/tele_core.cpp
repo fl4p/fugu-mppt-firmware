@@ -7,6 +7,7 @@
 #ifdef WITH_BLE_TELE
 #include "tele_ble.h"
 #endif
+#include "tele_mqtt.h"
 
 #include <Arduino.h>
 
@@ -63,6 +64,9 @@ void teleLoadWireConf() {
 #ifdef WITH_BLE_TELE
     if (teleBleStreaming()) g_teleBinary = true;   // BLE stream requires the binary wire
 #endif
+#ifdef WITH_TELE_MQTT
+    if (teleMqttActive()) g_teleBinary = true;
+#endif
 }
 
 moodycamel::ReaderWriterQueue<std::string> pointsQ{};
@@ -73,6 +77,7 @@ void telemetryAddPoint(TelePoint &p, uint16_t maxQueue) {
 #ifdef WITH_BLE_TELE
     teleBleEnqueue(wire);
 #endif
+    teleMqttEnqueue(wire);
     if (g_teleUdpActive && pointsQ.size_approx() < maxQueue)
         pointsQ.enqueue(std::move(wire));
 }
