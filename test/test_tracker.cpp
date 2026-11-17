@@ -4,6 +4,9 @@
 #include <esp_log.h>
 #include "util.h"   // loopWallClockUs_, wallClockMs() — tracker.h relies on its includer for these
 #include "tracker.h"
+#include "peak_scan.h"
+#include "sim/vconv.h"
+#include <algorithm>
 
 // Tracker embeds two 2048-entry tables (~16 KB) — far over the task stack, so heap-allocate it
 // (the firmware holds it as a static MpptController member, never on the stack).
@@ -348,4 +351,152 @@ void test_tracker_slow_mode_ends_45s_after_reversal() {
     runTo(t, 48'000);
     TEST_ASSERT_FALSE(t.slowMode);
     TEST_ASSERT_TRUE(std::isnan(runTo(t, 100'000))); // no re-entry without a reversal
+}
+
+// ---- dP-P&O (tracker.conf::dp_po) ----
+
+// Slow mode held (MPP record out of reach, recent reversal). Plant P(d, t) = (100 + rate t) (1 - ((d - 1000) / 400)^2),
+// duty += control value * 100 counts/s, 2 ms ticks. Returns the largest |d - 1000| over `sec`.
+static float rampExcursion(bool dpPo, float rate, float sec) {
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    t.dpPo = dpPo;
+    loopWallClockUs_ = 1'000'000;
+    t.resetTracker(100.f, true);
+    t.resetDirection(true, NAN);
+    t.setSlowMode(true);
+    t._timeTakeover = 0, t._timeLastReverse = wallClockMs();
+    float d = 1000, dMax = 0;
+    for (float s = 0; s < sec; s += 0.002f) {
+        advanceMs(2);
+        t.maxPowerPoint = {1e6f, wallClockMs(), 1000, 0};
+        const float x = (d - 1000) / 400, p = (100 + rate * s) * (1 - x * x);
+        d += t.update(p, (uint16_t) d, 0.f, [] { return 50.f; }) * 100 * 0.002f;
+        dMax = std::max(dMax, std::fabs(d - 1000));
+    }
+    TEST_ASSERT_TRUE(t.slowMode);
+    return dMax;
+}
+
+// Known-bad case for plain P&O: rising light makes every step look like a gain, so it walks off the MPP until the
+// curvature outweighs the ramp. With the drift measured in the hold it reverses on the perturbation alone.
+void test_tracker_dp_po_holds_mpp_under_ramp() {
+    const float plain = rampExcursion(false, 0.5f, 40), dp = rampExcursion(true, 0.5f, 40);
+    ESP_LOGI("test", "ramp excursion plain %.0f, dP-P&O %.0f counts", plain, dp);
+    TEST_ASSERT_TRUE(plain > 40);
+    TEST_ASSERT_TRUE(dp < 0.5f * plain);
+}
+
+// Constant light: dP-P&O tracks like plain P&O (the drift term stays ~0).
+void test_tracker_dp_po_constant_light() {
+    const float plain = rampExcursion(false, 0, 40), dp = rampExcursion(true, 0, 40);
+    ESP_LOGI("test", "constant light excursion plain %.0f, dP-P&O %.0f counts", plain, dp);
+    TEST_ASSERT_TRUE(dp < 1.5f * plain + 5);
+}
+
+// ---- partial global-peak scan (peak_scan.h) ----
+
+// fry-like string: 6 substrings (bypass diode 0.45 V), Voc 80 V, Vmpp 68.8 V; ideal CCM buck on 26 V: Vin = 26 V * 2047 / d
+struct ScanRig {
+    VirtualConverter pv;
+    PeakScan s;
+    float g[6] = {1, 1, 1, 1, 1, 1}, light = 1, d;
+    uint32_t now = 1000;
+    int active = 0;
+
+    explicit ScanRig(float vStart, uint8_t n = 6) {
+        pv.setPv(4.f, 80.f, 0.86f);
+        shade();
+        d = 26.f * 2047 / vStart;
+        s.n = n, s.interval = 20;
+        s.onSweep(80.f, now);
+    }
+    void shade() {
+        float x[6];
+        for (int i = 0; i < 6; ++i) x[i] = g[i] * light;
+        pv.setPvString(6, x, nullptr, 0.45f);
+    }
+    // the sweep's current samples, Voc down to the battery
+    void sweep() {
+        for (float v = 80; v > 29; v -= 0.5f) s.sweepSample(pv.pvCurrent(v));
+    }
+    [[nodiscard]] float vin() const { return 26.f * 2047 / d; }
+    [[nodiscard]] float p() const { return vin() * pv.pvCurrent(vin()); }
+    template<class F>
+    void run(uint32_t ms, F f) {
+        for (uint32_t end = now + ms; now < end;) {
+            now += 2;
+            f(*this);
+            const float t = s.update(now, vin(), vin(), p(), (uint16_t) d, 29.f, 5.f, [] { return 50.f; });
+            if (!std::isnan(t)) d += std::clamp((t - d) * 0.2f, -10.f, 10.f), ++active;
+            s.ended = 0;
+        }
+    }
+    void run(uint32_t ms) { run(ms, [](ScanRig &) {}); }
+};
+
+// Known-bad case: on the full-string peak while one shaded substring makes the 57 V peak 18 % better. Without the
+// scan the operating point stays; the scan moves to the better peak.
+void test_scan_moves_to_better_peak() {
+    auto off = std::make_unique<ScanRig>(68.8f, 0);
+    off->g[5] = 0.7f, off->shade();
+    off->run(30'000);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, 68.8f, off->vin());
+
+    auto r = std::make_unique<ScanRig>(68.8f);
+    r->g[5] = 0.7f, r->shade(), r->sweep();
+    const float p0 = r->p();
+    r->run(30'000);
+    ESP_LOGI("test", "scan: %.1f W at 68.8 V -> %.1f W at %.1f V", p0, r->p(), r->vin());
+    TEST_ASSERT_TRUE(r->active > 0);
+    TEST_ASSERT_FLOAT_WITHIN(3.f, 55.5f, r->vin());
+    TEST_ASSERT_TRUE(r->p() > 1.1f * p0);
+}
+
+// On the global peak already: probes, returns and stays.
+void test_scan_stays_on_global_peak() {
+    auto r = std::make_unique<ScanRig>(56.9f);
+    r->g[5] = 0.7f, r->shade(), r->sweep();
+    r->run(30'000);
+    TEST_ASSERT_TRUE(r->active > 0);
+    TEST_ASSERT_FLOAT_WITHIN(0.3f, 56.9f, r->vin());
+}
+
+// Light rises 40 % while the worse peak is probed: compared with the start it looks 15 % better. The power at the
+// start point measured again on return shows the change, so the scan stays.
+void test_scan_ignores_light_change() {
+    auto r = std::make_unique<ScanRig>(56.9f);
+    r->g[5] = 0.7f, r->shade(), r->sweep();
+    r->run(30'000, [](ScanRig &x) {
+        if (x.s.phase == PeakScan::Probe && x.light == 1) x.light = 1.4f, x.shade();
+    });
+    TEST_ASSERT_EQUAL_FLOAT(1.4f, r->light);
+    TEST_ASSERT_FLOAT_WITHIN(0.3f, 56.9f, r->vin());
+}
+
+// Clear sky on the full-string peak: no lower peak can beat it at the current seen in the sweep, so no probing.
+void test_scan_skips_clear_sky() {
+    auto r = std::make_unique<ScanRig>(68.8f);
+    r->sweep();
+    r->run(30'000);
+    TEST_ASSERT_EQUAL_INT(0, r->active);
+    TEST_ASSERT_TRUE(r->s.pRef > 0);
+}
+
+// Trigger only (no period): a flickering cloud keeps the power off the reference but never steady, so no scan;
+// once the power settles at the new level, the scan runs.
+void test_scan_trigger_waits_for_steady_power() {
+    auto r = std::make_unique<ScanRig>(56.9f);
+    r->s.interval = 0;
+    r->g[5] = 0.7f, r->shade(), r->sweep();
+    r->run(6'000);
+    TEST_ASSERT_TRUE(r->s.pRef > 0);
+    r->run(90'000, [](ScanRig &x) {
+        const float l = (x.now / 2000) % 2 ? 0.5f : 0.65f;
+        if (l != x.light) x.light = l, x.shade();
+    });
+    TEST_ASSERT_EQUAL_INT(0, r->active);
+    r->light = 0.6f, r->shade();
+    r->run(30'000);
+    TEST_ASSERT_TRUE(r->active > 0);
 }

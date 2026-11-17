@@ -18,6 +18,7 @@
 #include "battery.h"
 #include "viz/lcd.h"
 #include "tracker.h"
+#include "peak_scan.h"
 #include "pd_control.h"
 #include "store.h"
 #include "metering.h"
@@ -295,6 +296,7 @@ public:
     const Sensor *sensorPhysicalI{nullptr};
     const Sensor *sensorPhysicalU{nullptr};
     Tracker tracker{};
+    PeakScan scan{};
 
 private:
     uint8_t ledPinSimple = 255;
