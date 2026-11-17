@@ -244,13 +244,15 @@ drops by up to 2 A in the board models. The MPPT and voltage loops close around 
 exact readings, from the plant efficiency at the points where the limit changes the LS count: at
 most 0.01–0.04 percentage points at `M` < 0.5, 0.03–0.20 at `M` = 0.5–0.7, 0.13–0.51 at 0.7–0.8 and
 0.20–0.55 at 0.8–0.9, where the DCM output power is at most a few tens of watts; the mean extra loss
-over those points is below 10 mW. In closed-loop PV simulations near `V_i ≈ V_o` (low-voltage
-strings, partial shade, dawn, dusk, low light, a battery at the voltage cap) the harvest changed by
-−1.2 to +0.7 percentage points in single runs, with identical protection trips. Over eight noise
-seeds the low-light scenario moved from 98.1 ± 0.4 to 97.8 ± 0.7 % and the slow low-light scenario
-from 98.5 ± 0.2 to 98.5 ± 0.1 %. The dusk scenario does not depend on the seed and dropped from
-98.4 to 97.7 %; its result moves by a similar amount (97.6–98.6 %) with a 2 % `V_i` gain error and no
-change to the limit, so a single run does not separate the two.
+over those points is below 10 mW. In closed-loop PV simulations near `V_i ≈ V_o` (low-voltage strings, partial shade, dawn, dusk, low
+light, a battery at the voltage cap) the harvest changed by −1.2 to +0.7 percentage points in single
+runs, with identical protection trips. A paired dusk study (four board models, three noise
+conditions, 76 pairs each) found no cost with exact readings (−0.1 ± 0.1 percentage points). With
+`V_o` read 2.5 % low on the two models whose ring leaves reverse current at HS turn-on, the harvest
+dropped by a median of 0.85 percentage points: without the limit, the late window carries reverse
+current over and runs the converter forced-CCM-like at `D ≈ M`, where the MPP tracker happens to
+track better on a PV source. The limit returns these cases to the exact-reading behaviour. A smaller
+time floor recovers part of this only by giving up the combined-error case above.
 
 ### Timing correction (`rect_offset_ns`)
 

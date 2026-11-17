@@ -173,9 +173,55 @@ turning negative.
 
 Closed loop, final budget (`msim-new2` vs old, pgx93, same scenario list and gains): harvest -1.2 .. +0.7 pp in single
 runs, trips identical. 8 seeds: wx-low 98.12 +- 0.44 -> 97.78 +- 0.68 %, wx-low-slow 98.47 +- 0.17 -> 98.49 +- 0.14 %.
-wx-dusk does not depend on the seed: 98.4 -> 97.7 % (all 8 identical); its trajectory splits at the first sweep
-(t = 36 s, D 999 vs 996) and the old firmware alone gives 97.6-98.6 % across Vout/Vin gain errors, so one run does not
-separate a cost from trajectory sensitivity. A real ~0.5 pp dusk cost cannot be excluded from these runs.
+wx-dusk without noise is deterministic: 98.4 -> 97.7 % on fry; resolved below.
+
+### wx-dusk, paired (main fd988888 vs a424a779; pgx93, tag demargin-dusk; `tools/duskrun.sh`, `data/dusk-paired.txt`)
+
+Plants fry / fry-hq / flat / flat-hq x Vout gain 1 / 0.983 / 0.975 and Vin gain 1.02 x {noise-free; Gaussian ADC noise
+(`vconv.conf` noise_vout 0.03, noise_iout 0.02; wx-dusk has none of its own, so `SIM_SEED` only matters with it) seeds 1-9;
+measured-noise replay (`SIM_NOISE` fry/flat) offsets 0-16 s step 2}: 76 pairs per plant, 304 in all. Harvest diff
+new - main [pp]:
+
+| subset | n | mean | median | worst .. best | worse / better |
+|---|---|---|---|---|---|
+| all | 304 | -0.10 | 0.00 | -13.4 .. +6.2 | 145 / 135 |
+| exact readings (gain 1/1) | 76 | -0.11 | 0.00 | -1.5 .. +0.8 | 36 / 34 |
+| flat, flat-hq | 152 | +0.02 | 0.00 | -1.3 .. +2.1 | 68 / 67 |
+| fry, fry-hq, Vout gain 0.975 | 38 | -1.26 | -0.85 | -13.2 .. 0.0 | 36 / 0 |
+| fry, fry-hq, Vout gain 0.983 | 38 | +0.67 | +0.45 | -4.9 .. +6.2 | 10 / 28 |
+| fry, fry-hq, Vin gain 1.02 | 38 | -0.27 | +0.15 | -13.4 .. +5.2 | 16 / 20 |
+| noise-free only | 16 | -0.23 | -0.20 | -1.2 .. +0.4 | 11 / 4 |
+
+Trips: identical in 302 of 304 pairs (+1 / -1 once each).
+
+- **Exact readings: no detectable cost** (-0.11 +- 0.11 pp, 95 %). The noise-free 98.4 -> 97.7 is one trajectory: the
+  first sweep captures count 1057 instead of 1063 and the runs never meet again; the limit binds only during the sweeps
+  and briefly at t 80-90 s and 1640-1680 s (instrumented build).
+- **Real cost: fry plants with Vout read 2.5 % low** (36 of 38 worse, median -0.85 pp). Mechanism: in main the late
+  window carries reverse current over (the stiff-source hazard this branch removes), and on a PV source that runs the
+  converter in a forced-CCM-like state at D ~ M (tracking duty mean 1260 counts vs 706 with exact readings), where P&O
+  tracks better: main's tracking loss is 0.54 % there vs 0.94 % with exact readings. The fix returns it to DCM, i.e. to
+  the exact-reading behaviour (f0 variant: 0.96 %; a424a779 2.36 % incl. trapped runs, see next). flat's ring
+  (320 kHz) leaves no carry-over: main runs at the exact-reading duty there and nothing changes.
+- **Trapped runs (harvest < 96 %), pre-existing:** main 15 of 304 (all Gaussian, fry/fry-hq, Vout 0.983 or Vin 1.02),
+  a424a779 9, floor 600 ns 11, no floor 2. In each the tracker walks to high duty / low Vin at dusk (e.g. 34 V vs MPP
+  48 V, -13 pp) and stays. Measured output power tracks PV power there (ratio 0.97 const.), so it is not a measurement
+  bias; the stiff-plant Iout is nearly flat over a few hundred HS counts below D = M (dewin, fry, Vin 34 V), which
+  leaves the P&O blind near the boundary. Which runs get trapped moves with any change to the window; it is a tracker
+  issue, not caused by this limit.
+
+Floor vs fraction (same 304 cells, `msim-f0` = budget 0.0198 T only, which at 39 kHz equals a 500 ns floor;
+`msim-f600`):
+
+| build | mean diff vs main | fry Vout 0.975 median | trapped runs | stiff Vo -2 % and Vi +2 % | stiff Vo -4 % |
+|---|---|---|---|---|---|
+| a424a779 (700 ns) | -0.10 | -0.85 | 9 | 0 | fry 1-10 pts >= -0.009 A |
+| 600 ns | -0.18 | -0.70 | 11 | fry 244-282 pts, -0.09 A | fry 383-427 pts, -0.11 A |
+| 0 / 500 ns | +0.10 | -0.55 | 2 | fry 1775-1834 pts, -0.29 A; flat 54, -0.36 A | (reviewer: -0.35 / -0.56 A) |
+
+Vo -3 % and Vi +2.5 % alone clear with all three. Both terms add to the misreading cost (the floor about 0.3 pp of
+the 0.85); a smaller floor buys back part of it only by giving up the combined-error and -4 % cases, and the
+difference in mean harvest is within the trapped-run noise. No code change: 700 ns stays.
 
 ## Tests (final budget)
 
@@ -191,7 +237,7 @@ separate a cost from trajectory sensitivity. A real ~0.5 pp dusk cost cannot be 
 - vconv-spice-check: PASS (self-tests fail as expected).
 - `rcal-vin.sh` (Mac, `msim-new2`, 192 runs): 0 outside the band, 23 failed runs (offset kept; 25 with 0.02 T). Board
   means fry +143, fry-hq +232, flat -228, flat-hq -188, pooled -10 (baseline -9) ns. `data/rcal-vin.txt`.
-- dcm-current-test, vconv-test: pass (0.02 T rule; the limit does not touch them).
+- dcm-current-test (all ok), vconv-test 1309/1309: pass on a424a779.
 - Unity QEMU suite: 262 tests, 0 failures, 25 ignored. esp32s3 build (IDF 6.0.3): pass, 11 % free.
   `rtprof_map.py --check`: 0 not in IRAM; `lateDrainCounts`/`computePwmRectMax` have no out-of-line symbol (inlined
   into IRAM `pwmPerturb`).
@@ -219,4 +265,5 @@ separate a cost from trajectory sensitivity. A real ~0.5 pp dusk cost cannot be 
 - The min-pulse hazard above M 0.92 (and M 0.865-0.9 at low HS) is documented, not fixed.
 - The 0.7 us floor is a constant for the lowest measured ring frequency; a board with a lower ring (more node C, larger
   L) needs a longer floor. Untested at other switching frequencies.
-- The wx-dusk -0.7 pp (single deterministic scenario) is not resolved into cost vs trajectory sensitivity.
+- The pre-existing dusk tracker trap (P&O parked at high duty near D = M, up to -13 pp, 15 of 304 paired runs on main)
+  is not addressed.
