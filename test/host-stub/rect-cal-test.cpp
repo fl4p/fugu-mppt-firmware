@@ -238,6 +238,33 @@ static bool sweepTrips(float isc, int &offset, int hidden, float voutBias, bool 
     return h.tripped;
 }
 
+// Near D = M a low Vout reading eats the WCE ratio margin; a late offset must then not reach the complementary clamp
+// (forced CCM below D = M): it keeps the LS off for T/32 before the next HS, else falls back to the offset-0 window.
+static void testLateGap() {
+    const float vi = 60.f, vo = 30.f * 0.983f; // Vout read 1.7 % low, true M = 0.5
+    const int ctMax = pwmCountsFromNs(RectOffsetLateMaxNs, 39000.f * PM), gap = PM >> 5;
+    auto lsAt = [&](int off, int hs) {
+        SynchronousConverter c{}; initConv(c);
+        c.setRectOnOffset(off);
+        c.enableSyncRect(true);
+        c.pwmPerturb((int16_t) hs);
+        for (int k = 0; k < 400; ++k) { c.updateSyncRectMaxDuty(vi, vo, 1.f); c.pwmPerturb(0); }
+        return (int) c.getRectOnPwmCnt();
+    };
+    int n = 0, clamp = 0, tight = 0, minGap = PM;
+    for (int hs = PM / 2 - 150; hs <= PM / 2; hs += 3) {
+        const int ls0 = lsAt(0, hs), ls = lsAt(ctMax, hs), comp = PM - hs - 1;
+        ++n;
+        if (ls >= comp && ls0 < comp) ++clamp;
+        if (ls > ls0 + 1 && comp - ls < gap - 1) ++tight;
+        if (ls > ls0 + 1) minGap = std::min(minGap, comp - ls);
+    }
+    CHECK(clamp == 0 && tight == 0, "late gap: %d of %d points into the clamp, %d closer than T/32 (min gap %d ct)", clamp, n,
+          tight, minGap);
+    printf("late gap: %d points, %d into the complementary clamp, min idle after a late LS %d ct (T/32 = %d)\n", n, clamp,
+           minGap, gap);
+}
+
 static void testDriverRule() {
     SynchronousConverter c{};
     const int ct875 = (int) std::lround(875e-9 * 39000.0 * PM);
@@ -245,9 +272,13 @@ static void testDriverRule() {
     CHECK(c.getRectOnOffset() == 0 && c.rectOffsetNeedsCal(), "foreign driver: off=%d", c.getRectOnOffset());
     initConv(c, "875", nullptr);
     CHECK(c.getRectOnOffset() == 0 && c.rectOffsetNeedsCal(), "no driver key: off=%d", c.getRectOnOffset());
-    initConv(c, "875", "mock");
-    CHECK(std::abs(c.getRectOnOffset() - ct875) <= 1 && !c.rectOffsetNeedsCal(), "same driver: off=%d want %d",
-          c.getRectOnOffset(), ct875);
+    const int ct100 = (int) std::lround(100e-9 * 39000.0 * PM), ctMax = pwmCountsFromNs(RectOffsetLateMaxNs, 39000.f * PM);
+    initConv(c, "100", "mock");
+    CHECK(std::abs(c.getRectOnOffset() - ct100) <= 1 && c.rectOffsetCal() == 1, "same driver: off=%d want %d",
+          c.getRectOnOffset(), ct100);
+    initConv(c, "875", "mock"); // past the late limit: loaded as a bound there
+    CHECK(c.getRectOnOffset() == ctMax && c.rectOffsetCal() == 2, "late 875 ns: off=%d level %u want %d level 2",
+          c.getRectOnOffset(), c.rectOffsetCal(), ctMax);
     initConv(c, "-500", "mock");
     CHECK(c.getRectOnOffset() < -70 && !c.rectOffsetNeedsCal(), "negative offset: off=%d", c.getRectOnOffset());
     initConv(c, "-500", "mock", "0");
@@ -506,15 +537,19 @@ static void testVoltageBaseline() {
     const int floor = RectCal::floorCounts(cv.getPwmTickRate());
     CHECK(d.get() == RectCal::Done && d.applied >= floor && RectBackstop::shrink(d.applied, 20, floor) <= d.applied,
           "learned %d applied %d floor %d", d.learned, d.applied, floor);
-    // a knee 35 ct late (HS-side delay) is applied less the margin; 80 ct late (node lag at Vin > 2 Vout) is a bound
-    // at LateMaxNs
+    // below Vin = 2 Vout a knee 35 ct late (HS-side delay) is applied less the margin, 80 ct late is a bound at
+    // LateMaxNs; above, any late result is a bound at 0 (node lag)
     const int hi = pwmCountsFromNs(RectCal::LateMaxNs, cv.getPwmTickRate());
-    RectCal late, late35;
-    fixture(late35, 60, 26.7f, 60, 26.7f, 35.f);
+    RectCal late, late35, lateHi;
+    fixture(lateHi, 60, 26.7f, 60, 26.7f, 35.f);
+    CHECK(lateHi.get() == RectCal::Done && lateHi.learned >= 25 && lateHi.applied == 0 && lateHi.clamped,
+          "late knee +35 at 2.25 Vout: state %d learned %d applied %d clamped %d", lateHi.get(), lateHi.learned,
+          lateHi.applied, lateHi.clamped);
+    fixture(late35, 45, 26.7f, 45, 26.7f, 35.f);
     CHECK(late35.get() == RectCal::Done && late35.learned >= 25 && late35.applied > 0 && late35.applied <= hi
           && !late35.clamped, "late knee +35: state %d learned %d applied %d clamped %d", late35.get(), late35.learned,
           late35.applied, late35.clamped);
-    fixture(late, 60, 26.7f, 60, 26.7f, 80.f);
+    fixture(late, 45, 26.7f, 45, 26.7f, 80.f);
     CHECK(late.get() == RectCal::Done && late.learned >= 60 && late.applied == hi && late.clamped,
           "late knee: state %d learned %d applied %d clamped %d", late.get(), late.learned, late.applied, late.clamped);
     printf("late knee +35: learned %+d applied %+d; +80: learned %+d applied %+d%s\n", late35.learned, late35.applied,
@@ -1307,13 +1342,13 @@ static void testPersistLock() {
            "unadmitted grant expires and retries)\n");
 }
 
-// A knee 80 ct past ideal (LS conducting 80 ct shorter than commanded) is beyond LateMaxNs: a bound, not a
-// measurement: the active offset when shorter, else LateMaxNs (20 ct); a shorter measured offset stays measured; saved as rect_offset_cal=2, which a
+// A knee 80 ct past ideal (LS conducting 80 ct shorter than commanded) from above Vin = 2 Vout is a bound, not a
+// measurement: the active offset when shorter, else 0; a shorter measured offset stays measured; saved as rect_offset_cal=2, which a
 // reboot reads back. Auto retries a bound only below Vin = 2 Vout and not within a week of the last one.
 static void testBound() {
     struct Case { const char *name; int off; uint8_t lv; int want; uint8_t wantLv; bool saved; };
     const Case cases[] = {{"never calibrated", 0, 0, 0, 2, true}, {"backstop -60", -60, 0, -60, 2, true},
-                          {"measured -60", -60, 1, -60, 1, false}, {"manual +40", 40, 1, 20, 2, true},
+                          {"measured -60", -60, 1, -60, 1, false}, {"manual +40", 40, 1, 0, 2, true},
                           {"bound -60", -60, 2, -60, 2, true}};
     for (const auto &k: cases) {
         g_saved.clear(); g_saveCalls = 0; g_saveOk = true;
@@ -1551,6 +1586,7 @@ int main(int argc, char **argv) {
     }
     g_verbose = argc == 2 && !strcmp(argv[1], "-v");
     testDriverRule();
+    testLateGap();
     testShrinkMonotone();
     testFieldData();
     testFlatField();

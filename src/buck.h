@@ -1290,8 +1290,10 @@ public:
             ESP_LOGW("converter", "rect_offset_ns=%.0f was measured on driver '%s', not %s: using 0, needs rect-cal",
                      offNs, offDrv.c_str(), driverName);
         const uint8_t lv = coilConf.getByte("rect_offset_cal", 1);
-        rectCalLevel = drvOk ? (lv == 2 ? 2 : lv ? 1 : 0) : 0;
-        rectOnOffset = drvOk ? (int16_t) rectOffsetCountsFromNs(offNs, getPwmTickRate()) : 0;
+        const bool late = offNs > RectOffsetLateMaxNs;
+        if (drvOk && late) ESP_LOGW("converter", "rect_offset_ns=%.0f: bound at %.0f", offNs, RectOffsetLateMaxNs);
+        rectCalLevel = drvOk ? (lv == 2 || late ? 2 : lv ? 1 : 0) : 0;
+        rectOnOffset = drvOk ? (int16_t) rectOffsetCountsFromNs(std::min(offNs, RectOffsetLateMaxNs), getPwmTickRate()) : 0;
         logConfig();
     }
 
@@ -1313,7 +1315,12 @@ public:
             // rectOnOffset compensates a fixed dead-time/gate-delay between the commanded LS count
             // and the true zero crossing (measure_coil.py --ls-sweep). >0 turns LS off later,
             // recovering body-diode loss but eating reverse-current margin; default 0 = unchanged.
-            float ideal = (float) pwmCtrl * pwmRectRatioDCM + (float) rectOnOffset;
+            const float base = (float) pwmCtrl * pwmRectRatioDCM;
+            float ideal = base + (float) rectOnOffset;
+            // a late offset keeps LS off >= T/32 before the next HS: near D = M a reading error eats the ratio
+            // margin and the offset alone would reach the complementary clamp (forced CCM, reverse current)
+            if (rectOnOffset > 0)
+                ideal = std::min(ideal, std::max(base, (float) (driverPwmMax - pwmCtrl - 1 - (driverPwmMax >> 5))));
             float v = ideal + rectDitherErr;
             long ls = std::lround(v);
             if (advanceDither) rectDitherErr = v - (float) ls;

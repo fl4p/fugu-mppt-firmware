@@ -43,7 +43,7 @@
  * sqrt(L C) either way depending on the ring phase, which differs at every operating point. The zero crossing
  * is therefore also taken from the charge per period (zc, needs the coil L). learned = peak - max(zc, ideal)
  * (counts) is the timing error of driver, gate and sensing, rounded early. A late (positive) result is applied up
- * to LateMaxNs; a later one is a bound (clamped).
+ * to LateMaxNs from a calibration point below Vin = 2 Vout; a later one, or any late one above, is a bound (clamped).
  *
  * Ownership: the RT core writes the payload in start()/refuse() (from Idle) and during Run, core 0
  * in Fit. Each hand-off is a release store of `state`; the other side reads it with acquire before
@@ -61,7 +61,7 @@ public:
     static constexpr float PlausibleNs = 2500.f; // |learned| above this is rejected (400 ct at 160 MHz)
     static constexpr float MinMarginNs = 125.f;  // applied margin floor (20 ct at 160 MHz)
     static constexpr float DipMarginNs = 250.f;  // same when the fit ended at a dip floor (40 ct)
-    static constexpr float LateMaxNs = 125.f;    // latest applied offset (20 ct): a quarter of the 2 % M margin at D = M
+    static constexpr float LateMaxNs = RectOffsetLateMaxNs; // latest applied offset (20 ct), below Vin = 2 Vout only
     static constexpr float StiffV = 0.02f;       // max Vin deviation from Init (fraction)
     static constexpr float VoutDrift = 0.05f;    // max Vout deviation from Init (fraction)
     static constexpr float JumpV = 0.003f;       // max step Vin off its references' mean (fraction)
@@ -331,8 +331,8 @@ public:
         const float a = l - std::max((float) pwmCountsFromNs(cut ? DipMarginNs : MinMarginNs, tickRate), 0.3f * std::fabs(l));
         learned = (int16_t) std::lround(l);
         // Driver and gate delays explain tens of ns. Past Vin = 2 Vout the node lift to Vin can put the knee later
-        // still: beyond LateMaxNs a result only bounds the offset (lf(): min(LateMaxNs, active)).
-        const float hi = (float) pwmCountsFromNs(LateMaxNs, tickRate);
+        // still, so a late result there only bounds the offset at 0; below, beyond LateMaxNs (lf(): min(hi, active)).
+        const float hi = vi0 < 2.f * vo0 ? (float) pwmCountsFromNs(LateMaxNs, tickRate) : 0.f;
         clamped = a > hi;
         applied = (int16_t) std::lround(std::min(a, hi));
         peak = x0;

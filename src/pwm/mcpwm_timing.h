@@ -31,6 +31,8 @@ static inline int pwmCountsFromNs(float ns, float tickRateHz) {
 static inline int rectOffsetCountsFromNs(float ns, float tickRateHz) {
     return pwmCountsFromNs(ns, tickRateHz);
 }
+// latest rect_offset applied (a quarter of the 2 % ratio margin at D = M); a later value bounds it there
+static constexpr float RectOffsetLateMaxNs = 125.f;
 static inline float rectOffsetNsFromCounts(int counts, float tickRateHz) {
     return tickRateHz > 0.f ? (float) counts * 1e9f / tickRateHz : 0.f;
 }

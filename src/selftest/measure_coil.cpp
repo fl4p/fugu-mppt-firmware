@@ -251,11 +251,11 @@ static void sweepLs(const MeasArgs &a) {
     if (Lc == Lc) UART_LOG("  L (peak curvature) = %.1f uH (cross-check)", Lc * 1e6f);
     if (a.apply) {
         if (!(pk > 0 && pk < n - 1)) { UART_LOG("  apply skipped: peak at sweep edge; widen sweep"); return; }
-        int lim = pwmMax / 8;
-        int new_off = constrain((int) lroundf(ls_peak - ideal_ls - 12.0f), -lim, lim);
+        const int lim = pwmMax / 8, hi = rectOffsetCountsFromNs(RectOffsetLateMaxNs, converter.getPwmTickRate());
+        const int raw = (int) lroundf(ls_peak - ideal_ls - 12.0f), new_off = constrain(raw, -lim, hi);
         mppt.rectCal.post(new_off, true); // applied by the RT loop
         mppt.rectCal.requestSave();       // coil.conf once the converter is off
-        converter.setRectOffsetNeedsCal(false);
+        converter.setRectOffsetCal(raw > hi ? 2 : 1);
         UART_LOG("  applied rect_offset %.0f ns (%d ct, %s); saved to coil.conf once the converter is off",
                  rectOffsetNsFromCounts(new_off, converter.getPwmTickRate()), new_off, converter.drvName());
     }
