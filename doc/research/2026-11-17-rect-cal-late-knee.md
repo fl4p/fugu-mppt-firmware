@@ -4,7 +4,9 @@
 
 Date: 2026-11-17. Branch `rcal-vin3` (off main e4cb0616): c58ce398 (sim harness), 2aa807ce (port of rcal-vin2),
 3ee071b3 (late rule + regression), 344f77ab (docs), then the review fixes (T/32 idle gap, positive results only below
-2 Vout, load/measure-coil clamp, rcal-vin.sh bias checks). **Simulator only, nothing ran on hardware.**
+2 Vout, load/measure-coil clamp, rcal-vin.sh bias checks), then the second review fixes (drain gap and M limit, load
+clamp in counts, baseline-relative rcal-vin.sh checks; section "Second review" below). **Simulator only, nothing ran on
+hardware.**
 
 All numbers are from the host simulator on the Mac (none from pgx93). Sim counts are 12.5 ns (pwmMax 2047 at 39 kHz);
 tables are converted to ns. Data and tools: `doc/research/rect-cal-late-knee/` (`data/*.tsv`, `tools/`).
@@ -119,8 +121,10 @@ or apply them bounded. Decision after review: **bounded at LateMaxNs = 125 ns, o
 Vin = 2 Vout, and never into the complementary clamp.**
 
 - `SynchronousConverter::computePwmRectMax`: a positive offset is applied only as far as it leaves the LS off for
-  `T/32` (128 ct at 4103, 0.8 µs at 39 kHz) before the next HS turn-on, and not at all where the window without it
-  already ends later: `ls = min(base + off, max(base, T - HS - 1 - T/32))`.
+  `T/32` (128 ct at 4103, 0.8 µs at 39 kHz) plus the drain `off/ratio` before the next HS turn-on, not at all where the
+  window without it already ends later, and not at all where `ratio < 0.25` (buck M_WCE > 0.8):
+  `ls = ratio < 0.25 ? base : min(base + off, max(base, T - HS - 1 - T/32 - off/ratio))` (second review; the first
+  fix had the T/32 gap only).
 - A rect-cal result whose applied offset is ≤ +125 ns from a calibration point below 2 Vout is a measurement
   (`rect_offset_cal=1`). A later one, or any positive one above 2 Vout, is a bound (`rect_offset_cal=2`): applied
   min(limit, active) with limit +125 ns below and 0 above 2 Vout; a measured shorter offset is kept. Bounds are retried
@@ -217,8 +221,8 @@ fry-hq [-662..+88], flat [-538..0], flat-hq [-650..0].
 - `vconv-spice-check.sh`: PASS (its self-tests fail as designed).
 - mppt-sim rcal, rcal-bus, rcal-cloud, rcal-flat, rcal-low, rcal-low-bus, rcal-ov, rcal-sun: no FAIL; rcal-sun learns
   +15 ct above 2 Vout -> bound, applied 0; rcal-flat learns -22 / applies -32 ct.
-- `test/host-stub/rcal-vin.sh` (96 runs, 2 seeds): 0 outside the band, 13 failed runs (offset kept); per board learned
-  mean +195 / +290 / -229 / -181 ns (fry, fry-hq, flat, flat-hq), bounds 55 / 85 / 5 / 5 %, pooled mean +11 ns.
+- `test/host-stub/rcal-vin.sh` (192 runs, 4 seeds): 0 outside the band, 22 failed runs (offset kept); baselines and
+  known-bads in "Second review".
 - esp32s3 firmware build (IDF 6.0.3): pass, 11 % app partition free; also with `CONFIG_FUGU_WITH_MEASURE_COIL=y`.
 - Docs: `npm run build` pass.
 
@@ -229,9 +233,77 @@ fry-hq [-662..+88], flat [-538..0], flat-hq [-650..0].
 - No pgx93 offload: runs were small (≤ 144 runs), local -j4.
 - The fry knee lag above 2Vo is probably a plant artefact (SPICE knee - zc much smaller); if the field shows it, fry
   runs above 2 Vout end as bounds (rcal-vin.sh: 55-85 % of fry runs).
-- The fry-hq bound share (85 %) sits close to the 90 % limit of rcal-vin.sh; results are deterministic per platform,
-  but a plant or libm change can move it.
-- The band sweep covers Vout reading errors only; a Vin reading high by the same fraction shifts the ratio the same
-  way (not run separately). Points where the LS min pulse sets the LS, and HS above pwmCtrlMax, are not covered.
+- rcal-vin.sh baselines are Mac numbers; the cross-machine margin is estimated from seed realisations (not measured on
+  pgx93). A plant or rect-cal change that moves a board mean by > 150 ns needs new baselines.
+- The band sweeps skip points where the LS min pulse sets the LS and HS above pwmCtrlMax, and use stiff sources.
 - flat's -170..-290 ns bias comes from the preset's L0 vs plant L; on hardware the same ε/2 rule applies to the
   coil.conf L0 error.
+
+## Second review (high M, load clamp units, rcal-vin.sh baselines)
+
+### Reverse current that has not drained (high M)
+
+The T/32 gap only covers the clamp band. After a late LS turn-off the reverse current drains through the HS body diode
+at (Vi - Vo)/L, i.e. in `t_late·M/(1 - M)` = `t_late/ratio` (boost: the same expression with its ratio). At Vin =
+1.1-1.2 Vout that is 5-10x the late time, so with Vout read 1.7 % low a +125 ns offset still turned the mean current
+negative 120-130 counts below M·T (outside the 60-count window of the first band sweep): fry 253 points, -0.23 A.
+
+Rules screened with the full-range probe (`tools/band.cpp`, 1-count HS steps in the last 600 counts below M·T, 4-count
+steps below; `data/band-wide-rules.txt`), points where the offset turned the mean current negative:
+
+| rule | fry +125, Vo -2 / -2.5 % | fry +250, -2 / -2.5 % | flat +125, -2.5 % | flat +250, -2 / -2.5 % |
+|---|---|---|---|---|
+| T/32 + off/ratio | 72 / 441 | 34 / 417 | 132 | 0 / 66 |
+| T/32, no offset at M_WCE > 0.8 | 0 / 192 | 191 / 759 | 71 | 70 / 555 |
+| T/32, no offset at M_WCE > 0.75 | 0 / 21 | 20 / 334 | 0 | 0 / 224 |
+| T/32 + off/ratio, none at M_WCE > 0.8 (chosen) | 0 / 0 | 0 / 0 | 0 | 0 / 0 |
+
+Full check of the chosen rule (`data/band-wide-fw.txt`): fry, fry-hq, flat, flat-hq × +63 / +125 / +250 ns × Vout read
+0 / -0.5 / -1 / -1.5 / -1.7 / -2 / -2.5 % low and Vin read +1 / +2 / +2.5 % high, every HS count from the LS min pulse
+to M·T (1-count steps), 85 000-168 000 points per case: 0 points into the clamp, 0 points where the offset turns the
+mean current negative. Largest loss of mean output current against offset 0 (all plants):
+
+| reading error | +63 ns | +125 ns | +250 ns | offset 0 itself: points with Iout < 0, min |
+|---|---|---|---|---|
+| none | 0.016 A | 0.027 A | 0.043 A | 0 |
+| Vout -1 % | 0.037 | 0.059 | 0.084 | 0 |
+| Vout -1.5 % | 0.060 | 0.094 | 0.137 | fry 170 / fry-hq 184, -0.13 A |
+| Vout -1.7 % | 0.076 | 0.117 | 0.170 | fry 362 / fry-hq 373, -0.21 A |
+| Vout -2 % | 0.111 | 0.166 | 0.230 | 638-1532 per plant, -0.37..-0.42 A |
+| Vout -2.5 % | 0.283 | 0.416 | 0.506 | 3796-4889, -1.7..-2.4 A |
+| Vin +2 % | 0.106 | 0.157 | 0.224 | 349-1188, -0.22..-0.35 A |
+| Vin +2.5 % | 0.250 | 0.373 | 0.454 | 3418-4516, -1.4..-2.3 A |
+
+**Out-of-scope finding (offset 0):** on the ring plants the 2 % WCE window itself drives the mean output current
+negative near D = M from a Vout reading 1.5 % low (fry) and on all plants at 2 % low. The ring current at HS turn-on moves
+the zero crossing by up to ±sqrt(LC), which the 2 % margin does not cover at high M. This is the existing diode-emulation
+window, not the offset; worth a separate look given the known 1.1-1.7 % low Vout reading of one board while converting.
+
+Hazard table with the chosen rule (`data/hazard-final.txt`, 1-count steps): +125 ns WCE exact sensors fry 0.14 A /
+14 mW, flat 0.055 A / 11 mW; +250 ns fry 0.19 A, flat 0.15 A; margin used up (LS = ideal + off): unchanged from the
+table above (0.30-0.35 A, ≤ 55 mW at +125 ns), the worst points are below M = 0.8.
+
+`testLateGap` adds a DCM case at Vin 34 V, Vout read 29.5 V (M_WCE 0.885): the offset must not act on any of the 122
+DCM points. With the M limit removed it fails (52 points).
+
+### Load clamp in counts
+
+`rect_offset_ns` is compared with the limit in counts at the active tick rate: a saved value is the ns of whole counts
+(LEDC 35 kHz: 125 ns -> 9 ct -> 126 ns), which compared in ns turned a measurement into a bound with a warning each boot.
+rect-cal-test: 128 ns at 160 MHz (20 ct) loads as 20 ct, level 1.
+
+### rcal-vin.sh checks against baselines
+
+Seeds default to 4 (192 runs). Per board the learned mean must stay within 150 ns of its baseline (Mac, 4 seeds: fry
++162, fry-hq +234, flat -231, flat-hq -190 ns), the pooled mean within 100 ns of -9 ns. Seeds 1-2 vs 3-4 move a board
+mean by 4-104 ns (fry-hq most), the pooled mean by about 50 ns, so a 4-seed mean on another machine should stay within
+about ±75 ns per board. The bound share is printed only (fry-hq 74 %).
+
+| build | fry | fry-hq | flat | flat-hq | pooled | result |
+|---|---|---|---|---|---|---|
+| final | +162 | +234 | -231 | -190 | -9 | pass |
+| +200 ns learned bias | +362 | +435 | -31 | +10 | +192 | fail on every board and pooled |
+| +400 ns learned bias | +562 | +635 | +170 | +210 | +392 | fail on every board and pooled |
+
+Not run on pgx93: mirroring the worktree (with the cloned docs node_modules) exceeded 30 min and was stopped, so the
+cross-machine margin is estimated from seed realisations, not measured.

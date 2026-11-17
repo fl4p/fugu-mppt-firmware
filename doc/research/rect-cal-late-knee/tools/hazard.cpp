@@ -43,8 +43,10 @@ int main(int argc, char **argv) {
                 const double ideal = (vin / vout - 1) * hs;
                 const double lsF = wce ? hs * (0.980198 / M - 1) : ideal;
                 if (hs + (int) std::lround(lsF) >= kPmax - 1) continue;
-                double t = lsF + offNs / kTickNs; // SynchronousConverter::computePwmRectMax: T/32 idle before HS
-                if (offNs > 0) t = std::min(t, std::max(lsF, (double) (kPmax - hs - 1 - (kPmax >> 5))));
+                // SynchronousConverter::computePwmRectMax: idle T/32 + off/ratio before HS, no offset at ratio < 0.25
+                const double rr = wce ? 0.980198 / M - 1 : 1 / M - 1, o = offNs / kTickNs;
+                double t = lsF + o;
+                if (o > 0) t = rr < 0.25 ? lsF : std::min(t, std::max(lsF, kPmax - hs - 1 - (kPmax >> 5) - o / rr));
                 const int ls = std::min(kPmax - hs - 1, std::max(320, (int) std::lround(t)));
                 const R r = run(b, vin, vout, hs, ls), r0 = run(b, vin, vout, hs, std::max(320, (int) std::lround(lsF)));
                 if (!r0.dcm) continue;

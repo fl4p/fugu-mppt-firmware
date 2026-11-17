@@ -494,26 +494,42 @@ Referenced to the ideal window alone with a downward bend only, the same runs le
 of 0.39–0.46 µs, and up to +1.5 µs late below `V_i = 2·V_o`, where the current bends up at the
 crossing.
 
-**Late results.** A late LS turn-off builds reverse current at `V_o/L` per second. Near `D = M` the
-2% ratio margin of the diode-emulation window (about `0.02·T` = 0.5 µs at 39 kHz) is all that keeps
-the LS from filling the off-time, and a `V_o` reading 1.5–2% low (or `V_i` as much high) uses it up.
-A positive offset added on top then reaches the complementary limit `T − HS − 1`: the LS turns off
-only when HS turns on, which forces CCM below `D = M` and runs the converter backward from the
-battery. In the board models, +125 ns with `V_o` read 1.7% low did so in a band up to 20 HS counts wide
-below `D = M` and drew up to −1.3 A on average; +250 ns with 1% low, −0.3 A. The firmware therefore
-applies a positive offset only as far as it leaves the LS off for `T/32` (0.8 µs at 39 kHz) before
-the next HS turn-on, and not at all where the window without it already ends later. Over the DCM
-range (`V_i` = 31–80 V, `V_o` = 26.8 and 29.2 V, every HS count up to `D = M`) with `V_o` read 0 to
-2% low, offsets up to +250 ns then never reach the limit and never turn the mean output current
-negative; they lower it by at most 0.15 A against offset 0.
+**Late results.** A late LS turn-off builds reverse current at `V_o/L` per second. When the LS turns
+off, that current drains through the HS body diode into the input at `(V_i − V_o)/L`, so it takes
+`M/(1 − M)` times the late time to return to zero: one late time at `M = 0.5`, four at `M = 0.8`.
+Near `D = M` the 2% ratio margin of the diode-emulation window (about `0.02·T` = 0.5 µs at 39 kHz)
+is all that keeps the LS from filling the off-time, and a `V_o` reading 1.5–2% low (or `V_i` as much
+high) uses it up. A positive offset added on top then either reaches the complementary limit
+`T − HS − 1`, where the LS turns off only when HS turns on and the converter runs backward from the
+battery in forced CCM, or leaves a reverse current that has not drained when HS turns on. In the
+board models, +125 ns with `V_o` read 1.7% low did the first in a band up to 20 HS counts wide below
+`D = M` (down to −1.3 A mean output current) and, near `V_i = 1.1–1.2·V_o`, the second up to 130
+counts below `D = M` (down to −0.23 A).
+
+The firmware therefore applies a positive offset only as far as it leaves the LS off for `T/32`
+(0.8 µs at 39 kHz) plus the drain time `offset·M/(1 − M)` before the next HS turn-on, not at all
+where the window without it already ends later, and not at all above `M = 0.8` (worst-case ratio),
+where the drain takes more than four times the offset. Each part alone was not enough in the board
+models: the gaps alone left negative mean current at `V_o` read 2% low, the `M` limit with the fixed
+`T/32` gap alone left it near `M = 0.79`.
+
+Checked over the whole DCM range (`V_i` = 31–80 V, `V_o` = 26.8 and 29.2 V, every HS count from the
+LS minimum pulse to `D = M`) on four board models, with offsets of +63, +125 and +250 ns and readings
+of `V_o` 0 to 2.5% low or `V_i` up to 2.5% high: an offset never reaches the complementary limit and
+never turns the mean output current negative where offset 0 keeps it positive. Against offset 0 it
+lowers the mean output current by at most 0.12 A at +125 ns and `V_o` 1.7% low, 0.17 A at 2% low,
+and 0.42 A at 2.5% low. The window without an offset is not covered by this: with `V_o` read 1.5% low
+it already drives the mean output current negative near `D = M` in two of the models (−0.12 A), at
+2% low in all four (−0.37 to −0.42 A), and at 2.5% low by up to −2.4 A.
 
 The run applies a late result up to +125 ns, and only from a calibration point below `V_i = 2·V_o`
-(see *Bounds*). In the board models with exact voltage readings, +125 ns leaves at most 0.08–0.14 A
-of reverse current at LS turn-off (0.2–0.7 µJ in the coil per period) and up to 14 mW of extra
+(see *Bounds*). In the board models with exact voltage readings, +125 ns leaves at most 0.06–0.14 A
+of reverse current at LS turn-off (0.1–0.7 µJ in the coil per period) and up to 14 mW of extra
 loss; with readings that use up the 2% margin, 0.30–0.35 A (offset 0: 0.25–0.28 A) and up to 55 mW.
 The gain of a late correction is small: the body diode carrying the last 0.5 µs of the fall costs
-about 1 mW. A stored `rect_offset_ns` or a `measure-coil ls apply` result above +125 ns is used as
-+125 ns and counts as a bound.
+about 1 mW. A stored `rect_offset_ns` above +125 ns (compared in counts at the active tick rate) is
+used as +125 ns and counts as a bound; so does a `measure-coil ls apply` result, which as a bench
+tool does not apply the `V_i = 2·V_o` rule of the run.
 
 **Bounds.** Above `V_i = 2·V_o` the reverse current must first lift the switch node to `V_i`
 before it is lost, which can put the downward bend after the zero crossing by a lag that the node
