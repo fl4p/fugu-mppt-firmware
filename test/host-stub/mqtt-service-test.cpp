@@ -87,7 +87,11 @@ esp_err_t esp_mqtt_client_destroy(esp_mqtt_client_handle_t c) {
     return ESP_OK;
 }
 int esp_mqtt_client_subscribe(esp_mqtt_client_handle_t, const char *, int) { return ++g_subs; }
-int esp_mqtt_client_publish(esp_mqtt_client_handle_t, const char *, const char *, int, int, int) { return 0; }
+static std::string g_pubData; // last published payload, as esp-mqtt sends it (len 0 = strlen)
+int esp_mqtt_client_publish(esp_mqtt_client_handle_t, const char *, const char *d, int len, int, int) {
+    g_pubData.assign(d, len ? (size_t) len : std::strlen(d));
+    return 0;
+}
 
 // --- test helpers ---
 namespace {
@@ -221,6 +225,17 @@ void test_before_connect_clears_flag() {
     assert(!MQTT.isConnected());
 }
 
+// a binary payload with an embedded NUL arrives with its full length; text still uses strlen
+void test_publish_binary_len() {
+    fresh();
+    const char bin[] = {0, 2, 'a', 0, 'b'};
+    assert(MQTT.publish("t", bin, sizeof bin, 0, false));
+    assert(g_pubData == std::string(bin, sizeof bin));
+    assert(MQTT.publish("t", "txt", 0, false) && g_pubData == "txt");
+    deliver(MQTT.client, MQTT_EVENT_DISCONNECTED);
+    assert(!MQTT.publish("t", bin, sizeof bin, 0, false));
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -234,6 +249,7 @@ int main(int argc, char **argv) {
             {"incident_state_restart", test_incident_state_restart},
             {"failed_with_live_client", test_failed_with_live_client_not_connected},
             {"before_connect_clears_flag", test_before_connect_clears_flag},
+            {"publish_binary_len", test_publish_binary_len},
     };
     for (auto &t: tests)
         if (argc < 2 || std::strstr(t.name, argv[1])) {

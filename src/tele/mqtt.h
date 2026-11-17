@@ -44,6 +44,7 @@ public:
 
     // false while disconnected or when the client rejects it
     bool publish(const char *topic, const char *payload, int qos, bool retain);
+    bool publish(const char *topic, const void *data, size_t len, int qos, bool retain);
 
     // Creates and starts the client; false if that fails (nothing left allocated). True without a broker.
     bool init(const ConfFile &conf);

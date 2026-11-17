@@ -28,8 +28,13 @@ void MqttService::subscribeTopic(const std::string &topic, MqttMsgCallback fn) {
         ESP_LOGW(TAG, "subscribe '%s' failed", topic.c_str());
 }
 
+bool MqttService::publish(const char *topic, const void *data, size_t len, int qos, bool retain) {
+    return mqttConnected && client &&
+           esp_mqtt_client_publish(client, topic, (const char *) data, (int) len, qos, retain) >= 0;
+}
+
 bool MqttService::publish(const char *topic, const char *payload, int qos, bool retain) {
-    return mqttConnected && client && esp_mqtt_client_publish(client, topic, payload, 0, qos, retain) >= 0;
+    return publish(topic, payload, strlen(payload), qos, retain);
 }
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
