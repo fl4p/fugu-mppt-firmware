@@ -3,7 +3,8 @@
 # rect-cal on the corrected board plants: bias, spread and the late-knee rule
 
 Date: 2026-11-17. Branch `rcal-vin3` (off main e4cb0616): c58ce398 (sim harness), 2aa807ce (port of rcal-vin2),
-3ee071b3 (late rule + regression), plus the docs commit. **Simulator only, nothing ran on hardware.**
+3ee071b3 (late rule + regression), 344f77ab (docs), then the review fixes (T/32 idle gap, positive results only below
+2 Vout, load/measure-coil clamp, rcal-vin.sh bias checks). **Simulator only, nothing ran on hardware.**
 
 All numbers are from the host simulator on the Mac (none from pgx93). Sim counts are 12.5 ns (pwmMax 2047 at 39 kHz);
 tables are converted to ns. Data and tools: `doc/research/rect-cal-late-knee/` (`data/*.tsv`, `tools/`).
@@ -114,54 +115,111 @@ sd about 220 ns per run, so the shifts are uncertain to about ±60 ns. Per the d
 ## Late-knee decision
 
 Options: apply late results (unbounded), refuse them (main: a positive result is a bound, applied min(0, active)),
-or apply them bounded. Decision: **bounded at LateMaxNs = 125 ns**.
+or apply them bounded. Decision after review: **bounded at LateMaxNs = 125 ns, only from calibration points below
+Vin = 2 Vout, and never into the complementary clamp.**
 
-- A result whose applied offset is ≤ +125 ns is applied as a measurement (`rect_offset_cal=1`).
-- A later one is a bound (`rect_offset_cal=2`): applied min(+125 ns, active offset); a measured shorter offset is
-  kept. Bounds are retried weekly or when Vin < 2Vo.
+- `SynchronousConverter::computePwmRectMax`: a positive offset is applied only as far as it leaves the LS off for
+  `T/32` (128 ct at 4103, 0.8 µs at 39 kHz) before the next HS turn-on, and not at all where the window without it
+  already ends later: `ls = min(base + off, max(base, T - HS - 1 - T/32))`.
+- A rect-cal result whose applied offset is ≤ +125 ns from a calibration point below 2 Vout is a measurement
+  (`rect_offset_cal=1`). A later one, or any positive one above 2 Vout, is a bound (`rect_offset_cal=2`): applied
+  min(limit, active) with limit +125 ns below and 0 above 2 Vout; a measured shorter offset is kept. Bounds are retried
+  weekly, and only below 2 Vout.
+- `coil.conf` `rect_offset_ns` above +125 ns is loaded as +125 ns with `rect_offset_cal=2`; `measure-coil ls apply`
+  clamps to +125 ns and stores 2 when it clamped.
 - The runtime backstop is unchanged (a positive offset drops to 0 on the collapse signature).
 
-Rationale: driver/gate delays are tens of ns and must stay correctable; clamp-lag artefacts on the plant are hundreds
-of ns. A positive offset is only a hazard once it eats the 2 % WCE margin near D = M.
+Rationale: driver/gate delays are tens of ns; one run scatters by ~0.2 µs; the plant clamp lag above 2 Vout is
+hundreds of ns. The gain of a late correction is ~1 mW (body diode on the last 0.5 µs), the cost of a wrong one
+11-55 mW, so late results are taken only where the knee has no node-lift lag (below 2 Vout). The 2 Vout rule was chosen
+over "two agreeing runs" because it needs no stored history and matches the physical mechanism of the lag.
+
+### Clamp band near D = M (review finding)
+
+With the earlier rule `ls = min(base + off, T - HS - 1)` a Vout reading 1.5-2 % low (it uses up the 2 % WCE margin) let
+a positive offset reach the complementary limit for HS in about `[M·(T - off), M·T]`: LS off only at HS on, forced CCM
+below D = M, negative mean current. The first hazard sweep stepped HS by 23 counts and missed this band.
+
+`tools/band.cpp <board> <off_ns> <vout_err> [old|new]`: stiff plant, 4103 ct / 39 kHz, Vout 26.8 / 29.2 V, Vin 31-80 V,
+every HS count in the 60 below M·T, WCE window from the biased reading, LS min pulse 320 ct (points where it sets the
+LS skipped). "into clamp": the offset, not the reading, reaches T - HS - 1; "made Iout<0": mean Iout < 0 where offset 0
+gives ≥ 0; "drop": largest Iout loss against offset 0. Full output: `data/band-sweep.txt`, `data/band-sweep-hq.txt`.
+
+| board | offset | Vout err | old: into clamp / made Iout<0 / min Iout | new (T/32): into clamp / made Iout<0 / max drop |
+|---|---|---|---|---|
+| fry | +63 | -1.7 % | 0 / 352 / -0.18 A | 0 / 0 / 0.053 A |
+| | +63 | -2.0 % | 540 / 1359 / -0.83 A | 0 / 0 / 0.055 A |
+| | +125 | -1.0 % | 0 / 0 / - (drop 2.65 A) | 0 / 0 / 0.078 A |
+| | +125 | -1.5 % | 80 / 699 / -0.34 A | 0 / 0 / 0.085 A |
+| | +125 | -1.7 % | 520 / 1874 / -0.71 A | 0 / 0 / 0.090 A |
+| | +125 | -2.0 % | 1071 / 2271 / -1.46 A | 0 / 0 / 0.093 A |
+| | +250 | -1.0 % | 49 / 571 / -0.29 A | 0 / 0 / 0.133 A |
+| | +250 | -2.0 % | 2140 / 3594 / -5.56 A | 0 / 0 / 0.154 A |
+| flat | +63 | -2.0 % | 540 / 1341 / -1.57 A | 0 / 0 / 0.031 A |
+| | +125 | -1.5 % | 80 / 466 / -0.33 A | 0 / 0 / 0.046 A |
+| | +125 | -1.7 % | 520 / 1641 / -1.28 A | 0 / 0 / 0.049 A |
+| | +125 | -2.0 % | 1071 / 2346 / -2.36 A | 0 / 0 / 0.051 A |
+| | +250 | -1.0 % | 49 / 313 / -0.24 A | 0 / 0 / 0.066 A |
+| | +250 | -2.0 % | 2140 / 3760 / -4.74 A | 0 / 0 / 0.082 A |
+
+New rule, all of fry, fry-hq, flat, flat-hq × offsets 0 / +63 / +125 / +250 × Vout err 0 / -0.5 / -1 / -1.5 / -1.7 / -2 %:
+0 points into the clamp, 0 points with the mean current turned negative. Offset 0 is the same in both rules (0 / 0).
+Gap choice: an `off`-count gap (the reviewer's first proposal) still left 505 negative points on flat (+125, -1.7 %,
+min -0.34 A); 40 / 60 counts left 188-418 / 31-88; 82 counts (2 %) left 5 points (fry -1.5 %, -0.05 A); 103 and 128
+counts left none. T/32 = 128 ct has headroom over 103 and is a shift.
+
+`test/host-stub/rect-cal-test.cpp` `testLateGap` checks the rule on `SynchronousConverter` (Vin 60, Vout read 1.7 %
+low, HS over the 150 counts below M·T, offset +125 ns): no point into the clamp, idle ≥ T/32 wherever the offset acts.
+With the rule disabled it fails (2 points into the clamp, 23 closer than T/32).
 
 ### Hazard numbers (stiff plant, field timing 4103 / 39 kHz, LS min pulse 320 ct, Vout 26.8 / 29.2 V, Vin 31-80 V)
 
-`tools/hazard.cpp <board> <offset_ns> [wce]`. Over all DCM points where the offset acts (LS > min pulse):
+`tools/hazard.cpp <board> <offset_ns> [wce|ideal] [-] [step]`, firmware rule (T/32 gap), every HS count, all DCM points
+where the offset acts. `data/hazard-gap.txt`. These replace the earlier 23-count table.
 
 | case | offset | fry | flat |
 |---|---|---|---|
-| WCE LS, exact sensors | 0 | 0.07 A | 0 A |
-| | +125 | 0.13 A at LS off (0.66 µJ/cycle, 26 mW circulating), ≤ 11 mW extra loss | 0.09 A (0.21 µJ, 8 mW), ≤ 10 mW |
-| | +250 | 0.19 A | 0.24 A |
-| | +375 | 0.41 A, -0.49 A at HS on (carry-over) | 0.83 A, -0.86 A at HS on |
-| | +500 | runaway, 2.6 A | runaway, 3.9 A (near D = M, HS + LS ≈ T) |
-| LS = ideal + offset (sensor errors ate the margin) | 0 | 0.25 A | 0.27 A |
-| | +125 | 0.29 A (3.3 µJ), ≤ 45 mW extra loss | 0.35 A (3.0 µJ), ≤ 54 mW |
-| | +500 | 0.44 A | 0.63 A |
+| WCE LS, exact sensors | 0 | 0.07 A at LS off | 0 A |
+| | +125 | 0.14 A (0.72 µJ/cycle, 28 mW circulating), ≤ 14 mW extra loss | 0.08 A (0.18 µJ, 7 mW), ≤ 11 mW |
+| | +250 | 0.19 A (1.4 µJ), ≤ 16 mW | 0.19 A (0.9 µJ), ≤ 12 mW |
+| | +375 (7-count steps) | 0.24 A, ≤ 31 mW | 0.27 A, ≤ 25 mW |
+| | +500 (7-count steps) | 0.29 A, ≤ 67 mW | 0.34 A, ≤ 47 mW |
+| LS = ideal + offset (margin used up) | 0 | 0.25 A | 0.28 A |
+| | +125 | 0.30 A (3.4 µJ), ≤ 46 mW | 0.35 A (3.1 µJ), ≤ 55 mW |
+| | +250 | 0.35 A, ≤ 98 mW | 0.42 A, ≤ 117 mW |
 
-In the margin-eaten case there is no HS-on current growth up to +375 ns, but points at the period limit were skipped
-(`HS + LS ≥ pwmMax - 1`), so carry-over there is not covered. The gain from correcting a late LS is small: body-diode
-loss at 460 ns early is about 1 mW. The worst cost of the cap (+125 ns wrongly applied) is about 0.13 A reverse
-current and ≤ 11 mW (exact sensors) or 0.35 A and ≤ 54 mW (margin consumed); runaway onset is +300..+375 ns.
+The coil current at HS turn-on stays at its offset-0 value (-0.25..-0.36 A, the ring) for all offsets: no carry-over.
+Without the gap rule the earlier 23-count sweep showed carry-over from +375 ns and runaway (2.6-3.9 A) at +500 ns;
+with it +500 ns stays below 0.35 A. The +125 ns cap now limits loss, the gap limits the hazard.
 
-**Known-bad check:** LateMaxNs = 500 fails `rcal-vin.sh` (28 runs outside the band); main fails the sd ≤ 350 ns
-criterion (sd 440-450).
+**Known-bad checks:** LateMaxNs = 500 fails `rcal-vin.sh` (28 runs outside the band, earlier version); main fails its
+sd criterion; a +400 ns learned bias (`l += pwmCountsFromNs(400)` in a scratch build) fails the new bias checks:
+pooled mean +411 ns (> 200), fry +596 / fry-hq +691 ns (> 400), fry 100 % / fry-hq 95 % bounds (> 90 %)
+(`data/rcal-vin-bias400.txt`). The disabled gap rule fails `testLateGap`.
 
 **Known limitation:** the applied value is not monotone in the result: a result just under the cap applies up to
 +125 ns, a later one (bound) applies min(+125, active), which is 0 with an active 0. The non-monotone side is the
-safe one.
+safe one. A positive measurement (below 2 Vout) is not re-run; the gap rule bounds its hazard.
+
+### Final matrices with the review fixes (3 seeds; `data/m-fin2*.tsv`)
+
+Learned values are identical to the port. Applied: Voc 58-79.6 (above 2 Vout) at most 0 on every board
+(fry [-375..0], fry-hq [-212..0], flat [-1250..0], flat-hq [-1000..-25]); Voc 40/48 (below) fry [-825..+125],
+fry-hq [-662..+88], flat [-538..0], flat-hq [-650..0].
 
 ## Tests run (worktree, Mac)
 
-- Host: rect-cal-test (new late-knee fixture: +35 -> applied in (0, 20] ct, +80 -> 20 ct clamped; manual +40 -> 20),
-  vconv-test 1309/1309, dcm-current, coil-fit, izero 511/511, mcpwm-timing, vconv-energy-audit, the other buildable
-  host tests: pass. Pre-existing (also on main e4cb0616): converter-test does not build (logging.h); conf-hash,
-  integrator, ripple-freq, scope have no build line.
+- Host: rect-cal-test (late-knee fixtures below 2 Vout: +35 -> +15 ct, +80 -> +20 ct clamped; above: +35 -> 0
+  clamped; manual +40 above 2 Vout -> 0, level 2; coil.conf 875 ns -> 20 ct level 2, 100 ns -> 16 ct level 1;
+  `testLateGap`), vconv-test 1309/1309, dcm-current, coil-fit, izero 511/511, mcpwm-timing, vconv-energy-audit and
+  the other buildable host tests: pass. Pre-existing (also on main e4cb0616): converter-test does not build
+  (logging.h); conf-hash, integrator, ripple-freq, scope have no build line.
 - `vconv-spice-check.sh`: PASS (its self-tests fail as designed).
-- mppt-sim rcal* scenarios: non-ring scenarios identical to main; rcal-sun learns +15 / applies +5 ct; rcal-flat
-  learns -22 / applies -32 ct.
-- `test/host-stub/rcal-vin.sh` (96 runs, 2 seeds): 0 outside the band, 13 failed runs (offset kept, ≤ 25 %).
-- esp32s3 firmware build (IDF 6.0.3): pass, 11 % app partition free.
+- mppt-sim rcal, rcal-bus, rcal-cloud, rcal-flat, rcal-low, rcal-low-bus, rcal-ov, rcal-sun: no FAIL; rcal-sun learns
+  +15 ct above 2 Vout -> bound, applied 0; rcal-flat learns -22 / applies -32 ct.
+- `test/host-stub/rcal-vin.sh` (96 runs, 2 seeds): 0 outside the band, 13 failed runs (offset kept); per board learned
+  mean +195 / +290 / -229 / -181 ns (fry, fry-hq, flat, flat-hq), bounds 55 / 85 / 5 / 5 %, pooled mean +11 ns.
+- esp32s3 firmware build (IDF 6.0.3): pass, 11 % app partition free; also with `CONFIG_FUGU_WITH_MEASURE_COIL=y`.
 - Docs: `npm run build` pass.
 
 ## Not done / limits
@@ -170,6 +228,10 @@ safe one.
   has none.
 - No pgx93 offload: runs were small (≤ 144 runs), local -j4.
 - The fry knee lag above 2Vo is probably a plant artefact (SPICE knee - zc much smaller); if the field shows it, fry
-  will hit the +125 ns bound often (final: 18-27 of 35 runs at high Vin).
+  runs above 2 Vout end as bounds (rcal-vin.sh: 55-85 % of fry runs).
+- The fry-hq bound share (85 %) sits close to the 90 % limit of rcal-vin.sh; results are deterministic per platform,
+  but a plant or libm change can move it.
+- The band sweep covers Vout reading errors only; a Vin reading high by the same fraction shifts the ratio the same
+  way (not run separately). Points where the LS min pulse sets the LS, and HS above pwmCtrlMax, are not covered.
 - flat's -170..-290 ns bias comes from the preset's L0 vs plant L; on hardware the same ε/2 rule applies to the
   coil.conf L0 error.

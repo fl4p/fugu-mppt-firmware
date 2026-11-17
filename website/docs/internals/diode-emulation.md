@@ -488,29 +488,41 @@ toward a longer LS when `learned` is negative. The result takes effect at once.
 
 In the board models (no driver or gate delay, so the true offset is 0) over `V_i` = 1.4–2.9·`V_o`,
 `I_sc` 3 and 6 A, two fill factors and three noise seeds, the run learns a mean of −0.29 to +0.34 µs
-per model with a spread (standard deviation) of 0.15–0.26 µs and applies −1.25 to +0.14 µs.
+per model with a spread (standard deviation) of 0.15–0.26 µs and applies −1.25 to +0.13 µs, positive
+values only from calibration points below `V_i = 2·V_o`.
 Referenced to the ideal window alone with a downward bend only, the same runs learn with a spread
 of 0.39–0.46 µs, and up to +1.5 µs late below `V_i = 2·V_o`, where the current bends up at the
 crossing.
 
-**Late results.** A late result is applied up to +125 ns. A later LS turn-off than the zero
-crossing builds reverse current at `V_o/L` per second; near `D = M` the 2% ratio margin of the
-diode-emulation window (about `0.02·T` = 0.5 µs at 39 kHz) is all that keeps the LS from filling the
-off-time, and an LS that does so runs the converter backward from the battery (see *Switch-node
-ringing*). In the board models with exact voltage readings, an offset of +125 ns over the DCM range
-(`V_i` = 31–80 V, `V_o` = 26.8 and 29.2 V) leaves at most 0.09–0.13 A of reverse current at LS
-turn-off (0.2–0.7 µJ in the coil per period) and up to 11 mW of extra loss; +250 ns leaves
-0.19–0.24 A; at +375 ns the reverse current carries into the next period near `D = M` (0.4–0.9 A)
-and at +500 ns it runs away to 2.6–3.9 A. With voltage readings that use up the 2% margin, +125 ns
-leaves 0.29–0.35 A (offset 0: 0.25–0.27 A) without carry-over. The +125 ns limit takes a quarter of
-the margin.
+**Late results.** A late LS turn-off builds reverse current at `V_o/L` per second. Near `D = M` the
+2% ratio margin of the diode-emulation window (about `0.02·T` = 0.5 µs at 39 kHz) is all that keeps
+the LS from filling the off-time, and a `V_o` reading 1.5–2% low (or `V_i` as much high) uses it up.
+A positive offset added on top then reaches the complementary limit `T − HS − 1`: the LS turns off
+only when HS turns on, which forces CCM below `D = M` and runs the converter backward from the
+battery. In the board models, +125 ns with `V_o` read 1.7% low did so in a band up to 20 HS counts wide
+below `D = M` and drew up to −1.3 A on average; +250 ns with 1% low, −0.3 A. The firmware therefore
+applies a positive offset only as far as it leaves the LS off for `T/32` (0.8 µs at 39 kHz) before
+the next HS turn-on, and not at all where the window without it already ends later. Over the DCM
+range (`V_i` = 31–80 V, `V_o` = 26.8 and 29.2 V, every HS count up to `D = M`) with `V_o` read 0 to
+2% low, offsets up to +250 ns then never reach the limit and never turn the mean output current
+negative; they lower it by at most 0.15 A against offset 0.
+
+The run applies a late result up to +125 ns, and only from a calibration point below `V_i = 2·V_o`
+(see *Bounds*). In the board models with exact voltage readings, +125 ns leaves at most 0.08–0.14 A
+of reverse current at LS turn-off (0.2–0.7 µJ in the coil per period) and up to 14 mW of extra
+loss; with readings that use up the 2% margin, 0.30–0.35 A (offset 0: 0.25–0.28 A) and up to 55 mW.
+The gain of a late correction is small: the body diode carrying the last 0.5 µs of the fall costs
+about 1 mW. A stored `rect_offset_ns` or a `measure-coil ls apply` result above +125 ns is used as
++125 ns and counts as a bound.
 
 **Bounds.** Above `V_i = 2·V_o` the reverse current must first lift the switch node to `V_i`
 before it is lost, which can put the downward bend after the zero crossing by a lag that the node
-capacitance sets. Driver and gate delays explain tens of nanoseconds. A result whose applied
-offset would exceed +125 ns is therefore a bound, not a measurement: the run applies the shorter of
-+125 ns and the offset in use, and never moves an active offset later. A shorter measured offset
-stays as it is and keeps its state. Otherwise the value is stored with
+capacitance sets. Driver and gate delays explain tens of nanoseconds, and a single run scatters by
+about 0.2 µs. A late result from a calibration point above `V_i = 2·V_o`, or one whose applied
+offset would exceed +125 ns below it, is therefore a bound, not a measurement: the run applies the
+shorter of the limit (0 above `V_i = 2·V_o`, +125 ns below) and the offset in use, and never moves an
+active offset later. A shorter measured offset stays as it is and keeps its state. Otherwise the
+value is stored with
 `rect_offset_cal=2`, which `rect-cal status` shows as `bound` also after a reboot. Writing it to `coil.conf` (`rect_offset_ns`, `rect_offset_drv`, `rect_offset_cal`) waits
 until the converter has been off without interruption for 10 s with a valid output-power reading
 below 1 W, typically at night: a flash write that erases a sector stalls both cores, including the

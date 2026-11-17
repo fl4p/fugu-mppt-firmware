@@ -1,4 +1,5 @@
 // reverse current and loss of a late LS offset over the DCM operating range, stiff sources, field timing (4103 @ 39 kHz)
+//   hazard <board> <off_ns> [wce|ideal] [hq|-] [hs step, default 1]
 #include "sim/vconv.h"
 #include "plant_boards.h"
 #include <cmath>
@@ -29,6 +30,7 @@ static R run(const PlantBoard &b, float vin, float vout, int hs, int ls) {
 int main(int argc, char **argv) {
     const double offNs = argc > 2 ? atof(argv[2]) : 0;
     const bool wce = argc > 3 && !strcmp(argv[3], "wce");
+    const int step = argc > 5 ? atoi(argv[5]) : 1;
     PlantBoard b = *plantBoard(argv[1]);
     if (argc > 4 && !strcmp(argv[4], "hq")) b = highQ(b);
     double worstI = 0, worstE = 0, worstDp = 0, worstCarry = 0, worstDpRel = 0;
@@ -37,11 +39,13 @@ int main(int argc, char **argv) {
     for (float vout: {26.8f, 29.2f})
         for (float vin = 31.f; vin <= 80.f; vin += 1.f) {
             const float M = vout / vin;
-            for (int hs = 300; hs < M * kPmax; hs += 23) {
+            for (int hs = 300; hs < M * kPmax; hs += step) {
                 const double ideal = (vin / vout - 1) * hs;
                 const double lsF = wce ? hs * (0.980198 / M - 1) : ideal;
-                const int ls = std::max(320, (int) std::lround(lsF + offNs / kTickNs));
                 if (hs + (int) std::lround(lsF) >= kPmax - 1) continue;
+                double t = lsF + offNs / kTickNs; // SynchronousConverter::computePwmRectMax: T/32 idle before HS
+                if (offNs > 0) t = std::min(t, std::max(lsF, (double) (kPmax - hs - 1 - (kPmax >> 5))));
+                const int ls = std::min(kPmax - hs - 1, std::max(320, (int) std::lround(t)));
                 const R r = run(b, vin, vout, hs, ls), r0 = run(b, vin, vout, hs, std::max(320, (int) std::lround(lsF)));
                 if (!r0.dcm) continue;
                 ++n;
