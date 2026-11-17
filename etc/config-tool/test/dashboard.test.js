@@ -92,7 +92,7 @@ test('tele-ble refusal reason is shown on the BLE badge', async () => {
 
 test('stored URL auto-connects, subscribes, pokes remembered hosts', async () => {
   const { window, client } = await withBroker({
-    'mqtt-user': 'u', 'mqtt-pass': 'p',
+    'mqtt-user': 'u', 'mqtt-pass': 'p', 'mqtt-remember': '1',
     'mqtt-known-hosts': JSON.stringify({ [URL]: ['fry', 'flat'], 'ws://other:1': ['x'] }),
   });
   assert.equal(client.url, URL);
@@ -423,6 +423,36 @@ test('banners: missing navigator.bluetooth; https page with ws:// URL', async ()
   const f = await loadDash({ url: 'file:///tmp/dashboard.html' });
   assert.ok([...f.window.document.querySelectorAll('.banner')].some(e => /file:\/\//.test(e.textContent)));
   assert.equal(f.window.Dash.client, null);
+});
+
+test('password is not stored unless "remember" is ticked', async () => {
+  const { window, Dash } = await loadDash({ storage: { 'mqtt-pass': 'old' } });
+  const d = window.document;
+  assert.equal(d.getElementById('mqtt-remember').checked, false);
+  assert.equal(d.getElementById('mqtt-pass').value, '');
+  assert.equal(window.localStorage.getItem('mqtt-pass'), null);
+  d.getElementById('mqtt-url').value = 'ws://b:9';
+  d.getElementById('mqtt-pass').value = 'secret';
+  d.getElementById('mqtt-connect').click();
+  await settle();
+  assert.equal(window.localStorage.getItem('mqtt-pass'), null);
+  assert.equal(Dash.client.opts.password, 'secret');
+  d.getElementById('mqtt-connect').click();
+  const r = d.getElementById('mqtt-remember');
+  r.checked = true; r.dispatchEvent(new window.Event('change'));
+  d.getElementById('mqtt-connect').click();
+  await settle();
+  assert.equal(window.localStorage.getItem('mqtt-pass'), 'secret');
+  assert.equal(window.localStorage.getItem('mqtt-remember'), '1');
+  r.checked = false; r.dispatchEvent(new window.Event('change'));
+  assert.equal(window.localStorage.getItem('mqtt-pass'), null);
+  assert.equal(d.getElementById('mqtt-pass').value, 'secret');
+});
+
+test('remembered password is restored', async () => {
+  const { window } = await loadDash({ storage: { 'mqtt-pass': 'p', 'mqtt-remember': '1' } });
+  assert.equal(window.document.getElementById('mqtt-remember').checked, true);
+  assert.equal(window.document.getElementById('mqtt-pass').value, 'p');
 });
 
 test('Connect button stores settings and toggles to Disconnect', async () => {

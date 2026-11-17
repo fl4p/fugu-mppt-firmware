@@ -33,7 +33,7 @@ window.mqtt = {
 
 function buildHtml({ mqtt = true } = {}) {
   let html = fs.readFileSync(HTML_PATH, 'utf8');
-  html = html.replace(/\s*<script src="https:\/\/[^"]+"><\/script>/g, '');
+  html = html.replace(/\s*<script src="https:\/\/[^"]+"[^>]*><\/script>/g, '');
   const teledec = fs.readFileSync(path.join(DIR, 'teledec.js'), 'utf8');
   html = html.replace('<script src="teledec.js"></script>',
     (mqtt ? MQTT_STUB : '') + '<script>\n' + teledec + '\n</script>');

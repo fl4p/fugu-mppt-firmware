@@ -57,7 +57,7 @@ Object.defineProperty(window, "_mqttDeviceHost", { get: () => mqttDeviceHost });
 function buildHtml() {
   let html = fs.readFileSync(HTML_PATH, 'utf8');
   // drop the two CDN scripts — we provide stubs instead
-  html = html.replace(/\s*<script src="https:\/\/[^"]+"><\/script>/g, '');
+  html = html.replace(/\s*<script src="https:\/\/[^"]+"[^>]*><\/script>/g, '');
   html = html.replace(/\s*<script type="module">[\s\S]*?<\/script>/g, '');
   // inject stubs immediately before the main inline script
   html = html.replace('<script>\n"use strict";', STUBS + '<script>\n"use strict";');

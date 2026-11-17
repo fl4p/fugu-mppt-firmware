@@ -23,6 +23,8 @@
                  padding:6px 9px; font-size:13px; }
   header input:focus { outline:none; border-color:var(--accent); }
   #mqtt-url { width:230px; } #mqtt-user, #mqtt-pass { width:110px; }
+  #mqtt-remember-l { color:var(--muted); font-size:12px; }
+  header input[type=checkbox] { padding:0; margin:0 3px 0 0; vertical-align:middle; }
   #mqtt-status { color:var(--muted); font-size:12px; }
   #mqtt-status.err { color:var(--warn); }
   button { background:var(--panel2); color:var(--fg); border:1px solid var(--line); border-radius:6px;
@@ -104,6 +106,7 @@
   <input id="mqtt-url" placeholder="ws://&lt;broker&gt;:&lt;port&gt;" autocomplete="off" spellcheck="false">
   <input id="mqtt-user" placeholder="user" autocomplete="username">
   <input id="mqtt-pass" placeholder="password" type="password" autocomplete="current-password">
+  <label id="mqtt-remember-l" title="store the password in this browser's localStorage"><input id="mqtt-remember" type="checkbox"> remember</label>
   <button id="mqtt-connect" class="primary">Connect</button>
   <span id="mqtt-status"></span>
   <span class="spacer"></span>
@@ -113,7 +116,7 @@
 <div id="empty">No converters yet. Connect to an MQTT broker or add a BLE device.</div>
 <main id="cards"></main>
 
-<script src="https://unpkg.com/mqtt@5/dist/mqtt.min.js"></script>
+<script src="https://unpkg.com/mqtt@5.16.1/dist/mqtt.min.js" integrity="sha384-ilRYg/zm2XqUafLvBoGVk40UfNRnvUkYMy+e/JPo4YgsFR6X9Q3jYEkqFQXquX4r" crossorigin="anonymous"></script>
 <script src="teledec.js"></script>
 <script>
   // ESP_LOG / sweep-plot output is ANSI-coloured (SGR). Self-contained converter (no CDN/ESM
@@ -161,7 +164,7 @@ const NUS_SVC  = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX   = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_TX   = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_TELE = "6e400005-b5a3-f393-e0a9-e50e24dcca9e";
-const LS = { url:"mqtt-url", user:"mqtt-user", pass:"mqtt-pass", hosts:"mqtt-known-hosts" };
+const LS = { url:"mqtt-url", user:"mqtt-user", pass:"mqtt-pass", remember:"mqtt-remember", hosts:"mqtt-known-hosts" };
 const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
 const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, PROBE_MS = 60000, CURVE_RETRIES = 2;
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000] };
@@ -185,6 +188,7 @@ const REPLY = {
 const now = () => Date.now();
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch(_){ return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch(_){} };
+const lsDel = (k) => { try { localStorage.removeItem(k); } catch(_){} };
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -1137,12 +1141,20 @@ function banners(){
 function init(){
   $("mqtt-url").value = lsGet(LS.url) || "";
   $("mqtt-user").value = lsGet(LS.user) || "";
-  $("mqtt-pass").value = lsGet(LS.pass) || "";
+  const rem = lsGet(LS.remember) === "1";
+  $("mqtt-remember").checked = rem;
+  $("mqtt-pass").value = rem ? lsGet(LS.pass) || "" : "";
+  if (!rem) lsDel(LS.pass);
+  $("mqtt-remember").onchange = () => {
+    lsSet(LS.remember, $("mqtt-remember").checked ? "1" : "0");
+    if (!$("mqtt-remember").checked) lsDel(LS.pass);
+  };
   $("mqtt-url").addEventListener("input", banners);
   $("mqtt-connect").onclick = () => {
     if (client){ mqttDisconnect(); return; }
     const url = $("mqtt-url").value.trim(), user = $("mqtt-user").value, pass = $("mqtt-pass").value;
-    lsSet(LS.url, url); lsSet(LS.user, user); lsSet(LS.pass, pass);
+    lsSet(LS.url, url); lsSet(LS.user, user);
+    if ($("mqtt-remember").checked) lsSet(LS.pass, pass); else lsDel(LS.pass);
     if (!url){ setStatus("enter a broker URL", true); return; }
     mqttConnect(url, user, pass);
   };
