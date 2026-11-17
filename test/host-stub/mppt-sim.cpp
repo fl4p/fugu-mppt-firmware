@@ -26,6 +26,8 @@
 //     wx-mp-ramp, wx-mp-psu, wx-mp-psu-nosink  source Voc slowly 1.25 -> 1.02 -> 1.25 x Vbat (LS min pulse ratio
 //                       limit): weak PV / stiff sinking source into a full battery / non-sinking bench PSU; the
 //                       == REVERSE line has the plant's reverse output current and the starts
+//     wx-mp-manual      the -psu source with manual duty 0.8 (stop, then the manual restart waits for the start ratio)
+//     wx-mp-ccm         stiff source into a charging battery, Voc 1.3 -> 1.02 x Vbat: CCM until the duty limit, then DCM
 //     wx-sun-fry, wx-sun-flat   steady sun, MPP SIM_P W (default 70), the board's L, string and Vin (fry ~64 V, flat ~55 V)
 //     wx-ramp-fry, wx-ramp-flat wx-sun with irradiance changing SIM_RAMP %/min (default 2, exponential) from 120 s
 //     wx-wob-fry, wx-wob-flat   wx-sun with irradiance x (1 + a sin 2 pi f t), SIM_WOB=a,f (default 0.005,0.2)
@@ -741,6 +743,7 @@ struct Wx {
     Track vocT;                              // source Voc profile (overrides vocLog)
     float iscFix = 0;                        // Isc [A] instead of the one from pClear
     bool noSink = false;                     // source does not sink current (bench PSU); default: sinks above Voc
+    float manual = 0;                        // > 0: manual duty (fraction of pwmMax) instead of MPPT
 
     void init() {
         PvModel m;
@@ -752,6 +755,9 @@ struct Wx {
         g_vconv.setPv(isc, voc, k);
         g_vconv.setPvBlocking(noSink);
         g_vconv.setBat(vbat, rbat);
+        if (manual > 0)
+            g_app.opMode = OpMode::Manual,
+            mppt.manualTarget = (uint16_t) std::lround(manual * (float) converter.pwmMaxDriver());
     }
 
     void apply(double t) {
@@ -1171,6 +1177,18 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         float g = p / wx.pClear;
         for (int i = 0; i < 6; ++i) g = p / wx.pClear * wx.voc / (wx.voc + wx.vocLog * std::log(g));
         wx.cloud = {{0, g}}, wx.vbat = getenv("SIM_VBAT") ? atof(getenv("SIM_VBAT")) : 26.1f, wx.statsFrom = 120, wx.T = 900;
+    } else if (sc == "wx-mp-manual") {
+        // manual duty 0.8 from a stiff sinking source, Voc 1.25 -> 1.02 x Vbat and back: DCM up through the stop ratio;
+        // after the stop the manual restart must wait for the start ratio
+        wx.vbat = 28.95f, wx.voc = 1.25f * wx.vbat, wx.T = 1500, wx.k = 0.95f, wx.iscFix = 20, wx.manual = 0.8f;
+        wx.vocT = {{120, wx.voc}, {720, 1.02f * wx.vbat}, {780, 1.02f * wx.vbat}, {1380, wx.voc}};
+        wx.statsFrom = 60;
+    } else if (sc == "wx-mp-ccm") {
+        // stiff sinking source into a battery below the cap, Voc 1.3 -> 1.02 x Vbat: MPPT runs in CCM (no floor there)
+        // until the duty limit, then the current falls and the converter enters DCM near or above the stop ratio
+        wx.vbat = 26.6f, wx.voc = 1.3f * wx.vbat, wx.T = 700, wx.k = 0.95f, wx.iscFix = 20;
+        wx.vocT = {{150, wx.voc}, {500, 1.02f * wx.vbat}};
+        wx.statsFrom = 60;
     } else if (sc == "wx-mp-ramp" || sc == "wx-mp-psu" || sc == "wx-mp-psu-nosink") {
         // operating point from 1.25 x Vbat down to ~1.02 x and back over 2 x 600 s from 120 s. -ramp: weak PV (k 0.78,
         // Voc 1.6 -> 1.3 x Vbat, 20 W at the start) in DCM near the ratio limit. -psu: stiff source (k 0.95, Isc 20 A,

@@ -200,6 +200,7 @@ public:
     uint32_t lastVoutSamples = 0; // RT only, edge-detects fresh Vout data for the forced-PWM gate
     uint8_t minPulseCnt = 0; // RT only, fresh Vout samples in a row above the LS min pulse ratio
     bool minPulseFloor = false; // RT only, update() holds Vin above the LS min pulse ratio
+    bool minPulseWasExposed = false; // RT only, protect()'s previous minPulseExposed()
 
 private:
     bool _sweeping = false; // global scan
@@ -477,6 +478,11 @@ public:
         return boardPowerSupplyVoltage() < (start ? 9.5f : 9.f);
     }
 
+    // buck: a start at output vOut would run the LS min pulse above the start ratio
+    [[nodiscard]] bool minPulseStartBlocked(float vOut) const {
+        return !converter.boost() && !(vOut < sensors.Vin->ewm.avg.get() * converter.minPulseRatioMax(true));
+    }
+
     // First startCondition() clause currently blocking a start, or nullptr if clear.
     // Single source of truth for startCondition(); also logged while idle in START.
     [[nodiscard]] const char *startBlockReason() const {
@@ -497,10 +503,8 @@ public:
                   ? sensors.Vin->ewm.avg.get() < sensors.Vout->ewm.avg.get() + 1
                   : sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1))
             return "Vin-Vout";
-        if (!converter.boost() &&
-            !(std::max(sensors.Vout->ewm.avg.get(), g_app.psuMode() ? psuVsetpoint : 0.f)
-              < sensors.Vin->ewm.avg.get() * converter.minPulseRatioMax(true)))
-            return "Vin-Vout";
+        if (minPulseStartBlocked(std::max(sensors.Vout->ewm.avg.get(), g_app.psuMode() ? psuVsetpoint : 0.f)))
+            return "minpulse-M";
         if (g_app.psuMode() && sensors.Vout && sensors.Vout->last > computeOvThreshold() * 0.98f)
             return "Vout-still-OV";
         if (boardPowerSupplyUnderVoltage(true)) return "supply-UV";
@@ -828,12 +832,18 @@ public:
         lastVoutSamples = voutSamples;
 
         // buck DCM: the LS min pulse pumps the output back into the input above minPulseRatioMax(false). update() holds
-        // Vin above the start ratio; a source it cannot move (stiff) shows as reverse current there
-        if (freshV) {
-            const bool over = converter.minPulseExposed() &&
-                              (!(vOut < vIn * converter.minPulseRatioMax(false)) ||
-                               (sensorPhysicalI->ewm.avg.get() < -0.05f && !(vOut < vIn * converter.minPulseRatioMax(true))));
-            minPulseCnt = over ? (uint8_t) (minPulseCnt + 1) : 0;
+        // Vin above the start ratio; a source it cannot move (stiff) shows as reverse current there. DCM entered above
+        // the stop ratio (from CCM, stiff source) pumps at once: no debounce
+        {
+            const bool exposed = converter.minPulseExposed();
+            const bool overStop = exposed && !(vOut < vIn * converter.minPulseRatioMax(false));
+            if (overStop && !minPulseWasExposed)
+                minPulseCnt = MinPulseDebounce;
+            else if (freshV)
+                minPulseCnt = overStop || (exposed && sensorPhysicalI->ewm.avg.get() < -0.05f &&
+                                           !(vOut < vIn * converter.minPulseRatioMax(true)))
+                                  ? (uint8_t) (minPulseCnt + 1) : 0;
+            minPulseWasExposed = exposed;
         }
         if (minPulseCnt >= MinPulseDebounce) {
             minPulseCnt = 0;

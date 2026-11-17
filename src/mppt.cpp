@@ -425,6 +425,7 @@ void MpptController::updateManual() {
         }
     } else {
         if (converter.disabled()) {
+            if (minPulseStartBlocked(sensors.Vout->ewm.avg.get())) return;
             if (!limits.reverse_current_paranoia) {
                 converter.enableSyncRect(true);
                 bflow.enable(true);

@@ -1074,9 +1074,9 @@ public:
 
     // Buck: the LS min pulse (pwmRectMin, commanded) leaves reverse current that drains through the HS body diode in
     // M/(1-M) of its excess; above M = 1 - pwmRectMin/T it no longer drains within the period T, carries over and grows
-    // (the converter boosts from the output into the input). Highest Vout/Vin reading for running: that limit less T/32
-    // (ring current at HS turn-on) times the worst-case reading factor; for a start or the Vin floor less
-    // MinPulseRatioHyst.
+    // (the converter boosts from the output into the input). Highest Vout/Vin reading for running: that limit times the
+    // worst-case factor of two 1 % readings, less T/32 for reading errors beyond that (Vout can read 1.1-1.7 % low while
+    // switching; the ring at HS turn-on adds only ~0.002); for a start or the Vin floor less MinPulseRatioHyst.
     [[nodiscard]] __attribute__((always_inline)) float minPulseRatioMax(bool start) const {
         constexpr float wcef = (1.f - VoltageMaxErr) / (1.f + VoltageMaxErr);
         const float T = (float) driverPwmMax + (float) drvDtLhTicks();

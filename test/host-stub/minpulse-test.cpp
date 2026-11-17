@@ -10,7 +10,7 @@
 // Build & run (repo root):
 //   clang++ -std=gnu++20 -O2 -fexceptions -DMOCK=1 -I test/host-stub -I src \
 //       test/host-stub/minpulse-test.cpp src/sim/vconv.cpp -o /tmp/minpulse-test && /tmp/minpulse-test
-// MINPULSE_LIMIT=<M> replaces the stop ratio (known-bad calibration: 0.93 must fail).
+// MINPULSE_LIMIT=<M> replaces the stop ratio (known-bad calibration: 0.93 and 0.90 must fail).
 
 #include <cstdarg>
 #include <cstdio>
@@ -91,9 +91,17 @@ int main() {
     CHECK(wcef > 0.97f && wcef < 0.99f, "reading-error factor %.4f", wcef);
     CHECK(c.minPulseRatioMax(true) < c.minPulseRatioMax(false) - 0.01f, "no start hysteresis");
     CHECK(c.minPulseRatioMax(false) / wcef < mCrit, "the limit must sit below the carry-over onset");
+    // reading errors beyond 1 % per sensor (Vout reads up to 1.7 % low while switching): >= 0.02 in M left to the onset
+    CHECK(mCrit - mStop / wcef >= 0.02f, "stop ratio %.4f leaves %.4f to the onset at the 1 %% reading limit", mStop,
+          mCrit - mStop / wcef);
     {
-        SynchronousConverter bst{};
-        initConv(bst, "boost");
+        // in DCM above the stop ratio (no load: DCM by current) a buck is exposed, a boost is not
+        const float vin = 20.f, vout = vin * (c.minPulseRatioMax(false) + 0.01f);
+        SynchronousConverter bk{}, bst{};
+        initConv(bk), initConv(bst, "boost");
+        CHECK(!bk.minPulseExposed(), "fresh buck starts in CCM");
+        CHECK(bk.computeDCM(vin, vout, 0.f) && bst.computeDCM(vin, vout, 0.f), "no DCM at zero current");
+        CHECK(bk.minPulseExposed(), "buck in DCM above the stop ratio not exposed");
         CHECK(!bst.minPulseExposed(), "boost has no rect min pulse");
     }
 
