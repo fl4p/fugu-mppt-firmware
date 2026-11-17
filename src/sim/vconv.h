@@ -81,12 +81,14 @@ public:
     SunModel &sun() { return sun_; }
     [[nodiscard]] float getSunG() const { return sunG_; } // irradiance applied to the PV curve
 
-    // PV string of n (1..3) series substrings, each with a bypass diode: g[i] scales the Isc of
-    // substring i, w[i] is its share of Voc (null = equal shares). Gives up to n power peaks.
-    // Approximation: the conducting substrings share the voltage by w, no bypass-diode drop.
-    void setPvString(uint8_t n, const float *g, const float *w = nullptr) {
+    // PV string of n (1..6) series substrings, each with a bypass diode: g[i] scales the Isc of
+    // substring i, w[i] is its share of Voc (null = equal shares), vd the forward drop of a conducting
+    // bypass diode. Gives up to n power peaks.
+    // Approximation: the conducting substrings share the voltage by w at the current of the weakest of them.
+    void setPvString(uint8_t n, const float *g, const float *w = nullptr, float vd = 0) {
         pvN_ = n < 1 ? 1 : n > kPvSubMax ? kPvSubMax : n;
-        uint8_t o[kPvSubMax] = {0, 1, 2};
+        pvVd_ = vd;
+        uint8_t o[kPvSubMax] = {0, 1, 2, 3, 4, 5};
         std::sort(o, o + pvN_, [g](uint8_t a, uint8_t b) { return g[a] > g[b]; });
         float sum = 0;
         for (uint8_t m = 0; m < pvN_; ++m) {
@@ -105,7 +107,8 @@ public:
     // String current at voltage v: best of "the m strongest substrings conduct, the rest bypassed".
     [[nodiscard]] float pvCurrent(float v) const {
         float i = pvG_[pvN_ - 1] * pv_.current(v);
-        for (uint8_t m = 0; m + 1 < pvN_; ++m) i = std::max(i, pvG_[m] * pv_.current(v * pvInvW_[m]));
+        for (uint8_t m = 0; m + 1 < pvN_; ++m)
+            i = std::max(i, pvG_[m] * pv_.current((v + (float) (pvN_ - 1 - m) * pvVd_) * pvInvW_[m]));
         return i;
     }
 
@@ -224,10 +227,11 @@ private:
     SunModel sun_;
     float isc0_ = 8.0f, voc0_ = 40.0f, sunG_ = 1.0f, sunAcc_ = 0.0f;
     void applySun(float g);
-    static constexpr uint8_t kPvSubMax = 3;
+    static constexpr uint8_t kPvSubMax = 6;
     uint8_t pvN_ = 1;
-    float pvG_[kPvSubMax] = {1.f, 1.f, 1.f};    // substring factors, strongest first
-    float pvInvW_[kPvSubMax] = {1.f, 1.f, 1.f}; // 1 / Voc share of the m+1 strongest
+    float pvVd_ = 0;
+    float pvG_[kPvSubMax] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f};    // substring factors, strongest first
+    float pvInvW_[kPvSubMax] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f}; // 1 / Voc share of the m+1 strongest
     bool pvBlocking_ = false;
 
     // Battery + passives
