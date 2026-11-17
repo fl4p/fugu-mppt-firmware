@@ -69,21 +69,19 @@ void pushU(Plot &p, float x, float y) { auto b = block(p); b->p[0][b->n[0]++] = 
 void pushD(Plot &p, float x, float y) { auto b = block(p); b->p[1][b->n[1]++] = {x, y}; }
 
 // One render cycle as in the firmware: the RT side hands the block over at the sweep end, the
-// core-0 task charts and frees it.
+// core-0 task charts and keeps it.
 void doPlot(Plot &p) {
     p.handOver();
     p.plot();
 }
 
-// the block was charted and freed
-bool plotted(const Plot &p) { return !p.handed.load() && !p.collecting.load(); }
+// the block was charted and kept
+bool plotted(const Plot &p) { return !p.handed.load() && !p.collecting.load() && p.last() == p.block; }
 
 } // namespace
 
 // ------------------------------------------------------------------
 //  N < 3: must early-return without touching the chart renderer.
-//  The Series storage gets cleared so a re-use after the early return
-//  starts from empty.
 // ------------------------------------------------------------------
 
 void test_one_point_short_circuits() {
@@ -298,6 +296,34 @@ void test_rt_add_and_handover() {
 }
 
 // ------------------------------------------------------------------
+//  The block survives plot(): n unchanged, series 0 sorted by x, reused by
+//  the next begin(); a sweep without handOver() hides it from last().
+// ------------------------------------------------------------------
+
+void test_block_kept_after_plot() {
+    section("block_kept_after_plot");
+    Plot p;
+    EXPECT(p.last() == nullptr);
+    auto b = block(p);
+    EXPECT(p.last() == nullptr);
+    for (int i = 0; i < 50; ++i) p.add(80.f - i * 0.5f, i * 0.01f, 100.f + i, 80.f);
+    const uint16_t n0 = b->n[0], n1 = b->n[1];
+    const auto lastAdded = b->p[0][n0 - 1]; // smallest x
+    EXPECT(n0 > 10);
+    doPlot(p);
+    EXPECT(plotted(p));
+    EXPECT(p.last() == b);
+    EXPECT(b->n[0] == n0 && b->n[1] == n1);
+    bool asc = true;
+    for (uint16_t i = 1; i < b->n[0]; ++i) asc &= b->p[0][i - 1].first <= b->p[0][i].first;
+    EXPECT(asc);
+    EXPECT(b->p[0][0] == lastAdded);
+    EXPECT(block(p) == b); // reused
+    EXPECT(b->n[0] == 0 && b->endTimeS == 0);
+    EXPECT(p.last() == nullptr); // collecting, no handOver
+}
+
+// ------------------------------------------------------------------
 //  main
 // ------------------------------------------------------------------
 
@@ -313,6 +339,7 @@ int main() {
     test_repeated_render_cycles();
     test_stress_random_small_N();
     test_rt_add_and_handover();
+    test_block_kept_after_plot();
 
     std::printf("\nplot-test: %d checks, %d failures\n", g_run, g_fail);
     return g_fail == 0 ? 0 : 1;

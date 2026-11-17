@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <ctime>
 #include <new>
 #include <string>
 #include <utility>
@@ -18,27 +19,37 @@
 
 #include "logging.h"
 
-// Points of one sweep (x, power) for the console chart. Heap block owned by core 0.
+// Points of one sweep (x, power). Heap block owned by core 0.
 struct PlotPoints {
-    static constexpr uint16_t Cap = 240;
+    static constexpr uint16_t Cap = 120;
     uint16_t n[2];
+    uint32_t endTimeS; // 0: unknown
     std::pair<float, float> p[2][Cap]; // [0] = (Vin, P), [1] = (duty, P)
 };
 
 // Sweep chart. The RT core only appends into a block that core 0 allocated before the sweep and
-// frees after plotting, so the RT side never touches the heap; without a block it drops the points.
+// keeps after plotting (x-ascending), so the RT side never touches the heap; without a block it
+// drops the points.
 struct Plot {
     std::atomic<PlotPoints *> collecting{nullptr}; // RT appends here
     std::atomic<PlotPoints *> handed{nullptr};     // stopped collecting, waiting for plot()
+    PlotPoints *block = nullptr;                   // core 0
 
-    // core 0: provide an empty block if there is none
+    ~Plot() { delete block; }
+
+    // core 0: provide an empty block if none is collecting
     void begin() {
-        if (collecting.load(std::memory_order_acquire)) return;
-        auto b = new(std::nothrow) PlotPoints;
-        if (!b) return;
-        b->n[0] = b->n[1] = 0;
-        PlotPoints *none = nullptr;
-        if (!collecting.compare_exchange_strong(none, b, std::memory_order_acq_rel)) delete b;
+        if (collecting.load(std::memory_order_acquire) || handed.load(std::memory_order_acquire)) return;
+        if (!block) block = new(std::nothrow) PlotPoints;
+        if (!block) return;
+        block->n[0] = block->n[1] = 0;
+        block->endTimeS = 0;
+        collecting.store(block, std::memory_order_release);
+    }
+
+    // core 0: last plotted sweep, nullptr while a sweep is collected or pending
+    [[nodiscard]] const PlotPoints *last() const {
+        return collecting.load(std::memory_order_acquire) || handed.load(std::memory_order_acquire) ? nullptr : block;
     }
 
     // RT: empty the block at a sweep start
@@ -70,13 +81,11 @@ struct Plot {
         return true;
     }
 
-    __attribute__((cold)) static void _plotSeries(std::pair<float, float> *pts, uint16_t &n, const char *label) {
-#if !ASCII_PLOT_DISABLED
+    __attribute__((cold)) static void _plotSeries(std::pair<float, float> *pts, uint16_t n, const char *label) {
         auto *const end = pts + n;
         std::sort(pts, end);
-
+#if !ASCII_PLOT_DISABLED
         if (n < 3) {
-            n = 0;
             ESP_LOGI("plot", "Not enough data to plot %s", label);
             return;
         }
@@ -116,8 +125,6 @@ struct Plot {
             series.push_back(y);
         }
 
-        n = 0;
-
         printf_mux("\r\n");
         ascii::Asciichart(series).height(16).Plot([](const std::string &line) {
             printf_mux("%s\r\n", line.c_str());
@@ -129,10 +136,12 @@ struct Plot {
 #endif
     }
 
-    // core 0: chart and free the handed-over block
+    // core 0: chart the handed-over block and keep it
     void plot() {
         auto b = handed.load(std::memory_order_acquire);
         if (!b) return;
+        const auto now = time(nullptr);
+        b->endTimeS = now > 1000000000 ? (uint32_t) now : 0;
         try {
             _plotSeries(b->p[0], b->n[0], "V");
             _plotSeries(b->p[1], b->n[1], "D");
@@ -140,6 +149,5 @@ struct Plot {
             ESP_LOGE("plot", "Error: %s", e.what());
         }
         handed.store(nullptr, std::memory_order_release);
-        delete b;
     }
 };

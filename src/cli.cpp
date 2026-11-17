@@ -492,6 +492,31 @@ static void cmdSweep(cmd *) {
         CMD_FAIL_RETURN("sweep: RT transition timed out");
 }
 
+static void cmdSweepCurve(cmd *) {
+    const bool sw = mppt.isSweeping();
+    const Plot &pl = mppt.sweepCurve();
+    const PlotPoints *b = sw ? pl.block : pl.last();
+    const uint16_t n = b ? b->n[0] : 0;
+    if (!n) {
+        UART_LOG("sc: none");
+        return;
+    }
+    const auto &m = mppt.sweepMpp();
+    UART_LOG("sc: t=%lu n=%u mpp=%.1f,%.1f sweeping=%d", (unsigned long) b->endTimeS, (unsigned) n, m.power,
+             m.voltage, (int) sw);
+    char buf[192];
+    int len = 0, k = 0;
+    for (uint16_t i = 0; i < n; ++i) {
+        if (!len) len = snprintf(buf, sizeof(buf), "sc:");
+        len += snprintf(buf + len, sizeof(buf) - len, " %.2f %.1f", b->p[0][i].first, b->p[0][i].second);
+        if (++k == 12 || len > 140 || i + 1 == n) {
+            UART_LOG("%s", buf);
+            len = k = 0;
+        }
+    }
+    UART_LOG("sc: end");
+}
+
 // rect-cal [force|status|abort] — self-calibrate the DCM low-side timing offset (rect_cal.h)
 static void cmdRectCal(cmd *c) {
     Command cc(c);
@@ -2236,6 +2261,7 @@ void setupCli() {
     cli.addCommand("mppt", cmdMppt);
     cli.addCommand("short-ls", cmdShortLs);
     cli.addCommand("sweep", cmdSweep);
+    cli.addCommand("sweep-curve", cmdSweepCurve);
     cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [force|status|abort]
     cli.addCommand("intr", cmdIntr);
     cli.addBoundlessCmd("reset-lag", cmdResetLag); // reset-lag [q]: q skips the rt-stats print

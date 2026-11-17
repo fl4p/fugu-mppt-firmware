@@ -369,6 +369,8 @@ public:
     }
     [[nodiscard]] bool active() const { return _sweeping or sampler.isCalibrating() or !converter.disabled(); }
     [[nodiscard]] bool isSweeping() const { return _sweeping; }
+    [[nodiscard]] const Plot &sweepCurve() const { return sweepPlot; }
+    [[nodiscard]] const auto &sweepMpp() const { return maxPowerPoint; }
 
     // Default backoff blocks startCondition() so MPPT doesn't re-poke pwmPerturb()
     // every tick after a protection trip — otherwise OV/OC violations spam the log
