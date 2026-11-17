@@ -1,0 +1,992 @@
+<!doctype html>
+<!-- this document is an LLM generated placeholder -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fugu MPPT dashboard</title>
+<style>
+  :root {
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c232c; --line:#2a3340;
+    --fg:#d7dde3; --muted:#8b96a3; --accent:#4493f8; --accent2:#2ea043;
+    --unit:#d29922; --warn:#f0883e;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         background:var(--bg); color:var(--fg); }
+  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; gap:10px;
+           align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 8px 0 0; font-weight:600; }
+  header .spacer { flex:1; }
+  header input { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px;
+                 padding:6px 9px; font-size:13px; }
+  header input:focus { outline:none; border-color:var(--accent); }
+  #mqtt-url { width:230px; } #mqtt-user, #mqtt-pass { width:110px; }
+  #mqtt-status { color:var(--muted); font-size:12px; }
+  #mqtt-status.err { color:var(--warn); }
+  button { background:var(--panel2); color:var(--fg); border:1px solid var(--line); border-radius:6px;
+           padding:6px 12px; cursor:pointer; font-size:13px; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent2); border-color:var(--accent2); color:#fff; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  #banners { padding:0 20px; }
+  .banner { margin-top:10px; padding:8px 12px; border:1px solid var(--warn); border-radius:6px;
+            color:var(--warn); font-size:13px; }
+  #empty { color:var(--muted); text-align:center; margin:60px 20px; }
+  #cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(420px, 1fr)); gap:14px; padding:16px 20px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px;
+          display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .card .top { display:flex; gap:8px; align-items:center; }
+  .card .host { font-weight:600; font-size:15px; }
+  .card .top .spacer { flex:1; }
+  .badge { font-size:11px; border:1px solid var(--line); border-radius:20px; padding:1px 8px; color:var(--muted); }
+  .badge[data-state="on"] { color:var(--accent2); border-color:var(--accent2); }
+  .badge[data-state="refused"] { color:var(--warn); border-color:var(--warn); }
+  .badge[data-state="pending"] { color:var(--accent); border-color:var(--accent); }
+  .card .mode { font-size:12px; color:var(--muted); }
+  .card .age { font-size:12px; color:var(--muted); }
+  .card.stale .kpis { opacity:.45; }
+  .card.stale .age { color:var(--warn); }
+  .kpis .p { font-size:34px; font-weight:600; line-height:1.1; font-variant-numeric:tabular-nums; }
+  .kpis .p small { font-size:16px; color:var(--muted); font-weight:400; margin-left:4px; }
+  .kpis .peak { font-size:13px; color:var(--muted); }
+  .kpis .small { font-size:12px; color:var(--muted); display:flex; gap:12px; flex-wrap:wrap;
+                 font-variant-numeric:tabular-nums; }
+  .kpis .small b { color:var(--fg); font-weight:500; }
+  .card .rate { font-size:11px; color:var(--muted); }
+  .card .reconnect { align-self:flex-start; font-size:12px; padding:3px 10px; }
+  .logwrap { display:flex; flex-direction:column; gap:4px; }
+  .logbar { display:flex; gap:8px; align-items:center; font-size:11px; color:var(--muted); }
+  .logbar .spacer { flex:1; }
+  .log { height:170px; overflow:auto; background:#0a0d12; border:1px solid var(--line); border-radius:6px;
+         padding:6px 8px; font-family:ui-monospace,monospace; font-size:11px; }
+  .log div { white-space:pre; line-height:1.45; color:var(--muted); }
+  .log .sent { color:var(--accent); }
+  .log .ok { color:var(--accent2); }
+  .log .err { color:var(--warn); }
+  .log .alert { color:var(--warn); }
+  .card:not(.show-sc) .log .sc { display:none; }
+  form.console { display:flex; gap:6px; }
+  form.console input { flex:1; min-width:0; background:var(--bg); color:var(--fg); border:1px solid var(--line);
+    border-radius:6px; padding:5px 8px; font-family:ui-monospace,monospace; font-size:12px; }
+  form.console input:focus { outline:none; border-color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fugu dashboard</h1>
+  <input id="mqtt-url" placeholder="ws://&lt;broker&gt;:&lt;port&gt;" autocomplete="off" spellcheck="false">
+  <input id="mqtt-user" placeholder="user" autocomplete="username">
+  <input id="mqtt-pass" placeholder="password" type="password" autocomplete="current-password">
+  <button id="mqtt-connect" class="primary">Connect</button>
+  <span id="mqtt-status"></span>
+  <span class="spacer"></span>
+  <button id="ble-add">+ Add BLE device</button>
+</header>
+<div id="banners"></div>
+<div id="empty">No converters yet. Connect to an MQTT broker or add a BLE device.</div>
+<main id="cards"></main>
+
+<script src="https://unpkg.com/mqtt@5/dist/mqtt.min.js"></script>
+<script src="teledec.js"></script>
+<script>
+  // ESP_LOG / sweep-plot output is ANSI-coloured (SGR). Self-contained converter (no CDN/ESM
+  // import, so colouring still works on an offline bench) -> escapes its input and wraps coloured
+  // runs in a single open <span>, kept well-nested so createContextualFragment splices cleanly.
+  // Caller (ulLine) only invokes it when the line actually contains an ESC sequence.
+  (function(){
+    const FG = {  // dark-terminal palette, codes 30-37 (normal) + 90-97 (bright)
+      30:"#555",31:"#e06c75",32:"#98c379",33:"#d19a66",34:"#61afef",35:"#c678dd",36:"#56b6c2",37:"#abb2bf",
+      90:"#777",91:"#e06c75",92:"#98c379",93:"#e5c07b",94:"#61afef",95:"#c678dd",96:"#56b6c2",97:"#ffffff"
+    };
+    const esc = t => t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    window.ansiConvert = { toHtml(s){
+      let out="", open=false, color=null, bold=false, last=0, m;
+      const re=/\x1b\[([0-9;]*)m/g;
+      const apply = () => {
+        if(open){ out+="</span>"; open=false; }
+        if(color===null && !bold) return;
+        out += '<span style="'+(color!==null?"color:"+color+";":"")+(bold?"font-weight:bold;":"")+'">';
+        open=true;
+      };
+      while((m=re.exec(s))){
+        out += esc(s.slice(last, m.index));
+        last = re.lastIndex;
+        for(const c of (m[1]||"0").split(";").map(x => x===""?0:+x)){
+          if(c===0){ color=null; bold=false; }
+          else if(c===1) bold=true;
+          else if(c===22) bold=false;
+          else if(c===39) color=null;
+          else if(FG[c]!==undefined) color=FG[c];
+        }
+        apply();
+      }
+      out += esc(s.slice(last));
+      if(open) out+="</span>";
+      return out;
+    }};
+  })();
+</script>
+<script>
+"use strict";
+(function(){
+const TD = window.TeleDec;
+const NUS_SVC  = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX   = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_TX   = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_TELE = "6e400005-b5a3-f393-e0a9-e50e24dcca9e";
+const LS = { url:"mqtt-url", user:"mqtt-user", pass:"mqtt-pass", hosts:"mqtt-known-hosts" };
+const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
+const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, PROBE_MS = 60000, CURVE_RETRIES = 2;
+const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000] };
+const LOG_KEEP = 200, LOG_SHOW = 100;
+
+// Device reply patterns (contract with src/cli.cpp)
+const REPLY = {
+  hostname:   /Hostname:\s*(\S+)/,
+  ok:         /\bOK: /,
+  err:        /\bERR: /,
+  unknown:    /Unknown command|Command not found/,
+  mqttOn:     /tele-mqtt: on, (\d+) s left, dropped (\d+) B/,
+  mqttOff:    /tele-mqtt: off\b/,
+  mqttReason: /tele-mqtt: (.+?)\s*$/,
+  bleState:   /tele-ble: (on|off) \(dropped (\d+) B\)/,
+  bleReason:  /tele-ble: (.+?)\s*$/,
+  stopSweep:  /Stop sweep/,
+  sc:         /(?:^|[^A-Za-z0-9_])sc:/,
+};
+
+const now = () => Date.now();
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch(_){ return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch(_){} };
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+class Ring {
+  constructor(cap){ this.cap = cap; this.a = []; }
+  push(x){ this.a.push(x); if (this.a.length > this.cap) this.a.splice(0, this.a.length - this.cap); }
+  get length(){ return this.a.length; }
+  last(){ return this.a[this.a.length - 1]; }
+}
+
+// Streaming UTF-8 line splitter: a glyph may straddle two notifications/messages.
+function lineSplitter(onLine){
+  let dec = new TextDecoder(), buf = "";
+  return {
+    feed(bytes){
+      buf += dec.decode(bytes, {stream:true});
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0){
+        const ln = buf.slice(0, i).replace(/\r$/, "");
+        buf = buf.slice(i + 1);
+        onLine(ln);
+      }
+    },
+    reset(){ dec = new TextDecoder(); buf = ""; },
+  };
+}
+
+function median(a){
+  if (!a.length) return NaN;
+  const s = a.slice().sort((x, y) => x - y), m = s.length >> 1;
+  return s.length & 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+
+/* ---------------------------------------------------------------------------------------------
+   Device model: one card per hostname, fed by BLE and/or MQTT.
+--------------------------------------------------------------------------------------------- */
+const devices = new Map();
+
+class Device {
+  constructor(host){
+    this.host = host;
+    this.ble = null;
+    this.mqtt = { table:new Map(), split:lineSplitter(ln => onLine(this, ln, "mqtt")),
+                  firstAt:0, teleSeen:false, teleAt:0, errors:0,
+                  lease:{ state:"idle", reason:"", left:0, dropped:0, at:0, busy:false, clockTried:false } };
+    this.tele = {};
+    this.lastTs = 0; this.lastAt = 0;
+    this.intervals = new Ring(50);
+    this.arrivals = { ble:[], mqtt:[], test:[] };
+    this.seenTs = new Set(); this.seenQ = [];
+    this.points = new Ring(600);
+    this.sweepTrace = []; this.curve = null; this.curveNone = false;
+    this.sc = new TD.SweepCurveParser();
+    this.curveReq = null; this.curveTimer = null; this.curveErr = "";
+    this.log = new Ring(LOG_KEEP); this.logNew = [];
+    this.history = []; this.histIdx = 0;
+    this.lineListeners = new Set();
+    this.el = null; this.ver = 0;
+  }
+}
+
+function getDevice(host, src){
+  let dev = devices.get(host);
+  if (!dev){
+    dev = new Device(host);
+    devices.set(host, dev);
+    scheduleRender(dev);
+  }
+  if (src === "mqtt" && !dev.mqtt.firstAt){
+    dev.mqtt.firstAt = now();
+    rememberHost(host);
+  }
+  return dev;
+}
+
+function bleTeleOn(dev){ return !!(dev.ble && dev.ble.state === "on" && dev.ble.tele === "on"); }
+
+// One decoded point from either source; the same point over BLE and MQTT is kept once (by ts).
+function ingest(dev, p, src){
+  if (p.ts){
+    if (dev.seenTs.has(p.ts)) return false;
+    dev.seenTs.add(p.ts); dev.seenQ.push(p.ts);
+    if (dev.seenQ.length > 2000) dev.seenTs.delete(dev.seenQ.shift());
+  }
+  const f = p.fields, t = dev.tele;
+  if (!("P" in f) && !("Ui" in f) && !("mppt_state" in f)) return false;
+  const prevState = t.state;
+  for (const [k, n] of [["P","P"],["Ui","Ui"],["Uo","Uo"],["I","I"],["pwm_duty","duty"],["mppt_state","state"],
+                         ["P_max_today","Pmax"],["E_today","Etoday"],["E","E"],["mcu_temp","mcuT"],
+                         ["ntc_temp","ntcT"],["lag","lag"],["heap","heap"]])
+    if (k in f) t[n] = f[k];
+  const at = now();
+  if (p.ts && dev.lastTs && p.ts > dev.lastTs) dev.intervals.push(p.ts - dev.lastTs);
+  if (p.ts > dev.lastTs) dev.lastTs = p.ts;
+  dev.lastAt = at;
+  const arr = dev.arrivals[src] || (dev.arrivals[src] = []);
+  arr.push(at);
+  while (arr.length && arr[0] < at - 10000) arr.shift();
+  dev.points.push({ ts:p.ts, P:t.P, Ui:t.Ui, src });
+  onPointState(dev, prevState, t.state, t);
+  scheduleRender(dev);
+  return true;
+}
+
+// Sweep tracking: collect (Ui, P) while the tracker sweeps; fetch the curve once it stops.
+function onPointState(dev, prev, cur, t){
+  if (cur === 5){
+    if (prev !== 5) dev.sweepTrace = [];
+    if (Number.isFinite(t.Ui) && Number.isFinite(t.P)) dev.sweepTrace.push({ V:t.Ui, P:t.P });
+    dev.ver++;
+  } else if (prev === 5 && cur !== undefined){
+    scheduleCurve(dev, CFG.curveDebounceMs);
+  }
+}
+
+function pushLog(dev, cls, text){
+  const e = { cls, text };
+  dev.log.push(e); dev.logNew.push(e);
+  if (dev.logNew.length > LOG_SHOW) dev.logNew.splice(0, dev.logNew.length - LOG_SHOW);
+  scheduleRender(dev);
+}
+
+function lineClass(ln){
+  let cls = REPLY.ok.test(ln) ? "ok" : REPLY.err.test(ln) ? "err" : "";
+  if (REPLY.sc.test(TD.stripAnsi(ln))) cls += " sc";
+  return cls.trim();
+}
+
+// Every console line of a device, from either transport.
+function onLine(dev, ln, src){
+  // with BLE up, the MQTT log mirror carries the same lines
+  if (src === "mqtt" && dev.ble && dev.ble.state === "on") return;
+  pushLog(dev, lineClass(ln), ln);
+  dev.lineListeners.forEach(fn => fn(ln));
+  const plain = TD.stripAnsi(ln);
+  let m;
+  if ((m = REPLY.mqttOn.exec(plain))){
+    const L = dev.mqtt.lease; L.left = +m[1]; L.dropped = +m[2]; L.leftAt = now();
+  } else if (REPLY.mqttOff.test(plain)){
+    dev.mqtt.lease.left = 0;
+  }
+  if ((m = REPLY.bleState.exec(plain)) && dev.ble){ dev.ble.dropped = +m[2]; }
+  if (REPLY.stopSweep.test(plain)) scheduleCurve(dev, CFG.curveDebounceMs);
+  const r = dev.sc.feed(ln);
+  if (r) onCurve(dev, r);
+}
+
+function onCurve(dev, r){
+  if (r.complete){
+    if (r.curve){ dev.curve = r.curve; dev.curveNone = false; }
+    else { dev.curve = null; dev.curveNone = true; }
+    dev.curveErr = "";
+    dev.ver++;
+    finishCurveReq(dev);
+  } else if (r.reason !== "restart" && dev.curveReq){
+    clearTimeout(dev.curveTimer);
+    curveAttempt(dev);
+  }
+  scheduleRender(dev);
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Commands
+--------------------------------------------------------------------------------------------- */
+function canSend(dev){ return (dev.ble && dev.ble.state === "on") || mqttReady(); }
+
+async function send(dev, cmd, via){
+  cmd = String(cmd).replace(/[\r\n]+$/, "").trim();
+  if (!cmd) return;
+  if (via !== "mqtt" && dev.ble && dev.ble.state === "on") return dev.ble.write(cmd + "\r\n");
+  if (via !== "ble" && mqttReady()) return mqttPublish("pv/log/" + dev.host + "/cmd", cmd);
+  throw new Error("not connected");
+}
+
+// Resolves {ok, lines} at the device's "OK: <cmd>" / "ERR: <cmd>" marker; rejects on timeout.
+function sendCommand(dev, cmd, { onRx, timeoutMs = 4000, via } = {}){
+  return new Promise((resolve, reject) => {
+    const lines = [];
+    const fn = (ln) => {
+      lines.push(ln);
+      if (onRx) onRx(ln);
+      if (ln.includes("OK: " + cmd)){ done(); resolve({ ok:true, lines }); }
+      else if (ln.includes("ERR: " + cmd)){ done(); resolve({ ok:false, lines }); }
+    };
+    const timer = setTimeout(() => { done(); const e = new Error("timeout"); e.lines = lines; reject(e); }, timeoutMs);
+    const done = () => { clearTimeout(timer); dev.lineListeners.delete(fn); };
+    dev.lineListeners.add(fn);
+    send(dev, cmd, via).catch(e => { done(); reject(e); });
+  });
+}
+
+function scheduleCurve(dev, delay){
+  clearTimeout(dev.curveDebounce);
+  dev.curveDebounce = setTimeout(() => requestCurve(dev), delay);
+}
+
+// Single in-flight `sweep-curve`, 4 s timeout, 2 retries.
+function requestCurve(dev){
+  if (dev.curveReq || !canSend(dev)) return false;
+  dev.curveReq = { tries:0 };
+  curveAttempt(dev);
+  return true;
+}
+function curveAttempt(dev){
+  const q = dev.curveReq;
+  if (!q) return;
+  if (q.tries > CURVE_RETRIES){ dev.curveErr = "no sweep-curve reply"; finishCurveReq(dev); scheduleRender(dev); return; }
+  q.tries++;
+  dev.curveTimer = setTimeout(() => curveAttempt(dev), CFG.curveTimeoutMs);
+  send(dev, "sweep-curve").catch(e => { dev.curveErr = e.message; finishCurveReq(dev); scheduleRender(dev); });
+}
+function finishCurveReq(dev){
+  clearTimeout(dev.curveTimer); dev.curveTimer = null; dev.curveReq = null;
+}
+
+/* ---------------------------------------------------------------------------------------------
+   MQTT: discovery, telemetry, lease
+--------------------------------------------------------------------------------------------- */
+let client = null, clientUrl = "", clientUp = false;
+const mqttReady = () => !!(client && clientUp);
+
+function mqttPublish(topic, msg){
+  return new Promise((res, rej) => client.publish(topic, msg, { qos:0 }, e => e ? rej(e) : res()));
+}
+
+function knownHosts(url){
+  try { return (JSON.parse(lsGet(LS.hosts) || "{}")[url]) || []; } catch(_){ return []; }
+}
+function rememberHost(host){
+  const url = clientUrl;
+  if (!url || !host) return;
+  let all = {}; try { all = JSON.parse(lsGet(LS.hosts) || "{}"); } catch(_){}
+  const list = Array.isArray(all[url]) ? all[url].filter(h => h !== host) : [];
+  list.unshift(host);
+  all[url] = list.slice(0, 32);
+  lsSet(LS.hosts, JSON.stringify(all));
+}
+
+function setStatus(text, isErr){
+  const s = $("mqtt-status"); s.textContent = text; s.classList.toggle("err", !!isErr);
+}
+
+function mqttConnect(url, user, pass){
+  mqttDisconnect();
+  url = (url || "").trim();
+  if (!url) return null;
+  if (!window.mqtt){ setStatus("mqtt.js did not load", true); return null; }
+  clientUrl = url;
+  let c;
+  try { c = window.mqtt.connect(url, { username:user || undefined, password:pass || undefined,
+                                       reconnectPeriod:5000, connectTimeout:5000 }); }
+  catch(e){ setStatus(e.message, true); return null; }
+  client = c;
+  setStatus("connecting…");
+  $("mqtt-connect").textContent = "Disconnect";
+  c.on("connect", () => {
+    if (client !== c) return;
+    clientUp = true;
+    setStatus("connected");
+    for (const t of ["pv/log/#", "pv/alert/#", "pv/tele/#"]) c.subscribe(t, { qos:0 }, () => {});
+    for (const h of knownHosts(url)) c.publish("pv/log/" + h + "/cmd", "hostname", { qos:0 }, () => {});
+    for (const dev of devices.values()){
+      const L = dev.mqtt.lease;
+      if (L.state === "on" || L.state === "pending") lease(dev);
+    }
+    renderAllSoon();
+  });
+  c.on("message", (topic, payload) => { if (client === c) onMqttMessage(topic, payload); });
+  c.on("error", (e) => { if (client === c) setStatus(e.message || String(e), true); });
+  c.on("close", () => { if (client !== c) return; clientUp = false; setStatus("disconnected, retrying…", true); renderAllSoon(); });
+  return c;
+}
+
+function mqttDisconnect(){
+  const c = client;
+  client = null; clientUp = false;
+  $("mqtt-connect").textContent = "Connect";
+  if (c){ try { c.end(true); } catch(_){} setStatus("disconnected"); }
+  renderAllSoon();
+}
+
+function u8(payload){ return payload instanceof Uint8Array ? payload : new Uint8Array(payload); }
+
+function onMqttMessage(topic, payload){
+  const parts = topic.split("/");
+  if (parts[0] !== "pv" || !parts[2]) return;
+  const kind = parts[1], host = parts[2];
+  if (kind === "log" && parts.length === 3){
+    getDevice(host, "mqtt").mqtt.split.feed(u8(payload));
+  } else if (kind === "alert" && parts.length === 4){
+    const dev = getDevice(host, "mqtt");
+    pushLog(dev, "alert", "[alert " + parts[3] + "] " + new TextDecoder().decode(u8(payload)).trim());
+  } else if (kind === "tele" && parts.length === 3){
+    ingestTele(host, payload, "mqtt");
+  }
+}
+
+// One MQTT telemetry message `<cid><payload>` (also the test/demo entry point).
+function ingestTele(host, bytes, src = "mqtt"){
+  const dev = getDevice(host, src === "mqtt" ? "mqtt" : undefined);
+  const b = u8(bytes);
+  if (!b.length) return [];
+  const pts = [];
+  if (src === "mqtt"){ dev.mqtt.teleSeen = true; dev.mqtt.teleAt = now(); }
+  try { TD.decodePayload(b[0], b.subarray(1), dev.mqtt.table, pts); }
+  catch(e){ dev.mqtt.errors++; }
+  for (const p of pts) ingest(dev, p, src);
+  if (src === "mqtt") maybeRenew(dev);
+  scheduleRender(dev);
+  return pts;
+}
+
+function leaseWanted(dev){
+  return mqttReady() && !bleTeleOn(dev) && dev.mqtt.lease.state !== "unsupported";
+}
+
+// `tele-mqtt 120` over MQTT; reply decides the card state.
+async function lease(dev){
+  const L = dev.mqtt.lease;
+  if (L.busy || !mqttReady()) return;
+  L.busy = true; L.at = now();
+  if (L.state === "idle") L.state = "pending";
+  try {
+    const r = await sendCommand(dev, "tele-mqtt " + LEASE_S, { via:"mqtt", timeoutMs:5000 });
+    const plain = r.lines.map(TD.stripAnsi);
+    const on = plain.map(l => REPLY.mqttOn.exec(l)).find(Boolean);
+    if (r.ok){
+      L.state = "on"; L.reason = "";
+      if (on){ L.left = +on[1]; L.dropped = +on[2]; L.leftAt = now(); }
+    } else {
+      let reason = "";
+      for (const l of plain){
+        const m = REPLY.mqttReason.exec(l);
+        if (m && !REPLY.mqttOn.test(l) && !REPLY.mqttOff.test(l)) reason = m[1];
+      }
+      if (!reason || plain.some(l => REPLY.unknown.test(l))){
+        L.state = "unsupported"; L.reason = "firmware without tele-mqtt (relay-fed)";
+      } else if (/clock/.test(reason) && !L.clockTried){
+        L.clockTried = true;
+        L.busy = false;
+        await send(dev, "set-time " + now(), "mqtt");
+        return lease(dev);
+      } else {
+        L.state = "refused"; L.reason = reason;
+      }
+    }
+  } catch(e){
+    L.state = "no-reply"; L.reason = e.message === "timeout" ? "no reply to tele-mqtt" : e.message;
+  } finally {
+    L.busy = false;
+    scheduleRender(dev);
+  }
+}
+
+function maybeRenew(dev){
+  const L = dev.mqtt.lease;
+  if (L.state === "on" && now() - L.at >= RENEW_MS && leaseWanted(dev)) lease(dev);
+}
+
+/* ---------------------------------------------------------------------------------------------
+   BLE: one NUS link per device
+--------------------------------------------------------------------------------------------- */
+class BleLink {
+  constructor(device){
+    this.device = device;
+    this.dev = null;
+    this.state = "off"; this.reason = ""; this.tele = "off"; this.teleReason = "";
+    this.dropped = 0; this.retries = 0; this.userClosed = false; this.lastProbe = 0;
+    this.server = this.rx = this.tx = this.teleChar = null;
+    this.stream = new TD.TeleStream((err) => { this.decodeErr = err.message; });
+    this.split = lineSplitter(ln => { if (this.dev) onLine(this.dev, ln, "ble"); });
+    this.wq = Promise.resolve();
+    this._onTx = (e) => this.split.feed(dv(e.target.value));
+    this._onTele = (e) => {
+      if (!this.dev) return;
+      for (const p of this.stream.feed(dv(e.target.value))) ingest(this.dev, p, "ble");
+    };
+    this._onDisc = () => this.onDisconnected();
+    device.addEventListener("gattserverdisconnected", this._onDisc);
+  }
+
+  get name(){ return this.device.name || this.device.id || "ble"; }
+
+  async connect(attempts = 4){
+    this.state = "connecting"; this.reason = ""; this.userClosed = false;
+    if (this.dev) scheduleRender(this.dev);
+    let lastErr;
+    for (let i = 1; i <= attempts; i++){
+      try {
+        const server = await this.device.gatt.connect();
+        const svc = await server.getPrimaryService(NUS_SVC);
+        const rx = await svc.getCharacteristic(NUS_RX);
+        const tx = await svc.getCharacteristic(NUS_TX);
+        let tc = null;
+        try { tc = await svc.getCharacteristic(NUS_TELE); } catch(_){}
+        this.server = server; this.rx = rx; this.tx = tx; this.teleChar = tc;
+        this.split.reset();
+        this.stream = new TD.TeleStream((err) => { this.decodeErr = err.message; });
+        await tx.startNotifications();
+        tx.addEventListener("characteristicvaluechanged", this._onTx);
+        if (tc){
+          await tc.startNotifications();
+          tc.addEventListener("characteristicvaluechanged", this._onTele);
+        }
+        this.state = "on"; this.retries = 0;
+        return;
+      } catch(e){
+        lastErr = e;
+        try { this.device.gatt.disconnect(); } catch(_){}
+        if (i < attempts) await sleep(500 * i);
+      }
+    }
+    this.state = "off"; this.reason = lastErr ? lastErr.message : "connect failed";
+    throw lastErr || new Error("connect failed");
+  }
+
+  // 20 B slices, write-with-response (pairing is triggered by the ATT error), serialized.
+  write(str){
+    const data = new TextEncoder().encode(str);
+    const run = async () => {
+      if (this.state !== "on" || !this.rx) throw new Error("BLE not connected");
+      for (let off = 0; off < data.length; off += 20){
+        const s = data.slice(off, off + 20);
+        if (this.rx.writeValueWithResponse) await this.rx.writeValueWithResponse(s);
+        else await this.rx.writeValue(s);
+      }
+    };
+    const p = this.wq.then(run, run);
+    this.wq = p.catch(() => {});
+    return p;
+  }
+
+  // hostname -> set-time -> tele-ble 1 -> sweep-curve
+  async enable(){
+    const tmp = this.dev;
+    let host = null;
+    const onRx = (l) => { const m = REPLY.hostname.exec(TD.stripAnsi(l)); if (m) host = m[1]; };
+    try { await sendCommand(tmp, "hostname", { onRx, timeoutMs:2500, via:"ble" }); } catch(_){}
+    if (!host) host = this.name.replace(/^fugu-/, "");
+    attachBle(this, host);
+    const dev = this.dev;
+    try { await sendCommand(dev, "set-time " + now(), { via:"ble" }); } catch(_){}
+    if (!this.teleChar){
+      this.tele = "refused"; this.teleReason = "no telemetry characteristic (firmware without BLE telemetry)";
+    } else {
+      try {
+        const r = await sendCommand(dev, "tele-ble 1", { via:"ble" });
+        if (r.ok){ this.tele = "on"; this.teleReason = ""; }
+        else {
+          this.tele = "refused";
+          const plain = r.lines.map(TD.stripAnsi);
+          let reason = "";
+          for (const l of plain){ const m = REPLY.bleReason.exec(l); if (m && !REPLY.bleState.test(l)) reason = m[1]; }
+          this.teleReason = reason || (plain.some(l => REPLY.unknown.test(l)) ? "firmware without tele-ble" : "tele-ble refused");
+        }
+      } catch(e){ this.tele = "refused"; this.teleReason = "no reply to tele-ble"; }
+    }
+    this.lastProbe = now();
+    scheduleRender(dev);
+    requestCurve(dev);
+  }
+
+  probe(){
+    if (this.state !== "on" || this.tele !== "on" || !this.dev) return;
+    if (now() - this.lastProbe < PROBE_MS) return;
+    this.lastProbe = now();
+    this.write("tele-ble\r\n").catch(() => {});
+  }
+
+  async onDisconnected(){
+    if (this.state === "off" && !this.server) return;
+    this.server = this.rx = this.tx = this.teleChar = null;
+    this.tele = "off";
+    if (this.userClosed){ this.state = "off"; if (this.dev) scheduleRender(this.dev); return; }
+    for (const ms of CFG.bleBackoffMs){
+      this.state = "reconnecting"; this.reason = "link lost, retrying";
+      if (this.dev) scheduleRender(this.dev);
+      await sleep(ms);
+      if (this.userClosed) break;
+      try { await this.connect(1); await this.enable(); return; } catch(_){}
+    }
+    this.state = "off"; this.reason = "link lost";
+    if (this.dev) scheduleRender(this.dev);
+  }
+
+  async reconnect(){
+    try { await this.connect(); await this.enable(); }
+    catch(e){ this.state = "off"; this.reason = e.message; }
+    if (this.dev) scheduleRender(this.dev);
+  }
+
+  disconnect(){
+    this.userClosed = true;
+    try { this.device.gatt.disconnect(); } catch(_){}
+    this.state = "off";
+  }
+}
+
+function dv(v){ return v instanceof Uint8Array ? v : new Uint8Array(v.buffer, v.byteOffset || 0, v.byteLength); }
+
+// Bind a link to the card of `host`, folding a provisional card into an existing one.
+function attachBle(link, host){
+  const old = link.dev;
+  let dev = devices.get(host);
+  if (old && old.host !== host){
+    if (dev){
+      for (const e of old.log.a) dev.log.push(e);
+      dev.logNew = dev.log.a.slice(-LOG_SHOW); dev.logReset = true;
+      old.lineListeners.forEach(fn => dev.lineListeners.add(fn));
+      removeDevice(old);
+    } else {
+      devices.delete(old.host);
+      old.host = host; dev = old;
+      devices.set(host, dev);
+      if (dev.el) dev.el.dataset.host = host;
+    }
+  }
+  if (!dev) dev = getDevice(host);
+  if (dev.ble && dev.ble !== link) dev.ble.disconnect();
+  dev.ble = link; link.dev = dev;
+  scheduleRender(dev);
+  return dev;
+}
+
+function removeDevice(dev){
+  devices.delete(dev.host);
+  if (dev.el) dev.el.remove();
+  dev.el = null;
+}
+
+// Start a link for a (granted) Web Bluetooth device; the card is keyed by the device name until
+// `hostname` answers.
+async function linkBle(btDevice, { connect = true } = {}){
+  const prov = (btDevice.name || btDevice.id || "ble").replace(/^fugu-/, "");
+  for (const d of devices.values()) if (d.ble && d.ble.device === btDevice) return d.ble;
+  const link = new BleLink(btDevice);
+  attachBle(link, prov);
+  if (!connect){ link.reason = "not connected"; scheduleRender(link.dev); return link; }
+  try { await link.connect(); await link.enable(); }
+  catch(e){ link.state = "off"; link.reason = e.message; scheduleRender(link.dev); }
+  return link;
+}
+
+async function addBle(){
+  if (!navigator.bluetooth) return null;
+  let d;
+  try {
+    d = await navigator.bluetooth.requestDevice({
+      filters:[{ namePrefix:"fugu-" }, { services:[NUS_SVC] }], optionalServices:[NUS_SVC] });
+  } catch(_){ return null; }
+  return linkBle(d);
+}
+
+async function restoreBle(){
+  if (!navigator.bluetooth || typeof navigator.bluetooth.getDevices !== "function") return;
+  let list = [];
+  try { list = await navigator.bluetooth.getDevices(); } catch(_){ return; }
+  for (const d of list) await linkBle(d, { connect:false });
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Rendering (coalesced, <= 4 Hz)
+--------------------------------------------------------------------------------------------- */
+const dirty = new Set();
+let renderTimer = null, lastRender = 0;
+
+function scheduleRender(dev){
+  dirty.add(dev);
+  if (renderTimer) return;
+  const wait = Math.max(0, lastRender + 250 - performance.now());
+  renderTimer = setTimeout(() => {
+    const raf = window.requestAnimationFrame || ((f) => setTimeout(f, 0));
+    raf(flush);
+  }, wait);
+}
+function renderAllSoon(){ for (const d of devices.values()) scheduleRender(d); }
+
+function flush(){
+  clearTimeout(renderTimer); renderTimer = null;
+  lastRender = performance.now();
+  const list = [...dirty]; dirty.clear();
+  for (const dev of list) if (devices.get(dev.host) === dev) renderCard(dev);
+  $("empty").style.display = devices.size ? "none" : "";
+}
+
+function el(tag, cls, text){
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function createCard(dev){
+  const c = el("section", "card");
+  c.dataset.host = dev.host;
+  const top = el("div", "top");
+  top.append(el("span", "host"), el("span", "badge ble", "BLE"), el("span", "badge mqtt", "MQTT"),
+             el("span", "spacer"), el("span", "mode"), el("span", "age"));
+  const k = el("div", "kpis");
+  const p = el("div", "p"); p.append(el("span", "pv", "–"), el("small", null, "W"));
+  const small = el("div", "small");
+  for (const [cls, lab] of [["vin","Vin"],["vout","Vout"],["iout","I"],["duty","duty"]]){
+    const s = el("span", null, lab + " "); s.append(el("b", cls, "–")); small.append(s);
+  }
+  k.append(p, el("div", "peak"), small);
+  const rate = el("div", "rate");
+  const rc = el("button", "reconnect", "Reconnect BLE");
+  rc.style.display = "none";
+  rc.onclick = () => { if (dev.ble) dev.ble.reconnect(); };
+  const lw = el("div", "logwrap");
+  const bar = el("div", "logbar");
+  const lab = el("label"); const cb = el("input", "sc-toggle"); cb.type = "checkbox";
+  cb.onchange = () => c.classList.toggle("show-sc", cb.checked);
+  lab.append(cb, document.createTextNode(" show sc: lines"));
+  bar.append(el("span", null, "log"), el("span", "spacer"), lab);
+  const log = el("div", "log");
+  const form = el("form", "console");
+  const inp = el("input"); inp.placeholder = "console command"; inp.spellcheck = false; inp.autocomplete = "off";
+  form.append(inp);
+  form.onsubmit = (e) => { e.preventDefault(); const v = inp.value; inp.value = ""; consoleSend(dev, v); };
+  inp.onkeydown = (e) => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    const h = dev.history;
+    if (!h.length) return;
+    e.preventDefault();
+    dev.histIdx = clamp(dev.histIdx + (e.key === "ArrowUp" ? -1 : 1), 0, h.length);
+    inp.value = dev.histIdx < h.length ? h[dev.histIdx] : "";
+  };
+  lw.append(bar, log, form);
+  c.append(top, k, rate, rc, lw);
+  $("cards").append(c);
+  dev.el = c;
+  dev.logReset = true;
+  return c;
+}
+
+const q = (dev, sel) => dev.el.querySelector(sel);
+const fmt = (x, d = 1) => Number.isFinite(x) ? x.toFixed(d) : "–";
+
+function fmtAge(ms){
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + " s ago";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  return (s / 3600).toFixed(1) + " h ago";
+}
+
+function staleAfter(dev){
+  const m = median(dev.intervals.a);
+  return Number.isFinite(m) ? clamp(3 * m, 5000, 1200000) : 1200000;
+}
+
+function fmtEnergy(wh){
+  if (!Number.isFinite(wh)) return "– Wh";
+  return wh >= 1000 ? (wh / 1000).toFixed(2) + " kWh" : wh.toFixed(0) + " Wh";
+}
+
+function rateOf(dev, src){
+  const a = dev.arrivals[src] || [];
+  const t = now(), w = a.filter(x => x >= t - 10000);
+  if (w.length < 2) return w.length / 10;
+  return w.length / Math.max(1, (t - w[0]) / 1000);
+}
+
+function leaseLeft(L){ return Math.max(0, L.left - Math.round((now() - (L.leftAt || L.at)) / 1000)); }
+
+function badge(e, state, title){
+  e.dataset.state = state; e.title = title;
+}
+
+function renderAge(dev){
+  if (!dev.el) return;
+  const age = q(dev, ".age");
+  if (!dev.lastAt){ age.textContent = "no data"; dev.el.classList.remove("stale"); return; }
+  const a = now() - dev.lastAt;
+  age.textContent = fmtAge(a);
+  dev.el.classList.toggle("stale", a > staleAfter(dev));
+}
+
+function renderCard(dev){
+  if (!dev.el) createCard(dev);
+  const t = dev.tele;
+  q(dev, ".host").textContent = dev.host;
+  // badges
+  const b = dev.ble;
+  if (!b) badge(q(dev, ".badge.ble"), "off", "no BLE link");
+  else if (b.state === "on" && b.tele === "on") badge(q(dev, ".badge.ble"), "on", "connected, telemetry on (" + b.name + ")");
+  else if (b.state === "on" && b.tele === "refused") badge(q(dev, ".badge.ble"), "refused", b.teleReason);
+  else if (b.state === "on") badge(q(dev, ".badge.ble"), "pending", "connected, enabling telemetry");
+  else if (b.state === "connecting" || b.state === "reconnecting") badge(q(dev, ".badge.ble"), "pending", b.reason || b.state);
+  else badge(q(dev, ".badge.ble"), "off", b.reason || "disconnected");
+  q(dev, ".reconnect").style.display = b && b.state === "off" ? "" : "none";
+  const L = dev.mqtt.lease;
+  const mb = q(dev, ".badge.mqtt");
+  if (!mqttReady() || !dev.mqtt.firstAt) badge(mb, "off", mqttReady() ? "not seen on MQTT" : "MQTT not connected");
+  else if (L.state === "on") badge(mb, "on", "telemetry lease, " + leaseLeft(L) + " s left, dropped " + L.dropped + " B");
+  else if (L.state === "refused" || L.state === "no-reply") badge(mb, "refused", L.reason);
+  else if (L.state === "unsupported") badge(mb, "on", L.reason);
+  else if (L.state === "pending") badge(mb, "pending", "leasing telemetry");
+  else badge(mb, "on", dev.mqtt.teleSeen ? "telemetry (relay)" : "log only");
+  q(dev, ".mode").textContent = t.state !== undefined ? (MODES[t.state] || ("state " + t.state)) : "";
+  // KPIs
+  q(dev, ".pv").textContent = fmt(t.P, 1);
+  q(dev, ".peak").textContent = "peak today " + fmt(t.Pmax, 1) + " W · " + fmtEnergy(t.Etoday);
+  q(dev, ".vin").textContent = fmt(t.Ui, 1) + " V";
+  q(dev, ".vout").textContent = fmt(t.Uo, 2) + " V";
+  q(dev, ".iout").textContent = fmt(t.I, 2) + " A";
+  q(dev, ".duty").textContent = Number.isFinite(t.duty) ? String(t.duty) : "–";
+  // rate line
+  const parts = [];
+  if (b && b.state === "on" && b.tele === "on"){
+    const s = b.stream.stats;
+    parts.push("BLE " + rateOf(dev, "ble").toFixed(1) + " pt/s · dropped " + b.dropped + " B · resyncs " + s.resyncs);
+  }
+  if (dev.mqtt.teleSeen){
+    parts.push(L.state === "on"
+      ? "MQTT " + rateOf(dev, "mqtt").toFixed(1) + " pt/s · dropped " + L.dropped + " B"
+      : "MQTT relay " + rateOf(dev, "mqtt").toFixed(1) + " pt/s");
+  }
+  q(dev, ".rate").textContent = parts.join("  |  ");
+  renderAge(dev);
+  renderLog(dev);
+  q(dev, "form.console input").disabled = !canSend(dev);
+}
+
+function renderLog(dev){
+  const box = q(dev, ".log");
+  if (dev.logReset){ box.replaceChildren(); dev.logReset = false; dev.logNew = dev.log.a.slice(-LOG_SHOW); }
+  if (!dev.logNew.length) return;
+  const atBottom = box.scrollHeight - box.clientHeight - box.scrollTop < 4;
+  const frag = document.createDocumentFragment();
+  for (const e of dev.logNew){
+    const d = el("div", e.cls || null);
+    if (/\x1b\[/.test(e.text)) d.appendChild(document.createRange().createContextualFragment(window.ansiConvert.toHtml(e.text)));
+    else d.textContent = e.text;
+    frag.append(d);
+  }
+  dev.logNew = [];
+  box.append(frag);
+  while (box.childElementCount > LOG_SHOW) box.firstElementChild.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+async function consoleSend(dev, cmd){
+  cmd = String(cmd).replace(/[\r\n]+$/, "");
+  if (!cmd.trim()) return;
+  if (dev.history[dev.history.length - 1] !== cmd) dev.history.push(cmd);
+  if (dev.history.length > 50) dev.history.shift();
+  dev.histIdx = dev.history.length;
+  pushLog(dev, "sent", "» " + cmd);
+  try { await send(dev, cmd); }
+  catch(e){ pushLog(dev, "err", "send failed: " + (e.message || e)); }
+}
+
+/* ---------------------------------------------------------------------------------------------
+   1 s tick: ages, lease start/renewal, BLE dropped-counter probe
+--------------------------------------------------------------------------------------------- */
+function tick(){
+  const t = now();
+  for (const dev of devices.values()){
+    renderAge(dev);
+    const L = dev.mqtt.lease;
+    if (leaseWanted(dev) && !L.busy){
+      if (L.state === "idle" && dev.mqtt.firstAt && t - dev.mqtt.firstAt >= LEASE_WAIT_MS){
+        if (!dev.mqtt.teleSeen) lease(dev);
+        else L.state = "relay";
+      } else if ((L.state === "on" || L.state === "no-reply") && t - L.at >= RENEW_MS){
+        lease(dev);
+      }
+    }
+    if (dev.ble) dev.ble.probe();
+    if (dev.lastAt && t - dev.lastAt < 15000) scheduleRender(dev);
+  }
+}
+
+function onVisible(){
+  if (document.visibilityState !== "visible") return;
+  for (const dev of devices.values()){
+    const L = dev.mqtt.lease;
+    if (L.state === "on" && leaseWanted(dev) && now() - L.at >= 5000) lease(dev);
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Header, banners, start-up
+--------------------------------------------------------------------------------------------- */
+function banners(){
+  const out = [];
+  if (location.protocol === "file:")
+    out.push("Opened from file://: serve this folder over http (python3 -m http.server) so Web Bluetooth is available.");
+  if (!navigator.bluetooth)
+    out.push("Web Bluetooth is not available: use Chrome or Edge over https or localhost.");
+  if (location.protocol === "https:" && /^ws:\/\//i.test($("mqtt-url").value.trim()))
+    out.push("An https page cannot open ws:// connections: use a wss:// broker URL.");
+  const box = $("banners");
+  box.replaceChildren(...out.map(t => el("div", "banner", t)));
+  $("ble-add").disabled = !navigator.bluetooth;
+}
+
+function init(){
+  $("mqtt-url").value = lsGet(LS.url) || "";
+  $("mqtt-user").value = lsGet(LS.user) || "";
+  $("mqtt-pass").value = lsGet(LS.pass) || "";
+  $("mqtt-url").addEventListener("input", banners);
+  $("mqtt-connect").onclick = () => {
+    if (client){ mqttDisconnect(); return; }
+    const url = $("mqtt-url").value.trim(), user = $("mqtt-user").value, pass = $("mqtt-pass").value;
+    lsSet(LS.url, url); lsSet(LS.user, user); lsSet(LS.pass, pass);
+    if (!url){ setStatus("enter a broker URL", true); return; }
+    mqttConnect(url, user, pass);
+  };
+  $("ble-add").onclick = () => addBle();
+  document.addEventListener("visibilitychange", onVisible);
+  banners();
+  setInterval(tick, 1000);
+  if ($("mqtt-url").value.trim()) mqttConnect($("mqtt-url").value, $("mqtt-user").value, $("mqtt-pass").value);
+  restoreBle();
+}
+
+window.Dash = {
+  devices, Device, BleLink, REPLY, CFG, NUS:{ SVC:NUS_SVC, RX:NUS_RX, TX:NUS_TX, TELE:NUS_TELE },
+  getDevice, ingest, ingestTele, onLine, onMqttMessage, send, sendCommand, requestCurve, lease, tick,
+  flush, mqttConnect, mqttDisconnect, addBle, linkBle, restoreBle, consoleSend, staleAfter,
+  get client(){ return client; },
+};
+
+init();
+})();
+</script>
+</body>
+</html>
