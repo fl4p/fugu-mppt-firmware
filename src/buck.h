@@ -615,6 +615,7 @@ public:
     [[nodiscard]] bool syncRectEnabled_() const { return syncRectEnabled; }
 
     [[nodiscard]] const uint16_t &pwmMaxDriver() const { return driverPwmMax; };
+    [[nodiscard]] float getCoilL() const { return coilL0 * InductivityDcBias; } // the model's L (H)
 
 #if HAVE_MCPWM
     // Raw leg access for the beacon-sync servo (period trim + live count); null when LEDC active.

@@ -38,10 +38,11 @@
  * (SpvMax). A sense path that follows the LS window ends the run: a Vout reading off its references by
  * the same amount on both tries at one LS, or an Iout reading that rises by more than IoutLs (+ IoutLsA
  * per A) before the ideal count (the diode-to-channel gain is a few mA, reverse current only lowers it).
- * The fit places the zero crossing where the current bends down, independent of a sloped baseline.
- * learned = peak - ideal (counts) is the net timing error of driver, gate and sensing, plus the time the
- * reverse current needs to lift the node to Vin when Vin > 2 Vout: a positive result is a bound
- * (clamped), not a measurement.
+ * The fit places the zero crossing where the current bends, independent of a sloped baseline.
+ * The coil current the switch-node ring leaves when HS turns on moves the zero crossing off ideal, by up to
+ * sqrt(L C) either way depending on the ring phase, which differs at every operating point. The zero crossing
+ * is therefore also taken from the charge per period (zc, needs the coil L). learned = peak - max(zc, ideal)
+ * (counts) is the timing error of driver, gate and sensing, rounded early.
  *
  * Ownership: the RT core writes the payload in start()/refuse() (from Idle) and during Run, core 0
  * in Fit. Each hand-off is a release store of `state`; the other side reads it with acquire before
@@ -71,6 +72,7 @@ public:
     static constexpr float CcmFrac = 0.9f; // LS cap: this fraction of the off-time volt-second limit (1 - Vo/Vi)
     static constexpr float SettleI = 0.02f;      // Init windows agree: |dI| <= SettleI A + SettleI * I
     static constexpr float IoutLs = 0.02f, IoutLsA = 0.004f; // max Iout rise before ideal: A + per A of Init current
+    static constexpr float ZcLo = 0.8f;          // zc from the steps at ZcLo..1 x ideal (below the knee)
 
     std::atomic<uint8_t> state{Idle};
     const char *why = ""; // failure reason
@@ -80,6 +82,7 @@ public:
     bool clamped = false; // the fit asked for a positive offset: a bound, applied as min(0, active offset)
     bool cut = false;     // the fit ended at the floor of a dip
     float ideal = 0, peak = 0; // peak: fitted LS count of the zero crossing (knee)
+    float zc = 0; // zero crossing from the charge per period (counts), ideal without a coil L
     float dv = 0; // largest relative Vin/Vout deviation from Init
     float rise = 0, iLs = 0; // Iout rise before ideal on two points in a row, its bound (A)
     float xs[MaxPts]{}, ys[MaxPts]{}; // fit() sorts them by LS
@@ -108,10 +111,11 @@ public:
         return running() ? std::clamp((int) hs - (int) hsNow, -maxStep, maxStep) : 0;
     }
 
-    // lateMax: farthest LS past ideal the sweep may go (counts, the plausible |learned|)
-    void start(uint32_t nowUs, uint16_t hs_, uint16_t lsMin_, uint16_t lsCap_, uint16_t lateMax_ = 400) {
-        hs = hs_; lsMin = lsMin_; lsCap = lsCap_; lateMax = lateMax_; fine = false; drops = 0; kf = 0;
-        n = 0; k = 0; ideal = peak = dv = rise = iLs = 0; ymax = -INFINITY; learned = applied = 0; clamped = cut = false; why = "";
+    // lateMax: farthest LS past ideal the sweep may go (counts, the plausible |learned|); lt: coil L times the
+    // PWM period (H s), 0: zero crossing at ideal
+    void start(uint32_t nowUs, uint16_t hs_, uint16_t lsMin_, uint16_t lsCap_, uint16_t lateMax_ = 400, float lt = 0) {
+        hs = hs_; lsMin = lsMin_; lsCap = lsCap_; lateMax = lateMax_; fine = false; drops = 0; kf = 0; coilLT = lt;
+        n = 0; k = 0; ideal = peak = zc = dv = rise = iLs = 0; ymax = -INFINITY; learned = applied = 0; clamped = cut = false; why = "";
         retries = 0; jdi = jdo = jallow = jrefVi = jrefVo = voHi = 0; jls = 0;
         phase = Init; ls = lsMin; prevOk = false;
         t0 = tPh = nowUs;
@@ -277,7 +281,7 @@ public:
             }
         // the ring can turn the current back up past the bend: once two points in a row were KneeDrop/2 below the
         // highest and one rises StepDrop above the lowest since, the fit ends at that lowest point (the dip floor
-        // after it is no quadratic: it pulled the knee early)
+        // after it is no quadratic: it pulled the knee early). An up-bend at the crossing comes before any dip.
         int m = 1, low = 0, at = 0;
         bool dip = cut = false;
         for (float hi = ys[0], lo = ys[0]; m < n; ++m) {
@@ -287,17 +291,41 @@ public:
             if (ys[m] > hi) hi = lo = ys[m], dip = false;
             else if (ys[m] < lo) lo = ys[m], at = m;
         }
-        // zero crossing = where the current bends down (reverse current), whatever the baseline slope
-        float x0 = 0, drop = 0, rms = 0;
+        // A DCM triangle of peak p carries p^2 L Vi / (2 Vo (Vi - Vo)) per period, whatever current HS turned on
+        // into (second order) and however long it conducted, and ends p L / Vo after HS turns off
+        float iz = 0;
+        int nz = 0, kmax = 0;
+        for (int j = 0; j < n; ++j)
+            if (xs[j] >= ZcLo * ideal && xs[j] <= ideal) iz += ys[j], ++nz;
+        for (int j = 1; j < m; ++j)
+            if (ys[j] > ys[kmax]) kmax = j;
+        zc = ideal;
+        if (coilLT > 0 && nz)
+            zc = tickRate * std::sqrt(std::max(0.f, 2.f * (refPrev + iz / (float) nz) * coilLT * (vi0 - vo0) / (vo0 * vi0)));
+        const float plaus = (float) pwmCountsFromNs(PlausibleNs, tickRate);
+        // Holding the LS past the crossing changes the ring current at HS turn-on: with a negative one the current
+        // bends up there, else it stays flat until the node clamps at Vin and bends down. The crossing is the
+        // earlier of an up-bend before the maximum and a down-bend before the dip floor.
+        float x0 = INFINITY;
+        const auto knee = [&](int j, bool up) {
+            float x, drop, rms;
+            if (j >= 6 && kneeFit(xs, ys, j, x, drop, rms, up) && drop >= std::max(KneeMinA, 4.f * rms)) x0 = std::min(x0, x);
+        };
+        if (xs[kmax] > zc) knee(kmax + 1, true);
+        knee(m, false);
         const char *e = m < 6 ? "few points"
-                        : !kneeFit(xs, ys, m, x0, drop, rms) || !(drop >= std::max(KneeMinA, 4.f * rms)) ? "no knee"
-                        : !(std::fabs(x0 - ideal) <= (float) pwmCountsFromNs(PlausibleNs, tickRate)) ? "implausible"
+                        : coilLT > 0 && !nz ? "no points below ideal"
+                        : !(std::fabs(zc - ideal) <= plaus) ? "charge model"
+                        : !(x0 < INFINITY) ? "no knee"
+                        : !(std::fabs(x0 - std::max(zc, ideal)) <= plaus) ? "implausible"
                         : nullptr;
         if (e) {
             fail(e);
             return false;
         }
-        const float l = x0 - ideal;
+        // zc - ideal is the ring current at HS turn-on, but also HS edge delays and half a voltage sensing error,
+        // which the offset must keep: against the later of both the result errs early (body diode)
+        const float l = x0 - std::max(zc, ideal);
         const float a = l - std::max((float) pwmCountsFromNs(cut ? DipMarginNs : MinMarginNs, tickRate), 0.3f * std::fabs(l));
         learned = (int16_t) std::lround(l);
         // the knee is the onset of loss: past Vin = 2 Vout the reverse current first lifts the node to Vin, which
@@ -319,6 +347,7 @@ private:
     uint8_t drops = 0, kf = 0; // drops: 1 the last coarse step was a clear drop (at lsD), 2 measuring it again
     uint16_t lsD = 0;
     float capX = 0, f0 = 0, fg = 0; // LS cap, fine pass start and step
+    float coilLT = 0; // coil L times the PWM period (H s)
     uint8_t k = 0;
     uint32_t t0 = 0, tPh = 0;
     uint32_t ns = 0;
@@ -532,7 +561,8 @@ public:
                 clamps = c.lsClamps();
                 bs.reset();
                 cal.start(in.nowUs, hs, c.getRectOnPwmMin(), pm - hs - 1,
-                          (uint16_t) pwmCountsFromNs(RectCal::PlausibleNs, c.getPwmTickRate()));
+                          (uint16_t) pwmCountsFromNs(RectCal::PlausibleNs, c.getPwmTickRate()),
+                          c.getCoilL() / (float) c.getPwmFrequency());
             }
         }
         persistLock(c, in.nowUs);
@@ -580,8 +610,8 @@ public:
             const int o = offset();
             const bool keep = cal.clamped && o < 0 && activeCalibrated() && c.rectOffsetCal() == 1;
             if (cal.clamped) cal.applied = (int16_t) std::min(0, o), nextAuto = nowS + BoundRetryS;
-            ESP_LOGI("rectcal", "done: hs=%u ideal=%.0f peak=%.0f learned=%+d ct, applied %+d ct%s (%.0f ns, %s, %u pts)",
-                     cal.hs, cal.ideal, cal.peak, cal.learned, cal.applied,
+            ESP_LOGI("rectcal", "done: hs=%u ideal=%.0f zc=%.0f peak=%.0f learned=%+d ct, applied %+d ct%s (%.0f ns, %s, %u pts)",
+                     cal.hs, cal.ideal, cal.zc, cal.peak, cal.learned, cal.applied,
                      keep ? " (bound, measured offset kept)" : cal.clamped ? " (bound)" : "",
                      rectOffsetNsFromCounts(cal.applied, tr), c.drvName(), cal.n);
             if (!keep) {
@@ -651,8 +681,8 @@ public:
                  fires.load(std::memory_order_relaxed), dirty);
         if (s == RectCal::Run) ESP_LOGI("rectcal", "hs=%u", cal.hs);
         if ((s != RectCal::Done && s != RectCal::Fail) || !cal.hs) return;
-        ESP_LOGI("rectcal", "last: hs=%u ideal=%.0f peak=%.0f learned=%+d applied=%+d ct%s%s, dV %.1f%%, Iout rise %.0f mA "
-                 "(max %.0f), %u pts, %u redone", cal.hs, cal.ideal, cal.peak, cal.learned, cal.applied,
+        ESP_LOGI("rectcal", "last: hs=%u ideal=%.0f zc=%.0f peak=%.0f learned=%+d applied=%+d ct%s%s, dV %.1f%%, Iout rise "
+                 "%.0f mA (max %.0f), %u pts, %u redone", cal.hs, cal.ideal, cal.zc, cal.peak, cal.learned, cal.applied,
                  cal.clamped ? " (bound)" : "", cal.cut ? " (fit to dip floor)" : "", 100.f * cal.dv, 1e3f * cal.rise,
                  1e3f * cal.iLs, cal.n, cal.retries);
         if (s == RectCal::Fail && cal.jrefVi > 0) {

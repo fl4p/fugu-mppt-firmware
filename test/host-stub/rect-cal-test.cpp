@@ -87,7 +87,7 @@ struct Rig {
     float vout() { return p.getVout() + voutBias + 0.01f * nd(rng); }
 };
 
-static const char *g_L0 = "56e-6"; // coil.conf L0 the converter model uses
+static const char *g_L0 = "53.6e-6"; // coil.conf L0: the model uses 0.95 L0 = the plant's 50.9 uH
 static void initConv(SynchronousConverter &c, const char *offNs = nullptr, const char *offDrv = nullptr,
                      const char *offCal = nullptr) {
     ConfFile conv{}; conv.set("topo", "buck");
@@ -708,6 +708,19 @@ static void testForce() {
                    f.truth, cal.n, 100 * cal.dv, f.iMin, f.hsEnd);
         }
 
+    // coil.conf L0 off by +-10 %: the charge-based zero crossing moves by half of that
+    for (const char *l0: {"59e-6", "48.2e-6"}) {
+        g_L0 = l0;
+        Host h(11.5f, 80, 0.f, 0.f);
+        const ForceRun f = forceRun(h);
+        const RectCal &cal = h.ctl.cal;
+        CHECK(f.ok && cal.learned <= f.truth + 20.f && cal.learned >= f.truth - 0.06f * cal.ideal,
+              "L0 %s: %s learned %d truth %.0f", l0, f.ok ? "done" : cal.why, cal.learned, f.truth);
+        printf("force, coil L0 %s (model 0.95 L0, plant 50.9e-6): %s zc-ideal %+.0f learned %d truth %.0f\n", l0, f.ok ? "done" : cal.why,
+               cal.zc - cal.ideal, cal.learned, f.truth);
+    }
+    g_L0 = "53.6e-6";
+
     // battery bus: Vout +2.5 % / -2.5 % linear over 30 s from the start (second charger, loads): accepted
     for (float tot: {0.025f, -0.025f}) {
         Host h(11.5f, 80, 0.f, 0.f);
@@ -749,7 +762,7 @@ static void testForce() {
 // the guard. The knee fit lands between the zero crossing (-35) and the clamp onset (~+50); the applied
 // offset must not be later than the crossing by more than 20 ct (40 mA reverse at 80 uH).
 static void testFullSun() {
-    g_L0 = "80e-6";
+    g_L0 = "84.2e-6";
     int lo = 999, hi = -999, alo = 999, ahi = -999, done = 0, guards = 0, trips = 0, lsMaxPast = -999;
     for (uint32_t seed = 1; seed <= 6; ++seed) {
         Host h(5.6f, 35, 0.f, 0.f);
@@ -784,7 +797,7 @@ static void testFullSun() {
             printf("\n");
         }
     }
-    g_L0 = "56e-6";
+    g_L0 = "53.6e-6";
     CHECK(done == 6 && guards == 0 && trips == 0, "full sun: %d/6 done, guard %d, trips %d", done, guards, trips);
     CHECK(done && alo >= -35 - 45 && ahi <= -35 + 20 && hi - lo <= 10, "full sun: applied %d..%d, learned %d..%d", alo, ahi,
           lo, hi);
@@ -798,7 +811,7 @@ static void testFullSun() {
 // the cap and learned up to +252 ct (truth -35). Must fail or apply at most 20 ct late (as full sun) and learn
 // at most 25 ct early.
 static void testRingBack() {
-    g_L0 = "50.9e-6";
+    g_L0 = "53.6e-6";
     for (float q: {3.f, 5.f, 10.f, 40.f})
         for (uint32_t seed = 1; seed <= 2; ++seed) {
             Host h(5.6f, 35, 0.f, 0.f);
@@ -829,7 +842,7 @@ static void testRingBack() {
                 printf("\n");
             }
         }
-    g_L0 = "56e-6";
+    g_L0 = "53.6e-6";
 }
 
 // Knee at c, quadratic to a dip floor 60 ct later, a partial recovery below StepDrop, then the ring rise. The fit
