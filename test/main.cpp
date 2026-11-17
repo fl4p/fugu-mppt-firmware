@@ -7,6 +7,18 @@
 
 //#warning "Test main"
 
+#if __XTENSA__
+#include "esp_private/startup_internal.h"
+// Static ctors use the FPU before the scheduler, where the lazy-enable trap panics. On silicon
+// CP0 is already enabled there (the firmware relies on it too); QEMU resets it to 0.
+ESP_SYSTEM_INIT_FN(test_fpu_enable, CORE, BIT(0), 999) {
+    uint32_t cp;
+    asm volatile("rsr.cpenable %0" : "=a"(cp));
+    asm volatile("wsr.cpenable %0\n rsync" ::"a"(cp | 1));
+    return ESP_OK;
+}
+#endif
+
 // src/main.cpp defines this in the normal build; with RUN_TESTS=1 the entry point
 // is swapped to this file, so we provide our own definition. wallClockUs() reads it,
 // but nothing in tests writes — that's fine, time-based tests pass explicit timestamps.
