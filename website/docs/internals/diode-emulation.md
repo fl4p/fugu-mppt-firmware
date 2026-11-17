@@ -726,16 +726,10 @@ Because of the clamp, a buck with sync rect off (console `sync off`) still issue
 Account for this pulse when you compare scope traces with the ideal triangle.
 
 The minimum pulse is not covered by the drain limit. With the default `boot_refresh_ns` of 2 µs at
-39 kHz it is 7.8 % of the period. Near `D = M` its reverse current cannot drain before the next HS
-turn-on once $M > 1 - t_{min}/T$ = 0.92 (`V_i` below about 1.085·`V_o`). That carry-over estimate
-is approximate: each period the pulse also pumps charge from the battery back into the input, even
-where no reverse current carries over, and the board models go negative from `M` ≈ 0.92 at every
-HS count and from `M` ≈ 0.865–0.9 at HS counts up to about 1200 (30 % duty).
-Above `M` ≈ 0.92 the converter runs as a boost from the battery into the input. With a stiff source this is a large reverse current (hundreds of amps in the board models). With a PV
-input it lifts `V_i` to about $V_o/(1 - t_{min}/T)$; a nearly dark panel that cannot absorb it below
-`V_oc` lets the input rise until the panel conducts, and the reverse-current protection stops the
-converter. Below it, the pulse drives the mean current negative only at light load and low HS counts,
-where it exceeds twice the ideal window (in the board models down to −0.27 A at `M` = 0.9 and low duty).
+39 kHz it is 7.8 % of the period, and above a voltage ratio of about 0.92 its reverse current no longer
+drains within the period and pumps charge from the output back into the input. The firmware keeps a
+buck below that ratio with a start block, a `V_in` floor and a stop; see
+[LS minimum pulse near unity ratio](#ls-minimum-pulse-near-unity-ratio).
 
 ### Failure modes at the LS boundary
 
@@ -779,7 +773,8 @@ the dead time, so `M_c` ≈ 0.915–0.922.
 Below `M_c` the pulse's reverse current drains within the period. The mean output current
 is still negative when the pulse exceeds twice the ideal window, i.e. at
 `t_HS < t_min·M/(2(1 − M))`; that current is bounded, about `V_o·t_min²/(2·L·T·(1 − M))`
-(0.2–0.3 A on a 50–80 µH coil near `M` 0.89), and does not grow.
+and does not grow. Near `M` 0.89 this lossless upper bound is 0.24–0.29 A on an 80 µH coil and
+0.37–0.45 A on 51 µH (0 to 200 ns dead time); the board models, with losses, give 0.2–0.3 A.
 
 The firmware keeps a buck in DCM (diode emulation, not forced PWM) below `M_c` from the
 measured voltages:
@@ -789,14 +784,17 @@ measured voltages:
 | stop | `M_stop = (1 − (t_min + T/32)/T) · 0.99/1.01` | 0.873 / 0.866 (`V_in` < 1.146 / 1.155 `V_out`) |
 | start, `V_in` floor | `M_stop − 0.02` | 0.853 / 0.846 (`V_in` > 1.172 / 1.182 `V_out`) |
 
-`T/32` covers the ring current that a DCM period leaves in the coil at HS turn-on (it moves
-the zero crossing by up to `√(LC)` of the switch node), and the factor `0.99/1.01` the
-worst-case ratio error of two voltage readings with 1 % error each (`V_out` read low,
-`V_in` read high). With both at their limit the highest true ratio the stop admits is
-0.890 / 0.884, 0.03 below `M_c`.
+The factor `0.99/1.01` is the worst-case ratio error of two voltage readings with 1 % error
+each (`V_out` read low, `V_in` read high). `T/32` (0.031 in `M`) is a further margin for
+reading errors beyond that: an output voltage sensor can read 1.1–1.7 % low while the
+converter switches. The ring current that a DCM period leaves in the coil at HS turn-on moves
+the zero crossing by only about 0.002 in `M`. With both readings at their 1 % limit the
+highest true ratio the stop admits is 0.890 / 0.884, 0.03 below `M_c`.
 
 - **Start:** a buck starts only below the start ratio, in addition to `V_in > V_out + 1 V`
-  (start-block reason `Vin-Vout`). In PSU mode the larger of `V_out` and the setpoint counts.
+  (start-block reason `minpulse-M`). In PSU and PV-simulation mode the larger of `V_out` and
+  the setpoint counts, so a setpoint at or above `M_start·V_in` does not start. A manual duty
+  (`dc`) start, including the restart after a backoff, follows the same rule.
 - **`V_in` floor:** while the converter is in DCM, the input-voltage controller holds
   `V_in ≥ V_out / (M_stop − 0.02)` (in addition to `limits.conf::vin_min`). A sweep that
   reaches the floor ends there like at any other limit, and the tracker stays on the floor
@@ -806,16 +804,20 @@ worst-case ratio error of two voltage readings with 1 % error each (`V_out` read
 - **Stop:** the converter stops with a 5 s backoff (reason `minpulse-M`) when, in DCM,
   either the ratio reaches `M_stop`, or it is above the start ratio while the averaged output
   current is below −0.05 A (a source the floor cannot move). Both are evaluated on the
-  averaged voltages and need 4 consecutive fresh `V_out` samples. After the stop, the start
-  ratio applies again.
+  averaged voltages and need 4 consecutive fresh `V_out` samples, except when the converter
+  enters DCM (from CCM) with the ratio already at `M_stop`: then the pump is already running
+  and the stop is immediate. After the stop, the start ratio applies again.
 
 In CCM the coil current covers the LS window and none of this applies; a converter in CCM
-near unity ratio keeps running until the current drops into DCM.
+near unity ratio keeps running until the current drops into DCM, where it stops at once if
+the ratio is at or above `M_stop`.
 
 Limits of the protection: the margin between `M_stop` and `M_c` is about 1 V of `V_in` at a
 27 V output. A stiff source that steps across it faster than the averaged readings follow
 (about 10 samples of the voltage filter plus 4 samples) pumps until the stop, at the
-resistive level above. The bounded negative current at short HS times below the start ratio
+resistive level above. A converter that leaves CCM above `M_c` (a stiff input falling while the
+HS runs at its maximum, which is about `1 − t_min/T`) pumps until the averaged current marks
+DCM. The bounded negative current at short HS times below the start ratio
 remains (a sweep starting from zero duty passes through it). A boost has no rect minimum
 pulse (`pwmRectMin` is 0) and is not affected.
 

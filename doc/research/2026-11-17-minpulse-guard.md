@@ -36,8 +36,10 @@ M_stop  = wcef · (31/32 − pwmRectMin/T)      wcef = (1 − 0.01)/(1 + 0.01) =
 M_start = M_stop − 0.02
 ```
 
-`T/32` is the DCM fade margin the pulse width rounding can eat. `wcef` assumes `V_out` reads 1 % high and `V_in`
-1 % low (the worst case, which makes the true ratio larger than the read one).
+`wcef` covers `V_out` reading 1 % low and `V_in` 1 % high (the worst case: the read ratio is then below the true
+one). `T/32` (0.031 in M) is a margin for reading errors beyond 1 %: flat's `V_out` reads 1.1–1.7 % low while
+switching. The ring current at HS turn-on moves the zero crossing by only ~0.002 in M, so it is not the reason for
+the margin.
 
 | config | M_c | M_stop (Vin below) | M_start (Vin above) |
 |---|---|---|---|
@@ -52,14 +54,17 @@ low ratio; a boost near unity is the de-margin branch's topic.
 
 Three parts:
 
-1. **Start block** (`startBlockReason`, reason `Vin-Vout`): a buck does not start while
-   `max(V_out, psu setpoint) ≥ M_start·V_in` (EWM readings).
+1. **Start block** (`startBlockReason`, reason `minpulse-M`): a buck does not start while
+   `max(V_out, psu setpoint) ≥ M_start·V_in` (EWM readings). The same rule gates a manual-duty start in
+   `updateManual()`, including the restart after a backoff.
 2. **V_in floor** (`mppt.update()`): in DCM the Vin controller target becomes
    `max(Vin_min, V_out/M_start)`. The tracker keeps running and the floor limits it. The Vin controller is reset when
    the floor switches on or off, because the normalized PD controller's D-term kicks on a setpoint step (that kick
    ended the initial sweep with "no MPP" and a 30 s backoff in an early version, −5.6 pp harvest on wx-dusk).
 3. **Stop backstop** (`protect()`, fresh `V_out` samples only): `shutdownDcdc("minpulse-M")` (5 s backoff) after 4
    consecutive fresh samples with read ratio `≥ M_stop`, or with ratio `≥ M_start` and `I_out` EWM `< −0.05 A`.
+   When the converter enters DCM (exposed edge) with the ratio already `≥ M_stop`, it stops on that pass without the
+   debounce.
 
 Why not a pure stop: in wx-mp-ramp the MPP sits right at the limit for minutes and a stop-only guard cycled 41 times
 per run. The floor holds the operating point at `M_start` instead; the stop only fires when the source is too stiff
@@ -71,7 +76,11 @@ cover the slow cases (dusk, dawn, ramps).
 
 Code size: +0x340 bytes. `rtprof_map --check`: 79 entries, all in IRAM. The two `buck.h` helpers are
 `always_inline` (no flash COMDAT). The only new flash symbol is the cold `protect()` lambda with the log line.
-No new conf key.
+No new conf key. After the review follow-ups: still 11 % free, `rtprof_map --check` 79 entries, 0 not in IRAM.
+
+CCM side: a buck's HS is capped at `pwmCtrlMax = pwmMax − pwmRectMin − 1`, so `D_max ≈ M_c`. A CCM point with forward
+current therefore sits at `M < M_c`; DCM can be entered above `M_c` only when a stiff input falls while the
+converter is in CCM (current reverses, the current EWM then flags DCM). That entry stops at once.
 
 ## Open-loop check (`test/host-stub/minpulse-test.cpp`)
 
@@ -164,8 +173,8 @@ Reading:
 
 | test | result |
 |---|---|
-| `test/host-stub/minpulse-test.cpp` (new, includes known-bad) | PASS; known-bad limits 0.93 / 0.905 FAIL as intended |
-| `test/host-stub/minpulse-sim.sh` (new, wx-mp-ramp/psu/psu-nosink/dusk, fry) | guard PASS, base FAIL (psu, nosink, dusk) |
+| `test/host-stub/minpulse-test.cpp` (new, includes known-bad) | PASS; known-bad limits 0.93 / 0.905 / 0.90 FAIL as intended (0.90 by the ≥ 0.02 margin check); buck in DCM above the stop ratio exposed, boost not |
+| `test/host-stub/minpulse-sim.sh` (new, wx-mp-ramp/psu/psu-nosink/manual/ccm/dusk, fry) | guard PASS; base FAIL (psu, nosink, dusk); first guard version without the follow-ups FAIL on wx-mp-manual (135 stops, 158 starts, −4.7 A, revI trip) and wx-mp-ccm (DCM entry to stop 8.9 ms vs 2.2 ms) |
 | rect-cal-test | PASS |
 | dcm-current-test | all ok |
 | vconv-test | 1309 / 1309 |
@@ -181,14 +190,27 @@ Reading:
 - Not tested on hardware. The bench procedure covers the start block, the floor and the stop in manual duty on fbuck;
   the stop on reverse current needs a source on the output and is covered only in the simulator.
 - A stiff-source ratio step faster than ~14 samples (EWM lag + debounce) crosses `M_c` before the stop fires.
+- DCM entry from CCM above `M_c` (stiff input falling while in CCM): the stop is immediate once the firmware flags
+  DCM, but that flag follows the current EWM, so the pump runs for the EWM's lag first. In the sim
+  (wx-mp-ccm) the entry was at M 0.918, below `M_c`; the reviewer's 13 A/ms case (M 0.95) was not reproduced
+  closed-loop.
+- Manual duty: after a `minpulse-M` stop the restart waits for `V_out < M_start·V_in`; with a load that drains the
+  output this gives a stop/restart cycle every few seconds until `dc 0` (no floor in manual).
 - Below `M_start` the min pulse still gives a bounded negative mean current at light HS (−0.1…−0.3 A, larger for
   smaller L). The guard does not address it; the existing revI-ewm protection and diode emulation do.
-- PSU mode: the start block uses the setpoint, so `psu <V>` above `M_start·V_in` does not start (by design); with the
-  floor a PSU output sags to `M_start·V_in` when the input drops.
+- PSU and PV-sim modes: the start block uses the setpoint, so `psu <V>` / a `pv` setpoint above `M_start·V_in` does
+  not start (by design, documented in console.md and operating-modes.md); with the floor a PSU output sags to
+  `M_start·V_in` when the input drops.
 - The 1 % reading error is an assumption, not a measured property of each board.
 - The PV plant clamps `V_in` at 1.05·V_oc when non-sinking (pvBlocking); a real bench PSU with output capacitance
   can rise further while charge is pumped back.
 - flat in wx-mp-psu*: no MPP in base or guard, not investigated.
+
+## Review follow-up spot check (pgx93, after the rebase onto main 21123e59)
+
+wx-dawn / wx-dusk / wx-mp-ramp, fry, fry-hq, flat, flat-hq, seeds 1–2 (24 runs, tag minpulse-fix): mean harvest
+97.33 / 98.12 / 113.83 %, 0 minpulse-M stops, 0 s above `M_c`, 0 revI trips, Iout min −0.144 / −0.159 / 0 A.
+The reviewer's combined numbers: dawn 97.33, dusk 98.13.
 
 ## Reproduce
 

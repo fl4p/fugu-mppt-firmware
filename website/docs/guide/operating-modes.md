@@ -90,6 +90,9 @@ The following rules apply in manual mode:
 - If `dc` fails in either of these cases, assume nothing was stopped. Check the reply.
 - Protections stay active. Unless `limits.conf::reverse_current_paranoia` is set, a non-zero duty enables synchronous
   rectification and the backflow switch.
+- In buck topology a non-zero duty does not start the converter (and does not restart it after a protection
+  backoff) while `Vout` is at or above `M_start·Vin`, about Vin / 1.18 with the default `boot_refresh_ns`. In DCM
+  the converter stops with `minpulse-M` when the ratio reaches `M_stop`; manual mode has no Vin floor.
 - `sync` and `bf` require manual mode. `short-ls` works from any mode on a boost converter with `Vin` ≈ 0 and
   switches to manual mode itself. See [console](../reference/console.md#manual-pwm-commands).
 - `tracker.conf::target_duty_cycle` (a fraction of the maximum duty) boots straight into manual mode at that duty.
@@ -125,6 +128,11 @@ The following limits and fault rules apply in PSU mode:
 - The setpoint is range-checked against the output voltage limit (`limits.conf::lv_max` in a buck, `hv_max` in a
   boost).
 - In boost topology the setpoint must exceed Vin by at least 0.5 V.
+- In buck topology the converter does not start while the setpoint is at or above `M_start·Vin`, about Vin / 1.18
+  with the default `boot_refresh_ns` (start-block reason `minpulse-M`). The command is accepted and the converter
+  starts once Vin is high enough. Running in DCM, it holds Vin at or above `Vout / M_start`, so with a weak input the
+  output sags below the setpoint; with an input that does not give way it stops (`minpulse-M`). See
+  [LS minimum pulse near unity ratio](../internals/diode-emulation.md#ls-minimum-pulse-near-unity-ratio).
 - Output over-voltage and supply under-voltage trips retry fast. Within 60 s, the first 4 trips retry after 100 ms,
   trips 5-8 use the normal backoff, and the 9th latches the output off (`psu` shows the latch). Other faults use their
   normal backoff. Any mode command (`psu <V>`, `psu off`, `mppt`, `dc`) clears the latch.
@@ -162,6 +170,8 @@ The simulator behaves as follows:
 - The setpoint moves along the curve, slew-limited by `pv_slew` (V/s) and clamped to
   [Vin + 0.5 V, min(Voc, Vout max)], where Vout max is `limits.conf::hv_max` in a boost (`lv_max` in a buck). A boost can only emulate the part of the curve above Vin.
 - The Iout limiter is capped at 1.1 × Isc.
+- In buck topology the same ratio limit as in PSU mode applies: no start while the setpoint is at or above about
+  Vin / 1.18.
 - `pv off` goes to manual mode, not MPPT, since a simulator is a bench source.
 
 :::danger

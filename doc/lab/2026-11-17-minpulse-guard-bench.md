@@ -8,7 +8,7 @@ Background: `website/docs/internals/diode-emulation.md#ls-minimum-pulse-near-uni
 
 ## What is tested
 
-1. Start block: a buck does not start in DCM above the start ratio (`START blocked: Vin-Vout`).
+1. Start block: a buck does not start in DCM above the start ratio (`START blocked: minpulse-M`).
 2. `V_in` floor: in DCM the Vin controller holds `V_in ≥ V_out / M_start` (limiter index 0) and the converter keeps
    running with positive output current while the input is lowered toward `V_out`.
 3. Stop: in manual duty (no floor) the converter stops with `backoff 5s [minpulse-M]` when the read ratio reaches
@@ -91,7 +91,7 @@ Korad 22.0 V. Then:
 psu 20
 ```
 
-Wait 10 s, then `status` and read the log. Expected: converter stays off, log `START blocked: Vin-Vout` (20 / 22 =
+Wait 10 s, then `status` and read the log. Expected: converter stays off, log `START blocked: minpulse-M` (20 / 22 =
 0.91 > `M_start`). In PSU mode the setpoint counts, not only the present `V_out`.
 
 Korad 25.0 V (20 / 25 = 0.80 < `M_start`). Expected: converter starts, `V_out` settles at 20.0 V, `I_out` ≈ 0.09 A
@@ -128,8 +128,11 @@ dc 1500
 command script with `sensor` after 3 s, until the converter stops. Use `pwm-dump` to confirm each `dc` landed.
 
 Expected: the converter stops with `... at the LS min pulse ratio limit, shutdown` and `backoff 5s [minpulse-M]` when
-`V_out/V_in` (averaged readings) reaches `M_stop` (≈ 19.9 V at 23.0 V in). It stays off (manual duty does not restart
-by itself). End with `dc 0`.
+`V_out/V_in` (averaged readings) reaches `M_stop` (≈ 19.9 V at 23.0 V in). After the 5 s backoff the manual duty
+restarts by itself only once `V_out` has decayed below `M_start·V_in` (≈ 19.5 V at 23.0 V): R_L drains the output
+capacitors, so expect a restart, a ramp back to the commanded duty and another stop, a few seconds apart, until
+`dc 0`. Each restart must happen below `M_start·V_in` (read `V_out` in the `sensor` line just before the restart);
+a restart above it is a failure. Send `dc 0` within 30 s of the first stop.
 
 Repeat once at Korad 26.0 V (stop at ≈ 22.5 V out).
 
@@ -151,7 +154,7 @@ Repeat once at Korad 26.0 V (stop at ≈ 22.5 V out).
 - Step 2: no stop; limiter index 0 below the floor; `V_out/V_in` within ±0.01 of `M_start` there; `I_out` never below
   −0.05 A; `V_in` never more than 0.2 V above the Korad setpoint (no pumping into the input).
 - Step 3: stop line with `minpulse-M` at a read ratio within ±0.005 of the computed `M_stop`, within 0.5 s of the
-  crossing step; no `Reverse I` or `revI-ewm` line before it.
+  crossing step; no `Reverse I` or `revI-ewm` line before it; no restart while `V_out ≥ M_start·V_in`.
 
 ## Abort criteria (then `dc 0`, then Korad output off)
 
