@@ -76,8 +76,12 @@ so the offset comes from a running regression of the one-minute drops against th
 as slope. The regression needs at least 2 A of spread in the output current before the excess drop and
 the slope are evaluated. A minute that lies off the regression line by half of `wire_p_warn` (a step)
 doesn't enter it, and nothing enters it while a level is held, so a fault can't fade into the offset.
-- **Sweep fit.** The output resistance of each qualifying sweep (telemetry `Ro`) against its own
-  baseline. Needs no BMS data. A level needs 3 consecutive qualifying sweeps above its threshold.
+- **Sweep fit.** The median output resistance of the last 5 qualifying sweeps (telemetry `Ro`)
+  against its own baseline, so up to 2 outlying sweeps out of 5 don't move it. Needs no BMS data and
+  at least 3 sweeps since boot. It is graded at most once per 20 charging minutes, so a burst of
+  sweeps within a few minutes counts once. A level needs 3 consecutive graded values above its
+  threshold, which takes at least 40 charging minutes; a level drops only when all of the last 5
+  sweeps are below.
 
 The slope and the sweep fit are graded at the highest one-minute output current of the last one to
 two charging hours. Any estimate can raise the level. A level drops only after every estimate that

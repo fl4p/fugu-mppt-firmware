@@ -7,6 +7,7 @@
 //     -f <mOhm>@<unix s>   inject a series resistance from that time on
 //     -s <unix s>          start the guard here (data before it is skipped)
 //     -p                   prime: learn the baseline over the whole data first, then judge every day
+//     -P <mask>            graded paths (WireGuard::paths): 1 fast, 2 Rc, 4 Ro; default 7
 //     -v                   print level changes and fast-path minutes >= 1.2 W
 //
 // Levels are reported as level(), i.e. as with wire_protect=2 (the learning phase still caps them at warn).
@@ -224,6 +225,7 @@ int main(int argc, char **argv) {
     float dR = 0;
     int64_t faultMs = INT64_MAX, startMs = 0;
     bool prime = false;
+    uint8_t paths = 7;
     int a = 1;
     for (; a < argc && argv[a][0] == '-'; ++a) {
         if (!strcmp(argv[a], "-f") && a + 1 < argc) {
@@ -232,10 +234,11 @@ int main(int argc, char **argv) {
             faultMs = atoll(strchr(s, '@') + 1) * 1000;
         } else if (!strcmp(argv[a], "-s") && a + 1 < argc) startMs = atoll(argv[++a]) * 1000;
         else if (!strcmp(argv[a], "-p")) prime = true;
+        else if (!strcmp(argv[a], "-P") && a + 1 < argc) paths = (uint8_t) atoi(argv[++a]);
         else if (!strcmp(argv[a], "-v")) g_verbose = true;
         else { fprintf(stderr, "bad option %s\n", argv[a]); return 2; }
     }
-    if (a >= argc) { fprintf(stderr, "usage: %s [-f mOhm@unixS] [-s unixS] [-p] [-v] datadir...\n", argv[0]); return 2; }
+    if (a >= argc) { fprintf(stderr, "usage: %s [-f mOhm@unixS] [-s unixS] [-p] [-P mask] [-v] datadir...\n", argv[0]); return 2; }
     for (; a < argc; ++a) load(argv[a]);
     auto byT = [](auto &x, auto &y) { return x.t < y.t; };
     std::sort(mp.begin(), mp.end(), byT);
@@ -246,6 +249,7 @@ int main(int argc, char **argv) {
 
     WireGuard g;
     g.conf.mode = 2;
+    g.paths = paths;
     if (prime) {
         WireGuard p;
         p.conf.mode = 2;

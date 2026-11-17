@@ -18,15 +18,17 @@ struct WireGuardConf {
  * Output wire-fault guard: compares the output-path resistance against a per-board baseline and
  * grades the excess power ΔR·I² into ok/warn/derate/trip. Three paths: per-frame drop against the
  * baseline Rc/Rb (frame(), judged on 1-min means at Iout >= I_MIN), the slope of those drops
- * against Iout, and the per-sweep Ro (tick()). The voltage offset between converter and BMS drifts,
+ * against Iout, and the sweep Ro (tick()). The voltage offset between converter and BMS drifts,
  * so the fast path takes it from a slow regression of the frame drops against Iout instead of the
  * baseline: an offset carries no current, a resistance shows as slope. Minutes off that regression
- * line by pWarn/2 (steps) don't enter it. The slope and Ro paths are graded at the peak current of
- * the last 1-2 charging hours. A day whose median fast-path ΔR (without BMS: Ro) is 2·drMin above
- * baseline warns regardless of current, never more. The baseline is the median of up to DAYS
- * accepted day medians; a day's median above baseline + drMin is rejected. Freshness ages in
- * charging minutes, so a night neither releases nor invalidates the last verdict. Trip latches
- * until reset() or reboot.
+ * line by pWarn/2 (steps) don't enter it. The Ro path grades the median of the last RO_MED sweeps
+ * (nothing below RO_MED_MIN), at most once per RO_GAP charging minutes, so a burst of noisy sweeps
+ * can't fill its N_RO history; it releases a level only when all of those sweeps are below. The
+ * slope and Ro paths are graded at the peak current of the last 1-2 charging hours. A day whose
+ * median fast-path ΔR (without BMS: Ro) is 2·drMin above baseline warns regardless of current,
+ * never more. The baseline is the median of up to DAYS accepted day medians; a day's median above
+ * baseline + drMin is rejected. Freshness ages in charging minutes, so a night neither releases nor
+ * invalidates the last verdict. Trip latches until reset() or reboot.
  * ioutCap() and tripped() may be read from another core; everything else is single-core.
  */
 class WireGuard {
@@ -39,6 +41,10 @@ public:
     static constexpr float OVER_DERATE = 1.25f; // derated but Pw still above this · pDerate -> trip
     static constexpr uint8_t N_FAST = 5, N_RC = 30, N_RO = 3, MIN_FRAMES = 5;
     static constexpr uint16_t STALE_FAST = 15, STALE_RC = 60, STALE_RO = 360; // [charging minutes]
+    // Ro: median window [sweeps], fewest sweeps graded, [charging minutes] between graded values.
+    // RO_GAP > RO_MED sweeps at the fastest rate seen (~2 min), so graded values share no sweeps.
+    static constexpr uint8_t RO_MED = 5, RO_MED_MIN = 3;
+    static constexpr uint16_t RO_GAP = 20;
     static constexpr uint32_t LOWER_S = 1800, DAY_SAMPLE_S = 900, NIGHT_S = 3600;
     static constexpr uint32_t DAY_MIN_S = 12 * 3600, DAY_MAX_S = 36 * 3600;
     static constexpr uint16_t UNV_CHARGE_MIN = 30; // a charging day: this much time at Iout >= I_MIN
@@ -191,18 +197,20 @@ private:
     };
 
     Blob h{VER, 0, 0, 0, 0, 0, 0, 0, NONE, NONE, {}, {}, {}, {}};
-    bool dirty = false;
+    bool dirty = false, roNew = false;
     float bRc = NAN, bA = NAN, bRb = NAN, bRo = NAN;
 
     std::atomic<float> cap{NAN};
     std::atomic<bool> trip{false};
     uint8_t lvl = Ok, rbLvl = 0, overDerate = 0;
-    uint32_t belowS = 0, rbBelowS = 0;
+    int16_t roBuf[RO_MED]{}; // last sweeps, 10 µΩ
+    uint8_t roDown = Ok;     // release grade of the Ro path, from the highest sweep in roBuf
+    uint8_t roK = 0;         // sweeps seen, wraps RO_MED..2·RO_MED-1
+    uint32_t belowS = 0;
 
     Path fast{STALE_FAST}, rcP{STALE_RC}, roP{STALE_RO}, rbP{STALE_RC};
-    float rcIn = NAN, aIn = NAN, rbIn = NAN, roIn = NAN;
-    uint32_t roSeen = 0;
-    bool roNew = false;
+    float rcIn = NAN, aIn = NAN, rbIn = NAN;
+    uint32_t roSeen = 0, rbBelowS = 0;
 
     // frame sums of this minute, and their forgetting sum over minutes: 1, i, i², dv, i·dv, ib, i·ib
     float ms[7]{};
@@ -271,9 +279,11 @@ private:
     }
 
     void onRo(float ro) {
-        roIn = ro;
+        const int16_t v = q(ro, 1e5f);
         if (nDRo == DAY_N) { compact(dRo, nDRo); nDRo /= 2; }
-        dRo[nDRo++] = q(ro, 1e5f);
+        dRo[nDRo++] = v;
+        roBuf[roK % RO_MED] = v;
+        if (++roK == 2 * RO_MED) roK = RO_MED;
         roNew = true;
     }
 
@@ -358,9 +368,13 @@ private:
         std::fill(ms, ms + 7, 0.f);
 
         // a sweep before the first charging minute (boot sweep) waits for a reference current
-        if (roNew && (!std::isfinite(bRo) || iRef() >= I_MIN)) {
+        if (roNew && roK >= RO_MED_MIN && (!roP.has || cm - roP.cm >= RO_GAP) &&
+            (!std::isfinite(bRo) || iRef() >= I_MIN)) {
             roNew = false;
-            if (paths & 4) slow(roP, roIn - bRo, iRef());
+            const uint8_t n = std::min(roK, RO_MED);
+            if (paths & 4) slow(roP, median(roBuf, n) / 1e5f - bRo, iRef());
+            const float hi = *std::max_element(roBuf, roBuf + n) / 1e5f - bRo;
+            roDown = gradeOf(hi * iRef() * iRef(), hi, HYST);
         }
         if (op && sep && (paths & 2)) slow(rcP, r - rcBase(), iRef());
         // Rb only up to what the excess drop supports, so an R1/R2 trade-off alone can't warn
@@ -383,7 +397,10 @@ private:
             uint8_t down = Ok;
             bool any = false;
             for (auto *p: {&fast, &rcP, &roP})
-                if (fresh(*p)) { any = true; down = std::max(down, gradeOf(p->pw, p->dr, HYST)); }
+                if (fresh(*p)) {
+                    any = true;
+                    down = std::max(down, p == &roP ? roDown : gradeOf(p->pw, p->dr, HYST));
+                }
             if (!any || down >= lvl) belowS = 0;
             else if (!belowS) belowS = nowS;
             else if (nowS - belowS >= LOWER_S) { lvl = down; belowS = 0; }

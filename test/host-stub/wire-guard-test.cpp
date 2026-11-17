@@ -31,6 +31,10 @@ struct Sim {
     float ipk = 28.f, flat = 0.8f, sigV = 0.015f;
     float loadAmp = 3.f;
     bool bms = true, rcFeed = true, roFeed = true, honorCap = true;
+    uint32_t sweepS = 1800, nSweep = 0;
+    // sweep outliers of roOut [Ω]: bit (sweep # mod 5) of outMask, or with probability outP
+    float roOut = 0, outP = 0;
+    uint8_t outMask = 0;
     uint32_t t = 0, roStamp = 0;
     float ro = NAN, prevI = NAN;
     std::mt19937 rng{1};
@@ -84,8 +88,11 @@ struct Sim {
             prevI = i;
         } else prevI = NAN;
 
-        if (roFeed && running && i >= 3 && t % 1800 == 0) {
+        if (roFeed && running && i >= 3 && t % sweepS == 0) {
             ro = rcDay + fr + rb + fb + rbat + 0.001f * std::sin((float) t / 9000.f) + nro(rng);
+            if ((outMask >> (nSweep % 5) & 1) || (outP > 0 && std::uniform_real_distribution<float>()(rng) < outP))
+                ro += roOut;
+            ++nSweep;
             roStamp = t;
         }
         const float rcv = rcFeed ? w.own(t) : NAN;
@@ -453,6 +460,85 @@ static void testKnownBad() {
     CHECK(b.maxEff == 0, "3-minute blip raised level %u", b.maxEff);
 }
 
+// sweeps every 2 min (fry 11-14: ~30/h), Ro path only
+static void testRoNoise() {
+    printf("Ro path: sweep bursts, median + spacing\n");
+    struct C { const char *n; uint8_t mask; float p; } cases[]{
+        {"2 of every 5 sweeps +12 mOhm", 0b00011, 0},
+        {"20 % random +12 mOhm", 0, 0.2f},
+    };
+    for (auto &c: cases) {
+        Sim s{2};
+        s.sweepS = 120;
+        s.roOut = 0.012f;
+        s.runUntil(ON);
+        s.g.paths = 4;
+        s.outMask = c.mask;
+        s.outP = c.p;
+        s.runUntil(ON + 3 * DAY);
+        printf("  %-30s maxLvl=%u Ro fresh=%d\n", c.n, s.maxLvl, s.g.roPath().fresh);
+        CHECK(s.maxLvl == 0, "%s raised level %u", c.n, s.maxLvl);
+    }
+    for (int noisy = 0; noisy < 2; ++noisy) { // +15 mOhm at 15 A: 3.4 W
+        Sim s{2};
+        s.sweepS = 120;
+        s.ipk = 15.f;
+        s.roOut = -0.012f; // outliers low: they must not hide the step either
+        s.runUntil(ON);
+        s.g.paths = 4;
+        s.outP = noisy ? 0.2f : 0;
+        s.faultT = ON;
+        s.dRc = 0.015f;
+        s.runUntil(ON + DAY);
+        char name[48];
+        snprintf(name, sizeof name, "+15 mOhm at 15 A%s", noisy ? ", 20 % low" : "");
+        printRun(name, s);
+        CHECK(s.maxEff == 1, "%s: want warn, got %u", name, s.maxEff);
+        CHECK(s.det(1) >= 2 * WireGuard::RO_GAP && s.det(1) <= 90, "%s: warn after %.1f min", name, s.det(1));
+    }
+    {   // repaired: the Ro path alone releases once all sweeps of its window are low
+        Sim s{2};
+        s.sweepS = 120;
+        faultRun(s, 0.006f, false, false, true);
+        CHECK(s.maxLvl == 2 && s.g.level() >= 1, "Ro +6 mOhm: max %u now %u", s.maxLvl, s.g.level());
+        s.dRc = 0;
+        s.runUntil(s.t + DAY);
+        printf("  Ro +6 mOhm repaired: lvl=%u\n", s.g.level());
+        CHECK(s.g.level() == 0, "Ro-only derate did not release after repair");
+    }
+    printf("  monotonic, Ro only, 2-min sweeps, 0..100 mOhm: ");
+    uint8_t prev = 0;
+    for (int mo: {0, 2, 4, 6, 8, 10, 15, 20, 30, 50, 100}) {
+        Sim s{2};
+        s.sweepS = 120;
+        faultRun(s, (float) mo * 1e-3f, false, false, true);
+        printf("%u", s.maxLvl);
+        CHECK(s.maxLvl >= prev, "+%d mOhm gave %u < %u", mo, s.maxLvl, prev);
+        if (mo == 100) CHECK(s.g.tripped() && s.det(3) <= 90, "+100 mOhm: trip after %.1f min", s.det(3));
+        prev = s.maxLvl;
+    }
+    printf("\n");
+    {   // fewer than RO_MED_MIN sweeps: no Ro value, unverified rather than ok
+        Sim s{2};
+        s.bms = s.rcFeed = false;
+        s.sweepS = 120;
+        s.runUntil(2 * DAY + 8 * 3600);
+        const auto b = s.g.blob(); // reboot with a baseline
+        s.g.reset();
+        CHECK(s.g.load(&b, sizeof b) && std::isfinite(s.g.baseRo()), "reload");
+        for (uint32_t k = 0; k < WireGuard::RO_MED_MIN; ++k) {
+            const uint32_t n = s.nSweep;
+            while (s.nSweep == n) s.step();
+            s.runUntil(s.t + 60);
+            if (k + 1 < WireGuard::RO_MED_MIN)
+                CHECK(!s.g.roPath().fresh && s.g.wf() == WireGuard::WF_UNVERIFIED, "%u sweeps: Ro fresh %d wf %d",
+                      k + 1, s.g.roPath().fresh, s.g.wf());
+        }
+        CHECK(s.g.roPath().fresh && s.g.wf() == 0, "%u sweeps: Ro fresh %d wf %d", WireGuard::RO_MED_MIN,
+              s.g.roPath().fresh, s.g.wf());
+    }
+}
+
 static void testPersist() {
     printf("blob round trip\n");
     Sim s{2};
@@ -481,6 +567,7 @@ int main() {
     testRb();
     testModes();
     testKnownBad();
+    testRoNoise();
     testPersist();
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail != 0;

@@ -313,11 +313,69 @@ day, never cap); day warning from Ro without BMS, cleared after repair, persiste
 unverified at boot and after 2 days of lost data while charging; `Pw` absent 3 min after data stops.
 
 Open:
-- The `Ro` path reached 4.1 W (7-day baseline) and 5.8 W (one-afternoon baseline) on 11-14 in the
+- ~~The `Ro` path reached 4.1 W (7-day baseline) and 5.8 W (one-afternoon baseline) on 11-14 in the
   replay. It did not warn (3 consecutive qualifying sweeps needed), but on 11-14 there were 30 sweeps
   within one hour (10:01–10:59), so 3 consecutive sweeps cover only a few minutes. The replay's sweep
   fits are noisier than the device's (device `Ro` 20.3–23.0 mΩ that day). Consider spacing or a
-  median over sweeps before `wire_protect=2`.
+  median over sweeps before `wire_protect=2`.~~ Done 2026-11-17, below.
 - The device is still learning (since 11-12) with a baseline of one partial afternoon; the new code
   keeps the blob layout, so the learned days carry over.
 - Field check of the new fast path over high-current days before `wire_protect=2`.
+
+## Ro path: median and spacing (2026-11-17)
+
+Host-tested and replayed, not deployed.
+
+- Each qualifying sweep enters a ring of the last `RO_MED` = 5 sweeps (int16, 10 µΩ, as the day
+  buffers). The graded value is their median against `Ro_base`, so 2 outliers in 5 don't move it,
+  while a real shift does once 3 of 5 sweeps carry it.
+- A graded value enters the `N_RO` = 3 history at most once per `RO_GAP` = 20 charging minutes; sweeps
+  in between only enter the ring. 20 minutes is longer than 5 sweeps take at the fastest rate seen
+  (~2 min apart on 11-14), so successive graded values share no sweep, and a level needs the median
+  above threshold over at least 40 charging minutes. Nights don't count (charging minutes).
+- Below `RO_MED_MIN` = 3 sweeps since boot there is no `Ro` value: the path is not fresh, `wf` stays
+  unverified unless another path has data. The boot-sweep rule (wait for a reference current) and
+  `STALE_RO` = 360 charging minutes since the last graded value are unchanged.
+- Release is asymmetric: the `Ro` path counts as below only when the highest of its 5 sweeps is below
+  75 % of the thresholds (`roDown`). Without that, a lagging median (fault in 1–2 of 5 sweeps) could
+  release a level raised by the fast path once the fast path goes stale.
+- `sizeof(WireGuard)` 696 → 696 (host and xtensa-esp32s3; `roIn` dropped, members moved into padding),
+  `sizeof(Blob)` 124 unchanged.
+
+Replay fry 11-04..11-16 (`etc/wire_replay_fetch.py`), max `Ro`-path Pw per day [W], before → after:
+
+| day | natural learning | primed baseline (`-p`) |
+|---|---|---|
+| 11-05 | 0.33 → 0.19 | 0.53 → 0.33 |
+| 11-06 | 0.28 → 0.28 | 0.42 → 0.50 |
+| 11-07 | 0.14 → −0.06 | 0.21 → −0.01 |
+| 11-09 | 0.96 → 0.04 | 0.99 → 0.07 |
+| 11-10 | 0.03 → −0.29 | 0.03 → −0.26 |
+| 11-12 | 1.01 → 0.42 | 1.01 → 0.42 |
+| 11-13 | 0.28 → −0.22 | 0.30 → −0.20 |
+| 11-14 | 4.11 → 0.23 | 4.11 → 0.23 |
+| 11-15 | 1.34 → 0.77 | 1.32 → 0.76 |
+| 11-16 | 1.00 → 0.67 | 1.00 → 0.67 |
+
+No level in either. From the deploy time (one-afternoon baseline, `-s` 11-12 14:12) the `Ro` path
+max drops from 5.71 to 1.90 W on 11-14 and from 2.71 to 2.15 W on 11-15 (that baseline is 3.5 mΩ low
+on `Rc`); still no level.
+
+Injected series resistance, `Ro` path only (`-P 4`), minutes to warn / derate / trip, before → after:
+
+| onset | +6 mΩ | +15 mΩ | +100 mΩ |
+|---|---|---|---|
+| 11-14 09:00 | 117 / – / – → 353 / – / – | 62 / 98 / 383 → 145 / 178 / 1523 | 62 / 62 / 62 → 145 / 145 / 145 |
+| 11-12 10:00 | 2864 / – / – → 252 / – / – | 81 / 81 / 3203 → 206 / 206 / 4343 | |
+
+On 11-14 the +15 mΩ warning comes 104 charging minutes after the onset (sweeps at 09:13, 09:43, then
+from 10:01; graded at 10:16, 10:49, 11:25). +6 mΩ is at the warn threshold at the day's currents, so
+the noise of single sweeps made it look faster before; on 11-12 the median finds it earlier. Trips
+come later because 3 graded values must lie above 8 W, i.e. ≥ 23 A at +15 mΩ. With all paths the fast
+path still warns +15 mΩ after 39 min (11-14) and 69 min (11-12).
+
+Host test: sweeps every 2 min with 2 of every 5 or 20 % random sweeps +12 mΩ raise nothing (the old
+code derates on the 20 % case); +15 mΩ at 15 A warns after 45 min, also with 20 % low outliers;
+Ro-only monotonic over 0..100 mΩ; a repaired Ro-only derate releases; 1–2 sweeps after a reboot leave
+`wf` unverified. With the simulator's 30-min sweeps the Ro-only +6/+15 mΩ steps take 120 instead of
+60 min (3 sweeps to move the median, then 3 graded values).
