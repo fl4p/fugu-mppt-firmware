@@ -221,6 +221,19 @@ void test_reconnect_resends_table() {
     assert(frames(g_pubs[n].second)[0] == 2);
 }
 
+void test_oversized_frame_flushes() {   // a big (table) frame must ship the batch, not be dropped
+    reset();
+    assert(!teleMqttLease(60));
+    g_pubs.clear();
+    const std::string small(300, 'a'), big(500, 'b');
+    teleMqttEnqueue(small); teleMqttEnqueue(small);   // 600 B buffered, below the flush threshold
+    teleMqttEnqueue(big);                             // 1100 B would exceed CAP
+    assert(g_pubs.size() == 1 && g_pubs[0].second.size() == 601);
+    assert(teleMqttDropped() == 0);
+    run(600);                                         // the big frame goes out with the next flush
+    assert(g_pubs.size() >= 2 && g_pubs[1].second.find(big) != std::string::npos);
+}
+
 void test_lease_cap() {
     reset();
     assert(!teleMqttLease(5000));
@@ -243,6 +256,7 @@ int main(int argc, char **argv) {
             {"service_stopped", test_service_stopped},
             {"reconnect_resends_table", test_reconnect_resends_table},
             {"lease_cap", test_lease_cap},
+            {"oversized_frame_flushes", test_oversized_frame_flushes},
     };
     for (auto &t: tests)
         if (argc < 2 || std::strstr(t.name, argv[1])) {

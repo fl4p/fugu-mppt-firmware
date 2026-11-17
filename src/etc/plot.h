@@ -67,7 +67,7 @@ struct Plot {
     // RT
     void add(float u, float d, float power, float uMax) {
         auto b = collecting.load(std::memory_order_acquire);
-        if (!b) return;
+        if (!b || !std::isfinite(u) || !std::isfinite(power)) return;
         addPoint(b->p[0], b->n[0], u, power, uMax);
         addPoint(b->p[1], b->n[1], d, power, 1.0f);
     }

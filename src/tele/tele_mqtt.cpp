@@ -67,8 +67,18 @@ const char *teleMqttLease(uint32_t seconds) {
     return nullptr;
 }
 
+static void flush(time_ms nowMs) {
+    if (buf.size() > 1 && !MQTT.publish(topic.c_str(), buf.data(), buf.size(), 0, false))
+        dropped += buf.size() - 1;
+    buf.assign(1, '\0');
+    lastFlushMs = nowMs;
+}
+
 void teleMqttEnqueue(const std::string &frame) {
     if (!teleMqttActive()) return;
+    // A frame that does not fit ships the batch first: drop-newest would preferentially lose the
+    // largest frames, which are the symbol-table heartbeats a late subscriber needs.
+    if (buf.size() - 1 + frame.size() > CAP && MQTT.isConnected()) flush(lastFlushMs);
     if (buf.size() - 1 + frame.size() > CAP) dropped += frame.size();
     else buf += frame;
 }
@@ -92,10 +102,5 @@ void teleMqttTick(time_ms nowMs) {
         wasConnected = true;
     }
     teleProducePoint();
-    if (buf.size() > 1 && (buf.size() - 1 >= CAP - 128 || nowMs - lastFlushMs > FLUSH_MS)) {
-        if (!MQTT.publish(topic.c_str(), buf.data(), buf.size(), 0, false))
-            dropped += buf.size() - 1;
-        buf.assign(1, '\0');
-        lastFlushMs = nowMs;
-    }
+    if (buf.size() > 1 && (buf.size() - 1 >= CAP - 128 || nowMs - lastFlushMs > FLUSH_MS)) flush(nowMs);
 }
