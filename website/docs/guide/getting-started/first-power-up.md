@@ -54,7 +54,8 @@ With only the input supply connected and the output open, check the following re
 - [ ] Current readings sit near zero. The sampler calibrates the zero-current offset at start.
 - [ ] `status` shows the limits you configured.
 - [ ] While idle the log names what blocks a start, for example `START blocked: Vin-Vout (Vin=12.4 Vout=12.9 …)`. A buck
-  needs Vin above Vout + 1 V; a boost needs Vin below Vout + 1 V.
+  needs Vin above Vout + 1 V and above about 1.18 × Vout (the LS minimum pulse limit, see
+  [Diode Emulation](../../internals/diode-emulation.md#ls-minimum-pulse-near-unity-ratio)); a boost needs Vin below Vout + 1 V.
 
 Then connect a load or a second supply/battery simulator on the output and let the converter start. Watch `status`
 and the log. The firmware logs every protection trip with its reason.

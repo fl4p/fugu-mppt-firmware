@@ -753,6 +753,72 @@ This asymmetry is why the `M` bias leans toward the safe (early) side and why th
 on a buck above `M ≈ 0.99`, wherever `pwmRectMin` exceeds the ideal window, and wherever the
 offset over-corrects, the commanded LS window is longer than ideal and some reverse current flows.
 
+### LS minimum pulse near unity ratio
+
+A buck issues at least `pwmRectMin` (the bootstrap refresh `boot_refresh_ns` plus the HS→LS
+dead time, `t_min`) of LS on-time every period, also in DCM and with sync rect off. When the
+ideal window is shorter, the pulse drives the coil current negative by `V_o·δ/L`, where `δ` is
+the part of the pulse after the zero crossing. After the LS turns off, that current drains
+through the HS body diode into the input at `(V_i − V_o)/L`, which takes `δ·M/(1 − M)`. The
+drain fits into the period only while
+
+$$
+\frac{t_{min}}{1 - M} \le T \quad\Leftrightarrow\quad M \le M_c = 1 - \frac{t_{min}}{T},
+$$
+
+independent of the HS on-time. Above `M_c` the reverse current carries over into the next
+period and grows by `V_i·T·(M − M_c)/L` per period: the converter runs as a boost from the
+output into the input. With a source that can sink current (a battery bus, a sinking supply)
+the mean current settles only where the loop resistance limits it, `≈ −V_i·(M − M_c)/R`,
+which is tens of amps a few percent above `M_c`. One percent above `M_c` the current
+falls by about 4 A per millisecond (`V_i` 29 V, `L` 76 µH), so no sensor-based reaction can
+follow the pump once it runs. A panel limits it by rising in voltage until `M` is back at `M_c`.
+With the defaults (`boot_refresh_ns` 2 µs at 39 kHz) `t_min/T` is 7.8 to 8.5 % depending on
+the dead time, so `M_c` ≈ 0.915–0.922.
+
+Below `M_c` the pulse's reverse current drains within the period. The mean output current
+is still negative when the pulse exceeds twice the ideal window, i.e. at
+`t_HS < t_min·M/(2(1 − M))`; that current is bounded, about `V_o·t_min²/(2·L·T·(1 − M))`
+(0.2–0.3 A on a 50–80 µH coil near `M` 0.89), and does not grow.
+
+The firmware keeps a buck in DCM (diode emulation, not forced PWM) below `M_c` from the
+measured voltages:
+
+| | ratio `V_out/V_in` (readings) | defaults, dead time 0 / 200 ns |
+|---|---|---|
+| stop | `M_stop = (1 − (t_min + T/32)/T) · 0.99/1.01` | 0.873 / 0.866 (`V_in` < 1.146 / 1.155 `V_out`) |
+| start, `V_in` floor | `M_stop − 0.02` | 0.853 / 0.846 (`V_in` > 1.172 / 1.182 `V_out`) |
+
+`T/32` covers the ring current that a DCM period leaves in the coil at HS turn-on (it moves
+the zero crossing by up to `√(LC)` of the switch node), and the factor `0.99/1.01` the
+worst-case ratio error of two voltage readings with 1 % error each (`V_out` read low,
+`V_in` read high). With both at their limit the highest true ratio the stop admits is
+0.890 / 0.884, 0.03 below `M_c`.
+
+- **Start:** a buck starts only below the start ratio, in addition to `V_in > V_out + 1 V`
+  (start-block reason `Vin-Vout`). In PSU mode the larger of `V_out` and the setpoint counts.
+- **`V_in` floor:** while the converter is in DCM, the input-voltage controller holds
+  `V_in ≥ V_out / (M_stop − 0.02)` (in addition to `limits.conf::vin_min`). A sweep that
+  reaches the floor ends there like at any other limit, and the tracker stays on the floor
+  while the panel's MPP is below it. The floor appears as limiter index 0 (`Vin`). The
+  input-voltage controller's derivative memory is reset when the floor comes or goes, so the
+  setpoint step is not taken as a voltage change.
+- **Stop:** the converter stops with a 5 s backoff (reason `minpulse-M`) when, in DCM,
+  either the ratio reaches `M_stop`, or it is above the start ratio while the averaged output
+  current is below −0.05 A (a source the floor cannot move). Both are evaluated on the
+  averaged voltages and need 4 consecutive fresh `V_out` samples. After the stop, the start
+  ratio applies again.
+
+In CCM the coil current covers the LS window and none of this applies; a converter in CCM
+near unity ratio keeps running until the current drops into DCM.
+
+Limits of the protection: the margin between `M_stop` and `M_c` is about 1 V of `V_in` at a
+27 V output. A stiff source that steps across it faster than the averaged readings follow
+(about 10 samples of the voltage filter plus 4 samples) pumps until the stop, at the
+resistive level above. The bounded negative current at short HS times below the start ratio
+remains (a sweep starting from zero duty passes through it). A boost has no rect minimum
+pulse (`pwmRectMin` is 0) and is not affected.
+
 ## Boost converter
 
 The roles flip (the control switch is LS, the rectifier is HS), but the derivation is the same.

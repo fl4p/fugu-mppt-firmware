@@ -242,7 +242,7 @@ seconds and count `shutdown` / `Converter enabled` lines.
 ### 6.1 startCondition gating
 - Verify no start when: NTC above `temp_max − 3` or MCU at/above `temp_max − 3` (87 °C with
   `temp_max=90`); supply < 9.5 V; or the Vin/Vout polarity is wrong
-  for the topology (buck needs Vin > Vout+1; boost needs Vin < Vout+1).
+  for the topology (buck needs Vin > Vout+1 and Vin > ~1.18 Vout; boost needs Vin < Vout+1).
 
 ### 6.2 Cold/low-light start
 - Ramp input from below threshold; confirm clean first sweep once `startCondition` is met.

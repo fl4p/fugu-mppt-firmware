@@ -31,7 +31,7 @@ fails setup at boot with its replacement, for example
 |----------------------------|------|-------|---------|---------------------------------------------------|
 | `hv_max`                   | V    | float | —       | Maximum HV-side voltage before protection cutout       |
 | `lv_max`                   | V    | float | —       | Maximum LV-side voltage before protection cutout       |
-| `vin_min`                  | V    | float | —       | Input-voltage regulation floor. In MPPT/PSU/PV modes the Vin controller reduces duty to keep Vin ≥ `vin_min`. Not a trip, and not applied in manual PWM. The hard supply undervoltage stop is fixed at ~9 V. Required (no usable default) |
+| `vin_min`                  | V    | float | —       | Input-voltage regulation floor. In MPPT/PSU/PV modes the Vin controller reduces duty to keep Vin ≥ `vin_min` (a buck in DCM also keeps Vin ≥ about 1.18 × Vout, see [Diode Emulation](../../internals/diode-emulation.md#ls-minimum-pulse-near-unity-ratio)). Not a trip, and not applied in manual PWM. The hard supply undervoltage stop is fixed at ~9 V. Required (no usable default) |
 | `hv_i_max`                 | A    | float | —       | Maximum HV-side current                           |
 | `lv_i_max`                 | A    | float | —       | Maximum LV-side current                           |
 | `iout_short`               | A    | float | —       | Output short-circuit current threshold            |

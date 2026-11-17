@@ -29,7 +29,7 @@ sidebar_position: 1
 | `pwm_sd`                | GPIO | int    | 255     | Gate driver shutdown/DIS pin (HiLi mode); 255 = none |
 | `pwm_in`                | GPIO | int    | —       | Gate driver IN pin (InEn mode)                 |
 | `pwm_en`                | GPIO | int    | —       | Gate driver EN pin (InEn mode)                 |
-| `boot_refresh_ns`       | ns   | float  | 2000    | Min *realized* LS on-time to refresh HS bootstrap cap; `pwm_deadtime_hl_ns` is reserved on top |
+| `boot_refresh_ns`       | ns   | float  | 2000    | Min *realized* LS on-time to refresh HS bootstrap cap; `pwm_deadtime_hl_ns` is reserved on top. Also sets the buck's highest Vout/Vin ratio in DCM ([LS minimum pulse](../../internals/diode-emulation.md#ls-minimum-pulse-near-unity-ratio)) |
 | `pwm_deadtime_ns`       | ns   | float  | 0       | HiLi hardware dead-time (MCPWM), common value for both transitions; 0 = none, and 0 also means the console `dt` command cannot arm it later |
 | `pwm_deadtime_hl_ns`    | ns   | float  | `pwm_deadtime_ns` | HS->LS override (ctrl-off -> rect-on). Hardware RED delay on the rect rising edge; the *realized* gap is one tick less (the ctrl generator spends one tick claiming its dead-time path). 0 leaves the submodule bypassed for the whole boot |
 | `pwm_deadtime_lh_ns`    | ns   | float  | `pwm_deadtime_ns` | LS->HS override (rect-off -> ctrl-on at the period wrap). Reserved in software as `pwmMax = periodTicks - ticks`; the realized band is one tick *wider* (callers cap `cmpLS` at `pwmMax-1`) and it eats commandable duty span |
