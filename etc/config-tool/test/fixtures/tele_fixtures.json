@@ -204,7 +204,7 @@
      "cid": 0,
      "payload": "EQEBAgMABAAAIEIAgMTSlqkz",
      "lines": [],
-     "error": "KeyError"
+     "error": null
     },
     {
      "cid": 0,
@@ -233,7 +233,7 @@
      "lines": [
       "mppt Ui=40 10"
      ],
-     "error": "KeyError"
+     "error": null
     },
     {
      "cid": 0,
@@ -353,9 +353,9 @@
     "mppt,device=flat Ui=40.8522,Uo=27.8993,P=262.336,pwm_duty=2287i,lag=2.05078 1763400007000"
    ],
    "stats": {
-    "records": 4,
+    "records": 5,
     "resyncs": 2,
-    "errors": 2,
+    "errors": 1,
     "bytes": 408,
     "pending": 0
    }
@@ -375,9 +375,9 @@
     "mppt,device=flat Ui=40.9013,Uo=27.4433,P=106.26,pwm_duty=1465i,lag=1.46191 1763400001000"
    ],
    "stats": {
-    "records": 9,
+    "records": 11,
     "resyncs": 0,
-    "errors": 3,
+    "errors": 1,
     "bytes": 544,
     "pending": 0
    }
@@ -446,9 +446,9 @@
     "mppt,device=flat Ui=40.0001,Uo=27.6404,P=7.59934,pwm_duty=1577i,lag=1.05762 1763400059000"
    ],
    "stats": {
-    "records": 38,
+    "records": 41,
     "resyncs": 14,
-    "errors": 15,
+    "errors": 12,
     "bytes": 3319,
     "pending": 0
    }

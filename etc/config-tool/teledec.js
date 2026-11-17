@@ -182,6 +182,21 @@
     // Point[] {meas, tags, fields, types, ts}. Points are appended to `out` as they decode, so a
     // later error keeps the earlier ones (as the Python generator does). `table` (Map SID ->
     // [name, dt]) persists across payloads.
+    // A data frame referencing a SID the table lacks (joined mid-stream, table frame lost) is
+    // skipped rather than aborting the payload: the next table frame may follow in the same batch.
+    function frameDecodable(f, j, table) {
+        const vi = () => { const x = readVarint(f, j); j = x.pos; return x.value; };
+        if (!table.has(vi())) return false;                       // measurement
+        while (j < f.length && f[j] !== 0) { if (!table.has(vi()) || !table.has(vi())) return false; }
+        j++;
+        while (j < f.length && f[j] !== 0) {
+            const e = table.get(vi());
+            if (!e) return false;
+            j += DT_WIDTH[e[1]] || 0;
+        }
+        return true;
+    }
+
     function decodePayload(cid, payload, table, out = []) {
         if (cid === 1) payload = tampDecompress(payload);
         else if (cid !== 0) throw new Error(`unknown compressor id ${cid}`);
@@ -207,6 +222,7 @@
                     table.set(sid, [s.value, peek()]); j++;
                 }
             } else if (ft === 1) {
+                if (!frameDecodable(f, j, table)) continue;   // table not seen yet: skip this frame
                 const p = {meas: sym(vi())[0], tags: {}, fields: {}, types: {}, ts: 0};
                 while (peek() !== 0) { const k = sym(vi())[0]; p.tags[k] = sym(vi())[0]; }
                 j++;
