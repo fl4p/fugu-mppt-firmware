@@ -211,7 +211,7 @@ struct SolarEnergyMeter {
             [](const PersistentState &a, const PersistentState &b) {
                 return std::abs(a.totalEnergy - b.totalEnergy) < 5
                        && a.bootCount == b.bootCount
-                       && std::abs(a.todayEnergy - b.totalEnergy) < 5;
+                       && std::abs(a.todayEnergy - b.todayEnergy) < 5;
             },
             1000 * 60 * 2
     };
@@ -230,7 +230,7 @@ struct SolarEnergyMeter {
             dailyEnergyMeter.restore(stat.todayEnergy, stat.timeLastPower);
             ESP_LOGI("mppt", "Restored: totalE=%.2f boot=%lu dailyE=%.2f",
                      totalEnergy.get(),
-                     stat.bootCount, stat.totalEnergy);
+                     stat.bootCount, stat.todayEnergy);
         }
         commit(true);
     }
