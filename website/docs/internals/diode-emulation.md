@@ -391,14 +391,25 @@ crossing, recovers, and turns into a gain around 1.2× ideal. The converter mode
 field sweeps on an 80 µH board within 3–18 mA rms, including both tails; the model and its
 parameters are described in [vconv.conf](../reference/config/vconv.md#switch-node-ring).
 
+HS also turns on into the ring. The coil current it finds there, up to about `±V_o/Z_0` depending on
+the ring phase, adds to the peak current and moves the zero crossing by that current times `L/V_o`,
+up to `±√(LC)`. The window `(V_i/V_o − 1)·HS` does not contain it. The phase follows the off-time
+after the crossing, `T − HS·V_i/V_o`, so the shift differs at every operating point and no constant
+offset can follow it. In the board models fitted to a SPICE half-bridge bench (76 µH with a 233 kHz
+ring and 51 µH with 320 kHz, at the run's calibration point over `V_i` = 40–78 V) the crossing lies
+between −0.43 and +0.75 µs from the ideal window. Holding the LS past the crossing changes the ring
+current HS turns on into: with a negative ring current the output current bends up at the crossing;
+with a positive one it stays flat past the crossing and bends down only at the clamp onset.
+
 Two consequences follow for the run:
 
-- The bend fit locates where the steep loss starts, between the zero crossing and the clamp onset.
-  Points past the loss minimum pull the fit far early (the full field sweep does not fit at all;
-  truncated two points past the bend it lands within the expected range), which is why the
-  sweep stops one step after the first clear drop and the fit ends at the floor of the first dip. On the ringing model the run learns 11–13 counts before
-  the ideal window against a zero crossing at −35 counts, and the applied offset (after the margin)
-  lands within 4 counts of the crossing.
+- A downward bend fit alone finds the steep loss, between the zero crossing and the clamp onset,
+  and misses an upward bend at the crossing (see *Locating the zero crossing*). Points past the
+  loss minimum pull the fit far early (the full field sweep does not fit at all; truncated two
+  points past the bend it lands within the expected range), which is why the sweep stops one step
+  after the first clear drop and the fit ends at the floor of the first dip. On the ringing model
+  of a full-sun run the run learns 25–30 counts before the ideal window against a zero crossing at
+  −35 counts, and the applied offset (after the margin) lands 10–15 counts before the crossing.
 - An LS longer than the off-time `(1 − V_o/V_i)·T` leaves reverse current in the inductor when
   HS turns on. The converter then runs as a synchronous buck backward from the battery, and the
   reverse current grows by several amperes within a few periods until the reverse-current guard
@@ -425,36 +436,81 @@ that a protection has just lowered. Afterwards HS fades back to the operating po
 from, unless the backflow switch is open (reverse-current guard) or the mode changed; then the
 tracker continues from where the run stopped.
 
-**Locating the zero crossing.** The run fits a line with a downward quadratic bend from `x_0`
-on, `y = c_0 + c_1·d + c_2·min(0, d)² + c_3·max(0, d)²` with `d = x − x_0`, `c_2 ≤ 0` and
-`c_3 < c_2`, and searches `x_0` over the sweep. The line takes any slope of the early side, so
-`x_0` is where the curve starts to bend down, not where it is highest. With a falling early side,
-the maximum sits at the start of the sweep and a peak fit lands far before the crossing (about
-−190 counts on the 80 µH field data, where the bend fit finds −9 and +47).
+**Locating the zero crossing.** A DCM triangle of peak current `p` carries
+`p²·L·V_i/(2·V_o·(V_i − V_o))` per period and ends `p·L/V_o` after HS turns off. This holds
+whatever coil current HS turned on into (to second order) and however long HS really conducted, so
+the measured current places the actual zero crossing `zc` without knowing the ring phase: the run
+uses the mean current of its steps at 0.8–1× ideal (below the crossing), the PWM period and the
+coil inductance of the converter model, `0.95·L0`. Since `zc ∝ √L`, an inductance error of `ε`
+moves `zc` by `ε/2` of the window. In the board models `zc` follows the plant's crossing at the
+calibration point within a spread of 10–20 ns: 40–180 ns early with the model inductance equal to
+the plant's (the ring returns about `C·V_o` per period from the output to the node, which the run
+cannot subtract without the node capacitance), and 25–250 ns late with a model inductance 4% above
+the plant's.
+
+The run then fits a line with a quadratic bend from `x_0` on,
+`y = c_0 + c_1·d + c_2·min(0, d)² + c_3·max(0, d)²` with `d = x − x_0`, and searches `x_0` over the
+sweep. Two bends are fitted: a downward one (`c_2 ≤ 0`, `c_3 < c_2`) over all points up to a dip
+floor (below) and, if the highest of them lies past `zc`, an upward one (`c_3 > max(c_2, 0)`)
+through that point. Each must exceed 10 mA and 4× its residual RMS at the last point, counting
+only the bend it adds to the early side's own curvature; otherwise a concave early side and a
+noise point past `zc` pass as an upward bend. The earlier bend is the crossing in commanded counts.
+The line takes any slope of the early side, so `x_0` is where the curve starts to bend, not where
+it is highest. With a falling early side, the maximum sits at the start of the sweep and a peak
+fit lands far before the crossing (about −190 counts on the 80 µH field data, where the bend fit
+finds −9 and +47).
 
 Past the bend the ring can turn the current back up, and the points of a recovery pull the
 quadratic, and with it `x_0`, early. Once two consecutive points lie at least 10 mA below the
 highest point and a later one rises 10 mA above the lowest point since, the fit uses the points up
-to that lowest one, the floor of the first dip. A dip followed by a recovery smaller than 10 mA is
-fitted in full. Ending at the floor leaves few points past the bend: on a knee followed within 60
-counts by a dip floor and a partial recovery of 4–8 mA, the fit lands between 210 counts before
-and 17 counts after the knee (ending after the recovery instead, 17 to 240 counts before it).
+to that lowest one, the floor of the first dip. An upward bend at the crossing comes before any
+dip and stays in. A dip followed by a recovery smaller than 10 mA is fitted in full. Ending at the
+floor leaves few points past the bend: on a knee followed within 60 counts by a dip floor and a
+partial recovery of 4–8 mA, the fit lands between 210 counts before and 17 counts after the knee
+(ending after the recovery instead, 17 to 240 counts before it).
 
-The run is rejected, and the previous value kept, with fewer than 6 points, no bend (`no knee`:
-the bend at the last point under 10 mA or under 4× the residual RMS) or `|x_0 − ideal| > 2.5 µs`.
-Otherwise the applied offset is `learned − max(125 ns, 0.3·|learned|)`, or
-`learned − max(250 ns, 0.3·|learned|)` when the fit ended at a dip floor, always toward a shorter
-LS. With the larger floor the partial-recovery case above applies at least 23 counts (6.25 ns
-each) before the knee. The margin grows with the offset, because a large offset comes from large
-unmodelled delays; a fixed fraction of `learned` would move toward a longer LS when `learned` is
-negative. The result takes effect at once.
+`zc − ideal` contains the ring current at HS turn-on, which no constant offset can follow, but also
+the extra charge of an HS that conducts longer than commanded and half of a voltage sensing error
+(`zc` depends half as strongly on `V_o` as the window does). The run therefore learns
+`learned = x_0 − max(zc, ideal)`: the delays of driver, gate and sensing between the commanded and
+the real LS turn-off, rounded early. An HS that conducts `τ` longer than commanded moves the real
+crossing by `τ·V_i/V_o`, of which the result contains about `τ`, which leaves the LS early.
+
+The run is rejected, and the previous value kept, with fewer than 6 points, no step at 0.8–1×
+ideal, `|zc − ideal| > 2.5 µs` (`charge model`: `L0` or the current reading far off), no bend
+(`no knee`: the bend at the last point under 10 mA or under 4× the residual RMS) or
+`|x_0 − max(zc, ideal)| > 2.5 µs` (`implausible`). Otherwise the applied offset is
+`learned − max(125 ns, 0.3·|learned|)`, or `learned − max(250 ns, 0.3·|learned|)` when the fit
+ended at a dip floor, at most +125 ns. With the larger floor the partial-recovery case above
+applies at least 23 counts (6.25 ns each) before the knee. The margin grows with the offset,
+because a large offset comes from large unmodelled delays; a fixed fraction of `learned` would move
+toward a longer LS when `learned` is negative. The result takes effect at once.
+
+In the board models (no driver or gate delay, so the true offset is 0) over `V_i` = 1.4–2.9·`V_o`,
+`I_sc` 3 and 6 A, two fill factors and three noise seeds, the run learns a mean of −0.29 to +0.34 µs
+per model with a spread (standard deviation) of 0.15–0.26 µs and applies −1.25 to +0.14 µs.
+Referenced to the ideal window alone with a downward bend only, the same runs learn with a spread
+of 0.39–0.46 µs, and up to +1.5 µs late below `V_i = 2·V_o`, where the current bends up at the
+crossing.
+
+**Late results.** A late result is applied up to +125 ns. A later LS turn-off than the zero
+crossing builds reverse current at `V_o/L` per second; near `D = M` the 2% ratio margin of the
+diode-emulation window (about `0.02·T` = 0.5 µs at 39 kHz) is all that keeps the LS from filling the
+off-time, and an LS that does so runs the converter backward from the battery (see *Switch-node
+ringing*). In the board models with exact voltage readings, an offset of +125 ns over the DCM range
+(`V_i` = 31–80 V, `V_o` = 26.8 and 29.2 V) leaves at most 0.09–0.13 A of reverse current at LS
+turn-off (0.2–0.7 µJ in the coil per period) and up to 11 mW of extra loss; +250 ns leaves
+0.19–0.24 A; at +375 ns the reverse current carries into the next period near `D = M` (0.4–0.9 A)
+and at +500 ns it runs away to 2.6–3.9 A. With voltage readings that use up the 2% margin, +125 ns
+leaves 0.29–0.35 A (offset 0: 0.25–0.27 A) without carry-over. The +125 ns limit takes a quarter of
+the margin.
 
 **Bounds.** Above `V_i = 2·V_o` the reverse current must first lift the switch node to `V_i`
-before it is lost, which puts the knee after the zero crossing by a lag that the node capacitance
-sets. A result whose applied offset would be positive (`learned` more than the margin past ideal)
-is therefore a bound, not a measurement: the run applies the shorter of 0 and the offset in use,
-never a positive one, and never a value that moves an active negative offset later. A measured
-negative offset stays as it is and keeps its state. Otherwise the value is stored with
+before it is lost, which can put the downward bend after the zero crossing by a lag that the node
+capacitance sets. Driver and gate delays explain tens of nanoseconds. A result whose applied
+offset would exceed +125 ns is therefore a bound, not a measurement: the run applies the shorter of
++125 ns and the offset in use, and never moves an active offset later. A shorter measured offset
+stays as it is and keeps its state. Otherwise the value is stored with
 `rect_offset_cal=2`, which `rect-cal status` shows as `bound` also after a reboot. Writing it to `coil.conf` (`rect_offset_ns`, `rect_offset_drv`, `rect_offset_cal`) waits
 until the converter has been off without interruption for 10 s with a valid output-power reading
 below 1 W, typically at night: a flash write that erases a sector stalls both cores, including the
