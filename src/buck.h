@@ -88,6 +88,8 @@ class SynchronousConverter {
     static constexpr float MinVoltageRatio = 1e-2f;
     static constexpr float MaxBoostRatio = 10.f;
     static constexpr float UnityRatioMargin = 1e-2f;
+    // DCM: late LS conduction (fraction of the period) whose drain through the HS body diode must end before the next HS
+    static constexpr float LateDrainBudget = 0.02f;
 
 
 #if HAVE_MCPWM
@@ -1323,12 +1325,16 @@ public:
             // A late offset leaves reverse current that drains through the ctrl body diode in off/ratio. Near D = M a
             // reading error eats the ratio margin: keep LS off T/32 plus that drain before the next HS (else forced CCM,
             // reverse current), and none where the drain exceeds 4x the offset (ratio < 0.25, buck M > 0.8)
-            if (rectOnOffset > 0) {
-                const float r = pwmRectRatioDCM;
+            const float r = pwmRectRatioDCM, comp = (float) (driverPwmMax - pwmCtrl - 1);
+            if (rectOnOffset > 0)
                 ideal = r < 0.25f ? base
-                                  : std::min(ideal, std::max(base, (float) (driverPwmMax - pwmCtrl - 1 - (driverPwmMax >> 5))
-                                                                   - (float) rectOnOffset / r));
-            }
+                                  : std::min(ideal, std::max(base, comp - (float) (driverPwmMax >> 5) - (float) rectOnOffset / r));
+            // The window itself: a ratio reading error past the WCE margin, or the ring current at HS turn-on, puts the
+            // zero crossing before LS off. Leave the drain of LateDrainBudget*T of late conduction (budget/ratio) before
+            // the next HS, else the reverse current carries over and near D = M the mean current turns negative.
+            // Binds only near D = M; the divide runs only there.
+            const float late = (float) driverPwmMax * LateDrainBudget;
+            if (r > 0 && r * (comp - ideal) < late) ideal = comp - late / r;
             float v = ideal + rectDitherErr;
             long ls = std::lround(v);
             if (advanceDither) rectDitherErr = v - (float) ls;

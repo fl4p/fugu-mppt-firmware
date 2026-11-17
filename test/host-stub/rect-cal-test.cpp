@@ -35,6 +35,7 @@ inline void digitalWrite(uint8_t, int) {}
 #include "../../src/rect_cal.h"
 #include "../../src/sim/vconv.h"
 #include "rect_cal_plant.h"
+#include "plant_boards.h"
 
 void assertPinState(uint8_t, bool, const char *, bool) {}
 static bool g_quiet = true, g_trace = false, g_verbose = false;
@@ -271,6 +272,45 @@ static void testLateGap() {
     CHECK(acts == 0 && dcmLs > 10, "late offset applied at M_WCE 0.885 on %d of %d DCM points", acts, dcmLs);
     printf("late gap: %d points, %d into the complementary clamp, min idle after a late LS %d ct (T/32 = %d)\n", n, clamp,
            minGap, gap);
+}
+
+// Offset 0, Vout read 2 % low (uses up the WCE margin) near D = M on the fry plant (ring at HS turn-on): the window's
+// late conduction must drain before the next HS. The rule without the drain gap leaves the mean output current negative
+// with the LS above its min pulse (reverse current carried into the next period).
+static void testDrainGap() {
+    const PlantBoard b = *plantBoard("fry");
+    char l0[16]; snprintf(l0, sizeof l0, "%g", b.l0Conf);
+    const char *l0Was = g_L0; g_L0 = l0;
+    const float vo = 26.8f;
+    int n = 0, neg = 0, cut = 0; float worst = 0;
+    for (float vi: {29.2f, 30.f, 32.f, 36.f}) {
+        const int top = (int) (vo / vi * PM);
+        for (int hs = top - 150; hs <= top; hs += 3) {
+            SynchronousConverter c{}; initConv(c);
+            c.enableSyncRect(true);
+            c.pwmPerturb((int16_t) hs);
+            for (int k = 0; k < 300; ++k) { c.updateSyncRectMaxDuty(vi, vo * 0.98f, 0.05f); c.pwmPerturb(0); }
+            const int ls = c.getRectOnPwmCnt();
+            if (ls <= c.getRectOnPwmMin()) { ++cut; continue; }
+            VirtualConverter p;
+            p.setPv(1e-6f, 500.f, 0.8f); p.setPvBlocking(true); p.setPassives(470e-6f, 470e-6f, b.lPlant);
+            p.setRing(b.ringC(), b.ringQ); p.setRingNode(b.ringV, b.ringCexp, b.ringCt);
+            p.setDiodeVf(b.vf); p.setSwitching(b.tDead, b.tHsExt, b.rHs, b.rLs, b.tSw);
+            p.setPwmMax(PM); p.setPwmFreq(FSW); p.setBat(vo, 1e-6f);
+            p.setPwmCount(0, hs); p.setPwmCount(1, ls);
+            double io = 0;
+            for (int k = 0; k < 1000; ++k) {
+                p.setVin(vi); p.setVout(vo); p.stepSeconds(1.f / FSW, FSW);
+                if (k >= 900) io += p.getIoutAvg();
+            }
+            io /= 100, ++n;
+            if (io < 0) ++neg, worst = std::min(worst, (float) io);
+        }
+    }
+    g_L0 = l0Was;
+    CHECK(neg == 0 && n > 50, "drain gap: mean Iout < 0 on %d of %d window points (min %.3f A)", neg, n, worst);
+    printf("drain gap: %d window points near D = M, %d with mean Iout < 0 (min %.3f A), %d at the LS min pulse\n", n, neg,
+           worst, cut);
 }
 
 static void testDriverRule() {
@@ -1598,6 +1638,7 @@ int main(int argc, char **argv) {
     g_verbose = argc == 2 && !strcmp(argv[1], "-v");
     testDriverRule();
     testLateGap();
+    testDrainGap();
     testShrinkMonotone();
     testFieldData();
     testFlatField();
