@@ -1290,10 +1290,13 @@ public:
             ESP_LOGW("converter", "rect_offset_ns=%.0f was measured on driver '%s', not %s: using 0, needs rect-cal",
                      offNs, offDrv.c_str(), driverName);
         const uint8_t lv = coilConf.getByte("rect_offset_cal", 1);
-        const bool late = offNs > RectOffsetLateMaxNs;
+        // in counts: a saved value is the ns of whole counts, which can exceed the limit's ns at another tick rate
+        const int offCt = rectOffsetCountsFromNs(offNs, getPwmTickRate()),
+                  hiCt = rectOffsetCountsFromNs(RectOffsetLateMaxNs, getPwmTickRate());
+        const bool late = offCt > hiCt;
         if (drvOk && late) ESP_LOGW("converter", "rect_offset_ns=%.0f: bound at %.0f", offNs, RectOffsetLateMaxNs);
         rectCalLevel = drvOk ? (lv == 2 || late ? 2 : lv ? 1 : 0) : 0;
-        rectOnOffset = drvOk ? (int16_t) rectOffsetCountsFromNs(std::min(offNs, RectOffsetLateMaxNs), getPwmTickRate()) : 0;
+        rectOnOffset = drvOk ? (int16_t) std::min(offCt, hiCt) : 0;
         logConfig();
     }
 
@@ -1317,10 +1320,15 @@ public:
             // recovering body-diode loss but eating reverse-current margin; default 0 = unchanged.
             const float base = (float) pwmCtrl * pwmRectRatioDCM;
             float ideal = base + (float) rectOnOffset;
-            // a late offset keeps LS off >= T/32 before the next HS: near D = M a reading error eats the ratio
-            // margin and the offset alone would reach the complementary clamp (forced CCM, reverse current)
-            if (rectOnOffset > 0)
-                ideal = std::min(ideal, std::max(base, (float) (driverPwmMax - pwmCtrl - 1 - (driverPwmMax >> 5))));
+            // A late offset leaves reverse current that drains through the ctrl body diode in off/ratio. Near D = M a
+            // reading error eats the ratio margin: keep LS off T/32 plus that drain before the next HS (else forced CCM,
+            // reverse current), and none where the drain exceeds 4x the offset (ratio < 0.25, buck M > 0.8)
+            if (rectOnOffset > 0) {
+                const float r = pwmRectRatioDCM;
+                ideal = r < 0.25f ? base
+                                  : std::min(ideal, std::max(base, (float) (driverPwmMax - pwmCtrl - 1 - (driverPwmMax >> 5))
+                                                                   - (float) rectOnOffset / r));
+            }
             float v = ideal + rectDitherErr;
             long ls = std::lround(v);
             if (advanceDither) rectDitherErr = v - (float) ls;

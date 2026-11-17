@@ -239,16 +239,17 @@ static bool sweepTrips(float isc, int &offset, int hidden, float voutBias, bool 
 }
 
 // Near D = M a low Vout reading eats the WCE ratio margin; a late offset must then not reach the complementary clamp
-// (forced CCM below D = M): it keeps the LS off for T/32 before the next HS, else falls back to the offset-0 window.
+// (forced CCM below D = M): it keeps the LS off for T/32 plus the reverse current's drain (off/ratio) before the next
+// HS, else falls back to the offset-0 window; above M_WCE = 0.8 (drain > 4x the offset) it is not applied.
 static void testLateGap() {
-    const float vi = 60.f, vo = 30.f * 0.983f; // Vout read 1.7 % low, true M = 0.5
+    float vi = 60.f, vo = 30.f * 0.983f, il = 1.f; // Vout read 1.7 % low, true M = 0.5
     const int ctMax = pwmCountsFromNs(RectOffsetLateMaxNs, 39000.f * PM), gap = PM >> 5;
     auto lsAt = [&](int off, int hs) {
         SynchronousConverter c{}; initConv(c);
         c.setRectOnOffset(off);
         c.enableSyncRect(true);
         c.pwmPerturb((int16_t) hs);
-        for (int k = 0; k < 400; ++k) { c.updateSyncRectMaxDuty(vi, vo, 1.f); c.pwmPerturb(0); }
+        for (int k = 0; k < 400; ++k) { c.updateSyncRectMaxDuty(vi, vo, il); c.pwmPerturb(0); }
         return (int) c.getRectOnPwmCnt();
     };
     int n = 0, clamp = 0, tight = 0, minGap = PM;
@@ -261,6 +262,13 @@ static void testLateGap() {
     }
     CHECK(clamp == 0 && tight == 0, "late gap: %d of %d points into the clamp, %d closer than T/32 (min gap %d ct)", clamp, n,
           tight, minGap);
+    vi = 34.f; il = 0.3f; // M_WCE 0.885, DCM: no late offset anywhere
+    int acts = 0, dcmLs = 0;
+    for (int hs = 1200; hs <= PM - 260; hs += 20) {
+        const int l0 = lsAt(0, hs);
+        acts += lsAt(ctMax, hs) != l0, dcmLs += l0 < PM - hs - 1;
+    }
+    CHECK(acts == 0 && dcmLs > 10, "late offset applied at M_WCE 0.885 on %d of %d DCM points", acts, dcmLs);
     printf("late gap: %d points, %d into the complementary clamp, min idle after a late LS %d ct (T/32 = %d)\n", n, clamp,
            minGap, gap);
 }
@@ -276,6 +284,9 @@ static void testDriverRule() {
     initConv(c, "100", "mock");
     CHECK(std::abs(c.getRectOnOffset() - ct100) <= 1 && c.rectOffsetCal() == 1, "same driver: off=%d want %d",
           c.getRectOnOffset(), ct100);
+    initConv(c, "128", "mock"); // the ns of a saved whole count can exceed the limit's ns: compared in counts
+    CHECK(c.getRectOnOffset() == ctMax && c.rectOffsetCal() == 1, "128 ns: off=%d level %u want %d level 1",
+          c.getRectOnOffset(), c.rectOffsetCal(), ctMax);
     initConv(c, "875", "mock"); // past the late limit: loaded as a bound there
     CHECK(c.getRectOnOffset() == ctMax && c.rectOffsetCal() == 2, "late 875 ns: off=%d level %u want %d level 2",
           c.getRectOnOffset(), c.rectOffsetCal(), ctMax);
