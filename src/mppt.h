@@ -198,6 +198,8 @@ public:
     // mailbox; PWM hardware remains RT-owned.
     std::atomic<uint16_t> manualTarget{0};
     uint32_t lastVoutSamples = 0; // RT only, edge-detects fresh Vout data for the forced-PWM gate
+    uint8_t minPulseCnt = 0; // RT only, fresh Vout samples in a row above the LS min pulse ratio
+    bool minPulseFloor = false; // RT only, update() holds Vin above the LS min pulse ratio
 
 private:
     bool _sweeping = false; // global scan
@@ -216,6 +218,7 @@ private:
     // strands the converter there until it's driven to the opposite rail. Below it: no target, fall
     // back to normal MPPT / the next periodic re-sweep. MPPT still harvests sub-threshold light.
     static constexpr float SweepMinPowerFrac = 0.002f; // of p_max: 2 W at 1 kW
+    static constexpr uint8_t MinPulseDebounce = 4; // fresh Vout samples
     [[nodiscard]] float sweepMinPower() const { return limits.P_max * SweepMinPowerFrac; }
 
     Plot sweepPlot{};
@@ -493,6 +496,10 @@ public:
             !(converter.boost()
                   ? sensors.Vin->ewm.avg.get() < sensors.Vout->ewm.avg.get() + 1
                   : sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1))
+            return "Vin-Vout";
+        if (!converter.boost() &&
+            !(std::max(sensors.Vout->ewm.avg.get(), g_app.psuMode() ? psuVsetpoint : 0.f)
+              < sensors.Vin->ewm.avg.get() * converter.minPulseRatioMax(true)))
             return "Vin-Vout";
         if (g_app.psuMode() && sensors.Vout && sensors.Vout->last > computeOvThreshold() * 0.98f)
             return "Vout-still-OV";
@@ -819,6 +826,24 @@ public:
         const uint32_t voutSamples = sensors.Vout->numSamples;
         const bool freshV = (voutSamples != lastVoutSamples);
         lastVoutSamples = voutSamples;
+
+        // buck DCM: the LS min pulse pumps the output back into the input above minPulseRatioMax(false). update() holds
+        // Vin above the start ratio; a source it cannot move (stiff) shows as reverse current there
+        if (freshV) {
+            const bool over = converter.minPulseExposed() &&
+                              (!(vOut < vIn * converter.minPulseRatioMax(false)) ||
+                               (sensorPhysicalI->ewm.avg.get() < -0.05f && !(vOut < vIn * converter.minPulseRatioMax(true))));
+            minPulseCnt = over ? (uint8_t) (minPulseCnt + 1) : 0;
+        }
+        if (minPulseCnt >= MinPulseDebounce) {
+            minPulseCnt = 0;
+            RT_COLD(
+            ESP_LOGW("mppt", "Vout %.2f / Vin %.2f (I %.2f) at the LS min pulse ratio limit, shutdown", vOut, vIn,
+                     sensorPhysicalI->ewm.avg.get());
+            shutdownDcdc("minpulse-M");
+            );
+            return false;
+        }
         auto vr = converter.updateSyncRectMaxDuty(
             vIn, vOut, converter.boost() ? sensors.Iin->ewm.avg.get() : sensors.Iout->ewm.avg.get(),
             freshV);

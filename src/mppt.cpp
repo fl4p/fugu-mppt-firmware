@@ -113,8 +113,17 @@ void MpptController::update() {
     else if (g_app.psuMode())
         psuAdvanceSetpoint(dtCtrl);
 
+    // Vin floor at the LS min pulse ratio; its D term must not see the setpoint step when the floor comes or goes
+    if (minPulseFloor != converter.minPulseExposed()) minPulseFloor = !minPulseFloor, VinController.reset();
+
     std::array<CVP, 5> controlValues{
-        CVP{CV, VinController, {sensors.Vin->med3.get(), limits.Vin_min}},
+        CVP{
+            CV, VinController, {
+                sensors.Vin->med3.get(),
+                minPulseFloor ? std::max(limits.Vin_min, sensors.Vout->ewm.avg.get() / converter.minPulseRatioMax(true))
+                              : limits.Vin_min
+            }
+        },
         CVP{
             CV, VoutController, {
                 _sweeping ? sensors.Vout->ewm.avg.get() : sensors.Vout->med3.get(),

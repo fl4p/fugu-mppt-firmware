@@ -93,6 +93,8 @@ class SynchronousConverter {
     // turn-on, sqrt(L*C_node) = 1/(2 pi f_ring): 0.68 us at the lowest measured board ring, 233 kHz.
     static constexpr float LateDrainBudget = 1.f - (1.f - VoltageMaxErr) / (1.f + VoltageMaxErr); // of the period
     static constexpr float LateDrainMinNs = 700.f;
+    // Buck LS min pulse ratio limit (minPulseRatioMax): start and Vin floor this far in M below the stop ratio
+    static constexpr float MinPulseRatioHyst = 0.02f;
 
 
 #if HAVE_MCPWM
@@ -1069,6 +1071,22 @@ public:
     [[nodiscard]] uint16_t getRectOnPwmMax() const { return pwmRectMax; }
 
     [[nodiscard]] uint16_t getRectOnPwmMin() const { return pwmRectMin; }
+
+    // Buck: the LS min pulse (pwmRectMin, commanded) leaves reverse current that drains through the HS body diode in
+    // M/(1-M) of its excess; above M = 1 - pwmRectMin/T it no longer drains within the period T, carries over and grows
+    // (the converter boosts from the output into the input). Highest Vout/Vin reading for running: that limit less T/32
+    // (ring current at HS turn-on) times the worst-case reading factor; for a start or the Vin floor less
+    // MinPulseRatioHyst.
+    [[nodiscard]] __attribute__((always_inline)) float minPulseRatioMax(bool start) const {
+        constexpr float wcef = (1.f - VoltageMaxErr) / (1.f + VoltageMaxErr);
+        const float T = (float) driverPwmMax + (float) drvDtLhTicks();
+        return wcef * (31.f / 32.f - (float) pwmRectMin / T) - (start ? MinPulseRatioHyst : 0.f);
+    }
+
+    // the LS min pulse is issued without a forward current to cover it (buck DCM, diode emulation)
+    [[nodiscard]] __attribute__((always_inline)) bool minPulseExposed() const {
+        return !isBoost && dcmHysteresis && !forcedPwm_();
+    }
 
     [[nodiscard]] int16_t getRectOnOffset() const { return rectOnOffset; }
 

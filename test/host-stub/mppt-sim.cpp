@@ -23,6 +23,9 @@
 //     wx-low, wx-mid    steady light rising slowly, MPP 2 -> 20 W in 30 min / 55 -> 110 W in 10 min, sensor noise
 //     wx-low-slow       wx-low with power-sensor filter length 60 (slow sensor profile; SIM_ADC_HZ=200 for ADS-like rates)
 //     wx-sweep-fall, wx-sweep-rise, wx-sweep-shade   cloud edge during a sweep (-shade: two peaks)
+//     wx-mp-ramp, wx-mp-psu, wx-mp-psu-nosink  source Voc slowly 1.25 -> 1.02 -> 1.25 x Vbat (LS min pulse ratio
+//                       limit): weak PV / stiff sinking source into a full battery / non-sinking bench PSU; the
+//                       == REVERSE line has the plant's reverse output current and the starts
 //     wx-sun-fry, wx-sun-flat   steady sun, MPP SIM_P W (default 70), the board's L, string and Vin (fry ~64 V, flat ~55 V)
 //     wx-ramp-fry, wx-ramp-flat wx-sun with irradiance changing SIM_RAMP %/min (default 2, exponential) from 120 s
 //     wx-wob-fry, wx-wob-flat   wx-sun with irradiance x (1 + a sin 2 pi f t), SIM_WOB=a,f (default 0.005,0.2)
@@ -120,6 +123,8 @@ static std::vector<double> g_slowDownT; // "Slow mode, duty" log times (slow-mod
 static double g_fineT0 = 0, g_fineT1 = 0; // env SIM_FINE=t0,t1: per-tick sensor trace window
 static double g_rampSec = 0, g_rampT0 = 0, g_rampFrom = 0, g_rampTo = 0; // linear Isc ramp
 static bool g_verbose = true;
+static double g_qOut = 0; // plant output charge [C], per RT iteration (cycle-average Iout x dt)
+static unsigned g_nStarts = 0; // converter off -> on edges
 
 // ---- board plant (ring-* scenarios, SIM_RING; wx-* default to fry) ----
 static PlantBoard g_board;
@@ -611,7 +616,9 @@ static void run(double sec, double traceEvery, Probe *probe = nullptr, double fi
             if (f >= 1.0) g_rampSec = 0;
         }
         bool onBefore = !converter.disabled();
+        const double tIt = tNow();
         loopRTIter();
+        g_qOut += g_vconv.getIoutAvg() * (tNow() - tIt);
         if (g_tickHook) g_tickHook();
         if (g_pDump) {
             const float r[6] = {(float) tNow(), sensors.Iout->ewm.avg.get(), sensors.Vout->ewm.avg.get(),
@@ -638,6 +645,7 @@ static void run(double sec, double traceEvery, Probe *probe = nullptr, double fi
             if (wasOn && !on && probe->firstOffT < 0) probe->firstOffT = tNow();
             if ((tNow() - probe->t0) * 1e3 < fineMs) traceLine("  ");
         }
+        g_nStarts += on && !wasOn;
         if (on != wasOn && g_verbose) printf("%9.4f --- converter %s\n", tNow(), on ? "ON" : "OFF");
         wasOn = on;
         if (traceEvery > 0 && tNow() >= nextTrace) {
@@ -730,15 +738,19 @@ struct Wx {
     double sweepAt = -1, statsFrom = 0, T = 600;
     float isc = 0, g[3] = {1, 1, 1}, vocNow = 0;
     float ramp = 0, wobA = 0, wobF = 0;      // irradiance x exp(ramp (t - 120 s)), x (1 + wobA sin(2 pi wobF t))
+    Track vocT;                              // source Voc profile (overrides vocLog)
+    float iscFix = 0;                        // Isc [A] instead of the one from pClear
+    bool noSink = false;                     // source does not sink current (bench PSU); default: sinks above Voc
 
     void init() {
         PvModel m;
         m.set(1, voc, k);
         float best = 0;
         for (float v = 1; v < voc; v += 0.05f) best = std::max(best, v * m.current(v));
-        isc = pClear / best;
+        isc = iscFix > 0 ? iscFix : pClear / best;
         vocNow = voc;
         g_vconv.setPv(isc, voc, k);
+        g_vconv.setPvBlocking(noSink);
         g_vconv.setBat(vbat, rbat);
     }
 
@@ -752,8 +764,9 @@ struct Wx {
             gMax = std::max(gMax, g[i]);
         }
         g_vconv.setPvString(n, g, n > 1 ? w : nullptr);
-        if (vocLog > 0) {
-            const float v = std::max(1.f, voc + vocLog * std::log(std::max(gMax, 1e-30f)));
+        if (vocLog > 0 || !vocT.empty()) {
+            const float v = !vocT.empty() ? trackAt(vocT, t, voc)
+                                          : std::max(1.f, voc + vocLog * std::log(std::max(gMax, 1e-30f)));
             if (std::fabs(v - vocNow) > 1e-3f) g_vconv.setPv(isc, vocNow = v, k);
         }
         if (!vbatT.empty()) g_vconv.setBat(trackAt(vbatT, t, vbat), rbat);
@@ -937,6 +950,12 @@ static int runWx(const std::string &name, Wx &wx) {
     time_ms lastRev = 0;
     bool wasSlow = false;
     double holdAt = getenv("SIM_HOLD") ? atof(getenv("SIM_HOLD")) : -1; // tracker output x0 from then on
+    // reverse output current per 20 ms slice (plant truth); time on above the LS min pulse's carry-over ratio
+    double iMin = 0, tNeg = 0, qNeg = 0, tAbove = 0, tAboveDcm = 0;
+    float mOnMax = 0;
+    const unsigned starts0 = g_nStarts;
+    const float mCrit = 1.f - (float) converter.getRectOnPwmMin() /
+                              ((float) converter.pwmMaxDriver() + (float) converter.getDtLhTicks());
 
     for (double nextTr = 0; tNow() < wx.T;) {
         const double tb = tNow();
@@ -947,8 +966,20 @@ static int runWx(const std::string &name, Wx &wx) {
             mppt.startSweep();
             wx.sweepAt = -1;
         }
+        const double q0 = g_qOut;
         run(0.02, 0);
         const double dt = tNow() - tb;
+        if (tb >= wx.statsFrom && dt > 0) {
+            const double im = (g_qOut - q0) / dt;
+            iMin = std::min(iMin, im);
+            if (im < -0.05) tNeg += dt;
+            if (im < 0) qNeg -= im * dt;
+            if (!converter.disabled() && g_vconv.getVin() > 1) {
+                const float m = g_vconv.getVout() / g_vconv.getVin();
+                mOnMax = std::max(mOnMax, m);
+                if (m > mCrit) tAbove += dt, tAboveDcm += converter.inDCM() ? dt : 0;
+            }
+        }
 
         const float now[4] = {wx.g[0], wx.g[1], wx.g[2], wx.vocNow};
         if (memcmp(now, key, sizeof key)) nPk = pvPeaks(pk, valley), memcpy(key, now, sizeof key);
@@ -1044,6 +1075,13 @@ static int runWx(const std::string &name, Wx &wx) {
            " sweeps %2zu | limiter %4.1f %% | trips %zu [%s]\n", name.c_str(), hz ? hz : "450", ePv * pc,
            eUse > 0 ? 100 * ePv / eUse : 0, tWrong, tCat[OFF], nSweeps, 100 * tCat[LIMIT] / tStat, nTrips, trips.c_str());
     {
+        size_t nMp = 0;
+        for (auto &t: g_trips) nMp += t.t >= wx.statsFrom && t.who == "minpulse-M";
+        printf("== REVERSE %-18s plant Iout 20 ms mean min %.3f A, %.1f s below -0.05 A, %.3f C back | starts %u,"
+               " minpulse-M stops %zu | on at plant M > %.3f (1 - t_min/T) %.1f s (%.1f s DCM), max on M %.3f\n",
+               name.c_str(), iMin, tNeg, qNeg, g_nStarts - starts0, nMp, mCrit, tAbove, tAboveDcm, mOnMax);
+    }
+    {
         size_t nLogged = 0;
         for (double t: g_slowDownT) nLogged += t >= wx.statsFrom;
         const double dm = dN > 0 ? dS / dN : 0, vm = dN > 0 ? vS / dN : 0, k = 1000.0 / converter.pwmCtrlMax;
@@ -1133,6 +1171,18 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         float g = p / wx.pClear;
         for (int i = 0; i < 6; ++i) g = p / wx.pClear * wx.voc / (wx.voc + wx.vocLog * std::log(g));
         wx.cloud = {{0, g}}, wx.vbat = getenv("SIM_VBAT") ? atof(getenv("SIM_VBAT")) : 26.1f, wx.statsFrom = 120, wx.T = 900;
+    } else if (sc == "wx-mp-ramp" || sc == "wx-mp-psu" || sc == "wx-mp-psu-nosink") {
+        // operating point from 1.25 x Vbat down to ~1.02 x and back over 2 x 600 s from 120 s. -ramp: weak PV (k 0.78,
+        // Voc 1.6 -> 1.3 x Vbat, 20 W at the start) in DCM near the ratio limit. -psu: stiff source (k 0.95, Isc 20 A,
+        // sinks above Voc like a battery bus; Voc 1.25 -> 1.02 x) into a battery at the Vout cap, so the converter runs
+        // light in DCM; -nosink: a bench PSU that cannot sink
+        const bool pv = sc == "wx-mp-ramp";
+        wx.vbat = pv ? 26.6f : 28.95f, wx.voc = (pv ? 1.6f : 1.25f) * wx.vbat, wx.T = 1500;
+        if (pv) wx.k = 0.78f, wx.pClear = 20;
+        else wx.k = 0.95f, wx.iscFix = 20, wx.noSink = sc == "wx-mp-psu-nosink";
+        const float lo = (pv ? 1.3f : 1.02f) * wx.vbat;
+        wx.vocT = {{120, wx.voc}, {720, lo}, {780, lo}, {1380, wx.voc}};
+        wx.statsFrom = 60;
     } else if (sc == "wx-sweep-fall" || sc == "wx-sweep-rise") {
         // cloud edge (73 % in 10 s) starting 2 s into a sweep
         const bool fall = sc == "wx-sweep-fall";
