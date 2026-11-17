@@ -125,6 +125,7 @@ public:
     // per-cycle Vout maximum since the last call
     float takeVoutMax() { float m = vOutMax_; vOutMax_ = vOut_; return m; }
     [[nodiscard]] float getIL()   const { return iLEnd_; }
+    [[nodiscard]] float getILsOff() const { return iLsOff_; } // buck: coil current at LS turn-off (HS off: at its end)
     [[nodiscard]] float getIsc()  const { return pv_.isc; }
     [[nodiscard]] float getVoc()  const { return pv_.voc; }
     [[nodiscard]] float getPvK()  const { return pv_.k; }
@@ -191,7 +192,7 @@ private:
     float vIn_   = 0.0f;
     float vOut_  = 0.0f;
     float vOutMax_ = 0.0f;
-    float iLEnd_ = 0.0f;
+    float iLEnd_ = 0.0f, iLsOff_ = 0.0f;
     PwmState pwm_{};
     float iInAvg_  = 0.0f;
     float iOutAvg_ = 0.0f;

@@ -262,6 +262,7 @@ void VirtualConverter::stepOneCycleBuck(float T) {
         qIn += rLs_ * tLS * (c - b1) * (c - b1) * (1.0f / 12.0f) * invVin_;
     }
     const float areaLS = trapArea(b1, c, tLS);
+    iLsOff_ = c;
 
     // Phase 3: both off. c > 0: LS body diode. c < 0: HS body diode (rev pump).
     float cEnd = c;

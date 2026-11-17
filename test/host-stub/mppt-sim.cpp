@@ -47,6 +47,11 @@
 //     rcal-sun     80 uH board, Isc 5.6 A / Voc 79.6 V, 5 nF switch node ringing at Q 40 (non-monotonic late side)
 //     rcal-flat    flat (51 uH, 326 kHz ring, 1470 sps), ~390 W at Vin ~55 V, Vout +0.6 V for 2 ms every 1-3 s:
 //                  D-only Vout limiter touches below the cap must not abort the run
+//     rcal-pv      plain rect-cal force on the SIM_RING board plant (default fry), panel SIM_PV="isc,voc,k" (default
+//                  5.6,79.6,0.78): k moves the start Vin, isc the power, voc the calibration duty
+//     rcal*: SIM_NOISE_IOUT=<A> Iout noise sigma (default 0.01); the plant's zero crossing at the calibration point
+//     ("truth": LS count where the coil current at LS turn-off crosses zero, stiff sources at the run's mean plant
+//     Vin/Vout, so dead time, diode drop and the ring current at HS turn-on are in it) is printed against ideal
 //     rcal-low-bus rcal-low on a swinging bus (+-0.4 % / 23 s, +-0.2 % / 7.3 s, 0.15 % steps every 2-6 s)
 //   switch-node ring (DCM Iout ripple vs duty; vconv.conf ring_c/ring_q), board = fry | flat (L0, L, ring f, Q
 //   fitted to field sweeps), suffix -off = same board with the ring disabled, -damped = ring at Q 0.5 (no
@@ -1150,6 +1155,34 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
     return true;
 }
 
+// LS count (fractional) where the plant's coil current at LS turn-off first turns negative as LS grows, HS fixed,
+// stiff Vin/Vout; i0: coil current at HS turn-on there. NAN: none below the period.
+static double plantZc(float vin, float vout, int hs, double &i0) {
+    const uint32_t f = converter.getPwmFrequency();
+    const auto at = [&](int ls, double &a) {
+        VirtualConverter p = g_vconv;
+        p.setPvBlocking(true), p.setBat(vout, 1e-6f), p.setBatRipple(0, 100);
+        p.setPwmCount(0, hs), p.setPwmCount(1, ls);
+        double s = 0, s0 = 0;
+        for (int k = 0; k < 600; ++k) {
+            p.setVin(vin), p.setVout(vout);
+            const float il = p.getIL();
+            p.stepSeconds(1.f / (float) f, f);
+            if (k >= 300) s += p.getILsOff(), s0 += il;
+        }
+        a = s0 / 300;
+        return s / 300;
+    };
+    const double id = (vin / vout - 1) * hs;
+    double a, prev = at((int) (0.6 * id), a);
+    for (int ls = (int) (0.6 * id) + 1; ls < converter.pwmMaxDriver() - hs - 1; ++ls) {
+        const double c = at(ls, a);
+        if (prev > 0 && c <= 0) return i0 = a, ls - c / (c - prev);
+        prev = c;
+    }
+    return NAN;
+}
+
 // rect-cal force at full power: ramp-down, calibration, ramp back, against the plant. Reports trips,
 // the learned offset (no gate delay in the plant: the truth is 0), the ramp and the power after.
 static int runRectCal(const std::string &name, const std::string &sc) {
@@ -1165,7 +1198,8 @@ static int runRectCal(const std::string &name, const std::string &sc) {
     printf("%9.4f >>> rect-cal force at HS %u, %s, P %.0f W\n", tNow(), hs0, dcm0 ? "DCM" : "CCM", p0);
     double tCal = -1, tEnd = -1;
     float iMin = INFINITY, ilMin = INFINITY, vinMax = 0, iRunMin = INFINITY, ilAfter = INFINITY;
-    int stepMax = 0, lsOffMin = 0;
+    int stepMax = 0, lsOffMin = 0, nPv = 0;
+    double pvSum = 0, poSum = 0;
     uint16_t hsPrev = hs0;
     const uint8_t clamps0 = converter.lsClamps();
     std::mt19937 busRng{7};
@@ -1199,6 +1233,7 @@ static int runRectCal(const std::string &name, const std::string &sc) {
                 ++lsOffMin;
             if (tCal < 0 && hs == rc.cal.hs) tCal = t;
             iRunMin = std::min(iRunMin, g_vconv.getIoutAvg());
+            if (hs == rc.cal.hs && converter.manualRect_()) pvSum += g_vconv.getVin(), poSum += g_vconv.getVout(), ++nPv;
         }
         iMin = std::min(iMin, g_vconv.getIoutAvg());
         ilMin = std::min(ilMin, g_vconv.getIL());
@@ -1218,6 +1253,16 @@ static int runRectCal(const std::string &name, const std::string &sc) {
            "%.1f mA (bound %.1f), offset now %d ct, rect_offset_cal %u\n", rc.cal.ideal, rc.cal.peak, rc.cal.learned,
            rc.cal.applied, rc.cal.clamped ? " (bound)" : "", rc.cal.cut ? " (fit ended at a dip)" : "", rc.cal.n,
            rc.cal.retries, 100 * rc.cal.dv, 1e3f * rc.cal.rise, 1e3f * rc.cal.iLs, rc.offset(), converter.rectOffsetCal());
+    if (nPv && rc.cal.hs) {
+        const float tr = converter.getPwmTickRate(), vi = (float) (pvSum / nPv), vo = (float) (poSum / nPv);
+        double i0 = 0;
+        const double zc = plantZc(vi, vo, rc.cal.hs, i0), t = zc - rc.cal.ideal;
+        const float zq = [](const auto &c) { if constexpr (requires { c.zc; }) return (float) c.zc; else return NAN; }(rc.cal);
+        printf("== truth: plant Vin %.2f Vout %.2f at HS %u: zero crossing %.1f ct, %+.1f ct (%+.0f ns) off ideal %.1f "
+               "(plant voltages: %+.1f ct), coil current at HS turn-on %+.3f A; charge zc %+.0f ct; learned %+.0f, applied "
+               "%+.0f ct off the truth\n", vi, vo, rc.cal.hs, zc, t, t / tr * 1e9, rc.cal.ideal, zc - (vi / vo - 1) * rc.cal.hs,
+               i0, zq - rc.cal.ideal, rc.cal.learned - t, rc.cal.applied - t);
+    }
     printf("== rect-cal points (LS - ideal : dI A):");
     for (int i = 0; i < rc.cal.n; ++i) printf(" %.0f:%+.3f", rc.cal.xs[i] - rc.cal.ideal, rc.cal.ys[i]);
     printf("\n");
@@ -1329,6 +1374,7 @@ static int simMain(int argc, char **argv) {
     const std::string name = sc;
     if (p0) sc.resize(sc.size() - 3);
     if (sc == "rcal-flat") setenv("SIM_RING", "flat", 0), setenv("SIM_ADC_HZ", "1470", 0);
+    if (sc == "rcal-pv") setenv("SIM_RING", "fry", 0);
     if (sc.rfind("wx-", 0) == 0 && sc.size() > 4 && sc.compare(sc.size() - 4, 4, "-fry") == 0)
         setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
     if (sc.rfind("wx-", 0) == 0 && sc.size() > 5 && sc.compare(sc.size() - 5, 5, "-flat") == 0)
@@ -1367,9 +1413,16 @@ static int simMain(int argc, char **argv) {
     if (sc == "rcal-flat") ov.insert(ov.end(), {{"isc", "7.5"}, {"voc", "66"}, {"v_bat", "26.7"}});
     if (sc == "rcal-ov") setenv("SIM_CONF", "limits.conf:hv_max=77.5", 1);
     if (sc == "rcal-sun") setenv("SIM_CONF", "coil.conf:L0=80e-6", 1);
+    if (const char *n = getenv("SIM_NOISE_IOUT"); rcal && n) ov[0].second = n;
     boot(ov, p0);
     if (rcal) g_vconv.setDiodeVf(0.7f);
-    if (sc == "rcal-sun") g_vconv.setRing(5e-9f, 40.f), g_vconv.setPv(5.6f, 79.6f, 0.78f);
+    if (sc == "rcal-sun" && !g_ring) g_vconv.setRing(5e-9f, 40.f);
+    if (sc == "rcal-sun") g_vconv.setPv(5.6f, 79.6f, 0.78f);
+    if (sc == "rcal-pv") {
+        float isc = 5.6f, voc = 79.6f, k = 0.78f;
+        if (const char *e = getenv("SIM_PV")) sscanf(e, "%f,%f,%f", &isc, &voc, &k);
+        g_vconv.setPv(isc, voc, k);
+    }
     if (g_ring) {
         g_vconv.setPassives(g_vconv.getCin(), g_vconv.getCout(), g_ring->lPlant);
         printf("# board plant %s: coil.conf L0 %.0f uH, plant L %.0f uH, ring %s (%.0f kHz at %.0f V, Q %.1f, node C %.2f nF),"
