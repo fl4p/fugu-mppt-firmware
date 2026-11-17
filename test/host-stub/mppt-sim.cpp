@@ -1249,7 +1249,7 @@ static int runRectCal(const std::string &name, const std::string &sc) {
            rc.cal.get() == RectCal::Done ? "done" : "failed", rc.cal.get() == RectCal::Fail ? ": " : "",
            rc.cal.get() == RectCal::Fail ? rc.cal.why : "", tEnd, rc.cal.hs, tCal, hs0, dcm0 ? "DCM" : "CCM", stepMax,
            lsOffMin, (unsigned) (uint8_t) (converter.lsClamps() - clamps0));
-    printf("== rect-cal: ideal %.0f peak %.0f learned %+d applied %+d ct%s%s (truth 0), %u pts, %u redone, dV %.2f%%, Iout rise "
+    printf("== rect-cal: ideal %.0f peak %.0f learned %+d applied %+d ct%s%s (plant timing error 0), %u pts, %u redone, dV %.2f%%, Iout rise "
            "%.1f mA (bound %.1f), offset now %d ct, rect_offset_cal %u\n", rc.cal.ideal, rc.cal.peak, rc.cal.learned,
            rc.cal.applied, rc.cal.clamped ? " (bound)" : "", rc.cal.cut ? " (fit ended at a dip)" : "", rc.cal.n,
            rc.cal.retries, 100 * rc.cal.dv, 1e3f * rc.cal.rise, 1e3f * rc.cal.iLs, rc.offset(), converter.rectOffsetCal());
@@ -1272,9 +1272,10 @@ static int runRectCal(const std::string &name, const std::string &sc) {
            p1, p0, modeStr(), converter.manualRect_());
     printf("\n== log after event (first %zu lines):\n", g_logSince.size());
     for (size_t i = 0; i < g_logSince.size() && i < 60; ++i) printf("   %s\n", g_logSince[i].c_str());
-    // a positive offset holds the LS past the zero crossing wherever Vin <= 2 Vout: never applied
-    if (rc.offset() > 0 || (rc.cal.get() == RectCal::Done && (rc.cal.applied > 0 || (rc.cal.clamped && rc.cal.applied < rc.offset())))) {
-        printf("FAIL: positive offset applied (%+d ct, active %+d ct)\n", rc.cal.applied, rc.offset());
+    // a late offset eats the 2 % margin of the LS ratio near D = M: never past LateMaxNs
+    const int hi = pwmCountsFromNs(RectCal::LateMaxNs, converter.getPwmTickRate());
+    if (rc.offset() > hi || (rc.cal.get() == RectCal::Done && (rc.cal.applied > hi || (rc.cal.clamped && rc.cal.applied < rc.offset())))) {
+        printf("FAIL: offset past LateMaxNs applied (%+d ct, active %+d ct)\n", rc.cal.applied, rc.offset());
         return 1;
     }
     return 0;

@@ -42,7 +42,8 @@
  * The coil current the switch-node ring leaves when HS turns on moves the zero crossing off ideal, by up to
  * sqrt(L C) either way depending on the ring phase, which differs at every operating point. The zero crossing
  * is therefore also taken from the charge per period (zc, needs the coil L). learned = peak - max(zc, ideal)
- * (counts) is the timing error of driver, gate and sensing, rounded early.
+ * (counts) is the timing error of driver, gate and sensing, rounded early. A late (positive) result is applied up
+ * to LateMaxNs; a later one is a bound (clamped).
  *
  * Ownership: the RT core writes the payload in start()/refuse() (from Idle) and during Run, core 0
  * in Fit. Each hand-off is a release store of `state`; the other side reads it with acquire before
@@ -60,6 +61,7 @@ public:
     static constexpr float PlausibleNs = 2500.f; // |learned| above this is rejected (400 ct at 160 MHz)
     static constexpr float MinMarginNs = 125.f;  // applied margin floor (20 ct at 160 MHz)
     static constexpr float DipMarginNs = 250.f;  // same when the fit ended at a dip floor (40 ct)
+    static constexpr float LateMaxNs = 125.f;    // latest applied offset (20 ct): a quarter of the 2 % M margin at D = M
     static constexpr float StiffV = 0.02f;       // max Vin deviation from Init (fraction)
     static constexpr float VoutDrift = 0.05f;    // max Vout deviation from Init (fraction)
     static constexpr float JumpV = 0.003f;       // max step Vin off its references' mean (fraction)
@@ -79,7 +81,7 @@ public:
     uint16_t hs = 0;      // 0 after a refused start
     uint8_t n = 0, seq = 0; // seq: counts starts and refusals
     int16_t learned = 0, applied = 0;
-    bool clamped = false; // the fit asked for a positive offset: a bound, applied as min(0, active offset)
+    bool clamped = false; // the fit asked for more than LateMaxNs: a bound, applied as min(LateMaxNs, active offset)
     bool cut = false;     // the fit ended at the floor of a dip
     float ideal = 0, peak = 0; // peak: fitted LS count of the zero crossing (knee)
     float zc = 0; // zero crossing from the charge per period (counts), ideal without a coil L
@@ -328,11 +330,11 @@ public:
         const float l = x0 - std::max(zc, ideal);
         const float a = l - std::max((float) pwmCountsFromNs(cut ? DipMarginNs : MinMarginNs, tickRate), 0.3f * std::fabs(l));
         learned = (int16_t) std::lround(l);
-        // the knee is the onset of loss: past Vin = 2 Vout the reverse current first lifts the node to Vin, which
-        // puts the knee after the zero crossing, by a lag the node capacitance sets. Never later than the ideal:
-        // a positive result only bounds the offset (lf() applies min(0, active)).
-        clamped = a > 0;
-        applied = clamped ? 0 : (int16_t) std::lround(a);
+        // Driver and gate delays explain tens of ns. Past Vin = 2 Vout the node lift to Vin can put the knee later
+        // still: beyond LateMaxNs a result only bounds the offset (lf(): min(LateMaxNs, active)).
+        const float hi = (float) pwmCountsFromNs(LateMaxNs, tickRate);
+        clamped = a > hi;
+        applied = (int16_t) std::lround(std::min(a, hi));
         peak = x0;
         state.store(Done, std::memory_order_release);
         return true;
@@ -606,10 +608,11 @@ public:
     void lf(Conv &c, uint32_t nowS, float pOut, float vr = 0) {
         const float tr = c.getPwmTickRate();
         if (cal.get() == RectCal::Fit && cal.fit(tr)) {
-            // a clamped fit is a bound: the active offset if shorter, else 0; a measured shorter one stays measured
+            // a clamped fit is a bound: the active offset if shorter, else LateMaxNs; a measured shorter one stays
+            // measured
             const int o = offset();
-            const bool keep = cal.clamped && o < 0 && activeCalibrated() && c.rectOffsetCal() == 1;
-            if (cal.clamped) cal.applied = (int16_t) std::min(0, o), nextAuto = nowS + BoundRetryS;
+            const bool keep = cal.clamped && o < cal.applied && activeCalibrated() && c.rectOffsetCal() == 1;
+            if (cal.clamped) cal.applied = (int16_t) std::min<int>(cal.applied, o), nextAuto = nowS + BoundRetryS;
             ESP_LOGI("rectcal", "done: hs=%u ideal=%.0f zc=%.0f peak=%.0f learned=%+d ct, applied %+d ct%s (%.0f ns, %s, %u pts)",
                      cal.hs, cal.ideal, cal.zc, cal.peak, cal.learned, cal.applied,
                      keep ? " (bound, measured offset kept)" : cal.clamped ? " (bound)" : "",
@@ -660,7 +663,7 @@ public:
 
         const bool steady = pOut > IdleW && std::fabs(pOut - pPrev) < 0.1f * pOut;
         pPrev = pOut;
-        // a bound (knee at or past ideal, as the node lift puts it above Vin = 2 Vout) is retried only below that
+        // a bound (knee past LateMaxNs, as the node lift can put it above Vin = 2 Vout) is retried only below that
         const uint8_t lv = c.rectOffsetCal();
         if (autoRun && (!lv || (lv == 2 && vr > 0 && vr < 2.f)) && steady && (int32_t) (nowS - nextAuto) >= 0
             && requestStart()) {

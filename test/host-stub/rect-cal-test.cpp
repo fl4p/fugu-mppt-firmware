@@ -506,12 +506,19 @@ static void testVoltageBaseline() {
     const int floor = RectCal::floorCounts(cv.getPwmTickRate());
     CHECK(d.get() == RectCal::Done && d.applied >= floor && RectBackstop::shrink(d.applied, 20, floor) <= d.applied,
           "learned %d applied %d floor %d", d.learned, d.applied, floor);
-    // a knee 80 ct late (node lag at Vin > 2 Vout) learns a positive offset: never applied
-    RectCal late;
+    // a knee 35 ct late (HS-side delay) is applied less the margin; 80 ct late (node lag at Vin > 2 Vout) is a bound
+    // at LateMaxNs
+    const int hi = pwmCountsFromNs(RectCal::LateMaxNs, cv.getPwmTickRate());
+    RectCal late, late35;
+    fixture(late35, 60, 26.7f, 60, 26.7f, 35.f);
+    CHECK(late35.get() == RectCal::Done && late35.learned >= 25 && late35.applied > 0 && late35.applied <= hi
+          && !late35.clamped, "late knee +35: state %d learned %d applied %d clamped %d", late35.get(), late35.learned,
+          late35.applied, late35.clamped);
     fixture(late, 60, 26.7f, 60, 26.7f, 80.f);
-    CHECK(late.get() == RectCal::Done && late.learned >= 60 && late.applied == 0 && late.clamped,
+    CHECK(late.get() == RectCal::Done && late.learned >= 60 && late.applied == hi && late.clamped,
           "late knee: state %d learned %d applied %d clamped %d", late.get(), late.learned, late.applied, late.clamped);
-    printf("late knee +80: learned %+d applied %+d%s\n", late.learned, late.applied, late.clamped ? " (clamped)" : "");
+    printf("late knee +35: learned %+d applied %+d; +80: learned %+d applied %+d%s\n", late35.learned, late35.applied,
+           late.learned, late.applied, late.clamped ? " (clamped)" : "");
     printf("voltage baseline: Vin+10%% '%s', Vout+3%% learned %d, Vout+5.6%% '%s', Vin+1.5%% learned %d (no step %d), "
            "tail learned %d applied %d floor %d\n", a.why, b.learned, b2.why, c.learned, c0.learned, d.learned, d.applied, floor);
 }
@@ -1300,13 +1307,13 @@ static void testPersistLock() {
            "unadmitted grant expires and retries)\n");
 }
 
-// A knee past ideal (LS conducting 80 ct shorter than commanded) is a bound, not a measurement: the active
-// offset when shorter, else 0; a shorter measured offset stays measured; saved as rect_offset_cal=2, which a
+// A knee 80 ct past ideal (LS conducting 80 ct shorter than commanded) is beyond LateMaxNs: a bound, not a
+// measurement: the active offset when shorter, else LateMaxNs (20 ct); a shorter measured offset stays measured; saved as rect_offset_cal=2, which a
 // reboot reads back. Auto retries a bound only below Vin = 2 Vout and not within a week of the last one.
 static void testBound() {
     struct Case { const char *name; int off; uint8_t lv; int want; uint8_t wantLv; bool saved; };
     const Case cases[] = {{"never calibrated", 0, 0, 0, 2, true}, {"backstop -60", -60, 0, -60, 2, true},
-                          {"measured -60", -60, 1, -60, 1, false}, {"manual +40", 40, 1, 0, 2, true},
+                          {"measured -60", -60, 1, -60, 1, false}, {"manual +40", 40, 1, 20, 2, true},
                           {"bound -60", -60, 2, -60, 2, true}};
     for (const auto &k: cases) {
         g_saved.clear(); g_saveCalls = 0; g_saveOk = true;
