@@ -476,7 +476,7 @@ public:
     // Single source of truth for startCondition(); also logged while idle in START.
     [[nodiscard]] const char *startBlockReason() const {
         if (psuLatched) return "psu-latch";
-        if (converter.startInhibited()) return "conf-save";
+        if (converter.startInhibited(SynchronousConverter::InhibitCal)) return "conf-save";
         if (g_app.psuMode()) {
             const auto feasibility = currentPsuFeasibility();
             if (feasibility == PsuSetpointError::BoostBelowInput)
@@ -496,8 +496,11 @@ public:
             return "Vout-still-OV";
         if (boardPowerSupplyUnderVoltage(true)) return "supply-UV";
         if (sampler.isCalibrating()) return "calibrating";
+        if (converter.startInhibited(SynchronousConverter::InhibitIdle)) return kIdleBlock; // last: the only blocker
         return nullptr;
     }
+
+    static constexpr const char *kIdleBlock = "idle profile";
 
     [[nodiscard]] bool startCondition() const { return startBlockReason() == nullptr; }
 

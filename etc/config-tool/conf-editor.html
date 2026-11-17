@@ -293,7 +293,7 @@ const META = {
   led_simple:{unit:"GPIO",desc:"Plain on/off status LED pin",type:"int"},
   fan_pwm:{unit:"GPIO",desc:"Cooling fan PWM pin",type:"int"},
   adc_fake_freq:{unit:"Hz",desc:"Mock ADC total fake sample rate (all channels)",type:"int"},
-  idle_cpu_mhz:{unit:"MHz",desc:"CPU clock while the idle power profile is on (converter off 5 min); 80, 160 or 240, 0 = keep boot clock",type:"int"},
+  idle_cpu_mhz:{unit:"MHz",desc:"CPU clock while the idle power profile is on (converter off 5 min); a converter start waits until the boot clock is back; skipped until reboot if the control loop loses samples at it; 80, 160 or 240, 0 = keep boot clock",type:"int"},
   ads_alert:{unit:"GPIO",desc:"ADS1x15 ALERT/RDY pin number",type:"int"},
 
   // sensor.conf

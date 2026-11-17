@@ -122,7 +122,8 @@ class SynchronousConverter {
     uint8_t rectCalLevel = 1; // coil.conf rect_offset_cal on the active driver: 0 uncalibrated, 1 measured, 2 bound
     std::atomic<uint8_t> lsClampCount{0}; // bumped by syncRectMinDuty() and disable() (also core 0)
     std::atomic<uint16_t> enables{0};      // bumped by each start in pwmPerturb()
-    std::atomic<bool> startInhibit{false}; // pwmPerturb() does not start the converter
+    std::atomic<uint8_t> startInhibit{0}; // owner bits; pwmPerturb() does not start the converter
+    std::atomic<bool> startWanted{false};
 
     bool syncRectOffHyst = false; // latched: sync rect disabled by low current, needs 4x to re-arm
     float outInVoltageRatio = 0; // M
@@ -1073,8 +1074,19 @@ public:
     void setRectOffsetCal(uint8_t v) { rectCalLevel = v; }
     [[nodiscard]] uint8_t lsClamps() const { return lsClampCount.load(std::memory_order_relaxed); }
     [[nodiscard]] uint16_t enableCount() const { return enables.load(std::memory_order_acquire); }
-    [[nodiscard]] bool startInhibited() const { return startInhibit.load(std::memory_order_acquire); }
-    void inhibitStart(bool v) { startInhibit.store(v, std::memory_order_seq_cst); }
+    // owners of startInhibit: rect-cal save and `pwr pwm` share InhibitCal, the idle profile holds InhibitIdle
+    static constexpr uint8_t InhibitCal = 1, InhibitIdle = 2;
+    [[nodiscard]] bool startInhibited(uint8_t who = 0xff) const {
+        return startInhibit.load(std::memory_order_acquire) & who;
+    }
+    void inhibitStart(bool v, uint8_t who = InhibitCal) {
+        if (v) startInhibit.fetch_or(who, std::memory_order_seq_cst);
+        else startInhibit.fetch_and((uint8_t) ~who, std::memory_order_seq_cst);
+    }
+    // a start was refused by InhibitIdle since the last call
+    void wantStart() { startWanted.store(true, std::memory_order_relaxed); }
+    bool takeStartWanted() { return startWanted.exchange(false, std::memory_order_relaxed); }
+    [[nodiscard]] bool startWantedPending() const { return startWanted.load(std::memory_order_relaxed); }
 
     // Comparator counts per second = fsw * the full timer period. Used to convert the physical
     // rect_offset_ns / boot_refresh_ns <-> counts independent of driver resolution. It is the FULL
@@ -1315,7 +1327,10 @@ public:
     void pwmPerturb(int16_t direction) {
         bool enabling = unlikely(disabled() and direction > 0);
         if (enabling) {
-            if (startInhibit.load(std::memory_order_seq_cst)) return;
+            if (const uint8_t inh = startInhibit.load(std::memory_order_seq_cst)) {
+                if (inh & InhibitIdle) wantStart();
+                return;
+            }
             enables.fetch_add(1, std::memory_order_acq_rel);
             UART_LOG("Converter enabled");
             if (pinSd != 255) digitalWrite(pinSd, 0);

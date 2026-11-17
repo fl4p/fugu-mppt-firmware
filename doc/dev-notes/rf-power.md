@@ -45,6 +45,53 @@ active; WiFi PS keeps its own >= 10 W predicate. Log: `idle profile on: cpu 80 M
 tele 900000 ms, WiFi MAX_MODEM` / `idle profile off (converter): ...`. Any `pwr` cpu/pm/ble-adv/tele/
 wifi-ps knob suspends it until reboot.
 
+### Converter start waits for the boot clock (2026-11-17)
+
+Field result that prompted it: flat (INA226, ~1475 samples/s, 0.68 ms period) ran ~1070 samples/s at
+80 MHz, left the profile 0.1 s *after* `Converter enabled` and latched `lag=1025 us` (normal dawn starts
+845-916 us). fry (512 samples/s) was unaffected.
+
+- **Start inhibit.** `SynchronousConverter::startInhibit` is now a bit set: `InhibitCal` (rect-cal save,
+  `pwr pwm`, unchanged between them) and `InhibitIdle`. Core 0 sets `InhibitIdle` *before* lowering the
+  clock (then waits 10 ms and checks that no start slipped through, as `pwr pwm` does) and clears it only
+  after the boot clock is back and the RT loop has run `kIdleSettleN` = 128 samples and
+  `kIdleSettleUs` = 200 ms at it. `pwmPerturb()` is the only place a converter is enabled; it refuses
+  while any bit is set, so no mode (MPPT sweep, PSU/PV-sim, `dc`/`+N`, rect-cal, measure-coil) can
+  switch at the idle clock.
+- **Wake request.** A start refused for `InhibitIdle` (in `pwmPerturb()`, or the RT start branch when
+  `startBlockReason()` returns only `idle profile`) sets `converter.startWanted`. The next network-loop
+  pass (`idleProfileTick()` runs first in it) leaves the profile: CPU first, then telemetry interval and
+  BLE advert. Log: `idle profile off (start): cpu 160 MHz ...`, then
+  `idle profile: start released, <n> samples in <ms> ms at 160 MHz`. While it waits the status line
+  logs `START blocked: idle profile`. A blocked network loop delays the start by the length of the
+  block; the RT loop re-raises the request every pass, so nothing is lost.
+- A pack held full in daylight (no sweep) still raises the request, so the profile stays out then.
+
+### CPU-part guard
+
+On every entry the profile measures the RT sample rate (Vout `numSamples` over `kIdleRateWinUs` = 3 s,
+`esp_timer` timestamps) at the boot clock, switches (start inhibited), skips 0.5 s, and measures again.
+Below `kIdleMinRateRatio` = 0.97 of the pre-switch rate it goes back to the boot clock and latches the
+CPU part off until reboot (RAM only; BLE adv, telemetry and WiFi stay in the profile):
+`idle profile: cpu stays 160 MHz, sample rate 1070/1475 at 80 MHz`. Passing logs
+`idle profile: cpu 80 MHz, sample rate 1475/1475`. No usable pre-switch rate (0, sampler not running)
+keeps the boot clock and retries every window. A window with a flash write (`fugu_flash_seq`) or an ADC
+calibration is not judged; after 4 such windows at the idle clock the rate counts as missing and the
+clock is restored. `status`'s `sps` and `pwr`'s `rt=` are not used: the first is a 3 s average of the
+same counter shared with the latency watchdog, the second is the ADC's nominal (INA226: boot-measured)
+rate, not the loop's. With the continuous internal ADC the counter only drops once the DMA pool
+overflows, so there the guard detects lost samples, not added batch latency.
+
+Bench knobs (`CONFIG_FUGU_WITH_PWR_KNOBS`): `pwr idle 0|1|auto` forces the profile off/on through the
+same code (blockers still apply; a refused start ends a forced on; not allowed after a suspending knob),
+`pwr gap` prints and resets the max RT loop period (`g_app.cmdLoopLag`, latched with the converter on
+or off) with the Vout sample rate since the last call. The `pwr` line shows `idle=<on>/<auto|off|on|susp>
+icpu=<boot|pre|test|low|settle|latched|->`. `etc/idle_switch_stall.py -p <port> --cycles 20` measures
+the stall of the clock switch.
+
+Clock-switch stall (mock board, 1470 samples/s, 20 enter/exit cycles, 2026-11-17, `etc/idle_switch_stall.py`): not measurable. Worst loop gap in the interval containing the switch: 800 µs entering 80 MHz, 765 µs leaving, against 804 µs over the same time without switching. A start from the profile (three runs) peaked at 909-915 µs, a start without it at 901-923 µs. The mock holds its rate at 80 MHz up to 5000 samples/s; at 7000 the guard tripped (6552/7042) and the rate recovered at 160 MHz. Not measured on an INA226 board.
+(enter: _ us, exit: _ us, steady at 80 MHz: _ us, baseline at 160 MHz: _ us).
+
 While `g_teleMinPointUs >= 1 s` (`teleSparse()`, idle profile or `pwr tele`), every point carries the
 fields otherwise sent every 10th/20th/40th point (temperatures, lag, heap, mppt_state, Ro/Rc/Rb, ...), and
 the UDP flush task sends a partial batch at once instead of holding it until ~MSS fills (which at

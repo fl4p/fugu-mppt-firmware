@@ -1342,8 +1342,10 @@ static void loopRTNewData(time_ms nowMs) {
             } else {
                 stopAndBackoff(4);
             }
-        } else if (!flashOpActive() && wallClockUs() > delayStartUntil && mppt.startCondition()) { // start runs from flash
-            RT_COLD(
+        } else if (!flashOpActive() && wallClockUs() > delayStartUntil) { // start runs from flash
+            const char *blocked = mppt.startBlockReason();
+            if (blocked == MpptController::kIdleBlock) converter.wantStart(); // idle profile leaves first
+            if (!blocked) RT_COLD(
             if (g_app.psuMode()) {
                 mppt.bflow.enable(true);
                 converter.pwmPerturb(1);
@@ -1481,10 +1483,20 @@ static void netGuardTick(bool wifiUp) {
 static int8_t s_wifiPs = -1; // -1 unset, 0 MIN_MODEM, 1 MAX_MODEM
 #endif
 
+// CPU part of the profile (core 0). InhibitIdle is set from before the clock drops until the RT loop
+// has settled at the boot clock again, so the converter never starts at the idle clock.
+enum : uint8_t { CpuBoot, CpuPre, CpuTest, CpuLow, CpuSettle };
+
 static struct {
     uint16_t cpuMhz, advMs, bootMhz; // 0 = that part off
     uint32_t teleMs;
     bool on, suspended, hold;
+    bool cpuOff;         // guard: the RT loop lost samples at cpuMhz, CPU part off until reboot (RAM only)
+    uint8_t cpu, force;  // force: 0 auto, 1 off, 2 on (`pwr idle`)
+    uint8_t tries;       // CpuPre: windows without a rate; CpuTest: disturbed windows
+    float pre;           // samples/s before the switch
+    int64_t swUs;        // CpuTest: clock switch time
+    struct { int64_t t; uint32_t n, seq; time_us cal; } w; // rate window start
 } s_idle{};
 
 bool idleProfileOn() { return s_idle.on; }
@@ -1500,9 +1512,9 @@ static void idleProfileSetup(const ConfFile &boardConf) {
     rtc_cpu_freq_config_t cur, idle;
     rtc_clk_cpu_freq_get_config(&cur);
     s_idle.bootMhz = cur.freq_mhz;
-    s_idle.cpuMhz = mhz;
+    s_idle.cpuMhz = mhz == cur.freq_mhz ? 0 : mhz;
     // a different PLL (classic ESP32: 240 MHz) is not a divider switch, it stops the PLL clocks
-    if (mhz && (!rtc_clk_cpu_freq_mhz_to_config(mhz, &idle) || idle.source_freq_mhz != cur.source_freq_mhz)) {
+    if (s_idle.cpuMhz && (!rtc_clk_cpu_freq_mhz_to_config(mhz, &idle) || idle.source_freq_mhz != cur.source_freq_mhz)) {
         ESP_LOGW("main", "idle_cpu_mhz=%ld needs a PLL change from %lu MHz, CPU stays", mhz, (unsigned long) cur.freq_mhz);
         s_idle.cpuMhz = 0;
     }
@@ -1524,9 +1536,130 @@ static bool cpuSetMhz(uint32_t mhz) {
 #endif
 }
 
+static uint32_t voutSamples() { return sensors.Vout ? sensors.Vout->numSamples : 0; }
+
+static void idleWinStart(int64_t t) {
+    s_idle.w = {t, voutSamples(), fugu_flash_seq, adcSampler.getTimeLastCalibrationUs()};
+}
+
+// a flash write stalls both cores, a calibration resets the sample counter: no verdict from such a window
+static float idleRateNow(int64_t t) {
+    const auto &w = s_idle.w;
+    const uint32_t sq = fugu_flash_seq;
+    const bool dist = sq != w.seq || (sq & 1) || adcSampler.isCalibrating()
+                      || adcSampler.getTimeLastCalibrationUs() != w.cal;
+    return idleWinRate(w.n, voutSamples(), t - w.t, dist);
+}
+
+static void idleCpuRestore(int64_t now) {
+    cpuSetMhz(s_idle.bootMhz);
+    s_idle.cpu = CpuSettle;
+    s_idle.w.t = now;
+    s_idle.w.n = voutSamples();
+}
+
+// inhibit first, then make sure no start slipped through before the clock drops
+static bool idleCpuLower() {
+    const uint16_t en = converter.enableCount();
+    converter.inhibitStart(true, SynchronousConverter::InhibitIdle);
+    vTaskDelay(pdMS_TO_TICKS(10)); // a start that passed the inhibit check has finished
+    if (!converter.disabled() || converter.enableCount() != en || converter.startWantedPending()) {
+        converter.inhibitStart(false, SynchronousConverter::InhibitIdle);
+        return false;
+    }
+    cpuSetMhz(s_idle.cpuMhz);
+    return true;
+}
+
+// leaving the profile: back to the boot clock (settle) or drop a pending check
+static void idleCpuLeave(int64_t now) {
+    if (s_idle.cpu == CpuPre) s_idle.cpu = CpuBoot;
+    else if (s_idle.cpu == CpuTest || s_idle.cpu == CpuLow) idleCpuRestore(now);
+}
+
+static void idleCpuTick() {
+    auto &s = s_idle;
+    const int64_t now = esp_timer_get_time();
+    if (!s.on) idleCpuLeave(now); // also catches a leave from another task during idleCpuLower()
+    switch (s.cpu) {
+        case CpuBoot:
+            if (s.on && s.cpuMhz && !s.cpuOff) {
+                s.cpu = CpuPre;
+                s.tries = 0;
+                idleWinStart(now);
+            }
+            break;
+        case CpuPre: {
+            if (now - s.w.t < kIdleRateWinUs) break;
+            s.pre = idleRateNow(now);
+            if (idleCpuVerdict(s.pre, s.pre) == IdleCpuVerdict::NoBase) {
+                if (!s.tries++)
+                    UART_LOG("idle profile: cpu stays %u MHz, no sample rate (%.0f/s), retrying", s.bootMhz, s.pre);
+                idleWinStart(now);
+                break;
+            }
+            if (!idleCpuLower()) {
+                idleWinStart(now);
+                break;
+            }
+            s.cpu = CpuTest;
+            s.tries = 0;
+            s.swUs = now;
+            s.w.t = 0;
+            break;
+        }
+        case CpuTest: {
+            if (getCpuFrequencyMhz() != s.cpuMhz) {
+                if (now - s.swUs < 2000000) break;
+                s.cpuOff = true;
+                UART_LOG("idle profile: cpu stays %u MHz, switch to %u MHz failed", s.bootMhz, s.cpuMhz);
+                idleCpuRestore(now);
+                break;
+            }
+            if (!s.w.t) {
+                if (now - s.swUs >= kIdleSkipUs) idleWinStart(now);
+                break;
+            }
+            if (now - s.w.t < kIdleRateWinUs) break;
+            const float r = idleRateNow(now);
+            if (std::isnan(r) && ++s.tries < 4) {
+                idleWinStart(now);
+                break;
+            }
+            if (idleCpuVerdict(s.pre, r) == IdleCpuVerdict::Keep) {
+                s.cpu = CpuLow;
+                UART_LOG("idle profile: cpu %u MHz, sample rate %.0f/%.0f", s.cpuMhz, r, s.pre);
+                break;
+            }
+            s.cpuOff = true;
+            UART_LOG("idle profile: cpu stays %u MHz, sample rate %.0f/%.0f at %u MHz", s.bootMhz, r, s.pre, s.cpuMhz);
+            idleCpuRestore(now);
+            break;
+        }
+        case CpuSettle: {
+            // a `pwr cpu|pm` knob owns the clock now
+            if (!s.suspended && getCpuFrequencyMhz() != s.bootMhz) {
+                idleCpuRestore(now);
+                break;
+            }
+            const auto n = (int32_t) (voutSamples() - s.w.n);
+            if (n < 0) s.w.n = voutSamples();
+            if (!s.suspended && (n < (int32_t) kIdleSettleN || now - s.w.t < kIdleSettleUs)) break;
+            converter.inhibitStart(false, SynchronousConverter::InhibitIdle);
+            s.cpu = CpuBoot;
+            UART_LOG("idle profile: start released, %ld samples in %lu ms at %lu MHz", (long) n,
+                     (unsigned long) ((now - s.w.t) / 1000), (unsigned long) getCpuFrequencyMhz());
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+// CPU first: a refused start waits for it, telemetry and advertising do not matter for it
 static void idleProfileSet(bool on, const char *why) {
     s_idle.on = on;
-    if (s_idle.cpuMhz) cpuSetMhz(on ? s_idle.cpuMhz : s_idle.bootMhz);
+    if (!on) idleCpuLeave(esp_timer_get_time());
     if (s_idle.teleMs) g_teleMinPointUs = on ? s_idle.teleMs * 1000u : kTeleMinPointUs;
 #ifdef WITH_BLE
     if (s_idle.advMs) bleConsoleSetAdvMs(on ? s_idle.advMs : 0); // with a client: retried by the tick
@@ -1556,6 +1689,28 @@ void idleProfileHold(bool hold) {
     if (hold && s_idle.on) idleProfileSet(false, "(ota)");
 }
 
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+const char *idleProfileForce(const char *arg) {
+    if (s_idle.suspended) return "suspended by a pwr knob until reboot";
+    if (!strcmp(arg, "auto")) s_idle.force = 0;
+    else if (!strcmp(arg, "0")) s_idle.force = 1;
+    else if (!strcmp(arg, "1")) s_idle.force = 2;
+    else return "expected 0, 1 or auto";
+    return nullptr;
+}
+
+const char *idleProfileMode() {
+    static const char *const m[] = {"auto", "off", "on"};
+    return s_idle.suspended ? "susp" : m[s_idle.force];
+}
+
+const char *idleCpuState() {
+    static const char *const st[] = {"boot", "pre", "test", "low", "settle"};
+    if (!s_idle.cpuMhz) return "-";
+    return s_idle.cpuOff && s_idle.cpu == CpuBoot ? "latched" : st[s_idle.cpu];
+}
+#endif
+
 // what keeps the profile off; nullptr = idle
 static const char *idleBlocker() {
     // a sweep armed for the next start keeps mppt.active() true all night
@@ -1579,15 +1734,19 @@ static const char *idleBlocker() {
 
 static void idleProfileTick(time_ms nowMs) {
     static time_ms busyMs = 0;
-    if (s_idle.suspended) return;
-    const char *why = idleBlocker();
-    if (why) busyMs = nowMs;
-    const bool want = nowMs - busyMs > 5u * 60 * 1000;
-    if (want != s_idle.on) idleProfileSet(want, why);
+    const bool wake = converter.takeStartWanted(); // the RT loop refused a start (InhibitIdle)
+    if (!s_idle.suspended) {
+        const char *why = wake ? "(start)" : idleBlocker();
+        if (why) busyMs = nowMs;
+        if (wake && s_idle.force == 2) s_idle.force = 0; // a start ends a forced profile
+        const bool want = s_idle.force ? s_idle.force == 2 && !why : nowMs - busyMs > 5u * 60 * 1000;
+        if (want != s_idle.on) idleProfileSet(want, why ? why : s_idle.force ? "(pwr idle)" : nullptr);
 #ifdef WITH_BLE
-    else if (s_idle.advMs && bleConsoleAdvMs() != (want ? s_idle.advMs : 0))
-        bleConsoleSetAdvMs(want ? s_idle.advMs : 0);
+        else if (s_idle.advMs && bleConsoleAdvMs() != (want ? s_idle.advMs : 0))
+            bleConsoleSetAdvMs(want ? s_idle.advMs : 0);
 #endif
+    }
+    idleCpuTick();
 }
 
 // Per-tick WiFi + network-service work for loopNetwork_task. Handles auto-reenable timer, the
