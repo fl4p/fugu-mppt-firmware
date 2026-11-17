@@ -164,7 +164,8 @@ void test_buck_bootstrap_min_default() {
 void test_buck_bootstrap_min_scales_with_conf() {
     SynchronousConverter c;
     initConvEx(c, "buck", "3000"); // double the refresh time -> ~double the count
-    auto expect = (uint16_t) std::ceil(3000e-9f * kFsw * (float) c.pwmMaxDriver());
+    // in timer ticks like the firmware: kFsw * pwmMax is off by the whole-tick period rounding
+    auto expect = (uint16_t) (std::ceil(3000.f * 1e-9f * c.getPwmTickRate()) + c.getDtHlTicks());
     TEST_ASSERT_EQUAL_UINT(expect, c.getRectOnPwmMin());
 }
 

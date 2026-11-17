@@ -23,6 +23,7 @@
 #include "pwm/ledc.h"
 #include "pwm/mcpwm.h"
 #include "pwm/mcpwm_timing.h"
+#include "qemu.h"
 
 static const char *TAG_PWM = "pwm_rig";
 
@@ -392,6 +393,7 @@ struct LedcCapRig {
 // edges; freq = (N-1)*APB_HZ / (last-first). Must agree with LEDC's quantized
 // emit-freq (APB / (pwmMax + 1)) within ±5 Hz.
 void test_pwm_rig_freq_path() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     LedcCapRig rig;
     rig.init(kFsw);
     rig.ledc.update_pwm(0, rig.ledc.pwmMax / 2);  // D = 0.5
@@ -424,6 +426,7 @@ void test_pwm_rig_freq_path() {
 // MCPWM_CAP both edges, mean(t_fall − t_rise) over 1024 cycles vs commanded duty
 // fraction × measured period. Tolerance ±25 ns expressed as duty fraction.
 void test_pwm_rig_pulsewidth_path() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     static constexpr float kDuties[] = {0.25f, 0.5f, 0.75f};
 
     LedcCapRig rig;
@@ -481,6 +484,7 @@ void test_pwm_rig_pulsewidth_path() {
 // Sweep fsw ∈ {20k, 39k, 100k}. MCPWM_CAP timestamps N rising edges on HS,
 // freq = (N-1)*APB / (last-first). At 20 kHz, N=1024 ≈ 51 ms — fits ring + timeout.
 void test_mcpwm_hs_freq() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     // 100 kHz is out of the CAP's reliable range: inter-edge interval (5 µs) is
     // close to CAP ISR latency (~1-3 µs on S3) and dropped edges inflate the mean
     // period. Verified empirically — variance across reboots was 97-99.9 kHz.
@@ -525,6 +529,7 @@ void test_mcpwm_hs_freq() {
 // Test 2. MCPWM HS duty matches commanded cmpHS within ±25 ns.
 // Sweep D ∈ {0.1, 0.25, 0.5, 0.75, 0.9}; measure mean pulse width vs cmpHS / pwmMax.
 void test_mcpwm_hs_duty() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     // Endpoint duties (0.1, 0.9) produce sub-3-µs HS pulses at 39 kHz; the CAP ISR
     // latency (~1–3 µs on S3) drops one edge per such pulse and the test under-counts.
     // Spec1 still asks for 0.1 / 0.9 — those are deferred to Round 2 (scope-only).
@@ -620,6 +625,7 @@ static constexpr float    kExpectedDtLsHsNs = (float)(kDtTestTicks + 1) * 1e9f /
 // Test 4a. HS → LS dead-band (mid-period). t(LS-rise) − t(HS-fall) over many periods.
 // Mean must match the configured dt within ±50 ns; minimum must be > 0 (no shoot-through).
 void test_mcpwm_deadband_hs_to_ls() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     McpwmLegRig rig;
     rig.init(kDtTestFsw, kDtTestTicks, /*enLogic*/false, /*capture_ls*/true);
     rig.leg.setHsOff(rig.leg.pwmMax / 2);
@@ -646,6 +652,7 @@ void test_mcpwm_deadband_hs_to_ls() {
 // Test 4b. LS → HS dead-band at period wrap. Drive cmpLS = pwmMax − 1 (worst case);
 // the gap = (dtTicks + 1) MCPWM ticks. Pair (LS-fall[k], HS-rise[k+1]).
 void test_mcpwm_deadband_ls_to_hs() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     McpwmLegRig rig;
     rig.init(kDtTestFsw, kDtTestTicks, /*enLogic*/false, /*capture_ls*/true);
     rig.leg.setHsOff(rig.leg.pwmMax / 4);              // narrow HS so LS has room
@@ -675,6 +682,7 @@ void test_mcpwm_deadband_ls_to_hs() {
 // two register writes, and dt=1 is fully cancelled by the 1-tick HS path-claim delay. Neither
 // transient is observable from the CAP ring, so only the refusal itself can be tested here.
 void test_mcpwm_deadtime_runtime_change() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     static constexpr uint32_t kSteps[] = {16, 80, 8};
     constexpr uint32_t N = 256;
 
@@ -738,6 +746,7 @@ void test_mcpwm_deadtime_runtime_change() {
 // pwmMax reservation), so an asymmetric pair must land on exactly one each. Picked far apart
 // (32 vs 80 ticks = 200 vs 500 ns) so a value leaking into the other edge is unmissable.
 void test_mcpwm_deadtime_split_init() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     static constexpr uint32_t kHl = 32, kLh = 80;
     constexpr uint32_t N = 256;
 
@@ -775,6 +784,7 @@ void test_mcpwm_deadtime_split_init() {
 // 1-tick HS falling delay and no retune) while the wrap band is still reserved out of pwmMax.
 // This state is unreachable before the split and is the one that must not accidentally arm.
 void test_mcpwm_deadtime_lh_only() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     static constexpr uint32_t kLh = 80;
     McpwmLegRig rig;
     rig.init(kDtTestFsw, /*dtTicks*/0, /*enLogic*/false, /*capture_ls*/false, /*dtLhTicks*/kLh);
@@ -813,6 +823,7 @@ void test_mcpwm_deadtime_lh_only() {
 // Test 10e. Runtime split retune: pwmMax must track lh alone and the measured HS→LS band hl
 // alone. Change one at a time so a cross-wired update cannot hide behind the other moving too.
 void test_mcpwm_deadtime_split_runtime() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     constexpr uint32_t N = 256;
     McpwmLegRig rig;
     rig.init(kDtTestFsw, /*dtTicks*/32, /*enLogic*/false, /*capture_ls*/true, /*dtLhTicks*/32);
@@ -862,6 +873,7 @@ void test_mcpwm_deadtime_split_runtime() {
 // The FED-on-HS workaround adds a fixed ~6 ns shortfall; that shows up as a small
 // negative intercept and is well inside the budget.
 void test_mcpwm_deadtime_linearity() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     static constexpr uint32_t kSweepTicks[] = {8, 16, 32, 80};
     constexpr uint32_t        K = sizeof(kSweepTicks) / sizeof(kSweepTicks[0]);
     constexpr uint32_t        N = 256;
@@ -906,6 +918,7 @@ void test_mcpwm_deadtime_linearity() {
 // Set cmpLS = cmpHS so LS gen's HIGH and LOW events coincide → LS stays low all
 // period. Verify zero LS rising edges over 100 ms (~3900 cycles).
 void test_mcpwm_ls_force_off() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     McpwmLegRig rig;
     rig.init(kFsw, /*dtTicks*/0, /*enLogic*/false, /*capture_ls*/true);
     uint16_t cmpHS = rig.leg.pwmMax / 2;
@@ -933,6 +946,7 @@ void test_mcpwm_ls_force_off() {
 // Set cmpHS small, cmpLS = pwmMax−1 (worst-case largest LS on-time). Measure mean
 // LS-high duty over many cycles; expect close to (pwmMax−1−cmpHS)/pwmMax.
 void test_mcpwm_ls_force_on() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     McpwmLegRig rig;
     rig.init(kFsw, /*dtTicks*/0, /*enLogic*/false, /*capture_ls*/true);
     uint16_t cmpHS = rig.leg.pwmMax / 4;
@@ -967,6 +981,7 @@ void test_mcpwm_ls_force_on() {
 // `forceShutdown()` forces both gates LOW via mcpwm_generator_set_force_level.
 // Verify pin is constant 0 (digitalRead samples + zero CAP edges over 50 ms).
 void test_mcpwm_d0_hs_low() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     McpwmLegRig rig;
     rig.init(kFsw, /*dtTicks*/0, /*enLogic*/false, /*capture_ls*/false);
     rig.leg.setHsOff(rig.leg.pwmMax / 2);  // start mid-duty so we know the leg is alive
@@ -999,6 +1014,7 @@ void test_mcpwm_d0_hs_low() {
 // Force HS HIGH via mcpwm_generator_set_force_level(genHS, 1, true). LS forced LOW.
 // Verify HS pin constant 1 (digitalRead + zero CAP edges).
 void test_mcpwm_d1_hs_high() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     McpwmLegRig rig;
     rig.init(kFsw, /*dtTicks*/0, /*enLogic*/false, /*capture_ls*/false);
     rig.leg.setHsOff(rig.leg.pwmMax / 2);
@@ -1036,6 +1052,7 @@ void test_mcpwm_d1_hs_high() {
 // D2×pwmMax} within ±1 CAP tick — no intermediate values from a torn update.
 // Regression guard against update_cmp_on_tez flag accidentally being cleared.
 void test_mcpwm_glitch_free_duty_step() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     McpwmLegRig rig;
     rig.init(kFsw, /*dtTicks*/0, /*enLogic*/false, /*capture_ls*/false);
     uint16_t pwmMax = rig.leg.pwmMax;
@@ -1092,6 +1109,7 @@ void test_mcpwm_glitch_free_duty_step() {
 // so the matrix-input route (pin → PWM_FAULT) coexists with software pin writes.
 // Recover, verify switching resumes.
 void test_mcpwm_ost_brake_latches() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     McpwmLegRig rig;
     rig.init(kFsw, /*dtTicks*/0, /*enLogic*/false, /*capture_ls*/false);
     rig.leg.setHsOff(rig.leg.pwmMax / 2);
@@ -1153,6 +1171,7 @@ void test_mcpwm_ost_brake_latches() {
 static constexpr int kMcpwmHs1ChanId = 3;
 
 void test_mcpwm_interleaved_phase() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     MCPWM_Converter<2> conv;
     const int pinHS[2] = {kHsPin,    PWM_HS_PIN_2};
     const int pinLS[2] = {kLsPin,    PWM_LS_PIN_2};
@@ -1212,6 +1231,7 @@ void test_mcpwm_interleaved_phase() {
 // InEn boards switches the half-bridge before MPPT/protection runs). forceShutdown()
 // (which the converter issues right after start()) must keep it low too.
 void test_mcpwm_boot_safe_low() {
+    SKIP_IN_QEMU("no MCPWM edges, so the no-edge check would pass vacuously");
     McpwmLegRig rig;
     rig.init(kFsw, /*dtTicks*/0, /*enLogic*/false, /*capture_ls*/true);
     // NOTE: deliberately do NOT setHsOff/setLsOff — observe the init defaults.
@@ -1252,6 +1272,7 @@ void test_mcpwm_boot_safe_low() {
 // resume at the NEW duty — not stay latched LOW (the InEn permanent-latch bug) and
 // not flash the stale pre-disable duty. enLogic: IN=HS gen, EN=LS gen.
 void test_mcpwm_enlogic_reenable() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     constexpr uint32_t N_REENABLE = 128;
     McpwmLegRig rig;
     rig.init(kFsw, /*dtTicks*/0, /*enLogic*/true, /*capture_ls*/true);
@@ -1302,6 +1323,7 @@ void test_mcpwm_enlogic_reenable() {
 // period), not pwmMax/2. With dtTicks=32 the bug would shift leg-1 by ~100 ns — outside
 // the ±50 ns window.
 void test_mcpwm_interleaved_phase_deadtime() {
+    SKIP_IN_QEMU("no MCPWM output or capture edges");
     MCPWM_Converter<2> conv;
     const int pinHS[2] = {kHsPin,    PWM_HS_PIN_2};
     const int pinLS[2] = {kLsPin,    PWM_LS_PIN_2};
@@ -1373,6 +1395,7 @@ void test_rect_offset_ns_conversion() {
 // Bench wiring: PicoScope CH A on IO35 (HS), CH B on IO37 (LS), GND to device GND.
 // Always passes — the real measurement is host-side. Runs LAST (~35 s).
 void test_mcpwm_endpoint_duty_scope() {
+    SKIP_IN_QEMU("scope target measured off-board, nothing to observe");
     static constexpr float    kDuties[]  = {0.05f, 0.10f, 0.25f, 0.50f, 0.75f, 0.90f, 0.95f};
     static constexpr uint32_t kDwellMs   = 8000;
     // CH B (1x probe) is on IO37 and works; route HS there for the duty measurement.

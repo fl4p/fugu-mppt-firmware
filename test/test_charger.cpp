@@ -374,18 +374,18 @@ void test_mqtt_empty_payload_is_safe() {
 // used to make a stale value read fresh again for 180 s on every wrap.
 void test_cell_voltage_stays_stale_across_us_wrap() {
     BatteryState bs;
-    loopWallClockUs_ = 5'000'000;
+    setWallClockUs(5'000'000);
     bs.setVcellHigh(3.40f);
     TEST_ASSERT_TRUE(bs.haveValidCellVoltage());
 
-    loopWallClockUs_ = 5'000'000 + (BatteryState::VCELL_EXPIRATION_TIME_SEC - 3) * 1'000'000ULL;
+    setWallClockUs(5'000'000 + (BatteryState::VCELL_EXPIRATION_TIME_SEC - 3) * 1'000'000ULL);
     TEST_ASSERT_TRUE(bs.haveValidCellVoltage());
 
-    loopWallClockUs_ = 5'000'000 + (BatteryState::VCELL_EXPIRATION_TIME_SEC + 2) * 1'000'000ULL;
+    setWallClockUs(5'000'000 + (BatteryState::VCELL_EXPIRATION_TIME_SEC + 2) * 1'000'000ULL);
     TEST_ASSERT_FALSE(bs.haveValidCellVoltage());
 
     for (int k = 1; k <= 3; ++k) {
-        loopWallClockUs_ = 5'000'000 + k * (1ULL << 32) + 1'000'000; // 1 s past the k-th wrap
+        setWallClockUs(5'000'000 + k * (1ULL << 32) + 1'000'000); // 1 s past the k-th wrap
         TEST_ASSERT_FALSE(bs.haveValidCellVoltage());
     }
 }

@@ -21,6 +21,7 @@
 
 #include "util.h"   // RT_CORE, NON_RT_CORE
 #include "etc/rt.h" // RT_PRIO
+#include "qemu.h"
 
 // A GPIO used as a self-triggering interrupt source: driven as an output that feeds its own
 // input edge, so no external wiring is needed. 21 is the Fugu2 HS gate input, so pulses are ~1 us and
@@ -101,6 +102,7 @@ static int captureIsrCoreRaw(int installCore) {
 
 // The dispatcher core follows the install core: installing on core 0 -> ISR on core 0.
 void test_gpio_isr_lands_on_install_core_0() {
+    SKIP_IN_QEMU("no GPIO edge interrupts");
     int core = captureIsrCoreRaw(0);
     ESP_LOGW(TAG, "install core 0 -> ISR ran on core %d (fired %lu)", core, (unsigned long) s_isrCount);
     TEST_ASSERT_GREATER_THAN_UINT32(0, s_isrCount); // rig sanity: edge actually fired
@@ -109,6 +111,7 @@ void test_gpio_isr_lands_on_install_core_0() {
 
 // ...and installing on RT_CORE -> ISR on RT_CORE. This is the affinity the RT sampler needs.
 void test_gpio_isr_lands_on_install_core_rt() {
+    SKIP_IN_QEMU("no GPIO edge interrupts");
     int core = captureIsrCoreRaw(RT_CORE);
     ESP_LOGI(TAG, "install core RT=%d -> ISR ran on core %d (fired %lu)", RT_CORE, core, (unsigned long) s_isrCount);
     TEST_ASSERT_GREATER_THAN_UINT32(0, s_isrCount);
@@ -120,6 +123,7 @@ void test_gpio_isr_lands_on_install_core_rt() {
 // "GPIO isr service already installed" line and the alert ISR fires on RT_CORE. Must be the first
 // attachInterrupt() of the run (arduino caches its install state), so it runs before the raw tests.
 void test_attachinterrupt_after_preinstall_uses_rt_core() {
+    SKIP_IN_QEMU("no GPIO edge interrupts");
     gpio_uninstall_isr_service();
     TEST_ASSERT_EQUAL(ESP_OK, installGpioIsrServiceOnCore(RT_CORE));
 

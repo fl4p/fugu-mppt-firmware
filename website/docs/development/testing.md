@@ -50,6 +50,11 @@ alternative, `idf.py -p $ESPPORT flash monitor` resets the board and attaches in
 
 The PWM/MCPWM tests only run in an MCPWM build (`CONFIG_FUGU_WITH_MCPWM=y`). The software suite passes without it.
 
+Without a board, `python3 test/unity_qemu.py` (after `. ./idf-export.sh`) builds the suite in `build-qemu`, runs it in
+QEMU (esp32s3), and exits non-zero on a failure or crash. QEMU's flash has no QIO mode, so the script sets DIO in that
+build directory's sdkconfig only. The tests that need real pin edges (GPIO interrupts, MCPWM output and capture)
+detect QEMU by its blank factory MAC and report as Ignored.
+
 `MAIN_SRC=<file>` replaces the application sources with one file that provides `setup()`/`loop()`, for example
 `MAIN_SRC=../test/main_ads_rate.cpp idf.py build`. The `test_*.cpp` files run under `test/main.cpp` via
 `RUN_TESTS=1`. They aren't entry points.
