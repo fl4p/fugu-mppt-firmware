@@ -83,6 +83,10 @@ public:
 
     [[nodiscard]] float depth() const { return _depth; }
 
+    // consumer: BMS charge at the last full, and its restore after a reboot (before any cell frame)
+    [[nodiscard]] float bmsRef() const { return _bmsRef; }
+    void restoreRef(float ref) { _bmsRef = ref; }
+
     // consumer thread, once per cell frame: deepest deficit since full (the recharge release depth)
     float updateDepth() {
         if (!std::isfinite(_bmsRef)) _bmsRef = _bmsAtCell.load(std::memory_order_relaxed); // no full since boot

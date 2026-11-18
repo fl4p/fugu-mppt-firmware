@@ -250,6 +250,8 @@ static TeleConf setupNetworkAtBoot() {
     return teleConf;
 }
 
+static RTC_NOINIT_ATTR ChargerRtc s_chargerRtc;
+
 // Sensors → converter → MPPT/tracker bring-up. Sets g_app.setupErr on any failure. Kept as one unit
 // because these initializations fail-together: without sensors the converter can't run safely,
 // without coil/converter conf the PWM driver can't init.
@@ -271,6 +273,7 @@ static void setupConverterAndMppt(const ConfFile &boardConf, const Limits &lim, 
             converterConf = ConfFile{"/littlefs/conf/converter.conf"};
 
             mppt.charger.begin(chargerConf);
+            mppt.charger.attachRtc(&s_chargerRtc);
             converter.init(converterConf, boardConf, coilConf);
             g_hwOvIsrHook = hwOvIsr;
 #ifndef HAVE_MCPWM

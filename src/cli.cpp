@@ -1898,6 +1898,24 @@ static void cmdWireReset(cmd *) {
     UART_LOG("wire: latch and baseline cleared, learning restarts");
 }
 
+static const char *const HOLIDAY_MODES[] = {"auto", "on", "off"};
+
+// holiday [auto|on|off] — holiday ceiling: detection, forced on, or disabled
+static void cmdHoliday(cmd *c) {
+    Command cc(c);
+    auto &chg = mppt.charger;
+    if (cc.countArgs() >= 1) {
+        auto arg = cc.getArg(0).getValue();
+        uint8_t o = 3;
+        for (uint8_t i = 0; i < 3; ++i) if (arg == HOLIDAY_MODES[i]) o = i;
+        if (o == 3) CMD_FAIL_RETURN("holiday: use auto|on|off");
+        if (!(chg.params.holiday_charge > 0.f)) CMD_FAIL_RETURN("holiday: set charger.conf holiday_charge first");
+        chg.setHolidayOverride(o);
+    }
+    UART_LOG("holiday %s (%s), ceiling %.0f%%", chg.holiday() ? "ON" : "off", HOLIDAY_MODES[chg.holidayOverride()],
+             chg.ceiling() * 100.f);
+}
+
 // status  — charger/battery snapshot: termination state, effective limits, termination line and BMS feed.
 static void cmdStatus(cmd *) {
     auto &chg = mppt.charger;
@@ -1926,16 +1944,19 @@ static void cmdStatus(cmd *) {
     if ((bool) chg.termCond && std::isfinite(p.Cbat) && p.Cbat > 0.f && p.recharge_dod > 0.f)
         UART_LOG("  DoD since full: %.0f%% / %.0f%% to recharge", bs.coulombCounter.depth() / p.Cbat * 100.f,
                  p.recharge_dod * 100.f);
-    if (p.partial_charge > 0.f) {
-        time_us lf = chg.lastFullUs();
-        if (lf)
-            UART_LOG("  partial_charge=%.0f%%  last full %.1fh ago (full charge every %.1f d)",
-                     p.partial_charge * 100.f, (wallClockUs() - lf) * (1.f / 3600e6f),
-                     p.full_charge_interval_s / 86400.f);
+    if (chg.ceiling() > 0.f) {
+        uint32_t age = chg.fullAgeS();
+        if (age != UINT32_MAX)
+            UART_LOG("  ceiling=%.0f%%  last full %.1fh ago (full charge every %.1f d)%s", chg.ceiling() * 100.f,
+                     age / 3600.f, p.full_charge_interval_s / 86400.f, chg.deficitKnown() ? "" : ", Ah counter unknown");
         else
-            UART_LOG("  partial_charge=%.0f%%  no full charge since boot yet (charging to full first)",
-                     p.partial_charge * 100.f);
+            UART_LOG("  ceiling=%.0f%%  last full unknown (charging to full first)", chg.ceiling() * 100.f);
     }
+    if (p.holiday_charge > 0.f)
+        UART_LOG("  holiday %s (%s)  quiet days %u/%u (gaps %u)  today: discharging %.1fh, mean %.2f/%.2fA",
+                 chg.holiday() ? "ON" : "off", HOLIDAY_MODES[chg.holidayOverride()], (unsigned) chg.holidayStreak(),
+                 (unsigned) p.holiday_days, (unsigned) chg.holidayGaps(), chg.holidayDischargeH(), chg.holidayMeanA(),
+                 p.holiday_ibat);
     if (chg.haveTemp())
         UART_LOG("  pack temp %.1f..%.1f°C (%lus ago)  charge min %.0f derate %.0f max %.0f°C",
                  chg.tempMin(), chg.tempMax(), (unsigned long) chg.tempAgeS(),
@@ -2416,6 +2437,7 @@ void setupCli() {
     cli.addBoundlessCmd("pv", cmdPv); // pv <isc> <voc> [k] | scale <s> | off
 #endif
     cli.addCommand("status", cmdStatus);
+    cli.addBoundlessCmd("holiday", cmdHoliday); // holiday [auto|on|off]
     cli.addCommand("wire", cmdWire);
     cli.addCommand("wire-reset", cmdWireReset);
 

@@ -470,11 +470,11 @@ average SoC. Stopping short of full lowers it on every cycle, which is what
 These mechanisms depend on data from the BMS. The termination line and the recharge release need
 `bat_c` and the BMS cell-voltage and pack-current reports. `partial_charge` additionally needs:
 
-- a full charge since boot (its Ah counter measures the deficit since the last full charge)
+- a full charge since boot (its Ah counter measures the deficit since the last full charge), or one kept across a software reset together with a live BMS remaining-charge report
 - fresh cell-voltage and pack-current data (each expires after 180 s)
 - `recharge_dod` smaller than `partial_charge`
 
-After a reboot, or while the data are stale, the charger charges to full.
+After a power loss, or while the data are stale, the charger charges to full.
 
 The temperature limits need a configured BMS temperature topic. Each sensor expires one hour
 after its last report, and with no fresh sensor the temperature policy is off.
@@ -492,7 +492,7 @@ that evidence is.
 | `tail_c_rate` | 0.05 | The manufacturer's cutoff current, specified at 3.65 V [[8](#ref-8)]. At `cv_eoc` = 3.5 V, the interpolation in [[13](#ref-13)] for a 3.65 V / 0.05 C pair would terminate at about 0.023 C, so the default line terminates earlier. How much capacity that forgoes was not measured in any reviewed source. | medium for the value at 3.65 V; the rest is inference |
 | `recharge_dod` | 0.20 | Allows charging again once the pack has discharged this fraction of `bat_c` since the last full charge; it does not bound how far the pack discharges. With light loads the pack spends much of its time in its top fifth, the high-SoC regime that aged fastest in [[2](#ref-2)] (tested there as 75–100 %). A larger value means fewer full charges and less time near 100 %. | medium |
 | `partial_charge` | 0 (off) | The direction is well supported: lower average SoC ages LFP/graphite more slowly in calendar storage [[1](#ref-1), [3](#ref-3), [6](#ref-6)] and in low-rate cycling [[2](#ref-2)]. The best ceiling is cell-specific: the calendar step lay at 73 % SoC in the LFP cell of [[1](#ref-1)] and depends on electrode balancing; it has not been measured for large prismatic cells. The manufacturer's recommended range is 10–90 % [[8](#ref-8)]. Charging stops at `partial_charge` and resumes once the pack has discharged `recharge_dod` below it; prerequisites above. | high for the direction, low for any particular number |
-| `holiday_charge` | 0 (off) | Applies a ceiling automatically after `holiday_days` days in a row whose discharge stays below `holiday_dod` × `bat_c` (a pack that barely cycles); the same calendar-aging evidence as for `partial_charge` applies. With `holiday_charge` = 0.5 and the default `recharge_dod` the pack cycles between 30 and 50 % SoC, the manufacturer's storage window [[8](#ref-8)]. The detection thresholds are engineering choices. | high for the direction, none for the thresholds |
+| `holiday_charge` | 0 (off) | Applies a ceiling automatically after `holiday_days` days in a row whose mean discharge current stays below `holiday_ibat` (a pack that barely cycles); the same calendar-aging evidence as for `partial_charge` applies. With `holiday_charge` = 0.6 and `holiday_band` = 0.1 the pack cycles at about 50–60 % SoC: between 37.5 and 62.5 % SoC storage fade hardly differed [[3](#ref-3)], and the band stays below the step near 70 % SoC [[1](#ref-1)] (see [§3.1](#31-soc-steps)) with several days of base-load reserve. The detection thresholds are engineering choices. | high for the direction, none for the thresholds |
 | `full_charge_interval` | 7 d | Full charges are needed for BMS balancing (subject to the BMS's own conditions) and to re-zero the Ah counter. No reviewed source addresses how often an LFP pack needs one. | none (engineering choice) |
 | `ibat_max` | 20 A | At or below 0.5 C, charge rate had little influence on aging in [[4](#ref-4)], and at low rates calendar aging dominated [[5](#ref-5)]. Stay at or below the manufacturer's 0.5 C standard charge [[8](#ref-8)]. | medium; transfer to large prismatic cells assumed |
 | `bat_temp_min` | 0 °C | The manufacturer's lower charge limit [[8](#ref-8)]; plating and a drastic loss of cycle life below 0 °C [[20](#ref-20), [21](#ref-21)]. Acts only with fresh BMS temperature reports. | high |

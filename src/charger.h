@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
+#include <cstring>
 
 #include "console.h"
 #include "etc/coulomb_counter.h"
@@ -29,6 +31,10 @@ struct BatChargerParams {
     float vout_offset_max = 0.6f; // [V] worst-case Vout-sensor error to tolerate during terminated float.
     float partial_charge = 0.f; // SoC fraction to stop at between periodic full charges (0 = always charge to full)
     uint32_t full_charge_interval_s = 7 * 86400; // [s] charge to full (BMS balancing) at least this often
+    float holiday_charge = 0.f; // SoC ceiling once the pack barely cycles (0 = auto mode off)
+    float holiday_ibat = NAN; // [A] quiet day: mean discharge current below this
+    float holiday_band = 0.1f; // SoC band below holiday_charge before the hold releases
+    uint8_t holiday_days = 3; // consecutive quiet days to enter holiday mode
     float bat_temp_min = 0.f; // [°C] no charging below (Li plating)
     float bat_temp_derate = 45.f; // [°C] charge current derates linearly from here ...
     float bat_temp_max = 55.f; // [°C] ... to zero here
@@ -88,6 +94,21 @@ struct BatChargerParams {
                 partial_charge = 0.f;
             }
         }
+        holiday_charge = chargerConf.getFloat("holiday_charge", 0.f);
+        assert_throw(holiday_charge >= 0.f && holiday_charge < 1.f, "holiday_charge must be in [0, 1)");
+        long hd = chargerConf.getLong("holiday_days", 3);
+        assert_throw(hd >= 1 && hd <= 60, "holiday_days must be in [1, 60]");
+        holiday_days = (uint8_t) hd;
+        if (holiday_charge > 0.f) {
+            holiday_ibat = chargerConf.getFloat("holiday_ibat", NAN);
+            assert_throw(std::isfinite(holiday_ibat) && holiday_ibat > 0.f, "holiday_charge needs holiday_ibat > 0 [A]");
+            holiday_band = chargerConf.getFloat("holiday_band", 0.1f);
+            assert_throw(holiday_band > 0.f && holiday_band < holiday_charge, "need 0 < holiday_band < holiday_charge");
+            if (!(std::isfinite(Cbat) && Cbat > 0.f)) {
+                ESP_LOGW("charger", "holiday_charge needs bat_c, disabled");
+                holiday_charge = 0.f;
+            }
+        }
         float days = chargerConf.getFloat("full_charge_interval", 7.f);
         assert_throw(days > 0.f && days < 365.f, "full_charge_interval must be in (0, 365) days");
         full_charge_interval_s = (uint32_t) (days * 86400.f);
@@ -98,6 +119,27 @@ struct BatChargerParams {
                      "need bat_temp_min < bat_temp_derate < bat_temp_max");
     }
 };
+
+// Charger state kept across esp_restart/panic/OTA in RTC_NOINIT RAM (not across power loss)
+struct ChargerRtc {
+    uint32_t magic;
+    uint32_t fullAgeS; // age of the last full charge, UINT32_MAX = unknown
+    float bmsRef; // BMS remaining charge at that full, NAN = none
+    uint8_t holiday, streak, gaps, override_;
+    uint32_t sum;
+
+    static constexpr uint32_t MAGIC = 0x48444c31;
+    [[nodiscard]] uint32_t checksum() const {
+        uint32_t w[4], h = 0x811c9dc5;
+        memcpy(w, this, sizeof(w));
+        for (uint32_t x: w) h = (h ^ x) * 16777619u;
+        return h;
+    }
+    [[nodiscard]] bool valid() const {
+        return magic == MAGIC && sum == checksum() && holiday <= 1 && override_ <= 2;
+    }
+};
+static_assert(offsetof(ChargerRtc, sum) == 16, "ChargerRtc layout");
 
 struct BatteryState {
     static constexpr auto VCELL_EXPIRATION_TIME_SEC = 180;
@@ -321,6 +363,16 @@ class BatteryCharger {
     float _hotScale = NAN; // derate factor for Ibat_lim above bat_temp_derate (NAN = none)
     bool _wasHold = false;
     time_us _lastFullUs = 0; // last termination latch (0 = none since boot)
+    time_us _hStartUs = 0, _hLastUs = 0; // holiday: current 24 h bucket start, last tick
+    float _hCovS = 0.f, _hDisS = 0.f, _hDisAh = 0.f; // bucket coverage [s], discharge time [s] and charge [Ah]
+    uint32_t _hLastT = 0, _hFrames = 0, _hChg = 0; // ibat frames in the bucket, and how many changed value
+    float _hLastI = NAN;
+    uint8_t _hStreak = 0, _hGaps = 0; // consecutive quiet / unevaluable buckets
+    volatile uint8_t _hOverride = 0; // 0 auto, 1 on, 2 off
+    bool _holiday = false, _hEff = false; // detected, effective last tick
+    uint32_t _fullAgeBootS = UINT32_MAX; // restored full-charge age at boot (no full since boot)
+    bool _refRestored = false; // the BMS full reference survived a reboot
+    ChargerRtc *_rtc = nullptr;
 
     // Consumer-side freshness of the producer's 32-bit frame stamps: the stamp only tells us a
     // frame arrived; when it changed is noted here on the 64-bit loop clock (wrap-free, no torn read).
@@ -334,6 +386,11 @@ class BatteryCharger {
     static constexpr time_us TEMP_EXPIRE_US = 3600ULL * 1000000ULL; // policy off without a frame (as without a sensor)
     static constexpr time_us IBAT_EXPIRE_US = 180ULL * 1000000ULL; // like VCELL_EXPIRATION_TIME_SEC
     static constexpr float IOUT_LIM_FLOOR = 0.25f; // the CC limiter normalizes by its setpoint; never 0
+    static constexpr time_us HOLIDAY_DAY_US = 86400ULL * 1000000ULL;
+    static constexpr time_us HOLIDAY_GAP_US = 60ULL * 1000000ULL; // longer tick or ibat-frame gap: not covered
+    static constexpr float HOLIDAY_DIS_A = 0.2f; // [A] discharge below this counts
+    static constexpr float HOLIDAY_MIN_DIS_S = 2 * 3600; // discharge time for an evaluable bucket
+    static constexpr float HOLIDAY_EXIT_MIN_S = 3 * 3600, HOLIDAY_EXIT_K = 1.2f; // in-bucket exit: mean > K * holiday_ibat
 
     // Notes when a frame stamp changes; true while the last change is younger than maxAge.
     static bool _fresh(uint32_t stamp, uint32_t &last, time_us &seen, time_us now, time_us maxAge) {
@@ -437,14 +494,106 @@ public:
         return newest ? (uint32_t) ((wallClockUs() - newest) / 1000000ULL) : 0;
     }
 
-    // Partial-charge ceiling: after a full charge, stop at partial_charge (Ah-counted from that
-    // full) and hold there by load-following until the pack has discharged recharge_dod below the
-    // ceiling, or until full_charge_interval expires (then charge to full again for balancing).
-    // Needs a full event since boot: the Ah counter is a deficit-since-full, unknown before that.
+    // Holiday detection, per 24 h bucket: mean discharge current (ibat < -0.2 A) over the time it
+    // discharged. Charging is ignored, so a balancing full charge is no activity. A bucket is evaluable
+    // with >= 80 % ibat coverage, >= 2 h of discharge and a changing ibat (a stuck reading is not quiet);
+    // an unevaluable one pauses the streak, two in a row reset it. holiday_days quiet buckets enter; a
+    // mean above holiday_ibat ends it (in the running bucket after 3 h above 1.2 holiday_ibat).
+    void _updateHoliday() {
+        if (!(params.holiday_charge > 0.f)) {
+            _holiday = false;
+            _hStreak = _hGaps = 0;
+            _hStartUs = 0;
+            _hEff = false;
+            return;
+        }
+        time_us now = wallClockUs();
+        if (!_hStartUs) _hNewBucket(now);
+        time_us dt = now - _hLastUs;
+        _hLastUs = now;
+        float ibat = batSt.ibatSmoothed();
+        bool fresh = ibatFresh();
+        if (batSt.ibat_t != _hLastT) {
+            _hLastT = batSt.ibat_t;
+            ++_hFrames;
+            if (batSt.ibat_raw != _hLastI) ++_hChg;
+            _hLastI = batSt.ibat_raw;
+        }
+        if (dt <= HOLIDAY_GAP_US && fresh && now - _ibatSeenUs <= HOLIDAY_GAP_US && std::isfinite(ibat)) {
+            float s = dt * 1e-6f;
+            _hCovS += s;
+            if (ibat < -HOLIDAY_DIS_A) { _hDisS += s; _hDisAh -= ibat * s * (1.f / 3600.f); }
+        }
+        float mean = holidayMeanA();
+        if (_holiday && _hDisS >= HOLIDAY_EXIT_MIN_S && mean > HOLIDAY_EXIT_K * params.holiday_ibat) {
+            _hStreak = 0;
+            _hSet(false, mean);
+        }
+        if (now - _hStartUs >= HOLIDAY_DAY_US) {
+            bool evaluable = _hCovS >= 0.8f * (HOLIDAY_DAY_US * 1e-6f) && _hDisS >= HOLIDAY_MIN_DIS_S
+                             && _hChg * 20 >= _hFrames;
+            if (!evaluable) {
+                if (_hGaps < UINT8_MAX) ++_hGaps;
+                if (_hGaps >= 2) { _hStreak = 0; _hSet(false, mean); }
+            } else {
+                _hGaps = 0;
+                _hStreak = mean < params.holiday_ibat ? (uint8_t) (_hStreak < UINT8_MAX ? _hStreak + 1 : _hStreak) : 0;
+                _hSet(_hStreak >= params.holiday_days, mean);
+            }
+            _hNewBucket(now);
+        }
+        bool eff = holiday();
+        if (_hEff && !eff) _partialHold = false; // re-evaluate against the raised ceiling
+        _hEff = eff;
+    }
+
+    void _hNewBucket(time_us now) {
+        _hStartUs = _hLastUs = now;
+        _hCovS = _hDisS = _hDisAh = 0.f;
+        _hFrames = _hChg = 0;
+    }
+
+    void _hSet(bool h, float mean) {
+        if (h != _holiday)
+            ESP_LOGI("charger", "holiday %s: %u quiet days (mean discharge %.2f A, %.1f h)", h ? "on" : "off",
+                     (unsigned) _hStreak, mean, _hDisS * (1.f / 3600.f));
+        _holiday = h;
+    }
+
+    [[nodiscard]] float holidayMeanA() const { return _hDisS > 0.f ? _hDisAh * 3600.f / _hDisS : 0.f; }
+
+    // effective: detection, or the console override
+    [[nodiscard]] bool holiday() const {
+        return params.holiday_charge > 0.f && (_hOverride == 1 || (_hOverride == 0 && _holiday));
+    }
+
+    // SoC ceiling in effect (0 = charge to full)
+    [[nodiscard]] float ceiling() const {
+        float c = params.partial_charge;
+        if (holiday()) c = c > 0.f ? fminf(c, params.holiday_charge) : params.holiday_charge;
+        return c;
+    }
+
+    // Age of the last full charge [s], from a reboot-surviving age when there was none since boot;
+    // UINT32_MAX when unknown (a full charge is due).
+    [[nodiscard]] uint32_t fullAgeS() const {
+        if (_lastFullUs) return (uint32_t) ((wallClockUs() - _lastFullUs) / 1000000ULL);
+        if (_fullAgeBootS == UINT32_MAX) return UINT32_MAX;
+        return _fullAgeBootS + (uint32_t) (wallClockUs() / 1000000ULL);
+    }
+
+    // The deficit counts from a real full: one since boot, or the restored BMS reference while it is live.
+    [[nodiscard]] bool deficitKnown() const {
+        return _lastFullUs != 0 || (_refRestored && batSt.coulombCounter.bmsSource());
+    }
+
+    // Partial-charge ceiling: after a full charge, stop at ceiling() (Ah-counted from that full) and
+    // hold there by load-following until the pack has discharged recharge_dod (holiday_band on
+    // holiday) below it, or until full_charge_interval expires (then charge to full for balancing).
     void _updatePartialHold() {
         bool dataOk = batSt.haveValidCellVoltage() && ibatFresh(); // the deficit counter is only trusted live
-        bool enabled = params.partial_charge > 0.f && _lastFullUs != 0 && dataOk
-                       && (wallClockUs() - _lastFullUs) < (time_us) params.full_charge_interval_s * 1000000ULL;
+        float lim = ceiling();
+        bool enabled = lim > 0.f && deficitKnown() && dataOk && fullAgeS() < params.full_charge_interval_s;
         if (!enabled || bool(termCond)) {
             if (_partialHold)
                 ESP_LOGI("charger", "partial hold off (%s)", bool(termCond) ? "terminated" : !dataOk ? "BMS stale" : "full charge due");
@@ -452,15 +601,57 @@ public:
             return;
         }
         float ah = batSt.coulombCounter.deficit();
-        float ceilAh = (1.f - params.partial_charge) * params.Cbat;
+        float ceilAh = (1.f - lim) * params.Cbat;
+        float band = holiday() ? params.holiday_band : params.recharge_dod;
         if (!_partialHold && ah <= ceilAh) {
             _partialHold = true;
-            ESP_LOGI("charger", "partial hold: %.0f%% reached (%.1f Ah since full)", params.partial_charge * 100.f, ah);
-        } else if (_partialHold && ah > ceilAh + params.recharge_dod * params.Cbat) {
+            ESP_LOGI("charger", "partial hold: %.0f%% reached (%.1f Ah since full)", lim * 100.f, ah);
+        } else if (_partialHold && ah > ceilAh + band * params.Cbat) {
             _partialHold = false;
             ESP_LOGI("charger", "partial hold released: %.1f Ah since full", ah);
         }
     }
+
+    // Restores from r if valid (else starts unknown), then keeps r up to date on every update().
+    void attachRtc(ChargerRtc *r) {
+        _rtc = r;
+        if (!r->valid()) {
+            ESP_LOGI("charger", "no retained state (power-on)");
+            return;
+        }
+        if (r->fullAgeS < 365U * 86400U) {
+            _fullAgeBootS = r->fullAgeS;
+            if (std::isfinite(r->bmsRef)) {
+                batSt.coulombCounter.restoreRef(r->bmsRef);
+                _refRestored = true;
+            }
+        }
+        _holiday = r->holiday;
+        _hStreak = r->streak;
+        _hGaps = r->gaps;
+        _hOverride = r->override_;
+        ESP_LOGI("charger", "retained: full %lus ago%s, holiday %u (streak %u, override %u)",
+                 (unsigned long) _fullAgeBootS, _refRestored ? " (BMS ref)" : "", (unsigned) _holiday,
+                 (unsigned) _hStreak, (unsigned) _hOverride);
+    }
+
+    void _saveRtc() {
+        if (!_rtc) return;
+        ChargerRtc r{};
+        r.magic = ChargerRtc::MAGIC;
+        r.fullAgeS = fullAgeS();
+        r.bmsRef = r.fullAgeS != UINT32_MAX && (_lastFullUs || _refRestored) ? batSt.coulombCounter.bmsRef() : NAN;
+        r.holiday = _holiday;
+        r.streak = _hStreak;
+        r.gaps = _hGaps;
+        r.override_ = _hOverride;
+        r.sum = r.checksum();
+        *_rtc = r;
+    }
+
+    // 0 auto, 1 on, 2 off
+    void setHolidayOverride(uint8_t o) { _hOverride = o; }
+    [[nodiscard]] uint8_t holidayOverride() const { return _hOverride; }
 
     // Load-following: nudge vpack_pin so the BMS pack current goes to ibatTarget (0: the converter
     // covers the load, nothing goes into the pack). One capped step per ibat frame; ibat is already
@@ -493,7 +684,7 @@ public:
         if (_coldBlocked) t = 0.f;
         if (std::isfinite(_hotScale)) t = fminf(t, params.Ibat_lim * _hotScale);
         if (_partialHold) {
-            float ceilAh = (1.f - params.partial_charge) * params.Cbat;
+            float ceilAh = (1.f - ceiling()) * params.Cbat;
             t = fminf(t, fminf(fmaxf((batSt.coulombCounter.deficit() - ceilAh) * 0.5f, -1.f), 1.f));
         }
         return t;
@@ -768,8 +959,10 @@ public:
         batSt.update(vout, iout);
         _updateTermination();
         _updateTempLimit();
+        _updateHoliday();
         _updatePartialHold();
         _updatePackVoltagePinning(voutAuthority, INFINITY, vout);
+        _saveRtc();
     }
 
     // One wire fit sample per pack-voltage frame, while switching at a current that held steady
@@ -787,6 +980,9 @@ public:
     }
 
     [[nodiscard]] bool partialHold() const { return _partialHold; }
+    [[nodiscard]] uint8_t holidayStreak() const { return _hStreak; }
+    [[nodiscard]] uint8_t holidayGaps() const { return _hGaps; }
+    [[nodiscard]] float holidayDischargeH() const { return _hDisS * (1.f / 3600.f); }
     [[nodiscard]] bool chargeBlocked() const { return _coldBlocked; }
     // the pack wants no charge: terminated, at the partial ceiling, or too cold
     [[nodiscard]] bool chargeHold() const { return bool(termCond) || _partialHold || _coldBlocked; }

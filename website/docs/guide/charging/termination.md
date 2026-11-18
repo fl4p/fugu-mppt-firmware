@@ -200,8 +200,12 @@ The partial-charge ceiling works as follows:
   (the pack cycles between `partial_charge - recharge_dod` and
   `partial_charge`).
 - Every `full_charge_interval` days, the charger drops the ceiling and charges
-  the pack to full for BMS balancing. A reboot also charges to full first,
-  because the deficit counter starts unknown.
+  the pack to full for BMS balancing.
+- A software reset (restart, crash, OTA update) keeps the age of the last full
+  charge and the BMS remaining charge at that point in RTC memory. With
+  `mqtt.conf:bat_charge_topic` reporting, the hold continues after such a reset
+  from the BMS charge. Otherwise, and after a power loss, the deficit counter
+  starts unknown and the charger charges to full first.
 - The hold needs live BMS data. If the cell-voltage or the `ibat` stream stops
   (180 s), the charger drops the hold and falls back to its ordinary behaviour.
   It re-engages the hold when the data returns.
@@ -215,6 +219,57 @@ hold like termination.
 The configuration must satisfy `0 < recharge_dod < partial_charge`. Otherwise,
 the release band would reach below 0 % SoC. Without `bat_c`, the ceiling is
 disabled.
+
+### Holiday auto mode (`holiday_charge`)
+
+A pack that is cycled every day benefits from charging to full; a pack that
+barely moves for days, for example while the owner is away, only sits at the
+top. With `holiday_charge` set, the charger detects such quiet periods and
+applies a ceiling automatically:
+
+- The charger measures the mean discharge current of the pack in consecutive
+  24 h windows on its own uptime clock: the Ah discharged while the BMS `ibat`
+  was below −0.2 A, divided by the time it was. Charging is ignored, so a full
+  charge is not counted as activity. A window is quiet when this mean stays
+  below `holiday_ibat`.
+- A window is only evaluated when live `ibat` data covered at least 80 % of it
+  (a gap of more than 60 s between frames counts as not covered), the pack
+  discharged for at least 2 h, and the `ibat` reading changed in at least 5 %
+  of the frames (a stuck reading is not quiet). A window that fails these
+  checks neither counts nor resets the streak; two such windows in a row reset
+  it and end holiday mode.
+- After `holiday_days` quiet windows in a row, the ceiling `holiday_charge`
+  applies (the lower of `holiday_charge` and `partial_charge` if both are set).
+  It works like the partial-charge ceiling above, including the hold and the
+  periodic full charge every `full_charge_interval` days, but the hold
+  releases `holiday_band` (instead of `recharge_dod`) below the ceiling.
+- With `holiday_charge=0.6` and the default `holiday_band` of 0.1, the pack
+  cycles between about 50 and 60 % SoC. That lies on the same calendar-aging
+  plateau as lower storage levels and below the step near 70 % (see
+  [LFP longevity](../../internals/lfp-longevity.md)), and it keeps several
+  days of base-load reserve. The hold refills towards the ceiling at no more
+  than 1 A, so a base load that discharges more overnight than that refills
+  during the day slides the pack down to the release point, where normal
+  charging takes it back up to the ceiling.
+- Holiday mode ends when a window closes with a mean at or above
+  `holiday_ibat`, or earlier, as soon as the running window has discharged for
+  3 h at a mean above 1.2 × `holiday_ibat`. The pack then charges to full again
+  (or to `partial_charge`).
+- The holiday state, the quiet-day streak and the console override survive a
+  software reset (RTC memory), not a power loss.
+
+Set `holiday_ibat` to about 1.5 times the pack's idle discharge current (standby
+consumers, BMS, inverter idle), measured from the BMS current on days when the
+installation is unattended. Below the idle current holiday mode never engages;
+far above it, normal use counts as quiet. There is no default: the mode
+refuses to load without it.
+
+The console command `holiday on|off|auto` overrides the detection: `on` applies
+the holiday ceiling now, `off` disables it, and `auto` returns to the detection.
+`status` shows the holiday state, the mode, the quiet-day streak, the
+unevaluated windows and the discharge time and mean current of the running
+window. The configuration must satisfy `0 < holiday_band < holiday_charge`;
+without `bat_c` the auto mode is disabled.
 
 ## Pack temperature (`bat_temp_*`)
 

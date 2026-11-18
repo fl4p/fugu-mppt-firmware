@@ -816,6 +816,263 @@ void test_partial_hold_disabled_by_default() {
     TEST_ASSERT_FALSE(charger.partialHold());
 }
 
+// ------------------------------------------------------------------
+//  Holiday auto mode (holiday_ibat 2.3 A: mean discharge current per 24 h)
+// ------------------------------------------------------------------
+
+static void holidaySetup(BatteryCharger &c, uint8_t days = 3) {
+    c.params = makeLfpParams();
+    c.params.holiday_charge = 0.6f;
+    c.params.holiday_ibat = 2.3f;
+    c.params.holiday_band = 0.1f;
+    c.params.holiday_days = days;
+    loopWallClockUs_ = 1'000'000;
+}
+
+// a loop tick every 20 s, with a cell + ibat frame unless frames=false; jitter keeps the reading alive
+static void holidayRun(BatteryCharger &c, float ibat, uint32_t secs, bool frames = true, float jitter = 0.05f) {
+    static uint32_t n = 0;
+    for (uint32_t s = 0; s < secs; s += 20) {
+        loopWallClockUs_ += 20'000'000;
+        if (frames) {
+            c.batSt.setVcellHigh(3.30f);
+            c.batSt.updateBatCurrent(ibat + ((++n & 1) ? jitter : -jitter));
+        }
+        c.update(c.params.Vbat_max, 0.f, true);
+    }
+}
+
+// 14 h discharging at meanA, 8 h charging, 2 h idle (the idle part without frames: 67 % coverage)
+static void holidayDay(BatteryCharger &c, float meanA, bool covered = true, float jitter = 0.05f) {
+    holidayRun(c, -meanA, 14 * 3600, true, jitter);
+    holidayRun(c, 10.f, 8 * 3600, covered, jitter);
+    holidayRun(c, 0.f, 2 * 3600, true, jitter);
+}
+
+static void holidayEnter(BatteryCharger &c) {
+    holidaySetup(c, 1);
+    holidayDay(c, 1.5f);
+    holidayRun(c, 0.f, 3600);
+    TEST_ASSERT_TRUE(c.holiday());
+}
+
+void test_holiday_enters_after_quiet_days() {
+    BatteryCharger c;
+    holidaySetup(c);
+    holidayDay(c, 1.5f);
+    holidayDay(c, 1.5f);
+    holidayRun(c, 0.f, 3600);
+    TEST_ASSERT_FALSE(c.holiday());
+    TEST_ASSERT_EQUAL_UINT8(2, c.holidayStreak());
+    TEST_ASSERT_EQUAL_FLOAT(0.f, c.ceiling());
+    holidayDay(c, 1.5f);
+    TEST_ASSERT_TRUE(c.holiday());
+    TEST_ASSERT_EQUAL_FLOAT(0.6f, c.ceiling());
+}
+
+// A badly covered bucket neither counts nor resets the streak.
+void test_holiday_gap_pauses() {
+    BatteryCharger c;
+    holidaySetup(c, 2);
+    holidayDay(c, 1.5f);
+    holidayRun(c, 0.f, 3600);
+    TEST_ASSERT_EQUAL_UINT8(1, c.holidayStreak());
+    holidayDay(c, 1.5f, false);
+    TEST_ASSERT_EQUAL_UINT8(1, c.holidayStreak());
+    TEST_ASSERT_EQUAL_UINT8(1, c.holidayGaps());
+    TEST_ASSERT_FALSE(c.holiday());
+    holidayDay(c, 1.5f);
+    TEST_ASSERT_TRUE(c.holiday());
+    TEST_ASSERT_EQUAL_UINT8(0, c.holidayGaps());
+}
+
+// Two unevaluable buckets in a row reset the streak and drop holiday; one keeps it.
+void test_holiday_two_gaps_reset() {
+    BatteryCharger c;
+    holidayEnter(c);
+    holidayDay(c, 1.5f, false);
+    TEST_ASSERT_TRUE(c.holiday());
+    holidayDay(c, 1.5f, false);
+    TEST_ASSERT_FALSE(c.holiday());
+    TEST_ASSERT_EQUAL_UINT8(0, c.holidayStreak());
+    // ibat frames every 2 min: the 60 s gap rule covers nothing, never quiet
+    for (int i = 0; i < 1500; ++i) {
+        loopWallClockUs_ += 120'000'000;
+        c.batSt.setVcellHigh(3.30f);
+        c.batSt.updateBatCurrent(-1.5f + (i & 1) * 0.1f);
+        c.update(c.params.Vbat_max, 0.f, true);
+    }
+    TEST_ASSERT_FALSE(c.holiday());
+    TEST_ASSERT_EQUAL_UINT8(0, c.holidayStreak());
+}
+
+// A stuck ibat reading (same value every frame) is not quiet.
+void test_holiday_stuck_sensor_not_quiet() {
+    BatteryCharger c;
+    holidaySetup(c, 1);
+    holidayDay(c, 1.5f, true, 0.f);
+    holidayDay(c, 1.5f, true, 0.f);
+    holidayRun(c, -1.5f, 3600, true, 0.f);
+    TEST_ASSERT_FALSE(c.holiday());
+    TEST_ASSERT_EQUAL_UINT8(0, c.holidayStreak());
+}
+
+// A heavy discharge exits within the running bucket once it has lasted 3 h above 1.2 holiday_ibat.
+void test_holiday_exits_on_heavy_discharge() {
+    BatteryCharger c;
+    holidayEnter(c);
+    holidayRun(c, -5.f, 2 * 3600 + 1800);
+    TEST_ASSERT_TRUE(c.holiday());
+    holidayRun(c, -5.f, 3600);
+    TEST_ASSERT_FALSE(c.holiday());
+    TEST_ASSERT_EQUAL_UINT8(0, c.holidayStreak());
+    TEST_ASSERT_EQUAL_FLOAT(0.f, c.ceiling());
+}
+
+// A balancing full charge (and its markFull re-zero) is charge, not activity.
+void test_holiday_survives_full_charge() {
+    BatteryCharger c;
+    holidayEnter(c);
+    holidayRun(c, 30.f, 3 * 3600);
+    holidayRun(c, 0.1f, 600); // let the ibat smoothing settle for termination
+    driveEocFeedback(c, c.params.cv_min + 0.10f, 12);
+    TEST_ASSERT_TRUE(bool(c.termCond));
+    TEST_ASSERT_TRUE(c.holiday());
+    holidayDay(c, 1.5f);
+    holidayRun(c, 0.f, 3600);
+    TEST_ASSERT_TRUE(c.holiday());
+}
+
+// Holiday only below holiday_ibat; a higher mean discharge never yields it.
+void test_holiday_monotonic() {
+    const float amps[] = {1.0f, 2.0f, 2.5f, 3.0f, 8.0f, 30.0f};
+    for (float a: amps) {
+        BatteryCharger c;
+        holidaySetup(c, 1);
+        holidayDay(c, a);
+        holidayRun(c, 0.f, 3600);
+        TEST_ASSERT_EQUAL(a < 2.3f, c.holiday());
+    }
+}
+
+void test_holiday_ceiling_combination() {
+    BatteryCharger c;
+    holidaySetup(c, 1);
+    c.params.partial_charge = 0.8f;
+    TEST_ASSERT_EQUAL_FLOAT(0.8f, c.ceiling());
+    holidayDay(c, 1.5f);
+    holidayRun(c, 0.f, 3600);
+    TEST_ASSERT_TRUE(c.holiday());
+    TEST_ASSERT_EQUAL_FLOAT(0.6f, c.ceiling());
+    c.params.partial_charge = 0.5f; // the lower one wins
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, c.ceiling());
+    c.params.holiday_charge = 0.f; // auto mode off: holiday dropped
+    holidayRun(c, 0.f, 20);
+    TEST_ASSERT_FALSE(c.holiday());
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, c.ceiling());
+}
+
+void test_holiday_override() {
+    BatteryCharger c;
+    holidaySetup(c, 1);
+    c.setHolidayOverride(1);
+    TEST_ASSERT_TRUE(c.holiday());
+    TEST_ASSERT_EQUAL_FLOAT(0.6f, c.ceiling());
+    c.setHolidayOverride(2);
+    holidayDay(c, 1.5f);
+    holidayRun(c, 0.f, 3600);
+    TEST_ASSERT_FALSE(c.holiday()); // detected, but disabled
+    TEST_ASSERT_EQUAL_FLOAT(0.f, c.ceiling());
+    c.setHolidayOverride(0);
+    TEST_ASSERT_TRUE(c.holiday());
+    c.params.holiday_charge = 0.f;
+    c.setHolidayOverride(1);
+    TEST_ASSERT_FALSE(c.holiday()); // nothing to apply without holiday_charge
+}
+
+// On holiday the hold releases holiday_band (not recharge_dod) below the ceiling: 60 % -> 50 %.
+void test_holiday_band_release() {
+    BatteryCharger c;
+    holidayEnter(c);
+    driveEocFeedback(c, c.params.cv_min + 0.10f, 12);
+    TEST_ASSERT_TRUE(bool(c.termCond));
+    c.params.holiday_ibat = 100.f; // keep holiday through the test discharge
+    holidayRun(c, -30.f, 3 * 3600); // 90 Ah: termination released, hold on below the 112 Ah ceiling
+    TEST_ASSERT_FALSE(bool(c.termCond));
+    TEST_ASSERT_TRUE(c.partialHold());
+    holidayRun(c, -30.f, 3600 + 1800); // 135 Ah: within 112 + 28
+    TEST_ASSERT_TRUE(c.partialHold());
+    holidayRun(c, -30.f, 1800); // 150 Ah: past the holiday band (recharge_dod would hold to 168)
+    TEST_ASSERT_FALSE(c.partialHold());
+}
+
+void test_holiday_rtc_restore() {
+    ChargerRtc r;
+    memset(&r, 0xa5, sizeof(r)); // power-on garbage
+    BatteryCharger a;
+    holidaySetup(a, 1);
+    a.attachRtc(&r);
+    TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, a.fullAgeS());
+    TEST_ASSERT_FALSE(a.holiday());
+    TEST_ASSERT_EQUAL_UINT8(0, a.holidayOverride());
+    TEST_ASSERT_FALSE(a.deficitKnown());
+
+    // full charge with a live BMS remaining charge, then a forced holiday
+    a.batSt.coulombCounter.setBmsCharge(250.f, wallClockTicks());
+    driveEocFeedback(a, a.params.cv_min + 0.10f, 12);
+    TEST_ASSERT_TRUE(bool(a.termCond));
+    a.setHolidayOverride(1);
+    holidayRun(a, 0.f, 3600);
+    TEST_ASSERT_TRUE(r.valid());
+    TEST_ASSERT_EQUAL_FLOAT(250.f, r.bmsRef);
+
+    // reboot: the full reference, its age and the override survive; the hold runs on the BMS charge
+    ChargerRtc saved = r;
+    BatteryCharger b;
+    holidaySetup(b, 1);
+    b.attachRtc(&r);
+    TEST_ASSERT_TRUE(b.holiday());
+    TEST_ASSERT_TRUE(b.fullAgeS() >= 3600 && b.fullAgeS() < 2 * 3600);
+    TEST_ASSERT_FALSE(b.deficitKnown()); // no live BMS charge yet
+    for (int i = 0; i < 12; ++i) {
+        b.batSt.coulombCounter.setBmsCharge(200.f, wallClockTicks());
+        holidayRun(b, -1.f, 20);
+    }
+    TEST_ASSERT_TRUE(b.deficitKnown());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 50.f, b.batSt.coulombCounter.deficit());
+    TEST_ASSERT_TRUE(b.partialHold());
+
+    // a corrupted record restores nothing
+    saved.streak ^= 1;
+    BatteryCharger d;
+    holidaySetup(d, 1);
+    d.attachRtc(&saved);
+    TEST_ASSERT_FALSE(d.holiday());
+    TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, d.fullAgeS());
+}
+
+void test_holiday_config_validation() {
+    auto loads = [](std::initializer_list<std::pair<const char *, const char *>> extra) {
+        ConfFile f{{{"vout_max", "14.6"}, {"cv_eoc", "3.65"}, {"cv_float", "3.37"}, {"bat_c", "280"}}};
+        for (auto &kv: extra) f.set(kv.first, kv.second);
+        BatChargerParams p;
+        try { p.load(f); } catch (...) { return false; }
+        return true;
+    };
+    TEST_ASSERT_FALSE(loads({{"holiday_charge", "0.6"}})); // holiday_ibat is required
+    TEST_ASSERT_TRUE(loads({{"holiday_charge", "0.6"}, {"holiday_ibat", "2.3"}}));
+    TEST_ASSERT_FALSE(loads({{"holiday_charge", "0.6"}, {"holiday_ibat", "2.3"}, {"holiday_band", "0.6"}}));
+    TEST_ASSERT_FALSE(loads({{"holiday_charge", "0.6"}, {"holiday_ibat", "2.3"}, {"holiday_days", "0"}}));
+    TEST_ASSERT_TRUE(loads({{"holiday_charge", "0.15"}, {"holiday_ibat", "2.3"}, {"holiday_band", "0.1"}})); // recharge_dod 0.2 is fine
+    ConfFile noCap{{{"vout_max", "14.6"}, {"cv_eoc", "3.65"}, {"cv_float", "3.37"}, {"holiday_charge", "0.6"},
+                    {"holiday_ibat", "2.3"}}};
+    BatChargerParams p;
+    p.load(noCap);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, p.holiday_charge);
+    TEST_ASSERT_EQUAL_FLOAT(0.1f, p.holiday_band);
+    TEST_ASSERT_EQUAL_UINT8(3, p.holiday_days);
+}
+
 void test_mqtt_bat_temp_topics() {
     BatteryCharger charger;
     charger.params = makeLfpParams();
