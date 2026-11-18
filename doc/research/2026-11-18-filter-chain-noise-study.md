@@ -114,6 +114,38 @@ Sweep counts equal (258 vs 257). The fix alone (despike=0, before vs after) is n
 
 Deployment order matters: despike on a device without 670a3ef9 reproduces the back-to-back sweep loop.
 
+## Low-light noise capture and the rev_k scan
+
+Dusk captures 2026-11-18 with `test/host-stub/noise_capture.sh` (read-only scope stream): fry 16:29 UTC at 0.45 A
+(5 min, steady 0-45 s), fry 16:41 UTC at 0.14 A (sweep at 180-240 s, profile from 30-170 s), flat 16:39 UTC at
+0.28 A (another session's capture, 0-55 s before a sweep). Raw data in `etc/adcscope/data/{fry,flat}/dusk-lowlight-*`
+(fugu-data submodule, not committed there yet); profiles `test/host-stub/noise/{fry-dusk045,fry-dusk014,flat-dusk028}.fnz`.
+
+| profile | I | Iout rms | 30 ms mean rms | old profile scaled to this I |
+|---|---|---|---|---|
+| fry-dusk045 | 0.45 A | 8.1 mA (kurtosis 18) | 2.9 mA (0.65 % of I) | 17 mA rms (fry.fnz 3.8 %) |
+| fry-dusk014 | 0.14 A | 10.9 mA | 7.9 mA (5.6 %) | 5.4 mA rms |
+| flat-dusk028 | 0.28 A | 11.0 mA | 4.4 mA (1.6 %) | 2.6 mA rms (flat.fnz 0.9 %) |
+
+The Iout noise has a floor of ~8-11 mA that does not scale with current, so the old profiles (scaled with I)
+understate low-light period noise 10-30x. fry-dusk014 carries 44 % of its variance below 2 Hz, most likely the
+tracker's own dither at a current that follows the duty; it overstates noise.
+
+rev_k scan (port of the 11-17 patch onto main 0e039be1, worktree `agent-a1533e95825db54ec`, uncommitted) vs a main
+build, vup, 5 scenarios (wx-low/dusk/dawn/cloud/mid) x the 3 dusk profiles with `SIM_NOISE_EXP=0` x offsets
+0/10/20 s, plus the old fry/flat profiles (exp 1, offsets 0/100/200). Harvest delta vs main, mean / worst [pp]:
+
+| k | dusk profiles (45 runs) | of which fry-dusk045 / flat-dusk028 / fry-dusk014 | old profiles (30 runs) |
+|---|---|---|---|
+| 1.4 | -0.56 / -5.40 | +0.12 / -1.12 / -0.67 | +0.26 / -0.60 |
+| 2.0 | -0.47 / -8.70 | +0.38 / -0.35 / -1.43 | +0.25 / -1.80 |
+| 2.5 | -0.21 / -7.80 | +0.33 / -0.14 / -0.81 | +0.11 / -5.20 (wx-low) |
+
+Trip counts equal to main. The large losses are wx-dusk with fry-dusk014 (main 92-93 %, k 1.4 87-89 %, k 2.5
+85-90 %). No k beats the fixed rule under both the measured low-light noise and the old profiles: k 1.4 loses on
+flat's floor, k 2.5 loses on the old wx-low case, and the best gains are +0.1..+0.4 pp. Recommendation: do not
+land rev_k as the default.
+
 ## Limits
 
 Captures are 2025-03 to 2026-06, mostly mid/high current; the low-light case (< 0.5 A, INA226 floor) that
