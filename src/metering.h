@@ -264,13 +264,13 @@ struct SolarEnergyMeter {
                                 rtVout.load(std::memory_order_relaxed));
     }
 
-    void commit(bool increaseBootCounter = false) {
+    void commit(bool increaseBootCounter = false, bool force = false) {
         auto stats = flash.getFlashValue();
         stats.totalEnergy = totalEnergy.get();
         stats.timeLastPower = dailyEnergyMeter.timeLastPower;
         stats.todayEnergy = dailyEnergyMeter.today.energyYield;
         stats.todayPinMax = dailyEnergyMeter.today.pinMax;
         if (increaseBootCounter)++stats.bootCount;
-        flash.update(stats);
+        flash.update(stats, force);
     }
 };

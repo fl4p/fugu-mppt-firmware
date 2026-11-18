@@ -136,4 +136,12 @@ void test_meter_persistent_state() {
     TEST_ASSERT_TRUE(st2.load(true));
     TEST_ASSERT_EQUAL_FLOAT(312.5f, DailyEnergyMeter::sanePinMax(st2.getFlashValue().todayPinMax));
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 4.25f, st2.getFlashValue().todayEnergy);
+
+    // a small change is gated by similar() and the write interval; force writes it anyway
+    ref.totalEnergy += 1.0;
+    TEST_ASSERT_FALSE(st2.update(ref));
+    TEST_ASSERT_TRUE(st2.update(ref, true));
+    FlashValueStore<PersistentState> st3{fn};
+    TEST_ASSERT_TRUE(st3.load(true));
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 124.5, st3.getFlashValue().totalEnergy);
 }

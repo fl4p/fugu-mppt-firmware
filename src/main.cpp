@@ -1925,6 +1925,7 @@ void systemRestart() {
         ESP_LOGE("main", "restart refused: bootloader region not verified");
         return;
     }
+    mppt.meter.commit(false, true); // energy counters are otherwise only committed at sweep start / UV
     UART_LOG("Rebooting");
     restartCloseTelnet();
     g_services.stopAll(); // tear down enabled services while WiFi is still up (see mqtt_task overflow)

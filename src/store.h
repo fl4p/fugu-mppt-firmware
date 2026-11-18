@@ -236,13 +236,14 @@ public:
 
     const T &getFlashValue() { return valueFlash; }
 
-    bool update(const T &val) {
+    // force: skip the write-interval and similarity gates (e.g. right before a reboot)
+    bool update(const T &val, bool force = false) {
         auto now = millis();
-        if (_lastWrite && (now - _lastWrite < _minWriteIntervalMs)) {
+        if (!force && _lastWrite && (now - _lastWrite < _minWriteIntervalMs)) {
             return false;
         }
 
-        if (similar(val, valueFlash))
+        if (!force && similar(val, valueFlash))
             return false;
 
         if (file.update(val)) {
