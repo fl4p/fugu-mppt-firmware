@@ -19,7 +19,7 @@ flowchart LR
   end
   subgraph core0["Core 0"]
     net["loopNetwork_task<br/>console · Wi-Fi · FTP · MQTT<br/>telemetry · LCD · loopLF"]
-    sys["Wi-Fi / lwIP / mDNS<br/>esp_timer task"]
+    sys["Wi-Fi / lwIP / mDNS<br/>BLE controller + NimBLE host<br/>esp_timer task"]
   end
   adc[(ADC)] --> rt
   rt --> pwm[(Gate driver)]
@@ -30,10 +30,11 @@ The table lists what runs on each core and the rules that apply there.
 
 | Core | Runs | Rules |
 |---|---|---|
-| 1 | `loopRT`: sampling, protection, controllers, PWM | Nothing else is pinned here. The loop blocks on the next ADC sample; never add `vTaskDelay`. |
-| 0 | Arduino `loop()` → `loopNetwork_task`, Wi-Fi, lwIP, MQTT, `esp_timer` task | All [services](../reference/services.md) tick here. |
+| 1 | `loopRT`: [sampling](sensors.md), protection, [PD controllers](control-loop.md), [MPPT](mppt-tracker.md), [PWM](pwm-drivers.md) | Nothing else is pinned here. The loop blocks on the next ADC sample; never add `vTaskDelay`. |
+| 0 | Arduino `loop()` → `loopNetwork_task`: [console](../reference/console.md), Wi-Fi, lwIP, [MQTT](../reference/mqtt.md), [telemetry](../reference/telemetry-fields.md), [BLE](../reference/ble/gatt.md) controller and NimBLE host, `esp_timer` task | All [services](../reference/services.md) tick here. |
 
-`sdkconfig.defaults` pins Arduino, Wi-Fi/lwIP, mDNS, MQTT, and the `esp_timer` task to core 0. `loopRT` checks its
+`sdkconfig.defaults` pins Arduino, Wi-Fi/lwIP, mDNS, MQTT, and the `esp_timer` task to core 0; `sdkconfig.ble`
+pins the Bluetooth controller and the NimBLE host there too. `loopRT` checks its
 core at startup.
 
 ## Control pipeline
@@ -50,11 +51,13 @@ flowchart LR
 ```
 
 1. **Sampling** (`src/adc/sampling.h`): async reads, round-robin over channels, with notch, median, and EWM filters.
-   `Vout` is sampled last so the controller reacts to it with minimum latency. See [Sensors](sensors.md).
+   `Vout` is sampled last so the controller reacts to it with minimum latency. See [Sensors](sensors.md) and
+   [Signal Filters](signal-filters.md).
 2. **Protection** (`mppt.protect`, `mppt.protectLf`): hard cut-outs. A violation calls `stopAndBackoff(seconds)`.
 3. **PD controllers** (`src/pd_control.h`): the smallest response wins. See [Control Loop](control-loop.md).
-4. **MPP tracker** (`src/tracker.h`): global sweep, then fast and slow perturb & observe.
-5. **Converter** (`src/buck.h`): computes the low-side on-time. See [Diode Emulation](diode-emulation.md).
+4. **MPP tracker** (`src/tracker.h`): global sweep, then fast and slow perturb & observe. See [MPP Tracker](mppt-tracker.md).
+5. **Converter** (`src/buck.h`): computes the low-side on-time. See [Diode Emulation](diode-emulation.md) and
+   [PWM Drivers](pwm-drivers.md).
 
 ## Configuration and state
 
@@ -83,10 +86,23 @@ The table maps source paths to their contents.
 | `src/buck.h`, `src/pwm/` | Converter model and gate drivers |
 | `src/adc/` | ADC backends and the sampler |
 | `src/math/` | Filters and statistics |
-| `src/charger.h` | Charge termination |
+| `src/charger.h` | Charge termination, see [Charge Termination](../guide/charging/termination.md) |
 | `src/tele/` | MQTT, telemetry, FTP, Home Assistant |
 | `src/service.h` | Service base class |
 | `src/sim/` | Virtual converter |
 | `etc/` | Host tools: console client, OTA, config editor, scope |
 | `config/` | Board configuration images |
 | `test/` | Unit tests |
+
+## Internals pages
+
+| Page | Covers |
+|---|---|
+| [Control Loop](control-loop.md) | Loop iteration, limiters, noise versus speed, BMS coupling |
+| [MPP Tracker](mppt-tracker.md) | Global sweep, perturb & observe, when the tracker sweeps |
+| [Sensors](sensors.md) | ADC backends, scaling, virtual sensors |
+| [Signal Filters](signal-filters.md) | Notch, median, and EWM filter chain |
+| [Diode Emulation](diode-emulation.md) | Low-side on-time, CCM/DCM transition |
+| [PWM Drivers](pwm-drivers.md) | MCPWM synchronous-buck driver |
+| [DCM Coil Ringing](dcm-ringing.mdx) | Switch-node ringing in discontinuous mode |
+| [LFP Longevity](lfp-longevity.md) | What the aging literature says about charge control |
