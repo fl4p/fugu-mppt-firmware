@@ -53,6 +53,10 @@
   .badge[data-state="on"] { color:var(--accent2); border-color:var(--accent2); }
   .badge[data-state="refused"] { color:var(--warn); border-color:var(--warn); }
   .badge[data-state="pending"] { color:var(--accent); border-color:var(--accent); }
+  .card .top .alerts { display:contents; }
+  .badge.alert[data-state="ok"] { color:var(--accent2); border-color:var(--accent2); }
+  .badge.alert[data-state="warn"] { color:var(--unit); border-color:var(--unit); }
+  .badge.alert[data-state="derate"], .badge.alert[data-state="trip"] { color:var(--warn); border-color:var(--warn); }
   .card .mode { font-size:12px; color:var(--muted); }
   .card .age { font-size:12px; color:var(--muted); }
   .card.stale .kpis { opacity:.45; }
@@ -275,6 +279,7 @@ class Device {
                   firstAt:0, teleSeen:false, teleAt:0, errors:0,
                   lease:{ state:"off", reason:"", left:0, dropped:0, at:0, busy:false, retry:false, clockTried:false, silentAt:0 } };
     this.tele = {};
+    this.alerts = new Map(); // source -> {lvl, msg, t}
     this.lastTs = 0; this.lastAt = 0;
     this.intervals = new Ring(50);
     this.arrivals = { ble:[], mqtt:[], test:[] };
@@ -638,9 +643,16 @@ function onMqttMessage(topic, payload, pkt){
     getDevice(host, "mqtt").mqtt.split.feed(u8(payload));
   } else if (kind === "alert" && parts.length === 4){
     // a retained alert may outlive its device (renamed host): no card for it
-    if (pkt && pkt.retain && !devices.has(host)) return;
+    const retained = !!(pkt && pkt.retain);
+    if (retained && !devices.has(host)) return;
     const dev = getDevice(host, "mqtt");
-    pushLog(dev, "alert", "[alert " + parts[3] + "] " + new TextDecoder().decode(u8(payload)).trim());
+    const text = new TextDecoder().decode(u8(payload)).trim();
+    let a = null;
+    try { a = JSON.parse(text); } catch(e) {}
+    if (a && typeof a === "object" && typeof a.lvl === "string") dev.alerts.set(parts[3], { lvl:a.lvl, msg:String(a.msg || ""), t:+a.t || 0 });
+    else dev.alerts.set(parts[3], { lvl:"warn", msg:text, t:0 });
+    if (!retained) pushLog(dev, "alert", "[alert " + parts[3] + "] " + text);
+    scheduleRender(dev);
   } else if (kind === "tele" && parts.length === 3){
     ingestTele(host, payload, "mqtt");
   }
@@ -994,7 +1006,7 @@ function createCard(dev){
   c.dataset.host = dev.host;
   const top = el("div", "top");
   top.append(el("span", "host"), el("span", "badge ble", "BLE"), el("span", "badge mqtt", "MQTT"),
-             el("span", "spacer"), el("span", "mode"), el("span", "age"));
+             el("span", "alerts"), el("span", "spacer"), el("span", "mode"), el("span", "age"));
   const fb = el("button", "forget", "×");
   fb.title = "forget this device";
   fb.onclick = () => forget(dev);
@@ -1128,6 +1140,12 @@ function renderCard(dev){
   else if (L.state === "relay") badge(mb, "on", L.reason);
   else if (L.state === "pending") badge(mb, "pending", "leasing telemetry");
   else badge(mb, "on", dev.mqtt.teleSeen ? "telemetry (relay)" : "log only");
+  const ab = q(dev, ".alerts");
+  for (const [src, a] of dev.alerts){
+    let e = ab.querySelector('[data-src="' + src + '"]');
+    if (!e){ e = el("span", "badge alert", src); e.dataset.src = src; ab.append(e); }
+    badge(e, a.lvl, a.lvl + (a.msg ? ": " + a.msg : "") + (a.t ? " (" + new Date(a.t * 1000).toLocaleString() + ")" : ""));
+  }
   q(dev, ".mode").textContent = t.state !== undefined ? (MODES[t.state] || ("state " + t.state)) : "";
   // KPIs
   q(dev, ".pv").textContent = fmt(t.P, 1);

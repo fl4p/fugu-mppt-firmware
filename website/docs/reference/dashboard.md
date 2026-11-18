@@ -34,7 +34,9 @@ Each converter gets a card, keyed by its hostname:
   **log & console** checkbox in the header is ticked; the page remembers the setting in this browser.
   The periodic `V=…` status lines and the `sc:` curve dumps are hidden unless the card's **status lines**
   and **sc: lines** checkboxes are ticked.
-- **Link badges**: one for BLE and one for MQTT.
+- **Link badges**: one for BLE (only on cards with a BLE link) and one for MQTT. Alerts the device publishes
+  under `pv/alert/<hostname>/<source>` appear as one badge per source, coloured by level, with the message
+  and time as tooltip; an alert that arrives while the page is open is also written to the log.
 - **More info**: a collapsed box under the values with the stream rate and dropped bytes per link, the
   slower telemetry fields (`mcu_temp`, `lag`, `heap`, `heap_min`, lifetime `E`, the `Ro`/`Rc`/`Rb` resistances
   once known), the MQTT lease state, and the telemetry decoder's error and resync counters.

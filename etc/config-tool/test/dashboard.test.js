@@ -148,15 +148,23 @@ test('cards from pv/log and pv/alert; /cmd echoes ignored; hosts remembered', as
   assert.deepEqual(JSON.parse(window.localStorage.getItem('mqtt-known-hosts'))[URL], ['flat', 'fry']);
 });
 
-test('a retained alert creates no card, but is logged on an existing one', async () => {
+test('alerts become badges: retained ones create no card and no log line, live ones are logged too', async () => {
   const { window, Dash, client } = await withBroker();
-  client.emit('message', 'pv/alert/fugu-esp32s3-OLD/wire', enc('no fresh wire data'), { retain: true });
+  client.emit('message', 'pv/alert/fugu-esp32s3-OLD/wire', enc('{"lvl":"unverified","msg":"no fresh wire data","t":1}'), { retain: true });
   client.emit('message', 'pv/alert/flat/bms', enc('live'));
-  client.emit('message', 'pv/alert/flat/wire', enc('stale'), { retain: true });
+  client.emit('message', 'pv/alert/flat/wire', enc('{"lvl":"unverified","msg":"no fresh wire data","t":1795000994}'), { retain: true });
   Dash.flush();
   assert.deepEqual(plain([...Dash.devices.keys()]), ['flat']);
   const rows = [...card(window, 'flat').querySelectorAll('.log div')].map(r => r.textContent);
-  assert.deepEqual(rows, ['[alert bms] live', '[alert wire] stale']);
+  assert.deepEqual(rows, ['[alert bms] live']);
+  const badges = [...card(window, 'flat').querySelectorAll('.badge.alert')];
+  assert.deepEqual(badges.map(b => [b.textContent, b.dataset.state]), [['bms', 'warn'], ['wire', 'unverified']]);
+  assert.match(badges[1].title, /^unverified: no fresh wire data \(/);
+  client.emit('message', 'pv/alert/flat/wire', enc('{"lvl":"warn","msg":"Pw 3.2W dR 8.0mOhm","t":1795001000}'));
+  Dash.flush();
+  assert.equal(card(window, 'flat').querySelectorAll('.badge.alert').length, 2);
+  assert.equal(card(window, 'flat').querySelector('.badge.alert[data-src="wire"]').dataset.state, 'warn');
+  assert.equal([...card(window, 'flat').querySelectorAll('.log div')].pop().textContent, '[alert wire] {"lvl":"warn","msg":"Pw 3.2W dR 8.0mOhm","t":1795001000}');
 });
 
 test('pv/tele message renders KPIs; kWh above 1000 Wh; mode name; lease despite a flowing stream', async () => {
