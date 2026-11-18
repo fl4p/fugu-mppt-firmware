@@ -497,7 +497,7 @@ public:
     // Holiday detection, per 24 h bucket: mean discharge current (ibat < -0.2 A) over the time it
     // discharged. Charging is ignored, so a balancing full charge is no activity. A bucket is evaluable
     // with >= 80 % ibat coverage, >= 2 h of discharge and a changing ibat (a stuck reading is not quiet);
-    // an unevaluable one pauses the streak, two in a row reset it. holiday_days quiet buckets enter; a
+    // an unevaluable one pauses the streak, two in a row reset it unless on holiday. holiday_days quiet buckets enter; a
     // mean above holiday_ibat ends it (in the running bucket after 3 h above 1.2 holiday_ibat).
     void _updateHoliday() {
         if (!(params.holiday_charge > 0.f)) {
@@ -534,7 +534,7 @@ public:
                              && _hChg * 20 >= _hFrames;
             if (!evaluable) {
                 if (_hGaps < UINT8_MAX) ++_hGaps;
-                if (_hGaps >= 2) { _hStreak = 0; _hSet(false, mean); }
+                if (_hGaps >= 2 && !_holiday) _hStreak = 0; // gaps never end an active holiday
             } else {
                 _hGaps = 0;
                 _hStreak = mean < params.holiday_ibat ? (uint8_t) (_hStreak < UINT8_MAX ? _hStreak + 1 : _hStreak) : 0;

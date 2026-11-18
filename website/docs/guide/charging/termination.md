@@ -236,8 +236,10 @@ applies a ceiling automatically:
   (a gap of more than 60 s between frames counts as not covered), the pack
   discharged for at least 2 h, and the `ibat` reading changed in at least 5 %
   of the frames (a stuck reading is not quiet). A window that fails these
-  checks neither counts nor resets the streak; two such windows in a row reset
-  it and end holiday mode.
+  checks neither counts nor resets the streak. Before holiday mode is on, two
+  such windows in a row reset the streak; once it is on, missing data never
+  ends it (without fresh BMS data the hold is off anyway, and the next
+  evaluated window decides).
 - After `holiday_days` quiet windows in a row, the ceiling `holiday_charge`
   applies (the lower of `holiday_charge` and `partial_charge` if both are set).
   It works like the partial-charge ceiling above, including the hold and the

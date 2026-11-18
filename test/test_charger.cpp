@@ -886,14 +886,26 @@ void test_holiday_gap_pauses() {
     TEST_ASSERT_EQUAL_UINT8(0, c.holidayGaps());
 }
 
-// Two unevaluable buckets in a row reset the streak and drop holiday; one keeps it.
+// Unevaluable buckets never end an active holiday; before it, two in a row reset the streak.
 void test_holiday_two_gaps_reset() {
     BatteryCharger c;
     holidayEnter(c);
-    holidayDay(c, 1.5f, false);
+    uint8_t streak = c.holidayStreak();
+    for (int i = 0; i < 4; ++i) holidayDay(c, 1.5f, false);
     TEST_ASSERT_TRUE(c.holiday());
-    holidayDay(c, 1.5f, false);
+    TEST_ASSERT_EQUAL_UINT8(streak, c.holidayStreak());
+    holidayDay(c, 1.5f);
+    TEST_ASSERT_TRUE(c.holiday());
+    holidayRun(c, -5.f, 3 * 3600 + 60);
     TEST_ASSERT_FALSE(c.holiday());
+    // not on holiday: two gaps reset the streak
+    c.params.holiday_days = 3;
+    holidayDay(c, 1.5f);
+    TEST_ASSERT_FALSE(c.holiday());
+    TEST_ASSERT_EQUAL_UINT8(1, c.holidayStreak());
+    holidayDay(c, 1.5f, false);
+    TEST_ASSERT_EQUAL_UINT8(1, c.holidayStreak());
+    holidayDay(c, 1.5f, false);
     TEST_ASSERT_EQUAL_UINT8(0, c.holidayStreak());
     // ibat frames every 2 min: the 60 s gap rule covers nothing, never quiet
     for (int i = 0; i < 1500; ++i) {
