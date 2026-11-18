@@ -303,6 +303,15 @@ t1 = tab.full_table()
 b = data_frame(tab, 'mppt', [], [('NEW', F32, 1.0)], 11)
 add_seq('partial_then_error', [(0, frames(t1, a, b)), (0, frames(tab.full_table(), b))])
 
+# data frames with an invalid field type (DT 11, DT 0 = Str) are skipped; the good frame decodes
+tab = SymbolTable()
+good = data_frame(tab, 'mppt', [], [('P', F32, 1.0)], 6)
+sx, sm = tab.intern('X', 11), tab.ids['mppt']
+bad11 = bytes([1]) + varint(sm) + b'\0' + varint(sx) + b'\x00\x00\x80\x3f' + b'\0' + varint(5)
+bad0 = bytes([1]) + varint(sm) + b'\0' + varint(sm) + b'\0' + varint(4)
+add_seq('bad_field_dt', [(0, frames(tab.full_table(), bad11, good)), (0, frames(bad0, good))])
+assert [s['lines'] for s in payload_cases[-1]['sequence']] == [['mppt P=1 6']] * 2, payload_cases[-1]
+
 # unknown frame type, unknown cid, truncated data frame
 add_seq('bad_frame_type', [(0, frames(b'\x03abc'))])
 add_seq('bad_cid', [(2, b'\x01\x01')])

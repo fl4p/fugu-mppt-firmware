@@ -246,6 +246,27 @@
    ]
   },
   {
+   "name": "bad_field_dt",
+   "sequence": [
+    {
+     "cid": 0,
+     "payload": "EQIBbXBwdAAAAlAACQNYAAsACgEBAAMAAIA/AAUKAQEAAgAAgD8ABg==",
+     "lines": [
+      "mppt P=1 6"
+     ],
+     "error": null
+    },
+    {
+     "cid": 0,
+     "payload": "BgEBAAEABAoBAQACAACAPwAG",
+     "lines": [
+      "mppt P=1 6"
+     ],
+     "error": null
+    }
+   ]
+  },
+  {
    "name": "bad_frame_type",
    "sequence": [
     {

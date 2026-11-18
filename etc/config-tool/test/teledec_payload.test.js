@@ -97,3 +97,27 @@ test('decodePayload returns a fresh array and rejects unknown cid', () => {
   assert.equal(pts.length, 4);
   assert.throws(() => T.decodePayload(2, Uint8Array.of(1, 1), new Map()), /compressor/);
 });
+
+const varint = (n) => { const o = []; do { let b = n % 128; n = Math.floor(n / 128); if (n) b |= 0x80; o.push(b); } while (n); return o; };
+const framed = (f) => [...varint(f.length), ...f];
+
+test('symbol table is reset once it would exceed MAX_SYMBOLS', () => {
+  const table = new Map();
+  const tab = [2];
+  for (let sid = 1; sid <= T.MAX_SYMBOLS; sid++) tab.push(...varint(sid), 0x6B, 0, T.DT.F32);
+  tab.push(0);
+  T.decodePayload(0, Uint8Array.from(framed(tab)), table);
+  assert.equal(table.size, T.MAX_SYMBOLS);
+  T.decodePayload(0, Uint8Array.from(framed([2, ...varint(1), 0x6B, 0, T.DT.F32, 0])), table);
+  assert.equal(table.size, T.MAX_SYMBOLS, 'redefining a known SID keeps the table');
+  T.decodePayload(0, Uint8Array.from(framed([2, ...varint(T.MAX_SYMBOLS + 1), 0x6D, 0, 0, 0])), table);
+  assert.equal(table.size, 1);
+});
+
+test('tampDecompress refuses output beyond MAX_TAMP_OUT', () => {
+  // header 0x58 + zero bits: each 12-bit token is a 2-byte match at offset 0
+  const big = new Uint8Array(50000); big[0] = 0x58;
+  assert.throws(() => T.tampDecompress(big), /64 KB/);
+  const ok = new Uint8Array(40000); ok[0] = 0x58;
+  assert.ok(T.tampDecompress(ok).length < T.MAX_TAMP_OUT);
+});

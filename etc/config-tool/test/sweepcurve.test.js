@@ -19,7 +19,7 @@ test('parseScLine: header, data, end, none, non-sc', () => {
     {kind: 'header', t: 1763400000, n: 3, mpp: {P: 152.5, V: 41.25}, sweeping: false});
   assert.equal(parseScLine('sc: t=1 n=0 mpp=0,0 sweeping=1').sweeping, true);
   assert.deepEqual(parseScLine('sc: 40.5 100 41 120.25'),
-    {kind: 'data', points: [{V: 40.5, P: 100}, {V: 41, P: 120.25}], truncated: false});
+    {kind: 'data', points: [{V: 40.5, P: 100}, {V: 41, P: 120.25}], dropped: 0, truncated: false});
   assert.deepEqual(parseScLine('sc: end'), {kind: 'end'});
   assert.deepEqual(parseScLine('sc: none\r'), {kind: 'none'});
   assert.equal(parseScLine('V=41.2 P=120'), null);
@@ -33,8 +33,8 @@ test('parseScLine matches sc: after a log prefix and ANSI codes', () => {
 });
 
 test('parseScLine: odd value count keeps whole pairs and flags truncation', () => {
-  assert.deepEqual(parseScLine('sc: 40 100 41'), {kind: 'data', points: [{V: 40, P: 100}], truncated: true});
-  assert.deepEqual(parseScLine('sc: 40 100 41 12x'), {kind: 'data', points: [{V: 40, P: 100}], truncated: true});
+  assert.deepEqual(parseScLine('sc: 40 100 41'), {kind: 'data', points: [{V: 40, P: 100}], dropped: 0, truncated: true});
+  assert.deepEqual(parseScLine('sc: 40 100 41 12x'), {kind: 'data', points: [{V: 40, P: 100}], dropped: 0, truncated: true});
   assert.equal(parseScLine('sc: t=abc n=3 mpp=1,2').kind, 'invalid');
   assert.equal(parseScLine('sc: t=1 n=3 mpp=1').kind, 'invalid');
   assert.equal(parseScLine('sc: hello').kind, 'data');
@@ -93,4 +93,19 @@ test('SweepCurveParser: none, and data/end without a header', () => {
   assert.deepEqual(feedAll(['sc: 1 2', 'sc: end']), []);
   assert.deepEqual(feedAll([HDR, 'sc: none', 'sc: end']), [{complete: true, curve: null}]);
   assert.deepEqual(feedAll([HDR, 'sc: t=x', 'sc: 30 10 35 80 41.25 152.5', 'sc: end']).map((r) => r.complete), [true]);
+});
+
+test('parseScLine: inf/-inf/nan tokens are non-finite; their pairs are dropped but counted', () => {
+  const h = parseScLine('sc: t=1 n=3 mpp=inf,-inf sweeping=0');
+  assert.equal(h.kind, 'header');
+  assert.equal(h.mpp.P, Infinity);
+  assert.equal(h.mpp.V, -Infinity);
+  assert.deepEqual(parseScLine('sc: 30 inf -inf 5 40 100'),
+    {kind: 'data', points: [{V: 40, P: 100}], dropped: 2, truncated: false});
+  assert.deepEqual(parseScLine('sc: nan NaN'), {kind: 'data', points: [], dropped: 1, truncated: false});
+  const p = new SweepCurveParser();
+  for (const l of ['sc: t=1 n=3 mpp=100,40 sweeping=0', 'sc: 30 inf 35 nan', 'sc: 40 100']) p.feed(l);
+  const r = p.feed('sc: end');
+  assert.equal(r.complete, true);
+  assert.deepEqual(r.curve.points, [{V: 40, P: 100}]);
 });

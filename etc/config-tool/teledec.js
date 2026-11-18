@@ -13,6 +13,8 @@
 
     const RECORD_MAGIC = 0x7E;
     const MAX_RECORD = 4096;
+    const MAX_SYMBOLS = 4096;          // per table; a larger table is reset
+    const MAX_TAMP_OUT = 65536;
     // WireDT -> byte width (0 = Str, never a field value)
     const DT_WIDTH = [0, 1, 1, 1, 2, 2, 4, 4, 2, 4, 8];
     const DT = {STR: 0, BOOL: 1, I8: 2, U8: 3, I16: 4, U16: 5, I32: 6, U32: 7, F16: 8, F32: 9, F64: 10};
@@ -127,6 +129,7 @@
             return v;
         };
         const emit = (byte) => {
+            if (n >= MAX_TAMP_OUT) throw new Error('tamp: output over 64 KB');
             if (n === out.length) { const o = new Uint8Array(out.length * 2); o.set(out); out = o; }
             out[n++] = byte;
         };
@@ -191,8 +194,8 @@
         j++;
         while (j < f.length && f[j] !== 0) {
             const e = table.get(vi());
-            if (!e) return false;
-            j += DT_WIDTH[e[1]] || 0;
+            if (!e || !DT_WIDTH[e[1]]) return false;           // unknown SID or field type
+            j += DT_WIDTH[e[1]];
         }
         return true;
     }
@@ -219,10 +222,12 @@
                     const sid = vi();
                     if (sid === 0) break;
                     const s = cstr(f, j); j = s.pos;
+                    if (!table.has(sid) && table.size >= MAX_SYMBOLS) table.clear();
                     table.set(sid, [s.value, peek()]); j++;
                 }
             } else if (ft === 1) {
-                if (!frameDecodable(f, j, table)) continue;   // table not seen yet: skip this frame
+                // table not seen yet, or a field type this decoder lacks: skip this frame
+                if (!frameDecodable(f, j, table)) continue;
                 const p = {meas: sym(vi())[0], tags: {}, fields: {}, types: {}, ts: 0};
                 while (peek() !== 0) { const k = sym(vi())[0]; p.tags[k] = sym(vi())[0]; }
                 j++;
@@ -323,6 +328,8 @@
     //   sc: end   |   sc: none
     const SC_RE = /(?:^|[^A-Za-z0-9_])sc:\s*(.*?)\s*$/;
     const NUM_RE = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$|^[-+]?(?:inf|nan)$/i;
+    const scNum = (tok) => /^[-+]?inf$/i.test(tok) ? (tok[0] === '-' ? -Infinity : Infinity)
+        : /nan$/i.test(tok) ? NaN : Number(tok);
 
     // Returns null for a non-`sc:` line, else {kind: 'header'|'data'|'end'|'none'|'invalid', ...}.
     function parseScLine(line) {
@@ -338,7 +345,7 @@
             }
             const mpp = (kv.mpp || '').split(',');
             const h = {kind: 'header', t: Number(kv.t), n: Number(kv.n),
-                mpp: {P: Number(mpp[0]), V: Number(mpp[1])}, sweeping: kv.sweeping === '1'};
+                mpp: {P: scNum(mpp[0]), V: scNum(mpp[1])}, sweeping: kv.sweeping === '1'};
             if (!Number.isFinite(h.t) || !Number.isInteger(h.n) || h.n < 0 || mpp.length !== 2 ||
                 !NUM_RE.test(mpp[0]) || !NUM_RE.test(mpp[1])) return {kind: 'invalid', text: body};
             return h;
@@ -347,13 +354,17 @@
         let truncated = false;
         for (const tok of body ? body.split(/\s+/) : []) {
             if (!NUM_RE.test(tok)) { truncated = true; break; }
-            vals.push(Number(tok));
+            vals.push(scNum(tok));
         }
         if (vals.length % 2) truncated = true;
         const points = [];
-        for (let i = 0; i + 1 < vals.length; i += 2) points.push({V: vals[i], P: vals[i + 1]});
-        if (!points.length && !truncated) return {kind: 'invalid', text: body};
-        return {kind: 'data', points, truncated};
+        let dropped = 0;
+        for (let i = 0; i + 1 < vals.length; i += 2) {
+            if (Number.isFinite(vals[i]) && Number.isFinite(vals[i + 1])) points.push({V: vals[i], P: vals[i + 1]});
+            else dropped++;                                       // inf/nan pair
+        }
+        if (!points.length && !dropped && !truncated) return {kind: 'invalid', text: body};
+        return {kind: 'data', points, dropped, truncated};
     }
 
     // Assembles one curve from header, data and `end` lines. feed() returns undefined until a
@@ -365,7 +376,7 @@
             const c = this.cur;
             this.cur = null;
             const curve = {t: c.t, n: c.n, mpp: c.mpp, sweeping: c.sweeping, points: c.points};
-            if (!reason && c.points.length !== c.n) reason = 'short';
+            if (!reason && c.points.length + c.dropped !== c.n) reason = 'short';
             if (!reason && c.truncated) reason = 'truncated';
             return reason ? {complete: false, curve, reason} : {complete: true, curve};
         }
@@ -376,12 +387,14 @@
             switch (p.kind) {
                 case 'header': {
                     const prev = this.cur ? this._finish('restart') : undefined;
-                    this.cur = {t: p.t, n: p.n, mpp: p.mpp, sweeping: p.sweeping, points: [], truncated: false};
+                    this.cur = {t: p.t, n: p.n, mpp: p.mpp, sweeping: p.sweeping, points: [], dropped: 0,
+                        truncated: false};
                     return prev;
                 }
                 case 'data':
                     if (this.cur) {
                         this.cur.points.push(...p.points);
+                        this.cur.dropped += p.dropped;
                         if (p.truncated) this.cur.truncated = true;
                     }
                     return undefined;
@@ -397,7 +410,7 @@
     }
 
     return {
-        RECORD_MAGIC, MAX_RECORD, DT, DT_WIDTH,
+        RECORD_MAGIC, MAX_RECORD, MAX_SYMBOLS, MAX_TAMP_OUT, DT, DT_WIDTH,
         readVarint, cstr, f16ToF32, fmtG, tampInitDictionary, tampDecompress,
         decodePayload, pointToLine, TeleStream, stripAnsi, parseScLine, SweepCurveParser,
     };
