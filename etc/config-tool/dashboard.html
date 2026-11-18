@@ -35,6 +35,8 @@
   #banners { padding:0 20px; }
   .banner { margin-top:10px; padding:8px 12px; border:1px solid var(--warn); border-radius:6px;
             color:var(--warn); font-size:13px; }
+  .banner.found { border-color:var(--accent2); color:inherit; }
+  .banner button { margin-left:8px; }
   #empty { color:var(--muted); text-align:center; margin:60px 20px; }
   #cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(420px, 1fr)); gap:14px; padding:16px 20px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px;
@@ -182,7 +184,7 @@ const LS = { url:"mqtt-url", user:"mqtt-user", pass:"dash-mqtt-pass", remember:"
 const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
 const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, SILENT_MS = 15000, PROBE_MS = 60000, CURVE_RETRIES = 2;
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000], bleRetryMs:500,
-              hostnameMs:8000, snapMs:10000, snapMax:16 };
+              hostnameMs:8000, snapMs:10000, snapMax:16, wsProbeMs:3000, confMs:6000 };
 const SNAP_T = ["P","Ui","Uo","I","duty","state","Pmax","Etoday","ntcT","mcuT","Ro","Rc","Rb"];
 const LOG_KEEP = 200, LOG_SHOW = 100;
 // live P-V reconstruction: bin width V, faded after ms, bin cap, overwrite radius bins, path break V
@@ -809,6 +811,7 @@ class BleLink {
     this.lastProbe = now();
     scheduleRender(dev);
     requestCurve(dev);
+    discoverBroker(dev);
   }
 
   probe(){
@@ -1368,6 +1371,83 @@ function onVisible(){
 }
 
 /* ---------------------------------------------------------------------------------------------
+   Broker discovery: mqtt.conf of a BLE-linked device, then a WebSocket port probe
+--------------------------------------------------------------------------------------------- */
+const CONF_LINE = /Conf '\/littlefs\/conf\/([^:']+):([^']+)' = '(.*)'\s*$/;
+const WS_PORTS = [1885, 9001, 8083, 8080];
+let found = null, discovering = false;
+const probed = new Set();
+const brokerUnset = () => !client && !lsGet(LS.url) && !$("mqtt-url").value.trim();
+
+function parseBroker(uri){
+  uri = (uri || "").trim();
+  if (!uri) return null;
+  try {
+    const u = new URL(/^[a-z][\w+.-]*:\/\//i.test(uri) ? uri : "mqtt://" + uri);
+    return u.hostname ? { host:u.hostname, port:+u.port || (/^mqtts|ssl/i.test(u.protocol) ? 8883 : 1883) } : null;
+  } catch(_){ return null; }
+}
+
+function wsCandidates({ host, port }){
+  const ports = WS_PORTS.includes(port) ? WS_PORTS : [...WS_PORTS, port];
+  return ports.map(p => "ws://" + host + ":" + p);
+}
+
+// First URL whose WebSocket (subprotocol mqtt) opens within CFG.wsProbeMs, tried in order; else null.
+async function probeWs(urls){
+  for (const url of urls){
+    const ok = await new Promise(res => {
+      let ws = null;
+      const fin = (v) => {
+        clearTimeout(t);
+        if (ws){ ws.onopen = ws.onerror = ws.onclose = null; try { ws.close(); } catch(_){} }
+        res(v);
+      };
+      const t = setTimeout(() => fin(false), CFG.wsProbeMs);
+      try { ws = new WebSocket(url, "mqtt"); } catch(_){ fin(false); return; }
+      ws.onopen = () => fin(true);
+      ws.onerror = ws.onclose = () => fin(false);
+    });
+    if (ok) return url;
+  }
+  return null;
+}
+
+async function discoverBroker(dev){
+  if (discovering || !brokerUnset()) return;
+  discovering = true;
+  try {
+    let r;
+    try { r = await sendCommand(dev, "get-config mqtt.conf", { via:"ble", timeoutMs:CFG.confMs }); } catch(_){ return; }
+    const kv = {};
+    for (const l of r.lines){ const m = CONF_LINE.exec(TD.stripAnsi(l)); if (m && m[1] === "mqtt.conf") kv[m[2]] = m[3]; }
+    const b = parseBroker(kv.broker_uri);
+    if (!b || probed.has(b.host)) return;
+    probed.add(b.host);
+    if (location.protocol === "https:"){ found = { kind:"https", host:b.host }; banners(); return; }
+    const url = await probeWs(wsCandidates(b));
+    if (!brokerUnset()) return;
+    if (!url){ found = { kind:"none", host:b.host }; banners(); return; }
+    $("mqtt-url").value = url;
+    if (kv.username) $("mqtt-user").value = kv.username;
+    if (kv.password) $("mqtt-pass").value = kv.password;
+    found = { kind:"ok", host:b.host, url, from:dev.host };
+    banners();
+  } finally { discovering = false; }
+}
+
+function foundBanner(){
+  if (!found) return null;
+  if (found.kind === "https") return el("div", "banner", "broker at " + found.host + ", use wss://");
+  if (found.kind === "none") return el("div", "banner", "broker " + found.host + " has no WebSocket listener on the usual ports");
+  const d = el("div", "banner found", "MQTT broker found at " + found.url + " (from " + found.from + ") — Connect? ");
+  const b = el("button", "primary", "Connect");
+  b.onclick = connectClicked;
+  d.append(b);
+  return d;
+}
+
+/* ---------------------------------------------------------------------------------------------
    Header, banners, start-up
 --------------------------------------------------------------------------------------------- */
 function banners(){
@@ -1379,13 +1459,26 @@ function banners(){
   if (location.protocol === "https:" && /^ws:\/\//i.test($("mqtt-url").value.trim()))
     out.push("An https page cannot open ws:// connections: use a wss:// broker URL.");
   const box = $("banners");
-  box.replaceChildren(...out.map(t => el("div", "banner", t)));
+  const fb = foundBanner();
+  box.replaceChildren(...out.map(t => el("div", "banner", t)), ...(fb ? [fb] : []));
   $("ble-add").disabled = !navigator.bluetooth;
 }
 
+function connectClicked(){
+  if (client){ mqttDisconnect(); return; }
+  const url = $("mqtt-url").value.trim(), user = $("mqtt-user").value, pass = $("mqtt-pass").value;
+  lsSet(LS.url, url); lsSet(LS.user, user);
+  if ($("mqtt-remember").checked) lsSet(LS.pass, pass); else lsDel(LS.pass);
+  if (!url){ setStatus("enter a broker URL", true); return; }
+  if (found){ found = null; banners(); }
+  mqttConnect(url, user, pass);
+}
+
 function init(){
-  $("mqtt-url").value = lsGet(LS.url) || "";
-  $("mqtt-user").value = lsGet(LS.user) || "";
+  // ?mqtt=<ws url>&user=<name> prefill without connecting; a password is never taken from the URL
+  const qp = new URLSearchParams(location.search), qUrl = (qp.get("mqtt") || "").trim(), qUser = qp.get("user");
+  $("mqtt-url").value = qUrl || lsGet(LS.url) || "";
+  $("mqtt-user").value = qUser !== null ? qUser : lsGet(LS.user) || "";
   const rem = lsGet(LS.remember) === "1";
   $("mqtt-remember").checked = rem;
   $("mqtt-pass").value = rem ? lsGet(LS.pass) || "" : "";
@@ -1399,28 +1492,21 @@ function init(){
   document.body.classList.toggle("show-console", ct.checked);
   ct.onchange = () => { document.body.classList.toggle("show-console", ct.checked); lsSet(LS.console, ct.checked ? "1" : "0"); };
   $("mqtt-url").addEventListener("input", banners);
-  $("mqtt-connect").onclick = () => {
-    if (client){ mqttDisconnect(); return; }
-    const url = $("mqtt-url").value.trim(), user = $("mqtt-user").value, pass = $("mqtt-pass").value;
-    lsSet(LS.url, url); lsSet(LS.user, user);
-    if ($("mqtt-remember").checked) lsSet(LS.pass, pass); else lsDel(LS.pass);
-    if (!url){ setStatus("enter a broker URL", true); return; }
-    mqttConnect(url, user, pass);
-  };
+  $("mqtt-connect").onclick = connectClicked;
   $("ble-add").onclick = () => addBle();
   document.addEventListener("visibilitychange", onVisible);
   window.addEventListener("pagehide", () => saveSnaps());
   restoreSnaps();
   banners();
   setInterval(tick, 1000);
-  if ($("mqtt-url").value.trim()) mqttConnect($("mqtt-url").value, $("mqtt-user").value, $("mqtt-pass").value);
+  if (!qUrl && $("mqtt-url").value.trim()) mqttConnect($("mqtt-url").value, $("mqtt-user").value, $("mqtt-pass").value);
   restoreBle();
 }
 
 window.Dash = {
   devices, Device, BleLink, REPLY, CFG, NUS:{ SVC:NUS_SVC, RX:NUS_RX, TX:NUS_TX, TELE:NUS_TELE },
   getDevice, ingest, ingestTele, onLine, onMqttMessage, send, sendCommand, requestCurve, lease, tick, niceTicks,
-  attachBle, LIM, saveSnaps, forget,
+  attachBle, LIM, saveSnaps, forget, probeWs, wsCandidates, parseBroker, discoverBroker, connectClicked,
   flush, mqttConnect, mqttDisconnect, addBle, linkBle, restoreBle, consoleSend, staleAfter,
   get client(){ return client; },
 };

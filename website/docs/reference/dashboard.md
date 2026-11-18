@@ -71,6 +71,26 @@ bins and credentials are not part of the snapshot.
 The page subscribes to `pv/log/#`, `pv/alert/#` and `pv/tele/#`, and sends commands on `pv/log/<hostname>/cmd`. When
 a device has both links, BLE carries telemetry and commands, and the page does not lease the MQTT stream for it.
 
+### Finding the broker
+
+When no broker URL is stored and no MQTT client is connected, the page reads the broker from the first device that
+connects over BLE:
+
+1. After the BLE enable sequence, the page sends `get-config mqtt.conf` and takes the host from `broker_uri`, plus
+   `username` and `password`.
+2. It probes WebSocket listeners on that host, one at a time with a 3 s timeout each: `ws://<host>:1885`, `:9001`,
+   `:8083`, `:8080`, and last the port from `broker_uri`. The first that accepts a connection (subprotocol `mqtt`)
+   wins; the probe closes it at once.
+3. On success the page fills in the URL, user and password fields and shows a banner with a **Connect** button. It
+   does not connect by itself. The password stays in memory unless **remember** is ticked.
+
+Without a listener on any of these ports, a banner says the broker has no WebSocket listener on the usual ports. An
+`https` page cannot open `ws://` connections, so it skips the probe and only names the broker host, as a hint to use a
+`wss://` URL.
+
+The fields can also be prefilled from the page URL: `dashboard.html?mqtt=ws://<host>:<port>&user=<name>`. The page
+does not connect on its own then, and never reads a password from the URL.
+
 ## Console commands used
 
 | Command | When the page sends it |
@@ -78,6 +98,7 @@ a device has both links, BLE carries telemetry and commands, and the page does n
 | `set-time <epoch_ms>` | Only when `tele-ble 1` or `tele-mqtt` is refused because the device clock is not set, followed by one retry of that command. |
 | `hostname` | After a BLE connect, to name the card. The page waits up to 8 s and asks once more; without a reply it uses the advertised name minus `fugu-`. |
 | `tele-ble 1` | After a BLE connect, to start the BLE telemetry stream. |
+| `get-config mqtt.conf` | After the BLE enable sequence, while no broker URL is stored and no MQTT client is connected, to find the broker (see [Finding the broker](#finding-the-broker)). |
 | `tele-mqtt 120` | Over MQTT, about 5 s after a device first appears, also when its telemetry already arrives (another client's lease can expire at any time). The page renews the lease every 60 s while the tab is open, on a broker reconnect, and once more when the tab becomes visible again. When telemetry had been arriving and stops for 15 s, the page requests the lease again, at most once per 15 s, while the lease is running, unanswered, or refused for a transient reason; not for relay-fed devices or after a permanent error such as `disabled`. Devices without the command are not asked again. |
 | `sweep-curve` | On connect, after each sweep, and on the refresh button. Up to two retries, 4 s timeout each. |
 
@@ -118,6 +139,10 @@ The hosted copy shares its `github.io` origin with every other project page on t
 pages can read its `localStorage`. Do not tick **remember** on the hosted copy; serve the page yourself if the
 password should be remembered.
 :::
+
+Broker discovery reads `mqtt.conf` over BLE, so the device sends its MQTT username and password over the BLE link,
+and the reply also appears in the card's log. Anyone who can connect to the device's BLE console can read these
+credentials the same way.
 
 With `cmd_input=1`, anyone who can publish to the broker can control the converter, and the console line on each card
 sends any command. Use broker authentication and ACLs, and give the dashboard's broker user only the topics it needs.

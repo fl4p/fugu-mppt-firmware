@@ -16,6 +16,8 @@ const plain = (x) => JSON.parse(JSON.stringify(x));
 const pubs = (client, topic) => [...client._publishes.filter(p => !topic || p.topic === topic).map(p => p.msg)];
 // without the sweep-curve fetch issued 5 s after discovery
 const lpubs = (client, topic) => pubs(client, topic).filter(m => m !== 'sweep-curve');
+// BLE writes without the broker discovery read issued after the enable sequence
+const ew = (writes) => plain(writes.filter(w => w !== 'get-config mqtt.conf'));
 
 async function withBroker(extra = {}) {
   const env = await loadDash({ storage: { 'mqtt-url': URL, ...extra } });
@@ -45,7 +47,7 @@ test('no MQTT URL: no client is created, BLE-only enable sequence works without 
   assert.deepEqual(plain(bt.requests[0].filters), [{ namePrefix: 'fugu-' }, { services: [Dash.NUS.SVC] }]);
   assert.deepEqual(plain(bt.requests[0].optionalServices), [Dash.NUS.SVC]);
   // no set-time unless tele-ble 1 is refused for the clock
-  assert.deepEqual(plain(dev.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
+  assert.deepEqual(ew(dev.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
   assert.ok(dev.slices.every(n => n <= 20));
   // one telemetry record split over two notifications
   const rec = bleRecord([{ fields: { P: 123.46, Ui: 40.5, Uo: 27.25, I: 4.5, pwm_duty: 1234 }, ts: 1_763_400_000_123 }]);
@@ -89,7 +91,7 @@ test('tele-ble refusal reason is shown on the BLE badge; a clock refusal sends s
   const b = card(window, 'flu').querySelector('.badge.ble');
   assert.equal(b.dataset.state, 'refused');
   assert.equal(b.title, 'clock not set');
-  assert.deepEqual(dev.writes.map(w => w.replace(/^set-time \d+$/, 'set-time N')),
+  assert.deepEqual(ew(dev.writes).map(w => w.replace(/^set-time \d+$/, 'set-time N')),
     ['hostname', 'tele-ble 1', 'set-time N', 'tele-ble 1', 'sweep-curve']);
 });
 
@@ -108,10 +110,10 @@ test('BLE: set-time then tele-ble on after a clock refusal; other refusals send 
   await Dash.addBle();
   Dash.flush();
   assert.equal(card(window, 'fbuck').querySelector('.badge.ble').dataset.state, 'on');
-  assert.deepEqual(dev.writes.map(w => w.replace(/^set-time \d+$/, 'set-time N')),
+  assert.deepEqual(ew(dev.writes).map(w => w.replace(/^set-time \d+$/, 'set-time N')),
     ['hostname', 'tele-ble 1', 'set-time N', 'tele-ble 1', 'sweep-curve']);
   assert.equal(card(window, 'fboost').querySelector('.badge.ble').title, 'low heap');
-  assert.deepEqual(plain(other.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
+  assert.deepEqual(ew(other.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
 });
 
 test('stored URL auto-connects, subscribes, pokes remembered hosts', async () => {
@@ -506,7 +508,7 @@ test('BLE link loss: 3 backoff reconnects, then a Reconnect button that works', 
   await until(() => dev.writes.length >= n + 3, 3000, 'enable sequence');
   Dash.flush();
   assert.equal(c.querySelector('.badge.ble').dataset.state, 'on');
-  assert.deepEqual(plain(dev.writes.slice(n)), ['hostname', 'tele-ble 1', 'sweep-curve']);
+  assert.deepEqual(ew(dev.writes.slice(n)), ['hostname', 'tele-ble 1', 'sweep-curve']);
   assert.equal(btn.style.display, 'none');
 });
 
@@ -527,7 +529,7 @@ test('getDevices: one silent connect per fugu device; a throwing connect leaves 
   Dash.flush();
   assert.equal(calls, 1, 'exactly one attempt');
   assert.equal(otherCalls, 0, 'non-fugu device without a snapshot is not connected');
-  assert.deepEqual(plain(ok.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
+  assert.deepEqual(ew(ok.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
   const c = card(window, 'fboost');
   assert.equal(c.querySelector('.badge.ble').dataset.state, 'off');
   const btn = c.querySelector('button.reconnect');
@@ -700,7 +702,7 @@ test('BLE: a failed connect attempt (gatt.disconnect fires gattserverdisconnecte
   await Dash.addBle();
   await settle(50);
   assert.equal(dev.failService, 0, 'first attempt failed after gatt.connect()');
-  assert.deepEqual(plain(dev.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
+  assert.deepEqual(ew(dev.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
   assert.equal(Dash.devices.get('fbuck').ble.state, 'on');
 });
 
@@ -742,7 +744,7 @@ test('re-adding a restored (placeholder) BLE device connects it', async () => {
   assert.equal(Dash.devices.get('fboost').ble.state, 'off');
   await Dash.addBle();
   assert.equal(Dash.devices.get('fboost').ble.state, 'on');
-  assert.deepEqual(plain(d.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
+  assert.deepEqual(ew(d.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
 });
 
 test('lease: silence re-lease after a transient refusal, never after a permanent one', async () => {

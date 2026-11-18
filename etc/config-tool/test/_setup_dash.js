@@ -155,9 +155,31 @@ function makeFakeBluetooth(devicesToOffer = []) {
   return bt;
 }
 
+// Scriptable WebSocket: outcome(url) -> 'open' | 'error' | 'hang' (default 'error'), fired on a timer.
+// `tried` lists [url, protocol] in construction order, `closed` the URLs closed by the page.
+function makeFakeWebSocket(outcome = () => 'error') {
+  const ctl = { tried: [], closed: [] };
+  ctl.WebSocket = class {
+    constructor(url, protocol) {
+      this.url = url; this.protocol = protocol; this.readyState = 0;
+      ctl.tried.push([url, protocol]);
+      const o = outcome(url) || 'error';
+      if (o === 'hang') return;
+      setTimeout(() => {
+        if (this.readyState !== 0) return;
+        if (o === 'open') { this.readyState = 1; if (this.onopen) this.onopen({}); }
+        else { this.readyState = 3; if (this.onerror) this.onerror({}); if (this.onclose) this.onclose({}); }
+      }, 1);
+    }
+    close() { if (this.readyState < 2) ctl.closed.push(this.url); this.readyState = 3; }
+  };
+  return ctl;
+}
+
 const doms = [];
 
-async function loadDash({ storage = {}, bluetooth = makeFakeBluetooth(), mqtt = true, url = 'http://localhost/' } = {}) {
+async function loadDash({ storage = {}, bluetooth = makeFakeBluetooth(), mqtt = true, url = 'http://localhost/',
+  ws = makeFakeWebSocket() } = {}) {
   const dom = new JSDOM(buildHtml({ mqtt }), {
     url,
     runScripts: 'dangerously',
@@ -166,12 +188,13 @@ async function loadDash({ storage = {}, bluetooth = makeFakeBluetooth(), mqtt = 
       window.TextEncoder = TextEncoder;
       window.TextDecoder = TextDecoder;
       if (!url.startsWith('file:')) for (const [k, v] of Object.entries(storage)) window.localStorage.setItem(k, v);
+      window.WebSocket = ws.WebSocket;
       if (bluetooth) Object.defineProperty(window.navigator, 'bluetooth', { value: bluetooth, configurable: true });
     },
   });
   doms.push(dom);
   await settle();
-  return { dom, window: dom.window, Dash: dom.window.Dash, bluetooth };
+  return { dom, window: dom.window, Dash: dom.window.Dash, bluetooth, ws };
 }
 
 function closeAll() { while (doms.length) doms.pop().window.close(); }
@@ -255,6 +278,6 @@ function fakeScrollGeometry(el, { scrollHeight, clientHeight, scrollTop = 0 }) {
 }
 
 module.exports = {
-  loadDash, closeAll, settle, until, buildHtml, makeFakeBleDevice, makeFakeBluetooth, UUID,
+  loadDash, closeAll, settle, until, buildHtml, makeFakeBleDevice, makeFakeBluetooth, makeFakeWebSocket, UUID,
   encodePayload, mqttMsg, bleRecord, varint, fakeScrollGeometry,
 };
