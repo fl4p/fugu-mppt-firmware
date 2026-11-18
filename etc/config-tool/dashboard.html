@@ -604,7 +604,7 @@ function mqttConnect(url, user, pass){
     }
     renderAllSoon();
   });
-  c.on("message", (topic, payload) => { if (client === c) onMqttMessage(topic, payload); });
+  c.on("message", (topic, payload, pkt) => { if (client === c) onMqttMessage(topic, payload, pkt); });
   c.on("error", (e) => { if (client === c) setStatus(e.message || String(e), true); });
   c.on("close", () => { if (client !== c) return; clientUp = false; setStatus("disconnected, retrying…", true); renderAllSoon(); });
   return c;
@@ -620,13 +620,15 @@ function mqttDisconnect(){
 
 function u8(payload){ return payload instanceof Uint8Array ? payload : new Uint8Array(payload); }
 
-function onMqttMessage(topic, payload){
+function onMqttMessage(topic, payload, pkt){
   const parts = topic.split("/");
   if (parts[0] !== "pv" || !parts[2]) return;
   const kind = parts[1], host = parts[2];
   if (kind === "log" && parts.length === 3){
     getDevice(host, "mqtt").mqtt.split.feed(u8(payload));
   } else if (kind === "alert" && parts.length === 4){
+    // a retained alert may outlive its device (renamed host): no card for it
+    if (pkt && pkt.retain && !devices.has(host)) return;
     const dev = getDevice(host, "mqtt");
     pushLog(dev, "alert", "[alert " + parts[3] + "] " + new TextDecoder().decode(u8(payload)).trim());
   } else if (kind === "tele" && parts.length === 3){

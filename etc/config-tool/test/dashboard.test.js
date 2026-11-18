@@ -146,6 +146,17 @@ test('cards from pv/log and pv/alert; /cmd echoes ignored; hosts remembered', as
   assert.deepEqual(JSON.parse(window.localStorage.getItem('mqtt-known-hosts'))[URL], ['flat', 'fry']);
 });
 
+test('a retained alert creates no card, but is logged on an existing one', async () => {
+  const { window, Dash, client } = await withBroker();
+  client.emit('message', 'pv/alert/fugu-esp32s3-OLD/wire', enc('no fresh wire data'), { retain: true });
+  client.emit('message', 'pv/alert/flat/bms', enc('live'));
+  client.emit('message', 'pv/alert/flat/wire', enc('stale'), { retain: true });
+  Dash.flush();
+  assert.deepEqual(plain([...Dash.devices.keys()]), ['flat']);
+  const rows = [...card(window, 'flat').querySelectorAll('.log div')].map(r => r.textContent);
+  assert.deepEqual(rows, ['[alert bms] live', '[alert wire] stale']);
+});
+
 test('pv/tele message renders KPIs; kWh above 1000 Wh; mode name; lease despite a flowing stream', async () => {
   const { window, Dash, client } = await withBroker();
   const c = clock(window);
