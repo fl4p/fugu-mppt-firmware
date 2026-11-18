@@ -22,7 +22,7 @@ Each converter gets a card, keyed by its hostname:
 - **Today's peak and energy**: the `P_max_today` and `E_today` telemetry fields.
 - **Sweep curve**: the power-versus-input-voltage curve of the last MPPT sweep, read with `sweep-curve`, with the
   maximum power point and the live operating point marked. The page fetches the curve on connect and again after
-  each sweep ends. A refresh button fetches it on demand. A dashed **live** curve is built from the telemetry
+  each sweep ends. A refresh button fetches it on demand, and a **sweep** button starts a new global sweep. A dashed **live** curve is built from the telemetry
   stream in 0.25 V bins of input voltage: each sample sets the power of its own bin and of the existing bins within
   ±0.5 V. Bins stay for the session (at most 400; the least recently updated goes first), parts not updated for ten
   minutes are drawn faded, and the line breaks where neighbouring bins are more than 2 V apart. The power axis grows to the highest plotted value and does not shrink.
@@ -108,6 +108,7 @@ does not connect on its own then, and never reads a password from the URL.
 | `get-config mqtt.conf` | After the BLE enable sequence, while no broker URL is stored and no MQTT client is connected, to find the broker (see [Finding the broker](#finding-the-broker)). |
 | `tele-mqtt 120` | Over MQTT, about 5 s after a device first appears, also when its telemetry already arrives (another client's lease can expire at any time). The page renews the lease every 60 s while the tab is open, on a broker reconnect, and once more when the tab becomes visible again. When telemetry had been arriving and stops for 15 s, the page requests the lease again, at most once per 15 s, while the lease is running, unanswered, or refused for a transient reason; not for relay-fed devices or after a permanent error such as `disabled`. Devices without the command are not asked again. |
 | `sweep-curve` | On connect, after each sweep, and on the refresh button. Up to two retries, 4 s timeout each. |
+| `sweep` | On the **sweep** button next to the chart, which is disabled while the device reports a sweep in progress. |
 
 See [Console commands](console.md) for the replies.
 

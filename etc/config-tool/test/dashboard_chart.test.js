@@ -91,6 +91,12 @@ test('chart: empty state, curve path, MPP ring, live dot, caption, refresh', asy
   Dash.flush();
   assert.equal(card(window, 'fry').querySelector('button.refresh').disabled, true);
   assert.match(caption(), /loading/);
+
+  // sweep button sends `sweep`; disabled while the device reports a sweep in progress
+  card(window, 'fry').querySelector('button.sweep').click();
+  assert.equal(pubs(client, 'pv/log/fry/cmd').filter(m => m === 'sweep').length, 1);
+  assert.equal(card(window, 'flat').querySelector('button.sweep').disabled, true);
+  assert.equal(card(window, 'fry').querySelector('button.sweep').disabled, false);
 });
 
 test('chart: y-axis top sticks at the plotted session maximum, ignores P_max_today', async () => {

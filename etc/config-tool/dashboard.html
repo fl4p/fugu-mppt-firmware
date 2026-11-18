@@ -109,7 +109,7 @@
   .chartkeys .k-star i { width:12px; height:12px; background:var(--series-1);
     clip-path:polygon(50% 0,62.6% 32.7%,97.6% 34.5%,70.4% 56.6%,79.4% 90.5%,50% 71.4%,20.6% 90.5%,29.6% 56.6%,2.4% 34.5%,37.4% 32.7%); }
   .chartkeys .k-dot i { width:8px; height:8px; background:var(--series-2); border-radius:50%; }
-  .chartbar button.refresh { padding:1px 8px; font-size:12px; flex:none; }
+  .chartbar button.refresh, .chartbar button.sweep { padding:1px 8px; font-size:12px; flex:none; }
   svg.chart, svg.vinchart { width:100%; height:auto; display:block; }
   svg.chart .grid line, svg.vinchart .grid line { stroke:var(--grid); stroke-width:1; }
   svg.chart .base, svg.vinchart .base { stroke:var(--axis); stroke-width:1; }
@@ -1214,10 +1214,13 @@ function createChart(dev){
   const keys = [["k-line", "last sweep"], ["k-recon", "live"], ["k-star", "MPP"], ["k-dot", "now"]].map(([c, t]) => {
     const s = el("span", "key " + c); s.append(el("i"), document.createTextNode(t)); return s;
   });
+  const sb = el("button", "sweep", "sweep");
+  sb.title = "run a global sweep now (the curve is fetched when it ends)";
+  sb.onclick = () => { send(dev, "sweep").catch(e => pushLog(dev, "err", e.message)); scheduleRender(dev); };
   const rb = el("button", "refresh", "↻");
   rb.title = "fetch the last sweep curve";
   rb.onclick = () => { requestCurve(dev); scheduleRender(dev); };
-  bar.append(el("span", "caption"), el("span", "spacer"), rb);
+  bar.append(el("span", "caption"), el("span", "spacer"), sb, rb);
   const kb = el("div", "chartkeys"); kb.append(...keys);
   const svg = svgEl("svg", { viewBox:`0 0 ${CH.w} ${CH.h}`, role:"img", "aria-label":"power over input voltage" }, "chart");
   svg.append(svgEl("g", {}, "grid"), svgEl("line", {}, "base"), svgEl("g", {}, "ylab"), svgEl("g", {}, "xlab"),
@@ -1390,6 +1393,7 @@ function renderCaption(dev){
   else if (dev.curveErr) parts.push(dev.curveErr);
   q(dev, ".chartbar .caption").textContent = parts.join(" · ");
   q(dev, "button.refresh").disabled = !!dev.curveReq || !canSend(dev);
+  q(dev, "button.sweep").disabled = dev.tele.state === 5 || !canSend(dev);
 }
 
 // Crosshair snaps to the nearest curve point (or the live curve when no curve is known).
