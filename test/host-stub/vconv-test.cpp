@@ -1013,6 +1013,123 @@ void testY2_boost_duty_floor_pumps_open_output() {
     EXPECT(v.getVout() > vin + 2.0f); // unloaded, the floor really does creep upward
 }
 
+// Sun: clear-sky half-sine day, night, Markov clouds, PV scaling.
+float runSun(SunModel &s, float secs) {
+    float g = s.g;
+    for (int i = 0, n = (int) std::lround(secs / 0.05f); i < n; ++i) g = s.step(0.05f);
+    return g;
+}
+
+void testSun_clear_day() {
+    section("Sun: clear day 100 s, night 25 s");
+    SunModel s;
+    s.setDay(100.0f);
+    EXPECT_NEAR(s.nightS(), 25.0f, 1e-6);
+    EXPECT(runSun(s, 0.05f) < 1e-3f);
+    EXPECT_NEAR(runSun(s, 24.95f), std::pow(std::sin(3.14159265f / 4.0f), 1.3f), 2e-3);
+    EXPECT_NEAR(runSun(s, 25.0f), 1.0f, 1e-3);
+    EXPECT(runSun(s, 60.0f) == 0.0f); // t = 110
+    EXPECT(runSun(s, 15.05f) < 1e-3f); // wrapped to the next sunrise
+    EXPECT(s.t < 1.0f);
+    s.peak = 0.8f;
+    EXPECT_NEAR(runSun(s, 50.0f), 0.8f, 1e-3);
+    bool fin = true;
+    SunModel tiny;
+    tiny.setDay(0.01f);
+    EXPECT_NEAR(tiny.day, 1.0f, 0);
+    for (int i = 0; i < 1000; ++i) {
+        float g = tiny.step(0.05f);
+        fin = fin && std::isfinite(g) && g >= 0.0f && g <= 1.0f;
+    }
+    for (float t = 99.99f; t < 100.0f; t += 1e-5f) {
+        SunModel e;
+        e.setDay(100.0f);
+        e.t = t;
+        fin = fin && std::isfinite(e.step(0.0f));
+    }
+    EXPECT(fin);
+}
+
+void testSun_clouds() {
+    section("Sun: clouds");
+    auto mk = [](uint32_t seed) {
+        SunModel s;
+        s.reset(seed);
+        s.setDay(1e6f);
+        s.rate = 6.0f, s.depth = 0.7f, s.len = 10.0f, s.edge = 3.0f;
+        return s;
+    };
+    SunModel a = mk(7), b = mk(7), c = mk(8);
+    bool same = true, differ = false, inRange = true;
+    float cMin = 1.0f;
+    for (int i = 0; i < 72000; ++i) { // 1 h
+        float ga = a.step(0.05f), gb = b.step(0.05f), gc = c.step(0.05f);
+        same = same && ga == gb;
+        differ = differ || ga != gc;
+        inRange = inRange && a.cloud >= 0.3f - 1e-6f && a.cloud <= 1.0f + 1e-6f;
+        cMin = std::min(cMin, a.cloud);
+    }
+    EXPECT(same);
+    EXPECT(differ);
+    EXPECT(inRange);
+    EXPECT(cMin < 0.5f);
+    a.rate = 0.0f;
+    runSun(a, 600.0f);
+    EXPECT_NEAR(a.cloud, 1.0f, 1e-3);
+
+    // renewal mean dip: lambda*len / (1 + lambda*len) x mean depth 0.65*depth
+    SunModel m = mk(3);
+    m.rate = 2.0f, m.edge = 0.5f;
+    double dip = 0;
+    const int n = 20 * 72000;
+    for (int i = 0; i < n; ++i) { m.step(0.05f); dip += 1.0 - m.cloud; }
+    dip /= n;
+    const double lL = 2.0 / 60.0 * 10.0, want = lL / (1.0 + lL) * 0.65 * 0.7;
+    std::printf("  mean dip %.4f, renewal %.4f, rate*len*depth %.4f\n", dip, want, lL * 0.65 * 0.7);
+    EXPECT(dip > 0.6 * want && dip < 1.4 * want);
+}
+
+void testSun_pv_scaling() {
+    section("Sun: PV scaling, night collapse, floors");
+    PvModel p;
+    p.set(1e-4f, 0.5f, 0.85f);
+    EXPECT(std::isfinite(p.alpha) && std::isfinite(p.norm));
+    EXPECT(std::isfinite(p.current(0.25f)) && p.current(0.0f) == 1e-4f);
+    EXPECT(std::isfinite(p.voltage(5e-5f)));
+
+    VirtualConverter v;
+    v.setPv(13.0f, 76.0f, 0.85f);
+    v.setBat(27.0f, 0.05f);
+    v.setPwm(mkPwm(0, 0)); // converter off
+    v.sun().setDay(10.0f);
+    v.sun().night = 10.0f;
+    auto run = [&v](float secs) { for (int i = 0; i < (int) std::lround(secs / 0.002f); ++i) v.stepSeconds(0.002f, kFreq); };
+    run(5.0f); // noon
+    EXPECT_NEAR(v.getSunG(), 1.0f, 3e-3);
+    EXPECT_NEAR(v.getIsc(), 13.0f, 0.05);
+    EXPECT_NEAR(v.getVoc(), 76.0f, 0.02);
+    run(5.0f + 2.5f); // night
+    EXPECT(v.getSunG() == 0.0f);
+    EXPECT(v.getVoc() < 1.0f && v.getVoc() >= 0.5f);
+    EXPECT(v.getIsc() >= 1e-4f && v.getIsc() < 2e-4f);
+    EXPECT(std::isfinite(v.getVin()) && v.getVin() <= 0.55f);
+    EXPECT_NEAR(v.getPvK(), 0.85f, 1e-6);
+    v.setPv(10.0f, 60.0f, 0.8f); // base change while dark keeps it dark
+    EXPECT(v.getVoc() < 1.0f);
+    v.sun().setDay(0.0f);
+    run(0.1f);
+    EXPECT(v.getSunG() == 1.0f);
+    EXPECT_NEAR(v.getIsc(), 10.0f, 0);
+    EXPECT_NEAR(v.getVoc(), 60.0f, 0);
+    EXPECT_NEAR(v.getPvK(), 0.8f, 1e-6);
+    // G = 0.3: Voc - 4 % per e-fold
+    v.sun().setDay(100.0f);
+    v.sun().peak = 0.3f;
+    run(50.0f);
+    EXPECT_NEAR(v.getVoc(), 60.0f * (1.0f + 0.04f * std::log(v.getSunG())), 0.01);
+    EXPECT_NEAR(v.getSunG(), 0.3f, 2e-3);
+}
+
 } // namespace
 
 int main() {
@@ -1048,6 +1165,9 @@ int main() {
     testY_boost_duty_floor_power();
     testY2_boost_duty_floor_pumps_open_output();
     testZ_boost_current_routing();
+    testSun_clear_day();
+    testSun_clouds();
+    testSun_pv_scaling();
 
     std::printf("\nvconv-test: %d/%d passed\n", g_run - g_fail, g_run);
     return g_fail == 0 ? 0 : 1;

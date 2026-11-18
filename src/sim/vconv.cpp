@@ -454,8 +454,21 @@ void VirtualConverter::stepOneCycleBoost(float T) {
     dcm_ = (cEnd == 0.0f) && (c != 0.0f || a == 0.0f);
 }
 
+// Isc ~ G; Voc falls 4 % per e-fold of G, and below G = 1e-3 linearly toward a dead panel
+void VirtualConverter::applySun(float g) {
+    constexpr float kGKnee = 1e-3f, kVocKnee = 0.7236897f; // 1 + 0.04 ln(kGKnee)
+    sunG_ = g;
+    const float voc = g >= kGKnee ? voc0_ * (1.0f + 0.04f * std::log(g)) : voc0_ * kVocKnee * g * (1.0f / kGKnee);
+    pv_.set(std::max(isc0_ * g, 1e-4f), std::max(voc, 0.5f), pv_.k);
+}
+
 void VirtualConverter::stepSeconds(float dt_s, uint32_t pwmFreqFallback) {
     if (dt_s <= 0.0f) return;
+    if ((sun_.day > 0.0f || sunG_ != 1.0f) && (sunAcc_ += dt_s) >= 0.05f) {
+        const float g = sun_.day > 0.0f ? sun_.step(sunAcc_) : 1.0f;
+        sunAcc_ = 0.0f;
+        if (std::fabs(g - sunG_) > 0.002f * sunG_ || (g == 1.0f && sunG_ != 1.0f)) applySun(g);
+    }
     uint32_t freq = pwm_.pwmFreq ? pwm_.pwmFreq : pwmFreqFallback;
     if (freq < 1000) freq = 39000;
     const float T = 1.0f / (float) freq;

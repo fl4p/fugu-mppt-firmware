@@ -87,6 +87,15 @@ static void configureVirtualConverter() {
     float voc = vc.f("voc", 40.0f);
     float k   = vc.f("pv_k", 0.8f);
     g_vconv.setPv(isc, voc, k);
+    auto &sun = g_vconv.sun();
+    sun.night = vc.f("sun_night_s", -1.0f);
+    sun.peak = vc.f("sun_peak", 1.0f);
+    sun.rate = vc.f("cloud_rate", 0.0f);
+    sun.depth = vc.f("cloud_depth", 0.7f);
+    sun.len = vc.f("cloud_len_s", 20.0f);
+    sun.edge = vc.f("cloud_edge_s", 3.0f);
+    sun.reset((uint32_t) vc.getLong("sun_seed", 1));
+    sun.setDay(vc.f("sun_day_s", 0.0f));
 
     const float vBat = vc.f("v_bat", 28.0f);
     const float rBat = vc.f("r_bat", 0.05f);

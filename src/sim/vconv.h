@@ -6,6 +6,52 @@
 
 #include "math/pv_model.h"
 
+// Irradiance G in [0, 1]: a clear-sky day (flattened half-sine) and night, repeating, times a Markov
+// cloud factor with soft edges. Deterministic for a seed. day = 0: off.
+struct SunModel {
+    float day = 0.0f;    // s, 0 = off (min 1 s)
+    float night = -1.0f; // s, < 0: day / 4
+    float peak = 1.0f;   // clear-sky G at noon
+    float rate = 0.0f;   // cloud starts per minute
+    float depth = 0.7f;  // max cloud dip; a cloud dips uniform in [0.3, 1] x depth
+    float len = 20.0f;   // mean cloud duration, s (1..600)
+    float edge = 3.0f;   // cloud edge time constant, s
+    float t = 0.0f, gClear = 1.0f, cloud = 1.0f, g = 1.0f;
+    uint32_t seed = 1;
+
+    void setDay(float d) {
+        if (!(day > 0.0f) && d > 0.0f) t = 0.0f;
+        day = d > 0.0f ? std::max(d, 1.0f) : 0.0f;
+    }
+    void reset(uint32_t s) { seed = rng_ = s ? s : 1; t = 0.0f; cloud = target_ = 1.0f; left_ = 0.0f; }
+    [[nodiscard]] float nightS() const { return night >= 0.0f ? night : 0.25f * day; }
+
+    float step(float dt) {
+        constexpr float kPi = 3.14159265f;
+        const float period = day + nightS();
+        t += dt;
+        if (t >= period) t = std::fmod(t, period);
+        gClear = t < day ? std::fmin(std::fmax(peak, 0.0f), 1.0f) *
+                           std::pow(std::fmax(std::sin(kPi * t / day), 0.0f), 1.3f) : 0.0f;
+        if (left_ > 0.0f) left_ -= dt;
+        else if (uni() < std::fmax(rate, 0.0f) * (1.0f / 60.0f) * dt) {
+            target_ = 1.0f - std::fmin(std::fmax(depth, 0.0f), 1.0f) * (0.3f + 0.7f * uni());
+            left_ = -std::fmin(std::fmax(len, 1.0f), 600.0f) * std::log(1.0f - uni());
+        }
+        if (left_ <= 0.0f) target_ = 1.0f;
+        cloud += (target_ - cloud) * dt / (std::fmax(edge, 0.0f) + dt);
+        return g = gClear * cloud;
+    }
+
+private:
+    uint32_t rng_ = 1;
+    float left_ = 0.0f, target_ = 1.0f;
+    float uni() { // [0, 1)
+        rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5;
+        return (float) (rng_ >> 8) * (1.0f / 16777216.0f);
+    }
+};
+
 // Pure-C++ model of a synchronous buck OR boost converter (setBoost()). No Arduino, no IDF,
 // no FreeRTOS.
 // Wire-up (PWM input, ADC output, conf parsing) lives in src/pwm/vconv.h,
@@ -26,7 +72,14 @@ public:
     [[nodiscard]] bool isBoost() const { return boost_; }
 
     // PV source curve (math/pv_model.h).
-    void setPv(float isc, float voc, float k) { pv_.set(isc, voc, k); }
+    // Base PV parameters; the sun model scales them.
+    void setPv(float isc, float voc, float k) {
+        isc0_ = isc, voc0_ = voc;
+        if (sunG_ == 1.0f) pv_.set(isc, voc, k);
+        else pv_.k = k, applySun(sunG_);
+    }
+    SunModel &sun() { return sun_; }
+    [[nodiscard]] float getSunG() const { return sunG_; } // irradiance applied to the PV curve
 
     // PV string of n (1..3) series substrings, each with a bypass diode: g[i] scales the Isc of
     // substring i, w[i] is its share of Voc (null = equal shares). Gives up to n power peaks.
@@ -168,6 +221,9 @@ private:
     bool boost_ = false;
 
     PvModel pv_;
+    SunModel sun_;
+    float isc0_ = 8.0f, voc0_ = 40.0f, sunG_ = 1.0f, sunAcc_ = 0.0f;
+    void applySun(float g);
     static constexpr uint8_t kPvSubMax = 3;
     uint8_t pvN_ = 1;
     float pvG_[kPvSubMax] = {1.f, 1.f, 1.f};    // substring factors, strongest first

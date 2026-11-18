@@ -2053,7 +2053,9 @@ static void cmdMeasureCoil(cmd *c) {
 // vconv                           dump state
 // vconv pv <isc> <voc> [k]        update PV params
 // vconv bat <vbat>                update battery voltage
-// vconv set <key> <value>         in-memory setter (c_in, c_out, r_bat, l, vbat_ac_amp, vbat_ac_freq, vbat_ac_shape, diode_vf, ring_c, ring_q)
+// vconv set <key> <value>         in-memory setter (c_in, c_out, r_bat, l, vbat_ac_amp, vbat_ac_freq, vbat_ac_shape, diode_vf, ring_c, ring_q,
+//                                 sun_day_s, sun_night_s, sun_peak, cloud_rate, cloud_depth, cloud_len_s, cloud_edge_s, sun_seed)
+// vconv sun                       irradiance state
 static void cmdVconv(cmd *c) {
     Command cc(c);
     int n = cc.countArgs();
@@ -2099,10 +2101,16 @@ static void cmdVconv(cmd *c) {
             g_vconv.setBat(v, g_vconv.getRbat());
             UART_LOG("vconv: Vbat=%.2f", v);
         }
+    } else if (sub == "sun") {
+        const auto &s = g_vconv.sun();
+        UART_LOG("vconv sun: G=%.4f clear=%.4f cloud=%.4f t=%.1f/%.1f+%.1fs Isc=%.3fA Voc=%.2fV",
+                 g_vconv.getSunG(), s.gClear, s.cloud, s.t, s.day, s.nightS(), g_vconv.getIsc(), g_vconv.getVoc());
     } else if (sub == "set") {
         if (n < 3) CMD_FAIL_RETURN("vconv set: expected <key> <value>");
         auto key = cc.getArg(1).getValue();
         float v  = cc.getArg(2).getValue().toFloat();
+        auto &sun = g_vconv.sun();
+        if (!std::isfinite(v)) CMD_FAIL_RETURN("vconv set: bad value");
         if (key == "c_in")          g_vconv.setPassives(v, g_vconv.getCout(), g_vconv.getL());
         else if (key == "c_out")    g_vconv.setPassives(g_vconv.getCin(), v, g_vconv.getL());
         else if (key == "l")        g_vconv.setPassives(g_vconv.getCin(), g_vconv.getCout(), v);
@@ -2113,10 +2121,18 @@ static void cmdVconv(cmd *c) {
         else if (key == "diode_vf") g_vconv.setDiodeVf(v);
         else if (key == "ring_c")   g_vconv.setRing(v, g_vconv.getRingQ());
         else if (key == "ring_q")   g_vconv.setRing(g_vconv.getRingC(), v);
+        else if (key == "sun_day_s")    sun.setDay(v);
+        else if (key == "sun_night_s")  sun.night = v;
+        else if (key == "sun_peak")     sun.peak = v;
+        else if (key == "cloud_rate")   sun.rate = v;
+        else if (key == "cloud_depth")  sun.depth = v;
+        else if (key == "cloud_len_s")  sun.len = v;
+        else if (key == "cloud_edge_s") sun.edge = v;
+        else if (key == "sun_seed")     sun.reset((uint32_t) std::fabs(v));
         else CMD_FAIL_RETURN("vconv set: unknown key '%s'", key.c_str());
         UART_LOG("vconv: %s=%.6g", key.c_str(), v);
     } else {
-        CMD_FAIL_RETURN("vconv: expected pv|bat|set");
+        CMD_FAIL_RETURN("vconv: expected pv|bat|sun|set");
     }
 }
 #endif
