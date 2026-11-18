@@ -19,6 +19,7 @@ wired clock sync, and the control-loop gains. The following table lists its keys
 | `pv_k`       |      | float | 0.8     | PV-sim Vmp/Voc curve factor, valid range [0.5, 0.95] |
 | `pv_slew`    | V/s  | float | 200     | PV-sim setpoint slew limit (min 10) |
 | `pv_iout_span` |    | float | 16      | PV-sim EWMA span of the Iout feedback for the curve (local, separate from the Iout sensor `_filt_len`) |
+| `c_in`       | F    | float | 1e-3    | Input capacitance, board caps plus the array's. The sweep slows down so that the caps' discharge power C·V·dV/dt stays under 5 % of the input power, and subtracts that power from the power it records. Set it to the board's real input capacitance (2 × 470 µF on the standard board). 0 turns both off; a value outside 0..0.02 F or not a number is rejected with an error and the default is used. See [Global sweep](../../internals/mppt-tracker.md#global-sweep) |
 | `forced_pwm` |      | bool  | 0       | Force CCM PWM even at light loads (see notes below)        |
 | `fpwm_gate`  |      | bool  | 1       | Hold `forced_pwm` off until the duty reaches the voltage ratio (bring-up gate, see notes below) |
 | `fpwm_gate_margin` |  | float | 0.01    | Duty margin the gate requires on top of the measured ratio |

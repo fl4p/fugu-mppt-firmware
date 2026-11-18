@@ -337,6 +337,7 @@ const META = {
 
   // converter.conf
   topo:{unit:"",desc:"Converter topology: buck or boost",type:"enum"},
+  c_in:{unit:"F",desc:"Input capacitance (board caps plus the array's): the sweep slows so C*V*dV/dt stays under 5 % of the power, and subtracts it from the power it records; set the board's real value (2 x 470 uF), 0 = off, 0..0.02 (default 1e-3)",type:"float"},
   forced_pwm:{unit:"",desc:"Force CCM PWM even at light loads (1=on)",type:"bool"},
   fpwm_gate:{unit:"",desc:"Hold forced PWM off until the duty reaches the voltage ratio (bring-up gate)",type:"bool"},
   fpwm_gate_margin:{unit:"",desc:"Duty margin the forced-PWM gate requires on top of the measured ratio",type:"float"},
@@ -392,7 +393,7 @@ const META = {
   // tracker.conf
   target_duty_cycle:{unit:"",desc:"Fixed duty cycle fraction (0-1 of pwmMaxDriver); if > 0 enters manual PWM mode with hard-fixed duty (no PD control, no MPPT tracking)",type:"float"},
   sweep_speed:{unit:"",desc:"Global-sweep speed; scales both per-tick cap and limit-tracking gain (default 4.0)",type:"float"},
-  sweep_pace:{unit:"",desc:"Largest sweep speed-up where Vin moves slowly with the duty (near Voc, towards the Vin floor), 1..8 (default 1.0 = off, ramp linear in duty; experimental)",type:"float"},
+  sweep_pace:{unit:"",desc:"Largest sweep speed-up where Vin moves slowly with the duty (near Voc, towards the Vin floor), 1..8 (default 4.0; 1 = off, ramp linear in duty); bounded by the sensor filter delay",type:"float"},
   sweep_verify:{unit:"",desc:"Sweep verdict: flag a sweep when the settled power after landing on its MPP differs from the MPP by more than this fraction (default 0.1); 0 = off",type:"float"},
   pv_substrings:{unit:"",desc:"Learned bypass-diode substring count for the partial peak scan (written by the converter after a shaded sweep, 2..6); 0 = learn again, takes effect at the next boot",type:"byte"},
   scan_interval:{unit:"s",desc:"Partial peak scan period, 0..65535 (default 300); 0 = triggered scans only",type:"long"},
@@ -530,7 +531,7 @@ const FILE_KEYS = {
     "p_max","reverse_current_paranoia","temp_derate","temp_max","vin_min",
     "wire_dr_min","wire_p_derate","wire_p_trip","wire_p_warn","wire_protect","wire_r_max"],
   "coil.conf":["L0","rect_cal_auto","rect_offset_cal","rect_offset_drv","rect_offset_ns"],
-  "converter.conf":["ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
+  "converter.conf":["c_in","ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
     "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
     "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td",
     "forced_pwm","fpwm_gate","fpwm_gate_hold","fpwm_gate_margin","mode","psu_vout","pv_iout_span","pv_isc","pv_k","pv_slew","pv_voc",
@@ -563,7 +564,7 @@ const TYPE_KEYS = {
     "pv_substrings","scan_trigger"]),
   long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq","i2c_hs_freq",
     "holiday_days","i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pwm_freq","sprofiler_hz","switch_delay","scan_interval"]),
-  float: new Set(["L0","bat_c","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","holiday_charge","holiday_ibat","holiday_band","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","hv_i_max","hv_max","ibat_max","psu_vout","rect_offset_ns",
+  float: new Set(["L0","bat_c","c_in","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","holiday_charge","holiday_ibat","holiday_band","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","hv_i_max","hv_max","ibat_max","psu_vout","rect_offset_ns",
      "ina22x_range","ina22x_resistor","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max","power_conversion_eff",
      "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","sweep_pace","sweep_verify","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
     "vin_min","vout_max","vout_max_fallback","vout_offset_max",
@@ -597,7 +598,7 @@ const DEFAULTS = {
   // coil.conf
   "rect_offset_ns":"0","rect_cal_auto":"1","rect_offset_cal":"1",
   // converter.conf
-  "forced_pwm":"0","fpwm_gate":"1","fpwm_gate_hold":"192","fpwm_gate_margin":"0.01","mode":"\"mppt\"","sync_phase_deg":"0","sync_phase_ns":"0","sync_role":"\"none\"","topo":"\"buck\"",
+  "c_in":"1e-3","forced_pwm":"0","fpwm_gate":"1","fpwm_gate_hold":"192","fpwm_gate_margin":"0.01","mode":"\"mppt\"","sync_phase_deg":"0","sync_phase_ns":"0","sync_role":"\"none\"","topo":"\"buck\"",
   "ctrl_vin_kp":"-100","ctrl_vin_kd":"-200","ctrl_vout_kp":"1500","ctrl_vout_kd":"12000",
   "ctrl_iin_kp":"100","ctrl_iin_kd":"200","ctrl_iout_kp":"200","ctrl_iout_kd":"400",
   "ctrl_power_kp":"20","ctrl_power_kd":"5",
@@ -605,7 +606,7 @@ const DEFAULTS = {
   "cv_eoc":"3.5","cv_float":"3.325","recharge_dod":"0.2","recharge_vfloor_band":"0.05","tail_c_rate":"0.05","vout_offset_max":"0.6",
   "partial_charge":"0","full_charge_interval":"7","holiday_charge":"0","holiday_band":"0.1","holiday_days":"3","bat_temp_min":"0","bat_temp_derate":"45","bat_temp_max":"55",
   // tracker.conf
-  "sweep_speed":"4.0","sweep_pace":"1.0","sweep_verify":"0.1","target_duty_cycle":"0.0","pv_substrings":"0","scan_interval":"300","scan_trigger":"1",
+  "sweep_speed":"4.0","sweep_pace":"4.0","sweep_verify":"0.1","target_duty_cycle":"0.0","pv_substrings":"0","scan_interval":"300","scan_trigger":"1",
   // mqtt.conf
   "bat_charge_topic":"\"\"","bat_voltage_topic":"\"\"","broker_uri":"\"\"","cell_voltages_max_topic":"\"\"","cmd_input":"0","enabled":"1",
   "ibat_lim_topic":"\"\"","ibat_topic":"\"\"","log_level":"\"info\"","password":"\"\"",

@@ -53,17 +53,52 @@ A sweep (`startSweep()` in `src/mppt.h`) runs these steps:
    nearest limit scales it, so the ramp slows down when approaching a Vout, current or power limit. The Vin floor
    does not slow it: the sweep ends when Vin crosses the floor.
 4. Over every 1/128 of the duty range the sweep measures how far Vin moved. Where Vin moved less than Voc over the
-   whole duty range would, the step grows by up to `sweep_pace` (default 1, off), so the ramp runs at a more even pace in
-   Vin: fast near Voc, where the converter barely draws current, and on the flat high-duty end towards the floor. The
-   steep stretch past the MPP keeps the plain step. The speed-up fades out between no load and half the power limit, and
-   a Vout that moves without a battery holding it (open output) turns it off.
-5. It records the sample with the highest smoothed power as the MPP. It ignores samples below 0.2 % of
-   `limits.conf::p_max` (2 W at 1 kW, `sweepMinPower()`), so a sweep in marginal light cannot "peak" at a
-   near-maximum-duty phantom point.
+   whole duty range would, the step grows by up to `sweep_pace` (default 4, 1 = off), so the ramp runs at a more even
+   pace in Vin: fast near Voc, where the converter barely draws current, and on the flat high-duty end towards the
+   floor. The steep stretch past the MPP keeps the plain step. The speed-up fades out between no load and half the power
+   limit, and a Vout that moves without a battery holding it (open output) turns it off.
+   The sensor filters lag the ramp, so the speed-up is also bounded by their delay: the ramp may move at most 1/64 of
+   the duty range per filter delay $\tau = (\text{span} + 1) / f_s$ of the slowest of Vin, the power current and the
+   power voltage (median-of-5 plus a two-pass EWM). At the base step (`sweep_speed` 4, 10 % of the duty range per
+   second) this allows a speed-up of $0.156 / \tau$ [s]: 3.8 at 512 sps and span 20, the full 4 at 1470 sps, 1.1 at
+   450 sps and span 60, and none at 125 sps and span 60.
+5. In dim light the input capacitance matters. While Vin falls, the input caps discharge into the converter, and the
+   measured power is the string's plus $C_{in} V \, |dV/dt|$: 1 mF at 50 V and 40 V/s adds 2 W to a 4 W string. Over
+   the same window the sweep keeps this term under 5 % of the measured power by slowing the ramp, down to 1/32 of the
+   base step. $C_{in}$ is `converter.conf::c_in` (default 1 mF). It should match the board's real input
+   capacitance (two 470 µF capacitors on the standard board). The landing is not monotonic in it: with a 1.2 mF
+   plant, 0.5, 1 and 2 mF harvest 89.5, 91.2 and 95.8 % in a dusk test at 4 W but 97.6, 97.5 and 95.8 % at 10 W.
+6. It records the sample with the highest power, less the discharge term, as the MPP, with the smoothed Vin (filtered
+   like the power, so with equal filters the two refer to the same moment) and the local Vin slope per duty count. It ignores samples
+   below 0.2 % of `limits.conf::p_max` (2 W at 1 kW, `sweepMinPower()`), so a sweep in marginal light cannot "peak"
+   at a near-maximum-duty phantom point.
 
 The sweep stops as soon as any limiter produces a control mode (CV, CC, or CP), including the bounce at the maximum
 duty. The captured MPP duty becomes the target, and the loop fades to it with a bounded step before handing over to
 P&O.
+
+### Landing trim
+
+Vin lags the ramp. Near the MPP in discontinuous mode the converter loads the string like a resistor
+$V_{mp}/I_{mp}$, in parallel with the string's own dynamic resistance, which equals the same value there. The input
+capacitance therefore settles with $\tau = C_{in} V_{mp}^2 / (2 P_{mp})$, 0.31 s with 1 mF at 50 V and 4 W, so in
+dim light the captured duty lies tens of counts past the MPP. The captured Vin does not: the string's power depends on
+Vin alone, and the recorded power has the discharge term removed.
+
+After the fade reaches the captured duty, the loop holds the duty until the power filter has settled (as for the
+verdict below). P&O is paused meanwhile; the limiters stay in charge, and one that acts ends the assessment
+unverified. If the smoothed Vin then differs from the captured one by more than 3 %, the loop moves the duty once by
+half the difference over the captured Vin slope (at most 1/64 of the duty range), holds and settles again, and then
+gives the verdict. The slope is taken while the caps lag, so the full step tends to overshoot. Afterwards P&O starts
+afresh from the settled power, heading towards the captured Vin.
+
+A sweep bright enough for a verdict has a short lag, so if its landing power already misses the MPP by more than
+`sweep_verify`, the light changed and it gets the verdict without a trim. The log shows
+
+```
+sweep landed 49.1 V 5.3 W, MPP 55.1 V 6.4 W
+sweep landing trim 341 -> 290
+```
 
 If the best captured power is below that floor, the sweep commits no target. The converter shuts down for 30 s and
 resumes through the normal start path. The firmware logs this backoff at info level as
@@ -80,16 +115,18 @@ maximum can be a cusp where the light changed, far above or below the real curve
 local maxima a distorted curve can rank the wrong one highest. P&O cannot cross the power valley to a higher
 maximum.
 
-After the fade reaches the captured MPP duty, the loop waits for the power filter to settle (`powerSettleMs()`,
-1.5 to 3 s) and compares the smoothed power with the captured MPP power. If the two differ by more than
+After the fade reaches the captured MPP duty (and the [landing trim](#landing-trim)), the loop waits for the power
+filter to settle (`powerSettleMs()`, 1.5 to 3 s) and compares the smoothed power with the captured MPP power. If the two differ by more than
 `tracker.conf::sweep_verify` (default 0.10, 0 = off), the sweep is flagged. The converter stays at the landing
 point and P&O carries on from there. A flagged sweep then:
 
 * does not teach the [substring count](#substring-count);
 * starts a [partial peak scan](#partial-peak-scan) as soon as the scan has its reference, if a substring count is
   known;
-* otherwise, or when that scan finds no candidate, schedules one re-sweep 60 s later. At most one such re-sweep is
-  scheduled per 10 min, so a gusty sky cannot turn into a sweep loop. The re-sweep waits for the same conditions as
+* otherwise, or when that scan finds no candidate, schedules one re-sweep 60 s later. If the landing was brighter
+  than the MPP (the light rose during the sweep, which then peaks late, at a low Vin), the re-sweep follows as soon as
+  the light holds: the input current (power over Vin) rose less than 3 % in 5 s, 60 s at the latest. At most one such
+  re-sweep is scheduled per 10 min, so a gusty sky cannot turn into a sweep loop. The re-sweep waits for the same conditions as
   the periodic one ([below](#when-the-tracker-does-not-sweep)), and any sweep that starts meanwhile replaces it.
 
 A sweep whose fade a limiter stops, or that lands in a limit, gets no verdict and counts as clean. A sweep whose MPP is below 5 % of `limits.conf::p_max`: in low light the captured MPP is the
@@ -101,6 +138,7 @@ sweep verified: landed 468 W vs MPP 470 W (-0 %)
 sweep flagged: landed 452 W vs MPP 780 W (-42 %), scan now
 sweep flagged: landed 208 W vs MPP 496 W (-58 %)
 re-sweep in 60 s
+re-sweep in 5 s
 re-sweep capped (one per 10 min)
 sweep not verified (limiter)
 ```
@@ -423,7 +461,7 @@ The tracker reads these keys from `tracker.conf`:
 | Key                                                                  | Default | Effect                                               |
 |----------------------------------------------------------------------|---------|------------------------------------------------------|
 | [`sweep_speed`](../reference/config/tracker.md)                      | 4.0     | Sweep speed; scales the per-tick cap and the limit-tracking gain (min 0.1) |
-| [`sweep_pace`](../reference/config/tracker.md)                       | 1.0     | Largest sweep speed-up where Vin moves slowly; 1 = off |
+| [`sweep_pace`](../reference/config/tracker.md)                       | 4.0     | Largest sweep speed-up where Vin moves slowly; 1 = off |
 | [`sweep_verify`](../reference/config/tracker.md)                     | 0.10    | [Sweep verdict](#sweep-verdict) tolerance; 0 = off   |
 | [`target_duty_cycle`](../reference/config/tracker.md)                | 0.0     | Fixed duty fraction; > 0 disables sweep and P&O      |
 | [`scan_interval`](../reference/config/tracker.md)                    | 300     | Partial peak scan period [s]; 0 = triggered only     |

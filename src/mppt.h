@@ -211,17 +211,19 @@ private:
 
     struct {
         float power = 0;
-        float voltage = 0;
+        float voltage = 0; // Vin EWM, as delayed as the power
+        float slope = 0;   // [V/count] Vin fall per duty count there
         uint16_t dutyCycle = 0;
     } maxPowerPoint; // MPP during sweep
 
     // sweep verdict, RT: landed power vs the sweep MPP once settled
     uint8_t _svPhase = 0; // 1 landing, 2 settling
+    uint8_t _svLandTrim = 0; // 1: landing trim pending, 2: verdict
     uint8_t _svFlag = 0;  // 0 none, 1 clean, 2 light changed
-    float _svLand = 0;
+    float _svLand = 0, _svI = 0; // landed power, input current then
     uint32_t _svT = 0, _resweepAt = 0, _retryAt = 0; // [ms] settle start, scheduled re-sweep, last one scheduled
     void sweepVerdict(uint32_t nowMs, float p, bool ok);
-    void scheduleResweep(uint32_t nowMs);
+    void scheduleResweep(uint32_t nowMs, uint32_t inMs = 60000);
 
     // A sweep only commits its captured MPP as the operating target above this power. In marginal
     // light (e.g. a dawn cold-start sweep) the "peak" is just noise at near-max duty; committing it
@@ -312,9 +314,12 @@ private:
     uint16_t targetPwmCnt = 0; // config-derived boot duty; cleared on mppt/sweep to allow tracking
 
     float sweepSpeed = 4.0f; // global-sweep speed (tracker.conf::sweep_speed)
-    float sweepPace = 1.0f;  // tracker.conf::sweep_pace, largest sweep speed-up where Vin moves slowly, 1 = off
-    float _paceV = 0, _paceVo = 0, _pace = 1; // Vin and Vout at the pace anchor, speed-up
+    float sweepPace = 4.0f;  // tracker.conf::sweep_pace, largest sweep speed-up where Vin moves slowly, 1 = off
+    float _paceV = 0, _paceVo = 0, _pace = 1, _paceMax = 1, _paceS = 0; // Vin, Vout at the pace anchor, speed-up, bound, Vin fall/count
+    float _paceCap = 0, _lagF = 0; // [W] input caps' discharge cIn * Vin * -dVin/dt over the last pace window; [s] filter delay
     uint16_t _paceD = 0;         // duty at the pace anchor
+    uint32_t _paceT = 0;         // [us] time at the pace anchor
+    float cIn = 1e-3f;           // [F] converter.conf::c_in, input capacitance (sweep slow-down)
     float sweepVerify = 0.1f; // tracker.conf::sweep_verify, 0 = off
 
 public:
@@ -362,6 +367,15 @@ public:
                const Limits &limits_, const TeleConf &tele_);
 
     [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }
+
+    // [s] the larger mean delay of the Vin and power filters: median-5 (2 samples) and a 2-pass EWM (span - 1)
+    [[nodiscard]] float sweepFiltDelay() const {
+        auto d = [](const Sensor *s) {
+            float fs = s->isVirtual ? 0 : static_cast<const PhysicalSensor *>(s)->notchFs;
+            return fs > 0 ? (float) (s->ewm.span() + 1) / fs : 1.f;
+        };
+        return std::max(d(sensors.Vin), std::max(d(sensorPhysicalI), d(sensorPhysicalU)));
+    }
 
     // 99 % step settling of the slower power sensor: 2-pass EWMA 6.64 tau (tau ~ span/2 samples) + median-of-5 delay
     [[nodiscard]] float powerSettleMs() const {
@@ -468,16 +482,25 @@ public:
         scan.reset(wallClockMs());
     }
 
-    // RT, sweeping: speed-up 1..sweepPace where Vin moved less than Voc per pwmCtrlMax counts over the last
-    // pwmCtrlMax/128 counts (the knee past the MPP is steeper and keeps 1). A Vout moving by 1/256 of itself means
-    // no battery holds it (the ramp charges the output caps, which would read as power): 1.
-    __attribute__((always_inline)) void sweepPaceUpdate() {
+    // RT, sweeping, per pwmCtrlMax/128 counts or Voc/256 of Vin: speed-up 1.._paceMax where Vin moved less than Voc
+    // per pwmCtrlMax counts (the knee past the MPP is steeper and keeps 1); 1 at most while Vout moves by 1/256 of
+    // itself (no battery: the ramp charges the output caps, which reads as power). Slow-down to 1/32 where the input
+    // caps' discharge cIn * Vin * |dVin/dt|, which reads as power too, exceeds 5 % of the power p.
+    __attribute__((always_inline)) void sweepPaceUpdate(float p) {
         const uint16_t d = converter.getCtrlOnPwmCnt();
-        if (d < _paceD + converter.pwmCtrlMax / 128 + 1) return;
-        const float v = sensors.Vin->ewm.avg.get(), vo = sensors.Vout->ewm.avg.get();
-        const float num = scan.voc * (float) (d - _paceD), den = std::fabs(v - _paceV) * (float) converter.pwmCtrlMax;
-        _pace = std::fabs(vo - _paceVo) * 256 > vo ? 1 : den * sweepPace <= num ? sweepPace : std::max(1.f, num / den);
-        _paceV = v, _paceVo = vo, _paceD = d;
+        const float v = sensors.Vin->ewm.avg.get(), dv = _paceV - v;
+        if (d < _paceD + converter.pwmCtrlMax / 128 + 1 && std::fabs(dv) * 256 < scan.voc) return;
+        const auto t = (uint32_t) wallClockUs();
+        const float vo = sensors.Vout->ewm.avg.get(), cap = cIn * v * std::max(0.f, dv) * 1e6f / (float) std::max<uint32_t>(t - _paceT, 1000);
+        float pace = _paceMax;
+        if (d > _paceD) {
+            const float num = scan.voc * (float) (d - _paceD), den = std::fabs(dv) * (float) converter.pwmCtrlMax;
+            _paceS = dv / (float) (d - _paceD);
+            if (den * pace > num) pace = std::max(1.f, num / den);
+        }
+        if (std::fabs(vo - _paceVo) * 256 > vo) pace = std::min(1.f, pace);
+        if (p >= sweepMinPower() && cap * 20 > p) pace = std::min(pace, std::max(1 / 32.f, _pace * p / (20 * cap)));
+        _pace = pace, _paceCap = cap, _paceV = v, _paceVo = vo, _paceD = d, _paceT = t;
     }
 
     // Vin lower limit; minPulse: also above the LS min pulse ratio (buck DCM start ratio)
@@ -1481,8 +1504,9 @@ public:
 
         targetDutyCycle = maxPowerPoint.dutyCycle;
         // dim: the MPP is the largest of noisy samples, biased high; such a sweep teaches nothing either
-        _svPhase = sweepVerify > 0 && maxPowerPoint.power >= 25 * sweepMinPower();
-        scan.onSweepMpp(maxPowerPoint.voltage, maxPowerPoint.power, 25 * sweepMinPower(), _svPhase);
+        const bool verify = sweepVerify > 0 && maxPowerPoint.power >= 25 * sweepMinPower();
+        _svPhase = 1, _svLandTrim = 1 | verify << 1;
+        scan.onSweepMpp(maxPowerPoint.voltage, maxPowerPoint.power, 25 * sweepMinPower(), verify);
 
         auto z = outZ.finish((uint32_t) (wallClockUs() / 1000000));
         if (z.n)

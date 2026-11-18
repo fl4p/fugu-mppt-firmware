@@ -15,6 +15,7 @@ struct PlantBoard {
     float ringF, ringV, ringCexp, ringQ, ringCt; // free ring frequency at Vin = ringV, C ~ Vin^-ringCexp, Q, edge C ratio
     float qHigh; // Q of the "-hq" variant: ripple of the undamped bench (no core loss)
     float vf, tDead, tHsExt, rHs, rLs, tSw; // diode_vf, t_dead, t_hs_ext, r_hs, r_ls, t_sw
+    float cIn; // c_in: 2 x 470 uF +20 % and the panel's own; fry's dusk sweeps fit 1.0-1.5 mF output-referred
 
     [[nodiscard]] float ringC() const { return ringF > 0 ? 1.f / (39.478418f * ringF * ringF * lPlant) : 0.f; }
 
@@ -23,7 +24,7 @@ struct PlantBoard {
         auto s = [](float v) { char b[24]; snprintf(b, sizeof b, "%g", v); return std::string(b); };
         return {{"ring_c", s(ring ? ringC() : 0.f)}, {"ring_q", s(ringQ)}, {"ring_v", s(ringV)}, {"ring_cexp", s(ringCexp)}, {"ring_ct", s(ringCt)},
                 {"diode_vf", s(vf)}, {"t_dead", s(tDead)}, {"t_hs_ext", s(tHsExt)}, {"r_hs", s(rHs)}, {"r_ls", s(rLs)},
-                {"t_sw", s(tSw)}};
+                {"t_sw", s(tSw)}, {"c_in", s(cIn)}};
     }
 };
 
@@ -31,8 +32,8 @@ struct PlantBoard {
 // C ~ Vin^-0.6 and the edge C ratio 0.75 from the bench's free ring vs rise transit; Q from the field DCM sweeps;
 // dead time = UCC21330B with RDT 20k; r_* and t_sw fitted to the bench's CCM efficiency.
 inline PlantBoard kPlantBoards[] = {
-    {"fry", 80e-6f, 76e-6f, 233e3f, 75.f, 0.6f, 25.f, 0.75f, 150.f, 0.7f, 185e-9f, 0.f, 0.008f, 0.014f, 100e-9f},
-    {"flat", 56e-6f, 51e-6f, 320e3f, 60.f, 0.6f, 15.f, 0.75f, 100.f, 0.7f, 185e-9f, 0.f, 0.012f, 0.018f, 100e-9f},
+    {"fry", 80e-6f, 76e-6f, 233e3f, 75.f, 0.6f, 25.f, 0.75f, 150.f, 0.7f, 185e-9f, 0.f, 0.008f, 0.014f, 100e-9f, 1.2e-3f},
+    {"flat", 56e-6f, 51e-6f, 320e3f, 60.f, 0.6f, 15.f, 0.75f, 100.f, 0.7f, 185e-9f, 0.f, 0.012f, 0.018f, 100e-9f, 1.2e-3f},
 };
 
 inline PlantBoard *plantBoard(const char *name) {
@@ -74,6 +75,7 @@ inline void plantBoardsFromEnv() {
         else if (k == "r_hs") b->rHs = v;
         else if (k == "r_ls") b->rLs = v;
         else if (k == "t_sw") b->tSw = v;
+        else if (k == "c_in") b->cIn = v;
         else fprintf(stderr, "SIM_PLANT: unknown key %s\n", k.c_str());
     }
 }

@@ -36,6 +36,8 @@
 //     wx-mp-ccm         stiff source into a charging battery, Voc 1.3 -> 1.02 x Vbat: CCM until the duty limit, then DCM
 //     wx-sun-fry, wx-sun-flat   steady sun, MPP SIM_P W (default 70), the board's L, string and Vin (fry ~64 V, flat ~55 V);
 //                       SIM_SWEEP_AT=t requests a sweep at t [s] and starts the stats there
+//     wx-dusk-land-fry  wx-sun-fry at dusk (6 W, Voc ~66 V there, Vmpp ~55 V, bat 25.8 V), a sweep at 100 s: the ramp
+//                       outruns Vin through the input caps, the captured duty lies past the MPP (field fry 2026-11-18)
 //     wx-ramp-fry, wx-ramp-flat wx-sun with irradiance changing SIM_RAMP %/min (default 2, exponential) from 120 s
 //     wx-wob-fry, wx-wob-flat   wx-sun with irradiance x (1 + a sin 2 pi f t), SIM_WOB=a,f (default 0.005,0.2)
 //     wx-dstep          static P(D): dusk light SIM_GC (0.039), duty SIM_DSTEP=d0,d1,step,dwell up and back, one DSTEP
@@ -863,7 +865,8 @@ struct SweepPt {
     float vin, vout, iout, ioutSensor;
 };
 static std::vector<SweepPt> g_sweepPts;
-static uint16_t g_sweepEndH = 0;
+static uint16_t g_sweepEndH = 0, g_sweepEndH6 = 0;
+static float g_sweepEndV = 0, g_sweepEndV6 = 0;
 static double g_sweepEndT = -1, g_ringRecFrom = 0; // first sweep starting after g_ringRecFrom
 
 static void ringTick() {
@@ -874,7 +877,8 @@ static void ringTick() {
     if (sw && h > last && g_sweepEndT < 0 && tNow() >= g_ringRecFrom)
         g_sweepPts.push_back({h, g_vconv.getVin(), g_vconv.getVout(), g_vconv.getIoutAvg(), sensors.Iout->ewm.avg.get()});
     if (was && !sw && g_sweepEndT < 0 && !g_sweepPts.empty() && tNow() >= g_ringRecFrom) g_sweepEndT = tNow();
-    if (g_sweepEndT >= 0 && !g_sweepEndH && tNow() >= g_sweepEndT + 2.0) g_sweepEndH = h; // after the slew to the MPP
+    if (g_sweepEndT >= 0 && !g_sweepEndH && tNow() >= g_sweepEndT + 2.0) g_sweepEndH = h, g_sweepEndV = g_vconv.getVin();
+    if (g_sweepEndT >= 0 && !g_sweepEndH6 && tNow() >= g_sweepEndT + 6.0) g_sweepEndH6 = h, g_sweepEndV6 = g_vconv.getVin();
     if (!sw) last = 0;
     else last = std::max(last, h);
     was = sw;
@@ -969,8 +973,9 @@ static void ringStaticReport(const char *what, const std::vector<double> &dutyHi
     for (size_t i = 0; i < lm.size() && i < 12; ++i) printf(" %u:%.1f%%", lm[i].first, 100 * lm[i].second / pMax);
     printf("\n");
     if (g_sweepEndT >= 0)
-        printf("== RING sweep chose count %u (t=%.1f + 2 s): static P there %.1f %% of the max (max at %u)\n", g_sweepEndH,
-               g_sweepEndT, 100 * curveAt(c, g_sweepEndH) / pMax, hMax);
+        printf("== RING sweep chose count %u (t=%.1f + 2 s): static P there %.1f %% of the max (max at %u); Vin %.1f V,"
+               " +6 s count %u %.1f %% Vin %.1f V\n", g_sweepEndH, g_sweepEndT, 100 * curveAt(c, g_sweepEndH) / pMax, hMax,
+               g_sweepEndV, g_sweepEndH6, 100 * curveAt(c, g_sweepEndH6) / pMax, g_sweepEndV6);
     if (!dutyHist.empty()) {
         double tot = 0;
         for (double x: dutyHist) tot += x;
@@ -1115,6 +1120,19 @@ static int runWx(const std::string &name, Wx &wx) {
             }
         }
         wx.apply(tb);
+        {
+            static double openAt = getenv("SIM_OPEN_AT") ? atof(getenv("SIM_OPEN_AT")) : -1;
+            static bool opened = false;
+            static float vmx = 0;
+            if (openAt >= 0 && tb >= openAt) {
+                printf("%9.3f >>> OPEN bat: D=%u Vin=%.2f Vout=%.2f Iout=%.2f mode=%s\n", tb, converter.getCtrlOnPwmCnt(),
+                       g_vconv.getVin(), g_vconv.getVout(), g_vconv.getIoutAvg(), modeStr());
+                g_vconv.setBat(0, 1e9f), g_vconv.takeVoutMax(), openAt = -1, opened = true;
+            } else if (opened) {
+                const float m = g_vconv.takeVoutMax();
+                if (m > vmx) vmx = m, printf("%9.3f >>> VOUTMAX %.2f\n", tb, vmx);
+            }
+        }
         if (holdAt >= 0 && tb >= holdAt) mppt.speedScale = 0, holdAt = -1;
         if (wx.sweepAt >= 0 && tb >= wx.sweepAt) {
             printf("%9.2f >>> sweep requested\n", tb);
@@ -1373,10 +1391,13 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         wx.vocLog = 2.6f, wx.T = low ? 1860 : 1260;
         if (sc == "wx-calfail") wx.T = 2400, wx.maxSweeps = 3; // boot + 1800 s (+1 spare)
         for (float t = 0; t <= wx.T; t += 10) wx.cloud.emplace_back(t, g0 * std::pow(r, std::clamp(t - 60, 0.f, tr) / tr));
-    } else if (sc.rfind("wx-sun-", 0) == 0 || sc.rfind("wx-ramp-", 0) == 0 || sc.rfind("wx-wob-", 0) == 0) {
+    } else if (sc.rfind("wx-sun-", 0) == 0 || sc.rfind("wx-ramp-", 0) == 0 || sc.rfind("wx-wob-", 0) == 0 ||
+               sc == "wx-dusk-land-fry") {
         // steady sun, MPP SIM_P W; fry: Vin ~64 V at 70 W, flat: ~55 V
-        const float p = getenv("SIM_P") ? atof(getenv("SIM_P")) : 70;
+        const bool land = sc == "wx-dusk-land-fry";
+        const float p = getenv("SIM_P") ? atof(getenv("SIM_P")) : land ? 6 : 70;
         if (sc.compare(sc.size() - 4, 4, "-fry") == 0) fry(615), wx.vocLog = 2.6f;
+        if (land) wx.voc = 77;
         if (const char *e = getenv("SIM_VOC")) wx.voc = atof(e);
         if (sc.rfind("wx-ramp-", 0) == 0) wx.ramp = (getenv("SIM_RAMP") ? atof(getenv("SIM_RAMP")) : 2) / 6000;
         if (sc.rfind("wx-wob-", 0) == 0) {
@@ -1385,7 +1406,8 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         }
         float g = p / wx.pClear;
         for (int i = 0; i < 6; ++i) g = p / wx.pClear * wx.voc / (wx.voc + wx.vocLog * std::log(g));
-        wx.cloud = {{0, g}}, wx.vbat = getenv("SIM_VBAT") ? atof(getenv("SIM_VBAT")) : 26.1f, wx.statsFrom = 120, wx.T = 900;
+        wx.cloud = {{0, g}}, wx.vbat = getenv("SIM_VBAT") ? atof(getenv("SIM_VBAT")) : land ? 25.8f : 26.1f, wx.statsFrom = 120, wx.T = 900;
+        if (land) wx.sweepAt = wx.statsFrom = 100, wx.T = 200;
         if (const char *e = getenv("SIM_SWEEP_AT")) wx.sweepAt = wx.statsFrom = atof(e); // a requested sweep in the stats
     } else if (sc == "wx-mp-manual") {
         // manual duty 0.8 from a stiff sinking source, Voc 1.25 -> 1.02 x Vbat and back: DCM up through the stop ratio;
@@ -1413,9 +1435,11 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         wx.statsFrom = 60;
     } else if (sc == "wx-sweep-fall" || sc == "wx-sweep-rise") {
         // cloud edge (73 % in 10 s) starting 2 s into a sweep. -fall: flagged, one re-sweep 60 s later (verified);
-        // -rise: the MPP is captured after the edge, the landing agrees
+        // -rise: the paced ramp ends inside the edge and peaks late at a low Vin; flagged brighter, the re-sweep follows
+        // once the light holds. SIM_EDGE_AT=t moves the edge start (the expected events then do not apply)
         const bool fall = sc == "wx-sweep-fall";
-        wx.cloud = {{62, fall ? 1 : 0.27f}, {72, fall ? 0.27f : 1}};
+        const float e = getenv("SIM_EDGE_AT") ? atof(getenv("SIM_EDGE_AT")) : 62;
+        wx.cloud = {{e, fall ? 1 : 0.27f}, {e + 10, fall ? 0.27f : 1}};
         wx.sweepAt = wx.statsFrom = 60, wx.T = 240;
         wx.verdict = fall ? "vfrv" : "vv", wx.sweeps = fall ? 2 : 1;
     } else if (sc == "wx-sweep-gust") {
@@ -1430,7 +1454,8 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         wx.cloud = {{0, 0.04f}, {40, 0.04f}, {45, 0.3f}, {62, 0.3f}, {90, 1}};
         wx.sweepAt = wx.statsFrom = 60, wx.T = 240;
         const bool off = sc == "wx-sweep-learn-off";
-        wx.verdict = off ? "L" : "frvL", wx.sweeps = off ? 1 : 2;
+        // -off: the paced sweep ends at 68 s, the light still rising: the scan trigger (power off its reference) probes once
+        wx.verdict = off ? "Ls" : "frvL", wx.sweeps = off ? 1 : 2;
     } else if (sc == "ring-sweep" || sc == "ring-weak") {
         // field-like string at the board's morning Voc; -sweep: a global sweep at 60 s in ~150-180 W sun
         const bool fry = !strcmp(g_ring->name, "fry");
