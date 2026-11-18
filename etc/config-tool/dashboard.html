@@ -11,8 +11,13 @@
     --bg:#0e1116; --panel:#161b22; --panel2:#1c232c; --line:#2a3340;
     --fg:#d7dde3; --muted:#8b96a3; --accent:#4493f8; --accent2:#2ea043;
     --unit:#d29922; --warn:#f0883e;
+    color-scheme:dark;
   }
-  * { box-sizing:border-box; }
+  * { box-sizing:border-box; scrollbar-color:#3a4654 transparent; scrollbar-width:thin; }
+  ::-webkit-scrollbar { width:7px; height:7px; }
+  ::-webkit-scrollbar-thumb { background:#3a4654; border-radius:4px; }
+  ::-webkit-scrollbar-thumb:hover { background:#4c5a6b; }
+  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background:transparent; }
   body { margin:0; font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
          background:var(--bg); color:var(--fg); }
   header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; gap:10px;
@@ -70,9 +75,9 @@
   .logwrap { display:flex; flex-direction:column; gap:4px; }
   .logbar { display:flex; gap:8px; align-items:center; font-size:11px; color:var(--muted); }
   .logbar .spacer { flex:1; }
-  .log { height:170px; overflow:auto; background:#0a0d12; border:1px solid var(--line); border-radius:6px;
-         padding:6px 8px; font-family:ui-monospace,monospace; font-size:11px; }
-  .log div { white-space:pre; line-height:1.45; color:var(--muted); }
+  .log { height:180px; overflow-y:auto; overflow-x:hidden; background:#0a0d12; border:1px solid var(--line);
+         border-radius:6px; padding:4px 6px; font-family:ui-monospace,Menlo,monospace; font-size:10px; }
+  .log div { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.35; color:var(--muted); }
   .log .sent { color:var(--accent); }
   .log .ok { color:var(--accent2); }
   .log .err { color:var(--warn); }
@@ -81,7 +86,7 @@
   form.console { display:flex; gap:6px; }
   body:not(.show-console) form.console, body:not(.show-console) .logbar, body:not(.show-console) .log { display:none; }
   form.console input { flex:1; min-width:0; background:var(--bg); color:var(--fg); border:1px solid var(--line);
-    border-radius:6px; padding:5px 8px; font-family:ui-monospace,monospace; font-size:12px; }
+    border-radius:6px; padding:4px 8px; font-family:ui-monospace,Menlo,monospace; font-size:11px; }
   form.console input:focus { outline:none; border-color:var(--accent); }
   /* P-vs-Vin chart: dark chart tokens, series-1 blue for the curve, slot-2 orange for "now" */
   .chartwrap { --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70; --grid:#2a3340; --axis:#3a4552; --surface:var(--panel); }
