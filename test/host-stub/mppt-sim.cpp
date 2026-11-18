@@ -21,6 +21,7 @@
 //     wx-shade2-move, wx-shade3-move  shade moves, the global maximum changes peak after the boot sweep
 //     wx-shade-walk                   a shadow walks across the substrings, the global peak moves several times
 //     wx-shade-cloud    shaded substring under the cloud series (second peak comes and goes)
+//     wx-shade-learn    wx-shade2 shade for two sweeps (learns the substrings), clear at 1900 s, back at 2000..2300 s
 //     wx-dawn, wx-dusk  irradiance through the start threshold
 //     wx-low, wx-mid    steady light rising slowly, MPP 2 -> 20 W in 30 min / 55 -> 110 W in 10 min, sensor noise
 //     wx-low-slow       wx-low with power-sensor filter length 60 (slow sensor profile; SIM_ADC_HZ=200 for ADS-like rates)
@@ -40,6 +41,7 @@
 //     fry3: a capture with 3 % p-p at ~0.2 Hz). The == TRACKER line ends with the tracking loss in J, the part in slow
 //     mode and the largest Vin offset from the MPP in slow mode
 //   SIM_T=600 wx run length [s], SIM_TR=5 wx trace interval [s], SIM_V=1 firmware log in wx/shade runs
+//   SIM_SCAN_N=6 partial peak scan with the substring count already learned (default: learned from the sweeps)
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
 //   SIM_PDUMP=<file>  per RT tick float32 t, Iout ewm, Vout ewm, HS count, slow mode, PV power; SIM_HOLD=t: wx runs hold the duty from t [s]
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
@@ -572,6 +574,9 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
     mppt.rectCal.init(converter.getRectOnOffset(), !converter.rectOffsetNeedsCal());
     ConfFile trackerConf{"/littlefs/conf/tracker.conf", true};
     mppt.begin(trackerConf, boardConf, converterConf, lim, TeleConf{});
+#if SCAN_ACTIVE_DEFINED
+    if (const char *e = getenv("SIM_SCAN_N")) mppt.scan.n = (uint8_t) atoi(e); // substrings already learned
+#endif
     if (g_app.setupErr) { printf("setupErr\n"); exit(2); }
     adcSampler.begin(); // loopRT prologue
     printf("# sim tick %u us, pwm_freq %lu, Vbat_max %.2f, Iout_max %.1f, p_max %.0f\n", g_simTickUs,
@@ -1255,6 +1260,9 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
             // one module shaded 0.3 -> 0.72: global 34 V peak -> 68.8 V peak 50 % above it
             wx.sub[3] = wx.sub[4] = wx.sub[5] = {{120, 0.3f}, {420, 0.72f}}, wx.T = 2400;
         }
+    } else if (sc == "wx-shade-learn") {
+        fry6(215), wx.T = 3400;
+        wx.sub[5] = {{0, 0.70f}, {1900, 0.70f}, {1960, 1}, {2000, 1}, {2300, 0.70f}};
     } else if (sc == "wx-shade-walk") {
         // a shadow (0.35) walks across the substrings, about 2.5 of them at a time: the global peak moves
         fry6(400), wx.T = 2400;

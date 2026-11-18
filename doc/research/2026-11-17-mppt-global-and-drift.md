@@ -4,6 +4,9 @@
 
 Simulator only. Nothing here ran on hardware.
 
+**Update 2026-11-18 (later):** `pv_substrings` was removed; the scan learns the substring count from the sweeps
+(see [2026-11-18-scan-substring-learning.md](2026-11-18-scan-substring-learning.md)). The key names below are historical.
+
 **Status 2026-11-18:** the sections up to "Recommendation" describe the first round on the approximate plant
 and the first scan design. A review found that part of the shade gains came from that plant. The
 [follow-up](#follow-up-2026-11-18-review-fixes-and-the-exact-series-string-plant) re-baselines on an exact
