@@ -253,6 +253,7 @@ private:
     std::atomic<CalibrationState> calibrationState_{CalibrationState::Idle};
     uint8_t calibrating_ = 0; // remaining sensors; RT task only
     bool zeroLoaded_ = false; // current flowed at the stop (sticky while active and kZeroWaitUs after it)
+    bool calibFailed_ = false; // the last calibration failed; cleared by the next start or takeCalibFailure()
     time_us timeLastCalibration = 0, calibStartUs_ = 0, zeroLoadUs_ = 0;
 
     __attribute__((always_inline)) void applyCalibrationCommandRt() {
@@ -271,6 +272,7 @@ private:
             // a restart refills the EWM from the tail, so keep the loaded state of the stop
             zeroLoaded_ = loaded || (zeroLoaded_ && (calibrating_ || now - zeroLoadUs_ < kZeroWaitUs));
             calibrating_ = realSensors.size();
+            calibFailed_ = false;
             calibStartUs_ = now;
             for (auto &ch: sensors) {
                 ch->reset(true);
@@ -312,8 +314,9 @@ private:
                 ch->calibrationComplete = true;
     }
 
-    void finishCalibrationRt() {
+    void failCalibrationRt() {
         keepOffsetsRt();
+        calibFailed_ = true;
         calibrating_ = 0;
         auto state = CalibrationState::Active;
         calibrationState_.compare_exchange_strong(
@@ -609,7 +612,7 @@ public:
                 if (!keep && !ignoreCalibrationConstraints && (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue)) {
                     ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, stdn=%.6f)",
                              sensor.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, sensor.last, std);
-                    finishCalibrationRt();
+                    failCalibrationRt();
                     //startCalibration();
                     return UpdateRet::CalibFailure;
                 }
@@ -621,7 +624,7 @@ public:
                     ESP_LOGW("sampler", "%s last=%.6f med3=%.6f avg=%.6f num=%lu", sensor.params.teleName.c_str(),
                              sensor.last,
                              sensor.med3.get(), sensor.ewm.avg.get(), sensor.numSamples);
-                    finishCalibrationRt();
+                    failCalibrationRt();
                     //startCalibration();
                     return UpdateRet::CalibFailure;
                 }
@@ -820,6 +823,12 @@ public:
     [[nodiscard]] time_us getTimeLastCalibrationUs() const { return timeLastCalibration; }
     // last calibration start, failed or not; RT task only
     [[nodiscard]] time_us getCalibrationStartUs() const { return calibStartUs_; }
+    // RT task only
+    bool takeCalibFailure() {
+        const bool f = calibFailed_;
+        calibFailed_ = false;
+        return f;
+    }
 
 
     // Any core. restart additionally clears the sensor filters (not the calibration).

@@ -803,8 +803,11 @@ static void loopRT(void *arg) {
         if (wasHalted && timeLastSampler) timeLastSampler = nowUs; // grace for the stall watchdog
         wasHalted = false;
 
-        if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure)
+        if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
+            // a sweep's converter is still off here, which stopAndBackoff() skips; the sweep would restart it
+            if (mppt.isSweeping()) mppt.shutdownDcdc("calib-fail", 4);
             stopAndBackoff(4);
+        }
 
         // ADC stall watchdog. AdcError = the continuous-ADC isGood() tripped (DMA stalled); a stale
         // timeLastSampler = the sampler is alive but no fresh sample reached the controller. Either way

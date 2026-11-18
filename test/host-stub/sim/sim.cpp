@@ -293,7 +293,11 @@ static void loopRTOnce() {
     auto samplerRet = adcSampler.update();
     converter.applyPendingDeadTimeRt();
     mppt.applyPendingPwmFreqRt();
-    if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) stopAndBackoff(4);
+    if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
+        // a sweep's converter is still off here, which stopAndBackoff() skips; the sweep would restart it
+        if (mppt.isSweeping()) mppt.shutdownDcdc("calib-fail", 4);
+        stopAndBackoff(4);
+    }
     if (samplerRet == ADC_Sampler::UpdateRet::NewData) loopRTNewData(nowUs / 1000ULL);
 }
 

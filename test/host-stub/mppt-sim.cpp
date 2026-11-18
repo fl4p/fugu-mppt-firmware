@@ -24,7 +24,8 @@
 //     wx-shade-learn    wx-shade2 shade for two sweeps (learns the substrings), clear at 1900 s, back at 2000..2300 s
 //     wx-dawn, wx-dusk  irradiance through the start threshold
 //     wx-low, wx-mid    steady light rising slowly, MPP 2 -> 20 W in 30 min / 55 -> 110 W in 10 min, sensor noise
-//     wx-calfail        wx-mid with +-1.3 V bus ripple, every calibration fails: re-sweeps keep the 30 min cadence ("== CALFAIL")
+//     wx-calfail        wx-mid with +-1.3 V bus ripple, every calibration fails: off 4 s per failure, the restart keeps the old zeros,
+//                       calibrations keep the 30 min cadence ("== CALFAIL")
 //     wx-low-slow       wx-low with power-sensor filter length 60 (slow sensor profile; SIM_ADC_HZ=200 for ADS-like rates)
 //     wx-sweep-fall, wx-sweep-rise, wx-sweep-shade   cloud edge during a sweep (-shade: two peaks)
 //     wx-sweep-gust, wx-sweep-learn[-off], wx-sweep-scan   sweep verdict: re-sweep cap, no learning from a flagged
@@ -140,7 +141,8 @@ struct Trip {
 };
 static std::vector<Trip> g_trips;
 static std::vector<double> g_sweepT; // "Start sweep" log times
-static unsigned g_calFails = 0;
+static std::vector<double> g_calFailT, g_onT; // "Calibration failed" log times, converter off -> on edges
+static unsigned g_calStarts = 0;
 static std::vector<std::string> g_logSince; // log lines after the scenario event
 static double g_eventT = -1;
 static std::vector<double> g_slowDownT; // "Slow mode, duty" log times (slow-mode entries)
@@ -250,7 +252,8 @@ static void logHook(char lvl, const char *tag, const char *msg) {
     char who[64];
     if (sscanf(msg, "backoff %us [%63[^]]]", &sec, who) == 2) g_trips.push_back({tNow(), who, sec});
     if (!strcmp(msg, "Start sweep")) g_sweepT.push_back(tNow());
-    if (!strncmp(msg, "Calibration failed", 18)) ++g_calFails;
+    if (!strncmp(msg, "Calibration failed", 18)) g_calFailT.push_back(tNow());
+    if (!strcmp(msg, "Start calibration")) ++g_calStarts;
     if (!strncmp(msg, "Slow mode, duty", 15)) g_slowDownT.push_back(tNow());
     if (!strncmp(msg, "sweep verified", 14)) g_verdict += 'v';
     if (!strncmp(msg, "sweep flagged", 13)) g_verdict += strstr(msg, "scan now") ? 'F' : 'f';
@@ -372,7 +375,11 @@ static void loopRTIterBody() {
     converter.applyPendingDeadTimeRt();
     mppt.applyPendingPwmFreqRt();
     if (adcSampler.halted) return;
-    if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) stopAndBackoff(4);
+    if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
+        // a sweep's converter is still off here, which stopAndBackoff() skips; the sweep would restart it
+        if (mppt.isSweeping()) mppt.shutdownDcdc("calib-fail", 4);
+        stopAndBackoff(4);
+    }
 
     constexpr time_ms kAdcResetThrottleMs = 300, kAdcSustainedMs = 800, kAdcRestartMs = 60000;
     static time_ms adcStalledSinceMs = 0, lastAdcResetMs = 0;
@@ -699,6 +706,7 @@ static void run(double sec, double traceEvery, Probe *probe = nullptr, double fi
             if ((tNow() - probe->t0) * 1e3 < fineMs) traceLine("  ");
         }
         g_nStarts += on && !wasOn;
+        if (on && !wasOn) g_onT.push_back(tNow());
         if (on != wasOn && g_verbose) printf("%9.4f --- converter %s\n", tNow(), on ? "ON" : "OFF");
         wasOn = on;
         if (traceEvery > 0 && tNow() >= nextTrace) {
@@ -791,7 +799,7 @@ struct Wx {
     Track vbatT;                             // battery EMF profile
     double sweepAt = -1, statsFrom = 0, T = 600;
     std::string verdict; // sweep verdict events expected (g_verdict), "" = not checked; with sweeps after statsFrom
-    size_t sweeps = 0, maxSweeps = 0; // maxSweeps: CALFAIL check, 0 = off
+    size_t sweeps = 0, maxCals = 0; // maxCals: CALFAIL check, 0 = off
     float isc = 0, g[6] = {1, 1, 1, 1, 1, 1}, vocNow = 0;
     float half = 0, vocDrift = 0;           // half-substring shade, Voc drift over T (fraction)
     bool exact = false;                      // exact series-string plant
@@ -1295,10 +1303,19 @@ static int runWx(const std::string &name, Wx &wx) {
     for (auto &t: g_trips)
         if (t.t >= wx.statsFrom && ++shown <= 12) printf("==   trip at t=%.1f s [%s] %us\n", t.t, t.who.c_str(), t.sec);
     if (nTrips > 12) printf("==   ... %zu trips total\n", nTrips);
-    if (wx.maxSweeps) {
-        const bool ok = g_calFails >= 2 && nSweeps <= wx.maxSweeps;
-        printf("== CALFAIL %s: %u failed calibrations (want >= 2), %zu sweeps (want <= %zu): %s\n", name.c_str(),
-               g_calFails, nSweeps, wx.maxSweeps, ok ? "PASS" : "FAIL");
+    if (wx.maxCals) {
+        // each failure: off for the 4 s backoff, then back on (a sweep on the old zeros)
+        double offMin = 1e9, offMax = 0;
+        for (double tf: g_calFailT) {
+            auto on = std::upper_bound(g_onT.begin(), g_onT.end(), tf);
+            const double off = on == g_onT.end() ? 1e9 : *on - tf;
+            offMin = std::min(offMin, off), offMax = std::max(offMax, off);
+        }
+        const bool ok = g_calFailT.size() >= 2 && g_calStarts <= wx.maxCals && offMin >= 3.9 && offMax <= 15 &&
+                        ePv * pc >= 97;
+        printf("== CALFAIL %s: %zu failed calibrations (want >= 2), %u started (want <= %zu), off %.2f..%.2f s after a"
+               " failure (want 3.9..15), harvest %.1f %% (want >= 97): %s\n", name.c_str(), g_calFailT.size(),
+               g_calStarts, wx.maxCals, offMin, offMax, ePv * pc, ok ? "PASS" : "FAIL");
         if (!ok) return 1;
     }
     if (!wx.verdict.empty()) {
@@ -1389,7 +1406,7 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         const bool low = sc == "wx-low" || sc == "wx-low-slow";
         const float g0 = (low ? 2.5f : 61.f) / wx.pClear, r = low ? 10.f : 2.f, tr = low ? 1800 : 600;
         wx.vocLog = 2.6f, wx.T = low ? 1860 : 1260;
-        if (sc == "wx-calfail") wx.T = 2400, wx.maxSweeps = 3; // boot + 1800 s (+1 spare)
+        if (sc == "wx-calfail") wx.T = 2400, wx.maxCals = 3; // boot + 1800 s (+1 spare)
         for (float t = 0; t <= wx.T; t += 10) wx.cloud.emplace_back(t, g0 * std::pow(r, std::clamp(t - 60, 0.f, tr) / tr));
     } else if (sc.rfind("wx-sun-", 0) == 0 || sc.rfind("wx-ramp-", 0) == 0 || sc.rfind("wx-wob-", 0) == 0 ||
                sc == "wx-dusk-land-fry") {

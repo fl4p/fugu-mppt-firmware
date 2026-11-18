@@ -1020,7 +1020,9 @@ public:
 
         maxPowerPoint = {};
 
-        sampler.startCalibration();
+        // after a failed calibration sweep once on the old zeros: a persistent failure must not block every start
+        if (sampler.takeCalibFailure()) ESP_LOGW("mppt", "Last calibration failed, sweep on the old zeros");
+        else sampler.startCalibration();
 
         sweepPlot.restart();
         rt_defer([](void *c, float, float) {
