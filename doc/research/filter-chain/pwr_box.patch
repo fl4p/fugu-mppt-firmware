@@ -1,0 +1,230 @@
+diff --git a/etc/config-tool/conf-editor.html b/etc/config-tool/conf-editor.html
+index 230f088f..8778da93 100644
+--- a/etc/config-tool/conf-editor.html
++++ b/etc/config-tool/conf-editor.html
+@@ -388,6 +388,7 @@ const META = {
+   // tracker.conf
+   target_duty_cycle:{unit:"",desc:"Fixed duty cycle fraction (0-1 of pwmMaxDriver); if > 0 enters manual PWM mode with hard-fixed duty (no PD control, no MPPT tracking)",type:"float"},
+   sweep_speed:{unit:"",desc:"Global-sweep speed; scales both per-tick cap and limit-tracking gain (default 4.0)",type:"float"},
++  pwr_box:{unit:"",desc:"Experimental: tracker power and Vin from the median output (no EWMA), decision period = whole ripple periods (default 0)",type:"bool"},
+ 
+   // mqtt.conf
+   broker_uri:{unit:"",desc:"MQTT broker URI, e.g. mqtt://host:port",type:"string"},
+@@ -528,7 +529,7 @@ const FILE_KEYS = {
+     "sync_phase_deg","sync_phase_ns","sync_role","topo"],
+   "charger.conf":["bat_c","bat_temp_derate","bat_temp_max","bat_temp_min","cv_ceiling","cv_eoc","cv_float","full_charge_interval","ibat_max",
+     "partial_charge","recharge_dod","recharge_vfloor_band","tail_c_rate","vout_max","vout_max_fallback","vout_offset_max"],
+-  "tracker.conf":["sweep_speed","target_duty_cycle"],
++  "tracker.conf":["pwr_box","sweep_speed","target_duty_cycle"],
+   "mqtt.conf":["bat_charge_topic","bat_temp_topic","bat_voltage_topic","broker_uri","cell_voltages_max_topic","cmd_input","enabled","ibat_lim_topic",
+     "ibat_topic","log_level","password","username"],
+   "tele.conf":["adv_ms","binary","ble","enabled","idle_interval_ms","influxdb_host","log_level"],
+@@ -550,7 +551,7 @@ const TYPE_KEYS = {
+   byte: new Set(["addr","ads_alert","cmd_input","enabled","expected_hz","fan_pwm","forced_pwm","fpwm_gate","rect_cal_auto","rect_offset_cal",
+     "i2c_port","i2c_scl","i2c_sda","ignore_calibration_constraints","ina22x_addr","ina22x_alert",
+     "led_simple","lv_pgood","notch_adaptive","ntc_ch","panel_en","panel_sd","pwm_en","pwm_fault_active_high","pwm_fault_pin",
+-    "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert","wire_protect"]),
++    "pwm_hi","pwm_in","pwm_li","pwm_sd","pwr_box","reverse_current_paranoia","skip_assert","wire_protect"]),
+   long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq","i2c_hs_freq",
+     "i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pwm_freq","sprofiler_hz","switch_delay"]),
+   float: new Set(["L0","bat_c","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","hv_i_max","hv_max","ibat_max","psu_vout","rect_offset_ns",
+@@ -595,7 +596,7 @@ const DEFAULTS = {
+   "cv_eoc":"3.5","cv_float":"3.325","recharge_dod":"0.2","recharge_vfloor_band":"0.05","tail_c_rate":"0.05","vout_offset_max":"0.6",
+   "partial_charge":"0","full_charge_interval":"7","bat_temp_min":"0","bat_temp_derate":"45","bat_temp_max":"55",
+   // tracker.conf
+-  "sweep_speed":"4.0","target_duty_cycle":"0.0",
++  "pwr_box":"0","sweep_speed":"4.0","target_duty_cycle":"0.0",
+   // mqtt.conf
+   "bat_charge_topic":"\"\"","bat_voltage_topic":"\"\"","broker_uri":"\"\"","cell_voltages_max_topic":"\"\"","cmd_input":"0","enabled":"1",
+   "ibat_lim_topic":"\"\"","ibat_topic":"\"\"","log_level":"\"info\"","password":"\"\"",
+diff --git a/src/mppt.cpp b/src/mppt.cpp
+index bd6ba0b4..ef566e2c 100644
+--- a/src/mppt.cpp
++++ b/src/mppt.cpp
+@@ -293,8 +293,15 @@ void MpptController::update() {
+         } else {
+             controlMode = MpptControlMode::MPPT;
+             const bool slow = tracker.slowMode;
+-            controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get(),
+-                                          [this] { return powerSettleMs(); });
++            if (pwrBox) {
++                auto pi = static_cast<const PhysicalSensor *>(sensorPhysicalI);
++                bool notch = pi->notchFilter && sensorPhysicalU->notchFilter;
++                controlValue = tracker.update(pi->med3.get() * sensorPhysicalU->med3.get(), converter.getCtrlOnPwmCnt(),
++                                              sensors.Vin->med3.get(), [this] { return powerSettleMs(); },
++                                              notch ? sampler.getNotchFreq() : 0.f, pi->notchFs, pi->numSamples);
++            } else
++                controlValue = tracker.update(power, converter.getCtrlOnPwmCnt(), sensors.Vin->ewm.avg.get(),
++                                              [this] { return powerSettleMs(); });
+             controlValue *= speedScale;
+             slowEntry = tracker.slowMode && !slow;
+         }
+@@ -500,6 +507,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
+ 
+     psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
+     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
++    pwrBox = trackerConf.getByte("pwr_box", 0) != 0;
+ 
+     if (tele.influxdbHost) {
+         ESP_LOGI("main", "Influxdb telemetry to host %s", tele.influxdbHost.toString().c_str());
+diff --git a/src/mppt.h b/src/mppt.h
+index 00bdc10b..098c2694 100644
+--- a/src/mppt.h
++++ b/src/mppt.h
+@@ -298,6 +298,7 @@ private:
+     uint16_t targetPwmCnt = 0; // config-derived boot duty; cleared on mppt/sweep to allow tracking
+ 
+     float sweepSpeed = 4.0f; // global-sweep speed (tracker.conf::sweep_speed)
++    bool pwrBox = false; // tracker.conf::pwr_box: tracker power from the median output over whole ripple periods
+ 
+ public:
+     Limits limits{};
+@@ -345,11 +346,12 @@ public:
+ 
+     [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }
+ 
+-    // 99 % step settling of the slower power sensor: 2-pass EWMA 6.64 tau (tau ~ span/2 samples) + median-of-5 delay
++    // 99 % step settling of the slower power sensor: 2-pass EWMA 6.64 tau (tau ~ span/2 samples) + median-of-5 delay;
++    // pwr_box: the median delay only (the box mean nulls the notch ringing at f0)
+     [[nodiscard]] float powerSettleMs() const {
+-        auto ms = [](const Sensor *s) {
++        auto ms = [this](const Sensor *s) {
+             float fs = static_cast<const PhysicalSensor *>(s)->notchFs;
+-            return fs > 0 ? (3320.f * (float) s->ewm.span() + 2000.f) / fs : 1000.f;
++            return fs > 0 ? ((pwrBox ? 0.f : 3320.f * (float) s->ewm.span()) + 2000.f) / fs : 1000.f;
+         };
+         return std::max(ms(sensorPhysicalI), ms(sensorPhysicalU));
+     }
+diff --git a/src/tracker.h b/src/tracker.h
+index 1a3afadb..672f15fb 100644
+--- a/src/tracker.h
++++ b/src/tracker.h
+@@ -26,6 +26,7 @@ struct Tracker {
+     time_ms _timeLastReverse = 0;
+     time_ms _timeSettle = 0; // settle window start: reversal or limiter hand-back
+     time_ms _timeTakeover = 0; // limiter hand-back
++    uint32_t _boxN0 = 0, _boxW = 0; // box period: start sample, length [samples], 0 = restart
+ 
+     float _curPower = 0.0;
+     float _lastPower = 0.0;
+@@ -43,6 +44,7 @@ struct Tracker {
+     void resetTracker(float power, bool direction) {
+         _direction = direction;
+         _time = wallClockMs();
++        _boxW = 0;
+         _lastPower = power;
+         maxPowerPoint.power = 0;
+         maxPowerPoint.vin = 0;
+@@ -60,21 +62,40 @@ struct Tracker {
+         _direction = direction;
+         _time = wallClockMs();
+         _timeSettle = _timeTakeover = _time;
++        _boxW = 0;
+         if (!isnan(vin)) _lastVin = vin;
+         setSlowMode(false);
+     }
+ 
++    // whole ripple periods (f0 [Hz]) closest to 1/frequency, at least one, in samples at fs [Hz]
++    [[nodiscard]] uint32_t boxWindow(float f0, float fs) const {
++        return (uint32_t) lroundf(std::max(1.f, roundf(f0 / frequency)) * fs / f0);
++    }
++
+     // settleMs(): step settling time [ms] of the filter on powerSample, called once per tracker period.
++    // f0 [Hz] >= frequency/2, fs > 0: the period is the box window, counted on nSmp (samples of the power sensor at fs)
++    // instead of the clock.
+     // Returns the control value; on slow-mode entry the distance [counts] to the MPP duty.
+     template<class SettleMs>
+-    float update(float powerSample, uint16_t dutyCycle, float vin, SettleMs settleMs) {
++    float update(float powerSample, uint16_t dutyCycle, float vin, SettleMs settleMs,
++                 float f0 = 0, float fs = 0, uint32_t nSmp = 0) {
+         auto now = wallClockMs();
+ 
+-        _powerBuf.add(powerSample);
+-        _vinBuf.add(vin);
++        const bool box = fs > 0 && f0 * 2 >= frequency;
++        const bool open = box && (_boxW == 0 || nSmp < _boxN0); // the window opens after this sample
++        if (open) {
++            _boxN0 = nSmp;
++            _boxW = boxWindow(f0, fs);
++            _powerBuf.clear();
++            _vinBuf.clear();
++        } else {
++            _powerBuf.add(powerSample);
++            _vinBuf.add(vin);
++        }
+ 
+-        if ((float) (now - _time) > (1000.f / frequency)) {
++        if (!open && (box ? nSmp - _boxN0 >= _boxW : (float) (now - _time) > (1000.f / frequency))) {
+             _time = now;
++            _boxN0 = nSmp;
+             auto power = _powerBuf.pop();
+             auto vin = _vinBuf.pop();
+ 
+@@ -137,6 +158,7 @@ struct Tracker {
+             if (!slowMode) slow = slow && now - m.timestamp > 1000 * 30 && now - _timeTakeover > 1000 * 30;
+             bool enter = slow && !slowMode;
+             setSlowMode(slow);
++            if (box) _boxW = boxWindow(f0, fs);
+             // the MPP duty is a reference where a poor or non-linear output current measurement misleads the slow
+             // P&O: the caller applies the distance like a control value, i.e. a fraction of it
+             if (enter) return (float) m.dutyCycle - (float) dutyCycle;
+diff --git a/test/main.cpp b/test/main.cpp
+index 19eae831..fbad0e61 100644
+--- a/test/main.cpp
++++ b/test/main.cpp
+@@ -297,6 +297,7 @@ void test_tracker_converges_to_peak();
+ void test_tracker_settles_after_reversal();
+ void test_tracker_settle_window_follows_filter();
+ void test_tracker_settle_waits_for_vin();
++void test_tracker_box_window();
+ void test_tracker_slow_mode_settle_ignores_vin();
+ void test_tracker_slow_mode_settle_ignores_filter();
+ void test_tracker_handback_starts_window();
+@@ -525,6 +526,7 @@ void setup() {
+     RUN_TEST(test_tracker_settles_after_reversal);
+     RUN_TEST(test_tracker_settle_window_follows_filter);
+     RUN_TEST(test_tracker_settle_waits_for_vin);
++    RUN_TEST(test_tracker_box_window);
+     RUN_TEST(test_tracker_slow_mode_settle_ignores_vin);
+     RUN_TEST(test_tracker_slow_mode_settle_ignores_filter);
+     RUN_TEST(test_tracker_handback_starts_window);
+diff --git a/test/test_tracker.cpp b/test/test_tracker.cpp
+index daac147f..56384739 100644
+--- a/test/test_tracker.cpp
++++ b/test/test_tracker.cpp
+@@ -349,3 +349,26 @@ void test_tracker_slow_mode_ends_45s_after_reversal() {
+     TEST_ASSERT_FALSE(t.slowMode);
+     TEST_ASSERT_TRUE(std::isnan(runTo(t, 100'000))); // no re-entry without a reversal
+ }
++
++// pwr_box: the period is whole ripple periods counted on the power sensor's samples, not the clock; the mean starts
++// after the opening sample.
++void test_tracker_box_window() {
++    loopWallClockUs_ = 1'000'000;
++    auto tp = std::make_unique<Tracker>();
++    auto &t = *tp;
++    t.setSlowMode(false);
++    TEST_ASSERT_EQUAL_UINT32(14, t.boxWindow(100.f, 450.f)); // fast: 3 periods of 4.5 samples
++    TEST_ASSERT_EQUAL_UINT32(15, t.boxWindow(120.f, 450.f)); // 4 periods of 3.75
++    t.resetTracker(100.f, /*direction=*/true);
++    t.update(1000.f, 100, 0.f, kSettleMs, 100.f, 450.f, 7); // opens the window, not in the mean
++    for (uint32_t n = 8; n < 7 + 14; ++n) {
++        advanceMs(100); // the clock alone would decide every call
++        t.update(50.f, 100, 0.f, kSettleMs, 100.f, 450.f, n);
++        TEST_ASSERT_TRUE(t._direction);
++    }
++    t.update(50.f, 100, 0.f, kSettleMs, 100.f, 450.f, 7 + 14);
++    TEST_ASSERT_FALSE(t._direction);
++    TEST_ASSERT_EQUAL_FLOAT(50.f, t._curPower);
++    t.setSlowMode(true);
++    TEST_ASSERT_EQUAL_UINT32(225, t.boxWindow(100.f, 450.f)); // 50 periods
++}
+diff --git a/website/docs/reference/config/tracker.md b/website/docs/reference/config/tracker.md
+index cd24c7a2..d5263aab 100644
+--- a/website/docs/reference/config/tracker.md
++++ b/website/docs/reference/config/tracker.md
+@@ -11,3 +11,4 @@ sidebar_position: 7
+ |---------------------|------|-------|---------|----------------------------------------------------------------------|
+ | `target_duty_cycle` |      | float | 0.0     | Fixed duty cycle fraction (0–1 of pwmMaxDriver); if > 0 enters manual PWM mode with hard-fixed duty (no PD control, no MPPT tracking) |
+ | `sweep_speed`       |      | float | 4.0     | Global-sweep speed; scales both per-tick cap and limit-tracking gain (clamp ≥ 0.1) |
++| `pwr_box`           |      | byte  | 0       | Experimental. 1: the tracker averages the per-sample product of the median outputs (no EWMA), and the median Vin, over a whole number of inverter-ripple periods (the notch frequency) closest to 33 ms in fast and 500 ms in slow mode, counted in power-sensor samples; without a notch, the clock period. Its settle window after a reversal is the median delay. Protection, limiters and telemetry keep the EWMA |
