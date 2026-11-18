@@ -112,7 +112,7 @@ class DailyEnergyMeter {
     DailyRingStorage store{};
 
 
-    float _prevTotalEnergy = 0;
+    double _prevTotalEnergy = 0;
 
 public:
     DailyEnergyMeterState<float> today;
@@ -160,7 +160,7 @@ public:
         _prevTotalEnergy = 0;
     }
 
-    void update(float smoothPower, float totalEnergy, float vin = NAN, float vout = NAN) {
+    void update(float smoothPower, double totalEnergy, float vin = NAN, float vout = NAN) {
         auto now = std::time(nullptr);
 
         if (smoothPower > powerDayEnd) {
@@ -175,7 +175,7 @@ public:
 
         if ((today.energyYield > 0 or smoothPower >= powerDayStart) and totalEnergy > _prevTotalEnergy + 1e-3f) {
             if (_prevTotalEnergy > 0) {
-                float e = (totalEnergy - _prevTotalEnergy);
+                float e = (float) (totalEnergy - _prevTotalEnergy);
                 if (today.energyYield == 0)
                     ESP_LOGI("met",
                              "First energy %.4f today, day #%u, total %.2f", e,
@@ -206,7 +206,8 @@ static_assert(sizeof(PersistentState) == 32, "stats file layout changed");
 
 
 struct SolarEnergyMeter {
-    TrapezoidalIntegrator<float, time_us, float> totalEnergy{
+    // double accumulator: at 10^4 Wh a float's ulp (~0.002 Wh) swallows every per-sample increment
+    TrapezoidalIntegrator<float, time_us, double> totalEnergy{
             1e-6f / 3600.f,  // /us => /h
             /*maxDt*/static_cast<time_us>(4e6f) // 4sec
     };
@@ -258,7 +259,7 @@ struct SolarEnergyMeter {
     // hardcoded 0 it never starts and E_today stays at its restored value forever.
     void update() {
         dailyEnergyMeter.update(rtPower.load(std::memory_order_relaxed),
-                                (float) totalEnergy.get(),
+                                totalEnergy.get(),
                                 rtVin.load(std::memory_order_relaxed),
                                 rtVout.load(std::memory_order_relaxed));
     }
