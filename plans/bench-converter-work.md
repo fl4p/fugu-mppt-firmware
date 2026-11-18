@@ -2,7 +2,7 @@
 
 # Work that needs a bench converter
 
-Status: 2026-11-17. Written from the session that worked on the 1 ms loop goal, the rectifier-offset
+Status: 2026-11-18. Written from the session that worked on the 1 ms loop goal, the rectifier-offset
 calibration, the coil measurement, the current zero, the tracker and the MQTT recovery. Everything in
 sessions 1 to 6 is waiting for a converter on a bench with a scope; there is none at the moment. None
 of it should be tried first on the two installed converters. The last two sections list what does not
@@ -258,16 +258,19 @@ These can be done on the installed converters or without hardware, whenever some
 | Tracker after-picture | one day of log on the current build | not done; before-picture on the previous build: 18–23 slow-mode entries per hour, no enter-then-reset churn. Count `Slow mode, duty` lines and those followed by `Reset maxPower` within 1 s |
 | Fourth review of `coil-lowfreq` | nothing | open; do it before session 3 |
 | Unit-test suite panics in QEMU before the test framework starts | nothing | an investigation was started on 2026-11-17 in worktree `/tmp/qemufix` (branch `qemu-unity-fix`); nothing committed |
-| Idle power profile on the 51 µH converter | a fix of the profile's exit | the profile's exit pushed the loop gap to 1025 µs (2026-11-17 07:18 UTC), so that converter has `board.conf idle_cpu_mhz=0` and `tele.conf idle_interval_ms=0`. Remove both keys once the exit is fixed and measured |
+| Idle power profile | a fix of the profile's start gate | on the 51 µH converter the guard now keeps the CPU at 160 MHz and the loop stays under 1 ms (worst 881 µs through the 2026-11-18 dawn). On the 76 µH converter the start gate did not release at the real idle clock and the unit did not start at dawn; it has `board.conf idle_cpu_mhz=0` until that is fixed |
 | Headless scope capture | a commit in the `etc/adcscope` submodule | written and used, uncommitted |
 
 ## State to know when resuming
 
 - The 1 ms loop goal is closed: the 51 µH converter held under 1 ms for a full day on one build
   (worst 883 µs, 2026-11-15 17:53 to 2026-11-16 18:00 UTC).
-- Both installed converters run `main` at `c8abd6c` (version string `fry-brk1-603-gc8abd6cb`) without the
+- Both installed converters run `main` at `e4cb061` (version string `fry-brk1-608-ge4cb0616`) without the
   coil measurement command. To use `measure-coil` on them, build with the `sdkconfig.measure_coil`
-  fragment.
+  fragment. The 76 µH converter has `board.conf idle_cpu_mhz=0` because the idle profile's start gate
+  kept it from starting at dawn on 2026-11-18.
+- The wider picture (results, open problems, where the code is, working rules) is in
+  [handover-2026-11-18-loop-rectcal-coil-tracker.md](handover-2026-11-18-loop-rectcal-coil-tracker.md).
 - The 51 µH converter has no rectifier offset (0 ns, uncalibrated) and cannot learn one until its sense
   path is fixed (session 5). The firmware refuses there with "Iout follows LS" or "sense follows LS".
 - Coil values: 76 µH converter measures 76.0–77.0 µH (`coil.conf` 80e-6, used as 95 %); 51 µH converter
