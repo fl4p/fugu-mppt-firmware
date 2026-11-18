@@ -131,6 +131,34 @@ The loop also trips `hw-OV` when the alert cannot be armed or the INA226 has los
 after an I2C error or a chip reset. Without the MCPWM gate driver the firmware warns at boot that the alert cannot force
 the gates off. See [`board.conf`](../reference/config/board.md).
 
+### Overshoot on battery disconnect
+
+When a BMS opens the battery path while the buck delivers current, the coil current has nowhere to go but the output
+capacitor. Stopping the switches does not stop it: the low-side body diode keeps the coil discharging into the output.
+The output therefore rises to about
+
+$$
+V_\text{pk} \approx V_0 + I \sqrt{L / C_\text{out}}
+$$
+
+with $V_0$ the battery voltage and $I$ the output current at the moment the battery opens. No over-voltage trip, in
+software or hardware, can keep the output below this value.
+
+Simulated peaks for an 8S LFP pack (`Vbat_max` 29 V) charged at 28 A from 64 V, with nothing else on the output:
+
+| L | C<sub>out</sub> | Vout sampled at 200 Hz | Vout sampled at 5 kHz |
+|---|---|---|---|
+| 30 µH | 470 µF | 38.0 V | 35.5 V |
+| 30 µH | 560 µF | 37.3 V | 34.9 V |
+| 100 µH | 470 µF | 41.4 V | 41.4 V |
+
+A faster trip lowers the peak by at most a few volts, and only for small coils. Absorbing the coil energy
+($\tfrac{1}{2} L I^2$, about 12 mJ at 30 µH and 28 A) or adding output capacitance lowers it further. A fast trip still
+matters if the high side keeps switching with the low side off: Vout then climbs towards Vin.
+
+These figures come from the host simulator, not from measurements. Loads on the charger side of the BMS reduce the peak,
+but they are also exposed to it.
+
 ## ADC and loop watchdogs
 
 These checks run in the real-time loop whether or not the converter is switching. They stop the converter only when it
