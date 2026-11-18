@@ -17,7 +17,7 @@ The following table lists each quantity with its method and tool.
 | Duty cycle at the pin | External scope, auto-stepped | `etc/pico_pwm_duty.py` |
 | Coil ripple current | Current clamp on the coil | `etc/pico_capture.py` |
 | Coil inductance `L0` | DCM transfer relation from on-board sensors | [Coil inductance](coil-inductance.md) |
-| DCM ring frequency | Switch-node probe | [DCM coil ringing](../internals/dcm-ringing.mdx) |
+| DCM ring frequency, switch-node capacitance | Switch-node capture triggered on the LS gate, resonant fit | [Switch-node capacitance](switch-node-capacitance.md) |
 | ADC noise, ripple, filter behaviour | Raw sample stream over TCP | `./etc/scope.py` (adcscope) |
 
 ## Scope capture
@@ -87,8 +87,9 @@ prints a configured-vs-measured table.
 ## DCM ring frequency
 
 After the coil current reaches zero in DCM, the coil rings with the switch-node capacitance. The frequency depends on
-the FETs and layout of each board, so measure it on the switch node rather than reusing another board's value. See
-[DCM coil ringing](../internals/dcm-ringing.mdx) for the model and what the ring period means for low-side timing.
+the FETs and layout of each board, so measure it on the switch node rather than reusing another board's value.
+[Switch-node capacitance](switch-node-capacitance.md) describes the capture, the fit and its limits.
+[DCM coil ringing](../internals/dcm-ringing.mdx) covers the model and what the ring period means for low-side timing.
 
 ## ADC noise
 
