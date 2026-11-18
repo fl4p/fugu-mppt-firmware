@@ -1,0 +1,25 @@
+# pgx93, v1 (5 % rule only), fry Vout 0.975, SIM_NOISE=fry ofs 16: Vin jumps at constant duty
+   86.637 trk: D=1037 Vin=50.73/50.73 Ppv=40.12 Pm=38.873 dP=-0.056 ref=38.929 dir=+ slow lim=15 mode=MPPT dcm=1 M=0.525 sr=1 LS=946/947 bf=1 Io=1.498/1.495
+   87.139 trk: D=1037 Vin=50.27/50.42 Ppv=40.22 Pm=38.869 dP=-0.060 ref=38.929 dir=+ slow lim=15 mode=MPPT dcm=1 M=0.530 sr=1 LS=935/935 bf=1 Io=1.505/1.499
+   87.641 trk: D=1037 Vin=45.44/45.44 Ppv=39.58 Pm=38.947 dP=+0.019 ref=38.929 dir=- slow lim=15 mode=MPPT dcm=1 M=0.587 sr=1 LS=739/740 bf=1 Io=1.479/1.477
+  142.858 trk: D=1151 Vin=45.06/45.08 Ppv=35.25 Pm=34.238 dP=-0.015 ref=34.253 dir=+ slow lim=15 mode=MPPT dcm=1 M=0.591 sr=1 LS=805/806 bf=1 Io=1.317/1.317
+  143.360 trk: D=1152 Vin=43.15/43.54 Ppv=34.34 Pm=34.033 dP=-0.221 ref=34.033 dir=- slow lim=15 mode=MPPT dcm=1 M=0.618 sr=1 LS=741/741 bf=1 Io=1.290/1.292
+  143.862 trk: D=1152 Vin=41.46/41.46 Ppv=33.36 Pm=32.680 dP=-1.353 ref=32.680 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=650/650 bf=1 Io=1.247/1.243
+  143.895 trk: D=1152 Vin=41.45/41.46 Ppv=33.36 Pm=32.323 dP=-0.357 ref=32.323 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=650/650 bf=1 Io=1.247/1.245
+  143.930 trk: D=1153 Vin=41.45/41.45 Ppv=33.35 Pm=32.358 dP=+0.035 ref=32.358 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=650/651 bf=1 Io=1.247/1.245
+  143.965 trk: D=1154 Vin=41.45/41.45 Ppv=33.35 Pm=32.317 dP=-0.041 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=651/651 bf=1 Io=1.246/1.244
+  144.001 trk: D=1155 Vin=41.45/41.43 Ppv=33.35 Pm=32.299 dP=-0.018 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=651/651 bf=1 Io=1.246/1.243
+  144.036 trk: D=1155 Vin=41.45/41.43 Ppv=33.34 Pm=32.284 dP=-0.032 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=650/650 bf=1 Io=1.246/1.243
+  144.071 trk: D=1156 Vin=41.45/41.42 Ppv=33.34 Pm=32.306 dP=-0.011 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=650/650 bf=1 Io=1.246/1.243
+  144.104 trk: D=1157 Vin=41.44/41.42 Ppv=33.34 Pm=32.320 dP=+0.004 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=651/651 bf=1 Io=1.246/1.244
+  144.139 trk: D=1158 Vin=41.44/41.42 Ppv=33.34 Pm=32.286 dP=-0.030 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=652/652 bf=1 Io=1.246/1.243
+  144.174 trk: D=1159 Vin=41.44/41.43 Ppv=33.33 Pm=32.264 dP=-0.053 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=652/652 bf=1 Io=1.246/1.242
+  144.210 trk: D=1159 Vin=41.44/41.43 Ppv=33.33 Pm=32.315 dP=-0.001 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=652/653 bf=1 Io=1.246/1.245
+  144.245 trk: D=1160 Vin=41.44/41.44 Ppv=33.33 Pm=32.295 dP=-0.022 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=653/654 bf=1 Io=1.245/1.242
+  144.280 trk: D=1161 Vin=41.44/41.43 Ppv=33.33 Pm=32.273 dP=-0.044 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=654/654 bf=1 Io=1.245/1.242
+  144.313 trk: D=1162 Vin=41.44/41.42 Ppv=33.32 Pm=32.251 dP=-0.066 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=654/654 bf=1 Io=1.245/1.242
+  144.348 trk: D=1163 Vin=41.44/41.42 Ppv=33.32 Pm=32.279 dP=-0.038 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=655/655 bf=1 Io=1.245/1.243
+  144.383 trk: D=1164 Vin=41.44/41.42 Ppv=33.32 Pm=32.295 dP=-0.022 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=655/655 bf=1 Io=1.245/1.243
+  144.418 trk: D=1164 Vin=41.44/41.42 Ppv=33.32 Pm=32.291 dP=-0.026 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=655/655 bf=1 Io=1.245/1.243
+  144.454 trk: D=1165 Vin=41.44/41.42 Ppv=33.31 Pm=32.290 dP=-0.026 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=655/656 bf=1 Io=1.245/1.242
+  144.489 trk: D=1166 Vin=41.45/41.44 Ppv=33.32 Pm=32.286 dP=-0.031 ref=32.317 dir=+ lim=15 mode=MPPT dcm=1 M=0.643 sr=1 LS=656/657 bf=1 Io=1.245/1.243
