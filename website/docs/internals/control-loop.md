@@ -43,6 +43,8 @@ flowchart TD
   sync --> x3([next sample])
 ```
 
+The protection step and its trip conditions are described in [Protection](protection.md).
+
 ## Limiters
 
 Besides the MPP tracker, the loop contains five PD controllers, which are PID controllers without the integral term:
