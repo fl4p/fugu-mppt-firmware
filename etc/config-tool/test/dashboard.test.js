@@ -593,8 +593,8 @@ test('banners: missing navigator.bluetooth; https page with ws:// URL', async ()
   assert.equal(f.window.Dash.client, null);
 });
 
-test('password is not stored unless "remember" is ticked', async () => {
-  const { window, Dash } = await loadDash({ storage: { 'dash-mqtt-pass': 'old' } });
+test('password is not stored while "remember" is unticked', async () => {
+  const { window, Dash } = await loadDash({ storage: { 'dash-mqtt-pass': 'old', 'dash-mqtt-remember': '0' } });
   const d = window.document;
   const ls = (k) => window.localStorage.getItem(k);
   assert.equal(d.getElementById('mqtt-remember').checked, false);
@@ -626,7 +626,7 @@ test('remembered password is restored', async () => {
 });
 
 test("the conf editor's stored password is neither read nor deleted by the dashboard", async () => {
-  const { window } = await loadDash({ storage: { 'mqtt-pass': 'conf', 'mqtt-remember': '1', 'mqtt-url': 'ws://b:9' } });
+  const { window } = await loadDash({ storage: { 'mqtt-pass': 'conf', 'mqtt-remember': '1', 'mqtt-url': 'ws://b:9', 'dash-mqtt-remember': '0' } });
   const d = window.document;
   assert.equal(d.getElementById('mqtt-remember').checked, false);
   assert.equal(d.getElementById('mqtt-pass').value, '');
@@ -925,4 +925,22 @@ test('snapshot: broker connect pokes snapshot hosts as well as remembered hosts'
   });
   assert.deepEqual(plain(client._publishes.map(p => [p.topic, p.msg])),
     [['pv/log/fry/cmd', 'hostname'], ['pv/log/fbuck/cmd', 'hostname']]);
+});
+
+test('remember is on by default: the password is stored on connect', async () => {
+  const { window, Dash } = await loadDash();
+  const d = window.document;
+  assert.equal(d.getElementById('mqtt-remember').checked, true);
+  d.getElementById('mqtt-url').value = 'ws://b:9'; d.getElementById('mqtt-user').value = 'u'; d.getElementById('mqtt-pass').value = 'secret';
+  d.getElementById('mqtt-connect').click();
+  await settle();
+  assert.equal(window.localStorage.getItem('dash-mqtt-pass'), 'secret');
+  assert.equal(Dash.client.opts.password, 'secret');
+});
+
+test('no auto-connect with a user but no stored password; a hint is shown instead', async () => {
+  const { window, Dash } = await loadDash({ storage: { 'mqtt-url': 'ws://b:9', 'mqtt-user': 'u', 'dash-mqtt-remember': '0' } });
+  await settle();
+  assert.equal(Dash.client, null);
+  assert.match(window.document.getElementById('banners').textContent, /password/);
 });

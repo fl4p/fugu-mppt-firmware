@@ -51,7 +51,7 @@ Then do one or both of the following:
   appears as a card.
 - Click **+ Add BLE device** and pick a converter in the browser's chooser. Repeat for each converter.
 
-The page remembers the broker URL and user. Where the browser supports `navigator.bluetooth.getDevices()`, devices
+The page remembers the broker URL, user and, unless **remember** is unticked, the password; with a user but no stored password it does not connect by itself and asks for the password instead. Where the browser supports `navigator.bluetooth.getDevices()`, devices
 allowed earlier reappear after a reload. The page tries one connection to each `fugu-*` device without a click; when
 that fails, or the browser requires a click, the card shows a **Reconnect** button instead.
 
@@ -130,7 +130,7 @@ Without telemetry, a card shows the log and the sweep curve but no live values. 
 ## Security
 
 :::caution
-With **remember** ticked next to the password field, the broker password is stored in plain text in the browser's
+With **remember** ticked next to the password field (the default), the broker password is stored in plain text in the browser's
 `localStorage` for the page's origin. Unticked (the default), the password stays in memory for the session only, and
 a stored password is removed. The URL and user are always stored, as are the device snapshots (no credentials). The dashboard keeps its password under its own
 keys, separate from the configuration editor's.

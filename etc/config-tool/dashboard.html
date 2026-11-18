@@ -1451,8 +1451,10 @@ function foundBanner(){
 /* ---------------------------------------------------------------------------------------------
    Header, banners, start-up
 --------------------------------------------------------------------------------------------- */
+let noPass = false;   // stored broker + user but no password: do not auto-connect, ask instead
 function banners(){
   const out = [];
+  if (noPass) out.push("MQTT: enter the broker password and press Connect (tick \"remember\" to keep it).");
   if (location.protocol === "file:")
     out.push("Opened from file://: serve this folder over http (python3 -m http.server) so Web Bluetooth is available.");
   if (!navigator.bluetooth)
@@ -1467,6 +1469,7 @@ function banners(){
 
 function connectClicked(){
   if (client){ mqttDisconnect(); return; }
+  if (noPass){ noPass = false; banners(); }
   const url = $("mqtt-url").value.trim(), user = $("mqtt-user").value, pass = $("mqtt-pass").value;
   lsSet(LS.url, url); lsSet(LS.user, user);
   if ($("mqtt-remember").checked) lsSet(LS.pass, pass); else lsDel(LS.pass);
@@ -1480,7 +1483,7 @@ function init(){
   const qp = new URLSearchParams(location.search), qUrl = (qp.get("mqtt") || "").trim(), qUser = qp.get("user");
   $("mqtt-url").value = qUrl || lsGet(LS.url) || "";
   $("mqtt-user").value = qUser !== null ? qUser : lsGet(LS.user) || "";
-  const rem = lsGet(LS.remember) === "1";
+  const rem = lsGet(LS.remember) !== "0";   // remember the password unless the user unticked it
   $("mqtt-remember").checked = rem;
   const sameHost = (a, b) => { try { return new URL(a).hostname === new URL(b).hostname; } catch (e) { return false; } };
   // a ?mqtt= link for another host must not get the remembered password
@@ -1502,7 +1505,10 @@ function init(){
   restoreSnaps();
   banners();
   setInterval(tick, 1000);
-  if (!qUrl && $("mqtt-url").value.trim()) mqttConnect($("mqtt-url").value, $("mqtt-user").value, $("mqtt-pass").value);
+  if (!qUrl && $("mqtt-url").value.trim()) {
+    if ($("mqtt-user").value && !$("mqtt-pass").value) { noPass = true; banners(); }
+    else mqttConnect($("mqtt-url").value, $("mqtt-user").value, $("mqtt-pass").value);
+  }
   restoreBle();
 }
 
