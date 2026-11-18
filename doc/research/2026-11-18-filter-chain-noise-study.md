@@ -29,8 +29,8 @@ labelled rate. Labelled rates are approximate (fry's INA226 runs ~10 % fast), so
 The chain needs 3 to 5 fast periods (100 to 167 ms) until a step shows at 95 % in the period mean. A boxcar of
 the same latency (whole ripple periods) has period-mean noise of 0.87 to 0.99x the chain's on 13 of 17 captures;
 half that latency costs 0 to 28 % more noise. The 2-pass EWMA is therefore close to the best linear filter for
-this latency. Replacing it with a boxcar (step 3 of the plan) buys at most ~10 % noise or ~2x latency at
-roughly equal noise.
+this latency. Replacing it with a boxcar (step 3 of the plan) buys ~1-13 % noise on most captures (31 % on
+30w-hotplate-on-off, 0.69x) or ~2x latency at roughly equal noise.
 
 ### Where the remaining noise sits
 
@@ -41,9 +41,10 @@ chain's period-mean sd is 4.1 %. Period means therefore do not average down with
 with the 11-17 sim result that the period fade lost ("slow content does not average down like noise").
 
 Regressing that band on Vin (linear + quadratic) explains 0 to 2 % of it on 12 of 17 captures (23 to 70 % on
-three inverter captures of flat/fry, 42 % on 30w-low-noise). So it is mostly not the tracker's own dither; it is
-load / bus / irradiance wander or measurement drift at a fixed operating point. Caveat: Vin is resampled by
-labelled rates; a rate error smears the alignment and would lower R².
+three inverter captures of flat/fry, 42 % on 30w-low-noise). This does NOT establish that the band is mostly
+non-dither: Vin is resampled by labelled rates (fry's INA226 runs ~10 % off its label), and aligning the channel
+endpoints instead moves two inverter captures from 22.6 to 70.0 % and 69.7 to 97.6 % explained (review
+2026-11-18). The predictor is also instantaneous (no lag). Treat the origin of the 0.3..15 Hz band as open.
 
 ### Median vs despike
 
@@ -56,15 +57,16 @@ labelled rates; a rate error smears the alignment and would lower R².
 
 ## Implications
 
-- The chain is not the bottleneck. Filter rework (boxcar, adaptive span, LMS ripple canceller) targets content
-  the notch and EWMA already remove; expected tracker gain is small.
+- For the variants tested, the chain is not the bottleneck: filter rework (boxcar, adaptive span, LMS ripple
+  canceller) targets content the notch and EWMA already remove. This does not show that filtering is exhausted
+  in general.
 - The tracker's decision noise is low-frequency wander that no causal per-period filter separates from a duty
   step. Levers that address it: a noise-derived reversal threshold (11-17 step 1, pending), drift-compensated
   P&O (dP-P&O, a mid-period sample to subtract a linear trend), dither demodulation (lock-in / extremum seeking),
   or a Vin-referenced loop that rejects bus disturbances before they reach P.
 - `despike` is the one filter change with a measurable effect (unbiased mean, half the noise on pulsed loads,
-  worse on the China-inverter spike train). Host-sim result below: +0.31 pp mean once the calibration gate was
-  fixed.
+  worse on the China-inverter spike train). Host-sim result below: +0.15 pp mean (+0.31 including one +14 pp
+  baseline outlier) once the calibration gate was fixed.
 
 ## Boxcar tracker window in the host sim (rejected)
 
@@ -85,8 +87,10 @@ pwr_box=0 is bit-identical to main. Same 90-run sweep on vup, pwr_box=0 vs 1 (`/
 Why the offline result did not carry over: the offline metric was the noise of one period mean against a held
 reference. The tracker decides on dP between successive periods, and the EWMA correlates successive means, which
 lowers the noise of that difference; independent box windows lose it. The tracker's fixed reversal thresholds
-are tuned to the correlated chain. A noise-derived threshold (rev_k) would scale with the box noise, but the
-offline gain (at most ~10 %) leaves little to win. Not pursued further.
+are tuned to the correlated chain. This mechanism was not isolated, and the comparison is not like for like: the
+offline equal-latency box was 100-167 ms, the prototype ~30 ms with almost no settle allowance; also `_lastPower`
+can be held over several periods, so not every decision is an adjacent-period difference. A longer box was not
+tried. Not pursued further.
 
 ## Despike in the host sim
 
@@ -109,8 +113,18 @@ After the fix (main 670a3ef9), despike=8 vs 0, harvest delta:
 | wx-dusk | ~0 (one +14 pp baseline outlier excluded) | -0.80 | |
 | wx-mid | ~0 | -0.10 | +1.00 |
 | wx-wob-fry | -0.04 pp | -0.50 | +0.50 |
+| all | +0.15 pp excluding the outlier (+0.31 with it) | | |
 
 Sweep counts equal (258 vs 257). The fix alone (despike=0, before vs after) is neutral: -0.01 pp mean.
+Caveat: these result files were written by parallel appends that interleaved some records, and
+`trk-sweep-diff.py` assigns metrics to the latest header (one fx-ds0 run parsed empty). Fixed in
+`trk-noise-sweep.sh` (one file per run, records checked for exactly one SUMMARY); the dusk table below matches
+the reconstructed SUMMARY lines (review 2026-11-18).
+
+A calibration that keeps failing for any reason still re-sweeps every ~10 s: `timeLastCalibration` only advances
+on success and drives the periodic sweep. The review reproduced it with a ±1.3 V 100 Hz Vout ripple at ~506 sps
+(sd 0.757 V > 0.7 V; the old gate passed it). fry/flat boot calibrations show Vout sd 2.5 / 5.7 mV, so this is
+latent there; retry scheduling fix in progress.
 
 Deployment order matters: despike on a device without 670a3ef9 reproduces the back-to-back sweep loop.
 
@@ -125,26 +139,38 @@ Dusk captures 2026-11-18 with `test/host-stub/noise_capture.sh` (read-only scope
 |---|---|---|---|---|
 | fry-dusk045 | 0.45 A | 8.1 mA (kurtosis 18) | 2.9 mA (0.65 % of I) | 17 mA rms (fry.fnz 3.8 %) |
 | fry-dusk014 | 0.14 A | 10.9 mA | 7.9 mA (5.6 %) | 5.4 mA rms |
-| flat-dusk028 | 0.28 A | 11.0 mA | 4.4 mA (1.6 %) | 2.6 mA rms (flat.fnz 0.9 %) |
+| flat-dusk028 | 0.28 A | 11.0 mA | 3.8-4.4 mA (1.4-1.6 %, method-dependent) | 2.6 mA rms (flat.fnz 0.9 %) |
 
-The Iout noise has a floor of ~8-11 mA that does not scale with current, so the old profiles (scaled with I)
-understate low-light period noise 10-30x. fry-dusk014 carries 44 % of its variance below 2 Hz, most likely the
-tracker's own dither at a current that follows the duty; it overstates noise.
+The Iout noise has a floor of ~8-11 mA that does not scale with current in these three captures, so the old
+profiles (scaled with I) understate low-light period noise 10-30x. fry-dusk014 carries 44 % of its variance
+below 2 Hz with ~0.92 correlation to Vin at 350 ms lag and 0.98 coherence near 0.625 Hz: plant motion, not sensor
+noise. It is a stress case, not a sensor-floor profile.
+
+Polarity: the scope sends |raw|/3 and `noise_profile.py` does not restore the sign or the sensor transform. With
+fry's ~-0.545 A Iout offset the dusk captures sit on the reversed branch (telemetry fit I = 0.542 - 1.012 x scope,
+r = -0.989), so the fry profiles replay Iout with the wrong sign relative to Vin/Vout. RMS is unaffected; I-V
+cross-correlation (relevant for fry-dusk014's plant motion) is reversed.
 
 rev_k scan (port of the 11-17 patch onto main 0e039be1, worktree `agent-a1533e95825db54ec`, uncommitted) vs a main
 build, vup, 5 scenarios (wx-low/dusk/dawn/cloud/mid) x the 3 dusk profiles with `SIM_NOISE_EXP=0` x offsets
 0/10/20 s, plus the old fry/flat profiles (exp 1, offsets 0/100/200). Harvest delta vs main, mean / worst [pp]:
 
-| k | dusk profiles (45 runs) | of which fry-dusk045 / flat-dusk028 / fry-dusk014 | old profiles (30 runs) |
-|---|---|---|---|
-| 1.4 | -0.56 / -5.40 | +0.12 / -1.12 / -0.67 | +0.26 / -0.60 |
-| 2.0 | -0.47 / -8.70 | +0.38 / -0.35 / -1.43 | +0.25 / -1.80 |
-| 2.5 | -0.21 / -7.80 | +0.33 / -0.14 / -0.81 | +0.11 / -5.20 (wx-low) |
+| k | dusk profiles (45 runs) | excluding fry-dusk014 (30) | per profile fry-dusk045 / flat-dusk028 / fry-dusk014 | old profiles (30 runs) |
+|---|---|---|---|---|
+| 1.4 | -0.56 / -5.40 | -0.50 / -5.00 | +0.12 / -1.12 / -0.67 | +0.26 / -0.60 |
+| 2.0 | -0.47 / -8.70 | +0.01 / -2.20 | +0.38 / -0.35 / -1.43 | +0.25 / -1.80 |
+| 2.5 | -0.21 / -7.80 | +0.10 / -1.00 | +0.33 / -0.14 / -0.81 | +0.11 / -5.20 (wx-low) |
 
-Trip counts equal to main. The large losses are wx-dusk with fry-dusk014 (main 92-93 %, k 1.4 87-89 %, k 2.5
-85-90 %). No k beats the fixed rule under both the measured low-light noise and the old profiles: k 1.4 loses on
-flat's floor, k 2.5 loses on the old wx-low case, and the best gains are +0.1..+0.4 pp. Recommendation: do not
-land rev_k as the default.
+Trip totals 292 (main) vs 292 / 294 / 291; individual runs differ. The large losses are wx-dusk with fry-dusk014
+(main 92-93 %, k 1.4 87-89 %, k 2.5 85-90 %). Without that profile, k 2.0 / 2.5 are neutral to +0.1 pp with worst
+cases of -1..-2 pp; k 1.4 loses on flat's floor and k 2.5 loses on the old wx-low case. The dusk baseline itself
+varies by up to 3.5 pp across offsets, so 3 offsets of one recording at one gain cannot show a reliable gain or
+loss of this size. Conclusion: no k shows a reliable gain; recommendation: do not land rev_k as the default.
+
+The port's AR(1) correction rho = exp(-T/tau) does not describe 2-pass EWMA + period means: adjacent correlation
+0.64 vs the model's 0.23 at 450 Hz, sigma estimated 0.56x (450 Hz), 0.60x (506 Hz), 0.86x (1470 Hz), so k has no
+consistent noise-relative meaning across sample rates. The port also calls `expf` (flash) from the RT path each
+tracker period; it would need IRAM placement before any deployment.
 
 ## Limits
 
