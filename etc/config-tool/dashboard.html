@@ -495,6 +495,7 @@ function onLine(dev, ln, src){
 
 function onCurve(dev, r){
   if (r.complete){
+    if (r.curve && !(dev.curve && dev.curve.t === r.curve.t)) dev.pTop = 1; // new sweep: the y axis starts over
     if (r.curve){ dev.curve = r.curve; dev.curveNone = false; }
     else { dev.curve = null; dev.curveNone = true; }
     dev.curveErr = ""; dev.curveRestored = false;

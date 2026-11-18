@@ -27,7 +27,7 @@ Each converter gets a card, keyed by its hostname:
   "sky changed during sweep". A refresh button fetches it on demand, and a **sweep** button starts a new global sweep. A dashed **live** curve is built from the telemetry
   stream in 0.25 V bins of input voltage: each sample sets the power of its own bin and of the existing bins within
   ±0.5 V. Bins stay for the session (at most 400; the least recently updated goes first), parts not updated for ten
-  minutes are drawn faded, and the line breaks where neighbouring bins are more than 2 V apart. The power axis grows to the highest plotted value and does not shrink.
+  minutes are drawn faded, and the line breaks where neighbouring bins are more than 2 V apart. The power axis grows to the highest plotted value and does not shrink until a new sweep curve arrives, which starts it over.
 - **Input voltage, last 30 s**: a small chart under the sweep curve with the input voltage of the last 30 s of
   telemetry (the last sample of each 0.1 s), the newest sample at the right edge and the current value in its
   caption. The voltage axis spans the window's minimum to maximum plus 5 %. Hidden until telemetry arrives.

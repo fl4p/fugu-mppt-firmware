@@ -233,6 +233,20 @@ test('niceTicks is bounded and falls back on non-finite or runaway input', async
   assert.deepEqual([f.lo, f.hi], [0, 1]);
 });
 
+test('chart: a new sweep resets the sticky y top; refetching the same sweep keeps it', async () => {
+  const { Dash, client } = await withBroker();
+  log(client, 'fry', ['sc: t=100 n=2 mpp=800,60 sweeping=0', 'sc: 40 500 60 800', 'sc: end']);
+  Dash.flush();
+  const dev = Dash.devices.get('fry');
+  assert.ok(dev.pTop >= 800, String(dev.pTop));
+  log(client, 'fry', ['sc: t=100 n=2 mpp=800,60 sweeping=0', 'sc: 40 500 60 800', 'sc: end']);
+  Dash.flush();
+  assert.ok(dev.pTop >= 800, String(dev.pTop));
+  log(client, 'fry', ['sc: t=200 n=2 mpp=400,60 sweeping=0', 'sc: 40 250 60 400', 'sc: end']);
+  Dash.flush();
+  assert.ok(dev.pTop >= 400 && dev.pTop < 800, String(dev.pTop));
+});
+
 test('chart: hostile sc: values and telemetry are ignored; pTop never exceeds the clamp', async () => {
   const { window, Dash, client } = await withBroker();
   log(client, 'fry', ['sc: t=1 n=4 mpp=1.7e308,1e18 sweeping=0', 'sc: 30 1.7e308 1e18 20 -5 10 40 100',
