@@ -118,3 +118,30 @@ test('query parameters prefill URL and user, never a password, and do not connec
   assert.equal(window._mqttClients[0].url, 'ws://q.test:9001');
   assert.equal(window._mqttClients[0].opts.username, 'alice');
 });
+
+test('a remembered password is not prefilled for a ?mqtt= link to another host, but is for the same host', async () => {
+  const other = await loadDash({
+    url: 'http://localhost/dashboard.html?mqtt=ws://evil.test:9001',
+    storage: { 'mqtt-url': 'ws://stored.test:1885', 'mqtt-user': 'bob', 'dash-mqtt-remember': '1', 'dash-mqtt-pass': 's3cret' },
+  });
+  assert.equal(val(other.window, 'mqtt-url'), 'ws://evil.test:9001');
+  assert.equal(val(other.window, 'mqtt-pass'), '');
+  const same = await loadDash({
+    url: 'http://localhost/dashboard.html?mqtt=ws://stored.test:9001',
+    storage: { 'mqtt-url': 'ws://stored.test:1885', 'mqtt-user': 'bob', 'dash-mqtt-remember': '1', 'dash-mqtt-pass': 's3cret' },
+  });
+  assert.equal(val(same.window, 'mqtt-pass'), 's3cret');
+});
+
+test('broker discovery never keeps a remembered password for a device-supplied host', async () => {
+  const noPass = (c) => c === 'get-config mqtt.conf'
+    ? [conf('broker_uri', 'mqtt://dev.test:1882'), conf('username', 'u'), 'I (1240) main: OK: get-config mqtt.conf'] : null;
+  const dev = makeFakeBleDevice({ hostname: 'flat', reply: noPass });
+  const ws = makeFakeWebSocket((u) => u.endsWith(':1885') ? 'open' : 'error');
+  const env = await loadDash({ bluetooth: makeFakeBluetooth([dev]), ws, storage: { 'dash-mqtt-remember': '1', 'dash-mqtt-pass': 's3cret' } });
+  env.window.document.getElementById('mqtt-pass').value = 's3cret';   // a remembered password sitting in the field
+  await env.Dash.addBle();
+  await until(() => val(env.window, 'mqtt-url') === 'ws://dev.test:1885');
+  assert.equal(val(env.window, 'mqtt-user'), 'u');
+  assert.equal(val(env.window, 'mqtt-pass'), '');
+});

@@ -1429,8 +1429,9 @@ async function discoverBroker(dev){
     if (!brokerUnset()) return;
     if (!url){ found = { kind:"none", host:b.host }; banners(); return; }
     $("mqtt-url").value = url;
-    if (kv.username) $("mqtt-user").value = kv.username;
-    if (kv.password) $("mqtt-pass").value = kv.password;
+    // only credentials from the same mqtt.conf: a remembered password must not ride along to a device-chosen host
+    $("mqtt-user").value = kv.username || "";
+    $("mqtt-pass").value = kv.password || "";
     found = { kind:"ok", host:b.host, url, from:dev.host };
     banners();
   } finally { discovering = false; }
@@ -1481,7 +1482,9 @@ function init(){
   $("mqtt-user").value = qUser !== null ? qUser : lsGet(LS.user) || "";
   const rem = lsGet(LS.remember) === "1";
   $("mqtt-remember").checked = rem;
-  $("mqtt-pass").value = rem ? lsGet(LS.pass) || "" : "";
+  const sameHost = (a, b) => { try { return new URL(a).hostname === new URL(b).hostname; } catch (e) { return false; } };
+  // a ?mqtt= link for another host must not get the remembered password
+  $("mqtt-pass").value = rem && (!qUrl || sameHost(qUrl, lsGet(LS.url) || "")) ? lsGet(LS.pass) || "" : "";
   if (!rem) lsDel(LS.pass);
   $("mqtt-remember").onchange = () => {
     lsSet(LS.remember, $("mqtt-remember").checked ? "1" : "0");
