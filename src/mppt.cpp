@@ -710,7 +710,8 @@ bool rectCalPersist(int counts, uint8_t cal) {
 __attribute__((cold, noinline)) void MpptController::sweepVerdict(uint32_t nowMs, float p, bool ok) {
     _svPhase = 0;
     const float mpp = maxPowerPoint.power, d = mpp > 0 ? p / mpp - 1 : 0;
-    if (!ok) {
+    if (!ok) { // not evaluable: treated as clean, the maxima still teach
+        scan.release();
         ESP_LOGI("mppt", "sweep not verified (limiter)");
         return;
     }

@@ -86,9 +86,8 @@ point and P&O carries on from there. A flagged sweep then:
   scheduled per 10 min, so a gusty sky cannot turn into a sweep loop. The re-sweep waits for the same conditions as
   the periodic one ([below](#when-the-tracker-does-not-sweep)), and any sweep that starts meanwhile replaces it.
 
-A sweep whose fade a limiter stops, or that lands in a limit, gets no verdict and does not teach the substring count
-either. Neither does a sweep whose MPP is below 5 % of `limits.conf::p_max`: in low light the captured MPP is the
-largest of noisy samples, biased high by tens of percent, and such a sweep teaches nothing anyway. The log shows one
+A sweep whose fade a limiter stops, or that lands in a limit, gets no verdict and counts as clean. A sweep whose MPP is below 5 % of `limits.conf::p_max`: in low light the captured MPP is the
+largest of noisy samples, biased high by tens of percent, gets no verdict either; it teaches nothing anyway. The log shows one
 line per decision:
 
 ```
