@@ -205,7 +205,8 @@ public:
     void setVin(float v)  { vIn_ = v; }
     void setVout(float v) { vOut_ = v; }
     void setDiodeVf(float v) { diodeVf_ = v; } // body-diode drop (LS and HS) in the dead/off phases
-    // Buck DC bias: L = L0 * (1 - k*|Ipk|), Ipk the previous cycle's peak (k in 1/A, 0 = off). The ring keeps L0.
+    // Buck DC bias: L = L0 * (1 - k*|Ipk|), Ipk the previous cycle's peak (k in 1/A, 0 = off). Only the HS/LS/diode slopes use the
+    // biased L; the dead-time swing and its clamp energy, the off-phase ring and the boost branch keep L0.
     void setLBias(float k) { lK_ = k; }
     // Buck switch-node ring while both switches are off: node capacitance c (F) against the coil,
     // quality factor q; ring frequency 1/(2*pi*sqrt(L*c)). c <= 0 disables it (default).
