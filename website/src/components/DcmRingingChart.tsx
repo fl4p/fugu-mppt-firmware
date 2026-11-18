@@ -5,26 +5,29 @@ import styles from './DcmRingingChart.module.css';
 const VIN = 60, VOUT = 27, L = 83e-6, C = 3.0e-9, FSW = 39e3, IPK = 1.5, Q = 10;
 const W0 = 1 / Math.sqrt(L * C), Z0 = Math.sqrt(L / C), ALPHA = W0 / (2 * Q);
 const T = 1 / FSW, T_ON = L * IPK / (VIN - VOUT), T_LS = T_ON + L * IPK / VOUT, T_END = T + 2.5e-6;
+// HF transition ring at the hard HS edges, slowed down and enlarged so it shows at this time scale.
+const HF_F = 3e6, HF_TAU = 250e-9, HF_OS = 12, HF_US = 7;
+const hf = (dt: number, a: number) => a * Math.exp(-dt / HF_TAU) * Math.sin(2 * Math.PI * HF_F * dt);
 
 type Phase = 'HS on' | 'LS on' | 'both off (ring)';
 
 function sample(t: number): {v: number; i: number; phase: Phase} {
-  if (t < T_ON) return {v: VIN, i: IPK * t / T_ON, phase: 'HS on'};
-  if (t < T_LS) return {v: 0, i: IPK * (1 - (t - T_ON) / (T_LS - T_ON)), phase: 'LS on'};
+  if (t < T_ON) return {v: VIN + hf(t, HF_OS), i: IPK * t / T_ON, phase: 'HS on'};
+  if (t < T_LS) return {v: -hf(t - T_ON, HF_US), i: IPK * (1 - (t - T_ON) / (T_LS - T_ON)), phase: 'LS on'};
   if (t < T) {
     const tr = t - T_LS, e = Math.exp(-ALPHA * tr);
     return {v: VOUT * (1 - e * Math.cos(W0 * tr)), i: -(VOUT / Z0) * e * Math.sin(W0 * tr), phase: 'both off (ring)'};
   }
   const t2 = t - T;
-  return {v: VIN, i: Math.max(0, IPK * t2 / T_ON), phase: 'HS on'};
+  return {v: VIN + hf(t2, HF_OS), i: Math.max(0, IPK * t2 / T_ON), phase: 'HS on'};
 }
 
 const VW = 720, PL = 52, PR = 16, PANEL_H = 150, GAP = 34, TOP = 28;
 const V_TOP = TOP, I_TOP = TOP + PANEL_H + GAP, AXIS_Y = I_TOP + PANEL_H, VH = AXIS_Y + 44;
-const V_MAX = 70, I_MIN = -0.5, I_MAX = 2;
+const V_MIN = -10, V_MAX = 80, I_MIN = -0.5, I_MAX = 2;
 const us = (t: number) => t * 1e6;
 const x = (t: number) => PL + (t / T_END) * (VW - PL - PR);
-const yV = (v: number) => V_TOP + PANEL_H * (1 - v / V_MAX);
+const yV = (v: number) => V_TOP + PANEL_H * (1 - (v - V_MIN) / (V_MAX - V_MIN));
 const yI = (i: number) => I_TOP + PANEL_H * (1 - (i - I_MIN) / (I_MAX - I_MIN));
 
 const PHASES: [number, number, Phase][] = [[0, T_ON, 'HS on'], [T_ON, T_LS, 'LS on'], [T_LS, T, 'both off (ring)'], [T, T_END, 'HS on']];
@@ -36,7 +39,8 @@ export default function DcmRingingChart(): React.JSX.Element {
   const {vPath, iPath} = useMemo(() => {
     const n = 1400, pts = Array.from({length: n + 1}, (_, k) => (k / n) * T_END);
     const edges = [T_ON, T_LS, T]; // draw the switching edges vertically
-    const all = [...pts, ...edges.flatMap(e => [e - 1e-12, e])].sort((a, b) => a - b);
+    const hfPts = [0, T_ON, T].flatMap(e => Array.from({length: 240}, (_, k) => e + (k / 240) * 6 * HF_TAU));
+    const all = [...pts, ...hfPts, ...edges.flatMap(e => [e - 1e-12, e])].sort((a, b) => a - b);
     const path = (f: (t: number) => number) => all.map((t, k) => `${k ? 'L' : 'M'}${x(t).toFixed(1)},${f(t).toFixed(1)}`).join('');
     return {vPath: path(t => yV(sample(t).v)), iPath: path(t => yI(sample(t).i))};
   }, []);
@@ -49,7 +53,7 @@ export default function DcmRingingChart(): React.JSX.Element {
   };
 
   const hv = hoverT !== null ? sample(hoverT) : null;
-  const vTicks = [0, 20, 40, 60], iTicks = [-0.5, 0, 0.5, 1, 1.5, 2], tTicks = [0, 5, 10, 15, 20, 25];
+  const vTicks = [0, 20, 40, 60, 80], iTicks = [-0.5, 0, 0.5, 1, 1.5, 2], tTicks = [0, 5, 10, 15, 20, 25];
 
   return (
     <figure className={styles.root}>
@@ -110,7 +114,8 @@ export default function DcmRingingChart(): React.JSX.Element {
         L = {L * 1e6} µH, C_sw = {C * 1e9} nF (f_r = {(W0 / 2 / Math.PI / 1e3).toFixed(0)} kHz,
         √(L/C_sw) = {Z0.toFixed(0)} Ω), f_sw = {FSW / 1e3} kHz, 1.5 A peak, damping Q ≈ {Q} assumed. The ring
         starts at 0 V and oscillates around V_out, peaking below 2·V_out as it decays; its current amplitude is at most
-        V_out/√(L/C_sw).
+        V_out/√(L/C_sw). The overshoot above V_in and undershoot below 0 V at the hard HS edges is the HF
+        transition ring.
       </figcaption>
       <details className={styles.table}>
         <summary>Key points (table)</summary>

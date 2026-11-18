@@ -4,131 +4,103 @@ sidebar_position: 8
 ---
 
 import DcmRingingChart from '@site/src/components/DcmRingingChart';
-import SwitchNodeTank from '@site/src/components/SwitchNodeTank';
+import SwitchNodeTank, {SwitchNodeTankSimple} from '@site/src/components/SwitchNodeTank';
 
 # DCM Coil Ringing
 
-In discontinuous conduction mode (DCM), the LS rectifier turns off when the inductor current
-reaches zero. The residual energy in the inductor then resonates with the parasitic capacitance
-at the switch node (MOSFET C_oss, LS FET junction capacitance, and PCB trace capacitance), which
-forms an LC tank. In a synchronous buck with diode emulation (this firmware, `src/buck.h`), the
-LS FET's C_oss is the dominant capacitance and the main inductor L is the tank inductance.
+In discontinuous conduction mode (DCM), the LS rectifier turns off when the inductor current `i_L` reaches zero. At
+that moment the coil stores no energy, but the switch node sits at 0 V while its equilibrium is `V_out`. The node
+capacitance (`C_oss` of both FETs plus the PCB) and the coil `L` form an LC tank, which rings around `V_out`.
 
-The schematic shows the power stage during the ring. Both gates are held off, so each FET reduces to its body
-diode and its output capacitance C_oss (C_ds + C_gd). C_in and C_out are AC ground at the ring frequency, so the
-HS and LS C_oss and the PCB capacitance all sit in parallel from the switch node to ground and form C_sw. The HS
-body diode clamps the node one diode drop above V_in.
+This page covers what happens *after* the LS FET turns off at the zero crossing. The companion page
+[Diode Emulation](diode-emulation.md) covers the zero-crossing detection (ZCD) timing.
+
+## DCM ring and HF transition ring
+
+The switch node shows two ringing phenomena, and the DCM coil ring is distinct from the HF transition ring:
+
+- **HF transition ringing** occurs at *every* HS/LS switching edge. The parasitic loop inductance (trace and
+  package, ~10–30 nH) resonates with `C_oss` at tens to hundreds of MHz. The ring lasts a few ns, and snubbers,
+  gate resistance and layout address it. Most app notes (TI slyt465, Specter Engineering, ADI) focus on this ring.
+- **DCM coil ringing** (this page) occurs *only after* the inductor current reaches zero and both FETs are off.
+  The main power inductor `L` resonates with the switch-node capacitance `C_sw` (see [LC tank](#lc-tank)), well
+  above `f_sw` (39 kHz) but far below the HF transition ring. The ring lasts hundreds of ns to µs.
+
+The lower frequency makes firmware timing relative to the DCM ring feasible: `T_ring/4` spans tens to hundreds of
+PWM ticks (one MCPWM tick is 6.25 ns).
+
+## LC tank
 
 <SwitchNodeTank />
 
-This page covers what happens *after* the LS FET turns off at the zero crossing. The companion
-page [Diode Emulation](diode-emulation.md) covers the ZCD (Zero-cross detection) timing.
+The schematic shows the power stage during the ring. Both gates are held off, so each FET reduces to its body diode
+and its output capacitance `C_oss` (`C_ds + C_gd`). The HS body diode clamps the node one diode drop above `V_in`.
+
+`C_in` and `C_out` are orders of magnitude larger than `C_sw`, so at the ring frequency they act as shorts: `V_in`
+and `V_out` stay still while the node swings. The HS `C_oss` therefore returns to ground through `C_in`, and the HS
+and LS `C_oss` and the PCB capacitance all sit in parallel from the switch node to ground.
+
+Reduced to the parts that ring, the circuit is a parallel LC tank:
+
+<SwitchNodeTankSimple />
+
+`C_sw` is the sum of the capacitances on the switch node, with `n_HS` and `n_LS` the number of paralleled FETs at
+each position:
+
+$$
+C_{sw} = n_{HS} \cdot C_{oss,HS} + n_{LS} \cdot C_{oss,LS} + C_{pcb}
+$$
+
+`C_oss` depends on the drain-source voltage. With the node near 0 V, the HS FET sees `V_DS ≈ V_in` and the LS FET
+`V_DS ≈ 0`; over the swing the two move in opposite directions. `C_sw` is therefore an effective value over the
+swing, which is what a fit to the ring measures (see
+[Switch-node capacitance](../lab/switch-node-capacitance.md)).
+
+The coil `L` and `C_sw` set the ring frequency and the quarter period:
+
+$$
+f_r = \frac{1}{2\pi \cdot \sqrt{L \cdot C_{sw}}}, \qquad \frac{T_{ring}}{4} = \frac{\pi}{2} \cdot \sqrt{L \cdot C_{sw}}
+$$
+
+Losses damp the ring. With `R` the series loss resistance of the tank, its quality factor is
+
+$$
+Q = \frac{1}{R} \cdot \sqrt{\frac{L}{C_{sw}}}
+$$
+
+and the observed (damped) frequency is
+
+$$
+f_d = f_r \cdot \sqrt{1 - \frac{1}{4Q^2}}
+$$
+
+which is within 1 % of `f_r` for `Q ≥ 4`.
+
+## Waveform
 
 <DcmRingingChart />
 
-## Two kinds of switch-node ringing
-
-The switch node shows two ringing phenomena, and the DCM coil ring is distinct from the HF
-transition ring:
-
-- **HF transition ringing** occurs at *every* HS/LS switching edge. The *parasitic loop
-  inductance* (trace + package ~10–30 nH) resonates with C_oss at tens to hundreds of MHz. The
-  ring lasts a few ns, and snubbers, gate-R, and layout address it. Most app notes (TI slyt465,
-  Specter Engineering, ADI) focus on this ring.
-- **DCM coil ringing** (this page) occurs *only after* the inductor current reaches zero and
-  both FETs are off. The main power inductor L resonates with the switch-node capacitance C_sw
-  at f_r ≈ 1/(2π√(L·C_sw)), which is well above f_sw (39 kHz) but far below the HF transition
-  ring. The ring lasts hundreds of ns to µs. Its lower frequency makes firmware active damping
-  feasible, because T_ring/4 is comfortably within MCPWM tick resolution.
+The ring starts at 0 V, where the LS turned off, and oscillates around `V_out` while it decays. If the swing
+reaches `V_in + V_f`, the HS body diode clamps it there.
 
 ## Ring frequency per board
 
-C_sw is per-board and depends mostly on how many FETs are paralleled. It is not a universal
-constant. A C_sw of ~100–200 pF, which gives 1.3–2 MHz, is roughly an order of magnitude low for any
-board with paralleled 100 V FETs.
+`C_sw` is per board and depends mostly on how many FETs are paralleled; it is not a universal constant. A `C_sw` of
+~100–200 pF, which gives 1.3–2.3 MHz, is roughly an order of magnitude low for any board with paralleled 100 V FETs.
 
-The following table compares three example boards (A, B, C):
+The following table compares three example boards. Row A illustrates that low-`C_sw` case; it is not a measurement.
 
-| board | L | C_sw | f_r | T_ring/4 |
+| Board | `L` | `C_sw` | `f_r` | `T_ring/4` |
 |---|--:|--:|--:|--:|
-| A (Fugu2-class, 50–80 µH coils) | 50–80 µH | ~100–200 pF *(estimate, unverified)* | 1.3–2 MHz | 125–192 ns |
-| **B** | **83 µH** (measured, DMM6500 4-wire) | **2.98–3.04 nF** (measured 2026-09-06) | **320 kHz** | **~780 ns** |
-| C | 40 µH (`coil.conf L0`) | **unmeasured** (see [Board C](#board-c-node-capacitance)) | — | — |
+| A (illustration, low `C_sw`) | 50–80 µH | 100–200 pF (assumed) | 1.3–2.3 MHz | 111–199 ns |
+| B | 83 µH (measured) | 2.98–3.04 nF (measured) | 320 kHz | ~780 ns |
+| C | 40 µH (`coil.conf::L0`) | unmeasured | — | — |
 
-Board B carries a single IPP022N12NM6 on the low side. Board C carries 2× IPP050N10NF2S (HS) and
-2× IPP039N10N5 (LS), which puts four 100 V dies on the node. C_oss rises steeply toward 0 V,
-which is precisely where this ring lives.
+Board B carries a single IPP022N12NM6 on the low side. Board C carries 2× IPP050N10NF2S (HS) and 2× IPP039N10N5
+(LS), which puts four 100 V dies on the node. `C_oss` rises steeply toward 0 V, which is where this ring lives.
 
-### How to measure the ring
-
-A valid measurement of C_sw follows three rules.
-
-1. Run the converter in DCM, which means diode emulation at a load below the CCM boundary
-   (I_out < ΔI_L/2). Above that boundary the coil current never reaches zero and there is no ring.
-   Forced PWM holds the LS on through the zero crossing (forced CCM) and suppresses the ring at any
-   load.
-2. Trigger on the LS gate's falling edge. The LS gate is ground-referenced and driven every cycle
-   regardless of what the power stage does, so it is the only sound arming point.
-
-   The switch node can't trigger its own measurement. `scope_backends.mxo.capture()` defaults to
-   a *slew-rate* trigger (`max_transition_s = 100e-9`) that by construction fires only on
-   transitions faster than 100 ns, and this ring's transit is of order 1 µs. A run armed on the
-   node therefore records the HS turn-on edge and looks like a successful ring capture. An
-   earlier capture on board B did exactly that. Its rise durations fall 217 → 132 ns across
-   Vin 35–70 V, and it was mistaken for this measurement for three weeks.
-3. Fit the resonance instead of inverting a quarter-cycle. Fit
-   `v(t) = V_c − A·cos(ω(t − t₀))` over the unclamped part of the rise (3–93 %) and take
-   `C_sw = 1/(ω²L)`.
-
-   Inverting `T/4 = (π/2)·√(L·C_sw)` over the 0 → Vin transit gives a wrong `C_sw` for this
-   waveform. The transit is not a quarter-cycle starting from rest. The node swings about a
-   *midpoint* and is truncated when the HS body diode clamps it one V_f above V_in, so `dV/dt`
-   peaks near mid-swing rather than at the rail.
-
-### Board B measurement (2026-09-06)
-
-The board B value comes from a capture with the output open, near-zero current, Vin 71.10 V, and
-`dc 200` (D = 0.049). An MXO44 had C1 on the switch node and C2 on the LS gate, armed on the
-gate's falling edge, and recorded 12 events.
-
-The fit gives `ω = 2.012e6 ± 9.6e3 rad/s` (sd 0.5 % across events), `V_c = 37.84 ± 0.11 V`,
-`A = 41.96 ± 0.18 V`, and `f_r = 320.2 kHz`. The swing would reach `V_c + A` = 79.8 V and is
-clamped at **72.84 ± 0.10 V**, one diode drop above V_in. With L = 83 µH (measured), C_sw is
-**2.977 nF**. With `A_L·N²` = 81.2 µH, it is **3.042 nF**.
-
-### Board C node capacitance
-
-Board C's C_sw is unmeasured. Its existing captures are two Vin sweeps (run2 and run3) armed on the
-switch node, and they don't fit a resonant quarter-cycle.
-
-The following table shows that the 0 → Vin transit in those traces depends on Vin:
-
-| Vin (V) | 14.9 | 20.2 | 25.3 | 30.4 | 35.7 | 40.9 | 46.0 |
-|---|--:|--:|--:|--:|--:|--:|--:|
-| run2 (ns) | 781 | 695 | 633 | 589 | 623 | 598 | 546 |
-| run3 (ns) | 833 | 712 | 677 | 524 | 547 | 533 | 479 |
-
-The transit falls monotonically by 30 % (run2) and 43 % (run3). Board C's `dV/dt` also peaks at
-50–60 % of swing, like board B's, where a quarter-cycle from rest must peak at the rail.
-
-Refitting these traces with the resonant model gives a `C_sw` that drifts 7.97 → 3.88 nF with Vin.
-The fit diverges outright on run3's three lowest points (`V_c` = −5582 V, f = 8.4 kHz, a cosine
-fitted to a nearly straight segment). At Vin 46 the candidates span 2.3–4.4 nF. A fresh
-acquisition by the gate-triggered method above would settle the value.
-
-### Open question: resonance or constant-current charge
-
-Board B's value also has an open question. A straight line fits the central 15–85 % of *every*
-rise in these captures to R² ≈ 0.999, board B's included. Over that span a cosine and a ramp are
-barely distinguishable. Board B's number rests on its fit converging where board C's does not,
-plus the body-diode clamp. It does **not** rest on having excluded a constant-current charge.
-
-A Vin sweep with the gate trigger would separate the two models. A resonance gives a transit
-that is invariant with Vin, and a current-driven charge gives one proportional to Vin. That sweep
-has not been run.
-
-The constant-current model (`I_neg = Vout·t_LS/L` pumped by the low-side minimum on-time) is
-therefore an open alternative, because the board C transit in the table above depends on Vin.
+[Switch-node capacitance](../lab/switch-node-capacitance.md) describes how the board B value was measured, why
+board C's existing captures do not give one, and the uncertainty of the resonant model behind the fit.
 
 ## Reduction techniques
 

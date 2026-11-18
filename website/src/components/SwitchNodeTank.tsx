@@ -21,6 +21,19 @@ function Cap({x, y1, y2, cls}: {x: number; y1: number; y2: number; cls?: string}
   );
 }
 
+// Dashed bypass marking a capacitor that is a short at the ring frequency.
+function AcShort({x, y1, y2, tx, ty}: {x: number; y1: number; y2: number; tx: number; ty: number}) {
+  return (
+    <g>
+      <path className={styles.short} d={`M${x},${y1}V${y2}`} />
+      <text x={tx} y={ty} className={styles.muted}>≈ short</text>
+      <text x={tx} y={ty + 15} className={styles.muted}>
+        at f<tspan baselineShift="sub" fontSize="0.75em">r</tspan>
+      </text>
+    </g>
+  );
+}
+
 // Vertical diode, anode at y2 (bottom), cathode at y1 (top).
 function Diode({x, y1, y2}: {x: number; y1: number; y2: number}) {
   const m = (y1 + y2) / 2;
@@ -39,17 +52,20 @@ function Fet({cx, c, name, top, bot}: {cx: number; c: number; name: string; top:
   const yd = c - 55, ys = c + 55;
   return (
     <g>
-      <path d={`M${g},${c - 20}V${c + 20}`} />
-      <path d={`M${ch},${c - 22}V${c - 10}M${ch},${c - 6}V${c + 6}M${ch},${c + 10}V${c + 22}`} />
-      <path d={`M${ch},${c - 16}H${cx}V${top}M${ch},${c + 16}H${cx}V${bot}M${ch},${c}H${cx}V${c + 16}`} />
-      <path className={styles.fill} d={`M${ch + 2},${c}l9,-5v10Z`} />
-      <path d={`M${g},${c}H${g - 45}`} />
+      <g className={styles.off}>
+        <path d={`M${g},${c - 20}V${c + 20}`} />
+        <path d={`M${ch},${c - 22}V${c - 10}M${ch},${c - 6}V${c + 6}M${ch},${c + 10}V${c + 22}`} />
+        <path d={`M${ch},${c - 16}H${cx}M${ch},${c + 16}H${cx}M${ch},${c}H${cx}V${c + 16}`} />
+        <path className={styles.fill} d={`M${ch + 2},${c}l9,-5v10Z`} />
+        <path d={`M${g},${c}H${g - 45}`} />
+      </g>
+      <path d={`M${cx},${c - 16}V${top}M${cx},${c + 16}V${bot}`} />
       <path d={`M${cx},${yd}H${cx + 110}M${cx},${ys}H${cx + 110}`} />
       <Diode x={cx + 50} y1={yd} y2={ys} />
       <Cap x={cx + 110} y1={yd} y2={ys} cls={styles.par} />
       <circle className={styles.dot} cx={cx} cy={yd} r={3} />
       <circle className={styles.dot} cx={cx} cy={ys} r={3} />
-      <Sub b="Q" s={name} x={g - 8} y={c - 30} textAnchor="end" />
+      <Sub b="Q" s={name} x={g - 8} y={c - 30} textAnchor="end" className={styles.offText} />
       <text x={g - 50} y={c + 4} textAnchor="end" className={styles.muted}>off</text>
       <Sub b="D" s="body" x={cx + 62} y={c + 4} />
       <Sub b="C" s={`oss,${name}`} x={cx + 128} y={c + 4} className={styles.parText} />
@@ -62,7 +78,7 @@ export default function SwitchNodeTank() {
   return (
     <figure className={styles.root}>
       <div className={styles.scroll}>
-        <svg viewBox="0 0 820 500" className={styles.svg} role="img"
+        <svg viewBox="0 0 820 430" className={styles.svg} role="img"
              aria-label="Synchronous buck switch node with HS and LS MOSFETs, their body diodes and output capacitances, PCB capacitance, inductor L and output capacitor">
           <g className={styles.wire}>
             {/* rails */}
@@ -70,6 +86,7 @@ export default function SwitchNodeTank() {
             {/* input capacitor */}
             <Cap x={110} y1={yVin} y2={yGnd} />
             <Sub b="C" s="in" x={128} y={(yVin + yGnd) / 2 + 4} />
+            <AcShort x={84} y1={yVin} y2={yGnd} tx={128} ty={(yVin + yGnd) / 2 + 22} />
             <circle className={styles.dot} cx={110} cy={yVin} r={3} />
             <circle className={styles.dot} cx={110} cy={yGnd} r={3} />
             <Sub b="V" s="in" x={66} y={yVin + 4} textAnchor="end" />
@@ -95,23 +112,45 @@ export default function SwitchNodeTank() {
             {/* output */}
             <Cap x={xOut} y1={ySw} y2={yGnd} />
             <Sub b="C" s="out" x={xOut + 18} y={(ySw + yGnd) / 2 + 4} />
+            <AcShort x={xOut - 22} y1={ySw} y2={yGnd} tx={xOut + 18} ty={(ySw + yGnd) / 2 + 22} />
             <circle className={styles.dot} cx={xOut} cy={ySw} r={3} />
             <Sub b="V" s="out" x={xOut + 8} y={ySw - 10} />
           </g>
 
+        </svg>
+      </div>
+    </figure>
+  );
+}
+
+// Reduced tank: C_in/C_out shorted, FETs off, so all node capacitances sit in parallel with L to AC ground.
+export function SwitchNodeTankSimple() {
+  const yTop = 50, yBot = 210, xL = 400, caps: [number, string][] = [[90, 'oss,HS'], [190, 'oss,LS'], [290, 'pcb']];
+  return (
+    <figure className={styles.root}>
+      <div className={styles.scroll}>
+        <svg viewBox="0 0 520 250" className={`${styles.svg} ${styles.svgSmall}`} role="img"
+             aria-label="Simplified LC tank: C_oss of the HS and LS FETs and the PCB capacitance in parallel with the inductor L">
+          <g className={styles.wire}>
+            <path className={styles.node} d={`M${caps[0][0]},${yTop}H${xL}`} />
+            <path d={`M${caps[0][0]},${yBot}H${xL}`} />
+            {caps.map(([x, s]) => (
+              <g key={s}>
+                <Cap x={x} y1={yTop} y2={yBot} cls={styles.par} />
+                <Sub b="C" s={s} x={x + 18} y={(yTop + yBot) / 2 + 4} className={styles.parText} />
+                <circle className={styles.dot} cx={x} cy={yTop} r={3} />
+                <circle className={styles.dot} cx={x} cy={yBot} r={3} />
+              </g>
+            ))}
+            <path d={`M${xL},${yTop}V${yTop + 30}M${xL},${yBot - 30}V${yBot}`} />
+            <path className={styles.tank}
+                  d={`M${xL},${yTop + 30}a12.5,12.5 0 0 1 0,25a12.5,12.5 0 0 1 0,25a12.5,12.5 0 0 1 0,25a12.5,12.5 0 0 1 0,25`} />
+            <text x={xL + 22} y={(yTop + yBot) / 2 + 4} className={styles.tankText}>L</text>
+            <text x={caps[0][0]} y={yTop - 10} className={styles.nodeText}>SW</text>
+            <path d={`M245,${yBot}V${yBot + 12}M231,${yBot + 12}h28M236,${yBot + 17}h18M241,${yBot + 22}h8`} />
+          </g>
           <g className={styles.note}>
-            <Sub b="C" s="sw" x={70} y={452} />
-            <text x={96} y={452}>
-              = n<tspan baselineShift="sub" fontSize="0.75em">HS</tspan>·C<tspan baselineShift="sub" fontSize="0.75em">oss,HS</tspan>
-              {' '}+ n<tspan baselineShift="sub" fontSize="0.75em">LS</tspan>·C<tspan baselineShift="sub" fontSize="0.75em">oss,LS</tspan>
-              {' '}+ C<tspan baselineShift="sub" fontSize="0.75em">pcb</tspan>,
-              {'   '}f<tspan baselineShift="sub" fontSize="0.75em">r</tspan> = 1 / (2π√(L·C<tspan baselineShift="sub" fontSize="0.75em">sw</tspan>))
-            </text>
-            <text x={70} y={478} className={styles.muted}>
-              C<tspan baselineShift="sub" fontSize="0.75em">in</tspan> and C<tspan baselineShift="sub" fontSize="0.75em">out</tspan> are
-              AC ground for the ring; n = paralleled FETs per position; C<tspan baselineShift="sub" fontSize="0.75em">oss</tspan> taken
-              at V<tspan baselineShift="sub" fontSize="0.75em">DS</tspan> near 0 V.
-            </text>
+            <text x={262} y={yBot + 20} className={styles.muted}>AC ground (V<tspan baselineShift="sub" fontSize="0.75em">in</tspan>, V<tspan baselineShift="sub" fontSize="0.75em">out</tspan>, GND)</text>
           </g>
         </svg>
       </div>

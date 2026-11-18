@@ -2,6 +2,7 @@
   --par: #d9480f;
   --tank: #2a78d6;
   --muted: #6f6e69;
+  --off: #b9b8b2;
   margin: 1.5rem 0;
 }
 
@@ -9,6 +10,7 @@
   --par: #f08c4a;
   --tank: #4d94ea;
   --muted: #a2a198;
+  --off: #55544f;
 }
 
 .scroll { overflow-x: auto; }
@@ -35,5 +37,10 @@
 .tankText { fill: var(--tank); font-style: italic; }
 .wire path.node { stroke-width: 2.4; }
 .nodeText { font-weight: 600; }
+.wire .off path { stroke: var(--off); }
+.wire .off .fill { fill: var(--off); }
+.offText { fill: var(--off); }
+.wire path.short { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 4 4; }
 .muted { fill: var(--muted); font-size: 12px; }
 .note { font-size: 13px; }
+.svgSmall { min-width: 380px; max-width: 520px; }
