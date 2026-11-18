@@ -87,12 +87,12 @@ void test_tracker_cloud_recovery_reverses_on_vin_jump() {
     TEST_ASSERT_TRUE(t._direction);
 }
 
-// Steady t0 at Vin 45 W, steering `dir`, past the settle window after the hand-back
+// Steady at 40 W, Vin 45, steering `dir`, 3 s after the hand-back
 static void steered(Tracker &t, bool dir) {
     loopWallClockUs_ = 1'000'000;
     t.resetTracker(40.f, dir);
     t.resetDirection(dir, 45.f);
-    advanceMs(1100);
+    advanceMs(3100);                        // past the hand-back skip
     t.update(40.f, 1050, 45.f, kSettleMs);
     TEST_ASSERT_EQUAL(dir, t._direction);
 }
@@ -128,6 +128,35 @@ void test_tracker_vin_against_band() {
     advanceMs(100);
     t.update(38.f, 1050, 44.1f, kSettleMs);
     TEST_ASSERT_FALSE(t._direction);
+}
+
+// The fade to the sweep's MPP hands back while Vin still rises (low light, flat model: reference 44.4 V, Vin
+// 46.1 V 0.2 s later). Within 3 s of the hand-back that overshoot is no plant step: a drop reverses as before.
+// Known-bad: the band held two reversals there (wx-low -0.6 pp).
+void test_tracker_handback_overshoot_not_held() {
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    loopWallClockUs_ = 1'000'000;
+    t.resetTracker(5.f, false);
+    t.resetDirection(false, 43.f);          // fade end, Vin rising
+    advanceMs(200);
+    t.update(4.5f, 293, 44.4f, kSettleMs);  // power drop: reverse to + at 44.4 V
+    TEST_ASSERT_TRUE(t._direction);
+    advanceMs(1000);
+    t.update(4.9f, 300, 45.1f, kSettleMs);  // overshoot, 1.6 % against, 1.2 s after the hand-back
+    advanceMs(100);
+    t.update(4.6f, 302, 45.1f, kSettleMs);  // drop: reverses
+    TEST_ASSERT_FALSE(t._direction);
+    // the same 4 s after the hand-back: held
+    t.resetDirection(false, 43.f);
+    advanceMs(200);
+    t.update(4.1f, 293, 44.4f, kSettleMs);
+    TEST_ASSERT_TRUE(t._direction);
+    advanceMs(3800);
+    t.update(4.9f, 300, 45.1f, kSettleMs);
+    advanceMs(100);
+    t.update(4.6f, 302, 45.1f, kSettleMs);
+    TEST_ASSERT_TRUE(t._direction);
 }
 
 // The same in the other direction: steering Vin down while the plant or light lifts it, and in slow mode

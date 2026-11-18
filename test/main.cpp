@@ -321,6 +321,7 @@ void test_tracker_vin_band_symmetric();
 void test_tracker_vin_drop_against_steering_keeps_direction();
 void test_tracker_vin_rise_against_steering_keeps_direction();
 void test_tracker_vin_against_band();
+void test_tracker_handback_overshoot_not_held();
 void test_tracker_slow_entry_after_30s();
 void test_tracker_slow_entry_needs_reversal_after_takeover();
 void test_tracker_handback_ends_slow_mode();
@@ -584,6 +585,7 @@ void setup() {
     RUN_TEST(test_tracker_vin_drop_against_steering_keeps_direction);
     RUN_TEST(test_tracker_vin_rise_against_steering_keeps_direction);
     RUN_TEST(test_tracker_vin_against_band);
+    RUN_TEST(test_tracker_handback_overshoot_not_held);
     RUN_TEST(test_tracker_converges_to_peak);
     RUN_TEST(test_tracker_settles_after_reversal);
     RUN_TEST(test_tracker_settle_window_follows_filter);

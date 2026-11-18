@@ -18,6 +18,7 @@ struct MPP {
  */
 struct Tracker {
     static constexpr float VinAgainstBand = 0.01f; // of Vin, see update()
+    static constexpr time_ms HandBackMs = 3000;
 
     float minPowerStep = 1.0f;
     float minPowerStepRel = 1.0f;
@@ -98,23 +99,25 @@ struct Tracker {
 
                 // after a reversal the filtered power still shows the old direction and the input cap's
                 // charge/discharge, which lags the duty by ~C*V/(2.5*I) in low light: the reference follows the
-                // power until the filter has settled and Vin is back at the reversal point. At most 1 s: the
-                // excursion of a longer blind leg costs more than the lag. Not in slow mode: a window there can only
+                // power until the filter has settled and Vin is back at the reversal point, at most 1 s (past that,
+                // Vin more than 1 % against still holds a reversal, below). Not in slow mode: a window there can only
                 // end at a 500 ms decision, so it skips a whole period and doubles the leg. The slew is 25x slower,
                 // so the input-cap current it causes stays below the power threshold
-                // Vin against the way we steer since the last reversal (> 0: not back yet, for the settle window). A
+                // Vin against the way we steer since the last reversal (> 0: not back yet). 3 s after a hand-back, a
                 // power drop with Vin more than 1 % against, or a 5 % Vin move against, comes from the plant, not from
                 // our step, and does not reverse: near D = M a DCM plant can drop Vin by several volts at an unchanged
                 // duty (ring current at HS turn-on), and reversing on that steered further down, to a flat P(D) far
-                // below the MPP. The band keeps reversals on light changes and lag, which move Vin less
+                // below the MPP. The band keeps reversals on light changes; the 3 s skip the overshoot of the fade
+                // or limiter step before the hand-back, which is no reference
                 const float against = _lastVin > 0 ? (_direction ? vin - _lastVin : _lastVin - vin) : 0;
+                const bool plant = now - _timeTakeover > HandBackMs && against > 0;
                 auto since = now - _timeSettle;
                 if (!slowMode && since < 1000 && ((float) since < settleMs() || against > 0)) {
                     _lastPower = power;
                 } else if (absDp >= minPowerStep
                            or (abs(_lastPower) > minPowerStep and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel)) {
                     _lastPower = power;
-                    if (dP < 0 && !(against > VinAgainstBand * _lastVin)) rev = true;
+                    if (dP < 0 && !(plant && against > VinAgainstBand * _lastVin)) rev = true;
                 }
 
                 // cloud recovery
@@ -122,7 +125,7 @@ struct Tracker {
                 // we might be tracking on a light intensity transient
                 // and end up at a voltage far away from MPP
                 // 5 % of the higher end, so down and up legs are equal (5 % of each start ratchets down)
-                if (!(against > 0) && abs(vin - _lastVin) > 0.05f * std::max(vin, _lastVin)) {
+                if (!plant && abs(vin - _lastVin) > 0.05f * std::max(vin, _lastVin)) {
                     rev = true;
                 }
 
