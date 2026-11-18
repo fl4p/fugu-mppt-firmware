@@ -50,8 +50,14 @@ A sweep (`startSweep()` in `src/mppt.h`) runs these steps:
 1. It disables the converter, clears the fade target, and resets the PD controllers.
 2. It starts a sensor calibration. The periodic re-sweep doubles as periodic calibration.
 3. Once calibration is done, it raises the duty each tick. `sweep_speed` caps the step, and the distance to the
-   nearest limit scales it, so the ramp slows down when approaching a V/I/P limit.
-4. It records the sample with the highest smoothed power as the MPP. It ignores samples below 0.2 % of
+   nearest limit scales it, so the ramp slows down when approaching a Vout, current or power limit. The Vin floor
+   does not slow it: the sweep ends when Vin crosses the floor.
+4. Over every 1/128 of the duty range the sweep measures how far Vin moved. Where Vin moved less than Voc over the
+   whole duty range would, the step grows by up to `sweep_pace` (default 1, off), so the ramp runs at a more even pace in
+   Vin: fast near Voc, where the converter barely draws current, and on the flat high-duty end towards the floor. The
+   steep stretch past the MPP keeps the plain step. The speed-up fades out between no load and half the power limit, and
+   a Vout that moves without a battery holding it (open output) turns it off.
+5. It records the sample with the highest smoothed power as the MPP. It ignores samples below 0.2 % of
    `limits.conf::p_max` (2 W at 1 kW, `sweepMinPower()`), so a sweep in marginal light cannot "peak" at a
    near-maximum-duty phantom point.
 
@@ -417,6 +423,7 @@ The tracker reads these keys from `tracker.conf`:
 | Key                                                                  | Default | Effect                                               |
 |----------------------------------------------------------------------|---------|------------------------------------------------------|
 | [`sweep_speed`](../reference/config/tracker.md)                      | 4.0     | Sweep speed; scales the per-tick cap and the limit-tracking gain (min 0.1) |
+| [`sweep_pace`](../reference/config/tracker.md)                       | 1.0     | Largest sweep speed-up where Vin moves slowly; 1 = off |
 | [`sweep_verify`](../reference/config/tracker.md)                     | 0.10    | [Sweep verdict](#sweep-verdict) tolerance; 0 = off   |
 | [`target_duty_cycle`](../reference/config/tracker.md)                | 0.0     | Fixed duty fraction; > 0 disables sweep and P&O      |
 | [`scan_interval`](../reference/config/tracker.md)                    | 300     | Partial peak scan period [s]; 0 = triggered only     |

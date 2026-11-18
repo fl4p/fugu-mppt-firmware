@@ -147,7 +147,8 @@ void MpptController::update() {
     // TODO sum negative values
 
     CVP *limitingControl = nullptr;
-    float limitingControlValue = std::numeric_limits<float>::infinity();
+    float limitingControlValue = std::numeric_limits<float>::infinity(), outerCv = limitingControlValue;
+    float powerCv = limitingControlValue;
 
     bool past = false;
     for (auto &c: controlValues) {
@@ -163,6 +164,8 @@ void MpptController::update() {
             cv = -1;
         }
 
+        if (&c == &controlValues.back()) powerCv = std::fmin(cv, powerCv);
+        else if (&c != controlValues.data() && cv < outerCv) outerCv = cv;
         if (cv < limitingControlValue) {
             limitingControlValue = cv;
             limitingControl = &c;
@@ -173,7 +176,7 @@ void MpptController::update() {
     //                                        [](const CVP &a, const CVP &b) { return a.second < b.second; });
 
     MpptControlMode controlMode = MpptControlMode::None;
-    float controlValue = 0;
+    float controlValue = 0, capCv = limitingControlValue;
     bool slowEntry = false;
 
     // A limiter that only touches (D-term on a ripple crest) must not steer the tracker: resetting its
@@ -237,13 +240,21 @@ void MpptController::update() {
             if (inBackoff()) return;
             scan.onSweep(sensors.Vin->ewm.avg.get(), nowMs);
             converter.pwmPerturb(1);
+            _paceV = sensors.Vin->ewm.avg.get(), _paceVo = sensors.Vout->ewm.avg.get();
+            _paceD = converter.getCtrlOnPwmCnt(), _pace = 1;
         }
 
         if (controlMode == MpptControlMode::None) {
             controlMode = MpptControlMode::Sweep;
             // sweep_speed scales both the per-tick cap and the limit-tracking gain,
-            // so it actually controls speed near P/I/V limits, not just far from them
-            controlValue = std::min(limitingControlValue * (sweepSpeed * 0.25f / 5.0f), sweepSpeed);
+            // so it actually controls speed near P/I/V limits, not just far from them.
+            // The Vin floor does not slow it: crossing the floor ends the sweep. The pace speed-up leaves the
+            // limit-tracking terms as they are, except the power limiter's (slow everywhere), up to half its limit.
+            const float k = sweepSpeed * (0.25f / 5.0f), pp = powerCv;
+            const float pace = 1 + (_pace - 1) * std::clamp(pp * (2 * 0.25f / 5.0f) - 1, 0.f, 1.f);
+            controlValue = std::min(std::min(sweepSpeed, pp * k) * pace, outerCv * k);
+            capCv = std::min(outerCv, pp * pace);
+            sweepPaceUpdate();
 
             // capture MPP during sweep, this will be our target afterward.
             // Ignore sub-sweepMinPower() samples so a marginal-light sweep can't "peak" at a
@@ -346,7 +357,7 @@ void MpptController::update() {
 
     // always cap control value
     // TODO instead of capping, use fade-to-target. the tracker might return big jumps
-    controlValue = std::min(controlValue, limitingControlValue);
+    controlValue = std::min(controlValue, capCv);
     ctrlState.mode = controlMode;
     cntrlValue = controlValue;
 
@@ -542,6 +553,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
     sweepVerify = std::max(0.f, trackerConf.getFloat("sweep_verify", 0.1f));
+    sweepPace = std::clamp(trackerConf.getFloat("sweep_pace", 1.0f), 1.f, 8.f);
     scan.n = scan.saved = std::min<uint8_t>(6, trackerConf.getByte("pv_substrings", 0)); // learned, 0 = learn again
     scan.interval = (uint16_t) std::clamp(trackerConf.getLong("scan_interval", 300), 0L, 65535L);
     scan.trigger = trackerConf.getByte("scan_trigger", 1);

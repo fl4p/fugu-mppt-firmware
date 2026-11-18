@@ -33,7 +33,8 @@
 //                       == REVERSE line has the plant's reverse output current and the starts
 //     wx-mp-manual      the -psu source with manual duty 0.8 (stop, then the manual restart waits for the start ratio)
 //     wx-mp-ccm         stiff source into a charging battery, Voc 1.3 -> 1.02 x Vbat: CCM until the duty limit, then DCM
-//     wx-sun-fry, wx-sun-flat   steady sun, MPP SIM_P W (default 70), the board's L, string and Vin (fry ~64 V, flat ~55 V)
+//     wx-sun-fry, wx-sun-flat   steady sun, MPP SIM_P W (default 70), the board's L, string and Vin (fry ~64 V, flat ~55 V);
+//                       SIM_SWEEP_AT=t requests a sweep at t [s] and starts the stats there
 //     wx-ramp-fry, wx-ramp-flat wx-sun with irradiance changing SIM_RAMP %/min (default 2, exponential) from 120 s
 //     wx-wob-fry, wx-wob-flat   wx-sun with irradiance x (1 + a sin 2 pi f t), SIM_WOB=a,f (default 0.005,0.2)
 //     wx-dstep          static P(D): dusk light SIM_GC (0.039), duty SIM_DSTEP=d0,d1,step,dwell up and back, one DSTEP
@@ -1375,6 +1376,7 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         float g = p / wx.pClear;
         for (int i = 0; i < 6; ++i) g = p / wx.pClear * wx.voc / (wx.voc + wx.vocLog * std::log(g));
         wx.cloud = {{0, g}}, wx.vbat = getenv("SIM_VBAT") ? atof(getenv("SIM_VBAT")) : 26.1f, wx.statsFrom = 120, wx.T = 900;
+        if (const char *e = getenv("SIM_SWEEP_AT")) wx.sweepAt = wx.statsFrom = atof(e); // a requested sweep in the stats
     } else if (sc == "wx-mp-manual") {
         // manual duty 0.8 from a stiff sinking source, Voc 1.25 -> 1.02 x Vbat and back: DCM up through the stop ratio;
         // after the stop the manual restart must wait for the start ratio
@@ -1738,8 +1740,11 @@ static int simMain(int argc, char **argv) {
     if (sc == "rcal-flat") ov.insert(ov.end(), {{"isc", "7.5"}, {"voc", "66"}, {"v_bat", "26.7"}});
     if (sc == "rcal-ov") setenv("SIM_CONF", "limits.conf:hv_max=77.5", 1);
     if (sc == "rcal-sun") setenv("SIM_CONF", "coil.conf:L0=80e-6", 1);
-    if (sc == "wx-sweep-learn-off") setenv("SIM_CONF", "tracker.conf:sweep_verify=0", 1);
-    if (sc == "wx-sweep-scan") setenv("SIM_CONF", "tracker.conf:pv_substrings=6", 1);
+    if (sc == "wx-sweep-learn-off" || sc == "wx-sweep-scan") {
+        std::string c = sc == "wx-sweep-scan" ? "tracker.conf:pv_substrings=6" : "tracker.conf:sweep_verify=0";
+        if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
+        setenv("SIM_CONF", c.c_str(), 1);
+    }
     if (const char *n = getenv("SIM_NOISE_IOUT"); rcal && n) ov[0].second = n;
     boot(ov, p0);
     if (rcal) g_vconv.setDiodeVf(0.7f);

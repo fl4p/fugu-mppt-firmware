@@ -312,6 +312,9 @@ private:
     uint16_t targetPwmCnt = 0; // config-derived boot duty; cleared on mppt/sweep to allow tracking
 
     float sweepSpeed = 4.0f; // global-sweep speed (tracker.conf::sweep_speed)
+    float sweepPace = 1.0f;  // tracker.conf::sweep_pace, largest sweep speed-up where Vin moves slowly, 1 = off
+    float _paceV = 0, _paceVo = 0, _pace = 1; // Vin and Vout at the pace anchor, speed-up
+    uint16_t _paceD = 0;         // duty at the pace anchor
     float sweepVerify = 0.1f; // tracker.conf::sweep_verify, 0 = off
 
 public:
@@ -463,6 +466,18 @@ public:
         targetDutyCycle = 0;
         _svPhase = 0;
         scan.reset(wallClockMs());
+    }
+
+    // RT, sweeping: speed-up 1..sweepPace where Vin moved less than Voc per pwmCtrlMax counts over the last
+    // pwmCtrlMax/128 counts (the knee past the MPP is steeper and keeps 1). A Vout moving by 1/256 of itself means
+    // no battery holds it (the ramp charges the output caps, which would read as power): 1.
+    __attribute__((always_inline)) void sweepPaceUpdate() {
+        const uint16_t d = converter.getCtrlOnPwmCnt();
+        if (d < _paceD + converter.pwmCtrlMax / 128 + 1) return;
+        const float v = sensors.Vin->ewm.avg.get(), vo = sensors.Vout->ewm.avg.get();
+        const float num = scan.voc * (float) (d - _paceD), den = std::fabs(v - _paceV) * (float) converter.pwmCtrlMax;
+        _pace = std::fabs(vo - _paceVo) * 256 > vo ? 1 : den * sweepPace <= num ? sweepPace : std::max(1.f, num / den);
+        _paceV = v, _paceVo = vo, _paceD = d;
     }
 
     // Vin lower limit; minPulse: also above the LS min pulse ratio (buck DCM start ratio)
