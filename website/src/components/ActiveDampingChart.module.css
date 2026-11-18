@@ -1,0 +1,77 @@
+.scroll { overflow-x: auto; }
+
+.root {
+  --c-free: #2a78d6;
+  --c-quarter: #eb6834;
+  --c-valley: #1f9e6e;
+  --grid: #e6e6e3;
+  --zero: #b9b8b2;
+  --text-secondary: #52514e;
+  --text-muted: #6f6e69;
+  margin: 1.5rem 0;
+}
+
+:root[data-theme='dark'] .root {
+  --c-free: #3987e5;
+  --c-quarter: #d95926;
+  --c-valley: #2fb784;
+  --grid: #2e2e2c;
+  --zero: #55544f;
+  --text-secondary: #c3c2b7;
+  --text-muted: #a2a198;
+}
+
+.svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  touch-action: pan-x pan-y;
+  min-width: 680px;
+  font-family: var(--ifm-font-family-base);
+}
+
+.grid { stroke: var(--grid); stroke-width: 1; }
+.zero { stroke: var(--zero); stroke-width: 1; }
+.ref { stroke: var(--zero); stroke-width: 1; stroke-dasharray: 3 3; }
+
+.line { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.free { stroke: var(--c-free); }
+.quarter { stroke: var(--c-quarter); }
+.valley { stroke: var(--c-valley); }
+
+.band_quarter { fill: var(--c-quarter); opacity: 0.15; }
+.band_valley { fill: var(--c-valley); opacity: 0.15; }
+
+.cross { stroke: var(--text-muted); stroke-width: 1; }
+.dot { stroke: var(--ifm-background-color); stroke-width: 2; }
+.dot_free { fill: var(--c-free); }
+.dot_quarter { fill: var(--c-quarter); }
+.dot_valley { fill: var(--c-valley); }
+
+.tick { fill: var(--text-muted); font-size: 11px; }
+.axisLabel, .phase { fill: var(--text-secondary); font-size: 12px; }
+.panelTitle { fill: var(--ifm-font-color-base); font-size: 12px; font-weight: 600; }
+.refLabel { fill: var(--text-muted); font-size: 11px; }
+
+.legend, .readout {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-top: 0.25rem;
+  font-variant-numeric: tabular-nums;
+}
+.legend { display: flex; gap: 1.2rem; flex-wrap: wrap; }
+.readout { min-height: 1.4em; }
+
+.key {
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  margin: 0 4px 3px 0;
+  vertical-align: middle;
+}
+.key_free { background: var(--c-free); }
+.key_quarter { background: var(--c-quarter); }
+.key_valley { background: var(--c-valley); }
+
+.caption { font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.5rem; }
+.table { font-size: 0.85rem; margin-top: 0.5rem; }
