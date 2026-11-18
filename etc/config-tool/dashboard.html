@@ -180,8 +180,8 @@ const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
 const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, SILENT_MS = 15000, PROBE_MS = 60000, CURVE_RETRIES = 2;
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000] };
 const LOG_KEEP = 200, LOG_SHOW = 100;
-// live P-V reconstruction: bin width V, decay s, faded after ms, bin cap
-const RECON = { bin:0.25, staleMs:600000, max:400 };
+// live P-V reconstruction: bin width V, faded after ms, bin cap, overwrite radius bins, path break V
+const RECON = { bin:0.25, staleMs:600000, max:400, near:2, gapV:2 };
 
 // Device reply patterns (contract with src/cli.cpp)
 const REPLY = {
@@ -311,22 +311,24 @@ function ingest(dev, p, src){
   return true;
 }
 
-// Binned P-V curve from the live stream: the newest sample in a bin replaces its value.
+// Binned P-V curve from the live stream: the newest sample replaces its bin and the existing bins within ±0.5 V.
 function reconAdd(dev, v, p, ts, at){
   const k = Math.round(v / RECON.bin);
-  let b = dev.recon.get(k);
-  if (!b){
+  if (!dev.recon.has(k)){
     if (dev.recon.size >= RECON.max){
       let old = null;
       for (const [k, o] of dev.recon) if (!old || o.at < old[1].at) old = [k, o];
       dev.recon.delete(old[0]);
     }
-    dev.recon.set(k, b = { V:k * RECON.bin, P:p, ts, at });
-  } else {
-    b.P = p;
+    dev.recon.set(k, { V:k * RECON.bin, P:p, ts, at });
+  }
+  for (let j = k - RECON.near; j <= k + RECON.near; j++){
+    const b = dev.recon.get(j);
+    if (!b) continue;
+    b.P = p; b.at = at;
     if (ts > b.ts) b.ts = ts;
   }
-  b.at = at; dev.reconVer++;
+  dev.reconVer++;
 }
 
 // Re-render when a bin crosses the stale age.
@@ -1083,10 +1085,11 @@ function renderChart(dev){
     const at = now(), ds = ["", ""], seg = (p) => X(p.V).toFixed(1) + " " + Y(p.P).toFixed(1);
     let prev = -1;
     recon.forEach((p, i) => {
+      const join = i && p.V - recon[i - 1].V <= RECON.gapV;
       const old = at - p.at > RECON.staleMs;
-      const c = i ? +(old || at - recon[i - 1].at > RECON.staleMs) : +old;
-      if (i && c === prev) ds[c] += "L" + seg(p);
-      else ds[c] += "M" + (i ? seg(recon[i - 1]) + "L" : "") + seg(p);
+      const c = join ? +(old || at - recon[i - 1].at > RECON.staleMs) : +old;
+      if (join && c === prev) ds[c] += "L" + seg(p);
+      else ds[c] += "M" + (join ? seg(recon[i - 1]) + "L" : "") + seg(p);
       prev = c;
     });
     svg.querySelector("path.recon:not(.stale)").setAttribute("d", ds[0]);

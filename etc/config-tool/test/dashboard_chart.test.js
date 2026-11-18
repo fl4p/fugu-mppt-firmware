@@ -162,3 +162,49 @@ test('chart: live P-V reconstruction bins Vin, decays toward new P, keeps and fa
   assert.equal(d.recon.size, 400);
   assert.ok(!d.recon.has(Math.round(40 / 0.25)) && d.recon.has(Math.round(50 / 0.25)));
 });
+
+test('chart: a live sample overwrites existing bins within ±0.5 V, creates only its own', async () => {
+  const { window, Dash, client } = await withBroker();
+  let t = 1_763_400_000_000;
+  window.Date.now = () => t;
+  const st = { syms: new Map() };
+  const tele = (Ui, P) => client.emit('message', 'pv/tele/fry', mqttMsg([{ fields: { P, Ui }, ts: t }], st));
+  for (const v of [30.25, 30.5, 30.75, 31.25, 31.5]) { t += 100; tele(v, 250); }
+  const d = Dash.devices.get('fry');
+  const bin = (v) => d.recon.get(Math.round(v / 0.25));
+  assert.equal(d.recon.size, 5);
+  t += 60000; tele(31.0, 0);
+  assert.equal(d.recon.size, 6);
+  for (const v of [30.5, 30.75, 31.0, 31.25, 31.5]) {
+    assert.equal(bin(v).P, 0, `${v} V`);
+    assert.equal(bin(v).ts, t);
+    assert.equal(bin(v).at, t);
+  }
+  assert.equal(bin(30.25).P, 250);
+  assert.ok(bin(30.25).ts < t);
+});
+
+test('chart: live path breaks where neighbouring bins are more than 2 V apart', async () => {
+  const { window, Dash, client } = await withBroker();
+  let t = 1_763_400_000_000;
+  window.Date.now = () => t;
+  const st = { syms: new Map() };
+  const tele = (Ui, P) => client.emit('message', 'pv/tele/fry', mqttMsg([{ fields: { P, Ui }, ts: t }], st));
+  for (const [v, p] of [[5, 10], [6, 20], [30, 200], [31, 210]]) { t += 100; tele(v, p); }
+  Dash.flush();
+  const path = (sel) => card(window, 'fry').querySelector(sel).getAttribute('d') || '';
+  let dd = path('path.recon:not(.stale)');
+  assert.equal((dd.match(/M/g) || []).length, 2);
+  assert.equal((dd.match(/L/g) || []).length, 2);
+  // stale path breaks the same way
+  t += 660000; Dash.tick(); Dash.flush();
+  assert.equal(path('path.recon:not(.stale)'), '');
+  dd = path('path.recon.stale');
+  assert.equal((dd.match(/M/g) || []).length, 2);
+  assert.equal((dd.match(/L/g) || []).length, 2);
+  // 2 V exactly still joins (6-8 V is stale: one end is)
+  t += 100; tele(8, 30); Dash.flush();
+  dd = path('path.recon.stale');
+  assert.equal((dd.match(/M/g) || []).length, 2);
+  assert.equal((dd.match(/L/g) || []).length, 3);
+});
