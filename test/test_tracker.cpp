@@ -71,20 +71,85 @@ void test_tracker_deadband_ignores_small_drop() {
     TEST_ASSERT_TRUE(step > 0.f);
 }
 
-// Cloud recovery: a >5% Vin change since the last reversal flips direction even when
+// Cloud recovery: a >5% Vin change the way we steer since the last reversal flips direction even when
 // power is rising (which on its own would not reverse).
 void test_tracker_cloud_recovery_reverses_on_vin_jump() {
     loopWallClockUs_ = 1'000'000;
     auto tp = std::make_unique<Tracker>();
     auto &t = *tp;
-    t.resetTracker(100.f, /*direction=*/true);
-    advanceMs(100);
-    t.update(100.f, 100, 30.f, kSettleMs);  // primes _lastVin (0->30 reverses once); dir now false
-    advanceMs(100);
+    t.resetTracker(100.f, /*direction=*/false);
+    t.resetDirection(false, 30.f);          // Vin reference 30, steering Vin up
+    advanceMs(1100);                        // past the settle window
     t.update(105.f, 100, 30.f, kSettleMs);  // vin stable, power up -> no reversal, dir stays false
     TEST_ASSERT_FALSE(t._direction);
     advanceMs(100);
     t.update(106.f, 100, 33.f, kSettleMs);  // vin 30->33 = ~10% -> reverse despite rising power
+    TEST_ASSERT_TRUE(t._direction);
+}
+
+// Steady t0 at Vin 45 W, steering `dir`, past the settle window after the hand-back
+static void steered(Tracker &t, bool dir) {
+    loopWallClockUs_ = 1'000'000;
+    t.resetTracker(40.f, dir);
+    t.resetDirection(dir, 45.f);
+    advanceMs(1100);
+    t.update(40.f, 1050, 45.f, kSettleMs);
+    TEST_ASSERT_EQUAL(dir, t._direction);
+}
+
+// Near D = M a DCM plant can drop Vin at an unchanged duty (fry plant at dusk: 49.5 -> 45 V at D 1050). While we
+// steer Vin up, that drop and the power lost with it are not the result of our step: no reversal, else the tracker
+// steers further down onto a flat P(D) far below the MPP. Known-bad: both reversed before.
+void test_tracker_vin_drop_against_steering_keeps_direction() {
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    steered(t, false);
+    advanceMs(100);
+    t.update(39.5f, 1049, 41.f, kSettleMs); // Vin -9 %, power -0.5 W (below the threshold): no cloud reversal
+    TEST_ASSERT_FALSE(t._direction);
+    advanceMs(100);
+    t.update(38.f, 1047, 41.f, kSettleMs);  // power -2 W: no power reversal either, the reference follows
+    TEST_ASSERT_FALSE(t._direction);
+    TEST_ASSERT_EQUAL_FLOAT(38.f, t._lastPower);
+    advanceMs(100);
+    t.update(36.f, 1045, 45.5f, kSettleMs); // back above the reference: a drop reverses again (not muted)
+    TEST_ASSERT_TRUE(t._direction);
+}
+
+// The band: Vin 0.6 % against (light wobble, input-cap lag) still reverses on a power drop, 2 % does not
+void test_tracker_vin_against_band() {
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    steered(t, false);
+    advanceMs(100);
+    t.update(38.f, 1050, 44.73f, kSettleMs);
+    TEST_ASSERT_TRUE(t._direction);
+    steered(t, false);
+    advanceMs(100);
+    t.update(38.f, 1050, 44.1f, kSettleMs);
+    TEST_ASSERT_FALSE(t._direction);
+}
+
+// The same in the other direction: steering Vin down while the plant or light lifts it, and in slow mode
+void test_tracker_vin_rise_against_steering_keeps_direction() {
+    auto tp = std::make_unique<Tracker>();
+    auto &t = *tp;
+    steered(t, true);
+    advanceMs(100);
+    t.update(38.f, 1051, 48.f, kSettleMs);  // Vin +6.7 %, power -2 W
+    TEST_ASSERT_TRUE(t._direction);
+    advanceMs(100);
+    t.update(36.f, 1052, 44.5f, kSettleMs); // Vin below the reference: reverse
+    TEST_ASSERT_FALSE(t._direction);
+
+    steered(t, false);
+    t.maxPowerPoint = {60.f, wallClockMs(), 900, 48.f};
+    t.setSlowMode(true);
+    advanceMs(600);
+    t.update(38.f, 1050, 43.f, kSettleMs);  // slow mode, Vin falls against us, power -2 W: hold
+    TEST_ASSERT_FALSE(t._direction);
+    advanceMs(600);
+    t.update(36.f, 1049, 45.2f, kSettleMs);
     TEST_ASSERT_TRUE(t._direction);
 }
 
@@ -164,7 +229,7 @@ void test_tracker_settle_waits_for_vin() {
     advanceMs(100);
     t.update(70.f, 100, 50.2f, [] { return 0.f; });   // Vin back: decide
     TEST_ASSERT_TRUE(t._direction);
-    // Vin never comes back: decisions resume after 1 s
+    // Vin never comes back (0.6 %, inside the 1 % band): decisions resume after 1 s
     advanceMs(500);
     t.update(60.f, 100, 50.5f, [] { return 0.f; });
     TEST_ASSERT_TRUE(t._direction);
@@ -187,7 +252,7 @@ static void slowModeDecidesAfterReversal(float settleMs) {
     t.update(90.f, 100, 50.f, settle);    // reverse at Vin 50
     TEST_ASSERT_FALSE(t._direction);
     advanceMs(600);
-    t.update(80.f, 100, 49.f, settle);    // Vin not back, filter not settled: slow mode decides anyway
+    t.update(80.f, 100, 49.7f, settle);   // Vin not back (inside the 1 % band), filter not settled: decides anyway
     TEST_ASSERT_TRUE(t.slowMode);
     TEST_ASSERT_TRUE(t._direction);
 }
@@ -220,8 +285,10 @@ void test_tracker_vin_band_symmetric() {
     auto tp = std::make_unique<Tracker>();
     auto &t = *tp;
     t.resetTracker(10.f, /*direction=*/true);
+    t.resetDirection(true, 40.f);
+    advanceMs(1000);
     auto step = [&](float vin) { advanceMs(200); t.update(10.f, 100, vin, kSettleMs); return t._direction; };
-    bool d = step(40.f);                    // primes _lastVin (0 -> 40 reverses)
+    bool d = t._direction;
     TEST_ASSERT_TRUE(d == step(38.1f));     // 1.9 V < 5 % of 40
     TEST_ASSERT_TRUE(d != step(37.9f));
     d = t._direction;

@@ -107,15 +107,18 @@ The verdict and the landing power also appear in the `sweep-curve` header
 `Tracker::update()` (`src/tracker.h`) averages power and Vin over one tracker period, then compares the period
 mean with the last reference power. These rules set the direction:
 
-- If the power change exceeds the absolute or relative threshold and is negative, the direction reverses.
+- If the power change exceeds the absolute or relative threshold and is negative, the direction reverses, unless
+  Vin moved more than 1 % against the steering since the last reversal (up while the duty rises, down while it
+  falls). Then the drop did not come from the step, and only the reference power follows it (see
+  [Plant moving against the step](#plant-moving-against-the-step)).
 - After a reversal, the tracker does not judge the power change during a settle window. The reference power
   follows the measurement instead. The filtered power still lags behind the old direction, and the input
   capacitor discharges while Vin falls and charges while it rises, so the output power dips right after a turn
   toward higher Vin. A decision in that window would reverse again, mostly toward lower Vin. A hand-back from a
   limiter to P&O starts the same window.
-- If Vin moved by more than 5 % since the last reversal, the direction reverses as well. This handles cloud
-  recovery, because tracking a light transient can drift far from the MPP. The 5 % refers to the higher of the
-  two voltages, so a leg down and the following leg up have the same length.
+- If Vin moved by more than 5 % since the last reversal in the steered direction, the direction reverses as well.
+  This handles cloud recovery, because tracking a light transient can drift far from the MPP. The 5 % refers to
+  the higher of the two voltages, so a leg down and the following leg up have the same length.
 - Below 1 W, the tracker always increases duty.
 
 In low light the power change across one 5 % leg near the MPP is about 1 % of the power, below the
@@ -205,6 +208,36 @@ loop period and capped by the limiters, so the duty moves by a small fraction of
 the duty before and after that tick (`Slow mode, duty <from> -> <to> (<step>, MPP duty <d>, P=<W>)`).
 
 The console command `speed <x>` (0 ≤ x < 10) scales the tracker step (default 1.0).
+
+### Plant moving against the step
+
+P&O on the duty assumes that Vin follows it: more duty, lower Vin. Near the DCM/CCM boundary ($D \approx M$) on a
+low-impedance output this does not always hold. The switch-node ring after the coil current reaches zero leaves a
+current in the coil at the next high-side turn-on, and its value depends on the idle time, which shrinks as the
+duty rises. In a simulated board model with a 233 kHz ring and a battery output, at dusk light (about 23 W, MPP at
+48 V):
+
+- Over about 250 counts (12 % of the period) below $D = M$, Vin stays within 0.3 V. The coil current at turn-on
+  goes from +0.1 A to -0.3 A, which cancels the extra on-time.
+- Across that span $P(D)$ is flat with a slight rise toward higher duty, a local maximum at 37 V. The dip on the way
+  back to the MPP is 0.5 % of the power, below both thresholds.
+- At an unchanged duty, Vin can step down by 3 to 5 V within 0.3 s.
+
+When such a step came while the tracker steered Vin up, the power drop or the 5 % Vin move reversed it toward
+lower Vin. The next step repeated that, and the tracker ended on the local maximum, up to 18 V below the MPP, until
+the next sweep. A reversal therefore needs Vin not to have moved more than 1 % against the steering since the last
+reversal, and the 5 % rule counts only a move in the steered direction.
+
+The 1 % band keeps reversals on light changes. Light that dims lowers Vin and power together. Without a band, that
+blocked every reversal of a leg toward higher Vin and none toward lower Vin, so the tracker ratcheted up the
+steep side of the P-V curve. Under an irradiance wobble of 0.5 % at 0.2 Hz, which moves Vin by about 0.4 %, it
+settled 4 V above the MPP and lost 4 % of harvest on one board model. Bands of 2 and 3 % let 1 and 3 of 10 trapped
+dusk runs through.
+
+In normal tracking a leg crosses the MPP, so Vin is past the last reversal point when the power drops and the rule
+does not change anything. In paired simulation runs at dusk (four board models, exact and misread voltages,
+Gaussian and measured sensor noise), the runs below 96 % of the reachable power dropped from 10 of 304 to 0, and the
+mean harvest rose by 0.3 percentage points. Steady sun, wobble, clouds, partial shade and dawn were unchanged.
 
 ### Steady-state efficiency and noise
 
