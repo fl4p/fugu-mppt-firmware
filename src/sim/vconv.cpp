@@ -137,14 +137,26 @@ void VirtualConverter::stepOneCycle(float T) {
         return;
     }
 
-    if (boost_) {
-        stepOneCycleBoost(T);
-    } else {
-        stepOneCycleBuck(T);
+    // L-C_out loop: pass 1 at the old V_out predicts the end V_out, pass 2 reruns the cycle from the same coil
+    // state at the mid-cycle V_out. The charges are weighted (q1 + 2 q2)/3, which makes V_out exact to (w0 T)^3
+    // and removes the midpoint's (w0 T)^2/12 frequency error. One pass at the old V_out is forward Euler there
+    // and gains energy every cycle (open battery + synchronous LS: runaway LC ring).
+    const float v0 = vOut_, iL0 = iLEnd_, iPk0 = iPk_;
+    float qOut1 = 0.0f, qIn1 = 0.0f;
+    for (int pass = 0; pass < 2; ++pass) {
+        if (boost_) stepOneCycleBoost(T);
+        else stepOneCycleBuck(T);
+        if (pass) break;
+        qOut1 = iOutAvg_, qIn1 = iInAvg_;
+        const float vPred = std::max(0.0f, (v0 + (T * iOutAvg_) * invCout_ + aOut_ * vBatEff) * inv1pAout_);
+        vOut_ = 0.5f * (v0 + vPred), iLEnd_ = iL0, iPk_ = iPk0;
     }
+    vOut_ = v0;
+    iOutAvg_ = (qOut1 + 2.0f * iOutAvg_) * (1.0f / 3.0f);
+    iInAvg_ = (qIn1 + 2.0f * iInAvg_) * (1.0f / 3.0f);
 
     // Source/sink + cap dynamics. V_in: forward-Euler (PV+C_in time constant is
-    // bounded). V_out: backward-Euler — unconditionally stable, lets r_bat go
+    // bounded). V_out: backward-Euler in r_bat — unconditionally stable, lets r_bat go
     // arbitrarily small without crossing the T/(R·C)=2 cliff (short-circuit case).
     //   V_out_new = (V_out + T·I_out_avg/C_out + a·V_bat) / (1 + a),   a = T/(R_bat·C_out)
     const float Ipv = pvBlocking_ ? std::max(0.f, pvCurrent(vIn_)) : pvCurrent(vIn_);
@@ -162,20 +174,8 @@ void VirtualConverter::stepOneCycle(float T) {
     if (vIn_ < 0.0f) vIn_ = 0.0f;
     const float vInMax = pv_.voc * 1.05f;
     if (vIn_ > vInMax) vIn_ = vInMax;
-    // KNOWN SOLVER LIMITATION (pre-existing, affects buck and boost alike). iL is advanced using
-    // the OLD vOut_, so the L–C_out loop is forward-Euler and grows energy at (w0*T)^2/4 per cycle
-    // against damping zeta*w0*T. It is unstable whenever
-    //     zeta < w0*T/4,      w0 = 1/sqrt(L*C_out),  zeta = (1/2)*sqrt(L/C_out)/r_bat
-    // i.e. at LIGHT LOAD / low damping. The clamps below do not cause it — with them removed the
-    // trajectory diverges to NaN rather than ringing; they merely bound the divergence into a
-    // limit cycle (~1 Hz, unrelated to the LC frequency). Measured: boost D=0.3 C_out=470uF grows
-    // +0.30%/cycle at r_bat=100 ohm, is marginal at 12 ohm, decays at 2 ohm.
-    //
-    // This IS firmware-reachable: buck.h commands rect = driverPwmMax - pwmCtrl - 1 in CCM, and the
-    // limit cycle appears at 1, 2 and 4 counts of slack. So a lightly loaded vconv rig can show a
-    // wild Vout/iL oscillation that is a model defect, not a controller bug — check the criterion
-    // above before blaming the loop. Conversion-ratio tests pick a damped operating point (see
-    // vconv-test W, and A for buck).
+    // The two-pass step above leaves a slight numerical damping of the undamped L-C_out ring, ~(w0 T)^4/24 per
+    // cycle (w0 = 1/sqrt(L C_out)); the single-pass forward-Euler step it replaced grew it instead.
     if (vOut_ < 0.0f) vOut_ = 0.0f;
     // Defensive ceiling: 2·V_bat for normal operation. When V_bat ≈ 0 (open-circuit
     // preset: r_bat≫1, v_bat=0) fall back to 2·Voc so V_out can charge up to the
@@ -391,10 +391,6 @@ void VirtualConverter::stepOneCycleBoost(float T) {
     // In steady state the floor holds for any commanded duty: the synchronous equilibrium is
     // V_out = V_in/(1-D) >= V_in for D < 1, verified in vconv-test X2. Reverse coil current does
     // NOT break it — an over-driven rect just bucks V_out back down toward that same ratio.
-    // (A sub-V_in excursion with iL very negative is reachable, but only in the light-load regime
-    // the forward-Euler criterion at the vOut_ clamp flags as unstable, i.e. it is a solver
-    // artifact rather than a property of the topology.)
-    //
     // The one real escape: pwmCtrl == pwmMax leaves tOff=0 and rect=0, so nothing reaches the
     // output and V_out collapses to 0 while the coil shorts the input. Out of reach only because
     // buck.h caps duty at pwmCtrlMax = 0.9*driverPwmMax — so the floor is duty-clamp enforced at

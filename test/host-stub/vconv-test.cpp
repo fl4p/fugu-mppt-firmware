@@ -808,14 +808,11 @@ void testV_boost_branch_is_live() {
 //
 // Verified AT the operating point, not by settling to it -- same caveat test A records for buck.
 // With rect = pmax-ctrl there is no dead time, so L and C_out form a high-Q bidirectional
-// resonator; started far from equilibrium it rings, and the `if (vOut_ < 0) vOut_ = 0` clamp
-// rectifies the undershoot into a sustained oscillation (a pre-existing model artifact, not a
-// boost-branch bug -- see the note in stepOneCycle). Pinning both rails and checking that the coil
-// current is periodic is the real invariant: net volt-seconds over a cycle must be zero.
+// resonator that rings for long when started far from equilibrium. Pinning both rails and checking
+// that the coil current is periodic is the real invariant: net volt-seconds over a cycle must be zero.
 void testW_boost_ccm_ratio() {
     section("W: boost CCM ratio 1/(1-D)");
-    // Settled, not pinned. The forward-Euler L/C_out instability (see the note at the vOut_ clamp)
-    // only bites at light load, so pick the damped side of zeta < w0*T/4: r_bat 2 ohm, C_out 470uF.
+    // Settled, not pinned: r_bat 2 ohm damps the L/C_out ring, C_out 470uF.
     // rect = pmax-ctrl-1 is exactly what buck.h commands in CCM. A stiff source needs voc == vin,
     // otherwise setPv() is a current source that charges C_in up to voc and every ratio reads high.
     for (uint16_t ctrl : {200, 300, 400}) {
@@ -953,10 +950,7 @@ void testZ_boost_current_routing() {
 // X2: reverse coil current does NOT break the floor, and the one duty that does is clamped away.
 // Test X covers zero duty (body-diode passthrough holds V_out up at V_in). Here: approach the
 // operating point from ABOVE, so the sync rect conducts in reverse and bucks C_out back toward
-// C_in. It settles at V_in/(1-D) -- above V_in -- not below it. Run on the DAMPED side of the
-// forward-Euler criterion (see the vOut_ clamp note): in the light-load unstable regime the same
-// duty shows a sub-V_in excursion with iL very negative, which is a solver artifact, and mistaking
-// it for a real floor escape is an easy trap.
+// C_in. It settles at V_in/(1-D) -- above V_in -- not below it.
 void testX2_boost_floor_holds_under_reverse_current() {
     section("X2: floor holds under reverse current");
     const float vin = 25.2f;
