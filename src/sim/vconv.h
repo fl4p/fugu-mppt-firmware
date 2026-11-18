@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cmath>
 #include <algorithm>
+#include <vector>
 
 #include "math/pv_model.h"
 
@@ -75,7 +76,7 @@ public:
     // Base PV parameters; the sun model scales them.
     void setPv(float isc, float voc, float k) {
         isc0_ = isc, voc0_ = voc;
-        if (sunG_ == 1.0f) pv_.set(isc, voc, k);
+        if (sunG_ == 1.0f) pv_.set(isc, voc, k), xDirty_ = true;
         else pv_.k = k, applySun(sunG_);
     }
     SunModel &sun() { return sun_; }
@@ -88,6 +89,10 @@ public:
     void setPvString(uint8_t n, const float *g, const float *w = nullptr, float vd = 0) {
         pvN_ = n < 1 ? 1 : n > kPvSubMax ? kPvSubMax : n;
         pvVd_ = vd;
+        for (uint8_t i = 0; i < pvN_; ++i) {
+            const float wi = w ? w[i] : 1.f / (float) pvN_;
+            if (xg_[i] != g[i] || xw_[i] != wi) xg_[i] = g[i], xw_[i] = wi, xDirty_ = true;
+        }
         uint8_t o[kPvSubMax] = {0, 1, 2, 3, 4, 5};
         std::sort(o, o + pvN_, [g](uint8_t a, uint8_t b) { return g[a] > g[b]; });
         float sum = 0;
@@ -105,7 +110,46 @@ public:
     }
 
     // String current at voltage v: best of "the m strongest substrings conduct, the rest bypassed".
+    // exact series string: V(I) = sum over substrings of max(sum over halves w/2 V_pv(I/g), -vd), tabulated
+    bool xExact_ = false; mutable bool xDirty_ = true;
+    float xg_[6]{}, xw_[6]{}, xHalf_[6] = {1, 1, 1, 1, 1, 1};
+    static constexpr int kTbl = 4096;
+    mutable std::vector<float> xV_; // V(I) table, allocated only for the exact model (host sim)
+    mutable float xImax_ = 0;
+    void setPvExact(bool e) { xExact_ = e, xDirty_ = true; }
+    void setPvHalf(int i, float f) { xHalf_[i] = f, xDirty_ = true; }
+    float xVsub(int k, float I) const {
+        float v = 0;
+        for (int h = 0; h < 2; ++h) {
+            const float gh = xg_[k] * (h ? xHalf_[k] : 1.f);
+            if (I >= gh * pv_.isc * 0.99999f) { v = -1e4f; break; }
+            v += 0.5f * xw_[k] * pv_.voltage(I / gh);
+        }
+        return std::max(v, -pvVd_);
+    }
+    void xBuild() const {
+        float im = 0;
+        for (int k = 0; k < pvN_; ++k) im = std::max(im, xg_[k] * pv_.isc * std::max(1.f, xHalf_[k]));
+        xImax_ = im;
+        xV_.resize(kTbl + 1);
+        for (int j = 0; j <= kTbl; ++j) {
+            const float I = im * (float) j / (float) kTbl * 0.99998f;
+            float v = 0;
+            for (int k = 0; k < pvN_; ++k) v += xVsub(k, I);
+            xV_[j] = v;
+        }
+        xDirty_ = false;
+    }
     [[nodiscard]] float pvCurrent(float v) const {
+        if (xExact_) {
+            if (xDirty_) xBuild();
+            if (v >= xV_[0]) return 0;
+            if (v <= xV_[kTbl]) return xImax_;
+            int lo = 0, hi = kTbl; // xV_ decreasing
+            while (hi - lo > 1) { int m = (lo + hi) / 2; if (xV_[m] > v) lo = m; else hi = m; }
+            const float f = (xV_[lo] - v) / std::max(1e-9f, xV_[lo] - xV_[hi]);
+            return xImax_ * ((float) lo + f) / (float) kTbl * 0.99998f;
+        }
         float i = pvG_[pvN_ - 1] * pv_.current(v);
         for (uint8_t m = 0; m + 1 < pvN_; ++m)
             i = std::max(i, pvG_[m] * pv_.current((v + (float) (pvN_ - 1 - m) * pvVd_) * pvInvW_[m]));
@@ -228,6 +272,9 @@ private:
     float isc0_ = 8.0f, voc0_ = 40.0f, sunG_ = 1.0f, sunAcc_ = 0.0f;
     void applySun(float g);
     static constexpr uint8_t kPvSubMax = 6;
+public:
+    static constexpr uint8_t kPvSubMaxX = 6;
+private:
     uint8_t pvN_ = 1;
     float pvVd_ = 0;
     float pvG_[kPvSubMax] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f};    // substring factors, strongest first

@@ -460,6 +460,7 @@ void VirtualConverter::applySun(float g) {
     sunG_ = g;
     const float voc = g >= kGKnee ? voc0_ * (1.0f + 0.04f * std::log(g)) : voc0_ * kVocKnee * g * (1.0f / kGKnee);
     pv_.set(std::max(isc0_ * g, 1e-4f), std::max(voc, 0.5f), pv_.k);
+    xDirty_ = true;
 }
 
 void VirtualConverter::stepSeconds(float dt_s, uint32_t pwmFreqFallback) {

@@ -95,8 +95,10 @@
 
 #if __has_include("peak_scan.h")
 #define SCAN_ACTIVE() mppt.scan.active()
+#define SCAN_ACTIVE_DEFINED 1
 #else
 #define SCAN_ACTIVE() false // a tree without the partial scan
+#define SCAN_ACTIVE_DEFINED 0
 #endif
 
 // ---- globals owned by main.cpp on target ----
@@ -750,6 +752,9 @@ struct Wx {
     Track vbatT;                             // battery EMF profile
     double sweepAt = -1, statsFrom = 0, T = 600;
     float isc = 0, g[6] = {1, 1, 1, 1, 1, 1}, vocNow = 0;
+    float half = 0, vocDrift = 0;           // half-substring shade, Voc drift over T (fraction)
+    bool exact = false;                      // exact series-string plant
+    float gm[6] = {1, 1, 1, 1, 1, 1};        // per-substring Isc mismatch
     float ramp = 0, wobA = 0, wobF = 0;      // irradiance x exp(ramp (t - 120 s)), x (1 + wobA sin(2 pi wobF t))
     Track vocT;                              // source Voc profile (overrides vocLog)
     float iscFix = 0;                        // Isc [A] instead of the one from pClear
@@ -777,10 +782,15 @@ struct Wx {
         float gMax = 0;
         for (uint8_t i = 0; i < n; ++i) {
             const float s = trackAt(sub[i], t, 1);
-            g[i] = beamShade ? std::min(c, s) : c * s;
+            if (half > 0) g_vconv.setPvHalf(i, s < 1 ? 1.f / s : 1.f); // half the cells shaded, the other half in full light
+            g[i] = (beamShade ? std::min(c, s) : c * s) * gm[i];
             gMax = std::max(gMax, g[i]);
         }
         g_vconv.setPvString(n, g, n > 1 && w[1] > 0 ? w : nullptr, vd);
+        if (vocDrift != 0) {
+            const float v = voc * (1 + vocDrift * (float) (t / T));
+            if (std::fabs(v - vocNow) > 1e-3f) g_vconv.setPv(isc, vocNow = v, k);
+        }
         if (vocLog > 0 || !vocT.empty()) {
             const float v = !vocT.empty() ? trackAt(vocT, t, voc)
                                           : std::max(1.f, voc + vocLog * std::log(std::max(gMax, 1e-30f)));
@@ -936,10 +946,69 @@ static void ringStaticReport(const char *what, const std::vector<double> &dutyHi
     }
 }
 
+#if SCAN_ACTIVE_DEFINED
+// integration checks around a running partial peak scan (SIM_ACT=psu|manual|limit on a scan scenario)
+struct ItState {
+    int act = 0, step = 0;
+    double t1 = 0;
+    float vMax0 = 0;
+    bool done = false, fail = false;
+    const char *why = "";
+};
+
+static void itFail(ItState &it, const char *why) {
+    if (!it.fail) it.fail = true, it.why = why;
+}
+
+static void itStep(ItState &it, double t) {
+    auto &sc = mppt.scan;
+    if (it.act == 1 && it.step >= 1 && g_app.psuMode() && mppt.targetDutyCycle) itFail(it, "PSU mode with a duty fade target");
+    switch (it.step) {
+        case 0: // wait for a probe
+            if (sc.phase != PeakScan::Probe) return;
+            it.t1 = t, it.step = 1;
+            printf("%9.2f >>> IT action during the probe\n", t);
+            if (it.act == 1) {
+                if (!mppt.requestPsuSetpoint(g_vconv.getVbat() + 0.3f)) itFail(it, "psu request refused");
+            } else if (it.act == 2) {
+                (void) mppt.requestPsuManual(converter.getCtrlOnPwmCnt(), -1);
+            } else {
+                it.vMax0 = mppt.charger.params.Vbat_max;
+                mppt.charger.params.Vbat_max = sensors.Vout->ewm.avg.get() - 0.2f;
+            }
+            return;
+        case 1:
+            if (t - it.t1 < 0.5) return;
+            if (sc.active()) itFail(it, "scan still active 0.5 s after the action");
+            if (it.act == 1 && mppt.targetDutyCycle) itFail(it, "PSU mode with a duty fade target");
+            if (it.act == 2 && !g_app.manualPwm()) itFail(it, "not in manual mode");
+            if (it.act == 3 && mppt.teleSnap().limIdx == 15) itFail(it, "no limiter after the cap drop");
+            it.step = 2, it.t1 = t;
+            return;
+        case 2:
+            if (it.act == 1 && (sc.active() || mppt.targetDutyCycle)) itFail(it, "PSU: scan or fade target came back");
+            if (t - it.t1 < 5) return;
+            if (it.act == 2) (void) mppt.requestPsuOff(); // manual -> MPPT, no sweep
+            if (it.act == 3) mppt.charger.params.Vbat_max = it.vMax0;
+            it.step = 3, it.t1 = t;
+            return;
+        case 3:
+            // back in MPPT: no scan from the old reference before a new one is taken (5 s) and the period passed
+            if (it.act == 2 && sc.active() && t - it.t1 < 6) itFail(it, "stale scan resumed after manual -> MPPT");
+            if (t - it.t1 > 10) it.done = true, it.step = 4;
+            return;
+        default:
+            return;
+    }
+}
+#endif
+
 static int runWx(const std::string &name, Wx &wx) {
     if (const char *e = getenv("SIM_T")) wx.T = atof(e);
     g_verbose = getenv("SIM_V") != nullptr;
     const double trEvery = getenv("SIM_TR") ? atof(getenv("SIM_TR")) : wx.T / 60;
+    // exact series string by default on the bypass-diode scenarios; SIM_PV_EXACT=0/1 overrides
+    g_vconv.setPvExact(getenv("SIM_PV_EXACT") ? atoi(getenv("SIM_PV_EXACT")) != 0 : wx.exact);
     wx.init();
     wx.apply(0);
     std::vector<double> dutyHist;
@@ -974,6 +1043,10 @@ static int runWx(const std::string &name, Wx &wx) {
     const float mCrit = 1.f - (float) converter.getRectOnPwmMin() /
                               ((float) converter.pwmMaxDriver() + (float) converter.getDtLhTicks());
 
+#if SCAN_ACTIVE_DEFINED
+    ItState it{};
+    if (const char *e = getenv("SIM_ACT")) it.act = !strcmp(e, "psu") ? 1 : !strcmp(e, "manual") ? 2 : !strcmp(e, "limit") ? 3 : 0;
+#endif
     for (double nextTr = 0; tNow() < wx.T;) {
         const double tb = tNow();
         wx.apply(tb);
@@ -986,6 +1059,9 @@ static int runWx(const std::string &name, Wx &wx) {
         const double q0 = g_qOut;
         run(0.02, 0);
         const double dt = tNow() - tb;
+#if SCAN_ACTIVE_DEFINED
+        if (it.act) itStep(it, tb);
+#endif
         if (tb >= wx.statsFrom && dt > 0) {
             const double im = (g_qOut - q0) / dt;
             iMin = std::min(iMin, im);
@@ -1136,6 +1212,13 @@ static int runWx(const std::string &name, Wx &wx) {
         if (!g_sweepPts.empty()) ringSweepReport();
         ringStaticReport("tracking", dutyHist);
     }
+#if SCAN_ACTIVE_DEFINED
+    if (it.act) {
+        printf("== IT %s: %s%s\n", getenv("SIM_ACT"), it.fail ? "FAIL " : it.done ? "PASS" : "FAIL scan never active",
+               it.fail ? it.why : "");
+        if (it.fail || !it.done) return 1;
+    }
+#endif
     return 0;
 }
 
@@ -1144,7 +1227,15 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
     // fry-like string: Voc 80 V, peaks near 68 V (all), 57 V and 30 V (substrings bypassed)
     auto fry = [&](float pClear) { wx.voc = 80, wx.k = 0.86f, wx.pClear = pClear; };
     // fry/flat geometry: 2 modules x 3 bypass diodes, local peaks near m/6 of the string's Vmpp
-    auto fry6 = [&](float pClear) { fry(pClear), wx.n = 6, wx.vd = 0.45f; };
+    auto fry6 = [&](float pClear) {
+        fry(pClear), wx.n = 6, wx.vd = 0.45f, wx.exact = true;
+        if (const char *e = getenv("SIM_K")) wx.k = atof(e);
+        if (const char *e = getenv("SIM_W")) sscanf(e, "%f,%f,%f,%f,%f,%f", wx.w, wx.w + 1, wx.w + 2, wx.w + 3, wx.w + 4, wx.w + 5);
+        if (const char *e = getenv("SIM_HALF")) wx.half = atof(e);
+        if (const char *e = getenv("SIM_G")) // per-substring Isc mismatch factors
+            sscanf(e, "%f,%f,%f,%f,%f,%f", wx.gm, wx.gm + 1, wx.gm + 2, wx.gm + 3, wx.gm + 4, wx.gm + 5);
+        if (const char *e = getenv("SIM_VOCDRIFT")) wx.vocDrift = atof(e);
+    };
     if (sc == "wx-cloud") {
         wx.cloud = kCloud1120, wx.T = 900;
     } else if (sc == "wx-cloud-cv" || sc == "wx-cloud-cv-ripple") {
