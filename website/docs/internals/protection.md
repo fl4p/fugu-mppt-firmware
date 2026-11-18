@@ -11,13 +11,14 @@ hold a value at its limit, while a protection trip turns the half-bridge off.
 
 ## Where the checks run
 
-The real-time loop calls two functions on every pass while the converter is switching, in MPPT, PSU and manual PWM
-modes:
+The real-time loop calls two functions on every control step while the converter is switching, in MPPT, PSU and
+manual PWM modes:
 
 - `mppt.protect()` checks the fast electrical faults on the latest sample.
 - `mppt.protectLf()` checks supply voltage, battery detection, temperature and the wire-fault latch.
 
-Neither runs while the converter is off. While it is off, the [start conditions](#start-conditions) decide whether it
+Both run in the same step, so `protectLf()` also runs after `protect()` has tripped. Neither runs while the converter
+is off or while the sensors calibrate; calibration holds the converter off. While it is off, the [start conditions](#start-conditions) decide whether it
 may start again.
 
 Three watchdogs in `src/main.cpp` sit outside these functions and cover the sampler itself:
@@ -25,32 +26,43 @@ Three watchdogs in `src/main.cpp` sit outside these functions and cover the samp
 
 ## Trip and backoff
 
-A trip calls `shutdownDcdc(who, seconds)`, which:
+Most trips call `shutdownDcdc(who, seconds)`, which:
 
-1. Disables the converter (both gates off).
-2. Opens the backflow switch and releases the LV power-good output.
-3. Ends a running sweep.
-4. Arms a backoff timer and logs `backoff <n>s [<who>]`.
+1. Releases the LV power-good output and opens the backflow switch.
+2. Disables the converter (both gates off).
+3. With a backoff above 0: ends a running sweep, arms the backoff timer and logs `backoff <n>s [<who>]`.
 
-A failed check also makes the loop call `stopAndBackoff(4)`, which delays the next start by 4 s. The converter
-restarts once both timers have expired and the start conditions pass. In MPPT mode the restart is a new sweep, which
-waits while the battery is reported full.
+The log line appears only when the backoff is newly armed or made longer, and carries ` mid-sweep` when a sweep was
+running. A repeated trip does not extend a running backoff unless it asks for a longer one.
 
-A repeated trip does not extend a running backoff unless it asks for a longer one. The `who` tag in the log line names
-the check that tripped; the [trip reference](#trip-reference) lists them.
+A failed check also makes the loop call `stopAndBackoff(4)`:
+
+- It holds the next start for at least 4 s (100 ms in PSU mode). This timer is not reported as a start-block reason.
+- If the check did not stop the converter itself, it stops it with a 5 s backoff logged as
+  `backoff 5s [stopAndBackoff]`. Over-temperature and wire-fault trips take this path.
+
+The converter restarts once both timers have expired and the [start conditions](#start-conditions) pass, so a 5 s or
+30 s trip restarts after 5 s or 30 s. In MPPT mode the restart is a new sweep. It waits while a fresh BMS report says
+the battery is full, and up to 12 s for the first BMS report when a BMS source is configured.
+
+A sweep that finds no usable power ends with `backoff 30s [sweep-no-mpp]`, logged at info level. It uses the same
+mechanism but is not a fault.
 
 ### PSU mode
 
 In PSU mode, including the PV simulator, output over-voltage (`Vout-OV`) and supply under-voltage (`supply-UV`) trips retry
 fast, because a load step can cause them:
 
-| Trips in the last 60 s | Backoff |
+| Trips within 60 s of the first trip in a window | Backoff |
 |---|---|
 | 1–4 | 100 ms |
 | 5–8 | The trip's normal backoff |
 | More than 8 | 30 s, and the converter stays latched off (`psu-latch`) |
 
-All other trips keep their normal backoff in PSU mode.
+Re-issuing `psu <V>` or `pv <isc> <voc>`, or leaving PSU mode, clears the latch and the trip count.
+
+Trips with their own backoff, such as `Vin-OV` or `Iout-OC`, keep it in PSU mode. Stops without one (over-temperature,
+wire fault, loop latency, calibration failure) may retry after 100 ms in PSU mode, once their start condition clears.
 
 ## Trip reference
 
@@ -60,27 +72,27 @@ the side keys `hv_max`, `lv_max`, `hv_i_max` and `lv_i_max` map to these roles t
 
 | `who` tag | Condition | Backoff |
 |---|---|---|
-| `hw-OV` | INA226 bus over-voltage alert, see [Hardware over-voltage alert](#hardware-over-voltage-alert) | 5 s |
+| `hw-OV` | INA226 bus over-voltage alert, or the alert could not be armed, see [Hardware over-voltage alert](#hardware-over-voltage-alert) | 5 s |
 | `psu-setpoint-infeasible` | PSU setpoint no longer reachable: a boost setpoint below Vin, or a setpoint above the OV limit | 30 s, latched |
 | `Vin-OV` | Vin sample > Vin max | 5 s |
-| `BMS-cutoff` | Output current collapses while Vout and Vin jump, the signature of a BMS opening its switch (buck, battery mode) | 30 s |
+| `BMS-cutoff` | The signature of a BMS opening its switch: Iout median below 25 % of its average (average > max(1 A, 5 % of Iout max)), Vout median more than 2 % of `Vbat_max` above its average, and Vin median above its average. Buck, battery voltage known, not PSU mode | 30 s |
 | `Vout-OV` | Vout sample > the [OV threshold](#output-over-voltage-threshold) | 5 s |
 | `Iin-OC` | Iin sample > 1.3 × Iin max | 5 s |
 | `Iout-OC` | Iout sample > 1.5 × Iout max, median > 1.25 × Iout max, or average > 1.15 × Iout max | 30 s |
-| `revI-highAvg` | Two reverse-current samples below −1 A while the average output current is above 10 A | 5 s |
+| `revI-highAvg` | The last two samples of the physical current sensor below −1 A while the average Iout is above 10 A. Not in forced PWM | 5 s |
 | `revI-ewm` | Average current of the physical current sensor below −1 A | 5 s |
 | `Vout>Vin-avg` | Buck: average Vout > 1.25 × (average Vin + 1 V) | 5 s |
 | `Vout>2Vin` | Buck: Vout sample > 2 × (Vin + 0.5 V) | 5 s |
 | `short` | Average Iout > `iout_short` while average Vout < 1 V | 30 s |
 | `highI-bflowOpen` | Boards with a backflow switch: more than 6 A while the backflow switch is open or the duty cycle is below 10 % | 5 s |
-| `highD-bflowOpen` | Boards with a backflow switch: duty cycle above 33 % with the backflow switch open, unless the DCM current estimate stays below 1 A | 5 s |
+| `highD-bflowOpen` | Boards with a backflow switch: duty cycle above 33 % with the backflow switch open, unless the DCM current estimate stays below 1 A. A buck sweep that reaches this point at near-zero current ends the sweep instead | 5 s |
 | `highI-noSyncRect` | More than 6 A with synchronous rectification off | 5 s |
-| `minpulse-M` | Buck in DCM: Vout/Vin above the low-side minimum-pulse ratio, see [Diode Emulation](diode-emulation.md#ls-minimum-pulse-near-unity-ratio) | 5 s |
-| `Vr-sensor-fail` | Duty cycle well above what Vout and Iout imply while the output current stays near zero: a sensor or half-bridge fault (`reverse_current_paranoia` only) | 5 s |
+| `minpulse-M` | Buck in DCM: Vout/Vin above the low-side minimum-pulse stop ratio, or reverse current with Vout/Vin above the start ratio, for 4 fresh Vout samples (at once if DCM is entered above the stop ratio). See [Diode Emulation](diode-emulation.md#ls-minimum-pulse-near-unity-ratio) | 5 s |
+| `Vr-sensor-fail` | Duty cycle well above what Vout and Iout imply while the current stays below 1 % of Iout max: a sensor or half-bridge fault. `reverse_current_paranoia` only; not in PSU mode while Vout is between half the setpoint and the setpoint | 5 s |
 | `supply-UV` | Board supply, max(Vin, Vout) − 0.3 V, below 9 V. Skipped in manual PWM | 5 s |
-| — | Battery voltage cannot be detected from Vout (MPPT without `charger.conf::vout_max`). Starts a new sensor calibration | 4 s |
-| — | NTC or MCU temperature > `temp_max` | 5 s |
-| — | Wire-fault guard tripped, see [Output wire-fault protection](../reference/config/limits.md#output-wire-fault-protection) | until `wire-reset` |
+| — | Not PSU mode, no battery voltage known (`charger.conf::vout_max`, `vset` or an earlier detection), and none can be detected from Vout. Starts a new sensor calibration; no `backoff` line is logged | 4 s |
+| `stopAndBackoff` | NTC or MCU temperature > `temp_max`, logged as `Temp … > …°C, shutdown`. A stale temperature reading does not trip | 5 s |
+| `stopAndBackoff` | Wire-fault guard tripped (`wire_protect = 2` only), see [Output wire-fault protection](../reference/config/limits.md#output-wire-fault-protection) | until `wire-reset` or reboot |
 
 ### Reverse current below the trip level
 
@@ -99,31 +111,38 @@ The `Vout-OV` threshold depends on the mode, in this order:
 
 1. An explicit limit from the console command `ovset`: min(`ovset`, Vout max).
 2. PSU mode: setpoint × 1.03 (× 1.5 without `reverse_current_paranoia`), capped at Vout max. The PV simulator uses its
-   open-circuit voltage instead of the setpoint.
-3. Battery mode with a known battery voltage: `Vbat_max` × 1.03 (× 1.5 without `reverse_current_paranoia`), capped at
+   open-circuit voltage instead of the setpoint. After the setpoint is lowered, the old setpoint stays the base until
+   Vout falls inside the new band.
+3. A known battery voltage: `Vbat_max` × 1.03 (× 1.5 without `reverse_current_paranoia`), capped at
    Vout max.
 4. Otherwise Vout max.
 
-If the over-voltage persists for more than 20 s in battery mode, the firmware clears the detected `Vbat_max` and
-detects it again. A `Vbat_max` set with the console command `vset` is kept, and the firmware logs an error instead.
+If `Vout-OV` trips keep recurring with no clean protection pass for more than 20 s (not PSU mode), the firmware clears
+the detected `Vbat_max` and detects it again after a new sensor calibration. A `Vbat_max` set with the console command `vset` is kept, and the firmware logs an error instead.
 
 ### Hardware over-voltage alert
 
 With `board.conf::ina22x_ov` set, the INA226 compares its bus voltage against that limit in hardware and raises its
 ALERT pin. With the MCPWM gate driver, the ALERT interrupt forces the gates off immediately, without waiting for the
 real-time loop. The loop then trips with `hw-OV`. An alert that arrives while the converter is off is discarded, so it
-cannot block the next start. See [`board.conf`](../reference/config/board.md).
+cannot block the next start.
+
+The loop also trips `hw-OV` when the alert cannot be armed or the INA226 has lost its alert configuration, for example
+after an I2C error or a chip reset. Without the MCPWM gate driver the firmware warns at boot that the alert cannot force
+the gates off. See [`board.conf`](../reference/config/board.md).
 
 ## ADC and loop watchdogs
 
-These checks run in the real-time loop whether or not the converter is switching.
+These checks run in the real-time loop whether or not the converter is switching. They stop the converter only when it
+is switching.
 
 | Watchdog | Condition | Action |
 |---|---|---|
 | ADC stall | The ADC reports an error, or no fresh sample for 200 ms outside calibration | Reset the ADC peripherals (at most every 300 ms). After 800 ms of stall: stop with a 16 s backoff. After 60 s: restart the system |
+| ADC reset | A requested ADC reset | Stop during the reset; restart 6 s after it (30 s if the reset failed) |
 | No sample | No sample at all 20 s after boot | Disable the converter and log `Never got a sample! Please check ADC`. After 15 min: restart the system |
-| Loop latency | Sample rate below `sensor.conf::expected_hz` for 3 consecutive low-frequency windows (~3 s each) | Stop with a 4 s backoff |
-| Calibration failure | Sensor calibration fails | Stop with a 4 s backoff |
+| Loop latency | Sample rate below `sensor.conf::expected_hz` for 3 consecutive 3 s windows. Off when `expected_hz` is 0, the default | Stop with a 5 s backoff (100 ms in PSU mode) |
+| Calibration failure | Sensor calibration fails | Hold the start for 4 s (100 ms in PSU mode) |
 
 The latency watchdog ignores manual PWM, the first 2 s after a calibration, and the first samples after boot. A single
 slow window logs a warning without stopping the converter.
@@ -131,20 +150,25 @@ slow window logs a warning without stopping the converter.
 ## Start conditions
 
 While the converter is off, `startBlockReason()` must return no reason before the loop starts it. In MPPT mode the
-low-frequency status line logs the blocking reason as `START blocked: <reason>`. The temperature and supply checks use a margin above their trip level, so the
-converter does not restart right at the threshold:
+low-frequency status line logs the blocking reason as `START blocked: <reason>`, when it changes and at most every 30 s
+otherwise. The temperature and supply checks use a margin above their trip level, so the converter does not restart
+right at the threshold. The table lists the reasons in the order they are checked:
 
 | Reason | Blocks the start while |
 |---|---|
 | `psu-latch` | PSU mode latched off after repeated trips |
+| `conf-save` | A rectifier-calibration result or a `pwr pwm` setting is being saved |
+| `psu-boost-setpoint` | PSU mode, boost: the setpoint is below Vin |
+| `psu-ov-conflict` | PSU mode: the setpoint conflicts with the OV limit |
 | `backoff` | The backoff timer is running |
 | `wire-trip` | The wire-fault guard is tripped |
-| `temp` | NTC or MCU temperature > `temp_max` − 3 °C |
-| `Vin-Vout` | Not in PSU mode: Vin is not at least 1 V above Vout (buck) or below Vout (boost) |
-| `minpulse-M` | A buck start would run the low-side minimum pulse above its ratio limit |
+| `temp` | NTC or MCU temperature > `temp_max` − 3 °C, or no fresh MCU temperature |
+| `Vin-Vout` | Not in PSU mode: a buck needs average Vin > average Vout + 1 V, a boost needs average Vin < average Vout + 1 V |
+| `minpulse-M` | A buck start at the current Vout (or the PSU setpoint, if higher) would run the low-side minimum pulse above its start ratio |
 | `Vout-still-OV` | PSU mode: Vout is still above 98 % of the OV threshold |
 | `supply-UV` | Board supply below 9.5 V |
 | `calibrating` | Sensor calibration is running |
+| `idle profile` | The idle power profile holds the converter off; the loop asks it to leave |
 
 ## Configuration
 
