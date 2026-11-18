@@ -618,6 +618,7 @@ function mqttConnect(url, user, pass){
     for (const dev of devices.values()){
       const L = dev.mqtt.lease;
       if (L.state !== "off" && L.state !== "relay") lease(dev);
+      if (dev.mqtt.firstAt) requestCurve(dev); // a sweep may have ended while the broker was away
     }
     renderAllSoon();
   });

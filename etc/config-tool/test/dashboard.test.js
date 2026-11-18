@@ -271,9 +271,12 @@ test('lease: tele-mqtt 120 after 5 s without telemetry; on-reply; renew every 60
   await settle();
   Dash.flush();
   assert.match(text(window, 'flat', '.rate'), /^MQTT [\d.]+ pt\/s · dropped 3 B$/);
-  // broker reconnect re-leases
+  // broker reconnect re-leases and refetches the curve (a sweep may have ended meanwhile)
+  log(client, 'flat', ['sc: none', 'OK: sweep-curve']); // settle the request from the first lease
+  const nCurve = pubs(client, 'pv/log/flat/cmd').filter(m => m === 'sweep-curve').length;
   client.emit('connect');
   assert.equal(lpubs(client, 'pv/log/flat/cmd').filter(m => m === 'tele-mqtt 120').length, 4);
+  assert.equal(pubs(client, 'pv/log/flat/cmd').filter(m => m === 'sweep-curve').length, nCurve + 1);
   assert.ok(!pubs(client).includes('tele-mqtt 0'));
 });
 
