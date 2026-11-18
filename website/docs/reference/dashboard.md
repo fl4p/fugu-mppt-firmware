@@ -32,6 +32,8 @@ Each converter gets a card, keyed by its hostname:
 - **Log tail and console**: the device console log, including the replies to commands sent from the page,
   and an input line that sends a command to the device over the active link. Both are hidden until the
   **log & console** checkbox in the header is ticked; the page remembers the setting in this browser.
+  The periodic `V=…` status lines and the `sc:` curve dumps are hidden unless the card's **status lines**
+  and **sc: lines** checkboxes are ticked.
 - **Link badges**: one for BLE and one for MQTT.
 - **More info**: a collapsed box under the values with the stream rate and dropped bytes per link, the
   slower telemetry fields (`mcu_temp`, `lag`, `heap`, `heap_min`, lifetime `E`, the `Ro`/`Rc`/`Rb` resistances

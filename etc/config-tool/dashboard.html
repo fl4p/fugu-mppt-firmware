@@ -83,6 +83,8 @@
   .log .err { color:var(--warn); }
   .log .alert { color:var(--warn); }
   .card:not(.show-sc) .log .sc { display:none; }
+  .card:not(.show-st) .log .st { display:none; }
+  .logbar label { white-space:nowrap; }
   form.console { display:flex; gap:6px; }
   body:not(.show-console) form.console, body:not(.show-console) .logbar, body:not(.show-console) .log { display:none; }
   form.console input { flex:1; min-width:0; background:var(--bg); color:var(--fg); border:1px solid var(--line);
@@ -218,6 +220,7 @@ const REPLY = {
   bleReason:  /tele-ble: (.+?)\s*$/,
   stopSweep:  /Stop sweep/,
   sc:         /(?:^|[^A-Za-z0-9_])sc:/,
+  status:     /^V=\d/,
 };
 
 const now = () => Date.now();
@@ -457,7 +460,9 @@ function pushLog(dev, cls, text){
 
 function lineClass(ln){
   let cls = REPLY.ok.test(ln) ? "ok" : REPLY.err.test(ln) ? "err" : "";
-  if (REPLY.sc.test(TD.stripAnsi(ln))) cls += " sc";
+  const plain = TD.stripAnsi(ln);
+  if (REPLY.sc.test(plain)) cls += " sc";
+  else if (REPLY.status.test(plain)) cls += " st";
   return cls.trim();
 }
 
@@ -1009,10 +1014,13 @@ function createCard(dev){
   rc.onclick = () => { if (dev.ble) dev.ble.reconnect(); };
   const lw = el("div", "logwrap");
   const bar = el("div", "logbar");
-  const lab = el("label"); const cb = el("input", "sc-toggle"); cb.type = "checkbox";
-  cb.onchange = () => c.classList.toggle("show-sc", cb.checked);
-  lab.append(cb, document.createTextNode(" show sc: lines"));
-  bar.append(el("span", null, "log"), el("span", "spacer"), lab);
+  const toggle = (cls, text) => {
+    const lab = el("label"); const cb = el("input", cls + "-toggle"); cb.type = "checkbox";
+    cb.onchange = () => c.classList.toggle("show-" + cls, cb.checked);
+    lab.append(cb, document.createTextNode(" " + text));
+    return lab;
+  };
+  bar.append(el("span", null, "log"), el("span", "spacer"), toggle("st", "status lines"), toggle("sc", "sc: lines"));
   const log = el("div", "log");
   const form = el("form", "console");
   const inp = el("input"); inp.placeholder = "console command"; inp.spellcheck = false; inp.autocomplete = "off";

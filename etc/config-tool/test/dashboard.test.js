@@ -422,16 +422,19 @@ test('console: publish over MQTT, history with arrow keys, reply classes, sc lin
   key('ArrowUp'); assert.equal(inp.value, 'status');
   key('ArrowDown'); assert.equal(inp.value, 'heap');
   key('ArrowDown'); assert.equal(inp.value, '');
-  log(client, 'fry', ['OK: status', 'ERR: bogus', 'I (1) main: sc: none']);
+  log(client, 'fry', ['OK: status', 'ERR: bogus', 'I (1) main: sc: none',
+    'V=56.6/25.75 I=1.45/ 3.10A  82.3W 34℃39℃ 1471sps  0㎅/s DCM(H|L|Lm)=1862|2141|2142 st=⇡MPPT,1 lag=861㎲ N=1624379 rssi=-44']);
   Dash.flush();
   const rows = [...c.querySelectorAll('.log div')];
   assert.deepEqual(plain(rows.slice(1, 4).map(r => [r.className, r.textContent])),
     [['sent', '» status'], ['sent', '» heap'], ['sent', '» heap']]);
-  assert.deepEqual(rows.slice(-3).map(r => r.className), ['ok', 'err', 'sc']);
-  assert.equal(c.classList.contains('show-sc'), false);
-  const cb = c.querySelector('input.sc-toggle');
-  cb.checked = true; cb.dispatchEvent(new window.Event('change'));
-  assert.equal(c.classList.contains('show-sc'), true);
+  assert.deepEqual(rows.slice(-4).map(r => r.className), ['ok', 'err', 'sc', 'st']);
+  for (const k of ['sc', 'st']){
+    assert.equal(c.classList.contains('show-' + k), false);
+    const cb = c.querySelector('input.' + k + '-toggle');
+    cb.checked = true; cb.dispatchEvent(new window.Event('change'));
+    assert.equal(c.classList.contains('show-' + k), true);
+  }
 });
 
 test('log keeps 100 rows and tail-follows only at the bottom', async () => {
