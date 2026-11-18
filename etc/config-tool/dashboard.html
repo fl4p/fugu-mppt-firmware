@@ -1142,7 +1142,7 @@ function renderCard(dev){
   else badge(mb, "on", dev.mqtt.teleSeen ? "telemetry (relay)" : "log only");
   const ab = q(dev, ".alerts");
   for (const [src, a] of dev.alerts){
-    let e = ab.querySelector('[data-src="' + src + '"]');
+    let e = [...ab.children].find(x => x.dataset.src === src);
     if (!e){ e = el("span", "badge alert", src); e.dataset.src = src; ab.append(e); }
     badge(e, a.lvl, a.lvl + (a.msg ? ": " + a.msg : "") + (a.t ? " (" + new Date(a.t * 1000).toLocaleString() + ")" : ""));
   }
