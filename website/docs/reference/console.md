@@ -238,7 +238,7 @@ The following commands print help and inspect or drive hardware on the bench.
 | `pwm-dump` | Print the realized PWM frequency, period ticks and comparator positions. |
 | `anaw <pin> <0..255>` *(LEDC builds)* | Arduino `analogWrite` on a pin (drives the pin directly). |
 | `ota-ble …` *(needs `CONFIG_FUGU_WITH_BLE`)* | Device side of the OTA push over BLE; driven by the host tool, see [OTA over BLE](../guide/updating/ota-ble.md). |
-| `vconv [pv\|bat\|set …]` *(needs `CONFIG_FUGU_WITH_VCONV`)* | Inspect or change the virtual converter simulation. |
+| `vconv [pv\|bat\|sun\|set …]` *(needs `CONFIG_FUGU_WITH_VCONV`)* | Inspect or change the virtual converter simulation; `vconv sun` prints the simulated irradiance (see [vconv.conf](config/vconv.md#sun-and-clouds)). |
 
 ## Scripts
 

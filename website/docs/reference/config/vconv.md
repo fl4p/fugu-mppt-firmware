@@ -41,6 +41,52 @@ The file accepts the following keys.
 | `noise_iin`     | A    | float | 0       | Gaussian ADC noise σ on Iin (channel 3)                                     |
 | `noise_ntc`     |      | float | 0       | Gaussian ADC noise σ on the NTC channel                                     |
 | `ntc_v`         |      | float | 0.9     | Constant NTC channel value (25 °C equivalent)                               |
+| `sun_day_s`     | s    | float | 0       | Length of the simulated day; 0 = off (static PV), minimum 1. See [Sun and clouds](#sun-and-clouds) |
+| `sun_night_s`   | s    | float | day/4   | Length of the night after each day                                          |
+| `sun_peak`      |      | float | 1.0     | Clear-sky irradiance at noon, fraction of the `isc`/`voc` conditions (0..1)  |
+| `cloud_rate`    | 1/min | float | 0      | Mean cloud starts per minute of clear sky; 0 = no clouds                    |
+| `cloud_depth`   |      | float | 0.7     | Maximum irradiance dip of a cloud (0..1)                                    |
+| `cloud_len_s`   | s    | float | 20      | Mean cloud duration (1..600)                                                |
+| `cloud_edge_s`  | s    | float | 3       | Time constant of the cloud edges                                            |
+| `sun_seed`      |      | int   | 1       | Cloud random seed                                                           |
+
+## Sun and clouds
+
+With `sun_day_s` > 0 the plant scales the PV curve by an irradiance G between 0 and 1, so the tracker
+sees sunrise, noon, sunset, night and passing clouds. `isc`, `voc` and `pv_k` stay the full-sun
+values.
+
+- **Clear sky.** A day of `sun_day_s` seconds followed by a night of `sun_night_s` seconds, repeating.
+  During the day G_clear = `sun_peak` · sin(π·t/`sun_day_s`)^1.3, a flattened half-sine; at night
+  G_clear = 0.
+- **Clouds.** In clear sky a cloud starts with probability `cloud_rate`/60 per second. Each cloud
+  dips the irradiance by a depth drawn uniformly from 0.3·`cloud_depth` to `cloud_depth` and lasts
+  an exponentially distributed time with mean `cloud_len_s`. The cloud factor follows the dip
+  through a first-order low-pass with time constant `cloud_edge_s`, so edges are soft. A seeded
+  random generator makes a run repeatable for one `sun_seed`.
+- **PV curve.** G = G_clear · cloud factor sets Isc = `isc` · G and
+  Voc = `voc` · (1 + 0.04 · ln G): a string loses about 4 % of its open-circuit voltage per e-fold
+  of irradiance. Below G = 0.001 Voc falls linearly toward zero (floors 0.1 mA and 0.5 V), so the
+  night looks like a dead panel and the input undervoltage protection acts as at dusk.
+
+The model updates 20 times per simulated second and rebuilds the PV curve only when G has changed
+by more than 0.2 %. Over a long run the cloud factor averages about 1 − 0.65 · `cloud_depth` · f,
+where f = r·L / (1 + r·L) is the cloudy share of the time for a start rate r = `cloud_rate`/60 and
+mean duration L = `cloud_len_s`.
+
+A 10-minute day with clouds:
+
+```
+sun_day_s=600
+cloud_rate=4
+cloud_depth=0.7
+cloud_len_s=15
+```
+
+All keys change at runtime with `vconv set <key> <value>`. Switching `sun_day_s` from 0 to a
+positive value starts the day at sunrise, setting `sun_seed` reseeds the clouds and restarts the
+day, and `sun_day_s` 0 restores the full-sun curve. `vconv sun` prints G, G_clear, the cloud factor,
+the time of day and the effective Isc and Voc.
 
 ## Switch-node ring
 
