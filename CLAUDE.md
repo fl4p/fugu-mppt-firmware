@@ -184,6 +184,9 @@ noun-phrase labels ("Temperature", "Float and CV holds", "LFP longevity"), not s
 ("Temperature is the first-order calendar factor", "How much does cycling matter?"); dates, conditions and the finding
 go in the body. No walls of text: split a long study paragraph into a short setup (who tested what), a table when
 3+ comparable conditions have numbers, a list for parallel figures, and a separate paragraph for caveats/limits.
+A generic measurement method and its anonymised results ("board B, 83 µH") go on a published `website/docs/lab/`
+page, linked from the `internals/` or `reference/` page that uses them; that page keeps at most a short summary table.
+Bench-specific steps (which device, host, wiring) go to `doc/lab/`, the capture record to `doc/research/`.
 The production build enforces the mechanical part (`website/src/remark/docs-lint.mjs`; the dev server only warns). Every doc review, by Codex,
 Astra or an agent, includes the criteria "reads as reference documentation, not notes or a transcript" and "no paragraph is a wall of
 text".

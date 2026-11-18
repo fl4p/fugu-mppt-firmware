@@ -17,7 +17,7 @@ This page covers what happens *after* the LS FET turns off at the zero crossing.
 
 ## DCM ring and HF transition ring
 
-The switch node shows two ringing phenomena, and the DCM coil ring is distinct from the HF transition ring:
+The switch node shows two distinct ringing phenomena:
 
 - **HF transition ringing** occurs at *every* HS/LS switching edge. The parasitic loop inductance (trace and
   package, ~10–30 nH) resonates with `C_oss` at tens to hundreds of MHz. The ring lasts a few ns, and snubbers,
@@ -26,8 +26,15 @@ The switch node shows two ringing phenomena, and the DCM coil ring is distinct f
   The main power inductor `L` resonates with the switch-node capacitance `C_sw` (see [LC tank](#lc-tank)), well
   above `f_sw` (39 kHz) but far below the HF transition ring. The ring lasts hundreds of ns to µs.
 
-The lower frequency makes firmware timing relative to the DCM ring feasible: `T_ring/4` spans tens to hundreds of
+Because the DCM ring is much slower, firmware can time events against it: `T_ring/4` spans tens to hundreds of
 PWM ticks (one MCPWM tick is 6.25 ns).
+
+## Waveform
+
+<DcmRingingChart />
+
+The ring starts at 0 V, where the LS turned off, and oscillates around `V_out` while it decays. If the swing
+reaches `V_in + V_f`, the HS body diode clamps it there.
 
 ## LC tank
 
@@ -52,7 +59,7 @@ C_{sw} = n_{HS} \cdot C_{oss,HS} + n_{LS} \cdot C_{oss,LS} + C_{pcb}
 $$
 
 `C_oss` depends on the drain-source voltage. With the node near 0 V, the HS FET sees `V_DS ≈ V_in` and the LS FET
-`V_DS ≈ 0`; over the swing the two move in opposite directions. `C_sw` is therefore an effective value over the
+`V_DS ≈ 0`. Over the swing, the two move in opposite directions. `C_sw` is therefore an effective value over the
 swing, which is what a fit to the ring measures (see
 [Switch-node capacitance](../lab/switch-node-capacitance.md)).
 
@@ -76,19 +83,12 @@ $$
 
 which is within 1 % of `f_r` for `Q ≥ 4`.
 
-## Waveform
-
-<DcmRingingChart />
-
-The ring starts at 0 V, where the LS turned off, and oscillates around `V_out` while it decays. If the swing
-reaches `V_in + V_f`, the HS body diode clamps it there.
-
 ## Ring frequency per board
 
-`C_sw` is per board and depends mostly on how many FETs are paralleled; it is not a universal constant. A `C_sw` of
+`C_sw` differs per board and depends mostly on how many FETs are paralleled, so it isn't a universal constant. A `C_sw` of
 ~100–200 pF, which gives 1.3–2.3 MHz, is roughly an order of magnitude low for any board with paralleled 100 V FETs.
 
-The following table compares three example boards. Row A illustrates that low-`C_sw` case; it is not a measurement.
+The following table compares three example boards. Row A illustrates that low-`C_sw` case and isn't a measurement.
 
 | Board | `L` | `C_sw` | `f_r` | `T_ring/4` |
 |---|--:|--:|--:|--:|

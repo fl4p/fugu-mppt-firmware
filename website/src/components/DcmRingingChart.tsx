@@ -107,15 +107,12 @@ export default function DcmRingingChart(): React.JSX.Element {
       <div className={styles.readout} aria-live="polite">
         {hv && hoverT !== null
           ? <>t = {us(hoverT).toFixed(2)} µs · <span className={styles.keyV}/>v_sw = {hv.v.toFixed(1)} V · <span className={styles.keyI}/>i_L = {hv.i.toFixed(3)} A · {hv.phase}</>
-          : <>Hover or tap the chart to read values.</>}
+          : null}
       </div>
       <figcaption className={styles.caption}>
-        Illustrative, computed from the ideal DCM model, not a measurement: V_in = {VIN} V, V_out = {VOUT} V,
-        L = {L * 1e6} µH, C_sw = {C * 1e9} nF (f_r = {(W0 / 2 / Math.PI / 1e3).toFixed(0)} kHz,
-        √(L/C_sw) = {Z0.toFixed(0)} Ω), f_sw = {FSW / 1e3} kHz, 1.5 A peak, damping Q ≈ {Q} assumed. The ring
-        starts at 0 V and oscillates around V_out, peaking below 2·V_out as it decays; its current amplitude is at most
-        V_out/√(L/C_sw). The overshoot above V_in and undershoot below 0 V at the hard HS edges is the HF
-        transition ring.
+        Illustrative, ideal DCM model: V_in = {VIN} V, V_out = {VOUT} V, L = {L * 1e6} µH, C_sw = {C * 1e9} nF,
+        f_sw = {FSW / 1e3} kHz, {IPK} A peak, Q ≈ {Q}. The ring starts at 0 V and swings around V_out
+        at f_r = {(W0 / 2 / Math.PI / 1e3).toFixed(0)} kHz (C_sw, f_r and Q: see <a href="#lc-tank">LC tank</a>). The spikes at the HS edges are the HF transition ring.
       </figcaption>
       <details className={styles.table}>
         <summary>Key points (table)</summary>
