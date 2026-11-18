@@ -1112,6 +1112,7 @@ function renderCard(dev){
   q(dev, ".host").textContent = dev.host;
   // badges
   const b = dev.ble;
+  q(dev, ".badge.ble").hidden = !b; // no link ever attached: no badge
   if (!b) badge(q(dev, ".badge.ble"), "off", "no BLE link");
   else if (b.state === "on" && b.tele === "on") badge(q(dev, ".badge.ble"), "on", "connected, telemetry on (" + b.name + ")");
   else if (b.state === "on" && b.tele === "refused") badge(q(dev, ".badge.ble"), "refused", b.teleReason);

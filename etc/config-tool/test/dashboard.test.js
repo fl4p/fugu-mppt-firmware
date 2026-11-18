@@ -60,6 +60,7 @@ test('no MQTT URL: no client is created, BLE-only enable sequence works without 
   assert.equal(text(window, 'fbuck', '.vin'), '40.5 V');
   assert.equal(text(window, 'fbuck', '.duty'), '1234');
   assert.equal(card(window, 'fbuck').querySelector('.badge.ble').dataset.state, 'on');
+  assert.equal(card(window, 'fbuck').querySelector('.badge.ble').hidden, false);
   assert.equal(card(window, 'fbuck').querySelector('.badge.mqtt').dataset.state, 'off');
   assert.match(text(window, 'fbuck', '.rate'), /^BLE [\d.]+ pt\/s · dropped 0 B · resyncs 0$/);
 });
@@ -143,6 +144,7 @@ test('cards from pv/log and pv/alert; /cmd echoes ignored; hosts remembered', as
   assert.ok(rows[1].querySelector('span[style*="color"]'));
   assert.equal(rows[2].className, 'ok');
   assert.equal(text(window, 'flat', '.log div'), '[alert bms] cell over-voltage');
+  assert.equal(card(window, 'flat').querySelector('.badge.ble').hidden, true);
   assert.deepEqual(JSON.parse(window.localStorage.getItem('mqtt-known-hosts'))[URL], ['flat', 'fry']);
 });
 
