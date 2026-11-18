@@ -323,7 +323,7 @@
     function stripAnsi(s) { return s.replace(ANSI_RE, ''); }
 
     // --- sweep curve console lines ------------------------------------------------------------
-    //   sc: t=<epoch_s> n=<N> mpp=<W>,<V> sweeping=0|1
+    //   sc: t=<epoch_s> n=<N> mpp=<W>,<V> sweeping=0|1 [flag=0|light land=<W>]
     //   sc: V P V P ...      (repeated)
     //   sc: end   |   sc: none
     const SC_RE = /(?:^|[^A-Za-z0-9_])sc:\s*(.*?)\s*$/;
@@ -346,6 +346,10 @@
             const mpp = (kv.mpp || '').split(',');
             const h = {kind: 'header', t: Number(kv.t), n: Number(kv.n),
                 mpp: {P: scNum(mpp[0]), V: scNum(mpp[1])}, sweeping: kv.sweeping === '1'};
+            if (kv.flag !== undefined) {                          // sweep verdict: '' clean, else the reason
+                h.flag = kv.flag === '0' ? '' : kv.flag;
+                h.land = NUM_RE.test(kv.land || '') ? scNum(kv.land) : NaN;
+            }
             if (!Number.isFinite(h.t) || !Number.isInteger(h.n) || h.n < 0 || mpp.length !== 2 ||
                 !NUM_RE.test(mpp[0]) || !NUM_RE.test(mpp[1])) return {kind: 'invalid', text: body};
             return h;
@@ -376,6 +380,7 @@
             const c = this.cur;
             this.cur = null;
             const curve = {t: c.t, n: c.n, mpp: c.mpp, sweeping: c.sweeping, points: c.points};
+            if (c.flag !== undefined) curve.flag = c.flag, curve.land = c.land;
             if (!reason && c.points.length + c.dropped !== c.n) reason = 'short';
             if (!reason && c.truncated) reason = 'truncated';
             return reason ? {complete: false, curve, reason} : {complete: true, curve};
@@ -387,8 +392,8 @@
             switch (p.kind) {
                 case 'header': {
                     const prev = this.cur ? this._finish('restart') : undefined;
-                    this.cur = {t: p.t, n: p.n, mpp: p.mpp, sweeping: p.sweeping, points: [], dropped: 0,
-                        truncated: false};
+                    this.cur = {t: p.t, n: p.n, mpp: p.mpp, sweeping: p.sweeping, flag: p.flag, land: p.land,
+                        points: [], dropped: 0, truncated: false};
                     return prev;
                 }
                 case 'data':

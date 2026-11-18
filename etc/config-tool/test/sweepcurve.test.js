@@ -109,3 +109,21 @@ test('parseScLine: inf/-inf/nan tokens are non-finite; their pairs are dropped b
   assert.equal(r.complete, true);
   assert.deepEqual(r.curve.points, [{V: 40, P: 100}]);
 });
+
+test('parseScLine: sweep verdict tokens, old headers without them', () => {
+  const h = parseScLine(HDR + ' flag=light land=97.5');
+  assert.equal(h.flag, 'light');
+  assert.equal(h.land, 97.5);
+  const c = parseScLine(HDR + ' flag=0 land=150.0');
+  assert.equal(c.flag, '');
+  assert.equal(c.land, 150);
+  assert.equal('flag' in parseScLine(HDR), false);
+  assert.ok(Number.isNaN(parseScLine(HDR + ' flag=light').land));
+});
+
+test('SweepCurveParser carries the verdict into the curve', () => {
+  const [r] = feedAll([HDR + ' flag=light land=97.5', 'sc: 30 10 35 80 41.25 152.5', 'sc: end']);
+  assert.equal(r.complete, true);
+  assert.equal(r.curve.flag, 'light');
+  assert.equal(r.curve.land, 97.5);
+});

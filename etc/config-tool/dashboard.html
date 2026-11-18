@@ -116,6 +116,7 @@
   svg.chart text, svg.vinchart text { fill:var(--muted); font-size:9px; font-variant-numeric:tabular-nums; }
   svg.chart text.empty { font-size:11px; }
   svg.chart path.curve { fill:none; stroke:var(--series-1); stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
+  svg.chart path.curve.flagged { stroke-opacity:.45; stroke-dasharray:5 3; }
   svg.chart path.recon { fill:none; stroke:var(--series-2); stroke-opacity:.7; stroke-width:1.5; stroke-dasharray:4 3; stroke-linejoin:round; }
   svg.chart path.recon.stale { stroke-opacity:.3; }
   svg.chart path.mpp { fill:var(--series-1); }
@@ -223,6 +224,7 @@ const REPLY = {
   bleState:   /tele-ble: (on|off) \(dropped (\d+) B\)/,
   bleReason:  /tele-ble: (.+?)\s*$/,
   stopSweep:  /Stop sweep/,
+  sweepVerdict: /sweep (?:verified|flagged):/,
   sc:         /(?:^|[^A-Za-z0-9_])sc:/,
   status:     /^V=\d/,
 };
@@ -486,7 +488,7 @@ function onLine(dev, ln, src){
     dev.mqtt.lease.left = 0;
   }
   if ((m = REPLY.bleState.exec(plain)) && dev.ble){ dev.ble.dropped = +m[2]; }
-  if (REPLY.stopSweep.test(plain)) scheduleCurve(dev, CFG.curveDebounceMs);
+  if (REPLY.stopSweep.test(plain) || REPLY.sweepVerdict.test(plain)) scheduleCurve(dev, CFG.curveDebounceMs);
   const r = dev.sc.feed(ln);
   if (r) onCurve(dev, r);
 }
@@ -1363,7 +1365,9 @@ function renderChart(dev){
     base.setAttribute("x1", CH.l); base.setAttribute("x2", CH.w - CH.r);
     base.setAttribute("y1", Y(0)); base.setAttribute("y2", Y(0));
     show(base, true);
-    svg.querySelector("path.curve").setAttribute("d", d(curve));
+    const pc = svg.querySelector("path.curve");
+    pc.setAttribute("d", d(curve));
+    pc.classList.toggle("flagged", !!(dev.curve && dev.curve.flag));
     for (const s of ["path.mpp-halo", "path.mpp"]){
       const c = svg.querySelector(s);
       show(c, !!mpp);
@@ -1387,6 +1391,7 @@ function renderCaption(dev){
     if (c.t > 0) parts.push("sweep " + fmtSweepTime(c.t));
     if (c.mpp.P > 0) parts.push("MPP " + c.mpp.P.toFixed(1) + " W @ " + c.mpp.V.toFixed(1) + " V");
     if (c.sweeping) parts.push("sweeping");
+    else if (c.flag) parts.push("sky changed during sweep");
   } else if (dev.curveNone) parts.push("no sweep recorded");
   if (dev.tele.state === 5) parts.push("sweep in progress");
   if (dev.curveReq) parts.push("loading…");

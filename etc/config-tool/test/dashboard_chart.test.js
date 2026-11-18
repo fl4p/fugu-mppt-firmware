@@ -295,3 +295,27 @@ test('vin chart: last 30 s of Vin, <= 301 vertices, hidden without telemetry', a
   const yo = [...card(window, 'one').querySelectorAll('svg.vinchart g.ylab text')].map(e => parseFloat(e.textContent));
   assert.ok(yo[0] <= 19 && yo.at(-1) >= 21 && yo.at(-1) > yo[0], yo.join());
 });
+
+test('chart: a flagged sweep draws the curve dimmed and says so; the verdict line refetches', async () => {
+  const { window, Dash, client } = await withBroker();
+  log(client, 'fry', ['x']);
+  Dash.flush();
+  const svg = card(window, 'fry').querySelector('svg.chart');
+  const caption = () => card(window, 'fry').querySelector('.chartbar .caption').textContent;
+  const t = Math.floor(Date.now() / 1000);
+  const dev = Dash.devices.get('fry');
+  const deb = dev.curveDebounce;
+  log(client, 'fry', ['I (9) mppt: sweep flagged: landed 452 W vs MPP 780 W (-42 %), scan now']);
+  assert.notEqual(dev.curveDebounce, deb);
+  log(client, 'fry', [`sc: t=${t} n=3 mpp=780.0,64.5 sweeping=0 flag=light land=452.0`,
+    'sc: 70.0 100.0 64.5 780.0 50.0 400.0', 'sc: end']);
+  Dash.flush();
+  assert.equal(svg.querySelector('path.curve').classList.contains('flagged'), true);
+  assert.equal(svg.querySelector('path.mpp').getAttribute('visibility'), 'visible');
+  assert.match(caption(), /MPP 780\.0 W @ 64\.5 V · sky changed during sweep$/);
+
+  log(client, 'fry', [`sc: t=${t + 60} n=2 mpp=470.0,58.0 sweeping=0 flag=0 land=468.0`, 'sc: 70.0 100.0 58.0 470.0', 'sc: end']);
+  Dash.flush();
+  assert.equal(svg.querySelector('path.curve').classList.contains('flagged'), false);
+  assert.doesNotMatch(caption(), /sky changed/);
+});
