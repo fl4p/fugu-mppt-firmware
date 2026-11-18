@@ -523,7 +523,7 @@ public:
         return nullptr;
     }
 
-    static constexpr const char *kIdleBlock = "idle profile";
+    static const char kIdleBlock[]; // one object: callers compare the pointer across translation units
 
     [[nodiscard]] bool startCondition() const { return startBlockReason() == nullptr; }
 

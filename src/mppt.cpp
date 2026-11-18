@@ -13,6 +13,7 @@
 constexpr auto withDebugFields = false;
 
 uint32_t g_teleMinPointUs = kTeleMinPointUs; // idle profile, `pwr tele`
+const char MpptController::kIdleBlock[] = "idle profile";
 
 // Controller output -> duty slew rate [normalized duty per second]. The loop gain of a controller
 // is Kp * this, so keep it named rather than as a literal buried in the update path.

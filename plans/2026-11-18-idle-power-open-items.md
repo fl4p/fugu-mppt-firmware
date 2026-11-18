@@ -78,6 +78,20 @@ Cause confirmed: with a sweep armed, `MpptController::update()` returned at its 
   (backstop timing). Still to do: the bench run on bench-139c (procedure in the session report), then
   `idle_cpu_mhz` back to 80 on fry.
 
+### Bench result and second cause (2026-11-18)
+
+Bench-139c, mock profile, `pwr vin` to move PV voltage. With the first version of the fix the start
+in `st=START,1` came only through the backstop (`idle profile off (start, backstop)`, 1.1 s after
+Vin rose), in the forced and the automatic path; `st=START,0` used the primary path. Cause: the idle
+block reason was a `static constexpr const char *` compared by pointer, and with
+`-fno-merge-constants` the literal has a different address per translation unit, so the comparison
+in `mppt.cpp` never matched. `kIdleBlock` is now one array object defined in `mppt.cpp`. After that,
+automatic path in `st=START,1`: `START blocked: idle profile` -> `idle profile off (start)` 0.2 s
+later -> `start released, 302 samples in 200 ms at 160 MHz` -> `Converter enabled`.
+
+Still open: not run on a converter. fry and flat have `idle_cpu_mhz=0`; setting it back to 80 on fry
+needs an update to a main containing this fix and a watched dawn.
+
 ## 2. Other open points of the idle profile
 
 - **flat sample rate at 80 MHz**: 1076 of 1478 samples/s. Cause not measured; from code reading the
