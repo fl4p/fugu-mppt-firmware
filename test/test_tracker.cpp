@@ -375,9 +375,9 @@ struct ScanRig {
         for (int i = 0; i < 6; ++i) x[i] = g[i] * light;
         pv.setPvString(6, x, nullptr, 0.45f);
     }
-    // the sweep's current samples, Voc down to the battery
+    // the sweep's samples, Voc down to the battery
     void sweep() {
-        for (float v = 80; v > 29; v -= 0.5f) s.sweepSample(pv.pvCurrent(v));
+        for (float v = 80; v > 29; v -= 0.5f) s.sweepSample(v, v * pv.pvCurrent(v));
     }
     [[nodiscard]] float vin() const { return 26.f * 2047 / d; }
     [[nodiscard]] float p() const { return vin() * pv.pvCurrent(vin()); }
@@ -523,11 +523,11 @@ void test_scan_probe_anchor_on_vin() {
 void test_scan_learns_vmpp_ratio() {
     PeakScan s{};
     s.onSweep(80.f, 0);
-    s.onSweepMpp(62.4f);
+    s.onSweepMpp(62.4f, 0, 1);
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.78f, s.kVmp);
-    s.onSweepMpp(74.f);
+    s.onSweepMpp(74.f, 0, 1);
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.78f, s.kVmp);
-    s.onSweepMpp(45.f);
+    s.onSweepMpp(45.f, 0, 1);
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.78f, s.kVmp);
 }
 
@@ -540,4 +540,122 @@ void test_scan_timeout_returns_to_start() {
     TEST_ASSERT_EQUAL_INT(4, r->ended);
     TEST_ASSERT_EQUAL_INT((int) dStart, (int) r->s.d0);
     TEST_ASSERT_TRUE(r->s.pRef <= 0);
+}
+
+// ---- substring count learned from the sweeps ----
+
+// One sweep from Voc to 29 V in 0.25 V steps through PeakScan's learner. light(v): irradiance factor (a cloud during
+// the sweep), noise: relative power noise amplitude (deterministic).
+template<class L>
+static void learnSweep(PeakScan &s, const VirtualConverter &pv, L light, float noise = 0) {
+    uint32_t r = 12345;
+    float pm = 0, vm = 0;
+    s.onSweep(pv.pvCurrent(80.f) > 0 ? 80.f : 79.f, 0);
+    for (float v = 80; v > 29; v -= 0.25f) {
+        r = r * 1664525u + 1013904223u;
+        const float p = v * pv.pvCurrent(v) * light(v) * (1 + noise * ((float) (r >> 8) / 8388608.f - 1));
+        s.sweepSample(v, p);
+        if (p > pm) pm = p, vm = v;
+    }
+    s.onSweepMpp(vm, pm, 10);
+}
+static void learnSweep(PeakScan &s, const VirtualConverter &pv) { learnSweep(s, pv, [](float) { return 1.f; }); }
+
+// Synthetic sweep: power piecewise linear through (v, p) points, Vin falling.
+static void learnCurve(PeakScan &s, std::initializer_list<std::pair<float, float>> pts) {
+    s.onSweep(pts.begin()->first, 0);
+    float pm = 0, vm = 0;
+    for (auto a = pts.begin(), b = a + 1; b != pts.end(); ++a, ++b)
+        for (float v = a->first; v > b->first; v -= 0.25f) {
+            const float p = b->second + (a->second - b->second) * (v - b->first) / (a->first - b->first);
+            s.sweepSample(v, p);
+            if (p > pm) pm = p, vm = v;
+        }
+    s.onSweepMpp(vm, pm, 10);
+}
+
+static std::unique_ptr<VirtualConverter> fryString(float g4, float g5) {
+    auto pv = std::make_unique<VirtualConverter>();
+    pv->setPv(4.f, 80.f, 0.86f);
+    pv->setPvExact(true);
+    const float g[6] = {1, 1, 1, 1, g4, g5};
+    pv->setPvString(6, g, nullptr, 0.45f);
+    return pv;
+}
+
+// One or two shaded substrings (exact series string): two maxima per sweep, the lower at 5 or 4 of 6 shares. Learned
+// on the second sweep, not on the first.
+void test_scan_learns_substrings() {
+    for (float g4: {1.f, 0.45f}) {
+        auto pv = fryString(g4, g4 < 1 ? 0.45f : 0.6f);
+        PeakScan s{};
+        learnSweep(s, *pv);
+        TEST_ASSERT_EQUAL_INT(6, s.cand);
+        TEST_ASSERT_EQUAL_INT(0, s.n);
+        learnSweep(s, *pv);
+        TEST_ASSERT_EQUAL_INT(6, s.n);
+    }
+}
+
+// Unshaded: one maximum, never learns. Known-bad shapes of the field sweeps: a small bump near the battery (below
+// 30 % of the MPP), and a start transient near Voc (above 0.93 Voc) ahead of a hot string's MPP at 0.72 Voc, which
+// would put the MPP at 5.3 of 6 shares.
+void test_scan_unshaded_never_learns() {
+    auto pv = fryString(1, 1);
+    PeakScan s{};
+    for (int i = 0; i < 4; ++i) learnSweep(s, *pv);
+    TEST_ASSERT_EQUAL_INT(0, s.cand);
+    for (int i = 0; i < 2; ++i) learnCurve(s, {{80, 0}, {68, 200}, {36, 30}, {33, 45}, {29, 30}});
+    TEST_ASSERT_EQUAL_INT(0, s.cand);
+    for (int i = 0; i < 2; ++i) learnCurve(s, {{80, 0}, {77, 100}, {76, 90}, {57.6f, 300}, {29, 150}});
+    TEST_ASSERT_EQUAL_INT(0, s.cand);
+    TEST_ASSERT_EQUAL_INT(0, s.n);
+}
+
+// Known-bad: +-3 % power noise on an unshaded sweep stays below the 8 % dip; +-15 % gives more than 6 maxima, which
+// discards the sweep. A cloud during one sweep fakes a lower maximum that fits 6, but the next (clear) sweep has one
+// maximum, and a cloud in the sweep after that does not pair with the first.
+void test_scan_noise_and_cloud_do_not_learn() {
+    auto pv = fryString(1, 1);
+    PeakScan s{};
+    for (int i = 0; i < 3; ++i) learnSweep(s, *pv, [](float) { return 1.f; }, 0.03f);
+    TEST_ASSERT_EQUAL_INT(0, s.cand);
+    for (int i = 0; i < 3; ++i) learnSweep(s, *pv, [](float) { return 1.f; }, 0.15f);
+    TEST_ASSERT_TRUE(s.nc > 6);
+    TEST_ASSERT_EQUAL_INT(0, s.n);
+    auto cloud = [](float v) { return v < 50 && v > 46 ? 0.6f : 1.f; };
+    learnSweep(s, *pv, cloud);
+    TEST_ASSERT_EQUAL_INT(6, s.cand); // a cloud alone looks like shade
+    learnSweep(s, *pv);
+    learnSweep(s, *pv, cloud);
+    TEST_ASSERT_EQUAL_INT(0, s.n);
+}
+
+// Known-bad spacing: a lower maximum at 3.6 of 6 shares fits 5 substrings, the next sweep's at 3.0 fits 6: no
+// agreement, nothing learned; a maximum that fits no n (5.65 of 6) stays unlearned however often; two sweeps at
+// 3.0 then learn 6. Voc 80 V: one share of 6 = 10.93 V.
+void test_scan_mismatched_spacing_stays_unlearned() {
+    PeakScan s{};
+    auto two = [&s](float vLow) { learnCurve(s, {{80, 0}, {70, 200}, {vLow + 4, 120}, {vLow, 190}, {29, 100}}); };
+    two(3.6f * 10.93f);
+    TEST_ASSERT_EQUAL_INT(5, s.cand);
+    two(3.0f * 10.93f);
+    TEST_ASSERT_EQUAL_INT(6, s.cand);
+    TEST_ASSERT_EQUAL_INT(0, s.n);
+    two(5.65f * 10.93f);
+    two(5.65f * 10.93f);
+    TEST_ASSERT_EQUAL_INT(1, s.cand);
+    TEST_ASSERT_EQUAL_INT(0, s.n);
+    two(3.0f * 10.93f);
+    two(3.0f * 10.93f);
+    TEST_ASSERT_EQUAL_INT(6, s.n);
+}
+
+// A dim sweep (MPP below pMin) does not count: two shaded sweeps under 10 W learn nothing.
+void test_scan_dim_sweep_ignored() {
+    auto pv = fryString(1, 0.6f);
+    PeakScan s{};
+    for (int i = 0; i < 2; ++i) learnSweep(s, *pv, [](float) { return 0.02f; });
+    TEST_ASSERT_EQUAL_INT(0, s.n);
+    TEST_ASSERT_EQUAL_INT(0, s.cand);
 }

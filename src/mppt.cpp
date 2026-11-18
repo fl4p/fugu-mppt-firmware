@@ -247,7 +247,7 @@ void MpptController::update() {
             // capture MPP during sweep, this will be our target afterward.
             // Ignore sub-sweepMinPower() samples so a marginal-light sweep can't "peak" at a
             // near-max-duty phantom (dawn cold-start) and strand the converter there.
-            if (scan.n && sensors.Vin->ewm.avg.get() > 1) scan.sweepSample(power_smooth / sensors.Vin->ewm.avg.get());
+            scan.sweepSample(sensors.Vin->ewm.avg.get(), power_smooth);
             if (power_smooth > maxPowerPoint.power && power_smooth >= sweepMinPower()) {
                 maxPowerPoint.power = power_smooth;
                 maxPowerPoint.dutyCycle = converter.getCtrlOnPwmCnt();
@@ -533,7 +533,6 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
 
     psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
-    scan.n = std::min<uint8_t>(6, trackerConf.getByte("pv_substrings", 0));
     scan.interval = (uint16_t) std::clamp(trackerConf.getLong("scan_interval", 300), 0L, 65535L);
     scan.trigger = trackerConf.getByte("scan_trigger", 1);
 

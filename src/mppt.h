@@ -1412,7 +1412,7 @@ public:
         }
 
         targetDutyCycle = maxPowerPoint.dutyCycle;
-        scan.onSweepMpp(maxPowerPoint.voltage);
+        scan.onSweepMpp(maxPowerPoint.voltage, maxPowerPoint.power, 25 * sweepMinPower());
 
         auto z = outZ.finish((uint32_t) (wallClockUs() / 1000000));
         if (z.n)

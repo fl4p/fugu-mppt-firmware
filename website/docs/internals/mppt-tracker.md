@@ -21,8 +21,8 @@ Tracking runs in three phases:
 
 A new global sweep runs every 30 minutes so the tracker does not stay on a local maximum, which happens with
 partially shaded strings. A sweep takes 20–60 s, depending on the loop rate. Sweeping too often or too slowly
-costs yield. With `tracker.conf::pv_substrings` > 1 on a buck, a [partial peak scan](#partial-peak-scan) checks the other
-local maxima of a shaded string in about 1–3 s, every 5 minutes and after a sustained change.
+costs yield. On a buck, once two sweeps have shown a shaded string, a [partial peak scan](#partial-peak-scan) checks the
+other local maxima in about 1–3 s, every 5 minutes and after a sustained change.
 
 In low light, power changes between P&O steps stay below the tracker's thresholds, so P&O cannot follow an
 MPP that moves while the light changes (see [Perturb & observe](#perturb--observe)). If the last sweep
@@ -206,9 +206,10 @@ which weaker substrings also conduct sits higher: the stronger substrings carry 
 one, above their own MPP voltage. Two 60-cell modules in series have $n = 6$. P&O climbs the maximum it starts
 on and stays there until the next global sweep, even when another maximum is higher.
 
-`PeakScan` (`src/peak_scan.h`) probes one voltage per candidate maximum. It needs
-`tracker.conf::pv_substrings` > 1 and a buck converter (no-op on boost). It runs in tracking mode only (no
-limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV-sim mode), above 5 % of `limits.conf::p_max`:
+`PeakScan` (`src/peak_scan.h`) probes one voltage per candidate maximum. It needs the number of substrings $n$,
+which it learns from the global sweeps (below), and a buck converter (no-op on boost). It runs in tracking mode
+only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV-sim mode), above 5 % of
+`limits.conf::p_max`:
 
 1. Candidates: the unshaded substring share is estimated as $s_0 = k\,V_{oc}/n$, with $V_{oc}$ the input
    voltage at the start of the last global sweep (converter off) and $k = V_{mpp}/V_{oc}$ taken from the sweep's
@@ -232,6 +233,35 @@ limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV-sim mode), ab
    continues where it was, in the same mode.
 
 The log shows each scan as `scan: P <P0>-><P0'> W at <V>V, <n> probes, best x<ratio> at <V>V[, moving]`.
+
+### Substring count
+
+The sweep runs from $V_{oc}$ down to the battery and passes every maximum. It records the local maxima of the
+smoothed power below $0.93\,V_{oc}$ that have a dip of 8 % on both sides (up to 6; a sweep with more is noise and
+does not count). After the sweep, the maxima of at least 30 % of the sweep's MPP are taken; the first one (highest
+voltage) is the full-string maximum, the others are lower maxima. The candidate count is the largest $n$ in 2..6
+for which every lower maximum lies between $m - 0.25$ and $m + 0.5$ shares of $0.82\,V_{oc}/n$ for a whole
+$m < n$. The window is asymmetric because a shaded maximum sits above its $m$ unshaded shares (see above).
+
+| Sweep | Result |
+|---|---|
+| One maximum (unshaded, or the shade passed) | count 0 |
+| Lower maxima that no $n$ fits | count 1 |
+| MPP below 5 % of `limits.conf::p_max` | ignored |
+| Same count 2..6 as the previous counted sweep | learned |
+
+Two sweeps in a row must agree, so a cloud edge during one sweep is not enough. The learned $n$ only grows, and it
+lives in RAM: after a reboot it is learned again, with no flash write. Until then the scan is off; an unshaded
+string never learns and never scans. The log shows `scan: <n> bypass-diode substrings learned from the sweeps`.
+
+Sweeps run every 30 minutes, so the first shade after a boot costs at least one sweep period without scans. A
+shadow that comes and goes between two sweeps is not learned from.
+
+The rule cannot tell 3 from 6 when every lower maximum sits on an even multiple of the 6-share grid, and it
+takes the larger count. A string of 3 substrings can therefore learn 6; the scan then also probes the odd
+multiples, which costs time but misses no maximum.
+
+### Schedule and cost
 
 A scan starts every `scan_interval` seconds (default 300) after the last scan or sweep, and 60 s after a scan
 whose best probe came within 6 % of the reference: under clouds the ratio between two maxima changes, and a
@@ -278,7 +308,6 @@ The tracker reads these keys from `tracker.conf`:
 |----------------------------------------------------------------------|---------|------------------------------------------------------|
 | [`sweep_speed`](../reference/config/tracker.md)                      | 4.0     | Sweep speed; scales the per-tick cap and the limit-tracking gain (min 0.1) |
 | [`target_duty_cycle`](../reference/config/tracker.md)                | 0.0     | Fixed duty fraction; > 0 disables sweep and P&O      |
-| [`pv_substrings`](../reference/config/tracker.md)                    | 0       | Bypass-diode substrings in series; > 1 enables the partial peak scan |
 | [`scan_interval`](../reference/config/tracker.md)                    | 300     | Partial peak scan period [s]; 0 = triggered only     |
 | [`scan_trigger`](../reference/config/tracker.md)                     | 1       | Also scan after a sustained Vin or power change      |
 
