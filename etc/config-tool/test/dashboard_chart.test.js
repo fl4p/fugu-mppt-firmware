@@ -16,15 +16,15 @@ async function withBroker() {
   return { ...env, client: env.window._mqttClients[0] };
 }
 
-test('relay-fed card fetches the sweep curve once 5 s after discovery', async () => {
+test('relay-fed card fetches the sweep curve and leases once 5 s after discovery', async () => {
   const { window, Dash, client } = await withBroker();
   let t = 1_763_400_000_000;
   window.Date.now = () => t;
   client.emit('message', 'pv/tele/fry', mqttMsg([{ fields: { P: 1 }, ts: t }]));
   t += 5000; Dash.tick();
-  assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['sweep-curve']);
+  assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['tele-mqtt 120', 'sweep-curve']);
   t += 5000; Dash.tick();
-  assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['sweep-curve']);
+  assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['tele-mqtt 120', 'sweep-curve']);
 });
 
 test('chart: empty state, curve path, MPP ring, live dot, caption, refresh', async () => {

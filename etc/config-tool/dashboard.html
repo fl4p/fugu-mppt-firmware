@@ -177,7 +177,7 @@ const NUS_TELE = "6e400005-b5a3-f393-e0a9-e50e24dcca9e";
 const LS = { url:"mqtt-url", user:"mqtt-user", pass:"mqtt-pass", remember:"mqtt-remember", hosts:"mqtt-known-hosts",
              console:"dash-console" };
 const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
-const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, PROBE_MS = 60000, CURVE_RETRIES = 2;
+const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, SILENT_MS = 15000, PROBE_MS = 60000, CURVE_RETRIES = 2;
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000] };
 const LOG_KEEP = 200, LOG_SHOW = 100;
 // live P-V reconstruction: bin width V, decay s, faded after ms, bin cap
@@ -192,6 +192,7 @@ const REPLY = {
   mqttOn:     /tele-mqtt: on, (\d+) s left, dropped (\d+) B/,
   mqttOff:    /tele-mqtt: off\b/,
   mqttReason: /tele-mqtt: (.+?)\s*$/,
+  mqttRetry:  /mqtt not connected|clock not set|low heap|out of memory/,
   bleState:   /tele-ble: (on|off) \(dropped (\d+) B\)/,
   bleReason:  /tele-ble: (.+?)\s*$/,
   stopSweep:  /Stop sweep/,
@@ -247,7 +248,7 @@ class Device {
     this.ble = null;
     this.mqtt = { table:new Map(), split:lineSplitter(ln => onLine(this, ln, "mqtt")),
                   firstAt:0, teleSeen:false, teleAt:0, errors:0,
-                  lease:{ state:"idle", reason:"", left:0, dropped:0, at:0, busy:false, clockTried:false } };
+                  lease:{ state:"off", reason:"", left:0, dropped:0, at:0, busy:false, retry:false, clockTried:false, silentAt:0 } };
     this.tele = {};
     this.lastTs = 0; this.lastAt = 0;
     this.intervals = new Ring(50);
@@ -498,7 +499,7 @@ function mqttConnect(url, user, pass){
     for (const h of knownHosts(url)) c.publish("pv/log/" + h + "/cmd", "hostname", { qos:0 }, () => {});
     for (const dev of devices.values()){
       const L = dev.mqtt.lease;
-      if (L.state === "on" || L.state === "pending") lease(dev);
+      if (L.state !== "off" && L.state !== "relay") lease(dev);
     }
     renderAllSoon();
   });
@@ -548,7 +549,12 @@ function ingestTele(host, bytes, src = "mqtt"){
 }
 
 function leaseWanted(dev){
-  return mqttReady() && !bleTeleOn(dev) && dev.mqtt.lease.state !== "unsupported";
+  return mqttReady() && !bleTeleOn(dev) && dev.mqtt.lease.state !== "relay";
+}
+
+// Periodic retry: running lease, missing reply, transient refusal.
+function leaseRetries(L){
+  return L.state === "on" || L.state === "no-reply" || (L.state === "refused" && L.retry);
 }
 
 // `tele-mqtt 120` over MQTT; reply decides the card state.
@@ -556,11 +562,12 @@ async function lease(dev){
   const L = dev.mqtt.lease;
   if (L.busy || !mqttReady()) return;
   L.busy = true; L.at = now();
-  if (L.state === "idle") L.state = "pending";
+  if (L.state === "off") L.state = "pending";
   try {
     const r = await sendCommand(dev, "tele-mqtt " + LEASE_S, { via:"mqtt", timeoutMs:5000 });
     const plain = r.lines.map(TD.stripAnsi);
     const on = plain.map(l => REPLY.mqttOn.exec(l)).find(Boolean);
+    L.retry = false;
     if (r.ok){
       L.state = "on"; L.reason = "";
       if (on){ L.left = +on[1]; L.dropped = +on[2]; L.leftAt = now(); }
@@ -570,19 +577,23 @@ async function lease(dev){
         const m = REPLY.mqttReason.exec(l);
         if (m && !REPLY.mqttOn.test(l) && !REPLY.mqttOff.test(l)) reason = m[1];
       }
-      if (!reason || plain.some(l => REPLY.unknown.test(l))){
-        L.state = "unsupported"; L.reason = "firmware without tele-mqtt (relay-fed)";
+      if (plain.some(l => REPLY.unknown.test(l))){
+        L.state = "relay"; L.reason = "firmware without tele-mqtt (relay-fed)";
       } else if (/clock/.test(reason) && !L.clockTried){
         L.clockTried = true;
         L.busy = false;
         await send(dev, "set-time " + now(), "mqtt");
-        return lease(dev);
+        return await lease(dev);
       } else {
-        L.state = "refused"; L.reason = reason;
+        L.state = "refused"; L.reason = reason || "tele-mqtt refused"; L.retry = REPLY.mqttRetry.test(reason);
       }
     }
   } catch(e){
-    L.state = "no-reply"; L.reason = e.message === "timeout" ? "no reply to tele-mqtt" : e.message;
+    if ((e.lines || []).some(l => REPLY.unknown.test(TD.stripAnsi(l)))){
+      L.state = "relay"; L.reason = "firmware without tele-mqtt (relay-fed)";
+    } else {
+      L.state = "no-reply"; L.reason = e.message === "timeout" ? "no reply to tele-mqtt" : e.message;
+    }
   } finally {
     L.busy = false;
     scheduleRender(dev);
@@ -926,8 +937,10 @@ function renderMore(dev, L){
   const r = ["Ro", "Rc", "Rb"].filter(k => Number.isFinite(t[k])).map(k => k + " " + fmt(t[k], 0) + " mΩ");
   if (r.length) f.push(r.join(" · "));
   if (L.state === "on") f.push("lease on, " + leaseLeft(L) + " s left");
-  else if (L.state === "refused" || L.state === "no-reply") f.push("lease refused: " + L.reason);
-  else if (dev.mqtt.teleSeen) f.push("lease relay-fed");
+  else if (L.state === "refused") f.push("lease refused: " + L.reason);
+  else if (L.state === "no-reply") f.push("lease no reply");
+  else if (L.state === "relay") f.push("lease relay-fed");
+  else if (L.state === "pending") f.push("lease pending");
   const info = q(dev, "details.more .info");
   info.replaceChildren(...f.map(x => el("span", null, x)));
 }
@@ -950,7 +963,7 @@ function renderCard(dev){
   if (!mqttReady() || !dev.mqtt.firstAt) badge(mb, "off", mqttReady() ? "not seen on MQTT" : "MQTT not connected");
   else if (L.state === "on") badge(mb, "on", "telemetry lease, " + leaseLeft(L) + " s left, dropped " + L.dropped + " B");
   else if (L.state === "refused" || L.state === "no-reply") badge(mb, "refused", L.reason);
-  else if (L.state === "unsupported") badge(mb, "on", L.reason);
+  else if (L.state === "relay") badge(mb, "on", L.reason);
   else if (L.state === "pending") badge(mb, "pending", "leasing telemetry");
   else badge(mb, "on", dev.mqtt.teleSeen ? "telemetry (relay)" : "log only");
   q(dev, ".mode").textContent = t.state !== undefined ? (MODES[t.state] || ("state " + t.state)) : "";
@@ -971,7 +984,8 @@ function renderCard(dev){
   if (dev.mqtt.teleSeen){
     parts.push(L.state === "on"
       ? "MQTT " + rateOf(dev, "mqtt").toFixed(1) + " pt/s · dropped " + L.dropped + " B"
-      : "MQTT relay " + rateOf(dev, "mqtt").toFixed(1) + " pt/s");
+      : "MQTT relay " + rateOf(dev, "mqtt").toFixed(1) + " pt/s"
+        + (L.state === "refused" ? " · lease refused" : L.state === "no-reply" ? " · lease no reply" : ""));
   }
   q(dev, ".rate").textContent = parts.join("  |  ");
   if (q(dev, "details.more").open) renderMore(dev, L);
@@ -1185,11 +1199,13 @@ function tick(){
     if (dev.recon.size && reconAge(dev, t)) scheduleRender(dev);
     const L = dev.mqtt.lease;
     if (leaseWanted(dev) && !L.busy){
-      if (L.state === "idle" && dev.mqtt.firstAt && t - dev.mqtt.firstAt >= LEASE_WAIT_MS){
-        if (!dev.mqtt.teleSeen) lease(dev);
-        else L.state = "relay";
+      if (L.state === "off" && dev.mqtt.firstAt && t - dev.mqtt.firstAt >= LEASE_WAIT_MS){
+        lease(dev);
         if (!dev.curve && !dev.curveNone) requestCurve(dev);
-      } else if ((L.state === "on" || L.state === "no-reply") && t - L.at >= RENEW_MS){
+      } else if (dev.mqtt.teleSeen && t - dev.mqtt.teleAt >= SILENT_MS && t - L.silentAt >= SILENT_MS){
+        L.silentAt = t;
+        lease(dev);
+      } else if (leaseRetries(L) && t - L.at >= RENEW_MS){
         lease(dev);
       }
     }
@@ -1202,7 +1218,7 @@ function onVisible(){
   if (document.visibilityState !== "visible") return;
   for (const dev of devices.values()){
     const L = dev.mqtt.lease;
-    if (L.state === "on" && leaseWanted(dev) && now() - L.at >= 5000) lease(dev);
+    if (leaseRetries(L) && leaseWanted(dev) && now() - L.at >= 5000) lease(dev);
   }
 }
 

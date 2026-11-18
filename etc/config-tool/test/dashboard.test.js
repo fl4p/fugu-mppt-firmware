@@ -120,7 +120,7 @@ test('cards from pv/log and pv/alert; /cmd echoes ignored; hosts remembered', as
   assert.deepEqual(JSON.parse(window.localStorage.getItem('mqtt-known-hosts'))[URL], ['flat', 'fry']);
 });
 
-test('pv/tele message renders KPIs; kWh above 1000 Wh; mode name; relay without a lease', async () => {
+test('pv/tele message renders KPIs; kWh above 1000 Wh; mode name; lease despite a flowing stream', async () => {
   const { window, Dash, client } = await withBroker();
   const c = clock(window);
   const st = { syms: new Map() };
@@ -157,10 +157,43 @@ test('pv/tele message renders KPIs; kWh above 1000 Wh; mode name; relay without 
   assert.match(info, /heap 100 KB/);
   assert.match(info, /heap_min 80 KB/);
   assert.match(info, /E 123\.456 kWh/);
-  assert.match(info, /lease relay-fed/);
-  // telemetry within 5 s of discovery: never leased
+  assert.doesNotMatch(info, /lease/);
+  // a stream already flowing (another client's lease) still gets our own lease
   c.add(6000); Dash.tick(); await settle();
-  assert.deepEqual(lpubs(client, 'pv/log/fry/cmd'), []);
+  assert.deepEqual(lpubs(client, 'pv/log/fry/cmd'), ['tele-mqtt 120']);
+  log(client, 'fry', ['tele-mqtt: on, 117 s left, dropped 0 B', 'OK: tele-mqtt 120']);
+  await settle(); Dash.flush();
+  assert.match(more.querySelector('.info').textContent, /lease on, 117 s left/);
+  assert.match(text(window, 'fry', '.rate'), /^MQTT [\d.]+ pt\/s · dropped 0 B$/);
+});
+
+test('lease: stream silent for 15 s re-leases in states on and no-reply, at most once per 15 s', async () => {
+  const { window, Dash, client } = await withBroker();
+  const c = clock(window);
+  client.emit('message', 'pv/tele/fry', mqttMsg([{ fields: { P: 1 }, ts: c.get() }]));
+  c.add(5000); Dash.tick();
+  log(client, 'fry', ['tele-mqtt: on, 120 s left, dropped 0 B', 'OK: tele-mqtt 120']);
+  await settle();
+  assert.equal(Dash.devices.get('fry').mqtt.lease.state, 'on');
+  c.add(9000); Dash.tick();
+  assert.equal(lpubs(client, 'pv/log/fry/cmd').length, 1, 'not silent for 15 s yet');
+  // no reply to the silence lease
+  window.setTimeout = ((st) => (fn, ms, ...a) => st(fn, ms === 5000 ? 0 : ms, ...a))(window.setTimeout);
+  c.add(1000); Dash.tick();
+  assert.equal(lpubs(client, 'pv/log/fry/cmd').length, 2);
+  await settle(5);
+  assert.equal(Dash.devices.get('fry').mqtt.lease.state, 'no-reply');
+  c.add(5000); Dash.tick(); await settle(5);
+  assert.equal(lpubs(client, 'pv/log/fry/cmd').length, 2, 'once per 15 s');
+  c.add(10000); Dash.tick();
+  assert.equal(lpubs(client, 'pv/log/fry/cmd').length, 3);
+  assert.ok(lpubs(client, 'pv/log/fry/cmd').every(m => m === 'tele-mqtt 120'));
+  await settle(5);
+  Dash.flush();
+  assert.match(text(window, 'fry', '.rate'), /lease no reply$/);
+  const more = card(window, 'fry').querySelector('details.more');
+  more.open = true; await settle(5); Dash.flush();
+  assert.match(more.querySelector('.info').textContent, /lease no reply/);
 });
 
 test('lease: tele-mqtt 120 after 5 s without telemetry; on-reply; renew every 60 s; re-lease on reconnect', async () => {
@@ -217,17 +250,66 @@ test('lease: clock refusal sends set-time once and retries', async () => {
 test('lease: firmware without tele-mqtt is treated as relay-fed; other reasons shown', async () => {
   const { window, Dash, client } = await withBroker();
   const c = clock(window);
-  log(client, 'old', ['x']); log(client, 'busy', ['x']);
+  log(client, 'old', ['x']); log(client, 'busy', ['x']); log(client, 'off', ['x']);
+  client.emit('message', 'pv/tele/old', mqttMsg([{ fields: { P: 1 }, ts: c.get() }]));
+  client.emit('message', 'pv/tele/off', mqttMsg([{ fields: { P: 1 }, ts: c.get() }]));
   c.add(5000); Dash.tick();
   log(client, 'old', ['E (5) main: Command not found: tele-mqtt', 'ERR: tele-mqtt 120']);
   log(client, 'busy', ['W (5) main: tele-mqtt: low heap', 'ERR: tele-mqtt 120']);
+  log(client, 'off', ['W (5) main: tele-mqtt: disabled', 'ERR: tele-mqtt 120']);
   await settle();
   Dash.flush();
   assert.equal(card(window, 'old').querySelector('.badge.mqtt').dataset.state, 'on');
   assert.match(card(window, 'old').querySelector('.badge.mqtt').title, /relay-fed/);
   assert.equal(card(window, 'busy').querySelector('.badge.mqtt').title, 'low heap');
+  assert.equal(Dash.devices.get('old').mqtt.lease.state, 'relay');
+  const more = card(window, 'old').querySelector('details.more');
+  more.open = true; await settle(5); Dash.flush();
+  assert.match(more.querySelector('.info').textContent, /lease relay-fed/);
+  // stream silent for 15 s: relay never re-leases, disabled does (silence rule), low heap retries at 60 s
+  c.add(16000); Dash.tick();
+  assert.equal(lpubs(client, 'pv/log/old/cmd').length, 1, 'relay: no lease on silence');
+  assert.equal(lpubs(client, 'pv/log/off/cmd').length, 2, 'disabled: silence re-runs the lease');
+  assert.equal(lpubs(client, 'pv/log/busy/cmd').length, 1);
+  log(client, 'off', ['W (6) main: tele-mqtt: disabled', 'ERR: tele-mqtt 120']);
+  await settle();
+  c.add(45000); Dash.tick();
+  assert.equal(lpubs(client, 'pv/log/busy/cmd').length, 2, 'low heap retried after 60 s');
+  log(client, 'busy', ['tele-mqtt: on, 120 s left, dropped 0 B', 'OK: tele-mqtt 120']);
+  await settle();
   c.add(120000); Dash.tick();
-  assert.equal(lpubs(client, 'pv/log/old/cmd').length, 1, 'unsupported is not retried');
+  assert.equal(lpubs(client, 'pv/log/old/cmd').length, 1, 'relay is not retried');
+  assert.ok(!pubs(client, 'pv/log/old/cmd').includes('tele-mqtt 0'));
+});
+
+test('lease: disabled is not retried without telemetry; Command not found while streaming -> relay, no renewals', async () => {
+  const { window, Dash, client } = await withBroker();
+  const c = clock(window);
+  log(client, 'off', ['x']);
+  c.add(5000); Dash.tick();
+  log(client, 'off', ['W (5) main: tele-mqtt: disabled', 'ERR: tele-mqtt 120']);
+  await settle();
+  c.add(300000); Dash.tick();
+  assert.equal(lpubs(client, 'pv/log/off/cmd').length, 1);
+  Dash.flush();
+  assert.equal(card(window, 'off').querySelector('.badge.mqtt').title, 'disabled');
+  const more = card(window, 'off').querySelector('details.more');
+  more.open = true; await settle(5); Dash.flush();
+  assert.match(more.querySelector('.info').textContent, /lease refused: disabled/);
+  // relay-fed device: stream flowing, then 'Command not found'
+  client.emit('message', 'pv/tele/rl', mqttMsg([{ fields: { P: 1 }, ts: c.get() }]));
+  c.add(5000); Dash.tick();
+  assert.deepEqual(lpubs(client, 'pv/log/rl/cmd'), ['tele-mqtt 120']);
+  log(client, 'rl', ['E (5) main: Command not found: tele-mqtt', 'ERR: tele-mqtt 120']);
+  await settle();
+  for (let i = 0; i < 10; i++){
+    c.add(30000); Dash.tick();
+    client.emit('message', 'pv/tele/rl', mqttMsg([{ fields: { P: 2 + i }, ts: c.get() }]));
+  }
+  client.emit('connect');
+  assert.deepEqual(lpubs(client, 'pv/log/rl/cmd').filter(m => m !== 'hostname'), ['tele-mqtt 120']);
+  Dash.flush();
+  assert.match(text(window, 'rl', '.rate'), /^MQTT relay /);
 });
 
 test('lease: no reply shows no-reply on the badge', async () => {

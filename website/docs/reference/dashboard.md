@@ -70,7 +70,7 @@ a device has both links, BLE carries telemetry and commands, and the page does n
 |---------|------------------------|
 | `set-time <epoch_ms>` | After a BLE connect, and over MQTT when a lease is refused because the clock is not set. |
 | `tele-ble 1` | After a BLE connect, to start the BLE telemetry stream. |
-| `tele-mqtt 120` | Over MQTT, about 5 s after a device first appears without relay telemetry. The page renews the lease every 60 s while the tab is open, and once more when the tab becomes visible again. |
+| `tele-mqtt 120` | Over MQTT, about 5 s after a device first appears, also when its telemetry already arrives (another client's lease can expire at any time). The page renews the lease every 60 s while the tab is open, on a broker reconnect, and once more when the tab becomes visible again. When telemetry had been arriving and stops for 15 s, the page requests the lease again, at most once per 15 s. Devices without the command are not asked again. |
 | `sweep-curve` | On connect, after each sweep, and on the refresh button. Up to two retries, 4 s timeout each. |
 
 See [Console commands](console.md) for the replies.
@@ -87,15 +87,15 @@ Hover a badge for its reason. The badge colour shows the state:
 | BLE | off | No BLE link, or disconnected. A **Reconnect** button appears on the card. |
 | MQTT | on | Telemetry lease running (seconds left and dropped bytes in the tooltip), telemetry from a relay, a device without `tele-mqtt` (relay-fed), or log only. |
 | MQTT | pending | Requesting a lease. |
-| MQTT | refused | `tele-mqtt` returned an error (reason in the tooltip), or the device did not reply. The page retries a missing reply every 60 s. |
+| MQTT | refused | `tele-mqtt` returned an error (reason in the tooltip), or the device did not reply. The page retries every 60 s after a missing reply or a transient error (`mqtt not connected`, `clock not set`, `low heap`, `out of memory`), not after other errors such as `disabled`. |
 | MQTT | off | Broker not connected, or the device has not been seen on the broker. |
 
 Without telemetry, a card shows the log and the sweep curve but no live values. The MQTT tooltip then tells why:
 
 - "log only": the device logs to the broker, but no telemetry has arrived on `pv/tele/<hostname>` and no lease is
   requested yet, for example in the first seconds after the device appears.
-- "firmware without tele-mqtt (relay-fed)": the device answered `tele-mqtt` with `Unknown command`. Live values
-  appear only once a relay publishes its `pv/tele/<hostname>` topic.
+- "firmware without tele-mqtt (relay-fed)": the device answered `tele-mqtt` with `Unknown command` or `Command not
+  found`. Live values appear only once a relay publishes its `pv/tele/<hostname>` topic.
 - A `tele-mqtt` error (MQTT refused): the reason from the device, for example `low heap`, or UDP telemetry running the text wire (`tele.conf binary=0`). The page sets the clock itself when the reason is an unset clock.
 
 ## Security
