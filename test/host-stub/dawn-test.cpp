@@ -88,21 +88,25 @@ static void test_dawn_high_voc_panel_only_yields_a_few_watts() {
 }
 
 // Integration check: rules OUT sensor calibration as the dawn blocker. startSweep() triggers a
-// calibration that must clear  ewm.std*|avg| <= maxStddev (vin maxStddev=1.8) to start. ewm.std is
-// a NORMALISED variance (~(dx/avg)^2, see statmath.h::EWM::add), so the product ~ dx^2/avg actually
-// SHRINKS at high Voc — fry's high-voltage string passes more easily, not less. Drive the real EWM
-// over the dawn ramp + generous 0.1V noise and confirm the gate passes with huge margin.
+// calibration that must clear  sqrt(sum(d^2) / 2n) <= maxStddev (vin maxStddev=1.8 V, successive
+// differences d, sampling.h::calibNoiseSd) to start. Dawn ramp + generous 0.1V noise must pass.
 static void test_dawn_calibration_not_the_blocker() {
     printf("test_dawn_calibration_not_the_blocker\n");
     const float maxStddev = 1.8f;                 // sensor_setup.cpp vin calibrationConstraints
-    EWM<false, float> e{kSpan};
+    double d2 = 0, last = NAN;
+    int n = 0;
     unsigned seed = 2026;
     auto rnd = [&] { seed = seed * 1103515245u + 12345u; return ((seed >> 16) & 0x7fff) / 32767.f * 2 - 1; };
     float v = 65.0f;                               // worst case: highest Voc (06:30), still ramping
-    for (int i = 0; i < kSps * 60; ++i) { e.add(v + 0.1f * rnd()); v += 0.031f / kSps; }
-    float gate = e.std.get() * std::fabs(e.avg.get());
+    for (int i = 0; i < kSps * 60; ++i) {
+        float x = v + 0.1f * rnd();
+        if (!std::isnan(last)) { d2 += (x - last) * (x - last); ++n; }
+        last = x;
+        v += 0.031f / kSps;
+    }
+    float gate = sqrtf(d2 / (2.f * n));
     CHECK(gate < maxStddev, "calibration gate should pass on the dawn ramp");
-    printf("  calib gate std*|avg|=%.4f < %.1f -> calibration ruled out as the blocker\n", gate, maxStddev);
+    printf("  calib gate stddev=%.4f V < %.1f -> calibration ruled out as the blocker\n", gate, maxStddev);
 }
 
 int main() {

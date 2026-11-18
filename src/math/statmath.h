@@ -119,7 +119,7 @@ public:
         if (!meanVar) last_x = x;
     }
 
-    inline const float_t &nstddev() const { return sqrt(std.get()); }
+    inline float_t nstddev() const { return sqrt(std.get()); }
 
     inline const float_t &nvar() const { return std.get(); }
 };

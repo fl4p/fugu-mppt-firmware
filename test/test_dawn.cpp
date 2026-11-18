@@ -69,14 +69,18 @@ void test_dawn_vin_gate_clears_fast_and_stays_open() {
 }
 
 // Rules OUT sensor calibration as the dawn blocker. startSweep() triggers a calibration that must
-// clear  ewm.std*|avg| <= maxStddev (vin maxStddev=1.8, sensor_setup.cpp). ewm.std is a NORMALISED
-// variance (~(dx/avg)^2, statmath.h::EWM::add), so the product ~ dx^2/avg shrinks at high Voc —
-// fry's high-voltage string passes more easily, not less. Driven on the real Sensor EWM.
+// clear  calibNoiseSd() <= maxStddev (vin maxStddev=1.8 V, sensor_setup.cpp) over the sensor's samples.
 void test_dawn_calibration_not_the_blocker() {
     VirtualSensor vin([] { return 0.f; }, kSpan, "vin", 'V');
     float v = 65.0f;                              // worst case: highest Voc (06:30), still ramping
-    for (int i = 0; i < kSps * 60; ++i) { vin.add_sample(v); v += 0.031f / kSps; }
-    float gate = vin.ewm.std.get() * std::fabs(vin.ewm.avg.get());
+    float d2 = 0;
+    uint16_t n = 0;
+    for (int i = 0; i < kSps * 60; ++i) {
+        vin.add_sample(v);
+        v += 0.031f / kSps;
+        if (std::isfinite(vin.previous) && n < UINT16_MAX) { d2 += (vin.last - vin.previous) * (vin.last - vin.previous); ++n; }
+    }
+    float gate = ADC_Sampler::calibNoiseSd(d2, n);
     TEST_ASSERT_TRUE_MESSAGE(gate < 1.8f, "calibration gate should pass on the dawn ramp");
 }
 
