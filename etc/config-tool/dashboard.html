@@ -1223,7 +1223,7 @@ function createChart(dev){
   sb.onclick = () => { send(dev, "sweep").catch(e => pushLog(dev, "err", e.message)); scheduleRender(dev); };
   const rb = el("button", "refresh", "↻");
   rb.title = "fetch the last sweep curve";
-  rb.onclick = () => { requestCurve(dev); scheduleRender(dev); };
+  rb.onclick = () => { if (requestCurve(dev)) dev.pTop = 1; scheduleRender(dev); };
   bar.append(el("span", "caption"), el("span", "spacer"), sb, rb);
   const kb = el("div", "chartkeys"); kb.append(...keys);
   const svg = svgEl("svg", { viewBox:`0 0 ${CH.w} ${CH.h}`, role:"img", "aria-label":"power over input voltage" }, "chart");
