@@ -133,11 +133,10 @@ test('chart: live P-V reconstruction bins Vin, decays toward new P, keeps and fa
   assert.ok(card(window, 'fry').querySelector('.chartkeys .k-recon'));
   assert.equal(card(window, 'fry').querySelector('.chartkeys .k-trace'), null);
 
-  // 3 min later a lower P at 41 V pulls the bin most of the way down: 60 + 90 * exp(-dt / 60 s)
-  const b41 = d.recon.get(Math.round(41 / 0.25)), dt = t + 180000 - b41.ts;
+  // 3 min later a lower P at 41 V replaces the bin's value
+  const b41 = d.recon.get(Math.round(41 / 0.25));
   t += 180000; tele(41, 60);
-  assert.ok(Math.abs(b41.P - (60 + 90 * Math.exp(-dt / 60000))) < 1e-6, String(b41.P));
-  assert.ok(b41.P < 65);
+  assert.equal(b41.P, 60);
   Dash.flush();
   assert.equal(verts()[1][1], +d.chartScale.Y(b41.P).toFixed(1));
 

@@ -181,7 +181,7 @@ const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, PROBE_MS = 60000, C
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000] };
 const LOG_KEEP = 200, LOG_SHOW = 100;
 // live P-V reconstruction: bin width V, decay s, faded after ms, bin cap
-const RECON = { bin:0.25, tau:60, staleMs:600000, max:400 };
+const RECON = { bin:0.25, staleMs:600000, max:400 };
 
 // Device reply patterns (contract with src/cli.cpp)
 const REPLY = {
@@ -310,7 +310,7 @@ function ingest(dev, p, src){
   return true;
 }
 
-// Binned P-V curve from the live stream: per-bin time-decayed P (tau RECON.tau).
+// Binned P-V curve from the live stream: the newest sample in a bin replaces its value.
 function reconAdd(dev, v, p, ts, at){
   const k = Math.round(v / RECON.bin);
   let b = dev.recon.get(k);
@@ -322,7 +322,7 @@ function reconAdd(dev, v, p, ts, at){
     }
     dev.recon.set(k, b = { V:k * RECON.bin, P:p, ts, at });
   } else {
-    b.P = p + (b.P - p) * Math.exp(-Math.max(0, ts - b.ts) / 1000 / RECON.tau);
+    b.P = p;
     if (ts > b.ts) b.ts = ts;
   }
   b.at = at; dev.reconVer++;
