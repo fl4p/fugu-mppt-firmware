@@ -132,16 +132,21 @@ void test_meter_persistent_state() {
         FlashValueStore<PersistentState> st{fn};
         TEST_ASSERT_TRUE(st.update(ref));
     }
-    FlashValueStore<PersistentState> st2{fn};
+    // gated like SolarEnergyMeter::flash: similar within 5 Wh, one write per 2 min
+    FlashValueStore<PersistentState> st2{fn, [](const PersistentState &a, const PersistentState &b) {
+        return std::abs(a.totalEnergy - b.totalEnergy) < 5;
+    }, 1000 * 60 * 2};
     TEST_ASSERT_TRUE(st2.load(true));
     TEST_ASSERT_EQUAL_FLOAT(312.5f, DailyEnergyMeter::sanePinMax(st2.getFlashValue().todayPinMax));
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 4.25f, st2.getFlashValue().todayEnergy);
 
-    // a small change is gated by similar() and the write interval; force writes it anyway
     ref.totalEnergy += 1.0;
-    TEST_ASSERT_FALSE(st2.update(ref));
+    TEST_ASSERT_FALSE(st2.update(ref));       // similar
+    TEST_ASSERT_TRUE(st2.update(ref, true));  // forced
+    ref.totalEnergy += 10.0;
+    TEST_ASSERT_FALSE(st2.update(ref));       // write interval
     TEST_ASSERT_TRUE(st2.update(ref, true));
     FlashValueStore<PersistentState> st3{fn};
     TEST_ASSERT_TRUE(st3.load(true));
-    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 124.5, st3.getFlashValue().totalEnergy);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 134.5, st3.getFlashValue().totalEnergy);
 }
