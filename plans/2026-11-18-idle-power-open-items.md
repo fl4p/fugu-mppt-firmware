@@ -92,6 +92,17 @@ later -> `start released, 302 samples in 200 ms at 160 MHz` -> `Converter enable
 Still open: not run on a converter. fry and flat have `idle_cpu_mhz=0`; setting it back to 80 on fry
 needs an update to a main containing this fix and a watched dawn.
 
+### Converter test in progress (fry, started 2026-11-18 10:45 UTC)
+
+At Fab's request fry was updated to the fleet image `fry-brk1-685-gc9078ee4` (clean main with the fix,
+`sdkconfig.fleet`) with `board.conf::idle_cpu_mhz=80`. flat runs the same image with `idle_cpu_mhz=0`.
+Expected in fry's log: at dusk `idle profile: cpu 80 MHz, sample rate 512/512`; at dawn
+`START blocked: idle profile` for well under a second, `idle profile off (start)`,
+`start released, N samples in M ms at 160 MHz`, `Converter enabled`. `(start, backstop)` instead of
+`(start)` means an RT path still misses the wake. **If `START blocked: idle profile` persists with Vin
+above Vout: `set-config board.conf idle_cpu_mhz 0` and `restart` on fry.** Dawn on fry was about
+07:21 UTC on 11-18. Result: not yet known.
+
 ## 2. Other open points of the idle profile
 
 - **flat sample rate at 80 MHz**: 1076 of 1478 samples/s. Cause not measured; from code reading the
