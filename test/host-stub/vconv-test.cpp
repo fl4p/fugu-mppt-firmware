@@ -541,14 +541,14 @@ void testN_shim_wiring() {
     shim.update_pwm(1, 515);
     EXPECT(g_vconv.getPwm().pwmCtrl == 490 && g_vconv.getPwm().pwmRect == 25);
 
-    // 3a: direction<0 quirk. Reset pwmCtrl=500 first, then EN written before IN.
+    // 3a: direction<0 order (buck.h): EN written before IN. Reset pwmCtrl=500 first.
     g_vconv.setPwm(mkPwm(500, 25));
-    shim.update_pwm(1, 515);    // LS = 515 - 500 = 15
+    shim.update_pwm(1, 515);    // LS = 515 - 500 = 15 until the HS write
     EXPECT(g_vconv.getPwm().pwmCtrl == 500 && g_vconv.getPwm().pwmRect == 15);
 
-    // 3b: HS catches up; pwmRect stays at 15
+    // 3b: HS catches up; LS follows the EN total: 515 - 490 = 25
     shim.update_pwm(0, 490);
-    EXPECT(g_vconv.getPwm().pwmCtrl == 490 && g_vconv.getPwm().pwmRect == 15);
+    EXPECT(g_vconv.getPwm().pwmCtrl == 490 && g_vconv.getPwm().pwmRect == 25);
 
     // 4: HiLi reset update_pwm(1, 0) -> pwmRect = 0
     shim.update_pwm(1, 0);

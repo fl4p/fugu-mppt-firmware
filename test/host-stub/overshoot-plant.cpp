@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
     VirtualConverter p;
     p.setPv(100.f, kVin * 1.0001f, 0.999f);
     p.setPvBlocking(true);
-    p.setPassives(10e-3f, C, L);
+    p.setPassives(10.f, C, L); // stiff: the plant moves Vin within the cycle, setVin only resets its start
     p.setPwmMax(kPmax), p.setPwmFreq(kFreq);
     p.setVin(kVin), p.setVout(kVbat);
     p.setBat(kVbat, kRbat);

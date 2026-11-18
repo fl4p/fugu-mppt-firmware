@@ -26,7 +26,7 @@ struct Pt {
 void setup(VirtualConverter &p, const PlantBoard *b, float L) {
     p.setPv(1e-6f, 500.f, 0.8f);
     p.setPvBlocking(true);
-    p.setPassives(470e-6f, 470e-6f, L);
+    p.setPassives(10.f, 470e-6f, L); // stiff Vin (bench source): the plant moves Vin within the cycle
     if (b) {
         p.setRing(b->ringC() * b->lPlant / L, b->ringQ);
         p.setRingNode(b->ringV, b->ringCexp, b->ringCt);

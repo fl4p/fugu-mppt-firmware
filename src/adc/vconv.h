@@ -72,7 +72,7 @@ public:
             // keeps the plant clock in sync with any wall-clock-driven controller logic (capped so a
             // gross stall can't become a multi-ms catch-up spike).
             if (ticks > kMaxCatchupTicks) ticks = kMaxCatchupTicks;
-            const float dt = 1.0f / (float) adcFreq_;
+            const float dt = 1e-6f * (float) (1000000u / std::max<uint32_t>(adcFreq_, 1)); // timer period, whole us
             g_vconv.stepSeconds(dt * (float) ticks, 39000);
         }
         return ticks != 0;

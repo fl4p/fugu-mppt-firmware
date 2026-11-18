@@ -224,6 +224,7 @@ public:
     [[nodiscard]] float getVout() const { return vOut_; }
     // per-cycle Vout maximum since the last call
     float takeVoutMax() { float m = vOutMax_; vOutMax_ = vOut_; return m; }
+    [[nodiscard]] uint32_t vinClamps() const { return vInClamps_; } // cycles Vin hit its safety bound
     [[nodiscard]] float getIL()   const { return iLEnd_; }
     [[nodiscard]] float getILsOff() const { return iLsOff_; } // buck: coil current at LS turn-off (HS off: at its end)
     [[nodiscard]] float getIsc()  const { return pv_.isc; }
@@ -261,7 +262,7 @@ public:
         else if (ch == 1) pwm_.pwmRect = 0;
     }
 
-    // Advance the model by dt_s seconds. Without prior pwmFreq, falls back.
+    // Advance the model by dt_s seconds, carrying the sub-cycle remainder. Without prior pwmFreq, falls back.
     void stepSeconds(float dt_s, uint32_t pwmFreqFallback);
 
 private:
@@ -269,7 +270,7 @@ private:
 
     PvModel pv_;
     SunModel sun_;
-    float isc0_ = 8.0f, voc0_ = 40.0f, sunG_ = 1.0f, sunAcc_ = 0.0f;
+    float isc0_ = 8.0f, voc0_ = 40.0f, sunG_ = 1.0f, sunAcc_ = 0.0f, cycAcc_ = 0.0f;
     void applySun(float g);
     static constexpr uint8_t kPvSubMax = 6;
 public:
@@ -299,6 +300,7 @@ private:
     float vIn_   = 0.0f;
     float vOut_  = 0.0f;
     float vOutMax_ = 0.0f;
+    uint32_t vInClamps_ = 0;
     float iLEnd_ = 0.0f, iLsOff_ = 0.0f;
     PwmState pwm_{};
     float iInAvg_  = 0.0f;

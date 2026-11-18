@@ -137,11 +137,27 @@ void VirtualConverter::stepOneCycle(float T) {
         return;
     }
 
-    // L-C_out loop: pass 1 at the old V_out predicts the end V_out, pass 2 reruns the cycle from the same coil
-    // state at the mid-cycle V_out. The charges are weighted (q1 + 2 q2)/3, which makes V_out exact to (w0 T)^3
-    // and removes the midpoint's (w0 T)^2/12 frequency error. One pass at the old V_out is forward Euler there
-    // and gains energy every cycle (open battery + synchronous LS: runaway LC ring).
-    const float v0 = vOut_, iL0 = iLEnd_, iPk0 = iPk_;
+    // L-C_out and L-C_in loops: pass 1 at the old V_out/V_in predicts their end values, pass 2 reruns the cycle
+    // from the same coil state at the mid-cycle V_out/V_in. The charges are weighted (q1 + 2 q2)/3, which makes
+    // V_out exact to (w0 T)^3 and removes the midpoint's (w0 T)^2/12 frequency error. One pass at the old voltages
+    // is forward Euler there and gains energy every cycle (open battery + synchronous LS: runaway LC ring).
+    const float v0 = vOut_, vi0 = vIn_, iL0 = iLEnd_, iPk0 = iPk_;
+    // V_out: backward-Euler in r_bat, unconditionally stable for any r_bat (short-circuit case):
+    //   V_out_new = (V_out + T·I_out_avg/C_out + a·V_bat) / (1 + a),   a = T/(R_bat·C_out)
+    // V_in: the PV current is linearized at the cycle start and taken implicit (backward Euler); explicit, a stiff
+    // source (bench PSU, k -> 1: T G / C_in > 2) rings or settles where I_pv(V_in) != I_in. Above Voc the panel
+    // diode sinks what the HS body diode pumps back (curve slope at Voc), implicit for the same reason.
+    const float ipv0 = pvBlocking_ ? std::max(0.f, pvCurrent(vi0)) : pvCurrent(vi0);
+    const float g = std::max(0.0f, (ipv0 - pvCurrent(vi0 + 0.01f)) * 100.0f); // -dI_pv/dV
+    const float hIn = T * invCin_ / (1.0f + g * T * invCin_);
+    auto vinNext = [&](float iIn) {
+        float v = vi0 + (ipv0 - iIn) * hIn;
+        if (!pvBlocking_ && v > pv_.voc) {
+            const float k = T * invCin_ * pv_.isc * pv_.alpha / pv_.voc;
+            v = (v + k * pv_.voc) / (1.0f + k);
+        }
+        return std::max(0.0f, v);
+    };
     float qOut1 = 0.0f, qIn1 = 0.0f;
     for (int pass = 0; pass < 2; ++pass) {
         if (boost_) stepOneCycleBoost(T);
@@ -149,31 +165,20 @@ void VirtualConverter::stepOneCycle(float T) {
         if (pass) break;
         qOut1 = iOutAvg_, qIn1 = iInAvg_;
         const float vPred = std::max(0.0f, (v0 + (T * iOutAvg_) * invCout_ + aOut_ * vBatEff) * inv1pAout_);
-        vOut_ = 0.5f * (v0 + vPred), iLEnd_ = iL0, iPk_ = iPk0;
+        vOut_ = 0.5f * (v0 + vPred), vIn_ = 0.5f * (vi0 + vinNext(iInAvg_)), iLEnd_ = iL0, iPk_ = iPk0;
     }
     vOut_ = v0;
     iOutAvg_ = (qOut1 + 2.0f * iOutAvg_) * (1.0f / 3.0f);
     iInAvg_ = (qIn1 + 2.0f * iInAvg_) * (1.0f / 3.0f);
 
-    // Source/sink + cap dynamics. V_in: forward-Euler (PV+C_in time constant is
-    // bounded). V_out: backward-Euler in r_bat — unconditionally stable, lets r_bat go
-    // arbitrarily small without crossing the T/(R·C)=2 cliff (short-circuit case).
-    //   V_out_new = (V_out + T·I_out_avg/C_out + a·V_bat) / (1 + a),   a = T/(R_bat·C_out)
-    const float Ipv = pvBlocking_ ? std::max(0.f, pvCurrent(vIn_)) : pvCurrent(vIn_);
-
-    vIn_ += (Ipv - iInAvg_) * T * invCin_;
-    // above Voc the panel diode sinks what the HS body diode pumps back (curve slope at Voc), implicit:
-    // a stiff panel's slope would make the explicit step unstable
-    if (!pvBlocking_ && vIn_ > pv_.voc) {
-        const float k = T * invCin_ * pv_.isc * pv_.alpha / pv_.voc;
-        vIn_ = (vIn_ + k * pv_.voc) / (1.0f + k);
-    }
+    vIn_ = vinNext(iInAvg_);
     vOut_ = (vOut_ + (T * iOutAvg_) * invCout_ + aOut_ * vBatEff) * inv1pAout_;
     if (vOut_ > vOutMax_) vOutMax_ = vOut_;
 
-    if (vIn_ < 0.0f) vIn_ = 0.0f;
-    const float vInMax = pv_.voc * 1.05f;
-    if (vIn_ > vInMax) vIn_ = vInMax;
+    // Safety bound only: a sinking panel stays near Voc on its own; a blocking source (open backflow switch)
+    // has C_in integrate the pumped-back charge until the firmware's Vin OVP trips
+    const float vInMax = pvBlocking_ ? std::max(200.0f, 2.0f * pv_.voc) : pv_.voc * 1.05f;
+    if (vIn_ > vInMax) vIn_ = vInMax, ++vInClamps_;
     // The two-pass step above leaves a slight numerical damping of the undamped L-C_out ring, ~(w0 T)^4/24 per
     // cycle (w0 = 1/sqrt(L C_out)); the single-pass forward-Euler step it replaced grew it instead.
     if (vOut_ < 0.0f) vOut_ = 0.0f;
@@ -183,11 +188,11 @@ void VirtualConverter::stepOneCycle(float T) {
     // headroom: V_out legitimately sits well above both on this topology.
     float vOutMax = std::max(vbat_ * 2.0f, pv_.voc * 2.0f);
     // Boost: buck.h caps duty at pwmCtrlMax = 0.9*driverPwmMax, so the ideal ratio reaches 10, and
-    // vIn_ is itself allowed up to 1.05*voc — a LEGITIMATE operating point is therefore 10.5*voc.
+    // vIn_ is itself allowed up to 1.05*voc (blocking source: above) — a LEGITIMATE operating point is therefore 10.5*voc.
     // Anything tighter silently pins the plant so it stops responding to duty, which makes a Vout
     // loop look stable when it is not. 12x leaves margin over that; keep it in step with
     // MaxBoostRatio / pwmCtrlMax in buck.h.
-    if (boost_) vOutMax = std::max(vOutMax, pv_.voc * 12.0f);
+    if (boost_) vOutMax = std::max(vOutMax, std::max(pv_.voc, vIn_) * 12.0f);
     if (vOut_ > vOutMax) vOut_ = vOutMax;
 }
 
@@ -470,7 +475,9 @@ void VirtualConverter::stepSeconds(float dt_s, uint32_t pwmFreqFallback) {
     if (freq < 1000) freq = 39000;
     const float T = 1.0f / (float) freq;
 
-    long n = std::lround(dt_s / T);
-    if (n < 1) n = 1;
+    // carry the sub-cycle remainder so plant time tracks the caller's clock
+    cycAcc_ += dt_s * (float) freq;
+    const long n = std::lround(cycAcc_);
+    cycAcc_ -= (float) n;
     for (long i = 0; i < n; ++i) stepOneCycle(T);
 }

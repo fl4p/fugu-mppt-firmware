@@ -34,24 +34,28 @@ public:
     //   ch=0 (HS):     duty = pwmCtrl              -> HS on-count = duty
     //   ch=1 EnLogic:  duty = pwmCtrl + pwmRect    -> LS on-count = duty - pwmCtrl
     //   ch=1 HiLi reset: duty = 0                  -> LS on-count = 0
-    // The shim subtracts the last-set HS count for ch=1 (works for both modes).
+    // ch=1 stores the EN total and LS follows it on every HS write too, so either write order works.
     void update_pwm(int channel, uint32_t duty) {
-        if (channel == 1) {
-            uint32_t hs = g_vconv.getPwm().pwmCtrl;
-            g_vconv.setPwmCount(1, duty > hs ? duty - hs : 0);
-        } else {
-            g_vconv.setPwmCount((uint8_t) channel, duty);
-        }
+        if (channel == 1) en_ = duty;
+        else g_vconv.setPwmCount((uint8_t) channel, duty);
+        const uint32_t hs = g_vconv.getPwm().pwmCtrl;
+        if (channel <= 1 && en_ != kNoEn) g_vconv.setPwmCount(1, en_ > hs ? en_ - hs : 0);
     }
 
     // LEDC: set duty with hpoint (HiLi path). `duty` is the on-count directly;
     // hpoint just shifts where in the period the pulse sits and doesn't change
     // the duration. The plant places LS strictly after HS, so hpoint is ignored.
     void update_pwm(int channel, uint32_t /*hpoint*/, uint32_t duty) {
+        if (channel == 1) en_ = kNoEn;
         g_vconv.setPwmCount((uint8_t) channel, duty);
     }
 
     void stop(int channel, uint8_t /*idleLevel*/) {
+        if (channel == 1) en_ = kNoEn;
         g_vconv.stopChannel((uint8_t) channel);
     }
+
+private:
+    static constexpr uint32_t kNoEn = UINT32_MAX; // LS count set directly (HiLi / stopped)
+    uint32_t en_ = kNoEn;
 };
