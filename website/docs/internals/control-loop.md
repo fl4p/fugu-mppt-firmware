@@ -43,7 +43,7 @@ flowchart TD
   sync --> x3([next sample])
 ```
 
-The protection step and its trip conditions are described in [Protection](protection.md).
+[Protection](protection.md) describes the protection step and its trip conditions.
 
 ## Limiters
 
