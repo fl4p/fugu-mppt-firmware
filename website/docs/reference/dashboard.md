@@ -52,7 +52,14 @@ Then do one or both of the following:
 - Click **+ Add BLE device** and pick a converter in the browser's chooser. Repeat for each converter.
 
 The page remembers the broker URL and user. Where the browser supports `navigator.bluetooth.getDevices()`, devices
-allowed earlier reappear after a reload with a **Reconnect** button, so no new chooser click is needed.
+allowed earlier reappear after a reload. The page tries one connection to each `fugu-*` device without a click; when
+that fails, or the browser requires a click, the card shows a **Reconnect** button instead.
+
+The page also keeps a snapshot of up to 16 converters (the 16 seen most recently) in the browser's `localStorage`:
+hostname, links seen, the last telemetry values, the last sweep curve and the BLE device name. After a reload these
+cards appear at once, greyed, with the age of the values, until live data arrives; on connect the page asks each saved
+host on the broker for its `hostname`. The **×** on a card removes the card and its snapshot. Log lines, live curve
+bins and credentials are not part of the snapshot.
 
 ## Transports
 
@@ -104,7 +111,7 @@ Without telemetry, a card shows the log and the sweep curve but no live values. 
 :::caution
 With **remember** ticked next to the password field, the broker password is stored in plain text in the browser's
 `localStorage` for the page's origin. Unticked (the default), the password stays in memory for the session only, and
-a stored password is removed. The URL and user are always stored. The dashboard keeps its password under its own
+a stored password is removed. The URL and user are always stored, as are the device snapshots (no credentials). The dashboard keeps its password under its own
 keys, separate from the configuration editor's.
 
 The hosted copy shares its `github.io` origin with every other project page on that host, and script on any of those

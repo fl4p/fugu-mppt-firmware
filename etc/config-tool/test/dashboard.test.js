@@ -510,16 +510,52 @@ test('BLE link loss: 3 backoff reconnects, then a Reconnect button that works', 
   assert.equal(btn.style.display, 'none');
 });
 
-test('getDevices restores granted devices as placeholder cards', async () => {
+test('getDevices: one silent connect per fugu device; a throwing connect leaves the Reconnect button', async () => {
   const bt = makeFakeBluetooth();
-  bt.granted.push(makeFakeBleDevice({ name: 'fugu-fboost' }));
+  const d = makeFakeBleDevice({ name: 'fugu-fboost', hostname: 'fboost', failConnect: 1 });
+  let calls = 0;
+  const conn = d.gatt.connect;
+  d.gatt.connect = async () => { calls++; return conn(); };
+  const ok = makeFakeBleDevice({ name: 'fugu-fbuck', hostname: 'fbuck', id: 'dev2' });
+  const other = makeFakeBleDevice({ name: 'thermo', hostname: 'thermo', id: 'dev3' });
+  let otherCalls = 0;
+  other.gatt.connect = async () => { otherCalls++; throw new Error('should not connect'); };
+  bt.granted.push(d, ok, other);
   const { window, Dash } = await loadDash({ bluetooth: bt });
+  await until(() => Dash.devices.get('fbuck') && Dash.devices.get('fbuck').ble.state === 'on', 3000, 'silent connect');
   await settle(5);
   Dash.flush();
+  assert.equal(calls, 1, 'exactly one attempt');
+  assert.equal(otherCalls, 0, 'non-fugu device without a snapshot is not connected');
+  assert.deepEqual(plain(ok.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
   const c = card(window, 'fboost');
-  assert.ok(c);
   assert.equal(c.querySelector('.badge.ble').dataset.state, 'off');
+  const btn = c.querySelector('button.reconnect');
+  assert.notEqual(btn.style.display, 'none');
+  btn.click();
+  await until(() => d.writes.length >= 3, 3000, 'enable after Reconnect');
+  assert.equal(Dash.devices.get('fboost').ble.state, 'on');
+});
+
+test('getDevices: a gesture/security error on the silent connect falls back to the button', async () => {
+  const bt = makeFakeBluetooth();
+  const d = makeFakeBleDevice({ name: 'fugu-flat', hostname: 'flat' });
+  const conn = d.gatt.connect;
+  let calls = 0;
+  d.gatt.connect = async () => {
+    if (!calls++) throw new window.DOMException('Must be handling a user gesture', 'SecurityError');
+    return conn();
+  };
+  const { window, Dash } = await loadDash({ bluetooth: bt, storage: { 'dash-devices': JSON.stringify({
+    flat: { host: 'flat', seen: 1, via: { ble: true }, tele: { P: 10 }, lastAt: 1, bleId: 'dev1' } }) } });
+  bt.granted.push(d);
+  await Dash.restoreBle();
+  Dash.flush();
+  assert.equal(calls, 1);
+  const c = card(window, 'flat');
+  assert.equal(Dash.devices.get('flat').ble.reason, 'Must be handling a user gesture');
   assert.notEqual(c.querySelector('button.reconnect').style.display, 'none');
+  assert.equal(window.document.querySelectorAll('.card[data-host="flat"]').length, 1, 'joined the restored card');
 });
 
 test('stale threshold: clamp(3 x median interval, 5 s, 20 min), card greys out', async () => {
@@ -698,7 +734,7 @@ test('sendCommand: reply markers match whole commands only', async () => {
 });
 
 test('re-adding a restored (placeholder) BLE device connects it', async () => {
-  const d = makeFakeBleDevice({ name: 'fugu-fboost', hostname: 'fboost' });
+  const d = makeFakeBleDevice({ name: 'fugu-fboost', hostname: 'fboost', failConnect: 1 });
   const bt = makeFakeBluetooth([d]);
   bt.granted.push(d);
   const { Dash } = await loadDash({ bluetooth: bt });
@@ -780,4 +816,111 @@ test('more info shows decoder error and resync counters', async () => {
   assert.match(info, /BLE decode errors 1 · resyncs 1/);
   assert.match(info, /MQTT decode errors 1/);
   void client;
+});
+
+// --- device snapshots (localStorage `dash-devices`) ------------------------------------------------
+const SC_LINES = ['I (10) main: sc: t=1763400000 n=3 mpp=210.5,38.2 sweeping=0', 'sc: 30.0 100.0 35.0 180.0', 'sc: 38.2 210.5', 'sc: end'];
+const stored = (window) => JSON.parse(window.localStorage.getItem('dash-devices') || '{}');
+
+test('snapshot: written after ingest, at most every CFG.snapMs, no log lines or bins', async () => {
+  const { window, Dash } = await loadDash();
+  Dash.CFG.snapMs = 40;
+  Dash.ingestTele('fry', mqttMsg([{ fields: { P: 120, Ui: 38.5, Uo: 27.25, I: 4.5, pwm_duty: 1500, mppt_state: 4,
+    P_max_today: 300, E_today: 900, ntc_temp: 40, mcu_temp: 45, Ro: 200, Rc: 15 }, ts: 1_763_400_000_000 }]), 'mqtt');
+  const dev = Dash.devices.get('fry');
+  for (const l of SC_LINES) Dash.onLine(dev, l, 'test');
+  Dash.flush();
+  await settle(5);
+  const s = stored(window).fry;
+  assert.ok(s, 'first save without delay');
+  assert.deepEqual(plain(s.tele), { P: 120, Ui: 38.5, Uo: 27.25, I: 4.5, duty: 1500, state: 4, Pmax: 300, Etoday: 900,
+    ntcT: 40, mcuT: 45, Ro: 200, Rc: 15 });
+  assert.equal(s.via.mqtt, true);
+  assert.equal(s.curve.points.length, 3);
+  assert.ok(s.pTop >= 210.5);
+  assert.ok(!('log' in s) && !('recon' in s) && !('points' in s));
+  assert.doesNotMatch(window.localStorage.getItem('dash-devices'), /main: sc/);
+  Dash.ingestTele('fry', mqttMsg([{ fields: { P: 130 }, ts: 1_763_400_000_100 }]), 'test');
+  await settle(5);
+  assert.equal(stored(window).fry.tele.P, 120, 'debounced');
+  await until(() => stored(window).fry.tele.P === 130, 1000, 'debounced save');
+});
+
+test('snapshot: restored cards are stale with the age and the saved curve; first live point updates the card', async () => {
+  const a = await loadDash();
+  const ca = clock(a.window);
+  a.Dash.CFG.snapMs = 0;
+  a.Dash.ingestTele('old', mqttMsg([{ fields: { P: 50, Ui: 30 }, ts: ca.get() - 5000 }]), 'test');
+  ca.add(60_000);
+  a.Dash.ingestTele('fry', mqttMsg([{ fields: { P: 187.5, Ui: 37.2, Uo: 27.3, mppt_state: 4 }, ts: ca.get() }]), 'test');
+  const dev = a.Dash.devices.get('fry');
+  for (const l of SC_LINES) a.Dash.onLine(dev, l, 'test');
+  a.Dash.saveSnaps();
+  const json = a.window.localStorage.getItem('dash-devices');
+  const lastTs = dev.lastTs;
+
+  // new window, 12 min later
+  const b = await loadDash({ storage: { 'dash-devices': json }, url: 'http://localhost/?b' });
+  clock(b.window, ca.get() + 12 * 60_000);
+  b.Dash.tick();
+  b.Dash.flush();
+  const cards = [...b.window.document.querySelectorAll('.card')].map(c => c.dataset.host);
+  assert.deepEqual(cards, ['fry', 'old'], 'ordered by last seen');
+  const c = card(b.window, 'fry');
+  assert.ok(c.classList.contains('stale'));
+  assert.equal(text(b.window, 'fry', '.age'), '12 min ago');
+  assert.equal(text(b.window, 'fry', '.pv'), '187.5');
+  assert.match(c.querySelector('svg.chart path.curve').getAttribute('d'), /^M[\d. ]+L[\d. ]+L[\d. ]+$/);
+  assert.equal(c.querySelector('svg.chart circle.live').getAttribute('visibility'), 'hidden');
+  assert.equal(c.querySelector('.badge.ble').dataset.state, 'off');
+  assert.equal(c.querySelector('.badge.mqtt').dataset.state, 'off');
+  assert.equal(b.Dash.devices.get('fry').lastTs, 0);
+
+  // a live point with the same device timestamp as the last saved one is accepted
+  b.Dash.ingestTele('fry', mqttMsg([{ fields: { P: 201.0, Ui: 38 }, ts: lastTs }]), 'test');
+  b.Dash.flush();
+  assert.equal(text(b.window, 'fry', '.pv'), '201.0');
+  assert.equal(c.classList.contains('stale'), false);
+  assert.equal(text(b.window, 'fry', '.age'), '0 s ago');
+  assert.equal(c.querySelector('svg.chart circle.live').getAttribute('visibility'), 'visible');
+});
+
+test('snapshot: forget (with confirm) removes the entry and the card', async () => {
+  const { window, Dash } = await loadDash({ storage: { 'dash-devices': JSON.stringify({
+    fry: { host: 'fry', seen: 2, tele: { P: 1 }, lastAt: 2 }, flat: { host: 'flat', seen: 1, tele: { P: 2 }, lastAt: 1 } }) } });
+  Dash.flush();
+  const btn = card(window, 'fry').querySelector('.top button.forget');
+  window.confirm = () => false;
+  btn.click();
+  assert.ok(card(window, 'fry'));
+  assert.ok(stored(window).fry);
+  window.confirm = () => true;
+  btn.click();
+  assert.equal(card(window, 'fry'), null);
+  assert.equal(Dash.devices.has('fry'), false);
+  assert.deepEqual(Object.keys(stored(window)), ['flat']);
+});
+
+test('snapshot: at most 16 devices, least recently seen dropped', async () => {
+  const { window, Dash } = await loadDash();
+  const c = clock(window);
+  Dash.CFG.snapMs = 0;
+  for (let i = 0; i < 18; i++){
+    c.add(1000);
+    Dash.ingestTele('d' + i, mqttMsg([{ fields: { P: i }, ts: c.get() }]), 'test');
+  }
+  Dash.saveSnaps();
+  const keys = Object.keys(stored(window));
+  assert.equal(keys.length, 16);
+  assert.ok(!keys.includes('d0') && !keys.includes('d1'));
+  assert.ok(keys.includes('d17'));
+});
+
+test('snapshot: broker connect pokes snapshot hosts as well as remembered hosts', async () => {
+  const { client } = await withBroker({
+    'mqtt-known-hosts': JSON.stringify({ [URL]: ['fry'] }),
+    'dash-devices': JSON.stringify({ fry: { host: 'fry', seen: 2 }, fbuck: { host: 'fbuck', seen: 1 } }),
+  });
+  assert.deepEqual(plain(client._publishes.map(p => [p.topic, p.msg])),
+    [['pv/log/fry/cmd', 'hostname'], ['pv/log/fbuck/cmd', 'hostname']]);
 });

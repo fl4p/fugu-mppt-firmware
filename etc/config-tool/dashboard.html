@@ -61,6 +61,8 @@
   .card details.more summary { cursor:pointer; }
   .card details.more .info { display:flex; gap:4px 12px; flex-wrap:wrap; font-variant-numeric:tabular-nums; }
   .card .reconnect { align-self:flex-start; font-size:12px; padding:3px 10px; }
+  .card button.forget { padding:0 6px; font-size:13px; line-height:1.2; color:var(--muted); background:none; border-color:transparent; }
+  .card button.forget:hover { color:var(--warn); border-color:var(--warn); }
   .logwrap { display:flex; flex-direction:column; gap:4px; }
   .logbar { display:flex; gap:8px; align-items:center; font-size:11px; color:var(--muted); }
   .logbar .spacer { flex:1; }
@@ -176,11 +178,12 @@ const NUS_TX   = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_TELE = "6e400005-b5a3-f393-e0a9-e50e24dcca9e";
 // url/user/hosts are shared with conf-editor.html; the password keys are the dashboard's own
 const LS = { url:"mqtt-url", user:"mqtt-user", pass:"dash-mqtt-pass", remember:"dash-mqtt-remember",
-             hosts:"mqtt-known-hosts", console:"dash-console" };
+             hosts:"mqtt-known-hosts", console:"dash-console", snap:"dash-devices" };
 const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
 const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, SILENT_MS = 15000, PROBE_MS = 60000, CURVE_RETRIES = 2;
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000], bleRetryMs:500,
-              hostnameMs:8000 };
+              hostnameMs:8000, snapMs:10000, snapMax:16 };
+const SNAP_T = ["P","Ui","Uo","I","duty","state","Pmax","Etoday","ntcT","mcuT","Ro","Rc","Rb"];
 const LOG_KEEP = 200, LOG_SHOW = 100;
 // live P-V reconstruction: bin width V, faded after ms, bin cap, overwrite radius bins, path break V
 const RECON = { bin:0.25, staleMs:600000, max:400, near:2, gapV:2 };
@@ -270,6 +273,8 @@ class Device {
     this.lineListeners = new Set();
     this.el = null; this.ver = 0; this.pTop = 1;
     this.recon = new Map(); this.reconVer = 0;
+    this.keep = false; this.restored = false; this.seenAt = 0; this.via = { ble:false, mqtt:false };
+    this.snapAt = 0; this.snapTimer = null; this.bleId = ""; this.bleName = "";
   }
 }
 
@@ -283,8 +288,77 @@ function getDevice(host, src){
   if (src === "mqtt" && !dev.mqtt.firstAt){
     dev.mqtt.firstAt = now();
     rememberHost(host);
+    touch(dev, true);
   }
   return dev;
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Snapshots: last values per hostname in localStorage, restored as stale cards on load
+--------------------------------------------------------------------------------------------- */
+function loadSnaps(){
+  try { const o = JSON.parse(lsGet(LS.snap) || "{}"); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; }
+  catch(_){ return {}; }
+}
+
+function snapOf(dev, old){
+  const t = {};
+  for (const k of SNAP_T) if (Number.isFinite(dev.tele[k])) t[k] = dev.tele[k];
+  const b = dev.ble && dev.ble.device;
+  return { host:dev.host, seen:Math.max(dev.seenAt, dev.lastAt, (old && old.seen) || 0),
+           via:{ ble:dev.via.ble || !!dev.ble, mqtt:dev.via.mqtt || !!dev.mqtt.firstAt },
+           tele:t, lastAt:dev.lastAt, curve:dev.curve, pTop:dev.pTop,
+           bleId:(b && b.id) || dev.bleId, bleName:(b && b.name) || dev.bleName };
+}
+
+// Writes the given devices into the stored set (other hosts kept), newest CFG.snapMax by `seen`.
+function saveSnaps(list = [...devices.values()]){
+  const all = loadSnaps();
+  for (const dev of list){
+    if (!dev.keep || devices.get(dev.host) !== dev) continue;
+    clearTimeout(dev.snapTimer); dev.snapTimer = null; dev.snapAt = now();
+    all[dev.host] = snapOf(dev, all[dev.host]);
+  }
+  const keep = Object.values(all).filter(x => x && x.host).sort((a, b) => (b.seen || 0) - (a.seen || 0))
+    .slice(0, CFG.snapMax);
+  lsSet(LS.snap, JSON.stringify(Object.fromEntries(keep.map(x => [x.host, x]))));
+}
+
+// Activity on a device: keep it and save at most every CFG.snapMs.
+function touch(dev, keep){
+  if (keep) dev.keep = true;
+  dev.seenAt = now();
+  if (!dev.keep || dev.snapTimer) return;
+  dev.snapTimer = setTimeout(() => saveSnaps([dev]), clamp(dev.snapAt + CFG.snapMs - now(), 0, CFG.snapMs));
+}
+
+function restoreSnaps(){
+  const list = Object.values(loadSnaps()).filter(x => x && typeof x.host === "string" && x.host)
+    .sort((a, b) => (b.seen || 0) - (a.seen || 0)).slice(0, CFG.snapMax);
+  for (const s of list){
+    if (devices.has(s.host)) continue;
+    const dev = new Device(s.host);
+    Object.assign(dev.tele, s.tele || {});
+    dev.lastAt = +s.lastAt || 0; dev.seenAt = +s.seen || 0;
+    if (s.curve && Array.isArray(s.curve.points) && s.curve.mpp){ dev.curve = s.curve; dev.curveRestored = true; }
+    if (Number.isFinite(s.pTop)) dev.pTop = s.pTop;
+    dev.via = { ble:!!(s.via && s.via.ble), mqtt:!!(s.via && s.via.mqtt) };
+    dev.bleId = s.bleId || ""; dev.bleName = s.bleName || "";
+    dev.keep = dev.restored = true; dev.snapAt = now();
+    devices.set(s.host, dev);
+    renderCard(dev);
+  }
+  $("empty").style.display = devices.size ? "none" : "";
+}
+
+function forget(dev){
+  if (!window.confirm("Forget " + dev.host + "? Its saved values and card are removed.")) return;
+  const all = loadSnaps();
+  delete all[dev.host];
+  lsSet(LS.snap, JSON.stringify(all));
+  if (dev.ble) dev.ble.disconnect();
+  removeDevice(dev);
+  $("empty").style.display = devices.size ? "none" : "";
 }
 
 function bleTeleOn(dev){ return !!(dev.ble && dev.ble.state === "on" && dev.ble.tele === "on"); }
@@ -308,7 +382,8 @@ function ingest(dev, p, src){
   const at = now();
   if (p.ts && dev.lastTs && p.ts > dev.lastTs) dev.intervals.push(p.ts - dev.lastTs);
   if (p.ts > dev.lastTs) dev.lastTs = p.ts;
-  dev.lastAt = at;
+  dev.lastAt = at; dev.restored = false;
+  touch(dev, true);
   const arr = dev.arrivals[src] || (dev.arrivals[src] = []);
   arr.push(at);
   while (arr.length && arr[0] < at - 10000) arr.shift();
@@ -379,6 +454,7 @@ function onLine(dev, ln, src){
   // with BLE up, the MQTT log mirror carries the same lines
   if (src === "mqtt" && dev.ble && dev.ble.state === "on") return;
   pushLog(dev, lineClass(ln), ln);
+  touch(dev);
   dev.lineListeners.forEach(fn => fn(ln));
   const plain = TD.stripAnsi(ln);
   let m;
@@ -397,7 +473,8 @@ function onCurve(dev, r){
   if (r.complete){
     if (r.curve){ dev.curve = r.curve; dev.curveNone = false; }
     else { dev.curve = null; dev.curveNone = true; }
-    dev.curveErr = "";
+    dev.curveErr = ""; dev.curveRestored = false;
+    touch(dev, true);
     dev.ver++;
     finishCurveReq(dev);
   } else if (r.reason !== "restart" && dev.curveReq){
@@ -513,7 +590,7 @@ function mqttConnect(url, user, pass){
     clientUp = true;
     setStatus("connected");
     for (const t of ["pv/log/#", "pv/alert/#", "pv/tele/#"]) c.subscribe(t, { qos:0 }, () => {});
-    for (const h of knownHosts(url)) c.publish("pv/log/" + h + "/cmd", "hostname", { qos:0 }, () => {});
+    for (const h of new Set([...knownHosts(url), ...Object.keys(loadSnaps())])) c.publish("pv/log/" + h + "/cmd", "hostname", { qos:0 }, () => {});
     for (const dev of devices.values()){
       const L = dev.mqtt.lease;
       if (L.state !== "off" && L.state !== "relay") lease(dev);
@@ -716,6 +793,7 @@ class BleLink {
     if (!host) host = advHost(this.name);
     attachBle(this, host);
     const dev = this.dev;
+    touch(dev, true);
     if (!this.teleChar){
       this.tele = "refused"; this.teleReason = "no telemetry characteristic (firmware without BLE telemetry)";
     } else {
@@ -800,6 +878,7 @@ function attachBle(link, host){
 }
 
 function removeDevice(dev){
+  clearTimeout(dev.snapTimer); dev.snapTimer = null;
   devices.delete(dev.host);
   if (dev.el) dev.el.remove();
   dev.el = null;
@@ -843,7 +922,19 @@ async function restoreBle(){
   if (!navigator.bluetooth || typeof navigator.bluetooth.getDevices !== "function") return;
   let list = [];
   try { list = await navigator.bluetooth.getDevices(); } catch(_){ return; }
-  for (const d of list) await linkBle(d, { connect:false });
+  const snaps = Object.values(loadSnaps()), links = [];
+  for (const d of list){
+    const link = await linkBle(d, { connect:false });
+    const n = d.name || "";
+    if (/^fugu-/.test(n) || snaps.some(s => s && (s.host === advHost(n || d.id) || (s.bleId && s.bleId === d.id))))
+      links.push(link);
+  }
+  // one silent attempt each; a refused (no user gesture) or failed connect leaves the Reconnect button
+  await Promise.all(links.map(async (link) => {
+    if (link.state !== "off") return;
+    try { await link.connect(1); await link.enable(); }
+    catch(e){ link.state = "off"; link.reason = (e && e.message) || "connect failed"; if (link.dev) scheduleRender(link.dev); }
+  }));
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -884,6 +975,10 @@ function createCard(dev){
   const top = el("div", "top");
   top.append(el("span", "host"), el("span", "badge ble", "BLE"), el("span", "badge mqtt", "MQTT"),
              el("span", "spacer"), el("span", "mode"), el("span", "age"));
+  const fb = el("button", "forget", "×");
+  fb.title = "forget this device";
+  fb.onclick = () => forget(dev);
+  top.append(fb);
   const k = el("div", "kpis");
   const p = el("div", "p"); p.append(el("span", "pv", "–"), el("small", null, "W"));
   const small = el("div", "small");
@@ -963,7 +1058,7 @@ function renderAge(dev){
   if (!dev.lastAt){ age.textContent = "no data"; dev.el.classList.remove("stale"); return; }
   const a = now() - dev.lastAt;
   age.textContent = fmtAge(a);
-  dev.el.classList.toggle("stale", a > staleAfter(dev));
+  dev.el.classList.toggle("stale", dev.restored || a > staleAfter(dev));
 }
 
 function renderMore(dev, L){
@@ -1101,7 +1196,7 @@ function renderChart(dev){
   const svg = q(dev, "svg.chart"), t = dev.tele;
   const curve = dev.curve ? dev.curve.points.filter(p => sane(p.V, p.P)) : [];
   const recon = reconPoints(dev);
-  const live = sane(t.Ui, t.P) ? { V:t.Ui, P:t.P } : null;
+  const live = !dev.restored && sane(t.Ui, t.P) ? { V:t.Ui, P:t.P } : null;
   const mpp = dev.curve && sane(dev.curve.mpp.V, dev.curve.mpp.P) && dev.curve.mpp.P > 0 ? dev.curve.mpp : null;
   renderCaption(dev);
   const empty = svg.querySelector("text.empty");
@@ -1251,7 +1346,7 @@ function tick(){
     if (leaseWanted(dev) && !L.busy){
       if (L.state === "off" && dev.mqtt.firstAt && t - dev.mqtt.firstAt >= LEASE_WAIT_MS){
         lease(dev);
-        if (!dev.curve && !dev.curveNone) requestCurve(dev);
+        if ((!dev.curve || dev.curveRestored) && !dev.curveNone) requestCurve(dev);
       } else if (leaseRetries(L) && dev.mqtt.teleSeen && t - dev.mqtt.teleAt >= SILENT_MS && t - L.silentAt >= SILENT_MS){
         L.silentAt = t;
         lease(dev);
@@ -1314,6 +1409,8 @@ function init(){
   };
   $("ble-add").onclick = () => addBle();
   document.addEventListener("visibilitychange", onVisible);
+  window.addEventListener("pagehide", () => saveSnaps());
+  restoreSnaps();
   banners();
   setInterval(tick, 1000);
   if ($("mqtt-url").value.trim()) mqttConnect($("mqtt-url").value, $("mqtt-user").value, $("mqtt-pass").value);
@@ -1323,7 +1420,7 @@ function init(){
 window.Dash = {
   devices, Device, BleLink, REPLY, CFG, NUS:{ SVC:NUS_SVC, RX:NUS_RX, TX:NUS_TX, TELE:NUS_TELE },
   getDevice, ingest, ingestTele, onLine, onMqttMessage, send, sendCommand, requestCurve, lease, tick, niceTicks,
-  attachBle, LIM,
+  attachBle, LIM, saveSnaps, forget,
   flush, mqttConnect, mqttDisconnect, addBle, linkBle, restoreBle, consoleSend, staleAfter,
   get client(){ return client; },
 };
