@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include "math/statmath.h"
 #include "util.h"
@@ -15,8 +16,9 @@ struct PeakScan {
     static constexpr float kProbeLow = 0.97f; // probe on the flat low-voltage side of a peak
     static constexpr uint16_t kMeasMs = 100, kTravelMs = 1500, kSteadyMs = 5000;
 
-    uint8_t n = 0;           // bypass-diode substrings learned from the sweeps (RAM only), 0 = not yet: off
-    uint8_t cand = 0;        // the last sweep's count, 0: one maximum, 1: no n fits
+    uint8_t n = 0;           // bypass-diode substrings learned from the sweeps (tracker.conf::pv_substrings), 0 = off
+    volatile bool pending = false; // RT -> core 0: a sweep's maxima wait for learn()
+    bool unsaved = false;    // core 0: n grew since tracker.conf was written
     uint16_t interval = 300; // tracker.conf::scan_interval [s], 0 = triggered only
     bool trigger = true;     // tracker.conf::scan_trigger
     float margin = 0.03f;
@@ -30,7 +32,7 @@ struct PeakScan {
     float vc[6]{}, pc[6]{};
     float voc = NAN, iEnv = 0, kVmp = 0.82f; // Voc at the sweep start, max PV-side current [W/V], Vmpp / Voc
     float v0 = 0, p0 = 0, pRef = 0, vRef = 0, pS = 0;
-    float pk = 0, vPk = 0, pLo = 0; // sweep: running maximum, its Vin, minimum after it
+    float pk = 0, vPk = 0, pLo = 0; // sweep: running maximum (after the sweep: the MPP), its Vin, minimum after it
     bool fall = false;
     uint32_t t0 = 0, tPhase = 0, tLast = 0, tOff = 0, tS = 0;
     MeanAccumulator acc{};
@@ -40,12 +42,14 @@ struct PeakScan {
     // first sweep tick (converter still off, Vin ~ Voc)
     void onSweep(float vin, uint32_t now) {
         voc = vin, iEnv = 0, pRef = -1, phase = Idle, tLast = tOff = now, nc = 0, pLo = 0, fall = true;
+        pending = false;
     }
 
     // sweep tick, Vin falling: local power maxima below 0.93 Voc with an 8 % dip on both sides go to vc/pc (idle
     // during a sweep), nc = 7 on overflow
     __attribute__((always_inline)) void sweepSample(float v, float p) {
-        if (v > 1 && p / v > iEnv) iEnv = p / v;
+        if (!(v > 1) || std::isnan(p)) return;
+        if (p / v > iEnv) iEnv = p / v;
         if (fall) {
             if (p < pLo) pLo = p;
             else if (p > 1.08f * pLo) fall = false, pk = p, vPk = v;
@@ -62,31 +66,48 @@ struct PeakScan {
 
     // sweep MPP: an unshaded string's Vmpp / Voc lies in 0.74..0.86 (field 0.79..0.85); a shaded global maximum
     // falls outside (m < n substrings: lower, weaker substrings conducting: higher) and keeps the last value.
-    // Learns n from the maxima of at least 30 % of the MPP below the first (full-string) one: the largest n in 2..6
-    // that puts each at m - 0.25 .. m + 0.5 shares of 0.82 Voc / n (m < n; shaded maxima sit high). Learned when
-    // two sweeps in a row agree; a dim sweep (MPP below pMin) does not count.
+    // Hands the maxima to learn() unless the sweep was dim (MPP below pMin) or noisy (more than 6 maxima).
     __attribute__((always_inline)) void onSweepMpp(float v, float p, float pMin) {
         const float r = v / voc;
         if (r > 0.74f && r < 0.86f) kVmp = r;
-        if (nc > 6 || p < pMin) return;
-        int c = 6;
+        if (nc <= 6 && p >= pMin && voc > 0) {
+            pk = p;
+            std::atomic_thread_fence(std::memory_order_release);
+            pending = true;
+        }
+    }
+
+    // core 0, after onSweepMpp() (vc/pc stay untouched for 5 s): the first maximum of at least 60 % of the MPP is the
+    // full string (a start transient is weaker); n from the maxima below it of at least 30 % of the MPP, the largest
+    // n in 2..6 that puts each at m - 0.25 .. m + 0.5 shares of 0.82 Voc / n (m < n; shaded maxima sit high).
+    // Nothing if the MPP is not a recorded maximum. True if n grew.
+    bool learn() {
+        if (!pending) return false;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        pending = false;
+        int g = -1;
+        bool mpp = false;
+        for (int i = 0; i < nc; ++i) {
+            if (g < 0 && pc[i] >= 0.6f * pk) g = i;
+            mpp = mpp || pc[i] >= 0.98f * pk;
+        }
+        if (!mpp) return false;
+        int c = 6, q = 0;
         for (; c > 1; --c) {
             bool ok = true;
-            int q = 0;
-            for (int i = 0; i < nc; ++i) {
-                if (pc[i] < 0.3f * p || !q++) continue;
+            q = 0;
+            for (int i = g + 1; i < nc; ++i) {
+                if (pc[i] < 0.3f * pk) continue;
                 const float y = vc[i] / (0.82f * voc) * (float) c;
                 const int m = (int) (y + 0.25f);
-                ok = ok && m >= 1 && m < c && y <= (float) m + 0.5f;
+                ok = ok && m >= 1 && m < c && y <= (float) m + 0.5f, ++q;
             }
-            if (q < 2) c = 0;
-            if (ok || !c) break;
+            if (!q || ok) break;
         }
-        if (c > 1 && c == cand && c > n) {
-            n = (uint8_t) c;
-            ESP_LOGI("mppt", "scan: %u bypass-diode substrings learned from the sweeps", (unsigned) n);
-        }
-        cand = (uint8_t) c;
+        if (!q || c < 2 || c <= n) return false;
+        n = (uint8_t) c, unsaved = true;
+        ESP_LOGI("mppt", "scan: %u bypass-diode substrings learned from the sweep", (unsigned) n);
+        return true;
     }
 
     void abort() { phase = Idle; }

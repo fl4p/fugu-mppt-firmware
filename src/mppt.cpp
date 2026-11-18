@@ -533,6 +533,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
 
     psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
+    scan.n = std::min<uint8_t>(6, trackerConf.getByte("pv_substrings", 0)); // learned, 0 = learn again
     scan.interval = (uint16_t) std::clamp(trackerConf.getLong("scan_interval", 300), 0L, 65535L);
     scan.trigger = trackerConf.getByte("scan_trigger", 1);
 
@@ -693,6 +694,22 @@ bool rectCalPersist(int counts, uint8_t cal) {
                                  {"rect_offset_cal", cs}}, "rect_offset"); // legacy count key
     if (!ok) ESP_LOGW("rectcal", "coil.conf write failed, retrying");
     return ok;
+}
+
+// core 0: learn from the last sweep; save a grown count once a flash write is safe
+void MpptController::scanLf(bool flashSafe) {
+    scan.learn();
+    if (flashSafe) scanSave();
+}
+
+// core 0: one tracker.conf rewrite when the learned count grew
+void MpptController::scanSave() {
+    if (!scan.unsaved) return;
+    char v[4];
+    snprintf(v, sizeof v, "%u", scan.n);
+    ConfFile conf{"/littlefs/conf/tracker.conf"};
+    if (conf.update({{"pv_substrings", v}})) scan.unsaved = false;
+    else ESP_LOGW("mppt", "tracker.conf write failed, retrying");
 }
 
 void MpptController::rectCalLf() {

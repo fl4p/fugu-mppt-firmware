@@ -94,7 +94,8 @@ public:
             if (xg_[i] != g[i] || xw_[i] != wi) xg_[i] = g[i], xw_[i] = wi, xDirty_ = true;
         }
         uint8_t o[kPvSubMax] = {0, 1, 2, 3, 4, 5};
-        std::sort(o, o + pvN_, [g](uint8_t a, uint8_t b) { return g[a] > g[b]; });
+        for (uint8_t i = 1; i < pvN_; ++i) // insertion sort, as std::sort does at this size; GCC 15 -Warray-bounds
+            for (uint8_t j = i; j > 0 && g[o[j]] > g[o[j - 1]]; --j) std::swap(o[j], o[j - 1]);
         float sum = 0;
         for (uint8_t m = 0; m < pvN_; ++m) {
             sum += w ? w[o[m]] : 1.f / (float) pvN_;

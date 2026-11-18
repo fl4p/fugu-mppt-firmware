@@ -1461,6 +1461,8 @@ public:
     }
 
     void rectCalLf(); // core 0
+    void scanLf(bool flashSafe); // core 0
+    void scanSave();             // core 0, flash write safe
 
 private:
     // RT: in update() after protect() and the limiters; true while the run holds HS/LS.

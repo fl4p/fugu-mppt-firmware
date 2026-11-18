@@ -335,10 +335,11 @@ void test_scan_probe_anchor_on_vin();
 void test_scan_learns_vmpp_ratio();
 void test_scan_timeout_returns_to_start();
 void test_scan_learns_substrings();
+void test_scan_learns_other_counts();
 void test_scan_unshaded_never_learns();
-void test_scan_noise_and_cloud_do_not_learn();
-void test_scan_mismatched_spacing_stays_unlearned();
-void test_scan_dim_sweep_ignored();
+void test_scan_noise_and_cloud();
+void test_scan_count_only_grows_and_persist();
+void test_scan_skipped_and_nan_sweeps();
 
 // conf.h
 void test_conf_getlong_bases();
@@ -600,10 +601,11 @@ void setup() {
     RUN_TEST(test_scan_learns_vmpp_ratio);
     RUN_TEST(test_scan_timeout_returns_to_start);
     RUN_TEST(test_scan_learns_substrings);
+    RUN_TEST(test_scan_learns_other_counts);
     RUN_TEST(test_scan_unshaded_never_learns);
-    RUN_TEST(test_scan_noise_and_cloud_do_not_learn);
-    RUN_TEST(test_scan_mismatched_spacing_stays_unlearned);
-    RUN_TEST(test_scan_dim_sweep_ignored);
+    RUN_TEST(test_scan_noise_and_cloud);
+    RUN_TEST(test_scan_count_only_grows_and_persist);
+    RUN_TEST(test_scan_skipped_and_nan_sweeps);
 
     // buck.h — diode-emulation / sync-rect math
     RUN_TEST(test_buck_ripple_current);

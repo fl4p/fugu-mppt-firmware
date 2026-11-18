@@ -544,22 +544,25 @@ void test_scan_timeout_returns_to_start() {
 
 // ---- substring count learned from the sweeps ----
 
-// One sweep from Voc to 29 V in 0.25 V steps through PeakScan's learner. light(v): irradiance factor (a cloud during
-// the sweep), noise: relative power noise amplitude (deterministic).
+// One sweep from Voc down to vEnd in 0.25 V steps, then the core-0 learn(). light(v): irradiance factor (a cloud
+// during the sweep), noise: relative power noise amplitude (deterministic).
 template<class L>
-static void learnSweep(PeakScan &s, const VirtualConverter &pv, L light, float noise = 0) {
+static void learnSweep(PeakScan &s, const VirtualConverter &pv, float voc, float vEnd, L light, float noise = 0) {
     uint32_t r = 12345;
     float pm = 0, vm = 0;
-    s.onSweep(pv.pvCurrent(80.f) > 0 ? 80.f : 79.f, 0);
-    for (float v = 80; v > 29; v -= 0.25f) {
+    s.onSweep(voc, 0);
+    for (float v = voc; v > vEnd; v -= 0.25f) {
         r = r * 1664525u + 1013904223u;
         const float p = v * pv.pvCurrent(v) * light(v) * (1 + noise * ((float) (r >> 8) / 8388608.f - 1));
         s.sweepSample(v, p);
         if (p > pm) pm = p, vm = v;
     }
     s.onSweepMpp(vm, pm, 10);
+    s.learn();
 }
-static void learnSweep(PeakScan &s, const VirtualConverter &pv) { learnSweep(s, pv, [](float) { return 1.f; }); }
+static void learnSweep(PeakScan &s, const VirtualConverter &pv) {
+    learnSweep(s, pv, 80, 29, [](float) { return 1.f; });
+}
 
 // Synthetic sweep: power piecewise linear through (v, p) points, Vin falling.
 static void learnCurve(PeakScan &s, std::initializer_list<std::pair<float, float>> pts) {
@@ -572,90 +575,142 @@ static void learnCurve(PeakScan &s, std::initializer_list<std::pair<float, float
             if (p > pm) pm = p, vm = v;
         }
     s.onSweepMpp(vm, pm, 10);
+    s.learn();
 }
 
-static std::unique_ptr<VirtualConverter> fryString(float g4, float g5) {
+// exact series string of n substrings (13.33 V Voc each, Isc 4 A), g: Isc factors
+static std::unique_ptr<VirtualConverter> pvString(int n, std::initializer_list<float> g) {
     auto pv = std::make_unique<VirtualConverter>();
-    pv->setPv(4.f, 80.f, 0.86f);
+    pv->setPv(4.f, 13.333f * (float) n, 0.86f);
     pv->setPvExact(true);
-    const float g[6] = {1, 1, 1, 1, g4, g5};
-    pv->setPvString(6, g, nullptr, 0.45f);
+    float x[6] = {1, 1, 1, 1, 1, 1};
+    int i = 0;
+    for (float f: g) x[i++] = f;
+    pv->setPvString((uint8_t) n, x, nullptr, 0.45f);
     return pv;
 }
+static std::unique_ptr<VirtualConverter> fryString(float g4, float g5) { return pvString(6, {1, 1, 1, 1, g4, g5}); }
 
-// One or two shaded substrings (exact series string): two maxima per sweep, the lower at 5 or 4 of 6 shares. Learned
-// on the second sweep, not on the first.
+// One or two shaded substrings (fry-like, exact series string), the lower maximum at 5 or 4 of 6 shares, below or
+// above the full-string maximum. One sweep learns 6 and marks it for tracker.conf.
 void test_scan_learns_substrings() {
-    for (float g4: {1.f, 0.45f}) {
-        auto pv = fryString(g4, g4 < 1 ? 0.45f : 0.6f);
+    for (auto [g4, g5]: {std::pair{1.f, 0.8f}, {1.f, 0.6f}, {0.7f, 0.7f}}) {
+        auto pv = fryString(g4, g5);
         PeakScan s{};
         learnSweep(s, *pv);
-        TEST_ASSERT_EQUAL_INT(6, s.cand);
-        TEST_ASSERT_EQUAL_INT(0, s.n);
-        learnSweep(s, *pv);
         TEST_ASSERT_EQUAL_INT(6, s.n);
+        TEST_ASSERT_TRUE(s.unsaved);
+        TEST_ASSERT_FALSE(s.pending);
+    }
+}
+
+// Strings of 3, 4 and 5 substrings, exact series string, battery at a third of Voc. Every m/3 lies on the grid of
+// 6, so 3 learns 6. A shaded maximum at 3/4 sits 4.68 sixths high, off the grid of 6, so one shaded substring of 4
+// learns 5, two (2/4 = 3/6) learn 6. 5 learns 5 from a maximum at 3/5 (3.7 sixths), 6 from one at 4/5 (4.98).
+void test_scan_learns_other_counts() {
+    struct { int n; std::initializer_list<float> g; uint8_t learns; } cases[] = {
+        {3, {0.7f}, 6}, {4, {0.75f}, 5}, {4, {0.7f, 0.7f}, 6}, {5, {0.7f, 0.7f}, 5}, {5, {0.8f}, 6},
+    };
+    for (auto &c: cases) {
+        auto pv = pvString(c.n, c.g);
+        PeakScan s{};
+        const float voc = 13.333f * (float) c.n;
+        learnSweep(s, *pv, voc, voc / 3, [](float) { return 1.f; });
+        TEST_ASSERT_EQUAL_INT(c.learns, s.n);
     }
 }
 
 // Unshaded: one maximum, never learns. Known-bad shapes of the field sweeps: a small bump near the battery (below
-// 30 % of the MPP), and a start transient near Voc (above 0.93 Voc) ahead of a hot string's MPP at 0.72 Voc, which
-// would put the MPP at 5.3 of 6 shares.
+// 30 % of the MPP); a start transient above 0.93 Voc (not recorded) ahead of a hot MPP at 0.72 Voc; the transient at
+// 0.925 Voc with a third of the MPP ahead of a hot MPP at 0.72..0.74 Voc (not the full string: below 60 %). A
+// transient with 60 % of the MPP is taken as the full string and fakes 6.
 void test_scan_unshaded_never_learns() {
     auto pv = fryString(1, 1);
     PeakScan s{};
-    for (int i = 0; i < 4; ++i) learnSweep(s, *pv);
-    TEST_ASSERT_EQUAL_INT(0, s.cand);
-    for (int i = 0; i < 2; ++i) learnCurve(s, {{80, 0}, {68, 200}, {36, 30}, {33, 45}, {29, 30}});
-    TEST_ASSERT_EQUAL_INT(0, s.cand);
-    for (int i = 0; i < 2; ++i) learnCurve(s, {{80, 0}, {77, 100}, {76, 90}, {57.6f, 300}, {29, 150}});
-    TEST_ASSERT_EQUAL_INT(0, s.cand);
+    for (int i = 0; i < 3; ++i) learnSweep(s, *pv);
+    learnCurve(s, {{80, 0}, {68, 200}, {36, 30}, {33, 45}, {29, 30}});
+    learnCurve(s, {{80, 0}, {77, 100}, {76, 90}, {57.6f, 300}, {29, 150}});
+    for (float r: {0.72f, 0.74f}) learnCurve(s, {{80, 0}, {74, 100}, {72, 85}, {r * 80, 300}, {25, 120}});
     TEST_ASSERT_EQUAL_INT(0, s.n);
-}
-
-// Known-bad: +-3 % power noise on an unshaded sweep stays below the 8 % dip; +-15 % gives more than 6 maxima, which
-// discards the sweep. A cloud during one sweep fakes a lower maximum that fits 6, but the next (clear) sweep has one
-// maximum, and a cloud in the sweep after that does not pair with the first.
-void test_scan_noise_and_cloud_do_not_learn() {
-    auto pv = fryString(1, 1);
-    PeakScan s{};
-    for (int i = 0; i < 3; ++i) learnSweep(s, *pv, [](float) { return 1.f; }, 0.03f);
-    TEST_ASSERT_EQUAL_INT(0, s.cand);
-    for (int i = 0; i < 3; ++i) learnSweep(s, *pv, [](float) { return 1.f; }, 0.15f);
-    TEST_ASSERT_TRUE(s.nc > 6);
+    TEST_ASSERT_FALSE(s.unsaved);
+    learnCurve(s, {{80, 0}, {77, 250}, {75, 200}, {0.72f * 80, 300}, {25, 120}});
     TEST_ASSERT_EQUAL_INT(0, s.n);
-    auto cloud = [](float v) { return v < 50 && v > 46 ? 0.6f : 1.f; };
-    learnSweep(s, *pv, cloud);
-    TEST_ASSERT_EQUAL_INT(6, s.cand); // a cloud alone looks like shade
-    learnSweep(s, *pv);
-    learnSweep(s, *pv, cloud);
-    TEST_ASSERT_EQUAL_INT(0, s.n);
-}
-
-// Known-bad spacing: a lower maximum at 3.6 of 6 shares fits 5 substrings, the next sweep's at 3.0 fits 6: no
-// agreement, nothing learned; a maximum that fits no n (5.65 of 6) stays unlearned however often; two sweeps at
-// 3.0 then learn 6. Voc 80 V: one share of 6 = 10.93 V.
-void test_scan_mismatched_spacing_stays_unlearned() {
-    PeakScan s{};
-    auto two = [&s](float vLow) { learnCurve(s, {{80, 0}, {70, 200}, {vLow + 4, 120}, {vLow, 190}, {29, 100}}); };
-    two(3.6f * 10.93f);
-    TEST_ASSERT_EQUAL_INT(5, s.cand);
-    two(3.0f * 10.93f);
-    TEST_ASSERT_EQUAL_INT(6, s.cand);
-    TEST_ASSERT_EQUAL_INT(0, s.n);
-    two(5.65f * 10.93f);
-    two(5.65f * 10.93f);
-    TEST_ASSERT_EQUAL_INT(1, s.cand);
-    TEST_ASSERT_EQUAL_INT(0, s.n);
-    two(3.0f * 10.93f);
-    two(3.0f * 10.93f);
+    learnCurve(s, {{80, 0}, {74, 200}, {72, 170}, {0.72f * 80, 300}, {25, 120}}); // transient >= 60 % of the MPP: fakes 6
     TEST_ASSERT_EQUAL_INT(6, s.n);
 }
 
-// A dim sweep (MPP below pMin) does not count: two shaded sweeps under 10 W learn nothing.
-void test_scan_dim_sweep_ignored() {
-    auto pv = fryString(1, 0.6f);
+// Known-bad: +-3 % power noise stays below the 8 % dip; +-15 % gives more than 6 maxima, which discards the sweep.
+// A cloud that fakes a lower maximum off the grid (5.65 sixths) learns nothing; one on the grid learns 6 (the scan
+// then runs on an unshaded string: probes, no move).
+void test_scan_noise_and_cloud() {
+    auto pv = fryString(1, 1);
     PeakScan s{};
-    for (int i = 0; i < 2; ++i) learnSweep(s, *pv, [](float) { return 0.02f; });
+    for (int i = 0; i < 3; ++i) learnSweep(s, *pv, 80, 29, [](float) { return 1.f; }, 0.03f);
     TEST_ASSERT_EQUAL_INT(0, s.n);
-    TEST_ASSERT_EQUAL_INT(0, s.cand);
+    s.onSweep(80, 0);
+    uint32_t r = 7;
+    for (float v = 80; v > 29; v -= 0.25f)
+        r = r * 1664525u + 1013904223u, s.sweepSample(v, v * pv->pvCurrent(v) * (0.85f + 0.3f * (float) (r >> 8) / 16777216.f));
+    s.onSweepMpp(60, 250, 10);
+    TEST_ASSERT_TRUE(s.nc > 6);
+    TEST_ASSERT_FALSE(s.pending);
+    const float u = 0.82f * 80 / 6;
+    learnCurve(s, {{80, 0}, {70, 200}, {5.65f * u + 3, 130}, {5.65f * u, 190}, {29, 100}});
+    TEST_ASSERT_EQUAL_INT(0, s.n);
+    learnSweep(s, *pv, 80, 29, [](float v) { return v < 50 && v > 46 ? 0.6f : 1.f; });
+    TEST_ASSERT_EQUAL_INT(6, s.n);
+}
+
+// n only grows: 6 learned, a later sweep that fits only 5 keeps 6 and writes nothing. A count loaded from
+// tracker.conf (6) is not written again; a cleared one (0) learns again and is written.
+void test_scan_count_only_grows_and_persist() {
+    const float u6 = 0.82f * 80 / 6, u5 = 0.82f * 80 / 5;
+    PeakScan s{};
+    learnCurve(s, {{80, 0}, {70, 200}, {3 * u6 + 4, 120}, {3 * u6, 190}, {29, 100}});
+    TEST_ASSERT_EQUAL_INT(6, s.n);
+    s.unsaved = false;
+    learnCurve(s, {{80, 0}, {70, 200}, {3 * u5 + 4, 120}, {3 * u5, 190}, {29, 100}});
+    TEST_ASSERT_EQUAL_INT(6, s.n);
+    TEST_ASSERT_FALSE(s.unsaved);
+
+    PeakScan loaded{};
+    loaded.n = 6;
+    learnCurve(loaded, {{80, 0}, {70, 200}, {3 * u6 + 4, 120}, {3 * u6, 190}, {29, 100}});
+    TEST_ASSERT_FALSE(loaded.unsaved);
+    PeakScan cleared{};
+    cleared.n = 0;
+    learnCurve(cleared, {{80, 0}, {70, 200}, {3 * u5 + 4, 120}, {3 * u5, 190}, {29, 100}});
+    TEST_ASSERT_EQUAL_INT(5, cleared.n);
+    TEST_ASSERT_TRUE(cleared.unsaved);
+}
+
+// Skipped sweeps learn nothing: dim (MPP below pMin); the next sweep started before learn() and aborted (its maxima
+// are not the finished sweep's); an MPP that is not a recorded maximum (still rising at the battery end). NaN samples
+// are ignored: a shaded sweep with NaN interleaved still learns 6. NaN MPP or Voc: nothing to learn.
+void test_scan_skipped_and_nan_sweeps() {
+    auto pv = fryString(1, 0.8f);
+    PeakScan s{};
+    auto feed = [&] { for (float v = 80; v > 29; v -= 0.25f) s.sweepSample(v, v * pv->pvCurrent(v)); };
+    learnSweep(s, *pv, 80, 29, [](float) { return 0.02f; });
+    TEST_ASSERT_EQUAL_INT(0, s.n);
+    s.onSweep(80, 0), feed(), s.onSweepMpp(72, 228, 10);
+    TEST_ASSERT_TRUE(s.pending);
+    s.onSweep(80, 0), feed();
+    TEST_ASSERT_FALSE(s.learn());
+    TEST_ASSERT_EQUAL_INT(0, s.n);
+    learnCurve(s, {{80, 0}, {70, 200}, {60, 100}, {48, 190}, {40, 90}, {29, 300}});
+    TEST_ASSERT_EQUAL_INT(0, s.n);
+    s.onSweep(80, 0);
+    for (float v = 80; v > 29; v -= 0.25f) s.sweepSample(NAN, 1e6f), s.sweepSample(v, NAN), s.sweepSample(v, v * pv->pvCurrent(v));
+    s.onSweepMpp(72, 228, 10);
+    TEST_ASSERT_TRUE(s.learn());
+    TEST_ASSERT_EQUAL_INT(6, s.n);
+    s = PeakScan{};
+    s.onSweep(80, 0), feed(), s.onSweepMpp(NAN, NAN, 10);
+    TEST_ASSERT_FALSE(s.pending);
+    s.onSweep(NAN, 0);
+    for (float v = 80; v > 29; v -= 0.25f) s.sweepSample(v, v * pv->pvCurrent(v));
+    s.onSweepMpp(60, 200, 10);
+    TEST_ASSERT_FALSE(s.learn());
+    TEST_ASSERT_EQUAL_INT(0, s.n);
 }

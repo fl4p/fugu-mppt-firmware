@@ -21,7 +21,7 @@ Tracking runs in three phases:
 
 A new global sweep runs every 30 minutes so the tracker does not stay on a local maximum, which happens with
 partially shaded strings. A sweep takes 20–60 s, depending on the loop rate. Sweeping too often or too slowly
-costs yield. On a buck, once two sweeps have shown a shaded string, a [partial peak scan](#partial-peak-scan) checks the
+costs yield. On a buck, once a sweep has shown a shaded string, a [partial peak scan](#partial-peak-scan) checks the
 other local maxima in about 1–3 s, every 5 minutes and after a sustained change.
 
 In low light, power changes between P&O steps stay below the tracker's thresholds, so P&O cannot follow an
@@ -238,28 +238,50 @@ The log shows each scan as `scan: P <P0>-><P0'> W at <V>V, <n> probes, best x<ra
 
 The sweep runs from $V_{oc}$ down to the battery and passes every maximum. It records the local maxima of the
 smoothed power below $0.93\,V_{oc}$ that have a dip of 8 % on both sides (up to 6; a sweep with more is noise and
-does not count). After the sweep, the maxima of at least 30 % of the sweep's MPP are taken; the first one (highest
-voltage) is the full-string maximum, the others are lower maxima. The candidate count is the largest $n$ in 2..6
-for which every lower maximum lies between $m - 0.25$ and $m + 0.5$ shares of $0.82\,V_{oc}/n$ for a whole
-$m < n$. The window is asymmetric because a shaded maximum sits above its $m$ unshaded shares (see above).
+does not count). Within 3 s after the sweep, the low-frequency loop (core 0) evaluates them:
 
-| Sweep | Result |
-|---|---|
-| One maximum (unshaded, or the shade passed) | count 0 |
-| Lower maxima that no $n$ fits | count 1 |
-| MPP below 5 % of `limits.conf::p_max` | ignored |
-| Same count 2..6 as the previous counted sweep | learned |
+* The sweep's MPP must be one of the recorded maxima, and at least 5 % of `limits.conf::p_max`.
+* The first recorded maximum with at least 60 % of the MPP power is taken as the full-string maximum. Maxima above
+  it are ignored; this is where the start transient of the converter near $V_{oc}$ shows up on some boards.
+* The lower maxima are those below the full-string maximum with at least 30 % of the MPP power. Without one, the
+  sweep teaches nothing.
+* The count is the largest $n$ in 2..6 for which every lower maximum lies between $m - 0.25$ and $m + 0.5$ shares of
+  $0.82\,V_{oc}/n$ for a whole $m < n$. The window is asymmetric because a shaded maximum sits above its $m$
+  unshaded shares (see above). If no $n$ fits, the sweep teaches nothing.
 
-Two sweeps in a row must agree, so a cloud edge during one sweep is not enough. The learned $n$ only grows, and it
-lives in RAM: after a reboot it is learned again, with no flash write. Until then the scan is off; an unshaded
-string never learns and never scans. The log shows `scan: <n> bypass-diode substrings learned from the sweeps`.
+One sweep is enough. The count only grows: a sweep that fits a smaller $n$ changes nothing. The log shows
+`scan: <n> bypass-diode substrings learned from the sweep`. Until a count is learned the scan is off, so an
+unshaded string never scans.
 
-Sweeps run every 30 minutes, so the first shade after a boot costs at least one sweep period without scans. A
-shadow that comes and goes between two sweeps is not learned from.
+The count is kept in `tracker.conf::pv_substrings`. It is written once when it grows, as soon as a flash write is
+safe (converter off, or below 5 W), and before a console restart. Setting it to 0 makes the converter learn it
+again after the next restart. It is not meant to be set by hand.
 
-The rule cannot tell 3 from 6 when every lower maximum sits on an even multiple of the 6-share grid, and it
-takes the larger count. A string of 3 substrings can therefore learn 6; the scan then also probes the odd
-multiples, which costs time but misses no maximum.
+A shadow that comes and goes between two sweeps (30 minutes apart) after the first boot is not scanned on that pass.
+
+The grid of 6 shares also holds every multiple of 1/3, and lies within half a share of every multiple of 1/4 and
+1/5. The count therefore says which probe grid to use, not how many substrings there are:
+
+| Substrings | Learned | Effect on the scan |
+|---|---|---|
+| 6 | 6 | Probes at every maximum |
+| 2 or 3 | 6 | Extra probes at sixths that hold no maximum |
+| 4 | 5 (one substring shaded) or 6 (two) | Probes up to half a share off some maxima (1/4 and 3/4 with 6, 2/4 with 5) |
+| 5 | 6 (one substring shaded) or 5 (two) | With 6, probes up to 0.4 of a sixth off the maxima |
+| More than 6 | At most 6 | Probes off the maxima |
+
+A probe off a maximum measures less power than the maximum gives, so a better maximum can be missed; an extra
+probe costs a few hundred milliseconds. Neither causes a wrong move: the scan moves only to a probe that measured
+more power than the operating point, and P&O then climbs from there.
+
+Two unshaded cases can fake a count, both on the grid of 6:
+
+* A cloud edge during a sweep fakes a lower maximum on the grid.
+* A start transient between $0.9$ and $0.93\,V_{oc}$ with at least 60 % of the MPP power, followed by a hot-module
+  MPP at or below $0.75\,V_{oc}$, looks like a shaded full string over its MPP. The transient is near-constant
+  power (about 100 W on the boards measured), so this needs low light and hot modules together.
+
+The scan then runs on an unshaded string, probes, and stays; on a string of 6 substrings the count is right anyway.
 
 ### Schedule and cost
 

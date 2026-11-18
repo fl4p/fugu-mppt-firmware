@@ -1261,6 +1261,7 @@ __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
         handleCommand("reset-lag");
     }
     mppt.rectCalLf();
+    mppt.scanLf(flashWriteSafe());
     heapDiagLf((uint32_t) wallClockMs());
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     coredumpStampIfNew();
@@ -1921,6 +1922,7 @@ static void restartCloseTelnet() {
 
 void systemRestart() {
     converter.disable();
+    mppt.scanSave();
     if (g_restartBlocked) {
         ESP_LOGE("main", "restart refused: bootloader region not verified");
         return;
