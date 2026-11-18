@@ -1350,9 +1350,7 @@ static void loopRTNewData(time_ms nowMs) {
                 stopAndBackoff(4);
             }
         } else if (!flashOpActive() && wallClockUs() > delayStartUntil) { // start runs from flash
-            const char *blocked = mppt.startBlockReason();
-            if (blocked == MpptController::kIdleBlock) converter.wantStart(); // idle profile leaves first
-            if (!blocked) RT_COLD(
+            if (!mppt.startBlockReasonRt()) RT_COLD(
             if (g_app.psuMode()) {
                 mppt.bflow.enable(true);
                 converter.pwmPerturb(1);
@@ -1501,10 +1499,19 @@ static struct {
     bool cpuOff;         // guard: the RT loop lost samples at cpuMhz, CPU part off until reboot (RAM only)
     uint8_t cpu, force;  // force: 0 auto, 1 off, 2 on (`pwr idle`)
     uint8_t tries;       // CpuPre: windows without a rate; CpuTest: disturbed windows
+    bool stray;          // a stray InhibitIdle was cleared (logged once)
     float pre;           // samples/s before the switch
     int64_t swUs;        // CpuTest: clock switch time
     struct { int64_t t; uint32_t n, seq; time_us cal; } w; // rate window start
 } s_idle{};
+
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+static uint32_t s_idleAfterMs = 5u * 60 * 1000;
+void idleProfileAfter(uint32_t s) { s_idleAfterMs = s * 1000; }
+uint32_t idleProfileAfter() { return s_idleAfterMs / 1000; }
+#else
+static constexpr uint32_t s_idleAfterMs = 5u * 60 * 1000;
+#endif
 
 bool idleProfileOn() { return s_idle.on; }
 
@@ -1588,6 +1595,12 @@ static void idleCpuTick() {
     auto &s = s_idle;
     const int64_t now = esp_timer_get_time();
     if (!s.on) idleCpuLeave(now); // also catches a leave from another task during idleCpuLower()
+    // only CpuTest, CpuLow and CpuSettle own InhibitIdle
+    if (s.cpu <= CpuPre && converter.startInhibited(SynchronousConverter::InhibitIdle)) {
+        converter.inhibitStart(false, SynchronousConverter::InhibitIdle);
+        if (!s.stray) UART_LOG("idle profile: stray start inhibit cleared");
+        s.stray = true;
+    }
     switch (s.cpu) {
         case CpuBoot:
             if (s.on && s.cpuMhz && !s.cpuOff) {
@@ -1741,12 +1754,17 @@ static const char *idleBlocker() {
 
 static void idleProfileTick(time_ms nowMs) {
     static time_ms busyMs = 0;
-    const bool wake = converter.takeStartWanted(); // the RT loop refused a start (InhibitIdle)
+    static uint32_t idleOnlyMs = 0;
+    const bool rtWake = converter.takeStartWanted(); // the RT loop refused a start (InhibitIdle)
+    const bool bsWake = idleBackstopWake(converter.startInhibited(SynchronousConverter::InhibitIdle) &&
+                                         !g_app.manualPwm() && mppt.startBlockReason() == MpptController::kIdleBlock,
+                                         (uint32_t) nowMs, idleOnlyMs);
+    const bool wake = rtWake || bsWake;
     if (!s_idle.suspended) {
-        const char *why = wake ? "(start)" : idleBlocker();
+        const char *why = rtWake ? "(start)" : bsWake ? "(start, backstop)" : idleBlocker();
         if (why) busyMs = nowMs;
         if (wake && s_idle.force == 2) s_idle.force = 0; // a start ends a forced profile
-        const bool want = s_idle.force ? s_idle.force == 2 && !why : nowMs - busyMs > 5u * 60 * 1000;
+        const bool want = s_idle.force ? s_idle.force == 2 && !why : nowMs - busyMs > s_idleAfterMs;
         if (want != s_idle.on) idleProfileSet(want, why ? why : s_idle.force ? "(pwr idle)" : nullptr);
 #ifdef WITH_BLE
         else if (s_idle.advMs && bleConsoleAdvMs() != (want ? s_idle.advMs : 0))

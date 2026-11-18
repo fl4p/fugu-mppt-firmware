@@ -58,13 +58,22 @@ Field result that prompted it: flat (INA226, ~1475 samples/s, 0.68 ms period) ra
   `kIdleSettleUs` = 200 ms at it. `pwmPerturb()` is the only place a converter is enabled; it refuses
   while any bit is set, so no mode (MPPT sweep, PSU/PV-sim, `dc`/`+N`, rect-cal, measure-coil) can
   switch at the idle clock.
-- **Wake request.** A start refused for `InhibitIdle` (in `pwmPerturb()`, or the RT start branch when
-  `startBlockReason()` returns only `idle profile`) sets `converter.startWanted`. The next network-loop
-  pass (`idleProfileTick()` runs first in it) leaves the profile: CPU first, then telemetry interval and
-  BLE advert. Log: `idle profile off (start): cpu 160 MHz ...`, then
+- **Wake request.** A start refused for `InhibitIdle` sets `converter.startWanted`: in `pwmPerturb()`,
+  and in `MpptController::startBlockReasonRt()` when `startBlockReason()` returns only `idle profile`.
+  The RT loop gates both start paths with it: the start branch (no sweep armed, `st=START,0`) and the
+  top of `MpptController::update()` (sweep armed, `st=START,1`). Until 2026-11-18 only the start branch
+  raised it, so with a sweep armed the converter never started (fry, 13 min at dawn). The next
+  network-loop pass (`idleProfileTick()` runs first in it) leaves the profile: CPU first, then telemetry
+  interval and BLE advert. Log: `idle profile off (start): cpu 160 MHz ...`, then
   `idle profile: start released, <n> samples in <ms> ms at 160 MHz`. While it waits the status line
   logs `START blocked: idle profile`. A blocked network loop delays the start by the length of the
   block; the RT loop re-raises the request every pass, so nothing is lost.
+- **Backstops.** `idleProfileTick()` also leaves on its own when `InhibitIdle` is set, the mode is not
+  manual and `startBlockReason()` has been exactly `idle profile` for more than 1 s
+  (`idleBackstopWake()`), whether or not the RT flag came: log `idle profile off (start, backstop)`.
+  That line means an RT start path lacks the wake. `idleCpuTick()` clears `InhibitIdle` when the CPU
+  state is `boot` or `pre` (no state that owns it), logging `idle profile: stray start inhibit cleared`
+  once per boot.
 - A pack held full in daylight (no sweep) still raises the request, so the profile stays out then.
 
 ### CPU-part guard
@@ -85,8 +94,10 @@ overflows, so there the guard detects lost samples, not added batch latency.
 Bench knobs (`CONFIG_FUGU_WITH_PWR_KNOBS`): `pwr idle 0|1|auto` forces the profile off/on through the
 same code (blockers still apply; a refused start ends a forced on; not allowed after a suspending knob),
 `pwr gap` prints and resets the max RT loop period (`g_app.cmdLoopLag`, latched with the converter on
-or off) with the Vout sample rate since the last call. The `pwr` line shows `idle=<on>/<auto|off|on|susp>
-icpu=<boot|pre|test|low|settle|latched|->`. `etc/idle_switch_stall.py -p <port> --cycles 20` measures
+or off) with the Vout sample rate since the last call, `pwr idle-after <s 5..3600>` shortens the 5 min
+idle time of the automatic path (RAM only), `pwr vin <0..2>` scales the fake ADC channel that feeds Vin
+(`adc=fake` only). The `pwr` line shows `idle=<on>/<auto|off|on|susp>/<idle-after>s
+icpu=<boot|pre|test|low|settle|latched|->` and `vin=<scale>`. `etc/idle_switch_stall.py -p <port> --cycles 20` measures
 the stall of the clock switch.
 
 Clock-switch stall (mock board, 1470 samples/s, 20 enter/exit cycles, 2026-11-17, `etc/idle_switch_stall.py`): not measurable. Worst loop gap in the interval containing the switch: 800 µs entering 80 MHz, 765 µs leaving, against 804 µs over the same time without switching. A start from the profile (three runs) peaked at 909-915 µs, a start without it at 901-923 µs. The mock holds its rate at 80 MHz up to 5000 samples/s; at 7000 the guard tripped (6552/7042) and the rate recovered at 160 MHz. Not measured on an INA226 board.

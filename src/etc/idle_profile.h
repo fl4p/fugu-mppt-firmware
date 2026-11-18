@@ -18,6 +18,8 @@ bool idleProfileOn();
 const char *idleProfileForce(const char *arg); // `pwr idle 0|1|auto`; nullptr or the refusal
 const char *idleProfileMode();                 // auto, off, on (forced) or susp
 const char *idleCpuState();                    // CPU part: boot pre test low settle latched -
+void idleProfileAfter(uint32_t s);             // `pwr idle-after`: idle time before the profile, s
+uint32_t idleProfileAfter();
 
 // CPU-part guard: the RT sample rate at the idle clock against the rate measured just before
 constexpr int64_t kIdleRateWinUs = 3'000'000, kIdleSkipUs = 500'000;
@@ -30,6 +32,15 @@ constexpr uint32_t kIdleSettleN = 128;
 inline float idleWinRate(uint32_t n0, uint32_t n1, int64_t dtUs, bool disturbed) {
     if (dtUs <= 0 || disturbed || (int32_t) (n1 - n0) < 0) return NAN;
     return (float) (n1 - n0) * 1e6f / (float) dtUs;
+}
+
+// Network-loop backstop for the RT wake: true once a start has been refused only by InhibitIdle for
+// more than kIdleBackstopMs. since: start of that state + 1 ms, 0 = not in it.
+constexpr uint32_t kIdleBackstopMs = 1000;
+inline bool idleBackstopWake(bool idleOnly, uint32_t nowMs, uint32_t &since) {
+    if (!idleOnly) return since = 0, false;
+    if (!since) since = nowMs + 1;
+    return nowMs + 1 - since > kIdleBackstopMs;
 }
 
 enum class IdleCpuVerdict : uint8_t { Keep, Restore, NoBase };

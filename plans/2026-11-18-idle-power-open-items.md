@@ -56,6 +56,28 @@ To do:
    2026-11-18 07:34 UTC. flat still has `idle_cpu_mhz=80` and is safe only because its guard
    latches every night; setting it to 0 as well is the safe choice (needs a restart to apply).
 
+### Fix (2026-11-18, uncommitted, host-tested and compiled only, not run on hardware)
+
+Cause confirmed: with a sweep armed, `MpptController::update()` returned at its start gate
+(`converter.disabled() && !startCondition()`) without raising the wake.
+
+- `MpptController::startBlockReasonRt()` (`src/mppt.h`): `startBlockReason()` plus `converter.wantStart()`
+  when the only blocker is the idle bit. Used by both RT start gates: the start branch in `loopRTNewData`
+  (`st=START,0`) and the gate at the top of `update()` (`st=START,1`). `pwmPerturb()` keeps its own raise
+  (manual duty, measure-coil, rect-cal, sweep enable).
+- Backstop 1 (`idleProfileTick`): leaves the profile when `InhibitIdle` is set, the mode is not manual and
+  `startBlockReason()` has been exactly `idle profile` for more than 1 s (`idleBackstopWake()` in
+  `src/etc/idle_profile.h`). Log `idle profile off (start, backstop)`: that line means an RT path
+  lacks the wake.
+- Backstop 2 (`idleCpuTick`): `InhibitIdle` set in CPU state `boot` or `pre` is cleared, logged once as
+  `idle profile: stray start inhibit cleared`.
+- Bench knobs (`CONFIG_FUGU_WITH_PWR_KNOBS` only): `pwr vin <0..2>` scales the fake ADC channel feeding
+  Vin, `pwr idle-after <5..3600>` shortens the 5 min idle time.
+- Tests: `test/host-stub/mppt-sim.sh idle-wake` (armed sweep and no sweep: inhibit set, Vin rises, wake
+  raised, start after release; fails at "START,1 wake raised" with the old gate), `idle-guard-test`
+  (backstop timing). Still to do: the bench run on bench-139c (procedure in the session report), then
+  `idle_cpu_mhz` back to 80 on fry.
+
 ## 2. Other open points of the idle profile
 
 - **flat sample rate at 80 MHz**: 1076 of 1478 samples/s. Cause not measured; from code reading the

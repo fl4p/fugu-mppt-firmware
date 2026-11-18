@@ -52,6 +52,27 @@ int main() {
         CHECK(restored, "pre %.0f never restored", pre);
     }
 
+    // backstop wake: only after the idle-only state has held for more than kIdleBackstopMs
+    {
+        uint32_t since = 0;
+        CHECK(!idleBackstopWake(false, 5000, since) && since == 0, "not idle-only");
+        CHECK(!idleBackstopWake(true, 5000, since) && since, "first tick");
+        CHECK(!idleBackstopWake(true, 5000 + kIdleBackstopMs, since), "at the limit");
+        CHECK(idleBackstopWake(true, 5001 + kIdleBackstopMs, since), "past the limit");
+        CHECK(idleBackstopWake(true, 900000, since), "stays raised while idle-only");
+        CHECK(!idleBackstopWake(false, 900001, since) && since == 0, "cleared");
+        CHECK(!idleBackstopWake(true, 900002, since), "restarts the delay");
+        CHECK(!idleBackstopWake(true, 900002 + kIdleBackstopMs, since), "restarted delay, at the limit");
+        since = 0;
+        CHECK(!idleBackstopWake(true, 0, since) && since == 1, "t=0 is not 'not in it'");
+        CHECK(!idleBackstopWake(true, 0, since), "t=0 twice");
+        CHECK(idleBackstopWake(true, 1 + kIdleBackstopMs, since), "from t=0");
+        since = 0; // uint32 ms wrap
+        CHECK(!idleBackstopWake(true, 0xffffff00u, since), "before the wrap");
+        CHECK(!idleBackstopWake(true, 0xffffff00u + kIdleBackstopMs, since), "across the wrap, at the limit");
+        CHECK(idleBackstopWake(true, 0xffffff00u + kIdleBackstopMs + 1, since), "across the wrap");
+    }
+
     printf("%s (%d failures)\n", fails ? "FAILED" : "OK", fails);
     return fails != 0;
 }

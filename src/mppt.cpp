@@ -35,7 +35,7 @@ void MpptController::update() {
     // a sweep that ends other than through _stopSweep (trip, abort, restart) is dropped here
     if (!_sweeping || sampler.isCalibrating()) outZ.reset();
 
-    if (converter.disabled() && !startCondition()) {
+    if (converter.disabled() && startBlockReasonRt()) {
         bflow.enable(false);
         ctrlState.mode = MpptControlMode::None;
         return;

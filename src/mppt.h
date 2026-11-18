@@ -527,6 +527,13 @@ public:
 
     [[nodiscard]] bool startCondition() const { return startBlockReason() == nullptr; }
 
+    // RT start gates: startBlockReason(); a start refused only by the idle profile asks it to leave
+    const char *startBlockReasonRt() {
+        const char *r = startBlockReason();
+        if (r == kIdleBlock) converter.wantStart();
+        return r;
+    }
+
     bool protectLf(bool ignoreUV) {
         //auto nowMs = loopWallClockMs();
 

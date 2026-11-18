@@ -37,6 +37,8 @@ private:
     PeriodicTimer periodic_timer{};
 #if CONFIG_FUGU_WITH_PWR_KNOBS
     uint16_t waitMs = 10;
+    uint8_t scaleCh = 255;
+    float scale = 1.f;
     esp_timer_handle_t escTimer = nullptr;
 #else
     static constexpr uint16_t waitMs = 10;
@@ -149,6 +151,13 @@ public:
     }
 
     [[nodiscard]] bool espSource() const { return escTimer; }
+
+    // `pwr vin`: scale one channel's value
+    void setScale(uint8_t ch, float f) {
+        scale = f;
+        scaleCh = ch;
+    }
+    [[nodiscard]] float getScale() const { return scale; }
 #endif
 
     void setMaxExpectedVoltage(uint8_t ch, float voltage) override {
@@ -173,6 +182,9 @@ public:
         } else {
             x = .9f + .1f * s;
         }
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+        if (readingChannel == scaleCh) x *= scale;
+#endif
 
         if (scope)
             scope->addSample12(this, readingChannel, x / 3 * 4000);

@@ -85,10 +85,12 @@ static void pwrStatus() {
 #endif
     auto *vo = (const PhysicalSensor *) sensors.Vout;
     const float rt = vo && !vo->isVirtual ? vo->adc->getSamplingRate(vo->params.adcCh) : NAN;
-    UART_LOG("pwr: cpu=%lu apb=%lu %s adv=%s tele=%lu idle=%d/%s icpu=%s pm=%s pwm=%c rt=%.0f rtsrc=%s nl=%u T=%.2f",
+    UART_LOG("pwr: cpu=%lu apb=%lu %s adv=%s tele=%lu idle=%d/%s/%lus icpu=%s pm=%s pwm=%c rt=%.0f rtsrc=%s vin=%.2f nl=%u T=%.2f",
              (unsigned long) getCpuFrequencyMhz(), (unsigned long) getApbFrequency(), w, adv,
-             (unsigned long) (g_teleMinPointUs / 1000), (int) idleProfileOn(), idleProfileMode(), idleCpuState(), pm, pwm, rt,
-             !g_pwrFakeAdc ? "-" : g_pwrFakeAdc->espSource() ? "esp" : "gp", (unsigned) g_pwrNetLoopMs, t);
+             (unsigned long) (g_teleMinPointUs / 1000), (int) idleProfileOn(), idleProfileMode(),
+             (unsigned long) idleProfileAfter(), idleCpuState(), pm, pwm, rt,
+             !g_pwrFakeAdc ? "-" : g_pwrFakeAdc->espSource() ? "esp" : "gp", g_pwrFakeAdc ? g_pwrFakeAdc->getScale() : NAN,
+             (unsigned) g_pwrNetLoopMs, t);
 }
 
 #ifdef CONFIG_PM_ENABLE
@@ -125,9 +127,13 @@ static int pwmSet(bool on) {
 }
 #endif
 
+static bool onFakeAdc(const Sensor *s) {
+    auto *p = (const PhysicalSensor *) s;
+    return g_pwrFakeAdc && p && !p->isVirtual && p->adc == (AsyncADC<float> *) g_pwrFakeAdc;
+}
+
 static int rtSet(long hz) {
-    auto *vo = (const PhysicalSensor *) sensors.Vout;
-    if (!g_pwrFakeAdc || !vo || vo->isVirtual || vo->adc != (AsyncADC<float> *) g_pwrFakeAdc) {
+    if (!onFakeAdc(sensors.Vout)) {
         UART_LOG("pwr: rt not supported (adc is not fake)");
         return 1;
     }
@@ -359,6 +365,19 @@ static int pwrSet(int argc, const char *const *argv) {
         if (argc != 2 || !argNum(argv[1], v)) return -1;
         return rtSet(v);
     }
+    if (!strcmp(k, "vin")) {
+        char *end;
+        float f;
+        if (argc != 2 || (f = strtof(argv[1], &end), end == argv[1] || *end) || !(f >= 0 && f <= 2)) return -1;
+        if (!onFakeAdc(sensors.Vin)) { UART_LOG("pwr: vin not supported (adc is not fake)"); return 1; }
+        g_pwrFakeAdc->setScale(((const PhysicalSensor *) sensors.Vin)->params.adcCh, f);
+        return 0;
+    }
+    if (!strcmp(k, "idle-after")) {
+        if (argc != 2 || !argNum(argv[1], v) || v < 5 || v > 3600) return -1;
+        idleProfileAfter(v);
+        return 0;
+    }
 #ifdef CONFIG_PM_ENABLE
     if (!strcmp(k, "locks")) return argc == 1 ? locksPrint(locksDump()) : -1;
 #endif
@@ -424,7 +443,7 @@ bool pwrCommand(int argc, const char *const *argv) {
     if (rc < 0) {
         UART_LOG("usage: pwr [cpu 80|160|240 | pm <max> <min> <ls 0|1> [secs 10..3600] | pm off | wifi-ps none|min|max [li]"
                  " | wifi-tx <dBm 2..21> | ble-adv <ms 20..10240, 0=default> | tele <ms 20..3600000> | pwm 0|1 | rt <hz>"
-                 " | rt-src gp|esp | netloop <ms 1..1000> | idle 0|1|auto | gap"
+                 " | rt-src gp|esp | netloop <ms 1..1000> | idle 0|1|auto | idle-after <s 5..3600> | vin <0..2> | gap"
 #ifdef CONFIG_PM_ENABLE
                  " | locks | pmwin"
 #endif

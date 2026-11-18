@@ -13,6 +13,7 @@
 //   /tmp/mppt-sim <scenario>   # sanity | a | b | c | d-cloud | d-cloud-ramp | d-bus04 | d-bus08 | d-bus12 |
 //                              # d-noise | e | e-bleed; suffix -p0 = limits.conf reverse_current_paranoia=0
 //                              # shade | shade-cv: half-shaded string (two peaks)
+//                              # idle-wake: start refused only by InhibitIdle while Vin rises (armed sweep and not)
 //   weather scenarios (PV string of 1..3 substrings, irradiance played from a time series; "== SUMMARY" line):
 //     wx-cloud          recorded cloudy quarter hour (flat, 2026-11-14 11:20 UTC), full sun <-> cloud
 //     wx-cloud-cv       same with the battery at the Vout cap in full sun; -ripple adds 100 Hz bus ripple
@@ -286,7 +287,7 @@ static void loopRTNewData(time_ms nowMs) {
             } else {
                 stopAndBackoff(4);
             }
-        } else if (wallClockUs() > delayStartUntil && mppt.startCondition()) {
+        } else if (wallClockUs() > delayStartUntil && !mppt.startBlockReasonRt()) {
             if (g_app.psuMode()) {
                 mppt.bflow.enable(true);
                 converter.pwmPerturb(1);
@@ -1552,6 +1553,46 @@ static int runRingCoil(const std::string &name, bool weak) {
     return 0;
 }
 
+// Start refused only by the idle profile's InhibitIdle while Vin rises, with a sweep armed (st=START,1: fry
+// 2026-11-18, update() returned before any wake) and without (START,0: the start branch): the RT loop must raise
+// the wake, not start, and start once the bit is released.
+static int runIdleWake() {
+    g_vconv.setPvBlocking(true); // the night's panel would sink the battery through the HS body diode
+    settle(20);
+    const float isc = g_vconv.getIsc(), voc = g_vconv.getVoc(), k = g_vconv.getPvK();
+    int fails = 0;
+    auto check = [&](bool c, const char *what, int armed) {
+        printf("== idle-wake START,%d %s: %s\n", armed, c ? "ok" : "FAIL", what);
+        fails += !c;
+    };
+    for (int armed = 1; armed >= 0; --armed) {
+        stopAndBackoff(1);
+        g_vconv.setPv(isc, 0.3f * g_vconv.getVbat(), k);
+        run(10, 0);
+        if (armed) mppt.startSweep();
+        run(10, 0);
+        const char *r = mppt.startBlockReason();
+        traceLine("night ");
+        check(converter.disabled() && mppt.isSweeping() == (bool) armed && r && !strcmp(r, "Vin-Vout"),
+              "disabled, Vin-Vout", armed);
+        converter.inhibitStart(true, SynchronousConverter::InhibitIdle);
+        converter.takeStartWanted();
+        g_vconv.setPv(isc, voc, k);
+        run(3, 0);
+        traceLine("dawn  ");
+        check(mppt.startBlockReason() == MpptController::kIdleBlock, "only the idle bit blocks", armed);
+        check(converter.disabled(), "no start while inhibited", armed);
+        check(converter.takeStartWanted(), "wake raised", armed);
+        const uint16_t en = converter.enableCount();
+        converter.inhibitStart(false, SynchronousConverter::InhibitIdle);
+        run(6, 0);
+        traceLine("start ");
+        check(converter.enableCount() != en, "started after release", armed);
+    }
+    printf("== SUMMARY idle-wake: %s (%d failures)\n", fails ? "FAILED" : "OK", fails);
+    return fails != 0;
+}
+
 static int simMain(int argc, char **argv) {
     std::string sc = argc > 1 ? argv[1] : "sanity";
     g_simLogHook = logHook;
@@ -1632,6 +1673,7 @@ static int simMain(int argc, char **argv) {
         return 0;
     }
 
+    if (sc == "idle-wake") return runIdleWake();
     settle(sc == "d-noise" ? 60 : 60);
     size_t settleTrips = g_trips.size();
     printf("# trips during settle: %zu\n", settleTrips);
