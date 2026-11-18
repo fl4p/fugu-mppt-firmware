@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  loadDash, closeAll, settle, makeFakeBleDevice, makeFakeBluetooth, mqttMsg, bleRecord, fakeScrollGeometry,
+  loadDash, closeAll, settle, until, makeFakeBleDevice, makeFakeBluetooth, mqttMsg, bleRecord, fakeScrollGeometry,
 } = require('./_setup_dash');
 
 test.after(closeAll);
@@ -44,8 +44,8 @@ test('no MQTT URL: no client is created, BLE-only enable sequence works without 
   await settle(5);
   assert.deepEqual(plain(bt.requests[0].filters), [{ namePrefix: 'fugu-' }, { services: [Dash.NUS.SVC] }]);
   assert.deepEqual(plain(bt.requests[0].optionalServices), [Dash.NUS.SVC]);
-  assert.deepEqual(dev.writes.map(w => w.replace(/^set-time \d+$/, 'set-time N')),
-    ['hostname', 'set-time N', 'tele-ble 1', 'sweep-curve']);
+  // no set-time unless tele-ble 1 is refused for the clock
+  assert.deepEqual(plain(dev.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
   assert.ok(dev.slices.every(n => n <= 20));
   // one telemetry record split over two notifications
   const rec = bleRecord([{ fields: { P: 123.46, Ui: 40.5, Uo: 27.25, I: 4.5, pwm_duty: 1234 }, ts: 1_763_400_000_123 }]);
@@ -62,13 +62,14 @@ test('no MQTT URL: no client is created, BLE-only enable sequence works without 
   assert.match(text(window, 'fbuck', '.rate'), /^BLE [\d.]+ pt\/s · dropped 0 B · resyncs 0$/);
 });
 
-test('BLE hostname falls back to the device name minus fugu-; missing TELE char is a reason', async () => {
+test('BLE hostname: 8 s wait with one retry, then the device name minus fugu-; missing TELE char is a reason', async () => {
   const dev = makeFakeBleDevice({ hostname: null, name: 'fugu-bench', tele: false });
   const { window, Dash } = await loadDash({ bluetooth: makeFakeBluetooth([dev]) });
+  assert.equal(Dash.CFG.hostnameMs, 8000);
   Dash.CFG.curveTimeoutMs = 10;
-  const t0 = Date.now();
+  Dash.CFG.hostnameMs = 20;
   await Dash.addBle();
-  assert.ok(Date.now() - t0 >= 2400, 'waited for the hostname timeout');
+  assert.deepEqual(plain(dev.writes.slice(0, 2)), ['hostname', 'hostname']);
   Dash.flush();
   assert.ok(card(window, 'bench'));
   const b = card(window, 'bench').querySelector('.badge.ble');
@@ -77,7 +78,7 @@ test('BLE hostname falls back to the device name minus fugu-; missing TELE char 
   assert.ok(!dev.writes.includes('tele-ble 1'));
 });
 
-test('tele-ble refusal reason is shown on the BLE badge', async () => {
+test('tele-ble refusal reason is shown on the BLE badge; a clock refusal sends set-time and retries once', async () => {
   const dev = makeFakeBleDevice({
     hostname: 'flu',
     reply: (c) => c === 'tele-ble 1' ? ['W (9) main: tele-ble: clock not set', 'ERR: tele-ble 1'] : null,
@@ -88,11 +89,34 @@ test('tele-ble refusal reason is shown on the BLE badge', async () => {
   const b = card(window, 'flu').querySelector('.badge.ble');
   assert.equal(b.dataset.state, 'refused');
   assert.equal(b.title, 'clock not set');
+  assert.deepEqual(dev.writes.map(w => w.replace(/^set-time \d+$/, 'set-time N')),
+    ['hostname', 'tele-ble 1', 'set-time N', 'tele-ble 1', 'sweep-curve']);
+});
+
+test('BLE: set-time then tele-ble on after a clock refusal; other refusals send no set-time', async () => {
+  let n = 0;
+  const dev = makeFakeBleDevice({
+    hostname: 'fbuck',
+    reply: (c) => c === 'tele-ble 1' && !n++ ? ['W (9) main: tele-ble: clock not set', 'ERR: tele-ble 1'] : null,
+  });
+  const other = makeFakeBleDevice({
+    hostname: 'fboost', name: 'fugu-fboost', id: 'dev2',
+    reply: (c) => c === 'tele-ble 1' ? ['W (9) main: tele-ble: low heap', 'ERR: tele-ble 1'] : null,
+  });
+  const { window, Dash } = await loadDash({ bluetooth: makeFakeBluetooth([dev, other]) });
+  await Dash.addBle();
+  await Dash.addBle();
+  Dash.flush();
+  assert.equal(card(window, 'fbuck').querySelector('.badge.ble').dataset.state, 'on');
+  assert.deepEqual(dev.writes.map(w => w.replace(/^set-time \d+$/, 'set-time N')),
+    ['hostname', 'tele-ble 1', 'set-time N', 'tele-ble 1', 'sweep-curve']);
+  assert.equal(card(window, 'fboost').querySelector('.badge.ble').title, 'low heap');
+  assert.deepEqual(plain(other.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
 });
 
 test('stored URL auto-connects, subscribes, pokes remembered hosts', async () => {
   const { window, client } = await withBroker({
-    'mqtt-user': 'u', 'mqtt-pass': 'p', 'mqtt-remember': '1',
+    'mqtt-user': 'u', 'dash-mqtt-pass': 'p', 'dash-mqtt-remember': '1',
     'mqtt-known-hosts': JSON.stringify({ [URL]: ['fry', 'flat'], 'ws://other:1': ['x'] }),
   });
   assert.equal(client.url, URL);
@@ -266,15 +290,15 @@ test('lease: firmware without tele-mqtt is treated as relay-fed; other reasons s
   const more = card(window, 'old').querySelector('details.more');
   more.open = true; await settle(5); Dash.flush();
   assert.match(more.querySelector('.info').textContent, /lease relay-fed/);
-  // stream silent for 15 s: relay never re-leases, disabled does (silence rule), low heap retries at 60 s
+  // stream silent for 15 s: relay and disabled never re-lease, low heap retries at 60 s
   c.add(16000); Dash.tick();
   assert.equal(lpubs(client, 'pv/log/old/cmd').length, 1, 'relay: no lease on silence');
-  assert.equal(lpubs(client, 'pv/log/off/cmd').length, 2, 'disabled: silence re-runs the lease');
+  assert.equal(lpubs(client, 'pv/log/off/cmd').length, 1, 'disabled: no lease on silence');
   assert.equal(lpubs(client, 'pv/log/busy/cmd').length, 1);
-  log(client, 'off', ['W (6) main: tele-mqtt: disabled', 'ERR: tele-mqtt 120']);
-  await settle();
   c.add(45000); Dash.tick();
   assert.equal(lpubs(client, 'pv/log/busy/cmd').length, 2, 'low heap retried after 60 s');
+  for (let i = 0; i < 20; i++){ c.add(15000); Dash.tick(); }
+  assert.equal(lpubs(client, 'pv/log/off/cmd').length, 1, 'disabled is never retried');
   log(client, 'busy', ['tele-mqtt: on, 120 s left, dropped 0 B', 'OK: tele-mqtt 120']);
   await settle();
   c.add(120000); Dash.tick();
@@ -465,11 +489,13 @@ test('BLE probe: tele-ble every 60 s updates the dropped counter', async () => {
 test('BLE link loss: 3 backoff reconnects, then a Reconnect button that works', async () => {
   const dev = makeFakeBleDevice({ hostname: 'fbuck' });
   const { window, Dash } = await loadDash({ bluetooth: makeFakeBluetooth([dev]) });
-  Dash.CFG.bleBackoffMs = [1, 1, 1];
+  Dash.CFG.bleBackoffMs = [0, 0, 0];
   await Dash.addBle();
+  const link = Dash.devices.get('fbuck').ble;
   dev.failConnect = 3;
   dev.dropLink();
-  await settle(30);
+  await until(() => link.state === 'off' && link.reason === 'link lost', 3000, 'link lost');
+  assert.equal(dev.failConnect, 0, 'three reconnect attempts');
   Dash.flush();
   const c = card(window, 'fbuck');
   assert.equal(c.querySelector('.badge.ble').dataset.state, 'off');
@@ -477,10 +503,10 @@ test('BLE link loss: 3 backoff reconnects, then a Reconnect button that works', 
   assert.notEqual(btn.style.display, 'none');
   const n = dev.writes.length;
   btn.click();
-  await settle(10);
+  await until(() => dev.writes.length >= n + 3, 3000, 'enable sequence');
   Dash.flush();
   assert.equal(c.querySelector('.badge.ble').dataset.state, 'on');
-  assert.deepEqual(dev.writes.slice(n).map(w => w.replace(/\d+$/, 'N')), ['hostname', 'set-time N', 'tele-ble N', 'sweep-curve']);
+  assert.deepEqual(plain(dev.writes.slice(n)), ['hostname', 'tele-ble 1', 'sweep-curve']);
   assert.equal(btn.style.display, 'none');
 });
 
@@ -530,33 +556,51 @@ test('banners: missing navigator.bluetooth; https page with ws:// URL', async ()
 });
 
 test('password is not stored unless "remember" is ticked', async () => {
-  const { window, Dash } = await loadDash({ storage: { 'mqtt-pass': 'old' } });
+  const { window, Dash } = await loadDash({ storage: { 'dash-mqtt-pass': 'old' } });
   const d = window.document;
+  const ls = (k) => window.localStorage.getItem(k);
   assert.equal(d.getElementById('mqtt-remember').checked, false);
   assert.equal(d.getElementById('mqtt-pass').value, '');
-  assert.equal(window.localStorage.getItem('mqtt-pass'), null);
+  assert.equal(ls('dash-mqtt-pass'), null);
   d.getElementById('mqtt-url').value = 'ws://b:9';
   d.getElementById('mqtt-pass').value = 'secret';
   d.getElementById('mqtt-connect').click();
   await settle();
-  assert.equal(window.localStorage.getItem('mqtt-pass'), null);
+  assert.equal(ls('dash-mqtt-pass'), null);
   assert.equal(Dash.client.opts.password, 'secret');
   d.getElementById('mqtt-connect').click();
   const r = d.getElementById('mqtt-remember');
   r.checked = true; r.dispatchEvent(new window.Event('change'));
   d.getElementById('mqtt-connect').click();
   await settle();
-  assert.equal(window.localStorage.getItem('mqtt-pass'), 'secret');
-  assert.equal(window.localStorage.getItem('mqtt-remember'), '1');
+  assert.equal(ls('dash-mqtt-pass'), 'secret');
+  assert.equal(ls('dash-mqtt-remember'), '1');
   r.checked = false; r.dispatchEvent(new window.Event('change'));
-  assert.equal(window.localStorage.getItem('mqtt-pass'), null);
+  assert.equal(ls('dash-mqtt-pass'), null);
+  assert.equal(ls('mqtt-pass'), null, 'conf-editor key untouched');
   assert.equal(d.getElementById('mqtt-pass').value, 'secret');
 });
 
 test('remembered password is restored', async () => {
-  const { window } = await loadDash({ storage: { 'mqtt-pass': 'p', 'mqtt-remember': '1' } });
+  const { window } = await loadDash({ storage: { 'dash-mqtt-pass': 'p', 'dash-mqtt-remember': '1' } });
   assert.equal(window.document.getElementById('mqtt-remember').checked, true);
   assert.equal(window.document.getElementById('mqtt-pass').value, 'p');
+});
+
+test("the conf editor's stored password is neither read nor deleted by the dashboard", async () => {
+  const { window } = await loadDash({ storage: { 'mqtt-pass': 'conf', 'mqtt-remember': '1', 'mqtt-url': 'ws://b:9' } });
+  const d = window.document;
+  assert.equal(d.getElementById('mqtt-remember').checked, false);
+  assert.equal(d.getElementById('mqtt-pass').value, '');
+  assert.equal(window._mqttClients[0].opts.password, undefined);
+  d.getElementById('mqtt-connect').click();
+  d.getElementById('mqtt-pass').value = 'dash';
+  d.getElementById('mqtt-connect').click();
+  const r = d.getElementById('mqtt-remember');
+  r.checked = true; r.dispatchEvent(new window.Event('change'));
+  r.checked = false; r.dispatchEvent(new window.Event('change'));
+  assert.equal(window.localStorage.getItem('mqtt-pass'), 'conf');
+  assert.equal(window.localStorage.getItem('mqtt-remember'), '1');
 });
 
 test('Connect button stores settings and toggles to Disconnect', async () => {
@@ -607,4 +651,130 @@ test('console toggle shows the input on every card and persists across reloads',
   t.checked = false; t.dispatchEvent(new window.Event('change'));
   assert.equal(consoleShown(window, 'fry'), false);
   assert.equal(window.localStorage.getItem('dash-console'), '0');
+});
+
+test('BLE: a failed connect attempt (gatt.disconnect fires gattserverdisconnected) runs one enable sequence', async () => {
+  const dev = makeFakeBleDevice({ hostname: 'fbuck', failService: 1 });
+  const { Dash } = await loadDash({ bluetooth: makeFakeBluetooth([dev]) });
+  Dash.CFG.bleBackoffMs = [0, 0, 0];
+  Dash.CFG.bleRetryMs = 5;
+  await Dash.addBle();
+  await settle(50);
+  assert.equal(dev.failService, 0, 'first attempt failed after gatt.connect()');
+  assert.deepEqual(plain(dev.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
+  assert.equal(Dash.devices.get('fbuck').ble.state, 'on');
+});
+
+test('ingest: a same-ts raw-sensor point does not shadow the main point; BLE/MQTT duplicates still dropped', async () => {
+  const { Dash } = await loadDash();
+  const dev = Dash.getDevice('x');
+  const ts = 1_763_400_000_000;
+  assert.equal(Dash.ingest(dev, { fields: { iout_raw: 3 }, ts }, 'ble'), false);
+  assert.equal(Dash.ingest(dev, { fields: { Ui: 40.1 }, ts }, 'ble'), true, 'raw Ui point');
+  assert.equal(Dash.ingest(dev, { fields: { P: 100, Ui: 40, Uo: 27 }, ts }, 'ble'), true, 'main point');
+  assert.equal(dev.tele.P, 100);
+  assert.equal(Dash.ingest(dev, { fields: { P: 100, Ui: 40, Uo: 27 }, ts }, 'mqtt'), false);
+});
+
+test('sendCommand: reply markers match whole commands only', async () => {
+  const { Dash, client } = await withBroker();
+  log(client, 'fry', ['x']);
+  const dev = Dash.devices.get('fry');
+  let done = null;
+  const p = Dash.sendCommand(dev, 'tele-mqtt 120', { via: 'mqtt', timeoutMs: 200 }).then(r => { done = r; });
+  log(client, 'fry', ['ERR: tele-mqtt 1200', 'OK: tele-mqtt 120x', 'OK: tele-mqtt 12']);
+  await settle(5);
+  assert.equal(done, null);
+  log(client, 'fry', ['\x1b[0;32mI (5) main: OK: tele-mqtt 120\x1b[0m']);
+  await p;
+  assert.equal(done.ok, true);
+  const q = Dash.sendCommand(dev, 'hostname', { via: 'mqtt', timeoutMs: 200 });
+  log(client, 'fry', ['ERR: hostnamex', 'ERR: hostname']);
+  assert.equal((await q).ok, false);
+  assert.equal(dev.lineListeners.size, 0);
+});
+
+test('re-adding a restored (placeholder) BLE device connects it', async () => {
+  const d = makeFakeBleDevice({ name: 'fugu-fboost', hostname: 'fboost' });
+  const bt = makeFakeBluetooth([d]);
+  bt.granted.push(d);
+  const { Dash } = await loadDash({ bluetooth: bt });
+  await settle(5);
+  assert.equal(Dash.devices.get('fboost').ble.state, 'off');
+  await Dash.addBle();
+  assert.equal(Dash.devices.get('fboost').ble.state, 'on');
+  assert.deepEqual(plain(d.writes), ['hostname', 'tele-ble 1', 'sweep-curve']);
+});
+
+test('lease: silence re-lease after a transient refusal, never after a permanent one', async () => {
+  const { window, Dash, client } = await withBroker();
+  const c = clock(window);
+  for (const h of ['heap', 'dis']) client.emit('message', `pv/tele/${h}`, mqttMsg([{ fields: { P: 1 }, ts: c.get() }]));
+  c.add(5000); Dash.tick();
+  log(client, 'heap', ['W (5) main: tele-mqtt: low heap', 'ERR: tele-mqtt 120']);
+  log(client, 'dis', ['W (5) main: tele-mqtt: disabled', 'ERR: tele-mqtt 120']);
+  await settle();
+  c.add(15000); Dash.tick();
+  assert.equal(lpubs(client, 'pv/log/heap/cmd').length, 2, 'low heap: silence re-lease');
+  assert.equal(lpubs(client, 'pv/log/dis/cmd').length, 1, 'disabled: none');
+});
+
+test('card merge moves in-flight command listeners; none are left behind', async () => {
+  const bd = makeFakeBleDevice({ name: 'fugu-prov', hostname: 'flat' });
+  const { window, Dash, client } = await withBroker();
+  log(client, 'flat', ['x']);
+  const flat = Dash.devices.get('flat');
+  const link = new Dash.BleLink(bd);
+  Dash.attachBle(link, 'prov');
+  await link.connect();
+  const prov = Dash.devices.get('prov');
+  const p = Dash.sendCommand(prov, 'status', { via: 'ble', timeoutMs: 500 });
+  Dash.attachBle(link, 'flat');
+  assert.equal(Dash.devices.get('prov'), undefined);
+  assert.equal(flat.lineListeners.size, 1);
+  assert.equal((await p).ok, true);
+  assert.equal(flat.lineListeners.size, 0);
+  assert.equal(prov.lineListeners.size, 0);
+  void window;
+});
+
+test('BLE hostnames are sanitized for topics and card keys; a bare fugu- name is kept', async () => {
+  const a = makeFakeBleDevice({ name: 'fugu-x', hostname: 'fl/a+t#' });
+  const b = makeFakeBleDevice({ name: 'fugu-', id: 'dev2', hostname: null, tele: false });
+  const { Dash } = await loadDash({ storage: { 'mqtt-url': URL }, bluetooth: makeFakeBluetooth([a, b]) });
+  Dash.CFG.hostnameMs = 10;
+  Dash.CFG.curveTimeoutMs = 10;
+  await Dash.addBle();
+  await Dash.addBle();
+  assert.deepEqual(plain([...Dash.devices.keys()].sort()), ['flat', 'fugu-']);
+  const c = await loadDash({ bluetooth: makeFakeBluetooth([makeFakeBleDevice({ name: 'fugu-a b/c', hostname: null, tele: false })]) });
+  c.Dash.CFG.hostnameMs = 10;
+  c.Dash.CFG.curveTimeoutMs = 10;
+  await c.Dash.addBle();
+  assert.deepEqual(plain([...c.Dash.devices.keys()]), ['abc']);
+});
+
+test('MQTT log splitter drops a buffer over 16 KB without a newline', async () => {
+  const { Dash, client } = await withBroker();
+  log(client, 'fry', ['x']);
+  client.emit('message', 'pv/log/fry', enc('y'.repeat(20000)));
+  client.emit('message', 'pv/log/fry', enc('tail\n'));
+  const rows = Dash.devices.get('fry').log.a.map(e => e.text);
+  assert.deepEqual(plain(rows), ['x', 'tail']);
+});
+
+test('more info shows decoder error and resync counters', async () => {
+  const dev = makeFakeBleDevice({ hostname: 'fbuck' });
+  const { window, Dash, client } = await loadDash({ storage: { 'mqtt-url': URL }, bluetooth: makeFakeBluetooth([dev]) });
+  const cl = window._mqttClients[0];
+  await Dash.addBle();
+  dev.tele.notify(Uint8Array.of(0x00, 0x13, 0x7E, 0x02, 0x00, 0x09));   // garbage, then a record with a bad frame
+  cl.emit('message', 'pv/tele/fbuck', Buffer.from([0, 0x02, 0x03, 0x41]));
+  Dash.flush();
+  const more = card(window, 'fbuck').querySelector('details.more');
+  more.open = true; await settle(5); Dash.flush();
+  const info = more.querySelector('.info').textContent;
+  assert.match(info, /BLE decode errors 1 · resyncs 1/);
+  assert.match(info, /MQTT decode errors 1/);
+  void client;
 });

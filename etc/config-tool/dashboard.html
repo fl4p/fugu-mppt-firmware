@@ -174,14 +174,20 @@ const NUS_SVC  = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX   = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_TX   = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_TELE = "6e400005-b5a3-f393-e0a9-e50e24dcca9e";
-const LS = { url:"mqtt-url", user:"mqtt-user", pass:"mqtt-pass", remember:"mqtt-remember", hosts:"mqtt-known-hosts",
-             console:"dash-console" };
+// url/user/hosts are shared with conf-editor.html; the password keys are the dashboard's own
+const LS = { url:"mqtt-url", user:"mqtt-user", pass:"dash-mqtt-pass", remember:"dash-mqtt-remember",
+             hosts:"mqtt-known-hosts", console:"dash-console" };
 const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
 const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, SILENT_MS = 15000, PROBE_MS = 60000, CURVE_RETRIES = 2;
-const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000] };
+const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000], bleRetryMs:500,
+              hostnameMs:8000 };
 const LOG_KEEP = 200, LOG_SHOW = 100;
 // live P-V reconstruction: bin width V, faded after ms, bin cap, overwrite radius bins, path break V
 const RECON = { bin:0.25, staleMs:600000, max:400, near:2, gapV:2 };
+// plotted values outside these are ignored
+const LIM = { P:50000, V:2000 };
+const sane = (V, P) => Number.isFinite(V) && Number.isFinite(P) && V >= 0 && V <= LIM.V && Math.abs(P) <= LIM.P;
+const SPLIT_MAX = 16384;
 
 // Device reply patterns (contract with src/cli.cpp)
 const REPLY = {
@@ -225,6 +231,7 @@ function lineSplitter(onLine){
         buf = buf.slice(i + 1);
         onLine(ln);
       }
+      if (buf.length > SPLIT_MAX) buf = "";
     },
     reset(){ dec = new TextDecoder(); buf = ""; },
   };
@@ -284,13 +291,14 @@ function bleTeleOn(dev){ return !!(dev.ble && dev.ble.state === "on" && dev.ble.
 
 // One decoded point from either source; the same point over BLE and MQTT is kept once (by ts).
 function ingest(dev, p, src){
-  if (p.ts){
-    if (dev.seenTs.has(p.ts)) return false;
-    dev.seenTs.add(p.ts); dev.seenQ.push(p.ts);
-    if (dev.seenQ.length > 2000) dev.seenTs.delete(dev.seenQ.shift());
-  }
   const f = p.fields, t = dev.tele;
   if (!("P" in f) && !("Ui" in f) && !("mppt_state" in f)) return false;
+  if (p.ts){
+    const key = p.ts + ":" + Object.keys(f).join(",");
+    if (dev.seenTs.has(key)) return false;
+    dev.seenTs.add(key); dev.seenQ.push(key);
+    if (dev.seenQ.length > 2000) dev.seenTs.delete(dev.seenQ.shift());
+  }
   const prevState = t.state;
   for (const [k, n] of [["P","P"],["Ui","Ui"],["Uo","Uo"],["I","I"],["pwm_duty","duty"],["mppt_state","state"],
                          ["P_max_today","Pmax"],["E_today","Etoday"],["E","E"],["mcu_temp","mcuT"],
@@ -305,7 +313,7 @@ function ingest(dev, p, src){
   arr.push(at);
   while (arr.length && arr[0] < at - 10000) arr.shift();
   dev.points.push({ ts:p.ts, P:t.P, Ui:t.Ui, src });
-  if (Number.isFinite(f.Ui) && Number.isFinite(f.P)) reconAdd(dev, f.Ui, f.P, p.ts || at, at);
+  if (sane(f.Ui, f.P)) reconAdd(dev, f.Ui, f.P, p.ts || at, at);
   onPointState(dev, prevState, t.state);
   scheduleRender(dev);
   return true;
@@ -412,18 +420,25 @@ async function send(dev, cmd, via){
   throw new Error("not connected");
 }
 
+// "OK: <cmd>" / "ERR: <cmd>" followed by end of line or a non-word character
+function replyMarker(cmd){
+  return new RegExp("\\b(OK|ERR): " + cmd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?=$|\\W)");
+}
+
 // Resolves {ok, lines} at the device's "OK: <cmd>" / "ERR: <cmd>" marker; rejects on timeout.
+// fn.owner is the device whose listener set holds fn (moved by attachBle on a card merge).
 function sendCommand(dev, cmd, { onRx, timeoutMs = 4000, via } = {}){
   return new Promise((resolve, reject) => {
-    const lines = [];
+    const lines = [], re = replyMarker(String(cmd).trim());
     const fn = (ln) => {
       lines.push(ln);
       if (onRx) onRx(ln);
-      if (ln.includes("OK: " + cmd)){ done(); resolve({ ok:true, lines }); }
-      else if (ln.includes("ERR: " + cmd)){ done(); resolve({ ok:false, lines }); }
+      const m = re.exec(TD.stripAnsi(ln));
+      if (m){ done(); resolve({ ok:m[1] === "OK", lines }); }
     };
     const timer = setTimeout(() => { done(); const e = new Error("timeout"); e.lines = lines; reject(e); }, timeoutMs);
-    const done = () => { clearTimeout(timer); dev.lineListeners.delete(fn); };
+    const done = () => { clearTimeout(timer); fn.owner.lineListeners.delete(fn); };
+    fn.owner = dev;
     dev.lineListeners.add(fn);
     send(dev, cmd, via).catch(e => { done(); reject(e); });
   });
@@ -554,7 +569,7 @@ function leaseWanted(dev){
   return mqttReady() && !bleTeleOn(dev) && dev.mqtt.lease.state !== "relay";
 }
 
-// Periodic retry: running lease, missing reply, transient refusal.
+// Periodic and silence retry: running lease, missing reply, transient refusal.
 function leaseRetries(L){
   return L.state === "on" || L.state === "no-reply" || (L.state === "refused" && L.retry);
 }
@@ -657,7 +672,7 @@ class BleLink {
       } catch(e){
         lastErr = e;
         try { this.device.gatt.disconnect(); } catch(_){}
-        if (i < attempts) await sleep(500 * i);
+        if (i < attempts) await sleep(CFG.bleRetryMs * i);
       }
     }
     this.state = "off"; this.reason = lastErr ? lastErr.message : "connect failed";
@@ -680,29 +695,37 @@ class BleLink {
     return p;
   }
 
-  // hostname -> set-time -> tele-ble 1 -> sweep-curve
+  // `tele-ble 1`: null when on, else the refusal reason
+  async teleBle(dev){
+    const r = await sendCommand(dev, "tele-ble 1", { via:"ble" });
+    if (r.ok) return null;
+    const plain = r.lines.map(TD.stripAnsi);
+    let reason = "";
+    for (const l of plain){ const m = REPLY.bleReason.exec(l); if (m && !REPLY.bleState.test(l)) reason = m[1]; }
+    return reason || (plain.some(l => REPLY.unknown.test(l)) ? "firmware without tele-ble" : "tele-ble refused");
+  }
+
+  // hostname -> tele-ble 1 (set-time and one retry on a clock refusal) -> sweep-curve
   async enable(){
     const tmp = this.dev;
-    let host = null;
-    const onRx = (l) => { const m = REPLY.hostname.exec(TD.stripAnsi(l)); if (m) host = m[1]; };
-    try { await sendCommand(tmp, "hostname", { onRx, timeoutMs:2500, via:"ble" }); } catch(_){}
-    if (!host) host = this.name.replace(/^fugu-/, "");
+    let host = "";
+    const onRx = (l) => { const m = REPLY.hostname.exec(TD.stripAnsi(l)); if (m) host = cleanHost(m[1]); };
+    for (let i = 0; i < 2 && !host; i++){
+      try { await sendCommand(tmp, "hostname", { onRx, timeoutMs:CFG.hostnameMs, via:"ble" }); } catch(_){}
+    }
+    if (!host) host = advHost(this.name);
     attachBle(this, host);
     const dev = this.dev;
-    try { await sendCommand(dev, "set-time " + now(), { via:"ble" }); } catch(_){}
     if (!this.teleChar){
       this.tele = "refused"; this.teleReason = "no telemetry characteristic (firmware without BLE telemetry)";
     } else {
       try {
-        const r = await sendCommand(dev, "tele-ble 1", { via:"ble" });
-        if (r.ok){ this.tele = "on"; this.teleReason = ""; }
-        else {
-          this.tele = "refused";
-          const plain = r.lines.map(TD.stripAnsi);
-          let reason = "";
-          for (const l of plain){ const m = REPLY.bleReason.exec(l); if (m && !REPLY.bleState.test(l)) reason = m[1]; }
-          this.teleReason = reason || (plain.some(l => REPLY.unknown.test(l)) ? "firmware without tele-ble" : "tele-ble refused");
+        let reason = await this.teleBle(dev);
+        if (reason !== null && /clock/.test(reason)){
+          try { await sendCommand(dev, "set-time " + now(), { via:"ble" }); } catch(_){}
+          reason = await this.teleBle(dev);
         }
+        this.tele = reason === null ? "on" : "refused"; this.teleReason = reason || "";
       } catch(e){ this.tele = "refused"; this.teleReason = "no reply to tele-ble"; }
     }
     this.lastProbe = now();
@@ -718,6 +741,8 @@ class BleLink {
   }
 
   async onDisconnected(){
+    // connect()'s own gatt.disconnect() between attempts, or a drop during a running reconnect loop
+    if (this.state === "connecting" || this.state === "reconnecting") return;
     if (this.state === "off" && !this.server) return;
     this.server = this.rx = this.tx = this.teleChar = null;
     this.tele = "off";
@@ -756,7 +781,8 @@ function attachBle(link, host){
     if (dev){
       for (const e of old.log.a) dev.log.push(e);
       dev.logNew = dev.log.a.slice(-LOG_SHOW); dev.logReset = true;
-      old.lineListeners.forEach(fn => dev.lineListeners.add(fn));
+      old.lineListeners.forEach(fn => { fn.owner = dev; dev.lineListeners.add(fn); });
+      old.lineListeners.clear();
       if (old.pTop > dev.pTop) dev.pTop = old.pTop;
       removeDevice(old);
     } else {
@@ -779,11 +805,22 @@ function removeDevice(dev){
   dev.el = null;
 }
 
+// Host names become MQTT topic levels and card keys.
+const cleanHost = (s) => String(s || "").replace(/[\/+#\s]/g, "");
+// Advertised `fugu-<hostname>`, or the hostname itself when it starts with fugu-.
+function advHost(name){
+  const n = cleanHost(name);
+  return n.replace(/^fugu-/, "") || n || "ble";
+}
+
 // Start a link for a (granted) Web Bluetooth device; the card is keyed by the device name until
 // `hostname` answers.
 async function linkBle(btDevice, { connect = true } = {}){
-  const prov = (btDevice.name || btDevice.id || "ble").replace(/^fugu-/, "");
-  for (const d of devices.values()) if (d.ble && d.ble.device === btDevice) return d.ble;
+  const prov = advHost(btDevice.name || btDevice.id);
+  for (const d of devices.values()) if (d.ble && d.ble.device === btDevice){
+    if (connect && d.ble.state === "off") await d.ble.reconnect();
+    return d.ble;
+  }
   const link = new BleLink(btDevice);
   attachBle(link, prov);
   if (!connect){ link.reason = "not connected"; scheduleRender(link.dev); return link; }
@@ -943,6 +980,9 @@ function renderMore(dev, L){
   else if (L.state === "no-reply") f.push("lease no reply");
   else if (L.state === "relay") f.push("lease relay-fed");
   else if (L.state === "pending") f.push("lease pending");
+  const b = dev.ble;
+  if (b && b.stream){ const s = b.stream.stats; f.push("BLE decode errors " + s.errors + " · resyncs " + s.resyncs); }
+  if (dev.mqtt.teleSeen) f.push("MQTT decode errors " + dev.mqtt.errors);
   const info = q(dev, "details.more .info");
   info.replaceChildren(...f.map(x => el("span", null, x)));
 }
@@ -1010,13 +1050,20 @@ function svgEl(tag, attrs, cls){
   return e;
 }
 
+// At most TICKS_MAX ticks; non-finite or degenerate input gives the plain [lo, hi] (or [0, 1]) axis.
+const TICKS_MAX = 12;
 function niceTicks(lo, hi, n){
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)){ lo = 0; hi = 1; }
   if (!(hi > lo)) hi = lo + 1;
+  const fallback = () => hi > lo ? { lo, hi, ticks:[lo, hi], step:hi - lo } : { lo:0, hi:1, ticks:[0, 1], step:1 };
   const raw = (hi - lo) / n, p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
   const step = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p;
   const a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step;
+  const k = Math.round((b - a) / step);
+  if (!Number.isFinite(step) || !(step > 0) || !Number.isFinite(b) || !(k >= 1) || k > TICKS_MAX || a + step === a)
+    return fallback();
   const ticks = [];
-  for (let v = a; v <= b + step / 2; v += step) ticks.push(+v.toFixed(9));
+  for (let i = 0; i <= k; i++) ticks.push(+(a + i * step).toFixed(9));
   return { lo:a, hi:b, ticks, step };
 }
 
@@ -1052,14 +1099,14 @@ const show = (e, on) => e.setAttribute("visibility", on ? "visible" : "hidden");
 
 function renderChart(dev){
   const svg = q(dev, "svg.chart"), t = dev.tele;
-  const curve = dev.curve ? dev.curve.points.filter(p => Number.isFinite(p.V) && Number.isFinite(p.P)) : [];
+  const curve = dev.curve ? dev.curve.points.filter(p => sane(p.V, p.P)) : [];
   const recon = reconPoints(dev);
-  const live = Number.isFinite(t.Ui) && Number.isFinite(t.P) ? { V:t.Ui, P:t.P } : null;
-  const mpp = dev.curve && Number.isFinite(dev.curve.mpp.V) && dev.curve.mpp.P > 0 ? dev.curve.mpp : null;
+  const live = sane(t.Ui, t.P) ? { V:t.Ui, P:t.P } : null;
+  const mpp = dev.curve && sane(dev.curve.mpp.V, dev.curve.mpp.P) && dev.curve.mpp.P > 0 ? dev.curve.mpp : null;
   renderCaption(dev);
   const empty = svg.querySelector("text.empty");
   const all = curve.concat(recon, live ? [live] : [], mpp ? [mpp] : []);
-  for (const p of all) if (p.P > dev.pTop) dev.pTop = p.P;
+  for (const p of all) if (p.P > dev.pTop) dev.pTop = Math.min(p.P, LIM.P);
   if (!all.length){
     empty.textContent = dev.curveNone ? "no sweep recorded since boot" : "no sweep curve yet";
     show(empty, true);
@@ -1205,7 +1252,7 @@ function tick(){
       if (L.state === "off" && dev.mqtt.firstAt && t - dev.mqtt.firstAt >= LEASE_WAIT_MS){
         lease(dev);
         if (!dev.curve && !dev.curveNone) requestCurve(dev);
-      } else if (dev.mqtt.teleSeen && t - dev.mqtt.teleAt >= SILENT_MS && t - L.silentAt >= SILENT_MS){
+      } else if (leaseRetries(L) && dev.mqtt.teleSeen && t - dev.mqtt.teleAt >= SILENT_MS && t - L.silentAt >= SILENT_MS){
         L.silentAt = t;
         lease(dev);
       } else if (leaseRetries(L) && t - L.at >= RENEW_MS){
@@ -1275,7 +1322,8 @@ function init(){
 
 window.Dash = {
   devices, Device, BleLink, REPLY, CFG, NUS:{ SVC:NUS_SVC, RX:NUS_RX, TX:NUS_TX, TELE:NUS_TELE },
-  getDevice, ingest, ingestTele, onLine, onMqttMessage, send, sendCommand, requestCurve, lease, tick,
+  getDevice, ingest, ingestTele, onLine, onMqttMessage, send, sendCommand, requestCurve, lease, tick, niceTicks,
+  attachBle, LIM,
   flush, mqttConnect, mqttDisconnect, addBle, linkBle, restoreBle, consoleSend, staleAfter,
   get client(){ return client; },
 };

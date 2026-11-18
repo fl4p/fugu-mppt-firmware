@@ -73,11 +73,14 @@ function defaultReply(cmd, opts) {
 }
 
 // A scriptable NUS peripheral. `reply(cmd)` returns the console lines the device prints.
-function makeFakeBleDevice({ name = 'fugu-flat', id = 'dev1', hostname = 'flat', tele = true, reply, failConnect = 0 } = {}) {
+// gatt.disconnect() on a connected server fires gattserverdisconnected, as the Web Bluetooth spec
+// does; failService makes getPrimaryService fail after a successful connect.
+function makeFakeBleDevice({ name = 'fugu-flat', id = 'dev1', hostname = 'flat', tele = true, reply, failConnect = 0,
+  failService = 0 } = {}) {
   const opts = { hostname };
   const discLs = [];
   const dev = {
-    id, name, writes: [], slices: [], failConnect,
+    id, name, writes: [], slices: [], failConnect, failService,
     tx: fakeChar(UUID.TX), rx: null, tele: tele ? fakeChar(UUID.TELE) : null,
     addEventListener(t, fn) { if (t === 'gattserverdisconnected') discLs.push(fn); },
     removeEventListener() {},
@@ -118,9 +121,21 @@ function makeFakeBleDevice({ name = 'fugu-flat', id = 'dev1', hostname = 'flat',
     async connect() {
       if (dev.failConnect > 0) { dev.failConnect--; throw new Error('Connection attempt failed'); }
       dev.gatt.connected = true;
-      return { connected: true, async getPrimaryService(u) { if (u !== UUID.SVC) throw new Error('no svc'); return svc; }, disconnect() {} };
+      return {
+        connected: true,
+        async getPrimaryService(u) {
+          if (dev.failService > 0) { dev.failService--; throw new Error('NetworkError: GATT Server is disconnected'); }
+          if (u !== UUID.SVC) throw new Error('no svc');
+          return svc;
+        },
+        disconnect() { dev.gatt.disconnect(); },
+      };
     },
-    disconnect() { dev.gatt.connected = false; },
+    disconnect() {
+      if (!dev.gatt.connected) return;
+      dev.gatt.connected = false;
+      setTimeout(() => discLs.forEach(fn => fn({ target: dev })), 0);
+    },
   };
   return dev;
 }
@@ -162,6 +177,15 @@ async function loadDash({ storage = {}, bluetooth = makeFakeBluetooth(), mqtt = 
 function closeAll() { while (doms.length) doms.pop().window.close(); }
 
 const settle = (ms = 0) => new Promise(r => setTimeout(r, ms));
+
+// Wait until cond() holds (polling on real timers); throws after `ms`.
+async function until(cond, ms = 3000, what = 'condition') {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error('timed out waiting for ' + what);
+    await settle(2);
+  }
+}
 
 // --- minimal encoder for the binary telemetry wire (src/tele/sym_line_protocol.h) ---------------
 const DT = { STR: 0, U8: 3, U16: 5, U32: 7, F32: 9 };
@@ -231,6 +255,6 @@ function fakeScrollGeometry(el, { scrollHeight, clientHeight, scrollTop = 0 }) {
 }
 
 module.exports = {
-  loadDash, closeAll, settle, buildHtml, makeFakeBleDevice, makeFakeBluetooth, UUID,
+  loadDash, closeAll, settle, until, buildHtml, makeFakeBleDevice, makeFakeBluetooth, UUID,
   encodePayload, mqttMsg, bleRecord, varint, fakeScrollGeometry,
 };

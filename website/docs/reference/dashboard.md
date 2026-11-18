@@ -32,7 +32,7 @@ Each converter gets a card, keyed by its hostname:
 - **Link badges**: one for BLE and one for MQTT.
 - **More info**: a collapsed box under the values with the stream rate and dropped bytes per link, the
   slower telemetry fields (`mcu_temp`, `lag`, `heap`, `heap_min`, lifetime `E`, the `Ro`/`Rc`/`Rb` resistances
-  once known) and the MQTT lease state.
+  once known), the MQTT lease state, and the telemetry decoder's error and resync counters.
 
 ## Quick start
 
@@ -58,7 +58,7 @@ allowed earlier reappear after a reload with a **Reconnect** button, so no new c
 
 | Transport | Connection | Telemetry source | Requirements |
 |-----------|------------|------------------|--------------|
-| BLE | One NUS connection per device. The device advertises as `fugu-<hostname>`; each device needs one click in the chooser. | On connect, the page sends `set-time` (the device clock may be unset without Wi-Fi) and `tele-ble 1`, then decodes the stream from the telemetry characteristic. | Firmware built with BLE telemetry (`CONFIG_FUGU_WITH_BLE_TELE`), `ble` service running. See [Telemetry](../guide/telemetry/index.md). |
+| BLE | One NUS connection per device. The device advertises as `fugu-<hostname>`; each device needs one click in the chooser. | On connect, the page sends `tele-ble 1` and decodes the stream from the telemetry characteristic. When the device refuses because its clock is not set (no Wi-Fi, no SNTP), the page sends `set-time` and tries once more. | Firmware built with BLE telemetry (`CONFIG_FUGU_WITH_BLE_TELE`), `ble` service running. See [Telemetry](../guide/telemetry/index.md). |
 | MQTT | MQTT over WebSocket, `ws://` or `wss://`. The hosted `https` page can only use `wss://`. | Messages on `pv/tele/<hostname>`, either published by the device while a `tele-mqtt <seconds>` lease runs (build option `CONFIG_FUGU_WITH_TELE_MQTT`), or republished from the UDP telemetry wire by a host-side relay. | `mqtt.conf cmd_input=1` for commands. See [MQTT topics](mqtt.md#telemetry-stream). |
 
 The page subscribes to `pv/log/#`, `pv/alert/#` and `pv/tele/#`, and sends commands on `pv/log/<hostname>/cmd`. When
@@ -68,9 +68,10 @@ a device has both links, BLE carries telemetry and commands, and the page does n
 
 | Command | When the page sends it |
 |---------|------------------------|
-| `set-time <epoch_ms>` | After a BLE connect, and over MQTT when a lease is refused because the clock is not set. |
+| `set-time <epoch_ms>` | Only when `tele-ble 1` or `tele-mqtt` is refused because the device clock is not set, followed by one retry of that command. |
+| `hostname` | After a BLE connect, to name the card. The page waits up to 8 s and asks once more; without a reply it uses the advertised name minus `fugu-`. |
 | `tele-ble 1` | After a BLE connect, to start the BLE telemetry stream. |
-| `tele-mqtt 120` | Over MQTT, about 5 s after a device first appears, also when its telemetry already arrives (another client's lease can expire at any time). The page renews the lease every 60 s while the tab is open, on a broker reconnect, and once more when the tab becomes visible again. When telemetry had been arriving and stops for 15 s, the page requests the lease again, at most once per 15 s. Devices without the command are not asked again. |
+| `tele-mqtt 120` | Over MQTT, about 5 s after a device first appears, also when its telemetry already arrives (another client's lease can expire at any time). The page renews the lease every 60 s while the tab is open, on a broker reconnect, and once more when the tab becomes visible again. When telemetry had been arriving and stops for 15 s, the page requests the lease again, at most once per 15 s, while the lease is running, unanswered, or refused for a transient reason; not for relay-fed devices or after a permanent error such as `disabled`. Devices without the command are not asked again. |
 | `sweep-curve` | On connect, after each sweep, and on the refresh button. Up to two retries, 4 s timeout each. |
 
 See [Console commands](console.md) for the replies.
@@ -103,7 +104,12 @@ Without telemetry, a card shows the log and the sweep curve but no live values. 
 :::caution
 With **remember** ticked next to the password field, the broker password is stored in plain text in the browser's
 `localStorage` for the page's origin. Unticked (the default), the password stays in memory for the session only, and
-a stored password is removed. The URL and user are always stored.
+a stored password is removed. The URL and user are always stored. The dashboard keeps its password under its own
+keys, separate from the configuration editor's.
+
+The hosted copy shares its `github.io` origin with every other project page on that host, and script on any of those
+pages can read its `localStorage`. Do not tick **remember** on the hosted copy; serve the page yourself if the
+password should be remembered.
 :::
 
 With `cmd_input=1`, anyone who can publish to the broker can control the converter, and the console line on each card

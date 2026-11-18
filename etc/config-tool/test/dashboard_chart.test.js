@@ -208,3 +208,39 @@ test('chart: live path breaks where neighbouring bins are more than 2 V apart', 
   assert.equal((dd.match(/M/g) || []).length, 2);
   assert.equal((dd.match(/L/g) || []).length, 3);
 });
+
+test('niceTicks is bounded and falls back on non-finite or runaway input', async () => {
+  const { Dash } = await loadDash();
+  const nt = (lo, hi, n) => plain(Dash.niceTicks(lo, hi, n));
+  assert.deepEqual(nt(0, 200, 4).ticks, [0, 50, 100, 150, 200]);
+  for (const [lo, hi] of [[1e18, 1e18 + 256], [0, 1.7e308], [0, Infinity], [NaN, 5], [-Infinity, Infinity], [5, 5]]) {
+    const r = nt(lo, hi, 5);
+    assert.ok(r.ticks.length >= 2 && r.ticks.length <= 12, `${lo}..${hi}: ${r.ticks.length} ticks`);
+    assert.ok(r.ticks.every(Number.isFinite) || (!Number.isFinite(lo) || !Number.isFinite(hi)), `${lo}..${hi}`);
+  }
+  const f = nt(NaN, 5, 5);
+  assert.deepEqual([f.lo, f.hi], [0, 1]);
+});
+
+test('chart: hostile sc: values and telemetry are ignored; pTop never exceeds the clamp', async () => {
+  const { window, Dash, client } = await withBroker();
+  log(client, 'fry', ['sc: t=1 n=4 mpp=1.7e308,1e18 sweeping=0', 'sc: 30 1.7e308 1e18 20 -5 10 40 100',
+    'sc: end']);
+  log(client, 'fry', ['sc: t=1 n=2 mpp=1e999,30 sweeping=0', 'sc: 30 1e999 41 60000', 'sc: end']);
+  const dev = Dash.devices.get('fry');
+  client.emit('message', 'pv/tele/fry', mqttMsg([{ fields: { P: 3e38, Ui: 40 }, ts: Date.now() }]));
+  client.emit('message', 'pv/tele/fry', mqttMsg([{ fields: { P: 100, Ui: 1e30 }, ts: Date.now() + 1 }]));
+  Dash.flush();
+  assert.ok(dev.pTop <= Dash.LIM.P, String(dev.pTop));
+  const svg = card(window, 'fry').querySelector('svg.chart');
+  assert.ok(svg.querySelectorAll('g.xlab text').length <= 13);
+  assert.ok(svg.querySelectorAll('g.ylab text').length <= 13);
+  assert.equal(svg.querySelector('path.curve').getAttribute('d'), '');
+  assert.equal(svg.querySelector('circle.live').getAttribute('visibility'), 'hidden');
+  assert.equal(dev.recon.size, 0);
+  // a sane point still plots
+  log(client, 'fry', ['sc: t=1 n=2 mpp=100,40 sweeping=0', 'sc: 30 50 40 100', 'sc: end']);
+  Dash.flush();
+  assert.equal((svg.querySelector('path.curve').getAttribute('d').match(/[ML]/g) || []).length, 2);
+  assert.equal(svg.querySelector('g.ylab text:last-child').textContent, '100 W');
+});
