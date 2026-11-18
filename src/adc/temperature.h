@@ -14,9 +14,11 @@ class SingleValueSensor {
     // 64-bit load/store is not atomic across cores on Xtensa.
     volatile uint32_t _lastGoodTicks = 0;
     volatile bool _everGood = false;
+    volatile uint8_t _badRun = 0; // consecutive implausible reads
 
 protected:
-    virtual float readImpl() = 0;
+    virtual float readImpl() = 0; // raw sample, NaN on failure
+    virtual void resetFilters() {}
 
     // False once the sensor is known to be absent (no NTC fitted, driver install failed). Such a
     // sensor stays permanently "fresh NaN" so the pre-existing isnan policies apply unchanged,
@@ -29,24 +31,37 @@ public:
     // board does not report staleness; the freezes this guards against lasted minutes.
     static constexpr uint32_t EXPIRE_S = 90;
 
+    // Outside this range a reading is a sensor fault: an open NTC computes to -273 °C, a shorted one
+    // to -273 °C or, if the ADC saturates below the rail, to a high but plausible value (`temp` trip).
+    // BAD_READS implausible reads in a row (~9 s at lfPeriod) make the sensor stale at once.
+    static constexpr float T_MIN = -40.f, T_MAX = 150.f;
+    static constexpr uint8_t BAD_READS = 3;
+    static bool plausible(float t) { return t >= T_MIN && t <= T_MAX; }
+
     virtual ~SingleValueSensor() = default;
 
     [[nodiscard]] bool fitted() const { return present(); }
 
-    float read() {
+    // Returns the raw sample just read (NaN if the read failed or was implausible), not last().
+    // countBad: implausible reads count toward BAD_READS only on the regular lfPeriod read.
+    float read(bool countBad = true) {
+        // pre-stale history must not dominate last() once readings come back
+        if (present() && !fresh()) resetFilters();
         float v = readImpl();
-        // Stamp only on an actual update. A read that fails leaves the filters holding their old
-        // finite value, so stamping unconditionally would keep a permanently failing sensor
-        // "fresh" forever — the same stale-as-fresh defect through a different door.
-        if (!present()) { _everGood = true; _lastGoodTicks = coarseTicks(esp_timer_get_time()); }
-        else if (std::isfinite(last())) { _everGood = true; _lastGoodTicks = coarseTicks(esp_timer_get_time()); }
+        // Stamp only on a valid new sample: the filters keep their old finite value after a failed
+        // read, so stamping on last() would keep a failing sensor "fresh" forever.
+        if (!present() || plausible(v)) {
+            _badRun = 0;
+            _everGood = true;
+            _lastGoodTicks = coarseTicks(esp_timer_get_time());
+        } else if (countBad && _badRun < BAD_READS) _badRun = _badRun + 1;
         return v;
     }
 
     [[nodiscard]] virtual float last() const = 0; // raw cache, may be stale
 
     [[nodiscard]] bool fresh() const {
-        return _everGood && (coarseTicks(esp_timer_get_time()) - _lastGoodTicks) < secToCoarseTicks(EXPIRE_S);
+        return _everGood && _badRun < BAD_READS && (coarseTicks(esp_timer_get_time()) - _lastGoodTicks) < secToCoarseTicks(EXPIRE_S);
     }
 
     // Use this wherever a stale reading would be acted on as a measurement.
@@ -148,20 +163,19 @@ public:
             constexpr auto vcc = 3.3f;
             //float temp = adc2Celsius(volt / 3.9f * 4095.0f); // 11/12db => 3.9V full range (see docs)
             float temp = volt2Temp(volt / vcc);
+            if (!plausible(temp)) return NAN;
             ewma2.add(temp);
+            return temp;
         }
-
-        //float temp = adc2Celsius(ewma.get());
-
-        // if (isnan(temp) && !_attack) {
-        //    ESP_LOGW("temp", "Invalid temp %.1f from ADC %f", temp, adc);
-        //   _attack = 120;
-        // }
-
-        return last();
+        return NAN;
     }
 
     [[nodiscard]] float last() const override { return ewma2.get(); }
+
+protected:
+    void resetFilters() override { ewma2.reset(); }
+
+public:
 
 
     void setValueRef(const float &ref) {
@@ -218,13 +232,16 @@ public:
         }
 
         if (scope) scope->addSample12(this, 0, tsens_out * 40);
+        if (!plausible(tsens_out)) return NAN;
 
         ewma.add(median3.next(tsens_out));
 
-        return ewma.get();
+        return tsens_out;
     }
 
     [[nodiscard]] float last() const override { return ewma.get(); }
+
+    void resetFilters() override { median3.reset(); ewma.reset(); }
 
     // unfiltered, bypasses median/EWMA state
     float readRaw() {
@@ -263,11 +280,15 @@ public:
 
     float readImpl() override {
         //return (temprature_sens_read() - 32) / 1.8;
-        ewma.add(median3.next(temperatureRead() - 32.f)); // seems very off, remove?
-        return ewma.get();
+        const float t = temperatureRead();
+        if (!plausible(t)) return NAN;
+        ewma.add(median3.next(t));
+        return t;
     }
 
     [[nodiscard]] float last() const override { return ewma.get(); }
+
+    void resetFilters() override { median3.reset(); ewma.reset(); }
 };
 
 #endif

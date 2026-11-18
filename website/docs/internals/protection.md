@@ -39,7 +39,7 @@ A failed check also makes the loop call `stopAndBackoff(4)`:
 
 - It holds the next start for at least 4 s (100 ms in PSU mode). This timer is not reported as a start-block reason.
 - If the check did not stop the converter itself, it stops it with a 5 s backoff logged as
-  `backoff 5s [stopAndBackoff]`. Over-temperature and wire-fault trips take this path.
+  `backoff 5s [stopAndBackoff]`.
 
 The converter restarts once both timers have expired and the [start conditions](#start-conditions) pass, so a 5 s or
 30 s trip restarts after 5 s or 30 s. In MPPT mode the restart is a new sweep. It waits while a fresh BMS report says
@@ -61,8 +61,9 @@ fast, because a load step can cause them:
 
 Re-issuing `psu <V>` or `pv <isc> <voc>`, or leaving PSU mode, clears the latch and the trip count.
 
-Trips with their own backoff, such as `Vin-OV` or `Iout-OC`, keep it in PSU mode. Stops without one (over-temperature,
-wire fault, loop latency, calibration failure) may retry after 100 ms in PSU mode, once their start condition clears.
+Trips with their own backoff, such as `Vin-OV`, `Iout-OC`, `temp`, `temp-stale` or `wire-trip`, keep it in PSU mode.
+Stops without one (loop latency, calibration failure) may retry after 100 ms in PSU mode, once their start condition
+clears.
 
 ## Trip reference
 
@@ -91,8 +92,9 @@ the side keys `hv_max`, `lv_max`, `hv_i_max` and `lv_i_max` map to these roles t
 | `Vr-sensor-fail` | Duty cycle well above what Vout and Iout imply while the current stays below 1 % of Iout max: a sensor or half-bridge fault. `reverse_current_paranoia` only; not in PSU mode while Vout is between half the setpoint and the setpoint | 5 s |
 | `supply-UV` | Board supply, max(Vin, Vout) − 0.3 V, below 9 V. Skipped in manual PWM | 5 s |
 | — | Not PSU mode, no battery voltage known (`charger.conf::vout_max`, `vset` or an earlier detection), and none can be detected from Vout. Starts a new sensor calibration; no `backoff` line is logged | 4 s |
-| `stopAndBackoff` | NTC or MCU temperature > `temp_max`, logged as `Temp … > …°C, shutdown`. A stale temperature reading does not trip | 5 s |
-| `stopAndBackoff` | Wire-fault guard tripped (`wire_protect = 2` only), see [Output wire-fault protection](../reference/config/limits.md#output-wire-fault-protection) | until `wire-reset` or reboot |
+| `temp-stale` | A fitted NTC or MCU temperature sensor is open, shorted or silent: 3 readings in a row outside −40…150 °C (about 9 s), or no valid reading for 90 s. A shorted NTC trips `temp` instead if the ADC saturates below the supply rail. An unfitted NTC never trips | 5 s, then until a valid reading |
+| `temp` | NTC or MCU temperature > `temp_max`, logged as `Temp … > …°C, shutdown` | 5 s |
+| `wire-trip` | Wire-fault guard tripped (`wire_protect = 2` only), see [Output wire-fault protection](../reference/config/limits.md#output-wire-fault-protection) | until `wire-reset` or reboot |
 
 ### Reverse current below the trip level
 
@@ -180,7 +182,8 @@ slow window logs a warning without stopping the converter.
 While the converter is off, `startBlockReason()` must return no reason before the loop starts it. In MPPT mode the
 low-frequency status line logs the blocking reason as `START blocked: <reason>`, when it changes and at most every 30 s
 otherwise. The temperature and supply checks use a margin above their trip level, so the converter does not restart
-right at the threshold. The table lists the reasons in the order they are checked:
+right at the threshold. Manual PWM does not use this table, but `temp-stale` and `temp` also hold it off. The table
+lists the reasons in the order they are checked:
 
 | Reason | Blocks the start while |
 |---|---|
@@ -190,7 +193,8 @@ right at the threshold. The table lists the reasons in the order they are checke
 | `psu-ov-conflict` | PSU mode: the setpoint conflicts with the OV limit |
 | `backoff` | The backoff timer is running |
 | `wire-trip` | The wire-fault guard is tripped |
-| `temp` | NTC or MCU temperature > `temp_max` − 3 °C, or no fresh MCU temperature |
+| `temp-stale` | A fitted NTC or MCU temperature sensor has given 3 invalid readings in a row (outside −40…150 °C), no valid reading for 90 s, or none since boot |
+| `temp` | NTC or MCU temperature > `temp_max` − 3 °C, or no MCU temperature |
 | `Vin-Vout` | Not in PSU mode: a buck needs average Vin > average Vout + 1 V, a boost needs average Vin < average Vout + 1 V |
 | `minpulse-M` | A buck start at the current Vout (or the PSU setpoint, if higher) would run the low-side minimum pulse above its start ratio |
 | `Vout-still-OV` | PSU mode: Vout is still above 98 % of the OV threshold |

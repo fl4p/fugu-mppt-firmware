@@ -644,6 +644,7 @@ static void run(double sec, double traceEvery, Probe *probe = nullptr, double fi
             fwrite(r, 4, 6, g_pDump);
         }
         if (probe && onBefore) probeDetector(*probe);
+        mppt.tempPollStale(wallClockUs());
         if ((wallClockUs() - lastLfWorkUs) >= lfPeriod or !lastLfWorkUs) {
             loopLF(wallClockUs());
             lastLfWorkUs = wallClockUs();

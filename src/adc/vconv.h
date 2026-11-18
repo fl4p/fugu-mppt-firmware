@@ -40,7 +40,7 @@ public:
         noiseIout_ = vconvConf.f("noise_iout", 0.0f);
         noiseIin_  = vconvConf.f("noise_iin",  0.0f);
         noiseNtc_  = vconvConf.f("noise_ntc",  0.0f);
-        ntcConst_  = vconvConf.f("ntc_v",      0.9f); // 25 °C equivalent
+        ntcConst_  = vconvConf.f("ntc_v",      0.9f); // ~1.3 °C (25 °C is 1.65 V)
 
         rngState_ = 0x9E3779B9u; // deterministic seed -> tests stay reproducible
 #ifdef FUGU_HOST_SIM

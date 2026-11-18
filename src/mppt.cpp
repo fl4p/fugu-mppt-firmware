@@ -433,7 +433,7 @@ void MpptController::updateManual() {
 
     const int16_t rampStep = std::max(1, (int) std::lround((float) converter.pwmMaxDriver() / 512.f));
 
-    if (inBackoff() || charger.wireGuard.tripped()) {
+    if (inBackoff() || charger.wireGuard.tripped() || (converter.disabled() && tempStartBlock())) {
         if (!converter.disabled()) converter.disable();
         return;
     }

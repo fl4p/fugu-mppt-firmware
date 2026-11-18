@@ -1101,14 +1101,13 @@ static void lfControl() {
     alertTick();
     wifiShutdownIfHot(mppt.ucTemp.lastFresh());
 
-    // Staleness fails open for the OTP (NaN > Temp_max is false), matching how a missing sensor has
-    // always been treated — so say so out loud instead. Only reachable now via a >EXPIRE_S core-0
-    // stall or a sensor that stopped answering; either is worth a line in the log.
+    // A stale fitted sensor trips protectLf (`temp-stale`) and blocks starts, also in manual PWM. The
+    // NaN fallbacks downstream (25 % P_max derate, fan holds its level) are only defence in depth.
     static bool warnedStale = false;
-    bool stale = !mppt.ntc.fresh() || !mppt.ucTemp.fresh();
+    bool stale = mppt.tempStale();
     if (stale != warnedStale) {
         warnedStale = stale;
-        if (stale) ESP_LOGW("main", "temperature stale (ntc=%d mcu=%d), OTP and derate are blind",
+        if (stale) ESP_LOGW("main", "temperature stale (ntc=%d mcu=%d), converter held off",
                             (int) mppt.ntc.fresh(), (int) mppt.ucTemp.fresh());
         else ESP_LOGI("main", "temperature refresh recovered");
     }
@@ -1887,6 +1886,8 @@ static void loopNetwork_task(void *arg) {
     g_services.tickAll();
     teleMqttTick(nowMs);
 
+
+    mppt.tempPollStale(wallClockUs());
 
     // Control cadence is fixed and console-independent; the status line keeps its own (slower when
     // idle) pacing inside loopLF.

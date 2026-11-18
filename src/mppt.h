@@ -493,6 +493,28 @@ public:
         return !converter.boost() && !(vOut < sensors.Vin->ewm.avg.get() * converter.minPulseRatioMax(true));
     }
 
+    // A fitted sensor without a valid reading; an unfitted one never counts as stale.
+    [[nodiscard]] bool tempStale() const {
+        return (ntc.fitted() && !ntc.fresh()) || (ucTemp.fitted() && !ucTemp.fresh());
+    }
+
+    // Core 0, every loop pass: re-reads a stale fitted sensor every 100 ms instead of every lfPeriod, so
+    // a fresh sensor (e.g. the NTC once the sampler has data) unblocks the start without delay.
+    void tempPollStale(time_us nowUs) {
+        static time_us lastUs = 0;
+        if (nowUs - lastUs < 100000) return;
+        lastUs = nowUs;
+        if (ntc.fitted() && !ntc.fresh()) ntc.read(false);
+        if (ucTemp.fitted() && !ucTemp.fresh()) ucTemp.read(false);
+    }
+
+    // Temperature start gate, 3 °C below the trip level
+    [[nodiscard]] const char *tempStartBlock() const {
+        if (tempStale()) return "temp-stale";
+        if (ntc.last() > limits.Temp_max - 3 || !(ucTemp.last() < limits.Temp_max - 3)) return "temp";
+        return nullptr;
+    }
+
     // First startCondition() clause currently blocking a start, or nullptr if clear.
     // Single source of truth for startCondition(); also logged while idle in START.
     [[nodiscard]] const char *startBlockReason() const {
@@ -507,7 +529,7 @@ public:
         }
         if (inBackoff()) return "backoff";
         if (charger.wireGuard.tripped()) return "wire-trip";
-        if (ntc.lastFresh() > limits.Temp_max - 3 || !(ucTemp.lastFresh() < limits.Temp_max - 3)) return "temp";
+        if (const char *t = tempStartBlock()) return t;
         if (!g_app.psuMode() &&
             !(converter.boost()
                   ? sensors.Vin->ewm.avg.get() < sensors.Vout->ewm.avg.get() + 1
@@ -563,13 +585,31 @@ public:
             }
         }
 
-        if (ntc.lastFresh() > limits.Temp_max || ucTemp.lastFresh() > limits.Temp_max) {
+        static bool staleLogged = false;
+        if (unlikely(tempStale())) {
+            RT_COLD(
+            if (!staleLogged) ESP_LOGE("mppt", "temperature stale (ntc=%d mcu=%d), shutdown",
+                                       (int) ntc.fresh(), (int) ucTemp.fresh());
+            staleLogged = true;
+            shutdownDcdc("temp-stale", 5);
+            );
+            return false;
+        }
+        staleLogged = false;
+
+        if (unlikely(ntc.last() > limits.Temp_max || ucTemp.last() > limits.Temp_max)) {
+            RT_COLD(
             ESP_LOGE("mppt", "Temp %.1f (or mcu %.1f) > %.1f°C, shutdown", ntc.last(), ucTemp.last(), limits.Temp_max);
+            shutdownDcdc("temp", 5);
+            );
             return false;
         }
 
-        if (charger.wireGuard.tripped()) {
+        if (unlikely(charger.wireGuard.tripped())) {
+            RT_COLD(
             ESP_LOGE("mppt", "wire fault trip, shutdown (wire-reset to clear)");
+            shutdownDcdc("wire-trip", 5);
+            );
             return false;
         }
 
