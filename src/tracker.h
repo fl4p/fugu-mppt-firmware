@@ -40,21 +40,10 @@ struct Tracker {
 
     bool slowMode = false;
 
-    // dP-P&O (Sera et al. 2008): step the duty at the start of a period, hold it, and take the power mean of a settled
-    // window before mid-period (a) and at the end (b). 2 (b - a) is the irradiance-driven change per period; its EWMA
-    // is subtracted from dP. Slow mode only (tracker.conf::dp_po)
-    static constexpr float kDpAlpha = 0.6f;
-    bool dpPo = false;
-    bool _dpOn = false;
-    float _dpT = 0, _dpW0 = 0;      // period, window start in each half [ms]
-    float _drift = 0, _driftSum = 0; // irradiance-driven change per period, since the reference [W]
-    MeanAccumulator _dpA{}, _dpB{};
-
     void resetTracker(float power, bool direction) {
         _direction = direction;
         _time = wallClockMs();
         _lastPower = power;
-        _driftSum = 0;
         maxPowerPoint.power = 0;
         maxPowerPoint.vin = 0;
     }
@@ -70,8 +59,6 @@ struct Tracker {
     void resetDirection(bool direction, float vin) {
         _direction = direction;
         _time = wallClockMs();
-        _drift = _driftSum = 0;
-        _dpOn = false;
         _timeSettle = _timeTakeover = _time;
         if (!isnan(vin)) _lastVin = vin;
         setSlowMode(false);
@@ -80,8 +67,8 @@ struct Tracker {
     // continue after a pause that returned to the same operating point, power settled at `power`
     void resume(float power) {
         _time = wallClockMs();
-        _powerBuf.clear(), _vinBuf.clear(), _dpA.clear(), _dpB.clear();
-        _lastPower = power, _driftSum = 0;
+        _powerBuf.clear(), _vinBuf.clear();
+        _lastPower = power;
     }
 
     // settleMs(): step settling time [ms] of the filter on powerSample, called once per tracker period.
@@ -93,26 +80,13 @@ struct Tracker {
         _powerBuf.add(powerSample);
         _vinBuf.add(vin);
 
-        const float el = (float) (now - _time), T = _dpOn ? _dpT : 1000.f / frequency;
-        if (_dpOn) {
-            if (el > _dpW0 && el <= 0.5f * T) _dpA.add(powerSample);
-            else if (el > 0.5f * T + _dpW0) _dpB.add(powerSample);
-        }
-
-        if (el > T) {
+        if ((float) (now - _time) > (1000.f / frequency)) {
             _time = now;
             auto power = _powerBuf.pop();
             auto vin = _vinBuf.pop();
-            if (_dpOn && _dpA.num && _dpB.num) {
-                const float a = _dpA.getMean();
-                power = _dpB.getMean();
-                _drift += kDpAlpha * (2 * (power - a) - _drift);
-                _driftSum += _drift;
-            }
-            _dpA.clear(), _dpB.clear();
 
             _curPower = power;
-            dP = power - _lastPower - _driftSum;
+            dP = power - _lastPower;
 
             if (power < 1) {
                 _direction = true; // pump more power
@@ -129,10 +103,10 @@ struct Tracker {
                 auto since = now - _timeSettle;
                 if (!slowMode && since < 1000 &&
                     ((float) since < settleMs() || (_direction ? vin > _lastVin : vin < _lastVin))) {
-                    _lastPower = power, _driftSum = 0;
+                    _lastPower = power;
                 } else if (absDp >= minPowerStep
                            or (abs(_lastPower) > minPowerStep and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel)) {
-                    _lastPower = power, _driftSum = 0;
+                    _lastPower = power;
                     if (dP < 0) rev = true;
                 }
 
@@ -170,19 +144,12 @@ struct Tracker {
             if (!slowMode) slow = slow && now - m.timestamp > 1000 * 30 && now - _timeTakeover > 1000 * 30;
             bool enter = slow && !slowMode;
             setSlowMode(slow);
-            if (dpPo) {
-                // a window starts once the step (T/10) and 2/3 of the filter settling are past
-                const float s = 0.66f * settleMs();
-                _dpT = std::max(1000.f / frequency, 5 * s), _dpW0 = 0.1f * _dpT + s;
-                _dpOn = slowMode && _dpT < 1500;
-            }
             // the MPP duty is a reference where a poor or non-linear output current measurement misleads the slow
             // P&O: the caller applies the distance like a control value, i.e. a fraction of it
             if (enter) return (float) m.dutyCycle - (float) dutyCycle;
         }
 
         float speed = slowMode ? .02f : .5f;
-        if (_dpOn) speed = (float) (now - _time) < 0.1f * _dpT ? speed * 10 : 0;
         return _direction ? speed : -speed;
     }
 };

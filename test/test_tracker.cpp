@@ -353,47 +353,6 @@ void test_tracker_slow_mode_ends_45s_after_reversal() {
     TEST_ASSERT_TRUE(std::isnan(runTo(t, 100'000))); // no re-entry without a reversal
 }
 
-// ---- dP-P&O (tracker.conf::dp_po) ----
-
-// Slow mode held (MPP record out of reach, recent reversal). Plant P(d, t) = (100 + rate t) (1 - ((d - 1000) / 400)^2),
-// duty += control value * 100 counts/s, 2 ms ticks. Returns the largest |d - 1000| over `sec`.
-static float rampExcursion(bool dpPo, float rate, float sec) {
-    auto tp = std::make_unique<Tracker>();
-    auto &t = *tp;
-    t.dpPo = dpPo;
-    loopWallClockUs_ = 1'000'000;
-    t.resetTracker(100.f, true);
-    t.resetDirection(true, NAN);
-    t.setSlowMode(true);
-    t._timeTakeover = 0, t._timeLastReverse = wallClockMs();
-    float d = 1000, dMax = 0;
-    for (float s = 0; s < sec; s += 0.002f) {
-        advanceMs(2);
-        t.maxPowerPoint = {1e6f, wallClockMs(), 1000, 0};
-        const float x = (d - 1000) / 400, p = (100 + rate * s) * (1 - x * x);
-        d += t.update(p, (uint16_t) d, 0.f, [] { return 50.f; }) * 100 * 0.002f;
-        dMax = std::max(dMax, std::fabs(d - 1000));
-    }
-    TEST_ASSERT_TRUE(t.slowMode);
-    return dMax;
-}
-
-// Known-bad case for plain P&O: rising light makes every step look like a gain, so it walks off the MPP until the
-// curvature outweighs the ramp. With the drift measured in the hold it reverses on the perturbation alone.
-void test_tracker_dp_po_holds_mpp_under_ramp() {
-    const float plain = rampExcursion(false, 0.5f, 40), dp = rampExcursion(true, 0.5f, 40);
-    ESP_LOGI("test", "ramp excursion plain %.0f, dP-P&O %.0f counts", plain, dp);
-    TEST_ASSERT_TRUE(plain > 40);
-    TEST_ASSERT_TRUE(dp < 0.5f * plain);
-}
-
-// Constant light: dP-P&O tracks like plain P&O (the drift term stays ~0).
-void test_tracker_dp_po_constant_light() {
-    const float plain = rampExcursion(false, 0, 40), dp = rampExcursion(true, 0, 40);
-    ESP_LOGI("test", "constant light excursion plain %.0f, dP-P&O %.0f counts", plain, dp);
-    TEST_ASSERT_TRUE(dp < 1.5f * plain + 5);
-}
-
 // ---- partial global-peak scan (peak_scan.h) ----
 
 // fry-like string: 6 substrings (bypass diode 0.45 V), Voc 80 V, Vmpp 68.8 V; ideal CCM buck on 26 V: Vin = 26 V * 2047 / d
@@ -402,7 +361,7 @@ struct ScanRig {
     PeakScan s;
     float g[6] = {1, 1, 1, 1, 1, 1}, light = 1, d;
     uint32_t now = 1000;
-    int active = 0;
+    int active = 0, ended = 0;
 
     explicit ScanRig(float vStart, uint8_t n = 6) {
         pv.setPv(4.f, 80.f, 0.86f);
@@ -429,7 +388,7 @@ struct ScanRig {
             f(*this);
             const float t = s.update(now, vin(), vin(), p(), (uint16_t) d, 29.f, 5.f, [] { return 50.f; });
             if (!std::isnan(t)) d += std::clamp((t - d) * 0.2f, -10.f, 10.f), ++active;
-            s.ended = 0;
+            if (s.ended) ended = s.ended, s.ended = 0;
         }
     }
     void run(uint32_t ms) { run(ms, [](ScanRig &) {}); }
@@ -499,4 +458,86 @@ void test_scan_trigger_waits_for_steady_power() {
     r->light = 0.6f, r->shade();
     r->run(30'000);
     TEST_ASSERT_TRUE(r->active > 0);
+}
+
+// Global peak at 56.9 V, the full-string probe 9 % worse. Light rises 14 % while it is probed and stays: against the
+// start-point power before the probe it looks 4 % better. The reference is the larger of the two start-point
+// measurements, so the scan stays.
+void test_scan_reference_catches_light_ramp() {
+    auto r = std::make_unique<ScanRig>(56.9f);
+    r->g[5] = 0.81f, r->shade(), r->sweep();
+    uint32_t tP = 0;
+    r->run(30'000, [&tP](ScanRig &x) {
+        if (x.s.phase == PeakScan::Probe && !tP) tP = x.now;
+        if (tP && x.light < 1.14f) x.light = std::min(1.14f, 1 + 0.14f * (float) (x.now - tP) / 200.f), x.shade();
+    });
+    TEST_ASSERT_EQUAL_FLOAT(1.14f, r->light);
+    TEST_ASSERT_TRUE(r->active > 0);
+    TEST_ASSERT_EQUAL_INT(1, r->ended);
+    TEST_ASSERT_FLOAT_WITHIN(0.3f, 56.9f, r->vin());
+}
+
+// A better peak (+18 %), but the light steps up 30 % during the probe: the start point measured again differs by
+// more than 15 %, so the scan keeps the start point and reports the light change.
+void test_scan_aborts_on_light_step() {
+    auto r = std::make_unique<ScanRig>(68.8f);
+    r->g[5] = 0.7f, r->shade(), r->sweep();
+    r->run(30'000, [](ScanRig &x) {
+        if (x.s.phase == PeakScan::Probe && x.light == 1) x.light = 1.3f, x.shade();
+    });
+    TEST_ASSERT_EQUAL_INT(3, r->ended);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, 68.8f, r->vin());
+}
+
+// Trigger only: the power off the reference for 12 s (steady) does not scan, for 20 s it does.
+void test_scan_trigger_needs_15s() {
+    auto r = std::make_unique<ScanRig>(56.9f);
+    r->s.interval = 0;
+    r->g[5] = 0.7f, r->shade(), r->sweep();
+    r->run(61'000);
+    TEST_ASSERT_TRUE(r->s.pRef > 0);
+    r->light = 0.6f, r->shade();
+    r->run(12'000);
+    r->light = 1, r->shade();
+    r->run(10'000);
+    TEST_ASSERT_EQUAL_INT(0, r->active);
+    r->light = 0.6f, r->shade();
+    r->run(20'000);
+    TEST_ASSERT_TRUE(r->active > 0);
+}
+
+// Voc at the sweep read 12 % low: the substring share also follows the operating point (Vin / m0), so the probe
+// still lands on the 57 V peak's flat side and the scan moves there from the 68.8 V one.
+void test_scan_probe_anchor_on_vin() {
+    auto r = std::make_unique<ScanRig>(68.8f);
+    r->s.onSweep(70.f, r->now);
+    r->g[5] = 0.7f, r->shade(), r->sweep();
+    const float p0 = r->p();
+    r->run(30'000);
+    TEST_ASSERT_EQUAL_INT(2, r->ended);
+    TEST_ASSERT_TRUE(r->vin() > 49 && r->vin() < 57);
+    TEST_ASSERT_TRUE(r->p() > 1.03f * p0);
+}
+
+// Vmpp / Voc from the sweep MPP: an unshaded string's ratio is taken, a shaded maximum's (outside 0.74..0.86) is not.
+void test_scan_learns_vmpp_ratio() {
+    PeakScan s{};
+    s.onSweep(80.f, 0);
+    s.onSweepMpp(62.4f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.78f, s.kVmp);
+    s.onSweepMpp(74.f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.78f, s.kVmp);
+    s.onSweepMpp(45.f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.78f, s.kVmp);
+}
+
+// A scan stuck for 30 s (a stalled loop) ends with ended == 4 and the start duty, and stops steering.
+void test_scan_timeout_returns_to_start() {
+    auto r = std::make_unique<ScanRig>(68.8f);
+    r->g[5] = 0.7f, r->shade(), r->sweep();
+    const uint16_t dStart = (uint16_t) r->d;
+    r->run(60'000, [](ScanRig &x) { if (x.s.phase == PeakScan::Probe) x.now += 31'000; });
+    TEST_ASSERT_EQUAL_INT(4, r->ended);
+    TEST_ASSERT_EQUAL_INT((int) dStart, (int) r->s.d0);
+    TEST_ASSERT_TRUE(r->s.pRef <= 0);
 }

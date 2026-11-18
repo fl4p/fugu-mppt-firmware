@@ -450,6 +450,14 @@ public:
         _sweeping = false;
         maxPowerPoint = {};
         targetDutyCycle = 0;
+        scan.reset(wallClockMs());
+    }
+
+    // Vin lower limit; minPulse: also above the LS min pulse ratio (buck DCM start ratio)
+    [[nodiscard]] __attribute__((always_inline)) float vinFloor(bool minPulse) const {
+        return minPulse && !converter.boost()
+                   ? std::max(limits.Vin_min, sensors.Vout->ewm.avg.get() / converter.minPulseRatioMax(true))
+                   : limits.Vin_min;
     }
 
     // Break a CV-floor lockup in place (no reboot): release the charger's Vout pinning and reset the
@@ -1397,6 +1405,7 @@ public:
         }
 
         targetDutyCycle = maxPowerPoint.dutyCycle;
+        scan.onSweepMpp(maxPowerPoint.voltage);
 
         auto z = outZ.finish((uint32_t) (wallClockUs() / 1000000));
         if (z.n)
@@ -1434,7 +1443,7 @@ public:
         return {nowUs, sensors.Vin->last, sensors.Vout->last, sensors.Iout->last, sensors.Vin->ewm.avg.get(),
                 sensors.Vout->ewm.avg.get(), sensors.Iout->ewm.avg.get(), sensorPhysicalI->ewm.avg.get(),
                 fminf(sensorPhysicalI->ewm.avg.get(), std::max(sensorPhysicalI->last, sensorPhysicalI->previous)),
-                g_app.opMode.load() == OpMode::Mppt && !sampler.isCalibrating(), _sweeping, bflow.state(),
+                g_app.opMode.load() == OpMode::Mppt && !sampler.isCalibrating(), _sweeping || scan.active(), bflow.state(),
                 ctrlState._limPast || (ctrlState._limiting && ctrlState._limReal), !sensors.Iout->isVirtual, limits.Vin_max};
     }
 

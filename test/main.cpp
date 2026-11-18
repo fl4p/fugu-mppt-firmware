@@ -319,13 +319,17 @@ void test_tracker_slow_entry_needs_reversal_after_takeover();
 void test_tracker_handback_ends_slow_mode();
 void test_tracker_reset_before_entry();
 void test_tracker_slow_mode_ends_45s_after_reversal();
-void test_tracker_dp_po_holds_mpp_under_ramp();
-void test_tracker_dp_po_constant_light();
 void test_scan_moves_to_better_peak();
 void test_scan_stays_on_global_peak();
 void test_scan_ignores_light_change();
 void test_scan_skips_clear_sky();
 void test_scan_trigger_waits_for_steady_power();
+void test_scan_reference_catches_light_ramp();
+void test_scan_aborts_on_light_step();
+void test_scan_trigger_needs_15s();
+void test_scan_probe_anchor_on_vin();
+void test_scan_learns_vmpp_ratio();
+void test_scan_timeout_returns_to_start();
 
 // conf.h
 void test_conf_getlong_bases();
@@ -571,13 +575,17 @@ void setup() {
     RUN_TEST(test_tracker_handback_ends_slow_mode);
     RUN_TEST(test_tracker_reset_before_entry);
     RUN_TEST(test_tracker_slow_mode_ends_45s_after_reversal);
-    RUN_TEST(test_tracker_dp_po_holds_mpp_under_ramp);
-    RUN_TEST(test_tracker_dp_po_constant_light);
     RUN_TEST(test_scan_moves_to_better_peak);
     RUN_TEST(test_scan_stays_on_global_peak);
     RUN_TEST(test_scan_ignores_light_change);
     RUN_TEST(test_scan_skips_clear_sky);
     RUN_TEST(test_scan_trigger_waits_for_steady_power);
+    RUN_TEST(test_scan_reference_catches_light_ramp);
+    RUN_TEST(test_scan_aborts_on_light_step);
+    RUN_TEST(test_scan_trigger_needs_15s);
+    RUN_TEST(test_scan_probe_anchor_on_vin);
+    RUN_TEST(test_scan_learns_vmpp_ratio);
+    RUN_TEST(test_scan_timeout_returns_to_start);
 
     // buck.h — diode-emulation / sync-rect math
     RUN_TEST(test_buck_ripple_current);

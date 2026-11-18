@@ -21,7 +21,7 @@ Tracking runs in three phases:
 
 A new global sweep runs every 30 minutes so the tracker does not stay on a local maximum, which happens with
 partially shaded strings. A sweep takes 20–60 s, depending on the loop rate. Sweeping too often or too slowly
-costs yield. With `tracker.conf::pv_substrings` set, a [partial peak scan](#partial-peak-scan) checks the other
+costs yield. With `tracker.conf::pv_substrings` > 1 on a buck, a [partial peak scan](#partial-peak-scan) checks the other
 local maxima of a shaded string in about 1–3 s, every 5 minutes and after a sustained change.
 
 In low light, power changes between P&O steps stay below the tracker's thresholds, so P&O cannot follow an
@@ -200,73 +200,56 @@ smaller, so the effective $\theta$ is larger at low power and smaller at high po
 ## Partial peak scan
 
 A string of modules with bypass diodes has one local power maximum per number of conducting substrings. When
-$m$ of $n$ substrings conduct and the others are bypassed, the maximum sits near $m/n$ of the unshaded MPP
-voltage, a little lower by the forward drop of the conducting bypass diodes. Two 60-cell modules in series have
-$n = 6$. P&O climbs the maximum it starts on and stays there until the next global sweep, even when another
-maximum is higher.
+the $m$ strongest of $n$ substrings conduct at their own MPP and the others are bypassed, the maximum sits near
+$m$ unshaded substring MPP voltages, lower by the forward drops of the conducting bypass diodes. A maximum at
+which weaker substrings also conduct sits higher: the stronger substrings carry the current of the weakest
+one, above their own MPP voltage. Two 60-cell modules in series have $n = 6$. P&O climbs the maximum it starts
+on and stays there until the next global sweep, even when another maximum is higher.
 
-`PeakScan` (`src/peak_scan.h`) probes only those candidate voltages. It is enabled by
-`tracker.conf::pv_substrings` > 1 and runs in tracking mode only (no limiter, sweep, fade, charge hold or PSU
-mode), above 5 % of `limits.conf::p_max`:
+`PeakScan` (`src/peak_scan.h`) probes one voltage per candidate maximum. It needs
+`tracker.conf::pv_substrings` > 1 and a buck converter (no-op on boost). It runs in tracking mode only (no
+limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV-sim mode), above 5 % of `limits.conf::p_max`:
 
-1. Candidates: the voltage share of a substring is estimated as $0.82\,V_{oc}/n$, with $V_{oc}$ the input voltage
-   at the start of the last global sweep (converter off). The operating point is assigned to the nearest
-   multiple $m_0$; the share is then $V_{in}/m_0$, so the candidates scale with the maximum the tracker is on. Each
-   candidate $m \neq m_0$ is placed at $0.97\,m\,V_{in}/m_0$, on the flat low-voltage side of its maximum. A
-   candidate below $1.1\,V_{out}$ or the input undervoltage limit, or above $0.95\,V_{oc}$, is skipped.
-2. A lower candidate ($m < m_0$) delivers at most $m$ substring voltages times the largest current seen since
-   the last sweep (the sweep passes every maximum). If that is below the present power plus the margin, the
-   candidate is skipped. On an unshaded string in full sun this skips every candidate, and no scan runs.
-3. The scan holds the operating point, waits for the power filter to settle (`powerSettleMs()`), and averages
-   the power for 100 ms ($P_0$). It then steers $V_{in}$ to each candidate in turn (duty $D\sqrt{V_{in}/V_c}$
-   each loop tick, at most the fade step), settles, and averages again. Finally it returns to the start point
-   and measures $P_0'$.
-4. Each probe is compared with the start-point power interpolated linearly between $P_0$ and $P_0'$ to the
-   probe's time, which removes a steady irradiance change. If $P_0'$ differs from $P_0$ by more than 15 %, the
-   light changed too much and the scan keeps the start point. Otherwise the best probe wins if it beats the
-   start point by 3 %; the converter moves there, and P&O restarts in fast mode with a new MPP record. If no
-   probe wins, the tracker continues where it was, in the same mode.
+1. Candidates: the unshaded substring share is estimated as $s_0 = k\,V_{oc}/n$, with $V_{oc}$ the input
+   voltage at the start of the last global sweep (converter off) and $k = V_{mpp}/V_{oc}$ taken from the sweep's
+   maximum when it lies in 0.74..0.86 (an unshaded string); otherwise the last value is kept (0.82 at start). The operating point is assigned to the
+   nearest multiple $m_0$ of $s_0$. $V_{in}/m_0$ overestimates the share when weaker substrings conduct at the
+   operating point, $s_0$ misses heating since the sweep and the spread of $V_{mpp}/V_{oc}$; the scan uses their
+   mean $s = (V_{in}/m_0 + s_0)/2$. Each candidate $m \neq m_0$ is placed at $0.97\,m\,s$. A candidate below
+   1.05 times the input voltage floor (the input undervoltage limit, and on a buck the start ratio of the
+   low-side minimum pulse, about $1.2\,V_{out}$), or above $0.95\,V_{oc}$, is skipped.
+2. A lower candidate ($m < m_0$) delivers at most $m\,s$ times the largest current seen since the last sweep
+   (the sweep passes every maximum). If that is below the present power plus the margin, the candidate is
+   skipped. On an unshaded string in full sun this skips every candidate, and no scan runs.
+3. The scan holds the operating point, waits for the power filter to settle (`powerSettleMs()`, at most 1 s),
+   and averages the power for 100 ms ($P_0$). It then steers $V_{in}$ to each candidate in turn (duty
+   $D\sqrt{V_{in}/V_c}$ each loop tick, at most the fade step), settles, and averages again. Finally it returns
+   to the start point and measures $P_0'$. A scan that is not done after 30 s ends at the start point.
+4. Each probe is compared with $\max(P_0, P_0')$, so a change of irradiance during the scan cannot make a probe
+   look better. If $P_0'$ differs from $P_0$ by more than 15 %, the light changed too much and the scan keeps
+   the start point. Otherwise the best probe wins if it beats the reference by 3 %; the converter moves there,
+   and P&O restarts in fast mode towards higher $V_{in}$, with a new MPP record. If no probe wins, the tracker
+   continues where it was, in the same mode.
 
 The log shows each scan as `scan: P <P0>-><P0'> W at <V>V, <n> probes, best x<ratio> at <V>V[, moving]`.
 
-A scan starts every `scan_interval` seconds (default 300) after the last scan or sweep. With `scan_trigger=1`
-it also starts when, for 15 s without interruption, $V_{in}$ is more than half a substring share away from the
-voltage after the last scan, or the power is below 70 % or above 140 % of the power then. The power must also
-have stayed within ±10 % for the last 5 s, and the last scan must be at least 60 s ago. A passing cloud changes
-the power by more than that every few seconds, so most cloud edges do not trigger a scan; a shadow that moves
-across the string over minutes does.
+A scan starts every `scan_interval` seconds (default 300) after the last scan or sweep, and 60 s after a scan
+whose best probe came within 6 % of the reference: under clouds the ratio between two maxima changes, and a
+probe taken in a cloud can miss a maximum that wins in the sun. With `scan_trigger=1` a scan also starts when,
+for 15 s without interruption, $V_{in}$ is more than half a substring share away from the voltage after the
+last scan, or the power is below 70 % or above 140 % of the power then. The power must also have stayed within
+±10 % for the last 5 s, and the last scan must be at least 60 s ago. A passing cloud changes the power by more
+than that every few seconds, so most cloud edges do not trigger a scan; a shadow that moves across the string
+over minutes does.
 
-A limiter that becomes active during a scan ends it, and the duty fades back to the start point.
+A limiter that becomes active during a scan ends it, and the duty fades back to the start point. A change of
+operating mode (manual, PSU, PV-sim, MPPT) drops a running scan and its reference; PSU and PV-sim mode keep
+their own regulation.
 
-A scan takes 1.5 to 4 s and costs 10 to 130 J at 200 to 400 W, depending on the number of probes: the power
+A scan takes 1.5 to 4 s and costs 10 to 150 J at 200 to 450 W, depending on the number of probes: the power
 given up at the probes plus the travel between them. A scan that moves to a better maximum pays this back
-within seconds.
-
-## Drift-compensated P&O
-
-P&O compares the power of two periods. A change of irradiance between them adds to the change caused by the
-perturbation; a rising irradiance makes every step look like a gain, so the tracker walks away from the MPP
-until the curvature of the P-V curve outweighs the ramp. The dP-P&O method [Sera et al., IEEE TIE 55(7),
-2008](https://doi.org/10.1109/TIE.2008.924036) adds a power measurement in the middle of the period with no
-perturbation since: the change across that half belongs to the irradiance alone.
-
-With `tracker.conf::dp_po=1`, `Tracker::update()` in slow mode moves the duty within the first tenth of each
-period (10 times the normal speed, so the mean slew is unchanged) and then holds it. It averages power in two
-equal windows: one ending at mid-period, one ending at the period end. Each window starts once the step and two
-thirds of the filter settling time have passed. With the window means $a$ and $b$, $2(b - a)$ is the
-irradiance-driven change per period. An exponential average of it (weight 0.6) is summed per period since the
-reference power, and subtracted from $\Delta P$ before the thresholds are applied. The period mean used for
-$\Delta P$ and the MPP record is $b$, the settled end of the period.
-
-The period is $\max(1/f, 5 \cdot 0.66\,t_f)$, with $t_f$ the power filter settling time and $f$ the tracker rate.
-With the INA226 profile ($t_f \approx 150$ ms) that is the 500 ms slow-mode period. Above a period of 1.5 s
-(slow power filters such as the ADS1015 profile) the compensation stays off.
-
-Fast mode has no compensation: the hold needs a period of several filter settling times, and stretching the
-33 ms fast-mode period to 500 ms makes the tracker too slow to follow the MPP at dawn, at dusk and in low light.
-Slow mode ends when the power rises 0.5 % above the MPP record, so a rising irradiance usually returns the
-tracker to fast mode before the compensation acts. The compensation therefore mostly covers slow drifts and
-falling irradiance, where plain P&O already works.
+within seconds. A probe sits on the flat side of its maximum, so a maximum less than about 5 % above the
+operating point is often not taken.
 
 ## When the tracker does not sweep
 
@@ -298,7 +281,6 @@ The tracker reads these keys from `tracker.conf`:
 | [`pv_substrings`](../reference/config/tracker.md)                    | 0       | Bypass-diode substrings in series; > 1 enables the partial peak scan |
 | [`scan_interval`](../reference/config/tracker.md)                    | 300     | Partial peak scan period [s]; 0 = triggered only     |
 | [`scan_trigger`](../reference/config/tracker.md)                     | 1       | Also scan after a sustained Vin or power change      |
-| [`dp_po`](../reference/config/tracker.md)                            | 0       | 1 = drift-compensated P&O in slow mode               |
 
 Console: `sweep` starts a global sweep, `mppt` returns to automatic tracking, `speed <x>` scales the P&O step. See
 [Console](../reference/console.md).

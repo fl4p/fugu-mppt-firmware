@@ -6,13 +6,12 @@
 #include "util.h"
 
 /**
- * Partial global-peak scan for a string of n bypass-diode substrings: its local power peaks sit near m/n of the
- * unshaded MPP voltage (m conducting substrings). Measures the operating point, probes those voltages for a moment
- * each, returns, and moves to the best probe if it beats the operating point (drift-corrected) by `margin`.
+ * Partial global-peak scan for a string of n bypass-diode substrings, one local power peak per number m of conducting
+ * substrings, at or above m substring MPP voltages. Measures the operating point, probes the candidates for a moment
+ * each, measures the operating point again and moves to the best probe if it beats the larger of the two by `margin`.
  * Runs periodically and on a sustained Vin or power change since the last scan or sweep.
  */
 struct PeakScan {
-    static constexpr float kVmpOfVoc = 0.82f; // unshaded Vmpp / Voc (field fry/flat 0.79..0.85)
     static constexpr float kProbeLow = 0.97f; // probe on the flat low-voltage side of a peak
     static constexpr uint16_t kMeasMs = 100, kTravelMs = 1500, kSteadyMs = 5000;
 
@@ -25,11 +24,10 @@ struct PeakScan {
     Phase phase = Idle;
     uint8_t k = 0, nc = 0;
     bool settled = false;
-    uint8_t ended = 0; // 1 back at the start point, 2 moved to another peak
+    uint8_t ended = 0; // back at the start point: 1, 3 light changed; 2 moved to another peak; 4 timed out (return to d0)
     uint16_t d0 = 0;
     float vc[6]{}, pc[6]{};
-    uint32_t tc[6]{};
-    float voc = NAN, iEnv = 0, vs = 0;  // Voc at the sweep start, max PV-side current [W/V], substring Vmpp share
+    float voc = NAN, iEnv = 0, kVmp = 0.82f; // Voc at the sweep start, max PV-side current [W/V], Vmpp / Voc
     float v0 = 0, p0 = 0, pRef = 0, vRef = 0, pS = 0;
     uint32_t t0 = 0, tPhase = 0, tLast = 0, tOff = 0, tS = 0;
     MeanAccumulator acc{};
@@ -43,7 +41,17 @@ struct PeakScan {
 
     void sweepSample(float i) { if (i > iEnv) iEnv = i; }
 
+    // sweep MPP: an unshaded string's Vmpp / Voc lies in 0.74..0.86 (field 0.79..0.85); a shaded global maximum
+    // falls outside (m < n substrings: lower, weaker substrings conducting: higher) and keeps the last value
+    void onSweepMpp(float v) {
+        const float r = v / voc;
+        if (r > 0.74f && r < 0.86f) kVmp = r;
+    }
+
     void abort() { phase = Idle; }
+
+    // mode change: drop a running scan and the reference, re-reference 5 s into tracking, next scan after the period
+    void reset(uint32_t now) { phase = Idle, ended = 0, pRef = -1, tLast = tOff = now; }
 
     // NAN while idle; else the duty count to steer to. vinFast: med3, vin/pw: the tracker's (ewm) signals,
     // settleMs(): power filter settling time [ms]
@@ -58,7 +66,7 @@ struct PeakScan {
                 else if (now - tPhase > 5000) pRef = pw, vRef = vin, tOff = now;
                 return NAN;
             }
-            const float vs0 = kVmpOfVoc * voc / (float) n;
+            const float vs0 = kVmp * voc / (float) n;
             // trigger: off the reference Vin or power for 15 s, the power steady (+-10 %) for the last 5 s
             if (!trigger || (std::fabs(vin - vRef) < 0.5f * vs0 && pw > 0.7f * pRef && pw < 1.4f * pRef)) tOff = now;
             if (std::fabs(pw - pS) > 0.1f * pS) pS = pw, tS = now;
@@ -66,13 +74,15 @@ struct PeakScan {
                              (now - tOff > 15000 && now - tS > kSteadyMs && now - tLast > 60000);
             if (!due || pw < pMin) return NAN;
             tLast = now;
-            // anchor the substring share on the peak we are on (m0 of n conducting)
+            // m0 of n substrings conduct at our peak. With weaker substrings conducting a peak sits above m unshaded
+            // shares, so Vin / m0 can be high; the share from Voc misses heating and the Vmpp/Voc spread: take the mean
             const int m0 = std::clamp((int) std::lround(vin / vs0), 1, (int) n);
-            vs = vin / (float) m0, nc = 0;
+            const float sh = 0.5f * (vin / (float) m0 + vs0);
+            nc = 0;
             for (int m = 1; m <= n; ++m) {
-                const float v = kProbeLow * (float) m * vs;
+                const float v = kProbeLow * (float) m * sh;
                 // unreachable, at our own peak, or a lower peak that cannot beat us even at the best current seen
-                if (m == m0 || v < vMin || v > 0.95f * voc || (m < m0 && iEnv > 0 && (float) m * vs * iEnv < pw * (1 + margin)))
+                if (m == m0 || v < vMin || v > 0.95f * voc || (m < m0 && iEnv > 0 && (float) m * sh * iEnv < pw * (1 + margin)))
                     continue;
                 vc[nc++] = v;
             }
@@ -86,11 +96,12 @@ struct PeakScan {
         const float vt = phase == Probe || phase == Go ? vc[k] : v0;
         if (!settled && (std::fabs(vinFast - vt) < 0.01f * vt || now - tPhase > kTravelMs)) settled = true, tPhase = now;
         if (settled) {
-            const float ts = settleMs(), dt = (float) (now - tPhase);
+            const float ts = std::fmin(settleMs(), 1000.f), dt = (float) (now - tPhase); // fmin: NAN -> 1 s
             if (dt > ts) acc.add(pw);
             if (dt > ts + kMeasMs) step(now, vin);
         }
-        return (float) d * std::sqrt(vinFast / vt);
+        if (phase != Idle && now - t0 > 30000) phase = Idle, pRef = -1, ended = 4;
+        return phase == Idle ? NAN : (float) d * std::sqrt(vinFast / vt);
     }
 
     __attribute__((always_inline)) void step(uint32_t now, float vin) {
@@ -99,15 +110,14 @@ struct PeakScan {
         if (phase == Ref) {
             p0 = p, phase = Probe;
         } else if (phase == Probe) {
-            pc[k] = p, tc[k] = now - t0;
+            pc[k] = p;
             if (++k == nc) phase = Back;
         } else if (phase == Back) {
-            // power at the operating point drifted p0 -> p over the scan: compare each probe at its time
-            const float drift = (p - p0) / (float) (now - t0);
+            // the start point measured before and after: the larger one, so a light change cannot fake a gain
             int best = 0;
             float g = 0;
             for (int i = 0; i < nc; ++i) {
-                const float r = pc[i] / (p0 + drift * (float) tc[i]);
+                const float r = pc[i] / std::max(p0, p);
                 if (r > g) g = r, best = i;
             }
             const bool steady = std::fabs(p - p0) < 0.15f * p0, move = steady && g > 1 + margin;
@@ -116,7 +126,9 @@ struct PeakScan {
             if (move) {
                 k = (uint8_t) best, phase = Go, pRef = pc[best], vRef = vc[best];
             } else {
-                phase = Idle, pRef = p, vRef = vin, ended = 1;
+                phase = Idle, pRef = p, vRef = vin, ended = steady ? 1 : 3;
+                // a probe within 2 margins (clouds change the ratio): again in 60 s
+                if (g > 1 - 2 * margin && interval > 60) tLast = now - (interval - 60) * 1000u;
             }
         } else {
             phase = Idle, vRef = vin, ended = 2;

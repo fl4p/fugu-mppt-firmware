@@ -120,8 +120,7 @@ void MpptController::update() {
         CVP{
             CV, VinController, {
                 sensors.Vin->med3.get(),
-                minPulseFloor ? std::max(limits.Vin_min, sensors.Vout->ewm.avg.get() / converter.minPulseRatioMax(true))
-                              : limits.Vin_min
+                vinFloor(minPulseFloor)
             }
         },
         CVP{
@@ -297,24 +296,25 @@ void MpptController::update() {
                        || (I_phys_smooth_min > 0.05 && converter.getDutyCycle() > 0.3f)
     );
 
-    if (controlMode == MpptControlMode::None && !_sweeping && !targetDutyCycle && !g_app.psuMode() && !batteryFull) {
+    if (controlMode == MpptControlMode::None && !_sweeping && !targetDutyCycle && !g_app.psuMode() && !batteryFull &&
+        !converter.boost()) {
         const uint16_t d = converter.getCtrlOnPwmCnt();
         const float t = scan.update(nowMs, sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get(), power, d,
-                                    std::max(limits.Vin_min * 1.05f, sensors.Vout->ewm.avg.get() * 1.1f),
-                                    25 * sweepMinPower(), [this] { return powerSettleMs(); });
+                                    1.05f * vinFloor(true), 25 * sweepMinPower(), [this] { return powerSettleMs(); });
         if (!std::isnan(t)) {
             // the tracker pauses; back at the start point it carries on, on another peak it restarts
             controlMode = MpptControlMode::Sweep, keepTracker = true;
             controlValue = constrain(t - (float) d, -(float) (converter.pwmCounts() / 64) - 1,
                                      (float) (converter.pwmCounts() / 128) + 1);
         } else if (scan.ended) {
-            if (scan.ended == 1) tracker.resume(scan.pRef);
-            else tracker.resetDirection(tracker._direction, sensors.Vin->ewm.avg.get()), tracker.maxPowerPoint.power = 0;
+            if (scan.ended == 1 || scan.ended == 3) tracker.resume(scan.pRef);
+            else tracker.resetDirection(false, sensors.Vin->ewm.avg.get()), tracker.maxPowerPoint.power = 0; // probed below the peak
+            if (scan.ended == 4) targetDutyCycle = scan.d0;
             scan.ended = 0;
         }
     } else if (scan.active() && !_sweeping) {
         scan.abort();
-        if (!targetDutyCycle) targetDutyCycle = scan.d0;
+        if (!targetDutyCycle && !g_app.psuMode()) targetDutyCycle = scan.d0;
     }
 
     if (controlMode == MpptControlMode::None) {
@@ -533,9 +533,8 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
     scan.n = std::min<uint8_t>(6, trackerConf.getByte("pv_substrings", 0));
-    scan.interval = (uint16_t) trackerConf.getLong("scan_interval", 300);
+    scan.interval = (uint16_t) std::clamp(trackerConf.getLong("scan_interval", 300), 0L, 65535L);
     scan.trigger = trackerConf.getByte("scan_trigger", 1);
-    tracker.dpPo = trackerConf.getByte("dp_po", 0);
 
     if (tele.influxdbHost) {
         ESP_LOGI("main", "Influxdb telemetry to host %s", tele.influxdbHost.toString().c_str());
