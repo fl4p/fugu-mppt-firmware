@@ -124,7 +124,7 @@ the reconstructed SUMMARY lines (review 2026-11-18).
 A calibration that keeps failing for any reason still re-sweeps every ~10 s: `timeLastCalibration` only advances
 on success and drives the periodic sweep. The review reproduced it with a ±1.3 V 100 Hz Vout ripple at ~506 sps
 (sd 0.757 V > 0.7 V; the old gate passed it). fry/flat boot calibrations show Vout sd 2.5 / 5.7 mV, so this is
-latent there; retry scheduling fix in progress.
+latent there. Fixed in cddff4fd (cadence from the last attempt; sim wx-calfail 56 -> 2 sweeps).
 
 Deployment order matters: despike on a device without 670a3ef9 reproduces the back-to-back sweep loop.
 
