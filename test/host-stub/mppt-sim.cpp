@@ -36,6 +36,9 @@
 //     wx-sun-fry, wx-sun-flat   steady sun, MPP SIM_P W (default 70), the board's L, string and Vin (fry ~64 V, flat ~55 V)
 //     wx-ramp-fry, wx-ramp-flat wx-sun with irradiance changing SIM_RAMP %/min (default 2, exponential) from 120 s
 //     wx-wob-fry, wx-wob-flat   wx-sun with irradiance x (1 + a sin 2 pi f t), SIM_WOB=a,f (default 0.005,0.2)
+//     wx-dstep          static P(D): dusk light SIM_GC (0.039), duty SIM_DSTEP=d0,d1,step,dwell up and back, one DSTEP
+//                       line per step (Vin, PV and measured power, LS); manual mode, or SIM_DSTEP_MPPT=1 for MPPT with
+//                       the tracker frozen (diode emulation as in tracking)
 //   SIM_NOISE=fry|flat|<file.fnz>  replay sensor noise measured on a converter (test/host-stub/noise/, made by
 //     noise_profile.py; looped): residuals added to Vin/Vout/Iout, Iout's scaled by Iout/Iout(capture)^SIM_NOISE_EXP (default 1),
 //     x SIM_NOISE_GAIN, starting SIM_NOISE_OFS s into the profile; INA226 LSB quantisation, the boards' filt_len 20, SIM_ADC_HZ defaults to the capture rate
@@ -44,6 +47,7 @@
 //     mode and the largest Vin offset from the MPP in slow mode
 //   SIM_T=600 wx run length [s], SIM_TR=5 wx trace interval [s], SIM_V=1 firmware log in wx/shade runs
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
+//   SIM_TTRACE=t0,t1 /tmp/mppt-sim wx-dusk      # one line per tracker decision (duty, Vin, P, direction, LS) in t0..t1
 //   SIM_PDUMP=<file>  per RT tick float32 t, Iout ewm, Vout ewm, HS count, slow mode, PV power; SIM_HOLD=t: wx runs hold the duty from t [s]
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
 //   SIM_PHASE_US=500 /tmp/mppt-sim a          # a/b/c/e: plant runs n us past the event before the next ADC tick
@@ -139,6 +143,7 @@ static std::vector<std::pair<double, char>> g_scanT; // "scan:" log times; m = m
 // sweep verdict events: v verified, f flagged, F flagged + scan, r re-sweep scheduled, c capped, L learned, s scan
 static std::string g_verdict;
 static double g_fineT0 = 0, g_fineT1 = 0; // env SIM_FINE=t0,t1: per-tick sensor trace window
+static double g_trkT0 = 0, g_trkT1 = 0; // env SIM_TTRACE=t0,t1: one line per tracker decision
 static double g_rampSec = 0, g_rampT0 = 0, g_rampFrom = 0, g_rampTo = 0; // linear Isc ramp
 static bool g_verbose = true;
 static double g_qOut = 0; // plant output charge [C], per RT iteration (cycle-average Iout x dt)
@@ -660,6 +665,20 @@ static void run(double sec, double traceEvery, Probe *probe = nullptr, double fi
             lastLfWorkUs = wallClockUs();
         }
         bool on = !converter.disabled();
+        if (g_trkT1 > 0 && tNow() >= g_trkT0 && tNow() <= g_trkT1) {
+            static time_ms lastT = 0;
+            const auto &tr = mppt.tracker;
+            if (tr._time != lastT) {
+                lastT = tr._time;
+                const float v = g_vconv.getVin();
+                printf("%9.3f trk: D=%u Vin=%.2f/%.2f Ppv=%.2f Pm=%.3f dP=%+.3f ref=%.3f dir=%c%s lim=%u mode=%s dcm=%d M=%.3f sr=%d LS=%u/%u bf=%d Io=%.3f/%.3f\n",
+                       tNow(), converter.getCtrlOnPwmCnt(), v, sensors.Vin->ewm.avg.get(), v * g_vconv.pvCurrent(v),
+                       tr._curPower, tr.dP, tr._lastPower, tr._direction ? '+' : '-', tr.slowMode ? " slow" : "",
+                       (unsigned) mppt.teleSnap().limIdx, modeStr(), (int) converter.inDCM(), g_vconv.getVout() / v,
+                       (int) converter.syncRectEnabled_(), converter.getRectOnPwmCnt(), converter.getRectOnPwmMax(),
+                       (int) mppt.bflow.state(), g_vconv.getIoutAvg(), sensors.Iout->ewm.avg.get());
+            }
+        }
         if (g_fineT1 > 0 && tNow() >= g_fineT0 && tNow() <= g_fineT1) {
             printf("%9.4f fine: Vout last=%.3f med=%.3f ewm=%.3f n=%lu | Iout last=%.2f med=%.2f ewm=%.2f | D=%u %s cal=%d\n",
                    tNow(), sensors.Vout->last, sensors.Vout->med3.get(), sensors.Vout->ewm.avg.get(),
@@ -1063,8 +1082,34 @@ static int runWx(const std::string &name, Wx &wx) {
     ItState it{};
     if (const char *e = getenv("SIM_ACT")) it.act = !strcmp(e, "psu") ? 1 : !strcmp(e, "manual") ? 2 : !strcmp(e, "limit") ? 3 : 0;
 #endif
+    float ds[4] = {0, 0, 0, 0};
+    const bool dstep = name == "wx-dstep" && getenv("SIM_DSTEP") && sscanf(getenv("SIM_DSTEP"), "%f,%f,%f,%f", ds, ds + 1, ds + 2, ds + 3) == 4;
+    int dsN = dstep ? 2 * (int) std::lround((ds[1] - ds[0]) / ds[2]) + 1 : 0, dsI = -1;
+    double dsT0 = 30, dsAcc[5] = {};
+    if (dstep) wx.T = dsT0 + ds[3] * dsN + 1;
     for (double nextTr = 0; tNow() < wx.T;) {
         const double tb = tNow();
+        if (dstep && tb >= dsT0) {
+            const int i = (int) ((tb - dsT0) / ds[3]);
+            if (i != dsI) {
+                if (dsI >= 0 && dsAcc[0] > 0)
+                    printf("DSTEP %c D=%u/%u Vin=%.2f Ppv=%.3f Pm=%.3f LS=%.0f | pwmMax %u f %u Vo %.3f plant dcm %d iL %.3f iLsOff %.3f lim %u\n", dsI <= dsN / 2 ? 'u' : 'd', mppt.manualTarget.load(),
+                           converter.getCtrlOnPwmCnt(), dsAcc[1] / dsAcc[0], dsAcc[2] / dsAcc[0], dsAcc[3] / dsAcc[0], dsAcc[4] / dsAcc[0],
+                           g_vconv.getPwm().pwmMax, (unsigned) g_vconv.getPwm().pwmFreq, g_vconv.getVout(), (int) g_vconv.inDcm(), g_vconv.getIL(), g_vconv.getILsOff(), (unsigned) mppt.teleSnap().limIdx);
+                dsI = i, std::fill(dsAcc, dsAcc + 5, 0.0);
+                const int k = i <= dsN / 2 ? i : dsN - 1 - i;
+                if (i < dsN) {
+                    const auto d = (uint16_t) std::lround(ds[0] + ds[2] * (float) k);
+                    mppt.manualTarget = d;
+                    if (getenv("SIM_DSTEP_MPPT")) mppt.speedScale = 0, converter.pwmPerturb((int16_t) (d - converter.getCtrlOnPwmCnt()));
+                }
+            }
+            if (tb - dsT0 - ds[3] * i > ds[3] * 0.5) {
+                const float v = g_vconv.getVin();
+                dsAcc[0] += 1, dsAcc[1] += v, dsAcc[2] += v * g_vconv.pvCurrent(v),
+                    dsAcc[3] += sensors.Vout->ewm.avg.get() * sensors.Iout->ewm.avg.get(), dsAcc[4] += converter.getRectOnPwmCnt();
+            }
+        }
         wx.apply(tb);
         if (holdAt >= 0 && tb >= holdAt) mppt.speedScale = 0, holdAt = -1;
         if (wx.sweepAt >= 0 && tb >= wx.sweepAt) {
@@ -1305,6 +1350,11 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
             wx.cloud.emplace_back(sc == "wx-dawn" ? t : (float) wx.T - t, std::exp(lg));
         }
         if (sc == "wx-dusk") std::reverse(wx.cloud.begin(), wx.cloud.end());
+    } else if (sc == "wx-dstep") {
+        // dusk light held at SIM_GC (default 0.039), manual duty stepped by SIM_DSTEP=d0,d1,step,dwell up and back
+        const float g = getenv("SIM_GC") ? atof(getenv("SIM_GC")) : 0.039f;
+        wx.vocLog = 2.6f, wx.cloud = {{0, g}}, wx.manual = getenv("SIM_DSTEP_MPPT") ? 0 : 0.3f, wx.vbat = getenv("SIM_VBAT") ? atof(getenv("SIM_VBAT")) : 28;
+        wx.T = 1e9;
     } else if (sc == "wx-low" || sc == "wx-mid" || sc == "wx-low-slow") {
         // steady light rising slowly after the boot sweep, with sensor noise: MPP 2 -> 20 W in 30 min (x2 per 9 min),
         // 55 -> 110 W in 10 min (x2 per 10 min, dawn rate) then 10 min level
@@ -1643,6 +1693,7 @@ static int simMain(int argc, char **argv) {
     std::string sc = argc > 1 ? argv[1] : "sanity";
     g_simLogHook = logHook;
     if (const char *f = getenv("SIM_FINE")) sscanf(f, "%lf,%lf", &g_fineT0, &g_fineT1);
+    if (const char *f = getenv("SIM_TTRACE")) sscanf(f, "%lf,%lf", &g_trkT0, &g_trkT1);
     // suffix -p0: limits.conf reverse_current_paranoia=0 (Vout-OV threshold 1.5x instead of 1.03x Vbat_max)
     const bool p0 = sc.size() > 3 && sc.compare(sc.size() - 3, 3, "-p0") == 0;
     const std::string name = sc;
