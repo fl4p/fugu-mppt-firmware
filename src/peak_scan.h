@@ -93,8 +93,9 @@ struct PeakScan {
     // (mid: test hook, runs after the copy). True if n grew.
     template<class Mid = decltype([](PeakScan &) {})>
     bool learn(Mid mid = {}) {
+        const uint8_t g0 = gen.load(std::memory_order_acquire);
         if (!pending.exchange(false, std::memory_order_acquire)) return false;
-        const uint8_t g0 = gen.load(std::memory_order_acquire), nc = std::min<uint8_t>(this->nc, 6);
+        const uint8_t nc = std::min<uint8_t>(this->nc, 6);
         float vc[6], pc[6];
         std::copy_n(this->vc, 6, vc), std::copy_n(this->pc, 6, pc);
         const float voc = this->voc, pk = this->pk;

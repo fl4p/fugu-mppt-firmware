@@ -255,8 +255,9 @@ unshaded string never scans.
 
 The count is kept in `tracker.conf::pv_substrings`. It is written once when it grows, as soon as a flash write is
 safe (converter off, or below 5 W), and before a console restart. Setting it to 0 (`set-config`) makes the
-converter learn it again after the next restart; until then the running count stays in use, and a count learned
-in the meantime is not written over the new value. It is not meant to be set by hand otherwise.
+converter learn it again after the next restart; until then the running count stays in use. A count learned
+earlier in the same boot and not yet saved can still be written over the 0, so set it while the converter is off
+and restart right after. It is not meant to be set by hand otherwise.
 
 The evaluation works on a copy of the maxima. If a new sweep or a scan starts while it runs, the sweep is dropped.
 
