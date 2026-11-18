@@ -46,7 +46,7 @@ test('ingestTele renders a card with KPIs, the live dot and a sweep curve', asyn
     window.Dash.flush();
   }, Math.floor(ts / 1000));
   await expect(card.locator('svg.chart path.curve')).toHaveAttribute('d', /^M[\d. ]+(L[\d. ]+){18}$/);
-  await expect(card.locator('svg.chart circle.mpp')).toHaveAttribute('visibility', 'visible');
+  await expect(card.locator('svg.chart path.mpp')).toHaveAttribute('visibility', 'visible');
   await expect(card.locator('.chartbar .caption')).toContainText('MPP 245.0 W @ 36.0 V');
   // sc: lines are hidden in the log by default
   await expect(card.locator('.log .sc').first()).toBeHidden();

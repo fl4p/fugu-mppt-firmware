@@ -85,7 +85,8 @@
   .chartkeys .key i { display:inline-block; }
   .chartkeys .k-line i { width:14px; height:2px; background:var(--series-1); border-radius:1px; }
   .chartkeys .k-trace i { width:14px; height:2px; background:var(--series-1); opacity:.35; }
-  .chartkeys .k-ring i { width:8px; height:8px; border:2px solid var(--series-1); border-radius:50%; }
+  .chartkeys .k-star i { width:12px; height:12px; background:var(--series-1);
+    clip-path:polygon(50% 0,62.6% 32.7%,97.6% 34.5%,70.4% 56.6%,79.4% 90.5%,50% 71.4%,20.6% 90.5%,29.6% 56.6%,2.4% 34.5%,37.4% 32.7%); }
   .chartkeys .k-dot i { width:8px; height:8px; background:var(--series-2); border-radius:50%; }
   .chartbar button.refresh { padding:1px 8px; font-size:12px; flex:none; }
   svg.chart { width:100%; height:auto; display:block; }
@@ -95,8 +96,8 @@
   svg.chart text.empty { font-size:11px; }
   svg.chart path.curve { fill:none; stroke:var(--series-1); stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
   svg.chart path.trace { fill:none; stroke:var(--series-1); stroke-opacity:.35; stroke-width:1.5; stroke-linejoin:round; }
-  svg.chart circle.mpp { fill:none; stroke:var(--series-1); stroke-width:2; }
-  svg.chart circle.mpp-halo { fill:none; stroke:var(--surface); stroke-width:4; }
+  svg.chart path.mpp { fill:var(--series-1); }
+  svg.chart path.mpp-halo { fill:none; stroke:var(--surface); stroke-width:3; stroke-linejoin:round; }
   svg.chart circle.live { fill:var(--series-2); stroke:var(--surface); stroke-width:2; }
   svg.chart .hover line { stroke:var(--muted); stroke-width:1; }
   svg.chart .hover text { fill:var(--fg); font-size:10px; }
@@ -252,7 +253,7 @@ class Device {
     this.log = new Ring(LOG_KEEP); this.logNew = [];
     this.history = []; this.histIdx = 0;
     this.lineListeners = new Set();
-    this.el = null; this.ver = 0;
+    this.el = null; this.ver = 0; this.pTop = 1;
   }
 }
 
@@ -704,6 +705,7 @@ function attachBle(link, host){
       for (const e of old.log.a) dev.log.push(e);
       dev.logNew = dev.log.a.slice(-LOG_SHOW); dev.logReset = true;
       old.lineListeners.forEach(fn => dev.lineListeners.add(fn));
+      if (old.pTop > dev.pTop) dev.pTop = old.pTop;
       removeDevice(old);
     } else {
       devices.delete(old.host);
@@ -943,10 +945,12 @@ function niceTicks(lo, hi, n){
   return { lo:a, hi:b, ticks, step };
 }
 
+const STAR = "M0 -7L1.76 -2.43L6.66 -2.16L2.85 0.93L4.11 5.66L0 3L-4.11 5.66L-2.85 0.93L-6.66 -2.16L-1.76 -2.43Z";
+
 function createChart(dev){
   const w = el("div", "chartwrap");
   const bar = el("div", "chartbar");
-  const keys = [["k-line", "last sweep"], ["k-trace", "witnessed"], ["k-ring", "MPP"], ["k-dot", "now"]].map(([c, t]) => {
+  const keys = [["k-line", "last sweep"], ["k-trace", "witnessed"], ["k-star", "MPP"], ["k-dot", "now"]].map(([c, t]) => {
     const s = el("span", "key " + c); s.append(el("i"), document.createTextNode(t)); return s;
   });
   const rb = el("button", "refresh", "↻");
@@ -957,7 +961,7 @@ function createChart(dev){
   const svg = svgEl("svg", { viewBox:`0 0 ${CH.w} ${CH.h}`, role:"img", "aria-label":"power over input voltage" }, "chart");
   svg.append(svgEl("g", {}, "grid"), svgEl("line", {}, "base"), svgEl("g", {}, "ylab"), svgEl("g", {}, "xlab"),
              svgEl("path", { d:"" }, "trace"), svgEl("path", { d:"" }, "curve"),
-             svgEl("circle", { r:5 }, "mpp-halo"), svgEl("circle", { r:5 }, "mpp"), svgEl("circle", { r:4 }, "live"));
+             svgEl("path", { d:STAR }, "mpp-halo"), svgEl("path", { d:STAR }, "mpp"), svgEl("circle", { r:4 }, "live"));
   const empty = svgEl("text", { x:CH.w / 2, y:CH.h / 2, "text-anchor":"middle" }, "empty");
   const hov = svgEl("g", { visibility:"hidden" }, "hover");
   hov.append(svgEl("line", { y1:CH.t, y2:CH.h - CH.b }), svgEl("circle", { r:3 }),
@@ -980,21 +984,23 @@ function renderChart(dev){
   renderCaption(dev);
   const empty = svg.querySelector("text.empty");
   const all = curve.concat(trace, live ? [live] : [], mpp ? [mpp] : []);
+  for (const p of all) if (p.P > dev.pTop) dev.pTop = p.P;
+  if (t.Pmax > dev.pTop) dev.pTop = t.Pmax;
   if (!all.length){
     empty.textContent = dev.curveNone ? "no sweep recorded since boot" : "no sweep curve yet";
     show(empty, true);
     for (const s of ["path.curve", "path.trace"]) svg.querySelector(s).setAttribute("d", "");
-    for (const s of ["circle.mpp", "circle.mpp-halo", "circle.live"]) show(svg.querySelector(s), false);
+    for (const s of ["path.mpp", "path.mpp-halo", "circle.live"]) show(svg.querySelector(s), false);
     for (const s of ["g.grid", "g.ylab", "g.xlab"]) svg.querySelector(s).replaceChildren();
     show(svg.querySelector("line.base"), false);
     dev.chartKey = null; dev.chartScale = null;
     return;
   }
   show(empty, false);
-  const vs = all.map(p => p.V), ps = all.map(p => p.P);
+  const vs = all.map(p => p.V);
   let vlo = Math.min(...vs), vhi = Math.max(...vs);
   if (vhi - vlo < 2){ vlo -= 1; vhi += 1; }
-  const xd = niceTicks(vlo, vhi, 5), yd = niceTicks(0, Math.max(1, ...ps), 4);
+  const xd = niceTicks(vlo, vhi, 5), yd = niceTicks(0, dev.pTop, 4);
   const X = (v) => CH.l + (v - xd.lo) / (xd.hi - xd.lo) * (CH.w - CH.l - CH.r);
   const Y = (p) => CH.h - CH.b - Math.max(0, p) / yd.hi * (CH.h - CH.t - CH.b);
   dev.chartScale = { X, Y, pts: curve.length ? curve : trace };
@@ -1021,10 +1027,10 @@ function renderChart(dev){
     const d = (pts) => pts.map((p, i) => (i ? "L" : "M") + X(p.V).toFixed(1) + " " + Y(p.P).toFixed(1)).join("");
     svg.querySelector("path.curve").setAttribute("d", d(curve));
     svg.querySelector("path.trace").setAttribute("d", d(trace));
-    for (const s of ["circle.mpp-halo", "circle.mpp"]){
+    for (const s of ["path.mpp-halo", "path.mpp"]){
       const c = svg.querySelector(s);
       show(c, !!mpp);
-      if (mpp){ c.setAttribute("cx", X(mpp.V).toFixed(1)); c.setAttribute("cy", Y(mpp.P).toFixed(1)); }
+      if (mpp) c.setAttribute("transform", `translate(${X(mpp.V).toFixed(1)} ${Y(mpp.P).toFixed(1)})`);
     }
   }
   const lc = svg.querySelector("circle.live");

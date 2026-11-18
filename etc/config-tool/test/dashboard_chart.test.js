@@ -54,7 +54,7 @@ test('chart: empty state, curve path, MPP ring, live dot, trace, caption, refres
   assert.equal(xl[0], '30');
   assert.equal(xl.at(-1), '44 V');
   assert.equal(svg.querySelectorAll('g.grid line').length, 4);
-  const mpp = svg.querySelector('circle.mpp');
+  const mpp = svg.querySelector('path.mpp');
   assert.equal(mpp.getAttribute('visibility'), 'visible');
   assert.equal(svg.querySelector('circle.live').getAttribute('visibility'), 'hidden');
   assert.match(caption(), /^sweep \d\d?:\d\d( [AP]M)? · MPP 200\.0 W @ 36\.0 V$/);
@@ -64,7 +64,7 @@ test('chart: empty state, curve path, MPP ring, live dot, trace, caption, refres
   Dash.flush();
   const live = svg.querySelector('circle.live');
   assert.equal(live.getAttribute('visibility'), 'visible');
-  assert.ok(+live.getAttribute('cx') > +mpp.getAttribute('cx'));
+  assert.ok(+live.getAttribute('cx') > +mpp.getAttribute('transform').match(/translate\(([\d.]+)/)[1]);
   assert.equal(svg.querySelector('path.curve').getAttribute('d'), d);
 
   // witnessed sweep trace (new symbol table per stream)
@@ -86,4 +86,27 @@ test('chart: empty state, curve path, MPP ring, live dot, trace, caption, refres
   Dash.flush();
   assert.equal(card(window, 'fry').querySelector('button.refresh').disabled, true);
   assert.match(caption(), /loading/);
+});
+
+test('chart: y-axis top sticks at the session maximum and only grows', async () => {
+  const { window, Dash, client } = await withBroker();
+  const svg = () => card(window, 'fry').querySelector('svg.chart');
+  const top = () => [...svg().querySelectorAll('g.ylab text')].at(-1).textContent;
+  const st = { syms: new Map() };
+  const tele = (fields, dt) => client.emit('message', 'pv/tele/fry', mqttMsg([{ fields, ts: Date.now() + dt }], st));
+  tele({ P: 380, Ui: 40 }, 1);
+  Dash.flush();
+  assert.equal(top(), '400 W');
+
+  const t = Math.floor(Date.now() / 1000);
+  log(client, 'fry', [`sc: t=${t} n=3 mpp=60.0,36.0 sweeping=0`, 'sc: 44.0 10.0 40.0 50.0 36.0 60.0', 'sc: end']);
+  tele({ P: 55, Ui: 37 }, 2);
+  Dash.flush();
+  assert.equal(top(), '400 W');
+
+  tele({ P: 50, Ui: 37, P_max_today: 520 }, 3);
+  Dash.flush();
+  assert.equal(top(), '600 W');
+  const y520 = [...svg().querySelectorAll('g.ylab text')].map(e => e.textContent);
+  assert.deepEqual(plain(y520), ['0', '100', '200', '300', '400', '500', '600 W']);
 });
