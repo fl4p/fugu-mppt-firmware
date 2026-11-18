@@ -64,6 +64,11 @@ test('chart: empty state, curve path, MPP ring, live dot, caption, refresh', asy
   Dash.flush();
   const live = svg.querySelector('circle.live');
   assert.equal(live.getAttribute('visibility'), 'visible');
+  // live dashes above the sweep curve, MPP star and live dot on top
+  const order = [...svg.children].map(e => e.getAttribute('class'));
+  const at = (c) => order.indexOf(c);
+  assert.ok(at('curve') >= 0 && at('curve') < at('recon') && at('curve') < at('recon stale'), order.join());
+  assert.ok(Math.max(at('recon'), at('recon stale')) < at('mpp-halo') && at('mpp-halo') < at('mpp') && at('mpp') < at('live'), order.join());
   assert.ok(+live.getAttribute('cx') > +mpp.getAttribute('transform').match(/translate\(([\d.]+)/)[1]);
   assert.equal(svg.querySelector('path.curve').getAttribute('d'), d);
 
@@ -243,4 +248,44 @@ test('chart: hostile sc: values and telemetry are ignored; pTop never exceeds th
   Dash.flush();
   assert.equal((svg.querySelector('path.curve').getAttribute('d').match(/[ML]/g) || []).length, 2);
   assert.equal(svg.querySelector('g.ylab text:last-child').textContent, '100 W');
+});
+
+test('vin chart: last 30 s of Vin, <= 301 vertices, hidden without telemetry', async () => {
+  const { window, Dash, client } = await withBroker();
+  let t = 1_763_400_000_000;
+  window.Date.now = () => t;
+  log(client, 'nopts', ['x']);
+  const st = { syms: new Map() };
+  const t0 = t;
+  for (let i = 0; i < 400; i++){
+    const ts = t0 + i * 100;
+    client.emit('message', 'pv/tele/fry', mqttMsg([{ fields: { P: 100, Ui: 30 + i * 0.025 }, ts }], st));
+  }
+  t = t0 + 39_900;
+  Dash.flush();
+  const c = card(window, 'fry');
+  assert.equal(Dash.devices.get('fry').points.length, 400);
+  const path = c.querySelector('svg.vinchart path.vin');
+  assert.ok(path, 'path.vin exists');
+  assert.equal(c.querySelector('.vinwrap').style.display, '');
+  const v = [...path.getAttribute('d').matchAll(/[ML]([\d.]+) ([\d.]+)/g)].map(m => [+m[1], +m[2]]);
+  assert.ok(v.length <= 301 && v.length >= 290, String(v.length));
+  // x: left edge 34 = -30 s, right edge 310 = newest; the first vertex sits at ~-30 s
+  assert.ok(Math.abs(v[0][0] - 34) < 2, String(v[0][0]));
+  assert.ok(Math.abs(v.at(-1)[0] - 310) < 0.1, String(v.at(-1)[0]));
+  // Vin over the window: 30 + 100*0.025 = 32.5 .. 39.975
+  const yl = [...c.querySelectorAll('svg.vinchart g.ylab text')].map(e => parseFloat(e.textContent));
+  assert.ok(yl[0] <= 32.5 && yl.at(-1) >= 39.975, yl.join());
+  assert.match([...c.querySelectorAll('svg.vinchart g.ylab text')].at(-1).textContent, / V$/);
+  assert.deepEqual(plain([...c.querySelectorAll('svg.vinchart g.xlab text')].map(e => e.textContent)), ['-30 s', '-20 s', '-10 s', '0']);
+  assert.equal(c.querySelector('.vinbar .vincap').textContent, 'Vin · last 30 s');
+  assert.equal(c.querySelector('.vinbar .vinv').textContent, '40.0 V');
+  assert.equal(card(window, 'nopts').querySelector('path.vin'), null);
+  assert.equal(card(window, 'nopts').querySelector('.vinwrap').style.display, 'none');
+
+  // a single sample: +-1 V range
+  client.emit('message', 'pv/tele/one', mqttMsg([{ fields: { P: 1, Ui: 20 }, ts: t }], { syms: new Map() }));
+  Dash.flush();
+  const yo = [...card(window, 'one').querySelectorAll('svg.vinchart g.ylab text')].map(e => parseFloat(e.textContent));
+  assert.ok(yo[0] <= 19 && yo.at(-1) >= 21 && yo.at(-1) > yo[0], yo.join());
 });

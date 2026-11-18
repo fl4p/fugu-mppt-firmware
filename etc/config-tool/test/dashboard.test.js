@@ -883,7 +883,11 @@ test('snapshot: restored cards are stale with the age and the saved curve; first
   b.Dash.flush();
   assert.equal(text(b.window, 'fry', '.pv'), '201.0');
   assert.equal(c.classList.contains('stale'), false);
-  assert.equal(text(b.window, 'fry', '.age'), '0 s ago');
+  assert.equal(text(b.window, 'fry', '.age'), 'now');
+  clock(b.window, b.window.Date.now() + 2_400); b.Dash.tick(); b.Dash.flush();
+  assert.equal(text(b.window, 'fry', '.age'), 'now');
+  clock(b.window, b.window.Date.now() + 1_000); b.Dash.tick(); b.Dash.flush();
+  assert.equal(text(b.window, 'fry', '.age'), '3 s ago');
   assert.equal(c.querySelector('svg.chart circle.live').getAttribute('visibility'), 'visible');
 });
 

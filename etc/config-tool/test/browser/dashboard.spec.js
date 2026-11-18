@@ -34,6 +34,8 @@ test('ingestTele renders a card with KPIs, the live dot and a sweep curve', asyn
   await expect(card.locator('.peak')).toHaveText('peak today 240.3 W · 812 Wh');
   await expect(card.locator('.mode')).toHaveText('MPPT');
   await expect(card.locator('circle.live')).toHaveAttribute('visibility', 'visible');
+  await expect(card.locator('svg.vinchart path.vin')).toHaveAttribute('d', /^M[\d. ]+$/);
+  await expect(card.locator('.vinbar .vinv')).toHaveText('37.2 V');
 
   await page.evaluate((t) => {
     const dev = window.Dash.getDevice('demo');
@@ -69,6 +71,20 @@ test('ingestTele renders a card with KPIs, the live dot and a sweep curve', asyn
   expect(rows).toEqual({ bar: true, keys: 1, fits: true });
   await expect(card.locator('form.console')).toBeHidden();
 
+  // 30 s of Vin samples draw one line with many vertices
+  await page.evaluate((t0) => {
+    const dev = window.Dash.getDevice('demo');
+    for (let i = 1; i <= 300; i++)
+      window.Dash.ingest(dev, { ts: t0 + i * 100, fields: { P: 187 + 3 * Math.sin(i / 9), Ui: 37.2 + 0.4 * Math.sin(i / 25) + 0.05 * Math.sin(i * 1.7) } }, 'test');
+    window.Dash.flush();
+  }, ts);
+  await expect(card.locator('svg.vinchart path.vin')).toHaveAttribute('d', /^M[\d. ]+(L[\d. ]+){250,}$/);
+  // peak text shares the line with the big power number on a wide card
+  const same = await card.evaluate((c) => {
+    const p = c.querySelector('.kpis .p').getBoundingClientRect(), k = c.querySelector('.kpis .peak').getBoundingClientRect();
+    return k.top < p.bottom && k.left > p.right;
+  });
+  if ((await card.boundingBox()).width > 400) expect(same).toBe(true);
   if (process.env.DASH_SCREENSHOT) await card.screenshot({ path: process.env.DASH_SCREENSHOT });
   expect(errs).toEqual([]);
 });
