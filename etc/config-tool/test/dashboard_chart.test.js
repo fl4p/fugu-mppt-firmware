@@ -67,7 +67,7 @@ test('chart: empty state, curve path, MPP ring, live dot, caption, refresh', asy
   assert.ok(+live.getAttribute('cx') > +mpp.getAttribute('transform').match(/translate\(([\d.]+)/)[1]);
   assert.equal(svg.querySelector('path.curve').getAttribute('d'), d);
 
-  // sweep in progress (new symbol table per stream); single updates are not drawn as live curve
+  // sweep in progress (new symbol table per stream); every update is a live-curve bin
   const st = { syms: new Map() };
   client.emit('message', 'pv/tele/flat', mqttMsg([
     { fields: { P: 0, Ui: 45, mppt_state: 5 }, ts: Date.now() + 1 },
@@ -75,7 +75,7 @@ test('chart: empty state, curve path, MPP ring, live dot, caption, refresh', asy
   ], st));
   Dash.flush();
   const fsvg = card(window, 'flat').querySelector('svg.chart');
-  assert.equal(fsvg.querySelector('path.recon').getAttribute('d'), '');
+  assert.equal((fsvg.querySelector('path.recon').getAttribute('d').match(/[ML]/g) || []).length, 2);
   assert.equal(fsvg.querySelector('path.curve').getAttribute('d'), '');
   assert.match(card(window, 'flat').querySelector('.chartbar .caption').textContent, /sweep in progress/);
 
@@ -88,7 +88,7 @@ test('chart: empty state, curve path, MPP ring, live dot, caption, refresh', asy
   assert.match(caption(), /loading/);
 });
 
-test('chart: y-axis top sticks at the session maximum and only grows', async () => {
+test('chart: y-axis top sticks at the plotted session maximum, ignores P_max_today', async () => {
   const { window, Dash, client } = await withBroker();
   const svg = () => card(window, 'fry').querySelector('svg.chart');
   const top = () => [...svg().querySelectorAll('g.ylab text')].at(-1).textContent;
@@ -106,12 +106,14 @@ test('chart: y-axis top sticks at the session maximum and only grows', async () 
 
   tele({ P: 50, Ui: 37, P_max_today: 520 }, 3);
   Dash.flush();
+  assert.equal(top(), '400 W');
+
+  tele({ P: 510, Ui: 38 }, 4);
+  Dash.flush();
   assert.equal(top(), '600 W');
-  const y520 = [...svg().querySelectorAll('g.ylab text')].map(e => e.textContent);
-  assert.deepEqual(plain(y520), ['0', '100', '200', '300', '400', '500', '600 W']);
 });
 
-test('chart: live P-V reconstruction bins Vin, decays toward new P, drops stale bins', async () => {
+test('chart: live P-V reconstruction bins Vin, decays toward new P, keeps and fades stale bins', async () => {
   const { window, Dash, client } = await withBroker();
   let t = 1_763_400_000_000;
   window.Date.now = () => t;
@@ -120,8 +122,7 @@ test('chart: live P-V reconstruction bins Vin, decays toward new P, drops stale 
   const svg = () => card(window, 'fry').querySelector('svg.chart');
   const verts = () => [...(svg().querySelector('path.recon').getAttribute('d') || '').matchAll(/[ML]([\d.]+) ([\d.]+)/g)]
     .map(m => [+m[1], +m[2]]);
-  for (let i = 0; i < 3; i++)
-    for (const [v, p] of [[40, 100], [41, 150], [42, 120]]) { t += 100; tele(v, p); }
+  for (const [v, p] of [[40, 100], [41, 150], [42, 120]]) { t += 100; tele(v, p); }
   Dash.flush();
   const d = Dash.devices.get('fry');
   assert.equal(d.recon.size, 3);
@@ -140,8 +141,25 @@ test('chart: live P-V reconstruction bins Vin, decays toward new P, drops stale 
   Dash.flush();
   assert.equal(verts()[1][1], +d.chartScale.Y(b41.P).toFixed(1));
 
-  // 40 and 42 V were last updated 3 min ago, 41 V just now: 8 min more drops the first two
-  t += 480000; Dash.tick(); Dash.flush();
-  assert.deepEqual(plain([...d.recon.keys()]), [Math.round(41 / 0.25)]);
-  assert.equal(verts().length, 1);
+  // 11 min without updates: all bins persist but fade
+  const stale = () => svg().querySelector('path.recon.stale').getAttribute('d') || '';
+  assert.equal(stale(), '');
+  t += 660000; Dash.tick(); Dash.flush();
+  assert.equal(d.recon.size, 3);
+  assert.equal(verts().length, 0);
+  assert.equal((stale().match(/M/g) || []).length, 1);
+  assert.equal((stale().match(/[ML]/g) || []).length, 3);
+
+  // a segment is fresh only when both ends are: 42-43 V after updating 42 and adding 43
+  t += 100; tele(42, 125); t += 100; tele(43, 90);
+  Dash.flush();
+  assert.equal(verts().length, 2);
+  assert.equal(d.recon.size, 4);
+
+  // cap: oldest-updated bin goes first, after hours nothing else expires
+  t += 3_600_000; Dash.tick(); Dash.flush();
+  assert.equal(d.recon.size, 4);
+  for (let i = 0; i < 400; i++) { t += 10; tele(50 + i * 0.25, 10); }
+  assert.equal(d.recon.size, 400);
+  assert.ok(!d.recon.has(Math.round(40 / 0.25)) && d.recon.has(Math.round(50 / 0.25)));
 });

@@ -100,6 +100,7 @@
   svg.chart text.empty { font-size:11px; }
   svg.chart path.curve { fill:none; stroke:var(--series-1); stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
   svg.chart path.recon { fill:none; stroke:var(--series-2); stroke-opacity:.7; stroke-width:1.5; stroke-dasharray:4 3; stroke-linejoin:round; }
+  svg.chart path.recon.stale { stroke-opacity:.3; }
   svg.chart path.mpp { fill:var(--series-1); }
   svg.chart path.mpp-halo { fill:none; stroke:var(--surface); stroke-width:3; stroke-linejoin:round; }
   svg.chart circle.live { fill:var(--series-2); stroke:var(--surface); stroke-width:2; }
@@ -179,8 +180,8 @@ const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
 const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, PROBE_MS = 60000, CURVE_RETRIES = 2;
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000] };
 const LOG_KEEP = 200, LOG_SHOW = 100;
-// live P-V reconstruction: bin width V, decay s, drop after ms, bin cap, updates before drawn
-const RECON = { bin:0.25, tau:60, maxAge:600000, max:400, minN:3 };
+// live P-V reconstruction: bin width V, decay s, faded after ms, bin cap
+const RECON = { bin:0.25, tau:60, staleMs:600000, max:400 };
 
 // Device reply patterns (contract with src/cli.cpp)
 const REPLY = {
@@ -314,30 +315,32 @@ function reconAdd(dev, v, p, ts, at){
   const k = Math.round(v / RECON.bin);
   let b = dev.recon.get(k);
   if (!b){
-    if (dev.recon.size >= RECON.max) reconPrune(dev, at, true);
-    dev.recon.set(k, b = { V:k * RECON.bin, P:p, n:0, ts, at });
+    if (dev.recon.size >= RECON.max){
+      let old = null;
+      for (const [k, o] of dev.recon) if (!old || o.at < old[1].at) old = [k, o];
+      dev.recon.delete(old[0]);
+    }
+    dev.recon.set(k, b = { V:k * RECON.bin, P:p, ts, at });
   } else {
     b.P = p + (b.P - p) * Math.exp(-Math.max(0, ts - b.ts) / 1000 / RECON.tau);
     if (ts > b.ts) b.ts = ts;
   }
-  b.n++; b.at = at; dev.reconVer++;
+  b.at = at; dev.reconVer++;
 }
 
-function reconPrune(dev, at, full){
-  let old = null, n = dev.recon.size;
-  for (const [k, b] of dev.recon){
-    if (at - b.at > RECON.maxAge) dev.recon.delete(k);
-    else if (!old || b.at < old[1].at) old = [k, b];
-  }
-  if (full && old && dev.recon.size >= RECON.max) dev.recon.delete(old[0]);
-  if (dev.recon.size !== n){ dev.reconVer++; return true; }
-  return false;
+// Re-render when a bin crosses the stale age.
+function reconAge(dev, at){
+  let n = 0;
+  for (const b of dev.recon.values()) if (at - b.at > RECON.staleMs) n++;
+  if (n === (dev.reconStaleN || 0)) return false;
+  dev.reconStaleN = n; dev.reconVer++;
+  return true;
 }
 
 function reconPoints(dev){
   if (dev.reconPtsVer !== dev.reconVer){
     dev.reconPtsVer = dev.reconVer;
-    dev.reconPts = [...dev.recon.values()].filter(b => b.n >= RECON.minN).sort((a, b) => a.V - b.V);
+    dev.reconPts = [...dev.recon.values()].sort((a, b) => a.V - b.V);
   }
   return dev.reconPts;
 }
@@ -1016,7 +1019,7 @@ function createChart(dev){
   const kb = el("div", "chartkeys"); kb.append(...keys);
   const svg = svgEl("svg", { viewBox:`0 0 ${CH.w} ${CH.h}`, role:"img", "aria-label":"power over input voltage" }, "chart");
   svg.append(svgEl("g", {}, "grid"), svgEl("line", {}, "base"), svgEl("g", {}, "ylab"), svgEl("g", {}, "xlab"),
-             svgEl("path", { d:"" }, "recon"), svgEl("path", { d:"" }, "curve"),
+             svgEl("path", { d:"" }, "recon"), svgEl("path", { d:"" }, "recon stale"), svgEl("path", { d:"" }, "curve"),
              svgEl("path", { d:STAR }, "mpp-halo"), svgEl("path", { d:STAR }, "mpp"), svgEl("circle", { r:4 }, "live"));
   const empty = svgEl("text", { x:CH.w / 2, y:CH.h / 2, "text-anchor":"middle" }, "empty");
   const hov = svgEl("g", { visibility:"hidden" }, "hover");
@@ -1041,11 +1044,10 @@ function renderChart(dev){
   const empty = svg.querySelector("text.empty");
   const all = curve.concat(recon, live ? [live] : [], mpp ? [mpp] : []);
   for (const p of all) if (p.P > dev.pTop) dev.pTop = p.P;
-  if (t.Pmax > dev.pTop) dev.pTop = t.Pmax;
   if (!all.length){
     empty.textContent = dev.curveNone ? "no sweep recorded since boot" : "no sweep curve yet";
     show(empty, true);
-    for (const s of ["path.curve", "path.recon"]) svg.querySelector(s).setAttribute("d", "");
+    for (const p of svg.querySelectorAll("path.curve, path.recon")) p.setAttribute("d", "");
     for (const s of ["path.mpp", "path.mpp-halo", "circle.live"]) show(svg.querySelector(s), false);
     for (const s of ["g.grid", "g.ylab", "g.xlab"]) svg.querySelector(s).replaceChildren();
     show(svg.querySelector("line.base"), false);
@@ -1064,7 +1066,17 @@ function renderChart(dev){
   const d = (pts) => pts.map((p, i) => (i ? "L" : "M") + X(p.V).toFixed(1) + " " + Y(p.P).toFixed(1)).join("");
   if (key !== dev.chartKey || dev.reconDrawn !== dev.reconVer){
     dev.reconDrawn = dev.reconVer;
-    svg.querySelector("path.recon").setAttribute("d", d(recon));
+    const at = now(), ds = ["", ""], seg = (p) => X(p.V).toFixed(1) + " " + Y(p.P).toFixed(1);
+    let prev = -1;
+    recon.forEach((p, i) => {
+      const old = at - p.at > RECON.staleMs;
+      const c = i ? +(old || at - recon[i - 1].at > RECON.staleMs) : +old;
+      if (i && c === prev) ds[c] += "L" + seg(p);
+      else ds[c] += "M" + (i ? seg(recon[i - 1]) + "L" : "") + seg(p);
+      prev = c;
+    });
+    svg.querySelector("path.recon:not(.stale)").setAttribute("d", ds[0]);
+    svg.querySelector("path.recon.stale").setAttribute("d", ds[1]);
   }
   if (key !== dev.chartKey){
     dev.chartKey = key;
@@ -1170,7 +1182,7 @@ function tick(){
   const t = now();
   for (const dev of devices.values()){
     renderAge(dev);
-    if (dev.recon.size && reconPrune(dev, t)) scheduleRender(dev);
+    if (dev.recon.size && reconAge(dev, t)) scheduleRender(dev);
     const L = dev.mqtt.lease;
     if (leaseWanted(dev) && !L.busy){
       if (L.state === "idle" && dev.mqtt.firstAt && t - dev.mqtt.firstAt >= LEASE_WAIT_MS){

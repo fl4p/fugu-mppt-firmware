@@ -23,8 +23,9 @@ Each converter gets a card, keyed by its hostname:
 - **Sweep curve**: the power-versus-input-voltage curve of the last MPPT sweep, read with `sweep-curve`, with the
   maximum power point and the live operating point marked. The page fetches the curve on connect and again after
   each sweep ends. A refresh button fetches it on demand. A dashed **live** curve is built from the telemetry
-  stream: power is averaged per 0.25 V of input voltage with a one-minute time constant, a bin is drawn after three
-  points and dropped after ten minutes without one.
+  stream: power is averaged per 0.25 V of input voltage with a one-minute time constant. Bins stay for the
+  session (at most 400; the least recently updated goes first), and parts not updated for ten minutes are drawn
+  faded. The power axis grows to the highest plotted value and does not shrink.
 - **Log tail**: the device console log, including the replies to commands sent from the page.
 - **Console**: an input line that sends a command to the device over the active link. It is hidden until
   the **console** checkbox in the header is ticked; the page remembers the setting in this browser.
