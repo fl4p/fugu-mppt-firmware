@@ -8,6 +8,26 @@ the tables below from `data/results.txt`; `data/dstep-*.txt` static P(D) curves;
 All numbers in the tables are pgx93 runs (tag `dusk-trap`); the static curves and the wobble trace are Mac runs and
 are not compared with them.
 
+Follow-up after review (same day, rebased onto main 0c7ac4aa, pgx93 tag `dusk-trap2`): hand-back skip (below,
+"Hand-back"), the 5 % rule named as the mechanism and the band as a guard, the field scope, the stale sim board
+config. See "Follow-up validation".
+
+## Scope: this does not fix the field dusk loss
+
+The field shows a dusk loss that looks similar but is a different mechanism, and this change does not address it.
+Reviewer's analysis of the 1 s field data (2026-10-29 to 11-18, InfluxDB): on fry at dusk the tracker sits at
+about 2 W near 29-33 V while the sweeps find 4-10 W at 45-60 V. There D/M is about 0.5 (deep DCM, far from
+D = M), there are no Vin steps at an unchanged duty, and the P-V curve is flat with bypass-diode humps: the tracker
+steers there itself, with power changes below its thresholds. The trap studied here needs D close to M and a
+plant-driven Vin step; it is only reproduced in the simulator. Nothing below should be read as a fix for the field
+behaviour.
+
+## Sim board config is stale
+
+The `wx-*` fry/flat plants run the converter at pwmMax 2047 (`drv=vconv f=39000 pwmMax=2047`, the LEDC period).
+The real boards run MCPWM at pwmMax 4103 since 11-09. All HS counts below are on the 2047-count period; the
+fractions of the period carry over, the counts do not. The sim config is not changed in this branch.
+
 ## Problem
 
 The de-margin study (`2026-11-17-de-margin-near-unity.md`) found runs in `wx-dusk` on the stiff board models where
@@ -57,8 +77,9 @@ In the closed loop the plant has a second effect: **Vin steps down by 3 to 5 V w
 t = 87.1 s, and 45.1 -> 41.5 V at HS 1152, t = 143 s, slow mode). The LS window is at its cap (HS + LS ~ the
 period) in all of them.
 
-Each step happened while the tracker steered Vin **up** (direction "-", lower duty). Two rules then reversed it
-toward lower Vin:
+Each step happened while the tracker steered Vin **up** (direction "-", lower duty). Two rules can then reverse it
+toward lower Vin; the 5 % rule does almost all of it. An instrumented build (reviewer's, logging every held
+reversal) held 36-47 reversals by the 5 % rule per trapped run and one by the power rule:
 
 1. **The 5 % Vin rule** ("cloud recovery", reverse when Vin moved 5 % since the last reversal): at t = 91.1 s the
    power drop was 0.50 W, below both thresholds; the 9 % Vin drop reversed the tracker. The rule assumes Vin moved
@@ -78,18 +99,35 @@ DCM/CCM switching in the firmware (`dcm=1` throughout), quantization (the steps 
 `Tracker::update()` (`src/tracker.h`): a reversal needs Vin to have moved the way the tracker steers.
 
 - `against` = how far Vin moved against the steering since the last reversal (0 when the reference is unknown).
-- Power rule: a drop over the threshold reverses only if `against <= 0.01 * Vin_ref` (`VinAgainstBand`). The
-  reference power still follows the drop.
-- 5 % rule: counts only a move in the steered direction.
-- The settle window keeps its "not back yet" test (`against > 0`), unchanged.
+- 5 % rule: counts only a move in the steered direction. This is the change that removes the trap.
+- Power rule, as a guard: a drop over the threshold reverses only if `against <= 0.01 * Vin_ref`
+  (`VinAgainstBand`). The reference power still follows the drop. It mattered once per trapped run; it is kept so
+  a power drop that comes with a plant step cannot do what the 5 % rule no longer does.
+- Hand-back: both exceptions apply only from 3 s (`HandBackMs`) after a limiter hand-back (`resetDirection`,
+  which also ends the fade after a sweep and the peak scan). Before that, both rules act as on main.
+- The settle window keeps its "not back yet" test (`against > 0`), unchanged. It still ends after 1 s at the
+  latest, but past that a power drop with Vin more than 1 % against does not reverse.
 
 One float compare more per decision, no new state, inlined into the RT path (`rtprof_map.py --check`: 0 not in
 IRAM). A NaN Vin or an unknown reference falls back to the old behaviour.
 
+### Hand-back
+
+The reviewer's -0.6 pp wx-low run (flat, exact readings, noise-free, 98.1 -> 97.5 %) came from the hand-back.
+`resetDirection()` runs every tick while sweeping, fading or limiting, so the reference is the Vin EWM at the last
+fade tick, while Vin is still moving toward the MPP. Vin then overshot it by 1.6 % in the steered-against
+direction, the hand-back direction is that of the last fade step, and the first real reversals were held
+(`BLOCKP vin=45.14 ref=44.43`). Skipping both exceptions for 3 s after a hand-back restores main's behaviour
+there: the same run gives 98.1 % on the reviewer's base and on the rebased branch.
+
+Test: `test_tracker_handback_overshoot_not_held` (Vin overshoots the hand-back reference by 1.6 % and power
+drops: reverses; the same after the 3 s skip: held). Known-bad: fails on the branch's previous tracker.
+
 ### Why a 1 % band
 
 Without a band (variant `v2a`) all 10 traps cleared, but **wx-wob-fry lost 1.95 pp on average, 5 of 20 runs below
-96 %**: a light dip lowers Vin and power together, so every reversal of a leg toward higher Vin was blocked and
+96 %**: in DCM a light dip lowers Vin and power together (in CCM against the battery Vin = Vout/D does not move
+with the light), so every reversal of a leg toward higher Vin was blocked and
 none toward lower Vin; the tracker ratcheted up the steep side (flat model, noise-free: Vin 68 V vs MPP 64 V,
 tracking loss 0.16 -> 4.6 %). The 0.5 % / 0.2 Hz wobble moves Vin by about 0.4 %; the plant steps are 5-10 %.
 
@@ -140,8 +178,33 @@ fry and flat x (exact, Vout 0.975) x (noise-free, Gaussian seeds 1-2, replay off
 | wx-sweep-rise | | 0.00 | 0 / 0 | 0 |
 | wx-mp-manual, wx-mp-ccm, wx-mp-ramp, wx-mp-psu | | 0.00 | 0 / 0 | 0 |
 
-Trips identical in all 380. Nothing is worse beyond the spread; the -0.6 pp single wx-low run (flat, exact readings,
-noise-free: 98.1 -> 97.5 %) is within main's spread across noise realisations on that board (96.2-98.7 %).
+Trips identical in all 380. The -0.6 pp single wx-low run (flat, exact readings, noise-free: 98.1 -> 97.5 %) was
+the hand-back problem (see "Hand-back"), fixed in the follow-up.
+
+### Follow-up validation (hand-back skip, rebased onto main 0c7ac4aa)
+
+pgx93, tag `dusk-trap2`, paired against the rebased main (`base`), 140 pairs. Job list `data/jobs-followup.txt`, runner
+`tools/run1.sh` with the tag and paths changed; results in `data/results-followup.txt`.
+
+| set | n | base mean | diff mean | worst / best | changed | < 96 % |
+|---|---|---|---|---|---|---|
+| wx-dusk fry, misread (Vout 0.983, 0.975; Vin 1.02) | 24 | 97.25 | +0.91 | -0.5 / +14.0 | 18 | 1 -> 0 |
+| wx-dusk fry-hq, misread | 24 | 97.72 | +0.36 | -0.9 / +2.4 | 19 | 1 -> 0 |
+| wx-low (fry, flat; exact, Vout 0.975; 5 noise cases) | 20 | 97.79 | 0.00 | 0 / 0 | 0 | 0 -> 0 |
+| wx-low-slow (same) | 20 | 97.45 | 0.00 | 0 / 0 | 0 | 4 -> 4 |
+| wx-wob-fry (fry, flat; 2 readings; noise-free, seeds 1-2) | 12 | 99.67 | 0.00 | 0 / 0 | 0 | 0 -> 0 |
+| wx-cloud (same) | 12 | 96.54 | 0.00 | 0 / 0 | 0 | 0 -> 0 |
+| 7 shade scenarios (fry, flat; seeds 1-2) | 28 | 92.93 | 0.00 | 0 / 0 | 0 | 12 -> 12 |
+
+dusk cells are noise-free, Gaussian seeds 1-4 and replay offsets 0/4/8.
+
+- Trips identical in every pair.
+- The worse dusk runs (down to 97.3 %) are within base's spread across Gaussian seeds on the same cells
+  (96.5-98.5 %).
+- Against the previous fix on the same 48 dusk cells: -0.05 pp mean. The hand-back skip costs no measurable part of
+  the dusk gain (the d1 runs are paired with the old main, so this comparison also carries the rebase).
+- The reviewer's -0.6 run: wx-low flat, exact, noise-free gives 97.4 % on base and on the branch. On the reviewer's
+  own base tree, with only `tracker.h` replaced, it gives 98.1 % (base 98.1, previous fix 97.5).
 
 ## Tests
 
@@ -151,8 +214,11 @@ noise-free: 98.1 -> 97.5 %) is within main's spread across noise realisations on
   `test_tracker_vin_against_band` (0.6 % against still reverses, 2 % does not). Known-bad: on main's tracker the
   first three fail (host harness); with the band at 0 the band test and the restored settle tests fail (the
   wobble regression). Two existing tests now prime `_lastVin` with `resetDirection` instead of a reversal from 0.
-- Unity QEMU (`test/unity_qemu.py -B build-qemu`): 305 tests, 0 failures, 25 ignored.
-- esp32s3 build (IDF 6.0.3): pass, 10 % free; `rtprof_map.py --check main/rt_iram.lf /dev/null <elf>`: 79 symbol
+- `test_tracker_handback_overshoot_not_held`, see "Hand-back". The `steered()` helper now steps past the 3 s skip
+  before the plant-exception tests.
+- Unity QEMU (`test/unity_qemu.py -B build-qemu`): 305 tests, 0 failures, 25 ignored; after the follow-up
+  (rebased): 308 tests, 0 failures, 25 ignored.
+- esp32s3 build (IDF 6.0.3): pass, 10 % free (also after the follow-up); `rtprof_map.py --check main/rt_iram.lf /dev/null <elf>`: 79 symbol
   entries, 0 not in IRAM.
 - Docs build (`website/`, private webpack cache): pass.
 
@@ -160,6 +226,7 @@ noise-free: 98.1 -> 97.5 %) is within main's spread across noise realisations on
 
 - **No hardware data.** The step and the flat P(D) come from the SPICE-fitted ring models (233 kHz). Whether a real
   board shows Vin steps at an unchanged duty near D = M is untested; the field shows dusk operation at M > 0.8 daily.
+- **The field dusk loss is not this.** See "Scope" at the top.
 - **The flat local maximum itself remains.** The fix keeps the tracker from being pushed onto it; a tracker that
   arrives there another way (e.g. after a limiter hand-back at high duty) is not pulled off. No such run in 684.
 - **Light changes larger than 1 % of Vin** during a leg toward higher Vin still hold the reversal (clouds); in the

@@ -109,7 +109,8 @@ mean with the last reference power. These rules set the direction:
 
 - If the power change exceeds the absolute or relative threshold and is negative, the direction reverses, unless
   Vin moved more than 1 % against the steering since the last reversal (up while the duty rises, down while it
-  falls). Then the drop did not come from the step, and only the reference power follows it (see
+  falls). Then the drop did not come from the step, and only the reference power follows it. The exception does
+  not apply for 3 s after a limiter hand-back (see
   [Plant moving against the step](#plant-moving-against-the-step)).
 - After a reversal, the tracker does not judge the power change during a settle window. The reference power
   follows the measurement instead. The filtered power still lags behind the old direction, and the input
@@ -117,6 +118,7 @@ mean with the last reference power. These rules set the direction:
   toward higher Vin. A decision in that window would reverse again, mostly toward lower Vin. A hand-back from a
   limiter to P&O starts the same window.
 - If Vin moved by more than 5 % since the last reversal in the steered direction, the direction reverses as well.
+  Within 3 s of a limiter hand-back, a 5 % move in either direction counts.
   This handles cloud recovery, because tracking a light transient can drift far from the MPP. The 5 % refers to
   the higher of the two voltages, so a leg down and the following leg up have the same length.
 - Below 1 W, the tracker always increases duty.
@@ -129,7 +131,9 @@ and the re-reversals after a turn walked Vin down in the same way.
 
 ### Settle window
 
-The window applies in fast mode and lasts until both of these hold, but never longer than 1 s:
+The window applies in fast mode and lasts until both of these hold, but never longer than 1 s (past that, a
+reversal still waits while Vin is more than 1 % against the steering, see
+[Plant moving against the step](#plant-moving-against-the-step)):
 
 - The power filter has settled. Each power sensor (current and voltage) has a median of 5, which delays a
   step by 2 samples, and a 2-pass EWMA with span $N$, so each pass has a time constant of $\tau \approx N/2$
@@ -152,7 +156,8 @@ A limiter hand-back starts the window but does not count as a reversal. It is a 
 condition below: it ends slow mode, and the tracker continues in fast mode for at least 30 s after a derate,
 a CV hold, or a sweep.
 
-The 1 s cap bounds a leg that the tracker walks without judging power. In simulation, a 1.5 s window
+The 1 s cap bounds a leg that the tracker walks without judging power, as long as Vin stays within 1 % of the
+reversal voltage. In simulation, a 1.5 s window
 harvested less than a fixed 150 ms window, because the excursion it allows costs more than the filter lag
 does.
 
@@ -217,27 +222,34 @@ current in the coil at the next high-side turn-on, and its value depends on the 
 duty rises. In a simulated board model with a 233 kHz ring and a battery output, at dusk light (about 23 W, MPP at
 48 V):
 
-- Over about 250 counts (12 % of the period) below $D = M$, Vin stays within 0.3 V. The coil current at turn-on
-  goes from +0.1 A to -0.3 A, which cancels the extra on-time.
+- Over about 12 % of the PWM period below $D = M$, Vin stays within 0.3 V. The coil current at turn-on goes from
+  +0.1 A to -0.3 A, which cancels the extra on-time.
 - Across that span $P(D)$ is flat with a slight rise toward higher duty, a local maximum at 37 V. The dip on the way
   back to the MPP is 0.5 % of the power, below both thresholds.
 - At an unchanged duty, Vin can step down by 3 to 5 V within 0.3 s.
 
-When such a step came while the tracker steered Vin up, the power drop or the 5 % Vin move reversed it toward
-lower Vin. The next step repeated that, and the tracker ended on the local maximum, up to 18 V below the MPP, until
-the next sweep. A reversal therefore needs Vin not to have moved more than 1 % against the steering since the last
-reversal, and the 5 % rule counts only a move in the steered direction.
+When such a step came while the tracker steered Vin up, the 5 % Vin rule reversed it toward lower Vin. The next
+step repeated that, and the tracker ended on the local maximum, up to 18 V below the MPP, until the next sweep. The
+5 % rule therefore counts only a move in the steered direction. This removes the trap: in simulated trapped runs
+it held 36 to 47 reversals per run.
 
-The 1 % band keeps reversals on light changes. Light that dims lowers Vin and power together. Without a band, that
-blocked every reversal of a leg toward higher Vin and none toward lower Vin, so the tracker ratcheted up the
-steep side of the P-V curve. Under an irradiance wobble of 0.5 % at 0.2 Hz, which moves Vin by about 0.4 %, it
-settled 4 V above the MPP and lost 4 % of harvest on one board model. Bands of 2 and 3 % let 1 and 3 of 10 trapped
-dusk runs through.
+A power drop that coincides with such a step could reverse the tracker the same way, but that happened about once
+per trapped run. As a guard, a power drop does not reverse while Vin is more than 1 % against the steering. The
+1 % margin keeps reversals on light changes that move Vin. In DCM the converter input acts like a resistance, so
+dimming light lowers Vin and power together. Without a margin, that blocked every reversal of a leg toward higher
+Vin and none toward lower Vin, so the tracker ratcheted up the steep side of the P-V curve. Under an irradiance
+wobble of 0.5 % at 0.2 Hz, which moves Vin by about 0.4 %, it settled 4 V above the MPP and lost 4 % of harvest on
+one board model. In CCM against a stiff battery, $V_{in} = V_{out}/D$ does not move with the light, and only the
+power drops.
 
-In normal tracking a leg crosses the MPP, so Vin is past the last reversal point when the power drops and the rule
-does not change anything. In paired simulation runs at dusk (four board models, exact and misread voltages,
-Gaussian and measured sensor noise), the runs below 96 % of the reachable power dropped from 10 of 304 to 0, and the
-mean harvest rose by 0.3 percentage points. Steady sun, wobble, clouds, partial shade and dawn were unchanged.
+Both exceptions start 3 s after a limiter hand-back. The fade back to the sweep's MPP, or the limiter step before
+the hand-back, still moves Vin when P&O takes over, so the Vin at the hand-back is no reference. Vin can overshoot
+it by more than 1 %, and the direction at the hand-back is that of the last fade step. Blocking reversals there
+held the tracker off the MPP.
+
+In normal tracking a leg crosses the MPP, so Vin is past the last reversal point when the power drops, and neither
+exception changes anything. They do not help a tracker that sits on a flat P-V curve far below the MPP while Vin
+follows the duty, for example with bypass-diode humps.
 
 ### Steady-state efficiency and noise
 
