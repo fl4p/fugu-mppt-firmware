@@ -87,7 +87,8 @@
   .chartkeys .key { display:inline-flex; align-items:center; gap:4px; }
   .chartkeys .key i { display:inline-block; }
   .chartkeys .k-line i { width:14px; height:2px; background:var(--series-1); border-radius:1px; }
-  .chartkeys .k-trace i { width:14px; height:2px; background:var(--series-1); opacity:.35; }
+  .chartkeys .k-recon i { width:14px; height:2px;
+    background:repeating-linear-gradient(90deg, var(--series-2) 0 4px, transparent 4px 7px); opacity:.7; }
   .chartkeys .k-star i { width:12px; height:12px; background:var(--series-1);
     clip-path:polygon(50% 0,62.6% 32.7%,97.6% 34.5%,70.4% 56.6%,79.4% 90.5%,50% 71.4%,20.6% 90.5%,29.6% 56.6%,2.4% 34.5%,37.4% 32.7%); }
   .chartkeys .k-dot i { width:8px; height:8px; background:var(--series-2); border-radius:50%; }
@@ -98,7 +99,7 @@
   svg.chart text { fill:var(--muted); font-size:9px; font-variant-numeric:tabular-nums; }
   svg.chart text.empty { font-size:11px; }
   svg.chart path.curve { fill:none; stroke:var(--series-1); stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
-  svg.chart path.trace { fill:none; stroke:var(--series-1); stroke-opacity:.35; stroke-width:1.5; stroke-linejoin:round; }
+  svg.chart path.recon { fill:none; stroke:var(--series-2); stroke-opacity:.7; stroke-width:1.5; stroke-dasharray:4 3; stroke-linejoin:round; }
   svg.chart path.mpp { fill:var(--series-1); }
   svg.chart path.mpp-halo { fill:none; stroke:var(--surface); stroke-width:3; stroke-linejoin:round; }
   svg.chart circle.live { fill:var(--series-2); stroke:var(--surface); stroke-width:2; }
@@ -178,6 +179,8 @@ const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
 const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, PROBE_MS = 60000, CURVE_RETRIES = 2;
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000] };
 const LOG_KEEP = 200, LOG_SHOW = 100;
+// live P-V reconstruction: bin width V, decay s, drop after ms, bin cap, updates before drawn
+const RECON = { bin:0.25, tau:60, maxAge:600000, max:400, minN:3 };
 
 // Device reply patterns (contract with src/cli.cpp)
 const REPLY = {
@@ -250,13 +253,14 @@ class Device {
     this.arrivals = { ble:[], mqtt:[], test:[] };
     this.seenTs = new Set(); this.seenQ = [];
     this.points = new Ring(600);
-    this.sweepTrace = []; this.curve = null; this.curveNone = false;
+    this.curve = null; this.curveNone = false;
     this.sc = new TD.SweepCurveParser();
     this.curveReq = null; this.curveTimer = null; this.curveErr = "";
     this.log = new Ring(LOG_KEEP); this.logNew = [];
     this.history = []; this.histIdx = 0;
     this.lineListeners = new Set();
     this.el = null; this.ver = 0; this.pTop = 1;
+    this.recon = new Map(); this.reconVer = 0;
   }
 }
 
@@ -299,20 +303,48 @@ function ingest(dev, p, src){
   arr.push(at);
   while (arr.length && arr[0] < at - 10000) arr.shift();
   dev.points.push({ ts:p.ts, P:t.P, Ui:t.Ui, src });
-  onPointState(dev, prevState, t.state, t);
+  if (Number.isFinite(f.Ui) && Number.isFinite(f.P)) reconAdd(dev, f.Ui, f.P, p.ts || at, at);
+  onPointState(dev, prevState, t.state);
   scheduleRender(dev);
   return true;
 }
 
-// Sweep tracking: collect (Ui, P) while the tracker sweeps; fetch the curve once it stops.
-function onPointState(dev, prev, cur, t){
-  if (cur === 5){
-    if (prev !== 5) dev.sweepTrace = [];
-    if (Number.isFinite(t.Ui) && Number.isFinite(t.P)) dev.sweepTrace.push({ V:t.Ui, P:t.P });
-    dev.ver++;
-  } else if (prev === 5 && cur !== undefined){
-    scheduleCurve(dev, CFG.curveDebounceMs);
+// Binned P-V curve from the live stream: per-bin time-decayed P (tau RECON.tau).
+function reconAdd(dev, v, p, ts, at){
+  const k = Math.round(v / RECON.bin);
+  let b = dev.recon.get(k);
+  if (!b){
+    if (dev.recon.size >= RECON.max) reconPrune(dev, at, true);
+    dev.recon.set(k, b = { V:k * RECON.bin, P:p, n:0, ts, at });
+  } else {
+    b.P = p + (b.P - p) * Math.exp(-Math.max(0, ts - b.ts) / 1000 / RECON.tau);
+    if (ts > b.ts) b.ts = ts;
   }
+  b.n++; b.at = at; dev.reconVer++;
+}
+
+function reconPrune(dev, at, full){
+  let old = null, n = dev.recon.size;
+  for (const [k, b] of dev.recon){
+    if (at - b.at > RECON.maxAge) dev.recon.delete(k);
+    else if (!old || b.at < old[1].at) old = [k, b];
+  }
+  if (full && old && dev.recon.size >= RECON.max) dev.recon.delete(old[0]);
+  if (dev.recon.size !== n){ dev.reconVer++; return true; }
+  return false;
+}
+
+function reconPoints(dev){
+  if (dev.reconPtsVer !== dev.reconVer){
+    dev.reconPtsVer = dev.reconVer;
+    dev.reconPts = [...dev.recon.values()].filter(b => b.n >= RECON.minN).sort((a, b) => a.V - b.V);
+  }
+  return dev.reconPts;
+}
+
+// Fetch the sweep curve once a sweep (mppt_state 5) ends.
+function onPointState(dev, prev, cur){
+  if (prev === 5 && cur !== 5 && cur !== undefined) scheduleCurve(dev, CFG.curveDebounceMs);
 }
 
 function pushLog(dev, cls, text){
@@ -947,7 +979,7 @@ function renderCard(dev){
 }
 
 /* ---------------------------------------------------------------------------------------------
-   P-vs-Vin chart: last sweep curve, MPP ring, live operating point, faint witnessed-sweep trace
+   P-vs-Vin chart: last sweep curve, MPP ring, live operating point, binned live curve
 --------------------------------------------------------------------------------------------- */
 const SVGNS = "http://www.w3.org/2000/svg";
 const CH = { w:320, h:170, l:34, r:10, t:12, b:22 };
@@ -974,7 +1006,7 @@ const STAR = "M0 -7L1.76 -2.43L6.66 -2.16L2.85 0.93L4.11 5.66L0 3L-4.11 5.66L-2.
 function createChart(dev){
   const w = el("div", "chartwrap");
   const bar = el("div", "chartbar");
-  const keys = [["k-line", "last sweep"], ["k-trace", "witnessed"], ["k-star", "MPP"], ["k-dot", "now"]].map(([c, t]) => {
+  const keys = [["k-line", "last sweep"], ["k-recon", "live"], ["k-star", "MPP"], ["k-dot", "now"]].map(([c, t]) => {
     const s = el("span", "key " + c); s.append(el("i"), document.createTextNode(t)); return s;
   });
   const rb = el("button", "refresh", "↻");
@@ -984,7 +1016,7 @@ function createChart(dev){
   const kb = el("div", "chartkeys"); kb.append(...keys);
   const svg = svgEl("svg", { viewBox:`0 0 ${CH.w} ${CH.h}`, role:"img", "aria-label":"power over input voltage" }, "chart");
   svg.append(svgEl("g", {}, "grid"), svgEl("line", {}, "base"), svgEl("g", {}, "ylab"), svgEl("g", {}, "xlab"),
-             svgEl("path", { d:"" }, "trace"), svgEl("path", { d:"" }, "curve"),
+             svgEl("path", { d:"" }, "recon"), svgEl("path", { d:"" }, "curve"),
              svgEl("path", { d:STAR }, "mpp-halo"), svgEl("path", { d:STAR }, "mpp"), svgEl("circle", { r:4 }, "live"));
   const empty = svgEl("text", { x:CH.w / 2, y:CH.h / 2, "text-anchor":"middle" }, "empty");
   const hov = svgEl("g", { visibility:"hidden" }, "hover");
@@ -1002,22 +1034,22 @@ const show = (e, on) => e.setAttribute("visibility", on ? "visible" : "hidden");
 function renderChart(dev){
   const svg = q(dev, "svg.chart"), t = dev.tele;
   const curve = dev.curve ? dev.curve.points.filter(p => Number.isFinite(p.V) && Number.isFinite(p.P)) : [];
-  const trace = dev.sweepTrace;
+  const recon = reconPoints(dev);
   const live = Number.isFinite(t.Ui) && Number.isFinite(t.P) ? { V:t.Ui, P:t.P } : null;
   const mpp = dev.curve && Number.isFinite(dev.curve.mpp.V) && dev.curve.mpp.P > 0 ? dev.curve.mpp : null;
   renderCaption(dev);
   const empty = svg.querySelector("text.empty");
-  const all = curve.concat(trace, live ? [live] : [], mpp ? [mpp] : []);
+  const all = curve.concat(recon, live ? [live] : [], mpp ? [mpp] : []);
   for (const p of all) if (p.P > dev.pTop) dev.pTop = p.P;
   if (t.Pmax > dev.pTop) dev.pTop = t.Pmax;
   if (!all.length){
     empty.textContent = dev.curveNone ? "no sweep recorded since boot" : "no sweep curve yet";
     show(empty, true);
-    for (const s of ["path.curve", "path.trace"]) svg.querySelector(s).setAttribute("d", "");
+    for (const s of ["path.curve", "path.recon"]) svg.querySelector(s).setAttribute("d", "");
     for (const s of ["path.mpp", "path.mpp-halo", "circle.live"]) show(svg.querySelector(s), false);
     for (const s of ["g.grid", "g.ylab", "g.xlab"]) svg.querySelector(s).replaceChildren();
     show(svg.querySelector("line.base"), false);
-    dev.chartKey = null; dev.chartScale = null;
+    dev.chartKey = null; dev.chartScale = null; dev.reconDrawn = -1;
     return;
   }
   show(empty, false);
@@ -1027,8 +1059,13 @@ function renderChart(dev){
   const xd = niceTicks(vlo, vhi, 5), yd = niceTicks(0, dev.pTop, 4);
   const X = (v) => CH.l + (v - xd.lo) / (xd.hi - xd.lo) * (CH.w - CH.l - CH.r);
   const Y = (p) => CH.h - CH.b - Math.max(0, p) / yd.hi * (CH.h - CH.t - CH.b);
-  dev.chartScale = { X, Y, pts: curve.length ? curve : trace };
+  dev.chartScale = { X, Y, pts: curve.length ? curve : recon };
   const key = xd.lo + "," + xd.hi + "," + yd.hi + "," + dev.ver;
+  const d = (pts) => pts.map((p, i) => (i ? "L" : "M") + X(p.V).toFixed(1) + " " + Y(p.P).toFixed(1)).join("");
+  if (key !== dev.chartKey || dev.reconDrawn !== dev.reconVer){
+    dev.reconDrawn = dev.reconVer;
+    svg.querySelector("path.recon").setAttribute("d", d(recon));
+  }
   if (key !== dev.chartKey){
     dev.chartKey = key;
     const grid = svg.querySelector("g.grid"), yl = svg.querySelector("g.ylab"), xl = svg.querySelector("g.xlab");
@@ -1048,9 +1085,7 @@ function renderChart(dev){
     base.setAttribute("x1", CH.l); base.setAttribute("x2", CH.w - CH.r);
     base.setAttribute("y1", Y(0)); base.setAttribute("y2", Y(0));
     show(base, true);
-    const d = (pts) => pts.map((p, i) => (i ? "L" : "M") + X(p.V).toFixed(1) + " " + Y(p.P).toFixed(1)).join("");
     svg.querySelector("path.curve").setAttribute("d", d(curve));
-    svg.querySelector("path.trace").setAttribute("d", d(trace));
     for (const s of ["path.mpp-halo", "path.mpp"]){
       const c = svg.querySelector(s);
       show(c, !!mpp);
@@ -1082,7 +1117,7 @@ function renderCaption(dev){
   q(dev, "button.refresh").disabled = !!dev.curveReq || !canSend(dev);
 }
 
-// Crosshair snaps to the nearest curve point (or the witnessed trace when no curve is known).
+// Crosshair snaps to the nearest curve point (or the live curve when no curve is known).
 function chartHover(dev, svg, e){
   const s = dev.chartScale, hov = svg.querySelector("g.hover");
   if (!s || !s.pts.length){ show(hov, false); return; }
@@ -1135,6 +1170,7 @@ function tick(){
   const t = now();
   for (const dev of devices.values()){
     renderAge(dev);
+    if (dev.recon.size && reconPrune(dev, t)) scheduleRender(dev);
     const L = dev.mqtt.lease;
     if (leaseWanted(dev) && !L.busy){
       if (L.state === "idle" && dev.mqtt.firstAt && t - dev.mqtt.firstAt >= LEASE_WAIT_MS){

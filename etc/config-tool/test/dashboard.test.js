@@ -256,7 +256,7 @@ test('Stop sweep and leaving mppt_state 5 request sweep-curve (debounced, single
   assert.equal(dev.curve.points.length, 3);
   assert.deepEqual(plain(dev.curve.mpp), { P: 210.5, V: 38.2 });
   assert.equal(dev.curveReq, null);
-  // sweep witnessed over telemetry, then the state leaves 5
+  // a sweep seen over telemetry, then the state leaves 5
   const st = { syms: new Map() };
   let ts = 1_763_400_100_000;
   client.emit('message', 'pv/tele/fry', mqttMsg([
@@ -264,7 +264,6 @@ test('Stop sweep and leaving mppt_state 5 request sweep-curve (debounced, single
     { fields: { P: 50, Ui: 40 }, ts: ts++ },
     { fields: { P: 90, Ui: 36, mppt_state: 4 }, ts: ts++ },
   ], st));
-  assert.deepEqual(plain(dev.sweepTrace), [{ V: 45, P: 5 }, { V: 40, P: 50 }]);
   await settle(20);
   assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['sweep-curve', 'sweep-curve']);
 });

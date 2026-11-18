@@ -27,7 +27,7 @@ test('relay-fed card fetches the sweep curve once 5 s after discovery', async ()
   assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['sweep-curve']);
 });
 
-test('chart: empty state, curve path, MPP ring, live dot, trace, caption, refresh', async () => {
+test('chart: empty state, curve path, MPP ring, live dot, caption, refresh', async () => {
   const { window, Dash, client } = await withBroker();
   log(client, 'fry', ['x']);
   Dash.flush();
@@ -67,7 +67,7 @@ test('chart: empty state, curve path, MPP ring, live dot, trace, caption, refres
   assert.ok(+live.getAttribute('cx') > +mpp.getAttribute('transform').match(/translate\(([\d.]+)/)[1]);
   assert.equal(svg.querySelector('path.curve').getAttribute('d'), d);
 
-  // witnessed sweep trace (new symbol table per stream)
+  // sweep in progress (new symbol table per stream); single updates are not drawn as live curve
   const st = { syms: new Map() };
   client.emit('message', 'pv/tele/flat', mqttMsg([
     { fields: { P: 0, Ui: 45, mppt_state: 5 }, ts: Date.now() + 1 },
@@ -75,7 +75,7 @@ test('chart: empty state, curve path, MPP ring, live dot, trace, caption, refres
   ], st));
   Dash.flush();
   const fsvg = card(window, 'flat').querySelector('svg.chart');
-  assert.equal((fsvg.querySelector('path.trace').getAttribute('d').match(/[ML]/g) || []).length, 2);
+  assert.equal(fsvg.querySelector('path.recon').getAttribute('d'), '');
   assert.equal(fsvg.querySelector('path.curve').getAttribute('d'), '');
   assert.match(card(window, 'flat').querySelector('.chartbar .caption').textContent, /sweep in progress/);
 
@@ -109,4 +109,39 @@ test('chart: y-axis top sticks at the session maximum and only grows', async () 
   assert.equal(top(), '600 W');
   const y520 = [...svg().querySelectorAll('g.ylab text')].map(e => e.textContent);
   assert.deepEqual(plain(y520), ['0', '100', '200', '300', '400', '500', '600 W']);
+});
+
+test('chart: live P-V reconstruction bins Vin, decays toward new P, drops stale bins', async () => {
+  const { window, Dash, client } = await withBroker();
+  let t = 1_763_400_000_000;
+  window.Date.now = () => t;
+  const st = { syms: new Map() };
+  const tele = (Ui, P) => client.emit('message', 'pv/tele/fry', mqttMsg([{ fields: { P, Ui }, ts: t }], st));
+  const svg = () => card(window, 'fry').querySelector('svg.chart');
+  const verts = () => [...(svg().querySelector('path.recon').getAttribute('d') || '').matchAll(/[ML]([\d.]+) ([\d.]+)/g)]
+    .map(m => [+m[1], +m[2]]);
+  for (let i = 0; i < 3; i++)
+    for (const [v, p] of [[40, 100], [41, 150], [42, 120]]) { t += 100; tele(v, p); }
+  Dash.flush();
+  const d = Dash.devices.get('fry');
+  assert.equal(d.recon.size, 3);
+  const { X, Y } = d.chartScale;
+  const v = verts();
+  assert.equal(v.length, 3);
+  assert.deepEqual(plain(v), [[40, 100], [41, 150], [42, 120]].map(([V, P]) => [+X(V).toFixed(1), +Y(P).toFixed(1)]));
+  assert.ok(card(window, 'fry').querySelector('.chartkeys .k-recon'));
+  assert.equal(card(window, 'fry').querySelector('.chartkeys .k-trace'), null);
+
+  // 3 min later a lower P at 41 V pulls the bin most of the way down: 60 + 90 * exp(-dt / 60 s)
+  const b41 = d.recon.get(Math.round(41 / 0.25)), dt = t + 180000 - b41.ts;
+  t += 180000; tele(41, 60);
+  assert.ok(Math.abs(b41.P - (60 + 90 * Math.exp(-dt / 60000))) < 1e-6, String(b41.P));
+  assert.ok(b41.P < 65);
+  Dash.flush();
+  assert.equal(verts()[1][1], +d.chartScale.Y(b41.P).toFixed(1));
+
+  // 40 and 42 V were last updated 3 min ago, 41 V just now: 8 min more drops the first two
+  t += 480000; Dash.tick(); Dash.flush();
+  assert.deepEqual(plain([...d.recon.keys()]), [Math.round(41 / 0.25)]);
+  assert.equal(verts().length, 1);
 });
