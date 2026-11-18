@@ -10,6 +10,14 @@ const SCRATCH_HEADING = /^\s*(\d+[a-z]?\.?\s*)?(bottom line|tl;?\s*dr|provenance
 const TRANSCRIPT_LINE = /^\s*(LLM|User|Assistant|Human|AI)\s*>/m;
 const AI_NAME = /\b(codex|claude|chatgpt|gpt-\d)\b/i;
 const PLACEHOLDER = /LLM generated placeholder/i;
+const MAX_HEADING_WORDS = 6;
+
+function headingProblem(text) {
+  const label = text.replace(/^\s*\d+(\.\d+)*[a-z]?\.?\s+/i, '').trim();
+  if (label.endsWith('?')) return `question heading "${text}"`;
+  const words = label.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+  if (words > MAX_HEADING_WORDS) return `heading "${text}" has ${words} words (max ${MAX_HEADING_WORDS}; use a short label)`;
+}
 
 export default function docsLint({allowAiNames = []} = {}) {
   return (tree, file) => {
@@ -18,6 +26,8 @@ export default function docsLint({allowAiNames = []} = {}) {
     visit(tree, 'heading', (node) => {
       const text = toString(node);
       if (SCRATCH_HEADING.test(text)) problems.push(`heading "${text}"`);
+      const p = headingProblem(text);
+      if (p) problems.push(p);
     });
     visit(tree, 'text', (node) => {
       if (TRANSCRIPT_LINE.test(node.value)) problems.push(`transcript line "${node.value.trim().slice(0, 60)}"`);

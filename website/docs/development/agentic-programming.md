@@ -380,7 +380,7 @@ following rules apply to a real converter:
 
 ## 11. Typical agent flows
 
-### Tune a parameter, validate on vconv, then push to a real converter
+### Parameter tuning
 
 1. Flash a vconv build to a bench ESP32 (`config/lab/vconv_mock`).
 2. Adjust `vconv.conf` and the charger/mppt confs via `set-config`.
@@ -398,7 +398,7 @@ following rules apply to a real converter:
    :::
 6. Watch InfluxDB or poll `sensor avg` to confirm behavior.
 
-### Reproduce and fix a crash on a remote device
+### Remote crash fix
 
 1. `python etc/fugu_console.py --mqtt <broker> --mqtt-port <port> --name <dev> -c "coredump info"`
    confirms a dump is present (the `--name` selects the device's topic on the broker).
@@ -408,7 +408,7 @@ following rules apply to a real converter:
 4. Apply the fix, build, run `ota.py -n -m <name>`, confirm the version, and run `ota.py -m <name>`.
 5. Re-run step 1 to confirm the new run is clean.
 
-### Fuzz the input parser before a release
+### Parser fuzzing
 
 Run the safe fuzz pool for 600 seconds:
 

@@ -129,7 +129,9 @@ the two writes. This has three consequences:
 - The worst-case update latency is one PWM period. At 39 kHz that is ≈ 26 µs, well inside
   the RT loop budget.
 
-## Invariant: a latched period must never have `cmpLS < cmpHS`
+## Latch invariant
+
+A latched period must never have `cmpLS < cmpHS`.
 
 In HiLi mode the LS generator has no TEZ action. It goes HIGH at `cmpHS` and LOW at `cmpLS`
 (`src/pwm/mcpwm.h`), so LS holds its level across the period wrap. A period that latches with

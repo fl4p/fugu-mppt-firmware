@@ -81,7 +81,9 @@ applies to HiLi only.
 For this reason the firmware arms the sync input before `start()`, while the gates are idle, and
 nothing may arm a follower that hasn't positively qualified a live leader.
 
-## Coupling circuit (DC-blocked, tolerates ~1 V static ground offset)
+## Coupling circuit
+
+The circuit is DC-blocked and tolerates a static ground offset of about 1 V.
 
 The network only blocks DC. It rejects a static ground offset but passes common-mode transients,
 and both sides share a galvanic path. C1's reactance at the pulse edge is ~50 Ω against a ~7.7 k
@@ -185,7 +187,7 @@ by the measured window, not the requested one.
 The host-side check is `FuguDevice.wsync_status()` in fugu-py. It's tri-state: it returns `None`
 (unverified) instead of a pass whenever it can't establish the role, `pwm_freq`, or the count.
 
-## Sync on a USB pad (no GPIO header)
+## USB pad sync
 
 On a board that breaks out only USB and I2C, the sync wire arrives on GPIO19 (USB D−), which is
 also half of the USB-Serial-JTAG PHY. The pad can serve the PHY or the GPIO matrix, but not both,
@@ -231,7 +233,7 @@ reference with no DC offset between the boards, and neither board can back-feed 
 VBUS. Otherwise, put the coupling circuit on a USB-C breakout (D− = sync, GND through C2, VBUS and
 CC left open) and connect the cable there.
 
-### Re-arming after the leader comes up late
+### Late leader
 
 The firmware decides the pad at boot. A board that booted with USB attached, or before its leader
 was running, therefore stays in USB mode for that whole run.

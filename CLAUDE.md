@@ -176,9 +176,14 @@ Published pages are **curated documentation, not research notes**. Keep the rese
 provenance, reviews, source access log) unpublished in `doc/research/` and write the page from it. No "Bottom
 line"/TL;DR lead heading, no process sections, no agent transcripts, no Codex/Claude mentions in prose.
 Literature-based pages are surveys: scope, findings per topic with `[n]` citations, implications, limitations, and a
-numbered References list whose bibliographic data is verified against the sources. The production build enforces
-the mechanical part (`website/src/remark/docs-lint.mjs`; the dev server only warns). Every doc review, by Codex,
-Astra or an agent, includes the criterion "reads as reference documentation, not notes or a transcript".
+numbered References list whose bibliographic data is verified against the sources. Headings and titles are short
+noun-phrase labels ("Temperature", "Float and CV holds", "LFP longevity"), not sentences, claims or questions
+("Temperature is the first-order calendar factor", "How much does cycling matter?"); dates, conditions and the finding
+go in the body. No walls of text: split a long study paragraph into a short setup (who tested what), a table when
+3+ comparable conditions have numbers, a list for parallel figures, and a separate paragraph for caveats/limits.
+The production build enforces the mechanical part (`website/src/remark/docs-lint.mjs`; the dev server only warns). Every doc review, by Codex,
+Astra or an agent, includes the criteria "reads as reference documentation, not notes or a transcript" and "no paragraph is a wall of
+text".
 
 ## Tests
 

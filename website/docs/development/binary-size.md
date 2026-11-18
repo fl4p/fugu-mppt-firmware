@@ -45,7 +45,9 @@ The following changes predate the dated rounds below:
 - Make sprofiler build-time optional: `~10 KB`. The option is `WITH_SPROFILER=1` (now `CONFIG_FUGU_WITH_SPROFILER`).
   When it is unset, the top-level CMakeLists sets `EXCLUDE_COMPONENTS esp32-semihosting-profiler`.
 
-### 2026-05-25 round (sdkconfig.defaults + CMakeLists.txt + main/idf_component.yml)
+### 2026-05-25 round
+
+Files changed: `sdkconfig.defaults`, `CMakeLists.txt`, `main/idf_component.yml`.
 
 This round pruned unused IDF and Arduino features and fixed the build breaks that the pruning caused:
 
@@ -186,7 +188,7 @@ pulls in.
   Every `throw std::runtime_error(...)` in conf / sensor_setup / buck / mppt construction / ADC init would have to
   become a returned bool or `std::optional`. It is worth doing only after the other options are used up.
 
-## Finding STL template bloat (the method behind the 2026-05-30 wins)
+## Finding STL template bloat
 
 A single innocuous STL use can pull in a large libstdc++ object that nothing else shares, and removing that one use
 drops the whole chain. Both 2026-05-30 wins (`unordered_map`, `std::filesystem`) were found with these steps:

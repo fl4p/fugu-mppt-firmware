@@ -95,7 +95,9 @@ at 1 kHz, so it would drive the period straight back to the old frequency. Run `
 first. `phase_us` is a time, so you have to recompute a 180-degree interleave value after a
 frequency change either way.
 
-## Bench verification (2026-08-04, boost converter @70 V, consumer AP on ch1)
+## Bench verification
+
+Tested 2026-08-04 on a boost converter at 70 V, with a consumer AP on channel 1.
 
 The checklist below records what the bench test confirmed and what is still open:
 
@@ -131,7 +133,9 @@ The beacon accept rate on the bench was 0.2–3/s, far below the 10/s TBTT, beca
 channel and converter RF right at the antenna. The alpha-beta prediction bridged the gaps and
 lock held.
 
-## Oscilloscope campaign results (2026-08-04, dedicated beacon node)
+## Oscilloscope results
+
+Measured 2026-08-04 with a dedicated beacon node.
 
 A two-channel scope on both converters' LS gates (×10 probes) measured the ground truth. Relative
 edge timing was extracted per trigger event over 10-minute runs. A dedicated XIAO beacon node on

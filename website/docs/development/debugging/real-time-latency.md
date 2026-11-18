@@ -221,7 +221,7 @@ stale.
 Do not add calls that hold the kernel lock for long on core 0: `uxTaskGetSystemState()`, `vTaskList()` and
 `vTaskGetRunTimeStats()` all scan every stack under it.
 
-### Heap-lock contention from logging and console commands
+### Heap-lock contention
 
 After `loggingEnableDefer()` (called just before the loop starts), `ESP_LOGx`, `UART_LOG`, and `printf_mux` on core 1
 do not write UART or USB. `enqueue_log()` (`src/logging.cpp`) formats into a heap buffer and queues it for core 0. That

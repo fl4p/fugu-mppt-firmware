@@ -143,7 +143,9 @@ seconds and count `shutdown` / `Converter enabled` lines.
 
 ---
 
-## 2. MPPT tracking  *(requires PV simulator or PSU + series R)*
+## 2. MPPT tracking
+
+Requires a PV simulator, or a PSU with a series resistor.
 
 ### 2.1 Global sweep finds MPP
 - **Setup**: PV-sim at a fixed I-V curve.
@@ -195,7 +197,9 @@ seconds and count `shutdown` / `Converter enabled` lines.
 
 ---
 
-## 4. Charger / CV-CC  *(battery emulator on output)*
+## 4. Charger CV/CC
+
+Requires a battery emulator on the output.
 
 ### 4.0 CV with no battery (PV only)
 - **Setup**: input source only, no battery / open output (or sink in high-impedance).

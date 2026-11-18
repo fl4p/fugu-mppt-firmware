@@ -213,7 +213,9 @@ In this firmware this could be implemented as a minimum PWM duty floor. If the c
 falls below a threshold, the firmware either holds PWM at 0 (skip) or fires a minimum-width CCM
 pulse periodically.
 
-### 6. Active damping via LS FET (firmware, specific to synchronous buck)
+### 6. Active damping (firmware)
+
+This technique uses the LS FET and applies only to a synchronous buck.
 
 The ringing is between L and C_oss of the LS FET. Instead of letting it ring freely after the LS
 FET turns off, the firmware can use the FETs to absorb the energy:
@@ -257,7 +259,9 @@ FET turns off, the firmware can use the FETs to absorb the energy:
 - **Briefly re-turn the LS FET on** for a few ns at the zero-crossing to short the tank. This is
   the "active clamp" approach (see US8933635B2 patent for LED driver application).
 
-### 7. Schottky diode in parallel with LS FET body diode (hardware)
+### 7. Parallel Schottky (hardware)
+
+A Schottky diode in parallel with the LS FET body diode.
 
 An external Schottky diode has near-zero reverse recovery current, which reduces the current
 step that excites the RLC tank at turn-off. Specter Engineering's simulation showed ~90 V

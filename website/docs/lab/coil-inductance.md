@@ -75,7 +75,7 @@ fully determined by `L` and the terminal voltages, so a measured average `Iout` 
 
 ## 2. Methods to obtain `L0`
 
-### With a current probe / bench instrument
+### With a current probe
 
 A current probe or bench instrument allows these methods:
 
@@ -88,7 +88,9 @@ A current probe or bench instrument allows these methods:
 - **di/dt over a known interval.** Apply a known voltage across the coil for a measured time and
   read the current slope; `L = V·Δt/ΔI`.
 
-### Without a current probe (only `Vin`, `Vout`, `Iout`)
+### Without a current probe
+
+Only `Vin`, `Vout` and `Iout` are available.
 
 The following table evaluates four candidates against this hardware (battery output,
 `fs = 511 sps` control rate):
@@ -105,7 +107,7 @@ from DC data into a battery. With `Vout` clamped there is no kink in `Vout` vs l
 firmware's own `inDCM()` flag is computed *from* `L0`, so trusting it to find the boundary is
 circular.
 
-## 3. How a broken current sensor affects the measurement
+## 3. Broken current sensor
 
 Let the current sensor have a linear gain error `g`, reporting `Iout_meas = g·Iout_true` (`g < 1`
 under-reads). `L` enters the DCM relation only through `Iout`, so:
@@ -133,7 +135,7 @@ cross-check confirmed that both sensors are fine.
 If `L0` is derived from the same biased sensor and then used by the firmware, the gain cancels
 for diode emulation specifically (see §4).
 
-## 4. How a wrong `L0` affects diode emulation
+## 4. Wrong `L0`
 
 `L0` feeds only `rippleCurrent()` → `computeDCM()` (`src/buck.h`). The low-side turn-off ratio
 `rectCtrlRatio(M) = 1/M − 1` depends on the voltage ratio alone, not on `L0`. The only influence
@@ -557,7 +559,7 @@ settles within 1 % of it. At a steady 45 W, where the whole operating range is D
 1 % of the maximum with or without the ring. Ripple-induced local maxima appear only below about
 60 % of the peak power.
 
-## 8. Case study: board A vs board B (two different coils)
+## 8. Case study: two coils
 
 Two field boards (Fugu2 converters in service) self-measured ~1.57× apart because they have
 different coils. Assuming they shared one made the gap look like a sensor fault. The following

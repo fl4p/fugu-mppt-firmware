@@ -5,7 +5,7 @@ sidebar_position: 4
 
 # Build speed
 
-## Why a one-line edit triggers a multi-minute rebuild
+## Rebuild cost
 
 Edits to config and CMake files are expensive, while source-only edits under `src/` rebuild
 minimally. The build has ~1568 object files, and arduino-esp32 and the IDF components dominate them.
