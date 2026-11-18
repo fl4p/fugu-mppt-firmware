@@ -23,13 +23,16 @@ struct PeakScan {
     uint8_t saved = 0;       // core 0: n as read from or written to tracker.conf
     uint16_t interval = 300; // tracker.conf::scan_interval [s], 0 = triggered only
     bool trigger = true;     // tracker.conf::scan_trigger
+    bool force = false;      // RT: scan once referenced, also without a trigger
+    bool held = false;       // RT: maxima for learn() held until release()
     float margin = 0.03f;
 
     enum Phase : uint8_t { Idle, Ref, Probe, Back, Go };
     Phase phase = Idle;
     uint8_t k = 0, nc = 0;
     bool settled = false;
-    uint8_t ended = 0; // back at the start point: 1, 3 light changed; 2 moved to another peak; 4 timed out (return to d0)
+    uint8_t ended = 0; // back at the start point: 1, 3 light changed; 2 moved to another peak; 4 timed out (return to d0);
+                       // 5 forced scan without candidates
     uint16_t d0 = 0;
     float vc[6]{}, pc[6]{};
     float voc = NAN, iEnv = 0, kVmp = 0.82f; // Voc at the sweep start, max PV-side current [W/V], Vmpp / Voc
@@ -45,6 +48,7 @@ struct PeakScan {
     // RT, before vc/pc/nc/voc/pk change: a learn() in progress drops the sweep
     __attribute__((noinline)) IRAM_ATTR void claim() {
         pending.store(false, std::memory_order_relaxed);
+        held = false;
         gen.store(gen.load(std::memory_order_relaxed) + 1, std::memory_order_release);
         std::atomic_thread_fence(std::memory_order_release);
     }
@@ -52,7 +56,7 @@ struct PeakScan {
     // first sweep tick (converter still off, Vin ~ Voc)
     void onSweep(float vin, uint32_t now) {
         claim();
-        voc = vin, iEnv = 0, pRef = -1, phase = Idle, tLast = tOff = now, nc = 0, pLo = 0, fall = true;
+        voc = vin, iEnv = 0, pRef = -1, phase = Idle, tLast = tOff = now, nc = 0, pLo = 0, fall = true, force = false;
     }
 
     // sweep tick, Vin falling: local power maxima below 0.93 Voc with an 8 % dip on both sides go to vc/pc (idle
@@ -76,14 +80,20 @@ struct PeakScan {
 
     // sweep MPP: an unshaded string's Vmpp / Voc lies in 0.74..0.86 (field 0.79..0.85); a shaded global maximum
     // falls outside (m < n substrings: lower, weaker substrings conducting: higher) and keeps the last value.
-    // Hands the maxima to learn() unless the sweep was dim (MPP below pMin) or noisy (more than 6 maxima).
-    __attribute__((always_inline)) void onSweepMpp(float v, float p, float pMin) {
+    // Hands the maxima to learn() unless the sweep was dim (MPP below pMin) or noisy (more than 6 maxima); hold: only
+    // on release()
+    __attribute__((always_inline)) void onSweepMpp(float v, float p, float pMin, bool hold = false) {
         const float r = v / voc;
         if (r > 0.74f && r < 0.86f) kVmp = r;
         if (nc <= 6 && p >= pMin && voc > 0) {
             pk = p;
-            pending.store(true, std::memory_order_release);
+            if (hold) held = true;
+            else pending.store(true, std::memory_order_release);
         }
+    }
+
+    void release() {
+        if (held) held = false, pending.store(true, std::memory_order_release);
     }
 
     // core 0, after onSweepMpp() (vc/pc stay untouched for 5 s): the first maximum of at least 60 % of the MPP is the
@@ -149,10 +159,12 @@ struct PeakScan {
             // trigger: off the reference Vin or power for 15 s, the power steady (+-10 %) for the last 5 s
             if (!trigger || (std::fabs(vin - vRef) < 0.5f * vs0 && pw > 0.7f * pRef && pw < 1.4f * pRef)) tOff = now;
             if (std::fabs(pw - pS) > 0.1f * pS) pS = pw, tS = now;
-            const bool due = (interval && now - tLast > interval * 1000u) ||
+            const bool due = force || (interval && now - tLast > interval * 1000u) ||
                              (now - tOff > 15000 && now - tS > kSteadyMs && now - tLast > 60000);
             if (!due || pw < pMin) return NAN;
             tLast = now;
+            const bool forced = force;
+            force = false;
             // m0 of n substrings conduct at our peak. With weaker substrings conducting a peak sits above m unshaded
             // shares, so Vin / m0 can be high; the share from Voc misses heating and the Vmpp/Voc spread: take the mean
             const int m0 = std::clamp((int) std::lround(vin / vs0), 1, (int) n);
@@ -168,6 +180,7 @@ struct PeakScan {
             }
             if (!nc) {
                 pRef = pw, vRef = vin;
+                if (forced) ended = 5;
                 return NAN;
             }
             phase = Ref, v0 = vin, d0 = d, t0 = tPhase = now, settled = false, k = 0;

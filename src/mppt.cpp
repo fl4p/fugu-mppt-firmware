@@ -95,11 +95,13 @@ void MpptController::update() {
     // P&O cannot see the MPP in low light (power steps below its thresholds) and drifts toward Vout:
     // re-sweep once power has doubled since a low-power sweep's MPP (< 5 % of p_max)
     const auto sinceSweepUs = nowUs - sampler.getTimeLastCalibrationUs();
+    const uint32_t nowMs = (uint32_t) (nowUs / 1000);
     const bool grew = maxPowerPoint.power >= sweepMinPower() && maxPowerPoint.power < 25 * sweepMinPower() &&
                       power_smooth > 2 * maxPowerPoint.power && sinceSweepUs > 120 * 1000000;
+    const bool retry = _resweepAt && (int32_t) (nowMs - _resweepAt) >= 0;
     if (!g_app.psuMode() && !_sweeping && !batteryFull && !inBackoff() && !flashOpActive() &&
-        (grew || sinceSweepUs > 30 * 60000000)) {
-        ESP_LOGI("mppt", "%s sweep & sensor calibration", grew ? "power-doubled" : "periodic");
+        (grew || retry || sinceSweepUs > 30 * 60000000)) {
+        ESP_LOGI("mppt", "%s sweep & sensor calibration", grew ? "power-doubled" : retry ? "retry" : "periodic");
         g_app.maxLoopLag = 0; // restart the lag window so telemetry tracks per-sweep peak, not all-time
         startSweep();
         rtcount("mppt.update.startSweep");
@@ -177,7 +179,6 @@ void MpptController::update() {
     // A limiter that only touches (D-term on a ripple crest) must not steer the tracker: resetting its
     // direction on every touch and an upward step on every release walked the duty up through the MPP.
     // After a touch the following loops give back what the touch took and the tracker carries on.
-    const uint32_t nowMs = (uint32_t) (nowUs / 1000);
     const bool limSustained = ctrlState._limiting && nowMs - _limitSinceMs > 250;
     ctrlState._limPast = past;
     bool keepTracker = false;
@@ -280,13 +281,17 @@ void MpptController::update() {
             if (std::fabs(controlValue) <= 1) {
                 ESP_LOGI("mppt", "Reached target duty cycle %hu", targetDutyCycle);
                 targetDutyCycle = 0;
+                if (_svPhase == 1) _svPhase = 2, _svT = nowMs;
             }
         } else {
             ESP_LOGI("mppt", "PWM fade to %i stopped at controlMode %s", (int) targetDutyCycle,
                      MpptState2String[(int) controlMode]);
             targetDutyCycle = 0;
+            if (_svPhase == 1) sweepVerdict(nowMs, 0, false);
         }
     }
+    if (_svPhase == 2 && nowMs - _svT > std::clamp(powerSettleMs(), 1500.f, 3000.f))
+        sweepVerdict(nowMs, power_smooth, !batteryFull && !ctrlState._limiting && !converter.disabled() && !g_app.psuMode());
 
 
     float currentThreshold = limits.reverse_current_paranoia
@@ -307,6 +312,9 @@ void MpptController::update() {
             controlMode = MpptControlMode::Sweep, keepTracker = true;
             controlValue = constrain(t - (float) d, -(float) (converter.pwmCounts() / 64) - 1,
                                      (float) (converter.pwmCounts() / 128) + 1);
+        } else if (scan.ended == 5) {
+            scheduleResweep(nowMs);
+            scan.ended = 0;
         } else if (scan.ended) {
             if (scan.ended == 1 || scan.ended == 3) tracker.resume(scan.pRef);
             else tracker.resetDirection(false, sensors.Vin->ewm.avg.get()), tracker.maxPowerPoint.power = 0; // probed below the peak
@@ -533,6 +541,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
 
     psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
+    sweepVerify = std::max(0.f, trackerConf.getFloat("sweep_verify", 0.1f));
     scan.n = scan.saved = std::min<uint8_t>(6, trackerConf.getByte("pv_substrings", 0)); // learned, 0 = learn again
     scan.interval = (uint16_t) std::clamp(trackerConf.getLong("scan_interval", 300), 0L, 65535L);
     scan.trigger = trackerConf.getByte("scan_trigger", 1);
@@ -694,6 +703,37 @@ bool rectCalPersist(int counts, uint8_t cal) {
                                  {"rect_offset_cal", cs}}, "rect_offset"); // legacy count key
     if (!ok) ESP_LOGW("rectcal", "coil.conf write failed, retrying");
     return ok;
+}
+
+// RT: a sweep whose landing power misses its MPP saw the light change; it does not learn, the scan or one re-sweep per
+// 10 min checks the other peaks. !ok: not evaluable (limiter, fade stopped), no verdict
+__attribute__((cold, noinline)) void MpptController::sweepVerdict(uint32_t nowMs, float p, bool ok) {
+    _svPhase = 0;
+    const float mpp = maxPowerPoint.power, d = mpp > 0 ? p / mpp - 1 : 0;
+    if (!ok) {
+        ESP_LOGI("mppt", "sweep not verified (limiter)");
+        return;
+    }
+    _svLand = p, _svFlag = std::fabs(d) > sweepVerify ? 2 : 1;
+    if (_svFlag == 1) {
+        scan.release();
+        ESP_LOGI("mppt", "sweep verified: landed %.0f W vs MPP %.0f W (%+.0f %%)", p, mpp, 100 * d);
+        return;
+    }
+    scan.held = false;
+    const bool sc = scan.n && scan.voc > 0;
+    ESP_LOGI("mppt", "sweep flagged: landed %.0f W vs MPP %.0f W (%+.0f %%)%s", p, mpp, 100 * d, sc ? ", scan now" : "");
+    if (sc) scan.force = true;
+    else scheduleResweep(nowMs);
+}
+
+__attribute__((cold, noinline)) void MpptController::scheduleResweep(uint32_t nowMs) {
+    if (_retryAt && nowMs - _retryAt < 600000) {
+        ESP_LOGI("mppt", "re-sweep capped (one per 10 min)");
+        return;
+    }
+    _retryAt = nowMs | 1, _resweepAt = (nowMs + 60000) | 1;
+    ESP_LOGI("mppt", "re-sweep in 60 s");
 }
 
 // core 0: learn from the last sweep; save a grown count once a flash write is safe

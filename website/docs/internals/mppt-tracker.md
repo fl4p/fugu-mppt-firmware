@@ -67,6 +67,42 @@ bench supply, repeats this cycle indefinitely.
 At the end of a sweep, the firmware writes "MPP Scan done" to the LCD and logs
 `Stop sweep ... MPP=(<W>,<duty>,<V>)`.
 
+### Sweep verdict
+
+A sweep takes several seconds. If the irradiance changes meanwhile, the recorded curve mixes two sky states: its
+maximum can be a cusp where the light changed, far above or below the real curve, and on a string with several
+local maxima a distorted curve can rank the wrong one highest. P&O cannot cross the power valley to a higher
+maximum.
+
+After the fade reaches the captured MPP duty, the loop waits for the power filter to settle (`powerSettleMs()`,
+1.5 to 3 s) and compares the smoothed power with the captured MPP power. If the two differ by more than
+`tracker.conf::sweep_verify` (default 0.10, 0 = off), the sweep is flagged. The converter stays at the landing
+point and P&O carries on from there. A flagged sweep then:
+
+* does not teach the [substring count](#substring-count);
+* starts a [partial peak scan](#partial-peak-scan) as soon as the scan has its reference, if a substring count is
+  known;
+* otherwise, or when that scan finds no candidate, schedules one re-sweep 60 s later. At most one such re-sweep is
+  scheduled per 10 min, so a gusty sky cannot turn into a sweep loop. The re-sweep waits for the same conditions as
+  the periodic one ([below](#when-the-tracker-does-not-sweep)), and any sweep that starts meanwhile replaces it.
+
+A sweep whose fade a limiter stops, or that lands in a limit, gets no verdict and does not teach the substring count
+either. Neither does a sweep whose MPP is below 5 % of `limits.conf::p_max`: in low light the captured MPP is the
+largest of noisy samples, biased high by tens of percent, and such a sweep teaches nothing anyway. The log shows one
+line per decision:
+
+```
+sweep verified: landed 468 W vs MPP 470 W (-0 %)
+sweep flagged: landed 452 W vs MPP 780 W (-42 %), scan now
+sweep flagged: landed 208 W vs MPP 496 W (-58 %)
+re-sweep in 60 s
+re-sweep capped (one per 10 min)
+sweep not verified (limiter)
+```
+
+The verdict and the landing power also appear in the `sweep-curve` header
+([Console](../reference/console.md)).
+
 ## Perturb & observe
 
 `Tracker::update()` (`src/tracker.h`) averages power and Vin over one tracker period, then compares the period
@@ -238,7 +274,8 @@ The log shows each scan as `scan: P <P0>-><P0'> W at <V>V, <n> probes, best x<ra
 
 The sweep runs from $V_{oc}$ down to the battery and passes every maximum. It records the local maxima of the
 smoothed power below $0.93\,V_{oc}$ that have a dip of 8 % on both sides (up to 6; a sweep with more is noise and
-does not count). Within 3 s after the sweep, the low-frequency loop (core 0) evaluates them:
+does not count). Once the [sweep verdict](#sweep-verdict) passes (with `sweep_verify=0`: right after the sweep),
+the low-frequency loop (core 0) evaluates them within 3 s:
 
 * The sweep's MPP must be one of the recorded maxima, and at least 5 % of `limits.conf::p_max`.
 * The first recorded maximum with at least 60 % of the MPP power is taken as the full-string maximum. Maxima above
@@ -298,6 +335,9 @@ last scan, or the power is below 70 % or above 140 % of the power then. The powe
 than that every few seconds, so most cloud edges do not trigger a scan; a shadow that moves across the string
 over minutes does.
 
+A flagged sweep starts a scan as soon as the reference is taken, without a trigger (see
+[Sweep verdict](#sweep-verdict)).
+
 A limiter that becomes active during a scan ends it, and the duty fades back to the start point. A change of
 operating mode (manual, PSU, PV-sim, MPPT) drops a running scan and its reference; PSU and PV-sim mode keep
 their own regulation.
@@ -333,6 +373,7 @@ The tracker reads these keys from `tracker.conf`:
 | Key                                                                  | Default | Effect                                               |
 |----------------------------------------------------------------------|---------|------------------------------------------------------|
 | [`sweep_speed`](../reference/config/tracker.md)                      | 4.0     | Sweep speed; scales the per-tick cap and the limit-tracking gain (min 0.1) |
+| [`sweep_verify`](../reference/config/tracker.md)                     | 0.10    | [Sweep verdict](#sweep-verdict) tolerance; 0 = off   |
 | [`target_duty_cycle`](../reference/config/tracker.md)                | 0.0     | Fixed duty fraction; > 0 disables sweep and P&O      |
 | [`scan_interval`](../reference/config/tracker.md)                    | 300     | Partial peak scan period [s]; 0 = triggered only     |
 | [`scan_trigger`](../reference/config/tracker.md)                     | 1       | Also scan after a sustained Vin or power change      |

@@ -442,6 +442,31 @@ void test_scan_skips_clear_sky() {
     TEST_ASSERT_TRUE(r->s.pRef > 0);
 }
 
+// A flagged sweep forces a scan once the reference is taken, without period or trigger; clear sky: no candidate, ended 5
+void test_scan_forced() {
+    auto idle = std::make_unique<ScanRig>(68.8f);
+    idle->s.interval = 0, idle->s.trigger = false;
+    idle->g[5] = 0.7f, idle->shade(), idle->sweep();
+    idle->run(30'000);
+    TEST_ASSERT_EQUAL_INT(0, idle->active);
+
+    auto r = std::make_unique<ScanRig>(68.8f);
+    r->s.interval = 0, r->s.trigger = false;
+    r->g[5] = 0.7f, r->shade(), r->sweep();
+    r->s.force = true;
+    r->run(10'000);
+    TEST_ASSERT_TRUE(r->active > 0);
+    TEST_ASSERT_FALSE(r->s.force);
+    TEST_ASSERT_FLOAT_WITHIN(3.f, 55.5f, r->vin());
+
+    auto c = std::make_unique<ScanRig>(68.8f);
+    c->sweep();
+    c->s.force = true;
+    c->run(10'000);
+    TEST_ASSERT_EQUAL_INT(0, c->active);
+    TEST_ASSERT_EQUAL_INT(5, c->ended);
+}
+
 // Trigger only (no period): a flickering cloud keeps the power off the reference but never steady, so no scan;
 // once the power settles at the new level, the scan runs.
 void test_scan_trigger_waits_for_steady_power() {
@@ -590,6 +615,23 @@ static std::unique_ptr<VirtualConverter> pvString(int n, std::initializer_list<f
     return pv;
 }
 static std::unique_ptr<VirtualConverter> fryString(float g4, float g5) { return pvString(6, {1, 1, 1, 1, g4, g5}); }
+
+// A held sweep reaches learn() only on release(); a new sweep drops it
+void test_scan_held_sweep() {
+    auto pv = fryString(1.f, 0.7f);
+    PeakScan s{};
+    s.onSweep(80, 0);
+    for (float v = 80; v > 29; v -= 0.25f) s.sweepSample(v, v * pv->pvCurrent(v));
+    s.onSweepMpp(57, 400, 10, true);
+    TEST_ASSERT_FALSE(s.pending);
+    TEST_ASSERT_FALSE(s.learn());
+    s.release();
+    TEST_ASSERT_TRUE(s.pending);
+    s.onSweepMpp(57, 400, 10, true);
+    s.onSweep(80, 0);
+    s.release();
+    TEST_ASSERT_FALSE(s.pending);
+}
 
 // One or two shaded substrings (fry-like, exact series string), the lower maximum at 5 or 4 of 6 shares, below or
 // above the full-string maximum. One sweep learns 6 and marks it for tracker.conf.

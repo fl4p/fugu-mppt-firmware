@@ -327,6 +327,8 @@ void test_scan_moves_to_better_peak();
 void test_scan_stays_on_global_peak();
 void test_scan_ignores_light_change();
 void test_scan_skips_clear_sky();
+void test_scan_forced();
+void test_scan_held_sweep();
 void test_scan_trigger_waits_for_steady_power();
 void test_scan_reference_catches_light_ramp();
 void test_scan_aborts_on_light_step();
@@ -594,6 +596,8 @@ void setup() {
     RUN_TEST(test_scan_stays_on_global_peak);
     RUN_TEST(test_scan_ignores_light_change);
     RUN_TEST(test_scan_skips_clear_sky);
+    RUN_TEST(test_scan_forced);
+    RUN_TEST(test_scan_held_sweep);
     RUN_TEST(test_scan_trigger_waits_for_steady_power);
     RUN_TEST(test_scan_reference_catches_light_ramp);
     RUN_TEST(test_scan_aborts_on_light_step);

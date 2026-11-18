@@ -503,8 +503,11 @@ static void cmdSweepCurve(cmd *) {
         return;
     }
     const auto &m = mppt.sweepMpp();
-    UART_LOG("sc: t=%lu n=%u mpp=%.1f,%.1f sweeping=%d", (unsigned long) b->endTimeS, (unsigned) n, m.power,
-             m.voltage, (int) sw);
+    const uint8_t f = sw ? 0 : mppt.sweepFlag();
+    char fl[32] = "";
+    if (f) snprintf(fl, sizeof fl, " flag=%s land=%.1f", f == 2 ? "light" : "0", mppt.sweepLand());
+    UART_LOG("sc: t=%lu n=%u mpp=%.1f,%.1f sweeping=%d%s", (unsigned long) b->endTimeS, (unsigned) n, m.power,
+             m.voltage, (int) sw, fl);
     char buf[192];
     int len = 0, k = 0;
     for (uint16_t i = 0; i < n; ++i) {

@@ -215,6 +215,14 @@ private:
         uint16_t dutyCycle = 0;
     } maxPowerPoint; // MPP during sweep
 
+    // sweep verdict, RT: landed power vs the sweep MPP once settled
+    uint8_t _svPhase = 0; // 1 landing, 2 settling
+    uint8_t _svFlag = 0;  // 0 none, 1 clean, 2 light changed
+    float _svLand = 0;
+    uint32_t _svT = 0, _resweepAt = 0, _retryAt = 0; // [ms] settle start, scheduled re-sweep, last one scheduled
+    void sweepVerdict(uint32_t nowMs, float p, bool ok);
+    void scheduleResweep(uint32_t nowMs);
+
     // A sweep only commits its captured MPP as the operating target above this power. In marginal
     // light (e.g. a dawn cold-start sweep) the "peak" is just noise at near-max duty; committing it
     // strands the converter there until it's driven to the opposite rail. Below it: no target, fall
@@ -304,6 +312,7 @@ private:
     uint16_t targetPwmCnt = 0; // config-derived boot duty; cleared on mppt/sweep to allow tracking
 
     float sweepSpeed = 4.0f; // global-sweep speed (tracker.conf::sweep_speed)
+    float sweepVerify = 0.1f; // tracker.conf::sweep_verify, 0 = off
 
 public:
     Limits limits{};
@@ -377,6 +386,8 @@ public:
     [[nodiscard]] bool isSweeping() const { return _sweeping; }
     [[nodiscard]] const Plot &sweepCurve() const { return sweepPlot; }
     [[nodiscard]] const auto &sweepMpp() const { return maxPowerPoint; }
+    [[nodiscard]] uint8_t sweepFlag() const { return _svFlag; }
+    [[nodiscard]] float sweepLand() const { return _svLand; }
 
     // Default backoff blocks startCondition() so MPPT doesn't re-poke pwmPerturb()
     // every tick after a protection trip — otherwise OV/OC violations spam the log
@@ -450,6 +461,7 @@ public:
         _sweeping = false;
         maxPowerPoint = {};
         targetDutyCycle = 0;
+        _svPhase = 0;
         scan.reset(wallClockMs());
     }
 
@@ -952,6 +964,7 @@ public:
      */
     void startSweep() {
         _sweeping = true;
+        _svPhase = _svFlag = 0, _resweepAt = 0;
 
         converter.disable();
         ctrlState._limiting = false;
@@ -1452,7 +1465,9 @@ public:
         }
 
         targetDutyCycle = maxPowerPoint.dutyCycle;
-        scan.onSweepMpp(maxPowerPoint.voltage, maxPowerPoint.power, 25 * sweepMinPower());
+        // dim: the MPP is the largest of noisy samples, biased high; such a sweep teaches nothing either
+        _svPhase = sweepVerify > 0 && maxPowerPoint.power >= 25 * sweepMinPower();
+        scan.onSweepMpp(maxPowerPoint.voltage, maxPowerPoint.power, 25 * sweepMinPower(), _svPhase);
 
         auto z = outZ.finish((uint32_t) (wallClockUs() / 1000000));
         if (z.n)
