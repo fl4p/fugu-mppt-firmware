@@ -17,7 +17,7 @@ version and checked with a subresource integrity hash.
 
 Each converter gets a card, keyed by its hostname:
 
-- **Live values**: output power, input and output voltage, output current and duty cycle, from the telemetry
+- **Live values**: output power, input and output voltage, output current, duty cycle and the `ntc_temp` temperature, from the telemetry
   stream. A card whose last data point is older than three times the usual update interval is dimmed.
 - **Today's peak and energy**: the `P_max_today` and `E_today` telemetry fields.
 - **Sweep curve**: the power-versus-input-voltage curve of the last MPPT sweep, read with `sweep-curve`, with the
@@ -26,7 +26,10 @@ Each converter gets a card, keyed by its hostname:
 - **Log tail**: the device console log, including the replies to commands sent from the page.
 - **Console**: an input line that sends a command to the device over the active link. It is hidden until
   the **console** checkbox in the header is ticked; the page remembers the setting in this browser.
-- **Link badges**: one for BLE and one for MQTT, with the stream rate and dropped bytes below the values.
+- **Link badges**: one for BLE and one for MQTT.
+- **More info**: a collapsed box under the values with the stream rate and dropped bytes per link, the
+  slower telemetry fields (`mcu_temp`, `lag`, `heap`, `heap_min`, lifetime `E`, the `Ro`/`Rc`/`Rb` resistances
+  once known) and the MQTT lease state.
 
 ## Quick start
 

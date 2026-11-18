@@ -135,6 +135,29 @@ test('pv/tele message renders KPIs; kWh above 1000 Wh; mode name; relay without 
   assert.equal(text(window, 'fry', '.mode'), 'MPPT');
   assert.equal(text(window, 'fry', '.vout'), '27.10 V');
   assert.match(text(window, 'fry', '.rate'), /^MQTT relay /);
+  const more = card(window, 'fry').querySelector('details.more');
+  assert.equal(more.open, false);
+  assert.ok(more.querySelector('.rate'));
+  assert.equal(more.querySelector('summary').textContent, 'more info');
+  assert.equal(more.querySelector('.info').textContent, '');
+  assert.equal(text(window, 'fry', '.ntc'), '–');
+  client.emit('message', 'pv/tele/fry', mqttMsg([
+    { fields: { P: 301.0, mcu_temp: 41.26, ntc_temp: 48.24, Ro: 210.4, Rc: 15.2, lag: 2340, heap: 102400, heap_min: 81920, E: 123456 }, ts: c.get() + 40 },
+  ], st));
+  Dash.flush();
+  assert.equal(more.querySelector('.info').textContent, '');
+  assert.equal(text(window, 'fry', '.ntc'), '48.2 °C');
+  more.open = true;
+  await settle(5);
+  Dash.flush();
+  const info = more.querySelector('.info').textContent;
+  assert.match(info, /MCU 41\.3 °C/);
+  assert.match(info, /lag 2\.3 ms/);
+  assert.match(info, /Ro 210 mΩ · Rc 15 mΩ(?! · Rb)/);
+  assert.match(info, /heap 100 KB/);
+  assert.match(info, /heap_min 80 KB/);
+  assert.match(info, /E 123\.456 kWh/);
+  assert.match(info, /lease relay-fed/);
   // telemetry within 5 s of discovery: never leased
   c.add(6000); Dash.tick(); await settle();
   assert.deepEqual(lpubs(client, 'pv/log/fry/cmd'), []);

@@ -57,6 +57,9 @@
                  font-variant-numeric:tabular-nums; }
   .kpis .small b { color:var(--fg); font-weight:500; }
   .card .rate { font-size:11px; color:var(--muted); }
+  .card details.more { font-size:11px; color:var(--muted); }
+  .card details.more summary { cursor:pointer; }
+  .card details.more .info { display:flex; gap:4px 12px; flex-wrap:wrap; font-variant-numeric:tabular-nums; }
   .card .reconnect { align-self:flex-start; font-size:12px; padding:3px 10px; }
   .logwrap { display:flex; flex-direction:column; gap:4px; }
   .logbar { display:flex; gap:8px; align-items:center; font-size:11px; color:var(--muted); }
@@ -285,7 +288,8 @@ function ingest(dev, p, src){
   const prevState = t.state;
   for (const [k, n] of [["P","P"],["Ui","Ui"],["Uo","Uo"],["I","I"],["pwm_duty","duty"],["mppt_state","state"],
                          ["P_max_today","Pmax"],["E_today","Etoday"],["E","E"],["mcu_temp","mcuT"],
-                         ["ntc_temp","ntcT"],["lag","lag"],["heap","heap"]])
+                         ["ntc_temp","ntcT"],["lag","lag"],["heap","heap"],["heap_min","heapMin"],
+                         ["Ro","Ro"],["Rc","Rc"],["Rb","Rb"]])
     if (k in f) t[n] = f[k];
   const at = now();
   if (p.ts && dev.lastTs && p.ts > dev.lastTs) dev.intervals.push(p.ts - dev.lastTs);
@@ -798,11 +802,13 @@ function createCard(dev){
   const k = el("div", "kpis");
   const p = el("div", "p"); p.append(el("span", "pv", "–"), el("small", null, "W"));
   const small = el("div", "small");
-  for (const [cls, lab] of [["vin","Vin"],["vout","Vout"],["iout","I"],["duty","duty"]]){
+  for (const [cls, lab] of [["vin","Vin"],["vout","Vout"],["iout","I"],["duty","duty"],["ntc","T"]]){
     const s = el("span", null, lab + " "); s.append(el("b", cls, "–")); small.append(s);
   }
   k.append(p, el("div", "peak"), small);
-  const rate = el("div", "rate");
+  const more = el("details", "more");
+  more.append(el("summary", null, "more info"), el("div", "rate"), el("div", "info"));
+  more.ontoggle = () => scheduleRender(dev);
   const rc = el("button", "reconnect", "Reconnect BLE");
   rc.style.display = "none";
   rc.onclick = () => { if (dev.ble) dev.ble.reconnect(); };
@@ -826,7 +832,7 @@ function createCard(dev){
     inp.value = dev.histIdx < h.length ? h[dev.histIdx] : "";
   };
   lw.append(bar, log, form);
-  c.append(top, k, rate, rc, createChart(dev), lw);
+  c.append(top, k, more, rc, createChart(dev), lw);
   $("cards").append(c);
   dev.el = c;
   dev.logReset = true;
@@ -875,6 +881,22 @@ function renderAge(dev){
   dev.el.classList.toggle("stale", a > staleAfter(dev));
 }
 
+function renderMore(dev, L){
+  const t = dev.tele, kb = (x) => fmt(x / 1024, 0) + " KB", f = [];
+  if (Number.isFinite(t.mcuT)) f.push("MCU " + fmt(t.mcuT, 1) + " °C");
+  if (Number.isFinite(t.lag)) f.push("lag " + fmt(t.lag / 1000, 1) + " ms");
+  if (Number.isFinite(t.heap)) f.push("heap " + kb(t.heap));
+  if (Number.isFinite(t.heapMin)) f.push("heap_min " + kb(t.heapMin));
+  if (Number.isFinite(t.E)) f.push("E " + fmt(t.E / 1000, 3) + " kWh");
+  const r = ["Ro", "Rc", "Rb"].filter(k => Number.isFinite(t[k])).map(k => k + " " + fmt(t[k], 0) + " mΩ");
+  if (r.length) f.push(r.join(" · "));
+  if (L.state === "on") f.push("lease on, " + leaseLeft(L) + " s left");
+  else if (L.state === "refused" || L.state === "no-reply") f.push("lease refused: " + L.reason);
+  else if (dev.mqtt.teleSeen) f.push("lease relay-fed");
+  const info = q(dev, "details.more .info");
+  info.replaceChildren(...f.map(x => el("span", null, x)));
+}
+
 function renderCard(dev){
   if (!dev.el) createCard(dev);
   const t = dev.tele;
@@ -904,6 +926,7 @@ function renderCard(dev){
   q(dev, ".vout").textContent = fmt(t.Uo, 2) + " V";
   q(dev, ".iout").textContent = fmt(t.I, 2) + " A";
   q(dev, ".duty").textContent = Number.isFinite(t.duty) ? String(t.duty) : "–";
+  q(dev, ".ntc").textContent = Number.isFinite(t.ntcT) ? fmt(t.ntcT, 1) + " °C" : "–";
   // rate line
   const parts = [];
   if (b && b.state === "on" && b.tele === "on"){
@@ -916,6 +939,7 @@ function renderCard(dev){
       : "MQTT relay " + rateOf(dev, "mqtt").toFixed(1) + " pt/s");
   }
   q(dev, ".rate").textContent = parts.join("  |  ");
+  if (q(dev, "details.more").open) renderMore(dev, L);
   renderAge(dev);
   renderChart(dev);
   renderLog(dev);
