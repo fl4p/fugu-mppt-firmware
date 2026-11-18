@@ -165,7 +165,7 @@ Trip totals 292 (main) vs 292 / 294 / 291; individual runs differ. The large los
 (main 92-93 %, k 1.4 87-89 %, k 2.5 85-90 %). Without that profile, k 2.0 / 2.5 are neutral to +0.1 pp with worst
 cases of -1..-2 pp; k 1.4 loses on flat's floor and k 2.5 loses on the old wx-low case. The dusk baseline itself
 varies by up to 3.5 pp across offsets, so 3 offsets of one recording at one gain cannot show a reliable gain or
-loss of this size. Conclusion: no k shows a reliable gain; recommendation: do not land rev_k as the default.
+loss of this size. Conclusion: no k shows a reliable gain; recommendation: do not land rev_k as the default. Decision 2026-11-18: not landed; the fixed rule stays.
 
 The port's AR(1) correction rho = exp(-T/tau) does not describe 2-pass EWMA + period means: adjacent correlation
 0.64 vs the model's 0.23 at 450 Hz, sigma estimated 0.56x (450 Hz), 0.60x (506 Hz), 0.86x (1470 Hz), so k has no
