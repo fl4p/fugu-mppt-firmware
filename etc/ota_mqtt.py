@@ -10,16 +10,20 @@ directly reachable, lock onto the device by exact hostname, read `bootinfo`, ser
 etc/ota-via-relay.sh), send `ota <url>`, watch the log for `OTA Succeed`, a failure line or
 silence, then poll `bootinfo` until the device answers and check that it runs the image's version
 from another slot with a reset uptime. A failed or silent download is retried once, re-staged.
+Each transfer runs with the NAT gateway's Wi-Fi TX power raised (GatewayTx), restored afterwards.
 `--dry-run` does all of this except sending `ota`. Run from the repo root with .venv/bin/python3.
 """
 import argparse
 import atexit
+import json
 import os
 import re
 import socket
 import subprocess
 import sys
+import signal
 import time
+import urllib.error
 import urllib.request
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -157,6 +161,87 @@ class Relay:
             self.staged = False
 
 
+def default_gateway():
+    """$OTA_GW, else the host of the first $NAT_TELNET entry, else 192.168.1.231."""
+    nat = (os.environ.get('NAT_TELNET') or '').split(',')[0].strip()
+    return os.environ.get('OTA_GW') or nat.rsplit(':', 1)[0] or '192.168.1.231'
+
+
+class GatewayTx:
+    """Raise the Wi-Fi TX power of the NAT gateway (nimble-ble-proxy) for a transfer and restore
+    it. Talks HTTP directly when port 80 is reachable, else runs curl on `ssh_dest`. Every failure
+    is a warning: the gateway never blocks the OTA."""
+
+    def __init__(self, host, ssh_dest, dbm, hold_s):
+        self.host, self.ssh_dest, self.dbm, self.hold_s = host, ssh_dest, dbm, hold_s
+        self.direct = tcp_ok(host, 80, 1.5)
+        self.orig = None
+
+    def _call(self, method, query=''):
+        url = f'http://{self.host}/txpower' + (f'?{query}' if query else '')
+        if self.direct:
+            req = urllib.request.Request(url, method=method,
+                                         headers={'X-NBP-Confirm': 'yes'} if method == 'POST' else {})
+            try:
+                with urllib.request.urlopen(req, timeout=6) as r:
+                    return r.status, r.read().decode(errors='replace')
+            except urllib.error.HTTPError as e:
+                return e.code, e.read().decode(errors='replace')
+        cmd = ['curl', '-sS', '-m', '6', '-w', r'\n%{http_code}']
+        if method == 'POST':
+            cmd += ['-X', 'POST', '-H', 'X-NBP-Confirm: yes']
+        # own session: a second Ctrl-C must not kill the restore
+        r = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', self.ssh_dest,
+                            ' '.join(f"'{a}'" for a in cmd + [url])],
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=25,
+                           start_new_session=True)
+        body, _, code = r.stdout.rpartition('\n')
+        if r.returncode or not code.isdigit():
+            raise RuntimeError(f'ssh/curl exit {r.returncode}: {(r.stderr or r.stdout).strip()[-200:]}')
+        return int(code), body.strip()
+
+    def get(self):
+        code, body = self._call('GET')
+        if code != 200:
+            raise RuntimeError(f'GET /txpower: HTTP {code} {body[:120]}')
+        return json.loads(body)
+
+    def _set(self, dbm, hold=False):
+        q = f'wifi={dbm}' + (f'&for={int(hold)}' if hold else '')
+        code, body = self._call('POST', q)
+        got = self.get().get('wifi')
+        if got != dbm:
+            raise RuntimeError(f'POST /txpower?{q}: HTTP {code} {body[:120]}, GET wifi={got}')
+        return f'POST /txpower?{q} -> HTTP {code}, GET wifi={got}'
+
+    def boost(self):
+        try:
+            cur = self.get()
+            wifi = cur.get('wifi')
+            if not isinstance(wifi, int) or wifi < 2:
+                print(f'gw {self.host}: tx boost skipped, wifi={wifi!r} ({cur})')
+                return
+            if wifi >= self.dbm:
+                print(f'gw {self.host}: tx already {wifi} dBm, no boost')
+                return
+            # self-reverting boost only when the firmware advertises it
+            hold = self.hold_s if any(re.search(r'for|revert|until', k) for k in cur) else 0
+            self.orig = wifi
+            print(f'gw {self.host}: tx boost {wifi} -> {self.dbm} dBm: {self._set(self.dbm, hold)}')
+        except Exception as e:
+            print(f'⚠️  gw {self.host}: tx boost failed ({type(e).__name__}: {e}); continuing')
+
+    def restore(self):
+        if self.orig is None:
+            return
+        try:
+            print(f'gw {self.host}: tx restore -> {self.orig} dBm: {self._set(self.orig)}')
+            self.orig = None
+        except Exception as e:
+            print(f'⚠️  gw {self.host}: tx restore to {self.orig} dBm FAILED '
+                  f'({type(e).__name__}: {e}); set it by hand: POST /txpower?wifi={self.orig}')
+
+
 class ExactMqtt(MqttTransport):
     """MqttTransport that only accepts `pv/log/<device>` exactly, not a substring match."""
 
@@ -278,7 +363,15 @@ def main():
                     help='accept the guard prompts (plant-sim image, unconfirmed running image, ...)')
     ap.add_argument('--allow-driver-change', action='store_true',
                     help='push even if the gate driver differs or is unverified')
+    ap.add_argument('--gw', default=default_gateway(),
+                    help='NAT gateway whose Wi-Fi TX power is raised during the transfer '
+                         '(default $OTA_GW, else the $NAT_TELNET host, else 192.168.1.231)')
+    ap.add_argument('--gw-tx-dbm', type=int, default=20,
+                    help='gateway Wi-Fi TX power during the transfer, dBm (20)')
+    ap.add_argument('--no-gw-boost', action='store_true',
+                    help='leave the gateway TX power alone')
     args = ap.parse_args()
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # run the finally blocks
     args.bin = os.path.abspath(args.bin)
     sys.stdout.reconfigure(line_buffering=True)
 
@@ -352,6 +445,8 @@ def main():
                          ('version', 'VERSION', {'no_wrap': True}), ('slot', 'SLOT'),
                          ('rollback', 'ROLLBACK')], title=f'{args.name}:')
 
+        gw = None if args.no_gw_boost or args.dry_run else GatewayTx(
+            args.gw, ssh_dest, args.gw_tx_dbm, OTA_BUDGET + args.reboot_timeout + 60)
         result, text, after = 'failed', '', None
         for n in range(1 + max(0, args.retries)):
             try:
@@ -364,7 +459,13 @@ def main():
                 table()
                 print(f'dry-run: would send `ota {url}` to {args.name}')
                 return 0
-            result, text, after = attempt(con, url, image['version'], before)
+            try:
+                if gw:
+                    gw.boost()
+                result, text, after = attempt(con, url, image['version'], before)
+            finally:
+                if gw:
+                    gw.restore()
             print(f"attempt {n + 1}: {result}: {text}")
             if result != 'failed':
                 break

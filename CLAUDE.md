@@ -66,7 +66,10 @@ without `-n` (`--bin` for another image). It reads the broker and credentials fr
 fallback), tunnels through `havan-ts` when the broker is not directly reachable, stages the image on the relay with
 `etc/ota-via-relay.sh` when this host cannot serve it, locks onto the exact hostname, sends `ota <url>`, and then checks
 `bootinfo` for the image's version on the other slot with a reset uptime. A failed or silent download is retried once.
-It refuses non-interactively when the running image is still `PENDING_VERIFY`. `fugu_console.py --mqtt` (bare = `$MQTT_HOST`)
+It refuses non-interactively when the running image is still `PENDING_VERIFY`. Around each transfer it raises the NAT
+gateway's Wi-Fi TX power (`POST /txpower?wifi=20`, directly or curl via `havan-ts`) and restores the old value afterwards,
+also on failure or Ctrl-C (`--gw`, `--gw-tx-dbm`, `--no-gw-boost`); gateway errors only warn. The gateway persists the
+level in NVS, so after a `kill -9` check `GET /txpower`. `fugu_console.py --mqtt` (bare = `$MQTT_HOST`)
 takes its credentials from the same file and returns from `ota` at `OTA Succeed` or a failure line.
 
 **OTA safety net (rollback + boot watchdog).** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` makes a freshly-OTA'd image
