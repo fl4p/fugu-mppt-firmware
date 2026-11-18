@@ -340,6 +340,7 @@ void test_scan_unshaded_never_learns();
 void test_scan_noise_and_cloud();
 void test_scan_count_only_grows_and_persist();
 void test_scan_skipped_and_nan_sweeps();
+void test_scan_learn_drops_rewritten_sweep();
 
 // conf.h
 void test_conf_getlong_bases();
@@ -606,6 +607,7 @@ void setup() {
     RUN_TEST(test_scan_noise_and_cloud);
     RUN_TEST(test_scan_count_only_grows_and_persist);
     RUN_TEST(test_scan_skipped_and_nan_sweeps);
+    RUN_TEST(test_scan_learn_drops_rewritten_sweep);
 
     // buck.h — diode-emulation / sync-rect math
     RUN_TEST(test_buck_ripple_current);

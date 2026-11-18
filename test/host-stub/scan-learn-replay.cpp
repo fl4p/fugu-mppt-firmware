@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <string>
 #include "esp_log.h"
 #include "peak_scan.h"
@@ -17,7 +18,7 @@ int main(int argc, char **argv) {
     const bool crash = argc > 1 && !strcmp(argv[1], "crash");
     const float pMin = 25 * 0.002f * 1000; // 25 sweepMinPower() at p_max 1000 W
     struct Dev {
-        PeakScan s;
+        std::unique_ptr<PeakScan> ps = std::make_unique<PeakScan>();
         std::string boot;
         uint8_t saved = 0;
         int shaded = 0, covered = 0, wrong = 0;
@@ -30,13 +31,13 @@ int main(int argc, char **argv) {
         if (sscanf(line, "S %31s %31s %15s %f %f %f", dev, boot, tm, &voc, &vm, &pm) == 6) {
             d = &devs[dev];
             if (d->boot != boot) {
-                if (!crash && d->s.unsaved) d->saved = d->s.n;
-                d->s = PeakScan{}, d->s.n = d->saved, d->boot = boot;
+                if (!crash && d->ps->unsaved()) d->saved = d->ps->n;
+                d->ps = std::make_unique<PeakScan>(), d->ps->n = d->ps->saved = d->saved, d->boot = boot;
             }
-            if (d->s.unsaved) d->saved = d->s.n, d->s.unsaved = false; // sweep start: tracker.conf write
-            d->s.onSweep(voc, 0);
+            if (d->ps->unsaved()) d->saved = d->ps->saved = d->ps->n; // sweep start: tracker.conf write
+            d->ps->onSweep(voc, 0);
         } else if (line[0] == 'E' && d) {
-            auto &s = d->s;
+            auto &s = *d->ps;
             const uint8_t n0 = s.n, nc = s.nc;
             s.onSweepMpp(vm, pm, pMin);
             const bool bright = s.pending;
@@ -52,7 +53,7 @@ int main(int argc, char **argv) {
                    s.n != n0 ? " LEARNED" : "");
             d = nullptr;
         } else if (d && sscanf(line, "%f %f", &v, &p) == 2) {
-            d->s.sweepSample(v, p);
+            d->ps->sweepSample(v, p);
         }
     }
     for (auto &[k, x]: devs)

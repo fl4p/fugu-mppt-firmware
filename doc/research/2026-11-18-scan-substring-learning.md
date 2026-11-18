@@ -118,13 +118,36 @@ into its littlefs tree, so `scanSave()` really writes).
 
 ## Cost
 
-esp32s3 (IDF 6.0.3) vs main 60fa7dfd: flash code +800 B, rodata +172 B, IRAM (`.text` in DIRAM) +100 B
-(`MpptController::update()` +68 B: `sweepSample` inlined in the sweep branch; revision 1 had +378 B in
-`_stopSweep`). `scanLf()` 444 B and `scanSave()` 254 B in flash. `rtprof_map.py --check`: 79 entries, 0 not in IRAM.
-Classic esp32: IRAM 108463 B on both, 22.6 kB free. One `tracker.conf` rewrite per learned increase, only when
-`flashWriteSafe()` or at a console restart.
+esp32s3 (IDF 6.0.3) vs main 60fa7dfd, revision 3: IRAM (`.text` in DIRAM) +204 B (135819 -> 136023;
+`MpptController::update()` +64 B with `sweepSample` inlined, `PeakScan::claim()` 33 B out of line in IRAM; inlined
+twice it cost 120 B more; revision 2 was +100 B, revision 1 +378 B in `_stopSweep`). `scanLf()` 662 B and
+`scanSave()` 520 B in flash. `rtprof_map.py --check`: 79 entries, 0 not in IRAM. Classic esp32: IRAM 108499 B
+(main 108463), 22.6 kB free. One `tracker.conf` rewrite per learned increase, only when `flashWriteSafe()` or at a
+console restart on core 0.
+
+Sim sanity after revision 3 (pgx93, offset 11): warm output equals fixed $n = 6$ on wx-shade-learn fry,
+wx-shade-cloud flat, wx-shade2-move fry and wx-shade3 flat; learn output equals revision 2 on the same cells.
+
+## Revision 3 (re-review)
+
+* `systemRestart()` saves only off the RT core: the ADC-stall and no-sample restarts run on core 1 and must not write
+  flash or race `loopLF`'s save.
+* Handoff: `pending` is a `std::atomic<bool>` (store release, exchange acquire); RT bumps `gen` in `claim()` at sweep
+  start and scan start, before it rewrites the maxima. `learn()` copies them, fences, and drops the sweep if `gen`
+  moved (`test_scan_learn_drops_rewritten_sweep`).
+* `unsaved` is now `n != saved`, `saved` being the value read at boot or last written. `scanSave()` re-reads the key
+  first; if it differs from `saved` (set by hand since, e.g. `set-config ... pv_substrings 0`), the learned count is
+  not written.
+* `pv_substrings` is back in the reference table and the config editor, as a learned value.
+
+Covered as "known before the sweep" (the scan can act on that sweep's shade): fry 26/27, flat 1/4. "Covered" in the
+table above counts $n$ known after the sweep.
 
 ## Open risks
+
+* A strong start transient (at least 60 % of the MPP, below 0.93 $V_{oc}$) with a hot MPP at or below 0.74 $V_{oc}$
+  learns and saves a false 6 for good (until `pv_substrings` is set to 0). Cost on an unshaded string: idle scans,
+  about -0.04 pp of harvest; no wrong move.
 
 * First shade on a fresh installation (or after `pv_substrings=0`): not scanned until a sweep shows it. A shadow that
   comes and goes within 30 min after that boot is missed on its first pass.

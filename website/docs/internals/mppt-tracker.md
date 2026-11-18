@@ -254,8 +254,11 @@ One sweep is enough. The count only grows: a sweep that fits a smaller $n$ chang
 unshaded string never scans.
 
 The count is kept in `tracker.conf::pv_substrings`. It is written once when it grows, as soon as a flash write is
-safe (converter off, or below 5 W), and before a console restart. Setting it to 0 makes the converter learn it
-again after the next restart. It is not meant to be set by hand.
+safe (converter off, or below 5 W), and before a console restart. Setting it to 0 (`set-config`) makes the
+converter learn it again after the next restart; until then the running count stays in use, and a count learned
+in the meantime is not written over the new value. It is not meant to be set by hand otherwise.
+
+The evaluation works on a copy of the maxima. If a new sweep or a scan starts while it runs, the sweep is dropped.
 
 A shadow that comes and goes between two sweeps (30 minutes apart) after the first boot is not scanned on that pass.
 

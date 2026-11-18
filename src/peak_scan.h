@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include "esp_attr.h"
 #include "math/statmath.h"
 #include "util.h"
 
@@ -17,8 +18,9 @@ struct PeakScan {
     static constexpr uint16_t kMeasMs = 100, kTravelMs = 1500, kSteadyMs = 5000;
 
     uint8_t n = 0;           // bypass-diode substrings learned from the sweeps (tracker.conf::pv_substrings), 0 = off
-    volatile bool pending = false; // RT -> core 0: a sweep's maxima wait for learn()
-    bool unsaved = false;    // core 0: n grew since tracker.conf was written
+    std::atomic<bool> pending{false}; // RT -> core 0: a sweep's maxima wait for learn()
+    std::atomic<uint8_t> gen{0};      // RT: bumped before vc/pc/nc/voc/pk are rewritten (sweep start, scan start)
+    uint8_t saved = 0;       // core 0: n as read from or written to tracker.conf
     uint16_t interval = 300; // tracker.conf::scan_interval [s], 0 = triggered only
     bool trigger = true;     // tracker.conf::scan_trigger
     float margin = 0.03f;
@@ -38,11 +40,19 @@ struct PeakScan {
     MeanAccumulator acc{};
 
     [[nodiscard]] bool active() const { return phase != Idle; }
+    [[nodiscard]] bool unsaved() const { return n != saved; }
+
+    // RT, before vc/pc/nc/voc/pk change: a learn() in progress drops the sweep
+    __attribute__((noinline)) IRAM_ATTR void claim() {
+        pending.store(false, std::memory_order_relaxed);
+        gen.store(gen.load(std::memory_order_relaxed) + 1, std::memory_order_release);
+        std::atomic_thread_fence(std::memory_order_release);
+    }
 
     // first sweep tick (converter still off, Vin ~ Voc)
     void onSweep(float vin, uint32_t now) {
+        claim();
         voc = vin, iEnv = 0, pRef = -1, phase = Idle, tLast = tOff = now, nc = 0, pLo = 0, fall = true;
-        pending = false;
     }
 
     // sweep tick, Vin falling: local power maxima below 0.93 Voc with an 8 % dip on both sides go to vc/pc (idle
@@ -72,19 +82,25 @@ struct PeakScan {
         if (r > 0.74f && r < 0.86f) kVmp = r;
         if (nc <= 6 && p >= pMin && voc > 0) {
             pk = p;
-            std::atomic_thread_fence(std::memory_order_release);
-            pending = true;
+            pending.store(true, std::memory_order_release);
         }
     }
 
     // core 0, after onSweepMpp() (vc/pc stay untouched for 5 s): the first maximum of at least 60 % of the MPP is the
     // full string (a start transient is weaker); n from the maxima below it of at least 30 % of the MPP, the largest
     // n in 2..6 that puts each at m - 0.25 .. m + 0.5 shares of 0.82 Voc / n (m < n; shaded maxima sit high).
-    // Nothing if the MPP is not a recorded maximum. True if n grew.
-    bool learn() {
-        if (!pending) return false;
+    // Nothing if the MPP is not a recorded maximum. Works on a copy; drops it if RT rewrote the arrays meanwhile
+    // (mid: test hook, runs after the copy). True if n grew.
+    template<class Mid = decltype([](PeakScan &) {})>
+    bool learn(Mid mid = {}) {
+        if (!pending.exchange(false, std::memory_order_acquire)) return false;
+        const uint8_t g0 = gen.load(std::memory_order_acquire), nc = std::min<uint8_t>(this->nc, 6);
+        float vc[6], pc[6];
+        std::copy_n(this->vc, 6, vc), std::copy_n(this->pc, 6, pc);
+        const float voc = this->voc, pk = this->pk;
+        mid(*this);
         std::atomic_thread_fence(std::memory_order_acquire);
-        pending = false;
+        if (gen.load(std::memory_order_relaxed) != g0) return false;
         int g = -1;
         bool mpp = false;
         for (int i = 0; i < nc; ++i) {
@@ -105,7 +121,7 @@ struct PeakScan {
             if (!q || ok) break;
         }
         if (!q || c < 2 || c <= n) return false;
-        n = (uint8_t) c, unsaved = true;
+        n = (uint8_t) c;
         ESP_LOGI("mppt", "scan: %u bypass-diode substrings learned from the sweep", (unsigned) n);
         return true;
     }
@@ -140,6 +156,7 @@ struct PeakScan {
             // shares, so Vin / m0 can be high; the share from Voc misses heating and the Vmpp/Voc spread: take the mean
             const int m0 = std::clamp((int) std::lround(vin / vs0), 1, (int) n);
             const float sh = 0.5f * (vin / (float) m0 + vs0);
+            claim();
             nc = 0;
             for (int m = 1; m <= n; ++m) {
                 const float v = kProbeLow * (float) m * sh;

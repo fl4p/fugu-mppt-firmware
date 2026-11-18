@@ -1177,7 +1177,7 @@ static int runWx(const std::string &name, Wx &wx) {
            " GMPP, %.1f J per scan; wrong-peak loss %.2f %%\n", name.c_str(), nScan, nMoved, nLight, tCat[SCAN],
            loss[SCAN] / 3600, loss[SCAN] * pc, nScan ? loss[SCAN] / (double) nScan : 0.0, loss[WRONG] * pc);
     for (auto &[t, c]: g_scanT) if (t >= wx.statsFrom && nScan <= 40) printf("==   scan at t=%.1f s %c\n", t, c);
-    if (mppt.scan.unsaved) { // learned in this run: the save and the reload
+    if (mppt.scan.unsaved()) { // learned in this run: the save and the reload
         mppt.scanSave();
         ConfFile tc{"/littlefs/conf/tracker.conf"};
         printf("== SCAN learned %u substrings, tracker.conf pv_substrings=%u\n", mppt.scan.n, tc.getByte("pv_substrings", 0));

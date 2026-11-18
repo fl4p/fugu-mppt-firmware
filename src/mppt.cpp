@@ -533,7 +533,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
 
     psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
-    scan.n = std::min<uint8_t>(6, trackerConf.getByte("pv_substrings", 0)); // learned, 0 = learn again
+    scan.n = scan.saved = std::min<uint8_t>(6, trackerConf.getByte("pv_substrings", 0)); // learned, 0 = learn again
     scan.interval = (uint16_t) std::clamp(trackerConf.getLong("scan_interval", 300), 0L, 65535L);
     scan.trigger = trackerConf.getByte("scan_trigger", 1);
 
@@ -702,13 +702,17 @@ void MpptController::scanLf(bool flashSafe) {
     if (flashSafe) scanSave();
 }
 
-// core 0: one tracker.conf rewrite when the learned count grew
+// core 0: one tracker.conf rewrite when the learned count grew; a value set by hand since then is kept
 void MpptController::scanSave() {
-    if (!scan.unsaved) return;
+    if (!scan.unsaved()) return;
+    ConfFile conf{"/littlefs/conf/tracker.conf"};
+    if (conf.getByte("pv_substrings", 0) != scan.saved) {
+        scan.saved = scan.n;
+        return;
+    }
     char v[4];
     snprintf(v, sizeof v, "%u", scan.n);
-    ConfFile conf{"/littlefs/conf/tracker.conf"};
-    if (conf.update({{"pv_substrings", v}})) scan.unsaved = false;
+    if (conf.update({{"pv_substrings", v}})) scan.saved = scan.n;
     else ESP_LOGW("mppt", "tracker.conf write failed, retrying");
 }
 

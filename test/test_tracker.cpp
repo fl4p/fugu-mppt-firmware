@@ -599,7 +599,7 @@ void test_scan_learns_substrings() {
         PeakScan s{};
         learnSweep(s, *pv);
         TEST_ASSERT_EQUAL_INT(6, s.n);
-        TEST_ASSERT_TRUE(s.unsaved);
+        TEST_ASSERT_TRUE(s.unsaved());
         TEST_ASSERT_FALSE(s.pending);
     }
 }
@@ -632,7 +632,7 @@ void test_scan_unshaded_never_learns() {
     learnCurve(s, {{80, 0}, {77, 100}, {76, 90}, {57.6f, 300}, {29, 150}});
     for (float r: {0.72f, 0.74f}) learnCurve(s, {{80, 0}, {74, 100}, {72, 85}, {r * 80, 300}, {25, 120}});
     TEST_ASSERT_EQUAL_INT(0, s.n);
-    TEST_ASSERT_FALSE(s.unsaved);
+    TEST_ASSERT_FALSE(s.unsaved());
     learnCurve(s, {{80, 0}, {77, 250}, {75, 200}, {0.72f * 80, 300}, {25, 120}});
     TEST_ASSERT_EQUAL_INT(0, s.n);
     learnCurve(s, {{80, 0}, {74, 200}, {72, 170}, {0.72f * 80, 300}, {25, 120}}); // transient >= 60 % of the MPP: fakes 6
@@ -668,20 +668,20 @@ void test_scan_count_only_grows_and_persist() {
     PeakScan s{};
     learnCurve(s, {{80, 0}, {70, 200}, {3 * u6 + 4, 120}, {3 * u6, 190}, {29, 100}});
     TEST_ASSERT_EQUAL_INT(6, s.n);
-    s.unsaved = false;
+    s.saved = s.n;
     learnCurve(s, {{80, 0}, {70, 200}, {3 * u5 + 4, 120}, {3 * u5, 190}, {29, 100}});
     TEST_ASSERT_EQUAL_INT(6, s.n);
-    TEST_ASSERT_FALSE(s.unsaved);
+    TEST_ASSERT_FALSE(s.unsaved());
 
     PeakScan loaded{};
-    loaded.n = 6;
+    loaded.n = loaded.saved = 6;
     learnCurve(loaded, {{80, 0}, {70, 200}, {3 * u6 + 4, 120}, {3 * u6, 190}, {29, 100}});
-    TEST_ASSERT_FALSE(loaded.unsaved);
+    TEST_ASSERT_FALSE(loaded.unsaved());
     PeakScan cleared{};
     cleared.n = 0;
     learnCurve(cleared, {{80, 0}, {70, 200}, {3 * u5 + 4, 120}, {3 * u5, 190}, {29, 100}});
     TEST_ASSERT_EQUAL_INT(5, cleared.n);
-    TEST_ASSERT_TRUE(cleared.unsaved);
+    TEST_ASSERT_TRUE(cleared.unsaved());
 }
 
 // Skipped sweeps learn nothing: dim (MPP below pMin); the next sweep started before learn() and aborted (its maxima
@@ -705,12 +705,34 @@ void test_scan_skipped_and_nan_sweeps() {
     s.onSweepMpp(72, 228, 10);
     TEST_ASSERT_TRUE(s.learn());
     TEST_ASSERT_EQUAL_INT(6, s.n);
-    s = PeakScan{};
-    s.onSweep(80, 0), feed(), s.onSweepMpp(NAN, NAN, 10);
+    PeakScan t{};
+    t.onSweep(80, 0);
+    for (float v = 80; v > 29; v -= 0.25f) t.sweepSample(v, v * pv->pvCurrent(v));
+    t.onSweepMpp(NAN, NAN, 10);
+    TEST_ASSERT_FALSE(t.pending);
+    t.onSweep(NAN, 0);
+    for (float v = 80; v > 29; v -= 0.25f) t.sweepSample(v, v * pv->pvCurrent(v));
+    t.onSweepMpp(60, 200, 10);
+    TEST_ASSERT_FALSE(t.learn());
+    TEST_ASSERT_EQUAL_INT(0, t.n);
+}
+
+// RT rewrites the maxima while learn() works on its copy (a new sweep, a scan start): the sweep is dropped
+void test_scan_learn_drops_rewritten_sweep() {
+    auto pv = fryString(1, 0.8f);
+    PeakScan s{};
+    auto sweep = [&] {
+        s.onSweep(80, 0);
+        for (float v = 80; v > 29; v -= 0.25f) s.sweepSample(v, v * pv->pvCurrent(v));
+        s.onSweepMpp(72, 228, 10);
+    };
+    sweep();
+    TEST_ASSERT_FALSE(s.learn([](PeakScan &x) { x.onSweep(80, 0); }));
     TEST_ASSERT_FALSE(s.pending);
-    s.onSweep(NAN, 0);
-    for (float v = 80; v > 29; v -= 0.25f) s.sweepSample(v, v * pv->pvCurrent(v));
-    s.onSweepMpp(60, 200, 10);
-    TEST_ASSERT_FALSE(s.learn());
+    sweep();
+    TEST_ASSERT_FALSE(s.learn([](PeakScan &x) { x.claim(), x.nc = 0; }));
     TEST_ASSERT_EQUAL_INT(0, s.n);
+    sweep();
+    TEST_ASSERT_TRUE(s.learn());
+    TEST_ASSERT_EQUAL_INT(6, s.n);
 }

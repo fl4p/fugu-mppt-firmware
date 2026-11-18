@@ -1922,7 +1922,7 @@ static void restartCloseTelnet() {
 
 void systemRestart() {
     converter.disable();
-    mppt.scanSave();
+    if (xPortGetCoreID() != RT_CORE) mppt.scanSave();
     if (g_restartBlocked) {
         ESP_LOGE("main", "restart refused: bootloader region not verified");
         return;
