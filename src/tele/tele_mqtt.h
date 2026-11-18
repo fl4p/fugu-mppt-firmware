@@ -10,7 +10,7 @@
 
 #ifdef WITH_TELE_MQTT
 
-// seconds=0 stops; else starts or extends the lease (capped at 3600 s). nullptr on success,
+// seconds=0 stops; else starts the lease or re-sets its end to now+seconds (capped at 3600 s). nullptr on success,
 // else a static error message.
 const char *teleMqttLease(uint32_t seconds);
 void teleMqttEnqueue(const std::string &frame);   // producer fan-out

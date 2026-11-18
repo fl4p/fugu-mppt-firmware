@@ -1,4 +1,4 @@
-# fry/flat production image: options of the live build plus BLE telemetry stream + adv broadcast.
+# fry/flat production image: options of the live build plus the BLE telemetry stream (no adv broadcast: the browser cannot read it).
 # Build: idf.py -B build-fleet -DSDKCONFIG=build-fleet/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.fleet" build
 CONFIG_FUGU_INA226_MEASURED_RATE=y
 CONFIG_FUGU_RT_ALLOC_COUNT=y
@@ -15,4 +15,3 @@ CONFIG_FUGU_WITH_PWR_KNOBS=y
 CONFIG_FUGU_WITH_SCOPE=y
 CONFIG_FUGU_WITH_WSYNC=y
 CONFIG_FUGU_WITH_BLE_TELE=y
-CONFIG_FUGU_WITH_BLE_ADV=y

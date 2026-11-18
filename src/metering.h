@@ -217,7 +217,8 @@ struct SolarEnergyMeter {
                 return std::abs(a.totalEnergy - b.totalEnergy) < 5
                        && a.bootCount == b.bootCount
                        && std::abs(a.todayEnergy - b.todayEnergy) < 5
-                       && std::abs(a.todayPinMax - b.todayPinMax) < 5;
+                       && std::abs(a.todayPinMax - b.todayPinMax) < 5
+                       && std::abs((long) (a.timeLastPower - b.timeLastPower)) < 3600;  // restore() needs it fresh
             },
             1000 * 60 * 2
     };

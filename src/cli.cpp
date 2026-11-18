@@ -2128,7 +2128,7 @@ static void cmdVconv(cmd *c) {
         else if (key == "cloud_depth")  sun.depth = v;
         else if (key == "cloud_len_s")  sun.len = v;
         else if (key == "cloud_edge_s") sun.edge = v;
-        else if (key == "sun_seed")     sun.reset((uint32_t) std::fabs(v));
+        else if (key == "sun_seed")     sun.reset((uint32_t) std::min<double>(std::fabs(v), 4294967295.0));
         else CMD_FAIL_RETURN("vconv set: unknown key '%s'", key.c_str());
         UART_LOG("vconv: %s=%.6g", key.c_str(), v);
     } else {
