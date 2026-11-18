@@ -128,7 +128,7 @@ struct ChargerRtc {
     uint8_t holiday, streak, gaps, override_;
     uint32_t sum;
 
-    static constexpr uint32_t MAGIC = 0x48444c31;
+    static constexpr uint32_t MAGIC = 0x48444c32;
     [[nodiscard]] uint32_t checksum() const {
         uint32_t w[4], h = 0x811c9dc5;
         memcpy(w, this, sizeof(w));
@@ -371,7 +371,7 @@ class BatteryCharger {
     volatile uint8_t _hOverride = 0; // 0 auto, 1 on, 2 off
     bool _holiday = false, _hEff = false; // detected, effective last tick
     uint32_t _fullAgeBootS = UINT32_MAX; // restored full-charge age at boot (no full since boot)
-    bool _refRestored = false; // the BMS full reference survived a reboot
+    bool _refFull = false; // the counter's BMS reference was taken at a real full (since boot or restored)
     ChargerRtc *_rtc = nullptr;
 
     // Consumer-side freshness of the producer's 32-bit frame stamps: the stamp only tells us a
@@ -437,6 +437,7 @@ public:
             // Rising edge — pack is full, re-zero the coulomb counter so the
             // recharge_dod hysteresis measures against this full point.
             batSt.coulombCounter.markFull();
+            _refFull = std::isfinite(batSt.coulombCounter.bmsRef());
             _lastFullUs = wallClockUs();
             ESP_LOGI("charger", "Termination latched: ahSinceFull reset to 0");
         }
@@ -495,8 +496,8 @@ public:
     }
 
     // Holiday detection, per 24 h bucket: mean discharge current (ibat < -0.2 A) over the time it
-    // discharged. Charging is ignored, so a balancing full charge is no activity. A bucket is evaluable
-    // with >= 80 % ibat coverage, >= 2 h of discharge and a changing ibat (a stuck reading is not quiet);
+    // discharged (at least 2 h). Charging and the partial hold's own drain are ignored. A bucket is evaluable
+    // with >= 80 % ibat coverage and, after >= 2 h of discharge, a changing ibat (a stuck reading is not quiet);
     // an unevaluable one pauses the streak, two in a row reset it unless on holiday. holiday_days quiet buckets enter; a
     // mean above holiday_ibat ends it (in the running bucket after 3 h above 1.2 holiday_ibat).
     void _updateHoliday() {
@@ -512,6 +513,8 @@ public:
         time_us dt = now - _hLastUs;
         _hLastUs = now;
         float ibat = batSt.ibatSmoothed();
+        float t = _partialHold ? _holdIbatTarget() : 0.f;
+        if (t < 0.f && ibat >= t - HOLIDAY_DIS_A) ibat = 0.f; // the hold's own drain; beyond it the converter is out
         bool fresh = ibatFresh();
         if (batSt.ibat_t != _hLastT) {
             _hLastT = batSt.ibat_t;
@@ -530,8 +533,9 @@ public:
             _hSet(false, mean);
         }
         if (now - _hStartUs >= HOLIDAY_DAY_US) {
-            bool evaluable = _hCovS >= 0.8f * (HOLIDAY_DAY_US * 1e-6f) && _hDisS >= HOLIDAY_MIN_DIS_S
-                             && _hChg * 20 >= _hFrames;
+            bool evaluable = _hCovS >= 0.8f * (HOLIDAY_DAY_US * 1e-6f)
+                             && (_hDisS < HOLIDAY_MIN_DIS_S || _hChg * 20 >= _hFrames);
+            mean = _hDisAh * 3600.f / fmaxf(_hDisS, HOLIDAY_MIN_DIS_S);
             if (!evaluable) {
                 if (_hGaps < UINT8_MAX) ++_hGaps;
                 if (_hGaps >= 2 && !_holiday) _hStreak = 0; // gaps never end an active holiday
@@ -584,13 +588,21 @@ public:
 
     // The deficit counts from a real full: one since boot, or the restored BMS reference while it is live.
     [[nodiscard]] bool deficitKnown() const {
-        return _lastFullUs != 0 || (_refRestored && batSt.coulombCounter.bmsSource());
+        return _lastFullUs != 0 || (_refFull && batSt.coulombCounter.bmsSource());
     }
 
     // Partial-charge ceiling: after a full charge, stop at ceiling() (Ah-counted from that full) and
     // hold there by load-following until the pack has discharged recharge_dod (holiday_band on
     // holiday) below it, or until full_charge_interval expires (then charge to full for balancing).
     void _updatePartialHold() {
+        if (_refFull && !_lastFullUs && batSt.coulombCounter.bmsSource()) {
+            float d = batSt.coulombCounter.deficit();
+            if (!(d >= -0.05f * params.Cbat && d <= params.Cbat)) {
+                ESP_LOGW("charger", "restored BMS ref dropped: deficit %.1f Ah", d);
+                _refFull = false;
+                batSt.coulombCounter.restoreRef(NAN);
+            }
+        }
         bool dataOk = batSt.haveValidCellVoltage() && ibatFresh(); // the deficit counter is only trusted live
         float lim = ceiling();
         bool enabled = lim > 0.f && deficitKnown() && dataOk && fullAgeS() < params.full_charge_interval_s;
@@ -623,7 +635,7 @@ public:
             _fullAgeBootS = r->fullAgeS;
             if (std::isfinite(r->bmsRef)) {
                 batSt.coulombCounter.restoreRef(r->bmsRef);
-                _refRestored = true;
+                _refFull = true;
             }
         }
         _holiday = r->holiday;
@@ -631,7 +643,7 @@ public:
         _hGaps = r->gaps;
         _hOverride = r->override_;
         ESP_LOGI("charger", "retained: full %lus ago%s, holiday %u (streak %u, override %u)",
-                 (unsigned long) _fullAgeBootS, _refRestored ? " (BMS ref)" : "", (unsigned) _holiday,
+                 (unsigned long) _fullAgeBootS, _refFull ? " (BMS ref)" : "", (unsigned) _holiday,
                  (unsigned) _hStreak, (unsigned) _hOverride);
     }
 
@@ -640,7 +652,7 @@ public:
         ChargerRtc r{};
         r.magic = ChargerRtc::MAGIC;
         r.fullAgeS = fullAgeS();
-        r.bmsRef = r.fullAgeS != UINT32_MAX && (_lastFullUs || _refRestored) ? batSt.coulombCounter.bmsRef() : NAN;
+        r.bmsRef = r.fullAgeS != UINT32_MAX && _refFull ? batSt.coulombCounter.bmsRef() : NAN;
         r.holiday = _holiday;
         r.streak = _hStreak;
         r.gaps = _hGaps;

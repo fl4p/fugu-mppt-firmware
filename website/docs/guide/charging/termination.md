@@ -230,12 +230,14 @@ applies a ceiling automatically:
 - The charger measures the mean discharge current of the pack in consecutive
   24 h windows on its own uptime clock: the Ah discharged while the BMS `ibat`
   was below −0.2 A, divided by the time it was. Charging is ignored, so a full
-  charge is not counted as activity. A window is quiet when this mean stays
-  below `holiday_ibat`.
+  charge is not counted as activity, and neither is discharge caused by the
+  hold itself while it drains the pack down to the ceiling. A window is quiet
+  when this mean (taken over at least 2 h) stays below `holiday_ibat`.
 - A window is only evaluated when live `ibat` data covered at least 80 % of it
-  (a gap of more than 60 s between frames counts as not covered), the pack
-  discharged for at least 2 h, and the `ibat` reading changed in at least 5 %
-  of the frames (a stuck reading is not quiet). A window that fails these
+  (a gap of more than 60 s between frames counts as not covered) and, if the
+  pack discharged for 2 h or more, the `ibat` reading changed in at least 5 %
+  of the frames (a stuck reading is not quiet). A covered window with almost no
+  discharge counts as quiet. A window that fails these
   checks neither counts nor resets the streak. Before holiday mode is on, two
   such windows in a row reset the streak; once it is on, missing data never
   ends it (without fresh BMS data the hold is off anyway, and the next

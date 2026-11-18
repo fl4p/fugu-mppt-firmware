@@ -173,6 +173,10 @@ void test_holiday_override();
 void test_holiday_band_release();
 void test_holiday_rtc_restore();
 void test_holiday_config_validation();
+void test_holiday_hold_drain_not_quiet();
+void test_holiday_zero_load_quiet();
+void test_holiday_restored_ref_sanity();
+void test_holiday_window_phase();
 void test_mqtt_bat_temp_topics();
 void test_termination_reset_clears_latch();
 void test_coulomb_counter_starts_at_zero();
@@ -472,6 +476,10 @@ void setup() {
     RUN_TEST(test_holiday_band_release);
     RUN_TEST(test_holiday_rtc_restore);
     RUN_TEST(test_holiday_config_validation);
+    RUN_TEST(test_holiday_hold_drain_not_quiet);
+    RUN_TEST(test_holiday_zero_load_quiet);
+    RUN_TEST(test_holiday_restored_ref_sanity);
+    RUN_TEST(test_holiday_window_phase);
     // etc/coulomb_counter.h
     RUN_TEST(test_coulomb_counter_starts_at_zero);
     RUN_TEST(test_coulomb_counter_discharge_accumulates);

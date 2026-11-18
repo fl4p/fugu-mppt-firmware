@@ -842,7 +842,7 @@ static void holidayRun(BatteryCharger &c, float ibat, uint32_t secs, bool frames
     }
 }
 
-// 14 h discharging at meanA, 8 h charging, 2 h idle (the idle part without frames: 67 % coverage)
+// 14 h discharging at meanA, 8 h charging (without frames unless covered: 67 % coverage), 2 h idle
 static void holidayDay(BatteryCharger &c, float meanA, bool covered = true, float jitter = 0.05f) {
     holidayRun(c, -meanA, 14 * 3600, true, jitter);
     holidayRun(c, 10.f, 8 * 3600, covered, jitter);
@@ -1061,6 +1061,81 @@ void test_holiday_rtc_restore() {
     d.attachRtc(&saved);
     TEST_ASSERT_FALSE(d.holiday());
     TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, d.fullAgeS());
+}
+
+// restored record (full 1 h ago), then live BMS remaining charge bmsAh while running at ibat
+static void holidayBmsRun(BatteryCharger &c, float bmsAh, float ibat, uint32_t secs, ChargerRtc *r = nullptr) {
+    if (r) {
+        *r = ChargerRtc{ChargerRtc::MAGIC, 3600, 250.f, 1, 0, 0, 0, 0};
+        r->sum = r->checksum();
+        c.attachRtc(r);
+    }
+    for (uint32_t s = 0; s < secs; s += 60) {
+        c.batSt.coulombCounter.setBmsCharge(bmsAh, wallClockTicks());
+        holidayRun(c, ibat, 60);
+    }
+}
+
+// The hold draining an over-full pack (-1 A by day) is not discharge; a 3 A night load is.
+void test_holiday_hold_drain_not_quiet() {
+    BatteryCharger c;
+    ChargerRtc r;
+    holidaySetup(c, 1);
+    holidayBmsRun(c, 245.f, -1.f, 10 * 3600, &r); // 107 Ah above the ceiling: target -1 A
+    TEST_ASSERT_TRUE(c.partialHold() && c.holiday());
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 0.f, c.holidayDischargeH());
+    holidayBmsRun(c, 245.f, -3.f, 12 * 3600);
+    holidayBmsRun(c, 245.f, 0.f, 2 * 3600 + 60);
+    TEST_ASSERT_FALSE(c.holiday());
+}
+
+// A covered day without discharge is quiet (even a flat 0.00 A); a reading stuck at a discharge is
+// not, nor a short heavy discharge.
+void test_holiday_zero_load_quiet() {
+    const float amps[] = {0.f, -0.5f, -30.f};
+    for (float a: amps) {
+        BatteryCharger c;
+        holidaySetup(c, 3);
+        holidayRun(c, a, a < -1.f ? 5400 : 0, true, 0.f); // -30 A: 45 Ah in 1.5 h
+        holidayRun(c, a < -1.f ? 0.f : a, 3 * 86400 + 3600, true, 0.f);
+        TEST_ASSERT_EQUAL(a == 0.f, c.holiday());
+    }
+}
+
+// A restored reference outside [-5 %, 100 %] of Cbat is dropped; one from a full with a stale BMS
+// charge is not retained.
+void test_holiday_restored_ref_sanity() {
+    const float bms[] = {300.f, -40.f, 260.f};
+    for (float b: bms) {
+        BatteryCharger c;
+        ChargerRtc r;
+        holidaySetup(c, 1);
+        holidayBmsRun(c, b, -0.5f, 600, &r);
+        TEST_ASSERT_EQUAL(b == 260.f, c.deficitKnown() && c.partialHold() && std::isfinite(r.bmsRef));
+        TEST_ASSERT_EQUAL(b == 260.f, c.deficitKnown() || c.partialHold() || std::isfinite(r.bmsRef));
+    }
+    BatteryCharger c;
+    ChargerRtc r;
+    memset(&r, 0xa5, sizeof(r));
+    holidaySetup(c, 1);
+    c.attachRtc(&r);
+    driveEocFeedback(c, c.params.cv_min + 0.10f, 12);
+    holidayBmsRun(c, 250.f, 0.f, 600);
+    TEST_ASSERT_TRUE(r.valid() && r.fullAgeS < 3600 && std::isfinite(c.batSt.coulombCounter.bmsRef()));
+    TEST_ASSERT_TRUE(std::isnan(r.bmsRef));
+}
+
+// Windows run on uptime, 7 h off the load pattern: still enters and exits.
+void test_holiday_window_phase() {
+    BatteryCharger c;
+    holidaySetup(c, 2);
+    holidayRun(c, 0.f, 7 * 3600);
+    holidayDay(c, 1.5f);
+    TEST_ASSERT_FALSE(c.holiday());
+    holidayDay(c, 1.5f);
+    TEST_ASSERT_TRUE(c.holiday());
+    holidayDay(c, 3.f);
+    TEST_ASSERT_FALSE(c.holiday());
 }
 
 void test_holiday_config_validation() {
