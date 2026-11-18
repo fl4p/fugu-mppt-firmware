@@ -622,12 +622,15 @@ test('Connect button stores settings and toggles to Disconnect', async () => {
 const consoleShown = (window, host) =>
   window.getComputedStyle(card(window, host).querySelector('form.console')).display !== 'none';
 
-test('console input is hidden by default; the log tail stays visible', async () => {
+test('console input and log tail are hidden by default; the toggle shows both', async () => {
   const { window, Dash, client } = await withBroker();
   log(client, 'flat', ['I (1) main: hello']);
   Dash.flush();
-  assert.equal(window.document.getElementById('console-toggle').checked, false);
+  const t = window.document.getElementById('console-toggle');
+  assert.equal(t.checked, false);
   assert.equal(consoleShown(window, 'flat'), false);
+  assert.equal(window.getComputedStyle(card(window, 'flat').querySelector('.log')).display, 'none');
+  t.checked = true; t.dispatchEvent(new window.Event('change'));
   assert.notEqual(window.getComputedStyle(card(window, 'flat').querySelector('.log')).display, 'none');
 });
 

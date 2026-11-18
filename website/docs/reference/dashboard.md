@@ -26,9 +26,9 @@ Each converter gets a card, keyed by its hostname:
   stream in 0.25 V bins of input voltage: each sample sets the power of its own bin and of the existing bins within
   ±0.5 V. Bins stay for the session (at most 400; the least recently updated goes first), parts not updated for ten
   minutes are drawn faded, and the line breaks where neighbouring bins are more than 2 V apart. The power axis grows to the highest plotted value and does not shrink.
-- **Log tail**: the device console log, including the replies to commands sent from the page.
-- **Console**: an input line that sends a command to the device over the active link. It is hidden until
-  the **console** checkbox in the header is ticked; the page remembers the setting in this browser.
+- **Log tail and console**: the device console log, including the replies to commands sent from the page,
+  and an input line that sends a command to the device over the active link. Both are hidden until the
+  **log & console** checkbox in the header is ticked; the page remembers the setting in this browser.
 - **Link badges**: one for BLE and one for MQTT.
 - **More info**: a collapsed box under the values with the stream rate and dropped bytes per link, the
   slower telemetry fields (`mcu_temp`, `lag`, `heap`, `heap_min`, lifetime `E`, the `Ro`/`Rc`/`Rb` resistances

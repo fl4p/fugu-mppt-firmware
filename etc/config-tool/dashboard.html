@@ -73,7 +73,7 @@
   .log .alert { color:var(--warn); }
   .card:not(.show-sc) .log .sc { display:none; }
   form.console { display:flex; gap:6px; }
-  body:not(.show-console) form.console { display:none; }
+  body:not(.show-console) form.console, body:not(.show-console) .logbar, body:not(.show-console) .log { display:none; }
   form.console input { flex:1; min-width:0; background:var(--bg); color:var(--fg); border:1px solid var(--line);
     border-radius:6px; padding:5px 8px; font-family:ui-monospace,monospace; font-size:12px; }
   form.console input:focus { outline:none; border-color:var(--accent); }
@@ -119,7 +119,7 @@
   <button id="mqtt-connect" class="primary">Connect</button>
   <span id="mqtt-status"></span>
   <span class="spacer"></span>
-  <label id="console-l" title="show a console command line on each card"><input id="console-toggle" type="checkbox"> console</label>
+  <label id="console-l" title="show the log tail and a console command line on each card"><input id="console-toggle" type="checkbox"> log &amp; console</label>
   <button id="ble-add">+ Add BLE device</button>
 </header>
 <div id="banners"></div>
