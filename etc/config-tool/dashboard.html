@@ -75,9 +75,9 @@
   .logwrap { display:flex; flex-direction:column; gap:4px; }
   .logbar { display:flex; gap:8px; align-items:center; font-size:11px; color:var(--muted); }
   .logbar .spacer { flex:1; }
-  .log { height:180px; overflow-y:auto; overflow-x:hidden; background:#0a0d12; border:1px solid var(--line);
+  .log { height:180px; overflow:auto; background:#0a0d12; border:1px solid var(--line);
          border-radius:6px; padding:4px 6px; font-family:ui-monospace,Menlo,monospace; font-size:10px; }
-  .log div { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.35; color:var(--muted); }
+  .log div { white-space:pre; line-height:1.35; color:var(--muted); }
   .log .sent { color:var(--accent); }
   .log .ok { color:var(--accent2); }
   .log .err { color:var(--warn); }
