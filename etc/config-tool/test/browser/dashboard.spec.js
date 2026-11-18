@@ -5,6 +5,7 @@ const { mqttMsg } = require('../_setup_dash');
 
 async function gotoDash(page) {
   const errs = [];
+  if (process.env.DASH_VIEWPORT_W) await page.setViewportSize({ width: +process.env.DASH_VIEWPORT_W, height: 900 });
   page.on('pageerror', e => errs.push('pageerror: ' + e.message));
   page.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text()); });
   await page.goto('/dashboard.html');
@@ -57,6 +58,16 @@ test('ingestTele renders a card with KPIs, the live dot and a sweep curve', asyn
   await expect(card.locator('svg.chart g.hover text')).toHaveText(/^\d+\.\d W · \d+\.\d V$/);
   await page.mouse.move(0, 0);
   await expect(card.locator('svg.chart g.hover')).toHaveAttribute('visibility', 'hidden');
+
+  // caption + refresh on one row, legend on one row, nothing clipped
+  const rows = await card.evaluate((c) => {
+    const mid = (e) => { const r = e.getBoundingClientRect(); return Math.round((r.top + r.bottom) / 2); };
+    const bar = c.querySelector('.chartbar'), keys = [...c.querySelectorAll('.chartkeys .key')];
+    return { bar: Math.abs(mid(bar.querySelector('.caption')) - mid(bar.querySelector('button.refresh'))) <= 2,
+             keys: new Set(keys.map(mid)).size, fits: keys.every(k => k.getBoundingClientRect().right <= c.getBoundingClientRect().right) };
+  });
+  expect(rows).toEqual({ bar: true, keys: 1, fits: true });
+  await expect(card.locator('form.console')).toBeHidden();
 
   if (process.env.DASH_SCREENSHOT) await card.screenshot({ path: process.env.DASH_SCREENSHOT });
   expect(errs).toEqual([]);

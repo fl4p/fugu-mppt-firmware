@@ -24,7 +24,8 @@ Each converter gets a card, keyed by its hostname:
   maximum power point and the live operating point marked. The page fetches the curve on connect and again after
   each sweep ends. A refresh button fetches it on demand.
 - **Log tail**: the device console log, including the replies to commands sent from the page.
-- **Console**: an input line that sends a command to the device over the active link.
+- **Console**: an input line that sends a command to the device over the active link. It is hidden until
+  the **console** checkbox in the header is ticked; the page remembers the setting in this browser.
 - **Link badges**: one for BLE and one for MQTT, with the stream rate and dropped bytes below the values.
 
 ## Quick start

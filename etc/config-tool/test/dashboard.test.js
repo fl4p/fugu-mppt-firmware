@@ -470,3 +470,37 @@ test('Connect button stores settings and toggles to Disconnect', async () => {
   assert.equal(window._mqttClients[0].ended, true);
   assert.equal(d.getElementById('mqtt-connect').textContent, 'Connect');
 });
+
+const consoleShown = (window, host) =>
+  window.getComputedStyle(card(window, host).querySelector('form.console')).display !== 'none';
+
+test('console input is hidden by default; the log tail stays visible', async () => {
+  const { window, Dash, client } = await withBroker();
+  log(client, 'flat', ['I (1) main: hello']);
+  Dash.flush();
+  assert.equal(window.document.getElementById('console-toggle').checked, false);
+  assert.equal(consoleShown(window, 'flat'), false);
+  assert.notEqual(window.getComputedStyle(card(window, 'flat').querySelector('.log')).display, 'none');
+});
+
+test('console toggle shows the input on every card and persists across reloads', async () => {
+  const { window, Dash, client } = await withBroker();
+  log(client, 'flat', ['I (1) main: hello']);
+  log(client, 'fry', ['I (1) main: hello']);
+  Dash.flush();
+  const t = window.document.getElementById('console-toggle');
+  t.checked = true; t.dispatchEvent(new window.Event('change'));
+  assert.equal(consoleShown(window, 'flat'), true);
+  assert.equal(consoleShown(window, 'fry'), true);
+  assert.equal(window.localStorage.getItem('dash-console'), '1');
+
+  const r = await withBroker({ 'dash-console': window.localStorage.getItem('dash-console') });
+  log(r.client, 'flat', ['I (1) main: hello']);
+  r.Dash.flush();
+  assert.equal(r.window.document.getElementById('console-toggle').checked, true);
+  assert.equal(consoleShown(r.window, 'flat'), true);
+
+  t.checked = false; t.dispatchEvent(new window.Event('change'));
+  assert.equal(consoleShown(window, 'fry'), false);
+  assert.equal(window.localStorage.getItem('dash-console'), '0');
+});

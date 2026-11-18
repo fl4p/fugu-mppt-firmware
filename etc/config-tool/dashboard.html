@@ -23,7 +23,7 @@
                  padding:6px 9px; font-size:13px; }
   header input:focus { outline:none; border-color:var(--accent); }
   #mqtt-url { width:230px; } #mqtt-user, #mqtt-pass { width:110px; }
-  #mqtt-remember-l { color:var(--muted); font-size:12px; }
+  #mqtt-remember-l, #console-l { color:var(--muted); font-size:12px; }
   header input[type=checkbox] { padding:0; margin:0 3px 0 0; vertical-align:middle; }
   #mqtt-status { color:var(--muted); font-size:12px; }
   #mqtt-status.err { color:var(--warn); }
@@ -70,21 +70,24 @@
   .log .alert { color:var(--warn); }
   .card:not(.show-sc) .log .sc { display:none; }
   form.console { display:flex; gap:6px; }
+  body:not(.show-console) form.console { display:none; }
   form.console input { flex:1; min-width:0; background:var(--bg); color:var(--fg); border:1px solid var(--line);
     border-radius:6px; padding:5px 8px; font-family:ui-monospace,monospace; font-size:12px; }
   form.console input:focus { outline:none; border-color:var(--accent); }
   /* P-vs-Vin chart: dark chart tokens, series-1 blue for the curve, slot-2 orange for "now" */
   .chartwrap { --series-1:#3987e5; --series-2:#d95926; --grid:#2a3340; --axis:#3a4552; --surface:var(--panel); }
-  .chartbar { display:flex; gap:10px; align-items:center; font-size:11px; color:var(--muted); flex-wrap:wrap; }
-  .chartbar .caption { color:var(--fg); }
+  .chartbar, .chartkeys { display:flex; gap:10px; align-items:center; font-size:11px; color:var(--muted);
+                         flex-wrap:nowrap; min-width:0; white-space:nowrap; }
+  .chartbar .caption { color:var(--fg); min-width:0; overflow:hidden; text-overflow:ellipsis; }
   .chartbar .spacer { flex:1; }
-  .chartbar .key { display:inline-flex; align-items:center; gap:4px; }
-  .chartbar .key i { display:inline-block; }
-  .chartbar .k-line i { width:14px; height:2px; background:var(--series-1); border-radius:1px; }
-  .chartbar .k-trace i { width:14px; height:2px; background:var(--series-1); opacity:.35; }
-  .chartbar .k-ring i { width:8px; height:8px; border:2px solid var(--series-1); border-radius:50%; }
-  .chartbar .k-dot i { width:8px; height:8px; background:var(--series-2); border-radius:50%; }
-  .chartbar button.refresh { padding:1px 8px; font-size:12px; }
+  .chartkeys { justify-content:center; }
+  .chartkeys .key { display:inline-flex; align-items:center; gap:4px; }
+  .chartkeys .key i { display:inline-block; }
+  .chartkeys .k-line i { width:14px; height:2px; background:var(--series-1); border-radius:1px; }
+  .chartkeys .k-trace i { width:14px; height:2px; background:var(--series-1); opacity:.35; }
+  .chartkeys .k-ring i { width:8px; height:8px; border:2px solid var(--series-1); border-radius:50%; }
+  .chartkeys .k-dot i { width:8px; height:8px; background:var(--series-2); border-radius:50%; }
+  .chartbar button.refresh { padding:1px 8px; font-size:12px; flex:none; }
   svg.chart { width:100%; height:auto; display:block; }
   svg.chart .grid line { stroke:var(--grid); stroke-width:1; }
   svg.chart .base { stroke:var(--axis); stroke-width:1; }
@@ -110,6 +113,7 @@
   <button id="mqtt-connect" class="primary">Connect</button>
   <span id="mqtt-status"></span>
   <span class="spacer"></span>
+  <label id="console-l" title="show a console command line on each card"><input id="console-toggle" type="checkbox"> console</label>
   <button id="ble-add">+ Add BLE device</button>
 </header>
 <div id="banners"></div>
@@ -164,7 +168,8 @@ const NUS_SVC  = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX   = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_TX   = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_TELE = "6e400005-b5a3-f393-e0a9-e50e24dcca9e";
-const LS = { url:"mqtt-url", user:"mqtt-user", pass:"mqtt-pass", remember:"mqtt-remember", hosts:"mqtt-known-hosts" };
+const LS = { url:"mqtt-url", user:"mqtt-user", pass:"mqtt-pass", remember:"mqtt-remember", hosts:"mqtt-known-hosts",
+             console:"dash-console" };
 const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
 const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, PROBE_MS = 60000, CURVE_RETRIES = 2;
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000] };
@@ -947,7 +952,8 @@ function createChart(dev){
   const rb = el("button", "refresh", "↻");
   rb.title = "fetch the last sweep curve";
   rb.onclick = () => { requestCurve(dev); scheduleRender(dev); };
-  bar.append(el("span", "caption"), el("span", "spacer"), ...keys, rb);
+  bar.append(el("span", "caption"), el("span", "spacer"), rb);
+  const kb = el("div", "chartkeys"); kb.append(...keys);
   const svg = svgEl("svg", { viewBox:`0 0 ${CH.w} ${CH.h}`, role:"img", "aria-label":"power over input voltage" }, "chart");
   svg.append(svgEl("g", {}, "grid"), svgEl("line", {}, "base"), svgEl("g", {}, "ylab"), svgEl("g", {}, "xlab"),
              svgEl("path", { d:"" }, "trace"), svgEl("path", { d:"" }, "curve"),
@@ -959,7 +965,7 @@ function createChart(dev){
   svg.append(empty, hov);
   svg.addEventListener("pointermove", (e) => chartHover(dev, svg, e));
   svg.addEventListener("pointerleave", () => show(hov, false));
-  w.append(bar, svg);
+  w.append(bar, svg, kb);
   return w;
 }
 
@@ -1149,6 +1155,10 @@ function init(){
     lsSet(LS.remember, $("mqtt-remember").checked ? "1" : "0");
     if (!$("mqtt-remember").checked) lsDel(LS.pass);
   };
+  const ct = $("console-toggle");
+  ct.checked = lsGet(LS.console) === "1";
+  document.body.classList.toggle("show-console", ct.checked);
+  ct.onchange = () => { document.body.classList.toggle("show-console", ct.checked); lsSet(LS.console, ct.checked ? "1" : "0"); };
   $("mqtt-url").addEventListener("input", banners);
   $("mqtt-connect").onclick = () => {
     if (client){ mqttDisconnect(); return; }
