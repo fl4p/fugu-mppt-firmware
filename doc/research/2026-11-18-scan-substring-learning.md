@@ -4,106 +4,137 @@
 
 Simulator and offline field replay only. Nothing here ran on a converter.
 
-The `tracker.conf::pv_substrings` key is gone. `PeakScan` (`src/peak_scan.h`) learns the number of bypass-diode
-substrings $n$ from the global sweeps and keeps it in RAM; the scan stays off until then. Published description:
-`website/docs/internals/mppt-tracker.md`, "Substring count".
+`PeakScan` (`src/peak_scan.h`) learns the number of bypass-diode substrings $n$ from one shaded global sweep and
+persists it in `tracker.conf::pv_substrings` (a learned value; 0 = learn again after a restart). The scan stays off
+until then. Published description: `website/docs/internals/mppt-tracker.md`, "Substring count".
+
+Revision 2 (after review): one sweep instead of two agreeing ones, persisted, learner on core 0, full-string
+reference = first maximum with 60 % of the MPP (was: maxima above the MPP ignored).
 
 ## Rule
 
-During a sweep ($V_{oc}$ down to the battery) `sweepSample()` records local maxima of `power_smooth` below
-$0.93\,V_{oc}$ with an 8 % dip on both sides, in the scan's probe arrays (idle during a sweep; 6 slots, more = noise,
-the sweep is discarded). At the end (`onSweepMpp()`, sweep MPP at least 5 % of `p_max`):
+RT side (core 1): `sweepSample()` records local maxima of `power_smooth` below $0.93\,V_{oc}$ with an 8 % dip on both
+sides into the scan's probe arrays (idle during a sweep; 6 slots, more = noise). `onSweepMpp()` sets `pending` if the
+sweep's MPP is at least 5 % of `p_max`, Voc is valid and the slots did not overflow. Nothing else runs on the RT path.
 
-* maxima below 30 % of the MPP are dropped; the first remaining one (highest voltage) is the full-string maximum;
-* count 0 if it is the only one; else the largest $n$ in 2..6 that puts every lower maximum at
-  $m - 0.25 .. m + 0.5$ shares of $0.82\,V_{oc}/n$ ($1 \le m < n$), or 1 if none fits;
-* learned when two counted sweeps in a row give the same $n \ge 2$; $n$ only grows. One log line:
-  `scan: <n> bypass-diode substrings learned from the sweeps`.
+Core 0 (`loopLF` -> `MpptController::scanLf()`, at most 3 s later; the arrays stay untouched for at least 5 s):
 
-Why these numbers (field replay below): the start transient of flat's sweeps is a ~95-100 W maximum at
-0.94-0.98 $V_{oc}$ (0.91-0.94 in low light), so maxima above 0.93 $V_{oc}$ are not recorded; the hot unshaded MPP
-reaches 0.72 $V_{oc}$ (5.3 of 6 shares), so a single maximum never counts; shaded lower maxima sit 0-0.45 shares
-above the grid (strong substrings carry the weak ones' current), hence the asymmetric window.
+* the MPP must be one of the recorded maxima (98 %);
+* the first maximum with at least 60 % of the MPP power is the full-string maximum, earlier ones are ignored;
+* the lower maxima are those after it with at least 30 % of the MPP power; none -> nothing learned;
+* $n$ = the largest count in 2..6 that puts every lower maximum at $m - 0.25 .. m + 0.5$ shares of $0.82\,V_{oc}/n$
+  ($1 \le m < n$); no fit -> nothing learned;
+* learned if it exceeds the current $n$ (only grows), logged once (`scan: <n> bypass-diode substrings learned from
+  the sweep`), marked unsaved; written to `tracker.conf` by `scanSave()` when `flashWriteSafe()` (flash auto-suspend,
+  converter off, or below 5 W) and from `systemRestart()`. Worst case a few writes per device life.
 
-## Field replay (fry, flat; InfluxDB `ha_van/mppt`, read-only)
+Why these numbers (field replay below): flat's start transient is a ~95-100 W maximum at 0.94-0.98 $V_{oc}$
+(0.90-0.94 in low light), so maxima above 0.93 $V_{oc}$ are not recorded and a weaker one does not become the
+reference; shaded lower maxima sit 0-0.45 shares above the grid (strong substrings carry the weak ones' current),
+hence the asymmetric window. With "MPP = reference" (revision 1) a sweep whose shaded lower maximum is the MPP taught
+nothing; the 60 % reference learns those too (fry 11-04 15:51, exact-plant 6-substring string with one substring at
+0.6-0.7).
 
-Telemetry is fine enough: about 48 Hz, about 500 samples per 10 s sweep. Sweep ends from the console log
-(`Stop sweep ... MPP=`) on havan, 2026-11-03..18. Log time and telemetry time agree at offset 0 (the logged MPP
-matches the telemetry there, not at 1 or 2 h). Per sweep: last zero-duty sample to the duty maximum; telemetry `P`
-is output power (med3), smoothed with med3 + EWM 0.3 to stand in for `power_smooth`. Replayed through the firmware
-header (`test/host-stub/scan-learn-replay.cpp`), with `p_max` 1000 W.
+## Behaviour by string (exact series plant, `test_scan_learns_other_counts`, probe over shade 0.5-0.9)
+
+| Substrings | One substring shaded | Two shaded |
+|---|---|---|
+| 3 | 6 (0.5-0.8), nothing at 0.85+ | - |
+| 4 | 5 | 6 |
+| 5 | 6 (0.6-0.8; nothing at 0.5) | 5 |
+| 6 | 6 (0.6-0.8; nothing at 0.5) | 6 |
+
+Shade of 0.85 and above leaves a single maximum (no learning). The fit cannot tell 3 from 6 or 4/5 from 5/6; the
+count picks the probe grid. Cost of a non-6 count: extra or misplaced probes (a better maximum can be missed),
+never a wrong move (the scan only moves to a probe that measured more power).
+
+Transient guard: a start transient with less than 60 % of the MPP is not the reference, and one above 0.93 $V_{oc}$
+is not recorded. A transient between, with 60 % of the MPP, plus a hot MPP at or below 0.75 $V_{oc}$ still fakes 6
+(`test_scan_unshaded_never_learns` asserts this). In the field data the transient is about 100 W, so this needs an
+MPP below ~165 W with modules hot enough for $V_{mpp} \le 0.75\,V_{oc}$; no field sweep did it. Time from sweep start
+and dip depth do not separate the transient from fry's shaded full-string maximum (both about 4 s, similar dips).
+
+## Field replay with boot resets (fry, flat; InfluxDB `ha_van/mppt`, read-only)
+
+Input: the reviewer's `sweeps-boot.txt` (362 fry, 320 flat sweeps, 2026-11-03..18, 42 fry / 38 flat boots;
+`field_sweeps.py` now exports the same boot ids: log time minus uptime). Telemetry ~48 Hz, `P` as med3 + EWM 0.3
+for `power_smooth`, log and telemetry time agree at offset 0. Each new boot starts a fresh `PeakScan` with the
+saved count. Saved at the next sweep start (converter off) and at the reboot (`systemRestart()`); "crash" = every
+reboot unplanned, so only the sweep-start write counts. Shaded = a counted sweep (`pending`) with at least two
+maxima of 30 % of the MPP.
 
 | | fry | flat |
 |---|---|---|
-| sweeps with telemetry | 362 | 320 |
-| MPP at least 50 W | 193 | 223 |
-| two or more maxima | 27 (11 of 16 days) | 4 |
-| count per such sweep | 6: 27 | 6: 1, none fits: 3 |
-| learned, fresh boot each day | n = 6 on 3 days (11-05, 11-12, 11-14) | never |
-| learned, no reboot 11-03..18 | n = 6 on 11-05 09:21 | never |
-| learned a count other than 6 | never | never |
+| shaded sweeps | 27 | 4 |
+| covered ($n$ known after the sweep) | 27 | 2 |
+| covered, crash model | 27 | 1 |
+| sweeps with $n \ne 6$ | 0 | 0 |
+| first learned | 11-04 15:51 (lower maximum is the MPP) | 11-12 12:43 |
+| saved at the end | 6 | 6 (crash model: 0) |
 
-fry's lower maxima sit at 2.93-3.44, 3.91-4.28 and 4.87-5.43 shares of 6 (28 maxima). flat's three no-fit sweeps
-are the start transient followed by the MPP (twice, 2026-11-08/09 low light) and a dusk sweep with maxima at 5.65 and
-4.41 shares. On fry, 11-07 and 11-13 had two shaded sweeps that were not consecutive and did not learn.
+flat's two uncovered shaded sweeps (11-04 13:39, 11-08 16:14) are a low-light transient at 0.91 $V_{oc}$ (88-91 W)
+followed by the MPP at 0.85 $V_{oc}$: the transient is the reference and the MPP (6.2 sixths) fits no grid, so
+nothing is learned. fry's lower maxima sit at 2.93-5.43 sixths. The reviewer counted 37/39 fry and 3/7 flat with a
+different "shaded" definition; both counts show no wrong $n$.
 
-Earlier rule variants on the same data (Python mirror, discarded): a symmetric ±0.3 window learned 5 or 2 on some
-days; the learned $V_{mpp}/V_{oc}$ in place of 0.82 learned 5 once; counting a single maximum below 0.92 of
-$0.82\,V_{oc}$ took flat's hot unshaded MPP (0.75 $V_{oc}$) for a lower maximum.
-
-## Simulator (exact series plant, pgx93 only)
+## Simulator (exact series plant, pgx93 only, tag scan-learn2)
 
 `test/host-stub/mppt-sim.cpp`, plant `SIM_RING=fry|flat`, measured noise replay `SIM_NOISE=fry|flat`, offsets
-0/11/23 s (3 seeds per cell). Variants: off = main without scan; fixed = main with `pv_substrings=6`; learn = this
-branch; warm = this branch with `SIM_SCAN_N=6` (learned before the run). Harvest in points of the reachable GMPP
-(`== TRACKER ... harvest`). New scenario `wx-shade-learn`: the wx-shade2 shade over the boot sweep and the 1800 s
-sweep, clear at 1900-1960 s, back over 2000-2300 s.
+0/11/23 s (3 seeds per cell), all runs on pgx93. Variants: off = main without scan; fixed = main with
+`pv_substrings=6`; learn = this branch from an empty `tracker.conf` key; warm = this branch with
+`pv_substrings=6` (learned and persisted earlier). Harvest in % of the reachable GMPP (`== TRACKER ... harvest`).
+`wx-shade-learn`: the wx-shade2 shade over the boot sweep and the 1800 s sweep, clear at 1900-1960 s, back over
+2000-2300 s. Last column: learned / reloaded `tracker.conf` value per seed (the sim now redirects `rename`/`unlink`
+into its littlefs tree, so `scanSave()` really writes).
 
-| Cell | off | fixed − off | learn − off | learn − fixed (worst..best) | warm − fixed | wrong-peak s off / fixed / learn | scans fixed / learn |
-|---|---|---|---|---|---|---|---|
-| wx-shade-learn fry | 97.50 | +1.82 | +1.83 | +0.01 (-0.03..+0.05) | 0.00 | 1166 / 58 / 62 | 9.3 / 5.3 |
-| wx-shade-learn flat | 97.56 | +1.75 | +1.76 | +0.01 (-0.03..+0.06) | 0.00 | 1167 / 99 / 98 | 10.0 / 6.0 |
-| wx-shade2-move fry | 96.01 | +2.79 | 0.00 | -2.79 | 0.00 | 1412 / 212 / 1412 | 5.0 / 0 |
-| wx-shade2-move flat | 96.10 | +2.79 | 0.00 | -2.79 | 0.00 | 1411 / 211 / 1411 | 5.0 / 0 |
-| wx-shade3-move fry | 75.55 | +23.57 | 0.00 | -23.57 | 0.00 | 1569 / 69 / 1569 | 7.0 / 0 |
-| wx-shade3-move flat | 75.54 | +23.62 | 0.00 | -23.62 | 0.00 | 1569 / 69 / 1569 | 7.0 / 0 |
-| wx-shade-walk fry | 86.28 | +10.33 | 0.00 | -10.33 | 0.00 | 1160 / 333 / 1160 | 7.7 / 0 |
-| wx-shade-walk flat | 86.29 | +10.64 | 0.00 | -10.64 | 0.00 | 1160 / 293 / 1160 | 6.7 / 0 |
-| wx-sweep-shade fry | 85.17 | +9.06 | 0.00 | -9.06 (-12.91..-7.14) | 0.00 | 586 / 207 / 586 | 1.0 / 0 |
-| wx-sweep-shade flat | 85.19 | +9.03 | 0.00 | -9.03 (-12.76..-7.16) | 0.00 | 586 / 209 / 586 | 1.0 / 0 |
-| wx-shade-cloud fry | 96.05 | -0.14 | 0.00 | +0.14 (-0.28..+0.40) | 0.00 | 220 / 128 / 220 | 10.0 / 0 |
-| wx-shade-cloud flat | 96.13 | +0.17 | 0.00 | -0.17 (-0.44..+0.09) | 0.00 | 220 / 122 / 220 | 10.7 / 0 |
-| wx-shade2 fry / flat (static) | 99.00 / 99.07 | 0.00 | 0.00 | 0.00 | 0.00 | 0 | 1.0 / 0 |
-| wx-shade3 fry / flat (static) | 98.97 / 99.04 | -0.05 / -0.03 | 0.00 | +0.05 / +0.03 | 0.00 | 0 | 1.0 / 0 |
+| Cell | off | fixed − off | learn − off | learn − fixed (worst..best) | warm − fixed | wrong-peak s off / fixed / learn | scans fixed / learn | first scan learn [s] | learned/saved |
+|---|---|---|---|---|---|---|---|---|---|
+| wx-shade-learn fry | 97.50 | +1.80 | +1.80 | +0.00 | 0 | 1166 / 61 / 61 | 9.3 / 10.3 | 12 ×3 | 6/6 ×3 |
+| wx-shade-learn flat | 97.56 | +1.74 | +1.74 | +0.00 | 0 | 1167 / 99 / 99 | 10.0 / 11.0 | 12 ×3 | 6/6 ×3 |
+| wx-shade-cloud fry | 96.01 | -0.02 | +0.05 | +0.07 (+0.00..+0.22) | 0 | 220 / 139 / 139 | 10.3 / 11.3 | 15 ×3 | 6/6 ×3 |
+| wx-shade-cloud flat | 96.11 | +0.17 | +0.05 | -0.12 (-0.31..+0.00) | 0 | 220 / 145 / 133 | 11.0 / 11.3 | 15 ×3 | 6/6 ×3 |
+| wx-shade2 fry (static) | 99.01 | -0.02 | -0.02 | 0.00 | 0 | 0 | 1.0 / 2.0 | 12 ×3 | 6/6 ×3 |
+| wx-shade2 flat (static) | 99.06 | 0.00 | 0.00 | 0.00 | 0 | 0 | 1.0 / 2.0 | 12 ×3 | 6/6 ×3 |
+| wx-shade3 fry (static) | 98.97 | -0.04 | -0.04 | 0.00 | 0 | 0 | 1.0 / 2.0 | 12 ×3 | 6/6 ×3 |
+| wx-shade3 flat (static) | 99.03 | -0.03 | -0.01 | +0.02 (+0.00..+0.04) | 0 | 0 | 1.0 / 0.7 | 12 ×1 | 6/6, -, - |
+| wx-shade3-move fry | 75.54 | +23.59 | +7.86 | -15.73 (-23.59..0.00) | 0 | 1569 / 69 / 1069 | 7.0 / 3.3 | 12, 1813 | 6/6, -, 6/6 |
+| wx-shade3-move flat | 75.56 | +23.60 | 0.00 | -23.60 | 0 | 1569 / 69 / 1569 | 7.0 / 0 | - | - |
+| wx-shade2-move fry | 96.01 | +2.78 | 0.00 | -2.78 | 0 | 1412 / 212 / 1412 | 5.0 / 2.0 | 1813 ×3 | 6/6 ×3 |
+| wx-shade2-move flat | 96.11 | +2.78 | 0.00 | -2.78 | 0 | 1411 / 211 / 1411 | 5.0 / 2.0 | 1812 ×3 | 6/6 ×3 |
+| wx-shade-walk fry | 86.28 | +10.31 | 0.00 | -10.31 (-10.64..-10.02) | 0 | 1160 / 333 / 1160 | 7.7 / 0 | - | - |
+| wx-shade-walk flat | 86.29 | +10.63 | 0.00 | -10.63 (-10.89..-10.36) | 0 | 1160 / 280 / 1160 | 7.0 / 0 | - | - |
+| wx-sweep-shade fry | 85.17 | +9.06 | 0.00 | -9.06 (-12.90..-7.14) | 0 | 586 / 207 / 586 | 1.0 / 0 | - | - |
+| wx-sweep-shade flat | 85.17 | +10.70 | 0.00 | -10.70 (-12.57..-7.17) | 0 | 586 / 140 / 586 | 1.0 / 0 | - | - |
 
-* warm and fixed produce byte-identical output in all 48 runs: the learner changes nothing once $n$ is known.
-* learn and off produce byte-identical output in all 42 runs outside wx-shade-learn: these scenarios end (900-2400 s) before a
-  second shaded sweep, so nothing is learned. That is the first-shade-event cost: from boot, a shade event is
-  not scanned until two consecutive sweeps (30 min apart) have seen it. In wx-shade-learn the first scan follows
-  the 1812 s sweep in all 6 runs (learned there) and the returning shade is then handled like fixed $n = 6$ (+0.01).
-* Default without shade (main default vs this branch, fry plant and noise): wx-cloud, wx-cloud-cv, wx-sun-fry,
-  wx-dawn, wx-low, wx-mid and wx-shade2-move produce byte-identical output (the noise-file path line excepted).
+* warm and fixed produce identical output in all 48 runs (the noise path line and the learned line excepted): once
+  $n$ is persisted the learner changes nothing.
+* learn − fixed is the one-time cost of a converter that has never seen a shaded sweep: the move/walk/sweep-shade
+  scenarios start with an unshaded boot sweep, so the shade is not scanned until a sweep sees it (in the 2400 s
+  move runs that sweep is at 1812 s, too late to matter inside the run). With the count persisted this happens once
+  per installation, not once per boot.
+* Default without shade (main vs this branch, fry plant and noise, pgx93): wx-cloud, wx-cloud-cv, wx-sun-fry, wx-dawn,
+  wx-low and wx-mid produce identical output (an ssh retry line in one log excepted). wx-shade2-move now differs:
+  the branch learns 6 at the 1812 s sweep and scans afterwards (harvest unchanged at 96.0 %).
 
 ## Cost
 
-esp32s3 build vs e2bcaff2: image +400 B, `MpptController` +16 B RAM, `_stopSweep` +378 B (IRAM; the learner is
-inlined there), `update()` -11 B. `rtprof_map.py --check`: 79 entries, 0 not in IRAM. No flash writes, no
-allocation.
+esp32s3 (IDF 6.0.3) vs main 60fa7dfd: flash code +800 B, rodata +172 B, IRAM (`.text` in DIRAM) +100 B
+(`MpptController::update()` +68 B: `sweepSample` inlined in the sweep branch; revision 1 had +378 B in
+`_stopSweep`). `scanLf()` 444 B and `scanSave()` 254 B in flash. `rtprof_map.py --check`: 79 entries, 0 not in IRAM.
+Classic esp32: IRAM 108463 B on both, 22.6 kB free. One `tracker.conf` rewrite per learned increase, only when
+`flashWriteSafe()` or at a console restart.
 
 ## Open risks
 
-* First shade after a boot: no scan until two consecutive sweeps were shaded (field: fry learned on 3 of 11 shaded
-  days with a daily reboot, once without). A shadow that comes and goes within 30 min after a reboot is never
-  caught on its first pass. Persisting $n$ (one write when learned) or a default would remove this; both were out
-  of scope (RAM only).
-* A cloud edge in two consecutive sweeps can fake a lower maximum that fits 6 (75 % of positions fit the
-  window): the scan then runs on an unshaded string. Its candidate filter skips most probes in full sun; the cost
-  is scan time, not a wrong move.
-* A string of 3 substrings with its lower maxima on even multiples of 6 learns 6 (extra probes, nothing missed).
-  Strings with more than 6 substrings learn at most 6.
+* First shade on a fresh installation (or after `pv_substrings=0`): not scanned until a sweep shows it. A shadow that
+  comes and goes within 30 min after that boot is missed on its first pass.
+* A crash or power loss between learning and the next flash-safe moment loses the count (flat in the crash model).
+  It is learned again from the next shaded sweep.
+* A cloud edge or a strong start transient (above) can fake 6 on an unshaded string; the scan then runs, probes and
+  stays. On a 6-substring string that is the right count anyway.
+* Strings of 3/4/5 learn 5 or 6 (table above); strings with more than 6 learn at most 6.
 * Field replay uses telemetry output power (med3 + EWM), not the firmware's `power_smooth`; dips near 8 % may
   differ. No converter has run this code.
-* `kVmp` (learned $V_{mpp}/V_{oc}$ for probe placement) is unchanged; the learner uses the fixed 0.82.
 
 ## Reproduce
 
@@ -113,7 +144,8 @@ python3 doc/research/scan-learn/field_sweeps.py fetch sweeps.txt sweeps.pkl
 python3 doc/research/scan-learn/field_sweeps.py export sweeps.pkl > replay.txt
 clang++ -std=gnu++20 -O2 -include test/host-stub/esp/sim_prelude.h -I test/host-stub/esp -I src \
     test/host-stub/scan-learn-replay.cpp -o /tmp/scan-learn-replay
-/tmp/scan-learn-replay day < replay.txt   # "day": fresh PeakScan per device and date
-# sim: one cell
+/tmp/scan-learn-replay < replay.txt         # saved at sweep start and at reboot
+/tmp/scan-learn-replay crash < replay.txt   # saved at sweep start only
+# sim: one cell (learn); fixed/warm: SIM_CONF=tracker.conf:pv_substrings=6
 SIM_RING=fry SIM_NOISE=fry SIM_NOISE_OFS=11 offload run --host pgx93 -- <mppt-sim> wx-shade-learn
 ```

@@ -16,6 +16,8 @@
 #include "sim_alloc.h"
 
 #undef fopen
+#undef rename
+#undef unlink
 
 int64_t g_simUs = 0;
 float g_simChipTemp = 40.f;
@@ -46,6 +48,14 @@ FILE *sim_fopen(const char *path, const char *mode) {
         return fopen((g_simFsRoot + path).c_str(), mode);
     return fopen(path, mode);
 }
+
+static std::string simPath(const char *path) {
+    return strncmp(path, "/littlefs/", 10) == 0 ? g_simFsRoot + path : path;
+}
+
+int sim_rename(const char *from, const char *to) { return rename(simPath(from).c_str(), simPath(to).c_str()); }
+
+int sim_unlink(const char *path) { return unlink(simPath(path).c_str()); }
 
 // target RT logging captures the line raw, formatting happens on core 0: not counted here
 static void emit(char lvl, const char *tag, const char *fmt, va_list ap) {

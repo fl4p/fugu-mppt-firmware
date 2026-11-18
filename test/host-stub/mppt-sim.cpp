@@ -41,7 +41,6 @@
 //     fry3: a capture with 3 % p-p at ~0.2 Hz). The == TRACKER line ends with the tracking loss in J, the part in slow
 //     mode and the largest Vin offset from the MPP in slow mode
 //   SIM_T=600 wx run length [s], SIM_TR=5 wx trace interval [s], SIM_V=1 firmware log in wx/shade runs
-//   SIM_SCAN_N=6 partial peak scan with the substring count already learned (default: learned from the sweeps)
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
 //   SIM_PDUMP=<file>  per RT tick float32 t, Iout ewm, Vout ewm, HS count, slow mode, PV power; SIM_HOLD=t: wx runs hold the duty from t [s]
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
@@ -479,6 +478,7 @@ static void loopLF(time_us nowUs) {
     lfStuckWatchdog();
     lfControl();
     mppt.rectCalLf();
+    mppt.scanLf(false); // flash writes not simulated; saved and reloaded at the end of the run
     lastTimeOutUs = wallClockUs();
     lastNSamples = nSamples;
     lastWindowUs = nowUs;
@@ -574,9 +574,6 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
     mppt.rectCal.init(converter.getRectOnOffset(), !converter.rectOffsetNeedsCal());
     ConfFile trackerConf{"/littlefs/conf/tracker.conf", true};
     mppt.begin(trackerConf, boardConf, converterConf, lim, TeleConf{});
-#if SCAN_ACTIVE_DEFINED
-    if (const char *e = getenv("SIM_SCAN_N")) mppt.scan.n = (uint8_t) atoi(e); // substrings already learned
-#endif
     if (g_app.setupErr) { printf("setupErr\n"); exit(2); }
     adcSampler.begin(); // loopRT prologue
     printf("# sim tick %u us, pwm_freq %lu, Vbat_max %.2f, Iout_max %.1f, p_max %.0f\n", g_simTickUs,
@@ -1180,6 +1177,11 @@ static int runWx(const std::string &name, Wx &wx) {
            " GMPP, %.1f J per scan; wrong-peak loss %.2f %%\n", name.c_str(), nScan, nMoved, nLight, tCat[SCAN],
            loss[SCAN] / 3600, loss[SCAN] * pc, nScan ? loss[SCAN] / (double) nScan : 0.0, loss[WRONG] * pc);
     for (auto &[t, c]: g_scanT) if (t >= wx.statsFrom && nScan <= 40) printf("==   scan at t=%.1f s %c\n", t, c);
+    if (mppt.scan.unsaved) { // learned in this run: the save and the reload
+        mppt.scanSave();
+        ConfFile tc{"/littlefs/conf/tracker.conf"};
+        printf("== SCAN learned %u substrings, tracker.conf pv_substrings=%u\n", mppt.scan.n, tc.getByte("pv_substrings", 0));
+    }
     {
         size_t nMp = 0;
         for (auto &t: g_trips) nMp += t.t >= wx.statsFrom && t.who == "minpulse-M";

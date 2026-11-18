@@ -12,6 +12,11 @@
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 #include <cstdio>
+#include <unistd.h>
 
 FILE *sim_fopen(const char *path, const char *mode);
+int sim_rename(const char *from, const char *to);
+int sim_unlink(const char *path);
 #define fopen(p, m) sim_fopen(p, m)
+#define rename(...) sim_rename(__VA_ARGS__)
+#define unlink(...) sim_unlink(__VA_ARGS__)
