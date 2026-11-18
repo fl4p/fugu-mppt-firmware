@@ -1491,7 +1491,7 @@ public:
 
         ESP_LOGI("mppt",
                  "Stop sweep %.2fs mode=%s (lim=%i tgt=%.2f act=%.2f) PWM=%hu MPP=(%.1fW,%hu,%.1fV)",
-                 (wallClockUs() - sampler.getTimeLastCalibrationUs()) * 1e-6f,
+                 (wallClockUs() - sampler.getCalibrationStartUs()) * 1e-6f,
                  MpptState2String[(uint8_t) controlMode], limIdx,
                  limCtrl ? limCtrl->target : NAN, limCtrl ? limCtrl->actual : NAN,
                  converter.getCtrlOnPwmCnt(), maxPowerPoint.power, maxPowerPoint.dutyCycle, maxPowerPoint.voltage

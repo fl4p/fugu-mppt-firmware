@@ -24,6 +24,7 @@
 //     wx-shade-learn    wx-shade2 shade for two sweeps (learns the substrings), clear at 1900 s, back at 2000..2300 s
 //     wx-dawn, wx-dusk  irradiance through the start threshold
 //     wx-low, wx-mid    steady light rising slowly, MPP 2 -> 20 W in 30 min / 55 -> 110 W in 10 min, sensor noise
+//     wx-calfail        wx-mid with +-1.3 V bus ripple, every calibration fails: re-sweeps keep the 30 min cadence ("== CALFAIL")
 //     wx-low-slow       wx-low with power-sensor filter length 60 (slow sensor profile; SIM_ADC_HZ=200 for ADS-like rates)
 //     wx-sweep-fall, wx-sweep-rise, wx-sweep-shade   cloud edge during a sweep (-shade: two peaks)
 //     wx-sweep-gust, wx-sweep-learn[-off], wx-sweep-scan   sweep verdict: re-sweep cap, no learning from a flagged
@@ -137,6 +138,7 @@ struct Trip {
 };
 static std::vector<Trip> g_trips;
 static std::vector<double> g_sweepT; // "Start sweep" log times
+static unsigned g_calFails = 0;
 static std::vector<std::string> g_logSince; // log lines after the scenario event
 static double g_eventT = -1;
 static std::vector<double> g_slowDownT; // "Slow mode, duty" log times (slow-mode entries)
@@ -246,6 +248,7 @@ static void logHook(char lvl, const char *tag, const char *msg) {
     char who[64];
     if (sscanf(msg, "backoff %us [%63[^]]]", &sec, who) == 2) g_trips.push_back({tNow(), who, sec});
     if (!strcmp(msg, "Start sweep")) g_sweepT.push_back(tNow());
+    if (!strncmp(msg, "Calibration failed", 18)) ++g_calFails;
     if (!strncmp(msg, "Slow mode, duty", 15)) g_slowDownT.push_back(tNow());
     if (!strncmp(msg, "sweep verified", 14)) g_verdict += 'v';
     if (!strncmp(msg, "sweep flagged", 13)) g_verdict += strstr(msg, "scan now") ? 'F' : 'f';
@@ -786,7 +789,7 @@ struct Wx {
     Track vbatT;                             // battery EMF profile
     double sweepAt = -1, statsFrom = 0, T = 600;
     std::string verdict; // sweep verdict events expected (g_verdict), "" = not checked; with sweeps after statsFrom
-    size_t sweeps = 0;
+    size_t sweeps = 0, maxSweeps = 0; // maxSweeps: CALFAIL check, 0 = off
     float isc = 0, g[6] = {1, 1, 1, 1, 1, 1}, vocNow = 0;
     float half = 0, vocDrift = 0;           // half-substring shade, Voc drift over T (fraction)
     bool exact = false;                      // exact series-string plant
@@ -1274,6 +1277,12 @@ static int runWx(const std::string &name, Wx &wx) {
     for (auto &t: g_trips)
         if (t.t >= wx.statsFrom && ++shown <= 12) printf("==   trip at t=%.1f s [%s] %us\n", t.t, t.who.c_str(), t.sec);
     if (nTrips > 12) printf("==   ... %zu trips total\n", nTrips);
+    if (wx.maxSweeps) {
+        const bool ok = g_calFails >= 2 && nSweeps <= wx.maxSweeps;
+        printf("== CALFAIL %s: %u failed calibrations (want >= 2), %zu sweeps (want <= %zu): %s\n", name.c_str(),
+               g_calFails, nSweeps, wx.maxSweeps, ok ? "PASS" : "FAIL");
+        if (!ok) return 1;
+    }
     if (!wx.verdict.empty()) {
         const bool ok = g_verdict == wx.verdict && nSweeps == wx.sweeps;
         printf("== VERDICT %s: events %s (want %s), %zu sweeps after %.0f s (want %zu): %s\n", name.c_str(),
@@ -1356,12 +1365,13 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         const float g = getenv("SIM_GC") ? atof(getenv("SIM_GC")) : 0.039f;
         wx.vocLog = 2.6f, wx.cloud = {{0, g}}, wx.manual = getenv("SIM_DSTEP_MPPT") ? 0 : 0.3f, wx.vbat = getenv("SIM_VBAT") ? atof(getenv("SIM_VBAT")) : 28;
         wx.T = 1e9;
-    } else if (sc == "wx-low" || sc == "wx-mid" || sc == "wx-low-slow") {
+    } else if (sc == "wx-low" || sc == "wx-mid" || sc == "wx-low-slow" || sc == "wx-calfail") {
         // steady light rising slowly after the boot sweep, with sensor noise: MPP 2 -> 20 W in 30 min (x2 per 9 min),
         // 55 -> 110 W in 10 min (x2 per 10 min, dawn rate) then 10 min level
-        const bool low = sc != "wx-mid";
+        const bool low = sc == "wx-low" || sc == "wx-low-slow";
         const float g0 = (low ? 2.5f : 61.f) / wx.pClear, r = low ? 10.f : 2.f, tr = low ? 1800 : 600;
         wx.vocLog = 2.6f, wx.T = low ? 1860 : 1260;
+        if (sc == "wx-calfail") wx.T = 2400, wx.maxSweeps = 3; // boot + 1800 s (+1 spare)
         for (float t = 0; t <= wx.T; t += 10) wx.cloud.emplace_back(t, g0 * std::pow(r, std::clamp(t - 60, 0.f, tr) / tr));
     } else if (sc.rfind("wx-sun-", 0) == 0 || sc.rfind("wx-ramp-", 0) == 0 || sc.rfind("wx-wob-", 0) == 0) {
         // steady sun, MPP SIM_P W; fry: Vin ~64 V at 70 W, flat: ~55 V
@@ -1729,6 +1739,8 @@ static int simMain(int argc, char **argv) {
     }
     if (sc == "wx-low" || sc == "wx-mid" || sc == "wx-low-slow")
         ov = {{"noise_iout", sc != "wx-mid" ? "0.02" : "0.04"}, {"noise_vout", "0.03"}};
+    if (sc == "wx-calfail")
+        ov = {{"noise_iout", "0.04"}, {"noise_vout", "0.03"}, {"vbat_ac_amp", "1.3"}, {"vbat_ac_freq", "100"}};
     if (sc == "wx-low-slow") { // filter length 60 on the power sensors (buck_bench, boost_*)
         std::string c = "sensor.conf:lv_i_filt_len=60,sensor.conf:lv_v_filt_len=60";
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;

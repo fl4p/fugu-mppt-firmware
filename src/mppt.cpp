@@ -94,7 +94,8 @@ void MpptController::update() {
     // the sweep start runs from flash: let a flash op finish first
     // P&O cannot see the MPP in low light (power steps below its thresholds) and drifts toward Vout:
     // re-sweep once power has doubled since a low-power sweep's MPP (< 5 % of p_max)
-    const auto sinceSweepUs = nowUs - sampler.getTimeLastCalibrationUs();
+    // from the last attempt: a failing calibration must not re-sweep right away
+    const auto sinceSweepUs = nowUs - sampler.getCalibrationStartUs();
     const uint32_t nowMs = (uint32_t) (nowUs / 1000);
     const bool grew = maxPowerPoint.power >= sweepMinPower() && maxPowerPoint.power < 25 * sweepMinPower() &&
                       power_smooth > 2 * maxPowerPoint.power && sinceSweepUs > 120 * 1000000;

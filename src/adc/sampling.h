@@ -818,6 +818,8 @@ public:
     }
 
     [[nodiscard]] time_us getTimeLastCalibrationUs() const { return timeLastCalibration; }
+    // last calibration start, failed or not; RT task only
+    [[nodiscard]] time_us getCalibrationStartUs() const { return calibStartUs_; }
 
 
     // Any core. restart additionally clears the sensor filters (not the calibration).
