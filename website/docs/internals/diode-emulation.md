@@ -254,6 +254,10 @@ current over and runs the converter forced-CCM-like at `D ≈ M`, where the MPP 
 track better on a PV source. The limit returns these cases to the exact-reading behaviour. A smaller
 time floor recovers part of this only by giving up the combined-error case above.
 
+Repeated at the 4103-count MCPWM resolution (20 dusk runs per board model, low side turning off at the zero
+crossing), the limit cost nothing measurable (−0.22 to +0.23 percentage points per model and reading set, within two standard errors)
+and removed the 19 `minpulse-M` stops that the late window caused without it (29 at the 2047-count resolution).
+
 ### Timing correction (`rect_offset_ns`)
 
 The formula above gives the *ideal* zero-crossing time from the measured voltages. The LS

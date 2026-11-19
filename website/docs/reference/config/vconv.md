@@ -34,6 +34,7 @@ The file accepts the following keys.
 | `r_hs`          | Ω    | float | 0       | Resistance in series with the coil while the high side conducts (Rds(on), coil DCR, input-cap ESR share) |
 | `r_ls`          | Ω    | float | 0       | Resistance in series with the coil while the low side conducts             |
 | `t_sw`          | s    | float | 0       | High-side turn-off current fall time; the loss is paid from the input       |
+| `pwm_clk`       | Hz   | int   | 0       | Gate-driver timing the PWM shim emulates, read at boot: 0 = LEDC (80 MHz, power-of-two period: 2047 counts at 39 kHz), else the MCPWM timer clock (160000000: the MCPWM period of 4103 counts at 39 kHz and its realized frequency). `rect_offset_ns` and `boot_refresh_ns` are converted at this tick rate |
 | `adc_freq`      | Hz   | int   | 3000    | Sampling tick (falls back to `board.conf::adc_fake_freq`, then 3000)        |
 | `noise_vin`     | V    | float | 0       | Gaussian ADC noise σ on Vin; 0 = deterministic                              |
 | `noise_vout`    | V    | float | 0       | Gaussian ADC noise σ on Vout                                                |
@@ -83,7 +84,7 @@ cloud_depth=0.7
 cloud_len_s=15
 ```
 
-All keys change at runtime with `vconv set <key> <value>`. Switching `sun_day_s` from 0 to a
+All keys except `pwm_clk` change at runtime with `vconv set <key> <value>`. Switching `sun_day_s` from 0 to a
 positive value starts the day at sunrise, setting `sun_seed` reseeds the clouds and restarts the
 day, and `sun_day_s` 0 restores the full-sun curve. `vconv sun` prints G, G_clear, the cloud factor,
 the time of day and the effective Isc and Voc.

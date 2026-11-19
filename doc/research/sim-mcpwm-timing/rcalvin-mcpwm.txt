@@ -1,0 +1,200 @@
+board      Voc  Isc     k seed result                   learned   applied     truth  zc-truth
+flat        48    3  0.72    1 V_step                         -         -         -         - failed
+flat        48    3  0.72    2 done                      406 ns      0 ns    269 ns    138 ns ok
+flat        48    3  0.72    3 done                     -238 ns   -362 ns    222 ns    153 ns ok
+flat        48    3  0.72    4 V_step                         -         -         -         - failed
+flat        48    3  0.80    1 done                      -44 ns   -169 ns     39 ns    111 ns ok
+flat        48    3  0.80    2 done                      -50 ns   -175 ns     36 ns    108 ns ok
+flat        48    3  0.80    3 done                      -31 ns   -156 ns     47 ns    109 ns ok
+flat        48    3  0.80    4 done                      -44 ns   -169 ns     47 ns    109 ns ok
+flat        48    6  0.72    1 Iout_follows_LS                -         -         -         - failed
+flat        48    6  0.72    2 done                      338 ns      0 ns    301 ns    149 ns ok
+flat        48    6  0.72    3 Iout_follows_LS                -         -         -         - failed
+flat        48    6  0.72    4 done                       25 ns   -100 ns    266 ns    152 ns ok
+flat        48    6  0.80    1 done                     -156 ns   -281 ns    -46 ns    115 ns ok
+flat        48    6  0.80    2 done                     -256 ns   -506 ns   -184 ns    116 ns ok
+flat        48    6  0.80    3 done                     -262 ns   -512 ns   -194 ns    125 ns ok
+flat        48    6  0.80    4 done                     -344 ns   -469 ns   -107 ns    119 ns ok
+flat        68    3  0.72    1 done                     -788 ns  -1019 ns   -255 ns    192 ns ok
+flat        68    3  0.72    2 done                     -225 ns   -350 ns   -151 ns    194 ns ok
+flat        68    3  0.72    3 done                     -594 ns   -775 ns   -105 ns    186 ns ok
+flat        68    3  0.72    4 done                     -250 ns   -375 ns   -173 ns    192 ns ok
+flat        68    3  0.80    1 done                      -94 ns   -219 ns    173 ns    208 ns ok
+flat        68    3  0.80    2 done                       94 ns    -31 ns    234 ns    209 ns ok
+flat        68    3  0.80    3 done                       88 ns    -38 ns    230 ns    214 ns ok
+flat        68    3  0.80    4 done                       75 ns    -50 ns    231 ns    213 ns ok
+flat        68    6  0.72    1 done                     -669 ns   -869 ns   -242 ns    205 ns ok
+flat        68    6  0.72    2 done                     -425 ns   -556 ns   -206 ns    206 ns ok
+flat        68    6  0.72    3 done                     -231 ns   -356 ns   -154 ns    210 ns ok
+flat        68    6  0.72    4 done                    -1081 ns  -1406 ns   -261 ns    205 ns ok
+flat        68    6  0.80    1 done                        6 ns   -119 ns    103 ns    209 ns ok
+flat        68    6  0.80    2 done                     -138 ns   -262 ns    172 ns    209 ns ok
+flat        68    6  0.80    3 done                     -119 ns   -244 ns     31 ns    213 ns ok
+flat        68    6  0.80    4 done                        6 ns   -119 ns    104 ns    215 ns ok
+flat      79.6    3  0.72    1 done                     -800 ns  -1038 ns    -70 ns    226 ns ok
+flat      79.6    3  0.72    2 done                     -288 ns   -538 ns   -233 ns    233 ns ok
+flat      79.6    3  0.72    3 done                     -231 ns   -481 ns    -94 ns    225 ns ok
+flat      79.6    3  0.72    4 done                     -188 ns   -438 ns    -76 ns    226 ns ok
+flat      79.6    3  0.80    1 Iout_follows_LS                -         -         -         - failed
+flat      79.6    3  0.80    2 Iout_follows_LS                -         -         -         - failed
+flat      79.6    3  0.80    3 Iout_follows_LS                -         -         -         - failed
+flat      79.6    3  0.80    4 Iout_follows_LS                -         -         -         - failed
+flat      79.6    6  0.72    1 done                     -512 ns   -669 ns   -186 ns    236 ns ok
+flat      79.6    6  0.72    2 done                     -450 ns   -588 ns   -170 ns    239 ns ok
+flat      79.6    6  0.72    3 done                     -781 ns  -1012 ns   -206 ns    244 ns ok
+flat      79.6    6  0.72    4 done                     -488 ns   -631 ns   -181 ns    243 ns ok
+flat      79.6    6  0.80    1 done                     -469 ns   -606 ns    277 ns    248 ns ok
+flat      79.6    6  0.80    2 done                      -62 ns   -188 ns    254 ns    239 ns ok
+flat      79.6    6  0.80    3 done                     -125 ns   -250 ns    247 ns    253 ns ok
+flat      79.6    6  0.80    4 done                     -206 ns   -331 ns    268 ns    251 ns ok
+flat-hq     48    3  0.72    1 done                      388 ns      0 ns    343 ns    138 ns ok
+flat-hq     48    3  0.72    2 V_step                         -         -         -         - failed
+flat-hq     48    3  0.72    3 V_step                         -         -         -         - failed
+flat-hq     48    3  0.72    4 V_step                         -         -         -         - failed
+flat-hq     48    3  0.80    1 done                       -6 ns   -131 ns     41 ns    102 ns ok
+flat-hq     48    3  0.80    2 done                        0 ns   -125 ns     51 ns     99 ns ok
+flat-hq     48    3  0.80    3 done                     -319 ns   -444 ns   -126 ns    101 ns ok
+flat-hq     48    3  0.80    4 done                      -12 ns   -138 ns     47 ns    103 ns ok
+flat-hq     48    6  0.72    1 done                      275 ns      0 ns    394 ns    144 ns ok
+flat-hq     48    6  0.72    2 Iout_follows_LS                -         -         -         - failed
+flat-hq     48    6  0.72    3 Iout_follows_LS                -         -         -         - failed
+flat-hq     48    6  0.72    4 done                       -6 ns   -131 ns    268 ns    144 ns ok
+flat-hq     48    6  0.80    1 done                     -288 ns   -412 ns   -244 ns    101 ns ok
+flat-hq     48    6  0.80    2 done                     -425 ns   -550 ns   -139 ns    102 ns ok
+flat-hq     48    6  0.80    3 done                     -444 ns   -575 ns   -149 ns    105 ns ok
+flat-hq     48    6  0.80    4 done                     -469 ns   -606 ns   -153 ns    109 ns ok
+flat-hq     68    3  0.72    1 done                     -112 ns   -238 ns     36 ns    189 ns ok
+flat-hq     68    3  0.72    2 done                     -575 ns   -750 ns   -300 ns    181 ns ok
+flat-hq     68    3  0.72    3 done                     -144 ns   -269 ns     15 ns    191 ns ok
+flat-hq     68    3  0.72    4 done                     -431 ns   -562 ns    -94 ns    182 ns ok
+flat-hq     68    3  0.80    1 done                       31 ns    -94 ns    432 ns    211 ns ok
+flat-hq     68    3  0.80    2 done                     -194 ns   -319 ns    236 ns    208 ns ok
+flat-hq     68    3  0.80    3 done                     -125 ns   -250 ns    268 ns    213 ns ok
+flat-hq     68    3  0.80    4 done                       38 ns    -88 ns    433 ns    217 ns ok
+flat-hq     68    6  0.72    1 done                     -331 ns   -456 ns   -258 ns    195 ns ok
+flat-hq     68    6  0.72    2 done                    -1031 ns  -1338 ns   -335 ns    198 ns ok
+flat-hq     68    6  0.72    3 done                     -325 ns   -450 ns   -257 ns    201 ns ok
+flat-hq     68    6  0.72    4 done                     -538 ns   -700 ns   -294 ns    201 ns ok
+flat-hq     68    6  0.80    1 done                     -162 ns   -288 ns     44 ns    206 ns ok
+flat-hq     68    6  0.80    2 done                      -88 ns   -212 ns    103 ns    203 ns ok
+flat-hq     68    6  0.80    3 done                     -175 ns   -300 ns     38 ns    206 ns ok
+flat-hq     68    6  0.80    4 done                      -62 ns   -188 ns    140 ns    210 ns ok
+flat-hq   79.6    3  0.72    1 done                     -200 ns   -325 ns   -167 ns    217 ns ok
+flat-hq   79.6    3  0.72    2 done                     -550 ns   -712 ns    -16 ns    216 ns ok
+flat-hq   79.6    3  0.72    3 done                     -219 ns   -344 ns   -181 ns    219 ns ok
+flat-hq   79.6    3  0.72    4 done                     -269 ns   -394 ns   -204 ns    222 ns ok
+flat-hq   79.6    3  0.80    1 done                       69 ns    -56 ns    439 ns    248 ns ok
+flat-hq   79.6    3  0.80    2 Iout_follows_LS                -         -         -         - failed
+flat-hq   79.6    3  0.80    3 Iout_follows_LS                -         -         -         - failed
+flat-hq   79.6    3  0.80    4 done                       38 ns    -88 ns    438 ns    249 ns ok
+flat-hq   79.6    6  0.72    1 done                     -238 ns   -488 ns   -306 ns    231 ns ok
+flat-hq   79.6    6  0.72    2 done                     -219 ns   -469 ns   -106 ns    231 ns ok
+flat-hq   79.6    6  0.72    3 done                     -338 ns   -462 ns   -219 ns    238 ns ok
+flat-hq   79.6    6  0.72    4 done                     -194 ns   -444 ns   -291 ns    235 ns ok
+flat-hq   79.6    6  0.80    1 done                      -75 ns   -200 ns    417 ns    246 ns ok
+flat-hq   79.6    6  0.80    2 done                     -169 ns   -294 ns    383 ns    242 ns ok
+flat-hq   79.6    6  0.80    3 done                     -231 ns   -356 ns    366 ns    253 ns ok
+flat-hq   79.6    6  0.80    4 done                     -175 ns   -300 ns    383 ns    248 ns ok
+fry         48    3  0.72    1 V_step                         -         -         -         - failed
+fry         48    3  0.72    2 done                     -469 ns   -719 ns   -364 ns   -117 ns ok
+fry         48    3  0.72    3 done                     -544 ns   -712 ns   -290 ns   -110 ns ok
+fry         48    3  0.72    4 done                     -356 ns   -481 ns   -234 ns   -116 ns ok
+fry         48    3  0.80    1 done                      356 ns      0 ns    400 ns   -119 ns ok
+fry         48    3  0.80    2 done                      350 ns      0 ns    376 ns   -114 ns ok
+fry         48    3  0.80    3 done                      406 ns      0 ns    534 ns   -103 ns ok
+fry         48    3  0.80    4 done                      344 ns      0 ns    362 ns   -106 ns ok
+fry         48    6  0.72    1 V_step                         -         -         -         - failed
+fry         48    6  0.72    2 V_step                         -         -         -         - failed
+fry         48    6  0.72    3 V_step                         -         -         -         - failed
+fry         48    6  0.72    4 LS_headroom                    -         -         -         - failed
+fry         48    6  0.80    1 done                      269 ns      0 ns    278 ns   -121 ns ok
+fry         48    6  0.80    2 done                      281 ns      0 ns    158 ns   -108 ns ok
+fry         48    6  0.80    3 done                      288 ns      0 ns    164 ns   -108 ns ok
+fry         48    6  0.80    4 done                      256 ns      0 ns    290 ns   -102 ns ok
+fry         68    3  0.72    1 done                      262 ns      0 ns    117 ns    -92 ns ok
+fry         68    3  0.72    2 done                      388 ns      0 ns    227 ns    -77 ns ok
+fry         68    3  0.72    3 done                      325 ns      0 ns     74 ns    -74 ns ok
+fry         68    3  0.72    4 done                      138 ns      0 ns    -39 ns    -79 ns ok
+fry         68    3  0.80    1 done                       75 ns    -50 ns    656 ns    -56 ns ok
+fry         68    3  0.80    2 done                      -62 ns   -188 ns    655 ns    -49 ns ok
+fry         68    3  0.80    3 done                       38 ns    -88 ns    656 ns    -44 ns ok
+fry         68    3  0.80    4 done                      512 ns      0 ns    592 ns    -54 ns ok
+fry         68    6  0.72    1 done                      262 ns      0 ns     43 ns    -74 ns ok
+fry         68    6  0.72    2 done                      275 ns      0 ns     62 ns    -75 ns ok
+fry         68    6  0.72    3 done                      262 ns      0 ns     43 ns    -68 ns ok
+fry         68    6  0.72    4 done                      156 ns      0 ns    -26 ns    -68 ns ok
+fry         68    6  0.80    1 done                      388 ns      0 ns    422 ns    -72 ns ok
+fry         68    6  0.80    2 done                      506 ns      0 ns    554 ns    -60 ns ok
+fry         68    6  0.80    3 done                      488 ns      0 ns    503 ns    -59 ns ok
+fry         68    6  0.80    4 done                      506 ns      0 ns    559 ns    -53 ns ok
+fry       79.6    3  0.72    1 done                      175 ns      0 ns    226 ns    -82 ns ok
+fry       79.6    3  0.72    2 done                      175 ns      0 ns    232 ns    -69 ns ok
+fry       79.6    3  0.72    3 done                      312 ns      0 ns    162 ns    -68 ns ok
+fry       79.6    3  0.72    4 done                      244 ns      0 ns     52 ns    -65 ns ok
+fry       79.6    3  0.80    1 done                      -56 ns   -181 ns    637 ns    -49 ns ok
+fry       79.6    3  0.80    2 Iout_follows_LS                -         -         -         - failed
+fry       79.6    3  0.80    3 done                        0 ns   -125 ns    633 ns    -46 ns ok
+fry       79.6    3  0.80    4 Iout_follows_LS                -         -         -         - failed
+fry       79.6    6  0.72    1 done                      294 ns      0 ns     76 ns    -76 ns ok
+fry       79.6    6  0.72    2 done                      125 ns      0 ns    244 ns    -62 ns ok
+fry       79.6    6  0.72    3 done                      288 ns      0 ns     91 ns    -72 ns ok
+fry       79.6    6  0.72    4 done                      319 ns      0 ns    115 ns    -65 ns ok
+fry       79.6    6  0.80    1 done                      -25 ns   -150 ns    639 ns    -46 ns ok
+fry       79.6    6  0.80    2 done                      -38 ns   -162 ns    604 ns    -42 ns ok
+fry       79.6    6  0.80    3 done                       44 ns    -81 ns    639 ns    -39 ns ok
+fry       79.6    6  0.80    4 done                       25 ns   -100 ns    597 ns    -47 ns ok
+fry-hq      48    3  0.72    1 V_step                         -         -         -         - failed
+fry-hq      48    3  0.72    2 done                     -594 ns   -769 ns   -308 ns   -123 ns ok
+fry-hq      48    3  0.72    3 done                     -231 ns   -356 ns   -216 ns   -115 ns ok
+fry-hq      48    3  0.72    4 done                     -319 ns   -444 ns   -333 ns   -123 ns ok
+fry-hq      48    3  0.80    1 done                      362 ns      0 ns    428 ns   -122 ns ok
+fry-hq      48    3  0.80    2 done                      381 ns      0 ns    389 ns   -120 ns ok
+fry-hq      48    3  0.80    3 done                      419 ns      0 ns    588 ns   -106 ns ok
+fry-hq      48    3  0.80    4 done                      319 ns      0 ns    193 ns   -118 ns ok
+fry-hq      48    6  0.72    1 V_step                         -         -         -         - failed
+fry-hq      48    6  0.72    2 LS_headroom                    -         -         -         - failed
+fry-hq      48    6  0.72    3 V_step                         -         -         -         - failed
+fry-hq      48    6  0.72    4 V_step                         -         -         -         - failed
+fry-hq      48    6  0.80    1 done                      362 ns      0 ns    436 ns   -118 ns ok
+fry-hq      48    6  0.80    2 done                      300 ns      0 ns    139 ns   -114 ns ok
+fry-hq      48    6  0.80    3 done                      281 ns      0 ns    268 ns   -111 ns ok
+fry-hq      48    6  0.80    4 done                      344 ns      0 ns    453 ns   -102 ns ok
+fry-hq      68    3  0.72    1 done                      344 ns      0 ns    349 ns    -92 ns ok
+fry-hq      68    3  0.72    2 done                      262 ns      0 ns    116 ns    -79 ns ok
+fry-hq      68    3  0.72    3 done                      256 ns      0 ns     60 ns    -79 ns ok
+fry-hq      68    3  0.72    4 done                      181 ns      0 ns    119 ns    -76 ns ok
+fry-hq      68    3  0.80    1 done                      394 ns      0 ns    664 ns    -71 ns ok
+fry-hq      68    3  0.80    2 done                      381 ns      0 ns    658 ns    -57 ns ok
+fry-hq      68    3  0.80    3 done                      394 ns      0 ns    523 ns    -67 ns ok
+fry-hq      68    3  0.80    4 done                      381 ns      0 ns    637 ns    -56 ns ok
+fry-hq      68    6  0.72    1 done                     -206 ns   -331 ns   -168 ns    -94 ns ok
+fry-hq      68    6  0.72    2 done                       19 ns   -106 ns    -66 ns    -84 ns ok
+fry-hq      68    6  0.72    3 done                      281 ns      0 ns    116 ns    -72 ns ok
+fry-hq      68    6  0.72    4 done                      181 ns      0 ns    146 ns    -64 ns ok
+fry-hq      68    6  0.80    1 done                      338 ns      0 ns    449 ns    -81 ns ok
+fry-hq      68    6  0.80    2 done                      381 ns      0 ns    690 ns    -52 ns ok
+fry-hq      68    6  0.80    3 done                      369 ns      0 ns    651 ns    -57 ns ok
+fry-hq      68    6  0.80    4 done                      312 ns      0 ns    476 ns    -63 ns ok
+fry-hq    79.6    3  0.72    1 done                      125 ns      0 ns    272 ns    -85 ns ok
+fry-hq    79.6    3  0.72    2 done                      338 ns      0 ns    479 ns    -66 ns ok
+fry-hq    79.6    3  0.72    3 done                      269 ns      0 ns    151 ns    -70 ns ok
+fry-hq    79.6    3  0.72    4 done                      294 ns      0 ns    464 ns    -57 ns ok
+fry-hq    79.6    3  0.80    1 Iout_follows_LS                -         -         -         - failed
+fry-hq    79.6    3  0.80    2 done                      619 ns      0 ns    739 ns    -39 ns ok
+fry-hq    79.6    3  0.80    3 done                      456 ns      0 ns    741 ns    -41 ns ok
+fry-hq    79.6    3  0.80    4 done                      469 ns      0 ns    744 ns    -38 ns ok
+fry-hq    79.6    6  0.72    1 done                      294 ns      0 ns    146 ns    -78 ns ok
+fry-hq    79.6    6  0.72    2 done                      262 ns      0 ns    162 ns    -74 ns ok
+fry-hq    79.6    6  0.72    3 done                      231 ns      0 ns     75 ns    -75 ns ok
+fry-hq    79.6    6  0.72    4 done                      275 ns      0 ns    127 ns    -71 ns ok
+fry-hq    79.6    6  0.80    1 done                      475 ns      0 ns    748 ns    -48 ns ok
+fry-hq    79.6    6  0.80    2 done                      300 ns      0 ns    665 ns    -46 ns ok
+fry-hq    79.6    6  0.80    3 done                      488 ns      0 ns    746 ns    -40 ns ok
+fry-hq    79.6    6  0.80    4 done                      250 ns      0 ns    629 ns    -48 ns ok
+fry      41 done: learned mean +185 ns sd 239, 29 bounds (71 %), applied -719..+0 ns
+flat-hq  41 done: learned mean -202 ns sd 243, 2 bounds (5 %), applied -1338..+0 ns
+fry-hq   42 done: learned mean +263 ns sd 224, 36 bounds (86 %), applied -769..+0 ns
+flat     40 done: learned mean -240 ns sd 305, 2 bounds (5 %), applied -1406..+0 ns
+all boards: learned mean +4 ns (baseline -9)
+192 runs, 0 outside the band, 28 failed (offset kept)
+exit 0

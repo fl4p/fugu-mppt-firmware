@@ -91,7 +91,8 @@ Arduino, FreeRTOS, or ESP-IDF headers. It simulates the following parts:
 - A single-diode PV source (Isc, Voc, fill-factor k)
 - Battery/load (Vbat, Rbat)
 - Passives (L, Cin, Cout)
-- PWM gate timing (HS on-count, LS on-count, freq)
+- PWM gate timing (HS on-count, LS on-count, freq), at the LEDC or the MCPWM count resolution
+  (`vconv.conf::pwm_clk`)
 - Pluggable AC ripple models (sine inverter, |sin| rectifier, spiky China-inverter pulse)
 
 With `CONFIG_FUGU_WITH_VCONV=y`, the firmware replaces the real PWM driver with `PWM_VConv` and

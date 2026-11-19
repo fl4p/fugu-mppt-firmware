@@ -1,0 +1,6 @@
+wx-mp-psu          Iout min  -0.167 A, above onset   0.0 s, minpulse-M stops 1, starts 2, revI 0  ok
+wx-mp-psu-nosink   Iout min  -0.160 A, above onset   0.0 s, minpulse-M stops 1, starts 2, revI 0  ok
+wx-mp-manual       Iout min  -0.163 A, above onset   0.0 s, minpulse-M stops 1, starts 2, revI 0  ok
+wx-mp-ccm          Iout min   0.000 A, above onset   0.0 s, minpulse-M stops 1, starts 1, revI 0, DCM entry to stop 2.2 ms  ok
+wx-mp-ramp         Iout min   0.000 A, above onset   0.0 s, minpulse-M stops 0, starts 1, revI 0  ok
+wx-dusk            Iout min  -0.121 A, above onset   0.0 s, minpulse-M stops 0, starts 12, revI 0  ok

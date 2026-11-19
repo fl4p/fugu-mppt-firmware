@@ -316,6 +316,11 @@ step repeated that, and the tracker ended on the local maximum, up to 18 V below
 5 % rule therefore counts only a move in the steered direction. This removes the trap: in simulated trapped runs
 it held 36 to 47 reversals per run.
 
+The trap depends on the low-side timing, not on the duty resolution. In simulation it occurs at both PWM
+resolutions (2047 and 4103 counts per period) with the low side turning off at the modelled zero crossing
+(`rect_offset_ns` 0). With the low side turning off 1.3 µs early (`rect_offset_ns` -1312), it did not occur in
+144 runs, with or without the rule.
+
 A power drop that coincides with such a step could reverse the tracker the same way, but that happened about once
 per trapped run. As a guard, a power drop does not reverse while Vin is more than 1 % against the steering. The
 1 % margin keeps reversals on light changes that move Vin. In DCM the converter input acts like a resistance, so
