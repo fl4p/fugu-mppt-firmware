@@ -297,29 +297,143 @@ follows the duty, for example with bypass-diode humps.
 
 ### Steady-state efficiency and noise
 
-A simplified model shows how measurement noise limits P&O in steady light. Near the MPP the power curve is
-$P(x) = P_m(1 - c\,x^2)$ with $x = (V - V_m)/V_m$. The single-diode model gives $c \approx 1 + V_m/(2 n V_t)$
-per cell, about 9 for crystalline silicon, independent of the number of cells in series. The model assumes a fixed
-curve (constant irradiance and temperature) and independent noise in each period's power reading.
+A simplified model shows how measurement noise limits P&O in steady light. It assumes a fixed curve (constant
+irradiance and temperature) and independent noise in each period's power reading. Near the MPP the power curve is
+a parabola in the relative voltage offset $x$:
 
-- Without noise, P&O with step $\delta = \Delta V / V_m$ oscillates around the MPP with efficiency
-  $\eta = 1 - c\,\delta^2/2$. For steps of about one PWM count this loss is negligible.
-- With noise larger than the per-step power change, and $\sigma$ the relative noise of each period-averaged power
-  reading, the operating point performs a random walk with a drift toward the MPP. The stationary variance of $x$
-  is $\sqrt{\pi}\,\sigma/(4c)$, so $\eta \approx 1 - \tfrac{\sqrt{\pi}}{4}\,\sigma \approx 1 - 0.44\,\sigma$.
-  Step size and curvature cancel. The approximation ignores the direction persistence of P&O and holds to within
-  about a factor of 2.
-- With a relative decision threshold $\theta$, the point wanders within $P > P_m(1 - \theta)$ and
-  $\eta \approx 1 - \theta/3$. Keeping false reversals rare needs $\theta \approx k\sqrt{2}\,\sigma$ with
-  $k \approx 2\ldots3$, so $\eta \approx 1 - (0.9\ldots1.4)\,\sigma$. The threshold costs steady-state efficiency
-  but protects against walk-off driven by noise and changing irradiance, which this model does not include.
+$$
+P(x) = P_m \left(1 - c\,x^2\right), \qquad x = \frac{V - V_m}{V_m}
+$$
 
-Averaging sets $\sigma = \sigma_\text{raw}/\sqrt{N}$ with $N \approx f_s T_d$ (sample rate times decision period);
-filters and correlated noise reduce the effective $N$. At low power $\sigma$ grows as $1/P$, so dawn, dusk and low
+The single-diode model gives the curvature per cell, independent of the number of cells in series:
+
+$$
+c \approx 1 + \frac{V_m}{2\,n\,V_t}
+$$
+
+which is about 9 for crystalline silicon. The tracking efficiency is the mean power relative to the MPP:
+
+$$
+\eta = \frac{\overline{P}}{P_m} = 1 - c\,\overline{x^2}
+$$
+
+#### Without noise
+
+P&O with step $\delta = \Delta V / V_m$ oscillates around the MPP with
+
+$$
+\eta = 1 - \frac{c\,\delta^2}{2}
+$$
+
+For steps of about one PWM count this loss is negligible.
+
+#### Noise larger than the step
+
+Let $\sigma$ be the relative noise of each period-averaged power reading. When $\sigma$ exceeds the per-step power
+change, the operating point performs a random walk with a drift toward the MPP. Its stationary variance is
+
+$$
+\overline{x^2} = \frac{\sqrt{\pi}\,\sigma}{4\,c}
+$$
+
+so step size and curvature cancel:
+
+$$
+\eta \approx 1 - \frac{\sqrt{\pi}}{4}\,\sigma \approx 1 - 0.44\,\sigma
+$$
+
+The approximation ignores the direction persistence of P&O and holds to within about a factor of 2.
+
+#### Decision threshold
+
+With a relative decision threshold $\theta$ and a reference that follows every reading, the point wanders within
+$P > P_m (1 - \theta)$, and
+
+$$
+\eta \approx 1 - \frac{\theta}{3}
+$$
+
+The tracker holds its reference until the power changes by more than $\theta$, so on the way up the reference can
+sit up to $\theta$ below the peak, and the reversal on the way down comes another $\theta$ below the reference. The
+band then reaches $P_m(1 - 2\theta)$ and the loss lies between $\theta/3$ and $2\theta/3$.
+
+The band model holds only while $\theta$ is well above the noise. In simulation the loss was 0.5 to 0.8 $\theta$
+without noise and for $\theta \gtrsim 3\sigma$. Below $\theta \approx \sigma$ the tracker reverses mostly on noise,
+and the loss levels off near $1\,\sigma$ instead of falling with $\theta$. A threshold above the noise then costs
+more than it saves, unless the light changes quickly: a larger $\theta$ also delays the reaction to rising light,
+and in heavy noise with moving clouds it prevents reversals on noise that walk the tracker off the MPP.
+
+The difference of two readings has noise $\sqrt{2}\,\sigma$. Writing $\theta = k\sqrt{2}\,\sigma$, false
+reversals become rare from $k \approx 2 \ldots 3$, which costs
+
+$$
+\eta \approx 1 - (0.9 \ldots 1.4)\,\sigma
+$$
+
+The fixed thresholds of the tracker sit below that: in simulation with measured sensor noise they correspond to
+$k \approx 0.6$ in fast mode and $0.2 \ldots 0.3$ in slow mode, so the tracker accepts noise-driven reversals in
+steady light. Thresholds derived from a running noise estimate (fixed $k$ from 1.4 to 2.5) gained at most a few
+tenths of a percent in simulation and lost up to several percent at low light, where the current-sensor noise
+floor does not scale with current; the tracker therefore keeps fixed thresholds.
+
+#### Averaging and low power
+
+The decision period $T_d$ is the tracker period, not the sensor sample period: 33 ms in fast mode and 500 ms in
+slow mode. The tracker averages the filtered power samples of one period. The sensor filters already average the
+raw samples and correlate successive filtered samples, so the period mean gains less than $\sqrt{f_s T_d}$.
+Modelling the filtered power as noise $\sigma_f$ with exponential correlation and time constant $\tau$, the
+variance of a mean over $T_d$ is
+
+$$
+\sigma^2 = \sigma_f^2\, g\!\left(\frac{T_d}{\tau}\right), \qquad
+g(u) = \frac{2}{u}\left(1 - \frac{1 - e^{-u}}{u}\right)
+$$
+
+with $g \to 1$ for $T_d \ll \tau$ and $g \to 2\tau/T_d$ for $T_d \gg \tau$. The filter's settling time gives
+$\tau \approx t_f / 6.64$ (see [Settle window](#settle-window)). For the INA226 profile at 450 Hz ($t_f$ = 152 ms,
+$\tau \approx$ 23 ms):
+
+| Mode | $T_d$  | $T_d/\tau$ | $g$   | $\sigma / \sigma_f$ |
+|------|--------|------------|-------|---------------------|
+| Fast | 33 ms  | 1.4        | 0.65  | 0.81                |
+| Slow | 500 ms | 22         | 0.087 | 0.30                |
+
+In fast mode the period mean is barely quieter than one filtered sample. The two-pass EWMA is not a single
+exponential, so these values are approximate. At low power $\sigma$ grows as $1/P$, so dawn, dusk and low
 light dominate the steady-state loss. A longer decision period lowers $\sigma$ but follows changing irradiance more
-slowly, which is a separate loss. With the relative thresholds above, $\theta/3$ is about 0.05 % in slow mode and
-0.5 % in fast mode. The threshold is relative to $P + 5\,\text{W}$, and the absolute threshold applies when it is
-smaller, so the effective $\theta$ is larger at low power and smaller at high power.
+slowly, which is a separate loss.
+
+With the relative thresholds of the tracker, the threshold loss is:
+
+| Mode | $\theta$ | $\theta / 3$ |
+|------|----------|--------------|
+| Fast | 1.5 %    | 0.5 %        |
+| Slow | 0.15 %   | 0.05 %       |
+
+The tracker reverses when the power change exceeds either the absolute threshold $\Delta P_\text{abs}$ or the
+relative threshold $\theta_\text{rel}$ applied to $P + 5\,\text{W}$, so the smaller of the two sets the effective
+relative threshold:
+
+$$
+\theta_\text{eff} = \frac{\min\left(\Delta P_\text{abs},\; \theta_\text{rel}\,(P + 5\,\text{W})\right)}{P}
+$$
+
+$\theta_\text{eff}$ is larger at low power and smaller at high power. Below about 62 W in fast mode and 328 W in
+slow mode the relative term is the smaller one.
+
+#### Combined estimate
+
+Writing the noise as the absolute power noise $s_f$ of one filtered sample, so that
+$\sigma = s_f \sqrt{g} / P$, and taking the larger of the threshold and noise-walk losses gives
+
+$$
+\boxed{\; \eta \approx 1 - \frac{c\,\delta^2}{2} - \max\!\left(\kappa\,\frac{\theta_\text{eff}}{3},\; \frac{\sqrt{\pi}}{4}\,\frac{s_f\sqrt{g(T_d/\tau)}}{P}\right) \;}
+$$
+
+where $\kappa$ = 1 to 2 accounts for the held reference. The three terms come from separate limiting cases and are not exact in combination, so the result is an estimate
+to within about a factor of 2. Both loss terms grow as $1/P$ at low power. With
+$\theta \approx k\sqrt{2}\,\sigma$ and $k \ge 2$ the threshold term is the larger one; at the tracker's fixed
+thresholds ($k < 1$) the two terms are of similar size.
 
 ## Partial peak scan
 
