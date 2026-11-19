@@ -211,7 +211,7 @@ const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, SILENT_MS = 15000, 
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000], bleRetryMs:500,
               hostnameMs:8000, snapMs:10000, snapMax:16, wsProbeMs:3000, confMs:6000,
               chargerMs:300000, chargerTimeoutMs:6000, chargingMinW:1 };
-const SNAP_T = ["P","Ui","Uo","I","duty","state","Pmax","Etoday","ntcT","mcuT","Ro","Rc","Rb"];
+const SNAP_T = ["P","Ui","Uo","I","duty","state","stName","Pmax","Etoday","ntcT","mcuT","Ro","Rc","Rb"];
 const LOG_KEEP = 200, LOG_SHOW = 100;
 // live P-V reconstruction: bin width V, faded after ms, bin cap, overwrite radius bins, path break V
 const RECON = { bin:0.25, staleMs:600000, max:400, near:2, gapV:2 };
