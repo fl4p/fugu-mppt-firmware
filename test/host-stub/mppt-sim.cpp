@@ -1069,7 +1069,9 @@ static int runWx(const std::string &name, Wx &wx) {
     float slowDvMax = 0; // largest |Vin - Vmpp| / Vmpp in slow mode
     float dMin = 1e9f, dMax = 0, vMin = 1e9f, vMax = 0;
     uint32_t nRev = 0, nSlowIn = 0;
-    time_ms lastRev = 0;
+    time_ms lastRev = 0, lastTrk = 0;
+    double thS[2] = {}; // reversal threshold / P per period, by the mode the decision ran in
+    uint32_t thN[2] = {}, thFix[2] = {};
     bool wasSlow = false;
     double holdAt = getenv("SIM_HOLD") ? atof(getenv("SIM_HOLD")) : -1; // tracker output x0 from then on
     // reverse output current per 20 ms slice (plant truth); time on above the LS min pulse's carry-over ratio
@@ -1186,6 +1188,11 @@ static int runWx(const std::string &name, Wx &wx) {
             tSlow += dt;
             if (cat == TRACK && iG >= 0) lossSlow += (pG - pPv) * dt, slowDvMax = std::max(slowDvMax, std::fabs(vin / pk[iG].v - 1));
         }
+        if (trk._time != lastTrk && (cat == TRACK || cat == WRONG) && trk._curPower >= 1) {
+            thS[wasSlow] += trk.minPowerStep / trk._curPower, ++thN[wasSlow];
+            thFix[wasSlow] += trk._noiseN[wasSlow] < 8 || trk._noiseIdle[wasSlow] >= 32;
+        }
+        lastTrk = trk._time;
         nSlowIn += trk.slowMode && !wasSlow, wasSlow = trk.slowMode;
         nRev += trk._timeLastReverse != lastRev, lastRev = trk._timeLastReverse;
         if (isWrong) {
@@ -1255,12 +1262,15 @@ static int runWx(const std::string &name, Wx &wx) {
         printf("== TRACKER %-18s tracking %.0f s: duty mean %.0f rms %.1f p-p %.0f counts of %u (%.2f / %.1f permille),"
                " Vin mean %.2f rms %.3f p-p %.2f V | tracking loss %.2f %% | slow %.1f %% of the time, %u entries"
                " (%zu logged, every %.0f s) | %.1f reversals/min | harvest %.2f %% | tracking loss %.0f J, in slow mode"
-               " %.0f J, slow-mode Vin up to %.1f %% off the MPP\n", name.c_str(), dN, dm,
+               " %.0f J, slow-mode Vin up to %.1f %% off the MPP | theta/P fast %.2f slow %.2f permille, fixed rule"
+               " %.0f / %.0f %% of %u / %u periods\n", name.c_str(), dN, dm,
                std::sqrt(std::max(0.0, dS2 / std::max(dN, 1e-9) - dm * dm)), dMax - dMin, converter.pwmCtrlMax,
                std::sqrt(std::max(0.0, dS2 / std::max(dN, 1e-9) - dm * dm)) * k, (dMax - dMin) * k, vm,
                std::sqrt(std::max(0.0, vS2 / std::max(dN, 1e-9) - vm * vm)), vMax - vMin, loss[TRACK] * pc,
                100 * tSlow / tStat, nSlowIn, nLogged, nLogged ? tStat / nLogged : 0.0, nRev * 60 / tStat, ePv * pc,
-               loss[TRACK], lossSlow, 100 * slowDvMax);
+               loss[TRACK], lossSlow, 100 * slowDvMax, thN[0] ? 1000 * thS[0] / thN[0] : 0.0,
+               thN[1] ? 1000 * thS[1] / thN[1] : 0.0, thN[0] ? 100.0 * thFix[0] / thN[0] : 0.0,
+               thN[1] ? 100.0 * thFix[1] / thN[1] : 0.0, thN[0], thN[1]);
     }
     size_t shown = 0;
     for (auto &s: wrong) {

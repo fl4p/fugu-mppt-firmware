@@ -1,0 +1,120 @@
+identity K1.4 vs k-scan BsK1.4: 163/163 equal
+identity K2.5 vs k-scan BsN: 163/163 equal
+identity A vs k-scan A: 163/163 equal
+harvest: A in %, others mean / worst run (run) pp vs A
+                     n      A                         k1.4                          k2.0                         k2.5
+case                                                                                                                 
+wx-cloud flat-g1     9  98.55   +0.08 / -0.02 (flat-g1@16)     -0.03 / -0.20 (flat-g1@2)    +0.02 / -0.16 (flat-g1@0)
+wx-cloud flat-g3     9  96.91   +0.61 / +0.33 (flat-g3@16)    +0.80 / +0.53 (flat-g3@10)   +0.91 / +0.74 (flat-g3@10)
+wx-dawn flat         9  97.62       +0.74 / +0.71 (flat@8)        +0.72 / +0.68 (flat@8)       +0.72 / +0.70 (flat@6)
+wx-dawn fry          9  97.11       +1.12 / +0.93 (fry@14)        +1.10 / +0.93 (fry@14)        +1.09 / +0.91 (fry@0)
+wx-dawn nf           1  97.38           +0.73 / +0.73 (nf)            +0.75 / +0.75 (nf)           +0.75 / +0.75 (nf)
+wx-dusk flat         9  98.19       +0.66 / +0.42 (flat@0)        +0.68 / +0.44 (flat@0)       +0.68 / +0.44 (flat@0)
+wx-dusk fry          9  98.21       +0.55 / +0.23 (fry@14)        +0.59 / +0.28 (fry@14)       +0.57 / +0.16 (fry@14)
+wx-dusk fry120      18  97.77    -0.36 / -1.93 (fry120@13)     +0.09 / -0.91 (fry120@10)     +0.42 / -0.18 (fry120@4)
+wx-dusk nf           1  98.08           +0.73 / +0.73 (nf)            +0.73 / +0.73 (nf)           +0.72 / +0.72 (nf)
+wx-low flat-g0.3    11  98.45  +0.37 / -0.54 (flat-g0.3@2)  -0.25 / -1.05 (flat-g0.3@10)  -0.97 / -3.32 (flat-g0.3@6)
+wx-low fry           9  98.27        +0.35 / -1.10 (fry@8)         +0.42 / -0.19 (fry@4)       -0.06 / -2.61 (fry@12)
+wx-low fry120       18  98.18     +0.10 / -0.43 (fry120@4)     +0.16 / -0.06 (fry120@17)     +0.10 / -1.14 (fry120@1)
+wx-low gauss         9  97.61        -0.03 / -1.82 (seed2)         -2.02 / -6.50 (seed8)        -1.42 / -5.88 (seed6)
+wx-shade-cloud fry   9  93.28        +0.05 / -0.02 (fry@2)         +0.04 / -0.02 (fry@2)        -0.00 / -0.09 (fry@8)
+wx-shade-cloud nf    1  93.30           +0.08 / +0.08 (nf)            +0.09 / +0.09 (nf)           +0.07 / +0.07 (nf)
+wx-shade2 fry        9  99.00       +0.07 / +0.03 (fry@16)         +0.05 / +0.03 (fry@8)       -0.00 / -0.06 (fry@16)
+wx-shade2 nf         1  98.99           +0.08 / +0.08 (nf)            +0.08 / +0.08 (nf)           +0.08 / +0.08 (nf)
+wx-shade2-move fry   9  90.02       +0.07 / +0.04 (fry@10)         +0.04 / +0.03 (fry@0)       +0.03 / +0.00 (fry@10)
+wx-shade2-move nf    1  90.02           +0.07 / +0.07 (nf)            +0.07 / +0.07 (nf)           +0.07 / +0.07 (nf)
+wx-shade3 fry        9  98.96        +0.07 / +0.04 (fry@2)         +0.05 / +0.00 (fry@0)        +0.02 / -0.02 (fry@0)
+wx-shade3 nf         1  98.95           +0.09 / +0.09 (nf)            +0.09 / +0.09 (nf)           +0.09 / +0.09 (nf)
+wx-shade3-move fry   9  74.17       +0.07 / +0.05 (fry@12)         +0.05 / +0.03 (fry@4)        +0.03 / +0.00 (fry@8)
+wx-shade3-move nf    1  74.08           +0.16 / +0.16 (nf)            +0.16 / +0.16 (nf)           +0.16 / +0.16 (nf)
+wx-sweep-rise fry    9  96.42        -0.09 / -0.37 (fry@8)         +0.15 / +0.00 (fry@8)        +0.19 / +0.04 (fry@8)
+wx-sweep-rise nf     1  96.86           +0.09 / +0.09 (nf)            +0.09 / +0.09 (nf)           +0.08 / +0.08 (nf)
+wx-wob-flat flat     9  99.80      +0.04 / -0.20 (flat@16)       -0.06 / -0.33 (flat@12)       +0.00 / -0.19 (flat@8)
+wx-wob-fry fry       9  99.74        +0.13 / -0.06 (fry@8)         +0.08 / -0.14 (fry@8)       -0.35 / -0.94 (fry@10)
+
+reversals/min
+                     n    A k1.4 k2.0 k2.5
+case                                      
+wx-cloud flat-g1     9  106  181  134  114
+wx-cloud flat-g3     9  186  189  117   88
+wx-dawn flat         9   24   37   32   27
+wx-dawn fry          9   23   36   30   26
+wx-dawn nf           1   22   25   25   24
+wx-dusk flat         9   29   33   30   28
+wx-dusk fry          9   26   31   29   27
+wx-dusk fry120      18   25   25   23   20
+wx-dusk nf           1   31   29   30   29
+wx-low flat-g0.3    11   71  152   81   48
+wx-low fry           9   73  135   99   69
+wx-low fry120       18   39   66   62   58
+wx-low gauss         9  142  136   62   39
+wx-shade-cloud fry   9   58  116   90   74
+wx-shade-cloud nf    1   59  152  147  148
+wx-shade2 fry        9    8   33   19   13
+wx-shade2 nf         1    4   16   14   15
+wx-shade2-move fry   9   12   40   24   18
+wx-shade2-move nf    1    9   28   28   28
+wx-shade3 fry        9    9   33   18   13
+wx-shade3 nf         1    4   17   18   17
+wx-shade3-move fry   9    7   34   18   12
+wx-shade3-move nf    1    4   10   10   10
+wx-sweep-rise fry    9   61   57   32   23
+wx-sweep-rise nf     1   11   27   27   44
+wx-wob-flat flat     9   35   56   40   33
+wx-wob-fry fry       9   36   50   36   29
+
+theta/P %, fast | slow (mean over runs)
+                     n            A         k1.4         k2.0         k2.5
+case                                                                      
+wx-cloud flat-g1     9  0.49 | 0.08  0.13 | 0.20  0.19 | 0.29  0.24 | 0.34
+wx-cloud flat-g3     9  0.44 | 0.10  0.34 | 0.47  0.53 | 0.65  0.67 | 0.77
+wx-dawn flat         9  2.84 | 0.00  0.87 | 0.00  0.88 | 0.00  0.89 | 0.00
+wx-dawn fry          9  2.84 | 0.00  0.87 | 0.00  0.88 | 0.00  0.90 | 0.00
+wx-dawn nf           1  2.82 | 0.00  0.86 | 0.00  0.86 | 0.00  0.88 | 0.00
+wx-dusk flat         9  4.50 | 0.26  1.10 | 0.76  1.10 | 0.76  1.12 | 0.76
+wx-dusk fry          9  4.49 | 0.26  1.10 | 0.75  1.11 | 0.75  1.12 | 0.76
+wx-dusk fry120      18  4.44 | 0.26  1.15 | 0.79  1.17 | 0.84  1.21 | 0.89
+wx-dusk nf           1  4.55 | 0.26  1.08 | 0.75  1.10 | 0.73  1.09 | 0.74
+wx-low flat-g0.3    11  3.08 | 0.35  2.17 | 1.43  3.35 | 1.33  4.40 | 2.18
+wx-low fry           9  3.08 | 0.38  1.98 | 1.80  2.90 | 1.95  3.70 | 2.69
+wx-low fry120       18  3.07 | 0.44  1.16 | 1.91  1.43 | 2.67  1.74 | 3.51
+wx-low gauss         9  3.11 | 0.33  4.64 | 1.25  7.53 | 2.06  9.83 | 2.35
+wx-shade-cloud fry   9  0.76 | 0.14  0.17 | 0.12  0.23 | 0.17  0.29 | 0.21
+wx-shade-cloud nf    1  0.78 | 0.14  0.06 | 0.02  0.06 | 0.02  0.06 | 0.02
+wx-shade2 fry        9  0.64 | 0.15  0.15 | 0.08  0.22 | 0.13  0.28 | 0.17
+wx-shade2 nf         1  0.65 | 0.15  0.03 | 0.03  0.03 | 0.03  0.03 | 0.03
+wx-shade2-move fry   9  0.57 | 0.15  0.15 | 0.08  0.22 | 0.13  0.28 | 0.17
+wx-shade2-move nf    1  0.58 | 0.15  0.03 | 0.04  0.03 | 0.04  0.03 | 0.04
+wx-shade3 fry        9  0.58 | 0.15  0.15 | 0.08  0.22 | 0.13  0.28 | 0.17
+wx-shade3 nf         1  0.59 | 0.15  0.03 | 0.03  0.03 | 0.03  0.03 | 0.03
+wx-shade3-move fry   9  0.61 | 0.15  0.15 | 0.08  0.22 | 0.13  0.27 | 0.16
+wx-shade3-move nf    1  0.58 | 0.15  0.04 | 0.04  0.04 | 0.04  0.04 | 0.04
+wx-sweep-rise fry    9  0.14 | 0.07  0.14 | 0.07  0.21 | 0.11  0.27 | 0.15
+wx-sweep-rise nf     1  0.14 | 0.07  0.01 | 0.01  0.01 | 0.01  0.01 | 0.01
+wx-wob-flat flat     9  1.45 | 0.16  0.11 | 0.13  0.18 | 0.18  0.22 | 0.21
+wx-wob-fry fry       9  1.45 | 0.16  0.15 | 0.16  0.22 | 0.22  0.28 | 0.27
+
+groups: mean / worst run, pp vs A
+           mean                                                                           min                                                                         count                                                               
+grp  120Hz dusk 120Hz low cloud-g1 cloud-g3 dawn/dusk   low shade sweep-rise   wob 120Hz dusk 120Hz low cloud-g1 cloud-g3 dawn/dusk   low shade sweep-rise   wob 120Hz dusk 120Hz low cloud-g1 cloud-g3 dawn/dusk low shade sweep-rise wob
+var                                                                                                                                                                                                                                       
+k1.4      -0.36      0.10     0.08     0.61      0.76  0.24  0.07      -0.07  0.08      -1.93     -0.43    -0.02     0.33      0.23 -1.82 -0.02      -0.37 -0.20         18        18        9        9        38  29    50         10  18
+k2.0       0.09      0.16    -0.03     0.80      0.77 -0.59  0.05       0.14  0.01      -0.91     -0.06    -0.20     0.53      0.28 -6.50 -0.02       0.00 -0.33         18        18        9        9        38  29    50         10  18
+k2.5       0.42      0.10     0.02     0.91      0.77 -0.83  0.02       0.18 -0.17      -0.18     -1.14    -0.16     0.74      0.16 -5.88 -0.09       0.04 -0.94         18        18        9        9        38  29    50         10  18
+
+group A harvest %: {'120Hz dusk': 97.77, '120Hz low': 98.18, 'cloud-g1': 98.55, 'cloud-g3': 96.91, 'dawn/dusk': 97.78, 'low': 98.13, 'shade': 91.08, 'sweep-rise': 96.46, 'wob': 99.77}
+k1.4 low: mean +0.24 se 0.17 worst wx-low seed2 -1.82 (n=29)
+k1.4 120Hz dusk: mean -0.36 se 0.14 worst wx-dusk fry120@13 -1.93 (n=18)
+k1.4 120Hz low: mean +0.10 se 0.06 worst wx-low fry120@4 -0.43 (n=18)
+k1.4 cloud-g3: mean +0.61 se 0.05 worst wx-cloud flat-g3@16 +0.33 (n=9)
+k1.4 worst overall: wx-dusk fry120@13 -1.93; wx-low seed2 -1.82; wx-low seed7 -1.18
+k2.0 low: mean -0.59 se 0.34 worst wx-low seed8 -6.50 (n=29)
+k2.0 120Hz dusk: mean +0.09 se 0.12 worst wx-dusk fry120@10 -0.91 (n=18)
+k2.0 120Hz low: mean +0.16 se 0.04 worst wx-low fry120@17 -0.06 (n=18)
+k2.0 cloud-g3: mean +0.80 se 0.05 worst wx-cloud flat-g3@10 +0.53 (n=9)
+k2.0 worst overall: wx-low seed8 -6.50; wx-low seed1 -4.07; wx-low seed6 -3.95
+k2.5 low: mean -0.83 se 0.34 worst wx-low seed6 -5.88 (n=29)
+k2.5 120Hz dusk: mean +0.42 se 0.11 worst wx-dusk fry120@4 -0.18 (n=18)
+k2.5 120Hz low: mean +0.10 se 0.09 worst wx-low fry120@1 -1.14 (n=18)
+k2.5 cloud-g3: mean +0.91 se 0.03 worst wx-cloud flat-g3@10 +0.74 (n=9)
+k2.5 worst overall: wx-low seed6 -5.88; wx-low seed8 -5.60; wx-low flat-g0.3@6 -3.32

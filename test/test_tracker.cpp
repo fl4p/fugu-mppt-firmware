@@ -59,7 +59,7 @@ void test_tracker_keeps_direction_on_power_rise() {
     TEST_ASSERT_TRUE(step > 0.f);
 }
 
-// A drop smaller than minPowerStep (1.0) and below minPowerStepRel must not reverse.
+// Before 8 noise samples the fixed rule applies: a drop below 1.0 W and 1.5 % must not reverse.
 void test_tracker_deadband_ignores_small_drop() {
     loopWallClockUs_ = 1'000'000;
     auto tp = std::make_unique<Tracker>();

@@ -554,6 +554,8 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
     sweepVerify = std::max(0.f, trackerConf.getFloat("sweep_verify", 0.1f));
     sweepPace = std::clamp(trackerConf.getFloat("sweep_pace", 1.0f), 1.f, 8.f);
+    tracker.revK = std::max(0.f, trackerConf.getFloat("rev_k", 1.4f));
+    tracker.revFloor = std::max(0.001f, trackerConf.getFloat("rev_floor_w", 0.05f));
     scan.n = scan.saved = std::min<uint8_t>(6, trackerConf.getByte("pv_substrings", 0)); // learned, 0 = learn again
     scan.interval = (uint16_t) std::clamp(trackerConf.getLong("scan_interval", 300), 0L, 65535L);
     scan.trigger = trackerConf.getByte("scan_trigger", 1);

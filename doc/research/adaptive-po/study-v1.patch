@@ -1,0 +1,213 @@
+diff --git a/src/tracker.h b/src/tracker.h
+index 1a3afadb..1b710f43 100644
+--- a/src/tracker.h
++++ b/src/tracker.h
+@@ -3,6 +3,12 @@
+ #include "math/statmath.h"
+ #include "util.h"
+ 
++#ifdef FUGU_TRACKER_STUDY
++#define STUDY_TH (slowMode ? thScale : thScale * fastScale)
++#else
++#define STUDY_TH 1
++#endif
++
+ struct MPP {
+     float power = 0;
+     time_ms timestamp = 0;
+@@ -40,6 +46,23 @@ struct Tracker {
+ 
+     bool slowMode = false;
+ 
++#ifdef FUGU_TRACKER_STUDY
++    // adaptive P&O study (host sim): 0 baseline, 1 noise threshold, 2 + continuous period, 3 + slope step
++    uint8_t variant = 0;
++    float kSigma = 3, thScale = 1, fastScale = 1, thFloorRel = 5e-4f;
++    float _s2 = 0; // EWMA of e^2 * T / 6, e = second difference of period means [W^2 s]
++    float _p1 = NAN, _p2 = NAN, _v1 = NAN;
++    float _td = 1 / 30.f; // decision period [s]
++    float _slope = 0; // EWMA of (dP/(P+5)) / (dV/V)
++    float _trend = 0; // EWMA of the period-to-period power change [W]
++    uint16_t _oneWay = 0;
++    float theta = 0; // threshold of the last decision [W]
++
++    float sigma() const { return sqrtf(_s2 / (variant >= 2 ? _td : 1 / frequency)); }
++
++    float speedC() const { return std::min(.5f, .5f * powf(_td * 30.f, -1.1886f)); } // 25x at 15x period
++#endif
++
+     void resetTracker(float power, bool direction) {
+         _direction = direction;
+         _time = wallClockMs();
+@@ -62,6 +85,9 @@ struct Tracker {
+         _timeSettle = _timeTakeover = _time;
+         if (!isnan(vin)) _lastVin = vin;
+         setSlowMode(false);
++#ifdef FUGU_TRACKER_STUDY
++        if (variant >= 2) _td = 1 / 30.f, frequency = 30, _oneWay = 0;
++#endif
+     }
+ 
+     // settleMs(): step settling time [ms] of the filter on powerSample, called once per tracker period.
+@@ -97,8 +123,24 @@ struct Tracker {
+                 if (!slowMode && since < 1000 &&
+                     ((float) since < settleMs() || (_direction ? vin > _lastVin : vin < _lastVin))) {
+                     _lastPower = power;
+-                } else if (absDp >= minPowerStep
+-                           or (abs(_lastPower) > minPowerStep and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel)) {
++                }
++#ifdef FUGU_TRACKER_STUDY
++                else if (variant) {
++                    const float T = variant >= 2 ? _td : 1 / frequency;
++                    if (!isnan(_p2)) {
++                        const float e = power - 2 * _p1 + _p2, e2 = e * e * T / 6, cl = 9 * _s2 + 1e-4f * T;
++                        _s2 += (std::min(e2, cl) - _s2) * (_s2 > 0 ? 1 / 16.f : 1.f);
++                    }
++                    const float pr = abs(_lastPower) + 5.0f;
++                    theta = std::clamp(kSigma * sqrtf(2 * _s2 / T), thFloorRel * pr, std::min(1.f, .015f * pr));
++                    if (absDp >= theta) {
++                        _lastPower = power;
++                        if (dP < 0) rev = true;
++                    }
++                }
++#endif
++                else if (absDp >= minPowerStep * STUDY_TH
++                           or (abs(_lastPower) > minPowerStep * STUDY_TH and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel * STUDY_TH)) {
+                     _lastPower = power;
+                     if (dP < 0) rev = true;
+                 }
+@@ -129,6 +171,30 @@ struct Tracker {
+             }
+             bool newMax = power > m.power * 1.005f;
+             if (newMax) m = {power, now, dutyCycle, vin};
++#ifdef FUGU_TRACKER_STUDY
++            if (variant >= 3 && !isnan(_v1) && power > 1) {
++                const float dv = (vin - _v1) / vin;
++                if (std::abs(dv) > 1e-4f) _slope += ((power - _p1) / (power + 5) / dv - _slope) * .25f;
++            }
++            if (!isnan(_p1)) _trend += (power - _p1 - _trend) * .125f;
++            _p2 = _p1, _p1 = power, _v1 = vin;
++            if (variant >= 2) {
++                // shorten on a jump, a new MPP, a long one-way run; lengthen per reversal once settled
++                bool rev = _timeLastReverse == now;
++                const uint16_t leg = _oneWay + 1; // periods since the previous reversal
++                _oneWay = rev ? 0 : leg;
++                if (newMax || power < (slowMode ? .5f : 2.f) || std::abs(dP) > .03f * (std::abs(power) + 5)) _td = 1 / 30.f;
++                else if ((float) _oneWay * _td > 15 || std::abs(_trend) > theta * .25f || (rev && leg < 2))
++                    _td = std::max(1 / 30.f, _td / 1.5f);
++                else if (rev && leg >= 3 && now - _timeTakeover > 5000 && now - m.timestamp > 10000)
++                    _td = std::min(.5f, _td * 1.25f);
++                frequency = 1 / _td;
++                slowMode = _td > .1f;
++                float speed = speedC();
++                if (variant >= 3) speed = std::min(.5f, speed * std::clamp(std::abs(_slope) / .3f, .5f, 4.f));
++                return _direction ? speed : -speed;
++            }
++#endif
+ 
+             // slow mode: no new MPP for 30 s, a reversal since the last takeover and 30 s after it. Ends on a new
+             // MPP (also after a reset) or 45 s without a reversal
+@@ -142,6 +208,13 @@ struct Tracker {
+             if (enter) return (float) m.dutyCycle - (float) dutyCycle;
+         }
+ 
++#ifdef FUGU_TRACKER_STUDY
++        if (variant >= 2) {
++            float speed = speedC();
++            if (variant >= 3) speed = std::min(.5f, speed * std::clamp(std::abs(_slope) / .3f, .5f, 4.f));
++            return _direction ? speed : -speed;
++        }
++#endif
+         float speed = slowMode ? .02f : .5f;
+         return _direction ? speed : -speed;
+     }
+diff --git a/test/host-stub/mppt-sim.cpp b/test/host-stub/mppt-sim.cpp
+index 653705fa..848d2241 100644
+--- a/test/host-stub/mppt-sim.cpp
++++ b/test/host-stub/mppt-sim.cpp
+@@ -553,6 +553,14 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
+     ConfFile trackerConf{"/littlefs/conf/tracker.conf", true};
+     mppt.begin(trackerConf, boardConf, converterConf, lim, TeleConf{});
+     if (g_app.setupErr) { printf("setupErr\n"); exit(2); }
++#ifdef FUGU_TRACKER_STUDY
++    // TK_VARIANT 0 baseline, 1 noise threshold, 2 + continuous period, 3 + slope step; TK_K, TK_THSCALE, TK_FLOOR
++    if (const char *e = getenv("TK_VARIANT")) mppt.tracker.variant = (uint8_t) atoi(e);
++    if (const char *e = getenv("TK_K")) mppt.tracker.kSigma = atof(e);
++    if (const char *e = getenv("TK_THSCALE")) mppt.tracker.thScale = atof(e);
++    if (const char *e = getenv("TK_FASTSCALE")) mppt.tracker.fastScale = atof(e);
++    if (const char *e = getenv("TK_FLOOR")) mppt.tracker.thFloorRel = atof(e);
++#endif
+     adcSampler.begin(); // loopRT prologue
+     printf("# sim tick %u us, pwm_freq %lu, Vbat_max %.2f, Iout_max %.1f, p_max %.0f\n", g_simTickUs,
+            (unsigned long) converter.getPwmFrequency(), mppt.charger.params.Vbat_max, lim.Iout_max, lim.P_max);
+@@ -937,6 +945,14 @@ static int runWx(const std::string &name, Wx &wx) {
+     time_ms lastRev = 0;
+     bool wasSlow = false;
+     double holdAt = getenv("SIM_HOLD") ? atof(getenv("SIM_HOLD")) : -1; // tracker output x0 from then on
++#ifdef FUGU_TRACKER_STUDY
++    // per tracker decision while tracking, [0] fast [1] slow: count, relative threshold, relative sigma estimate,
++    // squared relative difference of consecutive period means; decision period; GMPP energy in slow tracking
++    double sN[2] = {}, sTh[2] = {}, sSg[2] = {}, sD2[2] = {}, sDn[2] = {}, sTd = 0, eGSlow = 0, lossSlowT = 0;
++    time_ms lastDec = 0;
++    float pDec = NAN;
++    int modeDec = -1;
++#endif
+ 
+     for (double nextTr = 0; tNow() < wx.T;) {
+         const double tb = tNow();
+@@ -1000,6 +1016,22 @@ static int runWx(const std::string &name, Wx &wx) {
+             if (cat == TRACK && iG >= 0) lossSlow += (pG - pPv) * dt, slowDvMax = std::max(slowDvMax, std::fabs(vin / pk[iG].v - 1));
+         }
+         nSlowIn += trk.slowMode && !wasSlow, wasSlow = trk.slowMode;
++#ifdef FUGU_TRACKER_STUDY
++        if (cat == TRACK && trk.slowMode && iG >= 0) eGSlow += pG * dt, lossSlowT += (pG - pPv) * dt;
++        if (trk._time != lastDec) {
++            lastDec = trk._time;
++            const int m = trk.slowMode;
++            const float P = std::max(trk._curPower, 1.f), lp = std::fabs(trk._lastPower), sc = trk.thScale * (m ? 1 : trk.fastScale);
++            const float th = trk.variant ? trk.theta
++                             : lp > trk.minPowerStep * sc ? std::min(trk.minPowerStep, trk.minPowerStepRel * (lp + 5)) * sc
++                             : trk.minPowerStep * sc;
++            if (cat == TRACK) {
++                ++sN[m], sTh[m] += th / P, sSg[m] += trk.variant ? trk.sigma() / P : 0, sTd += 1 / trk.frequency;
++                if (m == modeDec && std::isfinite(pDec)) sD2[m] += std::pow((trk._curPower - pDec) / P, 2), ++sDn[m];
++            }
++            pDec = cat == TRACK ? trk._curPower : NAN, modeDec = m;
++        }
++#endif
+         nRev += trk._timeLastReverse != lastRev, lastRev = trk._timeLastReverse;
+         if (isWrong) {
+             if (!inWrong) wrong.push_back({tb, 0, 0, 0, 0, 0, 0});
+@@ -1057,6 +1089,19 @@ static int runWx(const std::string &name, Wx &wx) {
+                100 * tSlow / tStat, nSlowIn, nLogged, nLogged ? tStat / nLogged : 0.0, nRev * 60 / tStat, ePv * pc,
+                loss[TRACK], lossSlow, 100 * slowDvMax);
+     }
++#ifdef FUGU_TRACKER_STUDY
++    {
++        const double n = sN[0] + sN[1];
++        auto pc2 = [](double a, double b) { return b > 0 ? 100 * a / b : 0.0; };
++        printf("== ADAPT %-18s v%u k %.2f th x%.2f | harvest %.3f %% | tracking loss %.3f %% | %.2f rev/min | slow %.1f %%,"
++               " slow-tracking loss %.3f %% of its GMPP | theta %% fast %.3f slow %.3f | sigma-hat %% fast %.4f slow %.4f |"
++               " diff-sigma %% fast %.4f slow %.4f | Td mean %.0f ms | decisions %.0f/%.0f\n", name.c_str(),
++               (unsigned) mppt.tracker.variant, mppt.tracker.kSigma, mppt.tracker.thScale, ePv * pc, loss[TRACK] * pc,
++               nRev * 60 / tStat, 100 * tSlow / tStat, pc2(lossSlowT, eGSlow), pc2(sTh[0], sN[0]), pc2(sTh[1], sN[1]),
++               pc2(sSg[0], sN[0]), pc2(sSg[1], sN[1]), 100 * std::sqrt(sDn[0] ? sD2[0] / sDn[0] / 2 : 0),
++               100 * std::sqrt(sDn[1] ? sD2[1] / sDn[1] / 2 : 0), n ? 1000 * sTd / n : 0, sN[0], sN[1]);
++    }
++#endif
+     size_t shown = 0;
+     for (auto &s: wrong) {
+         if (s.t1 - s.t0 < 2 || ++shown > 12) continue;
+diff --git a/test/host-stub/mppt-sim.sh b/test/host-stub/mppt-sim.sh
+index 27cf0a2b..19e0e7dc 100755
+--- a/test/host-stub/mppt-sim.sh
++++ b/test/host-stub/mppt-sim.sh
+@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ OUT=${OUT:-/tmp/mppt-sim}
+ clang++ -std=gnu++20 -O2 -fexceptions -Wno-format -Wno-deprecated-volatile \
+     -include "$ROOT/test/host-stub/esp/sim_prelude.h" -I "$ROOT/test/host-stub/esp" -I "$ROOT/src" \
+-    -DSIM_REPO_ROOT="\"$ROOT\"" \
++    ${SIM_DEFS--DFUGU_TRACKER_STUDY} -DSIM_REPO_ROOT="\"$ROOT\"" \
+     "$ROOT/test/host-stub/mppt-sim.cpp" "$ROOT/test/host-stub/esp/sim_stubs.cpp" "$ROOT/test/host-stub/esp/sim_alloc.cpp" \
+     "$ROOT/src/mppt.cpp" "$ROOT/src/adc/sensor_setup.cpp" "$ROOT/src/sim/vconv.cpp" "$ROOT/src/math/float16.cpp" -o "$OUT"
+ [ $# -eq 0 ] && set -- sanity a b c d-cloud d-cloud-ramp d-bus04 d-bus08 d-bus12 d-noise e e-bleed a-p0 b-p0 c-p0 e-p0 d-cloud-p0 d-cloud-ramp-p0 d-bus12-p0 d-noise-p0 \

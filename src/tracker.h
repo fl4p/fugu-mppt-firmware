@@ -20,9 +20,9 @@ struct Tracker {
     static constexpr float VinAgainstBand = 0.01f; // of Vin, see update()
     static constexpr time_ms HandBackMs = 3000;
 
-    float minPowerStep = 1.0f;
-    float minPowerStepRel = 1.0f;
+    float minPowerStep = 1.0f; // reversal threshold [W] of the last decision
     float frequency = 20;
+    float revK = 1.4f, revFloor = 0.05f; // threshold k*sqrt(2)*sigma, at least revFloor [W]
 
     bool _direction = false; //true => increase duty cycle/decrease solar voltage
     time_ms _time = 0;
@@ -43,6 +43,12 @@ struct Tracker {
 
     bool slowMode = false;
 
+    // noise of one period mean per mode, from second differences of successive means
+    float _p1 = NAN, _p2 = NAN;
+    EWMA<float> _noiseVar[2]{EWMA<float>(32), EWMA<float>(32)};
+    uint8_t _noiseN[2]{};
+    uint8_t _noiseIdle[2]{}; // periods since the last noise sample
+
     void resetTracker(float power, bool direction) {
         _direction = direction;
         _time = wallClockMs();
@@ -52,10 +58,41 @@ struct Tracker {
     }
 
     void setSlowMode(bool slow) {
+        if (slow != slowMode) _p1 = _p2 = NAN;
         slowMode = slow;
         frequency = slow ? 2 : 30;
-        minPowerStep = slow ? 0.5f : 1.0f;
-        minPowerStepRel = slow ? 0.0015f : 0.015f;
+    }
+
+    // fewer than 8 noise samples or none for 32 periods: the fixed rule, else max(k*sqrt(2)*sigma, floor).
+    // rho: correlation of adjacent period means (AR(1)), var(d) = 2 sigma^2 (1 - rho)(3 - rho)
+    bool exceedsNoise(float absDp, float rho) {
+        const int m = slowMode;
+        const float var = _noiseVar[m].get() / (2 * (1 - rho) * (3 - rho));
+        if (_noiseN[m] >= 8 && _noiseIdle[m] < 32 && std::isfinite(var)) {
+            minPowerStep = std::max(revK * 1.41421356f * sqrtf(std::max(var, 0.f)), revFloor);
+            return absDp >= minPowerStep;
+        }
+        const float step = slowMode ? 0.5f : 1.0f, rel = slowMode ? 0.0015f : 0.015f;
+        const float lp = std::abs(_lastPower);
+        minPowerStep = lp > step ? std::min(step, rel * (lp + 5.0f)) : step;
+        return absDp >= step || (lp > step && absDp / (lp + 5.0f) > rel);
+    }
+
+    // EWMA of d^2, d = p - 2 p1 + p2
+    void addNoiseSample(float p) {
+        if (!isnan(_p2)) {
+            const int m = slowMode;
+            auto &e = _noiseVar[m];
+            float d = p - 2 * _p1 + _p2, x = d * d;
+            // variance at which theta == floor: a zero estimate can rise again
+            const float vf = revFloor * revFloor / (2 * revK * revK + 1e-6f);
+            if (_noiseN[m] >= 8) x = std::min(x, 9 * std::max(e.get(), vf));
+            e.add(x);
+            if (_noiseN[m] < 255) ++_noiseN[m];
+            _noiseIdle[m] = 0;
+        }
+        _p2 = _p1;
+        _p1 = p;
     }
 
     // limiter hand-back: starts the settle window at vin, fast mode; slow mode waits for a reversal and 30 s
@@ -63,6 +100,7 @@ struct Tracker {
         _direction = direction;
         _time = wallClockMs();
         _timeSettle = _timeTakeover = _time;
+        _p1 = _p2 = NAN;
         if (!isnan(vin)) _lastVin = vin;
         setSlowMode(false);
     }
@@ -71,6 +109,7 @@ struct Tracker {
     void resume(float power) {
         _time = wallClockMs();
         _powerBuf.clear(), _vinBuf.clear();
+        _p1 = _p2 = NAN;
         _lastPower = power;
     }
 
@@ -93,9 +132,11 @@ struct Tracker {
 
             if (power < 1) {
                 _direction = true; // pump more power
+                _p1 = _p2 = NAN;
             } else {
                 auto absDp = std::abs(dP);
                 bool rev = false;
+                if (_noiseIdle[slowMode] < 255) ++_noiseIdle[slowMode];
 
                 // after a reversal the filtered power still shows the old direction and the input cap's
                 // charge/discharge, which lags the duty by ~C*V/(2.5*I) in low light: the reference follows the
@@ -109,15 +150,21 @@ struct Tracker {
                 // duty (ring current at HS turn-on), and reversing on that steered further down, to a flat P(D) far
                 // below the MPP. The band keeps reversals on light changes; the 3 s skip the overshoot of the fade
                 // or limiter step before the hand-back, which is no reference
+                // filter time constant = 99 % settling time / 6.64
+                const float settle = settleMs();
+                const float rho = settle > 0 ? std::min(expf(-6.64f * 1000.f / (frequency * settle)), 0.95f) : 0.f;
                 const float against = _lastVin > 0 ? (_direction ? vin - _lastVin : _lastVin - vin) : 0;
                 const bool plant = now - _timeTakeover > HandBackMs && against > 0;
                 auto since = now - _timeSettle;
-                if (!slowMode && since < 1000 && ((float) since < settleMs() || against > 0)) {
+                if (!slowMode && since < 1000 && ((float) since < settle || against > 0)) {
                     _lastPower = power;
-                } else if (absDp >= minPowerStep
-                           or (abs(_lastPower) > minPowerStep and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel)) {
-                    _lastPower = power;
-                    if (dP < 0 && !(plant && against > VinAgainstBand * _lastVin)) rev = true;
+                    _p1 = _p2 = NAN;
+                } else {
+                    if (exceedsNoise(absDp, rho)) {
+                        _lastPower = power;
+                        if (dP < 0 && !(plant && against > VinAgainstBand * _lastVin)) rev = true;
+                    }
+                    addNoiseSample(power);
                 }
 
                 // cloud recovery
@@ -130,6 +177,7 @@ struct Tracker {
                 }
 
                 if (rev) {
+                    _p1 = _p2 = NAN;
                     _direction = !_direction;
                     _timeLastReverse = _timeSettle = now;
                     _lastVin = vin;
