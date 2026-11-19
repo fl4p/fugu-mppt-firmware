@@ -1,0 +1,343 @@
+diff --git a/etc/config-tool/conf-editor.html b/etc/config-tool/conf-editor.html
+index ec3c7118..280fe873 100644
+--- a/etc/config-tool/conf-editor.html
++++ b/etc/config-tool/conf-editor.html
+@@ -388,6 +388,8 @@ const META = {
+   // tracker.conf
+   target_duty_cycle:{unit:"",desc:"Fixed duty cycle fraction (0-1 of pwmMaxDriver); if > 0 enters manual PWM mode with hard-fixed duty (no PD control, no MPPT tracking)",type:"float"},
+   sweep_speed:{unit:"",desc:"Global-sweep speed; scales both per-tick cap and limit-tracking gain (default 4.0)",type:"float"},
++  rev_k:{unit:"",desc:"P&O reversal threshold in noise units: k*sqrt(2)*sigma of one period mean (default 1.4)",type:"float"},
++  rev_floor_w:{unit:"W",desc:"Lowest P&O reversal threshold (default 0.05)",type:"float"},
+ 
+   // mqtt.conf
+   broker_uri:{unit:"",desc:"MQTT broker URI, e.g. mqtt://host:port",type:"string"},
+@@ -528,7 +530,7 @@ const FILE_KEYS = {
+     "sync_phase_deg","sync_phase_ns","sync_role","topo"],
+   "charger.conf":["bat_c","bat_temp_derate","bat_temp_max","bat_temp_min","cv_ceiling","cv_eoc","cv_float","full_charge_interval","ibat_max",
+     "partial_charge","recharge_dod","recharge_vfloor_band","tail_c_rate","vout_max","vout_max_fallback","vout_offset_max"],
+-  "tracker.conf":["sweep_speed","target_duty_cycle"],
++  "tracker.conf":["rev_floor_w","rev_k","sweep_speed","target_duty_cycle"],
+   "mqtt.conf":["bat_charge_topic","bat_temp_topic","bat_voltage_topic","broker_uri","cell_voltages_max_topic","cmd_input","enabled","ibat_lim_topic",
+     "ibat_topic","log_level","password","username"],
+   "tele.conf":["adv_ms","binary","ble","enabled","idle_interval_ms","influxdb_host","log_level"],
+@@ -555,7 +557,7 @@ const TYPE_KEYS = {
+     "i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pwm_freq","sprofiler_hz","switch_delay"]),
+   float: new Set(["L0","bat_c","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","hv_i_max","hv_max","ibat_max","psu_vout","rect_offset_ns",
+      "ina22x_range","ina22x_resistor","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max","power_conversion_eff",
+-     "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
++     "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","rev_floor_w","rev_k","sweep_speed","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
+     "vin_min","vout_max","vout_max_fallback","vout_offset_max",
+     "wire_dr_min","wire_p_derate","wire_p_trip","wire_p_warn","wire_r_max",
+     "ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
+@@ -595,7 +597,7 @@ const DEFAULTS = {
+   "cv_eoc":"3.5","cv_float":"3.325","recharge_dod":"0.2","recharge_vfloor_band":"0.05","tail_c_rate":"0.05","vout_offset_max":"0.6",
+   "partial_charge":"0","full_charge_interval":"7","bat_temp_min":"0","bat_temp_derate":"45","bat_temp_max":"55",
+   // tracker.conf
+-  "sweep_speed":"4.0","target_duty_cycle":"0.0",
++  "rev_floor_w":"0.05","rev_k":"1.4","sweep_speed":"4.0","target_duty_cycle":"0.0",
+   // mqtt.conf
+   "bat_charge_topic":"\"\"","bat_voltage_topic":"\"\"","broker_uri":"\"\"","cell_voltages_max_topic":"\"\"","cmd_input":"0","enabled":"1",
+   "ibat_lim_topic":"\"\"","ibat_topic":"\"\"","log_level":"\"info\"","password":"\"\"",
+diff --git a/src/mppt.cpp b/src/mppt.cpp
+index 2c2cb367..d4b6157f 100644
+--- a/src/mppt.cpp
++++ b/src/mppt.cpp
+@@ -499,6 +499,8 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
+ 
+     psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
+     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
++    tracker.revK = std::max(0.f, trackerConf.getFloat("rev_k", 1.4f));
++    tracker.revFloor = std::max(0.001f, trackerConf.getFloat("rev_floor_w", 0.05f));
+ 
+     if (tele.influxdbHost) {
+         ESP_LOGI("main", "Influxdb telemetry to host %s", tele.influxdbHost.toString().c_str());
+diff --git a/src/tracker.h b/src/tracker.h
+index 1a3afadb..1b70493b 100644
+--- a/src/tracker.h
++++ b/src/tracker.h
+@@ -17,9 +17,9 @@ struct MPP {
+  * Slow mode uses a lower update frequency, smaller power thresholds and a slower perturbation speed
+  */
+ struct Tracker {
+-    float minPowerStep = 1.0f;
+-    float minPowerStepRel = 1.0f;
++    float minPowerStep = 1.0f; // reversal threshold [W] of the last decision
+     float frequency = 20;
++    float revK = 1.4f, revFloor = 0.05f; // threshold k*sqrt(2)*sigma, at least revFloor [W]
+ 
+     bool _direction = false; //true => increase duty cycle/decrease solar voltage
+     time_ms _time = 0;
+@@ -40,6 +40,25 @@ struct Tracker {
+ 
+     bool slowMode = false;
+ 
++    // noise of one period mean per mode, from second differences of successive means
++    float _p1 = NAN, _p2 = NAN;
++    EWMA<float> _noiseVar[2]{EWMA<float>(32), EWMA<float>(32)};
++    uint8_t _noiseN[2]{};
++    uint8_t _noiseIdle[2]{}; // periods since the last noise sample
++#ifdef FUGU_TRACKER_STUDY
++    // study (host sim): relative threshold floor [1/W*W], variable step from the measured relative slope
++    float relFloor = 0;
++    bool slopeStep = false;
++    float _sp = NAN, _sv = NAN, _slope = 0; // last period's P, Vin; EWMA of (dP/(P+5)) / (dV/V)
++    // diagnosis: Huber clamp factor, cap theta at the fixed rule; per mode: samples, samples k <= 2 after a
++    // (p1, p2) reset, sum of raw d^2 for both; _run = samples since the last reset
++    float huber = 9;
++    bool capFixed = false;
++    uint32_t dN[2]{}, dNEarly[2]{};
++    double dX[2]{}, dXEarly[2]{};
++    uint16_t _run = 0;
++#endif
++
+     void resetTracker(float power, bool direction) {
+         _direction = direction;
+         _time = wallClockMs();
+@@ -49,10 +68,58 @@ struct Tracker {
+     }
+ 
+     void setSlowMode(bool slow) {
++        if (slow != slowMode) _p1 = _p2 = NAN;
+         slowMode = slow;
+         frequency = slow ? 2 : 30;
+-        minPowerStep = slow ? 0.5f : 1.0f;
+-        minPowerStepRel = slow ? 0.0015f : 0.015f;
++    }
++
++    // fewer than 8 noise samples or none for 32 periods: the fixed rule, else max(k*sqrt(2)*sigma, floor).
++    // rho: correlation of adjacent period means (AR(1)), var(d) = 2 sigma^2 (1 - rho)(3 - rho)
++    bool exceedsNoise(float absDp, float rho) {
++        const int m = slowMode;
++        const float var = _noiseVar[m].get() / (2 * (1 - rho) * (3 - rho));
++        if (_noiseN[m] >= 8 && _noiseIdle[m] < 32 && std::isfinite(var)) {
++            minPowerStep = std::max(revK * 1.41421356f * sqrtf(std::max(var, 0.f)), revFloor);
++#ifdef FUGU_TRACKER_STUDY
++            minPowerStep = std::max(minPowerStep, relFloor * std::abs(_lastPower));
++            if (capFixed) {
++                const float step = slowMode ? 0.5f : 1.0f, rel = slowMode ? 0.0015f : 0.015f;
++                const float lp = std::abs(_lastPower);
++                minPowerStep = std::min(minPowerStep, lp > step ? std::min(step, rel * (lp + 5.0f)) : step);
++            }
++#endif
++            return absDp >= minPowerStep;
++        }
++        const float step = slowMode ? 0.5f : 1.0f, rel = slowMode ? 0.0015f : 0.015f;
++        const float lp = std::abs(_lastPower);
++        minPowerStep = lp > step ? std::min(step, rel * (lp + 5.0f)) : step;
++        return absDp >= step || (lp > step && absDp / (lp + 5.0f) > rel);
++    }
++
++    // EWMA of d^2, d = p - 2 p1 + p2
++    void addNoiseSample(float p) {
++        if (!isnan(_p2)) {
++            const int m = slowMode;
++            auto &e = _noiseVar[m];
++            float d = p - 2 * _p1 + _p2, x = d * d;
++            // variance at which theta == floor: a zero estimate can rise again
++            const float vf = revFloor * revFloor / (2 * revK * revK + 1e-6f);
++#ifdef FUGU_TRACKER_STUDY
++            ++_run, ++dN[m], dX[m] += x;
++            if (_run <= 2) ++dNEarly[m], dXEarly[m] += x;
++            if (_noiseN[m] >= 8) x = std::min(x, huber * std::max(e.get(), vf));
++#else
++            if (_noiseN[m] >= 8) x = std::min(x, 9 * std::max(e.get(), vf));
++#endif
++            e.add(x);
++            if (_noiseN[m] < 255) ++_noiseN[m];
++            _noiseIdle[m] = 0;
++        }
++#ifdef FUGU_TRACKER_STUDY
++        else _run = 0;
++#endif
++        _p2 = _p1;
++        _p1 = p;
+     }
+ 
+     // limiter hand-back: starts the settle window at vin, fast mode; slow mode waits for a reversal and 30 s
+@@ -60,6 +127,7 @@ struct Tracker {
+         _direction = direction;
+         _time = wallClockMs();
+         _timeSettle = _timeTakeover = _time;
++        _p1 = _p2 = NAN;
+         if (!isnan(vin)) _lastVin = vin;
+         setSlowMode(false);
+     }
+@@ -83,9 +151,11 @@ struct Tracker {
+ 
+             if (power < 1) {
+                 _direction = true; // pump more power
++                _p1 = _p2 = NAN;
+             } else {
+                 auto absDp = std::abs(dP);
+                 bool rev = false;
++                if (_noiseIdle[slowMode] < 255) ++_noiseIdle[slowMode];
+ 
+                 // after a reversal the filtered power still shows the old direction and the input cap's
+                 // charge/discharge, which lags the duty by ~C*V/(2.5*I) in low light: the reference follows the
+@@ -93,14 +163,20 @@ struct Tracker {
+                 // excursion of a longer blind leg costs more than the lag. Not in slow mode: a window there can only
+                 // end at a 500 ms decision, so it skips a whole period and doubles the leg. The slew is 25x slower,
+                 // so the input-cap current it causes stays below the power threshold
++                // filter time constant = 99 % settling time / 6.64
++                const float settle = settleMs();
++                const float rho = settle > 0 ? std::min(expf(-6.64f * 1000.f / (frequency * settle)), 0.95f) : 0.f;
+                 auto since = now - _timeSettle;
+                 if (!slowMode && since < 1000 &&
+-                    ((float) since < settleMs() || (_direction ? vin > _lastVin : vin < _lastVin))) {
++                    ((float) since < settle || (_direction ? vin > _lastVin : vin < _lastVin))) {
+                     _lastPower = power;
+-                } else if (absDp >= minPowerStep
+-                           or (abs(_lastPower) > minPowerStep and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel)) {
+-                    _lastPower = power;
+-                    if (dP < 0) rev = true;
++                    _p1 = _p2 = NAN;
++                } else {
++                    if (exceedsNoise(absDp, rho)) {
++                        _lastPower = power;
++                        if (dP < 0) rev = true;
++                    }
++                    addNoiseSample(power);
+                 }
+ 
+                 // cloud recovery
+@@ -113,6 +189,7 @@ struct Tracker {
+                 }
+ 
+                 if (rev) {
++                    _p1 = _p2 = NAN;
+                     _direction = !_direction;
+                     _timeLastReverse = _timeSettle = now;
+                     _lastVin = vin;
+@@ -129,6 +206,13 @@ struct Tracker {
+             }
+             bool newMax = power > m.power * 1.005f;
+             if (newMax) m = {power, now, dutyCycle, vin};
++#ifdef FUGU_TRACKER_STUDY
++            if (slopeStep) {
++                const float dv = isnan(_sv) || vin <= 0 ? 0 : (vin - _sv) / vin;
++                if (power > 1 && std::abs(dv) > 1e-4f) _slope += ((power - _sp) / (power + 5) / dv - _slope) * .25f;
++                _sp = power, _sv = vin;
++            }
++#endif
+ 
+             // slow mode: no new MPP for 30 s, a reversal since the last takeover and 30 s after it. Ends on a new
+             // MPP (also after a reset) or 45 s without a reversal
+@@ -143,6 +227,9 @@ struct Tracker {
+         }
+ 
+         float speed = slowMode ? .02f : .5f;
++#ifdef FUGU_TRACKER_STUDY
++        if (slopeStep) speed = std::min(.5f, speed * std::clamp(std::abs(_slope) / .3f, .5f, 4.f));
++#endif
+         return _direction ? speed : -speed;
+     }
+ };
+diff --git a/test/host-stub/mppt-sim.cpp b/test/host-stub/mppt-sim.cpp
+index 653705fa..89ab3101 100644
+--- a/test/host-stub/mppt-sim.cpp
++++ b/test/host-stub/mppt-sim.cpp
+@@ -553,6 +553,17 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
+     ConfFile trackerConf{"/littlefs/conf/tracker.conf", true};
+     mppt.begin(trackerConf, boardConf, converterConf, lim, TeleConf{});
+     if (g_app.setupErr) { printf("setupErr\n"); exit(2); }
++#ifdef FUGU_TRACKER_STUDY
++    // TK_K, TK_FLOOR [W], TK_RELFLOOR [fraction of P], TK_D=1 slope-scaled step
++    if (const char *e = getenv("TK_K")) mppt.tracker.revK = atof(e);
++    if (const char *e = getenv("TK_FLOOR")) mppt.tracker.revFloor = atof(e);
++    if (const char *e = getenv("TK_RELFLOOR")) mppt.tracker.relFloor = atof(e);
++    mppt.tracker.slopeStep = getenv("TK_D") && atoi(getenv("TK_D"));
++    // TK_HUBER clamp factor (default 9), TK_SPAN estimator EWMA span (default 32), TK_CAP=1 theta <= fixed rule
++    if (const char *e = getenv("TK_HUBER")) mppt.tracker.huber = atof(e);
++    if (const char *e = getenv("TK_SPAN")) for (auto &v: mppt.tracker._noiseVar) v.updateSpan(atof(e));
++    mppt.tracker.capFixed = getenv("TK_CAP") && atoi(getenv("TK_CAP"));
++#endif
+     adcSampler.begin(); // loopRT prologue
+     printf("# sim tick %u us, pwm_freq %lu, Vbat_max %.2f, Iout_max %.1f, p_max %.0f\n", g_simTickUs,
+            (unsigned long) converter.getPwmFrequency(), mppt.charger.params.Vbat_max, lim.Iout_max, lim.P_max);
+@@ -934,7 +945,9 @@ static int runWx(const std::string &name, Wx &wx) {
+     float slowDvMax = 0; // largest |Vin - Vmpp| / Vmpp in slow mode
+     float dMin = 1e9f, dMax = 0, vMin = 1e9f, vMax = 0;
+     uint32_t nRev = 0, nSlowIn = 0;
+-    time_ms lastRev = 0;
++    time_ms lastRev = 0, lastTrk = 0;
++    double thS[2] = {}; // reversal threshold / P per period, by the mode the decision ran in
++    uint32_t thN[2] = {}, thFix[2] = {};
+     bool wasSlow = false;
+     double holdAt = getenv("SIM_HOLD") ? atof(getenv("SIM_HOLD")) : -1; // tracker output x0 from then on
+ 
+@@ -999,6 +1012,11 @@ static int runWx(const std::string &name, Wx &wx) {
+             tSlow += dt;
+             if (cat == TRACK && iG >= 0) lossSlow += (pG - pPv) * dt, slowDvMax = std::max(slowDvMax, std::fabs(vin / pk[iG].v - 1));
+         }
++        if (trk._time != lastTrk && (cat == TRACK || cat == WRONG) && trk._curPower >= 1) {
++            thS[wasSlow] += trk.minPowerStep / trk._curPower, ++thN[wasSlow];
++            thFix[wasSlow] += trk._noiseN[wasSlow] < 8 || trk._noiseIdle[wasSlow] >= 32;
++        }
++        lastTrk = trk._time;
+         nSlowIn += trk.slowMode && !wasSlow, wasSlow = trk.slowMode;
+         nRev += trk._timeLastReverse != lastRev, lastRev = trk._timeLastReverse;
+         if (isWrong) {
+@@ -1050,13 +1068,38 @@ static int runWx(const std::string &name, Wx &wx) {
+         printf("== TRACKER %-18s tracking %.0f s: duty mean %.0f rms %.1f p-p %.0f counts of %u (%.2f / %.1f permille),"
+                " Vin mean %.2f rms %.3f p-p %.2f V | tracking loss %.2f %% | slow %.1f %% of the time, %u entries"
+                " (%zu logged, every %.0f s) | %.1f reversals/min | harvest %.2f %% | tracking loss %.0f J, in slow mode"
+-               " %.0f J, slow-mode Vin up to %.1f %% off the MPP\n", name.c_str(), dN, dm,
++               " %.0f J, slow-mode Vin up to %.1f %% off the MPP | theta/P fast %.2f slow %.2f permille, fixed rule"
++               " %.0f / %.0f %% of %u / %u periods\n", name.c_str(), dN, dm,
+                std::sqrt(std::max(0.0, dS2 / std::max(dN, 1e-9) - dm * dm)), dMax - dMin, converter.pwmCtrlMax,
+                std::sqrt(std::max(0.0, dS2 / std::max(dN, 1e-9) - dm * dm)) * k, (dMax - dMin) * k, vm,
+                std::sqrt(std::max(0.0, vS2 / std::max(dN, 1e-9) - vm * vm)), vMax - vMin, loss[TRACK] * pc,
+                100 * tSlow / tStat, nSlowIn, nLogged, nLogged ? tStat / nLogged : 0.0, nRev * 60 / tStat, ePv * pc,
+-               loss[TRACK], lossSlow, 100 * slowDvMax);
++               loss[TRACK], lossSlow, 100 * slowDvMax, thN[0] ? 1000 * thS[0] / thN[0] : 0.0,
++               thN[1] ? 1000 * thS[1] / thN[1] : 0.0, thN[0] ? 100.0 * thFix[0] / thN[0] : 0.0,
++               thN[1] ? 100.0 * thFix[1] / thN[1] : 0.0, thN[0], thN[1]);
++    }
++#ifdef FUGU_TRACKER_STUDY
++    printf("== ADAPT %-18s B k %.2f floor %.3f rel %.3f D %d | harvest %.3f %% | tracking loss %.3f %% | %.2f rev/min |"
++           " slow %.1f %%, slow-tracking loss %.3f %% of its GMPP | theta %% fast %.3f slow %.3f | fixed rule %% fast %.1f"
++           " slow %.1f\n", name.c_str(), mppt.tracker.revK, mppt.tracker.revFloor, mppt.tracker.relFloor,
++           (int) mppt.tracker.slopeStep, ePv * pc, loss[TRACK] * pc, nRev * 60 / tStat, 100 * tSlow / tStat, 0.0,
++           thN[0] ? 100 * thS[0] / thN[0] : 0.0, thN[1] ? 100 * thS[1] / thN[1] : 0.0,
++           thN[0] ? 100.0 * thFix[0] / thN[0] : 0.0, thN[1] ? 100.0 * thFix[1] / thN[1] : 0.0);
++    {
++        // noise samples: per tracked period, per second of the mode; share and rms ratio of the first two after a reset
++        const auto &t = mppt.tracker;
++        double r[2], s[2], e[2], q[2];
++        for (int m = 0; m < 2; ++m) {
++            const double late = t.dN[m] - t.dNEarly[m];
++            r[m] = thN[m] ? (double) t.dN[m] / thN[m] : 0, s[m] = thN[m] ? t.dN[m] / (thN[m] * (m ? 0.5 : 1 / 30.)) : 0;
++            e[m] = t.dN[m] ? 100.0 * t.dNEarly[m] / t.dN[m] : 0;
++            q[m] = t.dNEarly[m] && late > 0 ? std::sqrt((t.dXEarly[m] / t.dNEarly[m]) / ((t.dX[m] - t.dXEarly[m]) / late)) : 0;
++        }
++        printf("== NOISE %-18s huber %.0f span %u cap %d | samples/period fast %.3f slow %.3f | samples/s fast %.2f slow %.3f"
++               " | early %% fast %.1f slow %.1f | rms early/late fast %.2f slow %.2f\n", name.c_str(), t.huber,
++               t._noiseVar[0].span(), (int) t.capFixed, r[0], r[1], s[0], s[1], e[0], e[1], q[0], q[1]);
+     }
++#endif
+     size_t shown = 0;
+     for (auto &s: wrong) {
+         if (s.t1 - s.t0 < 2 || ++shown > 12) continue;
+diff --git a/test/host-stub/mppt-sim.sh b/test/host-stub/mppt-sim.sh
+index 27cf0a2b..19e0e7dc 100755
+--- a/test/host-stub/mppt-sim.sh
++++ b/test/host-stub/mppt-sim.sh
+@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ OUT=${OUT:-/tmp/mppt-sim}
+ clang++ -std=gnu++20 -O2 -fexceptions -Wno-format -Wno-deprecated-volatile \
+     -include "$ROOT/test/host-stub/esp/sim_prelude.h" -I "$ROOT/test/host-stub/esp" -I "$ROOT/src" \
+-    -DSIM_REPO_ROOT="\"$ROOT\"" \
++    ${SIM_DEFS--DFUGU_TRACKER_STUDY} -DSIM_REPO_ROOT="\"$ROOT\"" \
+     "$ROOT/test/host-stub/mppt-sim.cpp" "$ROOT/test/host-stub/esp/sim_stubs.cpp" "$ROOT/test/host-stub/esp/sim_alloc.cpp" \
+     "$ROOT/src/mppt.cpp" "$ROOT/src/adc/sensor_setup.cpp" "$ROOT/src/sim/vconv.cpp" "$ROOT/src/math/float16.cpp" -o "$OUT"
+ [ $# -eq 0 ] && set -- sanity a b c d-cloud d-cloud-ramp d-bus04 d-bus08 d-bus12 d-noise e e-bleed a-p0 b-p0 c-p0 e-p0 d-cloud-p0 d-cloud-ramp-p0 d-bus12-p0 d-noise-p0 \
+diff --git a/website/docs/reference/config/tracker.md b/website/docs/reference/config/tracker.md
+index cd24c7a2..d6d06378 100644
+--- a/website/docs/reference/config/tracker.md
++++ b/website/docs/reference/config/tracker.md
+@@ -11,3 +11,5 @@ sidebar_position: 7
+ |---------------------|------|-------|---------|----------------------------------------------------------------------|
+ | `target_duty_cycle` |      | float | 0.0     | Fixed duty cycle fraction (0–1 of pwmMaxDriver); if > 0 enters manual PWM mode with hard-fixed duty (no PD control, no MPPT tracking) |
+ | `sweep_speed`       |      | float | 4.0     | Global-sweep speed; scales both per-tick cap and limit-tracking gain (clamp ≥ 0.1) |
++| `rev_k`             |      | float | 1.4     | P&O reversal threshold in noise units: a power change counts once it exceeds `rev_k`·√2·σ, with σ the noise of one period mean, estimated per mode from second differences of successive means (clamp ≥ 0). Until 8 noise samples exist the fixed threshold applies |
++| `rev_floor_w`       | W    | float | 0.05    | Lowest P&O reversal threshold (clamp ≥ 0.001) |
