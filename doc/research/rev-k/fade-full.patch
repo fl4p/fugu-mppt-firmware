@@ -1,0 +1,338 @@
+diff --git a/etc/config-tool/conf-editor.html b/etc/config-tool/conf-editor.html
+index ec3c7118..4aa2c4e3 100644
+--- a/etc/config-tool/conf-editor.html
++++ b/etc/config-tool/conf-editor.html
+@@ -388,6 +388,11 @@ const META = {
+   // tracker.conf
+   target_duty_cycle:{unit:"",desc:"Fixed duty cycle fraction (0-1 of pwmMaxDriver); if > 0 enters manual PWM mode with hard-fixed duty (no PD control, no MPPT tracking)",type:"float"},
+   sweep_speed:{unit:"",desc:"Global-sweep speed; scales both per-tick cap and limit-tracking gain (default 4.0)",type:"float"},
++  rev_k:{unit:"",desc:"P&O reversal threshold in noise units: k*sqrt(2)*sigma of one period mean (default 2.5)",type:"float"},
++  rev_floor_w:{unit:"W",desc:"Lowest P&O reversal threshold (default 0.05)",type:"float"},
++  period_min_ms:{unit:"ms",desc:"Shortest P&O decision period; restored on a new MPP, hand-back, cloud recovery or 45 s without reversal (default 33)",type:"float"},
++  period_max_ms:{unit:"ms",desc:"Longest P&O decision period; slew scales with period_min_ms/period (default 500)",type:"float"},
++  period_grow:{unit:"",desc:"Decision period factor per reversal without a new MPP record (default 1.3)",type:"float"},
+ 
+   // mqtt.conf
+   broker_uri:{unit:"",desc:"MQTT broker URI, e.g. mqtt://host:port",type:"string"},
+@@ -528,7 +533,7 @@ const FILE_KEYS = {
+     "sync_phase_deg","sync_phase_ns","sync_role","topo"],
+   "charger.conf":["bat_c","bat_temp_derate","bat_temp_max","bat_temp_min","cv_ceiling","cv_eoc","cv_float","full_charge_interval","ibat_max",
+     "partial_charge","recharge_dod","recharge_vfloor_band","tail_c_rate","vout_max","vout_max_fallback","vout_offset_max"],
+-  "tracker.conf":["sweep_speed","target_duty_cycle"],
++  "tracker.conf":["period_grow","period_max_ms","period_min_ms","rev_floor_w","rev_k","sweep_speed","target_duty_cycle"],
+   "mqtt.conf":["bat_charge_topic","bat_temp_topic","bat_voltage_topic","broker_uri","cell_voltages_max_topic","cmd_input","enabled","ibat_lim_topic",
+     "ibat_topic","log_level","password","username"],
+   "tele.conf":["adv_ms","binary","ble","enabled","idle_interval_ms","influxdb_host","log_level"],
+@@ -555,7 +560,7 @@ const TYPE_KEYS = {
+     "i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pwm_freq","sprofiler_hz","switch_delay"]),
+   float: new Set(["L0","bat_c","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_float","hv_i_max","hv_max","ibat_max","psu_vout","rect_offset_ns",
+      "ina22x_range","ina22x_resistor","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max","power_conversion_eff",
+-     "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
++     "period_grow","period_max_ms","period_min_ms","pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","rev_floor_w","rev_k","sweep_speed","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
+     "vin_min","vout_max","vout_max_fallback","vout_offset_max",
+     "wire_dr_min","wire_p_derate","wire_p_trip","wire_p_warn","wire_r_max",
+     "ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
+@@ -595,7 +600,7 @@ const DEFAULTS = {
+   "cv_eoc":"3.5","cv_float":"3.325","recharge_dod":"0.2","recharge_vfloor_band":"0.05","tail_c_rate":"0.05","vout_offset_max":"0.6",
+   "partial_charge":"0","full_charge_interval":"7","bat_temp_min":"0","bat_temp_derate":"45","bat_temp_max":"55",
+   // tracker.conf
+-  "sweep_speed":"4.0","target_duty_cycle":"0.0",
++  "period_grow":"1.3","period_max_ms":"500","period_min_ms":"33","rev_floor_w":"0.05","rev_k":"2.5","sweep_speed":"4.0","target_duty_cycle":"0.0",
+   // mqtt.conf
+   "bat_charge_topic":"\"\"","bat_voltage_topic":"\"\"","broker_uri":"\"\"","cell_voltages_max_topic":"\"\"","cmd_input":"0","enabled":"1",
+   "ibat_lim_topic":"\"\"","ibat_topic":"\"\"","log_level":"\"info\"","password":"\"\"",
+diff --git a/src/mppt.cpp b/src/mppt.cpp
+index 2c2cb367..bdba4ac1 100644
+--- a/src/mppt.cpp
++++ b/src/mppt.cpp
+@@ -499,6 +499,12 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
+ 
+     psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
+     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
++    tracker.revK = std::max(0.f, trackerConf.getFloat("rev_k", 2.5f));
++    tracker.revFloor = std::max(0.001f, trackerConf.getFloat("rev_floor_w", 0.05f));
++    tracker.periodMin = std::max(5.f, trackerConf.getFloat("period_min_ms", 33.f));
++    tracker.periodMax = std::max(tracker.periodMin, trackerConf.getFloat("period_max_ms", 500.f));
++    tracker.periodGrow = std::max(1.f, trackerConf.getFloat("period_grow", 1.3f));
++    tracker.setPeriod(tracker.periodMin);
+ 
+     if (tele.influxdbHost) {
+         ESP_LOGI("main", "Influxdb telemetry to host %s", tele.influxdbHost.toString().c_str());
+diff --git a/src/tracker.h b/src/tracker.h
+index 1a3afadb..16d592ca 100644
+--- a/src/tracker.h
++++ b/src/tracker.h
+@@ -13,19 +13,22 @@ struct MPP {
+ 
+ /**
+  * Implement local MPP tracking perturb / observe.
+- * If it doesn't find a new MPP for some time, it'll switch into slow mode.
+- * Slow mode uses a lower update frequency, smaller power thresholds and a slower perturbation speed
++ * The decision period grows by periodGrow on each reversal without a new MPP record, up to periodMax, and snaps back
++ * to periodMin on a new record, a takeover, a cloud-recovery reversal or 45 s without a reversal. The slew scales
++ * with 1/period.
+  */
+ struct Tracker {
+-    float minPowerStep = 1.0f;
+-    float minPowerStepRel = 1.0f;
+-    float frequency = 20;
++    float minPowerStep = 1.0f; // reversal threshold [W] of the last decision
++    float frequency = 30;
++    float revK = 2.5f, revFloor = 0.05f; // threshold k*sqrt(2 var), at least revFloor [W]
++    float periodMin = 33, periodMax = 500, periodGrow = 1.3f; // [ms]
++    float _period = 33;
+ 
+     bool _direction = false; //true => increase duty cycle/decrease solar voltage
+     time_ms _time = 0;
+     time_ms _timeLastReverse = 0;
+     time_ms _timeSettle = 0; // settle window start: reversal or limiter hand-back
+-    time_ms _timeTakeover = 0; // limiter hand-back
++    time_ms _subTime = 0;
+ 
+     float _curPower = 0.0;
+     float _lastPower = 0.0;
+@@ -33,12 +36,18 @@ struct Tracker {
+ 
+     MeanAccumulator _powerBuf{};
+     MeanAccumulator _vinBuf{};
++    MeanAccumulator _subBuf{}; // periodMin means for the noise estimate
+ 
+     MPP maxPowerPoint;
+ 
+     float dP = NAN;
+ 
+-    bool slowMode = false;
++    bool slowMode = false; // _period >= 250 ms
++
++    // noise of one periodMin mean, from second differences of successive means
++    float _p1 = NAN, _p2 = NAN;
++    EWMA<float> _noiseVar{32};
++    uint8_t _noiseN = 0;
+ 
+     void resetTracker(float power, bool direction) {
+         _direction = direction;
+@@ -48,57 +57,95 @@ struct Tracker {
+         maxPowerPoint.vin = 0;
+     }
+ 
+-    void setSlowMode(bool slow) {
+-        slowMode = slow;
+-        frequency = slow ? 2 : 30;
+-        minPowerStep = slow ? 0.5f : 1.0f;
+-        minPowerStepRel = slow ? 0.0015f : 0.015f;
++    void setPeriod(float t) {
++        _period = std::min(std::max(t, periodMin), periodMax);
++        frequency = 1000.f / _period;
++        slowMode = _period >= 250;
+     }
+ 
+-    // limiter hand-back: starts the settle window at vin, fast mode; slow mode waits for a reversal and 30 s
++    // fewer than 8 noise samples: the fixed rule, else max(k*sqrt(2 var_n), floor), var_n: variance of the mean of
++    // n periodMin means of an AR(1) sequence with correlation rho, var(d) = 2 sigma^2 (1 - rho)(3 - rho)
++    bool exceedsNoise(float absDp, float rho, float n) {
++        const float s2 = _noiseVar.get() / (2 * (1 - rho) * (3 - rho)), r1 = 1 - rho;
++        const float var = s2 / n * ((1 + rho) / r1 - 2 * rho * (1 - powf(rho, n)) / (n * r1 * r1));
++        if (_noiseN >= 8 && std::isfinite(var)) {
++            minPowerStep = std::max(revK * sqrtf(2 * std::max(var, 0.f)), revFloor);
++            return absDp >= minPowerStep;
++        }
++        const float step = slowMode ? 0.5f : 1.0f, rel = slowMode ? 0.0015f : 0.015f;
++        const float lp = std::abs(_lastPower);
++        minPowerStep = lp > step ? std::min(step, rel * (lp + 5.0f)) : step;
++        return absDp >= step || (lp > step && absDp / (lp + 5.0f) > rel);
++    }
++
++    // EWMA of d^2, d = p - 2 p1 + p2
++    void addNoiseSample(float p) {
++        if (!isnan(_p2)) {
++            float d = p - 2 * _p1 + _p2, x = d * d;
++            if (_noiseN >= 8) x = std::min(x, 9 * _noiseVar.get());
++            _noiseVar.add(x);
++            if (_noiseN < 255) ++_noiseN;
++        }
++        _p2 = _p1;
++        _p1 = p;
++    }
++
++    // limiter hand-back: starts the settle window at vin, shortest period
+     void resetDirection(bool direction, float vin) {
+         _direction = direction;
+         _time = wallClockMs();
+-        _timeSettle = _timeTakeover = _time;
++        _timeSettle = _time;
++        _p1 = _p2 = NAN;
+         if (!isnan(vin)) _lastVin = vin;
+-        setSlowMode(false);
++        setPeriod(periodMin);
+     }
+ 
+-    // settleMs(): step settling time [ms] of the filter on powerSample, called once per tracker period.
+-    // Returns the control value; on slow-mode entry the distance [counts] to the MPP duty.
++    // settleMs(): step settling time [ms] of the filter on powerSample, called once per periodMin and per decision.
++    // Returns the control value.
+     template<class SettleMs>
+     float update(float powerSample, uint16_t dutyCycle, float vin, SettleMs settleMs) {
+         auto now = wallClockMs();
+ 
+         _powerBuf.add(powerSample);
+         _vinBuf.add(vin);
++        _subBuf.add(powerSample);
++
++        if ((float) (now - _subTime) > periodMin) {
++            _subTime = now;
++            const float s = _subBuf.pop();
++            if (s < 1 || (float) (now - _timeSettle) < settleMs()) _p1 = _p2 = NAN;
++            else addNoiseSample(s);
++        }
+ 
+-        if ((float) (now - _time) > (1000.f / frequency)) {
++        if ((float) (now - _time) > _period) {
+             _time = now;
+             auto power = _powerBuf.pop();
+             auto vin = _vinBuf.pop();
+ 
+             _curPower = power;
+             dP = power - _lastPower;
++            bool rev = false, cloud = false;
+ 
+             if (power < 1) {
+                 _direction = true; // pump more power
++                _p1 = _p2 = NAN;
+             } else {
+                 auto absDp = std::abs(dP);
+-                bool rev = false;
+ 
+                 // after a reversal the filtered power still shows the old direction and the input cap's
+                 // charge/discharge, which lags the duty by ~C*V/(2.5*I) in low light: the reference follows the
+                 // power until the filter has settled and Vin is back at the reversal point. At most 1 s: the
+-                // excursion of a longer blind leg costs more than the lag. Not in slow mode: a window there can only
+-                // end at a 500 ms decision, so it skips a whole period and doubles the leg. The slew is 25x slower,
++                // excursion of a longer blind leg costs more than the lag. Not for long periods: a window there can
++                // only end at a decision, so it skips a whole period and doubles the leg. The slew is slower there,
+                 // so the input-cap current it causes stays below the power threshold
++                // filter time constant = 99 % settling time / 6.64
++                const float settle = settleMs();
++                const float rho = settle > 0 ? std::min(expf(-6.64f * periodMin / settle), 0.95f) : 0.f;
+                 auto since = now - _timeSettle;
+-                if (!slowMode && since < 1000 &&
+-                    ((float) since < settleMs() || (_direction ? vin > _lastVin : vin < _lastVin))) {
++                if (_period < 250 && since < 1000 &&
++                    ((float) since < settle || (_direction ? vin > _lastVin : vin < _lastVin))) {
+                     _lastPower = power;
+-                } else if (absDp >= minPowerStep
+-                           or (abs(_lastPower) > minPowerStep and absDp / (abs(_lastPower) + 5.0f) > minPowerStepRel)) {
++                } else if (exceedsNoise(absDp, rho, _period / periodMin)) {
+                     _lastPower = power;
+                     if (dP < 0) rev = true;
+                 }
+@@ -109,18 +156,18 @@ struct Tracker {
+                 // and end up at a voltage far away from MPP
+                 // 5 % of the higher end, so down and up legs are equal (5 % of each start ratchets down)
+                 if (abs(vin - _lastVin) > 0.05f * std::max(vin, _lastVin)) {
+-                    rev = true;
++                    rev = cloud = true;
+                 }
+ 
+                 if (rev) {
++                    _p1 = _p2 = NAN;
+                     _direction = !_direction;
+                     _timeLastReverse = _timeSettle = now;
+                     _lastVin = vin;
+                 }
+             }
+ 
+-            // MPP record: invalid after 5 min, or below 85 % once 30 s old; evaluated before the slow-mode
+-            // entry, which waits on the same 30 s
++            // MPP record: invalid after 5 min, or below 85 % once 30 s old
+             auto &m = maxPowerPoint;
+             if (m.power > 0 && (now - m.timestamp > 1000 * 60 * 5 ||
+                                 (power < m.power * 0.85f && now - m.timestamp > 1000 * 30))) {
+@@ -130,19 +177,15 @@ struct Tracker {
+             bool newMax = power > m.power * 1.005f;
+             if (newMax) m = {power, now, dutyCycle, vin};
+ 
+-            // slow mode: no new MPP for 30 s, a reversal since the last takeover and 30 s after it. Ends on a new
+-            // MPP (also after a reset) or 45 s without a reversal
+-            bool slow = power > (slowMode ? 0.5f : 2.f) && !newMax && _timeLastReverse > _timeTakeover &&
+-                        now - _timeLastReverse < 1000 * 45;
+-            if (!slowMode) slow = slow && now - m.timestamp > 1000 * 30 && now - _timeTakeover > 1000 * 30;
+-            bool enter = slow && !slowMode;
+-            setSlowMode(slow);
+-            // the MPP duty is a reference where a poor or non-linear output current measurement misleads the slow
+-            // P&O: the caller applies the distance like a control value, i.e. a fraction of it
+-            if (enter) return (float) m.dutyCycle - (float) dutyCycle;
++            // a reversal without a new record: oscillating about the peak
++            const bool up = _period > periodMin;
++            if (newMax || cloud || now - _timeLastReverse > 1000 * 45 || (up && power <= 0.5f))
++                setPeriod(periodMin);
++            else if (rev && power > (up ? 0.5f : 2.f))
++                setPeriod(_period * periodGrow);
+         }
+ 
+-        float speed = slowMode ? .02f : .5f;
++        float speed = .5f * periodMin / _period;
+         return _direction ? speed : -speed;
+     }
+ };
+diff --git a/test/host-stub/mppt-sim.cpp b/test/host-stub/mppt-sim.cpp
+index 653705fa..ad28a67b 100644
+--- a/test/host-stub/mppt-sim.cpp
++++ b/test/host-stub/mppt-sim.cpp
+@@ -934,7 +934,11 @@ static int runWx(const std::string &name, Wx &wx) {
+     float slowDvMax = 0; // largest |Vin - Vmpp| / Vmpp in slow mode
+     float dMin = 1e9f, dMax = 0, vMin = 1e9f, vMax = 0;
+     uint32_t nRev = 0, nSlowIn = 0;
+-    time_ms lastRev = 0;
++    time_ms lastRev = 0, lastTrk = 0;
++    double thS[2] = {}; // reversal threshold / P per period, by the mode the decision ran in
++    uint32_t thN[2] = {}, thFix[2] = {}, nSnap = 0;
++    double perS = 0; // decision period [ms] x time while tracking
++    float lastPeriod = mppt.tracker._period;
+     bool wasSlow = false;
+     double holdAt = getenv("SIM_HOLD") ? atof(getenv("SIM_HOLD")) : -1; // tracker output x0 from then on
+ 
+@@ -999,6 +1003,13 @@ static int runWx(const std::string &name, Wx &wx) {
+             tSlow += dt;
+             if (cat == TRACK && iG >= 0) lossSlow += (pG - pPv) * dt, slowDvMax = std::max(slowDvMax, std::fabs(vin / pk[iG].v - 1));
+         }
++        if (trk._time != lastTrk && (cat == TRACK || cat == WRONG) && trk._curPower >= 1) {
++            thS[wasSlow] += trk.minPowerStep / trk._curPower, ++thN[wasSlow];
++            thFix[wasSlow] += trk._noiseN < 8;
++        }
++        lastTrk = trk._time;
++        if (cat == TRACK) perS += trk._period * dt;
++        nSnap += trk._period < lastPeriod && trk._period <= trk.periodMin, lastPeriod = trk._period;
+         nSlowIn += trk.slowMode && !wasSlow, wasSlow = trk.slowMode;
+         nRev += trk._timeLastReverse != lastRev, lastRev = trk._timeLastReverse;
+         if (isWrong) {
+@@ -1050,12 +1061,15 @@ static int runWx(const std::string &name, Wx &wx) {
+         printf("== TRACKER %-18s tracking %.0f s: duty mean %.0f rms %.1f p-p %.0f counts of %u (%.2f / %.1f permille),"
+                " Vin mean %.2f rms %.3f p-p %.2f V | tracking loss %.2f %% | slow %.1f %% of the time, %u entries"
+                " (%zu logged, every %.0f s) | %.1f reversals/min | harvest %.2f %% | tracking loss %.0f J, in slow mode"
+-               " %.0f J, slow-mode Vin up to %.1f %% off the MPP\n", name.c_str(), dN, dm,
++               " %.0f J, slow-mode Vin up to %.1f %% off the MPP | theta/P fast %.2f slow %.2f permille, fixed rule"
++               " %.0f / %.0f %% of %u / %u periods | period mean %.0f ms, %u snaps\n", name.c_str(), dN, dm,
+                std::sqrt(std::max(0.0, dS2 / std::max(dN, 1e-9) - dm * dm)), dMax - dMin, converter.pwmCtrlMax,
+                std::sqrt(std::max(0.0, dS2 / std::max(dN, 1e-9) - dm * dm)) * k, (dMax - dMin) * k, vm,
+                std::sqrt(std::max(0.0, vS2 / std::max(dN, 1e-9) - vm * vm)), vMax - vMin, loss[TRACK] * pc,
+                100 * tSlow / tStat, nSlowIn, nLogged, nLogged ? tStat / nLogged : 0.0, nRev * 60 / tStat, ePv * pc,
+-               loss[TRACK], lossSlow, 100 * slowDvMax);
++               loss[TRACK], lossSlow, 100 * slowDvMax, thN[0] ? 1000 * thS[0] / thN[0] : 0.0,
++               thN[1] ? 1000 * thS[1] / thN[1] : 0.0, thN[0] ? 100.0 * thFix[0] / thN[0] : 0.0,
++               thN[1] ? 100.0 * thFix[1] / thN[1] : 0.0, thN[0], thN[1], dN > 0 ? perS / dN : 0.0, nSnap);
+     }
+     size_t shown = 0;
+     for (auto &s: wrong) {
+diff --git a/website/docs/reference/config/tracker.md b/website/docs/reference/config/tracker.md
+index cd24c7a2..dfe6f3f9 100644
+--- a/website/docs/reference/config/tracker.md
++++ b/website/docs/reference/config/tracker.md
+@@ -11,3 +11,8 @@ sidebar_position: 7
+ |---------------------|------|-------|---------|----------------------------------------------------------------------|
+ | `target_duty_cycle` |      | float | 0.0     | Fixed duty cycle fraction (0–1 of pwmMaxDriver); if > 0 enters manual PWM mode with hard-fixed duty (no PD control, no MPPT tracking) |
+ | `sweep_speed`       |      | float | 4.0     | Global-sweep speed; scales both per-tick cap and limit-tracking gain (clamp ≥ 0.1) |
++| `rev_k`             |      | float | 2.5     | P&O reversal threshold in noise units: a power change counts once it exceeds `rev_k`·√(2·var), with var the noise variance of one decision-period mean. It is derived from second differences of `period_min_ms` means, corrected for the power filter's correlation (clamp ≥ 0). Until 8 noise samples exist the fixed threshold applies |
++| `period_min_ms`     | ms   | float | 33      | Shortest P&O decision period; the tracker returns to it on a new MPP record, a limiter hand-back, a cloud-recovery reversal or 45 s without a reversal (clamp ≥ 5) |
++| `period_max_ms`     | ms   | float | 500     | Longest P&O decision period (clamp ≥ `period_min_ms`). The perturbation slew scales with `period_min_ms`/period |
++| `period_grow`       |      | float | 1.3     | Factor applied to the decision period on each reversal without a new MPP record (clamp ≥ 1) |
++| `rev_floor_w`       | W    | float | 0.05    | Lowest P&O reversal threshold (clamp ≥ 0.001) |
