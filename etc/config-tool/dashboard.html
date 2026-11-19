@@ -227,6 +227,7 @@ const REPLY = {
   sweepVerdict: /sweep (?:verified|flagged):/,
   sc:         /(?:^|[^A-Za-z0-9_])sc:/,
   status:     /^V=\d/,
+  statusLine: /^V=\s*(\S+)\/\s*(\S+) I=\s*(\S+)\/\s*(\S+)A\s+(\S+)W .*?\bst=(\S+?),\d/,
 };
 
 const now = () => Date.now();
@@ -489,6 +490,7 @@ function onLine(dev, ln, src){
   }
   if ((m = REPLY.bleState.exec(plain)) && dev.ble){ dev.ble.dropped = +m[2]; }
   if (REPLY.stopSweep.test(plain) || REPLY.sweepVerdict.test(plain)) scheduleCurve(dev, CFG.curveDebounceMs);
+  if ((m = REPLY.statusLine.exec(plain))) ingestStatus(dev, m);
   const r = dev.sc.feed(ln);
   if (r) onCurve(dev, r);
 }
@@ -663,6 +665,20 @@ function onMqttMessage(topic, payload, pkt){
 }
 
 // One MQTT telemetry message `<cid><payload>` (also the test/demo entry point).
+// The periodic status line (V=<Vin>/<Vout> I=<Iin>/<Iout>A <P>W ... st=<mode>,<n>) carries the live operating
+// point; it keeps the card current between telemetry points (a device in its idle profile sends one per
+// idle_interval_ms). No timestamp: never deduplicated, never counted as a telemetry interval.
+const STATUS_STATES = { "N/A":0, CV:1, CC:2, CP:3, MPPT:4, SWEEP:5 };
+function ingestStatus(dev, m){
+  const [Ui, Uo, , I, P] = m.slice(1, 6).map(Number);
+  if (![Ui, Uo, I, P].every(Number.isFinite)) return;
+  const f = { Ui, Uo, I, P };
+  const st = STATUS_STATES[m[6].replace(/[^A-Z/]/g, "")];
+  if (st !== undefined) f.mppt_state = st;
+  ingest(dev, { fields:f, ts:0 }, "status");
+  scheduleRender(dev);
+}
+
 function ingestTele(host, bytes, src = "mqtt"){
   const dev = getDevice(host, src === "mqtt" ? "mqtt" : undefined);
   const b = u8(bytes);

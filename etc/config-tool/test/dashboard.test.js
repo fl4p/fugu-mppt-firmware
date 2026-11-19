@@ -148,6 +148,25 @@ test('cards from pv/log and pv/alert; /cmd echoes ignored; hosts remembered', as
   assert.deepEqual(JSON.parse(window.localStorage.getItem('mqtt-known-hosts'))[URL], ['flat', 'fry']);
 });
 
+test('the status line updates the live values and the age without telemetry; nan lines are ignored', async () => {
+  const { window, Dash, client } = await withBroker();
+  log(client, 'flat', ['V= nan/  nan I= nan/  nanA   nanW --℃46℃  0sps  0㎅/s CCM(H|L|Lm)=   0|   0|   0 st=START,1 lag=0㎲ N=0 rssi=-50']);
+  Dash.flush();
+  assert.equal(text(window, 'flat', '.age'), 'no data');
+  log(client, 'flat', ['V=62.4/27.71 I=6.55/14.30A 408.5W 1℃73℃ 500sps  0㎅/s CCM(H|L|Lm)= 909|1136|1137 st=⇣MPPT,1 lag=2857㎲ N=86840 rssi=-53']);
+  Dash.flush();
+  const dev = Dash.devices.get('flat');
+  assert.equal(dev.tele.P, 408.5); assert.equal(dev.tele.Ui, 62.4); assert.equal(dev.tele.Uo, 27.71); assert.equal(dev.tele.I, 14.3);
+  assert.equal(dev.tele.state, 4);
+  assert.equal(text(window, 'flat', '.pv'), '408.5');
+  assert.equal(text(window, 'flat', '.age'), 'now');
+  assert.equal(dev.intervals.a.length, 0, 'a status line is not a telemetry interval');
+  log(client, 'flat', ['V=65.8/25.75 I=0.09/ 0.23A   6.1W 32℃37℃ 1471sps  0㎅/s DCM(H|L|Lm)= 393| 347| 597 st=SWEEP,1 lag=849㎲ N=2500 rssi=-44']);
+  Dash.flush();
+  assert.equal(dev.tele.state, 5);
+  assert.match(text(window, 'flat', '.chartbar .caption'), /sweep in progress/);
+});
+
 test('alerts become badges: retained ones create no card and no log line, live ones are logged too', async () => {
   const { window, Dash, client } = await withBroker();
   client.emit('message', 'pv/alert/fugu-esp32s3-OLD/wire', enc('{"lvl":"unverified","msg":"no fresh wire data","t":1}'), { retain: true });

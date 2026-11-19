@@ -36,6 +36,9 @@ Each converter gets a card, keyed by its hostname:
   **log & console** checkbox in the header is ticked; the page remembers the setting in this browser.
   The periodic `V=…` status lines and the `sc:` curve dumps are hidden unless the card's **status lines**
   and **sc: lines** checkboxes are ticked.
+- **Live values from the status line**: the periodic `V=…` status line in the device log also updates power,
+  voltages, current and mode, so a card stays current between telemetry points, for example while a device in
+  its idle profile sends telemetry only every `tele.conf idle_interval_ms`.
 - **Link badges**: one for BLE (only on cards with a BLE link) and one for MQTT. Alerts the device publishes
   under `pv/alert/<hostname>/<source>` appear as one badge per source, coloured by level, with the message
   and time as tooltip; an alert that arrives while the page is open is also written to the log.
