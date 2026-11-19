@@ -46,8 +46,10 @@ static void initConv(SynchronousConverter &c, const char *topo = "buck") {
     c.init(conv, board, coil);
 }
 
+// C_in 1 F: a stiff source within the cycle too (the plant steps Vin mid-cycle, so 470 uF pinned only at the cycle
+// start lets the pumped charge raise Vin and self-limit the pump)
 static void board(VirtualConverter &p, const PlantBoard &b, bool hq) {
-    p.setPassives(470e-6f, 470e-6f, b.lPlant);
+    p.setPassives(1.f, 470e-6f, b.lPlant);
     p.setRing(b.ringC(), hq ? b.qHigh : b.ringQ);
     p.setRingNode(b.ringV, b.ringCexp, b.ringCt);
     p.setSwitching(b.tDead, b.tHsExt, b.rHs, b.rLs, b.tSw);
