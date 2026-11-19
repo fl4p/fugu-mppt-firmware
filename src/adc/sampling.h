@@ -72,11 +72,13 @@ struct Sensor {
     // Decision-based ("glitch-safe") median: the unconditional median-of-5 rejects sparse glitches
     // but UNDER-READS a current that draws dense periodic pulses (a cheap inverter), discarding real
     // charge -> ~5% low power. When despikeK > 0 the sample passes through unchanged unless it is an
-    // extreme outlier (|v-median| > despikeK * running mean-deviation), so the recurring load pulses
-    // reach the mean (unbiased) while genuine impulse glitches are still clipped. See conf `despike`.
+    // extreme outlier (|v-median| > despikeK * running mean-deviation and > 4 quantization steps), so
+    // the recurring load pulses reach the mean (unbiased) while genuine impulse glitches are still
+    // clipped. See conf `despike`.
     inline static float despikeK = 0;               // outlier threshold in robust-scale units; 0 = off
     float despikeScale = 0;                         // EWM of |v-median|, the robust scale
-    uint32_t despikeTrips = 0;                      // cumulative clips (diagnostic + WARN)
+    float despikeStep = 0;                          // smallest nonzero sample step (quantization), 0 = unknown
+    uint32_t despikeTrips = 0;                      // clips in the current WARN window
     EWM<false, float> ewm; // filter residual noise
     MeanAccumulator calibBuffer{}; // for offset calibration
     float calibSq = 0, calibPrevMean = 0, calibPrevSd = 0, calibQ = 0; // zero settle check, offset sensors
@@ -134,6 +136,7 @@ struct Sensor {
             v -= calibrationAvg;
         }
 
+        const float dRaw = fabsf(x - lastRaw);
         previous = last;
         last = v;
         lastRaw = x;
@@ -145,7 +148,11 @@ struct Sensor {
         float m = med3.next(v); // always feed the median window so it tracks the signal
         if (despikeK > 0.f) {
             float dev = fabsf(v - m);
-            if (despikeScale > 0.f && dev > despikeK * despikeScale) {
+            if (dRaw > 0.f) {
+                float d = dRaw * fabsf(params.transform.factor);
+                if (d < despikeStep || despikeStep == 0.f) despikeStep = d;
+            }
+            if (despikeScale > 0.f && dev > despikeK * despikeScale && dev > 4.f * despikeStep) {
                 v = m; // extreme outlier (glitch) -> clip; recurring load pulses pass through
                 ++despikeTrips;
             }
@@ -364,8 +371,9 @@ public:
     void configureDespike(float k) { Sensor::despikeK = (k > 0.f) ? k : 0.f; }
 
     // Rate-limited WARN so the console always shows when the de-spiker is clipping outliers, without
-    // flooding the RT path. Called once per update(); reports clips accumulated over each window.
-    uint32_t despikeWarnDiv_ = 0, despikeTripsPrev_ = 0;
+    // flooding the RT path. Called once per update(); warns when a window's clips exceed 0.5 % of
+    // the physical samples taken in it.
+    uint32_t despikeWarnDiv_ = 0, despikeWinN_ = 0;
     void despikeWarnTick() {
         if (Sensor::despikeK <= 0.f || ++despikeWarnDiv_ < 2048) return;
         despikeWarnDiv_ = 0;
@@ -374,12 +382,12 @@ public:
         for (auto s: realSensors) {
             total += s->despikeTrips;
             if (s->despikeTrips > worst) { worst = s->despikeTrips; worstS = s; }
+            s->despikeTrips = 0;
         }
-        uint32_t delta = total - despikeTripsPrev_;
-        despikeTripsPrev_ = total;
-        if (delta)
-            ESP_LOGW("sampling", "despike clipped %u outlier sample(s) (k=%.1f, mostly %s)",
-                     delta, Sensor::despikeK, worstS ? worstS->params.teleName.c_str() : "?");
+        if (total * 200 > despikeWinN_)
+            ESP_LOGW("sampling", "despike clipped %u of %u sample(s) (k=%.1f, mostly %s)",
+                     total, despikeWinN_, Sensor::despikeK, worstS ? worstS->params.teleName.c_str() : "?");
+        despikeWinN_ = 0;
     }
 
     [[nodiscard]] float getNotchFreq() const { return notchFreq; }
@@ -672,6 +680,7 @@ public:
             return UpdateRet::CalibFailure;
 
         sensor->add_sample(v);
+        ++despikeWinN_;
         rtcount("adc.update.addSample");
 
         if (notchAdaptive && sensor == rippleSrc && rippleDet.configured()) {
