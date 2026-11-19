@@ -566,6 +566,13 @@ public:
         return nullptr;
     }
 
+    // A reset filter (calibration end, ADC restart) reads NaN until its median window refills
+    [[nodiscard]] bool filtersEmpty() const {
+        for (const Sensor *s: {sensors.Vin, sensors.Vout, sensors.Iin, sensors.Iout})
+            if (!std::isfinite(s->med3.get()) || !std::isfinite(s->ewm.avg.get())) return true;
+        return false;
+    }
+
     // First startCondition() clause currently blocking a start, or nullptr if clear.
     // Single source of truth for startCondition(); also logged while idle in START.
     [[nodiscard]] const char *startBlockReason() const {
@@ -592,6 +599,7 @@ public:
             return "Vout-still-OV";
         if (boardPowerSupplyUnderVoltage(true)) return "supply-UV";
         if (sampler.isCalibrating()) return "calibrating";
+        if (filtersEmpty()) return "filters-empty";
         if (converter.startInhibited(SynchronousConverter::InhibitIdle)) return kIdleBlock; // last: the only blocker
         return nullptr;
     }
