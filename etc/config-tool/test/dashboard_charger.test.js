@@ -84,10 +84,12 @@ test('status after the first lease and after a broker reconnect; reply renders t
   log(client, 'fry', TERMINATED);
   await settle();
   Dash.flush();
-  const e = card(window, 'fry').querySelector('.chg');
+  const e = card(window, 'fry').querySelector('.chg'), h = card(window, 'fry').querySelector('.top .cstate');
   assert.equal(e.hidden, false);
-  assert.equal(e.textContent, 'charger terminated (float) · cap 26.80 V · cell 3.341 V · DoD 0 % / 15 %');
-  assert.equal(e.querySelector('span').className, 's-terminated');
+  assert.equal(e.textContent, 'cap 26.80 V · cell 3.341 V · DoD 0 % / 15 %');
+  assert.equal(h.textContent, 'terminated (float)');
+  assert.equal(h.className, 'cstate s-terminated');
+  assert.equal(h.nextElementSibling.className, 'mode', 'state sits left of the mode');
   assert.equal(e.classList.contains('stale'), false);
   // reconnect re-requests
   client.emit('connect');
@@ -96,8 +98,9 @@ test('status after the first lease and after a broker reconnect; reply renders t
     '  holiday ON (on)  quiet days 3/3 (gaps 0)  today: discharging 0.0h, mean 0.10/2.30A', 'OK: status']);
   await settle();
   Dash.flush();
-  assert.equal(e.textContent, 'charger hold (load-following) · cell 3.402 V stale · holiday');
-  assert.equal(e.querySelector('span').className, 's-hold');
+  assert.equal(e.textContent, 'cell 3.402 V stale · holiday');
+  assert.equal(h.textContent, 'hold (load-following)');
+  assert.equal(h.className, 'cstate s-hold');
   assert.equal(e.querySelector('.dim').textContent, 'cell 3.402 V stale');
 });
 
@@ -151,11 +154,12 @@ test('BLE enable sequence asks for status; charging colour class; more info carr
   assert.match(info, /pack 12\.0\.\.13\.5 °C/);
   Dash.devices.get('fbuck').chg = Dash.parseChargerStatus(CHARGING);
   Dash.flush(); Dash.ingest(Dash.devices.get('fbuck'), { fields: { P: 1 }, ts: 0 }, 'test'); Dash.flush();
-  assert.equal(card(window, 'fbuck').querySelector('.chg span').className, 's-charging');
+  assert.equal(card(window, 'fbuck').querySelector('.cstate').className, 'cstate s-charging');
   Dash.devices.get('fbuck').chg = Dash.parseChargerStatus(['Charger: BLOCKED (pack cold)']);
   Dash.ingest(Dash.devices.get('fbuck'), { fields: { P: 2 }, ts: 0 }, 'test'); Dash.flush();
-  assert.equal(card(window, 'fbuck').querySelector('.chg').textContent, 'charger blocked (pack cold)');
-  assert.equal(card(window, 'fbuck').querySelector('.chg span').className, 's-blocked');
+  assert.equal(card(window, 'fbuck').querySelector('.chg').hidden, true, 'no extra fields: line hidden');
+  assert.equal(card(window, 'fbuck').querySelector('.cstate').textContent, 'blocked (pack cold)');
+  assert.equal(card(window, 'fbuck').querySelector('.cstate').className, 'cstate s-blocked');
 });
 
 test('snapshot: dev.chg round trip, restored as stale until a fresh reply', async () => {
@@ -175,8 +179,9 @@ test('snapshot: dev.chg round trip, restored as stale until a fresh reply', asyn
   b.Dash.flush();
   const e = card(b.window, 'fry').querySelector('.chg');
   assert.equal(e.hidden, false);
-  assert.equal(e.textContent, 'charger terminated (float) · cap 26.80 V · cell 3.341 V · DoD 0 % / 15 %');
+  assert.equal(e.textContent, 'cap 26.80 V · cell 3.341 V · DoD 0 % / 15 %');
   assert.equal(e.classList.contains('stale'), true);
+  assert.equal(card(b.window, 'fry').querySelector('.cstate').className, 'cstate s-terminated stale');
   assert.equal(b.Dash.devices.get('bad').chg, null);
   assert.equal(card(b.window, 'bad').querySelector('.chg').hidden, true);
   // fresh reply over a new broker connection clears the stale mark
@@ -189,5 +194,5 @@ test('snapshot: dev.chg round trip, restored as stale until a fresh reply', asyn
   assert.equal(await q2, true);
   b.Dash.flush();
   assert.equal(e.classList.contains('stale'), false);
-  assert.match(e.textContent, /^charger charging · cap 28\.40 V/);
+  assert.match(e.textContent, /^cap 28\.40 V/);
 });

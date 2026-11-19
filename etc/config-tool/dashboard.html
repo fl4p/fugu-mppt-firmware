@@ -69,12 +69,13 @@
   .kpis .small { flex-basis:100%; font-size:12px; color:var(--muted); display:flex; gap:12px; flex-wrap:wrap;
                  font-variant-numeric:tabular-nums; }
   .kpis .small b { color:var(--fg); font-weight:500; }
+  .card .cstate { font-size:12px; }
+  .card .s-terminated { color:var(--accent2); }
+  .card .s-charging { color:var(--fg); }
+  .card .s-hold { color:var(--unit); }
+  .card .s-blocked { color:var(--warn); }
   .kpis .chg { flex-basis:100%; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
-  .kpis .chg .s-terminated { color:var(--accent2); }
-  .kpis .chg .s-charging { color:var(--fg); }
-  .kpis .chg .s-hold { color:var(--unit); }
-  .kpis .chg .s-blocked { color:var(--warn); }
-  .kpis .chg .dim, .card:not(.stale) .kpis .chg.stale { opacity:.5; }
+  .kpis .chg .dim, .card:not(.stale) .kpis .chg.stale, .card .cstate.stale { opacity:.5; }
   .card .rate { font-size:11px; color:var(--muted); }
   .card details.more { font-size:11px; color:var(--muted); }
   .card details.more summary { cursor:pointer; }
@@ -1088,7 +1089,7 @@ function createCard(dev){
   c.dataset.host = dev.host;
   const top = el("div", "top");
   top.append(el("span", "host"), el("span", "badge ble", "BLE"), el("span", "badge mqtt", "MQTT"),
-             el("span", "alerts"), el("span", "spacer"), el("span", "mode"), el("span", "age"));
+             el("span", "alerts"), el("span", "spacer"), el("span", "cstate"), el("span", "mode"), el("span", "age"));
   const fb = el("button", "forget", "×");
   fb.title = "forget this device";
   fb.onclick = () => forget(dev);
@@ -1203,19 +1204,21 @@ function renderMore(dev, L){
 }
 
 function renderChg(dev){
-  const c = dev.chg, e = q(dev, ".chg");
-  e.hidden = !c;
-  if (!c) return;
-  const age = now() - (+c.at || 0);
-  e.classList.toggle("stale", !!dev.chgRestored || age > 2 * CFG.chargerMs);
-  e.title = "status " + fmtAge(age) + (dev.chgRestored ? " (saved)" : "");
-  const out = [document.createTextNode("charger "),
-               el("span", "s-" + c.state, c.state + (c.detail ? " (" + c.detail + ")" : ""))];
-  const add = (text, dim) => { out.push(document.createTextNode(" · ")); out.push(dim ? el("span", "dim", text) : document.createTextNode(text)); };
+  const c = dev.chg, e = q(dev, ".chg"), h = q(dev, ".cstate");
+  if (!c){ e.hidden = true; h.textContent = ""; h.className = "cstate"; return; }
+  const age = now() - (+c.at || 0), stale = !!dev.chgRestored || age > 2 * CFG.chargerMs;
+  const title = "charger status " + fmtAge(age) + (dev.chgRestored ? " (saved)" : "");
+  h.textContent = c.state + (c.detail ? " (" + c.detail + ")" : "");
+  h.className = "cstate s-" + c.state + (stale ? " stale" : "");
+  h.title = e.title = title;
+  e.classList.toggle("stale", stale);
+  const out = [];
+  const add = (text, dim) => { if (out.length) out.push(document.createTextNode(" · ")); out.push(dim ? el("span", "dim", text) : document.createTextNode(text)); };
   if (Number.isFinite(c.voutMax)) add("cap " + fmt(c.voutMax, 2) + " V");
   if (Number.isFinite(c.vcell)) add("cell " + fmt(c.vcell, 3) + " V" + (c.vcellOk ? "" : " stale"), !c.vcellOk);
   if (Number.isFinite(c.dod)) add("DoD " + fmt(c.dod, 0) + " % / " + fmt(c.dodRecharge, 0) + " %");
   if (c.holiday === "ON") add("holiday");
+  e.hidden = !out.length;
   e.replaceChildren(...out);
 }
 

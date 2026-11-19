@@ -89,7 +89,7 @@ test('ingestTele renders a card with KPIs, the live dot and a sweep curve', asyn
   expect(errs).toEqual([]);
 });
 
-test('charger line renders under the KPIs with the state colour', async ({ page }) => {
+test('charger state in the header with its colour, extras under the KPIs', async ({ page }) => {
   const errs = await gotoDash(page);
   await page.evaluate((b) => {
     window.Dash.ingestTele('demo', new Uint8Array(b));
@@ -102,9 +102,10 @@ test('charger line renders under the KPIs with the state colour', async ({ page 
     window.Dash.flush();
   }, [...mqttMsg([{ fields: { P: 10, Ui: 30 }, ts: Date.now() }])]);
   const chg = page.locator('.card[data-host="demo"] .kpis .chg');
-  await expect(chg).toHaveText('charger terminated (float) · cap 26.80 V · cell 3.341 V stale · DoD 0 % / 15 %');
+  await expect(chg).toHaveText('cap 26.80 V · cell 3.341 V stale · DoD 0 % / 15 %');
+  await expect(page.locator('.card[data-host="demo"] .top .cstate')).toHaveText('terminated (float)');
   const st = await chg.evaluate((e) => ({
-    color: getComputedStyle(e.querySelector('.s-terminated')).color,
+    color: getComputedStyle(e.closest('.card').querySelector('.top .cstate.s-terminated')).color,
     accent2: getComputedStyle(document.documentElement).getPropertyValue('--accent2').trim(),
     dim: getComputedStyle(e.querySelector('.dim')).opacity,
     below: e.getBoundingClientRect().top >= e.parentElement.querySelector('.small').getBoundingClientRect().bottom - 1,

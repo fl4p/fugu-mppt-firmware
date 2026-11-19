@@ -39,12 +39,12 @@ Each converter gets a card, keyed by its hostname:
 - **Live values from the status line**: the periodic `V=…` status line in the device log also updates power,
   voltages, current and mode, so a card stays current between telemetry points, for example while a device in
   its idle profile sends telemetry only every `tele.conf idle_interval_ms`.
-- **Charger state**: a line under the live values from the `status` reply: the charger state (terminated,
-  charging, partial hold or blocked, with its reason), the effective output cap `Vout_max`, the highest BMS cell
-  voltage and, once terminated, the depth of discharge since full against the recharge threshold. The state word is
-  green when terminated, yellow in partial hold and orange when blocked; "holiday" is appended while the holiday
-  ceiling is active. A BMS value the device reports as stale is dimmed and marked "stale". The line appears after
-  the first reply and is dimmed when the reply is older than 10 minutes or restored from the snapshot. The more info
+- **Charger state**: from the `status` reply. The state (terminated, charging, partial hold or blocked, with its
+  reason) stands in the card header next to the mode, green when terminated, yellow in partial hold and orange when
+  blocked. A line under the live values adds the effective output cap `Vout_max`, the highest BMS cell voltage and,
+  once terminated, the depth of discharge since full against the recharge threshold; "holiday" is appended while the
+  holiday ceiling is active. A BMS value the device reports as stale is dimmed and marked "stale". Both appear after
+  the first reply and are dimmed when the reply is older than 10 minutes or restored from the snapshot. The more info
   box adds `Vbat_max`, `Ibat_lim`, the battery current, the charge ceiling and last full charge, the holiday state and
   the pack temperature range when the device reports them.
 - **Link badges**: one for BLE (only on cards with a BLE link) and one for MQTT. Alerts the device publishes
