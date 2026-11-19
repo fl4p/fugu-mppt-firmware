@@ -146,7 +146,7 @@ struct Sensor {
             notchFilter->filter(&last, &v, 1);
         }
         float m = med3.next(v); // always feed the median window so it tracks the signal
-        if (despikeK > 0.f) {
+        if (despikeK > 0.f && params.unit != 'C') { // the NTC is slow and finely averaged: plain median
             float dev = fabsf(v - m);
             if (dRaw > 0.f) {
                 float d = dRaw * fabsf(params.transform.factor);
@@ -680,7 +680,7 @@ public:
             return UpdateRet::CalibFailure;
 
         sensor->add_sample(v);
-        ++despikeWinN_;
+        despikeWinN_ += sensor->params.unit != 'C';
         rtcount("adc.update.addSample");
 
         if (notchAdaptive && sensor == rippleSrc && rippleDet.configured()) {
