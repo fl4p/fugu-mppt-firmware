@@ -86,7 +86,11 @@
 //   SIM_RING=fry|flat|fry-hq|fry-off|flat-damped|... applies a board plant (test/host-stub/plant_boards.h: ring, diode
 //     drop, dead time, conduction and switching loss, fitted to the LTspice bench) to any other scenario; wx-* default
 //     to fry, SIM_RING=ideal = the lossless vconv_mock plant without ring. -hq: Q of the undamped bench (more ripple)
-//   SIM_PLANT="fry:ring_q=40,..." overrides board fields
+//     Board presets run the field boards' firmware timing: MCPWM 160 MHz (4103 counts at 39 kHz, minLS 320) and the
+//     board's live rect_offset_ns (not in rcal*, which start uncalibrated). Suffix -ledc (fry-ledc, fry-hq-ledc) or
+//     SIM_DRV=ledc: the LEDC timing (2047 counts, rect_offset 0) of every result before 2026-11-19; SIM_DRV=mcpwm
+//     also on the ideal plant
+//   SIM_PLANT="fry:ring_q=40,fry:rect_offset_ns=0,..." overrides board fields
 //
 #include <algorithm>
 #include <cmath>
@@ -165,6 +169,9 @@ static unsigned g_nStarts = 0; // converter off -> on edges
 static PlantBoard g_board;
 static const PlantBoard *g_ring = nullptr;
 static bool g_ringOn = false, g_ringDamped = false; // damped: Q 0.5, ring branch without oscillation
+// gate-driver timing of the board presets: MCPWM 160 MHz as live (4103 counts at 39 kHz), -ledc / SIM_DRV=ledc: the
+// LEDC timing of the results before 2026-11-19 (2047 counts, rect_offset 0); SIM_DRV=mcpwm also on the ideal plant
+static bool g_drvMcpwm = false, g_liveOffset = true; // rcal* start uncalibrated (no live rect_offset)
 static void (*g_tickHook)() = nullptr; // called after every RT iteration of run()
 static FILE *g_pDump = nullptr; // SIM_PDUMP=<file>: per tick t, Iout ewm, Vout ewm, HS count (float32)
 
@@ -184,6 +191,7 @@ static std::string ringBoardFrom(std::string sc) {
         if (!env || !strcmp(env, "ideal")) return sc;
         tag = std::string("x-") + env;
     }
+    const bool ledc = cutSuffix(tag, "-ledc");
     g_ringOn = !cutSuffix(tag, "-off");
     g_ringDamped = cutSuffix(tag, "-damped");
     const bool hq = cutSuffix(tag, "-hq");
@@ -193,6 +201,7 @@ static std::string ringBoardFrom(std::string sc) {
             g_board = hq ? highQ(b) : b;
             if (g_ringDamped) g_board.ringQ = 0.5f;
             g_ring = &g_board;
+            g_drvMcpwm = !ledc;
             if (sc.rfind("ring-", 0) == 0) sc = tag;
             return sc;
         }
@@ -586,10 +595,16 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
         }
     }
     if (paranoia0) writeConf(confDir, "limits.conf", {{"reverse_current_paranoia", "0"}});
+    if (const char *d = getenv("SIM_DRV")) g_drvMcpwm = !strcmp(d, "mcpwm");
+    if (g_drvMcpwm) writeConf(confDir, "vconv.conf", {{"pwm_clk", "160000000"}});
     if (g_ring) {
         char l0[24];
         snprintf(l0, sizeof l0, "%g", g_ring->l0Conf);
         writeConf(confDir, "coil.conf", {{"L0", l0}});
+        if (g_drvMcpwm && g_liveOffset && g_ring->rectOffsetNs != 0) {
+            snprintf(l0, sizeof l0, "%g", g_ring->rectOffsetNs);
+            writeConf(confDir, "coil.conf", {{"rect_offset_ns", l0}, {"rect_offset_drv", "vconv"}, {"rect_offset_cal", "1"}});
+        }
     }
 
     // setup(): the parts of setupConverterAndMppt() that the RT path needs
@@ -612,6 +627,9 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
     adcSampler.begin(); // loopRT prologue
     printf("# sim tick %u us, pwm_freq %lu, Vbat_max %.2f, Iout_max %.1f, p_max %.0f\n", g_simTickUs,
            (unsigned long) converter.getPwmFrequency(), mppt.charger.params.Vbat_max, lim.Iout_max, lim.P_max);
+    printf("# gate timing %s: pwmMax %u, minLS %u, maxHS %u, count %.3f ns, rect_offset %d ct\n", g_drvMcpwm ? "mcpwm" : "ledc",
+           converter.pwmMaxDriver(), converter.getRectOnPwmMin(), converter.pwmCtrlMax, 1e9f / converter.getPwmTickRate(),
+           converter.getRectOnOffset());
 }
 
 struct Probe {
@@ -1786,6 +1804,7 @@ static int simMain(int argc, char **argv) {
     if (sc.rfind("wx-", 0) == 0) setenv("SIM_RING", "fry", 0); // tracker scenarios: a field board's plant
     if (const char *n = getenv("SIM_NOISE"); n && *n) noiseLoad(n);
     if (const char *f = getenv("SIM_PDUMP")) g_pDump = ::fopen(f, "wb");
+    g_liveOffset = sc.rfind("rcal", 0) != 0;
     sc = ringBoardFrom(sc);
     std::vector<std::pair<std::string, std::string>> ov;
     if (sc == "b") ov = {{"isc", "1.6"}};

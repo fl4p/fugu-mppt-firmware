@@ -28,6 +28,7 @@ run1() {
     case $1 in fry*) hz=513 ;; *) hz=1469 ;; esac
     out=$(SIM_RING=$1 SIM_ADC_HZ=$hz SIM_SEED=$5 SIM_PV="$3,$2,$4" "$SIM_BIN" rcal-pv)
     awk -v b="$1" -v voc="$2" -v isc="$3" -v k="$4" -v s="$5" '
+        /^# gate timing/ { for (i = 1; i < NF; ++i) if ($i == "count") cn = $(i + 1) }
         /^== rect-cal: (done|failed)/ { st = ($3 == "done") ? "done" : substr($0, index($0, "failed: ") + 8); sub(/ after.*/, "", st) }
         /^== rect-cal: ideal/ { for (i = 1; i < NF; ++i) { if ($i == "learned") le = $(i + 1); if ($i == "applied") ap = $(i + 1) }
                                 lv = $NF }
@@ -36,8 +37,8 @@ run1() {
         END { gsub(/ /, "_", st)
               if (st == "") st = "no-run"
               if (le == "") le = ap = lv = "-"
-              printf "%s %s %s %s %s %s %s %s %s %s %s %s\n", b, voc, isc, k, s, st, le, ap, (tr == "") ? "-" : tr, (zq == "") ? "-" : zq - tr,
-                     lv, vr }' <<< "$out"
+              printf "%s %s %s %s %s %s %s %s %s %s %s %s %s\n", b, voc, isc, k, s, st, le, ap, (tr == "") ? "-" : tr, (zq == "") ? "-" : zq - tr,
+                     lv, vr, cn }' <<< "$out"
 }
 export -f run1
 jobs=()
@@ -45,13 +46,13 @@ for b in fry fry-hq flat flat-hq; do for voc in 48 68 79.6; do for isc in 3 6; d
     for s in $(seq 1 "$SEEDS"); do jobs+=("$b $voc $isc $k $s"); done
 done; done; done; done
 printf "%s\n" "${jobs[@]}" | xargs -P "$JOBS" -I{} bash -c 'run1 "{}"' | sort -k1,1 -k2,2n -k3,3n -k4,4 -k5,5n | awk '
-    # counts are of the host sim pwmMax 2047 at 39 kHz: 12.51 ns
-    BEGIN { ns = 1e9 / 39000 / 2048; split("fry 162 fry-hq 234 flat -231 flat-hq -190", bl, " ")
+    # counts are converted with the run's count duration (# gate timing: 6.25 ns MCPWM, 12.53 ns LEDC)
+    BEGIN { split("fry 162 fry-hq 234 flat -231 flat-hq -190", bl, " ")
             for (i = 1; i < 8; i += 2) base[bl[i]] = bl[i + 1]; pooled = -9; printf "%-8s %5s %4s %5s %4s %-22s %9s %9s %9s %9s\n", "board", "Voc", "Isc", "k", "seed",
             "result", "learned", "applied", "truth", "zc-truth" }
     { r = $6; bad = ""
       if (r == "done") {
-          le = $7 * ns; ap = $8 * ns; tr = $9 * ns; dz = $10 * ns
+          ns = $13; le = $7 * ns; ap = $8 * ns; tr = $9 * ns; dz = $10 * ns
           if (ap > 125.5 || (ap > 0 && $12 > 2)) bad = bad " applied>" (($12 > 2) ? 0 : 125)
           if (le < -1250) bad = bad " learned<-1250"
           if (dz > 300 || dz < -300) bad = bad " |zc-truth|>300"

@@ -258,6 +258,9 @@ public:
 
     void setPwmMax(uint16_t m)   { pwm_.pwmMax = m; }
     void setPwmFreq(uint32_t hz) { pwm_.pwmFreq = hz; }
+    // gate-driver timer clock the PWM shim emulates: 0 = LEDC (80 MHz, power-of-two period), else MCPWM bestTiming()
+    void setPwmClk(uint32_t hz) { pwmClkHz_ = hz; }
+    [[nodiscard]] uint32_t pwmClk() const { return pwmClkHz_; }
 
     void stopChannel(uint8_t ch) {
         if (ch == 0) pwm_.pwmCtrl = 0;
@@ -269,6 +272,7 @@ public:
 
 private:
     bool boost_ = false;
+    uint32_t pwmClkHz_ = 0;
 
     PvModel pv_;
     SunModel sun_;

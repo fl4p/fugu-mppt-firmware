@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "sim/vconv.h"
+#include "pwm/mcpwm_timing.h"
 
 // PwmDriver replacement that forwards LEDC-style update_pwm calls to the
 // VirtualConverter singleton (g_vconv). Mirrors PWM_Mock / PWM_ESP32_ledc API.
@@ -14,18 +15,27 @@ class PWM_VConv {
 public:
     const char *name = "vconv";
     uint16_t pwmMax = 0;
+    uint32_t resolutionHz = 0; // MCPWM timing: tick rate; 0 = LEDC timing
 
     PWM_VConv() = default;
 
     void init_pwm(int channel, int /*pin*/, uint32_t freq) {
-        // Mirror PWM_ESP32_ledc: pick the largest resolution such that the
-        // APB-tick divider is >= 2^resolution, capped at 14 bits.
-        uint32_t div = 80'000'000u / freq;
-        int resolution = std::min((int) std::log2((double) div), 14);
-        if (resolution < 1) resolution = 1;
-        uint16_t pm = (uint16_t) ((2u << (resolution - 1)) - 1u);
-        if (pwmMax == 0) pwmMax = pm;
         (void) channel;
+        if (const uint32_t clk = g_vconv.pwmClk()) {
+            // Mirror MCPWM_SyncLeg (HiLi, no dead-time): bestTiming period, realized frequency
+            const PwmTiming t = bestTiming(freq, clk);
+            if (pwmMax == 0) pwmMax = (uint16_t) t.period_ticks;
+            resolutionHz = t.resolution_hz;
+            freq = t.actual_freq;
+        } else {
+            // Mirror PWM_ESP32_ledc: pick the largest resolution such that the
+            // APB-tick divider is >= 2^resolution, capped at 14 bits.
+            uint32_t div = 80'000'000u / freq;
+            int resolution = std::min((int) std::log2((double) div), 14);
+            if (resolution < 1) resolution = 1;
+            uint16_t pm = (uint16_t) ((2u << (resolution - 1)) - 1u);
+            if (pwmMax == 0) pwmMax = pm;
+        }
         g_vconv.setPwmMax(pwmMax);
         g_vconv.setPwmFreq(freq);
     }

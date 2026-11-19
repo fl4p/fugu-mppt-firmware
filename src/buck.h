@@ -1125,7 +1125,11 @@ public:
     // not. Either way it must not move with the dead-time, or rect_offset_ns and boot_refresh_ns
     // would silently rescale on a runtime `dt`.
     [[nodiscard]] float getPwmTickRate() const {
+#if WITH_VCONV
+        const uint32_t hz = legacyDrv.resolutionHz;
+#else
         const uint32_t hz = drvDtResolutionHz();
+#endif
         return hz ? (float) hz : (float) pwmFrequency * (float) (driverPwmMax + drvDtLhTicks());
     }
 
