@@ -38,7 +38,7 @@ run1() {
               if (st == "") st = "no-run"
               if (le == "") le = ap = lv = "-"
               printf "%s %s %s %s %s %s %s %s %s %s %s %s %s\n", b, voc, isc, k, s, st, le, ap, (tr == "") ? "-" : tr, (zq == "") ? "-" : zq - tr,
-                     lv, vr, cn }' <<< "$out"
+                     lv, vr, (cn == "") ? "-" : cn }' <<< "$out"
 }
 export -f run1
 jobs=()
@@ -50,6 +50,7 @@ printf "%s\n" "${jobs[@]}" | xargs -P "$JOBS" -I{} bash -c 'run1 "{}"' | sort -k
     BEGIN { split("fry 162 fry-hq 234 flat -231 flat-hq -190", bl, " ")
             for (i = 1; i < 8; i += 2) base[bl[i]] = bl[i + 1]; pooled = -9; printf "%-8s %5s %4s %5s %4s %-22s %9s %9s %9s %9s\n", "board", "Voc", "Isc", "k", "seed",
             "result", "learned", "applied", "truth", "zc-truth" }
+    $13 == "-" { print "no # gate timing line from " ENVIRON["SIM_BIN"] " (older mppt-sim?): cannot convert counts"; nogate = 1; exit 2 }
     { r = $6; bad = ""
       if (r == "done") {
           ns = $13; le = $7 * ns; ap = $8 * ns; tr = $9 * ns; dz = $10 * ns
@@ -60,7 +61,8 @@ printf "%s\n" "${jobs[@]}" | xargs -P "$JOBS" -I{} bash -c 'run1 "{}"' | sort -k
           printf "%-8s %5s %4s %5s %4s %-22s %6.0f ns %6.0f ns %6.0f ns %6.0f ns %s\n", $1, $2, $3, $4, $5, r, le, ap, tr, dz, (bad == "") ? "ok" : "FAIL" bad
       } else { printf "%-8s %5s %4s %5s %4s %-22s %9s %9s %9s %9s failed\n", $1, $2, $3, $4, $5, r, "-", "-", "-", "-"; nf++ }
       runs++; if (bad != "") fails++ }
-    END { for (b in n) { m = sl[b] / n[b]; sd = sqrt(sl2[b] / n[b] - m ^ 2); bs = nb[b] / n[b]; f = ""
+    END { if (nogate) exit 2
+          for (b in n) { m = sl[b] / n[b]; sd = sqrt(sl2[b] / n[b] - m ^ 2); bs = nb[b] / n[b]; f = ""
               if (sd > 350) f = f " sd>350"
               if (!(b in base) || m - base[b] > 150 || m - base[b] < -150) f = f sprintf(" mean off baseline %+d", base[b])
               if (f != "") fails++

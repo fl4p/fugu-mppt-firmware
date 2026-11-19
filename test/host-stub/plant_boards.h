@@ -16,7 +16,7 @@ struct PlantBoard {
     float qHigh; // Q of the "-hq" variant: ripple of the undamped bench (no core loss)
     float vf, tDead, tHsExt, rHs, rLs, tSw; // diode_vf, t_dead, t_hs_ext, r_hs, r_ls, t_sw
     float cIn; // c_in: 2 x 470 uF +20 % and the panel's own; fry's dusk sweeps fit 1.0-1.5 mF output-referred
-    float rectOffsetNs; // live coil.conf rect_offset_ns (firmware side; mppt-sim applies it to the MCPWM preset only)
+    float rectOffsetNs; // coil.conf rect_offset_ns (firmware side; mppt-sim applies it to the MCPWM preset, not in rcal*)
 
     [[nodiscard]] float ringC() const { return ringF > 0 ? 1.f / (39.478418f * ringF * ringF * lPlant) : 0.f; }
 
@@ -32,10 +32,11 @@ struct PlantBoard {
 // fry: 76 uH plant, ring 233 kHz at 75 V (6.1 nF), ~195 kHz at 45 V; flat: 51 uH, 320 kHz at 60 V, ~295 kHz at 45 V.
 // C ~ Vin^-0.6 and the edge C ratio 0.75 from the bench's free ring vs rise transit; Q from the field DCM sweeps;
 // dead time = UCC21330B with RDT 20k; r_* and t_sw fitted to the bench's CCM efficiency.
-// Firmware side as live since 2026-11-15: MCPWM 160 MHz, pwm_freq 39000 (4103 counts), no MCU dead time,
-// boot_refresh_ns default 2000; coil.conf L0 80 / 56 uH, rect_offset_ns -1312 (fry, rect-cal 11-15) / 0 (flat).
+// Firmware side as live: MCPWM 160 MHz, pwm_freq 39000 (4103 counts), no MCU dead time, boot_refresh_ns default 2000,
+// coil.conf L0 80 / 56 uH. rect_offset_ns 0: the plant has no LS turn-off delay, so fry's live -1312 ns (rect-cal
+// 2026-11-15) would turn the LS off ~1.5 us before this plant's zero crossing; opt in with SIM_PLANT=fry:rect_offset_ns=-1312.
 inline PlantBoard kPlantBoards[] = {
-    {"fry", 80e-6f, 76e-6f, 233e3f, 75.f, 0.6f, 25.f, 0.75f, 150.f, 0.7f, 185e-9f, 0.f, 0.008f, 0.014f, 100e-9f, 1.2e-3f, -1312.f},
+    {"fry", 80e-6f, 76e-6f, 233e3f, 75.f, 0.6f, 25.f, 0.75f, 150.f, 0.7f, 185e-9f, 0.f, 0.008f, 0.014f, 100e-9f, 1.2e-3f, 0.f},
     {"flat", 56e-6f, 51e-6f, 320e3f, 60.f, 0.6f, 15.f, 0.75f, 100.f, 0.7f, 185e-9f, 0.f, 0.012f, 0.018f, 100e-9f, 1.2e-3f, 0.f},
 };
 

@@ -86,10 +86,10 @@
 //   SIM_RING=fry|flat|fry-hq|fry-off|flat-damped|... applies a board plant (test/host-stub/plant_boards.h: ring, diode
 //     drop, dead time, conduction and switching loss, fitted to the LTspice bench) to any other scenario; wx-* default
 //     to fry, SIM_RING=ideal = the lossless vconv_mock plant without ring. -hq: Q of the undamped bench (more ripple)
-//     Board presets run the field boards' firmware timing: MCPWM 160 MHz (4103 counts at 39 kHz, minLS 320) and the
-//     board's live rect_offset_ns (not in rcal*, which start uncalibrated). Suffix -ledc (fry-ledc, fry-hq-ledc) or
-//     SIM_DRV=ledc: the LEDC timing (2047 counts, rect_offset 0) of every result before 2026-11-19; SIM_DRV=mcpwm
-//     also on the ideal plant
+//     Board presets run the field boards' firmware timing: MCPWM 160 MHz (4103 counts at 39 kHz, minLS 320),
+//     rect_offset_ns 0 (fry's live -1312: SIM_PLANT=fry:rect_offset_ns=-1312; never in rcal*, which start
+//     uncalibrated). -ledc anywhere in the board tag (fry-ledc, fry-hq-ledc, fry-ledc-off) or SIM_DRV=ledc: the LEDC
+//     timing (2047 counts, rect_offset 0) of every result before 2026-11-19; SIM_DRV=mcpwm also on the ideal plant
 //   SIM_PLANT="fry:ring_q=40,fry:rect_offset_ns=0,..." overrides board fields
 //
 #include <algorithm>
@@ -171,7 +171,7 @@ static const PlantBoard *g_ring = nullptr;
 static bool g_ringOn = false, g_ringDamped = false; // damped: Q 0.5, ring branch without oscillation
 // gate-driver timing of the board presets: MCPWM 160 MHz as live (4103 counts at 39 kHz), -ledc / SIM_DRV=ledc: the
 // LEDC timing of the results before 2026-11-19 (2047 counts, rect_offset 0); SIM_DRV=mcpwm also on the ideal plant
-static bool g_drvMcpwm = false, g_liveOffset = true; // rcal* start uncalibrated (no live rect_offset)
+static bool g_drvMcpwm = false, g_liveOffset = true; // rcal* start uncalibrated (no board rect_offset)
 static void (*g_tickHook)() = nullptr; // called after every RT iteration of run()
 static FILE *g_pDump = nullptr; // SIM_PDUMP=<file>: per tick t, Iout ewm, Vout ewm, HS count (float32)
 
@@ -191,7 +191,9 @@ static std::string ringBoardFrom(std::string sc) {
         if (!env || !strcmp(env, "ideal")) return sc;
         tag = std::string("x-") + env;
     }
-    const bool ledc = cutSuffix(tag, "-ledc");
+    const size_t lp = tag.find("-ledc"); // anywhere in the board tag: fry-ledc, fry-hq-ledc, fry-ledc-off
+    const bool ledc = lp != std::string::npos;
+    if (ledc) tag.erase(lp, 5);
     g_ringOn = !cutSuffix(tag, "-off");
     g_ringDamped = cutSuffix(tag, "-damped");
     const bool hq = cutSuffix(tag, "-hq");
@@ -595,7 +597,10 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
         }
     }
     if (paranoia0) writeConf(confDir, "limits.conf", {{"reverse_current_paranoia", "0"}});
-    if (const char *d = getenv("SIM_DRV")) g_drvMcpwm = !strcmp(d, "mcpwm");
+    if (const char *d = getenv("SIM_DRV")) {
+        if (strcmp(d, "mcpwm") && strcmp(d, "ledc")) { printf("SIM_DRV=%s: want mcpwm or ledc\n", d); exit(1); }
+        g_drvMcpwm = !strcmp(d, "mcpwm");
+    }
     if (g_drvMcpwm) writeConf(confDir, "vconv.conf", {{"pwm_clk", "160000000"}});
     if (g_ring) {
         char l0[24];
