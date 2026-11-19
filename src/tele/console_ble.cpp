@@ -33,7 +33,7 @@
 // the format and the severity both have to survive. Flattening FAIL lines to INFO would mean raising
 // this tag's level silently swallows exactly what the host needs to tell failure from a dead link.
 extern ADC_Sampler adcSampler;
-void stopAndBackoff(uint32_t secondsDelay);
+void stopAndBackoff(uint32_t secondsDelay, const char *who = "stopAndBackoff");
 void systemRestart();
 
 static void otaStatusHook(OtaBleLevel level, const char *line) {

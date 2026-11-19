@@ -700,7 +700,7 @@ static esp_err_t disable_cpu_power_saving(void) {
     return ret;
 }
 
-void stopAndBackoff(uint32_t secondsDelay) {
+void stopAndBackoff(uint32_t secondsDelay, const char *who = "stopAndBackoff") {
     // Two independent gates hold the converter down: delayStartUntil here, and mppt's
     // _backoffUntilUs (via startCondition()). The restart needs BOTH, so the longer one wins and
     // arming shutdownDcdc's 5 s default below would mask the 100 ms fast retry entirely -- which it
@@ -708,10 +708,11 @@ void stopAndBackoff(uint32_t secondsDelay) {
     // exclusion is about not counting maintenance toward the trip/latch counter and is kept; it
     // must not also decide the duration. Pass 0 so the fast path is governed by delayStartUntil
     // alone. 100 ms still rate-limits the retry ~45x below the sample rate, which is what the
-    // default backoff exists to prevent.
+    // default backoff exists to prevent. A sweep's converter is off while it calibrates, and the
+    // sweep would restart it, so a sweep is shut down too.
     const bool psuFast = g_app.psuMode() && secondsDelay <= 5;
-    if (!converter.disabled())
-        mppt.shutdownDcdc("stopAndBackoff", psuFast ? 0 : 5);
+    if (!converter.disabled() || mppt.isSweeping())
+        mppt.shutdownDcdc(who, psuFast ? 0 : std::min<uint32_t>(secondsDelay, 5));
     delayStartUntil = wallClockUs() + (psuFast ? 100000ULL
                                               : static_cast<time_us>(secondsDelay) * 1000000ULL);
 }
@@ -803,11 +804,8 @@ static void loopRT(void *arg) {
         if (wasHalted && timeLastSampler) timeLastSampler = nowUs; // grace for the stall watchdog
         wasHalted = false;
 
-        if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
-            // a sweep's converter is still off here, which stopAndBackoff() skips; the sweep would restart it
-            if (mppt.isSweeping()) mppt.shutdownDcdc("calib-fail", 4);
-            stopAndBackoff(4);
-        }
+        if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure)
+            stopAndBackoff(4, "calib-fail");
 
         // ADC stall watchdog. AdcError = the continuous-ADC isGood() tripped (DMA stalled); a stale
         // timeLastSampler = the sampler is alive but no fresh sample reached the controller. Either way

@@ -104,7 +104,7 @@ extern KeyValueStorage nvs;
 void systemRestart();
 void netGuardPrint();
 
-void stopAndBackoff(uint32_t secondsDelay);
+void stopAndBackoff(uint32_t secondsDelay, const char *who = "stopAndBackoff");
 extern std::atomic<bool> g_wireResetReq;
 
 void loopLF(const time_us &nowUs, bool interim); // both call sites pass interim explicitly

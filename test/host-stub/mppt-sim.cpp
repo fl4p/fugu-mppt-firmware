@@ -295,10 +295,10 @@ void systemRestart() {
     printf("%9.4f !!! systemRestart() requested (not modelled, sim continues)\n", tNow());
 }
 
-void stopAndBackoff(uint32_t secondsDelay) {
+void stopAndBackoff(uint32_t secondsDelay, const char *who = "stopAndBackoff") {
     const bool psuFast = g_app.psuMode() && secondsDelay <= 5;
-    if (!converter.disabled())
-        mppt.shutdownDcdc("stopAndBackoff", psuFast ? 0 : 5);
+    if (!converter.disabled() || mppt.isSweeping())
+        mppt.shutdownDcdc(who, psuFast ? 0 : std::min<uint32_t>(secondsDelay, 5));
     delayStartUntil = wallClockUs() + (psuFast ? 100000ULL : static_cast<time_us>(secondsDelay) * 1000000ULL);
 }
 
@@ -392,11 +392,8 @@ static void loopRTIterBody() {
     converter.applyPendingDeadTimeRt();
     mppt.applyPendingPwmFreqRt();
     if (adcSampler.halted) return;
-    if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
-        // a sweep's converter is still off here, which stopAndBackoff() skips; the sweep would restart it
-        if (mppt.isSweeping()) mppt.shutdownDcdc("calib-fail", 4);
-        stopAndBackoff(4);
-    }
+    if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure)
+        stopAndBackoff(4, "calib-fail");
 
     constexpr time_ms kAdcResetThrottleMs = 300, kAdcSustainedMs = 800, kAdcRestartMs = 60000;
     static time_ms adcStalledSinceMs = 0, lastAdcResetMs = 0;

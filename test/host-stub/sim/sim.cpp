@@ -245,8 +245,8 @@ static void simRestart() {
 }
 
 // ---- main.cpp RT glue (non-PSU, non-manual paths) ----------------------------------------------
-void stopAndBackoff(uint32_t secondsDelay) {
-    if (!converter.disabled()) mppt.shutdownDcdc("stopAndBackoff", 5);
+void stopAndBackoff(uint32_t secondsDelay, const char *who = "stopAndBackoff") {
+    if (!converter.disabled() || mppt.isSweeping()) mppt.shutdownDcdc(who, std::min<uint32_t>(secondsDelay, 5));
     delayStartUntil = wallClockUs() + static_cast<time_us>(secondsDelay) * 1000000ULL;
 }
 
@@ -294,11 +294,8 @@ static void loopRTOnce() {
     auto samplerRet = adcSampler.update();
     converter.applyPendingDeadTimeRt();
     mppt.applyPendingPwmFreqRt();
-    if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure) {
-        // a sweep's converter is still off here, which stopAndBackoff() skips; the sweep would restart it
-        if (mppt.isSweeping()) mppt.shutdownDcdc("calib-fail", 4);
-        stopAndBackoff(4);
-    }
+    if (samplerRet == ADC_Sampler::UpdateRet::CalibFailure)
+        stopAndBackoff(4, "calib-fail");
     if (samplerRet == ADC_Sampler::UpdateRet::NewData) loopRTNewData(nowUs / 1000ULL);
 }
 
