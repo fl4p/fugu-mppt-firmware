@@ -413,7 +413,8 @@ void bleConsoleLoop(time_ms nowMs) {
     // Let a blocking command (e.g. `ota <url>`) push pending output while it runs — otherwise its
     // progress/result sits in txBuf until it returns, and on a successful OTA the reboot eats it.
     consoleFlushHook = []() { bleTxDrain(wallClockMs()); };
-    loopConsole(bleRead, bleWrite, nowMs);
+    static ConsoleLine line{};
+    loopConsole(line, bleRead, bleWrite, nowMs);
     consoleFlushHook = nullptr;
     bleTxDrain(nowMs); // flush queued console/log output, paced by NimBLE buffer availability
     otaBleTick(nowMs); // drain any staged OTA firmware bytes to flash (no-op when not updating)

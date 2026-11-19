@@ -47,14 +47,21 @@ void consoleFlush() { if (consoleFlushHook) consoleFlushHook(); }
 static constexpr auto uartPortNum = UART_NUM_0;
 
 
-void loopConsole(int read(char *buf, size_t len), int write(const char *buf, size_t len), time_ms nowMs) {
-    constexpr uint8_t bufSiz = 128;
-    static char buf[bufSiz];
-    static uint8_t buf_pos = 0;
+static ConsoleLine uartLine{}, usbLine{};
+
+void loopConsole(ConsoleLine &ln, int read(char *buf, size_t len), int write(const char *buf, size_t len),
+                        time_ms nowMs) {
+    constexpr uint8_t bufSiz = ConsoleLine::bufSiz;
+    char *buf = ln.buf;
+    uint8_t &buf_pos = ln.pos;
 
     char chunk[bufSiz];
     int length = read(chunk, sizeof(chunk));
     if (length <= 0) return;
+
+    // a partial line left idle (line noise, an aborted client) must not prefix the next command
+    if (buf_pos && nowMs - ln.lastMs > 30000) buf_pos = 0;
+    ln.lastMs = nowMs;
 
     lastTimeOutUs = wallClockUs(); // stop logging during user input
 
@@ -137,11 +144,11 @@ int console_write_usb(const char *buf, size_t len) {
 void loopUart(time_ms nowMs) {
     // for some reason Serial.available() doesn't work under platformio
     // so access the uart port directly
-    loopConsole(uartRead, uartWrite, nowMs);
+    loopConsole(uartLine, uartRead, uartWrite, nowMs);
 
     if (g_app.usbConnected) {
         //loopConsole(esp_usb_console_read_buf, esp_usb_console_write_buf, nowMs);
-        loopConsole(console_read_usb, console_write_usb, nowMs);
+        loopConsole(usbLine, console_read_usb, console_write_usb, nowMs);
     }
 }
 

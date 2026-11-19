@@ -1018,6 +1018,8 @@ def main():
         transport = make_transport(args)
         # Telnet drops the first byte sent during the post-connect handshake; wait for the banner.
         con = Console(transport, wait_banner=isinstance(transport, SocketTransport))
+        if isinstance(transport, SerialTransport):
+            con.write(con.eol)  # end a partial line the device may still hold, else it prefixes our first command
     except Exception as e:
         print(e)
         return 1

@@ -14,7 +14,16 @@ int console_write_usb(const char *buf, unsigned int len);
 
 void loopUart(time_ms nowMs);
 
-void loopConsole(int read(char *buf, size_t len), int write(const char *buf, size_t len), time_ms nowMs);
+// One line buffer per input stream, so bytes from one console never land in another's command.
+struct ConsoleLine {
+    static constexpr uint8_t bufSiz = 128;
+    char buf[bufSiz];
+    uint8_t pos;
+    time_ms lastMs;
+};
+
+void loopConsole(ConsoleLine &ln, int read(char *buf, size_t len), int write(const char *buf, size_t len),
+                 time_ms nowMs);
 
 // Installed by a transport whose output is buffered and drained asynchronously from its own loop
 // (BLE), so a long-running blocking command (e.g. an OTA download) can push pending output mid-run
