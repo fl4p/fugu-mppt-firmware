@@ -165,6 +165,13 @@ test('the status line updates the live values and the age without telemetry; nan
   Dash.flush();
   assert.equal(dev.tele.state, 5);
   assert.match(text(window, 'flat', '.chartbar .caption'), /sweep in progress/);
+  // mode 0 shows the status line's word (START/UV/MANU/PSU/PVS) instead of N/A; telemetry resets it
+  log(client, 'flat', ['V=14.6/26.63 I=-0.02/-0.01A  -0.3W 22℃27℃ 1477sps  0㎅/s DCM(H|L|Lm)=   0|   0| 320 st=START,0 lag=826㎲ N=1651665 rssi=-43']);
+  Dash.flush();
+  assert.equal(dev.tele.state, 0);
+  assert.equal(text(window, 'flat', '.mode'), 'start');
+  Dash.ingest(dev, { fields: { P: 0, mppt_state: 0 }, ts: 0 }, 'test'); Dash.flush();
+  assert.equal(text(window, 'flat', '.mode'), 'N/A');
 });
 
 test('alerts become badges: retained ones create no card and no log line, live ones are logged too', async () => {

@@ -38,7 +38,8 @@ Each converter gets a card, keyed by its hostname:
   and **sc: lines** checkboxes are ticked.
 - **Live values from the status line**: the periodic `V=…` status line in the device log also updates power,
   voltages, current and mode, so a card stays current between telemetry points, for example while a device in
-  its idle profile sends telemetry only every `tele.conf idle_interval_ms`.
+  its idle profile sends telemetry only every `tele.conf idle_interval_ms`. While no control mode is active, the
+  header shows the status line's word for it (`start`, `uv`, `manu`, `psu`, `pvs`) instead of "N/A".
 - **Charger state**: from the `status` reply. The state (terminated, charging, partial hold or blocked, with its
   reason) stands in the card header next to the mode, green when terminated, yellow in partial hold and orange when
   blocked. The firmware reports "charging" whenever the charger is not terminated; while the converter delivers less

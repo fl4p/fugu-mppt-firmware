@@ -413,6 +413,7 @@ function ingest(dev, p, src){
                          ["ntc_temp","ntcT"],["lag","lag"],["heap","heap"],["heap_min","heapMin"],
                          ["Ro","Ro"],["Rc","Rc"],["Rb","Rb"]])
     if (k in f) t[n] = f[k];
+  if ("mppt_state" in f) t.stName = f.st_name;   // status-line word for mode 0 (START, UV, MANU, PSU, PVS)
   const at = now();
   if (p.ts && dev.lastTs && p.ts > dev.lastTs) dev.intervals.push(p.ts - dev.lastTs);
   if (p.ts > dev.lastTs) dev.lastTs = p.ts;
@@ -736,8 +737,9 @@ function ingestStatus(dev, m){
   const [Ui, Uo, , I, P] = m.slice(1, 6).map(Number);
   if (![Ui, Uo, I, P].every(Number.isFinite)) return;
   const f = { Ui, Uo, I, P };
-  const st = STATUS_STATES[m[6].replace(/[^A-Z/]/g, "")];
+  const name = m[6].replace(/[^A-Z/]/g, ""), st = STATUS_STATES[name];
   if (st !== undefined) f.mppt_state = st;
+  else if (/^(START|UV|MANU|PSU|PVS)$/.test(name)){ f.mppt_state = 0; f.st_name = name.toLowerCase(); }
   ingest(dev, { fields:f, ts:0 }, "status");
   scheduleRender(dev);
 }
@@ -1266,7 +1268,7 @@ function renderCard(dev){
     if (!e){ e = el("span", "badge alert", src); e.dataset.src = src; ab.append(e); }
     badge(e, a.lvl, a.lvl + (a.msg ? ": " + a.msg : "") + (a.t ? " (" + new Date(a.t * 1000).toLocaleString() + ")" : ""));
   }
-  q(dev, ".mode").textContent = t.state !== undefined ? (MODES[t.state] || ("state " + t.state)) : "";
+  q(dev, ".mode").textContent = t.state === 0 && t.stName ? t.stName : t.state !== undefined ? (MODES[t.state] || ("state " + t.state)) : "";
   // KPIs
   q(dev, ".pv").textContent = fmt(t.P, 1);
   q(dev, ".peak").textContent = "peak today " + fmt(t.Pmax, 1) + " W · " + fmtEnergy(t.Etoday);
