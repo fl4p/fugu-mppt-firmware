@@ -32,9 +32,13 @@ struct PeakScan {
     uint8_t k = 0, nc = 0;
     bool settled = false;
     uint8_t ended = 0; // back at the start point: 1, 3 light changed; 2 moved to another peak; 4 timed out (return to d0);
-                       // 5 forced scan without candidates
+                       // 6 return pass done
     uint16_t d0 = 0;
     float vc[6]{}, pc[6]{};
+    // return pass: probe Vin and the down-pass power there (ascending), probe index of the best, largest probe/down - 1
+    bool ret = false;
+    uint8_t nr = 0, rb = 0;
+    float rv[7]{}, rp[7]{}, rDev = 0, rBest = 0, rLand = 0;
     float voc = NAN, iEnv = 0, kVmp = 0.82f; // Voc at the sweep start, max PV-side current [W/V], Vmpp / Voc
     float v0 = 0, p0 = 0, pRef = 0, vRef = 0, pS = 0;
     float pk = 0, vPk = 0, pLo = 0; // sweep: running maximum (after the sweep: the MPP), its Vin, minimum after it
@@ -56,7 +60,7 @@ struct PeakScan {
     // first sweep tick (converter still off, Vin ~ Voc)
     void onSweep(float vin, uint32_t now) {
         claim();
-        voc = vin, iEnv = 0, pRef = -1, phase = Idle, tLast = tOff = now, nc = 0, pLo = 0, fall = true, force = false;
+        voc = vin, iEnv = 0, pRef = -1, phase = Idle, tLast = tOff = now, nc = 0, pLo = 0, fall = true, ret = force = false;
     }
 
     // sweep tick, Vin falling: local power maxima below 0.93 Voc with an 8 % dip on both sides go to vc/pc (idle
@@ -137,10 +141,30 @@ struct PeakScan {
         return true;
     }
 
-    void abort() { phase = Idle; }
+    void abort() { phase = Idle, ret = false; }
 
     // mode change: drop a running scan and the reference, re-reference 5 s into tracking, next scan after the period
-    void reset(uint32_t now) { phase = Idle, ended = 0, pRef = -1, tLast = tOff = now; }
+    void reset(uint32_t now) { phase = Idle, ended = 0, pRef = -1, tLast = tOff = now, ret = false; }
+
+    // RT, at the bottom of a sweep: the way back up probes the recorded maxima and the MPP (vm, pm), lowest Vin first,
+    // each against its down-pass power, then goes to the best. vc/pc stay for learn(). False: fewer than 2 above vMin,
+    // or a noisy sweep. d: fallback duty on a timeout.
+    bool startReturn(float vm, float pm, float vMin, uint16_t d, uint32_t now) {
+        if (nc > 6) return false;
+        nr = 0;
+        bool mpp = false;
+        const auto add = [&](float v, float p) { if (v >= vMin) rv[nr] = v, rp[nr] = p, ++nr; };
+        for (int i = nc - 1; i >= 0; --i) {
+            if (!mpp && vm < vc[i] * 0.98f) add(vm, pm), mpp = true;
+            if (std::fabs(vc[i] - vm) <= 0.02f * vm) mpp = true;
+            add(vc[i], pc[i]);
+        }
+        if (!mpp) add(vm, pm);
+        if (nr < 2) return false;
+        phase = Probe, ret = true, k = rb = 0, d0 = d, t0 = tPhase = now, settled = false, rDev = rBest = 0;
+        acc.clear();
+        return true;
+    }
 
     // NAN while idle; else the duty count to steer to. vinFast: med3, vin/pw: the tracker's (ewm) signals,
     // settleMs(): power filter settling time [ms]
@@ -162,9 +186,7 @@ struct PeakScan {
             const bool due = force || (interval && now - tLast > interval * 1000u) ||
                              (now - tOff > 15000 && now - tS > kSteadyMs && now - tLast > 60000);
             if (!due || pw < pMin) return NAN;
-            tLast = now;
-            const bool forced = force;
-            force = false;
+            tLast = now, force = false;
             // m0 of n substrings conduct at our peak. With weaker substrings conducting a peak sits above m unshaded
             // shares, so Vin / m0 can be high; the share from Voc misses heating and the Vmpp/Voc spread: take the mean
             const int m0 = std::clamp((int) std::lround(vin / vs0), 1, (int) n);
@@ -180,20 +202,19 @@ struct PeakScan {
             }
             if (!nc) {
                 pRef = pw, vRef = vin;
-                if (forced) ended = 5;
                 return NAN;
             }
             phase = Ref, v0 = vin, d0 = d, t0 = tPhase = now, settled = false, k = 0;
             acc.clear();
         }
-        const float vt = phase == Probe || phase == Go ? vc[k] : v0;
+        const float vt = phase == Probe || phase == Go ? (ret ? rv[k] : vc[k]) : v0;
         if (!settled && (std::fabs(vinFast - vt) < 0.01f * vt || now - tPhase > kTravelMs)) settled = true, tPhase = now;
         if (settled) {
             const float ts = std::fmin(settleMs(), 1000.f), dt = (float) (now - tPhase); // fmin: NAN -> 1 s
             if (dt > ts) acc.add(pw);
             if (dt > ts + kMeasMs) step(now, vin);
         }
-        if (phase != Idle && now - t0 > 30000) phase = Idle, pRef = -1, ended = 4;
+        if (phase != Idle && now - t0 > 30000) phase = Idle, pRef = -1, ended = 4, ret = false;
         return phase == Idle ? NAN : (float) d * std::sqrt(vinFast / vt);
     }
 
@@ -202,6 +223,12 @@ struct PeakScan {
         settled = false, tPhase = now;
         if (phase == Ref) {
             p0 = p, phase = Probe;
+        } else if (phase == Probe && ret) {
+            const float r = p / rp[k] - 1;
+            ESP_LOGI("mppt", "sweep return: %.1f V %.1f W, down %.1f W (%+.0f %%)", rv[k], p, rp[k], 100 * r);
+            if (std::fabs(r) > std::fabs(rDev)) rDev = r;
+            if (p > rBest) rBest = p, rb = k;
+            if (++k == nr) k = rb, phase = Go;
         } else if (phase == Probe) {
             pc[k] = p;
             if (++k == nc) phase = Back;
@@ -224,7 +251,7 @@ struct PeakScan {
                 if (g > 1 - 2 * margin && interval > 60) tLast = now - (interval - 60) * 1000u;
             }
         } else {
-            phase = Idle, vRef = vin, ended = 2;
+            phase = Idle, vRef = vin, ended = ret ? 6 : 2, rLand = p, ret = false;
         }
     }
 };

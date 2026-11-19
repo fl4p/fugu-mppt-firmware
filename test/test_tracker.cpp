@@ -538,7 +538,7 @@ void test_scan_skips_clear_sky() {
     TEST_ASSERT_TRUE(r->s.pRef > 0);
 }
 
-// A flagged sweep forces a scan once the reference is taken, without period or trigger; clear sky: no candidate, ended 5
+// A flagged sweep forces a scan once the reference is taken, without period or trigger
 void test_scan_forced() {
     auto idle = std::make_unique<ScanRig>(68.8f);
     idle->s.interval = 0, idle->s.trigger = false;
@@ -554,13 +554,33 @@ void test_scan_forced() {
     TEST_ASSERT_TRUE(r->active > 0);
     TEST_ASSERT_FALSE(r->s.force);
     TEST_ASSERT_FLOAT_WITHIN(3.f, 55.5f, r->vin());
+}
 
-    auto c = std::make_unique<ScanRig>(68.8f);
-    c->sweep();
-    c->s.force = true;
-    c->run(10'000);
-    TEST_ASSERT_EQUAL_INT(0, c->active);
-    TEST_ASSERT_EQUAL_INT(5, c->ended);
+// Return pass from the sweep's bottom (exact series string): maxima at 73.5 and 57 V, the latter 6 % better; probing
+// both on the way up finds it and goes there. The recorded maxima stay for learn(). A light drop after the sweep
+// shows in every probe against its down-pass value.
+void test_scan_return_pass() {
+    for (const float light: {1.f, 0.7f}) {
+        auto r = std::make_unique<ScanRig>(30.f, 0);
+        r->pv.setPvExact(true);
+        r->g[5] = 0.7f, r->shade(), r->sweep();
+        const uint8_t nc = r->s.nc;
+        const float vc0 = r->s.vc[0];
+        TEST_ASSERT_TRUE(nc >= 2);
+        r->light = light, r->shade();
+        TEST_ASSERT_TRUE(r->s.startReturn(r->s.vc[0], r->s.pc[0], 29.f, (uint16_t) r->d, r->now));
+        r->run(20'000);
+        TEST_ASSERT_EQUAL_INT(6, r->ended);
+        TEST_ASSERT_FLOAT_WITHIN(1.5f, 56.9f, r->vin());
+        TEST_ASSERT_FLOAT_WITHIN(0.05f, light - 1, r->s.rDev);
+        TEST_ASSERT_FLOAT_WITHIN(0.03f * r->s.rBest, r->s.rBest, r->s.rLand);
+        TEST_ASSERT_EQUAL_INT(nc, r->s.nc);
+        TEST_ASSERT_EQUAL_FLOAT(vc0, r->s.vc[0]);
+    }
+    // one maximum: no return pass
+    auto c = std::make_unique<ScanRig>(30.f, 0);
+    c->pv.setPvExact(true), c->shade(), c->sweep();
+    TEST_ASSERT_FALSE(c->s.startReturn(68.8f, 300, 29.f, (uint16_t) c->d, c->now));
 }
 
 // Trigger only (no period): a flickering cloud keeps the power off the reference but never steady, so no scan;

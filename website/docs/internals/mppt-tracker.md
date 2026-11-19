@@ -75,7 +75,34 @@ A sweep (`startSweep()` in `src/mppt.h`) runs these steps:
 
 The sweep stops as soon as any limiter produces a control mode (CV, CC, or CP), including the bounce at the maximum
 duty. The captured MPP duty becomes the target, and the loop fades to it with a bounded step before handing over to
-P&O.
+P&O. A sweep that recorded two or more local maxima takes the [return pass](#return-pass) instead of the fade.
+
+### Return pass
+
+The sweep records the local maxima of the power that have a dip of 8 % on both sides (see
+[Substring count](#substring-count)). When a bright sweep (MPP at least 5 % of `limits.conf::p_max`) on a buck has
+recorded two or more of them, the captured MPP counted as one, the way back up from the bottom of the sweep measures
+them again, lowest Vin first:
+
+1. The loop steers Vin to the recorded Vin of the maximum, as the [partial peak scan](#partial-peak-scan) steers to
+   a probe. Maxima below 1.05 times the input voltage floor are skipped.
+2. Once Vin is within 1 % of it (or after 1.5 s), it waits for the power filter to settle (`powerSettleMs()`, at most
+   1 s) and averages the power for 100 ms. Vin is at rest then, so the input caps neither discharge nor charge, and the
+   probe compares directly with the down-pass value, from which the discharge term was removed.
+3. After the last probe it steers to the best one and measures there again (the landing).
+
+The pass never goes above the highest recorded maximum, so it does not return towards $V_{oc}$. A limiter that acts
+during the pass ends it without a verdict, as it stops a fade; at the bottom of the sweep the loop may still lower the
+duty while the limiter reports CV. A pass not done after 30 s ends with a fade to the captured duty. P&O then starts
+afresh at the landing point. The probes rank the maxima under the light of the moment, a few seconds after the sweep,
+so a cloud edge during the sweep no longer decides which maximum the converter settles on. The log shows each probe
+and the landing:
+
+```
+sweep return: 56.6 V 327.4 W, down 327.3 W (+0 %)
+sweep return: 74.7 V 302.5 W, down 440.5 W (-31 %)
+sweep return: landed 56.6 V 327.8 W, best probe 327.4 W
+```
 
 ### Landing trim
 
@@ -115,31 +142,37 @@ maximum can be a cusp where the light changed, far above or below the real curve
 local maxima a distorted curve can rank the wrong one highest. P&O cannot cross the power valley to a higher
 maximum.
 
-After the fade reaches the captured MPP duty (and the [landing trim](#landing-trim)), the loop waits for the power
-filter to settle (`powerSettleMs()`, 1.5 to 3 s) and compares the smoothed power with the captured MPP power. If the two differ by more than
-`tracker.conf::sweep_verify` (default 0.10, 0 = off), the sweep is flagged. The converter stays at the landing
-point and P&O carries on from there. A flagged sweep then:
+The verdict compares what the sweep recorded with what the converter measures afterwards:
+
+* After a [return pass](#return-pass): each probe with the down-pass power at that maximum, and the landing with the
+  best probe.
+* After a fade: once the fade reaches the captured MPP duty (and the [landing trim](#landing-trim)), the loop waits
+  for the power filter to settle (`powerSettleMs()`, 1.5 to 3 s) and compares the smoothed power with the captured MPP
+  power.
+
+If any of these differs by more than `tracker.conf::sweep_verify` (default 0.10, 0 = off), the sweep is flagged. Both
+passes and the landing agreeing make a clean sweep. The converter stays at the landing point and P&O carries on from
+there. A flagged sweep:
 
 * does not teach the [substring count](#substring-count);
 * starts a [partial peak scan](#partial-peak-scan) as soon as the scan has its reference, if a substring count is
-  known;
-* otherwise, or when that scan finds no candidate, schedules one re-sweep 60 s later. If the landing was brighter
-  than the MPP (the light rose during the sweep, which then peaks late, at a low Vin), the re-sweep follows as soon as
-  the light holds: the input current (power over Vin) rose less than 3 % in 5 s, 60 s at the latest. At most one such
-  re-sweep is scheduled per 10 min, so a gusty sky cannot turn into a sweep loop. The re-sweep waits for the same conditions as
-  the periodic one ([below](#when-the-tracker-does-not-sweep)), and any sweep that starts meanwhile replaces it.
+  known and the light may have hidden a maximum: after a fade (a changing sky can flatten the dip between two maxima,
+  so the sweep records only one), or when the landing after a return pass misses its own probe (the light changed
+  during the pass too). After a return pass whose landing agrees, the probes have already ranked the maxima afresh.
 
-A sweep whose fade a limiter stops, or that lands in a limit, gets no verdict and counts as clean. A sweep whose MPP is below 5 % of `limits.conf::p_max`: in low light the captured MPP is the
-largest of noisy samples, biased high by tens of percent, gets no verdict either; it teaches nothing anyway. The log shows one
+A flagged sweep is not repeated. On a string with one maximum P&O finds the MPP from the landing point by itself; on a
+string with several, a maximum that the sweep did not record is found by the periodic scan once the substring count is
+known, or by the next periodic sweep.
+
+A sweep whose fade or return pass a limiter stops, or that lands in a limit, gets no verdict and counts as clean. A
+sweep whose MPP is below 5 % of `limits.conf::p_max` gets no verdict either: in low light the captured MPP is the
+largest of noisy samples, biased high by tens of percent, and such a sweep teaches nothing anyway. The log shows one
 line per decision:
 
 ```
-sweep verified: landed 468 W vs MPP 470 W (-0 %)
-sweep flagged: landed 452 W vs MPP 780 W (-42 %), scan now
-sweep flagged: landed 208 W vs MPP 496 W (-58 %)
-re-sweep in 60 s
-re-sweep in 5 s
-re-sweep capped (one per 10 min)
+sweep verified: landed 468 W, off by -0 %
+sweep flagged: landed 328 W, off by -31 %
+sweep flagged: landed 302 W, off by -36 %, scan now
 sweep not verified (limiter)
 ```
 
@@ -537,7 +570,7 @@ last scan, or the power is below 70 % or above 140 % of the power then. The powe
 than that every few seconds, so most cloud edges do not trigger a scan; a shadow that moves across the string
 over minutes does.
 
-A flagged sweep starts a scan as soon as the reference is taken, without a trigger (see
+A flagged sweep can start a scan as soon as the reference is taken, without a trigger (see
 [Sweep verdict](#sweep-verdict)).
 
 A limiter that becomes active during a scan ends it, and the duty fades back to the start point. A change of

@@ -217,13 +217,13 @@ private:
     } maxPowerPoint; // MPP during sweep
 
     // sweep verdict, RT: landed power vs the sweep MPP once settled
-    uint8_t _svPhase = 0; // 1 landing, 2 settling
+    uint8_t _svPhase = 0; // 1 landing, 2 settling, 3 return pass
     uint8_t _svLandTrim = 0; // 1: landing trim pending, 2: verdict
     uint8_t _svFlag = 0;  // 0 none, 1 clean, 2 light changed
-    float _svLand = 0, _svI = 0; // landed power, input current then
-    uint32_t _svT = 0, _resweepAt = 0, _retryAt = 0; // [ms] settle start, scheduled re-sweep, last one scheduled
-    void sweepVerdict(uint32_t nowMs, float p, bool ok);
-    void scheduleResweep(uint32_t nowMs, uint32_t inMs = 60000);
+    float _svLand = 0; // landed power
+    uint32_t _svT = 0; // [ms] settle start
+    void sweepVerdict(float p, bool ok);
+    void sweepJudge(float p, float d, bool rescan);
 
     // A sweep only commits its captured MPP as the operating target above this power. In marginal
     // light (e.g. a dawn cold-start sweep) the "peak" is just noise at near-max duty; committing it
@@ -1002,7 +1002,7 @@ public:
      */
     void startSweep() {
         _sweeping = true;
-        _svPhase = _svFlag = 0, _resweepAt = 0;
+        _svPhase = _svFlag = 0;
 
         converter.disable();
         ctrlState._limiting = false;
@@ -1509,6 +1509,11 @@ public:
         const bool verify = sweepVerify > 0 && maxPowerPoint.power >= 25 * sweepMinPower();
         _svPhase = 1, _svLandTrim = 1 | verify << 1;
         scan.onSweepMpp(maxPowerPoint.voltage, maxPowerPoint.power, 25 * sweepMinPower(), verify);
+        // two or more maxima: the way back probes them (a bright buck sweep only)
+        if (!converter.boost() && maxPowerPoint.power >= 25 * sweepMinPower() &&
+            scan.startReturn(maxPowerPoint.voltage, maxPowerPoint.power, 1.05f * vinFloor(true), maxPowerPoint.dutyCycle,
+                             (uint32_t) wallClockMs()))
+            targetDutyCycle = 0, _svPhase = 3;
 
         auto z = outZ.finish((uint32_t) (wallClockUs() / 1000000));
         if (z.n)

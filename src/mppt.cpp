@@ -99,15 +99,9 @@ void MpptController::update() {
     const uint32_t nowMs = (uint32_t) (nowUs / 1000);
     const bool grew = maxPowerPoint.power >= sweepMinPower() && maxPowerPoint.power < 25 * sweepMinPower() &&
                       power_smooth > 2 * maxPowerPoint.power && sinceSweepUs > 120 * 1000000;
-    bool retry = _resweepAt && (int32_t) (nowMs - _resweepAt) >= 0;
-    // landed brighter than the MPP: re-sweep once the light holds (input current up < 3 % in 5 s), 60 s at the latest
-    if (retry && _svFlag == 2 && _svLand > maxPowerPoint.power && nowMs - _retryAt < 55000) {
-        const float i = power_smooth / sensors.Vin->ewm.avg.get();
-        if (i > 1.03f * _svI) _svI = i, _resweepAt = (nowMs + 5000) | 1, retry = false;
-    }
     if (!g_app.psuMode() && !_sweeping && !batteryFull && !inBackoff() && !flashOpActive() &&
-        (grew || retry || sinceSweepUs > 30 * 60000000)) {
-        ESP_LOGI("mppt", "%s sweep & sensor calibration", grew ? "power-doubled" : retry ? "retry" : "periodic");
+        (grew || sinceSweepUs > 30 * 60000000)) {
+        ESP_LOGI("mppt", "%s sweep & sensor calibration", grew ? "power-doubled" : "periodic");
         g_app.maxLoopLag = 0; // restart the lag window so telemetry tracks per-sweep peak, not all-time
         startSweep();
         rtcount("mppt.update.startSweep");
@@ -293,6 +287,34 @@ void MpptController::update() {
                 return;
             }
         }
+    } else if (_svPhase == 3) {
+        // return pass: steered like a scan; a limiter ends it unevaluated, as it stops a fade (CV only while it
+        // lowers the duty: the sweep ends at a limit)
+        const uint16_t d = converter.getCtrlOnPwmCnt();
+        float t = NAN;
+        if (controlMode == MpptControlMode::None || controlMode == MpptControlMode::MPPT || controlMode == CV)
+            t = scan.update(nowMs, sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get(), power, d, 0, 0,
+                            [this] { return powerSettleMs(); });
+        if (controlMode != MpptControlMode::None && controlMode != MpptControlMode::MPPT && !(t < (float) d))
+            t = NAN, scan.abort(), scan.ended = 0;
+        if (!std::isnan(t)) {
+            controlMode = MpptControlMode::Sweep;
+            controlValue = constrain(t - (float) d, -(float) (converter.pwmCounts() / 64) - 1,
+                                     (float) (converter.pwmCounts() / 128) + 1);
+        } else if (scan.ended == 6) {
+            scan.ended = 0, _svPhase = 0;
+            tracker.resetDirection(false, sensors.Vin->ewm.avg.get()), tracker.resume(scan.rLand);
+            const float dl = scan.rLand / scan.rBest - 1;
+            ESP_LOGI("mppt", "sweep return: landed %.1f V %.1f W, best probe %.1f W", sensors.Vin->ewm.avg.get(),
+                     scan.rLand, scan.rBest);
+            // the probes ranked the maxima afresh; a scan only if the light changed during the return pass too
+            if (_svLandTrim & 2)
+                sweepJudge(scan.rLand, std::fabs(dl) > std::fabs(scan.rDev) ? dl : scan.rDev, std::fabs(dl) > sweepVerify);
+        } else {
+            if (scan.ended == 4) targetDutyCycle = scan.d0;
+            scan.ended = 0;
+            sweepVerdict(0, false);
+        }
     } else if (targetDutyCycle) {
         if (controlMode == MpptControlMode::None or controlMode == MpptControlMode::MPPT or
             (controlMode == MpptControlMode::CV && converter.getCtrlOnPwmCnt() > targetDutyCycle)) {
@@ -309,13 +331,13 @@ void MpptController::update() {
             ESP_LOGI("mppt", "PWM fade to %i stopped at controlMode %s", (int) targetDutyCycle,
                      MpptState2String[(int) controlMode]);
             targetDutyCycle = 0;
-            if (_svPhase == 1) sweepVerdict(nowMs, 0, false);
+            if (_svPhase == 1) sweepVerdict(0, false);
         }
     }
     // landing assessment holds the duty; a limiter taking over ends it unevaluated
-    if (_svPhase == 2 && ctrlState._limiting) sweepVerdict(nowMs, 0, false);
+    if (_svPhase == 2 && ctrlState._limiting) sweepVerdict(0, false);
     if (_svPhase == 2 && nowMs - _svT > std::clamp(powerSettleMs(), 1500.f, 3000.f))
-        sweepVerdict(nowMs, power_smooth, !batteryFull && !ctrlState._limiting && !converter.disabled() && !g_app.psuMode());
+        sweepVerdict(power_smooth, !batteryFull && !ctrlState._limiting && !converter.disabled() && !g_app.psuMode());
 
 
     float currentThreshold = limits.reverse_current_paranoia
@@ -336,16 +358,13 @@ void MpptController::update() {
             controlMode = MpptControlMode::Sweep, keepTracker = true;
             controlValue = constrain(t - (float) d, -(float) (converter.pwmCounts() / 64) - 1,
                                      (float) (converter.pwmCounts() / 128) + 1);
-        } else if (scan.ended == 5) {
-            scheduleResweep(nowMs);
-            scan.ended = 0;
         } else if (scan.ended) {
             if (scan.ended == 1 || scan.ended == 3) tracker.resume(scan.pRef);
             else tracker.resetDirection(false, sensors.Vin->ewm.avg.get()), tracker.maxPowerPoint.power = 0; // probed below the peak
             if (scan.ended == 4) targetDutyCycle = scan.d0;
             scan.ended = 0;
         }
-    } else if (scan.active() && !_sweeping) {
+    } else if (scan.active() && !_sweeping && _svPhase != 3) {
         scan.abort();
         if (!targetDutyCycle && !g_app.psuMode()) targetDutyCycle = scan.d0;
     }
@@ -738,11 +757,11 @@ bool rectCalPersist(int counts, uint8_t cal) {
     return ok;
 }
 
-// RT: a sweep whose landing power misses its MPP saw the light change; it does not learn, the scan or one re-sweep per
-// 10 min checks the other peaks. !ok: not evaluable (limiter, fade stopped), no verdict
+// RT: a sweep whose landing power misses its MPP saw the light change; it does not learn. !ok: not evaluable (limiter,
+// fade stopped), no verdict
 // First the landing trim: Vin lags the ramp (C_in V^2 / 2P, ~0.3 s in dim light), so the captured duty
 // lies past the MPP, the captured Vin (filtered like the power) does not. Half a step on the sweep's Vin slope onto it.
-__attribute__((cold, noinline)) void MpptController::sweepVerdict(uint32_t nowMs, float p, bool ok) {
+__attribute__((cold, noinline)) void MpptController::sweepVerdict(float p, bool ok) {
     _svPhase = 0;
     const float v = sensors.Vin->ewm.avg.get(), dv = v - maxPowerPoint.voltage;
     const float mpp = maxPowerPoint.power, d = mpp > 0 ? p / mpp - 1 : 0;
@@ -765,26 +784,17 @@ __attribute__((cold, noinline)) void MpptController::sweepVerdict(uint32_t nowMs
         ESP_LOGI("mppt", "sweep not verified (limiter)");
         return;
     }
-    _svLand = p, _svFlag = std::fabs(d) > sweepVerify ? 2 : 1;
-    if (_svFlag == 1) {
-        scan.release();
-        ESP_LOGI("mppt", "sweep verified: landed %.0f W vs MPP %.0f W (%+.0f %%)", p, mpp, 100 * d);
-        return;
-    }
-    scan.held = false;
-    const bool sc = scan.n && scan.voc > 0;
-    ESP_LOGI("mppt", "sweep flagged: landed %.0f W vs MPP %.0f W (%+.0f %%)%s", p, mpp, 100 * d, sc ? ", scan now" : "");
-    if (sc) scan.force = true;
-    else _svI = p / v, scheduleResweep(nowMs, d > 0 ? 5000 : 60000);
+    sweepJudge(p, d, true);
 }
 
-__attribute__((cold, noinline)) void MpptController::scheduleResweep(uint32_t nowMs, uint32_t inMs) {
-    if (_retryAt && nowMs - _retryAt < 600000) {
-        ESP_LOGI("mppt", "re-sweep capped (one per 10 min)");
-        return;
-    }
-    _retryAt = nowMs | 1, _resweepAt = (nowMs + inMs) | 1;
-    ESP_LOGI("mppt", "re-sweep in %u s", (unsigned) (inMs / 1000));
+// RT: d, the landing or the worst return-pass probe against the down-pass, beyond sweep_verify flags the sweep. A sky
+// change can hide the dips between maxima from the sweep: with a known substring count a scan probes them (rescan).
+__attribute__((cold, noinline)) void MpptController::sweepJudge(float p, float d, bool rescan) {
+    _svLand = p, _svFlag = std::fabs(d) > sweepVerify ? 2 : 1;
+    if (_svFlag == 1) scan.release();
+    else scan.held = false, scan.force = rescan && scan.n && scan.voc > 0;
+    ESP_LOGI("mppt", "sweep %s: landed %.0f W, off by %+.0f %%%s", _svFlag == 1 ? "verified" : "flagged", p, 100 * d,
+             scan.force ? ", scan now" : "");
 }
 
 // core 0: learn from the last sweep; save a grown count once a flash write is safe
