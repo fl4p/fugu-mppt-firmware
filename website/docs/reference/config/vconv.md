@@ -41,7 +41,7 @@ The file accepts the following keys.
 | `noise_iout`    | A    | float | 0       | Gaussian ADC noise σ on Iout                                                |
 | `noise_iin`     | A    | float | 0       | Gaussian ADC noise σ on Iin (channel 3)                                     |
 | `noise_ntc`     |      | float | 0       | Gaussian ADC noise σ on the NTC channel                                     |
-| `ntc_v`         |      | float | 0.9     | Constant NTC channel value (25 °C equivalent)                               |
+| `ntc_v`         | V    | float | 0.9     | Constant NTC channel voltage; 0.9 V reads about 1 °C, 1.65 V is 25 °C; `vconv set ntc_v` changes it at runtime |
 | `sun_day_s`     | s    | float | 0       | Length of the simulated day; 0 = off (static PV), minimum 1. See [Sun and clouds](#sun-and-clouds) |
 | `sun_night_s`   | s    | float | day/4   | Length of the night after each day                                          |
 | `sun_peak`      |      | float | 1.0     | Clear-sky irradiance at noon, fraction of the `isc`/`voc` conditions (0..1)  |

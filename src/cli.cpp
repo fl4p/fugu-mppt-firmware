@@ -2128,6 +2128,7 @@ static void cmdVconv(cmd *c) {
         else if (key == "vbat_ac_freq") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), v, g_vconv.getVbatAcShape());
         else if (key == "vbat_ac_shape") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), g_vconv.getVbatAcFreq(), (int) v);
         else if (key == "diode_vf") g_vconv.setDiodeVf(v);
+        else if (key == "ntc_v")    g_vconv.ntcV = v;
         else if (key == "ring_c")   g_vconv.setRing(v, g_vconv.getRingQ());
         else if (key == "ring_q")   g_vconv.setRing(g_vconv.getRingC(), v);
         else if (key == "sun_day_s")    sun.setDay(v);

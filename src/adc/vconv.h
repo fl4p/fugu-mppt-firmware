@@ -40,7 +40,7 @@ public:
         noiseIout_ = vconvConf.f("noise_iout", 0.0f);
         noiseIin_  = vconvConf.f("noise_iin",  0.0f);
         noiseNtc_  = vconvConf.f("noise_ntc",  0.0f);
-        ntcConst_  = vconvConf.f("ntc_v",      0.9f); // ~1.3 °C (25 °C is 1.65 V)
+        g_vconv.ntcV = vconvConf.f("ntc_v", g_vconv.ntcV);
 
         rngState_ = 0x9E3779B9u; // deterministic seed -> tests stay reproducible
 #ifdef FUGU_HOST_SIM
@@ -88,7 +88,7 @@ public:
             case 1: x = g_vconv.getVout();    sigma = noiseVout_; break;
             case 2: x = g_vconv.getIoutAvg(); sigma = noiseIout_; break;
             case 3: x = g_vconv.getIinAvg();  sigma = noiseIin_;  break;
-            case 4: x = ntcConst_;            sigma = noiseNtc_;  break;
+            case 4: x = g_vconv.ntcV;         sigma = noiseNtc_;  break;
             default: x = 0.0f; break;
         }
         if (sigma > 0.0f) x += sigma * gaussian01();
@@ -112,7 +112,6 @@ private:
     uint8_t readingChannel_ = 0;
     uint32_t adcFreq_ = 3000;
     float noiseVin_ = 0.0f, noiseVout_ = 0.0f, noiseIout_ = 0.0f, noiseIin_ = 0.0f, noiseNtc_ = 0.0f;
-    float ntcConst_ = 0.9f;
     TaskNotification taskNotification_{};
     PeriodicTimer periodicTimer_{};
 
