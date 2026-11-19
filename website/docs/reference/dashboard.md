@@ -117,6 +117,13 @@ names clients use, give the broker the certificate and key (Mosquitto: `certfile
 listener), and install the CA certificate once on each phone or computer that should open the page. A certificate the
 browser does not trust fails silently in the probe and shows as a connection error on Connect.
 
+Without installing the CA, Chromium browsers can be told to accept the broker's certificate once: open the
+listener's address as a page, `https://<broker>:<wss port>/`, and choose "Advanced" and "Proceed". The page itself
+stays empty, because the listener only speaks WebSocket, but the browser remembers the choice for that address and
+the dashboard's `wss://` connection then succeeds. Chrome also asks once whether the page may reach devices on the
+local network; the broker is one of them, so allow it. Firefox has no such prompt, and its `about:config` setting
+`network.websocket.allowInsecureFromHTTPS` lets the `https` page use a plain `ws://` listener instead.
+
 The fields can also be prefilled from the page URL: `dashboard.html?mqtt=ws://<host>:<port>&user=<name>`. The page
 does not connect on its own then, and never reads a password from the URL.
 
