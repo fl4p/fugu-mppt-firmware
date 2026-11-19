@@ -155,6 +155,13 @@ test('BLE enable sequence asks for status; charging colour class; more info carr
   Dash.devices.get('fbuck').chg = Dash.parseChargerStatus(CHARGING);
   Dash.flush(); Dash.ingest(Dash.devices.get('fbuck'), { fields: { P: 1 }, ts: 0 }, 'test'); Dash.flush();
   assert.equal(card(window, 'fbuck').querySelector('.cstate').className, 'cstate s-charging');
+  // "charging" without input power reads idle
+  Dash.ingest(Dash.devices.get('fbuck'), { fields: { P: 0.2 }, ts: 0 }, 'test'); Dash.flush();
+  assert.equal(card(window, 'fbuck').querySelector('.cstate').textContent, 'idle');
+  assert.equal(card(window, 'fbuck').querySelector('.cstate').className, 'cstate s-idle');
+  assert.match(card(window, 'fbuck').querySelector('.cstate').title, /no input power/);
+  Dash.ingest(Dash.devices.get('fbuck'), { fields: { P: 3 }, ts: 0 }, 'test'); Dash.flush();
+  assert.equal(card(window, 'fbuck').querySelector('.cstate').textContent, 'charging');
   Dash.devices.get('fbuck').chg = Dash.parseChargerStatus(['Charger: BLOCKED (pack cold)']);
   Dash.ingest(Dash.devices.get('fbuck'), { fields: { P: 2 }, ts: 0 }, 'test'); Dash.flush();
   assert.equal(card(window, 'fbuck').querySelector('.chg').hidden, true, 'no extra fields: line hidden');

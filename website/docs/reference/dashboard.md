@@ -41,7 +41,8 @@ Each converter gets a card, keyed by its hostname:
   its idle profile sends telemetry only every `tele.conf idle_interval_ms`.
 - **Charger state**: from the `status` reply. The state (terminated, charging, partial hold or blocked, with its
   reason) stands in the card header next to the mode, green when terminated, yellow in partial hold and orange when
-  blocked. A line under the live values adds the effective output cap `Vout_max`, the highest BMS cell voltage and,
+  blocked. The firmware reports "charging" whenever the charger is not terminated; while the converter delivers less
+  than 1 W, for example at night, the card shows "idle" instead. A line under the live values adds the effective output cap `Vout_max`, the highest BMS cell voltage and,
   once terminated, the depth of discharge since full against the recharge threshold; "holiday" is appended while the
   holiday ceiling is active. A BMS value the device reports as stale is dimmed and marked "stale". Both appear after
   the first reply and are dimmed when the reply is older than 10 minutes or restored from the snapshot. The more info

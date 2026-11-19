@@ -74,6 +74,7 @@
   .card .s-charging { color:var(--fg); }
   .card .s-hold { color:var(--unit); }
   .card .s-blocked { color:var(--warn); }
+  .card .s-idle { color:var(--muted); }
   .kpis .chg { flex-basis:100%; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .kpis .chg .dim, .card:not(.stale) .kpis .chg.stale, .card .cstate.stale { opacity:.5; }
   .card .rate { font-size:11px; color:var(--muted); }
@@ -209,7 +210,7 @@ const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
 const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, SILENT_MS = 15000, PROBE_MS = 60000, CURVE_RETRIES = 2;
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000], bleRetryMs:500,
               hostnameMs:8000, snapMs:10000, snapMax:16, wsProbeMs:3000, confMs:6000,
-              chargerMs:300000, chargerTimeoutMs:6000 };
+              chargerMs:300000, chargerTimeoutMs:6000, chargingMinW:1 };
 const SNAP_T = ["P","Ui","Uo","I","duty","state","Pmax","Etoday","ntcT","mcuT","Ro","Rc","Rb"];
 const LOG_KEEP = 200, LOG_SHOW = 100;
 // live P-V reconstruction: bin width V, faded after ms, bin cap, overwrite radius bins, path break V
@@ -1207,9 +1208,11 @@ function renderChg(dev){
   const c = dev.chg, e = q(dev, ".chg"), h = q(dev, ".cstate");
   if (!c){ e.hidden = true; h.textContent = ""; h.className = "cstate"; return; }
   const age = now() - (+c.at || 0), stale = !!dev.chgRestored || age > 2 * CFG.chargerMs;
-  const title = "charger status " + fmtAge(age) + (dev.chgRestored ? " (saved)" : "");
-  h.textContent = c.state + (c.detail ? " (" + c.detail + ")" : "");
-  h.className = "cstate s-" + c.state + (stale ? " stale" : "");
+  let title = "charger status " + fmtAge(age) + (dev.chgRestored ? " (saved)" : ""), word = c.state;
+  // the firmware says "charging" for "not terminated"; without input power that is idle
+  if (word === "charging" && Number.isFinite(dev.tele.P) && dev.tele.P < CFG.chargingMinW){ word = "idle"; title += " · not terminated, no input power"; }
+  h.textContent = word + (c.detail ? " (" + c.detail + ")" : "");
+  h.className = "cstate s-" + word + (stale ? " stale" : "");
   h.title = e.title = title;
   e.classList.toggle("stale", stale);
   const out = [];
