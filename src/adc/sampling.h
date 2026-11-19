@@ -254,6 +254,7 @@ private:
     uint8_t calibrating_ = 0; // remaining sensors; RT task only
     bool zeroLoaded_ = false; // current flowed at the stop (sticky while active and kZeroWaitUs after it)
     bool calibFailed_ = false; // the last calibration failed; cleared by the next start or takeCalibFailure()
+    std::atomic<bool> forceCalibFail_{false}; // test: fail the next calibration once
     time_us timeLastCalibration = 0, calibStartUs_ = 0, zeroLoadUs_ = 0;
 
     __attribute__((always_inline)) void applyCalibrationCommandRt() {
@@ -609,6 +610,12 @@ public:
             {
                 auto std = sensor.ewm.std.get();
 
+                if (!keep && forceCalibFail_.exchange(false, std::memory_order_relaxed)) {
+                    ESP_LOGE("sampler", "Calibration failed, %s forced (test)", sensor.params.teleName.c_str());
+                    failCalibrationRt();
+                    return UpdateRet::CalibFailure;
+                }
+
                 if (!keep && !ignoreCalibrationConstraints && (!std::isfinite(avg) or std::fabs(avg) > constrains.maxAbsValue)) {
                     ESP_LOGE("sampler", "Calibration failed, %s abs value %.6f > %.6f (last=%.6f, stdn=%.6f)",
                              sensor.params.teleName.c_str(), std::fabs(avg), constrains.maxAbsValue, sensor.last, std);
@@ -829,6 +836,8 @@ public:
         calibFailed_ = false;
         return f;
     }
+    // Any core
+    void forceCalibFailure() { forceCalibFail_.store(true, std::memory_order_relaxed); }
 
 
     // Any core. restart additionally clears the sensor filters (not the calibration).

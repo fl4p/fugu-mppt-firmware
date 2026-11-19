@@ -487,7 +487,13 @@ static void cmdMcpwmTest(cmd *c) {
     UART_LOG("mcpwmtest: 1kHz 50%% on GPIO %d (group 0)", pin);
 }
 
-static void cmdSweep(cmd *) {
+static void cmdSweep(cmd *c) {
+    Command cc(c);
+    if (cc.countArgs()) {
+        if (cc.getArg(0).getValue() != "calfail") CMD_FAIL_RETURN("usage: sweep [calfail]");
+        adcSampler.forceCalibFailure();
+        UART_LOG("sweep: next calibration forced to fail");
+    }
     const auto ticket = mppt.requestPsuSweep();
     if (!waitPsuCommand(ticket))
         CMD_FAIL_RETURN("sweep: RT transition timed out");
@@ -2321,7 +2327,7 @@ void setupCli() {
     cli.addCommand("restart,reset,reboot", cmdRestart);
     cli.addCommand("mppt", cmdMppt);
     cli.addCommand("short-ls", cmdShortLs);
-    cli.addCommand("sweep", cmdSweep);
+    cli.addBoundlessCmd("sweep", cmdSweep); // sweep [calfail]
     cli.addCommand("sweep-curve", cmdSweepCurve);
     cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [force|status|abort]
     cli.addCommand("intr", cmdIntr);
