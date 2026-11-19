@@ -94,8 +94,17 @@ connects over BLE:
    does not connect by itself. The password stays in memory unless **remember** is ticked.
 
 Without a listener on any of these ports, a banner says the broker has no WebSocket listener on the usual ports. An
-`https` page cannot open `ws://` connections, so it skips the probe and only names the broker host, as a hint to use a
-`wss://` URL.
+`https` page cannot open `ws://` connections, so it probes `wss://<host>:8884`, `:8084` and `:443` instead and, when
+none opens, says so.
+
+### TLS
+
+The hosted `https` copy of the page can only talk to a broker over `wss://`, and the browser must trust the broker's
+certificate. A broker on a private network usually has no publicly issued certificate; a small private certificate
+authority works: issue the broker a server certificate whose subject alternative names list the IP addresses and host
+names clients use, give the broker the certificate and key (Mosquitto: `certfile`, `keyfile` on a `websockets`
+listener), and install the CA certificate once on each phone or computer that should open the page. A certificate the
+browser does not trust fails silently in the probe and shows as a connection error on Connect.
 
 The fields can also be prefilled from the page URL: `dashboard.html?mqtt=ws://<host>:<port>&user=<name>`. The page
 does not connect on its own then, and never reads a password from the URL.

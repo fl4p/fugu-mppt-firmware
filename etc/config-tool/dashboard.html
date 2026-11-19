@@ -1487,6 +1487,7 @@ function onVisible(){
 --------------------------------------------------------------------------------------------- */
 const CONF_LINE = /Conf '\/littlefs\/conf\/([^:']+):([^']+)' = '(.*)'\s*$/;
 const WS_PORTS = [1885, 9001, 8083, 8080];
+const WSS_PORTS = [8884, 8084, 443]; // an https page can only open wss://
 let found = null, discovering = false;
 const probed = new Set();
 const brokerUnset = () => !client && !lsGet(LS.url) && !$("mqtt-url").value.trim();
@@ -1501,6 +1502,7 @@ function parseBroker(uri){
 }
 
 function wsCandidates({ host, port }){
+  if (location.protocol === "https:") return WSS_PORTS.map(p => "wss://" + host + ":" + p);
   const ports = WS_PORTS.includes(port) ? WS_PORTS : [...WS_PORTS, port];
   return ports.map(p => "ws://" + host + ":" + p);
 }
@@ -1536,10 +1538,9 @@ async function discoverBroker(dev){
     const b = parseBroker(kv.broker_uri);
     if (!b || probed.has(b.host)) return;
     probed.add(b.host);
-    if (location.protocol === "https:"){ found = { kind:"https", host:b.host }; banners(); return; }
     const url = await probeWs(wsCandidates(b));
     if (!brokerUnset()) return;
-    if (!url){ found = { kind:"none", host:b.host }; banners(); return; }
+    if (!url){ found = { kind:location.protocol === "https:" ? "https" : "none", host:b.host }; banners(); return; }
     $("mqtt-url").value = url;
     // only credentials from the same mqtt.conf: a remembered password must not ride along to a device-chosen host
     $("mqtt-user").value = kv.username || "";
@@ -1551,7 +1552,7 @@ async function discoverBroker(dev){
 
 function foundBanner(){
   if (!found) return null;
-  if (found.kind === "https") return el("div", "banner", "broker at " + found.host + ", use wss://");
+  if (found.kind === "https") return el("div", "banner", "broker at " + found.host + ": no wss:// listener on the usual ports, or its certificate is not trusted by this browser");
   if (found.kind === "none") return el("div", "banner", "broker " + found.host + " has no WebSocket listener on the usual ports");
   const d = el("div", "banner found", "MQTT broker found at " + found.url + " (from " + found.from + ") — Connect? ");
   const b = el("button", "primary", "Connect");

@@ -81,14 +81,20 @@ test('discovery: skipped with a stored mqtt-url or a connected client', async ()
   assert.doesNotMatch(banner(env.window), /broker/);
 });
 
-test('discovery: an https page reads mqtt.conf but skips the probe and hints wss://', async () => {
-  const { window, dev, ws } = await enable({ url: 'https://localhost/', outcome: () => 'open' });
-  await until(() => /use wss/.test(banner(window)), 3000, 'https hint');
-  assert.ok(dev.writes.includes('get-config mqtt.conf'));
-  assert.equal(ws.tried.length, 0);
-  assert.match(banner(window), /broker at 192\.168\.1\.200, use wss:\/\//);
-  assert.equal(val(window, 'mqtt-url'), '');
-  assert.equal(val(window, 'mqtt-pass'), '');
+test('discovery: an https page probes wss:// ports; without one it hints at TLS', async () => {
+  let env = await enable({ url: 'https://localhost/', outcome: (u) => u.endsWith(':8884') ? 'open' : 'error' });
+  await until(() => /broker found/.test(banner(env.window)), 3000, 'found banner');
+  assert.ok(env.dev.writes.includes('get-config mqtt.conf'));
+  assert.deepEqual(plain(env.ws.tried.map(t => t[0])), [`wss://${HOST}:8884`]);
+  assert.equal(val(env.window, 'mqtt-url'), `wss://${HOST}:8884`);
+  assert.equal(val(env.window, 'mqtt-user'), 'pv');
+
+  env = await enable({ url: 'https://localhost/', outcome: () => 'error' });
+  await until(() => /wss/.test(banner(env.window)), 3000, 'https hint');
+  assert.deepEqual(plain(env.ws.tried.map(t => t[0])), [8884, 8084, 443].map(p => `wss://${HOST}:${p}`));
+  assert.match(banner(env.window), /broker at 192\.168\.1\.200: no wss:\/\/ listener on the usual ports, or its certificate is not trusted/);
+  assert.equal(val(env.window, 'mqtt-url'), '');
+  assert.equal(val(env.window, 'mqtt-pass'), '');
 });
 
 test('probeWs/wsCandidates/parseBroker', async () => {
