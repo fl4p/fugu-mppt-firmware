@@ -14,10 +14,10 @@ const text = (window, host, sel) => card(window, host).querySelector(sel).textCo
 // page-realm arrays/objects fail deepStrictEqual on prototype; copy into this realm
 const plain = (x) => JSON.parse(JSON.stringify(x));
 const pubs = (client, topic) => [...client._publishes.filter(p => !topic || p.topic === topic).map(p => p.msg)];
-// without the sweep-curve fetch issued 5 s after discovery
-const lpubs = (client, topic) => pubs(client, topic).filter(m => m !== 'sweep-curve');
-// BLE writes without the broker discovery read issued after the enable sequence
-const ew = (writes) => plain(writes.filter(w => w !== 'get-config mqtt.conf'));
+// without the sweep-curve and charger status fetches issued 5 s after discovery
+const lpubs = (client, topic) => pubs(client, topic).filter(m => m !== 'sweep-curve' && m !== 'status');
+// BLE writes without the charger status and broker discovery reads issued after the enable sequence
+const ew = (writes) => plain(writes.filter(w => w !== 'get-config mqtt.conf' && w !== 'status'));
 
 async function withBroker(extra = {}) {
   const env = await loadDash({ storage: { 'mqtt-url': URL, ...extra } });

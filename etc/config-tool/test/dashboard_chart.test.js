@@ -22,9 +22,9 @@ test('relay-fed card fetches the sweep curve and leases once 5 s after discovery
   window.Date.now = () => t;
   client.emit('message', 'pv/tele/fry', mqttMsg([{ fields: { P: 1 }, ts: t }]));
   t += 5000; Dash.tick();
-  assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['tele-mqtt 120', 'sweep-curve']);
+  assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['tele-mqtt 120', 'sweep-curve', 'status']);
   t += 5000; Dash.tick();
-  assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['tele-mqtt 120', 'sweep-curve']);
+  assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['tele-mqtt 120', 'sweep-curve', 'status']);
 });
 
 test('chart: empty state, curve path, MPP ring, live dot, caption, refresh', async () => {

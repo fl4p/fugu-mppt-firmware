@@ -27,7 +27,7 @@ async function enable({ outcome, storage, url, before } = {}) {
 test('discovery: get-config mqtt.conf after the enable sequence, probe in order, stop at the first open', async () => {
   const { window, Dash, dev, ws } = await enable({ storage: { 'dash-mqtt-remember': '0' }, outcome: (u) => u.endsWith(':8083') ? 'open' : 'error' });
   await until(() => /broker found/.test(banner(window)), 3000, 'found banner');
-  assert.deepEqual(plain(dev.writes), ['hostname', 'tele-ble 1', 'sweep-curve', 'get-config mqtt.conf']);
+  assert.deepEqual(plain(dev.writes), ['hostname', 'tele-ble 1', 'sweep-curve', 'status', 'get-config mqtt.conf']);
   assert.deepEqual(plain(ws.tried), [`ws://${HOST}:1885`, `ws://${HOST}:9001`, `ws://${HOST}:8083`].map(u => [u, 'mqtt']));
   assert.deepEqual(plain(ws.closed), [`ws://${HOST}:8083`]);
   assert.equal(val(window, 'mqtt-url'), `ws://${HOST}:8083`);

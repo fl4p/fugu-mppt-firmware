@@ -69,6 +69,12 @@
   .kpis .small { flex-basis:100%; font-size:12px; color:var(--muted); display:flex; gap:12px; flex-wrap:wrap;
                  font-variant-numeric:tabular-nums; }
   .kpis .small b { color:var(--fg); font-weight:500; }
+  .kpis .chg { flex-basis:100%; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .kpis .chg .s-terminated { color:var(--accent2); }
+  .kpis .chg .s-charging { color:var(--fg); }
+  .kpis .chg .s-hold { color:var(--unit); }
+  .kpis .chg .s-blocked { color:var(--warn); }
+  .kpis .chg .dim, .card:not(.stale) .kpis .chg.stale { opacity:.5; }
   .card .rate { font-size:11px; color:var(--muted); }
   .card details.more { font-size:11px; color:var(--muted); }
   .card details.more summary { cursor:pointer; }
@@ -201,7 +207,8 @@ const LS = { url:"mqtt-url", user:"mqtt-user", pass:"dash-mqtt-pass", remember:"
 const MODES = ["N/A", "CV", "CC", "CP", "MPPT", "Sweep"];
 const LEASE_S = 120, RENEW_MS = 60000, LEASE_WAIT_MS = 5000, SILENT_MS = 15000, PROBE_MS = 60000, CURVE_RETRIES = 2;
 const CFG = { curveTimeoutMs:4000, curveDebounceMs:1500, bleBackoffMs:[1000, 3000, 9000], bleRetryMs:500,
-              hostnameMs:8000, snapMs:10000, snapMax:16, wsProbeMs:3000, confMs:6000 };
+              hostnameMs:8000, snapMs:10000, snapMax:16, wsProbeMs:3000, confMs:6000,
+              chargerMs:300000, chargerTimeoutMs:6000 };
 const SNAP_T = ["P","Ui","Uo","I","duty","state","Pmax","Etoday","ntcT","mcuT","Ro","Rc","Rb"];
 const LOG_KEEP = 200, LOG_SHOW = 100;
 // live P-V reconstruction: bin width V, faded after ms, bin cap, overwrite radius bins, path break V
@@ -298,6 +305,7 @@ class Device {
     this.recon = new Map(); this.reconVer = 0;
     this.keep = false; this.restored = false; this.seenAt = 0; this.via = { ble:false, mqtt:false };
     this.snapAt = 0; this.snapTimer = null; this.bleId = ""; this.bleName = "";
+    this.chg = null; this.chgReq = false; this.chgReqAt = 0; this.chgRestored = false;
   }
 }
 
@@ -331,7 +339,7 @@ function snapOf(dev, old){
   return { host:dev.host, seen:Math.max(dev.seenAt, dev.lastAt, (old && old.seen) || 0),
            via:{ ble:dev.via.ble || !!dev.ble, mqtt:dev.via.mqtt || !!dev.mqtt.firstAt },
            tele:t, lastAt:dev.lastAt, curve:dev.curve, pTop:dev.pTop,
-           bleId:(b && b.id) || dev.bleId, bleName:(b && b.name) || dev.bleName };
+           bleId:(b && b.id) || dev.bleId, bleName:(b && b.name) || dev.bleName, chg:dev.chg };
 }
 
 // Writes the given devices into the stored set (other hosts kept), newest CFG.snapMax by `seen`.
@@ -367,6 +375,7 @@ function restoreSnaps(){
     if (Number.isFinite(s.pTop)) dev.pTop = s.pTop;
     dev.via = { ble:!!(s.via && s.via.ble), mqtt:!!(s.via && s.via.mqtt) };
     dev.bleId = s.bleId || ""; dev.bleName = s.bleName || "";
+    if (s.chg && typeof s.chg === "object" && CHG_STATES.includes(s.chg.state)){ dev.chg = s.chg; dev.chgRestored = true; }
     dev.keep = dev.restored = true; dev.snapAt = now();
     devices.set(s.host, dev);
     renderCard(dev);
@@ -572,6 +581,58 @@ function finishCurveReq(dev){
   clearTimeout(dev.curveTimer); dev.curveTimer = null; dev.curveReq = null;
 }
 
+// `status` reply (src/cli.cpp cmdStatus) -> charger snapshot; unmatched fields stay undefined.
+const CHG_STATES = ["terminated", "charging", "blocked", "hold"];
+const CHG_RE = {
+  state:   /Charger: (TERMINATED|charging|BLOCKED|PARTIAL HOLD)\b(?: \(([^)]*)\))?/,
+  limits:  /Vbat_max=(\S+?)V Vout_max=(\S+?)V\s+Ibat_lim=(\S+?)A Iout_max=(\S+?)A/,
+  bms:     /BMS vcell_high=(\S+?)V \(([^,]+), (\d+)s ago\)\s+ibat=(\S+?)A \(([^,]+), (\d+)s ago\)/,
+  dod:     /DoD since full: (\S+?)% \/ (\S+?)% to recharge/,
+  ceiling: /ceiling=(\S+?)%\s+last full (?:(\S+?)h ago \(full charge every (\S+?) d\)|unknown)/,
+  holiday: /(?:^|\s)holiday (ON|off) \((auto|on|off)\)\s+quiet days (\d+)\/(\d+)/,
+  temp:    /pack temp (-?[\d.]+?)\.\.(-?[\d.]+?)°C/,
+};
+function parseChargerStatus(lines){
+  const c = {}, num = (x) => { const v = Number(x); return x !== undefined && Number.isFinite(v) ? v : undefined; };
+  const find = (re) => { for (const l of lines){ const m = re.exec(TD.stripAnsi(String(l))); if (m) return m; } return null; };
+  let m;
+  if ((m = find(CHG_RE.state))){
+    c.state = { TERMINATED:"terminated", charging:"charging", BLOCKED:"blocked", "PARTIAL HOLD":"hold" }[m[1]];
+    if (m[2]) c.detail = m[2];
+  }
+  if ((m = find(CHG_RE.limits))){ c.vbatMax = num(m[1]); c.voutMax = num(m[2]); c.ibatLim = num(m[3]); c.ioutMax = num(m[4]); }
+  if ((m = find(CHG_RE.bms))){
+    c.vcell = num(m[1]); c.vcellOk = m[2] === "ok"; c.vcellAgeS = num(m[3]);
+    c.ibat = num(m[4]); c.ibatOk = m[5] === "ok"; c.ibatAgeS = num(m[6]);
+  }
+  if ((m = find(CHG_RE.dod))){ c.dod = num(m[1]); c.dodRecharge = num(m[2]); }
+  if ((m = find(CHG_RE.ceiling))){ c.ceiling = num(m[1]); c.lastFullH = num(m[2]); c.fullEveryD = num(m[3]); }
+  if ((m = find(CHG_RE.holiday))){ c.holiday = m[1]; c.holidayMode = m[2]; c.quietDays = num(m[3]); c.quietNeed = num(m[4]); }
+  if ((m = find(CHG_RE.temp))){ c.packTempMin = num(m[1]); c.packTempMax = num(m[2]); }
+  c.at = now();
+  return c;
+}
+
+// Single in-flight `status`, CFG.chargerTimeoutMs, one retry on a timeout.
+async function requestChargerStatus(dev){
+  if (dev.chgReq || !canSend(dev)) return false;
+  dev.chgReq = true; dev.chgReqAt = now();
+  try {
+    for (let i = 0; i < 2; i++){
+      let r;
+      try { r = await sendCommand(dev, "status", { timeoutMs:CFG.chargerTimeoutMs }); }
+      catch(e){ if (e.message === "timeout" && i === 0 && canSend(dev)) continue; return false; }
+      const c = parseChargerStatus(r.lines);
+      if (!c.state) return false;
+      dev.chg = c; dev.chgRestored = false;
+      touch(dev, true);
+      scheduleRender(dev);
+      return true;
+    }
+    return false;
+  } finally { dev.chgReq = false; }
+}
+
 /* ---------------------------------------------------------------------------------------------
    MQTT: discovery, telemetry, lease
 --------------------------------------------------------------------------------------------- */
@@ -621,7 +682,7 @@ function mqttConnect(url, user, pass){
     for (const dev of devices.values()){
       const L = dev.mqtt.lease;
       if (L.state !== "off" && L.state !== "relay") lease(dev);
-      if (dev.mqtt.firstAt) requestCurve(dev); // a sweep may have ended while the broker was away
+      if (dev.mqtt.firstAt){ requestCurve(dev); requestChargerStatus(dev); } // a sweep may have ended while the broker was away
     }
     renderAllSoon();
   });
@@ -860,6 +921,7 @@ class BleLink {
     this.lastProbe = now();
     scheduleRender(dev);
     requestCurve(dev);
+    requestChargerStatus(dev);
     discoverBroker(dev);
   }
 
@@ -1037,7 +1099,8 @@ function createCard(dev){
   for (const [cls, lab] of [["vin","Vin"],["vout","Vout"],["iout","I"],["duty","duty"],["ntc","T"]]){
     const s = el("span", null, lab + " "); s.append(el("b", cls, "–")); small.append(s);
   }
-  k.append(p, el("div", "peak"), small);
+  const chg = el("div", "chg"); chg.hidden = true;
+  k.append(p, el("div", "peak"), small, chg);
   const more = el("details", "more");
   more.append(el("summary", null, "more info"), el("div", "rate"), el("div", "info"));
   more.ontoggle = () => scheduleRender(dev);
@@ -1134,8 +1197,39 @@ function renderMore(dev, L){
   const b = dev.ble;
   if (b && b.stream){ const s = b.stream.stats; f.push("BLE decode errors " + s.errors + " · resyncs " + s.resyncs); }
   if (dev.mqtt.teleSeen) f.push("MQTT decode errors " + dev.mqtt.errors);
+  f.push(...chgMore(dev.chg));
   const info = q(dev, "details.more .info");
   info.replaceChildren(...f.map(x => el("span", null, x)));
+}
+
+function renderChg(dev){
+  const c = dev.chg, e = q(dev, ".chg");
+  e.hidden = !c;
+  if (!c) return;
+  const age = now() - (+c.at || 0);
+  e.classList.toggle("stale", !!dev.chgRestored || age > 2 * CFG.chargerMs);
+  e.title = "status " + fmtAge(age) + (dev.chgRestored ? " (saved)" : "");
+  const out = [document.createTextNode("charger "),
+               el("span", "s-" + c.state, c.state + (c.detail ? " (" + c.detail + ")" : ""))];
+  const add = (text, dim) => { out.push(document.createTextNode(" · ")); out.push(dim ? el("span", "dim", text) : document.createTextNode(text)); };
+  if (Number.isFinite(c.voutMax)) add("cap " + fmt(c.voutMax, 2) + " V");
+  if (Number.isFinite(c.vcell)) add("cell " + fmt(c.vcell, 3) + " V" + (c.vcellOk ? "" : " stale"), !c.vcellOk);
+  if (Number.isFinite(c.dod)) add("DoD " + fmt(c.dod, 0) + " % / " + fmt(c.dodRecharge, 0) + " %");
+  if (c.holiday === "ON") add("holiday");
+  e.replaceChildren(...out);
+}
+
+function chgMore(c){
+  const f = [];
+  if (!c) return f;
+  if (Number.isFinite(c.vbatMax)) f.push("Vbat_max " + fmt(c.vbatMax, 2) + " V · Ibat_lim " + fmt(c.ibatLim, 1) + " A");
+  if (Number.isFinite(c.ibat)) f.push("ibat " + fmt(c.ibat, 2) + " A" + (c.ibatOk ? "" : " stale"));
+  if (Number.isFinite(c.ceiling)) f.push("ceiling " + fmt(c.ceiling, 0) + " %" + (Number.isFinite(c.lastFullH)
+    ? " · last full " + fmt(c.lastFullH + (now() - (+c.at || 0)) / 3600000, 1) + " h ago" : ""));
+  if (c.holiday) f.push("holiday " + c.holiday + " (" + c.holidayMode + ")"
+    + (Number.isFinite(c.quietDays) ? " · quiet days " + c.quietDays + "/" + c.quietNeed : ""));
+  if (Number.isFinite(c.packTempMin)) f.push("pack " + fmt(c.packTempMin, 1) + ".." + fmt(c.packTempMax, 1) + " °C");
+  return f;
 }
 
 function renderCard(dev){
@@ -1175,6 +1269,7 @@ function renderCard(dev){
   q(dev, ".iout").textContent = fmt(t.I, 2) + " A";
   q(dev, ".duty").textContent = Number.isFinite(t.duty) ? String(t.duty) : "–";
   q(dev, ".ntc").textContent = Number.isFinite(t.ntcT) ? fmt(t.ntcT, 1) + " °C" : "–";
+  renderChg(dev);
   // rate line
   const parts = [];
   if (b && b.state === "on" && b.tele === "on"){
@@ -1478,6 +1573,7 @@ function tick(){
       if (L.state === "off" && dev.mqtt.firstAt && t - dev.mqtt.firstAt >= LEASE_WAIT_MS){
         lease(dev);
         if ((!dev.curve || dev.curveRestored) && !dev.curveNone) requestCurve(dev);
+        requestChargerStatus(dev);
       } else if (leaseRetries(L) && dev.mqtt.teleSeen && t - dev.mqtt.teleAt >= SILENT_MS && t - L.silentAt >= SILENT_MS){
         L.silentAt = t;
         lease(dev);
@@ -1486,6 +1582,8 @@ function tick(){
       }
     }
     if (dev.ble) dev.ble.probe();
+    if (dev.chgReqAt && t - dev.chgReqAt >= CFG.chargerMs && document.visibilityState === "visible"
+        && (dev.mqtt.firstAt || (dev.ble && dev.ble.state === "on"))) requestChargerStatus(dev);
     if (dev.lastAt && t - dev.lastAt < 15000) scheduleRender(dev);
   }
 }
@@ -1643,7 +1741,8 @@ function init(){
 
 window.Dash = {
   devices, Device, BleLink, REPLY, CFG, NUS:{ SVC:NUS_SVC, RX:NUS_RX, TX:NUS_TX, TELE:NUS_TELE },
-  getDevice, ingest, ingestTele, onLine, onMqttMessage, send, sendCommand, requestCurve, lease, tick, niceTicks,
+  getDevice, ingest, ingestTele, onLine, onMqttMessage, send, sendCommand, requestCurve, requestChargerStatus,
+  parseChargerStatus, lease, tick, niceTicks,
   attachBle, LIM, saveSnaps, forget, probeWs, wsCandidates, parseBroker, discoverBroker, connectClicked,
   flush, mqttConnect, mqttDisconnect, addBle, linkBle, restoreBle, consoleSend, staleAfter,
   get client(){ return client; },

@@ -88,3 +88,30 @@ test('ingestTele renders a card with KPIs, the live dot and a sweep curve', asyn
   if (process.env.DASH_SCREENSHOT) await card.screenshot({ path: process.env.DASH_SCREENSHOT });
   expect(errs).toEqual([]);
 });
+
+test('charger line renders under the KPIs with the state colour', async ({ page }) => {
+  const errs = await gotoDash(page);
+  await page.evaluate((b) => {
+    window.Dash.ingestTele('demo', new Uint8Array(b));
+    const dev = window.Dash.getDevice('demo');
+    dev.chg = window.Dash.parseChargerStatus(['Charger: TERMINATED (float)',
+      '  Vbat_max=29.00V Vout_max=26.80V  Ibat_lim=39.0A Iout_max=39.0A',
+      '  BMS vcell_high=3.341V (stale/na, 400s ago)  ibat=1.48A (ok, 0s ago)  ahSinceFull=0.49Ah (bms)  vout_avg=26.78V',
+      '  DoD since full: 0% / 15% to recharge']);
+    window.Dash.ingest(dev, { fields: { P: 1 }, ts: 0 }, 'test');
+    window.Dash.flush();
+  }, [...mqttMsg([{ fields: { P: 10, Ui: 30 }, ts: Date.now() }])]);
+  const chg = page.locator('.card[data-host="demo"] .kpis .chg');
+  await expect(chg).toHaveText('charger terminated (float) · cap 26.80 V · cell 3.341 V stale · DoD 0 % / 15 %');
+  const st = await chg.evaluate((e) => ({
+    color: getComputedStyle(e.querySelector('.s-terminated')).color,
+    accent2: getComputedStyle(document.documentElement).getPropertyValue('--accent2').trim(),
+    dim: getComputedStyle(e.querySelector('.dim')).opacity,
+    below: e.getBoundingClientRect().top >= e.parentElement.querySelector('.small').getBoundingClientRect().bottom - 1,
+  }));
+  expect(st.color).toBe('rgb(46, 160, 67)');
+  expect(st.accent2).toBe('#2ea043');
+  expect(st.dim).toBe('0.5');
+  expect(st.below).toBe(true);
+  expect(errs).toEqual([]);
+});

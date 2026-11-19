@@ -39,6 +39,14 @@ Each converter gets a card, keyed by its hostname:
 - **Live values from the status line**: the periodic `V=…` status line in the device log also updates power,
   voltages, current and mode, so a card stays current between telemetry points, for example while a device in
   its idle profile sends telemetry only every `tele.conf idle_interval_ms`.
+- **Charger state**: a line under the live values from the `status` reply: the charger state (terminated,
+  charging, partial hold or blocked, with its reason), the effective output cap `Vout_max`, the highest BMS cell
+  voltage and, once terminated, the depth of discharge since full against the recharge threshold. The state word is
+  green when terminated, yellow in partial hold and orange when blocked; "holiday" is appended while the holiday
+  ceiling is active. A BMS value the device reports as stale is dimmed and marked "stale". The line appears after
+  the first reply and is dimmed when the reply is older than 10 minutes or restored from the snapshot. The more info
+  box adds `Vbat_max`, `Ibat_lim`, the battery current, the charge ceiling and last full charge, the holiday state and
+  the pack temperature range when the device reports them.
 - **Link badges**: one for BLE (only on cards with a BLE link) and one for MQTT. Alerts the device publishes
   under `pv/alert/<hostname>/<source>` appear as one badge per source, coloured by level, with the message
   and time as tooltip; an alert that arrives while the page is open is also written to the log.
@@ -68,7 +76,7 @@ allowed earlier reappear after a reload. The page tries one connection to each `
 that fails, or the browser requires a click, the card shows a **Reconnect** button instead.
 
 The page also keeps a snapshot of up to 16 converters (the 16 seen most recently) in the browser's `localStorage`:
-hostname, links seen, the last telemetry values, the last sweep curve and the BLE device name. After a reload these
+hostname, links seen, the last telemetry values, the last sweep curve, the last charger state and the BLE device name. After a reload these
 cards appear at once, greyed, with the age of the values, until live data arrives; on connect the page asks each saved
 host on the broker for its `hostname`. The **×** on a card removes the card and its snapshot. Log lines, live curve
 bins and credentials are not part of the snapshot.
@@ -122,6 +130,7 @@ does not connect on its own then, and never reads a password from the URL.
 | `get-config mqtt.conf` | After the BLE enable sequence, while no broker URL is stored and no MQTT client is connected, to find the broker (see [Finding the broker](#finding-the-broker)). |
 | `tele-mqtt 120` | Over MQTT, about 5 s after a device first appears, also when its telemetry already arrives (another client's lease can expire at any time). The page renews the lease every 60 s while the tab is open, on a broker reconnect, and once more when the tab becomes visible again. When telemetry had been arriving and stops for 15 s, the page requests the lease again, at most once per 15 s, while the lease is running, unanswered, or refused for a transient reason; not for relay-fed devices or after a permanent error such as `disabled`. Devices without the command are not asked again. |
 | `sweep-curve` | On connect, after each sweep and its verdict, and on the refresh button. Up to two retries, 4 s timeout each. |
+| `status` | Next to the first `tele-mqtt` lease request and after the BLE enable sequence, on a broker reconnect, and every 5 min while the page is visible and the device has a link. One request at a time, 6 s timeout, one retry after a timeout. |
 | `sweep` | On the **sweep** button next to the chart, which is disabled while the device reports a sweep in progress. |
 
 See [Console commands](console.md) for the replies.
