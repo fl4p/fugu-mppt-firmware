@@ -97,7 +97,10 @@ idf.py -B build-<tag> build
 
 * **Use a separate `-B` build dir.** The shared `build/` may be in use by another session.
 * **A clean `git worktree` (to build HEAD without peers' dirty edits) is not self-contained**:
-  `dependencies.lock` is gitignored, and the `components/*` submodules need `git submodule update --init`. With no
+  `dependencies.lock` is gitignored, and the `components/*` submodules need
+  `git -c protocol.file.allow=always submodule update --init --recursive --force` (without the `-c`, `etc/fugu` fails
+  "transport 'file' not allowed" and aborts the run, which left `components/Adafruit_BusIO` empty and CMake failing
+  "Failed to resolve component 'Adafruit_BusIO'", 2026-11-18). With no
   lock, managed components resolve fresh and can be newer than the main tree's (`led_strip` 3.1 vs
   3.0.3, 2026-10-10). Never copy a lock into a worktree that already built: the image boot-looped
   flu in the RMT encoder, most likely app code compiled against the 3.0.3 header linked with the
