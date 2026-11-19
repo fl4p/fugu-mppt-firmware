@@ -9,7 +9,7 @@ Protection stops the converter when a measurement leaves its safe range. It runs
 before the [control loop](control-loop.md) step, and it is separate from the PD limiters: a limiter reduces duty to
 hold a value at its limit, while a protection trip turns the half-bridge off.
 
-## Where the checks run
+## Check scheduling
 
 The real-time loop calls two functions on every control step while the converter is switching, in MPPT, PSU and
 manual PWM modes:
@@ -17,9 +17,9 @@ manual PWM modes:
 - `mppt.protect()` checks the fast electrical faults on the latest sample.
 - `mppt.protectLf()` checks supply voltage, battery detection, temperature and the wire-fault latch.
 
-Both run in the same step, so `protectLf()` also runs after `protect()` has tripped. Neither runs while the converter
-is off or while the sensors calibrate; calibration holds the converter off. While it is off, the [start conditions](#start-conditions) decide whether it
-may start again.
+Both run in the same step, so `protectLf()` also runs after `protect()` has tripped. Both are skipped while the
+converter is off or while the sensors calibrate; calibration holds the converter off. While it is off, the
+[start conditions](#start-conditions) decide whether it may start again.
 
 Three watchdogs in `src/main.cpp` sit outside these functions and cover the sampler itself:
 [ADC stall](#adc-and-loop-watchdogs), missing samples and loop latency.
@@ -96,7 +96,7 @@ the side keys `hv_max`, `lv_max`, `hv_i_max` and `lv_i_max` map to these roles t
 | `temp` | NTC or MCU temperature > `temp_max`, logged as `Temp … > …°C, shutdown` | 5 s |
 | `wire-trip` | Wire-fault guard tripped (`wire_protect = 2` only), see [Output wire-fault protection](../reference/config/limits.md#output-wire-fault-protection) | until `wire-reset` or reboot |
 
-### Reverse current below the trip level
+### Sub-trip reverse current
 
 Some reverse-current conditions reduce rectification instead of tripping:
 
@@ -143,8 +143,8 @@ $$
 V_\text{pk} \approx V_0 + I \sqrt{L / C_\text{out}}
 $$
 
-with $V_0$ the battery voltage and $I$ the output current at the moment the battery opens. No over-voltage trip, in
-software or hardware, can keep the output below this value.
+with $V_0$ the battery voltage and $I$ the output current at the moment the battery opens. Over-voltage trips, in
+software or hardware, cannot keep the output below this value.
 
 Simulated peaks for an 8S LFP pack (`Vbat_max` 29 V) charged at 28 A from 64 V, with nothing else on the output:
 
@@ -181,9 +181,11 @@ slow window logs a warning without stopping the converter.
 
 While the converter is off, `startBlockReason()` must return no reason before the loop starts it. In MPPT mode the
 low-frequency status line logs the blocking reason as `START blocked: <reason>`, when it changes and at most every 30 s
-otherwise. The temperature and supply checks use a margin above their trip level, so the converter does not restart
-right at the threshold. Manual PWM does not use this table, but `temp-stale` and `temp` also hold it off. The table
-lists the reasons in the order they are checked:
+otherwise. `temp-stale` is not logged before the first input-voltage sample, when every sensor is still empty.
+
+The temperature and supply checks use a margin above their trip level, so the converter does not restart right at the
+threshold. Manual PWM skips this table, but `temp-stale` and `temp` also hold it off. The table lists the reasons in
+the order they are checked:
 
 | Reason | Blocks the start while |
 |---|---|
