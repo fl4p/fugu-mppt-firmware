@@ -159,10 +159,15 @@ there. A flagged sweep:
   known and the light may have hidden a maximum: after a fade (a changing sky can flatten the dip between two maxima,
   so the sweep records only one), or when the landing after a return pass misses its own probe (the light changed
   during the pass too). After a return pass whose landing agrees, the probes have already ranked the maxima afresh.
+* is swept once more if it recorded at most one maximum and no substring count is known: the scan has nothing to
+  probe, and the changing sky may have hidden a second maximum. The re-sweep follows 60 s later, or, when the landing
+  was brighter than the MPP, 5 s after the input current stops rising (at most 60 s). At most one re-sweep is
+  scheduled per 10 minutes, so a gusty sky does not keep the converter sweeping.
 
-A flagged sweep is not repeated. On a string with one maximum P&O finds the MPP from the landing point by itself; on a
-string with several, a maximum that the sweep did not record is found by the periodic scan once the substring count is
-known, or by the next periodic sweep.
+Otherwise a flagged sweep is not repeated. On a string with one maximum P&O finds the MPP from the landing point by
+itself; on a string with several, a maximum that the sweep did not record is found by the scan, or by the next
+periodic sweep. A string known to have a [single peak](#substring-count) (`pv_substrings=1`) is never re-swept: the
+landing check is its only verdict.
 
 A sweep whose fade or return pass a limiter stops, or that lands in a limit, gets no verdict and counts as clean. A
 sweep whose MPP is below 5 % of `limits.conf::p_max` gets no verdict either: in low light the captured MPP is the
@@ -172,6 +177,7 @@ line per decision:
 ```
 sweep verified: landed 468 W, off by -0 %
 sweep flagged: landed 328 W, off by -31 %
+re-sweep in 60 s
 sweep flagged: landed 302 W, off by -36 %, scan now
 sweep not verified (limiter)
 ```
@@ -525,7 +531,13 @@ One sweep is enough. The count only grows: a sweep that fits a smaller $n$ chang
 `scan: <n> bypass-diode substrings learned from the sweep`. Until a count is learned the scan is off, so an
 unshaded string never scans.
 
-The count is kept in `tracker.conf::pv_substrings`. It is written once when it grows, as soon as a flash write is
+A string can also be learned as a single peak, $n = 1$: two verified sweeps in a row, each with exactly one recorded
+maximum that is the MPP, while no count is known. A flagged sweep in between starts the run again; a sweep without a
+verdict (limiter, `sweep_verify=0`) neither counts nor breaks it. The log shows `scan: single peak learned from 2
+verified sweeps`. With $n = 1$ the scan stays idle and a flagged single-maximum sweep is not
+[re-swept](#sweep-verdict). A later sweep that shows shading still teaches a count of 2..6, which replaces it.
+
+The count is kept in `tracker.conf::pv_substrings` (1 = single peak). It is written once when it grows, as soon as a flash write is
 safe (converter off, or below 5 W), and before a console restart. Setting it to 0 (`set-config`) makes the
 converter learn it again after the next restart; until then the running count stays in use. A count learned
 earlier in the same boot and not yet saved can still be written over the 0, so set it while the converter is off

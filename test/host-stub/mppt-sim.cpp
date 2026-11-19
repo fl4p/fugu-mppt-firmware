@@ -16,6 +16,7 @@
 //                              # idle-wake: start refused only by InhibitIdle while Vin rises (armed sweep and not)
 //   weather scenarios (PV string of 1..3 substrings, irradiance played from a time series; "== SUMMARY" line):
 //     wx-cloud          recorded cloudy quarter hour (flat, 2026-11-14 11:20 UTC), full sun <-> cloud
+//     wx-cloud-n1       same with the single peak known (pv_substrings=1): no re-sweep after a flagged sweep
 //     wx-cloud-cv       same with the battery at the Vout cap in full sun; -ripple adds 100 Hz bus ripple
 //     wx-shade2, wx-shade3            static partial shade on a 6-substring string (2 modules x 3 bypass diodes)
 //     wx-shade2-move, wx-shade3-move  shade moves, the global maximum changes peak after the boot sweep
@@ -28,9 +29,11 @@
 //                       calibrations keep the 30 min cadence ("== CALFAIL")
 //     wx-low-slow       wx-low with power-sensor filter length 60 (slow sensor profile; SIM_ADC_HZ=200 for ADS-like rates)
 //     wx-sweep-fall, wx-sweep-rise, wx-sweep-shade   cloud edge during a sweep (-shade: two peaks)
-//     wx-sweep-gust, wx-sweep-learn[-off], wx-sweep-scan, wx-sweep-return   sweep verdict: no re-sweep, no learning
-//                       from a flagged sweep (-off: sweep_verify=0 learns from it), scan on a flag, the return pass
-//                       picking the better of two maxima after a cloud edge; "== VERDICT" PASS/FAIL
+//     wx-sweep-gust, wx-sweep-learn[-off], wx-sweep-scan, wx-sweep-return   sweep verdict: one re-sweep (one maximum,
+//                       no substring count), no learning from a flagged sweep (-off: sweep_verify=0 learns from it),
+//                       scan on a flag, the return pass picking the better of two maxima after a cloud edge
+//     wx-sweep-fall-n1, wx-sweep-rise-n1, wx-sweep-one   single peak known (pv_substrings=1): no re-sweep; -one learns
+//                       it from two verified sweeps; "== VERDICT" PASS/FAIL
 //     wx-mp-ramp, wx-mp-psu, wx-mp-psu-nosink  source Voc slowly 1.25 -> 1.02 -> 1.25 x Vbat (LS min pulse ratio
 //                       limit): weak PV / stiff sinking source into a full battery / non-sinking bench PSU; the
 //                       == REVERSE line has the plant's reverse output current and the starts
@@ -148,7 +151,8 @@ static std::vector<std::string> g_logSince; // log lines after the scenario even
 static double g_eventT = -1;
 static std::vector<double> g_slowDownT; // "Slow mode, duty" log times (slow-mode entries)
 static std::vector<std::pair<double, char>> g_scanT; // "scan:" log times; m = moved, l = light changed, - = stayed
-// sweep verdict events: v verified, f flagged, F flagged + scan, p return-pass probe, L learned, s scan
+// sweep verdict events: v verified, f flagged, F flagged + scan, p return-pass probe, r re-sweep scheduled, L learned,
+// 1 single peak learned, s scan
 static std::string g_verdict;
 static double g_fineT0 = 0, g_fineT1 = 0; // env SIM_FINE=t0,t1: per-tick sensor trace window
 static double g_trkT0 = 0, g_trkT1 = 0; // env SIM_TTRACE=t0,t1: one line per tracker decision
@@ -259,7 +263,9 @@ static void logHook(char lvl, const char *tag, const char *msg) {
     if (!strncmp(msg, "sweep verified", 14)) g_verdict += 'v';
     if (!strncmp(msg, "sweep flagged", 13)) g_verdict += strstr(msg, "scan now") ? 'F' : 'f';
     if (!strncmp(msg, "sweep return:", 13) && strstr(msg, "down")) g_verdict += 'p';
+    if (!strncmp(msg, "re-sweep in", 11)) g_verdict += 'r';
     if (strstr(msg, "learned from the sweep")) g_verdict += 'L';
+    if (strstr(msg, "single peak learned")) g_verdict += '1';
     if (!strncmp(msg, "scan: P", 7)) g_verdict += 's';
     if (!strncmp(msg, "scan:", 5))
         g_scanT.emplace_back(tNow(), strstr(msg, "moving") ? 'm' : strstr(msg, "light changed") ? 'l' : '-');
@@ -798,6 +804,7 @@ struct Wx {
     float vbat = 26.6f, rbat = 0.036f;
     Track vbatT;                             // battery EMF profile
     double sweepAt = -1, statsFrom = 0, T = 600;
+    std::vector<double> sweepsAt; // further requested sweeps, ascending
     std::string verdict; // sweep verdict events expected (g_verdict), "" = not checked; with sweeps after statsFrom
     size_t sweeps = 0, maxCals = 0; // maxCals: CALFAIL check, 0 = off
     float isc = 0, g[6] = {1, 1, 1, 1, 1, 1}, vocNow = 0;
@@ -1146,6 +1153,7 @@ static int runWx(const std::string &name, Wx &wx) {
             printf("%9.2f >>> sweep requested\n", tb);
             mppt.startSweep();
             wx.sweepAt = -1;
+            if (!wx.sweepsAt.empty()) wx.sweepAt = wx.sweepsAt.front(), wx.sweepsAt.erase(wx.sweepsAt.begin());
         }
         const double q0 = g_qOut;
         run(0.02, 0);
@@ -1353,7 +1361,7 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
             sscanf(e, "%f,%f,%f,%f,%f,%f", wx.gm, wx.gm + 1, wx.gm + 2, wx.gm + 3, wx.gm + 4, wx.gm + 5);
         if (const char *e = getenv("SIM_VOCDRIFT")) wx.vocDrift = atof(e);
     };
-    if (sc == "wx-cloud") {
+    if (sc == "wx-cloud" || sc == "wx-cloud-n1") { // -n1: single peak known (pv_substrings=1)
         wx.cloud = kCloud1120, wx.T = 900;
     } else if (sc == "wx-cloud-cv" || sc == "wx-cloud-cv-ripple") {
         // battery high enough that full sun runs into the Vout cap and every cloud releases it
@@ -1450,20 +1458,27 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         const float lo = (pv ? 1.3f : 1.02f) * wx.vbat;
         wx.vocT = {{120, wx.voc}, {720, lo}, {780, lo}, {1380, wx.voc}};
         wx.statsFrom = 60;
-    } else if (sc == "wx-sweep-fall" || sc == "wx-sweep-rise") {
-        // cloud edge (73 % in 10 s) starting 2 s into a sweep, one maximum: flagged, P&O carries on, no re-sweep;
+    } else if (sc == "wx-sweep-fall" || sc == "wx-sweep-rise" || sc == "wx-sweep-fall-n1" || sc == "wx-sweep-rise-n1") {
+        // cloud edge (73 % in 10 s) starting 2 s into a sweep, one maximum, no substring count: flagged, one re-sweep
+        // (-rise: 5 s after the light holds); -n1: single peak known (pv_substrings=1), P&O carries on, no re-sweep.
         // -rise: the paced ramp ends inside the edge and peaks late at a low Vin (flagged brighter).
         // SIM_EDGE_AT=t moves the edge start (the expected events then do not apply)
-        const bool fall = sc == "wx-sweep-fall";
+        const bool fall = sc.rfind("wx-sweep-fall", 0) == 0, n1 = sc.size() > 3 && sc.compare(sc.size() - 3, 3, "-n1") == 0;
         const float e = getenv("SIM_EDGE_AT") ? atof(getenv("SIM_EDGE_AT")) : 62;
         wx.cloud = {{e, fall ? 1 : 0.27f}, {e + 10, fall ? 0.27f : 1}};
         wx.sweepAt = wx.statsFrom = 60, wx.T = 240;
-        wx.verdict = "vf", wx.sweeps = 1;
+        wx.verdict = n1 ? "vf" : "vfrv", wx.sweeps = n1 ? 1 : 2;
+    } else if (sc == "wx-sweep-one") {
+        // one peak, steady sun: the boot and the 60 s sweep (verified) learn the single peak (pv_substrings=1); a sweep
+        // under a falling cloud edge is flagged and starts no re-sweep
+        wx.cloud = {{0, 1}, {302, 1}, {312, 0.27f}};
+        wx.sweepAt = 60, wx.sweepsAt = {180, 300}, wx.statsFrom = 60, wx.T = 600;
+        wx.verdict = "vv1vf", wx.sweeps = 3;
     } else if (sc == "wx-sweep-gust") {
-        // falling and rising cloud edges after a flagged sweep: no re-sweep however gusty
+        // falling and rising cloud edges after a flagged sweep: one re-sweep however gusty (flagged too, 10 min cap)
         wx.cloud = {{62, 1}, {72, 0.27f}, {120, 0.27f}, {130, 1}, {137, 1}, {147, 0.27f}};
         wx.sweepAt = wx.statsFrom = 60, wx.T = 400;
-        wx.verdict = "vf", wx.sweeps = 1;
+        wx.verdict = "vfrf", wx.sweeps = 2;
     } else if (sc == "wx-sweep-learn" || sc == "wx-sweep-learn-off") {
         // two peaks (one substring at 0.7) brightening during the sweep (a dim boot sweep: no verdict, no learning): the
         // return pass probes both and flags the sweep, which does not learn. -off: sweep_verify=0, the distorted sweep
@@ -1490,12 +1505,12 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         wx.verdict = "ppvLppf", wx.sweeps = 1;
     } else if (sc == "wx-sweep-shade" || sc == "wx-sweep-scan") {
         // two peaks, the 68.8 V one 10 % higher; a rising cloud edge during the sweep favours the later 57 V one.
-        // The edge hides the dip between them: one maximum, no return pass. -scan: substring count known
+        // The edge hides the dip between them: one maximum, no return pass, one re-sweep. -scan: substring count known
         // (pv_substrings=6), the flagged sweep starts a scan
         fry6(615), wx.sub[5] = {{0, 0.91f}};
         wx.cloud = {{62, 0.27f}, {72, 1}};
         wx.sweepAt = wx.statsFrom = 60, wx.T = 660;
-        if (sc == "wx-sweep-scan") wx.verdict = "vFs", wx.sweeps = 1;
+        wx.verdict = sc == "wx-sweep-scan" ? "vFs" : "vfrv", wx.sweeps = sc == "wx-sweep-scan" ? 1 : 2;
     } else {
         return false;
     }
@@ -1804,8 +1819,11 @@ static int simMain(int argc, char **argv) {
     if (sc == "rcal-flat") ov.insert(ov.end(), {{"isc", "7.5"}, {"voc", "66"}, {"v_bat", "26.7"}});
     if (sc == "rcal-ov") setenv("SIM_CONF", "limits.conf:hv_max=77.5", 1);
     if (sc == "rcal-sun") setenv("SIM_CONF", "coil.conf:L0=80e-6", 1);
-    if (sc == "wx-sweep-learn-off" || sc == "wx-sweep-scan") {
-        std::string c = sc == "wx-sweep-scan" ? "tracker.conf:pv_substrings=6" : "tracker.conf:sweep_verify=0";
+    const bool n1 = sc.size() > 3 && sc.compare(sc.size() - 3, 3, "-n1") == 0;
+    if (sc == "wx-sweep-learn-off" || sc == "wx-sweep-scan" || n1) {
+        std::string c = sc == "wx-sweep-scan" ? "tracker.conf:pv_substrings=6"
+                        : n1                  ? "tracker.conf:pv_substrings=1"
+                                              : "tracker.conf:sweep_verify=0";
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         setenv("SIM_CONF", c.c_str(), 1);
     }

@@ -749,6 +749,38 @@ void test_scan_held_sweep() {
     TEST_ASSERT_FALSE(s.pending);
 }
 
+// Two verified single-maximum sweeps in a row learn n = 1 (a flagged one in between restarts the run, an unverified one
+// does not count); n = 1 never scans, a shaded sweep still grows it
+void test_scan_learns_single_peak() {
+    auto pv = fryString(1.f, 1.f), sh = fryString(1.f, 0.7f);
+    PeakScan s{};
+    const auto sweep = [&](const VirtualConverter &c, int how) { // 0 unverified, 1 verified, 2 flagged
+        s.onSweep(80, 0);
+        float pm = 0, vm = 0;
+        for (float v = 80; v > 29; v -= 0.25f) {
+            const float p = v * c.pvCurrent(v);
+            s.sweepSample(v, p);
+            if (p > pm) pm = p, vm = v;
+        }
+        s.onSweepMpp(vm, pm, 10, true);
+        how == 2 ? s.drop() : s.release(how == 1);
+        s.learn();
+    };
+    sweep(*pv, 1);
+    TEST_ASSERT_EQUAL_INT(1, s.nc);
+    sweep(*pv, 2), sweep(*pv, 1), sweep(*pv, 0);
+    TEST_ASSERT_EQUAL_INT(0, s.n);
+    sweep(*pv, 1);
+    TEST_ASSERT_EQUAL_INT(1, s.n);
+    TEST_ASSERT_TRUE(s.unsaved());
+    s.voc = 80;
+    for (uint32_t t = 0; t < 400000; t += 1000)
+        TEST_ASSERT_TRUE(std::isnan(s.update(t, 68, 68, 400, 1000, 30, 10, [] { return 500.f; })));
+    TEST_ASSERT_FALSE(s.active());
+    sweep(*sh, 1);
+    TEST_ASSERT_EQUAL_INT(6, s.n);
+}
+
 // One or two shaded substrings (fry-like, exact series string), the lower maximum at 5 or 4 of 6 shares, below or
 // above the full-string maximum. One sweep learns 6 and marks it for tracker.conf.
 void test_scan_learns_substrings() {

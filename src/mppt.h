@@ -220,9 +220,10 @@ private:
     uint8_t _svPhase = 0; // 1 landing, 2 settling, 3 return pass
     uint8_t _svLandTrim = 0; // 1: landing trim pending, 2: verdict
     uint8_t _svFlag = 0;  // 0 none, 1 clean, 2 light changed
-    float _svLand = 0; // landed power
-    uint32_t _svT = 0; // [ms] settle start
-    void sweepVerdict(float p, bool ok);
+    float _svLand = 0, _svI = 0; // landed power, input current then
+    uint32_t _svT = 0, _resweepAt = 0, _retryAt = 0; // [ms] settle start, scheduled re-sweep, last one scheduled
+    void sweepVerdict(uint32_t nowMs, float p, bool ok);
+    void scheduleResweep(uint32_t nowMs, uint32_t inMs);
     void sweepJudge(float p, float d, bool rescan);
 
     // A sweep only commits its captured MPP as the operating target above this power. In marginal
@@ -1002,7 +1003,7 @@ public:
      */
     void startSweep() {
         _sweeping = true;
-        _svPhase = _svFlag = 0;
+        _svPhase = _svFlag = 0, _resweepAt = 0;
 
         converter.disable();
         ctrlState._limiting = false;

@@ -17,8 +17,10 @@ struct PeakScan {
     static constexpr float kProbeLow = 0.97f; // probe on the flat low-voltage side of a peak
     static constexpr uint16_t kMeasMs = 100, kTravelMs = 1500, kSteadyMs = 5000;
 
-    uint8_t n = 0;           // bypass-diode substrings learned from the sweeps (tracker.conf::pv_substrings), 0 = off
-    std::atomic<bool> pending{false}; // RT -> core 0: a sweep's maxima wait for learn()
+    uint8_t n = 0;           // bypass-diode substrings learned from the sweeps (tracker.conf::pv_substrings), 0 = learn,
+                             // 1 = single peak, nothing to scan
+    std::atomic<uint8_t> pending{0}; // RT -> core 0: a sweep's maxima wait for learn(); 2 verified, 3 flagged (no maxima)
+    uint8_t one = 0;         // core 0: verified single-maximum sweeps in a row
     std::atomic<uint8_t> gen{0};      // RT: bumped before vc/pc/nc/voc/pk are rewritten (sweep start, scan start)
     uint8_t saved = 0;       // core 0: n as read from or written to tracker.conf
     uint16_t interval = 300; // tracker.conf::scan_interval [s], 0 = triggered only
@@ -51,7 +53,7 @@ struct PeakScan {
 
     // RT, before vc/pc/nc/voc/pk change: a learn() in progress drops the sweep
     __attribute__((noinline)) IRAM_ATTR void claim() {
-        pending.store(false, std::memory_order_relaxed);
+        pending.store(0, std::memory_order_relaxed);
         held = false;
         gen.store(gen.load(std::memory_order_relaxed) + 1, std::memory_order_release);
         std::atomic_thread_fence(std::memory_order_release);
@@ -92,23 +94,32 @@ struct PeakScan {
         if (nc <= 6 && p >= pMin && voc > 0) {
             pk = p;
             if (hold) held = true;
-            else pending.store(true, std::memory_order_release);
+            else pending.store(1, std::memory_order_release);
         }
     }
 
-    void release() {
-        if (held) held = false, pending.store(true, std::memory_order_release);
+    // verified: the sweep passed its verdict; else not evaluable
+    void release(bool verified = false) {
+        if (held) held = false, pending.store(verified ? 2 : 1, std::memory_order_release);
+    }
+
+    // a flagged sweep: its maxima do not teach and it breaks a run of single-maximum sweeps
+    void drop() {
+        if (held) held = false, pending.store(3, std::memory_order_release);
     }
 
     // core 0, after onSweepMpp() (vc/pc stay untouched for 5 s): the first maximum of at least 60 % of the MPP is the
     // full string (a start transient is weaker); n from the maxima below it of at least 30 % of the MPP, the largest
     // n in 2..6 that puts each at m - 0.25 .. m + 0.5 shares of 0.82 Voc / n (m < n; shaded maxima sit high).
     // Nothing if the MPP is not a recorded maximum. Works on a copy; drops it if RT rewrote the arrays meanwhile
-    // (mid: test hook, runs after the copy). True if n grew.
+    // (mid: test hook, runs after the copy). Two verified sweeps in a row with one maximum each and n unknown: n = 1.
+    // True if n grew.
     template<class Mid = decltype([](PeakScan &) {})>
     bool learn(Mid mid = {}) {
         const uint8_t g0 = gen.load(std::memory_order_acquire);
-        if (!pending.exchange(false, std::memory_order_acquire)) return false;
+        const uint8_t pd = pending.exchange(0, std::memory_order_acquire);
+        if (!pd) return false;
+        if (pd == 3) return one = 0, false;
         const uint8_t nc = std::min<uint8_t>(this->nc, 6);
         float vc[6], pc[6];
         std::copy_n(this->vc, 6, vc), std::copy_n(this->pc, 6, pc);
@@ -121,6 +132,12 @@ struct PeakScan {
         for (int i = 0; i < nc; ++i) {
             if (g < 0 && pc[i] >= 0.6f * pk) g = i;
             mpp = mpp || pc[i] >= 0.98f * pk;
+        }
+        if (!mpp || nc != 1) one = 0;
+        else if (pd == 2 && !n && ++one >= 2) {
+            n = 1;
+            ESP_LOGI("mppt", "scan: single peak learned from 2 verified sweeps");
+            return true;
         }
         if (!mpp) return false;
         int c = 6, q = 0;
@@ -172,7 +189,7 @@ struct PeakScan {
     __attribute__((always_inline)) float update(uint32_t now, float vinFast, float vin, float pw, uint16_t d,
                                                 float vMin, float pMin, SettleMs settleMs) {
         if (phase == Idle) {
-            if (!n || !(voc > 0)) return NAN;
+            if (n < 2 || !(voc > 0)) return NAN;
             if (vin > 0 && pw / vin > iEnv) iEnv = pw / vin;
             if (pRef <= 0) { // tracking after a sweep: reference 5 s later
                 if (pRef < 0) pRef = 0, tPhase = now;

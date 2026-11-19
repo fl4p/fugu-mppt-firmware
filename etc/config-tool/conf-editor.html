@@ -395,7 +395,7 @@ const META = {
   sweep_speed:{unit:"",desc:"Global-sweep speed; scales both per-tick cap and limit-tracking gain (default 4.0)",type:"float"},
   sweep_pace:{unit:"",desc:"Largest sweep speed-up where Vin moves slowly with the duty (near Voc, towards the Vin floor), 1..8 (default 4.0; 1 = off, ramp linear in duty); bounded by the sensor filter delay",type:"float"},
   sweep_verify:{unit:"",desc:"Sweep verdict: flag a sweep when a return-pass probe or the settled landing power differs from the sweep's value by more than this fraction (default 0.1); 0 = off",type:"float"},
-  pv_substrings:{unit:"",desc:"Learned bypass-diode substring count for the partial peak scan (written by the converter after a shaded sweep, 2..6); 0 = learn again, takes effect at the next boot",type:"byte"},
+  pv_substrings:{unit:"",desc:"Learned bypass-diode substring count for the partial peak scan (written by the converter after a shaded sweep, 2..6; 1 = single peak, no scan or re-sweep); 0 = learn again, takes effect at the next boot",type:"byte"},
   scan_interval:{unit:"s",desc:"Partial peak scan period, 0..65535 (default 300); 0 = triggered scans only",type:"long"},
   scan_trigger:{unit:"",desc:"1 = also scan on a sustained Vin or power change since the last scan or sweep (default 1)",type:"byte"},
 
