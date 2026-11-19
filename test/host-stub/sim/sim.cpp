@@ -102,6 +102,7 @@ void flush_async_uart_log() {}
 rtcount_entry rtcount_table[RTCOUNT_MAX];
 std::atomic<int> rtcount_count{0};
 volatile bool rtcount_en = false;
+volatile bool g_hwOvTrip = false;
 void rtcount(const char *) {}
 void assertPinState(uint8_t, bool, const char *, bool) {}
 bool LCD::init(uint8_t) { return false; }
@@ -220,7 +221,7 @@ static void setupFw() {
     mppt.charger.begin(charger);
     converter.init(conv, board, coil);
     mppt.rectCal.autoRun = coil.getByte("rect_cal_auto", 1);
-    mppt.rectCal.persist = [](int, bool) { return true; };
+    mppt.rectCal.persist = [](int, uint8_t) { return true; };
     mppt.rectCal.init(converter.getRectOnOffset(), !converter.rectOffsetNeedsCal());
     mppt.begin(tracker, board, conv, lim, tele);
     adcSampler.begin();
