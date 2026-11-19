@@ -46,7 +46,7 @@ for b in fry fry-hq flat flat-hq; do for voc in 48 68 79.6; do for isc in 3 6; d
     for s in $(seq 1 "$SEEDS"); do jobs+=("$b $voc $isc $k $s"); done
 done; done; done; done
 printf "%s\n" "${jobs[@]}" | xargs -P "$JOBS" -I{} bash -c 'run1 "{}"' | sort -k1,1 -k2,2n -k3,3n -k4,4 -k5,5n | awk '
-    # counts are converted with the run's count duration (# gate timing: 6.25 ns MCPWM, 12.53 ns LEDC)
+    # counts are converted with the count duration of each run (# gate timing: 6.25 ns MCPWM, 12.53 ns LEDC)
     BEGIN { split("fry 162 fry-hq 234 flat -231 flat-hq -190", bl, " ")
             for (i = 1; i < 8; i += 2) base[bl[i]] = bl[i + 1]; pooled = -9; printf "%-8s %5s %4s %5s %4s %-22s %9s %9s %9s %9s\n", "board", "Voc", "Isc", "k", "seed",
             "result", "learned", "applied", "truth", "zc-truth" }
