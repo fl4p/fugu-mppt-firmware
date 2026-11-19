@@ -1250,7 +1250,9 @@ __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
         return;
     }
 
-    uint32_t sps = (dt > 20000) ? (uint64_t) (nSamples - lastNSamples) * 1000000llu / dt : lastSps;
+    // a sensor reset (calibration) zeroes the counter: count the samples since then
+    uint32_t n = nSamples >= lastNSamples ? nSamples - lastNSamples : nSamples;
+    uint32_t sps = (dt > 20000) ? (uint64_t) n * 1000000llu / dt : lastSps;
     lastSps = sps;
 
     lfWatchdog(nowUs, dt, sps, nSamples);
