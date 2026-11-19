@@ -126,20 +126,31 @@ test('mqttWrite publishes one trimmed line to pv/log/<host>/cmd', async () => {
 
 // §5 — importFromDevice hardening: retry on timeout (lost reply over MQTT QoS 0),
 // but trust an OK-with-zero-keys as authoritatively absent (no wasted retries).
+// The read is pipelined: every get-config goes out through activeWrite and replies are
+// matched by filename on the line stream, so the stub plays the device on that stream.
 test('importFromDevice retries a lost reply but treats an empty OK as absent', async () => {
   const { window } = await loadEditor();
   window.fetchHostname = async () => 'fry';
+  // compress the page's wait windows (6 s + 2×2.5 s) for the permanently-lost file
+  const realNow = window.performance.now.bind(window.performance);
+  window.performance.now = () => realNow() * 50;
 
   const attempts = {};
-  window.getConfig = async (file) => {
+  const reply = (file, kv) => setTimeout(() => {
+    for (const [k, v] of Object.entries(kv))
+      window._dispatchLine(`Conf '/littlefs/conf/${file}:${k}' = '${v}'`);
+    window._dispatchLine(`I (1) main: OK: get-config ${file}`);
+  }, 0);
+  window._activeWrite = async (s) => {
+    const file = s.trim().replace(/^get-config /, '');
     attempts[file] = (attempts[file] || 0) + 1;
-    if (file === 'board.conf')  return { mcu: 'esp32s3' };          // present
-    if (file === 'limits.conf') {                                    // dropped once, recovers
-      if (attempts[file] < 2) throw new Error('timeout');
-      return { hv_max: '85' };
+    if (file === 'board.conf')  return reply(file, { mcu: 'esp32s3' });  // present
+    if (file === 'limits.conf') {                                        // dropped once, recovers
+      if (attempts[file] < 2) return;
+      return reply(file, { hv_max: '85' });
     }
-    if (file === 'coil.conf')   throw new Error('timeout');          // permanently lost
-    return {};                                                       // genuinely absent (fast OK)
+    if (file === 'coil.conf')   return;                                  // permanently lost
+    reply(file, {});                                                     // genuinely absent (fast OK)
   };
 
   await window.importFromDevice('fry');
