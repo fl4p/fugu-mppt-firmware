@@ -26,8 +26,13 @@ struct WireGuardConf {
  * can't fill its N_RO history; it releases a level only when all of those sweeps are below. The
  * slope and Ro paths are graded at the peak current of the last 1-2 charging hours. A day whose
  * median fast-path ΔR (without BMS: Ro) is 2·drMin above baseline warns regardless of current,
- * never more. The baseline is the median of up to DAYS accepted day medians; a day's median above
- * baseline + drMin is rejected. Freshness ages in charging minutes, so a night neither releases nor
+ * never more. The baseline is the median of up to DAYS accepted day medians. Only a good day enters
+ * (rcGood: slow-fit samples taken while charging, enough frames and current spread; roGood: sweeps).
+ * While learning (fewer than LEARN_DAYS counted days) every good day enters, so the median outvotes
+ * an odd first day; after that a day's median above baseline + drMin is rejected. A day closes at
+ * the first hour without conversion DAY_MIN_S after the last close, or at the first one after a cold
+ * start if it counts, or after DAY_MAX_S. The open day survives a restart through saveDay() /
+ * restoreDay() (RTC RAM). Freshness ages in charging minutes, so a night neither releases nor
  * invalidates the last verdict. Trip latches until reset() or reboot.
  * ioutCap() and tripped() may be read from another core; everything else is single-core.
  */
@@ -54,6 +59,10 @@ public:
     static constexpr float OFS_VAR_MIN = 4.f;  // [A²] current spread needed to tell offset from slope
     static constexpr float OFS_MAX = 0.15f;    // [V] |offset − baseline a| beyond this: no verdict
     static constexpr uint32_t PW_AGE_S = 120;  // pw() reports values at most this old
+    // a day enters the baseline with >= DAY_RC_N slow-fit samples taken while charging, >= DAY_W_MIN
+    // frames at Iout >= I_MIN and a current variance >= DAY_VAR_MIN [A²] among them; Ro: >= DAY_RO_N sweeps
+    static constexpr uint8_t DAY_RC_N = 4, DAY_RO_N = 2;
+    static constexpr float DAY_W_MIN = 300, DAY_VAR_MIN = OFS_VAR_MIN;
 
     static constexpr int16_t NONE = INT16_MIN;
 
@@ -65,6 +74,24 @@ public:
         int16_t ancRc, ancRo;
         int16_t rc[DAYS], a[DAYS], rb[DAYS], ro[DAYS];
     };
+
+    // the open day: decimating sample buffers (rc/a/rb slow fit, ro sweeps, dr fast-path ΔR) and
+    // the frame sums of Iout >= I_MIN (count, Σi, Σi²) for the quality gate
+    struct Day {
+        int16_t rc[DAY_N], a[DAY_N], rb[DAY_N], ro[DAY_N], dr[DAY_N];
+        float w, i, i2;
+        uint32_t step, lastS, startS; // in a DayRtc: ages [s]
+        uint16_t chargeMin, fastN, fastHi; // charging minutes, fast-path minutes, of which dR >= drMin/2
+        uint8_t n, nRo, nDr, drStep, drSkip;
+        bool fast, bms; // a fast-path minute, a BMS frame
+    };
+    // a copy of the open day in RAM that survives a restart (RTC_NOINIT on the device)
+    struct DayRtc {
+        uint32_t magic;
+        Day d;
+        uint32_t sum;
+    };
+    static constexpr uint32_t DAY_MAGIC = 0x57440000u | sizeof(Day);
 
     WireGuardConf conf{};
     uint8_t paths = 7; // graded paths: 1 fast, 2 Rc, 4 Ro (diagnostics)
@@ -88,6 +115,27 @@ public:
     }
 
     [[nodiscard]] const Blob &blob() const { return h; }
+
+    void saveDay(DayRtc &r) const {
+        r.magic = DAY_MAGIC;
+        r.d = d;
+        if (started) {
+            r.d.lastS = tS - d.lastS;
+            r.d.startS = tS - d.startS;
+        }
+        r.sum = sum(r);
+    }
+
+    // before the first tick(); false (fresh day) unless r holds a consistent day
+    bool restoreDay(const DayRtc &r) {
+        const auto &x = r.d;
+        if (r.magic != DAY_MAGIC || r.sum != sum(r) || x.n > DAY_N || x.nRo > DAY_N || x.nDr > DAY_N ||
+            !x.drStep || x.drSkip >= x.drStep || x.step < DAY_SAMPLE_S || x.startS > 2 * DAY_MAX_S || !(x.w >= 0))
+            return false;
+        d = x;
+        coldDay = false;
+        return true;
+    }
     // a day closed or reset(): the baseline wants writing, but only while the converter is off
     [[nodiscard]] bool saveDue(bool running) const { return dirty && !running && conf.mode; }
     void saved() { dirty = false; }
@@ -96,9 +144,13 @@ public:
     void frame(float dv, float iout, float ibat) {
         if (!conf.mode || !std::isfinite(dv) || !std::isfinite(iout) || !std::isfinite(ibat)) return;
         if (std::fabs(ibat) > ibMinute) ibMinute = std::fabs(ibat);
+        d.bms = true;
         if (iout < I_MIN) return;
         const float x[7]{1, iout, iout * iout, dv, iout * dv, ibat, iout * ibat};
         for (uint8_t k = 0; k < 7; ++k) ms[k] += x[k];
+        d.w += 1;
+        d.i += iout;
+        d.i2 += x[2];
     }
 
     /**
@@ -108,7 +160,12 @@ public:
     bool tick(uint32_t nowS, float iout, bool running, float rc, float a, float rb, float ro, uint32_t roStamp) {
         if (!conf.mode) return false;
         tS = nowS;
-        if (!winS) winS = dayS = runS = nowS;
+        if (!started) {
+            started = true;
+            winS = runS = nowS;
+            d.startS = nowS - d.startS;
+            d.lastS = nowS - d.lastS;
+        }
         if (running) runS = nowS;
         if (std::isfinite(iout)) { iSum += iout; ++iN; }
         if (std::isfinite(ro) && roStamp && roStamp != roSeen) {
@@ -118,13 +175,16 @@ public:
         if (std::isfinite(rc) && std::isfinite(a) && std::isfinite(rb)) {
             rcIn = rc; aIn = a; rbIn = rb;
         } else rcIn = NAN;
-        if (std::isfinite(rcIn) && nowS - dLastS >= dStep) {
-            dLastS = nowS;
-            daySample(dRc, dA, dRb, nD, &dStep);
+        if (std::isfinite(rcIn) && iout >= I_MIN && nowS - d.lastS >= d.step) {
+            d.lastS = nowS;
+            daySample();
         }
         const auto prevWf = wf();
         if (nowS - winS >= 60) minute(nowS);
-        if ((!running && nowS - runS >= NIGHT_S && nowS - dayS >= DAY_MIN_S) || nowS - dayS >= DAY_MAX_S)
+        // the first day after a cold start closes at the first night if its data is good enough
+        const uint32_t age = nowS - d.startS;
+        if ((!running && nowS - runS >= NIGHT_S && (age >= DAY_MIN_S || (coldDay && dayCounts()))) ||
+            age >= DAY_MAX_S)
             closeDay(nowS);
         return prevWf != wf();
     }
@@ -172,8 +232,14 @@ public:
     [[nodiscard]] float slope() const { return ofsR - rcBase(); }
     [[nodiscard]] float iRef() const { return std::max(ioPk[0], ioPk[1]); }
     [[nodiscard]] uint8_t dayCount() const { return h.days; }
-    [[nodiscard]] uint8_t daySamples() const { return nD; }
-    [[nodiscard]] uint8_t daySweeps() const { return nDRo; }
+    [[nodiscard]] uint8_t daySamples() const { return d.n; }
+    [[nodiscard]] uint8_t daySweeps() const { return d.nRo; }
+    [[nodiscard]] float dayCurrentSd() const { // [A] spread of today's frames at Iout >= I_MIN
+        const float m = d.i / d.w;
+        return std::sqrt(std::fmax(0.f, d.i2 / d.w - m * m));
+    }
+    // the open day counts toward learning: its slow fit was good, or on a board without BMS data its sweeps
+    [[nodiscard]] bool dayCounts() const { return rcGood() || (roGood() && !h.nRc && !d.bms); }
 
 private:
     struct Hist { // 2-bit levels, newest in the low bits
@@ -222,11 +288,20 @@ private:
     float ioPk[2]{}, ibPk[2]{}; // peak minute current: current / previous charging hour
     uint8_t pkMin = 0;
 
-    int16_t dRc[DAY_N]{}, dA[DAY_N]{}, dRb[DAY_N]{}, dRo[DAY_N]{}, dDr[DAY_N]{}; // dDr: fast-path dR
-    uint8_t nD = 0, nDRo = 0, nDr = 0, drStep = 1, drSkip = 0;
-    uint16_t dChargeMin = 0, dFastN = 0, dFastHi = 0; // fast-path minutes today, of which dR >= drMin/2
-    bool dFast = false;
-    uint32_t dStep = DAY_SAMPLE_S, dLastS = 0, dayS = 0, runS = 0;
+    // times in d are ages until the first tick
+    static constexpr Day newDay(uint32_t lastS, uint32_t startS) {
+        return {{}, {}, {}, {}, {}, 0, 0, 0, DAY_SAMPLE_S, lastS, startS, 0, 0, 0, 0, 0, 0, 1, 0, false, false};
+    }
+    Day d = newDay(DAY_SAMPLE_S, 0);
+    bool started = false, coldDay = true;
+    uint32_t runS = 0;
+
+    static uint32_t sum(const DayRtc &r) {
+        uint32_t w[sizeof(Day) / 4], h = 0x811c9dc5;
+        memcpy(w, &r.d, sizeof w);
+        for (uint32_t x: w) h = (h ^ x) * 16777619u;
+        return h;
+    }
 
     static int16_t q(float x, float k) {
         const float v = std::round(x * k);
@@ -266,22 +341,22 @@ private:
         for (uint8_t i = 0; i < n / 2; ++i) x[i] = x[2 * i];
     }
 
-    void daySample(int16_t *rc, int16_t *a, int16_t *rb, uint8_t &n, uint32_t *step) {
-        if (n == DAY_N) {
-            compact(rc, n); compact(a, n); compact(rb, n);
-            n /= 2;
-            *step *= 2;
+    void daySample() {
+        if (d.n == DAY_N) {
+            compact(d.rc, d.n); compact(d.a, d.n); compact(d.rb, d.n);
+            d.n /= 2;
+            d.step *= 2;
         }
-        rc[n] = q(rcIn, 1e5f);
-        a[n] = q(aIn, 1e4f);
-        rb[n] = q(rbIn, 1e5f);
-        ++n;
+        d.rc[d.n] = q(rcIn, 1e5f);
+        d.a[d.n] = q(aIn, 1e4f);
+        d.rb[d.n] = q(rbIn, 1e5f);
+        ++d.n;
     }
 
     void onRo(float ro) {
         const int16_t v = q(ro, 1e5f);
-        if (nDRo == DAY_N) { compact(dRo, nDRo); nDRo /= 2; }
-        dRo[nDRo++] = v;
+        if (d.nRo == DAY_N) { compact(d.ro, d.nRo); d.nRo /= 2; }
+        d.ro[d.nRo++] = v;
         roBuf[roK % RO_MED] = v;
         if (++roK == 2 * RO_MED) roK = RO_MED;
         roNew = true;
@@ -312,10 +387,10 @@ private:
     }
 
     void dayDr(float dr) {
-        if (++drSkip < drStep) return;
-        drSkip = 0;
-        if (nDr == DAY_N) { compact(dDr, nDr); nDr /= 2; drStep *= 2; }
-        dDr[nDr++] = q(dr, 1e5f);
+        if (++d.drSkip < d.drStep) return;
+        d.drSkip = 0;
+        if (d.nDr == DAY_N) { compact(d.dr, d.nDr); d.nDr /= 2; d.drStep *= 2; }
+        d.dr[d.nDr++] = q(dr, 1e5f);
     }
 
     void minute(uint32_t nowS) {
@@ -325,7 +400,7 @@ private:
         iN = 0;
         if (im >= I_MIN) {
             ++cm;
-            ++dChargeMin;
+            ++d.chargeMin;
             peakAdd(ioPk, im);
             peakAdd(ibPk, ibMinute);
             if (++pkMin >= 60) {
@@ -352,10 +427,10 @@ private:
             fast.cm = cm;
             fast.at = nowS;
             fast.has = true;
-            dFast = true;
+            d.fast = true;
             fast.hist.push(gradeOf(fast.pw, fast.dr, 1));
-            ++dFastN;
-            if (fast.dr >= 0.5f * conf.drMin) ++dFastHi;
+            ++d.fastN;
+            if (fast.dr >= 0.5f * conf.drMin) ++d.fastHi;
             overDerate = armed() && lvl == Derate && fast.pw >= conf.pDerate * OVER_DERATE ? overDerate + 1 : 0;
         }
         // a minute off the regression line by pWarn/2 is a step, not drift: it must not pull the line
@@ -427,47 +502,48 @@ private:
         if (effLevel() == Trip) trip.store(true, std::memory_order_relaxed);
     }
 
+    [[nodiscard]] bool rcGood() const {
+        if (d.n < DAY_RC_N || !(d.w >= DAY_W_MIN)) return false;
+        const float m = d.i / d.w;
+        return d.i2 / d.w - m * m >= DAY_VAR_MIN;
+    }
+    [[nodiscard]] bool roGood() const { return d.nRo >= DAY_RO_N; }
+
     void closeDay(uint32_t nowS) {
-        dayS = nowS;
+        const bool learn = learning();
         // current-independent check on the day's median excess resistance: the fast path's, else Ro.
         // Not while learning, the baseline may still be one odd day.
-        const float dr = learning() ? NAN
-                         : nDr >= 4 ? median(dDr, nDr) / 1e5f
-                         : nDRo >= 2 ? median(dRo, nDRo) / 1e5f - bRo : NAN;
+        const float dr = learn ? NAN
+                         : d.nDr >= 4 ? median(d.dr, d.nDr) / 1e5f
+                         : d.nRo >= 2 ? median(d.ro, d.nRo) / 1e5f - bRo : NAN;
         if (dr >= 2 * conf.drMin) h.flags |= 1;
         else if (dr < 2 * conf.drMin * HYST) h.flags &= ~1;
-        bool data = false;
-        if (nD >= 4) {
-            data = true;
-            const float m = median(dRc, nD) / 1e5f;
-            // the fit can absorb a fault into its offset or Rb, so the fast path vetoes too
-            if (!(m > bRc + conf.drMin) && accept(m, h.ancRc) && 2 * dFastHi <= dFastN) {
+        // while learning every good day enters, the median of them outvotes an odd first day.
+        // After learning the fit can absorb a fault into its offset or Rb, so the fast path vetoes too.
+        const bool rc = rcGood(), ro = roGood(), cnt = dayCounts();
+        if (rc) {
+            const float m = median(d.rc, d.n) / 1e5f;
+            if (learn || (!(m > bRc + conf.drMin) && accept(m, h.ancRc) && 2 * d.fastHi <= d.fastN)) {
                 h.rc[h.hRc] = q(m, 1e5f);
-                h.a[h.hRc] = q(median(dA, nD) / 1e4f, 1e4f);
-                h.rb[h.hRc] = q(median(dRb, nD) / 1e5f, 1e5f);
+                h.a[h.hRc] = q(median(d.a, d.n) / 1e4f, 1e4f);
+                h.rb[h.hRc] = q(median(d.rb, d.n) / 1e5f, 1e5f);
                 h.hRc = (h.hRc + 1) % DAYS;
                 if (h.nRc < DAYS) ++h.nRc;
             }
         }
-        if (nDRo >= 2) {
-            data = true;
-            const float m = median(dRo, nDRo) / 1e5f;
-            if (!(m > bRo + conf.drMin) && accept(m, h.ancRo)) {
+        if (ro) {
+            const float m = median(d.ro, d.nRo) / 1e5f;
+            if (learn || (!(m > bRo + conf.drMin) && accept(m, h.ancRo))) {
                 h.ro[h.hRo] = q(m, 1e5f);
                 h.hRo = (h.hRo + 1) % DAYS;
                 if (h.nRo < DAYS) ++h.nRo;
             }
         }
-        data = data || dFast;
-        if (data) {
-            if (h.days < 255) ++h.days;
-            h.unvDays = 0;
-        } else if (dChargeMin >= UNV_CHARGE_MIN && h.unvDays < 255) ++h.unvDays;
-        nD = nDRo = nDr = drSkip = 0;
-        drStep = 1;
-        dStep = DAY_SAMPLE_S;
-        dChargeMin = dFastN = dFastHi = 0;
-        dFast = false;
+        if (cnt && h.days < 255) ++h.days;
+        if (d.n >= DAY_RC_N || ro || d.fast) h.unvDays = 0;
+        else if (d.chargeMin >= UNV_CHARGE_MIN && h.unvDays < 255) ++h.unvDays;
+        d = newDay(d.lastS, nowS);
+        coldDay = false;
         updateBase();
         if (!learning()) {
             anchor(h.ancRc, bRc);

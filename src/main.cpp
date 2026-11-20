@@ -518,9 +518,13 @@ __attribute__((cold)) static void wireGuardConf(const ConfFile &c) {
     assert_throw(w.drMin > 0 && w.rMax >= 0, "need wire_dr_min > 0, wire_r_max >= 0");
 }
 
+static RTC_NOINIT_ATTR WireGuard::DayRtc s_wireDayRtc;
+
 __attribute__((cold)) static void wireGuardLoad() {
     auto &g = mppt.charger.wireGuard;
     if (!g.conf.mode) return;
+    if (g.restoreDay(s_wireDayRtc))
+        ESP_LOGI("wire", "open day retained: %u Rc samples, %u sweeps", g.daySamples(), g.daySweeps());
     WireGuard::Blob b;
     nvs.open();
     const bool have = nvs.readBlob("wire", &b, sizeof b);
@@ -1060,6 +1064,11 @@ static void lfWireGuard(float iout) {
                  g.armed() ? "" : " (warn only)", (int) g.rbWarn(), g.pw(), g.ioutCap());
         lastLvl = g.level();
         lastRb = g.rbWarn();
+    }
+    static uint32_t rtcS = 0;
+    if (nowS - rtcS >= 10) {
+        rtcS = nowS;
+        g.saveDay(s_wireDayRtc);
     }
     static uint32_t lastTryS = 0;
     if (g.saveDue(running) && (!lastTryS || nowS - lastTryS >= 600)) {

@@ -90,15 +90,6 @@ An estimate counts as having data until 15 (excess drop), 60 (slope) or 360 (swe
 minutes pass without a new value; time without output current does not age it, so a night neither
 releases nor invalidates the day's verdict.
 
-The baseline is the median of the daily medians of the last 14 days that had data. A day ends at the
-first hour without conversion at least 12 hours after the previous one, or after 36 hours. A day's
-median enters the baseline only when it lies within `wire_dr_min` of the current baseline and, once
-learning has ended, within half of `wire_dr_min` of the lowest baseline since then, so a slowly growing
-fault isn't learned in. The first 7 days with data are a learning phase that only warns. The baseline
-is kept in NVS and written at most once a day, only while the converter is stopped; reprovisioning the
-config partition doesn't touch it. `wire-reset` clears the trip and the baseline and restarts
-learning.
-
 A rise of the shared bus-to-pack resistance (`Rb`) only warns: the chargers can't relieve that
 section while a load discharges the pack through it. When the output and battery currents move
 together (a single charger, steady loads), the converter can't tell a fault in the shared section
@@ -114,3 +105,29 @@ When no estimate has data (no BMS data and no qualifying sweep) and no level is 
 reports -1 and the MQTT alert reports `unverified`, also after more than 3 charging days without any
 data; a held level stays. Missing data never reads as `ok`. Telemetry `Pw` is sent only from an
 estimate that produced a value within the last 2 minutes.
+
+### Baseline and learning
+
+The baseline is the median of the daily medians of the last 14 good days. A day is good for the
+resistance baseline when it has at least 4 samples of the slow fit taken while `Iout` ≥ 5 A, at
+least 300 BMS frames at `Iout` ≥ 5 A, and a standard deviation of `Iout` of at least 2 A among those
+frames. Below that spread the fit can't tell the voltage offset from the resistance, and the drift of
+the offset biases the slope. The sweep baseline needs at least 2 sweeps on the day. A day without
+enough data neither enters the baseline nor counts as learned.
+
+The first 7 good days are a learning phase that only warns. On a converter with BMS data a day counts
+when the resistance part was good; without BMS data, when the sweeps were. During learning every good
+day enters the baseline, so a wrong first day is outvoted by the median once two more good days are
+in. After learning, a day's median enters only when it lies within `wire_dr_min` of the current
+baseline and within half of `wire_dr_min` of the lowest baseline since learning ended, so a slowly
+growing fault isn't learned in.
+
+A day ends at the first hour without conversion at least 12 hours after the previous end, or after 36
+hours. After a cold start (power-up) the first such hour ends the day as soon as the day counts. The
+open day is kept in RAM that survives a restart, a crash or watchdog reset and a firmware update
+(unless the update changes how the day is stored), but not a power loss, so restarts during the day
+don't discard its data.
+
+The baseline is kept in NVS and written at most once a day, only while the converter is stopped;
+reprovisioning the config partition doesn't touch it. `wire-reset` clears the trip, the baseline and
+the open day and restarts learning.

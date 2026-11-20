@@ -9,6 +9,11 @@
 //     -p                   prime: learn the baseline over the whole data first, then judge every day
 //     -P <mask>            graded paths (WireGuard::paths): 1 fast, 2 Rc, 4 Ro; default 7
 //     -v                   print level changes and fast-path minutes >= 1.2 W
+//     -r <s,s,...|@file>   restart the guard at these unix times, as the firmware does: baseline from the
+//                          last NVS save (saveDue, 600 s retry), the open day from its RTC copy (every 10 s,
+//                          where the guard has one), fits, sweeps and timers lost; the guard sees uptime
+//     -R                   with -r: the RTC copy is lost on every restart (power loss)
+//     -d                   print every day close
 //
 // Levels are reported as level(), i.e. as with wire_protect=2 (the learning phase still caps them at warn).
 #include <cmath>
@@ -114,6 +119,8 @@ struct Day {
     int fastMin = 0, fastWarnMin = 0, lvlMin[4]{}, devWfPos = 0, anyMin = 0;
     float baseA = NAN, baseRc = NAN, baseRb = NAN, kMin = INFINITY, kMax = -INFINITY;
     bool dayWarn = false;
+    int days = 0, boots = 0;
+    float baseRo = NAN;
     std::vector<float> dr; // fast-path dR of the day's minutes
 };
 
@@ -123,11 +130,48 @@ struct Result {
     std::map<int64_t, Day> days;
 };
 
-static bool g_verbose = false;
+static bool g_verbose = false, g_days = false, g_rtcLost = false;
+static std::vector<int64_t> g_reboots; // [ms]
+
+template<class G> struct Rtc {
+    static constexpr bool has = requires(G &g, typename G::DayRtc &r) { g.saveDay(r); g.restoreDay(r); };
+};
+
+template<class G> static void rtcSave(const G &g, std::vector<uint8_t> &buf) {
+    if constexpr (Rtc<G>::has) {
+        typename G::DayRtc r;
+        g.saveDay(r);
+        buf.assign((const uint8_t *) &r, (const uint8_t *) &r + sizeof r);
+    }
+}
+
+template<class G> static bool rtcRestore(G &g, const std::vector<uint8_t> &buf) {
+    if constexpr (Rtc<G>::has) {
+        typename G::DayRtc r;
+        if (buf.size() != sizeof r) return false;
+        memcpy(&r, buf.data(), sizeof r);
+        return g.restoreDay(r);
+    }
+    return false;
+}
+
+template<class G> static float daySd(const G &g) {
+    if constexpr (requires { g.dayCurrentSd(); }) return g.dayCurrentSd();
+    return NAN;
+}
 
 static Result run(WireGuard &g, float dR, int64_t faultMs, int64_t startMs) {
     Result r;
     WireResistance w;
+    const auto conf = g.conf;
+    const uint8_t paths = g.paths;
+    WireGuard::Blob flash{};
+    bool haveFlash = false;
+    std::vector<uint8_t> rtc;
+    size_t ri = 0;
+    int64_t bootMs = 0, rtcLastMs = 0;
+    uint32_t lastTryS = 0;
+    int boots = 0;
     const auto sweeps = fitSweeps(dR, faultMs);
     size_t si = 0, mi = 0, bi = 0, di = 0;
     int64_t t0 = std::max(mp.front().t, startMs) / 1000 * 1000;
@@ -141,7 +185,26 @@ static Result run(WireGuard &g, float dR, int64_t faultMs, int64_t startMs) {
     uint8_t lastLvl = 0;
     bool lastRb = false;
     float lastFastPw = NAN;
+    while (ri < g_reboots.size() && g_reboots[ri] <= t0) ++ri;
+    bootMs = t0 - 8000;
     for (int64_t t = t0; t <= mp.back().t; t += 3000) {
+        if (ri < g_reboots.size() && g_reboots[ri] <= t) {
+            ++ri;
+            ++boots;
+            g.~WireGuard();
+            new(&g) WireGuard();
+            g.conf = conf;
+            g.paths = paths;
+            const bool lb = haveFlash && g.load(&flash, sizeof flash), lr = !g_rtcLost && rtcRestore(g, rtc);
+            if (g_days)
+                printf("    %s restart: baseline %s (%u days), day %s\n", ts(t), lb ? "loaded" : "none", g.dayCount(),
+                       lr ? "restored" : "lost");
+            w = WireResistance{};
+            ro = NAN; roStamp = 0; prevI = NAN;
+            bootMs = t - 8000;
+            lastTryS = 0;
+            rtcLastMs = t;
+        }
         while (mi < mp.size() && mp[mi].t <= t) {
             uo = mp[mi].uo + (mp[mi].t >= faultMs ? dR * mp[mi].i : 0.f);
             io = mp[mi].i; lastM = mp[mi].t; ++mi;
@@ -151,14 +214,17 @@ static Result run(WireGuard &g, float dR, int64_t faultMs, int64_t startMs) {
             else { ibat = bms[bi].v; ibatT = bms[bi].t; }
             ++bi;
         }
-        while (si < sweeps.size() && sweeps[si].tEnd <= t) { ro = sweeps[si].r; roStamp = (uint32_t) (sweeps[si].tEnd / 1000); ++si; }
+        while (si < sweeps.size() && sweeps[si].tEnd <= t) {
+            if (sweeps[si].tEnd > bootMs) { ro = sweeps[si].r; roStamp = (uint32_t) ((sweeps[si].tEnd - bootMs) / 1000); }
+            ++si;
+        }
         auto &day = r.days[t / 86400000];
         while (di < dev.size() && dev[di].t <= t) {
             if (dev[di].pw > day.devPwMax) day.devPwMax = dev[di].pw;
             day.devWfPos += dev[di].wf > 0;
             ++di;
         }
-        const uint32_t nowS = (uint32_t) (t / 1000);
+        const uint32_t nowS = (uint32_t) ((t - bootMs) / 1000); // uptime, as on the device
         const bool have = t - lastM < 5000 && std::isfinite(io);
         const float iout = have ? io : 0.f;
         const bool running = have && iout > 0.3f;
@@ -172,7 +238,28 @@ static Result run(WireGuard &g, float dR, int64_t faultMs, int64_t startMs) {
             prevI = use ? iout : NAN;
         }
         const float roNow = roStamp && nowS - roStamp <= OutputImpedance::STALE_S ? ro : NAN;
+        const auto pre = g.blob();
+        const uint8_t preN = g.daySamples(), preRo = g.daySweeps();
+        const float preSd = daySd(g);
         g.tick(nowS, have ? iout : NAN, running, w.own(nowS), w.offset(nowS), w.shared(nowS), roNow, roStamp);
+        if (g_days && (memcmp(&pre, &g.blob(), sizeof pre) || (preN && !g.daySamples()) || (preRo && !g.daySweeps())))
+            printf("    %s day close: %u Rc samples (I sd %.1f A), %u sweeps -> days %u, Rc days %u Ro days %u, "
+                   "base Rc %.2f Ro %.2f mOhm%s\n", ts(t), preN, preSd, preRo, g.dayCount(), g.blob().nRc,
+                   g.blob().nRo, g.baseRc() * 1e3, g.baseRo() * 1e3, g.learning() ? " (learning)" : "");
+        if (g.saveDue(running) && (!lastTryS || nowS - lastTryS >= 600)) {
+            lastTryS = nowS;
+            flash = g.blob();
+            haveFlash = true;
+            g.saved();
+        }
+        if (t - rtcLastMs >= 10000) {
+            rtcLastMs = t;
+            rtcSave(g, rtc);
+        }
+        auto &dd = r.days[t / 86400000];
+        dd.days = g.dayCount();
+        dd.boots = boots;
+        dd.baseRo = g.baseRo();
 
         day.iMax = std::max(day.iMax, iout);
         if (g.rcPath().fresh) day.rcMax = std::max(day.rcMax, g.rcPath().pw);
@@ -236,6 +323,21 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[a], "-p")) prime = true;
         else if (!strcmp(argv[a], "-P") && a + 1 < argc) paths = (uint8_t) atoi(argv[++a]);
         else if (!strcmp(argv[a], "-v")) g_verbose = true;
+        else if (!strcmp(argv[a], "-d")) g_days = true;
+        else if (!strcmp(argv[a], "-R")) g_rtcLost = true;
+        else if (!strcmp(argv[a], "-r") && a + 1 < argc) {
+            const char *s = argv[++a];
+            FILE *f = *s == '@' ? fopen(s + 1, "r") : nullptr;
+            if (*s == '@' && !f) { fprintf(stderr, "no %s\n", s + 1); return 2; }
+            char buf[64];
+            while (f ? fscanf(f, "%63s", buf) == 1 : *s) {
+                const char *x = f ? buf : s;
+                g_reboots.push_back(atoll(x) * 1000);
+                if (!f) { s = strchr(s, ','); s = s ? s + 1 : ""; }
+            }
+            if (f) fclose(f);
+            std::sort(g_reboots.begin(), g_reboots.end());
+        }
         else { fprintf(stderr, "bad option %s\n", argv[a]); return 2; }
     }
     if (a >= argc) { fprintf(stderr, "usage: %s [-f mOhm@unixS] [-s unixS] [-p] [-P mask] [-v] datadir...\n", argv[0]); return 2; }
@@ -253,7 +355,10 @@ int main(int argc, char **argv) {
     if (prime) {
         WireGuard p;
         p.conf.mode = 2;
+        const auto rb = g_reboots;
+        g_reboots.clear();
         run(p, 0, INT64_MAX, startMs);
+        g_reboots = rb;
         auto b = p.blob();
         b.days = std::max<uint8_t>(b.days, WireGuard::LEARN_DAYS);
         g.load(&b, sizeof b);
@@ -261,15 +366,15 @@ int main(int argc, char **argv) {
                g.baseA() * 1e3, g.baseRb() * 1e3, g.baseRo() * 1e3, b.nRc, b.nRo);
     }
     const auto r = run(g, dR, faultMs, startMs);
-    printf("day    Imax  max Pw: fast    Rc    Ro   all | fast min>=warn  fastMin  lvl>=1  any>=1 [min] | slope [mΩ] med dR dayWarn | device Pw wf>0 | base a[mV] Rc Rb [mΩ]\n");
+    printf("day    Imax  max Pw: fast    Rc    Ro   all | fast min>=warn  fastMin  lvl>=1  any>=1 [min] | slope [mΩ] med dR dayWarn | device Pw wf>0 | base a[mV] Rc Rb Ro [mΩ] days boots\n");
     float pwMax = -INFINITY;
     int warnMin = 0, lvlMin = 0, anyMin = 0;
     for (auto &[d, x]: r.days) {
         const int l = x.lvlMin[1] + x.lvlMin[2] + x.lvlMin[3];
-        printf("%s  %5.1f  %12.2f %5.2f %5.2f %5.2f | %14d %8d %7d %7d       | %5.1f..%5.1f %6.2f %3d     | %9.2f %4d | %6.1f %5.2f %5.2f\n",
+        printf("%s  %5.1f  %12.2f %5.2f %5.2f %5.2f | %14d %8d %7d %7d       | %5.1f..%5.1f %6.2f %3d     | %9.2f %4d | %6.1f %5.2f %5.2f %5.2f %4d %5d\n",
                ts(d * 86400000, "%m-%d"), x.iMax, x.pwMax, x.rcMax, x.roMax, x.allMax, x.fastWarnMin, x.fastMin, l,
                x.anyMin, x.kMin * 1e3, x.kMax * 1e3, med(x.dr) * 1e3, (int) x.dayWarn, x.devPwMax, x.devWfPos, x.baseA * 1e3,
-               x.baseRc * 1e3, x.baseRb * 1e3);
+               x.baseRc * 1e3, x.baseRb * 1e3, x.baseRo * 1e3, x.days, x.boots);
         anyMin += x.anyMin;
         pwMax = std::max(pwMax, x.pwMax);
         warnMin += x.fastWarnMin;

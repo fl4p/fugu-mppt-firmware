@@ -1899,7 +1899,8 @@ static void cmdWire(cmd *) {
                  pv[i].pw);
     UART_LOG("  offset %.1fmV slope %.2fmOhm vs baseline, day dR warn %d", g.ofs() * 1e3f, g.slope() * 1e3f,
              (int) g.dayWarn());
-    UART_LOG("  Iref %.1fA, today %u Rc samples, %u sweeps", g.iRef(), g.daySamples(), g.daySweeps());
+    UART_LOG("  Iref %.1fA, today %u Rc samples (Iout sd %.1fA), %u sweeps, counts %d", g.iRef(), g.daySamples(),
+             g.dayCurrentSd(), g.daySweeps(), (int) g.dayCounts());
 }
 
 static void cmdWireReset(cmd *) {

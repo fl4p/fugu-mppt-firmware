@@ -379,3 +379,151 @@ code derates on the 20 % case); +15 mΩ at 15 A warns after 45 min, also with 20
 Ro-only monotonic over 0..100 mΩ; a repaired Ro-only derate releases; 1–2 sweeps after a reboot leave
 `wf` unverified. With the simulator's 30-min sweeps the Ro-only +6/+15 mΩ steps take 120 instead of
 60 min (3 sweeps to move the median, then 3 graded values).
+
+## Learning across restarts and odd first days (2026-11-20)
+
+Host-tested and replayed, not deployed.
+
+### Field finding
+
+fry, 2026-11-20: `wf` = 1 for about 70 minutes, `Pw` 6.2–6.8 W from the `Rc` (slope) path, no real
+fault. The `wire` command showed `baseline: 1 days (learning), Rc 3.13 a 25.7mV Rb 5.00 Ro 20.16
+mOhm` and `Rc fresh dR 15.45 mOhm Pw 3.47 W` at `Iref` 15 A. The true `Rc` is about 15–18 mΩ (11-08
+field fit about 15 mΩ). The baseline had been one day since at least 11-17.
+
+Three causes:
+
+1. **Restarts discarded the open day.** The day accumulators lived in RAM, and a day closed only at
+   the first hour without conversion 12 h after the previous close *or boot* (or after 36 h). The
+   console log shows 116 restarts of fry between 11-12 14:15 and 11-20 14:00 (boot stamps from
+   uptime; deduplicated within 2 min): the 20 OTAs plus bench sessions and reboot loops, e.g. 50 on
+   11-13 17:15–23:50, one every 2.5 min on 11-14 10:01–10:59, 13 on 11-18. After the first close
+   (11-13 ~02:48, the afternoon of 11-12) no further day closed.
+2. **That one day was poor.** Slow-fit samples were taken whenever the fit was valid, which includes
+   the hour after the last BMS frame. The 11-12 day had 5 samples, all from the end of a partial
+   afternoon; the replay gets 5.30 mΩ for it (the device 3.13 mΩ).
+3. **Learning could not outvote it.** `closeDay` rejected a day whose median exceeded baseline +
+   `drMin` also while learning (`accept()` already let everything through while learning, the
+   `drMin` check and the fast-path veto did not). Every correct day (~12–15 mΩ) was rejected against
+   a 1-day baseline.
+
+### Design
+
+- **Open day in RTC RAM.** The day accumulators moved into `WireGuard::Day` (200 B). `main.cpp`
+  copies it every 10 s into `RTC_NOINIT` RAM (`DayRtc`, 208 B: magic with `sizeof(Day)`, FNV-1a
+  checksum) and `wireGuardLoad()` restores it at boot, the same pattern as `ChargerRtc`. Times are
+  stored as ages, since the guard's clock is uptime and restarts at 0. The restore checks magic,
+  checksum and ranges (counts ≤ `DAY_N`, `drSkip < drStep`, step ≥ `DAY_SAMPLE_S`, age ≤ 72 h).
+  RTC RAM survives `esp_restart`, panic, task and interrupt watchdog and OTA (if the `Day` layout is
+  unchanged; a changed layout changes the magic), but not power-on or brown-out.
+  Why not NVS: restarts happen during the day while converting (OTA, crashes), and an NVS write
+  stalls the RT loop for 1 ms (append) to 33–65 ms (erase/compaction); RTC RAM costs no flash write
+  at all. The NVS blob is still written only after a day closes, with the converter off.
+- **Cold start.** Without a restored day (power-up), the first hour without conversion closes the
+  day as soon as it counts toward learning, without the 12 h. A midday pause of an hour after a cold
+  start can close a partial day once; accepted.
+- **Learning.** While `days < LEARN_DAYS`, every good day enters the `Rc` and `Ro` rings (no
+  `drMin` check, no fast-path veto), so the median outvotes an odd first day after two more good
+  days. After learning the rejection and the anchor are unchanged.
+- **Quality gate.** `Rc` (`rcGood`): ≥ `DAY_RC_N` = 4 slow-fit samples, now taken only while
+  `Iout` ≥ `I_MIN`; ≥ `DAY_W_MIN` = 300 BMS frames at `Iout` ≥ `I_MIN`; variance of `Iout` among
+  those frames ≥ `DAY_VAR_MIN` = `OFS_VAR_MIN` = 4 A². `Ro` (`roGood`): ≥ 2 sweeps (unchanged). A
+  day counts toward learning (`dayCounts`) when `rcGood`, or, on a board without any BMS frame that
+  day and without an `Rc` baseline, when `roGood`. Reasons: the slow fit separates offset from
+  resistance only through the current spread, the same criterion as the offset regression; the
+  offset drifts by tens of mV within a day (section of 2026-11-15), so at σ(Iout) = 2 A (range about
+  7 A) a 20 mV drift moves the slope by about 3 mΩ, below `drMin`, at 1 A by about 6 mΩ. 4 samples at
+  15 min need 45 min of charging with a valid fit; 300 frames are about 25 min of frames. On fry
+  11-04..11-20 the good days had σ 2.1–5.5 A; the gate dropped 11-06 (1 sample while charging),
+  11-10 (σ 2.0 A), 11-11, 11-17 (2 samples, σ 1.1 A) and 11-18 (`Iout` ≤ 4 A).
+- Consequence: a converter whose daily peak stays below about 11 A (σ < 2 A) never finishes
+  learning and stays warn-only (host test: counted days over 3 days by peak current 4..28 A in 2 A
+  steps: `0000333333333`).
+- Blob layout unchanged (`VER` 1): a stored baseline loads as before.
+- `wire` console line: today's `Iout` σ and whether the day counts.
+- `sizeof(WireGuard)` 696 → 720 B (host and xtensa-esp32s3), RTC RAM +208 B, `Blob` 124 B.
+  Firmware (esp32s3, IDF 6.0.3) 1 698 128 → 1 699 440 B (+1 312 B).
+
+### Replay (fry, empty baseline from 11-12 14:00, data to 11-20 16:00)
+
+`test/host-stub/wire-guard-replay.cpp -r` restarts the guard at the given times as the firmware
+does: baseline from the last NVS save (`saveDue`, 600 s retry), open day from the RTC copy (where
+the code has one; `-R` drops it), slow fit, sweeps and timers lost, uptime clock. Level minutes as
+with `wire_protect=2`.
+
+With the 116 restarts from the console log (before → after):
+
+| day | restarts so far | Imax [A] | days | baseline Rc [mΩ] | baseline Ro [mΩ] | max Pw fast / Rc / Ro [W] | minutes at warn |
+|---|---|---|---|---|---|---|---|
+| 11-12 | 2 | 21.2 | 0 → 0 | – → – | – → – | – / – / – → – / – / – | 0 → 0 |
+| 11-13 | 50 | 22.9 | 1 → 0 | 5.30 → – | – → 19.17 | 2.97 / 0.70 / – → – / – / 0.65 | 0 → 0 |
+| 11-14 | 79 | 24.6 | 1 → 2 | 5.30 → 11.14 | – → 19.17 | 0.83 / 0.86 / – → 0.85 / 0.51 / 0.45 | 0 → 0 |
+| 11-15 | 88 | 23.8 | 1 → 3 | 5.30 → 11.66 | – → 20.33 | – / – / – → – / – / 0.88 | 0 → 0 |
+| 11-16 | 90 | 20.5 | 1 → 4 | 5.30 → 11.75 | – → 20.81 | 1.59 / 1.28 / – → 0.55 / 0.18 / 0.95 | 0 → 0 |
+| 11-17 | 91 | 9.1 | 1 → 4 | 5.30 → 11.75 | – → 20.46 | – | 0 → 0 |
+| 11-18 | 105 | 4.0 | 1 → 4 | 5.30 → 11.75 | – → 20.81 | – | 0 → 0 |
+| 11-19 | 110 | 22.0 | 1 → 5 | 5.30 → 11.83 | – → 20.46 | 2.42 / 1.85 / – → 2.53 / 2.02 / 0.32 | 0 → 0 |
+| 11-20 | 116 | 20.7 | 1 → 5 | 5.30 → 11.83 | – → 20.46 | 5.94 / 5.43 / – → 1.11 / 1.01 / 0.79 | 47 → 0 |
+
+"Before" reproduces the field state: one learned day, a low `Rc`, and a warning on 11-20 from the
+`Rc` path (47 min, 5.4 W; device about 70 min, 6.2–6.8 W).
+
+Summary of the other runs (days learned by 11-20 / final baseline Rc, Ro [mΩ] / minutes at warn):
+
+| restarts | before | after |
+|---|---|---|
+| none | 8 / 13.46, 20.46 / 0 | 5 / 12.69, 20.46 / 0 |
+| 20 OTAs only | 5 / 12.68, 20.10 / 241 | 5 / 12.70, 20.46 / 242 |
+| 116, RTC copy lost each time (power loss) | 1 / 5.30, – / 47 | 1 / 15.88, 19.96 / 240 |
+| none, from 11-04 (empty baseline) | 16 / 14.33, 21.24 / 0 | 9 / 14.03, 21.24 / 0 |
+
+- The OTA-only run warns on 11-19 for about 4 h in both versions: fast path 6.3 mΩ, `Rc` path
+  5.7 mΩ at 20–21 A (2.5 W). The regression slope ran 1–6 mΩ above the baseline that day; it
+  depends on when the regression restarted (without the 11-19 OTAs the warning lasts longer, without
+  any restart there is none). Not a learning issue; the regression is not kept across a restart.
+- With the RTC copy lost on every restart, only 11-16 counts (power loss is not what happened on
+  fry; every reset reason in the log, from `bootinfo` replies, was SW, PANIC or INT_WDT).
+- From 11-04 the gate makes learning slower (ends 11-15 instead of 11-10) and drops the days listed
+  above; the baselines agree within 0.5 mΩ.
+- The `Rc` baseline from 11-12 on (11.8–12.7 mΩ) is lower than from 11-04 on (13.8–15.2 mΩ): the
+  slow fit's `Rc`/`Rb` split differs between those weeks.
+
+### Host test
+
+New cases in `test/host-stub/wire-guard-test.cpp` (all pass): a fry-like blob (1 day, `Rc`
+3.13 mΩ) followed by correct days converges to 13.97 mΩ after two good days and warns no more from
+day 3, still learning; a dim first day (7 A peak) and 5.4 A days don't enter the baseline; counted
+days are monotonic in the peak current; after learning a +10 mΩ fault stays out of both baselines
+for 5 days and holds the level; restarts every 3 h, every 2.5 min for 2 h a day (RTC kept) and at
+10:00 and 13:00 with the RTC copy lost all learn 10 days to the right baseline; restarts every 3 h
+with the RTC copy lost learn nothing (documented); a restored day closes exactly as without the
+restart; a corrupt, foreign or zeroed RTC copy is rejected.
+
+### Guard checklist
+
+1. Unevaluable input: a day below the gate neither enters a baseline nor counts toward learning, so
+   `learning()` stays true and the guard stays warn-only; `wire` shows the day's σ and whether it
+   counts. An unreadable RTC copy is rejected and starts an empty day.
+2. Monotonicity: more samples, frames or current spread can only turn a day good; counted days over
+   peak current 4..28 A are non-decreasing. Fault grading is unchanged (existing monotonic tests).
+3. Preconditions: `restoreDay()` runs in `wireGuardLoad()` before the first tick; the RTC copy is
+   refreshed every 10 s from the same core-0 loop that ticks the guard. Checked in the build (symbol
+   `s_wireDayRtc`, 208 B, in RTC slow memory) and in the host replay with the logged restart times.
+4. Source of truth: the magic includes `sizeof(Day)`, so a firmware with another layout does not
+   restore a foreign copy.
+5. Persistence: a restored day only adds data; a failed restore cannot mark anything verified.
+   `unvDays` still counts only at a day close.
+6. Provenance: `wire` reports days, learning and the day's gate inputs; the boot log says when an
+   open day was retained.
+7. Known-bad calibration: the 1-day 3.13 mΩ blob warns on day 1 (precondition checked), then
+   converges; the real-data replay reproduces the field warning before and removes it after; a
+   fault after learning is still rejected and warns.
+8. Fix vs mute: the warning disappears because the baseline converges to the measured `Rc`, not
+   because a threshold moved. Learning-time warnings still occur while the baseline is wrong.
+
+### Deploy note
+
+The blob layout is unchanged, so fry keeps `days 1, Rc 3.13`. Without `wire-reset` the next good day
+gives a 2-day median of about 8 mΩ (the slope path can still warn above about 18 A), the second
+good day outvotes it. `wire-reset` after the update drops the bad day at once; it also discards the
+open day, so it is best done before the day's charging starts.

@@ -36,6 +36,11 @@ struct Sim {
     float roOut = 0, outP = 0;
     uint8_t outMask = 0;
     uint32_t t = 0, roStamp = 0;
+    // restarts: the guard sees uptime t - bootT; persist emulates the NVS save and the RTC day copy
+    uint32_t bootT = 0;
+    bool persist = false, haveFlash = false;
+    WireGuard::Blob flash{};
+    WireGuard::DayRtc rtc{};
     float ro = NAN, prevI = NAN;
     std::mt19937 rng{1};
 
@@ -82,7 +87,7 @@ struct Sim {
 
         if (bms && running && i > 0.3f) {
             if (std::fabs(i - prevI) < 0.5f) {
-                if (rcFeed) w.add(dv, i, ib, t);
+                if (rcFeed) w.add(dv, i, ib, t - bootT);
                 g.frame(dv, i, ib);
             }
             prevI = i;
@@ -95,9 +100,19 @@ struct Sim {
             ++nSweep;
             roStamp = t;
         }
-        const float rcv = rcFeed ? w.own(t) : NAN;
-        g.tick(t, i, running, rcv, rcFeed ? w.offset(t) : NAN, rcFeed ? w.shared(t) : NAN,
-               roFeed && t - roStamp < 6 * 3600 ? ro : NAN, roFeed ? roStamp : 0);
+        const uint32_t up = t - bootT;
+        const float rcv = rcFeed ? w.own(up) : NAN;
+        const bool roOk = roFeed && roStamp > bootT && t - roStamp < 6 * 3600;
+        g.tick(up, i, running, rcv, rcFeed ? w.offset(up) : NAN, rcFeed ? w.shared(up) : NAN, roOk ? ro : NAN,
+               roOk ? roStamp - bootT : 0);
+        if (persist) {
+            if (g.saveDue(running)) {
+                flash = g.blob();
+                haveFlash = true;
+                g.saved();
+            }
+            g.saveDay(rtc);
+        }
 
         if (getenv("WG_DEBUG") && (g.level() != dbgL || g.rbWarn() != dbgRb)) {
             dbgL = g.level(); dbgRb = g.rbWarn();
@@ -116,6 +131,21 @@ struct Sim {
     }
 
     void runUntil(uint32_t end) { while (t < end) step(); }
+
+    // restart as the firmware does: baseline from the last save, open day from the RTC copy if kept
+    void reboot(bool rtcKept) {
+        const auto c = g.conf;
+        const uint8_t p = g.paths;
+        g.~WireGuard();
+        new(&g) WireGuard();
+        g.conf = c;
+        g.paths = p;
+        if (haveFlash) g.load(&flash, sizeof flash);
+        if (rtcKept) g.restoreDay(rtc);
+        w = WireResistance{};
+        prevI = NAN;
+        bootT = t - 8;
+    }
 
     float det(uint8_t l) const { // detection delay [min] after the fault, NAN = never
         return firstEff[l] == UINT32_MAX || firstEff[l] < faultT ? NAN : (float) (firstEff[l] - faultT) / 60.f;
@@ -554,6 +584,140 @@ static void testPersist() {
     printf("  sizeof(WireGuard)=%zu sizeof(Blob)=%zu\n", sizeof(WireGuard), sizeof(WireGuard::Blob));
 }
 
+
+// field case: one dim partial day left Rc 3.13 mOhm (true ~15) as a 1-day baseline; later correct
+// days were rejected against it, so learning never progressed and the slope path warned
+static void testBadFirstDay() {
+    printf("learning: a wrong first-day baseline is outvoted\n");
+    {
+        Sim s{1};
+        WireGuard::Blob b{WireGuard::VER, 1, 1, 1, 1, 1, 0, 0, WireGuard::NONE, WireGuard::NONE, {313}, {257}, {500}, {2016}};
+        CHECK(s.g.load(&b, sizeof b) && s.g.learning(), "load fry-like blob");
+        s.runUntil(DAY);
+        const uint8_t first = s.maxLvl;
+        s.maxLvl = 0;
+        s.runUntil(2 * DAY);
+        const float rc2 = s.g.baseRc();
+        s.runUntil(3 * DAY); // a held level releases in the morning of day 2
+        s.maxLvl = 0;
+        s.runUntil(5 * DAY);
+        printf("  base Rc 3.13 -> %.2f (after 2 good days) -> %.2f mOhm, days %u, level day 1 %u, days 3-5 %u, learning %d\n",
+               rc2 * 1e3, s.g.baseRc() * 1e3, s.g.dayCount(), first, s.maxLvl, s.g.learning());
+        CHECK(first >= 1, "precondition: the bad baseline warns on day 1");
+        CHECK(std::fabs(s.g.baseRc() - 0.014f) < 0.0015f, "baseline did not converge: %.2f mOhm", s.g.baseRc() * 1e3);
+        CHECK(s.maxLvl == 0, "false warning stays after convergence: level %u", s.maxLvl);
+        CHECK(s.g.dayCount() == 6 && s.g.learning() && !s.g.armed(), "days %u learning %d", s.g.dayCount(), s.g.learning());
+    }
+    {   // a dim first day (peak 7 A) doesn't enter at all; the next normal days do
+        Sim s{2};
+        s.ipk = 7.f;
+        s.runUntil(DAY);
+        printf("  dim first day (7 A): days %u, Rc days %u\n", s.g.dayCount(), s.g.blob().nRc);
+        CHECK(s.g.dayCount() == 0 && s.g.blob().nRc == 0 && s.g.learning(), "dim day entered the baseline");
+        s.ipk = 28.f;
+        s.runUntil(3 * DAY);
+        CHECK(s.g.dayCount() == 2 && std::fabs(s.g.baseRc() - 0.014f) < 0.0015f, "normal days: %u, Rc %.2f",
+              s.g.dayCount(), s.g.baseRc() * 1e3);
+    }
+    {   // too little data: a few minutes above I_MIN, no current spread
+        Sim s{2};
+        s.ipk = 5.4f;
+        s.runUntil(4 * DAY);
+        printf("  5.4 A peak, 4 days: days %u Rc days %u learning %d wf %d\n", s.g.dayCount(), s.g.blob().nRc,
+               s.g.learning(), s.g.wf());
+        CHECK(s.g.dayCount() == 0 && s.g.blob().nRc == 0 && s.g.learning(), "thin days entered the baseline");
+    }
+    printf("  counted days over peak current 4..28 A (3 days each): ");
+    int prev = 0;
+    for (int ipk = 4; ipk <= 28; ipk += 2) {
+        Sim s{2};
+        s.ipk = (float) ipk;
+        s.runUntil(3 * DAY);
+        printf("%u", s.g.dayCount());
+        CHECK(s.g.dayCount() >= prev, "peak %d A counted %u < %d days", ipk, s.g.dayCount(), prev);
+        prev = s.g.dayCount();
+    }
+    printf("\n");
+}
+
+// after learning a fault still stays out of the baseline and warns
+static void testFaultNotLearned() {
+    printf("fault after learning: rejected from the baseline\n");
+    Sim s{1};
+    s.runUntil(ON);
+    const float rc0 = s.g.baseRc(), ro0 = s.g.baseRo();
+    s.faultT = ON;
+    s.dRc = 0.010f;
+    s.runUntil(ON + 5 * DAY);
+    printf("  +10 mOhm for 5 days: base Rc %.2f -> %.2f, Ro %.2f -> %.2f mOhm, level %u wf %d\n", rc0 * 1e3,
+           s.g.baseRc() * 1e3, ro0 * 1e3, s.g.baseRo() * 1e3, s.g.level(), s.g.wf());
+    CHECK(std::fabs(s.g.baseRc() - rc0) < 0.001f && std::fabs(s.g.baseRo() - ro0) < 0.001f, "fault learned in");
+    CHECK(s.g.level() >= 1 && s.g.wf() == 1, "fault not warned: level %u wf %d", s.g.level(), s.g.wf());
+}
+
+// the firmware restarts with the baseline from NVS and, after a software reset, the open day from RTC RAM
+static void testReboots() {
+    printf("restarts during learning (10 days)\n");
+    struct C { const char *n; uint32_t every, first; bool rtc; uint8_t minDays; } cases[]{
+        {"every 3 h, RTC kept", 3 * 3600, 3600, true, 9},
+        {"every 2.5 min 9-11 h, RTC kept", 150, 0, true, 9},
+        {"10:00 and 13:00, RTC lost", 0, 0, false, 9},
+        {"every 3 h, RTC lost", 3 * 3600, 3600, false, 0},
+    };
+    for (auto &c: cases) {
+        Sim s{2};
+        s.persist = true;
+        uint32_t next = c.first;
+        while (s.t < 10 * DAY) {
+            s.step();
+            const uint32_t h = s.t % DAY;
+            bool boot;
+            if (c.every == 150) boot = h >= 9 * 3600 && h < 11 * 3600 && h % 150 < TICK;
+            else if (c.every) boot = s.t >= next;
+            else boot = h == 10 * 3600 || h == 13 * 3600;
+            if (boot) {
+                if (c.every && c.every != 150) next += c.every;
+                s.reboot(c.rtc);
+            }
+        }
+        printf("  %-32s days %2u learning %d base Rc %.2f Ro %.2f mOhm maxLvl %u\n", c.n, s.g.dayCount(),
+               s.g.learning(), s.g.baseRc() * 1e3, s.g.baseRo() * 1e3, s.maxLvl);
+        if (c.minDays) {
+            CHECK(s.g.dayCount() >= c.minDays && s.g.dayCount() <= 10, "%s: %u days", c.n, s.g.dayCount());
+            CHECK(std::fabs(s.g.baseRc() - 0.014f) < 0.0015f, "%s: Rc %.2f", c.n, s.g.baseRc() * 1e3);
+            CHECK(s.maxLvl == 0, "%s: level %u", c.n, s.maxLvl);
+        }
+    }
+    {   // RTC copy integrity
+        Sim s{2};
+        s.runUntil(DAY + 12 * 3600);
+        WireGuard::DayRtc r{};
+        s.g.saveDay(r);
+        WireGuard g2{};
+        CHECK(g2.restoreDay(r) && g2.daySamples() == s.g.daySamples() && g2.daySamples() > 0, "round trip");
+        auto bad = r;
+        bad.d.rc[0] ^= 1;
+        CHECK(!WireGuard{}.restoreDay(bad), "corrupt day accepted");
+        bad = r;
+        ++bad.magic;
+        CHECK(!WireGuard{}.restoreDay(bad), "foreign magic accepted");
+        WireGuard::DayRtc z{};
+        CHECK(!WireGuard{}.restoreDay(z), "zeroed RAM accepted");
+    }
+    {   // the restored day keeps its age across the uptime reset and closes as without the restart
+        Sim a{2}, b{2};
+        a.persist = b.persist = true;
+        a.runUntil(DAY + 12 * 3600);
+        b.runUntil(DAY + 12 * 3600);
+        b.reboot(true);
+        a.runUntil(3 * DAY);
+        b.runUntil(3 * DAY);
+        printf("  reboot at noon, RTC kept: days %u vs %u without, Rc %.3f vs %.3f mOhm\n", b.g.dayCount(),
+               a.g.dayCount(), b.g.baseRc() * 1e3, a.g.baseRc() * 1e3);
+        CHECK(a.g.dayCount() == b.g.dayCount() && std::fabs(a.g.baseRc() - b.g.baseRc()) < 3e-4f, "restored day differs");
+    }
+}
+
 int main() {
     testClean();
     testSteps();
@@ -569,6 +733,9 @@ int main() {
     testKnownBad();
     testRoNoise();
     testPersist();
+    testBadFirstDay();
+    testFaultNotLearned();
+    testReboots();
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail != 0;
 }
