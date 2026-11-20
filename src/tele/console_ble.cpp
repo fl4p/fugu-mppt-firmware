@@ -114,12 +114,6 @@ static bool lastNotifyOk = true;             // set by TxCallbacks::onStatus, re
 // update we request hasn't applied yet, so pushing the queued log backlog into the link overflows the
 // controller's ACL buffers (the rc=6 burst). Hold the drain for a short settle window; the backlog
 // then flushes cleanly. Re-armed on every connect.
-// The settle window also defers our connection-parameter request: issuing a device-initiated LL
-// connection update synchronously from the host connect callback — while justworks pairing/feature
-// exchange is still in flight and Wi-Fi coex is active — races the peer's procedures and trips the
-// controller assert lld_con.c:3275 (r_lld_con_param_update). We instead request it once from the
-// network-loop drain after the window, off the host callback. Backpressure tolerates the brief
-// slow-interval drain before the faster interval applies.
 // Command results (pwm-freq, sync, dt, status, ...) are emitted with UART_LOG, so they travel the
 // LOG path and are subject to the half-FIFO cap above -- a client can lose a reply with no error
 // and no gap, and cannot tell a command that failed from one whose answer was discarded. Until
@@ -127,12 +121,87 @@ static bool lastNotifyOk = true;             // set by TxCallbacks::onStatus, re
 // once the backlog clears, through bleWrite (full FIFO) so the marker itself cannot be dropped.
 static bool logDropped = false;
 static volatile bool txArmSettle = false;
-static volatile bool connParamsPending = false;
-static int phySetRc = 0;
-static time_ms phyReportAt = 0;
 static time_ms txConnectMs = 0;
 
 static constexpr time_ms TX_SETTLE_MS = 500;
+
+// Post-connect link setup (2M PHY, then conn interval), one LL procedure at a time. The S3 controller
+// asserts in lld_con.c:3275 (r_lld_con_param_update, INT_WDT) when the central's own connection
+// update crosses a procedure we opened (fry 2026-11-20, weak link; same assert and fix in
+// walkthru-earth/opensensor-space-firmware 27febc4). Starts LINK_SETTLE_MS after encryption (or
+// LINK_ENC_WAIT_MS after connect if the link stays plain), waits for the PHY update to complete,
+// and asks for an interval only if the central has not already chosen one in range.
+#if defined(CONFIG_BT_NIMBLE_ENABLED)
+enum : uint8_t { LINK_IDLE, LINK_PHY_WAIT, LINK_CONN, LINK_DONE };
+static volatile uint8_t linkStep = LINK_DONE;
+static volatile bool linkEnc = false, linkPhyDone = false;
+static volatile uint32_t linkT = 0; // millis(): connect / encryption / last step
+static bool linkEncRequired = false;
+static constexpr uint32_t LINK_SETTLE_MS = 2000, LINK_ENC_WAIT_MS = 6000, LINK_PHY_WAIT_MS = 2000,
+                          LINK_RETRY_MS = 1000;
+static constexpr uint16_t ITVL_MIN = 6, ITVL_MAX = 12; // 7.5..15 ms
+
+static int linkGapEvent(ble_gap_event *e, void *) {
+    if (e->type == BLE_GAP_EVENT_ENC_CHANGE && e->enc_change.status == 0 && linkStep == LINK_IDLE) {
+        linkEnc = true;
+        linkT = millis();
+    } else if (e->type == BLE_GAP_EVENT_PHY_UPDATE_COMPLETE) {
+        linkPhyDone = true;
+    } else if (e->type == BLE_GAP_EVENT_CONN_UPDATE && linkStep == LINK_CONN) {
+        linkT = millis(); // central just updated: keep clear of its next procedure
+    }
+    return 0;
+}
+
+static void linkTick() {
+    const uint32_t now = millis(), dt = now - linkT;
+    const uint16_t ch = bleServer->getConnId();
+    switch (linkStep) {
+        case LINK_IDLE:
+            if (dt < (linkEnc || !linkEncRequired ? LINK_SETTLE_MS : LINK_ENC_WAIT_MS)) return;
+            linkStep = LINK_CONN;
+            linkT = now - LINK_RETRY_MS;
+#if defined(CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_2M_PHY)
+            // Measured: 2M does not speed up an OTA push (flu 2026-09-08, ~37 s either way); kept for
+            // console/telemetry latency. A REQUEST, not a default: set-default never starts a procedure.
+            linkPhyDone = false;
+            if (ble_gap_set_prefered_le_phy(ch, BLE_GAP_LE_PHY_2M_MASK, BLE_GAP_LE_PHY_2M_MASK, 0) == 0) {
+                linkStep = LINK_PHY_WAIT;
+                linkT = now;
+            }
+#endif
+            return;
+        case LINK_PHY_WAIT: {
+            if (!linkPhyDone && dt < LINK_PHY_WAIT_MS) return;
+            uint8_t tx = 0, rx = 0;
+            ble_gap_read_le_phy(ch, &tx, &rx);
+            ESP_LOGI(TAG, "phy: done=%d tx=%u rx=%u", (int) linkPhyDone, (unsigned) tx, (unsigned) rx);
+            linkStep = LINK_CONN;
+            linkT = now;
+            return;
+        }
+        case LINK_CONN: {
+            if (dt < LINK_RETRY_MS) return;
+            ble_gap_conn_desc d;
+            if (ble_gap_conn_find(ch, &d) != 0) return;
+            if (d.conn_itvl >= ITVL_MIN && d.conn_itvl <= ITVL_MAX && d.conn_latency == 0) {
+                ESP_LOGI(TAG, "conn: itvl=%u kept", (unsigned) d.conn_itvl);
+                linkStep = LINK_DONE;
+                return;
+            }
+            // supervision timeout 400 = 4 s; refused while a procedure runs -> retry
+            if (bleServer->requestConnParams(ch, ITVL_MIN, ITVL_MAX, 0, 400)) {
+                ESP_LOGI(TAG, "conn: itvl=%u, requested %u..%u", (unsigned) d.conn_itvl, ITVL_MIN, ITVL_MAX);
+                linkStep = LINK_DONE;
+            }
+            linkT = now;
+            return;
+        }
+        default:
+            return;
+    }
+}
+#endif
 
 static int bleWrite(const char *buf, size_t len) {
     if (!deviceConnected || !txChar) return 0;
@@ -154,51 +223,9 @@ static void bleTxDrain(time_ms nowMs) {
     std::lock_guard<std::recursive_mutex> lk(txMutex);
     if (txArmSettle) { txConnectMs = nowMs; txArmSettle = false; }
     if (nowMs - txConnectMs < TX_SETTLE_MS) return; // let pairing settle before touching the link
-    if (phyReportAt && millis() >= phyReportAt) {
-        phyReportAt = 0;
-#if defined(CONFIG_BT_NIMBLE_ENABLED) && defined(CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_2M_PHY)
-        uint8_t txPhy = 0, rxPhy = 0;
-        const int rrc = ble_gap_read_le_phy(bleServer->getConnId(), &txPhy, &rxPhy);
-        // set_rc==0 means only that the host ACCEPTED the request, not that the link moved.
-        // tx/rx: 1=1M, 2=2M, 3=coded.
-        ESP_LOGI(TAG, "phy: set_rc=%d read_rc=%d tx=%u rx=%u",
-                 phySetRc, rrc, (unsigned) txPhy, (unsigned) rxPhy);
+#if defined(CONFIG_BT_NIMBLE_ENABLED)
+    linkTick();
 #endif
-    }
-
-    if (connParamsPending) {
-        // Deferred off the host connect callback — see the txArmSettle note for why.
-        // 6..12 = 7.5..15ms interval, latency 0, supervision timeout 400 = 4s.
-        connParamsPending = false;
-        bleServer->requestConnParams(bleServer->getConnId(), 6, 12, 0, 400);
-#if defined(CONFIG_BT_NIMBLE_ENABLED) && defined(CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_2M_PHY)
-        // Ask for the 2M PHY, which doubles the on-air symbol rate.
-        //
-        // MEASURED, and it does NOT speed up an OTA push: 36.5/38.4/38.2 s on 2M against
-        // 38.3/35.9/35.6/39.2 s on 1M (flu, 1.76 MB, same host, 2026-09-08) -- indistinguishable.
-        // The link is not symbol-rate-bound: at the 15 ms connection interval the transfer moves
-        // ~830 B per connection event, which already fits comfortably in an event, so halving the
-        // air time of each packet buys nothing. What is left is connection events and credit
-        // round-trips. Kept anyway because it engages cleanly (verified tx=2 rx=2) and benefits
-        // latency-sensitive console/telemetry traffic, but do NOT expect it to make OTA faster,
-        // and do not re-derive that -- the numbers above are the answer.
-        //
-        // Must be a REQUEST, not just a default. LE Set Default PHY only states a preference for
-        // when the PEER starts the procedure; it never initiates one, so a central that never asks
-        // leaves the link on 1M. This actively runs the PHY update procedure.
-        //
-        // Deferred here for the same reason as the conn-params request above: issuing it from the
-        // host connect callback trips a controller assert. Best effort — a peer or controller that
-        // refuses simply stays on 1M, which is the pre-existing behaviour.
-        {
-            const uint16_t ch = bleServer->getConnId();
-            const int rc = ble_gap_set_prefered_le_phy(ch, BLE_GAP_LE_PHY_2M_MASK,
-                                                       BLE_GAP_LE_PHY_2M_MASK, 0);
-            phySetRc = rc;
-            phyReportAt = millis() + 3000; // see below
-        }
-#endif
-    }
 
     // Chunk at the negotiated ATT MTU minus the 3-byte notify header (falls back to the 20-byte
     // default before MTU exchange). A larger MTU means a multi-line reply is a few notifications
@@ -267,9 +294,11 @@ class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer *s) override {
         deviceConnected = true;
         addLogCallback(bleLogWrite, false); // no boot replay: it floods the FIFO and eats the next result
-        // Defer the fast-interval connection-param request to the network-loop drain (see TX_SETTLE_MS
-        // note): requesting it here, in the host connect callback, trips controller assert lld_con.c:3275.
-        connParamsPending = true;
+#if defined(CONFIG_BT_NIMBLE_ENABLED)
+        linkEnc = false;
+        linkT = millis();
+        linkStep = LINK_IDLE; // linkTick() on the network loop, never from this host callback
+#endif
         txArmSettle = true; // hold the TX drain until the link speeds up (see TX_SETTLE_MS)
         ESP_LOGI(TAG, "client connected");
     }
@@ -294,7 +323,7 @@ class ServerCallbacks : public BLEServerCallbacks {
         // With the broadcast enabled, the teleAdvTick reconciler is the ONLY caller of GAP
         // advertising APIs: a start here runs on the NimBLE host task and would race the
         // network-loop tick's stop/start (same cross-task class as the lld_con.c:3275 assert
-        // that forced connParamsPending off this callback).
+        // that moved the link setup off the connect callback).
         if (!teleAdvEnabled()) s->startAdvertising();
     }
 };
@@ -362,6 +391,11 @@ void bleConsoleBegin(const std::string &deviceName, const std::string &security,
 
     bleServer = BLEDevice::createServer();
     bleServer->setCallbacks(&serverCallbacks);
+#if defined(CONFIG_BT_NIMBLE_ENABLED)
+    linkEncRequired = security == "passkey" || security == "justworks";
+    static ble_gap_event_listener gapListener;
+    ble_gap_event_listener_register(&gapListener, linkGapEvent, nullptr);
+#endif
 
     BLEService *svc = bleServer->createService(NUS_SERVICE_UUID);
 
