@@ -72,7 +72,7 @@
   .card .cstate { font-size:12px; }
   .card .s-terminated { color:var(--accent2); }
   .card .s-charging { color:var(--fg); }
-  .card .s-hold { color:var(--unit); }
+  .card .s-hold, .card .s-cvhold { color:var(--unit); }
   .card .s-blocked { color:var(--warn); }
   .card .s-idle { color:var(--muted); }
   .kpis .chg { flex-basis:100%; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
@@ -585,9 +585,9 @@ function finishCurveReq(dev){
 }
 
 // `status` reply (src/cli.cpp cmdStatus) -> charger snapshot; unmatched fields stay undefined.
-const CHG_STATES = ["terminated", "charging", "blocked", "hold"];
+const CHG_STATES = ["terminated", "charging", "blocked", "hold", "cvhold"];
 const CHG_RE = {
-  state:   /Charger: (TERMINATED|charging|BLOCKED|PARTIAL HOLD)\b(?: \(([^)]*)\))?/,
+  state:   /Charger: (TERMINATED|charging|BLOCKED|PARTIAL HOLD|CV HOLD)\b(?: \(([^)]*)\))?/,
   limits:  /Vbat_max=(\S+?)V Vout_max=(\S+?)V\s+Ibat_lim=(\S+?)A Iout_max=(\S+?)A/,
   bms:     /BMS vcell_high=(\S+?)V \(([^,]+), (\d+)s ago\)\s+ibat=(\S+?)A \(([^,]+), (\d+)s ago\)/,
   dod:     /DoD since full: (\S+?)% \/ (\S+?)% to recharge/,
@@ -600,7 +600,7 @@ function parseChargerStatus(lines){
   const find = (re) => { for (const l of lines){ const m = re.exec(TD.stripAnsi(String(l))); if (m) return m; } return null; };
   let m;
   if ((m = find(CHG_RE.state))){
-    c.state = { TERMINATED:"terminated", charging:"charging", BLOCKED:"blocked", "PARTIAL HOLD":"hold" }[m[1]];
+    c.state = { TERMINATED:"terminated", charging:"charging", BLOCKED:"blocked", "PARTIAL HOLD":"hold", "CV HOLD":"cvhold" }[m[1]];
     if (m[2]) c.detail = m[2];
   }
   if ((m = find(CHG_RE.limits))){ c.vbatMax = num(m[1]); c.voutMax = num(m[2]); c.ibatLim = num(m[3]); c.ioutMax = num(m[4]); }
@@ -1214,7 +1214,7 @@ function renderChg(dev){
   let title = "charger status " + fmtAge(age) + (dev.chgRestored ? " (saved)" : ""), word = c.state;
   // the firmware says "charging" for "not terminated"; without input power that is idle
   if (word === "charging" && Number.isFinite(dev.tele.P) && dev.tele.P < CFG.chargingMinW){ word = "idle"; title += " · not terminated, no input power"; }
-  h.textContent = word + (c.detail ? " (" + c.detail + ")" : "");
+  h.textContent = (word === "cvhold" ? "cv hold" : word) + (c.detail ? " (" + c.detail + ")" : "");
   h.className = "cstate s-" + word + (stale ? " stale" : "");
   h.title = e.title = title;
   e.classList.toggle("stale", stale);

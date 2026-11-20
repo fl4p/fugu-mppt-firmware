@@ -40,8 +40,8 @@ Each converter gets a card, keyed by its hostname:
   voltages, current and mode, so a card stays current between telemetry points, for example while a device in
   its idle profile sends telemetry only every `tele.conf idle_interval_ms`. While no control mode is active, the
   header shows the status line's word for it (`start`, `uv`, `manu`, `psu`, `pvs`) instead of "N/A".
-- **Charger state**: from the `status` reply. The state (terminated, charging, partial hold or blocked, with its
-  reason) stands in the card header next to the mode, green when terminated, yellow in partial hold and orange when
+- **Charger state**: from the `status` reply. The state (terminated, charging, partial hold, CV hold or blocked, with
+  its reason) stands in the card header next to the mode, green when terminated, yellow in a hold and orange when
   blocked. The firmware reports "charging" whenever the charger is not terminated; while the converter delivers less
   than 1 W, for example at night, the card shows "idle" instead. A line under the live values adds the effective output cap `Vout_max`, the highest BMS cell voltage and,
   once terminated, the depth of discharge since full against the recharge threshold; "holiday" is appended while the

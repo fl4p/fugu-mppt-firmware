@@ -167,6 +167,10 @@ test('BLE enable sequence asks for status; charging colour class; more info carr
   assert.equal(card(window, 'fbuck').querySelector('.chg').hidden, true, 'no extra fields: line hidden');
   assert.equal(card(window, 'fbuck').querySelector('.cstate').textContent, 'blocked (pack cold)');
   assert.equal(card(window, 'fbuck').querySelector('.cstate').className, 'cstate s-blocked');
+  Dash.devices.get('fbuck').chg = Dash.parseChargerStatus(['Charger: CV HOLD (312s, pin 27.95V)']);
+  Dash.ingest(Dash.devices.get('fbuck'), { fields: { P: 400 }, ts: 0 }, 'test'); Dash.flush();
+  assert.equal(card(window, 'fbuck').querySelector('.cstate').textContent, 'cv hold (312s, pin 27.95V)');
+  assert.equal(card(window, 'fbuck').querySelector('.cstate').className, 'cstate s-cvhold');
 });
 
 test('snapshot: dev.chg round trip, restored as stale until a fresh reply', async () => {
