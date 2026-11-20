@@ -17,6 +17,9 @@ sidebar_position: 6
 | `ibat_max`          | A    | float | 20         | Maximum battery charge current limit                           |
 | `bat_c`             | Ah   | float | unset → termination line and EOC feedback disabled (see [LFP charging](../../guide/charging/lfp-charging.md)) | Effective battery pack capacity |
 | `tail_c_rate`       | C    | float | 0.05       | End-of-charge tail current as fraction of capacity             |
+| `cv_hold_max_s`     | s    | int   | 0          | [CV hold](../../guide/charging/termination.md#cv-hold): instead of terminating when the highest cell crosses the termination line, hold it at `cv_eoc` and terminate on the tail current, at most this long (then terminate anyway). 0 = off (terminate on the line). Range 0..86400, e.g. 5400 |
+| `tail_hold_s`       | s    | int   | 180        | CV hold: the pack current must stay below `tail_c_rate` × `bat_c`, with the highest cell inside `cv_hold_band` of `cv_eoc`, this long without a break to terminate (1..7200) |
+| `cv_hold_band`      | V    | float | 0.02       | CV hold: cell band below `cv_eoc` that counts as "held" for the tail test. With the hold on it must be smaller than `cv_eoc` − `cv_float` |
 | `recharge_dod`      |      | float | 0.20       | Depth-of-discharge since full to release termination           |
 | `recharge_vfloor_band` | V | float | 0.05    | Cell-voltage drop below `cv_float` to release termination (fallback to DoD counter) |
 | `vout_offset_max`   | V    | float | 0.6        | Worst-case Vout-sensor error tolerated during float: how far below the float floor the BMS-driven EOC loop may pull to stop charging a full pack when Vout reads high |

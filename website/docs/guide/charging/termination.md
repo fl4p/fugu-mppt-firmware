@@ -173,6 +173,52 @@ reduces the current, which lowers `v_term`, which lowers the pin again, until
 the current is zero and the line trips at `cv_min`. This is the premature
 termination observed in the field in July 2026 at 3.40 V/cell.
 
+## CV hold
+
+At a high charge current the internal resistance raises the highest cell
+above the line long before the pack is full: on a 280 Ah LFP pack at 30 A the
+line can trip at about 90 % SoC. With `cv_hold_max_s` > 0 (default 0, off) the
+line crossing does not terminate. The charger enters a CV hold instead: it
+holds the highest cell at `cv_eoc` and lets the current taper.
+
+On each BMS cell frame the hold moves the output-voltage pin by
+`0.5 × (cv_eoc − vcell_high) × N_cells`, limited to ±30 mV per frame and kept
+between `vout_max_fallback` and `vout_max`. The pin starts at the measured bus
+voltage, so entering the hold does not step the output. While the output
+cannot reach the pin (not enough PV power), the pin rises at most 0.2 V above
+the bus, so the returning sun does not push the cell over `cv_eoc`. In PSU mode,
+and while another converter drives the bus, the pin stays where it is.
+
+The target is the constant `cv_eoc`, for the same reason as in
+[Absorption target vs. termination line](#absorption-target-vs-termination-line):
+a target that follows the current would walk the current down to zero.
+
+The hold ends in one of these ways:
+
+- Tail: the BMS pack current stays below `tail_c_rate × bat_c` and the highest
+  cell stays within `cv_hold_band` (default 0.02 V) of `cv_eoc` for
+  `tail_hold_s` (default 180 s) without a break. The band test rejects a low
+  current caused by clouds or a load: then the cell falls below the band and
+  the tail timer restarts. The charger terminates and marks the pack full.
+- Timeout: the hold has lasted `cv_hold_max_s`. The charger terminates and logs
+  a warning.
+- Ceiling: the highest cell reaches `cv_ceiling` on 2 consecutive frames. The
+  charger terminates at once, as without the hold.
+- Stale BMS data: the cell voltage or the pack current is older than 180 s. The
+  charger terminates without marking the pack full and holds the float
+  fallback.
+- Sun gone: the highest cell stays below `cv_float` for 4 consecutive frames.
+  The charger returns to charging without terminating, so a cloudy afternoon
+  does not end in a false "full".
+
+After termination the float and recharge rules above apply unchanged.
+`status` reports `CV HOLD (<seconds>s, pin <volts>V)` during the hold.
+
+Parallel chargers on one pack each run their own hold on the same BMS data,
+without coordination. The pin step is sized for that: one charger corrects at
+most half the cell error per frame, so two chargers stepping together correct
+at most the full error and stay stable.
+
 ## Partial-charge ceiling (`partial_charge`)
 
 The charger can stop short of full to lower the average SoC, which is the

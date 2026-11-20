@@ -179,6 +179,7 @@ void test_holiday_restored_ref_sanity();
 void test_holiday_window_phase();
 void test_mqtt_bat_temp_topics();
 void test_termination_reset_clears_latch();
+void test_termination_cv_hold_tail();
 void test_coulomb_counter_starts_at_zero();
 void test_coulomb_counter_discharge_accumulates();
 void test_coulomb_counter_charging_decrements();
@@ -464,6 +465,7 @@ void setup() {
     RUN_TEST(test_termination_release_via_voltage_floor);
     RUN_TEST(test_termination_dod_release_skipped_when_cbat_missing);
     RUN_TEST(test_termination_reset_clears_latch);
+    RUN_TEST(test_termination_cv_hold_tail);
     RUN_TEST(test_termination_line_streak_resets);
     // charger.h — EOC target, temperature policy, partial-charge hold
     RUN_TEST(test_eoc_feedback_does_not_chase_termination_line);

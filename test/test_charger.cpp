@@ -182,6 +182,23 @@ void test_termination_reset_clears_latch() {
     TEST_ASSERT_FLOAT_WITHIN(0.001f, p.cv_min, tc.v_term());
 }
 
+// CV hold: the line enters the hold instead of latching; the tail (in the cv_eoc band) latches after tail_hold_s.
+void test_termination_cv_hold_tail() {
+    auto p = makeLfpParams();
+    p.cv_hold_max_s = 5400;
+    Li_ChgTerminationCondition tc{p};
+    setWallClockUs(10'000'000ULL);
+    updateFrames(tc, 3.70f, 30.0f, 0.0f);
+    TEST_ASSERT_FALSE(bool(tc));
+    TEST_ASSERT_TRUE(tc.cvHold());
+    for (int s = 0; s <= 200; s += 12) {
+        setWallClockUs(loopWallClockUs_ + 12'000'000ULL);
+        tc.update(p.cv_eoc, 10.0f, 0.0f);
+    }
+    TEST_ASSERT_TRUE(bool(tc));
+    TEST_ASSERT_FALSE(tc.cvHold());
+}
+
 // ------------------------------------------------------------------
 //  CoulombCounter
 // ------------------------------------------------------------------

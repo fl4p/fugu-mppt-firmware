@@ -1933,9 +1933,12 @@ static void cmdStatus(cmd *) {
     bool vcOk = bs.haveValidCellVoltage();
     uint32_t ageS = bs.vcell_high > 0 ? coarseTicksToSec(bs.cellAgeTicks()) : 0;
 
+    char hold[32];
+    snprintf(hold, sizeof(hold), "CV HOLD (%lus, pin %.2fV)", (unsigned long) chg.termCond.cvHoldS(), chg.Vout_max());
     UART_LOG("Charger: %s", (bool) chg.termCond ? "TERMINATED (float)"
                             : chg.chargeBlocked() ? "BLOCKED (pack cold)"
-                            : chg.partialHold() ? "PARTIAL HOLD (load-following)" : "charging");
+                            : chg.partialHold() ? "PARTIAL HOLD (load-following)"
+                            : chg.termCond.cvHold() ? hold : "charging");
     UART_LOG("  Vbat_max=%.2fV Vout_max=%.2fV  Ibat_lim=%.1fA Iout_max=%.1fA",
              p.Vbat_max, chg.Vout_max(), p.Ibat_lim, chg.Iout_max());
     const float ovLimit = mppt.getExplicitOvLimit();

@@ -28,6 +28,9 @@ struct BatChargerParams {
     // ^ LFP: 0.05. NCR (Sanyo NCR18650GA, 67mA on 3500mAh): ~0.02. EVE INR18650: 0.033. Higher = safer (terminates earlier).
     float recharge_dod = 0.20f; // DoD-since-EoC to release termination. LFP  ~0.20. See website/docs/guide/charging/termination.md.
     float recharge_vfloor_band = 0.05f; // [V] cell-voltage drop below cv_min to release termination (fallback to DoD). See website/docs/guide/charging/termination.md.
+    uint32_t cv_hold_max_s = 0; // [s] CV hold at cv_eoc before termination, max duration (0 = off: latch on the line)
+    uint32_t tail_hold_s = 180; // [s] the hold latches once ibat stays below the tail this long
+    float cv_hold_band = 0.02f; // [V] cell band below cv_eoc for the hold's tail test
     float vout_offset_max = 0.6f; // [V] worst-case Vout-sensor error to tolerate during terminated float.
     float partial_charge = 0.f; // SoC fraction to stop at between periodic full charges (0 = always charge to full)
     uint32_t full_charge_interval_s = 7 * 86400; // [s] charge to full (BMS balancing) at least this often
@@ -80,6 +83,15 @@ struct BatChargerParams {
         recharge_dod = chargerConf.getFloat("recharge_dod", 0.20f);
         recharge_vfloor_band = chargerConf.getFloat("recharge_vfloor_band", 0.05f);
         assert_throw(recharge_vfloor_band >= 0.f, "recharge_vfloor_band must be >= 0");
+        long hs = chargerConf.getLong("cv_hold_max_s", 0);
+        assert_throw(hs >= 0 && hs <= 86400, "cv_hold_max_s must be in [0, 86400]");
+        cv_hold_max_s = (uint32_t) hs;
+        hs = chargerConf.getLong("tail_hold_s", 180);
+        assert_throw(hs > 0 && hs <= 7200, "tail_hold_s must be in (0, 7200]");
+        tail_hold_s = (uint32_t) hs;
+        cv_hold_band = chargerConf.getFloat("cv_hold_band", 0.02f);
+        assert_throw(cv_hold_band > 0.f && (!cv_hold_max_s || cv_hold_band < cv_eoc - cv_min),
+                     "need 0 < cv_hold_band < cv_eoc - cv_float");
         vout_offset_max = chargerConf.getFloat("vout_offset_max", 0.6f);
         assert_throw(vout_offset_max >= 0.f, "vout_offset_max must be >= 0");
         assert_throw(Vbat_fallback > vout_offset_max, "vout_max_fallback must be > vout_offset_max");
@@ -228,9 +240,28 @@ class Li_ChgTerminationCondition {
     uint8_t _lineStreak = 0;
     float _iHold = 0; // recent peak of ibat, decaying with ILINE_TAU_S
     time_us _iHoldUs = 0;
+    bool _cvHold = false, _tailOn = false;
+    uint32_t _cvHoldTicks = 0, _tailTicks = 0; // wallClockTicks() at hold entry / tail start
+
+    void _latch() {
+        terminated = true;
+        _cvHold = false;
+        _vfloorStreak = 0;
+        _ceilStreak = 0;
+        _lineStreak = 0;
+    }
 
 public:
     [[nodiscard]] float v_term() const { return _v_term; }
+    [[nodiscard]] bool cvHold() const { return _cvHold; }
+    [[nodiscard]] uint32_t cvHoldS() const { return _cvHold ? coarseTicksToSec(wallClockTicks() - _cvHoldTicks) : 0; }
+
+    // BMS cell or ibat data went stale during the CV hold: latch (the stale path holds the float cap anyway)
+    void latchStale() {
+        if (!_cvHold) return;
+        ESP_LOGW("charger", "cv hold ended: BMS data stale after %u s", (unsigned) cvHoldS());
+        _latch();
+    }
 
     explicit operator bool() const { return terminated; }
 
@@ -247,6 +278,7 @@ public:
         _vfloorStreak = 0;
         _ceilStreak = 0;
         _lineStreak = 0;
+        _cvHold = false;
     }
 
     // One call per BMS cell frame (the streaks count frames).
@@ -274,17 +306,48 @@ public:
         }
 
         bool lineLatch = false;
-        if (!terminated and ibat > iBatFloor and vcell_high > _v_term) {
+        if (!terminated and !_cvHold and ibat > iBatFloor and vcell_high > _v_term) {
             if (++_lineStreak >= VTERM_STREAK_REQ) lineLatch = true;
         } else {
             _lineStreak = 0;
         }
 
-        if (!terminated and (ceilingLatch or lineLatch)) {
-            terminated = true;
-            _vfloorStreak = 0;
-            _ceilStreak = 0;
+        if (lineLatch and !ceilingLatch and p.cv_hold_max_s) {
+            // CV hold: the charger holds the cell at cv_eoc and the current tapers; latch on the tail
+            lineLatch = false;
             _lineStreak = 0;
+            _cvHold = true;
+            _tailOn = false;
+            _vfloorStreak = 0;
+            _cvHoldTicks = wallClockTicks();
+        } else if (_cvHold and !ceilingLatch) {
+            uint32_t now = wallClockTicks(), heldS = coarseTicksToSec(now - _cvHoldTicks);
+            if (ibat < p.tail_c_rate * p.Cbat and vcell_high >= p.cv_eoc - p.cv_hold_band) {
+                if (!_tailOn) { _tailOn = true; _tailTicks = now; }
+            } else {
+                _tailOn = false;
+            }
+            uint32_t tailS = _tailOn ? coarseTicksToSec(now - _tailTicks) : 0;
+            if (tailS >= p.tail_hold_s) {
+                ESP_LOGW("charger", "cv hold ended: tail %u s @ iBat %.2f", (unsigned) tailS, ibat);
+                lineLatch = true;
+            } else if (heldS > p.cv_hold_max_s) {
+                ESP_LOGW("charger", "cv hold timeout after %u s", (unsigned) heldS);
+                lineLatch = true;
+            } else if (vcell_high < p.cv_min) {
+                // sun gone: back to charging, not "full"
+                if (++_vfloorStreak >= VFLOOR_STREAK_REQ) {
+                    ESP_LOGW("charger", "cv hold left: vcHigh %.3f < cv_min after %u s", vcell_high, (unsigned) heldS);
+                    _cvHold = false;
+                    _vfloorStreak = 0;
+                }
+            } else {
+                _vfloorStreak = 0;
+            }
+        }
+
+        if (!terminated and (ceilingLatch or lineLatch)) {
+            _latch();
             if (ceilingLatch)
                 ESP_LOGW("charger", "Termination latched on cell ceiling: vcHigh(%.3f) >= cv_ceiling(%.3f) @ iBat=%.2f",
                          vcell_high, p.cv_ceiling, ibat);
@@ -346,6 +409,7 @@ class BatteryCharger {
     float _staleCap = NAN; // [V] bus cap latched for the cell-data gap that began at _staleCapTicks
     uint32_t _staleCapTicks = 0;
     bool _termJoin = false; // terminated without authority, joined at float because the pack discharges
+    bool _wasCvHold = false;
 
     // Integrator step gate: advance vpack_pin only on a fresh BMS frame so the
     // step rate matches the cell-voltage update rate (otherwise loopLF at 1 Hz
@@ -418,10 +482,12 @@ public:
         // Gate on the battery-current snapshot from the BMS/MQTT producer. It is
         // already smoothed over IBAT_MIN_SAMPLES there; no need to pace on the
         // converter's own iout (which is ibat + iload and cannot be used alone).
-        if (!batSt.haveValidCellVoltage()) return;
-
         float ibat = batSt.ibatSmoothed();
-        if (!std::isfinite(ibat) || !ibatFresh()) return; // smoothing not warm yet, or the ibat stream stopped
+        bool ibatOk = std::isfinite(ibat) && ibatFresh();
+        if (!batSt.haveValidCellVoltage() || !ibatOk) {
+            termCond.latchStale(); // not a verified full: the Ah reference stays
+            return;
+        }
 
         uint32_t frame = batSt.vcell_high_t;
         if (frame == _lastTermFrameUs) return; // streaks inside termCond count cell frames, not loop ticks
@@ -688,6 +754,24 @@ public:
         vpack_pin = fminf(fmaxf(vpack_pin + step, floor), params.Vbat_max);
     }
 
+    // CV hold: one bounded pin step per cell frame towards vcell_high = cv_eoc. The target is constant (never
+    // v_term(ibat)). Loop gain per frame <= K (dVcell/dPin <= 1/n_cells); two converters stepping on one bus
+    // reach 2K = 1 < 2, still stable. Upward steps stop HEADROOM_V above the bus (PV-limited: no wind-up).
+    void _cvHoldStep(bool step, float voutNow) {
+        constexpr float K = 0.5f, STEP_MAX_V = 0.03f, HEADROOM_V = 0.2f;
+        uint32_t frame = batSt.vcell_high_t;
+        if (frame == _lastBmsFrameUs) return;
+        _lastBmsFrameUs = frame;
+        if (!step) return;
+        float d = fminf(fmaxf(K * (params.cv_eoc - batSt.vcell_high) * params.n_cells, -STEP_MAX_V), STEP_MAX_V);
+        float pin = vpack_pin + d;
+        if (d > 0 && std::isfinite(voutNow)) pin = fminf(pin, fmaxf(vpack_pin, voutNow + HEADROOM_V));
+        pin = fminf(fmaxf(pin, params.Vbat_fallback), params.Vbat_max);
+        if (pin != vpack_pin)
+            ESP_LOGD("charger", "cv hold: pin %.3f -> %.3f V (vcHigh %.3f)", vpack_pin, pin, batSt.vcell_high);
+        vpack_pin = pin;
+    }
+
     // Pack-current target of the hold, the strictest of: cold 0 A; hot the derated ibat_max; partial
     // a trim towards the Ah ceiling so a BMS current offset inside the deadband can't walk the SoC
     // away over a week (0.2 A is 34 Ah / 12 % in 7 days on 280 Ah), ±1 A at 2 Ah off.
@@ -702,7 +786,8 @@ public:
         return t;
     }
 
-    void _updatePackVoltagePinning(bool voutAuthority = true, float vbat = INFINITY, float voutNow = NAN) {
+    void _updatePackVoltagePinning(bool voutAuthority = true, float vbat = INFINITY, float voutNow = NAN,
+                                   bool psu = false) {
         // Pack-voltage-pinning regimes (first match wins):
         //   1) EOC feedback — cells above v_eoc: closed loop on vcell_high → v_eoc.
         //      Doubles as the over-target corrector during terminated float; pulls
@@ -754,6 +839,33 @@ public:
             _wasTerminated = false;
             if (std::isnan(vpack_pin)) vpack_pin = params.Vbat_max;
             _loadFollowStep(ibat, _holdIbatTarget(), voutAuthority);
+            return;
+        }
+
+        // CV hold before termination: regulate the highest cell at cv_eoc. Without authority (a sibling
+        // holds the bus) or in PSU mode the pin is frozen.
+        bool cvHold = termCond.cvHold();
+        if (cvHold != _wasCvHold) {
+            if (cvHold) {
+                float bus = batSt.vout_avg.get();
+                float pin = std::isfinite(vpack_pin) ? (std::isfinite(bus) ? fminf(vpack_pin, bus) : vpack_pin) : bus;
+                vpack_pin = fminf(fmaxf(std::isfinite(pin) ? pin : params.Vbat_max, params.Vbat_fallback), params.Vbat_max);
+                _lastBmsFrameUs = batSt.vcell_high_t; // first step on the next frame
+                ESP_LOGW("charger", "cv hold: vcHigh %.3f > line %.3f @ iBat %.2f, pin %.2f V",
+                         batSt.vcell_high, termCond.v_term(), ibat, vpack_pin);
+            } else if (!nowTerm) {
+                float from = std::isfinite(vpack_pin) ? vpack_pin : params.Vbat_fallback;
+                _floatGlide.start(from, params.Vbat_max, nowUs);
+                ESP_LOGI("charger", "cv hold left, gliding vpPin %.3fV -> %.3fV", from, params.Vbat_max);
+            }
+            _wasCvHold = cvHold;
+        }
+        if (cvHold) {
+            _vPinFilt.reset();
+            _fallbackGlide.reset();
+            _floatGlide.reset();
+            _wasTerminated = false;
+            _cvHoldStep(voutAuthority && !psu, voutNow);
             return;
         }
 
@@ -967,13 +1079,13 @@ public:
             });
     }
 
-    void update(float vout, float iout, bool voutAuthority = true) {
+    void update(float vout, float iout, bool voutAuthority = true, bool psu = false) {
         batSt.update(vout, iout);
         _updateTermination();
         _updateTempLimit();
         _updateHoliday();
         _updatePartialHold();
-        _updatePackVoltagePinning(voutAuthority, INFINITY, vout);
+        _updatePackVoltagePinning(voutAuthority, INFINITY, vout, psu);
         _saveRtc();
     }
 
@@ -996,8 +1108,8 @@ public:
     [[nodiscard]] uint8_t holidayGaps() const { return _hGaps; }
     [[nodiscard]] float holidayDischargeH() const { return _hDisS * (1.f / 3600.f); }
     [[nodiscard]] bool chargeBlocked() const { return _coldBlocked; }
-    // the pack wants no charge: terminated, at the partial ceiling, or too cold
-    [[nodiscard]] bool chargeHold() const { return bool(termCond) || _partialHold || _coldBlocked; }
+    // the pack wants no charge (terminated, at the partial ceiling, or too cold) or is held at cv_eoc
+    [[nodiscard]] bool chargeHold() const { return bool(termCond) || _partialHold || _coldBlocked || termCond.cvHold(); }
     [[nodiscard]] time_us lastFullUs() const { return _lastFullUs; }
 
     // Release the EOC vpack_pin latch upward to Vbat_max and clear the filter/glide state. Used when
