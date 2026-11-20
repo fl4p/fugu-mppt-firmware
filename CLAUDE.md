@@ -73,7 +73,7 @@ It refuses non-interactively when the running image is still `PENDING_VERIFY`. A
 gateway's Wi-Fi TX power (`POST /txpower?wifi=20`, directly or curl via `havan-ts`) and restores the old value afterwards,
 also on failure or Ctrl-C (`--gw`, `--gw-tx-dbm`, `--no-gw-boost`); gateway errors only warn. The gateway persists the
 level in NVS, so after a `kill -9` check `GET /txpower`. `fugu_console.py --mqtt` (bare = `$MQTT_HOST`)
-takes its credentials from the same file and returns from `ota` at `OTA Succeed` or a failure line.
+takes its credentials from the same file, tunnels through `havan-ts` the same way, and returns from `ota` at `OTA Succeed` or a failure line.
 
 **OTA safety net (rollback + boot watchdog).** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` makes a freshly-OTA'd image
 boot as `ESP_OTA_IMG_PENDING_VERIFY`. The app must confirm itself or the bootloader reverts to the previous slot on the

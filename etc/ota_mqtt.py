@@ -32,7 +32,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from etc.fugu.console import Console  # noqa: E402
 from etc.fugu.transport import MqttTransport  # noqa: E402
-from etc.fugu_console import etc_file, load_env_file, run_ota  # noqa: E402
+from etc.fugu_console import (broker_endpoint, etc_file, free_port, load_env_file,  # noqa: E402
+                              relay_ssh_dest, run_ota, tcp_ok)
 from ota_common import (archive_elf, bootinfo_row, build_gate_driver,  # noqa: E402
                         build_has_networking, build_is_plant_sim, device_driver_label,
                         gate_driver_verdict, image_is_dirty, is_current, is_pending_verify, judge,
@@ -53,14 +54,6 @@ def is_relevant(line):
     return bool(re.search(r'\bota\b|OTA|Download|HTTP_|main: ota', line, re.I))
 
 
-def tcp_ok(host, port, timeout=2.0):
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
 def route_src(host):
     """Local address this host would use to reach `host`, or None."""
     try:
@@ -73,41 +66,6 @@ def route_src(host):
 
 def same_24(a, b):
     return bool(a and b) and a.split('.')[:3] == b.split('.')[:3]
-
-
-def free_port(start=None):
-    for p in ([start] if start else []) + [0]:
-        with socket.socket() as s:
-            try:
-                s.bind(('', p))
-                return s.getsockname()[1]
-            except OSError:
-                continue
-
-
-class Tunnel:
-    """`ssh -N -L <free port>:host:port dest`, owned and closed by this process."""
-
-    def __init__(self, dest, host, port, timeout=20.0):
-        self.port = free_port()
-        self.proc = subprocess.Popen(
-            ['ssh', '-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'BatchMode=yes',
-             '-L', f'{self.port}:{host}:{port}', dest], stdin=subprocess.DEVNULL)
-        atexit.register(self.close)
-        deadline = time.monotonic() + timeout
-        while not tcp_ok('127.0.0.1', self.port, 1.0):
-            if self.proc.poll() is not None or time.monotonic() > deadline:
-                self.close()
-                raise RuntimeError(f'ssh tunnel to {host}:{port} via {dest} did not come up')
-            time.sleep(0.3)
-
-    def close(self):
-        if self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(5)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
 
 
 class LocalServer:
@@ -385,18 +343,13 @@ def main():
     print(f"image: {image['project']} {image['version']} (built {image['date']} {image['time']}, "
           f"IDF {image['idf']})")
 
-    ssh_dest = (os.environ.get('OTA_RELAY_SSH') or os.environ.get('NAT_TUNNEL_HOST')
-                or 'havan-ts')
-    host, port = args.broker, args.port
-    direct = tcp_ok(host, port)
-    if not direct:
-        print(f'broker {host}:{port} not reachable, tunnelling via {ssh_dest}')
-        try:
-            tun = Tunnel(ssh_dest, host, port)
-        except RuntimeError as e:
-            print(e)
-            return 2
-        host, port = '127.0.0.1', tun.port
+    ssh_dest = relay_ssh_dest()
+    try:
+        host, port, tun = broker_endpoint(args.broker, args.port)
+    except RuntimeError as e:
+        print(e)
+        return 2
+    direct = tun is None
 
     src = route_src(args.broker) if direct else None
     use_relay = args.relay == 'always' or (args.relay == 'auto' and not same_24(src, args.broker))

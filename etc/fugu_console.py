@@ -36,11 +36,13 @@ Examples:
 
 import argparse
 import asyncio
+import atexit
 import glob
 import os
 import queue
 import re
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -83,6 +85,64 @@ def etc_file(name):
         return path
     alt = os.path.join(os.path.dirname(common), "etc", name) if common else ""
     return alt if alt and os.path.exists(alt) else path
+
+
+def tcp_ok(host, port, timeout=2.0):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def free_port(start=None):
+    for p in ([start] if start else []) + [0]:
+        with socket.socket() as s:
+            try:
+                s.bind(('', p))
+                return s.getsockname()[1]
+            except OSError:
+                continue
+
+
+class Tunnel:
+    """`ssh -N -L <free port>:host:port dest`, owned and closed by this process."""
+
+    def __init__(self, dest, host, port, timeout=20.0):
+        self.port = free_port()
+        self.proc = subprocess.Popen(
+            ['ssh', '-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'BatchMode=yes',
+             '-L', f'{self.port}:{host}:{port}', dest], stdin=subprocess.DEVNULL)
+        atexit.register(self.close)
+        deadline = time.monotonic() + timeout
+        while not tcp_ok('127.0.0.1', self.port, 1.0):
+            if self.proc.poll() is not None or time.monotonic() > deadline:
+                self.close()
+                raise RuntimeError(f'ssh tunnel to {host}:{port} via {dest} did not come up')
+            time.sleep(0.3)
+
+    def close(self):
+        if self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+
+
+def relay_ssh_dest():
+    return os.environ.get('OTA_RELAY_SSH') or os.environ.get('NAT_TUNNEL_HOST') or 'havan-ts'
+
+
+def broker_endpoint(host, port):
+    """(host, port, tunnel) to reach host:port: direct when it answers, else through an ssh tunnel
+    via relay_ssh_dest() (tunnel is then not None). RuntimeError if the tunnel fails."""
+    if tcp_ok(host, port):
+        return host, port, None
+    dest = relay_ssh_dest()
+    print(f'broker {host}:{port} not reachable, tunnelling via {dest}')
+    tun = Tunnel(dest, host, port)
+    return '127.0.0.1', tun.port, tun
 
 
 def load_env_file(path=None):
@@ -934,7 +994,8 @@ def make_transport(args):
     if args.mqtt:
         ro = " (read-only)" if args.mqtt_readonly else ""
         print(f"connecting to MQTT broker {args.mqtt}:{args.mqtt_port}, device ~{args.name!r}{ro}")
-        return MqttTransport(args.mqtt, port=args.mqtt_port,
+        host, port, _ = broker_endpoint(args.mqtt, args.mqtt_port)
+        return MqttTransport(host, port=port,
                              username=args.mqtt_user, password=args.mqtt_pass,
                              device=args.name, writable=not args.mqtt_readonly)
     if args.ip:
