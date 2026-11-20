@@ -117,7 +117,8 @@ still be symbolicated. `idf_ext.py` at the repo root is a thin shim delegating t
 
 It stores one `zstd -19` ELF per unique build (~35 MB → ~9.7 MB) under the gitignored `elf-archive/`, deduped by sha,
 with an `index.jsonl` flash log (time, device, method, version, sha). Compression runs **detached** so it never blocks
-the flash flow; retention keeps the **30** most-recently-flashed builds (`ELF_ARCHIVE_KEEP`). Decode a dump:
+the flash flow; retention keeps the **30** most-recently-flashed builds (`ELF_ARCHIVE_KEEP`) plus the last **3** builds of every
+device (`ELF_ARCHIVE_KEEP_PER_DEVICE`). The archive is found from any cwd inside the repo. Decode a dump:
 
 ```bash
 python3 etc/idf-devtools/elf_archive.py decode <core.bin>           # auto-matches the ELF by sha bytes in the dump
