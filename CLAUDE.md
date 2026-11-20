@@ -16,10 +16,13 @@ listing every field.
 Before any `idf.py` invocation, source ESP-IDF into the shell with the tracked helper. It works from any git worktree
 (it finds `../../esp/idf6.0.3` relative to the main checkout via `git rev-parse --git-common-dir`; override with
 `FUGU_IDF_PATH=<idf dir>` or `FUGU_ESP_DIR=<dir of idf versions>`). A fresh clone or worktree needs the submodules
-first; without them CMake stops with "Submodules are not checked out".
+first; without them CMake stops with "Submodules are not checked out". In a worktree, git clones some submodules
+from the main checkout's `.git/modules` over the `file` transport, which is refused without
+`-c protocol.file.allow=always`; `--force` repairs submodules a failed first update left half checked out
+(idf-export.sh lists those).
 
 ```bash
-git submodule update --init --recursive   # once per fresh clone/worktree
+git -c protocol.file.allow=always submodule update --init --recursive --force   # once per fresh clone/worktree
 . ./idf-export.sh          # sources ESP-IDF, sets IDF_TARGET (arg `esp32`, else an exported IDF_TARGET, else esp32s3), sets $ESPPORT to the first USB port unless already set
 idf.py set-target esp32s3  # only needed once per build dir
 idf.py build               # feature flags live in Kconfig now (CONFIG_FUGU_WITH_*, idf.py menuconfig -> "Fugu MPPT firmware"): BLE/NETW default on, NETTOOLS/MCPWM/VCONV/SPROFILER/MEASURE_COIL/USB_MSC off (NETTOOLS depends on NETW; USB_MSC = S3 USB config drive, website/docs/guide/usb-drive.md). The old WITH_* env vars are rejected. Binary telemetry is a tele.conf setting, not a build flag

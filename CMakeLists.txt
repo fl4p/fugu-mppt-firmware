@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
 # A fresh clone/worktree has empty submodule dirs; IDF then fails with a misleading "Failed to resolve component".
-file(GLOB _fugu_busio "${CMAKE_CURRENT_SOURCE_DIR}/components/Adafruit_BusIO/*")
-if (NOT _fugu_busio)
-    message(FATAL_ERROR "Submodules are not checked out. Run: git submodule update --init --recursive")
+if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/components/Adafruit_BusIO/CMakeLists.txt"
+        OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/components/SimpleCLI/SimpleCLI/src")
+    message(FATAL_ERROR "Submodules are not checked out. Run: "
+            "git -c protocol.file.allow=always submodule update --init --recursive --force")
 endif ()
 
 # Feature flags moved from WITH_* env vars to Kconfig (main/Kconfig.projbuild, CONFIG_FUGU_WITH_*).

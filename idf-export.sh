@@ -42,10 +42,18 @@ else
     deactivate 2>/dev/null || true
     . "$_fugu_idf/export.sh"
 
-    if [ -z "$(ls -A "$_fugu_root/components/Adafruit_BusIO" 2>/dev/null)" ]; then
-        echo "idf-export.sh: submodules are not checked out, the build will fail. Run:" >&2
-        echo "  git -C '$_fugu_root' submodule update --init --recursive" >&2
+    # Missing or half-checked-out submodules (an interrupted first update leaves files deleted).
+    _fugu_bad=$(git -C "$_fugu_root" config -f .gitmodules --get-regexp '\.path$' 2>/dev/null |
+        while read -r _k _p; do
+            [ -n "$(git -C "$_fugu_root/$_p" ls-files 2>/dev/null | head -n1)" ] &&
+                [ -z "$(git -C "$_fugu_root/$_p" ls-files --deleted 2>/dev/null | head -n1)" ] ||
+                printf ' %s' "$_p"
+        done)
+    if [ -n "$_fugu_bad" ]; then
+        echo "idf-export.sh: submodules missing or incomplete:$_fugu_bad; the build will fail. Run:" >&2
+        echo "  git -C '$_fugu_root' -c protocol.file.allow=always submodule update --init --recursive --force" >&2
     fi
+    unset _fugu_bad
 
     if [ -z "${ESPPORT:-}" ]; then
         ESPPORT=$(find /dev -maxdepth 1 \( -name 'cu.usbmodem*' -o -name 'cu.usbserial*' \) 2>/dev/null | sort | head -n1)
