@@ -157,15 +157,28 @@ struct AsReader {
 #define AS_WIN (256 * 1024)
 #define AS_STRIDE 8 // words: one 32-byte line per read
 #define AS_BURST 8
+#define AS_YIELD_MS 20 // idle on the reader core must run, or a slow erase trips the task WDT
+#define AS_SLOW_MS 2000
 
 static void asReaderTask(void *a) {
     auto &r = *(AsReader *) a;
     uint32_t i = 0;
     bool was = false;
+    TickType_t ty = xTaskGetTickCount(), te = 0;
     while (r.run) {
         const bool e = r.erasing;
-        if (e && !was) r.i0 = i;
+        const TickType_t now = xTaskGetTickCount();
+        if (e && !was) {
+            r.i0 = i;
+            te = now;
+        }
         was |= e;
+        if (now - ty >= pdMS_TO_TICKS(AS_YIELD_MS) || (e && now - te > pdMS_TO_TICKS(AS_SLOW_MS))) {
+            // past AS_SLOW_MS stop reading: the erase is already a fail and finishes without suspends
+            vTaskDelay(1);
+            ty = xTaskGetTickCount();
+            continue;
+        }
         uint32_t t0 = esp_cpu_get_cycle_count(), s = 0;
         for (int k = 0; k < AS_BURST; ++k) {
             const uint32_t t1 = esp_cpu_get_cycle_count();
@@ -229,9 +242,13 @@ static uint8_t asRun(FlashSusProbe &r, uint32_t sector) {
     fugu_flash_sus_set(true);
     rd.erasing = true;
     const uint32_t n0 = rd.n;
+    // the erase busy-polls WIP; at idle priority it shares this core with idle, which feeds the task WDT
+    const UBaseType_t prio = uxTaskPriorityGet(nullptr);
+    vTaskPrioritySet(nullptr, tskIDLE_PRIORITY);
     const int64_t t0 = esp_timer_get_time();
     esp_err_t err = esp_flash_erase_region(nullptr, sector, 0x1000);
     const int64_t t1 = esp_timer_get_time();
+    vTaskPrioritySet(nullptr, prio);
     const uint32_t n1 = rd.n;
     rd.erasing = false;
     fugu_flash_sus_set(false);
@@ -248,7 +265,7 @@ static uint8_t asRun(FlashSusProbe &r, uint32_t sector) {
     r.autoReads = n > 0xffff ? 0xffff : n;
 
     if (err != ESP_OK) return AsErase;
-    if (ms > 2000) return AsSlow;
+    if (ms > AS_SLOW_MS) return AsSlow;
     if (n < 10 || rd.nE < 10 * AS_BURST) return AsNoOverlap;
     if (!asVerify(rd, run->address)) return AsData;
     // the reader forces AS_BURST misses back to back; the RT path is in IRAM (rt_iram.lf) and takes single
