@@ -41,3 +41,19 @@ sudo install -m 600 privkey.pem /var/lib/homeassistant/ssl/privkey.pem
 - Verify from havan: `openssl s_client -connect 127.0.0.1:8884 -CAfile /var/lib/homeassistant/ssl/fugu-lab-ca.crt </dev/null`.
 
 The plain listeners 1882 (MQTT) and 1885 (ws) are unchanged; the converters keep using 1882.
+
+## Plain-http copy on havan (no CA needed)
+
+Fab declined to install the private CA (2026-11-19). The dashboard is served instead from Home Assistant on havan,
+which listens on plain http port 80 and serves its `www` folder under `/local/`:
+
+```
+scp etc/config-tool/dashboard.html etc/config-tool/teledec.js havan-ts:/tmp/
+ssh havan-ts sudo -n install -m 644 /tmp/dashboard.html /tmp/teledec.js /var/lib/homeassistant/homeassistant/www/fugu/
+```
+
+URL on the LAN: `http://192.168.1.200/local/fugu/dashboard.html?mqtt=ws://192.168.1.200:1885&user=pv`
+Over Tailscale: `http://100.64.0.10/local/fugu/dashboard.html?mqtt=ws://100.64.0.10:1885&user=pv`
+
+An http page can open `ws://`, so the 8884 wss listener stays unused. Web Bluetooth is unavailable on an http page
+(secure context required); BLE cards need the hosted https copy or `localhost`. Re-copy after dashboard changes.
