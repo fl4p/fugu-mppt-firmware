@@ -1,6 +1,7 @@
 
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <esp_http_client.h>
 #include <esp_https_ota.h>
 #if CONFIG_FUGU_WITH_HTTPS
@@ -120,8 +121,9 @@ static int contentLen = 0;
 static int contentReceived = 0;
 static uint8_t lastPct = 0;
 
+// esp_timer, not wallClockUs(): the blocking download stalls whichever loop advances the wall clock
 esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
-    static time_us tStart = 0;
+    static int64_t tStart = 0;
 
     switch (evt->event_id) {
         case HTTP_EVENT_ERROR:
@@ -138,7 +140,7 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
             if (strcmp(evt->header_key, "Content-Length") == 0) {
                 contentLen = atoi(evt->header_value);
                 contentReceived = 0;
-                tStart = wallClockUs();
+                tStart = esp_timer_get_time();
             }
             ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
             break;
@@ -151,9 +153,9 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
                     ESP_LOGI("ota", "Download Progress: %4d %%", pct);
                     lastPct = pct;
                     if (pct == 100) {
-                        ESP_LOGI(TAG, "Download took %llu ms (%llu KB/s)", (wallClockUs() - tStart) / 1000,
-                                 contentReceived * 1000 / (wallClockUs() - tStart)
-                        );
+                        const int64_t dt = std::max<int64_t>(esp_timer_get_time() - tStart, 1);
+                        ESP_LOGI(TAG, "Download took %llu ms (%llu KB/s)", (unsigned long long) (dt / 1000),
+                                 (unsigned long long) (contentReceived * 1000LL / dt));
                     }
                     consoleFlush(); // download blocks the net loop; push this line to a buffered (BLE) console now
                 }
@@ -181,11 +183,11 @@ esp_err_t _ota_http_event_handler(esp_http_client_event_t *evt) {
 
 void otaWatchdog(void *arg) {
     ESP_LOGI("ota", "Watchdog task started");
-    auto tStart = wallClockUs();
+    const int64_t tStart = esp_timer_get_time();
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        if (wallClockUs() - tStart > OTA_TIMEOUT_SECONDS * int(1e6)) {
-            ESP_LOGE("ota", "Ota timeout after %.1f seconds", (wallClockUs() - tStart) * 1e-6f);
+        if (esp_timer_get_time() - tStart > OTA_TIMEOUT_SECONDS * int64_t(1e6)) {
+            ESP_LOGE("ota", "Ota timeout after %.1f seconds", (esp_timer_get_time() - tStart) * 1e-6f);
             systemRestart();
         }
     }
@@ -235,7 +237,7 @@ static esp_err_t httpOta(const char *url, const esp_partition_t *staging, const 
 }
 
 bool doOta(const char *url) {
-    const auto t0 = wallClockUs();
+    const int64_t t0 = esp_timer_get_time();
     const esp_err_t e = httpOta(url, nullptr, nullptr);
     if (e == ESP_OK) {
         ESP_LOGI("ota", "OTA Succeed, Rebooting...");
@@ -245,7 +247,7 @@ bool doOta(const char *url) {
     }
     logRetained("E (%lu) ota: update failed: %s at %d %% (%d/%d B) after %.1f s, old image kept",
                 (unsigned long) esp_log_timestamp(), esp_err_to_name(e), lastPct, contentReceived, contentLen,
-                (wallClockUs() - t0) * 1e-6f);
+                (esp_timer_get_time() - t0) * 1e-6f);
     consoleFlush();
     return false;
 }
