@@ -26,7 +26,7 @@
 //     wx-shade-walk                   a shadow walks across the substrings, the global peak moves several times
 //     wx-shade-cloud    shaded substring under the cloud series (second peak comes and goes)
 //     wx-shade-learn    wx-shade2 shade for two sweeps (learns the substrings), clear at 1900 s, back at 2000..2300 s
-//     wx-dawn, wx-dusk  irradiance through the start threshold
+//     wx-dawn, wx-dusk  irradiance through the start threshold; wx-dawn: no-MPP backoff doubles 30..300 s ("== NOMPP")
 //     wx-low, wx-mid    steady light rising slowly, MPP 2 -> 20 W in 30 min / 55 -> 110 W in 10 min, sensor noise
 //     wx-calfail        wx-mid with +-1.3 V bus ripple, every calibration fails: off 4 s per failure, the restart keeps the old zeros,
 //                       calibrations keep the 30 min cadence ("== CALFAIL")
@@ -481,7 +481,7 @@ static void lfStuckWatchdog() {
                             : sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 8.0f);
     bool noPower = sensors.Iout && fabsf(sensors.Iout->ewm.avg.get()) < 0.3f;
     const float psuSetpoint = mppt.getPsuSetpoint();
-    bool stuck = headroom && noPower && !g_app.manualPwm()
+    bool stuck = headroom && noPower && !g_app.manualPwm() && !mppt.noMppBackoff()
                  && (g_app.psuMode()
                          ? (std::isfinite(psuSetpoint) && sensors.Vout->ewm.avg.get() < psuSetpoint - 2.0f)
                          : !mppt.charger.chargeHold());
@@ -1350,6 +1350,20 @@ static int runWx(const std::string &name, Wx &wx) {
         printf("== CALFAIL %s: %zu failed calibrations (want >= 2), %u started (want <= %zu), off %.2f..%.2f s after a"
                " failure (want 3.9..15), harvest %.1f %% (want >= 97): %s\n", name.c_str(), g_calFailT.size(),
                g_calStarts, wx.maxCals, offMin, offMax, ePv * pc, ok ? "PASS" : "FAIL");
+        if (!ok) return 1;
+    }
+    if (name == "wx-dawn") {
+        // no-MPP backoff doubles 30..300 s and the converter stays off for all of it
+        unsigned n = 0;
+        bool ok = true;
+        for (auto &tr: g_trips) {
+            if (tr.who != "sweep-no-mpp") continue;
+            auto s = std::upper_bound(g_sweepT.begin(), g_sweepT.end(), tr.t);
+            ok &= tr.sec == std::min(30u << std::min(n, 4u), 300u) && (s == g_sweepT.end() || *s >= tr.t + tr.sec - 0.1);
+            ++n;
+        }
+        ok &= n >= 2 && n <= 6;
+        printf("== NOMPP %s: %u no-MPP backoffs (want 2..6), doubling and held: %s\n", name.c_str(), n, ok ? "PASS" : "FAIL");
         if (!ok) return 1;
     }
     if (!wx.verdict.empty()) {
@@ -2382,9 +2396,13 @@ static int simMain(int argc, char **argv) {
         run(e ? 120 : 6, e ? 2.0 : 0.5, &p, 25);
         report(name.c_str(), p);
         if (e) {
-            Probe q = probeStart();
             g_vconv.setBat(27.f, 0.05f);
             printf("%9.4f >>> vconv bat reconnect 27 V / 0.05 ohm\n", tNow());
+            // the no-MPP backoff grows while the battery is open: probe from the restart
+            const double tRc = tNow();
+            while (converter.disabled() && tNow() - tRc < 300) run(0.5, 0);
+            printf("%9.4f >>> converter on %.1f s after the reconnect\n", tNow(), tNow() - tRc);
+            Probe q = probeStart();
             run(60, 2.0, &q, 0);
             report("e-reconnect", q);
             traceLine("final ");

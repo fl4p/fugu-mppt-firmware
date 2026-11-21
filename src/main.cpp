@@ -990,7 +990,7 @@ static void lfStuckWatchdog() {
     // lockups — the CV-floor latch (shared-pack EOC feedback), the Vin-OV/limit-corruption backoff
     // loop (converter cycling, not steadily at the floor), and stalled sweeps. The authority gate
     // should now prevent the CV-floor latch; this stays a backstop. Gated against night (no
-    // headroom), calibration, manual PWM and brief transients (sustained timeout).
+    // headroom), calibration, manual PWM, a no-MPP sweep backoff (dim light) and brief transients.
     bool headroom = sensors.Vin && sensors.Vout
                     && (converter.boost()
                             ? sensors.Vin->ewm.avg.get() > mppt.limits.Vin_min + 2.0f
@@ -1001,7 +1001,7 @@ static void lfStuckWatchdog() {
     // defeat this watchdog. A legitimate calibration is far shorter than TIMEOUT_US, so the
     // sustained timer already excludes it.
     const float psuSetpoint = mppt.getPsuSetpoint();
-    bool stuck = headroom && noPower && !g_app.manualPwm()
+    bool stuck = headroom && noPower && !g_app.manualPwm() && !mppt.noMppBackoff()
                  && (g_app.psuMode()
                          ? (std::isfinite(psuSetpoint)
                             && sensors.Vout->ewm.avg.get() < psuSetpoint - 2.0f)

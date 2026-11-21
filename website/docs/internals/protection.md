@@ -46,7 +46,8 @@ The converter restarts once both timers have expired and the [start conditions](
 the battery is full, and up to 12 s for the first BMS report when a BMS source is configured.
 
 A sweep that finds no usable power ends with `backoff 30s [sweep-no-mpp]`, logged at info level. It uses the same
-mechanism but is not a fault.
+mechanism but is not a fault. Each further sweep without usable power doubles the backoff (30, 60, 120, 240 s, then
+300 s); a sweep that finds an MPP resets it to 30 s.
 
 ### PSU mode
 

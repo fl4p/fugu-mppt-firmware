@@ -222,6 +222,7 @@ private:
     uint8_t _svPhase = 0; // 1 landing, 2 settling, 3 return pass
     uint8_t _svLandTrim = 0; // 1: landing trim pending, 2: verdict
     uint8_t _svFlag = 0;  // 0 none, 1 clean, 2 light changed
+    uint8_t _noMppN = 0; // consecutive no-MPP sweeps, up to 4
     float _svLand = 0, _svI = 0; // landed power, input current then
     uint32_t _svT = 0, _resweepAt = 0, _retryAt = 0; // [ms] settle start, scheduled re-sweep, last one scheduled
     void sweepVerdict(uint32_t nowMs, float p, bool ok);
@@ -529,6 +530,7 @@ public:
     }
 
     [[nodiscard]] bool inBackoff() const { return wallClockUs() < _backoffUntilUs; }
+    [[nodiscard]] bool noMppBackoff() const { return _noMppN && inBackoff(); }
 
     [[nodiscard]] float boardPowerSupplyVoltage() const {
         constexpr auto diodeFwdVoltage = 0.3f;
@@ -1533,15 +1535,18 @@ public:
 
         if (maxPowerPoint.power < sweepMinPower()) {
             // Marginal light: no real MPP found. Don't commit a phantom target (would strand the
-            // converter at near-max duty). Drop the target and back off briefly; the converter then
-            // resumes via normal MPPT / the next periodic re-sweep once there's real power.
+            // converter at near-max duty). Drop the target and back off, 30 s doubling per repeat up to 300 s;
+            // the converter then resumes via normal MPPT / the next periodic re-sweep once there's real power.
             targetDutyCycle = 0;
-            ESP_LOGI("mppt", "Stop sweep: no MPP (best %.2fW < %.1fW), backing off", maxPowerPoint.power,
-                     sweepMinPower());
-            shutdownDcdc("sweep-no-mpp", 30);
+            const uint32_t sec = std::min(30u << _noMppN, 300u);
+            if (_noMppN < 4) ++_noMppN;
+            ESP_LOGI("mppt", "Stop sweep: no MPP (best %.2fW < %.1fW), backing off %lus", maxPowerPoint.power,
+                     sweepMinPower(), (unsigned long) sec);
+            shutdownDcdc("sweep-no-mpp", sec);
             return;
         }
 
+        _noMppN = 0;
         targetDutyCycle = maxPowerPoint.dutyCycle;
         // dim: the MPP is the largest of noisy samples, biased high; such a sweep teaches nothing either
         const bool verify = sweepVerify > 0 && maxPowerPoint.power >= 25 * sweepMinPower();
