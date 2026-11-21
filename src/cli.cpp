@@ -62,6 +62,7 @@ extern volatile uint8_t g_rtLogTest;
 #ifdef WITH_NETW
 #include "tele/telemetry.h"     // connect_wifi_async, add_ap
 #include "etc/ota.h"            // doOta
+#include "etc/rt_task.h"
 #include "etc/idle_profile.h"
 #endif
 #ifdef WITH_NETTOOLS
@@ -799,8 +800,9 @@ static void cmdLogLevel(cmd *c) {
 }
 
 #ifdef WITH_NETW
+// without an RT loop nothing can switch, and `dc 0` cannot be applied
 static bool conversionStopped() {
-    return g_app.manualPwm() && mppt.getManualTarget() == 0 && converter.disabled();
+    return converter.disabled() && (!rtLoopRunning() || (g_app.manualPwm() && mppt.getManualTarget() == 0));
 }
 
 // ota <url> | ota bootloader <url>
@@ -839,13 +841,23 @@ static void cmdOta(cmd *c) {
     // reset the device mid-transfer (doing `dc 0` by hand first was the reliable workaround).
     // Latch manual mode (also disables the !manualPwm-gated watchdogs) and ramp the converter
     // to 0, then wait for it to actually disable so the supply is settled when flashing begins.
-    const auto stopTicket = mppt.requestPsuManual(0, -1);
-    if (!waitPsuCommand(stopTicket)) {
-        idleProfileHold(false);
-        CMD_FAIL_RETURN("ota: RT shutdown transition timed out");
+    // Without an RT loop (failed setup) nothing acks the handshake, and only that loop ever enables the converter.
+    const bool rt = rtLoopRunning();
+    if (!rt) {
+        if (!converter.disabled()) {
+            idleProfileHold(false);
+            CMD_FAIL_RETURN("ota: no RT loop but converter enabled");
+        }
+        UART_LOG("ota: no RT loop, converter off, skipping the conversion stop");
+    } else {
+        const auto stopTicket = mppt.requestPsuManual(0, -1);
+        if (!waitPsuCommand(stopTicket)) {
+            idleProfileHold(false);
+            CMD_FAIL_RETURN("ota: RT shutdown transition timed out");
+        }
+        for (int i = 0; i < 100 && !converter.disabled(); ++i) delay(100); // <=10s for the ramp
+        delay(500);                 // let the output coil/caps de-energize
     }
-    for (int i = 0; i < 100 && !converter.disabled(); ++i) delay(100); // <=10s for the ramp
-    delay(500);                 // let the output coil/caps de-energize
     adcSampler.halted = true;   // disable ADC reading
 
     bool ok = doOta(url.c_str()); // reboots on success and never returns
@@ -853,6 +865,10 @@ static void cmdOta(cmd *c) {
     // OTA failed — resume the prior operating mode
     idleProfileHold(false);
     adcSampler.halted = false;
+    if (!rt) {
+        if (!ok) s_cmdFailed = true;
+        return;
+    }
     bool restored = true;
     if (savedMode == OpMode::Psu) {
         // A PV curve must be restored as the curve, not as a CV pin at the saved

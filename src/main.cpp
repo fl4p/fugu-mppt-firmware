@@ -76,6 +76,7 @@
 #include <dirent.h>
 
 #include "etc/rt_core_check.h"
+#include "etc/rt_task.h"
 #include "etc/flash_probe.h"
 #include "etc/heap_diag.h"
 #include "etc/net_guard.h"
@@ -644,7 +645,7 @@ __attribute__((cold)) void setup() {
 
     if (!g_app.setupErr) {
         // ~2 KB used (log formatting runs on core 0). Heap is the scarcer resource on the S3.
-        xTaskCreatePinnedToCore(loopRT, "loopRt", 8192, NULL, RT_PRIO, NULL, RT_CORE);
+        xTaskCreatePinnedToCore(loopRT, kRtTaskName, 8192, NULL, RT_PRIO, NULL, RT_CORE);
 #if WITH_RTPROF
         rtprofStart(2000);
 #endif
@@ -731,10 +732,8 @@ static void loopRT(void *arg) {
         adcSampler.begin();
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error starting ADC sampler: %s", er.what());
-        while (true) {
-            setWallClockUs(esp_timer_get_time());
-            vTaskDelay(10);
-        }
+        g_app.setupErr = true; // the network loop advances the wall clock instead
+        vTaskDelete(nullptr);
     }
 
     disable_cpu_power_saving();
