@@ -14,6 +14,9 @@
 //                              # d-noise | e | e-bleed; suffix -p0 = limits.conf reverse_current_paranoia=0
 //                              # shade | shade-cv: half-shaded string (two peaks)
 //                              # idle-wake: start refused only by InhibitIdle while Vin rises (armed sweep and not)
+//                              # hs-short, hs-short-bfclosed, hs-cal, hs-dawn, hs-dawn-nozero: HS-short check
+//                              # bf-ok, bf-open, bf-closed: `selftest bflow` (vconv.conf bf_model=1)
+//                              # bf-daily-flat: the daily run from MPPT at ~160 W in CCM on flat's plant
 //   weather scenarios (PV string of 1..3 substrings, irradiance played from a time series; "== SUMMARY" line):
 //     wx-cloud          recorded cloudy quarter hour (flat, 2026-11-14 11:20 UTC), full sun <-> cloud
 //     wx-cloud-n1       same with the single peak known (pv_substrings=1): no re-sweep after a flagged sweep
@@ -112,6 +115,7 @@
 #include "sim/vconv.h"
 #include "sim_alloc.h"
 #include "selftest/coil_fit.h"
+#include "selftest/bflow_test.h"
 #include "plant_boards.h"
 
 #if __has_include("peak_scan.h")
@@ -309,6 +313,7 @@ static void loopRTNewData(time_ms nowMs) {
     if (haveNewSample) {
         timeLastSampler = wallClockUs();
         mppt.rectCalRt();
+        mppt.hsShortRt((uint32_t) nowMs);
     }
 
     if (unlikely(adcSampler.isCalibrating())) {
@@ -691,6 +696,7 @@ static void run(double sec, double traceEvery, Probe *probe = nullptr, double fi
         loopRTIter();
         g_qOut += g_vconv.getIoutAvg() * (tNow() - tIt);
         if (g_tickHook) g_tickHook();
+        if (mppt.sensorPhysicalI) selftestUrgent((uint64_t) (esp_timer_get_time() / 1000)); // loopNetwork_task
         if (g_pDump) {
             const float r[6] = {(float) tNow(), sensors.Iout->ewm.avg.get(), sensors.Vout->ewm.avg.get(),
                                 (float) converter.getCtrlOnPwmCnt(), (float) mppt.tracker.slowMode,
@@ -1748,6 +1754,467 @@ static int runRingCoil(const std::string &name, bool weak) {
     return 0;
 }
 
+// ---- self-tests (vconv.conf bf_model=1: battery-side BF, Vout/Iout sensed at the battery) ----
+static float g_iOfs = 0; // Iout sensor offset [A]
+static float ofsHook(uint8_t ch, float x) { return ch == 2 ? x + g_iOfs : x; }
+static int g_vinGlitch = 0;
+static float glitchHook(uint8_t ch, float x) { if (ch == 0 && g_vinGlitch > 0) { --g_vinGlitch; return 1.f; } return x; }
+
+static int selftestCheck(const std::string &sc, bool c, const char *what) {
+    printf("== %s %s: %s\n", sc.c_str(), c ? "ok" : "FAIL", what);
+    return !c;
+}
+
+// hs-short: HS shorted while MPPT runs, then stopped: latch (gates off, no clamp without hs_clamp), start block,
+//   clear, re-latch, recovery.
+// hs-short-clamp: hs_clamp=1 and a recent blocks pass, by day: gates off, the clamp pending.
+// hs-short-bfclosed: hs_clamp=1, BF stuck closed: at night battery current flows before the ramp, so it never starts.
+// hs-night: hs_clamp=1, latched by day, then night: after 60 s below 9 V the LS ramps for 20 ms and is held; the
+//   250 ms tick re-applies the hold; a BF stuck closed under it releases it (clamp unsafe, persisted).
+// hs-night-abort: as hs-night, a disable() 5 ms into the ramp stops it with all gates off.
+// hs-cal: short present at boot, a 1 A panel (inside the 5 % zero bound): the boot zero must not hide it.
+// hs-dawn: 0.5 A Iout offset, night then Voc rising through Vbat: no latch. hs-dawn-nozero: no night first, so it
+//   latches (known limit), but never clamps.
+// hs-volt: battery disconnected, HS shorted: Vout follows Vin above the OV limit at ~0 A, latched by voltage.
+// hs-run: HS shorted while switching: another protection stops it, the idle check latches.
+// hs-unplug: the panel shorted 3 times in 6 min, healthy HS: never latched, running. hs-glitch: 3 single 1 V Vin samples: no latch, running.
+// hs-run-lsdead: the LS never turns on (no shoot-through).
+// hs-run-nodecl: hs-run without bflow_bat: no idle check and no latch; Vin-Vout blocks the restart.
+static int runHsShort(const std::string &sc) {
+    int f = 0;
+    auto chk = [&](bool c, const char *w) { f += selftestCheck(sc, c, w); };
+    auto st = [] { return mppt.hsFaultState(); };
+    auto runFor = [&](double sec, double *tLatch) {
+        const double t0 = tNow();
+        while (tNow() - t0 < sec) {
+            run(0.01, 0);
+            if (tLatch && *tLatch < 0 && st()) *tLatch = tNow() - t0;
+        }
+    };
+    const bool clampConf = sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-dawn-nozero" ||
+                           sc == "hs-volt-clamp" || sc.rfind("hs-night", 0) == 0;
+    if (clampConf) mppt.bfRecent = true; // as after a passed `selftest bflow`
+    chk(mppt.hsIdleCheck() == (sc.find("-nodecl") == std::string::npos), "idle check per board.conf");
+    if (sc == "hs-short" || sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-night" ||
+        sc == "hs-night-abort") {
+        const bool night = sc.rfind("hs-night", 0) == 0;
+        const float isc = g_vconv.getIsc(), voc = g_vconv.getVoc(), k = g_vconv.getPvK();
+        if (clampConf) { // a night first: the clamp needs a learnt zero
+            g_vconv.setPv(isc * .02f, .3f * g_vconv.getVbat(), k);
+            runFor(5, nullptr);
+            g_vconv.setPv(isc, voc, k);
+            printf("== %s: zero %.3f A after the night\n", sc.c_str(), mppt.hsZero());
+        }
+        settle(20);
+        chk(!converter.disabled() && !st(), "running, no fault");
+        g_vconv.hsShort = true;
+        if (sc == "hs-short-bfclosed") g_vconv.bfStuck = 2;
+        printf("%9.4f >>> HS short%s, converter stopped\n", tNow(), g_vconv.bfStuck ? " + BF stuck closed" : "");
+        stopAndBackoff(5);
+        const uint16_t en0 = converter.enableCount();
+        double tl = -1;
+        runFor(8, &tl);
+        traceLine("fault ");
+        printf("== %s: latched (%c) after %.2f s, Iout zero %.3f A, plant Vin %.1f V, LS count %u/%u\n", sc.c_str(),
+               mppt.hsFaultWhy() ?: '-', tl, mppt.hsZero(), g_vconv.getVin(), g_vconv.getPwm().pwmRect, g_vconv.getPwm().pwmMax);
+        chk(tl > 0.5 && tl < 5, "latched 0.5 s off + 3 s hold after the stop");
+        chk(converter.disabled() && converter.startInhibited(SynchronousConverter::InhibitHs), "start blocked");
+        chk(!mppt.bflow.state(), "BF commanded off");
+        // by day the clamp waits for the night (pending), gates off either way
+        const uint8_t want = sc == "hs-short" ? MpptController::HsOff : MpptController::HsPending;
+        chk(st() == want && !converter.lsClamped() && g_vconv.getPwm().pwmRect == 0 && g_vconv.getVin() > 20.f,
+            want == MpptController::HsOff ? "gates off, no clamp" : "clamp pending: gates off, Vin up");
+        if (sc == "hs-short" || sc == "hs-short-clamp") {
+            runFor(20, nullptr);
+            chk(converter.enableCount() == en0 && st() == want, "no start, still latched after 20 s");
+            mppt.hsClear();
+            runFor(0.5, nullptr);
+            chk(!st() && !converter.lsClamped() && converter.startInhibited(SynchronousConverter::InhibitHs),
+                "cleared: clamp off, start still blocked");
+            tl = -1;
+            runFor(6, &tl);
+            chk(st() == want, "re-latched, the short is still there");
+            if (want == MpptController::HsPending) {
+                mppt.bfRecent = false; // the blocks pass expires
+                runFor(.5, nullptr);
+                chk(st() == MpptController::HsOff && !converter.lsClamped(), "pending dropped to gates off when no longer armed");
+            }
+            g_vconv.hsShort = false;
+            mppt.hsClear();
+            printf("%9.4f >>> short removed, cleared\n", tNow());
+            run(30, 5.0);
+            chk(!st() && !converter.disabled(), "running again");
+        } else if (sc == "hs-short-bfclosed") {
+            // night: the plant's panel sinks at its 6 V Voc, so the battery discharges through the closed BF and the
+            // shorted HS into it (a real dark panel would rather hold Vin at the battery: pending for good)
+            g_vconv.setPv(isc * .01f, 6.f, k);
+            printf("%9.4f >>> night\n", tNow());
+            bool lsOn = false, ramp = false;
+            for (int n = 0; n < 12000; ++n) {
+                run(0.01, 0);
+                lsOn |= g_vconv.getPwm().pwmRect != 0;
+                ramp |= st() == MpptController::HsRamp || st() == MpptController::HsClamped;
+            }
+            traceLine("night ");
+            chk(!lsOn && !ramp, "LS never on, no ramp");
+            chk(st() == MpptController::HsOff && mppt.hsClampUnsafe.load() && simStoredUnsafe(),
+                "battery current at the arming: gates off, clamp unsafe (persisted)");
+            chk(converter.enableCount() == en0, "no start");
+        } else {
+            runFor(30, nullptr);
+            chk(st() == MpptController::HsPending, "still pending by day");
+            g_vconv.setPv(isc * .01f, 6.f, k);
+            printf("%9.4f >>> night\n", tNow());
+            double tLow = -1, tRamp = -1, tHold = -1;
+            uint16_t ls0 = 0, lsPrev = 0;
+            bool mono = true, hsLow = true;
+            int rampSteps = 0;
+            const double t0 = tNow();
+            while (tNow() - t0 < 100 && st() != MpptController::HsClamped && st() != MpptController::HsOff) {
+                run(0.0002, 0);
+                const auto &pw = g_vconv.getPwm();
+                if (tLow < 0 && sensors.Vin->ewm.avg.get() < 9.f) tLow = tNow();
+                if (st() == MpptController::HsRamp) {
+                    if (tRamp < 0) tRamp = tNow(), ls0 = pw.pwmRect;
+                    if (pw.pwmRect != lsPrev) ++rampSteps;
+                    mono &= pw.pwmRect >= lsPrev;
+                    hsLow &= pw.pwmCtrl == 0;
+                    lsPrev = pw.pwmRect;
+                    if (sc == "hs-night-abort" && tNow() - tRamp > .005) {
+                        printf("%9.4f >>> a protection disables the converter mid-ramp\n", tNow());
+                        mppt.shutdownDcdc("test", 0);
+                        run(0.002, 0);
+                        break;
+                    }
+                }
+                if (tHold < 0 && st() == MpptController::HsClamped) tHold = tNow();
+            }
+            traceLine("night ");
+            printf("== %s: Vin<9 V at %.1f s, ramp at %.3f s (%d steps, LS %u -> %u of %u), hold at %.3f s\n", sc.c_str(),
+                   tLow - t0, tRamp - t0, rampSteps, ls0, lsPrev, g_vconv.getPwm().pwmMax, tHold - t0);
+            chk(tLow > 0 && tRamp - tLow >= 60 && tRamp - tLow < 61, "ramp starts after 60 s below 9 V");
+            chk(ls0 > 0 && ls0 < g_vconv.getPwm().pwmMax / 50, "ramp starts with a short LS pulse");
+            chk(mono && hsLow, "LS width rises, HS held low");
+            if (sc == "hs-night-abort") {
+                chk(st() == MpptController::HsOff && !converter.lsClamped() && g_vconv.getPwm().pwmRect == 0 &&
+                    !mppt.hsClampUnsafe.load(), "ramp stopped by the disable: gates off");
+                runFor(5, nullptr);
+                chk(st() == MpptController::HsOff && g_vconv.getPwm().pwmRect == 0, "stays off");
+            } else {
+                chk(tHold - tRamp >= .019 && tHold - tRamp < .03 && rampSteps >= 10, "hold after a 20 ms ramp");
+                chk(st() == MpptController::HsClamped && converter.lsClamped() &&
+                    g_vconv.getPwm().pwmRect == g_vconv.getPwm().pwmMax && g_vconv.getVin() < 1.f, "LS clamped, Vin collapsed");
+                bool ramped = false;
+                for (int n = 0; n < 300; ++n) {
+                    run(0.01, 0);
+                    if (n == 100) converter.disable(); // a force-off elsewhere: the 250 ms tick re-applies the hold
+                    ramped |= st() != MpptController::HsClamped;
+                }
+                chk(!ramped && converter.lsClamped() && g_vconv.getPwm().pwmRect == g_vconv.getPwm().pwmMax,
+                    "3 s: the hold is re-applied, no new ramp");
+                g_vconv.bfStuck = 2;
+                printf("%9.4f >>> BF stuck closed under the hold\n", tNow());
+                runFor(2, nullptr);
+                traceLine("bf ");
+                chk(st() == MpptController::HsOff && !converter.lsClamped() && mppt.hsClampUnsafe.load(),
+                    "clamp released on battery current, all gates off, clamp unsafe");
+                chk(converter.enableCount() == en0, "no start");
+                // reboot right after: the urgent write persisted the state, RAM does not survive
+                chk(simStoredUnsafe(), "clamp-unsafe written at once");
+                mppt.hsClampUnsafe = false;
+                selftestLoad();
+                mppt.bfRecent = true; // as if a pass were recent: only the unsafe flag may disarm the clamp
+                printf("%9.4f >>> reboot (state reloaded)\n", tNow());
+                chk(st() == MpptController::HsOff && mppt.hsFaultWhy() == 'P' && mppt.hsClampUnsafe.load() &&
+                    !mppt.hsClampAllowed(true), "latch and clamp-unsafe restored, clamp not allowed");
+            }
+        }
+    } else if (sc == "hs-cal") {
+        runFor(15, nullptr);
+        traceLine("boot ");
+        printf("== %s: Iout zero taken %.3f A (calibrated %d), plant Iout %.2f A\n", sc.c_str(), sensors.Iout->calibrationAvg,
+               (int) sensors.Iout->calibrationComplete, g_vconv.getIoutSense());
+        chk(st() != 0, "latched");
+        chk(converter.enableCount() == 0, "never started");
+    } else if (sc == "hs-dawn" || sc == "hs-dawn-nozero") {
+        g_simSenseHook = ofsHook;
+        g_iOfs = .5f;
+        const float isc = g_vconv.getIsc(), k = g_vconv.getPvK(), vb = g_vconv.getVbat();
+        const bool night = sc == "hs-dawn";
+        const float v0 = night ? .3f * vb : vb - .5f, v1 = 1.3f * vb;
+        g_vconv.setPv(isc * .05f, v0, k);
+        runFor(night ? 30 : 5, nullptr);
+        printf("== %s: zero %.3f A after %s\n", sc.c_str(), mppt.hsZero(), night ? "night" : "5 s");
+        double tl = -1;
+        for (int i = 0; i <= 240; ++i) {
+            const float x = std::min(1.f, i / 240.f);
+            g_vconv.setPv(isc * (.05f + .3f * x), v0 + x * (v1 - v0), k);
+            runFor(.5, &tl);
+            if (i % 40 == 0) traceLine("dawn ");
+        }
+        printf("== %s: latched %s (after %.1f s)\n", sc.c_str(), st() ? "YES" : "no", tl);
+        if (night) chk(!st() && !converter.disabled(), "no latch, running");
+        else chk(st() == 2 && !converter.lsClamped(), "latched (known limit), no clamp without a learnt zero");
+    } else if (sc == "hs-volt" || sc == "hs-volt-clamp") {
+        const bool cl = sc == "hs-volt-clamp";
+        settle(20);
+        g_vconv.setBat(0, 1e9f);
+        g_vconv.hsShort = true;
+        printf("%9.4f >>> battery disconnected, HS short\n", tNow());
+        stopAndBackoff(5);
+        double tl = -1;
+        runFor(70, &tl);
+        traceLine("fault ");
+        chk(tl > 60 && tl < 62, "voltage alone latches after 0.5 s off + 60 s");
+        printf("== %s: latched (%c) after %.2f s, Vin %.1f Vout %.1f OV %.1f\n", sc.c_str(), mppt.hsFaultWhy() ?: '-', tl,
+               sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get(), mppt.computeOvThreshold());
+        chk(st() == (cl ? MpptController::HsPending : MpptController::HsOff) && mppt.hsFaultWhy() == 'V' &&
+            g_vconv.getPwm().pwmRect == 0, cl ? "latched by voltage, gates off, clamp pending" : "latched by voltage");
+    } else if (sc == "hs-unplug") {
+        // the panel shorted three times (connector pulled into a sinking source): Vout>2Vin each time, healthy HS
+        settle(20);
+        const float isc = g_vconv.getIsc(), voc = g_vconv.getVoc(), k = g_vconv.getPvK();
+        const size_t t0 = g_trips.size();
+        for (int n = 0; n < 3; ++n) {
+            printf("%9.4f >>> panel unplugged at %.1f W\n", tNow(), sensors.Vout->ewm.avg.get() * sensors.Iout->ewm.avg.get());
+            g_vconv.setPv(.001f, .5f, k);
+            runFor(1, nullptr);
+            g_vconv.setPv(isc, voc, k);
+            runFor(120, nullptr);
+        }
+        printf("== %s trips:", sc.c_str());
+        for (size_t q = t0; q < g_trips.size(); ++q) printf(" %s", g_trips[q].who.c_str());
+        printf("\n== %s: hs fault %d why %c, start %s\n", sc.c_str(), st(), mppt.hsFaultWhy() ?: '-', mppt.startBlockReason() ?: "free");
+        chk(!st(), "healthy HS not latched by 3 panel disconnects");
+        chk(!converter.disabled(), "running");
+    } else if (sc == "hs-glitch") {
+        settle(20);
+        g_simSenseHook = glitchHook;
+        const size_t t0 = g_trips.size();
+        for (int n = 0; n < 3; ++n) {
+            printf("%9.4f >>> one Vin sample reads 1 V\n", tNow());
+            g_vinGlitch = 1;
+            runFor(120, nullptr);
+        }
+        printf("== %s trips:", sc.c_str());
+        for (size_t q = t0; q < g_trips.size(); ++q) printf(" %s", g_trips[q].who.c_str());
+        printf("\n== %s: hs fault %d why %c, start %s\n", sc.c_str(), st(), mppt.hsFaultWhy() ?: '-', mppt.startBlockReason() ?: "free");
+        chk(!st() && !converter.disabled(), "healthy HS not latched by 3 single-sample Vin glitches, running");
+    } else if (sc == "hs-run" || sc == "hs-run-nodecl" || sc == "hs-run-lsdead") {
+        settle(20);
+        const size_t t0 = g_trips.size();
+        const uint16_t en0 = converter.enableCount();
+        g_vconv.hsShort = sc == "hs-run-lsdead" ? 2 : 1;
+        printf("%9.4f >>> HS short while switching\n", tNow());
+        double tOff = -1, tl = -1;
+        const double ts = tNow();
+        while (tNow() - ts < (sc == "hs-run" ? 10 : 60)) {
+            run(0.001, 0);
+            if (tOff < 0 && converter.disabled()) tOff = tNow() - ts;
+            if (tl < 0 && st()) tl = tNow() - ts;
+        }
+        traceLine("fault ");
+        printf("== %s: off after %.1f ms, latched (%c) after %.2f s, %u starts since, trips:", sc.c_str(), tOff * 1e3,
+               mppt.hsFaultWhy() ?: '-', tl, (unsigned) (converter.enableCount() - en0));
+        for (size_t k = t0; k < g_trips.size(); ++k) printf(" %s", g_trips[k].who.c_str());
+        printf("\n");
+        chk(tOff >= 0 && tOff < .2, "stopped within 200 ms");
+        // the plant dumps C_in into the battery at the short: an over-current or Vout>2Vin trip comes first
+        chk(g_trips.size() > t0, "a protection trip");
+        if (sc != "hs-run-nodecl") chk(st() == 2 && mppt.hsFaultWhy() == 'I' && converter.enableCount() == en0, "idle check latched, no restart");
+        else chk(!st() && converter.enableCount() == en0 && !strcmp(mppt.startBlockReason() ?: "", "Vin-Vout"),
+                 "no idle check: no latch, the shorted HS holds Vin at Vout, so no restart (Vin-Vout)");
+    } else {
+        printf("unknown scenario %s\n", sc.c_str());
+        return 1;
+    }
+    printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+    return f != 0;
+}
+
+// bf-ok, bf-open (stuck open), bf-closed (stuck closed): `selftest bflow` against the plant's BF
+// bf-nodecl: refused without board.conf bflow_bat=1
+// bf-daily: the daily run starts by itself, passes and is not repeated; bf-daily-fail: BF stuck open, bf-fail
+// bf-daily-flat: the daily run takes over from MPPT at ~160 W in CCM (flat 2026-11-21: stiff source, filt_len 20,
+//   flat's plant); a duty ramp-down at full power tripped highD-bflowOpen there
+//   latched, clear releases it
+// bf-daily-then-closed: daily pass, then BF stuck closed: blocks FAIL revokes the pass, clamp disarmed
+// bf-abort: the daily run loses its sun mid-test: aborted, retried after 30 min, no spin
+static int runBfTest(const std::string &sc) {
+    int f = 0;
+    auto chk = [&](bool c, const char *w) { f += selftestCheck(sc, c, w); };
+    settle(30);
+    const char *r = bfTestRefusal();
+    printf("== %s: refusal %s\n", sc.c_str(), r ? r : "none");
+    if (sc == "bf-nodecl") {
+        chk(r && strstr(r, "bflow_bat"), "refused without bflow_bat");
+        chk(!bfTestArm(), "not armed");
+        printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+        return f != 0;
+    }
+    auto trace = [] {
+        if (getenv("SIM_V") && !converter.disabled())
+            printf("%9.4f bf: HS %u LS %u/%u (plant %u/%u) bf %d I %.2f/%.2f Vin %.2f Vout %.2f dcm %d\n", tNow(),
+                   converter.getCtrlOnPwmCnt(), converter.getRectOnPwmCnt(), converter.getRectOnPwmMax(),
+                   g_vconv.getPwm().pwmRect, g_vconv.getPwm().pwmCtrl, (int) mppt.bflow.state(), sensors.Iout->med3.get(),
+                   sensors.Iout->ewm.avg.get(), sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get(), (int) converter.inDCM());
+    };
+    static float iMaxBlocks;
+    iMaxBlocks = 0;
+    auto watch = [] {
+        if (mppt.bfTest.mode.load() & MpptController::BfBlocks)
+            iMaxBlocks = std::max(iMaxBlocks, sensors.Iout->ewm.avg.get());
+    };
+    if (sc == "bf-daily-then-closed") {
+        static uint32_t lfMs2;
+        lfMs2 = 0;
+        g_tickHook = [] {
+            const uint32_t ms = (uint32_t) (esp_timer_get_time() / 1000);
+            bfTestTick(ms);
+            if (ms - lfMs2 >= 1000) lfMs2 = ms, selftestLf(ms, false);
+        };
+        run(200, 20);
+        printf("== %s: first run verdicts %c %c recent %d\n", sc.c_str(), bfTestVerdict(0) ?: '-', bfTestVerdict(1) ?: '-',
+               (int) mppt.bfRecent.load());
+        chk(bfTestVerdict(0) == 'P' && bfTestVerdict(1) == 'P' && mppt.bfRecent.load() && mppt.hsClampAllowed(true),
+            "daily pass: clamp armed");
+        g_vconv.bfStuck = 2;
+        printf("%9.4f >>> BF stuck closed; manual selftest bflow, the next 3 NVS writes fail\n", tNow());
+        chk(simStoredPass() && !simStoredBf(), "pass persisted");
+        simWriteFail = 3; // blocks F, selftestUrgent, runEnd
+        g_tickHook = [] { bfTestTick((uint32_t) (esp_timer_get_time() / 1000)); }; // no selftestLf: only urgent writes
+        chk(bfTestArm(), "armed");
+        run(120, 20);
+        chk(!simWriteFail && !simStoredBf() && simStoredPass(), "the urgent writes tried and failed");
+        chk(mppt.bfFail.load() && !mppt.hsClampAllowed(true), "write failed: bf-fail and the disarmed clamp hold in RAM");
+        g_tickHook = [] {
+            const uint32_t ms = (uint32_t) (esp_timer_get_time() / 1000);
+            if (ms - lfMs2 >= 1000) lfMs2 = ms, selftestLf(ms, false);
+        };
+        run(60, 20);
+        chk(simStoredBf() && !simStoredPass(), "retried: bf-fail and the revoked pass persisted");
+        printf("== %s: verdicts %c %c, bf-fail %d, recent %d, pass age %u s, clampAllowed(V) %d\n", sc.c_str(),
+               bfTestVerdict(0) ?: '-', bfTestVerdict(1) ?: '-', (int) mppt.bfFail.load(), (int) mppt.bfRecent.load(),
+               (unsigned) bfPassAgeS(), (int) mppt.hsClampAllowed(true));
+        chk(bfTestVerdict(0) == 'F' && !bfTestVerdict(1), "blocks FAIL, conducts phase skipped");
+        chk(!mppt.bfRecent.load() && bfPassAgeS() == UINT32_MAX, "a blocks FAIL revokes the verified state");
+        mppt.bfRecent = true; // even a stale verified flag must not arm the clamp with bf-fail latched
+        chk(!mppt.hsClampAllowed(true), "clamp not allowed");
+        g_tickHook = nullptr;
+        printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+        return f != 0;
+    }
+    if (sc.rfind("bf-daily", 0) == 0 || sc == "bf-abort") {
+        static int runs;
+        static uint32_t lfMs;
+        runs = 0, lfMs = 0;
+        g_tickHook = [] {
+            const uint32_t ms = (uint32_t) (esp_timer_get_time() / 1000);
+            const bool b = bfTestBusy();
+            bfTestTick(ms);
+            if (ms - lfMs >= 1000) lfMs = ms, selftestLf(ms, false);
+            if (!b && bfTestBusy()) ++runs;
+            if (mppt.bfTest.mode.load() & MpptController::BfBlocks)
+                iMaxBlocks = std::max(iMaxBlocks, sensors.Iout->ewm.avg.get());
+        };
+        if (sc == "bf-abort") {
+            const float isc = g_vconv.getIsc(), voc = g_vconv.getVoc();
+            // drop the sun once the test has engaged
+            while (tNow() < 400 && !(mppt.bfTest.mode.load() & MpptController::BfEngage)) run(0.01, 0);
+            g_vconv.setPv(isc * .02f, .9f * g_vconv.getVbat(), g_vconv.getPvK());
+            printf("%9.4f >>> sun gone mid-test\n", tNow());
+            run(20, 0);
+            printf("== %s: verdicts %c %c, runs %d\n", sc.c_str(), bfTestVerdict(0) ?: '-', bfTestVerdict(1) ?: '-', runs);
+            chk(runs == 1 && !bfTestBusy() && !mppt.bfFail.load() && (bfTestVerdict(0) == 'A' || bfTestVerdict(1) == 'A'),
+                "aborted once, no fail latch");
+            g_vconv.setPv(isc, voc, g_vconv.getPvK());
+            run(25 * 60, 300);
+            chk(runs == 1, "no retry within 25 min");
+            run(10 * 60, 300);
+            chk(runs == 2, "retried after 30 min");
+            chk(bfTestVerdict(0) == 'P' && bfTestVerdict(1) == 'P', "retry passed");
+        } else {
+            const size_t trips0 = g_trips.size();
+            run(sc == "bf-daily" ? 200 : 150, 20);
+            printf("== %s: runs %d, verdicts %c %c, bf-fail %d, recent %d, pass age %u s\n", sc.c_str(), runs,
+                   bfTestVerdict(0) ?: '-', bfTestVerdict(1) ?: '-', (int) mppt.bfFail.load(), (int) mppt.bfRecent.load(),
+                   (unsigned) bfPassAgeS());
+            chk(runs == 1 && !bfTestBusy(), "one daily run");
+            if (sc == "bf-daily" || sc == "bf-daily-flat") {
+                chk(bfTestVerdict(0) == 'P' && bfTestVerdict(1) == 'P' && mppt.bfRecent.load(), "passed, verified");
+                chk(!converter.disabled() && g_app.opMode.load() == OpMode::Mppt, "MPPT running again");
+                for (size_t i = trips0; i < g_trips.size(); ++i) printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
+                chk(g_trips.size() == trips0, "no protection trip");
+                if (sc == "bf-daily") run(30 * 60, 300);
+                chk(runs == 1, "not repeated within 30 min");
+            } else {
+                chk(bfTestVerdict(1) == 'F' && mppt.bfFail.load(), "conducts failed, bf-fail latched");
+                const uint16_t en = converter.enableCount();
+                run(60, 20);
+                chk(converter.disabled() && converter.enableCount() == en &&
+                    !strcmp(mppt.startBlockReason() ?: "", "bf-fail"), "start blocked: bf-fail");
+                selftestClearBf();
+                g_vconv.bfStuck = 0;
+                run(30, 10);
+                chk(!converter.disabled(), "running after clear");
+            }
+        }
+        g_tickHook = nullptr;
+        printf("== %s: blocks phase peak ewm I %.2f A\n", sc.c_str(), iMaxBlocks);
+        printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+        return f != 0;
+    }
+    if (sc == "bf-abort-cmd") { // `selftest abort` while the blocks phase is engaged
+        chk(bfTestArm(), "armed");
+        g_tickHook = [] { bfTestTick((uint32_t) (esp_timer_get_time() / 1000)); };
+        double t0 = tNow();
+        while (tNow() - t0 < 60 && !(mppt.bfTest.mode.load() & MpptController::BfEngage)) run(0.01, 0);
+        chk(mppt.bfTest.mode.load() & MpptController::BfEngage, "engaged");
+        bfTestAbort();
+        printf("%9.4f >>> selftest abort\n", tNow());
+        t0 = tNow();
+        while (bfTestBusy() && tNow() - t0 < 10) run(0.01, 0);
+        printf("== %s: stopped after %.2f s, verdicts %c %c\n", sc.c_str(), tNow() - t0, bfTestVerdict(0) ?: '-',
+               bfTestVerdict(1) ?: '-');
+        chk(!bfTestBusy() && tNow() - t0 < 5, "stopped within 5 s");
+        chk(bfTestVerdict(0) == 'A' && !bfTestVerdict(1) && !mppt.bfFail.load(), "aborted, no verdict, no latch");
+        chk(!mppt.bfTest.mode.load() && !mppt.bflow.lockOff.load(), "RT state released");
+        g_tickHook = nullptr;
+        run(20, 5.0);
+        chk(g_app.opMode.load() == OpMode::Mppt && !converter.disabled(), "MPPT restored and running");
+        printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+        return f != 0;
+    }
+    chk(bfTestArm(), "armed");
+    static auto s_trace = trace;
+    static auto s_watch = watch;
+    g_tickHook = [] {
+        bfTestTick((uint32_t) (esp_timer_get_time() / 1000));
+        s_watch();
+    };
+    const double t0 = tNow();
+    while (bfTestBusy() && tNow() - t0 < 180) {
+        run(0.05, 0);
+        s_trace();
+    }
+    g_tickHook = nullptr;
+    printf("== %s: done after %.1f s, verdicts %c %c, trips %zu, blocks phase peak ewm I %.2f A\n", sc.c_str(),
+           tNow() - t0, bfTestVerdict(0) ?: '-', bfTestVerdict(1) ?: '-', g_trips.size(), iMaxBlocks);
+    // a blocks FAIL skips the conducts phase
+    const char want0 = sc == "bf-closed" ? 'F' : 'P', want1 = sc == "bf-open" ? 'F' : sc == "bf-closed" ? 0 : 'P';
+    chk(!bfTestBusy(), "finished");
+    chk(bfTestVerdict(0) == want0, "blocks verdict");
+    chk(bfTestVerdict(1) == want1, "conducts verdict");
+    chk(!mppt.bfTest.mode.load() && !mppt.bflow.lockOff.load(), "RT state released");
+    chk(iMaxBlocks < 5.f, "blocks phase stays clear of the 6 A highI-bflowOpen trip");
+    run(20, 5.0);
+    const bool ok = sc == "bf-ok";
+    chk(mppt.bfFail.load() == !ok, ok ? "no bf-fail" : "bf-fail latched");
+    chk(g_app.opMode.load() == OpMode::Mppt && converter.disabled() != ok, ok ? "MPPT restored and running" : "MPPT restored, start blocked");
+    printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+    return f != 0;
+}
+
 // Start refused only by the idle profile's InhibitIdle while Vin rises, with a sweep armed (st=START,1: fry
 // 2026-11-18, update() returned before any wake) and without (START,0: the start branch): the RT loop must raise
 // the wake, not start, and start once the bit is released.
@@ -1798,6 +2265,7 @@ static int simMain(int argc, char **argv) {
     const std::string name = sc;
     if (p0) sc.resize(sc.size() - 3);
     if (sc == "rcal-flat") setenv("SIM_RING", "flat", 0), setenv("SIM_ADC_HZ", "1470", 0);
+    if (sc == "bf-daily-flat") setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
     if (sc == "rcal-pv") setenv("SIM_RING", "fry", 0);
     if (sc.rfind("wx-", 0) == 0 && sc.size() > 4 && sc.compare(sc.size() - 4, 4, "-fry") == 0)
         setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
@@ -1833,6 +2301,23 @@ static int simMain(int argc, char **argv) {
         std::string c = "sensor.conf:lv_i_filt_len=60,sensor.conf:lv_v_filt_len=60";
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         setenv("SIM_CONF", c.c_str(), 1);
+    }
+    const bool selftest = sc.rfind("hs-", 0) == 0 || sc.rfind("bf-", 0) == 0;
+    if (selftest) {
+        std::string c = sc.size() > 7 && !sc.compare(sc.size() - 7, 7, "-nodecl") ? "" : "board.conf:bflow_bat=1";
+        if (sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-dawn-nozero" || sc == "bf-daily-then-closed" ||
+            sc == "hs-volt-clamp" || sc.rfind("hs-night", 0) == 0)
+            c += ",board.conf:hs_clamp=1";
+        if (sc == "bf-daily-flat") // flat's sensor filters
+            c += ",sensor.conf:hv_v_filt_len=20,sensor.conf:lv_v_filt_len=20,sensor.conf:lv_i_filt_len=20";
+        if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
+        if (!c.empty()) setenv("SIM_CONF", c.c_str(), 1);
+        ov = {{"bf_model", "1"}};
+        if (sc == "bf-open" || sc == "bf-daily-fail") ov.push_back({"bf_stuck", "1"});
+        if (sc == "bf-closed") ov.push_back({"bf_stuck", "2"});
+        if (sc == "bf-daily-flat") ov.insert(ov.end(), {{"isc", "2.8"}, {"voc", "62"}, {"pv_k", "0.95"}, {"v_bat", "25.6"}});
+        if (sc == "hs-cal") ov.insert(ov.end(), {{"hs_short", "1"}, {"isc", "1.0"}});
+        if (sc.rfind("hs-dawn", 0) == 0) ov.push_back({"noise_iout", "0.04"});
     }
     if (sc == "wx-cloud-cv-ripple") ov = {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}};
     const bool rcal = sc.rfind("rcal", 0) == 0;
@@ -1881,6 +2366,8 @@ static int simMain(int argc, char **argv) {
     }
 
     if (sc == "idle-wake") return runIdleWake();
+    if (sc.rfind("hs-", 0) == 0) return runHsShort(sc);
+    if (sc.rfind("bf-", 0) == 0) return runBfTest(sc);
     settle(sc == "d-noise" ? 60 : 60);
     size_t settleTrips = g_trips.size();
     printf("# trips during settle: %zu\n", settleTrips);

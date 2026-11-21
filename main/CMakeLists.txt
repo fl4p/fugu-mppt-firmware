@@ -31,7 +31,7 @@ elseif (DEFINED ENV{MAIN_SRC})
 else ()
     # cli.cpp, bsync.cpp and measure_coil.cpp extern main.cpp's globals, so they're only built
     # alongside the real main (not test mains).
-    set(MAIN_SRC "../src/main.cpp" "../src/cli.cpp" "../src/tele/alert.cpp")
+    set(MAIN_SRC "../src/main.cpp" "../src/cli.cpp" "../src/tele/alert.cpp" "../src/selftest/bflow_test.cpp")
     if (CONFIG_FUGU_WITH_BSYNC)
         list(APPEND MAIN_SRC "../src/sync/bsync.cpp")
     endif ()
@@ -284,6 +284,7 @@ endif ()
 # try/catch is included by everything; selectively dropping it would mean rewiring error paths.
 set(_size_opt_srcs
         ../src/cli.cpp
+        ../src/selftest/bflow_test.cpp
         ../src/sync/bsync.cpp
         ../src/adc/sensor_setup.cpp
         ../src/logging.cpp

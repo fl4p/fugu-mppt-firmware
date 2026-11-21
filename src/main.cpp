@@ -45,6 +45,7 @@
 #ifdef WITH_MEASURE_COIL
 #include "selftest/measure_coil.h"
 #endif
+#include "selftest/bflow_test.h"
 
 #include "etc/version.h"
 
@@ -639,6 +640,7 @@ __attribute__((cold)) void setup() {
 #endif
 
     setupConverterAndMppt(boardConf, lim, teleConf, noI2C);
+    if (mppt.sensorPhysicalI) selftestLoad();
 
     if (!g_app.setupErr) {
         // ~2 KB used (log formatting runs on core 0). Heap is the scarcer resource on the S3.
@@ -1242,6 +1244,8 @@ static void lfUpdateLed(time_us nowUs) {
     }
 }
 
+static bool selftestMaintenance();
+
 __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
     auto &nSamples(sensors.Vout ? sensors.Vout->numSamples : lastNSamples);
     // The sps/throughput window keeps its OWN baseline: lastTimeOutUs is shared cadence state
@@ -1274,6 +1278,7 @@ __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
         handleCommand("reset-lag");
     }
     mppt.rectCalLf();
+    if (mppt.sensorPhysicalI) selftestLf(wallClockMs(), selftestMaintenance());
     mppt.scanLf(flashWriteSafe());
     heapDiagLf((uint32_t) wallClockMs());
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
@@ -1323,6 +1328,7 @@ static void loopRTNewData(time_ms nowMs) {
     if (haveNewSample) {
         timeLastSampler = wallClockUs();
         mppt.rectCalRt();
+        mppt.hsShortRt((uint32_t) nowMs);
     }
 
     // auto range current sense ADC channel TODO add hysteresis
@@ -1752,6 +1758,8 @@ static const char *idleBlocker() {
     if (g_app.psuMode()) return "(psu)";
     if (g_app.manualPwm() && mppt.getManualTarget()) return "(manual duty)";
     if (mppt.rectCal.cal.running()) return "(rect-cal)";
+    if (bfTestBusy()) return "(selftest)";
+    if (const uint8_t hs = mppt.hsFaultState(); hs && hs != MpptController::HsOff) return "(hs clamp)"; // monitored each sample
     if (converter.bsyncOwnsPeriod) return "(bsync)";
     if (s_idle.hold) return "(ota)";
 #ifdef WITH_BLE
@@ -1764,6 +1772,21 @@ static const char *idleBlocker() {
     if (usbDriveMounted()) return "(usb drive)";
 #endif
     return nullptr;
+}
+
+// work the daily `selftest bflow` must not interrupt
+static bool selftestMaintenance() {
+    if (mppt.rectCal.cal.running() || converter.bsyncOwnsPeriod || s_idle.hold) return true;
+#ifdef WITH_BLE
+    if (otaBleActive()) return true;
+#endif
+#ifdef WITH_MEASURE_COIL
+    if (isMeasuring()) return true;
+#endif
+#ifdef WITH_USB_MSC
+    if (usbDriveMounted()) return true;
+#endif
+    return false;
 }
 
 static void idleProfileTick(time_ms nowMs) {
@@ -1878,6 +1901,7 @@ static void loopNetwork_task(void *arg) {
     idleProfileTick(nowMs); // first: a converter start leaves the profile before any long job below
 
     loopUart(nowMs);
+    if (mppt.sensorPhysicalI) selftestUrgent(nowMs);
 #ifdef WITH_USB_MSC
     switch (usbDevPoll()) {
         case UsbEvent::ConfCommitted:

@@ -194,6 +194,47 @@ These commands set the duty cycle directly, switch between manual and tracking m
 | `measure-coil l0\|ls [steps\|hs] [dwell_ms] [apply]` *(needs `CONFIG_FUGU_WITH_MEASURE_COIL`)* | Measure the coil on-device by driving a DCM sweep (takes over manual PWM, then restores the previous mode: MPPT, manual duty, or PSU/PV). `l0` sweeps duty (default 48 steps, 1 s dwell, about a minute) and reports the inductance from a fit that removes the switch-node ring ripple (median of the points when the ring is not resolved), and its dependence on the peak coil current. It reads `Iout` with the converter off before and after the sweep, subtracts that zero, and refuses `apply` when the zero moved by more than 0.02 A; `ls` holds HS and sweeps the low-side count to find the `rect_offset_ns` timing. `apply` writes the result to `coil.conf` once the converter is off (`L0` takes effect at the next boot, an `ls` result at once). From MPPT the restore starts a fresh sweep. Needs `Vin > Vout` (sun/headroom). Port of `etc/measure_coil.py`; see [Coil Inductance Measurement](../lab/coil-inductance.md). |
 | `rect-cal [force\|status\|abort]` | Self-calibrate the DCM low-side timing offset (`coil.conf::rect_offset_ns`). Pins the LS at its minimum, ramps HS down to `0.55·Vout/Vin` of the period, waits for DCM and steady readings, steps the LS window across the inductor zero crossing, then fades HS back; the converter keeps delivering (reduced, about 20–35 W) power for up to 60 s. Plain `rect-cal` starts only from DCM at 0.3–4 A output current; `force` starts from any MPPT operating point, including CCM at full power. Both are refused unless the converter runs a buck in MPPT mode above that HS with no limiter active, sync rect and backflow switch on, at least 0.3 A output current and `Vin > Vout + 1 V` (the reply names the blocking condition). A successful run applies the offset at once and writes `rect_offset_ns`, `rect_offset_drv` and `rect_offset_cal` once the converter has been off for 10 s; a failed one keeps the old value. Any protection action during the run aborts it. Progress and the result go to the log (tag `rectcal`). `status` prints the state, the last failure reason, whether the offset is calibrated on the active gate driver, the active offset, the backstop trigger count, whether a value still waits to be saved (`unsaved`), the last sweep points (`LS:dI/Vin/Vout`: LS count, current against the references in A, the step's `Vin` and `Vout` against its references in 0.01%) and, after a voltage failure, the failing window's deviations, limits and reference voltages. `abort` stops a run and returns the LS to diode emulation. See [Diode emulation](../internals/diode-emulation.md#self-calibration-rect-cal). |
 | `short-ls` | Boost only, `Vin` ≈ 0 (e.g. for a controlled output discharge). Switches to manual PWM itself and holds the low side on. |
+| `selftest [bflow\|abort\|clear]` | High-side short and backflow switch state, the backflow switch test, clearing their latches, see [selftest](#selftest). |
+
+### selftest
+
+| Form | Description |
+| --- | --- |
+| `selftest` | Print the [high-side short check](../internals/protection.md#high-side-short-check) state (`ok` or latched: all gates off, clamp pending with the seconds Vin has been below 9 V, LS ramp, or LS clamped), whether the idle check runs, its learnt current zero, whether it blocks the start and, with `hs_clamp=1`, whether the clamp is armed. Then the backflow switch state: `ok` or `FAIL LATCHED`, the verdicts and age of the last run, the age of the last blocks pass and whether that makes the switch verified (within 36 h) or unverified. `status` prints the same lines. |
+| `selftest clear` | Clear a latched high-side short and a latched `bf-fail`, also ones restored after a reboot. Releases the low-side clamp and the backflow switch hold. The start stays blocked until the high-side short check sees a clean sample again, so a short that is still there latches again after 3 s. |
+| `selftest bflow` | Test the backflow switch of a buck, in two phases. Takes the converter over in manual PWM and restores the previous mode (MPPT or manual duty) at the end; takes 10–30 s, up to about 3 min on boards with slow sensor filters. Boards with `board.conf::bflow_bat=1` also run it once a day on their own. |
+| `selftest abort` | Stop a running `selftest bflow`: the converter stops and the previous mode is restored, without a verdict. |
+
+`selftest bflow` runs each phase the same way. It ramps the duty in diode emulation from 0.97 × Vout/Vin up to the
+first CCM operating point with at least 0.3 A forward current. The ramp stops at a duty proven to be forward
+(Vout/Vin × 1.02 + 1 %) if CCM is not reached first. Then it switches to forced PWM (complementary low side) and steps
+the duty down until D × Vin is 1 V below Vout:
+
+| Phase | Backflow switch | Pass | Fail |
+| --- | --- | --- | --- |
+| `blocks` | commanded off 20 ms before switching starts | no sample below −0.3 A, and a minimum of −0.2 A or above | a sample below −0.3 A stops the phase at once: the switch conducts backwards. The `conducts` phase is then skipped |
+| `conducts` | on | a sample below −0.5 A appears; the phase stops at once | none by the end: the switch does not turn on |
+
+The −0.3 A and −0.5 A values are trip thresholds, not bounds on the current: one duty count can move the current by
+about 1 A on a low-resistance path, so the sample that trips may read well below them.
+
+Each phase prints one line with the current, Vin, Vout, duty and ΔV = Vout − D × Vin at the stop. For a passing
+`conducts` phase, ΔV is the voltage at which reverse current appeared. A protection trip, a collapsing input voltage, a
+mode change (`mppt`, `psu`) or a latched high-side short aborts the test without a verdict. After a mode change the new
+mode stays.
+
+A failed phase latches `bf-fail`, which blocks every start until `selftest clear`, also across a reboot. Details on the
+phases and the daily run are under [Backflow switch test](../internals/protection.md#backflow-switch-test).
+
+The test is refused on a boost, without `board.conf::bflow_bat=1`, with a latched high-side short or `bf-fail`, while
+bsync owns the PWM period, in PSU mode, while calibrating, sweeping, during a rect-cal, measure-coil or OTA, with a command or dead-time change
+pending, during a backoff, with an uncalibrated current sensor, when Vin < 1.2 × Vout or Vin − Vout < 3 V, and when Vout
+is at 9 V or below or no battery voltage is known. While it runs, every command that changes the PWM, rectification,
+backflow switch or sensors is refused: `+N`/`-N`, `dc`, `sync`, `bf`/`panel`, `short-ls`, `sweep`, `rect-cal`, `dt`,
+`pwm-freq`, `mcpwmtest`, `pwr`, `measure-coil`, `ota`, `ota-ble`, `wsync`, `adc-cal`, `adc-restart`, `adc-reset`, `anf`,
+`gpio`, `anaw`, `vset`, `ovset`, `vconv`, `sleep` and `speed`, also inside a line split with `;;`. `mppt`, `psu`, `pv`
+and `selftest abort` abort it. The protections it suspends are listed under
+[Sub-trip reverse current](../internals/protection.md#sub-trip-reverse-current).
 
 The following commands require manual PWM mode.
 

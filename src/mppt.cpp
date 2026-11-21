@@ -498,6 +498,7 @@ void MpptController::updateManual() {
         return;
     }
 
+    if (bfTest.mode.load(std::memory_order_relaxed)) bfTestRt();
     const uint16_t target = manualTarget.load(std::memory_order_relaxed);
     if (target == 0) {
         if (!converter.disabled()) {
@@ -508,6 +509,7 @@ void MpptController::updateManual() {
         }
     } else {
         if (converter.disabled()) {
+            if (bfTest.mode.load(std::memory_order_relaxed) & BfStop) return;
             if (minPulseStartBlocked(sensors.Vout->ewm.avg.get())) return;
             if (!limits.reverse_current_paranoia) {
                 converter.enableSyncRect(true);
@@ -530,6 +532,8 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
                            const Limits &limits_, const TeleConf &tele_) {
     limits = limits_;
     tele = tele_;
+    bfBat = boardConf.getByte("bflow_bat", 0);
+    hsClampConf = boardConf.getByte("hs_clamp", 0);
 
     pdLoadGains(converterConf, VinController, "vin");
     pdLoadGains(converterConf, VoutController, "vout");
@@ -620,6 +624,8 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     fan.init(boardConf);
 
     bflow.init(boardConf);
+    if ((bfBat || hsClampConf) && !hsIdleCheck())
+        ESP_LOGW("mppt", "board.conf bflow_bat/hs_clamp ignored: needs a backflow switch, a buck and Iout sensed");
     lvPgood.init(boardConf);
     meter.load();
     if (targetPwmCnt) {
@@ -698,6 +704,8 @@ void MpptController::telemetry() {
             const float pw = wg.pw();
             if (std::isfinite(pw)) point.addField("Pw", pw, 2);
         }
+        if (const uint8_t hs = hsFault.load(std::memory_order_relaxed)) point.addField("hs_short", (int) hs);
+        if (bfFail.load(std::memory_order_relaxed)) point.addField("bf_fail", 1);
     }
 
     if (all || (_teleNumPoints % 40) == 0) {
@@ -750,6 +758,158 @@ void MpptController::telemetry() {
 
 extern SynchronousConverter converter;
 extern MpptController mppt;
+
+void MpptController::hsShortRt(uint32_t nowMs) {
+    if (hsClearReq.exchange(false, std::memory_order_acq_rel)) hsClearRt(); // also a latch restored on any topology
+    if (converter.boost()) return;
+    auto &g = hsGuard;
+    if (unlikely(bfTest.mode.load(std::memory_order_relaxed) && !g_app.manualPwm())) RT_COLD(
+        // the mode changed under the self-test: drop its exemptions and pinned LS
+        bfTest.mode.store(0);
+        converter.setManualRect(-1);
+        bflow.lockOff.fetch_and((uint8_t) ~BackflowDriver::LockSelftest);
+    );
+
+    const bool idle = hsIdleCheck();
+    if (idle) {
+        const Sensor &s = *sensorPhysicalI;
+        const auto &cc = s.params.calibrationConstraints;
+        const float ofs = cc.calibrateOffset && s.calibrationComplete ? s.calibrationAvg : 0.f;
+        const float iMin = std::max(.3f, .2f * cc.maxAbsValue), iRaw = s.ewm.avg.get() + ofs;
+        if (g.update(nowMs, converter.disabled(), sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get(), iRaw, iMin,
+                     std::max(2.f * iMin, 2.f * cc.maxAbsValue), g_app.psuMode() ? NAN : computeOvThreshold(),
+                     !bflow.state()))
+            hsLatchRt(nowMs, g.current(iRaw), g.byVoltage ? 'V' : 'I');
+        const uint8_t f = hsFault.load(std::memory_order_relaxed);
+        const float i = g.current(s.med3.get() + ofs);
+        if (f == HsClamped || f == HsRamp) {
+            // the clamp parks the switch node at ground: battery current through it means a conducting BF
+            if (std::isfinite(i)) hsRise = i >= -.5f && i <= std::max(hsI0, 0.f) + .5f ? 0 : hsRise + 1; // NaN holds
+            if (hsRise >= 2) RT_COLD(
+                converter.clampLs(false);
+                bflow.enable(false);
+                hsFault.store(HsOff);
+                hsClampUnsafe.store(true); // persisted by core 0, until a fresh blocks pass
+                ESP_LOGE("hs-short", "I %.2f A under the LS %s (%.2f A before): released, all gates off", i,
+                         f == HsRamp ? "ramp" : "clamp", hsI0);
+            );
+            else if (f == HsRamp) hsRampRt(nowMs);
+            else if (nowMs - hsClampMs >= 250) {
+                hsClampMs = nowMs;
+                if (hsClampAllowed(hsWhy.load(std::memory_order_relaxed) == 'V')) converter.clampLs(true); // after a force-off elsewhere
+                else hsGatesOffRt("clamp no longer armed");
+            }
+        } else if (f == HsPending) hsPendingRt(nowMs, i);
+    }
+    const bool inh = idle ? g.blocks() : g.latched;
+    if (inh != converter.startInhibited(SynchronousConverter::InhibitHs))
+        converter.inhibitStart(inh, SynchronousConverter::InhibitHs);
+}
+
+__attribute__((cold, noinline)) void MpptController::hsClearRt() {
+    auto &g = hsGuard;
+    if (converter.lsClamped() || hsFault.load(std::memory_order_relaxed) == HsRamp) converter.clampLs(false);
+    bflow.lockOff.fetch_and((uint8_t) ~BackflowDriver::LockHsShort);
+    g.latched = g.suspect = g.clean = false, g.needCheck = true;
+    hsWhy.store(0);
+    if (converter.boost()) converter.inhibitStart(false, SynchronousConverter::InhibitHs); // nothing else syncs it
+    hsFault.store(0);
+    ESP_LOGW("hs-short", "cleared%s", hsIdleCheck() ? ", start blocked until checked again" : "");
+}
+
+// The clamp is only safe for the LS at night: by day the input caps dump through the shorted HS and the LS.
+__attribute__((cold, noinline)) void MpptController::hsLatchRt(uint32_t nowMs, float i, char why) {
+    hsGuard.latched = true;
+    bflow.lockOff.fetch_or(BackflowDriver::LockHsShort);
+    bflow.enable(false);
+    converter.inhibitStart(true, SynchronousConverter::InhibitHs);
+    const bool clamp = hsClampAllowed(why == 'V');
+    hsI0 = i, hsClampMs = nowMs, hsRise = 0, hsArm.low = false;
+    hsWhy.store(why);
+    hsFault.store(clamp ? HsPending : HsOff);
+    converter.disable();
+    ESP_LOGE("hs-short", "HS short (%c): %.2f A, Vin %.2f Vout %.2f; start blocked, all gates off%s", why, i,
+             sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get(), clamp ? ", clamp pending Vin<9V" : "");
+}
+
+__attribute__((cold, noinline)) void MpptController::hsGatesOffRt(const char *why) {
+    converter.clampLs(false);
+    hsFault.store(HsOff);
+    ESP_LOGW("hs-short", "%s: all gates off", why);
+}
+
+// RT, each sample while the clamp is pending: arms on Vin below VinMax for HoldMs, re-checks the arming every 250 ms
+void MpptController::hsPendingRt(uint32_t nowMs, float i) {
+    const bool low = hsArm.update(nowMs, sensors.Vin->ewm.avg.get());
+    if (!low && nowMs - hsClampMs < 250) return;
+    hsClampMs = nowMs;
+    if (!hsClampAllowed(hsWhy.load(std::memory_order_relaxed) == 'V')) return hsGatesOffRt("clamp no longer armed");
+    if (!low || std::isnan(i)) return;
+    RT_COLD(
+        if (i < -.5f) { // battery current into the short: the BF conducts, a clamp would short the battery
+            hsClampUnsafe.store(true);
+            ESP_LOGE("hs-short", "I %.2f A before the LS ramp: no clamp", i);
+            return hsGatesOffRt("BF conducts");
+        }
+        hsI0 = i, hsRise = 0;
+        hsRampUs = (uint32_t) wallClockUs(), hsRampPos = 0;
+        hsFault.store(HsRamp);
+        if (!converter.lsPulse((uint32_t) std::ceil(HsClampArm::StartNs * 1e-9f * converter.getPwmTickRate())))
+            return hsGatesOffRt("LS ramp refused");
+        hsRampCnt = converter.lsClamps();
+        ESP_LOGW("hs-short", "Vin %.2f V below %.0f V for %lu s: LS ramp", sensors.Vin->ewm.avg.get(),
+                 HsClampArm::VinMax, (unsigned long) (HsClampArm::HoldMs / 1000));
+    );
+}
+
+// RT, each sample of the LS ramp: a disable() (a protection) or an OV alert ends it with all gates off
+void MpptController::hsRampRt(uint32_t nowMs) {
+    if (converter.lsClamps() != hsRampCnt || g_hwOvTrip || !hsClampAllowed(hsWhy.load(std::memory_order_relaxed) == 'V'))
+        return hsGatesOffRt("LS ramp stopped");
+    // a stalled loop must not skip the ramp: one step advances it by at most StepMaxUs
+    const auto now = (uint32_t) wallClockUs();
+    hsRampPos += std::min(now - hsRampUs, HsClampArm::StepMaxUs), hsRampUs = now;
+    if (hsRampPos < HsClampArm::RampUs) {
+        const float rate = converter.getPwmTickRate();
+        converter.lsPulse(HsClampArm::rampTicks(hsRampPos, (uint32_t) std::ceil(HsClampArm::StartNs * 1e-9f * rate),
+                                                converter.pwmMaxDriver()));
+        return;
+    }
+    RT_COLD(
+        hsClampMs = nowMs;
+        hsFault.store(HsClamped);
+        converter.clampLs(true);
+        ESP_LOGW("hs-short", "LS clamped on");
+    );
+}
+
+// RT, manual mode, each new sample
+void MpptController::bfTestRt() {
+    const uint8_t m = bfTest.mode.load(std::memory_order_acquire);
+    if (converter.disabled()) return;
+    if (m & BfStop) return bfTestStopRt();
+    if (m & BfConducts) bflow.enable(true);
+    if (!(m & BfEngage)) return;
+    converter.setManualRect(0x7fff); // complementary LS, follows the HS count
+    const float i = sensorPhysicalI->med3.get();
+    if (i < bfTest.iMin) bfTest.iMin = i;
+    if (!(i >= ((m & BfBlocks) ? -.3f : -.5f))) { // NaN stops without a record
+        if (!std::isnan(i)) {
+            bfTest.i = i, bfTest.vin = sensors.Vin->med3.get(), bfTest.vout = sensors.Vout->med3.get();
+            bfTest.d = converter.dutyCtrlEff();
+            bfTest.tripped.store(true, std::memory_order_release);
+        }
+        bfTestStopRt();
+    }
+}
+
+void MpptController::bfTestStopRt() {
+    bfTest.mode.fetch_or(BfStop);
+    converter.disable();
+    setManualTarget(0);
+    converter.setManualRect(-1);
+    bflow.enable(false);
+}
 
 // One rewrite of coil.conf (littlefs keeps the old file until close), under the admitted persist lock.
 bool rectCalPersist(int counts, uint8_t cal) {

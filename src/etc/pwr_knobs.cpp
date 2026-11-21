@@ -115,6 +115,7 @@ static int pwmSet(bool on) {
         return 1;
     }
     if (!on && converter.bsyncOwnsPeriod) { UART_LOG("pwr: pwm 0 refused while bsync runs"); return 1; }
+    if (!on && converter.lsClamped()) { UART_LOG("pwr: pwm 0 refused while the LS is clamped (hs-short)"); return 1; }
     const uint16_t en = converter.enableCount();
     converter.inhibitStart(true);
     vTaskDelay(pdMS_TO_TICKS(10)); // a start that passed the inhibit check has finished

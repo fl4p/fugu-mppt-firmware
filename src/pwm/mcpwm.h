@@ -443,6 +443,15 @@ public:
         if (genHS_) mcpwm_generator_set_force_level(genHS_, 0, true);
         if (genLS_) mcpwm_generator_set_force_level(genLS_, 0, true);
     }
+    void forceLevels(int hs, int ls) {
+        if (genHS_) mcpwm_generator_set_force_level(genHS_, hs, true);
+        if (genLS_) mcpwm_generator_set_force_level(genLS_, ls, true);
+    }
+    // HS forced low, LS back to its comparator actions
+    void forceHsLow() {
+        if (genHS_) mcpwm_generator_set_force_level(genHS_, 0, true);
+        if (genLS_) mcpwm_generator_set_force_level(genLS_, -1, true);
+    }
     // Remove the forced level, returning control to timer/comparator actions.
     void clearForce() {
         if (genHS_) mcpwm_generator_set_force_level(genHS_, -1, true);

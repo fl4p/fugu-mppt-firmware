@@ -52,6 +52,7 @@ extern volatile uint8_t g_rtLogTest;
 #ifdef WITH_MEASURE_COIL
 #include "selftest/measure_coil.h"
 #endif
+#include "selftest/bflow_test.h"
 #include "etc/version.h"
 #include "adc/sampling.h"
 #include "service.h"
@@ -228,6 +229,8 @@ static void cmdMppt(cmd *) {
 // [ls] the low-side on-count is pinned to that value (bench LS-timing sweep). ls<0 -> auto.
 
 static void cmdDc(cmd *c) {
+    if (bfTestBusy())
+        CMD_FAIL_RETURN("dc: selftest running (mppt aborts it)");
 #ifdef WITH_MEASURE_COIL
     if (isMeasuring())
         CMD_FAIL_RETURN("dc: busy measuring");
@@ -805,6 +808,8 @@ static void cmdOta(cmd *c) {
     auto url = Command(c).getArg(0).getValue();
     if (url.length() == 0)
         CMD_FAIL_RETURN("ota: expected url");
+    if (bfTestBusy())
+        CMD_FAIL_RETURN("ota: selftest running");
     UART_LOG("ota: running %s, downloading %s", format_version(), url.c_str());
     if (url.startsWith("bootloader")) {
         url.remove(0, 10);
@@ -882,6 +887,8 @@ static void cmdOta(cmd *c) {
 // receiver (halts the converter, erases the passive partition); the host then streams the image to the
 // NUS FW characteristic; `end` verifies the SHA-256 and reboots. ADC halt/restore lives inside otaBle*.
 static void cmdOtaBle(cmd *c) {
+    if (bfTestBusy())
+        CMD_FAIL_RETURN("ota-ble: selftest running");
     Command cc(c);
     // Reassemble the line for the module's parser, which owns both the command words and the OTAB
     // status words -- keeping them in one place is what stops them drifting apart again.
@@ -1927,6 +1934,19 @@ static void cmdHoliday(cmd *c) {
 }
 
 // status  — charger/battery snapshot: termination state, effective limits, termination line and BMS feed.
+// latched HS-short state, short
+static const char *hsStateStr(char *b, size_t n) {
+    switch (mppt.hsFaultState()) {
+        case MpptController::HsClamped: return "LS clamped";
+        case MpptController::HsRamp: return "LS ramp";
+        case MpptController::HsPending:
+            snprintf(b, n, "gates off, clamp pending (Vin<%.0fV %lus)", (double) HsClampArm::VinMax,
+                     (unsigned long) (mppt.hsPendingHeldMs((uint32_t) wallClockMs()) / 1000));
+            return b;
+        default: return "gates off";
+    }
+}
+
 static void cmdStatus(cmd *) {
     auto &chg = mppt.charger;
     const auto &p = chg.params;
@@ -1976,6 +1996,13 @@ static void cmdStatus(cmd *) {
                  p.bat_temp_min, p.bat_temp_derate, p.bat_temp_max);
     else if (chg.tempAgeS())
         UART_LOG("  pack temp expired (%lus ago)", (unsigned long) chg.tempAgeS());
+    if (mppt.hsFaultState()) {
+        char b[48];
+        UART_LOG("HS-short: LATCHED (%c), %s (selftest clear)", mppt.hsFaultWhy(), hsStateStr(b, sizeof b));
+    }
+    else if (converter.startInhibited(SynchronousConverter::InhibitHs))
+        UART_LOG("HS-short: start waits for a clean idle check");
+    selftestPrintState();
     if (g_app.psuMode()) {
         UART_LOG("PSU: vset=%.2fV %s trips=%u", mppt.getPsuSetpoint(),
                  mppt.isPsuLatched() ? "LATCHED" : mppt.isPsuEscalated() ? "escalated" : "ok",
@@ -2036,6 +2063,52 @@ static void cmdService(cmd *c) {
     }
 }
 
+// selftest                 HS-short state, last backflow-switch result
+// selftest bflow           backflow-switch test (buck, converter taken over, mode restored)
+// selftest abort           stop a running backflow-switch test
+// selftest clear           clear a latched HS short and a latched bf-fail
+static void cmdSelftest(cmd *c) {
+    auto sub = Command(c).getArg(0).getValue();
+    if (sub == "bflow") {
+#ifdef WITH_MEASURE_COIL
+        if (isMeasuring())
+            CMD_FAIL_RETURN("selftest: measure-coil running");
+#endif
+#ifdef WITH_BLE
+        if (otaBleActive())
+            CMD_FAIL_RETURN("selftest: OTA running");
+#endif
+        if (const char *r = bfTestRefusal())
+            CMD_FAIL_RETURN("selftest bflow: %s", r);
+        if (!bfTestStart())
+            CMD_FAIL_RETURN("selftest bflow: refused");
+        UART_LOG("selftest bflow: started, usually 10-30 s, up to ~3 min with slow sensor filters");
+    } else if (sub == "abort") {
+        if (!bfTestBusy())
+            CMD_FAIL_RETURN("selftest abort: not running");
+        bfTestAbort();
+        UART_LOG("selftest bflow: aborting");
+    } else if (sub == "clear") {
+        const bool hs = mppt.hsFaultState(), bf = mppt.bfFail.load();
+        if (!hs && !bf)
+            CMD_FAIL_RETURN("selftest: nothing latched");
+        if (hs) mppt.hsClear();
+        if (bf) selftestClearBf();
+        UART_LOG("selftest: cleared%s%s", hs ? " hs-short" : "", bf ? " bf-fail" : "");
+    } else if (!sub.length()) {
+        char b[48];
+        UART_LOG("hs-short: %s%s, idle check %s, zero %.3f A, start %s%s", mppt.hsFaultState() ? "LATCHED, " : "ok",
+                 mppt.hsFaultState() ? hsStateStr(b, sizeof b) : "", mppt.hsIdleCheck() ? "on" : "off",
+                 mppt.hsZero(), converter.startInhibited(SynchronousConverter::InhibitHs) ? "blocked" : "free",
+                 mppt.hsClampConf ? (mppt.hsClampAllowed(false) ? ", clamp armed" : ", clamp not armed") : "");
+        selftestPrintState();
+        if (bfTestBusy()) UART_LOG("selftest bflow: running");
+        else bfTestPrint();
+    } else {
+        CMD_FAIL_RETURN("selftest: expected bflow|abort|clear");
+    }
+}
+
 #ifdef WITH_MEASURE_COIL
 // measure-coil l0|ls [steps|hs] [dwell_ms] [apply]  — the sweep logic lives in measure_coil.cpp.
 static void cmdMeasureCoil(cmd *c) {
@@ -2057,6 +2130,8 @@ static void cmdMeasureCoil(cmd *c) {
     if (dwellMs && dwellMs < 200) dwellMs = 200;
     if (!converter.deadTimeIdle())
         CMD_FAIL_RETURN("measure-coil: a dead-time change is still queued");
+    if (bfTestBusy())
+        CMD_FAIL_RETURN("measure-coil: selftest running");
     if (!measureCoilStart(ls, apply, arg1, dwellMs))
         CMD_FAIL_RETURN("measure-coil: already running");
 }
@@ -2132,6 +2207,9 @@ static void cmdVconv(cmd *c) {
         else if (key == "vbat_ac_freq") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), v, g_vconv.getVbatAcShape());
         else if (key == "vbat_ac_shape") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), g_vconv.getVbatAcFreq(), (int) v);
         else if (key == "diode_vf") g_vconv.setDiodeVf(v);
+        else if (key == "bf_model") g_vconv.bfModel = v != 0;
+        else if (key == "bf_stuck") g_vconv.bfStuck = (uint8_t) v;
+        else if (key == "hs_short") g_vconv.hsShort = (uint8_t) v;
         else if (key == "ntc_v")    g_vconv.ntcV = v;
         else if (key == "ring_c")   g_vconv.setRing(v, g_vconv.getRingQ());
         else if (key == "ring_q")   g_vconv.setRing(g_vconv.getRingC(), v);
@@ -2327,14 +2405,23 @@ static void cmdAdcCal(cmd *) {
 
 static void cmdHelp(cmd *) { UART_LOG("%s", cli.toString().c_str()); }
 
+// Commands that change the PWM, rectification, backflow switch or sensors are refused while `selftest bflow` runs.
+// Checked where SimpleCLI dispatches each parsed command, so `a;;b` lines are covered too.
+template<void (*Handler)(cmd *)>
+static void bfGuarded(cmd *c) {
+    if (bfTestBusy())
+        CMD_FAIL_RETURN("%s: refused, selftest bflow running (selftest abort)", Command(c).getName().c_str());
+    Handler(c);
+}
+
 void setupCli() {
     cli.addCommand("help,?", cmdHelp);
     cli.addCommand("restart,reset,reboot", cmdRestart);
     cli.addCommand("mppt", cmdMppt);
-    cli.addCommand("short-ls", cmdShortLs);
-    cli.addBoundlessCmd("sweep", cmdSweep); // sweep [calfail]
+    cli.addCommand("short-ls", bfGuarded<cmdShortLs>);
+    cli.addBoundlessCmd("sweep", bfGuarded<cmdSweep>); // sweep [calfail]
     cli.addCommand("sweep-curve", cmdSweepCurve);
-    cli.addBoundlessCmd("rect-cal", cmdRectCal); // rect-cal [force|status|abort]
+    cli.addBoundlessCmd("rect-cal", bfGuarded<cmdRectCal>); // rect-cal [force|status|abort]
     cli.addCommand("intr", cmdIntr);
     cli.addBoundlessCmd("reset-lag", cmdResetLag); // reset-lag [q]: q skips the rt-stats print
 #if WITH_RTPROF
@@ -2352,7 +2439,7 @@ void setupCli() {
     cli.addCommand("tasks", cmdTasks);
     cli.addCommand("bootinfo", cmdBootinfo);
 #if CONFIG_IDF_TARGET_ESP32S3
-    cli.addCommand("adc-cal", cmdAdcCal);
+    cli.addCommand("adc-cal", bfGuarded<cmdAdcCal>);
 #endif
     cli.addBoundlessCmd("heap", cmdHeap);    // heap [check]
     cli.addBoundlessCmd("log", cmdLogLevel); // log <tag> <level>
@@ -2363,27 +2450,27 @@ void setupCli() {
     cli.addBoundlessCmd("crash", cmdCrash); // crash <null|abort|stack>: deliberate panic, writes coredump
 #endif
     cli.addCommand("uptime", cmdUptime);
-    cli.addBoundlessCmd("wsync", cmdWsync); // `wsync` edge rate; `wsync arm [off]` one-shot USB-pad probe
+    cli.addBoundlessCmd("wsync", bfGuarded<cmdWsync>); // `wsync` edge rate; `wsync arm [off]` one-shot USB-pad probe
     cli.addBoundlessCmd("sensor", cmdSensor); // `sensor` full dump; `sensor avg` compact EWM line
 #ifdef WITH_NETW
     cli.addCommand("ip", cmdIp);
 #endif
-    cli.addCommand("adc-restart", cmdAdcRestart);
-    cli.addCommand("adc-reset", cmdAdcReset);
-    cli.addCommand("anf", cmdAnf);
+    cli.addCommand("adc-restart", bfGuarded<cmdAdcRestart>);
+    cli.addCommand("adc-reset", bfGuarded<cmdAdcReset>);
+    cli.addCommand("anf", bfGuarded<cmdAnf>);
 
-    cli.addBoundlessCmd("dc", cmdDc); // dc <hs> [ls]
-    cli.addBoundlessCmd("dt,deadtime", cmdDeadTime); // dt [hl_ns [lh_ns]]
-    cli.addBoundlessCmd("pwm-freq,fsw", cmdPwmFreq); // pwm-freq [hz]
-    cli.addSingleArgCmd("sync", cmdSync);
-    cli.addSingleArgCmd("bf,panel", cmdBflow);
-    cli.addSingleArgCmd("speed", cmdSpeed);
+    cli.addBoundlessCmd("dc", bfGuarded<cmdDc>); // dc <hs> [ls]
+    cli.addBoundlessCmd("dt,deadtime", bfGuarded<cmdDeadTime>); // dt [hl_ns [lh_ns]]
+    cli.addBoundlessCmd("pwm-freq,fsw", bfGuarded<cmdPwmFreq>); // pwm-freq [hz]
+    cli.addSingleArgCmd("sync", bfGuarded<cmdSync>);
+    cli.addSingleArgCmd("bf,panel", bfGuarded<cmdBflow>);
+    cli.addSingleArgCmd("speed", bfGuarded<cmdSpeed>);
     cli.addSingleArgCmd("fan", cmdFan);
     cli.addSingleArgCmd("led", cmdLed);
-    cli.addBoundlessCmd("gpio", cmdGpio);
+    cli.addBoundlessCmd("gpio", bfGuarded<cmdGpio>);
 
 #if WITH_PWM_DIAGNOSTICS
-    cli.addSingleArgCmd("mcpwmtest", cmdMcpwmTest);
+    cli.addSingleArgCmd("mcpwmtest", bfGuarded<cmdMcpwmTest>);
     cli.addSingleArgCmd("gpiodump", [](cmd *c) {
         Command cc(c);
         int pin;
@@ -2431,6 +2518,7 @@ void setupCli() {
     });
 #if WITH_LEDC
     cli.addBoundlessCmd("anaw", [](cmd *c) {
+        if (bfTestBusy()) CMD_FAIL_RETURN("anaw: refused, selftest bflow running (selftest abort)");
         Command cc(c);
         int pin, val;
         if (!argInt(cc, 0, pin) || !argInt(cc, 1, val) || val < 0 || val > 255)
@@ -2450,7 +2538,7 @@ void setupCli() {
 #ifdef WITH_NETW
     cli.addBoundlessCmd("wifi", cmdWifi); // wifi on | off [minutes]
     cli.addSingleArgCmd("wifi-add", cmdWifiAdd);
-    cli.addSingleArgCmd("ota", cmdOta);
+    cli.addSingleArgCmd("ota", bfGuarded<cmdOta>);
 #endif
 #ifdef WITH_NETTOOLS
     cli.addBoundlessCmd("curl", cmdCurl);   // curl [-X M] [-H k:v] [-d data] <url>
@@ -2459,9 +2547,9 @@ void setupCli() {
     cli.addBoundlessCmd("tcpconnect,probe", cmdTcpConnect); // tcpconnect <host> <port>
     cli.addCommand("netstat,ifconfig", cmdNetstat);
 #endif
-    cli.addSingleArgCmd("vset", cmdVset);
+    cli.addSingleArgCmd("vset", bfGuarded<cmdVset>);
     cli.addSingleArgCmd("iset", cmdIset);
-    cli.addSingleArgCmd("ovset", cmdOvset);
+    cli.addSingleArgCmd("ovset", bfGuarded<cmdOvset>);
 #if WITH_PSU
     cli.addBoundlessCmd("psu", cmdPsu);
     cli.addBoundlessCmd("pv", cmdPv); // pv <isc> <voc> [k] | scale <s> | off
@@ -2479,13 +2567,13 @@ void setupCli() {
     cli.addBoundlessCmd("conf-check,confcheck", cmdConfCheck);
     cli.addBoundlessCmd("service,svc", cmdService);
 #ifdef WITH_SCRIPTS
-    cli.addSingleArgCmd("sleep", cmdSleep);
+    cli.addSingleArgCmd("sleep", bfGuarded<cmdSleep>);
     cli.addSingleArgCmd("run", cmdRun);
     cli.addCommand("scripts", cmdScripts);
     cli.addBoundlessCmd("script-set,script", cmdScriptSet);
 #endif
 #ifdef WITH_BLE
-    cli.addBoundlessCmd("ota-ble", cmdOtaBle);
+    cli.addBoundlessCmd("ota-ble", bfGuarded<cmdOtaBle>);
 #endif
 #if defined(WITH_NETW) || defined(WITH_BLE_TELE)
     cli.addSingleArgCmd("set-time", cmdSetTime);
@@ -2496,14 +2584,16 @@ void setupCli() {
 #ifdef WITH_TELE_MQTT
     cli.addSingleArgCmd("tele-mqtt", cmdTeleMqtt);
 #endif
+    cli.addBoundlessCmd("selftest", cmdSelftest); // selftest [bflow|abort|clear]
 #ifdef WITH_MEASURE_COIL
-    cli.addBoundlessCmd("measure-coil", cmdMeasureCoil); // measure-coil l0|ls [steps|hs] [dwell_ms] [apply]
+    cli.addBoundlessCmd("measure-coil", bfGuarded<cmdMeasureCoil>); // measure-coil l0|ls [steps|hs] [dwell_ms] [apply]
 #endif
 #if WITH_VCONV
-    cli.addBoundlessCmd("vconv", cmdVconv); // vconv [pv|bat|set ...]
+    cli.addBoundlessCmd("vconv", bfGuarded<cmdVconv>); // vconv [pv|bat|set ...]
 #endif
 #if CONFIG_FUGU_WITH_PWR_KNOBS
     cli.addBoundlessCmd("pwr", [](cmd *c) {
+        if (bfTestBusy()) CMD_FAIL_RETURN("pwr: refused, selftest bflow running (selftest abort)");
         Command cc(c);
         String s[5];
         const char *a[5];
@@ -2524,6 +2614,10 @@ bool handleCommand(const String &inp) {
     // does not enable manual pwm!
     if ((inp[0] == '+' or inp[0] == '-') && !adcSampler.isCalibrating() && inp.length() < 6 &&
         inp.toInt() != 0 && std::abs(inp.toInt()) < converter.pwmCtrlMax) {
+        if (bfTestBusy()) {
+            ESP_LOGW("main", "+-N: selftest bflow running");
+            return false;
+        }
         int pwmStep = inp.toInt();
         int target = (int) converter.getCtrlOnPwmCnt() + pwmStep;
         if (target < 0) target = 0;

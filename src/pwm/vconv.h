@@ -60,9 +60,10 @@ public:
         g_vconv.setPwmCount((uint8_t) channel, duty);
     }
 
-    void stop(int channel, uint8_t /*idleLevel*/) {
+    void stop(int channel, uint8_t idleLevel) {
         if (channel == 1) en_ = kNoEn;
         g_vconv.stopChannel((uint8_t) channel);
+        if (idleLevel) g_vconv.setPwmCount((uint8_t) channel, pwmMax);
     }
 
 private:

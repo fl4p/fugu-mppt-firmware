@@ -157,6 +157,16 @@ public:
         return i;
     }
 
+    // Battery-side backflow switch between the output node and the battery (opt-in): on conducts both ways,
+    // off is a diode (bfVf) toward the battery. Then Vout/Iout sense the battery side (BT+, battery current).
+    bool bfModel = false, bfOn = false;
+    uint8_t bfStuck = 0; // 1 stuck open, 2 stuck closed
+    float bfVf = 0.7f;
+    uint8_t hsShort = 0; // HS conducts permanently (buck); 2: and the LS never turns on
+    [[nodiscard]] bool bfConducts() const { return bfStuck ? bfStuck == 2 : bfOn; }
+    [[nodiscard]] float getVoutSense() const { return bfModel ? vSense_ : vOut_; }
+    [[nodiscard]] float getIoutSense() const { return bfModel ? ibat_ : iOutAvg_; }
+
     // Open backflow switch at the PV input: its body diode passes only forward PV current.
     void setPvBlocking(bool b) { pvBlocking_ = b; }
 
@@ -204,7 +214,7 @@ public:
     }
     void setPassives(float c_in, float c_out, float l) { cIn_ = c_in; cOut_ = c_out; l_ = l; }
     void setVin(float v)  { vIn_ = v; }
-    void setVout(float v) { vOut_ = v; }
+    void setVout(float v) { vOut_ = vSense_ = v; }
     void setDiodeVf(float v) { diodeVf_ = v; } // body-diode drop (LS and HS) in the dead/off phases
     float ntcV = 0.9f; // NTC sense voltage, ~1.3 °C (25 °C is 1.65 V)
     // Buck DC bias: L = L0 * (1 - k*|Ipk|), Ipk the previous cycle's peak (k in 1/A, 0 = off). Only the HS/LS/diode slopes use the
@@ -314,6 +324,8 @@ private:
     float iOutAvg_ = 0.0f;
     bool  dcm_     = false;
     bool  errored_ = false;
+    float vbNow_ = 0.0f, ibat_ = 0.0f, vSense_ = 0.0f;
+    float outNext(float v, float iOut, float T) const;
 
     // Cached reciprocals — the LX7 FPU has no hardware float divide, so every `/` is a software
     // __divsf3 call (~tens of cycles). stepOneCycle runs ~pwmFreq/adc_freq times per ADC sample, so

@@ -131,6 +131,7 @@ class SynchronousConverter {
     std::atomic<uint16_t> enables{0};      // bumped by each start in pwmPerturb()
     std::atomic<uint8_t> startInhibit{0}; // owner bits; pwmPerturb() does not start the converter
     std::atomic<bool> startWanted{false};
+    std::atomic<bool> lsClamp{false};
 
     bool syncRectOffHyst = false; // latched: sync rect disabled by low current, needs 4x to re-arm
     float outInVoltageRatio = 0; // M
@@ -474,6 +475,7 @@ class SynchronousConverter {
 
     // Commit only the LS off-count (instant clamp when an LS limit decreases).
     void drvCommitLsOff(uint16_t ctrl, uint16_t rect) {
+        if (lsClamp.load(std::memory_order_relaxed)) return;
 #if HAVE_MCPWM
         if (useMcpwm) { mcpwmDrv.setLsOff(ctrl + rect); return; }
 #endif
@@ -511,11 +513,14 @@ private:
 #endif
     }
 
-    // Bench diagnostic: hold LS high. LEDC-only.
+    // Hold the low-side switch on and the high-side off; MCPWM latches it until the next enable
     void drvShortLs() {
 #if HAVE_MCPWM
         if (useMcpwm) {
-            ESP_LOGW("buck", "shortLs() is a LEDC-only diagnostic; ignored for the MCPWM driver");
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+            if (mcpwmDrv.timerOff()) mcpwmDrv.timerResume(); // `pwr pwm 0`: a stopped timer may not apply the force
+#endif
+            mcpwmDrv.forceLevels(boost(), !boost());
             return;
         }
 #endif
@@ -1100,7 +1105,7 @@ public:
     [[nodiscard]] uint8_t lsClamps() const { return lsClampCount.load(std::memory_order_relaxed); }
     [[nodiscard]] uint16_t enableCount() const { return enables.load(std::memory_order_acquire); }
     // owners of startInhibit: rect-cal save and `pwr pwm` share InhibitCal, the idle profile holds InhibitIdle
-    static constexpr uint8_t InhibitCal = 1, InhibitIdle = 2;
+    static constexpr uint8_t InhibitCal = 1, InhibitIdle = 2, InhibitHs = 4, InhibitBf = 8;
     [[nodiscard]] bool startInhibited(uint8_t who = 0xff) const {
         return startInhibit.load(std::memory_order_acquire) & who;
     }
@@ -1379,6 +1384,7 @@ public:
     }
 
     void pwmPerturb(int16_t direction) {
+        if (unlikely(disabled() && lsClamp.load(std::memory_order_relaxed))) return;
         bool enabling = unlikely(disabled() and direction > 0);
         if (enabling) {
             if (const uint8_t inh = startInhibit.load(std::memory_order_seq_cst)) {
@@ -1466,8 +1472,10 @@ public:
 
     void disable() {
         lsClampCount.fetch_add(1, std::memory_order_relaxed);
-        if (pinSd != 255)digitalWrite(pinSd, 1);
-        drvShutdown();
+        const bool clamp = lsClamp.load(std::memory_order_seq_cst);
+        if (pinSd != 255) digitalWrite(pinSd, !clamp);
+        if (clamp) drvShortLs();
+        else drvShutdown();
 
         if (pwmCtrl > pwmCtrlMin)
             UART_LOG("PWM disabled (duty cycle was %d)\n", (int) pwmCtrl);
@@ -1480,6 +1488,41 @@ public:
         // rather than the RT-owned state.
         fpwmEngaged.store(false, std::memory_order_relaxed);
         fpwmReq.post(0);
+    }
+
+    // Disabled, and held there with the LS on (true) or all gates off (false). Only a disabled
+    // converter takes the clamp: pwmPerturb() refuses to start while it is set.
+    void clampLs(bool on) {
+        lsClamp.store(on, std::memory_order_seq_cst);
+        disable();
+    }
+    [[nodiscard]] bool lsClamped() const { return lsClamp.load(std::memory_order_relaxed); }
+
+    // Disabled buck without the clamp: HS held low, LS on for `ticks` (realized) each period, capped
+    // below the period. Ends with disable(). False if not disabled or the clamp is held.
+    bool lsPulse(uint32_t ticks) {
+        if (isBoost || !disabled() || lsClamp.load(std::memory_order_relaxed)) return false;
+        if (pinSd != 255) digitalWrite(pinSd, 0);
+        const uint32_t top = driverPwmMax - 1u;
+#if HAVE_MCPWM
+        if (useMcpwm) {
+#if CONFIG_FUGU_WITH_PWR_KNOBS
+            if (mcpwmDrv.timerOff()) mcpwmDrv.timerResume();
+#endif
+            // HiLi: the LS rises at cmpHS + hl (hardware RED); InEn: EN rises at the wrap, hl is 0
+            const uint32_t a = pwmEnLogic ? 0 : 1;
+            mcpwmDrv.setHsOff((uint16_t) a);
+            mcpwmDrv.setLsOff((uint16_t) std::min(a + mcpwmDrv.getDtHlTicks() + ticks, top));
+            mcpwmDrv.forceHsLow();
+            return true;
+        }
+#endif
+#if HAVE_LEGACY
+        legacyDrv.stop(pwmCh_Ctrl, 0);
+        if (pwmEnLogic) legacyDrv.update_pwm(pwmCh_Rect, std::min(ticks, top));
+        else legacyDrv.update_pwm(pwmCh_Rect, 0, std::min(ticks, top));
+#endif
+        return true;
     }
 
 
@@ -1621,10 +1664,11 @@ public:
         // rising edge and dtLh is the reserved wrap band. (The 1-tick FED that claims the DT path
         // makes the realized on-time one tick longer; ignoring it understates the duty, which is
         // the safe direction for the gate.)
-        const float period = (float) driverPwmMax + (float) drvDtLhTicks();
+        const float period = periodCounts();
         if (!(period > 0.f)) return 0.f;
         return (float) pwmCtrl / period;
     }
+    [[nodiscard]] float periodCounts() const { return (float) driverPwmMax + (float) drvDtLhTicks(); }
 
     /**
      * Bring-up gate for forced PWM (see fpwmGate). Zero DC coil current sits at D = M for the buck

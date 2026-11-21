@@ -123,11 +123,26 @@ void VirtualConverter::stepOneCycle(float T) {
     // degenerate, relax caps only. V_out is NOT guarded: a real short pulls
     // V_out near zero while the converter still delivers large I_L, and the
     // phase math handles V_out → 0 (phase-2/3 slopes go to zero, coil idles).
+    vbNow_ = vBatEff;
+    struct HsRestore { uint16_t &r; uint16_t v; ~HsRestore() { r = v; } } hsRestore{pwm_.pwmCtrl, ctrl}, lsRestore{pwm_.pwmRect, rect};
+    if (hsShort && !boost_ && ctrl < pmax && pmax) {
+        if (rect && hsShort != 2) { // shorted HS + LS on: C_in dumps, the node sees ground
+            vIn_ = 0.0f;
+            iLEnd_ -= (vOut_ + 0.01f * iLEnd_) * T * invL_; // 10 mOhm loop
+            iInAvg_ = 0.0f;
+            iOutAvg_ = iLEnd_;
+            vOut_ = std::max(0.0f, outNext(vOut_, iOutAvg_, T));
+            return;
+        }
+        pwm_.pwmCtrl = pmax;
+        if (hsShort == 2) pwm_.pwmRect = 0;
+    }
+
     constexpr float kVMin = 1e-4f;
     if (vIn_ < kVMin || pmax == 0 || L <= 0.0f) {
         const float Ipv = pvBlocking_ ? std::max(0.f, pvCurrent(vIn_)) : pvCurrent(vIn_);
         vIn_  += Ipv * T * invCin_;
-        vOut_ = (vOut_ + aOut_ * vBatEff) * inv1pAout_;
+        vOut_ = outNext(vOut_, 0.0f, T);
         if (vIn_  < 0.0f) vIn_  = 0.0f;
         if (vOut_ < 0.0f) vOut_ = 0.0f;
         iInAvg_  = 0.0f;
@@ -164,7 +179,7 @@ void VirtualConverter::stepOneCycle(float T) {
         else stepOneCycleBuck(T);
         if (pass) break;
         qOut1 = iOutAvg_, qIn1 = iInAvg_;
-        const float vPred = std::max(0.0f, (v0 + (T * iOutAvg_) * invCout_ + aOut_ * vBatEff) * inv1pAout_);
+        const float vPred = std::max(0.0f, outNext(v0, iOutAvg_, T));
         vOut_ = 0.5f * (v0 + vPred), vIn_ = 0.5f * (vi0 + vinNext(iInAvg_)), iLEnd_ = iL0, iPk_ = iPk0;
     }
     vOut_ = v0;
@@ -172,7 +187,7 @@ void VirtualConverter::stepOneCycle(float T) {
     iInAvg_ = (qIn1 + 2.0f * iInAvg_) * (1.0f / 3.0f);
 
     vIn_ = vinNext(iInAvg_);
-    vOut_ = (vOut_ + (T * iOutAvg_) * invCout_ + aOut_ * vBatEff) * inv1pAout_;
+    vOut_ = outNext(vOut_, iOutAvg_, T);
     if (vOut_ > vOutMax_) vOutMax_ = vOut_;
 
     // Safety bound only: a sinking panel stays near Voc on its own; a blocking source (open backflow switch)
@@ -480,4 +495,19 @@ void VirtualConverter::stepSeconds(float dt_s, uint32_t pwmFreqFallback) {
     const long n = std::lround(cycAcc_);
     cycAcc_ -= (float) n;
     for (long i = 0; i < n; ++i) stepOneCycle(T);
+    if (bfModel) {
+        const float vb = vbNow_ + (bfConducts() ? 0.0f : bfVf);
+        ibat_ = vOut_ > vb || bfConducts() ? (vOut_ - vb) / rbat_ : 0.0f;
+        vSense_ = vbNow_ + ibat_ * rbat_;
+    }
+}
+
+// output node: C_out, and the battery behind r_bat (backward Euler); a blocking BF (bf_model) passes only forward
+float VirtualConverter::outNext(float v, float iOut, float T) const {
+    const float vn = v + (T * iOut) * invCout_;
+    if (!bfModel) return (vn + aOut_ * vbNow_) * inv1pAout_;
+    const bool on = bfConducts();
+    const float vb = vbNow_ + (on ? 0.0f : bfVf);
+    const float vc = (vn + aOut_ * vb) * inv1pAout_;
+    return on || vc > vb ? vc : vn;
 }

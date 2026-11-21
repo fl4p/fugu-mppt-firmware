@@ -30,6 +30,7 @@
 #include "conv_side.h"
 #include "out_impedance.h"
 #include "rect_cal.h"
+#include "selftest/hs_short.h"
 
 bool rectCalPersist(int counts, uint8_t cal); // coil.conf, core 0
 
@@ -125,7 +126,8 @@ struct PsuReq {
     float v = NAN, isc = NAN, k = NAN; // v: PSU setpoint or PV Voc
     int32_t rect = -1;
     uint16_t duty = 0;
-    bool rebase = false, boot = false;
+    bool rebase = false, boot = false, keepBackoff = false; // keep: backoff and CV-floor latch survive a mode change
+    bool stop = false; // manual duty 0: PWM off at once, no ramp
 };
 
 struct PvCurve {
@@ -577,6 +579,8 @@ public:
     // Single source of truth for startCondition(); also logged while idle in START.
     [[nodiscard]] const char *startBlockReason() const {
         if (psuLatched) return "psu-latch";
+        if (converter.startInhibited(SynchronousConverter::InhibitHs)) return hsFault.load() ? "hs-short" : "hs-check";
+        if (converter.startInhibited(SynchronousConverter::InhibitBf)) return "bf-fail";
         if (converter.startInhibited(SynchronousConverter::InhibitCal)) return "conf-save";
         if (g_app.psuMode()) {
             const auto feasibility = currentPsuFeasibility();
@@ -803,7 +807,8 @@ public:
             return false;
         }
 
-        if (sensorPhysicalI->last < -1 && sensorPhysicalI->previous < -1 && !converter.forcedPwm_()) {
+        const bool bfT = bfTest.mode.load(std::memory_order_relaxed); // the self-test drives reverse current itself
+        if (sensorPhysicalI->last < -1 && sensorPhysicalI->previous < -1 && !converter.forcedPwm_() && !bfT) {
             RT_COLD(
             if (sensors.Iout->ewm.avg.get() > 10) {
                 //buck.halfDutyCycle();
@@ -849,7 +854,7 @@ public:
             // try to prevent voltage boost and disable low side for low currents
             auto currentFilt = fminf(sensorPhysicalI->ewm.avg.get(),
                                      std::max(sensorPhysicalI->last, sensorPhysicalI->previous));
-            if (currentFilt < -0.05f && limits.reverse_current_paranoia) {
+            if (currentFilt < -0.05f && limits.reverse_current_paranoia && !bfT) {
                 RT_COLD(
                 if (converter.getRectOnPwmCnt() > converter.getRectOnPwmMax() / 2 &&
                     converter.getRectOnPwmCnt() > (converter.pwmRectMin + converter.pwmCtrlMax / 20)) {
@@ -897,7 +902,7 @@ public:
             constexpr float BflowOpenMaxDcmCurrent = 1.f; // A
             float iDcm = NAN;
             const float vi = sensors.Vin->ewm.avg.get(), vo = sensors.Vout->ewm.avg.get();
-            if (converter.getDutyCycle() > 0.33f &&
+            if (!bfT && converter.getDutyCycle() > 0.33f &&
                 !((iDcm = converter.dcmCurrent(vi, vo)) < BflowOpenMaxDcmCurrent)) {
                 // a sweep at the ratio limit with <0.05 A has no more power to find: end it, not a fault.
                 // Vin can't really sit below Vout here; the 5% margin covers Vin sensor error at PV collapse
@@ -1109,6 +1114,23 @@ public:
     std::atomic<bool> psuEscalated{false};
     std::atomic<bool> psuLatched{false};
 
+    HsShortGuard hsGuard{};
+    HsClampArm hsArm{};
+    std::atomic<uint8_t> hsFault{0};
+    std::atomic<char> hsWhy{0};
+    std::atomic<bool> hsClearReq{false};
+    float hsI0 = 0;
+    uint32_t hsClampMs = 0, hsRampUs = 0, hsRampPos = 0; // ramp: last step, position (µs)
+    uint8_t hsRise = 0, hsRampCnt = 0;
+    std::atomic<bool> hsClampUnsafe{false}; // a clamp met battery current: disarmed until a fresh blocks pass (persisted)
+    void hsLatchRt(uint32_t nowMs, float i, char why);
+    void hsClearRt();
+    void hsPendingRt(uint32_t nowMs, float i);
+    void hsRampRt(uint32_t nowMs);
+    void hsGatesOffRt(const char *why);
+    void bfTestRt();
+    void bfTestStopRt();
+
     // PV-sim (solar-array-simulator): the output follows the panel curve V = f(Iout).
     // RT-owned; while active, psuVsetpoint is advanced along the curve each tick
     // (pvAdvanceSetpoint) instead of being a constant. slewVps/iout span are boot-config
@@ -1236,12 +1258,18 @@ public:
         return pvBaseIsc.load(std::memory_order_relaxed);
     }
 
-    [[nodiscard]] uint32_t requestPsuOff() { return postPsuCommand(PsuCommand::DisableMppt); }
+    [[nodiscard]] uint32_t requestPsuOff(bool keepBackoff = false) {
+        PsuReq r;
+        r.keepBackoff = keepBackoff;
+        return postPsuCommand(PsuCommand::DisableMppt, r);
+    }
 
-    [[nodiscard]] uint32_t requestPsuManual(uint16_t duty, int manualRect) {
+    [[nodiscard]] uint32_t requestPsuManual(uint16_t duty, int manualRect, bool keepBackoff = false, bool stop = false) {
         PsuReq r;
         r.duty = duty;
         r.rect = manualRect;
+        r.keepBackoff = keepBackoff;
+        r.stop = stop;
         return postPsuCommand(PsuCommand::DisableManual, r);
     }
 
@@ -1316,7 +1344,7 @@ public:
 
         if (command != PsuCommand::Enable && !pvCmd) {
             abortSweep();
-            clearBackoff();
+            if (!r.keepBackoff) clearBackoff();
             converter.setManualRect(-1);
             rectCal.drop();
             psuVsetpoint = NAN;
@@ -1325,9 +1353,10 @@ public:
             publishedPsuSetpoint.store(NAN, std::memory_order_release);
             pvDeactivateRt();
             psuResetTripState();
-            releaseCvFloorLatch("psu off");
+            if (!r.keepBackoff) releaseCvFloorLatch("psu off"); // it clears the backoff too
             lastPsuRequestError.store(PsuSetpointError::None, std::memory_order_relaxed);
             if (command == PsuCommand::DisableManual) {
+                if (r.stop && !manualDuty) shutdownDcdc("stop", 0);
                 setManualTarget(manualDuty);
                 converter.setManualRect(manualRect);
                 if (manualDuty != 0 && !limits.reverse_current_paranoia) {
@@ -1547,6 +1576,53 @@ public:
     }
 
     void telemetry();
+
+    // HS-short checks (selftest/hs_short.h): RT, once per new sample
+    void hsShortRt(uint32_t nowMs);
+    void hsClear() { hsClearReq.store(true, std::memory_order_release); }
+    // latched: LS clamped on, all gates off, gates off until Vin stays low (clamp pending), LS width ramp
+    static constexpr uint8_t HsClamped = 1, HsOff = 2, HsPending = 3, HsRamp = 4;
+    // 0 none, else one of the latched states above
+    [[nodiscard]] uint8_t hsFaultState() const { return hsFault.load(std::memory_order_relaxed); }
+    // pending: how long Vin has been below HsClampArm::VinMax (RT-written, approximate from core 0)
+    [[nodiscard]] uint32_t hsPendingHeldMs(uint32_t nowMs) const { return hsArm.heldMs(nowMs); }
+    // I idle current, V idle voltage, P restored at boot
+    [[nodiscard]] char hsFaultWhy() const { return hsWhy.load(std::memory_order_relaxed); }
+    [[nodiscard]] float hsZero() const { return hsGuard.zero; }
+    // before the RT task: a latch persisted across the reboot, gates off
+    void hsRestore() {
+        hsGuard.latched = true;
+        hsWhy = 'P';
+        hsFault = 2;
+        bflow.lockOff.fetch_or(BackflowDriver::LockHsShort);
+        converter.inhibitStart(true, SynchronousConverter::InhibitHs);
+    }
+
+    // board.conf: bflow_bat=1 declares a backflow switch between the converter output and the battery with the
+    // current sensor on the battery side (idle HS check, `selftest bflow`); hs_clamp=1 opts into the LS clamp
+    bool bfBat = false, hsClampConf = false;
+    [[nodiscard]] bool hsIdleCheck() const { return bfBat && bflow && !converter.boost() && sensorPhysicalI == sensors.Iout; }
+    std::atomic<bool> bfRecent{false}; // blocks phase of `selftest bflow` passed within 36 h (written by core 0)
+    std::atomic<bool> bfFail{false};   // latched `selftest bflow` failure
+    void bfFailSet(bool on) {
+        bfFail.store(on);
+        converter.inhibitStart(on, SynchronousConverter::InhibitBf);
+    }
+    // byVoltage: the latch did not judge a current, so an unlearnt zero does not matter
+    [[nodiscard]] bool hsClampAllowed(bool byVoltage) const {
+        return hsClampConf && hsIdleCheck() && !g_app.psuMode() && !hsClampUnsafe.load(std::memory_order_relaxed) &&
+               !bfFail.load(std::memory_order_relaxed) &&
+               (byVoltage || std::isfinite(hsGuard.zero)) && bfRecent.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool limiting() const { return ctrlState._limiting; }
+
+    // `selftest bflow` RT side (selftest/bflow_test.cpp)
+    static constexpr uint8_t BfBlocks = 1, BfConducts = 2, BfEngage = 4, BfStop = 8;
+    struct {
+        std::atomic<uint8_t> mode{0};
+        std::atomic<bool> tripped{false};
+        float iMin = INFINITY, i = NAN, vin = NAN, vout = NAN, d = NAN; // trip record
+    } bfTest;
 
     time_us lastUs = 0;
 

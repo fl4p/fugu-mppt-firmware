@@ -5,6 +5,10 @@
 
 #include "etc/pinconfig.h"
 #include "util.h"
+#include <atomic>
+#if WITH_VCONV
+#include "sim/vconv.h"
+#endif
 
 /**
  * Drives the backflow switch
@@ -16,6 +20,9 @@ class BackflowDriver {
     int8_t panelSD;
 
 public:
+    static constexpr uint8_t LockHsShort = 1, LockSelftest = 2;
+    std::atomic<uint8_t> lockOff{0}; // owner bits; enable(true) is refused while any is set
+
     void init(const ConfFile &pin) {
 #if WITH_VCONV
         // simulated plant: keep the logical state, never drive a real board's panel switch
@@ -45,6 +52,10 @@ public:
         // every tick, so a runtime `bf 0` can't hold; this is the only reliable hold.
         enable = false;
 #endif
+        if (lockOff.load(std::memory_order_relaxed)) enable = false;
+#if WITH_VCONV
+        g_vconv.bfOn = enable;
+#endif
         if (panelEN) {
             digitalWrite(panelEN, !!enable);
         } else if (panelSD) {
@@ -63,6 +74,9 @@ public:
     bool state() const { return _state; }
 
     explicit operator bool() const {
+#if WITH_VCONV
+        if (g_vconv.bfModel) return true;
+#endif
         return panelSD != 0 or panelEN != 0;   // init() asserts the two are mutually exclusive
     }
 };
