@@ -35,6 +35,7 @@
 //     wx-sweep-gust, wx-sweep-learn[-off], wx-sweep-scan, wx-sweep-return   sweep verdict: one re-sweep (one maximum,
 //                       no substring count), no learning from a flagged sweep (-off: sweep_verify=0 learns from it),
 //                       scan on a flag, the return pass picking the better of two maxima after a cloud edge
+//     wx-sweep-preempt  a requested sweep pre-empts a scheduled re-sweep, which then does not count to the 10 min cap
 //     wx-sweep-fall-n1, wx-sweep-rise-n1, wx-sweep-one   single peak known (pv_substrings=1): no re-sweep; -one learns
 //                       it from two verified sweeps; "== VERDICT" PASS/FAIL
 //     wx-mp-ramp, wx-mp-psu, wx-mp-psu-nosink  source Voc slowly 1.25 -> 1.02 -> 1.25 x Vbat (LS min pulse ratio
@@ -1508,6 +1509,11 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         wx.cloud = {{e, fall ? 1 : 0.27f}, {e + 10, fall ? 0.27f : 1}};
         wx.sweepAt = wx.statsFrom = 60, wx.T = 240;
         wx.verdict = n1 ? "vf" : "vfrv", wx.sweeps = n1 ? 1 : 2;
+    } else if (sc == "wx-sweep-preempt") {
+        // wx-sweep-fall, a requested sweep at 90 s pre-empts the re-sweep; a later flagged sweep still gets its re-sweep
+        wx.cloud = {{62, 1}, {72, 0.27f}, {150, 0.27f}, {160, 1}, {202, 1}, {212, 0.27f}};
+        wx.sweepAt = wx.statsFrom = 60, wx.sweepsAt = {90, 200}, wx.T = 400;
+        wx.verdict = "vfrvfrv", wx.sweeps = 4;
     } else if (sc == "wx-sweep-one") {
         // one peak, steady sun: the boot and the 60 s sweep (verified) learn the single peak (pv_substrings=1); a sweep
         // under a falling cloud edge is flagged and starts no re-sweep

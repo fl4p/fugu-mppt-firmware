@@ -224,7 +224,7 @@ private:
     uint8_t _svFlag = 0;  // 0 none, 1 clean, 2 light changed
     uint8_t _noMppN = 0; // consecutive no-MPP sweeps, up to 4
     float _svLand = 0, _svI = 0; // landed power, input current then
-    uint32_t _svT = 0, _resweepAt = 0, _retryAt = 0; // [ms] settle start, scheduled re-sweep, last one scheduled
+    uint32_t _svT = 0, _resweepAt = 0, _retryAt = 0; // [ms] settle start, scheduled re-sweep, scheduling of the last one that ran
     void sweepVerdict(uint32_t nowMs, float p, bool ok);
     void scheduleResweep(uint32_t nowMs, uint32_t inMs);
     void sweepJudge(float p, float d, bool rescan);
@@ -1018,7 +1018,8 @@ public:
      */
     void startSweep() {
         _sweeping = true;
-        _svPhase = _svFlag = 0, _resweepAt = 0;
+        if (_resweepAt) _retryAt = _resweepAt = 0; // pre-empted: it never ran, so it doesn't count to the cap
+        _svPhase = _svFlag = 0;
 
         converter.disable();
         ctrlState._limiting = false;

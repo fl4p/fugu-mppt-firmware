@@ -162,8 +162,9 @@ there. A flagged sweep:
   during the pass too). After a return pass whose landing agrees, the probes have already ranked the maxima afresh.
 * is swept once more if it recorded at most one maximum and no substring count is known: the scan has nothing to
   probe, and the changing sky may have hidden a second maximum. The re-sweep follows 60 s later, or, when the landing
-  was brighter than the MPP, 5 s after the input current stops rising (at most 60 s). At most one re-sweep is
-  scheduled per 10 minutes, so a gusty sky does not keep the converter sweeping.
+  was brighter than the MPP, 5 s after the input current stops rising (at most 60 s). At most one re-sweep runs
+  per 10 minutes, so a gusty sky does not keep the converter sweeping. A re-sweep that another sweep pre-empts does
+  not count.
 
 Otherwise a flagged sweep is not repeated. On a string with one maximum P&O finds the MPP from the landing point by
 itself; on a string with several, a maximum that the sweep did not record is found by the scan, or by the next

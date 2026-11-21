@@ -109,6 +109,7 @@ void MpptController::update() {
         (grew || retry || sinceSweepUs > 30 * 60000000)) {
         ESP_LOGI("mppt", "%s sweep & sensor calibration", grew ? "power-doubled" : retry ? "retry" : "periodic");
         g_app.maxLoopLag = 0; // restart the lag window so telemetry tracks per-sweep peak, not all-time
+        if (retry) _resweepAt = 0;
         startSweep();
         rtcount("mppt.update.startSweep");
         return;
