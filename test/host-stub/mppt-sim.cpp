@@ -12,6 +12,7 @@
 //   test/host-stub/mppt-sim.sh [scenario ...]   # builds /tmp/mppt-sim, runs the scenarios (default all)
 //   /tmp/mppt-sim <scenario>   # sanity | a | b | c | d-cloud | d-cloud-ramp | d-bus04 | d-bus08 | d-bus12 |
 //                              # d-noise | e | e-bleed; suffix -p0 = limits.conf reverse_current_paranoia=0
+//                              # e*: battery open at 60 s, back at 180 s: on within 5 s ("== RECONNECT")
 //                              # shade | shade-cv: half-shaded string (two peaks)
 //                              # idle-wake: start refused only by InhibitIdle while Vin rises (armed sweep and not)
 //                              # hs-short, hs-short-bfclosed, hs-cal, hs-dawn, hs-dawn-nozero: HS-short check
@@ -2402,15 +2403,18 @@ static int simMain(int argc, char **argv) {
         run(e ? 120 : 6, e ? 2.0 : 0.5, &p, 25);
         report(name.c_str(), p);
         if (e) {
+            Probe q = probeStart();
             g_vconv.setBat(27.f, 0.05f);
             printf("%9.4f >>> vconv bat reconnect 27 V / 0.05 ohm\n", tNow());
-            // the no-MPP backoff grows while the battery is open: probe from the restart
-            const double tRc = tNow();
-            while (converter.disabled() && tNow() - tRc < 300) run(0.5, 0);
-            printf("%9.4f >>> converter on %.1f s after the reconnect\n", tNow(), tNow() - tRc);
-            Probe q = probeStart();
             run(60, 2.0, &q, 0);
             report("e-reconnect", q);
+            // the battery's return ends the no-MPP backoff: back on within seconds, no trip
+            auto on = std::upper_bound(g_onT.begin(), g_onT.end(), q.t0);
+            const double dOn = on == g_onT.end() ? 1e9 : *on - q.t0;
+            const bool ok = dOn <= 5 && q.nOn > 0 && g_trips.size() == q.tripIdx0;
+            printf("== RECONNECT %s: on %.1f s after the reconnect (want <= 5), %u on-ticks, %zu trips: %s\n", name.c_str(),
+                   dOn, q.nOn, g_trips.size() - q.tripIdx0, ok ? "PASS" : "FAIL");
+            if (!ok) return 1;
             traceLine("final ");
         }
     } else if (sc == "d-cloud" || sc == "d-cloud-ramp") {

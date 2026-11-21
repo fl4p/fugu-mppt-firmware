@@ -131,7 +131,8 @@ If the best captured power is below that floor, the sweep commits no target. The
 resumes through the normal start path. The firmware logs this backoff at info level as
 `backoff 30s [sweep-no-mpp]`, not as a fault. Each consecutive sweep without an MPP doubles the backoff (60, 120,
 240 s) up to 300 s, so a dawn or a source that cannot deliver that power, such as a current-limited bench supply,
-retries every 5 min. A sweep that finds an MPP resets the backoff to 30 s.
+retries every 5 min. A sweep that finds an MPP, or a battery reconnected during the backoff (see
+[protection](protection.md)), resets the backoff to 30 s.
 
 At the end of a sweep, the firmware writes "MPP Scan done" to the LCD and logs
 `Stop sweep ... MPP=(<W>,<duty>,<V>)`.

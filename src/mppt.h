@@ -222,11 +222,18 @@ private:
     uint8_t _svPhase = 0; // 1 landing, 2 settling, 3 return pass
     uint8_t _svLandTrim = 0; // 1: landing trim pending, 2: verdict
     uint8_t _svFlag = 0;  // 0 none, 1 clean, 2 light changed
-    uint8_t _noMppN = 0; // consecutive no-MPP sweeps, up to 4
+    struct {
+        uint8_t n: 3 = 0; // consecutive no-MPP sweeps, up to 4
+        bool armed: 1 = false; // the running backoff is theirs
+        bool open: 1 = false; // Vout outside the battery band during it
+        uint8_t inBand: 2 = 0; // ~1 s ticks back in the band
+        bool tick: 1 = false;
+    } _noMpp;
     float _svLand = 0, _svI = 0; // landed power, input current then
     uint32_t _svT = 0, _resweepAt = 0, _retryAt = 0; // [ms] settle start, scheduled re-sweep, scheduling of the last one that ran
     void sweepVerdict(uint32_t nowMs, float p, bool ok);
     void scheduleResweep(uint32_t nowMs, uint32_t inMs);
+    void noMppBatCheck();
     void sweepJudge(float p, float d, bool rescan);
 
     // A sweep only commits its captured MPP as the operating target above this power. In marginal
@@ -422,6 +429,7 @@ public:
         bflow.enable(false);
         converter.disable();
         if (backoffSec) {
+            _noMpp.armed = false;
             // PSU fast-retry: only for transient faults (Vout-OV, supply-UV). Other faults
             // (sensor-fail, revI, highI) keep their normal backoff even in PSU mode.
             // stopAndBackoff caller is maintenance, not a fault — don't count it.
@@ -457,7 +465,8 @@ public:
                 if (!inBackoff() || backoffSec > _backoffArmedSec) {
                     _backoffUntilUs = wallClockUs() + static_cast<time_us>(backoffSec) * 1000000ULL;
                     _backoffArmedSec = backoffSec;
-                    if (strcmp(who, "sweep-no-mpp"))
+                    _noMpp.armed = !strcmp(who, "sweep-no-mpp");
+                    if (!_noMpp.armed)
                         ESP_LOGW("mppt", "backoff %lus [%s]%s", (unsigned long) backoffSec, who,
                                  _sweeping ? " mid-sweep" : "");
                     else
@@ -530,7 +539,7 @@ public:
     }
 
     [[nodiscard]] bool inBackoff() const { return wallClockUs() < _backoffUntilUs; }
-    [[nodiscard]] bool noMppBackoff() const { return _noMppN && inBackoff(); }
+    [[nodiscard]] bool noMppBackoff() const { return _noMpp.armed && inBackoff(); }
 
     [[nodiscard]] float boardPowerSupplyVoltage() const {
         constexpr auto diodeFwdVoltage = 0.3f;
@@ -616,6 +625,7 @@ public:
 
     // RT start gates: startBlockReason(); a start refused only by the idle profile asks it to leave
     const char *startBlockReasonRt() {
+        if (_noMpp.armed) noMppBatCheck();
         const char *r = startBlockReason();
         if (r == kIdleBlock) converter.wantStart();
         return r;
@@ -1539,15 +1549,15 @@ public:
             // converter at near-max duty). Drop the target and back off, 30 s doubling per repeat up to 300 s;
             // the converter then resumes via normal MPPT / the next periodic re-sweep once there's real power.
             targetDutyCycle = 0;
-            const uint32_t sec = std::min(30u << _noMppN, 300u);
-            if (_noMppN < 4) ++_noMppN;
+            const uint32_t sec = std::min(30u << _noMpp.n, 300u);
+            if (_noMpp.n < 4) ++_noMpp.n;
             ESP_LOGI("mppt", "Stop sweep: no MPP (best %.2fW < %.1fW), backing off %lus", maxPowerPoint.power,
                      sweepMinPower(), (unsigned long) sec);
             shutdownDcdc("sweep-no-mpp", sec);
             return;
         }
 
-        _noMppN = 0;
+        _noMpp = {};
         targetDutyCycle = maxPowerPoint.dutyCycle;
         // dim: the MPP is the largest of noisy samples, biased high; such a sweep teaches nothing either
         const bool verify = sweepVerify > 0 && maxPowerPoint.power >= 25 * sweepMinPower();

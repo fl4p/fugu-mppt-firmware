@@ -964,6 +964,23 @@ __attribute__((cold, noinline)) void MpptController::scheduleResweep(uint32_t no
     ESP_LOGI("mppt", "re-sweep in %u s", (unsigned) (inMs / 1000));
 }
 
+// RT, off in a no-MPP backoff: a battery coming back (Vout outside the battery band, then 1..2 s inside it again) ends
+// the backoff and restarts its doubling. A battery present all along (dawn) never leaves the band.
+__attribute__((cold, noinline)) void MpptController::noMppBatCheck() {
+    if (!inBackoff() || !charger.params.haveVbatMax()) return;
+    const float v = sensors.Vout->ewm.avg.get();
+    const bool tick = (wallClockUs() >> 20) & 1, flip = tick != _noMpp.tick;
+    _noMpp.tick = tick;
+    if (v < charger.params.n_cells * 2.5f || v > charger.params.Vbat_max * 1.03f) {
+        _noMpp.open = true, _noMpp.inBand = 0;
+        return;
+    }
+    if (!_noMpp.open || !flip || ++_noMpp.inBand < 2) return;
+    _noMpp = {};
+    clearBackoff();
+    ESP_LOGI("mppt", "battery back (Vout %.1f V), no-MPP backoff cleared", v);
+}
+
 // RT: d, the landing or the worst return-pass probe against the down-pass, beyond sweep_verify flags the sweep. A sky
 // change can hide the dips between maxima from the sweep: with a known substring count a scan probes them (rescan).
 __attribute__((cold, noinline)) void MpptController::sweepJudge(float p, float d, bool rescan) {
