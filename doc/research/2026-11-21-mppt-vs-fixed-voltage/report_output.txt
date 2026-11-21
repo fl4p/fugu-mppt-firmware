@@ -1,0 +1,94 @@
+
+## fry
+bins 2026-10-23 14:41:40+00:00 .. 2026-11-21 10:11:20+00:00; curves valid 480, multi-peak 201, shaded(npk>1 or Vmpp<0.75Voc) 213
+E all 25.96 kWh, limited 1.93 (7.4%), time limited 15.5%, no curve 0.41, analysed 23.62 kWh
+Voc_nom (median Voc of curves >50% of P95) 78.2 V, Vmpp median 64.8
+eta_op (fresh, n=17201) 0.9809 (median s_op 0.988), sweep cost 0.0050, eta 0.9759; eta incl. stale curves 0.9733
+| strategy | setting | E/E(ideal MPP) | E/E(MPPT harvested) |
+|---|---|---|---|
+| MPPT (this firmware) | | 0.976 | 1.000 |
+| best fixed V (hindsight) | 64.5 V | 0.961 | 0.985 |
+| per-day best fixed V | varies | 0.968 | 0.991 |
+| 0.76 x Voc_nom | 59.4 V | 0.932 | 0.955 |
+| 0.78 x Voc_nom | 61.0 V | 0.943 | 0.966 |
+| 0.80 x Voc_nom | 62.5 V | 0.953 | 0.977 |
+| k*Voc, best k | k=0.84 | 0.964 | 0.988 |
+| k*Voc | k=0.70 | 0.878 | 0.900 |
+| k*Voc | k=0.75 | 0.920 | 0.943 |
+| k*Voc | k=0.80 | 0.949 | 0.973 |
+| k*Voc | k=0.85 | 0.963 | 0.986 |
+sensitivity, fresh curves only (age<10 min, 41% of bins): best V 64.5 0.962, at global best V 0.962, kVoc best 0.966 (k=0.84)
+                     category  E_share  ratio_bestV  ratio_own_bestV  own_bestV  loss_share  ratio_kVoc  lossk_share
+                   clear days    0.478        0.968            0.968       64.5       0.398       0.966        0.459
+                   mixed days    0.450        0.960            0.960       65.0       0.466       0.964        0.451
+                overcast days    0.072        0.926            0.931       63.0       0.136       0.955        0.090
+               unshaded curve    0.772        0.984            0.984       64.5       0.310       0.984        0.345
+                 shaded curve    0.228        0.882            0.897       67.5       0.690       0.898        0.655
+dawn/dusk (first/last 90 min)    0.111        0.867            0.877       60.5       0.378       0.895        0.329
+                     core day    0.889        0.973            0.973       65.0       0.622       0.973        0.671
+                before 13 UTC    0.686        0.967            0.967       65.0       0.586       0.971        0.553
+             13 UTC and later    0.314        0.949            0.949       64.5       0.414       0.949        0.447
+    unshaded, core day, clear    0.359        0.988            0.988       64.5       0.112       0.983        0.168
+unshaded, core day, all skies    0.704        0.985            0.985       64.5       0.263       0.984        0.322
+temperature subset n=122: Vmpp 64.9+-2.09 V, Voc 77.9+-1.13 V, Vmpp/Voc 0.834+-0.025; Vmpp = -5.7 + 1.20*Voc + -3.97*ln(Pmax), R2 0.57
+curvature s(Vmpp*(1+x)): {-0.1: np.float64(0.933), -0.05: np.float64(0.9703), 0.05: np.float64(0.9499), 0.1: np.float64(0.7543)}
+                        voc  vmpp   n
+t1                                   
+2026-10-19/2026-10-25  78.0  66.6   4
+2026-10-26/2026-11-01  76.8  63.9  10
+2026-11-02/2026-11-08  78.0  64.8  31
+2026-11-09/2026-11-15  78.2  65.7  46
+2026-11-16/2026-11-22  78.2  64.7  31
+h          7      8      9      10     11     12     13     14     15     16     17
+n       14.00  38.00  42.00  66.00  35.00  32.00  29.00  32.00  23.00  29.00   1.00
+vmpp    62.17  64.93  66.46  65.35  63.73  64.29  64.21  64.52  62.22  59.38  64.74
+voc     73.71  77.08  77.63  77.49  76.72  76.55  77.38  76.93  76.07  74.88  71.58
+shaded   0.14   0.50   0.29   0.15   0.11   0.03   0.03   0.19   0.35   0.55   1.00
+validation: sc curves 31, |dPmax| median 0.002, |dVmpp| median 0.48 V, MAD(s) median 0.010; scans 66: measured 0.878 predicted 0.870, bias -0.008, MAE 0.052
+
+## flat
+bins 2026-10-22 06:37:30+00:00 .. 2026-11-21 10:15:10+00:00; curves valid 426, multi-peak 57, shaded(npk>1 or Vmpp<0.75Voc) 70
+E all 44.84 kWh, limited 4.66 (10.4%), time limited 10.9%, no curve 2.99, analysed 37.19 kWh
+Voc_nom (median Voc of curves >50% of P95) 69.9 V, Vmpp median 55.8
+eta_op (fresh, n=18805) 0.9782 (median s_op 0.986), sweep cost 0.0049, eta 0.9734; eta incl. stale curves 0.9714
+| strategy | setting | E/E(ideal MPP) | E/E(MPPT harvested) |
+|---|---|---|---|
+| MPPT (this firmware) | | 0.973 | 1.000 |
+| best fixed V (hindsight) | 56.0 V | 0.974 | 1.000 |
+| per-day best fixed V | varies | 0.981 | 1.008 |
+| 0.76 x Voc_nom | 53.1 V | 0.957 | 0.983 |
+| 0.78 x Voc_nom | 54.5 V | 0.966 | 0.993 |
+| 0.80 x Voc_nom | 55.9 V | 0.974 | 1.000 |
+| k*Voc, best k | k=0.81 | 0.975 | 1.002 |
+| k*Voc | k=0.70 | 0.891 | 0.916 |
+| k*Voc | k=0.75 | 0.943 | 0.969 |
+| k*Voc | k=0.80 | 0.974 | 1.001 |
+| k*Voc | k=0.85 | 0.952 | 0.978 |
+sensitivity, fresh curves only (age<10 min, 40% of bins): best V 56.0 0.973, at global best V 0.973, kVoc best 0.975 (k=0.81)
+                     category  E_share  ratio_bestV  ratio_own_bestV  own_bestV  loss_share  ratio_kVoc  lossk_share
+                   clear days    0.462        0.977            0.977       56.0       0.415       0.978        0.409
+                   mixed days    0.466        0.973            0.973       56.5       0.489       0.974        0.488
+                overcast days    0.072        0.965            0.967       57.5       0.096       0.964        0.104
+               unshaded curve    0.928        0.975            0.975       56.5       0.891       0.976        0.899
+                 shaded curve    0.072        0.961            0.965       55.0       0.109       0.965        0.101
+dawn/dusk (first/last 90 min)    0.131        0.951            0.955       57.5       0.245       0.953        0.248
+                     core day    0.869        0.977            0.977       56.0       0.755       0.978        0.752
+                before 13 UTC    0.705        0.974            0.974       56.0       0.700       0.975        0.694
+             13 UTC and later    0.295        0.973            0.973       56.0       0.300       0.974        0.306
+    unshaded, core day, clear    0.377        0.980            0.980       56.5       0.287       0.981        0.282
+unshaded, core day, all skies    0.809        0.977            0.978       56.5       0.698       0.978        0.700
+temperature subset n=162: Vmpp 56.7+-2.37 V, Voc 69.6+-0.91 V, Vmpp/Voc 0.813+-0.032; Vmpp = 3.8 + 1.18*Voc + -4.92*ln(Pmax), R2 0.77
+curvature s(Vmpp*(1+x)): {-0.1: np.float64(0.9164), -0.05: np.float64(0.9617), 0.05: np.float64(0.9591), 0.1: np.float64(0.8334)}
+                        voc  vmpp   n
+t1                                   
+2026-10-19/2026-10-25  70.6  57.8   5
+2026-10-26/2026-11-01  69.0  54.3  17
+2026-11-02/2026-11-08  69.8  57.2  49
+2026-11-09/2026-11-15  69.8  57.3  56
+2026-11-16/2026-11-22  69.9  56.7  35
+h          7      8      9      10     11     12     13     14     15     16     17
+n       19.00  40.00  43.00  51.00  34.00  33.00  28.00  32.00  24.00  31.00   5.00
+vmpp    56.80  59.70  57.28  56.70  55.15  56.23  56.81  57.24  57.18  55.16  53.00
+voc     65.91  69.50  69.91  69.03  68.79  68.57  69.32  68.96  68.14  67.33  62.84
+shaded   0.11   0.02   0.02   0.04   0.06   0.12   0.07   0.00   0.00   0.19   0.00
+validation: sc curves 30, |dPmax| median 0.003, |dVmpp| median 0.25 V, MAD(s) median 0.012; scans 42: measured 0.801 predicted 0.823, bias +0.022, MAE 0.032
