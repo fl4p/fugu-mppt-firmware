@@ -15,6 +15,8 @@
 
 static void mqttLogCallback(const char *str, uint16_t len);
 
+static std::string presenceTopic() { return "pv/dev/" + getHostname(true); }
+
 static void log_error_if_nonzero(const char *message, int error_code) {
     if (error_code != 0) {
         ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
@@ -59,6 +61,7 @@ void MqttService::_handleEvent(esp_event_base_t base, int32_t event_id, void *ev
                 ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d topic=%s", msg_id, topic.first.c_str());
             }
             mqttConnected = true;
+            esp_mqtt_client_publish(client, presenceTopic().c_str(), "online", 0, 1, 1);
 
             addLogCallback(mqttLogCallback);
             if (onConnected) onConnected();
@@ -163,6 +166,11 @@ bool MqttService::init(const ConfFile &conf) {
 #endif
     if (!username.empty())mqtt_cfg.credentials.username = username.c_str();
     if (!password.empty())mqtt_cfg.credentials.authentication.password = password.c_str();
+    auto willTopic = presenceTopic(); // copied by esp_mqtt_client_init
+    mqtt_cfg.session.last_will.topic = willTopic.c_str();
+    mqtt_cfg.session.last_will.msg = "offline";
+    mqtt_cfg.session.last_will.qos = 1;
+    mqtt_cfg.session.last_will.retain = 1;
 
     client = esp_mqtt_client_init(&mqtt_cfg);
     if (!client) {
@@ -183,7 +191,10 @@ bool MqttService::init(const ConfFile &conf) {
 
 void MqttService::close() {
     if (client) {
-        if (mqttConnected) esp_mqtt_client_disconnect(client);
+        if (mqttConnected) {
+            publish(presenceTopic().c_str(), "offline", 1, true); // a clean disconnect skips the LWT
+            esp_mqtt_client_disconnect(client);
+        }
         // stop() waits for an in-flight connect, whose CONNECTED event still sets the flag
         esp_mqtt_client_stop(client);
         esp_mqtt_client_unregister_event(client, MQTT_EVENT_ANY, mqtt_event_handler);

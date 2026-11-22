@@ -132,6 +132,8 @@
     font-family:ui-monospace,monospace; font-size:13px; display:flex; align-items:center; gap:8px; }
   .modal .devlist .dev:last-child { border-bottom:none; }
   .modal .devlist .dev:hover { background:var(--panel2); color:var(--accent); }
+  .modal .devlist .dev.offline { color:var(--muted); }
+  .modal .devlist .dev.offline::after { content:"offline"; font-size:11px; }
   .modal .devlist .empty { padding:14px; color:var(--muted); font-size:12px; text-align:center; }
   @media (max-width:640px) {
     header { padding:12px 14px; gap:10px; }
@@ -1490,9 +1492,11 @@ async function connectBluetooth(){
      • write() publishes one trimmed command per call to pv/log/<host>/cmd
 ---------------------------------------------------------------------------- */
 const MQTT_LOG_ROOT = "pv/log/";
+const MQTT_DEV_ROOT = "pv/dev/";  // retained presence: online / offline (LWT)
 let mqttClient=null, mqttDeviceHost=null, mqttBuf="", mqttDec=new TextDecoder();
 let grantedMqttConfig=null;   // {url,username,password,device} for silent re-connect
 let mqttScanClient=null;      // temporary client used only by the scan dialog
+let mqttScanTick=null;
 
 function mqttFeedPayload(payload){
   mqttBuf += mqttDec.decode(payload, {stream:true}); // stream-decode: see onBleNotify
@@ -1541,7 +1545,7 @@ async function mqttBindDevice(client, hostname){
   client.on("message", (topic, payload)=>{
     // pv/log/<hostname> only — ignore the deeper /cmd echo, and other devices
     const parts = topic.split("/");
-    if (parts.length !== 3) return;
+    if (parts.length !== 3 || parts[1] !== "log") return;
     if (parts[2] !== mqttDeviceHost) return;
     mqttFeedPayload(payload);
   });
@@ -1555,7 +1559,7 @@ async function mqttBindDevice(client, hostname){
    MQTT modal: scan broker for devices, let the user pick one to connect.
    Hostnames are learned passively from `pv/log/<hostname>` traffic, plus an
    active probe to previously-seen hosts (published once, cached per broker
-   URL) — devices that aren't currently chattering still show up.
+   URL), plus retained presence on `pv/dev/<hostname>` (online/offline).
 ---------------------------------------------------------------------------- */
 const MQ_LS = { url:"mqtt-url", user:"mqtt-user", pass:"mqtt-pass" };
 const MQ_HOSTS_KEY = "mqtt-known-hosts";  // {<broker-url>: [host, ...]}
@@ -1591,10 +1595,15 @@ function mqttModalOpen(){
   mqttModalSetStatus("");
   document.getElementById("mqtt-modal").classList.add("open");
 }
+function mqttScanStop(){
+  clearInterval(mqttScanTick); mqttScanTick=null;
+}
 function mqttModalClose(){
   document.getElementById("mqtt-modal").classList.remove("open");
+  mqttScanStop();
   if (mqttScanClient){ try { mqttScanClient.end(true); } catch(_){} mqttScanClient=null; }
 }
+// hosts: [[name, offline], ...]
 function mqttRenderDevices(hosts){
   const dl = document.getElementById("mqtt-devlist");
   dl.classList.add("show"); dl.replaceChildren();
@@ -1602,8 +1611,8 @@ function mqttRenderDevices(hosts){
     const e=document.createElement("div"); e.className="empty"; e.textContent="no devices seen yet";
     dl.appendChild(e); return;
   }
-  for (const h of hosts){
-    const d=document.createElement("div"); d.className="dev"; d.textContent=h;
+  for (const [h, off] of hosts){
+    const d=document.createElement("div"); d.className="dev"+(off?" offline":""); d.textContent=h;
     d.onclick = ()=>mqttConnectAndImport(h);
     dl.appendChild(d);
   }
@@ -1613,43 +1622,53 @@ async function mqttScanDevices(){
   if (!cfg.url){ mqttModalSetStatus("broker URL required", true); return; }
   for (const k in MQ_LS) localStorage.setItem(MQ_LS[k], cfg[k]==null?"":cfg[k]);
   // tear down a prior scan client before starting a new one
+  mqttScanStop();
   if (mqttScanClient){ try { mqttScanClient.end(true); } catch(_){} mqttScanClient=null; }
   mqttModalSetStatus("connecting …");
   let client;
   try { client = await mqttBrokerConnect(cfg.url, cfg.user, cfg.pass); }
   catch(e){ mqttModalSetStatus("broker: "+(e.message||e), true); return; }
   mqttScanClient = client;
-  const hosts = new Set();
-  client.on("message", (topic)=>{
+  const hosts = new Map();  // host -> offline
+  let dirty = true;
+  const mark = (h, off)=>{ if (hosts.get(h) !== off){ hosts.set(h, off); dirty = true; } };
+  client.on("message", (topic, payload)=>{
     const p = topic.split("/");
-    if (p.length===3) hosts.add(p[2]);
+    if (p.length!==3 || p[0]!=="pv" || !p[2]) return;
+    if (p[1]==="log") mark(p[2], false);
+    else if (p[1]==="dev"){
+      const v = payload.toString();
+      if (v==="online" || v==="offline") mark(p[2], v==="offline");
+    }
   });
-  client.subscribe(MQTT_LOG_ROOT + "#", {qos:0}, e=>{
+  client.subscribe([MQTT_LOG_ROOT + "#", MQTT_DEV_ROOT + "+"], {qos:0}, e=>{
     if (e){ mqttModalSetStatus("subscribe: "+e.message, true); return; }
-    mqttModalSetStatus("scanning (5 s) …");
     // poke previously-seen hosts so quiet devices reply on pv/log/<host>
     for (const h of mqttKnownHosts(cfg.url)){
       client.publish(MQTT_LOG_ROOT + h + "/cmd", "ip", {qos:0});
     }
   });
-  // refresh the list as devices appear; final state shown after 5 s
-  const tick = setInterval(()=>mqttRenderDevices(Array.from(hosts).sort()), 800);
-  setTimeout(()=>{
-    clearInterval(tick);
-    mqttRenderDevices(Array.from(hosts).sort());
-    mqttModalSetStatus(hosts.size ? `${hosts.size} device(s) found — click one to connect` : "no devices responded under pv/log/", !hosts.size);
-  }, 5000);
+  // keep listening until the modal closes or a device is picked
+  const render = ()=>{
+    if (!dirty) return;
+    dirty = false;
+    mqttRenderDevices(Array.from(hosts).sort((a,b)=>a[0].localeCompare(b[0])));
+    mqttModalSetStatus(`${hosts.size} device(s) found — listening …`);
+  };
+  render();
+  mqttScanTick = setInterval(render, 800);
 }
 async function mqttConnectAndImport(hostname){
   const cfg = mqttModalRead();
   cfg.device = hostname;
   // hand the scan client off to the device session: same broker connection,
   // just rebind the message handler — avoids a second CONNACK round-trip.
+  mqttScanStop();
   await disconnectSerial(); await disconnectBluetooth(); await disconnectMqtt();
   let client = mqttScanClient; mqttScanClient = null;
   try {
     if (!client) client = await mqttBrokerConnect(cfg.url, cfg.user, cfg.pass);
-    else client.removeAllListeners("message");
+    else { client.removeAllListeners("message"); client.unsubscribe(MQTT_DEV_ROOT + "+"); }
     await mqttBindDevice(client, hostname);
     grantedMqttConfig = cfg;
     mqttRememberHost(cfg.url, hostname);

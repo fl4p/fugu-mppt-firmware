@@ -58,9 +58,10 @@ left untouched.
 ### MQTT scan
 
 **Connect MQTT** opens a dialog for the broker URL, username, and password, which are kept in browser
-`localStorage`. **Scan for devices** subscribes to `pv/log/#` for 5 s and probes the hosts remembered for that
-broker with the `ip` command. It lists every `<hostname>` seen publishing. Pick a device to read its config. See
-[MQTT topics](mqtt.md).
+`localStorage`. **Scan for devices** subscribes to `pv/log/#` and the retained presence topics `pv/dev/+`, and
+probes the hosts remembered for that broker with the `ip` command. It lists every `<hostname>` seen publishing or
+present, marks those whose presence is `offline`, and keeps listening while the dialog is open. Pick a device to read
+its config. See [MQTT topics](mqtt.md).
 
 ## Editing
 

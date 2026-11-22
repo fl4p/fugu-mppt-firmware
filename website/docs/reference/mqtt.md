@@ -48,6 +48,7 @@ The firmware uses the following topics:
 |----------------------------------------------------|-----------|---------------------------|------------------------------------|
 | `pv/log/<hostname>`                                | publish   | console / log lines       | always while connected             |
 | `pv/log/<hostname>/cmd`                            | subscribe | console command           | `cmd_input=1`                      |
+| `pv/dev/<hostname>`                                | publish   | `online` / `offline`, retained, QoS 1 | on connect; `offline` on a clean stop and as last will |
 | `pv/alert/<hostname>/<source>`                     | publish   | alert JSON, retained, QoS 1 | on a state change of the source    |
 | `pv/tele/<hostname>`                               | publish   | binary telemetry, QoS 0   | while a `tele-mqtt` lease runs     |
 | `homeassistant/sensor/<device-id>-power/config`    | publish   | HA discovery JSON, retained | on connect, then every 1000 state updates |
@@ -58,6 +59,14 @@ The firmware uses the following topics:
 | values of `bat_temp_topic` (up to 4)               | subscribe | pack temperature, °C      | key set                            |
 
 All subscriptions use QoS 0. In the Home Assistant topics, `<device-id>` is lower-cased.
+
+## Presence
+
+`pv/dev/<hostname>` holds the device's presence as a retained message. The firmware publishes `online` after each
+connect and `offline` before a clean disconnect (for example `svc off mqtt`). The same topic is registered as
+the last will with payload `offline`, so the broker publishes it when the connection drops without a disconnect
+(power loss, reset, network loss) once the keep-alive times out. A subscriber to `pv/dev/+` gets every known
+device at once, including quiet ones.
 
 ## Alerts
 
