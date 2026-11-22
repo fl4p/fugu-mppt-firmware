@@ -99,6 +99,7 @@ void MpptController::update() {
     const uint32_t nowMs = (uint32_t) (nowUs / 1000);
     const bool grew = maxPowerPoint.power >= sweepMinPower() && maxPowerPoint.power < 25 * sweepMinPower() &&
                       power_smooth > 2 * maxPowerPoint.power && sinceSweepUs > 120 * 1000000;
+    if (_capV > 0) capResweep(nowMs);
     bool retry = _resweepAt && (int32_t) (nowMs - _resweepAt) >= 0;
     // landed brighter than the MPP: re-sweep once the light holds (input current up < 3 % in 5 s), 60 s at the latest
     if (retry && _svFlag == 2 && _svLand > maxPowerPoint.power && nowMs - _retryAt < 55000) {
@@ -973,6 +974,20 @@ __attribute__((cold, noinline)) void MpptController::sweepVerdict(uint32_t nowMs
     }
     sweepJudge(p, d, true);
     if (_svFlag == 2 && scan.nc <= 1 && !scan.n) _svI = p / v, scheduleResweep(nowMs, d > 0 ? 5000 : 60000);
+}
+
+// RT: a sweep cut by the Vout cap held without BMS cell data sweeps again once the data lifts the cap
+__attribute__((cold, noinline)) void MpptController::capNote(float cap) {
+    _capV = !g_app.psuMode() && !charger.batSt.haveValidCellVoltage() ? cap : 0;
+}
+
+__attribute__((cold, noinline)) void MpptController::capResweep(uint32_t nowMs) {
+    if (!charger.terminationDecided() || !charger.batSt.haveValidCellVoltage()) return;
+    if (!charger.chargeHold() && charger.Vout_max() > _capV + 0.2f) {
+        ESP_LOGI("mppt", "sweep cap %.2f V lifted to %.2f V", _capV, charger.Vout_max());
+        scheduleResweep(nowMs, 3000);
+    }
+    _capV = 0;
 }
 
 __attribute__((cold, noinline)) void MpptController::scheduleResweep(uint32_t nowMs, uint32_t inMs) {

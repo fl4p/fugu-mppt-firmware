@@ -38,6 +38,8 @@
 //     wx-sweep-gust, wx-sweep-learn[-off], wx-sweep-scan, wx-sweep-return   sweep verdict: one re-sweep (one maximum,
 //                       no substring count), no learning from a flagged sweep (-off: sweep_verify=0 learns from it),
 //                       scan on a flag, the return pass picking the better of two maxima after a cloud edge
+//     wx-bms-late, wx-bms-none, wx-bms-full   boot sweep under the 26.8 V fallback cap before BMS cell data (SIM_BMS_AT,
+//                       default 20 s): -late re-sweeps once the data lifts the cap, -none/-full keep the boot sweep ("== BMSCAP")
 //     wx-sweep-preempt  a requested sweep pre-empts a scheduled re-sweep, which then does not count to the 10 min cap
 //     wx-sweep-fall-n1, wx-sweep-rise-n1, wx-sweep-one   single peak known (pv_substrings=1): no re-sweep; -one learns
 //                       it from two verified sweeps; "== VERDICT" PASS/FAIL
@@ -167,6 +169,11 @@ static std::vector<std::pair<double, char>> g_scanT; // "scan:" log times; m = m
 // sweep verdict events: v verified, f flagged, F flagged + scan, p return-pass probe, r re-sweep scheduled, L learned,
 // 1 single peak learned, s scan
 static std::string g_verdict;
+struct SweepStop {
+    double t;
+    float p, v;
+};
+static std::vector<SweepStop> g_stops; // "Stop sweep" lines with an MPP
 static double g_fineT0 = 0, g_fineT1 = 0; // env SIM_FINE=t0,t1: per-tick sensor trace window
 static double g_trkT0 = 0, g_trkT1 = 0; // env SIM_TTRACE=t0,t1: one line per tracker decision
 static double g_rampSec = 0, g_rampT0 = 0, g_rampFrom = 0, g_rampTo = 0; // linear Isc ramp
@@ -278,6 +285,11 @@ static void logHook(char lvl, const char *tag, const char *msg) {
     char who[64];
     if (sscanf(msg, "backoff %us [%63[^]]]", &sec, who) == 2) g_trips.push_back({tNow(), who, sec});
     if (!strcmp(msg, "Start sweep")) g_sweepT.push_back(tNow());
+    if (const char *m = strncmp(msg, "Stop sweep ", 11) ? nullptr : strstr(msg, "MPP=(")) {
+        float p, v;
+        unsigned d;
+        if (sscanf(m, "MPP=(%fW,%u,%fV", &p, &d, &v) == 3) g_stops.push_back({tNow(), p, v});
+    }
     if (!strncmp(msg, "Calibration failed", 18)) g_calFailT.push_back(tNow());
     if (!strcmp(msg, "Start calibration")) ++g_calStarts;
     if (!strncmp(msg, "Slow mode, duty", 15)) g_slowDownT.push_back(tNow());
@@ -855,6 +867,9 @@ struct Wx {
     float iscFix = 0;                        // Isc [A] instead of the one from pClear
     bool noSink = false;                     // source does not sink current (bench PSU); default: sinks above Voc
     float manual = 0;                        // > 0: manual duty (fraction of pwmMax) instead of MPPT
+    double bmsAt = -1;                       // BMS frames from then on (ibat every 4 s, highest cell every 12 s)
+    float vcell = 0;                         // highest cell [V] the BMS reports
+    int bmsResweep = -1;                     // BMSCAP check: 1 a re-sweep must find the MPP, 0 no further sweep
 
     void init() {
         PvModel m;
@@ -1123,6 +1138,7 @@ static int runWx(const std::string &name, Wx &wx) {
     };
     std::vector<Span> wrong;
     bool inWrong = false;
+    float pGLast = 0;
     Peak pk[6];
     float valley[6], key[7] = {-1, -1, -1, -1, -1, -1, -1};
     int nPk = 0, maxPk = 0;
@@ -1207,6 +1223,11 @@ static int runWx(const std::string &name, Wx &wx) {
             wx.sweepAt = -1;
             if (!wx.sweepsAt.empty()) wx.sweepAt = wx.sweepsAt.front(), wx.sweepsAt.erase(wx.sweepsAt.begin());
         }
+        if (wx.bmsAt >= 0 && tb >= wx.bmsAt) {
+            static double nextI = 0, nextC = 0;
+            if (tb >= nextI) mppt.charger.batSt.updateBatCurrent(g_vconv.getIoutAvg()), nextI = tb + 4;
+            if (tb >= nextC) mppt.charger.batSt.setVcellHigh(wx.vcell), nextC = tb + 12;
+        }
         const double q0 = g_qOut;
         run(0.02, 0);
         const double dt = tNow() - tb;
@@ -1237,6 +1258,7 @@ static int runWx(const std::string &name, Wx &wx) {
         }
         while (iOp + 1 < nPk && vin > valley[iOp]) ++iOp;
         const float pG = iG < 0 ? 0 : pk[iG].p, pPv = vin * g_vconv.pvCurrent(vin);
+        pGLast = pG;
         const bool on = !converter.disabled();
         const bool sweeping = mppt.isSweeping() || (mppt.getState() == MpptControlMode::Sweep && !SCAN_ACTIVE());
         const bool isWrong = on && !sweeping && !SCAN_ACTIVE() && iG >= 0 && iOp != iG && pG > pk[iOp].p * 1.02f;
@@ -1392,6 +1414,15 @@ static int runWx(const std::string &name, Wx &wx) {
         printf("== NOMPP %s: %u no-MPP backoffs (want 2..6), doubling and held: %s\n", name.c_str(), n, ok ? "PASS" : "FAIL");
         if (!ok) return 1;
     }
+    if (wx.bmsResweep >= 0) {
+        for (auto &s: g_stops) printf("==   sweep stop t=%.1f s MPP %.1f W at %.1f V\n", s.t, s.p, s.v);
+        const SweepStop last = g_stops.empty() ? SweepStop{0, 0, 0} : g_stops.back();
+        const bool ok = wx.bmsResweep ? g_stops.size() >= 2 && last.p >= 0.95f * pGLast : g_stops.size() == 1;
+        printf("== BMSCAP %s: %zu sweep stops (want %s), last MPP %.1f W of GMPP %.1f W, Vout cap %.2f V at the end: %s\n",
+               name.c_str(), g_stops.size(), wx.bmsResweep ? ">= 2, last >= 95 %" : "1", last.p, pGLast,
+               mppt.charger.Vout_max(), ok ? "PASS" : "FAIL");
+        if (!ok) return 1;
+    }
     if (!wx.verdict.empty()) {
         const bool ok = g_verdict == wx.verdict && nSweeps == wx.sweeps;
         printf("== VERDICT %s: events %s (want %s), %zu sweeps after %.0f s (want %zu): %s\n", name.c_str(),
@@ -1534,6 +1565,17 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         wx.cloud = {{e, fall ? 1 : 0.27f}, {e + 10, fall ? 0.27f : 1}};
         wx.sweepAt = wx.statsFrom = 60, wx.T = 240;
         wx.verdict = n1 ? "vf" : "vfrv", wx.sweeps = n1 ? 1 : 2;
+    } else if (sc == "wx-bms-late" || sc == "wx-bms-none" || sc == "wx-bms-full") {
+        // reboot in sun into a charging pack while the Vout cap sits at vout_max_fallback (26.8 V) until BMS cell data
+        // arrives (SIM_BMS_AT, default 20 s): the boot sweep stops at the cap. -late: cells 3.33 V, the data lifts the cap
+        // to vout_max; -none: no BMS data; -full: cells above cv_eoc, the cap stays
+        const float p = 590;
+        float g = p / wx.pClear;
+        for (int i = 0; i < 6; ++i) g = p / wx.pClear * wx.voc / (wx.voc + wx.vocLog * std::log(g));
+        wx.cloud = {{0, g}}, wx.vbat = 26.3f, wx.T = 300;
+        if (sc != "wx-bms-none") wx.bmsAt = getenv("SIM_BMS_AT") ? atof(getenv("SIM_BMS_AT")) : 20;
+        wx.vcell = sc == "wx-bms-full" ? 3.62f : 3.33f;
+        wx.bmsResweep = sc == "wx-bms-late";
     } else if (sc == "wx-sweep-preempt") {
         // wx-sweep-fall, a requested sweep at 90 s pre-empts the re-sweep; a later flagged sweep still gets its re-sweep
         wx.cloud = {{62, 1}, {72, 0.27f}, {150, 0.27f}, {160, 1}, {202, 1}, {212, 0.27f}};
@@ -2451,6 +2493,11 @@ static int simMain(int argc, char **argv) {
         if (flatTake) ov.insert(ov.end(), {{"isc", "2.8"}, {"voc", "62"}, {"pv_k", "0.95"}, {"v_bat", "25.6"}});
         if (sc == "hs-cal") ov.insert(ov.end(), {{"hs_short", "1"}, {"isc", "1.0"}});
         if (sc.rfind("hs-dawn", 0) == 0) ov.push_back({"noise_iout", "0.04"});
+    }
+    if (sc.rfind("wx-bms-", 0) == 0) {
+        std::string c = "charger.conf:vout_max_fallback=26.8";
+        if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
+        setenv("SIM_CONF", c.c_str(), 1);
     }
     if (sc == "wx-cloud-cv-ripple") ov = {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}};
     const bool rcal = sc.rfind("rcal", 0) == 0;

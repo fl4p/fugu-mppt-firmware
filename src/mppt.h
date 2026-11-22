@@ -230,9 +230,12 @@ private:
         bool tick: 1 = false;
     } _noMpp;
     float _svLand = 0, _svI = 0; // landed power, input current then
+    float _capV = 0; // [V] Vout cap that ended the last sweep while BMS cell data was missing, 0 none
     uint32_t _svT = 0, _resweepAt = 0, _retryAt = 0; // [ms] settle start, scheduled re-sweep, scheduling of the last one that ran
     void sweepVerdict(uint32_t nowMs, float p, bool ok);
     void scheduleResweep(uint32_t nowMs, uint32_t inMs);
+    void capNote(float cap);
+    void capResweep(uint32_t nowMs);
     void noMppBatCheck();
     void sweepJudge(float p, float d, bool rescan);
 
@@ -1560,6 +1563,8 @@ public:
         }
 
         _noMpp = {};
+        _capV = 0;
+        if (controlMode == MpptControlMode::CV && limIdx == 1) capNote(limCtrl->target);
         targetDutyCycle = maxPowerPoint.dutyCycle;
         // dim: the MPP is the largest of noisy samples, biased high; such a sweep teaches nothing either
         const bool verify = sweepVerify > 0 && maxPowerPoint.power >= 25 * sweepMinPower();
