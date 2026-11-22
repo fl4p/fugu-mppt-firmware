@@ -71,4 +71,7 @@ extern uint8_t simWriteFail; // fail the next NVS writes
 bool simStoredBf();
 bool simStoredUnsafe();
 uint32_t simStoredPass();
+void simLoadBlob(const uint8_t *b, size_t n); // decoded by the next selftestLoad()
+uint8_t simRecTog();
+uint8_t simStoredVer();
 #endif

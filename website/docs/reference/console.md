@@ -226,10 +226,17 @@ mode stays.
 A failed phase latches `bf-fail`, which blocks every start until `selftest clear`, also across a reboot. Details on the
 phases and the daily run are under [Backflow switch test](../internals/protection.md#backflow-switch-test).
 
+With an output current sensor that cannot read reverse current, or with Vout below 2 V (no battery), the test runs a
+single `toggle` phase instead: forced PWM at a fixed duty, the switch turned off and on 3 times. It prints the mean on
+and off readings (current with a battery, D × Vin − Vout without) and the smallest off step. See
+[Toggle variant](../internals/protection.md#toggle-variant).
+
 The test is refused on a boost, without `board.conf::bflow_bat=1`, with a latched high-side short or `bf-fail`, while
 bsync owns the PWM period, in PSU mode, while calibrating, sweeping, during a rect-cal, measure-coil or OTA, with a command or dead-time change
 pending, during a backoff, with an uncalibrated current sensor, when Vin < 1.2 × Vout or Vin − Vout < 3 V, and when Vout
-is at 9 V or below or no battery voltage is known. While it runs, every command that changes the PWM, rectification,
+is between 2 V and 9 V or no battery voltage is known. Below 2 V (no battery) it needs Vin of at least 12 V and a known
+Vbat max, and is refused while BMS cell data is fresh. The toggle variant is refused when its settled-reading wait
+exceeds 1 s. While it runs, every command that changes the PWM, rectification,
 backflow switch or sensors is refused: `+N`/`-N`, `dc`, `sync`, `bf`/`panel`, `short-ls`, `sweep`, `rect-cal`, `dt`,
 `pwm-freq`, `mcpwmtest`, `pwr`, `measure-coil`, `ota`, `ota-ble`, `wsync`, `adc-cal`, `adc-restart`, `adc-reset`, `anf`,
 `gpio`, `anaw`, `vset`, `ovset`, `vconv`, `sleep` and `speed`, also inside a line split with `;;`. `mppt`, `psu`, `pv`

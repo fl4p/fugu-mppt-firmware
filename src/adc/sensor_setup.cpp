@@ -115,6 +115,7 @@ static void configureVirtualConverter() {
     g_vconv.bfModel = vc.getByte("bf_model", 0);
     g_vconv.bfStuck = vc.getByte("bf_stuck", 0);
     g_vconv.hsShort = vc.getByte("hs_short", 0);
+    g_vconv.iUnidir = vc.getByte("i_unidir", 0);
 
     // Topology comes from converter.conf, not vconv.conf: the plant must match whatever buck.h was
     // told, or the Ctrl/Rect gate roles and the sim disagree. We run before converter.init(), so we

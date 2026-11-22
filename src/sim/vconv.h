@@ -163,6 +163,7 @@ public:
     uint8_t bfStuck = 0; // 1 stuck open, 2 stuck closed
     float bfVf = 0.7f;
     uint8_t hsShort = 0; // HS conducts permanently (buck); 2: and the LS never turns on
+    bool iUnidir = false; // the Iout channel clips at 0 (one-direction current amp)
     [[nodiscard]] bool bfConducts() const { return bfStuck ? bfStuck == 2 : bfOn; }
     [[nodiscard]] float getVoutSense() const { return bfModel ? vSense_ : vOut_; }
     [[nodiscard]] float getIoutSense() const { return bfModel ? ibat_ : iOutAvg_; }

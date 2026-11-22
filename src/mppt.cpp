@@ -637,6 +637,8 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     bflow.init(boardConf);
     if ((bfBat || hsClampConf) && !hsIdleCheck())
         ESP_LOGW("mppt", "board.conf bflow_bat/hs_clamp ignored: needs a backflow switch, a buck and Iout sensed");
+    else if (hsClampConf && !batIBipolar())
+        ESP_LOGW("mppt", "board.conf hs_clamp ignored: the Iout sensor cannot read reverse current");
     lvPgood.init(boardConf);
     meter.load();
     if (targetPwmCnt) {
@@ -910,6 +912,7 @@ void MpptController::bfTestRt() {
     const uint8_t m = bfTest.mode.load(std::memory_order_acquire);
     if (converter.disabled()) return;
     if (m & BfStop) return bfTestStopRt();
+    if (m & BfToggle) return bfToggleRt(m);
     if (m & BfConducts) bflow.enable(true);
     if (!(m & BfEngage)) return;
     converter.setManualRect(0x7fff); // complementary LS, follows the HS count
@@ -923,6 +926,34 @@ void MpptController::bfTestRt() {
         }
         bfTestStopRt();
     }
+}
+
+// the toggle variant's switch and its guards; the current sensor may not see reverse current
+void MpptController::bfToggleRt(uint8_t m) {
+    const bool on = m & BfOn;
+    if (on != bflow.state()) {
+        bflow.enable(on);
+        bfTest.floorHold = bfTest.holdN, bfTest.iSeen = (uint8_t) sensorPhysicalI->numSamples;
+    }
+    if (!(m & BfEngage)) return;
+    converter.setManualRect(0x7fff);
+    const float i = sensorPhysicalI->med3.get(), vi = sensors.Vin->med3.get(),
+                y = converter.dutyCtrlEff() * vi - sensors.Vout->med3.get();
+    uint8_t why = 0;
+    if (m & BfNoBat) why = !(i >= -.5f && i <= .5f) ? 3 : !(y >= -1.f) ? 2 : !(vi <= bfTest.vinMax) ? 4 : 0;
+    else if (!(m & BfFloor)) return;
+    else if (!(y >= -.3f)) why = 2;
+    else if (on) {
+        if (const auto n = (uint8_t) sensorPhysicalI->numSamples; n != bfTest.iSeen && bfTest.floorHold)
+            bfTest.iSeen = n, --bfTest.floorHold;
+        if (!bfTest.floorHold && !(i >= bfTest.iFloor)) why = 1;
+    }
+    if (!why) return;
+    RT_COLD(
+        bfTest.why = why, bfTest.i = i, bfTest.d = y;
+        bfTest.tripped.store(true, std::memory_order_release);
+        bfTestStopRt();
+    );
 }
 
 void MpptController::bfTestStopRt() {

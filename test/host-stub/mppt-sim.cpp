@@ -279,7 +279,10 @@ static void noiseLoad(const char *name) {
            g_noise.v[2].size() / g_noise.fs[2], g_noise.fs[2], g_noise.iRef, g_noise.gain, g_noise.exp);
 }
 
+static bool g_clampIgnoredLog = false;
+
 static void logHook(char lvl, const char *tag, const char *msg) {
+    if (strstr(msg, "hs_clamp ignored")) g_clampIgnoredLog = true;
     // backoff log of MpptController::shutdownDcdc: "backoff %lus [%s]..."
     unsigned sec;
     char who[64];
@@ -1894,6 +1897,7 @@ static int selftestCheck(const std::string &sc, bool c, const char *what) {
 // hs-short: HS shorted while MPPT runs, then stopped: latch (gates off, no clamp without hs_clamp), start block,
 //   clear, re-latch, recovery.
 // hs-short-clamp: hs_clamp=1 and a recent blocks pass, by day: gates off, the clamp pending.
+// hs-short-unidir: hs_clamp=1 with a one-direction Iout sensor: ignored at boot, latches, the clamp never arms.
 // hs-short-bfclosed: hs_clamp=1, BF stuck closed: at night battery current flows before the ramp, so it never starts.
 // hs-night: hs_clamp=1, latched by day, then night: after 60 s below 9 V the LS ramps for 20 ms and is held; the
 //   250 ms tick re-applies the hold; a BF stuck closed under it releases it (clamp unsafe, persisted).
@@ -1917,11 +1921,16 @@ static int runHsShort(const std::string &sc) {
             if (tLatch && *tLatch < 0 && st()) *tLatch = tNow() - t0;
         }
     };
-    const bool clampConf = sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-dawn-nozero" ||
+    const bool clampConf = sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-dawn-nozero" || sc == "hs-short-unidir" ||
                            sc == "hs-volt-clamp" || sc.rfind("hs-night", 0) == 0;
     if (clampConf) mppt.bfRecent = true; // as after a passed `selftest bflow`
     chk(mppt.hsIdleCheck() == (sc.find("-nodecl") == std::string::npos), "idle check per board.conf");
-    if (sc == "hs-short" || sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc.rfind("hs-night", 0) == 0) {
+    const bool unidir = sc == "hs-short-unidir";
+    if (unidir) {
+        chk(!mppt.batIBipolar() && g_clampIgnoredLog, "unidirectional sensor: hs_clamp ignored at boot");
+        chk(!mppt.hsClampAllowed(true) && !mppt.hsClampAllowed(false), "clamp never allowed");
+    }
+    if (sc == "hs-short" || unidir || sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc.rfind("hs-night", 0) == 0) {
         const bool night = sc.rfind("hs-night", 0) == 0;
         const float isc = g_vconv.getIsc(), voc = g_vconv.getVoc(), k = g_vconv.getPvK();
         if (clampConf) { // a night first: the clamp needs a learnt zero
@@ -1946,10 +1955,20 @@ static int runHsShort(const std::string &sc) {
         chk(converter.disabled() && converter.startInhibited(SynchronousConverter::InhibitHs), "start blocked");
         chk(!mppt.bflow.state(), "BF commanded off");
         // by day the clamp waits for the night (pending), gates off either way
-        const uint8_t want = sc == "hs-short" ? MpptController::HsOff : MpptController::HsPending;
+        const uint8_t want = sc == "hs-short" || unidir ? MpptController::HsOff : MpptController::HsPending;
         chk(st() == want && !converter.lsClamped() && g_vconv.getPwm().pwmRect == 0 && g_vconv.getVin() > 20.f,
             want == MpptController::HsOff ? "gates off, no clamp" : "clamp pending: gates off, Vin up");
-        if (sc == "hs-short" || sc == "hs-short-clamp") {
+        if (unidir) {
+            g_vconv.setPv(isc * .01f, 6.f, k);
+            printf("%9.4f >>> night\n", tNow());
+            bool ls = false;
+            for (int n = 0; n < 9000; ++n) {
+                run(0.01, 0);
+                ls |= g_vconv.getPwm().pwmRect != 0 || st() == MpptController::HsRamp || st() == MpptController::HsClamped;
+            }
+            traceLine("night ");
+            chk(!ls && st() == MpptController::HsOff && converter.enableCount() == en0, "90 s of night: no LS ramp or clamp");
+        } else if (sc == "hs-short" || sc == "hs-short-clamp") {
             runFor(20, nullptr);
             chk(converter.enableCount() == en0 && st() == want, "no start, still latched after 20 s");
             mppt.hsClear();
@@ -2218,11 +2237,46 @@ static int runHsShort(const std::string &sc) {
 // bf-daily-flat: the daily run takes over from MPPT at ~160 W in CCM (flat 2026-11-21: stiff source, filt_len 20,
 //   flat's plant); a duty ramp-down at full power tripped highD-bflowOpen there
 //   latched, clear releases it
+// bf-uni-ok/-open/-closed: Iout clips at 0 (one-direction amp): the toggle variant runs; -abort: the sun goes
+//   mid-toggle (SIM_DROP s after engaging): aborted, reverse current through the on switch stopped within the floor's hold
+//   (SIM_G: the PV current factor, Voc kept; SIM_VB: a battery voltage step instead)
+// bf-uni-offdrop: BF stuck closed, the sun goes in the first off dwell: the RT y floor stops it, aborted
+// bf-uni-cloud: the PV current to 30 % 0.2 s after engaging (a cloud): aborted, never FAIL
+// bf-uni-dcm: a 0.5 A panel stays in DCM up to the duty cap: aborted before forced PWM, no reverse current
+// bf-uni-slow: lv_i_filt_len=300: the toggle's dwell exceeds 1 s: refused
+// bf-uni-soft-ok/-closed: a 1.6 A panel at 100 kHz: the current partly stays while off, Vin rises by Vf / D instead
+// bf-nobat-ok/-closed: battery removed (divider load only): toggle variant judged on D Vin - Vout per duty bump
+// bf-nobat-reconnect: a one-direction sensor, the pack (BMS) reconnects mid-toggle: RT stop, aborted
+// bf-nobat-packsense: a pack is there but Vout reads 0 (open divider): the output does not follow, aborted
+// bf-nobat-bms: Vout reads 0 but BMS cell data is fresh: refused
+// bf-ok-dcm: a 0.5 A panel, bipolar sensor: blocks passes, conducts aborts in DCM at the duty cap
+// bf-rec: NVS record decode: a version 2 record converts (tog 0, pass kept), version 3 reads, version 1 drops the pass
+// bf-daily-uni: the daily run on a one-direction sensor: toggle pass, verified, clamp not armed
 // bf-daily-then-closed: daily pass, then BF stuck closed: blocks FAIL revokes the pass, clamp disarmed
 // bf-abort: the daily run loses its sun mid-test: aborted, retried after 30 min, no spin
 static int runBfTest(const std::string &sc) {
     int f = 0;
     auto chk = [&](bool c, const char *w) { f += selftestCheck(sc, c, w); };
+    if (sc == "bf-rec") {
+        const uint32_t t = (uint32_t) time(nullptr) - 3600;
+        uint8_t b[16] = {2, 0, 0, 0, 'P', 'P', 0xa5, 0x5a};
+        memcpy(b + 8, &t, 4), memcpy(b + 12, &t, 4);
+        simLoadBlob(b, 16);
+        selftestLoad();
+        chk(simRecTog() == 0 && bfPassAgeS() < 7200 && !mppt.bfFail.load(), "v2: tog 0, pass kept");
+        selftestLf((uint32_t) (esp_timer_get_time() / 1000), false);
+        chk(simStoredVer() == 3 && simStoredPass() == t, "v2: rewritten as v3");
+        b[0] = 3, b[6] = 1;
+        simLoadBlob(b, 16);
+        selftestLoad();
+        chk(simRecTog() == 1 && bfPassAgeS() < 7200, "v3: tog read");
+        b[0] = 1, b[2] = 1;
+        simLoadBlob(b, 16);
+        selftestLoad();
+        chk(mppt.bfFail.load() && bfPassAgeS() == UINT32_MAX && simRecTog() == 0, "v1: bf kept, pass dropped");
+        printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+        return f != 0;
+    }
     settle(30);
     const char *r = bfTestRefusal();
     printf("== %s: refusal %s\n", sc.c_str(), r ? r : "none");
@@ -2318,7 +2372,14 @@ static int runBfTest(const std::string &sc) {
                    bfTestVerdict(0) ?: '-', bfTestVerdict(1) ?: '-', (int) mppt.bfFail.load(), (int) mppt.bfRecent.load(),
                    (unsigned) bfPassAgeS());
             chk(runs == 1 && !bfTestBusy(), "one daily run");
-            if (sc == "bf-daily" || sc == "bf-daily-flat") {
+            if (sc == "bf-daily-uni") {
+                chk(bfTestVerdict(0) == 'P' && !bfTestVerdict(1) && bfPassAgeS() < 600 && !mppt.bfRecent.load(),
+                    "toggle passed, verified, clamp not armed");
+                chk(!converter.disabled() && g_app.opMode.load() == OpMode::Mppt, "MPPT running again");
+                chk(g_trips.size() == trips0, "no protection trip");
+                run(30 * 60, 300);
+                chk(runs == 1, "not repeated within 30 min");
+            } else if (sc == "bf-daily" || sc == "bf-daily-flat") {
                 chk(bfTestVerdict(0) == 'P' && bfTestVerdict(1) == 'P' && mppt.bfRecent.load(), "passed, verified");
                 chk(!converter.disabled() && g_app.opMode.load() == OpMode::Mppt, "MPPT running again");
                 for (size_t i = trips0; i < g_trips.size(); ++i) printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
@@ -2362,6 +2423,114 @@ static int runBfTest(const std::string &sc) {
         printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
         return f != 0;
     }
+    if (sc == "bf-uni-slow") {
+        chk(r && strstr(r, "too slow") && !bfTestStart(), "refused: filters too slow");
+        printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+        return f != 0;
+    }
+    if (sc.rfind("bf-uni-", 0) == 0 || sc.rfind("bf-nobat-", 0) == 0) {
+        const bool noBat = sc[3] == 'n', ok = sc.size() > 3 && !sc.compare(sc.size() - 3, 3, "-ok"),
+                   offDrop = sc == "bf-uni-offdrop", sunDrop = sc == "bf-uni-abort" || sc == "bf-uni-cloud" || offDrop, reconnect = sc == "bf-nobat-reconnect",
+                   packSense = sc == "bf-nobat-packsense", aborts = sunDrop || reconnect || packSense || sc == "bf-uni-dcm",
+                   uni = !noBat || reconnect;
+        chk(mppt.batIBipolar() == !uni, uni ? "sensor unidirectional" : "sensor bipolar");
+        static float (*prevHook)(uint8_t, float);
+        prevHook = g_simSenseHook;
+        if (packSense) { // the pack stays, the Vout divider is open
+            chk(simPsuWait(mppt.requestPsuManual(0, -1, true, true)), "stopped");
+            g_simSenseHook = [](uint8_t ch, float x) { return ch == 1 ? 0.f : prevHook ? prevHook(ch, x) : x; };
+            run(3, 0);
+            r = bfTestRefusal();
+            printf("== %s: pack %.1f V, Vout reads %.2f V, refusal %s\n", sc.c_str(), g_vconv.getVbat(),
+                   sensors.Vout->ewm.avg.get(), r ? r : "none");
+        } else if (noBat) { // battery off, both output nodes bled down by the divider
+            chk(simPsuWait(mppt.requestPsuManual(0, -1, true, true)), "stopped");
+            g_vconv.bfVf = .5f; // body diode at the divider's 0.2 mA
+            g_vconv.setBat(0.f, 94e3f);
+            run(1, 0);
+            g_vconv.setVout(0.f);
+            run(3, 0);
+            r = bfTestRefusal();
+            printf("== %s: no battery, Vout %.2f V, refusal %s\n", sc.c_str(), sensors.Vout->ewm.avg.get(), r ? r : "none");
+            if (sc == "bf-nobat-bms") {
+                mppt.charger.batSt.setVcellHigh(3.3f);
+                r = bfTestRefusal();
+                printf("== %s: BMS data fresh, refusal %s\n", sc.c_str(), r ? r : "none");
+                chk(r && strstr(r, "BMS") && !bfTestStart(), "refused: BMS data fresh");
+                printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+                return f != 0;
+            }
+        }
+        static float iRevBfOn, vOutMax;
+        static double revT0, revS; // reverse current with the switch on: first time, total time
+        iRevBfOn = 0, vOutMax = 0, revT0 = -1, revS = 0;
+        g_tickHook = [] {
+            static double tPrev = 0;
+            const double t = tNow();
+            if (mppt.bfTest.mode.load() && g_vconv.bfConducts()) {
+                iRevBfOn = std::min(iRevBfOn, g_vconv.getIoutSense());
+                if (g_vconv.getIoutSense() < -.5f) revS += t - tPrev, revT0 = revT0 < 0 ? t : revT0;
+                if (getenv("SIM_REV") && g_vconv.getIoutSense() < -.5f)
+                    printf("%9.5f rev I %.2f Vs %.2f D %.4f Vin %.2f med3 Vin %.2f Vout %.2f I %.2f dis %d mode %u\n", t,
+                           g_vconv.getIoutSense(), g_vconv.getVoutSense(), converter.dutyCtrlEff(), g_vconv.getVin(),
+                           sensors.Vin->med3.get(), sensors.Vout->med3.get(), sensors.Iout->med3.get(),
+                           (int) converter.disabled(), (unsigned) mppt.bfTest.mode.load());
+            }
+            tPrev = t;
+            vOutMax = std::max(vOutMax, g_vconv.getVout());
+        };
+        chk(bfTestStart(), "armed");
+        const double t0 = tNow();
+        const float isc = g_vconv.getIsc(), voc = g_vconv.getVoc();
+        const float vb = g_vconv.getVbat(), rb = g_vconv.getRbat();
+        if (sunDrop) { // the sun goes while the switch is toggled
+            while (tNow() - t0 < 60 && !(mppt.bfTest.mode.load() & MpptController::BfEngage)) run(0.01, 0);
+            const bool cloud = sc == "bf-uni-cloud";
+            if (offDrop) // the first off dwell
+                while (tNow() - t0 < 60 && (mppt.bfTest.mode.load() & MpptController::BfOn)) run(0.001, 0);
+            run(getenv("SIM_DROP") ? atof(getenv("SIM_DROP")) : offDrop ? .02 : cloud ? .2 : .25, 0);
+            const char *g = getenv("SIM_G");
+            if (getenv("SIM_VB")) g_vconv.setBat(vb + (float) atof(getenv("SIM_VB")), rb);
+            else if (g || cloud) g_vconv.setPv(isc * (g ? (float) atof(g) : .3f), voc, g_vconv.getPvK());
+            else g_vconv.setPv(isc * .02f, .9f * g_vconv.getVbat(), g_vconv.getPvK());
+            printf("%9.4f >>> source change mid-test\n", tNow());
+        }
+        if (reconnect) { // the pack comes back while the switch is toggled
+            while (tNow() - t0 < 60 && bfTestBusy() && !(mppt.bfTest.mode.load() & MpptController::BfOn)) run(0.01, 0);
+            run(.3, 0);
+            g_vconv.setBat(27.f, .05f);
+            printf("%9.4f >>> pack reconnected, Vout %.2f V\n", tNow(), g_vconv.getVout());
+        }
+        while (bfTestBusy() && tNow() - t0 < 180) {
+            run(0.05, 0);
+            trace();
+        }
+        if (sunDrop) g_vconv.setPv(isc, voc, g_vconv.getPvK()), g_vconv.setBat(vb, rb);
+        g_tickHook = nullptr;
+        g_simSenseHook = prevHook;
+        run(1.1, 0); // past the UART rate limit
+        bfTestPrint();
+        printf("== %s: done after %.1f s, verdicts %c %c, trips %zu, plant I min with the BF on %.3f A, Vout max %.2f V\n",
+               sc.c_str(), tNow() - t0, bfTestVerdict(0) ?: '-', bfTestVerdict(1) ?: '-', g_trips.size(), iRevBfOn, vOutMax);
+        chk(!bfTestBusy(), "finished");
+        chk(bfTestVerdict(0) == (aborts ? 'A' : ok ? 'P' : 'F') && !bfTestVerdict(1),
+            aborts ? "toggle aborted" : ok ? "toggle PASS" : "toggle FAIL");
+        chk(!mppt.bfTest.mode.load() && !mppt.bflow.lockOff.load(), "RT state released");
+        printf("== %s: reverse current below -0.5 A with the switch on for %.1f ms (from %.4f)\n", sc.c_str(), revS * 1e3, revT0);
+        // a sun loss within one sample reverses at once; the floor must stop it within its hold
+        chk(sunDrop || reconnect ? revS < .03 : iRevBfOn > -.3f, "no reverse current through the switch while on");
+        const bool good = ok || aborts;
+        chk(mppt.bfFail.load() == !good && simStoredBf() == !good, good ? "no bf-fail" : "bf-fail latched and persisted");
+        selftestLf((uint32_t) (esp_timer_get_time() / 1000), false);
+        chk(ok == (bfPassAgeS() != UINT32_MAX) && !mppt.bfRecent.load(), ok ? "verified, clamp not armed" : "no pass");
+        if (!noBat) {
+            run(20, 5.0);
+            chk(g_app.opMode.load() == OpMode::Mppt && converter.disabled() != good,
+                ok ? "MPPT restored and running" : "MPPT restored, start blocked");
+        } else chk(g_app.opMode.load() == OpMode::Manual && converter.disabled(), "manual 0 restored");
+        printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+        return f != 0;
+    }
     chk(bfTestStart(), "armed");
     static auto s_trace = trace;
     static auto s_watch = watch;
@@ -2375,14 +2544,15 @@ static int runBfTest(const std::string &sc) {
     printf("== %s: done after %.1f s, verdicts %c %c, trips %zu, blocks phase peak ewm I %.2f A\n", sc.c_str(),
            tNow() - t0, bfTestVerdict(0) ?: '-', bfTestVerdict(1) ?: '-', g_trips.size(), iMaxBlocks);
     // a blocks FAIL skips the conducts phase
-    const char want0 = sc == "bf-closed" ? 'F' : 'P', want1 = sc == "bf-open" ? 'F' : sc == "bf-closed" ? 0 : 'P';
+    const char want0 = sc == "bf-closed" ? 'F' : 'P',
+               want1 = sc == "bf-open" ? 'F' : sc == "bf-closed" ? 0 : sc == "bf-ok-dcm" ? 'A' : 'P';
     chk(!bfTestBusy(), "finished");
     chk(bfTestVerdict(0) == want0, "blocks verdict");
     chk(bfTestVerdict(1) == want1, "conducts verdict");
     chk(!mppt.bfTest.mode.load() && !mppt.bflow.lockOff.load(), "RT state released");
     chk(iMaxBlocks < 5.f, "blocks phase stays clear of the 6 A highI-bflowOpen trip");
     run(20, 5.0);
-    const bool ok = sc == "bf-ok";
+    const bool ok = sc == "bf-ok" || sc == "bf-ok-dcm";
     chk(mppt.bfFail.load() == !ok, ok ? "no bf-fail" : "bf-fail latched");
     chk(g_app.opMode.load() == OpMode::Mppt && converter.disabled() != ok, ok ? "MPPT restored and running" : "MPPT restored, start blocked");
     printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
@@ -2480,7 +2650,7 @@ static int simMain(int argc, char **argv) {
     const bool selftest = sc.rfind("hs-", 0) == 0 || sc.rfind("bf-", 0) == 0 || sc == "mc-flat";
     if (selftest) {
         std::string c = sc.size() > 7 && !sc.compare(sc.size() - 7, 7, "-nodecl") ? "" : "board.conf:bflow_bat=1";
-        if (sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-dawn-nozero" || sc == "bf-daily-then-closed" ||
+        if (sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-dawn-nozero" || sc == "bf-daily-then-closed" || sc == "hs-short-unidir" ||
             sc == "hs-volt-clamp" || sc.rfind("hs-night", 0) == 0)
             c += ",board.conf:hs_clamp=1";
         if (flatTake) // flat's sensor filters
@@ -2488,8 +2658,16 @@ static int simMain(int argc, char **argv) {
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         if (!c.empty()) setenv("SIM_CONF", c.c_str(), 1);
         ov = {{"bf_model", "1"}};
-        if (sc == "bf-open" || sc == "bf-daily-fail") ov.push_back({"bf_stuck", "1"});
-        if (sc == "bf-closed") ov.push_back({"bf_stuck", "2"});
+        if (sc == "bf-open" || sc == "bf-daily-fail" || sc == "bf-uni-open") ov.push_back({"bf_stuck", "1"});
+        if (sc == "bf-closed" || sc == "bf-uni-closed" || sc == "bf-uni-offdrop" || sc == "bf-uni-soft-closed" || sc == "bf-nobat-closed")
+            ov.push_back({"bf_stuck", "2"});
+        if (sc.rfind("bf-uni-soft", 0) == 0) ov.push_back({"isc", "1.6"}); // the PV, not the duty, sets the current
+        if (sc.rfind("bf-uni-", 0) == 0 || sc == "hs-short-unidir" || sc == "bf-daily-uni" || sc == "bf-nobat-reconnect")
+            ov.push_back({"i_unidir", "1"});
+        if (sc == "bf-uni-dcm" || sc == "bf-ok-dcm") ov.push_back({"isc", "0.5"});
+        if (sc == "bf-uni-slow") c += ",sensor.conf:lv_i_filt_len=300", setenv("SIM_CONF", c.c_str(), 1);
+        // 100 kHz: CCM from ~1 A, so the 1.6 A panel engages (DCM aborts)
+        if (sc.rfind("bf-uni-soft", 0) == 0) c += ",board.conf:pwm_freq=100000", setenv("SIM_CONF", c.c_str(), 1);
         if (flatTake) ov.insert(ov.end(), {{"isc", "2.8"}, {"voc", "62"}, {"pv_k", "0.95"}, {"v_bat", "25.6"}});
         if (sc == "hs-cal") ov.insert(ov.end(), {{"hs_short", "1"}, {"isc", "1.0"}});
         if (sc.rfind("hs-dawn", 0) == 0) ov.push_back({"noise_iout", "0.04"});

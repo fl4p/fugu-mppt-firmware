@@ -95,11 +95,14 @@ public:
 #ifdef FUGU_HOST_SIM
         if (g_simSenseHook) x = g_simSenseHook(readingChannel_, x);
 #endif
+        if (readingChannel_ == 2 && g_vconv.iUnidir && !(x > 0.0f)) x = 0.0f;
         if (scope) scope->addSample12(this, readingChannel_, x / 3.0f * 4000.0f);
         return x;
     }
 
     float getInputImpedance(uint8_t) override { return 1e9f; } // ideal voltage divider
+
+    [[nodiscard]] bool bipolar(uint8_t ch) const override { return ch != 2 || !g_vconv.iUnidir; }
 
     void reset(uint8_t) override {}
 

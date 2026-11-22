@@ -92,6 +92,9 @@ public:
 
     virtual float getInputImpedance(uint8_t ch) = 0;
 
+    // the raw sample can go below 0
+    [[nodiscard]] virtual bool bipolar(uint8_t ch) const { return false; }
+
     virtual void reset(const uint8_t ch) {
     }
 

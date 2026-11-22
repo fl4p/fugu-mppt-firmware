@@ -2239,6 +2239,7 @@ static void cmdVconv(cmd *c) {
         else if (key == "bf_model") g_vconv.bfModel = v != 0;
         else if (key == "bf_stuck") g_vconv.bfStuck = (uint8_t) v;
         else if (key == "hs_short") g_vconv.hsShort = (uint8_t) v;
+        else if (key == "i_unidir") g_vconv.iUnidir = v != 0;
         else if (key == "ntc_v")    g_vconv.ntcV = v;
         else if (key == "ring_c")   g_vconv.setRing(v, g_vconv.getRingQ());
         else if (key == "ring_q")   g_vconv.setRing(g_vconv.getRingC(), v);

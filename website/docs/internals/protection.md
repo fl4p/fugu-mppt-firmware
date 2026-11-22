@@ -187,9 +187,12 @@ at a peak current above the low-side pulse rating. It therefore engages only at 
 leaves the clamp pending. The clamp is armed when all of these hold:
 
 - `board.conf::hs_clamp=1` and `bflow_bat=1`, a backflow switch is fitted and the converter is a buck,
+- the output current sensor can read reverse current (see [Toggle variant](#toggle-variant)), because the clamp is
+  released on battery current flowing backwards,
 - not PSU mode, where a stiff supply would be shorted,
 - the latch came from the voltage criterion, or the check has learnt its zero, so a sensor offset cannot clamp,
-- the blocks phase of the [backflow switch test](#backflow-switch-test) passed within the last 36 hours, no `bf-fail`
+- the blocks phase of the [backflow switch test](#backflow-switch-test) passed within the last 36 hours (a toggle
+  variant pass does not count), no `bf-fail`
   is latched, and
 - no clamp has met battery current since the last blocks pass.
 
@@ -257,7 +260,8 @@ and step the duty down until D × Vin is 1 V below Vout. Each step waits a quart
 The thresholds are trip levels, not bounds: one duty count moves the current by up to about 1 A on a low-resistance
 path. The blocks phase engages forced PWM at once and steps down faster while the current exceeds 2 A, because the
 switch's body diode carries the forward current. It also engages at 4.5 A without waiting for CCM, to stay clear of
-the 6 A `highI-bflowOpen` trip. The conducts phase waits 150 ms before engaging, for the switch's gate supply.
+the 6 A `highI-bflowOpen` trip. The conducts phase engages only in CCM, after 150 ms for the switch's gate supply: in
+DCM, D × Vin is below Vout and forced PWM would pull reverse current at once. Without CCM at the duty cap it aborts.
 
 A blocks FAIL ends the run: the conducts phase is not run on a switch that leaks backwards. The FAIL also discards the
 last blocks pass, which disarms the low-side clamp. Both are written to flash as soon as the converter has stopped.
@@ -267,6 +271,54 @@ short latches, a step times out or `selftest abort` is given. After a mode chang
 test keeps backoffs and the charger's latches as they were.
 
 A failed phase latches `bf-fail`: every start is refused until `selftest clear`, also after a reboot.
+
+#### Toggle variant
+
+The two phases need a current sensor that reads reverse current, and a battery. The test runs a toggle variant
+instead when either is missing:
+
+- the output current sensor cannot read below −1 A: an INA226 current channel counts as bidirectional; another ADC
+  only when its transform rises with the raw value and the raw zero, less the learnt zero offset, maps below −1 A (an
+  offset amplifier). The ADS1x15 driver reads single-ended, so it counts like the internal ADC.
+- Vout (battery side) reads below 2 V when the test starts: no battery. The Vout divider bleeds an open battery side
+  toward 0 V; a stale charge on the output capacitors makes the test refuse (Vout implausible) until it has decayed.
+
+The variant holds forced PWM at a fixed duty and turns the switch off and on 3 times. Each reading waits for the
+power sensors' settling time plus 20 ms after the edge, at least 60 ms. The test refuses to start when that wait
+exceeds 1 s (sensor filters too slow for the toggle).
+
+The criterion is y = D × Vin − Vout, the voltage across the loop. With the switch on, y is the resistive drop. A
+blocking switch adds its body-diode drop while off: on a soft source the current stays and y rises by about 0.5–0.7 V
+(Vin rises by Vf / D); on a stiff source the current collapses instead.
+
+| Case | Operating point | Pass | Fail |
+| --- | --- | --- | --- |
+| battery | ramp as above with the switch on, to CCM with at least 1 A (0.5 A at the duty cap), then forced PWM | every off reading: y at least 0.3 V above both on neighbours, or the current below 30 % of both | an off reading that does neither, with steady neighbours |
+| no battery | forced PWM from zero duty with the switch off; Vout must follow D × Vin before the ramp continues to min(Vin/2, 0.8 × Vbat max) − 3 V | every off reading: y at least 0.2 V above both on neighbours | an off reading below that, with steady neighbours |
+
+Steady neighbours means the two on readings around an off reading agree: y within 0.15 V and, with a battery, the
+current within 15 %. Otherwise the source or the load changed during the cycle, and the run aborts without a verdict.
+The 0.3 V margin sits below the body-diode drop at 0.3 A and more (about 0.45 V and up) and above the error of a
+settled reading. Without a battery, each turn-off also raises the duty by 1 V, so a blocking switch leaves the output
+one diode drop below the new D × Vin, even where the divider bleeds the output too slowly to show a drop.
+
+The variant never lowers the duty with the switch on. The real-time loop owns the switch and these guards, because
+reverse current through the closed switch is invisible to a one-direction sensor:
+
+- with a battery, a stop when y falls below −0.3 V, and with the switch on, when the current falls below 30 % of the
+  last on reading. The current check starts after the median filter's depth plus the gate's turn-on time in fresh
+  current samples (3 + 10 ms × the sample rate).
+- without a battery, a stop at a current above 0.5 A, at y below −1 V, or at Vin 3 % above its value at the start,
+  which only energy from the output side can cause.
+
+Each stop aborts the run, as does a Vin drop of 1 % before a turn-on. Without a battery, the test refuses when BMS cell
+data is fresh or Vbat max is unknown, and aborts when BMS data arrives or Vout does not follow the duty within 3 s
+(a pack behind an open divider). A FAIL latches `bf-fail` like a blocks FAIL. A PASS counts as a blocks pass for the
+verified state, but does not arm the [low-side clamp](#low-side-clamp).
+
+A pack that reconnects without BMS data while the switch is on, at a voltage above D × Vin, back-feeds until Vin rises
+(a few samples). With a battery, a sudden rise of the battery voltage right after a turn-on is unobservable for up to
+the current check's hold.
 
 **Daily run.** Boards with `board.conf::bflow_bat=1` run the test on their own once a day, at the first opportunity
 when all of these hold for 60 s:

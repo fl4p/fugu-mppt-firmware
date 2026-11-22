@@ -684,6 +684,8 @@ public:
     float getInputImpedance(uint8_t ch) override {
         return 830e3; // 830k ina226 input impedance
     }
+
+    [[nodiscard]] bool bipolar(uint8_t ch) const override { return ch == ChI; }
 };
 
 

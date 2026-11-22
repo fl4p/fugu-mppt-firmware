@@ -1146,6 +1146,7 @@ public:
     void hsRampRt(uint32_t nowMs);
     void hsGatesOffRt(const char *why);
     void bfTestRt();
+    void bfToggleRt(uint8_t m);
     void bfTestStopRt();
 
     // PV-sim (solar-array-simulator): the output follows the panel curve V = f(Iout).
@@ -1625,6 +1626,15 @@ public:
     // current sensor on the battery side (idle HS check, `selftest bflow`); hs_clamp=1 opts into the LS clamp
     bool bfBat = false, hsClampConf = false;
     [[nodiscard]] bool hsIdleCheck() const { return bfBat && bflow && !converter.boost() && sensorPhysicalI == sensors.Iout; }
+    // the physical current sensor reads below -1 A: a signed ADC, or (rising transform) raw 0 maps below -1 A
+    // after the learnt zero. A falling transform's floor depends on the ADC's full scale: counted unidirectional
+    [[nodiscard]] bool batIBipolar() const {
+        const auto *s = static_cast<const PhysicalSensor *>(sensorPhysicalI);
+        if (s->adc->bipolar(s->params.adcCh)) return true;
+        const float ofs = s->params.calibrationConstraints.calibrateOffset && std::isfinite(s->calibrationAvg)
+                              ? s->calibrationAvg : 0.f;
+        return s->params.transform.factor > 0 && s->params.transform.apply(0.f) - ofs < -1.f;
+    }
     std::atomic<bool> bfRecent{false}; // blocks phase of `selftest bflow` passed within 36 h (written by core 0)
     std::atomic<bool> bfFail{false};   // latched `selftest bflow` failure
     void bfFailSet(bool on) {
@@ -1633,18 +1643,25 @@ public:
     }
     // byVoltage: the latch did not judge a current, so an unlearnt zero does not matter
     [[nodiscard]] bool hsClampAllowed(bool byVoltage) const {
-        return hsClampConf && hsIdleCheck() && !g_app.psuMode() && !hsClampUnsafe.load(std::memory_order_relaxed) &&
+        return hsClampConf && hsIdleCheck() && batIBipolar() && !g_app.psuMode() &&
+               !hsClampUnsafe.load(std::memory_order_relaxed) &&
                !bfFail.load(std::memory_order_relaxed) &&
                (byVoltage || std::isfinite(hsGuard.zero)) && bfRecent.load(std::memory_order_relaxed);
     }
     [[nodiscard]] bool limiting() const { return ctrlState._limiting; }
 
     // `selftest bflow` RT side (selftest/bflow_test.cpp)
-    static constexpr uint8_t BfBlocks = 1, BfConducts = 2, BfEngage = 4, BfStop = 8;
+    // toggle variant: BfToggle the RT owns the switch, BfOn wanted on; BfFloor trip below iFloor with the switch on,
+    // and on D Vin < Vout - 0.3 V; BfNoBat trip on |I| > 0.5 A, D Vin < Vout - 1 V or Vin > vinMax
+    static constexpr uint8_t BfBlocks = 1, BfConducts = 2, BfEngage = 4, BfStop = 8, BfFloor = 16, BfToggle = 32,
+                             BfOn = 64, BfNoBat = 128;
     struct {
         std::atomic<uint8_t> mode{0};
         std::atomic<bool> tripped{false};
         float iMin = INFINITY, i = NAN, vin = NAN, vout = NAN, d = NAN; // trip record
+        float iFloor = 0, vinMax = 0;
+        uint8_t floorHold = 0, holdN = 0, iSeen = 0; // fresh current samples before iFloor applies after a turn-on
+        uint8_t why = 0; // toggle trip: 1 floor, 2 D Vin below Vout, 3 no-battery current, 4 Vin rose
     } bfTest;
 
     time_us lastUs = 0;
