@@ -590,6 +590,7 @@ public:
     // Single source of truth for startCondition(); also logged while idle in START.
     [[nodiscard]] const char *startBlockReason() const {
         if (psuLatched) return "psu-latch";
+        if (converter.startInhibited(SynchronousConverter::InhibitBoot)) return "restart";
         if (converter.startInhibited(SynchronousConverter::InhibitHs)) return hsFault.load() ? "hs-short" : "hs-check";
         if (converter.startInhibited(SynchronousConverter::InhibitBf)) return "bf-fail";
         if (converter.startInhibited(SynchronousConverter::InhibitCal)) return "conf-save";

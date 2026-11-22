@@ -1674,6 +1674,11 @@ std::string confFile(const String &c) {
 }
 
 
+// a hand edit of the rect-cal keys wins over a result not yet saved
+static void confEdited(const std::string &fn, const String &key) {
+    if (fn.ends_with("/coil.conf") && key.startsWith("rect_offset")) mppt.rectCal.discard();
+}
+
 // set-config <file> <key> <value...>  — value may contain spaces, so join the trailing tokens.
 //   set-config coil.conf L0 50            set-config mqtt.conf broker_uri mqtt://192.168.1.134:1882
 //   set-config limits.conf lv_i_max 35    set-config charger.conf cv_eoc 3.53
@@ -1689,6 +1694,7 @@ static void cmdSetConfig(cmd *c) {
     auto oldVal = conf.getString(key.c_str(), "");
     if (oldVal != val.c_str() && !conf.add({{key.c_str(), val.c_str()}}, true))
         CMD_FAIL_RETURN("set-config: cannot write %s, '%s' unchanged", fn.c_str(), key.c_str());
+    confEdited(fn, key);
     ESP_LOGI("main", "Set conf '%s:%s' = '%s' (was %s)", fn.c_str(), key.c_str(), val.c_str(), oldVal.c_str());
 }
 
@@ -1705,6 +1711,7 @@ static void cmdDelConfig(cmd *c) {
         CMD_FAIL_RETURN("del-config: key '%s' not found in %s", key.c_str(), fn.c_str());
     if (!conf.remove(key.c_str()))
         CMD_FAIL_RETURN("del-config: cannot write %s, '%s' kept", fn.c_str(), key.c_str());
+    confEdited(fn, key);
     ESP_LOGI("main", "Deleted conf '%s:%s'", fn.c_str(), key.c_str());
 }
 

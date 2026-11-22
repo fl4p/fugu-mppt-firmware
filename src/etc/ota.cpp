@@ -228,7 +228,7 @@ static esp_err_t httpOta(const char *url, const esp_partition_t *staging, const 
     contentLen = contentReceived = lastPct = 0;
 
     TaskHandle_t wdTask = nullptr;
-    xTaskCreate(otaWatchdog, "otaWD", 4096, NULL, 20, &wdTask);
+    xTaskCreatePinnedToCore(otaWatchdog, "otaWD", 4096, NULL, 20, &wdTask, !RT_CORE); // systemRestart saves off RT
     if (!wdTask)
         return ESP_ERR_NO_MEM;
     esp_err_t ret = esp_https_ota(&ota_config);

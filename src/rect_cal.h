@@ -513,10 +513,18 @@ public:
 
     // core 0, before a reboot with the converter off and its starts inhibited: save an applied offset without the
     // RT grant (RT may not sample any more). Skipped while another task's write is admitted.
-    void saveFinal(const Conv &c) {
+    void saveFinal(const Conv &c, uint32_t nowS) {
         uint8_t s = lk.load(std::memory_order_acquire);
         while (dirty && pend.idle() && c.disabled() && s != Admitted)
-            if (lk.compare_exchange_weak(s, Admitted, std::memory_order_acq_rel)) return write(c, 0);
+            if (lk.compare_exchange_weak(s, Admitted, std::memory_order_acq_rel)) return write(c, nowS);
+    }
+
+    // core 0: coil.conf edited by hand, the edit wins over a value not yet saved
+    void discard() {
+        saveReq.store(false, std::memory_order_release);
+        dirty = false;
+        confirms = 0;
+        cancelSave();
     }
 
 private:
