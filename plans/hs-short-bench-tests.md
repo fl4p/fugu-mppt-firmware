@@ -13,6 +13,17 @@ verdicts hinge on board quantities nobody has measured. These tests close that g
 Never on fry or flat. Measurements 1-4 are passive and may run on any Fugu2 board; tests 5-8 short a FET on purpose
 and need a sacrificial Fugu2 board.
 
+## Order
+
+1. Passive measurements 1-4 first (needs Fab at the bench, no risk). The rail (1) and the fitted BF Vth (2) decide
+   whether the 9 V clamp limit has margin: SPICE has no BF conduction at 9 V for nominal and datasheet-minimum Vth,
+   but a warm minimum-Vth part conducts from about 3 V, and the 10.11 V rail corner removes all margin.
+   Measure the BF static bias (3) on the same board, and record the assembly facts (4) for every board that may
+   get `hs_clamp=1`.
+2. Feed the results into the SPICE decks and re-run Q9. If the margin at 9 V is gone, lower the firmware limit
+   (`HsClampArm::VinMax`) or keep `hs_clamp` off until the switched BF gate pull-down (Fugu2 issue #37) is fitted.
+3. Then the shorted-HS tests 5-8 on a sacrificial board.
+
 ## Passive measurements (any Fugu2 board)
 
 1. **"+12V" rail under load.** DMM/scope on the AP3012 output while converting at about 10 A. Nominal 9.34 V
