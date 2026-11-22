@@ -521,12 +521,14 @@ __attribute__((cold)) static void wireGuardConf(const ConfFile &c) {
 }
 
 static RTC_NOINIT_ATTR WireGuard::DayRtc s_wireDayRtc;
+static RTC_NOINIT_ATTR WireGuard::FitRtc s_wireFitRtc;
 
 __attribute__((cold)) static void wireGuardLoad() {
     auto &g = mppt.charger.wireGuard;
     if (!g.conf.mode) return;
     if (g.restoreDay(s_wireDayRtc))
         ESP_LOGI("wire", "open day retained: %u Rc samples, %u sweeps", g.daySamples(), g.daySweeps());
+    if (g.restoreFit(s_wireFitRtc)) ESP_LOGI("wire", "offset regression retained");
     WireGuard::Blob b;
     nvs.open();
     const bool have = nvs.readBlob("wire", &b, sizeof b);
@@ -1070,6 +1072,7 @@ static void lfWireGuard(float iout) {
     if (nowS - rtcS >= 10) {
         rtcS = nowS;
         g.saveDay(s_wireDayRtc);
+        g.saveFit(s_wireFitRtc);
     }
     static uint32_t lastTryS = 0;
     if (g.saveDue(running) && (!lastTryS || nowS - lastTryS >= 600)) {

@@ -134,9 +134,10 @@ growing fault isn't learned in.
 
 A day ends at the first hour without conversion at least 12 hours after the previous end, or after 36
 hours. After a cold start (power-up) the first such hour ends the day as soon as the day counts. The
-open day is kept in RAM that survives a restart, a crash or watchdog reset and a firmware update
-(unless the update changes how the day is stored), but not a power loss, so restarts during the day
-don't discard its data.
+open day and the offset regression are kept in RAM that survives a restart, a crash or watchdog reset
+and a firmware update (unless the update changes how they are stored), but not a power loss, so
+restarts during the day don't discard its data and the excess drop is evaluated again from the first
+minute after a restart.
 
 The baseline is kept in NVS and written at most once a day, only while the converter is stopped;
 reprovisioning the config partition doesn't touch it. `wire-reset` clears the trip, the baseline and

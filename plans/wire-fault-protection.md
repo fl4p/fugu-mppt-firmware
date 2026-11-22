@@ -587,3 +587,65 @@ unchanged.
 - Without restarts, +10 mΩ at 11-14 12:00: first warn 1343 → 1529 min (+3 h), the cost of not
   grading on a 2-day baseline; at 11-15 12:00: 267 → 263 min.
 - The live single-day `Ro` case (after 11-20) is not in this data set.
+
+## Offset regression kept across restarts (2026-11-22)
+
+Host-tested and replayed, not deployed.
+
+### Finding
+
+The regression sums `rg[7]` were lost on every restart. With fry's OTA restarts only (20 from
+11-12 14:00 to 11-20 14:36, 3-day baseline gate on), the replay warned 242 min on 11-19
+(12:59–17:01, fast 2.57 W and `Rc` 2.51 W at 6.3/5.7 mΩ): restarts at 09:59 and 10:12 left a
+regression learned from that morning only, whose offset and slope were off. Without restarts and
+with the 116 real restarts it does not warn (fast max 2.30 and 2.53 W).
+
+### Change
+
+- `FitRtc` (`float rg[7]` + FNV-1a seeded with `FIT_MAGIC`, 32 B) in a second `RTC_NOINIT` struct,
+  written with the day copy every 10 s (`saveFit`), restored in `wireGuardLoad` (`restoreFit`).
+  Rejected (cold regression) on a checksum mismatch, a non-finite sum or negative `rg[0]`/`rg[2]`.
+  Power loss still starts cold.
+- Stored as float: rounding is ~1e-7 relative; the worst cancellation is `var = rg2/w − mi²`
+  (~400 A² minus ~400 A²), an error of ~4e-5 A² against `OFS_VAR_MIN` 4 A², and the slope moves by
+  ~1e-7 Ω. Runtime sums stay double.
+- `DayRtc`, its magic and checksum, `Blob` and `VER` unchanged, so the open day survives the update
+  to this version. Level, histories and paths are not kept: after a restart a level must be
+  re-raised (5 fast minutes).
+- Firmware (esp32s3, IDF 6.0.3): 1 720 432 → 1 720 768 B (+336 B), DIRAM unchanged, RTC slow
+  +32 B (noinit).
+
+### Host test
+
+`testFitRestore`: after a noon restart on day 10 the fast path returns after 1 min (cold: none
+within 60 min, the noon current spread is too small); slope −0.837 vs −0.845 mΩ without the restart.
++6 mΩ 2 min before / after the restart warns after 7 / 5 min (cold: 122 / 118 min). Round trip,
+corrupt sum, zeroed RAM and re-signed NaN/inf/negative sums checked. Other results unchanged.
+
+### Replay (fry, empty baseline from 11-12 14:00, data to 11-20 14:36)
+
+| restarts | before (min at warn) | after | fast Pw max 11-19 |
+|---|---|---|---|
+| OTA only (20) | 242 (11-19) | 0 | 3.06 → 2.29 W |
+| real (116) | 0 | 0 | 2.53 → 2.38 W |
+| real, RTC lost (`-R`) | 0 | 0 | – |
+
+`-F` (day kept, regression dropped) reproduces the old result exactly; without restarts the output is
+byte-identical. Injected faults, first warn [min] before → after (OTA / real restarts):
+
+| fault | +6 mΩ | +10 mΩ | +20 mΩ |
+|---|---|---|---|
+| 11-14 12:00 | 1529→1529 / 3109→3109 | 1529→1529 / 2829→2867 | 1529→1529 / 2786→2829 |
+| 11-16 12:00 | 4364→92 / 185→229 | 90→87 / 135→89 | 87→54 / 135→54 |
+| 11-19 12:00 | 158→8 / 114→5 | 134→8 / 134→5 | 114→8 / 114→5 |
+| 11-19 10:10, restart 10:12 | 124→48 / 124→41 | 124→12 / 124→7 | 124→9 / 124→7 |
+| 11-20 12:03, restart 12:13 | 72→72 / 71→71 | 69→21 / 67→20 | 43→21 / 42→6 |
+| 11-20 12:10, restart 12:13 | 65→65 / 64→64 | 62→14 / 60→13 | 36→14 / 35→13 |
+| 11-19 16:45 (evening) | 0*→1230 / 1229→1229 | 0*→1230 / 1096→1155 | 0*→1010 / 1017→1012 |
+
+\* inside the old false warning. Later in 4 of the 21 real-restart cases (none of the OTA-only ones) (+38 to +59 min): the 11-14
+fault (no 3-day baseline until 11-16), +6 mΩ on 11-16 (2.2 W against `wire_p_warn` 2 W, found by
+`Ro` instead of `Rc`), +10 mΩ on 11-19 16:45 (next morning). In those the old code was helped by a
+restart rebuilding the regression from post-fault data, so the `Rc` slope saw the step; a kept
+regression, like one never restarted, holds through the fault (step minutes don't enter it) and
+leaves it to the fast path. The no-restart times are 1529, 92 and 1129 min.

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <random>
 #include <vector>
 #include "out_impedance.h"
@@ -41,6 +42,7 @@ struct Sim {
     bool persist = false, haveFlash = false;
     WireGuard::Blob flash{};
     WireGuard::DayRtc rtc{};
+    WireGuard::FitRtc fit{};
     float ro = NAN, prevI = NAN;
     std::mt19937 rng{1};
 
@@ -112,6 +114,7 @@ struct Sim {
                 g.saved();
             }
             g.saveDay(rtc);
+            g.saveFit(fit);
         }
 
         if (getenv("WG_DEBUG") && (g.level() != dbgL || g.rbWarn() != dbgRb)) {
@@ -132,8 +135,8 @@ struct Sim {
 
     void runUntil(uint32_t end) { while (t < end) step(); }
 
-    // restart as the firmware does: baseline from the last save, open day from the RTC copy if kept
-    void reboot(bool rtcKept) {
+    // restart as the firmware does: baseline from the last save, open day and regression from RTC if kept
+    void reboot(bool rtcKept, bool fitKept = true) {
         const auto c = g.conf;
         const uint8_t p = g.paths;
         g.~WireGuard();
@@ -142,6 +145,7 @@ struct Sim {
         g.paths = p;
         if (haveFlash) g.load(&flash, sizeof flash);
         if (rtcKept) g.restoreDay(rtc);
+        if (rtcKept && fitKept) g.restoreFit(fit);
         w = WireResistance{};
         prevI = NAN;
         bootT = t - 8;
@@ -767,6 +771,66 @@ static void testBaseMinDays() {
     }
 }
 
+// the offset regression survives a software reset in RTC RAM; anything odd there starts it cold
+static void testFitRestore() {
+    printf("offset regression across a restart\n");
+    constexpr uint32_t T = 10 * DAY + 12 * 3600;
+    auto firstFast = [](Sim &s) {
+        const uint32_t t0 = s.t;
+        while (!s.g.fastPath().fresh && s.t < t0 + 3600) s.step();
+        return (float) (s.t - t0) / 60.f;
+    };
+    Sim a{2}, b{2}, c{2};
+    for (auto *s: {&a, &b, &c}) { s->persist = true; s->runUntil(T); }
+    b.reboot(true);
+    c.reboot(true, false);
+    const float wb = firstFast(b), wc = firstFast(c);
+    a.runUntil(b.t);
+    printf("  first fast-path minute after restart: %.1f min restored, %.1f min cold; slope %.3f vs %.3f mOhm\n", wb, wc,
+           b.g.slope() * 1e3, a.g.slope() * 1e3);
+    CHECK(wb <= 2 && wc >= 5, "warm %.1f cold %.1f min", wb, wc);
+    CHECK(std::fabs(a.g.slope() - b.g.slope()) < 5e-5f, "restored slope %.3f vs %.3f mOhm", b.g.slope() * 1e3,
+          a.g.slope() * 1e3);
+
+    WireGuard::FitRtc r{};
+    a.g.saveFit(r);
+    WireGuard g2{};
+    CHECK(g2.restoreFit(r), "round trip rejected");
+    auto bad = r;
+    bad.rg[3] *= 1.001f;
+    CHECK(!WireGuard{}.restoreFit(bad), "corrupt sums accepted");
+    WireGuard::FitRtc z{};
+    CHECK(!WireGuard{}.restoreFit(z), "zeroed RAM accepted");
+    auto sign = [](WireGuard::FitRtc &f) { // the guard's FNV-1a over the sums, seeded with FIT_MAGIC
+        uint32_t h = WireGuard::FIT_MAGIC, x;
+        for (float v: f.rg) { memcpy(&x, &v, 4); h = (h ^ x) * 16777619u; }
+        f.sum = h;
+    };
+    bad = r;
+    sign(bad);
+    CHECK(WireGuard{}.restoreFit(bad), "re-signed copy rejected");
+    for (float x: {NAN, INFINITY, -1.f}) {
+        bad = r;
+        bad.rg[x < 0 ? 0 : 4] = x;
+        sign(bad);
+        CHECK(!WireGuard{}.restoreFit(bad), "signed sums with %g accepted", x);
+    }
+
+    // a fault shortly before or after the restart is still found as fast as without one
+    for (int32_t dt: {-120, 120}) {
+        Sim f{2};
+        f.persist = true;
+        f.runUntil(T - 3600);
+        f.faultT = f.t + 3600 + dt;
+        f.dRc = 0.006f;
+        f.runUntil(T);
+        f.reboot(true);
+        f.runUntil(T + 3 * 3600);
+        printf("  +6 mOhm %+d s from the restart: warn after %.1f min\n", dt, f.det(1));
+        CHECK(f.det(1) <= 8, "fault %+d s from restart: warn after %.1f min", dt, f.det(1));
+    }
+}
+
 int main() {
     testClean();
     testSteps();
@@ -786,6 +850,7 @@ int main() {
     testFaultNotLearned();
     testReboots();
     testBaseMinDays();
+    testFitRestore();
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail != 0;
 }

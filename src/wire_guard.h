@@ -32,9 +32,9 @@ struct WireGuardConf {
  * While learning (fewer than LEARN_DAYS counted days) every good day enters, so the median outvotes
  * an odd first day; after that a day's median above baseline + drMin is rejected. A day closes at
  * the first hour without conversion DAY_MIN_S after the last close, or at the first one after a cold
- * start if it counts, or after DAY_MAX_S. The open day survives a restart through saveDay() /
- * restoreDay() (RTC RAM). Freshness ages in charging minutes, so a night neither releases nor
- * invalidates the last verdict. Trip latches until reset() or reboot.
+ * start if it counts, or after DAY_MAX_S. The open day and the offset regression survive a restart
+ * through saveDay()/restoreDay() and saveFit()/restoreFit() (RTC RAM). Freshness ages in charging
+ * minutes, so a night neither releases nor invalidates the last verdict. Trip latches until reset() or reboot.
  * ioutCap() and tripped() may be read from another core; everything else is single-core.
  */
 class WireGuard {
@@ -93,6 +93,12 @@ public:
         uint32_t sum;
     };
     static constexpr uint32_t DAY_MAGIC = 0x57440000u | sizeof(Day);
+    // the offset regression sums in RTC RAM; float rounding (~1e-7) is far below the fit's noise
+    struct FitRtc {
+        float rg[7];
+        uint32_t sum;
+    };
+    static constexpr uint32_t FIT_MAGIC = 0x57460000u | sizeof(FitRtc);
 
     WireGuardConf conf{};
     uint8_t paths = 7; // graded paths: 1 fast, 2 Rc, 4 Ro (diagnostics)
@@ -124,13 +130,27 @@ public:
             r.d.lastS = tS - d.lastS;
             r.d.startS = tS - d.startS;
         }
-        r.sum = sum(r);
+        r.sum = sum(&r.d, sizeof r.d);
+    }
+
+    void saveFit(FitRtc &r) const {
+        for (uint8_t k = 0; k < 7; ++k) r.rg[k] = (float) rg[k];
+        r.sum = sum(r.rg, sizeof r.rg, FIT_MAGIC);
+    }
+
+    // before the first tick(); false (cold regression) unless r holds consistent sums
+    bool restoreFit(const FitRtc &r) {
+        if (r.sum != sum(r.rg, sizeof r.rg, FIT_MAGIC) || !(r.rg[0] >= 0) || !(r.rg[2] >= 0)) return false;
+        for (float x: r.rg)
+            if (!std::isfinite(x)) return false;
+        std::copy(r.rg, r.rg + 7, rg);
+        return true;
     }
 
     // before the first tick(); false (fresh day) unless r holds a consistent day
     bool restoreDay(const DayRtc &r) {
         const auto &x = r.d;
-        if (r.magic != DAY_MAGIC || r.sum != sum(r) || x.n > DAY_N || x.nRo > DAY_N || x.nDr > DAY_N ||
+        if (r.magic != DAY_MAGIC || r.sum != sum(&r.d, sizeof r.d) || x.n > DAY_N || x.nRo > DAY_N || x.nDr > DAY_N ||
             !x.drStep || x.drSkip >= x.drStep || x.step < DAY_SAMPLE_S || x.startS > 2 * DAY_MAX_S || !(x.w >= 0))
             return false;
         d = x;
@@ -301,10 +321,12 @@ private:
     bool started = false, coldDay = true;
     uint32_t runS = 0;
 
-    static uint32_t sum(const DayRtc &r) {
-        uint32_t w[sizeof(Day) / 4], h = 0x811c9dc5;
-        memcpy(w, &r.d, sizeof w);
-        for (uint32_t x: w) h = (h ^ x) * 16777619u;
+    static uint32_t sum(const void *p, size_t n, uint32_t h = 0x811c9dc5) {
+        for (size_t i = 0; i + 4 <= n; i += 4) {
+            uint32_t x;
+            memcpy(&x, (const uint8_t *) p + i, 4);
+            h = (h ^ x) * 16777619u;
+        }
         return h;
     }
 

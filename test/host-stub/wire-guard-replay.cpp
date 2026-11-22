@@ -130,18 +130,27 @@ struct Result {
     std::map<int64_t, Day> days;
 };
 
-static bool g_verbose = false, g_days = false, g_rtcLost = false;
+static bool g_verbose = false, g_days = false, g_rtcLost = false, g_fitLost = false;
 static std::vector<int64_t> g_reboots; // [ms]
 
 template<class G> struct Rtc {
     static constexpr bool has = requires(G &g, typename G::DayRtc &r) { g.saveDay(r); g.restoreDay(r); };
 };
 
-template<class G> static void rtcSave(const G &g, std::vector<uint8_t> &buf) {
+template<class G> struct FitRtc {
+    static constexpr bool has = requires(G &g, typename G::FitRtc &r) { g.saveFit(r); g.restoreFit(r); };
+};
+
+template<class G> static void rtcSave(const G &g, std::vector<uint8_t> &buf, std::vector<uint8_t> &fit) {
     if constexpr (Rtc<G>::has) {
         typename G::DayRtc r;
         g.saveDay(r);
         buf.assign((const uint8_t *) &r, (const uint8_t *) &r + sizeof r);
+    }
+    if constexpr (FitRtc<G>::has) {
+        typename G::FitRtc r;
+        g.saveFit(r);
+        fit.assign((const uint8_t *) &r, (const uint8_t *) &r + sizeof r);
     }
 }
 
@@ -151,6 +160,16 @@ template<class G> static bool rtcRestore(G &g, const std::vector<uint8_t> &buf) 
         if (buf.size() != sizeof r) return false;
         memcpy(&r, buf.data(), sizeof r);
         return g.restoreDay(r);
+    }
+    return false;
+}
+
+template<class G> static bool fitRestore(G &g, const std::vector<uint8_t> &buf) {
+    if constexpr (FitRtc<G>::has) {
+        typename G::FitRtc r;
+        if (buf.size() != sizeof r) return false;
+        memcpy(&r, buf.data(), sizeof r);
+        return g.restoreFit(r);
     }
     return false;
 }
@@ -167,7 +186,7 @@ static Result run(WireGuard &g, float dR, int64_t faultMs, int64_t startMs) {
     const uint8_t paths = g.paths;
     WireGuard::Blob flash{};
     bool haveFlash = false;
-    std::vector<uint8_t> rtc;
+    std::vector<uint8_t> rtc, fit;
     size_t ri = 0;
     int64_t bootMs = 0, rtcLastMs = 0;
     uint32_t lastTryS = 0;
@@ -195,10 +214,11 @@ static Result run(WireGuard &g, float dR, int64_t faultMs, int64_t startMs) {
             new(&g) WireGuard();
             g.conf = conf;
             g.paths = paths;
-            const bool lb = haveFlash && g.load(&flash, sizeof flash), lr = !g_rtcLost && rtcRestore(g, rtc);
+            const bool lb = haveFlash && g.load(&flash, sizeof flash), lr = !g_rtcLost && rtcRestore(g, rtc),
+                       lf = !g_rtcLost && !g_fitLost && fitRestore(g, fit);
             if (g_days)
-                printf("    %s restart: baseline %s (%u days), day %s\n", ts(t), lb ? "loaded" : "none", g.dayCount(),
-                       lr ? "restored" : "lost");
+                printf("    %s restart: baseline %s (%u days), day %s, regression %s\n", ts(t), lb ? "loaded" : "none",
+                       g.dayCount(), lr ? "restored" : "lost", lf ? "restored" : "lost");
             w = WireResistance{};
             ro = NAN; roStamp = 0; prevI = NAN;
             bootMs = t - 8000;
@@ -254,7 +274,7 @@ static Result run(WireGuard &g, float dR, int64_t faultMs, int64_t startMs) {
         }
         if (t - rtcLastMs >= 10000) {
             rtcLastMs = t;
-            rtcSave(g, rtc);
+            rtcSave(g, rtc, fit);
         }
         auto &dd = r.days[t / 86400000];
         dd.days = g.dayCount();
@@ -325,6 +345,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[a], "-v")) g_verbose = true;
         else if (!strcmp(argv[a], "-d")) g_days = true;
         else if (!strcmp(argv[a], "-R")) g_rtcLost = true;
+        else if (!strcmp(argv[a], "-F")) g_fitLost = true;
         else if (!strcmp(argv[a], "-r") && a + 1 < argc) {
             const char *s = argv[++a];
             FILE *f = *s == '@' ? fopen(s + 1, "r") : nullptr;
