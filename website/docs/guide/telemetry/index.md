@@ -154,6 +154,7 @@ The following setups match common goals:
 | Low bandwidth over a weak link | `binary=1` + `influx_binary_proxy.py` near the database |
 | No Wi-Fi at the site | BLE advertising + `influx_binary_proxy.py --adv` on a host within BLE range |
 | Debug one device from a laptop | `fugu_console.py --ble --tele` |
+| Live view in a browser, no server | [Dashboard](pathname:///tools/dashboard.html) over BLE or MQTT ([docs](../../reference/dashboard.md)) |
 
 See also: [`tele.conf`](../../reference/config/tele.md), [`mqtt.conf`](../../reference/config/mqtt.md),
 [Host tools](../../reference/host-tools.md).

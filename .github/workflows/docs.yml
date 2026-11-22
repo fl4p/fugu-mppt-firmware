@@ -3,7 +3,7 @@ name: Docs
 on:
   push:
     branches: [main]
-    paths: ['website/**', '.github/workflows/docs.yml']
+    paths: ['website/**', 'etc/config-tool/dashboard.html', 'etc/config-tool/teledec.js', 'etc/config-tool/conf-editor.html', '.github/workflows/docs.yml']
   workflow_dispatch:
 
 permissions:

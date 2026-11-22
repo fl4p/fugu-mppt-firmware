@@ -8,6 +8,7 @@ sidebar_position: 2
 [`etc/config-tool/conf-editor.html`](https://github.com/fl4p/fugu-mppt-firmware/blob/main/etc/config-tool/conf-editor.html)
 is a single-page browser editor for the board `.conf` files. It reads them from a device or an archive, lets you edit
 them with type, unit, and default hints, and then downloads a `.zip` or writes only the changes back to the device.
+A hosted copy is at [/tools/conf-editor.html](pathname:///tools/conf-editor.html).
 
 The editor is one self-contained HTML file with no build step. The MQTT transport loads `mqtt.js` from a CDN. The
 other paths work offline.

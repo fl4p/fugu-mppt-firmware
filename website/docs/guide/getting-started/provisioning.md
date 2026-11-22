@@ -47,7 +47,7 @@ Besides provisioning, you can change the configuration in these ways:
 | Method | Use when |
 |---|---|
 | `set-config <file>.conf <key> <value>` on the [console](../../reference/console.md) | Changing single values on a running device |
-| `etc/config-tool/conf-editor.html` | Editing all files in a browser over serial or BLE |
+| [Config editor](pathname:///tools/conf-editor.html) ([docs](../../reference/config-editor.md)) | Editing all files in a browser over serial or BLE |
 | FTP (Wi-Fi up; 1 connection, passive mode off) | Copying whole files |
 | `idf.py flash` | Flashing firmware and config together, using the board set in `CMakeLists.txt` |
 
