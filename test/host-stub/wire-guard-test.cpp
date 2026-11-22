@@ -552,10 +552,10 @@ static void testRoNoise() {
         Sim s{2};
         s.bms = s.rcFeed = false;
         s.sweepS = 120;
-        s.runUntil(2 * DAY + 8 * 3600);
+        s.runUntil(3 * DAY + 8 * 3600);
         const auto b = s.g.blob(); // reboot with a baseline
         s.g.reset();
-        CHECK(s.g.load(&b, sizeof b) && std::isfinite(s.g.baseRo()), "reload");
+        CHECK(s.g.load(&b, sizeof b) && s.g.roRef(), "reload");
         for (uint32_t k = 0; k < WireGuard::RO_MED_MIN; ++k) {
             const uint32_t n = s.nSweep;
             while (s.nSweep == n) s.step();
@@ -586,7 +586,8 @@ static void testPersist() {
 
 
 // field case: one dim partial day left Rc 3.13 mOhm (true ~15) as a 1-day baseline; later correct
-// days were rejected against it, so learning never progressed and the slope path warned
+// days were rejected against it, so learning never progressed and the slope path warned (now: not
+// graded below BASE_MIN_DAYS)
 static void testBadFirstDay() {
     printf("learning: a wrong first-day baseline is outvoted\n");
     {
@@ -603,7 +604,7 @@ static void testBadFirstDay() {
         s.runUntil(5 * DAY);
         printf("  base Rc 3.13 -> %.2f (after 2 good days) -> %.2f mOhm, days %u, level day 1 %u, days 3-5 %u, learning %d\n",
                rc2 * 1e3, s.g.baseRc() * 1e3, s.g.dayCount(), first, s.maxLvl, s.g.learning());
-        CHECK(first >= 1, "precondition: the bad baseline warns on day 1");
+        CHECK(first == 0, "a 1-day baseline was graded on day 1: level %u", first);
         CHECK(std::fabs(s.g.baseRc() - 0.014f) < 0.0015f, "baseline did not converge: %.2f mOhm", s.g.baseRc() * 1e3);
         CHECK(s.maxLvl == 0, "false warning stays after convergence: level %u", s.maxLvl);
         CHECK(s.g.dayCount() == 6 && s.g.learning() && !s.g.armed(), "days %u learning %d", s.g.dayCount(), s.g.learning());
@@ -718,6 +719,54 @@ static void testReboots() {
     }
 }
 
+// a baseline of 1 stored day, 5 mOhm low: not graded until BASE_MIN_DAYS days; a fault after that is
+static void testBaseMinDays() {
+    printf("baseline below %u days is not graded\n", WireGuard::BASE_MIN_DAYS);
+    using B = WireGuard::Blob;
+    // Ro true ~23 mOhm, Rc ~14 mOhm (Sim)
+    const B roLow{WireGuard::VER, 0, 0, 1, 1, 1, 0, 0, WireGuard::NONE, WireGuard::NONE, {}, {}, {}, {1800}};
+    const B rcLow{WireGuard::VER, 1, 1, 0, 0, 1, 0, 0, WireGuard::NONE, WireGuard::NONE, {900}, {200}, {300}, {}};
+    struct C { const char *n; const B &b; uint8_t paths; float rMax; } cases[]{
+        {"Ro 1 day 18 mOhm, Ro path", roLow, 4, 0},
+        {"Rc 1 day 9 mOhm, fast+Rc", rcLow, 3, 0},
+    };
+    for (auto &c: cases) {
+        Sim s{2};
+        s.sweepS = 120;
+        s.g.paths = c.paths;
+        CHECK(s.g.load(&c.b, sizeof c.b), "%s: load", c.n);
+        s.runUntil(15 * 3600);
+        const int8_t wf0 = s.g.wf();
+        const bool ref0 = c.paths == 4 ? s.g.roRef() : s.g.rcRef();
+        s.runUntil(3 * DAY);
+        const bool ref = c.paths == 4 ? s.g.roRef() : s.g.rcRef();
+        const uint8_t clean = s.maxLvl;
+        s.faultT = s.t + 12 * 3600;
+        s.dRc = 0.010f;
+        s.runUntil(s.faultT + DAY);
+        printf("  %-26s day 0: ref %d wf %d; days 0-2 maxLvl %u, ref %d; +10 mOhm day 3: warn after %.1f min\n", c.n,
+               ref0, wf0, clean, ref, s.det(1));
+        CHECK(!ref0 && wf0 == WireGuard::WF_UNVERIFIED, "%s: graded on day 0 (wf %d)", c.n, wf0);
+        CHECK(clean == 0, "%s: 1-day baseline raised level %u", c.n, clean);
+        CHECK(ref, "%s: no reference after 3 days", c.n);
+        CHECK(s.det(1) <= 90, "%s: fault after 3 days not warned (%.1f min)", c.n, s.det(1));
+    }
+    {   // a configured rMax is a reference from the start; the 1-day Rc below it is not used
+        Sim s{2};
+        s.g.conf.rMax = 0.016f;
+        s.g.paths = 3;
+        CHECK(s.g.load(&rcLow, sizeof rcLow) && s.g.rcRef() && !s.g.rbRef(), "rMax: load");
+        s.runUntil(DAY);
+        const uint8_t clean = s.maxLvl;
+        s.faultT = s.t + 12 * 3600;
+        s.dRc = 0.010f;
+        s.runUntil(s.faultT + 12 * 3600);
+        printf("  rMax 16 mOhm, Rc 1 day 9 mOhm: day 0 maxLvl %u; +10 mOhm day 1: warn after %.1f min\n", clean, s.det(1));
+        CHECK(clean == 0, "rMax: clean day raised level %u", clean);
+        CHECK(s.det(1) <= 15, "rMax: fault on day 1 not warned (%.1f min)", s.det(1));
+    }
+}
+
 int main() {
     testClean();
     testSteps();
@@ -736,6 +785,7 @@ int main() {
     testBadFirstDay();
     testFaultNotLearned();
     testReboots();
+    testBaseMinDays();
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail != 0;
 }

@@ -1917,9 +1917,13 @@ static void cmdWire(cmd *) {
              g.baseRb() * 1e3f, g.baseRo() * 1e3f, g.blob().unvDays);
     const char *names[]{"fast", "Rc", "Ro", "Rb"};
     const WireGuard::PathView pv[]{g.fastPath(), g.rcPath(), g.roPath(), g.rbPath()};
-    for (int i = 0; i < 4; ++i)
-        UART_LOG("  %-4s %s dR %.2f mOhm Pw %.2f W", names[i], pv[i].fresh ? "fresh" : "stale", pv[i].dr * 1e3f,
-                 pv[i].pw);
+    const bool ref[]{g.rcRef(), g.rcRef(), g.roRef(), g.rbRef()};
+    for (int i = 0; i < 4; ++i) {
+        if (ref[i]) UART_LOG("  %-4s %s dR %.2f mOhm Pw %.2f W", names[i], pv[i].fresh ? "fresh" : "stale",
+                             pv[i].dr * 1e3f, pv[i].pw);
+        else UART_LOG("  %-4s stale, baseline %u/%u days", names[i], i == 2 ? g.blob().nRo : g.blob().nRc,
+                      WireGuard::BASE_MIN_DAYS);
+    }
     UART_LOG("  offset %.1fmV slope %.2fmOhm vs baseline, day dR warn %d", g.ofs() * 1e3f, g.slope() * 1e3f,
              (int) g.dayWarn());
     UART_LOG("  Iref %.1fA, today %u Rc samples (Iout sd %.1fA), %u sweeps, counts %d", g.iRef(), g.daySamples(),

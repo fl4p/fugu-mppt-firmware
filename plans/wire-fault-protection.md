@@ -527,3 +527,63 @@ The blob layout is unchanged, so fry keeps `days 1, Rc 3.13`. Without `wire-rese
 gives a 2-day median of about 8 mΩ (the slope path can still warn above about 18 A), the second
 good day outvotes it. `wire-reset` after the update drops the bad day at once; it also discards the
 open day, so it is best done before the day's charging starts.
+
+## Grading only against a baseline of 3 stored days (2026-11-22)
+
+Host-tested and replayed, not deployed.
+
+### Field finding
+
+While learning, `closeDay` stores a day's `Ro` median whenever the day has ≥ `DAY_RO_N` = 2 sweeps,
+also when the day does not count toward `days`. `updateBase` then sets `bRo` to the ring median, so
+after one afternoon the `Ro` path graded against a 1-day baseline (fry: 20.1 mΩ). The 11-20 false
+warning came the same way through the `Rc` path (1-day `Rc` 3.13 mΩ).
+
+### Change
+
+- `BASE_MIN_DAYS` = 3. `rcBase()` is NAN until `nRc` ≥ 3, unless `rMax` is set; then it is `rMax`
+  alone (not `min(bRc, rMax)`, which would bring back the 1-day value). `roBase()` is NAN until
+  `nRo` ≥ 3. A NAN baseline leaves `slow()` without a value, so the path stays `has = false`, and
+  `roDown` grades NAN to `Ok`.
+- Fast path: the same bug. Its excess drop is `y − rcBase()·i` with `y` the drop above the
+  regression intercept, i.e. the regression slope against `rcBase()` minute by minute (the 11-20
+  replay "before" had fast 5.94 W next to `Rc` 5.43 W). It goes through `rcBase()` and is gated with
+  the `Rc` path. The step test of the regression no longer uses `rcBase()` (`|y − r·i|`, the same
+  value), so regression learning is unchanged while the path is ungraded.
+- `Rb` path: graded `rbIn − bRb` against the 1-day `bRb`; gated on `nRc` ≥ 3 (`rbRef()`), also with
+  `rMax`, since `rMax` caps only `Rc`.
+- Day warning fallback (no fast-path minutes): `median(d.ro) − roBase()`, so it also needs 3 `Ro`
+  days. It only runs after learning.
+- Not changed: `ofsFit` still subtracts the 1-day `bRb·ib` and checks `|a − bA|` against the 1-day
+  `bA`. With `rMax` set and `nRc` < 3 the slope is therefore graded with a 1-day `Rb` correction; a
+  `bRb` error moves the slope by about ΔRb·cov(ib, Iout)/var(Iout). Without `rMax` nothing is graded
+  in that state.
+- Day storage unchanged: every good day still enters the rings while learning.
+- `rMax` as a reference: kept. It is the user's stated upper bound on `Rc`; grading against a value
+  at or above the true `Rc` under-reports the excess (a later warning), it cannot raise a false one
+  unless `rMax` is set below the real `Rc`, which is equally wrong after learning.
+- `wire`: an ungraded path prints `stale, baseline n/3 days`.
+- No new member, `Blob` and `VER` unchanged; `sizeof(WireGuard)` 720 → 720 B (host). Firmware
+  (esp32s3, IDF 6.0.3) 1 719 760 → 1 719 792 B (+32 B).
+
+### Host test
+
+`testBaseMinDays`: a blob with one `Ro` day 5 mΩ low (Ro path only) and one with one `Rc` day 5 mΩ
+low (fast + `Rc`), 28 A days: `wf` −1 on day 0, no level on days 0–2, referenced after 3 days, and
++10 mΩ on day 3 warns after 62 min (Ro) and 5 min (fast + `Rc`). `rMax` 16 mΩ with the low 1-day
+`Rc`: no level on day 0, +10 mΩ on day 1 warns after 5 min. Against the old header all three clean
+cases warn (known-bad). `testBadFirstDay` (1-day 3.13 mΩ) no longer warns on day 1; its convergence
+checks are unchanged. The 3-sweep `Ro` case now builds a 3-day baseline first. All other results
+unchanged.
+
+### Replay (fry, empty baseline from 11-12 14:00, data to 11-20 14:36, 116 restarts)
+
+- Clean: minutes at warn 0 → 0. Before, `Ro` was graded on 11-13 (1 day, 0.65 W) and all paths on
+  11-14 (2 days); after, `Ro` from 11-15 and fast/`Rc` from 11-16.
+- +6/+10/+20 mΩ injected 11-14 12:00, 11-16 12:00, 11-19 12:00: identical before and after
+  (first warn 3108/2829/2786, 184/134/134, 114/134/114 min). For the 11-14 fault the old code
+  had only 17 fast-path minutes that day (1 at warn) and `Ro` at 2.0 W, so it did not warn on its
+  2-day baseline either.
+- Without restarts, +10 mΩ at 11-14 12:00: first warn 1343 → 1529 min (+3 h), the cost of not
+  grading on a 2-day baseline; at 11-15 12:00: 267 → 263 min.
+- The live single-day `Ro` case (after 11-20) is not in this data set.

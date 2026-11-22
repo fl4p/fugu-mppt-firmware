@@ -28,6 +28,7 @@ struct WireGuardConf {
  * median fast-path ΔR (without BMS: Ro) is 2·drMin above baseline warns regardless of current,
  * never more. The baseline is the median of up to DAYS accepted day medians. Only a good day enters
  * (rcGood: slow-fit samples taken while charging, enough frames and current spread; roGood: sweeps).
+ * A path is graded only against a baseline of BASE_MIN_DAYS stored days (Rc: or a configured rMax).
  * While learning (fewer than LEARN_DAYS counted days) every good day enters, so the median outvotes
  * an odd first day; after that a day's median above baseline + drMin is rejected. A day closes at
  * the first hour without conversion DAY_MIN_S after the last close, or at the first one after a cold
@@ -40,7 +41,7 @@ class WireGuard {
 public:
     enum Level : uint8_t { Ok = 0, Warn, Derate, Trip };
     static constexpr int8_t WF_UNVERIFIED = -1;
-    static constexpr uint8_t DAYS = 14, LEARN_DAYS = 7, DAY_N = 16, VER = 1;
+    static constexpr uint8_t DAYS = 14, LEARN_DAYS = 7, BASE_MIN_DAYS = 3, DAY_N = 16, VER = 1;
     static constexpr float I_MIN = 5.f;        // [A]
     static constexpr float HYST = 0.75f;       // release thresholds = HYST · raise thresholds
     static constexpr float OVER_DERATE = 1.25f; // derated but Pw still above this · pDerate -> trip
@@ -223,7 +224,7 @@ public:
     [[nodiscard]] PathView rcPath() const { return {rcP.dr, rcP.pw, fresh(rcP)}; }
     [[nodiscard]] PathView roPath() const { return {roP.dr, roP.pw, fresh(roP)}; }
     [[nodiscard]] PathView rbPath() const { return {rbP.dr, rbP.pw, fresh(rbP)}; }
-    [[nodiscard]] float baseRc() const { return rcBase(); }
+    [[nodiscard]] float baseRc() const { return capRc(bRc); }
     [[nodiscard]] float baseA() const { return bA; }
     [[nodiscard]] float baseRb() const { return bRb; }
     [[nodiscard]] float baseRo() const { return bRo; }
@@ -231,6 +232,10 @@ public:
     [[nodiscard]] float ofs() const { return ofsA - bA; }
     [[nodiscard]] float slope() const { return ofsR - rcBase(); }
     [[nodiscard]] float iRef() const { return std::max(ioPk[0], ioPk[1]); }
+    // enough stored days to grade against: fast and Rc paths (or rMax), Rb path, Ro path
+    [[nodiscard]] bool rcRef() const { return rbRef() || conf.rMax > 0; }
+    [[nodiscard]] bool rbRef() const { return h.nRc >= BASE_MIN_DAYS; }
+    [[nodiscard]] bool roRef() const { return h.nRo >= BASE_MIN_DAYS; }
     [[nodiscard]] uint8_t dayCount() const { return h.days; }
     [[nodiscard]] uint8_t daySamples() const { return d.n; }
     [[nodiscard]] uint8_t daySweeps() const { return d.nRo; }
@@ -316,10 +321,12 @@ private:
         return n & 1 ? t[n / 2] : 0.5f * ((float) t[n / 2 - 1] + (float) t[n / 2]);
     }
 
-    [[nodiscard]] float rcBase() const {
-        if (conf.rMax > 0) return std::isfinite(bRc) ? std::min(bRc, conf.rMax) : conf.rMax;
-        return bRc;
+    [[nodiscard]] float capRc(float b) const {
+        if (conf.rMax > 0) return std::isfinite(b) ? std::min(b, conf.rMax) : conf.rMax;
+        return b;
     }
+    [[nodiscard]] float rcBase() const { return capRc(rbRef() ? bRc : NAN); }
+    [[nodiscard]] float roBase() const { return roRef() ? bRo : NAN; }
 
     [[nodiscard]] bool fresh(const Path &p) const { return p.has && cm - p.cm <= p.stale; }
 
@@ -419,7 +426,7 @@ private:
         ofsA = sep ? a : NAN;
         ofsR = sep ? r : NAN;
         // [V] excess drop of this minute: the offset comes from the regression, its slope stays in
-        const float e = op && sep ? (ms[3] - bRb * ms[5]) / n - a - rcBase() * i : NAN;
+        const float y = op && sep ? (ms[3] - bRb * ms[5]) / n - a : NAN, e = y - rcBase() * i;
         if (std::isfinite(e)) dayDr(e / i);
         if (std::isfinite(e) && (paths & 1)) {
             fast.dr = e / i;
@@ -436,7 +443,7 @@ private:
         // a minute off the regression line by pWarn/2 is a step, not drift: it must not pull the line
         // along (a fault step would tilt it and inflate or hide itself), slower changes are learned.
         // Nothing is learned while a level is held, so a found fault can't fade into the offset.
-        if (op && lvl == Ok && !(std::fabs(e - (r - rcBase()) * i) * i >= 0.5f * conf.pWarn)) {
+        if (op && lvl == Ok && !(std::fabs(y - r * i) * i >= 0.5f * conf.pWarn)) {
             constexpr double l = 1. - 1. / OFS_TAU;
             for (uint8_t k = 0; k < 7; ++k) rg[k] = rg[k] * l + ms[k];
         }
@@ -444,16 +451,16 @@ private:
 
         // a sweep before the first charging minute (boot sweep) waits for a reference current
         if (roNew && roK >= RO_MED_MIN && (!roP.has || cm - roP.cm >= RO_GAP) &&
-            (!std::isfinite(bRo) || iRef() >= I_MIN)) {
+            (!roRef() || iRef() >= I_MIN)) {
             roNew = false;
             const uint8_t n = std::min(roK, RO_MED);
-            if (paths & 4) slow(roP, median(roBuf, n) / 1e5f - bRo, iRef());
-            const float hi = *std::max_element(roBuf, roBuf + n) / 1e5f - bRo;
+            if (paths & 4) slow(roP, median(roBuf, n) / 1e5f - roBase(), iRef());
+            const float hi = *std::max_element(roBuf, roBuf + n) / 1e5f - roBase();
             roDown = gradeOf(hi * iRef() * iRef(), hi, HYST);
         }
         if (op && sep && (paths & 2)) slow(rcP, r - rcBase(), iRef());
         // Rb only up to what the excess drop supports, so an R1/R2 trade-off alone can't warn
-        if (std::isfinite(rcIn) && std::isfinite(e) && std::fabs(ib) >= I_MIN)
+        if (std::isfinite(rcIn) && std::isfinite(e) && rbRef() && std::fabs(ib) >= I_MIN)
             slow(rbP, std::fmin(rbIn - bRb, e / std::fabs(ib)), std::max(ibPk[0], ibPk[1]));
 
         for (auto *p: {&fast, &rcP, &roP, &rbP})
@@ -515,7 +522,7 @@ private:
         // Not while learning, the baseline may still be one odd day.
         const float dr = learn ? NAN
                          : d.nDr >= 4 ? median(d.dr, d.nDr) / 1e5f
-                         : d.nRo >= 2 ? median(d.ro, d.nRo) / 1e5f - bRo : NAN;
+                         : d.nRo >= 2 ? median(d.ro, d.nRo) / 1e5f - roBase() : NAN;
         if (dr >= 2 * conf.drMin) h.flags |= 1;
         else if (dr < 2 * conf.drMin * HYST) h.flags &= ~1;
         // while learning every good day enters, the median of them outvotes an odd first day.

@@ -118,7 +118,17 @@ enough data neither enters the baseline nor counts as learned.
 The first 7 good days are a learning phase that only warns. On a converter with BMS data a day counts
 when the resistance part was good; without BMS data, when the sweeps were. During learning every good
 day enters the baseline, so a wrong first day is outvoted by the median once two more good days are
-in. After learning, a day's median enters only when it lies within `wire_dr_min` of the current
+in.
+
+An estimate is graded only once its baseline holds at least 3 stored days: the excess drop, the slope
+and the shared-section (`Rb`) check need 3 days in the resistance baseline, the sweep fit 3 days in
+the sweep baseline. A configured `wire_r_max` counts as a reference for the excess drop and the
+slope from the start; until 3 days are stored they grade against `wire_r_max` alone. An estimate
+that is not graded holds and raises no level and shows as `stale, baseline n/3 days` in the `wire`
+command; with no other estimate graded, `wf` reports -1. Every good day is still stored while
+learning.
+
+After learning, a day's median enters only when it lies within `wire_dr_min` of the current
 baseline and within half of `wire_dr_min` of the lowest baseline since learning ended, so a slowly
 growing fault isn't learned in.
 
