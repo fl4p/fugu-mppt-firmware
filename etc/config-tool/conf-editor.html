@@ -302,9 +302,6 @@ const META = {
 
   // sensor.conf
   adc:{unit:"",desc:"Default ADC backend for all channels",type:"string"},
-  expected_hz:{unit:"Hz",desc:"Expected control-loop sample rate (lower-bound check)",type:"int"},
-  power_conversion_eff:{unit:"",desc:"Assumed converter efficiency for virtual current sensor",type:"float"},
-  conversion_eff:{unit:"",desc:"Legacy efficiency key (superseded by power_conversion_eff)",type:"float"},
   ignore_calibration_constraints:{unit:"",desc:"Bypass ADC calibration sanity constraints",type:"bool"},
   notch_adaptive:{unit:"",desc:"Auto-tune inverter-ripple notch to the tone measured on Vout",type:"bool"},
   notch_freq:{unit:"Hz",desc:"Notch frequency when not adaptive (2x mains: 100=50Hz, 120=60Hz)",type:"float"},
@@ -532,8 +529,8 @@ const FILE_KEYS = {
     "led_WS2812","led_WS2812B","led_simple","lv_pgood","lv_pgood_v","mcu","ntc_ch","panel_en","panel_sd",
     "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","pwm_driver_logic","pwm_en","pwm_fault_active_high","pwm_fault_pin",
     "pwm_freq","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin","skip_assert"],
-  "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_sr","expected_hz",
-    "ignore_calibration_constraints","notch_adaptive","notch_freq","notch_q","ntc_ch","power_conversion_eff"],
+  "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_sr",
+    "ignore_calibration_constraints","notch_adaptive","notch_freq","notch_q","ntc_ch"],
   "limits.conf":["hv_i_max","hv_max","iout_short","lv_i_max","lv_max",
     "p_max","reverse_current_paranoia","temp_derate","temp_max","vin_min",
     "wire_dr_min","wire_p_derate","wire_p_trip","wire_p_warn","wire_protect","wire_r_max"],
@@ -564,7 +561,7 @@ const FILE_KEYS = {
    (getByte/getLong/getFloat/getString), determined by grepping src/. */
 // SCRAPER:BEGIN TYPE_KEYS
 const TYPE_KEYS = {
-  byte: new Set(["addr","ads_alert","bflow_bat","cmd_input","hs_clamp","enabled","expected_hz","fan_pwm","forced_pwm","fpwm_gate","rect_cal_auto","rect_offset_cal",
+  byte: new Set(["addr","ads_alert","bflow_bat","cmd_input","hs_clamp","enabled","fan_pwm","forced_pwm","fpwm_gate","rect_cal_auto","rect_offset_cal",
     "i2c_port","i2c_scl","i2c_sda","ignore_calibration_constraints","ina22x_addr","ina22x_alert",
     "led_simple","lv_pgood","notch_adaptive","ntc_ch","panel_en","panel_sd","pwm_en","pwm_fault_active_high","pwm_fault_pin",
     "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert","wire_protect",
@@ -572,7 +569,7 @@ const TYPE_KEYS = {
   long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq","i2c_hs_freq",
     "cv_hold_max_s","holiday_days","i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pwm_freq","sprofiler_hz","switch_delay","scan_interval","tail_hold_s"]),
   float: new Set(["L0","bat_c","c_in","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","holiday_charge","holiday_ibat","holiday_band","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_hold_band","cv_float","hv_i_max","hv_max","ibat_max","psu_vout","rect_offset_ns",
-     "ina22x_range","ina22x_resistor","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max","power_conversion_eff",
+     "ina22x_range","ina22x_resistor","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max",
      "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","sweep_pace","sweep_verify","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
     "vin_min","vout_max","vout_max_fallback","vout_offset_max",
     "wire_dr_min","wire_p_derate","wire_p_trip","wire_p_warn","wire_r_max",
@@ -597,8 +594,7 @@ const DEFAULTS = {
   "mcu":"\"\"","ntc_ch":"255","panel_en":"0","panel_sd":"0","pwm_fault_active_high":"0","bflow_bat":"0","hs_clamp":"0",
   "pwm_fault_pin":"255","pwm_sd":"255","skip_assert":"0",
   // sensor.conf
-  "adc":"\"\"","expected_hz":"0","ignore_calibration_constraints":"0",
-  "power_conversion_eff":"0.95",
+  "adc":"\"\"","ignore_calibration_constraints":"0",
   // limits.conf
   "reverse_current_paranoia":"1","temp_max":"90.0",
   "wire_protect":"1","wire_p_warn":"2","wire_p_derate":"4","wire_p_trip":"8","wire_dr_min":"4","wire_r_max":"0",

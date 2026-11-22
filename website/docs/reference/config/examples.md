@@ -29,9 +29,6 @@ hv_i_filt_len = 30
 
 lv_i_filt_len = 30  # the LV current is the virtual sensor here
 
-expected_hz = 80
-power_conversion_eff = 0.97
-
 ignore_calibration_constraints = 1  # skip noise/range checks (NOT for production!)
 ```
 

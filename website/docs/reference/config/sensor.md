@@ -12,8 +12,6 @@ The following keys apply to all channels:
 | key                              | unit | type   | default | description                                                    |
 |----------------------------------|------|--------|---------|----------------------------------------------------------------|
 | `adc`                            |      | string | —       | Default ADC backend for all channels                           |
-| `expected_hz`                    | Hz   | uint16 | 0       | Minimum control-loop sample rate for the loop-rate watchdog, 0–65535 (0 = off). If the samples per second stay below it for three consecutive ~3 s windows (outside calibration and manual PWM), the converter logs `Loop latency high (…), shutdown!` and backs off. A value outside the range fails sensor setup at boot. Set it below the rate the ADC settings deliver, e.g. `3900` in `config/lab/dry_mock` |
-| `power_conversion_eff`           |      | float  | 0.95    | Assumed converter efficiency for the virtual current sensor    |
 | `ignore_calibration_constraints` |      | bool   | 0       | Bypass ADC calibration sanity constraints                      |
 | `notch_adaptive`                 |      | bool   | 1       | Auto-tune the inverter-ripple notch to the tone measured on Vout (off = fixed at `notch_freq`) |
 | `notch_freq`                     | Hz   | float  | 100     | Notch frequency when not adaptive (2×mains: 100 = 50 Hz, 120 = 60 Hz) |
@@ -71,8 +69,8 @@ Configure the voltage and current sensors in `sensor.conf` to match your topolog
 
 There are four sensors: Vin, Vout, Iin, and Iout. Configure them by side (HV/LV); the topology
 assigns the roles. A converter can have one or two current sensors.
-With a single current sensor, the firmware computes the other from the voltage ratio and
-`power_conversion_eff`. The tables above list all keys.
+With a single current sensor, the firmware computes the other from the voltage ratio and a fixed
+97 % conversion efficiency. The tables above list all keys.
 
 The following example mixes backends as the Fugu2 board image (`config/fmetal`) does. The channel
 numbers belong to that board: the HV side voltage is on internal ADC1 channel 3, and the LV side
@@ -102,9 +100,6 @@ lv_i_filt_len = 30   # filter window (samples)
 #hv_i_factor = -20.15 # sensitivity (A/V)
 #hv_i_midpoint = 1.88 # zero offset (e.g. ACS712)
 #hv_i_filt_len = 30
-
-expected_hz = 80             # loop-rate watchdog lower bound (0 disables)
-power_conversion_eff = 0.97  # assumed efficiency for the virtual current sensor
 ```
 
 As a buck this reads Vin from ADC1 and Vout and Iout from the INA226, with Iin virtual. With

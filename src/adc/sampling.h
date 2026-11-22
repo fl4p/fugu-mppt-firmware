@@ -468,8 +468,8 @@ public:
 
     // getSamplingRate() reports the uniform per-channel rate (base/N). A muxed ADC with an
     // interleaved Vout samples each sensor at a different duty, so scale by N*appearances/pollLen.
-    float effectiveSampleRate(PhysicalSensor *ps) {
-        float fs = ps->adc->getSamplingRate(ps->params.adcCh);
+    float effectiveSampleRate(PhysicalSensor *ps, bool nominal = false) {
+        float fs = nominal ? ps->adc->nominalSamplingRate(ps->params.adcCh) : ps->adc->getSamplingRate(ps->params.adcCh);
         auto &s = getAdcState(ps->adc);
         if (!s.cycleOrder.empty()) {
             uint8_t app = 0;

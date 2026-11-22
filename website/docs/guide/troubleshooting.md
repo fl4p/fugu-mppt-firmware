@@ -32,7 +32,7 @@ The following table lists the ADC and control-loop log lines, what they mean, an
 | `Never got a sample! Please check ADC` | no sample 20 s after boot; converter disabled | ADC backend in `sensor.conf`, I²C pins, `ina22x_alert` / `ads_alert` pin, `scan-i2c` |
 | `ADC stall <n> ms, shutdown` | samples stopped for > 0.8 s during conversion; the ADC is reset, the device restarts after 60 s of stall | wiring, I²C noise, the tasks starving the sampler (`rt-stats`) |
 | `ina22x: <n> timeout!` | the INA226 alert did not arrive in time | `ina22x_alert` pin, `ina22x_conv_time_us` |
-| `Loop latency high (…), shutdown!` | control loop slower than `sensor.conf::expected_hz` | `expected_hz` too high for the ADC settings, or a blocked RT path |
+| `Loop latency high (…), shutdown!` | Vout sampled at less than half its nominal rate | a blocked RT path, ADC alert pin or I²C errors (`rt-stats`, `sensor`) |
 | `Calibration failed, <sensor> …` | a sensor was not at rest during zero-current calibration | load or input connected at boot, wrong `_midpoint` |
 | `Sensor <sensor> zero not settled #<n>: <checks> …` | after a stop, the current-sensor zero did not settle within 1.2 s; the previous zero is kept. `<checks>` names the failed tests (`mean`: the reading still moves, `noise`: noise above 5 % of the zero limit, `ratio`: noise changed between blocks) with their numbers. From the fourth calibration in a row, a zero whose mean is stable is taken without the noise tests (`zero taken w/o noise check`) | the unsettled count in `sensor`; a slow current decay after high-power stops, or a noisy current sensor |
 | `error during sensor/converter/tracker setup: …` | a config file is invalid; the control loop is not started | the message names the key |

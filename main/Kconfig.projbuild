@@ -21,7 +21,8 @@ menu "ADC drivers"
             configured conversion time (1e6 / (2*conv_time_us)). Some INA226 chips (notably
             counterfeit parts) convert faster than their datasheet timing, so the nominal rate
             underestimates the real sample rate — which mistunes anything keyed to it (the
-            inverter-ripple notch's reported frequency, the expected_hz loop-rate watchdog).
+            inverter-ripple notch's reported frequency). The loop-rate watchdog threshold
+            always uses the nominal rate.
             When set, getSamplingRate() instead returns a rate measured over several conversions
             at operational settings during init, so it reflects the chip's actual throughput.
             No-op on boards without an INA226 (the measurement lives in ADC_INA226). Default on.

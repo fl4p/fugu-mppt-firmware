@@ -18,12 +18,13 @@ Three supervisors on the same task detect a loop that falls behind:
 
 | Supervisor | Trips when | Action |
 |---|---|---|
-| Loop-rate watchdog (`lfWatchdog`) | Samples per second stay below `sensor.conf::expected_hz` for 3 consecutive ~3 s windows (outside calibration and manual PWM) | `Loop latency high (…), shutdown!`, `stopAndBackoff(4)` |
+| Loop-rate watchdog (`lfWatchdog`) | Vout samples per second stay below half the nominal Vout sample rate for 3 consecutive ~3 s windows (outside calibration and manual PWM) | `Loop latency high (…), shutdown!`, `stopAndBackoff(4)` |
 | ADC stall watchdog | The ADC reports an error, or no fresh sample arrived for 200 ms outside calibration | `resetPeripherals()` at most every 300 ms; `ADC stall <n> ms, shutdown` and `stopAndBackoff(16)` if the stall persists > 800 ms; system restart after 60 s |
 | No-sample check | No sample at all 20 s after start | `Never got a sample! Please check ADC`, converter disabled; system restart once uptime passes 15 min |
 
-`expected_hz` is documented in [sensor.conf](../../reference/config/sensor.md). Setting it to `0` disables the
-loop-rate watchdog.
+The threshold is derived at boot from the ADC settings: the configured per-channel rate of the Vout ADC, scaled by
+Vout's share of the polling order. An INA226 contributes its nominal rate from the conversion time, not a measured one,
+so a slow chip cannot lower its own threshold. The boot log reports the value (`loop-rate watchdog <n> Hz`).
 
 The per-sample OV/OC cutouts in `mppt.protect` are independent of these supervisors and run on every sample that
 arrives.

@@ -11,7 +11,7 @@
 
 // AsyncADC backend that reads from the VirtualConverter singleton (g_vconv).
 // Channel mapping (fixed): 0=Vin, 1=Vout, 2=Iout, 3=Iin, 4=NTC. Profiles usually leave Iin a
-// VirtualSensor (computed from the other side + power_conversion_eff).
+// VirtualSensor (computed from the other side at a fixed efficiency).
 //
 // On every periodic timer tick we step the plant by (1/adc_freq) seconds and
 // notify the consumer task. Channels are read with readMode=SnapshotAllChannels, mirroring

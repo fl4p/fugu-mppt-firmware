@@ -16,7 +16,7 @@ The hardware must measure the following signals.
 |---|---|---|
 | `Vout` | Yes | Battery voltage; should be precise and sampled fast to limit transients on load changes |
 | `Vin` | Yes | May be coarse (an 8-bit ADC is enough if `Iout` is measured); needed for diode emulation in DCM and UV/OV shutdown |
-| `Iin` or `Iout` | At least one | The missing side is computed by a `VirtualSensor` from the voltage ratio and `power_conversion_eff` |
+| `Iin` or `Iout` | At least one | The missing side is computed by a `VirtualSensor` from the voltage ratio and a fixed 97 % efficiency |
 | `ntc` | Optional | Heatsink temperature for derating |
 
 A bidirectional current sensor allows boost operation (lower solar voltage to higher battery voltage).

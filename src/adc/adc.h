@@ -48,6 +48,9 @@ public:
         throw std::runtime_error("getSR"s + " " + "not implemented");
     };
 
+    // configured rate, independent of what the hardware delivers
+    virtual float nominalSamplingRate(uint8_t channel) { return getSamplingRate(channel); }
+
     /**
      * select the channel to read (MuxedRoundRobin and SnapshotAllChannels)
      * @param channel

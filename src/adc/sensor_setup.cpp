@@ -30,7 +30,6 @@
 extern ADC_Sampler adcSampler;
 extern VIinVout<const Sensor *> sensors;
 extern MpptController mppt;
-extern float conversionEfficiency;
 
 #include "../app_state.h"
 #if CONFIG_FUGU_WITH_PWR_KNOBS
@@ -161,12 +160,6 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
         throw std::runtime_error("no sensor conf");
     }
 
-    auto expectedHz = sensConf.getLong("expected_hz", 0);
-    assert_throw(expectedHz >= 0 && expectedHz <= 65535, "expected_hz out of range [0,65535]");
-    g_app.loopRateMin = (uint16_t) expectedHz;
-    conversionEfficiency = sensConf.f("power_conversion_eff", 0.95f);
-    assert_throw(conversionEfficiency > 0.5f and conversionEfficiency < 1.0f, "");
-
     struct p {
         SensorParams params;
         AsyncADC<float> *adc;
@@ -276,7 +269,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
                         return 0.f;
                     if (std::abs(sensors.Iout->last) < .01f or sensors.Vin->last < 0.1f)
                         return 0.f;
-                    return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
+                    return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / VIRTUAL_SENSOR_EFF;
                 },
                 iin.filtLen,
                 iin.params.teleName.c_str(),
@@ -305,7 +298,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
                         return 0.f;
                     if (std::abs(sensors.Iin->last) < .05f or sensors.Vout->last < 0.1f)
                         return 0.f;
-                    return sensors.Iin->last * sensors.Vin->last / sensors.Vout->last * conversionEfficiency;
+                    return sensors.Iin->last * sensors.Vin->last / sensors.Vout->last * VIRTUAL_SENSOR_EFF;
                 },
                 iout.filtLen,
                 iout.params.teleName.c_str(),
@@ -350,4 +343,12 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
     if (adcSampler.ignoreCalibrationConstraints)
         ESP_LOGW("main", "Skipping ADC range and noise checks.");
     heap_caps_check_integrity_all(true);
+}
+
+void setLoopRateMin() {
+    auto vo = sensors.Vout;
+    if (vo && !vo->isVirtual)
+        g_app.loopRateMin = (uint16_t) std::min(
+            adcSampler.effectiveSampleRate((PhysicalSensor *) vo, true) * 0.5f, 65535.f);
+    ESP_LOGI("sensor", "loop-rate watchdog %hu Hz", g_app.loopRateMin);
 }

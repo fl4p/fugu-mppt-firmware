@@ -123,7 +123,6 @@ uint32_t lastNSamples = 0;
 
 unsigned long lastMpptUpdateNumSamples = 0;
 
-float conversionEfficiency;
 
 AppState g_app{}; // mode flags / per-iteration max-lag bookkeeping (see app_state.h)
 
@@ -738,6 +737,7 @@ static void loopRT(void *arg) {
 
     try {
         adcSampler.begin();
+        setLoopRateMin();
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error starting ADC sampler: %s", er.what());
         g_app.setupErr = true; // the network loop advances the wall clock instead

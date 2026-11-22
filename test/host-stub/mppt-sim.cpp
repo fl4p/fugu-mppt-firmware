@@ -144,7 +144,6 @@ volatile uint32_t loopWallTicks_ = 0;
 time_us lastLoopTime = 0, timeLastSampler = 0, delayStartUntil = 0, lastTimeOutUs = 0, lastLfWorkUs = 0;
 uint32_t lastNSamples = 0;
 unsigned long lastMpptUpdateNumSamples = 0;
-float conversionEfficiency;
 AppState g_app{};
 static const auto lfPeriod = 3000000ULL;
 
@@ -607,7 +606,6 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
     const char *hzEnv = getenv("SIM_ADC_HZ");
     const int hz = hzEnv ? atoi(hzEnv) : 450;
     writeConf(confDir, "vconv.conf", {{"adc_freq", std::to_string(hz)}});
-    writeConf(confDir, "sensor.conf", {{"expected_hz", std::to_string(hz * 4 / 5)}});
     if (g_simSenseHook)
         writeConf(confDir, "sensor.conf", {{"hv_v_filt_len", "20"}, {"lv_v_filt_len", "20"}, {"lv_i_filt_len", "20"}, {"hv_i_filt_len", "20"}});
     if (g_ring) writeConf(confDir, "vconv.conf", g_ring->conf(g_ringOn)); // ring_c is at the plant L, set after boot
@@ -657,6 +655,7 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
     mppt.begin(trackerConf, boardConf, converterConf, lim, TeleConf{});
     if (g_app.setupErr) { printf("setupErr\n"); exit(2); }
     adcSampler.begin(); // loopRT prologue
+    setLoopRateMin();
     printf("# sim tick %u us, pwm_freq %lu, Vbat_max %.2f, Iout_max %.1f, p_max %.0f\n", g_simTickUs,
            (unsigned long) converter.getPwmFrequency(), mppt.charger.params.Vbat_max, lim.Iout_max, lim.P_max);
     printf("# gate timing %s: pwmMax %u, minLS %u, maxHS %u, count %.3f ns, rect_offset %d ct\n", g_drvMcpwm ? "mcpwm" : "ledc",

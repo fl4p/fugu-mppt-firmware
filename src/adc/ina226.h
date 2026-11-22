@@ -174,6 +174,10 @@ public:
         return ina226SampleRate(convUs_);
     }
 
+#if CONFIG_FUGU_INA226_MEASURED_RATE
+    float nominalSamplingRate(uint8_t) override { return ina226SampleRate(convUs_); }
+#endif
+
     bool resetPeripherals() override {
         if (!i2c_test_address(ina226.i2cAddress)) {
             ESP_LOGI("ina22x", "Chip didnt respond at address 0x%02X", (uint8_t) ina226.i2cAddress);

@@ -144,7 +144,7 @@ static int rtSet(long hz) {
     const long lo = std::max<long>(10, g_app.loopRateMin);
     if (hz < lo || hz > 10000) {
         UART_LOG("pwr: rt %ld refused, range %ld..10000 Hz (floor: %s)", hz, lo,
-                 lo > 10 ? "sensor.conf expected_hz, loop latency watchdog" : "ADC stall window 200 ms");
+                 lo > 10 ? "loop latency watchdog, half the boot Vout rate" : "ADC stall window 200 ms");
         return 1;
     }
     const esp_err_t e = g_pwrFakeAdc->setRate(hz);

@@ -157,7 +157,6 @@ VIinVout<const Sensor *> sensors{nullptr, nullptr, nullptr, nullptr};
 SynchronousConverter converter;
 static LCD g_lcd;
 MpptController mppt{adcSampler, sensors, converter, g_lcd};
-float conversionEfficiency = 0.97f;
 static time_us delayStartUntil = 0, timeLastSampler = 0;
 static uint32_t lastMpptUpdateNumSamples = 0;
 static SimADC *g_adc = nullptr;
@@ -188,12 +187,12 @@ static void setupFw() {
     auto coil = mkConf("coil", {{"L0", lbuf}, {"rect_cal_auto", "0"}});
     auto conv = mkConf("converter", {{"topo", "buck"}, {"forced_pwm", "0"}});
     auto tracker = mkConf("tracker", {});
-    auto sens = mkConf("sensor", {{"filt_len", "20"}, {"expected_hz", "200"}});
+    auto sens = mkConf("sensor", {{"filt_len", "20"}});
     TeleConf tele{};
 
     setWallClockUs(g_simUs);
     Limits lim{limitsC, false};
-    g_app.loopRateMin = (uint16_t) sens.getLong("expected_hz", 200);
+    g_app.loopRateMin = (uint16_t) (S.sps * 0.5f);
     const auto fl = (uint16_t) sens.getLong("filt_len", 20);
 
     // as setupSensors() for adc=vconv (channel 0=Vin, 1=Vout, 2=Iout, 4=NTC, Iin virtual)
@@ -205,7 +204,7 @@ static void setupFw() {
         if (!std::isfinite(sensors.Iout->last) || !std::isfinite(sensors.Vin->last) || !std::isfinite(sensors.Vout->last))
             return 0.f;
         if (std::abs(sensors.Iout->last) < .01f or sensors.Vin->last < 0.1f) return 0.f;
-        return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / conversionEfficiency;
+        return sensors.Iout->last * sensors.Vout->last / sensors.Vin->last / 0.97f; // VIRTUAL_SENSOR_EFF; SRC may predate sensor_setup.h
     }, fl, "iin", 'A');
     sensors.Iout = adcSampler.addSensor(g_adc, {2, {1.f, 0.f}, {lim.Iout_max * 0.05f, .1f, true}, "iout", 'A', true},
                                         lim.Iout_max, fl);

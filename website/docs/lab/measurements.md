@@ -116,7 +116,7 @@ This section outlines what to measure; there is no validated procedure or toolin
 The outline covers efficiency, thermal soak, and the record that keeps results comparable:
 
 - For efficiency, measure input and output power with external meters (4-wire where currents are high), not with the
-  board's own sensors, which carry calibration error and the `power_conversion_eff` assumption for virtual channels.
+  board's own sensors, which carry calibration error and the fixed 97 % efficiency assumption for virtual channels.
   Sweep load at several input voltages; record duty, conduction mode (CCM/DCM) and switching frequency per point.
 - For a thermal soak, run at a fixed operating point until temperatures settle. Log `ntc_temp` and the MCU temperature
   from telemetry alongside FET and coil temperatures from external probes, and note where `limits.conf::temp_derate`

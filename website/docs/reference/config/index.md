@@ -44,7 +44,7 @@ The tables on the file pages use these conventions:
   required and board-specific: there is no built-in default, and the value (usually a divider
   ratio, pin, or limit) must come from the board image.
 - Channel `255` means absent. The firmware replaces a missing current sensor (`iin`/`iout`) with a
-  `VirtualSensor` derived from the other side and `power_conversion_eff`.
+  `VirtualSensor` derived from the other side and a fixed 97 % efficiency.
 
 ## Files
 

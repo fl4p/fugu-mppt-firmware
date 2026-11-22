@@ -405,7 +405,7 @@ is switching.
 | ADC stall | The ADC reports an error, or no fresh sample for 200 ms outside calibration | Reset the ADC peripherals (at most every 300 ms). After 800 ms of stall: stop with a 16 s backoff. After 60 s: restart the system |
 | ADC reset | A requested ADC reset | Stop during the reset; restart 6 s after it (30 s if the reset failed) |
 | No sample | No sample at all 20 s after boot | Disable the converter and log `Never got a sample! Please check ADC`. After 15 min: restart the system |
-| Loop latency | Sample rate below `sensor.conf::expected_hz` for 3 consecutive 3 s windows. Off when `expected_hz` is 0, the default | Stop with a 5 s backoff (100 ms in PSU mode) |
+| Loop latency | Vout sample rate below half its nominal rate for 3 consecutive 3 s windows. Always on, unless Vout is a virtual sensor | Stop with a 5 s backoff (100 ms in PSU mode) |
 | Calibration failure | Sensor calibration fails | Hold the start for 4 s (100 ms in PSU mode) |
 
 The latency watchdog ignores manual PWM, the first 2 s after a calibration, and the first samples after boot. A single
@@ -449,5 +449,4 @@ the order they are checked:
 | [`charger.conf`](../reference/config/charger.md)`::vout_max` | Battery voltage that sets the output OV threshold |
 | [`board.conf`](../reference/config/board.md)`::ina22x_ov` | INA226 hardware over-voltage alert |
 | [`board.conf`](../reference/config/board.md)`::bflow_bat`, `hs_clamp` | Idle high-side short check and backflow switch test; low-side clamp |
-| [`sensor.conf`](../reference/config/sensor.md)`::expected_hz` | Minimum sample rate for the latency watchdog |
 | `ovset` (console) | Explicit output OV limit, RAM only |

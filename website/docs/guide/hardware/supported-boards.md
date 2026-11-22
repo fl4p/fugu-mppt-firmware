@@ -34,7 +34,7 @@ The following table lists the board configurations in the repository.
 | Boost PSU example | `config/psu/boost80V` | ESP32-S3 | Vin: INA226, Vout: internal ADC1 | INA226, 0.5 mΩ shunt | Boost, `mode=psu` at 24 V |
 
 A board with a single current sensor gets the other current from a virtual sensor, computed from the voltage ratio
-and `sensor.conf::power_conversion_eff`.
+and a fixed 97 % conversion efficiency.
 
 Configurations for development without a power stage (`config/lab/dry_mock`, `dry_int`, `vconv_mock`,
 `wokwi_mock`) are listed in [Provisioning](../getting-started/provisioning.md#board-configurations).
@@ -64,11 +64,6 @@ The `fugu1` folders differ as follows:
   provisioning, copy `charger.conf`, `coil.conf`, and `converter.conf` from `fugu1_esp32`. The firmware has no
   defaults for the following keys, so also add `pwm_freq=39000` and `pwm_driver_logic=InEn` to its `board.conf`, and
   `esp32adc1_sr=22000` and `esp32adc1_avg=32` to its `sensor.conf`.
-
-:::note
-The `fugu1` sensor files set `conversion_eff`, but the firmware reads `power_conversion_eff`. The built-in default of
-0.95 applies until you rename the key.
-:::
 
 ### Solar boost
 
