@@ -1,0 +1,14 @@
+## fry: valid 480, ntc range 12.8..45.1 C
+  unshaded, all power: n=265, Voc = 68.6 -0.132(±0.016)*ntc +2.39(±0.07)*lnP, R2 0.85 -> dVoc/dT_ntc = -0.173 ± 0.022 %/K
+      ntc only: +0.306 ± 0.036 %/K, R2 0.21; corr(ntc, lnP) 0.67
+  unshaded, Pmax < 20 % P95 (low heating): n=118, Voc = 68.6 -0.310(±0.019)*ntc +3.77(±0.10)*lnP, R2 0.93 -> dVoc/dT_ntc = -0.419 ± 0.026 %/K
+      ntc only: +0.009 ± 0.085 %/K, R2 0.00; corr(ntc, lnP) 0.43
+  unshaded, Pmax > 30 % P95: n=122, Voc = 71.0 -0.042(±0.019)*ntc +1.43(±0.25)*lnP, R2 0.21 -> dVoc/dT_ntc = -0.054 ± 0.025 %/K
+      ntc only: +0.001 ± 0.026 %/K, R2 0.00; corr(ntc, lnP) 0.39
+## flat: valid 426, ntc range -16.3..76.5 C
+  unshaded, all power: n=351, Voc = 58.9 -0.063(±0.007)*ntc +2.35(±0.06)*lnP, R2 0.89 -> dVoc/dT_ntc = -0.092 ± 0.010 %/K
+      ntc only: +0.214 ± 0.015 %/K, R2 0.38; corr(ntc, lnP) 0.78
+  unshaded, Pmax < 20 % P95 (low heating): n=162, Voc = 58.6 -0.149(±0.010)*ntc +3.21(±0.05)*lnP, R2 0.97 -> dVoc/dT_ntc = -0.226 ± 0.015 %/K
+      ntc only: +0.442 ± 0.054 %/K, R2 0.29; corr(ntc, lnP) 0.70
+  unshaded, Pmax > 30 % P95: n=161, Voc = 68.2 -0.008(±0.007)*ntc +0.31(±0.22)*lnP, R2 0.01 -> dVoc/dT_ntc = -0.012 ± 0.010 %/K
+      ntc only: -0.004 ± 0.009 %/K, R2 0.00; corr(ntc, lnP) 0.52

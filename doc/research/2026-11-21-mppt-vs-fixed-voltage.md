@@ -240,7 +240,9 @@ correlation is near zero because the ratios span only 0.75-0.95 and the curve ca
   that direction: the curves are optimistic below the MPP. fry shows no offset. Read the flat result as "fixed
   56 V ≈ MPPT within about ±1.5 %" and the fry result as "MPPT ahead by 1.5 ± 1 %".
 - **One season only:** 30 late-autumn days with little temperature range. The year-round cost of a fixed voltage is
-  higher (see Temperature); the cost of k·Voc probably is not.
+  higher (see Temperature); the cost of k·Voc probably is not. A year model calibrated to this month
+  (`2026-11-22-mppt-vs-fixed-voltage-year.md`) puts the best fixed voltage about 6 % (fry) / 4.5 % (flat) behind the
+  MPPT over a year, and k·Voc 2-3.5 % behind.
 - **Output power, not panel power.** P is the converter's output, so conversion efficiency at each V is folded into
   the curves. A fixed-V charger would have its own, similar loss.
 - **Gaps:**
