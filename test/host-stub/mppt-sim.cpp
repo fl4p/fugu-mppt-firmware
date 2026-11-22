@@ -63,6 +63,7 @@
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
 //   SIM_TTRACE=t0,t1 /tmp/mppt-sim wx-dusk      # one line per tracker decision (duty, Vin, P, direction, LS) in t0..t1
 //   SIM_PDUMP=<file>  per RT tick float32 t, Iout ewm, Vout ewm, HS count, slow mode, PV power; SIM_HOLD=t: wx runs hold the duty from t [s]
+//   SIM_DC=ta,duty,tb  wx runs: console `dc duty` at ta [s], `mppt` at tb [s]
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
 //   SIM_PHASE_US=500 /tmp/mppt-sim a          # a/b/c/e: plant runs n us past the event before the next ADC tick
 //   SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" /tmp/mppt-sim a   # board overrides
@@ -1177,6 +1178,19 @@ static int runWx(const std::string &name, Wx &wx) {
             }
         }
         if (holdAt >= 0 && tb >= holdAt) mppt.speedScale = 0, holdAt = -1;
+        {
+            // SIM_DC=ta,duty,tb: console `dc duty` at ta, `mppt` at tb
+            static float dc[3] = {-1, 0, -1};
+            static bool dcInit = getenv("SIM_DC") && sscanf(getenv("SIM_DC"), "%f,%f,%f", dc, dc + 1, dc + 2) == 3;
+            if (dcInit && dc[0] >= 0 && tb >= dc[0]) {
+                printf("%9.2f >>> dc %.0f (D=%u Vin=%.2f sweeping=%d)\n", tb, dc[1], converter.getCtrlOnPwmCnt(),
+                       g_vconv.getVin(), (int) mppt.isSweeping());
+                (void) mppt.requestPsuManual((uint16_t) dc[1], -1), dc[0] = -1;
+            } else if (dcInit && dc[0] < 0 && dc[2] >= 0 && tb >= dc[2]) {
+                printf("%9.2f >>> mppt (D=%u Vin=%.2f)\n", tb, converter.getCtrlOnPwmCnt(), g_vconv.getVin());
+                (void) mppt.requestPsuOff(), dc[2] = -1;
+            }
+        }
         if (wx.sweepAt >= 0 && tb >= wx.sweepAt) {
             printf("%9.2f >>> sweep requested\n", tb);
             mppt.startSweep();

@@ -67,6 +67,14 @@ struct Tracker {
         setSlowMode(false);
     }
 
+    // start afresh at vin (NaN: unknown), e.g. after manual control froze the state
+    void restart(float vin) {
+        resetDirection(false, vin);
+        if (isnan(vin)) _lastVin = 0;
+        maxPowerPoint.power = 0;
+        _powerBuf.clear(), _vinBuf.clear();
+    }
+
     // continue after a pause that returned to the same operating point, power settled at `power`
     void resume(float power) {
         _time = wallClockMs();

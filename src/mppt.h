@@ -1391,6 +1391,7 @@ public:
             } else {
                 g_app.opMode = OpMode::Mppt;
                 clearBootTarget();
+                tracker.restart(sensors.Vin ? sensors.Vin->ewm.avg.get() : NAN);
                 ESP_LOGI("mppt", "PSU off, MPPT mode");
             }
             completePsuCommand(ticket, PsuSetpointError::None);
@@ -1587,7 +1588,7 @@ public:
             auto m = (MpptController *) c;
             // TODO replace displayMessageF with a general message callback call
             m->lcd.displayMessageF("MPP Scan done\n%.1fW @ %.1fV", 6000, p, v);
-            m->sweepPlot.plot();
+            m->sweepPlot.plot(p, v);
         }, this, maxPowerPoint.power, maxPowerPoint.voltage);
     }
 

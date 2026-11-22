@@ -19,12 +19,18 @@
 
 #include "logging.h"
 
-// Points of one sweep (x, power). Heap block owned by core 0.
+// Points of one sweep (x, power) and a copy of the last completed one. Heap block owned by core 0.
 struct PlotPoints {
     static constexpr uint16_t Cap = 120;
     uint16_t n[2];
-    uint32_t endTimeS; // 0: unknown
+    uint16_t kn;          // points in k
+    uint32_t endTimeS;    // k's sweep end, 0: unknown
+    float kMpp[2];        // k's MPP (Vin, P)
+    float kScale;         // k's P per count
     std::pair<float, float> p[2][Cap]; // [0] = (Vin, P), [1] = (duty, P)
+    uint16_t k[Cap][2];   // last completed sweep (Vin [10 mV], P [kScale])
+
+    [[nodiscard]] std::pair<float, float> kept(uint16_t i) const { return {k[i][0] * .01f, k[i][1] * kScale}; }
 };
 
 // Sweep chart. The RT core only appends into a block that core 0 allocated before the sweep and
@@ -40,17 +46,14 @@ struct Plot {
     // core 0: provide an empty block if none is collecting
     void begin() {
         if (collecting.load(std::memory_order_acquire) || handed.load(std::memory_order_acquire)) return;
-        if (!block) block = new(std::nothrow) PlotPoints;
+        if (!block) block = new(std::nothrow) PlotPoints{};
         if (!block) return;
         block->n[0] = block->n[1] = 0;
-        block->endTimeS = 0;
         collecting.store(block, std::memory_order_release);
     }
 
-    // core 0: last plotted sweep, nullptr while a sweep is collected or pending
-    [[nodiscard]] const PlotPoints *last() const {
-        return collecting.load(std::memory_order_acquire) || handed.load(std::memory_order_acquire) ? nullptr : block;
-    }
+    // core 0: block holding the last completed sweep in k, nullptr if none; an aborted sweep keeps it
+    [[nodiscard]] const PlotPoints *last() const { return block && block->kn ? block : nullptr; }
 
     // RT: empty the block at a sweep start
     void restart() {
@@ -136,18 +139,29 @@ struct Plot {
 #endif
     }
 
-    // core 0: chart the handed-over block and keep it
-    void plot() {
+    // core 0: chart the handed-over block and keep its (Vin, P) series with the MPP (vMpp, pMpp) in k
+    void plot(float pMpp = 0, float vMpp = 0) {
         auto b = handed.load(std::memory_order_acquire);
         if (!b) return;
-        const auto now = time(nullptr);
-        b->endTimeS = now > 1000000000 ? (uint32_t) now : 0;
         try {
             _plotSeries(b->p[0], b->n[0], "V");
             _plotSeries(b->p[1], b->n[1], "D");
         } catch (const std::exception &e) {
             ESP_LOGE("plot", "Error: %s", e.what());
         }
+        b->kn = 0;
+        float pMax = 0;
+        for (uint16_t i = 0; i < b->n[0]; ++i) pMax = std::max(pMax, b->p[0][i].second);
+        b->kScale = pMax > 0 ? pMax / 65535.f : 1;
+        for (uint16_t i = 0; i < b->n[0]; ++i) {
+            const auto &q = b->p[0][i];
+            b->k[i][0] = (uint16_t) std::clamp(q.first * 100.f + .5f, 0.f, 65535.f);
+            b->k[i][1] = (uint16_t) std::clamp(q.second / b->kScale + .5f, 0.f, 65535.f);
+        }
+        b->kMpp[0] = vMpp, b->kMpp[1] = pMpp;
+        const auto now = time(nullptr);
+        b->endTimeS = now > 1000000000 ? (uint32_t) now : 0;
+        b->kn = b->n[0];
         handed.store(nullptr, std::memory_order_release);
     }
 };

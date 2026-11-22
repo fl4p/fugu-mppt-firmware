@@ -76,7 +76,7 @@ void doPlot(Plot &p) {
 }
 
 // the block was charted and kept
-bool plotted(const Plot &p) { return !p.handed.load() && !p.collecting.load() && p.last() == p.block; }
+bool plotted(const Plot &p) { return !p.handed.load() && !p.collecting.load() && p.block && p.block->kn == p.block->n[0]; }
 
 } // namespace
 
@@ -296,8 +296,8 @@ void test_rt_add_and_handover() {
 }
 
 // ------------------------------------------------------------------
-//  The block survives plot(): n unchanged, series 0 sorted by x, reused by
-//  the next begin(); a sweep without handOver() hides it from last().
+//  The block survives plot(): n unchanged, series 0 sorted by x and copied to k,
+//  reused by the next begin(); k stays through a sweep without handOver().
 // ------------------------------------------------------------------
 
 void test_block_kept_after_plot() {
@@ -318,9 +318,52 @@ void test_block_kept_after_plot() {
     for (uint16_t i = 1; i < b->n[0]; ++i) asc &= b->p[0][i - 1].first <= b->p[0][i].first;
     EXPECT(asc);
     EXPECT(b->p[0][0] == lastAdded);
+    bool same = b->kn == n0;
+    for (uint16_t i = 0; i < b->kn; ++i) {
+        const auto q = b->kept(i);
+        same &= std::fabs(q.first - b->p[0][i].first) <= .005f && std::fabs(q.second - b->p[0][i].second) <= 1e-4f * 149;
+    }
+    EXPECT(same);
     EXPECT(block(p) == b); // reused
-    EXPECT(b->n[0] == 0 && b->endTimeS == 0);
-    EXPECT(p.last() == nullptr); // collecting, no handOver
+    EXPECT(b->n[0] == 0 && b->kn == n0);
+    EXPECT(p.last() == b); // collecting, no handOver: the last completed sweep stays
+}
+
+// ------------------------------------------------------------------
+//  An aborted sweep (begin, add, no handOver) keeps the last completed curve;
+//  the next completed sweep replaces it.
+// ------------------------------------------------------------------
+
+void test_aborted_sweep_keeps_curve() {
+    section("aborted_sweep_keeps_curve");
+    Plot p;
+    auto b = block(p);
+    for (int i = 0; i < 40; ++i) p.add(70.f - i * 0.5f, i * 0.01f, 2.f + 0.1f * i, 80.f);
+    p.handOver();
+    p.plot(5.9f, 50.5f);
+    const uint16_t kn = b->kn;
+    const auto k0 = b->kept(0), kl = b->kept(kn - 1);
+    EXPECT(kn > 10 && p.last() == b && b->kMpp[0] == 50.5f && b->kMpp[1] == 5.9f);
+    // aborted sweep: restart(), points, no handOver(); then a second aborted one
+    for (int s = 0; s < 2; ++s) {
+        p.restart();
+        block(p);
+        for (int i = 0; i < 20; ++i) p.add(75.f - i, i * 0.02f, 100.f + i, 80.f);
+        EXPECT(p.last() == b && b->kn == kn && b->kept(0) == k0 && b->kept(kn - 1) == kl);
+    }
+    // a completed sweep replaces it (k is x-ascending: the 129 W point first)
+    p.restart();
+    for (int i = 0; i < 30; ++i) p.add(75.f - i, i * 0.02f, 100.f + i, 80.f);
+    p.handOver();
+    p.plot(129.f, 46.f);
+    EXPECT(b->kn == 30 && b->kMpp[1] == 129.f && std::fabs(b->kept(0).second - 129.f) < 0.01f);
+    // negative power clamps to 0
+    p.restart();
+    block(p);
+    for (int i = 0; i < 5; ++i) p.add(75.f - i, i * 0.02f, -1.f + i, 80.f);
+    p.handOver();
+    p.plot();
+    EXPECT(b->kn == 5 && b->kept(4).second == 0.f && std::fabs(b->kept(0).second - 3.f) < 1e-3f);
 }
 
 // ------------------------------------------------------------------
@@ -340,6 +383,7 @@ int main() {
     test_stress_random_small_N();
     test_rt_add_and_handover();
     test_block_kept_after_plot();
+    test_aborted_sweep_keeps_curve();
 
     std::printf("\nplot-test: %d checks, %d failures\n", g_run, g_fail);
     return g_fail == 0 ? 0 : 1;
