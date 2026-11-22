@@ -935,13 +935,22 @@ void MpptController::bfToggleRt(uint8_t m) {
         bflow.enable(on);
         bfTest.floorHold = bfTest.holdN, bfTest.iSeen = (uint8_t) sensorPhysicalI->numSamples;
     }
-    if (!(m & BfEngage)) return;
-    converter.setManualRect(0x7fff);
-    const float i = sensorPhysicalI->med3.get(), vi = sensors.Vin->med3.get(),
-                y = converter.dutyCtrlEff() * vi - sensors.Vout->med3.get();
+    if (!(m & BfEngage)) {
+        if (!(m & BfNoBat)) return;
+        converter.setManualRect(0); // LS at its minimum: an asynchronous buck, no reverse path
+    } else converter.setManualRect(0x7fff);
+    const float i = sensorPhysicalI->med3.get(), d = converter.dutyCtrlEff(),
+                y = d * sensors.Vin->med3.get() - sensors.Vout->med3.get();
     uint8_t why = 0;
-    if (m & BfNoBat) why = !(i >= -.5f && i <= .5f) ? 3 : !(y >= -1.f) ? 2 : !(vi <= bfTest.vinMax) ? 4 : 0;
-    else if (!(m & BfFloor)) return;
+    if (m & BfNoBat) { // raw samples, two in a row
+        const auto &vi = *sensors.Vin, &vo = *sensors.Vout;
+        why = !(i >= -.5f && i <= .5f) ? 3
+              : (m & BfEngage) && on && !(d * vi.last - vo.last >= -1.f) && !(d * vi.previous - vo.previous >= -1.f) ? 2
+              : !(vi.last <= bfTest.vinMax) && !(vi.previous <= bfTest.vinMax) ? 4 : 0;
+        // the output follows: forced PWM before the diode mode pumps it further (the switch is off)
+        if (!why && !(m & BfEngage) && vo.last >= bfTest.vProof && vo.previous >= bfTest.vProof)
+            bfTest.mode.fetch_or(BfEngage, std::memory_order_relaxed);
+    } else if (!(m & BfFloor)) return;
     else if (!(y >= -.3f)) why = 2;
     else if (on) {
         if (const auto n = (uint8_t) sensorPhysicalI->numSamples; n != bfTest.iSeen && bfTest.floorHold)

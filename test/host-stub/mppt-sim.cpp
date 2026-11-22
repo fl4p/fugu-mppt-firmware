@@ -2249,6 +2249,8 @@ static int runHsShort(const std::string &sc) {
 // bf-nobat-reconnect: a one-direction sensor, the pack (BMS) reconnects mid-toggle: RT stop, aborted
 // bf-nobat-packsense: a pack is there but Vout reads 0 (open divider): the output does not follow, aborted
 // bf-nobat-bms: Vout reads 0 but BMS cell data is fresh: refused
+// bf-nobat-sawbat: the battery was seen (Vout > 9 V, converter off 2 min) before it went: refused until a reboot
+// env: SIM_BFVF the body-diode drop, SIM_BFSTUCK 1/2 the switch stuck open/closed, SIM_UNIDIR a one-direction sensor
 // bf-ok-dcm: a 0.5 A panel, bipolar sensor: blocks passes, conducts aborts in DCM at the duty cap
 // bf-rec: NVS record decode: a version 2 record converts (tog 0, pass kept), version 3 reads, version 1 drops the pass
 // bf-daily-uni: the daily run on a one-direction sensor: toggle pass, verified, clamp not armed
@@ -2278,7 +2280,13 @@ static int runBfTest(const std::string &sc) {
         return f != 0;
     }
     settle(30);
-    const char *r = bfTestRefusal();
+    // no battery since boot: nothing may have seen the pack yet (the firmware's LF tick would)
+    const bool nb = sc.rfind("bf-nobat-", 0) == 0 && sc != "bf-nobat-sawbat";
+    if (sc == "bf-nobat-sawbat") { // the pack holds Vout with the converter off
+        simPsuWait(mppt.requestPsuManual(0, -1, true, true));
+        run(125, 0);
+    }
+    const char *r = nb ? nullptr : bfTestRefusal();
     printf("== %s: refusal %s\n", sc.c_str(), r ? r : "none");
     if (sc == "bf-nodecl") {
         chk(r && strstr(r, "bflow_bat"), "refused without bflow_bat");
@@ -2432,7 +2440,7 @@ static int runBfTest(const std::string &sc) {
         const bool noBat = sc[3] == 'n', ok = sc.size() > 3 && !sc.compare(sc.size() - 3, 3, "-ok"),
                    offDrop = sc == "bf-uni-offdrop", sunDrop = sc == "bf-uni-abort" || sc == "bf-uni-cloud" || offDrop, reconnect = sc == "bf-nobat-reconnect",
                    packSense = sc == "bf-nobat-packsense", aborts = sunDrop || reconnect || packSense || sc == "bf-uni-dcm",
-                   uni = !noBat || reconnect;
+                   uni = !noBat || reconnect || getenv("SIM_UNIDIR");
         chk(mppt.batIBipolar() == !uni, uni ? "sensor unidirectional" : "sensor bipolar");
         static float (*prevHook)(uint8_t, float);
         prevHook = g_simSenseHook;
@@ -2452,6 +2460,12 @@ static int runBfTest(const std::string &sc) {
             run(3, 0);
             r = bfTestRefusal();
             printf("== %s: no battery, Vout %.2f V, refusal %s\n", sc.c_str(), sensors.Vout->ewm.avg.get(), r ? r : "none");
+            if (sc == "bf-nobat-sawbat") {
+                printf("== %s: battery seen before it went, refusal %s\n", sc.c_str(), r ? r : "none");
+                chk(r && strstr(r, "seen since boot") && !bfTestStart(), "refused: a battery was seen this boot");
+                printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+                return f != 0;
+            }
             if (sc == "bf-nobat-bms") {
                 mppt.charger.batSt.setVcellHigh(3.3f);
                 r = bfTestRefusal();
@@ -2479,6 +2493,7 @@ static int runBfTest(const std::string &sc) {
             tPrev = t;
             vOutMax = std::max(vOutMax, g_vconv.getVout());
         };
+        if (getenv("SIM_BFVF")) g_vconv.bfVf = (float) atof(getenv("SIM_BFVF"));
         chk(bfTestStart(), "armed");
         const double t0 = tNow();
         const float isc = g_vconv.getIsc(), voc = g_vconv.getVoc();
@@ -2665,6 +2680,8 @@ static int simMain(int argc, char **argv) {
         if (sc.rfind("bf-uni-", 0) == 0 || sc == "hs-short-unidir" || sc == "bf-daily-uni" || sc == "bf-nobat-reconnect")
             ov.push_back({"i_unidir", "1"});
         if (sc == "bf-uni-dcm" || sc == "bf-ok-dcm") ov.push_back({"isc", "0.5"});
+        if (const char *e = getenv("SIM_BFSTUCK")) ov.push_back({"bf_stuck", e});
+        if (getenv("SIM_UNIDIR")) ov.push_back({"i_unidir", "1"});
         if (sc == "bf-uni-slow") c += ",sensor.conf:lv_i_filt_len=300", setenv("SIM_CONF", c.c_str(), 1);
         // 100 kHz: CCM from ~1 A, so the 1.6 A panel engages (DCM aborts)
         if (sc.rfind("bf-uni-soft", 0) == 0) c += ",board.conf:pwm_freq=100000", setenv("SIM_CONF", c.c_str(), 1);

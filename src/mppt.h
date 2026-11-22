@@ -392,13 +392,14 @@ public:
     }
 
     // 99 % step settling of the slower power sensor: 2-pass EWMA 6.64 tau (tau ~ span/2 samples) + median-of-5 delay
-    [[nodiscard]] float powerSettleMs() const {
-        auto ms = [](const Sensor *s) {
-            float fs = static_cast<const PhysicalSensor *>(s)->notchFs;
-            return fs > 0 ? (3320.f * (float) s->ewm.span() + 2000.f) / fs : 1000.f;
-        };
-        return std::max(ms(sensorPhysicalI), ms(sensorPhysicalU));
+    // a sensor's filters settled after a step
+    [[nodiscard]] static float settleMs(const Sensor *s) {
+        if (s->isVirtual) return 0;
+        float fs = static_cast<const PhysicalSensor *>(s)->notchFs;
+        return fs > 0 ? (3320.f * (float) s->ewm.span() + 2000.f) / fs : 1000.f;
     }
+
+    [[nodiscard]] float powerSettleMs() const { return std::max(settleMs(sensorPhysicalI), settleMs(sensorPhysicalU)); }
 
     struct TeleSnap {
         float Ui, Uo, I, P, mcuTemp, ntcTemp;
@@ -1652,14 +1653,15 @@ public:
 
     // `selftest bflow` RT side (selftest/bflow_test.cpp)
     // toggle variant: BfToggle the RT owns the switch, BfOn wanted on; BfFloor trip below iFloor with the switch on,
-    // and on D Vin < Vout - 0.3 V; BfNoBat trip on |I| > 0.5 A, D Vin < Vout - 1 V or Vin > vinMax
+    // and on D Vin < Vout - 0.3 V; BfNoBat: the LS at its minimum until Vout reaches vProof, then BfEngage; trip on
+    // |I| > 0.5 A, Vin > vinMax or (switch on, engaged) D Vin < Vout - 1 V
     static constexpr uint8_t BfBlocks = 1, BfConducts = 2, BfEngage = 4, BfStop = 8, BfFloor = 16, BfToggle = 32,
                              BfOn = 64, BfNoBat = 128;
     struct {
         std::atomic<uint8_t> mode{0};
         std::atomic<bool> tripped{false};
         float iMin = INFINITY, i = NAN, vin = NAN, vout = NAN, d = NAN; // trip record
-        float iFloor = 0, vinMax = 0;
+        float iFloor = 0, vinMax = 0, vProof = 0; // vProof: no battery, Vout that proves it follows the duty
         uint8_t floorHold = 0, holdN = 0, iSeen = 0; // fresh current samples before iFloor applies after a turn-on
         uint8_t why = 0; // toggle trip: 1 floor, 2 D Vin below Vout, 3 no-battery current, 4 Vin rose
     } bfTest;

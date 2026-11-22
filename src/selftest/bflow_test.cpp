@@ -39,7 +39,7 @@ struct {
     // sums, smallest y step
     uint32_t ticket = 0, t0 = 0, t1 = 0, dwell = 0, tickMs = 0;
     OpMode savedMode = OpMode::Mppt;
-    uint16_t savedManual = 0, d = 0, dCap = 0, bump = 0;
+    uint16_t savedManual = 0, d = 0, dCap = 0, bump = 0, dLive = 0; // dLive: MPPT duty at the take-over
     const char *why = nullptr;
     Res res[2];
 } s;
@@ -149,8 +149,23 @@ bool noBattery() { return sensors.Vout->ewm.avg.get() < 2.f; }
 // no battery: the toggle's last output voltage
 float noBatV() { return std::min(.5f * sensors.Vin->ewm.avg.get(), .8f * mppt.charger.params.Vbat_max); }
 
-// one reading per switch state, the filters settled
-uint32_t togDwellMs() { return std::max<uint32_t>(60, (uint32_t) mppt.powerSettleMs() + 20); }
+// one reading per switch state, the filters of I, Vin and Vout settled
+uint32_t togDwellMs() {
+    return (uint32_t) std::max(60.f, std::max(mppt.powerSettleMs(), MpptController::settleMs(sensors.Vin)) + 20.f);
+}
+
+// a battery was seen this boot (it may sit behind an open BMS now): BMS data, or Vout above 9 V with the converter
+// off for 2 min (an open output pumped up by the converter decays). nbOut: a no-battery run raised the output
+bool sawBat = false, nbOut = false;
+uint64_t convOnMs = 0;
+
+void watchBat() {
+    const uint64_t now = wallClockMs();
+    if (mppt.charger.batSt.haveValidCellVoltage()) sawBat = true;
+    if (!converter.disabled()) convOnMs = now;
+    if (noBattery()) nbOut = false;
+    else if (!nbOut && now - convOnMs > 120000 && sensors.Vout->ewm.avg.get() > 9.f) sawBat = true;
+}
 
 const char *voltRefusal() {
     const float vi = sensors.Vin->ewm.avg.get(), vo = sensors.Vout->ewm.avg.get();
@@ -158,7 +173,10 @@ const char *voltRefusal() {
     if (noBattery()) {
         if (!mppt.charger.params.haveVbatMax()) return "no battery: Vbat_max unknown";
         if (mppt.charger.batSt.haveValidCellVoltage()) return "no battery, but BMS data is fresh";
-        return noBatV() >= 6.f ? nullptr : "no battery: Vin too low (needs >= 12 V)";
+        if (sawBat) return "no battery, but one was seen since boot (reboot without it)";
+        // forced PWM from the minimum duty, 3 duty bumps of 1 V above it and room for the ramp
+        const float dMinV = (converter.pwmCtrlMin + 1) * vi / converter.periodCounts();
+        return noBatV() >= std::max(dMinV, vo + 1.f) + 4.f ? nullptr : "no battery: Vin too low for the toggle";
     }
     if (!(vo > 9.f) || !mppt.charger.params.haveVbatMax()) return "Vout implausible";
     if (!(vi >= 1.2f * vo && vi - vo >= 3.f)) return "Vin too low (needs >= 1.2 Vout and Vout + 3 V)";
@@ -200,14 +218,15 @@ void startPhase(uint32_t now) {
 void startRamp(uint32_t now) {
     const float m = sensors.Vout->ewm.avg.get() / sensors.Vin->ewm.avg.get(), t = converter.periodCounts();
     s.dCap = (uint16_t) std::min<float>(converter.pwmCtrlMax, std::ceil((m * 1.0202f + .01f) * t));
+    if (s.phase || s.tog) s.dCap = std::max(s.dCap, s.dLive); // switch on: up to the live point's CCM
     s.d = (uint16_t) std::min<float>(s.dCap, m * .97f * t);
     s.dwell = constrain((uint32_t) (mppt.powerSettleMs() / 4), 20u, 500u);
     mppt.setManualTarget(s.d);
     s.st = St::Ramp, s.t0 = now;
 }
 
-// no battery: forced PWM from 0 with the switch off (no reverse path). The output must follow D Vin - Vf by 3 V
-// (a pack, or an open Vout divider with a pack, does not), then up to noBatV() - 3 bumps
+// no battery: the switch off, the LS at its minimum (an asynchronous buck: no reverse path, even through a closed
+// switch). Then forced PWM up to noBatV() - 3 bumps
 void startNoBat(uint32_t now) {
     const float vi = sensors.Vin->ewm.avg.get(), t = converter.periodCounts();
     s.bump = (uint16_t) std::ceil(1.f / vi * t);
@@ -216,6 +235,24 @@ void startNoBat(uint32_t now) {
     s.dwell = constrain((uint32_t) (mppt.powerSettleMs() / 4), 20u, 500u);
     mppt.setManualTarget(s.d);
     s.st = St::Ramp, s.t0 = now, s.t1 = 0;
+}
+
+// the duty climbs from the minimum until the output rises 1 V, at most to D Vin = Vout + 3 V (a pack, or an open
+// Vout divider with a pack, does not rise). The RT then engages forced PWM, with the switch still off: a working
+// Vout sense reading a few volts rules out a pack. Then the duty goes above the output.
+void nbProbe(uint32_t now) {
+    const float vi = sensors.Vin->ewm.avg.get(), t = converter.periodCounts();
+    if (mppt.bfTest.mode.load(std::memory_order_acquire) & MpptController::BfEngage) {
+        const float dn = std::ceil((sensors.Vout->med3.get() + .3f) / vi * t);
+        if (dn > s.dCap) return abortRun("Vout pumped up", now);
+        mppt.setManualTarget(s.d = std::max<uint16_t>(s.d, (uint16_t) dn));
+        s.fp = true, s.t0 = now;
+        return;
+    }
+    if (converter.getCtrlOnPwmCnt() != s.d) return;
+    if (converter.dutyCtrlEff() * vi < mppt.bfTest.vProof + 2.f) mppt.setManualTarget(++s.d);
+    else if (!s.t1) s.t1 = now;
+    else if (now - s.t1 > 3000) abortRun("Vout does not follow the duty: a battery?", now);
 }
 
 // the RT switches; with a battery the current must stay above 30 % of the last on reading once the switch is on
@@ -252,7 +289,7 @@ void togEnd(char v) {
     stopRt();
 }
 
-// y = D Vin - Vout: the loop's drop. A blocking switch adds its body diode's drop while off (>= 0.45 V at >= 0.3 A),
+// y = D Vin - Vout: the loop's drop. A blocking switch adds its body diode's drop while off,
 // unless the current collapses instead (a stiff source). Each off reading is judged against both on neighbours:
 // they must agree (steady source and load, else abort), and the off reading must stand out (else FAIL).
 void togStep(uint32_t now) {
@@ -275,7 +312,8 @@ void togStep(uint32_t now) {
                 return abortRun("source or load changed", now);
             const float st = s.yo - std::max(ya, y);
             s.dv = std::min(s.dv, st);
-            if (!(st >= (s.noBat ? .2f : .3f)) && (s.noBat || !(s.xo < .3f * std::min(x, a)))) return togEnd('F');
+            // the step is Vf less the loop drop a partial current collapse gives back; a closed switch steps 0
+            if (!(st >= .1f) && (s.noBat || !(s.xo < .3f * std::min(x, a)))) return togEnd('F');
         }
         if (s.k == 2 * TogN) return togEnd('P');
         bfOn(false);
@@ -333,8 +371,12 @@ void runEnd() {
 
 bool dailyEligible() {
     if (g_app.opMode.load() != OpMode::Mppt || converter.disabled() || mppt.limiting()) return false;
-    if (!(mppt.sensorPhysicalI->ewm.avg.get() >= .5f)) return false;
-    return !bfTestRefusal();
+    // the test needs CCM forward current: the live point in CCM with half the ripple below 2/3 of the current
+    const float i = mppt.sensorPhysicalI->ewm.avg.get();
+    if (converter.inDCM() || !(i >= .75f * converter.rippleCurrent(sensors.Vin->ewm.avg.get(),
+                                                                   sensors.Vout->ewm.avg.get())))
+        return false;
+    return !noBattery() && !bfTestRefusal();
 }
 }
 
@@ -349,6 +391,7 @@ uint32_t simStoredPass() { return simStore.passUnix; }
 
 const char *bfTestRefusal() {
     if (s.busy) return "already running";
+    watchBat();
     if (converter.boost()) return "buck only";
     if (!mppt.hsIdleCheck()) return "needs board.conf bflow_bat=1 (battery-side backflow switch and current sensor)";
     if (mppt.hsFaultState()) return "hs-short latched";
@@ -434,6 +477,7 @@ bool bfTestTick(uint32_t now) {
     switch (s.st) {
         case St::Enter:
             s.savedMode = g_app.opMode.load(), s.savedManual = mppt.getManualTarget();
+            s.dLive = s.savedMode == OpMode::Mppt && !converter.disabled() ? converter.getCtrlOnPwmCnt() : 0;
             s.ticket = mppt.requestPsuManual(0, -1, true, true);
             s.st = St::Off, s.t0 = now;
             break;
@@ -456,9 +500,11 @@ bool bfTestTick(uint32_t now) {
                         const float fs = static_cast<const PhysicalSensor *>(mppt.sensorPhysicalI)->notchFs;
                         b.holdN = (uint8_t) std::min(60.f, 3.f + std::ceil(fs * .01f)); // median + the BF gate's 2 tau
                         b.why = 0;
+                        b.vProof = sensors.Vout->ewm.avg.get() + 1.f;
                         b.vinMax = 1.03f * sensors.Vin->ewm.avg.get() + .5f; // no battery: nothing to pull Vin above the open circuit
-                        b.mode.store(s.noBat ? MpptController::BfToggle | MpptController::BfNoBat | MpptController::BfEngage
+                        b.mode.store(s.noBat ? MpptController::BfToggle | MpptController::BfNoBat
                                              : MpptController::BfToggle);
+                        nbOut |= s.noBat;
                         if (!s.noBat) bfOn(true);
                     }
                 }
@@ -472,18 +518,12 @@ bool bfTestTick(uint32_t now) {
             break;
         case St::Seek:
             if (converter.disabled()) abortRun("protection", now);
+            else if (s.noBat && !s.fp) nbProbe(now);
             else if (now - s.t0 >= s.dwell && converter.getCtrlOnPwmCnt() == s.d) {
                 s.t0 = now;
                 const float i = mppt.sensorPhysicalI->ewm.avg.get();
                 const uint16_t up = std::min<uint16_t>(s.dCap, s.d + std::max(1, (int) (converter.periodCounts() / 512)));
-                if (s.noBat) {
-                    const float dv = converter.dutyCtrlEff() * sensors.Vin->ewm.avg.get();
-                    if (!s.fp && dv >= 3.f) { // the output follows the duty
-                        if (sensors.Vout->ewm.avg.get() >= .5f * dv) s.fp = true;
-                        else if (!s.t1) s.t1 = now;
-                        else if (now - s.t1 > 3000) abortRun("Vout does not follow the duty: a battery?", now);
-                        if (!s.fp) break;
-                    }
+                if (s.noBat) { // ramp the open output up
                     if (s.d >= s.dCap) s.st = St::Settle;
                     else mppt.setManualTarget(s.d = up);
                     break;
@@ -612,6 +652,7 @@ void selftestUrgent(uint64_t now) {
 }
 
 void selftestLf(uint64_t now, bool maintenance) {
+    if (!s.busy) watchBat();
     if (const uint32_t t = unixNow()) { // the clock arrived after a result
         if (passRam && !rec.passUnix) rec.passUnix = t - (uint32_t) ((now - passMs) / 1000);
         if (resRam && !rec.resUnix) rec.resUnix = t - (uint32_t) ((now - resMs) / 1000);

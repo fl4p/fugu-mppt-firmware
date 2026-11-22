@@ -284,22 +284,24 @@ instead when either is missing:
   toward 0 V; a stale charge on the output capacitors makes the test refuse (Vout implausible) until it has decayed.
 
 The variant holds forced PWM at a fixed duty and turns the switch off and on 3 times. Each reading waits for the
-power sensors' settling time plus 20 ms after the edge, at least 60 ms. The test refuses to start when that wait
+settling time of the current, Vin and Vout filters plus 20 ms after the edge, at least 60 ms. The test refuses to start when that wait
 exceeds 1 s (sensor filters too slow for the toggle).
 
 The criterion is y = D × Vin − Vout, the voltage across the loop. With the switch on, y is the resistive drop. A
-blocking switch adds its body-diode drop while off: on a soft source the current stays and y rises by about 0.5–0.7 V
-(Vin rises by Vf / D); on a stiff source the current collapses instead.
+blocking switch adds its body-diode drop Vf while off: on a soft source the current stays and y rises by Vf (Vin rises
+by Vf / D); on a stiff source the current collapses instead. In between, y rises by Vf less the drop the lost current
+gave back on the loop resistance.
 
 | Case | Operating point | Pass | Fail |
 | --- | --- | --- | --- |
-| battery | ramp as above with the switch on, to CCM with at least 1 A (0.5 A at the duty cap), then forced PWM | every off reading: y at least 0.3 V above both on neighbours, or the current below 30 % of both | an off reading that does neither, with steady neighbours |
-| no battery | forced PWM from zero duty with the switch off; Vout must follow D × Vin before the ramp continues to min(Vin/2, 0.8 × Vbat max) − 3 V | every off reading: y at least 0.2 V above both on neighbours | an off reading below that, with steady neighbours |
+| battery | ramp as above with the switch on, to CCM with at least 1 A (0.5 A at the duty cap), then forced PWM | every off reading: y at least 0.1 V above both on neighbours, or the current below 30 % of both | an off reading that does neither, with steady neighbours |
+| no battery | switch off, low side at its minimum pulse (an asynchronous buck), the duty climbing from its minimum until Vout has risen 1 V (at most to D × Vin = Vout + 3 V); the real-time loop then engages forced PWM, the duty goes above the output and ramps to min(Vin/2, 0.8 × Vbat max) − 3 V | every off reading: y at least 0.1 V above both on neighbours | an off reading below that, with steady neighbours |
 
 Steady neighbours means the two on readings around an off reading agree: y within 0.15 V and, with a battery, the
 current within 15 %. Otherwise the source or the load changed during the cycle, and the run aborts without a verdict.
-The 0.3 V margin sits below the body-diode drop at 0.3 A and more (about 0.45 V and up) and above the error of a
-settled reading. Without a battery, each turn-off also raises the duty by 1 V, so a blocking switch leaves the output
+A switch stuck closed steps 0.00 V. The 0.1 V threshold sits below a hot body diode's drop at a few hundred
+microamperes (0.15–0.35 V) and below a partial current collapse's step with Vf down to 0.15 V, and above the
+error of a settled reading. Without a battery, each turn-off also raises the duty by 1 V, so a blocking switch leaves the output
 one diode drop below the new D × Vin, even where the divider bleeds the output too slowly to show a drop.
 
 The variant never lowers the duty with the switch on. The real-time loop owns the switch and these guards, because
@@ -308,12 +310,16 @@ reverse current through the closed switch is invisible to a one-direction sensor
 - with a battery, a stop when y falls below −0.3 V, and with the switch on, when the current falls below 30 % of the
   last on reading. The current check starts after the median filter's depth plus the gate's turn-on time in fresh
   current samples (3 + 10 ms × the sample rate).
-- without a battery, a stop at a current above 0.5 A, at y below −1 V, or at Vin 3 % above its value at the start,
-  which only energy from the output side can cause.
+- without a battery, a stop at a current above 0.5 A, at Vin 3 % above its value at the start, which only energy
+  from the output side can cause, and with the switch on in forced PWM at y below −1 V. Vin and y use the raw
+  samples, two in a row, not the filtered values.
 
-Each stop aborts the run, as does a Vin drop of 1 % before a turn-on. Without a battery, the test refuses when BMS cell
-data is fresh or Vbat max is unknown, and aborts when BMS data arrives or Vout does not follow the duty within 3 s
-(a pack behind an open divider). A FAIL latches `bf-fail` like a blocks FAIL. A PASS counts as a blocks pass for the
+Each stop aborts the run, as does a Vin drop of 1 % before a turn-on. Without a battery, the test runs only on
+request, never as the daily run. It refuses when BMS cell data is fresh, when a battery has been seen since boot
+(BMS data, or Vout above 9 V with the converter off for 2 minutes, so a pack may sit behind an open BMS), when Vbat max is unknown, or when
+min(Vin/2, 0.8 × Vbat max) is below Vout + 5 V. It aborts when BMS data arrives or Vout does not rise within 3 s
+(a pack behind an open divider). Without the low side, a switch stuck closed cannot pull reverse
+current from such a pack. A raised output after a no-battery run does not count as a battery. A FAIL latches `bf-fail` like a blocks FAIL. A PASS counts as a blocks pass for the
 verified state, but does not arm the [low-side clamp](#low-side-clamp).
 
 A pack that reconnects without BMS data while the switch is on, at a voltage above D × Vin, back-feeds until Vin rises
@@ -323,12 +329,15 @@ the current check's hold.
 **Daily run.** Boards with `board.conf::bflow_bat=1` run the test on their own once a day, at the first opportunity
 when all of these hold for 60 s:
 
-- MPPT mode, converting at least 0.5 A, no limiter active, no sweep, no backoff,
+- MPPT mode, no limiter active, no sweep, no backoff, a battery present,
+- the live operating point in CCM, with the current at least 1.5 × the CCM boundary (half the coil ripple), the
+  current the test needs: with the switch on, its ramp may climb to this live duty,
 - Vin at least 1.2 × Vout and 3 V above it,
 - no rectifier calibration, coil measurement, OTA or USB drive.
 
-The next run is due 20 hours after the last run with two verdicts, so the time of day drifts to the first opportunity
-of the morning. An aborted run retries after 30 minutes, at most four times, then waits 20 hours. A refused start waits
+The next run is due 20 hours after the last run with two verdicts, at the first opportunity with enough power. An
+aborted conducts phase does not count as a run; the blocks pass it may have produced still counts for the verified
+state. An aborted run retries after 30 minutes, at most four times, then waits 20 hours. A refused start waits
 5 minutes. The time of the last blocks pass is stored in flash. Without a pass for 36 hours, for example after days
 without sun, the switch counts as unverified: the low-side clamp is off, but conversion continues.
 
