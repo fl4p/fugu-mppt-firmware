@@ -7,6 +7,9 @@ the [original hardware design](https://www.instructables.com/DIY-1kW-MPPT-Solar-
 I discourage using this design, as it has poor noise performance among other issues.
 and recommend my improved design [Fugu2](https://github.com/fl4p/Fugu2).
 
+**Documentation:** [fl4p.github.io/fugu-mppt-firmware](https://fl4p.github.io/fugu-mppt-firmware/)
+(mostly LLM-generated; check important details against the source).
+
 The charger implements proper charge termination for Lithium-Batteries (e.g. LiFePo4, NCA, NCM, Sodium-Ion) as described in [this article](https://nordkyndesign.com/charging-marine-lithium-battery-banks).
 
 Highlights:
