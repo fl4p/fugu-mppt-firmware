@@ -1104,8 +1104,9 @@ public:
     void setRectOffsetCal(uint8_t v) { rectCalLevel = v; }
     [[nodiscard]] uint8_t lsClamps() const { return lsClampCount.load(std::memory_order_relaxed); }
     [[nodiscard]] uint16_t enableCount() const { return enables.load(std::memory_order_acquire); }
-    // owners of startInhibit: rect-cal save and `pwr pwm` share InhibitCal, the idle profile holds InhibitIdle
-    static constexpr uint8_t InhibitCal = 1, InhibitIdle = 2, InhibitHs = 4, InhibitBf = 8;
+    // owners of startInhibit: rect-cal save and `pwr pwm` share InhibitCal, the idle profile holds InhibitIdle,
+    // a restart InhibitBoot
+    static constexpr uint8_t InhibitCal = 1, InhibitIdle = 2, InhibitHs = 4, InhibitBf = 8, InhibitBoot = 16;
     [[nodiscard]] bool startInhibited(uint8_t who = 0xff) const {
         return startInhibit.load(std::memory_order_acquire) & who;
     }

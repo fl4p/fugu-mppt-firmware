@@ -1962,9 +1962,11 @@ static void restartCloseTelnet() {
 }
 
 void systemRestart() {
+    converter.inhibitStart(true, SynchronousConverter::InhibitBoot);
     converter.disable();
-    if (xPortGetCoreID() != RT_CORE) mppt.scanSave();
+    if (xPortGetCoreID() != RT_CORE) mppt.scanSave(), mppt.rectCal.saveFinal(converter);
     if (g_restartBlocked) {
+        converter.inhibitStart(false, SynchronousConverter::InhibitBoot);
         ESP_LOGE("main", "restart refused: bootloader region not verified");
         return;
     }

@@ -508,7 +508,19 @@ public:
     // A calibrated value keeps the converter's measured/bound state (set on core 0 with its post()).
     void trySave(const Conv &c, uint32_t nowS) {
         uint8_t s = Granted;
-        if (!lk.compare_exchange_strong(s, Admitted, std::memory_order_acq_rel)) return;
+        if (lk.compare_exchange_strong(s, Admitted, std::memory_order_acq_rel)) write(c, nowS);
+    }
+
+    // core 0, before a reboot with the converter off and its starts inhibited: save an applied offset without the
+    // RT grant (RT may not sample any more). Skipped while another task's write is admitted.
+    void saveFinal(const Conv &c) {
+        uint8_t s = lk.load(std::memory_order_acquire);
+        while (dirty && pend.idle() && c.disabled() && s != Admitted)
+            if (lk.compare_exchange_weak(s, Admitted, std::memory_order_acq_rel)) return write(c, 0);
+    }
+
+private:
+    void write(const Conv &c, uint32_t nowS) {
         const uint32_t a = act.load(std::memory_order_acquire);
         const int o = (int16_t) (a & 0xffff);
         const uint8_t cl = a & CalBit ? std::max<uint8_t>(1, c.rectOffsetCal()) : 0;
@@ -524,6 +536,7 @@ public:
         }
     }
 
+public:
     // core 0: request a run; false while one is running or being fitted. force: start from any MPPT
     // operating point above the calibration HS, also CCM at high current.
     bool requestStart(bool force = false) {

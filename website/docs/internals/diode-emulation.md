@@ -659,7 +659,11 @@ atomically, so a reset during the save leaves either the old or the new file com
 `svc`) write the same way; FTP uploads and the USB config drive have their own write paths. On a
 bench ESP32-S3 the save, including the rename, took about 0.4 s (about 0.05 s for an in-place
 rewrite), so a start that falls into a save is delayed by that much. A failed or withdrawn save is
-retried a minute later; successful writes are at least 10 minutes apart. What is
+retried a minute later; successful writes are at least 10 minutes apart. A software restart (`restart`, an
+OTA update, the ADC-stall and network watchdogs) writes a value that is still unsaved at once,
+without the 10 s off time: it first blocks converter starts and switches the converter off, so the
+stall cannot hit a running converter. A reset that skips the restart path (panic, brown-out,
+hardware watchdog, the no-output watchdog) loses it. What is
 written is always the offset in use at that moment together with its state (measured, bound or
 uncalibrated): if the backstop below has shortened a fresh result before it was saved, the shorter
 value is saved as uncalibrated.

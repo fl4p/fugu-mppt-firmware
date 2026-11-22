@@ -1561,6 +1561,37 @@ static void testDc0Save() {
     g_ctl = nullptr; g_conv = nullptr;
 }
 
+// systemRestart: a result still unsaved is written at once, without the off time or the RT grant (OTA halts RT), only
+// with the converter off; a write already admitted by another task is not repeated.
+static void testRestartSave() {
+    g_saved.clear(); g_saveCalls = 0; g_saveOk = true; g_writes = g_poweredWrites = g_unadmitted = 0;
+    Host h(3.f, 80, 0.f, 0.f);
+    g_ctl = &h.ctl; g_conv = &h.c; g_writeHook = nullptr;
+    float truth;
+    CHECK(calibrate(h, truth), "cal failed: %s", h.ctl.cal.why);
+    CHECK(h.ctl.unsaved() && !h.c.disabled(), "precondition: unsaved %d off %d", h.ctl.unsaved(), h.c.disabled());
+    h.ctl.saveFinal(h.c);
+    CHECK(g_saveCalls == 0, "saved while converting");
+    int nested = 0;
+    g_writeHook = [&](int k) { if (!k) h.ctl.saveFinal(h.c), ++nested; };
+    h.c.inhibitStart(true, SynchronousConverter::InhibitBoot);
+    h.c.disable();
+    h.ctl.saveFinal(h.c);
+    g_writeHook = nullptr;
+    CHECK(nested == 1 && g_saveCalls == 1 && !h.ctl.unsaved() && g_saved.size() == 1 &&
+          g_saved[0].first == h.ctl.offset() && g_saved[0].second == 1,
+          "restart: nested %d calls %d unsaved %d saved %d", nested, g_saveCalls, h.ctl.unsaved(),
+          g_saved.empty() ? -9999 : g_saved[0].first);
+    h.ctl.rt(h.c, h.in());
+    h.c.pwmPerturb(10);
+    CHECK(h.c.disabled() && g_poweredWrites == 0 && g_unadmitted == 0, "restart: started %d powered %d unadmitted %d",
+          !h.c.disabled(), g_poweredWrites, g_unadmitted);
+    h.ctl.saveFinal(h.c);
+    CHECK(g_saveCalls == 1, "saved again");
+    g_ctl = nullptr; g_conv = nullptr;
+    printf("restart save: ok (written at once with the converter off, not while converting)\n");
+}
+
 // R3-2: the backstop stays armed over long uptimes (2^31 and 2^32 us) and re-holds after a restart.
 static void testBackstopUptime() {
     Host h(3.f, 80, 0.f, 0.f);
@@ -1715,6 +1746,7 @@ int main(int argc, char **argv) {
     testPersistLock();
     testBound();
     testDc0Save();
+    testRestartSave();
     testConfUpdate();
     testBackstopUptime();
     testBackstopEligibility();
