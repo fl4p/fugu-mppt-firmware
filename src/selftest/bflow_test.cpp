@@ -5,17 +5,12 @@
 #include <cmath>
 #include <cstring>
 #include <ctime>
-#ifdef FUGU_HOST_SIM
-#include <mutex>
-#endif
 
 #include "../logging.h"
 #include "../app_state.h"
 
 #ifndef FUGU_HOST_SIM
 #include "nvs.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 bool flashWriteSafe();
 #endif
 
@@ -38,7 +33,7 @@ struct {
     St st = St::Idle;
     uint8_t phase = 0; // 0 blocks, 1 conducts
     bool daily = false, keepMode = false;
-    uint32_t ticket = 0, t0 = 0, dwell = 0;
+    uint32_t ticket = 0, t0 = 0, dwell = 0, tickMs = 0;
     OpMode savedMode = OpMode::Mppt;
     uint16_t savedManual = 0, d = 0, dCap = 0;
     const char *why = nullptr;
@@ -53,25 +48,7 @@ struct Rec {
 };
 static_assert(sizeof(Rec) == 16, "");
 
-// rec, the RAM ages and the scheduler: core 0 (selftestLf, selftestUrgent, the test task), under Lock
-#ifdef FUGU_HOST_SIM
-std::mutex mx;
-struct Lock {
-    std::lock_guard<std::mutex> g{mx};
-};
-#else
-// static: a std::mutex takes ~100 B of heap at its first lock (boot) and keeps it
-SemaphoreHandle_t mxHandle() {
-    static StaticSemaphore_t buf;
-    static const SemaphoreHandle_t h = xSemaphoreCreateMutexStatic(&buf);
-    return h;
-}
-struct Lock {
-    Lock() { xSemaphoreTake(mxHandle(), portMAX_DELAY); }
-    ~Lock() { xSemaphoreGive(mxHandle()); }
-    Lock(const Lock &) = delete;
-};
-#endif
+// the machine, rec, the RAM ages and the scheduler: loopNetwork_task only (console commands included), no lock
 Rec rec, stored;
 uint64_t passMs = 0, resMs = 0, writeMs = 0; // uptime [ms] of this boot's events
 uint32_t writeGapMs = 0;
@@ -195,13 +172,13 @@ void engage(uint32_t now) {
     s.st = St::Step, s.t0 = now;
 }
 
-// under Lock: fold the RT-side latches into rec
+// fold the RT-side latches into rec
 void syncRec() {
     if (mppt.hsClampUnsafe.load() && !rec.unsafe) rec.unsafe = 1, passRam = false, rec.passUnix = 0;
     rec.hs = mppt.hsFaultState() != 0, rec.bf = mppt.bfFail.load();
 }
 
-// under Lock: urgent skips the 10 s throttle and the failure back-off (one try)
+// urgent skips the 10 s throttle and the failure back-off (one try)
 void writeRec(uint64_t now, bool urgent) {
     if (!memcmp(&rec, &stored, sizeof rec) || !flashWriteSafe()) return;
     if (!urgent && (s.busy || now - writeMs < writeGapMs)) return;
@@ -216,16 +193,14 @@ void writeRec(uint64_t now, bool urgent) {
     }
 }
 
-// test task, converter off: a leaking BF blocks the start and revokes the pass, persisted before anything else
+// converter off: a leaking BF blocks the start and revokes the pass, persisted before anything else
 void blocksFail(uint64_t now) {
     mppt.bfFailSet(true);
-    Lock l;
     passRam = false, rec.passUnix = 0;
     syncRec();
     writeRec(now, true);
 }
 
-// test task: the result
 void runEnd() {
     const char v0 = s.res[0].v, v1 = s.res[1].v;
     const uint64_t now = wallClockMs();
@@ -235,7 +210,6 @@ void runEnd() {
         ESP_LOGE("selftest", "backflow switch FAILED (blocks %c, conducts %c): start blocked until `selftest clear`",
                  v0 ?: '-', v1 ?: '-');
     }
-    Lock l;
     const uint32_t t = unixNow();
     if (v0 == 'P') passRam = true, passMs = now, rec.passUnix = t, rec.unsafe = 0, mppt.hsClampUnsafe.store(false);
     if (v0 == 'F') passRam = false, rec.passUnix = 0;
@@ -274,7 +248,7 @@ const char *bfTestRefusal() {
     return voltRefusal();
 }
 
-bool bfTestArm() {
+bool bfTestStart() {
     if (bfTestRefusal() || s.busy.exchange(true)) return false;
     abortReq = false;
     s.res[0] = s.res[1] = {};
@@ -303,6 +277,8 @@ void bfTestPrint() {
 
 bool bfTestTick(uint32_t now) {
     if (s.st == St::Idle) return false;
+    if (now - s.tickMs < 10) return true;
+    s.tickMs = now;
     if (abortReq.exchange(false) && s.st < St::Restore) {
         if (s.st == St::Enter) s.keepMode = true; // nothing taken over yet
         if (s.st <= St::Off || s.st == St::Gap) s.why = "aborted", s.st = St::Restore;
@@ -428,23 +404,6 @@ bool bfTestTick(uint32_t now) {
     return true;
 }
 
-#ifndef FUGU_HOST_SIM
-static void bfTestTask(void *) {
-    while (bfTestTick((uint32_t) wallClockMs())) vTaskDelay(pdMS_TO_TICKS(10));
-    vTaskDelete(nullptr);
-}
-
-bool bfTestStart() {
-    if (!bfTestArm()) return false;
-    if (xTaskCreatePinnedToCore(bfTestTask, "bf-test", 6144, nullptr, 1, nullptr, NON_RT_CORE) != pdPASS) {
-        s.st = St::Idle;
-        s.busy = false;
-        return false;
-    }
-    return true;
-}
-#endif
-
 uint32_t bfPassAgeS() { return ageS(passRam, passMs, rec.passUnix); }
 
 void selftestLoad() {
@@ -474,13 +433,11 @@ void selftestUrgent(uint64_t now) {
     const bool rise = b & ~seen;
     seen = b;
     if (!rise) return;
-    Lock l;
     syncRec();
     writeRec(now, true);
 }
 
 void selftestLf(uint64_t now, bool maintenance) {
-    Lock l;
     if (const uint32_t t = unixNow()) { // the clock arrived after a result
         if (passRam && !rec.passUnix) rec.passUnix = t - (uint32_t) ((now - passMs) / 1000);
         if (resRam && !rec.resUnix) rec.resUnix = t - (uint32_t) ((now - resMs) / 1000);
@@ -492,22 +449,17 @@ void selftestLf(uint64_t now, bool maintenance) {
     if (s.busy || !mppt.hsIdleCheck()) return;
     const uint32_t ra = ageS(resRam, resMs, rec.resUnix);
     if (daily.poll(now, ra >= BfDaily::DueMs / 1000, !maintenance && dailyEligible())) {
-        if (bfTestArm()) {
+        if (const char *r = bfTestRefusal()) {
+            UART_LOG("selftest bflow: daily run refused: %s", r);
+            daily.refused(now);
+        } else if (bfTestStart()) {
             s.daily = true;
             UART_LOG("selftest bflow: daily run");
-#ifndef FUGU_HOST_SIM
-            if (xTaskCreatePinnedToCore(bfTestTask, "bf-test", 6144, nullptr, 1, nullptr, NON_RT_CORE) != pdPASS) {
-                s.st = St::Idle;
-                s.busy = false;
-                daily.refused(now);
-            }
-#endif
-        } else daily.refused(now);
+        }
     }
 }
 
 void selftestPrintState() {
-    Lock l;
     const uint32_t pa = bfPassAgeS(), ra = ageS(resRam, resMs, rec.resUnix);
     char last[24] = "never", pass[24] = "never";
     if (ra != UINT32_MAX) snprintf(last, sizeof last, "%.1f h ago", (float) ra / 3600.f);

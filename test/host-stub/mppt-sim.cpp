@@ -706,7 +706,10 @@ static void run(double sec, double traceEvery, Probe *probe = nullptr, double fi
         loopRTIter();
         g_qOut += g_vconv.getIoutAvg() * (tNow() - tIt);
         if (g_tickHook) g_tickHook();
-        if (mppt.sensorPhysicalI) selftestUrgent((uint64_t) (esp_timer_get_time() / 1000)); // loopNetwork_task
+        if (mppt.sensorPhysicalI) { // loopNetwork_task
+            const uint64_t ms = esp_timer_get_time() / 1000;
+            selftestUrgent(ms), bfTestTick((uint32_t) ms);
+        }
         if (g_pDump) {
             const float r[6] = {(float) tNow(), sensors.Iout->ewm.avg.get(), sensors.Vout->ewm.avg.get(),
                                 (float) converter.getCtrlOnPwmCnt(), (float) mppt.tracker.slowMode,
@@ -2183,7 +2186,7 @@ static int runBfTest(const std::string &sc) {
     printf("== %s: refusal %s\n", sc.c_str(), r ? r : "none");
     if (sc == "bf-nodecl") {
         chk(r && strstr(r, "bflow_bat"), "refused without bflow_bat");
-        chk(!bfTestArm(), "not armed");
+        chk(!bfTestStart(), "not armed");
         printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
         return f != 0;
     }
@@ -2205,7 +2208,6 @@ static int runBfTest(const std::string &sc) {
         lfMs2 = 0;
         g_tickHook = [] {
             const uint32_t ms = (uint32_t) (esp_timer_get_time() / 1000);
-            bfTestTick(ms);
             if (ms - lfMs2 >= 1000) lfMs2 = ms, selftestLf(ms, false);
         };
         run(200, 20);
@@ -2217,8 +2219,8 @@ static int runBfTest(const std::string &sc) {
         printf("%9.4f >>> BF stuck closed; manual selftest bflow, the next 3 NVS writes fail\n", tNow());
         chk(simStoredPass() && !simStoredBf(), "pass persisted");
         simWriteFail = 3; // blocks F, selftestUrgent, runEnd
-        g_tickHook = [] { bfTestTick((uint32_t) (esp_timer_get_time() / 1000)); }; // no selftestLf: only urgent writes
-        chk(bfTestArm(), "armed");
+        g_tickHook = nullptr; // no selftestLf: only urgent writes
+        chk(bfTestStart(), "armed");
         run(120, 20);
         chk(!simWriteFail && !simStoredBf() && simStoredPass(), "the urgent writes tried and failed");
         chk(mppt.bfFail.load() && !mppt.hsClampAllowed(true), "write failed: bf-fail and the disarmed clamp hold in RAM");
@@ -2246,7 +2248,6 @@ static int runBfTest(const std::string &sc) {
         g_tickHook = [] {
             const uint32_t ms = (uint32_t) (esp_timer_get_time() / 1000);
             const bool b = bfTestBusy();
-            bfTestTick(ms);
             if (ms - lfMs >= 1000) lfMs = ms, selftestLf(ms, false);
             if (!b && bfTestBusy()) ++runs;
             if (mppt.bfTest.mode.load() & MpptController::BfBlocks)
@@ -2300,8 +2301,7 @@ static int runBfTest(const std::string &sc) {
         return f != 0;
     }
     if (sc == "bf-abort-cmd") { // `selftest abort` while the blocks phase is engaged
-        chk(bfTestArm(), "armed");
-        g_tickHook = [] { bfTestTick((uint32_t) (esp_timer_get_time() / 1000)); };
+        chk(bfTestStart(), "armed");
         double t0 = tNow();
         while (tNow() - t0 < 60 && !(mppt.bfTest.mode.load() & MpptController::BfEngage)) run(0.01, 0);
         chk(mppt.bfTest.mode.load() & MpptController::BfEngage, "engaged");
@@ -2320,13 +2320,10 @@ static int runBfTest(const std::string &sc) {
         printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
         return f != 0;
     }
-    chk(bfTestArm(), "armed");
+    chk(bfTestStart(), "armed");
     static auto s_trace = trace;
     static auto s_watch = watch;
-    g_tickHook = [] {
-        bfTestTick((uint32_t) (esp_timer_get_time() / 1000));
-        s_watch();
-    };
+    g_tickHook = [] { s_watch(); };
     const double t0 = tNow();
     while (bfTestBusy() && tNow() - t0 < 180) {
         run(0.05, 0);

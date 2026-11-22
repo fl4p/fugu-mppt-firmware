@@ -11,15 +11,13 @@
 
 // nullptr: may start, else the reason
 const char *bfTestRefusal();
-// runs the step machine in a non-RT task; false if refused or running
+// arms the step machine; false if refused or running
 bool bfTestStart();
 bool bfTestBusy();
 // stops a running test: converter off, previous mode back, no verdict
 void bfTestAbort();
-// one step of the machine, every ~10 ms; false once done
+// loopNetwork_task, every pass: one step of the machine at most every 10 ms; false once done
 bool bfTestTick(uint32_t nowMs);
-// arms the machine without a task (host sim drives bfTestTick)
-bool bfTestArm();
 void bfTestPrint();
 // last verdict of phase 0 (blocks) / 1 (conducts): P pass, F fail, A aborted, 0 not run
 char bfTestVerdict(uint8_t phase);

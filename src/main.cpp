@@ -1906,7 +1906,7 @@ static void loopNetwork_task(void *arg) {
     idleProfileTick(nowMs); // first: a converter start leaves the profile before any long job below
 
     loopUart(nowMs);
-    if (mppt.sensorPhysicalI) selftestUrgent(nowMs);
+    if (mppt.sensorPhysicalI) selftestUrgent(nowMs), bfTestTick((uint32_t) nowMs);
 #ifdef WITH_USB_MSC
     switch (usbDevPoll()) {
         case UsbEvent::ConfCommitted:
