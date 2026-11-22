@@ -16,6 +16,7 @@ public:
     virtual ~Compressor() = default;
     virtual uint8_t id() const = 0;          // wire tag (0=none, 1=tamp, ...)
     virtual const char *name() const = 0;
+    // appends the packet to `out`; false leaves `out` as it was
     virtual bool packet(const uint8_t *in, size_t n, std::string &out) = 0;
     // Raw input size that keeps one compressed packet within `mtu` (minus the id
     // byte). The transport batches up to this many raw bytes per datagram.
@@ -30,7 +31,7 @@ public:
     uint8_t id() const override { return 0; }
     const char *name() const override { return "none"; }
     bool packet(const uint8_t *in, size_t n, std::string &out) override {
-        out.assign(reinterpret_cast<const char *>(in), n);
+        out.append(reinterpret_cast<const char *>(in), n);
         return true;
     }
     size_t maxBatchRaw(size_t mtu) const override { return mtu > 1 ? mtu - 1 : 0; }  // raw == datagram
@@ -40,8 +41,7 @@ public:
 // batched packets (warm window) or a reliable stream; near break-even on single
 // tiny frames. Defined in tamp_compress.cpp so the tamp C headers stay isolated.
 class TampCompress : public Compressor {
-    std::vector<unsigned char> window_;      // 1<<windowBits_ dictionary buffer
-    uint8_t windowBits_;
+    uint8_t windowBits_;                     // dictionary of 1<<windowBits_ B, allocated per packet
 public:
     explicit TampCompress(uint8_t windowBits = 10);
     uint8_t id() const override { return 1; }

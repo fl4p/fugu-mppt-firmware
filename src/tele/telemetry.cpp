@@ -300,11 +300,8 @@ void teleUdpLoadCompressor() {
 // it with the compressor id, and send as one self-contained UDP datagram.
 static void sendBinaryBatch(const IPAddress &dst, uint16_t port, Compressor &comp, std::string &raw) {
     if (raw.empty()) return;
-    static std::string out;
-    std::string body;
-    if (comp.packet((const uint8_t *) raw.data(), raw.size(), body)) {
-        out.assign(1, (char) comp.id());     // 1-byte tag so the receiver picks the decompressor
-        out += body;
+    std::string out(1, (char) comp.id());    // 1-byte tag so the receiver picks the decompressor
+    if (comp.packet((const uint8_t *) raw.data(), raw.size(), out)) {
         if (out.size() > CONFIG_TCP_MSS)
             ESP_LOGW("tele", "binary datagram %u B > MSS (raw %u)", (unsigned) out.size(), (unsigned) raw.size());
         bytesSent += asyncUdp.writeTo((const uint8_t *) out.data(), out.size(), dst, port);
@@ -339,10 +336,11 @@ void TelemetryService::flushQueue(const IPAddress &addr) {
         static std::string batch;
         std::string frame;
         try {
+            if (batch.capacity() < cap) batch.reserve(cap); // once: growing by doubling held up to 2x cap
             while (pointsQ.try_dequeue(frame)) {
                 if (!batch.empty() && batch.size() + frame.size() > cap) {  // batch full -> send, carry frame over
                     sendBinaryBatch(addr, port, comp, batch);                // one full datagram per call
-                    batch = std::move(frame);
+                    batch += frame;                                         // keeps the reserved buffer
                     return;
                 }
                 batch += frame;

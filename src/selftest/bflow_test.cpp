@@ -5,13 +5,17 @@
 #include <cmath>
 #include <cstring>
 #include <ctime>
+#ifdef FUGU_HOST_SIM
 #include <mutex>
+#endif
 
 #include "../logging.h"
 #include "../app_state.h"
 
 #ifndef FUGU_HOST_SIM
 #include "nvs.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 bool flashWriteSafe();
 #endif
 
@@ -49,10 +53,28 @@ struct Rec {
 };
 static_assert(sizeof(Rec) == 16, "");
 
-// rec, the RAM ages and the scheduler: core 0 (selftestLf, selftestUrgent, the test task), under mx
+// rec, the RAM ages and the scheduler: core 0 (selftestLf, selftestUrgent, the test task), under Lock
+#ifdef FUGU_HOST_SIM
 std::mutex mx;
+struct Lock {
+    std::lock_guard<std::mutex> g{mx};
+};
+#else
+// static: a std::mutex takes ~100 B of heap at its first lock (boot) and keeps it
+SemaphoreHandle_t mxHandle() {
+    static StaticSemaphore_t buf;
+    static const SemaphoreHandle_t h = xSemaphoreCreateMutexStatic(&buf);
+    return h;
+}
+struct Lock {
+    Lock() { xSemaphoreTake(mxHandle(), portMAX_DELAY); }
+    ~Lock() { xSemaphoreGive(mxHandle()); }
+    Lock(const Lock &) = delete;
+};
+#endif
 Rec rec, stored;
-uint64_t passMs = 0, resMs = 0, writeMs = 0, writeGapMs = 0; // uptime [ms] of this boot's events
+uint64_t passMs = 0, resMs = 0, writeMs = 0; // uptime [ms] of this boot's events
+uint32_t writeGapMs = 0;
 bool passRam = false, resRam = false;
 uint8_t writeFails = 0;
 BfDaily daily;
@@ -173,13 +195,13 @@ void engage(uint32_t now) {
     s.st = St::Step, s.t0 = now;
 }
 
-// under mx: fold the RT-side latches into rec
+// under Lock: fold the RT-side latches into rec
 void syncRec() {
     if (mppt.hsClampUnsafe.load() && !rec.unsafe) rec.unsafe = 1, passRam = false, rec.passUnix = 0;
     rec.hs = mppt.hsFaultState() != 0, rec.bf = mppt.bfFail.load();
 }
 
-// under mx: urgent skips the 10 s throttle and the failure back-off (one try)
+// under Lock: urgent skips the 10 s throttle and the failure back-off (one try)
 void writeRec(uint64_t now, bool urgent) {
     if (!memcmp(&rec, &stored, sizeof rec) || !flashWriteSafe()) return;
     if (!urgent && (s.busy || now - writeMs < writeGapMs)) return;
@@ -190,14 +212,14 @@ void writeRec(uint64_t now, bool urgent) {
     } else {
         if (!writeFails) ESP_LOGW("selftest", "state write failed, retrying with back-off");
         if (writeFails < 255) ++writeFails;
-        writeGapMs = std::min<uint64_t>(std::max<uint64_t>(writeGapMs, 10000) * 2, 3600000);
+        writeGapMs = std::min<uint32_t>(std::max<uint32_t>(writeGapMs, 10000) * 2, 3600000);
     }
 }
 
 // test task, converter off: a leaking BF blocks the start and revokes the pass, persisted before anything else
 void blocksFail(uint64_t now) {
     mppt.bfFailSet(true);
-    std::lock_guard<std::mutex> l(mx);
+    Lock l;
     passRam = false, rec.passUnix = 0;
     syncRec();
     writeRec(now, true);
@@ -213,7 +235,7 @@ void runEnd() {
         ESP_LOGE("selftest", "backflow switch FAILED (blocks %c, conducts %c): start blocked until `selftest clear`",
                  v0 ?: '-', v1 ?: '-');
     }
-    std::lock_guard<std::mutex> l(mx);
+    Lock l;
     const uint32_t t = unixNow();
     if (v0 == 'P') passRam = true, passMs = now, rec.passUnix = t, rec.unsafe = 0, mppt.hsClampUnsafe.store(false);
     if (v0 == 'F') passRam = false, rec.passUnix = 0;
@@ -452,13 +474,13 @@ void selftestUrgent(uint64_t now) {
     const bool rise = b & ~seen;
     seen = b;
     if (!rise) return;
-    std::lock_guard<std::mutex> l(mx);
+    Lock l;
     syncRec();
     writeRec(now, true);
 }
 
 void selftestLf(uint64_t now, bool maintenance) {
-    std::lock_guard<std::mutex> l(mx);
+    Lock l;
     if (const uint32_t t = unixNow()) { // the clock arrived after a result
         if (passRam && !rec.passUnix) rec.passUnix = t - (uint32_t) ((now - passMs) / 1000);
         if (resRam && !rec.resUnix) rec.resUnix = t - (uint32_t) ((now - resMs) / 1000);
@@ -485,7 +507,7 @@ void selftestLf(uint64_t now, bool maintenance) {
 }
 
 void selftestPrintState() {
-    std::lock_guard<std::mutex> l(mx);
+    Lock l;
     const uint32_t pa = bfPassAgeS(), ra = ageS(resRam, resMs, rec.resUnix);
     char last[24] = "never", pass[24] = "never";
     if (ra != UINT32_MAX) snprintf(last, sizeof last, "%.1f h ago", (float) ra / 3600.f);
