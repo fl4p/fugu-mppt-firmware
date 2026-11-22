@@ -60,6 +60,8 @@ On a confirmed double fault, keep the LS on so the battery current through coil 
 
 ## Validation steps (later)
 
+Bench prerequisites (rail, BF Vth, clamp engage) are in `plans/hs-short-bench-tests.md`.
+
 - Datasheet numbers for F1, the LS and BF FETs: I²t, SOA, avalanche.
 - SPICE run of the crowbar with the board's coil saturation curve and loop parasitics.
 - Bench test on a sacrificial board with a current-limited supply first, then a small pack, never on a live
