@@ -762,6 +762,10 @@ extern MpptController mppt;
 
 void MpptController::hsShortRt(uint32_t nowMs) {
     if (hsClearReq.exchange(false, std::memory_order_acq_rel)) hsClearRt(); // also a latch restored on any topology
+    if (unlikely(g_hwOvTrip)) { // main.cpp keeps the alert while the clamp is pending, ramping or held
+        if (const uint8_t f = hsFault.load(std::memory_order_relaxed); f && f != HsOff)
+            hsGatesOffRt("OV alert");
+    }
     if (converter.boost()) return;
     auto &g = hsGuard;
     if (unlikely(bfTest.mode.load(std::memory_order_relaxed) && !g_app.manualPwm())) RT_COLD(
@@ -855,9 +859,10 @@ void MpptController::hsPendingRt(uint32_t nowMs, float i) {
         hsI0 = i, hsRise = 0;
         hsRampUs = (uint32_t) wallClockUs(), hsRampPos = 0;
         hsFault.store(HsRamp);
-        if (!converter.lsPulse((uint32_t) std::ceil(HsClampArm::StartNs * 1e-9f * converter.getPwmTickRate())))
+        hsRampCnt = converter.lsClamps(); // before the pulse: a disable() during it ends the ramp
+        if (!converter.lsPulse((uint32_t) std::ceil(HsClampArm::StartNs * 1e-9f * converter.getPwmTickRate()))
+            || converter.lsClamps() != hsRampCnt)
             return hsGatesOffRt("LS ramp refused");
-        hsRampCnt = converter.lsClamps();
         ESP_LOGW("hs-short", "Vin %.2f V below %.0f V for %lu s: LS ramp", sensors.Vin->ewm.avg.get(),
                  HsClampArm::VinMax, (unsigned long) (HsClampArm::HoldMs / 1000));
     );
@@ -874,6 +879,8 @@ void MpptController::hsRampRt(uint32_t nowMs) {
         const float rate = converter.getPwmTickRate();
         converter.lsPulse(HsClampArm::rampTicks(hsRampPos, (uint32_t) std::ceil(HsClampArm::StartNs * 1e-9f * rate),
                                                 converter.pwmMaxDriver()));
+        // a disable() (core 0) between the check above and the step: undo the step
+        if (converter.lsClamps() != hsRampCnt) hsGatesOffRt("LS ramp stopped");
         return;
     }
     RT_COLD(

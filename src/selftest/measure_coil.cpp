@@ -270,8 +270,14 @@ static void measureCoilTask(void *arg) {
     const uint16_t savedManualTarget = mppt.getManualTarget();
     float savedPvIsc, savedPvVoc, savedPvK;
     const bool savedPvActive = mppt.getPvCurve(savedPvIsc, savedPvVoc, savedPvK);
-    const auto enterTicket = mppt.requestPsuManual(0, -1);
-    if (!waitPsuCommand(enterTicket)) {
+    // stop at once: a ramp-down from full power with paranoia opens the BF at high duty (highD-bflowOpen)
+    const auto enterTicket = mppt.requestPsuManual(0, -1, false, true);
+    const bool entered = waitPsuCommand(enterTicket);
+    for (const time_ms dl = wallClockMs() + 10000; entered && wallClockMs() < dl;) { // let the filters drain
+        if (converter.disabled() && sensors.Iout && fabsf(sensors.Iout->ewm.avg.get()) < 1.f) break;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    if (!entered) {
         UART_LOG("measure-coil: RT transition timed out");
     } else if (!sensors.Vin || !sensors.Vout || !sensors.Iout) {
         UART_LOG("measure-coil: missing Vin/Vout/Iout sensor");

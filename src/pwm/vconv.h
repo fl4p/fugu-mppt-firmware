@@ -11,6 +11,10 @@
 // VirtualConverter singleton (g_vconv). Mirrors PWM_Mock / PWM_ESP32_ledc API.
 // MCPWM-only members (setHsOff/setLsOff/forceShutdown/...) are NOT provided;
 // MCPWM-dependent code in buck.h is excluded under #if WITH_MCPWM.
+#ifdef FUGU_HOST_SIM
+inline void (*g_simPwmStopHook)(int ch) = nullptr; // host sim: another core acting inside a driver call
+#endif
+
 class PWM_VConv {
 public:
     const char *name = "vconv";
@@ -61,6 +65,9 @@ public:
     }
 
     void stop(int channel, uint8_t idleLevel) {
+#ifdef FUGU_HOST_SIM
+        if (g_simPwmStopHook) g_simPwmStopHook(channel);
+#endif
         if (channel == 1) en_ = kNoEn;
         g_vconv.stopChannel((uint8_t) channel);
         if (idleLevel) g_vconv.setPwmCount((uint8_t) channel, pwmMax);

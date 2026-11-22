@@ -115,14 +115,16 @@ static int pwmSet(bool on) {
         return 1;
     }
     if (!on && converter.bsyncOwnsPeriod) { UART_LOG("pwr: pwm 0 refused while bsync runs"); return 1; }
-    if (!on && converter.lsClamped()) { UART_LOG("pwr: pwm 0 refused while the LS is clamped (hs-short)"); return 1; }
+    // the LS clamp, its ramp and its pending start drive the LS on a disabled converter
+    const auto hsBusy = [] { const uint8_t s = mppt.hsFaultState(); return converter.lsClamped() || (s && s != MpptController::HsOff); };
+    if (!on && hsBusy()) { UART_LOG("pwr: pwm 0 refused while the LS clamp is held or pending (hs-short)"); return 1; }
     const uint16_t en = converter.enableCount();
     converter.inhibitStart(true);
     vTaskDelay(pdMS_TO_TICKS(10)); // a start that passed the inhibit check has finished
-    const bool idle = converter.disabled() && converter.enableCount() == en;
+    const bool idle = converter.disabled() && converter.enableCount() == en && (on || !hsBusy());
     const esp_err_t e = !idle ? ESP_OK : on ? leg->timerResume() : leg->timerSuspend();
     converter.inhibitStart(false);
-    if (!idle) UART_LOG("pwr: pwm refused, converter not disabled");
+    if (!idle) UART_LOG("pwr: pwm refused, converter not disabled or LS clamp pending");
     else if (e != ESP_OK) UART_LOG("pwr: pwm: %s", esp_err_to_name(e));
     return idle && e == ESP_OK ? 0 : 1;
 }

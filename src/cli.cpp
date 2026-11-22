@@ -841,8 +841,8 @@ static void cmdOta(cmd *c) {
     // Stop power conversion and let the stage de-energize BEFORE downloading. OTA flash
     // writes briefly stall the RT loop and draw erase-current spikes; at full power that
     // reset the device mid-transfer (doing `dc 0` by hand first was the reliable workaround).
-    // Latch manual mode (also disables the !manualPwm-gated watchdogs) and ramp the converter
-    // to 0, then wait for it to actually disable so the supply is settled when flashing begins.
+    // Latch manual mode (also disables the !manualPwm-gated watchdogs) and stop the converter at
+    // once (a ramp-down at full power trips highD-bflowOpen), then let the supply settle.
     // Without an RT loop (failed setup) nothing acks the handshake, and only that loop ever enables the converter.
     const bool rt = rtLoopRunning();
     if (!rt) {
@@ -852,12 +852,12 @@ static void cmdOta(cmd *c) {
         }
         UART_LOG("ota: no RT loop, converter off, skipping the conversion stop");
     } else {
-        const auto stopTicket = mppt.requestPsuManual(0, -1);
+        const auto stopTicket = mppt.requestPsuManual(0, -1, false, true);
         if (!waitPsuCommand(stopTicket)) {
             idleProfileHold(false);
             CMD_FAIL_RETURN("ota: RT shutdown transition timed out");
         }
-        for (int i = 0; i < 100 && !converter.disabled(); ++i) delay(100); // <=10s for the ramp
+        for (int i = 0; i < 100 && !converter.disabled(); ++i) delay(100);
         delay(500);                 // let the output coil/caps de-energize
     }
     adcSampler.halted = true;   // disable ADC reading

@@ -1340,7 +1340,10 @@ static void loopRTNewData(time_ms nowMs) {
     ); */
 
 
-    if (mppt.converter.disabled()) g_hwOvTrip = false; // an alert while not switching must not trip the next start
+    // an alert while not switching must not trip the next start; one while the LS clamp is pending, ramping or held
+    // is left to the next hsShortRt(), which releases the clamp
+    if (mppt.converter.disabled() && (!mppt.hsFaultState() || mppt.hsFaultState() == MpptController::HsOff))
+        g_hwOvTrip = false;
 
     if (unlikely(adcSampler.isCalibrating())) {
         mppt.shutdownDcdc("calib", 0); // calibration must resume MPPT immediately on completion

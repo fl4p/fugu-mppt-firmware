@@ -18,6 +18,8 @@
 //                              # hs-short, hs-short-bfclosed, hs-cal, hs-dawn, hs-dawn-nozero: HS-short check
 //                              # bf-ok, bf-open, bf-closed: `selftest bflow` (vconv.conf bf_model=1)
 //                              # bf-daily-flat: the daily run from MPPT at ~160 W in CCM on flat's plant
+//                              # mc-flat: `measure-coil l0` entered from MPPT at ~160 W in CCM on flat's plant
+//                              # hs-night-ov*, hs-night-race*: OV alert / core-0 disable() around the LS ramp and hold
 //   weather scenarios (PV string of 1..3 substrings, irradiance played from a time series; "== SUMMARY" line):
 //     wx-cloud          recorded cloudy quarter hour (flat, 2026-11-14 11:20 UTC), full sun <-> cloud
 //     wx-cloud-n1       same with the single peak known (pv_substrings=1): no re-sweep after a flagged sweep
@@ -180,6 +182,7 @@ static bool g_ringOn = false, g_ringDamped = false; // damped: Q 0.5, ring branc
 // LEDC timing of the results before 2026-11-19 (2047 counts, rect_offset 0); SIM_DRV=mcpwm also on the ideal plant
 static bool g_drvMcpwm = false, g_liveOffset = true; // rcal* start uncalibrated (no board rect_offset)
 static void (*g_tickHook)() = nullptr; // called after every RT iteration of run()
+static void (*g_afterHsHook)() = nullptr; // called in loopRTNewData right after hsShortRt (an ISR landing there)
 static FILE *g_pDump = nullptr; // SIM_PDUMP=<file>: per tick t, Iout ewm, Vout ewm, HS count (float32)
 
 static bool cutSuffix(std::string &t, const char *sfx) {
@@ -317,7 +320,11 @@ static void loopRTNewData(time_ms nowMs) {
         timeLastSampler = wallClockUs();
         mppt.rectCalRt();
         mppt.hsShortRt((uint32_t) nowMs);
+        if (g_afterHsHook) g_afterHsHook();
     }
+
+    if (mppt.converter.disabled() && (!mppt.hsFaultState() || mppt.hsFaultState() == MpptController::HsOff))
+        g_hwOvTrip = false;
 
     if (unlikely(adcSampler.isCalibrating())) {
         mppt.shutdownDcdc("calib", 0);
@@ -1716,7 +1723,13 @@ static float med5(float *a) { return coilfit::detail::median(a, 5); }
 static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
     const double t0 = tNow();
     coilfit::Result res;
-    if (!simPsuWait(mppt.requestPsuManual(0, -1))) printf("  measure: RT transition timed out\n");
+    // SIM_MC_RAMP=1: the entry before the hard stop (a duty ramp-down)
+    const bool ramp = getenv("SIM_MC_RAMP") != nullptr;
+    if (!simPsuWait(mppt.requestPsuManual(0, -1, false, !ramp))) printf("  measure: RT transition timed out\n");
+    for (const double dl = tNow() + 10; tNow() < dl && !ramp;) { // let the filters drain
+        if (converter.disabled() && fabsf(sensors.Iout->ewm.avg.get()) < 1.f) break;
+        run(0.01, 0);
+    }
     const float fsw = (float) converter.getPwmFrequency();
     const uint16_t pwmMax = converter.pwmMaxDriver();
     const float iMaxLim = std::min(2.0f, mppt.limits.Iout_max);
@@ -1755,6 +1768,39 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
     if (!simPsuWait(off ? mppt.requestPsuOff() : mppt.requestPsuSweep())) printf("  measure: MPPT restore timed out\n");
     secs = tNow() - t0;
     return res;
+}
+
+// mc-flat: `measure-coil l0` takes over from MPPT at ~150 W in CCM with paranoia on (bf-daily-flat's plant):
+//   no protection trip at the take-over (a duty ramp-down at full power trips highD-bflowOpen, whose backoff then
+//   holds the converter off under the sweep), the sweep finds its DCM points. SIM_MC_RAMP=1 enters with the old
+//   ramp-down. Known, not checked: near 2 A the L0 sweep itself trips highD-bflowOpen (BF open, D > 0.33).
+static int runMcFlat(const std::string &sc) {
+    int f = 0;
+    auto chk = [&](bool c, const char *w) {
+        printf("== %s %s: %s\n", sc.c_str(), c ? "ok" : "FAIL", w);
+        f += !c;
+    };
+    settle(30);
+    for (double dl = tNow() + 120; tNow() < dl && !(g_vconv.getVin() * g_vconv.pvCurrent(g_vconv.getVin()) > 140.f);)
+        run(0.5, 0);
+    const float v = g_vconv.getVin(), p0 = v * g_vconv.pvCurrent(v);
+    printf("== %s: PV %.0f W, %s, %s, paranoia %d\n", sc.c_str(), p0, converter.inDCM() ? "DCM" : "CCM", modeStr(),
+           (int) mppt.limits.reverse_current_paranoia);
+    chk(p0 > 130.f && !converter.inDCM() && !converter.disabled(), "MPPT at full power in CCM");
+    const size_t trips0 = g_trips.size();
+    const double tEnter = tNow();
+    double secs = 0;
+    const auto r = simMeasureL0(48, 1000, secs);
+    int entryTrips = 0;
+    for (size_t i = trips0; i < g_trips.size(); ++i) entryTrips += g_trips[i].t < tEnter + 2;
+    for (size_t i = trips0; i < g_trips.size(); ++i) printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
+    printf("== %s: L %.2f uH vs plant %.2f uH, %d DCM pts, %.0f s\n", sc.c_str(), r.L * 1e6f, g_vconv.getL() * 1e6f, r.n, secs);
+    chk(!entryTrips, "no protection trip at the take-over");
+    chk(r.n >= 3 && std::isfinite(r.L), "the sweep found its DCM points");
+    run(40, 5.0);
+    chk(!converter.disabled() && g_app.opMode.load() == OpMode::Mppt, "MPPT running again");
+    printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+    return f != 0;
 }
 
 static int runRingCoil(const std::string &name, bool weak) {
@@ -1830,8 +1876,7 @@ static int runHsShort(const std::string &sc) {
                            sc == "hs-volt-clamp" || sc.rfind("hs-night", 0) == 0;
     if (clampConf) mppt.bfRecent = true; // as after a passed `selftest bflow`
     chk(mppt.hsIdleCheck() == (sc.find("-nodecl") == std::string::npos), "idle check per board.conf");
-    if (sc == "hs-short" || sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-night" ||
-        sc == "hs-night-abort") {
+    if (sc == "hs-short" || sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc.rfind("hs-night", 0) == 0) {
         const bool night = sc.rfind("hs-night", 0) == 0;
         const float isc = g_vconv.getIsc(), voc = g_vconv.getVoc(), k = g_vconv.getPvK();
         if (clampConf) { // a night first: the clamp needs a learnt zero
@@ -1902,15 +1947,39 @@ static int runHsShort(const std::string &sc) {
             printf("%9.4f >>> night\n", tNow());
             double tLow = -1, tRamp = -1, tHold = -1;
             uint16_t ls0 = 0, lsPrev = 0;
-            bool mono = true, hsLow = true;
+            bool mono = true, hsLow = true, everHeld = false;
             int rampSteps = 0;
+            // -ov*: an OV alert lands between hsShortRt and the alert clear (pend: by night before the ramp, ov: 5 ms into
+            // the ramp, ovhold: in the hold); -race*: a core-0 disable() inside a ramp step's driver writes (race0: the
+            // first pulse, race: 5 ms in)
+            static bool s_raceArm, s_raceHit;
+            static int s_lsAfterRace;
+            s_raceArm = sc == "hs-night-race0", s_raceHit = false, s_lsAfterRace = -1;
+            g_simPwmStopHook = [](int) {
+                if (!s_raceArm || mppt.hsFaultState() != MpptController::HsRamp) return;
+                s_raceArm = false, s_raceHit = true;
+                printf("%9.4f >>> core 0 disable() inside a ramp step\n", tNow());
+                converter.disable();
+            };
+            g_tickHook = [] {
+                if (s_raceHit && s_lsAfterRace < 0) s_lsAfterRace = g_vconv.getPwm().pwmRect;
+            };
+            auto ovAlert = [] {
+                printf("%9.4f >>> OV alert after hsShortRt (%u)\n", tNow(), mppt.hsFaultState());
+                g_afterHsHook = [] { g_hwOvTrip = true, g_afterHsHook = nullptr; };
+            };
+            const bool stopLike = sc == "hs-night-abort" || sc == "hs-night-ov" || sc == "hs-night-ovpend" ||
+                                  sc == "hs-night-race" || sc == "hs-night-race0";
             const double t0 = tNow();
             while (tNow() - t0 < 100 && st() != MpptController::HsClamped && st() != MpptController::HsOff) {
                 run(0.0002, 0);
                 const auto &pw = g_vconv.getPwm();
                 if (tLow < 0 && sensors.Vin->ewm.avg.get() < 9.f) tLow = tNow();
+                if (sc == "hs-night-ovpend" && tLow > 0 && tNow() - tLow > 30 && st() == MpptController::HsPending &&
+                    !g_hwOvTrip && !g_afterHsHook && tRamp < 0)
+                    ovAlert(), tRamp = 0;
                 if (st() == MpptController::HsRamp) {
-                    if (tRamp < 0) tRamp = tNow(), ls0 = pw.pwmRect;
+                    if (tRamp <= 0) tRamp = tNow(), ls0 = pw.pwmRect;
                     if (pw.pwmRect != lsPrev) ++rampSteps;
                     mono &= pw.pwmRect >= lsPrev;
                     hsLow &= pw.pwmCtrl == 0;
@@ -1921,18 +1990,49 @@ static int runHsShort(const std::string &sc) {
                         run(0.002, 0);
                         break;
                     }
+                    if (sc == "hs-night-ov" && tNow() - tRamp > .005 && !g_afterHsHook && !g_hwOvTrip) ovAlert();
+                    if (sc == "hs-night-race" && tNow() - tRamp > .005 && !s_raceHit) s_raceArm = true;
                 }
                 if (tHold < 0 && st() == MpptController::HsClamped) tHold = tNow();
             }
+            everHeld = tHold >= 0;
+            if (sc == "hs-night-ovhold" && st() == MpptController::HsClamped) {
+                run(0.1, 0);
+                ovAlert();
+                bool reheld = false;
+                for (int n = 0; n < 100; ++n) run(0.01, 0), reheld |= n > 1 && (converter.lsClamped() || g_vconv.getPwm().pwmRect);
+                traceLine("ov ");
+                chk(st() == MpptController::HsOff && !converter.lsClamped() && g_vconv.getPwm().pwmRect == 0 && !reheld,
+                    "OV alert in the hold: released, all gates off, not re-applied");
+                g_simPwmStopHook = nullptr, g_tickHook = nullptr, g_afterHsHook = nullptr;
+                printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+                return f != 0;
+            }
+            if (sc == "hs-night-ovpend" || sc == "hs-night-race0") {
+                run(1, 0);
+                traceLine("night ");
+                printf("== %s: Vin<9 V at %.1f s, state %u, held %d, LS after the race %d\n", sc.c_str(), tLow - t0, st(),
+                       (int) everHeld, s_lsAfterRace);
+                if (sc == "hs-night-race0") chk(s_raceHit && s_lsAfterRace == 0, "the first pulse undone at once");
+                chk(st() == MpptController::HsOff && !everHeld && !converter.lsClamped() && g_vconv.getPwm().pwmRect == 0,
+                    sc == "hs-night-ovpend" ? "OV alert while pending: gates off, never clamped"
+                                            : "disable() during the first pulse: gates off, never clamped");
+                g_simPwmStopHook = nullptr, g_tickHook = nullptr, g_afterHsHook = nullptr;
+                printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+                return f != 0;
+            }
+            g_simPwmStopHook = nullptr, g_tickHook = nullptr, g_afterHsHook = nullptr;
             traceLine("night ");
             printf("== %s: Vin<9 V at %.1f s, ramp at %.3f s (%d steps, LS %u -> %u of %u), hold at %.3f s\n", sc.c_str(),
                    tLow - t0, tRamp - t0, rampSteps, ls0, lsPrev, g_vconv.getPwm().pwmMax, tHold - t0);
             chk(tLow > 0 && tRamp - tLow >= 60 && tRamp - tLow < 61, "ramp starts after 60 s below 9 V");
             chk(ls0 > 0 && ls0 < g_vconv.getPwm().pwmMax / 50, "ramp starts with a short LS pulse");
             chk(mono && hsLow, "LS width rises, HS held low");
-            if (sc == "hs-night-abort") {
-                chk(st() == MpptController::HsOff && !converter.lsClamped() && g_vconv.getPwm().pwmRect == 0 &&
-                    !mppt.hsClampUnsafe.load(), "ramp stopped by the disable: gates off");
+            if (stopLike) {
+                if (sc == "hs-night-race") chk(s_raceHit && s_lsAfterRace == 0, "the step after the disable undone at once");
+                chk(st() == MpptController::HsOff && !everHeld && !converter.lsClamped() && g_vconv.getPwm().pwmRect == 0 &&
+                    !mppt.hsClampUnsafe.load(), sc == "hs-night-ov" ? "ramp stopped by the OV alert: gates off"
+                                                                    : "ramp stopped by the disable: gates off");
                 runFor(5, nullptr);
                 chk(st() == MpptController::HsOff && g_vconv.getPwm().pwmRect == 0, "stays off");
             } else {
@@ -2300,7 +2400,8 @@ static int simMain(int argc, char **argv) {
     const std::string name = sc;
     if (p0) sc.resize(sc.size() - 3);
     if (sc == "rcal-flat") setenv("SIM_RING", "flat", 0), setenv("SIM_ADC_HZ", "1470", 0);
-    if (sc == "bf-daily-flat") setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
+    const bool flatTake = sc == "bf-daily-flat" || sc == "mc-flat";
+    if (flatTake) setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
     if (sc == "rcal-pv") setenv("SIM_RING", "fry", 0);
     if (sc.rfind("wx-", 0) == 0 && sc.size() > 4 && sc.compare(sc.size() - 4, 4, "-fry") == 0)
         setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
@@ -2337,20 +2438,20 @@ static int simMain(int argc, char **argv) {
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         setenv("SIM_CONF", c.c_str(), 1);
     }
-    const bool selftest = sc.rfind("hs-", 0) == 0 || sc.rfind("bf-", 0) == 0;
+    const bool selftest = sc.rfind("hs-", 0) == 0 || sc.rfind("bf-", 0) == 0 || sc == "mc-flat";
     if (selftest) {
         std::string c = sc.size() > 7 && !sc.compare(sc.size() - 7, 7, "-nodecl") ? "" : "board.conf:bflow_bat=1";
         if (sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-dawn-nozero" || sc == "bf-daily-then-closed" ||
             sc == "hs-volt-clamp" || sc.rfind("hs-night", 0) == 0)
             c += ",board.conf:hs_clamp=1";
-        if (sc == "bf-daily-flat") // flat's sensor filters
+        if (flatTake) // flat's sensor filters
             c += ",sensor.conf:hv_v_filt_len=20,sensor.conf:lv_v_filt_len=20,sensor.conf:lv_i_filt_len=20";
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         if (!c.empty()) setenv("SIM_CONF", c.c_str(), 1);
         ov = {{"bf_model", "1"}};
         if (sc == "bf-open" || sc == "bf-daily-fail") ov.push_back({"bf_stuck", "1"});
         if (sc == "bf-closed") ov.push_back({"bf_stuck", "2"});
-        if (sc == "bf-daily-flat") ov.insert(ov.end(), {{"isc", "2.8"}, {"voc", "62"}, {"pv_k", "0.95"}, {"v_bat", "25.6"}});
+        if (flatTake) ov.insert(ov.end(), {{"isc", "2.8"}, {"voc", "62"}, {"pv_k", "0.95"}, {"v_bat", "25.6"}});
         if (sc == "hs-cal") ov.insert(ov.end(), {{"hs_short", "1"}, {"isc", "1.0"}});
         if (sc.rfind("hs-dawn", 0) == 0) ov.push_back({"noise_iout", "0.04"});
     }
@@ -2403,6 +2504,7 @@ static int simMain(int argc, char **argv) {
     if (sc == "idle-wake") return runIdleWake();
     if (sc.rfind("hs-", 0) == 0) return runHsShort(sc);
     if (sc.rfind("bf-", 0) == 0) return runBfTest(sc);
+    if (sc == "mc-flat") return runMcFlat(sc);
     settle(sc == "d-noise" ? 60 : 60);
     size_t settleTrips = g_trips.size();
     printf("# trips during settle: %zu\n", settleTrips);
