@@ -67,7 +67,7 @@ The repository pins these git submodules:
 | `etc/idf-devtools` | [fl4p/idf-devtools](https://github.com/fl4p/idf-devtools) | Generic ESP-IDF tools: ELF archive for coredump decoding, `provision.py`, incremental flashing, NVS dump, symbol lookup |
 | `etc/adcscope` | [fl4p/adcscope](https://github.com/fl4p/adcscope) | Soft oscilloscope client for the `scope` stream |
 | `test/host-stub/arduino-shim` | [fl4p/arduino-host-shim](https://github.com/fl4p/arduino-host-shim) | Arduino API shim for host tests |
-| `components/*` | various | ADS1x15, BusIO, INA226, LiquidCrystal I²C, SimpleCLI, SimpleFTPServer, ESPTelnet, semihosting profiler |
+| `components/*` | various | ADS1x15, BusIO, INA226, LiquidCrystal I²C, SimpleCLI, ESPTelnet, semihosting profiler |
 
 The root `provision.py` is a thin wrapper that execs `etc/idf-devtools/provision.py`, so provisioning needs that
 submodule. [Libraries](libraries.md) lists the component libraries and their use.

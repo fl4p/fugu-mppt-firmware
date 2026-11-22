@@ -65,11 +65,13 @@ FILE_VAR_OVERRIDES = {
     'src/adc/vconv.h':           {'vconvConf': None},
     'src/sensor_setup.cpp':      {'vc': None, 'coil': None},
     'src/conv_side.h':           {'conv': 'converter.conf'},   # readTopoIsBoost()
+    'src/tele/http_conf_service.cpp': {'c': 'http.conf'},
+    'src/tele/conf_creds.h':     {'c': 'ftp.conf'},
 }
 
 # Service base class reads these two keys from EVERY service's own conf file.
 SERVICE_CONFS = ['mqtt.conf', 'tele.conf', 'ftp.conf', 'telnet.conf',
-                 'scope.conf', 'lcd.conf', 'ble.conf']
+                 'scope.conf', 'lcd.conf', 'ble.conf', 'http.conf']
 
 # Keys the scraper cannot reach because:
 #   - the key is a runtime variable (`boardConf.getByte(pnCtrl)` where pnCtrl

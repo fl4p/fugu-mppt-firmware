@@ -221,7 +221,7 @@ littlefs_create_partition_image(littlefs ${FUGU_LITTLEFS_SRC}
 
 # Image size (doc/image-size-reduction.md): -Os on core-0-only components; RT-path components keep -O2
 set(FUGU_OS_COMPONENTS bt lwip espressif__mdns joltwallet__littlefs wpa_supplicant espressif__mqtt http_parser
-        esp_http_client esp-tls tcp_transport esp_https_ota SimpleFTPServer ESPTelnet SimpleCLI nvs_flash esp_netif
+        esp_http_client esp-tls tcp_transport esp_https_ota ESPTelnet SimpleCLI nvs_flash esp_netif
         esp_wifi esp_event espcoredump esp-ota-ble tamp espressif__esp_delta_ota app_update esp_partition vfs esp_phy
         esp_coex espressif__network_provisioning protocomm protobuf-c espressif__led_strip esp_driver_rmt esp_hal_rmt
         console bootloader_support efuse esp_app_format Arduino-LiquidCrystal-I2C esp_security

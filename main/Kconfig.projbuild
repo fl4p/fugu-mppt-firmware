@@ -136,10 +136,18 @@ config FUGU_WITH_SCOPE
         Off drops the scope service and compiles every sampling-path hook to nothing.
 
 config FUGU_WITH_FTP
-    bool "FTP server for /littlefs/conf (ftp service)"
+    bool "FTP server for /littlefs (ftp service)"
     default y
     help
-        Single-connection FTP server exposing the config partition while Wi-Fi is up.
+        FTP server (2 sessions, passive and active mode) exposing the littlefs partition
+        while Wi-Fi is up.
+
+config FUGU_WITH_HTTP_CONF
+    bool "HTTP file endpoint for /littlefs/conf (http service)"
+    default n
+    help
+        GET/PUT/DELETE /conf/<name> with HTTP Basic auth (FTP credentials), polled from the
+        network loop without its own task. Port and enable flag in http.conf.
 
 config FUGU_WITH_HA
     bool "Home Assistant MQTT discovery"

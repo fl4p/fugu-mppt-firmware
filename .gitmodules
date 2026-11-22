@@ -22,10 +22,6 @@
 	path = components/INA226_WE/INA226_WE
 	url = https://github.com/fl4p/INA226_WE
 
-[submodule "components/SimpleFTPServer/SimpleFTPServer"]
-	path = components/SimpleFTPServer/SimpleFTPServer
-	url = https://github.com/fl4p/SimpleFTPServer
-	branch = master
 [submodule "components/ESPTelnet/ESPTelnet"]
 	path = components/ESPTelnet/ESPTelnet
 	url = https://github.com/LennartHennigs/ESPTelnet

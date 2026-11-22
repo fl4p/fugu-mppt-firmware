@@ -155,6 +155,9 @@ CONFIG_LWIP_TCPIP_TASK_AFFINITY=0x0
 # Drop IPv6: nothing in firmware uses AF_INET6 / getaddrinfo on v6; saves ~20 KB flash.
 CONFIG_LWIP_IPV6=n
 
+# FTP (2 sessions = 5), HTTP conf (3), telnet (2), MQTT, scope (2), OTA client: 10 is too few.
+CONFIG_LWIP_MAX_SOCKETS=16
+
 # Drop PPP: only used for cellular/dial-up modems over UART; we only do IP over WiFi.
 # arduino-esp32 pulls in esp_modem, whose ESP_MODEM_USE_PPP_MODE `select`s LWIP_PPP_SUPPORT.
 # Flip both off here so esp_modem stops forcing PPP on.

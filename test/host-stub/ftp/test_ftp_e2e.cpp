@@ -1,23 +1,8 @@
-// Host-side end-to-end regression for the four SimpleFTPServer security fixes
-// (PASS-without-USER bypass, makePath stack overflow, PORT NULL deref, PORT
-// FTP-bounce). Compiles the vendored FtpServer.cpp against the reusable
-// Arduino shim in ../arduino-shim, runs it on loopback ports, and drives it
-// from the same process via raw TCP.
+// Host-side end-to-end tests for src/tele/ftp_server.cpp. The server is compiled natively
+// (POSIX sockets + file API), serves a fresh mkdtemp() root on loopback ports and is driven over
+// raw TCP from forked test processes. See SPEC.md.
 //
-// Each test runs in a forked subprocess so a crash (the original PORT NULL
-// deref would SIGSEGV the server) reports as a clean test failure instead of
-// taking out the entire binary.
-//
-// Build (or use test/host-stub/ftp/CMakeLists.txt):
-//   clang++ -std=gnu++17 -fexceptions -Wno-overloaded-virtual \
-//     -I test/host-stub/arduino-shim -I components/SimpleFTPServer/SimpleFTPServer \
-//     -DESP32 -DFTP_SERVER_NETWORK_TYPE=6 -DSTORAGE_TYPE=7 \
-//     -DDEFAULT_FTP_SERVER_NETWORK_TYPE_ESP32=6 -DDEFAULT_STORAGE_TYPE_ESP32=7 \
-//     -DESP_ARDUINO_VERSION_MAJOR=3 \
-//     test/host-stub/arduino-shim/arduino_shim.cpp \
-//     components/SimpleFTPServer/SimpleFTPServer/FtpServer.cpp \
-//     test/host-stub/ftp/test_ftp_e2e.cpp \
-//     -o /tmp/ftp-e2e-test && /tmp/ftp-e2e-test
+// Build: cmake -S test/host-stub/ftp -B test/host-stub/ftp/build && cmake --build test/host-stub/ftp/build
 
 #include <arpa/inet.h>
 #include <atomic>
@@ -28,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
@@ -35,16 +21,7 @@
 #include <thread>
 #include <unistd.h>
 
-#include "Arduino.h"
-#include "FS.h"
-#include "LittleFS.h"
-#include "WiFi.h"
-#include "WiFiServer.h"
-
-// Pin the vendored lib's flavor before including its header.
-#define FTP_SERVER_NETWORK_TYPE 6  // NETWORK_ESP32
-#define STORAGE_TYPE            7  // STORAGE_LITTLEFS
-#include "FtpServer.h"
+#include "../../../src/tele/ftp_server.h"
 
 namespace {
 
@@ -53,13 +30,22 @@ constexpr uint16_t kPasvPort = 12122;
 constexpr const char *USER = "ftp";
 constexpr const char *PASS = "secret";
 
-FtpServer server(kCmdPort, kPasvPort);
+FtpServer server;
+std::mutex serverMu;
 std::atomic<bool> running{true};
+
+uint32_t nowMs() {
+    using namespace std::chrono;
+    return (uint32_t) duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
 
 void ftpLoop() {
     while (running.load(std::memory_order_relaxed)) {
-        server.handleFTP();
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        {
+            std::lock_guard<std::mutex> lk(serverMu);
+            server.poll(nowMs());
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
@@ -69,8 +55,9 @@ void ftpLoop() {
 struct FtpDial {
     int fd = -1;
     std::string buf;
+    std::string last; // last reply line
 
-    explicit FtpDial(uint16_t port) {
+    explicit FtpDial(uint16_t port = kCmdPort) {
         fd = ::socket(AF_INET, SOCK_STREAM, 0);
         assert(fd >= 0);
         sockaddr_in sa{};
@@ -79,9 +66,7 @@ struct FtpDial {
         sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         int rc = ::connect(fd, (sockaddr *)&sa, sizeof(sa));
         assert(rc == 0 && "connect to FTP control socket failed");
-        // Bound each blocking recv so a missing reply surfaces as -1 instead
-        // of hanging the test.
-        timeval tv{2, 0};
+        timeval tv{0, 200000};
         ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     }
     ~FtpDial() { if (fd >= 0) ::close(fd); }
@@ -92,8 +77,9 @@ struct FtpDial {
         (void)n;
     }
 
-    int readCode() {
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    // -1 on timeout, -2 once the peer closed with nothing pending
+    int readCode(int timeoutMs = 3000) {
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
         int lastCode = -1;
         while (std::chrono::steady_clock::now() < deadline) {
             for (;;) {
@@ -101,28 +87,20 @@ struct FtpDial {
                 if (nl == std::string::npos) break;
                 std::string line = buf.substr(0, nl);
                 buf.erase(0, nl + 1);
+                if (!line.empty() && line.back() == '\r') line.pop_back();
                 if (line.size() >= 4) {
                     int code = std::atoi(line.substr(0, 3).c_str());
                     char sep = line[3];
                     if (code > 0) {
                         lastCode = code;
-                        if (sep == ' ') return code;
+                        if (sep == ' ') { last = line; return code; }
                     }
                 }
             }
             char tmp[256];
             ssize_t n = ::recv(fd, tmp, sizeof(tmp), 0);
             if (n > 0) buf.append(tmp, tmp + (size_t)n);
-            else if (n == 0) {
-                // Peer closed. If buf holds a terminator-less single line
-                // (e.g. "221 Goodbye" lost trailing \r\n on close), parse it.
-                if (lastCode == -1 && buf.size() >= 4) {
-                    int code = std::atoi(buf.substr(0, 3).c_str());
-                    if (code > 0 && buf[3] == ' ') return code;
-                }
-                break;
-            }
-            // -1 with EAGAIN: SO_RCVTIMEO fired; loop until outer deadline.
+            else if (n == 0) return lastCode == -1 ? -2 : lastCode;
         }
         return lastCode;
     }
@@ -135,34 +113,25 @@ struct FtpDial {
         return readCode();
     }
 
-    // Send PASV, parse the "227 ... (h1,h2,h3,h4,p1,p2)" reply, return the
-    // advertised data port (0 on parse failure). Reads through buf the same
-    // way readCode does, so call it instead of readCode for PASV.
+    // PASV -> port from "227 ... (h1,h2,h3,h4,p1,p2)", 0 on failure
     uint16_t pasv() {
         send("PASV");
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-        while (std::chrono::steady_clock::now() < deadline) {
-            auto nl = buf.find('\n');
-            while (nl != std::string::npos) {
-                std::string line = buf.substr(0, nl);
-                buf.erase(0, nl + 1);
-                if (line.rfind("227", 0) == 0) {
-                    auto lp = line.find('(');
-                    auto rp = line.find(')', lp == std::string::npos ? 0 : lp);
-                    if (lp == std::string::npos || rp == std::string::npos) return 0;
-                    unsigned a, b, c, d, p1, p2;
-                    if (std::sscanf(line.c_str() + lp + 1, "%u,%u,%u,%u,%u,%u",
-                                    &a, &b, &c, &d, &p1, &p2) != 6) return 0;
-                    return (uint16_t)((p1 << 8) | p2);
-                }
-                nl = buf.find('\n');
-            }
-            char tmp[256];
-            ssize_t n = ::recv(fd, tmp, sizeof(tmp), 0);
-            if (n > 0) buf.append(tmp, tmp + (size_t)n);
-            else if (n == 0) break;
-        }
-        return 0;
+        if (readCode() != 227) return 0;
+        auto lp = last.find('(');
+        unsigned a, b, c, d, p1, p2;
+        if (lp == std::string::npos ||
+            std::sscanf(last.c_str() + lp + 1, "%u,%u,%u,%u,%u,%u", &a, &b, &c, &d, &p1, &p2) != 6) return 0;
+        return (uint16_t)((p1 << 8) | p2);
+    }
+
+    // EPSV -> port from "229 ... (|||port|)", 0 on failure
+    uint16_t epsv() {
+        send("EPSV");
+        if (readCode() != 229) return 0;
+        auto lp = last.find("(|||");
+        unsigned p;
+        if (lp == std::string::npos || std::sscanf(last.c_str() + lp + 4, "%u", &p) != 1) return 0;
+        return (uint16_t) p;
     }
 };
 
@@ -193,12 +162,49 @@ std::string drainData(int dfd) {
     return out;
 }
 
-// ---- per-bug regressions ---------------------------------------------------
+void sendAll(int dfd, const std::string &s) {
+    size_t off = 0;
+    while (off < s.size()) {
+        ssize_t n = ::send(dfd, s.data() + off, s.size() - off, 0);
+        assert(n > 0);
+        off += (size_t)n;
+    }
+}
 
-// Bug #1: PASS-without-USER bypass. The buggy code printed 503 *and* fell
-// through to authenticate if the password matched — meaning the server queues
-// "503 ..." and "230 Ok" back-to-back. We must drain any 2xx that arrives
-// before sending a follow-up command, then check that PWD doesn't succeed.
+std::string pattern(size_t n, unsigned seed) {
+    std::string p(n, '\0');
+    for (size_t i = 0; i < n; ++i) p[i] = (char)((i * 7 + seed) % 251);
+    return p;
+}
+
+// PASV + STOR of a whole payload
+void put(FtpDial &c, const std::string &path, const std::string &payload) {
+    uint16_t pport = c.pasv();        assert(pport > 0);
+    int dfd = openData(pport);        assert(dfd >= 0);
+    c.send("STOR " + path);           assert(c.readCode() == 150);
+    sendAll(dfd, payload);
+    ::close(dfd);
+    assert(c.readCode() == 226);
+}
+
+// PASV + RETR, returns the bytes
+std::string get(FtpDial &c, const std::string &path) {
+    uint16_t pport = c.pasv();        assert(pport > 0);
+    int dfd = openData(pport);        assert(dfd >= 0);
+    c.send("RETR " + path);
+    int code = c.readCode();
+    if (code != 150) { ::close(dfd); return "<" + std::to_string(code) + ">"; }
+    std::string got = drainData(dfd);
+    ::close(dfd);
+    assert(c.readCode() == 226);
+    return got;
+}
+
+// ---- regressions carried over from the SimpleFTPServer fork ---------------------------------------------------
+
+// PASS-without-USER bypass (a SimpleFTPServer bug once replied 503 and then
+// authenticated anyway, queuing 503 + 230): PASS must not log in and PWD
+// must not succeed.
 void test_pass_without_user() {
     FtpDial c(kCmdPort);
     assert(c.readCode() == 220);
@@ -222,11 +228,9 @@ void test_pass_without_user() {
     assert(pwdCode != 257 && "PASS-before-USER must not authenticate the session");
 }
 
-// Bug #2: makePath stack overflow. The buggy strncat overflows fullName when
-// workingDir + "/" + param > FTP_CWD_SIZE (263 B). Setup: mkdir a long dir,
-// CWD into it (makes workingDir long), then CWD a relative path long enough
-// to overflow the 263-byte buffer but short enough that the lib's per-line
-// cmd buffer (also FTP_CMD_SIZE=263) accepts it.
+// Path overflow: cwd (101 B) + "/" + a 200 B relative arg exceeds the
+// path buffer (FtpServer::PATH_LEN) while the line fits CMD_MAX. Must be
+// rejected with 500 and leave the server alive.
 void test_long_cwd_path() {
     FtpDial c(kCmdPort);
     assert(c.login() == 230);
@@ -375,12 +379,7 @@ void test_mlsd_subdir() {
            && "MLSD listing must contain only entries *inside* the subdir, not the subdir name itself");
 }
 
-// CWD "../" from root must stay at root — the lib's makePath walks up
-// workingDir but clamps at "/". This is the one portable, FS-independent
-// path-traversal assertion. (Embedded "..", e.g. "/sub/../foo", is *not*
-// normalized by the lib and falls through to the FS layer's path
-// resolution, so its behavior depends on the underlying FS — out of
-// scope here.)
+// CWD "../" from root must stay at root.
 void test_cwd_dotdot_clamps_at_root() {
     FtpDial c(kCmdPort);
     assert(c.login() == 230);
@@ -399,14 +398,11 @@ void test_cwd_dotdot_clamps_at_root() {
     c.send("PWD");                       int pwd1 = c.readCode();
     std::fprintf(stderr, "  PWD->%d after CWD ..\n", pwd1);
     assert(pwd1 == 257);
-    // Note: we don't parse the path string out of the 257 reply; the lib
-    // sends "257 \"/\" ..." in both the "/" and "//" cases. Either is fine
-    // here — the assertion is that we didn't escape into something else.
+    assert(c.last.rfind("257 \"/\"", 0) == 0 && "CWD .. from / must stay at /");
 }
 
-// Multi-chunk STOR + RETR. The lib's `fileBuffer` is allocated dynamically
-// up to BUFFERSIZE (1436 on ESP32). A 10 KB payload guarantees multiple
-// read/write iterations through doFiletoNetwork / doNetworkToFile.
+// Multi-chunk STOR + RETR: 10 KB crosses the 1 KB transfer buffer
+// (FtpServer::BUF) several times.
 void test_large_file_round_trip() {
     FtpDial c(kCmdPort);
     assert(c.login() == 230);
@@ -463,7 +459,7 @@ void test_dele_then_retr_fails() {
     std::fprintf(stderr, "  DELE ->%d (expect 250)\n", del);
     assert(del == 250);
 
-    // Now RETR must fail. The lib's makeExistsPath sends "550 <path> not found."
+    // Now RETR must fail with 550
     pport = c.pasv();                 assert(pport > 0);
     dfd = openData(pport);            assert(dfd >= 0);
     c.send("RETR /todelete.bin");
@@ -473,16 +469,270 @@ void test_dele_then_retr_fails() {
     assert(retr == 550 && "RETR of a deleted file must return 550");
 }
 
+// ---- multi-session, passive/active modes, timeouts ----------------------
+
+// Two logged-in sessions with interleaved transfers: A's STOR stays open
+// while B runs a LIST, then A RETRs while B STORs. Each session gets its own
+// passive port, so the data connections cannot cross.
+void test_two_sessions_interleaved() {
+    FtpDial a, b;
+    assert(a.login() == 230);
+    assert(b.login() == 230);
+
+    const std::string pa = pattern(6000, 1), pb = pattern(5000, 2);
+
+    uint16_t portA = a.pasv(), portB = b.pasv();
+    std::fprintf(stderr, "  PASV A=%u B=%u\n", portA, portB);
+    assert(portA && portB && portA != portB);
+
+    int da = openData(portA);                 assert(da >= 0);
+    a.send("STOR /a.bin");                    assert(a.readCode() == 150);
+    sendAll(da, pa.substr(0, 3000));
+
+    int db = openData(portB);                 assert(db >= 0);
+    b.send("LIST");                           assert(b.readCode() == 150);
+    std::string listing = drainData(db);
+    ::close(db);
+    assert(b.readCode() == 226);
+    std::fprintf(stderr, "  B LIST during A STOR: %zu B\n", listing.size());
+
+    sendAll(da, pa.substr(3000));
+    ::close(da);
+    assert(a.readCode() == 226);
+
+    portA = a.pasv();                         assert(portA);
+    portB = b.pasv();                         assert(portB);
+    da = openData(portA);                     assert(da >= 0);
+    db = openData(portB);                     assert(db >= 0);
+    a.send("RETR /a.bin");                    assert(a.readCode() == 150);
+    b.send("STOR /b.bin");                    assert(b.readCode() == 150);
+    sendAll(db, pb.substr(0, 2500));
+    std::string gotA = drainData(da);
+    ::close(da);
+    sendAll(db, pb.substr(2500));
+    ::close(db);
+    assert(a.readCode() == 226);
+    assert(b.readCode() == 226);
+    assert(gotA == pa && "A's RETR returned wrong bytes");
+    assert(get(a, "/b.bin") == pb && "B's upload corrupted");
+}
+
+// A third and fourth connection get 421 and are closed; the two sessions
+// keep working, and a freed slot is reusable.
+void test_over_limit_421() {
+    static_assert(FtpServer::MAX_SESSIONS == 2, "test assumes two sessions");
+    FtpDial a, b;
+    assert(a.login() == 230);
+    assert(b.login() == 230);
+    {
+        FtpDial c, d;
+        int cc = c.readCode(), dc = d.readCode();
+        std::fprintf(stderr, "  3rd->%d 4th->%d (expect 421)\n", cc, dc);
+        assert(cc == 421 && dc == 421);
+        assert(c.readCode() == -2 && "over-limit connection must be closed");
+    }
+    a.send("NOOP");                           assert(a.readCode() == 200);
+    b.send("NOOP");                           assert(b.readCode() == 200);
+    assert(get(a, "/upload.bin").size() > 0);
+
+    b.send("QUIT");                           assert(b.readCode() == 221);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    FtpDial e;
+    assert(e.login() == 230 && "slot must be free after QUIT");
+}
+
+// EPSV + NLST, data connection opened after the command
+void test_epsv() {
+    FtpDial c;
+    assert(c.login() == 230);
+    uint16_t port = c.epsv();
+    std::fprintf(stderr, "  EPSV->%u\n", port);
+    assert(port == kPasvPort || port == kPasvPort + 1);
+    c.send("NLST /");                         // connect only after the command
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    int dfd = openData(port);                 assert(dfd >= 0);
+    assert(c.readCode() == 150);
+    std::string names = drainData(dfd);
+    ::close(dfd);
+    assert(c.readCode() == 226);
+    assert(names.find("upload.bin\r\n") != std::string::npos);
+    c.send("EPSV ALL");                       assert(c.readCode() == 200);
+}
+
+// Active mode: PORT and EPRT to a listener on the control peer
+void test_active_port() {
+    FtpDial c;
+    assert(c.login() == 230);
+    put(c, "/active.txt", "active mode payload\n");
+
+    for (int eprt = 0; eprt < 2; ++eprt) {
+        int l = ::socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in sa{};
+        sa.sin_family = AF_INET;
+        sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        assert(::bind(l, (sockaddr *) &sa, sizeof(sa)) == 0 && ::listen(l, 1) == 0);
+        socklen_t sl = sizeof(sa);
+        ::getsockname(l, (sockaddr *) &sa, &sl);
+        unsigned port = ntohs(sa.sin_port);
+        char cmd[64];
+        if (eprt) std::snprintf(cmd, sizeof(cmd), "EPRT |1|127.0.0.1|%u|", port);
+        else std::snprintf(cmd, sizeof(cmd), "PORT 127,0,0,1,%u,%u", port >> 8, port & 255);
+        c.send(cmd);
+        int pc = c.readCode();
+        std::fprintf(stderr, "  %s ->%d\n", cmd, pc);
+        assert(pc == 200);
+        c.send("RETR /active.txt");
+        int dfd = ::accept(l, nullptr, nullptr);
+        ::close(l);
+        assert(dfd >= 0);
+        assert(c.readCode() == 150);
+        std::string got = drainData(dfd);
+        ::close(dfd);
+        assert(c.readCode() == 226);
+        assert(got == "active mode payload\n");
+    }
+    c.send("EPRT |2|::1|5000|");              assert(c.readCode() == 522);
+    c.send("EPRT |1|10.1.2.3|5000|");         assert(c.readCode() == 501);
+    c.send("PORT 127,0,0,1,0,21");            assert(c.readCode() == 501); // privileged port
+}
+
+// PASV, then never connect: 425 after the data timeout, session survives.
+// Same for PORT to a port nobody listens on.
+void test_data_timeout() {
+    FtpDial c;
+    assert(c.login() == 230);
+    assert(c.pasv() > 0);
+    auto t0 = std::chrono::steady_clock::now();
+    c.send("LIST");
+    int code = c.readCode(5000);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    std::fprintf(stderr, "  LIST without data conn ->%d after %lld ms (expect 425)\n", code, (long long) ms);
+    assert(code == 425);
+    c.send("NOOP");                           assert(c.readCode() == 200);
+    c.send("RETR /upload.bin");               assert(c.readCode() == 425); // no PASV/PORT pending
+
+    int l = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ::bind(l, (sockaddr *) &sa, sizeof(sa));
+    socklen_t sl = sizeof(sa);
+    ::getsockname(l, (sockaddr *) &sa, &sl);
+    unsigned port = ntohs(sa.sin_port);
+    ::close(l); // refuse connections on that port
+    char cmd[64];
+    std::snprintf(cmd, sizeof(cmd), "PORT 127,0,0,1,%u,%u", port >> 8, port & 255);
+    c.send(cmd);                              assert(c.readCode() == 200);
+    c.send("LIST");                           assert(c.readCode() == 425);
+    c.send("NOOP");                           assert(c.readCode() == 200);
+}
+
+// An upload that is aborted (ABOR, or the control connection drops) must
+// leave the previous file content untouched.
+void test_aborted_upload_keeps_original() {
+    const std::string orig = "vout_max = 28.4\n";
+    {
+        FtpDial c;
+        assert(c.login() == 230);
+        put(c, "/keep.conf", orig);
+
+        uint16_t pport = c.pasv();            assert(pport > 0);
+        int dfd = openData(pport);            assert(dfd >= 0);
+        c.send("STOR /keep.conf");            assert(c.readCode() == 150);
+        sendAll(dfd, "vout_max = 9");
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        c.send("\xff\xf4\xff\xf2" "ABOR");
+        int a1 = c.readCode(), a2 = c.readCode();
+        std::fprintf(stderr, "  ABOR ->%d,%d (expect 426,226)\n", a1, a2);
+        assert(a1 == 426 && a2 == 226);
+        ::close(dfd);
+        assert(get(c, "/keep.conf") == orig && "ABOR must not touch the target");
+
+        pport = c.pasv();                     assert(pport > 0);
+        dfd = openData(pport);                assert(dfd >= 0);
+        c.send("STOR /keep.conf");            assert(c.readCode() == 150);
+        sendAll(dfd, "truncated");
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        ::close(c.fd); // drop control mid-upload
+        c.fd = -1;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        ::close(dfd);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    FtpDial c;
+    assert(c.login() == 230);
+    assert(get(c, "/keep.conf") == orig && "dropped session must not touch the target");
+    c.send("SIZE /keep.conf");                assert(c.readCode() == 213);
+}
+
+// Misc commands: FEAT, SYST, TYPE, MLST, SIZE, MDTM, RNFR/RNTO, RMD, 502, 530
+void test_misc_commands() {
+    FtpDial c;
+    assert(c.readCode() == 220);
+    c.send("FEAT");                           assert(c.readCode() == 211);
+    c.send("SYST");                           assert(c.readCode() == 215);
+    c.send("LIST");                           assert(c.readCode() == 530);
+    c.send("CWD /");                          assert(c.readCode() == 530);
+    c.send("USER nobody");                    assert(c.readCode() == 331);
+    c.send("PASS secret");                    assert(c.readCode() == 530);
+    c.send(std::string("USER ") + USER);      assert(c.readCode() == 331);
+    c.send(std::string("PASS ") + PASS);      assert(c.readCode() == 230);
+    c.send("OPTS UTF8 ON");                   assert(c.readCode() == 200);
+    c.send("TYPE I");                         assert(c.readCode() == 200);
+    c.send("TYPE X");                         assert(c.readCode() == 504);
+    c.send("XYZW");                           assert(c.readCode() == 502);
+    c.send("SITE CHMOD 777 x");               assert(c.readCode() == 502);
+    c.send(std::string(400, 'N'));            assert(c.readCode() == 500); // over-long line
+    c.send("NOOP");                           assert(c.readCode() == 200);
+    put(c, "/ren.txt", "12345");
+    c.send("SIZE /ren.txt");                  assert(c.readCode() == 213 && c.last == "213 5");
+    c.send("MDTM /ren.txt");                  assert(c.readCode() == 213 && c.last.size() == 18);
+    c.send("MLST /ren.txt");                  assert(c.readCode() == 250);
+    c.send("RNTO /x.txt");                    assert(c.readCode() == 503);
+    c.send("RNFR /ren.txt");                  assert(c.readCode() == 350);
+    c.send("RNTO /renamed.txt");              assert(c.readCode() == 250);
+    c.send("SIZE /ren.txt");                  assert(c.readCode() == 550);
+    c.send("MKD /d1");                        assert(c.readCode() == 257);
+    c.send("CWD d1");                         assert(c.readCode() == 250);
+    c.send("CDUP");                           assert(c.readCode() == 250);
+    c.send("RMD /d1");                        assert(c.readCode() == 250);
+    c.send("CWD /d1");                        assert(c.readCode() == 550);
+    c.send("RETR ../../../etc/passwd");       assert(c.readCode() == 425);
+    assert(get(c, "../../../../etc/hosts") == "<550>" && ".. must clamp at the FTP root");
+    c.send("QUIT");                           assert(c.readCode() == 221);
+}
+
+// Not logging in within the auth timeout, or idling after login, closes the session.
+void test_auth_timeout() {
+    FtpDial c;
+    assert(c.readCode() == 220);
+    c.send(std::string("USER ") + USER);      assert(c.readCode() == 331);
+    int code = c.readCode(4000);
+    std::fprintf(stderr, "  idle before login ->%d (expect 421)\n", code);
+    assert(code == 421);
+    assert(c.readCode() == -2);
+}
+
+void test_idle_timeout() {
+    FtpDial c;
+    assert(c.login() == 230);
+    c.send("NOOP");                           assert(c.readCode() == 200);
+    int code = c.readCode(4000);
+    std::fprintf(stderr, "  idle after login ->%d (expect 421)\n", code);
+    assert(code == 421);
+    assert(c.readCode() == -2);
+}
+
 // ---- subprocess harness ---------------------------------------------------
 
 struct Test {
     const char *name;
     void (*fn)();
+    FtpServer::Timeouts timeouts;
 };
 
-// Fork-per-test so an assertion (or, for buggy code, SIGSEGV in the server
-// thread shared by all subsequent tests) is reported as a single failure
-// instead of taking down later tests too. Server runs in the parent.
+// Fork-per-test so an assertion in one test is reported as a single failure.
+// The server runs in the parent.
 bool runForked(const Test &t) {
     pid_t pid = ::fork();
     if (pid < 0) { std::perror("fork"); return false; }
@@ -510,43 +760,61 @@ int main() {
     // Writing to a half-closed peer would otherwise SIGPIPE the whole binary.
     std::signal(SIGPIPE, SIG_IGN);
 
-    LittleFS.begin(true);
-    server.begin(USER, PASS);
+    char root[] = "/tmp/ftp-e2e-XXXXXX";
+    if (!::mkdtemp(root)) { std::perror("mkdtemp"); return 1; }
+    if (!server.begin(USER, PASS, root, kCmdPort, kPasvPort)) {
+        std::fprintf(stderr, "server.begin failed\n");
+        return 1;
+    }
+    std::fprintf(stderr, "root %s\n", root);
 
     std::thread t(ftpLoop);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
+    const FtpServer::Timeouts def{};
     const Test tests[] = {
-        // long_cwd_path is destructive on buggy code (stack smash in the
-        // server thread crashes the parent process too). Run it last so
-        // the other regressions still report cleanly on a buggy build.
-        {"pass_without_user",       test_pass_without_user},
-        {"malformed_port",          test_malformed_port},
-        {"port_bounce",             test_port_bounce},
-        {"cwd_dotdot_clamps",       test_cwd_dotdot_clamps_at_root},
-        {"upload_download",         test_upload_download},
-        {"large_file_round_trip",   test_large_file_round_trip},
-        {"dele_then_retr_fails",    test_dele_then_retr_fails},
-        {"mlsd_subdir",             test_mlsd_subdir},
-        {"long_cwd_path",           test_long_cwd_path},
+        {"pass_without_user",       test_pass_without_user, def},
+        {"malformed_port",          test_malformed_port, def},
+        {"port_bounce",             test_port_bounce, def},
+        {"cwd_dotdot_clamps",       test_cwd_dotdot_clamps_at_root, def},
+        {"upload_download",         test_upload_download, def},
+        {"large_file_round_trip",   test_large_file_round_trip, def},
+        {"dele_then_retr_fails",    test_dele_then_retr_fails, def},
+        {"mlsd_subdir",             test_mlsd_subdir, def},
+        {"two_sessions_interleaved", test_two_sessions_interleaved, def},
+        {"over_limit_421",          test_over_limit_421, def},
+        {"epsv",                    test_epsv, def},
+        {"active_port",             test_active_port, def},
+        {"data_timeout",            test_data_timeout, {10000, 300000, 500}},
+        {"aborted_upload_keeps_original", test_aborted_upload_keeps_original, def},
+        {"misc_commands",           test_misc_commands, def},
+        {"auth_timeout",            test_auth_timeout, {1000, 300000, 10000}},
+        {"idle_timeout",            test_idle_timeout, {10000, 1000, 10000}},
+        {"long_cwd_path",           test_long_cwd_path, def},
     };
 
-    int failures = 0;
+    int failures = 0, n = 0;
     for (const auto &t : tests) {
+        {
+            std::lock_guard<std::mutex> lk(serverMu);
+            server.timeouts = t.timeouts;
+        }
         std::fprintf(stderr, "--- %s ---\n", t.name);
         if (!runForked(t)) ++failures;
-        // SimpleFTPServer is single-client; let the server reset to listening
-        // before the next test connects.
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        ++n;
+        // let the server notice the closed sessions before the next test connects
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     running = false;
     t.join();
+    server.end();
+    std::string rm = std::string("rm -rf ") + root;
+    if (std::system(rm.c_str()) != 0) std::fprintf(stderr, "cleanup of %s failed\n", root);
 
     if (failures) {
-        std::fprintf(stderr, "%d test(s) FAILED\n", failures);
+        std::fprintf(stderr, "%d of %d test(s) FAILED\n", failures, n);
         return 1;
     }
-    std::fprintf(stderr, "ALL FTP REGRESSION TESTS PASSED\n");
+    std::fprintf(stderr, "ALL %d FTP TESTS PASSED\n", n);
     return 0;
 }

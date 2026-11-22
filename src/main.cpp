@@ -28,6 +28,9 @@
 #if WITH_FTP
 #include "tele/ftp_service.h"
 #endif
+#if WITH_HTTP_CONF
+#include "tele/http_conf_service.h"
+#endif
 #include "tele/telnet_service.h"
 #include "tele/telemetry_service.h"
 #if WITH_HA
@@ -391,6 +394,9 @@ static void registerServices() {
     g_services.registerService(&telemetryService);
 #if WITH_FTP
     g_services.registerService(&ftpService);
+#endif
+#if WITH_HTTP_CONF
+    g_services.registerService(&httpConfService);
 #endif
     g_services.registerService(&telnetService);
 #endif

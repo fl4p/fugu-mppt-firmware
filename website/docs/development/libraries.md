@@ -44,7 +44,6 @@ The following libraries are vendored as git submodules under `components/`:
 | INA226_WE | [fl4p fork](https://github.com/fl4p/INA226_WE) | INA226 backend |
 | Arduino-LiquidCrystal-I2C | [fdebrabander](https://github.com/fdebrabander/Arduino-LiquidCrystal-I2C-library) | HD44780 LCD over I²C |
 | ESPTelnet | [LennartHennigs](https://github.com/LennartHennigs/ESPTelnet) | Telnet console |
-| SimpleFTPServer | [fl4p fork](https://github.com/fl4p/SimpleFTPServer) | FTP access to the configuration |
 | SimpleCLI | [SpacehuhnTech](https://github.com/SpacehuhnTech/SimpleCLI) | Console command parser (`src/cli.cpp`) |
 | esp32-semihosting-profiler | [fl4p](https://github.com/fl4p/esp32-semihosting-profiler) | Sampling profiler (`CONFIG_FUGU_WITH_SPROFILER`) |
 

@@ -106,13 +106,25 @@ The following table lists Wi-Fi and telnet symptoms and their fixes.
 
 ## FTP
 
-When Wi-Fi is up, the FTP server exposes the littlefs partition. It accepts one connection, so set your client, such
-as FileZilla, to 1 simultaneous connection.
+When Wi-Fi is up, the FTP server exposes the littlefs partition. It serves two sessions at a time and refuses a
+third connection with `421`. FileZilla opens extra connections for transfers, so limit it to 2 simultaneous
+connections (Site Manager, Transfer Settings).
 
-Passive mode uses data port 50009, and the control port is 21. Allow both through any firewall or NAT. Credentials
-come from NVS, or from `ftp_user`/`ftp_pass` in [`ftp.conf`](../reference/config/ftp.md).
+The control port is 21. Passive mode (`PASV`, `EPSV`) uses data port 50009 for the first session and 50010 for the
+second; allow ports 21 and 50009-50010 through any firewall or NAT. Active mode (`PORT`, `EPRT`) also works, but
+only towards the client's own address. Credentials come from NVS, or from `ftp_user`/`ftp_pass` in
+[`ftp.conf`](../reference/config/ftp.md).
+
+An upload goes to a temporary file that replaces the target only when the transfer completes, so an interrupted
+upload leaves the old file intact. Sessions close after 10 s without login or 5 min without activity.
 
 To change a single value, prefer `set-config`, which needs no FTP.
+
+## HTTP
+
+Builds with `CONFIG_FUGU_WITH_HTTP_CONF` serve the config files over HTTP as well, for example
+`curl -u user:pass http://<device>/conf/`. It uses the FTP credentials and port 80; see
+[`http.conf`](../reference/config/http.md) for the endpoints and limits.
 
 ## Charging
 

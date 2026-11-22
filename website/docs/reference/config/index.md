@@ -63,6 +63,7 @@ Each file has its own reference page:
 | [`tele.conf`](tele.md) | InfluxDB telemetry |
 | [`wifi.conf`](wifi.md) | Wi-Fi credentials + roaming |
 | [`ftp.conf`](ftp.md) | FTP service |
+| [`http.conf`](http.md) | HTTP config-file service (build option) |
 | [`telnet.conf`](telnet.md) | telnet console service |
 | [`scope.conf`](scope.md) | raw ADC streaming service |
 | [`lcd.conf`](lcd.md) | status display service |

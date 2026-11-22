@@ -76,10 +76,6 @@ This round pruned unused IDF and Arduino features and fixed the build breaks tha
   `target_link_libraries(${arduino_lib} PUBLIC idf::esp_wifi …)`.
 - ESPTelnet REQUIRES esp_wifi. The root cause is the same. Here the component's own REQUIRES list was the cleanest
   place to add it.
-- SimpleFTPServer `DEFAULT_STORAGE_TYPE_ESP32=7` → PUBLIC. `FtpServerKey.h` re-resolves `STORAGE_TYPE` at every
-  include site. With `SELECTIVE_FFat=n` removing `FFat.h` from the path, consumers (main.cpp via `ftp_service.h`) need
-  the LITTLEFS define to fall through correctly. The define therefore moved from `component_compile_definitions`
-  (PRIVATE) to `target_compile_definitions(${COMPONENT_LIB} PUBLIC …)`.
 - `src/web/server.cpp` trimmed from 36 lines of dead WebServer/SPIFFS/ArduinoOTA/AsyncTCP includes around one
   `MDNS.addService(...)` call to 6 lines.
 
@@ -94,7 +90,7 @@ coil sweeps on the bench, enable it with `idf.py menuconfig` (CONFIG_FUGU_WITH_M
 Per-file `-Os` on cold libmain TUs saved ~25 KB with no measurable RT regression. The build applies
 `set_source_files_properties(... COMPILE_OPTIONS "-Os")` to
 `cli.cpp / sensor_setup.cpp / logging.cpp / util.cpp / viz/lcd.cpp / console.cpp / etc/rt.cpp / math/float16.cpp`,
-plus all `NETW_SRC` (telemetry, ftp_service, telnet_service, scope_service, mqtt, HAMqttDevice, home_assistant,
+plus all `NETW_SRC` (telemetry, ftp_service, ftp_server, telnet_service, scope_service, mqtt, HAMqttDevice, home_assistant,
 tamp_compress, web/server, etc/ota), `BLE_SRC` (console_ble, etc/ota_ble), and `measure_coil.cpp` when enabled.
 
 These files keep `-O2` (`CONFIG_COMPILER_OPTIMIZATION_PERF`): `main.cpp` (hosts `loopRT`), `mppt.cpp`

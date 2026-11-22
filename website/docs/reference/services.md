@@ -187,6 +187,7 @@ the module it wraps, and defines an `inline <Name>Service <name>Service;` instan
 |---|---|---|
 | `MqttService` | `src/tele/mqtt.h` / `mqtt.cpp` | the service *is* the MQTT module |
 | `FtpService` | `src/tele/ftp_service.h` | no |
+| `HttpConfService` | `src/tele/http_conf_service.h` | no; compiled only with `WITH_HTTP_CONF` |
 | `TelnetService` | `src/tele/telnet_service.h` | no |
 | `TelemetryService` | `src/tele/telemetry_service.h` | `mppt` (extern) |
 | `ScopeService` | `src/tele/scope_service.h` | owns the `Scope` object as a member; the global `scope` pointer aims at it |
@@ -215,7 +216,8 @@ The following table lists each service's conf file, network dependency, and hook
 |---|---|---|---|---|---|
 | `mqtt` | `mqtt.conf` | yes | release a leftover client, read conf, run the `preStart` hook (charger BMS subscriptions + `onConnected`), then `init()` (fails if the client cannot be created or started) | `close()` | — (the MQTT client runs its own task) |
 | `tele` | `tele.conf` | yes (disabled by default) | require Wi-Fi (UDP is connectionless), load the wire format, spawn the flush task (fails if it cannot be created) | delete the flush task | produce InfluxDB points (the flush task sends them) |
-| `ftp` | `ftp.conf` | yes | require Wi-Fi, then `ftpBegin()` | `ftpEnd()` | `ftpHandle()` |
+| `ftp` | `ftp.conf` | yes | require Wi-Fi, resolve credentials, listen on port 21 | close the listener and sessions | poll sockets with a zero-timeout `select()`, one command and one chunk per session |
+| `http` | `http.conf` | yes | require Wi-Fi, resolve credentials, listen on `port` | close the listener and clients | poll sockets with a zero-timeout `select()`, one chunk per connection |
 | `telnet` | `telnet.conf` | yes | require Wi-Fi, then `setupTelnet()` (fails if the server does not start) | `telnetStop()` (drops the log sink) | `telnetLoop()` |
 | `lcd` | `lcd.conf` | no (disabled by default) | `lcd.init()` if not already initialised | — | refresh the display |
 | `scope` | `scope.conf` | yes | require Wi-Fi, then begin the TCP server | end the server | accept clients, then pump (the pump blocks ~1 tick and serves as the loop's yield) |
@@ -245,7 +247,7 @@ log_level = info     # error | warn | info
 ```
 
 Defaults when the file or a key is absent: `enabled` follows the constructor's `enabledDefault`
-(true for `mqtt`, `ftp`, `telnet`, and `scope`; false for `tele`, `lcd`, `ble`, and `bsync`), and `log_level` is `info`.
+(true for `mqtt`, `ftp`, `http`, `telnet`, and `scope`; false for `tele`, `lcd`, `ble`, and `bsync`), and `log_level` is `info`.
 
 `ConfFile::add` updates these keys in place and rewrites the whole file, preserving inline and
 full-line comments and never growing the file with duplicate lines, which suits keys that are
