@@ -520,15 +520,21 @@ __attribute__((cold)) static void wireGuardConf(const ConfFile &c) {
     assert_throw(w.drMin > 0 && w.rMax >= 0, "need wire_dr_min > 0, wire_r_max >= 0");
 }
 
-static RTC_NOINIT_ATTR WireGuard::DayRtc s_wireDayRtc;
-static RTC_NOINIT_ATTR WireGuard::FitRtc s_wireFitRtc;
+// fixed address at the top of RTC slow memory (main/wire_rtc.ld)
+static WireGuard::Rtc s_wireRtc __attribute__((section(".rtc_wire")));
+// TODO drop once no device runs build 804: its copy at 0x50000004 (fit) / 0x50000024 (day)
+static RTC_NOINIT_ATTR struct {
+    WireGuard::FitRtc fit;
+    WireGuard::DayRtc day;
+} s_wireRtcOld;
 
 __attribute__((cold)) static void wireGuardLoad() {
     auto &g = mppt.charger.wireGuard;
     if (!g.conf.mode) return;
-    if (g.restoreDay(s_wireDayRtc))
+    const bool cur = s_wireRtc.magic == WireGuard::RTC_MAGIC;
+    if (g.restoreDay(cur ? s_wireRtc.day : s_wireRtcOld.day))
         ESP_LOGI("wire", "open day retained: %u Rc samples, %u sweeps", g.daySamples(), g.daySweeps());
-    if (g.restoreFit(s_wireFitRtc)) ESP_LOGI("wire", "offset regression retained");
+    if (g.restoreFit(cur ? s_wireRtc.fit : s_wireRtcOld.fit)) ESP_LOGI("wire", "offset regression retained");
     WireGuard::Blob b;
     nvs.open();
     const bool have = nvs.readBlob("wire", &b, sizeof b);
@@ -1071,8 +1077,9 @@ static void lfWireGuard(float iout) {
     static uint32_t rtcS = 0;
     if (nowS - rtcS >= 10) {
         rtcS = nowS;
-        g.saveDay(s_wireDayRtc);
-        g.saveFit(s_wireFitRtc);
+        s_wireRtc.magic = WireGuard::RTC_MAGIC;
+        g.saveDay(s_wireRtc.day);
+        g.saveFit(s_wireRtc.fit);
     }
     static uint32_t lastTryS = 0;
     if (g.saveDue(running) && (!lastTryS || nowS - lastTryS >= 600)) {

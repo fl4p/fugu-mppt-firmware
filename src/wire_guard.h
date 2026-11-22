@@ -86,7 +86,7 @@ public:
         uint8_t n, nRo, nDr, drStep, drSkip;
         bool fast, bms; // a fast-path minute, a BMS frame
     };
-    // a copy of the open day in RAM that survives a restart (RTC_NOINIT on the device)
+    // a copy of the open day in RAM that survives a restart (RTC RAM on the device)
     struct DayRtc {
         uint32_t magic;
         Day d;
@@ -99,6 +99,13 @@ public:
         uint32_t sum;
     };
     static constexpr uint32_t FIT_MAGIC = 0x57460000u | sizeof(FitRtc);
+    // the whole RTC copy; each part validates alone, new parts go at the end
+    struct Rtc {
+        uint32_t magic;
+        FitRtc fit;
+        DayRtc day;
+    };
+    static constexpr uint32_t RTC_MAGIC = 0x57520001u;
 
     WireGuardConf conf{};
     uint8_t paths = 7; // graded paths: 1 fast, 2 Rc, 4 Ro (diagnostics)

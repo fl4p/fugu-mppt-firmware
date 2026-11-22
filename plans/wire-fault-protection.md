@@ -649,3 +649,47 @@ fault (no 3-day baseline until 11-16), +6 mΩ on 11-16 (2.2 W against `wire_p_wa
 restart rebuilding the regression from post-fault data, so the `Rc` slope saw the step; a kept
 regression, like one never restarted, holds through the fault (step minutes don't enter it) and
 leaves it to the fast path. The no-restart times are 1529, 92 and 1129 min.
+
+## RTC copy at a fixed address (2026-11-22)
+
+### Finding
+
+The OTA 792 → 804 lost the open day although `DayRtc` was unchanged: adding `s_wireFitRtc` moved
+`s_wireDayRtc` from 0x50000004 to 0x50000024 (`.rtc_noinit` is filled in link order), so the new
+image read the wrong bytes and the checksum failed. Any RTC variable added, removed or reordered in
+any component shifts it again; so does `RTC_DATA_ATTR` data, which the linker places before
+`.rtc_noinit` in the same region.
+
+### Change
+
+- One struct `WireGuard::Rtc`: `magic` (`RTC_MAGIC`, layout version), `FitRtc`, `DayRtc`. Per-part
+  magic and checksum unchanged; a part that fails starts cold alone. New parts go at the end. `Fit`
+  comes first because a `Day` size change (`DAY_N`) would move everything after it.
+- `main/wire_rtc.ld` (added with `target_linker_script`, no IDF file patched) places input section
+  `.rtc_wire` as a `NOLOAD` output section at `ORIGIN(rtc_slow_seg) + LENGTH(rtc_slow_seg) − 0x200`:
+  0x50001E00 on the S3, 0x50001DE8 on the classic ESP32 (below its reserved timer/bootloader
+  block). The linker fills RTC slow memory from the bottom (`.rtc.data`, `.rtc.bss`,
+  `.rtc_noinit`, `.rtc.force_slow`), so nothing it places can move the top. Two `ASSERT`s fail the
+  link if `_rtc_force_slow_end` reaches the block or the block outgrows 0x200 B (both checked by
+  forcing them).
+- Rejected: an ldgen fragment or `SECTION_MAPPINGS(rtc_noinit)` puts it first in `.rtc_noinit`,
+  which still moves with RTC data/bss; enabling `CONFIG_ULP_COPROC_ENABLED` to reserve the bottom
+  turns on an unrelated feature.
+- Failure modes: the address moves only if the end of `rtc_slow_seg` moves (classic ESP32:
+  `CONFIG_BOOTLOADER_RESERVE_RTC_SIZE`; S3: none, its reserved block is in RTC fast memory) or the
+  0x200 is changed; the copy then fails its checks once and starts cold. A large ULP reserve or
+  RTC data growth to ~7.5 KB fails the link instead of overlapping. Moving RTC data to fast memory
+  (`CONFIG_ESP32S3_RTCDATA_IN_FAST_MEM`) does not touch the block.
+- Migration from 804: a temporary `RTC_NOINIT` struct `s_wireRtcOld` (Fit + Day, 240 B) takes the
+  place of the two old variables and lands at 0x50000004 (nm), so `s_chargerRtc` (0x500000F4),
+  the flash-probe state (0x50000108) and `.rtc.force_slow` (0x50000128, reloaded by the
+  bootloader on every non-deep-sleep reset) keep their 804 addresses too. While the new header is
+  not valid, `wireGuardLoad` restores from it, validated by the existing magic and checksums; the
+  first 10 s save writes the header. Drop `s_wireRtcOld` once no device runs 804; that update
+  shifts `s_chargerRtc` and the flash-probe state (both fail safe).
+- Firmware (esp32s3): `fugu-firmware.bin` 1 722 016 B unchanged (`.flash.text` +8 B), `.rtc_noinit`
+  unchanged (0x128), `.rtc_wire` +244 B; net +4 B RTC once the migration struct is dropped.
+- nm, base: `s_wireFitRtc` 0x50000004, `s_wireDayRtc` 0x50000024. New: `s_wireRtc` 0x50001E00 (244 B);
+  with dummy `RTC_NOINIT_ATTR` arrays in `main.cpp` (52 B) and `util.cpp` (28 B) plus an
+  `RTC_DATA_ATTR` array (20 B): `s_wireRtcOld` 0x50000004 → 0x5000004C, `s_wireRtc` still 0x50001E00.
+- Host test passes; the replay is byte-identical to main (OTA and real restarts, c1..c9 data).
