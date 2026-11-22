@@ -1116,12 +1116,15 @@ function createCard(dev){
   const bar = el("div", "logbar");
   const toggle = (cls, text) => {
     const lab = el("label"); const cb = el("input", cls + "-toggle"); cb.type = "checkbox";
-    cb.onchange = () => c.classList.toggle("show-" + cls, cb.checked);
+    cb.onchange = () => { c.classList.toggle("show-" + cls, cb.checked); logPin(log); };
     lab.append(cb, document.createTextNode(" " + text));
     return lab;
   };
   bar.append(el("span", null, "log"), el("span", "spacer"), toggle("st", "status lines"), toggle("sc", "sc: lines"));
   const log = el("div", "log");
+  log.stick = true;
+  log.onscroll = () => { if (log.clientHeight) log.stick = log.scrollHeight - log.clientHeight - log.scrollTop < 4; };
+  new ResizeObserver(() => logPin(log)).observe(log);
   const form = el("form", "console");
   const inp = el("input"); inp.placeholder = "console command"; inp.spellcheck = false; inp.autocomplete = "off";
   form.append(inp);
@@ -1362,7 +1365,7 @@ function createChart(dev){
 }
 
 /* Vin over the last VIN.span ms, newest sample at the right edge; last sample per VIN.slot ms */
-const VIN = { w:320, h:60, l:34, r:10, t:5, b:14, span:30000, slot:100 };
+const VIN = { w:320, h:60, l:34, r:10, t:5, b:14, span:30000, slot:100, minV:4 };
 
 function createVinChart(){
   const w = el("div", "vinwrap");
@@ -1392,7 +1395,7 @@ function renderVin(dev){
   pts.reverse();
   let lo = Infinity, hi = -Infinity;
   for (const p of pts){ lo = Math.min(lo, p.V); hi = Math.max(hi, p.V); }
-  if (hi - lo < 1e-6){ lo -= 1; hi += 1; } else { const m = (hi - lo) * 0.05; lo -= m; hi += m; }
+  { const m = Math.max((hi - lo) * 0.05, (VIN.minV - (hi - lo)) / 2); lo -= m; hi += m; }
   const yd = niceTicks(lo, hi, 3);
   const X = (ts) => VIN.l + (ts - t0) / VIN.span * (VIN.w - VIN.l - VIN.r);
   const Y = (v) => VIN.h - VIN.b - (v - yd.lo) / (yd.hi - yd.lo) * (VIN.h - VIN.t - VIN.b);
@@ -1544,7 +1547,6 @@ function renderLog(dev){
   const box = q(dev, ".log");
   if (dev.logReset){ box.replaceChildren(); dev.logReset = false; dev.logNew = dev.log.a.slice(-LOG_SHOW); }
   if (!dev.logNew.length) return;
-  const atBottom = box.scrollHeight - box.clientHeight - box.scrollTop < 4;
   const frag = document.createDocumentFragment();
   for (const e of dev.logNew){
     const d = el("div", e.cls || null);
@@ -1555,7 +1557,12 @@ function renderLog(dev){
   dev.logNew = [];
   box.append(frag);
   while (box.childElementCount > LOG_SHOW) box.firstElementChild.remove();
-  if (atBottom) box.scrollTop = box.scrollHeight;
+  logPin(box);
+}
+
+function logPin(box){
+  if (box.clientHeight && box.scrollHeight <= box.clientHeight) box.stick = true;
+  if (box.stick) box.scrollTop = box.scrollHeight;
 }
 
 async function consoleSend(dev, cmd){

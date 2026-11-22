@@ -187,6 +187,7 @@ async function loadDash({ storage = {}, bluetooth = makeFakeBluetooth(), mqtt = 
     beforeParse(window) {
       window.TextEncoder = TextEncoder;
       window.TextDecoder = TextDecoder;
+      window.ResizeObserver = class { observe(){} disconnect(){} };
       if (!url.startsWith('file:')) for (const [k, v] of Object.entries(storage)) window.localStorage.setItem(k, v);
       window.WebSocket = ws.WebSocket;
       if (bluetooth) Object.defineProperty(window.navigator, 'bluetooth', { value: bluetooth, configurable: true });

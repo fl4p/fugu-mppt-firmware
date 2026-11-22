@@ -489,10 +489,12 @@ test('log keeps 100 rows and tail-follows only at the bottom', async () => {
   assert.equal(box.childElementCount, 100);
   assert.equal(box.firstElementChild.textContent, 'line 50');
   fakeScrollGeometry(box, { scrollHeight: 1000, clientHeight: 100, scrollTop: 200 });
+  box.dispatchEvent(new window.Event('scroll'));
   log(client, 'fry', ['more']);
   Dash.flush();
   assert.equal(box.scrollTop, 200);
   fakeScrollGeometry(box, { scrollHeight: 1000, clientHeight: 100, scrollTop: 900 });
+  box.dispatchEvent(new window.Event('scroll'));
   log(client, 'fry', ['more2']);
   Dash.flush();
   assert.equal(box.scrollTop, 1000);

@@ -116,3 +116,43 @@ test('charger state in the header with its colour, extras under the KPIs', async
   expect(st.below).toBe(true);
   expect(errs).toEqual([]);
 });
+
+test('log opens scrolled to the bottom when shown after lines arrived hidden', async ({ page }) => {
+  await gotoDash(page);
+  await page.evaluate(() => {
+    window.Dash.ingestTele('demo', new Uint8Array(0));
+    const dev = window.Dash.getDevice('demo');
+    for (let i = 0; i < 150; i++) window.Dash.onLine(dev, 'line ' + i, 'test');
+    window.Dash.flush();
+  });
+  const log = page.locator('.card[data-host="demo"] .log');
+  await expect(log).toBeHidden();
+  await page.locator('#console-toggle').check();
+  await expect(log).toBeVisible();
+  await expect.poll(() => log.evaluate(b => b.scrollHeight - b.clientHeight - b.scrollTop)).toBeLessThan(4);
+  expect(await log.evaluate(b => b.scrollHeight > b.clientHeight)).toBe(true);
+});
+
+test('log follows again after a line filter makes it fit while scrolled to the top', async ({ page }) => {
+  await gotoDash(page);
+  await page.locator('#console-toggle').check();
+  await page.evaluate(() => {
+    window.Dash.ingestTele('demo', new Uint8Array(0));
+    const dev = window.Dash.getDevice('demo');
+    for (let i = 0; i < 60; i++) window.Dash.onLine(dev, 'sc: ' + i, 'test');
+    for (let i = 0; i < 3; i++) window.Dash.onLine(dev, 'line ' + i, 'test');
+    window.Dash.flush();
+  });
+  const card = page.locator('.card[data-host="demo"]');
+  const log = card.locator('.log');
+  await card.locator('.sc-toggle').check();
+  await log.evaluate(b => { b.scrollTop = 0; });
+  await expect.poll(() => log.evaluate(b => b.stick)).toBe(false);
+  await card.locator('.sc-toggle').uncheck();
+  await page.evaluate(() => {
+    const dev = window.Dash.getDevice('demo');
+    for (let i = 0; i < 40; i++) window.Dash.onLine(dev, 'more ' + i, 'test');
+    window.Dash.flush();
+  });
+  await expect.poll(() => log.evaluate(b => b.scrollHeight - b.clientHeight - b.scrollTop)).toBeLessThan(4);
+});
