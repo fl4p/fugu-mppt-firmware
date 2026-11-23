@@ -24,13 +24,15 @@ You can read and change the configuration in these ways:
 - `del-config <file>.conf <key>` removes a value.
 - FTP works when Wi-Fi is up (1 connection; passive mode, data port 50009, works from the same
   subnet only), or use `etc/config-tool/conf-tool.py`.
-- The single-page editor `etc/config-tool/conf-editor.html` connects via serial or BLE or reads
-  uploaded files, and exports a zip file.
+- The [config editor](../config-editor.md) is a browser page that reads a device's configuration
+  over USB serial, Bluetooth or MQTT (or from a file, archive or board preset), shows every key with
+  its unit, default and description, and writes only the changes back. It also lists services and
+  runs self-tests and measurements. Open the [hosted copy](pathname:///tools/conf-editor.html).
 - `./provision.py <board>` writes a whole `config/<board>` image to the littlefs partition.
 
 ## When changes take effect
 
-`set-config` only rewrites the file. What applies the new value depends on the file:
+`set-config` only rewrites the file (the config editor shows for each change when it takes effect). What applies the new value depends on the file:
 
 - `board`, `sensor`, `limits`, `coil`, `converter`, `charger`, and `tracker` are read at boot, so
   reboot after `set-config`. Console verbs (`vset`, `iset`, `dt`, `pwm-freq`, …) change RAM only.
