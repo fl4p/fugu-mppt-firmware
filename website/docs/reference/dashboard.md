@@ -30,10 +30,13 @@ Each converter gets a card, keyed by its hostname:
   minutes are drawn faded, and the line breaks where neighbouring bins are more than 2 V apart. The power axis grows to the highest plotted value and does not shrink until a new sweep curve arrives or the refresh button is pressed, which start it over.
 - **Input voltage, last 30 s**: a small chart under the sweep curve with the input voltage of the last 30 s of
   telemetry (the last sample of each 0.1 s), the newest sample at the right edge and the current value in its
-  caption. The voltage axis spans the window's minimum to maximum plus 5 %. Hidden until telemetry arrives.
+  caption. The voltage axis spans the window's minimum to maximum plus 5 %, and at least 4 V around the data so
+  noise stays a thin band. Hidden until telemetry arrives.
 - **Log tail and console**: the device console log, including the replies to commands sent from the page,
   and an input line that sends a command to the device over the active link. Both are hidden until the
   **log & console** checkbox in the header is ticked; the page remembers the setting in this browser.
+  The log opens at its newest line and follows new lines while scrolled to the bottom; scrolling up stops
+  following until it is back at the bottom.
   The periodic `V=…` status lines and the `sc:` curve dumps are hidden unless the card's **status lines**
   and **sc: lines** checkboxes are ticked.
 - **Live values from the status line**: the periodic `V=…` status line in the device log also updates power,
