@@ -1962,6 +1962,32 @@ static void cmdHoliday(cmd *c) {
              chg.ceiling() * 100.f);
 }
 
+static void balanceLine(char *b, size_t n) {
+    auto &chg = mppt.charger;
+    const auto &p = chg.params;
+    const char *why = chg.balanceDeferWhy();
+    if (!p.balance_interval_s) snprintf(b, n, "balance off");
+    else if (!chg.balanceDue()) snprintf(b, n, "balance in %.1fd", (p.balance_interval_s - chg.balanceAgeS()) / 86400.f);
+    else snprintf(b, n, "balance due (%s) %u/%lus", chg.balanceRunning() ? "running" : why ? why : "next charge",
+                  (unsigned) chg.balanceInBandS(), (unsigned long) p.balance_hold_s);
+}
+
+// balance [now|skip] — top-balancing run state; make it due now, or mark it done
+static void cmdBalance(cmd *c) {
+    Command cc(c);
+    auto &chg = mppt.charger;
+    if (cc.countArgs() >= 1) {
+        auto arg = cc.getArg(0).getValue();
+        if (!chg.params.balance_interval_s || (arg != "now" && arg != "skip"))
+            CMD_FAIL_RETURN("balance now|skip, needs balance_interval");
+        arg == "now" ? chg.balanceNow() : chg.balanceSkip();
+        return;
+    }
+    char b[64];
+    balanceLine(b, sizeof b);
+    UART_LOG("%s", b);
+}
+
 // status  — charger/battery snapshot: termination state, effective limits, termination line and BMS feed.
 // latched HS-short state, short
 static const char *hsStateStr(char *b, size_t n) {
@@ -1983,8 +2009,12 @@ static void cmdStatus(cmd *) {
     bool vcOk = bs.haveValidCellVoltage();
     uint32_t ageS = bs.vcell_high > 0 ? coarseTicksToSec(bs.cellAgeTicks()) : 0;
 
-    char hold[32];
-    snprintf(hold, sizeof(hold), "CV HOLD (%lus, pin %.2fV)", (unsigned long) chg.termCond.cvHoldS(), chg.Vout_max());
+    char hold[64];
+    if (chg.balanceRunning())
+        snprintf(hold, sizeof(hold), "CV HOLD balance (%u/%lus, pin %.2fV)", (unsigned) chg.balanceInBandS(),
+                 (unsigned long) p.balance_hold_s, chg.Vout_max());
+    else
+        snprintf(hold, sizeof(hold), "CV HOLD (%lus, pin %.2fV)", (unsigned long) chg.termCond.cvHoldS(), chg.Vout_max());
     UART_LOG("Charger: %s", (bool) chg.termCond ? "TERMINATED (float)"
                             : chg.chargeBlocked() ? "BLOCKED (pack cold)"
                             : chg.partialHold() ? "PARTIAL HOLD (load-following)"
@@ -2019,6 +2049,11 @@ static void cmdStatus(cmd *) {
                  chg.holiday() ? "ON" : "off", HOLIDAY_MODES[chg.holidayOverride()], (unsigned) chg.holidayStreak(),
                  (unsigned) p.holiday_days, (unsigned) chg.holidayGaps(), chg.holidayDischargeH(), chg.holidayMeanA(),
                  p.holiday_ibat);
+    if (p.balance_interval_s) {
+        char b[64];
+        balanceLine(b, sizeof b);
+        UART_LOG("  %s", b);
+    }
     if (chg.haveTemp())
         UART_LOG("  pack temp %.1f..%.1f°C (%lus ago)  charge min %.0f derate %.0f max %.0f°C",
                  chg.tempMin(), chg.tempMax(), (unsigned long) chg.tempAgeS(),
@@ -2586,6 +2621,7 @@ void setupCli() {
 #endif
     cli.addCommand("status", cmdStatus);
     cli.addBoundlessCmd("holiday", cmdHoliday); // holiday [auto|on|off]
+    cli.addBoundlessCmd("balance", cmdBalance); // balance [now|skip]
     cli.addCommand("wire", cmdWire);
     cli.addCommand("wire-reset", cmdWireReset);
 

@@ -478,8 +478,9 @@ After a power loss, or while the data are stale, the charger charges to full.
 
 The temperature limits need a configured BMS temperature topic. Each sensor expires one hour
 after its last report, and with no fresh sensor the temperature policy is off.
-`full_charge_interval` schedules a full charge. Whether the BMS balances the cells during it
-depends on the BMS's own balancing conditions.
+With `partial_charge` or `holiday_charge` set, `full_charge_interval` schedules a full charge.
+Whether the BMS balances the cells during it depends on the BMS's own balancing conditions;
+`balance_interval` schedules a longer hold at the top for an active balancer.
 
 The following table lists each setting with its default from
 [`charger.conf`](../reference/config/charger.md), what the evidence says about it, and how strong
@@ -494,6 +495,7 @@ that evidence is.
 | `partial_charge` | 0 (off) | The direction is well supported: lower average SoC ages LFP/graphite more slowly in calendar storage [[1](#ref-1), [3](#ref-3), [6](#ref-6)] and in low-rate cycling [[2](#ref-2)]. The best ceiling is cell-specific: the calendar step lay at 73 % SoC in the LFP cell of [[1](#ref-1)] and depends on electrode balancing; it has not been measured for large prismatic cells. The manufacturer's recommended range is 10–90 % [[8](#ref-8)]. Charging stops at `partial_charge` and resumes once the pack has discharged `recharge_dod` below it; prerequisites above. | high for the direction, low for any particular number |
 | `holiday_charge` | 0 (off) | Applies a ceiling automatically after `holiday_days` days in a row whose mean discharge current stays below `holiday_ibat` (a pack that barely cycles); the same calendar-aging evidence as for `partial_charge` applies. With `holiday_charge` = 0.6 and `holiday_band` = 0.1 the pack cycles at about 50–60 % SoC: between 37.5 and 62.5 % SoC storage fade hardly differed [[3](#ref-3)], and the band stays below the step near 70 % SoC [[1](#ref-1)] (see [§3.1](#31-soc-steps)) with several days of base-load reserve. The detection thresholds are engineering choices. | high for the direction, none for the thresholds |
 | `full_charge_interval` | 7 d | Full charges are needed for BMS balancing (subject to the BMS's own conditions) and to re-zero the Ah counter. No reviewed source addresses how often an LFP pack needs one. | none (engineering choice) |
+| `balance_interval` | 0 (off) | Each run holds the highest cell near `cv_eoc` for `balance_hold_s` (default 2 h, summed over sessions, one session at most twice that), the time at the top that drives aging ([§5.2](#52-time-at-the-top), [§5.3](#53-float-and-cv-holds)), so runs are infrequent (about monthly) and bounded. They are deferred above 35 °C, the top of the manufacturer's storage range [[8](#ref-8)], because heat multiplies the aging at high SoC ([§6.1](#61-heat)). No reviewed source addresses how often or how long an active balancer needs the pack at the top. | none (engineering choice) |
 | `ibat_max` | 20 A | At or below 0.5 C, charge rate had little influence on aging in [[4](#ref-4)], and at low rates calendar aging dominated [[5](#ref-5)]. Stay at or below the manufacturer's 0.5 C standard charge [[8](#ref-8)]. | medium; transfer to large prismatic cells assumed |
 | `bat_temp_min` | 0 °C | The manufacturer's lower charge limit [[8](#ref-8)]; plating and a drastic loss of cycle life below 0 °C [[20](#ref-20), [21](#ref-21)]. Acts only with fresh BMS temperature reports. | high |
 | `bat_temp_derate` / `bat_temp_max` | 45 / 55 °C | 55 °C is the manufacturer's upper charge limit, and rated cycle life at 45 °C is less than half that at 25 °C [[8](#ref-8)]; calendar fade also rises steeply with temperature [[1](#ref-1), [6](#ref-6)]. Acts only with fresh BMS temperature reports. | medium |

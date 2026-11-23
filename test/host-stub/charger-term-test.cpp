@@ -12,6 +12,16 @@ using std::max;
 #include "charger.h"
 
 time_us loopWallClockUs_ = 0;
+MqttService MQTT;
+void MqttService::subscribeTopic(const std::string &, MqttMsgCallback) {}
+bool MqttService::init(const ConfFile &) { return true; }
+void MqttService::close() {}
+bool MqttService::onStart() { return false; }
+void MqttService::onStop() {}
+void MqttService::onTick() {}
+void MqttService::_handleEvent(esp_event_base_t, int32_t, void *) {}
+void MqttService::_invokeForTest(const std::string &, const char *, int) {}
+float strntof(const char *dat, int len) { return strtof(std::string(dat, len).c_str(), nullptr); }
 volatile uint32_t loopWallTicks_ = 0;
 
 static int g_fail = 0;
@@ -384,7 +394,362 @@ static void test_hold_psu_freezes_pin() {
     CHECK(c.Vout_max() == pin, "psu mode: hold pin frozen %.3f -> %.3f", pin, c.Vout_max());
 }
 
+// ---- top balancing ----
+
+static BatChargerParams balParams(uint32_t holdS = 1800, uint32_t maxS = 0) {
+    BatChargerParams p = holdParams(maxS);
+    p.balance_interval_s = 30 * 86400;
+    p.balance_hold_s = holdS;
+    return p;
+}
+
+static void tick(BatteryCharger &c, float vout = 27.5f) {
+    setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
+    c.update(vout, 0.f, true);
+}
+
+// frames() helper reaching the hold: warm-up below the line, then 2 frames above it
+static void enterHold(BatteryCharger &c) {
+    frames(c, 3.45f, 30.f, 10, true);
+    frames(c, 3.52f, 30.f, 2, true);
+}
+
+static void test_bal_not_due_normal() {
+    for (uint32_t maxS: {0u, 5400u}) {
+        BatteryCharger c; c.params = balParams(1800, maxS); setWallClockUs(1'000'000ULL);
+        c.termCond.reset();
+        CHECK(!c.balanceDue() && c.balanceAgeS() < 5, "boot: unknown age counts from boot, not due (age %u)",
+              c.balanceAgeS());
+        Plant pl;
+        pl.untilHold(c);
+        if (!maxS) CHECK((bool) c.termCond && !c.termCond.cvHold(), "not due, hold off: latched on the line");
+        else {
+            CHECK(c.termCond.cvHold() && !c.balanceRunning(), "not due: regular hold");
+            for (int s = 0; s < 7200 && !(bool) c.termCond; s += 12) pl.run(c, 12);
+            CHECK((bool) c.termCond && c.termCond.cvHoldS() == 0, "not due: tail latches as before");
+        }
+        CHECK(c.balanceInBandS() == 0, "not due: no in-band time counted");
+    }
+    BatteryCharger c; c.params = balParams(); c.params.balance_interval_s = 86400; setWallClockUs(1'000'000ULL);
+    tick(c);
+    CHECK(!c.balanceDue(), "1 d interval: not due at boot");
+    setWallClockUs(loopWallClockUs_ + 86400ULL * 1000000ULL);
+    tick(c);
+    CHECK(c.balanceDue(), "1 d interval: due a day after boot");
+}
+
+static void test_bal_completes() {
+    BatteryCharger c; c.params = balParams(7200); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    c.balanceNow();
+    tick(c);
+    CHECK(c.balanceDue(), "balance now: due");
+    Plant pl;
+    int k = pl.untilHold(c);
+    CHECK(k >= 0 && c.termCond.cvHold() && c.balanceRunning(), "hold entered with cv_hold_max_s = 0");
+    int inBand = 0, tail = 0, tailMax = 0, held = 0;
+    float vmax = 0, vmin = 9;
+    while (!(bool) c.termCond && held < 20000) {
+        pl.run(c, 1);
+        ++held;
+        if (pl.vcell() >= 3.48f) ++inBand;
+        if (held > 600) { vmax = std::max(vmax, pl.vcell()); vmin = std::min(vmin, pl.vcell()); }
+        tail = pl.ibat < 14.f ? tail + 1 : 0;
+        tailMax = std::max(tailMax, tail);
+    }
+    printf("  balance: latched after %d s (cell in band ~%d s, tail streak %d s, cell %.3f..%.3f)\n", held, inBand,
+           tailMax, vmin, vmax);
+    CHECK((bool) c.termCond && !c.termCond.cvHold(), "run latched");
+    CHECK(tailMax > 1000, "tail exit ignored during the run (tail streak %d s)", tailMax);
+    CHECK(held >= 7200 && inBand >= 7200 - 30 && held <= 7200 + 600, "completes at balance_hold_s: %d s, %d in band",
+          held, inBand);
+    CHECK(vmax <= 3.5f + 0.02f && vmin >= 3.5f - 0.02f, "cell held at cv_eoc +- band: %.3f..%.3f", vmin, vmax);
+    CHECK(!c.balanceDue() && c.balanceAgeS() < 15 && c.balanceInBandS() == 0, "done: age 0, progress 0 (age %u)", c.balanceAgeS());
+    CHECK(c.batSt.coulombCounter.updateDepth() < 1.f, "completion marks full");
+    pl.run(c, 60);
+    CHECK(c.Vout_max() <= 26.8f + 0.02f, "float after the run: %.3f", c.Vout_max());
+}
+
+static void test_bal_progress_survives_sun_gone_and_cap() {
+    BatteryCharger c; c.params = balParams(1800); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    c.balanceNow();
+    Plant pl;
+    pl.untilHold(c);
+    pl.run(c, 600);
+    pl.ipv[0] = 0.f; pl.iload = 5.f; pl.voc = 3.33f; // sun gone
+    pl.run(c, 12 * 6);
+    CHECK(!(bool) c.termCond && !c.termCond.cvHold(), "sun gone: hold left, not terminated");
+    uint32_t p1 = c.balanceInBandS();
+    CHECK(p1 > 450 && p1 <= 600 + 12, "first session in band %u s", p1);
+    pl.run(c, 3600);
+    CHECK(c.balanceInBandS() == p1 && c.balanceDue(), "progress kept overnight: %u s", c.balanceInBandS());
+    pl.ipv[0] = 35.f; pl.iload = 0.f; pl.voc = 3.40f; // next day
+    pl.untilHold(c, 7200);
+    CHECK(c.balanceRunning(), "next day: run resumes");
+    int held = 0;
+    while (!(bool) c.termCond && held < 5000) { pl.run(c, 1); ++held; }
+    CHECK((bool) c.termCond && !c.balanceDue(), "completes in the second session");
+    CHECK(held >= (int) (1800 - p1) - 5 && held < (int) (1800 - p1) + 300, "second session %d s, needed %u s", held,
+          1800 - p1);
+
+    // session cap: PV-limited under a load, the cell sits below the band
+    BatteryCharger d; d.params = balParams(1800); setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
+    d.termCond.reset();
+    d.balanceNow();
+    Plant q;
+    q.untilHold(d);
+    q.iload = 30.f;
+    held = 0;
+    while (!(bool) d.termCond && held < 8000) { q.run(d, 1); ++held; }
+    uint32_t p2 = d.balanceInBandS();
+    printf("  session cap after %d s, %u s in band\n", held, p2);
+    CHECK((bool) d.termCond && held > 3400 && held < 3700, "session capped at 2 balance_hold_s (%d s)", held);
+    CHECK(d.balanceDue() && p2 < 1800, "cap keeps the run pending (%u s in band)", p2);
+    CHECK(d.batSt.coulombCounter.updateDepth() < 1.f, "cap terminates as a normal full");
+}
+
+static void test_bal_delta() {
+    for (int variant = 0; variant < 4; ++variant) {
+        BatteryCharger c; c.params = balParams(7200); setWallClockUs(1'000'000ULL);
+        c.termCond.reset();
+        c.balanceNow();
+        enterHold(c);
+        CHECK(c.balanceRunning(), "delta %d: run", variant);
+        int n = 0;
+        for (; n < 60 && !(bool) c.termCond; ++n) {
+            float vc = variant == 3 ? 3.45f : 3.50f; // 3: out of band
+            if (variant == 0 || variant == 3 || (variant == 1 && n == 0)) c.batSt.setCellDelta(0.005f);
+            if (variant == 2) c.batSt.setCellDelta(n % 2 ? 0.005f : 0.02f); // never 3 in a row
+            frames(c, vc, 10.f, 1, true);
+        }
+        if (variant == 0) CHECK((bool) c.termCond && n <= 5 && !c.balanceDue(), "delta: early finish after %d frames", n);
+        else CHECK(!(bool) c.termCond && c.balanceDue(), "delta %d: no early finish (%d frames)", variant, n);
+    }
+    BatteryCharger c; c.params = balParams(7200); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    c.balanceNow();
+    enterHold(c);
+    for (int n = 0; n < 5; ++n) { c.batSt.setCellDelta(NAN); frames(c, 3.50f, 10.f, 1, true); }
+    CHECK(!(bool) c.termCond && c.balanceDue(), "NAN delta is not balanced");
+}
+
+static void test_bal_defer() {
+    for (int why = 0; why < 2; ++why) {
+        BatteryCharger c; c.params = balParams(1800);
+        if (!why) { c.params.holiday_charge = 0.6f; c.params.holiday_ibat = 1.f; }
+        setWallClockUs(1'000'000ULL);
+        c.termCond.reset();
+        c.balanceNow();
+        enterHold(c);
+        CHECK(c.balanceRunning(), "defer %d: running", why);
+        frames(c, 3.50f, 10.f, 30, true);
+        uint32_t p = c.balanceInBandS();
+        if (!why) c.setHolidayOverride(1);
+        else c.batSt.setTemp(0, 36.f);
+        frames(c, 3.50f, 10.f, 2, true);
+        CHECK(!c.balanceRunning() && !c.termCond.cvHold() && c.balanceDue(), "defer %d: hold ended", why);
+        CHECK((bool) c.termCond && c.batSt.coulombCounter.updateDepth() < 1.f, "defer %d: normal full", why);
+        CHECK(c.balanceDeferWhy() != nullptr, "defer %d: reason given", why);
+        frames(c, 3.50f, 10.f, 10, true);
+        CHECK(c.balanceInBandS() <= p + 4, "defer %d: progress kept, not counting (%u -> %u)", why, p, c.balanceInBandS());
+        if (why) {
+            c.batSt.setTemp(0, 34.f);
+            frames(c, 3.40f, 10.f, 1, true);
+            CHECK(c.balanceDeferWhy() != nullptr, "34 °C: still warm (hysteresis)");
+            c.batSt.setTemp(0, 32.f);
+            frames(c, 3.40f, 10.f, 1, true);
+            CHECK(c.balanceDeferWhy() == nullptr, "32 °C: may run again");
+        }
+    }
+    BatteryCharger c; c.params = balParams(1800); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    c.balanceNow();
+    c.batSt.setTemp(0, 40.f);
+    enterHold(c);
+    CHECK((bool) c.termCond && !c.termCond.cvHold(), "warm pack: no run, normal termination");
+    c.batSt.setTemp(0, NAN);
+    tick(c);
+    CHECK(c.balanceDeferWhy() == nullptr, "no fresh temperature: not deferred on temperature");
+}
+
+static void test_bal_ceiling_and_stale() {
+    BatteryCharger c; c.params = balParams(1800); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    c.balanceNow();
+    enterHold(c);
+    frames(c, 3.50f, 10.f, 20, true);
+    uint32_t p = c.balanceInBandS();
+    frames(c, 3.56f, 10.f, 2, true);
+    CHECK((bool) c.termCond && c.balanceDue() && c.balanceInBandS() >= p, "ceiling latches, run stays pending");
+
+    BatteryCharger d; d.params = balParams(1800); setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
+    d.termCond.reset();
+    d.balanceNow();
+    enterHold(d);
+    frames(d, 3.50f, 10.f, 20, true);
+    p = d.balanceInBandS();
+    for (int s = 0; s < 400; ++s) tick(d); // cell + ibat frames stop
+    CHECK((bool) d.termCond && d.balanceDue() && d.balanceInBandS() <= p + 64, "stale: latched, run pending (%u -> %u)",
+          p, d.balanceInBandS());
+    CHECK(d.balanceDeferWhy() != nullptr, "stale: deferred");
+}
+
+static void test_bal_partial_hold_suspended() {
+    BatteryCharger c; c.params = balParams(); c.params.partial_charge = 0.8f; setWallClockUs(1'000'000ULL);
+    latch(c, true);
+    c.termCond.reset();
+    frames(c, 3.34f, 0.f, 5, true);
+    CHECK(c.partialHold(), "partial hold after a full");
+    c.balanceNow();
+    frames(c, 3.34f, 0.f, 2, true);
+    CHECK(!c.partialHold(), "balance due: partial ceiling suspended");
+    c.balanceSkip();
+    frames(c, 3.34f, 0.f, 2, true);
+    CHECK(c.partialHold() && !c.balanceDue(), "skipped: partial hold again");
+}
+
+static void test_bal_rtc() {
+    ChargerRtc r{};
+    BatteryCharger a; a.params = balParams(1800);
+    a.params.holiday_charge = 0.6f; a.params.holiday_ibat = 1.f;
+    setWallClockUs(1'000'000ULL);
+    a.attachRtc(&r);
+    a.termCond.reset();
+    a.setHolidayOverride(2);
+    a.balanceNow();
+    enterHold(a);
+    frames(a, 3.50f, 10.f, 25, true);
+    uint32_t p = a.balanceInBandS();
+    CHECK(r.valid() && r.balValid() && r.magic == 0x48444c32, "saved, v2 prefix intact");
+    CHECK(r.balAgeS == UINT32_MAX && r.balInBandS == p, "forced + progress saved");
+
+    BatteryCharger b; b.params = balParams(1800); b.params.holiday_charge = 0.6f; b.params.holiday_ibat = 1.f;
+    b.attachRtc(&r);
+    CHECK(b.holidayOverride() == 2 && b.balanceInBandS() == p, "restored: holiday override, progress %u", b.balanceInBandS());
+    tick(b);
+    CHECK(b.balanceDue(), "restored: still forced due");
+
+    BatteryCharger e; e.params = balParams(1800);
+    setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
+    e.attachRtc(&r);
+    tick(e);
+    e.balanceSkip();
+    tick(e);
+    setWallClockUs(loopWallClockUs_ + 10ULL * 86400ULL * 1000000ULL);
+    tick(e);
+    BatteryCharger f; f.params = balParams(1800);
+    f.attachRtc(&r);
+    CHECK(f.balanceAgeS() >= 10 * 86400 && !f.balanceDue(), "age restored: %u s", f.balanceAgeS());
+
+    // v2 layout (older build): holiday restored, balance unknown (from boot)
+    ChargerRtc o{};
+    o.magic = ChargerRtc::MAGIC; o.fullAgeS = 3600; o.bmsRef = NAN; o.holiday = 1; o.override_ = 1;
+    o.sum = o.checksum();
+    o.balMagic = 0xdeadbeef; o.balAgeS = 5; o.balInBandS = 1234; o.balSum = 7;
+    BatteryCharger g; g.params = balParams(1800); g.params.holiday_charge = 0.6f; g.params.holiday_ibat = 1.f;
+    g.attachRtc(&o);
+    CHECK(g.holidayOverride() == 1 && g.balanceInBandS() == 0, "v2: holiday kept, no balance progress");
+}
+
+static void test_bal_two_units() {
+    BatteryCharger a, b; a.params = balParams(3600); b.params = balParams(3600); setWallClockUs(1'000'000ULL);
+    a.termCond.reset(); b.termCond.reset();
+    a.balanceNow(); b.balanceNow();
+    Plant pl;
+    pl.ipv[0] = 25.f; pl.ipv[1] = 25.f;
+    BatteryCharger *u[2] = {&a, &b};
+    for (int k = 0; k < 3600 && !(a.balanceRunning() && b.balanceRunning()); ++k) pl.run(u, 2, 1);
+    CHECK(a.balanceRunning() && b.balanceRunning(), "both run");
+    pl.run(u, 2, 600);
+    float vmax = 0, vmin = 9;
+    int s = 0;
+    for (; s < 6000 && !((bool) a.termCond && (bool) b.termCond); s += 12) {
+        pl.run(u, 2, 12);
+        if (!(bool) a.termCond) { vmax = std::max(vmax, pl.vcell()); vmin = std::min(vmin, pl.vcell()); }
+    }
+    printf("  two units balance: cell %.3f..%.3f, both latched %d s later\n", vmin, vmax, s);
+    CHECK(vmax <= 3.5f + 0.02f && vmin >= 3.5f - 0.02f, "two units hold cv_eoc +- band: %.3f..%.3f", vmin, vmax);
+    CHECK((bool) a.termCond && (bool) b.termCond && !a.balanceDue() && !b.balanceDue(), "both complete");
+}
+
+// a reboot mid-hold must not restart the session cap (cell just below the band: no progress)
+static void test_bal_cap_survives_reboot() {
+    ChargerRtc r{};
+    setWallClockUs(1'000'000ULL);
+    uint32_t total = 0;
+    bool capped = false;
+    for (int boot = 0; boot < 3 && !capped; ++boot) {
+        BatteryCharger c; c.params = balParams(1800);
+        c.attachRtc(&r);
+        c.termCond.reset();
+        if (!boot) c.balanceNow();
+        enterHold(c);
+        for (int n = 0; n < 500 && c.termCond.cvHold(); ++n) { frames(c, 3.47f, 10.f, 1, true); total += 4; }
+        capped = (bool) c.termCond;
+        CHECK(c.balanceInBandS() < 30, "below band: little progress (%u s)", c.balanceInBandS());
+    }
+    CHECK(capped && total <= 3600 + 60, "session cap across reboots after %u s in the hold", total);
+}
+
+// a low-delta streak must not span a gap without ticks
+static void test_bal_delta_gap() {
+    BatteryCharger c; c.params = balParams(7200); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    c.balanceNow();
+    enterHold(c);
+    for (int n = 0; n < 2; ++n) { c.batSt.setCellDelta(0.005f); frames(c, 3.50f, 10.f, 1, true); }
+    setWallClockUs(loopWallClockUs_ + 120'000'000ULL);
+    c.batSt.setCellDelta(0.005f);
+    frames(c, 3.50f, 10.f, 1, true);
+    CHECK(c.balanceDue(), "2 frames, 120 s gap, 1 frame: not done");
+}
+
+// a configured temperature sensor that went stale defers (no sensor configured: no deferral)
+static void test_bal_temp_stale() {
+    BatteryCharger c; c.params = balParams(1800); setWallClockUs(1'000'000ULL);
+    ConfFile m;
+    m.set("bat_temp_topic", "bms/t1");
+    c.beginMqtt(m);
+    c.termCond.reset();
+    c.balanceNow();
+    c.batSt.setTemp(0, 40.f);
+    frames(c, 3.40f, 10.f, 2, true);
+    CHECK(c.balanceDeferWhy() != nullptr, "40 C: deferred");
+    frames(c, 3.40f, 10.f, 1000, true); // > 1 h without a temperature frame
+    CHECK(!c.haveTemp() && c.balanceDeferWhy() != nullptr, "configured sensor stale: still deferred");
+    enterHold(c);
+    CHECK(!c.balanceRunning(), "no run with a stale temperature");
+}
+
+// a 64-bit wall clock read torn on core 0 must not make the run due (balance timestamps use the tick clock)
+static void test_bal_torn_clock() {
+    BatteryCharger c; c.params = balParams(1800); setWallClockUs(1'000'000ULL);
+    tick(c);
+    c.balanceSkip();
+    time_us t = loopWallClockUs_ + 1'000'000ULL;
+    setWallClockUs(t);
+    loopWallClockUs_ = t + (1ULL << 32); // torn: high word one ahead, ticks right
+    c.update(27.5f, 0.f, true);
+    loopWallClockUs_ = t;
+    tick(c);
+    CHECK(!c.balanceDue(), "torn us read during skip: not due (age %u)", c.balanceAgeS());
+}
+
 int main() {
+    test_bal_cap_survives_reboot();
+    test_bal_delta_gap();
+    test_bal_temp_stale();
+    test_bal_torn_clock();
+    test_bal_two_units();
+    test_bal_not_due_normal();
+    test_bal_completes();
+    test_bal_progress_survives_sun_gone_and_cap();
+    test_bal_delta();
+    test_bal_defer();
+    test_bal_ceiling_and_stale();
+    test_bal_partial_hold_suspended();
+    test_bal_rtc();
     test_cloud_dip_does_not_latch();
     test_low_current_above_line_still_latches();
     test_stale_cells_hold_bus();

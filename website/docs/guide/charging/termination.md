@@ -219,6 +219,63 @@ without coordination. The pin step is sized for that: one charger corrects at
 most half the cell error per frame, so two chargers stepping together correct
 at most the full error and stay stable.
 
+## Top balancing
+
+An active cell balancer equalizes the cells only while they sit at the top of
+the charge curve, where the voltage separates them. With `balance_interval` > 0
+(days, default 0, off) the charger periodically holds the pack there long
+enough for the balancer to work. Time at the top ages LFP cells, more so when
+warm (see [LFP longevity](../../internals/lfp-longevity.md)), so the run is
+infrequent, bounded, and deferred when the pack is warm.
+
+A run is due once the last completed run is `balance_interval` days old. While
+it is due:
+
+- The partial-charge ceiling does not hold, as when `full_charge_interval`
+  expires. Holiday mode defers the run instead (see below), so its ceiling
+  stays.
+- A crossing of the termination line enters the [CV hold](#cv-hold), also with
+  `cv_hold_max_s` = 0. The tail and the `cv_hold_max_s` timeout do not end it.
+- The time the highest cell spends within `cv_hold_band` of `cv_eoc` adds up
+  across charge sessions (a cloudy day, a sunset) until it reaches
+  `balance_hold_s` (default 7200 s).
+- With `mqtt.conf:cell_voltages_delta_topic` configured, the run also completes
+  when the BMS cell spread is at or below `balance_delta` (default 0.01 V) on 3
+  frames in a row while the cell is in band. A delta older than 60 s does not
+  count.
+
+When the run completes, the hold ends through its normal exits: with
+`cv_hold_max_s` = 0 the charger terminates at once and marks the pack full.
+The ceiling, stale-data and sun-gone exits of the hold apply unchanged; they
+do not complete the run.
+
+Limits and deferral:
+
+- A single session ends after 2 × `balance_hold_s` in the hold (for example
+  when the PV cannot keep the cell in band) through the normal hold exits. The
+  run stays pending with its in-band time. A software reset during a session
+  does not restart this count.
+- The run is deferred while holiday mode is on, while the hottest fresh pack
+  sensor is above 35 °C (the top of the LFP storage range; it resumes below
+  33 °C), and while the BMS cell or current data is stale. A deferred run that
+  is already holding ends the hold through its normal exits and keeps its
+  progress. With `mqtt.conf:bat_temp_topic` configured but no fresh
+  temperature (each sensor expires after one hour), the run is deferred as well;
+  without a configured temperature topic there is no temperature deferral.
+- A pack that is already terminated when the run becomes due is not released
+  for it; the run happens on the next charge.
+- The age of the last run, the in-band time and the session time survive a
+  software reset. After
+  a power loss the age counts from boot, so a run is never due right after
+  power-on.
+
+The console command `balance` shows the state (off, days to the next run, due,
+running or the deferral reason, and the in-band time); `balance now` makes a
+run due, `balance skip` marks it done. During a run `status` reports
+`CV HOLD balance (<in band>/<balance_hold_s>s, pin <volts>V)`. Parallel
+chargers on one pack each run their own balance hold on the same BMS data, with
+the same pin stepping as the CV hold.
+
 ## Partial-charge ceiling (`partial_charge`)
 
 The charger can stop short of full to lower the average SoC, which is the

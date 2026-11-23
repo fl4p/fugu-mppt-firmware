@@ -34,6 +34,9 @@ struct BatChargerParams {
     float vout_offset_max = 0.6f; // [V] worst-case Vout-sensor error to tolerate during terminated float.
     float partial_charge = 0.f; // SoC fraction to stop at between periodic full charges (0 = always charge to full)
     uint32_t full_charge_interval_s = 7 * 86400; // [s] charge to full (BMS balancing) at least this often
+    uint32_t balance_interval_s = 0; // [s] top-balancing run at least this often (0 = off)
+    uint32_t balance_hold_s = 7200; // [s] in-band time at cv_eoc that completes a balance run
+    float balance_delta = 0.01f; // [V] cell delta that completes a run early
     float holiday_charge = 0.f; // SoC ceiling once the pack barely cycles (0 = auto mode off)
     float holiday_ibat = NAN; // [A] quiet day: mean discharge current below this
     float holiday_band = 0.1f; // SoC band below holiday_charge before the hold releases
@@ -90,7 +93,13 @@ struct BatChargerParams {
         assert_throw(hs > 0 && hs <= 7200, "tail_hold_s must be in (0, 7200]");
         tail_hold_s = (uint32_t) hs;
         cv_hold_band = chargerConf.getFloat("cv_hold_band", 0.02f);
-        assert_throw(cv_hold_band > 0.f && (!cv_hold_max_s || cv_hold_band < cv_eoc - cv_min),
+        float bd = chargerConf.getFloat("balance_interval", 0.f);
+        hs = chargerConf.getLong("balance_hold_s", 7200);
+        balance_delta = chargerConf.getFloat("balance_delta", 0.01f);
+        assert_throw(bd >= 0.f && bd < 365.f && hs > 0 && hs <= 86400 && balance_delta >= 0.f, "balance_* out of range");
+        balance_interval_s = (uint32_t) (bd * 86400.f);
+        balance_hold_s = (uint32_t) hs;
+        assert_throw(cv_hold_band > 0.f && (!(cv_hold_max_s || balance_interval_s) || cv_hold_band < cv_eoc - cv_min),
                      "need 0 < cv_hold_band < cv_eoc - cv_float");
         vout_offset_max = chargerConf.getFloat("vout_offset_max", 0.6f);
         assert_throw(vout_offset_max >= 0.f, "vout_offset_max must be >= 0");
@@ -132,26 +141,38 @@ struct BatChargerParams {
     }
 };
 
-// Charger state kept across esp_restart/panic/OTA in RTC_NOINIT RAM (not across power loss)
+// Charger state kept across esp_restart/panic/OTA in RTC_NOINIT RAM (not across power loss).
+// The first 20 B are the v2 layout (older builds read it unchanged); the balance part validates alone.
 struct ChargerRtc {
     uint32_t magic;
     uint32_t fullAgeS; // age of the last full charge, UINT32_MAX = unknown
     float bmsRef; // BMS remaining charge at that full, NAN = none
     uint8_t holiday, streak, gaps, override_;
     uint32_t sum;
+    uint32_t balMagic;
+    uint32_t balAgeS; // age of the last balance run, UINT32_MAX = forced due
+    uint32_t balInBandS; // in-band time of the unfinished run
+    uint32_t balSessS; // time in the current balance hold session
+    uint32_t balSum;
 
-    static constexpr uint32_t MAGIC = 0x48444c32;
-    [[nodiscard]] uint32_t checksum() const {
-        uint32_t w[4], h = 0x811c9dc5;
-        memcpy(w, this, sizeof(w));
-        for (uint32_t x: w) h = (h ^ x) * 16777619u;
+    static constexpr uint32_t MAGIC = 0x48444c32, BAL_MAGIC = 0x42414c32;
+    [[nodiscard]] __attribute__((noinline)) static uint32_t fnv(const void *p, size_t words) {
+        uint32_t h = 0x811c9dc5, w;
+        for (size_t i = 0; i < words; ++i) {
+            memcpy(&w, (const char *) p + 4 * i, 4);
+            h = (h ^ w) * 16777619u;
+        }
         return h;
     }
+    [[nodiscard]] uint32_t checksum() const { return fnv(this, 4); }
+    [[nodiscard]] uint32_t balChecksum() const { return fnv(&balMagic, 4); }
     [[nodiscard]] bool valid() const {
         return magic == MAGIC && sum == checksum() && holiday <= 1 && override_ <= 2;
     }
+    [[nodiscard]] bool balValid() const { return balMagic == BAL_MAGIC && balSum == balChecksum(); }
 };
-static_assert(offsetof(ChargerRtc, sum) == 16, "ChargerRtc layout");
+static_assert(offsetof(ChargerRtc, sum) == 16 && offsetof(ChargerRtc, balMagic) == 20 && sizeof(ChargerRtc) == 40,
+              "ChargerRtc layout");
 
 struct BatteryState {
     static constexpr auto VCELL_EXPIRATION_TIME_SEC = 180;
@@ -167,6 +188,8 @@ struct BatteryState {
     volatile uint32_t vpack_t = 0; // last vpack frame, same clock as vcell_high_t
     volatile float temp[TEMP_SENSORS]{NAN, NAN, NAN, NAN}; // [°C] pack sensors from BMS
     volatile uint32_t temp_t[TEMP_SENSORS]{0, 0, 0, 0};
+    volatile float cell_delta = NAN; // [V] BMS max - min cell voltage
+    volatile uint32_t cell_delta_t = 0; // last delta frame, same clock as vcell_high_t
 
     EWMA<volatile float, float> vout_avg{60}; // time-averaged pack voltage
     CoulombCounter coulombCounter{}; // Ah-since-last-full tracker, used for recharge hysteresis
@@ -182,6 +205,11 @@ struct BatteryState {
         if (i >= TEMP_SENSORS) return;
         temp[i] = (t > -40.f && t < 100.f) ? t : NAN; // NAN and sensor-fault values drop the sensor
         temp_t[i] = static_cast<uint32_t>(wallClockUs());
+    }
+
+    void setCellDelta(float d) {
+        cell_delta = d;
+        cell_delta_t = static_cast<uint32_t>(wallClockUs());
     }
 
     [[nodiscard]] bool haveValidCellVoltage() const {
@@ -252,6 +280,8 @@ class Li_ChgTerminationCondition {
     }
 
 public:
+    bool balance = false; // balance run: a line crossing enters the hold even with cv_hold_max_s = 0; no tail/timeout exit
+
     [[nodiscard]] float v_term() const { return _v_term; }
     [[nodiscard]] bool cvHold() const { return _cvHold; }
     [[nodiscard]] uint32_t cvHoldS() const { return _cvHold ? coarseTicksToSec(wallClockTicks() - _cvHoldTicks) : 0; }
@@ -312,7 +342,7 @@ public:
             _lineStreak = 0;
         }
 
-        if (lineLatch and !ceilingLatch and p.cv_hold_max_s) {
+        if (lineLatch and !ceilingLatch and (p.cv_hold_max_s or balance)) {
             // CV hold: the charger holds the cell at cv_eoc and the current tapers; latch on the tail
             lineLatch = false;
             _lineStreak = 0;
@@ -328,10 +358,10 @@ public:
                 _tailOn = false;
             }
             uint32_t tailS = _tailOn ? coarseTicksToSec(now - _tailTicks) : 0;
-            if (tailS >= p.tail_hold_s) {
+            if (!balance and tailS >= p.tail_hold_s) {
                 ESP_LOGW("charger", "cv hold ended: tail %u s @ iBat %.2f", (unsigned) tailS, ibat);
                 lineLatch = true;
-            } else if (heldS > p.cv_hold_max_s) {
+            } else if (!balance and heldS > p.cv_hold_max_s) {
                 ESP_LOGW("charger", "cv hold timeout after %u s", (unsigned) heldS);
                 lineLatch = true;
             } else if (vcell_high < p.cv_min) {
@@ -437,6 +467,14 @@ class BatteryCharger {
     uint32_t _fullAgeBootS = UINT32_MAX; // restored full-charge age at boot (no full since boot)
     bool _refFull = false; // the counter's BMS reference was taken at a real full (since boot or restored)
     ChargerRtc *_rtc = nullptr;
+    // wallClockTicks(): tear-free on core 0
+    uint32_t _balDoneT = 0, _balLastT = 0; // last completed run (0 = none since boot), last balance tick
+    uint32_t _balAgeBootS = 0; // restored balance age at boot; unknown counts from boot
+    float _balInBandS = 0.f, _balSessS = 0.f; // in-band time of the pending run, time in the current hold session
+    uint32_t _balDeltaLastT = 0, _balDeltaSeenT = 0;
+    uint8_t _balDeltaStreak = 0;
+    bool _balForce = false, _balRun = false, _balHot = false, _balWasHold = false, _tempSource = false;
+    volatile uint8_t _balReq = 0; // console request: 1 now, 2 skip
 
     // Consumer-side freshness of the producer's 32-bit frame stamps: the stamp only tells us a
     // frame arrived; when it changed is noted here on the 64-bit loop clock (wrap-free, no torn read).
@@ -455,6 +493,10 @@ class BatteryCharger {
     static constexpr float HOLIDAY_DIS_A = 0.2f; // [A] discharge below this counts
     static constexpr float HOLIDAY_MIN_DIS_S = 2 * 3600; // discharge time for an evaluable bucket
     static constexpr float HOLIDAY_EXIT_MIN_S = 3 * 3600, HOLIDAY_EXIT_K = 1.2f; // in-bucket exit: mean > K * holiday_ibat
+    static constexpr float BAL_TEMP_MAX = 35.f; // [°C] balance runs deferred above (LFP storage range 0..35 °C)
+    static constexpr uint32_t BAL_GAP_T = secToCoarseTicks(60); // older cell frames, longer tick/delta gaps: not counted
+    static constexpr float BAL_TICK_S = 1048576e-6f; // [s] per coarse tick
+    static constexpr uint8_t BAL_DELTA_FRAMES = 3; // consecutive delta frames <= balance_delta to finish early
 
     // Notes when a frame stamp changes; true while the last change is younger than maxAge.
     static bool _fresh(uint32_t stamp, uint32_t &last, time_us &seen, time_us now, time_us maxAge) {
@@ -506,6 +548,71 @@ public:
             _refFull = std::isfinite(batSt.coulombCounter.bmsRef());
             _lastFullUs = wallClockUs();
             ESP_LOGI("charger", "Termination latched: ahSinceFull reset to 0");
+        }
+    }
+
+    // Age of the last completed balance run [s]; unknown counts from boot.
+    [[nodiscard]] uint32_t balanceAgeS() const {
+        return (_balDoneT ? 0 : _balAgeBootS) + coarseTicksToSec(wallClockTicks() - _balDoneT);
+    }
+
+    [[nodiscard]] bool balanceDue() const {
+        return params.balance_interval_s && (_balForce || balanceAgeS() >= params.balance_interval_s);
+    }
+
+    // why a due run waits, nullptr when it may run
+    [[nodiscard]] const char *balanceDeferWhy() {
+        if (holiday()) return "holiday";
+        if (_balHot) return "warm";
+        if (_tempSource && !haveTemp()) return "temp n/a";
+        if (!batSt.haveValidCellVoltage() || !ibatFresh()) return "BMS stale";
+        return nullptr;
+    }
+
+    [[nodiscard]] bool balanceRunning() const { return termCond.balance && termCond.cvHold(); }
+    [[nodiscard]] uint32_t balanceInBandS() const { return (uint32_t) _balInBandS; }
+
+    // console requests, applied on the next update()
+    void balanceNow() { _balReq = 1; }
+    void balanceSkip() { _balReq = 2; }
+
+    // Top-balancing run: while due and not deferred, a line crossing enters the CV hold (termCond.balance) and
+    // it holds the highest cell at cv_eoc. Done after balance_hold_s in band or balance_delta on
+    // BAL_DELTA_FRAMES delta frames; the hold then ends through its normal exits (tail, cv_hold_max_s), as it
+    // does when the run is deferred or a session exceeds 2 balance_hold_s. The in-band time is kept until done.
+    void _updateBalance() {
+        uint32_t now = wallClockTicks(), dt = now - _balLastT;
+        _balLastT = now;
+        uint8_t q = _balReq;
+        _balReq = 0;
+        _balForce |= q == 1;
+        _balHot = haveTemp() && _tempMax > (_balHot ? BAL_TEMP_MAX - BAT_TEMP_HYST : BAL_TEMP_MAX);
+        _balRun = balanceDue() && !balanceDeferWhy();
+        bool hold = termCond.cvHold();
+        if (_balWasHold && !hold) _balSessS = 0.f; // session over (a reboot keeps it)
+        _balWasHold = hold;
+        if (hold && _balRun && dt <= BAL_GAP_T) _balSessS += dt * BAL_TICK_S;
+        termCond.balance = _balRun && _balSessS <= 2 * params.balance_hold_s;
+        bool newDelta = batSt.cell_delta_t != _balDeltaLastT;
+        if (newDelta) {
+            _balDeltaLastT = batSt.cell_delta_t;
+            if (now - _balDeltaSeenT > BAL_GAP_T) _balDeltaStreak = 0;
+            _balDeltaSeenT = now;
+        }
+        if (!(termCond.balance && hold && dt <= BAL_GAP_T && batSt.cellAgeTicks() < BAL_GAP_T
+              && batSt.vcell_high >= params.cv_eoc - params.cv_hold_band)) {
+            _balDeltaStreak = 0;
+        } else {
+            _balInBandS += dt * BAL_TICK_S;
+            if (newDelta) _balDeltaStreak = batSt.cell_delta <= params.balance_delta ? _balDeltaStreak + 1 : 0;
+        }
+        if (q == 2 || _balInBandS >= params.balance_hold_s || _balDeltaStreak >= BAL_DELTA_FRAMES) {
+            ESP_LOGI("charger", "balance %s: %u s in band", q == 2 ? "skipped" : "done", (unsigned) _balInBandS);
+            _balDoneT = now | 1;
+            _balInBandS = 0.f;
+            _balForce = false;
+            _balDeltaStreak = 0;
+            termCond.balance = false;
         }
     }
 
@@ -671,7 +778,7 @@ public:
         }
         bool dataOk = batSt.haveValidCellVoltage() && ibatFresh(); // the deficit counter is only trusted live
         float lim = ceiling();
-        bool enabled = lim > 0.f && deficitKnown() && dataOk && fullAgeS() < params.full_charge_interval_s;
+        bool enabled = lim > 0.f && deficitKnown() && dataOk && fullAgeS() < params.full_charge_interval_s && !_balRun;
         if (!enabled || bool(termCond)) {
             if (_partialHold)
                 ESP_LOGI("charger", "partial hold off (%s)", bool(termCond) ? "terminated" : !dataOk ? "BMS stale" : "full charge due");
@@ -711,6 +818,12 @@ public:
         ESP_LOGI("charger", "retained: full %lus ago%s, holiday %u (streak %u, override %u)",
                  (unsigned long) _fullAgeBootS, _refFull ? " (BMS ref)" : "", (unsigned) _holiday,
                  (unsigned) _hStreak, (unsigned) _hOverride);
+        if (r->balValid()) {
+            _balForce = r->balAgeS == UINT32_MAX;
+            _balAgeBootS = _balForce ? 0 : r->balAgeS;
+            _balInBandS = (float) (r->balInBandS < 86400U ? r->balInBandS : 86400U);
+            _balSessS = (float) (r->balSessS < 2 * 86400U ? r->balSessS : 2 * 86400U);
+        }
     }
 
     void _saveRtc() {
@@ -724,6 +837,11 @@ public:
         r.gaps = _hGaps;
         r.override_ = _hOverride;
         r.sum = r.checksum();
+        r.balMagic = ChargerRtc::BAL_MAGIC;
+        r.balAgeS = _balForce ? UINT32_MAX : balanceAgeS();
+        r.balInBandS = (uint32_t) _balInBandS;
+        r.balSessS = (uint32_t) _balSessS;
+        r.balSum = r.balChecksum();
         *_rtc = r;
     }
 
@@ -1024,6 +1142,7 @@ public:
 
         // up to TEMP_SENSORS comma-separated topics (batmon-ha: <dev>/temperatures/1,<dev>/temperatures/2)
         topic = mqttConf.getString("bat_temp_topic", "");
+        _tempSource = !topic.empty();
         for (uint8_t i = 0; i < BatteryState::TEMP_SENSORS && !topic.empty(); ++i) {
             auto comma = topic.find(',');
             std::string one = topic.substr(0, comma);
@@ -1051,6 +1170,18 @@ public:
                     return;
                 }
                 batSt.coulombCounter.setBmsCharge(ah, wallClockTicks());
+            });
+
+        // batmon-ha: <dev>/cell_voltages/delta [V]
+        topic = mqttConf.getString("cell_voltages_delta_topic", "");
+        if (!topic.empty())
+            MQTT.subscribeTopic(topic, [&](const char *dat, int len) {
+                float d = strntof(dat, len);
+                if (!std::isfinite(d) || d < 0) {
+                    LOG_VALUE_IGNORED("charger", "cell_delta", len, dat);
+                    return;
+                }
+                batSt.setCellDelta(d);
             });
 
         topic = mqttConf.getString("bat_voltage_topic", "");
@@ -1084,6 +1215,7 @@ public:
         _updateTermination();
         _updateTempLimit();
         _updateHoliday();
+        _updateBalance();
         _updatePartialHold();
         _updatePackVoltagePinning(voutAuthority, INFINITY, vout, psu);
         _saveRtc();
