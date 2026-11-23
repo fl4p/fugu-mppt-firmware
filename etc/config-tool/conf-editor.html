@@ -2226,14 +2226,39 @@ function getConfig(file, timeoutMs=3000){
   });
 }
 
+// The firmware's masked form of a console line (src/etc/con_guard.h secretCut):
+// the secret part of the OK/ERR marker and of log lines reads "***".
+const isSecretKey = k => /pass|psk|key|secret|token|cred/i.test(k);
+function maskSecrets(s){
+  const k = s.replace(/^[#\s]+/, ""), m = k.match(/^([^=\s]*)\s*=/);
+  if (m && isSecretKey(m[1])) return s.slice(0, s.length-k.length+m[0].length)+"***";
+  let cut = -1;
+  const w = s.toLowerCase().indexOf("wifi-add");
+  if (w >= 0){ const c = s.indexOf(":", w+8); if (c >= 0) cut = c+1; }
+  const u = s.indexOf("://");
+  if (u >= 0 && s.indexOf("@", u+3) >= 0 && (cut < 0 || u+3 < cut)) cut = u+3;
+  const re = /[^ \t]+/g; let t, first = true;
+  while ((t = re.exec(s))){
+    if (first){ first = false; continue; }
+    const e = t[0].indexOf("=");
+    if (!isSecretKey(e >= 0 ? t[0].slice(0, e) : t[0])) continue;
+    let v = t.index + (e >= 0 ? e+1 : t[0].length);
+    if (e < 0) while (s[v]===" " || s[v]==="\t") v++;
+    if (v < s.length && (cut < 0 || v < cut)) cut = v;
+    break;
+  }
+  return cut < 0 ? s : s.slice(0, cut)+"***";
+}
+
 // Send one console command. Streams every reply line to onRx as it arrives and
 // resolves true/false when the device echoes its result marker: console.cpp
-// writes "OK: <cmd>" / "ERR: <cmd>" once handleCommand() returns. onRx returning
-// true also resolves true (a command that never returns, like `restart`).
+// writes "OK: <cmd>" / "ERR: <cmd>" (secrets masked) once handleCommand() returns.
+// onRx returning true also resolves true (a command that never returns, like `restart`).
 function sendCommand(cmdStr, onRx, timeoutMs=4000){
   // the whole command up to the line end (trailing whitespace allowed), so "OK: svc on tele"
-  // does not match "OK: svc on telnet"
-  const mark = new RegExp("(?:^|[^\\w])(OK|ERR): "+escapeRe(cmdStr.trim())+"\\s*$");
+  // does not match "OK: svc on telnet"; the device masks secrets, so accept that form too
+  const c = cmdStr.trim();
+  const mark = new RegExp("(?:^|[^\\w])(OK|ERR): (?:"+escapeRe(c)+"|"+escapeRe(maskSecrets(c))+")\\s*$");
   return new Promise((resolve,reject)=>{
     const onLine = (ln)=>{
       if (onRx && onRx(ln)===true){ done(); resolve(true); return; }

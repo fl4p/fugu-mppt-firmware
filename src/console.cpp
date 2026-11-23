@@ -18,6 +18,7 @@
 #include <hal/uart_types.h>
 #include "logging.h"
 #include "console.h"
+#include "etc/con_guard.h"
 #ifdef WITH_USB_MSC
 #include "usb/usb_dev.h"
 #endif
@@ -103,7 +104,8 @@ void loopConsole(ConsoleLine &ln, int read(char *buf, size_t len), int write(con
             if (inp.length() > 0) {
                 bool ok = handleCommand(inp);
                 char marker[160];
-                int n = snprintf(marker, sizeof(marker), "%s: %s\r\n", ok ? "OK" : "ERR", inp.c_str());
+                const int m = secretCut(inp.c_str());
+                int n = snprintf(marker, sizeof(marker), "%s: %.*s%s\r\n", ok ? "OK" : "ERR", CG_MASKED(inp.c_str(), m));
                 if (n > 0) write(marker, n < (int) sizeof(marker) ? n : (int) sizeof(marker) - 1);
             }
             buf_pos = 0;
@@ -117,7 +119,7 @@ void loopConsole(ConsoleLine &ln, int read(char *buf, size_t len), int write(con
             write(&c, 1); // echo
         } else {
             buf[buf_pos] = 0;
-            ESP_LOGW("main", "discarding command buffer %s", buf);
+            ESP_LOGW("main", "discarding command buffer (%u bytes)", (unsigned) buf_pos);
             buf_pos = 0;
         }
     }

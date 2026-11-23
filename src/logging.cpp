@@ -17,6 +17,7 @@
 #include <cassert>
 #include "util.h"
 #include "etc/mpsc_ring.h"
+#include "etc/con_guard.h"
 #include <soc/soc.h>
 
 
@@ -521,8 +522,9 @@ static IRAM_ATTR int vprintf_(const char *fmt, va_list argptr) {
 }
 
 void logCmdResult(bool ok, const char *cmd, int64_t startUs) {
-    if (esp_timer_get_time() - startUs > 5000000) logRetained("%s: %s", ok ? "OK" : "ERR", cmd);
-    else UART_LOG("%s: %s", ok ? "OK" : "ERR", cmd);
+    const int m = secretCut(cmd);
+    if (esp_timer_get_time() - startUs > 5000000) logRetained("%s: %.*s%s", ok ? "OK" : "ERR", CG_MASKED(cmd, m));
+    else UART_LOG("%s: %.*s%s", ok ? "OK" : "ERR", CG_MASKED(cmd, m));
 }
 
 #if WITH_TELNET

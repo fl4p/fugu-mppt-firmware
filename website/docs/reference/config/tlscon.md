@@ -37,8 +37,8 @@ svc on tlscon
 
 Setting the key over the MQTT console sends it through the broker, and in plaintext unless the broker connection
 uses TLS. The key is stored in `/littlefs/conf/tlscon.conf` like the other credentials, so it is readable by anyone
-with console, FTP or HTTP config access. `set-config` logs each command with its value to every log output (serial,
-telnet, the MQTT log topic, a `tlscon` session), so the key also appears there.
+with FTP or HTTP config access. The console masks it as `***` in the command echo, the logs, `get-config` and `cat`
+(see [Secrets](../console.md#secrets)).
 
 ## Sessions
 

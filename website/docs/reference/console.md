@@ -24,6 +24,21 @@ It confirms an unknown, malformed, or out-of-context command with `ERR: <cmd>`
 and logs the reason. For an unknown command the reason is a parser error. For invalid
 arguments or the wrong context it's the specific rejection message.
 
+## Secrets
+
+Console output and the command echo reach every log output (serial, telnet, the MQTT log topic, a
+`tlscon` session, the retained boot log), so the firmware masks secret values as `***`:
+
+- In the command echo, the `OK:`/`ERR:` marker and command logs, everything after a word that names a secret key
+  (contains `pass`, `psk`, `key`, `secret`, `token` or `cred`, any case), after the `:` of `wifi-add`, and after
+  `://` when an `@` follows. `set-config mqtt.conf password hunter2` is acknowledged as
+  `OK: set-config mqtt.conf password ***`.
+- `set-config` logs a secret key's new and old value as `***`.
+- `get-config` prints a set secret value as `***`. Read the plain file over FTP, HTTP or the USB config drive.
+- `cat` masks `key=value` lines with a secret key, URI credentials, and the commands above in scripts.
+
+Host tools that wait for the marker compare against both the full and the masked command.
+
 ## System Commands
 
 These commands manage the network, firmware updates, the clock, and resets.

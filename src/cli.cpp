@@ -62,6 +62,7 @@ extern volatile uint8_t g_rtLogTest;
 #include "viz/led.h"
 #include "storage/key-value.h"
 #include "conf_hash.h"
+#include "etc/con_guard.h"
 #ifdef WITH_NETW
 #include "tele/telemetry.h"     // connect_wifi_async, add_ap
 #include "etc/ota.h"            // doOta
@@ -667,7 +668,8 @@ static void cmdCat(cmd *c) {
     while (fgets(line, sizeof(line), f)) {
         size_t l = strlen(line);
         while (l && (line[l - 1] == '\n' || line[l - 1] == '\r')) line[--l] = 0; // UART_LOG adds its own EOL
-        UART_LOG("%s", line);
+        const int m = secretCut(line);
+        UART_LOG("%.*s%s", CG_MASKED(line, m));
         if ((total += (long) l) > 16384) { UART_LOG("cat: ...truncated"); break; }
     }
     fclose(f);
@@ -1768,6 +1770,11 @@ static void confEdited(const std::string &fn, const String &key) {
     if (fn.ends_with("/coil.conf") && key.startsWith("rect_offset")) mppt.rectCal.discard();
 }
 
+// a set secret or a URI with credentials prints as *** (console output reaches every log sink)
+static const char *secretVal(const char *key, const char *v) {
+    return *v && (isSecretKey(key) || secretCut(v) >= 0) ? "***" : v;
+}
+
 // set-config <file> <key> <value...>  — value may contain spaces, so join the trailing tokens.
 //   set-config coil.conf L0 50            set-config mqtt.conf broker_uri mqtt://192.168.1.134:1882
 //   set-config limits.conf lv_i_max 35    set-config charger.conf cv_eoc 3.53
@@ -1784,7 +1791,8 @@ static void cmdSetConfig(cmd *c) {
     if (oldVal != val.c_str() && !conf.add({{key.c_str(), val.c_str()}}, true))
         CMD_FAIL_RETURN("set-config: cannot write %s, '%s' unchanged", fn.c_str(), key.c_str());
     confEdited(fn, key);
-    ESP_LOGI("main", "Set conf '%s:%s' = '%s' (was %s)", fn.c_str(), key.c_str(), val.c_str(), oldVal.c_str());
+    ESP_LOGI("main", "Set conf '%s:%s' = '%s' (was %s)", fn.c_str(), key.c_str(), secretVal(key.c_str(), val.c_str()),
+             secretVal(key.c_str(), oldVal.c_str()));
 }
 
 
@@ -1814,10 +1822,10 @@ static void cmdGetConfig(cmd *c) {
     if (cc.countArgs() >= 2) {
         auto key = cc.getArg(1).getValue();
         auto val = conf.getString(key.c_str(), "");
-        UART_LOG("Conf '%s:%s' = '%s'", fn.c_str(), key.c_str(), val.c_str());
+        UART_LOG("Conf '%s:%s' = '%s'", fn.c_str(), key.c_str(), secretVal(key.c_str(), val.c_str()));
     } else {
         for (const auto &key: conf.keys())
-            ESP_LOGI("main", "Conf '%s:%s' = '%s'", fn.c_str(), key.c_str(), conf.getString(key).c_str());
+            ESP_LOGI("main", "Conf '%s:%s' = '%s'", fn.c_str(), key.c_str(), secretVal(key.c_str(), conf.getString(key).c_str()));
     }
 }
 
@@ -2440,13 +2448,14 @@ static void cmdRun(cmd *c) {
             String inp(p);
             inp.trim();
             if (!inp.length()) continue;
-            UART_LOG("=== %s ===", inp.c_str());
+            const int m = secretCut(p);
+            UART_LOG("=== %.*s%s ===", CG_MASKED(p, m));
             bool ok = handleCommand(inp);
             consoleFlush();
             if (!ok) {
                 s_scriptDepth--;
                 fclose(f);
-                CMD_FAIL_RETURN("run: aborted at line %d: %s", ln, inp.c_str());
+                CMD_FAIL_RETURN("run: aborted at line %d", ln);
             }
             ++executed;
         }
@@ -2764,7 +2773,8 @@ void setupCli() {
 }
 
 bool handleCommand(const String &inp) {
-    ESP_LOGI("main", "received serial command: '%s'", inp.c_str());
+    const int m = secretCut(inp.c_str());
+    ESP_LOGI("main", "received serial command: '%.*s%s'", CG_MASKED(inp.c_str(), m));
 
     // +N / -N PWM step is a signed numeric token, not a named command -> handle before SimpleCLI.
     // does not enable manual pwm!
@@ -2797,10 +2807,10 @@ bool handleCommand(const String &inp) {
         cli.parse(inp); // runs the matched command callback inline
     } catch (const std::exception &e) {
         // a throwing command must not take down the console/network task
-        ESP_LOGE("main", "command '%s' failed: %s", inp.c_str(), e.what());
+        ESP_LOGE("main", "command '%.*s%s' failed: %s", CG_MASKED(inp.c_str(), m), e.what());
         return false;
     } catch (...) {
-        ESP_LOGE("main", "command '%s' failed: unknown exception", inp.c_str());
+        ESP_LOGE("main", "command '%.*s%s' failed: unknown exception", CG_MASKED(inp.c_str(), m));
         return false;
     }
     if (cli.errored()) {
