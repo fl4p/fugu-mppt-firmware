@@ -181,7 +181,7 @@ test('MQTT modal: Scan connects to the broker and lists devices seen on pv/log/<
   assert.equal(clients.length, 1, 'scan should open exactly one broker connection');
   const c = clients[0];
   assert.equal(c.url, 'ws://broker:9001');
-  assert.ok(c._subscribes.includes('pv/log/#'), 'scan should subscribe to pv/log/#');
+  assert.ok(c._subscribes.flat().includes('pv/log/#'), 'scan should subscribe to pv/log/#');
 
   // Fake two devices publishing and one /cmd echo we should ignore
   c.emit('message', 'pv/log/fry',         new TextEncoder().encode('hi\n'));
@@ -193,4 +193,5 @@ test('MQTT modal: Scan connects to the broker and lists devices seen on pv/log/<
   const names = [...window.document.querySelectorAll('#mqtt-devlist .dev')]
     .map(d => d.textContent);
   assert.deepEqual(names.sort(), ['flat', 'fry']);
+  window.mqttModalClose();   // else the 0.8s scan interval keeps node from draining
 });
