@@ -19,6 +19,47 @@ python3 etc/fugu_console.py -p /dev/cu.usbmodemXXXX      # interactive console o
 python3 etc/fugu_console.py --ip <device-ip> -c status   # one command over telnet
 ```
 
+## Wi-Fi setup
+
+A device joins the networks listed in [`wifi.conf`](../reference/config/wifi.md). There are two ways to add one.
+
+### Console
+
+On any transport, add the network and restart:
+
+```
+wifi-add <ssid>:<password>
+restart
+```
+
+### Improv over BLE
+
+Builds with `CONFIG_FUGU_WITH_IMPROV` (on by default) offer [Improv Wi-Fi](https://www.improv-wifi.com/) next to the
+BLE console, so a phone can send the credentials. It needs the `ble` service running (`svc on ble`, see
+[BLE](#ble)).
+
+Two clients support it:
+
+- [improv-wifi.com](https://www.improv-wifi.com/) in Chrome on Android or desktop.
+- Home Assistant's Improv via BLE integration, which discovers the device on its own.
+
+The device stores the network with `wifi-add` semantics and joins it. If the join fails within about 25 s, the
+client shows an error and you can retry.
+
+Improv has no authentication of its own. The device therefore accepts credentials only while it is offline:
+
+| Condition | Improv state |
+|---|---|
+| No network configured | Accepts credentials |
+| Wi-Fi down for `wifi.conf::improv_offline_s` (default 600 s; `0` disables this case) | Accepts credentials until Wi-Fi is up again |
+| Wi-Fi down for a shorter time, or turned off with `wifi off` | Authorization required; credentials refused |
+| Wi-Fi connected | Provisioned; credentials refused |
+
+The device advertises Improv only while it accepts credentials, and for one minute after a successful setup. The
+Improv command characteristic uses the same pairing mode as the console
+([`ble.conf::ble_security`](../reference/config/ble.md)), so with `justworks` or `passkey` the phone pairs first.
+The optional network scan is supported. Identify and hostname commands are not.
+
 ## Transports
 
 Each transport has its own requirements on the device and its own client flags:

@@ -17,6 +17,11 @@ The following table lists the service and its characteristics:
 | FW (host→device) | `6E400004-B5A3-F393-E0A9-E50E24DCCA9E` | write-no-response | Raw firmware bytes of an [OTA push](../../guide/updating/ota-ble.md#wire-protocol) |
 | TELE (device→host) | `6E400005-B5A3-F393-E0A9-E50E24DCCA9E` | notify | Binary telemetry stream, only in `CONFIG_FUGU_WITH_BLE_TELE` builds |
 
+`CONFIG_FUGU_WITH_IMPROV` builds add the [Improv Wi-Fi](https://www.improv-wifi.com/ble/) service
+(`00467768-6228-2272-4663-277478268000`) with its five standard characteristics. Its RPC command characteristic takes
+write with response only, under the same security as RX. Capabilities are device info and network scan (`0x06`). See
+[Wi-Fi setup](../../guide/connecting.md#improv-over-ble) for when it accepts credentials.
+
 ## Connection
 
 The device applies these connection limits:
@@ -52,7 +57,19 @@ TELE carry no security requirement of their own. Each value sets pairing and wri
 ## Advertising
 
 The device advertises under its hostname (see [Connecting](../../guide/connecting.md#ble)) with the NUS service
-UUID in the advertising data, and answers scan requests. It stops advertising while a client is connected.
+UUID in the advertising data, and answers scan requests. The name is in the scan response. It stops advertising while
+a client is connected.
+
+While Improv accepts credentials, the advertising data alternates every 0.5 s between two payloads, because the
+Improv service UUID and its `0x4677` service data must share one advertisement and fill all 31 bytes:
+
+| Payload | Content |
+|---|---|
+| Console | Flags, NUS service UUID |
+| Improv | Flags, Improv service UUID, service data `0x4677`: state, capabilities, 4 reserved bytes |
+
+In `CONFIG_FUGU_WITH_BLE_ADV` builds the Improv payload takes every other telemetry slot while advertising is
+connectable.
 
 `CONFIG_FUGU_WITH_BLE_ADV` builds add a connectionless telemetry record to the advertising data (see
 [BLE advertising record](../telemetry-fields.md#ble-advertising-record)). These builds keep advertising while a

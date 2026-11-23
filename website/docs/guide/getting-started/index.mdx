@@ -12,7 +12,7 @@ Bringing up a board takes three steps:
 
 1. Build and flash the firmware.
 2. Flash the board configuration ([provisioning](provisioning.md)).
-3. Connect to the console and join Wi-Fi.
+3. Connect to the console and join Wi-Fi, from the console or a phone ([Wi-Fi setup](../connecting.md#wi-fi-setup)).
 
 ## Quick start
 
@@ -71,6 +71,9 @@ To join Wi-Fi, enter these commands in the console:
 wifi-add <ssid>:<password>
 restart
 ```
+
+Alternatively, with the BLE console enabled (`svc on ble`), a phone can send the credentials over
+[Improv Wi-Fi](../connecting.md#improv-over-ble) while the board has no network configured.
 
 ## Install ESP-IDF
 

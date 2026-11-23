@@ -47,6 +47,7 @@ The following table lists each feature option, its default, and what it does:
 | `CONFIG_FUGU_WITH_BLE_TELE` | off | Binary telemetry stream over a NUS notify characteristic. Needs `BLE`; turns on `TELE_BINARY`. |
 | `CONFIG_FUGU_WITH_TELE_BINARY` | off | Binary telemetry wire and tamp compressor, used when [`tele.conf`](../../reference/config/tele.md) `binary=1`. Needs `NETW` or `BLE_TELE`; off saves ~8.5 KB flash. |
 | `CONFIG_FUGU_WITH_BLE_ADV` | off | Connectionless telemetry in BLE advertising data. Needs `BLE`. |
+| `CONFIG_FUGU_WITH_IMPROV` | on | [Improv Wi-Fi](../connecting.md#improv-over-ble) provisioning over BLE. Needs `BLE` and `NETW`; off saves ~5 KB flash. |
 | `FUGU_GATE_DRIVER` | MCPWM\*\* | Gate driver, one per build: `CONFIG_FUGU_GATE_LEDC`, `CONFIG_FUGU_WITH_MCPWM` ([MCPWM](../../internals/pwm-drivers.md): hardware dead-time, fault brake, glitch-free updates, live `pwm-freq`/`dt`) or `CONFIG_FUGU_WITH_VCONV` (simulated converter in place of gate driver and ADC, `src/sim/vconv.*`). |
 | `CONFIG_FUGU_WITH_LEDC` | on | LEDC peripheral for the fan PWM and the `anaw` command. The LEDC gate driver turns it on. |
 | `CONFIG_FUGU_WITH_WSYNC` | on\* | Wired MCPWM clock sync between converters. Needs `MCPWM`. |

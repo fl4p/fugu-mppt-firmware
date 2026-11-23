@@ -28,6 +28,8 @@ void disconnect_wifi(bool off);
 
 bool wait_for_wifi();
 
+void wifi_retry_now(); // skip the backoff after a failed attempt
+
 void wifiLoop(bool connect = false);
 
 

@@ -27,6 +27,7 @@
 #include "adc/sampling.h" // ADC_Sampler -- halted while flash is busy
 #include "tele_ble.h"    // BLE telemetry stream (TELE characteristic, WITH_BLE_TELE)
 #include "tele_adv.h"    // advertising telemetry broadcast (WITH_BLE_ADV)
+#include "improv_ble.h"
 
 // esp-ota-ble host hooks. The status sink goes to ESP_LOG* at the level the module asked for, with
 // the tag still "otab" -- the wire protocol IS these log lines (they are mirrored to the client), so
@@ -417,6 +418,7 @@ void bleConsoleBegin(const std::string &deviceName, const std::string &security,
     teleBleCreateChar(svc); // telemetry notify char (no-op unless WITH_BLE_TELE)
 
     svc->start();
+    improvCreateService(bleServer, writeProps);
 
     BLEAdvertising *adv = BLEDevice::getAdvertising();
     adv->addServiceUUID(NUS_SERVICE_UUID);
@@ -454,6 +456,7 @@ void bleConsoleLoop(time_ms nowMs) {
     otaBleTick(nowMs); // drain any staged OTA firmware bytes to flash (no-op when not updating)
     teleBleTick(nowMs); // batch + notify the telemetry stream (no-op unless streaming)
     teleAdvTick(nowMs); // broadcast payload refresh + adv-mode reconciler (no-op unless enabled)
+    improvTick(nowMs);
 }
 
 bool bleConsoleConnected() {

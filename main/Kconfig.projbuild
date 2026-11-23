@@ -205,6 +205,15 @@ config FUGU_WITH_BLE_ADV
         client is connected (non-connectable adv). tele.conf::adv_ms sets the refresh
         interval (0 = off). Host side: etc/influx_binary_proxy.py --adv.
 
+config FUGU_WITH_IMPROV
+    bool "Improv Wi-Fi provisioning over BLE"
+    default y
+    depends on FUGU_WITH_BLE && FUGU_WITH_NETW
+    help
+        Improv Wi-Fi GATT service next to the NUS console: a phone (improv-wifi.com, Home
+        Assistant) sends Wi-Fi credentials while the device is offline. Same write security as
+        the console (ble.conf ble_security).
+
 config FUGU_WITH_USB_MSC
     bool "USB config drive + CDC console (TinyUSB)"
     default n

@@ -231,8 +231,11 @@ void wifiLoop(bool connect) {
     // }
 }
 
+static unsigned long lastTimeout = 0;
+
+void wifi_retry_now() { lastTimeout = 0; }
+
 bool wait_for_wifi() {
-    static unsigned long lastTimeout = 0;
     static unsigned long disconnectedSince = 0;
     static std::string prevSsid;
 

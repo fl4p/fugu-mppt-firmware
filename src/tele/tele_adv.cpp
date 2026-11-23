@@ -8,6 +8,7 @@
 #include <esp_log.h>
 
 #include "console_ble.h"
+#include "improv_ble.h"
 #include "../conf.h"
 #include "../mppt.h"
 #include "../app_state.h"
@@ -90,9 +91,8 @@ static bool startNonConn() {
 // Every 8th slot broadcasts flags + complete name instead of the record: scan responses
 // don't reach every observer (rpi kernel scans effectively passively next to an active LE
 // connection), so the name must ride the adv payload itself. Observers cache it per MAC.
-static bool namePayload() {
-    static uint8_t slot = 0;
-    if (++slot % 8 != 0) return false;
+static bool namePayload(uint8_t slot) {
+    if (slot % 8 != 0) return false;
     const char *name = bleConsoleName();
     size_t n = std::min(strlen(name), (size_t) 26);
     if (!n) return false;
@@ -107,7 +107,18 @@ static bool namePayload() {
 }
 
 static void refreshPayload() {
-    if (namePayload()) return;
+    static uint8_t slot = 0;
+    ++slot;
+    // Improv needs its UUID + service data in one advert (31 B): every odd slot while offered
+    if (advMode == AdvMode::Connectable && (slot & 1)) {
+        uint8_t ad[31];
+        if (size_t n = improvAdvPayload(ad)) {
+            int rc = ble_gap_adv_set_data(ad, n);
+            if (rc != 0) warnThrottled("set improv data", rc);
+            return;
+        }
+    }
+    if (namePayload(slot)) return;
     // Sensor setup can fail (setupErr) with the BLE service still up — the console must
     // survive to debug exactly that (same guard as MQTT.tickHook).
     if (!mppt.sensorPhysicalI || !mppt.sensorPhysicalU) return;
