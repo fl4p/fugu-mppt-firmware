@@ -526,6 +526,18 @@ only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV-sim 
 
 The log shows each scan as `scan: P <P0>-><P0'> W at <V>V, <n> probes, best x<ratio> at <V>V[, moving]`.
 
+### Near-point probes
+
+With `scan_near_v` above 0 (default 2 V), each scan first probes $V_{in} \pm$ `scan_near_v` around the start
+point, before it measures $P_0$, with the same settle and 100 ms average. A side below 1.05 times the input voltage
+floor or above $0.95\,V_{oc}$ is skipped. Both are compared with $\max(P_0, P_0')$, as the candidates are, and
+logged as `scan near: v0 <V> V, -<dV>V x<ratio>, +<dV>V x<ratio>` (`n/a` for a skipped side). A ratio above 1
+on one side means the operating point sits below the local maximum, on the side away from it.
+
+The two probes are a measurement only: they take no part in the best probe, the 15 % light-change check, the
+60 s re-scan or the move. The 30 s scan timeout starts after them, so the rest of the scan runs as without
+them, about two probe times later.
+
 ### Substring count
 
 The sweep runs from $V_{oc}$ down to the battery and passes every maximum. It records the local maxima of the
@@ -640,6 +652,7 @@ The tracker reads these keys from `tracker.conf`:
 | [`target_duty_cycle`](../reference/config/tracker.md)                | absent  | Fixed duty fraction; if set (0 included) disables sweep and P&O |
 | [`scan_interval`](../reference/config/tracker.md)                    | 300     | Partial peak scan period [s]; 0 = triggered only     |
 | [`scan_trigger`](../reference/config/tracker.md)                     | 1       | Also scan after a sustained Vin or power change      |
+| [`scan_near_v`](../reference/config/tracker.md)                      | 2.0     | [Near-point probe](#near-point-probes) offset [V]; 0 = off |
 
 Console: `sweep` starts a global sweep, `mppt` returns to automatic tracking, `speed <x>` scales the P&O step. See
 [Console](../reference/console.md).

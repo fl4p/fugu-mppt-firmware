@@ -16,3 +16,4 @@ sidebar_position: 7
 | `pv_substrings`     |      | byte  | 0       | Learned bypass-diode substring count of the [partial peak scan](../../internals/mppt-tracker.md#substring-count) (2..6), written by the converter after a shaded sweep; 1 = single peak (two verified single-maximum sweeps in a row): no scan, no re-sweep. 0 = learn again; a change takes effect at the next boot, and a count learned before then is not written over it |
 | `scan_interval`     | s    | long  | 300     | Period of the [partial peak scan](../../internals/mppt-tracker.md#partial-peak-scan) (0..65535); 0 = triggered scans only |
 | `scan_trigger`      |      | byte  | 1       | 1 = also scan after a sustained change of Vin or power since the last scan or sweep |
+| `scan_near_v`       | V    | float | 2.0     | Offset of the log-only [near-point probes](../../internals/mppt-tracker.md#near-point-probes) at Vin -/+ this value during each peak scan (0..25.5, 0.1 V steps); 0 = off |

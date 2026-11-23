@@ -873,6 +873,7 @@ const META = {
   pv_substrings:{unit:"",desc:"Learned bypass-diode substring count for the partial peak scan (written by the converter after a shaded sweep, 2..6; 1 = single peak, no scan or re-sweep); 0 = learn again, takes effect at the next boot",type:"byte"},
   scan_interval:{unit:"s",desc:"Partial peak scan period, 0..65535 (default 300); 0 = triggered scans only",type:"long"},
   scan_trigger:{unit:"",desc:"1 = also scan on a sustained Vin or power change since the last scan or sweep (default 1)",type:"byte"},
+  scan_near_v:{unit:"V",desc:"Log-only peak-scan probes at Vin -/+ this offset, 0..25.5 (default 2.0); 0 = off",type:"float"},
 
   // mqtt.conf
   broker_uri:{unit:"",desc:"MQTT broker URI, e.g. mqtt://host:port",type:"string"},
@@ -1080,7 +1081,7 @@ const FILE_KEYS = {
     "cv_hold_max_s","full_charge_interval","holiday_band","holiday_charge","holiday_days",
     "holiday_ibat","ibat_max","partial_charge","recharge_dod","recharge_vfloor_band",
     "tail_c_rate","tail_hold_s","vout_max","vout_max_fallback","vout_offset_max"],
-  "tracker.conf":["pv_substrings","scan_interval","scan_trigger","sweep_pace","sweep_speed",
+  "tracker.conf":["pv_substrings","scan_interval","scan_near_v","scan_trigger","sweep_pace","sweep_speed",
     "sweep_verify","target_duty_cycle"],
   "mqtt.conf":["bat_charge_topic","bat_temp_topic","bat_voltage_topic","broker_uri","ca_file",
     "cell_voltages_delta_topic","cell_voltages_max_topic","cmd_input","enabled","ibat_lim_topic",

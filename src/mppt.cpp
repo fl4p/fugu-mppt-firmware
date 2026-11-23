@@ -618,6 +618,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     scan.n = scan.saved = std::min<uint8_t>(6, trackerConf.getByte("pv_substrings", 0)); // learned, 0 = learn again
     scan.interval = (uint16_t) std::clamp(trackerConf.getLong("scan_interval", 300), 0L, 65535L);
     scan.trigger = trackerConf.getByte("scan_trigger", 1);
+    scan.nearDv = (uint8_t) std::clamp(std::lround(10 * trackerConf.getFloat("scan_near_v", 2.f)), 0L, 255L);
 
     if (tele.influxdbHost) {
         ESP_LOGI("main", "Influxdb telemetry to host %s", tele.influxdbHost.toString().c_str());

@@ -85,7 +85,7 @@ struct Tracker {
     // settleMs(): step settling time [ms] of the filter on powerSample, called once per tracker period.
     // Returns the control value; on slow-mode entry the distance [counts] to the MPP duty.
     template<class SettleMs>
-    float update(float powerSample, uint16_t dutyCycle, float vin, SettleMs settleMs) {
+    __attribute__((always_inline)) float update(float powerSample, uint16_t dutyCycle, float vin, SettleMs settleMs) {
         auto now = wallClockMs();
 
         _powerBuf.add(powerSample);
