@@ -5,6 +5,8 @@ sidebar_position: 3
 
 # Serial Console
 
+*Original hand-written note: [doc/Console.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Console.md).*
+
 The console lets you control and inspect the charger while it runs. You send text commands over
 UART, telnet, USB serial-JTAG, or MQTT. Every transport uses the same string protocol, which also
 makes the console suitable for automated tests. The firmware multiplexes input and output across

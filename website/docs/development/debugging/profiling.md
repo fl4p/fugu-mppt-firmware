@@ -5,6 +5,8 @@ sidebar_position: 6
 
 # Profiling on ESP32
 
+*Original hand-written note: [doc/dev-notes/performance profiling.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/dev-notes/performance%20profiling.md).*
+
 You can profile the ESP32 with instrumented or sampling methods. The main options are:
 
 * SEGGER SystemView, over ESP-IDF App Trace and JTAG, is the method Espressif documents. Of the options here, it comes

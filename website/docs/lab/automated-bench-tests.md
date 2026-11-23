@@ -5,6 +5,8 @@ sidebar_position: 7
 
 # Automated bench tests
 
+*Original hand-written note: [doc/Test Cases.MD](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Test%20Cases.MD).*
+
 This test matrix gives repeatable, scriptable coverage of the protection, control, MPPT, and charger
 paths under controlled load conditions, without needing sun or a real battery. It exercises the
 converter against a programmable power supply on the input and a programmable electronic load / sink

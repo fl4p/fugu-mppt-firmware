@@ -5,6 +5,8 @@ sidebar_position: 4
 
 # Power loop
 
+*Original hand-written note: [doc/Power Loop.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Power%20Loop.md).*
+
 The power-loop rig connects two Fugu devices in a loop for hardware measurements, such as waveforms of gates, switch
 nodes, and coil current, or conversion efficiency.
 

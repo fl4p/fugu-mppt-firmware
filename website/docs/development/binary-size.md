@@ -5,6 +5,8 @@ sidebar_position: 9
 
 # Binary size
 
+*Original hand-written note: [doc/dev-notes/binary size.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/dev-notes/binary%20size.md).*
+
 This page lists the changes already made to shrink the firmware image and the ones still open. The 1.87 MB OTA slot
 (`partitions.csv`) is the hard ceiling for WITH_BLE=1 builds. Inspect the image with `idf.py size`,
 `idf.py size-components` and `idf.py size-files`.

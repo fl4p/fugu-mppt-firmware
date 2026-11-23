@@ -5,6 +5,8 @@ sidebar_position: 3
 
 # Internal ADC
 
+*Original hand-written note: [doc/Internal ADC.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Internal%20ADC.md).*
+
 ## Linearity and noise
 
 The ESP32 internal ADC has a poor reputation: it is non-linear and known to be noisy.

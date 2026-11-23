@@ -5,6 +5,8 @@ sidebar_position: 7
 
 # Wokwi simulator
 
+*Original hand-written note: [doc/dev-notes/simulator wokwi.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/dev-notes/simulator%20wokwi.md).*
+
 The firmware can run in the Wokwi simulator. The simulation is configured in `diagram.json` and `wokwi.toml`. For the
 options in `wokwi.toml`, see the [Wokwi project configuration](https://docs.wokwi.com/vscode/project-config) docs.
 

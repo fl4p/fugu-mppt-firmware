@@ -5,6 +5,8 @@ sidebar_position: 4
 
 # Sensors
 
+*Original hand-written note: [doc/Sensors.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Sensors.md).*
+
 The firmware implements a sensor layer that abstracts asynchronous ADC reads and supports multiple ADCs at once.
 A sensor represents an ADC channel, which is usually one physical pin, or two pins for a differential channel.
 

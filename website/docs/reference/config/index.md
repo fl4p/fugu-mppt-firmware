@@ -5,6 +5,8 @@ sidebar_position: 0
 
 # Configuration files
 
+*Original hand-written note: [doc/Configuration.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Configuration.md).*
+
 Hardware behavior and runtime options live in flat `key=value` `.conf` files on the device's
 `littlefs` partition under `/littlefs/conf/`, rather than being compiled in. `ConfFile`
 (`src/conf.h`) parses them. The source-of-truth image for each board lives under `config/` (e.g.

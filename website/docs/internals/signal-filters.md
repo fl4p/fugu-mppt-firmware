@@ -5,6 +5,8 @@ sidebar_position: 5
 
 # Signal Filters
 
+*Original hand-written note: [doc/Signal Filters.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Signal%20Filters.md).*
+
 ## Noise sources
 
 Noise can degrade tracking performance significantly.

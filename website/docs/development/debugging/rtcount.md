@@ -5,6 +5,8 @@ sidebar_position: 5
 
 # Real-Time Counter / Profiler
 
+*Original hand-written note: [doc/Real-time Counter.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Real-time%20Counter.md).*
+
 The `rtcount` profiler measures the real-time latency of labeled blocks in the time-critical loop.
 Each `rtcount("<label>")` call in the loop marks the end of a labeled block. The call uses cycle counters to capture
 the time that has passed since the previous call.

@@ -9,6 +9,8 @@ import {LsSweepChart, LsTimingChart, MSensitivityChart} from '@site/src/componen
 
 # Diode Emulation
 
+*Original hand-written note: [doc/Diode Emulation.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Diode%20Emulation.md).*
+
 ## Nomenclature
 
 ```

@@ -5,6 +5,8 @@ sidebar_position: 2
 
 # Control Loop
 
+*Original hand-written note: [doc/Control Loop.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Control%20Loop.md).*
+
 The control loop reads `Vout`, `Vin`, and `Iin` and adjusts the PWM duty cycle of the converter for MPPT and output
 regulation. It runs once per `Vout` reading, which keeps the output voltage response fast.
 

@@ -5,6 +5,8 @@ sidebar_position: 2
 
 # Logging
 
+*Original hand-written note: [doc/Logging.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Logging.md).*
+
 `src/logging.cpp` multiplexes firmware log output (`ESP_LOGx`, `UART_LOG`, `printf_mux`) to the
 UART/USB console, telnet, MQTT, and BLE.
 

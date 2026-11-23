@@ -5,6 +5,8 @@ sidebar_position: 4
 
 # Real-time latency
 
+*Original hand-written note: [doc/dev-notes/Real-Time Latency.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/dev-notes/Real-Time%20Latency.md).*
+
 The converter control loop must respond to a load transient fast enough to keep output overshoot small. Latency here
 is the time from an input change to the PWM response. For protection, only the worst case counts, not the mean.
 
