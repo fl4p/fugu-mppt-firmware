@@ -49,7 +49,8 @@ open, and so is a client when the free heap is below 24 KB. A handshake that has
 dropped.
 
 The TLS context is allocated only while a client is connected. The listening socket and the PSK configuration stay
-allocated while the service runs.
+allocated while the service runs. An open session costs about 2 KB of heap with `CONFIG_MBEDTLS_DYNAMIC_BUFFER=y` and
+about 24.6 KB with the default static buffers (see [TLS heap](../../guide/getting-started/build-options.md#tls-heap)).
 
 ## Client
 

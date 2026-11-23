@@ -40,6 +40,8 @@ The server certificate must name the address in `broker_uri`, as a DNS name or a
 alternative names. A missing or unreadable `ca_file` fails the service start rather than falling back to the CA
 bundle.
 
+`ca_file` applies to the broker only: an `https://` OTA download is always verified against the CA bundle.
+
 A TLS connection needs considerably more heap than a plain one. See
 [TLS heap](../../guide/getting-started/build-options.md#tls-heap) for measured figures and the
 `CONFIG_MBEDTLS_DYNAMIC_BUFFER` option.

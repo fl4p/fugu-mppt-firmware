@@ -93,7 +93,43 @@ free / minimum ever free / largest free block, in bytes:
 Dynamic buffers give the smallest steady-state cost, about 6 KB free and 8 KB minimum. Smaller static buffers help
 little, because the handshake still needs room for the server's full certificate chain. A broker that fails
 verification (wrong `ca_file`) makes the client retry the handshake every few seconds, and each attempt drives the
-minimum free heap down to about 9 KB. An open `tlscon` session costs about 2 KB with dynamic buffers.
+minimum free heap down to about 9 KB.
+
+An open `tlscon` session costs about 2 KB with dynamic buffers and about 24.6 KB with static buffers.
+
+### Static or dynamic buffers
+
+Static buffers are allocated once per connection and held until it closes. Dynamic buffers are allocated per record
+and released after it, so an idle connection holds almost nothing. The cost is fragmentation: every incoming record
+needs one contiguous block of about 16.4 KB (`Dynamic Impl: alloc(16749 bytes) failed` when the largest free block is
+smaller).
+
+`CONFIG_MBEDTLS_DYNAMIC_BUFFER=y` is the recommended setting for `HTTPS` builds that keep a TLS connection open (an
+`mqtts://` broker, `tlscon`). With BLE released for the download, an `https://` OTA works with either setting.
+
+### `https://` OTA
+
+The `ota <url>` command shuts BLE down before the download, which returns about 65 KB
+(see [OTA over Wi-Fi](../updating/ota-wifi.md#manual-update)). Measured on an ESP32-S3 (`HTTPS` and `tlscon`
+compiled in, plain MQTT connected, a 1.8 MB image at about 63 KB/s), internal heap in bytes:
+
+| mbedTLS buffers | before the command, free / largest | lowest free, internal / DMA | smallest largest block | result |
+|---|---|---|---|---|
+| static | 51 700 / 31 700 | 41 100–44 200 / 33 400–36 500 | 31 700 | 2 of 2 |
+| dynamic | 51 600 / 31 700 | 41 100–45 000 / 33 400–37 300 | 31 700 | 2 of 2 |
+
+"Lowest free" is the minimum from the `ota` command to the end of the download, including the TLS handshake.
+
+Firmware that kept BLE running during the download had only about 40 KB free and a 29 KB largest block. There, an
+`https://` OTA with dynamic buffers failed every time on the 16.4 KB record buffer, and with static buffers it
+succeeded only with the MQTT service stopped; with MQTT running, certificate verification ran out of memory. The same
+limits still apply when BLE is kept: `ota bootloader <url>` does not release it, and `ota <url>` keeps it when a
+connected BLE client does not disconnect within 5 s.
+
+The download verifies the server against the built-in CA bundle and checks its host name. `mqtt.conf` `ca_file`
+applies to the broker only, so a server with a certificate from a private CA cannot serve OTA images. The build
+disables the P-384 curve (`CONFIG_MBEDTLS_ECP_DP_SECP384R1_ENABLED=n`), which the certificate chain of `github.com`
+(and so of release downloads) needs: such URLs fail with `-0x3A00`. `raw.githubusercontent.com` works.
 
 ## Environment variables
 
