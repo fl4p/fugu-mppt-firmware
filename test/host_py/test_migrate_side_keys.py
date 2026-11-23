@@ -142,6 +142,23 @@ class OfflineTest(unittest.TestCase):
             m.topo_of({"topo": "buck"}, "boost")
         self.assertEqual(m.rewrite("limits.conf", "vin_min=8\niout_short=6\np_max=800\n", False)[1], [])
 
+    def test_moves_ina226_keys_to_sensor_conf(self):
+        board = "# INA226\nina22x_alert=41\nina22x_resistor=0.5e-3\nina22x_conv_time_us=332 # fast\n#ina22x_ov=30\n"
+        b, s, ch = m.move_lines(board, "ntc_ch=7")
+        self.assertEqual(b, "# INA226\nina22x_alert=41\n")
+        self.assertEqual(s, "ntc_ch=7\n\n# INA226\nina22x_resistor=0.5e-3\nina22x_conv_time_us=332 # fast\n#ina22x_ov=30\n")
+        self.assertEqual(ch, [("ina22x_resistor", "0.5e-3"), ("ina22x_conv_time_us", "332")])
+        self.assertEqual(m.move_lines(b, s), (b, s, []))
+        b, s, ch = m.move_lines("ina22x_ov=30\n", "#ina22x_ov=1\nina22x_ov=30\n")  # equal: drop from board
+        self.assertEqual((b, s, ch), ("", "#ina22x_ov=1\nina22x_ov=30\n", [("ina22x_ov", "30")]))
+        with self.assertRaisesRegex(m.MigrationError, "differ"):
+            m.move_lines("ina22x_ov=30\n", "ina22x_ov=31\n")
+
+    def test_no_profile_has_ina226_keys_in_board_conf(self):
+        for f in sorted(ROOT.glob("config/**/board.conf")):
+            with self.subTest(profile=str(f.relative_to(ROOT))):
+                self.assertFalse(set(m.MOVED_KEYS) & m.parse_conf(f.read_text()).keys())
+
 
 class LiveTest(unittest.TestCase):
     @staticmethod
@@ -187,6 +204,17 @@ class LiveTest(unittest.TestCase):
             m.live_commands(cap)
         self.assertEqual(m.live_commands(cap, "buck"),
                          ["set-config sensor.conf hv_v_ch 3", "del-config sensor.conf vin_ch"])
+
+    def test_ina226_keys_board_only_capture(self):
+        cap = ("Conf '/littlefs/conf/board.conf:ina22x_resistor' = '0.5e-3'\n"
+               "Conf '/littlefs/conf/board.conf:ina22x_ov' = '30'\n"
+               "Conf '/littlefs/conf/board.conf:ina22x_alert' = '41'")
+        self.assertEqual(m.live_commands(cap), [
+            "set-config sensor.conf ina22x_resistor 0.5e-3", "set-config sensor.conf ina22x_ov 30",
+            "del-config board.conf ina22x_resistor", "del-config board.conf ina22x_ov"])
+        self.assertEqual(m.live_commands(cap, rollback=True), [
+            "set-config board.conf ina22x_resistor 0.5e-3", "set-config board.conf ina22x_ov 30",
+            "del-config sensor.conf ina22x_resistor", "del-config sensor.conf ina22x_ov"])
 
 
 if __name__ == "__main__":

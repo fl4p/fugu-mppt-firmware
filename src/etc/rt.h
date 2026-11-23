@@ -94,7 +94,7 @@ void rtAllocPrint();
 // core that last ran the internal-ADC / alert-pin interrupt (0xff: none yet)
 extern uint8_t g_isrCore[2];
 
-// HW over-voltage alert (board.conf ina22x_ov): set by the alert ISR, consumed by mppt.protect()
+// HW over-voltage alert (sensor.conf ina22x_ov): set by the alert ISR, consumed by mppt.protect()
 extern volatile bool g_hwOvTrip;
 // called from the alert ISR to force the gates off; must be IRAM-safe
 extern void (*volatile g_hwOvIsrHook)();

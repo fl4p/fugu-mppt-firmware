@@ -46,7 +46,7 @@ static AsyncADC<float> *createAdcInstance(const std::string &adcName, const Conf
 #endif
 #if CONFIG_FUGU_WITH_INA226
     } else if (adcName == "ina226") {
-        adc = new ADC_INA226();
+        adc = new ADC_INA226(sensConf);
 #endif
     } else if (adcName == "esp32adc1") {
         // assert_throw(ntc_ch== 255, "adc1 conflicts ntc impl TODO fix");
@@ -170,8 +170,15 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
     auto defAdcName = sensConf.getString("adc", "");
     const bool boost = readTopoIsBoost("sensor.conf");
     rejectSensorRoleKeys(sensConf, boost);
+    for (auto k: {"ina22x_resistor", "ina22x_conv_time_us", "ina22x_ov"})
+        if (boardConf.has(k)) {
+            // a leftover copy is fine while sensor.conf holds the same value
+            if (!sensConf.has(k) || boardConf.getFloat(k, 0) != sensConf.getFloat(k, 0))
+                throw std::runtime_error(std::string("board.conf ") + k + " is no longer read, move it to sensor.conf");
+            ESP_LOGW("sensor", "board.conf %s is no longer read (same value in sensor.conf), remove it", k);
+        }
     std::unordered_map<std::string, AsyncADC<float> *> adcs{};
-    float busOv = boardConf.getFloat("ina22x_ov", 0); // consumed by the ina226 bus channel
+    float busOv = sensConf.getFloat("ina22x_ov", 0); // consumed by the ina226 bus channel
     for (auto chn_: {"ntc", "vin", "iin", "iout", "vout",}) {
         auto chn = std::string(chn_);
         const auto key = sensorKeyPrefix(chn, boost); // hv_v, lv_v, hv_i, lv_i by topo
@@ -204,6 +211,9 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
 #if CONFIG_FUGU_WITH_INA226
                 if (an == "ina226" && chNum == ADC_INA226::ChVBus && busOv != 0) {
                     ((ADC_INA226 *) adc)->setBusOvLimit(lt.apply_inverse(busOv));
+#ifndef HAVE_MCPWM
+                    ESP_LOGW("main", "ina22x_ov: gate driver is not MCPWM, the alert ISR cannot force the gates off");
+#endif
                     busOv = 0;
                 }
 #endif

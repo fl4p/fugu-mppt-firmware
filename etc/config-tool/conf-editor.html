@@ -317,9 +317,6 @@ const META = {
   i2c_port:{unit:"",desc:"ESP32 I2C controller index (0 or 1)",type:"int"},
   ina22x_alert:{unit:"GPIO",desc:"INA226 ALERT pin number",type:"int"},
   ina22x_addr:{unit:"",desc:"INA226 I2C address",type:"int"},
-  ina22x_resistor:{unit:"Ω",desc:"INA226 current-sense shunt resistance; current range = 81.92 mV / R",type:"float"},
-  ina22x_conv_time_us:{unit:"µs",desc:"INA226 per-conversion time (rounded up to nearest device step); lower=faster/noisier",type:"int"},
-  ina22x_ov:{unit:"V",desc:"INA226 bus over-voltage limit (sensor volts after divider); ALERT ISR forces gates off, conversions polled; 0=off",type:"float"},
   pwm_freq:{unit:"Hz",desc:"Converter PWM switching frequency",type:"int"},
   pwm_driver_logic:{unit:"",desc:"Gate driver logic: HiLi or InEn",type:"enum",opts:["HiLi","InEn"]},
   pwm_hi:{unit:"GPIO",desc:"High-side gate driver pin (HiLi mode)",type:"int"},
@@ -357,6 +354,10 @@ const META = {
   despike:{unit:"",desc:"Glitch-safe median outlier threshold (mean-dev units): 0=off, ~8 enables. Passes dense load pulses (unbiased current), still clips impulse glitches (only beyond 4 quantization steps). Not applied to the NTC",type:"float"},
   esp32adc1_sr:{unit:"Hz",desc:"Internal ADC1 continuous-mode raw sample rate",type:"int"},
   esp32adc1_avg:{unit:"",desc:"Internal ADC1 hardware averaging count per sample",type:"int"},
+  esp32adc1_inl:{unit:"",desc:"Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation, all ADC1 channels); calibrate gain/offset with it on",type:"bool"},
+  ina22x_resistor:{unit:"Ω",desc:"INA226 current-sense shunt resistance; current range = 81.92 mV / R",type:"float"},
+  ina22x_conv_time_us:{unit:"µs",desc:"INA226 per-conversion time (rounded up to nearest device step); lower=faster/noisier",type:"int"},
+  ina22x_ov:{unit:"V",desc:"INA226 bus over-voltage limit (sensor volts after divider); ALERT ISR forces gates off, conversions polled; 0=off",type:"float"},
 
   // limits.conf
   hv_max:{unit:"V",desc:"Maximum HV-side voltage before protection cutout (Vin max in buck, Vout max in boost)",type:"float"},
@@ -581,12 +582,12 @@ const ADD_KEY_HINTS = { "sensor.conf": ["hv_v","lv_v","hv_i","lv_i"].flatMap(c =
 // SCRAPER:BEGIN FILE_KEYS
 const FILE_KEYS = {
   "board.conf":["adc_fake_freq","ads_alert","bflow_bat","boot_refresh_ns","fan_pwm","hs_clamp","i2c_freq","i2c_hs_freq","i2c_port","idle_cpu_mhz",
-    "i2c_scl","i2c_sda","ina22x_addr","ina22x_alert","ina22x_conv_time_us","ina22x_ov","ina22x_resistor",
+    "i2c_scl","i2c_sda","ina22x_addr","ina22x_alert",
     "led_WS2812","led_WS2812B","led_simple","lv_pgood","lv_pgood_v","mcu","panel_en","panel_sd",
     "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","pwm_driver_logic","pwm_en","pwm_fault_active_high","pwm_fault_pin",
     "pwm_freq","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin","skip_assert"],
-  "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_sr",
-    "ignore_calibration_constraints","notch_adaptive","notch_freq","notch_q","ntc_ch"],
+  "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_inl","esp32adc1_sr",
+    "ignore_calibration_constraints","ina22x_conv_time_us","ina22x_ov","ina22x_resistor","notch_adaptive","notch_freq","notch_q","ntc_ch"],
   "limits.conf":["hv_i_max","hv_max","iout_short","lv_i_max","lv_max",
     "p_max","reverse_current_paranoia","temp_derate","temp_max","vin_min",
     "wire_dr_min","wire_p_derate","wire_p_trip","wire_p_warn","wire_protect","wire_r_max"],
@@ -620,13 +621,13 @@ const FILE_KEYS = {
 const TYPE_KEYS = {
   byte: new Set(["addr","ads_alert","bflow_bat","cmd_input","hs_clamp","enabled","fan_pwm","forced_pwm","fpwm_gate","rect_cal_auto","rect_offset_cal",
     "i2c_port","i2c_scl","i2c_sda","ignore_calibration_constraints","ina22x_addr","ina22x_alert",
-    "led_simple","lv_pgood","notch_adaptive","ntc_ch","panel_en","panel_sd","pwm_en","pwm_fault_active_high","pwm_fault_pin",
+    "esp32adc1_inl","led_simple","lv_pgood","notch_adaptive","ntc_ch","panel_en","panel_sd","pwm_en","pwm_fault_active_high","pwm_fault_pin",
     "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert","wire_protect",
     "pv_substrings","scan_trigger"]),
   long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq","i2c_hs_freq",
     "balance_hold_s","cv_hold_max_s","holiday_days","i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pasv_port","port","pwm_freq","sprofiler_hz","switch_delay","improv_offline_s","scan_interval","tail_hold_s"]),
   float: new Set(["L0","balance_delta","balance_interval","bat_c","c_in","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","holiday_charge","holiday_ibat","holiday_band","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_hold_band","cv_float","hv_i_max","hv_max","ibat_max","psu_vout","rect_offset_ns",
-     "ina22x_resistor","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max",
+     "ina22x_ov","ina22x_resistor","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max",
      "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","sweep_pace","sweep_verify","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
     "vin_min","vout_max","vout_max_fallback","vout_offset_max",
     "wire_dr_min","wire_p_derate","wire_p_trip","wire_p_warn","wire_r_max",
@@ -647,11 +648,11 @@ const CHAN_SUFFIX_TYPE = { adc:"string", ch:"byte", rh:"float", rl:"float", fact
 const DEFAULTS = {
   // board.conf
   "adc_fake_freq":"3000","fan_pwm":"255","i2c_freq":"100000","i2c_hs_freq":"0","i2c_port":"0","i2c_sda":"255","idle_cpu_mhz":"80",
-  "ina22x_addr":"0x40","ina22x_alert":"255","ina22x_conv_time_us":"1100","ina22x_ov":"0","led_simple":"255","lv_pgood":"255","lv_pgood_v":"10.5",
+  "ina22x_addr":"0x40","ina22x_alert":"255","led_simple":"255","lv_pgood":"255","lv_pgood_v":"10.5",
   "mcu":"\"\"","ntc_ch":"255","panel_en":"0","panel_sd":"0","pwm_fault_active_high":"0","bflow_bat":"0","hs_clamp":"0",
   "pwm_fault_pin":"255","pwm_sd":"255","skip_assert":"0",
   // sensor.conf
-  "adc":"\"\"","ignore_calibration_constraints":"0",
+  "adc":"\"\"","esp32adc1_inl":"0","ignore_calibration_constraints":"0","ina22x_conv_time_us":"1100","ina22x_ov":"0",
   // limits.conf
   "reverse_current_paranoia":"1","temp_max":"90.0",
   "wire_protect":"1","wire_p_warn":"2","wire_p_derate":"4","wire_p_trip":"8","wire_dr_min":"4","wire_r_max":"0",

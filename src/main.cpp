@@ -282,10 +282,6 @@ static void setupConverterAndMppt(const ConfFile &boardConf, const Limits &lim, 
             mppt.charger.attachRtc(&s_chargerRtc);
             converter.init(converterConf, boardConf, coilConf);
             g_hwOvIsrHook = hwOvIsr;
-#ifndef HAVE_MCPWM
-            if (boardConf.getFloat("ina22x_ov", 0) > 0)
-                ESP_LOGW("main", "ina22x_ov: gate driver is not MCPWM, the alert ISR cannot force the gates off");
-#endif
             mppt.rectCal.autoRun = coilConf.getByte("rect_cal_auto", 1);
             mppt.rectCal.persist = rectCalPersist;
             mppt.rectCal.init(converter.getRectOnOffset(), !converter.rectOffsetNeedsCal());

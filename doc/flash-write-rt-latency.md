@@ -18,7 +18,7 @@ longer delays the control loop.
 Before: 40-67 ms with caches off, 151-202 ms with auto-suspend alone.
 
 The loop gap can never be shorter than one sample period. On a board with an INA226 that period is
-two conversions, so `board.conf::ina22x_conv_time_us` sets the floor (1100 -> 2.2 ms, 332 -> 0.68 ms).
+two conversions, so `sensor.conf::ina22x_conv_time_us` sets the floor (1100 -> 2.2 ms, 332 -> 0.68 ms).
 When it changes, scale the `*_filt_len` of the INA226 channels by the same factor.
 
 ## Why a flash op stalled the loop

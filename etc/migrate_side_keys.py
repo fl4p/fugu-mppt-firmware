@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Migrate sensor.conf and limits.conf from role keys to HV/LV side keys.
+"""Migrate sensor.conf and limits.conf from role keys to HV/LV side keys, and move the INA226
+measurement keys (ina22x_resistor, ina22x_conv_time_us, ina22x_ov) from board.conf to sensor.conf.
 
 Firmware from the sensor-hv-lv change on reads only side keys (src/conv_side.h). A sensor.conf or
 limits.conf that still has a role key (vin_ch, iout_factor, vin_max, ...) fails setup at boot, so
@@ -9,14 +10,18 @@ Mapping, by converter.conf topo (absent = buck, as the firmware reads it):
   buck:  vin_/iin_ -> hv_v_/hv_i_   vout_/iout_ -> lv_v_/lv_i_   vin_max -> hv_max  iout_max -> lv_i_max ...
   boost: vin_/iin_ -> lv_v_/lv_i_   vout_/iout_ -> hv_v_/hv_i_   vin_max -> lv_max  iout_max -> hv_i_max ...
 Side current factors are positive HV->LV, so a boost's current *_factor changes sign. Every other
-key (ntc_*, vin_min, iout_short, p_max, charger.conf vout_max, ...) is left alone.
+key (ntc_*, vin_min, iout_short, p_max, charger.conf vout_max, ...) is left alone. Firmware that reads
+the INA226 keys from sensor.conf fails setup while board.conf still has one of them, unless
+sensor.conf holds the same value (then it only warns).
 
 Offline, rewrite conf directories in place (comments, order and inline comments are kept; already
-migrated files are left unchanged; a role key next to its own side key is refused):
+migrated files are left unchanged; a role key next to its own side key is refused; moved INA226 lines
+are appended to sensor.conf with their comments):
   etc/migrate_side_keys.py dir config/lab/buck_bench [more dirs...] [--topo buck|boost] [--check]
 
 Live board, still on the old firmware: capture the configs, then print the console commands:
-  get-config converter.conf / get-config sensor.conf / get-config limits.conf  -> save to board.log
+  get-config converter.conf / get-config sensor.conf / get-config limits.conf / get-config board.conf
+  -> save to board.log
   etc/migrate_side_keys.py live board.log [--topo buck|boost] [--rollback]
 Run the printed set-config/del-config lines over BLE or telnet, then OTA straight away: the old
 firmware keeps its sensors only until the next reboot. --rollback prints the inverse sequence.
@@ -29,6 +34,7 @@ from pathlib import Path
 ROLE_CHANNELS = ("vin", "vout", "iin", "iout")
 SENSOR_SUFFIXES = ("adc", "ch", "rh", "rl", "factor", "midpoint", "filt_len", "gain", "offset")  # conv_side.h SensorKeySuffixes
 LIMIT_KEYS = ("vin_max", "vout_max", "iin_max", "iout_max")
+MOVED_KEYS = ("ina22x_resistor", "ina22x_conv_time_us", "ina22x_ov")  # board.conf -> sensor.conf
 
 
 class MigrationError(Exception):
@@ -129,6 +135,42 @@ def rewrite(file, text, boost):
     return "".join(out), changes
 
 
+def moves(board_kv, sensor_kv):
+    """[(key, value)] to move board.conf -> sensor.conf; a key in both is dropped from board.conf if equal."""
+    out = []
+    for k in MOVED_KEYS:
+        if k not in board_kv:
+            continue
+        if k in sensor_kv and sensor_kv[k] != board_kv[k]:
+            raise MigrationError(f"board.conf {k}={board_kv[k]} and sensor.conf {k}={sensor_kv[k]} differ; "
+                                 "delete the wrong one, then rerun")
+        out.append((k, board_kv[k]))
+    return out
+
+
+def move_lines(board_text, sensor_text):
+    """(board text, sensor text, [(key, value)]) with the MOVED_KEYS lines, commented-out ones too,
+    cut from board.conf and appended to sensor.conf unless sensor.conf already has the key."""
+    active = parse_conf(sensor_text)
+    changes = moves(parse_conf(board_text), active)
+    listed = {m["key"] for m in map(LINE.match, sensor_text.splitlines()) if m}
+    keep, moved, cut = [], [], False
+    for line in board_text.splitlines(keepends=True):
+        m = LINE.match(line.rstrip("\r\n"))
+        if m and m["key"] in MOVED_KEYS:
+            cut = True
+            if m["key"] not in (listed if "#" in m["pre"] else active):
+                moved.append(line if line.endswith("\n") else line + "\n")
+        else:
+            keep.append(line)
+    if not cut:
+        return board_text, sensor_text, changes
+    if moved:
+        sep = "" if not sensor_text or sensor_text.endswith("\n") else "\n"
+        sensor_text += sep + ("\n" if sensor_text else "") + "# INA226\n" + "".join(moved)
+    return "".join(keep), sensor_text, changes
+
+
 def conf_dir(path):
     p = Path(path)
     return p / "conf" if not (p / "sensor.conf").exists() and (p / "conf").is_dir() else p
@@ -150,9 +192,16 @@ def migrate_dir(path, forced_topo=None, write=True):
         text, changes = rewrite(file, f.read_text(), boost)
         texts[f] = text
         done += [(file,) + c for c in changes]
+    board = d / "board.conf"
+    if board.exists():
+        sensor = d / "sensor.conf"
+        btext, stext, changes = move_lines(board.read_text(), texts.get(sensor, sensor.read_text() if sensor.exists() else ""))
+        if btext != board.read_text():
+            texts[board], texts[sensor] = btext, stext
+        done += [("board.conf", k, "sensor.conf", v, v) for k, v in changes]
     if write:
         for f, text in texts.items():
-            if f.read_text() != text:
+            if not f.exists() or f.read_text() != text:
                 f.write_text(text)
     return done
 
@@ -174,11 +223,22 @@ def parse_get_config(text):
 
 def live_commands(text, forced_topo=None, rollback=False):
     files = parse_get_config(text)
-    if "sensor.conf" not in files and "limits.conf" not in files:
-        raise MigrationError("no sensor.conf or limits.conf lines in the get-config output")
-    boost = topo_of(files.get("converter.conf"), forced_topo)
+    if not {"sensor.conf", "limits.conf", "board.conf"} & files.keys():
+        raise MigrationError("no sensor.conf, limits.conf or board.conf lines in the get-config output")
     sets, dels = [], []
-    for file in ("sensor.conf", "limits.conf"):
+    sens = files.get("sensor.conf", {})
+    for k, v in moves(files.get("board.conf", {}), sens):
+        if rollback:
+            sets.append(f"set-config board.conf {k} {v}")
+            if k not in sens:
+                dels.append(f"del-config sensor.conf {k}")
+        else:
+            if k not in sens:
+                sets.append(f"set-config sensor.conf {k} {v}")
+            dels.append(f"del-config board.conf {k}")
+    roles = [f for f in ("sensor.conf", "limits.conf") if f in files]
+    boost = topo_of(files.get("converter.conf"), forced_topo) if roles else False
+    for file in roles:
         for role, side, old, new in plan(file, files.get(file, {}), boost):
             if rollback:
                 sets.append(f"set-config {file} {role} {old}")
@@ -201,7 +261,8 @@ def main(argv=None):
     b = sub.add_parser("live", help="print console commands from a get-config capture")
     b.add_argument("log", nargs="?", default="-", help="get-config output (default stdin)")
     b.add_argument("--topo", choices=("buck", "boost"), help="needed when converter.conf was not captured")
-    b.add_argument("--rollback", action="store_true", help="print the inverse sequence (side -> role keys)")
+    b.add_argument("--rollback", action="store_true", help="print the inverse sequence (side -> role keys, "
+                   "INA226 keys back to board.conf)")
     args = ap.parse_args(argv)
 
     try:

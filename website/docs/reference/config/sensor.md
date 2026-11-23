@@ -61,6 +61,17 @@ flow. The same shunt therefore keeps the same `_factor` in both topologies.
 For worked ACS712 and bare-ESP32 configs, see [Notes & examples](#notes--examples).
 
 
+## INA226
+
+The following keys set the INA226 measurement (`ina226` backend); its wiring (`ina22x_alert`,
+`ina22x_addr`, `i2c_*`) is in [board.conf](board.md):
+
+| key | unit | type | default | description |
+|-----|------|------|---------|-------------|
+| `ina22x_resistor` | Ω | float | — | INA226 current-sense shunt resistance, required with `ina226` (0 to 10 Ω, else sensor setup fails); the current range is the shunt full scale, 81.92 mV / `ina22x_resistor`, at the shunt ADC resolution (2.5 µV / `ina22x_resistor`) |
+| `ina22x_conv_time_us` | µs | int | 1100 | INA226 per-conversion time (rounded up to nearest device step); lower = faster/noisier |
+| `ina22x_ov` | V | float | 0 | INA226 bus over-voltage limit, in volts of the sensor on the INA226 bus channel (after its divider; the LV side, which is the battery only in buck topology). When set, ALERT is a latched over-voltage alert: its ISR forces the gates off (MCPWM gate driver only) and the converter backs off; conversions are then polled instead of signalled. Set it above the highest normal voltage. 0 = ALERT is the conversion-ready strobe |
+
 ## Notes & examples
 
 ### Sensors
@@ -179,3 +190,24 @@ factors are positive for HV → LV power. `vin_min`, `iout_short`, `p_max`, `ntc
   firmware reads the configs only at boot, so OTA right after migrating: rebooting the old
   firmware on migrated configs leaves it without sensors. `--rollback` prints the inverse
   sequence. Without a captured `converter.conf`, pass `--topo buck|boost`.
+
+## Moving the INA226 keys
+
+Earlier firmware read `ina22x_resistor`, `ina22x_conv_time_us` and `ina22x_ov` from
+[board.conf](board.md). The current firmware reads them only from `sensor.conf`. A copy left in
+`board.conf` with the same value in `sensor.conf` only logs a warning. Any other copy in
+`board.conf` stops sensor setup:
+
+```
+board.conf ina22x_resistor is no longer read, move it to sensor.conf
+```
+
+`etc/migrate_side_keys.py` moves them as well. In a config directory it cuts the lines, with
+their comments, from `board.conf` and appends them to `sensor.conf`. For a live board, add
+`get-config board.conf` to the capture; the printed `set-config sensor.conf ...` lines come
+before the `del-config board.conf ...` lines. A key that is in both files with different values
+is refused.
+
+The `set-config sensor.conf ...` lines are harmless to earlier firmware, which does not read them.
+Running only those before the update and the `del-config` lines after it keeps the board working
+on either firmware.

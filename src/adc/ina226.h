@@ -32,7 +32,8 @@ class ADC_INA226 : public AsyncADC<float> {
     uint32_t alertTimeoutMs_ = 4;
     uint32_t measuredPairUs_ = 0; // measured CVRF interval (Vbus+I pair); 0 = not measured
     uint32_t lastAlertUs_ = 0;    // last sample or MASK_EN poll (micros)
-    uint16_t ovRaw_ = 0;          // BOL limit in bus LSBs (board.conf ina22x_ov), 0 = conversion-ready alert
+    float shuntR_;
+    uint16_t ovRaw_ = 0;          // BOL limit in bus LSBs (sensor.conf ina22x_ov), 0 = conversion-ready alert
     volatile bool ovArmed_ = false;
     uint32_t ovArmFails_ = 0;
     uint8_t ovMiss_ = 0;          // CVRF polls without a conversion since the last sample
@@ -71,6 +72,17 @@ public:
     }
 
 
+    explicit ADC_INA226(const ConfFile &sensConf) : shuntR_(sensConf.getFloat("ina22x_resistor")) {
+        assert_throw(shuntR_ > 0 && shuntR_ < 10, "sensor.conf: ina22x_resistor missing or out of range");
+        long convReqUs = sensConf.getLong("ina22x_conv_time_us", 1100);
+        auto ct = ina226ConvTimeAtLeast(convReqUs);
+        convSetting_ = ct.setting;
+        convUs_ = ct.us;
+        alertTimeoutMs_ = ina226AlertTimeoutMs(convUs_);
+        ESP_LOGI("ina22x", "conv time %u us (req %ld), ~%.0f SPS, alert timeout %lu ms",
+                 convUs_, convReqUs, ina226SampleRate(convUs_), alertTimeoutMs_);
+    }
+
     bool init(const ConfFile &boardConf) override {
         if (ina226_instance) {
             return false;
@@ -99,15 +111,7 @@ public:
         ina226.i2cAddress = addr;
 
         // CAL=2048: current LSB = shunt LSB (2.5 uV/R), range = 81.92 mV/R
-        ina226.setCalVal(2048, 0.08192f / boardConf.getFloat("ina22x_resistor"));
-
-        long convReqUs = boardConf.getLong("ina22x_conv_time_us", 1100);
-        auto ct = ina226ConvTimeAtLeast(convReqUs);
-        convSetting_ = ct.setting;
-        convUs_ = ct.us;
-        alertTimeoutMs_ = ina226AlertTimeoutMs(convUs_);
-        ESP_LOGI("ina22x", "conv time %u us (req %ld), ~%.0f SPS, alert timeout %lu ms",
-                 convUs_, convReqUs, ina226SampleRate(convUs_), alertTimeoutMs_);
+        ina226.setCalVal(2048, 0.08192f / shuntR_);
 
         if (!resetPeripherals())
             return false;
