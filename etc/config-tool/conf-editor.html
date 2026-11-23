@@ -54,6 +54,8 @@
   button.link:hover { background:transparent; color:var(--fg); text-decoration-color:currentColor; }
   button:disabled { opacity:.4; cursor:not-allowed; }
   label.btn input { display:none; }
+  button.xbtn { padding:6px; color:var(--muted); }
+  button.xbtn:hover { color:var(--fg); }
 
   /* header */
   header { position:sticky; top:0; z-index:30; height:var(--hdr); display:flex; align-items:center; gap:14px;
@@ -80,9 +82,9 @@
   #review-btn.none:hover { background:var(--field); }
   #review-btn.none .count { display:none; }
   .menu { position:relative; }
-  .menu > summary { list-style:none; font-size:13px; padding:6px 12px; border-radius:7px; cursor:pointer; user-select:none; white-space:nowrap; }
+  .menu > summary { display:inline-flex; align-items:center; gap:6px; list-style:none; font-size:13px; padding:6px 12px; border-radius:7px; cursor:pointer; user-select:none; white-space:nowrap; }
   .menu > summary::-webkit-details-marker { display:none; }
-  .menu > summary::after { content:""; display:inline-block; width:10px; height:6px; margin-left:7px; vertical-align:2px;
+  .menu > summary::after { content:""; display:inline-block; width:10px; height:6px; margin-left:1px;
     background:var(--chev) no-repeat center; }
   .menu > summary:hover, .menu[open] > summary { background:var(--field); }
   .menu-list { position:absolute; right:0; top:calc(100% + 6px); min-width:210px; background:var(--bg); border:1px solid var(--line);
@@ -360,7 +362,7 @@
   <span id="serial-status" style="display:none" role="status"></span>
   <div class="actions">
     <details id="open-menu" class="menu">
-      <summary>Open</summary>
+      <summary><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Open</summary>
       <div class="menu-list">
         <div class="mh">Read from a device</div>
         <button id="menu-mqtt" type="button">MQTT broker…</button>
@@ -374,7 +376,7 @@
         <button id="menu-start" type="button">Start screen</button>
       </div>
     </details>
-    <button id="open-console" type="button" aria-pressed="false" aria-controls="console">Console</button>
+    <button id="open-console" type="button" aria-pressed="false" aria-controls="console"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4M12 17h7"/></svg>Console</button>
     <button id="review-btn" class="primary none" type="button" aria-controls="review"><span class="lbl">Review changes</span><span class="count" id="review-count">0</span></button>
   </div>
 </header>
@@ -437,7 +439,7 @@
   <div class="sheet-head">
     <h2 id="review-title">Review changes</h2>
     <span id="review-sub" class="sub"></span>
-    <button id="review-close" type="button">Close</button>
+    <button id="review-close" class="xbtn" type="button" aria-label="Close" title="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div id="review-body" class="sheet-body"></div>
   <div class="sheet-foot">
@@ -453,7 +455,7 @@
   <div class="sheet-head">
     <h2 id="uploadlog-title">Console</h2>
     <span id="uploadlog-stat"></span>
-    <button id="uploadlog-close" type="button">Close</button>
+    <button id="uploadlog-close" class="xbtn" type="button" aria-label="Close" title="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div id="uploadlog"><div id="uploadlog-body"></div></div>
   <form id="uploadlog-input" autocomplete="off">
