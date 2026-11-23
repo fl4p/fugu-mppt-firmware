@@ -64,15 +64,29 @@ NAT router), sends `ota <url>` to each, then prints a before/after version table
 **Always `-n` first, and `-m <name>` to target, before OTAing `fry`/`flat`** — they're live converters and an OTA
 reboots them into the new image. Confirm versions in the after-table.
 
-**One device over the MQTT console (preferred for fry/flat):** `.venv/bin/python3 etc/ota_mqtt.py --name flat -n`, then
-without `-n` (`--bin` for another image). It reads the broker and credentials from `etc/mqtt.env` (main checkout's as
-fallback), tunnels through `havan-ts` when the broker is not directly reachable, stages the image on the relay with
-`etc/ota-via-relay.sh` when this host cannot serve it, locks onto the exact hostname, sends `ota <url>`, and then checks
-`bootinfo` for the image's version on the other slot with a reset uptime. A failed or silent download is retried once.
-It refuses non-interactively when the running image is still `PENDING_VERIFY`. Around each transfer it raises the NAT
-gateway's Wi-Fi TX power (`POST /txpower?wifi=20`, directly or curl via `havan-ts`) and restores the old value afterwards,
-also on failure or Ctrl-C (`--gw`, `--gw-tx-dbm`, `--no-gw-boost`); gateway errors only warn. The gateway persists the
-level in NVS, so after a `kill -9` check `GET /txpower`. `fugu_console.py --mqtt` (bare = `$MQTT_HOST`)
+**fry/flat image: `etc/fleet-build.sh [rev]`** (default HEAD) builds the production config (`sdkconfig.fleet`, IDF 6.0.3)
+in a clean, reused detached worktree `../fugu-fleet-wt` (`build-fleet/`), refuses a dirty worktree and prints the .bin
+path, version and sha256. Never ship a main-checkout build: it carries other sessions' uncommitted edits.
+
+**OTA over the MQTT console (preferred for fry/flat):** `.venv/bin/python3 etc/ota_mqtt.py --name fry,flat --bin
+../fugu-fleet-wt/build-fleet/fugu-firmware.bin -n`, then without `-n`. Devices go one after the other; a failure stops
+the rest. It reads the broker and credentials from `etc/mqtt.env` (main checkout's as fallback), tunnels through
+`havan-ts` when the broker is not directly reachable, locks onto the exact hostname and runs pre-flight checks (also in
+`-n`): image flags, a `PENDING_VERIFY` running image, a `-dirty` image (refused for fry/flat unless `--allow-dirty` when the tree it was built in has
+uncommitted firmware inputs; non-firmware dirt does not block), rect-cal running/unsaved, a sweep or top-balance run
+(need `--yes`), the RTC symbol layout vs the running build's archived ELF, the device's previous OTA record, and
+`--check CMD` outputs (repeatable, read-only commands, diffed after the OTA). A real OTA holds the `lock.sh` locks
+`ota-<device>` and `ota-relay` (refuses when held, `--lock-wait S` queues), stages the image on the relay with
+`etc/ota-via-relay.sh` when this host cannot serve it (own staging dir, `<name>-<sha8>.bin`, first free port
+9000-9099; `status|stop <token>`), sends `ota <url>` and checks `bootinfo` for the image's version on the other slot
+with a reset uptime. Failed downloads are retried (`--retries 2`, backoff 30/90 s) with throughput, relay status and
+whether the device rebooted (the firmware's 300 s OTA watchdog restarts it). `--verify` (default; `--no-verify`) then
+waits for `rollback=VALID` (`--valid-timeout 90`), watches the log for ADC/INA/latency/backoff/panic/reboot lines
+(`--watch 120`) and prints power before/after. Each OTA is recorded in `elf-archive/ota-owners.jsonl` (who, version,
+sha256, git sha, dirty paths, result). Around each transfer the NAT gateway's Wi-Fi TX power gets a timed boost
+(`POST /txpower?wifi=20&for=N`), cancelled afterwards by a plain set of the persisted level, also on failure or Ctrl-C
+(`--gw`, `--gw-tx-dbm`, `--no-gw-boost`); gateway errors only warn, and after a `kill -9` the boost reverts
+on its own. `fugu_console.py --mqtt` (bare = `$MQTT_HOST`)
 takes its credentials from the same file, tunnels through `havan-ts` the same way, and returns from `ota` at `OTA Succeed` or a failure line.
 
 **OTA safety net (rollback + boot watchdog).** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` makes a freshly-OTA'd image
