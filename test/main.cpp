@@ -60,10 +60,12 @@ time_us lastTimeOutUs = 0;
 // that the command runs only after process_queued_tasks(), and with the expected (trimmed) text.
 int g_handleCommandCalls = 0;
 String g_lastHandleCommand;
+bool g_lastHandleTrusted;
 
-bool handleCommand(const String &s) {
+bool handleCommand(const String &s, bool trusted) {
     ++g_handleCommandCalls;
     g_lastHandleCommand = s;
+    g_lastHandleTrusted = trusted;
     return false;
 }
 
@@ -372,6 +374,7 @@ void test_nvs_readstring_roundtrips_long_value();
 void test_nvs_readstring_short_and_missing();
 void test_telnet_command_is_deferred_then_runs_on_drain();
 void test_telnet_blank_command_is_dropped();
+void test_console_dispatch_keeps_trust();
 // test_charger.cpp — empty MQTT payload survives all three BMS callbacks (#7 attack path)
 void test_mqtt_empty_payload_is_safe();
 // test_charger.cpp — a stale cell frame stays stale across the 32-bit us wrap
@@ -727,6 +730,7 @@ void setup() {
     RUN_TEST(test_nvs_readstring_short_and_missing);
     RUN_TEST(test_telnet_command_is_deferred_then_runs_on_drain);
     RUN_TEST(test_telnet_blank_command_is_dropped);
+    RUN_TEST(test_console_dispatch_keeps_trust);
 
     RUN_TEST(test_float16);
 

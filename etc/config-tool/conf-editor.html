@@ -939,6 +939,7 @@ const META = {
 const FILE_META = {
   "charger.conf":  { vout_max:{unit:"V",desc:"Max pack/output charge-target voltage",type:"float"} },
   "tlscon.conf":   { port:{unit:"",desc:"TCP port of the TLS-PSK console (default 992)",type:"int"} },
+  "telnet.conf":   { trusted:{unit:"",desc:"Allow all commands over telnet (0 = read-only commands only)",type:"bool"} },
   "converter.conf":{ vout_max:{unit:"V",desc:"Not read (old output voltage limit; now limits.conf lv_max in buck, hv_max in boost)",type:"float"} },
 };
 const META_VOUT_MAX = {unit:"V",desc:"Maximum output voltage",type:"float"};
@@ -1085,7 +1086,7 @@ const FILE_KEYS = {
   "tele.conf":["adv_ms","binary","ble","enabled","idle_interval_ms","influxdb_host","log_level"],
   "ftp.conf":["enabled","ftp_pass","ftp_user","log_level","pasv_port"],
   "http.conf":["enabled","log_level","port"],
-  "telnet.conf":["enabled","log_level"],
+  "telnet.conf":["enabled","log_level","trusted"],
   "tlscon.conf":["enabled","log_level","port","psk","psk_id"],
   "scope.conf":["enabled","log_level"],
   "bsync.conf":["bssid","bw","channel","enabled","hw_only","ki","kp","log_level","phase_us"],
@@ -1106,7 +1107,7 @@ const TYPE_KEYS = {
     "led_WS2812","led_simple","lv_pgood","notch_adaptive","ntc_ch","pv_substrings","pwm_en",
     "pwm_fault_active_high","pwm_fault_pin","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin",
     "rect_cal_auto","rect_offset_cal","reverse_current_paranoia","scan_trigger","skip_assert",
-    "wire_protect"]),
+    "trusted","wire_protect"]),
   long: new Set(["adc_fake_freq","adv_ms","balance_hold_s","binary","ble","ble_passkey",
     "cv_hold_max_s","esp32adc1_avg","esp32adc1_sr","fpwm_gate_hold","holiday_days","i2c_freq",
     "i2c_hs_freq","i2c_scl","idle_adv_ms","idle_cpu_mhz","idle_interval_ms","improv_offline_s",
@@ -1182,6 +1183,8 @@ const DEFAULTS = {
   "adv_ms":"500","binary":"0","ble":"1","idle_interval_ms":"900000","influxdb_host":"\"\"",
   // ftp.conf
   "pasv_port":"50009",
+  // telnet.conf
+  "trusted":"0",
   // tlscon.conf
   "psk":"\"\"","psk_id":"\"\"",
   // bsync.conf

@@ -1,4 +1,4 @@
-// Host tests for src/etc/con_guard.h: secret masking of console/conf lines.
+// Host tests for src/etc/con_guard.h: secret masking of console/conf lines, read-only command allowlist.
 // The same vectors are checked against the host-side ports in test/host_py/test_mask_secrets.py.
 //
 // Build & run:
@@ -6,6 +6,7 @@
 //       -o /tmp/con-guard-test test/host-stub/con-guard-test.cpp && /tmp/con-guard-test
 
 #include <cstdio>
+#include <iterator>
 #include <string>
 
 #include "../../src/etc/con_guard.h"
@@ -60,6 +61,29 @@ int main() {
         printf("FAIL isSecretKey\n");
         ++fails;
     }
+
+    // untrusted allowlist: registered SimpleCLI names (aliases included), arg count, first arg
+    struct { const char *name; int n; const char *a0; bool ok; } ro[] = {
+        {"status", 0, "", true}, {"sensor", 1, "avg", true}, {"hostname,hn", 0, "", true},
+        {"hostname,hn", 1, "evil", false}, {"service,svc", 0, "", true}, {"service,svc", 1, "list", true},
+        {"service,svc", 1, "off", false}, {"service,svc", 2, "list", false}, {"coredump", 1, "info", true},
+        {"coredump", 1, "get", false}, {"coredump", 1, "erase", false}, {"heap", 1, "check", true},
+        {"heap", 1, "chec", false}, {"get-config,getc", 2, "mqtt.conf", true}, {"cat", 1, "conf/wifi.conf", true},
+        {"rect-cal", 1, "status", true}, {"rect-cal", 1, "force", false}, {"rect-cal", 0, "", false},
+        {"heap", 0, "", true}, {"coredump", 0, "", true}, {"sensor", 0, "", true}, {"service,svc", 1, "", true},
+        {"status", 1, "x", false}, {"heap", 1, "check,tasks", false}, {"heap", 1, "check,", false}, {"dt,deadtime", 1, "100", false},
+        {"dt,deadtime", 0, "", true}, {"set-config,setc", 3, "mqtt.conf", false}, {"dc", 1, "0", false},
+        {"restart,reset,reboot", 0, "", false}, {"ota", 1, "http://x", false}, {"ota-ble", 0, "", false},
+        {"wifi-add", 1, "a:b", false}, {"wifi", 1, "off", false}, {"mppt", 0, "", false}, {"sweep", 0, "", false},
+        {"bf,panel", 1, "0", false}, {"fan", 1, "1", false}, {"psu", 1, "off", false}, {"peek", 1, "0x0", false},
+        {"run", 1, "s", false}, {"log", 2, "*", false}, {"ble", 1, "pair", false}, {"ble", 2, "unpair", false}, {"ble", 1, "bonds", true}, {"status2", 0, "", false},
+        {"statu", 0, "", false}, {"hostname", 0, "", false},
+    };
+    for (auto &t: ro)
+        if (roCmdAllowed(kRoCmds, std::size(kRoCmds), t.name, t.n, t.a0) != t.ok) {
+            printf("FAIL roCmdAllowed('%s', %d, '%s') != %d\n", t.name, t.n, t.a0, t.ok);
+            ++fails;
+        }
 
     printf("%s (%d failures)\n", fails ? "FAILED" : "PASSED", fails);
     return fails != 0;

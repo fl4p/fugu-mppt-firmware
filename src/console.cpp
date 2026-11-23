@@ -41,20 +41,20 @@
 
 QueueHandle_t uart_queue;
 
-bool handleCommand(const String &inp);
+#include "cli.h"
 
 void (*consoleFlushHook)() = nullptr;
 
 void consoleFlush() { if (consoleFlushHook) consoleFlushHook(); }
 
-void consoleDispatchAsync(const char *line, size_t len) {
+void consoleDispatchAsync(const char *line, size_t len, bool trusted) {
     try {
-        enqueue_task([cmd = std::string(line, len)]() {
+        enqueue_task([cmd = std::string(line, len), trusted]() {
             String inp(cmd.c_str());
             inp.trim();
             if (!inp.length()) return;
             const auto t0 = esp_timer_get_time();
-            logCmdResult(handleCommand(inp), inp.c_str(), t0);
+            logCmdResult(handleCommand(inp, trusted), inp.c_str(), t0);
         });
     } catch (const std::bad_alloc &) {
         ESP_LOGW("console", "cmd dropped (OOM)");
@@ -67,7 +67,7 @@ static constexpr auto uartPortNum = UART_NUM_0;
 static ConsoleLine uartLine{}, usbLine{};
 
 void loopConsole(ConsoleLine &ln, int read(char *buf, size_t len), int write(const char *buf, size_t len),
-                        time_ms nowMs) {
+                        time_ms nowMs, bool trusted) {
     constexpr uint8_t bufSiz = ConsoleLine::bufSiz;
     char *buf = ln.buf;
     uint8_t &buf_pos = ln.pos;
@@ -102,7 +102,7 @@ void loopConsole(ConsoleLine &ln, int read(char *buf, size_t len), int write(con
             String inp(buf);
             inp.trim();
             if (inp.length() > 0) {
-                bool ok = handleCommand(inp);
+                bool ok = handleCommand(inp, trusted);
                 char marker[160];
                 const int m = secretCut(inp.c_str());
                 int n = snprintf(marker, sizeof(marker), "%s: %.*s%s\r\n", ok ? "OK" : "ERR", CG_MASKED(inp.c_str(), m));
@@ -162,11 +162,11 @@ int console_write_usb(const char *buf, size_t len) {
 void loopUart(time_ms nowMs) {
     // for some reason Serial.available() doesn't work under platformio
     // so access the uart port directly
-    loopConsole(uartLine, uartRead, uartWrite, nowMs);
+    loopConsole(uartLine, uartRead, uartWrite, nowMs, true);
 
     if (g_app.usbConnected) {
         //loopConsole(esp_usb_console_read_buf, esp_usb_console_write_buf, nowMs);
-        loopConsole(usbLine, console_read_usb, console_write_usb, nowMs);
+        loopConsole(usbLine, console_read_usb, console_write_usb, nowMs, true);
     }
 }
 

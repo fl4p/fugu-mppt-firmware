@@ -2772,9 +2772,30 @@ void setupCli() {
 #endif
 }
 
-bool handleCommand(const String &inp) {
+// Parses without running (paused SimpleCLI queues the commands) and checks each command against kRoCmds.
+static bool roLine(const String &inp) {
+    cli.pause();
+    cli.parse(inp);
+    bool ok = cli.countCmdQueue() < 10; // the queue drops its oldest entry beyond that
+    while (cli.available()) {
+        Command c = cli.getCmd();
+        const int n = c.countArgs();
+        if (!roCmdAllowed(kRoCmds, std::size(kRoCmds), c.getName().c_str(), n, n ? c.getArg(0).getValue().c_str() : ""))
+            ok = false;
+    }
+    while (cli.errored()) cli.getError();
+    cli.unpause();
+    return ok;
+}
+
+bool handleCommand(const String &inp, bool trusted) {
     const int m = secretCut(inp.c_str());
     ESP_LOGI("main", "received serial command: '%.*s%s'", CG_MASKED(inp.c_str(), m));
+
+    if (!trusted && (inp[0] == '+' || inp[0] == '-' || !roLine(inp))) {
+        ESP_LOGW("main", "refused: read-only console (telnet.conf trusted=0)");
+        return false;
+    }
 
     // +N / -N PWM step is a signed numeric token, not a named command -> handle before SimpleCLI.
     // does not enable manual pwm!

@@ -83,7 +83,8 @@ Each transport has its own requirements on the device and its own client flags:
 | BLE via ESPHome proxy | same as BLE, reached through an ESPHome `bluetooth_proxy` | `--ble-proxy HOST[:PORT]` (default port 6053), `--proxy-password` |
 | MQTT | `mqtt.conf::broker_uri` set; `cmd_input=1` to accept commands | `--mqtt BROKER`, `--mqtt-port`, `--mqtt-user`, `--mqtt-pass`, `--mqtt-readonly`, `--name` |
 
-On every transport, the device follows each command's output with `OK: <cmd>` or `ERR: <cmd>`.
+On every transport, the device follows each command's output with `OK: <cmd>` or `ERR: <cmd>`, with secret values
+masked as `***` (see [Secrets](../reference/console.md#secrets)).
 
 ### Serial
 
@@ -111,8 +112,9 @@ The server accepts one client at a time and asks for no password. Terminate comm
 [Services](../reference/services.md) and [`telnet.conf`](../reference/config/telnet.md).
 
 :::warning
-Telnet is unauthenticated and unencrypted: anyone on the network can run any command, including `ota`. Only
-enable it on networks you trust.
+Telnet is unauthenticated and unencrypted. It runs only read-only commands such as `status`, `sensor` and
+`get-config` unless `telnet.conf` sets `trusted=1`; then anyone on the network can run any command, including
+`ota`. See [Trusted consoles](../reference/console.md#trusted-consoles).
 :::
 
 ### TLS-PSK

@@ -8,9 +8,12 @@
 #include "../logging.h"   // set_logging_telnet
 #include "../etc/version.h"
 #include "../console.h"
-#include "telemetry.h"    // getHostname, handleCommand
+#include "../conf.h"
+#include "telemetry.h"    // getHostname
 
 extern time_us lastTimeOutUs;
+
+static bool s_trusted; // telnet.conf trusted=1: all commands, else read-only
 
 void TelnetService::closeConnection() {
     if (telnet.isConnected()) {
@@ -29,6 +32,7 @@ void TelnetService::beginClose() {
 
 bool TelnetService::onStart() {
     if (!WiFi.isConnected()) return false;
+    s_trusted = ConfFile{"/littlefs/conf/telnet.conf", true}.getByte("trusted", 0);
     return setupTelnet();
 }
 
@@ -56,7 +60,7 @@ bool TelnetService::setupTelnet() {
             t.flush();
             t.disconnectClient();
         } else {
-            consoleDispatchAsync(str.c_str(), str.length());
+            consoleDispatchAsync(str.c_str(), str.length(), s_trusted);
         }
     });
 
@@ -77,6 +81,7 @@ void TelnetService::onConnect(String ip) {
     t.println("\nWelcome to " + String(getHostname().c_str()) + " (" +
               WiFi.localIP().toString().c_str() + ")");
     t.println(format_version());
+    if (!s_trusted) t.println("Read-only console (telnet.conf trusted=0).");
     t.println("(Use ^] + q  to disconnect.)");
 
     set_logging_telnet(&t);

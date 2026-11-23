@@ -21,8 +21,8 @@ public:
     const char *c_str() const { return s.c_str(); }
     friend String operator+(const String &a, const char *b) { return a.s + b; }
 };
-bool handleCommand(const String &) { return true; }
-void consoleDispatchAsync(const char *, size_t) {}
+bool handleCommand(const String &, bool) { return true; }
+void consoleDispatchAsync(const char *, size_t, bool) {}
 void logCmdResult(bool, const char *, int64_t) {}
 const std::string &getHostname(bool) { static std::string h{"test"}; return h; }
 

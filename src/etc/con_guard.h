@@ -55,24 +55,36 @@ inline int secretCut(const char *s) {
     return cut;
 }
 
-// Commands an untrusted console may run. Entry: registered name (with aliases), optionally `|` and
-// either `*` (any args) or comma-separated allowed single first args. Use without args is allowed.
+// Commands an untrusted console may run. Entry: registered name (with aliases), alone = no arguments,
+// or `|*` = any arguments, or `|` and the comma-separated allowed values of a single argument (empty = none).
 inline bool roCmdAllowed(const char *const *list, size_t n, const char *name, int nargs, const char *arg0) {
     const size_t nl = strlen(name);
     for (size_t i = 0; i < n; ++i) {
         const char *e = list[i];
         if (strncmp(e, name, nl) || (e[nl] && e[nl] != '|')) continue;
-        if (!nargs) return true;
-        if (!e[nl]) return false;
+        if (!e[nl]) return !nargs;
         const char *a = e + nl + 1;
         if (!strcmp(a, "*")) return true;
-        if (nargs != 1) return false;
-        for (size_t al = strlen(arg0); *a; a += strcspn(a, ","), a += *a == ',')
-            if (!strncmp(a, arg0, al) && (a[al] == ',' || !a[al])) return true;
-        return false;
+        if (nargs > 1) return false;
+        const char *v = nargs ? arg0 : "";
+        const size_t vl = strlen(v);
+        for (;; ++a) {
+            const size_t il = strcspn(a, ",");
+            if (il == vl && !strncmp(a, v, il)) return true;
+            if (!a[il]) return false;
+            a += il;
+        }
     }
     return false;
 }
+
+// Read-only commands, the only ones an untrusted console (telnet unless telnet.conf trusted=1) may run.
+inline constexpr const char *kRoCmds[] = {
+    "help,?", "status", "sensor|*", "bootinfo", "uptime", "mem", "heap|,check,tasks", "tasks", "rt-stats", "intr",
+    "hostname,hn", "ip", "netstat,ifconfig", "service,svc|,list", "coredump|,info", "selftest", "wire", "holiday",
+    "balance", "sweep-curve", "rect-cal|status", "dt,deadtime", "pwm-freq,fsw", "pwm-dump", "rtprof",
+    "get-config,getc|*", "conf-hash,confhash", "conf-check,confcheck", "ls|*", "cat|*", "scripts", "ble|,bonds",
+};
 
 // printf args for "%.*s%s": s up to `cut` (secretCut), then "***"
 #define CG_MASKED(s, cut) ((cut) < 0 ? (int) strlen(s) : (cut)), (s), ((cut) < 0 ? "" : "***")

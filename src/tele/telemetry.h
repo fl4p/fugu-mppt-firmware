@@ -89,5 +89,4 @@ void dcdcDataChanged(const ADC_Sampler &dcdc, const Sensor &sensor);
 //void onTelnetConnect(String ip);
 //void onTelnetDisconnect(String ip);
 
-bool handleCommand(const String &inp);
 

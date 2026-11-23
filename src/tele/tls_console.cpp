@@ -121,7 +121,7 @@ static bool feed(Session *x, const char *b, int n) {
         }
         if (!x->lineLen) continue;
         if (x->lineLen == 4 && !memcmp(x->line, "exit", 4)) return false;
-        consoleDispatchAsync(x->line, x->lineLen);
+        consoleDispatchAsync(x->line, x->lineLen, true);
         x->lineLen = 0;
     }
     return true;

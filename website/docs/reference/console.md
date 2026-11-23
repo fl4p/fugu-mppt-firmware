@@ -39,6 +39,32 @@ Console output and the command echo reach every log output (serial, telnet, the 
 
 Host tools that wait for the marker compare against both the full and the masked command.
 
+## Trusted consoles
+
+Each transport is trusted or untrusted. A trusted console runs every command.
+
+| Transport | Trusted |
+| --- | --- |
+| UART, USB serial-JTAG, USB CDC | Yes |
+| BLE NUS | Yes with `ble_security` `passkey` or `justworks` (encrypted, bonded); no with `none` |
+| MQTT (`cmd_input=1`) | Yes: the broker authenticates; use broker credentials and ACLs on `pv/log/<host>/cmd` |
+| TLS-PSK (`tlscon`) | Yes |
+| Telnet | No, unless `telnet.conf` `trusted=1` |
+
+An untrusted console runs a line only if every command in it is on the read-only list below. Otherwise the line
+fails with `ERR: <cmd>` and the log line `refused: read-only console (telnet.conf trusted=0)`. New commands are not
+on the list, so they are refused until added. The `+N`/`-N` PWM steps are refused.
+
+| Command | Allowed arguments |
+| --- | --- |
+| `help`, `status`, `bootinfo`, `uptime`, `mem`, `tasks`, `rt-stats`, `intr`, `ip`, `netstat`, `wire`, `selftest`, `holiday`, `balance`, `sweep-curve`, `dt`, `pwm-freq`, `pwm-dump`, `rtprof`, `conf-hash`, `conf-check`, `scripts`, `hostname` | None |
+| `sensor`, `get-config`, `ls`, `cat` | Any |
+| `heap` | None, `check` or `tasks` |
+| `svc` | None or `list` |
+| `coredump` | None or `info` |
+| `ble` | None or `bonds` |
+| `rect-cal` | `status` |
+
 ## System Commands
 
 These commands manage the network, firmware updates, the clock, and resets.

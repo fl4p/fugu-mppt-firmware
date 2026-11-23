@@ -22,8 +22,9 @@ struct ConsoleLine {
     time_ms lastMs;
 };
 
+// trusted=false: only read-only commands run (handleCommand)
 void loopConsole(ConsoleLine &ln, int read(char *buf, size_t len), int write(const char *buf, size_t len),
-                 time_ms nowMs);
+                 time_ms nowMs, bool trusted);
 
 // Installed by a transport whose output is buffered and drained asynchronously from its own loop
 // (BLE), so a long-running blocking command (e.g. an OTA download) can push pending output mid-run
@@ -34,7 +35,7 @@ void consoleFlush();
 
 // Queue one command line for handleCommand() on loopNetwork_task (process_queued_tasks), not inline in
 // the transport's receive callback: a teardown command would destroy the transport under itself.
-void consoleDispatchAsync(const char *line, size_t len);
+void consoleDispatchAsync(const char *line, size_t len, bool trusted);
 
 extern time_us lastTimeOutUs;
 
