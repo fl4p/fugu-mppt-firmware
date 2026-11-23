@@ -10,7 +10,7 @@ sidebar_position: 2
 line for LFP and other lithium chemistries, as described in
 [Charging Marine Lithium Battery Banks](https://nordkyndesign.com/charging-marine-lithium-battery-banks/).
 
-The model places the cell at `cv_min` (the "float" voltage) at zero current and
+The model places the cell at `cv_float` (the "float" voltage) at zero current and
 at `cv_eoc` (the absorption voltage) when the charging current equals the
 tail-current threshold. Between those two operating points, a straight line in
 the (current, voltage) plane defines the termination boundary. Above the line,
@@ -19,13 +19,13 @@ the cell is "still charging". Below it, the cell is "done".
 The line can be restated as an apparent series resistance:
 
 ```
-r = (cv_eoc - cv_min) / (tail_c_rate * Cbat)
+r = (cv_eoc - cv_float) / (tail_c_rate * Cbat)
 ```
 
 With that resistance, the per-current termination voltage becomes:
 
 ```
-v_term(ibat) = cv_min + ibat * r       (clamped at cv_eoc)
+v_term(ibat) = cv_float + ibat * r       (clamped at cv_eoc)
 ```
 
 The charger declares termination when the highest reported cell voltage
@@ -72,7 +72,7 @@ backstop above it.
 The charger releases termination after a set amount of net discharge, not on
 cell voltage alone. LFP cells discharge nearly flat: a 1 % SoC drop from full
 can take voltage from 3.45 V down to 3.35 V. Releasing termination on
-`vcell_high < cv_min` alone therefore causes micro-cycling at the top of
+`vcell_high < cv_float` alone therefore causes micro-cycling at the top of
 charge. The charger oscillates between "terminated" and "charging" every few
 minutes while the cells barely move.
 
@@ -83,7 +83,7 @@ when either of these conditions holds:
 - Ah condition (primary): `ahSinceFull > recharge_dod * Cbat`. With the
   default `recharge_dod = 0.20` and a 280 Ah pack, this is ~56 Ah of net
   discharge before recharge is permitted.
-- Voltage floor (fallback): `vcell_high < cv_min - recharge_vfloor_band`
+- Voltage floor (fallback): `vcell_high < cv_float - recharge_vfloor_band`
   (band default 0.05 V) for 4 consecutive BMS cell frames. That is 3.275 V with
   the firmware defaults and 3.32 V with `cv_float=3.37`. This condition catches
   integrator drift, a wrong `Cbat`, or a missing BMS, any of which would
@@ -141,7 +141,7 @@ Set `bat_charge_topic` so that all chargers leave termination together (see
 These parameters also shape termination:
 
 - `cv_eoc`: absorption voltage (LFP: 3.65 V; firmware default 3.5 V)
-- `cv_float` (loaded into `cv_min`): float voltage (LFP: 3.37 V; firmware
+- `cv_float`: float voltage (LFP: 3.37 V; firmware
   default 3.325 V)
 - `cv_ceiling`: hard per-cell ceiling, default `cv_eoc + 0.05`. It latches
   termination after 2 consecutive frames at or above it, regardless of current.
@@ -166,11 +166,11 @@ The termination line only *decides* termination. It is not a setpoint.
 
 The EOC feedback loop (`BatteryCharger::_updatePackVoltagePinning`) lowers the
 pack-voltage pin whenever the highest cell is above its target. That target is
-the fixed `cv_eoc` while charging and `cv_min` once terminated.
+the fixed `cv_eoc` while charging and `cv_float` once terminated.
 
 The target must not be the current-dependent `v_term`. Lowering the pin
 reduces the current, which lowers `v_term`, which lowers the pin again, until
-the current is zero and the line trips at `cv_min`. This is the premature
+the current is zero and the line trips at `cv_float`. This is the premature
 termination observed in the field in July 2026 at 3.40 V/cell.
 
 ## CV hold

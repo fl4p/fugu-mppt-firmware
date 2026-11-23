@@ -317,7 +317,6 @@ const META = {
   despike:{unit:"",desc:"Glitch-safe median outlier threshold (mean-dev units): 0=off, ~8 enables. Passes dense load pulses (unbiased current), still clips impulse glitches (only beyond 4 quantization steps). Not applied to the NTC",type:"float"},
   esp32adc1_sr:{unit:"Hz",desc:"Internal ADC1 continuous-mode raw sample rate",type:"int"},
   esp32adc1_avg:{unit:"",desc:"Internal ADC1 hardware averaging count per sample",type:"int"},
-  iin_min_supply_voltage:{unit:"V",desc:"Legacy: min supply voltage for current sensor",type:"float"},
 
   // limits.conf
   hv_max:{unit:"V",desc:"Maximum HV-side voltage before protection cutout (Vin max in buck, Vout max in boost)",type:"float"},
@@ -390,7 +389,7 @@ const META = {
   tail_hold_s:{unit:"s",desc:"CV hold: pack current below tail_c_rate*bat_c, cell within cv_hold_band of cv_eoc, this long without a break to terminate",type:"long"},
   cv_hold_band:{unit:"V",desc:"CV hold: cell band below cv_eoc that counts as held for the tail test",type:"float"},
   recharge_dod:{unit:"",desc:"Depth-of-discharge since full to release termination",type:"float"},
-  recharge_vfloor_band:{unit:"V",desc:"Cell-voltage drop below cv_min to release termination (fallback to DoD)",type:"float"},
+  recharge_vfloor_band:{unit:"V",desc:"Cell-voltage drop below cv_float to release termination (fallback to DoD)",type:"float"},
   vout_offset_max:{unit:"V",desc:"Worst-case Vout-sensor error tolerated during float: how far below the float floor the BMS-driven EOC loop may pull to stop charging a full pack when Vout reads high",type:"float"},
   partial_charge:{unit:"",desc:"SoC fraction to stop at between full charges (Ah-counted from the last termination, held by load-following); 0 = always charge to full",type:"float"},
   full_charge_interval:{unit:"d",desc:"With partial_charge: charge to full (BMS balancing) at least this often",type:"float"},

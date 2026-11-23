@@ -1997,7 +1997,7 @@ static void cmdStatus(cmd *) {
                  p.vbatMaxExplicit ? ", vset locked" : "");
     else
         UART_LOG("  OV limit=derived from Vbat_max%s", p.vbatMaxExplicit ? " (vset locked)" : "");
-    UART_LOG("  v_term=%.3fV cv_min=%.3f cv_eoc=%.3f  Cbat=%.1fAh recharge_dod=%.2f",
+    UART_LOG("  v_term=%.3fV cv_float=%.3f cv_eoc=%.3f  Cbat=%.1fAh recharge_dod=%.2f",
              chg.termCond.v_term(), p.cv_min, p.cv_eoc, p.Cbat, p.recharge_dod);
     UART_LOG("  BMS vcell_high=%.3fV (%s, %lus ago)  ibat=%.2fA (%s, %lus ago)  ahSinceFull=%.2fAh (%s)  vout_avg=%.2fV",
              bs.vcell_high, vcOk ? "ok" : "stale/na", ageS,
