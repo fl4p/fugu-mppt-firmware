@@ -66,7 +66,7 @@
   #conn { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--faint); white-space:nowrap; }
   #conn::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--line-2); flex:none; }
   #conn.on { color:var(--fg-2); }
-  #conn.on::before { width:7px; height:7px; background:var(--accent); }
+  #conn.on::before { width:7px; height:7px; background:var(--icon); }
   #serial-status { font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1 1 auto; }
   #serial-status.err { color:var(--accent); }
   body:not(.loaded) #serial-status { display:none !important; }
@@ -1304,7 +1304,7 @@ function valueProblem(key, v){
   return "";
 }
 
-const collapsedGroups = new Set();  // "path|prefix" of folded key groups
+const openGroups = new Set();  // "path|prefix" of unfolded key groups
 
 // Groups keys by shared "_"-separated prefixes, in first-seen order. Chains with a
 // single branch are merged and a group needs 2+ keys. Returns items {key} or
@@ -1496,8 +1496,8 @@ function renderPane(){
     for (const it of items){
       if (it.key!=null){ parent.appendChild(keyRow(it.key, pfx)); continue; }
       const id = path+"|"+it.prefix;
-      const g = document.createElement("details"); g.className="kgroup"; g.open = !collapsedGroups.has(id);
-      g.ontoggle = ()=>{ g.open ? collapsedGroups.delete(id) : collapsedGroups.add(id); };
+      const g = document.createElement("details"); g.className="kgroup"; g.open = openGroups.has(id);
+      g.ontoggle = ()=>{ g.open ? openGroups.add(id) : openGroups.delete(id); };
       const s = document.createElement("summary");
       const body = document.createElement("div"); body.className="kbody";
       g.append(s, body); parent.appendChild(g);
@@ -2479,7 +2479,7 @@ function trapTab(e, box){
 function jumpToField(path, key){
   closeReview(true);
   state.active = path;
-  for (const id of [...collapsedGroups]) if (id.startsWith(path+"|") && key.startsWith(id.slice(path.length+1))) collapsedGroups.delete(id);
+  for (let i=key.indexOf("_"); i>0; i=key.indexOf("_",i+1)){ openGroups.add(path+"|"+key.slice(0,i)); openGroups.add(path+"|"+key.slice(0,i+1)); }
   renderApp();
   const row=[...document.querySelectorAll("#panes .row")].find(r=>r._key===key);
   if (row){ row.scrollIntoView({block:"center"}); const i=row.querySelector("input,select"); if (i) i.focus({preventScroll:true}); }

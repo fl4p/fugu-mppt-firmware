@@ -94,7 +94,7 @@ See [MQTT topics](mqtt.md).
 ## Layout
 
 The top bar shows the source name and the connection state. The state always refers to the device a push would go
-to: "Connected to `<hostname>` over MQTT" with an amber dot while that link is open, "Disconnected from
+to: "Connected to `<hostname>` over MQTT" with a green dot while that link is open, "Disconnected from
 `<hostname>` over MQTT" once it is closed, "Connecting …" during a read, and "Not connected" when there is nothing
 to push to. Its right side holds the **Open** menu, the **Console** toggle and the
 primary button: **Review changes** with a count, or **Save a copy** when nothing has changed.
@@ -111,7 +111,7 @@ A changed file shows an amber dot with its number of changed fields. A file that
 input/output role keys is drawn in amber (see [Removed role keys](#removed-role-keys)).
 
 Each file page starts with the file name, its path, "N of M keys set" and a one-line note on what the file
-controls. The keys follow, grouped by shared prefix (`i2c_`, `ina22x_`, …) into collapsible groups. A collapsed
+controls. The keys follow, grouped by shared prefix (`i2c_`, `ina22x_`, …) into groups that start collapsed. A collapsed
 group that holds changed or invalid keys shows an amber dot with their count. **Add a key**
 and **Show `<file>` as text** sit at the bottom as folded sections.
 

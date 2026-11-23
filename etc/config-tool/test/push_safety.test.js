@@ -206,3 +206,16 @@ test('replacing an edited file/preset asks first; declining keeps the edits', as
   window.dispatchEvent(ev);
   assert.equal(ev.defaultPrevented, true, 'leaving the page with edits is guarded');
 });
+
+test('key groups start folded; an unfold survives a re-render', async () => {
+  const { window } = await loadEditor();
+  window.load(mk({ 'conf/charger.conf': 'vout_max=28.8\ncv_eoc=3.55\ncv_float=3.4\n' }), 'demo');
+  showTab(window, 'conf/charger.conf');
+  const group = () => [...window.document.querySelectorAll('#panes .rows details.kgroup')]
+    .find(g => g.querySelector('summary').textContent.startsWith('cv'));
+  assert.equal(group().open, false);
+  group().open = true;
+  await new Promise(r => setTimeout(r, 10));
+  showTab(window, 'conf/mqtt.conf'); showTab(window, 'conf/charger.conf');
+  assert.equal(group().open, true);
+});

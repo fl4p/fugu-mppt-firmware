@@ -117,7 +117,8 @@ To overlay from the editor, use the Open menu's **Choose .zip…** /
 Visual language: ink on a neutral grey scale. Amber (`--accent`, `#b35c00`
 light / `#f0a24a` dark) is used only for state: a changed row's bar, input
 border and "was: …"; the per-file change count; errors and invalid values;
-role-key files; the live-connection dot. Focus rings are ink. System sans for
+role-key files. The live-connection dot and the start-screen icons use a
+separate green (`--icon`). Focus rings are ink. System sans for
 text, mono for keys, values and file names. No web fonts.
 
 ### 2.1 Header (top bar)
@@ -127,7 +128,7 @@ Sticky, 56 px. After a load it shows, left to right:
 * the wordmark;
 * the **source label** (`#srcname`, ellipsised, full text in the tooltip);
 * the **connection state** (`#conn`), always about the push target (§2.7):
-  "Connected to <host> over USB serial|Bluetooth|MQTT" (amber dot) while the
+  "Connected to <host> over USB serial|Bluetooth|MQTT" (green dot) while the
   link to the device the config was read from is open, "Disconnected from
   <host> over …" when that link is closed (a push reopens it), "Connecting …"
   during a connect and read, and "Not connected" (grey dot) when there is no
@@ -199,7 +200,8 @@ fills or clears a key.
 members form a collapsible group (`<details class="kgroup">`, chevron, prefix
 name in mono). Single-branch chains are merged; single keys come before groups
 at each level. Inside a group the shared prefix of each key is drawn faint.
-Collapsed state is remembered per file + prefix for the session. A collapsed
+Groups start collapsed; an opened group stays open per file + prefix for the
+session, and jumping to a key from the review sheet opens its groups. A collapsed
 group that contains changed or invalid rows (also in nested groups) shows an
 amber dot after its name with the number of changed rows and ", K invalid"
 (tooltip "N changed, K invalid"); the marker is hidden while the group is open.
