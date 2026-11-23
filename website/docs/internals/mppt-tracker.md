@@ -134,6 +134,11 @@ resumes through the normal start path. The firmware logs this backoff at info le
 retries every 5 min. A sweep that finds an MPP, or a battery reconnected during the backoff (see
 [protection](protection.md)), resets the backoff to 30 s.
 
+The Vout cap can end a sweep before it captures any power, when the battery already sits above the cap. After a
+reboot, for example, the cap holds `vout_max_fallback` until BMS cell data arrives. Such a no-MPP backoff ends as soon
+as the cap rises 0.2 V above both the cap that ended the sweep and Vout (log
+`Vout cap <V> V lifted to <V> V, no-MPP backoff cleared`). The doubling stays as it is.
+
 At the end of a sweep, the firmware writes "MPP Scan done" to the LCD and logs
 `Stop sweep ... MPP=(<W>,<duty>,<V>)`.
 

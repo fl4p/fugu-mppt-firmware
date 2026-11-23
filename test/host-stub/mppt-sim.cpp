@@ -40,6 +40,8 @@
 //                       scan on a flag, the return pass picking the better of two maxima after a cloud edge
 //     wx-bms-late, wx-bms-none, wx-bms-full   boot sweep under the 26.8 V fallback cap before BMS cell data (SIM_BMS_AT,
 //                       default 20 s): -late re-sweeps once the data lifts the cap, -none/-full keep the boot sweep ("== BMSCAP")
+//     wx-bms-high       wx-bms-late with the pack (27.1 V) above the cap at boot: the cap cuts the boot sweep at 0 W; its
+//                       no-MPP backoff ends when the BMS data lifts the cap, then a sweep finds the MPP ("== BMSCAP")
 //     wx-sweep-preempt  a requested sweep pre-empts a scheduled re-sweep, which then does not count to the 10 min cap
 //     wx-sweep-fall-n1, wx-sweep-rise-n1, wx-sweep-one   single peak known (pv_substrings=1): no re-sweep; -one learns
 //                       it from two verified sweeps; "== VERDICT" PASS/FAIL
@@ -1419,10 +1421,17 @@ static int runWx(const std::string &name, Wx &wx) {
     if (wx.bmsResweep >= 0) {
         for (auto &s: g_stops) printf("==   sweep stop t=%.1f s MPP %.1f W at %.1f V\n", s.t, s.p, s.v);
         const SweepStop last = g_stops.empty() ? SweepStop{0, 0, 0} : g_stops.back();
-        const bool ok = wx.bmsResweep ? g_stops.size() >= 2 && last.p >= 0.95f * pGLast : g_stops.size() == 1;
-        printf("== BMSCAP %s: %zu sweep stops (want %s), last MPP %.1f W of GMPP %.1f W, Vout cap %.2f V at the end: %s\n",
-               name.c_str(), g_stops.size(), wx.bmsResweep ? ">= 2, last >= 95 %" : "1", last.p, pGLast,
-               mppt.charger.Vout_max(), ok ? "PASS" : "FAIL");
+        unsigned noMpp = 0;
+        for (auto &tr: g_trips) noMpp += tr.who == "sweep-no-mpp";
+        // -high: the sweep that finds the MPP starts within 10 s of the BMS data
+        double t0 = 1e9;
+        for (double t: g_sweepT) if (!g_stops.empty() && t < g_stops.front().t) t0 = t;
+        const bool ok = wx.bmsResweep == 2 ? last.p >= 0.95f * pGLast && t0 < wx.bmsAt + 10
+                        : wx.bmsResweep ? g_stops.size() >= 2 && last.p >= 0.95f * pGLast : g_stops.size() == 1;
+        printf("== BMSCAP %s: %zu sweep stops (want %s), last MPP %.1f W of GMPP %.1f W, %u no-MPP backoffs, Vout cap"
+               " %.2f V at the end: %s\n", name.c_str(), g_stops.size(),
+               wx.bmsResweep == 2 ? "its sweep by BMS data + 10 s" : wx.bmsResweep ? ">= 2, last >= 95 %" : "1",
+               last.p, pGLast, noMpp, mppt.charger.Vout_max(), ok ? "PASS" : "FAIL");
         if (!ok) return 1;
     }
     if (!wx.verdict.empty()) {
@@ -1567,17 +1576,17 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         wx.cloud = {{e, fall ? 1 : 0.27f}, {e + 10, fall ? 0.27f : 1}};
         wx.sweepAt = wx.statsFrom = 60, wx.T = 240;
         wx.verdict = n1 ? "vf" : "vfrv", wx.sweeps = n1 ? 1 : 2;
-    } else if (sc == "wx-bms-late" || sc == "wx-bms-none" || sc == "wx-bms-full") {
+    } else if (sc == "wx-bms-late" || sc == "wx-bms-none" || sc == "wx-bms-full" || sc == "wx-bms-high") {
         // reboot in sun into a charging pack while the Vout cap sits at vout_max_fallback (26.8 V) until BMS cell data
         // arrives (SIM_BMS_AT, default 20 s): the boot sweep stops at the cap. -late: cells 3.33 V, the data lifts the cap
         // to vout_max; -none: no BMS data; -full: cells above cv_eoc, the cap stays
         const float p = 590;
         float g = p / wx.pClear;
         for (int i = 0; i < 6; ++i) g = p / wx.pClear * wx.voc / (wx.voc + wx.vocLog * std::log(g));
-        wx.cloud = {{0, g}}, wx.vbat = 26.3f, wx.T = 300;
+        wx.cloud = {{0, g}}, wx.vbat = sc == "wx-bms-high" ? 27.1f : 26.3f, wx.T = 300;
         if (sc != "wx-bms-none") wx.bmsAt = getenv("SIM_BMS_AT") ? atof(getenv("SIM_BMS_AT")) : 20;
         wx.vcell = sc == "wx-bms-full" ? 3.62f : 3.33f;
-        wx.bmsResweep = sc == "wx-bms-late";
+        wx.bmsResweep = sc == "wx-bms-late" ? 1 : sc == "wx-bms-high" ? 2 : 0;
     } else if (sc == "wx-sweep-preempt") {
         // wx-sweep-fall, a requested sweep at 90 s pre-empts the re-sweep; a later flagged sweep still gets its re-sweep
         wx.cloud = {{62, 1}, {72, 0.27f}, {150, 0.27f}, {160, 1}, {202, 1}, {212, 0.27f}};

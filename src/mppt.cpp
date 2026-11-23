@@ -1040,10 +1040,18 @@ __attribute__((cold, noinline)) void MpptController::scheduleResweep(uint32_t no
 }
 
 // RT, off in a no-MPP backoff: a battery coming back (Vout outside the battery band, then 1..2 s inside it again) ends
-// the backoff and restarts its doubling. A battery present all along (dawn) never leaves the band.
+// the backoff and restarts its doubling. A battery present all along (dawn) never leaves the band. After a sweep the
+// Vout cap cut, the cap rising above it and Vout ends the backoff.
 __attribute__((cold, noinline)) void MpptController::noMppBatCheck() {
-    if (!inBackoff() || !charger.params.haveVbatMax()) return;
+    if (!inBackoff()) return;
     const float v = sensors.Vout->ewm.avg.get();
+    if (_capV > 0 && charger.Vout_max() > std::max(_capV, v) + 0.2f) {
+        ESP_LOGI("mppt", "Vout cap %.2f V lifted to %.2f V, no-MPP backoff cleared", _capV, charger.Vout_max());
+        _capV = 0;
+        clearBackoff();
+        return;
+    }
+    if (!charger.params.haveVbatMax()) return;
     const bool tick = (wallClockUs() >> 20) & 1, flip = tick != _noMpp.tick;
     _noMpp.tick = tick;
     if (v < charger.params.n_cells * 2.5f || v > charger.params.Vbat_max * 1.03f) {

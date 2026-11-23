@@ -230,7 +230,7 @@ private:
         bool tick: 1 = false;
     } _noMpp;
     float _svLand = 0, _svI = 0; // landed power, input current then
-    float _capV = 0; // [V] Vout cap that ended the last sweep while BMS cell data was missing, 0 none
+    float _capV = 0; // [V] Vout cap that ended the last sweep while BMS cell data was missing or at no power, 0 none
     uint32_t _svT = 0, _resweepAt = 0, _retryAt = 0; // [ms] settle start, scheduled re-sweep, scheduling of the last one that ran
     void sweepVerdict(uint32_t nowMs, float p, bool ok);
     void scheduleResweep(uint32_t nowMs, uint32_t inMs);
@@ -1035,6 +1035,7 @@ public:
         _sweeping = true;
         if (_resweepAt) _retryAt = _resweepAt = 0; // pre-empted: it never ran, so it doesn't count to the cap
         _svPhase = _svFlag = 0;
+        _capV = 0;
 
         converter.disable();
         ctrlState._limiting = false;
@@ -1556,6 +1557,8 @@ public:
             // converter at near-max duty). Drop the target and back off, 30 s doubling per repeat up to 300 s;
             // the converter then resumes via normal MPPT / the next periodic re-sweep once there's real power.
             targetDutyCycle = 0;
+            // cut by the Vout cap before any power: the cap lifting ends the backoff (noMppBatCheck)
+            _capV = ctrlState._limiting && limIdx == 1 ? limCtrl->target : 0;
             const uint32_t sec = std::min(30u << _noMpp.n, 300u);
             if (_noMpp.n < 4) ++_noMpp.n;
             ESP_LOGI("mppt", "Stop sweep: no MPP (best %.2fW < %.1fW), backing off %lus", maxPowerPoint.power,
