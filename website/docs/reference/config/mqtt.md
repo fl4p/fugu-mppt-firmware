@@ -19,7 +19,7 @@ sidebar_position: 8
 | `ibat_lim_topic`          |      | string | `""`    | Topic for battery charge current limit; empty = not subscribed |
 | `bat_temp_topic`          |      | string | `""`    | Up to 4 comma-separated topics for pack temperatures from the BMS (batmon-ha: `<dev>/temperatures/1,<dev>/temperatures/2`); drives `bat_temp_*` in charger.conf. Empty = not subscribed |
 | `cell_voltages_delta_topic` |    | string | `""`    | Topic for the BMS cell-voltage spread in volts (batmon-ha: `<dev>/cell_voltages/delta`); lets a [top-balancing](../../guide/charging/termination.md#top-balancing) run finish early (`balance_delta` in charger.conf). Empty = not subscribed |
-| `ca_file`                 |      | string | `""`    | CA certificate (PEM) that verifies an `mqtts://` broker: a file name in `/littlefs/conf` or an absolute path. Empty = the built-in CA bundle. Needs `CONFIG_FUGU_WITH_HTTPS` |
+| `ca_file`                 |      | string | `""`    | CA certificate (PEM) that verifies an `mqtts://` broker: a file name in `/littlefs/conf` or an absolute path; ignored for `mqtt://`. Empty = the built-in CA bundle. Needs `CONFIG_FUGU_WITH_HTTPS` |
 | `cmd_input`               |      | bool   | 0       | Accept console commands over MQTT (`pv/log/<host>/cmd`) |
 | `enabled`                 |      | bool   | 1       | Start this service at boot                              |
 | `log_level`               |      | enum   | info    | Verbosity: `error`, `warn` or `info`                    |
@@ -39,3 +39,7 @@ ca_file=mqtt-ca.pem
 The server certificate must name the address in `broker_uri`, as a DNS name or an IP address in its subject
 alternative names. A missing or unreadable `ca_file` fails the service start rather than falling back to the CA
 bundle.
+
+A TLS connection needs considerably more heap than a plain one. See
+[TLS heap](../../guide/getting-started/build-options.md#tls-heap) for measured figures and the
+`CONFIG_MBEDTLS_DYNAMIC_BUFFER` option.

@@ -77,6 +77,24 @@ The build rejects the old `WITH_*` environment variables and stops with an error
 Binary telemetry is a configuration setting, `tele.conf::binary`, rather than a build flag.
 :::
 
+## TLS heap
+
+Each TLS connection (an `mqtts://` broker, an `https://` OTA download, a `tlscon` session) allocates its record
+buffers from the internal heap. With the default static buffers (16 KB in, 4 KB out), an `mqtts://` connection costs
+far more heap than plain MQTT. The figures below were measured on an ESP32-S3 at steady state, as internal heap
+free / minimum ever free / largest free block, in bytes:
+
+| mbedTLS buffers                                   | plain MQTT             | `mqtts://`             |
+|---------------------------------------------------|------------------------|------------------------|
+| static, 16 KB in / 4 KB out (default)             | 40 300 / 37 500 / 29 700 | 29 200 / 19 700 / 8 200  |
+| static, 4 KB in / 2 KB out                        | 40 400 / 36 100 / 29 700 | 28 600 / 20 600 / 13 800 |
+| `CONFIG_MBEDTLS_DYNAMIC_BUFFER=y`                 | 40 500 / 33 100 / 29 700 | 34 600 / 24 700 / 22 500 |
+
+Dynamic buffers give the smallest steady-state cost, about 6 KB free and 8 KB minimum. Smaller static buffers help
+little, because the handshake still needs room for the server's full certificate chain. A broker that fails
+verification (wrong `ca_file`) makes the client retry the handshake every few seconds, and each attempt drives the
+minimum free heap down to about 9 KB. An open `tlscon` session costs about 2 KB with dynamic buffers.
+
 ## Environment variables
 
 The build also reads these environment variables:
