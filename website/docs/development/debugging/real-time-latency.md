@@ -1,6 +1,7 @@
 ---
 title: Real-time latency
 sidebar_position: 4
+description: "The converter control loop must respond to a load transient fast enough to keep output overshoot small."
 ---
 
 # Real-time latency

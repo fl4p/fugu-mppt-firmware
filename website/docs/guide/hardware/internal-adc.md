@@ -1,6 +1,7 @@
 ---
 title: "Internal ADC"
 sidebar_position: 3
+description: "Using the ESP32 internal ADC: linearity and calibration, noise, wiring, and sampling rates."
 ---
 
 # Internal ADC

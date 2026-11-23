@@ -1,6 +1,7 @@
 ---
 title: Power-loop rig
 sidebar_position: 4
+description: "The power-loop rig connects two Fugu devices in a loop for hardware measurements, such as waveforms of gates, switch nodes, and coil current, or conversion efficiency."
 ---
 
 # Power loop

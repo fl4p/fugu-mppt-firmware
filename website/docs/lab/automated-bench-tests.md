@@ -1,6 +1,7 @@
 ---
 title: Automated bench tests
 sidebar_position: 7
+description: "This test matrix gives repeatable, scriptable coverage of the protection, control, MPPT, and charger paths under controlled load conditions, without needing sun or a real battery."
 ---
 
 # Automated bench tests

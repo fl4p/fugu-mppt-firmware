@@ -1,6 +1,7 @@
 ---
 title: "Serial Console"
 sidebar_position: 3
+description: "The console lets you control and inspect the charger while it runs."
 ---
 
 # Serial Console

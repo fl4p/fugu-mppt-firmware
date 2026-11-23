@@ -1,6 +1,7 @@
 ---
 title: "Signal Filters"
 sidebar_position: 5
+description: "ADC noise sources and the filters that reduce them: median filter, residual noise, and the inverter-ripple notch."
 ---
 
 # Signal Filters

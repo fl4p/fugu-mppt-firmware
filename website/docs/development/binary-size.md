@@ -1,6 +1,7 @@
 ---
 title: Binary size
 sidebar_position: 9
+description: "This page lists the changes already made to shrink the firmware image and the ones still open."
 ---
 
 # Binary size

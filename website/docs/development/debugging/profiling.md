@@ -1,6 +1,7 @@
 ---
 title: Profiling
 sidebar_position: 6
+description: "You can profile the ESP32 with instrumented or sampling methods."
 ---
 
 # Profiling on ESP32

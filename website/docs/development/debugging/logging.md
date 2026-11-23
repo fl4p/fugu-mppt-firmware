@@ -1,6 +1,7 @@
 ---
 title: Logging
 sidebar_position: 2
+description: "src/logging.cpp multiplexes firmware log output (ESP_LOGx, UART_LOG, printf_mux) to the UART/USB console, telnet, MQTT, and BLE."
 ---
 
 # Logging

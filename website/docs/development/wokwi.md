@@ -1,6 +1,7 @@
 ---
 title: Wokwi simulator
 sidebar_position: 7
+description: "The firmware can run in the Wokwi simulator."
 ---
 
 # Wokwi simulator

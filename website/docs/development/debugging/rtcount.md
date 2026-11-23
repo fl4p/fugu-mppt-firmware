@@ -1,6 +1,7 @@
 ---
 title: rtcount
 sidebar_position: 5
+description: "The rtcount profiler measures the real-time latency of labeled blocks in the time-critical loop."
 ---
 
 # Real-Time Counter / Profiler

@@ -1,6 +1,7 @@
 ---
 title: "Configuration Files"
 sidebar_position: 0
+description: "Hardware behavior and runtime options live in flat key=value .conf files on the device's littlefs partition under /littlefs/conf/, rather than being compiled in."
 ---
 
 # Configuration files
