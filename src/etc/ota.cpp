@@ -126,7 +126,6 @@ static esp_err_t httpOta(const char *url, const esp_partition_t *staging, const 
     config.event_handler = _ota_http_event_handler;
     config.keep_alive_enable = true;
     config.buffer_size = 1024; // DEFAULT_HTTP_BUF_SIZE=512
-    config.skip_cert_common_name_check = true;
 
     esp_https_ota_config_t ota_config = {
         .http_config = &config,
