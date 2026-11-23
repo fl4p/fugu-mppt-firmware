@@ -211,7 +211,7 @@ static esp_err_t httpOta(const char *url, const esp_partition_t *staging, const 
         .http_config = &config,
         .http_client_init_cb = nullptr,
         .bulk_flash_erase = false,
-#if ESP_IDF_VERSION_MAJOR < 6 || CONFIG_ESP_HTTPS_OTA_ENABLE_PARTIAL_DOWNLOAD
+#if CONFIG_ESP_HTTPS_OTA_ENABLE_PARTIAL_DOWNLOAD
         .partial_http_download = false,
         .max_http_request_size = 0,
 #endif
@@ -321,11 +321,7 @@ static const char *blStageAndCopy(const char *url, const esp_partition_t *prim, 
 }
 
 const char *doOtaBootloader(const char *url, bool (*convOff)()) {
-#if ESP_IDF_VERSION_MAJOR >= 6
     if (esp_efuse_is_flash_encryption_enabled() || esp_secure_boot_enabled())
-#else
-    if (esp_flash_encryption_enabled() || esp_secure_boot_enabled())
-#endif
         return "flash encryption or secure boot enabled";
     esp_ota_img_states_t st;
     if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &st) == ESP_OK
