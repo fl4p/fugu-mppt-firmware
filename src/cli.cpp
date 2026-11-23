@@ -506,6 +506,18 @@ static void cmdSweep(cmd *c) {
     const auto ticket = mppt.requestPsuSweep();
     if (!waitPsuCommand(ticket))
         CMD_FAIL_RETURN("sweep: RT transition timed out");
+    // the reason is only valid once calibration is done and the filters refilled
+    const int64_t until = esp_timer_get_time() + 3000000;
+    while (converter.disabled() && esp_timer_get_time() < until) {
+        if (!adcSampler.isCalibrating() && !mppt.filtersEmpty()) {
+            const char *r = mppt.startBlockReason();
+            if (r && r != MpptController::kIdleBlock)
+                UART_LOG("sweep: queued, START blocked: %s (Vin=%.1f Vout=%.1f)", r,
+                         sensors.Vin->ewm.avg.get(), sensors.Vout->ewm.avg.get());
+            break;
+        }
+        delay(10);
+    }
 }
 
 static void cmdSweepCurve(cmd *) {

@@ -1135,7 +1135,7 @@ static void lfControl() {
         const bool voutAuthority = !mppt.converter.disabled()
                                    && mppt.converter.getCtrlOnPwmCnt() > minAuthorityPwm
                                    && currentShowsAuthority;
-        mppt.charger.update(vout, iout, voutAuthority, g_app.psuMode());
+        mppt.charger.update(vout, iout, voutAuthority, g_app.psuMode(), mppt.isSweeping());
         mppt.charger.updateWire(vout, iout, !mppt.converter.disabled());
         lfWireGuard(iout);
     }

@@ -219,6 +219,7 @@ struct Plant {
     bool ibatOn = true; // BMS ibat frames flowing
     bool bmsLag = false; // ibat frames report the current of one frame earlier
     float ibatOld = 0;
+    bool sweep = false; // mppt.isSweeping() of every unit
     int t = 0;
 
     void solve(BatteryCharger **c, int n) {
@@ -254,7 +255,7 @@ struct Plant {
                 if (ibatOn && t % 4 == 0) c[i]->batSt.updateBatCurrent(bmsLag ? ibatOld : ibat);
                 if (cells && t % 12 == 0) c[i]->batSt.setVcellHigh(vcell());
                 // main.cpp lfControl(): any running converter has authority while the charger holds
-                c[i]->update(vbus + off[i], iout[i], iout[i] > 0.3f || (c[i]->chargeHold() && ipv[i] > 0), psu);
+                c[i]->update(vbus + off[i], iout[i], iout[i] > 0.3f || (c[i]->chargeHold() && ipv[i] > 0), psu, sweep);
             }
             if (t % 4 == 0) ibatOld = ibat;
         }
@@ -429,6 +430,30 @@ static void test_hold_psu_freezes_pin() {
     float lim = c.Iout_max();
     pl.run(c, 240, true);
     CHECK(c.Iout_max() == lim && c.Vout_max() == 29.f, "psu mode: hold limit frozen %.2f -> %.2f A", lim, c.Iout_max());
+}
+
+// a sweep in the hold (converter off, then ramping from 0) must not pull the limit down to iout + 2 A; without the
+// sweep flag the same dip does (the PV-limited anti-wind-up)
+static void test_hold_sweep_keeps_limit(bool flag) {
+    BatteryCharger c; c.params = holdParams(); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    Plant pl;
+    pl.untilHold(c);
+    pl.run(c, 600);
+    const float lim = c.Iout_max(), i0 = pl.iout[0];
+    pl.sweep = flag;
+    pl.ipv[0] = 0.f;
+    pl.run(c, 6); // calibration + the low part of the ramp
+    const float limSw = c.Iout_max();
+    pl.ipv[0] = 35.f;
+    pl.run(c, 4);
+    pl.sweep = false;
+    pl.run(c, 4);
+    if (flag) {
+        CHECK(limSw == lim, "sweep: limit kept %.2f -> %.2f A", lim, limSw);
+        CHECK(pl.iout[0] > 0.9f * i0 && c.Iout_max() <= lim + 2.f, "sweep: back at %.2f A (before %.2f A), limit %.2f A",
+              pl.iout[0], i0, c.Iout_max());
+    } else CHECK(limSw <= 2.f + 0.01f, "no sweep flag: limit collapses to %.2f A (iout + 2 A)", limSw);
 }
 
 // clouds in the hold: no wind-up of the current limit, no overshoot when the sun returns
@@ -1144,6 +1169,8 @@ int main() {
     test_hold_two_units_converge(false);
     test_hold_two_units_converge(true);
     test_hold_psu_freezes_pin();
+    test_hold_sweep_keeps_limit(true);
+    test_hold_sweep_keeps_limit(false);
     test_hold_pv_limited_recovers();
     test_hold_stale_releases_limit();
     test_hold_entry_40a_two_units();
