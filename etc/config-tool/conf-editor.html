@@ -47,8 +47,13 @@
   .pane { display:none; }
   .pane.active { display:block; }
   .pane .path { color:var(--muted); font-size:12px; margin-bottom:14px; font-family:ui-monospace,monospace; }
-  .row { display:grid; grid-template-columns:minmax(160px,260px) 1fr; gap:14px; padding:10px 0;
-         border-bottom:1px solid var(--line); align-items:start; }
+  .row { display:grid; grid-template-columns:minmax(calc(160px - var(--ind,0px)),calc(260px - var(--ind,0px))) 1fr;
+         gap:14px; padding:10px 0; border-bottom:1px solid var(--line); align-items:start; }
+  .row .k .pfx { color:var(--muted); }
+  .kgroup > summary { cursor:pointer; padding:8px 0; border-bottom:1px solid var(--line);
+         font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; color:var(--accent); }
+  .kgroup > summary .cnt { color:var(--muted); font-size:11px; margin-left:8px; }
+  .kgroup > .kbody { margin-left:6px; padding-left:12px; border-left:1px solid var(--line); }
   .row .k { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; word-break:break-all; }
   .row .k .unit { color:var(--unit); margin-left:6px; font-size:11px; }
   .row .k .nometa { color:var(--warn); font-size:11px; margin-left:6px; }
@@ -65,18 +70,18 @@
   .clear-btn { flex:none; width:30px; height:32px; padding:0; line-height:1; font-size:17px;
     background:transparent; border:1px solid var(--line); border-radius:6px; color:var(--muted); cursor:pointer; }
   .clear-btn:hover { border-color:var(--warn); color:var(--warn); }
-  .row .val input {
+  .row .val input, .row .val select {
     width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--line);
     border-radius:6px; padding:7px 9px; font-family:ui-monospace,monospace; font-size:13px; }
-  .row .val input:focus { outline:none; border-color:var(--accent); }
-  .row.changed .val input { border-color:var(--warn); }
+  .row .val input:focus, .row .val select:focus { outline:none; border-color:var(--accent); }
+  .row.changed .val input, .row.changed .val select { border-color:var(--warn); }
   .row .unit-suffix {
     position:absolute; right:10px; top:50%; transform:translateY(-50%);
     color:var(--unit); font-size:11px; pointer-events:none; user-select:none; white-space:nowrap; }
   .row .orig { color:var(--muted); font-size:11px; margin-top:4px; cursor:pointer; width:fit-content; }
   .row .orig:hover { color:var(--fg); text-decoration:underline; }
-  .row.extra .val input { background:#0a0d12; border-style:dashed; }
-  .row.extra.filled .val input { background:var(--bg); border-style:solid; }
+  .row.extra .val input, .row.extra .val select { background:#0a0d12; border-style:dashed; }
+  .row.extra.filled .val input, .row.extra.filled .val select { background:var(--bg); border-style:solid; }
   .row .val input::placeholder { color:#5a6573; font-style:italic; }
   .addkey { margin-top:18px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .addkey input { background:var(--bg); color:var(--fg); border:1px solid var(--line);
@@ -139,7 +144,7 @@
     header { padding:12px 14px; gap:10px; }
     #panes { padding:14px 14px 60px; }
     .row { grid-template-columns:1fr; gap:6px; }
-    .row .val, .row .val input { max-width:none; }
+    .row .val, .row .val input, .row .val select { max-width:none; }
     #tabs { padding:0 8px; }
     #uploadlog { left:8px; right:8px; bottom:8px; width:auto; max-height:60vh; }
     .modal .field { grid-template-columns:1fr; gap:4px; }
@@ -257,9 +262,12 @@
    Lookup order: FILE_META[file][key] -> META[key] -> channel pattern ->
    ssid pattern -> inline comment from the file -> (none).
 ---------------------------------------------------------------------------- */
+// ADC backends createAdcInstance() accepts (some need a Kconfig option)
+const ADC_NAMES = ["ads1115","ads1015","ina226","esp32adc1","fake","vconv"];
+
 const META = {
   // board.conf
-  mcu:{unit:"",desc:"MCU type, e.g. esp32s3 or esp32",type:"string"},
+  mcu:{unit:"",desc:"MCU type, must match the firmware build target",type:"string",opts:["esp32s3","esp32"]},
   skip_assert:{unit:"",desc:"Skip GPIO pull-resistor sanity checks at init",type:"bool"},
   i2c_sda:{unit:"GPIO",desc:"I2C SDA pin number",type:"int"},
   i2c_scl:{unit:"GPIO",desc:"I2C SCL pin number",type:"int"},
@@ -273,7 +281,7 @@ const META = {
   ina22x_conv_time_us:{unit:"µs",desc:"INA226 per-conversion time (rounded up to nearest device step); lower=faster/noisier",type:"int"},
   ina22x_ov:{unit:"V",desc:"INA226 bus over-voltage limit (sensor volts after divider); ALERT ISR forces gates off, conversions polled; 0=off",type:"float"},
   pwm_freq:{unit:"Hz",desc:"Converter PWM switching frequency",type:"int"},
-  pwm_driver_logic:{unit:"",desc:"Gate driver logic: HiLi or InEn",type:"enum"},
+  pwm_driver_logic:{unit:"",desc:"Gate driver logic: HiLi or InEn",type:"enum",opts:["HiLi","InEn"]},
   pwm_hi:{unit:"GPIO",desc:"High-side gate driver pin (HiLi mode)",type:"int"},
   pwm_li:{unit:"GPIO",desc:"Low-side gate driver pin (HiLi mode)",type:"int"},
   pwm_sd:{unit:"GPIO",desc:"Gate driver shutdown/DIS pin (HiLi mode)",type:"int"},
@@ -301,7 +309,7 @@ const META = {
   ads_alert:{unit:"GPIO",desc:"ADS1x15 ALERT/RDY pin number",type:"int"},
 
   // sensor.conf
-  adc:{unit:"",desc:"Default ADC backend for all channels",type:"string"},
+  adc:{unit:"",desc:"Default ADC backend for all channels",type:"string",opts:ADC_NAMES},
   ignore_calibration_constraints:{unit:"",desc:"Bypass ADC calibration sanity constraints",type:"bool"},
   notch_adaptive:{unit:"",desc:"Auto-tune inverter-ripple notch to the tone measured on Vout",type:"bool"},
   notch_freq:{unit:"Hz",desc:"Notch frequency when not adaptive (2x mains: 100=50Hz, 120=60Hz)",type:"float"},
@@ -337,17 +345,17 @@ const META = {
   rect_offset_cal:{unit:"",desc:"1 = rect_offset_ns is a measurement. 0 = a runtime-backstop reduction: used, but counts as uncalibrated. 2 = a bound: rect-cal found the knee late (past +125 ns, or any late result above Vin = 2 Vout) and kept the shorter of the limit (+125 ns, 0 above 2 Vout) and the previous offset; a loaded or measure-coil value past +125 ns is used as +125 ns with this state (measure-coil ls apply is a bench tool and ignores the 2 Vout rule); rect_cal_auto retries only below Vin = 2 Vout, not within a week of a bound result (since boot)",type:"int"},
 
   // converter.conf
-  topo:{unit:"",desc:"Converter topology: buck or boost",type:"enum"},
+  topo:{unit:"",desc:"Converter topology: buck or boost",type:"enum",opts:["buck","boost"]},
   c_in:{unit:"F",desc:"Input capacitance (board caps plus the array's): the sweep slows so C*V*dV/dt stays under 5 % of the power, and subtracts it from the power it records; set the board's real value (2 x 470 uF), 0 = off, 0..0.02 (default 1e-3)",type:"float"},
   forced_pwm:{unit:"",desc:"Force CCM PWM even at light loads (1=on)",type:"bool"},
   fpwm_gate:{unit:"",desc:"Hold forced PWM off until the duty reaches the voltage ratio (bring-up gate)",type:"bool"},
   fpwm_gate_margin:{unit:"",desc:"Duty margin the forced-PWM gate requires on top of the measured ratio",type:"float"},
   fpwm_gate_hold:{unit:"",desc:"Samples of passing duty before the forced-PWM gate engages (ramp held meanwhile)",type:"long"},
-  sync_role:{unit:"",desc:"Wired MCPWM clock sync (WITH_WSYNC): none, leader or follower",type:"enum"},
+  sync_role:{unit:"",desc:"Wired MCPWM clock sync (WITH_WSYNC): none, leader or follower",type:"enum",opts:["none","leader","follower"]},
   sync_phase_deg:{unit:"deg",desc:"Leader only: pulse offset as an angle (180 = interleave); ignored on follower",type:"float"},
   sync_phase_ns:{unit:"ns",desc:"Leader only: additive trim on sync_phase_deg for wire propagation delay",type:"float"},
   boost:{unit:"",desc:"Legacy boost flag (replaced by topo=buck|boost)",type:"bool"},
-  mode:{unit:"",desc:"Operating mode: mppt, psu or pv (solar-array-simulator output)",type:"enum"},
+  mode:{unit:"",desc:"Operating mode: mppt, psu or pv (solar-array-simulator output)",type:"enum",opts:["mppt","psu","pv"]},
   psu_vout:{unit:"V",desc:"PSU mode output voltage setpoint (used when mode=psu)",type:"float"},
   pv_isc:{unit:"A",desc:"PV-sim short-circuit current (mode=pv; also caps Iout limiter at 1.1x)",type:"float"},
   pv_voc:{unit:"V",desc:"PV-sim open-circuit voltage (carries OV threshold and boost feasibility)",type:"float"},
@@ -455,7 +463,7 @@ const META = {
 
   // every service conf (mqtt/tele/ftp/telnet/scope/lcd/ble)
   enabled:{unit:"",desc:"Start this service at boot (1=on, 0=off)",type:"bool"},
-  log_level:{unit:"",desc:"Service log verbosity: error, warn or info",type:"enum"},
+  log_level:{unit:"",desc:"Service log verbosity: error, warn or info",type:"enum",opts:["error","warn","info"]},
 };
 
 // vout_max means slightly different things per file
@@ -472,7 +480,7 @@ const CHAN_PREFIX = { hv_v:"HV-side voltage", lv_v:"LV-side voltage",
                       ntc:"NTC (temperature)" };
 const CHAN_RE = /^(hv_v|lv_v|hv_i|lv_i|ntc)_(.+)$/;
 const CHAN_SUFFIX = {
-  adc:{unit:"",desc:"ADC backend for this channel",type:"string"},
+  adc:{unit:"",desc:"ADC backend for this channel",type:"string",opts:ADC_NAMES},
   ch:{unit:"",desc:"ADC channel index (255 = absent)",type:"int"},
   rh:{unit:"Ω",desc:"Voltage divider upper (high-side) resistor",type:"float"},
   rl:{unit:"Ω",desc:"Voltage divider lower resistor",type:"float"},
@@ -530,7 +538,7 @@ const ADD_KEY_HINTS = { "sensor.conf": ["hv_v","lv_v","hv_i","lv_i"].flatMap(c =
 const FILE_KEYS = {
   "board.conf":["adc_fake_freq","ads_alert","bflow_bat","boot_refresh_ns","fan_pwm","hs_clamp","i2c_freq","i2c_hs_freq","i2c_port","idle_cpu_mhz",
     "i2c_scl","i2c_sda","ina22x_addr","ina22x_alert","ina22x_conv_time_us","ina22x_ov","ina22x_range","ina22x_resistor",
-    "led_WS2812","led_WS2812B","led_simple","lv_pgood","lv_pgood_v","mcu","ntc_ch","panel_en","panel_sd",
+    "led_WS2812","led_WS2812B","led_simple","lv_pgood","lv_pgood_v","mcu","panel_en","panel_sd",
     "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","pwm_driver_logic","pwm_en","pwm_fault_active_high","pwm_fault_pin",
     "pwm_freq","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin","skip_assert"],
   "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_sr",
@@ -661,7 +669,7 @@ function lookupMeta(file, key, inlineComment) {
   const m = key.match(CHAN_RE);
   if (m && CHAN_SUFFIX[m[2]]) {
     const s = CHAN_SUFFIX[m[2]];
-    return { unit:s.unit, desc:CHAN_PREFIX[m[1]] + ": " + s.desc, type:s.type };
+    return { unit:s.unit, desc:CHAN_PREFIX[m[1]] + ": " + s.desc, type:s.type, opts:s.opts };
   }
   if (/^ssid_.+_psk$/.test(key)) return {unit:"",desc:"WiFi password for the matching ssid_*",type:"string"};
   if (/^ssid_.+$/.test(key))    return {unit:"",desc:"WiFi network SSID to connect to",type:"string"};
@@ -930,6 +938,35 @@ function renderApp(){
   refreshDirtyMarks();
 }
 
+const collapsedGroups = new Set();  // "path|prefix" of folded key groups
+
+// Groups keys by shared "_"-separated prefixes, in first-seen order. Chains with a
+// single branch are merged and a group needs 2+ keys. Returns items {key} or
+// {prefix, n, items}.
+function keyTree(keys){
+  const mk = ()=>({kids:new Map(), key:null, n:0, first:null});
+  const root = mk();
+  for (const k of keys){
+    let node = root;
+    for (const s of k.split("_")){
+      if (!node.kids.has(s)) node.kids.set(s, mk());
+      node = node.kids.get(s); node.n++; if (node.first==null) node.first = k;
+    }
+    node.key = k;
+  }
+  function walk(node, pfx){
+    const out = [];
+    for (const [s, c] of node.kids){
+      let p = pfx+s, cur = c;
+      while (cur.key==null && cur.kids.size===1){ const [s2, c2] = cur.kids.entries().next().value; p += "_"+s2; cur = c2; }
+      if (cur.n===1) out.push({key:cur.first});
+      else out.push({prefix:p+"_", n:cur.n, items:(cur.key!=null ? [{key:cur.key}] : []).concat(walk(cur, p+"_"))});
+    }
+    return out;
+  }
+  return walk(root, "");
+}
+
 function renderPane(){
   const panes=document.getElementById("panes"); panes.innerHTML="";
   const path=state.active, f=state.files[path], model=f.model;
@@ -974,9 +1011,22 @@ function renderPane(){
     const right = document.createElement("div"); right.className="val";
     const line = document.createElement("div"); line.className="val-line";
     const wrap = document.createElement("div"); wrap.className="inwrap";
-    const inp = document.createElement("input"); inp.type="text"; inp.value=value;
-    inp.spellcheck=false; inp.autocomplete="off";
-    if (isExtra) inp.placeholder="<not set>";
+    const opts = meta && (meta.opts || (meta.type==="bool" ? ["0","1"] : null));
+    let inp;
+    if (opts){
+      // unknown current values stay selectable so nothing is lost
+      inp = document.createElement("select");
+      for (const o of ["", ...opts, ...(value && !opts.includes(value) ? [value] : [])]){
+        const e = document.createElement("option"); e.value = o;
+        e.textContent = o==="" ? (isExtra ? "<not set>" : "(empty)") : o;
+        inp.appendChild(e);
+      }
+      inp.value = value;
+    } else {
+      inp = document.createElement("input"); inp.type="text"; inp.value=value;
+      inp.spellcheck=false; inp.autocomplete="off";
+      if (isExtra) inp.placeholder="<not set>";
+    }
     wrap.appendChild(inp);
     if (meta && meta.unit){
       const u = document.createElement("span"); u.className="unit-suffix"; u.textContent=meta.unit;
@@ -1023,19 +1073,38 @@ function renderPane(){
     return row;
   }
 
-  // render every key in the stable order; present rows come from the model,
-  // the rest render as <not set> placeholders.
-  for (const key of f.order){
+  // render every key in the stable order, grouped into a tree by shared "_"
+  // prefixes; present rows come from the model, the rest render as <not set>.
+  function keyRow(key, pfx){
     const l = model.lines.find(x=>x.key===key);
-    if (l){
-      pane.appendChild(makeRow(key, l.value, l.comment, false));
-    } else {
+    let row;
+    if (l) row = makeRow(key, l.value, l.comment, false);
+    else {
       const v = f.extras[key] || "";
-      const row = makeRow(key, v, "", true);
+      row = makeRow(key, v, "", true);
       if (v.trim()!=="") row.classList.add("filled");
-      pane.appendChild(row);
+    }
+    if (pfx && key.startsWith(pfx)){
+      const k = row.querySelector(".k");
+      k.innerHTML = '<span class="pfx">'+escHtml(pfx)+'</span>'+k.innerHTML.slice(escHtml(pfx).length);
+    }
+    return row;
+  }
+  function renderItems(items, parent, pfx, ind){
+    for (const it of items){
+      if (it.key!=null){ parent.appendChild(keyRow(it.key, pfx)); continue; }
+      const id = path+"|"+it.prefix;
+      const g = document.createElement("details"); g.className="kgroup"; g.open = !collapsedGroups.has(id);
+      g.ontoggle = ()=>{ g.open ? collapsedGroups.delete(id) : collapsedGroups.add(id); };
+      const s = document.createElement("summary");
+      s.innerHTML = escHtml(it.prefix)+'<span class="cnt">'+it.n+'</span>';
+      const body = document.createElement("div"); body.className="kbody";
+      body.style.setProperty("--ind", (ind+19)+"px");
+      g.append(s, body); parent.appendChild(g);
+      renderItems(it.items, body, it.prefix, ind+19);
     }
   }
+  renderItems(keyTree(f.order), pane, "", 0);
 
   // add-key (arbitrary)
   const add=document.createElement("div"); add.className="addkey";

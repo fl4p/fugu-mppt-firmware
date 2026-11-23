@@ -25,7 +25,7 @@ test('editing an input updates the model, shows "was: …" and the dirty dot', a
 
   const row = rowFor(window, 'mcu');
   assert.ok(row, 'mcu row should render on the active board.conf tab');
-  const input = row.querySelector('input');
+  const input = row.querySelector('select');
   const orig  = row.querySelector('.orig');
 
   assert.equal(orig.style.display, 'none', '"was:" hidden before any edit');
@@ -49,7 +49,7 @@ test('clear button is visible iff the input has a value', async () => {
   const { window } = await loadEditor();
   window.load(mk(SRC), 'demo');
   const row = rowFor(window, 'mcu');
-  const input = row.querySelector('input');
+  const input = row.querySelector('select');
   const clr   = row.querySelector('.clear-btn');
 
   assert.notEqual(clr.style.display, 'none', 'clear visible for a populated input');
@@ -65,8 +65,8 @@ test('changedFields lists del + set commands the upload will send', async () => 
 
   // edit one field and clear another
   const r1 = rowFor(window, 'mcu');
-  r1.querySelector('input').value = 'esp32';
-  r1.querySelector('input').dispatchEvent(new window.Event('input'));
+  r1.querySelector('select').value = 'esp32';
+  r1.querySelector('select').dispatchEvent(new window.Event('input'));
 
   const r2 = rowFor(window, 'pwm_freq');
   r2.querySelector('input').value = '';

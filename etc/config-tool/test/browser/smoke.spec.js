@@ -96,7 +96,7 @@ test('drag-drop folder upload via webkitGetAsEntry loads the dropped tree', asyn
   // app should switch on with the dropped folder's root as the source label
   await expect(page.locator('#srcname')).toHaveText('myconf');
   await expect(page.locator('#tabs .tab').filter({ hasText: 'board' })).toBeVisible();  // label strips ".conf" (§2.1)
-  // and the real .conf bytes should have populated the mcu input
-  const mcu = await page.locator('#panes .row input').first();
-  await expect(mcu).toHaveValue('esp32s3');
+  // and the real .conf bytes should have populated the mcu dropdown
+  await expect.poll(() => page.evaluate(() =>
+    [...document.querySelectorAll('#panes .row')].find(r => r._key === 'mcu')?.querySelector('select')?.value)).toBe('esp32s3');
 });
