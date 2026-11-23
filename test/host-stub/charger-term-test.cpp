@@ -1006,7 +1006,108 @@ static void test_bal_torn_clock() {
     CHECK(!c.balanceDue(), "torn us read during skip: not due (age %u)", c.balanceAgeS());
 }
 
+// BMS frames stop mid-hold for gapS (11-23: 150-211 s gaps): the limit decays instead of freezing open loop,
+// the expiry latch is unchanged, a short gap resumes from the decayed limit without overshoot. units: 1 or 2 on a bus.
+static void test_hold_blind_decay(int units, int gapS) {
+    BatteryCharger a, b; a.params = holdParams(); b.params = holdParams(); setWallClockUs(1'000'000ULL);
+    a.termCond.reset(); b.termCond.reset();
+    Plant pl;
+    if (units == 2) pl.ipv[0] = pl.ipv[1] = 25.f;
+    BatteryCharger *u[2] = {&a, &b};
+    for (int k = 0; k < 3600 && !(a.termCond.cvHold() && (units == 1 || b.termCond.cvHold())); ++k) pl.run(u, units, 1);
+    pl.run(u, units, 120);
+    CHECK(a.termCond.cvHold() && !(bool) a.termCond, "blind %d/%d: in the hold", units, gapS);
+    float lim0 = a.Iout_max(), ibat0 = pl.ibat;
+    pl.cells = pl.ibatOn = false;
+    pl.run(u, units, 18);
+    CHECK(a.Iout_max() >= lim0 - 0.01f, "blind %d/%d: 18 s, limit kept %.2f -> %.2f A", units, gapS, lim0, a.Iout_max());
+    float limMin = 99.f, ibatEnd = 0.f;
+    int latchedAt = -1;
+    for (int s = 18; s < gapS; ++s) {
+        pl.run(u, units, 1);
+        if (s == 100) ibatEnd = pl.ibat, limMin = a.Iout_max();
+        if (latchedAt < 0 && (bool) a.termCond) latchedAt = s;
+    }
+    printf("  blind %d unit(s), %d s: ibat %.1f -> %.1f A, lim %.1f -> %.2f A at 100 s, latched at %d s\n", units, gapS,
+           ibat0, ibatEnd, lim0, limMin, latchedAt);
+    CHECK(limMin < 1.f && ibatEnd < 1.f * units, "blind %d/%d: decayed below 1 A by 100 s (%.2f A, ibat %.1f A)",
+          units, gapS, limMin, ibatEnd);
+    if (gapS > 180) {
+        CHECK(latchedAt >= 175 && latchedAt <= 200, "blind %d/%d: expiry latch as before (%d s)", units, gapS, latchedAt);
+        return;
+    }
+    CHECK(latchedAt < 0 && a.termCond.cvHold(), "blind %d/%d: short gap, still in the hold", units, gapS);
+    pl.cells = pl.ibatOn = true;
+    float vmax = 0;
+    int back = -1;
+    for (int s = 0; s < 900; ++s) {
+        pl.run(u, units, 1);
+        vmax = std::max(vmax, pl.vcell());
+        if (back < 0 && pl.vcell() >= 3.5f - 0.005f) back = s;
+    }
+    printf("  blind %d unit(s) resume: cell at cv_eoc after %d s, max %.3f, ilim %.1f A\n", units, back, vmax, a.Iout_max());
+    CHECK(vmax <= 3.5f + 0.015f && back >= 0 && back < 600 && !(bool) a.termCond,
+          "blind %d/%d: resumed from the decayed limit, max %.3f, back after %d s", units, gapS, vmax, back);
+}
+
+// outside the hold a BMS gap does not touch the output limit
+static void test_bulk_blind_untouched() {
+    BatteryCharger c; c.params = holdParams(); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    frames(c, 3.40f, 30.f, 10, true);
+    for (int s = 0; s < 120; ++s) tick(c);
+    CHECK(!c.termCond.cvHold() && c.Iout_max() >= 40.f - 1e-3f, "bulk, BMS gap 120 s: no limit (%.1f A)", c.Iout_max());
+}
+
+// a ceiling latch in the approach (before the hold) defers the run; the wait survives a restart (RTC)
+static void test_bal_ceiling_approach_rtc() {
+    ChargerRtc r{};
+    BatteryCharger c; c.params = balParams(1800); setWallClockUs(1'000'000ULL);
+    c.attachRtc(&r);
+    c.termCond.reset();
+    c.balanceNow();
+    frames(c, 3.40f, 30.f, 10, true);
+    frames(c, 3.48f, 30.f, 2, true);
+    CHECK(!c.termCond.cvHold() && c.Iout_max() < 30.f, "approach: no hold, limit cut (%.1f A)", c.Iout_max());
+    frames(c, 3.56f, 30.f, 2, true);
+    CHECK((bool) c.termCond && c.balanceDeferWhy() && !strcmp(c.balanceDeferWhy(), "ceiling"),
+          "ceiling in the approach: deferred");
+    CHECK(r.ceilValid() && r.balCeilS < 30, "ceiling wait saved (%u s)", r.balCeilS);
+    frames(c, 3.40f, 10.f, 900, true); // 1 h
+    BatteryCharger d; d.params = balParams(1800);
+    setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
+    d.attachRtc(&r);
+    d.termCond.reset();
+    tick(d);
+    CHECK(d.balanceDue() && d.balanceDeferWhy() && !strcmp(d.balanceDeferWhy(), "ceiling"), "restart: still deferred");
+    setWallClockUs(loopWallClockUs_ + (30ULL * 86400ULL / 4 - 3600) * 1000000ULL);
+    frames(d, 3.40f, 10.f, 10, true);
+    CHECK(d.balanceDeferWhy() == nullptr, "restored wait ends at interval / 4 after the stop (%s)", d.balanceDeferWhy());
+    frames(d, 3.56f, 10.f, 2, true);
+    CHECK(d.balanceDeferWhy() != nullptr, "ceiling again: deferred");
+    d.balanceNow();
+    tick(d);
+    CHECK(d.balanceDeferWhy() == nullptr && r.ceilValid() && r.balCeilS == UINT32_MAX, "balance now: cleared and saved");
+
+    // a 40 B build (older) rewrote the balance part and left a stale ceiling tail: ignored
+    ChargerRtc o = r;
+    o.balCeilS = 10;
+    o.balCeilSum = o.ceilChecksum();
+    o.balInBandS += 1;
+    o.balSum = o.balChecksum();
+    BatteryCharger e; e.params = balParams(1800);
+    e.attachRtc(&o);
+    e.termCond.reset();
+    frames(e, 3.40f, 10.f, 10, true);
+    CHECK(e.balanceDeferWhy() == nullptr && e.balanceDue(), "stale ceiling tail ignored, balance part kept");
+}
+
 int main() {
+    test_hold_blind_decay(1, 120);
+    test_hold_blind_decay(2, 120);
+    test_hold_blind_decay(1, 240);
+    test_bulk_blind_untouched();
+    test_bal_ceiling_approach_rtc();
     test_hold_vout_offset_two_units();
     test_bal_cap_survives_reboot();
     test_bal_delta_gap();

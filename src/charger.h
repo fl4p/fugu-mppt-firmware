@@ -142,7 +142,8 @@ struct BatChargerParams {
 };
 
 // Charger state kept across esp_restart/panic/OTA in pinned RTC slow RAM (not across power loss).
-// The first 20 B are the v2 layout (older builds read it unchanged); the balance part validates alone.
+// The first 20 B are the v2 layout (older builds read it unchanged); the balance part validates alone, the
+// appended ceiling wait with balSum (a 40 B build leaves it stale, balSum moves on).
 struct ChargerRtc {
     uint32_t magic;
     uint32_t fullAgeS; // age of the last full charge, UINT32_MAX = unknown
@@ -154,6 +155,8 @@ struct ChargerRtc {
     uint32_t balInBandS; // in-band time of the unfinished run
     uint32_t balSessS; // time in the current balance hold session
     uint32_t balSum;
+    uint32_t balCeilS; // age of a run stopped on the cell ceiling, UINT32_MAX = none
+    uint32_t balCeilSum;
 
     static constexpr uint32_t MAGIC = 0x48444c32, BAL_MAGIC = 0x42414c32;
     [[nodiscard]] __attribute__((noinline)) static uint32_t fnv(const void *p, size_t words) {
@@ -170,9 +173,11 @@ struct ChargerRtc {
         return magic == MAGIC && sum == checksum() && holiday <= 1 && override_ <= 2;
     }
     [[nodiscard]] bool balValid() const { return balMagic == BAL_MAGIC && balSum == balChecksum(); }
+    [[nodiscard]] uint32_t ceilChecksum() const { return fnv(&balSum, 2); }
+    [[nodiscard]] bool ceilValid() const { return balValid() && balCeilSum == ceilChecksum(); }
 };
-static_assert(offsetof(ChargerRtc, sum) == 16 && offsetof(ChargerRtc, balMagic) == 20 && sizeof(ChargerRtc) == 40,
-              "ChargerRtc layout");
+static_assert(offsetof(ChargerRtc, sum) == 16 && offsetof(ChargerRtc, balMagic) == 20
+              && offsetof(ChargerRtc, balCeilS) == 40 && sizeof(ChargerRtc) == 48, "ChargerRtc layout");
 
 struct BatteryState {
     static constexpr auto VCELL_EXPIRATION_TIME_SEC = 180;
@@ -570,6 +575,11 @@ public:
             _refFull = std::isfinite(batSt.coulombCounter.bmsRef());
             _lastFullUs = wallClockUs();
             ESP_LOGI("charger", "Termination latched: ahSinceFull reset to 0");
+            // in the hold or its approach
+            if (termCond.balance && batSt.vcell_high >= params.cv_ceiling) {
+                _balCeilT = wallClockTicks() | 1;
+                ESP_LOGW("charger", "balance stopped on the cell ceiling, deferred");
+            }
         }
     }
 
@@ -616,13 +626,7 @@ public:
         _balHot = haveTemp() && _tempMax > (_balHot ? BAL_TEMP_MAX - BAT_TEMP_HYST : BAL_TEMP_MAX);
         _balRun = balanceDue() && !balanceDeferWhy();
         bool hold = termCond.cvHold() || termCond.stalePaused(); // a stale pause keeps the session
-        if (_balWasHold && !hold) {
-            _balSessS = 0.f; // session over (a reboot keeps it)
-            if (termCond.balance && bool(termCond) && batSt.vcell_high >= params.cv_ceiling) {
-                _balCeilT = now | 1;
-                ESP_LOGW("charger", "balance stopped on the cell ceiling, deferred");
-            }
-        }
+        if (_balWasHold && !hold) _balSessS = 0.f; // session over (a reboot keeps it)
         _balWasHold = hold;
         if (hold && _balRun && dt <= BAL_GAP_T) _balSessS += dt * BAL_TICK_S;
         termCond.balance = _balRun && _balSessS <= 2 * params.balance_hold_s;
@@ -856,6 +860,8 @@ public:
             _balAgeBootS = _balForce ? 0 : r->balAgeS;
             _balInBandS = (float) (r->balInBandS < 86400U ? r->balInBandS : 86400U);
             _balSessS = (float) (r->balSessS < 2 * 86400U ? r->balSessS : 2 * 86400U);
+            if (r->ceilValid() && r->balCeilS != UINT32_MAX)
+                _balCeilT = (wallClockTicks() - secToCoarseTicks(r->balCeilS)) | 1;
         }
     }
 
@@ -875,6 +881,8 @@ public:
         r.balInBandS = (uint32_t) _balInBandS;
         r.balSessS = (uint32_t) _balSessS;
         r.balSum = r.balChecksum();
+        r.balCeilS = _balCeilT ? coarseTicksToSec(wallClockTicks() + 1 - _balCeilT) : UINT32_MAX;
+        r.balCeilSum = r.ceilChecksum();
         *_rtc = r;
     }
 
@@ -912,9 +920,15 @@ public:
     // polarization relaxing after a cut is not room. Units on one BMS compute the same target, so it does not add
     // up. Ibat frame: the output-current limit moves G (target - ibat); N units sum to N G (dIbat/dIlim = 1), 2 G < 1
     // also with one frame of BMS lag. Up steps <= STEP_UP_A; the limit stays <= HEADROOM_A above the own iout
-    // (PV-limited: no wind-up).
+    // (PV-limited: no wind-up). BMS frames older than BLIND_S: the limit decays from ibat_max towards the floor
+    // (tau BLIND_TAU_S), as the expiry latch would end it; the floor holds for any number of units on the bus.
     void _cvHoldStep(bool step, float iout, float ibatCap) {
-        constexpr float K_UP = 0.5f, K_DOWN = 1.5f, G = 0.4f, STEP_UP_A = 2.f, HEADROOM_A = 2.f;
+        constexpr float K_UP = 0.5f, K_DOWN = 1.5f, G = 0.4f, STEP_UP_A = 2.f, HEADROOM_A = 2.f, BLIND_TAU_S = 20.f;
+        constexpr uint32_t BLIND_S = 20; // 5 ibat frames
+        const uint32_t age = std::max(ibatAgeS(), coarseTicksToSec(batSt.cellAgeTicks()));
+        if (step && age > BLIND_S)
+            _cvIlim = fmaxf(fminf(_cvIlim, params.Ibat_lim * expf(((float) BLIND_S - (float) age) / BLIND_TAU_S)),
+                            IOUT_LIM_FLOOR);
         const float ibat = batSt.ibat_raw;
         uint32_t frame = batSt.vcell_high_t;
         if (frame != _lastBmsFrameUs || std::isnan(_cvIbat)) {

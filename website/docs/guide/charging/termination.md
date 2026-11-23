@@ -244,11 +244,19 @@ The hold ends in one of these ways:
   charger terminates at once, as without the hold.
 - Stale BMS data: the cell voltage or the pack current is older than 180 s. The
   charger terminates without marking the pack full and holds the float
-  fallback. Until then the current limit stays where it was. A
-  [balance run](#top-balancing) pauses instead.
+  fallback. A [balance run](#top-balancing) pauses instead.
 - Sun gone: the highest cell stays below `cv_float` for 4 consecutive frames.
   The charger returns to charging without terminating, so a cloudy afternoon
   does not end in a false "full".
+
+Without BMS frames the hold runs blind: neither loop nor the ceiling check
+sees the pack. Once the newest cell or current frame is older than 20 s, the
+current limit decays from `ibat_max` towards its 0.25 A floor with a 20 s time
+constant (below 1 A after about 100 s), during the hold and its approach. The
+floor is safe however many chargers share the pack, and it matches where the
+180 s expiry ends anyway. Fresh frames resume the regulation from the decayed
+limit, so the current ramps back up at the upward step limit instead of
+stepping. The 180 s expiry and its exits do not change.
 
 When the hold ends in termination, the output voltage limit glides from the
 bus voltage as the converter reads it to the float voltage, so the output does
@@ -300,10 +308,11 @@ it is due:
 When the run completes, the hold ends through its normal exits: with
 `cv_hold_max_s` = 0 the charger terminates at once and marks the pack full.
 The ceiling and sun-gone exits of the hold apply unchanged; they do not
-complete the run. A run that stops on the ceiling stays pending with
-its in-band time but is deferred for a quarter of `balance_interval`, at
-least 20 h, so the next charge ends normally (the `balance` reason is
-`ceiling`). `balance now` clears the deferral; a software reset does too.
+complete the run. A run that stops on the ceiling, in the hold or in its
+[approach](#approach), stays pending with its in-band time but is deferred for
+a quarter of `balance_interval`, at least 20 h, so the next charge ends
+normally (the `balance` reason is `ceiling`). `balance now` clears the
+deferral; a software reset keeps it.
 
 Stale BMS data pauses the run instead of terminating:
 
@@ -337,8 +346,8 @@ Limits and deferral:
   without a configured temperature topic there is no temperature deferral.
 - A pack that is already terminated when the run becomes due is not released
   for it; the run happens on the next charge.
-- The age of the last run, the in-band time and the session time survive a
-  software reset. After
+- The age of the last run, the in-band time, the session time and a ceiling
+  deferral survive a software reset. After
   a power loss the age counts from boot, so a run is never due right after
   power-on.
 
