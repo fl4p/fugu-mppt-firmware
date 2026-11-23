@@ -1,0 +1,278 @@
+2026-11-23 10:46:00,463      fry: I (2112906) ota: Download Progress:   96 %
+2026-11-23 10:46:01,175      fry: I (2113485) ota: Download Progress:   97 %
+2026-11-23 10:46:01,790      fry: I (2114193) ota: Download Progress:   98 %
+2026-11-23 10:46:03,244      fry: I (2115686) ota: Download Progress:   99 %
+2026-11-23 10:46:03,967      fry: I (2116412) ota: Download Progress:  100 %
+2026-11-23 10:46:03,973      fry: I (2116414) ota: Download took 106682 ms (16 KB/s)
+2026-11-23 10:46:03,980      fry: I (2116418) esp_image: segment 0: paddr=00010020 vaddr=3c130020 size=4e1f4h (319988) map
+2026-11-23 10:46:04,059      fry: I (2116455) esp_image: segment 1: paddr=0005e21c vaddr=3fcaae00 size=01dfch (  7676)
+2026-11-23 10:46:04,066      fry: I (2116458) esp_image: segment 2: paddr=00060020 vaddr=42000020 size=12d51ch (1234204) map
+2026-11-23 10:46:04,158      fry: I (2116592) esp_image: segment 3: paddr=0018d544 vaddr=3fcacbfc size=048f4h ( 18676)
+2026-11-23 10:46:04,266      fry: I (2116596) esp_image: segment 4: paddr=00191e40 vaddr=40374000 size=26d64h (159076)
+2026-11-23 10:46:04,267      fry: I (2116615) esp_image: segment 5: paddr=001b8bac vaddr=5000013c size=00024h (    36)
+2026-11-23 10:46:04,267      fry: I (2116618) esp_image: segment 0: paddr=00010020 vaddr=3c130020 size=4e1f4h (319988) map
+2026-11-23 10:46:04,267      fry: I (2116652) esp_image: segment 1: paddr=0005e21c vaddr=3fcaae00 size=01dfch (  7676)
+2026-11-23 10:46:04,267      fry: I (2116654) esp_image: segment 2: paddr=00060020 vaddr=42000020 size=12d51ch (1234204) map
+2026-11-23 10:46:04,495      fry: I (2116783) esp_image: segment 3: paddr=0018d544 vaddr=3fcacbfc size=048f4h ( 18676)
+2026-11-23 10:46:04,501      fry: I (2116786) esp_image: segment 4: paddr=00191e40 vaddr=40374000 size=26d64h (159076)
+2026-11-23 10:46:04,502      fry: I (2116804) esp_image: segment 5: paddr=001b8bac vaddr=5000013c size=00024h (    36)
+2026-11-23 10:46:04,502      fry: I (2116944) ota: OTA Succeed, Rebooting...
+2026-11-23 10:46:04,554      fry: I (2116952) store: Wrote /littlefs/stats (size 32)
+2026-11-23 10:46:04,554      fry: I (2116953) flash: Wrote flash value /littlefs/stats
+2026-11-23 10:46:04,572      fry: Rebooting
+2026-11-23 10:46:04,573      fry: I (2116959) mqtt_client: Client asked to disconnect
+2026-11-23 10:46:12,754      fry: ina22x: i2c_hs_freq=380000 on, self-test bad/us: plain 0/136, HS code 0/167; code ACKs 0, read failures 0 (last 0x0)
+2026-11-23 10:46:13,067      fry: I (8072) main: setup() done.
+2026-11-23 10:46:13,171      fry: I (8084) tele: Starting time sync
+2026-11-23 10:46:13,171      fry: WiFi power save: MIN_MODEM (active)
+2026-11-23 10:46:13,172      fry: W (8088) charger: Cell Voltage n/a, gliding vpPin 26.800V -> 26.800V over 5000ms
+2026-11-23 10:46:13,172      fry: W (8091) alert: wire unverified: no fresh wire data
+2026-11-23 10:46:13,173      fry: W (8096) main: temperature stale (ntc=0 mcu=1), converter held off
+2026-11-23 10:46:13,173      fry: I (8102) converter: Coil L0=80.0 µH rect_offset=-325 ns (-52 ct, mcpwm)
+2026-11-23 10:46:13,173      fry: V= nan/  nan I= nan/  nanA   nanW --℃46℃  0sps  0㎅/s CCM(H|L|Lm)=   0|   0|   0 st=START,1 lag=0㎲ N=0 rssi=-34
+2026-11-23 10:46:13,173      fry: I (8120) tele: Time synced! Mon Nov 23 10:46:12 2026
+2026-11-23 10:46:13,989      fry: I (9013) sampler: Sensor iout calibration: avg=-0.5449 std=0.005454
+2026-11-23 10:46:14,092      fry: I (9013) sampler: Sensor iout offset-calibrated: -0.544900
+2026-11-23 10:46:14,093      fry: I (9015) sampler: Sensor vout calibration: avg=27.3281 std=0.003258
+2026-11-23 10:46:14,093      fry: I (9054) sampler: Sensor vin calibration: avg=77.1261 std=0.015973
+2026-11-23 10:46:14,501      fry: I (9488) sampler: Sensor ntc calibration: avg=1.7864 std=0.000467
+2026-11-23 10:46:14,510      fry: I (9488) sampler: Calibration done!
+2026-11-23 10:46:14,947      fry: (9438486): Converter enabled
+2026-11-23 10:46:14,999      fry: I (9992) mppt: Stop sweep: no MPP (best 0.00W < 2.0W), backing off 30s
+2026-11-23 10:46:14,999      fry: I (9992) mppt: backoff 30s [sweep-no-mpp]
+2026-11-23 10:46:15,225      fry: I (10219) main: temperature refresh recovered
+2026-11-23 10:46:15,634      fry: I (10682) main: received serial command: 'bootinfo'
+2026-11-23 10:46:15,640      fry: reset reason: SW
+2026-11-23 10:46:15,640      fry: running: ota_0 @0x010000 (1828KB)  rollback=PENDING_VERIFY
+2026-11-23 10:46:15,641      fry: heap: free=31576 min-ever=27988 largest=20480
+2026-11-23 10:46:15,646      fry: rt-alloc: 12 allocs, 0 frees by loopRt (+12/+0 since last print), last at 7039 ms
+2026-11-23 10:46:15,652      fry: netguard: mqtt down 0 s, re-inits 0, guard reboots 0 since power-on
+2026-11-23 10:46:15,658      fry: uptime: 10 s, app fugu-firmware v2.1.0 fry-brk1-840-ga082476f (built Nov 23 2026 10:42:38, IDF v6.0.3)
+2026-11-23 10:46:15,667      fry: chip: model=9 rev=0.1  flash: jedec=5e4016 4096KB auto-suspend=on
+2026-11-23 10:46:15,735      fry: flash-suspend: supported tsus=17us erase=54698us sr1=03/00 sr2=82/02; auto: pass erase=198ms stall=2065us reads=93 -> active; lag flash/other 1991/2079us; isr core adc/alert 1/1
+2026-11-23 10:46:15,735      fry: bootloader: idf v5.5.1-dirty v1, May 29 2026 17:53:36, len 22576, sha b9728536e716aa93
+2026-11-23 10:46:15,735      fry: bootguard: no record (stock bootloader?)
+2026-11-23 10:46:15,736      fry: V=77.1/27.33 I=0.00/ 0.00A   0.0W 29℃46℃ 204sps  0㎅/s CCM(H|L|Lm)=   0|   0|4101 st=START,0 lag=0㎲ N=883 rssi=-34
+2026-11-23 10:46:15,736      fry: I (10752) mppt: START blocked: backoff (Vin=77.1 Vout=27.3 ntc=29 mcu=46)
+2026-11-23 10:46:15,736      fry: OK: bootinfo
+2026-11-23 10:46:17,052      fry: I (11939) main: received serial command: 'bootinfo'
+2026-11-23 10:46:17,081      fry: reset reason: SW
+2026-11-23 10:46:17,082      fry: running: ota_0 @0x010000 (1828KB)  rollback=PENDING_VERIFY
+2026-11-23 10:46:17,082      fry: heap: free=31956 min-ever=27988 largest=20480
+2026-11-23 10:46:17,082      fry: rt-alloc: 12 allocs, 0 frees by loopRt (+0/+0 since last print), last at 7039 ms
+2026-11-23 10:46:17,083      fry: netguard: mqtt down 0 s, re-inits 0, guard reboots 0 since power-on
+2026-11-23 10:46:17,083      fry: uptime: 11 s, app fugu-firmware v2.1.0 fry-brk1-840-ga082476f (built Nov 23 2026 10:42:38, IDF v6.0.3)
+2026-11-23 10:46:17,083      fry: chip: model=9 rev=0.1  flash: jedec=5e4016 4096KB auto-suspend=on
+2026-11-23 10:46:17,083      fry: flash-suspend: supported tsus=17us erase=54698us sr1=03/00 sr2=82/02; auto: pass erase=198ms stall=2065us reads=93 -> active; lag flash/other 1991/2079us; isr core adc/alert 1/1
+2026-11-23 10:46:17,083      fry: bootloader: idf v5.5.1-dirty v1, May 29 2026 17:53:36, len 22576, sha b9728536e716aa93
+2026-11-23 10:46:17,083      fry: bootguard: no record (stock bootloader?)
+2026-11-23 10:46:17,084      fry: V=77.1/27.32 I=0.00/ 0.00A   0.0W 29℃46℃ 204sps  0㎅/s CCM(H|L|Lm)=   0|   0|4101 st=START,0 lag=0㎲ N=1527 rssi=-43
+2026-11-23 10:46:17,084      fry: OK: bootinfo
+2026-11-23 10:46:18,196      fry: W (13222) charger: release Vout pinning [no Vout authority]: 26.800 -> 29.000
+2026-11-23 10:46:22,118      fry: I (17164) main: received serial command: 'bootinfo'
+2026-11-23 10:46:22,182      fry: reset reason: SW
+2026-11-23 10:46:22,183      fry: running: ota_0 @0x010000 (1828KB)  rollback=PENDING_VERIFY
+2026-11-23 10:46:22,183      fry: heap: free=31956 min-ever=27828 largest=20480
+2026-11-23 10:46:22,184      fry: rt-alloc: 12 allocs, 0 frees by loopRt (+0/+0 since last print), last at 7039 ms
+2026-11-23 10:46:22,184      fry: netguard: mqtt down 0 s, re-inits 0, guard reboots 0 since power-on
+2026-11-23 10:46:22,185      fry: uptime: 16 s, app fugu-firmware v2.1.0 fry-brk1-840-ga082476f (built Nov 23 2026 10:42:38, IDF v6.0.3)
+2026-11-23 10:46:22,185      fry: chip: model=9 rev=0.1  flash: jedec=5e4016 4096KB auto-suspend=on
+2026-11-23 10:46:22,186      fry: flash-suspend: supported tsus=17us erase=54698us sr1=03/00 sr2=82/02; auto: pass erase=198ms stall=2065us reads=93 -> active; lag flash/other 1991/2079us; isr core adc/alert 1/1
+2026-11-23 10:46:22,186      fry: bootloader: idf v5.5.1-dirty v1, May 29 2026 17:53:36, len 22576, sha b9728536e716aa93
+2026-11-23 10:46:22,187      fry: bootguard: no record (stock bootloader?)
+2026-11-23 10:46:22,187      fry: V=77.0/27.32 I=-0.00/-0.00A  -0.0W 29℃46℃ 511sps  0㎅/s CCM(H|L|Lm)=   0|   0|4101 st=START,0 lag=0㎲ N=4201 rssi=-43
+2026-11-23 10:46:22,189      fry: OK: bootinfo
+2026-11-23 10:46:27,323      fry: I (22364) main: OTA image confirmed valid (rollback cancelled)
+2026-11-23 10:46:27,323      fry: I (22366) main: received serial command: 'bootinfo'
+2026-11-23 10:46:27,324      fry: reset reason: SW
+2026-11-23 10:46:27,324      fry: running: ota_0 @0x010000 (1828KB)  rollback=VALID
+2026-11-23 10:46:27,328      fry: heap: free=31956 min-ever=27828 largest=20480
+2026-11-23 10:46:27,328      fry: rt-alloc: 12 allocs, 0 frees by loopRt (+0/+0 since last print), last at 7039 ms
+2026-11-23 10:46:27,340      fry: netguard: mqtt down 0 s, re-inits 0, guard reboots 0 since power-on
+2026-11-23 10:46:27,419      fry: uptime: 21 s, app fugu-firmware v2.1.0 fry-brk1-840-ga082476f (built Nov 23 2026 10:42:38, IDF v6.0.3)
+2026-11-23 10:46:27,419      fry: chip: model=9 rev=0.1  flash: jedec=5e4016 4096KB auto-suspend=on
+2026-11-23 10:46:27,420      fry: flash-suspend: supported tsus=17us erase=54698us sr1=03/00 sr2=82/02; auto: pass erase=198ms stall=2065us reads=93 -> active; lag flash/other 3451/2079us; isr core adc/alert 1/1
+2026-11-23 10:46:27,420      fry: bootloader: idf v5.5.1-dirty v1, May 29 2026 17:53:36, len 22576, sha b9728536e716aa93
+2026-11-23 10:46:27,420      fry: bootguard: no record (stock bootloader?)
+2026-11-23 10:46:27,420      fry: V=77.0/27.32 I=0.00/ 0.00A   0.0W 29℃46℃ 511sps  0㎅/s CCM(H|L|Lm)=   0|   0|4101 st=START,0 lag=0㎲ N=6864 rssi=-43
+2026-11-23 10:46:27,420      fry: OK: bootinfo
+2026-11-23 10:46:36,327      fry: V=77.2/27.32 I=-0.00/-0.00A  -0.0W 29℃46℃ 511sps  0㎅/s CCM(H|L|Lm)=   0|   0|4101 st=START,0 lag=0㎲ N=11440 rssi=-43
+2026-11-23 10:46:51,365      fry: I (46388) mppt: Start sweep
+2026-11-23 10:46:51,375      fry: I (46388) mppt: Start calibration
+2026-11-23 10:46:51,376      fry: I (46388) sensor: vin reset calibration
+2026-11-23 10:46:51,376      fry: I (46388) sensor: ntc reset calibration
+2026-11-23 10:46:51,376      fry: I (46388) sensor: vout reset calibration
+2026-11-23 10:46:51,776      fry: I (46777) sampler: Sensor iout calibration: avg=-0.5465 std=0.005062
+2026-11-23 10:46:51,784      fry: I (46777) sampler: Sensor iout offset-calibrated: -0.546500
+2026-11-23 10:46:51,784      fry: I (46779) sampler: Sensor vout calibration: avg=27.3111 std=0.002885
+2026-11-23 10:46:51,784      fry: I (46822) sampler: Sensor vin calibration: avg=77.0089 std=0.005698
+2026-11-23 10:46:52,205      fry: I (47252) sampler: Sensor ntc calibration: avg=1.7730 std=0.000492
+2026-11-23 10:46:52,211      fry: I (47252) sampler: Calibration done!
+2026-11-23 10:46:52,211      fry: (46701628): Converter enabled
+2026-11-23 10:46:52,216      fry: (46702228): converter: CCM -> DCM (M=0.35, I=-0.00, ∆I/2=2.97, pwm=1)
+2026-11-23 10:46:52,593      fry: (47069116): Current above threshold 0.20 (pwm=400)
+2026-11-23 10:46:52,602      fry: (47069125): Back-flow switch enabled
+2026-11-23 10:46:52,602      fry: (47069131): Sync rect enabled
+2026-11-23 10:46:53,532      fry: (48025471): converter: DCM -> CCM (M=0.36, I=3.31, ∆I/2=2.94, pwm=1526)
+2026-11-23 10:46:54,423      fry: V=66.0/27.59 I=5.36/12.46A 355.6W 29℃45℃ 445sps  0㎅/s CCM(H|L|Lm)=1764|2338|2338 st=SWEEP,1 lag=2009㎲ N=1337 rssi=-43
+2026-11-23 10:46:57,392      fry: V=45.1/27.58 I=6.12/ 9.74A 277.0W 29℃45℃ 512sps  0㎅/s CCM(H|L|Lm)=2553|1549|1549 st=SWEEP,1 lag=2024㎲ N=2876 rssi=-43
+2026-11-23 10:47:00,381      fry: V=30.4/27.53 I=6.79/ 7.28A 207.2W 29℃45℃ 512sps  0㎅/s CCM(H|L|Lm)=3727| 375| 375 st=SWEEP,1 lag=2024㎲ N=4417 rssi=-43
+2026-11-23 10:47:00,478      fry: I (55499) mppt: Ro fit ok: 22.89+-0.64 mOhm res 18 mV span 12.2 A n 78
+2026-11-23 10:47:00,487      fry: I (55499) mppt: Stop sweep 9.11s mode=CV (lim=4 tgt=1000.00 act=203.32) PWM=3782 MPP=(344.4W,1789,65.4V)
+2026-11-23 10:47:00,487      fry: I (55506) mppt: Grouping 59 V points (30.32,200.67)~(76.99,-0.01) into 100 bins, binW=0.467
+2026-11-23 10:47:00,487      fry: [34m345 [36m┤                                                                         [31m╭──╮                       [0m
+2026-11-23 10:47:00,493      fry: [34m326 [36m┤                                                           [31m╭─────────────╯  ╰────╮                  [0m
+2026-11-23 10:47:00,505      fry: [34m308 [36m┤                                                  [31m╭────────╯                     ╰─╮                [0m
+2026-11-23 10:47:00,519      fry: [34m289 [36m┤                                          [31m╭───────╯                                ╰─╮              [0m
+2026-11-23 10:47:00,586      fry: [34m270 [36m┤                               [31m╭──────────╯                                          ╰─╮            [0m
+2026-11-23 10:47:00,587      fry: [34m252 [36m┤                         [31m╭─────╯                                                       │            [0m
+2026-11-23 10:47:00,587      fry: [34m233 [36m┤                [31m╭────────╯                                                             ╰╮           [0m
+2026-11-23 10:47:00,587      fry: [34m215 [36m┤         [31m╭──────╯                                                                       ╰─╮         [0m
+2026-11-23 10:47:00,593      fry: [34m196 [31m┼─────────╯                                                                                │         [0m
+2026-11-23 10:47:00,599      fry: [34m177 [36m┤                                                                                          [31m╰─╮       [0m
+2026-11-23 10:47:00,607      fry: [34m159 [36m┤                                                                                            [31m│       [0m
+2026-11-23 10:47:00,618      fry: [34m140 [36m┤                                                                                            [31m│       [0m
+2026-11-23 10:47:00,683      fry: [34m122 [36m┤                                                                                            [31m╰─╮     [0m
+2026-11-23 10:47:00,694      fry: [34m103 [36m┤                                                                                              [31m│     [0m
+2026-11-23 10:47:00,695      fry: [34m 84 [36m┤                                                                                              [31m╰╮    [0m
+2026-11-23 10:47:00,695      fry: [34m 66 [36m┤                                                                                               [31m╰─╮  [0m
+2026-11-23 10:47:00,695      fry: [34m 47 [36m┤                                                                                                 [31m╰─ [0m
+2026-11-23 10:47:00,696      fry: P|V     30.3 .. 77
+2026-11-23 10:47:00,696      fry: I (55728) mppt: Grouping 104 D points (0.00,-0.01)~(0.99,201.63) into 100 bins, binW=0.010
+2026-11-23 10:47:00,700      fry: [34m345 [36m┤                                             [31m╭─────╮                                                [0m
+2026-11-23 10:47:00,712      fry: [34m323 [36m┤                                            [31m╭╯     ╰────╮                                           [0m
+2026-11-23 10:47:00,771      fry: [34m302 [36m┤                                            [31m│           ╰────╮                                      [0m
+2026-11-23 10:47:00,874      fry: [34m280 [36m┤                                           [31m╭╯                ╰─────╮                                [0m
+2026-11-23 10:47:00,874      fry: [34m258 [36m┤                                           [31m│                       ╰──────╮                         [0m
+2026-11-23 10:47:00,875      fry: [34m237 [36m┤                                         [31m╭─╯                              ╰────────╮                [0m
+2026-11-23 10:47:00,875      fry: [34m215 [36m┤                                         [31m│                                         ╰────────╮       [0m
+2026-11-23 10:47:00,875      fry: [34m194 [36m┤                                         [31m│                                                  ╰────── [0m
+2026-11-23 10:47:00,875      fry: [34m172 [36m┤                                         [31m│                                                          [0m
+2026-11-23 10:47:00,875      fry: [34m151 [36m┤                                        [31m╭╯                                                          [0m
+2026-11-23 10:47:00,875      fry: [34m129 [36m┤                                        [31m│                                                           [0m
+2026-11-23 10:47:00,892      fry: [34m108 [36m┤                                        [31m│                                                           [0m
+2026-11-23 10:47:00,892      fry: [34m 86 [36m┤                                       [31m╭╯                                                           [0m
+2026-11-23 10:47:00,893      fry: [34m 65 [36m┤                                  [31m╭────╯                                                            [0m
+2026-11-23 10:47:00,893      fry: [34m 43 [36m┤                           [31m╭──────╯                                                                 [0m
+2026-11-23 10:47:00,893      fry: [34m 21 [36m┤               [31m╭───────────╯                                                                        [0m
+2026-11-23 10:47:00,995      fry: [34m  0 [31m┼───────────────╯                                                                                    [0m
+2026-11-23 10:47:00,996      fry: P|D     0.000264 .. 0.992
+2026-11-23 10:47:00,996      fry: I (55852) mppt: Reached target duty cycle 1789
+2026-11-23 10:47:02,323      fry: I (57354) mppt: sweep landed 64.4 V 361.8 W, MPP 65.4 V 344.4 W
+2026-11-23 10:47:02,331      fry: I (57354) mppt: sweep verified: landed 362 W, off by +5 %
+2026-11-23 10:47:03,361      fry: V=66.1/27.67 I=5.71/13.22A 376.9W 29℃45℃ 512sps  0㎅/s CCM(H|L|Lm)=1740|2068|2362 st=↓MPPT,1 lag=2039㎲ N=5956 rssi=-43
+2026-11-23 10:47:06,417      fry: V=64.3/27.70 I=5.90/13.25A 378.1W 29℃45℃ 512sps  0㎅/s CCM(H|L|Lm)=1817|2285|2285 st=↓MPPT,1 lag=2039㎲ N=7497 rssi=-43
+2026-11-23 10:47:09,389      fry: V=64.8/27.72 I=5.92/13.42A 383.4W 30℃45℃ 512sps  0㎅/s CCM(H|L|Lm)=1803|2299|2299 st=↓MPPT,1 lag=2039㎲ N=9036 rssi=-43
+2026-11-23 10:47:12,382      fry: V=64.0/27.72 I=6.05/13.53A 386.6W 30℃44℃ 512sps  0㎅/s CCM(H|L|Lm)=1825|2277|2277 st=↓MPPT,1 lag=2039㎲ N=10575 rssi=-43
+2026-11-23 10:47:15,430      fry: V=64.2/27.74 I=6.09/13.68A 391.3W 30℃44℃ 512sps  0㎅/s CCM(H|L|Lm)=1822|2280|2280 st=↑MPPT,1 lag=2039㎲ N=12114 rssi=-43
+2026-11-23 10:47:18,398      fry: V=64.9/27.76 I=6.08/13.76A 393.7W 30℃44℃ 511sps  0㎅/s CCM(H|L|Lm)=1803|2299|2299 st=↓MPPT,1 lag=2039㎲ N=13654 rssi=-43
+2026-11-23 10:47:21,456      fry: V=66.3/27.75 I=5.93/13.72A 392.5W 30℃44℃ 512sps  0㎅/s CCM(H|L|Lm)=1766|2336|2336 st=↑MPPT,1 lag=2039㎲ N=15194 rssi=-43
+2026-11-23 10:47:24,440      fry: V=64.7/27.74 I=6.11/13.72A 395.2W 30℃44℃ 512sps  0㎅/s CCM(H|L|Lm)=1808|2294|2294 st=↓MPPT,1 lag=2039㎲ N=16736 rssi=-43
+2026-11-23 10:47:27,421      fry: V=65.0/27.78 I=5.97/13.52A 387.2W 30℃44℃ 512sps  0㎅/s CCM(H|L|Lm)=1803|2299|2299 st=↓MPPT,1 lag=2039㎲ N=18275 rssi=-44
+2026-11-23 10:47:30,481      fry: W (85472) charger: cv hold: vcHigh 3.505 > line 3.500 @ iBat 28.23, pin 27.46 V
+2026-11-23 10:47:30,488      fry: V=65.0/27.79 I=5.90/13.39A 384.0W 30℃44℃ 511sps  0㎅/s CCM(H|L|Lm)=1682| 320|2420 st=   CV,1 lag=2055㎲ N=19815 rssi=-43
+2026-11-23 10:47:30,489      fry: (84919987): Set pwmLS 2301 -> pwmRectMin=320
+2026-11-23 10:47:30,489      fry: (84920000): Limiting! ctrl -660.04 => pert -120.32 (to 1682) mode=CV idx=1 (act=27.792 tgt=27.460)
+2026-11-23 10:47:30,489      fry: (84921177): converter: DCM -> CCM (M=0.43, I=13.39, ∆I/2=2.69, pwm=1682)
+2026-11-23 10:47:30,686      fry: (85165927): converter: CCM -> DCM (M=0.36, I=2.95, ∆I/2=2.96, pwm=1478)
+2026-11-23 10:47:33,456      fry: V=76.9/27.49 I=0.31/ 0.85A  23.7W 30℃44℃ 512sps  0㎅/s DCM(H|L|Lm)= 779|1305|1306 st=   CV,1 lag=2055㎲ N=21356 rssi=-43
+2026-11-23 10:47:36,443      fry: V=77.0/27.47 I=0.27/ 0.73A  20.7W 31℃44℃ 512sps  0㎅/s DCM(H|L|Lm)= 766|1284|1284 st=↑MPPT,1 lag=2055㎲ N=22896 rssi=-43
+2026-11-23 10:47:39,497      fry: V=76.8/27.48 I=0.41/ 1.10A  31.3W 31℃44℃ 512sps  0㎅/s DCM(H|L|Lm)= 892|1436|1498 st=↑MPPT,1 lag=2055㎲ N=24439 rssi=-43
+2026-11-23 10:47:42,462      fry: V=76.6/27.48 I=0.58/ 1.57A  44.6W 31℃44℃ 512sps  0㎅/s DCM(H|L|Lm)=1033|1675|1737 st=↑MPPT,1 lag=2055㎲ N=25979 rssi=-43
+2026-11-23 10:47:45,465      fry: V=76.5/27.48 I=0.66/ 1.78A  50.5W 31℃44℃ 512sps  0㎅/s DCM(H|L|Lm)=1175|1915|1977 st=↑MPPT,1 lag=2055㎲ N=27518 rssi=-42
+2026-11-23 10:47:47,480      fry: I (102489) mppt: Reset maxPower 382.96 (P=64.02)
+2026-11-23 10:47:48,504      fry: V=76.2/27.51 I=0.93/ 2.50A  70.8W 31℃44℃ 511sps  0㎅/s DCM(H|L|Lm)=1316|2143|2206 st=↑MPPT,1 lag=2055㎲ N=29058 rssi=-43
+2026-11-23 10:47:51,477      fry: V=76.1/27.50 I=0.98/ 2.63A  74.5W 31℃44℃ 512sps  0㎅/s DCM(H|L|Lm)=1458|2384|2446 st=↑MPPT,1 lag=2055㎲ N=30598 rssi=-43
+2026-11-23 10:47:52,396      fry: (106851513): converter: DCM -> CCM (M=0.36, I=3.29, ∆I/2=2.96, pwm=1500)
+2026-11-23 10:47:53,964      fry: W (109003) sampling: despike clipped 33 of 4269 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:47:54,483      fry: V=73.7/27.60 I=2.67/ 6.91A 197.4W 31℃44℃ 512sps  0㎅/s CCM(H|L|Lm)=1575|2527|2527 st=↑MPPT,1 lag=2055㎲ N=32138 rssi=-43
+2026-11-23 10:47:56,833      fry: W (111879) sampling: despike clipped 39 of 4269 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:47:57,517      fry: V=72.9/27.64 I=3.32/ 8.44A 241.9W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1596|2506|2506 st=   CV,1 lag=2055㎲ N=33676 rssi=-42
+2026-11-23 10:48:00,492      fry: V=72.8/27.63 I=3.33/ 8.51A 242.3W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1598|2504|2504 st=   CV,1 lag=2055㎲ N=35214 rssi=-43
+2026-11-23 10:48:02,637      fry: W (117635) sampling: despike clipped 30 of 4276 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:03,559      fry: V=72.6/27.67 I=3.51/ 8.92A 254.2W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1605|2497|2497 st=   CV,1 lag=2055㎲ N=36752 rssi=-43
+2026-11-23 10:48:05,502      fry: W (120515) sampling: despike clipped 24 of 4273 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:06,642      fry: V=71.3/27.69 I=4.16/10.40A 297.1W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1636|2466|2466 st=↑MPPT,1 lag=2055㎲ N=38291 rssi=-42
+2026-11-23 10:48:09,509      fry: V=71.4/27.70 I=4.13/10.33A 294.8W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1636|2466|2466 st=   CV,1 lag=2055㎲ N=39829 rssi=-43
+2026-11-23 10:48:11,237      fry: W (126269) sampling: despike clipped 28 of 4279 sample(s) (k=8.0, mostly vin)
+2026-11-23 10:48:12,568      fry: V=71.6/27.70 I=4.00/10.03A 286.2W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1629|2473|2473 st=   CV,1 lag=2055㎲ N=41367 rssi=-43
+2026-11-23 10:48:15,541      fry: V=72.0/27.70 I=3.77/ 9.49A 271.3W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1617|2485|2485 st=   CV,1 lag=2055㎲ N=42904 rssi=-43
+2026-11-23 10:48:16,975      fry: W (132019) sampling: despike clipped 28 of 4276 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:18,526      fry: V=72.6/27.69 I=3.49/ 8.88A 253.4W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1607|2495|2495 st=↑MPPT,1 lag=2055㎲ N=44444 rssi=-43
+2026-11-23 10:48:19,851      fry: W (134898) sampling: despike clipped 32 of 4272 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:21,580      fry: V=72.8/27.70 I=3.38/ 8.62A 245.8W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1601|2501|2501 st=↑MPPT,1 lag=2055㎲ N=45982 rssi=-43
+2026-11-23 10:48:22,730      fry: W (137777) sampling: despike clipped 29 of 4276 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:24,550      fry: V=72.7/27.68 I=3.42/ 8.71A 248.6W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1602|2500|2500 st=↑MPPT,1 lag=2055㎲ N=47521 rssi=-43
+2026-11-23 10:48:25,606      fry: W (140652) sampling: despike clipped 28 of 4266 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:27,449      fry: I (142497) main: received serial command: 'bootinfo'
+2026-11-23 10:48:27,455      fry: reset reason: SW
+2026-11-23 10:48:27,455      fry: running: ota_0 @0x010000 (1828KB)  rollback=VALID
+2026-11-23 10:48:27,523      fry: heap: free=31844 min-ever=24988 largest=20480
+2026-11-23 10:48:27,524      fry: rt-alloc: 12 allocs, 0 frees by loopRt (+0/+0 since last print), last at 7039 ms
+2026-11-23 10:48:27,524      fry: netguard: mqtt down 0 s, re-inits 0, guard reboots 0 since power-on
+2026-11-23 10:48:27,525      fry: uptime: 141 s, app fugu-firmware v2.1.0 fry-brk1-840-ga082476f (built Nov 23 2026 10:42:38, IDF v6.0.3)
+2026-11-23 10:48:27,525      fry: chip: model=9 rev=0.1  flash: jedec=5e4016 4096KB auto-suspend=on
+2026-11-23 10:48:27,525      fry: flash-suspend: supported tsus=17us erase=54698us sr1=03/00 sr2=82/02; auto: pass erase=198ms stall=2065us reads=93 -> active; lag flash/other 3451/2090us; isr core adc/alert 1/1
+2026-11-23 10:48:27,526      fry: bootloader: idf v5.5.1-dirty v1, May 29 2026 17:53:36, len 22576, sha b9728536e716aa93
+2026-11-23 10:48:27,526      fry: bootguard: no record (stock bootloader?)
+2026-11-23 10:48:27,527      fry: V=73.0/27.69 I=3.23/ 8.26A 235.8W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1595|2507|2507 st=   CV,1 lag=2055㎲ N=49042 rssi=-43
+2026-11-23 10:48:27,530      fry: OK: bootinfo
+2026-11-23 10:48:27,547      fry: V=73.0/27.68 I=3.22/ 8.24A 234.9W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1595|2507|2507 st=   CV,1 lag=2055㎲ N=49061 rssi=-43
+2026-11-23 10:48:27,623      fry: I (142599) main: received serial command: 'rect-cal status'
+2026-11-23 10:48:27,623      fry: I (142603) rectcal: state=idle auto=0 needed=0 drv=mcpwm offset=-52 ct (-325 ns) backstop=0 unsaved=0
+2026-11-23 10:48:27,623      fry: V=73.0/27.67 I=3.21/ 8.23A 234.7W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1595|2507|2507 st=↑MPPT,1 lag=2055㎲ N=49070 rssi=-43
+2026-11-23 10:48:27,623      fry: OK: rect-cal status
+2026-11-23 10:48:27,653      fry: I (142701) main: received serial command: 'wire'
+2026-11-23 10:48:27,725      fry: wire: warn only, level ok (effective ok), wf=-1 Pw=nanW cap=nanA
+2026-11-23 10:48:27,725      fry: baseline: 1 days (learning), Rc 17.74 a 87.7mV Rb -0.90 Ro 20.13 mOhm, unverified days 0
+2026-11-23 10:48:27,726      fry: fast stale, baseline 1/3 days
+2026-11-23 10:48:27,726      fry: Rc   stale, baseline 1/3 days
+2026-11-23 10:48:27,727      fry: Ro   stale dR nan mOhm Pw nan W
+2026-11-23 10:48:27,727      fry: Rb   stale, baseline 1/3 days
+2026-11-23 10:48:27,727      fry: offset -43.1mV slope nanmOhm vs baseline, day dR warn 0
+2026-11-23 10:48:27,728      fry: Iref 7.8A, today 5 Rc samples (Iout sd 2.7A), 5 sweeps, counts 1
+2026-11-23 10:48:27,728      fry: V=73.0/27.69 I=3.21/ 8.22A 234.6W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1595|2507|2507 st=   CV,1 lag=2055㎲ N=49131 rssi=-43
+2026-11-23 10:48:27,728      fry: OK: wire
+2026-11-23 10:48:27,750      fry: I (142797) main: received serial command: 'balance'
+2026-11-23 10:48:27,832      fry: balance due (running) 570/7200s
+2026-11-23 10:48:27,832      fry: V=73.0/27.68 I=3.21/ 8.22A 234.6W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1596|2506|2506 st=↑MPPT,1 lag=2055㎲ N=49167 rssi=-43
+2026-11-23 10:48:27,832      fry: OK: balance
+2026-11-23 10:48:27,855      fry: I (142900) main: received serial command: 'heap'
+2026-11-23 10:48:27,930      fry: heap (bytes):  free / min-ever / largest-block
+2026-11-23 10:48:27,930      fry: INTERNAL    31844    24988    20480
+2026-11-23 10:48:27,931      fry: DMA         24080    17224    20480
+2026-11-23 10:48:27,931      fry: SPIRAM          0        0        0
+2026-11-23 10:48:27,931      fry: V=73.0/27.69 I=3.24/ 8.29A 236.7W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1596|2506|2506 st=   CV,1 lag=2055㎲ N=49223 rssi=-43
+2026-11-23 10:48:27,931      fry: OK: heap
+2026-11-23 10:48:28,526      fry: W (143526) sampling: despike clipped 34 of 4267 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:30,591      fry: V=73.0/27.64 I=3.25/ 8.29A 236.9W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1596|2506|2506 st=↑MPPT,1 lag=2055㎲ N=50599 rssi=-43
+2026-11-23 10:48:31,410      fry: W (146397) sampling: despike clipped 23 of 4263 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:33,568      fry: V=73.0/27.69 I=3.17/ 8.11A 231.6W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1595|2507|2507 st=   CV,1 lag=2055㎲ N=52140 rssi=-43
+2026-11-23 10:48:34,277      fry: W (149280) sampling: despike clipped 32 of 4282 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:36,616      fry: V=72.8/27.68 I=3.25/ 8.30A 236.6W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1598|2504|2504 st=↑MPPT,1 lag=2055㎲ N=53678 rssi=-43
+2026-11-23 10:48:37,145      fry: W (152154) sampling: despike clipped 34 of 4266 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:37,251      fry: I (152291) mppt: Reset maxPower 298.22 (P=217.01)
+2026-11-23 10:48:39,602      fry: V=73.0/27.67 I=3.09/ 7.91A 225.6W 31℃43℃ 511sps  0㎅/s CCM(H|L|Lm)=1593|2509|2509 st=↑MPPT,1 lag=2055㎲ N=55217 rssi=-43
+2026-11-23 10:48:40,011      fry: W (155031) sampling: despike clipped 29 of 4270 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:42,580      fry: V=73.6/27.65 I=2.75/ 7.08A 202.1W 31℃43℃ 512sps  0㎅/s CCM(H|L|Lm)=1581|2521|2521 st=   CV,1 lag=2055㎲ N=56756 rssi=-43
+2026-11-23 10:48:42,878      fry: W (157914) sampling: despike clipped 35 of 4282 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:45,633      fry: V=73.5/27.65 I=2.78/ 7.16A 204.1W 31℃43℃ 512sps  0㎅/s CCM(H|L|Lm)=1583|2519|2519 st=↑MPPT,1 lag=2055㎲ N=58295 rssi=-43
+2026-11-23 10:48:45,748      fry: W (160786) sampling: despike clipped 37 of 4266 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:48,617      fry: V=73.8/27.65 I=2.57/ 6.64A 189.4W 31℃43℃ 512sps  0㎅/s CCM(H|L|Lm)=1574|2528|2528 st=↑MPPT,1 lag=2055㎲ N=59835 rssi=-43
+2026-11-23 10:48:48,625      fry: W (163664) sampling: despike clipped 37 of 4275 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:51,505      fry: W (166551) sampling: despike clipped 46 of 4289 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:51,598      fry: V=74.0/27.64 I=2.39/ 6.21A 177.0W 31℃43℃ 512sps  0㎅/s CCM(H|L|Lm)=1569|2533|2533 st=↑MPPT,1 lag=2055㎲ N=61375 rssi=-43
+2026-11-23 10:48:54,363      fry: W (169409) sampling: despike clipped 41 of 4245 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:54,656      fry: V=74.0/27.64 I=2.43/ 6.31A 179.9W 31℃43℃ 512sps  0㎅/s CCM(H|L|Lm)=1569|2533|2533 st=   CV,1 lag=2055㎲ N=62915 rssi=-43
+2026-11-23 10:48:57,324      fry: W (172302) sampling: despike clipped 43 of 4297 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:48:57,628      fry: V=74.1/27.66 I=2.45/ 6.37A 181.1W 31℃42℃ 512sps  0㎅/s CCM(H|L|Lm)=1569|2533|2533 st=   CV,1 lag=2055㎲ N=64454 rssi=-43
+2026-11-23 10:49:00,184      fry: W (175169) sampling: despike clipped 42 of 4260 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:49:00,613      fry: V=74.2/27.64 I=2.34/ 6.09A 173.4W 31℃42℃ 512sps  0㎅/s CCM(H|L|Lm)=1566|2536|2536 st=   CV,1 lag=2055㎲ N=65993 rssi=-44
+2026-11-23 10:49:03,053      fry: W (178053) sampling: despike clipped 43 of 4283 sample(s) (k=8.0, mostly iout)
+2026-11-23 10:49:03,671      fry: V=70.6/27.51 I=4.45/11.08A 313.8W 31℃42℃ 511sps  0㎅/s CCM(H|L|Lm)=1642|2460|2460 st=↑MPPT,1 lag=2055㎲ N=67534 rssi=-34
+2026-11-23 10:49:06,635      fry: V=65.8/27.56 I=5.76/13.36A 379.7W 31℃42℃ 512sps  0㎅/s CCM(H|L|Lm)=1764|2338|2338 st=↑MPPT,1 lag=2055㎲ N=69075 rssi=-34
+2026-11-23 10:49:09,641      fry: V=64.9/27.55 I=5.84/13.36A 379.4W 31℃42℃ 511sps  0㎅/s CCM(H|L|Lm)=1788|2314|2314 st=↑MPPT,1 lag=2055㎲ N=70613 rssi=-33
+2026-11-23 10:49:12,682      fry: V=65.0/27.55 I=5.84/13.38A 379.8W 32℃42℃ 511sps  0㎅/s CCM(H|L|Lm)=1783|2319|2319 st=↓MPPT,1 lag=2055㎲ N=72154 rssi=-34
+2026-11-23 10:49:15,653      fry: V=65.8/27.53 I=5.81/13.44A 381.4W 32℃42℃ 512sps  0㎅/s CCM(H|L|Lm)=1766|2336|2336 st=↓MPPT,1 lag=2055㎲ N=73693 rssi=-34
+2026-11-23 10:49:18,719      fry: V=66.5/27.53 I=5.73/13.41A 380.7W 32℃42℃ 511sps  0㎅/s CCM(H|L|Lm)=1743|2359|2359 st=↑MPPT,1 lag=2055㎲ N=75232 rssi=-34
+2026-11-23 10:49:21,699      fry: V=65.4/27.51 I=5.84/13.48A 382.4W 32℃42℃ 512sps  0㎅/s CCM(H|L|Lm)=1772|2330|2330 st=↑MPPT,1 lag=2055㎲ N=76771 rssi=-34

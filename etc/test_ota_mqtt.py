@@ -3,6 +3,7 @@
 Run: .venv/bin/python3 etc/test_ota_mqtt.py"""
 import os
 import queue
+import re
 import sys
 import tempfile
 import threading
@@ -73,6 +74,60 @@ class Guards(unittest.TestCase):
         finally:
             sys.stdin.close()
             sys.stdin = stdin
+
+
+def havan_log(path):
+    """(t, line)s of a pv/fugu_console.log excerpt ('YYYY-MM-DD HH:MM:SS,mmm  <dev>: <line>')."""
+    out = []
+    for raw in open(path, encoding='utf-8'):
+        if m := re.match(r'\S+ (\d+):(\d+):(\d+),(\d+)\s+[\w.-]+: (.*)$', raw.rstrip('\n')):
+            out.append((int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3]) + int(m[4]) / 1000, m[5]))
+    return out
+
+
+class BootWatch(unittest.TestCase):
+    """Post-OTA fault watch, calibrated on fry's real OTA boot 2026-11-23 10:46 (a clean boot)."""
+    LOG = havan_log(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'testdata',
+                                 'ota_boot_fry_20261123.txt'))
+
+    def test_fixture_has_the_lines_that_were_flagged(self):
+        text = [l for _, l in self.LOG]
+        for want in ('Rebooting', 'I (9992) mppt: backoff 30s [sweep-no-mpp]'):
+            self.assertIn(want, text)
+        self.assertTrue(any(l.startswith('ina22x: i2c_hs_freq') for l in text))
+        self.assertTrue(any('START blocked: backoff' in l for l in text))
+
+    def test_clean_boot_has_no_faults(self):
+        self.assertEqual(M.boot_faults(self.LOG), [])
+        self.assertTrue(M.new_boot(self.LOG)[0][1].startswith('ina22x: i2c_hs_freq'))
+
+    def test_faults_after_the_boot(self):
+        t = self.LOG[-1][0]
+        bad = ['E (30000) ina22x: 3 timeout!', 'W (31000) mppt: backoff 5s [Vout-OV]',
+               'E (32000) main: ADC stall 250 ms, shutdown (nSamples=1)', 'reset reason: TASK_WDT',
+               'W (33000) mppt: PSU escalated backoff 60s [supply-UV] (trip 3)',
+               'E (34000) main: Loop latency high (10<50 Hz), shutdown! (nSamples=1 D=0 rt=1.0s)',
+               "Guru Meditation Error: Core  1 panic'ed (LoadProhibited)", 'Rebooting']
+        ok = ['I (35000) mppt: backoff 30s [sweep-no-mpp]', 'reset reason: SW',
+              'I (36000) mppt: START blocked: backoff (Vin=1 Vout=2 ntc=3 mcu=4)',
+              'netguard: mqtt down 0 s, re-inits 0, guard reboots 0 since power-on']
+        lines = self.LOG + [(t + 1 + k * 0.1, l) for k, l in enumerate(bad + ok)]
+        self.assertEqual(M.boot_faults(lines), bad)
+
+    def test_pre_boot_lines_ignored_and_fallback(self):
+        k = next(i for i, (_, l) in enumerate(self.LOG) if 'OTA Succeed' in l)
+        t = self.LOG[k][0]
+        lines = self.LOG[:k + 1] + [(t, 'W (2116950) mppt: backoff 5s [Vout-OV]')] + self.LOG[k + 1:]
+        self.assertEqual(M.boot_faults(lines), [])
+        no_succeed = [x for x in self.LOG if 'OTA Succeed' not in x[1]]
+        self.assertIsNone(M.new_boot(no_succeed))
+        boot_t = next(x[0] for x in self.LOG if x[1].startswith('ina22x')) - 1
+        self.assertEqual(M.boot_faults(no_succeed, boot_t), [])
+        self.assertEqual(M.boot_faults(no_succeed, None), ['no new boot found in the log (unverified)'])
+
+    def test_summary_names_devices_not_run(self):
+        self.assertEqual(M.summary(['fry', 'flat'], {'fry': 1}), '\nsummary: fry FAILED, flat not run')
+        self.assertEqual(M.summary(['fry', 'flat'], {'fry': 0, 'flat': 0}), '\nsummary: fry ok, flat ok')
 
 
 class OtaLines(unittest.TestCase):

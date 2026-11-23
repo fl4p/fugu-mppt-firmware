@@ -81,8 +81,8 @@ uncommitted firmware inputs; non-firmware dirt does not block), rect-cal running
 9000-9099; `status|stop <token>`), sends `ota <url>` and checks `bootinfo` for the image's version on the other slot
 with a reset uptime. Failed downloads are retried (`--retries 2`, backoff 30/90 s) with throughput, relay status and
 whether the device rebooted (the firmware's 300 s OTA watchdog restarts it). `--verify` (default; `--no-verify`) then
-waits for `rollback=VALID` (`--valid-timeout 90`), watches the log for ADC/INA/latency/backoff/panic/reboot lines
-(`--watch 120`) and prints power before/after. Each OTA is recorded in `elf-archive/ota-owners.jsonl` (who, version,
+waits for `rollback=VALID` (`--valid-timeout 90`), watches the new boot's log (from the first line after the reboot) for ADC stall, INA timeout,
+loop latency, protection backoff (not the boot's `sweep-no-mpp`), panic, non-SW reset and reboot lines (`--watch 120`) and prints power before/after. Each OTA is recorded in `elf-archive/ota-owners.jsonl` (who, version,
 sha256, git sha, dirty paths, result). Around each transfer the NAT gateway's Wi-Fi TX power gets a timed boost
 (`POST /txpower?wifi=20&for=N`), cancelled afterwards by a plain set of the persisted level, also on failure or Ctrl-C
 (`--gw`, `--gw-tx-dbm`, `--no-gw-boost`); gateway errors only warn, and after a `kill -9` the boost reverts

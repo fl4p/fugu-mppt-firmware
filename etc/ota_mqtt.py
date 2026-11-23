@@ -60,8 +60,13 @@ RE_OTA_URL = re.compile(r'^ota\s+(https?://\S+)\s*$', re.M)
 RE_TOKEN = re.compile(r'^token\s+(\S+)\s*$', re.M)
 RE_STATUS = re.compile(r'V=\s*([\d.]+)/\s*([\d.]+) I=\s*([\d.]+)/\s*([\d.]+)A\s+([-\d.]+)W.*?st=\s*([^,\s]+)')
 RE_DL_TOOK = re.compile(r'Download took (\d+) ms \((\d+) KB/s\)')
-RE_FAULT = re.compile(r'ADC stall|Never got a sample|ina22x|timeout!|Loop latency high|ADC error|backoff|'
-                      r'panic|Guru|abort|Rebooting', re.I)
+# fault lines of a new boot (src/: main.cpp ADC/latency watchdogs, ina22x, mppt.h shutdownDcdc); the
+# sweep-no-mpp backoff, `START blocked: backoff` and the ina22x self-test line are normal at boot
+RE_FAULT = re.compile(r'ADC stall|Never got a sample|ina22x.*timeout|timeout!|Loop latency high|ADC error|'
+                      r'mppt: (PSU escalated )?backoff \d+s \[(?!sweep-no-mpp\])|PSU latch|'
+                      r'Guru Meditation|panic|abort\(\)|Backtrace:|assert failed|Rebooting|'
+                      r'reset reason: (?!SW\b)', re.I)
+RE_LOGTS = re.compile(r'^[EWIDV] \((\d+)\) ')
 RE_LOGPFX = re.compile(r'^([EWI]) \(\d+\) ')
 OTA_BUDGET = 330.0  # firmware OTA watchdog (300 s) + margin
 LIVE = ('fry', 'flat')  # live converters: no -dirty firmware without --allow-dirty
@@ -475,8 +480,8 @@ def print_checks(before, after):
                 print(f'  {l}')
 
 
-def preflight(args, con, tap, name, image, before):
-    """Image and device checks before the push. Returns False to stop (a dry run prints all)."""
+def guards(args, con, image, before, name=''):
+    """Image safety checks plus the device's rollback state; False aborts (a dry run prints all)."""
     ok = True
     if is_pending_verify(before):
         print('⚠️  the running image is not confirmed yet (PENDING_VERIFY): this OTA overwrites the '
@@ -489,11 +494,11 @@ def preflight(args, con, tap, name, image, before):
         print('⛔  PLANT-SIMULATION image (CONFIG_FUGU_WITH_VCONV=y): a real converter makes 0 W')
         ok = confirm('plant-sim image', args) and ok
     if image_is_dirty(image['version']):
-        fw = args.dirt
+        fw = getattr(args, 'dirt', None)
         if fw == [] and name in LIVE:
             print(f"note: {image['version']} is -dirty, but the tree it was built in has no "
                   f"uncommitted firmware inputs (as of now)")
-        elif name in LIVE and not args.allow_dirty:
+        elif name in LIVE and not getattr(args, 'allow_dirty', False):
             print(f"⛔  {image['version']} is a -dirty build; refused for {name} without --allow-dirty. "
                   + ('Uncommitted firmware inputs: ' + ' '.join(fw) if fw else
                      'Build it clean: etc/fleet-build.sh'))
@@ -509,6 +514,12 @@ def preflight(args, con, tap, name, image, before):
         if verdict != 'ok':
             print(f'⚠️  gate driver {verdict.upper()}: image {img or "unknown"}, device {device_driver_label(dev)}')
             ok = (args.allow_driver_change or confirm('gate-driver change', args)) and ok
+    return ok
+
+
+def preflight(args, con, tap, name, image, before):
+    """guards() plus device activity, RTC layout and the last OTA record. Returns False to stop."""
+    ok = guards(args, con, image, before, name)
     busy = []
     rc = ' '.join(con.command('rect-cal status', timeout=8))
     if m := re.search(r'state=(running|fitting)', rc):
@@ -562,11 +573,41 @@ def attempt(args, con, tap, url, image, before):
     return 'lost', f'no bootinfo reply within {budget:.0f} s after `ota` ({outcome})', None, t_send
 
 
+def new_boot(lines):
+    """The (t, line)s logged by the new boot after an `OTA Succeed`: they start at the first line
+    whose ESP log time is below that line's, or after a 2 s silence (the reboot plus Wi-Fi/MQTT
+    reconnect take longer). None without an `OTA Succeed` line or a boot."""
+    i = next((k for k, (_, l) in enumerate(lines) if 'OTA Succeed' in l), None)
+    if i is None or not (m := RE_LOGTS.match(lines[i][1])):
+        return None
+    ts0, prev = int(m[1]), lines[i][0]
+    for k in range(i + 1, len(lines)):
+        t, l = lines[k]
+        m = RE_LOGTS.match(l)
+        if (m and int(m[1]) < ts0) or t - prev >= 2.0:
+            return lines[k:]
+        prev = t
+    return None
+
+
+def boot_faults(lines, boot_t=None):
+    """Fault lines of the new boot in `lines` ((t, line)s since `ota` was sent); without a boundary
+    in the log, those received after `boot_t` (the boot time estimated from bootinfo)."""
+    nb = new_boot(lines)
+    if nb is None:
+        if boot_t is None:
+            return ['no new boot found in the log (unverified)']
+        nb = [x for x in lines if x[0] > boot_t]
+    return [l for _, l in nb if RE_FAULT.search(l)]
+
+
 def verify(args, con, tap, image, t_ota):
     """Wait for rollback=VALID on the image's version, then watch the log. Returns (ok, text)."""
-    deadline, info = time.monotonic() + args.valid_timeout, None
+    deadline, info, boot_t = time.monotonic() + args.valid_timeout, None, None
     while time.monotonic() < deadline:
         info = parse_bootinfo(con.command('bootinfo', timeout=6)) or info
+        if info and boot_t is None:
+            boot_t = time.monotonic() - info['uptime']
         if info and info['version'] != image['version']:
             return False, f"running {info['version']}, not {image['version']} (rolled back?)"
         if info and ' '.join(info['built'].split()) != ' '.join(f"{image['date']} {image['time']}".split()):
@@ -581,14 +622,14 @@ def verify(args, con, tap, image, t_ota):
     if args.watch > 0:
         print(f'watching the log for {args.watch:.0f} s ...')
         time.sleep(args.watch)
-    faults = [l for t, l in tap if t > t_ota and RE_FAULT.search(l) and 'OTA Succeed' not in l]
+    faults = boot_faults([x for x in tap if x[0] > t_ota], boot_t)
     end = parse_bootinfo(ask(con, 'bootinfo', lambda r: r if parse_bootinfo(r) else None, 30) or [])
     if not end or end['uptime'] + 5 < up0 + (time.monotonic() - t0):
         faults.append(f'device restarted during the watch (uptime {end and end["uptime"]} s)')
     for f in faults:
         print(f'  ❌ {f}')
     return not faults, (f'{len(faults)} fault line(s) after the OTA' if faults else
-                        f'VALID, clean log for {args.watch:.0f} s')
+                        f'VALID, clean log since the new boot ({args.watch:.0f} s watch)')
 
 
 def ota_device(args, name, image, server, gw, locks):
@@ -710,6 +751,11 @@ def ota_device(args, name, image, server, gw, locks):
         con.close()
 
 
+def summary(names, results):
+    return '\nsummary: ' + ', '.join(
+        f"{n} {'not run' if n not in results else 'ok' if results[n] == 0 else 'FAILED'}" for n in names)
+
+
 def main():
     load_env_file(etc_file('mqtt.env'))
     load_env_file(etc_file('nat.env'))
@@ -827,8 +873,7 @@ def main():
         if results[name] and not args.dry_run:
             break
     if len(names) > 1:
-        print('\nsummary: ' + ', '.join(f"{n} {'ok' if results[n] == 0 else 'FAILED' if n in results else 'not run'}"
-                                        for n in names))
+        print(summary(names, results))
     return max(results.values(), default=2) if not args.would_refuse else 1
 
 
