@@ -257,7 +257,7 @@ picks the channel (255 = absent). Hardware profiles name channels by side (`hv_v
 roles by `converter.conf::topo` in `src/conv_side.h` (same for `limits.conf` `hv_max`/`lv_max`/`hv_i_max`/`lv_i_max`);
 the old role keys fail setup with their replacement (`etc/migrate_side_keys.py` migrates configs; live boards before the
 OTA). `vconv`/`fake` mock channels are fixed by role, so their profiles use the side key of that role under their topo. A
-missing current sensor is replaced by a `VirtualSensor` computing it from the other side and `power_conversion_eff`. `LinearTransform{factor, midpoint}` scales raw ADC → physical units (auto-derived
+missing current sensor is replaced by a `VirtualSensor` computing it from the other side at a fixed 97 % efficiency. `LinearTransform{factor, midpoint}` scales raw ADC → physical units (auto-derived
 from `*_rh`/`*_rl` for voltage dividers).
 
 ### Charger / battery termination
