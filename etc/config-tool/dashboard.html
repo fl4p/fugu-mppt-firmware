@@ -84,6 +84,9 @@
   .card .reconnect { align-self:flex-start; font-size:12px; padding:3px 10px; }
   .card button.forget { padding:0 6px; font-size:13px; line-height:1.2; color:var(--muted); background:none; border-color:transparent; }
   .card button.forget:hover { color:var(--warn); border-color:var(--warn); }
+  .card button.cfg { padding:0 6px; font-size:12px; line-height:1.4; color:var(--muted); background:none; border-color:transparent; }
+  .card button.cfg:hover { color:var(--fg); border-color:var(--line); }
+  .card .handoff { font-size:12px; color:var(--muted); }
   .logwrap { display:flex; flex-direction:column; gap:4px; }
   .logbar { display:flex; gap:8px; align-items:center; font-size:11px; color:var(--muted); }
   .logbar .spacer { flex:1; }
@@ -639,7 +642,7 @@ async function requestChargerStatus(dev){
 /* ---------------------------------------------------------------------------------------------
    MQTT: discovery, telemetry, lease
 --------------------------------------------------------------------------------------------- */
-let client = null, clientUrl = "", clientUp = false;
+let client = null, clientUrl = "", clientUser = "", clientUp = false;
 const mqttReady = () => !!(client && clientUp);
 
 function mqttPublish(topic, msg){
@@ -668,7 +671,7 @@ function mqttConnect(url, user, pass){
   url = (url || "").trim();
   if (!url) return null;
   if (!window.mqtt){ setStatus("mqtt.js did not load", true); return null; }
-  clientUrl = url;
+  clientUrl = url; clientUser = user || "";
   let c;
   try { c = window.mqtt.connect(url, { username:user || undefined, password:pass || undefined,
                                        reconnectPeriod:5000, connectTimeout:5000 }); }
@@ -1038,22 +1041,60 @@ async function addBle(){
 }
 
 async function restoreBle(){
-  if (!navigator.bluetooth || typeof navigator.bluetooth.getDevices !== "function") return;
+  const hb = handoff && (handoff.ble || handoff.name) ? handoff.device || handoff.name : "";
+  if (!navigator.bluetooth || typeof navigator.bluetooth.getDevices !== "function"){
+    if (hb && navigator.bluetooth){ bleMissing = hb + ": this browser cannot reopen a Bluetooth device without the chooser. Click + Add BLE device and pick it."; banners(); }
+    return;
+  }
   let list = [];
   try { list = await navigator.bluetooth.getDevices(); } catch(_){ return; }
   const snaps = Object.values(loadSnaps()), links = [];
+  // the device the editor just released gets the full retry ladder: its link may still be closing
+  const want = (d) => !!(handoff && (handoff.ble ? d.id === handoff.ble : handoff.name && d.name === handoff.name));
   for (const d of list){
     const link = await linkBle(d, { connect:false });
     const n = d.name || "";
-    if (/^fugu-/.test(n) || snaps.some(s => s && (s.host === advHost(n || d.id) || (s.bleId && s.bleId === d.id))))
+    if (want(d) || /^fugu-/.test(n) || snaps.some(s => s && (s.host === advHost(n || d.id) || (s.bleId && s.bleId === d.id))))
       links.push(link);
+  }
+  if (hb && !list.some(want)){
+    bleMissing = hb + ": this page may not use its Bluetooth link yet. Click + Add BLE device and pick it.";
+    banners();
   }
   // one silent attempt each; a refused (no user gesture) or failed connect leaves the Reconnect button
   await Promise.all(links.map(async (link) => {
     if (link.state !== "off") return;
-    try { await link.connect(1); await link.enable(); }
+    try { await link.connect(want(link.device) ? 4 : 1); await link.enable(); }
     catch(e){ link.state = "off"; link.reason = (e && e.message) || "connect failed"; if (link.dev) scheduleRender(link.dev); }
   }));
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Configure: open conf-editor.html on a device. The fragment names the broker, user and device
+   (MQTT) or the Web Bluetooth device id and name (BLE); never a password.
+--------------------------------------------------------------------------------------------- */
+// {via, hash}: MQTT while the broker is up and the device was seen there, else BLE, else null.
+function handoffOf(dev){
+  if (client && mqttReady() && dev.mqtt.firstAt)
+    return { via:"mqtt", hash:{ mqtt:clientUrl, user:clientUser, device:dev.host } };
+  const b = dev.ble && dev.ble.device, id = (b && b.id) || dev.bleId, name = (b && b.name) || dev.bleName;
+  if (id || name) return { via:"ble", hash:{ ble:id || "", name:name || "", device:dev.host } };
+  return null;
+}
+
+// Over BLE the dashboard drops its own link first: the firmware takes one connection.
+function configure(dev){
+  const h = handoffOf(dev);
+  if (!h) return null;
+  if (h.via === "ble" && dev.ble && dev.ble.state !== "off"){
+    dev.ble.disconnect();
+    dev.ble.reason = "released for the config editor";
+    dev.handoff = true;
+  }
+  const url = "conf-editor.html#" + new URLSearchParams(h.hash);
+  window.open(url, "_blank", "noopener");
+  scheduleRender(dev);
+  return url;
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -1077,7 +1118,7 @@ function flush(){
   clearTimeout(renderTimer); renderTimer = null;
   lastRender = performance.now();
   const list = [...dirty]; dirty.clear();
-  for (const dev of list) if (devices.get(dev.host) === dev) renderCard(dev);
+  for (const dev of list) if (devices.get(dev.host) === dev){ renderCard(dev); showHandoffCard(dev); }
   $("empty").style.display = devices.size ? "none" : "";
 }
 
@@ -1094,10 +1135,12 @@ function createCard(dev){
   const top = el("div", "top");
   top.append(el("span", "host"), el("span", "badge ble", "BLE"), el("span", "badge mqtt", "MQTT"),
              el("span", "alerts"), el("span", "spacer"), el("span", "cstate"), el("span", "mode"), el("span", "age"));
+  const cb = el("button", "cfg", "Configure");
+  cb.onclick = () => configure(dev);
   const fb = el("button", "forget", "×");
   fb.title = "forget this device";
   fb.onclick = () => forget(dev);
-  top.append(fb);
+  top.append(cb, fb);
   const k = el("div", "kpis");
   const p = el("div", "p"); p.append(el("span", "pv", "–"), el("small", null, "W"));
   const small = el("div", "small");
@@ -1111,7 +1154,10 @@ function createCard(dev){
   more.ontoggle = () => scheduleRender(dev);
   const rc = el("button", "reconnect", "Reconnect BLE");
   rc.style.display = "none";
-  rc.onclick = () => { if (dev.ble) dev.ble.reconnect(); };
+  rc.onclick = () => { dev.handoff = false; if (dev.ble) dev.ble.reconnect(); };
+  const ho = el("div", "handoff", "Bluetooth link released for the config editor (one connection at a time). "
+    + "Close it there, then press Reconnect BLE.");
+  ho.hidden = true;
   const lw = el("div", "logwrap");
   const bar = el("div", "logbar");
   const toggle = (cls, text) => {
@@ -1138,7 +1184,7 @@ function createCard(dev){
     inp.value = dev.histIdx < h.length ? h[dev.histIdx] : "";
   };
   lw.append(bar, log, form);
-  c.append(top, k, more, rc, createChart(dev), lw);
+  c.append(top, k, more, ho, rc, createChart(dev), lw);
   $("cards").append(c);
   dev.el = c;
   dev.logReset = true;
@@ -1258,6 +1304,12 @@ function renderCard(dev){
   else if (b.state === "connecting" || b.state === "reconnecting") badge(q(dev, ".badge.ble"), "pending", b.reason || b.state);
   else badge(q(dev, ".badge.ble"), "off", b.reason || "disconnected");
   q(dev, ".reconnect").style.display = b && b.state === "off" ? "" : "none";
+  if (b && b.state !== "off") dev.handoff = false;
+  q(dev, ".handoff").hidden = !(dev.handoff && b && b.state === "off");
+  const ho = handoffOf(dev), cfg = q(dev, "button.cfg");
+  cfg.hidden = !ho;
+  if (ho) cfg.title = "Open the config editor on " + dev.host + " in a new tab, over " + (ho.via === "mqtt"
+    ? "MQTT" : "Bluetooth. The device takes one Bluetooth connection at a time, so the dashboard releases its link first");
   const L = dev.mqtt.lease;
   const mb = q(dev, ".badge.mqtt");
   if (!mqttReady() || !dev.mqtt.firstAt) badge(mb, "off", mqttReady() ? "not seen on MQTT" : "MQTT not connected");
@@ -1695,9 +1747,11 @@ function foundBanner(){
    Header, banners, start-up
 --------------------------------------------------------------------------------------------- */
 let noPass = false;   // stored broker + user but no password: do not auto-connect, ask instead
+let bleMissing = "";  // a #ble= handoff for a device this page may not use yet
 function banners(){
   const out = [];
   if (noPass) out.push("MQTT: enter the broker password and press Connect (tick \"remember\" to keep it).");
+  if (bleMissing) out.push(bleMissing);
   if (location.protocol === "file:")
     out.push("Opened from file://: serve this folder over http (python3 -m http.server) so Web Bluetooth is available.");
   if (!navigator.bluetooth)
@@ -1721,16 +1775,39 @@ function connectClicked(){
   mqttConnect(url, user, pass);
 }
 
+// The editor's "Open dashboard": #mqtt=<ws url>&user=<name>&device=<host> or #ble=<id>&name=<n>&device=<host>.
+// Read once and removed from the address at once; a password is never taken from the URL.
+let handoff = null;
+function takeHandoff(){
+  const p = new URLSearchParams(location.hash.replace(/^#/, ""));
+  if (!p.has("mqtt") && !p.has("ble") && !p.has("device")) return null;
+  history.replaceState(history.state, "", location.pathname + location.search);
+  const url = (p.get("mqtt") || "").trim();
+  return { url:/^wss?:\/\/\S+$/i.test(url) ? url : "", user:p.get("user"), ble:(p.get("ble") || "").trim(),
+           name:(p.get("name") || "").trim(), device:cleanHost(p.get("device") || "") };
+}
+
+// Scroll the handed-over device's card into view once it exists.
+function showHandoffCard(dev){
+  if (!handoff || !handoff.device || dev.host !== handoff.device || !dev.el) return;
+  handoff.device = "";
+  if (dev.el.scrollIntoView) dev.el.scrollIntoView({ block:"nearest" });
+}
+
 function init(){
-  // ?mqtt=<ws url>&user=<name> prefill without connecting; a password is never taken from the URL
+  handoff = takeHandoff();
+  // ?mqtt=<ws url>&user=<name> prefill without connecting; a password is never taken from the URL.
+  // The editor's #mqtt= handoff prefills the same way and then connects like a stored broker.
   const qp = new URLSearchParams(location.search), qUrl = (qp.get("mqtt") || "").trim(), qUser = qp.get("user");
-  $("mqtt-url").value = qUrl || lsGet(LS.url) || "";
-  $("mqtt-user").value = qUser !== null ? qUser : lsGet(LS.user) || "";
+  const hUrl = !qUrl && handoff ? handoff.url : "", pUrl = qUrl || hUrl;
+  $("mqtt-url").value = pUrl || lsGet(LS.url) || "";
+  $("mqtt-user").value = qUser !== null ? qUser : hUrl && handoff.user !== null ? handoff.user : lsGet(LS.user) || "";
   const rem = lsGet(LS.remember) !== "0";   // remember the password unless the user unticked it
   $("mqtt-remember").checked = rem;
   const sameHost = (a, b) => { try { return new URL(a).hostname === new URL(b).hostname; } catch (e) { return false; } };
-  // a ?mqtt= link for another host must not get the remembered password
-  $("mqtt-pass").value = rem && (!qUrl || sameHost(qUrl, lsGet(LS.url) || "")) ? lsGet(LS.pass) || "" : "";
+  // a ?mqtt= or #mqtt= link for another host (or, from the editor, another user) must not get the remembered password
+  const passOk = !pUrl || (sameHost(pUrl, lsGet(LS.url) || "") && (!hUrl || $("mqtt-user").value === (lsGet(LS.user) || "")));
+  $("mqtt-pass").value = rem && passOk ? lsGet(LS.pass) || "" : "";
   if (!rem) lsDel(LS.pass);
   $("mqtt-remember").onchange = () => {
     lsSet(LS.remember, $("mqtt-remember").checked ? "1" : "0");
@@ -1760,7 +1837,7 @@ window.Dash = {
   getDevice, ingest, ingestTele, onLine, onMqttMessage, send, sendCommand, requestCurve, requestChargerStatus,
   parseChargerStatus, lease, tick, niceTicks,
   attachBle, LIM, saveSnaps, forget, probeWs, wsCandidates, parseBroker, discoverBroker, connectClicked,
-  flush, mqttConnect, mqttDisconnect, addBle, linkBle, restoreBle, consoleSend, staleAfter,
+  flush, mqttConnect, mqttDisconnect, addBle, linkBle, restoreBle, consoleSend, staleAfter, handoffOf, configure,
   get client(){ return client; },
 };
 

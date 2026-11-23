@@ -36,6 +36,11 @@ Files map roughly to spec sections (`../spec.md`):
 | `transports.test.js` | §5 (`sendCommand`, `getConfig`, `importFromDevice` retry-on-timeout), §5.3 (MQTT scan modal + topics) |
 | `teledec_{tamp,payload,framing}.test.js` | `../teledec.js` (binary telemetry decoder, no jsdom) against `fixtures/tele_fixtures.json`; regenerate with `/path/to/repo/.venv/bin/python3 test/gen_tele_fixtures.py` (tamp 2.3.0, expected lines from `etc/fugu/teledec.py`) |
 | `sweepcurve.test.js` | `../teledec.js` `sc:` sweep-curve lines (`parseScLine`, `SweepCurveParser`) |
+| `handoff.test.js` | §1.4 (handoff fragment parsing and clearing, MQTT with / without a stored password, BLE via `getDevices`: found, not granted, no `getDevices`, busy; confirmDiscard; nothing pushed) |
+| `live_strip.test.js` | §2.1.1 (status-line parsing, stale and stop states, when the strip shows, the dashboard link per transport, no commands sent) |
+| `dashboard_handoff.test.js` | `../dashboard.html` Configure (MQTT / BLE fragment, BLE link released first, no password in the URL) and the `#mqtt=` / `#ble=` fragment from the editor |
+| `_fakes.js` | fake firmware, MQTT hook and granted BLE device shared by the two editor files above |
+| `browser/handoff.spec.js` | the handoff end to end in Chromium (dashboard Configure → editor tab reads), fragment gone after load, the strip keeps the header height at 1280/1024/375 px; `browser/_fake_mqtt.js` is the in-page fake broker |
 | `browser/smoke.spec.js` | CDN sanity (real `mqtt@5` + `ansi-to-html` load); real-layout tail-follow; folder drag-drop via `webkitGetAsEntry` |
 
 ## Adding tests

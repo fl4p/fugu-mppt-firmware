@@ -10,12 +10,14 @@ const INPUT  = '#uploadlog-cmd';
 
 test('ulShow/ulHide attach and detach the console listener', async () => {
   const { window } = await loadEditor();
-  assert.equal(window._lineListeners.size, 0);
+  const base = window._lineListeners.size;   // the live strip's listener stays attached
+  assert.ok(!window._lineListeners.has(window.ulConsoleListener));
   window.ulShow();
-  assert.equal(window._lineListeners.size, 1);
+  assert.equal(window._lineListeners.size, base + 1);
   assert.ok(window._lineListeners.has(window.ulConsoleListener));
   window.ulHide();
-  assert.equal(window._lineListeners.size, 0);
+  assert.equal(window._lineListeners.size, base);
+  assert.ok(!window._lineListeners.has(window.ulConsoleListener));
 });
 
 test('opening the panel renders ESP_LOG lines via the persistent listener', async () => {

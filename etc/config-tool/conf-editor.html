@@ -71,6 +71,23 @@
   #conn::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--line-2); flex:none; }
   #conn.on { color:var(--fg-2); }
   #conn.on::before { width:7px; height:7px; background:var(--icon); }
+  #live { display:inline-flex; align-items:center; gap:8px; font-size:12.5px; color:var(--fg-2); white-space:nowrap; min-width:0;
+    padding-left:12px; border-left:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  #live::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--icon); flex:none; }
+  #live .lv-txt { display:inline-flex; gap:8px; min-width:0; overflow:hidden; }
+  #live .lv-p { color:var(--fg); font-weight:550; }
+  #live .lv-v, #live .lv-age { color:var(--muted); }
+  #live .lv-m.stop { color:var(--accent); }
+  #live.stale::before { background:var(--line-2); }
+  #live.stale .lv-txt > * { color:var(--faint); }
+  #live.stale .lv-m.stop { color:var(--accent); opacity:.7; }
+  #live .lv-dash { color:var(--muted); text-decoration:underline; text-decoration-color:var(--line-2); text-underline-offset:3px; }
+  #live .lv-dash:hover { color:var(--fg); text-decoration-color:currentColor; }
+  #live .lv-dash.off { opacity:.4; cursor:not-allowed; }
+  #live { flex:none; }
+  /* fitLive(): dropped in this order until the header keeps its height and the source label its room */
+  #live.f1 .lv-v, #live.f2 .lv-age, #live.f3 .lv-dash, #live.f4 .lv-m:not(.stop), #live.f4:has(.lv-m.stop) .lv-p, #live.f5 { display:none; }
+  @media (max-width:520px) { #live { padding-left:8px; gap:6px; } #live .lv-age, #live .lv-dash { display:none; } }
   #serial-status { font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1 1 auto; }
   #serial-status.err { color:var(--accent); }
   body:not(.loaded) #serial-status { display:none !important; }
@@ -495,7 +512,7 @@
 <body>
 <header>
   <h1>Fugu MPPT config</h1>
-  <div class="src"><span id="srcname" title="Loaded configuration"></span><span id="conn">Not connected</span></div>
+  <div class="src"><span id="srcname" title="Loaded configuration"></span><span id="conn">Not connected</span><span id="live" role="status" hidden><span class="lv-txt"><span class="lv-p"></span><span class="lv-v" title="input → output voltage"></span><span class="lv-m"></span><span class="lv-age"></span></span><a id="live-dash" class="lv-dash" href="dashboard.html" target="_blank" rel="noopener" hidden>Open dashboard</a></span></div>
   <span id="serial-status" style="display:none" role="status"></span>
   <div class="actions">
     <details id="open-menu" class="menu">
@@ -641,6 +658,7 @@
     <div class="field"><label for="mqtt-user">Username</label><input id="mqtt-user" placeholder="pv"></div>
     <div class="field"><label for="mqtt-pass">Password</label><input id="mqtt-pass" type="password"></div>
     <div class="actions">
+      <button id="mqtt-go" class="primary" type="button" hidden>Read device</button>
       <button id="mqtt-scan" class="primary" type="button">Scan for devices</button>
       <span id="mqtt-status" class="status"></span>
       <span class="spacer"></span>
@@ -2020,6 +2038,7 @@ function showStatus(msg, isErr, busy){
   dm.style.color = isErr ? "" : "var(--muted)";
   const hs=document.getElementById("serial-status");
   if (hs){ hs.textContent=msg; hs.title=msg; hs.style.display=msg?"":"none"; hs.classList.toggle("err", !!isErr); }
+  if (!document.getElementById("live").hidden) renderLive();
   for (const el of [dm,hs]) if (el) el.classList.toggle("busy", !!busy && !!msg);
 }
 function showErr(msg){ showStatus(msg, true); }
@@ -2145,6 +2164,7 @@ let lastTransport=null;        // 'serial' | 'ble' | 'mqtt'
 let grantedSerialPort=null;    // navigator.serial port, stays authorized across close()
 let grantedBleDevice=null;     // BLE device, stays authorized across gatt.disconnect()
 let connecting=false;          // a connect + read is in progress
+let live=null, liveTimer=null; // live strip: last parsed status line {…, at}, its 1 s age timer
 const lineListeners = new Set();
 // The device prefixes each line with an ESP log tag, e.g.
 //   I (941282) main: Conf '/littlefs/conf/board.conf:mcu' = 'esp32s3'
@@ -2337,7 +2357,7 @@ async function connectSerial(){
 
 // Drop any live link; the previous read's handles stay until a new read succeeds.
 async function beginConnect(){
-  connecting = true;
+  connecting = true; live = null;
   await disconnectSerial(); await disconnectBluetooth(); await disconnectMqtt();
   ulRefreshInputState();
 }
@@ -2427,10 +2447,21 @@ async function connectBluetooth(){
   let dev;
   try { dev = await navigator.bluetooth.requestDevice({ filters:[{services:[NUS_SVC]}], optionalServices:[NUS_SVC] }); }
   catch(e){ return; }   // user dismissed the chooser
-  if (connecting || !confirmDiscard()) return;
+  await bleConnectAndImport(dev);
+}
+
+// Connect to a granted device and read its config. true: read; false: failed; undefined: not started.
+// errText(e) words the failure (default bleErrText); waitAdv first waits for an advertisement.
+async function bleConnectAndImport(dev, errText, waitAdv){
+  if (connecting || !confirmDiscard()) return undefined;
   await beginConnect();
   bleDevice = dev;
+  let adv = null;
   try {
+    if (waitAdv){
+      showStatus("waiting for "+(dev.name||"the device")+" to advertise …", false, true);
+      adv = await bleWaitAdvert(dev, waitAdv);
+    }
     showStatus("connecting to "+(dev.name||"device")+" …", false, true);
     const { server, rx, tx } = await bleConnectAndDiscover(bleDevice);
     bleServer = server; bleRxChar = rx; bleTxChar = tx;
@@ -2441,10 +2472,30 @@ async function connectBluetooth(){
     showStatus("connected — reading config from device …", false, true);
     await importFromDevice("ble-device", {transport:"ble", handle:dev});
     // Stay connected so the upload reuses this live link (reconnecting can miss the reply).
+    return true;
   } catch(e){
-    showErr(bleErrText(e, dev));
+    showErr((errText || bleErrText)(e, dev, adv));
     await disconnectBluetooth();
+    return false;
   } finally { endConnect(); }
+}
+
+// true once `dev` advertises within ms, false if not, null without watchAdvertisements.
+async function bleWaitAdvert(dev, ms){
+  if (typeof dev.watchAdvertisements !== "function") return null;
+  const ac = typeof AbortController==="function" ? new AbortController() : null;
+  let onAdv;
+  try {
+    return await new Promise(res=>{
+      const t = setTimeout(()=>res(false), ms);
+      onAdv = ()=>{ clearTimeout(t); res(true); };
+      dev.addEventListener("advertisementreceived", onAdv);
+      dev.watchAdvertisements(ac ? {signal:ac.signal} : undefined).catch(()=>{ clearTimeout(t); res(null); });
+    });
+  } finally {
+    dev.removeEventListener("advertisementreceived", onAdv);
+    if (ac) ac.abort();
+  }
 }
 
 /* ----------------------------------------------------------------------------
@@ -2533,6 +2584,19 @@ async function mqttBindDevice(client, hostname){
 ---------------------------------------------------------------------------- */
 const MQ_LS = { url:"mqtt-url", user:"mqtt-user", pass:"mqtt-pass" };
 const MQ_HOSTS_KEY = "mqtt-known-hosts";  // {<broker-url>: [host, ...]}
+// {url,user} the stored password was saved with: mqtt-url/mqtt-user are shared with the dashboard,
+// which may overwrite them, so a handoff uses the password only for this exact broker and user.
+const MQ_PASS_FOR = "mqtt-pass-for";
+function mqttSaveFields(cfg){
+  for (const k in MQ_LS) localStorage.setItem(MQ_LS[k], cfg[k]==null?"":cfg[k]);
+  localStorage.setItem(MQ_PASS_FOR, JSON.stringify({url:cfg.url, user:cfg.user||""}));
+}
+// The editor's stored password for exactly this broker URL and user, else null.
+function mqttStoredPass(url, user){
+  let b=null;
+  try { b = JSON.parse(localStorage.getItem(MQ_PASS_FOR)||"null"); } catch(_){}
+  return b && b.url===url && b.user===(user||"") ? localStorage.getItem(MQ_LS.pass) || "" : null;
+}
 function mqttKnownHosts(url){
   try { return (JSON.parse(localStorage.getItem(MQ_HOSTS_KEY)||"{}")[url]) || []; }
   catch(_){ return []; }
@@ -2556,14 +2620,21 @@ function mqttModalSetStatus(msg, isErr){
   const s = document.getElementById("mqtt-status");
   s.textContent = msg || ""; s.classList.toggle("err", !!isErr);
 }
-function mqttModalOpen(){
-  for (const k in MQ_LS) document.getElementById(MQ_LS[k]).value = localStorage.getItem(MQ_LS[k]) || "";
+let mqttHandoff=null, mqttLastErr="";   // device a handoff link asked for, while the modal waits for its password
+// pre: {url, user, pass, device, err} from a handoff link; without it the fields come from localStorage.
+function mqttModalOpen(pre){
+  mqttHandoff = pre && pre.device || null;
+  for (const k in MQ_LS) document.getElementById(MQ_LS[k]).value = pre ? pre[k] || "" : localStorage.getItem(MQ_LS[k]) || "";
   // sensible default for the URL if unseen
   if (!document.getElementById("mqtt-url").value) document.getElementById("mqtt-url").value = "ws://192.168.1.200:1885";
   const dl = document.getElementById("mqtt-devlist");
   dl.replaceChildren(); dl.classList.remove("show");
-  mqttModalSetStatus("");
+  const go = document.getElementById("mqtt-go");
+  go.hidden = !mqttHandoff; go.textContent = "Read "+(mqttHandoff||"device");
+  document.getElementById("mqtt-scan").classList.toggle("primary", !mqttHandoff);
+  mqttModalSetStatus(pre ? pre.err || `Enter the password${pre.user ? " for "+pre.user : ""} to read ${pre.device}.` : "", !!(pre && pre.err));
   document.getElementById("mqtt-modal").classList.add("open");
+  if (pre) document.getElementById("mqtt-pass").focus();
 }
 function mqttScanStop(){
   clearInterval(mqttScanTick); mqttScanTick=null;
@@ -2571,6 +2642,7 @@ function mqttScanStop(){
   mqttScanCfg=null;
 }
 function mqttModalClose(){
+  mqttHandoff = null;
   document.getElementById("mqtt-modal").classList.remove("open");
   mqttScanStop();
   if (mqttScanClient){ try { mqttScanClient.end(true); } catch(_){} mqttScanClient=null; }
@@ -2643,7 +2715,7 @@ async function mqttScanConnect(first){
 async function mqttScanDevices(){
   const cfg = mqttModalRead();
   if (!cfg.url){ mqttModalSetStatus("broker URL required", true); return; }
-  for (const k in MQ_LS) localStorage.setItem(MQ_LS[k], cfg[k]==null?"":cfg[k]);
+  mqttSaveFields(cfg);
   mqttScanStop();
   if (mqttScanClient){ try { mqttScanClient.end(true); } catch(_){} mqttScanClient=null; }
   mqttScanHosts.clear();
@@ -2651,10 +2723,10 @@ async function mqttScanDevices(){
   mqttModalSetStatus("connecting …");
   if (await mqttScanConnect(true)) mqttScanTick = setInterval(mqttScanRender, 800);
 }
-async function mqttConnectAndImport(hostname){
-  if (connecting || !confirmDiscard()) return;
-  const cfg = mqttModalRead();
-  cfg.device = hostname;
+// cfg {url,user,pass}: default the modal's fields. true: read; false: failed; undefined: not started.
+async function mqttConnectAndImport(hostname, cfg){
+  if (connecting || !confirmDiscard()) return undefined;
+  cfg = Object.assign({}, cfg || mqttModalRead(), {device:hostname});
   // hand the scan client off to the device session: same broker connection,
   // just rebind the message handler — avoids a second CONNACK round-trip.
   mqttScanStop();
@@ -2669,10 +2741,13 @@ async function mqttConnectAndImport(hostname){
     mqttModalClose();
     showStatus("connected — reading config from "+hostname+" …", false, true);
     await importFromDevice(hostname, {transport:"mqtt", handle:cfg});
+    return true;
   } catch(e){
-    showErr("MQTT: "+(e.message||e));
+    mqttLastErr = e.message||String(e);
+    showErr("MQTT: "+mqttLastErr);
     await disconnectMqtt();
     try { if (client) client.end(true); } catch(_){}
+    return false;
   } finally { endConnect(); }
 }
 
@@ -3105,6 +3180,7 @@ function refreshConn(){
     : activeWrite ? "Connected" : "Not connected";
   svcGate();
   tstGate();
+  renderLive();
   if (document.getElementById("review").classList.contains("open")) renderReview();
   renderApply();
 }
@@ -4260,6 +4336,160 @@ document.getElementById("mqtt-modal").addEventListener("click", e=>{
   if (e.target.id === "mqtt-modal") mqttModalClose();   // click backdrop to dismiss
 });
 
+document.getElementById("mqtt-go").onclick = ()=>{
+  const cfg = mqttModalRead(), device = mqttHandoff;
+  if (!cfg.url){ mqttModalSetStatus("broker URL required", true); return; }
+  mqttSaveFields(cfg);
+  handoffMqttRead(device, cfg);
+};
+
+/* ----------------------------------------------------------------------------
+   Handoff from the dashboard: conf-editor.html#mqtt=<ws url>&user=<name>&device=<host>
+   or #ble=<device id>&name=<advertised name>&device=<host>. The fragment never carries a
+   password. It is removed from the address at once (history.replaceState), before the read,
+   so a reload, bookmark or the back button does not read again. The read is a normal device
+   read (confirmDiscard, link committed only on success); nothing is pushed.
+---------------------------------------------------------------------------- */
+const HANDOFF_HOST = /^[^\/+#\s]+$/;
+function parseHandoff(hash){
+  const p = new URLSearchParams(String(hash||"").replace(/^#/,""));
+  const device = (p.get("device")||"").trim();
+  if (p.has("mqtt")){
+    const url = (p.get("mqtt")||"").trim();
+    if (!/^wss?:\/\/\S+$/i.test(url) || !HANDOFF_HOST.test(device)) return {bad:"mqtt"};
+    return { transport:"mqtt", url, user:p.get("user")||"", device };
+  }
+  if (p.has("ble")){
+    const id = (p.get("ble")||"").trim(), name = (p.get("name")||"").trim();
+    if (!id && !name) return {bad:"ble"};
+    return { transport:"ble", id, name, device:HANDOFF_HOST.test(device) ? device : "" };
+  }
+  return null;
+}
+function handoffFromHash(){
+  const h = parseHandoff(location.hash);
+  if (!h) return;
+  history.replaceState(history.state, "", location.pathname + location.search);
+  if (h.bad){ showErr("The link to read a device is incomplete: pick the device under Connect to a device."); return; }
+  return h.transport==="mqtt" ? handoffMqtt(h) : handoffBle(h);
+}
+async function handoffMqttRead(device, cfg){
+  const r = await mqttConnectAndImport(device, cfg);
+  if (r===false) mqttModalOpen(Object.assign({}, cfg, {device, err:"Could not read "+device+": "+mqttLastErr}));
+  return r;
+}
+// Anonymous broker or a password stored for exactly this broker and user: read at once; else ask.
+function handoffMqtt(h){
+  const pass = h.user ? mqttStoredPass(h.url, h.user) : "";
+  const cfg = {url:h.url, user:h.user, pass:pass||""};
+  if (pass===null){ mqttModalOpen(Object.assign(cfg, {device:h.device})); return; }
+  return handoffMqttRead(h.device, cfg);
+}
+function startOffer(id){
+  const pane=document.getElementById("start-"+id+"-pane");
+  if (!pane.classList.contains("open")) document.getElementById("start-"+id).click();
+}
+// A device this origin may use (navigator.bluetooth.getDevices), connected without the chooser.
+async function handoffBle(h){
+  const label = h.device || h.name || "the device";
+  const fail = msg => { showErr(msg); if (!state) startOffer("connect"); return false; };
+  const bt = navigator.bluetooth;
+  if (!bt) return fail("Web Bluetooth isn't available — use Chrome or Edge over localhost or https.");
+  if (typeof bt.getDevices!=="function")
+    return fail(`This browser cannot reopen ${label} without the Bluetooth chooser: click Bluetooth and pick it.`);
+  let list=[];
+  try { list = await bt.getDevices(); } catch(e){ return fail("Bluetooth: "+e.message); }
+  const dev = list.find(d=>h.id && d.id===h.id) || list.find(d=>h.name && d.name===h.name);
+  if (!dev) return fail(`${label} is not among the Bluetooth devices this page may use: click Bluetooth and pick it.`);
+  const r = await bleConnectAndImport(dev, (e, d, adv)=>
+    `${d.name||label} ${adv===false ? "is not advertising" : "did not accept the Bluetooth link"} (${(e&&e.message||e+"").replace(/\.(\s.*)?$/,"")}). `+
+    "It takes one Bluetooth connection at a time, so the dashboard, another tab or a console client may still hold it, "+
+    "or it is out of range. Close that link, then click Bluetooth to pick it.", 6000);
+  if (r===false && !state) startOffer("connect");
+  return r;
+}
+window.addEventListener("hashchange", handoffFromHash);
+
+/* ----------------------------------------------------------------------------
+   Live strip: the last `V=… st=…` status line from the link to the device the config was
+   read from. It only listens to lines that arrive anyway and sends nothing.
+---------------------------------------------------------------------------- */
+const LIVE_MODE = { MPPT:"MPPT", SWEEP:"Sweep", CV:"CV", CC:"CC", CP:"CP", MANU:"manual", PSU:"PSU", PVS:"PV sim",
+                    START:"stopped", UV:"undervoltage", "N/A":"N/A" };
+const LIVE_STOP = new Set(["START","UV"]);
+// Converting: a line every 3 s; stopped or idle: every 24 s.
+const liveStaleMs = r => r.stop || Math.abs(r.p) < 0.5 ? 30000 : 10000;
+function liveParse(raw){
+  const m = tstLine(raw).match(TST_V);
+  if (!m) return null;
+  const st = m[6].replace(/[^A-Z/]/g,"");   // drop the tracker direction arrows
+  return { vin:+m[1], vout:+m[2], p:+m[5], st, mode:LIVE_MODE[st] || st || m[6], stop:LIVE_STOP.has(st) };
+}
+function liveOnLine(ln){
+  const r = liveParse(ln);
+  if (!r) return;
+  r.at = Date.now(); live = r;
+  renderLive();
+}
+lineListeners.add(liveOnLine);
+const liveAge = ms => { const s=Math.round(ms/1000); return s<=2 ? "now" : s<90 ? s+" s ago" : Math.round(s/60)+" min ago"; };
+const fmtN = (x, d) => Number.isFinite(x) ? x.toFixed(d) : "–";
+function liveDashHref(t){
+  const p = t.transport==="mqtt" ? {mqtt:t.handle.url, user:t.handle.user||"", device:state.deviceName}
+          : {ble:t.handle.id||"", name:t.handle.name||"", device:state.deviceName};
+  return "dashboard.html#"+new URLSearchParams(p);
+}
+function renderLive(){
+  const box=document.getElementById("live"), t=pushTarget(), on=!!(t && activeWrite && !connecting);
+  box.hidden = !on;
+  if (!on){ clearInterval(liveTimer); liveTimer=null; return; }
+  if (!liveTimer) liveTimer = setInterval(renderLive, 1000);
+  const r = live, age = r ? Date.now()-r.at : 0, stale = !r || age > liveStaleMs(r);
+  box.classList.toggle("stale", stale);
+  const [p, v, m, a] = box.querySelector(".lv-txt").children;
+  p.textContent = r ? fmtN(r.p,1)+" W" : "waiting for a status line";
+  v.textContent = r ? fmtN(r.vin,1)+" → "+fmtN(r.vout,2)+" V" : "";
+  m.textContent = r ? r.mode : "";
+  m.classList.toggle("stop", !!(r && r.stop));
+  a.textContent = r ? liveAge(age) : "";
+  box.title = r ? `last status line ${liveAge(age)}${stale ? " (stale)" : ""}: P=${r.p} W, Vin=${r.vin} V, Vout=${r.vout} V, st=${r.st}` : "";
+  const d = document.getElementById("live-dash");
+  d.hidden = t.transport==="serial";
+  if (!d.hidden) liveDash(d, t);
+  fitLive(box);
+}
+function liveDash(d, t){
+  d.href = liveDashHref(t);
+  d.textContent = t.transport==="ble" ? "Release link & open dashboard" : "Open dashboard";
+  d.title = t.transport==="ble"
+    ? "The device takes one Bluetooth connection at a time: this closes the editor's link so the dashboard can connect. A push reconnects the editor once the dashboard has released it."
+    : "Open the dashboard for "+state.deviceName+" on this broker in a new tab";
+  d.classList.toggle("off", !!devBusy);
+  d.setAttribute("aria-disabled", String(!!devBusy));
+}
+// Drop strip parts (f1 voltages … f5 all) until the header keeps the height it has without the
+// strip, nothing in the source column overflows and the source label keeps up to 120 px.
+function fitLive(box){
+  const sn=document.getElementById("srcname"), src=box.parentElement, hd=document.querySelector("header");
+  const key=[innerWidth, sn.textContent, document.getElementById("conn").textContent,
+             document.getElementById("serial-status").textContent, box.textContent.length].join("|");
+  if (box._fitKey===key) return;
+  box._fitKey=key;
+  for (let i=1; i<=5; i++) box.classList.remove("f"+i);
+  box.hidden=true; const base=hd.offsetHeight; box.hidden=false;
+  const ok=()=>hd.offsetHeight<=base && src.scrollWidth<=src.clientWidth+1 && sn.clientWidth>=Math.min(sn.scrollWidth,120);
+  for (let i=1; i<=5 && !ok(); i++) box.classList.add("f"+i);
+}
+window.addEventListener("resize", ()=>{ if (!document.getElementById("live").hidden) renderLive(); });
+document.getElementById("live-dash").addEventListener("click", e=>{
+  const t = pushTarget();
+  if (devBusy || !t){ e.preventDefault(); return; }
+  if (t.transport!=="ble") return;
+  // the new tab opens from the click itself; the editor drops its link right after
+  disconnectBluetooth().then(()=>{ refreshConn(); showStatus("Bluetooth link released for the dashboard; a push reconnects."); });
+});
+
+handoffFromHash();
 
 if (typeof DecompressionStream === "undefined")
   showErr("Note: this browser lacks DecompressionStream; compressed .zip reading may fail. Folder upload still works.");

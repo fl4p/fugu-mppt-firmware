@@ -16,7 +16,9 @@ offline. One optional sibling: `teledec.js` (the dashboard's decoder, loaded
 with `<script src="teledec.js">` from the same folder) provides the
 `sweep-curve` parser for the Tests sheet's chart (§2.15); when it is missing
 (the HTML opened on its own) the editor works the same and the sweep card
-shows only its text summary.
+shows only its text summary. The live strip links to the sibling
+`dashboard.html`, and the dashboard opens this page with a handoff fragment
+(§1.4); both pages are deployed side by side.
 
 ---
 
@@ -114,6 +116,56 @@ count), so the user can check what the file would alter before pushing it.
 To overlay from the editor, use the Open menu's **Choose .zip…** /
 **Choose folder…**, or **Start screen** and then drop or pick a preset.
 
+### 1.4 Handoff from the dashboard
+
+The dashboard's **Configure** action opens `conf-editor.html` (same folder, new
+tab) with the device in the URL fragment, so it never reaches a server log:
+
+| Fragment | Meaning |
+| -------- | ------- |
+| `#mqtt=<ws(s) url>&user=<name>&device=<host>` | read `<host>` over this broker |
+| `#ble=<device id>&name=<advertised name>&device=<host>` | read this granted Web Bluetooth device |
+
+`parseHandoff` accepts only a `ws://`/`wss://` URL and a `<host>` without `/ + #`
+or whitespace (it becomes a topic level); a BLE handoff needs an id or a name. A
+password in the fragment (`pass=`, anything else) is never read.
+
+**Clearing.** `handoffFromHash` runs once at load and on `hashchange`. As soon as
+it recognises a handoff fragment (valid or not) it removes it with
+`history.replaceState` (path and query kept, no new history entry), before
+anything is read. A reload, a bookmark or the back button therefore never reads
+again, and the address bar no longer shows broker, user or device. Other
+fragments are left alone.
+
+**Safety.** A handoff is an ordinary device read: `confirmDiscard` (§1.1) runs
+before any link is dropped (declining keeps the loaded config and its link),
+`importFromDevice` commits the push target only on success, and nothing is
+pushed.
+
+**MQTT.** Without a user the editor reads at once. With a user it reads at once
+only when it has a password stored for exactly this broker URL and user
+(`mqttStoredPass`, §5.3); otherwise the MQTT dialog opens with the URL and user
+filled in, the password empty and focused, the status "Enter the password for
+<user> to read <host>.", and a primary **Read <host>** button (`#mqtt-go`) next
+to **Scan for devices**. **Read <host>** saves the fields like a scan does and
+reads that device. When a handoff read fails (broker refused, no reply) the
+dialog opens the same way with "Could not read <host>: <reason>".
+
+**Bluetooth.** `navigator.bluetooth.getDevices()` lists the devices this origin
+may use (the dashboard and the editor share it when served from one folder).
+The device is matched by id, then by name, and connected without the chooser
+(`bleConnectAndImport`): first up to 6 s waiting for an advertisement where
+`watchAdvertisements` exists, then the usual connect retries. Failures show in the
+status line and, on the start screen, expand **Connect to a device** so the
+normal chooser (**Bluetooth**, which needs the click) is one step away:
+
+| Case | Message |
+| ---- | ------- |
+| no `navigator.bluetooth` | Web Bluetooth isn't available … |
+| no `getDevices` | This browser cannot reopen <host> without the Bluetooth chooser: click Bluetooth and pick it. |
+| not granted | <host> is not among the Bluetooth devices this page may use: click Bluetooth and pick it. |
+| connect fails (busy) | <name> is not advertising / did not accept the Bluetooth link (<error>). It takes one Bluetooth connection at a time, so the dashboard, another tab or a console client may still hold it, or it is out of range. Close that link, then click Bluetooth to pick it. |
+
 ---
 
 ## 2. Editor UI
@@ -137,6 +189,7 @@ Sticky, 56 px. After a load it shows, left to right:
   <host> over …" when that link is closed (a push reopens it), "Connecting …"
   during a connect and read, and "Not connected" (grey dot) when there is no
   push target. Every connect, success or failure, updates it;
+* the **live strip** (`#live`, §2.1.1) while that link is open;
 * the **status line** (`#serial-status`, §2.9);
 * right-aligned actions: the **Open** menu, the **Console** toggle
   (`aria-pressed`), the **Services** button (§2.14; icon only at ≤520 px), the
@@ -153,6 +206,46 @@ choice, or with Esc, which returns focus to the **Open** button):
 **Primary button** (`#review-btn`): solid ink "Review changes" with a count
 badge when anything changed; outlined "Save a copy" (no badge) when nothing
 changed. Both open the review sheet (§2.7).
+
+#### 2.1.1 Live strip
+
+While the link to the device the config was read from is open (push target set,
+`activeWrite` set, not connecting), `#live` shows after the connection state,
+separated by a hairline: a dot, the power (`P` W), `Vin → Vout V`, the mode, the
+age of the last status line ("now" up to 2 s, "N s ago", "N min ago") and a link
+to the dashboard. Hidden otherwise.
+
+* **Source.** `liveOnLine` is a permanent `lineListeners` entry that parses the
+  periodic and interim status line `V=<Vin>/<Vout> I=… <P>W … st=<mode>,<n>` with
+  the Tests sheet's `TST_V` (`liveParse`). The strip sends nothing; it only reads
+  lines that arrive anyway. `beginConnect` clears it, so it never shows another
+  device's line; the interim status line each `get-config` prints fills it during
+  the read.
+* **Mode words.** `MPPT` (tracker arrows dropped), `Sweep`, `CV`, `CC`, `CP`,
+  `manual` (`MANU`), `PSU`, `PV sim` (`PVS`), `stopped` (`START`), `undervoltage`
+  (`UV`), `N/A`. `stopped` and `undervoltage` are amber; everything else is ink and
+  grey.
+* **Stale.** Green dot while the last line is fresh; grey dot and faint text after
+  10 s, or 30 s while the last line showed `START`/`UV` or under 0.5 W (the
+  firmware then prints every 24 s instead of every 3 s). Before the first line
+  after a connect the strip reads "waiting for a status line" (grey). A 1 s timer
+  runs only while the strip is shown. The tooltip repeats the raw values.
+* **Dashboard link** (`#live-dash`, a plain link, new tab): over MQTT "Open
+  dashboard" → `dashboard.html#mqtt=<url>&user=<user>&device=<host>` (no
+  password); over Bluetooth "Release link & open dashboard" →
+  `dashboard.html#ble=<id>&name=<name>&device=<host>`, and the click also drops the
+  editor's own link (`disconnectBluetooth`) so the dashboard can take the single
+  connection; the header then reads "Disconnected from …" and the status line
+  "Bluetooth link released for the dashboard; a push reconnects." The push target
+  is kept. Over USB serial there is no link (the dashboard has no serial
+  transport). While a device command holds the lock (`devBusy`) the link is dimmed
+  and a click does nothing.
+* **Fit.** The strip never changes the header's height. `fitLive` (on each render
+  whose inputs changed and on resize) drops parts in this order until the header is
+  as tall as without the strip, nothing in the source column overflows and the
+  source label keeps up to 120 px: voltages, age, dashboard link, mode (in a stop
+  state the power goes instead, so the amber word stays), then the whole strip. At
+  ≤520 px the age and the link are always hidden.
 
 ### 2.2 File list
 
@@ -922,6 +1015,14 @@ Browser ↔ broker via WebSocket only (`ws://` or `wss://`), using
    per-URL cache.
 4. Only when that read succeeds is `{url, user, pass, device}` kept as
    `grantedMqttConfig`, so a push can silently reconnect to that device later.
+
+Scan (and **Read <host>** of a handoff, §1.4) also store
+`localStorage["mqtt-pass-for"] = {url, user}`, the broker and user the stored
+password belongs to. `mqtt-url` and `mqtt-user` are shared with the dashboard,
+which overwrites them when it connects, so a handoff uses the stored password only
+when `mqtt-pass-for` matches the requested URL and user exactly; the password is
+never sent to another broker. The editor never reads the dashboard's own password
+keys.
 
 **Cancel**, a click on the backdrop, or picking a device closes the modal. Esc
 does not.

@@ -25,6 +25,7 @@ window.mqtt = {
       end(){ this.ended=true; return this; },
     };
     window._mqttClients = (window._mqttClients||[]).concat(client);
+    if (window._mqttHook) window._mqttHook(client);   // set in beforeParse: reach clients made during load
     Promise.resolve().then(()=>client.emit('connect'));
     return client;
   }
@@ -52,6 +53,7 @@ Object.defineProperty(window, "_activeWrite",    { get: () => activeWrite, set: 
 Object.defineProperty(window, "_lastTransport",  { get: () => lastTransport, set: v => { lastTransport = v; } });
 Object.defineProperty(window, "_mqttClient",     { get: () => mqttClient });
 Object.defineProperty(window, "_mqttDeviceHost", { get: () => mqttDeviceHost });
+Object.defineProperty(window, "_live",           { get: () => live, set: v => { live = v; } });
 `;
 
 // teledec: inline teledec.js where the page loads it (jsdom fetches no subresources, so without
@@ -73,12 +75,16 @@ function buildHtml({ teledec = false } = {}) {
   return html;
 }
 
+// opts.url: page URL (a handoff fragment runs at load); opts.storage: localStorage seeded before
+// the script runs; opts.beforeParse(window): more setup before the script runs (navigator.bluetooth).
 async function loadEditor(opts = {}) {
   const dom = new JSDOM(buildHtml(opts), {
-    url: 'http://localhost/',
+    url: opts.url || 'http://localhost/',
     runScripts: 'dangerously',
     pretendToBeVisual: true,
     beforeParse(window) {
+      for (const [k, v] of Object.entries(opts.storage || {})) window.localStorage.setItem(k, v);
+      if (opts.beforeParse) opts.beforeParse(window);
       // jsdom v24 doesn't expose these on window by default; the page treats
       // them as globals (`new TextDecoder()` at top level of the script).
       window.TextEncoder = TextEncoder;

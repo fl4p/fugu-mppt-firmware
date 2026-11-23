@@ -55,6 +55,13 @@ Each converter gets a card, keyed by its hostname:
 - **Link badges**: one for BLE (only on cards with a BLE link) and one for MQTT. Alerts the device publishes
   under `pv/alert/<hostname>/<source>` appear as one badge per source, coloured by level, with the message
   and time as tooltip; an alert that arrives while the page is open is also written to the log.
+- **Configure**: opens the [config editor](config-editor.md#opening-from-the-dashboard) in a new tab and reads this
+  device's config. Over MQTT (when the broker is connected and the device was seen on it) the link carries the
+  broker URL, user and hostname, never the password; the editor uses its own stored password for that broker and
+  user, or asks for it. Otherwise, over Bluetooth, the link carries the browser's id for the device. The firmware
+  accepts one Bluetooth connection at a time, so the dashboard releases its own link first; the card says so and
+  shows **Reconnect** for when you are done in the editor. Cards with neither a broker nor a Bluetooth device have
+  no Configure action.
 - **More info**: a collapsed box under the values with the stream rate and dropped bytes per link, the
   slower telemetry fields (`mcu_temp`, `lag`, `heap`, `heap_min`, lifetime `E`, the `Ro`/`Rc`/`Rb` resistances
   once known), the MQTT lease state, and the telemetry decoder's error and resync counters.
@@ -131,6 +138,14 @@ local network; the broker is one of them, so allow it. Firefox has no such promp
 
 The fields can also be prefilled from the page URL: `dashboard.html?mqtt=ws://<host>:<port>&user=<name>`. The page
 does not connect on its own then, and never reads a password from the URL.
+
+The config editor's **Open dashboard** link uses the fragment instead:
+`dashboard.html#mqtt=<ws url>&user=<name>&device=<hostname>` or
+`dashboard.html#ble=<device id>&name=<advertised name>&device=<hostname>`. The page removes the fragment from the
+address at once. For MQTT it fills in the URL and user and connects like a stored broker: with its remembered
+password only when the host and user match the remembered ones, otherwise it asks for the password. For Bluetooth it
+tries the named device with the full set of connect retries (the editor has just released it), and shows a banner
+when the browser has not allowed this page that device yet. It scrolls the device's card into view once it appears.
 
 ## Console commands used
 

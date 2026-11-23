@@ -92,12 +92,37 @@ The list shows every `<hostname>` seen publishing or present and marks those who
 listening while the dialog is open and reconnects every 3 s if the broker drops. Pick a device to read its config.
 See [MQTT topics](mqtt.md).
 
+### Opening from the dashboard
+
+**Configure** on a [dashboard](dashboard.md) card opens the editor in a new tab and reads that device's config at
+once. The device travels in the URL fragment, which the browser does not send to the web server:
+
+| Link | Fragment |
+|------|----------|
+| MQTT | `conf-editor.html#mqtt=<ws url>&user=<name>&device=<hostname>` |
+| Bluetooth | `conf-editor.html#ble=<device id>&name=<advertised name>&device=<hostname>` |
+
+The editor removes the fragment from the address as soon as it reads it, before connecting, so reloading the tab or
+using a bookmark of it does not read the device again. The link is a read like any other: with unsaved changes
+loaded, the editor asks first, and nothing is pushed.
+
+- **MQTT**: the URL never contains a password. On an anonymous broker the editor reads at once. Otherwise it uses
+  the password it stored for exactly this broker URL and user (from an earlier scan); without one, the MQTT dialog
+  opens with the URL and user filled in and a **Read `<hostname>`** button. The editor does not use the
+  dashboard's remembered password.
+- **Bluetooth**: the editor opens the device through `navigator.bluetooth.getDevices()`, the devices this site was
+  allowed earlier, without the device chooser. The firmware accepts one Bluetooth connection at a time, so the
+  dashboard drops its own link before it opens the editor. If the device is not among the allowed ones, the browser
+  lacks `getDevices()`, or the device does not accept the connection (another tab or client still holds it, or it is
+  out of range), the status line says so and the start screen opens **Connect to a device**: click **Bluetooth** and
+  pick it in the chooser.
+
 ## Layout
 
 The top bar shows the source name and the connection state. The state always refers to the device a push would go
 to: "Connected to `<hostname>` over MQTT" with a green dot while that link is open, "Disconnected from
 `<hostname>` over MQTT" once it is closed, "Connecting …" during a read, and "Not connected" when there is nothing
-to push to. Its right side holds the **Open** menu, the **Console** toggle, the **Services** and **Tests** buttons and the
+to push to. While that link is open, a [live strip](#live-strip) follows it. Its right side holds the **Open** menu, the **Console** toggle, the **Services** and **Tests** buttons and the
 primary button: **Review changes** with a count, or **Save a copy** when nothing has changed.
 
 The file list on the left has one entry per conf file, in three groups:
@@ -118,6 +143,23 @@ group that holds changed or invalid keys shows an amber dot with their count. At
 
 On a narrow screen the file list becomes a horizontal strip with small group labels, rows stack, and the review,
 console and services sheets open from the bottom. The page follows the system light or dark setting.
+
+### Live strip
+
+While the editor is connected to the device it read, the top bar shows one line of live status: input power, input
+and output voltage, the operating mode, the age of the last status line and a link to the dashboard. The values come
+from the periodic `V=… st=…` status line in the device log (every 3 s while converting, every 24 s while stopped) and
+from the status line every command prints. The strip only listens; it sends no commands.
+
+| Part | Shows |
+|------|-------|
+| Dot | Green while the last status line is fresh; grey after 10 s without one (30 s while stopped or under 0.5 W) |
+| Mode | MPPT, Sweep, CV, CC, CP, manual, PSU, PV sim; **stopped** (waiting to start) and **undervoltage** in amber |
+| Dashboard link | Over MQTT, **Open dashboard** opens the dashboard on the same broker in a new tab. Over Bluetooth, **Release link & open dashboard** closes the editor's own link first, because the device takes one Bluetooth connection at a time. A later push reconnects once the dashboard has released the link. Over USB serial there is no link. |
+
+The strip never changes the height of the top bar. When space is short it drops, in this order, the voltages, the
+age, the dashboard link and the mode (in a stopped state it keeps the mode and drops the power), and on a narrow
+screen it may hide altogether.
 
 ## Short view
 
