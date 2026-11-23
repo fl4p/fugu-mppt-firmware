@@ -73,10 +73,10 @@ uint32_t unixNow() {
     return t > 1000000000 ? (uint32_t) t : 0;
 }
 
-uint32_t ageS(bool ram, uint64_t ms, uint32_t unix) {
+uint32_t ageS(bool ram, uint64_t ms, uint32_t unixS) {
     if (ram) return (uint32_t) std::min<uint64_t>((wallClockMs() - ms) / 1000, UINT32_MAX - 1);
     const uint32_t t = unixNow();
-    return unix && t >= unix ? t - unix : UINT32_MAX;
+    return unixS && t >= unixS ? t - unixS : UINT32_MAX;
 }
 
 // 1 current, 2 converted (rewrite it), 0 unreadable. Another version or size keeps the hs/bf bytes (offsets 1 and 2
