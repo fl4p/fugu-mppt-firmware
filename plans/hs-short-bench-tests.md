@@ -2,10 +2,12 @@
 
 # Bench tests: HS short, backflow switch, LS clamp
 
-Status: planned (2026-11-22). None run yet.
+Status: planned (2026-11-22, toggle tests 9-10 added 2026-11-23). None run yet.
 
 The firmware side is on main (b2332679): the idle HS-short check, `selftest bflow` (daily) and the night-gated LS
-clamp (`board.conf::hs_clamp`, off by default). The backflow-switch test passed on fry and flat on 2026-11-21. The
+clamp (`board.conf::hs_clamp`, off by default). The toggle variant of `selftest bflow` (one-direction current sensor
+or no battery, f7449904 + 11042ac5) has run only in the host sim and on the vconv bench. The backflow-switch test
+passed on fry and flat on 2026-11-21 (and daily since). The
 clamp and the fault paths are validated only in the host sim and in SPICE
 (`doc/research/2026-11-20-hs-short-bflow-spice.md`, decks in `dcdc-tools/examples/fugu2-hs-short/`). The SPICE
 verdicts hinge on board quantities nobody has measured. These tests close that gap.
@@ -23,6 +25,8 @@ and need a sacrificial Fugu2 board.
 2. Feed the results into the SPICE decks and re-run Q9. If the margin at 9 V is gone, lower the firmware limit
    (`HsClampArm::VinMax`) or keep `hs_clamp` off until the switched BF gate pull-down (Fugu2 issue #37) is fitted.
 3. Then the shorted-HS tests 5-8 on a sacrificial board.
+4. Toggle tests 9-10 any time, on any Fugu2 board (no FET is shorted; test 10's stuck-closed case only bridges the
+   BF with the battery side open). Test 9 is cheapest and also tells whether the toggle's guard hold fits.
 
 ## Passive measurements (any Fugu2 board)
 
@@ -38,6 +42,24 @@ and need a sacrificial Fugu2 board.
    fitted, what is C10 (fry: 470 µF ZLH per HW Stories; flat: unknown), and the input caps (2 × ZLH 470 µF).
    Also the LS gate rise time and, if a scope with a Rogowski probe is available, the commutation-loop ringing
    frequency (extracted loop: 3.2 nH).
+
+## Toggle variant (any Fugu2 board)
+
+9. **BF turn-on and turn-off time.** Scope BflowG−BflowS and the battery current while `bf 0`/`bf 1` toggle at
+   2-5 A forward current (converter running, battery from a current-limited supply). The toggle's RT floor
+   assumes the BF conducts again within about 10 ms of the switch-on edge (hold = 3 + ceil(10 ms x sample rate)
+   current samples); the gate is pumped through ~200 kΩ into ~20 nF (τ ≈ 4-5 ms, from the schematic, not
+   measured). Turn-on slower than about 10 ms makes every toggle run abort with "forward current lost" (never a
+   FAIL), so the switch would stay unverified on one-direction-sensor boards. Also record the turn-off time
+   (the firmware waits 20 ms before judging blocks).
+10. **No-battery toggle.** Battery side open (Vout bled below 2 V, no BMS data on this boot: MQTT off), panel side
+    from a lab supply at 30-60 V, `bflow_bat=1`, manual `selftest bflow`. First question: does the BF gate pump
+    drive the switch at all with no battery? It runs from VDDB; if VDDB comes from the battery side, no-battery
+    mode cannot work on Fugu2 and should be refused on this board. If it drives: expect PASS with a Vout step of
+    about the body-diode drop at the divider current (R52 470k / R53 11k, ~50 µA; firmware threshold 0.1 V; sim
+    0.5 V, vconv bench 0.70 V). Measure that step: it is the margin of the no-battery verdict. With the BF gate
+    shorted to its source (BF stuck off is safe here) the run must still pass; with the BF drain-source bridged
+    (stuck closed) it must FAIL with a 0.00 V step.
 
 ## Shorted-HS tests (sacrificial board)
 
