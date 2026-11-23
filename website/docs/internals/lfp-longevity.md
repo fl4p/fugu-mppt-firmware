@@ -163,6 +163,8 @@ The ranking follows average SoC, not depth of discharge: the 75–100 % window c
 the capacity and still aged fastest. After 2500 h the best cells retained 97 % and the worst 76 %
 of their capacity.
 
+![The five SoC windows of the cycling test as horizontal bars on a 0–100 % SoC axis, ranked from best at the top to worst at the bottom: 0–25, 0–60, 0–80, 0–100 and 75–100 %, with a marker at each average SoC (12.5, 30, 40, 50 and 87.5 %). The average SoC rises with every rank. The best window, 0–25 %, and the worst, 75–100 %, are highlighted: both have a depth of 25 %.](img/lfp-longevity/soc-windows.svg)
+
 The SoC window outweighed every other factor tested. In the fade-rate comparison, each factor
 changed the fade rate by [[2](#ref-2), Fig. 2c–d]:
 
@@ -482,6 +484,14 @@ after its last report, and with no fresh sensor the temperature policy is off.
 With `partial_charge` or `holiday_charge` set, `full_charge_interval` schedules a full charge.
 Whether the BMS balances the cells during it depends on the BMS's own balancing conditions;
 `balance_interval` schedules a longer hold at the top for an active balancer.
+
+The figure places the SoC ranges from the evidence next to the ranges two charger settings
+produce. The `partial_charge` and `holiday_charge` values are examples, since both are off by
+default. Their bars mark where charging stops and resumes, not bounds on the SoC (`recharge_dod`
+does not limit how far the pack discharges), and both modes run between the periodic full charges
+of `full_charge_interval`. The position of the calendar step depends on the cell.
+
+![A 0–100 % SoC axis with two groups of bars. Evidence: the manufacturer's recommended range 10–90 % [8] and the 37.5–62.5 % range in which storage fade hardly differed at 40 °C [3]. Charger settings, with example values: holiday_charge 0.6 and holiday_band 0.1 give a band of about 50–60 %; partial_charge 0.8 with recharge_dod 0.20 stops charging at 80 % and resumes at 60 %. A dashed line at 73 % marks the calendar-aging step in the cell of [1]; its position depends on the cell.](img/lfp-longevity/soc-strip.svg)
 
 The following table lists each setting with its default from
 [`charger.conf`](../reference/config/charger.md), what the evidence says about it, and how strong
