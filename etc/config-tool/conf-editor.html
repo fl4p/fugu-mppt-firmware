@@ -631,7 +631,6 @@ const META = {
   lv_pgood:{unit:"GPIO",desc:"LV power-good output; high disables the HV aux supply path. 255 = none",type:"int"},
   lv_pgood_v:{unit:"V",desc:"LV pgood release point; asserts after LV held 0.5 V above it for 5 s",type:"float"},
   led_WS2812:{unit:"GPIO",desc:"WS2812 status LED data pin",type:"int"},
-  led_WS2812B:{unit:"GPIO",desc:"WS2812 LED data pin (alt key)",type:"int"},
   led_simple:{unit:"GPIO",desc:"Plain on/off status LED pin",type:"int"},
   fan_pwm:{unit:"GPIO",desc:"Cooling fan PWM pin",type:"int"},
   adc_fake_freq:{unit:"Hz",desc:"Mock ADC total fake sample rate (all channels)",type:"int"},
@@ -687,7 +686,6 @@ const META = {
   sync_role:{unit:"",desc:"Wired MCPWM clock sync (WITH_WSYNC): none, leader or follower",type:"enum",opts:["none","leader","follower"]},
   sync_phase_deg:{unit:"deg",desc:"Leader only: pulse offset as an angle (180 = interleave); ignored on follower",type:"float"},
   sync_phase_ns:{unit:"ns",desc:"Leader only: additive trim on sync_phase_deg for wire propagation delay",type:"float"},
-  boost:{unit:"",desc:"Legacy boost flag (replaced by topo=buck|boost)",type:"bool"},
   mode:{unit:"",desc:"Operating mode: mppt, psu or pv (solar-array-simulator output)",type:"enum",opts:["mppt","psu","pv"]},
   psu_vout:{unit:"V",desc:"PSU mode output voltage setpoint (used when mode=psu)",type:"float"},
   psu_slew_down:{unit:"V/s",desc:"PSU mode: a lower setpoint is approached at this rate (min 0.1); raising it is immediate. A boost returns the output charge to its input when it pulls Vout down",type:"float"},
@@ -928,26 +926,34 @@ const ADD_KEY_HINTS = { "sensor.conf": ["hv_v","lv_v","hv_i","lv_i"].flatMap(c =
    Run `python3 etc/config-tool/scrape_conf_keys.py --write` to refresh. */
 // SCRAPER:BEGIN FILE_KEYS
 const FILE_KEYS = {
-  "board.conf":["adc_fake_freq","ads_alert","bflow_bat","bflow_en","bflow_sd","boot_refresh_ns","fan_pwm","hs_clamp","i2c_freq","i2c_hs_freq","i2c_port","idle_cpu_mhz",
-    "i2c_scl","i2c_sda","ina22x_addr","ina22x_alert",
-    "led_WS2812","led_WS2812B","led_simple","lv_pgood","lv_pgood_v","mcu",
-    "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","pwm_driver_logic","pwm_en","pwm_fault_active_high","pwm_fault_pin",
-    "pwm_freq","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin","skip_assert"],
+  "board.conf":["adc_fake_freq","ads_alert","bflow_bat","bflow_en","bflow_sd","boot_refresh_ns",
+    "fan_pwm","hs_clamp","i2c_freq","i2c_hs_freq","i2c_port","i2c_scl","i2c_sda","idle_cpu_mhz",
+    "ina22x_addr","ina22x_alert","led_WS2812","led_simple","lv_pgood","lv_pgood_v","mcu",
+    "pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","pwm_deadtime_ns","pwm_driver_logic","pwm_en",
+    "pwm_fault_active_high","pwm_fault_pin","pwm_freq","pwm_hi","pwm_in","pwm_li","pwm_sd",
+    "pwm_sync_pin","skip_assert"],
   "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_inl","esp32adc1_sr",
-    "ignore_calibration_constraints","ina22x_conv_time_us","ina22x_ov","ina22x_resistor","notch_adaptive","notch_freq","notch_q","ntc_ch"],
-  "limits.conf":["hv_i_max","hv_max","iout_short","lv_i_max","lv_max",
-    "p_max","reverse_current_paranoia","temp_derate","temp_max","vin_min",
-    "wire_dr_min","wire_p_derate","wire_p_trip","wire_p_warn","wire_protect","wire_r_max"],
+    "ignore_calibration_constraints","ina22x_conv_time_us","ina22x_ov","ina22x_resistor",
+    "notch_adaptive","notch_freq","notch_q","ntc_ch"],
+  "limits.conf":["hv_i_max","hv_max","iout_short","lv_i_max","lv_max","p_max",
+    "reverse_current_paranoia","temp_derate","temp_max","vin_min","wire_dr_min","wire_p_derate",
+    "wire_p_trip","wire_p_warn","wire_protect","wire_r_max"],
   "coil.conf":["L0","rect_cal_auto","rect_offset_cal","rect_offset_drv","rect_offset_ns"],
-  "converter.conf":["c_in","ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
-    "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
-    "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td",
-    "forced_pwm","fpwm_gate","fpwm_gate_hold","fpwm_gate_margin","mode","psu_slew_down","psu_vout","pv_iout_span","pv_isc","pv_k","pv_slew","pv_voc",
-    "sync_phase_deg","sync_phase_ns","sync_role","topo"],
-  "charger.conf":["balance_delta","balance_hold_s","balance_interval","bat_c","bat_temp_derate","bat_temp_max","bat_temp_min","cv_ceiling","cv_eoc","cv_float","cv_hold_band","cv_hold_max_s","full_charge_interval","holiday_band","holiday_charge","holiday_days","holiday_ibat","ibat_max",
-    "partial_charge","recharge_dod","recharge_vfloor_band","tail_c_rate","tail_hold_s","vout_max","vout_max_fallback","vout_offset_max"],
-  "tracker.conf":["sweep_speed","sweep_pace","sweep_verify","target_duty_cycle","pv_substrings","scan_interval","scan_trigger"],
-  "mqtt.conf":["bat_charge_topic","bat_temp_topic","bat_voltage_topic","broker_uri","ca_file","cell_voltages_delta_topic","cell_voltages_max_topic","cmd_input","enabled","ibat_lim_topic",
+  "converter.conf":["c_in","ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd",
+    "ctrl_iout_kp","ctrl_iout_td","ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd",
+    "ctrl_vin_kp","ctrl_vin_td","ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td","forced_pwm",
+    "fpwm_gate","fpwm_gate_hold","fpwm_gate_margin","mode","psu_slew_down","psu_vout",
+    "pv_iout_span","pv_isc","pv_k","pv_slew","pv_voc","sync_phase_deg","sync_phase_ns",
+    "sync_role","topo"],
+  "charger.conf":["balance_delta","balance_hold_s","balance_interval","bat_c","bat_temp_derate",
+    "bat_temp_max","bat_temp_min","cv_ceiling","cv_eoc","cv_float","cv_hold_band",
+    "cv_hold_max_s","full_charge_interval","holiday_band","holiday_charge","holiday_days",
+    "holiday_ibat","ibat_max","partial_charge","recharge_dod","recharge_vfloor_band",
+    "tail_c_rate","tail_hold_s","vout_max","vout_max_fallback","vout_offset_max"],
+  "tracker.conf":["pv_substrings","scan_interval","scan_trigger","sweep_pace","sweep_speed",
+    "sweep_verify","target_duty_cycle"],
+  "mqtt.conf":["bat_charge_topic","bat_temp_topic","bat_voltage_topic","broker_uri","ca_file",
+    "cell_voltages_delta_topic","cell_voltages_max_topic","cmd_input","enabled","ibat_lim_topic",
     "ibat_topic","log_level","password","username"],
   "tele.conf":["adv_ms","binary","ble","enabled","idle_interval_ms","influxdb_host","log_level"],
   "ftp.conf":["enabled","ftp_pass","ftp_user","log_level","pasv_port"],
@@ -959,7 +965,7 @@ const FILE_KEYS = {
   "lcd.conf":["addr","enabled","log_level"],
   "ble.conf":["ble_passkey","ble_security","enabled","idle_adv_ms","log_level"],
   "pprof.conf":["sprofiler_hz"],
-  "wifi.conf":["switch_delay","improv_offline_s"],
+  "wifi.conf":["improv_offline_s","switch_delay"],
 };
 // SCRAPER:END FILE_KEYS
 
@@ -967,24 +973,36 @@ const FILE_KEYS = {
    (getByte/getLong/getFloat/getString), determined by grepping src/. */
 // SCRAPER:BEGIN TYPE_KEYS
 const TYPE_KEYS = {
-  byte: new Set(["addr","ads_alert","bflow_bat","cmd_input","hs_clamp","enabled","fan_pwm","forced_pwm","fpwm_gate","rect_cal_auto","rect_offset_cal",
-    "i2c_port","i2c_scl","i2c_sda","ignore_calibration_constraints","ina22x_addr","ina22x_alert",
-    "esp32adc1_inl","led_simple","lv_pgood","notch_adaptive","ntc_ch","bflow_en","bflow_sd","pwm_en","pwm_fault_active_high","pwm_fault_pin",
-    "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert","wire_protect",
-    "pv_substrings","scan_trigger"]),
-  long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq","i2c_hs_freq",
-    "balance_hold_s","cv_hold_max_s","holiday_days","i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pasv_port","port","pwm_freq","sprofiler_hz","switch_delay","improv_offline_s","scan_interval","tail_hold_s"]),
-  float: new Set(["L0","balance_delta","balance_interval","bat_c","c_in","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","holiday_charge","holiday_ibat","holiday_band","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_hold_band","cv_float","hv_i_max","hv_max","ibat_max","psu_slew_down","psu_vout","rect_offset_ns",
-     "ina22x_ov","ina22x_resistor","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max",
-     "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","sweep_pace","sweep_verify","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
-    "vin_min","vout_max","vout_max_fallback","vout_offset_max",
-    "wire_dr_min","wire_p_derate","wire_p_trip","wire_p_warn","wire_r_max",
-    "ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
-    "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
-    "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td"]),
-  string: new Set(["adc","ble_security","broker_uri","ca_file","cell_voltages_delta_topic","cell_voltages_max_topic","ftp_pass",
-    "ftp_user","bat_charge_topic","bat_temp_topic","bat_voltage_topic","ibat_lim_topic","ibat_topic","influxdb_host","log_level","mcu","mode","password","psk","psk_id",
-    "pwm_driver_logic","rect_offset_drv","topo","username"]),
+  byte: new Set(["addr","ads_alert","bflow_bat","bflow_en","bflow_sd","channel","cmd_input",
+    "enabled","esp32adc1_inl","fan_pwm","forced_pwm","fpwm_gate","hs_clamp","hw_only","i2c_port",
+    "i2c_scl","i2c_sda","ignore_calibration_constraints","ina22x_addr","ina22x_alert",
+    "led_WS2812","led_simple","lv_pgood","notch_adaptive","ntc_ch","pv_substrings","pwm_en",
+    "pwm_fault_active_high","pwm_fault_pin","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin",
+    "rect_cal_auto","rect_offset_cal","reverse_current_paranoia","scan_trigger","skip_assert",
+    "wire_protect"]),
+  long: new Set(["adc_fake_freq","adv_ms","balance_hold_s","binary","ble","ble_passkey",
+    "cv_hold_max_s","esp32adc1_avg","esp32adc1_sr","fpwm_gate_hold","holiday_days","i2c_freq",
+    "i2c_hs_freq","i2c_scl","idle_adv_ms","idle_cpu_mhz","idle_interval_ms","improv_offline_s",
+    "ina22x_conv_time_us","pasv_port","port","pwm_freq","scan_interval","sprofiler_hz",
+    "switch_delay","tail_hold_s"]),
+  float: new Set(["L0","balance_delta","balance_interval","bat_c","bat_temp_derate",
+    "bat_temp_max","bat_temp_min","boot_refresh_ns","bw","c_in","ctrl_iin_kd","ctrl_iin_kp",
+    "ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td","ctrl_power_kd","ctrl_power_kp",
+    "ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td","ctrl_vout_kd","ctrl_vout_kp",
+    "ctrl_vout_td","cv_ceiling","cv_eoc","cv_float","cv_hold_band","despike","fpwm_gate_margin",
+    "full_charge_interval","holiday_band","holiday_charge","holiday_ibat","hv_i_max","hv_max",
+    "ibat_max","ina22x_ov","ina22x_resistor","iout_short","ki","kp","lv_i_max","lv_max",
+    "lv_pgood_v","notch_freq","notch_q","p_max","partial_charge","phase_us","psu_slew_down",
+    "psu_vout","pv_iout_span","pv_isc","pv_k","pv_slew","pv_voc","pwm_deadtime_hl_ns",
+    "pwm_deadtime_lh_ns","pwm_deadtime_ns","recharge_dod","recharge_vfloor_band",
+    "rect_offset_ns","sweep_pace","sweep_speed","sweep_verify","sync_phase_deg","sync_phase_ns",
+    "tail_c_rate","target_duty_cycle","temp_derate","temp_max","vin_min","vout_max",
+    "vout_max_fallback","vout_offset_max","wire_dr_min","wire_p_derate","wire_p_trip",
+    "wire_p_warn","wire_r_max"]),
+  string: new Set(["adc","bat_charge_topic","bat_temp_topic","bat_voltage_topic","ble_security",
+    "broker_uri","bssid","ca_file","cell_voltages_delta_topic","cell_voltages_max_topic",
+    "ftp_pass","ftp_user","ibat_lim_topic","ibat_topic","influxdb_host","log_level","mcu","mode",
+    "password","psk","psk_id","pwm_driver_logic","rect_offset_drv","sync_role","topo","username"]),
 };
 // SCRAPER:END TYPE_KEYS
 const CHAN_SUFFIX_TYPE = { adc:"string", ch:"byte", rh:"float", rl:"float", factor:"float", midpoint:"float", filt_len:"long", gain:"float", offset:"float" };
@@ -995,49 +1013,71 @@ const CHAN_SUFFIX_TYPE = { adc:"string", ch:"byte", rh:"float", rl:"float", fact
 // SCRAPER:BEGIN DEFAULTS
 const DEFAULTS = {
   // board.conf
-  "adc_fake_freq":"3000","fan_pwm":"255","i2c_freq":"100000","i2c_hs_freq":"0","i2c_port":"0","i2c_sda":"255","idle_cpu_mhz":"80",
-  "ina22x_addr":"0x40","ina22x_alert":"255","led_simple":"255","lv_pgood":"255","lv_pgood_v":"10.5",
-  "mcu":"\"\"","ntc_ch":"255","bflow_en":"0","bflow_sd":"0","pwm_fault_active_high":"0","bflow_bat":"0","hs_clamp":"0",
-  "pwm_fault_pin":"255","pwm_sd":"255","skip_assert":"0",
+  "adc_fake_freq":"3000","bflow_bat":"0","bflow_en":"0","bflow_sd":"0",
+  "boot_refresh_ns":"2000.0","fan_pwm":"255","hs_clamp":"0","i2c_freq":"100000",
+  "i2c_hs_freq":"0","i2c_port":"0","i2c_sda":"255","idle_cpu_mhz":"80","ina22x_addr":"0x40",
+  "ina22x_alert":"255","led_WS2812":"255","led_simple":"255","lv_pgood":"255",
+  "lv_pgood_v":"10.5","mcu":"\"\"","pwm_deadtime_ns":"0.0","pwm_fault_active_high":"0",
+  "pwm_fault_pin":"255","pwm_sd":"255","pwm_sync_pin":"255","skip_assert":"0",
   // sensor.conf
-  "adc":"\"\"","esp32adc1_inl":"0","ignore_calibration_constraints":"0","ina22x_conv_time_us":"1100","ina22x_ov":"0",
+  "adc":"\"\"","despike":"0.0","esp32adc1_inl":"0","ignore_calibration_constraints":"0",
+  "ina22x_conv_time_us":"1100","ina22x_ov":"0","notch_adaptive":"1","notch_freq":"100.0",
+  "notch_q":"20.0","ntc_ch":"255",
   // limits.conf
-  "reverse_current_paranoia":"1","temp_max":"90.0",
-  "wire_protect":"1","wire_p_warn":"2","wire_p_derate":"4","wire_p_trip":"8","wire_dr_min":"4","wire_r_max":"0",
+  "reverse_current_paranoia":"1","temp_max":"90.0","wire_dr_min":"4.0","wire_p_derate":"4.0",
+  "wire_p_trip":"8.0","wire_p_warn":"2.0","wire_protect":"1","wire_r_max":"0.0",
   // coil.conf
-  "rect_offset_ns":"0","rect_cal_auto":"1","rect_offset_cal":"1",
+  "rect_cal_auto":"1","rect_offset_cal":"1","rect_offset_drv":"\"\"","rect_offset_ns":"0.0",
   // converter.conf
-  "c_in":"1e-3","forced_pwm":"0","fpwm_gate":"1","fpwm_gate_hold":"192","fpwm_gate_margin":"0.01","mode":"\"mppt\"","psu_slew_down":"2","sync_phase_deg":"0","sync_phase_ns":"0","sync_role":"\"none\"","topo":"\"buck\"",
-  "ctrl_vin_kp":"-100","ctrl_vin_kd":"-200","ctrl_vout_kp":"1500","ctrl_vout_kd":"12000",
-  "ctrl_iin_kp":"100","ctrl_iin_kd":"200","ctrl_iout_kp":"200","ctrl_iout_kd":"400",
-  "ctrl_power_kp":"20","ctrl_power_kd":"5",
+  "c_in":"0.001","ctrl_iin_kd":"200","ctrl_iin_kp":"100","ctrl_iout_kd":"400",
+  "ctrl_iout_kp":"200","ctrl_power_kd":"5","ctrl_power_kp":"20","ctrl_vin_kd":"-200",
+  "ctrl_vin_kp":"-100","ctrl_vout_kd":"12000","ctrl_vout_kp":"1500","forced_pwm":"0",
+  "fpwm_gate":"1","fpwm_gate_hold":"192","fpwm_gate_margin":"0.01","mode":"\"\"",
+  "psu_slew_down":"2.0","psu_vout":"0.0","pv_iout_span":"16.0","pv_isc":"0.0","pv_k":"0.8",
+  "pv_slew":"200.0","pv_voc":"0.0","sync_phase_deg":"0.0","sync_phase_ns":"0.0",
+  "sync_role":"\"none\"","topo":"\"buck\"",
   // charger.conf
-  "cv_eoc":"3.5","cv_float":"3.325","recharge_dod":"0.2","recharge_vfloor_band":"0.05","tail_c_rate":"0.05","vout_offset_max":"0.6","cv_hold_max_s":"0","tail_hold_s":"180","cv_hold_band":"0.02",
-  "partial_charge":"0","full_charge_interval":"7","holiday_charge":"0","holiday_band":"0.1","holiday_days":"3","balance_interval":"0","balance_hold_s":"7200","balance_delta":"0.01","bat_temp_min":"0","bat_temp_derate":"45","bat_temp_max":"55",
+  "balance_delta":"0.01","balance_hold_s":"7200","balance_interval":"0.0",
+  "bat_temp_derate":"45.0","bat_temp_max":"55.0","bat_temp_min":"0.0","cv_eoc":"3.5",
+  "cv_float":"3.325","cv_hold_band":"0.02","cv_hold_max_s":"0","full_charge_interval":"7.0",
+  "holiday_band":"0.1","holiday_charge":"0.0","holiday_days":"3","ibat_max":"20.0",
+  "partial_charge":"0.0","recharge_dod":"0.2","recharge_vfloor_band":"0.05","tail_c_rate":"0.05",
+  "tail_hold_s":"180","vout_offset_max":"0.6",
   // tracker.conf
-  "sweep_speed":"4.0","sweep_pace":"4.0","sweep_verify":"0.1","target_duty_cycle":"0.0","pv_substrings":"0","scan_interval":"300","scan_trigger":"1",
+  "pv_substrings":"0","scan_interval":"300","scan_trigger":"1","sweep_pace":"4.0",
+  "sweep_speed":"4.0","sweep_verify":"0.1",
   // mqtt.conf
-  "bat_charge_topic":"\"\"","bat_voltage_topic":"\"\"","broker_uri":"\"\"","cell_voltages_delta_topic":"\"\"","cell_voltages_max_topic":"\"\"","cmd_input":"0","enabled":"1",
-  "ibat_lim_topic":"\"\"","ibat_topic":"\"\"","log_level":"\"info\"","password":"\"\"",
-  "username":"\"\"",
+  "bat_charge_topic":"\"\"","bat_temp_topic":"\"\"","bat_voltage_topic":"\"\"",
+  "broker_uri":"\"\"","ca_file":"\"\"","cell_voltages_delta_topic":"\"\"",
+  "cell_voltages_max_topic":"\"\"","cmd_input":"0","ibat_lim_topic":"\"\"","ibat_topic":"\"\"",
+  "log_level":"\"info\"","password":"\"\"","username":"\"\"",
   // tele.conf
-  "influxdb_host":"\"\"","ble":"1",
+  "adv_ms":"500","binary":"0","ble":"1","idle_interval_ms":"900000","influxdb_host":"\"\"",
+  // ftp.conf
+  "pasv_port":"50009",
+  // tlscon.conf
+  "psk":"\"\"","psk_id":"\"\"",
+  // bsync.conf
+  "bssid":"\"\"","bw":"1.0","channel":"1","hw_only":"0","ki":"2.5e-07","kp":"5e-06",
+  "phase_us":"0.0",
   // lcd.conf
   "addr":"0",
   // ble.conf
-  "ble_passkey":"0","ble_security":"\"justworks\"",
+  "ble_passkey":"0","ble_security":"\"justworks\"","idle_adv_ms":"1000",
   // pprof.conf
   "sprofiler_hz":"0",
   // wifi.conf
-  "switch_delay":"30","improv_offline_s":"600",
-  // http.conf
-  "port":"80",
-  "pasv_port":"50009",
+  "improv_offline_s":"600","switch_delay":"30",
 };
 // SCRAPER:END DEFAULTS
 const CHAN_SUFFIX_DEFAULT = { ch:"255", factor:"1.0", midpoint:"0.0", filt_len:"10", gain:"1.0", offset:"0.0" };
 
+// defaults the flat DEFAULTS table can't hold: per-file values, and a "" read whose effect is a named mode
+const FILE_DEFAULTS = {"http.conf|port":"80", "tlscon.conf|port":"992", "converter.conf|mode":"\"mppt\""};
 function lookupDefault(file, key){
+  const base = file.split("/").pop(), fd = FILE_DEFAULTS[base+"|"+key];
+  if (fd!==undefined) return fd;
+  if (key==="enabled" && SERVICES.includes(base.replace(/\.conf$/,""))) return String(SVC_ON_DEFAULT[base.replace(/\.conf$/,"")]);
   if (key in DEFAULTS) return DEFAULTS[key];
   const m = key.match(CHAN_RE);
   if (m && (m[2] in CHAN_SUFFIX_DEFAULT)) return CHAN_SUFFIX_DEFAULT[m[2]];
@@ -1756,7 +1796,7 @@ function confVal(base, key){
   const f = fileOf(base), l = f && lineOf(f.model, key);
   return f ? (l ? l.value : f.extras[key]||"").trim() : "";
 }
-const effVal = (base, key) => confVal(base, key) || String(DEFAULTS[key]||"").replace(/^"(.*)"$/, "$1");
+const effVal = (base, key) => confVal(base, key) || String(lookupDefault(base, key)??"").replace(/^"(.*)"$/, "$1");
 const condHolds = (c, base) => { const v = effVal(c.file||base, c.key); return c.is ? c.is.includes(v) : v!=="" && !c.not.includes(v); };
 const condText = c => (c.file ? c.file+" " : "") + c.key + (c.is ? "="+c.is.join("|") : " set");
 

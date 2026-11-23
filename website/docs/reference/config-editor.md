@@ -366,9 +366,13 @@ under [Configuration files](config/index.md) together.
 tables:
 
 ```bash
-python3 etc/config-tool/scrape_conf_keys.py          # drift report
-python3 etc/config-tool/scrape_conf_keys.py --check  # non-zero exit on drift (CI)
+python3 etc/config-tool/scrape_conf_keys.py            # drift report
+python3 etc/config-tool/scrape_conf_keys.py --write    # rewrite FILE_KEYS, TYPE_KEYS, DEFAULTS
+python3 etc/config-tool/scrape_conf_keys.py --check    # exit 1 on drift, 2 on a getter it cannot resolve (CI)
 ```
+
+It resolves every getter to its `.conf` file from the code and fails on any it cannot, so a key is never silently
+missing from the tables. `--check` also fails on a `META` description for a key no getter reads.
 
 [`etc/config-tool/spec.md`](https://github.com/fl4p/fugu-mppt-firmware/blob/main/etc/config-tool/spec.md) specifies
 the full behaviour.

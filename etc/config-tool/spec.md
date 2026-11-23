@@ -657,20 +657,29 @@ for every `ConfFile::get*(key, default)` call and rewrites the three
 auto-managed blocks in `conf-editor.html`. They are delimited by
 `// SCRAPER:BEGIN <NAME>` / `// SCRAPER:END <NAME>` comments around
 `FILE_KEYS`, `TYPE_KEYS` and `DEFAULTS`. The hand-curated `META`,
-`FILE_META`, `CHAN_*` tables and prose descriptions are *not* touched. The
-script also reports keys read by firmware that have no `META[]`
-description (so you know what to write) and `META[]` entries that point at
-keys no longer seen in firmware (likely stale). Usage:
+`FILE_META`, `CHAN_*` tables and prose descriptions are *not* touched.
+
+Each getter's receiver is resolved to its `.conf` file from the code: the path
+of its `ConfFile{...}` / `loadConfSafe(...)` declaration or temporary, a
+service's own conf for `_confPath`, or what the callers pass for a
+`const ConfFile &` parameter; a key held in a helper parameter is followed to
+the callers' literals. Anything left unresolved is an error (exit 2), never
+skipped. The report also lists keys read by firmware without a `META[]`
+description, and `META[]` entries no getter reads (stale; `--check` fails on
+them unless listed in the script's `META_ONLY_OK`). Usage:
 
 ```
-python3 etc/config-tool/scrape_conf_keys.py            # drift report
-python3 etc/config-tool/scrape_conf_keys.py --write    # apply
-python3 etc/config-tool/scrape_conf_keys.py --check    # CI gate
+python3 etc/config-tool/scrape_conf_keys.py               # drift report
+python3 etc/config-tool/scrape_conf_keys.py --write       # apply
+python3 etc/config-tool/scrape_conf_keys.py --check       # CI gate: exit 1 on drift, 2 on unresolved getters
+python3 etc/config-tool/scrape_conf_keys.py --resolved    # which conf file each receiver resolved to
+python3 etc/config-tool/scrape_conf_keys.py --html PATH   # another copy of the editor
 ```
 
-Keys the literal-string scraper cannot reach (runtime key vars like
-`boardConf.getByte(pnCtrl)`, or inline `ConfFile{path}.getByte(...)`
-temporaries) are hand-listed inside the script's `EXTRA_KEYS` table.
+`DEFAULTS` is flat (one value per key). A key whose default differs between
+files (`port`: http 80, tlscon 992) is left out with a warning; such defaults,
+the services' `enabled` defaults (`SVC_ON_DEFAULT`) and `mode` (read as `""`,
+which runs MPPT) come from the hand-kept `FILE_DEFAULTS` in `lookupDefault()`.
 
 ---
 
