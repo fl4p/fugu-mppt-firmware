@@ -431,6 +431,7 @@ const META = {
   // ftp.conf (nvs takes precedence; conf is the fallback)
   ftp_user:{unit:"",desc:"FTP username for config access over LAN",type:"string"},
   ftp_pass:{unit:"",desc:"FTP password for config access over LAN",type:"string"},
+  pasv_port:{unit:"",desc:"FTP passive data port of session 1 (session 2: +1)",type:"int"},
 
   // http.conf (CONFIG_FUGU_WITH_HTTP_CONF; credentials from ftp)
   port:{unit:"",desc:"TCP port of the HTTP config-file endpoint",type:"int"},
@@ -556,7 +557,7 @@ const FILE_KEYS = {
   "mqtt.conf":["bat_charge_topic","bat_temp_topic","bat_voltage_topic","broker_uri","cell_voltages_max_topic","cmd_input","enabled","ibat_lim_topic",
     "ibat_topic","log_level","password","username"],
   "tele.conf":["adv_ms","binary","ble","enabled","idle_interval_ms","influxdb_host","log_level"],
-  "ftp.conf":["enabled","ftp_pass","ftp_user","log_level"],
+  "ftp.conf":["enabled","ftp_pass","ftp_user","log_level","pasv_port"],
   "http.conf":["enabled","log_level","port"],
   "telnet.conf":["enabled","log_level"],
   "scope.conf":["enabled","log_level"],
@@ -578,7 +579,7 @@ const TYPE_KEYS = {
     "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert","wire_protect",
     "pv_substrings","scan_trigger"]),
   long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq","i2c_hs_freq",
-    "cv_hold_max_s","holiday_days","i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","port","pwm_freq","sprofiler_hz","switch_delay","improv_offline_s","scan_interval","tail_hold_s"]),
+    "cv_hold_max_s","holiday_days","i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pasv_port","port","pwm_freq","sprofiler_hz","switch_delay","improv_offline_s","scan_interval","tail_hold_s"]),
   float: new Set(["L0","bat_c","c_in","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","holiday_charge","holiday_ibat","holiday_band","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_hold_band","cv_float","hv_i_max","hv_max","ibat_max","psu_vout","rect_offset_ns",
      "ina22x_resistor","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max",
      "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","sweep_pace","sweep_verify","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
@@ -637,6 +638,7 @@ const DEFAULTS = {
   "switch_delay":"30","improv_offline_s":"600",
   // http.conf
   "port":"80",
+  "pasv_port":"50009",
 };
 // SCRAPER:END DEFAULTS
 const CHAN_SUFFIX_DEFAULT = { ch:"255", factor:"1.0", midpoint:"0.0", filt_len:"10", gain:"1.0", offset:"0.0" };

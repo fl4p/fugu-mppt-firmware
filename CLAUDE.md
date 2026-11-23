@@ -380,12 +380,16 @@ before anything else, and tell Fab what you find:
 
 When connected to the 192.168.1.x network, these devices might be behind a NAT router:
 
-| IP          | telnet reachable via |
-|-------------|----------------------|
-| 192.168.4.2 | 192.168.1.231:232    |
-| 192.168.4.3 | 192.168.1.231:233    |
-| 192.168.4.4 | 192.168.1.231:234    |
-| 192.168.4.5 | 192.168.1.231:235    |
+| IP          | telnet reachable via | FTP reachable via                    |
+|-------------|----------------------|--------------------------------------|
+| 192.168.4.2 | 192.168.1.231:232    |                                      |
+| 192.168.4.3 | 192.168.1.231:233    |                                      |
+| 192.168.4.4 | 192.168.1.231:234    | 192.168.1.231:2144, PASV 50009-50010 |
+| 192.168.4.5 | 192.168.1.231:235    |                                      |
+
+The NAT router is nimble-ble-proxy: forwards via `POST /portmap` (header `X-Nat-Confirm: yes`), list in `GET /nat`.
+fry (.4.2) and flat (.4.4) have static leases. PASV ports pass through unchanged (the server announces its own port);
+FTP clients must ignore the 192.168.4.x address in the PASV reply (curl `--ftp-skip-pasv-ip`; ftplib and FileZilla do).
 
 IP addresses can change (not static), so always confirm the hostname in the telnet banner.
 Check etc/nat.env for up-to-date addresses (gitignored: a worktree has none, so `fugu_console.py` discovery skips NAT

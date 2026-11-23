@@ -22,5 +22,6 @@ The file accepts the following keys:
 |-------------|------|--------|---------|--------------------------------------|
 | `ftp_user`  |      | string | `user` (if either credential is unset) | FTP username |
 | `ftp_pass`  |      | string | chip ID (if either is unset) | FTP password |
+| `pasv_port` |      | int    | 50009   | Passive data port of the first session; the second uses `pasv_port`+1. Out of range (below 1024) falls back to 50009 |
 | `enabled`   |      | bool   | 1       | Start this service at boot           |
 | `log_level` |      | enum   | info    | Verbosity: `error`, `warn` or `info` |

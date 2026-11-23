@@ -68,6 +68,7 @@ FILE_VAR_OVERRIDES = {
     'src/adc/temperature.h':     {'boardConf': None},          # stale ntc_ch guard
     'src/tele/http_conf_service.cpp': {'c': 'http.conf'},
     'src/tele/conf_creds.h':     {'c': 'ftp.conf'},
+    'src/tele/ftp_service.cpp':  {'c': 'ftp.conf'},
 }
 
 # Service base class reads these two keys from EVERY service's own conf file.
