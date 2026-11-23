@@ -49,10 +49,8 @@ void enqueue_task(std::function<void(void)> &&fn);
 typedef void (*RtDeferredFn)(void *ctx, float a, float b);
 bool rt_defer(RtDeferredFn fn, void *ctx, float a = 0, float b = 0);
 
-#if WITH_TELNET
 class ESPTelnet;
 void set_logging_telnet(ESPTelnet *telnet);
-#endif
 
 
 // Log sinks: multiple callbacks may be registered concurrently (e.g. MQTT + BLE console). Each

@@ -94,7 +94,7 @@ void enqueue_task(std::function<void(void)> &&) {} // LCD messages, meter commit
 bool rt_defer(RtDeferredFn, void *, float, float) { return true; } // same: core-0 work is not simulated
 void addLogCallback(LogCallback, bool) {}
 void removeLogCallback(LogCallback) {}
-void set_logging_telnet(ESPTelnet *) {}
+esp_err_t esp_intr_dump(FILE *) { return 0; }
 
 volatile bool rtcount_en = false;
 void rtcount(const char *) {}

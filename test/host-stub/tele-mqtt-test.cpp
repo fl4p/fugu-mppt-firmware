@@ -22,6 +22,7 @@ public:
     friend String operator+(const String &a, const char *b) { return a.s + b; }
 };
 bool handleCommand(const String &) { return true; }
+void consoleDispatchAsync(const char *, size_t) {}
 void logCmdResult(bool, const char *, int64_t) {}
 const std::string &getHostname(bool) { static std::string h{"test"}; return h; }
 

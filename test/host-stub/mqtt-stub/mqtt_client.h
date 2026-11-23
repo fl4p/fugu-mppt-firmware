@@ -52,6 +52,7 @@ struct esp_mqtt_client_config_t {
     struct { struct { const char *uri; } address; } broker;
     struct { const char *username; struct { const char *password; } authentication; } credentials;
     struct { int stack_size; } task;
+    struct { struct { const char *topic; const char *msg; int qos; int retain; } last_will; } session;
 };
 
 esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t *);
