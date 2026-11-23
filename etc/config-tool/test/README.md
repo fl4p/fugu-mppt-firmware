@@ -31,6 +31,7 @@ Files map roughly to spec sections (`../spec.md`):
 | `load.test.js`       | §1 (loading clears state), §1.1 (upload overlays a device read), §2.1 (synthetic tabs, tab order) |
 | `edit.test.js`       | §2.2 (rows, "was: …" incl. "(not set)", clear button), §2.1 (dirty dot) |
 | `console.test.js`    | §7 (device-log panel, ANSI rendering, tail-follow, command input) |
+| `services.test.js`  | §2.14 (services sheet: `svc list` parsing, commands, gating, own-link confirm) |
 | `transports.test.js` | §5 (`sendCommand`, `getConfig`, `importFromDevice` retry-on-timeout), §5.3 (MQTT scan modal + topics) |
 | `teledec_{tamp,payload,framing}.test.js` | `../teledec.js` (binary telemetry decoder, no jsdom) against `fixtures/tele_fixtures.json`; regenerate with `/path/to/repo/.venv/bin/python3 test/gen_tele_fixtures.py` (tamp 2.3.0, expected lines from `etc/fugu/teledec.py`) |
 | `sweepcurve.test.js` | `../teledec.js` `sc:` sweep-curve lines (`parseScLine`, `SweepCurveParser`) |

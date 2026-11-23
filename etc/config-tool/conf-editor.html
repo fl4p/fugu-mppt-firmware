@@ -309,6 +309,38 @@
   #uploadlog-input input:focus { outline:none; border-color:var(--line-2); background:var(--bg); }
   #uploadlog-input input:disabled { opacity:.6; }
 
+  /* services sheet */
+  #open-services[aria-expanded="true"] { background:var(--field); }
+  .svc { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 16px; align-items:center; padding:12px 0; border-bottom:1px solid var(--line); }
+  .svc:last-child { border-bottom:0; }
+  .svc-id { min-width:0; display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 12px; }
+  .svc-name { font:600 13.5px var(--mono); color:var(--fg); }
+  .svc-state { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--faint); }
+  .svc-state::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--line-2); flex:none; align-self:center; }
+  .svc-state.running { color:var(--fg-2); }
+  .svc-state.running::before { background:var(--icon); }
+  .svc-state.failed { color:var(--accent); }
+  .svc-state.failed::before { background:var(--accent); }
+  .svc-detail { flex-basis:100%; font-size:12.5px; color:var(--muted); overflow-wrap:anywhere; }
+  .svc-detail:empty { display:none; }
+  .svc-ctl { display:flex; align-items:center; gap:8px; }
+  .svc-ctl select { font:12.5px var(--mono); color:var(--fg); background:var(--field) var(--chev) no-repeat right 9px center;
+    border:1px solid transparent; border-radius:7px; padding:5px 26px 5px 9px; appearance:none; -webkit-appearance:none; }
+  .svc-ctl select:hover { background-color:var(--field-hi); }
+  .svc-ctl select:disabled { opacity:.4; }
+  .svc-ctl .rs { border-color:var(--line-2); padding:5px 10px; }
+  .svc-ctl .switch { height:28px; gap:7px; }
+  .svc-ctl .switch .sw-txt { width:2.2em; }
+  .svc-ctl .switch:has(input:disabled) { opacity:.4; cursor:not-allowed; }
+  #svc-msg:empty { display:none; }
+  #svc-sub.busy { color:var(--fg-2); }
+  @media (max-width:760px) {
+    .svc { grid-template-columns:1fr; }
+  }
+  @media (max-width:520px) {
+    #open-services .lbl { display:none; }
+  }
+
   /* MQTT modal */
   .modal-bg { position:fixed; inset:0; background:var(--scrim); display:none; z-index:100;
     align-items:flex-start; justify-content:center; padding:12vh 16px 40px; overflow:auto; }
@@ -395,6 +427,7 @@
       </div>
     </details>
     <button id="open-console" type="button" aria-pressed="false" aria-controls="console"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4M12 17h7"/></svg>Console</button>
+    <button id="open-services" type="button" aria-label="Services" aria-haspopup="dialog" aria-expanded="false" aria-controls="services" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="7" rx="1.6"/><rect x="3.5" y="13" width="17" height="7" rx="1.6"/><path d="M7.5 7.5h.01M7.5 16.5h.01M11 7.5h6M11 16.5h6"/></svg><span class="lbl">Services</span></button>
     <button id="review-btn" class="primary none" type="button" aria-controls="review"><span class="lbl">Review changes</span><span class="count" id="review-count">0</span></button>
   </div>
 </header>
@@ -482,6 +515,21 @@
     <input id="uploadlog-cmd" type="text" placeholder="type a console command and press Enter" aria-label="Console command">
     <button type="submit">Send</button>
   </form>
+</aside>
+
+<div id="svc-scrim" class="scrim"></div>
+<aside id="services" class="sheet" role="dialog" aria-modal="true" aria-labelledby="svc-title">
+  <div class="sheet-head">
+    <h2 id="svc-title">Services</h2>
+    <span id="svc-sub" class="sub"></span>
+    <button id="svc-refresh" class="xbtn" type="button" aria-label="Refresh" title="Refresh (svc list)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4.5h-4.5"/></svg></button>
+    <button id="svc-close" class="xbtn" type="button" aria-label="Close" title="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div id="svc-body" class="sheet-body"></div>
+  <div class="sheet-foot">
+    <p id="svc-msg" class="note" role="status"></p>
+    <p class="note">On/off and the log level are saved in the service's <code>.conf</code> file on the device and take effect at once. Restart stops and starts a service without changing its setting.</p>
+  </div>
 </aside>
 
 <div id="mqtt-modal" class="modal-bg">
@@ -2717,6 +2765,7 @@ function refreshConn(){
   c.textContent = connecting ? "Connecting …"
     : t ? (activeWrite ? "Connected to " : "Disconnected from ") + targetName(t)
     : activeWrite ? "Connected" : "Not connected";
+  svcGate();
   if (document.getElementById("review").classList.contains("open")) renderReview();
   renderApply();
 }
@@ -2799,6 +2848,222 @@ document.getElementById("uploadlog-input").addEventListener("submit", e=>{
   const v=i.value; i.value="";
   consoleSend(v);
 });
+
+/* ----------------------------------------------------------------------------
+   Services sheet: `svc list` and `svc on|off|restart|log <name>` on the push
+   target, only while its link is open.
+---------------------------------------------------------------------------- */
+const SVC_T = { cmd:4000, own:2500, retry:1500, tries:4 };   // ms; own = reply wait when the command cuts our link
+function svcTimings(){ return SVC_T; }
+let svcRows=null, svcLink=null, svcBusy=null;
+const SVC_HDR = /\bNAME\s+STATE\s+LOG\s+ENABLED\s+DETAIL\b/;
+const SVC_ROW = /^(?:.*?\s)?([\w.-]+)\s+(Running|Stopped|Failed)\s+(error|warn|info)\s+(yes|no)(?:\s+(.*?))?\s*$/;
+const stripAnsi = s => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+
+// Rows of a `svc list` reply, or null when its header line is missing.
+function parseSvcList(lines){
+  let rows=null;
+  for (const raw of lines){
+    const ln=stripAnsi(raw);
+    if (SVC_HDR.test(ln)){ rows=[]; continue; }
+    const m = rows && ln.match(SVC_ROW);
+    if (!m) continue;
+    const r={ name:m[1], state:m[2], log:m[3], enabled:m[4]==="yes", detail:m[5]||"" };
+    const i=rows.findIndex(x=>x.name===r.name);
+    if (i>=0) rows[i]=r; else rows.push(r);
+  }
+  return rows;
+}
+
+// The push target while its link is open, else null.
+function svcTarget(){
+  const t=pushTarget();
+  if (!t || !activeWrite) return null;
+  const live = t.transport==="serial" ? activeWrite===serialWrite && serialPort===t.handle
+             : t.transport==="ble"    ? activeWrite===bleWrite && bleDevice===t.handle
+             : activeWrite===mqttWrite && !!mqttClient && mqttDeviceHost===t.handle.device;
+  return live ? t : null;
+}
+const svcOwnLink = (name, t) => name===(t.transport==="mqtt" ? "mqtt" : t.transport==="ble" ? "ble" : null);
+const svcOpenNow = () => document.getElementById("services").classList.contains("open");
+const svcSleep = ms => new Promise(r=>setTimeout(r, ms));
+
+function svcGate(){
+  const t=svcTarget(), b=document.getElementById("open-services");
+  b.disabled = !t;
+  b.title = t ? "Services on "+targetName(t) : "Connect to the device the config was read from";
+  if (svcOpenNow()) svcRender();
+}
+
+function svcSetMsg(text, isErr){
+  const m=document.getElementById("svc-msg");
+  m.textContent=text||""; m.classList.toggle("err", !!isErr);
+}
+
+function svcRender(){
+  const t=svcTarget(), body=document.getElementById("svc-body"), sub=document.getElementById("svc-sub");
+  sub.classList.toggle("busy", !!svcBusy);
+  sub.textContent = svcBusy ? svcBusy+" …" : t ? targetName(t) : "not connected";
+  document.getElementById("svc-refresh").disabled = !t || !!svcBusy;
+  body.replaceChildren();
+  const empty = (head, text) => {
+    const e=document.createElement("div"); e.className="review-empty";
+    const s=document.createElement("strong"); s.textContent=head; e.append(s, text); body.appendChild(e);
+  };
+  if (!t) return empty("Not connected", "Services are managed on the device the config was read from, while its link is open. Read the device again (Open) to manage them.");
+  if (svcLink!==t || !svcRows) return svcBusy ? undefined : empty("No list yet", "Refresh to read the services from the device.");
+  if (!svcRows.length) return empty("No services", "The firmware lists no services.");
+  for (const r of svcRows){
+    const row=document.createElement("div"); row.className="svc"; row.dataset.svc=r.name;
+    const id=document.createElement("div"); id.className="svc-id";
+    const n=document.createElement("span"); n.className="svc-name"; n.textContent=r.name;
+    const st=document.createElement("span"); st.className="svc-state "+r.state.toLowerCase(); st.textContent=r.state;
+    const d=document.createElement("span"); d.className="svc-detail"; d.textContent=r.detail;
+    id.append(n, st, d);
+    const ctl=document.createElement("div"); ctl.className="svc-ctl";
+    const lg=document.createElement("select"); lg.className="svc-log"; lg.disabled=!!svcBusy;
+    lg.setAttribute("aria-label", r.name+" log level"); lg.title="Log level, saved and applied now (svc log)";
+    for (const v of ["error","warn","info"]){ const o=document.createElement("option"); o.value=o.textContent=v; lg.appendChild(o); }
+    lg.value=r.log;
+    lg.onchange=()=>svcAction(r.name, "log", lg.value);
+    const rs=document.createElement("button"); rs.type="button"; rs.className="rs"; rs.textContent="Restart";
+    rs.disabled = !!svcBusy || !r.enabled;
+    rs.title = r.enabled ? `Stop and start ${r.name} now (svc restart)` : `${r.name} is off; turn it on to start it`;
+    rs.onclick=()=>svcAction(r.name, "restart");
+    const sw=document.createElement("label"); sw.className="switch";
+    sw.title="Enabled: saved on the device and applied now (svc on/off)";
+    const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=r.enabled; cb.disabled=!!svcBusy;
+    cb.setAttribute("aria-label", r.name+" enabled");
+    cb.onchange=()=>svcAction(r.name, cb.checked ? "on" : "off");
+    const tr=document.createElement("span"); tr.className="track";
+    const tx=document.createElement("span"); tx.className="sw-txt"; tx.textContent=r.enabled ? "on" : "off";
+    sw.append(cb, tr, tx);
+    ctl.append(lg, rs, sw);
+    row.append(id, ctl);
+    body.appendChild(row);
+  }
+}
+
+// `svc list`; true when a list came back. quiet: no error message on failure.
+async function svcRefresh(quiet){
+  const t=svcTarget();
+  if (!t){ svcRender(); return false; }
+  const prev=svcBusy; svcBusy=prev||"svc list"; svcRender();
+  const lines=[]; let ok;
+  try { ok = await sendCommand("svc list", ln=>lines.push(ln), SVC_T.cmd); } catch(_){ ok=null; }
+  svcBusy=prev;
+  const rows = ok ? parseSvcList(lines) : null;
+  if (rows){ svcRows=rows; svcLink=t; }
+  else if (!quiet) svcSetMsg(ok===false ? "The device rejected “svc list” (firmware without services?)"
+                           : ok ? "Incomplete reply to “svc list”; refresh to try again"
+                           : `No reply to “svc list” within ${SVC_T.cmd/1000} s`, true);
+  svcRender();
+  return !!rows;
+}
+
+// Mirror a saved service setting into the loaded <name>.conf, unless that field has a pending edit.
+function svcSyncConf(name, key, val){
+  const path = state && state.confPaths.find(p=>p.split("/").pop()===name+".conf");
+  if (!path) return;
+  const f=state.files[path], l=lineOf(f.model, key), orig=f.original[key];
+  const cur = l ? l.value : (f.extras[key]||"");
+  const pending = orig===undefined ? cur.trim()!=="" : cur!==orig;
+  f.original[key]=val;
+  if (!pending){ if (l) setConfValue(f.model, key, val); else f.extras[key]=val; }
+  if (state.active===path) renderPane();
+  refreshDirtyMarks();
+}
+
+async function svcAction(name, sub, arg){
+  const t=svcTarget();
+  if (!t || svcBusy){ svcRender(); return; }
+  const cmd = `svc ${sub} ${name}`+(arg ? " "+arg : "");
+  const own = (sub==="off" || sub==="restart") && svcOwnLink(name, t);
+  const dev=state.deviceName, via=TRANSPORT_NAME[t.transport];
+  const why=[];
+  if (own && sub==="off"){
+    const others=Object.keys(TRANSPORT_NAME).filter(k=>k!==t.transport).map(k=>TRANSPORT_NAME[k]).join(" or ");
+    why.push(`This editor is connected to ${dev} over ${via}. Stopping ${name} drops that link; turning ${name} back on then needs another link (${others}).`);
+  }
+  if (own && sub==="restart")
+    why.push(`This editor is connected to ${dev} over ${via}. The link drops while ${name} restarts; the editor then waits for the device to answer again.`);
+  if (sub==="off" && name==="mqtt")
+    why.push("A charger that gets its BMS data over MQTT loses it and falls back to its stale-cell voltage cap.");
+  if (why.length){
+    if (sub==="off") why.push(`The setting is saved, so ${name} also stays off after a reboot.`);
+    if (!window.confirm(`${sub==="off" ? "Stop" : "Restart"} ${name} on ${dev}?\n\n`+why.join("\n\n"))){ svcRender(); return; }
+  }
+  svcBusy=cmd; svcSetMsg(""); svcRender();
+  const lines=[]; let ok;
+  try { ok = await sendCommand(cmd, ln=>lines.push(stripAnsi(ln)), own ? SVC_T.own : SVC_T.cmd); } catch(_){ ok=null; }
+  if (own && ok!==false){ await svcAfterOwnLink(name, sub, t); svcBusy=null; svcRender(); return; }
+  svcBusy=null;
+  if (ok===true){
+    if (sub==="on" || sub==="off") svcSyncConf(name, "enabled", sub==="on" ? "1" : "0");
+    else if (sub==="log") svcSyncConf(name, "log_level", arg);
+    const sf=lines.find(l=>/\bstart failed\b/.test(l));
+    if (sf) svcSetMsg(`${name} did not start: ${sf.replace(/^.*?\bstart failed\s*/,"").replace(/^\(|\)$/g,"") || "start failed"}`, true);
+  } else if (ok===false){
+    const r=[...lines].reverse().find(l=>/\bsvc(?: log)?: /.test(l));
+    svcSetMsg(`The device rejected “${cmd}”`+(r ? ": "+r.replace(/^.*?\bsvc(?: log)?: /,"") : ""), true);
+  } else svcSetMsg(`No reply to “${cmd}” within ${SVC_T.cmd/1000} s`, true);
+  await svcRefresh();
+}
+
+// After stopping/restarting the service our own link runs over: close the link
+// (off), or wait for the device to answer on it again (restart).
+async function svcAfterOwnLink(name, sub, t){
+  const dev=state.deviceName, via=TRANSPORT_NAME[t.transport];
+  const close = async ()=>{ await (t.transport==="mqtt" ? disconnectMqtt() : disconnectBluetooth()); refreshConn(); };
+  if (sub==="off"){
+    await close();
+    svcSetMsg(`${name} stopped; the ${via} link to ${dev} is closed.`, false);
+    return;
+  }
+  svcBusy=`waiting for ${dev}`;
+  if (t.transport==="ble"){ await disconnectBluetooth(); refreshConn(); }
+  for (let i=0; i<SVC_T.tries; i++){
+    await svcSleep(SVC_T.retry);
+    if (pushTarget()!==t) return;               // the user started another connect
+    try { await ensureConnection(t); } catch(_){ continue; }
+    refreshConn();
+    if (await svcRefresh(true)){ svcSetMsg(`${name} restarted; the ${via} link is back.`, false); return; }
+  }
+  if (pushTarget()===t) await close();
+  svcSetMsg(`${name} restarted, but ${dev} did not answer over ${via} again. Read the device again (Open) to reconnect.`, true);
+}
+
+function svcOpen(){
+  if (!svcTarget()) return;
+  svcSetMsg("");
+  document.getElementById("services").classList.add("open");
+  document.getElementById("svc-scrim").classList.add("open");
+  document.getElementById("open-services").setAttribute("aria-expanded","true");
+  document.getElementById("svc-close").focus();
+  svcRender();
+  if (!svcBusy) svcRefresh();
+}
+function svcClose(){
+  const s=document.getElementById("services");
+  if (!s.classList.contains("open")) return;
+  const inside=s.contains(document.activeElement);
+  s.classList.remove("open");
+  document.getElementById("svc-scrim").classList.remove("open");
+  const b=document.getElementById("open-services");
+  b.setAttribute("aria-expanded","false");
+  if (inside) b.focus();
+}
+document.getElementById("open-services").onclick = svcOpen;
+document.getElementById("svc-close").onclick = svcClose;
+document.getElementById("svc-scrim").onclick = svcClose;
+document.getElementById("svc-refresh").onclick = ()=>{ if (!svcBusy){ svcSetMsg(""); svcRefresh(); } };
+document.getElementById("menu-start").addEventListener("click", svcClose);
+// capture phase: handled before the document-level Esc handler of the other sheets
+window.addEventListener("keydown", e=>{
+  if (!svcOpenNow()) return;
+  if (e.key==="Tab") trapTab(e, document.getElementById("services"));
+  else if (e.key==="Escape"){ e.stopPropagation(); svcClose(); }
+}, true);
 
 document.getElementById("upload").onclick = ()=>uploadChanged({reviewed:true});
 document.getElementById("review-btn").onclick = openReview;

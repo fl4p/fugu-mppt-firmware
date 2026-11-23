@@ -135,7 +135,8 @@ Sticky, 56 px. After a load it shows, left to right:
   push target. Every connect, success or failure, updates it;
 * the **status line** (`#serial-status`, §2.9);
 * right-aligned actions: the **Open** menu, the **Console** toggle
-  (`aria-pressed`), and the primary **Review changes (N)** button.
+  (`aria-pressed`), the **Services** button (§2.14; icon only at ≤520 px), and
+  the primary **Review changes (N)** button.
 
 **Open menu** (`<details>` dropdown, closes on an outside click, after a
 choice, or with Esc, which returns focus to the **Open** button):
@@ -478,6 +479,62 @@ just before any trailing blank line; filled-in firmware-known keys that were
 absent are appended at the end on serialize. A key that appears more than once
 gets one row; as in the firmware, the last occurrence gives its value, and an
 edit rewrites every occurrence so the file stays unambiguous.
+
+### 2.14 Services sheet
+
+The **Services** button (server icon, `aria-expanded`) is enabled only while
+`svcTarget()` is non-null: there is a push target (§2.7) **and** its link is
+open on that same handle (`activeWrite` is the target's transport and
+`serialPort` / `bleDevice` is the granted handle, or the MQTT client is bound
+to the target's hostname). It never reconnects or talks to another device; a
+closed link means "read the device again". `refreshConn()` re-evaluates it.
+
+A modal right-hand sheet (520 px) over its own scrim (`#svc-scrim`); a bottom
+sheet on mobile like the others. Opening moves focus to **Close**, Tab cycles
+inside, Esc (handled in the capture phase, before the other sheets' handler),
+the scrim, **Close** and **Start screen** close it, focus returns to the
+button. Head: "Services", the target ("<host> over <transport>", or the
+running command with a spinner), **Refresh** (↻), **Close**.
+
+* **Read**: `svc list` on open, on Refresh and after every action, via
+  `sendCommand` (completion = the `OK: <cmd>` / `ERR: <cmd>` marker, 4 s).
+  `parseSvcList()` strips SGR escapes, starts at the header line
+  `NAME STATE LOG ENABLED DETAIL` (no header → incomplete reply), and takes
+  each line matching `<name> Running|Stopped|Failed error|warn|info yes|no
+  [detail]`, tolerating an ESP log prefix; the detail is the rest of the line
+  (may be empty or contain spaces). Other lines (the interim status line
+  before the marker, interleaved log output) are ignored; a repeated name
+  keeps its last row.
+* **Row**: name (mono), state dot + text (green Running, grey Stopped, amber
+  Failed), the detail below; controls: log-level select (`svc log <name>
+  <level>`), **Restart** (`svc restart <name>`, disabled while the service is
+  off), and an on/off switch (`svc on|off <name>`). Tooltips and the footer
+  note say that on/off and the level are saved on the device and apply at
+  once. All controls are disabled while a command runs.
+* **Result**: `ERR` shows "The device rejected “<cmd>”: <reason>" with the
+  reason from the firmware's `svc: …` warning; a `start failed (state=…)`
+  line after `svc on` shows "<name> did not start: …"; no marker shows
+  "No reply to “<cmd>” within 4 s". Errors are amber in the footer.
+* **Loaded copy**: after a confirmed `svc on|off|log`, the loaded
+  `<name>.conf` gets the saved `enabled` / `log_level` as its original value
+  (and as current value unless that field has a pending edit), so the review
+  sheet and downloads match the device.
+* **Confirms** (`window.confirm`): stopping or restarting the service the
+  editor's own link runs over (`mqtt` over MQTT, `ble` over Bluetooth) says
+  the link drops; stopping also says another link is then needed to turn it
+  back on. Stopping `mqtt` over any link says a charger that gets BMS data
+  over MQTT falls back to its stale-cell voltage cap. Stopping adds that the
+  setting is saved and survives a reboot. Declining sends nothing and resets
+  the control.
+* **Own link**: such a command waits 2.5 s for its marker (it usually never
+  arrives). After a stop the editor closes that link, so the header reads
+  "Disconnected from <host> over …" and the sheet shows "Not connected".
+  After a restart it closes a Bluetooth link and reconnects to the same
+  granted device, or keeps the MQTT session; it then retries `svc list` up to
+  4 times, 1.5 s apart: on an answer "<name> restarted; the <transport> link
+  is back", otherwise it closes the link and says to read the device again.
+* When the link closes or changes while the sheet is open, the rows are
+  replaced by "Not connected" and Refresh is disabled.
 
 ---
 

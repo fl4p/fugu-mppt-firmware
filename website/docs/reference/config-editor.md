@@ -96,7 +96,7 @@ See [MQTT topics](mqtt.md).
 The top bar shows the source name and the connection state. The state always refers to the device a push would go
 to: "Connected to `<hostname>` over MQTT" with a green dot while that link is open, "Disconnected from
 `<hostname>` over MQTT" once it is closed, "Connecting …" during a read, and "Not connected" when there is nothing
-to push to. Its right side holds the **Open** menu, the **Console** toggle and the
+to push to. Its right side holds the **Open** menu, the **Console** toggle, the **Services** button and the
 primary button: **Review changes** with a count, or **Save a copy** when nothing has changed.
 
 The file list on the left has one entry per conf file, in three groups:
@@ -115,8 +115,8 @@ controls. The keys follow, grouped by shared prefix (`i2c_`, `ina22x_`, …) int
 group that holds changed or invalid keys shows an amber dot with their count. **Add a key**
 and **Show `<file>` as text** sit at the bottom as folded sections.
 
-On a narrow screen the file list becomes a horizontal strip with small group labels, rows stack, and the review and
-console sheets open from the bottom. The page follows the system light or dark setting.
+On a narrow screen the file list becomes a horizontal strip with small group labels, rows stack, and the review,
+console and services sheets open from the bottom. The page follows the system light or dark setting.
 
 ## Short view
 
@@ -272,6 +272,28 @@ lists them, and they appear under "Not on device".
 **Console** opens a side panel below the top bar (a bottom sheet on a narrow screen) with the live device output and a command field that writes to the active connection.
 It renders the firmware's ANSI log colours, shows `ERR:` replies in amber, and follows new output unless you have
 scrolled up. See [Serial Console](console.md).
+
+## Services
+
+**Services** opens a panel with the firmware's services (see `svc` in [Serial Console](console.md)), read with
+`svc list`. It is available only while the editor is connected to the device the config was read from. Each row
+shows the service name, its state (green dot for Running, grey for Stopped, amber for Failed) and its status
+detail, with three controls:
+
+| Control   | Command                        | Effect                                                         |
+|-----------|--------------------------------|----------------------------------------------------------------|
+| Log level | `svc log <name> <level>`       | Saved in the service's `.conf` file and applied at once        |
+| Restart   | `svc restart <name>`           | Stops and starts the service; off while the service is disabled |
+| On/off    | `svc on <name>` / `svc off <name>` | Saved in the service's `.conf` file and started or stopped at once |
+
+The list is read again after each action and with the refresh button. A rejected command shows the firmware's
+reason. The loaded `<name>.conf` follows a saved on/off or log level, unless that field has an unsent edit.
+
+Stopping or restarting the service the editor is connected through (`mqtt` over MQTT, `ble` over Bluetooth)
+drops that link, so the editor asks first. After a stop the top bar shows the device as disconnected; turning
+the service back on needs another connection. After a restart the editor waits for the device to answer again.
+Stopping `mqtt` also asks first, because a charger that gets its BMS data over MQTT loses it and falls back to
+its stale-cell voltage cap.
 
 ## conf-tool.py (FTP)
 
