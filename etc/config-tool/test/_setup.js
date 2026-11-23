@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
 
-const HTML_PATH = path.resolve(__dirname, '..', 'conf-editor.html');
+const HTML_PATH = process.env.CONF_EDITOR_HTML ? path.resolve(process.env.CONF_EDITOR_HTML) : path.resolve(__dirname, '..', 'conf-editor.html');
 
 // Stub: capture publish/subscribe calls, fire 'connect' on next microtask.
 // String.raw so the embedded JS keeps its own escape sequences intact.

@@ -94,9 +94,11 @@ test('mqttBindDevice filters topics: only `pv/log/<host>`, never `/cmd` echoes',
   await new Promise(r => setTimeout(r, 0));   // wait for CONNACK
   await window.mqttBindDevice(client, 'fugu139C');
 
-  // bound: subscribe was issued, activeWrite is mqttWrite
+  // bound: subscribe was issued, activeWrite is mqttWrite; the push target is
+  // committed only by a successful read (importFromDevice), not by binding
   assert.ok(client._subscribes.includes('pv/log/#'));
-  assert.equal(window._lastTransport, 'mqtt');
+  assert.equal(window._activeWrite, window.mqttWrite);
+  assert.equal(window._lastTransport, null);
 
   // capture forwarded lines via our own lineListener
   const seen = [];

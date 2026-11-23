@@ -31,10 +31,10 @@ test('real ansi-to-html: ESC[…m renders as a coloured span', async ({ page }) 
   // two ANSI lines → at least two coloured spans; plain line stays uncoloured
   const colored = await page.locator('#uploadlog-body span[style*="color"]').count();
   expect(colored).toBeGreaterThanOrEqual(2);
-  // sanity: the green span should be a recognizable green colour
-  const styles = await page.locator('#uploadlog-body span[style*="color"]').evaluateAll(
-    els => els.map(e => e.getAttribute('style')));
-  expect(styles.some(s => /#[0-9a-fA-F]{3,6}/.test(s))).toBe(true);
+  // sanity: the green span resolves to a green colour (palette may be CSS vars)
+  const rgbs = await page.locator('#uploadlog-body span[style*="color"]').evaluateAll(
+    els => els.map(e => getComputedStyle(e).color.match(/\d+/g).map(Number)));
+  expect(rgbs.some(([r,g,b]) => g > r + 20 && g > b + 20)).toBe(true);
 });
 
 test('tail-follow under real layout: scroll snaps to bottom only when at bottom', async ({ page }) => {

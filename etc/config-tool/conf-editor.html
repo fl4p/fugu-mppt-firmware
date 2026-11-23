@@ -4,253 +4,476 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Fugu MPPT config editor</title>
 <style>
   :root {
-    --bg:#0e1116; --panel:#161b22; --panel2:#1c232c; --line:#2a3340;
-    --fg:#d7dde3; --muted:#8b96a3; --accent:#4493f8; --accent2:#2ea043;
-    --unit:#d29922; --warn:#f0883e;
+    --bg:#ffffff; --side:#f7f7f6; --field:#f2f2f1; --field-hi:#ebebea; --line:#e4e4e2; --line-2:#d3d3d0;
+    --fg:#1f2023; --fg-2:#3d3f43; --muted:#6c6f74; --faint:#a2a5a9;
+    --accent:#b35c00;
+    --icon:#156b5b; --icon-soft:#e2efeb;
+    --ink-btn:#1f2023; --ink-btn-fg:#ffffff;
+    --scrim:rgba(20,20,22,.28);
+    --shadow:0 1px 2px rgba(20,20,20,.06), 0 12px 32px rgba(20,20,20,.10);
+    --chev:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236c6f74' stroke-width='1.4'/%3E%3C/svg%3E");
+    --a30:#4b4f55; --a31:#c0392b; --a32:#2f7d32; --a33:#9a6a00; --a34:#2f62b3; --a35:#8e44ad; --a36:#16808a; --a37:#55595f; --a97:#1f2023;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --hdr:56px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#1b1c1f; --side:#1f2023; --field:#26282c; --field-hi:#2d2f34; --line:#2e3035; --line-2:#3a3d43;
+      --fg:#e7e7e5; --fg-2:#c9cac8; --muted:#9a9ca0; --faint:#686b70;
+      --accent:#f0a24a;
+      --icon:#5cc2a6; --icon-soft:#1b2e29;
+      --ink-btn:#e7e7e5; --ink-btn-fg:#1b1c1f;
+      --scrim:rgba(0,0,0,.5);
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 16px 40px rgba(0,0,0,.45);
+      --chev:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9ca0' stroke-width='1.4'/%3E%3C/svg%3E");
+      --a30:#8a8e94; --a31:#ec7b72; --a32:#8fc68a; --a33:#e2b866; --a34:#7fb0ec; --a35:#c99be0; --a36:#6cc6cf; --a37:#bfc1c4; --a97:#ffffff;
+    }
   }
   * { box-sizing:border-box; }
-  body { margin:0; font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-         background:var(--bg); color:var(--fg); }
-  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px;
-           align-items:center; flex-wrap:wrap; }
-  header h1 { font-size:16px; margin:0; font-weight:600; }
-  header .spacer { flex:1; }
+  html { -webkit-text-size-adjust:100%; }
+  body { margin:0; font:14px/1.5 var(--sans); background:var(--bg); color:var(--fg);
+         -webkit-font-smoothing:antialiased; }
+  code { font-family:var(--mono); font-size:.92em; }
+  :focus-visible { outline:2px solid var(--fg); outline-offset:2px; }
+  [hidden] { display:none !important; }
+
   button, label.btn {
-    background:var(--panel2); color:var(--fg); border:1px solid var(--line); border-radius:6px;
-    padding:7px 13px; cursor:pointer; font-size:13px; }
-  button:hover, label.btn:hover { border-color:var(--accent); }
-  button.primary { background:var(--accent2); border-color:var(--accent2); color:#fff; }
-  button:disabled { opacity:.45; cursor:not-allowed; }
+    font:inherit; font-size:13px; color:var(--fg); background:transparent; border:1px solid transparent;
+    border-radius:7px; padding:6px 12px; cursor:pointer; line-height:1.35; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+  button:hover, label.btn:hover { background:var(--field); }
+  button.primary { background:var(--ink-btn); color:var(--ink-btn-fg); }
+  button.primary:hover { opacity:.88; background:var(--ink-btn); }
+  button.quiet-outline { border-color:var(--line-2); }
+  button.link { font:inherit; font-size:inherit; color:var(--muted); padding:0; border-radius:3px; text-decoration:underline;
+    text-decoration-color:var(--line-2); text-underline-offset:3px; }
+  button.link:hover { background:transparent; color:var(--fg); text-decoration-color:currentColor; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
   label.btn input { display:none; }
-  #drop {
-    margin:40px auto; max-width:640px; border:2px dashed var(--line); border-radius:12px;
-    padding:48px 24px; text-align:center; color:var(--muted); transition:border-color .15s,background .15s; }
-  #drop.hover { border-color:var(--accent); background:var(--panel); }
-  #drop h2 { color:var(--fg); margin:0 0 6px; font-size:18px; }
-  #drop .controls { margin-top:18px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
-  #drop .startpane { display:none; margin-top:22px; }
-  #drop .startpane.open { display:block; }
-  #drop .startpane .controls { margin-top:12px; }
-  #preset-list { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px;
-    padding:7px 9px; font-family:ui-monospace,monospace; font-size:13px; max-width:340px; }
-  #preset-list:focus { outline:none; border-color:var(--accent); }
+
+  /* header */
+  header { position:sticky; top:0; z-index:30; height:var(--hdr); display:flex; align-items:center; gap:14px;
+           padding:0 20px; background:var(--bg); border-bottom:1px solid transparent; }
+  body.loaded header { border-bottom-color:var(--line); }
+  header h1 { font-size:14px; font-weight:600; margin:0; white-space:nowrap; letter-spacing:-.005em; }
+  header .src { display:none; align-items:center; gap:12px; min-width:0; color:var(--muted); font-size:13px; }
+  body.loaded header .src { display:flex; }
+  #srcname { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:34ch; color:var(--fg-2); }
+  #conn { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--faint); white-space:nowrap; }
+  #conn::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--line-2); flex:none; }
+  #conn.on { color:var(--fg-2); }
+  #conn.on::before { width:7px; height:7px; background:var(--accent); }
+  #serial-status { font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1 1 auto; }
+  #serial-status.err { color:var(--accent); }
+  body:not(.loaded) #serial-status { display:none !important; }
+  header .spacer { flex:1; }
+  header .actions { display:none; align-items:center; gap:4px; flex:none; margin-left:auto; }
+  body.loaded header .actions { display:flex; }
+  #open-console[aria-pressed="true"] { background:var(--field); }
+  #review-btn .count { font-size:11.5px; font-weight:600; min-width:18px; padding:0 6px; border-radius:9px; text-align:center;
+    background:color-mix(in srgb, var(--ink-btn-fg) 20%, transparent); }
+  #review-btn.none { background:transparent; color:var(--fg); border-color:var(--line-2); opacity:1; }
+  #review-btn.none:hover { background:var(--field); }
+  #review-btn.none .count { display:none; }
+  .menu { position:relative; }
+  .menu > summary { list-style:none; font-size:13px; padding:6px 12px; border-radius:7px; cursor:pointer; user-select:none; white-space:nowrap; }
+  .menu > summary::-webkit-details-marker { display:none; }
+  .menu > summary::after { content:""; display:inline-block; width:10px; height:6px; margin-left:7px; vertical-align:2px;
+    background:var(--chev) no-repeat center; }
+  .menu > summary:hover, .menu[open] > summary { background:var(--field); }
+  .menu-list { position:absolute; right:0; top:calc(100% + 6px); min-width:210px; background:var(--bg); border:1px solid var(--line);
+    border-radius:10px; box-shadow:var(--shadow); padding:5px; display:flex; flex-direction:column; z-index:40; }
+  .menu-list > button, .menu-list > label.btn { justify-content:flex-start; width:100%; border-radius:6px; }
+  .menu-list .mh { font-size:11.5px; color:var(--faint); padding:7px 12px 3px; }
+  .menu-list .sep { height:1px; background:var(--line); margin:5px 6px; }
+
+  /* start screen */
+  #drop { min-height:calc(100vh - var(--hdr)); padding:9vh 24px 80px; position:relative; }
+  #drop::after { content:""; position:fixed; inset:12px; border:1.5px dashed var(--line-2); border-radius:14px;
+    pointer-events:none; opacity:0; transition:opacity .15s; }
+  #drop.hover::after { opacity:1; }
+  .start { max-width:572px; margin:0 auto; }
+  .start .intro h2 { font-size:30px; line-height:1.15; font-weight:600; letter-spacing:-.02em; margin:0 0 10px; }
+  .start .intro p { color:var(--muted); margin:0 0 40px; max-width:52ch; font-size:15px; }
+  .choice { border-top:1px solid var(--line); }
+  .choice:last-of-type { border-bottom:1px solid var(--line); }
+  .choice-head { width:100%; display:grid; grid-template-columns:40px 1fr auto; gap:16px; align-items:center; text-align:left; white-space:normal;
+    padding:18px 0; border-radius:0; background:transparent; }
+  .choice-head:hover { background:transparent; }
+  .choice-head .ic { width:40px; height:40px; border-radius:10px; background:var(--icon-soft); color:var(--icon); display:grid; place-items:center; }
+  .choice-head .t { font-size:15.5px; font-weight:550; display:block; }
+  .choice-head .d { display:block; color:var(--muted); font-size:13px; margin-top:2px; }
+  .choice-head::after { content:""; width:10px; height:6px; background:var(--chev) no-repeat center; transition:transform .15s; }
+  .choice.open .choice-head::after { transform:rotate(180deg); }
+  .choice-head:hover .t { text-decoration:underline; text-underline-offset:3px; text-decoration-thickness:1px; }
+  .startpane { display:none; padding:0 0 22px 56px; }
+  .startpane.open { display:block; }
+  .startpane .controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .startpane .controls > button:not(.primary), .startpane .controls > label.btn { border-color:var(--line-2); }
+  .startpane .fine { color:var(--muted); font-size:12.5px; margin-top:12px; max-width:56ch; }
+  .resume { margin:22px 0 0; font-size:13.5px; }
+  .start .hint { color:var(--faint); font-size:13px; margin-top:22px; }
+  #drop-msg { margin-top:14px; font-size:13px; }
+  #drop-msg:empty { display:none; }
+  #preset-list { font:13px var(--mono); color:var(--fg); background:var(--field) var(--chev) no-repeat right 11px center;
+    border:1px solid transparent; border-radius:7px; padding:7px 32px 7px 10px; appearance:none; -webkit-appearance:none; max-width:340px; }
+
+  /* editor shell */
   #app { display:none; }
-  #tabs { display:flex; gap:2px; padding:0 16px; border-bottom:1px solid var(--line);
-          overflow-x:auto; background:var(--panel); }
-  .tab { padding:10px 14px; cursor:pointer; color:var(--muted); border-bottom:2px solid transparent;
-         white-space:nowrap; font-size:13px; }
-  .tab:hover { color:var(--fg); }
-  .tab.active { color:var(--fg); border-bottom-color:var(--accent); }
-  .tab.new:not(.active) { opacity:.55; font-style:italic; }
-  .tab.sensitive { color:#d97a7a; }
-  .tab.sensitive:hover, .tab.sensitive.active { color:#f0a0a0; }
-  .tab .dot { color:var(--warn); margin-left:6px; }
-  .tab.rolekey { color:var(--warn); }
-  #panes { padding:18px 22px 60px; }
-  .pane { display:none; }
+  .shell { display:grid; grid-template-columns:216px minmax(0,1fr); min-height:calc(100vh - var(--hdr)); }
+  #tabs { position:sticky; top:var(--hdr); align-self:start; height:calc(100vh - var(--hdr)); overflow:auto;
+    background:var(--side); padding:18px 10px 40px; border-right:1px solid var(--line); }
+  .tabs-sep { font-size:11.5px; color:var(--faint); padding:16px 10px 5px; }
+  .tabs-sep:first-child { padding-top:2px; }
+  .tab { display:flex; align-items:center; gap:8px; padding:5px 10px; border-radius:6px; cursor:pointer; color:var(--fg-2);
+    font:13px/1.5 var(--mono); white-space:nowrap; }
+  .tab:hover { background:var(--field-hi); }
+  .tab.active { background:var(--bg); color:var(--fg); box-shadow:0 0 0 1px var(--line); }
+  .tab.new { color:var(--faint); }
+  .tab.new.active { color:var(--fg-2); }
+  .tab.rolekey { color:var(--accent); }
+  .tab .dot { margin-left:auto; flex:none; display:inline-flex; align-items:center; gap:5px; font:600 11px/1 var(--sans); color:var(--accent); }
+  .tab .dot::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--accent); }
+
+  #panes { padding:44px 40px 120px; }
+  .pane { display:none; max-width:780px; margin:0 auto; }
   .pane.active { display:block; }
-  .pane .path { color:var(--muted); font-size:12px; margin-bottom:14px; font-family:ui-monospace,monospace; }
-  .row { display:grid; grid-template-columns:minmax(calc(160px - var(--ind,0px)),calc(260px - var(--ind,0px))) 1fr;
-         gap:14px; padding:10px 0; border-bottom:1px solid var(--line); align-items:start; }
-  .row .k .pfx { color:var(--muted); }
-  .switch { position:relative; display:inline-flex; align-items:center; gap:10px; height:32px; cursor:pointer; user-select:none; }
-  .switch input { position:absolute; opacity:0; width:0; height:0; }
-  .switch .track { position:relative; width:38px; height:20px; border-radius:10px; background:var(--line);
-    border:1px solid var(--line); transition:background .15s; }
-  .switch .track::after { content:""; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%;
-    background:var(--fg); transition:left .15s; }
-  .switch input:checked + .track { background:var(--accent2); border-color:var(--accent2); }
-  .switch input:checked + .track::after { left:20px; }
-  .switch input:focus-visible + .track { outline:2px solid var(--accent); }
-  .switch.unset .track { background:transparent; border-style:dashed; }
-  .switch.unset .track::after { background:var(--muted); opacity:.5; }
-  .switch .sw-txt { font-family:ui-monospace,monospace; font-size:12px; color:var(--muted); }
-  .switch.unset .sw-txt { font-style:italic; }
-  .row.changed .switch .track { box-shadow:0 0 0 1px var(--warn); }
-  .kgroup > summary { cursor:pointer; padding:8px 0; border-bottom:1px solid var(--line);
-         font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; color:var(--accent); }
-  .kgroup > summary .cnt { color:var(--muted); font-size:11px; margin-left:8px; }
-  .kgroup > .kbody { margin-left:6px; padding-left:12px; border-left:1px solid var(--line); }
-  .row .k { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; word-break:break-all; }
-  .row .k .unit { color:var(--unit); margin-left:6px; font-size:11px; }
-  .row .k .nometa { color:var(--warn); font-size:11px; margin-left:6px; }
-  .row .k .type { display:inline-block; margin-left:8px; font-size:10px; padding:1px 7px; border-radius:10px;
-    background:var(--panel2); border:1px solid var(--line); color:var(--muted); vertical-align:middle; letter-spacing:.03em; }
-  .row .k .type[data-t="float"]  { color:#79c0ff; border-color:#1f4d72; }
-  .row .k .type[data-t="byte"],
-  .row .k .type[data-t="long"]   { color:#7ee787; border-color:#2a5a32; }
-  .row .k .type[data-t="string"] { color:#d2a8ff; border-color:#4a3a66; }
-  .row .desc { color:var(--muted); font-size:12px; margin-top:3px; }
-  .row .val { max-width:440px; }
-  .row .val-line { display:flex; gap:8px; align-items:center; }
-  .row .inwrap { position:relative; display:block; flex:1; }
-  .clear-btn { flex:none; width:30px; height:32px; padding:0; line-height:1; font-size:17px;
-    background:transparent; border:1px solid var(--line); border-radius:6px; color:var(--muted); cursor:pointer; }
-  .clear-btn:hover { border-color:var(--warn); color:var(--warn); }
+  .phead { margin-bottom:26px; }
+  .phead h2 { font:600 28px/1.15 var(--mono); letter-spacing:-.03em; margin:0; }
+  .phead h2 .ext { color:var(--faint); font-weight:400; }
+  .phead .meta { color:var(--muted); font-size:13px; margin-top:8px; }
+  .phead .meta .path { font-family:var(--mono); font-size:12.5px; }
+  .phead .meta .link { margin-left:.5em; }
+  .phead .note { color:var(--muted); font-size:13px; margin-top:4px; }
+  .empty-note { color:var(--muted); font-size:13px; margin:6px 0 0; }
+
+  .err { color:var(--accent); }
+  .keyform { font-size:13px; border-left:2px solid var(--accent); padding:4px 0 4px 12px; margin:0 0 20px; }
+
+  .row { position:relative; display:grid; grid-template-columns:minmax(0,1fr) minmax(200px,300px); column-gap:32px;
+    padding:11px 0; align-items:start; }
+  .row::before { content:""; position:absolute; left:-16px; top:12px; bottom:12px; width:2px; border-radius:2px; background:transparent; }
+  .row.changed::before { background:var(--accent); }
+  .row.is-hidden, .kgroup.is-hidden { display:none; }
+  .row .lbl { min-width:0; padding-top:5px; }
+  .row .k { display:block; font:13.5px/1.4 var(--mono); color:var(--fg); word-break:break-all; }
+  .row .k .pfx { color:var(--faint); }
+  .row.extra:not(.filled) .k { color:var(--muted); }
+  .row .desc { color:var(--muted); font-size:12.5px; line-height:1.45; margin-top:2px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:default; }
+  .row:focus-within .desc, .row .desc.open { white-space:normal; }
+  .row .desc .def { color:var(--faint); margin-left:.6em; }
+  .row .desc.none { color:var(--faint); font-style:italic; }
+  .row .desc.err { color:var(--accent); white-space:normal; }
+  .row .val { min-width:0; }
+  .row .val-line { display:flex; align-items:center; gap:4px; position:relative; padding-right:28px; }
+  .row .inwrap { flex:1; min-width:0; display:block; }
+  .row .unit { flex:none; width:3.4em; font-size:12px; color:var(--muted); padding-left:6px; white-space:nowrap; }
   .row .val input, .row .val select {
-    width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--line);
-    border-radius:6px; padding:7px 9px; font-family:ui-monospace,monospace; font-size:13px; }
-  .row .val input:focus, .row .val select:focus { outline:none; border-color:var(--accent); }
-  .row.changed .val input, .row.changed .val select { border-color:var(--warn); }
-  .row .unit-suffix {
-    position:absolute; right:10px; top:50%; transform:translateY(-50%);
-    color:var(--unit); font-size:11px; pointer-events:none; user-select:none; white-space:nowrap; }
-  .row select ~ .unit-suffix { right:30px; }
-  .row .orig { color:var(--muted); font-size:11px; margin-top:4px; cursor:pointer; width:fit-content; }
-  .row .orig:hover { color:var(--fg); text-decoration:underline; }
-  .row.extra .val input, .row.extra .val select { background:#0a0d12; border-style:dashed; }
-  .row.extra.filled .val input, .row.extra.filled .val select { background:var(--bg); border-style:solid; }
-  .row .val input::placeholder { color:#5a6573; font-style:italic; }
-  .addkey { margin-top:18px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .addkey input { background:var(--bg); color:var(--fg); border:1px solid var(--line);
-                  border-radius:6px; padding:6px 8px; font-family:ui-monospace,monospace; font-size:13px; }
-  .toolbar { display:flex; gap:10px; align-items:center; margin-bottom:12px; }
-  .toolbar .grow { flex:1; }
-  details.raw { margin-top:22px; border:1px solid var(--line); border-radius:8px; }
-  details.raw summary { padding:9px 12px; cursor:pointer; color:var(--muted); }
-  details.raw pre { margin:0; padding:12px; background:#0a0d12; border-top:1px solid var(--line);
-                    overflow:auto; font-size:12px; }
-  .err { color:var(--warn); }
-  .keyform { margin-bottom:12px; font-size:13px; }
-  .pill { font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:20px; padding:2px 9px; }
-  #uploadlog { position:fixed; right:16px; bottom:16px; width:min(560px,92vw); max-height:50vh; overflow:auto;
-    background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px;
-    font-family:ui-monospace,monospace; font-size:12px; display:none; z-index:50; box-shadow:0 8px 30px rgba(0,0,0,.55); }
-  #uploadlog .ulhdr { display:flex; gap:8px; align-items:center; margin-bottom:8px; color:var(--fg); font-family:inherit; }
-  #uploadlog .ulhdr .spacer { flex:1; }
-  #uploadlog-body div { white-space:pre; line-height:1.5; }
-  #uploadlog .sent { color:var(--accent); }
+    width:100%; font:13px/1.4 var(--mono); color:var(--fg); background:var(--field); border:1px solid transparent;
+    border-radius:7px; padding:7px 10px; transition:background .12s, border-color .12s; }
+  .row .val select { appearance:none; -webkit-appearance:none; background:var(--field) var(--chev) no-repeat right 11px center; padding-right:30px; }
+  .row .val input:hover, .row .val select:hover { background-color:var(--field-hi); }
+  .row .val input:focus, .row .val select:focus { outline:none; background-color:var(--bg); border-color:var(--line-2); }
+  .row .val input::placeholder { color:var(--faint); }
+  .row.extra:not(.filled) .val input, .row.extra:not(.filled) .val select { background-color:transparent; border-color:var(--line); }
+  .row.extra:not(.filled) .val select { color:var(--faint); }
+  .row.changed .val input, .row.changed .val select { border-color:var(--accent); background-color:var(--bg); }
+  .row.invalid .val input { border-style:dashed; }
+  .row .bad { font-size:12px; color:var(--accent); margin-top:5px; }
+  .clear-btn { position:absolute; right:0; top:50%; margin-top:-12px; width:24px; height:24px; padding:0; justify-content:center; font-size:16px; line-height:1; color:var(--faint);
+    border-radius:6px; opacity:0; transition:opacity .12s; }
+  .row:hover .clear-btn, .row:focus-within .clear-btn { opacity:1; }
+  .clear-btn:hover { color:var(--fg); background:var(--field); }
+  .clear-btn:focus-visible { opacity:1; }
+  .row .orig { font:12px var(--mono); color:var(--accent); margin-top:5px; cursor:pointer; width:fit-content; max-width:100%;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row .orig::after { content:"  revert"; font-family:var(--sans); color:var(--muted); white-space:pre; }
+  .row .orig:hover::after { color:var(--fg); text-decoration:underline; }
+
+  .switch { position:relative; display:inline-flex; align-items:center; gap:10px; height:34px; cursor:pointer; user-select:none; }
+  .switch input { position:absolute; opacity:0; width:0; height:0; }
+  .switch .track { position:relative; width:34px; height:20px; border-radius:10px; background:var(--line-2); transition:background .15s; }
+  .switch .track::after { content:""; position:absolute; top:3px; left:3px; width:14px; height:14px; border-radius:50%;
+    background:var(--bg); transition:left .15s; box-shadow:0 1px 2px rgba(0,0,0,.2); }
+  .switch input:checked + .track { background:var(--fg); }
+  .switch input:checked + .track::after { left:17px; }
+  .switch input:focus-visible + .track { outline:2px solid var(--fg); outline-offset:2px; }
+  .switch.unset .track { background:transparent; box-shadow:inset 0 0 0 1px var(--line-2); }
+  .switch.unset .track::after { background:var(--line-2); box-shadow:none; }
+  .switch .sw-txt { font:12.5px var(--mono); color:var(--muted); }
+  .switch.unset .sw-txt { color:var(--faint); }
+  .row.changed .switch .track { box-shadow:0 0 0 2px var(--bg), 0 0 0 3px var(--accent); }
+
+  .kgroup { margin:6px 0; }
+  .kgroup > summary { list-style:none; cursor:pointer; padding:14px 0 4px; font:13px var(--mono); color:var(--fg-2);
+    display:flex; align-items:center; gap:8px; width:fit-content; user-select:none; }
+  .kgroup > summary::-webkit-details-marker { display:none; }
+  .kgroup > summary::before { content:""; width:10px; height:6px; background:var(--chev) no-repeat center; transform:rotate(-90deg);
+    transition:transform .15s; }
+  .kgroup[open] > summary::before { transform:none; }
+  .kgroup > summary .cnt { color:var(--faint); font:12px var(--sans); }
+  .kgroup > summary .cnt:empty { display:none; }
+  .kgroup > summary .dot { display:inline-flex; align-items:center; gap:5px; font:600 11px/1 var(--sans); color:var(--accent); }
+  .kgroup > summary .dot::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--accent); }
+  .kgroup[open] > summary .dot { display:none; }
+  .kgroup > .kbody { padding-left:18px; }
+
+  .pane-foot { margin-top:34px; padding-top:18px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:12px; }
+  .addkey { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  .addkey input { font:13px var(--mono); color:var(--fg); background:transparent; border:1px solid var(--line); border-radius:7px; padding:6px 10px; min-width:0; }
+  .addkey input:first-of-type { flex:1 1 220px; }
+  .addkey input:nth-of-type(2) { flex:0 1 160px; }
+  .addkey input:focus { outline:none; border-color:var(--line-2); background:var(--field); }
+  .addkey button { border-color:var(--line-2); }
+  details.fold > summary { cursor:pointer; color:var(--muted); font-size:13px; width:fit-content; list-style:none; display:flex; align-items:center; gap:8px; }
+  details.fold > summary::-webkit-details-marker { display:none; }
+  details.fold > summary::before { content:""; width:10px; height:6px; background:var(--chev) no-repeat center; transform:rotate(-90deg); transition:transform .15s; }
+  details.fold[open] > summary::before { transform:none; }
+  details.fold > summary:hover { color:var(--fg); }
+  details.fold pre { margin:10px 0 0; padding:14px 16px; background:var(--side); border-radius:8px; overflow:auto;
+    font:12px/1.55 var(--mono); color:var(--fg-2); }
+
+  /* sheets: review + console */
+  .scrim { position:fixed; inset:0; background:var(--scrim); z-index:60; display:none; }
+  .scrim.open { display:block; }
+  .sheet { position:fixed; top:0; right:0; bottom:0; width:min(520px,100%); background:var(--bg); z-index:61;
+    display:flex; flex-direction:column; border-left:1px solid var(--line); box-shadow:var(--shadow);
+    transform:translateX(102%); transition:transform .2s ease, visibility .2s; visibility:hidden; }
+  .sheet.open { transform:none; visibility:visible; transition:transform .2s ease; }
+  .sheet-head { display:flex; align-items:center; gap:12px; min-height:var(--hdr); padding:0 12px 0 24px; border-bottom:1px solid var(--line); flex:none; }
+  .sheet-head h2 { margin:0; font-size:14px; font-weight:600; white-space:nowrap; }
+  .sheet-head .sub { color:var(--muted); font-size:12.5px; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sheet-body { flex:1; overflow:auto; padding:6px 24px 24px; }
+  .sheet-foot { border-top:1px solid var(--line); padding:14px 24px 16px; display:flex; flex-direction:column; gap:12px; flex:none; }
+  .sheet-foot .btns { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+  .sheet-foot .btns > button:not(.primary) { border-color:var(--line-2); }
+  .sheet-foot .note { margin:0; font-size:12.5px; color:var(--muted); }
+  .sheet-foot .note:empty { display:none; }
+  .rfile { margin-top:22px; }
+  .rfile h3 { margin:0 0 4px; font:600 13.5px var(--mono); display:flex; gap:10px; align-items:baseline; }
+  .rfile h3 .n { color:var(--faint); font:400 12px var(--sans); }
+  .diff { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:1px 12px; padding:8px 0; align-items:center; }
+  .diff .dk { font:13px var(--mono); color:var(--fg); cursor:pointer; word-break:break-all; width:fit-content; }
+  .diff .dk:hover { text-decoration:underline; text-underline-offset:3px; }
+  .diff .dv { grid-column:1; display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 8px; font:12.5px var(--mono); }
+  .diff .old { color:var(--faint); text-decoration:line-through; word-break:break-all; }
+  .diff .to { color:var(--faint); font-family:var(--sans); }
+  .diff .new { color:var(--fg); word-break:break-all; }
+  .diff .none { font-family:var(--sans); font-style:italic; text-decoration:none; }
+  .diff .new.none { color:var(--accent); }
+  .diff .undo { grid-column:2; grid-row:1 / span 2; font-size:12.5px; }
+  .diff .bad { grid-column:1; font-size:12px; color:var(--accent); }
+  .diff.invalid .new { text-decoration:underline wavy var(--accent); text-underline-offset:3px; }
+  .sheet-foot .note.err { color:var(--accent); }
+  .review-empty { padding:30px 0 10px; color:var(--muted); font-size:13px; max-width:44ch; }
+  .review-empty strong { display:block; color:var(--fg); font-size:14px; font-weight:600; margin-bottom:4px; }
+  details.cmds { margin-top:24px; }
+
+  #console { width:min(640px,100%); top:var(--hdr); }
+  #uploadlog-stat { color:var(--muted); font-size:12.5px; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #uploadlog-close { color:var(--muted); }
+  #uploadlog { flex:1; overflow:auto; padding:12px 24px; font:12px/1.6 var(--mono); }
+  #uploadlog-body div { white-space:pre; line-height:1.6; }
+  #uploadlog-body:empty::before { content:"Device output appears here."; color:var(--faint); font-family:var(--sans); }
+  #uploadlog .sent { color:var(--fg); font-weight:600; }
   #uploadlog .resp { color:var(--muted); }
-  #uploadlog .resp.ok { color:var(--accent2); }
-  #uploadlog .resp.err { color:var(--warn); }
-  #uploadlog-input { display:flex; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid var(--line); }
-  #uploadlog-input input { flex:1; background:var(--bg); color:var(--fg); border:1px solid var(--line);
-    border-radius:6px; padding:6px 9px; font-family:ui-monospace,monospace; font-size:12px; }
-  #uploadlog-input input:focus { outline:none; border-color:var(--accent); }
-  #uploadlog-input input:disabled { opacity:.5; }
-  #uploadlog-input button { padding:5px 11px; font-family:inherit; font-size:12px; }
-  #open-console { position:fixed; right:16px; bottom:16px; z-index:40;
-    box-shadow:0 4px 14px rgba(0,0,0,.45); }
+  #uploadlog .resp.ok { color:var(--fg); }
+  #uploadlog .resp.err { color:var(--accent); }
+  #uploadlog-input { display:flex; gap:6px; padding:10px 12px 12px 16px; border-top:1px solid var(--line); flex:none; }
+  #uploadlog-input input { flex:1; min-width:0; font:12.5px var(--mono); color:var(--fg); background:var(--field); border:1px solid transparent;
+    border-radius:7px; padding:7px 10px; }
+  #uploadlog-input input:focus { outline:none; border-color:var(--line-2); background:var(--bg); }
+  #uploadlog-input input:disabled { opacity:.6; }
+
   /* MQTT modal */
-  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; z-index:100;
-    align-items:flex-start; justify-content:center; padding:60px 16px; overflow:auto; }
+  .modal-bg { position:fixed; inset:0; background:var(--scrim); display:none; z-index:100;
+    align-items:flex-start; justify-content:center; padding:12vh 16px 40px; overflow:auto; }
   .modal-bg.open { display:flex; }
-  .modal { background:var(--panel); border:1px solid var(--line); border-radius:10px;
-    width:min(520px,100%); padding:18px 20px; box-shadow:0 12px 40px rgba(0,0,0,.5); }
-  .modal h2 { margin:0 0 12px; font-size:16px; font-weight:600; }
-  .modal .field { display:grid; grid-template-columns:110px 1fr; gap:10px; align-items:center;
-    margin-bottom:8px; }
-  .modal .field label { color:var(--muted); font-size:12px; }
-  .modal .field input { background:var(--bg); color:var(--fg); border:1px solid var(--line);
-    border-radius:6px; padding:6px 9px; font-family:ui-monospace,monospace; font-size:13px; width:100%; }
-  .modal .field input:focus { outline:none; border-color:var(--accent); }
-  .modal .actions { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; align-items:center; }
+  .modal { background:var(--bg); border:1px solid var(--line); border-radius:14px; width:min(460px,100%); padding:24px 24px 20px; box-shadow:var(--shadow); }
+  .modal h2 { margin:0 0 4px; font-size:17px; font-weight:600; letter-spacing:-.01em; }
+  .modal .sub { color:var(--muted); font-size:13px; margin:0 0 18px; }
+  .modal .field { display:block; margin-bottom:12px; }
+  .modal .field label { display:block; color:var(--muted); font-size:12.5px; margin-bottom:4px; }
+  .modal .field input { font:13px var(--mono); color:var(--fg); background:var(--field); border:1px solid transparent;
+    border-radius:7px; padding:8px 10px; width:100%; }
+  .modal .field input:focus { outline:none; border-color:var(--line-2); background:var(--bg); }
+  .modal .actions { display:flex; gap:8px; margin-top:18px; flex-wrap:wrap; align-items:center; }
   .modal .actions .spacer { flex:1; }
-  .modal .status { color:var(--muted); font-size:12px; min-height:1.2em; }
-  .modal .status.err { color:var(--warn); }
-  .modal .devlist { margin-top:14px; border:1px solid var(--line); border-radius:6px;
-    max-height:220px; overflow:auto; display:none; }
+  .modal .status { color:var(--muted); font-size:12.5px; min-height:1.2em; }
+  .modal .status.err { color:var(--accent); }
+  .modal .devlist { margin-top:16px; border-top:1px solid var(--line); max-height:240px; overflow:auto; display:none; }
   .modal .devlist.show { display:block; }
-  .modal .devlist .dev { padding:9px 12px; border-bottom:1px solid var(--line); cursor:pointer;
-    font-family:ui-monospace,monospace; font-size:13px; display:flex; align-items:center; gap:8px; }
-  .modal .devlist .dev:last-child { border-bottom:none; }
-  .modal .devlist .dev:hover { background:var(--panel2); color:var(--accent); }
-  .modal .devlist .dev.offline { color:var(--muted); }
-  .modal .devlist .dev.offline::after { content:"offline"; font-size:11px; }
-  .modal .devlist .empty { padding:14px; color:var(--muted); font-size:12px; text-align:center; }
-  @media (max-width:640px) {
-    header { padding:12px 14px; gap:10px; }
-    #panes { padding:14px 14px 60px; }
-    .row { grid-template-columns:1fr; gap:6px; }
-    .row .val, .row .val input, .row .val select { max-width:none; }
-    #tabs { padding:0 8px; }
-    #uploadlog { left:8px; right:8px; bottom:8px; width:auto; max-height:60vh; }
-    .modal .field { grid-template-columns:1fr; gap:4px; }
+  .modal .devlist .dev { padding:10px 4px; border-bottom:1px solid var(--line); cursor:pointer; font:13px var(--mono);
+    display:flex; align-items:center; gap:8px; }
+  .modal .devlist .dev:hover { background:var(--field); }
+  .modal .devlist .dev.offline { color:var(--faint); }
+  .modal .devlist .dev.offline::after { content:"offline"; margin-left:auto; font:12px var(--sans); }
+  .modal .devlist .empty { padding:16px 4px; color:var(--muted); font-size:12.5px; }
+
+  @media (hover:none) { .clear-btn { opacity:.7; } }
+  @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+  @media (max-width:760px) {
+    header { height:auto; min-height:var(--hdr); flex-wrap:wrap; padding:10px 14px; gap:6px 12px; }
+    #serial-status { order:5; flex-basis:100%; white-space:normal; overflow-wrap:anywhere; }
+    #srcname { max-width:20ch; }
+    .shell { display:block; }
+    #tabs { position:static; height:auto; display:flex; gap:2px; overflow-x:auto; padding:8px 10px; border-right:0; border-bottom:1px solid var(--line); }
+    .tabs-sep, .tabs-sep:first-child { flex:none; align-self:center; padding:0 4px 0 10px; font-size:10.5px; white-space:nowrap; }
+    .tabs-sep:first-child { padding-left:2px; }
+    .tab .dot { margin-left:0; }
+    #panes { padding:26px 18px 120px; }
+    .phead h2 { font-size:24px; }
+    .row { grid-template-columns:1fr; row-gap:8px; }
+    .row::before { left:-10px; }
+    .row .desc { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+    .row:focus-within .desc, .row .desc.open { -webkit-line-clamp:unset; }
+    #drop { padding-top:6vh; }
+    .start .intro h2 { font-size:25px; }
+    .sheet { top:auto; width:100%; height:86vh; border-left:0; border-top:1px solid var(--line); border-radius:14px 14px 0 0;
+      transform:translateY(102%); }
+    #console { top:auto; width:100%; }
+    .sheet-head { padding-left:18px; }
+    .sheet-body, #uploadlog { padding-left:18px; padding-right:18px; }
+    .sheet-foot { padding-left:18px; padding-right:18px; }
+    .sheet-foot .btns > * { flex:1; justify-content:center; }
   }
+  @media (max-width:520px) {
+    body.loaded header h1 { display:none; }
+    body.loaded header .src { flex-basis:100%; }
+    #srcname { max-width:none; flex:0 1 auto; }
+    header .actions { flex-basis:100%; justify-content:flex-end; }
+    .menu-list { left:0; right:auto; }
+  }
+.busy::before{content:"";display:inline-block;width:.75em;height:.75em;margin-right:.45em;vertical-align:-.08em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:busy-spin .8s linear infinite}
+@keyframes busy-spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
 <header>
-  <h1>Fugu MPPT — config editor</h1>
-  <span id="srcname" class="pill" style="display:none"></span>
-  <span id="serial-status" class="pill" style="display:none"></span>
-  <span class="spacer"></span>
-  <button id="serial-btn" style="display:none">Read from serial</button>
-  <label class="btn" id="reload-zip" style="display:none">Open .zip<input type="file" accept=".zip"></label>
-  <label class="btn" id="reload-dir" style="display:none">Open folder<input type="file" webkitdirectory directory multiple></label>
-  <button id="upload" style="display:none">Upload changes to device</button>
-  <button id="download" class="primary" style="display:none">Download .zip</button>
+  <h1>Fugu MPPT config</h1>
+  <div class="src"><span id="srcname" title="Loaded configuration"></span><span id="conn">Not connected</span></div>
+  <span id="serial-status" style="display:none" role="status"></span>
+  <div class="actions">
+    <details id="open-menu" class="menu">
+      <summary>Open</summary>
+      <div class="menu-list">
+        <div class="mh">Read from a device</div>
+        <button id="menu-mqtt" type="button">MQTT broker…</button>
+        <button id="menu-ble" type="button">Bluetooth</button>
+        <button id="serial-btn" type="button">USB serial</button>
+        <div class="sep"></div>
+        <div class="mh">Open a file</div>
+        <label class="btn" id="reload-zip">Choose .zip…<input type="file" accept=".zip"></label>
+        <label class="btn" id="reload-dir">Choose folder…<input type="file" webkitdirectory directory multiple></label>
+        <div class="sep"></div>
+        <button id="menu-start" type="button">Start screen</button>
+      </div>
+    </details>
+    <button id="open-console" type="button" aria-pressed="false" aria-controls="console">Console</button>
+    <button id="review-btn" class="primary none" type="button" aria-controls="review"><span class="lbl">Review changes</span><span class="count" id="review-count">0</span></button>
+  </div>
 </header>
 
-<button id="open-console" style="display:none">Device log</button>
-
 <div id="drop">
-  <h2>Fugu MPPT config editor</h2>
-  <div class="controls">
-    <button id="start-connect" class="btn">Connect to a device</button>
-    <button id="start-open" class="btn">Open a file</button>
-    <button id="start-preset" class="btn">Load preset</button>
-  </div>
-
-  <div id="start-connect-pane" class="startpane">
-    <div>Read the live config straight off the device over MQTT (via WebSocket), Bluetooth (NUS; Chrome/Edge, https or localhost), or USB serial.</div>
-    <div class="controls">
-      <button id="connect-mqtt" class="btn">Connect MQTT</button>
-      <button id="connect-ble" class="btn">Connect Bluetooth</button>
-      <button id="connect-serial" class="btn">Connect serial (115200)</button>
+  <div class="start">
+    <div class="intro">
+      <h2>Board configuration</h2>
+      <p>Edit the <code>.conf</code> files a Fugu MPPT reads at boot. Read them from a device, open a saved copy, or start from a board preset.</p>
     </div>
-  </div>
 
-  <div id="start-open-pane" class="startpane">
-    <div>Open a <code>.zip</code> or a folder structured like <code>config/fmetal</code> (with a <code>conf/</code> dir of <code>*.conf</code> files) — or drop one anywhere on this page.</div>
-    <div class="controls">
-      <label class="btn">Choose .zip<input id="pick-zip" type="file" accept=".zip"></label>
-      <label class="btn">Choose folder<input id="pick-dir" type="file" webkitdirectory directory multiple></label>
-    </div>
-  </div>
+    <section class="choice">
+      <button id="start-connect" class="choice-head" type="button" aria-expanded="false" aria-controls="start-connect-pane"><span class="ic" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg></span><span><span class="t">Connect to a device</span><span class="d">Read the live config, edit it, push the changes back</span></span></button>
+      <div id="start-connect-pane" class="startpane">
+        <div class="controls">
+          <button id="connect-mqtt" type="button">MQTT broker…</button>
+          <button id="connect-ble" type="button">Bluetooth</button>
+          <button id="connect-serial" type="button">USB serial</button>
+        </div>
+        <div class="fine">MQTT connects through the broker's WebSocket listener. Bluetooth and USB serial (115200 baud) need Chrome or Edge over https or localhost.</div>
+      </div>
+    </section>
 
-  <div id="start-preset-pane" class="startpane">
-    <div>Start from a board config shipped with the firmware.</div>
-    <div class="controls">
-      <select id="preset-list"></select>
-      <button id="preset-load" class="btn">Load</button>
-    </div>
-  </div>
+    <section class="choice">
+      <button id="start-open" class="choice-head" type="button" aria-expanded="false" aria-controls="start-open-pane"><span class="ic" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span><span class="t">Open a file</span><span class="d">A <code>.zip</code> or a folder with a <code>conf/</code> directory, like <code>config/fmetal</code></span></span></button>
+      <div id="start-open-pane" class="startpane">
+        <div class="controls">
+          <label class="btn">Choose .zip<input id="pick-zip" type="file" accept=".zip"></label>
+          <label class="btn">Choose folder<input id="pick-dir" type="file" webkitdirectory directory multiple></label>
+        </div>
+        <div class="fine">Files other than <code>*.conf</code> are kept and written back unchanged.</div>
+      </div>
+    </section>
 
-  <div id="drop-msg" class="err" style="margin-top:14px"></div>
+    <section class="choice">
+      <button id="start-preset" class="choice-head" type="button" aria-expanded="false" aria-controls="start-preset-pane"><span class="ic" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5zM3 13l9 5 9-5"/></svg></span><span><span class="t">Start from a preset</span><span class="d">A board config shipped with the firmware</span></span></button>
+      <div id="start-preset-pane" class="startpane">
+        <div class="controls">
+          <select id="preset-list" aria-label="Board preset"></select>
+          <button id="preset-load" class="primary" type="button">Load</button>
+        </div>
+      </div>
+    </section>
+
+    <p id="resume" class="resume" hidden><button id="resume-btn" class="link" type="button"></button></p>
+    <div class="hint">You can also drop a .zip or folder anywhere on this page.</div>
+    <div id="drop-msg" class="err" role="status"></div>
+  </div>
 </div>
 
 <div id="app">
-  <div id="tabs"></div>
-  <div id="panes"></div>
+  <div class="shell">
+    <nav id="tabs" aria-label="Config files"></nav>
+    <main id="panes"></main>
+  </div>
 </div>
 
-<div id="uploadlog">
-  <div class="ulhdr"><strong id="uploadlog-title">Device log</strong><span id="uploadlog-stat" class="pill"></span><span class="spacer"></span><button id="uploadlog-close">close</button></div>
-  <div id="uploadlog-body"></div>
+<div id="scrim" class="scrim"></div>
+<aside id="review" class="sheet" role="dialog" aria-modal="true" aria-labelledby="review-title">
+  <div class="sheet-head">
+    <h2 id="review-title">Review changes</h2>
+    <span id="review-sub" class="sub"></span>
+    <button id="review-close" type="button">Close</button>
+  </div>
+  <div id="review-body" class="sheet-body"></div>
+  <div class="sheet-foot">
+    <p id="review-note" class="note"></p>
+    <div class="btns">
+      <button id="download" type="button">Download .zip</button>
+      <button id="upload" class="primary" type="button" style="display:none">Push to device</button>
+    </div>
+  </div>
+</aside>
+
+<aside id="console" class="sheet" role="dialog" aria-labelledby="uploadlog-title">
+  <div class="sheet-head">
+    <h2 id="uploadlog-title">Console</h2>
+    <span id="uploadlog-stat"></span>
+    <button id="uploadlog-close" type="button">Close</button>
+  </div>
+  <div id="uploadlog"><div id="uploadlog-body"></div></div>
   <form id="uploadlog-input" autocomplete="off">
-    <input id="uploadlog-cmd" type="text" placeholder="type a console command and press Enter">
+    <input id="uploadlog-cmd" type="text" placeholder="type a console command and press Enter" aria-label="Console command">
     <button type="submit">Send</button>
   </form>
-</div>
+</aside>
 
 <div id="mqtt-modal" class="modal-bg">
-  <div class="modal">
-    <h2>Connect via MQTT</h2>
-    <div class="field"><label>Broker URL</label><input id="mqtt-url" placeholder="ws://192.168.1.200:1885"></div>
-    <div class="field"><label>Username</label><input id="mqtt-user" placeholder="pv"></div>
-    <div class="field"><label>Password</label><input id="mqtt-pass" type="password"></div>
-    <div style="color:var(--muted);font-size:11px;margin-top:6px">
-      Browser MQTT requires WebSocket (ws:// or wss://). Mosquitto needs a <code>listener</code> on a WS port.
-    </div>
+  <div class="modal" role="dialog" aria-labelledby="mqtt-title">
+    <h2 id="mqtt-title">Connect over MQTT</h2>
+    <p class="sub">The browser needs a WebSocket listener (<code>ws://</code> or <code>wss://</code>) on the broker.</p>
+    <div class="field"><label for="mqtt-url">Broker URL</label><input id="mqtt-url" placeholder="ws://192.168.1.200:1885"></div>
+    <div class="field"><label for="mqtt-user">Username</label><input id="mqtt-user" placeholder="pv"></div>
+    <div class="field"><label for="mqtt-pass">Password</label><input id="mqtt-pass" type="password"></div>
     <div class="actions">
-      <button id="mqtt-scan" class="primary">Scan for devices</button>
+      <button id="mqtt-scan" class="primary" type="button">Scan for devices</button>
       <span id="mqtt-status" class="status"></span>
       <span class="spacer"></span>
-      <button id="mqtt-cancel">Cancel</button>
+      <button id="mqtt-cancel" type="button">Cancel</button>
     </div>
     <div id="mqtt-devlist" class="devlist"></div>
   </div>
@@ -263,10 +486,9 @@
   // runs in a single open <span>, kept well-nested so createContextualFragment splices cleanly.
   // Caller (ulLine) only invokes it when the line actually contains an ESC sequence.
   (function(){
-    const FG = {  // dark-terminal palette, codes 30-37 (normal) + 90-97 (bright)
-      30:"#555",31:"#e06c75",32:"#98c379",33:"#d19a66",34:"#61afef",35:"#c678dd",36:"#56b6c2",37:"#abb2bf",
-      90:"#777",91:"#e06c75",92:"#98c379",93:"#e5c07b",94:"#61afef",95:"#c678dd",96:"#56b6c2",97:"#ffffff"
-    };
+    const FG = {};  // theme-aware palette (CSS vars), codes 30-37 + bright 90-97
+    for (let c=30;c<38;c++){ FG[c]=`var(--a${c})`; FG[c+60]=`var(--a${c})`; }
+    FG[97]="var(--a97)";
     const esc = t => t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     window.ansiConvert = { toHtml(s){
       let out="", open=false, color=null, bold=false, last=0, m;
@@ -757,10 +979,16 @@ function rewriteLine(raw, key, val){
   return m[1] + val + m[3];
 }
 
+// The firmware keeps the last of duplicate keys, so read and write all of them.
+function lineOf(model, key){
+  for (let i=model.lines.length-1; i>=0; i--) if (model.lines[i].key===key) return model.lines[i];
+}
 function setConfValue(model, key, val){
+  let hit=false;
   for (const l of model.lines){
-    if (l.key === key){ l.value = val; l.raw = rewriteLine(l.raw, key, val); return; }
+    if (l.key === key){ l.value = val; l.raw = rewriteLine(l.raw, key, val); hit=true; }
   }
+  if (hit) return;
   // append new key
   if (model.lines.length && model.lines[model.lines.length-1].raw === "")
     model.lines.splice(model.lines.length-1, 0, {raw:key+"="+val, key, value:val, comment:""});
@@ -873,11 +1101,11 @@ function load(files, sourceName){
       const base = path.split("/").pop();
       // stable display order: keys present in the file first, then remaining
       // firmware-known keys. Keeps rows from jumping when toggled set/unset.
-      const order = model.lines.filter(l=>l.key!=null).map(l=>l.key);
+      const order = [...new Set(model.lines.filter(l=>l.key!=null).map(l=>l.key))];
       for (const k of (FILE_KEYS[base]||[])) if (!order.includes(k)) order.push(k);
       // value each key had in the file, so we can show "was: …" after edits/deletes
       const original = {};
-      for (const l of model.lines) if (l.key!=null && !(l.key in original)) original[l.key]=l.value;
+      for (const l of model.lines) if (l.key!=null) original[l.key]=l.value;
       map[path] = { isConf:true, model, extras:{}, order, original };
     }
     else map[path] = { isConf:false, bytes };
@@ -906,7 +1134,7 @@ function load(files, sourceName){
 /* Overlay uploaded conf values onto the current device-read state as pending
    edits, instead of discarding the read. Each file's `original` (the device
    values) is kept, so values that differ from the device light up as changed
-   and the user can review them before "Upload changes to device". For a file
+   and the user can check them under "Review changes" before pushing. For a file
    the upload includes, keys the device had but the upload omits are cleared
    (shown as <not set>) — the uploaded file fully replaces that file. Files the
    upload doesn't include at all are left untouched. */
@@ -926,7 +1154,7 @@ function mergeUpload(files, sourceName){
     const uploaded = parseConf(td.decode(files[path])).lines.filter(l=>l.key!=null);
     const uploadKeys = new Set(uploaded.map(l=>l.key));
     for (const l of uploaded){
-      if (f.model.lines.some(x=>x.key===l.key)) setConfValue(f.model, l.key, l.value);
+      if (lineOf(f.model, l.key)) setConfValue(f.model, l.key, l.value);
       else { f.extras[l.key] = l.value; if (!f.order.includes(l.key)) f.order.push(l.key); }
     }
     // key the device reported but this uploaded file omits → clear the field
@@ -949,7 +1177,7 @@ function mergeUpload(files, sourceName){
   if (firstChanged && !changedFields(state.files[state.active]).length) state.active = firstChanged;
   renderApp();
   showStatus(total
-    ? `Applied "${sourceName}" — ${total} field${total>1?"s":""} differ from the device; review the highlighted rows, then "Upload changes to device".`
+    ? `Applied "${sourceName}" — ${total} field${total>1?"s":""} differ from the device; check the highlighted rows, then "Review changes".`
     : `Applied "${sourceName}" — every value already matches the device.`);
 }
 
@@ -957,8 +1185,18 @@ function mergeUpload(files, sourceName){
 // device read yet) a fresh upload loads from scratch as before.
 function applyUpload(files, sourceName){
   if (state && state.fromDevice) mergeUpload(files, sourceName);
-  else load(files, sourceName);
+  else if (confirmDiscard()) load(files, sourceName);
 }
+
+function pendingCount(){
+  return state ? state.confPaths.reduce((n,p)=>n+changedFields(state.files[p]).length, 0) : 0;
+}
+// Before replacing the loaded state: ask if that drops edits.
+function confirmDiscard(){
+  const n = pendingCount();
+  return !n || window.confirm(`${n} change${n>1?"s":""} not pushed or saved will be lost. Continue?`);
+}
+window.addEventListener("beforeunload", e=>{ if (pendingCount()){ e.preventDefault(); e.returnValue=""; } });
 
 function confSort(a,b){
   const ai=TAB_ORDER.indexOf(a.split("/").pop().replace(/\.conf$/,""));
@@ -966,36 +1204,111 @@ function confSort(a,b){
   return (ai<0?99:ai)-(bi<0?99:bi) || a.localeCompare(b);
 }
 
+const SENSITIVE = new Set(["board","sensor","limits","coil","converter"]);
+const FILE_DESC = {
+  board:"Pins, buses, the current-sense chip and the gate driver.",
+  sensor:"ADC channels, scaling and filtering.",
+  limits:"Protection limits: voltage, current, power and temperature.",
+  coil:"Inductor value and rectifier timing.",
+  converter:"Topology, operating mode and control-loop gains.",
+  charger:"Battery charge targets, holds and recharge.",
+  tracker:"MPPT sweep and tracking.",
+  mqtt:"Broker connection and battery topics.",
+  tele:"Telemetry to InfluxDB and over Bluetooth.",
+  wifi:"Wi-Fi networks to join.",
+  ble:"Bluetooth console and pairing.",
+  ftp:"FTP access to the config files.",
+  http:"HTTP config server.",
+  telnet:"Telnet console.",
+  scope:"Raw ADC stream for the soft oscilloscope.",
+  lcd:"Character LCD.",
+  bsync:"PWM clock sync from Wi-Fi beacons.",
+  pprof:"Sampling profiler.",
+};
+// unset keys still shown in the short view
+const COMMON = {
+  "board.conf":["mcu","pwm_freq"],
+  "limits.conf":["hv_max","lv_max","hv_i_max","lv_i_max"],
+  "coil.conf":["L0"],
+  "converter.conf":["topo","mode"],
+  "charger.conf":["vout_max","cv_eoc","cv_float","ibat_max","bat_c"],
+  "mqtt.conf":["enabled","broker_uri"],
+  "tele.conf":["enabled","influxdb_host"],
+};
+const showAllFiles = new Set();
+const fileLabel = p => p.split("/").pop().replace(/\.conf$/,"");
+
 function renderApp(){
   document.getElementById("drop").style.display="none";
   document.getElementById("app").style.display="block";
-  for (const id of ["download","reload-zip","reload-dir","serial-btn"]) document.getElementById(id).style.display="";
-  const sn=document.getElementById("srcname"); sn.style.display=""; sn.textContent=state.sourceName;
+  document.body.classList.add("loaded");
+  document.getElementById("resume").hidden=true;
+  const sn=document.getElementById("srcname"); sn.textContent=state.sourceName; sn.title=state.sourceName;
 
   const tabs=document.getElementById("tabs"); tabs.innerHTML="";
-  const SENSITIVE = new Set(["board","sensor","limits","coil","converter"]);
+  let lastGrp=null;
   for (const path of state.confPaths){
+    const f=state.files[path], label=fileLabel(path);
+    const grp = f.isNew ? "new" : SENSITIVE.has(label) ? "hw" : "op";
+    if (grp!==lastGrp){
+      const h=document.createElement("div"); h.className="tabs-sep";
+      h.textContent = grp==="hw" ? "Hardware" : grp==="op" ? "Settings" : "Not on device";
+      tabs.appendChild(h); lastGrp=grp;
+    }
     const t=document.createElement("div");
-    const label = path.split("/").pop().replace(/\.conf$/,"");
-    t.className="tab"+(path===state.active?" active":"")+(state.files[path].isNew?" new":"")+(SENSITIVE.has(label)?" sensitive":"");
-    t.title=path+(state.files[path].isNew?" (not on device — fill a key to create)":"")+(SENSITIVE.has(label)?" — sensitive (hardware/calibration)":"");
-    const roleErr = state.files[path].isConf ? roleKeyError(path, fileKeys(state.files[path]), topoFor(path)) : "";
+    t.className="tab"+(path===state.active?" active":"")+(f.isNew?" new":"");
+    t.title=path+(f.isNew?" (not on device — fill a key to create)":"")+(SENSITIVE.has(label)?" — sensitive (hardware/calibration)":"");
+    t.tabIndex=0; t.setAttribute("role","link");
+    if (path===state.active) t.setAttribute("aria-current","page");
+    const roleErr = f.isConf ? roleKeyError(path, fileKeys(f), topoFor(path)) : "";
     if (roleErr){ t.className += " rolekey"; t.title += " — needs migration: " + roleErr; }
     t.textContent = label;
     const dot=document.createElement("span"); dot.className="dot"; dot.dataset.path=path;
-    dot.style.display="none"; dot.textContent="●"; t.appendChild(dot);
-    t.onclick=()=>{ state.active=path; renderApp(); };
+    dot.style.display="none"; t.appendChild(dot);
+    t.onclick=()=>{ state.active=path; renderApp(); window.scrollTo(0,0); };
+    t.onkeydown=e=>{ if (e.key==="Enter"||e.key===" "){ e.preventDefault(); t.onclick(); } };
     tabs.appendChild(t);
   }
+  const act=tabs.querySelector(".tab.active");
+  if (act && act.scrollIntoView && tabs.scrollWidth>tabs.clientWidth) act.scrollIntoView({block:"nearest",inline:"nearest"});
   renderPane();
   refreshDirtyMarks();
+  refreshConn();
+}
+
+// Mirrors ConfFile::getX (src/conf.h) on the trimmed value: what it throws on, or reads unexpectedly. "" = fine
+function valueProblem(key, v){
+  v = v.trim();
+  if (v==="") return "";
+  const t = lookupType(key);
+  if (t==="float"){
+    if (/^[+-]?(inf(inity)?|nan)$/i.test(v)) return "";
+    if (!/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(v)) return "Not a number: use digits, a dot and an optional exponent, e.g. 0.5 or 1e-3";
+    const x = Number(v);
+    if (!isFinite(Math.fround(x)) || (x===0 && /[1-9]/.test(v.split(/e/i)[0]))) return "Out of range for a float";
+    return "";
+  }
+  if (t!=="byte" && t!=="long") return "";
+  // strtol_2_8_10_16: lowercase 0b/0x prefix, a leading 0 means octal, a sign means decimal
+  let n;
+  if (/^0b[01]+$/.test(v)) n = parseInt(v.slice(2), 2);
+  else if (/^0x[0-9a-f]+$/i.test(v) && v[1]==="x") n = parseInt(v.slice(2), 16);
+  else if (/^0[0-7]+$/.test(v)){
+    n = parseInt(v, 8);
+    if (n !== parseInt(v, 10)) return `A leading 0 means octal: the firmware reads ${n}`;
+  }
+  else if (/^[+-]?\d+$/.test(v) && !/^0\d/.test(v)) n = parseInt(v, 10);
+  else return "Not a whole number: use decimal, 0x hex or 0b binary (no leading 0, lowercase prefix)";
+  if (t==="byte" && (n<0 || n>255)) return "Out of range: 0 to 255";
+  if (n < -2147483648 || n > 2147483647) return "Out of range for a 32-bit integer";
+  return "";
 }
 
 const collapsedGroups = new Set();  // "path|prefix" of folded key groups
 
 // Groups keys by shared "_"-separated prefixes, in first-seen order. Chains with a
-// single branch are merged and a group needs 2+ keys. Single keys come before
-// groups on each level. Returns items {key} or {prefix, n, items}.
+// single branch are merged and a group needs 2+ keys. Returns items {key} or
+// {prefix, n, items}.
 function keyTree(keys){
   const mk = ()=>({kids:new Map(), key:null, n:0, first:null});
   const root = mk();
@@ -1020,13 +1333,33 @@ function keyTree(keys){
   return walk(root, "");
 }
 
+
 function renderPane(){
   const panes=document.getElementById("panes"); panes.innerHTML="";
   const path=state.active, f=state.files[path], model=f.model;
+  const base=path.split("/").pop(), label=fileLabel(path);
+  const showAll=showAllFiles.has(path);
   const pane=document.createElement("div"); pane.className="pane active";
 
-  const pathEl=document.createElement("div"); pathEl.className="path"; pathEl.textContent=path;
-  pane.appendChild(pathEl);
+  const head=document.createElement("div"); head.className="phead";
+  const h=document.createElement("h2"); h.textContent=label;
+  const ext=document.createElement("span"); ext.className="ext"; ext.textContent=base.slice(label.length); h.appendChild(ext);
+  const meta=document.createElement("div"); meta.className="meta";
+  const pathEl=document.createElement("span"); pathEl.className="path"; pathEl.textContent=path;
+  const nAll=f.order.length;
+  const cnt=document.createElement("span");
+  const refreshCount=()=>{ cnt.textContent=`, ${fileKeys(f).length} of ${nAll} keys set`; };
+  refreshCount();
+  const tog=document.createElement("button"); tog.type="button"; tog.className="link";
+  tog.textContent = showAll ? "Show set keys only" : `Show all ${nAll} keys`;
+  tog.onclick=()=>{ showAll ? showAllFiles.delete(path) : showAllFiles.add(path); renderPane(); refreshDirtyMarks(); };
+  meta.append(pathEl, cnt, tog);
+  head.append(h, meta);
+  const note=document.createElement("div"); note.className="note";
+  note.textContent = f.isNew ? "Not on the device. Fill in a key to create this file; left empty, it is not written."
+    : (FILE_DESC[label] || "") + (SENSITIVE.has(label) ? " A wrong value can damage the converter." : "");
+  if (note.textContent) head.appendChild(note);
+  pane.appendChild(head);
 
   // a removed role key (conv_side.h) fails setup at boot: say so above the rows
   const formErr=document.createElement("div"); formErr.className="err keyform";
@@ -1037,40 +1370,43 @@ function renderPane(){
   refreshKeyForm();
   pane.appendChild(formErr);
 
-  const unitInputs = [];  // [input, unitSpan] pairs to size after layout
+  const common = new Set(COMMON[base] || []);
 
   function makeRow(key, value, comment, isExtra){
     const meta = lookupMeta(path, key, comment);
     const row = document.createElement("div");
     row.className = "row" + (isExtra ? " extra" : "");
     row._key = key;
+    const id = "f-" + key;
 
-    const left = document.createElement("div");
-    const k = document.createElement("div"); k.className="k";
+    const left = document.createElement("div"); left.className="lbl";
+    const k = document.createElement("label"); k.className="k"; k.id=id+"-k";
     const ty = lookupType(key);
-    k.innerHTML = escHtml(key)
-      + (ty ? ' <span class="type" data-t="'+ty+'" title="firmware reads this with ConfFile::get'+
-              ty.charAt(0).toUpperCase()+ty.slice(1)+'()">'+ty+'</span>' : "")
-      + (meta ? "" : ' <span class="nometa" title="no metadata found in firmware">?</span>');
+    k.textContent = key;
+    k.title = (ty ? ty+", read with ConfFile::get"+ty.charAt(0).toUpperCase()+ty.slice(1)+"()" : "type unknown")
+            + (meta ? "" : "; no metadata in the firmware tables");
     left.appendChild(k);
-    const d = document.createElement("div"); d.className="desc"+(meta && meta.removed ? " err" : "");
-    let desc = meta ? meta.desc : "(no description found)";
+    const d = document.createElement("div");
+    d.className="desc"+(meta && meta.removed ? " err" : "")+(meta ? "" : " none");
+    d.textContent = meta ? meta.desc : "No description";
+    if (meta && meta.fromComment) d.textContent += " (from file comment)";
     const def = lookupDefault(path, key);
-    if (def !== undefined) desc += "  ·  default: " + (meta && meta.type==="bool" && (def==="0"||def==="1") ? (def==="1" ? "on" : "off") : def);
-    if (meta && meta.fromComment) desc += "  ·  (from file comment)";
-    d.textContent = desc;
+    if (def !== undefined){ const s=document.createElement("span"); s.className="def"; s.textContent="default: "+(meta && meta.type==="bool" && (def==="0"||def==="1") ? (def==="1" ? "on" : "off") : def); d.append(" ", s); }
+    d.title = d.textContent;
+    d.onclick = ()=>d.classList.toggle("open");
     left.appendChild(d);
 
     const right = document.createElement("div"); right.className="val";
     const line = document.createElement("div"); line.className="val-line";
     const wrap = document.createElement("div"); wrap.className="inwrap";
     const knob = meta && meta.type==="bool" && ["","0","1"].includes(value);
+    if (!knob) k.htmlFor=id;   // a label click must not toggle the switch
     const opts = !knob && meta && (meta.opts || (meta.type==="bool" ? ["0","1"] : null));
     let inp;
     if (knob){
       // on/off switch; "" = not set (dashed), the × button clears it again
       const sw = document.createElement("label"); sw.className="switch";
-      const cb = document.createElement("input"); cb.type="checkbox";
+      const cb = document.createElement("input"); cb.type="checkbox"; cb.id=id; cb.setAttribute("aria-labelledby", k.id);
       const track = document.createElement("span"); track.className="track";
       const txt = document.createElement("span"); txt.className="sw-txt";
       sw.append(cb, track, txt);
@@ -1082,7 +1418,7 @@ function renderPane(){
       show();
     } else if (opts){
       // unknown current values stay selectable so nothing is lost
-      inp = document.createElement("select");
+      inp = document.createElement("select"); inp.id=id;
       for (const o of ["", ...opts, ...(value && !opts.includes(value) ? [value] : [])]){
         const e = document.createElement("option"); e.value = o;
         e.textContent = o==="" ? (isExtra ? "<not set>" : "(empty)") : o;
@@ -1090,38 +1426,33 @@ function renderPane(){
       }
       inp.value = value;
     } else {
-      inp = document.createElement("input"); inp.type="text"; inp.value=value;
+      inp = document.createElement("input"); inp.type="text"; inp.value=value; inp.id=id;
       inp.spellcheck=false; inp.autocomplete="off";
       if (isExtra) inp.placeholder="<not set>";
     }
     wrap.appendChild(inp.el || inp);
-    if (meta && meta.unit){
-      const u = document.createElement("span"); u.className="unit-suffix"; u.textContent=meta.unit;
-      wrap.appendChild(u); unitInputs.push([inp,u]);
-    }
     line.appendChild(wrap);
+    const u = document.createElement("span"); u.className="unit"; u.textContent=(meta && meta.unit) || "";
+    line.appendChild(u);
 
     // clear button: removes the entry from the file, leaving it <not set>
     const clearBtn = document.createElement("button");
     clearBtn.type="button"; clearBtn.className="clear-btn"; clearBtn.textContent="×";
-    clearBtn.title="remove from file (set to <not set>)";
+    clearBtn.title="Remove from the file (<not set>)"; clearBtn.setAttribute("aria-label","Remove "+key+" from the file");
     clearBtn.onclick = ()=>{ removeConfKey(model,key); f.extras[key]=""; markDirty(path); renderPane(); refreshDirtyMarks(); };
     const updateClearVis = ()=>{ clearBtn.style.display = inp.value.trim()!=="" ? "" : "none"; };
     line.appendChild(clearBtn);
 
     right.appendChild(line);
+    const bad = document.createElement("div"); bad.className="bad"; bad.style.display="none";
+    right.appendChild(bad);
     const origEl = document.createElement("div"); origEl.className="orig"; origEl.style.display="none";
-    origEl.title = "click to restore this value";
+    origEl.title = "Revert to the loaded value"; origEl.setAttribute("role","button"); origEl.tabIndex=0;
     right.appendChild(origEl);
 
     const orig = f.original[key];  // value loaded from the device/file (undefined if absent there)
-    // clicking "was: …" reverts the field to the value it loaded with
-    origEl.onclick = ()=>{
-      if (orig===undefined){ removeConfKey(model,key); f.extras[key]=""; }
-      else if (model.lines.some(x=>x.key===key)) setConfValue(model,key,orig);
-      else f.extras[key]=orig;
-      markDirty(path); renderPane(); refreshDirtyMarks();
-    };
+    origEl.onclick = ()=>{ revertField(path, key); renderPane(); refreshDirtyMarks(); };
+    origEl.onkeydown = e=>{ if (e.key==="Enter"||e.key===" "){ e.preventDefault(); origEl.onclick(); } };
     const updateOrig = ()=>{
       // mirror changedFields(): a key the device/file didn't have counts as
       // changed once it holds a non-empty value, so the row highlight always
@@ -1130,9 +1461,11 @@ function renderPane(){
       origEl.style.display = show ? "" : "none";
       if (show) origEl.textContent = "was: " + (orig===undefined ? "(not set)" : orig==="" ? "(empty)" : orig);
       row.classList.toggle("changed", show);
+      const p = inp.el ? "" : valueProblem(key, inp.value);
+      bad.textContent = p; bad.style.display = p ? "" : "none"; row.classList.toggle("invalid", !!p);
     };
     inp.oninput = isExtra
-      ? ()=>{ f.extras[key]=inp.value; row.classList.toggle("filled", inp.value.trim()!==""); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); refreshKeyForm(); }
+      ? ()=>{ f.extras[key]=inp.value; row.classList.toggle("filled", inp.value.trim()!==""); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); refreshKeyForm(); refreshCount(); }
       : ()=>{ setConfValue(model,key,inp.value); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); };
     updateOrig(); updateClearVis();
 
@@ -1142,8 +1475,9 @@ function renderPane(){
 
   // render every key in the stable order, grouped into a tree by shared "_"
   // prefixes; present rows come from the model, the rest render as <not set>.
+  // The short view hides unset keys that are neither changed nor common.
   function keyRow(key, pfx){
-    const l = model.lines.find(x=>x.key===key);
+    const l = lineOf(model, key);
     let row;
     if (l) row = makeRow(key, l.value, l.comment, false);
     else {
@@ -1153,58 +1487,97 @@ function renderPane(){
     }
     if (pfx && key.startsWith(pfx)){
       const k = row.querySelector(".k");
-      k.innerHTML = '<span class="pfx">'+escHtml(pfx)+'</span>'+k.innerHTML.slice(escHtml(pfx).length);
+      const s = document.createElement("span"); s.className="pfx"; s.textContent=pfx;
+      k.textContent = key.slice(pfx.length); k.prepend(s);
     }
     return row;
   }
-  function renderItems(items, parent, pfx, ind){
+  function renderItems(items, parent, pfx){
     for (const it of items){
       if (it.key!=null){ parent.appendChild(keyRow(it.key, pfx)); continue; }
       const id = path+"|"+it.prefix;
       const g = document.createElement("details"); g.className="kgroup"; g.open = !collapsedGroups.has(id);
       g.ontoggle = ()=>{ g.open ? collapsedGroups.delete(id) : collapsedGroups.add(id); };
       const s = document.createElement("summary");
-      s.innerHTML = escHtml(it.prefix.slice(0,-1))+'<span class="cnt">'+it.n+'</span>';
       const body = document.createElement("div"); body.className="kbody";
-      body.style.setProperty("--ind", (ind+19)+"px");
       g.append(s, body); parent.appendChild(g);
-      renderItems(it.items, body, it.prefix, ind+19);
+      renderItems(it.items, body, it.prefix);
+      const rows = [...body.querySelectorAll(".row")];
+      const nset = rows.filter(r=>!r.classList.contains("extra") || r.classList.contains("filled")).length;
+      s.textContent = it.prefix.slice(0,-1);
+      const c = document.createElement("span"); c.className="cnt";
+      c.textContent = !showAll ? "" : nset===it.n ? `${it.n} keys` : `${nset} of ${it.n} set`;
+      const dot = document.createElement("span"); dot.className="dot";
+      s.append(c, dot);
     }
   }
-  renderItems(keyTree(f.order), pane, "", 0);
+  // short view: only keys that are set, changed or commonly edited; the rest
+  // stay in the DOM, hidden, so the full model is always rendered
+  const visible = key => {
+    if (showAll || common.has(key) || f.original[key]!==undefined) return true;
+    return !!lineOf(model, key) || String(f.extras[key]||"").trim()!=="";
+  };
+  const shown = f.order.filter(visible), rest = f.order.filter(k=>!visible(k));
+  const list = document.createElement("div"); list.className="rows";
+  renderItems(keyTree(shown), list, "");
+  pane.appendChild(list);
+  if (rest.length){
+    const hid = document.createElement("div"); hid.className="rows-hidden"; hid.hidden = true;
+    for (const k of rest){ const r = keyRow(k, ""); r.classList.add("is-hidden"); hid.appendChild(r); }
+    pane.appendChild(hid);
+  }
+  if (!shown.length){
+    const e=document.createElement("p"); e.className="empty-note";
+    e.append(f.order.length ? `No keys are set in ${base}. ` : `${base} has no known keys. Add one below.`);
+    if (f.order.length){
+      const b=document.createElement("button"); b.type="button"; b.className="link"; b.textContent=`Show all ${nAll} keys`;
+      b.onclick=tog.onclick; e.append(b, " to fill one in.");
+    }
+    pane.appendChild(e);
+  }
 
+  const foot=document.createElement("div"); foot.className="pane-foot";
   // add-key (arbitrary)
+  const addw=document.createElement("details"); addw.className="fold";
+  const adds=document.createElement("summary"); adds.textContent="Add a key";
   const add=document.createElement("div"); add.className="addkey";
-  const ki=document.createElement("input"); ki.placeholder="new key";
+  const ki=document.createElement("input"); ki.placeholder="new key"; ki.setAttribute("aria-label","New key");
   // suggest the side channel keys the file does not list yet
-  const offered=(ADD_KEY_HINTS[path.split("/").pop()]||[]).filter(k=>!f.order.includes(k));
+  const offered=(ADD_KEY_HINTS[base]||[]).filter(k=>!f.order.includes(k));
   if (offered.length){
     const dl=document.createElement("datalist"); dl.id="addkey-list";
     for (const k of offered){ const o=document.createElement("option"); o.value=k; dl.appendChild(o); }
     ki.setAttribute("list", dl.id); ki.placeholder="new key, e.g. "+offered[0];
     add.appendChild(dl);
   }
-  const vi=document.createElement("input"); vi.placeholder="value";
-  const ab=document.createElement("button"); ab.textContent="+ add key";
+  const vi=document.createElement("input"); vi.placeholder="value"; vi.setAttribute("aria-label","Value");
+  const ab=document.createElement("button"); ab.type="button"; ab.textContent="Add";
   ab.onclick=()=>{ const key=ki.value.trim(); if(!key) return;
     setConfValue(model,key,vi.value); delete f.extras[key];
     if (!f.order.includes(key)) f.order.push(key);
     markDirty(path); renderPane(); refreshDirtyMarks(); };
-  add.append(ki,vi,ab); pane.appendChild(add);
+  add.append(ki,vi,ab); addw.append(adds, add); foot.appendChild(addw);
 
   // raw preview
-  const det=document.createElement("details"); det.className="raw";
-  const sum=document.createElement("summary"); sum.textContent="raw "+path.split("/").pop();
+  const det=document.createElement("details"); det.className="fold";
+  const sum=document.createElement("summary"); sum.textContent="Show "+base+" as text";
   const pre=document.createElement("pre"); pre.textContent=serializeFile(f);
   function refreshRaw(){ if(det.open) pre.textContent=serializeFile(f); }
   det.ontoggle=refreshRaw;
-  det.append(sum,pre); pane.appendChild(det);
+  det.append(sum,pre); foot.appendChild(det);
+  pane.appendChild(foot);
 
   panes.appendChild(pane);
-
-  // size each unit-bearing input's right padding to its suffix width
-  for (const [inp,u] of unitInputs) inp.style.paddingRight = (u.offsetWidth + 16) + "px";
 }
+
+// Revert one field to the value it loaded with.
+function revertField(path, key){
+  const f=state.files[path], model=f.model, orig=f.original[key];
+  if (orig===undefined){ removeConfKey(model,key); f.extras[key]=""; }
+  else if (lineOf(model, key)) setConfValue(model,key,orig);
+  else f.extras[key]=orig;
+}
+
 
 // Keys the file will be written with: its lines plus filled-in extras.
 function fileKeys(f){
@@ -1220,7 +1593,7 @@ function changedFields(f){
   if (!f.isConf) return out;
   for (const key of f.order){
     const orig = f.original[key];
-    const l = f.model.lines.find(x=>x.key===key);
+    const l = lineOf(f.model, key);
     const cur = l ? l.value : (f.extras[key]||"");
     if (orig===undefined ? cur.trim()!=="" : cur!==orig) out.push({key, cur, orig});
   }
@@ -1229,13 +1602,32 @@ function changedFields(f){
 // A file is "changed" if any field changed. Reverting every field clears the mark.
 function isFileDirty(f){ return changedFields(f).length > 0; }
 function markDirty(path){ refreshDirtyMarks(); }
+// a folded group shows how many of its rows are changed or invalid
+function refreshGroupMarks(){
+  for (const g of document.querySelectorAll("#panes .kgroup")){
+    const d = g.querySelector(":scope > summary .dot");
+    const n = g.querySelectorAll(".row.changed").length, bad = g.querySelectorAll(".row.invalid").length;
+    d.textContent = (n ? n : "") + (bad ? (n ? ", " : "") + bad + " invalid" : "");
+    d.title = n+" changed"+(bad ? ", "+bad+" invalid" : "");
+    d.style.display = n||bad ? "" : "none";
+  }
+}
 function refreshDirtyMarks(){
+  refreshGroupMarks();
+  let total = 0;
   document.querySelectorAll("#tabs .dot").forEach(d=>{
     const f = state.files[d.dataset.path];
-    d.style.display = (f && isFileDirty(f)) ? "" : "none";
+    const n = f ? changedFields(f).length : 0;
+    total += n;
+    d.style.display = n ? "" : "none";
+    d.textContent = n; d.title = n+" changed";
   });
+  const rb = document.getElementById("review-btn");
+  rb.classList.toggle("none", !total);
+  document.getElementById("review-count").textContent = total;
+  rb.querySelector(".lbl").textContent = total ? "Review changes" : "Save a copy";
+  if (document.getElementById("review").classList.contains("open")) renderReview();
 }
-function escHtml(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
 async function download(){
   const enc=new TextEncoder(); const out={};
@@ -1261,11 +1653,12 @@ async function download(){
 /* ----------------------------------------------------------------------------
    Input wiring: zip file, folder, drag-drop
 ---------------------------------------------------------------------------- */
-function showStatus(msg, isErr){
-  const c = isErr ? "var(--warn)" : "var(--muted)";
-  const dm=document.getElementById("drop-msg"); dm.textContent=msg; dm.style.color=c;
+function showStatus(msg, isErr, busy){
+  const dm=document.getElementById("drop-msg"); dm.textContent=msg; dm.classList.toggle("err", !!isErr);
+  dm.style.color = isErr ? "" : "var(--muted)";
   const hs=document.getElementById("serial-status");
-  if (hs){ hs.textContent=msg; hs.style.display=msg?"":"none"; hs.style.color=c; }
+  if (hs){ hs.textContent=msg; hs.title=msg; hs.style.display=msg?"":"none"; hs.classList.toggle("err", !!isErr); }
+  for (const el of [dm,hs]) if (el) el.classList.toggle("busy", !!busy && !!msg);
 }
 function showErr(msg){ showStatus(msg, true); }
 
@@ -1384,11 +1777,12 @@ window.addEventListener("drop",e=>{ if(state) e.preventDefault(); });
 let serialPort=null, serialReader=null;
 // Active transport write fn (set by connectSerial / connectBluetooth). getConfig() is transport-agnostic.
 let activeWrite=null;
-// Which transport was used last and the authorized handles, so the upload can
-// silently reconnect (no chooser) after the read flow closed the connection.
-let lastTransport=null;        // 'serial' | 'ble'
+// Transport and authorized handle of the last successful device read, so the push
+// can silently reconnect (no chooser). Set only once importFromDevice succeeds.
+let lastTransport=null;        // 'serial' | 'ble' | 'mqtt'
 let grantedSerialPort=null;    // navigator.serial port, stays authorized across close()
 let grantedBleDevice=null;     // BLE device, stays authorized across gatt.disconnect()
+let connecting=false;          // a connect + read is in progress
 const lineListeners = new Set();
 // The device prefixes each line with an ESP log tag, e.g.
 //   I (941282) main: Conf '/littlefs/conf/board.conf:mcu' = 'esp32s3'
@@ -1473,7 +1867,9 @@ function fetchHostname(timeoutMs=2500){
   });
 }
 
-async function importFromDevice(sourceLabel){
+// link: {transport, handle} of the connection the read goes over; committed as the
+// push target only if the read succeeds.
+async function importFromDevice(sourceLabel, link){
   let label = sourceLabel || "device";
   try { const hn = await fetchHostname(); if (hn) label = hn; } catch(_){}
   const enc = new TextEncoder();
@@ -1501,12 +1897,12 @@ async function importFromDevice(sourceLabel){
     // round-trips overlap, so total ≈ device processing + one round-trip, not 16×round-trip (the
     // old per-file await was the MQTT slowdown). Writes stay sequential so serial bytes don't mix.
     for (const f of allFiles) await activeWrite("get-config "+f+"\r\n");
-    showStatus("reading config from "+label+" …");
+    showStatus("reading config from "+label+" …", false, true);
     await waitUntil(()=>seen.size>=allFiles.length, 6000);
     // Retry only the files whose marker never came (dropped), not every file.
     let drop = allFiles.filter(f=>!seen.has(f));
     for (let pass=0; pass<2 && drop.length; pass++){
-      showStatus("retrying "+drop.length+" file(s) …");
+      showStatus("retrying "+drop.length+" file(s) …", false, true);
       await new Promise(r=>setTimeout(r, 250));   // let a late reply drain first
       for (const f of drop) await activeWrite("get-config "+f+"\r\n");
       await waitUntil(()=>drop.every(f=>seen.has(f)), 2500);
@@ -1525,6 +1921,13 @@ async function importFromDevice(sourceLabel){
   if (!n) throw new Error("no config received — is the device at the console prompt?");
   load(files, label);
   state.fromDevice = true; state.deviceName = label;
+  if (link){
+    state.link = link;
+    lastTransport = link.transport;
+    grantedSerialPort = link.transport==="serial" ? link.handle : null;
+    grantedBleDevice  = link.transport==="ble"    ? link.handle : null;
+    grantedMqttConfig = link.transport==="mqtt"   ? link.handle : null;
+  }
   // surface lost files: their tabs will show as "not on device", so the user
   // knows not to trust a backup overlay there.
   showStatus(missed.length
@@ -1548,23 +1951,30 @@ async function connectSerial(){
   let port;
   try { port = await navigator.serial.requestPort(); }
   catch(e){ return; }   // user dismissed the chooser
-  await disconnectSerial(); await disconnectBluetooth(); await disconnectMqtt();   // drop any prior connection
-  grantedSerialPort = port; lastTransport = "serial";
+  if (connecting || !confirmDiscard()) return;
+  await beginConnect();
   try {
     await port.open({ baudRate:115200 });
     serialPort = port;
     serialReadLoop(port);            // runs in background until disconnect
     activeWrite = serialWrite;
-    showStatus("connected — reading config from device …");
-    await importFromDevice("serial-device");
-    document.getElementById("upload").style.display=""; document.getElementById("open-console").style.display=""; ulRefreshInputState();
+    showStatus("connected — reading config from device …", false, true);
+    await importFromDevice("serial-device", {transport:"serial", handle:port});
     // Stay connected: reopening the port can reset the device (DTR/RTS), so the
     // upload reuses this live connection instead of closing and reopening.
   } catch(e){
     showErr("Serial: "+e.message);
     await disconnectSerial();
-  }
+  } finally { endConnect(); }
 }
+
+// Drop any live link; the previous read's handles stay until a new read succeeds.
+async function beginConnect(){
+  connecting = true;
+  await disconnectSerial(); await disconnectBluetooth(); await disconnectMqtt();
+  ulRefreshInputState();
+}
+function endConnect(){ connecting = false; ulRefreshInputState(); }
 
 /* ----------------------------------------------------------------------------
    Web Bluetooth: same get-config flow over the Nordic UART Service (NUS).
@@ -1622,7 +2032,7 @@ async function bleConnectAndDiscover(device, attempts=4){
       lastErr = e;
       try { device.gatt.disconnect(); } catch(_){}
       if (i < attempts){
-        showStatus(`BLE connect attempt ${i}/${attempts} failed (${e.message}) — retrying…`);
+        showStatus(`BLE connect attempt ${i}/${attempts} failed (${e.message}) — retrying…`, false, true);
         await new Promise(r=>setTimeout(r, 500*i));
       }
     }
@@ -1638,23 +2048,24 @@ async function connectBluetooth(){
   let dev;
   try { dev = await navigator.bluetooth.requestDevice({ filters:[{services:[NUS_SVC]}], optionalServices:[NUS_SVC] }); }
   catch(e){ return; }   // user dismissed the chooser
-  await disconnectSerial(); await disconnectBluetooth(); await disconnectMqtt();   // drop any prior connection (clears bleDevice)
-  bleDevice = dev; grantedBleDevice = dev; lastTransport = "ble";
+  if (connecting || !confirmDiscard()) return;
+  await beginConnect();
+  bleDevice = dev;
   try {
+    showStatus("connecting to "+(dev.name||"device")+" …", false, true);
     const { server, rx, tx } = await bleConnectAndDiscover(bleDevice);
     bleServer = server; bleRxChar = rx; bleTxChar = tx;
     bleBuf=""; bleDec=new TextDecoder();
     await bleTxChar.startNotifications();
     bleTxChar.addEventListener('characteristicvaluechanged', onBleNotify);
     activeWrite = bleWrite;
-    showStatus("connected — reading config from device …");
-    await importFromDevice("ble-device");
-    document.getElementById("upload").style.display=""; document.getElementById("open-console").style.display=""; ulRefreshInputState();
+    showStatus("connected — reading config from device …", false, true);
+    await importFromDevice("ble-device", {transport:"ble", handle:dev});
     // Stay connected so the upload reuses this live link (reconnecting can miss the reply).
   } catch(e){
     showErr("Bluetooth: "+e.message+" — if it was paired before, remove the device in your OS Bluetooth settings; make sure no phone or other browser tab holds the connection, then retry.");
     await disconnectBluetooth();
-  }
+  } finally { endConnect(); }
 }
 
 /* ----------------------------------------------------------------------------
@@ -1667,7 +2078,7 @@ async function connectBluetooth(){
 const MQTT_LOG_ROOT = "pv/log/";
 const MQTT_DEV_ROOT = "pv/dev/";  // retained presence: online / offline (LWT)
 let mqttClient=null, mqttDeviceHost=null, mqttBuf="", mqttDec=new TextDecoder();
-let grantedMqttConfig=null;   // {url,username,password,device} for silent re-connect
+let grantedMqttConfig=null;   // {url,user,pass,device} for silent re-connect
 let mqttScanClient=null;      // temporary client used only by the scan dialog
 let mqttScanTick=null, mqttScanRetry=null, mqttScanCfg=null, mqttScanDirty=false;
 const mqttScanHosts = new Map();  // host -> offline
@@ -1727,7 +2138,6 @@ async function mqttBindDevice(client, hostname){
   await new Promise((res,rej)=>client.subscribe(MQTT_LOG_ROOT + "#", {qos:0},
     e => e ? rej(e) : res()));
   activeWrite = mqttWrite;
-  lastTransport = "mqtt";
 }
 
 /* ----------------------------------------------------------------------------
@@ -1857,29 +2267,28 @@ async function mqttScanDevices(){
   if (await mqttScanConnect(true)) mqttScanTick = setInterval(mqttScanRender, 800);
 }
 async function mqttConnectAndImport(hostname){
+  if (connecting || !confirmDiscard()) return;
   const cfg = mqttModalRead();
   cfg.device = hostname;
   // hand the scan client off to the device session: same broker connection,
   // just rebind the message handler — avoids a second CONNACK round-trip.
   mqttScanStop();
-  await disconnectSerial(); await disconnectBluetooth(); await disconnectMqtt();
+  await beginConnect();
   let client = mqttScanClient; mqttScanClient = null;
   if (client && !client.connected){ try { client.end(true); } catch(_){} client = null; }
   try {
     if (!client) client = await mqttBrokerConnect(cfg.url, cfg.user, cfg.pass);
     else { client.removeAllListeners("message"); client.unsubscribe(MQTT_DEV_ROOT + "+"); }
     await mqttBindDevice(client, hostname);
-    grantedMqttConfig = cfg;
     mqttRememberHost(cfg.url, hostname);
     mqttModalClose();
-    showStatus("connected — reading config from "+hostname+" …");
-    await importFromDevice(hostname);
-    document.getElementById("upload").style.display=""; document.getElementById("open-console").style.display=""; ulRefreshInputState();
+    showStatus("connected — reading config from "+hostname+" …", false, true);
+    await importFromDevice(hostname, {transport:"mqtt", handle:cfg});
   } catch(e){
     showErr("MQTT: "+(e.message||e));
     await disconnectMqtt();
     try { if (client) client.end(true); } catch(_){}
-  }
+  } finally { endConnect(); }
 }
 
 /* ----------------------------------------------------------------------------
@@ -1887,56 +2296,76 @@ async function mqttConnectAndImport(hostname){
    over whichever transport was used last, reconnecting silently if the read flow
    already closed the connection.
 ---------------------------------------------------------------------------- */
-async function ensureConnection(){
+// The device the loaded config was read from, while the stored handle still points
+// at it; null (nothing to push to) for a file/preset, or mid-connect.
+function pushTarget(){
+  if (connecting || !state || !state.fromDevice || !state.link) return null;
+  const l = state.link, h = {serial:grantedSerialPort, ble:grantedBleDevice, mqtt:grantedMqttConfig}[l.transport];
+  return l.transport===lastTransport && h && h===l.handle ? l : null;
+}
+
+async function ensureConnection(link){
   if (activeWrite) return;            // still connected
-  if (lastTransport==="serial"){
-    if (!grantedSerialPort) throw new Error("connect to the device first");
-    await grantedSerialPort.open({ baudRate:115200 });
-    serialPort = grantedSerialPort;
+  const h = link.handle;
+  if (link.transport==="serial"){
+    await h.open({ baudRate:115200 });
+    serialPort = h;
     serialReadLoop(serialPort);
     activeWrite = serialWrite;
-  } else if (lastTransport==="ble"){
-    if (!grantedBleDevice) throw new Error("connect to the device first");
-    const { server, rx, tx } = await bleConnectAndDiscover(grantedBleDevice);
-    bleServer = server; bleRxChar = rx; bleTxChar = tx; bleBuf=""; bleDec=new TextDecoder();
+  } else if (link.transport==="ble"){
+    const { server, rx, tx } = await bleConnectAndDiscover(h);
+    bleDevice = h; bleServer = server; bleRxChar = rx; bleTxChar = tx; bleBuf=""; bleDec=new TextDecoder();
     await bleTxChar.startNotifications();
     bleTxChar.addEventListener('characteristicvaluechanged', onBleNotify);
     activeWrite = bleWrite;
-  } else if (lastTransport==="mqtt"){
-    if (!grantedMqttConfig) throw new Error("connect to the device first");
-    const c = await mqttBrokerConnect(grantedMqttConfig.url, grantedMqttConfig.user, grantedMqttConfig.pass);
-    await mqttBindDevice(c, grantedMqttConfig.device);
   } else {
-    throw new Error("read the config from a device first");
+    const c = await mqttBrokerConnect(h.url, h.user, h.pass);
+    await mqttBindDevice(c, h.device);
   }
 }
 
-async function uploadChanged(){
-  if (!state) return;
-  // gather changed fields: set-config for new/edited values, del-config for cleared keys
+// set-config for new/edited values, del-config for cleared keys
+function pendingCommands(){
   const cmds = [];
+  if (!state) return cmds;
   for (const path of state.confPaths){
     const f = state.files[path], base = path.split("/").pop();
-    for (const {key,cur} of changedFields(f)){
-      if (cur.trim()==="") cmds.push({ str:`del-config ${base} ${key}`, label:base+":"+key, f, key, del:true });
-      else cmds.push({ str:`set-config ${base} ${key} ${cur}`, label:base+":"+key, f, key, cur });
+    for (const {key,cur,orig} of changedFields(f)){
+      if (cur.trim()==="") cmds.push({ str:`del-config ${base} ${key}`, label:base+":"+key, f, key, del:true, path, orig, cur });
+      else cmds.push({ str:`set-config ${base} ${key} ${cur}`, label:base+":"+key, f, key, cur, path, orig, problem:valueProblem(key, cur) });
     }
   }
+  return cmds;
+}
+const TRANSPORT_NAME = {serial:"USB serial", ble:"Bluetooth", mqtt:"MQTT"};
+const targetName = t => `${state.deviceName} over ${TRANSPORT_NAME[t.transport]}`;
+
+async function uploadChanged(opts){
+  if (!state) return;
+  const target = pushTarget();
+  if (!target){ showErr("Nothing to push to: read the config from a device first"); return; }
+  const cmds = pendingCommands();
   if (!cmds.length){ showStatus("nothing changed to upload"); return; }
-  // confirm: list every command that will be sent before touching the device
-  const tname = lastTransport==="ble" ? "Bluetooth" : lastTransport==="serial" ? "serial"
-              : lastTransport==="mqtt" ? "MQTT" : "the device";
-  const prompt = `Send these ${cmds.length} command(s) to ${tname}?\n\n` + cmds.map(c=>"  "+c.str).join("\n");
-  if (!window.confirm(prompt)) return;
+  const tname = targetName(target);
+  const bad = cmds.filter(c=>c.problem);
+  // the review sheet already lists every command; a direct call still confirms
+  if (!(opts && opts.reviewed)){
+    const prompt = `Send these ${cmds.length} command(s) to ${tname}?\n\n` + cmds.map(c=>"  "+c.str).join("\n");
+    if (!window.confirm(prompt)) return;
+  }
+  if (bad.length && !window.confirm(`${bad.length} value${bad.length>1?"s are":" is"} invalid and the firmware will reject or misread ${bad.length>1?"them":"it"}:\n\n`
+      + bad.map(c=>`  ${c.label} = ${c.cur}: ${c.problem}`).join("\n") + `\n\nPush to ${tname} anyway?`)) return;
+  closeReview();
   const btn = document.getElementById("upload"); btn.disabled = true;
   const weOpened = !activeWrite;
   const failed = []; let ok=0, aborted=false;
-  ulOpen(`sending ${cmds.length} command(s) over ${tname}`);
+  ulOpen(`sending ${cmds.length} command(s) to ${tname}`);
   try {
-    await ensureConnection();
+    await ensureConnection(target);
+    ulRefreshInputState();
     for (let i=0;i<cmds.length;i++){
       const c = cmds[i];
-      showStatus(`uploading ${i+1}/${cmds.length}: ${c.label} …`);
+      showStatus(`uploading ${i+1}/${cmds.length}: ${c.label} …`, false, true);
       ulLine("sent", "» "+c.str);
       let got = 0;
       // ulConsoleListener (attached while the panel is open) already renders the reply
@@ -1954,10 +2383,11 @@ async function uploadChanged(){
   } catch(e){
     showErr("Upload: "+e.message); ulLine("resp err", "connection failed: "+e.message); aborted=true;
   } finally {
-    if (weOpened) await (lastTransport==="ble" ? disconnectBluetooth()
-                       : lastTransport==="mqtt" ? disconnectMqtt()
+    if (weOpened) await (target.transport==="ble" ? disconnectBluetooth()
+                       : target.transport==="mqtt" ? disconnectMqtt()
                        : disconnectSerial());
     btn.disabled=false;
+    ulRefreshInputState();
     renderPane(); refreshDirtyMarks();   // drop dots/"was:" for fields now on the device
   }
   if (aborted){ ulStat("connection failed", true); return; }   // keep the connection error visible
@@ -1965,6 +2395,103 @@ async function uploadChanged(){
   if (failed.length) msg += " — failed: "+failed.join(", ");
   ulStat(`done: ${ok}/${cmds.length} ok`+(failed.length?`, ${failed.length} failed`:""), failed.length>0);
   showStatus(msg, failed.length>0);
+}
+
+/* Review sheet: old → new per file, then push or download. */
+function renderReview(){
+  const body=document.getElementById("review-body"); body.replaceChildren();
+  const cmds=pendingCommands();
+  const files=[...new Set(cmds.map(c=>c.path))];
+  const nbad=cmds.filter(c=>c.problem).length, target=pushTarget();
+  document.getElementById("review-sub").textContent = cmds.length
+    ? `${cmds.length} change${cmds.length>1?"s":""} in ${files.length} file${files.length>1?"s":""}`+(nbad ? `, ${nbad} invalid` : "") : "";
+  const dl=document.getElementById("download"), up=document.getElementById("upload"), note=document.getElementById("review-note");
+  if (!cmds.length){
+    const e=document.createElement("div"); e.className="review-empty";
+    const s=document.createElement("strong"); s.textContent="No changes yet";
+    e.append(s, "Edited fields collect here, so you can check them before pushing or saving. You can still download this configuration as a backup.");
+    body.appendChild(e);
+  }
+  for (const path of files){
+    const sec=document.createElement("section"); sec.className="rfile";
+    const h=document.createElement("h3"); h.textContent=path.split("/").pop();
+    const mine=cmds.filter(c=>c.path===path);
+    const n=document.createElement("span"); n.className="n"; n.textContent=mine.length+" change"+(mine.length>1?"s":""); h.appendChild(n);
+    sec.appendChild(h);
+    for (const c of mine){
+      const d=document.createElement("div"); d.className="diff"+(c.problem?" invalid":"");
+      const k=document.createElement("div"); k.className="dk"; k.textContent=c.key; k.title="Show this field";
+      k.onclick=()=>jumpToField(c.path, c.key);
+      const v=document.createElement("div"); v.className="dv";
+      const o=document.createElement("span"); o.className="old"+(c.orig===undefined?" none":"");
+      o.textContent = c.orig===undefined ? "not set" : c.orig==="" ? '""' : c.orig;
+      const to=document.createElement("span"); to.className="to"; to.textContent="→";
+      const nw=document.createElement("span"); nw.className="new"+(c.del?" none":"");
+      nw.textContent = c.del ? "removed" : c.cur;
+      v.append(o,to,nw);
+      const u=document.createElement("button"); u.type="button"; u.className="link undo"; u.textContent="Undo";
+      u.onclick=()=>{ revertField(c.path, c.key); if (state.active===c.path) renderPane(); refreshDirtyMarks(); };
+      d.append(k,u,v);
+      if (c.problem){ const b=document.createElement("div"); b.className="bad"; b.textContent=c.problem; d.appendChild(b); }
+      sec.appendChild(d);
+    }
+    body.appendChild(sec);
+  }
+  if (cmds.length){
+    const det=document.createElement("details"); det.className="fold cmds";
+    const s=document.createElement("summary"); s.textContent=`Commands sent to the device (${cmds.length})`;
+    const pre=document.createElement("pre"); pre.textContent=cmds.map(c=>c.str).join("\n");
+    det.append(s,pre); body.appendChild(det);
+  }
+  const dirty = cmds.length > 0;
+  dl.textContent = dirty ? "Download .zip" : "Download backup .zip";
+  dl.classList.toggle("primary", !target || !dirty);
+  up.style.display = target && dirty ? "" : "none";
+  if (target) up.textContent = `Push ${cmds.length} change${cmds.length>1?"s":""} to ${targetName(target)}`;
+  note.classList.toggle("err", dirty && !!nbad);
+  note.textContent = !dirty ? ""
+    : nbad ? `${nbad} value${nbad>1?"s are":" is"} invalid (marked above); the firmware rejects or misreads ${nbad>1?"them":"it"}. Fix ${nbad>1?"them":"it"} first, or confirm when pushing.`
+    : target ? `Each change is sent to ${targetName(target)} as a set-config or del-config command and confirmed by the device.`
+    : state && state.fromDevice ? "The device connection changed. Read the device again (Open) to push."
+    : "Not read from a device. Download the .zip, or read the device first (Open) and then open this file over it to push the differences.";
+}
+function openReview(){
+  renderReview();
+  document.getElementById("review").classList.add("open");
+  document.getElementById("scrim").classList.add("open");
+  document.getElementById("review-close").focus();
+}
+function closeReview(keepFocus){
+  const r=document.getElementById("review");
+  if (!r.classList.contains("open")) return;
+  const inside=r.contains(document.activeElement);
+  r.classList.remove("open");
+  if (!document.getElementById("console").classList.contains("open") || !narrow()) document.getElementById("scrim").classList.remove("open");
+  if (inside && !keepFocus) document.getElementById("review-btn").focus();
+}
+// keep Tab inside an open dialog
+function trapTab(e, box){
+  const els=[...box.querySelectorAll("button,input,select,summary,[tabindex]")].filter(x=>!x.disabled && x.tabIndex>=0 && x.getClientRects().length);
+  if (!els.length) return;
+  const i=els.indexOf(document.activeElement);
+  if (e.shiftKey ? i<=0 : i===els.length-1 || i<0){ e.preventDefault(); els[e.shiftKey ? els.length-1 : 0].focus(); }
+}
+function jumpToField(path, key){
+  closeReview(true);
+  state.active = path;
+  for (const id of [...collapsedGroups]) if (id.startsWith(path+"|") && key.startsWith(id.slice(path.length+1))) collapsedGroups.delete(id);
+  renderApp();
+  const row=[...document.querySelectorAll("#panes .row")].find(r=>r._key===key);
+  if (row){ row.scrollIntoView({block:"center"}); const i=row.querySelector("input,select"); if (i) i.focus({preventScroll:true}); }
+}
+
+function refreshConn(){
+  const c=document.getElementById("conn"), t=pushTarget();
+  c.classList.toggle("on", !connecting && !!activeWrite && !!t);
+  c.textContent = connecting ? "Connecting …"
+    : t ? (activeWrite ? "Connected to " : "Disconnected from ") + targetName(t)
+    : activeWrite ? "Connected" : "Not connected";
+  if (document.getElementById("review").classList.contains("open")) renderReview();
 }
 
 // Device-log panel: shows every line the device sends (whether triggered by an
@@ -1977,16 +2504,20 @@ function ulConsoleListener(ln){
 }
 function ulShow(){
   if (!lineListeners.has(ulConsoleListener)) lineListeners.add(ulConsoleListener);
-  document.getElementById("uploadlog").style.display="block";
-  // panel and the floating "Device log" button share the bottom-right corner
-  document.getElementById("open-console").style.display="none";
+  document.getElementById("console").classList.add("open");
+  document.getElementById("open-console").setAttribute("aria-pressed","true");
+  if (narrow()) document.getElementById("scrim").classList.add("open");
   ulRefreshInputState();
 }
+// same breakpoint as the CSS bottom-sheet layout
+const narrow = () => !!(window.matchMedia && window.matchMedia("(max-width:760px)").matches);
 function ulHide(){
   lineListeners.delete(ulConsoleListener);
-  document.getElementById("uploadlog").style.display="none";
-  // restore the floating button once a transport has been used (lastTransport set)
-  if (lastTransport) document.getElementById("open-console").style.display="";
+  const con=document.getElementById("console");
+  if (con.classList.contains("open") && con.contains(document.activeElement)) document.getElementById("open-console").focus();
+  con.classList.remove("open");
+  document.getElementById("open-console").setAttribute("aria-pressed","false");
+  if (!document.getElementById("review").classList.contains("open")) document.getElementById("scrim").classList.remove("open");
 }
 function ulOpen(statusText){
   document.getElementById("uploadlog-body").replaceChildren();
@@ -1995,7 +2526,7 @@ function ulOpen(statusText){
 }
 function ulStat(text, isErr){
   const s=document.getElementById("uploadlog-stat");
-  s.textContent=text; s.style.color = isErr ? "var(--warn)" : "var(--muted)";
+  s.textContent=text; s.style.color = isErr ? "var(--accent)" : "";
 }
 function ulLine(cls, text){
   const log=document.getElementById("uploadlog"), body=document.getElementById("uploadlog-body");
@@ -2018,6 +2549,7 @@ function ulRefreshInputState(){
   i.disabled = !activeWrite;
   i.placeholder = activeWrite ? "type a console command and press Enter"
                               : "connect to a device first";
+  refreshConn();
 }
 async function consoleSend(cmd){
   cmd = cmd.replace(/[\r\n]+$/,"");
@@ -2029,7 +2561,8 @@ async function consoleSend(cmd){
 }
 document.getElementById("uploadlog-close").onclick = ulHide;
 document.getElementById("open-console").onclick = ()=>{
-  ulStat("device log", false);
+  if (document.getElementById("console").classList.contains("open")){ ulHide(); return; }
+  if (!document.getElementById("uploadlog-stat").textContent) ulStat(activeWrite ? "device log" : "not connected", false);
   ulShow();
   document.getElementById("uploadlog-cmd").focus();
 };
@@ -2040,7 +2573,20 @@ document.getElementById("uploadlog-input").addEventListener("submit", e=>{
   consoleSend(v);
 });
 
-document.getElementById("upload").onclick = uploadChanged;
+document.getElementById("upload").onclick = ()=>uploadChanged({reviewed:true});
+document.getElementById("review-btn").onclick = openReview;
+document.getElementById("review-close").onclick = closeReview;
+document.getElementById("scrim").onclick = ()=>{ closeReview(); ulHide(); };
+document.addEventListener("keydown", e=>{
+  if (document.getElementById("mqtt-modal").classList.contains("open")) return;
+  const rv=document.getElementById("review"), menu=document.getElementById("open-menu");
+  if (e.key==="Tab" && rv.classList.contains("open")) trapTab(e, rv);
+  if (e.key!=="Escape") return;
+  if (menu.open){ closeMenu(); menu.querySelector("summary").focus(); }
+  else if (rv.classList.contains("open")) closeReview();
+  else ulHide();
+});
+
 // Start screen: mutually exclusive choices, each revealing its own actions.
 for (const id of ["connect","open","preset"]){
   const btn = document.getElementById("start-"+id), pane = document.getElementById("start-"+id+"-pane");
@@ -2048,9 +2594,11 @@ for (const id of ["connect","open","preset"]){
     const open = pane.classList.toggle("open");
     for (const o of ["connect","open","preset"]) if (o !== id){
       document.getElementById("start-"+o+"-pane").classList.remove("open");
-      document.getElementById("start-"+o).classList.remove("primary");
+      document.getElementById("start-"+o).setAttribute("aria-expanded","false");
+      document.getElementById("start-"+o).parentElement.classList.remove("open");
     }
-    btn.classList.toggle("primary", open);
+    btn.setAttribute("aria-expanded", String(open));
+    btn.parentElement.classList.toggle("open", open);
     if (open && id === "preset")
       loadPresetIndex().catch(e => showErr("Presets unavailable: " + e.message));
   };
@@ -2058,15 +2606,31 @@ for (const id of ["connect","open","preset"]){
 
 document.getElementById("preset-load").onclick = loadPreset;
 
+const closeMenu = ()=>document.getElementById("open-menu").removeAttribute("open");
 document.getElementById("connect-serial").onclick = connectSerial;
-document.getElementById("serial-btn").onclick = connectSerial;
+document.getElementById("serial-btn").onclick = ()=>{ closeMenu(); connectSerial(); };
 document.getElementById("connect-ble").onclick = connectBluetooth;
+document.getElementById("menu-ble").onclick = ()=>{ closeMenu(); connectBluetooth(); };
 document.getElementById("connect-mqtt").onclick = mqttModalOpen;
+document.getElementById("menu-mqtt").onclick = ()=>{ closeMenu(); mqttModalOpen(); };
+for (const id of ["reload-zip","reload-dir"]) document.querySelector("#"+id+" input").addEventListener("change", closeMenu);
+document.getElementById("menu-start").onclick = ()=>{
+  closeMenu(); closeReview(); ulHide();
+  document.getElementById("app").style.display="none";
+  document.getElementById("drop").style.display="";
+  document.body.classList.remove("loaded");
+  showStatus("");
+  const r=document.getElementById("resume");
+  if (state){ r.hidden=false; document.getElementById("resume-btn").textContent="Back to "+state.sourceName; }
+};
+document.getElementById("resume-btn").onclick = ()=>{ document.getElementById("resume").hidden=true; renderApp(); };
+document.addEventListener("click", e=>{ const m=document.getElementById("open-menu"); if (m.open && !m.contains(e.target)) closeMenu(); });
 document.getElementById("mqtt-scan").onclick = mqttScanDevices;
 document.getElementById("mqtt-cancel").onclick = mqttModalClose;
 document.getElementById("mqtt-modal").addEventListener("click", e=>{
   if (e.target.id === "mqtt-modal") mqttModalClose();   // click backdrop to dismiss
 });
+
 
 if (typeof DecompressionStream === "undefined")
   showErr("Note: this browser lacks DecompressionStream; compressed .zip reading may fail. Folder upload still works.");
