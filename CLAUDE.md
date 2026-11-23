@@ -434,6 +434,9 @@ Confirm the device ip address with the `ip` command.
 
 You have access to live and historic device telemetry and logs.
 Read device log through `ssh havan.local` `tail pv/fugu_console.log -f -n 200`.
+havan also runs the MQTT broker, the only BMS feed (batmon) and the telemetry relay. Before rebooting it (or the .231
+router), take `~/bin/lock.sh acquire havan` and announce on the `fugu` channel; if havan goes silent, check
+`~/bin/lock.sh status havan` and the channel first (`~/dev/kb/agent-ops/reboot-a-shared-host-only-under-its-lock.md`).
 The telemetry data is at influxdb tm.fabi.me:8086 / db `ha_van` / measurement mppt.
 (user `$INFLUX_HA_VAN_USER`, pass `$INFLUX_HA_VAN_PASS` — `.claude/memory/secrets.env`).
 
