@@ -596,8 +596,10 @@ The **Tests** button (pulse icon, `aria-expanded`) has the gating of §2.14
 over its open link. Same sheet behaviour as §2.14 (own scrim `#tst-scrim`,
 focus to **Close**, Tab trap, Esc in the capture phase, scrim, **Close** and
 **Start screen** close it, focus returns to the button). Head: "Tests", the
-target or the running command with a spinner, **Check again** (↻: re-probe),
-**Close**. While a test runs the button icon turns amber.
+target or the running command ("reading the status" for the Status reads)
+with a spinner, **Close**. No footer note; the foot shows only `#tst-msg`
+and is hidden while that is empty. While a test runs the button icon turns
+amber.
 
 * **Build probe** (on the first open per device, and on ↻): `help`, parsed
   by `parseHelp()` (`name[,alias] [<value> …]` per line; a reply without
@@ -607,20 +609,47 @@ target or the running command with a spinner, **Check again** (↻: re-probe),
   absent). Without a `help` reply every always-built command is assumed and
   `adc-cal` is hidden. A command that answers "Command not found" when run is
   hidden from then on. Hidden roots are listed at the end with their build
-  flag. Nothing else is sent on open.
-* **Cards**, grouped Status / Measurements / Self-tests / Calibration:
-  title, a tag (`read-only` grey; amber `drives the converter`, `takes over
-  the converter`, `re-enables starts`), one line on what it does, *Needs*,
-  *Takes* (duration), *Sends* (the exact command, plus the abort command),
-  an amber-bordered risk note for anything that drives the power stage, an
-  option checkbox where the command has one, **Read**/**Run** (the MPP sweep
-  card has both: **Read last sweep**, **Run sweep**; its read button is
-  hidden when `sweep-curve` is not in the build), **Abort**
-  while its run is in progress (only where the firmware has one), the result
-  (dot + bold summary, green pass, amber fail/warn, detail lines), the sweep
-  chart on the MPP sweep card, and a
-  collapsible "Device output (N lines)" with every line received during the
-  run (open while running, folded once a result is in).
+  flag.
+* **Status block** (`tstStatusRead`): right after the probe, and on every
+  later open, the editor reads the Status commands the build has, in order
+  `selftest`, `rect-cal status`, `wire`, `adc-cal`, one after the other
+  under one device lock (`tstRun.id` = `"status"`). So the first open sends
+  exactly `help` (plus the bare `measure-coil` probe when `help` lacks it)
+  and those four; nothing that drives or changes anything runs on its own.
+  The block is a heading "Status", "read just now" / "read N min ago"
+  (refreshed every 30 s while open) and one quiet ↻ (`#tst-refresh`:
+  re-probe, then read again). One row per command (`details.tst-row`): a
+  muted label (Protection, Low-side timing, Wire guard, ADC calibration)
+  and the parsed one-line state (`summary.short`): "OK, nothing latched" /
+  the latch; "offset <ns> ns, <state>" (+ uncalibrated, not saved yet;
+  "failed: <why>"); "on|warn only|off, baseline <Rc> mΩ" (learning,
+  tripped, level <x>); "eFuse version <n>". An amber dot and amber text only
+  for a latch, a failed calibration, a tripped or raised wire level, a
+  refusal ("refused") or no reply ("no reply"); then the verbatim note sits
+  under the row. No buttons on the rows; a click opens the raw device output
+  of the last read. A row whose command answers "Command not found" is
+  dropped quietly and listed at the end. A `selftest` read by any other
+  sequence (pre-read, finish, Check) updates its row too.
+* **Action cards**, grouped Measurements / Self-tests / Calibration. Folded
+  (default): a chevron in the left gutter, the title (`.tst-x`, medium
+  weight) with a muted tag (`drives the converter`, `takes over the
+  converter`, `re-enables starts`), one description of at most ~70
+  characters, and on the right the buttons: **Run** (MPP sweep: **Read last
+  sweep** and **Run sweep**; the read button is hidden when `sweep-curve` is
+  not in the build), **Abort** while its run is in progress (only where the
+  firmware has one), and on Clear latched faults the reason it is disabled
+  ("Nothing latched"). A click on the title or the description (not on the
+  buttons) toggles the details (`.tst-more`): the option checkbox where the
+  command has one, then *Risk*, *Needs*, *Takes* and *Sends* (the exact
+  command and the abort command, monospace). A run, its result and its
+  output show under the card whenever there is one (`.shown`), folded
+  details or not: the result (dot + summary, green pass, amber fail/warn,
+  muted detail lines in the normal font), the sweep chart on the MPP sweep
+  card, a Check button where needed, and a collapsible "Device output (N
+  lines)" (open while running, folded once a result is in). Text styles:
+  title, body text, one muted grey (`--muted`, ≥ 4.5:1 in both themes) and
+  monospace only for commands and raw output; amber only for failures,
+  warnings and refusals.
 
 | Card | Group | Command | Confirm | Ends on | Then |
 | --- | --- | --- | --- | --- | --- |
@@ -659,14 +688,25 @@ target or the running command with a spinner, **Check again** (↻: re-probe),
   suppresses the status line while it runs, `uptime` and whether a status line
   came back.
 * **Results**: `selftest` → latches and the backflow state line, plus this
-  boot's last verdicts; backflow run → PASS when every phase passed, FAIL with
+  boot's last verdicts (Status row: the short form above); backflow run → PASS when every phase passed, FAIL with
   the phase (starts blocked until cleared), else "No verdict: <why>";
   `measure-coil l0` → "L = x µH" with ring fit/median and noise/systematic
   error, amber when the zero moved (DISTURBED); `ls` → low-side peak, offset
   from ideal, the curvature L, the applied offset; rect-cal → applied offset,
-  or "Failed: <why>"; sweep → MPP W at V (or "Sweeping: N points so far",
-  "No sweep recorded since boot"), amber when flagged `light` and for "No MPP
-  found"; failure lines of `measure-coil` (need Vin>Vout+1, too few points, …)
+  or "Failed: <why>"; sweep → "MPP <P> W at <V> V" with the point count, age
+  and landing on the same line (or "Sweeping: N points so far", "No sweep
+  recorded since boot"), amber when flagged `light` and for "No MPP found".
+  A run whose output has the firmware's `Stop sweep <s>s mode=… (lim=<i>
+  tgt=<t> act=…) …` line with a limiter index 1–4 (mppt.cpp `controlValues`:
+  0 Vin floor, 1 Vout, 2 Iin, 3 Iout, 4 power; 0 and -1, the duty end, end a
+  sweep normally) is amber, says "Stop point <P> W at <V> V" and "Stopped
+  after <s> s by the output-voltage / input-current / output-current /
+  power limit (<t> V|A|W): the MPP shown is where the sweep stopped, not the
+  panel's maximum." `sweep not verified (limiter)` adds "The landing was not
+  verified: a limiter was active." With fewer than 3 points: "The device
+  recorded only N point(s), so there is no curve." and no chart (also for
+  **Read last sweep**, which has no stop line). Counts are pluralised
+  ("1 point"); failure lines of `measure-coil` (need Vin>Vout+1, too few points, …)
   → "No result: …".
 * **MPP sweep card**: one card with two actions. **Read last sweep** sends
   `sweep-curve` like a status read (no confirm, holds the device lock);
@@ -679,21 +719,23 @@ target or the running command with a spinner, **Check again** (↻: re-probe),
   it reads the header only (regex) and no chart is drawn. A Check after a lost
   link or a timeout reads `sweep-curve` into the note only.
 * **Sweep chart** (`tstChart`, a `<figure>` under the result, hidden without a
-  drawable curve): inline SVG, P (W) over Vin (V), the points as one path in
-  reply order, the MPP from the header as an accent dot with a dotted drop
-  line and a "<P> W · <V> V" label (flipped left in the right third); no MPP
-  mark when its power is not positive. Axis ticks at 1/2/5 steps, unit on the
+  drawable curve of at least 3 points): inline SVG, P (W) over Vin (V), the
+  points as one path in reply order, the MPP from the header as a green
+  (`--icon`) dot with a dotted drop line and a "<P> W · <V> V" label (flipped
+  left in the right third); no MPP mark when its power is not positive. Axis ticks at 1/2/5 steps, unit on the
   last tick of each axis; the y axis includes 0 and any negative point. A
   V span under 2 V is widened to 2 V, a P span under 1 W to 1 W. Up to 24
   points also get a dot each. viewBox width = the card width (280–760 px,
   520 when unmeasured), 190 px high (170 under 440 px), so text stays at
-  its CSS size; redrawn only for a new curve or width. Caption: "Sweep at
-  <time>" (date too when not today; "sweep time unknown" without a device
+  its CSS size; redrawn only for a new curve or width. The result line above
+  the chart carries what a reader needs; the `<figcaption>` is visually
+  hidden and kept for assistive technology: "Sweep at <time>" (date too when not today; "sweep time unknown" without a device
   clock), "Sweep in progress, N points so far" for `sweeping=1`, plus ", sky
   changed during sweep" for `flag=light`, which also dashes and fades the
-  line. Near-monochrome from the theme variables, accent only for the MPP.
+  line. Near-monochrome from the theme variables, green only for the MPP.
   `role="img"` with an `aria-label` naming the state, the MPP (or "best so
-  far" while sweeping, or "no maximum power point"), the point count and the
+  far" while sweeping, "stop point" for a limiter stop, or "no maximum power
+  point"), the point count and the
   V range. An incomplete reply (fewer points than `n`, a truncated line, a
   restart) is not drawn; a detail says "curve incomplete (k of n points,
   <reason>): not drawn".
@@ -701,13 +743,14 @@ target or the running command with a spinner, **Check again** (↻: re-probe),
   §2.14's `svcSyncConf`. rect-cal and the `ls` apply save `rect_offset_*` only
   once the converter has been off, so their result says to read the device
   again later.
-* **One at a time**: a test run, its `selftest` pre-read and the `help` probe
-  hold the editor's device lock (`devBusy`, the same one `withDevice()` takes
+* **One at a time**: a test run, its `selftest` pre-read, the `help` probe
+  and the Status reads hold the editor's device lock (`devBusy`, the same one `withDevice()` takes
   for pushes, apply steps and Services actions). While it is held, the other
   sequences, the console input and the other Run buttons are disabled; Abort
   is part of the running test and still sends.
-* When the link closes, the cards stay with their results under a "Not
-  connected" note and their buttons disabled; a different device resets them.
+* When the link closes, the rows and cards stay with their results under a
+  "Not connected" note and their buttons disabled; a different device resets
+  them.
 
 ---
 

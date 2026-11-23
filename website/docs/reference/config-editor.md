@@ -332,7 +332,14 @@ its stale-cell voltage cap.
 **Tests** opens a panel that runs measurements, self-tests and calibrations on the device, one at a time. Like
 **Services**, it is available only while the editor is connected to the device the config was read from. On first
 open it sends `help` to learn which commands the firmware build has, and probes `measure-coil` with no arguments if
-`help` does not list it; tests the build lacks are hidden and named at the end. Nothing else runs until you click.
+`help` does not list it; tests the build lacks are hidden and named at the end.
+
+The panel opens with a **Status** block. Each time the panel opens, the editor reads the four read-only status
+commands in turn (`selftest`, `rect-cal status`, `wire`, `adc-cal`) and shows one line per check, for example
+"OK, nothing latched" or "offset 500 ns, idle". An amber dot marks a check that needs attention: a latched fault,
+a failed calibration, a tripped wire guard, a refusal or no reply. Click a line to see the device's raw output. The
+block shows when it was last read, and its refresh button reads it again. Nothing that drives the converter runs
+until you click.
 
 | Test | Group | Command | Asks first |
 |------|-------|---------|------------|
@@ -347,13 +354,14 @@ open it sends `help` to learn which commands the firmware build has, and probes 
 | Low-side timing (rect-cal) | Calibration | `rect-cal [force]`, abort with `rect-cal abort` | yes; device name with `force` |
 | Low-side timing from a coil sweep | Calibration | `measure-coil ls [apply]` | device name |
 
-Each entry says what it does, what it needs, how long it takes and which command it sends. Entries that drive the
-power stage carry a risk note. Before any of them starts, the editor reads `selftest` and the status line, then
+The other entries are folded to a title, a one-line description and their buttons. Click the title to unfold the
+details: the option where there is one, the risk, what the test needs, how long it takes and which command it sends.
+Before any of them starts, the editor reads `selftest` and the status line, then
 asks; the question names the device, says what happens (for example that the converter is taken over and conversion
 stops for about a minute) and states whether the converter is delivering power now and how much. The most invasive
 ones need the device name typed in. A refusal shows the firmware's reason as it printed it. Nothing is retried.
 
-While a test runs, its output appears under the entry and **Abort** is offered where the firmware has an abort
+While a test runs, its output appears under the entry, folded or not, and **Abort** is offered where the firmware has an abort
 command (`measure-coil` has none). The result is a short summary:
 
 - the latched faults and the backflow switch state, with this boot's last test verdicts;
@@ -367,7 +375,10 @@ The **MPP sweep** entry has two buttons. **Read last sweep** fetches the curve o
 driving the converter. **Run sweep** asks first, sweeps, then fetches the new curve. Either way the entry draws power
 over input voltage with the maximum power point marked, and the caption says when that sweep ran. A sweep still in
 progress shows the points so far. A sweep the firmware flagged because the light changed while it ran is drawn dashed.
-Without a sweep since boot there is no curve to draw.
+Without a sweep since boot there is no curve to draw, and with fewer than three points the entry says so instead of
+drawing one. If a limiter (output voltage, input or output current, or power) ended the sweep early, the result
+reads "Stop point" instead of "MPP" and names the limit and its setting: the point shown is where the sweep stopped,
+not the panel's maximum.
 
 `measure-coil l0 apply` writes `L0` to `coil.conf`, and the loaded `coil.conf` follows. rect-cal and
 `measure-coil ls apply` save `rect_offset_ns` only once the converter has been off for a while, so read the device

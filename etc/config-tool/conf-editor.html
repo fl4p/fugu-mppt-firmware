@@ -345,62 +345,83 @@
   /* tests sheet */
   #open-tests[aria-expanded="true"] { background:var(--field); }
   #open-tests.running svg { color:var(--accent); }
-  .tst-group { margin:22px 0 2px; font-size:11.5px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--faint); }
-  .tst { padding:14px 0; border-bottom:1px solid var(--line); }
-  .tst-group + .tst { padding-top:8px; }
-  .tst:last-child { border-bottom:0; }
-  .tst-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 10px; }
-  .tst-name { margin:0; font-size:13.5px; font-weight:600; color:var(--fg); }
-  .tst-tag { font-size:12px; color:var(--faint); }
-  .tst-tag.warn { color:var(--accent); }
-  .tst-what { margin:3px 0 0; font-size:12.5px; color:var(--fg-2); }
-  .tst-meta { display:grid; grid-template-columns:auto minmax(0,1fr); gap:1px 10px; margin:6px 0 0; font-size:12px; color:var(--muted); }
-  .tst-meta dt { color:var(--faint); }
-  .tst-meta dd { margin:0; overflow-wrap:anywhere; }
-  .tst-risk { margin:8px 0 0; padding-left:10px; border-left:2px solid var(--accent); font-size:12px; color:var(--fg-2); }
-  .tst-ctl { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; margin-top:10px; }
+  #tests .sheet-foot:has(> #tst-msg:empty) { display:none; }
+  #tst-body { font-size:13px; line-height:1.45; color:var(--fg); }
+  .tst-group { margin:22px 0 4px; font-size:12px; font-weight:500; color:var(--muted); }
+  .tst-shead { display:flex; align-items:center; gap:8px; margin:14px 0 2px; }
+  .tst-shead .tst-group { margin:0; }
+  .tst-ago { margin-left:auto; font-size:12px; color:var(--muted); }
+  .tst-shead .xbtn { padding:4px; margin-right:-4px; }
+  .tst-shead .xbtn:disabled { opacity:.4; }
+  details.tst-row > summary { position:relative; display:grid; grid-template-columns:8.5em minmax(0,1fr); gap:12px; padding:4px 0; cursor:pointer; list-style:none; }
+  details.tst-row > summary::-webkit-details-marker { display:none; }
+  .tst-x::before, details.tst-row > summary::before { content:""; position:absolute; left:-17px; top:calc(.725em - 3px); width:10px; height:6px;
+    background:var(--chev) no-repeat center; transform:rotate(-90deg); transition:transform .15s; }
+  details.tst-row > summary::before { top:calc(4px + .725em - 3px); opacity:.6; }
+  details.tst-row > summary:hover::before, details.tst-row[open] > summary::before { opacity:1; }
+  details.tst-row[open] > summary::before, .tst.open .tst-x::before { transform:none; }
+  .tst-lbl { color:var(--muted); }
+  .tst-val { min-width:0; overflow-wrap:anywhere; }
+  .tst-row.bad .tst-val { color:var(--accent); }
+  .tst-row.bad .tst-val::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--accent); margin-right:7px; vertical-align:.05em; }
+  .tst-row .tst-out { margin:2px 0 8px; }
+  .tst-note { margin:0 0 4px calc(8.5em + 12px); font-size:12.5px; color:var(--accent); }
+  .tst { padding:9px 0; }
+  .tst-group + .tst { padding-top:2px; }
+  .tst-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; cursor:pointer; }
+  .tst-ti { flex:1 1 220px; min-width:0; }
+  .tst-name { margin:0; font-size:13.5px; font-weight:500; display:flex; flex-wrap:wrap; align-items:baseline; gap:0 8px; }
+  .tst-x { position:relative; border:0; background:none; padding:0; border-radius:0; font:inherit; color:var(--fg); text-align:left; cursor:pointer; }
+  .tst-x:hover { background:none; }
+  .tst-tag { font-size:12px; font-weight:400; color:var(--muted); }
+  .tst-what { margin:1px 0 0; }
+  .tst-ctl { display:flex; align-items:center; gap:8px; margin-left:auto; }
   .tst-ctl button { border-color:var(--line-2); padding:5px 12px; }
-  .tst-ctl .tst-opt { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--fg-2); cursor:pointer; margin-right:auto; }
-  .tst-ctl .tst-opt:has(input:disabled) { opacity:.5; cursor:not-allowed; }
-  .tst-ctl .tst-state { font-size:12.5px; color:var(--fg-2); margin-right:auto; }
-  .tst-res { margin:10px 0 0; font-size:12.5px; color:var(--fg-2); }
+  .tst-state { font-size:12.5px; color:var(--muted); }
+  .tst-state:empty { display:none; }
+  .tst-more { margin:8px 0 0; }
+  .tst-opt { display:flex; align-items:center; gap:7px; margin:0 0 6px; width:fit-content; cursor:pointer; }
+  .tst-opt:has(input:disabled) { opacity:.5; cursor:not-allowed; }
+  .tst-meta { display:grid; grid-template-columns:auto minmax(0,1fr); gap:2px 12px; margin:0; }
+  .tst-meta dt { color:var(--muted); }
+  .tst-meta dd { margin:0; overflow-wrap:anywhere; }
+  .tst-cmd { font:12px var(--mono); }
+  .tst-res { margin:8px 0 0; }
   .tst-res:empty { display:none; }
-  .tst-res strong { display:inline-flex; align-items:center; gap:6px; font-weight:600; color:var(--fg); }
-  .tst-res strong::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--line-2); flex:none; }
+  .tst-res .sum { margin:0; }
+  .tst-res strong { font-weight:500; }
+  .tst-res strong::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--line-2); margin-right:7px; vertical-align:.05em; }
   .tst-res.pass strong::before { background:var(--icon); }
   .tst-res.fail strong, .tst-res.warn strong { color:var(--accent); }
   .tst-res.fail strong::before, .tst-res.warn strong::before { background:var(--accent); }
-  .tst-res .d { display:block; margin-top:2px; color:var(--muted); font:11.5px/1.5 var(--mono); overflow-wrap:anywhere; }
-  .tst-res .d.err { color:var(--accent); font-family:var(--sans); font-size:12.5px; }
+  .tst-res .m { color:var(--muted); }
+  .tst-res .m::before { content:" · "; }
+  .tst-res .d { display:block; color:var(--muted); overflow-wrap:anywhere; }
+  .tst-res .d.err { color:var(--accent); }
+  .tst-res .busy { color:var(--muted); }
   .tst-res .recheck { margin-top:6px; border-color:var(--line-2); padding:4px 10px; font-size:12.5px; }
-  .tst-chart { margin:12px 0 0; }
-  .tst-chart figcaption { font-size:12px; color:var(--muted); margin:0 0 4px; }
+  .tst-chart { margin:10px 0 0; }
+  .tst-chart figcaption { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
   .tst-chart svg { display:block; width:100%; height:auto; overflow:visible; }
-  .tst-chart text { fill:var(--faint); font:10.5px var(--sans); font-variant-numeric:tabular-nums; }
+  .tst-chart text { fill:var(--muted); font:10.5px var(--sans); font-variant-numeric:tabular-nums; }
   .tst-chart .g { stroke:var(--line); }
   .tst-chart .z { stroke:var(--line-2); }
   .tst-chart .ln { fill:none; stroke:var(--fg-2); stroke-width:1.6; stroke-linejoin:round; stroke-linecap:round; }
   .tst-chart .ln.flag { stroke-dasharray:5 3; opacity:.6; }
   .tst-chart .pt { fill:var(--fg-2); }
-  .tst-chart .mdrop { stroke:var(--accent); stroke-dasharray:2 3; opacity:.55; }
-  .tst-chart .mpp { fill:var(--accent); stroke:var(--bg); stroke-width:2; }
-  .tst-chart text.mlab { fill:var(--accent); font-size:11.5px; font-weight:600; paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
-  .tst.compact { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:16px; }
-  .tst.compact > * { grid-column:1; }
-  .tst.compact > .tst-ctl { grid-column:2; grid-row:1 / span 3; align-self:start; margin-top:0; flex-direction:column; align-items:flex-end; gap:6px; }
-  .tst.compact > .tst-ctl .tst-state { margin:0; order:2; font-size:12px; color:var(--muted); }
-  .tst.compact > .tst-ctl .tst-state:empty { display:none; }
-  .tst.compact > .tst-risk, .tst.compact > .tst-res, .tst.compact > .tst-log { grid-column:1 / -1; }
+  .tst-chart .mdrop { stroke:var(--icon); stroke-dasharray:2 3; opacity:.55; }
+  .tst-chart .mpp { fill:var(--icon); stroke:var(--bg); stroke-width:2; }
+  .tst-chart text.mlab { fill:var(--icon); font-size:11.5px; font-weight:500; paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
   details.tst-log { margin-top:8px; }
   details.tst-log > summary { font-size:12.5px; }
   .tst-out { margin-top:8px; max-height:170px; overflow:auto; padding:8px 10px; background:var(--side); border-radius:7px;
-    font:11.5px/1.55 var(--mono); color:var(--muted); white-space:pre; }
+    font:11.5px/1.55 var(--mono); color:var(--fg-2); white-space:pre; }
   .tst-out:empty { display:none; }
-  .tst-out .st { color:var(--faint); }
+  .tst-out .st { color:var(--muted); }
   .tst-out .w { color:var(--accent); }
   .tst-empty { padding:30px 0 10px; color:var(--muted); font-size:13px; max-width:44ch; }
   .tst-empty strong { display:block; color:var(--fg); font-size:14px; font-weight:600; margin-bottom:4px; }
-  .tst-absent { margin-top:18px; font-size:12px; color:var(--faint); }
+  .tst-absent { margin-top:18px; font-size:12px; color:var(--muted); }
   #tst-msg:empty { display:none; }
   #tst-sub.busy { color:var(--fg-2); }
   @media (max-width:520px) {
@@ -604,13 +625,11 @@
   <div class="sheet-head">
     <h2 id="tst-title">Tests</h2>
     <span id="tst-sub" class="sub"></span>
-    <button id="tst-refresh" class="xbtn" type="button" aria-label="Check again" title="Check again which tests the firmware has (help)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4.5h-4.5"/></svg></button>
     <button id="tst-close" class="xbtn" type="button" aria-label="Close" title="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div id="tst-body" class="sheet-body"></div>
   <div class="sheet-foot">
     <p id="tst-msg" class="note" role="status"></p>
-    <p class="note">One test at a time, on the device the config was read from. Nothing runs or repeats on its own; tests that drive the power stage ask first.</p>
   </div>
 </aside>
 
@@ -3400,7 +3419,7 @@ function tstTimings(){ return TST_T; }
 function tstDefs(){ return TESTS; }
 // tstRun: the test in progress; tstHave: command names from `help` (null: unknown); tstGone: roots that
 // answered "Command not found"; tstSt: last parsed `selftest` state. A run holds devBusy (withDevice).
-let tstRun=null, tstDev=null, tstHave=undefined, tstProbing=false, tstSt=null;
+let tstRun=null, tstDev=null, tstHave=undefined, tstProbing=false, tstSt=null, tstStatusAt=0, tstAgoTimer=0;
 const tstGone=new Set(), tstProbed={}, tstRes=new Map(), tstOpt={};
 function tstBusyNow(){ return !!tstRun; }
 function tstLock(run){ tstRun=run; devBusy = run ? "“"+run.cmd+"”" : null; ulRefreshInputState(); }
@@ -3412,25 +3431,21 @@ const TST_NOCMD = /\bCommand not found\b/;
 
 // group, card text, the command(s), the confirm level ("plain" | "typed") and how a run ends
 const TESTS = [
-  { id:"selftest", group:"Status", title:"Protection self-checks", root:"selftest", cmd:()=>"selftest",
-    what:"High-side short check and backflow switch: latched faults and the last test result.", dur:"instant" },
-  { id:"rcstatus", group:"Status", title:"Low-side timing calibration", root:"rect-cal", cmd:()=>"rect-cal status",
-    what:"State of the rect-cal self-calibration and the active rect_offset.", dur:"instant" },
-  { id:"wire", group:"Status", title:"Output wire guard", root:"wire", cmd:()=>"wire",
-    what:"Wire-fault protection state, level and learned baseline.", dur:"instant" },
-  { id:"adccal", group:"Status", title:"ADC calibration (eFuse)", root:"adc-cal", cmd:()=>"adc-cal", noProbe:true,
-    what:"What the chip's ADC1 calibration is built from (ESP32-S3 builds).", dur:"instant" },
+  { id:"selftest", group:"Status", title:"Protection self-checks", label:"Protection", root:"selftest", cmd:()=>"selftest" },
+  { id:"rcstatus", group:"Status", title:"Low-side timing calibration", label:"Low-side timing", root:"rect-cal", cmd:()=>"rect-cal status" },
+  { id:"wire", group:"Status", title:"Output wire guard", label:"Wire guard", root:"wire", cmd:()=>"wire" },
+  { id:"adccal", group:"Status", title:"ADC calibration (eFuse)", label:"ADC calibration", root:"adc-cal", cmd:()=>"adc-cal", noProbe:true },
 
   { id:"sweep", group:"Measurements", title:"MPP sweep", root:"sweep", cmd:()=>"sweep", confirm:"plain",
     read:"sweep-curve", readLabel:"Read last sweep", runLabel:"Run sweep", chart:true,
-    tag:"drives the converter", what:"Sweeps the duty from zero to maximum and reports the panel's maximum power point. Read last sweep shows the latest curve without driving anything.",
+    tag:"drives the converter", what:"Finds the panel's maximum power point and draws its curve.",
     needs:"MPPT or PSU mode; not during a backflow switch test.", dur:"a few seconds",
     risk:"Output power drops while the duty sweeps; PSU mode is left.",
     does:()=>"The tracker sweeps the duty from zero to maximum to find the maximum power point, after a short sensor zero calibration. Output power drops for a few seconds; PSU mode is left.",
     end:/\bsweep landed\b|\bStop sweep\b/, timeout:90000, finish:"sweep-curve", recheck:"sweep-curve" },
   { id:"coil", group:"Measurements", title:"Coil inductance (L0)", root:"measure-coil", optional:true,
     cmd:o=>"measure-coil l0"+(o.apply ? " apply" : ""), confirm:"typed", tag:"takes over the converter",
-    what:"Sweeps the duty in DCM and fits the coil inductance from the transfer ratio.",
+    what:"Measures the inductance of the power coil.",
     needs:"Vin above Vout + 1 V (sun); bench build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1–1.5 min, no abort",
     risk:"Stops conversion and drives the half-bridge in manual PWM up to 2 A output. The firmware has no abort for it.",
     opt:{ key:"apply", label:"Save L0 to coil.conf" },
@@ -3440,7 +3455,7 @@ const TESTS = [
 
   { id:"bflow", group:"Self-tests", title:"Backflow switch", root:"selftest", cmd:()=>"selftest bflow", abort:"selftest abort",
     confirm:"typed", tag:"takes over the converter",
-    what:"Checks that the battery-side backflow switch blocks when off and conducts when on.",
+    what:"Checks the battery-side backflow switch.",
     needs:"A buck with board.conf bflow_bat=1, Vin ≥ 1.2 × Vout and Vout + 3 V, nothing latched, no sweep, rect-cal or backoff.",
     dur:"10–30 s, up to about 3 min",
     risk:"Stops conversion, then drives the half-bridge in forced PWM until reverse current flows. A failure blocks every start until the latch is cleared.",
@@ -3448,14 +3463,14 @@ const TESTS = [
     end:/\bselftest bflow (?:blocks|conducts): (?:PASS|FAIL|ABORTED)\b|\bselftest bflow toggle(?: \([^)]*\))?: (?:PASS|FAIL|ABORTED)\b|\bselftest bflow: (?!started\b|aborting\b|running\b|daily run\b|mode restore\b)/,
     timeout:240000, finish:"selftest", recheck:"selftest" },
   { id:"clear", group:"Self-tests", title:"Clear latched faults", root:"selftest", cmd:()=>"selftest clear", confirm:"typed",
-    tag:"re-enables starts", what:"Clears a latched high-side short and a latched backflow switch failure.",
+    tag:"re-enables starts", what:"Lets the converter start again after a latched fault.",
     needs:"A latch shown by the protection self-checks.", dur:"instant",
     risk:"The converter may start again. A short that is still there latches again after 3 s; a failed backflow switch is not re-tested by clearing.",
     does:()=>"The latched faults are cleared and the converter may start again. A high-side short that is still there latches again after 3 s; a backflow switch that failed its test is not re-tested by clearing." },
 
   { id:"rectcal", group:"Calibration", title:"Low-side timing (rect-cal)", root:"rect-cal", cmd:o=>o.force ? "rect-cal force" : "rect-cal",
     abort:"rect-cal abort", confirm:o=>o.force ? "typed" : "plain", tag:"drives the converter · writes coil.conf",
-    what:"Steps the low-side window across the coil's zero crossing and calibrates rect_offset_ns.",
+    what:"Tunes the low-side switch timing while the converter runs.",
     needs:"MPPT on a buck, sync rect and backflow switch on, DCM at 0.3–4 A (force: any point from 0.3 A), Vin > Vout + 1 V, no limiter.",
     dur:"up to 60 s", risk:"The converter keeps running at a reduced operating point (about 20–35 W) during the run.",
     opt:{ key:"force", label:"force: start from any operating point" },
@@ -3465,7 +3480,7 @@ const TESTS = [
     end:/\brectcal: (?:done|failed|refused):/, timeout:120000, finish:"rect-cal status", recheck:"rect-cal status" },
   { id:"coills", group:"Calibration", title:"Low-side timing from a coil sweep", root:"measure-coil", optional:true,
     cmd:o=>"measure-coil ls"+(o.apply ? " apply" : ""), confirm:"typed", tag:"takes over the converter",
-    what:"Holds the duty and sweeps the low-side count to locate the rectifier timing peak.",
+    what:"Finds the best low-side switch timing from a coil sweep.",
     needs:"DCM with Vin > Vout at a low duty; bench build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1.5 min, no abort",
     risk:"Stops conversion, forces sync rect and the backflow switch on and sweeps the low-side window in manual PWM. The firmware has no abort for it.",
     opt:{ key:"apply", label:"Apply and save rect_offset" },
@@ -3635,7 +3650,7 @@ function tstChart(fig, c, cw){
   const state = c.sweeping ? `sweep in progress, ${pts.length} point${pts.length===1 ? "" : "s"} so far`
     : (c.t>1e9 ? "sweep at "+fmtSweepTime(c.t) : "sweep time unknown (device clock not set)") + (c.flag==="light" ? ", sky changed during sweep" : "");
   const svg=svgEl("svg", { viewBox:`0 0 ${W} ${H}`, role:"img", "data-points":pts.length,
-    "aria-label":`Power over input voltage, ${state}: ${mpp ? `${c.sweeping ? "best so far" : "MPP"} ${c.p} W at ${c.v} V` : "no maximum power point"}, ${pts.length} point${pts.length===1 ? "" : "s"} from ${f1(vlo)} to ${f1(vhi)} V.` });
+    "aria-label":`Power over input voltage, ${state}: ${mpp ? `${c.sweeping ? "best so far" : c.stop ? "stop point" : "MPP"} ${c.p} W at ${c.v} V` : "no maximum power point"}, ${plural(pts.length, "point")} from ${f1(vlo)} to ${f1(vhi)} V.` });
   for (const v of yd.ticks){
     svg.append(svgEl("line", { x1:L, x2:W-R, y1:Y(v), y2:Y(v) }, v===0 ? "z" : "g"));
     const t=svgEl("text", { x:L-6, y:Y(v)+3.5, "text-anchor":"end" }); t.textContent = v===yd.hi ? v+" W" : String(v); svg.append(t);
@@ -3655,7 +3670,20 @@ function tstChart(fig, c, cw){
   fig.replaceChildren(cap, svg);
 }
 
-// Summary {cls, text, details} of a finished command or run.
+const plural = (n, w) => `${n} ${w}${n===1 ? "" : "s"}`;
+
+// limiter order of mppt.cpp controlValues; 0 (Vin floor) and -1 (duty end) end a sweep normally
+const TST_LIM = [null, ["output-voltage limit","V"], ["input-current limit","A"], ["output-current limit","A"], ["power limit","W"]];
+// A sweep cut short by a limiter (`Stop sweep <s>s mode=… (lim=i tgt=… act=…) …`): why, else "".
+function tstSweepStop(lines){
+  for (const raw of lines){
+    const m=tstMsgOf(tstLine(raw)).match(/\bStop sweep ([\d.]+)s mode=\S+ \(lim=(-?\d+) tgt=(\S+) act=\S+\)/), L=m && TST_LIM[+m[2]];
+    if (L) return `Stopped after ${(+m[1]).toFixed(1)} s by the ${L[0]} (${(+m[3]).toFixed(L[1]==="W" ? 0 : 1)} ${L[1]}): the MPP shown is where the sweep stopped, not the panel's maximum.`;
+  }
+  return "";
+}
+
+// Summary {cls, text, details, meta?, short?} of a finished command or run.
 function tstSummary(id, lines, extra){
   let r;
   switch (id){
@@ -3664,43 +3692,54 @@ function tstSummary(id, lines, extra){
       const bf=parseBflow(lines);
       const details=[ "high-side short: "+(s.hs||"?"), "backflow switch: "+(s.bf||"?"), ...(bf && !s.running ? bf.details.map(x=>"last run "+x) : []) ];
       if (s.running) details.push("backflow switch test running");
-      return { cls: s.hsLatched || s.bfLatched ? "fail" : "pass",
-               text: s.hsLatched && s.bfLatched ? "High-side short and backflow switch failure latched: starts blocked"
-                   : s.hsLatched ? "High-side short latched: starts blocked" : s.bfLatched ? "Backflow switch failure latched: starts blocked"
-                   : "Nothing latched", details };
+      const text = s.hsLatched && s.bfLatched ? "High-side short and backflow switch failure latched: starts blocked"
+                 : s.hsLatched ? "High-side short latched: starts blocked" : s.bfLatched ? "Backflow switch failure latched: starts blocked"
+                 : "Nothing latched";
+      return { cls: s.hsLatched || s.bfLatched ? "fail" : "pass", text, details,
+               short: text==="Nothing latched" ? (s.running ? "OK, backflow switch test running" : "OK, nothing latched") : text };
     }
     case "rcstatus": {
       const s=parseRectStatus(lines); if (!s) return null;
       return { cls: s.state==="failed" ? "warn" : s.cal==="calibrated" ? "pass" : "",
                text:`rect_offset ${s.ns} ns (${s.ct} ct, ${s.drv}), ${s.cal}`,
+               short: s.state==="failed" ? `offset ${s.ns} ns, failed${s.why ? ": "+s.why : ""}`
+                    : `offset ${s.ns} ns, ${s.state}${s.cal==="calibrated" ? "" : ", "+s.cal}${s.unsaved ? ", not saved yet" : ""}`,
                details:[ `state ${s.state}${s.why ? ": "+s.why : ""}`, `auto ${s.auto ? "on" : "off"}, recalibration ${s.needed ? "needed" : "not needed"}, backstop ${s.backstop}×`,
                          ...(s.unsaved ? ["not saved yet: saved to coil.conf once the converter has been off for about 10 s"] : []) ] };
     }
     case "wire": {
-      const l=lines.map(x=>tstMsgOf(tstLine(x))).find(x=>/^wire: /.test(x)); if (!l) return null;
+      const all=lines.map(x=>tstMsgOf(tstLine(x))), l=all.find(x=>/^wire: /.test(x)); if (!l) return null;
       const m=l.match(/^wire: (.*?), level (\w+) \(effective (\w+)\)( TRIPPED)?/);
-      if (!m) return { cls:"", text:l.replace(/^wire: /,"Wire guard ") , details:[] };
+      if (!m) return { cls:"", text:l.replace(/^wire: /,"Wire guard "), details:[], short:/^wire: off\b/.test(l) ? "off" : l.replace(/^wire: /,"") };
+      const b=all.map(x=>x.match(/^\s+baseline: (\d+) days?( \(learning\))?, Rc (-?[\d.]+)/)).find(Boolean);
+      const base = !b ? "" : b[2] || b[1]==="0" ? ", learning" : `, baseline ${Math.round(+b[3])} mΩ`;
       return { cls: m[4] ? "fail" : m[3]!=="ok" ? "warn" : "pass", text:`Wire guard ${m[1]}, level ${m[3]}${m[4] ? ", TRIPPED" : ""}`,
-               details:lines.map(x=>tstMsgOf(tstLine(x))).filter(x=>/^\s+(?:baseline|Iref):/.test(x)).map(x=>x.trim()) };
+               short:`${m[1]==="armed" ? "on" : m[1]}${m[4] ? ", tripped" : m[3]!=="ok" ? ", level "+m[3] : ""}${base}`,
+               details:all.filter(x=>/^\s+(?:baseline|Iref):?/.test(x)).map(x=>x.trim()) };
     }
     case "sweep": {
-      const c=parseCurve(lines);
-      const curve = c && c.complete && c.points.length ? c : null;
+      const c=parseCurve(lines), few = c && !c.none && c.n<3;
+      const curve = c && c.complete && c.points.length && !few ? c : null;
       if (extra && extra.noMpp) return { cls:"warn", text:"No MPP found", details:[extra.noMpp.replace(/^no MPP\s*/,"").replace(/^\((.*)\)/,"$1")], curve };
       if (!c) return null;
       if (c.none) return { cls:"", text:"No sweep recorded since boot", details:[] };
-      const ago=fmtAgo(c.t);
-      return { cls: c.flag==="light" ? "warn" : c.sweeping ? "" : "pass",
-               text: c.sweeping ? `Sweeping: ${c.n} points so far` : `MPP ${c.p} W at ${c.v} V`,
-               details:[ `${c.n} points${ago ? ", "+ago : ""}`, ...(c.flag==="light" ? [`landing ${c.land} W missed the sweep's value (flag light)`] : c.flag ? [`verified, landed ${c.land} W`] : []),
-                 ...(c.points && !curve ? [c.complete ? "no curve points" : `curve incomplete (${c.points.length} of ${c.n} points${c.reason ? ", "+c.reason : ""}): not drawn`] : []) ],
+      const ago=fmtAgo(c.t), stop=tstSweepStop(lines);
+      if (curve && stop) curve.stop=true;
+      return { cls: c.flag==="light" || stop ? "warn" : c.sweeping ? "" : "pass",
+               text: c.sweeping ? `Sweeping: ${plural(c.n, "point")} so far` : `${stop ? "Stop point" : "MPP"} ${c.p} W at ${c.v} V`,
+               meta:[ plural(c.n, "point")+(ago ? ", "+ago : ""), ...(c.flag && c.flag!=="light" ? [`verified, landed ${c.land} W`] : []) ],
+               details:[ ...(stop ? [stop] : []),
+                 ...(few ? [`The device recorded only ${plural(c.n, "point")}, so there is no curve.`] : []),
+                 ...(c.flag==="light" ? [`The light changed during the sweep: landing ${c.land} W missed the sweep's value.`] : []),
+                 ...(lines.some(l=>/\bsweep not verified \(limiter\)/.test(tstLine(l))) ? ["The landing was not verified: a limiter was active."] : []),
+                 ...(c.points && !curve && !few ? [c.complete ? "no curve points" : `curve incomplete (${c.points.length} of ${c.n} points${c.reason ? ", "+c.reason : ""}): not drawn`] : []) ],
                curve };
     }
     case "adccal": {
       const v=lines.map(x=>tstLine(x)).map(x=>x.match(/ADCCAL efuse_ver=(\d+)/)).find(Boolean);
       if (!v) return null;
       const g=lines.map(x=>tstLine(x).match(/ADCCAL adc1 atten=(\d) .*?gain_uv_per_code=([\d.]+)/)).filter(Boolean);
-      return { cls:"pass", text:`eFuse calibration version ${v[1]}`, details:g.map(m=>`atten ${m[1]}: ${m[2]} µV/code`) };
+      return { cls:"pass", text:`eFuse calibration version ${v[1]}`, short:`eFuse version ${v[1]}`, details:g.map(m=>`atten ${m[1]}: ${m[2]} µV/code`) };
     }
     case "coil": case "coills": {
       const c=parseCoil(lines);
@@ -3744,7 +3783,7 @@ function tstGate(){
   b.classList.toggle("running", !!tstRun);
   b.title = t ? "Tests on "+targetName(t)+(tstRun ? " — "+tstRun.cmd+" running" : "") : "Connect to the device the config was read from";
   const dev = state && state.deviceName;
-  if (dev!==tstDev && !tstRun){ tstDev=dev; tstHave=undefined; tstGone.clear(); for (const k in tstProbed) delete tstProbed[k]; tstRes.clear(); tstSt=null; }
+  if (dev!==tstDev && !tstRun){ tstDev=dev; tstHave=undefined; tstGone.clear(); for (const k in tstProbed) delete tstProbed[k]; tstRes.clear(); tstSt=null; tstStatusAt=0; }
   if (tstOpenNow()) tstRender();
 }
 
@@ -3783,6 +3822,23 @@ async function tstProbe(){
   }
   tstProbing=false; devBusy=null; ulRefreshInputState();
   tstRender();
+  if (tstTarget()===t) tstStatusRead();
+}
+
+// The Status rows, read-only and instant: one after the other under one device lock.
+async function tstStatusRead(){
+  const t=tstTarget(), defs=TESTS.filter(d=>d.group==="Status" && tstAvail(d));
+  if (!t || tstRun || tstProbing || devBusy || !defs.length) return;
+  tstLock({ id:"status", cmd:defs[0].cmd(), link:t }); tstGate();
+  for (const d of defs){
+    if (tstTarget()!==t) break;
+    const r=tstResult(d.id), cmd=d.cmd();
+    tstLock({ id:"status", cmd, link:t }); r.st="run"; r.lines=[]; tstPaint(d.id);
+    const x=await tstSend(cmd, ln=>tstPush(r, ln), d.id==="adccal" ? 8000 : TST_T.cmd);
+    tstFinishRead(d.id, d, cmd, x, true);
+  }
+  tstStatusAt=Date.now();
+  tstLock(null); tstGate();
 }
 
 function tstConvText(live){
@@ -3817,16 +3873,29 @@ async function tstRead(id){
   tstFinishRead(id, d, cmd, x);
   tstGate();
 }
-function tstFinishRead(id, d, cmd, x){
+// quiet: a Status row of the automatic read; a missing command only drops its row (listed at the end).
+function tstFinishRead(id, d, cmd, x, quiet){
   const r=tstResult(id);
   const root=cmd.split(" ")[0];
-  if (x.lines.some(l=>TST_NOCMD.test(l))){ tstGone.add(root); r.st="idle"; tstSetMsg(`“${root}” is not in this firmware build; ${root===d.root ? "its tests are" : "it is"} hidden.`, true); return; }
+  r.note=""; r.noteErr=false; r.recheck=false;
+  if (x.lines.some(l=>TST_NOCMD.test(l))){ tstGone.add(root); r.st="idle"; if (!quiet) tstSetMsg(`“${root}” is not in this firmware build; ${root===d.root ? "its tests are" : "it is"} hidden.`, true); return; }
   if (x.ok===true){
     r.sum=tstSummary(id, x.lines); r.st="done"; r.fold=true;
     if (!r.sum){ r.note="Reply not recognised; see the output."; r.noteErr=true; }
     if (id==="selftest") tstSt=parseSelftest(x.lines);
-  } else if (x.ok===false){ r.st="refused"; r.note=`The device refused “${cmd}”: `+(tstRefusal(x.lines, cmd)||"no reason given"); r.noteErr=true; }
+    return;
+  }
+  if (d.group==="Status") r.sum=null;
+  if (x.ok===false){ r.st="refused"; r.note=`The device refused “${cmd}”: `+(tstRefusal(x.lines, cmd)||"no reason given"); r.noteErr=true; }
   else { r.st="unknown"; r.note=`No reply to “${cmd}” within ${TST_T.cmd/1000} s.`; r.noteErr=true; }
+}
+
+// A `selftest` reply seen by any sequence also updates its Status row and the latch state.
+function tstSelftestSeen(lines){
+  const s=parseSelftest(lines); if (!s) return null;
+  const sr=tstResult("selftest");
+  tstSt=s; sr.sum=tstSummary("selftest", lines); sr.st="done"; sr.lines=[...lines]; sr.note=""; sr.noteErr=false;
+  return s;
 }
 
 // A test that drives the power stage or changes protection state: read the live state, confirm, start,
@@ -3843,7 +3912,7 @@ async function tstStart(id){
   const pre=await tstSend("selftest");
   if (tstTarget()!==t) return end("idle", `The link to ${dev} closed; nothing was sent.`, true);
   if (pre.ok!==true) return end("idle", pre.ok===false ? `“selftest” was refused (${tstRefusal(pre.lines, "selftest")||"no reason"}); nothing was started.` : `No reply to “selftest” from ${dev}; nothing was started.`, true);
-  const st=parseSelftest(pre.lines); if (st){ tstSt=st; const s=tstResult("selftest"); s.sum=tstSummary("selftest", pre.lines); s.st="done"; }
+  const st=tstSelftestSeen(pre.lines);
   let extra="";
   if (id==="clear"){
     if (st && !st.hsLatched && !st.bfLatched) return end("idle", `Nothing is latched on ${dev}; nothing was sent.`);
@@ -3862,7 +3931,7 @@ async function tstStart(id){
   if (!d.end){                                                   // one-shot (selftest clear)
     r.sum=tstSummary(id, x.lines);
     const s=await tstSend("selftest");
-    if (s.ok===true){ tstSt=parseSelftest(s.lines); const sr=tstResult("selftest"); sr.sum=tstSummary("selftest", s.lines); sr.st="done"; }
+    if (s.ok===true) tstSelftestSeen(s.lines);
     return end("done");
   }
 
@@ -3886,7 +3955,7 @@ async function tstStart(id){
     const f=await tstSend(d.finish, ln=>tstPush(r, ln));
     if (f.ok===true) res=res.concat(f.lines);
     if (d.finish==="selftest" && f.ok===true){
-      const s=parseSelftest(f.lines); if (s){ tstSt=s; const sr=tstResult("selftest"); sr.sum=tstSummary("selftest", f.lines); sr.st="done"; }
+      const s=tstSelftestSeen(f.lines);
       if (s && s.running){ r.recheck=true; return end("unknown", "The device still reports the test as running.", true); }
       const fin=parseBflow(f.lines); if (fin) res=f.lines;         // the device's own record of the run
     }
@@ -3919,7 +3988,7 @@ async function tstRecheck(id){
                               : `${state.deviceName} printed no status line: a coil measurement may still be running.`;
     r.noteErr=!tstLive(x.lines);
   } else if (d.recheck==="selftest"){
-    const s=parseSelftest(x.lines); if (s){ tstSt=s; const sr=tstResult("selftest"); sr.sum=tstSummary("selftest", x.lines); sr.st="done"; }
+    const s=tstSelftestSeen(x.lines);
     const b=parseBflow(x.lines);
     r.note = s && s.running ? "The test is still running on the device." : b ? "Last run on the device: "+b.text : "No result of this boot on the device: "+((s && s.bf) || "unknown");
     r.noteErr = !!(s && s.running) || !b || b.cls!=="pass";
@@ -3934,84 +4003,135 @@ async function tstRecheck(id){
 
 function tstRender(){
   const t=tstTarget(), body=document.getElementById("tst-body"), sub=document.getElementById("tst-sub");
-  const busy = tstProbing ? "checking the firmware" : tstRun ? tstRun.cmd : "";
+  const busy = tstProbing ? "checking the firmware" : tstRun ? (tstRun.id==="status" ? "reading the status" : tstRun.cmd) : "";
   sub.classList.toggle("busy", !!busy);
   sub.textContent = busy ? busy+" …" : t ? targetName(t) : "not connected";
-  document.getElementById("tst-refresh").disabled = !t || !!devBusy;
   const empty=(h, p)=>{ const e=document.createElement("div"); e.className="tst-empty";
     const s=document.createElement("strong"); s.textContent=h; e.append(s, p); body.replaceChildren(e); body._key=null; };
   if (!t && !tstRun && tstHave===undefined) return empty("Not connected", "Read the device again (Open) to run tests on it.");
   if (tstProbing || tstHave===undefined) return empty("Checking the firmware", "Reading which tests this firmware build has (help).");
   if (body._key!==tstKey()) tstBuild(body);
   body.querySelector(".tst-off").hidden = !!t;
+  const rf=document.getElementById("tst-refresh");
+  rf.disabled = !t || !!devBusy; rf.title = "Read the status again" + (devBusy ? ` (wait for ${devBusy})` : "");
+  tstAgo();
   TESTS.forEach(d=>tstPaint(d.id));
+}
+function tstAgo(){
+  const e=document.querySelector("#tst-body .tst-ago"); if (!e) return;
+  const s=(Date.now()-tstStatusAt)/1000;
+  e.textContent = tstRun && tstRun.id==="status" ? "reading …" : !tstStatusAt ? "" : s<45 ? "read just now" : "read "+fmtAgo(tstStatusAt/1000);
 }
 
 const tstKey = () => [tstDev, tstHave ? [...tstHave].join() : String(tstHave), ...TESTS.map(tstAvail)].join("|");
+const tstEl = (tag, cls, text) => { const e=document.createElement(tag); if (cls) e.className=cls; if (text!=null) e.textContent=text; return e; };
+const tstOutEl = label => { const o=tstEl("div", "tst-out"); o.setAttribute("role","log"); o.setAttribute("aria-label", label+" output"); return o; };
 function tstBuild(body){
   body._key=tstKey();
-  const off=document.createElement("div"); off.className="tst-empty tst-off";
-  const os=document.createElement("strong"); os.textContent="Not connected";
-  off.append(os, "Read the device again (Open) to run tests on it. Results below are from before the link closed.");
+  const off=tstEl("div", "tst-empty tst-off");
+  off.append(tstEl("strong", "", "Not connected"), "Read the device again (Open) to run tests on it. Results below are from before the link closed.");
   const out=[off];
-  for (const g of TST_GROUPS){
+  // Status: label + the parsed one-line state per read-only check; the row opens the raw output
+  const st=tstEl("section", "tst-status"), sh=tstEl("div", "tst-shead");
+  const rf=tstEl("button", "xbtn"); rf.id="tst-refresh"; rf.type="button"; rf.setAttribute("aria-label", "Read the status again");
+  rf.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4.5h-4.5"/></svg>';
+  rf.onclick=()=>{ if (!devBusy){ tstGone.clear(); for (const k in tstProbed) delete tstProbed[k]; tstHave=undefined; tstProbe(); } };
+  sh.append(tstEl("h3", "tst-group", "Status"), tstEl("span", "tst-ago"), rf);
+  st.append(sh);
+  for (const d of TESTS.filter(d=>d.group==="Status" && tstAvail(d))){
+    const row=tstEl("details", "tst-row"); row.dataset.tst=d.id;
+    const sm=tstEl("summary");
+    sm.append(tstEl("span", "tst-lbl", d.label), tstEl("span", "tst-val"));
+    row.append(sm, tstOutEl(d.title));
+    st.append(row, Object.assign(tstEl("p", "tst-note"), { hidden:true }));
+  }
+  out.push(st);
+  for (const g of TST_GROUPS.slice(1)){
     const defs=TESTS.filter(d=>d.group===g && tstAvail(d));
     if (!defs.length) continue;
-    const h=document.createElement("h3"); h.className="tst-group"; h.textContent=g; out.push(h);
+    out.push(tstEl("h3", "tst-group", g));
     for (const d of defs){
-      const c=document.createElement("section"); c.className="tst"+(d.opt || d.read ? "" : " compact"); c.dataset.tst=d.id;
-      const hd=document.createElement("div"); hd.className="tst-head";
-      const n=document.createElement("h4"); n.className="tst-name"; n.textContent=d.title;
-      const tg=document.createElement("span"); tg.className="tst-tag"+(d.tag ? " warn" : ""); tg.textContent=d.tag||"read-only";
-      hd.append(n, tg);
-      const w=document.createElement("p"); w.className="tst-what"; w.textContent=d.what;
-      const dl=document.createElement("dl"); dl.className="tst-meta";
-      const kv=(k,v,code)=>{ const dt=document.createElement("dt"); dt.textContent=k; const dd=document.createElement("dd");
-        if (code){ const cc=document.createElement("code"); cc.className="tst-cmd"; cc.textContent=v; dd.append(cc); } else dd.textContent=v; dl.append(dt, dd); };
+      const c=tstEl("section", "tst"); c.dataset.tst=d.id;
+      const hd=tstEl("div", "tst-head"), ti=tstEl("div", "tst-ti");
+      const n=tstEl("h4", "tst-name"), x=tstEl("button", "tst-x", d.title);
+      x.type="button"; x.setAttribute("aria-expanded", "false");
+      n.append(x);
+      if (d.tag) n.append(tstEl("span", "tst-tag", d.tag));
+      ti.append(n, tstEl("p", "tst-what", d.what));
+      const ctl=tstEl("div", "tst-ctl");
+      ctl.append(tstEl("span", "tst-state"));
+      if (d.read){ const rd=tstEl("button", "read", d.readLabel); rd.type="button"; rd.onclick=()=>tstRead(d.id); ctl.append(rd); }
+      const run=tstEl("button", "run", d.runLabel || "Run"); run.type="button";
+      run.onclick=()=>tstStart(d.id);
+      ctl.append(run);
+      if (d.abort){ const ab=tstEl("button", "abort", "Abort"); ab.type="button"; ab.onclick=()=>tstAbort(d.id); ctl.append(ab); }
+      hd.append(ti, ctl);
+      hd.onclick=e=>{ if (e.target.closest(".tst-ctl")) return; const r=tstResult(d.id); r.open=!r.open; tstPaint(d.id); };
+      // details: option, needs / takes / sends, the risk
+      const more=tstEl("div", "tst-more");
+      more.id="tst-more-"+d.id; x.setAttribute("aria-controls", more.id);
+      if (d.opt){
+        const lb=tstEl("label", "tst-opt"), cb=tstEl("input");
+        cb.type="checkbox"; cb.checked=!!(tstOpt[d.id]||{})[d.opt.key];
+        cb.onchange=()=>{ tstOpt[d.id]={...(tstOpt[d.id]||{}), [d.opt.key]:cb.checked}; tstPaint(d.id); };
+        lb.append(cb, document.createTextNode(d.opt.label)); more.append(lb);
+      }
+      const dl=tstEl("dl", "tst-meta");
+      const kv=(k, v)=>{ const dd=tstEl("dd"); if (v instanceof Node) dd.append(v); else dd.textContent=v; dl.append(tstEl("dt", "", k), dd); };
+      if (d.risk) kv("Risk", d.risk);
       if (d.needs) kv("Needs", d.needs);
       kv("Takes", d.dur);
-      kv("Sends", "", true);
-      c.append(hd, w, dl);
-      if (d.risk){ const rk=document.createElement("p"); rk.className="tst-risk"; rk.textContent=d.risk; c.append(rk); }
-      const ctl=document.createElement("div"); ctl.className="tst-ctl";
-      if (d.opt){
-        const lb=document.createElement("label"); lb.className="tst-opt";
-        const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=!!(tstOpt[d.id]||{})[d.opt.key];
-        cb.onchange=()=>{ tstOpt[d.id]={...(tstOpt[d.id]||{}), [d.opt.key]:cb.checked}; tstPaint(d.id); };
-        lb.append(cb, document.createTextNode(d.opt.label)); ctl.append(lb);
-      } else { const s=document.createElement("span"); s.className="tst-state"; ctl.append(s); }
-      if (d.read){ const rd=document.createElement("button"); rd.type="button"; rd.className="read quiet-outline"; rd.textContent=d.readLabel;
-        rd.onclick=()=>tstRead(d.id); ctl.append(rd); }
-      const run=document.createElement("button"); run.type="button"; run.className="run";
-      run.textContent = d.runLabel || (d.end || d.confirm ? "Run" : "Read");
-      run.onclick=()=> d.end || d.confirm ? tstStart(d.id) : tstRead(d.id);
-      ctl.append(run);
-      if (d.abort){ const ab=document.createElement("button"); ab.type="button"; ab.className="abort"; ab.textContent="Abort"; ab.onclick=()=>tstAbort(d.id); ctl.append(ab); }
-      const res=document.createElement("div"); res.className="tst-res"; res.setAttribute("role","status");
-      const lg=document.createElement("details"); lg.className="fold tst-log"; lg.hidden=true;
-      const sm=document.createElement("summary"); sm.textContent="Device output";
-      const o=document.createElement("div"); o.className="tst-out"; o.setAttribute("role","log"); o.setAttribute("aria-label", d.title+" output");
-      lg.append(sm, o);
-      c.append(ctl, res);
-      if (d.chart){ const f=document.createElement("figure"); f.className="tst-chart"; f.hidden=true; c.append(f); }
+      kv("Sends", tstEl("code", "tst-cmd"));
+      more.append(dl);
+      const res=tstEl("div", "tst-res"); res.setAttribute("role","status");
+      const lg=tstEl("details", "fold tst-log"); lg.hidden=true;
+      lg.append(tstEl("summary", "", "Device output"), tstOutEl(d.title));
+      c.append(hd, more, res);
+      if (d.chart){ const f=tstEl("figure", "tst-chart"); f.hidden=true; c.append(f); }
       c.append(lg);
       out.push(c);
     }
   }
   const hidden=[...new Set([...TESTS.filter(d=>!tstAvail(d)).map(d=>d.root),
     ...TESTS.filter(d=>d.read && tstAvail(d) && !tstAvail({ root:d.read })).map(d=>d.read)])];
-  if (hidden.length){
-    const p=document.createElement("p"); p.className="tst-absent";
-    p.textContent="Not in this firmware build: "+hidden.map(x=>x+(x==="measure-coil" ? " (CONFIG_FUGU_WITH_MEASURE_COIL)" : x==="adc-cal" ? " (ESP32-S3 builds)" : "")).join(", ")+".";
-    out.push(p);
-  }
+  if (hidden.length)
+    out.push(tstEl("p", "tst-absent", "Not in this firmware build: "+hidden.map(x=>x+(x==="measure-coil" ? " (CONFIG_FUGU_WITH_MEASURE_COIL)" : x==="adc-cal" ? " (ESP32-S3 builds)" : "")).join(", ")+"."));
   body.replaceChildren(...out);
 }
 
+function tstPaintOut(out, lines){
+  if (out._n===lines.length && out._from===lines[0]) return;
+  const atBottom = out.scrollHeight - out.clientHeight - out.scrollTop < 4;
+  out.replaceChildren(...lines.map(raw=>{ const l=tstLine(raw), e=document.createElement("div");
+    e.className = TST_V.test(l) ? "st" : /^\s*[WE] \(/.test(l) || /\bERR: /.test(l) ? "w" : ""; e.textContent=l; return e; }));
+  out._n=lines.length; out._from=lines[0];
+  if (atBottom) out.scrollTop=out.scrollHeight;
+}
+
+function tstPaintRow(id){
+  const row=document.querySelector(`#tst-body .tst-row[data-tst="${id}"]`); if (!row) return;
+  const r=tstResult(id), s=r.sum;
+  const bad = s ? s.cls==="fail" || s.cls==="warn" : r.st==="refused" || r.st==="unknown" || r.noteErr;
+  row.classList.toggle("bad", !!bad);
+  row.querySelector(".tst-val").textContent = s ? s.short || s.text : r.st==="run" ? "reading …" : r.st==="refused" ? "refused"
+    : r.st==="unknown" ? "no reply" : r.note ? "not recognised" : "–";
+  const note=row.nextElementSibling;
+  note.textContent = r.noteErr && r.st!=="run" ? r.note : ""; note.hidden=!note.textContent;
+  tstPaintOut(row.querySelector(".tst-out"), r.lines);
+}
+
 function tstPaint(id){
+  const d=tstDef(id);
+  if (d.group==="Status") return tstPaintRow(id);
   const c=document.querySelector(`#tst-body .tst[data-tst="${id}"]`); if (!c) return;
-  const d=tstDef(id), r=tstResult(id), t=tstTarget(), mine=tstRun && tstRun.id===id;
+  const r=tstResult(id), t=tstTarget(), mine=tstRun && tstRun.id===id;
   const o=tstOpt[id]||{};
+  // the chevron folds the details; a run, its result and its output show whenever there is one
+  const shown = !!(mine || r.sum || r.note || r.lines.length);
+  c.classList.toggle("open", !!r.open);
+  c.classList.toggle("shown", shown);
+  c.querySelector(".tst-x").setAttribute("aria-expanded", String(!!r.open));
+  c.querySelector(".tst-more").hidden=!r.open;
   c.querySelector(".tst-cmd").textContent = d.cmd(o) + (d.abort ? `  ·  ${d.abort}` : "") + (d.read ? `  ·  ${d.read}` : "");
   const run=c.querySelector(".run"), ab=c.querySelector(".abort"), cb=c.querySelector(".tst-opt input"), stl=c.querySelector(".tst-state");
   const rd=c.querySelector(".read");
@@ -4023,33 +4143,31 @@ function tstPaint(id){
   run.title = why || (devBusy && !mine ? devBusy+" is running" : "");
   if (ab){ ab.hidden=!mine || r.st!=="run"; ab.disabled=!t; }
   if (cb) cb.disabled=!!devBusy;
-  if (stl) stl.textContent = why;
+  stl.textContent = id==="clear" ? why : "";
   const res=c.querySelector(".tst-res");
   res.className="tst-res"+(r.sum && r.sum.cls ? " "+r.sum.cls : "");
+  res.hidden=!shown;
   const parts=[];
-  if (mine && r.st==="run"){ const s=document.createElement("span"); s.className="busy"; s.textContent="Running "+tstRun.cmd+" …"; parts.push(s); }
+  if (mine && r.st==="run"){ parts.push(tstEl("span", "busy", "Running "+tstRun.cmd+" …")); }
   if (r.sum && !(mine && r.st==="run")){
-    const s=document.createElement("strong"); s.textContent=r.sum.text; parts.push(s);
-    for (const x of r.sum.details||[]){ const e=document.createElement("span"); e.className="d"; e.textContent=x; parts.push(e); }
+    const p=tstEl("p", "sum");
+    p.append(tstEl("strong", "", r.sum.text));
+    for (const x of r.sum.meta||[]) p.append(tstEl("span", "m", x));
+    parts.push(p);
+    for (const x of r.sum.details||[]) parts.push(tstEl("span", "d", x));
   }
-  if (r.note){ const e=document.createElement("span"); e.className="d note"+(r.noteErr ? " err" : ""); e.textContent=r.note; parts.push(e); }
-  if (r.recheck && d.recheck && !mine){ const b=document.createElement("button"); b.type="button"; b.className="recheck";
-    b.textContent=`Check (${d.recheck})`; b.disabled=!t || !!devBusy; b.onclick=()=>tstRecheck(id); parts.push(b); }
+  if (r.note) parts.push(tstEl("span", "d note"+(r.noteErr ? " err" : ""), r.note));
+  if (r.recheck && d.recheck && !mine){ const b=tstEl("button", "recheck", `Check (${d.recheck})`); b.type="button";
+    b.disabled=!t || !!devBusy; b.onclick=()=>tstRecheck(id); parts.push(b); }
   res.replaceChildren(...parts);
   const fig=c.querySelector(".tst-chart");
-  if (fig) tstChart(fig, r.sum && !(mine && r.st==="run") ? r.sum.curve : null, c.clientWidth);
+  if (fig){ tstChart(fig, r.sum && !(mine && r.st==="run") ? r.sum.curve : null, c.clientWidth); }
   const out=c.querySelector(".tst-out"), lg=c.querySelector(".tst-log");
   lg.hidden=!r.lines.length;
-  lg.firstChild.textContent=`Device output (${r.lines.length} line${r.lines.length===1 ? "" : "s"})`;
+  lg.firstChild.textContent=`Device output (${plural(r.lines.length, "line")})`;
   if (mine && r.st==="run") lg.open=true;
   else if (r.fold){ lg.open=false; r.fold=false; }
-  if (out._n!==r.lines.length || out._from!==r.lines[0]){
-    const atBottom = out.scrollHeight - out.clientHeight - out.scrollTop < 4;
-    out.replaceChildren(...r.lines.map(raw=>{ const l=tstLine(raw), e=document.createElement("div");
-      e.className = TST_V.test(l) ? "st" : /^\s*[WE] \(/.test(l) || /\bERR: /.test(l) ? "w" : ""; e.textContent=l; return e; }));
-    out._n=r.lines.length; out._from=r.lines[0];
-    if (atBottom) out.scrollTop=out.scrollHeight;
-  }
+  tstPaintOut(out, r.lines);
 }
 
 function tstOpen(){
@@ -4059,11 +4177,14 @@ function tstOpen(){
   document.getElementById("open-tests").setAttribute("aria-expanded","true");
   document.getElementById("tst-close").focus();
   tstRender();
-  if (tstHave===undefined && !devBusy) tstProbe();
+  clearInterval(tstAgoTimer); tstAgoTimer=setInterval(tstAgo, 30000);
+  if (devBusy) return;
+  if (tstHave===undefined) tstProbe(); else tstStatusRead();
 }
 function tstClose(){
   const s=document.getElementById("tests");
   if (!s.classList.contains("open")) return;
+  clearInterval(tstAgoTimer); tstAgoTimer=0;
   const inside=s.contains(document.activeElement);
   s.classList.remove("open");
   document.getElementById("tst-scrim").classList.remove("open");
@@ -4074,7 +4195,6 @@ function tstClose(){
 document.getElementById("open-tests").onclick = tstOpen;
 document.getElementById("tst-close").onclick = tstClose;
 document.getElementById("tst-scrim").onclick = tstClose;
-document.getElementById("tst-refresh").onclick = ()=>{ if (!devBusy){ tstGone.clear(); for (const k in tstProbed) delete tstProbed[k]; tstHave=undefined; tstProbe(); } };
 document.getElementById("menu-start").addEventListener("click", tstClose);
 window.addEventListener("keydown", e=>{
   if (!tstOpenNow()) return;

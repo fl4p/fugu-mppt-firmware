@@ -1,5 +1,6 @@
-// Spec §2.15 (tests sheet): gating, the build probe, confirms (plain and typed device name), refusals,
-// result parsing per test, abort, link drop and timeout mid-test, the one-at-a-time guard and the sweep chart.
+// Spec §2.15 (tests sheet): gating, the build probe, the Status rows read on open, collapsed action cards,
+// confirms (plain and typed device name), refusals, result parsing per test, abort, link drop and timeout
+// mid-test, the one-at-a-time guard and the sweep chart.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadEditor } = require('./_setup');
@@ -106,6 +107,7 @@ function firmware(host, opts = {}) {
     if (cmd === 'sweep') {
       ok();
       later(30, () => opts.noMpp ? s(I('mppt', 'Stop sweep: no MPP (best 0.30W < 1.0W), backing off 60s'))
+        : opts.sweepStop ? s(I('mppt', opts.sweepStop))
         : s(I('mppt', 'sweep landed 35.0 V 309.0 W, MPP 35.2 V 312.4 W')));
       return;
     }
@@ -176,6 +178,8 @@ function mqttFirmware(window, devs) {
 const CONF = { 'coil.conf': { L0: '50e-6', rect_offset_ns: '500' }, 'charger.conf': { vout_max: '28.8' } };
 const $ = (w, sel) => w.document.querySelector(sel);
 const card = (w, id) => $(w, `#tst-body .tst[data-tst="${id}"]`);
+const row = (w, id) => $(w, `#tst-body .tst-row[data-tst="${id}"]`);
+const rowText = (w, id) => row(w, id).querySelector('.tst-val').textContent;
 const settle = (ms = 30) => new Promise(r => setTimeout(r, ms));
 async function until(pred, ms = 3000) {
   const end = Date.now() + ms;
@@ -194,7 +198,7 @@ async function connected(opts = {}) {
 }
 async function openSheet(window) {
   btn(window).click();
-  await until(() => card(window, 'selftest'));
+  await until(() => $(window, '#tst-body .tst-status'));
 }
 const idle = w => until(() => !w.tstBusyNow() && !$(w, '#tst-sub').classList.contains('busy'));
 
@@ -251,14 +255,25 @@ test('gating: no tests without a read, or after a failed switch to another devic
   assert.equal(fry.sent.length, a); assert.equal(other.sent.length, b);
 });
 
-test('opening probes the build only: help, then the bare measure-coil probe; absent tests are hidden', async () => {
+test('opening reads the build, then the Status rows, and nothing else', async () => {
+  const { window, dev } = await connected({ coil: true });
+  window.confirm = () => { throw new Error('read-only commands must not confirm'); };
+  window.prompt = window.confirm;
+  const from = dev.sent.length;
+  await openSheet(window);
+  await idle(window);
+  assert.deepEqual(dev.sent.slice(from), ['help', 'selftest', 'rect-cal status', 'wire', 'adc-cal']);
+  assert.match($(window, '.tst-ago').textContent, /^read just now$/);
+});
+
+test('opening probes measure-coil when help lacks it; absent tests are hidden', async () => {
   const { window, dev } = await connected();
   const from = dev.sent.length;
   await openSheet(window);
   await idle(window);
-  assert.deepEqual(dev.sent.slice(from), ['help', 'measure-coil'], 'nothing but the probe is sent on open');
+  assert.deepEqual(dev.sent.slice(from), ['help', 'measure-coil', 'selftest', 'rect-cal status', 'wire', 'adc-cal']);
   assert.equal(card(window, 'coil'), null); assert.equal(card(window, 'coills'), null);
-  assert.ok(card(window, 'adccal'), 'adc-cal is in help');
+  assert.ok(row(window, 'adccal'), 'adc-cal is in help');
   assert.match($(window, '#tst-body .tst-absent').textContent, /measure-coil \(CONFIG_FUGU_WITH_MEASURE_COIL\)/);
   for (const g of ['Status', 'Measurements', 'Self-tests', 'Calibration'])
     assert.ok([...window.document.querySelectorAll('#tst-body .tst-group')].some(h => h.textContent === g), g);
@@ -271,28 +286,96 @@ test('measure-coil found by the bare probe when help omits it; adc-cal hidden wh
   await openSheet(window); await idle(window);
   assert.ok(dev.sent.includes('measure-coil'));
   assert.ok(card(window, 'coil')); assert.ok(card(window, 'coills'));
-  assert.equal(card(window, 'adccal'), null);
+  assert.equal(row(window, 'adccal'), null);
+  assert.ok(!dev.sent.includes('adc-cal'), 'a row the build lacks is not read');
   assert.match($(window, '#tst-body .tst-absent').textContent, /adc-cal \(ESP32-S3 builds\)/);
 });
 
-test('status cards read and summarise: selftest, rect-cal status, wire, sweep-curve, adc-cal', async () => {
+test('Status rows: one parsed line each, no buttons, the raw output on click, a quiet refresh', async () => {
   const { window, dev } = await connected();
   await openSheet(window); await idle(window);
+  for (const [id, re] of [['selftest', /^OK, nothing latched$/], ['rcstatus', /^offset 500 ns, idle$/],
+    ['wire', /^on, baseline 15 mΩ$/], ['adccal', /^eFuse version 1$/]]) {
+    assert.match(rowText(window, id), re, id);
+    assert.equal(row(window, id).classList.contains('bad'), false, id + ': no dot when all is well');
+    assert.equal(row(window, id).querySelector('button'), null, id + ': no per-row button');
+  }
+  assert.equal(row(window, 'selftest').querySelector('.tst-lbl').textContent, 'Protection');
+  assert.doesNotMatch($(window, '#tst-body .tst-status').textContent, /Takes|Sends|Read\b/);
+  assert.doesNotMatch($(window, '#tst-body').textContent, /read-only/);
+  const r = row(window, 'wire');
+  assert.equal(r.open, false);
+  r.querySelector('summary').click();
+  assert.equal(r.open, true);
+  assert.match(r.querySelector('.tst-out').textContent, /wire: armed, level ok.*baseline: 12 days/);
   window.confirm = () => { throw new Error('read-only commands must not confirm'); };
   window.prompt = window.confirm;
-  for (const [id, cmd, re] of [['selftest', 'selftest', /Nothing latched.*high-side short: ok.*backflow switch: ok; last run P\/P/],
-    ['rcstatus', 'rect-cal status', /rect_offset 500 ns \(20 ct, mcpwm\), calibrated.*state idle/],
-    ['wire', 'wire', /Wire guard armed, level ok.*baseline: 12 days/],
-    ['sweep', 'sweep-curve', new RegExp(`MPP ${SWEEP.P} W at ${SWEEP.V} V.*87 points, 2 min ago`)],
-    ['adccal', 'adc-cal', /eFuse calibration version 1.*atten 3: 286.33 µV\/code/]]) {
-    const from = dev.sent.length;
-    card(window, id).querySelector(id === 'sweep' ? '.read' : '.run').click();
-    await idle(window);
-    assert.deepEqual(dev.sent.slice(from), [cmd]);
-    assert.match(resText(window, id), re, id);
-    assert.ok(card(window, id).querySelector('.tst-out').textContent.length > 0, 'live output shown');
+  const from = dev.sent.length;
+  $(window, '#tst-refresh').click();
+  await idle(window);
+  assert.deepEqual(dev.sent.slice(from), ['help', 'measure-coil', 'selftest', 'rect-cal status', 'wire', 'adc-cal']);
+});
+
+test('Status rows: amber dot on a latched fault, a failed calibration and a refusal', async () => {
+  const { window } = await connected({ state: { hsLatched: true, rect: { state: 'failed', why: 'not in DCM', ct: -3, ns: '-75', unsaved: 0 } } });
+  await openSheet(window); await idle(window);
+  assert.ok(row(window, 'selftest').classList.contains('bad'));
+  assert.equal(rowText(window, 'selftest'), 'High-side short latched: starts blocked');
+  assert.ok(row(window, 'rcstatus').classList.contains('bad'));
+  assert.equal(rowText(window, 'rcstatus'), 'offset -75 ns, failed: not in DCM');
+  assert.equal(row(window, 'wire').classList.contains('bad'), false);
+  assert.equal(card(window, 'clear').querySelector('.run').disabled, false, 'clear offered for the latch');
+});
+
+test('Status rows: a silent command shows "no reply" with its note', async () => {
+  const { window } = await connected({ silent: ['wire'] });
+  await openSheet(window); await idle(window);
+  assert.equal(rowText(window, 'wire'), 'no reply');
+  assert.ok(row(window, 'wire').classList.contains('bad'));
+  assert.match(row(window, 'wire').nextElementSibling.textContent, /No reply to “wire” within 0\.3 s/);
+  assert.equal(rowText(window, 'adccal'), 'eFuse version 1', 'the next row is still read');
+});
+
+test('action cards: collapsed to title and one line, details on click, the run and its result always shown', async () => {
+  const { window } = await connected({ coil: true });
+  await openSheet(window); await idle(window);
+  for (const id of ['sweep', 'coil', 'bflow', 'clear', 'rectcal', 'coills']) {
+    const c = card(window, id);
+    assert.equal(c.classList.contains('open'), false, id);
+    assert.equal(c.classList.contains('shown'), false, id + ': nothing to show yet');
+    assert.equal(c.querySelector('.tst-more').hidden, true, id + ': details folded');
+    assert.equal(c.querySelector('.tst-res').hidden, true, id);
+    assert.equal(c.querySelector('.tst-x').getAttribute('aria-expanded'), 'false');
+    assert.ok(c.querySelector('.tst-what').textContent.length <= 70, id + ': short description');
+    assert.ok(c.querySelector('.tst-ctl .run'), id + ': primary button on the line');
   }
-  assert.ok(card(window, 'selftest').querySelector('.tst-res').classList.contains('pass'));
+  const c = card(window, 'coil');
+  c.querySelector('.tst-x').click();
+  assert.ok(c.classList.contains('open'));
+  assert.equal(c.querySelector('.tst-x').getAttribute('aria-expanded'), 'true');
+  assert.equal(c.querySelector('.tst-more').hidden, false);
+  assert.match(c.querySelector('.tst-more').textContent, /Save L0 to coil\.conf.*Risk.*no abort.*Needs.*Takes.*Sends.*measure-coil l0/);
+  c.querySelector('.tst-what').click();
+  assert.equal(c.classList.contains('open'), false, 'a click on the line folds it again');
+  window.prompt = () => null;
+  c.querySelector('.run').click();                         // a button does not toggle the details
+  await idle(window);
+  assert.equal(c.classList.contains('open'), false);
+  assert.ok(c.classList.contains('shown') && !c.querySelector('.tst-res').hidden, 'the outcome shows on a folded card');
+  assert.match(resText(window, 'coil'), /Not started/);
+  window.prompt = () => 'fry';
+  const b = card(window, 'bflow');
+  const run = window.tstStart('bflow');
+  await until(() => window.tstBusyNow() && b.querySelector('.tst-out').textContent.includes('forced PWM'));
+  assert.ok(b.classList.contains('shown') && !b.querySelector('.tst-res').hidden, 'shown while running');
+  assert.equal(b.querySelector('.tst-log').hidden, false); assert.equal(b.querySelector('.tst-log').open, true);
+  b.querySelector('.tst-x').click(); b.querySelector('.tst-x').click();
+  assert.ok(!b.querySelector('.tst-res').hidden, 'folding the details keeps the run in view');
+  await run;
+  assert.ok(b.classList.contains('shown') && !b.querySelector('.tst-res').hidden);
+  assert.match(resText(window, 'bflow'), /PASS/);
+  assert.equal(b.querySelector('.tst-more').hidden, true, 'details stay folded under a result');
+  assert.equal($(window, '#tests .sheet-foot').textContent.trim(), '', 'no footer note');
 });
 
 test('backflow switch test: typed device name, live power in the prompt, live output, PASS from selftest', async () => {
@@ -343,7 +426,8 @@ test('backflow FAIL: amber result, latch shown, clear needs the typed name and c
   const res = card(window, 'bflow').querySelector('.tst-res');
   assert.ok(res.classList.contains('fail'));
   assert.match(res.textContent, /FAIL in blocks: every start is blocked/);
-  assert.match(resText(window, 'selftest'), /Backflow switch failure latched/);
+  assert.match(rowText(window, 'selftest'), /Backflow switch failure latched/);
+  assert.ok(row(window, 'selftest').classList.contains('bad'));
   assert.equal(card(window, 'clear').querySelector('.run').disabled, false);
 
   let prompt = '';
@@ -353,7 +437,8 @@ test('backflow FAIL: amber result, latch shown, clear needs the typed name and c
   assert.match(prompt, /may start again/);
   assert.ok(dev.sent.includes('selftest clear'));
   assert.match(resText(window, 'clear'), /Cleared bf-fail/);
-  assert.match(resText(window, 'selftest'), /Nothing latched/);
+  assert.equal(rowText(window, 'selftest'), 'OK, nothing latched');
+  assert.equal(row(window, 'selftest').classList.contains('bad'), false);
   assert.equal(card(window, 'clear').querySelector('.run').disabled, true, 'nothing latched any more');
 });
 
@@ -536,34 +621,36 @@ test('one at a time: services actions and pushes wait for a running test, and th
   assert.ok(!dev.sent.includes('svc off ftp'));
   assert.match($(window, '#uploadlog-cmd').placeholder, /waiting for “selftest bflow”/);   // shared devBusy lock
   await window.uploadChanged({ reviewed: true });   // nothing pending anyway; must not send
+  const nWire = dev.sent.filter(c => c === 'wire').length;
   await window.tstRead('wire');
-  assert.ok(!dev.sent.includes('wire'), 'a second test does not start');
+  assert.equal(dev.sent.filter(c => c === 'wire').length, nWire, 'a second test does not start');
   card(window, 'bflow').querySelector('.abort').click();
   await run;
   assert.equal(window.tstBusyNow(), false);
 });
 
-test('a command missing at run time hides its card (help unavailable)', async () => {
+test('a status command the build lacks drops its row (help unavailable)', async () => {
   const { window, dev } = await connected({ helpSilent: true, absent: ['wire'] });
   await openSheet(window); await idle(window);
   assert.match($(window, '#tst-msg').textContent, /No reply to “help”/);
-  assert.equal(card(window, 'adccal'), null, 'unknown build: adc-cal stays hidden');
-  card(window, 'wire').querySelector('.run').click();
-  await idle(window);
+  assert.equal(row(window, 'adccal'), null, 'unknown build: adc-cal stays hidden');
   assert.ok(dev.sent.includes('wire'));
-  assert.equal(card(window, 'wire'), null);
-  assert.match($(window, '#tst-msg').textContent, /“wire” is not in this firmware build/);
+  assert.equal(row(window, 'wire'), null);
+  assert.ok(row(window, 'selftest') && row(window, 'rcstatus'));
+  assert.match($(window, '#tst-body .tst-absent').textContent, /\bwire\b/);
+  const from = dev.sent.length;
+  await window.tstRead('selftest');
+  assert.deepEqual(dev.sent.slice(from), ['selftest']);
+  assert.equal(rowText(window, 'selftest'), 'OK, nothing latched');
 });
 
 test('backflow card disabled on a board without bflow_bat; Escape and the scrim close the sheet', async () => {
   const { window } = await connected({ bfChecked: false });
   await openSheet(window); await idle(window);
-  card(window, 'selftest').querySelector('.run').click();
-  await idle(window);
   assert.equal(card(window, 'bflow').querySelector('.run').disabled, true);
   assert.match(card(window, 'bflow').querySelector('.run').title, /bflow_bat=0/);
 
-  card(window, 'wire').querySelector('.run').focus();
+  row(window, 'wire').querySelector('summary').focus();
   window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal($(window, '#tests').classList.contains('open'), false);
   assert.equal(window.document.activeElement.id, 'open-tests');
@@ -587,17 +674,21 @@ test('MPP sweep card: Read last sweep sends sweep-curve without a confirm and dr
   await openSheet(window); await idle(window);
   assert.equal(card(window, 'curve'), null, 'one sweep card');
   const c = card(window, 'sweep');
-  assert.equal(c.querySelector('.tst-name').textContent, 'MPP sweep');
+  assert.equal(c.querySelector('.tst-x').textContent, 'MPP sweep');
+  assert.equal(c.querySelector('.tst-tag').textContent, 'drives the converter');
   assert.equal(c.querySelector('.run').textContent, 'Run sweep');
   assert.equal(c.querySelector('.read').textContent, 'Read last sweep');
   assert.match(c.querySelector('.tst-cmd').textContent, /^sweep {2}· {2}sweep-curve$/);
   assert.equal(chart(window).hidden, true, 'no chart before a read');
+  assert.equal(c.classList.contains('shown'), false);
   window.confirm = () => { throw new Error('reading the last sweep must not confirm'); };
   const from = dev.sent.length;
   c.querySelector('.read').click();
   await idle(window);
   assert.deepEqual(dev.sent.slice(from), ['sweep-curve']);
   assert.match(resText(window, 'sweep'), new RegExp(`MPP ${SWEEP.P} W at ${SWEEP.V} V.*87 points, 2 min ago`));
+  assert.ok(c.classList.contains('shown'), 'the result shows under the card');
+  assert.equal(c.querySelector('.tst-res .sum').childElementCount, 3, 'summary, points and landing on one line');
   const fig = chart(window), svg = fig.querySelector('svg');
   assert.equal(fig.hidden, false);
   assert.equal(svg.getAttribute('role'), 'img');
@@ -625,6 +716,55 @@ test('without teledec.js the sweep card keeps the text summary and draws nothing
   assert.equal(window.parseCurve(SWEEP.lines).points, undefined, 'header only');
 });
 
+// A real run cut short by the output-current limit after 3.5 s; its `sweep-curve` as the device returned it.
+const STOP = 'Stop sweep 3.50s mode=CC (lim=3 tgt=2.00 act=2.04) PWM=812 MPP=(54.3W,812,67.4V)';
+const CUT = { lines: ['sc: t=1795441928 n=1 mpp=54.3,67.4 sweeping=0', 'sc: 68.11 0.0', 'sc: end'] };
+
+test('a sweep stopped by a limiter: "stop point", why it ended, and no chart for one point', async () => {
+  let { window, dev } = await connected({ sweepStop: STOP, curve: CUT });
+  await openSheet(window); await idle(window);
+  window.confirm = () => true;
+  await window.tstStart('sweep');
+  assert.deepEqual(dev.sent.slice(-3), ['selftest', 'sweep', 'sweep-curve']);
+  const res = card(window, 'sweep').querySelector('.tst-res');
+  assert.ok(res.classList.contains('warn'));
+  assert.match(res.querySelector('strong').textContent, /^Stop point 54\.3 W at 67\.4 V$/);
+  assert.match(res.textContent, /Stopped after 3\.5 s by the output-current limit \(2\.0 A\): the MPP shown is where the sweep stopped, not the panel's maximum\./);
+  assert.match(res.textContent, /The device recorded only 1 point, so there is no curve\./);
+  assert.match(res.textContent, /1 point, /); assert.doesNotMatch(res.textContent, /1 points/);
+  assert.equal(chart(window).hidden, true);
+  assert.equal(chart(window).querySelector('svg'), null);
+
+  ({ window } = await connected({ curve: CUT }));
+  await openSheet(window); await idle(window);
+  card(window, 'sweep').querySelector('.read').click();
+  await idle(window);
+  assert.match(resText(window, 'sweep'), /^MPP 54\.3 W at 67\.4 V/, 'no stop line: an MPP');
+  assert.doesNotMatch(resText(window, 'sweep'), /Stopped after/);
+  assert.match(resText(window, 'sweep'), /only 1 point, so there is no curve/);
+  assert.equal(chart(window).hidden, true);
+});
+
+test('sweep stop lines: limiter names, normal ends, an unverified landing', async () => {
+  const { window } = await loadEditor({ teledec: true });
+  const stop = (lim, tgt) => window.tstSummary('sweep', [I('mppt', `Stop sweep 4.20s mode=CV (lim=${lim} tgt=${tgt} act=1.00) PWM=1 MPP=(9.0W,1,30.0V)`), ...SWEEP.lines]);
+  assert.match(stop(1, '28.80').details[0], /by the output-voltage limit \(28\.8 V\)/);
+  assert.match(stop(2, '9.00').details[0], /by the input-current limit \(9\.0 A\)/);
+  assert.match(stop(4, '400.00').details[0], /by the power limit \(400 W\)/);
+  assert.match(stop(3, '2.00').text, /^Stop point /);
+  assert.ok(stop(3, '2.00').curve.stop);
+  for (const lim of [0, -1]) {
+    const s = stop(lim, '20.00');
+    assert.match(s.text, /^MPP /, `lim=${lim} ends a sweep normally`);
+    assert.equal(s.details.length, 0);
+  }
+  const fig = window.document.createElement('figure');
+  window.tstChart(fig, stop(3, '2.00').curve, 520);
+  assert.match(fig.querySelector('svg').getAttribute('aria-label'), /stop point \d/);
+  const nv = window.tstSummary('sweep', [...SWEEP.lines, I('mppt', 'sweep not verified (limiter)')]);
+  assert.match(nv.details.join(' '), /The landing was not verified: a limiter was active\./);
+});
+
 test('sweep chart: none since boot, in progress, flagged, few points, degenerate ranges, incomplete', async () => {
   let { window } = await connected({ noCurve: true });
   await openSheet(window); await idle(window);
@@ -644,10 +784,15 @@ test('sweep chart: none since boot, in progress, flagged, few points, degenerate
   assert.match(fl.cap.textContent, /sky changed during sweep/);
 
   const one = drawn(window, sweepReply({ pts: [[30, 0]] }).lines);
-  assert.equal(one.svg.getAttribute('data-points'), '1');
-  assert.equal(one.svg.querySelectorAll('circle.pt').length, 1);
-  assert.equal(one.svg.querySelector('circle.mpp'), null, 'no MPP at 0 W');
-  assert.match(one.svg.getAttribute('aria-label'), /no maximum power point/);
+  assert.equal(one.svg, null, 'one point is no curve');
+  assert.match(one.sum.details.join(' '), /The device recorded only 1 point, so there is no curve\./);
+  assert.doesNotMatch(one.sum.meta.join(' '), /1 points/);
+  assert.equal(drawn(window, sweepReply({ pts: [[30, 0], [31, 0]] }).lines).svg, null, 'nor are two');
+  const zero = drawn(window, sweepReply({ pts: [[30, 0], [31, 0], [32, 0]] }).lines);
+  assert.equal(zero.svg.getAttribute('data-points'), '3');
+  assert.equal(zero.svg.querySelectorAll('circle.pt').length, 3);
+  assert.equal(zero.svg.querySelector('circle.mpp'), null, 'no MPP at 0 W');
+  assert.match(zero.svg.getAttribute('aria-label'), /no maximum power point/);
 
   const flat = drawn(window, sweepReply({ pts: [[35, 100], [35, 100], [35, 100]] }).lines);
   assert.equal(flat.svg.querySelectorAll('circle.mpp').length, 1);
