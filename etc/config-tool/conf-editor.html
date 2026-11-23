@@ -1499,7 +1499,8 @@ const MQTT_DEV_ROOT = "pv/dev/";  // retained presence: online / offline (LWT)
 let mqttClient=null, mqttDeviceHost=null, mqttBuf="", mqttDec=new TextDecoder();
 let grantedMqttConfig=null;   // {url,username,password,device} for silent re-connect
 let mqttScanClient=null;      // temporary client used only by the scan dialog
-let mqttScanTick=null;
+let mqttScanTick=null, mqttScanRetry=null, mqttScanCfg=null, mqttScanDirty=false;
+const mqttScanHosts = new Map();  // host -> offline
 
 function mqttFeedPayload(payload){
   mqttBuf += mqttDec.decode(payload, {stream:true}); // stream-decode: see onBleNotify
@@ -1535,9 +1536,10 @@ function mqttBrokerConnect(url, username, password){
     try { c = mqtt.connect(url, { username:username||undefined, password:password||undefined,
                                   reconnectPeriod:0, connectTimeout:5000 }); }
     catch(e){ reject(e); return; }
-    const onErr = e => { try{c.end(true);}catch(_){} reject(e); };
-    c.once("connect", ()=>{ c.off("error", onErr); resolve(c); });
-    c.once("error", onErr);
+    const onErr = e => { c.off("close", onClose); try{c.end(true);}catch(_){} reject(e); };
+    const onClose = () => onErr(new Error("connection closed"));  // refused WS emits only close
+    c.once("connect", ()=>{ c.off("error", onErr); c.off("close", onClose); resolve(c); });
+    c.once("error", onErr); c.once("close", onClose);
   });
 }
 
@@ -1600,6 +1602,8 @@ function mqttModalOpen(){
 }
 function mqttScanStop(){
   clearInterval(mqttScanTick); mqttScanTick=null;
+  clearTimeout(mqttScanRetry); mqttScanRetry=null;
+  mqttScanCfg=null;
 }
 function mqttModalClose(){
   document.getElementById("mqtt-modal").classList.remove("open");
@@ -1620,22 +1624,38 @@ function mqttRenderDevices(hosts){
     dl.appendChild(d);
   }
 }
-async function mqttScanDevices(){
-  const cfg = mqttModalRead();
-  if (!cfg.url){ mqttModalSetStatus("broker URL required", true); return; }
-  for (const k in MQ_LS) localStorage.setItem(MQ_LS[k], cfg[k]==null?"":cfg[k]);
-  // tear down a prior scan client before starting a new one
-  mqttScanStop();
-  if (mqttScanClient){ try { mqttScanClient.end(true); } catch(_){} mqttScanClient=null; }
-  mqttModalSetStatus("connecting …");
-  let client;
-  try { client = await mqttBrokerConnect(cfg.url, cfg.user, cfg.pass); }
-  catch(e){ mqttModalSetStatus("broker: "+(e.message||e), true); return; }
-  mqttScanClient = client;
-  const hosts = new Map();  // host -> offline
-  let dirty = true;
-  const mark = (h, off)=>{ if (hosts.get(h) !== off){ hosts.set(h, off); dirty = true; } };
-  client.on("message", (topic, payload)=>{
+function mqttScanRender(){
+  if (!mqttScanDirty) return;
+  mqttScanDirty = false;
+  mqttRenderDevices(Array.from(mqttScanHosts).sort((a,b)=>a[0].localeCompare(b[0])));
+  mqttModalSetStatus(mqttScanClient ? `${mqttScanHosts.size} device(s) found — listening …` : "reconnecting …");
+}
+// (Re)connect the scan client for the current mqttScanCfg; retries every 3 s after a drop.
+async function mqttScanConnect(first){
+  mqttScanRetry = null;
+  const cfg = mqttScanCfg;
+  if (!cfg) return false;
+  let c;
+  try { c = await mqttBrokerConnect(cfg.url, cfg.user, cfg.pass); }
+  catch(e){
+    if (cfg !== mqttScanCfg) return false;
+    if (first){ mqttScanCfg = null; mqttModalSetStatus("broker: "+(e.message||e), true); return false; }
+    mqttModalSetStatus("reconnecting … ("+(e.message||e)+")");
+    mqttScanRetry = setTimeout(mqttScanConnect, 3000);
+    return false;
+  }
+  if (cfg !== mqttScanCfg){ try { c.end(true); } catch(_){} return false; }
+  mqttScanClient = c;
+  const drop = ()=>{
+    if (c !== mqttScanClient || cfg !== mqttScanCfg) return;
+    mqttScanClient = null;
+    try { c.end(true); } catch(_){}
+    mqttModalSetStatus("reconnecting …");
+    mqttScanRetry = setTimeout(mqttScanConnect, 3000);
+  };
+  c.on("close", drop); c.on("offline", drop); c.on("error", drop);
+  const mark = (h, off)=>{ if (mqttScanHosts.get(h) !== off){ mqttScanHosts.set(h, off); mqttScanDirty = true; } };
+  c.on("message", (topic, payload)=>{
     const p = topic.split("/");
     if (p.length!==3 || p[0]!=="pv" || !p[2]) return;
     if (p[1]==="log") mark(p[2], false);
@@ -1644,22 +1664,27 @@ async function mqttScanDevices(){
       if (v==="online" || v==="offline") mark(p[2], v==="offline");
     }
   });
-  client.subscribe([MQTT_LOG_ROOT + "#", MQTT_DEV_ROOT + "+"], {qos:0}, e=>{
+  c.subscribe([MQTT_LOG_ROOT + "#", MQTT_DEV_ROOT + "+"], {qos:0}, e=>{
     if (e){ mqttModalSetStatus("subscribe: "+e.message, true); return; }
     // poke previously-seen hosts so quiet devices reply on pv/log/<host>
     for (const h of mqttKnownHosts(cfg.url)){
-      client.publish(MQTT_LOG_ROOT + h + "/cmd", "ip", {qos:0});
+      c.publish(MQTT_LOG_ROOT + h + "/cmd", "ip", {qos:0});
     }
   });
-  // keep listening until the modal closes or a device is picked
-  const render = ()=>{
-    if (!dirty) return;
-    dirty = false;
-    mqttRenderDevices(Array.from(hosts).sort((a,b)=>a[0].localeCompare(b[0])));
-    mqttModalSetStatus(`${hosts.size} device(s) found — listening …`);
-  };
-  render();
-  mqttScanTick = setInterval(render, 800);
+  mqttScanDirty = true; mqttScanRender();
+  return true;
+}
+// keeps listening (and reconnecting) until the modal closes or a device is picked
+async function mqttScanDevices(){
+  const cfg = mqttModalRead();
+  if (!cfg.url){ mqttModalSetStatus("broker URL required", true); return; }
+  for (const k in MQ_LS) localStorage.setItem(MQ_LS[k], cfg[k]==null?"":cfg[k]);
+  mqttScanStop();
+  if (mqttScanClient){ try { mqttScanClient.end(true); } catch(_){} mqttScanClient=null; }
+  mqttScanHosts.clear();
+  mqttScanCfg = cfg;
+  mqttModalSetStatus("connecting …");
+  if (await mqttScanConnect(true)) mqttScanTick = setInterval(mqttScanRender, 800);
 }
 async function mqttConnectAndImport(hostname){
   const cfg = mqttModalRead();
@@ -1669,6 +1694,7 @@ async function mqttConnectAndImport(hostname){
   mqttScanStop();
   await disconnectSerial(); await disconnectBluetooth(); await disconnectMqtt();
   let client = mqttScanClient; mqttScanClient = null;
+  if (client && !client.connected){ try { client.end(true); } catch(_){} client = null; }
   try {
     if (!client) client = await mqttBrokerConnect(cfg.url, cfg.user, cfg.pass);
     else { client.removeAllListeners("message"); client.unsubscribe(MQTT_DEV_ROOT + "+"); }
