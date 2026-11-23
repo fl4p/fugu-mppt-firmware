@@ -451,6 +451,17 @@ class ServerCallbacks : public BLEServerCallbacks {
         ESP_LOGI(TAG, "client connected");
     }
 
+#if defined(CONFIG_BT_NIMBLE_ENABLED)
+    // Security request only to bonded peers (silent re-encryption). A new peer pairs on its first
+    // encrypted access (ATT insufficient authentication); asking on connect makes Android prompt early.
+    void onConnect(BLEServer *, ble_gap_conn_desc *d) override {
+        ble_store_key_sec k{};
+        k.peer_addr = d->peer_id_addr;
+        ble_store_value_sec v;
+        if (linkEncRequired && ble_store_read_peer_sec(&k, &v) == 0) ble_gap_security_initiate(d->conn_handle);
+    }
+#endif
+
     void onDisconnect(BLEServer *s) override {
         deviceConnected = false;
         // UNCONDITIONAL. The otaBleActive() guard that used to be here made this
@@ -521,6 +532,7 @@ void bleConsoleBegin(const std::string &deviceName, const std::string &security,
     // (NimBLE backend; under Bluedroid the *_ENC/_AUTHEN flags are 0 and degrade to open).
     uint32_t writeProps = BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR;
     auto *sec = new BLESecurity();
+    BLESecurity::setForceAuthentication(false); // see ServerCallbacks::onConnect
     if (security == "passkey") {
         sec->setPassKey(true, passkey);
         sec->setCapability(ESP_IO_CAP_OUT);            // device displays the passkey

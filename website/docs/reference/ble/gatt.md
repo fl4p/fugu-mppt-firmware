@@ -54,8 +54,10 @@ TELE carry no security requirement of their own. Each value sets pairing and wri
 | `passkey` | Bonded, secure connections, MITM protection with the static `ble_passkey` | Authenticated link required |
 | any other value | None | Open |
 
-With `justworks` or `passkey`, the device sends a security request on connect, and TX carries no output until the
-link is encrypted. A peer without a bond can pair only while the
+With `justworks` or `passkey`, the device sends a security request on connect only to a bonded peer, which then
+re-encrypts with its stored key. A peer without a bond can connect, discover services and read open characteristics
+without pairing; its first write to RX, FW or the Improv command characteristic fails with "insufficient
+authentication", and the client pairs and retries. TX carries no output until the link is encrypted. A peer without a bond can pair only while the
 [pairing window](../config/ble.md#pairing-window) is open; otherwise the device answers its pairing request with
 "command not supported".
 
