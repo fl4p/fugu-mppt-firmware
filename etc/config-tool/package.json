@@ -4,6 +4,7 @@
   "private": true,
   "description": "Tests for conf-editor.html (run in jsdom against the live HTML).",
   "scripts": {
+    "pretest:browser": "node gen_presets.mjs",
     "test":          "node --test --test-reporter spec test/*.test.js",
     "test:browser":  "playwright test",
     "test:all":      "npm test && npm run test:browser"

@@ -16,7 +16,10 @@ Self-contained: one HTML file, no build step. Two external CDN dependencies
 
 ## 1. Loading config
 
-The user opens config either as files or live off a device.
+The user opens config either as files, live off a device, or from a shipped
+board preset. The start screen shows three exclusive choices — **Connect to a
+device**, **Open a file** and **Load preset** — each revealing its own actions
+(picking one collapses the others; a drag-drop works without opening any).
 
 | Source                | UI                                                                 |
 | --------------------- | ------------------------------------------------------------------ |
@@ -25,6 +28,18 @@ The user opens config either as files or live off a device.
 | USB serial            | "Connect serial (115200)" → `navigator.serial.requestPort()`       |
 | Bluetooth (NUS)       | "Connect Bluetooth" → `navigator.bluetooth.requestDevice()`        |
 | MQTT                  | "Connect MQTT" → opens scan modal (see §6.3)                       |
+| board preset          | "Load preset" → picker fed by `presets/index.json`                 |
+
+### 1.0 Board presets
+
+`presets/` is a **generated** mirror of the `config/<board>/conf/*.conf` dirs
+(`node etc/config-tool/gen_presets.mjs`, gitignored; `config/dl/` captures are
+skipped). The editor fetches `presets/index.json`, then one
+`presets/<id>/conf/<file>` per file, and feeds them to `load()` like a folder
+upload — so the source is `config/`, never a hand-maintained second copy. The
+website build regenerates the same tree into `static/tools/presets/`
+(`website/scripts/copy-tools.mjs`). Fetch needs the page on http(s); over
+`file://` the preset list reports the missing generator command.
 
 Loading any source clears any previously loaded state. The last key inside a
 zip/folder is treated as the source label (equal keys: last one overwrites the previous key's value); with serial/BLE the device's

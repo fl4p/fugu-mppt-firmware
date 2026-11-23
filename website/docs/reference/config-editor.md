@@ -20,9 +20,12 @@ Web Serial and Web Bluetooth need a Chromium browser (Chrome, Edge) and a secure
 
 ```bash
 cd etc/config-tool
+node gen_presets.mjs        # board presets for "Load preset" (generated, not committed)
 python3 -m http.server 8000
 # open http://localhost:8000/conf-editor.html
 ```
+
+The start screen offers three ways in: **Connect to a device**, **Open a file**, and **Load preset**.
 
 To read, edit, and write back a device config over serial, follow these steps:
 
@@ -44,9 +47,15 @@ The editor can load a config from any of these sources:
 |-----------------|----------------------------------------|-----------------------------------------------------------------------|
 | `.zip` archive  | **Choose .zip**, drag-and-drop         | Stored and deflate entries                                            |
 | Folder          | **Choose folder**, drag-and-drop       | e.g. a `config/<board>/conf` folder                                   |
+| Board preset    | **Load preset**                        | A `config/<board>` shipped with the firmware; see below               |
 | USB serial      | **Connect serial (115200)**            | Web Serial; the port stays open between read and upload so the device is not reset |
 | Bluetooth (NUS) | **Connect Bluetooth**                  | Web Bluetooth, Nordic UART service; the OS may prompt for pairing     |
 | MQTT            | **Connect MQTT**                       | WebSocket broker URL (`ws://` / `wss://`); needs `mqtt.conf` `cmd_input=1` |
+
+**Load preset** starts from one of the board configs under `config/`, so you can edit a known board without a device
+or an archive. The list comes from `presets/index.json`, which `etc/config-tool/gen_presets.mjs` generates by
+mirroring every `config/<board>/conf/*.conf` (the `presets/` tree is a build artifact and is not committed) — re-run
+the script after a config change. The website build regenerates its own copy into `static/tools/presets/`.
 
 Loading a source replaces the previous state, with one exception. After a live device read, opening a `.zip` or
 folder overlays it onto the device values. Every value that differs shows up as a pending change, so you can

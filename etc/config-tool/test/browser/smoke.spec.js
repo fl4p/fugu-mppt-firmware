@@ -100,3 +100,17 @@ test('drag-drop folder upload via webkitGetAsEntry loads the dropped tree', asyn
   await expect.poll(() => page.evaluate(() =>
     [...document.querySelectorAll('#panes .row')].find(r => r._key === 'mcu')?.querySelector('select')?.value)).toBe('esp32s3');
 });
+
+test('Load preset: index fetches, a board config loads into the editor', async ({ page }) => {
+  const errs = await gotoEditor(page);
+  await page.click('#start-preset');
+  // index.json + the preset files are generated from config/ (gen_presets.mjs)
+  await expect.poll(() => page.locator('#preset-list option').count()).toBeGreaterThan(5);
+  await page.selectOption('#preset-list', 'fmetal');
+  await page.click('#preset-load');
+  await expect(page.locator('#srcname')).toHaveText('preset fmetal');
+  await expect(page.locator('#tabs .tab').filter({ hasText: 'board' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() =>
+    [...document.querySelectorAll('#panes .row')].find(r => r._key === 'mcu')?.querySelector('select')?.value)).toBe('esp32s3');
+  expect(errs).toEqual([]);
+});

@@ -31,6 +31,12 @@
   #drop.hover { border-color:var(--accent); background:var(--panel); }
   #drop h2 { color:var(--fg); margin:0 0 6px; font-size:18px; }
   #drop .controls { margin-top:18px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+  #drop .startpane { display:none; margin-top:22px; }
+  #drop .startpane.open { display:block; }
+  #drop .startpane .controls { margin-top:12px; }
+  #preset-list { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px;
+    padding:7px 9px; font-family:ui-monospace,monospace; font-size:13px; max-width:340px; }
+  #preset-list:focus { outline:none; border-color:var(--accent); }
   #app { display:none; }
   #tabs { display:flex; gap:2px; padding:0 16px; border-bottom:1px solid var(--line);
           overflow-x:auto; background:var(--panel); }
@@ -167,18 +173,38 @@
 <button id="open-console" style="display:none">Device log</button>
 
 <div id="drop">
-  <h2>Drop a config .zip here</h2>
-  <div>…or open a <code>.zip</code> / a folder structured like <code>config/fmetal</code> (with a <code>conf/</code> dir of <code>*.conf</code> files).</div>
+  <h2>Fugu MPPT config editor</h2>
   <div class="controls">
-    <label class="btn">Choose .zip<input id="pick-zip" type="file" accept=".zip"></label>
-    <label class="btn">Choose folder<input id="pick-dir" type="file" webkitdirectory directory multiple></label>
+    <button id="start-connect" class="btn">Connect to a device</button>
+    <button id="start-open" class="btn">Open a file</button>
+    <button id="start-preset" class="btn">Load preset</button>
   </div>
-  <div style="margin-top:18px;color:var(--muted);font-size:12px">…or read the live config straight off the device over USB serial, Bluetooth (NUS; Chrome/Edge, https or localhost), or MQTT (via WebSocket).</div>
-  <div class="controls" style="margin-top:10px">
-    <button id="connect-serial" class="btn">Connect serial (115200)</button>
-    <button id="connect-ble" class="btn">Connect Bluetooth</button>
-    <button id="connect-mqtt" class="btn">Connect MQTT</button>
+
+  <div id="start-connect-pane" class="startpane">
+    <div>Read the live config straight off the device over MQTT (via WebSocket), Bluetooth (NUS; Chrome/Edge, https or localhost), or USB serial.</div>
+    <div class="controls">
+      <button id="connect-mqtt" class="btn">Connect MQTT</button>
+      <button id="connect-ble" class="btn">Connect Bluetooth</button>
+      <button id="connect-serial" class="btn">Connect serial (115200)</button>
+    </div>
   </div>
+
+  <div id="start-open-pane" class="startpane">
+    <div>Open a <code>.zip</code> or a folder structured like <code>config/fmetal</code> (with a <code>conf/</code> dir of <code>*.conf</code> files) — or drop one anywhere on this page.</div>
+    <div class="controls">
+      <label class="btn">Choose .zip<input id="pick-zip" type="file" accept=".zip"></label>
+      <label class="btn">Choose folder<input id="pick-dir" type="file" webkitdirectory directory multiple></label>
+    </div>
+  </div>
+
+  <div id="start-preset-pane" class="startpane">
+    <div>Start from a board config shipped with the firmware.</div>
+    <div class="controls">
+      <select id="preset-list"></select>
+      <button id="preset-load" class="btn">Load</button>
+    </div>
+  </div>
+
   <div id="drop-msg" class="err" style="margin-top:14px"></div>
 </div>
 
@@ -1255,6 +1281,40 @@ async function handleEntries(entries){
   } catch(e){ showErr("Could not read dropped folder: "+e.message); }
 }
 
+/* ----------------------------------------------------------------------------
+   Board presets: config/<board> mirrored by gen_presets.mjs, fetched over http.
+---------------------------------------------------------------------------- */
+let presetList = null;
+async function loadPresetIndex(){
+  if (presetList) return presetList;
+  const r = await fetch("presets/index.json", {cache:"no-store"});
+  if (!r.ok) throw new Error(`HTTP ${r.status} — run: node etc/config-tool/gen_presets.mjs`);
+  presetList = (await r.json()).presets || [];
+  const sel = document.getElementById("preset-list");
+  sel.innerHTML = "";
+  for (const p of presetList){
+    const o = document.createElement("option");
+    o.value = p.id; o.textContent = `${p.label} — ${p.files.length} files`;
+    sel.appendChild(o);
+  }
+  document.getElementById("preset-load").disabled = !presetList.length;
+  return presetList;
+}
+
+async function loadPreset(){
+  try {
+    const p = (await loadPresetIndex()).find(x => x.id === document.getElementById("preset-list").value);
+    if (!p) return;
+    const files = {};
+    for (const f of p.files){
+      const r = await fetch(`presets/${p.id}/conf/${f}`, {cache:"no-store"});
+      if (!r.ok) throw new Error(`${p.id}/conf/${f}: HTTP ${r.status}`);
+      files["conf/"+f] = new Uint8Array(await r.arrayBuffer());
+    }
+    applyUpload(files, "preset "+p.label);
+  } catch(e){ showErr("Could not load preset: "+e.message); }
+}
+
 function wireInput(el, handler){ el.addEventListener("change", e=>{ if(e.target.files.length) handler(e.target.files); el.value=""; }); }
 wireInput(document.getElementById("pick-zip"), fl=>handleZipFile(fl[0]));
 wireInput(document.getElementById("pick-dir"), handleFolder);
@@ -1944,6 +2004,23 @@ document.getElementById("uploadlog-input").addEventListener("submit", e=>{
 });
 
 document.getElementById("upload").onclick = uploadChanged;
+// Start screen: mutually exclusive choices, each revealing its own actions.
+for (const id of ["connect","open","preset"]){
+  const btn = document.getElementById("start-"+id), pane = document.getElementById("start-"+id+"-pane");
+  btn.onclick = () => {
+    const open = pane.classList.toggle("open");
+    for (const o of ["connect","open","preset"]) if (o !== id){
+      document.getElementById("start-"+o+"-pane").classList.remove("open");
+      document.getElementById("start-"+o).classList.remove("primary");
+    }
+    btn.classList.toggle("primary", open);
+    if (open && id === "preset")
+      loadPresetIndex().catch(e => showErr("Presets unavailable: " + e.message));
+  };
+}
+
+document.getElementById("preset-load").onclick = loadPreset;
+
 document.getElementById("connect-serial").onclick = connectSerial;
 document.getElementById("serial-btn").onclick = connectSerial;
 document.getElementById("connect-ble").onclick = connectBluetooth;

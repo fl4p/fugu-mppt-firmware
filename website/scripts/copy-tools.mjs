@@ -1,6 +1,6 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const site = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = join(site, '..', 'etc', 'config-tool');
@@ -14,4 +14,10 @@ if (missing.length) {
 }
 mkdirSync(dst, { recursive: true });
 for (const f of files) copyFileSync(join(src, f), join(dst, f));
-console.log(`copy-tools: ${files.join(', ')} -> static/tools/`);
+
+// Board presets for "Load preset", regenerated from config/ so the copy can't drift.
+const presetsDst = join(dst, 'presets');
+rmSync(presetsDst, { recursive: true, force: true });
+const { generatePresets } = await import(pathToFileURL(join(src, 'gen_presets.mjs')).href);
+const presets = generatePresets(presetsDst);
+console.log(`copy-tools: ${files.join(', ')} + ${presets.length} presets -> static/tools/`);
