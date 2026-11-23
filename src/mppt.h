@@ -1039,6 +1039,7 @@ public:
 
         converter.disable();
         ctrlState._limiting = false;
+        ctrlState.limIdx = 15;
         _limitPert = 0;
         targetDutyCycle = 0;
 

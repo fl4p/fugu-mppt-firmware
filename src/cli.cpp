@@ -1355,6 +1355,7 @@ static void cmdRtStats(cmd *) {
     cmdLoopLagBegin();
     print_real_time_stats_blocking();
     rtAllocPrint();
+    UART_LOG("loop-rate watchdog %hu Hz", g_app.loopRateMin);
     cmdLoopLagPrint();
 }
 

@@ -27,7 +27,7 @@ Three supervisors on the same task detect a loop that falls behind:
 
 The threshold is derived at boot from the ADC settings: the configured per-channel rate of the Vout ADC, scaled by
 Vout's share of the polling order. An INA226 contributes its nominal rate from the conversion time, not a measured one,
-so a slow chip cannot lower its own threshold. The boot log reports the value (`loop-rate watchdog <n> Hz`).
+so a slow chip cannot lower its own threshold. The boot log and `rt-stats` report the value (`loop-rate watchdog <n> Hz`).
 
 The per-sample OV/OC cutouts in `mppt.protect` are independent of these supervisors and run on every sample that
 arrives.
@@ -322,7 +322,7 @@ Each tool answers a different question about latency:
 |---|---|---|
 | `lag=` in the status line | Longest loop interval since the last `reset-lag` | [Console](../../reference/console.md) |
 | `rtcount("label")` + `reset-lag` | Which section of the RT loop is slow (count, total, mean, max, and the sample index of the max) | [rtcount](rtcount.md) |
-| `rt-stats` | CPU % per task and core over about 2 s | [Profiling](profiling.md) |
+| `rt-stats` | CPU % per task and core over about 2 s, and the loop-rate watchdog threshold | [Profiling](profiling.md) |
 | `tasks` | Task placement, priority, stack headroom | [Console](../../reference/console.md) |
 | Sampling profiler (`CONFIG_FUGU_WITH_SPROFILER`), SystemView, gprof | Where time goes on average | [Profiling](profiling.md) |
 
