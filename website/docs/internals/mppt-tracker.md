@@ -79,7 +79,7 @@ P&O. A sweep that recorded two or more local maxima takes the [return pass](#ret
 
 ### Return pass
 
-The sweep records the local maxima of the power that have a dip of 8 % on both sides (see
+The sweep records the local maxima of the power that have a dip of about 8 % on both sides (see
 [Substring count](#substring-count)). When a bright sweep (MPP at least 5 % of `limits.conf::p_max`) on a buck has
 recorded two or more of them, the captured MPP counted as one, the way back up from the bottom of the sweep measures
 them again, lowest Vin first:
@@ -179,6 +179,25 @@ itself; on a string with several, a maximum that the sweep did not record is fou
 periodic sweep. A string known to have a [single peak](#substring-count) (`pv_substrings=1`) is never re-swept: the
 landing check is its only verdict.
 
+```mermaid
+flowchart TD
+    S["Sweep ends"] --> L{"Limiter in the<br/>landing?"}
+    L -- yes --> NV["No verdict, counts as clean"]
+    L -- no --> B{"MPP ≥ 5 %<br/>of p_max?"}
+    B -- no --> NV
+    B -- yes --> D{"Within<br/>sweep_verify?"}
+    D -- yes --> V["Verified: P&O from the landing,<br/>maxima teach the substring count"]
+    D -- no --> F["Flagged: teaches nothing"]
+    F --> N{"Substring count"}
+    N -- "2..6" --> H{"Fade, or landing<br/>off its probe?"}
+    H -- yes --> SC["Partial peak scan now"]
+    H -- no --> P["Stay, P&O from the landing"]
+    N -- "1 (single peak)" --> P
+    N -- unknown --> M{"≤ 1 maximum<br/>recorded?"}
+    M -- yes --> RS["Re-sweep in 60 s,<br/>at most one per 10 min"]
+    M -- no --> P
+```
+
 A sweep whose fade or return pass a limiter stops, or that lands in a limit, gets no verdict and counts as clean. A
 sweep whose MPP is below 5 % of `limits.conf::p_max` gets no verdict either: in low light the captured MPP is the
 largest of noisy samples, biased high by tens of percent, and such a sweep teaches nothing anyway. The log shows one
@@ -238,12 +257,19 @@ reversal still waits while Vin is more than 1 % against the steering, see
   direction for a moment, then turns. When it gets back to the reversal voltage, the capacitor current has
   mostly reversed. This measures the plant lag directly, so the capacitance does not need to be configured.
 
+![Vin and power after a reversal: Vin keeps falling, turns, and is back at the reversal voltage after 600 ms; the filtered measured power drops below the string power](img/mppt-tracker/settle-window.svg)
+
+*Model of a reversal at 2 W: string $P(x) = P_m(1 - 9x^2)$ with the MPP at 60 V, 470 µF input capacitance, converter
+conductance ramped at ±12 %/s, power filter median-5 + 2-pass EWMA (span 20, 450 Hz). The filter settles after
+152 ms; Vin returns to the reversal voltage after 600 ms, which ends the window. While Vin rises, the measured power
+stays below the string power by the capacitor charging power.*
+
 | Power sensor profile                  | $f_s$  | $N$ | $t_f$   |
 |---------------------------------------|--------|-----|---------|
 | INA226, 1.1 ms conversion             | 450 Hz | 20  | 152 ms  |
 | INA226 at its slowest rate            | 200 Hz | 20  | 342 ms  |
 | INA226, filter length 60              | 450 Hz | 60  | 447 ms  |
-| ADS1015, three muxed channels         | 120 Hz | 60  | 1 s (capped from 1.6 s) |
+| ADS1015, three muxed channels         | 120 Hz | 60  | 1 s (capped from 1.7 s) |
 
 A limiter hand-back starts the window but does not count as a reversal. It is a takeover for the slow-mode
 condition below: it ends slow mode, and the tracker continues in fast mode for at least 30 s after a derate,
@@ -411,6 +437,11 @@ The tracker holds its reference until the power changes by more than $\theta$, s
 sit up to $\theta$ below the peak, and the reversal on the way down comes another $\theta$ below the reference. The
 band then reaches $P_m(1 - 2\theta)$ and the loss lies between $\theta/3$ and $2\theta/3$.
 
+![P&O band on the parabola P/Pm = 1 - 9x², for the fast and the slow threshold](img/mppt-tracker/po-band.svg)
+
+*Parabola model with $c = 9$. Inner band: $P > P_m(1 - \theta)$, outer band: $P > P_m(1 - 2\theta)$, with the
+half-width in Vin offset.*
+
 The band model holds only while $\theta$ is well above the noise. In simulation the loss was 0.5 to 0.8 $\theta$
 without noise and for $\theta \gtrsim 3\sigma$. Below $\theta \approx \sigma$ the tracker reverses mostly on noise,
 and the loss levels off near $1\,\sigma$ instead of falling with $\theta$. A threshold above the noise then costs
@@ -452,6 +483,11 @@ $\tau \approx$ 23 ms):
 | Fast | 33 ms  | 1.4        | 0.65  | 0.81                |
 | Slow | 500 ms | 22         | 0.087 | 0.30                |
 
+![g(u) on log axes with the fast and slow operating points](img/mppt-tracker/variance-g.svg)
+
+*$g(u)$ with its asymptote $2\tau/T_d$, for $\tau$ = 23 ms. Fast mode sits on the flat part, slow mode on the
+asymptote.*
+
 In fast mode the period mean is barely quieter than one filtered sample. The two-pass EWMA is not a single
 exponential, so these values are approximate. At low power $\sigma$ grows as $1/P$, so dawn, dusk and low
 light dominate the steady-state loss. A longer decision period lowers $\sigma$ but follows changing irradiance more
@@ -465,8 +501,8 @@ With the relative thresholds of the tracker, the threshold loss is:
 | Slow | 0.15 %   | 0.05 %       |
 
 The tracker reverses when the power change exceeds either the absolute threshold $\Delta P_\text{abs}$ or the
-relative threshold $\theta_\text{rel}$ applied to $P + 5\,\text{W}$, so the smaller of the two sets the effective
-relative threshold:
+relative threshold $\theta_\text{rel}$ applied to $P + 5\,\text{W}$ (only while $P > \Delta P_\text{abs}$), so the smaller of
+the two sets the effective relative threshold:
 
 $$
 \theta_\text{eff} = \frac{\min\left(\Delta P_\text{abs},\; \theta_\text{rel}\,(P + 5\,\text{W})\right)}{P}
@@ -474,6 +510,11 @@ $$
 
 $\theta_\text{eff}$ is larger at low power and smaller at high power. Below about 62 W in fast mode and 328 W in
 slow mode the relative term is the smaller one.
+
+![Effective relative threshold versus power for fast and slow mode, log-log](img/mppt-tracker/theta-eff.svg)
+
+*$\theta_\text{eff}$ from the tracker's thresholds. The dots mark where the absolute term takes over. The
+threshold loss is $\theta_\text{eff}/3$ to $2\theta_\text{eff}/3$.*
 
 #### Combined estimate
 
@@ -497,6 +538,13 @@ $m$ unshaded substring MPP voltages, lower by the forward drops of the conductin
 which weaker substrings also conduct sits higher: the stronger substrings carry the current of the weakest
 one, above their own MPP voltage. Two 60-cell modules in series have $n = 6$. P&O climbs the maximum it starts
 on and stays there until the next global sweep, even when another maximum is higher.
+
+![P-V curves of an unshaded and a partially shaded string, with the recorded maxima, the share grid and the scan probes](img/mppt-tracker/pv-shaded.svg)
+
+*Model: two 60-cell modules in series (6 substrings with bypass diodes), two substrings at 40 % irradiance.
+(a) The sweep records the maxima below $0.93\,V_{oc}$; on the grid of $m \cdot 0.82\,V_{oc}/6$ they fit
+$n = 6$. (b) A scan from the 65 V maximum probes $0.97\,m\,s$ for $m$ = 3 to 5, skips $m$ = 1 and 2 by the
+current bound (step 2 below) and moves to $m = 4$.*
 
 `PeakScan` (`src/peak_scan.h`) probes one voltage per candidate maximum. It needs the number of substrings $n$,
 which it learns from the global sweeps (below), and a buck converter (no-op on boost). It runs in tracking mode
@@ -541,8 +589,9 @@ them, about two probe times later.
 ### Substring count
 
 The sweep runs from $V_{oc}$ down to the battery and passes every maximum. It records the local maxima of the
-smoothed power below $0.93\,V_{oc}$ that have a dip of 8 % on both sides (up to 6; a sweep with more is noise and
-does not count). Once the [sweep verdict](#sweep-verdict) passes (with `sweep_verify=0`: right after the sweep),
+smoothed power below $0.93\,V_{oc}$ that have a dip on both sides: a maximum ends when the power falls below 0.92 times its
+peak, and the next one starts when the power rises above 1.08 times the low in between. It keeps up to 6; a sweep with
+more is noise and does not count. Once the [sweep verdict](#sweep-verdict) passes (with `sweep_verify=0`: right after the sweep),
 the low-frequency loop (core 0) evaluates them within 3 s:
 
 * The sweep's MPP must be one of the recorded maxima, and at least 5 % of `limits.conf::p_max`.
