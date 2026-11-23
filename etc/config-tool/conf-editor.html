@@ -491,7 +491,7 @@ const META = {
 
   // wifi.conf
   switch_delay:{unit:"s",desc:"Keep retrying the lost AP (router reboot) before roaming to another network; 0=immediate",type:"int"},
-  improv_offline_s:{unit:"s",desc:"Wi-Fi down this long before Improv over BLE accepts new credentials; 0=only with no network configured",type:"int"},
+  improv_offline_s:{unit:"s",desc:"Wi-Fi down this long before Improv over BLE accepts new credentials; 0=only with no network configured; negative=Improv off (no GATT service, read at BLE start)",type:"int"},
 
   // pprof.conf
   sprofiler_hz:{unit:"Hz",desc:"Sampling profiler frequency (needs OpenOCD attached)",type:"int"},

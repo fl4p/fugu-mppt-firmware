@@ -182,7 +182,9 @@ class RpcCallbacks : public BLECharacteristicCallbacks {
 static RpcCallbacks rpcCallbacks;
 
 void improvCreateService(BLEServer *srv, uint32_t writeProps) {
-    offlineOpenMs = (uint32_t) ConfFile{"/littlefs/conf/wifi.conf", true}.getLong("improv_offline_s", 600) * 1000;
+    const long s = ConfFile{"/littlefs/conf/wifi.conf", true}.getLong("improv_offline_s", 600);
+    if (s < 0) return; // Improv off: no service, stateChr stays null
+    offlineOpenMs = (uint32_t) s * 1000;
     BLEService *svc = srv->createService(IMPROV_UUID(0));
     const uint32_t rn = BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY;
     stateChr = svc->createCharacteristic(IMPROV_UUID(1), rn);

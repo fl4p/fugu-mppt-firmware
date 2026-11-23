@@ -20,7 +20,7 @@ The following table lists the service and its characteristics:
 `CONFIG_FUGU_WITH_IMPROV` builds add the [Improv Wi-Fi](https://www.improv-wifi.com/ble/) service
 (`00467768-6228-2272-4663-277478268000`) with its five standard characteristics. Its RPC command characteristic takes
 write with response only, under the same security as RX. Capabilities are device info and network scan (`0x06`). See
-[Wi-Fi setup](../../guide/connecting.md#improv-over-ble) for when it accepts credentials.
+[Wi-Fi setup](../../guide/connecting.md#improv-over-ble) for when it accepts credentials; a negative `wifi.conf::improv_offline_s` omits the service.
 
 ## Connection
 

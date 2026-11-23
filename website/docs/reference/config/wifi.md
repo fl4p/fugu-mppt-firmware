@@ -20,4 +20,4 @@ The file accepts the following keys:
 | `ssid_<name>`     |      | string | —       | SSID to join                                                                                                 |
 | `ssid_<name>_psk` |      | string | —       | Passphrase for that SSID                                                                                     |
 | `switch_delay`    | s    | int    | 30      | Keep retrying the lost AP (router reboot) before roaming to another configured network; 0 = roam immediately |
-| `improv_offline_s` | s   | int    | 600     | Wi-Fi down this long before [Improv over BLE](../../guide/connecting.md#improv-over-ble) accepts new credentials; 0 = only while no network is configured |
+| `improv_offline_s` | s   | int    | 600     | Wi-Fi down this long before [Improv over BLE](../../guide/connecting.md#improv-over-ble) accepts new credentials; 0 = only while no network is configured; negative = Improv off (no GATT service, read at BLE start) |

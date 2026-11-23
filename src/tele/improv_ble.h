@@ -3,7 +3,7 @@
 // Improv Wi-Fi over BLE (improv-wifi.com/ble), a GATT service next to the NUS console.
 // Credentials are accepted only while the device is offline: no network configured, or
 // Wi-Fi down for wifi.conf::improv_offline_s. Online, the state reads "provisioned" and
-// credentials are refused.
+// credentials are refused. A negative improv_offline_s disables Improv (no GATT service).
 
 #include <cstddef>
 #include <cstdint>
