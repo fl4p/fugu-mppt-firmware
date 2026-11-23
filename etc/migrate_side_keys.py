@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Migrate sensor.conf and limits.conf from role keys to HV/LV side keys, and move the INA226
-measurement keys (ina22x_resistor, ina22x_conv_time_us, ina22x_ov) from board.conf to sensor.conf.
+"""Migrate sensor.conf and limits.conf from role keys to HV/LV side keys, move the INA226
+measurement keys (ina22x_resistor, ina22x_conv_time_us, ina22x_ov) from board.conf to sensor.conf,
+and rename the board.conf backflow switch pins panel_en/panel_sd to bflow_en/bflow_sd.
 
 Firmware from the sensor-hv-lv change on reads only side keys (src/conv_side.h). A sensor.conf or
 limits.conf that still has a role key (vin_ch, iout_factor, vin_max, ...) fails setup at boot, so
@@ -12,11 +13,14 @@ Mapping, by converter.conf topo (absent = buck, as the firmware reads it):
 Side current factors are positive HV->LV, so a boost's current *_factor changes sign. Every other
 key (ntc_*, vin_min, iout_short, p_max, charger.conf vout_max, ...) is left alone. Firmware that reads
 the INA226 keys from sensor.conf fails setup while board.conf still has one of them, unless
-sensor.conf holds the same value (then it only warns).
+sensor.conf holds the same value (then it only warns). Firmware that reads bflow_en/bflow_sd fails
+setup on a board.conf with panel_en/panel_sd but not its replacement; with both it warns and uses
+the new key.
 
 Offline, rewrite conf directories in place (comments, order and inline comments are kept; already
 migrated files are left unchanged; a role key next to its own side key is refused; moved INA226 lines
-are appended to sensor.conf with their comments):
+are appended to sensor.conf with their comments; panel_en/panel_sd lines are renamed in place, or
+dropped when the new key already holds the same value):
   etc/migrate_side_keys.py dir config/lab/buck_bench [more dirs...] [--topo buck|boost] [--check]
 
 Live board, still on the old firmware: capture the configs, then print the console commands:
@@ -24,7 +28,10 @@ Live board, still on the old firmware: capture the configs, then print the conso
   -> save to board.log
   etc/migrate_side_keys.py live board.log [--topo buck|boost] [--rollback]
 Run the printed set-config/del-config lines over BLE or telnet, then OTA straight away: the old
-firmware keeps its sensors only until the next reboot. --rollback prints the inverse sequence.
+firmware keeps its sensors only until the next reboot. A board with panel_en/panel_sd gets two
+steps: the bflow_* set-config lines come first in step 1 (the old firmware ignores them), the
+del-config lines for panel_* are step 2, after the OTA, so either firmware finds its key across the
+reboot. --rollback prints the inverse sequence.
 """
 import argparse
 import re
@@ -35,6 +42,7 @@ ROLE_CHANNELS = ("vin", "vout", "iin", "iout")
 SENSOR_SUFFIXES = ("adc", "ch", "rh", "rl", "factor", "midpoint", "filt_len", "gain", "offset")  # conv_side.h SensorKeySuffixes
 LIMIT_KEYS = ("vin_max", "vout_max", "iin_max", "iout_max")
 MOVED_KEYS = ("ina22x_resistor", "ina22x_conv_time_us", "ina22x_ov")  # board.conf -> sensor.conf
+RENAMED_KEYS = {"panel_en": "bflow_en", "panel_sd": "bflow_sd"}  # board.conf, src/pwm/backflow.h
 
 
 class MigrationError(Exception):
@@ -171,6 +179,37 @@ def move_lines(board_text, sensor_text):
     return "".join(keep), sensor_text, changes
 
 
+def renames(board_kv):
+    """[(old, new, value)] for the renamed board.conf keys in `board_kv`; new == old value is fine."""
+    out = []
+    for old, new in RENAMED_KEYS.items():
+        if old not in board_kv:
+            continue
+        if new in board_kv and board_kv[new] != board_kv[old]:
+            raise MigrationError(f"board.conf {old}={board_kv[old]} and {new}={board_kv[new]} differ; "
+                                 "delete the wrong one, then rerun")
+        out.append((old, new, board_kv[old]))
+    return out
+
+
+def rename_lines(board_text):
+    """(board text, [(old, new, value)]) with panel_en/panel_sd lines, commented-out ones too, renamed
+    in place; an active old line is dropped when the new key is already set."""
+    active = parse_conf(board_text)
+    changes = renames(active)
+    out = []
+    for line in board_text.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        m = LINE.match(body)
+        new = m and RENAMED_KEYS.get(m["key"])
+        if new:
+            if "#" not in m["pre"] and new in active:
+                continue
+            line = m["pre"] + new + m["eq"] + m["val"] + m["post"] + line[len(body):]
+        out.append(line)
+    return "".join(out), changes
+
+
 def conf_dir(path):
     p = Path(path)
     return p / "conf" if not (p / "sensor.conf").exists() and (p / "conf").is_dir() else p
@@ -195,10 +234,15 @@ def migrate_dir(path, forced_topo=None, write=True):
     board = d / "board.conf"
     if board.exists():
         sensor = d / "sensor.conf"
-        btext, stext, changes = move_lines(board.read_text(), texts.get(sensor, sensor.read_text() if sensor.exists() else ""))
-        if btext != board.read_text():
-            texts[board], texts[sensor] = btext, stext
+        orig = board.read_text()
+        btext, stext, changes = move_lines(orig, texts.get(sensor, sensor.read_text() if sensor.exists() else ""))
+        if btext != orig:
+            texts[sensor] = stext
         done += [("board.conf", k, "sensor.conf", v, v) for k, v in changes]
+        btext, changes = rename_lines(btext)
+        if btext != orig:
+            texts[board] = btext
+        done += [("board.conf", o, n, v, v) for o, n, v in changes]
     if write:
         for f, text in texts.items():
             if not f.exists() or f.read_text() != text:
@@ -221,11 +265,22 @@ def parse_get_config(text):
     return files
 
 
-def live_commands(text, forced_topo=None, rollback=False):
+def live_steps(text, forced_topo=None, rollback=False):
+    """(step 1: before the OTA, step 2: after it) console commands."""
     files = parse_get_config(text)
     if not {"sensor.conf", "limits.conf", "board.conf"} & files.keys():
         raise MigrationError("no sensor.conf, limits.conf or board.conf lines in the get-config output")
-    sets, dels = [], []
+    sets, dels, after = [], [], []
+    board = files.get("board.conf", {})
+    for old, new, v in renames(board):
+        if rollback:
+            sets.append(f"set-config board.conf {old} {v}")
+            if new not in board:
+                after.append(f"del-config board.conf {new}")
+        else:
+            if new not in board:
+                sets.append(f"set-config board.conf {new} {v}")
+            after.append(f"del-config board.conf {old}")
     sens = files.get("sensor.conf", {})
     for k, v in moves(files.get("board.conf", {}), sens):
         if rollback:
@@ -247,7 +302,12 @@ def live_commands(text, forced_topo=None, rollback=False):
                 sets.append(f"set-config {file} {side} {new}")
                 dels.append(f"del-config {file} {role}")
     # all sets first: an interrupted run leaves the old keys, which the old firmware still reads
-    return sets + dels
+    return sets + dels, after
+
+
+def live_commands(text, forced_topo=None, rollback=False):
+    now, after = live_steps(text, forced_topo, rollback)
+    return now + after
 
 
 def main(argv=None):
@@ -261,15 +321,18 @@ def main(argv=None):
     b = sub.add_parser("live", help="print console commands from a get-config capture")
     b.add_argument("log", nargs="?", default="-", help="get-config output (default stdin)")
     b.add_argument("--topo", choices=("buck", "boost"), help="needed when converter.conf was not captured")
-    b.add_argument("--rollback", action="store_true", help="print the inverse sequence (side -> role keys, "
+    b.add_argument("--rollback", action="store_true", help="print the inverse sequence (side -> role keys, bflow_* -> panel_*, "
                    "INA226 keys back to board.conf)")
     args = ap.parse_args(argv)
 
     try:
         if args.mode == "live":
             text = sys.stdin.read() if args.log == "-" else Path(args.log).read_text()
-            cmds = live_commands(text, args.topo, args.rollback)
-            print("\n".join(cmds) if cmds else "# nothing to migrate", flush=True)
+            now, after = live_steps(text, args.topo, args.rollback)
+            if after:
+                ota = "the downgrade" if args.rollback else "the OTA"
+                now = [f"# step 1: now, before {ota}"] + (now or ["# (nothing)"]) + [f"# step 2: after {ota}"] + after
+            print("\n".join(now) if now else "# nothing to migrate", flush=True)
             return 0
         pending = False
         for d in args.dirs:

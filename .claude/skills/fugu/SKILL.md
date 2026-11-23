@@ -296,6 +296,9 @@ fails sensor/limits setup at boot. **Before OTA-ing a live board to that firmwar
 (`--rollback` prints the inverse; `--topo` if converter.conf was not captured). OTA right after: the old firmware
 reboots into no sensors on migrated configs. Offline conf dirs: `etc/migrate_side_keys.py dir <dir>`. A board that
 already fails at boot with `... is no longer read; with topo=... use ...` needs the same migration.
+`board.conf` `panel_en`/`panel_sd` are now `bflow_en`/`bflow_sd`: an old key without its new one fails setup
+(`board.conf: panel_sd was renamed to bflow_sd`). Add `get-config board.conf` to the capture; `live` then prints
+step 1 (`set-config board.conf bflow_sd ...`, before the OTA) and step 2 (`del-config board.conf panel_sd`, after it).
 
 Symptoms of **no config partition**: `ls /` fails, `ntc=-273℃`. (`0sps` is *not* a reliable
 symptom: a status-line bug — fixed in `6b83991` — produced it from any scripted console session,

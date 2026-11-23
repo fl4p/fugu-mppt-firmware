@@ -38,6 +38,12 @@ def base_profiles():
     return sorted({str(Path(p).parent) for p in r.stdout.split() if p.endswith("/sensor.conf")})
 
 
+def tracked(suffix):
+    """Paths under config/ in git ending in `suffix` (untracked device captures and backups excluded)."""
+    r = subprocess.run(["git", "-C", str(ROOT), "ls-files", "config"], capture_output=True, text=True, check=True)
+    return sorted(ROOT / p for p in r.stdout.split() if p.endswith(suffix))
+
+
 def num(v):
     try:
         return float(v)
@@ -100,7 +106,7 @@ class ProfilesTest(unittest.TestCase):
                 self.assertEqual(resolve(now, True), want)
 
     def test_no_profile_has_a_role_key(self):
-        for d in sorted(ROOT.glob("config/**/conf")):
+        for d in sorted({f.parent for f in tracked("/conf/board.conf")}):
             with self.subTest(profile=str(d.relative_to(ROOT))):
                 self.assertEqual(m.migrate_dir(d, write=False), [])
 
@@ -154,8 +160,23 @@ class OfflineTest(unittest.TestCase):
         with self.assertRaisesRegex(m.MigrationError, "differ"):
             m.move_lines("ina22x_ov=30\n", "ina22x_ov=31\n")
 
+    def test_renames_backflow_pins(self):
+        text = "panel_sd=40   # SD\n# panel_en=8 # none\nbflow_bat=1\n"
+        new, ch = m.rename_lines(text)
+        self.assertEqual(new, "bflow_sd=40   # SD\n# bflow_en=8 # none\nbflow_bat=1\n")
+        self.assertEqual(ch, [("panel_sd", "bflow_sd", "40")])
+        self.assertEqual(m.rename_lines(new), (new, []))
+        self.assertEqual(m.rename_lines("panel_sd=40\nbflow_sd=40\n"), ("bflow_sd=40\n", [("panel_sd", "bflow_sd", "40")]))
+        with self.assertRaisesRegex(m.MigrationError, "differ"):
+            m.rename_lines("panel_sd=40\nbflow_sd=41\n")
+
+    def test_no_profile_has_old_backflow_keys(self):
+        for f in tracked("/board.conf"):
+            with self.subTest(profile=str(f.relative_to(ROOT))):
+                self.assertFalse(set(m.RENAMED_KEYS) & m.parse_conf(f.read_text()).keys())
+
     def test_no_profile_has_ina226_keys_in_board_conf(self):
-        for f in sorted(ROOT.glob("config/**/board.conf")):
+        for f in tracked("/board.conf"):
             with self.subTest(profile=str(f.relative_to(ROOT))):
                 self.assertFalse(set(m.MOVED_KEYS) & m.parse_conf(f.read_text()).keys())
 
@@ -215,6 +236,17 @@ class LiveTest(unittest.TestCase):
         self.assertEqual(m.live_commands(cap, rollback=True), [
             "set-config board.conf ina22x_resistor 0.5e-3", "set-config board.conf ina22x_ov 30",
             "del-config sensor.conf ina22x_resistor", "del-config sensor.conf ina22x_ov"])
+
+    def test_backflow_rename_in_two_steps(self):
+        cap = ("Conf '/littlefs/conf/board.conf:panel_sd' = '40'\n"
+               "Conf '/littlefs/conf/board.conf:bflow_bat' = '1'")
+        self.assertEqual(m.live_steps(cap), (["set-config board.conf bflow_sd 40"], ["del-config board.conf panel_sd"]))
+        self.assertEqual(m.live_steps(cap, rollback=True),
+                         (["set-config board.conf panel_sd 40"], ["del-config board.conf bflow_sd"]))
+        both = cap + "\nConf '/littlefs/conf/board.conf:bflow_sd' = '40'"
+        self.assertEqual(m.live_steps(both), ([], ["del-config board.conf panel_sd"]))
+        with self.assertRaisesRegex(m.MigrationError, "differ"):
+            m.live_steps(cap + "\nConf '/littlefs/conf/board.conf:bflow_sd' = '41'")
 
 
 if __name__ == "__main__":

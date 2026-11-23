@@ -143,7 +143,7 @@ Bench result: with `sdkconfig.pm_ls` (PM + tickless idle +
 slept 70 % of a 240 s window and the die fell from 38.6 C to 26 C; telnet stayed connected.
 DFS 80/40 MHz alone gave about 31 C. Before this can become firmware behaviour:
 
-- every GPIO floats in light sleep (gate, `pwm_sd`, `panel_sd`, LED): needs `gpio_sleep_sel_dis`
+- every GPIO floats in light sleep (gate, `pwm_sd`, `bflow_sd`, LED): needs `gpio_sleep_sel_dis`
   or explicit sleep levels, verified on a scope;
 - real boards must stop the MCPWM timer and the continuous ADC at night (both hold
   `ESP_PM_APB_FREQ_MAX`), so dawn detection needs a low-rate sampling mode;

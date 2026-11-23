@@ -252,7 +252,7 @@ The following commands require manual PWM mode.
 | Command | Description |
 | --- | --- |
 | `sync [on\|1\|off\|0\|forced\|forced!]` | Disable/enable the low-side switch (diode emulation / synchronous rectification). `forced` requests forced-PWM mode. Some protections relax on the *request* (the `Vr-sensor-fail` test, because a board asking for forced PWM is telling you its current sensor is unusable); the diode-emulation behaviour changes only once the gate actually engages: with `converter.conf::fpwm_gate` on, it stays diode-emulating until the duty is above the voltage ratio. `forced!` engages immediately, bypassing that gate. Bare `sync` reports the state and the duty the gate is waiting for, and is the one form that also works outside manual PWM. |
-| `bf <0\|1>`, `panel <0\|1>` | Disable/enable the backflow (panel) switch. When enabled it allows current to flow from output to input (battery to solar). Requires a configured backflow switch. |
+| `bf <0\|1>`, `panel <0\|1>` | Disable/enable the backflow switch. When enabled it allows current to flow from output to input (battery to solar). Requires `board.conf::bflow_en` or `bflow_sd`. |
 
 ## Service Commands
 

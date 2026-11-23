@@ -93,3 +93,13 @@ test('row description renders " · default: <value>" when a default is known', a
   // no default scraped (required by firmware) → no suffix
   assert.doesNotMatch(byKey.pwm_freq.querySelector('.desc').textContent, /default:/);
 });
+
+test('renamed board.conf backflow keys: old key is flagged, new key has meta', async () => {
+  const { window } = await loadEditor();
+  const old = window.lookupMeta('conf/board.conf', 'panel_sd', '');
+  assert.equal(old.removed, true);
+  assert.match(old.desc, /bflow_sd/);
+  assert.equal(window.lookupMeta('conf/board.conf', 'bflow_sd', '').unit, 'GPIO');
+  assert.equal(window.lookupType('bflow_en'), 'byte');
+  assert.equal(window.lookupDefault('conf/board.conf', 'bflow_sd'), '0');
+});

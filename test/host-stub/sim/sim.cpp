@@ -177,7 +177,7 @@ static void setupFw() {
     char lbuf[24];
     snprintf(lbuf, sizeof lbuf, "%g", S.L);
     auto board = mkConf("board", {{"pwm_freq", "39000"}, {"pwm_driver_logic", "HiLi"}, {"pwm_hi", "21"},
-                                  {"pwm_li", "14"}, {"pwm_sd", "47"}, {"panel_sd", "40"}, {"skip_assert", "1"}});
+                                  {"pwm_li", "14"}, {"pwm_sd", "47"}, {"bflow_sd", "40"}, {"skip_assert", "1"}});
     auto limitsC = mkConf("limits", {{"vin_min", "10.5"}, {"hv_max", "85"}, {"lv_max", "60"}, {"hv_i_max", "30"},
                                      {"lv_i_max", "32"}, {"iout_short", "6"}, {"p_max", "1000"},
                                      {"temp_max", "90"}, {"temp_derate", "70"}});
