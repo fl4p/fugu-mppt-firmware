@@ -230,12 +230,56 @@ class LiveTest(unittest.TestCase):
         cap = ("Conf '/littlefs/conf/board.conf:ina22x_resistor' = '0.5e-3'\n"
                "Conf '/littlefs/conf/board.conf:ina22x_ov' = '30'\n"
                "Conf '/littlefs/conf/board.conf:ina22x_alert' = '41'")
-        self.assertEqual(m.live_commands(cap), [
-            "set-config sensor.conf ina22x_resistor 0.5e-3", "set-config sensor.conf ina22x_ov 30",
-            "del-config board.conf ina22x_resistor", "del-config board.conf ina22x_ov"])
-        self.assertEqual(m.live_commands(cap, rollback=True), [
-            "set-config board.conf ina22x_resistor 0.5e-3", "set-config board.conf ina22x_ov 30",
-            "del-config sensor.conf ina22x_resistor", "del-config sensor.conf ina22x_ov"])
+        # the old firmware reads board.conf: its copy is only deleted after the OTA
+        self.assertEqual(m.live_steps(cap), (
+            ["set-config sensor.conf ina22x_resistor 0.5e-3", "set-config sensor.conf ina22x_ov 30"],
+            ["del-config board.conf ina22x_resistor", "del-config board.conf ina22x_ov"]))
+        self.assertEqual(m.live_steps(cap, rollback=True), (
+            ["set-config board.conf ina22x_resistor 0.5e-3", "set-config board.conf ina22x_ov 30"],
+            ["del-config sensor.conf ina22x_resistor", "del-config sensor.conf ina22x_ov"]))
+
+    def test_ina226_keys_same_in_both(self):  # fry 2026-11-23
+        cap = ("Conf '/littlefs/conf/converter.conf:topo' = 'buck'\n"
+               "Conf '/littlefs/conf/board.conf:ina22x_resistor' = '0.5e-3'\n"
+               "Conf '/littlefs/conf/board.conf:ina22x_ov' = '0'\n"
+               "Conf '/littlefs/conf/sensor.conf:ina22x_resistor' = '0.0005'\n"
+               "Conf '/littlefs/conf/sensor.conf:ina22x_ov' = '0'")
+        w = []
+        self.assertEqual(m.live_steps(cap, warnings=w), (
+            [], ["del-config board.conf ina22x_resistor", "del-config board.conf ina22x_ov"]))
+        self.assertEqual(w, [])
+        self.assertEqual(m.live_steps(cap, rollback=True), (
+            ["set-config board.conf ina22x_resistor 0.5e-3", "set-config board.conf ina22x_ov 0"], []))
+
+    def test_ina226_keys_differ(self):
+        cap = ("Conf '/littlefs/conf/converter.conf:topo' = 'buck'\n"
+               "Conf '/littlefs/conf/board.conf:ina22x_resistor' = '0.5e-3'\n"
+               "Conf '/littlefs/conf/sensor.conf:ina22x_resistor' = '1e-3'")
+        w = []
+        self.assertEqual(m.live_steps(cap, warnings=w), (
+            ["set-config sensor.conf ina22x_resistor 0.5e-3"], ["del-config board.conf ina22x_resistor"]))
+        self.assertEqual(len(w), 1)
+        self.assertIn("would fail setup", w[0])
+        self.assertIn("board.conf's 0.5e-3", w[0])
+        self.assertEqual(m.live_steps(cap, rollback=True), (
+            ["set-config board.conf ina22x_resistor 0.5e-3"], ["set-config sensor.conf ina22x_resistor 1e-3"]))
+
+    def test_ina226_keys_already_migrated(self):
+        cap = "Conf '/littlefs/conf/converter.conf:topo' = 'buck'\n" \
+            "Conf '/littlefs/conf/sensor.conf:ina22x_resistor' = '0.5e-3'\nConf '/littlefs/conf/board.conf:i2c_port' = '0'"
+        self.assertEqual(m.live_steps(cap), ([], []))
+
+    def test_step1_never_deletes_a_key_the_old_firmware_reads(self):
+        cap = ("Conf '/littlefs/conf/converter.conf:topo' = 'buck'\n"
+               "Conf '/littlefs/conf/board.conf:ina22x_resistor' = '0.5e-3'\n"
+               "Conf '/littlefs/conf/board.conf:panel_sd' = '40'\n"
+               "Conf '/littlefs/conf/sensor.conf:ina22x_resistor' = '0.5e-3'")
+        now, _ = m.live_steps(cap)
+        self.assertFalse([c for c in now if c.startswith("del-config board.conf")])
+
+    def test_equal_spellings_move_offline(self):
+        b, s, ch = m.move_lines("ina22x_resistor=0.5e-3\n", "ina22x_resistor=0.0005\n")
+        self.assertEqual((b, s, ch), ("", "ina22x_resistor=0.0005\n", [("ina22x_resistor", "0.5e-3")]))
 
     def test_backflow_rename_in_two_steps(self):
         cap = ("Conf '/littlefs/conf/board.conf:panel_sd' = '40'\n"

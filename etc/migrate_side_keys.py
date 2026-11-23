@@ -13,9 +13,9 @@ Mapping, by converter.conf topo (absent = buck, as the firmware reads it):
 Side current factors are positive HV->LV, so a boost's current *_factor changes sign. Every other
 key (ntc_*, vin_min, iout_short, p_max, charger.conf vout_max, ...) is left alone. Firmware that reads
 the INA226 keys from sensor.conf fails setup while board.conf still has one of them, unless
-sensor.conf holds the same value (then it only warns). Firmware that reads bflow_en/bflow_sd fails
-setup on a board.conf with panel_en/panel_sd but not its replacement; with both it warns and uses
-the new key.
+sensor.conf holds the same value (then it only warns); earlier firmware reads them only from
+board.conf. Firmware that reads bflow_en/bflow_sd fails setup on a board.conf with panel_en/panel_sd
+but not its replacement; with both it warns and uses the new key.
 
 Offline, rewrite conf directories in place (comments, order and inline comments are kept; already
 migrated files are left unchanged; a role key next to its own side key is refused; moved INA226 lines
@@ -27,11 +27,15 @@ Live board, still on the old firmware: capture the configs, then print the conso
   get-config converter.conf / get-config sensor.conf / get-config limits.conf / get-config board.conf
   -> save to board.log
   etc/migrate_side_keys.py live board.log [--topo buck|boost] [--rollback]
-Run the printed set-config/del-config lines over BLE or telnet, then OTA straight away: the old
-firmware keeps its sensors only until the next reboot. A board with panel_en/panel_sd gets two
-steps: the bflow_* set-config lines come first in step 1 (the old firmware ignores them), the
-del-config lines for panel_* are step 2, after the OTA, so either firmware finds its key across the
-reboot. --rollback prints the inverse sequence.
+Run the printed set-config/del-config lines over BLE or telnet, then OTA straight away: after role
+key deletes the old firmware keeps its sensors only until the next reboot (no config suits both
+firmwares there). The INA226 keys and panel_en/panel_sd get two steps: step 1, before the OTA, only
+adds the sensor.conf INA226 copies and the bflow_* keys, which the old firmware ignores; step 2,
+once the board runs the new image and bootinfo shows it VALID, deletes the board.conf INA226 keys
+and panel_*. Between the steps either firmware boots. An INA226 key whose sensor.conf value differs
+from board.conf is flagged (the new firmware would fail setup); step 1 overwrites it with the
+board.conf value, the one the old firmware uses. --rollback prints the inverse sequence for the
+same capture.
 """
 import argparse
 import re
@@ -143,24 +147,32 @@ def rewrite(file, text, boost):
     return "".join(out), changes
 
 
+def same_value(a, b):
+    """Equal as the firmware compares the INA226 keys (getFloat), e.g. 0.5e-3 == 0.0005."""
+    try:
+        return float(a) == float(b)
+    except ValueError:
+        return a == b
+
+
 def moves(board_kv, sensor_kv):
-    """[(key, value)] to move board.conf -> sensor.conf; a key in both is dropped from board.conf if equal."""
-    out = []
-    for k in MOVED_KEYS:
-        if k not in board_kv:
-            continue
-        if k in sensor_kv and sensor_kv[k] != board_kv[k]:
-            raise MigrationError(f"board.conf {k}={board_kv[k]} and sensor.conf {k}={sensor_kv[k]} differ; "
-                                 "delete the wrong one, then rerun")
-        out.append((k, board_kv[k]))
-    return out
+    """[(key, board value, sensor value or None)] for the MOVED_KEYS in board.conf."""
+    return [(k, board_kv[k], sensor_kv.get(k)) for k in MOVED_KEYS if k in board_kv]
+
+
+def differ_msg(k, bv, sv):
+    return f"board.conf {k}={bv} and sensor.conf {k}={sv} differ"
 
 
 def move_lines(board_text, sensor_text):
     """(board text, sensor text, [(key, value)]) with the MOVED_KEYS lines, commented-out ones too,
     cut from board.conf and appended to sensor.conf unless sensor.conf already has the key."""
     active = parse_conf(sensor_text)
-    changes = moves(parse_conf(board_text), active)
+    changes = []
+    for k, bv, sv in moves(parse_conf(board_text), active):
+        if sv is not None and not same_value(bv, sv):
+            raise MigrationError(differ_msg(k, bv, sv) + "; delete the wrong one, then rerun")
+        changes.append((k, bv))
     listed = {m["key"] for m in map(LINE.match, sensor_text.splitlines()) if m}
     keep, moved, cut = [], [], False
     for line in board_text.splitlines(keepends=True):
@@ -265,8 +277,10 @@ def parse_get_config(text):
     return files
 
 
-def live_steps(text, forced_topo=None, rollback=False):
-    """(step 1: before the OTA, step 2: after it) console commands."""
+def live_steps(text, forced_topo=None, rollback=False, warnings=None):
+    """(step 1: before the OTA, step 2: after it) console commands. Notes needing attention are
+    appended to `warnings` (a list) if given."""
+    warn = warnings.append if warnings is not None else lambda _: None
     files = parse_get_config(text)
     if not {"sensor.conf", "limits.conf", "board.conf"} & files.keys():
         raise MigrationError("no sensor.conf, limits.conf or board.conf lines in the get-config output")
@@ -281,16 +295,24 @@ def live_steps(text, forced_topo=None, rollback=False):
             if new not in board:
                 sets.append(f"set-config board.conf {new} {v}")
             after.append(f"del-config board.conf {old}")
+    # INA226 keys: the old firmware reads board.conf only, the new one sensor.conf and tolerates an
+    # equal board.conf copy. Deletes wait for step 2 so either firmware boots in between.
     sens = files.get("sensor.conf", {})
-    for k, v in moves(files.get("board.conf", {}), sens):
+    for k, v, sv in moves(board, sens):
+        differs = sv is not None and not same_value(v, sv)
         if rollback:
             sets.append(f"set-config board.conf {k} {v}")
-            if k not in sens:
-                dels.append(f"del-config sensor.conf {k}")
+            if sv is None:
+                after.append(f"del-config sensor.conf {k}")
+            elif differs:
+                after.append(f"set-config sensor.conf {k} {sv}")
         else:
-            if k not in sens:
+            if differs:
+                warn(f"{differ_msg(k, v, sv)}: the new firmware would fail setup. The old firmware uses "
+                     f"board.conf's {v}; step 1 sets sensor.conf to it. Check which value is right first.")
+            if sv is None or differs:
                 sets.append(f"set-config sensor.conf {k} {v}")
-            dels.append(f"del-config board.conf {k}")
+            after.append(f"del-config board.conf {k}")
     roles = [f for f in ("sensor.conf", "limits.conf") if f in files]
     boost = topo_of(files.get("converter.conf"), forced_topo) if roles else False
     for file in roles:
@@ -328,11 +350,15 @@ def main(argv=None):
     try:
         if args.mode == "live":
             text = sys.stdin.read() if args.log == "-" else Path(args.log).read_text()
-            now, after = live_steps(text, args.topo, args.rollback)
+            warnings = []
+            now, after = live_steps(text, args.topo, args.rollback, warnings)
             if after:
                 ota = "the downgrade" if args.rollback else "the OTA"
-                now = [f"# step 1: now, before {ota}"] + (now or ["# (nothing)"]) + [f"# step 2: after {ota}"] + after
-            print("\n".join(now) if now else "# nothing to migrate", flush=True)
+                now = ([f"# step 1: now, before {ota}"] + (now or ["# (nothing)"]) +
+                       [f"# step 2: after {ota}, once bootinfo shows that image VALID"] + after)
+            for w in warnings:
+                print(f"migrate_side_keys: WARNING: {w}", file=sys.stderr)
+            print("\n".join([f"# WARNING: {w}" for w in warnings] + now) if now else "# nothing to migrate", flush=True)
             return 0
         pending = False
         for d in args.dirs:

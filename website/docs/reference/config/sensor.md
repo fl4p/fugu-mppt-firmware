@@ -203,11 +203,16 @@ board.conf ina22x_resistor is no longer read, move it to sensor.conf
 ```
 
 `etc/migrate_side_keys.py` moves them as well. In a config directory it cuts the lines, with
-their comments, from `board.conf` and appends them to `sensor.conf`. For a live board, add
-`get-config board.conf` to the capture; the printed `set-config sensor.conf ...` lines come
-before the `del-config board.conf ...` lines. A key that is in both files with different values
-is refused.
+their comments, from `board.conf` and appends them to `sensor.conf`; a key that is in both files
+with different values is refused. For a live board, add `get-config board.conf` to the capture.
+The output has two steps:
 
-The `set-config sensor.conf ...` lines are harmless to earlier firmware, which does not read them.
-Running only those before the update and the `del-config` lines after it keeps the board working
-on either firmware.
+1. Before the update: `set-config sensor.conf ...` for each key that `sensor.conf` lacks or holds
+   with a different value. Earlier firmware reads these keys only from `board.conf` and ignores
+   the `sensor.conf` copy.
+2. After the update, once `bootinfo` shows the new image valid: `del-config board.conf ...`.
+
+Between the two steps both files hold the same value, so either firmware boots. Deleting the
+`board.conf` copy earlier would leave earlier firmware without its shunt value at the next reboot.
+A key whose `sensor.conf` value differs from `board.conf` is printed as a warning; step 1 sets it
+to the `board.conf` value, the one earlier firmware uses, so check which value is right first.
