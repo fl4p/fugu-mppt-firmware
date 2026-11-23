@@ -7,25 +7,10 @@
 
 #include "../logging.h"   // set_logging_telnet
 #include "../etc/version.h"
+#include "../console.h"
 #include "telemetry.h"    // getHostname, handleCommand
 
 extern time_us lastTimeOutUs;
-
-void telnetDispatchCommandAsync(const char *line) {
-    // Defer to loopNetwork_task (where process_queued_tasks runs). Running handleCommand inline
-    // inside the ESPTelnet input callback lets a teardown command (wifi off, svc off telnet,
-    // restart) stop/destroy this same ESPTelnet from within its own callback -> UAF. Mirror the
-    // MQTT cmd_input path. The OK/ERR confirmation rides the log mux (telnet is a sink via
-    // set_logging_telnet), so the deferred task no longer touches the telnet object.
-    std::string cmd(line);
-    enqueue_task([cmd]() {
-        String inp(cmd.c_str());
-        inp.trim();
-        if (!inp.length()) return;
-        const auto t0 = esp_timer_get_time();
-        logCmdResult(handleCommand(inp), inp.c_str(), t0);
-    });
-}
 
 void TelnetService::closeConnection() {
     if (telnet.isConnected()) {
@@ -71,7 +56,7 @@ bool TelnetService::setupTelnet() {
             t.flush();
             t.disconnectClient();
         } else {
-            telnetDispatchCommandAsync(str.c_str());
+            consoleDispatchAsync(str.c_str(), str.length());
         }
     });
 

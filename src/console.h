@@ -32,6 +32,10 @@ void loopConsole(ConsoleLine &ln, int read(char *buf, size_t len), int write(con
 extern void (*consoleFlushHook)();
 void consoleFlush();
 
+// Queue one command line for handleCommand() on loopNetwork_task (process_queued_tasks), not inline in
+// the transport's receive callback: a teardown command would destroy the transport under itself.
+void consoleDispatchAsync(const char *line, size_t len);
+
 extern time_us lastTimeOutUs;
 
 

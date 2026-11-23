@@ -2,8 +2,8 @@
 //   #7  src/util.cpp::strntof()  — out-of-bounds read on an empty (len==0) payload.
 //   #8  src/storage/key-value.h::KeyValueStorage::readString() — abort/boot-loop on a value
 //        longer than the old fixed 64-byte buffer.
-//   #9  src/tele/telnet_service.cpp — telnet commands must be DEFERRED (enqueue_task), not run
-//        inline inside the ESPTelnet input callback (UAF when the command tears down the transport).
+//   #9  src/console.cpp::consoleDispatchAsync — network console commands must be DEFERRED
+//        (enqueue_task), not run inline in the transport callback (UAF when the command tears it down).
 
 #include <unity.h>
 #include <Arduino.h>
@@ -15,8 +15,7 @@
 #include "logging.h"         // enqueue_task, process_queued_tasks
 #include "storage/key-value.h"
 
-// telnet_service.cpp; forward-declared to avoid pulling ESPTelnet.h into this TU.
-void telnetDispatchCommandAsync(const char *line);
+#include "console.h"           // consoleDispatchAsync
 
 // Owned by test/main.cpp (the instrumented handleCommand stub).
 extern int g_handleCommandCalls;
@@ -81,7 +80,7 @@ void test_telnet_command_is_deferred_then_runs_on_drain() {
     process_queued_tasks();             // drain anything left by earlier tests
     int before = g_handleCommandCalls;
 
-    telnetDispatchCommandAsync("status");
+    consoleDispatchAsync("status", 6);
     // The whole point of the UAF fix: handleCommand must NOT have run inline.
     TEST_ASSERT_EQUAL_INT(before, g_handleCommandCalls);
 
@@ -94,7 +93,7 @@ void test_telnet_command_is_deferred_then_runs_on_drain() {
 void test_telnet_blank_command_is_dropped() {
     process_queued_tasks();
     int before = g_handleCommandCalls;
-    telnetDispatchCommandAsync("   ");  // trims to empty -> skipped, never reaches handleCommand
+    consoleDispatchAsync("   ", 3);  // trims to empty -> skipped, never reaches handleCommand
     process_queued_tasks();
     TEST_ASSERT_EQUAL_INT(before, g_handleCommandCalls);
 }

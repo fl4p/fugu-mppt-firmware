@@ -31,7 +31,9 @@
 #if WITH_HTTP_CONF
 #include "tele/http_conf_service.h"
 #endif
+#if WITH_TELNET
 #include "tele/telnet_service.h"
+#endif
 #include "tele/telemetry_service.h"
 #if WITH_HA
 #include "tele/home_assistant.h"
@@ -398,7 +400,9 @@ static void registerServices() {
 #if WITH_HTTP_CONF
     g_services.registerService(&httpConfService);
 #endif
+#if WITH_TELNET
     g_services.registerService(&telnetService);
+#endif
 #endif
     g_services.registerService(&lcdService);
 #if WITH_SCOPE
@@ -1972,7 +1976,7 @@ static void loopNetwork_task(void *arg) {
 // Give the telnet client a chance to drain a FIN before we wipe the stack. stopAll() would slam
 // the socket shut, so do this ahead of it.
 static void restartCloseTelnet() {
-#ifdef WITH_NETW
+#if WITH_TELNET
     telnetService.beginClose();
     for (int i = 0; i < 200 && telnetService.closePending(); ++i) delay(10);
 #endif

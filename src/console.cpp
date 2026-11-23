@@ -2,6 +2,8 @@
 #include <Arduino.h>
 
 #include <esp_pm.h>
+#include <new>
+#include <string>
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG || CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
 #include <hal/usb_serial_jtag_ll.h>
 #endif
@@ -43,6 +45,20 @@ bool handleCommand(const String &inp);
 void (*consoleFlushHook)() = nullptr;
 
 void consoleFlush() { if (consoleFlushHook) consoleFlushHook(); }
+
+void consoleDispatchAsync(const char *line, size_t len) {
+    try {
+        enqueue_task([cmd = std::string(line, len)]() {
+            String inp(cmd.c_str());
+            inp.trim();
+            if (!inp.length()) return;
+            const auto t0 = esp_timer_get_time();
+            logCmdResult(handleCommand(inp), inp.c_str(), t0);
+        });
+    } catch (const std::bad_alloc &) {
+        ESP_LOGW("console", "cmd dropped (OOM)");
+    }
+}
 
 static constexpr auto uartPortNum = UART_NUM_0;
 

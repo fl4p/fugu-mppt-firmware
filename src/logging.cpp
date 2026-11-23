@@ -4,7 +4,10 @@
 #include <cstring>
 #include <esp_attr.h>
 #include <new>
+#include <Arduino.h>
+#if WITH_TELNET
 #include <ESPTelnet.h>
+#endif
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>   // pcTaskGetName (wifi-task bypass in vprintf_)
 #include <esp_timer.h>
@@ -123,7 +126,11 @@ struct RtLogLine {
 };
 static MpscRing<RtLogLine, 16> s_rtLog;
 
+#if WITH_TELNET
 ESPTelnet *log_telnet = nullptr;
+#else
+static constexpr bool log_telnet = false;
+#endif
 
 // Up to kMaxLogCallbacks sinks. Registered from the MQTT/BLE tasks, iterated from any core-0
 // logging context (vprintf_mux) + the network loop (flush). logCbMux guards the array; readers
@@ -426,7 +433,9 @@ void flush_async_uart_log() {
         const char *str = s_out + off;
         const uint16_t len = s_len[i];
         printf_old("%s", str); // str is data, not a format string (it may contain %)
+#if WITH_TELNET
         if (log_telnet) log_telnet->write((uint8_t *) str, len);
+#endif
         LogCallback cbs[kMaxLogCallbacks];
         const int ncb = snapshotLogCallbacks(cbs);
         for (int k = 0; k < ncb; ++k) cbs[k](str, len);
@@ -478,7 +487,9 @@ static int vprintf_mux(const char *fmt, va_list argptr) {
     printf_old("%s", buf); // UART/JTAG console (always)
 
     if (log_telnet or logCallbackCount or s_bootLogOpen) {
+#if WITH_TELNET
         if (log_telnet) log_telnet->write((uint8_t *) buf, l);
+#endif
         LogCallback cbs[kMaxLogCallbacks];
         int n = snapshotLogCallbacks(cbs);
         for (int i = 0; i < n; ++i) cbs[i](buf, l);
@@ -514,6 +525,7 @@ void logCmdResult(bool ok, const char *cmd, int64_t startUs) {
     else UART_LOG("%s: %s", ok ? "OK" : "ERR", cmd);
 }
 
+#if WITH_TELNET
 void set_logging_telnet(ESPTelnet *telnet) {
     if (telnet && !log_telnet) {
         char r[sizeof(s_retain)];
@@ -522,6 +534,7 @@ void set_logging_telnet(ESPTelnet *telnet) {
     log_telnet = telnet;
     ESP_LOGI("log", "%s telnet logging", telnet ? "Enabled" : "Disabled");
 }
+#endif
 
 void enable_esp_log_to_telnet() {
     // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/log.html

@@ -128,6 +128,13 @@ config FUGU_WITH_NETTOOLS
         console commands. Debug tools — they reuse the WiFi/HTTP/lwip stack already linked by
         NETW. https:// URLs need FUGU_WITH_HTTPS.
 
+config FUGU_WITH_TELNET
+    bool "Telnet console (telnet service, TCP port 23, no authentication)"
+    default y
+    help
+        Plaintext console and log sink on TCP port 23. Anyone on the network can run any
+        command. The service starts only with telnet.conf enabled=1.
+
 config FUGU_WITH_SCOPE
     bool "ADC scope streamer (scope service, TCP port 24)"
     default y

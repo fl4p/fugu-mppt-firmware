@@ -36,7 +36,8 @@ restart
 
 Builds with `CONFIG_FUGU_WITH_IMPROV` (on by default) offer [Improv Wi-Fi](https://www.improv-wifi.com/) next to the
 BLE console, so a phone can send the credentials. It needs the `ble` service running (`svc on ble`, see
-[BLE](#ble)).
+[BLE](#ble)). A negative `wifi.conf::improv_offline_s` (e.g. `-1`) turns Improv off: the device then creates no
+Improv service and saves its heap. The setting is read when BLE starts, so restart after changing it.
 
 Two clients support it:
 
@@ -67,7 +68,7 @@ Each transport has its own requirements on the device and its own client flags:
 | Transport | Device side | Client flags |
 |---|---|---|
 | Serial | UART0 at 115200 baud; on ESP32-S3 also the USB-Serial-JTAG port | `-p PORT` (default `$ESPPORT`, else the first matching `/dev/cu.usbmodem*`, `/dev/ttyUSB*`, `/dev/ttyACM*`, …), `-b BAUD` |
-| Telnet | Wi-Fi up, `telnet` service running, TCP port 23, one client at a time | `--ip HOST[:PORT]` |
+| Telnet | `CONFIG_FUGU_WITH_TELNET` build, Wi-Fi up, `telnet` service running (off by default), TCP port 23, one client at a time | `--ip HOST[:PORT]` |
 | BLE | `CONFIG_FUGU_WITH_BLE` build and the `ble` service running (off by default) | `--ble [NAME]`, `--name`, `--address`, `--adapter hciN` (Linux) |
 | BLE via ESPHome proxy | same as BLE, reached through an ESPHome `bluetooth_proxy` | `--ble-proxy HOST[:PORT]` (default port 6053), `--proxy-password` |
 | MQTT | `mqtt.conf::broker_uri` set; `cmd_input=1` to accept commands | `--mqtt BROKER`, `--mqtt-port`, `--mqtt-user`, `--mqtt-pass`, `--mqtt-readonly`, `--name` |
@@ -96,10 +97,12 @@ telnet <device-ip>                                 # any telnet client works
 ```
 
 The server accepts one client at a time and asks for no password. Terminate commands with `\n`. The
-`telnet` service is enabled by default. See [Services](../reference/services.md).
+`telnet` service is off by default; enable it with `svc on telnet` over another console. See
+[Services](../reference/services.md) and [`telnet.conf`](../reference/config/telnet.md).
 
 :::warning
-Telnet is unauthenticated. Only enable it on networks you trust.
+Telnet is unauthenticated and unencrypted: anyone on the network can run any command, including `ota`. Only
+enable it on networks you trust.
 :::
 
 ### BLE

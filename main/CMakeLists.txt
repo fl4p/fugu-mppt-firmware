@@ -50,7 +50,6 @@ endif ()
 
 set(NETW_SRC
         "../src/tele/telemetry.cpp"
-        "../src/tele/telnet_service.cpp"
         "../src/tele/mqtt.cpp"
         "../src/etc/ota.cpp"
 )
@@ -66,6 +65,9 @@ endif ()
 
 if (NOT WITH_NETW)
     set(NETW_SRC "")
+endif ()
+if (CONFIG_FUGU_WITH_TELNET)
+    list(APPEND NETW_SRC "../src/tele/telnet_service.cpp")
 endif ()
 if (CONFIG_FUGU_WITH_SCOPE)
     list(APPEND NETW_SRC "../src/tele/scope_service.cpp")
@@ -177,6 +179,9 @@ endif ()
 # CONFIG_FUGU_WITH_NETTOOLS (default n, depends on NETW) compiles the `curl`/`ping` console commands.
 if (CONFIG_FUGU_WITH_NETTOOLS)
     component_compile_definitions("WITH_NETTOOLS=1")
+endif ()
+if (CONFIG_FUGU_WITH_TELNET)
+    component_compile_definitions("WITH_TELNET=1")
 endif ()
 if (CONFIG_FUGU_WITH_SCOPE)
     component_compile_definitions("WITH_SCOPE=1")

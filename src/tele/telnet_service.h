@@ -1,9 +1,9 @@
 #pragma once
 
-// TelnetService: remote console on port 23 while Wi-Fi is up. The telnet client also doubles as a
-// log sink, so onStop() drops that sink before the server dies. Owns the ESPTelnet object, its
-// event handlers and lifecycle (implemented in telnet_service.cpp); no dependency on the main.cpp
-// globals.
+// TelnetService: unauthenticated plaintext console on port 23 while Wi-Fi is up, off unless
+// telnet.conf enabled=1. The telnet client also doubles as a log sink, so onStop() drops that
+// sink before the server dies. Owns the ESPTelnet object, its event handlers and lifecycle
+// (implemented in telnet_service.cpp); no dependency on the main.cpp globals.
 
 #include <ESPTelnet.h>
 
@@ -11,7 +11,7 @@
 
 class TelnetService : public Service {
 public:
-    TelnetService() : Service("telnet", "/littlefs/conf/telnet.conf", /*requiresNetwork*/ true) {
+    TelnetService() : Service("telnet", "/littlefs/conf/telnet.conf", /*requiresNetwork*/ true, /*enabledDefault*/ false) {
     }
 
     [[nodiscard]] std::string statusDetail() const override {
@@ -50,7 +50,3 @@ private:
 
 inline TelnetService telnetService;
 
-// Enqueue a telnet command line for deferred execution on loopNetwork_task (process_queued_tasks),
-// rather than running handleCommand inline inside the ESPTelnet input callback (UAF on teardown
-// commands). Implemented in telnet_service.cpp; exposed for the defer-not-inline regression test.
-void telnetDispatchCommandAsync(const char *line);
