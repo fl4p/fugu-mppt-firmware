@@ -1,225 +1,185 @@
-> **Moved and outdated.** This is the old version of this note, kept for existing links. Its field values and
-> `rect_offset` model are superseded, and `InductivityDcBias` is now a 0.95 multiplier. The maintained version is [Diode Emulation](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/diode-emulation) ([source](../website/docs/internals/diode-emulation.md)).
+> Original note (March 2025). The maintained, extended version is [Diode Emulation](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/diode-emulation/).
 
 # Nomenclature
 
 ```
-HS:    high-side switch
-LS:    low-side switch
-cntrl: control switch        — HS in buck,  LS in boost
-rect:  rectification switch  — LS in buck,  HS in boost
+HS: high-side switch
+LS: low-side swith
+cntrl switch: control switch (buck: HS, boost: LS)
+rect switch: synchrounous rectification switch (buck: LS, boost: HS)
 ```
 
-# Diode emulation
+# Diode Emulation
 
-The rectifier switch (LS in a buck) can be left off and the coil-discharge current will
-flow through its body diode. The converter then operates non-synchronously: trivial to
-control, but you pay the body-diode `V_f` loss every cycle.
+We can leave the Low-Side switch (LS, aka *sync-FET*, *synchronous
+rectifier*) off and the coil discharge current will flow through the LS
+MOSFET´s body diode. The buck converter then operates in non-synchronous
+mode, which is much easier to implement with the cost of lower
+conversion efficiency.
 
-Synchronous operation turns the rect switch on for the window the body diode would
-otherwise conduct, shorting it out and removing the `V_f` loss. The cost is that the
-on-time has to be *right*: too long and the inductor current reverses (forced PWM —
-charge flows back from output to input); too short and the body diode picks up the
-remainder (small `V_f` loss, no danger).
+In CCM (Continuous conduction mode), switching the LS is trivial. DC
+bias current is higher than half the ripple current, so we just keep LS
+on while HS is off. Notice that the LS body diode conducts during driver
+dead times. The inductor is permanently energized and the duty cycle D equals conversion ratio M (=Vo/Vi).
 
-**Diode emulation** in this firmware is the sensor-less computation of that on-time. In
-CCM it is just `(1 − D)/f_sw`. In DCM it depends on the conversion ratio `M = V_o/V_i`.
+In DCM, e.g. during light load conditions, we must take care about LS
+switching times. Conversion ratio is:
 
-The alternative is a current sensor with hardware zero-cross detection (analog
-comparator into the gate driver `DIS`/`EN` pin, or fast ADC with µs-scale latency).
-This board doesn't have one, hence the sensor-less approach below.
+$$M_{DCM} = \frac{2}{ 1 + \sqrt{1+4R_e/R} }$$
 
-## CCM / DCM decision
+Where R is the load resistance and Re is the effective input resistance
+of the converter:
 
-The converter is in DCM whenever half the ripple current exceeds the dc output current:
+$$R_e = \frac{2L\cdot f_{sw}}{ D^2 }$$
+
+For more details refer to Fundamentals of Power Electronics, Third
+Edition, pages 145, 597. Here it is sufficient to understand that in DCM
+conversion ratio M does not equal duty cycle D.
+
+## Inductor Current Zero Cross Detection
+
+We can use a current sensor with zero cross detection (ZCD) to disable
+the LS as soon as coil current becomes zero. A digital ZCD
+implementation requires an ADC sampling rate much higher than the
+switching frequency for accurate timing (such as the dsPIC33CK64MC105).
+
+An analog ZCD works with a fast comparator, whose output can be fed into
+the half bridge driver to `DIS` (or `SD`, `EN*`) input.
+
+With the current sensor measuring coil current, we can add another comparator
+to implement peak current limiting. This prevents excessive currents when inductor core starts to saturate and the
+ac ripple current waveform becomes spiky (
+see [MPS article, Figure 7](https://www.monolithicpower.com/en/learning/resources/power-losses-in-buck-converters-and-how-to-increase-efficiency)).
+Once the current threshold is
+reached, we shut down the ctrl switch and after the chosen dead-time
+enable the sync switch. The analog signal path garantues very fast
+shut-down in over-load and short-circuit conditions.
+
+<https://www.monolithicpower.com/en/learning/resources/power-losses-in-buck-converters-and-how-to-increase-efficiency>
+
+## Sensor-less approach
+
+In a sensor-less approach we model coil current over time and shut the
+LS off when we expect the coil current to be near zero. Turning the LS
+off too early will increase power loss of the LS body diode. Turning off
+to late puts the converter into Forced-PWM mode with reverse current
+flow, which decreases efficiency as well.
+
+### DCM or CCM
+
+First, we need to check if converter operating condition requires DCM.
+The converter is in DCM if half the ripple current is larger than dc
+output current:
 
 $$\frac{\Delta I_L}{2} > I_o$$
 
-For a buck:
+We compute the inductor ripple current:
 
-$$\Delta I_L = \frac{V_o}{f_{sw} \cdot L} \cdot \left(1 - \frac{V_o}{V_i}\right)$$
+$$\Delta I_L = \frac{V_o}{f_{sw} \cdot L(I_o)} \cdot (1 - V_o/V_i)$$
 
-`L` depends on dc bias current: powder cores droop with `H`. With `N` turns and effective
-magnetic path length `l_e`,
+Notice that inductivity L here depends on I_o. For powder core
+materials, permeability drops with increasing dc bias current. We
+neglect frequency and temperature dependency, as it is usually low. With
+dc coil current, number of turns N and magnetic path length l_e we
+compute the dc magnetization force:
 
-$$H_{dc} = \frac{N \cdot I_o}{l_e}, \qquad L(I_o) = \frac{\\%\mu_i(H_{dc})}{\mu_i} \cdot L_0$$
+$$H_{dc} = \frac{N}{l_e} \cdot I_o$$
 
-Implementing the full `%μ(H)` model needs the core datasheet and a per-board geometry
-table. The firmware instead uses a flat margin: `L = L_0 · (1 − InductivityDcBias)`,
-default `InductivityDcBias = 0.05` (5%). This is adequate because (a) the CCM/DCM
-boundary region is narrow in normal operation, (b) the saturation curve of well-chosen
-powder cores is flat through that region, and (c) the dc margin in CCM at high power is
-much larger than the ripple, so a few-percent `L` error doesn't shift the boundary far.
-`L_0` is per board (`coil.conf::L0`); `etc/measure_coil.py` measures it.
+With the value of the H-field we can compute the permeability and
+inductivity drop with the model from the materials\'s datasheet
+( $\\%\mu _i( H )$ ).
 
-The DCM conversion ratio (Erickson, *Fundamentals of Power Electronics*, 3e, pp. 145,
-597) is
+$$L(I_o) = \frac{\\%\mu _i(H_dc)}{\mu _i} \cdot L_0$$
 
-$$M_{DCM} = \frac{2}{1 + \sqrt{1 + 4 R_e / R}}, \qquad R_e = \frac{2 L \cdot f_{sw}}{D^2}$$
+With the DC-biased inductivity value we compute ripple current and
+decide if the converter is in DCM.
 
-where `R` is the load. The firmware doesn't use `M_DCM` directly — it measures `V_o` and
-`V_i` — but the formula matters for understanding that in DCM `M ≠ D`.
+Besides inductivity value L, this approach needs the number of winding
+turns, the magnet path length of the core and the dc bias model of the
+core material. Simulations show that there is a rather small
+operating range where the converter would operate in DCM with L(I_o),
+but in CCM with L0. For reduced complexity of the implementation, we can
+just assume a fixed inductivity drop of 5%. This works for well-designed inductors with moderate ripple factor around
+0.3, because powder core DC saturation curve tends to be rather flat during the CCM/DCM transition point and the dc
+margin is sufficiently higher than ripple current during higher condition in CCM. A simplified model would assume a
+linear L(I_o), such as 0.1 Imax => 10% drop. An analytic inference still needs to be done.
 
-## DCM rectifier on-time
+If we find the converter to be in DCM, we compute LS on-time as follows.
 
-During HS conduction the inductor sees `V_i − V_o`, so starting from zero,
+### DCM Rectifier timing
 
-$$I_L(t) = \frac{V_i - V_o}{L} \cdot t, \qquad I_{L,\mathrm{peak}} = \frac{V_i - V_o}{L} \cdot t_{on,HS}$$
+During HS on-time ($0<t<t_{on,HS}$), coil current rises:
 
-During rect conduction the inductor sees `−V_o` and the current falls linearly. Solving
-for the time it takes to reach zero,
+$$I_L(t) = \frac{1}{L} \int_{0}^{t} V_i-V_o \,dt$$
 
-$$0 = I_{L,\mathrm{peak}} - \frac{V_o}{L} \cdot t_{on,LS}$$
+We calculate the peak inductor current:
 
-$$\boxed{\; t_{on,LS} = t_{on,HS} \cdot \left(\frac{V_i}{V_o} - 1\right) = t_{on,HS} \cdot \left(\frac{1}{M} - 1\right) \;}$$
+$$I_{L,max} = I_L(t_{on,HS}) = \frac{1}{L} (V_i-V_o) \cdot t_{on,HS}$$
 
-With `t_{on,HS} = D / f_{sw}`,
+During LS conduction ($t_{on,HS}<t<t_{on,HS}+t_{on,LS}$), the inductor
+current falls:
 
-$$t_{on,LS,\mathrm{DCM}} = \frac{D}{f_{sw}} \cdot \left(\frac{1}{M} - 1\right)$$
+$$I_L(t) = I_{L,max} - \frac{1}{L} (V_o) \cdot (t- t_{on,HS})$$
 
-**`L` cancels.** Any error in the inductance model only affects whether we *think* we're
-in DCM (the boundary check above), not the rect on-time itself. This is the load-bearing
-property — voltage measurements set the timing; inductance just sets the regime.
+Now we want to find $t_{on,LS}$ when the current becomes zero for given
+$t_{on,HS}, V_i, V_o$:
 
-Setting `M = D` (the CCM identity) recovers the CCM formula:
+$$0 \stackrel{!}{=} I_{L,max} - \frac{1}{L} (V_o) \cdot t_{on,LS}$$
 
-$$t_{on,LS,\mathrm{CCM}} = \frac{1 - D}{f_{sw}}$$
+Which results:
 
-## Sensitivity to voltage measurement error
+$$t_{on,LS} = t_{on,HS} \cdot (\frac{V_i}{V_o} - 1) = t_{on,HS} \cdot (\frac{1}{M} - 1)$$
 
-`M = V_o / V_i`. With independent fractional errors `ε_i` on `V_i` and `ε_o` on `V_o`,
-the relative error in `M` is
+$$t_{on,LS,DCM} = \frac{D}{f_{sw}} \cdot (\frac{1}{M} - 1)$$
 
-$$\frac{\Delta M}{M} \approx \varepsilon_o - \varepsilon_i$$
+With $t_{on,HS} = \frac{D}{f_{sw}}$:
 
-The rect on-time depends on `M` through `1/M − 1`. Its sensitivity is
+$$t_{on,LS,DCM} = $$t_{on,HS} \cdot (\frac{1}{M} - 1)$$
 
-$$\frac{\Delta t_{on,LS}}{t_{on,LS}} = -\frac{1}{1 - M} \cdot \frac{\Delta M}{M}$$
 
-So:
 
-| operating point | 2% M-error → t_on,LS error |
-|-----------------|----------------------------|
-| `M = 0.5`       | 4%                         |
-| `M = 0.8`       | 10%                        |
-| `M = 0.9`       | 20%                        |
-| `M = 0.95`      | 40%                        |
+Notice that if we set M = D, as in CCM, this equation becomes equal to
+the CCM case:
 
-The sensitivity blows up as `M → 1` (low `V_i − V_o`, where the falling slope `V_o/L` is
-much steeper than the rising slope and small mistakes in the rising-slope estimate get
-amplified). The controller needs a wider margin at high `M` — better to turn LS off
-*slightly early* (pay a tiny body-diode `V_f` loss) than late (reverse current).
+$$t_{on,LS,CCM} = \frac{1-D}{f_sw}$$
 
-## Hardware delay (`rect_offset_ns`)
+Takeaways
 
-The formula above gives the *ideal* zero-crossing time. In hardware a constant delay
-sits between the commanded LS-off count and the moment the FET actually stops
-conducting: gate-driver propagation, FET turn-off, switch-node decay. This delay is
+- In CCM low-side switching time is simply (1-D)/f_sw
+- whether converter operates in CCM / DCM depends on load conditions
+  and (dc-biased) inductivity
+- In DCM low-side switching time depends on conversion ratio M and
+  duty cycle D
+- Switching LS too long causes reverse coil current and might turn the
+  buck converter into a (reversed) boost converter
+- Switching time ratio of HS and LS is independent of inductivity value
 
-- **per board** — gate driver part, FET selection, layout parasitics;
-- **independent of `M`** — it's a fixed propagation time, not a ratio;
-- **independent of `L`** — same reason the ideal time was;
-- **a fixed time** — nanoseconds, set by the gate-drive circuit and MOSFET, not by the PWM.
+### Error Considerations
 
-Because it's a fixed *time*, it's stored in `coil.conf::rect_offset_ns` as **nanoseconds**
-and converted to counts at boot (`ns·1e-9·fsw·pwmMax`, the same tick-rate basis as
-`boot_refresh_ns`); `>0` = LS off later, toward the zero crossing. Storing the time, not
-counts, makes the calibration **invariant to the PWM resolution and `pwm_freq`** — the
-same physical delay maps to the right count on any driver. (Concretely: at the LEDC-equivalent
-2048 counts/period at 39 kHz one count ≈ 12.5 ns, while MCPWM `bestTiming` gives ~4103
-counts/period from a 160 MHz source clock, ≈ 6.25 ns/count — so a fixed delay would *double*
-in counts between the two, which is exactly the breakage the ns form avoids.)
+The converter measures V_in and V_out with an ADC. Noise, temperature
+drift and non-linearity cause voltage errors. This affects the value for
+M and finally the rectification on time.
 
-### Measuring it
+Let assume two extreme cases for the voltage measurements: V_in is +1%
+of the actual value, V_out -1%: we will get an M which is around -2%
+below the actual value ( precisely $0.99/1.01≈0.98$ ). Rectification time is reciprocal to M and
+this will cause a +4% error rectification on time at D=0.5. If we double
+the voltage error, we get approximately double the error for
+rectification time. Longer rectification time will cause reverse current
+flow and additional loss (it can reduce ripple voltage, refer to forced
+PWM or FPWM)
 
-Hold a steep-edge HS duty in DCM and sweep LS on-time up from zero. `I_out`
+If we measure V_out with -1% error and V_out +1%, the rectification time
+will be 4% too short.
 
-1. **rises** as LS replaces the body diode (recovering the `V_f` loss);
-2. **peaks** when LS turns off exactly at the zero crossing (clean ideal triangle);
-3. **falls** as LS is held past zero and reverse current starts.
+# Boost Converter
 
-```
- Iout                      peak = LS off exactly at i_L=0  (clean ideal triangle)
-   |                       .--''''--.
-   |                  .--''          ''--.
-   |              .-''                    ''-.        reverse current:
-   | body-diode .-'                          '-.     LS held past zero,
-   |  only   _.-'                                '   i_L goes negative,
-   |     _.-'                                         charge pulled back
-   +----+-----------------------+-------------------> LS on-time (counts)
-      LS=0                  t_on,LS = (1/M - 1) * t_on,HS
-   (Vf loss, low Iout)         = rectCtrlRatio(M) * pwmCtrl
-```
+$$M_{CCM} = \frac{1}{1-D}$$
 
-The body-diode side is a broad plateau — turning LS off early just hands conduction
-back to the diode, a small `V_f` loss, no cliff. The informative feature is the sharp
-reverse-current edge just past the peak. The offset between the peak and the firmware's
-predicted point `rectCtrlRatio(M)·pwmCtrl` is the hardware offset.
+$$t_{on,HS} = t_{on,LS} \cdot \frac{1}{M - 1}$$
 
-`measure-coil ls [hs]` (on-device) or `etc/measure_coil.py --ls-sweep --hs N` brackets the
-peak. `--apply` computes `peak − ideal − --apply-margin` (default 12 counts), converts it to
-time, and writes `coil.conf::rect_offset_ns`. Use
-a steep-edge HS where the peak is genuinely locatable; flat plateaus yield no reliable
-peak. Field values: `fry` +100, `flat` +57 counts (at LEDC 12.5 ns/tick) — different
-boards, different gate-driver / FET combinations, as expected for an `L`- and
-`M`-independent constant.
-
-## Failure modes at the LS boundary
-
-```
-   I_L ▲
-       │      ▲ I_peak
-       │     ╱╲
-       │    ╱  ╲
-       │   ╱    ╲                     ideal: LS off exactly at ZC
-       │  ╱      ╲                    — clean triangle, no V_f loss,
-       │ ╱        ╲                     no reverse current
-       │╱          ╲
-     0 ●────────────●────────●─────▶ t
-       │             ╲      ╱
-       │              ╲    ╱   ◄── reverse current
-       │               ╲  ╱        (slope = −V_o/L
-       │                ╲╱          continues through 0)
-       │                 ●
-       │← HS →│←── LS ──→│
-```
-
-```
-   I_L ▲
-       │            ▲ I_peak
-       │           ╱╲
-       │          ╱  ╲
-       │         ╱    ╲
-       │        ╱      ╲
-       │       ╱        ╲ ◄── LS opens early
-       │      ╱          ╲╲
-       │     ╱            ╲╲   ◄── body diode picks up
-       │    ╱              ╲╲       remaining I_L (V_f loss)
-     0 ┼───●────────────────●●●────────────▶ t
-       │
-       │←── HS on ──→│ LS on │diode│  idle  │
-                     (short)
-```
-
-Late: reverse current. Output charge is pulled back toward the input through the rect
-switch — efficiency loss plus an anti-boost effect that can lift `V_in`.
-
-Early: body diode conducts the remainder. Pure `V_f · I` loss, bounded, no instability.
-
-The asymmetry is why the controller always biases toward the safe (early) side and why
-`rect_offset_ns` is applied with a margin.
-
-# Boost converter
-
-The roles flip — control switch is LS, rectifier is HS — but the derivation is the same.
-
-$$M_{CCM} = \frac{1}{1 - D}$$
-
-$$t_{on,HS} = t_{on,LS} \cdot \frac{1}{M - 1} = \frac{D}{f_{sw}} \cdot \frac{1}{M - 1}$$
-
-where `D` is now the LS (control) duty. Same `L`-cancellation, same `M → 1` sensitivity
-blow-up at the high-step-up corner.
+$$t_{on,HS} = \frac{D}{f_{sw}} \cdot \frac{1}{M - 1}$$
 
 References
 
-- Erickson, Maksimović. *Fundamentals of Power Electronics*, 3rd ed., ch. 5 and 15.
+- Fundamentals of Power Electronics, chapters 5 and 15

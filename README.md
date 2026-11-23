@@ -29,9 +29,9 @@ Highlights:
 * Telemetry to InfluxDB over UDP
 * LCD (hd44780) and WS2812B RGB LED driver
 * Configuration files on flash file system (littlefs)
-* [Serial UART console](website/docs/reference/console.md) and telnet to interact with the charger
+* [Serial UART console](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/console/) and telnet to interact with the charger
 * MQTT support to communicate with the BMS and Home Assistant
-* ADC abstraction layer with implementations for ESP32(S3) [Internal ADC](website/docs/guide/hardware/internal-adc.md), ADS1x15 and
+* ADC abstraction layer with implementations for ESP32(S3) [Internal ADC](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/hardware/internal-adc/), ADS1x15 and
   INA226/INA228
 * Async ADC sampling for low latency control loop (<900µs in-out latency)
 * Automatic zero-current calibration
@@ -104,7 +104,7 @@ Build-time features are Kconfig options (`CONFIG_FUGU_WITH_*`, under **"Fugu MPP
 | `CONFIG_FUGU_WITH_NETW`     |     on  | WiFi, mDNS, MQTT, telemetry (UDP/InfluxDB), HTTPS OTA, certificates, web server, FTP, telnet. Turn off to strip all of them — saves ~700 KB; BLE console and BLE OTA remain. Layers in `sdkconfig.no_netw` when off. |
 | `CONFIG_FUGU_WITH_NETTOOLS` |    off  | Network debug console commands: `curl` (HTTPS via the cert bundle), `ping`, `nslookup`/`resolve`, `tcpconnect`/`probe`, `netstat`/`ifconfig`. Depends on `CONFIG_FUGU_WITH_NETW`. |
 | `CONFIG_FUGU_WITH_BLE`      |     on  | NimBLE NUS console (`BleConsoleService`) and BLE OTA push (`ota-ble` command). `select`s `BT_ENABLED`; the NimBLE host + radio/thermal tunings live in `sdkconfig.ble` (layered when on). Costs ~250 KB.                 |
-| `FUGU_GATE_DRIVER` (choice) | MCPWM | Gate driver, one per build: `CONFIG_FUGU_WITH_MCPWM` (hardware dead-time, GPIO OST brake, glitch-free comparator updates; default), `CONFIG_FUGU_GATE_LEDC` (default on classic ESP32) or `CONFIG_FUGU_WITH_VCONV`. See [`website/docs/internals/pwm-drivers.md`](website/docs/internals/pwm-drivers.md). |
+| `FUGU_GATE_DRIVER` (choice) | MCPWM | Gate driver, one per build: `CONFIG_FUGU_WITH_MCPWM` (hardware dead-time, GPIO OST brake, glitch-free comparator updates; default), `CONFIG_FUGU_GATE_LEDC` (default on classic ESP32) or `CONFIG_FUGU_WITH_VCONV`. See [PWM drivers](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/pwm-drivers/). |
 | `CONFIG_FUGU_WITH_SPROFILER`|    off  | Compiles in the semihosting sampling profiler (`sprofiler_initialize`, only useful with OpenOCD attached). When off, the `esp32-semihosting-profiler` component is excluded entirely (~8 KB BSS).                            |
 | `CONFIG_FUGU_WITH_VCONV`    |    off  | Gate-driver choice: replaces the physical gate driver + ADC with an in-firmware synchronous-buck plant (`src/sim/vconv.*`, configured via `vconv.conf`). For closed-loop control-algorithm work without hardware. |
 | `CONFIG_FUGU_WITH_MEASURE_COIL` | off | Compiles in the on-device coil-inductance measurement commands (`l0`/`ls` sweeps, ported from `measure_coil.py`); skips the status line during a sweep. |
@@ -136,7 +136,7 @@ You find existing board configuration in the folder [`config/`](config):
 
 * `fmetal`: [Fugu2 board](https://github.com/fl4p/Fugu2), the "standard" configuration
 * `fugu1/fugu1_esp32`: original fugu design with ADS1015 ADC
-* `fugu1/fugu_int_adc`: original fugu design but using the [internal ADC](website/docs/guide/hardware/internal-adc.md)
+* `fugu1/fugu_int_adc`: original fugu design but using the [internal ADC](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/hardware/internal-adc/)
 * `psu_12v`: example for a 12V power supply using Forced PWM
 * `lab/dry_mock`: uses a mock ADC producing sinusoidal readings, useful for testing with ESP32 dev boards
 * `lab/dry_int`: uses the internal ADC for dry testing
@@ -172,7 +172,7 @@ idf.py monitor
 ```
 
 If Wi-Fi connection is successful you will be able to connect with telnet and FTP.
-You can send the same commands over telnet as over the [Serial console](website/docs/reference/console.md).
+You can send the same commands over telnet as over the [Serial console](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/console/).
 
 Use FTP to change HW configuration files to configure IO pins, ADC and converter topology.
 Note that FTP server is unstable. It seems to work well with the Filezilla client.
@@ -282,7 +282,7 @@ modelled using a constant -5% inductance drop, which appears to be reasonably ac
 noticeable during operation near the CCM/DCM transition point, and it usually causes the rectification switch to turn
 off too early. If you experience reverse inductor current, decrease `L0` value.
 A more accurate model would use the DC-bias curve from the core material's datasheet.
-See [Diode Emulation](website/docs/internals/diode-emulation.md) for more details and formulae.
+See [Diode Emulation](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/diode-emulation/) for more details and formulae.
 
 For additional safety the low-side duty cycle is slowly faded to its maximum value. As soon as we detect reverse
 current (which might also be noise), we decrease the LS switch duty cycle and slowly recover.

@@ -76,6 +76,7 @@ const config: Config = {
     },
     footer: {
       style: 'dark',
+      copyright: 'This documentation is mostly LLM-generated; check important details against the source code.',
       links: [
         {
           title: 'Project',
