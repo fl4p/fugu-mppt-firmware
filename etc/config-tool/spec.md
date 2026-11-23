@@ -762,7 +762,7 @@ amber.
 | Low-side timing calibration | Status | `rect-cal status` | – | marker | – |
 | Output wire guard | Status | `wire` | – | marker | – |
 | ADC calibration (eFuse) | Status | `adc-cal` | – | marker | – |
-| MPP sweep: Run sweep | Measurements | `sweep` | confirm | `sweep landed` / `Stop sweep` (90 s) | `sweep-curve` |
+| MPP sweep: Run sweep | Measurements | `sweep` | confirm | `sweep landed` / `Stop sweep` (90 s), or queued (below) | `sweep-curve`; none when queued |
 | MPP sweep: Read last sweep | Measurements | `sweep-curve` | – | marker | – |
 | Coil inductance (L0) | Measurements | `measure-coil l0 [apply]` | typed | `measure-coil: done` (300 s) | – |
 | Backflow switch | Self-tests | `selftest bflow`, abort `selftest abort` | typed | a verdict or `selftest bflow: <why>` line (240 s) | `selftest` |
@@ -823,6 +823,30 @@ amber.
   `TeleDec.SweepCurveParser` (header, points, `complete`/`reason`), without it
   it reads the header only (regex) and no chart is drawn. A Check after a lost
   link or a timeout reads `sweep-curve` into the note only.
+* **Sweep the converter can't start (queued)**: the firmware's `sweep` waits
+  in `START` until `startCondition()` passes (no sun at night, a backoff, a
+  latch), so `Stop sweep` may come hours later. The editor trusts the
+  firmware's START state, never Vin < Vout (a boost runs with Vin below Vout).
+  *Before sending*: when the `selftest` status line (else the live strip's
+  line, at most 10 s old) says `st=START` or `UV`, the confirm adds "The
+  converter can't start now: <why>. A sweep waits until it can start, then
+  runs. OK queues it anyway." Cancel sends nothing and notes "Not queued: …".
+  No warning when the last `START blocked:` line (≤ 45 s old) names `idle
+  profile`: a sweep wakes it. *During the run* it ends, as **done** and
+  neutral, on `sweep: queued, START blocked: <reason> (Vin=… Vout=…)` (the
+  firmware's reply before `OK`), on a `START blocked:` log line (older
+  firmware; not `calibrating`, `filters-empty`, `idle profile` or `Vin=nan`,
+  and not between `Start calibration` and `Calibration done`), or on a status
+  line with `st=START|UV` at least 3 s (`TST_T.cal`) after `Calibration done`
+  (or the accept): the converter is off during the zero calibration of every
+  sweep, also in daylight. Result: "Sweep queued: the converter can't start
+  (<why>)" and "It runs when it can; the chart updates after that (Read last
+  sweep)."; no `sweep-curve` is sent, so no empty chart. <why> is "<plain
+  words> (<reason>), Vin <x> V, Vout <y> V" for the known reasons (`Vin-Vout`,
+  `supply-UV`, `backoff`, `bf-fail`, `hs-short`, `hs-check`, `wire-trip`),
+  else the reason as printed, else "no reason reported" with the status
+  line's voltages; `UV` without a reason reads "board supply under-voltage
+  (supply-UV)". The run releases the device lock like any other end.
 * **Sweep chart** (`tstChart`, a `<figure>` under the result, hidden without a
   drawable curve of at least 3 points): inline SVG, P (W) over Vin (V), the
   points as one path in reply order, the MPP from the header as a green

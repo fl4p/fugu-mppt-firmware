@@ -7,7 +7,8 @@ const { loadEditor } = require('./_setup');
 
 const W = s => `\x1b[0;33mW (5000) main: ${s}\x1b[0m`;
 const I = (tag, s) => `\x1b[0;32mI (5001) ${tag}: ${s}\x1b[0m`;
-const vline = p => `V=36.1/26.80 I=${(p / 36.1).toFixed(2)}/4.31A ${p.toFixed(1)}W 31℃42℃ 450sps 12㎅/s CCM(H|L|Lm)=1234|2345|2400 st= MPPT↑,1 lag=2100㎲ N=123 rssi=-60`;
+const vline = (p, mode = ' MPPT↑') => `V=36.1/26.80 I=${(p / 36.1).toFixed(2)}/4.31A ${p.toFixed(1)}W 31℃42℃ 450sps 12㎅/s CCM(H|L|Lm)=1234|2345|2400 st=${mode},1 lag=2100㎲ N=123 rssi=-60`;
+const BLOCK = pre => `${pre}START blocked: Vin-Vout (Vin=6.8 Vout=26.6)`;
 const HELP = ['help,?', 'restart,reset,reboot', 'mppt', 'sweep <value> <value> ...', 'sweep-curve', 'rect-cal <value> <value> ...',
   'bootinfo', 'adc-cal', 'uptime', 'status', 'wire', 'wire-reset', 'hostname,hn <value> <value> ...', 'service,svc <value> <value> ...',
   'selftest <value> <value> ...'];
@@ -47,7 +48,7 @@ function firmware(host, opts = {}) {
     say = s;
     sent.push(cmd);
     if ((opts.silent || []).includes(cmd)) return;
-    const ok = () => { s(vline(st.power)); s('OK: ' + cmd); };
+    const ok = () => { s(vline(st.power, opts.mode)); s('OK: ' + cmd); };
     const err = msg => { if (msg) s(W(msg)); s('ERR: ' + cmd); };
     let g;
     if (cmd === 'hostname') return s('Hostname: ' + host);
@@ -105,7 +106,16 @@ function firmware(host, opts = {}) {
       (opts.curve || SWEEP).lines.forEach(x => s(x)); return ok();
     }
     if (cmd === 'sweep') {
+      // src/cli.cpp cmdSweep: the queued line comes before OK; older firmware only logs START blocked
+      if (opts.night === 'new') { s(BLOCK('sweep: queued, ')); return ok(); }
       ok();
+      later(5, () => s(I('mppt', 'Start calibration')));
+      later(10, () => s(vline(0, 'START')));                 // converter off during the zero calibration
+      later(20, () => s(I('sampler', 'Calibration done!')));
+      if (opts.night === 'old') return later(40, () => s(I('mppt', 'START blocked: Vin-Vout (Vin=6.8 Vout=26.6 ntc=18 mcu=28)')));
+      if (opts.night === 'status') return later(60, () => s(vline(0, 'START')));
+      if (opts.night) return;
+      later(25, () => s(vline(0, 'START')));                 // just after it, before the converter starts
       later(30, () => opts.noMpp ? s(I('mppt', 'Stop sweep: no MPP (best 0.30W < 1.0W), backing off 60s'))
         : opts.sweepStop ? s(I('mppt', opts.sweepStop))
         : s(I('mppt', 'sweep landed 35.0 V 309.0 W, MPP 35.2 V 312.4 W')));
@@ -619,6 +629,88 @@ test('global sweep: confirm, MPP from sweep-curve; no MPP reported in amber', as
   await window.tstStart('sweep');
   assert.ok(card(window, 'sweep').querySelector('.tst-res').classList.contains('warn'));
   assert.match(resText(window, 'sweep'), /No MPP found.*best 0\.30W < 1\.0W/);
+});
+
+// Night: the firmware queues the sweep until the converter can start (st=START), so the run ends there.
+const queuedRe = /Sweep queued: the converter can't start \(the input voltage is too close to the output \(Vin-Vout\), Vin 6\.8 V, Vout 26\.6 V\)/;
+const free = (w, id) => !w.tstBusyNow() && !card(w, id).querySelector('.run').disabled;
+
+test('sweep at night: the pre-check says why the converter cannot start and queues on OK', async () => {
+  const { window, dev } = await connected({ power: 0, mode: 'START', night: 'new' });
+  await openSheet(window); await idle(window);
+  window._dispatchLine(I('mppt', 'START blocked: Vin-Vout (Vin=6.8 Vout=26.6 ntc=18 mcu=28)'));
+  let msg = '';
+  window.confirm = m => { msg = m; return false; };
+  await window.tstStart('sweep');
+  assert.match(msg, /The converter can't start now: the input voltage is too close to the output \(Vin-Vout\), Vin 6\.8 V, Vout 26\.6 V\. A sweep waits until it can start, then runs\. OK queues it anyway\./);
+  assert.equal(dev.sent.at(-1), 'selftest', 'nothing sent on Cancel');
+  assert.match(card(window, 'sweep').querySelector('.tst-res').textContent, /Not queued: the converter can't start now \(.*Vin-Vout/);
+  assert.ok(free(window, 'sweep'), 'lock released');
+
+  window.confirm = () => true;
+  const t0 = Date.now();
+  await window.tstStart('sweep');
+  assert.ok(Date.now() - t0 < 2000, 'ends at the queued reply, not the timeout');
+  assert.equal(dev.sent.at(-1), 'sweep', 'no sweep-curve for a queued sweep');
+  assert.match(resText(window, 'sweep'), queuedRe);
+  assert.match(resText(window, 'sweep'), /It runs when it can; the chart updates after that/);
+  assert.ok(!card(window, 'sweep').querySelector('.tst-res').classList.contains('fail'));
+  assert.equal(card(window, 'sweep').querySelector('.tst-chart svg'), null, 'no empty chart');
+  assert.ok(free(window, 'sweep'), 'lock released');
+});
+
+test('sweep pre-check: reason from the status line alone, UV, and no warning for the idle profile', async () => {
+  let { window } = await connected({ power: 0, mode: 'START', night: 'new' });
+  await openSheet(window); await idle(window);
+  let msg = '';
+  window.confirm = m => { msg = m; return false; };
+  await window.tstStart('sweep');
+  assert.match(msg, /can't start now: no reason reported, Vin 36\.1 V, Vout 26\.8 V/);
+
+  ({ window } = await connected({ power: 0, mode: '   UV', night: 'new' }));
+  await openSheet(window); await idle(window);
+  window.confirm = m => { msg = m; return false; };
+  await window.tstStart('sweep');
+  assert.match(msg, /can't start now: board supply under-voltage \(supply-UV\)/);
+
+  ({ window } = await connected({ power: 0, mode: 'START' }));
+  await openSheet(window); await idle(window);
+  window._dispatchLine(I('mppt', 'START blocked: idle profile (Vin=36.1 Vout=26.8 ntc=18 mcu=28)'));
+  window.confirm = m => { msg = m; return true; };
+  await window.tstStart('sweep');
+  assert.doesNotMatch(msg, /can't start/);
+  assert.match(resText(window, 'sweep'), new RegExp(`MPP ${SWEEP.P} W at ${SWEEP.V} V`));
+});
+
+test('sweep at night on older firmware: a START blocked line or st=START ends the run as queued', async () => {
+  let { window, dev } = await connected({ power: 0, mode: 'START', night: 'old' });
+  await openSheet(window); await idle(window);
+  window.confirm = () => true;
+  await window.tstStart('sweep');
+  assert.equal(dev.sent.at(-1), 'sweep');
+  assert.match(resText(window, 'sweep'), queuedRe);
+  assert.ok(free(window, 'sweep'));
+
+  // no START blocked line: the status line still in START after the zero calibration
+  ({ window, dev } = await connected({ power: 0, night: 'status' }));
+  window.tstTimings().cal = 25;
+  await openSheet(window); await idle(window);
+  window.confirm = () => true;
+  await window.tstStart('sweep');
+  assert.equal(dev.sent.at(-1), 'sweep');
+  assert.match(resText(window, 'sweep'), /Sweep queued: the converter can't start \(no reason reported, Vin 36\.1 V, Vout 26\.8 V\)/);
+  assert.ok(free(window, 'sweep'));
+});
+
+test('a normal sweep ignores st=START during the zero calibration and ends on Stop sweep', async () => {
+  const stop = 'Stop sweep 3.52s mode=CC (lim=3 tgt=2.01 act=2.01) PWM=1164 MPP=(54.8W,1164,66.8V)';
+  const { window, dev } = await connected({ sweepStop: stop });
+  await openSheet(window); await idle(window);
+  window.confirm = () => true;
+  await window.tstStart('sweep');
+  assert.deepEqual(dev.sent.slice(-2), ['sweep', 'sweep-curve']);
+  assert.match(resText(window, 'sweep'), /Stop point .* W at .* V/);
+  assert.doesNotMatch(resText(window, 'sweep'), /queued/);
 });
 
 test('link drop mid-test: state unknown, no result claimed, a check is offered', async () => {

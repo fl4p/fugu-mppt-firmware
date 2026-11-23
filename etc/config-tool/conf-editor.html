@@ -3718,7 +3718,7 @@ window.addEventListener("keydown", e=>{
    Tests sheet: measurements, self-tests and calibrations on the push target
    (same gating as Services), one at a time. Nothing runs or repeats on its own.
 ---------------------------------------------------------------------------- */
-const TST_T = { cmd:4000, probe:4000, settle:1200, poll:1000 };   // ms
+const TST_T = { cmd:4000, probe:4000, settle:1200, poll:1000, cal:3000 };   // ms; cal: st=START ignored this long after the zero calibration
 function tstTimings(){ return TST_T; }
 function tstDefs(){ return TESTS; }
 // tstRun: the test in progress; tstHave: command names from `help` (null: unknown); tstGone: roots that
@@ -3988,6 +3988,27 @@ function tstSweepStop(lines){
   return "";
 }
 
+// `START blocked: <reason> (Vin=… Vout=…)` (idle log line, and the `sweep: queued, …` reply) → why the
+// converter can't start; soft: passing (calibration, idle wake-up) or read while the filters were empty.
+const TST_SOFT = new Set(["calibrating", "filters-empty", "idle profile"]);
+const TST_BLOCK = { "Vin-Vout":"the input voltage is too close to the output", "supply-UV":"board supply under-voltage",
+  backoff:"protection backoff", "bf-fail":"backflow switch failure latched", "hs-short":"high-side short latched",
+  "hs-check":"high-side short check pending", "wire-trip":"output wire guard tripped" };
+function tstBlockOf(raw){
+  const m=tstLine(raw).match(/\bSTART blocked: (.+?) \(Vin=(\S+) Vout=([^\s)]+)/);
+  return m && { reason:m[1], vin:+m[2], vout:+m[3], soft:TST_SOFT.has(m[1]) || !Number.isFinite(+m[2]), at:Date.now() };
+}
+let tstBlk=null;                     // last START blocked line on the link
+lineListeners.add(ln=>{ const b=tstBlockOf(ln); if (b) tstBlk=b; });
+// b: a hard tstBlockOf, else null; v: status line {vin, vout, st} for the voltages and UV
+function tstWhy(b, v){
+  const r = b ? b.reason : v && v.st==="UV" ? "supply-UV" : "", x = b || v;
+  const g = TST_BLOCK[r] ? `${TST_BLOCK[r]} (${r})` : r || "no reason reported";
+  return x ? `${g}, Vin ${fmtN(x.vin, 1)} V, Vout ${fmtN(x.vout, 1)} V` : g;
+}
+const tstQueued = why => ({ cls:"", text:"Sweep queued: the converter can't start ("+why+")",
+  details:["It runs when it can; the chart updates after that (Read last sweep)."] });
+
 // Summary {cls, text, details, meta?, short?} of a finished command or run.
 function tstSummary(id, lines, extra){
   let r;
@@ -4230,7 +4251,17 @@ async function tstStart(id){
     if (st) extra = "Latched: "+[st.hsLatched && "high-side short", st.bfLatched && "backflow switch failure"].filter(Boolean).join(" and ")+".";
   }
   if (id==="bflow" && st && st.running) return end("idle", `A backflow switch test is already running on ${dev} (daily run?).`, true);
-  if (!tstAsk(d, o, tstLive(pre.lines), extra)) return end("idle", "Not started.");
+  // the firmware's START state (st=START|UV), not Vin<Vout: boost converters run with Vin below Vout
+  let held="";
+  if (id==="sweep"){
+    const v=liveParse(pre.lines.filter(l=>TST_V.test(tstLine(l))).pop()||"") || (live && Date.now()-live.at<=10000 ? live : null);
+    const b=tstBlk && !tstBlk.soft && Date.now()-tstBlk.at<=45000 ? tstBlk : null;
+    if (v && v.stop && !(tstBlk && tstBlk.reason==="idle profile" && Date.now()-tstBlk.at<=45000)){
+      held=tstWhy(b, v);
+      extra=`The converter can't start now: ${held}. A sweep waits until it can start, then runs. OK queues it anyway.`;
+    }
+  }
+  if (!tstAsk(d, o, tstLive(pre.lines), extra)) return end("idle", held ? `Not queued: the converter can't start now (${held}).` : "Not started.");
   if (tstTarget()!==t) return end("idle", `The link to ${dev} closed; nothing was sent.`, true);
 
   r.st="run"; r.lines=[]; r.sum=null; r.open=true; tstPaint(id);
@@ -4246,12 +4277,22 @@ async function tstStart(id){
     return end("done");
   }
 
-  // follow the run
-  const t0=Date.now(); let ended=false, lost=false, noMpp=null;
-  const follow = ln => { onLine(ln); const m=tstLine(ln); if (d.end.test(m)){ ended=true; const n=m.match(/\bStop sweep: (.*)$/); if (n) noMpp=n[1]; } };
+  // follow the run. A sweep the converter can't start waits in START: `sweep: queued, START blocked: …`,
+  // else (older firmware) a START blocked line or st=START|UV once the zero calibration is over
+  const t0=Date.now(); let ended=false, lost=false, noMpp=null, cal=false, calAt=t0, blk=null, qv=null;
+  const watch = ln => {
+    if (id!=="sweep") return;
+    const m=tstLine(ln), b=tstBlockOf(ln), v=!b && liveParse(ln);
+    if (/\bStart calibration\b/.test(m)) cal=true;
+    else if (/\bCalibration done\b/.test(m)){ cal=false; calAt=Date.now(); }
+    else if (b && !b.soft && (!cal || /\bsweep: queued\b/.test(m))) blk=b;
+    else if (v && v.stop && !cal && Date.now()-calAt>=TST_T.cal) qv=v;
+  };
+  x.lines.forEach(watch);
+  const follow = ln => { onLine(ln); watch(ln); const m=tstLine(ln); if (d.end.test(m)){ ended=true; const n=m.match(/\bStop sweep: (.*)$/); if (n) noMpp=n[1]; } };
   lineListeners.add(follow);
   tstRun.since=t0; tstGate();
-  while (!ended){
+  while (!ended && !blk && !qv){
     await svcSleep(TST_T.poll);
     if (tstTarget()!==t){ lost=true; break; }
     if (Date.now()-t0 > d.timeout) break;
@@ -4259,6 +4300,11 @@ async function tstStart(id){
   if (ended){ await svcSleep(TST_T.settle); }
   lineListeners.delete(follow);
   if (lost){ r.recheck=!!d.recheck; return end("unknown", `The link to ${dev} closed during the test: its state is unknown. Read the device again (Open), then check.`, true); }
+  if (!ended && (blk || qv)){
+    const pb=tstBlk && !tstBlk.soft && Date.now()-tstBlk.at<=45000 ? tstBlk : null;
+    r.sum=tstQueued(tstWhy(blk || pb, qv));
+    return end("done");
+  }
   if (!ended){ r.recheck=!!d.recheck; return end("unknown", `No end of the test within ${Math.round(d.timeout/1000)} s: its state is unknown.`, true); }
 
   let res=[...r.lines];

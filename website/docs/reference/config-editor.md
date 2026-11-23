@@ -459,6 +459,12 @@ drawing one. If a limiter (output voltage, input or output current, or power) en
 reads "Stop point" instead of "MPP" and names the limit and its setting: the point shown is where the sweep stopped,
 not the panel's maximum.
 
+A sweep only runs once the converter can start. At night, during a protection backoff or with a latched fault, the
+firmware keeps the sweep waiting until it can. When the device's status says the converter is stopped or in
+undervoltage, **Run sweep** says so before sending anything, with the firmware's reason and the input and output
+voltages, and **OK** queues the sweep anyway. A queued run ends at once with "Sweep queued: the converter can't start
+(…)" instead of waiting for a result; the curve is there after the sweep has run (**Read last sweep**).
+
 `measure-coil l0 apply` writes `L0` to `coil.conf`, and the loaded `coil.conf` follows. rect-cal and
 `measure-coil ls apply` save `rect_offset_ns` only once the converter has been off for a while, so read the device
 again later to see it.
