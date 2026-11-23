@@ -121,7 +121,7 @@
   .startpane .fine { color:var(--muted); font-size:12.5px; margin-top:12px; max-width:56ch; }
   .resume { margin:22px 0 0; font-size:13.5px; }
   .start .hint { color:var(--faint); font-size:13px; margin-top:22px; }
-  #drop-msg { margin-top:14px; font-size:13px; }
+  #drop-msg { margin-top:14px; font-size:13px; white-space:pre-line; }
   #drop-msg:empty { display:none; }
   #preset-list { font:13px var(--mono); color:var(--fg); background:var(--field) var(--chev) no-repeat right 11px center;
     border:1px solid transparent; border-radius:7px; padding:7px 32px 7px 10px; appearance:none; -webkit-appearance:none; max-width:340px; }
@@ -2265,6 +2265,18 @@ async function bleConnectAndDiscover(device, attempts=4){
   throw lastErr;
 }
 
+function bleErrText(e, dev){
+  const m = e && e.message || String(e), name = dev && dev.name || "The device";
+  if (!/disconnected|connection attempt failed|gatt operation failed|networkerror|not paired|authenticat|encrypt/i.test(m))
+    return "Bluetooth: "+m;
+  return name+" dropped the Bluetooth link while connecting ("+m.replace(/\. .*$/,"")+"). Usual causes:\n"+
+    "• weak signal: move closer;\n"+
+    "• it takes one Bluetooth connection at a time: close other tabs, apps or console clients using it;\n"+
+    "• a stale pairing: if this computer paired with it before a reflash or bond reset, remove it in your OS Bluetooth settings;\n"+
+    "• newer firmware accepts a new pairing only for a few minutes after boot or after `ble pair` (pair_window_s in ble.conf).\n"+
+    "Then retry.";
+}
+
 async function connectBluetooth(){
   if (!('bluetooth' in navigator)){
     showErr("Web Bluetooth isn't available — use Chrome or Edge over localhost or https (not Safari/Firefox/iOS).");
@@ -2288,7 +2300,7 @@ async function connectBluetooth(){
     await importFromDevice("ble-device", {transport:"ble", handle:dev});
     // Stay connected so the upload reuses this live link (reconnecting can miss the reply).
   } catch(e){
-    showErr("Bluetooth: "+e.message+" — if it was paired before, remove the device in your OS Bluetooth settings; make sure no phone or other browser tab holds the connection, then retry.");
+    showErr(bleErrText(e, dev));
     await disconnectBluetooth();
   } finally { endConnect(); }
 }
