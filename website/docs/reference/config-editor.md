@@ -94,28 +94,37 @@ See [MQTT topics](mqtt.md).
 
 ### Connection failures
 
-When the broker rejects the username or password, the dialog says "The broker refused the login" with the broker's
-reason.
+Every failure message names the broker as `<host>:<port>`, says how far the connection got and what to try next.
 
-A browser gives no reason when a `wss://` connection fails. A broker certificate that the browser does not trust,
-an unreachable broker and a denied local network access prompt all look the same, and for a WebSocket the browser
-shows no certificate warning. When a `wss://` connection fails before the broker has answered, the dialog shows:
+When the broker rejects the username or password, the dialog says "`<host>:<port>` refused the login" with the
+broker's reason. Other refusals give the reason and the MQTT return code.
+
+A browser gives no reason when a WebSocket fails. A broker certificate that the browser does not trust, an
+unreachable broker and a denied local network access prompt all look the same, and for a WebSocket the browser shows
+no certificate warning. So after a failure the editor opens a bare WebSocket to the broker URL and closes it again:
+
+| WebSocket check | Message |
+|---|---|
+| opens | The broker accepts the WebSocket, but the MQTT connection failed, with the reason if there is one. Check the broker's log. |
+| fails, `wss://` | Could not open a secure connection, with the certificate advice below. |
+| fails, `ws://` | Could not open a WebSocket: check the address, the port and the broker's WebSocket listener. |
+| no answer in 5 s | No answer from the broker: check the address and that the broker is running. |
+
+For a `wss://` broker that fails the check, the dialog shows:
 
 > Could not open a secure connection to `<host>:<port>`. If the broker uses a private certificate, open it once and
 > accept the warning, then come back.
 
 **Open https://`<host>:<port>`** opens the broker's address in a new tab. Choose **Advanced** and then
-**Proceed** there. The page stays blank, because the listener only speaks WebSocket. Chrome may also ask whether the
-editor may access devices on the local network; allow it, or the connection fails as well. When you return to the
-editor tab, it repeats the scan (or the **Read `<hostname>`** of a dashboard link) once. If that fails too, the
-message and the button stay, and the editor retries again only after another click.
+**Proceed** there. An empty page or an error page follows, because the listener serves no web page. Chrome may also
+ask whether the editor may access devices on the local network; allow it, or the connection fails as well. When you
+return to the editor tab, it repeats the scan (or the **Read `<hostname>`** of a dashboard link) once. If that fails
+too, the message and the button stay, and the editor retries again only after another click. See
+[Dashboard: TLS](dashboard.md#tls) for setting up a broker certificate.
 
-Before it shows the message, the editor requests `https://<host>:<port>/` without reading the answer. If the
-browser accepts the certificate there, the certificate is not the cause, and the dialog says instead that the
-broker did not accept the MQTT WebSocket: check the port and path of its WebSocket listener. A failed request cannot
-tell an untrusted certificate, an unreachable broker and blocked local network access apart, so in that case the
-message covers all three. `ws://` brokers and connections that drop after they were established never get the
-message. See [Dashboard: TLS](dashboard.md#tls) for setting up a broker certificate.
+If the broker drops a scan that was listening, the status says how long the connection ran and when data last
+arrived, and the scan reconnects every 3 s. If the connection to a device that was read drops, the status says the
+same, and the next push reconnects. A drop while the editor tab is in the background is not shown as an error.
 
 ### Opening from the dashboard
 

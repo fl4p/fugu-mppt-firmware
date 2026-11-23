@@ -149,9 +149,9 @@ filled in, the password empty and focused, the status "Enter the password for
 <user> to read <host>.", and a primary **Read <host>** button (`#mqtt-go`) next
 to **Scan for devices**. **Read <host>** saves the fields like a scan does and
 reads that device. When a handoff read fails (broker refused, no reply) the
-dialog opens the same way with "Could not read <host>: <reason>"; a `wss://`
-broker that failed before CONNACK also gets the certificate advice (§5.3.1),
-whose retry repeats **Read <host>**.
+dialog opens the same way with "Could not read <host>: <reason>"; a connect that
+failed before CONNACK reads "Could not read <host>." with the box of §5.3.1
+below it, whose retry (certificate advice) repeats **Read <host>**.
 
 **Bluetooth.** `navigator.bluetooth.getDevices()` lists the devices this origin
 may use (the dashboard and the editor share it when served from one folder).
@@ -1009,8 +1009,12 @@ Browser ↔ broker via WebSocket only (`ws://` or `wss://`), using
    `pv/dev/<host>` = `online`/`offline` adds it and marks it offline (faint,
    "offline" label). The list re-renders every 0.8 s ("N device(s) found —
    listening …") and the scan keeps listening until the modal closes or a
-   device is picked. If the broker drops, it reconnects every 3 s
-   ("reconnecting …"); a failure on the first connect is reported instead.
+   device is picked. If the broker drops, it reconnects every 3 s ("Lost
+   <host>:<port> after <time> (last data <n> ago)[: <mqtt.js error>],
+   reconnecting every 3 s …", then "…; reconnecting every 3 s (last try:
+   <stage>) …" while the attempts fail; "Paused in the background, reconnecting
+   every 3 s …", not red, when the tab was hidden); a failure on the first
+   connect is reported instead (§5.3.1).
 3. Clicking a device *hands off* the scan client (message listeners rebound,
    `pv/dev/+` unsubscribed, no second CONNACK), closes the modal and runs
    `importFromDevice(hostname, …)`. Once bound, the hostname is added to the
@@ -1042,27 +1046,46 @@ does not.
 * Each `write(str)` publishes one trimmed line to `pv/log/<hostname>/cmd`
   with QoS 0 (MQTT is message-framed, not a byte stream).
 
-#### 5.3.1 Refused login, `wss://` failures
+#### 5.3.1 Connection failures
 
-`mqttBrokerConnect` rejects only before CONNACK. A CONNACK refusal (mqtt.js
-emits `error` "Connection refused: <reason>" with `code` = return code) is
-reported as such: return codes 4/5 (MQTT 5: 134/135) or a "Bad user…"/"Not
-authori…" reason read "the broker refused the login (<reason>)" (scan status
-"The broker refused the login (…)", handoff "Could not read <host>: the broker
-refused the login (…)"); other codes read "the broker refused the connection
-(<reason>)". A refusal never gets the advice below.
+Every MQTT failure message names the broker (`<host>:<port>`), the stage that
+failed and what to do next; none reads a bare "connection closed". The texts come
+from `WssHint` (`explain`, `refusedText`, `lostText`).
 
-A `wss://` connect that fails otherwise before CONNACK gets no reason from the
-browser: an untrusted certificate (no warning is shown for a WebSocket), an
-unreachable host and a denied local-network-access prompt all end in mqtt.js
-`close` (WebSocket code 1006) without an `error` event. For a scan, a
-**Read <host>** or a click on a listed device, the dialog then shows a quiet box
-(`#mqtt-hint`, the status line is cleared):
+**Before CONNACK.** `mqttBrokerConnect` rejects only before CONNACK, with an error
+whose message is the explanation (`err.info`, `err.preConnack`, `err.refused`). A
+CONNACK refusal (mqtt.js emits `error` "Connection refused: <reason>" with `code`
+= return code) is not probed: return codes 4/5 (MQTT 5: 134/135) or a "Bad
+user…"/"Not authori…" reason read "<host>:<port> refused the login (<reason>).
+Check the user and password." (scan status, handoff "Could not read <host>:
+…"); other codes read "<host>:<port> refused the MQTT connection (<reason>, code
+<n>). Check the broker's log." A refusal never gets the box below.
+
+Any other failure gets no reason from the browser: an untrusted certificate (no
+warning is shown for a WebSocket), an unreachable host and a denied
+local-network-access prompt all end in mqtt.js `close` (WebSocket code 1006)
+without an `error` event. So the editor **probes**: a bare
+`new WebSocket(url, "mqtt")` to the broker URL, closed again at once, 5 s limit.
+`fetch("https://<host>:<port>/")` would be no probe: Mosquitto's websockets
+listener answers a GET without an upgrade with an empty response, so the fetch
+fails with an accepted certificate too. By the probe's result, a quiet box
+(`#mqtt-hint`) in the dialog shows (the status line is cleared, or reads "Could
+not read <host>." for a handoff or a device picked from the list):
+
+| Probe | Box |
+|---|---|
+| opens | "<host>:<port> accepts the [secure ]WebSocket, but the MQTT connection failed: <reason>. Check the broker's log." The reason is the mqtt.js error ("no answer to the MQTT login in time" for its `connack timeout`), else "the broker closed it without answering". No button. |
+| fails, `wss://` | the certificate advice below, with the button |
+| fails, `ws://` | "Could not open a WebSocket to <host>:<port>. Check the address, the port and that the broker has a WebSocket listener there." plus the local-network note. No button. |
+| no answer in 5 s | "No answer from <host>:<port> within 5 s. Check the address and that the broker is running." plus the local-network note. No button. |
+
+The certificate advice:
 
 > Could not open a secure connection to <host>:<port>. If the broker uses a
 > private certificate, open it once and accept the warning, then come back.
-> *A blank page after accepting is normal. If the browser asks whether this page
-> may access devices on the local network, allow it.*
+> *An empty or error page after accepting is normal: the broker serves no web
+> page. If the browser asks whether this page may access devices on the local
+> network, allow it.*
 > [Open https://<host>:<port>]
 
 The button calls `window.open("https://<host>:<port>/", "_blank", "noopener")`
@@ -1072,24 +1095,20 @@ action (**Read <host>** with a handoff, else **Scan for devices**, both with the
 current fields) and the status reads "Retrying <host>:<port> …". The box stays
 until that connect succeeds; a failed retry shows it again with the button and
 retries only after another click. Closing the dialog, reopening it, a success or
-a failure that does not qualify clears the box and the pending retry. Never for
-`ws://`, a refusal, or a drop after a successful connect (the scan's 3 s
-reconnects). The URL opened carries host and port only.
+a refusal clears the box and the pending retry. Never after a successful connect
+(the scan's 3 s reconnects, §5.3). The URL opened carries host and port only.
+The main status line (`showErr`) gets the same explanation.
 
-**Probe.** Before showing the box the editor fetches
-`https://<host>:<port>/` with `{mode:"no-cors", cache:"no-store",
-credentials:"omit"}` (4 s limit). It resolves (opaque response) once this
-browser accepts the broker's TLS certificate, whatever the HTTP status, and
-rejects with a `TypeError` for an untrusted certificate, an unreachable host and
-a blocked local-network access alike. So it can only rule the certificate out:
-when it resolves, the box instead says "<host>:<port> accepts a secure
-connection, but the broker did not accept the MQTT WebSocket on it. Check the
-port and the path of the broker's WebSocket listener." without a button. A
-rejected or unanswered probe keeps the certificate advice, worded for all three
-causes.
+**After CONNACK.** A device session (the client bound to the read device) that
+drops shows "MQTT: lost <host>:<port> after <time> (last data <n> ago)[: <mqtt.js
+error>]; the next push reconnects." (`lostText`: time since the device was
+bound, time since the last packet received), and frees the link so the next push reconnects. A drop
+while the tab is hidden (background timers are throttled, a keepalive is missed)
+reads "MQTT: the session with <host>:<port> paused while the tab was in the
+background; the next push reconnects.", not as an error.
 
-`WssHint` (classification, probe, box, one-shot retry) is kept identical in
-`dashboard.html`; `test/wss_hint.test.js` compares the two copies.
+`WssHint` (classification, probe, explanation, box, one-shot retry) is kept
+identical in `dashboard.html`; `test/wss_hint.test.js` compares the two copies.
 
 ---
 

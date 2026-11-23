@@ -132,7 +132,7 @@ no reason.
 
 Without installing the CA, Chromium browsers can be told to accept the broker's certificate once: open the
 listener's address as a page, `https://<broker>:<wss port>/`, and choose "Advanced" and "Proceed". The page itself
-stays empty, because the listener only speaks WebSocket, but the browser remembers the choice for that address and
+stays empty or shows an error, because the listener serves no web page, but the browser remembers the choice for that address and
 the dashboard's `wss://` connection then succeeds. Chrome also asks once whether the page may reach devices on the
 local network; the broker is one of them, so allow it. Firefox has no such prompt, and its `about:config` setting
 `network.websocket.allowInsecureFromHTTPS` lets the `https` page use a plain `ws://` listener instead.
@@ -144,14 +144,26 @@ tab. When the dashboard tab gets the focus again, it reconnects once right away;
 continues as well. If that fails too, the banner and the button stay, and another immediate reconnect needs another
 click. The banner goes away once a connection succeeds.
 
-Before showing the banner, the page requests `https://<host>:<port>/` without reading the answer. If the browser
-accepts the certificate there, the banner says instead that the broker did not accept the MQTT WebSocket, so check
-the port and path of the listener. A failed request cannot tell an untrusted certificate, an unreachable broker and
-blocked local network access apart. `ws://` brokers and connections that drop after they were established get no
-banner.
+Before showing the banner, the page opens a bare WebSocket to the broker URL and closes it again. The banner
+depends on the result:
 
-When the broker rejects the username or password, the status reads "the broker refused the login" with the
+| WebSocket check | Banner |
+|---|---|
+| opens | The broker accepts the WebSocket, but the MQTT connection failed, with the reason if there is one. Check the broker's log. No button. |
+| fails, `wss://` | The certificate advice above, with the button. It also covers an unreachable broker and blocked local network access, which look the same to the page. |
+| fails, `ws://` | Could not open a WebSocket: check the address, the port and the broker's WebSocket listener. |
+| no answer in 5 s | No answer from the broker: check the address and that the broker is running. |
+
+Until the first connection succeeds, the status reads "not connected to `<host>:<port>`, retrying every 5 s".
+
+When the broker rejects the username or password, the status reads "`<host>:<port>` refused the login" with the
 broker's reason, and the page stops reconnecting until you press **Connect** again.
+
+A connection that worked and then drops gets no banner. The status says how long it ran, when data last arrived and
+the error if there was one, for example "lost `<host>:<port>` after 3 min (last data 65 s ago): Keepalive timeout,
+retrying every 5 s". A browser throttles a background tab, so its connection can time out while the tab is hidden.
+Such a drop reads "paused in the background, reconnecting", not as an error, and the page reconnects as soon as the
+tab is visible again.
 
 The fields can also be prefilled from the page URL: `dashboard.html?mqtt=ws://<host>:<port>&user=<name>`. The page
 does not connect on its own then, and never reads a password from the URL.

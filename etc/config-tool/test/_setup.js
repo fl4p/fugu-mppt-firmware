@@ -23,6 +23,7 @@ window.mqtt = {
       publish(topic, msg, opts, cb){ this._publishes.push({topic, msg:String(msg), opts}); if(cb) cb(); return this; },
       subscribe(topic, opts, cb){ this._subscribes.push(topic); if(cb) cb(); return this; },
       end(){ this.ended=true; return this; },
+      reconnect(){ this.reconnects=(this.reconnects||0)+1; Promise.resolve().then(()=>this.emit('connect')); return this; },
     };
     window._mqttClients = (window._mqttClients||[]).concat(client);
     if (window._mqttHook) window._mqttHook(client);   // set in beforeParse: reach clients made during load

@@ -1,7 +1,9 @@
 // A local wss:// MQTT stub for browser tests: an https server with a fresh self-signed certificate
 // (made with openssl), a WebSocket listener on any path and enough MQTT 3.1.1 to answer CONNECT with a
-// CONNACK return code (0 accepts, 5 = not authorized), SUBSCRIBE and PINGREQ. ws:false leaves only
-// the https server: its TLS works but the WebSocket upgrade is dropped.
+// CONNACK return code (0 accepts, 5 = not authorized), SUBSCRIBE and PINGREQ. Like Mosquitto's websockets
+// listener it answers a plain GET (no upgrade) with an empty response: the connection closes, so a fetch()
+// fails even with a trusted certificate. connack:false closes the WebSocket on CONNECT without a CONNACK;
+// ws:false drops the WebSocket upgrade.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -37,9 +39,9 @@ function packets(buf) {
   return out;
 }
 
-async function startWssBroker({ rc = 0, ws = true } = {}) {
+async function startWssBroker({ rc = 0, ws = true, connack = true } = {}) {
   const st = { rc, connects: 0, upgrades: 0, gets: 0 };
-  const srv = https.createServer(selfSigned(), (req, res) => { st.gets++; res.writeHead(404); res.end(); });
+  const srv = https.createServer(selfSigned(), (req) => { st.gets++; req.socket.destroy(); });
   srv.on('upgrade', () => { st.upgrades++; });
   if (ws) {
     const wss = new WebSocketServer({ server: srv, handleProtocols: p => (p.has('mqtt') ? 'mqtt' : false) });
@@ -48,6 +50,7 @@ async function startWssBroker({ rc = 0, ws = true } = {}) {
         const t = type >> 4;
         if (t === 1) {
           st.connects++;
+          if (!connack) { sock.close(); return; }
           sock.send(Buffer.from([0x20, 2, 0, st.rc]));
           if (st.rc) setTimeout(() => sock.close(), 20);
         } else if (t === 8) {
