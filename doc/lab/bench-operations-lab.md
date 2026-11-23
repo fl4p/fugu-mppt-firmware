@@ -215,12 +215,14 @@ Over BLE (`OTA over BLE.md`): `.venv/bin/python3 etc/ota_ble.py -n <name> -y`.
 
 When this Mac cannot reach the device LAN directly (macOS Local Network privacy, off-site), serve
 the image from a host that can: `OTA_RELAY_IP=<relay LAN IP> etc/ota-via-relay.sh [bin]`.
-It copies the image to the relay over ssh (`$OTA_RELAY_SSH`, default `$NAT_TUNNEL_HOST`),
-checks its sha256, starts `http.server` there for `$OTA_RELAY_TTL` s (600) and prints the
-sha256 and the `ota <url>` line. Send that line through the console (e.g. the
-`etc/nat-tunnel.sh up` telnet ports with `fugu_console.py --ip 127.0.0.1:<port>`), after the
-usual `hostname` check and the live-converter rules above. `etc/ota-via-relay.sh stop` ends the
-server early. `OTA_RELAY_*` may also be set in `etc/nat.env`.
+It copies the image to the relay over ssh (`$OTA_RELAY_SSH`, default `$NAT_TUNNEL_HOST`) into its own
+staging dir as `<name>-<sha8>.bin`, checks its sha256, serves it for `$OTA_RELAY_TTL` s (600) on the first
+free port of 9000-9099 (`$OTA_RELAY_PORT`: a port or `lo-hi`) and prints `sha256`, `token <dir>`, `port`
+and the `ota <url>` line. Parallel runs do not touch each other: `etc/ota-via-relay.sh status <token>`
+shows whether that server is up (plus its access log), `stop <token>` ends only that server and removes
+only its dir. Send the `ota` line through the console (e.g. the `etc/nat-tunnel.sh up` telnet ports with
+`fugu_console.py --ip 127.0.0.1:<port>`), after the usual `hostname` check and the live-converter rules
+above. `etc/ota_mqtt.py` does all of this itself. `OTA_RELAY_*` may also be set in `etc/nat.env`.
 
 ## Verifying what a board is running
 
