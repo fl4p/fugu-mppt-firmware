@@ -163,7 +163,7 @@ bool MqttService::init(const ConfFile &conf) {
     mqtt_cfg.broker.address.uri = brokerUri.c_str();
     mqtt_cfg.task.stack_size = 8192; // default ~6 KB overflows during the transport-error storm on WiFi teardown
 #if CONFIG_FUGU_WITH_HTTPS
-    if (auto ca = conf.getString("ca_file", ""); !ca.empty()) {
+    if (auto ca = conf.getString("ca_file", ""); !ca.empty() && brokerUri.starts_with("mqtts:")) {
         if (ca[0] != '/') ca = "/littlefs/conf/" + ca;
         FILE *f = fopen(ca.c_str(), "r");
         if (f) {
