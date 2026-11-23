@@ -23,6 +23,14 @@ CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
 # CONFIG_BT_NIMBLE_ROLE_CENTRAL is not set
 # CONFIG_BT_NIMBLE_ROLE_OBSERVER is not set
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+# Pools sized for one connection (defaults 24/24/6). Incoming ACL: one buffer per OTA write for the whole 8 KB
+# credit window, assuming DLE and 244 B writes that arrive as one PDU each (34); 182 B writes would need 45. With the
+# pool empty the controller task waits and drops a packet after 30 ms.
+# Controller instances: peak 2 (MAX_CONNECTIONS=1 plus one advert: connectable, or the non-connectable WITH_BLE_ADV
+# one while connected; no extended adv); 3 leaves one spare.
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=34
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=12
+CONFIG_BT_CTRL_BLE_MAX_ACT=3
 
 # Persist bonding keys (LTK/IRK) in NVS so a paired central reconnects after a device
 # reboot without re-pairing. Default is 'n', which wipes bonds every boot — the central

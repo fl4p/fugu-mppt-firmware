@@ -13,5 +13,7 @@ CONFIG_SPI_FLASH_OVERRIDE_CHIP_DRIVER_LIST=y
 # CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
 # a core-0 task that misses the cache inside a kernel critical section would hold the kernel lock over the miss
 CONFIG_FREERTOS_IN_IRAM=y
-# 8 x 1.6 KB instead of 10; still above the RX BA window (6)
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+# arduino-esp32 passes static_rx_buf_num=4 to esp_wifi_init() (WiFiGeneric, unless useStaticBuffers()), so this
+# value is not used at runtime; it only mirrors that 4. The RX BA window is real: 4 instead of 6, <= those 4 buffers.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
+CONFIG_ESP_WIFI_RX_BA_WIN=4
