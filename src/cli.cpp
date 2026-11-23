@@ -32,6 +32,9 @@ extern volatile uint8_t g_rtLogTest;
 #include "bootguard.h"
 #endif
 #include <esp_heap_caps.h>
+#if CONFIG_HEAP_TASK_TRACKING
+#include <esp_heap_task_info.h>
+#endif
 #include <esp_log.h>
 #include <freertos/task.h>
 #include <SimpleCLI.h>
@@ -770,6 +773,76 @@ static void cmdIntr(cmd *) {
     free(buf);
 }
 
+#if CONFIG_HEAP_TASK_TRACKING
+// IDF 6.0.3's tracking hooks take a mutex on every malloc/free and hang the board (INT_WDT on a malloc inside a
+// critical section; skipping those still hung). Keep only the per-block owner word and walk it on demand.
+extern "C" {
+IRAM_ATTR void __wrap_heap_caps_update_per_task_info_alloc(void *, void *, size_t, uint32_t) {}
+IRAM_ATTR void __wrap_heap_caps_update_per_task_info_free(void *, void *) {}
+IRAM_ATTR void __wrap_heap_caps_update_per_task_info_realloc(void *, void *, void *, size_t, TaskHandle_t, size_t,
+                                                             uint32_t) {}
+}
+
+// Internal heap held per owning task (stacks count to the creating task), plus own stack size/free.
+static void heapTasks() {
+    constexpr size_t NT = 48;
+    auto *tt = (heap_task_totals_t *) calloc(NT, sizeof(heap_task_totals_t));
+    auto *ts = (TaskStatus_t *) malloc(NT * sizeof(TaskStatus_t));
+    if (!tt || !ts) {
+        free(tt);
+        free(ts);
+        UART_LOG("heap tasks: oom");
+        return;
+    }
+    size_t n = 0;
+    heap_task_info_params_t p{};
+    p.caps[0] = p.mask[0] = MALLOC_CAP_INTERNAL;
+    p.totals = tt;
+    p.num_totals = &n;
+    p.max_totals = NT;
+    heap_caps_get_per_task_info(&p);
+    UBaseType_t nl = uxTaskGetSystemState(ts, NT, nullptr);
+    auto stack = [](TaskHandle_t h) -> unsigned {
+#if ESP_IDF_VERSION_MAJOR >= 6
+        auto *s = (void *) xTaskGetStackStart(h);
+#else
+        auto *s = (void *) pxTaskGetStackStart(h);
+#endif
+        return heap_caps_check_integrity_addr((intptr_t) s, false) ? heap_caps_get_allocated_size(s) : 0;
+    };
+    UART_LOG("%-16s %7s %5s %6s %6s", "task", "held", "blk", "stack", "stkfre");
+    size_t sum = 0, blk = 0;
+    for (size_t i = 0; i < n + nl; ++i) {
+        unsigned sz = 0, cnt = 0, stk = 0, fre = 0;
+        char nm[20];
+        UBaseType_t j = 0;
+        if (i < n) {
+            const auto &t = tt[i];
+            sz = t.size[0];
+            cnt = t.count[0];
+            while (t.task && j < nl && ts[j].xHandle != t.task) ++j;
+            if (!t.task || j == nl) {
+                snprintf(nm, sizeof nm, t.task ? "(gone %p)" : "(no task)", t.task);
+                j = nl;
+            }
+        } else if (!ts[j = i - n].xHandle) continue;
+        if (j < nl) {
+            stk = stack(ts[j].xHandle);
+            fre = ts[j].usStackHighWaterMark;
+            snprintf(nm, sizeof nm, "%s", ts[j].pcTaskName);
+            ts[j].xHandle = nullptr;
+        }
+        sum += sz;
+        blk += cnt;
+        UART_LOG("%-16s %7u %5u %6u %6u", nm, sz, cnt, stk, fre);
+    }
+    UART_LOG("%-16s %7u %5u  (incl. this command's %u B buffers)", "total", (unsigned) sum, (unsigned) blk,
+             (unsigned) (heap_caps_get_allocated_size(tt) + heap_caps_get_allocated_size(ts)));
+    free(tt);
+    free(ts);
+}
+#endif
+
 static void cmdHeap(cmd *c) {
     UART_LOG("heap (bytes):  free / min-ever / largest-block");
     struct { const char *n; uint32_t caps; } pools[] = {
@@ -780,6 +853,14 @@ static void cmdHeap(cmd *c) {
                  (unsigned) heap_caps_get_largest_free_block(p.caps));
     if (Command(c).getArg(0).getValue() == "check")
         UART_LOG("integrity: %s", heap_caps_check_integrity_all(true) ? "OK" : "CORRUPT");
+#if CONFIG_HEAP_TASK_TRACKING
+    multi_heap_info_t mi;
+    heap_caps_get_info(&mi, MALLOC_CAP_INTERNAL);
+    UART_LOG("  INTERNAL allocated %u in %u blocks, free %u", (unsigned) mi.total_allocated_bytes,
+             (unsigned) mi.allocated_blocks, (unsigned) mi.total_free_bytes);
+    if (Command(c).getArg(0).getValue() == "tasks")
+        heapTasks();
+#endif
 }
 
 // log <tag> <error|warn|info|debug|verbose|none>  — runtime ESP_LOG level for any tag (`*` = all).
@@ -2506,7 +2587,7 @@ void setupCli() {
 #if CONFIG_IDF_TARGET_ESP32S3
     cli.addCommand("adc-cal", bfGuarded<cmdAdcCal>);
 #endif
-    cli.addBoundlessCmd("heap", cmdHeap);    // heap [check]
+    cli.addBoundlessCmd("heap", cmdHeap);    // heap [check|tasks]
     cli.addBoundlessCmd("log", cmdLogLevel); // log <tag> <level>
     cli.addCommand("mem", cmdMem);
     cli.addBoundlessCmd("peek", cmdPeek); // peek <hex-addr> [len]; symbol resolution lives host-side

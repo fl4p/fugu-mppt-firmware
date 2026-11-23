@@ -373,6 +373,11 @@ component_compile_options(
 # this component's own 26 TUs. It is NOT applied to libesp-ota-ble.a, whose merge sections
 # still join the early pool.
 target_compile_options(${COMPONENT_LIB} PRIVATE -fno-merge-constants)
+if (CONFIG_HEAP_TASK_TRACKING)
+    foreach (_f alloc free realloc)
+        target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=heap_caps_update_per_task_info_${_f}")
+    endforeach ()
+endif ()
 # GPIO ISR service with ESP_INTR_FLAG_IRAM (Kconfig, default off): only where its handler chain is
 # IRAM-resident (rt_iram_extra.lf)
 if (RT_IRAM_LF AND CONFIG_FUGU_GPIO_ISR_IRAM)
