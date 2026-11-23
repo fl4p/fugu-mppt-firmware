@@ -7,7 +7,12 @@
 #include <cstring>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_idf_version.h"
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
 #include "freertos/freertos_debug.h"
+#else
+#include "esp_private/freertos_debug.h"
+#endif
 #include "esp_memory_utils.h"
 #include "esp_attr.h"
 #include "util.h" // flashOpActive
