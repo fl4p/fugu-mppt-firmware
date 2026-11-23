@@ -163,7 +163,22 @@ bool MqttService::init(const ConfFile &conf) {
     mqtt_cfg.broker.address.uri = brokerUri.c_str();
     mqtt_cfg.task.stack_size = 8192; // default ~6 KB overflows during the transport-error storm on WiFi teardown
 #if CONFIG_FUGU_WITH_HTTPS
-    mqtt_cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
+    if (auto ca = conf.getString("ca_file", ""); !ca.empty()) {
+        if (ca[0] != '/') ca = "/littlefs/conf/" + ca;
+        FILE *f = fopen(ca.c_str(), "r");
+        if (f) {
+            char b[256];
+            for (size_t n; (n = fread(b, 1, sizeof(b), f)) > 0 && _ca.size() < 8192;) _ca.append(b, n);
+            fclose(f);
+        }
+        if (_ca.find("-----BEGIN CERTIFICATE-----") == std::string::npos) {
+            ESP_LOGE(TAG, "ca_file %s: no PEM certificate", ca.c_str());
+            _ca.clear();
+            return false;
+        }
+        mqtt_cfg.broker.verification.certificate = _ca.c_str(); // kept by pointer, freed in close()
+    } else
+        mqtt_cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
 #endif
     if (!username.empty())mqtt_cfg.credentials.username = username.c_str();
     if (!password.empty())mqtt_cfg.credentials.authentication.password = password.c_str();
@@ -202,6 +217,9 @@ void MqttService::close() {
         esp_mqtt_client_destroy(client);
         client = nullptr; // else a restart with empty broker_uri (init() early-returns) leaves it dangling
     }
+#if CONFIG_FUGU_WITH_HTTPS
+    std::string().swap(_ca);
+#endif
     mqttConnected = false;
     removeLogCallback(mqttLogCallback); // drop the sink; stop may not fire MQTT_EVENT_DISCONNECTED
     mqttMsgHandlers.clear(); // onStart/preStart rebuilds subscriptions, so a restart honors conf (e.g. cmd_input)

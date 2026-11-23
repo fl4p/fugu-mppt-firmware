@@ -38,7 +38,7 @@ The following table lists each feature option, its default, and what it does:
 |---|:---:|---|
 | `CONFIG_FUGU_WITH_NETW` | on | Wi-Fi, mDNS, MQTT, InfluxDB telemetry, OTA, FTP, telnet. Off strips all of them (~700 KB); the UART/USB/BLE consoles remain. Layers `sdkconfig.no_netw` when off. |
 | `CONFIG_FUGU_WITH_NETTOOLS` | off | `curl`, `ping`, `nslookup`, `tcpconnect`, `netstat` console commands. Needs `NETW`; `https://` URLs also need `HTTPS`. |
-| `CONFIG_FUGU_WITH_HTTPS` | off | TLS client: `https://` OTA and `curl`, `mqtts://` broker, verified against the mbedTLS CA bundle. Needs `NETW`; on adds ~72 KB flash (incl. the CA bundle). |
+| `CONFIG_FUGU_WITH_HTTPS` | off | TLS client: `https://` OTA and `curl`, `mqtts://` broker, verified against the mbedTLS CA bundle (MQTT: or a private CA in [`mqtt.conf`](../../reference/config/mqtt.md#tls) `ca_file`). Needs `NETW`; on adds ~77 KB flash (incl. the CA bundle). |
 | `CONFIG_FUGU_WITH_TELNET` | on | [Telnet console](../../reference/config/telnet.md) on TCP port 23, without authentication; runs only with `telnet.conf` `enabled=1`. Needs `NETW`. |
 | `CONFIG_FUGU_WITH_SCOPE` | on | Raw-ADC [scope](../../reference/host-tools.md#scopepy) streamer on TCP port 24. Needs `NETW`; off saves ~7 KB flash. |
 | `CONFIG_FUGU_WITH_FTP` | on | [FTP server](../../reference/config/ftp.md) for the config partition. Needs `NETW`; off saves ~15 KB flash. |

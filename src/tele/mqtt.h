@@ -28,6 +28,9 @@ private:
     std::unordered_map<std::string, MqttMsgCallback> mqttMsgHandlers{};
     bool mqttConnected = false;
     bool _configured = false;
+#if CONFIG_FUGU_WITH_HTTPS
+    std::string _ca; // mqtt.conf ca_file PEM, referenced by the client until close()
+#endif
     time_ms _lastTickMs = 0;
 
 public:
