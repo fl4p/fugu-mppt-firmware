@@ -17,6 +17,8 @@ module.exports = defineConfig({
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', testMatch: 'dashboard.spec.js', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', testMatch: 'dashboard.spec.js', use: { ...devices['Desktop Safari'] } },
   ],
   webServer: {
     command: 'python3 -m http.server 8765',

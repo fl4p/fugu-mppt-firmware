@@ -156,3 +156,29 @@ test('log follows again after a line filter makes it fit while scrolled to the t
   });
   await expect.poll(() => log.evaluate(b => b.scrollHeight - b.clientHeight - b.scrollTop)).toBeLessThan(4);
 });
+
+test('log scrolled up stays put on new lines; back at the bottom it follows again', async ({ page }) => {
+  await gotoDash(page);
+  await page.locator('#console-toggle').check();
+  const add = (n, tag) => page.evaluate(([n, tag]) => {
+    if (!window.Dash.getDevice('demo')) window.Dash.ingestTele('demo', new Uint8Array(0));
+    const dev = window.Dash.getDevice('demo');
+    for (let i = 0; i < n; i++) window.Dash.onLine(dev, tag + ' ' + i, 'test');
+    window.Dash.flush();
+  }, [n, tag]);
+  await add(60, 'a');
+  const log = page.locator('.card[data-host="demo"] .log');
+  const gap = () => log.evaluate(b => b.scrollHeight - b.clientHeight - b.scrollTop);
+  await expect.poll(gap).toBeLessThan(4);
+  await log.hover();
+  await page.mouse.wheel(0, -300);
+  await expect.poll(() => log.evaluate(b => b.stick)).toBe(false);
+  const top = await log.evaluate(b => b.scrollTop);
+  await add(5, 'b');
+  expect(await gap()).toBeGreaterThan(100);
+  expect(Math.abs(await log.evaluate(b => b.scrollTop) - top)).toBeLessThan(150);
+  await log.evaluate(b => { b.scrollTop = b.scrollHeight; });
+  await expect.poll(() => log.evaluate(b => b.stick)).toBe(true);
+  await add(5, 'c');
+  await expect.poll(gap).toBeLessThan(4);
+});

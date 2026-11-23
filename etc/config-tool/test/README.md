@@ -9,9 +9,9 @@ These tests load the real `conf-editor.html` into [jsdom](https://github.com/jsd
 ```bash
 cd etc/config-tool
 npm install                                # one-time: jsdom + @playwright/test
-npx playwright install chromium            # one-time: ~150 MB chromium binary
+npx playwright install chromium firefox webkit  # one-time browser binaries
 npm test            # node:test + jsdom    (~5 s; default)
-npm run test:browser  # playwright + real chromium  (~5 s)
+npm run test:browser  # playwright: conf editor in chromium, dashboard in chromium, firefox, webkit  (~10 s)
 npm run test:all      # both
 ```
 
