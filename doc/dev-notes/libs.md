@@ -39,6 +39,8 @@ CoAp https://github.com/espressif/idf-extra-components/tree/master/coap (REST fo
 https://github.com/espressif/idf-extra-components/tree/master/network_provisioning
 
 # profiling
+https://github.com/espressif/idf-extra-components/tree/master/ccomp_timer
+esp32-semihosting-profiler
 see [performance profiling.md](../../website/docs/development/debugging/profiling.md)
 
 
