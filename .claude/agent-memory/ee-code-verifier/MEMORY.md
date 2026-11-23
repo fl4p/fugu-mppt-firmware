@@ -31,3 +31,6 @@
 - [DCM switch-node ring = Iout ripple vs duty](project_dcm_switch_node_ring.md) — field f/Q/C per board, N law, mean biases (turn-off ½CVin² → L low), ring-fit estimator
 - [vconv reverse-pump energy leak](project_vconv_reverse_pump_energy_leak.md) — c<0 HS-diode charge not credited to iIn; wx-dawn 94.5 % is an artifact (~80 % when fixed)
 - [rect-cal/measure-coil pre-flight 11-14](project_rectcal_preflight_review_1114.md) — applied lands late on replicas; no discard cmd; HS from pre-ramp Vin; measure-coil traps
+- [CV hold is current-mode (11-23)](project_cv_hold_current_mode.md) — Iout limit from BMS frames, pin at Vbat_max; outer gain K*R_dyn/r ~0.1 real; load-off spike; floor trickle
+- [Balance stale pause](project_balance_stale_pause.md) — first-stale-tick balance ordering trap, resume skips exits, 180 s frozen-limit window
+- [CV-hold entry plant fit + gain bounds](project_cv_hold_entry_plant_fit.md) — 11-23 40 A overshoot fit (1+2 mOhm, knee); K·R_f/r<1; 48c9203c margins
