@@ -241,6 +241,7 @@
   .addkey input:nth-of-type(2) { flex:0 1 160px; }
   .addkey input:focus { outline:none; border-color:var(--line-2); background:var(--field); }
   .addkey button { border-color:var(--line-2); }
+  .pane-foot > button.more { font-size:13px; width:fit-content; text-decoration:none; }
   details.fold > summary { cursor:pointer; color:var(--muted); font-size:13px; width:fit-content; list-style:none; display:flex; align-items:center; gap:8px; }
   details.fold > summary::-webkit-details-marker { display:none; }
   details.fold > summary::before { content:""; width:10px; height:6px; background:var(--chev) no-repeat center; transform:rotate(-90deg); transition:transform .15s; }
@@ -827,10 +828,22 @@ const APPLY = {
 // <name>.conf of these services: enabled/log_level are pushed as `svc on|off|log`, which writes and applies
 const SERVICES = ["mqtt","tele","ftp","http","telnet","tlscon","lcd","scope","ble","bsync"];
 const LINK_SVC = {mqtt:"mqtt", ble:"ble"};   // service an editor transport runs through
+// enabledDefault of each service's constructor (service.h:51), for a conf without `enabled`
+const SVC_ON_DEFAULT = {mqtt:1, tele:0, ftp:1, http:1, telnet:0, tlscon:0, lcd:0, scope:1, ble:0, bsync:0};
+// what switching a service off cuts, for the review sheet
+const SVC_OFF_WARN = {
+  mqtt:"Its console closes, and a charger that gets its BMS data over MQTT loses it and falls back to its stale-cell voltage cap.",
+  ble:"Its Bluetooth console closes.", telnet:"Its telnet console closes.", tlscon:"Its TLS console closes.",
+};
+// extra words for a key's "takes effect" hint
+const APPLY_NOTE = {"ftp.conf:ftp_user":"ignored while credentials are stored in NVS", "ftp.conf:ftp_pass":"ignored while credentials are stored in NVS"};
 
+// tracker.conf target_duty_cycle set (absent = MPPT; outside [0,1] ignored) boots manual PWM and ignores converter.conf mode
+const DUTY_OVER = {file:"tracker.conf", key:"target_duty_cycle", holds:v=>v!=="" && isFinite(v) && +v>=0 && +v<=1};
 /* Key dependencies. `if`: the keys are read only while that key (same file unless `file`) has a value
    in `is`; an unset or unknown value changes nothing. `required`: needs a value (while `if` holds).
-   `needs`: the key, when on (not unset/0), only works if one of the conditions holds. */
+   `needs`: the key, when on (not unset/0), only works if one of the conditions holds (`text` words it).
+   `over`: while that key's current value passes `holds`, the `if` is overridden and the keys are unused. */
 const DEPENDS = [
   // buck.h:1205-1243: no default, any other value throws
   {file:"board.conf", keys:["pwm_driver_logic"], required:true},
@@ -838,13 +851,14 @@ const DEPENDS = [
   {file:"board.conf", keys:["pwm_in","pwm_en"], if:{key:"pwm_driver_logic", is:["InEn"]}, required:true},
   {file:"board.conf", keys:["pwm_hi","pwm_li"], if:{key:"pwm_driver_logic", is:["HiLi"]}, required:true},
   {file:"board.conf", keys:["pwm_sd"], if:{key:"pwm_driver_logic", is:["HiLi"]}},
-  // mppt.cpp:575-590: read only in that mode, 0 fails it (psu_slew_down, :609, is read always)
-  {file:"converter.conf", keys:["psu_vout"], if:{key:"mode", is:["psu"]}, required:true},
-  {file:"converter.conf", keys:["pv_isc","pv_voc"], if:{key:"mode", is:["pv"]}, required:true},
-  {file:"converter.conf", keys:["pv_k","pv_slew","pv_iout_span"], if:{key:"mode", is:["pv"]}},
-  // mppt.h:1632,1650 + mppt.cpp:638: a backflow switch (backflow.h:38-39,86, pin 0 = none) and a buck
-  {file:"board.conf", keys:["hs_clamp"], needs:[{key:"bflow_bat", is:["1"]}]},
-  {file:"board.conf", keys:["bflow_bat"], needs:[{key:"bflow_en", not:["0"]}, {key:"bflow_sd", not:["0"]}]},
+  // mppt.cpp:575-590: read only in that mode, 0 fails it (psu_slew_down, :609, is read always);
+  // mppt.cpp:550-572: a tracker.conf target_duty_cycle in [0,1] overrides mode
+  {file:"converter.conf", keys:["psu_vout"], if:{key:"mode", is:["psu"]}, required:true, over:DUTY_OVER},
+  {file:"converter.conf", keys:["pv_isc","pv_voc"], if:{key:"mode", is:["pv"]}, required:true, over:DUTY_OVER},
+  {file:"converter.conf", keys:["pv_k","pv_slew","pv_iout_span"], if:{key:"mode", is:["pv"]}, over:DUTY_OVER},
+  // mppt.h:1632,1650 + mppt.cpp:537-538,638 (getByte: any non-zero is on): a backflow switch (backflow.h:38-39,86, pin 0 = none) and a buck
+  {file:"board.conf", keys:["hs_clamp"], needs:[{key:"bflow_bat", not:["0"]}], text:"needs bflow_bat on (non-zero)"},
+  {file:"board.conf", keys:["bflow_bat"], needs:[{key:"bflow_en", not:["0"]}, {key:"bflow_sd", not:["0"]}], text:"needs bflow_en or bflow_sd set to a pin (non-zero)"},
   {file:"board.conf", keys:["bflow_bat","hs_clamp"], needs:[{file:"converter.conf", key:"topo", is:["buck"]}]},
 ];
 // keys shown as a block at the top of a group, with plain labels
@@ -1455,10 +1469,13 @@ function renderPane(){
   const cnt=document.createElement("span");
   const refreshCount=()=>{ cnt.textContent=`, ${fileKeys(f).length} of ${nAll} keys set`; };
   refreshCount();
-  const tog=document.createElement("button"); tog.type="button"; tog.className="link";
-  tog.textContent = showAll ? "Show set keys only" : `Show all ${nAll} keys`;
+  // rows Show all lists: every key except unset ones DEPENDS marks unused
+  const nFull=f.order.filter(k=>!depState(base, k).unused || keyHas(f, k)).length;
+  const tog=document.createElement("button"); tog.type="button"; tog.className="link more";
+  tog.textContent = showAll ? "Show fewer keys" : `Show all ${nFull} keys`;
+  if (nFull<nAll) tog.title = `${nAll-nFull} more not used with the current settings`;
   tog.onclick=()=>{ showAll ? showAllFiles.delete(path) : showAllFiles.add(path); renderPane(); refreshDirtyMarks(); };
-  meta.append(pathEl, cnt, tog);
+  meta.append(pathEl, cnt);
   head.append(h, meta);
   const note=document.createElement("div"); note.className="note";
   note.textContent = f.isNew ? "Not on the device. Fill in a key to create this file; left empty, it is not written."
@@ -1663,13 +1680,14 @@ function renderPane(){
     const e=document.createElement("p"); e.className="empty-note";
     e.append(f.order.length ? `No keys are set in ${base}. ` : `${base} has no known keys. Add one below.`);
     if (f.order.length){
-      const b=document.createElement("button"); b.type="button"; b.className="link"; b.textContent=`Show all ${nAll} keys`;
+      const b=document.createElement("button"); b.type="button"; b.className="link"; b.textContent=`Show all ${nFull} keys`;
       b.onclick=tog.onclick; e.append(b, " to fill one in.");
     }
     pane.appendChild(e);
   }
 
   const foot=document.createElement("div"); foot.className="pane-foot";
+  if (f.order.length) foot.appendChild(tog);
   // add-key (arbitrary)
   const addw=document.createElement("details"); addw.className="fold";
   const adds=document.createElement("summary"); adds.textContent="Add a key";
@@ -1753,6 +1771,8 @@ function depState(base, key){
       d.ctl.push([cf, c.key]);
       if (!cv || (opts && !opts.includes(cv))) continue;
       if (!c.is.includes(cv)){ d.unused = `not used with ${c.key}=${cv}`; continue; }
+      const o = r.over, ov = o && confVal(o.file, o.key);
+      if (o){ d.ctl.push([o.file, o.key]); if (o.holds(ov)){ d.unused = `not used: ${o.file} ${o.key}=${ov} overrides ${c.key}=${cv}`; continue; } }
       d.used = true;
       if (r.required && !v) d.required = `required for ${c.key}=${cv}`;
     } else if (r.required){
@@ -1761,7 +1781,7 @@ function depState(base, key){
     }
     if (r.needs && !["","0"].includes(effVal(base, key)) && !r.needs.some(n=>condHolds(n, base))){
       d.ctl.push(...r.needs.map(n=>[n.file||base, n.key]));
-      d.needs = (d.needs ? d.needs+"; " : "") + "needs " + r.needs.map(condText).join(" or ");
+      d.needs = (d.needs ? d.needs+"; " : "") + (r.text || "needs " + r.needs.map(condText).join(" or "));
     }
   }
   return d;
@@ -1790,6 +1810,11 @@ function depWarnings(cmds){
     if (seen.has(r.file+key)) continue; seen.add(r.file+key);
     const d = depState(r.file, key), msg = (d.unused && keyHas(fileOf(r.file), key) && d.unused) || d.required || d.needs;
     if (msg && [[r.file, key], ...d.ctl].some(([f,k])=>changed.has(f+":"+k))) out.push(`${r.file} ${key}: ${msg}`);
+  }
+  for (const c of cmds){
+    const svc = c.path.split("/").pop().slice(0,-5);
+    if (c.key==="enabled" && c.cur.trim()==="0" && SVC_OFF_WARN[svc])
+      out.push(`${svc}.conf enabled=0: ${svc} stops ${c.when==="now" ? "now" : "after reboot"}. ${SVC_OFF_WARN[svc]}`);
   }
   return out.sort();
 }
@@ -2037,13 +2062,14 @@ function getConfig(file, timeoutMs=3000){
 // writes "OK: <cmd>" / "ERR: <cmd>" once handleCommand() returns. onRx returning
 // true also resolves true (a command that never returns, like `restart`).
 function sendCommand(cmdStr, onRx, timeoutMs=4000){
+  // the whole command up to the line end (trailing whitespace allowed), so "OK: svc on tele"
+  // does not match "OK: svc on telnet"
+  const mark = new RegExp("(?:^|[^\\w])(OK|ERR): "+escapeRe(cmdStr.trim())+"\\s*$");
   return new Promise((resolve,reject)=>{
     const onLine = (ln)=>{
       if (onRx && onRx(ln)===true){ done(); resolve(true); return; }
-      // match by substring (like getConfig): the marker line can carry a
-      // trailing char that would defeat endsWith.
-      if (ln.includes("OK: "+cmdStr)){ done(); resolve(true); }
-      else if (ln.includes("ERR: "+cmdStr)){ done(); resolve(false); }
+      const m = stripAnsi(ln).match(mark);
+      if (m){ done(); resolve(m[1]==="OK"); }
     };
     const timer = setTimeout(()=>{ done(); reject(new Error("timeout")); }, timeoutMs);
     const done = ()=>{ clearTimeout(timer); lineListeners.delete(onLine); };
@@ -2066,8 +2092,8 @@ function fetchHostname(timeoutMs=2500){
 // link: {transport, handle} of the connection the read goes over; committed as the
 // push target only if the read succeeds.
 async function importFromDevice(sourceLabel, link){
-  let label = sourceLabel || "device";
-  try { const hn = await fetchHostname(); if (hn) label = hn; } catch(_){}
+  let label = sourceLabel || "device", hn = null;
+  try { hn = await fetchHostname(); if (hn) label = hn; } catch(_){}
   const enc = new TextEncoder();
   const allFiles = Object.keys(FILE_KEYS);
   const result = {};        // file -> {key: value}, filled as Conf lines stream in
@@ -2115,10 +2141,13 @@ async function importFromDevice(sourceLabel, link){
     n++;
   }
   if (!n) throw new Error("no config received — is the device at the console prompt?");
+  // a re-read of the same device keeps what its earlier pushes still need applied
+  const prevApply = hn && state && state.fromDevice && state.deviceName===hn ? state.apply : null;
   load(files, label);
   state.fromDevice = true; state.deviceName = label;
   if (link){
     state.link = link;
+    if (prevApply){ prevApply.link = link; state.apply = prevApply; }
     lastTransport = link.transport;
     grantedSerialPort = link.transport==="serial" ? link.handle : null;
     grantedBleDevice  = link.transport==="ble"    ? link.handle : null;
@@ -2275,6 +2304,7 @@ const MQTT_LOG_ROOT = "pv/log/";
 const MQTT_DEV_ROOT = "pv/dev/";  // retained presence: online / offline (LWT)
 let mqttClient=null, mqttDeviceHost=null, mqttBuf="", mqttDec=new TextDecoder();
 let grantedMqttConfig=null;   // {url,user,pass,device} for silent re-connect
+const mqttPresence = {on:0, off:0};   // live (not retained) presence messages of the bound device
 let mqttScanClient=null;      // temporary client used only by the scan dialog
 let mqttScanTick=null, mqttScanRetry=null, mqttScanCfg=null, mqttScanDirty=false;
 const mqttScanHosts = new Map();  // host -> offline
@@ -2324,15 +2354,20 @@ function mqttBrokerConnect(url, username, password){
 // and pick up the activeWrite handle so getConfig/sendCommand work as on serial/BLE.
 async function mqttBindDevice(client, hostname){
   mqttClient = client; mqttDeviceHost = hostname; mqttBuf = ""; mqttDec=new TextDecoder();
-  client.on("message", (topic, payload)=>{
+  client.on("message", (topic, payload, packet)=>{
     // pv/log/<hostname> only — ignore the deeper /cmd echo, and other devices
     const parts = topic.split("/");
-    if (parts.length !== 3 || parts[1] !== "log") return;
-    if (parts[2] !== mqttDeviceHost) return;
-    mqttFeedPayload(payload);
+    if (parts.length !== 3 || parts[2] !== mqttDeviceHost) return;
+    if (parts[1] === "dev"){
+      const v = typeof payload==="string" ? payload : td.decode(payload);
+      if (!(packet && packet.retain) && (v==="online" || v==="offline")) mqttPresence[v==="online" ? "on" : "off"]++;
+      return;
+    }
+    if (parts[1] === "log") mqttFeedPayload(payload);
   });
   await new Promise((res,rej)=>client.subscribe(MQTT_LOG_ROOT + "#", {qos:0},
     e => e ? rej(e) : res()));
+  client.subscribe(MQTT_DEV_ROOT + hostname, {qos:0});   // presence: shows a restart of the device's mqtt service
   activeWrite = mqttWrite;
 }
 
@@ -2530,23 +2565,59 @@ const whenText = w => w==="now" ? "now" : w==="live" ? "when next used" : w==="r
 function addNeed(need, w){ if (w==="reboot") need.reboot = true; else if (Array.isArray(w)) w.forEach(x=>need.svcs.add(x)); }
 const needText = n => [...[...n.svcs].map(x=>"restarting "+x), ...(n.reboot ? ["reboot"] : [])].join(", ");
 
+/* One device command sequence at a time: a push, an apply step, a Services action and console
+   input share the link and its reply stream, so each takes this lock; while it is held their
+   controls are disabled. */
+let devBusy = null;   // label of the running sequence
+let svcRows = null, svcLink = null;   // last `svc list` rows and the link they were read on
+async function withDevice(label, fn){
+  if (devBusy) return undefined;
+  devBusy = label; ulRefreshInputState();
+  try { return await fn(); }
+  finally { devBusy = null; ulRefreshInputState(); }
+}
+
+// Services the push target's firmware lists (Services sheet, this link), or null if not read.
+const svcListed = t => svcRows && t && svcLink===t ? new Set(svcRows.map(r=>r.name)) : null;
+let svcMissing = {link:null, names:new Set()};   // answered `svc: unknown '<name>'` on that link
+// Whether `name` is off on the push target: its saved enabled (loaded/pushed conf, else the
+// firmware default) or, if the Services sheet listed it on this link, its runtime state.
+function svcOff(name){
+  const t = pushTarget(), f = fileOf(name+".conf"), v = f ? f.original.enabled : undefined;
+  if (v!==undefined && v.trim()==="0") return true;
+  const r = svcRows && t && svcLink===t && svcRows.find(x=>x.name===name);
+  if (r) return !r.enabled;
+  return v===undefined && SVC_ON_DEFAULT[name]===0;
+}
+// The firmware's reason when a reply to `svc on|restart <name>` shows the start failed
+// (service.h:170-173 "'<name>' failed: …", cli.cpp:2197 "start failed (state=…)"), else null.
+function startFailure(lines, name){
+  const ls = lines.map(stripAnsi), re = new RegExp("'"+escapeRe(name)+"' failed: (.*?)\\s*$");
+  for (const l of ls){ const m = l.match(re); if (m) return m[1]; }
+  const sf = ls.find(l=>/\bstart failed\b/.test(l));
+  return sf ? sf.replace(/^.*?\bstart failed\s*/,"").replace(/^\(|\)$/g,"") || "start failed" : null;
+}
+const svcUnknown = (lines, name) => lines.some(l=>stripAnsi(l).includes(`svc: unknown '${name}'`));
+
 // set-config for new/edited values, del-config for cleared keys; a service's enabled/log_level
-// as `svc on|off|log` (writes the conf and applies it), except switching off the editor's own link.
-// `when`: when the change takes effect (see whenText).
+// as `svc on|off|log` (writes the conf and applies it), except switching off the editor's own link
+// and a service the firmware does not have. `when`: when the change takes effect (see whenText).
 function pendingCommands(){
   const cmds = [];
   if (!state) return cmds;
-  const t = pushTarget(), own = t && LINK_SVC[t.transport];
+  const t = pushTarget(), own = t && LINK_SVC[t.transport], listed = svcListed(t);
+  const missing = t && svcMissing.link===t ? svcMissing.names : new Set();
   for (const path of state.confPaths){
-    const f = state.files[path], base = path.split("/").pop(), svc = SERVICES.includes(base.slice(0,-5)) && base.slice(0,-5);
+    const f = state.files[path], base = path.split("/").pop(), name = base.slice(0,-5);
+    const svc = SERVICES.includes(name) && (!listed || listed.has(name)) && !missing.has(name) && name;
     for (const {key,cur,orig} of changedFields(f)){
-      const v = cur.trim(), c = { label:base+":"+key, f, key, path, orig, cur, when:applyOf(base, key) };
-      if (svc && (key==="enabled" || key==="log_level")) c.when = "reboot";
+      const v = cur.trim(), c = { label:base+":"+key, f, key, path, base, orig, cur, when:applyOf(base, key), note:APPLY_NOTE[base+":"+key] };
+      if (SERVICES.includes(name) && (key==="enabled" || key==="log_level")) c.when = "reboot";
       if (v===""){ c.del = true; c.str = `del-config ${base} ${key}`; }
       else {
         c.str = `set-config ${base} ${key} ${cur}`; c.problem = valueProblem(key, cur);
-        if (svc && key==="enabled" && /^[01]$/.test(v) && !(v==="0" && svc===own)){ c.str = `svc ${v==="1" ? "on" : "off"} ${svc}`; c.when = "now"; }
-        if (svc && key==="log_level" && ["error","warn","info"].includes(v)){ c.str = `svc log ${svc} ${v}`; c.when = "now"; }
+        if (svc && key==="enabled" && /^[01]$/.test(v) && !(v==="0" && svc===own)){ c.str = `svc ${v==="1" ? "on" : "off"} ${svc}`; c.when = "now"; c.svc = svc; }
+        if (svc && key==="log_level" && ["error","warn","info"].includes(v)){ c.str = `svc log ${svc} ${v}`; c.when = "now"; c.svc = svc; }
       }
       cmds.push(c);
     }
@@ -2555,9 +2626,10 @@ function pendingCommands(){
 }
 const TRANSPORT_NAME = {serial:"USB serial", ble:"Bluetooth", mqtt:"MQTT"};
 const targetName = t => `${state.deviceName} over ${TRANSPORT_NAME[t.transport]}`;
+const otherLinks = t => Object.keys(TRANSPORT_NAME).filter(k=>k!==t.transport).map(k=>TRANSPORT_NAME[k]).join(" or ");
 
 async function uploadChanged(opts){
-  if (!state) return;
+  if (!state || devBusy) return;
   const target = pushTarget();
   if (!target){ showErr("Nothing to push to: read the config from a device first"); return; }
   const cmds = pendingCommands();
@@ -2572,30 +2644,43 @@ async function uploadChanged(opts){
   if (bad.length && !window.confirm(`${bad.length} value${bad.length>1?"s are":" is"} invalid and the firmware will reject or misread ${bad.length>1?"them":"it"}:\n\n`
       + bad.map(c=>`  ${c.label} = ${c.cur}: ${c.problem}`).join("\n") + `\n\nPush to ${tname} anyway?`)) return;
   closeReview();
-  const btn = document.getElementById("upload"); btn.disabled = true;
+  await withDevice("push", ()=>pushCommands(target, cmds));
+}
+
+async function pushCommands(target, cmds){
   const weOpened = !activeWrite;
   const failed = []; let ok=0, aborted=false;
   // what the pushed changes still need applied, collected per target until a reboot
-  const need = state.apply && state.apply.link===target ? state.apply : (state.apply = {link:target, reboot:false, svcs:new Set()});
+  const need = state.apply && state.apply.link===target ? state.apply
+    : (state.apply = {link:target, reboot:false, svcs:new Set(), whenOn:new Set()});
   need.ok = false;
-  ulOpen(`sending ${cmds.length} command(s) to ${tname}`);
+  ulOpen(`sending ${cmds.length} command(s) to ${targetName(target)}`);
   try {
     await ensureConnection(target);
     ulRefreshInputState();
     for (let i=0;i<cmds.length;i++){
       const c = cmds[i];
       showStatus(`uploading ${i+1}/${cmds.length}: ${c.label} …`, false, true);
-      ulLine("sent", "» "+c.str);
-      let got = 0;
-      // ulConsoleListener (attached while the panel is open) already renders the reply
-      // lines; here we only count them for the timeout-error message below.
-      const onRx = ()=>{ got++; };
+      // ulConsoleListener (attached while the panel is open) already renders the reply lines
+      const lines = [], send = async () => { lines.length = 0; ulLine("sent", "» "+c.str); return sendCommand(c.str, ln=>{ lines.push(ln); }); };
       try {
-        const r = await sendCommand(c.str, onRx);
-        if (r){ ok++; addNeed(need, c.when); if (c.del) delete c.f.original[c.key]; else c.f.original[c.key] = c.cur; }  // now matches device → clears the mark
-        else failed.push(c.label);
+        let r = await send();
+        if (!r && c.svc && svcUnknown(lines, c.svc)){
+          // not in this firmware: write the file instead
+          if (svcMissing.link!==target) svcMissing = {link:target, names:new Set()};
+          svcMissing.names.add(c.svc);
+          c.str = `set-config ${c.base} ${c.key} ${c.cur}`; c.when = "reboot"; c.svc = null;
+          r = await send();
+        }
+        if (!r){ failed.push(c.label); continue; }
+        if (c.del) delete c.f.original[c.key]; else c.f.original[c.key] = c.cur;  // now matches the device file → clears the mark
+        const on = c.svc && c.key==="enabled" ? c.cur.trim()==="1" : null;
+        if (on!==null) svcSeen(target, c.svc, on);
+        const why = on && startFailure(lines, c.svc);
+        if (why){ failed.push(`${c.label} (${c.svc} did not start: ${why})`); continue; }
+        ok++; addNeed(need, c.when);
       } catch(e){
-        ulLine("resp err", `(no marker after ${e.message}; ${got} line(s) received)`);
+        ulLine("resp err", `(no marker after ${e.message}; ${lines.length} line(s) received)`);
         failed.push(c.label+" ("+e.message+")");
       }
     }
@@ -2603,62 +2688,160 @@ async function uploadChanged(opts){
     showErr("Upload: "+e.message); ulLine("resp err", "connection failed: "+e.message); aborted=true;
   } finally {
     if (weOpened) await closeLink(target);
-    btn.disabled=false;
-    ulRefreshInputState();
     renderPane(); refreshDirtyMarks();   // drop dots/"was:" for fields now on the device
   }
   if (aborted){ ulStat("connection failed", true); return; }   // keep the connection error visible
-  need.ok = !failed.length; renderApply();
+  need.ok = !failed.length; applyPrune(need); renderApply();
   let msg = `uploaded ${ok}/${cmds.length} changed field${cmds.length>1?"s":""}`;
+  const at = applyText(need);
   if (failed.length) msg += " — failed: "+failed.join(", ");
-  else if (need.reboot || need.svcs.size) msg += " — takes effect after: "+needText(need.reboot ? {svcs:[], reboot:true} : need);
+  else if (at) msg += " — "+at.charAt(0).toLowerCase()+at.slice(1);
   ulStat(`done: ${ok}/${cmds.length} ok`+(failed.length?`, ${failed.length} failed`:""), failed.length>0);
   showStatus(msg, failed.length>0);
 }
 
 const closeLink = t => t.transport==="ble" ? disconnectBluetooth() : t.transport==="mqtt" ? disconnectMqtt() : disconnectSerial();
 
+// A confirmed `svc on|off <name>` on link t: the Services rows follow; turning it on applies its pending changes.
+function svcSeen(t, name, on){
+  const r = svcRows && svcLink===t && svcRows.find(x=>x.name===name);
+  if (r) r.enabled = on;
+  const a = state && state.apply;
+  if (on && a && a.link===t) a.whenOn.delete(name);
+}
+// A confirmed restart of `name` on link t (or "" = reboot) applies what it was needed for.
+function applyDone(t, name){
+  const a = state && state.apply;
+  if (!a || a.link!==t) return;
+  if (name) a.svcs.delete(name); else { a.reboot = false; a.svcs.clear(); }
+}
+// A restart of a switched-off service would start it (service.h:100-103 ignores enabled): its
+// change instead applies when it is turned on.
+function applyPrune(a){ for (const x of [...a.svcs]) if (svcOff(x)){ a.svcs.delete(x); a.whenOn.add(x); } }
+function applyText(a){
+  const parts = [];
+  if (a.reboot || a.svcs.size) parts.push("Takes effect after: "+needText(a.reboot ? {svcs:[], reboot:true} : a));
+  for (const x of a.whenOn) parts.push(`${x}: applies when ${x} is turned on`);
+  return parts.join(". ");
+}
+
 // Apply bar in the console: after a clean push, the restarts or the reboot the pushed changes need.
 function renderApply(){
   const box = document.getElementById("apply"), a = state && state.apply;
-  const on = !!(a && a.ok && pushTarget()===a.link && (a.reboot || a.svcs.size));
-  box.hidden = !on;
-  if (!on) return;
-  box.firstElementChild.textContent = "Takes effect after: " + needText(a.reboot ? {svcs:[], reboot:true} : a);
+  const on = !!(a && a.ok && pushTarget()===a.link);
+  if (on) applyPrune(a);
+  box.hidden = !(on && (a.reboot || a.svcs.size || a.whenOn.size));
+  if (box.hidden) return;
+  box.firstElementChild.textContent = applyText(a);
   box.lastElementChild.replaceChildren(...(a.reboot ? [""] : [...a.svcs]).map(x=>{
-    const b = document.createElement("button"); b.type = "button";
+    const b = document.createElement("button"); b.type = "button"; b.disabled = !!devBusy;
     b.textContent = x ? "Restart "+x : "Reboot device"; b.onclick = ()=>applyStep(x);
     return b;
   }));
 }
+
+// What shows that the device cut or bounced the link since linkMark(): on MQTT its presence topic
+// (mqtt.cpp: "offline" on a clean stop, "online" on connect), on Bluetooth the GATT link dropping.
+const linkMark = t => t.transport==="mqtt" ? {...mqttPresence} : {ble:bleServer};
+const linkCut = (t, m, stopOnly) => t.transport==="mqtt"
+  ? mqttPresence.off>m.off || (!stopOnly && mqttPresence.on>m.on)
+  : t.transport==="ble" && !!m.ble && !m.ble.connected;
+
+// After `svc restart <name>` on the service link t runs over: wait for the device to answer over
+// the link again and read `svc list`. {confirmed, msg, isErr}; confirmed needs the OK marker or the
+// link bounce (linkCut) and the service Running afterwards.
+async function restartOwnLink(name, t, ok, lines, mark){
+  const dev = state.deviceName, via = TRANSPORT_NAME[t.transport], cmd = "svc restart "+name;
+  let cut = linkCut(t, mark);
+  if (t.transport==="ble"){ await disconnectBluetooth(); refreshConn(); }
+  let rows = null;
+  for (let i=0; i<SVC_T.tries && !rows; i++){
+    await svcSleep(SVC_T.retry);
+    if (pushTarget()!==t) return {msg:`“${cmd}” sent, not confirmed: another connection was started`, isErr:true};
+    try { await ensureConnection(t); } catch(_){ continue; }
+    refreshConn();
+    rows = await svcList();
+  }
+  if (t.transport==="mqtt") cut = cut || linkCut(t, mark);   // presence may arrive late; a BLE link was closed by us
+  const why = ok && startFailure(lines, name);
+  if (why) return {msg:`${name} did not start: ${why}`, isErr:true};
+  if (!rows){
+    if (pushTarget()===t){ await closeLink(t); refreshConn(); }
+    return ok ? {confirmed:true, msg:`${name} restarted on ${dev}, but ${dev} did not answer over ${via} again. Read the device again (Open) to reconnect.`, isErr:true}
+              : {msg:`“${cmd}” sent, not confirmed: ${dev} did not answer over ${via} again. Read the device again (Open) to check.`, isErr:true};
+  }
+  const r = rows.find(x=>x.name===name);
+  if (!r || r.state!=="Running") return {msg:`${name} is ${r ? r.state : "not listed"} on ${dev} after “${cmd}”; the ${via} link is back.`, isErr:true};
+  if (!(ok || cut)) return {msg:`“${cmd}” sent, not confirmed: ${name} is running and the ${via} link is back, but nothing showed that it restarted. Restart it again if unsure.`, isErr:true};
+  return {confirmed:true, msg:`${name} restarted on ${dev}; the ${via} link is back.`};
+}
+
 // `svc restart <svc>`, or `restart` for "", on the pushed-to device only
 async function applyStep(svc){
   const a = state && state.apply, t = pushTarget();
-  if (!a || t!==a.link){ renderApply(); return; }
-  const tname = targetName(t), drops = !svc || LINK_SVC[t.transport]===svc, cmd = svc ? "svc restart "+svc : "restart";
-  if (!svc ? !window.confirm(`Reboot ${tname}?\n\nThe device stops converting and reboots. This editor's connection drops; reconnect from Open when the device is back.`)
-      : drops && !window.confirm(`Restart ${svc} on ${tname}?\n\nThis editor is connected through ${svc}, so its connection drops.`)) return;
-  document.querySelectorAll("#apply button").forEach(b=>b.disabled = true);
-  const weOpened = !activeWrite;
-  let r = "err", refused = false;
-  ulShow(); ulLine("sent", "» "+cmd);
-  try {
-    await ensureConnection(t); ulRefreshInputState();
-    // restart prints "Rebooting" and never returns; refused, it says so and ends with OK
-    const ok = await sendCommand(cmd, ln=>{ if (/restart refused/.test(ln)) refused = true; return /\bRebooting\b/.test(ln); }, 5000);
-    r = ok && !refused ? "ok" : "err";
-  } catch(e){
-    if (e.message==="timeout") r = "gone"; else ulLine("resp err", "connection failed: "+e.message);
+  if (!a || t!==a.link || devBusy){ renderApply(); return; }
+  applyPrune(a);
+  if (svc ? !a.svcs.has(svc) : !a.reboot){ renderApply(); return; }
+  const dev = state.deviceName, tname = targetName(t), own = LINK_SVC[t.transport], cmd = svc ? "svc restart "+svc : "restart";
+  const ownOff = !svc && own && svcOff(own);
+  if (!svc ? !window.confirm(`Reboot ${tname}?\n\nThe device stops converting and reboots. `
+        + (ownOff ? `${own} is switched off in its ${own}.conf, so this ${TRANSPORT_NAME[t.transport]} link does not come back after the reboot; connect over ${otherLinks(t)} instead.`
+                    + (own==="mqtt" ? " A charger that gets its BMS data over MQTT loses it and falls back to its stale-cell voltage cap." : "")
+                  : "This editor's connection drops; reconnect from Open when the device is back."))
+      : svc===own && !window.confirm(`Restart ${svc} on ${tname}?\n\nThis editor is connected through ${svc}, so its connection drops.`)) return;
+  await withDevice(cmd, async ()=>{
+    const weOpened = !activeWrite;
+    let res;
+    ulShow(); showStatus(`${cmd} on ${dev} …`, false, true);
+    try { await ensureConnection(t); ulRefreshInputState(); }
+    catch(e){ ulLine("resp err", "connection failed: "+e.message); res = {msg:"connection failed: "+e.message, isErr:true}; }
+    if (!res && svc){   // the service may have been switched off since the push (Services sheet, console)
+      await svcList(); applyPrune(a);
+      if (!a.svcs.has(svc)) res = {msg:`${svc} is off on ${dev}; the change applies when ${svc} is turned on`};
+    }
+    if (!res) res = svc ? await applyRestart(svc, t) : await applyReboot(t, ownOff);
+    if (res.confirmed) applyDone(t, svc);
+    if (weOpened && activeWrite && pushTarget()===t) await closeLink(t);
+    ulStat(res.msg, !!res.isErr); showStatus(res.msg, !!res.isErr);
+  });
+  renderApply();
+}
+
+async function applyRestart(svc, t){
+  const cmd = "svc restart "+svc, dev = state.deviceName, own = LINK_SVC[t.transport]===svc;
+  const lines = [], mark = linkMark(t);
+  let ok;
+  ulLine("sent", "» "+cmd);
+  try { ok = await sendCommand(cmd, ln=>{ lines.push(ln); }, own ? SVC_T.own : SVC_T.cmd); }
+  catch(e){ if (e.message!=="timeout") return {msg:"connection failed: "+e.message, isErr:true}; ok = null; }
+  if (own && ok!==false) return restartOwnLink(svc, t, ok, lines, mark);
+  if (ok===false){
+    const r = [...lines].map(stripAnsi).reverse().find(l=>/\bsvc: /.test(l));
+    return {msg:`${dev} rejected “${cmd}”`+(r ? ": "+r.replace(/^.*?\bsvc: /,"") : ""), isErr:true};
   }
-  const done = r==="ok" || (r==="gone" && drops);
-  if (done){ if (svc) a.svcs.delete(svc); else { a.reboot = false; a.svcs.clear(); } }
-  if ((done && drops) || weOpened) await closeLink(t);
-  const msg = !done ? (r==="gone" ? `no reply to "${cmd}" from ${state.deviceName}` : refused ? `${state.deviceName} refused the restart — see the console` : `"${cmd}" failed — see the console`)
-    : !svc ? `${state.deviceName} is rebooting — reconnect from Open when it is back`
-    : drops ? `restarted ${svc} on ${state.deviceName}; the connection dropped — reconnect from Open`
-    : `restarted ${svc} on ${state.deviceName}`;
-  ulStat(msg, !done); showStatus(msg, !done);
-  ulRefreshInputState(); renderApply();
+  if (ok===null) return {msg:`“${cmd}” sent to ${dev}, not confirmed: no reply within ${SVC_T.cmd/1000} s. Check with Refresh in Services.`, isErr:true};
+  const why = startFailure(lines, svc);
+  if (why) return {msg:`${svc} did not start after the restart on ${dev}: ${why}`, isErr:true};
+  return {confirmed:true, msg:`restarted ${svc} on ${dev}`};
+}
+
+// `restart` prints "Rebooting" (main.cpp systemRestart) and never answers; refused, it logs
+// "restart refused: …" and returns with OK.
+async function applyReboot(t, ownOff){
+  const dev = state.deviceName;
+  let saw = false, refused = false, ok;
+  ulLine("sent", "» restart");
+  try { ok = await sendCommand("restart", ln=>{ if (/restart refused/.test(ln)) refused = true; if (/\bRebooting\b/.test(ln)) return saw = true; }, 5000); }
+  catch(e){ if (e.message!=="timeout") return {msg:"connection failed: "+e.message, isErr:true}; ok = null; }
+  if (saw){
+    await closeLink(t); refreshConn();
+    const own = LINK_SVC[t.transport];
+    return {confirmed:true, msg: ownOff ? `${dev} is rebooting; ${own} stays off there, so connect over ${otherLinks(t)} when it is back`
+                                        : `${dev} is rebooting — reconnect from Open when it is back`};
+  }
+  if (refused) return {msg:`${dev} refused the restart — see the console`, isErr:true};
+  if (ok===null) return {msg:`“restart” sent to ${dev}, not confirmed: no “Rebooting” line within 5 s. Check with Refresh in Services or reconnect from Open.`, isErr:true};
+  return {msg:`“restart” failed on ${dev} — see the console`, isErr:true};
 }
 
 /* Review sheet: old → new per file, then push or download. */
@@ -2699,7 +2882,7 @@ function renderReview(){
       const nw=document.createElement("span"); nw.className="new"+(c.del?" none":"");
       nw.textContent = c.del ? "removed" : c.cur;
       v.append(o,to,nw);
-      if (target){ const w=document.createElement("span"); w.className="when"; w.textContent=whenText(c.when); v.appendChild(w); }
+      if (target){ const w=document.createElement("span"); w.className="when"; w.textContent=whenText(c.when)+(c.note ? ` (${c.note})` : ""); v.appendChild(w); }
       const u=document.createElement("button"); u.type="button"; u.className="link undo"; u.textContent="Undo";
       u.onclick=()=>{ revertField(c.path, c.key); if (state.active===c.path) renderPane(); refreshDirtyMarks(); };
       d.append(k,u,v);
@@ -2717,7 +2900,7 @@ function renderReview(){
   const dirty = cmds.length > 0;
   dl.textContent = dirty ? "Download .zip" : "Download backup .zip";
   dl.classList.toggle("primary", !target || !dirty);
-  up.style.display = target && dirty ? "" : "none";
+  up.style.display = target && dirty ? "" : "none"; up.disabled = !!devBusy;
   if (target) up.textContent = `Push ${cmds.length} change${cmds.length>1?"s":""} to ${targetName(target)}`;
   const need = {svcs:new Set(), reboot:false}; cmds.forEach(c=>addNeed(need, c.when));
   document.getElementById("review-when").textContent = !(target && dirty) ? ""
@@ -2822,18 +3005,25 @@ function ulLine(cls, text){
 }
 function ulRefreshInputState(){
   const i=document.getElementById("uploadlog-cmd");
-  i.disabled = !activeWrite;
-  i.placeholder = activeWrite ? "type a console command and press Enter"
-                              : "connect to a device first";
+  i.disabled = !activeWrite || !!devBusy;
+  document.querySelector("#uploadlog-input button").disabled = i.disabled;
+  i.placeholder = !activeWrite ? "connect to a device first"
+                : devBusy ? `waiting for ${devBusy} …` : "type a console command and press Enter";
+  const up=document.getElementById("upload"); if (up) up.disabled = !!devBusy;
   refreshConn();
 }
 async function consoleSend(cmd){
   cmd = cmd.replace(/[\r\n]+$/,"");
   if (!cmd) return;
   if (!activeWrite){ ulLine("resp err", "no active connection"); return; }
-  ulLine("sent", "» "+cmd);
-  try { await activeWrite(cmd+"\r\n"); }
-  catch(e){ ulLine("resp err", "send failed: "+(e.message||e)); }
+  if (devBusy){ ulLine("resp err", `not sent: waiting for ${devBusy}`); return; }
+  const i=document.getElementById("uploadlog-cmd"), had=document.activeElement===i;
+  await withDevice("console", async ()=>{
+    ulLine("sent", "» "+cmd);
+    try { await activeWrite(cmd+"\r\n"); }
+    catch(e){ ulLine("resp err", "send failed: "+(e.message||e)); }
+  });
+  if (had && !i.disabled) i.focus();
 }
 document.getElementById("uploadlog-close").onclick = ulHide;
 document.getElementById("open-console").onclick = ()=>{
@@ -2855,7 +3045,6 @@ document.getElementById("uploadlog-input").addEventListener("submit", e=>{
 ---------------------------------------------------------------------------- */
 const SVC_T = { cmd:4000, own:2500, retry:1500, tries:4 };   // ms; own = reply wait when the command cuts our link
 function svcTimings(){ return SVC_T; }
-let svcRows=null, svcLink=null, svcBusy=null;
 const SVC_HDR = /\bNAME\s+STATE\s+LOG\s+ENABLED\s+DETAIL\b/;
 const SVC_ROW = /^(?:.*?\s)?([\w.-]+)\s+(Running|Stopped|Failed)\s+(error|warn|info)\s+(yes|no)(?:\s+(.*?))?\s*$/;
 const stripAnsi = s => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
@@ -2884,7 +3073,7 @@ function svcTarget(){
              : activeWrite===mqttWrite && !!mqttClient && mqttDeviceHost===t.handle.device;
   return live ? t : null;
 }
-const svcOwnLink = (name, t) => name===(t.transport==="mqtt" ? "mqtt" : t.transport==="ble" ? "ble" : null);
+const svcOwnLink = (name, t) => name===LINK_SVC[t.transport];
 const svcOpenNow = () => document.getElementById("services").classList.contains("open");
 const svcSleep = ms => new Promise(r=>setTimeout(r, ms));
 
@@ -2902,16 +3091,16 @@ function svcSetMsg(text, isErr){
 
 function svcRender(){
   const t=svcTarget(), body=document.getElementById("svc-body"), sub=document.getElementById("svc-sub");
-  sub.classList.toggle("busy", !!svcBusy);
-  sub.textContent = svcBusy ? svcBusy+" …" : t ? targetName(t) : "not connected";
-  document.getElementById("svc-refresh").disabled = !t || !!svcBusy;
+  sub.classList.toggle("busy", !!devBusy);
+  sub.textContent = devBusy ? devBusy+" …" : t ? targetName(t) : "not connected";
+  document.getElementById("svc-refresh").disabled = !t || !!devBusy;
   body.replaceChildren();
   const empty = (head, text) => {
     const e=document.createElement("div"); e.className="review-empty";
     const s=document.createElement("strong"); s.textContent=head; e.append(s, text); body.appendChild(e);
   };
   if (!t) return empty("Not connected", "Services are managed on the device the config was read from, while its link is open. Read the device again (Open) to manage them.");
-  if (svcLink!==t || !svcRows) return svcBusy ? undefined : empty("No list yet", "Refresh to read the services from the device.");
+  if (svcLink!==t || !svcRows) return devBusy ? undefined : empty("No list yet", "Refresh to read the services from the device.");
   if (!svcRows.length) return empty("No services", "The firmware lists no services.");
   for (const r of svcRows){
     const row=document.createElement("div"); row.className="svc"; row.dataset.svc=r.name;
@@ -2921,18 +3110,20 @@ function svcRender(){
     const d=document.createElement("span"); d.className="svc-detail"; d.textContent=r.detail;
     id.append(n, st, d);
     const ctl=document.createElement("div"); ctl.className="svc-ctl";
-    const lg=document.createElement("select"); lg.className="svc-log"; lg.disabled=!!svcBusy;
+    const lg=document.createElement("select"); lg.className="svc-log"; lg.disabled=!!devBusy;
     lg.setAttribute("aria-label", r.name+" log level"); lg.title="Log level, saved and applied now (svc log)";
     for (const v of ["error","warn","info"]){ const o=document.createElement("option"); o.value=o.textContent=v; lg.appendChild(o); }
     lg.value=r.log;
     lg.onchange=()=>svcAction(r.name, "log", lg.value);
+    const off = svcOff(r.name);
     const rs=document.createElement("button"); rs.type="button"; rs.className="rs"; rs.textContent="Restart";
-    rs.disabled = !!svcBusy || !r.enabled;
-    rs.title = r.enabled ? `Stop and start ${r.name} now (svc restart)` : `${r.name} is off; turn it on to start it`;
+    rs.disabled = !!devBusy || off;
+    rs.title = !off ? `Stop and start ${r.name} now (svc restart)`
+      : r.enabled ? `${r.name} is saved as off; a restart would start it` : `${r.name} is off; turn it on to start it`;
     rs.onclick=()=>svcAction(r.name, "restart");
     const sw=document.createElement("label"); sw.className="switch";
     sw.title="Enabled: saved on the device and applied now (svc on/off)";
-    const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=r.enabled; cb.disabled=!!svcBusy;
+    const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=r.enabled; cb.disabled=!!devBusy;
     cb.setAttribute("aria-label", r.name+" enabled");
     cb.onchange=()=>svcAction(r.name, cb.checked ? "on" : "off");
     const tr=document.createElement("span"); tr.className="track";
@@ -2944,21 +3135,24 @@ function svcRender(){
   }
 }
 
-// `svc list`; true when a list came back. quiet: no error message on failure.
-async function svcRefresh(quiet){
+// `svc list` on the open link (caller holds the device lock); the rows, or null. loud: say why it failed.
+async function svcList(loud){
   const t=svcTarget();
-  if (!t){ svcRender(); return false; }
-  const prev=svcBusy; svcBusy=prev||"svc list"; svcRender();
+  if (!t){ svcRender(); return null; }
   const lines=[]; let ok;
-  try { ok = await sendCommand("svc list", ln=>lines.push(ln), SVC_T.cmd); } catch(_){ ok=null; }
-  svcBusy=prev;
+  try { ok = await sendCommand("svc list", ln=>{ lines.push(ln); }, SVC_T.cmd); } catch(_){ ok=null; }
   const rows = ok ? parseSvcList(lines) : null;
   if (rows){ svcRows=rows; svcLink=t; }
-  else if (!quiet) svcSetMsg(ok===false ? "The device rejected “svc list” (firmware without services?)"
+  else if (loud) svcSetMsg(ok===false ? "The device rejected “svc list” (firmware without services?)"
                            : ok ? "Incomplete reply to “svc list”; refresh to try again"
                            : `No reply to “svc list” within ${SVC_T.cmd/1000} s`, true);
-  svcRender();
-  return !!rows;
+  svcRender(); renderApply();
+  return rows;
+}
+// Refresh button / opening the sheet; true when a list came back. quiet: no error message on failure.
+async function svcRefresh(quiet){
+  if (!svcTarget()){ svcRender(); return false; }
+  return !!(await withDevice("svc list", ()=>svcList(!quiet)));
 }
 
 // Mirror a saved service setting into the loaded <name>.conf, unless that field has a pending edit.
@@ -2976,15 +3170,14 @@ function svcSyncConf(name, key, val){
 
 async function svcAction(name, sub, arg){
   const t=svcTarget();
-  if (!t || svcBusy){ svcRender(); return; }
+  if (!t || devBusy){ svcRender(); return; }
+  if (sub==="restart" && svcOff(name)){ svcSetMsg(`${name} is off; a restart would start it. Turn it on instead.`, true); svcRender(); return; }
   const cmd = `svc ${sub} ${name}`+(arg ? " "+arg : "");
   const own = (sub==="off" || sub==="restart") && svcOwnLink(name, t);
   const dev=state.deviceName, via=TRANSPORT_NAME[t.transport];
   const why=[];
-  if (own && sub==="off"){
-    const others=Object.keys(TRANSPORT_NAME).filter(k=>k!==t.transport).map(k=>TRANSPORT_NAME[k]).join(" or ");
-    why.push(`This editor is connected to ${dev} over ${via}. Stopping ${name} drops that link; turning ${name} back on then needs another link (${others}).`);
-  }
+  if (own && sub==="off")
+    why.push(`This editor is connected to ${dev} over ${via}. Stopping ${name} drops that link; turning ${name} back on then needs another link (${otherLinks(t)}).`);
   if (own && sub==="restart")
     why.push(`This editor is connected to ${dev} over ${via}. The link drops while ${name} restarts; the editor then waits for the device to answer again.`);
   if (sub==="off" && name==="mqtt")
@@ -2993,44 +3186,40 @@ async function svcAction(name, sub, arg){
     if (sub==="off") why.push(`The setting is saved, so ${name} also stays off after a reboot.`);
     if (!window.confirm(`${sub==="off" ? "Stop" : "Restart"} ${name} on ${dev}?\n\n`+why.join("\n\n"))){ svcRender(); return; }
   }
-  svcBusy=cmd; svcSetMsg(""); svcRender();
-  const lines=[]; let ok;
-  try { ok = await sendCommand(cmd, ln=>lines.push(stripAnsi(ln)), own ? SVC_T.own : SVC_T.cmd); } catch(_){ ok=null; }
-  if (own && ok!==false){ await svcAfterOwnLink(name, sub, t); svcBusy=null; svcRender(); return; }
-  svcBusy=null;
-  if (ok===true){
-    if (sub==="on" || sub==="off") svcSyncConf(name, "enabled", sub==="on" ? "1" : "0");
-    else if (sub==="log") svcSyncConf(name, "log_level", arg);
-    const sf=lines.find(l=>/\bstart failed\b/.test(l));
-    if (sf) svcSetMsg(`${name} did not start: ${sf.replace(/^.*?\bstart failed\s*/,"").replace(/^\(|\)$/g,"") || "start failed"}`, true);
-  } else if (ok===false){
-    const r=[...lines].reverse().find(l=>/\bsvc(?: log)?: /.test(l));
-    svcSetMsg(`The device rejected “${cmd}”`+(r ? ": "+r.replace(/^.*?\bsvc(?: log)?: /,"") : ""), true);
-  } else svcSetMsg(`No reply to “${cmd}” within ${SVC_T.cmd/1000} s`, true);
-  await svcRefresh();
+  await withDevice(cmd, async ()=>{
+    svcSetMsg(""); svcRender();
+    const lines=[], mark=linkMark(t); let ok;
+    try { ok = await sendCommand(cmd, ln=>{ lines.push(stripAnsi(ln)); }, own ? SVC_T.own : SVC_T.cmd); } catch(_){ ok=null; }
+    if (own && ok!==false){
+      const res = sub==="off" ? await stopOwnLink(name, t, ok, mark) : await restartOwnLink(name, t, ok, lines, mark);
+      if (res.confirmed && sub==="restart") applyDone(t, name);
+      svcSetMsg(res.msg, !!res.isErr);
+      return;
+    }
+    if (ok===true){
+      if (sub==="on" || sub==="off"){ svcSyncConf(name, "enabled", sub==="on" ? "1" : "0"); svcSeen(t, name, sub==="on"); }
+      else if (sub==="log") svcSyncConf(name, "log_level", arg);
+      const sf = (sub==="on" || sub==="restart") && startFailure(lines, name);
+      if (sf) svcSetMsg(`${name} did not start: ${sf}`, true);
+      else if (sub==="restart") applyDone(t, name);
+    } else if (ok===false){
+      const r=[...lines].reverse().find(l=>/\bsvc(?: log)?: /.test(l));
+      svcSetMsg(`The device rejected “${cmd}”`+(r ? ": "+r.replace(/^.*?\bsvc(?: log)?: /,"") : ""), true);
+    } else svcSetMsg(`“${cmd}” sent, not confirmed: no reply within ${SVC_T.cmd/1000} s. Check with Refresh.`, true);
+    await svcList(true);
+  });
+  svcRender(); renderApply();
 }
 
-// After stopping/restarting the service our own link runs over: close the link
-// (off), or wait for the device to answer on it again (restart).
-async function svcAfterOwnLink(name, sub, t){
+// After `svc off <name>` on the service link t runs over: the OK marker cannot come back over it
+// (cmdService logs after stop()), so the stop counts as confirmed only by the marker or the device
+// cutting the link (linkCut). The link is closed either way.
+async function stopOwnLink(name, t, ok, mark){
   const dev=state.deviceName, via=TRANSPORT_NAME[t.transport];
-  const close = async ()=>{ await (t.transport==="mqtt" ? disconnectMqtt() : disconnectBluetooth()); refreshConn(); };
-  if (sub==="off"){
-    await close();
-    svcSetMsg(`${name} stopped; the ${via} link to ${dev} is closed.`, false);
-    return;
-  }
-  svcBusy=`waiting for ${dev}`;
-  if (t.transport==="ble"){ await disconnectBluetooth(); refreshConn(); }
-  for (let i=0; i<SVC_T.tries; i++){
-    await svcSleep(SVC_T.retry);
-    if (pushTarget()!==t) return;               // the user started another connect
-    try { await ensureConnection(t); } catch(_){ continue; }
-    refreshConn();
-    if (await svcRefresh(true)){ svcSetMsg(`${name} restarted; the ${via} link is back.`, false); return; }
-  }
-  if (pushTarget()===t) await close();
-  svcSetMsg(`${name} restarted, but ${dev} did not answer over ${via} again. Read the device again (Open) to reconnect.`, true);
+  const cut = ok===true || linkCut(t, mark, true);
+  await closeLink(t); refreshConn();
+  if (cut){ svcSyncConf(name, "enabled", "0"); svcSeen(t, name, false); return {confirmed:true, msg:`${name} stopped; the ${via} link to ${dev} is closed.`}; }
+  return {msg:`“svc off ${name}” sent, not confirmed: the reply cannot come back over ${via} once ${name} stops. The ${via} link to ${dev} is closed; check over ${otherLinks(t)}.`, isErr:true};
 }
 
 function svcOpen(){
@@ -3041,7 +3230,7 @@ function svcOpen(){
   document.getElementById("open-services").setAttribute("aria-expanded","true");
   document.getElementById("svc-close").focus();
   svcRender();
-  if (!svcBusy) svcRefresh();
+  if (!devBusy) svcRefresh();
 }
 function svcClose(){
   const s=document.getElementById("services");
@@ -3056,7 +3245,7 @@ function svcClose(){
 document.getElementById("open-services").onclick = svcOpen;
 document.getElementById("svc-close").onclick = svcClose;
 document.getElementById("svc-scrim").onclick = svcClose;
-document.getElementById("svc-refresh").onclick = ()=>{ if (!svcBusy){ svcSetMsg(""); svcRefresh(); } };
+document.getElementById("svc-refresh").onclick = ()=>{ if (!devBusy){ svcSetMsg(""); svcRefresh(); } };
 document.getElementById("menu-start").addEventListener("click", svcClose);
 // capture phase: handled before the document-level Esc handler of the other sheets
 window.addEventListener("keydown", e=>{

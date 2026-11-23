@@ -112,8 +112,8 @@ input/output role keys is drawn in amber (see [Removed role keys](#removed-role-
 
 Each file page starts with the file name, its path, "N of M keys set" and a one-line note on what the file
 controls. The keys follow, grouped by shared prefix (`i2c_`, `ina22x_`, …) into groups that start collapsed. A collapsed
-group that holds changed or invalid keys shows an amber dot with their count. **Add a key**
-and **Show `<file>` as text** sit at the bottom as folded sections.
+group that holds changed or invalid keys shows an amber dot with their count. At the bottom sit **Show all N keys**
+(see [Short view](#short-view)) and the folded sections **Add a key** and **Show `<file>` as text**.
 
 On a narrow screen the file list becomes a horizontal strip with small group labels, rows stack, and the review,
 console and services sheets open from the bottom. The page follows the system light or dark setting.
@@ -121,9 +121,10 @@ console and services sheets open from the bottom. The page follows the system li
 ## Short view
 
 Each file opens in a short view. It shows the keys that are set, changed, or commonly edited (such as `mcu`,
-`pwm_freq`, the side limits, `L0`, `topo` and the charge targets). **Show all M keys** next to the key count lists
-every key the firmware reads from that file. Group headings then show how many of their keys are set. **Show set
-keys only** switches back. The choice is kept per file.
+`pwm_freq`, the side limits, `L0`, `topo` and the charge targets). **Show all N keys** at the bottom of the page
+lists every key the firmware reads from that file, except unset keys that the current settings make unused (see
+[Dependent keys](#dependent-keys)); N counts exactly the rows it shows. Group headings then show how many of their
+keys are set. **Show fewer keys** switches back. The choice is kept per file.
 
 ## Keys
 
@@ -173,8 +174,9 @@ Some keys only matter for a certain value of another key. The editor follows the
 | `psu_vout` (converter) | Read with `mode=psu`, required |
 | `pv_isc`, `pv_voc` (converter) | Read with `mode=pv`, required |
 | `pv_k`, `pv_slew`, `pv_iout_span` (converter) | Read with `mode=pv` |
-| `hs_clamp` (board) | Needs `bflow_bat=1` |
-| `bflow_bat` (board) | Needs `bflow_en` or `bflow_sd` set |
+| `psu_vout`, `pv_*` (converter) | Not read while tracker.conf `target_duty_cycle` is between 0 and 1, which overrides `mode` |
+| `hs_clamp` (board) | Needs `bflow_bat` on (any non-zero value) |
+| `bflow_bat` (board) | Needs `bflow_en` or `bflow_sd` set to a pin (non-zero) |
 | `bflow_bat`, `hs_clamp` (board) | Need converter.conf `topo=buck` |
 
 A key that is not read under the current value is hidden while it is unset, also under **Show all**. If it has a value
@@ -210,8 +212,11 @@ unchanged. The editor shows the firmware's error above the rows, with the replac
   repeated.
 - **Undo** reverts that change. Clicking a key name jumps to its field.
 - With a device to push to, each change says when it takes effect: "now", "after restarting mqtt", "after reboot",
-  or "when next used". The footer sums it up, for example "Takes effect after: restarting mqtt, reboot".
-- An amber list above the files warns about dependent keys a change breaks (see [Dependent keys](#dependent-keys)).
+  or "when next used". `ftp_user` and `ftp_pass` add that they are ignored while credentials are stored in NVS. The
+  footer sums it up, for example "Takes effect after: restarting mqtt, reboot".
+- An amber list above the files warns about dependent keys a change breaks (see [Dependent keys](#dependent-keys)),
+  and about switching off a service that carries a console: `mqtt` (a charger that gets its BMS data over MQTT then
+  falls back to its stale-cell voltage cap), `ble`, `telnet` or `tlscon`.
 - **Commands sent to the device** unfolds the exact command list.
 
 The sheet footer holds the save actions:
@@ -219,7 +224,7 @@ The sheet footer holds the save actions:
 | Action                         | Result                                                                                   |
 |--------------------------------|------------------------------------------------------------------------------------------|
 | **Download .zip**              | `<source>-edited.zip` if anything changed, else `<source>-backup-<YYYY-MM-DD>.zip`. Non-`.conf` files from the source are carried over unchanged |
-| **Push N changes to `<hostname>` over …** | `set-config <file> <key> <value>` per added or edited key, `del-config <file> <key>` per cleared key. A service's `enabled` and `log_level` go as `svc on`/`svc off <name>` and `svc log <name> <level>` instead. Only changed fields are sent |
+| **Push N changes to `<hostname>` over …** | `set-config <file> <key> <value>` per added or edited key, `del-config <file> <key>` per cleared key. A service's `enabled` and `log_level` go as `svc on`/`svc off <name>` and `svc log <name> <level>` instead, unless the firmware does not have that service: then they go as `set-config` and take effect after a reboot. Only changed fields are sent |
 
 The push button appears only when the loaded config was read from a device, and names that device. It stays
 available after a file or preset is overlaid onto that read. A config loaded from a file or preset alone has no
@@ -229,7 +234,11 @@ without asking for the port or device again. With no changes, the sheet offers *
 
 A push starts from this button without a second confirmation, unless a value is invalid: then a dialog lists the
 invalid values and asks again. The console opens and shows each command and its reply. A field the device
-confirmed with `OK:` loses its change mark, and fields that failed stay marked.
+confirmed with `OK:` loses its change mark, and fields that failed stay marked. A service switched on by the push
+that fails to start counts as failed, with the firmware's reason.
+
+The editor sends one command sequence at a time: while a push, an apply step or a Services action runs, the push
+and apply buttons, the Services controls and the console input are disabled.
 
 ### Applying a push
 
@@ -249,11 +258,28 @@ Switching off the service the editor is connected through (mqtt over MQTT, ble o
 
 After a push in which every command succeeded, the console shows what is still needed, with a button for each step:
 **Restart mqtt** and so on, or only **Reboot device** when a reboot is due, since it covers the restarts. A failed
-push shows no buttons. The buttons only act on the device that was pushed to; reading another device hides them.
+push shows no buttons. The buttons only act on the device that was pushed to; reading another device hides them,
+while reading the same device again keeps them.
 
-**Reboot device** asks first: the converter stops converting, reboots, and the editor's connection drops. It then
-sends `restart`, closes the connection and asks you to reconnect from **Open** when the device is back. Restarting
-the service the editor is connected through also asks first, and drops the connection.
+A restart starts a service even when it is switched off. So a service that is off, after the push or later, gets
+no **Restart** button; the console says the change applies when that service is turned on. Before it restarts a
+service, the editor reads `svc list` again and stops if the service has been switched off meanwhile.
+
+**Reboot device** asks first: the converter stops converting, reboots, and the editor's connection drops. If the
+push switched off the service the editor is connected through, the dialog says instead that this connection does
+not come back after the reboot and that you need another connection. Restarting the service the editor is
+connected through also asks first, and drops the connection.
+
+A step counts as done only when the device confirms it, and only then does its button go:
+
+| Step | Confirmed by |
+|------|--------------|
+| Reboot device | The device's `Rebooting` line; the editor then closes the connection |
+| Restart of another service | `OK:` without a failed-start message |
+| Restart of the service the editor is connected through | `OK:`, or the link going down (presence message over MQTT, dropped Bluetooth link), and the service listed as Running afterwards |
+
+Without that confirmation the status reads "sent, not confirmed", the button stays, and you can check in
+**Services** or read the device again. A failed start shows the firmware's reason.
 
 The sheet is a modal dialog: Tab stays inside it, Esc closes it, and focus returns to **Review changes**. Esc also
 closes the **Open** menu and the console.
@@ -283,15 +309,20 @@ detail, with three controls:
 | Control   | Command                        | Effect                                                         |
 |-----------|--------------------------------|----------------------------------------------------------------|
 | Log level | `svc log <name> <level>`       | Saved in the service's `.conf` file and applied at once        |
-| Restart   | `svc restart <name>`           | Stops and starts the service; off while the service is disabled |
+| Restart   | `svc restart <name>`           | Stops and starts the service; off while the service is switched off, because a restart would start it |
 | On/off    | `svc on <name>` / `svc off <name>` | Saved in the service's `.conf` file and started or stopped at once |
 
 The list is read again after each action and with the refresh button. A rejected command shows the firmware's
-reason. The loaded `<name>.conf` follows a saved on/off or log level, unless that field has an unsent edit.
+reason, and a service that fails to start after **On** or **Restart** shows why. A command without a reply reads
+"sent, not confirmed". The loaded `<name>.conf` follows a saved on/off or log level, unless that field has an unsent
+edit. A restart here also removes the matching **Restart** button from the console.
 
 Stopping or restarting the service the editor is connected through (`mqtt` over MQTT, `ble` over Bluetooth)
-drops that link, so the editor asks first. After a stop the top bar shows the device as disconnected; turning
-the service back on needs another connection. After a restart the editor waits for the device to answer again.
+drops that link, so the editor asks first. The device cannot send its `OK:` over a link it just stopped. A stop
+therefore counts as confirmed only when the link visibly goes down: an `offline` presence message over MQTT, or the
+device dropping the Bluetooth link. Otherwise the panel says the command was sent but not confirmed. After a stop
+the top bar shows the device as disconnected either way; turning the service back on needs another connection.
+After a restart the editor waits for the device to answer again and checks that the service is Running.
 Stopping `mqtt` also asks first, because a charger that gets its BMS data over MQTT loses it and falls back to
 its stale-cell voltage cap.
 

@@ -19,8 +19,11 @@ const shown = window => [...window.document.querySelectorAll('#panes .rows .row'
 const dep = (window, key) => { const d = row(window, key).querySelector('.dep'); return d.hidden ? '' : d.textContent; };
 const gateKeys = window => [...window.document.querySelectorAll('#panes .gate .row')].map(r => r._key);
 const gateNote = window => window.document.querySelector('#panes .gate .gate-note').textContent;
+const moreBtn = window => window.document.querySelector('#panes .pane-foot button.more');
 function showAll(window){
-  [...window.document.querySelectorAll('#panes .phead button.link')].find(b => /Show all/.test(b.textContent)).click();
+  const b = moreBtn(window);
+  assert.match(b.textContent, /^Show all \d+ keys$/);
+  b.click();
 }
 async function boardWith(conf, converter = ''){
   const { window } = await loadEditor();
@@ -112,10 +115,10 @@ test('converter.conf mode: psu_* and pv_* keys follow the mode', async () => {
 
 test('needs: hs_clamp, bflow_bat and the buck topology', async () => {
   const window = await boardWith('pwm_freq=39000\npwm_driver_logic=HiLi\npwm_hi=1\npwm_li=2\nbflow_bat=0\nhs_clamp=1\nbflow_en=0\n');
-  assert.equal(dep(window, 'hs_clamp'), 'needs bflow_bat=1');
+  assert.equal(dep(window, 'hs_clamp'), 'needs bflow_bat on (non-zero)');
   window.document.getElementById('f-bflow_bat').click();
   assert.equal(dep(window, 'hs_clamp'), '');
-  assert.equal(dep(window, 'bflow_bat'), 'needs bflow_en set or bflow_sd set');
+  assert.equal(dep(window, 'bflow_bat'), 'needs bflow_en or bflow_sd set to a pin (non-zero)');
   const input = window.document.getElementById('f-bflow_en');
   edit(window, 'bflow_en', '5');                     // text input: notes refresh in place, no re-render
   assert.equal(dep(window, 'bflow_bat'), '');
@@ -157,4 +160,50 @@ test('a cross-file `if` rule hides and fades keys in another file', async () => 
   showTab(window, 'conf/tracker.conf');
   assert.ok(!shown(window).includes('sweep_pace'));
   assert.equal(dep(window, 'sweep_speed'), 'not used with mode=psu');
+});
+
+test('hs_clamp: any non-zero bflow_bat counts as on (getByte)', async () => {
+  const window = await boardWith('pwm_freq=39000\nbflow_bat=2\nhs_clamp=1\nbflow_en=5\n');
+  assert.equal(dep(window, 'hs_clamp'), '');
+  edit(window, 'bflow_bat', '0');
+  assert.equal(dep(window, 'hs_clamp'), 'needs bflow_bat on (non-zero)');
+});
+
+test('tracker.conf target_duty_cycle in [0,1] overrides mode: psu_vout/pv_* not required', async () => {
+  const { window } = await loadEditor();
+  window.load(mk({ 'conf/converter.conf': 'topo=buck\nmode=psu\n', 'conf/tracker.conf': 'target_duty_cycle=0.3\n' }), 'demo');
+  showTab(window, 'conf/converter.conf');
+  assert.ok(!shown(window).includes('psu_vout'), 'unset and unused: hidden');
+  window.openReview();
+  assert.equal(window.document.querySelectorAll('#review-body .rwarn li').length, 0);
+  window.closeReview();
+  showTab(window, 'conf/tracker.conf'); edit(window, 'target_duty_cycle', '1.5');   // outside [0,1]: ignored by the firmware
+  showTab(window, 'conf/converter.conf');
+  assert.equal(dep(window, 'psu_vout'), 'required for mode=psu');
+  showTab(window, 'conf/tracker.conf'); edit(window, 'target_duty_cycle', '0');      // explicit 0 = manual duty 0
+  showTab(window, 'conf/converter.conf'); edit(window, 'psu_vout', '24');
+  assert.equal(dep(window, 'psu_vout'), 'not used: tracker.conf target_duty_cycle=0 overrides mode=psu');
+  showTab(window, 'conf/tracker.conf'); edit(window, 'target_duty_cycle', '');       // absent = MPPT: mode counts
+  showTab(window, 'conf/converter.conf');
+  assert.equal(dep(window, 'psu_vout'), '');
+});
+
+test('Show all sits at the bottom of the pane; its count matches the rows it reveals', async () => {
+  const window = await boardWith('pwm_freq=39000\npwm_driver_logic=HiLi\npwm_hi=1\npwm_li=2\n');
+  const head = window.document.querySelector('#panes .phead');
+  assert.equal(head.querySelector('button'), null, 'no toggle in the header');
+  assert.match(head.querySelector('.meta').textContent, /, \d+ of \d+ keys set$/);
+  const foot = window.document.querySelector('#panes .pane-foot');
+  assert.equal(foot.firstElementChild, moreBtn(window), 'first in the footer, before Add a key / Show as text');
+  assert.equal(moreBtn(window).tagName, 'BUTTON');
+  const n = +moreBtn(window).textContent.match(/\d+/)[0];
+  const nAll = window._state.files['conf/board.conf'].order.length;
+  assert.ok(n < nAll, 'pwm_in/pwm_en are not used with HiLi and not counted');
+  assert.match(moreBtn(window).title, new RegExp(`^${nAll - n} more not used`));
+  moreBtn(window).focus();
+  moreBtn(window).click();
+  assert.equal(shown(window).length, n);
+  assert.equal(moreBtn(window).textContent, 'Show fewer keys');
+  moreBtn(window).click();
+  assert.match(moreBtn(window).textContent, /^Show all/);
 });

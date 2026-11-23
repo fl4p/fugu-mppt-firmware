@@ -181,17 +181,17 @@ alphabetically.
 A centred column (max 780 px):
 
 * **Heading**: the file name in large mono, with `.conf` faint.
-* **Meta line**: `<path>, N of M keys set` and a link-style toggle
-  (**Show all M keys** / **Show set keys only**, §2.4). M is the file's row
-  count (keys in the file plus firmware-known keys it omits).
+* **Meta line**: `<path>, N of M keys set`. M is the file's row count (keys
+  in the file plus firmware-known keys it omits).
 * **Note line**: the `FILE_DESC` sentence for the file; Hardware files append
   "A wrong value can damage the converter." Synthetic files instead read "Not
   on the device. Fill in a key to create this file; left empty, it is not
   written."
 * **Role-key error** (`.err.keyform`, amber left rule), only when present.
 * The key rows (§2.5), grouped as a prefix tree.
-* **Footer** (above a rule): two folded disclosures, **Add a key** and
-  **Show <file> as text** (§2.8).
+* **Footer** (above a rule): the quiet link-style button **Show all K keys** /
+  **Show fewer keys** (§2.4, not a fold, keyboard-reachable), then two folded
+  disclosures, **Add a key** and **Show <file> as text** (§2.8).
 
 Stable row order: keys present in the file first, then firmware-known keys from
 `FILE_KEYS` that the file omits. This keeps rows from jumping when the user
@@ -216,12 +216,15 @@ that file (`mcu`, `pwm_freq`; the four side limits; `L0`; `topo`, `mode`;
 `broker_uri` / `influxdb_host`). The other rows are still rendered, hidden
 (`.rows-hidden`, `.is-hidden`), so the full model is always in the DOM.
 
-**Show all M keys** switches that file to the full tree with every
-firmware-known key; group headings then show a count ("N keys" when all are
-set, else "n of N set"). **Show set keys only** switches back. The choice is
-per file and kept for the session.
+**Show all K keys** (pane footer) switches that file to the full tree with
+every firmware-known key; group headings then show a count ("N keys" when all
+are set, else "n of N set"). K is the number of rows that view shows: every key
+except unset keys a `DEPENDS` rule marks unused (§2.6.1), so K can be below M;
+the button's tooltip then says "J more not used with the current settings".
+**Show fewer keys** switches back. The choice is per file and kept for the
+session.
 
-When the short view has no rows: "No keys are set in <file>. **Show all M keys**
+When the short view has no rows: "No keys are set in <file>. **Show all K keys**
 to fill one in." A file with no known keys at all: "<file> has no known keys.
 Add one below."
 
@@ -300,7 +303,10 @@ and the review sheet. A rule names a file and keys plus one of:
   enum value outside `opts` is flagged too.
 * `needs: [cond, …]`: the key, when on (not unset or `0`), works only if one of
   the conditions holds (`{file?, key, is:[…]}` or `{key, not:["0"]}` = set and
-  not 0).
+  not 0). `text` replaces the generated "needs <cond> or <cond>" note.
+* `over: {file, key, holds(v)}` (with `if`): while that key's current value
+  (not its default) passes `holds`, the `if` is overridden and the keys count
+  as unused: "not used: <file> <key>=<v> overrides <key>=<value>".
 
 Rows:
 
@@ -311,7 +317,8 @@ Rows:
 * A **required** key that is empty always shows, with an amber "required for
   <key>=<value>" ("required: HiLi or InEn" without `if`). A folded group that
   holds one opens.
-* A failed `needs` shows "needs <cond> or <cond>" in amber under the field.
+* A failed `needs` shows "needs <cond> or <cond>" (or the rule's `text`) in
+  amber under the field.
 
 Notes are non-blocking. Editing a controlling key of an `if` re-renders the
 pane at once (focus stays on the field) and opens the groups of the keys it
@@ -326,14 +333,17 @@ Rules (with the firmware source they come from):
 | board `pwm_in`, `pwm_en` | used with `pwm_driver_logic=InEn`, required | `src/buck.h:1208-1222` |
 | board `pwm_hi`, `pwm_li` | used with `HiLi`, required | `src/buck.h:1223-1236` |
 | board `pwm_sd` | used with `HiLi` (optional, default 255) | `src/buck.h:1231` |
-| converter `psu_vout` | used with `mode=psu`, required | `src/mppt.cpp:575-576` |
-| converter `pv_isc`, `pv_voc` | used with `mode=pv`, required | `src/mppt.cpp:584-590` |
-| converter `pv_k`, `pv_slew`, `pv_iout_span` | used with `mode=pv` | `src/mppt.cpp:584-590` |
-| board `hs_clamp` | needs `bflow_bat=1` | `src/mppt.h:1632,1650` |
-| board `bflow_bat` | needs `bflow_en` or `bflow_sd` set (pin 0 = none) | `src/pwm/backflow.h:38-39,86` |
+| converter `psu_vout` | used with `mode=psu`, required; unused while tracker.conf `target_duty_cycle` is in [0,1] | `src/mppt.cpp:550-576` |
+| converter `pv_isc`, `pv_voc` | used with `mode=pv`, required; same override | `src/mppt.cpp:550-590` |
+| converter `pv_k`, `pv_slew`, `pv_iout_span` | used with `mode=pv`; same override | `src/mppt.cpp:550-590` |
+| board `hs_clamp` | "needs bflow_bat on (non-zero)" (`getByte`, any non-zero is on) | `src/mppt.cpp:537-538`, `src/mppt.h:1632,1650` |
+| board `bflow_bat` | "needs bflow_en or bflow_sd set to a pin (non-zero)" (pin 0 = none) | `src/pwm/backflow.h:38-39,86` |
 | board `bflow_bat`, `hs_clamp` | need converter.conf `topo=buck` | `src/mppt.h:1632`, `src/mppt.cpp:638` |
 
 `psu_slew_down` is read in every mode (`src/mppt.cpp:609`), so it has no rule.
+A `target_duty_cycle` that is absent (MPPT) or outside [0,1] (ignored with an
+error) leaves `mode` in force; an explicit `0` boots manual PWM at duty 0 and
+overrides it too.
 
 **Gate driver block** (`GATE`): in board.conf the `pwm` group starts with a
 block "Gate driver": a quiet line, then `pwm_driver_logic` and the pins, used
@@ -365,10 +375,16 @@ instead).
   an amber wavy underline and the row's number warning below it.
 * With a push target, each change ends with a quiet hint of when it takes
   effect (§6.1): "now", "after restarting mqtt", "after restarting ftp and
-  http", "after reboot" or "when next used".
+  http (ignored while credentials are stored in NVS)" (`ftp_user`,
+  `ftp_pass`: `APPLY_NOTE`), "after reboot" or "when next used".
 * Above the files, an amber list warns about dependency problems (§2.6.1) that
-  involve a changed key, e.g. "board.conf hs_clamp: needs bflow_bat=1" or
-  "converter.conf psu_vout: required for mode=psu". It does not block the push.
+  involve a changed key, e.g. "board.conf hs_clamp: needs bflow_bat on
+  (non-zero)" or "converter.conf psu_vout: required for mode=psu", and about
+  switching a link service off (`SVC_OFF_WARN`): "mqtt.conf enabled=0: mqtt
+  stops now|after reboot. Its console closes, and a charger that gets its BMS
+  data over MQTT loses it and falls back to its stale-cell voltage cap.";
+  likewise ble (Bluetooth console), telnet and tlscon. It does not block the
+  push.
 * A folded disclosure **Commands sent to the device (N)** lists the exact
   commands the push sends (§6.1).
 * With no changes: "No changes yet — Edited fields collect here, so you can
@@ -421,8 +437,9 @@ attempt i/4 failed (…) — retrying…", "connected — reading config from de
 (serial, Bluetooth) or "… from <host> …" (MQTT), "reading config from <label>
 …", "retrying N file(s) …". A successful read clears the line; a read with lost
 files reports "read N file(s) from <host> — K timed out, skipped: …". Push
-progress ("uploading i/N: <file>:<key> …") has the spinner; the final
-"uploaded k/N changed fields[ — failed: …]" does not. On mobile the header
+progress ("uploading i/N: <file>:<key> …") and an apply step ("<cmd> on
+<host> …") have the spinner; the final "uploaded k/N changed fields[ — failed:
+…]" and the apply result do not. On mobile the header
 status line wraps instead of being cut off.
 
 ### 2.10 Console
@@ -448,7 +465,8 @@ ok[, f failed]"), **Close**.
   within 4 px of the bottom.
 * **Command input**: a field + **Send** at the bottom; Enter or Send echoes
   `» <cmd>` and writes through `activeWrite`. Disabled with the placeholder
-  "connect to a device first" when no transport is active.
+  "connect to a device first" when no transport is active, and with "waiting
+  for <command> …" while a device command sequence runs (§6, device lock).
 * A push opens the console implicitly and clears its log first.
 * Esc closes the console when neither the review sheet nor the Open menu is
   open; if focus was inside the console it returns to the **Console** button.
@@ -507,14 +525,26 @@ running command with a spinner), **Refresh** (↻), **Close**.
   keeps its last row.
 * **Row**: name (mono), state dot + text (green Running, grey Stopped, amber
   Failed), the detail below; controls: log-level select (`svc log <name>
-  <level>`), **Restart** (`svc restart <name>`, disabled while the service is
-  off), and an on/off switch (`svc on|off <name>`). Tooltips and the footer
-  note say that on/off and the level are saved on the device and apply at
-  once. All controls are disabled while a command runs.
+  <level>`), **Restart** (`svc restart <name>`), and an on/off switch (`svc
+  on|off <name>`). Tooltips and the footer note say that on/off and the level
+  are saved on the device and apply at once. All controls are disabled while
+  any device command sequence runs (device lock, §6), with the running command
+  and a spinner in the head.
+* **Restart only enabled services**: the firmware's `restart()` is `stop();
+  start()` and `start()` ignores `enabled` (`src/service.h:100-103`), so a
+  restart would start a switched-off service. **Restart** is disabled, and
+  `svcAction(<name>, "restart")` sends nothing ("<name> is off; a restart would
+  start it. Turn it on instead."), while `svcOff(name)` holds: the loaded
+  `<name>.conf` has `enabled=0` (the device's saved value), or the last `svc
+  list` on this link shows it disabled, or neither is known and the service is
+  off by default (`SVC_ON_DEFAULT`, from the constructors: mqtt, ftp, http,
+  scope on; tele, telnet, tlscon, lcd, ble, bsync off).
 * **Result**: `ERR` shows "The device rejected “<cmd>”: <reason>" with the
-  reason from the firmware's `svc: …` warning; a `start failed (state=…)`
-  line after `svc on` shows "<name> did not start: …"; no marker shows
-  "No reply to “<cmd>” within 4 s". Errors are amber in the footer.
+  reason from the firmware's `svc: …` warning. After `svc on` or `svc
+  restart`, a failed start (`'<name>' failed: <why>` from `Service::fail`, or
+  `start failed (state=…)`) shows "<name> did not start: <why>" even though the
+  command ends with `OK:`. No marker shows "“<cmd>” sent, not confirmed: no
+  reply within 4 s. Check with Refresh." Errors are amber in the footer.
 * **Loaded copy**: after a confirmed `svc on|off|log`, the loaded
   `<name>.conf` gets the saved `enabled` / `log_level` as its original value
   (and as current value unless that field has a pending edit), so the review
@@ -526,13 +556,31 @@ running command with a spinner), **Refresh** (↻), **Close**.
   over MQTT falls back to its stale-cell voltage cap. Stopping adds that the
   setting is saved and survives a reboot. Declining sends nothing and resets
   the control.
-* **Own link**: such a command waits 2.5 s for its marker (it usually never
-  arrives). After a stop the editor closes that link, so the header reads
-  "Disconnected from <host> over …" and the sheet shows "Not connected".
-  After a restart it closes a Bluetooth link and reconnects to the same
-  granted device, or keeps the MQTT session; it then retries `svc list` up to
-  4 times, 1.5 s apart: on an answer "<name> restarted; the <transport> link
-  is back", otherwise it closes the link and says to read the device again.
+* **Own link**: such a command waits 2.5 s for its marker. The marker usually
+  cannot arrive (`cmdService` logs it after `stop()`), so other evidence
+  counts: on MQTT a live `pv/dev/<host>` presence message after the command
+  (§5.3: `offline` for a stop, `offline` or `online` for a restart), on
+  Bluetooth the GATT server reporting the link as dropped.
+  * **Stop**: the editor closes that link either way (header "Disconnected
+    from <host> over …", sheet "Not connected"). With evidence: "<name>
+    stopped; the <transport> link to <host> is closed." and the loaded conf
+    follows. Without: "“svc off <name>” sent, not confirmed: the reply cannot
+    come back over <transport> once <name> stops. The <transport> link to
+    <host> is closed; check over <other transports>." (amber; the conf is not
+    changed).
+  * **Restart**: the editor closes a Bluetooth link and reconnects to the same
+    granted device, or keeps the MQTT session; it then retries `svc list` up to
+    4 times, 1.5 s apart. With evidence and the service Running: "<name>
+    restarted on <host>; the <transport> link is back." Running but no
+    evidence (the command may have been lost): "“svc restart <name>” sent, not
+    confirmed: <name> is running and the <transport> link is back, but nothing
+    showed that it restarted. Restart it again if unsure." Not Running: "<name>
+    is <state> on <host> after …". No answer: the link is closed and the
+    message says to read the device again (“… sent, not confirmed” without the
+    OK marker).
+* A confirmed restart, from the sheet or an own-link restart, removes the
+  matching **Restart <name>** from the apply bar (§6.1); a confirmed `svc on`
+  clears its "applies when <name> is turned on" note.
 * When the link closes or changes while the sheet is open, the rows are
   replaced by "Not connected" and Refresh is disabled.
 
@@ -706,6 +754,11 @@ does not.
 * Subscribe `pv/log/#`. Only 3-part topics `pv/log/<hostname>` of the bound
   device are treated as device log; deeper topics (the `/cmd` echo) are
   ignored.
+* Subscribe `pv/dev/<hostname>` (presence). The firmware publishes `offline`
+  when its mqtt service stops cleanly and `online` when it connects
+  (`src/tele/mqtt.cpp`). Live (not retained) messages are counted
+  (`mqttPresence`); they show that a `svc off|restart mqtt` sent over MQTT took
+  effect (§2.14, §6.1).
 * Each `write(str)` publishes one trimmed line to `pv/log/<hostname>/cmd`
   with QoS 0 (MQTT is message-framed, not a byte stream).
 
@@ -722,11 +775,20 @@ changed field (`pendingCommands`), in file-list order:
   for `log_level`, in the conf file of a service (`<name>.conf`, `SERVICES`:
   mqtt, tele, ftp, http, telnet, tlscon, lcd, scope, ble, bsync). These write
   the conf like `set-config` and apply it at once (`src/cli.cpp:2193-2205`),
-  and reply `OK:` / `ERR:` like every command (a service missing from the
-  build answers `ERR: …`). Exception: `svc off` for the service the editor is
-  connected through (mqtt over MQTT, ble over Bluetooth) stays `set-config`,
-  so the push does not cut its own link. Other values, and a cleared
-  `enabled`/`log_level` (`del-config`), take effect after a reboot.
+  and reply `OK:` / `ERR:` like every command. Exceptions, sent as
+  `set-config` ("after reboot"): `svc off` for the service the editor is
+  connected through (mqtt over MQTT, ble over Bluetooth), so the push does not
+  cut its own link; a service missing from the last `svc list` read on this
+  link (Services sheet), and one that answered `svc: unknown '<name>'` on this
+  link before. Other values, and a cleared `enabled`/`log_level`
+  (`del-config`), take effect after a reboot.
+
+**Device lock** (`withDevice`): a push, an apply step (§6.1), a Services
+action or refresh (§2.14) and a console line each hold one lock while they talk
+to the device, so their commands, reply waits and `ensureConnection` calls
+never interleave. While it is held the Push button, the apply buttons, the
+Services controls and the console input are disabled, and a call that finds it
+held returns without sending.
 
 `uploadChanged()` refuses ("Nothing to push to: read the config from a device
 first") without a push target (§2.7). The review sheet already lists every
@@ -747,7 +809,13 @@ target.
    `OK: <cmd>` / `ERR: <cmd>` echo (4 s).
 4. On `OK` the field's `original` is updated to the new value (or deleted for
    `del-config`), which clears its change mark; `ERR` or a timeout records a
-   failure (timeouts also log how many lines arrived).
+   failure (timeouts also log how many lines arrived). An `ERR` with `svc:
+   unknown '<name>'` (service not in this build) resends the field as
+   `set-config <file> <key> <value>` ("after reboot") and remembers the name
+   for later pushes on this link. A `svc on` whose start fails (`'<name>'
+   failed: <why>` or `start failed (state=…)` before the `OK:`) updates
+   `original` (the file was saved) but counts as failed: "<file>:enabled
+   (<name> did not start: <why>)".
 5. The console status ends with "done: k/N ok[, f failed]" (amber on
    failures), the status line with "uploaded k/N changed fields[ — failed:
    …]". A connection failure shows "connection failed" instead.
@@ -771,7 +839,7 @@ The firmware applies nothing on `set-config`/`del-config`. `APPLY` maps a file
 | tele.conf | `adv_ms` | after `svc restart ble` |
 | tele.conf | `idle_interval_ms` | after reboot |
 | ftp.conf | all | after `svc restart ftp` |
-| ftp.conf | `ftp_user`, `ftp_pass` | after `svc restart ftp` and `svc restart http` (HTTP login) |
+| ftp.conf | `ftp_user`, `ftp_pass` | after `svc restart ftp` and `svc restart http` (HTTP login); ignored while credentials are stored in NVS (`src/tele/conf_creds.h`) |
 | http.conf | all | after `svc restart http` |
 | tlscon.conf | all | after `svc restart tlscon` |
 | bsync.conf | all | after `svc restart bsync` |
@@ -788,22 +856,50 @@ push hides it; a later clean push to the same target shows what has collected.
 The bar only shows while `pushTarget()` is the link that was pushed to, so a
 read of another device hides it and its buttons never send elsewhere.
 
-* **Restart <name>** sends `svc restart <name>` and waits for `OK:`; the
-  button goes. Restarting the service the editor is connected through (mqtt
-  over MQTT, ble over Bluetooth) first asks "Restart <name> on <host>? This
-  editor is connected through <name>, so its connection drops."; a missing
-  reply then counts as done, and the editor closes the link.
+**Switched-off services** (`applyPrune`): a restart would start a switched-off
+service (§2.14), so a service for which `svcOff(name)` holds after the push
+(e.g. `enabled=0` pushed with a host change, or switched off in the Services
+sheet later) gets no button; the bar instead says "<name>: applies when <name>
+is turned on" (its `onStart` reads the conf then). The check runs whenever the
+bar renders, so a later switch-off removes the button. A confirmed `svc on`
+(push or sheet) clears the note.
+
+* **Restart <name>** sends `svc list` first and re-checks `svcOff` on the
+  answer (the service may have been switched off since, e.g. from the
+  console); if it is off, nothing more is sent: "<name> is off on <host>; the
+  change applies when <name> is turned on". Otherwise it sends `svc restart
+  <name>`. Only `OK:` without a failed-start line (`'<name>' failed: <why>`)
+  confirms it and removes the button; a failed start reads "<name> did not
+  start after the restart on <host>: <why>", no reply "“svc restart <name>”
+  sent to <host>, not confirmed: no reply within 4 s. Check with Refresh in
+  Services."; both keep the button. Restarting the service the editor is
+  connected through (mqtt over MQTT, ble over Bluetooth) first asks "Restart
+  <name> on <host>? This editor is connected through <name>, so its
+  connection drops." and is then confirmed as in §2.14 (OK marker, or MQTT
+  presence / Bluetooth link drop plus the service Running in `svc list`);
+  otherwise it reports "sent, not confirmed" and the button stays.
 * **Reboot device** asks "Reboot <host> over <transport>? The device stops
   converting and reboots. This editor's connection drops; reconnect from Open
-  when the device is back." Only after OK it sends `restart` (the firmware
-  stops conversion itself). The device prints `Rebooting` and never answers
-  `OK:`; that line, or no reply in 5 s, counts as rebooting: the apply bar
-  clears, the editor closes the link (header "Disconnected from <host> over
-  <transport>") and the status reads "<host> is rebooting — reconnect from
-  Open when it is back". A refused restart (`restart refused`, then `OK:`) is
-  reported as an error and the button stays.
+  when the device is back." If the editor's own link service has `enabled=0`
+  in its loaded conf (pushed as `set-config`), the second part instead says
+  that this link does not come back after the reboot and to connect over the
+  other transports, plus, for mqtt, that a charger that gets its BMS data over
+  MQTT falls back to its stale-cell voltage cap. Only after OK it sends
+  `restart` (the firmware stops conversion itself). Only the device's
+  `Rebooting` line (`systemRestart`, `src/main.cpp`) confirms it: the apply bar
+  clears (the "applies when … is turned on" notes stay), the editor closes the
+  link (header "Disconnected from <host> over <transport>") and the status
+  reads "<host> is rebooting — reconnect from Open when it is back" (or
+  "…; <link> stays off there, so connect over <others> when it is back"). No
+  such line within 5 s: "“restart” sent to <host>, not confirmed: no
+  “Rebooting” line within 5 s. Check with Refresh in Services or reconnect
+  from Open."; the button and the link stay. A refused restart (`restart
+  refused`, then `OK:`) is reported as an error and the button stays.
 
-A link opened just for an apply command is closed afterwards, as for a push.
+The status line shows "<cmd> on <host> …" with the spinner while a step runs;
+the step holds the device lock (§6). A link opened just for an apply command
+is closed afterwards, as for a push. Reading the same device again (same
+hostname) keeps `state.apply` and moves it to the new link.
 
 ---
 
@@ -818,9 +914,10 @@ A link opened just for an apply command is closed afterwards, as for a push.
   line.
 * Synthetic ("Not on device") files are skipped on download and push unless the
   user filled at least one key.
-* The console marker matchers use `includes(...)` rather than
-  `endsWith(...)`: the device's reply line can carry a trailing whitespace
-  or terminator char that defeats `endsWith`.
+* `sendCommand` matches its marker as `(OK|ERR): <cmd>` up to the line end
+  (trailing whitespace allowed, SGR escapes stripped, preceded by start or a
+  non-word char), so "OK: svc on telnet" does not answer `svc on tele`. The
+  `get-config` matchers keep `includes(...)`: the file names end in `.conf`.
 * `lineListeners` is the single fan-out point — adding a new transport only
   means feeding it newline-framed text and providing an `activeWrite(str)`.
 * The pre-redesign element IDs the tests use are kept (`srcname`,

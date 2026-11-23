@@ -97,7 +97,7 @@ test('the review shows when each change takes effect, and a summary', async () =
     'mqtt.conf:broker_uri': 'after restarting mqtt',
     'tele.conf:enabled': 'now',
     'tele.conf:ble': 'when next used',
-    'ftp.conf:ftp_user': 'after restarting ftp and http',
+    'ftp.conf:ftp_user': 'after restarting ftp and http (ignored while credentials are stored in NVS)',
   });
   assert.equal(window.document.getElementById('review-when').textContent,
     'Takes effect after: restarting mqtt, restarting ftp, restarting http, reboot');
@@ -132,7 +132,9 @@ test('after a clean push: restart buttons for exactly the services needed', asyn
   assert.ok(sent(window).includes('devA: svc restart ftp'));
   assert.deepEqual(applyButtons(window), ['Restart mqtt', 'Restart http']);
 
-  // the editor's own link (mqtt over MQTT): confirm, then the connection is closed
+  // the editor's own link (mqtt over MQTT): confirm; OK confirms the restart, the editor then waits
+  // for `svc list` (this fake has none) and closes the link
+  Object.assign(window.svcTimings(), { retry: 10, tries: 2 });
   let prompt = ''; window.confirm = m => { prompt = m; return true; };
   await window.applyStep('mqtt');
   assert.match(prompt, /connected through mqtt, so its connection drops/);

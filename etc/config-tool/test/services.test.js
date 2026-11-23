@@ -264,6 +264,7 @@ test('stopping mqtt over MQTT: confirm names the link and the BMS data, then the
   window.confirm = () => true;
   cb().checked = false; cb().dispatchEvent(new window.Event('change'));
   await until(() => /link to devA is closed/.test($(window, '#svc-msg').textContent));
+  assert.match($(window, '#svc-msg').textContent, /sent, not confirmed/, 'no OK and no presence: the stop is not confirmed');
   assert.ok(devA.sent.includes('svc off mqtt'));
   assert.equal($(window, '#conn').textContent, 'Disconnected from devA over MQTT');
   assert.equal(window._activeWrite, null);
@@ -281,6 +282,7 @@ test('restarting mqtt over MQTT waits for the device and keeps the link', async 
   assert.match(prompt, /link drops while mqtt restarts/);
   assert.doesNotMatch(prompt, /BMS/);
   await until(() => /link is back/.test($(window, '#svc-msg').textContent));
+  assert.match($(window, '#svc-msg').textContent, /not confirmed/, 'no OK and no presence: running, but the restart is not confirmed');
   assert.equal($(window, '#conn').textContent, 'Connected to devA over MQTT');
   assert.ok(rowOf(window, 'mqtt'));
 });
