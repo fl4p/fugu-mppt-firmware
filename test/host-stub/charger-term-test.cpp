@@ -201,44 +201,57 @@ static BatChargerParams holdParams(uint32_t maxS = 5400) {
     return p;
 }
 
-// 8s pack + cable: vcell_high = voc + ibat * R_CELL, bus = 8 vcell + iout * R_BUS. Each converter is a CV
-// source at its pin (R_SRC output resistance) limited to its PV current. 1 s steps (loopLF), ibat frames
-// every 4 s, cell frames every 12 s.
+// 8s pack + cable: vcell_high = voc + imb + ibat * R_CELL, bus = 8 voc + ibat * 8 R_CELL + iout * R_BUS. Each converter
+// is a CV source at its pin (R_SRC output resistance) limited to its PV current and Iout_max(). Its Vout sensor reads
+// off[i] from the bus, so it regulates the true bus to Vout_max() - off[i]. 1 s steps (loopLF), ibat frames every
+// 4 s, cell frames every 12 s.
 struct Plant {
     static constexpr float R_CELL = 0.004f, R_BUS = 0.02f, R_SRC = 0.005f, DV_DAH = 0.0032f;
     float voc = 3.38f, iload = 0.f, ipv[2] = {35.f, 35.f};
+    float imb = 0.f, kImb = 0.f; // highest cell above the mean, rising kImb V/Ah while charging
+    float off[2] = {0.f, 0.f};
+    bool flatOff = false; // unit 1 reads -0.1 V while unit 0 converts, else -0.9 V (fry/flat 11-23)
     float ibat = 0, vbus = 0, iout[2] = {0, 0};
     bool cells = true; // BMS cell frames flowing
+    bool bmsLag = false; // ibat frames report the current of one frame earlier
+    float ibatOld = 0;
     int t = 0;
 
     void solve(BatteryCharger **c, int n) {
         float lo = 8 * voc - 5, hi = 8 * voc + 5;
+        auto src = [&](int i, float v) {
+            return std::clamp((c[i]->Vout_max() - off[i] - v) / R_SRC, 0.f, std::min(ipv[i], c[i]->Iout_max()));
+        };
         for (int k = 0; k < 60; ++k) {
             float v = 0.5f * (lo + hi), sum = 0;
-            for (int i = 0; i < n; ++i) sum += std::clamp((c[i]->Vout_max() - v) / R_SRC, 0.f, ipv[i]);
+            for (int i = 0; i < n; ++i) sum += src(i, v);
             float vb = v - sum * R_BUS;
             float need = (vb - 8 * voc) / (8 * R_CELL) + iload;
             (sum > need ? lo : hi) = v;
         }
         vbus = 0.5f * (lo + hi);
         float sum = 0;
-        for (int i = 0; i < n; ++i) sum += (iout[i] = std::clamp((c[i]->Vout_max() - vbus) / R_SRC, 0.f, ipv[i]));
+        for (int i = 0; i < n; ++i) sum += (iout[i] = src(i, vbus));
         ibat = sum - iload;
     }
 
-    [[nodiscard]] float vcell() const { return voc + ibat * R_CELL; }
+    [[nodiscard]] float vcell() const { return voc + imb + ibat * R_CELL; }
 
     void run(BatteryCharger **c, int n, int sec, bool psu = false) {
         for (int k = 0; k < sec; ++k) {
             ++t;
             setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
+            if (flatOff) off[1] = iout[0] > 1.f ? -0.1f : -0.9f;
             solve(c, n);
             voc += ibat * (1.f / 3600.f) * DV_DAH;
+            if (ibat > 0) imb += ibat * (1.f / 3600.f) * kImb;
             for (int i = 0; i < n; ++i) {
-                if (t % 4 == 0) c[i]->batSt.updateBatCurrent(ibat);
+                if (t % 4 == 0) c[i]->batSt.updateBatCurrent(bmsLag ? ibatOld : ibat);
                 if (cells && t % 12 == 0) c[i]->batSt.setVcellHigh(vcell());
-                c[i]->update(vbus, iout[i], iout[i] > 0.3f, psu);
+                // main.cpp lfControl(): any running converter has authority while the charger holds
+                c[i]->update(vbus + off[i], iout[i], iout[i] > 0.3f || (c[i]->chargeHold() && ipv[i] > 0), psu);
             }
+            if (t % 4 == 0) ibatOld = ibat;
         }
     }
     void run(BatteryCharger &c, int sec, bool psu = false) { BatteryCharger *a[1] = {&c}; run(a, 1, sec, psu); }
@@ -272,8 +285,8 @@ static void test_hold_converges_and_tail_latches() {
     Plant pl;
     int k = pl.untilHold(c);
     CHECK(k >= 0 && c.termCond.cvHold(), "hold entered (after %d s, ibat %.1f A)", k, pl.ibat);
-    float pinIn = c.Vout_max();
-    CHECK(pinIn < 29.f - 0.1f, "entry pin at the bus, not Vbat_max: %.3f", pinIn);
+    CHECK(c.Vout_max() == 29.f && std::fabs(c.Iout_max() - pl.iout[0]) < 2.f,
+          "entry: pin at Vbat_max, current limit at the output current (%.1f / %.1f A)", c.Iout_max(), pl.iout[0]);
     pl.run(c, 600);
     float vmax = 0, vmin = 9, iAtLatch = NAN;
     int tailT = 0, latchedAt = -1;
@@ -298,17 +311,33 @@ static void test_hold_load_step_no_latch() {
     Plant pl;
     pl.untilHold(c);
     pl.run(c, 300);
-    float pin0 = c.Vout_max();
     pl.iload = 30.f; // PV-limited: ibat ~5 A, the cell drops below the band
-    float vhi = 0;
-    for (int s = 0; s < 1800; s += 12) { pl.run(c, 12); vhi = std::max(vhi, pl.vcell()); }
+    float limHi = 0;
+    for (int s = 0; s < 1800; s += 12) { pl.run(c, 12); limHi = std::max(limHi, c.Iout_max() - pl.iout[0]); }
     CHECK(pl.ibat < 14.f && pl.vcell() < 3.48f, "load: ibat %.1f A, cell %.3f", pl.ibat, pl.vcell());
     CHECK(!(bool) c.termCond && c.termCond.cvHold(), "low current below the band does not latch");
-    CHECK(c.Vout_max() <= pin0 + 1e-3f, "pin not wound up: %.3f -> %.3f (bus %.3f)", pin0, c.Vout_max(), pl.vbus);
+    CHECK(limHi <= 2.f + 0.01f, "limit not wound up: at most %.2f A above the output current", limHi);
     pl.iload = 0.f;
     float vmax = 0;
-    for (int s = 0; s < 600; s += 12) { pl.run(c, 12); vmax = std::max(vmax, pl.vcell()); }
-    CHECK(vmax < 3.55f && !(bool) c.termCond, "load gone: no ceiling trip, max %.3f", vmax);
+    int out = 0;
+    for (int s = 0; s < 600; ++s) {
+        pl.run(c, 1);
+        vmax = std::max(vmax, pl.vcell());
+        if (s >= 60 && std::fabs(pl.vcell() - 3.5f) > 0.015f) ++out;
+    }
+    printf("  load off: cell peak %.3f, %d s out of +-15 mV after 60 s\n", vmax, out);
+    CHECK(vmax < 3.55f && !(bool) c.termCond && out == 0, "load gone: no ceiling trip (max %.3f), back in band", vmax);
+
+    // load step during the hold with PV to spare: the current limit follows, the cell stays near cv_eoc
+    pl.iload = 5.f;
+    float vlo = 9;
+    vmax = 0;
+    for (int s = 0; s < 600; s += 12) {
+        pl.run(c, 12);
+        if (s >= 60) vlo = std::min(vlo, pl.vcell()), vmax = std::max(vmax, pl.vcell());
+    }
+    printf("  5 A load: cell %.3f..%.3f, iout %.1f A\n", vlo, vmax, pl.iout[0]);
+    CHECK(vlo >= 3.5f - 0.015f && vmax <= 3.5f + 0.015f, "load on: cell back at cv_eoc: %.3f..%.3f", vlo, vmax);
 }
 
 static void test_hold_timeout() {
@@ -364,10 +393,11 @@ static void test_hold_cloudy_exit() {
     CHECK(c.Vout_max() > 28.9f, "back to bulk: %.3f", c.Vout_max());
 }
 
-static void test_hold_two_units_converge() {
+static void test_hold_two_units_converge(bool lag) {
     BatteryCharger a, b; a.params = holdParams(); b.params = holdParams(); setWallClockUs(1'000'000ULL);
     a.termCond.reset(); b.termCond.reset();
     Plant pl;
+    pl.bmsLag = lag;
     pl.ipv[0] = 25.f; pl.ipv[1] = 25.f;
     BatteryCharger *u[2] = {&a, &b};
     for (int k = 0; k < 3600 && !(a.termCond.cvHold() && b.termCond.cvHold()); ++k) pl.run(u, 2, 1);
@@ -378,8 +408,9 @@ static void test_hold_two_units_converge() {
         pl.run(u, 2, 12);
         vmax = std::max(vmax, pl.vcell()); vmin = std::min(vmin, pl.vcell());
     }
-    printf("  two units: cell %.3f..%.3f, pins %.3f/%.3f\n", vmin, vmax, a.Vout_max(), b.Vout_max());
-    CHECK(vmax <= 3.5f + 0.02f && vmin >= 3.5f - 0.02f, "two units hold cv_eoc +- band: %.3f..%.3f", vmin, vmax);
+    printf("  two units%s: cell %.3f..%.3f, ilim %.1f/%.1f A\n", lag ? " (ibat 1 frame late)" : "", vmin, vmax,
+           a.Iout_max(), b.Iout_max());
+    CHECK(vmax <= 3.5f + 0.015f && vmin >= 3.5f - 0.015f, "two units hold cv_eoc +- band: %.3f..%.3f", vmin, vmax);
     for (int s = 0; s < 7200 && !((bool) a.termCond && (bool) b.termCond); s += 12) pl.run(u, 2, 12);
     CHECK((bool) a.termCond && (bool) b.termCond, "both latch on the tail (ibat %.1f A)", pl.ibat);
 }
@@ -389,9 +420,56 @@ static void test_hold_psu_freezes_pin() {
     c.termCond.reset();
     Plant pl;
     pl.untilHold(c);
-    float pin = c.Vout_max();
+    pl.run(c, 1);
+    float lim = c.Iout_max();
     pl.run(c, 240, true);
-    CHECK(c.Vout_max() == pin, "psu mode: hold pin frozen %.3f -> %.3f", pin, c.Vout_max());
+    CHECK(c.Iout_max() == lim && c.Vout_max() == 29.f, "psu mode: hold limit frozen %.2f -> %.2f A", lim, c.Iout_max());
+}
+
+// clouds in the hold: no wind-up of the current limit, no overshoot when the sun returns
+static void test_hold_pv_limited_recovers() {
+    BatteryCharger c; c.params = holdParams(); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    Plant pl;
+    pl.untilHold(c);
+    pl.run(c, 600);
+    pl.ipv[0] = 4.f;
+    float limHi = 0;
+    for (int s = 0; s < 1800; s += 4) { pl.run(c, 4); limHi = std::max(limHi, c.Iout_max() - pl.iout[0]); }
+    CHECK(c.termCond.cvHold() && pl.vcell() < 3.49f, "cloud: in hold, cell %.3f below target", pl.vcell());
+    CHECK(limHi <= 2.f + 0.01f && c.Iout_max() < 7.f, "cloud: limit %.2f A, at most %.2f A above iout", c.Iout_max(), limHi);
+    pl.ipv[0] = 35.f;
+    float vmax = 0;
+    int s = 0, back = -1;
+    for (; s < 1200; s += 12) {
+        pl.run(c, 12);
+        vmax = std::max(vmax, pl.vcell());
+        if (back < 0 && pl.vcell() >= 3.5f - 0.005f) back = s;
+    }
+    printf("  sun back: cell max %.3f, at cv_eoc after %d s\n", vmax, back);
+    CHECK(vmax <= 3.5f + 0.015f, "sun back: no overshoot, max %.3f", vmax);
+    CHECK(back >= 0 && back < 600, "sun back: cell at cv_eoc after %d s", back);
+}
+
+// cell frames stop in the hold: stale latch, the limit goes, the existing stale fallback holds the bus
+static void test_hold_stale_releases_limit() {
+    BatteryCharger c; c.params = holdParams(); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    Plant pl;
+    pl.untilHold(c);
+    pl.run(c, 300);
+    CHECK(c.Iout_max() < 30.f, "hold limits the current: %.1f A", c.Iout_max());
+    float lim = c.Iout_max();
+    pl.cells = false;
+    pl.run(c, 170);
+    CHECK(c.termCond.cvHold() && c.Iout_max() <= lim + 2.f, "within expiry: still limited %.1f A", c.Iout_max());
+    pl.run(c, 30);
+    CHECK((bool) c.termCond && c.Iout_max() >= 40.f - 1e-3f, "stale: latched, limit released (%.1f A)", c.Iout_max());
+    float bus = pl.vbus;
+    pl.run(c, 2);
+    CHECK(c.Vout_max() <= bus + 0.05f, "stale: pin at the bus, no output step (%.3f, bus %.3f)", c.Vout_max(), bus);
+    pl.run(c, 30);
+    CHECK(std::fabs(c.Vout_max() - 26.8f) < 0.02f, "stale: float fallback %.3f", c.Vout_max());
 }
 
 // ---- top balancing ----
@@ -582,6 +660,21 @@ static void test_bal_ceiling_and_stale() {
     uint32_t p = c.balanceInBandS();
     frames(c, 3.56f, 10.f, 2, true);
     CHECK((bool) c.termCond && c.balanceDue() && c.balanceInBandS() >= p, "ceiling latches, run stays pending");
+    CHECK(c.balanceDeferWhy() && !strcmp(c.balanceDeferWhy(), "ceiling"), "ceiling: deferred");
+    c.termCond.reset(); // next charge
+    enterHold(c);
+    CHECK(!c.balanceRunning() && !c.termCond.cvHold() && (bool) c.termCond, "next charge: no run, normal termination");
+    setWallClockUs(loopWallClockUs_ + (30ULL * 86400ULL / 4) * 1000000ULL);
+    frames(c, 3.40f, 10.f, 2, true);
+    CHECK(c.balanceDeferWhy() == nullptr && c.balanceDue(), "interval / 4 later: may run again");
+    c.termCond.reset();
+    enterHold(c);
+    CHECK(c.balanceRunning(), "interval / 4 later: runs");
+    frames(c, 3.56f, 10.f, 2, true);
+    CHECK(c.balanceDeferWhy() != nullptr, "ceiling again: deferred");
+    c.balanceNow();
+    tick(c);
+    CHECK(c.balanceDeferWhy() == nullptr, "balance now: deferral cleared");
 
     BatteryCharger d; d.params = balParams(1800); setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
     d.termCond.reset();
@@ -673,6 +766,32 @@ static void test_bal_two_units() {
     CHECK((bool) a.termCond && (bool) b.termCond && !a.balanceDue() && !b.balanceDue(), "both complete");
 }
 
+// 11-23: flat's Vout reads -0.1 V while fry converts and -0.9 V alone. fry backs off, flat then holds in its own
+// low-reading frame and the runaway cell walks to the ceiling.
+static void test_hold_vout_offset_two_units() {
+    BatteryCharger a, b; a.params = balParams(7200); b.params = balParams(7200); setWallClockUs(1'000'000ULL);
+    a.termCond.reset(); b.termCond.reset();
+    a.balanceNow(); b.balanceNow();
+    Plant pl;
+    pl.ipv[0] = pl.ipv[1] = 30.f;
+    pl.imb = 0.06f; pl.kImb = 0.01f; pl.flatOff = true;
+    BatteryCharger *u[2] = {&a, &b};
+    for (int k = 0; k < 3600 && !(a.balanceRunning() && b.balanceRunning()); ++k) pl.run(u, 2, 1);
+    CHECK(a.balanceRunning() && b.balanceRunning(), "both run");
+    pl.run(u, 2, 600);
+    float vmax = 0, vmin = 9, vend = 0;
+    int s = 0;
+    for (; s < 5400 && !(bool) a.termCond && !(bool) b.termCond; s += 12) {
+        pl.run(u, 2, 12);
+        vmax = std::max(vmax, pl.vcell()); vmin = std::min(vmin, pl.vcell());
+    }
+    vend = pl.vcell();
+    printf("  offset: cell %.3f..%.3f (end %.3f) over %d s, iout %.1f/%.1f A, lim %.1f/%.1f A\n", vmin, vmax, vend, s,
+           pl.iout[0], pl.iout[1], a.Iout_max(), b.Iout_max());
+    CHECK(!(bool) a.termCond && !(bool) b.termCond, "no ceiling stop after %d s (cell %.3f)", s, vend);
+    CHECK(vmax <= 3.5f + 0.015f && vmin >= 3.5f - 0.015f, "offset: cell held at cv_eoc +- 15 mV: %.3f..%.3f", vmin, vmax);
+}
+
 // a reboot mid-hold must not restart the session cap (cell just below the band: no progress)
 static void test_bal_cap_survives_reboot() {
     ChargerRtc r{};
@@ -737,6 +856,7 @@ static void test_bal_torn_clock() {
 }
 
 int main() {
+    test_hold_vout_offset_two_units();
     test_bal_cap_survives_reboot();
     test_bal_delta_gap();
     test_bal_temp_stale();
@@ -766,8 +886,11 @@ int main() {
     test_hold_stale_latches();
     test_hold_ceiling_latches();
     test_hold_cloudy_exit();
-    test_hold_two_units_converge();
+    test_hold_two_units_converge(false);
+    test_hold_two_units_converge(true);
     test_hold_psu_freezes_pin();
+    test_hold_pv_limited_recovers();
+    test_hold_stale_releases_limit();
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

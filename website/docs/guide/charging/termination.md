@@ -181,13 +181,28 @@ line can trip at about 90 % SoC. With `cv_hold_max_s` > 0 (default 0, off) the
 line crossing does not terminate. The charger enters a CV hold instead: it
 holds the highest cell at `cv_eoc` and lets the current taper.
 
-On each BMS cell frame the hold moves the output-voltage pin by
-`0.5 × (cv_eoc − vcell_high) × N_cells`, limited to ±30 mV per frame and kept
-between `vout_max_fallback` and `vout_max`. The pin starts at the measured bus
-voltage, so entering the hold does not step the output. While the output
-cannot reach the pin (not enough PV power), the pin rises at most 0.2 V above
-the bus, so the returning sun does not push the cell over `cv_eoc`. In PSU mode,
-and while another converter drives the bus, the pin stays where it is.
+The hold regulates the pack charge current from BMS data only. The output
+voltage limit stays at `vout_max` as a protection ceiling, so an error of the
+converter's own Vout reading cannot shift the regulated cell voltage. Two
+loops run on the BMS frames:
+
+- Cell loop, on each cell frame: the pack-current target is the measured
+  `ibat` plus $(cv\_eoc - vcell\_high)/r$, where
+  $r = (cv\_eoc - cv\_float)/(tail\_c\_rate \cdot bat\_c)$ is the cell
+  resistance implied by the termination line (about 10.7 mΩ for 280 Ah).
+- Current loop, on each `ibat` frame: the converter's output-current limit
+  moves by 0.4 × (target − `ibat`). Upward steps are at most 2 A, and the limit
+  stays at most 2 A above the converter's own output current, so it does not
+  wind up while the PV power is short and the returning sun does not push the
+  cell over `cv_eoc`. The limit never goes below 0.25 A.
+
+The output current includes the house load ($i_{out} = i_{bat} + i_{load}$);
+regulating `ibat` with the limit as the integrator lets a load step settle
+within a few `ibat` frames, without waiting for the cell voltage to move. The
+limit starts at the output current when the hold begins, so entering the hold
+does not step the output. In PSU mode the limit stays where it is. A colder or
+hotter pack than the temperature policy allows lowers the target to its
+pack-current limit.
 
 The target is the constant `cv_eoc`, for the same reason as in
 [Absorption target vs. termination line](#absorption-target-vs-termination-line):
@@ -206,18 +221,28 @@ The hold ends in one of these ways:
   charger terminates at once, as without the hold.
 - Stale BMS data: the cell voltage or the pack current is older than 180 s. The
   charger terminates without marking the pack full and holds the float
-  fallback.
+  fallback. Until then the current limit stays where it was.
 - Sun gone: the highest cell stays below `cv_float` for 4 consecutive frames.
   The charger returns to charging without terminating, so a cloudy afternoon
   does not end in a false "full".
 
-After termination the float and recharge rules above apply unchanged.
-`status` reports `CV HOLD (<seconds>s, pin <volts>V)` during the hold.
+When the hold ends in termination, the output voltage limit glides from the
+bus voltage as the converter reads it to the float voltage, so the output does
+not step. After termination the float and recharge rules above apply
+unchanged. `status` reports `CV HOLD (<seconds>s, ilim <amps>A)` during the
+hold.
 
 Parallel chargers on one pack each run their own hold on the same BMS data,
-without coordination. The pin step is sized for that: one charger corrects at
-most half the cell error per frame, so two chargers stepping together correct
-at most the full error and stay stable.
+without coordination. The gains are sized for that:
+
+- All chargers compute the same pack-current target from the same frames, so
+  the cell loop gain does not add up. Its gain per frame is at most 1, since
+  the short-term cell resistance is below $r$.
+- Each charger's limit moves `ibat` one for one, so N chargers sum to a gain of
+  0.4 N per `ibat` frame: 0.8 for two, stable also when the BMS reports the
+  current one frame late.
+- A charger whose Vout sensor reads wrong regulates the same pack current as
+  the others; the reading only matters at the `vout_max` ceiling.
 
 ## Top balancing
 
@@ -247,7 +272,10 @@ it is due:
 When the run completes, the hold ends through its normal exits: with
 `cv_hold_max_s` = 0 the charger terminates at once and marks the pack full.
 The ceiling, stale-data and sun-gone exits of the hold apply unchanged; they
-do not complete the run.
+do not complete the run. A run that stops on the ceiling stays pending with
+its in-band time but is deferred for a quarter of `balance_interval`, at
+least 20 h, so the next charge ends normally (the `balance` reason is
+`ceiling`). `balance now` clears the deferral; a software reset does too.
 
 Limits and deferral:
 
@@ -272,9 +300,9 @@ Limits and deferral:
 The console command `balance` shows the state (off, days to the next run, due,
 running or the deferral reason, and the in-band time); `balance now` makes a
 run due, `balance skip` marks it done. During a run `status` reports
-`CV HOLD balance (<in band>/<balance_hold_s>s, pin <volts>V)`. Parallel
+`CV HOLD balance (<in band>/<balance_hold_s>s, ilim <amps>A)`. Parallel
 chargers on one pack each run their own balance hold on the same BMS data, with
-the same pin stepping as the CV hold.
+the same current regulation as the CV hold.
 
 ## Partial-charge ceiling (`partial_charge`)
 

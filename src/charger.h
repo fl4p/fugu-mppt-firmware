@@ -440,6 +440,7 @@ class BatteryCharger {
     uint32_t _staleCapTicks = 0;
     bool _termJoin = false; // terminated without authority, joined at float because the pack discharges
     bool _wasCvHold = false;
+    float _cvIlim = NAN, _cvIbat = NAN; // [A] CV hold: output-current limit (NAN = none), pack-current target
 
     // Integrator step gate: advance vpack_pin only on a fresh BMS frame so the
     // step rate matches the cell-voltage update rate (otherwise loopLF at 1 Hz
@@ -471,7 +472,7 @@ class BatteryCharger {
     uint32_t _balDoneT = 0, _balLastT = 0; // last completed run (0 = none since boot), last balance tick
     uint32_t _balAgeBootS = 0; // restored balance age at boot; unknown counts from boot
     float _balInBandS = 0.f, _balSessS = 0.f; // in-band time of the pending run, time in the current hold session
-    uint32_t _balDeltaLastT = 0, _balDeltaSeenT = 0;
+    uint32_t _balDeltaLastT = 0, _balDeltaSeenT = 0, _balCeilT = 0; // _balCeilT: run stopped on the cell ceiling
     uint8_t _balDeltaStreak = 0;
     bool _balForce = false, _balRun = false, _balHot = false, _balWasHold = false, _tempSource = false;
     volatile uint8_t _balReq = 0; // console request: 1 now, 2 skip
@@ -565,6 +566,10 @@ public:
         if (holiday()) return "holiday";
         if (_balHot) return "warm";
         if (_tempSource && !haveTemp()) return "temp n/a";
+        // a run stopped on the cell ceiling waits interval/4, at least 20 h (not the next charge)
+        if (_balCeilT && wallClockTicks() + 1 - _balCeilT
+                         < secToCoarseTicks(std::max<uint32_t>(params.balance_interval_s / 4, 72000)))
+            return "ceiling";
         if (!batSt.haveValidCellVoltage() || !ibatFresh()) return "BMS stale";
         return nullptr;
     }
@@ -586,10 +591,17 @@ public:
         uint8_t q = _balReq;
         _balReq = 0;
         _balForce |= q == 1;
+        if (q == 1) _balCeilT = 0;
         _balHot = haveTemp() && _tempMax > (_balHot ? BAL_TEMP_MAX - BAT_TEMP_HYST : BAL_TEMP_MAX);
         _balRun = balanceDue() && !balanceDeferWhy();
         bool hold = termCond.cvHold();
-        if (_balWasHold && !hold) _balSessS = 0.f; // session over (a reboot keeps it)
+        if (_balWasHold && !hold) {
+            _balSessS = 0.f; // session over (a reboot keeps it)
+            if (termCond.balance && bool(termCond) && batSt.vcell_high >= params.cv_ceiling) {
+                _balCeilT = now | 1;
+                ESP_LOGW("charger", "balance stopped on the cell ceiling, deferred");
+            }
+        }
         _balWasHold = hold;
         if (hold && _balRun && dt <= BAL_GAP_T) _balSessS += dt * BAL_TICK_S;
         termCond.balance = _balRun && _balSessS <= 2 * params.balance_hold_s;
@@ -872,22 +884,28 @@ public:
         vpack_pin = fminf(fmaxf(vpack_pin + step, floor), params.Vbat_max);
     }
 
-    // CV hold: one bounded pin step per cell frame towards vcell_high = cv_eoc. The target is constant (never
-    // v_term(ibat)). Loop gain per frame <= K (dVcell/dPin <= 1/n_cells); two converters stepping on one bus
-    // reach 2K = 1 < 2, still stable. Upward steps stop HEADROOM_V above the bus (PV-limited: no wind-up).
-    void _cvHoldStep(bool step, float voutNow) {
-        constexpr float K = 0.5f, STEP_MAX_V = 0.03f, HEADROOM_V = 0.2f;
+    // CV hold, BMS frames only (no Vout reading). Cell frame: pack-current target = measured ibat + K (cv_eoc -
+    // vcell_high) / r, r the line's cell resistance (>= the cell's short-term dI->dV), so the cell loop gain is <= K
+    // per frame; units on one BMS compute the same target, so it does not add up. Ibat frame: the output-current
+    // limit moves G (target - ibat); N units sum to N G (dIbat/dIlim = 1), 2 G < 1 also with one frame of BMS lag.
+    // Up steps <= STEP_UP_A; the limit stays <= HEADROOM_A above the own iout (PV-limited: no wind-up).
+    void _cvHoldStep(bool step, float iout, float ibatCap) {
+        constexpr float K = 1.f, G = 0.4f, STEP_UP_A = 2.f, HEADROOM_A = 2.f;
+        const float ibat = batSt.ibat_raw;
         uint32_t frame = batSt.vcell_high_t;
-        if (frame == _lastBmsFrameUs) return;
-        _lastBmsFrameUs = frame;
+        if (frame != _lastBmsFrameUs) {
+            _lastBmsFrameUs = frame;
+            _cvIbat = fminf(ibat + K * (params.cv_eoc - batSt.vcell_high) * params.tail_c_rate * params.Cbat
+                                   / (params.cv_eoc - params.cv_min), ibatCap);
+        }
+        frame = batSt.ibat_t;
+        if (frame == _lastIbatFrameUs) return;
+        _lastIbatFrameUs = frame;
         if (!step) return;
-        float d = fminf(fmaxf(K * (params.cv_eoc - batSt.vcell_high) * params.n_cells, -STEP_MAX_V), STEP_MAX_V);
-        float pin = vpack_pin + d;
-        if (d > 0 && std::isfinite(voutNow)) pin = fminf(pin, fmaxf(vpack_pin, voutNow + HEADROOM_V));
-        pin = fminf(fmaxf(pin, params.Vbat_fallback), params.Vbat_max);
-        if (pin != vpack_pin)
-            ESP_LOGD("charger", "cv hold: pin %.3f -> %.3f V (vcHigh %.3f)", vpack_pin, pin, batSt.vcell_high);
-        vpack_pin = pin;
+        float lim = fminf(fminf(_cvIlim + fminf(G * (_cvIbat - ibat), STEP_UP_A), iout + HEADROOM_A), params.Ibat_lim);
+        lim = fmaxf(lim, IOUT_LIM_FLOOR);
+        ESP_LOGD("charger", "cv hold: ibat %.2f -> %.2f A, ilim %.2f -> %.2f A", ibat, _cvIbat, _cvIlim, lim);
+        _cvIlim = lim;
     }
 
     // Pack-current target of the hold, the strictest of: cold 0 A; hot the derated ibat_max; partial
@@ -905,7 +923,7 @@ public:
     }
 
     void _updatePackVoltagePinning(bool voutAuthority = true, float vbat = INFINITY, float voutNow = NAN,
-                                   bool psu = false) {
+                                   bool psu = false, float ioutNow = NAN) {
         // Pack-voltage-pinning regimes (first match wins):
         //   1) EOC feedback — cells above v_eoc: closed loop on vcell_high → v_eoc.
         //      Doubles as the over-target corrector during terminated float; pulls
@@ -934,7 +952,35 @@ public:
         // termination seen on fry/flat 2026-07).
         float v_eoc = nowTerm ? params.cv_min : params.cv_eoc;
 
+        // CV hold before termination: the cell loop sets an output-current limit from BMS frames. The pin stays at
+        // Vbat_max (a protection ceiling only), so a Vout-sensor error cannot keep power flowing. PSU mode freezes it.
         float ibat = batSt.ibatSmoothed();
+        bool cvHold = termCond.cvHold();
+        if (cvHold != _wasCvHold) {
+            _wasCvHold = cvHold;
+            if (cvHold) {
+                _cvIlim = std::isfinite(ioutNow) ? fmaxf(ioutNow, IOUT_LIM_FLOOR) : params.Ibat_lim;
+                _lastBmsFrameUs = ~batSt.vcell_high_t; // target from this frame
+                ESP_LOGW("charger", "cv hold: vcHigh %.3f > line %.3f @ iBat %.2f, ilim %.1f A",
+                         batSt.vcell_high, termCond.v_term(), ibat, _cvIlim);
+            } else {
+                // a latch glides to float from the bus as read now: no output step
+                if (nowTerm && std::isfinite(voutNow)) vpack_pin = fminf(voutNow, params.Vbat_max);
+                _cvIlim = NAN;
+                ESP_LOGI("charger", "cv hold left (%s), vpPin %.3fV", nowTerm ? "terminated" : "charging", vpack_pin);
+            }
+        }
+        if (cvHold) {
+            vpack_pin = params.Vbat_max;
+            _vPinFilt.reset();
+            _fallbackGlide.reset();
+            _floatGlide.reset();
+            _wasTerminated = false;
+            _wasHold = false; // a load-follow hold after this one starts at the bus
+            _cvHoldStep(!psu, ioutNow, _holdIbatTarget());
+            return;
+        }
+
         bool hold = ibatFresh() && (_partialHold || _coldBlocked || std::isfinite(_hotScale));
         if (hold != _wasHold) {
             if (hold) {
@@ -957,33 +1003,6 @@ public:
             _wasTerminated = false;
             if (std::isnan(vpack_pin)) vpack_pin = params.Vbat_max;
             _loadFollowStep(ibat, _holdIbatTarget(), voutAuthority);
-            return;
-        }
-
-        // CV hold before termination: regulate the highest cell at cv_eoc. Without authority (a sibling
-        // holds the bus) or in PSU mode the pin is frozen.
-        bool cvHold = termCond.cvHold();
-        if (cvHold != _wasCvHold) {
-            if (cvHold) {
-                float bus = batSt.vout_avg.get();
-                float pin = std::isfinite(vpack_pin) ? (std::isfinite(bus) ? fminf(vpack_pin, bus) : vpack_pin) : bus;
-                vpack_pin = fminf(fmaxf(std::isfinite(pin) ? pin : params.Vbat_max, params.Vbat_fallback), params.Vbat_max);
-                _lastBmsFrameUs = batSt.vcell_high_t; // first step on the next frame
-                ESP_LOGW("charger", "cv hold: vcHigh %.3f > line %.3f @ iBat %.2f, pin %.2f V",
-                         batSt.vcell_high, termCond.v_term(), ibat, vpack_pin);
-            } else if (!nowTerm) {
-                float from = std::isfinite(vpack_pin) ? vpack_pin : params.Vbat_fallback;
-                _floatGlide.start(from, params.Vbat_max, nowUs);
-                ESP_LOGI("charger", "cv hold left, gliding vpPin %.3fV -> %.3fV", from, params.Vbat_max);
-            }
-            _wasCvHold = cvHold;
-        }
-        if (cvHold) {
-            _vPinFilt.reset();
-            _fallbackGlide.reset();
-            _floatGlide.reset();
-            _wasTerminated = false;
-            _cvHoldStep(voutAuthority && !psu, voutNow);
             return;
         }
 
@@ -1217,7 +1236,7 @@ public:
         _updateHoliday();
         _updateBalance();
         _updatePartialHold();
-        _updatePackVoltagePinning(voutAuthority, INFINITY, vout, psu);
+        _updatePackVoltagePinning(voutAuthority, INFINITY, vout, psu, iout);
         _saveRtc();
     }
 
@@ -1289,6 +1308,7 @@ public:
         auto lim = params.Ibat_lim;
 
         if (std::isfinite(ioutLim)) lim = min(lim, ioutLim);
+        if (std::isfinite(_cvIlim)) lim = min(lim, _cvIlim);
         const float wireCap = wireGuard.ioutCap();
         if (std::isfinite(wireCap)) lim = min(lim, wireCap);
         return fmaxf(lim, IOUT_LIM_FLOOR); // the CC limiter normalizes by its setpoint; 0 (e.g. ibat_lim_topic) would divide by 0

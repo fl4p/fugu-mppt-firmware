@@ -2092,10 +2092,10 @@ static void cmdStatus(cmd *) {
 
     char hold[64];
     if (chg.balanceRunning())
-        snprintf(hold, sizeof(hold), "CV HOLD balance (%u/%lus, pin %.2fV)", (unsigned) chg.balanceInBandS(),
-                 (unsigned long) p.balance_hold_s, chg.Vout_max());
+        snprintf(hold, sizeof(hold), "CV HOLD balance (%u/%lus, ilim %.1fA)", (unsigned) chg.balanceInBandS(),
+                 (unsigned long) p.balance_hold_s, chg.Iout_max());
     else
-        snprintf(hold, sizeof(hold), "CV HOLD (%lus, pin %.2fV)", (unsigned long) chg.termCond.cvHoldS(), chg.Vout_max());
+        snprintf(hold, sizeof(hold), "CV HOLD (%lus, ilim %.1fA)", (unsigned long) chg.termCond.cvHoldS(), chg.Iout_max());
     UART_LOG("Charger: %s", (bool) chg.termCond ? "TERMINATED (float)"
                             : chg.chargeBlocked() ? "BLOCKED (pack cold)"
                             : chg.partialHold() ? "PARTIAL HOLD (load-following)"
