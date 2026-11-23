@@ -70,29 +70,8 @@ public:
 
 
 class TempSensorGPIO_NTC : public SingleValueSensor {
-    float ntcResistance = 10e3f;
-
     const float *valuePtr = nullptr;
-
-    RunningMedian3<float> median3{};
     EWMA<float> ewma2{2};
-
-    uint8_t _attack = 1; // discard first samples
-
-    adc_channel_t ch = adc_channel_t::ADC_CHANNEL_9;
-
-
-    [[nodiscard]] float adc2Celsius(float adc) const {
-        // invalid adc 4095
-        if (adc >= 4080)
-            return NAN;
-        float tl = log(ntcResistance * (4095.f / adc - 1.f));
-        float temp = (1.f / (1.009249522e-3f + 2.378405444e-4f * tl + 2.019202697e-7f * tl * tl * tl)) - 273.15f;
-        if (temp < -200 or temp > 300) {
-            return NAN;
-        }
-        return temp;
-    }
 
     [[nodiscard]] float volt2Temp(float vr) const {
         // vr = v_adc/vcc_supply
@@ -105,69 +84,25 @@ class TempSensorGPIO_NTC : public SingleValueSensor {
         return 1.f / (std::log(Rp / R0 * (1.f / vr - 1.f)) / beta + 1.f / T0) - 273.15f;
     }
 
-    //esp_adc_cal_characteristics_t adc_char{};
-    adc_atten_t adc_atten = ADC_ATTEN_DB_12; // 10k NTC / 10K pulldown on 3.3V => 1.65V mid
-
 protected:
     [[nodiscard]] bool present() const override { return valuePtr != nullptr; }
 
 public:
     TempSensorGPIO_NTC() = default;
 
-
+    // the NTC channel is a sensor.conf channel; refuse a stale board.conf one
     void begin(const ConfFile &boardConf) {
-        if (valuePtr == nullptr) {
-            auto chi = boardConf.getByte("ntc_ch", 255);
-            if (chi == 255)
-                return;
-
-            assert_throw(false, "ntc: adc1 not implemented, only by ptr");
-            /*
-            ch = (adc_channel_t) chi;
-
-            assert(ch >= 0 and ch <= adc_channel_t::ADC_CHANNEL_9);
-
-            ESP_ERROR_CHECK(adc1_config_width(ADC_WIDTH_BIT_12));
-            ESP_ERROR_CHECK(adc1_config_channel_atten(ch, adc_atten));
-            assert(ESP_ADC_CAL_VAL_NOT_SUPPORTED !=
-                   esp_adc_cal_characterize(ADC_UNIT_1, adc_atten, ADC_WIDTH_BIT_12, 1100, &adc_char));
-            //pinMode((uint8_t) PinConfig::NTC, ANALOG);
-            //assert(adcAttachPin((uint8_t) PinConfig::NTC));
-             */
-        } else {
-            //ESP_LOGI("ntc")
-        }
+        assert_throw(valuePtr || boardConf.getByte("ntc_ch", 255) == 255,
+                     "board.conf ntc_ch is no longer read, set ntc_ch in sensor.conf");
     }
 
     float readImpl() override {
-        if (valuePtr == nullptr) {
-            //auto adc = analogRead((uint8_t) PinConfig::NTC);
-            /* if (ch == adc1_channel_t::ADC1_CHANNEL_MAX)
-                 return NAN;
-
-             auto adc = adc1_get_raw(ch);
-
-             // ESP_LOGI("temp", "ADC_RAW=%i", adc);
-
-             if (_attack) --_attack;
-             else {
-                 float temp = adc2Celsius(adc);
-                 if (!isnan(temp)) {
-                     ewma1.add(median3.next(temp));
-                     ewma2.add(ewma1.get());
-                 }
-             }
-             */
-        } else {
-            auto volt = *valuePtr;
-            constexpr auto vcc = 3.3f;
-            //float temp = adc2Celsius(volt / 3.9f * 4095.0f); // 11/12db => 3.9V full range (see docs)
-            float temp = volt2Temp(volt / vcc);
-            if (!plausible(temp)) return NAN;
-            ewma2.add(temp);
-            return temp;
-        }
-        return NAN;
+        if (valuePtr == nullptr) return NAN;
+        constexpr auto vcc = 3.3f;
+        float temp = volt2Temp(*valuePtr / vcc);
+        if (!plausible(temp)) return NAN;
+        ewma2.add(temp);
+        return temp;
     }
 
     [[nodiscard]] float last() const override { return ewma2.get(); }
@@ -176,8 +111,6 @@ protected:
     void resetFilters() override { ewma2.reset(); }
 
 public:
-
-
     void setValueRef(const float &ref) {
         valuePtr = &ref;
     }

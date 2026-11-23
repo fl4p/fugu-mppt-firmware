@@ -65,6 +65,7 @@ FILE_VAR_OVERRIDES = {
     'src/adc/vconv.h':           {'vconvConf': None},
     'src/sensor_setup.cpp':      {'vc': None, 'coil': None},
     'src/conv_side.h':           {'conv': 'converter.conf'},   # readTopoIsBoost()
+    'src/adc/temperature.h':     {'boardConf': None},          # stale ntc_ch guard
     'src/tele/http_conf_service.cpp': {'c': 'http.conf'},
     'src/tele/conf_creds.h':     {'c': 'ftp.conf'},
 }
