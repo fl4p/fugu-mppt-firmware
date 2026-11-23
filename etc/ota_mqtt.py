@@ -2,7 +2,7 @@
 """OTA devices through their MQTT consoles, one after the other, and verify each.
 
     etc/fleet-build.sh                    # fry/flat image from a clean worktree (sdkconfig.fleet, IDF 6.0.3)
-    etc/ota_mqtt.py --name fry,flat --bin ../fugu-fleet-wt/build-fleet/fugu-firmware.bin -n
+    etc/ota_mqtt.py --name fry,flat --bin ../fugu-fleet-wt/build/fleet/fugu-firmware.bin -n
     etc/ota_mqtt.py --name fry,flat --bin ... [--check wire --check "rect-cal status"]
 
 Setup: broker and credentials from etc/mqtt.env (relay/ssh settings from etc/nat.env; a worktree

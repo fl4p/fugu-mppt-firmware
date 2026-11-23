@@ -21,11 +21,11 @@ For CI or variant builds, layer an sdkconfig fragment instead of using menuconfi
 
 ```bash
 echo 'CONFIG_FUGU_WITH_BLE=n' > my.frag
-SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-noble -D SDKCONFIG=build-noble/sdkconfig build
+SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build/noble -D SDKCONFIG=build/noble/sdkconfig build
 ```
 
 The top-level `CMakeLists.txt` also reads the live sdkconfig to decide fragment layering. That's the one given with
-`-D SDKCONFIG=`, or else the root `sdkconfig`. If you pass `-D SDKCONFIG=build-noble/sdkconfig` on every command, a root
+`-D SDKCONFIG=`, or else the root `sdkconfig`. If you pass `-D SDKCONFIG=build/noble/sdkconfig` on every command, a root
 `sdkconfig` from another build doesn't leak into the variant.
 
 `etc/matrix_build.sh` builds each variant in its own project root.
@@ -187,7 +187,7 @@ On ESP32-S3 the repository ships this fragment as `sdkconfig.vconv_s3`. Build it
 its own `sdkconfig`:
 
 ```bash
-SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" idf.py -B build-vconv -DSDKCONFIG=build-vconv/sdkconfig build
+SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" idf.py -B build/vconv -DSDKCONFIG=build/vconv/sdkconfig build
 ```
 
 Provision `config/lab/vconv_mock`.

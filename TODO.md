@@ -536,7 +536,7 @@ t = [
 
 
 
-alias idf-noble='WITH_BLE=0 idf.py -B build-noble'
+alias idf-noble='WITH_BLE=0 idf.py -B build/noble'
 
 
 

@@ -2,7 +2,7 @@
 # Build the WITH_* x target matrix into isolated per-variant project roots so that
 # concurrent variants (or other idf.py runs in this tree) don't trample each other's
 # managed_components/, dependencies.lock, or sdkconfig. Each variant gets a symlink
-# farm under build-matrix-roots/<name>/ pointing at the real sources, plus its own
+# farm under build/matrix-roots/<name>/ pointing at the real sources, plus its own
 # managed_components/, dependencies.lock, sdkconfig, and build/.
 set -u
 cd "$(dirname "$0")/.."
@@ -11,8 +11,8 @@ cd "$(dirname "$0")/.."
 
 PROJ_ROOT="$(pwd -P)"
 results=()
-log_dir="build-matrix-logs"
-roots_dir="build-matrix-roots"
+log_dir="build/matrix-logs"
+roots_dir="build/matrix-roots"
 mkdir -p "$log_dir" "$roots_dir"
 
 # Top-level entries each variant root needs to see. Anything not listed (build dirs,

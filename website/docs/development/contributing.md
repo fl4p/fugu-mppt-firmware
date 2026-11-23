@@ -13,14 +13,14 @@ GitHub profile to share your experience.
 
 1. Follow the [coding conventions](conventions.md).
 2. Build both targets: `idf.py build` (ESP32-S3) and
-   `IDF_TARGET=esp32 idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig build` (classic ESP32). If your change touches feature flags, also run `etc/matrix_build.sh`. See [Build](build.md).
+   `IDF_TARGET=esp32 idf.py -B build/esp32 -D SDKCONFIG=build/esp32/sdkconfig build` (classic ESP32). If your change touches feature flags, also run `etc/matrix_build.sh`. See [Build](build.md).
 3. Run the tests that cover your change. [Testing](testing.md) describes them, and this table shows which tests to run
    for each kind of change:
 
 | Change | Run |
 |---|---|
 | Pure logic, parsers, services | Host tests in `test/host-stub/` and `test/host_py/` |
-| Control loop, sensors, drivers | On-target Unity suite: `RUN_TESTS=1 idf.py -B build-tests build` |
+| Control loop, sensors, drivers | On-target Unity suite: `RUN_TESTS=1 idf.py -B build/tests build` |
 | Console commands, networking | `python etc/e2e-test/run_e2e.py --cluster console --serial <port>` |
 | Control behaviour without hardware | A `CONFIG_FUGU_WITH_VCONV=y` build with `config/lab/vconv_mock` |
 | Power stage | A current-limited bench setup, see [Lab overview](../lab/index.md) |

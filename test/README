@@ -1,7 +1,7 @@
 On-target tests (Unity, replaces main.cpp with test/main.cpp):
 
 ```
-RUN_TESTS=1 idf.py -B build-tests flash      # runs the full software unit suite by default
+RUN_TESTS=1 idf.py -B build/tests flash      # runs the full software unit suite by default
 ```
 
 Read the Unity output with `etc/fugu_console.py -p /dev/cu.usbmodem...` (it resets the board on

@@ -40,8 +40,8 @@ config with `config/lab/dry_mock`. If the littlefs config must be kept, use `app
 To build and flash the suite and open the console, run:
 
 ```bash
-RUN_TESTS=1 idf.py -B build-tests build
-RUN_TESTS=1 idf.py -B build-tests -p $ESPPORT flash
+RUN_TESTS=1 idf.py -B build/tests build
+RUN_TESTS=1 idf.py -B build/tests -p $ESPPORT flash
 python3 etc/fugu_console.py -p $ESPPORT      # then press RESET/EN to see the Unity output
 ```
 
@@ -50,7 +50,7 @@ alternative, `idf.py -p $ESPPORT flash monitor` resets the board and attaches in
 
 The PWM/MCPWM tests only run in an MCPWM build (`CONFIG_FUGU_WITH_MCPWM=y`). The software suite passes without it.
 
-Without a board, `python3 test/unity_qemu.py` (after `. ./idf-export.sh`) builds the suite in `build-qemu`, runs it in
+Without a board, `python3 test/unity_qemu.py` (after `. ./idf-export.sh`) builds the suite in `build/qemu`, runs it in
 QEMU (esp32s3), and exits non-zero on a failure or crash. QEMU's flash has no QIO mode, so the script sets DIO in that
 build directory's sdkconfig only. The tests that need real pin edges (GPIO interrupts, MCPWM output and capture)
 detect QEMU by its blank factory MAC and report as Ignored.

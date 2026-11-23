@@ -1,7 +1,7 @@
 """Build the Unity suite (RUN_TESTS=1) and run it in QEMU (esp32s3), no board needed.
 
   . ./idf-export.sh
-  python3 test/unity_qemu.py [-B build-qemu] [--no-build] [--timeout 1200] [--log FILE]
+  python3 test/unity_qemu.py [-B build/qemu] [--no-build] [--timeout 1200] [--log FILE]
 
 QEMU's flash has no QIO, so the build dir's sdkconfig is switched to DIO (sdkconfig.defaults untouched).
 Tests that need real pins or peripherals detect QEMU at runtime (test/qemu.h) and report as Ignored.
@@ -95,7 +95,7 @@ def run(flash, efuse, timeout, log):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('-B', '--build-dir', default='build-qemu')
+    ap.add_argument('-B', '--build-dir', default='build/qemu')
     ap.add_argument('--no-build', action='store_true')
     ap.add_argument('--timeout', type=float, default=1200)
     ap.add_argument('--log', default=None, help='default: <build-dir>/unity_qemu.log')

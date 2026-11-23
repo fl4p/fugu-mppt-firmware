@@ -1,9 +1,9 @@
 """Run test/main_bl_ota.cpp under QEMU (esp32s3): refusal cases, then a real bootloader install, then a
 second boot from the new bootloader.
 
-  MAIN_SRC=../test/main_bl_ota.cpp idf.py -B build-blqemu -DSDKCONFIG=build-blqemu/sdkconfig build
-  (QEMU's flash has no QIO: set CONFIG_ESPTOOLPY_FLASHMODE_DIO=y in build-blqemu/sdkconfig first)
-  python3 test/bl_ota_qemu.py build-blqemu
+  MAIN_SRC=../test/main_bl_ota.cpp idf.py -B build/blqemu -DSDKCONFIG=build/blqemu/sdkconfig build
+  (QEMU's flash has no QIO: set CONFIG_ESPTOOLPY_FLASHMODE_DIO=y in build/blqemu/sdkconfig first)
+  python3 test/bl_ota_qemu.py build/blqemu
 
 The candidate is the build's own bootloader with its descriptor date replaced (checksum and SHA-256
 fixed up), so it boots like the original but is distinguishable in `bootloader:` lines.
@@ -84,4 +84,4 @@ def main(build):
 
 
 if __name__ == '__main__':
-    sys.exit(0 if main(sys.argv[1] if len(sys.argv) > 1 else 'build-blqemu') else 1)
+    sys.exit(0 if main(sys.argv[1] if len(sys.argv) > 1 else 'build/blqemu') else 1)

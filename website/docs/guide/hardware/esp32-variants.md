@@ -17,14 +17,14 @@ with "not consistent with target … in the environment".
 To keep both targets side by side, give the classic target its own build directory and its own `sdkconfig`. By
 default, the generated `sdkconfig` lives in the project root and records the target, so two build directories that
 share it would overwrite each other's target. The following commands build the S3 in `build/` and the classic ESP32
-in `build-esp32/`:
+in `build/esp32/`:
 
 ```bash
 idf.py set-target esp32s3 && idf.py build        # ESP32-S3: build/ + ./sdkconfig
 
-# classic ESP32: build-esp32/ + build-esp32/sdkconfig
-IDF_TARGET=esp32 idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig build
-IDF_TARGET=esp32 idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig -p $ESPPORT flash
+# classic ESP32: build/esp32/ + build/esp32/sdkconfig
+IDF_TARGET=esp32 idf.py -B build/esp32 -D SDKCONFIG=build/esp32/sdkconfig build
+IDF_TARGET=esp32 idf.py -B build/esp32 -D SDKCONFIG=build/esp32/sdkconfig -p $ESPPORT flash
 ```
 
 Pass the same `IDF_TARGET=esp32` prefix and `-B`/`-D SDKCONFIG=` pair to every classic-ESP32 command. The prefix

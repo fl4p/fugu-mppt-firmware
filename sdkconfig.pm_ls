@@ -1,7 +1,7 @@
 # sdkconfig.pm without the USB-Serial-JTAG NO_LIGHT_SLEEP lock: automatic light sleep engages with a host
 # attached, and every sleep disables the USJ pad and clock, so the USB console drops for the whole window
 # (use telnet/BLE/MQTT). Light sleep is never enabled at boot, only by a `pwr pm ... 1 <secs>` window.
-# idf.py -B build-pm-ls -DSDKCONFIG=build-pm-ls/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.pm_ls" build
+# idf.py -B build/pm-ls -DSDKCONFIG=build/pm-ls/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.pm_ls" build
 CONFIG_FUGU_WITH_PWR_KNOBS=y
 CONFIG_PM_ENABLE=y
 CONFIG_FREERTOS_USE_TICKLESS_IDLE=y

@@ -2,7 +2,7 @@
 # Build the fry/flat production image (sdkconfig.fleet, ESP-IDF 6.0.3) of a commit in a clean, reused
 # detached worktree, so no uncommitted edit of the main checkout ships.
 #   etc/fleet-build.sh [git-rev]      default HEAD of the main checkout
-# Env: FLEET_WT  worktree (default <main checkout>/../fugu-fleet-wt), build dir build-fleet inside it.
+# Env: FLEET_WT  worktree (default <main checkout>/../fugu-fleet-wt), build dir build/fleet inside it.
 # Prints the .bin path, version and sha256; feed it to `etc/ota_mqtt.py --bin <path>`.
 set -eu
 main=$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)
@@ -23,15 +23,15 @@ if [ -n "$dirt" ]; then
 fi
 
 # a cached sdkconfig would override a changed sdkconfig.fleet/defaults
-rm -f "$wt/build-fleet/sdkconfig" "$wt/build-fleet/sdkconfig.fugu-baseline"
+rm -f "$wt/build/fleet/sdkconfig" "$wt/build/fleet/sdkconfig.fugu-baseline"
 (
     cd "$wt"
     . ./idf-export.sh esp32s3 >/dev/null
-    idf.py -B build-fleet -DSDKCONFIG=build-fleet/sdkconfig \
+    idf.py -B build/fleet -DSDKCONFIG=build/fleet/sdkconfig \
         -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.fleet" build
 )
 
-bin=$wt/build-fleet/fugu-firmware.bin
+bin=$wt/build/fleet/fugu-firmware.bin
 ver=$(python3 - "$bin" <<'EOF'
 import struct, sys
 d = open(sys.argv[1], 'rb').read(0x200)

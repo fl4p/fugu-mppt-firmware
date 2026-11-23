@@ -182,7 +182,7 @@ battery). Use `app-flash` if the littlefs config must be kept.
 The following commands build and flash the test suite, or build a single entry point:
 
 ```bash
-RUN_TESTS=1 idf.py -B build-tests build flash monitor
+RUN_TESTS=1 idf.py -B build/tests build flash monitor
 # or target a single entry point:
 MAIN_SRC=../test/main_ads_rate.cpp idf.py build
 ```

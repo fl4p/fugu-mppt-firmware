@@ -1,8 +1,8 @@
 """Run test/main_rt_task.cpp (rtLoopRunning()) under QEMU (esp32s3).
 
-  MAIN_SRC=../test/main_rt_task.cpp idf.py -B build-rtqemu -DSDKCONFIG=build-rtqemu/sdkconfig build
-  (QEMU's flash has no QIO: set CONFIG_ESPTOOLPY_FLASHMODE_DIO=y in build-rtqemu/sdkconfig first)
-  python3 test/rt_task_qemu.py build-rtqemu
+  MAIN_SRC=../test/main_rt_task.cpp idf.py -B build/rtqemu -DSDKCONFIG=build/rtqemu/sdkconfig build
+  (QEMU's flash has no QIO: set CONFIG_ESPTOOLPY_FLASHMODE_DIO=y in build/rtqemu/sdkconfig first)
+  python3 test/rt_task_qemu.py build/rtqemu
 """
 import os
 import shutil
@@ -41,4 +41,4 @@ def main(build):
 
 
 if __name__ == '__main__':
-    sys.exit(0 if main(sys.argv[1] if len(sys.argv) > 1 else 'build-rtqemu') else 1)
+    sys.exit(0 if main(sys.argv[1] if len(sys.argv) > 1 else 'build/rtqemu') else 1)

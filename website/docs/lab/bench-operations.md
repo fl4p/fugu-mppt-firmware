@@ -45,7 +45,7 @@ If a flash or build dies with a truncated tail, the real error is in
 `build-<tag>/log/idf_py_std{err,out}_output_<pid>` (the pid is in the filename).
 
 After you change a firmware global's type, both `idf.py -B build build` and
-`RUN_TESTS=1 idf.py -B build-tests build` must be green. Only the second compiles the test TUs,
+`RUN_TESTS=1 idf.py -B build/tests build` must be green. Only the second compiles the test TUs,
 and an `extern` type mismatch links silently (observed: `time_us` vs `unsigned long`).
 
 ## Identifying the board on a port

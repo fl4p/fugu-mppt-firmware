@@ -31,12 +31,15 @@ idf.py -p $ESPPORT app-flash
 `idf.py flash`/`app-flash` automatically archive the build ELF for later coredump symbolication (via the project's
 `idf_ext.py`). Name the device with `FUGU_DEVICE=<name> idf.py flash` or `./flash.sh <name>` (see "ELF archive" below).
 
+Extra build directories (variants, tests, review or experiment builds) go under `build/<name>/`, never `build-<name>/` in
+the repo root. Note that `idf.py fullclean` of the default `build/` deletes them too.
+
 Default build target is `esp32s3`. Classic `esp32`: own build dir and sdkconfig, target from the environment
 (`IDF_TARGET=esp32 . ./idf-export.sh` does not stick; `-DIDF_TARGET=esp32` alone clashes with the exported esp32s3):
-`. ./idf-export.sh esp32 && idf.py -B build-esp32 -DSDKCONFIG=build-esp32/sdkconfig build`, or prefix each command
+`. ./idf-export.sh esp32 && idf.py -B build/esp32 -DSDKCONFIG=build/esp32/sdkconfig build`, or prefix each command
 with `IDF_TARGET=esp32` in an esp32s3 shell.
 Simulated-converter build on the S3 (provision `config/lab/vconv_mock`):
-`idf.py -B build-vconv -DSDKCONFIG=build-vconv/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" build`.
+`idf.py -B build/vconv -DSDKCONFIG=build/vconv/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" build`.
 
 The top-level `CMakeLists.txt` invokes `littlefs_create_partition_image(... FLASH_IN_PROJECT)` so the **board config
 selected by `FUGU_LITTLEFS_SRC` (`config/lab/dry_mock` on esp32s3, `config/fugu1/fugu1_esp32` on esp32) is flashed
@@ -63,11 +66,11 @@ NAT router), sends `ota <url>` to each, then prints a before/after version table
 reboots them into the new image. Confirm versions in the after-table.
 
 **fry/flat image: `etc/fleet-build.sh [rev]`** (default HEAD) builds the production config (`sdkconfig.fleet`, IDF 6.0.3)
-in a clean, reused detached worktree `../fugu-fleet-wt` (`build-fleet/`), refuses a dirty worktree and prints the .bin
+in a clean, reused detached worktree `../fugu-fleet-wt` (`build/fleet/`), refuses a dirty worktree and prints the .bin
 path, version and sha256. Never ship a main-checkout build: it carries other sessions' uncommitted edits.
 
 **OTA over the MQTT console (preferred for fry/flat):** `.venv/bin/python3 etc/ota_mqtt.py --name fry,flat --bin
-../fugu-fleet-wt/build-fleet/fugu-firmware.bin -n`, then without `-n`. Devices go one after the other; a failure stops
+../fugu-fleet-wt/build/fleet/fugu-firmware.bin -n`, then without `-n`. Devices go one after the other; a failure stops
 the rest. It reads the broker and credentials from `etc/mqtt.env` (main checkout's as fallback), tunnels through
 `havan-ts` when the broker is not directly reachable, locks onto the exact hostname and runs pre-flight checks (also in
 `-n`): image flags, a `PENDING_VERIFY` running image, a `-dirty` image (refused for fry/flat unless `--allow-dirty` when the tree it was built in has
@@ -224,7 +227,7 @@ Unit tests live under `test/` and reuse the same firmware build, swapping `main.
 `main/CMakeLists.txt`:
 
 ```bash
-RUN_TESTS=1 idf.py -B build-tests build flash monitor
+RUN_TESTS=1 idf.py -B build/tests build flash monitor
 ```
 
 To swap in a single alternate entry point without touching CMakeLists:

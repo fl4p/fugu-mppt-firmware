@@ -46,7 +46,7 @@ project-root `sdkconfig` if it exists. The resolved options then select fragment
 Later fragments win. To pass your own fragments, set `SDKCONFIG_DEFAULTS` and quote the list:
 
 ```bash
-SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-myvariant build
+SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build/myvariant build
 ```
 
 `sdkconfig.vconv_s3` is the prepared fragment for a virtual-converter build on ESP32-S3. See
@@ -54,7 +54,7 @@ SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build-myvariant build
 directory with its own `sdkconfig`:
 
 ```bash
-SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" idf.py -B build-vconv -DSDKCONFIG=build-vconv/sdkconfig build
+SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" idf.py -B build/vconv -DSDKCONFIG=build/vconv/sdkconfig build
 ```
 
 If the generated `sdkconfig` looks wrong, delete it and rebuild.
@@ -85,11 +85,12 @@ Each target or variant has its own build directory:
 | Directory | Command | Purpose |
 |---|---|---|
 | `build/` | `idf.py build` | Default, ESP32-S3 |
-| `build-esp32/` | `IDF_TARGET=esp32 idf.py -B build-esp32 -D SDKCONFIG=build-esp32/sdkconfig build` | Classic ESP32 |
-| `build-tests/` | `RUN_TESTS=1 idf.py -B build-tests build` | Unity test runner, see [Testing](testing.md) |
-| `build-<variant>/` | `SDKCONFIG_DEFAULTS=… idf.py -B build-<variant> -D SDKCONFIG=build-<variant>/sdkconfig build` | Any other flag combination |
+| `build/esp32/` | `IDF_TARGET=esp32 idf.py -B build/esp32 -D SDKCONFIG=build/esp32/sdkconfig build` | Classic ESP32 |
+| `build/tests/` | `RUN_TESTS=1 idf.py -B build/tests build` | Unity test runner, see [Testing](testing.md) |
+| `build/<variant>/` | `SDKCONFIG_DEFAULTS=… idf.py -B build/<variant> -D SDKCONFIG=build/<variant>/sdkconfig build` | Any other flag combination |
 
-All `build-*` directories are gitignored.
+Put every extra build directory under `build/`, not next to it as `build-<name>/`. `build/` is gitignored.
+`idf.py fullclean` on the default directory deletes everything in `build/`, the variant directories included.
 
 :::note Flashing includes a config image
 `idf.py flash` also writes a littlefs image built from `config/lab/dry_mock` (ESP32-S3) or
@@ -100,7 +101,7 @@ board, use `idf.py app-flash`. Both commands archive the build ELF for later cor
 ## Variant matrix
 
 `etc/matrix_build.sh` builds the common variants, each in its own symlinked project root under
-`build-matrix-roots/<name>/`, so they don't share `sdkconfig`, `managed_components/`, or `dependencies.lock`:
+`build/matrix-roots/<name>/`, so they don't share `sdkconfig`, `managed_components/`, or `dependencies.lock`:
 
 | Variant | Target | BLE | NETW |
 |---|---|:---:|:---:|
@@ -111,7 +112,7 @@ board, use `idf.py app-flash`. Both commands archive the build ELF for later cor
 | `esp32-ble` | esp32 | on | on |
 | `esp32-noble` | esp32 | off | on |
 
-The script writes logs to `build-matrix-logs/<name>.log`. Its summary lists the exit code and `fugu-firmware.bin`
+The script writes logs to `build/matrix-logs/<name>.log`. Its summary lists the exit code and `fugu-firmware.bin`
 size per variant.
 
 The script sources `./idf-export.sh`, which sources ESP-IDF's `export.sh` from `FUGU_IDF_PATH`, from
