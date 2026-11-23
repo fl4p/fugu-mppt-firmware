@@ -373,6 +373,18 @@
   .tst-res .d { display:block; margin-top:2px; color:var(--muted); font:11.5px/1.5 var(--mono); overflow-wrap:anywhere; }
   .tst-res .d.err { color:var(--accent); font-family:var(--sans); font-size:12.5px; }
   .tst-res .recheck { margin-top:6px; border-color:var(--line-2); padding:4px 10px; font-size:12.5px; }
+  .tst-chart { margin:12px 0 0; }
+  .tst-chart figcaption { font-size:12px; color:var(--muted); margin:0 0 4px; }
+  .tst-chart svg { display:block; width:100%; height:auto; overflow:visible; }
+  .tst-chart text { fill:var(--faint); font:10.5px var(--sans); font-variant-numeric:tabular-nums; }
+  .tst-chart .g { stroke:var(--line); }
+  .tst-chart .z { stroke:var(--line-2); }
+  .tst-chart .ln { fill:none; stroke:var(--fg-2); stroke-width:1.6; stroke-linejoin:round; stroke-linecap:round; }
+  .tst-chart .ln.flag { stroke-dasharray:5 3; opacity:.6; }
+  .tst-chart .pt { fill:var(--fg-2); }
+  .tst-chart .mdrop { stroke:var(--accent); stroke-dasharray:2 3; opacity:.55; }
+  .tst-chart .mpp { fill:var(--accent); stroke:var(--bg); stroke-width:2; }
+  .tst-chart text.mlab { fill:var(--accent); font-size:11.5px; font-weight:600; paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
   .tst.compact { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:16px; }
   .tst.compact > * { grid-column:1; }
   .tst.compact > .tst-ctl { grid-column:2; grid-row:1 / span 3; align-self:start; margin-top:0; flex-direction:column; align-items:flex-end; gap:6px; }
@@ -620,6 +632,8 @@
 </div>
 
 <script src="https://unpkg.com/mqtt@5.16.1/dist/mqtt.min.js" integrity="sha384-ilRYg/zm2XqUafLvBoGVk40UfNRnvUkYMy+e/JPo4YgsFR6X9Q3jYEkqFQXquX4r" crossorigin="anonymous"></script>
+<!-- optional: sweep-curve parser for the Tests sheet chart; missing → text summary only -->
+<script src="teledec.js"></script>
 <script>
   // ESP_LOG / sweep-plot output is ANSI-coloured (SGR). Self-contained converter (no CDN/ESM
   // import, so colouring still works on an offline bench) -> escapes its input and wraps coloured
@@ -3404,13 +3418,12 @@ const TESTS = [
     what:"State of the rect-cal self-calibration and the active rect_offset.", dur:"instant" },
   { id:"wire", group:"Status", title:"Output wire guard", root:"wire", cmd:()=>"wire",
     what:"Wire-fault protection state, level and learned baseline.", dur:"instant" },
-  { id:"curve", group:"Status", title:"Last sweep", root:"sweep-curve", cmd:()=>"sweep-curve",
-    what:"Maximum power point and points of the last global sweep.", dur:"instant" },
   { id:"adccal", group:"Status", title:"ADC calibration (eFuse)", root:"adc-cal", cmd:()=>"adc-cal", noProbe:true,
     what:"What the chip's ADC1 calibration is built from (ESP32-S3 builds).", dur:"instant" },
 
-  { id:"sweep", group:"Measurements", title:"Global MPP sweep", root:"sweep", cmd:()=>"sweep", confirm:"plain",
-    tag:"drives the converter", what:"Sweeps the duty from zero to maximum and reports the panel's maximum power point.",
+  { id:"sweep", group:"Measurements", title:"MPP sweep", root:"sweep", cmd:()=>"sweep", confirm:"plain",
+    read:"sweep-curve", readLabel:"Read last sweep", runLabel:"Run sweep", chart:true,
+    tag:"drives the converter", what:"Sweeps the duty from zero to maximum and reports the panel's maximum power point. Read last sweep shows the latest curve without driving anything.",
     needs:"MPPT or PSU mode; not during a backflow switch test.", dur:"a few seconds",
     risk:"Output power drops while the duty sweeps; PSU mode is left.",
     does:()=>"The tracker sweeps the duty from zero to maximum to find the maximum power point, after a short sensor zero calibration. Output power drops for a few seconds; PSU mode is left.",
@@ -3561,8 +3574,21 @@ function parseRectStatus(lines){
   return null;
 }
 
-// `sweep-curve` header.
+// `sweep-curve` reply. With teledec.js loaded its SweepCurveParser also assembles the points
+// (`points`, `complete`); without it only the header is read.
 function parseCurve(lines){
+  const TD=window.TeleDec;
+  if (TD && TD.SweepCurveParser){
+    const sc=new TD.SweepCurveParser(); let last=null;
+    for (const raw of lines){ const r=sc.feed(raw); if (r) last=r; }
+    if (!last) return null;
+    const c=last.curve;
+    if (!c) return { none:true };
+    const f1 = x => Number.isFinite(x) ? x.toFixed(1) : String(x);
+    return { t:c.t, n:c.n, p:f1(c.mpp.P), v:f1(c.mpp.V), P:c.mpp.P, V:c.mpp.V, sweeping:c.sweeping,
+             flag: c.flag===undefined ? "" : c.flag || "0", land: c.land===undefined ? "" : f1(c.land),
+             points:c.points, complete:last.complete, reason:last.reason||"" };
+  }
   for (const raw of lines){
     const l=tstMsgOf(tstLine(raw)); let m;
     if (/\bsc: none\b/.test(l)) return { none:true };
@@ -3573,6 +3599,61 @@ function parseCurve(lines){
 }
 
 const fmtAgo = t => { const s=Math.round(Date.now()/1000 - t); return !(t>1e9) || s<0 ? "" : s<90 ? `${s} s ago` : s<5400 ? `${Math.round(s/60)} min ago` : `${(s/3600).toFixed(1)} h ago`; };
+
+const fmtSweepTime = t => { const d=new Date(t*1000), hm=d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" });
+  return d.toDateString()===new Date().toDateString() ? hm : d.toLocaleDateString()+" "+hm; };
+
+// Axis ticks over [lo, hi] at a 1/2/5 step, about n intervals.
+function niceTicks(lo, hi, n){
+  if (!(hi>lo)) hi=lo+1;
+  const raw=(hi-lo)/n, p=10**Math.floor(Math.log10(raw)), f=raw/p;
+  const step=(f<1.5 ? 1 : f<3 ? 2 : f<7 ? 5 : 10)*p, a=Math.floor(lo/step)*step;
+  const k=Math.max(1, Math.round((Math.ceil(hi/step)*step-a)/step));
+  if (!(step>0) || k>12) return { lo, hi, ticks:[lo, hi] };
+  return { lo:a, hi:a+k*step, ticks:Array.from({ length:k+1 }, (_, i)=>+(a+i*step).toFixed(9)) };
+}
+
+const svgEl = (tag, a, cls) => { const e=document.createElementNS("http://www.w3.org/2000/svg", tag);
+  if (cls) e.setAttribute("class", cls); for (const k in a) e.setAttribute(k, a[k]); return e; };
+
+// P over Vin of a parsed `sweep-curve` (parseCurve with points) into `fig`, sized for a card `cw` px wide.
+function tstChart(fig, c, cw){
+  if (!c){ fig.hidden=true; fig._c=null; fig.replaceChildren(); return; }
+  const W=Math.max(280, Math.min(760, Math.round((cw||520)/10)*10));
+  if (fig._c===c && fig._w===W) return;
+  fig._c=c; fig._w=W; fig.hidden=false;
+  const narrow=W<440, H=narrow ? 170 : 190, L=44, R=16, T=16, B=24;
+  const pts=c.points, mpp = Number.isFinite(c.P) && Number.isFinite(c.V) && c.P>0 ? { V:c.V, P:c.P } : null;
+  const all = mpp ? pts.concat(mpp) : pts;
+  let vlo=Infinity, vhi=-Infinity, plo=0, phi=-Infinity;
+  for (const q of all){ vlo=Math.min(vlo, q.V); vhi=Math.max(vhi, q.V); plo=Math.min(plo, q.P); phi=Math.max(phi, q.P); }
+  if (vhi-vlo<2){ const m=(2-(vhi-vlo))/2; vlo-=m; vhi+=m; }
+  if (!(phi-plo>=1)) phi=plo+1;
+  const xd=niceTicks(vlo, vhi, narrow ? 4 : 6), yd=niceTicks(plo, phi, 4);
+  const X = v => L+(v-xd.lo)/(xd.hi-xd.lo)*(W-L-R), Y = p => H-B-(p-yd.lo)/(yd.hi-yd.lo)*(H-T-B);
+  const f1 = v => v.toFixed(1);
+  const state = c.sweeping ? `sweep in progress, ${pts.length} point${pts.length===1 ? "" : "s"} so far`
+    : (c.t>1e9 ? "sweep at "+fmtSweepTime(c.t) : "sweep time unknown (device clock not set)") + (c.flag==="light" ? ", sky changed during sweep" : "");
+  const svg=svgEl("svg", { viewBox:`0 0 ${W} ${H}`, role:"img", "data-points":pts.length,
+    "aria-label":`Power over input voltage, ${state}: ${mpp ? `${c.sweeping ? "best so far" : "MPP"} ${c.p} W at ${c.v} V` : "no maximum power point"}, ${pts.length} point${pts.length===1 ? "" : "s"} from ${f1(vlo)} to ${f1(vhi)} V.` });
+  for (const v of yd.ticks){
+    svg.append(svgEl("line", { x1:L, x2:W-R, y1:Y(v), y2:Y(v) }, v===0 ? "z" : "g"));
+    const t=svgEl("text", { x:L-6, y:Y(v)+3.5, "text-anchor":"end" }); t.textContent = v===yd.hi ? v+" W" : String(v); svg.append(t);
+  }
+  for (const v of xd.ticks){
+    const t=svgEl("text", { x:X(v), y:H-B+15, "text-anchor":"middle" }); t.textContent = v===xd.hi ? v+" V" : String(v); svg.append(t);
+  }
+  svg.append(svgEl("path", { d:pts.map((q, i)=>(i ? "L" : "M")+X(q.V).toFixed(1)+" "+Y(q.P).toFixed(1)).join("") }, "ln"+(c.flag==="light" ? " flag" : "")));
+  if (pts.length<=24) for (const q of pts) svg.append(svgEl("circle", { cx:X(q.V).toFixed(1), cy:Y(q.P).toFixed(1), r:2.2 }, "pt"));
+  if (mpp){
+    const x=X(mpp.V), y=Y(mpp.P), right = x > L+(W-L-R)*0.62;
+    svg.append(svgEl("line", { x1:x, x2:x, y1:y, y2:Y(Math.max(0, yd.lo)) }, "mdrop"), svgEl("circle", { cx:x, cy:y, r:4.5 }, "mpp"));
+    const t=svgEl("text", { x: right ? x-7 : x+7, y:Math.max(11, y-8), "text-anchor": right ? "end" : "start" }, "mlab");
+    t.textContent=`${c.p} W · ${c.v} V`; svg.append(t);
+  }
+  const cap=document.createElement("figcaption"); cap.textContent=state[0].toUpperCase()+state.slice(1);
+  fig.replaceChildren(cap, svg);
+}
 
 // Summary {cls, text, details} of a finished command or run.
 function tstSummary(id, lines, extra){
@@ -3602,15 +3683,18 @@ function tstSummary(id, lines, extra){
       return { cls: m[4] ? "fail" : m[3]!=="ok" ? "warn" : "pass", text:`Wire guard ${m[1]}, level ${m[3]}${m[4] ? ", TRIPPED" : ""}`,
                details:lines.map(x=>tstMsgOf(tstLine(x))).filter(x=>/^\s+(?:baseline|Iref):/.test(x)).map(x=>x.trim()) };
     }
-    case "curve": case "sweep": {
+    case "sweep": {
       const c=parseCurve(lines);
-      if (id==="sweep" && extra && extra.noMpp) return { cls:"warn", text:"No MPP found", details:[extra.noMpp.replace(/^no MPP\s*/,"").replace(/^\((.*)\)/,"$1")] };
+      const curve = c && c.complete && c.points.length ? c : null;
+      if (extra && extra.noMpp) return { cls:"warn", text:"No MPP found", details:[extra.noMpp.replace(/^no MPP\s*/,"").replace(/^\((.*)\)/,"$1")], curve };
       if (!c) return null;
-      if (c.none) return { cls:"", text:"No sweep yet", details:[] };
+      if (c.none) return { cls:"", text:"No sweep recorded since boot", details:[] };
       const ago=fmtAgo(c.t);
       return { cls: c.flag==="light" ? "warn" : c.sweeping ? "" : "pass",
                text: c.sweeping ? `Sweeping: ${c.n} points so far` : `MPP ${c.p} W at ${c.v} V`,
-               details:[ `${c.n} points${ago ? ", "+ago : ""}`, ...(c.flag==="light" ? [`landing ${c.land} W missed the sweep's value (flag light)`] : c.flag ? [`verified, landed ${c.land} W`] : []) ] };
+               details:[ `${c.n} points${ago ? ", "+ago : ""}`, ...(c.flag==="light" ? [`landing ${c.land} W missed the sweep's value (flag light)`] : c.flag ? [`verified, landed ${c.land} W`] : []),
+                 ...(c.points && !curve ? [c.complete ? "no curve points" : `curve incomplete (${c.points.length} of ${c.n} points${c.reason ? ", "+c.reason : ""}): not drawn`] : []) ],
+               curve };
     }
     case "adccal": {
       const v=lines.map(x=>tstLine(x)).map(x=>x.match(/ADCCAL efuse_ver=(\d+)/)).find(Boolean);
@@ -3726,7 +3810,7 @@ async function tstRead(id){
   const d=tstDef(id), t=tstTarget();
   if (!t || tstRun || tstProbing) return;
   if (devBusy){ tstSetMsg(`Wait for ${devBusy} to finish.`, true); return; }
-  const r=tstResult(id), cmd=d.cmd(tstOpt[id]||{});
+  const r=tstResult(id), cmd=d.read || d.cmd(tstOpt[id]||{});
   tstLock({ id, cmd, link:t }); r.st="run"; r.lines=[]; r.sum=null; r.note=""; r.recheck=false; tstGate();
   const x=await tstSend(cmd, ln=>{ tstPush(r, ln); tstPaint(id); }, d.id==="adccal" ? 8000 : TST_T.cmd);
   tstLock(null);
@@ -3735,7 +3819,8 @@ async function tstRead(id){
 }
 function tstFinishRead(id, d, cmd, x){
   const r=tstResult(id);
-  if (x.lines.some(l=>TST_NOCMD.test(l))){ tstGone.add(d.root); r.st="idle"; tstSetMsg(`“${d.root}” is not in this firmware build; its tests are hidden.`, true); return; }
+  const root=cmd.split(" ")[0];
+  if (x.lines.some(l=>TST_NOCMD.test(l))){ tstGone.add(root); r.st="idle"; tstSetMsg(`“${root}” is not in this firmware build; ${root===d.root ? "its tests are" : "it is"} hidden.`, true); return; }
   if (x.ok===true){
     r.sum=tstSummary(id, x.lines); r.st="done"; r.fold=true;
     if (!r.sum){ r.note="Reply not recognised; see the output."; r.noteErr=true; }
@@ -3839,7 +3924,7 @@ async function tstRecheck(id){
     r.note = s && s.running ? "The test is still running on the device." : b ? "Last run on the device: "+b.text : "No result of this boot on the device: "+((s && s.bf) || "unknown");
     r.noteErr = !!(s && s.running) || !b || b.cls!=="pass";
   } else {
-    const sum=tstSummary(d.recheck==="rect-cal status" ? "rcstatus" : "curve", x.lines);
+    const sum=tstSummary(d.recheck==="rect-cal status" ? "rcstatus" : "sweep", x.lines);
     r.note = sum ? "Device now: "+sum.text : "Reply not recognised.";
     r.noteErr = !sum;
   }
@@ -3874,7 +3959,7 @@ function tstBuild(body){
     if (!defs.length) continue;
     const h=document.createElement("h3"); h.className="tst-group"; h.textContent=g; out.push(h);
     for (const d of defs){
-      const c=document.createElement("section"); c.className="tst"+(d.opt ? "" : " compact"); c.dataset.tst=d.id;
+      const c=document.createElement("section"); c.className="tst"+(d.opt || d.read ? "" : " compact"); c.dataset.tst=d.id;
       const hd=document.createElement("div"); hd.className="tst-head";
       const n=document.createElement("h4"); n.className="tst-name"; n.textContent=d.title;
       const tg=document.createElement("span"); tg.className="tst-tag"+(d.tag ? " warn" : ""); tg.textContent=d.tag||"read-only";
@@ -3895,8 +3980,10 @@ function tstBuild(body){
         cb.onchange=()=>{ tstOpt[d.id]={...(tstOpt[d.id]||{}), [d.opt.key]:cb.checked}; tstPaint(d.id); };
         lb.append(cb, document.createTextNode(d.opt.label)); ctl.append(lb);
       } else { const s=document.createElement("span"); s.className="tst-state"; ctl.append(s); }
+      if (d.read){ const rd=document.createElement("button"); rd.type="button"; rd.className="read quiet-outline"; rd.textContent=d.readLabel;
+        rd.onclick=()=>tstRead(d.id); ctl.append(rd); }
       const run=document.createElement("button"); run.type="button"; run.className="run";
-      run.textContent = d.end || d.confirm ? "Run" : "Read";
+      run.textContent = d.runLabel || (d.end || d.confirm ? "Run" : "Read");
       run.onclick=()=> d.end || d.confirm ? tstStart(d.id) : tstRead(d.id);
       ctl.append(run);
       if (d.abort){ const ab=document.createElement("button"); ab.type="button"; ab.className="abort"; ab.textContent="Abort"; ab.onclick=()=>tstAbort(d.id); ctl.append(ab); }
@@ -3905,11 +3992,14 @@ function tstBuild(body){
       const sm=document.createElement("summary"); sm.textContent="Device output";
       const o=document.createElement("div"); o.className="tst-out"; o.setAttribute("role","log"); o.setAttribute("aria-label", d.title+" output");
       lg.append(sm, o);
-      c.append(ctl, res, lg);
+      c.append(ctl, res);
+      if (d.chart){ const f=document.createElement("figure"); f.className="tst-chart"; f.hidden=true; c.append(f); }
+      c.append(lg);
       out.push(c);
     }
   }
-  const hidden=[...new Set(TESTS.filter(d=>!tstAvail(d)).map(d=>d.root))];
+  const hidden=[...new Set([...TESTS.filter(d=>!tstAvail(d)).map(d=>d.root),
+    ...TESTS.filter(d=>d.read && tstAvail(d) && !tstAvail({ root:d.read })).map(d=>d.read)])];
   if (hidden.length){
     const p=document.createElement("p"); p.className="tst-absent";
     p.textContent="Not in this firmware build: "+hidden.map(x=>x+(x==="measure-coil" ? " (CONFIG_FUGU_WITH_MEASURE_COIL)" : x==="adc-cal" ? " (ESP32-S3 builds)" : "")).join(", ")+".";
@@ -3922,8 +4012,10 @@ function tstPaint(id){
   const c=document.querySelector(`#tst-body .tst[data-tst="${id}"]`); if (!c) return;
   const d=tstDef(id), r=tstResult(id), t=tstTarget(), mine=tstRun && tstRun.id===id;
   const o=tstOpt[id]||{};
-  c.querySelector(".tst-cmd").textContent = d.cmd(o) + (d.abort ? `  ·  ${d.abort}` : "");
+  c.querySelector(".tst-cmd").textContent = d.cmd(o) + (d.abort ? `  ·  ${d.abort}` : "") + (d.read ? `  ·  ${d.read}` : "");
   const run=c.querySelector(".run"), ab=c.querySelector(".abort"), cb=c.querySelector(".tst-opt input"), stl=c.querySelector(".tst-state");
+  const rd=c.querySelector(".read");
+  if (rd){ rd.hidden=!tstAvail({ root:d.read }); rd.disabled=!t || !!devBusy; rd.title = devBusy && !mine ? devBusy+" is running" : ""; }
   let why="";
   if (id==="bflow" && tstSt && tstSt.bfChecked===false) why="Not checked on this board (board.conf bflow_bat=0)";
   if (id==="clear" && tstSt && !tstSt.hsLatched && !tstSt.bfLatched) why="Nothing latched";
@@ -3944,6 +4036,8 @@ function tstPaint(id){
   if (r.recheck && d.recheck && !mine){ const b=document.createElement("button"); b.type="button"; b.className="recheck";
     b.textContent=`Check (${d.recheck})`; b.disabled=!t || !!devBusy; b.onclick=()=>tstRecheck(id); parts.push(b); }
   res.replaceChildren(...parts);
+  const fig=c.querySelector(".tst-chart");
+  if (fig) tstChart(fig, r.sum && !(mine && r.st==="run") ? r.sum.curve : null, c.clientWidth);
   const out=c.querySelector(".tst-out"), lg=c.querySelector(".tst-log");
   lg.hidden=!r.lines.length;
   lg.firstChild.textContent=`Device output (${r.lines.length} line${r.lines.length===1 ? "" : "s"})`;

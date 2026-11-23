@@ -12,7 +12,11 @@ writes the result back as a downloadable `.zip` or as a stream of
 Self-contained: one HTML file, no build step. One external CDN dependency
 (browser-side only): `mqtt@5` (WebSocket MQTT client, pinned with SRI). The
 ANSI colour converter for the console is inline, so log colouring works
-offline.
+offline. One optional sibling: `teledec.js` (the dashboard's decoder, loaded
+with `<script src="teledec.js">` from the same folder) provides the
+`sweep-curve` parser for the Tests sheet's chart (§2.15); when it is missing
+(the HTML opened on its own) the editor works the same and the sweep card
+shows only its text summary.
 
 ---
 
@@ -609,9 +613,12 @@ target or the running command with a spinner, **Check again** (↻: re-probe),
   the converter`, `re-enables starts`), one line on what it does, *Needs*,
   *Takes* (duration), *Sends* (the exact command, plus the abort command),
   an amber-bordered risk note for anything that drives the power stage, an
-  option checkbox where the command has one, **Read**/**Run**, **Abort**
+  option checkbox where the command has one, **Read**/**Run** (the MPP sweep
+  card has both: **Read last sweep**, **Run sweep**; its read button is
+  hidden when `sweep-curve` is not in the build), **Abort**
   while its run is in progress (only where the firmware has one), the result
-  (dot + bold summary, green pass, amber fail/warn, detail lines) and a
+  (dot + bold summary, green pass, amber fail/warn, detail lines), the sweep
+  chart on the MPP sweep card, and a
   collapsible "Device output (N lines)" with every line received during the
   run (open while running, folded once a result is in).
 
@@ -620,9 +627,9 @@ target or the running command with a spinner, **Check again** (↻: re-probe),
 | Protection self-checks | Status | `selftest` | – | marker | – |
 | Low-side timing calibration | Status | `rect-cal status` | – | marker | – |
 | Output wire guard | Status | `wire` | – | marker | – |
-| Last sweep | Status | `sweep-curve` | – | marker | – |
 | ADC calibration (eFuse) | Status | `adc-cal` | – | marker | – |
-| Global MPP sweep | Measurements | `sweep` | confirm | `sweep landed` / `Stop sweep` (90 s) | `sweep-curve` |
+| MPP sweep: Run sweep | Measurements | `sweep` | confirm | `sweep landed` / `Stop sweep` (90 s) | `sweep-curve` |
+| MPP sweep: Read last sweep | Measurements | `sweep-curve` | – | marker | – |
 | Coil inductance (L0) | Measurements | `measure-coil l0 [apply]` | typed | `measure-coil: done` (300 s) | – |
 | Backflow switch | Self-tests | `selftest bflow`, abort `selftest abort` | typed | a verdict or `selftest bflow: <why>` line (240 s) | `selftest` |
 | Clear latched faults | Self-tests | `selftest clear` | typed | marker | `selftest` |
@@ -657,8 +664,39 @@ target or the running command with a spinner, **Check again** (↻: re-probe),
   `measure-coil l0` → "L = x µH" with ring fit/median and noise/systematic
   error, amber when the zero moved (DISTURBED); `ls` → low-side peak, offset
   from ideal, the curvature L, the applied offset; rect-cal → applied offset,
-  or "Failed: <why>"; sweep → MPP W at V, amber "No MPP found"; failure lines of
-  `measure-coil` (need Vin>Vout+1, too few points, …) → "No result: …".
+  or "Failed: <why>"; sweep → MPP W at V (or "Sweeping: N points so far",
+  "No sweep recorded since boot"), amber when flagged `light` and for "No MPP
+  found"; failure lines of `measure-coil` (need Vin>Vout+1, too few points, …)
+  → "No result: …".
+* **MPP sweep card**: one card with two actions. **Read last sweep** sends
+  `sweep-curve` like a status read (no confirm, holds the device lock);
+  **Run sweep** is the confirmed `sweep` run, finished by `sweep-curve`. Both
+  write the same result and chart, so the card shows the curve of the latest
+  reply, i.e. the device's newest sweep; a run that ends in "No MPP found"
+  still draws the curve `sweep-curve` returns, captioned with its own time.
+  `parseCurve()` reads the reply: with `window.TeleDec` it feeds every line to
+  `TeleDec.SweepCurveParser` (header, points, `complete`/`reason`), without it
+  it reads the header only (regex) and no chart is drawn. A Check after a lost
+  link or a timeout reads `sweep-curve` into the note only.
+* **Sweep chart** (`tstChart`, a `<figure>` under the result, hidden without a
+  drawable curve): inline SVG, P (W) over Vin (V), the points as one path in
+  reply order, the MPP from the header as an accent dot with a dotted drop
+  line and a "<P> W · <V> V" label (flipped left in the right third); no MPP
+  mark when its power is not positive. Axis ticks at 1/2/5 steps, unit on the
+  last tick of each axis; the y axis includes 0 and any negative point. A
+  V span under 2 V is widened to 2 V, a P span under 1 W to 1 W. Up to 24
+  points also get a dot each. viewBox width = the card width (280–760 px,
+  520 when unmeasured), 190 px high (170 under 440 px), so text stays at
+  its CSS size; redrawn only for a new curve or width. Caption: "Sweep at
+  <time>" (date too when not today; "sweep time unknown" without a device
+  clock), "Sweep in progress, N points so far" for `sweeping=1`, plus ", sky
+  changed during sweep" for `flag=light`, which also dashes and fades the
+  line. Near-monochrome from the theme variables, accent only for the MPP.
+  `role="img"` with an `aria-label` naming the state, the MPP (or "best so
+  far" while sweeping, or "no maximum power point"), the point count and the
+  V range. An incomplete reply (fewer points than `n`, a truncated line, a
+  restart) is not drawn; a detail says "curve incomplete (k of n points,
+  <reason>): not drawn".
 * **Loaded copy**: `applied coil.conf L0=<v>` sets coil.conf `L0` like
   §2.14's `svcSyncConf`. rect-cal and the `ls` apply save `rect_offset_*` only
   once the converter has been off, so their result says to read the device

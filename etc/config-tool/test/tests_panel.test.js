@@ -1,5 +1,5 @@
 // Spec §2.15 (tests sheet): gating, the build probe, confirms (plain and typed device name), refusals,
-// result parsing per test, abort, link drop and timeout mid-test, and the one-at-a-time guard.
+// result parsing per test, abort, link drop and timeout mid-test, the one-at-a-time guard and the sweep chart.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadEditor } = require('./_setup');
@@ -10,6 +10,23 @@ const vline = p => `V=36.1/26.80 I=${(p / 36.1).toFixed(2)}/4.31A ${p.toFixed(1)
 const HELP = ['help,?', 'restart,reset,reboot', 'mppt', 'sweep <value> <value> ...', 'sweep-curve', 'rect-cal <value> <value> ...',
   'bootinfo', 'adc-cal', 'uptime', 'status', 'wire', 'wire-reset', 'hostname,hn <value> <value> ...', 'service,svc <value> <value> ...',
   'selftest <value> <value> ...'];
+
+// `sweep-curve` reply as src/cli.cpp cmdSweepCurve prints it: header (mpp=P,V), " %.2f %.1f" pairs, 12 per line.
+// A one-diode panel model swept from near Voc down to 18 V.
+function sweepReply({ n = 87, t = Math.floor(Date.now() / 1000) - 120, sweeping = false, flag = '0', pts } = {}) {
+  pts = pts || Array.from({ length: n }, (_, i) => {
+    const V = 43.2 - i * (25.2 / Math.max(1, n - 1));
+    return [V, V * 9.4 * (1 - Math.exp((V - 43.6) / 2.4))];
+  });
+  const mp = pts.reduce((a, b) => (b[1] > a[1] ? b : a), [0, -Infinity]);
+  const lines = [`sc: t=${sweeping ? 0 : t} n=${pts.length} mpp=${mp[1].toFixed(1)},${mp[0].toFixed(1)} sweeping=${+sweeping}`
+    + (flag && !sweeping ? ` flag=${flag} land=${(mp[1] * (flag === 'light' ? 0.8 : 0.99)).toFixed(1)}` : '')];
+  for (let i = 0; i < pts.length; i += 12)
+    lines.push('sc:' + pts.slice(i, i + 12).map(([V, P]) => ` ${V.toFixed(2)} ${P.toFixed(1)}`).join(''));
+  lines.push('sc: end');
+  return { lines, n: pts.length, P: mp[1].toFixed(1), V: mp[0].toFixed(1) };
+}
+const SWEEP = sweepReply();
 
 // A scripted fake firmware. Async test output is emitted with setTimeout after the start marker.
 function firmware(host, opts = {}) {
@@ -84,8 +101,7 @@ function firmware(host, opts = {}) {
     }
     if (cmd === 'sweep-curve') {
       if (opts.noCurve) { s('sc: none'); return ok(); }
-      s(`sc: t=${Math.floor(Date.now() / 1000) - 120} n=87 mpp=312.4,35.2 sweeping=0 flag=0 land=309.0`);
-      s('sc: 20.00 10.0 25.00 120.0'); s('sc: end'); return ok();
+      (opts.curve || SWEEP).lines.forEach(x => s(x)); return ok();
     }
     if (cmd === 'sweep') {
       ok();
@@ -169,7 +185,7 @@ const btn = w => w.document.getElementById('open-tests');
 const resText = (w, id) => card(w, id).querySelector('.tst-res').textContent;
 
 async function connected(opts = {}) {
-  const { window } = await loadEditor();
+  const { window } = await loadEditor({ teledec: opts.teledec !== false });
   const dev = firmware('fry', { conf: CONF, ...opts });
   mqttFirmware(window, { fry: dev, other: firmware('other', {}) });
   await window.mqttConnectAndImport('fry');
@@ -267,10 +283,10 @@ test('status cards read and summarise: selftest, rect-cal status, wire, sweep-cu
   for (const [id, cmd, re] of [['selftest', 'selftest', /Nothing latched.*high-side short: ok.*backflow switch: ok; last run P\/P/],
     ['rcstatus', 'rect-cal status', /rect_offset 500 ns \(20 ct, mcpwm\), calibrated.*state idle/],
     ['wire', 'wire', /Wire guard armed, level ok.*baseline: 12 days/],
-    ['curve', 'sweep-curve', /MPP 312.4 W at 35.2 V.*87 points, 2 min ago/],
+    ['sweep', 'sweep-curve', new RegExp(`MPP ${SWEEP.P} W at ${SWEEP.V} V.*87 points, 2 min ago`)],
     ['adccal', 'adc-cal', /eFuse calibration version 1.*atten 3: 286.33 µV\/code/]]) {
     const from = dev.sent.length;
-    card(window, id).querySelector('.run').click();
+    card(window, id).querySelector(id === 'sweep' ? '.read' : '.run').click();
     await idle(window);
     assert.deepEqual(dev.sent.slice(from), [cmd]);
     assert.match(resText(window, id), re, id);
@@ -455,7 +471,8 @@ test('global sweep: confirm, MPP from sweep-curve; no MPP reported in amber', as
   await window.tstStart('sweep');
   assert.match(msg, /fry is not converting now: 0\.4 W/);
   assert.deepEqual(dev.sent.slice(-3), ['selftest', 'sweep', 'sweep-curve']);
-  assert.match(resText(window, 'sweep'), /MPP 312\.4 W at 35\.2 V/);
+  assert.match(resText(window, 'sweep'), new RegExp(`MPP ${SWEEP.P} W at ${SWEEP.V} V`));
+  assert.equal(card(window, 'sweep').querySelector('.tst-chart svg').getAttribute('data-points'), '87');
 
   ({ window } = await connected({ noMpp: true }));
   await openSheet(window); await idle(window);
@@ -554,4 +571,92 @@ test('backflow card disabled on a board without bflow_bat; Escape and the scrim 
   assert.equal($(window, '#tests').classList.contains('open'), true);
   $(window, '#tst-scrim').click();
   assert.equal($(window, '#tests').classList.contains('open'), false);
+});
+
+const chart = w => card(w, 'sweep').querySelector('.tst-chart');
+function drawn(window, lines) {
+  const sum = window.tstSummary('sweep', lines), fig = window.document.createElement('figure');
+  window.tstChart(fig, sum.curve, 520);
+  const svg = fig.querySelector('svg');
+  if (svg) assert.doesNotMatch(svg.outerHTML, /NaN|Infinity/);
+  return { sum, fig, svg, cap: fig.querySelector('figcaption') };
+}
+
+test('MPP sweep card: Read last sweep sends sweep-curve without a confirm and draws the P-V curve', async () => {
+  const { window, dev } = await connected();
+  await openSheet(window); await idle(window);
+  assert.equal(card(window, 'curve'), null, 'one sweep card');
+  const c = card(window, 'sweep');
+  assert.equal(c.querySelector('.tst-name').textContent, 'MPP sweep');
+  assert.equal(c.querySelector('.run').textContent, 'Run sweep');
+  assert.equal(c.querySelector('.read').textContent, 'Read last sweep');
+  assert.match(c.querySelector('.tst-cmd').textContent, /^sweep {2}· {2}sweep-curve$/);
+  assert.equal(chart(window).hidden, true, 'no chart before a read');
+  window.confirm = () => { throw new Error('reading the last sweep must not confirm'); };
+  const from = dev.sent.length;
+  c.querySelector('.read').click();
+  await idle(window);
+  assert.deepEqual(dev.sent.slice(from), ['sweep-curve']);
+  assert.match(resText(window, 'sweep'), new RegExp(`MPP ${SWEEP.P} W at ${SWEEP.V} V.*87 points, 2 min ago`));
+  const fig = chart(window), svg = fig.querySelector('svg');
+  assert.equal(fig.hidden, false);
+  assert.equal(svg.getAttribute('role'), 'img');
+  assert.equal(svg.getAttribute('data-points'), '87');
+  assert.equal((svg.querySelector('path.ln').getAttribute('d').match(/[ML]/g) || []).length, 87);
+  assert.equal(svg.querySelectorAll('circle.pt').length, 0, 'no point markers on a full curve');
+  assert.equal(svg.querySelectorAll('circle.mpp').length, 1);
+  assert.equal(svg.querySelector('text.mlab').textContent, `${SWEEP.P} W · ${SWEEP.V} V`);
+  assert.match(svg.getAttribute('aria-label'), new RegExp(`MPP ${SWEEP.P} W at ${SWEEP.V} V, 87 points`));
+  const ticks = [...svg.querySelectorAll('text:not(.mlab)')].map(t => t.textContent);
+  assert.ok(ticks.some(t => / W$/.test(t)) && ticks.some(t => / V$/.test(t)), 'axis units');
+  assert.match(fig.querySelector('figcaption').textContent, /^Sweep at \S/);
+  assert.doesNotMatch(svg.outerHTML, /NaN|Infinity/);
+});
+
+test('without teledec.js the sweep card keeps the text summary and draws nothing', async () => {
+  const { window } = await connected({ teledec: false });
+  assert.equal(window.TeleDec, undefined);
+  await openSheet(window); await idle(window);
+  card(window, 'sweep').querySelector('.read').click();
+  await idle(window);
+  assert.match(resText(window, 'sweep'), new RegExp(`MPP ${SWEEP.P} W at ${SWEEP.V} V.*87 points, 2 min ago`));
+  assert.equal(chart(window).hidden, true);
+  assert.equal(chart(window).querySelector('svg'), null);
+  assert.equal(window.parseCurve(SWEEP.lines).points, undefined, 'header only');
+});
+
+test('sweep chart: none since boot, in progress, flagged, few points, degenerate ranges, incomplete', async () => {
+  let { window } = await connected({ noCurve: true });
+  await openSheet(window); await idle(window);
+  card(window, 'sweep').querySelector('.read').click();
+  await idle(window);
+  assert.match(resText(window, 'sweep'), /No sweep recorded since boot/);
+  assert.equal(chart(window).hidden, true);
+
+  const run = drawn(window, sweepReply({ sweeping: true, n: 10 }).lines);
+  assert.equal(run.cap.textContent, 'Sweep in progress, 10 points so far');
+  assert.equal(run.svg.querySelectorAll('circle.pt').length, 10, 'few points are marked');
+  assert.match(run.svg.getAttribute('aria-label'), /best so far/);
+
+  const fl = drawn(window, sweepReply({ flag: 'light' }).lines);
+  assert.equal(fl.sum.cls, 'warn');
+  assert.ok(fl.svg.querySelector('path.ln').classList.contains('flag'));
+  assert.match(fl.cap.textContent, /sky changed during sweep/);
+
+  const one = drawn(window, sweepReply({ pts: [[30, 0]] }).lines);
+  assert.equal(one.svg.getAttribute('data-points'), '1');
+  assert.equal(one.svg.querySelectorAll('circle.pt').length, 1);
+  assert.equal(one.svg.querySelector('circle.mpp'), null, 'no MPP at 0 W');
+  assert.match(one.svg.getAttribute('aria-label'), /no maximum power point/);
+
+  const flat = drawn(window, sweepReply({ pts: [[35, 100], [35, 100], [35, 100]] }).lines);
+  assert.equal(flat.svg.querySelectorAll('circle.mpp').length, 1);
+  const neg = drawn(window, sweepReply({ pts: [[40, -0.4], [38, -0.2], [36, 0]] }).lines);
+  assert.ok(neg.svg.querySelector('path.ln'));
+
+  const cut = SWEEP.lines.filter((_, i) => i !== 2);
+  const inc = drawn(window, cut);
+  assert.equal(inc.fig.hidden, true, 'an incomplete curve is not drawn');
+  assert.match(inc.sum.details.join(' '), /curve incomplete \(75 of 87 points, short\): not drawn/);
+  assert.match(inc.sum.text, new RegExp(`MPP ${SWEEP.P} W`));
 });

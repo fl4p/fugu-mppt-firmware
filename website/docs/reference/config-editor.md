@@ -11,7 +11,8 @@ board preset, shows each key with its unit, description and default, and then do
 changes back to the device. A hosted copy is at [/tools/conf-editor.html](pathname:///tools/conf-editor.html).
 
 The editor is one self-contained HTML file with no build step. The MQTT transport loads `mqtt.js` from a CDN. The
-other paths work offline.
+other paths work offline. The sweep chart in the Tests panel also loads `teledec.js` from the same folder (the hosted
+copy has it); opened on its own, the editor shows the sweep result as text only.
 
 ## Quick start
 
@@ -338,9 +339,8 @@ open it sends `help` to learn which commands the firmware build has, and probes 
 | Protection self-checks | Status | `selftest` | no |
 | Low-side timing calibration | Status | `rect-cal status` | no |
 | Output wire guard | Status | `wire` | no |
-| Last sweep | Status | `sweep-curve` | no |
 | ADC calibration (eFuse) | Status | `adc-cal` (ESP32-S3 builds) | no |
-| Global MPP sweep | Measurements | `sweep` | yes |
+| MPP sweep | Measurements | `sweep`; **Read last sweep** sends `sweep-curve` | yes; not for reading |
 | Coil inductance (L0) | Measurements | `measure-coil l0 [apply]` (`CONFIG_FUGU_WITH_MEASURE_COIL`) | device name |
 | Backflow switch | Self-tests | `selftest bflow`, abort with `selftest abort` | device name |
 | Clear latched faults | Self-tests | `selftest clear` | device name |
@@ -361,7 +361,13 @@ command (`measure-coil` has none). The result is a short summary:
   verdict with the reason the test stopped;
 - the coil inductance in µH with its fit and error estimate, or the reason there is no result;
 - the calibrated low-side offset, or the reason the calibration failed;
-- the maximum power point of the sweep.
+- the maximum power point of the sweep, with its power-over-voltage curve.
+
+The **MPP sweep** entry has two buttons. **Read last sweep** fetches the curve of the device's latest sweep without
+driving the converter. **Run sweep** asks first, sweeps, then fetches the new curve. Either way the entry draws power
+over input voltage with the maximum power point marked, and the caption says when that sweep ran. A sweep still in
+progress shows the points so far. A sweep the firmware flagged because the light changed while it ran is drawn dashed.
+Without a sweep since boot there is no curve to draw.
 
 `measure-coil l0 apply` writes `L0` to `coil.conf`, and the loaded `coil.conf` follows. rect-cal and
 `measure-coil ls apply` save `rect_offset_ns` only once the converter has been off for a while, so read the device

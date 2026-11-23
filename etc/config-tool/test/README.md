@@ -32,7 +32,7 @@ Files map roughly to spec sections (`../spec.md`):
 | `edit.test.js`       | §2.2 (rows, "was: …" incl. "(not set)", clear button), §2.1 (dirty dot) |
 | `console.test.js`    | §7 (device-log panel, ANSI rendering, tail-follow, command input) |
 | `services.test.js`  | §2.14 (services sheet: `svc list` parsing, commands, gating, own-link confirm) |
-| `tests_panel.test.js` | §2.15 (tests sheet: build probe, confirms, refusals, result parsing, abort, link drop, one-at-a-time guard) |
+| `tests_panel.test.js` | §2.15 (tests sheet: build probe, confirms, refusals, result parsing, abort, link drop, one-at-a-time guard, MPP sweep card and chart, the fallback without `teledec.js`) |
 | `transports.test.js` | §5 (`sendCommand`, `getConfig`, `importFromDevice` retry-on-timeout), §5.3 (MQTT scan modal + topics) |
 | `teledec_{tamp,payload,framing}.test.js` | `../teledec.js` (binary telemetry decoder, no jsdom) against `fixtures/tele_fixtures.json`; regenerate with `/path/to/repo/.venv/bin/python3 test/gen_tele_fixtures.py` (tamp 2.3.0, expected lines from `etc/fugu/teledec.py`) |
 | `sweepcurve.test.js` | `../teledec.js` `sc:` sweep-curve lines (`parseScLine`, `SweepCurveParser`) |
@@ -44,4 +44,5 @@ Use `loadEditor()` from `_setup.js` — it returns a jsdom `dom`, and `dom.windo
 
 * every top-level `function ...()` from the script (e.g. `parseConf`, `serializeFile`, `sendCommand`, `mqttBindDevice`, `ulShow`, `consoleSend`, `lookupType`, `lookupMeta`, `writeZip`, `readZip`, …).
 * test hooks injected at the bottom of the script: `_lineListeners`, `_dispatchLine(line)`, `_state` (getter), `_activeWrite` (get/set), `_lastTransport` (get/set), `_mqttClient`, `_mqttDeviceHost`, `_mqttClients` (list of stub clients).
+* `loadEditor({ teledec: true })` inlines `../teledec.js` where the page loads it; by default the page runs without it (jsdom fetches no subresources), as when the HTML is opened on its own.
 * stubs: `window.mqtt.connect(url,opts)` returns a fake client that records `subscribe`/`publish` calls; `window.ansiConvert.toHtml(text)` wraps any ESC-containing text in a single `<span style="color:#0a0">…</span>` so tests can assert on the conversion path.

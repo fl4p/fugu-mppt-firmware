@@ -54,8 +54,13 @@ Object.defineProperty(window, "_mqttClient",     { get: () => mqttClient });
 Object.defineProperty(window, "_mqttDeviceHost", { get: () => mqttDeviceHost });
 `;
 
-function buildHtml() {
+// teledec: inline teledec.js where the page loads it (jsdom fetches no subresources, so without
+// this the page runs as if teledec.js were missing).
+function buildHtml({ teledec = false } = {}) {
   let html = fs.readFileSync(HTML_PATH, 'utf8');
+  const tag = '<script src="teledec.js"></script>';
+  html = html.replace(tag, teledec
+    ? '<script>\n' + fs.readFileSync(path.resolve(path.dirname(HTML_PATH), 'teledec.js'), 'utf8') + '\n</script>' : '');
   // drop the two CDN scripts — we provide stubs instead
   html = html.replace(/\s*<script src="https:\/\/[^"]+"[^>]*><\/script>/g, '');
   html = html.replace(/\s*<script type="module">[\s\S]*?<\/script>/g, '');
@@ -68,8 +73,8 @@ function buildHtml() {
   return html;
 }
 
-async function loadEditor() {
-  const dom = new JSDOM(buildHtml(), {
+async function loadEditor(opts = {}) {
+  const dom = new JSDOM(buildHtml(opts), {
     url: 'http://localhost/',
     runScripts: 'dangerously',
     pretendToBeVisual: true,
