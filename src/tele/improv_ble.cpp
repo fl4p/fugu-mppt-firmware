@@ -11,7 +11,6 @@
 #include <WiFi.h>
 #include <esp_app_desc.h>
 #include <host/ble_gap.h>
-#include <os/os_mbuf.h>
 
 #include "telemetry.h"
 #include "tele_adv.h"
@@ -51,7 +50,7 @@ static uint32_t rxMs = 0; // millis()
 static void notify(BLECharacteristic *c, const uint8_t *d, size_t n) {
     c->setValue((uint8_t *) d, n);
     // Same floor as the console drain: an MTU notify into an empty mbuf pool asserts in NimBLE.
-    for (int i = 0; i < 50 && os_msys_num_free() < 8; ++i) vTaskDelay(pdMS_TO_TICKS(2));
+    for (int i = 0; i < 50 && bleMsys1Free() < 8; ++i) vTaskDelay(pdMS_TO_TICKS(2));
     c->notify();
 }
 

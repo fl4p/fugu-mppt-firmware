@@ -115,6 +115,16 @@ static uint16_t advMs = 0; // connectable adv interval, 0 = stack default
 // Single-producer (NimBLE host task, onWrite) / single-consumer (network loop, bleRead) byte queue.
 static moodycamel::ReaderWriterQueue<char> rxQueue{256};
 
+// NimBLE keeps its msys pools sorted by block size; notify/ATT/L2CAP allocate from the first (msys_1),
+// so os_msys_num_free(), which sums all pools, overstates the headroom. No public per-pool API.
+struct MsysPoolList { os_mbuf_pool *first; os_mbuf_pool **last; };
+extern "C" MsysPoolList g_msys_pool_list;
+
+int bleMsys1Free() {
+    const os_mbuf_pool *p = g_msys_pool_list.first;
+    return p ? p->omp_pool->mp_num_free : os_msys_num_free();
+}
+
 // --- console read/write hooks fed to loopConsole() ---
 
 static int bleRead(char *buf, size_t len) {
@@ -374,7 +384,7 @@ static void bleTxDrain(time_ms nowMs) {
         // Floor 8: an MTU-sized notify can consume ~4 blocks across ATT/L2CAP fragmentation, and
         // IDF's NimBLE hard-asserts (ble_att_cmd.c:91) if ble_l2cap_tx runs dry mid-send — an
         // exhausted pool there PANICS the device (fboost coredump 8-05), it doesn't just drop.
-        if (os_msys_num_free() < 8) break;
+        if (bleMsys1Free() < 8) break;
         size_t n = std::min(chunk, txBuf.size() - txHead);
         // Don't split a multi-byte UTF-8 sequence across notifications: clients that decode each
         // notification independently would render the split halves as replacement chars. If the next
@@ -769,6 +779,8 @@ bool bleConsoleConnected() { return false; }
 bool bleConsoleRelease() { return false; }
 
 bool bleOtaRebootDue() { return false; }
+
+int bleMsys1Free() { return 0; }
 
 size_t bleConsoleChunk() { return 20; }
 

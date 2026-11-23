@@ -30,6 +30,8 @@ bool bleConsoleConnected();
 bool bleConsoleRelease();
 // A BLE OTA push released Wi-Fi and then failed; the caller must reboot.
 bool bleOtaRebootDue();
+// Free blocks in NimBLE's small mbuf pool (msys_1), the one notifications are built from.
+int bleMsys1Free();
 
 size_t bleConsoleChunk();       // usable notify payload: negotiated MTU-3, else 20
 bool bleConsoleLinkSettled();   // connected + post-connect settle window elapsed

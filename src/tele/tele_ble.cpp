@@ -3,7 +3,6 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
-#include <os/os_mbuf.h>   // os_msys_num_free()
 
 #include "console_ble.h"
 #include "telemetry.h"
@@ -151,10 +150,10 @@ void teleBleTick(time_ms nowMs) {
         packetize(nowMs);
 
     while (outHead < outBuf.size()) {
-        // Leave more mbuf headroom than the console drain (floor 8): telemetry is the lower-
-        // priority stream and must not starve the console/log mirror sharing the link — and
+        // Leave more msys_1 headroom (floor 10 of 12 blocks) than the console drain (floor 8): telemetry is the
+        // lower-priority stream and must not starve the console/log mirror sharing the link — and
         // ble_l2cap_tx running dry mid-send panics (see the console drain's floor comment).
-        if (os_msys_num_free() < 12) break;
+        if (bleMsys1Free() < 10) break;
         size_t n = std::min(chunk, outBuf.size() - outHead);
         teleChar->setValue((uint8_t *) (outBuf.data() + outHead), n);
         lastNotifyOk = true;
