@@ -569,6 +569,8 @@ def verify(args, con, tap, image, t_ota):
         info = parse_bootinfo(con.command('bootinfo', timeout=6)) or info
         if info and info['version'] != image['version']:
             return False, f"running {info['version']}, not {image['version']} (rolled back?)"
+        if info and ' '.join(info['built'].split()) != ' '.join(f"{image['date']} {image['time']}".split()):
+            return False, f"running {info['version']} built {info['built']}, not this image's build"
         if info and info.get('rollback') == 'VALID':
             break
         time.sleep(5)
