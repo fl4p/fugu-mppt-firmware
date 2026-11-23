@@ -29,5 +29,11 @@
   min-width: 560px;
 }
 
+/* WebKit (every iOS browser) renders positioned elements inside an SVG foreignObject blank;
+   mermaid's math labels are MathML-only, so static is safe */
+.docusaurus-mermaid-container foreignObject .katex {
+  position: static;
+}
+
 /* Wide display equations scroll inside the content column instead of widening the page. */
 .katex-display { overflow-x: auto; overflow-y: hidden; }

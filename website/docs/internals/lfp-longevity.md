@@ -18,7 +18,7 @@ export const Ref = ({n}) => {
 :::tip[In short]
 
 - **[Temperature](#6-temperature) first:** a resting pack loses capacity 2–3× faster at 45–50 °C than at 25–30 °C [[1](#ref-1), [6](#ref-6)].
-- **Avoid sitting near full:** aging rises with [average SoC](#41-average-soc), with a [step](#31-soc-steps) above ~70 % in one LFP cell (the position is cell-specific). Keep the pack mostly below that and charge to full only occasionally [[1](#ref-1), [2](#ref-2)]; what counts is the [time at the top](#52-time-at-the-top). The charger does this with [`partial_charge`](#8-charger-settings).
+- **Avoid sitting near full:** aging rises with [average SoC](#41-average-soc), with a [step](#31-soc-steps) above ~70 % in one LFP cell (depending on the cell). Keep the pack mostly below that and charge to full only occasionally [[1](#ref-1), [2](#ref-2)]; what counts is the [time at the top](#52-time-at-the-top). The charger does this with [`partial_charge`](#8-charger-settings).
 - **[Charge rate](#7-charge-rate) hardly matters** at ≤ 0.5 C [[4](#ref-4)]. **Never charge below 0 °C** ([lithium plating](#62-cold-and-plating)) [[20](#ref-20)].
 - **[Storage](#33-manufacturer-data):** 30–50 % SoC, 0–35 °C [[8](#ref-8)].
 
@@ -208,14 +208,15 @@ discharge for all three chemistries tested, but the SoC range had little effect 
 of the LFP cells at 200 equivalent full cycles in their statistical analysis
 [[9](#ref-9), Fig. 5f].
 
-The LFP cells reached 80 % capacity after 2500 to 9000 equivalent full cycles; most had not
-reached 80 % when the study ended, and for those the authors extrapolated the then-current linear
-fade rate [[9](#ref-9)].
+When the study ended, most LFP cells were still above 80 % capacity. With those extrapolated at
+their final linear fade rate, the cells' cycle life to 80 % ranged from 2500 to 9000 equivalent
+full cycles [[9](#ref-9)].
 
 ### 4.3 High-rate results
 
-Stroe's thesis found low SoC worse than high SoC, and the conclusion of a pulse study points the
-same way, although its measured capacities do not.
+At 4 C the [average-SoC ranking](#41-average-soc) reverses in Stroe's thesis, where low average
+SoC aged cells faster than high. The conclusion of a pulse study points the same way, although
+its measured capacities do not.
 
 In the thesis, 2.5 Ah LFP/graphite cells cycled at 4 C, 42.5 °C and 35 % depth of cycle around
 average SoCs of 27.5, 50 and 72.5 % lost capacity faster the lower the average SoC
