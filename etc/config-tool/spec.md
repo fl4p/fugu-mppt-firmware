@@ -721,8 +721,9 @@ amber.
   tripped, level <x>); "eFuse version <n>". An amber dot and amber text only
   for a latch, a failed calibration, a tripped or raised wire level, a
   refusal ("refused") or no reply ("no reply"); then the verbatim note sits
-  under the row. No buttons on the rows; a click opens the raw device output
-  of the last read. A row whose command answers "Command not found" is
+  inside the row and unfolds it once when it arrives. No buttons on the rows;
+  a click on the line folds or unfolds the row (the note and the raw device
+  output of the last read). A row whose command answers "Command not found" is
   dropped quietly and listed at the end. A `selftest` read by any other
   sequence (pre-read, finish, Check) updates its row too.
 * **Action cards**, grouped Measurements / Self-tests / Calibration. Folded
@@ -733,15 +734,24 @@ amber.
   sweep** and **Run sweep**; the read button is hidden when `sweep-curve` is
   not in the build), **Abort** while its run is in progress (only where the
   firmware has one), and on Clear latched faults the reason it is disabled
-  ("Nothing latched"). A click on the title or the description (not on the
-  buttons) toggles the details (`.tst-more`): the option checkbox where the
-  command has one, then *Risk*, *Needs*, *Takes* and *Sends* (the exact
-  command and the abort command, monospace). A run, its result and its
-  output show under the card whenever there is one (`.shown`), folded
-  details or not: the result (dot + summary, green pass, amber fail/warn,
-  muted detail lines in the normal font), the sweep chart on the MPP sweep
-  card, a Check button where needed, and a collapsible "Device output (N
-  lines)" (open while running, folded once a result is in). Text styles:
+  ("Nothing latched"), or "running …" while its run is in progress and the
+  card is folded. A click on the title (a button with `aria-expanded` and
+  `aria-controls`) or the description (not on the buttons) folds or unfolds
+  everything below the head line (`.tst-more`): the run or its result (dot +
+  summary, green pass, amber fail/warn, muted detail lines in the normal
+  font, a note, a Check button where needed), the sweep chart on the MPP
+  sweep card, a collapsible "Device output (N lines)" (open while running,
+  folded once a result is in), then the option checkbox where the command
+  has one and *Risk*, *Needs*, *Takes* and *Sends* (the exact command and the
+  abort command, monospace). A folded card shows none of these. Starting a
+  run or a read unfolds its card; a result, a refusal or an unknown-state
+  note unfolds it once when it arrives (a cancelled confirm and "nothing
+  latched" do not); otherwise the user's fold wins. A running card may be
+  folded: **Abort** stays on the head line. Cards and Status rows keep their
+  fold per device for the session in `tstRes` (`r.open`), across repaints
+  and rebuilds of the sheet. A 1 px `--line` divider separates the Status
+  rows, closes the Status block and separates the cards; a group heading
+  sits above its first divider and each group ends with one. Text styles:
   title, body text, one muted grey (`--muted`, ≥ 4.5:1 in both themes) and
   monospace only for commands and raw output; amber only for failures,
   warnings and refusals.

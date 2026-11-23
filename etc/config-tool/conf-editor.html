@@ -364,27 +364,29 @@
   #open-tests.running svg { color:var(--accent); }
   #tests .sheet-foot:has(> #tst-msg:empty) { display:none; }
   #tst-body { font-size:13px; line-height:1.45; color:var(--fg); }
-  .tst-group { margin:22px 0 4px; font-size:12px; font-weight:500; color:var(--muted); }
-  .tst-shead { display:flex; align-items:center; gap:8px; margin:14px 0 2px; }
+  .tst-group { margin:20px 0 6px; font-size:12px; font-weight:500; color:var(--muted); }
+  .tst-shead { display:flex; align-items:center; gap:8px; margin:14px 0 6px; }
+  .tst-status { border-bottom:1px solid var(--line); }
+  details.tst-row { border-top:1px solid var(--line); }
   .tst-shead .tst-group { margin:0; }
   .tst-ago { margin-left:auto; font-size:12px; color:var(--muted); }
   .tst-shead .xbtn { padding:4px; margin-right:-4px; }
   .tst-shead .xbtn:disabled { opacity:.4; }
-  details.tst-row > summary { position:relative; display:grid; grid-template-columns:8.5em minmax(0,1fr); gap:12px; padding:4px 0; cursor:pointer; list-style:none; }
+  details.tst-row > summary { position:relative; display:grid; grid-template-columns:8.5em minmax(0,1fr); gap:12px; padding:5px 0; cursor:pointer; list-style:none; }
   details.tst-row > summary::-webkit-details-marker { display:none; }
   .tst-x::before, details.tst-row > summary::before { content:""; position:absolute; left:-17px; top:calc(.725em - 3px); width:10px; height:6px;
     background:var(--chev) no-repeat center; transform:rotate(-90deg); transition:transform .15s; }
-  details.tst-row > summary::before { top:calc(4px + .725em - 3px); opacity:.6; }
+  details.tst-row > summary::before { top:calc(5px + .725em - 3px); opacity:.6; }
   details.tst-row > summary:hover::before, details.tst-row[open] > summary::before { opacity:1; }
   details.tst-row[open] > summary::before, .tst.open .tst-x::before { transform:none; }
   .tst-lbl { color:var(--muted); }
   .tst-val { min-width:0; overflow-wrap:anywhere; }
   .tst-row.bad .tst-val { color:var(--accent); }
   .tst-row.bad .tst-val::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--accent); margin-right:7px; vertical-align:.05em; }
-  .tst-row .tst-out { margin:2px 0 8px; }
-  .tst-note { margin:0 0 4px calc(8.5em + 12px); font-size:12.5px; color:var(--accent); }
-  .tst { padding:9px 0; }
-  .tst-group + .tst { padding-top:2px; }
+  .tst-row .tst-out { margin:0 0 8px; }
+  .tst-note { margin:0 0 6px calc(8.5em + 12px); font-size:12.5px; color:var(--accent); }
+  .tst { padding:8px 0; border-top:1px solid var(--line); }
+  .tst:not(:has(+ .tst)) { border-bottom:1px solid var(--line); }
   .tst-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; cursor:pointer; }
   .tst-ti { flex:1 1 220px; min-width:0; }
   .tst-name { margin:0; font-size:13.5px; font-weight:500; display:flex; flex-wrap:wrap; align-items:baseline; gap:0 8px; }
@@ -396,7 +398,7 @@
   .tst-ctl button { border-color:var(--line-2); padding:5px 12px; }
   .tst-state { font-size:12.5px; color:var(--muted); }
   .tst-state:empty { display:none; }
-  .tst-more { margin:8px 0 0; }
+  .tst-det { margin:8px 0 0; }
   .tst-opt { display:flex; align-items:center; gap:7px; margin:0 0 6px; width:fit-content; cursor:pointer; }
   .tst-opt:has(input:disabled) { opacity:.5; cursor:not-allowed; }
   .tst-meta { display:grid; grid-template-columns:auto minmax(0,1fr); gap:2px 12px; margin:0; }
@@ -4169,14 +4171,20 @@ async function tstRead(id){
   if (!t || tstRun || tstProbing) return;
   if (devBusy){ tstSetMsg(`Wait for ${devBusy} to finish.`, true); return; }
   const r=tstResult(id), cmd=d.read || d.cmd(tstOpt[id]||{});
-  tstLock({ id, cmd, link:t }); r.st="run"; r.lines=[]; r.sum=null; r.note=""; r.recheck=false; tstGate();
+  tstLock({ id, cmd, link:t }); r.st="run"; r.lines=[]; r.sum=null; r.note=""; r.recheck=false; if (d.group!=="Status") r.open=true; tstGate();
   const x=await tstSend(cmd, ln=>{ tstPush(r, ln); tstPaint(id); }, d.id==="adccal" ? 8000 : TST_T.cmd);
   tstLock(null);
   tstFinishRead(id, d, cmd, x);
   tstGate();
 }
 // quiet: a Status row of the automatic read; a missing command only drops its row (listed at the end).
+// A result, or a note on a failed read, unfolds its card or row once.
 function tstFinishRead(id, d, cmd, x, quiet){
+  const r=tstResult(id);
+  tstReadOutcome(id, d, cmd, x, quiet);
+  if (r.noteErr || (r.sum && d.group!=="Status")) r.open=true;
+}
+function tstReadOutcome(id, d, cmd, x, quiet){
   const r=tstResult(id);
   const root=cmd.split(" ")[0];
   r.note=""; r.noteErr=false; r.recheck=false;
@@ -4208,7 +4216,7 @@ async function tstStart(id){
   if (devBusy){ tstSetMsg(`Wait for ${devBusy} to finish.`, true); return; }
   const o={...(tstOpt[id]||{})}, cmd=d.cmd(o), r=tstResult(id);
   tstLock({ id, cmd, link:t }); tstSetMsg(""); r.note=""; r.recheck=false; tstGate();
-  const end = (st, note, isErr) => { r.st=st; r.note=note||""; r.noteErr=!!isErr; r.fold = st==="done"; tstLock(null); tstGate(); };
+  const end = (st, note, isErr) => { r.st=st; r.note=note||""; r.noteErr=!!isErr; r.fold = st==="done"; if (st!=="idle" || isErr) r.open=true; tstLock(null); tstGate(); };
 
   // live power and latches, for the confirm and the clear
   const pre=await tstSend("selftest");
@@ -4224,7 +4232,7 @@ async function tstStart(id){
   if (!tstAsk(d, o, tstLive(pre.lines), extra)) return end("idle", "Not started.");
   if (tstTarget()!==t) return end("idle", `The link to ${dev} closed; nothing was sent.`, true);
 
-  r.st="run"; r.lines=[]; r.sum=null; tstPaint(id);
+  r.st="run"; r.lines=[]; r.sum=null; r.open=true; tstPaint(id);
   const onLine = ln => { tstPush(r, ln); tstPaint(id); };
   const x=await tstSend(cmd, onLine);
   if (x.lines.some(l=>TST_NOCMD.test(l))){ tstGone.add(d.root); end("idle"); tstSetMsg(`“${d.root}” is not in this firmware build; its tests are hidden.`, true); return; }
@@ -4283,7 +4291,7 @@ async function tstRecheck(id){
   if (!t || devBusy || !d.recheck) return;
   tstLock({ id, cmd:d.recheck, link:t }); tstGate();
   const x=await tstSend(d.recheck);
-  tstLock(null);
+  tstLock(null); r.open=true;
   if (x.ok!==true){ r.note=`No answer to “${d.recheck}”: still unknown.`; r.noteErr=true; tstGate(); return; }
   if (d.recheck==="uptime"){            // measure-coil suppresses the status line while it runs
     r.note = tstLive(x.lines) ? `${state.deviceName} prints its status line again: no coil measurement is running. Read the device again (Open) to see whether coil.conf changed.`
@@ -4344,8 +4352,9 @@ function tstBuild(body){
     const row=tstEl("details", "tst-row"); row.dataset.tst=d.id;
     const sm=tstEl("summary");
     sm.append(tstEl("span", "tst-lbl", d.label), tstEl("span", "tst-val"));
-    row.append(sm, tstOutEl(d.title));
-    st.append(row, Object.assign(tstEl("p", "tst-note"), { hidden:true }));
+    sm.onclick=e=>{ e.preventDefault(); const r=tstResult(d.id); r.open=!r.open; tstPaintRow(d.id); };
+    row.append(sm, Object.assign(tstEl("p", "tst-note"), { hidden:true }), tstOutEl(d.title));
+    st.append(row);
   }
   out.push(st);
   for (const g of TST_GROUPS.slice(1)){
@@ -4369,14 +4378,20 @@ function tstBuild(body){
       if (d.abort){ const ab=tstEl("button", "abort", "Abort"); ab.type="button"; ab.onclick=()=>tstAbort(d.id); ctl.append(ab); }
       hd.append(ti, ctl);
       hd.onclick=e=>{ if (e.target.closest(".tst-ctl")) return; const r=tstResult(d.id); r.open=!r.open; tstPaint(d.id); };
-      // details: option, needs / takes / sends, the risk
-      const more=tstEl("div", "tst-more");
+      // the fold: result, chart, output, then option, needs / takes / sends, the risk
+      const more=tstEl("div", "tst-more"), det=tstEl("div", "tst-det");
       more.id="tst-more-"+d.id; x.setAttribute("aria-controls", more.id);
+      const res=tstEl("div", "tst-res"); res.setAttribute("role","status");
+      const lg=tstEl("details", "fold tst-log"); lg.hidden=true;
+      lg.append(tstEl("summary", "", "Device output"), tstOutEl(d.title));
+      more.append(res);
+      if (d.chart){ const f=tstEl("figure", "tst-chart"); f.hidden=true; more.append(f); }
+      more.append(lg, det);
       if (d.opt){
         const lb=tstEl("label", "tst-opt"), cb=tstEl("input");
         cb.type="checkbox"; cb.checked=!!(tstOpt[d.id]||{})[d.opt.key];
         cb.onchange=()=>{ tstOpt[d.id]={...(tstOpt[d.id]||{}), [d.opt.key]:cb.checked}; tstPaint(d.id); };
-        lb.append(cb, document.createTextNode(d.opt.label)); more.append(lb);
+        lb.append(cb, document.createTextNode(d.opt.label)); det.append(lb);
       }
       const dl=tstEl("dl", "tst-meta");
       const kv=(k, v)=>{ const dd=tstEl("dd"); if (v instanceof Node) dd.append(v); else dd.textContent=v; dl.append(tstEl("dt", "", k), dd); };
@@ -4384,13 +4399,8 @@ function tstBuild(body){
       if (d.needs) kv("Needs", d.needs);
       kv("Takes", d.dur);
       kv("Sends", tstEl("code", "tst-cmd"));
-      more.append(dl);
-      const res=tstEl("div", "tst-res"); res.setAttribute("role","status");
-      const lg=tstEl("details", "fold tst-log"); lg.hidden=true;
-      lg.append(tstEl("summary", "", "Device output"), tstOutEl(d.title));
-      c.append(hd, more, res);
-      if (d.chart){ const f=tstEl("figure", "tst-chart"); f.hidden=true; c.append(f); }
-      c.append(lg);
+      det.append(dl);
+      c.append(hd, more);
       out.push(c);
     }
   }
@@ -4415,9 +4425,10 @@ function tstPaintRow(id){
   const r=tstResult(id), s=r.sum;
   const bad = s ? s.cls==="fail" || s.cls==="warn" : r.st==="refused" || r.st==="unknown" || r.noteErr;
   row.classList.toggle("bad", !!bad);
+  row.open=!!r.open;
   row.querySelector(".tst-val").textContent = s ? s.short || s.text : r.st==="run" ? "reading …" : r.st==="refused" ? "refused"
     : r.st==="unknown" ? "no reply" : r.note ? "not recognised" : "–";
-  const note=row.nextElementSibling;
+  const note=row.querySelector(".tst-note");
   note.textContent = r.noteErr && r.st!=="run" ? r.note : ""; note.hidden=!note.textContent;
   tstPaintOut(row.querySelector(".tst-out"), r.lines);
 }
@@ -4428,7 +4439,7 @@ function tstPaint(id){
   const c=document.querySelector(`#tst-body .tst[data-tst="${id}"]`); if (!c) return;
   const r=tstResult(id), t=tstTarget(), mine=tstRun && tstRun.id===id;
   const o=tstOpt[id]||{};
-  // the chevron folds the details; a run, its result and its output show whenever there is one
+  // the chevron folds everything below the head line; Abort stays on it
   const shown = !!(mine || r.sum || r.note || r.lines.length);
   c.classList.toggle("open", !!r.open);
   c.classList.toggle("shown", shown);
@@ -4445,7 +4456,7 @@ function tstPaint(id){
   run.title = why || (devBusy && !mine ? devBusy+" is running" : "");
   if (ab){ ab.hidden=!mine || r.st!=="run"; ab.disabled=!t; }
   if (cb) cb.disabled=!!devBusy;
-  stl.textContent = id==="clear" ? why : "";
+  stl.textContent = id==="clear" ? why : mine && r.st==="run" && !r.open ? "running …" : "";
   const res=c.querySelector(".tst-res");
   res.className="tst-res"+(r.sum && r.sum.cls ? " "+r.sum.cls : "");
   res.hidden=!shown;

@@ -187,6 +187,11 @@ async function until(pred, ms = 3000) {
 }
 const btn = w => w.document.getElementById('open-tests');
 const resText = (w, id) => card(w, id).querySelector('.tst-res').textContent;
+// rendered: no [hidden] ancestor, and not inside a closed <details> other than in its summary
+const seen = el => !!el && !el.closest('[hidden]') && !(el.parentElement.closest('details:not([open])') && !el.closest('summary'));
+const fold = (w, id) => card(w, id).querySelector('.tst-x').click();
+// everything under the head line: result, chart, Check, output, details
+const below = c => [...c.querySelectorAll('.tst-res, .tst-chart, .tst-log, .tst-out, .tst-det, .recheck')];
 
 async function connected(opts = {}) {
   const { window } = await loadEditor({ teledec: opts.teledec !== false });
@@ -332,50 +337,99 @@ test('Status rows: a silent command shows "no reply" with its note', async () =>
   await openSheet(window); await idle(window);
   assert.equal(rowText(window, 'wire'), 'no reply');
   assert.ok(row(window, 'wire').classList.contains('bad'));
-  assert.match(row(window, 'wire').nextElementSibling.textContent, /No reply to “wire” within 0\.3 s/);
+  const note = row(window, 'wire').querySelector('.tst-note');
+  assert.match(note.textContent, /No reply to “wire” within 0\.3 s/);
+  assert.equal(row(window, 'wire').open, true, 'the note unfolds its row once');
+  row(window, 'wire').querySelector('summary').click();
+  assert.equal(seen(note), false, 'a folded row hides its note and output');
+  window.tstRender();
+  assert.equal(row(window, 'wire').open, false, 'the fold survives a repaint');
   assert.equal(rowText(window, 'adccal'), 'eFuse version 1', 'the next row is still read');
 });
 
-test('action cards: collapsed to title and one line, details on click, the run and its result always shown', async () => {
+test('action cards: collapsed to the head line; a run, its result and its output fold with the card', async () => {
   const { window } = await connected({ coil: true });
   await openSheet(window); await idle(window);
   for (const id of ['sweep', 'coil', 'bflow', 'clear', 'rectcal', 'coills']) {
     const c = card(window, id);
     assert.equal(c.classList.contains('open'), false, id);
     assert.equal(c.classList.contains('shown'), false, id + ': nothing to show yet');
-    assert.equal(c.querySelector('.tst-more').hidden, true, id + ': details folded');
+    assert.equal(c.querySelector('.tst-more').hidden, true, id + ': folded');
     assert.equal(c.querySelector('.tst-res').hidden, true, id);
     assert.equal(c.querySelector('.tst-x').getAttribute('aria-expanded'), 'false');
+    assert.equal(c.querySelector('.tst-x').getAttribute('aria-controls'), c.querySelector('.tst-more').id);
+    for (const e of below(c)) assert.ok(c.querySelector('.tst-more').contains(e), id + ': ' + e.className + ' is in the fold');
     assert.ok(c.querySelector('.tst-what').textContent.length <= 70, id + ': short description');
-    assert.ok(c.querySelector('.tst-ctl .run'), id + ': primary button on the line');
+    assert.ok(seen(c.querySelector('.tst-ctl .run')), id + ': primary button on the line');
   }
+  assert.ok(seen(card(window, 'clear').querySelector('.tst-state')), 'the reason stays on the head line');
   const c = card(window, 'coil');
   c.querySelector('.tst-x').click();
   assert.ok(c.classList.contains('open'));
   assert.equal(c.querySelector('.tst-x').getAttribute('aria-expanded'), 'true');
   assert.equal(c.querySelector('.tst-more').hidden, false);
-  assert.match(c.querySelector('.tst-more').textContent, /Save L0 to coil\.conf.*Risk.*no abort.*Needs.*Takes.*Sends.*measure-coil l0/);
+  assert.match(c.querySelector('.tst-det').textContent, /Save L0 to coil\.conf.*Risk.*no abort.*Needs.*Takes.*Sends.*measure-coil l0/);
   c.querySelector('.tst-what').click();
   assert.equal(c.classList.contains('open'), false, 'a click on the line folds it again');
   window.prompt = () => null;
-  c.querySelector('.run').click();                         // a button does not toggle the details
+  c.querySelector('.run').click();                         // a button does not toggle the fold
   await idle(window);
-  assert.equal(c.classList.contains('open'), false);
-  assert.ok(c.classList.contains('shown') && !c.querySelector('.tst-res').hidden, 'the outcome shows on a folded card');
+  assert.equal(c.classList.contains('open'), false, 'a cancelled start leaves the card folded');
   assert.match(resText(window, 'coil'), /Not started/);
+  assert.equal(seen(c.querySelector('.tst-res')), false);
+
   window.prompt = () => 'fry';
   const b = card(window, 'bflow');
   const run = window.tstStart('bflow');
   await until(() => window.tstBusyNow() && b.querySelector('.tst-out').textContent.includes('forced PWM'));
-  assert.ok(b.classList.contains('shown') && !b.querySelector('.tst-res').hidden, 'shown while running');
-  assert.equal(b.querySelector('.tst-log').hidden, false); assert.equal(b.querySelector('.tst-log').open, true);
-  b.querySelector('.tst-x').click(); b.querySelector('.tst-x').click();
-  assert.ok(!b.querySelector('.tst-res').hidden, 'folding the details keeps the run in view');
+  assert.ok(b.classList.contains('open'), 'a run unfolds its card');
+  assert.ok(seen(b.querySelector('.tst-res')) && seen(b.querySelector('.tst-out')), 'live output in view');
+  assert.equal(b.querySelector('.tst-log').open, true);
+  fold(window, 'bflow');
+  assert.equal(b.classList.contains('open'), false, 'a running card folds');
+  for (const e of below(b)) assert.equal(seen(e), false, 'folded while running: ' + e.className);
+  assert.ok(seen(b.querySelector('.abort')), 'Abort stays on the head line');
+  assert.equal(b.querySelector('.tst-state').textContent, 'running …');
   await run;
-  assert.ok(b.classList.contains('shown') && !b.querySelector('.tst-res').hidden);
+  assert.ok(b.classList.contains('open'), 'the result unfolds the card once');
   assert.match(resText(window, 'bflow'), /PASS/);
-  assert.equal(b.querySelector('.tst-more').hidden, true, 'details stay folded under a result');
+  assert.ok(seen(b.querySelector('.tst-res')) && seen(b.querySelector('.tst-det')));
+  assert.equal(b.querySelector('.tst-state').textContent, '');
+  const shown = resText(window, 'bflow');
+  fold(window, 'bflow');
+  for (const e of below(b)) assert.equal(seen(e), false, 'folded with a result: ' + e.className);
+  window.tstRender();
+  $(window, '#tst-body')._key = null; window.tstRender();  // rebuild
+  const b2 = card(window, 'bflow');
+  assert.notEqual(b2, b, 'rebuilt');
+  assert.equal(b2.classList.contains('open'), false, 'the fold survives a rebuild');
+  assert.equal(b2.querySelector('.tst-x').getAttribute('aria-expanded'), 'false');
+  assert.equal(seen(b2.querySelector('.tst-res')), false);
+  fold(window, 'bflow');
+  assert.ok(seen(b2.querySelector('.tst-res')));
+  assert.equal(resText(window, 'bflow'), shown, 'unfolding shows the same result');
   assert.equal($(window, '#tests .sheet-foot').textContent.trim(), '', 'no footer note');
+});
+
+test('action cards: Abort on a folded running card; an unknown state unfolds once', async () => {
+  const { window, dev } = await connected({ bfNeverEnds: true });
+  window.tstDefs().find(d => d.id === 'bflow').timeout = 400;
+  await openSheet(window); await idle(window);
+  window.prompt = () => 'fry';
+  const run = window.tstStart('bflow');
+  const b = card(window, 'bflow');
+  await until(() => window.tstBusyNow() && b.querySelector('.tst-out').textContent.includes('started'));
+  fold(window, 'bflow');
+  const from = dev.sent.length;
+  b.querySelector('.tst-head .abort').click();
+  await until(() => dev.sent.length > from);
+  assert.equal(dev.sent[from], 'selftest abort');
+  assert.equal(b.classList.contains('open'), false, 'Abort does not unfold');
+  await run;
+  assert.ok(b.classList.contains('open'), 'the unknown-state note unfolds the card');
+  assert.ok(seen(b.querySelector('.recheck')), 'Check in view');
+  fold(window, 'bflow'); window.tstRender();
+  assert.equal(seen(b.querySelector('.tst-res .note')), false, 'and folds with it');
 });
 
 test('backflow switch test: typed device name, live power in the prompt, live output, PASS from selftest', async () => {
@@ -687,7 +741,7 @@ test('MPP sweep card: Read last sweep sends sweep-curve without a confirm and dr
   await idle(window);
   assert.deepEqual(dev.sent.slice(from), ['sweep-curve']);
   assert.match(resText(window, 'sweep'), new RegExp(`MPP ${SWEEP.P} W at ${SWEEP.V} V.*87 points, 2 min ago`));
-  assert.ok(c.classList.contains('shown'), 'the result shows under the card');
+  assert.ok(c.classList.contains('shown'), 'the result shows in the card');
   assert.equal(c.querySelector('.tst-res .sum').childElementCount, 3, 'summary, points and landing on one line');
   const fig = chart(window), svg = fig.querySelector('svg');
   assert.equal(fig.hidden, false);

@@ -413,7 +413,8 @@ open it sends `help` to learn which commands the firmware build has, and probes 
 The panel opens with a **Status** block. Each time the panel opens, the editor reads the four read-only status
 commands in turn (`selftest`, `rect-cal status`, `wire`, `adc-cal`) and shows one line per check, for example
 "OK, nothing latched" or "offset 500 ns, idle". An amber dot marks a check that needs attention: a latched fault,
-a failed calibration, a tripped wire guard, a refusal or no reply. Click a line to see the device's raw output. The
+a failed calibration, a tripped wire guard, a refusal or no reply. Click a line to see the device's raw output and,
+after a refusal or no reply, the reason; such a line opens by itself when the reason arrives. The
 block shows when it was last read, and its refresh button reads it again. Nothing that drives the converter runs
 until you click.
 
@@ -431,14 +432,16 @@ until you click.
 | Low-side timing from a coil sweep | Calibration | `measure-coil ls [apply]` | device name |
 
 The other entries are folded to a title, a one-line description and their buttons. Click the title to unfold the
-details: the option where there is one, the risk, what the test needs, how long it takes and which command it sends.
+entry: its last result, the device output, the option where there is one, the risk, what the test needs, how long it
+takes and which command it sends. A folded entry hides all of these. Starting a test unfolds its entry, and a new
+result or a note that the test's state is unknown unfolds it once; after that the entry stays as you leave it.
 Before any of them starts, the editor reads `selftest` and the status line, then
 asks; the question names the device, says what happens (for example that the converter is taken over and conversion
 stops for about a minute) and states whether the converter is delivering power now and how much. The most invasive
 ones need the device name typed in. A refusal shows the firmware's reason as it printed it. Nothing is retried.
 
-While a test runs, its output appears under the entry, folded or not, and **Abort** is offered where the firmware has an abort
-command (`measure-coil` has none). The result is a short summary:
+While a test runs, its output appears in the unfolded entry, and **Abort** is offered next to the buttons where the
+firmware has an abort command (`measure-coil` has none). Folding a running entry hides the output but keeps **Abort**. The result is a short summary:
 
 - the latched faults and the backflow switch state, with this boot's last test verdicts;
 - backflow switch PASS, or FAIL with the failing phase (every start stays blocked until the latch is cleared), or no
