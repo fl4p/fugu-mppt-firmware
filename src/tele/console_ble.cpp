@@ -194,12 +194,32 @@ static void encAudit(uint16_t ch) {
     ESP_LOGI(TAG, "%s %s", s, fresh ? "paired, new bond" : d.sec_state.bonded ? "bonded, encrypted" : "encrypted");
 }
 
+struct CccdPick {
+    ble_addr_t self;     // peer being written
+    ble_store_key_cccd drop;
+    bool found;
+};
+
+static int cccdPick(int, ble_store_value *v, void *arg) {
+    auto *p = (CccdPick *) arg;
+    const bool other = ble_addr_cmp(&v->cccd.peer_addr, &p->self) != 0;
+    if (!p->found || other) ble_store_key_from_value_cccd(&p->drop, &v->cccd);
+    p->found = true;
+    return other;
+}
+
 // Window closed: refuse a new bond with a full table. Open: NimBLE evicts the oldest on overflow.
+// A full CCCD table drops a stored subscription (another peer's first) instead of a whole bond.
 class StoreCallbacks : public BLEDeviceCallbacks {
     int onStoreStatus(ble_store_status_event *e, void *arg) override {
         if (e->event_code == BLE_STORE_EVENT_FULL && linkEncRequired && !pairOpen) {
             ESP_LOGW(TAG, "pairing refused: window closed, bond table full");
             return BLE_HS_ESTORE_CAP;
+        }
+        if (e->event_code == BLE_STORE_EVENT_OVERFLOW && e->overflow.obj_type == BLE_STORE_OBJ_TYPE_CCCD) {
+            CccdPick p{e->overflow.value->cccd.peer_addr, {}, false};
+            ble_store_iterate(BLE_STORE_OBJ_TYPE_CCCD, cccdPick, &p);
+            return p.found ? ble_store_delete_cccd(&p.drop) : BLE_HS_ESTORE_CAP;
         }
         if (e->event_code == BLE_STORE_EVENT_OVERFLOW && (e->overflow.obj_type == BLE_STORE_OBJ_TYPE_OUR_SEC
                                                           || e->overflow.obj_type == BLE_STORE_OBJ_TYPE_PEER_SEC)) {

@@ -36,7 +36,9 @@ device logs a warning with the peer address, and an info line for each paired or
 
 The device stores up to 3 bonds in NVS. They survive reboots and firmware updates, and `ble unpair` or erasing the NVS
 partition removes them. When the table is full, a new pairing inside the window evicts the oldest bond. Outside the
-window it is refused. List and remove bonds with `ble bonds` and `ble unpair <address|all>`, see
+window it is refused. Stored notification subscriptions have their own table; when it is full, the device drops a
+stored subscription (another peer's first), never a bond. Clients subscribe again on every connection anyway. List and
+remove bonds with `ble bonds` and `ble unpair <address|all>`, see
 [Console commands](../console.md#ble-commands).
 
 With `ble_security=none` the console is open to everyone and the window does not apply: any device can connect, and
