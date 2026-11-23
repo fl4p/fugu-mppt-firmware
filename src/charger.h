@@ -962,7 +962,7 @@ public:
     }
 
     void _updatePackVoltagePinning(bool voutAuthority = true, float vbat = INFINITY, float voutNow = NAN,
-                                   bool psu = false, float ioutNow = NAN) {
+                                   bool psu = false, float ioutNow = NAN, bool sweep = false) {
         // Pack-voltage-pinning regimes (first match wins):
         //   1) EOC feedback — cells above v_eoc: closed loop on vcell_high → v_eoc.
         //      Doubles as the over-target corrector during terminated float; pulls
@@ -1002,7 +1002,7 @@ public:
         bool ap = !cvHold && !psu && !nowTerm && (params.cv_hold_max_s || termCond.balance) && batDataOk && ibatFresh()
                   && !_partialHold && !_coldBlocked && !(ibat < 0.f);
         if (ap && !std::isfinite(_cvIlim) && batSt.vcell_high >= params.cv_eoc - APPROACH_V && ibatNow > iTail) {
-            _cvIlim = std::isfinite(ioutNow) ? fmaxf(ioutNow * iTail / ibatNow, IOUT_LIM_FLOOR) : iTail;
+            _cvIlim = std::isfinite(ioutNow) && !sweep ? fmaxf(ioutNow * iTail / ibatNow, IOUT_LIM_FLOOR) : iTail;
             _cvIbat = iTail;
             _lastBmsFrameUs = batSt.vcell_high_t;
             _lastIbatFrameUs = batSt.ibat_t;
@@ -1023,7 +1023,9 @@ public:
         if (cvHold != _wasCvHold) {
             _wasCvHold = cvHold;
             if (cvHold) {
-                if (!std::isfinite(_cvIlim)) _cvIlim = std::isfinite(ioutNow) ? fmaxf(ioutNow, IOUT_LIM_FLOOR) : params.Ibat_lim;
+                if (!std::isfinite(_cvIlim))
+                    _cvIlim = sweep ? params.tail_c_rate * params.Cbat
+                              : std::isfinite(ioutNow) ? fmaxf(ioutNow, IOUT_LIM_FLOOR) : params.Ibat_lim;
                 _lastBmsFrameUs = ~batSt.vcell_high_t; // target from this frame
                 ESP_LOGW("charger", "cv hold: vcHigh %.3f > line %.3f @ iBat %.2f, ilim %.1f A",
                          batSt.vcell_high, termCond.v_term(), ibat, _cvIlim);
@@ -1042,7 +1044,7 @@ public:
             _floatGlide.reset();
             _wasTerminated = false;
             _wasHold = false; // a load-follow hold after this one starts at the bus
-            _cvHoldStep(!psu, ioutNow, _holdIbatTarget());
+            _cvHoldStep(!psu && !sweep, ioutNow, _holdIbatTarget()); // a sweep's own current dip must not pull it down
             return;
         }
 
@@ -1294,14 +1296,14 @@ public:
             });
     }
 
-    void update(float vout, float iout, bool voutAuthority = true, bool psu = false) {
+    void update(float vout, float iout, bool voutAuthority = true, bool psu = false, bool sweep = false) {
         batSt.update(vout, iout);
         _updateTermination();
         _updateTempLimit();
         _updateHoliday();
         _updateBalance();
         _updatePartialHold();
-        _updatePackVoltagePinning(voutAuthority, INFINITY, vout, psu, iout);
+        _updatePackVoltagePinning(voutAuthority, INFINITY, vout, psu, iout, sweep);
         _saveRtc();
     }
 

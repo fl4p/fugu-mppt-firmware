@@ -203,6 +203,9 @@ loops run on the BMS frames:
   stays at most 2 A above the converter's own output current, so it does not
   wind up while the PV power is short and the returning sun does not push the
   cell over `cv_eoc`. The limit never goes below 0.25 A.
+- During an MPP sweep the current loop holds its limit: the sweep starts from
+  zero output current, which would otherwise pull the limit down to 2 A. A hold
+  or approach that begins during a sweep starts at the tail current.
 
 The output current includes the house load ($i_{out} = i_{bat} + i_{load}$);
 regulating `ibat` with the limit as the integrator lets a load step settle
