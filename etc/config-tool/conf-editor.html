@@ -189,6 +189,13 @@
   .row.changed .val input, .row.changed .val select { border-color:var(--accent); background-color:var(--bg); }
   .row.invalid .val input { border-style:dashed; }
   .row .bad { font-size:12px; color:var(--accent); margin-top:5px; }
+  .row .dep { font-size:12px; color:var(--accent); margin-top:5px; }
+  .row .dep.muted { color:var(--muted); }
+  .row.unused .lbl, .row.unused .val-line { opacity:.5; }
+  .row .k .klabel { font:12.5px var(--sans); color:var(--muted); margin-left:.7em; word-break:normal; }
+  .gate { margin:4px 0 10px; padding:2px 0 4px 12px; border-left:2px solid var(--line); }
+  .gate-h { font-size:12.5px; font-weight:600; color:var(--fg-2); padding-top:8px; }
+  .gate-note { font-size:12.5px; color:var(--muted); }
   .clear-btn { position:absolute; right:0; top:50%; margin-top:-12px; width:24px; height:24px; padding:0; justify-content:center; font-size:16px; line-height:1; color:var(--faint);
     border-radius:6px; opacity:0; transition:opacity .12s; }
   .row:hover .clear-btn, .row:focus-within .clear-btn { opacity:1; }
@@ -277,6 +284,14 @@
   .review-empty { padding:30px 0 10px; color:var(--muted); font-size:13px; max-width:44ch; }
   .review-empty strong { display:block; color:var(--fg); font-size:14px; font-weight:600; margin-bottom:4px; }
   details.cmds { margin-top:24px; }
+  .diff .when { color:var(--faint); font:12px var(--sans); margin-left:auto; padding-left:8px; }
+  .rwarn { margin:18px 0 0; padding:0 0 0 12px; border-left:2px solid var(--accent); list-style:none; font-size:12.5px; color:var(--accent); }
+  .rwarn li { padding:2px 0; }
+  .applybar { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap; padding:10px 12px 10px 24px; border-bottom:1px solid var(--line);
+    font-size:12.5px; color:var(--fg-2); flex:none; }
+  .applybar > span:first-child { flex:1; min-width:12em; }
+  .applybar .btns { display:flex; gap:6px; flex-wrap:wrap; }
+  .applybar button { border-color:var(--line-2); }
 
   #console { width:min(640px,100%); top:var(--hdr); }
   #uploadlog-stat { color:var(--muted); font-size:12.5px; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -343,6 +358,7 @@
     #console { top:auto; width:100%; }
     .sheet-head { padding-left:18px; }
     .sheet-body, #uploadlog { padding-left:18px; padding-right:18px; }
+    .applybar { padding-left:18px; }
     .sheet-foot { padding-left:18px; padding-right:18px; }
     .sheet-foot .btns > * { flex:1; justify-content:center; }
   }
@@ -445,6 +461,7 @@
   </div>
   <div id="review-body" class="sheet-body"></div>
   <div class="sheet-foot">
+    <p id="review-when" class="note"></p>
     <p id="review-note" class="note"></p>
     <div class="btns">
       <button id="download" type="button">Download .zip</button>
@@ -459,6 +476,7 @@
     <span id="uploadlog-stat"></span>
     <button id="uploadlog-close" class="xbtn" type="button" aria-label="Close" title="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
+  <div id="apply" class="applybar" hidden><span></span><span class="btns"></span></div>
   <div id="uploadlog"><div id="uploadlog-body"></div></div>
   <form id="uploadlog-input" autocomplete="off">
     <input id="uploadlog-cmd" type="text" placeholder="type a console command and press Enter" aria-label="Console command">
@@ -623,6 +641,7 @@ const META = {
   boost:{unit:"",desc:"Legacy boost flag (replaced by topo=buck|boost)",type:"bool"},
   mode:{unit:"",desc:"Operating mode: mppt, psu or pv (solar-array-simulator output)",type:"enum",opts:["mppt","psu","pv"]},
   psu_vout:{unit:"V",desc:"PSU mode output voltage setpoint (used when mode=psu)",type:"float"},
+  psu_slew_down:{unit:"V/s",desc:"PSU mode: a lower setpoint is approached at this rate (min 0.1); raising it is immediate. A boost returns the output charge to its input when it pulls Vout down",type:"float"},
   pv_isc:{unit:"A",desc:"PV-sim short-circuit current (mode=pv; also caps Iout limiter at 1.1x)",type:"float"},
   pv_voc:{unit:"V",desc:"PV-sim open-circuit voltage (carries OV threshold and boost feasibility)",type:"float"},
   pv_k:{unit:"",desc:"PV-sim Vmp/Voc curve factor, range [0.5,0.95] (default 0.8)",type:"float"},
@@ -750,6 +769,40 @@ const FILE_META = {
 };
 const META_VOUT_MAX = {unit:"V",desc:"Maximum output voltage",type:"float"};
 
+// When a pushed key takes effect (default "reboot"): "live" = read when used, else the services whose
+// `svc restart` re-reads it (their onStart; enabled/log_level only at registration, service.h:139-150).
+const APPLY = {
+  "mqtt.conf":"mqtt", "http.conf":"http", "tlscon.conf":"tlscon", "bsync.conf":"bsync",
+  "tele.conf":{"":"tele", ble:"live", adv_ms:"ble", idle_interval_ms:"reboot"},
+  "ftp.conf":{"":"ftp", ftp_user:"ftp http", ftp_pass:"ftp http"},
+};
+// <name>.conf of these services: enabled/log_level are pushed as `svc on|off|log`, which writes and applies
+const SERVICES = ["mqtt","tele","ftp","http","telnet","tlscon","lcd","scope","ble","bsync"];
+const LINK_SVC = {mqtt:"mqtt", ble:"ble"};   // service an editor transport runs through
+
+/* Key dependencies. `if`: the keys are read only while that key (same file unless `file`) has a value
+   in `is`; an unset or unknown value changes nothing. `required`: needs a value (while `if` holds).
+   `needs`: the key, when on (not unset/0), only works if one of the conditions holds. */
+const DEPENDS = [
+  // buck.h:1205-1243: no default, any other value throws
+  {file:"board.conf", keys:["pwm_driver_logic"], required:true},
+  // buck.h:1208-1222 InEn reads pwm_in/pwm_en; buck.h:1223-1236 HiLi pwm_hi/pwm_li, pwm_sd optional (255)
+  {file:"board.conf", keys:["pwm_in","pwm_en"], if:{key:"pwm_driver_logic", is:["InEn"]}, required:true},
+  {file:"board.conf", keys:["pwm_hi","pwm_li"], if:{key:"pwm_driver_logic", is:["HiLi"]}, required:true},
+  {file:"board.conf", keys:["pwm_sd"], if:{key:"pwm_driver_logic", is:["HiLi"]}},
+  // mppt.cpp:575-590: read only in that mode, 0 fails it (psu_slew_down, :609, is read always)
+  {file:"converter.conf", keys:["psu_vout"], if:{key:"mode", is:["psu"]}, required:true},
+  {file:"converter.conf", keys:["pv_isc","pv_voc"], if:{key:"mode", is:["pv"]}, required:true},
+  {file:"converter.conf", keys:["pv_k","pv_slew","pv_iout_span"], if:{key:"mode", is:["pv"]}},
+  // mppt.h:1632,1650 + mppt.cpp:638: a backflow switch (backflow.h:38-39,86, pin 0 = none) and a buck
+  {file:"board.conf", keys:["hs_clamp"], needs:[{key:"bflow_bat", is:["1"]}]},
+  {file:"board.conf", keys:["bflow_bat"], needs:[{key:"bflow_en", not:["0"]}, {key:"bflow_sd", not:["0"]}]},
+  {file:"board.conf", keys:["bflow_bat","hs_clamp"], needs:[{file:"converter.conf", key:"topo", is:["buck"]}]},
+];
+// keys shown as a block at the top of a group, with plain labels
+const GATE = {"board.conf":{prefix:"pwm_", title:"Gate driver", keys:["pwm_driver_logic","pwm_hi","pwm_li","pwm_sd","pwm_in","pwm_en"]}};
+const KEY_LABEL = {pwm_hi:"HI, high-side input", pwm_li:"LI, low-side input", pwm_in:"IN, PWM input", pwm_en:"EN, enable", pwm_sd:"DIS, shutdown (optional)"};
+
 // channel-prefixed sensor keys (side hv_v_/lv_v_/hv_i_/lv_i_, ntc_ + suffix).
 // converter.conf topo maps sides to roles: buck in=HV out=LV, boost in=LV out=HV.
 const CHAN_PREFIX = { hv_v:"HV-side voltage", lv_v:"LV-side voltage",
@@ -783,9 +836,6 @@ function sideKeyFor(file, key, boost){
   if (base==="limits.conf" && ROLE_LIMITS.includes(key)) return side(key)+(key[0]==="i" ? "_i_max" : "_max");
   return null;
 }
-
-// board.conf keys the firmware renamed; setup fails while only the old one is set.
-const RENAMED_KEYS = { "board.conf": { panel_en:"bflow_en", panel_sd:"bflow_sd" } };
 
 // topo of the converter.conf next to `path` ("buck" when it has none, as the firmware reads it).
 function topoFor(path){
@@ -830,7 +880,7 @@ const FILE_KEYS = {
   "converter.conf":["c_in","ctrl_iin_kd","ctrl_iin_kp","ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td",
     "ctrl_power_kd","ctrl_power_kp","ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td",
     "ctrl_vout_kd","ctrl_vout_kp","ctrl_vout_td",
-    "forced_pwm","fpwm_gate","fpwm_gate_hold","fpwm_gate_margin","mode","psu_vout","pv_iout_span","pv_isc","pv_k","pv_slew","pv_voc",
+    "forced_pwm","fpwm_gate","fpwm_gate_hold","fpwm_gate_margin","mode","psu_slew_down","psu_vout","pv_iout_span","pv_isc","pv_k","pv_slew","pv_voc",
     "sync_phase_deg","sync_phase_ns","sync_role","topo"],
   "charger.conf":["balance_delta","balance_hold_s","balance_interval","bat_c","bat_temp_derate","bat_temp_max","bat_temp_min","cv_ceiling","cv_eoc","cv_float","cv_hold_band","cv_hold_max_s","full_charge_interval","holiday_band","holiday_charge","holiday_days","holiday_ibat","ibat_max",
     "partial_charge","recharge_dod","recharge_vfloor_band","tail_c_rate","tail_hold_s","vout_max","vout_max_fallback","vout_offset_max"],
@@ -862,7 +912,7 @@ const TYPE_KEYS = {
     "pv_substrings","scan_trigger"]),
   long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq","i2c_hs_freq",
     "balance_hold_s","cv_hold_max_s","holiday_days","i2c_scl","ina22x_conv_time_us","led_WS2812","led_WS2812B","pasv_port","port","pwm_freq","sprofiler_hz","switch_delay","improv_offline_s","scan_interval","tail_hold_s"]),
-  float: new Set(["L0","balance_delta","balance_interval","bat_c","c_in","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","holiday_charge","holiday_ibat","holiday_band","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_hold_band","cv_float","hv_i_max","hv_max","ibat_max","psu_vout","rect_offset_ns",
+  float: new Set(["L0","balance_delta","balance_interval","bat_c","c_in","lv_pgood_v","bat_temp_derate","bat_temp_max","bat_temp_min","boot_refresh_ns","full_charge_interval","partial_charge","holiday_charge","holiday_ibat","holiday_band","fpwm_gate_margin","cv_ceiling","cv_eoc","cv_hold_band","cv_float","hv_i_max","hv_max","ibat_max","psu_slew_down","psu_vout","rect_offset_ns",
      "ina22x_ov","ina22x_resistor","iout_short","lv_i_max","lv_max","notch_freq","notch_q","p_max",
      "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","recharge_dod","recharge_vfloor_band","sweep_speed","sweep_pace","sweep_verify","tail_c_rate","target_duty_cycle","temp_derate","temp_max",
     "vin_min","vout_max","vout_max_fallback","vout_offset_max",
@@ -895,7 +945,7 @@ const DEFAULTS = {
   // coil.conf
   "rect_offset_ns":"0","rect_cal_auto":"1","rect_offset_cal":"1",
   // converter.conf
-  "c_in":"1e-3","forced_pwm":"0","fpwm_gate":"1","fpwm_gate_hold":"192","fpwm_gate_margin":"0.01","mode":"\"mppt\"","sync_phase_deg":"0","sync_phase_ns":"0","sync_role":"\"none\"","topo":"\"buck\"",
+  "c_in":"1e-3","forced_pwm":"0","fpwm_gate":"1","fpwm_gate_hold":"192","fpwm_gate_margin":"0.01","mode":"\"mppt\"","psu_slew_down":"2","sync_phase_deg":"0","sync_phase_ns":"0","sync_role":"\"none\"","topo":"\"buck\"",
   "ctrl_vin_kp":"-100","ctrl_vin_kd":"-200","ctrl_vout_kp":"1500","ctrl_vout_kd":"12000",
   "ctrl_iin_kp":"100","ctrl_iin_kd":"200","ctrl_iout_kp":"200","ctrl_iout_kd":"400",
   "ctrl_power_kp":"20","ctrl_power_kd":"5",
@@ -945,8 +995,6 @@ function lookupMeta(file, key, inlineComment) {
   const side = sideKeyFor(file, key, false);
   if (side) return {unit:"", type:"", removed:true, desc:`No longer read: role key, migrate to ${side} (buck) / `+
                     `${sideKeyFor(file, key, true)} (boost) with etc/migrate_side_keys.py`};
-  const rn = RENAMED_KEYS[base] && RENAMED_KEYS[base][key];
-  if (rn) return {unit:"", type:"", removed:true, desc:`Renamed to ${rn}; migrate with etc/migrate_side_keys.py`};
   if (FILE_META[base] && FILE_META[base][key]) return FILE_META[base][key];
   if (key === "vout_max") return META_VOUT_MAX;
   if (META[key]) return META[key];
@@ -1455,6 +1503,14 @@ function renderPane(){
     right.appendChild(line);
     const bad = document.createElement("div"); bad.className="bad"; bad.style.display="none";
     right.appendChild(bad);
+    const dep = document.createElement("div"); dep.className="dep";
+    right.appendChild(dep);
+    row._dep = ()=>{
+      const s = depState(base, key), msg = s.unused || s.required || s.needs || "";
+      dep.textContent = msg; dep.hidden = !msg; dep.classList.toggle("muted", !!s.unused);
+      row.classList.toggle("unused", !!s.unused); row._req = !!s.required;
+    };
+    row._dep();
     const origEl = document.createElement("div"); origEl.className="orig"; origEl.style.display="none";
     origEl.title = "Revert to the loaded value"; origEl.setAttribute("role","button"); origEl.tabIndex=0;
     right.appendChild(origEl);
@@ -1474,8 +1530,8 @@ function renderPane(){
       bad.textContent = p; bad.style.display = p ? "" : "none"; row.classList.toggle("invalid", !!p);
     };
     inp.oninput = isExtra
-      ? ()=>{ f.extras[key]=inp.value; row.classList.toggle("filled", inp.value.trim()!==""); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); refreshKeyForm(); refreshCount(); }
-      : ()=>{ setConfValue(model,key,inp.value); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); };
+      ? ()=>{ f.extras[key]=inp.value; row.classList.toggle("filled", inp.value.trim()!==""); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); refreshKeyForm(); refreshCount(); depEdited(base, key); }
+      : ()=>{ setConfValue(model,key,inp.value); updateOrig(); updateClearVis(); markDirty(path); refreshRaw(); depEdited(base, key); };
     updateOrig(); updateClearVis();
 
     row.appendChild(left); row.appendChild(right);
@@ -1499,6 +1555,7 @@ function renderPane(){
       const s = document.createElement("span"); s.className="pfx"; s.textContent=pfx;
       k.textContent = key.slice(pfx.length); k.prepend(s);
     }
+    if (KEY_LABEL[key]){ const s = document.createElement("span"); s.className="klabel"; s.textContent=KEY_LABEL[key]; row.querySelector(".k").append(s); }
     return row;
   }
   function renderItems(items, parent, pfx){
@@ -1510,8 +1567,16 @@ function renderPane(){
       const s = document.createElement("summary");
       const body = document.createElement("div"); body.className="kbody";
       g.append(s, body); parent.appendChild(g);
+      if (it.gate){
+        const b = document.createElement("div"); b.className="gate";
+        const h = document.createElement("div"); h.className="gate-h"; h.textContent=GATE[base].title;
+        const n = document.createElement("div"); n.className="gate-note"; n.textContent=gateNote();
+        b.append(h, n); body.appendChild(b);
+        for (const k of it.gate) b.appendChild(keyRow(k, it.prefix));
+      }
       renderItems(it.items, body, it.prefix);
       const rows = [...body.querySelectorAll(".row")];
+      if (rows.some(r=>r._req)) g.open = true;     // a required, empty key must be in sight
       const nset = rows.filter(r=>!r.classList.contains("extra") || r.classList.contains("filled")).length;
       s.textContent = it.prefix.slice(0,-1);
       const c = document.createElement("span"); c.className="cnt";
@@ -1522,13 +1587,24 @@ function renderPane(){
   }
   // short view: only keys that are set, changed or commonly edited; the rest
   // stay in the DOM, hidden, so the full model is always rendered
+  // a key unused under DEPENDS hides unless it has a value; a used or required one always shows
   const visible = key => {
-    if (showAll || common.has(key) || f.original[key]!==undefined) return true;
-    return !!lineOf(model, key) || String(f.extras[key]||"").trim()!=="";
+    const d = depState(base, key), has = keyHas(f, key);
+    return d.unused ? has : has || showAll || common.has(key) || !!d.used || !!d.required;
   };
   const shown = f.order.filter(visible), rest = f.order.filter(k=>!visible(k));
   const list = document.createElement("div"); list.className="rows";
-  renderItems(keyTree(shown), list, "");
+  const tree = keyTree(shown), gate = GATE[base], gg = gate && tree.find(it=>it.prefix===gate.prefix);
+  if (gg){   // used keys first, in table order
+    gg.gate = gate.keys.filter(k=>gg.items.some(it=>it.key===k)).sort((a,b)=>!!depState(base,a).unused - !!depState(base,b).unused);
+    gg.items = gg.items.filter(it=>!gate.keys.includes(it.key));
+  }
+  function gateNote(){
+    const pins = {InEn:["pwm_in","pwm_en"], HiLi:["pwm_hi","pwm_li"]}[confVal(base, "pwm_driver_logic")], boost = topoFor(path)==="boost";
+    return pins ? `${boost ? "Boost" : "Buck"} (converter.conf topo): ${pins[+boost]} switches, ${pins[+!boost]} rectifies.`
+                : "Set pwm_driver_logic to HiLi or InEn to show the pins it uses.";
+  }
+  renderItems(tree, list, "");
   pane.appendChild(list);
   if (rest.length){
     const hid = document.createElement("div"); hid.className="rows-hidden"; hid.hidden = true;
@@ -1608,6 +1684,68 @@ function changedFields(f){
   }
   return out;
 }
+const fileOf = base => { const p = state && state.confPaths.find(p=>p.split("/").pop()===base); return p ? state.files[p] : null; };
+const keyHas = (f, key) => !!f && (f.original[key]!==undefined || !!lineOf(f.model, key) || String(f.extras[key]||"").trim()!=="");
+function confVal(base, key){
+  const f = fileOf(base), l = f && lineOf(f.model, key);
+  return f ? (l ? l.value : f.extras[key]||"").trim() : "";
+}
+const effVal = (base, key) => confVal(base, key) || String(DEFAULTS[key]||"").replace(/^"(.*)"$/, "$1");
+const condHolds = (c, base) => { const v = effVal(c.file||base, c.key); return c.is ? c.is.includes(v) : v!=="" && !c.not.includes(v); };
+const condText = c => (c.file ? c.file+" " : "") + c.key + (c.is ? "="+c.is.join("|") : " set");
+
+// DEPENDS verdict for one key: {unused, required, needs} messages, used (an `if` holds), ctl (keys it hangs on)
+function depState(base, key){
+  const d = {ctl:[]};
+  for (const r of DEPENDS){
+    if (r.file!==base || !r.keys.includes(key)) continue;
+    const c = r.if, v = confVal(base, key);
+    if (c){
+      const cf = c.file||base, cv = effVal(cf, c.key), opts = (lookupMeta(cf, c.key)||{}).opts;
+      d.ctl.push([cf, c.key]);
+      if (!cv || (opts && !opts.includes(cv))) continue;
+      if (!c.is.includes(cv)){ d.unused = `not used with ${c.key}=${cv}`; continue; }
+      d.used = true;
+      if (r.required && !v) d.required = `required for ${c.key}=${cv}`;
+    } else if (r.required){
+      const opts = (lookupMeta(base, key)||{}).opts;
+      if (!v || (opts && !opts.includes(v))) d.required = (v ? "unknown value, " : "") + "required" + (opts ? ": "+opts.join(" or ") : "");
+    }
+    if (r.needs && !["","0"].includes(effVal(base, key)) && !r.needs.some(n=>condHolds(n, base))){
+      d.ctl.push(...r.needs.map(n=>[n.file||base, n.key]));
+      d.needs = (d.needs ? d.needs+"; " : "") + "needs " + r.needs.map(condText).join(" or ");
+    }
+  }
+  return d;
+}
+// keys whose value hides/shows others: an edit re-renders the pane
+const IF_CTL = new Set(DEPENDS.filter(r=>r.if).map(r=>(r.if.file||r.file)+":"+r.if.key));
+
+function openKeyGroups(path, key){
+  for (let i=key.indexOf("_"); i>0; i=key.indexOf("_",i+1)){ openGroups.add(path+"|"+key.slice(0,i)); openGroups.add(path+"|"+key.slice(0,i+1)); }
+}
+// After an edit of `key` in `base`: re-render if it controls visibility (opening the groups it reveals), else refresh the notes.
+function depEdited(base, key){
+  if (!IF_CTL.has(base+":"+key)){ document.querySelectorAll("#panes .row").forEach(r=>r._dep && r._dep()); return; }
+  for (const r of DEPENDS) if (r.if && (r.if.file||r.file)===base && r.if.key===key){
+    const p = state.confPaths.find(p=>p.split("/").pop()===r.file);
+    if (p) r.keys.forEach(k=>openKeyGroups(p, k));
+  }
+  const a = document.activeElement, id = a && a.id;
+  renderPane(); refreshDirtyMarks();
+  const e = id && document.getElementById(id); if (e) e.focus();
+}
+// Dependency problems that involve a changed key, for the review sheet.
+function depWarnings(cmds){
+  const changed = new Set(cmds.map(c=>c.path.split("/").pop()+":"+c.key)), out = [], seen = new Set();
+  for (const r of DEPENDS) for (const key of r.keys){
+    if (seen.has(r.file+key)) continue; seen.add(r.file+key);
+    const d = depState(r.file, key), msg = (d.unused && keyHas(fileOf(r.file), key) && d.unused) || d.required || d.needs;
+    if (msg && [[r.file, key], ...d.ctl].some(([f,k])=>changed.has(f+":"+k))) out.push(`${r.file} ${key}: ${msg}`);
+  }
+  return out.sort();
+}
+
 // A file is "changed" if any field changed. Reverting every field clears the mark.
 function isFileDirty(f){ return changedFields(f).length > 0; }
 function markDirty(path){ refreshDirtyMarks(); }
@@ -1848,11 +1986,12 @@ function getConfig(file, timeoutMs=3000){
 
 // Send one console command. Streams every reply line to onRx as it arrives and
 // resolves true/false when the device echoes its result marker: console.cpp
-// writes "OK: <cmd>" / "ERR: <cmd>" once handleCommand() returns.
+// writes "OK: <cmd>" / "ERR: <cmd>" once handleCommand() returns. onRx returning
+// true also resolves true (a command that never returns, like `restart`).
 function sendCommand(cmdStr, onRx, timeoutMs=4000){
   return new Promise((resolve,reject)=>{
     const onLine = (ln)=>{
-      if (onRx) onRx(ln);
+      if (onRx && onRx(ln)===true){ done(); resolve(true); return; }
       // match by substring (like getConfig): the marker line can carry a
       // trailing char that would defeat endsWith.
       if (ln.includes("OK: "+cmdStr)){ done(); resolve(true); }
@@ -2333,15 +2472,35 @@ async function ensureConnection(link){
   }
 }
 
-// set-config for new/edited values, del-config for cleared keys
+// "reboot", "live", or the services whose restart applies `key` of `base`
+function applyOf(base, key){
+  const a = APPLY[base], v = a && typeof a==="object" ? (Object.hasOwn(a, key) ? a[key] : a[""]) : a;
+  return !v || v==="reboot" || v==="live" ? v||"reboot" : v.split(" ");
+}
+const listFmt = a => new Intl.ListFormat("en", {type:"conjunction"}).format(a);
+const whenText = w => w==="now" ? "now" : w==="live" ? "when next used" : w==="reboot" ? "after reboot" : "after restarting "+listFmt(w);
+function addNeed(need, w){ if (w==="reboot") need.reboot = true; else if (Array.isArray(w)) w.forEach(x=>need.svcs.add(x)); }
+const needText = n => [...[...n.svcs].map(x=>"restarting "+x), ...(n.reboot ? ["reboot"] : [])].join(", ");
+
+// set-config for new/edited values, del-config for cleared keys; a service's enabled/log_level
+// as `svc on|off|log` (writes the conf and applies it), except switching off the editor's own link.
+// `when`: when the change takes effect (see whenText).
 function pendingCommands(){
   const cmds = [];
   if (!state) return cmds;
+  const t = pushTarget(), own = t && LINK_SVC[t.transport];
   for (const path of state.confPaths){
-    const f = state.files[path], base = path.split("/").pop();
+    const f = state.files[path], base = path.split("/").pop(), svc = SERVICES.includes(base.slice(0,-5)) && base.slice(0,-5);
     for (const {key,cur,orig} of changedFields(f)){
-      if (cur.trim()==="") cmds.push({ str:`del-config ${base} ${key}`, label:base+":"+key, f, key, del:true, path, orig, cur });
-      else cmds.push({ str:`set-config ${base} ${key} ${cur}`, label:base+":"+key, f, key, cur, path, orig, problem:valueProblem(key, cur) });
+      const v = cur.trim(), c = { label:base+":"+key, f, key, path, orig, cur, when:applyOf(base, key) };
+      if (svc && (key==="enabled" || key==="log_level")) c.when = "reboot";
+      if (v===""){ c.del = true; c.str = `del-config ${base} ${key}`; }
+      else {
+        c.str = `set-config ${base} ${key} ${cur}`; c.problem = valueProblem(key, cur);
+        if (svc && key==="enabled" && /^[01]$/.test(v) && !(v==="0" && svc===own)){ c.str = `svc ${v==="1" ? "on" : "off"} ${svc}`; c.when = "now"; }
+        if (svc && key==="log_level" && ["error","warn","info"].includes(v)){ c.str = `svc log ${svc} ${v}`; c.when = "now"; }
+      }
+      cmds.push(c);
     }
   }
   return cmds;
@@ -2368,6 +2527,9 @@ async function uploadChanged(opts){
   const btn = document.getElementById("upload"); btn.disabled = true;
   const weOpened = !activeWrite;
   const failed = []; let ok=0, aborted=false;
+  // what the pushed changes still need applied, collected per target until a reboot
+  const need = state.apply && state.apply.link===target ? state.apply : (state.apply = {link:target, reboot:false, svcs:new Set()});
+  need.ok = false;
   ulOpen(`sending ${cmds.length} command(s) to ${tname}`);
   try {
     await ensureConnection(target);
@@ -2382,7 +2544,7 @@ async function uploadChanged(opts){
       const onRx = ()=>{ got++; };
       try {
         const r = await sendCommand(c.str, onRx);
-        if (r){ ok++; if (c.del) delete c.f.original[c.key]; else c.f.original[c.key] = c.cur; }  // now matches device → clears the mark
+        if (r){ ok++; addNeed(need, c.when); if (c.del) delete c.f.original[c.key]; else c.f.original[c.key] = c.cur; }  // now matches device → clears the mark
         else failed.push(c.label);
       } catch(e){
         ulLine("resp err", `(no marker after ${e.message}; ${got} line(s) received)`);
@@ -2392,18 +2554,63 @@ async function uploadChanged(opts){
   } catch(e){
     showErr("Upload: "+e.message); ulLine("resp err", "connection failed: "+e.message); aborted=true;
   } finally {
-    if (weOpened) await (target.transport==="ble" ? disconnectBluetooth()
-                       : target.transport==="mqtt" ? disconnectMqtt()
-                       : disconnectSerial());
+    if (weOpened) await closeLink(target);
     btn.disabled=false;
     ulRefreshInputState();
     renderPane(); refreshDirtyMarks();   // drop dots/"was:" for fields now on the device
   }
   if (aborted){ ulStat("connection failed", true); return; }   // keep the connection error visible
+  need.ok = !failed.length; renderApply();
   let msg = `uploaded ${ok}/${cmds.length} changed field${cmds.length>1?"s":""}`;
   if (failed.length) msg += " — failed: "+failed.join(", ");
+  else if (need.reboot || need.svcs.size) msg += " — takes effect after: "+needText(need.reboot ? {svcs:[], reboot:true} : need);
   ulStat(`done: ${ok}/${cmds.length} ok`+(failed.length?`, ${failed.length} failed`:""), failed.length>0);
   showStatus(msg, failed.length>0);
+}
+
+const closeLink = t => t.transport==="ble" ? disconnectBluetooth() : t.transport==="mqtt" ? disconnectMqtt() : disconnectSerial();
+
+// Apply bar in the console: after a clean push, the restarts or the reboot the pushed changes need.
+function renderApply(){
+  const box = document.getElementById("apply"), a = state && state.apply;
+  const on = !!(a && a.ok && pushTarget()===a.link && (a.reboot || a.svcs.size));
+  box.hidden = !on;
+  if (!on) return;
+  box.firstElementChild.textContent = "Takes effect after: " + needText(a.reboot ? {svcs:[], reboot:true} : a);
+  box.lastElementChild.replaceChildren(...(a.reboot ? [""] : [...a.svcs]).map(x=>{
+    const b = document.createElement("button"); b.type = "button";
+    b.textContent = x ? "Restart "+x : "Reboot device"; b.onclick = ()=>applyStep(x);
+    return b;
+  }));
+}
+// `svc restart <svc>`, or `restart` for "", on the pushed-to device only
+async function applyStep(svc){
+  const a = state && state.apply, t = pushTarget();
+  if (!a || t!==a.link){ renderApply(); return; }
+  const tname = targetName(t), drops = !svc || LINK_SVC[t.transport]===svc, cmd = svc ? "svc restart "+svc : "restart";
+  if (!svc ? !window.confirm(`Reboot ${tname}?\n\nThe device stops converting and reboots. This editor's connection drops; reconnect from Open when the device is back.`)
+      : drops && !window.confirm(`Restart ${svc} on ${tname}?\n\nThis editor is connected through ${svc}, so its connection drops.`)) return;
+  document.querySelectorAll("#apply button").forEach(b=>b.disabled = true);
+  const weOpened = !activeWrite;
+  let r = "err", refused = false;
+  ulShow(); ulLine("sent", "» "+cmd);
+  try {
+    await ensureConnection(t); ulRefreshInputState();
+    // restart prints "Rebooting" and never returns; refused, it says so and ends with OK
+    const ok = await sendCommand(cmd, ln=>{ if (/restart refused/.test(ln)) refused = true; return /\bRebooting\b/.test(ln); }, 5000);
+    r = ok && !refused ? "ok" : "err";
+  } catch(e){
+    if (e.message==="timeout") r = "gone"; else ulLine("resp err", "connection failed: "+e.message);
+  }
+  const done = r==="ok" || (r==="gone" && drops);
+  if (done){ if (svc) a.svcs.delete(svc); else { a.reboot = false; a.svcs.clear(); } }
+  if ((done && drops) || weOpened) await closeLink(t);
+  const msg = !done ? (r==="gone" ? `no reply to "${cmd}" from ${state.deviceName}` : refused ? `${state.deviceName} refused the restart — see the console` : `"${cmd}" failed — see the console`)
+    : !svc ? `${state.deviceName} is rebooting — reconnect from Open when it is back`
+    : drops ? `restarted ${svc} on ${state.deviceName}; the connection dropped — reconnect from Open`
+    : `restarted ${svc} on ${state.deviceName}`;
+  ulStat(msg, !done); showStatus(msg, !done);
+  ulRefreshInputState(); renderApply();
 }
 
 /* Review sheet: old → new per file, then push or download. */
@@ -2415,6 +2622,12 @@ function renderReview(){
   document.getElementById("review-sub").textContent = cmds.length
     ? `${cmds.length} change${cmds.length>1?"s":""} in ${files.length} file${files.length>1?"s":""}`+(nbad ? `, ${nbad} invalid` : "") : "";
   const dl=document.getElementById("download"), up=document.getElementById("upload"), note=document.getElementById("review-note");
+  const warns = cmds.length ? depWarnings(cmds) : [];
+  if (warns.length){
+    const w=document.createElement("ul"); w.className="rwarn";
+    for (const t of warns){ const li=document.createElement("li"); li.textContent=t; w.appendChild(li); }
+    body.appendChild(w);
+  }
   if (!cmds.length){
     const e=document.createElement("div"); e.className="review-empty";
     const s=document.createElement("strong"); s.textContent="No changes yet";
@@ -2438,6 +2651,7 @@ function renderReview(){
       const nw=document.createElement("span"); nw.className="new"+(c.del?" none":"");
       nw.textContent = c.del ? "removed" : c.cur;
       v.append(o,to,nw);
+      if (target){ const w=document.createElement("span"); w.className="when"; w.textContent=whenText(c.when); v.appendChild(w); }
       const u=document.createElement("button"); u.type="button"; u.className="link undo"; u.textContent="Undo";
       u.onclick=()=>{ revertField(c.path, c.key); if (state.active===c.path) renderPane(); refreshDirtyMarks(); };
       d.append(k,u,v);
@@ -2457,10 +2671,13 @@ function renderReview(){
   dl.classList.toggle("primary", !target || !dirty);
   up.style.display = target && dirty ? "" : "none";
   if (target) up.textContent = `Push ${cmds.length} change${cmds.length>1?"s":""} to ${targetName(target)}`;
+  const need = {svcs:new Set(), reboot:false}; cmds.forEach(c=>addNeed(need, c.when));
+  document.getElementById("review-when").textContent = !(target && dirty) ? ""
+    : need.reboot || need.svcs.size ? "Takes effect after: "+needText(need) : "No restart needed.";
   note.classList.toggle("err", dirty && !!nbad);
   note.textContent = !dirty ? ""
     : nbad ? `${nbad} value${nbad>1?"s are":" is"} invalid (marked above); the firmware rejects or misreads ${nbad>1?"them":"it"}. Fix ${nbad>1?"them":"it"} first, or confirm when pushing.`
-    : target ? `Each change is sent to ${targetName(target)} as a set-config or del-config command and confirmed by the device.`
+    : target ? `Each change is sent to ${targetName(target)} as the command listed above and confirmed by the device.`
     : state && state.fromDevice ? "The device connection changed. Read the device again (Open) to push."
     : "Not read from a device. Download the .zip, or read the device first (Open) and then open this file over it to push the differences.";
 }
@@ -2488,7 +2705,7 @@ function trapTab(e, box){
 function jumpToField(path, key){
   closeReview(true);
   state.active = path;
-  for (let i=key.indexOf("_"); i>0; i=key.indexOf("_",i+1)){ openGroups.add(path+"|"+key.slice(0,i)); openGroups.add(path+"|"+key.slice(0,i+1)); }
+  openKeyGroups(path, key);
   renderApp();
   const row=[...document.querySelectorAll("#panes .row")].find(r=>r._key===key);
   if (row){ row.scrollIntoView({block:"center"}); const i=row.querySelector("input,select"); if (i) i.focus({preventScroll:true}); }
@@ -2501,6 +2718,7 @@ function refreshConn(){
     : t ? (activeWrite ? "Connected to " : "Disconnected from ") + targetName(t)
     : activeWrite ? "Connected" : "Not connected";
   if (document.getElementById("review").classList.contains("open")) renderReview();
+  renderApply();
 }
 
 // Device-log panel: shows every line the device sends (whether triggered by an

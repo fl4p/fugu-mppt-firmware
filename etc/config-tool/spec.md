@@ -286,6 +286,64 @@ A changed row gets a 2 px amber bar at its left edge and an amber input border
   still kept and saved. The review sheet repeats the message and the push asks
   once more (§6).
 
+#### 2.6.1 Key dependencies (`DEPENDS`)
+
+A declarative table; one mechanism (`depState`) applies every rule to the rows
+and the review sheet. A rule names a file and keys plus one of:
+
+* `if: {file?, key, is:[…]}`: the keys are read only while that key (same file
+  unless `file`) has a value in `is`. The value used is the current one, else
+  the firmware default (`DEFAULTS`). An unset value without a default, or a
+  value outside the controller's `opts`, changes nothing.
+* `required`: the key needs a value (while its `if` holds). Without `if`, an
+  enum value outside `opts` is flagged too.
+* `needs: [cond, …]`: the key, when on (not unset or `0`), works only if one of
+  the conditions holds (`{file?, key, is:[…]}` or `{key, not:["0"]}` = set and
+  not 0).
+
+Rows:
+
+* An **unused** key (its `if` fails) that is unset and unchanged is hidden,
+  also under **Show all**. With a value in the file or a pending change it
+  shows faded with "not used with <key>=<value>" (muted), so it can be removed.
+* A **used** key (its `if` holds) shows in the short view even when unset.
+* A **required** key that is empty always shows, with an amber "required for
+  <key>=<value>" ("required: HiLi or InEn" without `if`). A folded group that
+  holds one opens.
+* A failed `needs` shows "needs <cond> or <cond>" in amber under the field.
+
+Notes are non-blocking. Editing a controlling key of an `if` re-renders the
+pane at once (focus stays on the field) and opens the groups of the keys it
+controls; other edits refresh the notes in place. A controller in another file
+takes effect when that file's tab is shown.
+
+Rules (with the firmware source they come from):
+
+| Keys | Rule | Source |
+| ---- | ---- | ------ |
+| board `pwm_driver_logic` | required, `HiLi` or `InEn` (no default; other values throw) | `src/buck.h:1205-1243` |
+| board `pwm_in`, `pwm_en` | used with `pwm_driver_logic=InEn`, required | `src/buck.h:1208-1222` |
+| board `pwm_hi`, `pwm_li` | used with `HiLi`, required | `src/buck.h:1223-1236` |
+| board `pwm_sd` | used with `HiLi` (optional, default 255) | `src/buck.h:1231` |
+| converter `psu_vout` | used with `mode=psu`, required | `src/mppt.cpp:575-576` |
+| converter `pv_isc`, `pv_voc` | used with `mode=pv`, required | `src/mppt.cpp:584-590` |
+| converter `pv_k`, `pv_slew`, `pv_iout_span` | used with `mode=pv` | `src/mppt.cpp:584-590` |
+| board `hs_clamp` | needs `bflow_bat=1` | `src/mppt.h:1632,1650` |
+| board `bflow_bat` | needs `bflow_en` or `bflow_sd` set (pin 0 = none) | `src/pwm/backflow.h:38-39,86` |
+| board `bflow_bat`, `hs_clamp` | need converter.conf `topo=buck` | `src/mppt.h:1632`, `src/mppt.cpp:638` |
+
+`psu_slew_down` is read in every mode (`src/mppt.cpp:609`), so it has no rule.
+
+**Gate driver block** (`GATE`): in board.conf the `pwm` group starts with a
+block "Gate driver": a quiet line, then `pwm_driver_logic` and the pins, used
+ones first. The line names the switching and rectifying pin for converter.conf
+`topo` (absent = buck): buck InEn switches `pwm_in`, rectifies `pwm_en`; buck
+HiLi switches `pwm_hi`, rectifies `pwm_li`; boost swaps them. With the logic
+unset or unknown it says "Set pwm_driver_logic to HiLi or InEn to show the
+pins it uses." The pins carry plain labels next to the key (`KEY_LABEL`): HI,
+high-side input; LI, low-side input; IN, PWM input; EN, enable; DIS, shutdown
+(optional).
+
 ### 2.7 Review sheet
 
 Opened by the primary button. A right-hand sheet (520 px) over a scrim on
@@ -304,18 +362,26 @@ instead).
   old struck through ("not set" in italics when absent, `""` when empty), new
   value, or italic amber "removed" for a cleared key. An invalid new value gets
   an amber wavy underline and the row's number warning below it.
+* With a push target, each change ends with a quiet hint of when it takes
+  effect (§6.1): "now", "after restarting mqtt", "after restarting ftp and
+  http", "after reboot" or "when next used".
+* Above the files, an amber list warns about dependency problems (§2.6.1) that
+  involve a changed key, e.g. "board.conf hs_clamp: needs bflow_bat=1" or
+  "converter.conf psu_vout: required for mode=psu". It does not block the push.
 * A folded disclosure **Commands sent to the device (N)** lists the exact
-  `set-config` / `del-config` commands.
+  commands the push sends (§6.1).
 * With no changes: "No changes yet — Edited fields collect here, so you can
   check them before pushing or saving. You can still download this
   configuration as a backup."
-* **Footer**: a note and the buttons.
+* **Footer**: with a push target and changes, a summary of what applying them
+  needs, "Takes effect after: restarting mqtt, reboot" (services first, then
+  reboot), or "No restart needed."; then a note and the buttons.
 
 | State                          | Note                                               | Buttons |
 | ------------------------------ | -------------------------------------------------- | ------- |
 | no changes                     | (none)                                             | **Download backup .zip** (primary) |
 | changes, no push target        | "Not read from a device. Download the .zip, or read the device first (Open) and then open this file over it to push the differences." | **Download .zip** (primary) |
-| changes, push target           | "Each change is sent to <host> over <transport> as a set-config or del-config command and confirmed by the device." | **Download .zip**, **Push N changes to <host> over <USB serial\|Bluetooth\|MQTT>** (primary) |
+| changes, push target           | "Each change is sent to <host> over <transport> as the command listed above and confirmed by the device." | **Download .zip**, **Push N changes to <host> over <USB serial\|Bluetooth\|MQTT>** (primary) |
 | any invalid value              | "K values are invalid (marked above); the firmware rejects or misreads them. Fix them first, or confirm when pushing." (amber) | as above |
 
 **Push target** (`pushTarget()`): the loaded config came from a device read
@@ -523,7 +589,7 @@ Helpers:
 | Name                                 | Purpose                                                              |
 | ------------------------------------ | -------------------------------------------------------------------- |
 | `getConfig(file, timeoutMs=3000)`    | Sends `get-config <file>`, returns `{key:value, …}` when the device echoes `OK: get-config <file>` |
-| `sendCommand(cmd, onRx, timeoutMs=4000)` | Sends one command; resolves `true`/`false` on the `OK:`/`ERR:` echo; streams lines to `onRx` |
+| `sendCommand(cmd, onRx, timeoutMs=4000)` | Sends one command; resolves `true`/`false` on the `OK:`/`ERR:` echo; streams lines to `onRx`, and `onRx` returning `true` resolves `true` early (`restart` never echoes) |
 | `fetchHostname()`                    | Sends `hostname`, picks the "Hostname: <name>" reply for labelling (2.5 s) |
 | `importFromDevice(label, link)`      | One listener collects `Conf '/littlefs/conf/<file>:<key>' = '<value>'` lines for all `FILE_KEYS` files. Sends every `get-config <file>` back-to-back (pipelined), waits up to 6 s for all `OK: get-config <file>` markers, then re-sends only the files without a marker, up to 2 more passes (2.5 s each). A marker with zero lines means the file is authoritatively absent (no retry); a missing marker means the command or reply was dropped (common over MQTT QoS 0). Files still without a marker are listed in the status line and appear as "Not on device". Then `load()`s the result, sets `state.fromDevice`, `state.deviceName` and `state.link`, and commits `link` (`{transport, handle}`) as `lastTransport` and its granted handle (clearing the other transports' handles). |
 
@@ -595,6 +661,15 @@ changed field (`pendingCommands`), in file-list order:
 
 * `del-config <file> <key>` for fields that are now empty
 * `set-config <file> <key> <value>` for fields the user added or edited
+* `svc on|off <name>` for `enabled` = 1/0, and `svc log <name> <error|warn|info>`
+  for `log_level`, in the conf file of a service (`<name>.conf`, `SERVICES`:
+  mqtt, tele, ftp, http, telnet, tlscon, lcd, scope, ble, bsync). These write
+  the conf like `set-config` and apply it at once (`src/cli.cpp:2193-2205`),
+  and reply `OK:` / `ERR:` like every command (a service missing from the
+  build answers `ERR: …`). Exception: `svc off` for the service the editor is
+  connected through (mqtt over MQTT, ble over Bluetooth) stays `set-config`,
+  so the push does not cut its own link. Other values, and a cleared
+  `enabled`/`log_level` (`del-config`), take effect after a reboot.
 
 `uploadChanged()` refuses ("Nothing to push to: read the config from a device
 first") without a push target (§2.7). The review sheet already lists every
@@ -624,6 +699,54 @@ If a transport was newly opened just for the push, it is closed in the
 `finally` block (the header then reads "Disconnected from <host> over
 <transport>"); if it was
 the live read connection, it stays open.
+
+### 6.1 When a change takes effect, apply step
+
+The firmware applies nothing on `set-config`/`del-config`. `APPLY` maps a file
+(and per-key exceptions) to when its keys take effect; any other file is
+"reboot":
+
+| File | Keys | Takes effect |
+| ---- | ---- | ------------ |
+| mqtt.conf | all | after `svc restart mqtt` |
+| tele.conf | all | after `svc restart tele` |
+| tele.conf | `ble` | when next used (read at every `tele-ble on`) |
+| tele.conf | `adv_ms` | after `svc restart ble` |
+| tele.conf | `idle_interval_ms` | after reboot |
+| ftp.conf | all | after `svc restart ftp` |
+| ftp.conf | `ftp_user`, `ftp_pass` | after `svc restart ftp` and `svc restart http` (HTTP login) |
+| http.conf | all | after `svc restart http` |
+| tlscon.conf | all | after `svc restart tlscon` |
+| bsync.conf | all | after `svc restart bsync` |
+| any service conf | `enabled`, `log_level` | now when pushed as `svc …`, else after reboot |
+| everything else (board, sensor, limits, coil, converter, charger, tracker, pprof, wifi, ble, lcd, …) | all | after reboot |
+
+A push collects, per push target, the services to restart and whether a reboot
+is due (`state.apply`), from the commands the device confirmed. After a push
+with no failed command and no connection failure, the console shows an
+**apply bar** under its head: "Takes effect after: restarting mqtt" with one
+**Restart <name>** button per service, or "Takes effect after: reboot" with
+only **Reboot device** when a reboot is due (it covers the restarts). A failed
+push hides it; a later clean push to the same target shows what has collected.
+The bar only shows while `pushTarget()` is the link that was pushed to, so a
+read of another device hides it and its buttons never send elsewhere.
+
+* **Restart <name>** sends `svc restart <name>` and waits for `OK:`; the
+  button goes. Restarting the service the editor is connected through (mqtt
+  over MQTT, ble over Bluetooth) first asks "Restart <name> on <host>? This
+  editor is connected through <name>, so its connection drops."; a missing
+  reply then counts as done, and the editor closes the link.
+* **Reboot device** asks "Reboot <host> over <transport>? The device stops
+  converting and reboots. This editor's connection drops; reconnect from Open
+  when the device is back." Only after OK it sends `restart` (the firmware
+  stops conversion itself). The device prints `Rebooting` and never answers
+  `OK:`; that line, or no reply in 5 s, counts as rebooting: the apply bar
+  clears, the editor closes the link (header "Disconnected from <host> over
+  <transport>") and the status reads "<host> is rebooting — reconnect from
+  Open when it is back". A refused restart (`restart refused`, then `OK:`) is
+  reported as an error and the button stays.
+
+A link opened just for an apply command is closed afterwards, as for a push.
 
 ---
 

@@ -160,6 +160,41 @@ rewrites every occurrence.
 - An existing empty value (`key=`) is kept if untouched, but an empty value can't be written.
 - In a downloaded `.zip`, a hand-emptied existing key stays as `key=`. Use × to drop the line.
 
+### Dependent keys
+
+Some keys only matter for a certain value of another key. The editor follows these rules from the firmware:
+
+| Keys | Rule |
+|------|------|
+| `pwm_driver_logic` (board) | Required, `HiLi` or `InEn`. The firmware has no default and stops on another value |
+| `pwm_in`, `pwm_en` (board) | Read with `pwm_driver_logic=InEn`, both required |
+| `pwm_hi`, `pwm_li` (board) | Read with `HiLi`, both required |
+| `pwm_sd` (board) | Read with `HiLi`, optional |
+| `psu_vout` (converter) | Read with `mode=psu`, required |
+| `pv_isc`, `pv_voc` (converter) | Read with `mode=pv`, required |
+| `pv_k`, `pv_slew`, `pv_iout_span` (converter) | Read with `mode=pv` |
+| `hs_clamp` (board) | Needs `bflow_bat=1` |
+| `bflow_bat` (board) | Needs `bflow_en` or `bflow_sd` set |
+| `bflow_bat`, `hs_clamp` (board) | Need converter.conf `topo=buck` |
+
+A key that is not read under the current value is hidden while it is unset, also under **Show all**. If it has a value
+or a pending change, it shows faded with "not used with …", so you can remove it. A required key that is empty
+always shows, with an amber "required for …" note, and its group opens. A missing condition shows as "needs …". The
+notes warn but do not block. An unset `mode` counts as `mppt`, its firmware default; an unset or unknown
+`pwm_driver_logic` leaves the pins as they are.
+
+Changing a controlling value updates the rows at once and opens the group with the keys it brings in. A rule that
+depends on another file applies when you open that file's tab.
+
+In board.conf the `pwm` group starts with a **Gate driver** block: `pwm_driver_logic`, then the pins that logic uses,
+each with a plain label (HI, high-side input; LI, low-side input; IN, PWM input; EN, enable; DIS, shutdown). A line
+above them names the switching and the rectifying pin for the converter.conf `topo`:
+
+| Logic | Buck: switches / rectifies | Boost: switches / rectifies |
+|-------|----------------------------|-----------------------------|
+| InEn  | `pwm_in` / `pwm_en`        | `pwm_en` / `pwm_in`         |
+| HiLi  | `pwm_hi` / `pwm_li`        | `pwm_li` / `pwm_hi`         |
+
 ### Removed role keys
 
 The firmware names sensor channels and the four mapped limits by converter side (`hv_v_*`, `lv_i_*`, `hv_max`, …)
@@ -174,6 +209,9 @@ unchanged. The editor shows the firmware's error above the rows, with the replac
 - Each change reads old → new, or → *removed* for a cleared key. An invalid new value is underlined and its warning
   repeated.
 - **Undo** reverts that change. Clicking a key name jumps to its field.
+- With a device to push to, each change says when it takes effect: "now", "after restarting mqtt", "after reboot",
+  or "when next used". The footer sums it up, for example "Takes effect after: restarting mqtt, reboot".
+- An amber list above the files warns about dependent keys a change breaks (see [Dependent keys](#dependent-keys)).
 - **Commands sent to the device** unfolds the exact command list.
 
 The sheet footer holds the save actions:
@@ -181,7 +219,7 @@ The sheet footer holds the save actions:
 | Action                         | Result                                                                                   |
 |--------------------------------|------------------------------------------------------------------------------------------|
 | **Download .zip**              | `<source>-edited.zip` if anything changed, else `<source>-backup-<YYYY-MM-DD>.zip`. Non-`.conf` files from the source are carried over unchanged |
-| **Push N changes to `<hostname>` over …** | `set-config <file> <key> <value>` per added or edited key, `del-config <file> <key>` per cleared key. Only changed fields are sent |
+| **Push N changes to `<hostname>` over …** | `set-config <file> <key> <value>` per added or edited key, `del-config <file> <key>` per cleared key. A service's `enabled` and `log_level` go as `svc on`/`svc off <name>` and `svc log <name> <level>` instead. Only changed fields are sent |
 
 The push button appears only when the loaded config was read from a device, and names that device. It stays
 available after a file or preset is overlaid onto that read. A config loaded from a file or preset alone has no
@@ -192,6 +230,30 @@ without asking for the port or device again. With no changes, the sheet offers *
 A push starts from this button without a second confirmation, unless a value is invalid: then a dialog lists the
 invalid values and asks again. The console opens and shows each command and its reply. A field the device
 confirmed with `OK:` loses its change mark, and fields that failed stay marked.
+
+### Applying a push
+
+The firmware writes a pushed key to its file but does not apply it. When it takes effect depends on the file:
+
+| Change | Takes effect |
+|--------|--------------|
+| `enabled`, `log_level` of a service (mqtt, tele, ftp, http, telnet, tlscon, lcd, scope, ble, bsync) | Now: sent as `svc on`/`svc off`/`svc log`, which also save the file |
+| mqtt.conf | After `svc restart mqtt` |
+| tele.conf | After `svc restart tele`; `adv_ms` after `svc restart ble`; `ble` the next time the stream is started; `idle_interval_ms` after a reboot |
+| ftp.conf | After `svc restart ftp`; `ftp_user` and `ftp_pass` also after `svc restart http`, which uses the same login |
+| http.conf, tlscon.conf, bsync.conf | After restarting that service |
+| Everything else, and a cleared `enabled` or `log_level` | After a reboot |
+
+Switching off the service the editor is connected through (mqtt over MQTT, ble over Bluetooth) is sent as
+`set-config` and takes effect after a reboot, so the push keeps its connection.
+
+After a push in which every command succeeded, the console shows what is still needed, with a button for each step:
+**Restart mqtt** and so on, or only **Reboot device** when a reboot is due, since it covers the restarts. A failed
+push shows no buttons. The buttons only act on the device that was pushed to; reading another device hides them.
+
+**Reboot device** asks first: the converter stops converting, reboots, and the editor's connection drops. It then
+sends `restart`, closes the connection and asks you to reconnect from **Open** when the device is back. Restarting
+the service the editor is connected through also asks first, and drops the connection.
 
 The sheet is a modal dialog: Tab stays inside it, Esc closes it, and focus returns to **Review changes**. Esc also
 closes the **Open** menu and the console.
