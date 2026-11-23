@@ -89,7 +89,7 @@ test('row description renders " · default: <value>" when a default is known', a
   const byKey = Object.fromEntries(rows.map(r => [r._key, r]));
   // has a default → suffix present
   assert.match(byKey.i2c_freq.querySelector('.desc').textContent,    /default:\s*100000/);
-  assert.match(byKey.skip_assert.querySelector('.desc').textContent, /default:\s*0/);
+  assert.match(byKey.skip_assert.querySelector('.desc').textContent, /default:\s*off/);
   // no default scraped (required by firmware) → no suffix
   assert.doesNotMatch(byKey.pwm_freq.querySelector('.desc').textContent, /default:/);
 });

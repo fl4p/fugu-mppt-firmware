@@ -56,6 +56,20 @@
   .row { display:grid; grid-template-columns:minmax(calc(160px - var(--ind,0px)),calc(260px - var(--ind,0px))) 1fr;
          gap:14px; padding:10px 0; border-bottom:1px solid var(--line); align-items:start; }
   .row .k .pfx { color:var(--muted); }
+  .switch { position:relative; display:inline-flex; align-items:center; gap:10px; height:32px; cursor:pointer; user-select:none; }
+  .switch input { position:absolute; opacity:0; width:0; height:0; }
+  .switch .track { position:relative; width:38px; height:20px; border-radius:10px; background:var(--line);
+    border:1px solid var(--line); transition:background .15s; }
+  .switch .track::after { content:""; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%;
+    background:var(--fg); transition:left .15s; }
+  .switch input:checked + .track { background:var(--accent2); border-color:var(--accent2); }
+  .switch input:checked + .track::after { left:20px; }
+  .switch input:focus-visible + .track { outline:2px solid var(--accent); }
+  .switch.unset .track { background:transparent; border-style:dashed; }
+  .switch.unset .track::after { background:var(--muted); opacity:.5; }
+  .switch .sw-txt { font-family:ui-monospace,monospace; font-size:12px; color:var(--muted); }
+  .switch.unset .sw-txt { font-style:italic; }
+  .row.changed .switch .track { box-shadow:0 0 0 1px var(--warn); }
   .kgroup > summary { cursor:pointer; padding:8px 0; border-bottom:1px solid var(--line);
          font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; color:var(--accent); }
   .kgroup > summary .cnt { color:var(--muted); font-size:11px; margin-left:8px; }
@@ -84,6 +98,7 @@
   .row .unit-suffix {
     position:absolute; right:10px; top:50%; transform:translateY(-50%);
     color:var(--unit); font-size:11px; pointer-events:none; user-select:none; white-space:nowrap; }
+  .row select ~ .unit-suffix { right:30px; }
   .row .orig { color:var(--muted); font-size:11px; margin-top:4px; cursor:pointer; width:fit-content; }
   .row .orig:hover { color:var(--fg); text-decoration:underline; }
   .row.extra .val input, .row.extra .val select { background:#0a0d12; border-style:dashed; }
@@ -330,7 +345,7 @@ const META = {
   led_simple:{unit:"GPIO",desc:"Plain on/off status LED pin",type:"int"},
   fan_pwm:{unit:"GPIO",desc:"Cooling fan PWM pin",type:"int"},
   adc_fake_freq:{unit:"Hz",desc:"Mock ADC total fake sample rate (all channels)",type:"int"},
-  idle_cpu_mhz:{unit:"MHz",desc:"CPU clock while the idle power profile is on (converter off 5 min); a converter start waits until the boot clock is back; skipped until reboot if the control loop loses samples at it; 80, 160 or 240, 0 = keep boot clock",type:"int"},
+  idle_cpu_mhz:{unit:"MHz",desc:"CPU clock while the idle power profile is on (converter off 5 min); a converter start waits until the boot clock is back; skipped until reboot if the control loop loses samples at it; 80, 160 or 240, 0 = keep boot clock",type:"int",opts:["0","80","160","240"]},
   ads_alert:{unit:"GPIO",desc:"ADS1x15 ALERT/RDY pin number",type:"int"},
 
   // sensor.conf
@@ -971,8 +986,8 @@ function renderApp(){
 const collapsedGroups = new Set();  // "path|prefix" of folded key groups
 
 // Groups keys by shared "_"-separated prefixes, in first-seen order. Chains with a
-// single branch are merged and a group needs 2+ keys. Returns items {key} or
-// {prefix, n, items}.
+// single branch are merged and a group needs 2+ keys. Single keys come before
+// groups on each level. Returns items {key} or {prefix, n, items}.
 function keyTree(keys){
   const mk = ()=>({kids:new Map(), key:null, n:0, first:null});
   const root = mk();
@@ -992,7 +1007,7 @@ function keyTree(keys){
       if (cur.n===1) out.push({key:cur.first});
       else out.push({prefix:p+"_", n:cur.n, items:(cur.key!=null ? [{key:cur.key}] : []).concat(walk(cur, p+"_"))});
     }
-    return out;
+    return [...out.filter(i=>i.key!=null), ...out.filter(i=>i.key==null)];
   }
   return walk(root, "");
 }
@@ -1033,7 +1048,7 @@ function renderPane(){
     const d = document.createElement("div"); d.className="desc"+(meta && meta.removed ? " err" : "");
     let desc = meta ? meta.desc : "(no description found)";
     const def = lookupDefault(path, key);
-    if (def !== undefined) desc += "  ·  default: " + def;
+    if (def !== undefined) desc += "  ·  default: " + (meta && meta.type==="bool" && (def==="0"||def==="1") ? (def==="1" ? "on" : "off") : def);
     if (meta && meta.fromComment) desc += "  ·  (from file comment)";
     d.textContent = desc;
     left.appendChild(d);
@@ -1041,9 +1056,23 @@ function renderPane(){
     const right = document.createElement("div"); right.className="val";
     const line = document.createElement("div"); line.className="val-line";
     const wrap = document.createElement("div"); wrap.className="inwrap";
-    const opts = meta && (meta.opts || (meta.type==="bool" ? ["0","1"] : null));
+    const knob = meta && meta.type==="bool" && ["","0","1"].includes(value);
+    const opts = !knob && meta && (meta.opts || (meta.type==="bool" ? ["0","1"] : null));
     let inp;
-    if (opts){
+    if (knob){
+      // on/off switch; "" = not set (dashed), the × button clears it again
+      const sw = document.createElement("label"); sw.className="switch";
+      const cb = document.createElement("input"); cb.type="checkbox";
+      const track = document.createElement("span"); track.className="track";
+      const txt = document.createElement("span"); txt.className="sw-txt";
+      sw.append(cb, track, txt);
+      let v = value;
+      const show = ()=>{ cb.checked = v==="1"; sw.classList.toggle("unset", v==="");
+        txt.textContent = v==="" ? (isExtra ? "<not set>" : "(empty)") : v==="1" ? "on" : "off"; };
+      inp = { el:sw, get value(){ return v; }, set value(x){ v=x; show(); } };
+      cb.onchange = ()=>{ v = cb.checked ? "1" : "0"; show(); inp.oninput(); };
+      show();
+    } else if (opts){
       // unknown current values stay selectable so nothing is lost
       inp = document.createElement("select");
       for (const o of ["", ...opts, ...(value && !opts.includes(value) ? [value] : [])]){
@@ -1057,7 +1086,7 @@ function renderPane(){
       inp.spellcheck=false; inp.autocomplete="off";
       if (isExtra) inp.placeholder="<not set>";
     }
-    wrap.appendChild(inp);
+    wrap.appendChild(inp.el || inp);
     if (meta && meta.unit){
       const u = document.createElement("span"); u.className="unit-suffix"; u.textContent=meta.unit;
       wrap.appendChild(u); unitInputs.push([inp,u]);
@@ -1127,7 +1156,7 @@ function renderPane(){
       const g = document.createElement("details"); g.className="kgroup"; g.open = !collapsedGroups.has(id);
       g.ontoggle = ()=>{ g.open ? collapsedGroups.delete(id) : collapsedGroups.add(id); };
       const s = document.createElement("summary");
-      s.innerHTML = escHtml(it.prefix)+'<span class="cnt">'+it.n+'</span>';
+      s.innerHTML = escHtml(it.prefix.slice(0,-1))+'<span class="cnt">'+it.n+'</span>';
       const body = document.createElement("div"); body.className="kbody";
       body.style.setProperty("--ind", (ind+19)+"px");
       g.append(s, body); parent.appendChild(g);

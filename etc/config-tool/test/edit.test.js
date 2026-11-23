@@ -120,3 +120,31 @@ test('"<not set>" vs 0: empty input omits the key, explicit 0 keeps the row', as
   const ch = window.changedFields(f).find(c => c.key === 'pwm_freq');
   assert.equal(ch.orig, '0');
 });
+
+test('bool keys render as a switch: unset → on → off, × clears it, odd values keep a dropdown', async () => {
+  const { window } = await loadEditor();
+  window.load(mk({ 'config/conf/board.conf': 'mcu=esp32s3\nhs_clamp=yes\n' }), 'demo');
+  const f = window._state.files['config/conf/board.conf'];
+
+  let row = rowFor(window, 'skip_assert');
+  let cb = row.querySelector('.switch input');
+  assert.ok(cb, 'skip_assert renders a switch');
+  assert.ok(row.querySelector('.switch').classList.contains('unset'));
+  assert.equal(row.querySelector('.sw-txt').textContent, '<not set>');
+
+  cb.checked = true; cb.dispatchEvent(new window.Event('change'));
+  assert.equal(f.extras.skip_assert, '1');
+  assert.ok(!row.querySelector('.switch').classList.contains('unset'));
+  cb.checked = false; cb.dispatchEvent(new window.Event('change'));
+  assert.equal(f.extras.skip_assert, '0');
+  assert.match(window.serializeFile(f), /^skip_assert=0$/m);
+
+  row.querySelector('.clear-btn').click();
+  row = rowFor(window, 'skip_assert');
+  assert.doesNotMatch(window.serializeFile(f), /skip_assert/);
+  assert.ok(row.querySelector('.switch').classList.contains('unset'));
+
+  const odd = rowFor(window, 'hs_clamp');
+  assert.equal(odd.querySelector('.switch'), null);
+  assert.equal(odd.querySelector('select').value, 'yes');
+});
