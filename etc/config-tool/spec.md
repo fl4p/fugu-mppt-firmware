@@ -135,8 +135,9 @@ Sticky, 56 px. After a load it shows, left to right:
   push target. Every connect, success or failure, updates it;
 * the **status line** (`#serial-status`, §2.9);
 * right-aligned actions: the **Open** menu, the **Console** toggle
-  (`aria-pressed`), the **Services** button (§2.14; icon only at ≤520 px), and
-  the primary **Review changes (N)** button.
+  (`aria-pressed`), the **Services** button (§2.14; icon only at ≤520 px), the
+  **Tests** button (§2.15; icon only at ≤520 px), and the primary **Review
+  changes (N)** button.
 
 **Open menu** (`<details>` dropdown, closes on an outside click, after a
 choice, or with Esc, which returns focus to the **Open** button):
@@ -583,6 +584,92 @@ running command with a spinner), **Refresh** (↻), **Close**.
   clears its "applies when <name> is turned on" note.
 * When the link closes or changes while the sheet is open, the rows are
   replaced by "Not connected" and Refresh is disabled.
+
+### 2.15 Tests sheet
+
+The **Tests** button (pulse icon, `aria-expanded`) has the gating of §2.14
+(`tstTarget()` = `svcTarget()`): only the device the config was read from,
+over its open link. Same sheet behaviour as §2.14 (own scrim `#tst-scrim`,
+focus to **Close**, Tab trap, Esc in the capture phase, scrim, **Close** and
+**Start screen** close it, focus returns to the button). Head: "Tests", the
+target or the running command with a spinner, **Check again** (↻: re-probe),
+**Close**. While a test runs the button icon turns amber.
+
+* **Build probe** (on the first open per device, and on ↻): `help`, parsed
+  by `parseHelp()` (`name[,alias] [<value> …]` per line; a reply without
+  `help` itself is not trusted). A build-optional root that `help` does not
+  list is probed with its bare form, which has no side effect
+  (`measure-coil` → `ERR` "expected l0|ls" = present, "Command not found" =
+  absent). Without a `help` reply every always-built command is assumed and
+  `adc-cal` is hidden. A command that answers "Command not found" when run is
+  hidden from then on. Hidden roots are listed at the end with their build
+  flag. Nothing else is sent on open.
+* **Cards**, grouped Status / Measurements / Self-tests / Calibration:
+  title, a tag (`read-only` grey; amber `drives the converter`, `takes over
+  the converter`, `re-enables starts`), one line on what it does, *Needs*,
+  *Takes* (duration), *Sends* (the exact command, plus the abort command),
+  an amber-bordered risk note for anything that drives the power stage, an
+  option checkbox where the command has one, **Read**/**Run**, **Abort**
+  while its run is in progress (only where the firmware has one), the result
+  (dot + bold summary, green pass, amber fail/warn, detail lines) and a
+  collapsible "Device output (N lines)" with every line received during the
+  run (open while running, folded once a result is in).
+
+| Card | Group | Command | Confirm | Ends on | Then |
+| --- | --- | --- | --- | --- | --- |
+| Protection self-checks | Status | `selftest` | – | marker | – |
+| Low-side timing calibration | Status | `rect-cal status` | – | marker | – |
+| Output wire guard | Status | `wire` | – | marker | – |
+| Last sweep | Status | `sweep-curve` | – | marker | – |
+| ADC calibration (eFuse) | Status | `adc-cal` | – | marker | – |
+| Global MPP sweep | Measurements | `sweep` | confirm | `sweep landed` / `Stop sweep` (90 s) | `sweep-curve` |
+| Coil inductance (L0) | Measurements | `measure-coil l0 [apply]` | typed | `measure-coil: done` (300 s) | – |
+| Backflow switch | Self-tests | `selftest bflow`, abort `selftest abort` | typed | a verdict or `selftest bflow: <why>` line (240 s) | `selftest` |
+| Clear latched faults | Self-tests | `selftest clear` | typed | marker | `selftest` |
+| Low-side timing (rect-cal) | Calibration | `rect-cal [force]`, abort `rect-cal abort` | confirm; typed with force | `rectcal: done:` / `failed:` (120 s) | `rect-cal status` |
+| Low-side timing from a coil sweep | Calibration | `measure-coil ls [apply]` | typed | `measure-coil: done` (300 s) | – |
+
+* **Run** (`tstStart`): refused while another test, a services command or
+  a push runs. It first sends `selftest` (read-only) for the live status line
+  (`V=… I=…A <P>W … st=<mode>,…`) and the latches; then asks. **confirm**:
+  `window.confirm`; **typed**: `window.prompt` and the trimmed answer must equal
+  the hostname. Both texts name the command and the hostname, say what
+  happens (taken over, conversion stops, for how long, mode restored, no abort
+  where there is none, what gets written) and the live power: "<host> is a live
+  power converter: it is converting <P> W (Vin, Vout, mode) now" from 1 W,
+  "is not converting now", or "the current power is unknown". Declining sends
+  nothing more. `selftest clear` with nothing latched stops before asking; the
+  backflow test is not offered on a board whose `selftest` says `not checked
+  (board.conf bflow_bat=0)`, nor started while one already runs.
+* **Refusal**: an `ERR` marker shows "<host> refused “<cmd>”: <reason>", the
+  reason being the firmware's own line about the command (else its last
+  warning), verbatim. Nothing is retried.
+* **Following a run**: every line goes to the card; the run ends on the line in
+  the table, then after 1.2 s the "Then" command gives the result. If the link
+  closes (polled every second) or the time runs out, the state is **unknown**:
+  no result is claimed, and **Check (<cmd>)** reads `selftest`, `rect-cal
+  status` or `sweep-curve`; for `measure-coil`, which has no busy query and
+  suppresses the status line while it runs, `uptime` and whether a status line
+  came back.
+* **Results**: `selftest` → latches and the backflow state line, plus this
+  boot's last verdicts; backflow run → PASS when every phase passed, FAIL with
+  the phase (starts blocked until cleared), else "No verdict: <why>";
+  `measure-coil l0` → "L = x µH" with ring fit/median and noise/systematic
+  error, amber when the zero moved (DISTURBED); `ls` → low-side peak, offset
+  from ideal, the curvature L, the applied offset; rect-cal → applied offset,
+  or "Failed: <why>"; sweep → MPP W at V, amber "No MPP found"; failure lines of
+  `measure-coil` (need Vin>Vout+1, too few points, …) → "No result: …".
+* **Loaded copy**: `applied coil.conf L0=<v>` sets coil.conf `L0` like
+  §2.14's `svcSyncConf`. rect-cal and the `ls` apply save `rect_offset_*` only
+  once the converter has been off, so their result says to read the device
+  again later.
+* **One at a time**: a test run, its `selftest` pre-read and the `help` probe
+  hold the editor's device lock (`devBusy`, the same one `withDevice()` takes
+  for pushes, apply steps and Services actions). While it is held, the other
+  sequences, the console input and the other Run buttons are disabled; Abort
+  is part of the running test and still sends.
+* When the link closes, the cards stay with their results under a "Not
+  connected" note and their buttons disabled; a different device resets them.
 
 ---
 

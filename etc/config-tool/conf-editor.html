@@ -342,6 +342,59 @@
     #open-services .lbl { display:none; }
   }
 
+  /* tests sheet */
+  #open-tests[aria-expanded="true"] { background:var(--field); }
+  #open-tests.running svg { color:var(--accent); }
+  .tst-group { margin:22px 0 2px; font-size:11.5px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--faint); }
+  .tst { padding:14px 0; border-bottom:1px solid var(--line); }
+  .tst-group + .tst { padding-top:8px; }
+  .tst:last-child { border-bottom:0; }
+  .tst-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 10px; }
+  .tst-name { margin:0; font-size:13.5px; font-weight:600; color:var(--fg); }
+  .tst-tag { font-size:12px; color:var(--faint); }
+  .tst-tag.warn { color:var(--accent); }
+  .tst-what { margin:3px 0 0; font-size:12.5px; color:var(--fg-2); }
+  .tst-meta { display:grid; grid-template-columns:auto minmax(0,1fr); gap:1px 10px; margin:6px 0 0; font-size:12px; color:var(--muted); }
+  .tst-meta dt { color:var(--faint); }
+  .tst-meta dd { margin:0; overflow-wrap:anywhere; }
+  .tst-risk { margin:8px 0 0; padding-left:10px; border-left:2px solid var(--accent); font-size:12px; color:var(--fg-2); }
+  .tst-ctl { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; margin-top:10px; }
+  .tst-ctl button { border-color:var(--line-2); padding:5px 12px; }
+  .tst-ctl .tst-opt { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--fg-2); cursor:pointer; margin-right:auto; }
+  .tst-ctl .tst-opt:has(input:disabled) { opacity:.5; cursor:not-allowed; }
+  .tst-ctl .tst-state { font-size:12.5px; color:var(--fg-2); margin-right:auto; }
+  .tst-res { margin:10px 0 0; font-size:12.5px; color:var(--fg-2); }
+  .tst-res:empty { display:none; }
+  .tst-res strong { display:inline-flex; align-items:center; gap:6px; font-weight:600; color:var(--fg); }
+  .tst-res strong::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--line-2); flex:none; }
+  .tst-res.pass strong::before { background:var(--icon); }
+  .tst-res.fail strong, .tst-res.warn strong { color:var(--accent); }
+  .tst-res.fail strong::before, .tst-res.warn strong::before { background:var(--accent); }
+  .tst-res .d { display:block; margin-top:2px; color:var(--muted); font:11.5px/1.5 var(--mono); overflow-wrap:anywhere; }
+  .tst-res .d.err { color:var(--accent); font-family:var(--sans); font-size:12.5px; }
+  .tst-res .recheck { margin-top:6px; border-color:var(--line-2); padding:4px 10px; font-size:12.5px; }
+  .tst.compact { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:16px; }
+  .tst.compact > * { grid-column:1; }
+  .tst.compact > .tst-ctl { grid-column:2; grid-row:1 / span 3; align-self:start; margin-top:0; flex-direction:column; align-items:flex-end; gap:6px; }
+  .tst.compact > .tst-ctl .tst-state { margin:0; order:2; font-size:12px; color:var(--muted); }
+  .tst.compact > .tst-ctl .tst-state:empty { display:none; }
+  .tst.compact > .tst-risk, .tst.compact > .tst-res, .tst.compact > .tst-log { grid-column:1 / -1; }
+  details.tst-log { margin-top:8px; }
+  details.tst-log > summary { font-size:12.5px; }
+  .tst-out { margin-top:8px; max-height:170px; overflow:auto; padding:8px 10px; background:var(--side); border-radius:7px;
+    font:11.5px/1.55 var(--mono); color:var(--muted); white-space:pre; }
+  .tst-out:empty { display:none; }
+  .tst-out .st { color:var(--faint); }
+  .tst-out .w { color:var(--accent); }
+  .tst-empty { padding:30px 0 10px; color:var(--muted); font-size:13px; max-width:44ch; }
+  .tst-empty strong { display:block; color:var(--fg); font-size:14px; font-weight:600; margin-bottom:4px; }
+  .tst-absent { margin-top:18px; font-size:12px; color:var(--faint); }
+  #tst-msg:empty { display:none; }
+  #tst-sub.busy { color:var(--fg-2); }
+  @media (max-width:520px) {
+    #open-tests .lbl { display:none; }
+  }
+
   /* MQTT modal */
   .modal-bg { position:fixed; inset:0; background:var(--scrim); display:none; z-index:100;
     align-items:flex-start; justify-content:center; padding:12vh 16px 40px; overflow:auto; }
@@ -429,6 +482,7 @@
     </details>
     <button id="open-console" type="button" aria-pressed="false" aria-controls="console"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4M12 17h7"/></svg>Console</button>
     <button id="open-services" type="button" aria-label="Services" aria-haspopup="dialog" aria-expanded="false" aria-controls="services" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="7" rx="1.6"/><rect x="3.5" y="13" width="17" height="7" rx="1.6"/><path d="M7.5 7.5h.01M7.5 16.5h.01M11 7.5h6M11 16.5h6"/></svg><span class="lbl">Services</span></button>
+    <button id="open-tests" type="button" aria-label="Tests" aria-haspopup="dialog" aria-expanded="false" aria-controls="tests" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h3.5l2.5-6 4 12 2.5-6H21"/></svg><span class="lbl">Tests</span></button>
     <button id="review-btn" class="primary none" type="button" aria-controls="review"><span class="lbl">Review changes</span><span class="count" id="review-count">0</span></button>
   </div>
 </header>
@@ -530,6 +584,21 @@
   <div class="sheet-foot">
     <p id="svc-msg" class="note" role="status"></p>
     <p class="note">On/off and the log level are saved in the service's <code>.conf</code> file on the device and take effect at once. Restart stops and starts a service without changing its setting.</p>
+  </div>
+</aside>
+
+<div id="tst-scrim" class="scrim"></div>
+<aside id="tests" class="sheet" role="dialog" aria-modal="true" aria-labelledby="tst-title">
+  <div class="sheet-head">
+    <h2 id="tst-title">Tests</h2>
+    <span id="tst-sub" class="sub"></span>
+    <button id="tst-refresh" class="xbtn" type="button" aria-label="Check again" title="Check again which tests the firmware has (help)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4.5h-4.5"/></svg></button>
+    <button id="tst-close" class="xbtn" type="button" aria-label="Close" title="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div id="tst-body" class="sheet-body"></div>
+  <div class="sheet-foot">
+    <p id="tst-msg" class="note" role="status"></p>
+    <p class="note">One test at a time, on the device the config was read from. Nothing runs or repeats on its own; tests that drive the power stage ask first.</p>
   </div>
 </aside>
 
@@ -2695,6 +2764,7 @@ async function uploadChanged(opts){
   }
   if (bad.length && !window.confirm(`${bad.length} value${bad.length>1?"s are":" is"} invalid and the firmware will reject or misread ${bad.length>1?"them":"it"}:\n\n`
       + bad.map(c=>`  ${c.label} = ${c.cur}: ${c.problem}`).join("\n") + `\n\nPush to ${tname} anyway?`)) return;
+  if (devBusy){ showErr(`Wait for ${devBusy} to finish before pushing`); return; }
   closeReview();
   await withDevice("push", ()=>pushCommands(target, cmds));
 }
@@ -3001,6 +3071,7 @@ function refreshConn(){
     : t ? (activeWrite ? "Connected to " : "Disconnected from ") + targetName(t)
     : activeWrite ? "Connected" : "Not connected";
   svcGate();
+  tstGate();
   if (document.getElementById("review").classList.contains("open")) renderReview();
   renderApply();
 }
@@ -3304,6 +3375,617 @@ window.addEventListener("keydown", e=>{
   if (!svcOpenNow()) return;
   if (e.key==="Tab") trapTab(e, document.getElementById("services"));
   else if (e.key==="Escape"){ e.stopPropagation(); svcClose(); }
+}, true);
+
+/* ----------------------------------------------------------------------------
+   Tests sheet: measurements, self-tests and calibrations on the push target
+   (same gating as Services), one at a time. Nothing runs or repeats on its own.
+---------------------------------------------------------------------------- */
+const TST_T = { cmd:4000, probe:4000, settle:1200, poll:1000 };   // ms
+function tstTimings(){ return TST_T; }
+function tstDefs(){ return TESTS; }
+// tstRun: the test in progress; tstHave: command names from `help` (null: unknown); tstGone: roots that
+// answered "Command not found"; tstSt: last parsed `selftest` state. A run holds devBusy (withDevice).
+let tstRun=null, tstDev=null, tstHave=undefined, tstProbing=false, tstSt=null;
+const tstGone=new Set(), tstProbed={}, tstRes=new Map(), tstOpt={};
+function tstBusyNow(){ return !!tstRun; }
+function tstLock(run){ tstRun=run; devBusy = run ? "“"+run.cmd+"”" : null; ulRefreshInputState(); }
+const tstOpenNow = () => document.getElementById("tests").classList.contains("open");
+const tstLine = raw => stripAnsi(raw).replace(/\s+$/,"");
+const tstMsgOf = l => l.replace(/^\s*[IWEDV] \([^)]*\) [\w.-]+: /, "");     // drop the ESP log prefix
+const TST_V = /\bV=\s*(-?[\d.]+)\/\s*(-?[\d.]+) I=\s*(-?[\d.]+)\/\s*(-?[\d.]+)A\s+(-?[\d.]+)W\b.*?\bst=\s*([^,\s]+),/;
+const TST_NOCMD = /\bCommand not found\b/;
+
+// group, card text, the command(s), the confirm level ("plain" | "typed") and how a run ends
+const TESTS = [
+  { id:"selftest", group:"Status", title:"Protection self-checks", root:"selftest", cmd:()=>"selftest",
+    what:"High-side short check and backflow switch: latched faults and the last test result.", dur:"instant" },
+  { id:"rcstatus", group:"Status", title:"Low-side timing calibration", root:"rect-cal", cmd:()=>"rect-cal status",
+    what:"State of the rect-cal self-calibration and the active rect_offset.", dur:"instant" },
+  { id:"wire", group:"Status", title:"Output wire guard", root:"wire", cmd:()=>"wire",
+    what:"Wire-fault protection state, level and learned baseline.", dur:"instant" },
+  { id:"curve", group:"Status", title:"Last sweep", root:"sweep-curve", cmd:()=>"sweep-curve",
+    what:"Maximum power point and points of the last global sweep.", dur:"instant" },
+  { id:"adccal", group:"Status", title:"ADC calibration (eFuse)", root:"adc-cal", cmd:()=>"adc-cal", noProbe:true,
+    what:"What the chip's ADC1 calibration is built from (ESP32-S3 builds).", dur:"instant" },
+
+  { id:"sweep", group:"Measurements", title:"Global MPP sweep", root:"sweep", cmd:()=>"sweep", confirm:"plain",
+    tag:"drives the converter", what:"Sweeps the duty from zero to maximum and reports the panel's maximum power point.",
+    needs:"MPPT or PSU mode; not during a backflow switch test.", dur:"a few seconds",
+    risk:"Output power drops while the duty sweeps; PSU mode is left.",
+    does:()=>"The tracker sweeps the duty from zero to maximum to find the maximum power point, after a short sensor zero calibration. Output power drops for a few seconds; PSU mode is left.",
+    end:/\bsweep landed\b|\bStop sweep\b/, timeout:90000, finish:"sweep-curve", recheck:"sweep-curve" },
+  { id:"coil", group:"Measurements", title:"Coil inductance (L0)", root:"measure-coil", optional:true,
+    cmd:o=>"measure-coil l0"+(o.apply ? " apply" : ""), confirm:"typed", tag:"takes over the converter",
+    what:"Sweeps the duty in DCM and fits the coil inductance from the transfer ratio.",
+    needs:"Vin above Vout + 1 V (sun); bench build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1–1.5 min, no abort",
+    risk:"Stops conversion and drives the half-bridge in manual PWM up to 2 A output. The firmware has no abort for it.",
+    opt:{ key:"apply", label:"Save L0 to coil.conf" },
+    does:o=>"The converter is taken over: conversion stops at once, then the firmware sweeps the duty in manual PWM (diode emulation, up to 2 A output) for about 1–1.5 min and restores the previous mode; from MPPT it restarts with a sweep. There is no abort command."
+      + (o.apply ? "\n\nThe result is written to coil.conf L0 (effective after the next reboot)." : ""),
+    end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
+
+  { id:"bflow", group:"Self-tests", title:"Backflow switch", root:"selftest", cmd:()=>"selftest bflow", abort:"selftest abort",
+    confirm:"typed", tag:"takes over the converter",
+    what:"Checks that the battery-side backflow switch blocks when off and conducts when on.",
+    needs:"A buck with board.conf bflow_bat=1, Vin ≥ 1.2 × Vout and Vout + 3 V, nothing latched, no sweep, rect-cal or backoff.",
+    dur:"10–30 s, up to about 3 min",
+    risk:"Stops conversion, then drives the half-bridge in forced PWM until reverse current flows. A failure blocks every start until the latch is cleared.",
+    does:()=>"The converter is taken over: conversion stops, then the test drives the half-bridge in forced PWM and steps the duty down until reverse current flows through the backflow switch (10–30 s, up to about 3 min). The previous mode is restored at the end.\n\nA FAIL blocks every start until “selftest clear”, also across a reboot.",
+    end:/\bselftest bflow (?:blocks|conducts): (?:PASS|FAIL|ABORTED)\b|\bselftest bflow toggle(?: \([^)]*\))?: (?:PASS|FAIL|ABORTED)\b|\bselftest bflow: (?!started\b|aborting\b|running\b|daily run\b|mode restore\b)/,
+    timeout:240000, finish:"selftest", recheck:"selftest" },
+  { id:"clear", group:"Self-tests", title:"Clear latched faults", root:"selftest", cmd:()=>"selftest clear", confirm:"typed",
+    tag:"re-enables starts", what:"Clears a latched high-side short and a latched backflow switch failure.",
+    needs:"A latch shown by the protection self-checks.", dur:"instant",
+    risk:"The converter may start again. A short that is still there latches again after 3 s; a failed backflow switch is not re-tested by clearing.",
+    does:()=>"The latched faults are cleared and the converter may start again. A high-side short that is still there latches again after 3 s; a backflow switch that failed its test is not re-tested by clearing." },
+
+  { id:"rectcal", group:"Calibration", title:"Low-side timing (rect-cal)", root:"rect-cal", cmd:o=>o.force ? "rect-cal force" : "rect-cal",
+    abort:"rect-cal abort", confirm:o=>o.force ? "typed" : "plain", tag:"drives the converter · writes coil.conf",
+    what:"Steps the low-side window across the coil's zero crossing and calibrates rect_offset_ns.",
+    needs:"MPPT on a buck, sync rect and backflow switch on, DCM at 0.3–4 A (force: any point from 0.3 A), Vin > Vout + 1 V, no limiter.",
+    dur:"up to 60 s", risk:"The converter keeps running at a reduced operating point (about 20–35 W) during the run.",
+    opt:{ key:"force", label:"force: start from any operating point" },
+    does:o=>"The converter stays in MPPT but runs at a reduced operating point (about 20–35 W) for up to 60 s while the low-side window is stepped."
+      + (o.force ? " force starts from any operating point, including full power." : "")
+      + "\n\nA result is applied at once and saved to coil.conf once the converter has been off for about 10 s.",
+    end:/\brectcal: (?:done|failed|refused):/, timeout:120000, finish:"rect-cal status", recheck:"rect-cal status" },
+  { id:"coills", group:"Calibration", title:"Low-side timing from a coil sweep", root:"measure-coil", optional:true,
+    cmd:o=>"measure-coil ls"+(o.apply ? " apply" : ""), confirm:"typed", tag:"takes over the converter",
+    what:"Holds the duty and sweeps the low-side count to locate the rectifier timing peak.",
+    needs:"DCM with Vin > Vout at a low duty; bench build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1.5 min, no abort",
+    risk:"Stops conversion, forces sync rect and the backflow switch on and sweeps the low-side window in manual PWM. The firmware has no abort for it.",
+    opt:{ key:"apply", label:"Apply and save rect_offset" },
+    does:o=>"The converter is taken over: conversion stops at once, sync rect and the backflow switch are forced on, then the firmware holds a low duty and sweeps the low-side window for about 1.5 min and restores the previous mode. There is no abort command."
+      + (o.apply ? "\n\nThe offset is applied at once and saved to coil.conf once the converter is off." : ""),
+    end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
+];
+const TST_GROUPS = ["Status","Measurements","Self-tests","Calibration"];
+const tstDef = id => TESTS.find(d=>d.id===id);
+const tstConfirmLevel = (d, o) => typeof d.confirm==="function" ? d.confirm(o) : d.confirm;
+
+// Command names a `help` reply lists ("name[,alias] [<value> …]" per line), or null without its first line.
+function parseHelp(lines){
+  const names=new Set();
+  for (const raw of lines){
+    const m=tstLine(raw).trim().match(/^([a-z?][\w?.-]*(?:,[\w?.-]+)*)(?:\s+<.*)?$/i);
+    if (m) m[1].split(",").forEach(n=>names.add(n));
+  }
+  return names.has("help") ? names : null;
+}
+
+function tstAvail(d){
+  if (tstGone.has(d.root)) return false;
+  if (tstHave && tstHave.has(d.root)) return true;
+  if (d.optional) return tstProbed[d.root]===true;
+  if (d.noProbe) return false;
+  return !tstHave;                       // `help` listed everything else it has
+}
+
+// The last interim status line in `lines`: power, voltages and mode.
+function tstLive(lines){
+  for (let i=lines.length-1; i>=0; i--){
+    const m=tstLine(lines[i]).match(TST_V);
+    if (m) return { vin:+m[1], vout:+m[2], iin:+m[3], iout:+m[4], p:+m[5], mode:m[6] };
+  }
+  return null;
+}
+
+// `selftest` bare reply → latches, backflow state and this boot's last verdicts.
+function parseSelftest(lines){
+  const r={ hs:null, hsLatched:false, bf:null, bfChecked:null, bfLatched:false, running:false };
+  for (const raw of lines){
+    const l=tstMsgOf(tstLine(raw)); let m;
+    if ((m=l.match(/\bhs-short: (.*)$/))){ r.hs=m[1]; r.hsLatched=/^LATCHED\b/.test(m[1]); }
+    else if (/\bselftest bflow: running\b/.test(l)) r.running=true;
+    else if ((m=l.match(/(?:^|\s)bflow: (.*)$/))){ r.bf=m[1]; r.bfChecked=!/^not checked\b/.test(m[1]); r.bfLatched=/^FAIL LATCHED\b/.test(m[1]); if (/; running$/.test(m[1])) r.running=true; }
+  }
+  return r.hs!==null || r.bf!==null ? r : null;
+}
+
+// Verdict lines of a backflow switch run (bfTestPrint), the last one per phase.
+function parseBflow(lines){
+  const ph=new Map(); let why=null, failLog=null;
+  for (const raw of lines){
+    const l=tstMsgOf(tstLine(raw)); let m;
+    if ((m=l.match(/\bselftest bflow (blocks|conducts): (PASS|FAIL|ABORTED) I=(\S+) A \(min (\S+)\) Vin=(\S+) Vout=(\S+) D=(\S+) dV=(\S+)( \(reverse current\))?/)))
+      ph.set(m[1], { phase:m[1], v:m[2], d:`I=${m[3]} A (min ${m[4]}) Vin=${m[5]} Vout=${m[6]} D=${m[7]} dV=${m[8]}${m[9]||""}` });
+    else if ((m=l.match(/\bselftest bflow toggle \(([^)]*)\): (PASS|FAIL) (I|D Vin-Vout) on (\S+), off (\S+) ([AV]), min step (\S+) V/)))
+      ph.set("toggle", { phase:"toggle ("+m[1]+")", v:m[2], d:`${m[3]} on ${m[4]} ${m[6]}, off ${m[5]} ${m[6]}, min step ${m[7]} V` });
+    else if (/\bselftest bflow toggle: ABORTED\b/.test(l)) ph.set("toggle", { phase:"toggle", v:"ABORTED", d:"" });
+    else if ((m=l.match(/\bselftest bflow: (.+)$/)) && !/^(?:started\b|aborting\b|running\b|daily run\b)/.test(m[1])) why=m[1];
+    else if (/\bbackflow switch FAILED\b/.test(l)) failLog=l;
+  }
+  const p=[...ph.values()];
+  if (!p.length && !why) return null;
+  const fail=p.find(x=>x.v==="FAIL"), details=p.map(x=>`${x.phase}: ${x.v}${x.d ? " "+x.d : ""}`);
+  if (why && why!=="mode restore timed out") details.push("reason: "+why);
+  else if (why) details.push(why);
+  if (fail) return { cls:"fail", text:`Backflow switch FAIL in ${fail.phase.replace(/ \(.*/,"")}: every start is blocked until the latch is cleared`, details };
+  if (p.length && p.every(x=>x.v==="PASS") && (!why || why==="mode restore timed out"))
+    return { cls:"pass", text:`Backflow switch PASS (${p.map(x=>x.phase).join(", ")})`, details };
+  return { cls:"warn", text:`No verdict: ${why && why!=="mode restore timed out" ? why : "aborted"}`, details, failLog };
+}
+
+// `measure-coil` output → summary.
+function parseCoil(lines){
+  let L=null, kind="", bad=null, applied=null, disturbed=false, peak=null, ofs=null, lc=null, lsApplied=null, skip=null, done=false;
+  for (const raw of lines){
+    const l=tstMsgOf(tstLine(raw)); let m;
+    if ((m=l.match(/\bmeasure-coil: L = ([\d.]+) uH\s+\((ring fit|median of)/))){
+      L=m[1]; kind=m[2];
+      const n=l.match(/\+-([\d.]+)% noise \+-([\d.]+)% syst/);
+      kind = kind==="ring fit" ? "ring fit"+(n ? `, ±${n[1]} % noise, ±${n[2]} % syst` : "") : "median of the points, ring not resolved";
+    }
+    else if (/\bDISTURBED\b/.test(l)) disturbed=true;
+    else if ((m=l.match(/\bapplied coil\.conf L0=(\S+)/))) applied=m[1];
+    else if ((m=l.match(/\bmeasure-coil: peak LS ([\d.]+)/))) peak=m[1];
+    else if ((m=l.match(/\boffset peak-ideal ([+-]?\d+) ct/))) ofs=m[1];
+    else if ((m=l.match(/\bL \(peak curvature\) = ([\d.]+) uH/))) lc=m[1];
+    else if ((m=l.match(/\bapplied rect_offset (-?[\d.]+) ns \((-?\d+) ct, ([^)]+)\)/))) lsApplied=`${m[1]} ns (${m[2]} ct, ${m[3]})`;
+    else if ((m=l.match(/\bapply skipped: (.*)$/))) skip=m[1];
+    else if (/\bmeasure-coil: done\b/.test(l)) done=true;
+    else if ((m=l.match(/\bmeasure-coil: ((?:need |only |empty |converter |RT transition|missing |too few |FAILED |L0 not applied|.*restore failed).*)$/)) || (m=l.match(/^\s*(converter disabled \(protection\?\); aborting)/)))
+      bad = bad || m[1];
+  }
+  return { L, kind, bad, applied, disturbed, peak, ofs, lc, lsApplied, skip, done };
+}
+
+// `rect-cal status` → state line fields.
+function parseRectStatus(lines){
+  for (const raw of lines){
+    const m=tstMsgOf(tstLine(raw)).match(/\bstate=(\w+)(?:: (.*?))? auto=(\d) needed=(\d) drv=(\S+) offset=(-?\d+) ct \((-?[\d.]+) ns(, uncalibrated|, bound)?\) backstop=(\d+) unsaved=(\d)/);
+    if (m) return { state:m[1], why:m[2]||"", auto:m[3]==="1", needed:m[4]==="1", drv:m[5], ct:m[6], ns:m[7],
+                    cal:m[8] ? m[8].slice(2) : "calibrated", backstop:+m[9], unsaved:m[10]==="1" };
+  }
+  return null;
+}
+
+// `sweep-curve` header.
+function parseCurve(lines){
+  for (const raw of lines){
+    const l=tstMsgOf(tstLine(raw)); let m;
+    if (/\bsc: none\b/.test(l)) return { none:true };
+    if ((m=l.match(/\bsc: t=(\d+) n=(\d+) mpp=(-?[\d.]+),(-?[\d.]+) sweeping=(\d)(?: flag=(\w+) land=(-?[\d.]+))?/)))
+      return { t:+m[1], n:+m[2], p:m[3], v:m[4], sweeping:m[5]==="1", flag:m[6]||"", land:m[7]||"" };
+  }
+  return null;
+}
+
+const fmtAgo = t => { const s=Math.round(Date.now()/1000 - t); return !(t>1e9) || s<0 ? "" : s<90 ? `${s} s ago` : s<5400 ? `${Math.round(s/60)} min ago` : `${(s/3600).toFixed(1)} h ago`; };
+
+// Summary {cls, text, details} of a finished command or run.
+function tstSummary(id, lines, extra){
+  let r;
+  switch (id){
+    case "selftest": {
+      const s=parseSelftest(lines); if (!s) return null;
+      const bf=parseBflow(lines);
+      const details=[ "high-side short: "+(s.hs||"?"), "backflow switch: "+(s.bf||"?"), ...(bf && !s.running ? bf.details.map(x=>"last run "+x) : []) ];
+      if (s.running) details.push("backflow switch test running");
+      return { cls: s.hsLatched || s.bfLatched ? "fail" : "pass",
+               text: s.hsLatched && s.bfLatched ? "High-side short and backflow switch failure latched: starts blocked"
+                   : s.hsLatched ? "High-side short latched: starts blocked" : s.bfLatched ? "Backflow switch failure latched: starts blocked"
+                   : "Nothing latched", details };
+    }
+    case "rcstatus": {
+      const s=parseRectStatus(lines); if (!s) return null;
+      return { cls: s.state==="failed" ? "warn" : s.cal==="calibrated" ? "pass" : "",
+               text:`rect_offset ${s.ns} ns (${s.ct} ct, ${s.drv}), ${s.cal}`,
+               details:[ `state ${s.state}${s.why ? ": "+s.why : ""}`, `auto ${s.auto ? "on" : "off"}, recalibration ${s.needed ? "needed" : "not needed"}, backstop ${s.backstop}×`,
+                         ...(s.unsaved ? ["not saved yet: saved to coil.conf once the converter has been off for about 10 s"] : []) ] };
+    }
+    case "wire": {
+      const l=lines.map(x=>tstMsgOf(tstLine(x))).find(x=>/^wire: /.test(x)); if (!l) return null;
+      const m=l.match(/^wire: (.*?), level (\w+) \(effective (\w+)\)( TRIPPED)?/);
+      if (!m) return { cls:"", text:l.replace(/^wire: /,"Wire guard ") , details:[] };
+      return { cls: m[4] ? "fail" : m[3]!=="ok" ? "warn" : "pass", text:`Wire guard ${m[1]}, level ${m[3]}${m[4] ? ", TRIPPED" : ""}`,
+               details:lines.map(x=>tstMsgOf(tstLine(x))).filter(x=>/^\s+(?:baseline|Iref):/.test(x)).map(x=>x.trim()) };
+    }
+    case "curve": case "sweep": {
+      const c=parseCurve(lines);
+      if (id==="sweep" && extra && extra.noMpp) return { cls:"warn", text:"No MPP found", details:[extra.noMpp.replace(/^no MPP\s*/,"").replace(/^\((.*)\)/,"$1")] };
+      if (!c) return null;
+      if (c.none) return { cls:"", text:"No sweep yet", details:[] };
+      const ago=fmtAgo(c.t);
+      return { cls: c.flag==="light" ? "warn" : c.sweeping ? "" : "pass",
+               text: c.sweeping ? `Sweeping: ${c.n} points so far` : `MPP ${c.p} W at ${c.v} V`,
+               details:[ `${c.n} points${ago ? ", "+ago : ""}`, ...(c.flag==="light" ? [`landing ${c.land} W missed the sweep's value (flag light)`] : c.flag ? [`verified, landed ${c.land} W`] : []) ] };
+    }
+    case "adccal": {
+      const v=lines.map(x=>tstLine(x)).map(x=>x.match(/ADCCAL efuse_ver=(\d+)/)).find(Boolean);
+      if (!v) return null;
+      const g=lines.map(x=>tstLine(x).match(/ADCCAL adc1 atten=(\d) .*?gain_uv_per_code=([\d.]+)/)).filter(Boolean);
+      return { cls:"pass", text:`eFuse calibration version ${v[1]}`, details:g.map(m=>`atten ${m[1]}: ${m[2]} µV/code`) };
+    }
+    case "coil": case "coills": {
+      const c=parseCoil(lines);
+      if (id==="coil" && c.L) return { cls: c.disturbed ? "warn" : "pass", text:`L = ${c.L} µH`, details:[ c.kind,
+        c.disturbed ? "Iout zero moved by more than 0.02 A during the sweep: not for coil.conf" : c.applied ? `saved to coil.conf: L0=${c.applied} (effective after the next reboot)` : "",
+        c.bad ? c.bad : "" ].filter(Boolean) };
+      if (id==="coills" && c.peak) return { cls:"pass", text:`Low-side peak at ${c.peak} ct`+(c.ofs ? `, ${c.ofs} ct from ideal` : ""), details:[
+        c.lc ? `L ≈ ${c.lc} µH (peak curvature, cross-check)` : "",
+        c.lsApplied ? `applied rect_offset ${c.lsApplied}; saved to coil.conf once the converter is off. Read the device again later to see it.` : "",
+        c.skip ? "apply skipped: "+c.skip : "", c.bad || "" ].filter(Boolean) };
+      if (c.bad) return { cls:"fail", text:"No result: "+c.bad, details:[] };
+      return c.done ? { cls:"warn", text:"No result in the output", details:[] } : null;
+    }
+    case "bflow": return parseBflow(lines);
+    case "rectcal": {
+      let done=null, fail=null;
+      for (const raw of lines){
+        const l=tstMsgOf(tstLine(raw)); let m;
+        if ((m=l.match(/\bdone: hs=\d+ .*?applied ([+-]?\d+) ct(.*?) \((-?[\d.]+) ns, ([^,]+), (\d+) pts\)/))) done={ ct:m[1], bound:/bound/.test(m[2]), ns:m[3], drv:m[4], n:m[5] };
+        else if ((m=l.match(/\b(?:failed|refused): (.*?) \((\d+) pts\), offset stays (-?\d+) ct/))) fail={ why:m[1], ct:m[3] };
+      }
+      const s=parseRectStatus(lines);
+      if (done) return { cls:"pass", text:`rect_offset ${done.ns} ns (${+done.ct} ct, ${done.drv})${done.bound ? ", a bound" : ""}`, details:[ `${done.n} points`,
+        s && !s.unsaved ? "saved to coil.conf" : "applied now; saved to coil.conf once the converter has been off for about 10 s. Read the device again then to see it." ] };
+      if (fail) return { cls:"fail", text:"Failed: "+fail.why, details:[ `offset stays ${fail.ct} ct` ] };
+      return s && s.state==="failed" ? { cls:"fail", text:"Failed: "+s.why, details:[] } : null;
+    }
+    case "clear": {
+      const l=lines.map(x=>tstMsgOf(tstLine(x))).find(x=>/\bselftest: cleared\b/.test(x));
+      return l ? { cls:"pass", text:"Cleared"+l.replace(/^.*?selftest: cleared/,""), details:["the start stays blocked until the high-side short check sees a clean sample"] } : null;
+    }
+  }
+  return r||null;
+}
+
+function tstTarget(){ return svcTarget(); }
+
+function tstGate(){
+  const t=tstTarget(), b=document.getElementById("open-tests");
+  b.disabled = !t;
+  b.classList.toggle("running", !!tstRun);
+  b.title = t ? "Tests on "+targetName(t)+(tstRun ? " — "+tstRun.cmd+" running" : "") : "Connect to the device the config was read from";
+  const dev = state && state.deviceName;
+  if (dev!==tstDev && !tstRun){ tstDev=dev; tstHave=undefined; tstGone.clear(); for (const k in tstProbed) delete tstProbed[k]; tstRes.clear(); tstSt=null; }
+  if (tstOpenNow()) tstRender();
+}
+
+function tstSetMsg(text, isErr){
+  const m=document.getElementById("tst-msg");
+  m.textContent=text||""; m.classList.toggle("err", !!isErr);
+}
+
+// One command with its reply lines; ok: true (OK), false (ERR), null (no marker / write failed).
+async function tstSend(cmd, onLine, ms){
+  const lines=[]; let ok;
+  try { ok = await sendCommand(cmd, ln=>{ lines.push(ln); if (onLine) onLine(ln); }, ms||TST_T.cmd); } catch(_){ ok=null; }
+  return { ok, lines };
+}
+
+// The firmware's reason from an ERR reply, verbatim: its last line about the command, else its last warning.
+function tstRefusal(lines, cmd){
+  const root=(cmd||"").split(" ")[0], ls=[...lines].map(tstLine).reverse().filter(x=>!/\b(?:OK|ERR): /.test(x));
+  const l = (root && ls.find(x=>tstMsgOf(x).startsWith(root))) || ls.find(x=>/^\s*[WE] \(/.test(x));
+  return l ? tstMsgOf(l) : "";
+}
+
+async function tstProbe(){
+  const t=tstTarget();
+  if (!t || tstProbing || devBusy) return;
+  tstProbing=true; devBusy="“help”"; ulRefreshInputState(); tstSetMsg(""); tstRender();
+  const h=await tstSend("help", null, TST_T.probe);
+  if (tstTarget()===t){
+    tstHave = h.ok ? parseHelp(h.lines) : null;
+    for (const root of new Set(TESTS.filter(d=>d.optional).map(d=>d.root))){
+      if (tstHave && tstHave.has(root)) continue;
+      const p=await tstSend(root, null, TST_T.probe);       // bare: ERR "expected …", no side effect
+      tstProbed[root] = p.ok!==null && !p.lines.some(l=>TST_NOCMD.test(l));
+    }
+    if (h.ok===null) tstSetMsg("No reply to “help”: tests the firmware may lack are hidden.", true);
+  }
+  tstProbing=false; devBusy=null; ulRefreshInputState();
+  tstRender();
+}
+
+function tstConvText(live){
+  const dev=state.deviceName;
+  if (!live) return `The current power of ${dev} is unknown (no status line).`;
+  const pt = `${live.p.toFixed(1)} W (Vin ${live.vin} V, Vout ${live.vout} V, ${live.mode.trim()})`;
+  return Math.abs(live.p) >= 1 ? `${dev} is a live power converter: it is converting ${pt} now.` : `${dev} is not converting now: ${pt}.`;
+}
+
+// Ask before anything that drives the power stage or clears a latch; typed: the device name must be typed.
+function tstAsk(d, o, live, extra){
+  const dev=state.deviceName, lvl=tstConfirmLevel(d, o);
+  if (!lvl) return true;
+  const msg = `${d.title}: run “${d.cmd(o)}” on ${dev}?\n\n${tstConvText(live)}\n\n${extra ? extra+"\n\n" : ""}${d.does(o)}`;
+  if (lvl!=="typed") return window.confirm(msg);
+  const typed = window.prompt(`${msg}\n\nType the device name (${dev}) to confirm:`, "");
+  return typed!=null && typed.trim()===dev;
+}
+
+function tstResult(id){ let r=tstRes.get(id); if (!r) tstRes.set(id, r={ st:"idle", lines:[], sum:null, note:"", noteErr:false, recheck:false }); return r; }
+function tstPush(r, ln){ r.lines.push(ln); if (r.lines.length>400) r.lines.splice(0, r.lines.length-400); }
+
+// Read-only status command.
+async function tstRead(id){
+  const d=tstDef(id), t=tstTarget();
+  if (!t || tstRun || tstProbing) return;
+  if (devBusy){ tstSetMsg(`Wait for ${devBusy} to finish.`, true); return; }
+  const r=tstResult(id), cmd=d.cmd(tstOpt[id]||{});
+  tstLock({ id, cmd, link:t }); r.st="run"; r.lines=[]; r.sum=null; r.note=""; r.recheck=false; tstGate();
+  const x=await tstSend(cmd, ln=>{ tstPush(r, ln); tstPaint(id); }, d.id==="adccal" ? 8000 : TST_T.cmd);
+  tstLock(null);
+  tstFinishRead(id, d, cmd, x);
+  tstGate();
+}
+function tstFinishRead(id, d, cmd, x){
+  const r=tstResult(id);
+  if (x.lines.some(l=>TST_NOCMD.test(l))){ tstGone.add(d.root); r.st="idle"; tstSetMsg(`“${d.root}” is not in this firmware build; its tests are hidden.`, true); return; }
+  if (x.ok===true){
+    r.sum=tstSummary(id, x.lines); r.st="done"; r.fold=true;
+    if (!r.sum){ r.note="Reply not recognised; see the output."; r.noteErr=true; }
+    if (id==="selftest") tstSt=parseSelftest(x.lines);
+  } else if (x.ok===false){ r.st="refused"; r.note=`The device refused “${cmd}”: `+(tstRefusal(x.lines, cmd)||"no reason given"); r.noteErr=true; }
+  else { r.st="unknown"; r.note=`No reply to “${cmd}” within ${TST_T.cmd/1000} s.`; r.noteErr=true; }
+}
+
+// A test that drives the power stage or changes protection state: read the live state, confirm, start,
+// follow the output until it ends, then read the result. Ends "unknown" on a lost link or a timeout.
+async function tstStart(id){
+  const d=tstDef(id), t=tstTarget(), dev=state && state.deviceName;
+  if (!t || tstRun || tstProbing) return;
+  if (devBusy){ tstSetMsg(`Wait for ${devBusy} to finish.`, true); return; }
+  const o={...(tstOpt[id]||{})}, cmd=d.cmd(o), r=tstResult(id);
+  tstLock({ id, cmd, link:t }); tstSetMsg(""); r.note=""; r.recheck=false; tstGate();
+  const end = (st, note, isErr) => { r.st=st; r.note=note||""; r.noteErr=!!isErr; r.fold = st==="done"; tstLock(null); tstGate(); };
+
+  // live power and latches, for the confirm and the clear
+  const pre=await tstSend("selftest");
+  if (tstTarget()!==t) return end("idle", `The link to ${dev} closed; nothing was sent.`, true);
+  if (pre.ok!==true) return end("idle", pre.ok===false ? `“selftest” was refused (${tstRefusal(pre.lines, "selftest")||"no reason"}); nothing was started.` : `No reply to “selftest” from ${dev}; nothing was started.`, true);
+  const st=parseSelftest(pre.lines); if (st){ tstSt=st; const s=tstResult("selftest"); s.sum=tstSummary("selftest", pre.lines); s.st="done"; }
+  let extra="";
+  if (id==="clear"){
+    if (st && !st.hsLatched && !st.bfLatched) return end("idle", `Nothing is latched on ${dev}; nothing was sent.`);
+    if (st) extra = "Latched: "+[st.hsLatched && "high-side short", st.bfLatched && "backflow switch failure"].filter(Boolean).join(" and ")+".";
+  }
+  if (id==="bflow" && st && st.running) return end("idle", `A backflow switch test is already running on ${dev} (daily run?).`, true);
+  if (!tstAsk(d, o, tstLive(pre.lines), extra)) return end("idle", "Not started.");
+  if (tstTarget()!==t) return end("idle", `The link to ${dev} closed; nothing was sent.`, true);
+
+  r.st="run"; r.lines=[]; r.sum=null; tstPaint(id);
+  const onLine = ln => { tstPush(r, ln); tstPaint(id); };
+  const x=await tstSend(cmd, onLine);
+  if (x.lines.some(l=>TST_NOCMD.test(l))){ tstGone.add(d.root); end("idle"); tstSetMsg(`“${d.root}” is not in this firmware build; its tests are hidden.`, true); return; }
+  if (x.ok===false) return end("refused", `${dev} refused “${cmd}”: `+(tstRefusal(x.lines, cmd)||"no reason given"), true);
+  if (x.ok===null){ r.recheck=!!d.recheck; return end("unknown", `No reply to “${cmd}” from ${dev}: whether it started is unknown.`, true); }
+  if (!d.end){                                                   // one-shot (selftest clear)
+    r.sum=tstSummary(id, x.lines);
+    const s=await tstSend("selftest");
+    if (s.ok===true){ tstSt=parseSelftest(s.lines); const sr=tstResult("selftest"); sr.sum=tstSummary("selftest", s.lines); sr.st="done"; }
+    return end("done");
+  }
+
+  // follow the run
+  const t0=Date.now(); let ended=false, lost=false, noMpp=null;
+  const follow = ln => { onLine(ln); const m=tstLine(ln); if (d.end.test(m)){ ended=true; const n=m.match(/\bStop sweep: (.*)$/); if (n) noMpp=n[1]; } };
+  lineListeners.add(follow);
+  tstRun.since=t0; tstGate();
+  while (!ended){
+    await svcSleep(TST_T.poll);
+    if (tstTarget()!==t){ lost=true; break; }
+    if (Date.now()-t0 > d.timeout) break;
+  }
+  if (ended){ await svcSleep(TST_T.settle); }
+  lineListeners.delete(follow);
+  if (lost){ r.recheck=!!d.recheck; return end("unknown", `The link to ${dev} closed during the test: its state is unknown. Read the device again (Open), then check.`, true); }
+  if (!ended){ r.recheck=!!d.recheck; return end("unknown", `No end of the test within ${Math.round(d.timeout/1000)} s: its state is unknown.`, true); }
+
+  let res=[...r.lines];
+  if (d.finish){
+    const f=await tstSend(d.finish, ln=>tstPush(r, ln));
+    if (f.ok===true) res=res.concat(f.lines);
+    if (d.finish==="selftest" && f.ok===true){
+      const s=parseSelftest(f.lines); if (s){ tstSt=s; const sr=tstResult("selftest"); sr.sum=tstSummary("selftest", f.lines); sr.st="done"; }
+      if (s && s.running){ r.recheck=true; return end("unknown", "The device still reports the test as running.", true); }
+      const fin=parseBflow(f.lines); if (fin) res=f.lines;         // the device's own record of the run
+    }
+  }
+  r.sum=tstSummary(id, res, { noMpp });
+  if (id==="coil"){ const c=parseCoil(res); if (c.applied) svcSyncConf("coil", "L0", c.applied); }
+  end("done", r.sum ? "" : "Run ended; the result was not recognised. See the output.", !r.sum);
+}
+
+async function tstAbort(id){
+  const d=tstDef(id), t=tstTarget(), r=tstResult(id);
+  if (!t || !tstRun || tstRun.id!==id || !d.abort) return;
+  const x=await tstSend(d.abort, ln=>{ tstPush(r, ln); tstPaint(id); });
+  if (x.ok===false){ r.note=`“${d.abort}” refused: `+(tstRefusal(x.lines, d.abort)||"no reason"); r.noteErr=true; }
+  else if (x.ok===null){ r.note=`No reply to “${d.abort}”.`; r.noteErr=true; }
+  else r.note="Abort sent; waiting for the device to stop the test.";
+  tstPaint(id);
+}
+
+// After a lost link or a timeout: read the device's state, never claim a result.
+async function tstRecheck(id){
+  const d=tstDef(id), t=tstTarget(), r=tstResult(id);
+  if (!t || devBusy || !d.recheck) return;
+  tstLock({ id, cmd:d.recheck, link:t }); tstGate();
+  const x=await tstSend(d.recheck);
+  tstLock(null);
+  if (x.ok!==true){ r.note=`No answer to “${d.recheck}”: still unknown.`; r.noteErr=true; tstGate(); return; }
+  if (d.recheck==="uptime"){            // measure-coil suppresses the status line while it runs
+    r.note = tstLive(x.lines) ? `${state.deviceName} prints its status line again: no coil measurement is running. Read the device again (Open) to see whether coil.conf changed.`
+                              : `${state.deviceName} printed no status line: a coil measurement may still be running.`;
+    r.noteErr=!tstLive(x.lines);
+  } else if (d.recheck==="selftest"){
+    const s=parseSelftest(x.lines); if (s){ tstSt=s; const sr=tstResult("selftest"); sr.sum=tstSummary("selftest", x.lines); sr.st="done"; }
+    const b=parseBflow(x.lines);
+    r.note = s && s.running ? "The test is still running on the device." : b ? "Last run on the device: "+b.text : "No result of this boot on the device: "+((s && s.bf) || "unknown");
+    r.noteErr = !!(s && s.running) || !b || b.cls!=="pass";
+  } else {
+    const sum=tstSummary(d.recheck==="rect-cal status" ? "rcstatus" : "curve", x.lines);
+    r.note = sum ? "Device now: "+sum.text : "Reply not recognised.";
+    r.noteErr = !sum;
+  }
+  r.recheck = r.noteErr;
+  tstGate();
+}
+
+function tstRender(){
+  const t=tstTarget(), body=document.getElementById("tst-body"), sub=document.getElementById("tst-sub");
+  const busy = tstProbing ? "checking the firmware" : tstRun ? tstRun.cmd : "";
+  sub.classList.toggle("busy", !!busy);
+  sub.textContent = busy ? busy+" …" : t ? targetName(t) : "not connected";
+  document.getElementById("tst-refresh").disabled = !t || !!devBusy;
+  const empty=(h, p)=>{ const e=document.createElement("div"); e.className="tst-empty";
+    const s=document.createElement("strong"); s.textContent=h; e.append(s, p); body.replaceChildren(e); body._key=null; };
+  if (!t && !tstRun && tstHave===undefined) return empty("Not connected", "Read the device again (Open) to run tests on it.");
+  if (tstProbing || tstHave===undefined) return empty("Checking the firmware", "Reading which tests this firmware build has (help).");
+  if (body._key!==tstKey()) tstBuild(body);
+  body.querySelector(".tst-off").hidden = !!t;
+  TESTS.forEach(d=>tstPaint(d.id));
+}
+
+const tstKey = () => [tstDev, tstHave ? [...tstHave].join() : String(tstHave), ...TESTS.map(tstAvail)].join("|");
+function tstBuild(body){
+  body._key=tstKey();
+  const off=document.createElement("div"); off.className="tst-empty tst-off";
+  const os=document.createElement("strong"); os.textContent="Not connected";
+  off.append(os, "Read the device again (Open) to run tests on it. Results below are from before the link closed.");
+  const out=[off];
+  for (const g of TST_GROUPS){
+    const defs=TESTS.filter(d=>d.group===g && tstAvail(d));
+    if (!defs.length) continue;
+    const h=document.createElement("h3"); h.className="tst-group"; h.textContent=g; out.push(h);
+    for (const d of defs){
+      const c=document.createElement("section"); c.className="tst"+(d.opt ? "" : " compact"); c.dataset.tst=d.id;
+      const hd=document.createElement("div"); hd.className="tst-head";
+      const n=document.createElement("h4"); n.className="tst-name"; n.textContent=d.title;
+      const tg=document.createElement("span"); tg.className="tst-tag"+(d.tag ? " warn" : ""); tg.textContent=d.tag||"read-only";
+      hd.append(n, tg);
+      const w=document.createElement("p"); w.className="tst-what"; w.textContent=d.what;
+      const dl=document.createElement("dl"); dl.className="tst-meta";
+      const kv=(k,v,code)=>{ const dt=document.createElement("dt"); dt.textContent=k; const dd=document.createElement("dd");
+        if (code){ const cc=document.createElement("code"); cc.className="tst-cmd"; cc.textContent=v; dd.append(cc); } else dd.textContent=v; dl.append(dt, dd); };
+      if (d.needs) kv("Needs", d.needs);
+      kv("Takes", d.dur);
+      kv("Sends", "", true);
+      c.append(hd, w, dl);
+      if (d.risk){ const rk=document.createElement("p"); rk.className="tst-risk"; rk.textContent=d.risk; c.append(rk); }
+      const ctl=document.createElement("div"); ctl.className="tst-ctl";
+      if (d.opt){
+        const lb=document.createElement("label"); lb.className="tst-opt";
+        const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=!!(tstOpt[d.id]||{})[d.opt.key];
+        cb.onchange=()=>{ tstOpt[d.id]={...(tstOpt[d.id]||{}), [d.opt.key]:cb.checked}; tstPaint(d.id); };
+        lb.append(cb, document.createTextNode(d.opt.label)); ctl.append(lb);
+      } else { const s=document.createElement("span"); s.className="tst-state"; ctl.append(s); }
+      const run=document.createElement("button"); run.type="button"; run.className="run";
+      run.textContent = d.end || d.confirm ? "Run" : "Read";
+      run.onclick=()=> d.end || d.confirm ? tstStart(d.id) : tstRead(d.id);
+      ctl.append(run);
+      if (d.abort){ const ab=document.createElement("button"); ab.type="button"; ab.className="abort"; ab.textContent="Abort"; ab.onclick=()=>tstAbort(d.id); ctl.append(ab); }
+      const res=document.createElement("div"); res.className="tst-res"; res.setAttribute("role","status");
+      const lg=document.createElement("details"); lg.className="fold tst-log"; lg.hidden=true;
+      const sm=document.createElement("summary"); sm.textContent="Device output";
+      const o=document.createElement("div"); o.className="tst-out"; o.setAttribute("role","log"); o.setAttribute("aria-label", d.title+" output");
+      lg.append(sm, o);
+      c.append(ctl, res, lg);
+      out.push(c);
+    }
+  }
+  const hidden=[...new Set(TESTS.filter(d=>!tstAvail(d)).map(d=>d.root))];
+  if (hidden.length){
+    const p=document.createElement("p"); p.className="tst-absent";
+    p.textContent="Not in this firmware build: "+hidden.map(x=>x+(x==="measure-coil" ? " (CONFIG_FUGU_WITH_MEASURE_COIL)" : x==="adc-cal" ? " (ESP32-S3 builds)" : "")).join(", ")+".";
+    out.push(p);
+  }
+  body.replaceChildren(...out);
+}
+
+function tstPaint(id){
+  const c=document.querySelector(`#tst-body .tst[data-tst="${id}"]`); if (!c) return;
+  const d=tstDef(id), r=tstResult(id), t=tstTarget(), mine=tstRun && tstRun.id===id;
+  const o=tstOpt[id]||{};
+  c.querySelector(".tst-cmd").textContent = d.cmd(o) + (d.abort ? `  ·  ${d.abort}` : "");
+  const run=c.querySelector(".run"), ab=c.querySelector(".abort"), cb=c.querySelector(".tst-opt input"), stl=c.querySelector(".tst-state");
+  let why="";
+  if (id==="bflow" && tstSt && tstSt.bfChecked===false) why="Not checked on this board (board.conf bflow_bat=0)";
+  if (id==="clear" && tstSt && !tstSt.hsLatched && !tstSt.bfLatched) why="Nothing latched";
+  run.disabled = !t || !!devBusy || !!why;
+  run.title = why || (devBusy && !mine ? devBusy+" is running" : "");
+  if (ab){ ab.hidden=!mine || r.st!=="run"; ab.disabled=!t; }
+  if (cb) cb.disabled=!!devBusy;
+  if (stl) stl.textContent = why;
+  const res=c.querySelector(".tst-res");
+  res.className="tst-res"+(r.sum && r.sum.cls ? " "+r.sum.cls : "");
+  const parts=[];
+  if (mine && r.st==="run"){ const s=document.createElement("span"); s.className="busy"; s.textContent="Running "+tstRun.cmd+" …"; parts.push(s); }
+  if (r.sum && !(mine && r.st==="run")){
+    const s=document.createElement("strong"); s.textContent=r.sum.text; parts.push(s);
+    for (const x of r.sum.details||[]){ const e=document.createElement("span"); e.className="d"; e.textContent=x; parts.push(e); }
+  }
+  if (r.note){ const e=document.createElement("span"); e.className="d note"+(r.noteErr ? " err" : ""); e.textContent=r.note; parts.push(e); }
+  if (r.recheck && d.recheck && !mine){ const b=document.createElement("button"); b.type="button"; b.className="recheck";
+    b.textContent=`Check (${d.recheck})`; b.disabled=!t || !!devBusy; b.onclick=()=>tstRecheck(id); parts.push(b); }
+  res.replaceChildren(...parts);
+  const out=c.querySelector(".tst-out"), lg=c.querySelector(".tst-log");
+  lg.hidden=!r.lines.length;
+  lg.firstChild.textContent=`Device output (${r.lines.length} line${r.lines.length===1 ? "" : "s"})`;
+  if (mine && r.st==="run") lg.open=true;
+  else if (r.fold){ lg.open=false; r.fold=false; }
+  if (out._n!==r.lines.length || out._from!==r.lines[0]){
+    const atBottom = out.scrollHeight - out.clientHeight - out.scrollTop < 4;
+    out.replaceChildren(...r.lines.map(raw=>{ const l=tstLine(raw), e=document.createElement("div");
+      e.className = TST_V.test(l) ? "st" : /^\s*[WE] \(/.test(l) || /\bERR: /.test(l) ? "w" : ""; e.textContent=l; return e; }));
+    out._n=r.lines.length; out._from=r.lines[0];
+    if (atBottom) out.scrollTop=out.scrollHeight;
+  }
+}
+
+function tstOpen(){
+  if (!tstTarget()) return;
+  document.getElementById("tests").classList.add("open");
+  document.getElementById("tst-scrim").classList.add("open");
+  document.getElementById("open-tests").setAttribute("aria-expanded","true");
+  document.getElementById("tst-close").focus();
+  tstRender();
+  if (tstHave===undefined && !devBusy) tstProbe();
+}
+function tstClose(){
+  const s=document.getElementById("tests");
+  if (!s.classList.contains("open")) return;
+  const inside=s.contains(document.activeElement);
+  s.classList.remove("open");
+  document.getElementById("tst-scrim").classList.remove("open");
+  const b=document.getElementById("open-tests");
+  b.setAttribute("aria-expanded","false");
+  if (inside) b.focus();
+}
+document.getElementById("open-tests").onclick = tstOpen;
+document.getElementById("tst-close").onclick = tstClose;
+document.getElementById("tst-scrim").onclick = tstClose;
+document.getElementById("tst-refresh").onclick = ()=>{ if (!devBusy){ tstGone.clear(); for (const k in tstProbed) delete tstProbed[k]; tstHave=undefined; tstProbe(); } };
+document.getElementById("menu-start").addEventListener("click", tstClose);
+window.addEventListener("keydown", e=>{
+  if (!tstOpenNow()) return;
+  if (e.key==="Tab") trapTab(e, document.getElementById("tests"));
+  else if (e.key==="Escape"){ e.stopPropagation(); tstClose(); }
 }, true);
 
 document.getElementById("upload").onclick = ()=>uploadChanged({reviewed:true});

@@ -96,7 +96,7 @@ See [MQTT topics](mqtt.md).
 The top bar shows the source name and the connection state. The state always refers to the device a push would go
 to: "Connected to `<hostname>` over MQTT" with a green dot while that link is open, "Disconnected from
 `<hostname>` over MQTT" once it is closed, "Connecting …" during a read, and "Not connected" when there is nothing
-to push to. Its right side holds the **Open** menu, the **Console** toggle, the **Services** button and the
+to push to. Its right side holds the **Open** menu, the **Console** toggle, the **Services** and **Tests** buttons and the
 primary button: **Review changes** with a count, or **Save a copy** when nothing has changed.
 
 The file list on the left has one entry per conf file, in three groups:
@@ -325,6 +325,52 @@ the top bar shows the device as disconnected either way; turning the service bac
 After a restart the editor waits for the device to answer again and checks that the service is Running.
 Stopping `mqtt` also asks first, because a charger that gets its BMS data over MQTT loses it and falls back to
 its stale-cell voltage cap.
+
+## Tests
+
+**Tests** opens a panel that runs measurements, self-tests and calibrations on the device, one at a time. Like
+**Services**, it is available only while the editor is connected to the device the config was read from. On first
+open it sends `help` to learn which commands the firmware build has, and probes `measure-coil` with no arguments if
+`help` does not list it; tests the build lacks are hidden and named at the end. Nothing else runs until you click.
+
+| Test | Group | Command | Asks first |
+|------|-------|---------|------------|
+| Protection self-checks | Status | `selftest` | no |
+| Low-side timing calibration | Status | `rect-cal status` | no |
+| Output wire guard | Status | `wire` | no |
+| Last sweep | Status | `sweep-curve` | no |
+| ADC calibration (eFuse) | Status | `adc-cal` (ESP32-S3 builds) | no |
+| Global MPP sweep | Measurements | `sweep` | yes |
+| Coil inductance (L0) | Measurements | `measure-coil l0 [apply]` (`CONFIG_FUGU_WITH_MEASURE_COIL`) | device name |
+| Backflow switch | Self-tests | `selftest bflow`, abort with `selftest abort` | device name |
+| Clear latched faults | Self-tests | `selftest clear` | device name |
+| Low-side timing (rect-cal) | Calibration | `rect-cal [force]`, abort with `rect-cal abort` | yes; device name with `force` |
+| Low-side timing from a coil sweep | Calibration | `measure-coil ls [apply]` | device name |
+
+Each entry says what it does, what it needs, how long it takes and which command it sends. Entries that drive the
+power stage carry a risk note. Before any of them starts, the editor reads `selftest` and the status line, then
+asks; the question names the device, says what happens (for example that the converter is taken over and conversion
+stops for about a minute) and states whether the converter is delivering power now and how much. The most invasive
+ones need the device name typed in. A refusal shows the firmware's reason as it printed it. Nothing is retried.
+
+While a test runs, its output appears under the entry and **Abort** is offered where the firmware has an abort
+command (`measure-coil` has none). The result is a short summary:
+
+- the latched faults and the backflow switch state, with this boot's last test verdicts;
+- backflow switch PASS, or FAIL with the failing phase (every start stays blocked until the latch is cleared), or no
+  verdict with the reason the test stopped;
+- the coil inductance in µH with its fit and error estimate, or the reason there is no result;
+- the calibrated low-side offset, or the reason the calibration failed;
+- the maximum power point of the sweep.
+
+`measure-coil l0 apply` writes `L0` to `coil.conf`, and the loaded `coil.conf` follows. rect-cal and
+`measure-coil ls apply` save `rect_offset_ns` only once the converter has been off for a while, so read the device
+again later to see it.
+
+If the connection drops or a test does not end in time, the panel reports its state as unknown and offers a check
+(`selftest`, `rect-cal status` or `sweep-curve`) instead of a result. While a test runs, service actions and pushes
+wait; while a push or a service command runs, tests wait. See [Serial Console](console.md#selftest) for the
+commands and their refusals.
 
 ## conf-tool.py (FTP)
 
