@@ -2808,12 +2808,12 @@ static bool roLine(const String &inp) {
     return ok;
 }
 
-bool handleCommand(const String &inp, bool trusted) {
+bool handleCommand(const String &inp, const char *ro) {
     const int m = secretCut(inp.c_str());
     ESP_LOGI("main", "received serial command: '%.*s%s'", CG_MASKED(inp.c_str(), m));
 
-    if (!trusted && (inp[0] == '+' || inp[0] == '-' || !roLine(inp))) {
-        ESP_LOGW("main", "refused: read-only console (telnet.conf trusted=0)");
+    if (ro && (inp[0] == '+' || inp[0] == '-' || !roLine(inp))) {
+        ESP_LOGW("main", "refused: read-only console (%s)", ro);
         return false;
     }
 

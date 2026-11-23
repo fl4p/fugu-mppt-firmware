@@ -60,7 +60,7 @@ bool TelnetService::setupTelnet() {
             t.flush();
             t.disconnectClient();
         } else {
-            consoleDispatchAsync(str.c_str(), str.length(), s_trusted);
+            consoleDispatchAsync(str.c_str(), str.length(), s_trusted ? nullptr : "telnet.conf trusted=0");
         }
     });
 

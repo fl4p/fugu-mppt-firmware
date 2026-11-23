@@ -78,7 +78,7 @@ inline bool roCmdAllowed(const char *const *list, size_t n, const char *name, in
     return false;
 }
 
-// Read-only commands, the only ones an untrusted console (telnet unless telnet.conf trusted=1) may run.
+// Read-only commands, the only ones an untrusted console (telnet unless trusted=1, BLE with ble_security none) may run.
 inline constexpr const char *kRoCmds[] = {
     "help,?", "status", "sensor|*", "bootinfo", "uptime", "mem", "heap|,check,tasks", "tasks", "rt-stats", "intr",
     "hostname,hn", "ip", "netstat,ifconfig", "service,svc|,list", "coredump|,info", "selftest", "wire", "holiday",

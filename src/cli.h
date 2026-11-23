@@ -5,10 +5,11 @@ class String; // Arduino String (handleCommand); forward-declared to avoid pulli
 // Console command layer. setupCli() builds the SimpleCLI command table once at boot;
 // handleCommand() parses one whole input line (from UART/USB/telnet/BLE/MQTT — same string
 // protocol) through it and returns false on a parse error or handler-rejected input, true
-// otherwise. An untrusted line runs only if every command in it is read-only (kRoCmds), else false.
+// otherwise. ro (the reason, e.g. "telnet.conf trusted=0") marks an untrusted console: a line runs only if
+// every command in it is read-only (kRoCmds), else false.
 // See website/docs/reference/console.md.
 void setupCli();
-bool handleCommand(const String &inp, bool trusted = true);
+bool handleCommand(const String &inp, const char *ro = nullptr);
 
 // Runs the charger/limits loaders on the given files (nullptr or absent file = skip; an empty file
 // is checked), logs loader errors and unknown keys. false if a loader rejected its file.

@@ -604,7 +604,7 @@ void bleConsoleLoop(time_ms nowMs) {
     // progress/result sits in txBuf until it returns, and on a successful OTA the reboot eats it.
     consoleFlushHook = []() { bleTxDrain(wallClockMs()); };
     static ConsoleLine line{};
-    loopConsole(line, bleRead, bleWrite, nowMs, linkEncRequired); // ble_security none: read-only
+    loopConsole(line, bleRead, bleWrite, nowMs, linkEncRequired ? nullptr : "ble.conf ble_security=none");
     consoleFlushHook = nullptr;
     bleTxDrain(nowMs); // flush queued console/log output, paced by NimBLE buffer availability
     otaBleTick(nowMs); // drain any staged OTA firmware bytes to flash (no-op when not updating)

@@ -239,7 +239,7 @@ bool MqttService::onStart() {
         // Console-command input over MQTT (output is mirrored to pv/log/<hostname> by mqttLogCallback).
         if (conf.getByte("cmd_input", 0)) {
             subscribeTopic("pv/log/" + getHostname(true) + "/cmd", [](const char *data, int len) {
-                consoleDispatchAsync(data, len, true);
+                consoleDispatchAsync(data, len, nullptr);
             });
         }
         if (init(conf)) return true; // connection is async; client task runs on its own

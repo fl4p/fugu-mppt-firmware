@@ -52,7 +52,8 @@ Each transport is trusted or untrusted. A trusted console runs every command.
 | Telnet | No, unless `telnet.conf` `trusted=1` |
 
 An untrusted console runs a line only if every command in it is on the read-only list below. Otherwise the line
-fails with `ERR: <cmd>` and the log line `refused: read-only console (telnet.conf trusted=0)`. New commands are not
+fails with `ERR: <cmd>` and a log line naming the reason, `refused: read-only console (telnet.conf trusted=0)` or
+`refused: read-only console (ble.conf ble_security=none)`. New commands are not
 on the list, so they are refused until added. The `+N`/`-N` PWM steps are refused.
 
 | Command | Allowed arguments |
