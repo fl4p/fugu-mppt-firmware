@@ -2,6 +2,7 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <esp_heap_caps.h>
 #include <esp_http_client.h>
 #include <esp_https_ota.h>
 #if CONFIG_FUGU_WITH_HTTPS
@@ -29,6 +30,7 @@
 #include "sha256.h"
 #include "util.h"
 #include "logging.h"
+#include "tele/console_ble.h"
 
 constexpr auto OTA_TIMEOUT_SECONDS = 5 * 60;
 
@@ -158,6 +160,10 @@ static esp_err_t httpOta(const char *url, const esp_partition_t *staging, const 
 
 bool doOta(const char *url) {
     const int64_t t0 = esp_timer_get_time();
+    // Every OTA ends in a reboot, so BLE need not come back: free it for the download.
+    const unsigned h = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    const bool bleGone = !g_restartBlocked && bleConsoleRelease(); // no reboot to bring it back
+    if (bleGone) ESP_LOGI("ota", "BLE released, free heap %u -> %u", h, (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     const esp_err_t e = httpOta(url, nullptr, nullptr);
     if (e == ESP_OK) {
         ESP_LOGI("ota", "OTA Succeed, Rebooting...");
@@ -169,6 +175,7 @@ bool doOta(const char *url) {
                 (unsigned long) esp_log_timestamp(), esp_err_to_name(e), lastPct, contentReceived, contentLen,
                 (esp_timer_get_time() - t0) * 1e-6f);
     consoleFlush();
+    if (bleGone) systemRestart(); // BLE cannot be restarted in this boot
     return false;
 }
 
@@ -243,9 +250,7 @@ static const char *blStageAndCopy(const char *url, const esp_partition_t *prim, 
 const char *doOtaBootloader(const char *url, bool (*convOff)()) {
     if (esp_efuse_is_flash_encryption_enabled() || esp_secure_boot_enabled())
         return "flash encryption or secure boot enabled";
-    esp_ota_img_states_t st;
-    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &st) == ESP_OK
-        && st == ESP_OTA_IMG_PENDING_VERIFY)
+    if (otaPendingVerify())
         return "running app not yet confirmed (rollback pending)";
     if (!convOff()) return "conversion running, stop it first (dc 0)";
 

@@ -58,6 +58,14 @@ ota http://<host-ip>:9000/fugu-firmware.bin
 
 The `ota` [console command](../../reference/console.md) halts the converter and ADC during the download.
 
+Before the download the device also shuts BLE down and returns its memory to the heap, since every update ends in a
+reboot. A BLE console that sent the command loses its link; follow the update over serial, telnet or MQTT. BLE cannot
+be restarted without a reboot, so a failed or timed-out download reboots the device into the image it was running.
+
+The command is refused before anything is stopped when Wi-Fi is not connected, or while the running image is still
+*pending verify* (see [rollback](#rollback-and-boot-watchdog)): an update can start only after the previous one has
+confirmed itself, about 20 s after its reboot.
+
 ## Rollback and boot watchdog
 
 The bootloader is built with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`, so a new OTA image boots as

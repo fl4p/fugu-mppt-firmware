@@ -1843,11 +1843,26 @@ static void idleProfileTick(time_ms nowMs) {
     idleCpuTick();
 }
 
+#ifdef WITH_NETW
+static bool s_wifiTorndown = false;
+
+// Stop network services while the netif is still valid, then drop WiFi. Never from inside a telnet
+// input callback: deiniting lwip there freed pbufs under the log mirror (a use-after-free).
+void wifiRelease() {
+    g_app.disableWifi = true;
+    if (s_wifiTorndown) return;
+    g_services.stopNetworkServices();
+    disconnect_wifi(true);
+    s_wifiTorndown = true;
+}
+#endif
+
 // Per-tick WiFi + network-service work for loopNetwork_task. Handles auto-reenable timer, the
 // temp-gated wifiLoop, and self-healing network services on the WiFi-up edge.
 static void networkLoopTick() {
 #ifdef WITH_NETW
-    if (g_app.disableWifi && g_app.wifiReenableMs && (int32_t) (wallClockMs() - g_app.wifiReenableMs) >= 0) {
+    if (g_app.disableWifi && g_app.wifiReenableMs && !otaBleActive()
+        && (int32_t) (wallClockMs() - g_app.wifiReenableMs) >= 0) {
         g_app.wifiReenableMs = 0;
         g_app.disableWifi = false;
         UART_LOG("WiFi re-enabled after timeout");
@@ -1855,19 +1870,12 @@ static void networkLoopTick() {
     }
 
     // WiFi-down edge: `wifi off` only sets disableWifi (from a console/telnet/MQTT input callback);
-    // do the actual teardown HERE, outside that callback. Stop network services while the netif is
-    // still valid, then drop WiFi — deiniting lwip from inside telnet.loop() freed pbufs under the
-    // log mirror (a use-after-free). Latched so it runs once per down edge.
-    static bool wifiTorndown = false;
+    // the teardown runs here, once per down edge.
     if (g_app.disableWifi) {
         netGuardTick(false);
-        if (!wifiTorndown) {
-            g_services.stopNetworkServices();
-            disconnect_wifi(true);
-            wifiTorndown = true;
-        }
-    } else if (wifiTorndown) {
-        wifiTorndown = false;
+        wifiRelease();
+    } else if (s_wifiTorndown) {
+        s_wifiTorndown = false;
     }
 
     if (!g_app.disableWifi) {
@@ -1956,6 +1964,16 @@ static void loopNetwork_task(void *arg) {
     // ftp / telnet / telemetry / lcd / scope ticks (only the Running ones do work)
     g_services.tickAll();
     teleMqttTick(nowMs);
+#ifdef WITH_BLE
+    if (bleOtaRebootDue()) {
+        bleConsoleAwaitTxDrain(0, 1000);
+        systemRestart();
+#ifdef WITH_NETW
+        g_app.disableWifi = false; // restart refused: Wi-Fi was on before the push released it
+        connect_wifi_async();
+#endif
+    }
+#endif
 
 
     mppt.tempPollStale(wallClockUs());

@@ -16,6 +16,7 @@
 #include "telemetry.h"
 #include "tele_adv.h"
 #include "console_ble.h"
+#include <ota_ble.h>
 #include "../app_state.h"
 #include "../conf.h"
 
@@ -146,7 +147,9 @@ static void handleRpc(const uint8_t *p, size_t n) {
     if (cs != p[n - 1]) return setErr(E_INVALID_RPC);
     setErr(E_NONE);
     switch (p[0]) {
-        case CMD_WIFI: return wifiSettings(p + 2, p[1]);
+        case CMD_WIFI:
+            if (otaBleActive()) return setErr(E_UNKNOWN); // Wi-Fi stays off until the push's reboot
+            return wifiSettings(p + 2, p[1]);
         case CMD_DEVICE_INFO: {
             const esp_app_desc_t *app = esp_app_get_description();
             std::string body;
@@ -158,6 +161,7 @@ static void handleRpc(const uint8_t *p, size_t n) {
         }
         case CMD_SCAN:
             if (state != ST_AUTHORIZED) return setErr(E_NOT_AUTHORIZED);
+            if (otaBleActive()) return setErr(E_UNKNOWN);
             return scanResult();
         default:
             return setErr(E_UNKNOWN_RPC);

@@ -22,6 +22,8 @@
 #endif
 
 #include "console.h"   // loopConsole
+#include "app_state.h"
+#include "etc/ota.h"     // otaPendingVerify
 #include "util.h"      // wallClockMs
 #include "logging.h"   // addLogCallback / removeLogCallback, ESP_LOG*
 #include "etc/readerwriterqueue.h"
@@ -38,6 +40,9 @@
 extern ADC_Sampler adcSampler;
 void stopAndBackoff(uint32_t secondsDelay, const char *who = "stopAndBackoff");
 void systemRestart();
+void wifiRelease();
+
+static volatile bool otaRebootDue = false;
 
 static void otaStatusHook(OtaBleLevel level, const char *line) {
     switch (level) {
@@ -53,6 +58,28 @@ static void otaQuiesceHook(bool halt) {
     // down first, then the sampler.
     if (halt) stopAndBackoff(10);
     adcSampler.halted = halt;
+#ifdef WITH_NETW
+    // The push keeps Wi-Fi off until the reboot that ends it; a failed push reboots too. Not without
+    // a reboot to bring it back (cmdOtaBle refuses those cases), and Wi-Fi the user turned off stays
+    // as it is, with no reboot on failure.
+    static bool wifiReleased = false;
+    if (halt && !wifiReleased && !g_app.disableWifi && !g_restartBlocked && !otaPendingVerify()) {
+        const unsigned h = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        wifiReleased = true;
+        g_app.wifiReenableMs = 0;
+        wifiRelease();
+        ESP_LOGI("ota", "WiFi released, free heap %u -> %u", h, (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    } else if (!halt && wifiReleased) {
+        wifiReleased = false;
+        otaRebootDue = true;
+    }
+#endif
+}
+
+bool bleOtaRebootDue() {
+    if (!otaRebootDue) return false;
+    otaRebootDue = false;
+    return true;
 }
 
 static void otaBleInstallHooks() {
@@ -82,6 +109,7 @@ static volatile bool deviceConnected = false;
 // (logical service running) state; `bleInited` tracks the one-time stack bring-up.
 static bool bleInited = false;
 static bool bleStarted = false;
+static bool bleGone = false; // bleConsoleRelease() freed the stack; no init until reboot
 static uint16_t advMs = 0; // connectable adv interval, 0 = stack default
 
 // Single-producer (NimBLE host task, onWrite) / single-consumer (network loop, bleRead) byte queue.
@@ -453,7 +481,7 @@ static TxCallbacks txCallbacks;
 
 void bleConsoleBegin(const std::string &deviceName, const std::string &security, uint32_t passkey,
                      uint32_t pairWindowS) {
-    if (bleStarted) return; // already advertising
+    if (bleStarted || bleGone) return;
 
     if (bleInited) {
         // Stack is already up from a previous start; just resume advertising (see bleInited note).
@@ -548,6 +576,7 @@ void bleConsoleBegin(const std::string &deviceName, const std::string &security,
 
 void bleConsoleEnd() {
     if (!bleStarted) return;
+    if (otaBleActive()) otaBleAbort(); // no tick runs once stopped
     // Stop advertising only — do NOT BLEDevice::deinit(): the Arduino BLE wrapper can't be
     // re-initialized cleanly (see bleInited note), so the stack stays up across stop/start.
     removeLogCallback(bleLogWrite);
@@ -578,6 +607,31 @@ void bleConsoleLoop(time_ms nowMs) {
     }
 #endif
     improvTick(nowMs);
+}
+
+bool bleConsoleRelease() {
+    if (!bleInited) return false;
+    bleConsoleAwaitTxDrain(0, 1000);
+    bleServer->setCallbacks(nullptr); // no re-advertising from onDisconnect into the teardown
+    BLEDevice::stopAdvertising();
+    if (bleServer->getConnectedCount()) bleServer->disconnect(bleServer->getConnId());
+    // deinit() deletes the server before the host stops, so no disconnect event may still be due
+    for (int i = 0; i < 500 && bleServer->getConnectedCount(); ++i) vTaskDelay(pdMS_TO_TICKS(10));
+    if (bleServer->getConnectedCount()) {
+        bleServer->setCallbacks(&serverCallbacks);
+        ESP_LOGW(TAG, "client did not disconnect, BLE kept");
+        return false;
+    }
+    otaBleRequestAbort();
+    teleBleSetStreaming(false);
+    bleConsoleEnd();
+    { std::lock_guard<std::recursive_mutex> lk(txMutex); txBuf.clear(); txHead = 0; }
+    BLEDevice::deinit(true);
+    bleServer = nullptr;
+    txChar = nullptr;
+    bleInited = false;
+    bleGone = true;
+    return true;
 }
 
 bool bleConsoleConnected() {
@@ -711,6 +765,10 @@ void bleConsoleEnd() {}
 void bleConsoleLoop(time_ms) {}
 
 bool bleConsoleConnected() { return false; }
+
+bool bleConsoleRelease() { return false; }
+
+bool bleOtaRebootDue() { return false; }
 
 size_t bleConsoleChunk() { return 20; }
 

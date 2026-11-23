@@ -63,9 +63,10 @@ extern volatile uint8_t g_rtLogTest;
 #include "storage/key-value.h"
 #include "conf_hash.h"
 #include "etc/con_guard.h"
+#include "etc/ota.h"            // doOta, otaPendingVerify
 #ifdef WITH_NETW
 #include "tele/telemetry.h"     // connect_wifi_async, add_ap
-#include "etc/ota.h"            // doOta
+#include "etc/network_shim.h"
 #include "etc/rt_task.h"
 #include "etc/idle_profile.h"
 #endif
@@ -571,6 +572,8 @@ static void cmdResetLag(cmd *c) {
 static void cmdWifi(cmd *c) {
     Command cc(c);
     auto arg = cc.getArg(0).getValue();
+    if (otaBleActive())
+        CMD_FAIL_RETURN("wifi: BLE OTA in progress, WiFi stays off until its reboot");
     if (arg == "on") {
         g_app.wifiReenableMs = 0;
         g_app.disableWifi = false;
@@ -915,6 +918,12 @@ static void cmdOta(cmd *c) {
         return;
     }
 
+    // Refuse before anything is stopped or released: past the BLE release, any failure reboots.
+    if (otaPendingVerify())
+        CMD_FAIL_RETURN("ota: ESP_ERR_OTA_ROLLBACK_INVALID_STATE, running image not yet confirmed");
+    if (!wifiIsConnected())
+        CMD_FAIL_RETURN("ota: WiFi not connected");
+
     idleProfileHold(true); // full CPU clock for the download
     auto savedMode = g_app.opMode.load();
     const float savedPsuSetpoint = mppt.getPsuSetpoint();
@@ -1002,6 +1011,17 @@ static void cmdOtaBle(cmd *c) {
     // marker still tells the truth. Execution happens on the network loop -- esp_ota_begin blocks on
     // flash for far too long to run from a command callback -- so real failures still arrive later
     // as OTAB FAIL lines.
+    const String w = cc.getArg(0).getValue();
+    if (w == "begin" || w == "resume") {
+        // Refused here, before the quiesce hook stops conversion and releases Wi-Fi.
+        const char *why = otaPendingVerify() ? "esp_ota_begin ESP_ERR_OTA_ROLLBACK_INVALID_STATE"
+                          : !bleConsoleConnected() ? "no-ble-client"
+                          : g_restartBlocked ? "restart-blocked" : nullptr;
+        if (why) {
+            ESP_LOGW("otab", "OTAB FAIL %s", why);
+            CMD_FAIL_RETURN("otab: %s", why);
+        }
+    }
     if (otaBleSubmitCommand(line.c_str()) == OtaBleSubmit::Rejected)
         CMD_FAIL_RETURN("otab: expected begin <size> <sha256hex> | end | abort");
 }

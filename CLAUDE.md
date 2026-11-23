@@ -87,6 +87,14 @@ sha256, git sha, dirty paths, result). Around each transfer the NAT gateway's Wi
 on its own. `fugu_console.py --mqtt` (bare = `$MQTT_HOST`)
 takes its credentials from the same file, tunnels through `havan-ts` the same way, and returns from `ota` at `OTA Succeed` or a failure line.
 
+**OTAs release the other radio.** `ota <url>` shuts BLE down for the download (`bleConsoleRelease()`, frees the stack
+and controller memory) and `ota-ble begin` turns Wi-Fi off unless the user already did (`wifiRelease()`, the `wifi off`
+teardown). Neither comes back without a reboot, so after a release every failure, abort or timeout reboots into the
+running image. A BLE
+console that sends `ota <url>` loses its link; watch the result over serial or MQTT. Both refuse before stopping anything
+while the running image is PENDING_VERIFY (`ROLLBACK_INVALID_STATE`, first ~20 s after an OTA), `ota <url>` also
+without Wi-Fi, `ota-ble begin` also without a BLE client; `wifi on|off` and Improv Wi-Fi RPCs are refused during a BLE push.
+
 **OTA safety net (rollback + boot watchdog).** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` makes a freshly-OTA'd image
 boot as `ESP_OTA_IMG_PENDING_VERIFY`. The app must confirm itself or the bootloader reverts to the previous slot on the
 next reset:
@@ -370,7 +378,8 @@ You can connect to devices:
     - requires '\n' line termination
 - BLE (NUS Console)
     - pushing an update over BLE can be unreliable. better to start a local server to serve the image and invoke the
-      `ota <url>` command via the ble console. this will work even when the device is behind the NAT.
+      `ota <url>` command via the ble console. this will work even when the device is behind the NAT. The BLE link
+      closes when the download starts (BLE is released), so check the result with `bootinfo` after the reboot.
 
 ## A converter went silent: use the BLE backup link
 

@@ -52,9 +52,9 @@ The host controls the update with plain console commands on RX. For debugging, t
 but the bulk data flows only over the BLE FW characteristic. The device accepts these commands:
 
 ```
-ota-ble begin <size> <sha256hex>   arm: validate size, halt the converter, erase the passive partition
+ota-ble begin <size> <sha256hex>   arm: validate size, halt the converter, turn Wi-Fi off (if on), erase the passive partition
 ota-ble end                        finalize: drain, verify SHA-256, set boot partition, reboot
-ota-ble abort                      cancel: esp_ota_abort, free staging, re-enable the converter
+ota-ble abort                      cancel: esp_ota_abort, free staging, reboot into the running image
 ```
 
 `<size>` is the image length in bytes; `<sha256hex>` is its lowercase SHA-256 (64 hex chars).
@@ -110,8 +110,20 @@ The component handles a push in these parts:
   built-in image validation. Only then does it switch the boot partition.
 - **Safety.** The converter stays halted (`stopAndBackoff`, ADC halted) for the duration. All OTA state
   mutation happens on the network loop. A BLE disconnect requests an abort (`otaBleRequestAbort`) that
-  the next tick performs. After a dropped link, the device therefore never leaves a half-written partition armed, and it always
-  restores the converter.
+  the next tick performs. After a dropped link, the device therefore never leaves a half-written partition armed.
+- **Wi-Fi off.** Once the push is armed, the device stops its network services and turns Wi-Fi off to free
+  memory and airtime for the transfer. Wi-Fi comes back with the reboot that ends the push. Any end other than
+  success (abort, disconnect, the 30 s stall timeout, a SHA or image check failure) reboots the device into the
+  image it was running, so it comes back with Wi-Fi and the converter. An interrupted push therefore
+  starts again from the beginning; the receiver's resume point does not survive the reboot. `wifi on|off` and
+  Improv Wi-Fi provisioning are refused during the push, and a `wifi off <minutes>` timer waits for its end.
+  When Wi-Fi was already off (`wifi off`), or the build has no Wi-Fi support, there is nothing to release:
+  Wi-Fi stays as it was, and a failed push restores the converter without a reboot.
+- **Refusals.** `begin` and `resume` are refused before the converter is touched while no BLE client is connected
+  (`OTAB FAIL no-ble-client`) or while the running image is still *pending verify*, i.e. until about 20 s after an
+  OTA reboot (`OTAB FAIL esp_ota_begin ESP_ERR_OTA_ROLLBACK_INVALID_STATE`; `etc/ota_ble.py` waits and retries),
+  or while a bootloader update blocks restarts (`OTAB FAIL restart-blocked`).
+  See [rollback](ota-wifi.md#rollback-and-boot-watchdog).
 
 ## Notes and limitations
 

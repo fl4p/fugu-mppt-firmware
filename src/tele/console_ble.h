@@ -25,6 +25,12 @@ void bleConsoleLoop(time_ms nowMs); // drives the RX queue through loopConsole()
 
 bool bleConsoleConnected();
 
+// Shut the BLE stack and controller down and return their memory to the heap. BLE stays off until
+// the next reboot. False (stack kept) if it was never started or a client did not disconnect in 5 s.
+bool bleConsoleRelease();
+// A BLE OTA push released Wi-Fi and then failed; the caller must reboot.
+bool bleOtaRebootDue();
+
 size_t bleConsoleChunk();       // usable notify payload: negotiated MTU-3, else 20
 bool bleConsoleLinkSettled();   // connected + post-connect settle window elapsed
 void bleConsoleResumeAdv();     // (re)start the connectable advertisement (tele_adv reconciler)
