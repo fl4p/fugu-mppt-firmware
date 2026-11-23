@@ -55,6 +55,8 @@
   button:disabled { opacity:.4; cursor:not-allowed; }
   label.btn input { display:none; }
   button.xbtn { padding:6px; color:var(--muted); }
+  svg.bi { flex:none; color:var(--muted); }
+  button:hover svg.bi, label.btn:hover svg.bi { color:currentColor; }
   button.xbtn:hover { color:var(--fg); }
 
   /* header */
@@ -365,15 +367,15 @@
       <summary><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Open</summary>
       <div class="menu-list">
         <div class="mh">Read from a device</div>
-        <button id="menu-mqtt" type="button">MQTT broker…</button>
-        <button id="menu-ble" type="button">Bluetooth</button>
-        <button id="serial-btn" type="button">USB serial</button>
+        <button id="menu-mqtt" type="button"><svg class="bi" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5a9.5 9.5 0 0 1 14 0M8 15.5a5 5 0 0 1 8 0"/><circle cx="12" cy="18.5" r="1.2"/></svg>MQTT broker…</button>
+        <button id="menu-ble" type="button"><svg class="bi" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg>Bluetooth</button>
+        <button id="serial-btn" type="button"><svg class="bi" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v14M9 6l3-3 3 3M12 13l-4-2V8M12 15l4-2v-2"/><rect x="14.5" y="8.5" width="3" height="2.5" rx=".4"/><circle cx="8" cy="7" r="1"/><circle cx="12" cy="19" r="2"/></svg>USB serial</button>
         <div class="sep"></div>
         <div class="mh">Open a file</div>
-        <label class="btn" id="reload-zip">Choose .zip…<input type="file" accept=".zip"></label>
-        <label class="btn" id="reload-dir">Choose folder…<input type="file" webkitdirectory directory multiple></label>
+        <label class="btn" id="reload-zip"><svg class="bi" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M10 7h1M10 10h1M10 13h1M10 16v2h1v-2z"/></svg>Choose .zip…<input type="file" accept=".zip"></label>
+        <label class="btn" id="reload-dir"><svg class="bi" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Choose folder…<input type="file" webkitdirectory directory multiple></label>
         <div class="sep"></div>
-        <button id="menu-start" type="button">Start screen</button>
+        <button id="menu-start" type="button"><svg class="bi" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11 12 4l8 7M6 10v9h12v-9"/></svg>Start screen</button>
       </div>
     </details>
     <button id="open-console" type="button" aria-pressed="false" aria-controls="console"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4M12 17h7"/></svg>Console</button>
@@ -392,9 +394,9 @@
       <button id="start-connect" class="choice-head" type="button" aria-expanded="false" aria-controls="start-connect-pane"><span class="ic" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg></span><span><span class="t">Connect to a device</span><span class="d">Read the live config, edit it, push the changes back</span></span></button>
       <div id="start-connect-pane" class="startpane">
         <div class="controls">
-          <button id="connect-mqtt" type="button">MQTT broker…</button>
-          <button id="connect-ble" type="button">Bluetooth</button>
-          <button id="connect-serial" type="button">USB serial</button>
+          <button id="connect-mqtt" type="button"><svg class="bi" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5a9.5 9.5 0 0 1 14 0M8 15.5a5 5 0 0 1 8 0"/><circle cx="12" cy="18.5" r="1.2"/></svg>MQTT broker…</button>
+          <button id="connect-ble" type="button"><svg class="bi" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg>Bluetooth</button>
+          <button id="connect-serial" type="button"><svg class="bi" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v14M9 6l3-3 3 3M12 13l-4-2V8M12 15l4-2v-2"/><rect x="14.5" y="8.5" width="3" height="2.5" rx=".4"/><circle cx="8" cy="7" r="1"/><circle cx="12" cy="19" r="2"/></svg>USB serial</button>
         </div>
         <div class="fine">MQTT connects through the broker's WebSocket listener. Bluetooth and USB serial (115200 baud) need Chrome or Edge over https or localhost.</div>
       </div>
@@ -404,8 +406,8 @@
       <button id="start-open" class="choice-head" type="button" aria-expanded="false" aria-controls="start-open-pane"><span class="ic" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span><span class="t">Open a file</span><span class="d">A <code>.zip</code> or a folder with a <code>conf/</code> directory, like <code>config/fmetal</code></span></span></button>
       <div id="start-open-pane" class="startpane">
         <div class="controls">
-          <label class="btn">Choose .zip<input id="pick-zip" type="file" accept=".zip"></label>
-          <label class="btn">Choose folder<input id="pick-dir" type="file" webkitdirectory directory multiple></label>
+          <label class="btn"><svg class="bi" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M10 7h1M10 10h1M10 13h1M10 16v2h1v-2z"/></svg>Choose .zip<input id="pick-zip" type="file" accept=".zip"></label>
+          <label class="btn"><svg class="bi" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Choose folder<input id="pick-dir" type="file" webkitdirectory directory multiple></label>
         </div>
         <div class="fine">Files other than <code>*.conf</code> are kept and written back unchanged.</div>
       </div>
@@ -555,8 +557,8 @@ const META = {
   pwm_sync_pin:{unit:"GPIO",desc:"Wired-sync pulse pin (WITH_WSYNC, MCPWM): leader out / follower in",type:"int"},
   pwm_in:{unit:"GPIO",desc:"Gate driver IN pin (InEn mode)",type:"int"},
   pwm_en:{unit:"GPIO",desc:"Gate driver EN pin (InEn mode)",type:"int"},
-  panel_en:{unit:"GPIO",desc:"Panel/input backflow enable switch pin",type:"int"},
-  panel_sd:{unit:"GPIO",desc:"Panel/input backflow shutdown switch pin",type:"int"},
+  bflow_en:{unit:"GPIO",desc:"Backflow switch enable pin (high = on); 0 = no switch",type:"int"},
+  bflow_sd:{unit:"GPIO",desc:"Backflow switch shutdown pin (high = off); 0 = no switch",type:"int"},
   bflow_bat:{unit:"",desc:"Backflow switch between converter output and battery, current sensor on the battery side: idle HS-short check, selftest bflow and its daily run",type:"bool"},
   hs_clamp:{unit:"",desc:"Clamp the LS on after a latched HS short (needs bflow_bat=1 and a BF test pass within 36 h). Bench-validate first",type:"bool"},
   lv_pgood:{unit:"GPIO",desc:"LV power-good output; high disables the HV aux supply path. 255 = none",type:"int"},
@@ -782,6 +784,9 @@ function sideKeyFor(file, key, boost){
   return null;
 }
 
+// board.conf keys the firmware renamed; setup fails while only the old one is set.
+const RENAMED_KEYS = { "board.conf": { panel_en:"bflow_en", panel_sd:"bflow_sd" } };
+
 // topo of the converter.conf next to `path` ("buck" when it has none, as the firmware reads it).
 function topoFor(path){
   const f = state && state.files[path.slice(0, path.length-path.split("/").pop().length)+"converter.conf"];
@@ -811,9 +816,9 @@ const ADD_KEY_HINTS = { "sensor.conf": ["hv_v","lv_v","hv_i","lv_i"].flatMap(c =
    Run `python3 etc/config-tool/scrape_conf_keys.py --write` to refresh. */
 // SCRAPER:BEGIN FILE_KEYS
 const FILE_KEYS = {
-  "board.conf":["adc_fake_freq","ads_alert","bflow_bat","boot_refresh_ns","fan_pwm","hs_clamp","i2c_freq","i2c_hs_freq","i2c_port","idle_cpu_mhz",
+  "board.conf":["adc_fake_freq","ads_alert","bflow_bat","bflow_en","bflow_sd","boot_refresh_ns","fan_pwm","hs_clamp","i2c_freq","i2c_hs_freq","i2c_port","idle_cpu_mhz",
     "i2c_scl","i2c_sda","ina22x_addr","ina22x_alert",
-    "led_WS2812","led_WS2812B","led_simple","lv_pgood","lv_pgood_v","mcu","panel_en","panel_sd",
+    "led_WS2812","led_WS2812B","led_simple","lv_pgood","lv_pgood_v","mcu",
     "pwm_deadtime_ns","pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","pwm_driver_logic","pwm_en","pwm_fault_active_high","pwm_fault_pin",
     "pwm_freq","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin","skip_assert"],
   "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_inl","esp32adc1_sr",
@@ -852,7 +857,7 @@ const FILE_KEYS = {
 const TYPE_KEYS = {
   byte: new Set(["addr","ads_alert","bflow_bat","cmd_input","hs_clamp","enabled","fan_pwm","forced_pwm","fpwm_gate","rect_cal_auto","rect_offset_cal",
     "i2c_port","i2c_scl","i2c_sda","ignore_calibration_constraints","ina22x_addr","ina22x_alert",
-    "esp32adc1_inl","led_simple","lv_pgood","notch_adaptive","ntc_ch","panel_en","panel_sd","pwm_en","pwm_fault_active_high","pwm_fault_pin",
+    "esp32adc1_inl","led_simple","lv_pgood","notch_adaptive","ntc_ch","bflow_en","bflow_sd","pwm_en","pwm_fault_active_high","pwm_fault_pin",
     "pwm_hi","pwm_in","pwm_li","pwm_sd","reverse_current_paranoia","skip_assert","wire_protect",
     "pv_substrings","scan_trigger"]),
   long: new Set(["adc_fake_freq","ble_passkey","fpwm_gate_hold","esp32adc1_avg","esp32adc1_sr","i2c_freq","i2c_hs_freq",
@@ -880,7 +885,7 @@ const DEFAULTS = {
   // board.conf
   "adc_fake_freq":"3000","fan_pwm":"255","i2c_freq":"100000","i2c_hs_freq":"0","i2c_port":"0","i2c_sda":"255","idle_cpu_mhz":"80",
   "ina22x_addr":"0x40","ina22x_alert":"255","led_simple":"255","lv_pgood":"255","lv_pgood_v":"10.5",
-  "mcu":"\"\"","ntc_ch":"255","panel_en":"0","panel_sd":"0","pwm_fault_active_high":"0","bflow_bat":"0","hs_clamp":"0",
+  "mcu":"\"\"","ntc_ch":"255","bflow_en":"0","bflow_sd":"0","pwm_fault_active_high":"0","bflow_bat":"0","hs_clamp":"0",
   "pwm_fault_pin":"255","pwm_sd":"255","skip_assert":"0",
   // sensor.conf
   "adc":"\"\"","esp32adc1_inl":"0","ignore_calibration_constraints":"0","ina22x_conv_time_us":"1100","ina22x_ov":"0",
@@ -940,6 +945,8 @@ function lookupMeta(file, key, inlineComment) {
   const side = sideKeyFor(file, key, false);
   if (side) return {unit:"", type:"", removed:true, desc:`No longer read: role key, migrate to ${side} (buck) / `+
                     `${sideKeyFor(file, key, true)} (boost) with etc/migrate_side_keys.py`};
+  const rn = RENAMED_KEYS[base] && RENAMED_KEYS[base][key];
+  if (rn) return {unit:"", type:"", removed:true, desc:`Renamed to ${rn}; migrate with etc/migrate_side_keys.py`};
   if (FILE_META[base] && FILE_META[base][key]) return FILE_META[base][key];
   if (key === "vout_max") return META_VOUT_MAX;
   if (META[key]) return META[key];
