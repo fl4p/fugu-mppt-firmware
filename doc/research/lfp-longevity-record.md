@@ -117,6 +117,16 @@ cites as the origin of its termination line (S23) was never read during the rese
 it is referenced in `README.md`, the [LFP charging](../guide/charging/lfp-charging.md) and [termination](../guide/charging/termination.md) pages and
 `src/charger.h`. It plays no part in the evidence findings but is now archived and logged.
 
+## 6b. Digitized figure data
+
+- **S1 (Keil et al. 2016), Fig. 2c**, digitized 2026-11-23 for the §3.1 figure of the published page: capacity
+  vs storage SoC of the A123 APR18650M1A after about 9 months at 25, 40 and 50 °C (16 SoCs; 14 at 50 °C, no 0 %
+  or 45 % point). Read from the PDF vector paths with dsdig's paper-line class (new, not validated in general;
+  approved for this panel); a raster cross-check agreed within 0.0005 relative capacity. The central graphite
+  peak line was read at 72.8 % SoC (paper text: 73 %). The owner approved the curve overlay and the
+  axis-calibration check on 2026-11-23. Values are constants in `website/scripts/plots/lfp_longevity.py`
+  (4 decimals of relative capacity); fade = (1 − relative capacity) · 100.
+
 ## 7. Source access log
 
 | ID | work (stable identifier, version) | evidence state | attempt history | route | validation | load-bearing |

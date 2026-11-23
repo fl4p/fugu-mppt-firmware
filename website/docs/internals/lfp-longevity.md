@@ -83,17 +83,28 @@ Keil et al. stored three 18650 cell types, among them the A123 APR18650M1A (1.1 
 16 SoCs from 0 to 100 % and at 25, 40 and 50 °C for 9 to 10 months [[1](#ref-1)].
 
 Capacity fade did not rise steadily with SoC. It sat on plateaus covering 20–30 % of SoC or more,
-with a marked step above about 70 % SoC for the LFP cells (about 60 % for the NCA and NMC cells).
-The step coincides with the central peak of the graphite in differential voltage analysis, a
-graphite lithiation of about 50 %. That peak sat at 73 % SoC in the LFP cell and at 57 % in the
-NCA cell; the position depends on how the electrodes are balanced, so it differs between cell
-designs [[1](#ref-1), Fig. 5 and text].
+with a marked step above about 70 % SoC for the LFP cells (about 60 % for the NCA and NMC cells)
+[[1](#ref-1), Fig. 2a–c and text]. The step coincides with the central peak of the graphite in
+differential voltage analysis, a graphite lithiation of about 50 %. That peak sat at 73 % SoC in
+the LFP cell and at 57 % in the NCA cell; the position depends on how the electrodes are balanced,
+so it differs between cell designs [[1](#ref-1), Fig. 5d–f and text].
 
-The LFP cells showed no additional fade toward 100 % SoC, their aging "correlates entirely with
-the anode potential", and their resistance increase was the lowest of the three types and largely
-independent of storage SoC [[1](#ref-1), Results and Conclusions]. After nine months the LFP fade
-rate was about 0.2 percentage points per month at 25 °C and about 0.5 at 50 °C
-[[1](#ref-1), Results]. The authors recommend keeping the graphite less than 50 % lithiated for
+The figure shows the LFP cell of that study, the A123 APR18650M1A (1.1 Ah), after about 9 months
+of storage at 25, 40 and 50 °C. The 50 °C series has no points at 0 and 45 % SoC. Data digitized
+from [[1](#ref-1), Fig. 2c]; peak position from [[1](#ref-1), Fig. 5f].
+
+![Capacity fade after about 9 months against storage SoC from 0 to 100 % for the A123 APR18650M1A LFP cell, one line each for 25, 40 and 50 °C. Every line falls toward low SoC, is roughly flat between about 40 and 70 % SoC and steps up between 70 and 80 % SoC; at 25 °C the fade rises from about 3.5 % at 70 % SoC to about 5.9 % at 80 % and stays there up to 100 %. Higher temperature shifts the whole line up; at 100 % SoC the fade is about 5.8 % at 25 °C, 9.5 % at 40 °C and 14.8 % at 50 °C. A dashed line at 73 % SoC marks the central graphite peak in differential voltage analysis of the new cell.](img/lfp-longevity/keil-fade-vs-soc.svg)
+
+Keil et al. report no additional fade toward 100 % SoC for the LFP cells, which they attribute to
+the lower maximum voltage and the stable LFP lattice [[1](#ref-1), Results]. At 25 and 40 °C the
+fade does not rise from 80 to 100 % SoC; at 50 °C it still rises by about 1.3 percentage points (13.5 to
+14.8 %). The aging of the LFP cells "correlates entirely with the anode potential", and their
+resistance increase was the lowest of the three types and largely independent of storage SoC
+[[1](#ref-1), Results and Conclusions].
+
+Fade slows with time, roughly with its square root, and is largest in the first weeks. At nine
+months it was still growing by about 0.2 percentage points per month at 25 °C and about 0.5 at
+50 °C [[1](#ref-1), Results]. The authors recommend keeping the graphite less than 50 % lithiated for
 long-term storage [[1](#ref-1), Conclusions].
 
 Naumann et al. stored the Sony/Murata US26650FTC1 (3 Ah LFP) at 17 combinations of temperature

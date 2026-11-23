@@ -185,7 +185,7 @@ L 341.899375 219.816
    <g id="line2d_13">
     <path d="M 251.503375 219.816 
 L 251.503375 3.6 
-" clip-path="url(#pe3254888f0)" style="fill: none; stroke-dasharray: 5.6,4.2; stroke-dashoffset: 0; stroke: #3987e5; stroke-width: 1.4"/>
+" clip-path="url(#pe3254888f0)" style="fill: none; stroke-dasharray: 5.6,4.2; stroke-dashoffset: 0; stroke: #898781; stroke-width: 1.4"/>
    </g>
    <g id="text_24">
     <text style="font-size: 10px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; text-anchor: start; fill: #898781" x="255.520975" y="12.016235" transform="rotate(-0 255.520975 12.016235)">73 % calendar step [1]</text>
