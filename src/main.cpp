@@ -34,6 +34,9 @@
 #if WITH_TELNET
 #include "tele/telnet_service.h"
 #endif
+#if WITH_TLS_CONSOLE
+#include "tele/tls_console.h"
+#endif
 #include "tele/telemetry_service.h"
 #if WITH_HA
 #include "tele/home_assistant.h"
@@ -398,6 +401,9 @@ static void registerServices() {
 #endif
 #if WITH_TELNET
     g_services.registerService(&telnetService);
+#endif
+#if WITH_TLS_CONSOLE
+    g_services.registerService(&tlsConsoleService);
 #endif
 #endif
     g_services.registerService(&lcdService);

@@ -69,6 +69,7 @@ Each transport has its own requirements on the device and its own client flags:
 |---|---|---|
 | Serial | UART0 at 115200 baud; on ESP32-S3 also the USB-Serial-JTAG port | `-p PORT` (default `$ESPPORT`, else the first matching `/dev/cu.usbmodem*`, `/dev/ttyUSB*`, `/dev/ttyACM*`, …), `-b BAUD` |
 | Telnet | `CONFIG_FUGU_WITH_TELNET` build, Wi-Fi up, `telnet` service running (off by default), TCP port 23, one client at a time | `--ip HOST[:PORT]` |
+| TLS-PSK | `CONFIG_FUGU_WITH_TLS_CONSOLE` build, Wi-Fi up, `tlscon` service running with a key (off by default), TCP port 992, one client at a time | `--tls HOST[:PORT]`, `--psk-id`, `--psk` |
 | BLE | `CONFIG_FUGU_WITH_BLE` build and the `ble` service running (off by default) | `--ble [NAME]`, `--name`, `--address`, `--adapter hciN` (Linux) |
 | BLE via ESPHome proxy | same as BLE, reached through an ESPHome `bluetooth_proxy` | `--ble-proxy HOST[:PORT]` (default port 6053), `--proxy-password` |
 | MQTT | `mqtt.conf::broker_uri` set; `cmd_input=1` to accept commands | `--mqtt BROKER`, `--mqtt-port`, `--mqtt-user`, `--mqtt-pass`, `--mqtt-readonly`, `--name` |
@@ -104,6 +105,16 @@ The server accepts one client at a time and asks for no password. Terminate comm
 Telnet is unauthenticated and unencrypted: anyone on the network can run any command, including `ota`. Only
 enable it on networks you trust.
 :::
+
+### TLS-PSK
+
+The `tlscon` service serves the same console as telnet, encrypted with TLS 1.2 and authenticated by a pre-shared
+key. Set a key over serial or BLE and start the service, as described in
+[`tlscon.conf`](../reference/config/tlscon.md), then connect (Python 3.13 or later):
+
+```bash
+python3 etc/fugu_console.py --tls <device-ip> --psk-id <identity> --psk <hex key>
+```
 
 ### BLE
 

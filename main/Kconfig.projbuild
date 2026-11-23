@@ -135,6 +135,15 @@ config FUGU_WITH_TELNET
         Plaintext console and log sink on TCP port 23. Anyone on the network can run any
         command. The service starts only with telnet.conf enabled=1.
 
+config FUGU_WITH_TLS_CONSOLE
+    bool "TLS-PSK console (tlscon service)"
+    default n
+    select MBEDTLS_PSK_MODES
+    select MBEDTLS_KEY_EXCHANGE_PSK
+    help
+        Console over TLS 1.2 with a pre-shared key (tlscon.conf psk_id, psk). Turns on the mbedTLS
+        server role (sdkconfig.tls_console).
+
 config FUGU_WITH_SCOPE
     bool "ADC scope streamer (scope service, TCP port 24)"
     default y

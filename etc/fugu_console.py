@@ -50,12 +50,12 @@ import time
 
 try:  # works both as `python etc/fugu_console.py` and `python -m etc.fugu_console`
     from fugu.transport import (SerialTransport, SocketTransport, BleTransport,
-                                EspHomeBleTransport, MqttTransport)
+                                EspHomeBleTransport, MqttTransport, TlsPskTransport)
     from fugu.console import Console, Reply, REJECT
     from fugu.discover import discover_scope_servers
 except ImportError:
     from etc.fugu.transport import (SerialTransport, SocketTransport, BleTransport,
-                                    EspHomeBleTransport, MqttTransport)
+                                    EspHomeBleTransport, MqttTransport, TlsPskTransport)
     from etc.fugu.console import Console, Reply, REJECT
     from etc.fugu.discover import discover_scope_servers
 
@@ -998,6 +998,13 @@ def make_transport(args):
         return MqttTransport(host, port=port,
                              username=args.mqtt_user, password=args.mqtt_pass,
                              device=args.name, writable=not args.mqtt_readonly)
+    if args.tls:
+        host, _, port = args.tls.partition(":")
+        port = int(port) if port else TlsPskTransport.DEFAULT_PORT
+        if not args.psk:
+            raise SystemExit("--tls needs --psk (or $FUGU_PSK)")
+        print(f"connecting to {host}:{port} (TLS-PSK, identity {args.psk_id!r})")
+        return TlsPskTransport(host, args.psk_id, args.psk, port=port)
     if args.ip:
         host, _, port = args.ip.partition(":")  # host:port for NAT-forwarded endpoints
         port = int(port) if port else SocketTransport.DEFAULT_PORT
@@ -1027,6 +1034,12 @@ def parse_args(argv=None):
     ap.add_argument("--proxy-password", default=os.environ.get("ESPHOME_API_PASSWORD", ""),
                     help="ESPHome API password for --ble-proxy (default: $ESPHOME_API_PASSWORD)")
     ap.add_argument("--ip", help="use TCP/telnet to this address instead of serial")
+    ap.add_argument("--tls", metavar="HOST[:PORT]",
+                    help="TLS-PSK console (tlscon service, default port 992); key from --psk/--psk-id")
+    ap.add_argument("--psk-id", default=os.environ.get("FUGU_PSK_ID", "fugu"),
+                    help="TLS-PSK identity, tlscon.conf psk_id (default $FUGU_PSK_ID or 'fugu')")
+    ap.add_argument("--psk", default=os.environ.get("FUGU_PSK"),
+                    help="TLS-PSK key as hex, tlscon.conf psk (default $FUGU_PSK)")
     ap.add_argument("--mqtt", metavar="BROKER", nargs="?", const=os.environ.get("MQTT_HOST"),
                     help="use MQTT via this broker host instead of serial (bare --mqtt: $MQTT_HOST); "
                          "port and credentials default to $MQTT_PORT/$MQTT_USER/$MQTT_PASS from "

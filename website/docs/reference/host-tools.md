@@ -59,6 +59,7 @@ python3 etc/fugu_console.py -p $ESPPORT --coredump get       # pull + decode a c
 | `-p`, `--port`                        | Serial port (default `$ESPPORT` or autodetect)                                 |
 | `-b`, `--baud`                        | Baud rate, default 115200                                                      |
 | `--ip HOST[:PORT]`                    | TCP/telnet                                                                     |
+| `--tls HOST[:PORT]`                   | TLS-PSK console (default port 992), key from `--psk`/`--psk-id` or `$FUGU_PSK`/`$FUGU_PSK_ID`; Python 3.13+ |
 | `--ble`                               | BLE NUS; filter by advertised name with `--name`                               |
 | `--name`, `--address`                 | Name substring filter (BLE name or MQTT hostname), BLE address                 |
 | `--adapter hciN`                      | BlueZ adapter (Linux)                                                          |

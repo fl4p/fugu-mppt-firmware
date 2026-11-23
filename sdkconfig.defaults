@@ -53,10 +53,9 @@ CONFIG_COMPILER_CXX_EXCEPTIONS_EMG_POOL_SIZE=1024
 CONFIG_ESP_TASK_WDT_EN=y
 
 
-# OTA: (NetworkClientSecure)
-# this will significantly increase image size:
-CONFIG_MBEDTLS_PSK_MODES=n #y
-CONFIG_MBEDTLS_KEY_EXCHANGE_PSK=n #y
+# PSK cipher suites (CONFIG_FUGU_WITH_TLS_CONSOLE selects them back on)
+CONFIG_MBEDTLS_PSK_MODES=n
+CONFIG_MBEDTLS_KEY_EXCHANGE_PSK=n
 
 # WiFi: drop SoftAP (we're always STA — never act as AP).
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n

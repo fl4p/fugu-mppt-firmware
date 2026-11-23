@@ -68,6 +68,7 @@ Each file has its own reference page:
 | [`ftp.conf`](ftp.md) | FTP service |
 | [`http.conf`](http.md) | HTTP config-file service (build option) |
 | [`telnet.conf`](telnet.md) | telnet console service |
+| [`tlscon.conf`](tlscon.md) | TLS-PSK console service (build option) |
 | [`scope.conf`](scope.md) | raw ADC streaming service |
 | [`lcd.conf`](lcd.md) | status display service |
 | [`ble.conf`](ble.md) | BLE/NUS console service |

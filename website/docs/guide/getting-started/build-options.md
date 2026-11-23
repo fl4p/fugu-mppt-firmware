@@ -40,6 +40,7 @@ The following table lists each feature option, its default, and what it does:
 | `CONFIG_FUGU_WITH_NETTOOLS` | off | `curl`, `ping`, `nslookup`, `tcpconnect`, `netstat` console commands. Needs `NETW`; `https://` URLs also need `HTTPS`. |
 | `CONFIG_FUGU_WITH_HTTPS` | off | TLS client: `https://` OTA and `curl`, `mqtts://` broker, verified against the mbedTLS CA bundle (MQTT: or a private CA in [`mqtt.conf`](../../reference/config/mqtt.md#tls) `ca_file`). Needs `NETW`; on adds ~77 KB flash (incl. the CA bundle). |
 | `CONFIG_FUGU_WITH_TELNET` | on | [Telnet console](../../reference/config/telnet.md) on TCP port 23, without authentication; runs only with `telnet.conf` `enabled=1`. Needs `NETW`. |
+| `CONFIG_FUGU_WITH_TLS_CONSOLE` | off | [TLS-PSK console](../../reference/config/tlscon.md) (`tlscon` service). Needs `NETW`; selects the mbedTLS PSK key exchange and layers `sdkconfig.tls_console` (TLS server role). On adds ~14 KB flash, ~13 KB on top of `HTTPS`. |
 | `CONFIG_FUGU_WITH_SCOPE` | on | Raw-ADC [scope](../../reference/host-tools.md#scopepy) streamer on TCP port 24. Needs `NETW`; off saves ~7 KB flash. |
 | `CONFIG_FUGU_WITH_FTP` | on | [FTP server](../../reference/config/ftp.md) for the config partition. Needs `NETW`; off saves ~15 KB flash. |
 | `CONFIG_FUGU_WITH_HTTP_CONF` | off | [HTTP file endpoint](../../reference/config/http.md) (`GET`/`PUT`/`DELETE /conf/<name>`) for the config partition, no extra task. Needs `NETW`; on adds ~9 KB flash. |
@@ -94,7 +95,8 @@ The build also reads these environment variables:
 2. `sdkconfig.defaults.esp32` (classic ESP32 target only)
 3. `sdkconfig.ble` when `CONFIG_FUGU_WITH_BLE=y`
 4. `sdkconfig.no_netw` when `CONFIG_FUGU_WITH_NETW=n`
-5. `sdkconfig.usb_msc` when `CONFIG_FUGU_WITH_USB_MSC=y`
+5. `sdkconfig.tls_console` when `CONFIG_FUGU_WITH_TLS_CONSOLE=y`
+6. `sdkconfig.usb_msc` when `CONFIG_FUGU_WITH_USB_MSC=y`
 
 If `sdkconfig` looks wrong, delete it to regenerate it.
 
