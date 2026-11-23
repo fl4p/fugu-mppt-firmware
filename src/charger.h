@@ -259,6 +259,7 @@ class Li_ChgTerminationCondition {
     // The cell voltage relaxes over minutes after a drop in charge current (cloud), the line would drop
     // at once: place the line with the decaying peak of the current instead.
     static constexpr float ILINE_TAU_S = 120.f;
+    static constexpr uint32_t STALE_PAUSE_S = 600; // balance run: longest stale pause before the latch
 
     const BatChargerParams &p;
     bool terminated = false;
@@ -270,10 +271,12 @@ class Li_ChgTerminationCondition {
     time_us _iHoldUs = 0;
     bool _cvHold = false, _tailOn = false;
     uint32_t _cvHoldTicks = 0, _tailTicks = 0; // wallClockTicks() at hold entry / tail start
+    uint32_t _staleT = 0; // wallClockTicks() | 1 at a stale pause of a balance hold, 0 = none
 
     void _latch() {
         terminated = true;
         _cvHold = false;
+        _staleT = 0;
         _vfloorStreak = 0;
         _ceilStreak = 0;
         _lineStreak = 0;
@@ -285,11 +288,24 @@ public:
     [[nodiscard]] float v_term() const { return _v_term; }
     [[nodiscard]] bool cvHold() const { return _cvHold; }
     [[nodiscard]] uint32_t cvHoldS() const { return _cvHold ? coarseTicksToSec(wallClockTicks() - _cvHoldTicks) : 0; }
+    [[nodiscard]] bool stalePaused() const { return _staleT; }
 
-    // BMS cell or ibat data went stale during the CV hold: latch (the stale path holds the float cap anyway)
+    // BMS cell or ibat data went stale during the CV hold: latch (the stale path holds the float cap anyway).
+    // A balance hold pauses instead (left, the charger holds float as if latched) and resumes on the next
+    // fresh frame; it latches once stale STALE_PAUSE_S longer.
     void latchStale() {
-        if (!_cvHold) return;
-        ESP_LOGW("charger", "cv hold ended: BMS data stale after %u s", (unsigned) cvHoldS());
+        if (_staleT) {
+            if (wallClockTicks() - _staleT < secToCoarseTicks(STALE_PAUSE_S)) return;
+        } else if (!_cvHold) {
+            return;
+        } else if (balance) {
+            ESP_LOGW("charger", "cv hold paused: BMS data stale");
+            _staleT = wallClockTicks() | 1;
+            _cvHold = false;
+            return;
+        }
+        ESP_LOGW("charger", "cv hold ended: BMS data stale after %u s%s", (unsigned) cvHoldS(),
+                 _staleT ? " (balance paused)" : "");
         _latch();
     }
 
@@ -309,6 +325,7 @@ public:
         _ceilStreak = 0;
         _lineStreak = 0;
         _cvHold = false;
+        _staleT = 0;
     }
 
     // One call per BMS cell frame (the streaks count frames).
@@ -342,14 +359,16 @@ public:
             _lineStreak = 0;
         }
 
-        if (lineLatch and !ceilingLatch and (p.cv_hold_max_s or balance)) {
+        const bool resume = _staleT; // fresh after a stale pause: back in the hold, its clock kept
+        _staleT = 0;
+        if (!ceilingLatch and (resume or (lineLatch and (p.cv_hold_max_s or balance)))) {
             // CV hold: the charger holds the cell at cv_eoc and the current tapers; latch on the tail
             lineLatch = false;
             _lineStreak = 0;
             _cvHold = true;
             _tailOn = false;
             _vfloorStreak = 0;
-            _cvHoldTicks = wallClockTicks();
+            if (!resume) _cvHoldTicks = wallClockTicks();
         } else if (_cvHold and !ceilingLatch) {
             uint32_t now = wallClockTicks(), heldS = coarseTicksToSec(now - _cvHoldTicks);
             if (ibat < p.tail_c_rate * p.Cbat and vcell_high >= p.cv_eoc - p.cv_hold_band) {
@@ -594,7 +613,7 @@ public:
         if (q == 1) _balCeilT = 0;
         _balHot = haveTemp() && _tempMax > (_balHot ? BAL_TEMP_MAX - BAT_TEMP_HYST : BAL_TEMP_MAX);
         _balRun = balanceDue() && !balanceDeferWhy();
-        bool hold = termCond.cvHold();
+        bool hold = termCond.cvHold() || termCond.stalePaused(); // a stale pause keeps the session
         if (_balWasHold && !hold) {
             _balSessS = 0.f; // session over (a reboot keeps it)
             if (termCond.balance && bool(termCond) && batSt.vcell_high >= params.cv_ceiling) {
@@ -941,7 +960,7 @@ public:
         bool balancingMode = false;
 
         bool batDataOk = batSt.haveValidCellVoltage() and std::isfinite(params.Cbat);
-        bool nowTerm = bool(termCond);
+        bool nowTerm = bool(termCond) || termCond.stalePaused(); // a stale pause holds float as a latch does
         if (!nowTerm) _termJoin = false;
         auto nowUs = wallClockUs();
 
@@ -967,7 +986,8 @@ public:
                 // a latch glides to float from the bus as read now: no output step
                 if (nowTerm && std::isfinite(voutNow)) vpack_pin = fminf(voutNow, params.Vbat_max);
                 _cvIlim = NAN;
-                ESP_LOGI("charger", "cv hold left (%s), vpPin %.3fV", nowTerm ? "terminated" : "charging", vpack_pin);
+                ESP_LOGI("charger", "cv hold left (%s), vpPin %.3fV",
+                         termCond.stalePaused() ? "paused" : nowTerm ? "terminated" : "charging", vpack_pin);
             }
         }
         if (cvHold) {
@@ -1260,7 +1280,9 @@ public:
     [[nodiscard]] float holidayDischargeH() const { return _hDisS * (1.f / 3600.f); }
     [[nodiscard]] bool chargeBlocked() const { return _coldBlocked; }
     // the pack wants no charge (terminated, at the partial ceiling, or too cold) or is held at cv_eoc
-    [[nodiscard]] bool chargeHold() const { return bool(termCond) || _partialHold || _coldBlocked || termCond.cvHold(); }
+    [[nodiscard]] bool chargeHold() const {
+        return bool(termCond) || _partialHold || _coldBlocked || termCond.cvHold() || termCond.stalePaused();
+    }
     [[nodiscard]] time_us lastFullUs() const { return _lastFullUs; }
 
     // Release the EOC vpack_pin latch upward to Vbat_max and clear the filter/glide state. Used when

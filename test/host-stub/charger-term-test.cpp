@@ -213,6 +213,7 @@ struct Plant {
     bool flatOff = false; // unit 1 reads -0.1 V while unit 0 converts, else -0.9 V (fry/flat 11-23)
     float ibat = 0, vbus = 0, iout[2] = {0, 0};
     bool cells = true; // BMS cell frames flowing
+    bool ibatOn = true; // BMS ibat frames flowing
     bool bmsLag = false; // ibat frames report the current of one frame earlier
     float ibatOld = 0;
     int t = 0;
@@ -246,7 +247,7 @@ struct Plant {
             voc += ibat * (1.f / 3600.f) * DV_DAH;
             if (ibat > 0) imb += ibat * (1.f / 3600.f) * kImb;
             for (int i = 0; i < n; ++i) {
-                if (t % 4 == 0) c[i]->batSt.updateBatCurrent(bmsLag ? ibatOld : ibat);
+                if (ibatOn && t % 4 == 0) c[i]->batSt.updateBatCurrent(bmsLag ? ibatOld : ibat);
                 if (cells && t % 12 == 0) c[i]->batSt.setVcellHigh(vcell());
                 // main.cpp lfControl(): any running converter has authority while the charger holds
                 c[i]->update(vbus + off[i], iout[i], iout[i] > 0.3f || (c[i]->chargeHold() && ipv[i] > 0), psu);
@@ -683,9 +684,81 @@ static void test_bal_ceiling_and_stale() {
     frames(d, 3.50f, 10.f, 20, true);
     p = d.balanceInBandS();
     for (int s = 0; s < 400; ++s) tick(d); // cell + ibat frames stop
+    CHECK(!(bool) d.termCond && d.termCond.stalePaused() && d.balanceDue(), "stale 400 s: paused, not latched");
+    for (int s = 0; s < 600; ++s) tick(d);
     CHECK((bool) d.termCond && d.balanceDue() && d.balanceInBandS() <= p + 64, "stale: latched, run pending (%u -> %u)",
           p, d.balanceInBandS());
     CHECK(d.balanceDeferWhy() != nullptr, "stale: deferred");
+}
+
+// BMS frames (cells and ibat) stop for gapS mid run (fry/flat 11-23: ~3 min, both units latched)
+static void test_bal_stale_gap(int gapS, bool bal = true) {
+    BatteryCharger c; c.params = bal ? balParams(7200) : holdParams(); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    if (bal) c.balanceNow();
+    Plant pl;
+    pl.untilHold(c);
+    CHECK(c.termCond.cvHold() && c.balanceRunning() == bal, "gap %d: in the hold", gapS);
+    pl.run(c, 1800);
+    uint32_t p0 = c.balanceInBandS();
+    float limBefore = c.Iout_max(), ibatBefore = pl.ibat;
+    pl.cells = pl.ibatOn = false;
+    int s = 0, latchedAt = -1, pausedS = 0;
+    float limMin = 99.f, vmaxGap = 0.f, ibatGapEnd = 0.f;
+    for (; s < gapS; ++s) {
+        pl.run(c, 1);
+        vmaxGap = std::max(vmaxGap, pl.vcell());
+        if (c.termCond.stalePaused()) {
+            ++pausedS;
+            CHECK(!c.termCond.cvHold() && c.Vout_max() <= pl.vbus + 0.05f, "gap %d: paused at %d s, pin %.3f above the bus",
+                  gapS, s, c.Vout_max());
+            limMin = std::min(limMin, c.Iout_max());
+        }
+        if (latchedAt < 0 && (bool) c.termCond) latchedAt = s;
+    }
+    ibatGapEnd = pl.ibat;
+    uint32_t pGap = c.balanceInBandS();
+    printf("  gap %d s%s: paused %d s, latched at %d s, in band %u -> %u s, ibat %.1f -> %.1f A, lim %.1f -> %.1f A, cell max %.3f\n",
+           gapS, bal ? "" : " (normal hold)", pausedS, latchedAt, p0, pGap, ibatBefore, ibatGapEnd, limBefore, limMin,
+           vmaxGap);
+    CHECK(pGap <= p0 + 60, "gap %d: in-band time not counted past the 60 s cell-age limit (%u -> %u)", gapS, p0, pGap);
+    if (!bal) {
+        CHECK(latchedAt >= 175 && latchedAt <= 200 && pausedS == 0, "normal hold: latches at expiry as before (%d s)",
+              latchedAt);
+        return;
+    }
+    if (gapS > 800) {
+        CHECK(latchedAt >= 775 && latchedAt <= 800, "long gap: latched after expiry + pause (%d s)", latchedAt);
+        CHECK(!c.termCond.stalePaused() && c.balanceDue() && pGap >= p0, "long gap: run pending, progress kept");
+        pl.cells = pl.ibatOn = true;
+        pl.run(c, 120);
+        CHECK((bool) c.termCond && !c.termCond.cvHold(), "long gap: still terminated with fresh data");
+        return;
+    }
+    CHECK(latchedAt < 0 && pausedS > 0 && c.termCond.stalePaused(), "short gap: paused, not latched (latched at %d s)",
+          latchedAt);
+    CHECK(ibatGapEnd < 2.f, "short gap: pack current off at float (%.1f A)", ibatGapEnd);
+    pl.cells = pl.ibatOn = true;
+    int back = -1;
+    float ibatMax = -99.f, vmax = 0.f;
+    for (s = 0; s < 120; ++s) {
+        pl.run(c, 1);
+        if (back < 0 && c.balanceRunning()) back = s;
+        if (back >= 0) ibatMax = std::max(ibatMax, pl.ibat), vmax = std::max(vmax, pl.vcell());
+    }
+    CHECK(back >= 0 && back <= 13 && !(bool) c.termCond, "short gap: hold resumed after %d s", back);
+    CHECK(ibatMax <= ibatBefore + 8.f + 0.1f, "resume: no current surge (ibat %.1f A, %.1f A before)", ibatMax, ibatBefore);
+    int held = 0;
+    while (!(bool) c.termCond && held < 20000) {
+        pl.run(c, 1);
+        ++held;
+        vmax = std::max(vmax, pl.vcell());
+    }
+    printf("  gap %d s: resumed after %d s, completed %d s later, cell max %.3f\n", gapS, back, held + 120, vmax);
+    CHECK((bool) c.termCond && !c.balanceDue(), "short gap: run completes");
+    CHECK(held + 120 >= (int) (7200 - pGap) - 30 && held + 120 <= (int) (7200 - pGap) + 300,
+          "short gap: completes on the kept time (%d s after the gap, %u s left)", held + 120, 7200 - pGap);
+    CHECK(vmax <= 3.5f + 0.02f, "short gap: cell held at cv_eoc after the resume (max %.3f)", vmax);
 }
 
 static void test_bal_partial_hold_suspended() {
@@ -868,6 +941,9 @@ int main() {
     test_bal_delta();
     test_bal_defer();
     test_bal_ceiling_and_stale();
+    test_bal_stale_gap(240);
+    test_bal_stale_gap(1200);
+    test_bal_stale_gap(240, false);
     test_bal_partial_hold_suspended();
     test_bal_rtc();
     test_cloud_dip_does_not_latch();

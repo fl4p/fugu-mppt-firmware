@@ -221,7 +221,8 @@ The hold ends in one of these ways:
   charger terminates at once, as without the hold.
 - Stale BMS data: the cell voltage or the pack current is older than 180 s. The
   charger terminates without marking the pack full and holds the float
-  fallback. Until then the current limit stays where it was.
+  fallback. Until then the current limit stays where it was. A
+  [balance run](#top-balancing) pauses instead.
 - Sun gone: the highest cell stays below `cv_float` for 4 consecutive frames.
   The charger returns to charging without terminating, so a cloudy afternoon
   does not end in a false "full".
@@ -271,11 +272,28 @@ it is due:
 
 When the run completes, the hold ends through its normal exits: with
 `cv_hold_max_s` = 0 the charger terminates at once and marks the pack full.
-The ceiling, stale-data and sun-gone exits of the hold apply unchanged; they
-do not complete the run. A run that stops on the ceiling stays pending with
+The ceiling and sun-gone exits of the hold apply unchanged; they do not
+complete the run. A run that stops on the ceiling stays pending with
 its in-band time but is deferred for a quarter of `balance_interval`, at
 least 20 h, so the next charge ends normally (the `balance` reason is
 `ceiling`). `balance now` clears the deferral; a software reset does too.
+
+Stale BMS data pauses the run instead of terminating:
+
+- The charger leaves the hold and holds the float fallback, as a termination
+  would: the output voltage limit glides from the bus voltage to the float
+  voltage and the hold's current limit is dropped. It does not mark the pack
+  full.
+- The paused time counts neither as in-band time nor as session time.
+- With fresh cell and current data again, the hold resumes on the next cell
+  frame. Its current limit restarts at the
+  output current and ramps up, so the output does not step.
+- Data still stale 600 s into the pause (780 s after the last frame)
+  terminates the charger as outside a run. The run stays pending with its
+  in-band time and resumes on the next charge.
+
+A broker or BMS-publisher restart of a few minutes thus costs the run only the
+gap.
 
 Limits and deferral:
 
@@ -287,7 +305,7 @@ Limits and deferral:
   sensor is above 35 °C (the top of the LFP storage range; it resumes below
   33 °C), and while the BMS cell or current data is stale. A deferred run that
   is already holding ends the hold through its normal exits and keeps its
-  progress. With `mqtt.conf:bat_temp_topic` configured but no fresh
+  progress; stale data pauses it instead (see above). With `mqtt.conf:bat_temp_topic` configured but no fresh
   temperature (each sensor expires after one hour), the run is deferred as well;
   without a configured temperature topic there is no temperature deferral.
 - A pack that is already terminated when the run becomes due is not released
