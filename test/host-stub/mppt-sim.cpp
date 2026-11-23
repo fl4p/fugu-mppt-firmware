@@ -2599,6 +2599,7 @@ static int runIdleWake() {
     for (int armed = 1; armed >= 0; --armed) {
         stopAndBackoff(1);
         g_vconv.setPv(isc, 0.3f * g_vconv.getVbat(), k);
+        g_vconv.setVin(0.3f * g_vconv.getVbat()); // a blocking source keeps C_in charged
         run(10, 0);
         if (armed) mppt.startSweep();
         run(10, 0);
