@@ -911,6 +911,7 @@ const META = {
   // ble.conf
   ble_security:{unit:"",desc:"BLE pairing mode: justworks or secure",type:"string"},
   ble_passkey:{unit:"",desc:"BLE static passkey for secure pairing (0 = none)",type:"int"},
+  pair_window_s:{unit:"s",desc:"New BLE devices can pair only this long after boot or after `ble pair`; 0 = only after `ble pair`; bonded devices always connect",type:"int"},
   idle_adv_ms:{unit:"ms",desc:"Connectable advertising interval while the idle power profile is on, 20..10240, 0 = unchanged (stack default 30-60 ms)",type:"int"},
 
   // wifi.conf
@@ -1089,7 +1090,7 @@ const FILE_KEYS = {
   "scope.conf":["enabled","log_level"],
   "bsync.conf":["bssid","bw","channel","enabled","hw_only","ki","kp","log_level","phase_us"],
   "lcd.conf":["addr","enabled","log_level"],
-  "ble.conf":["ble_passkey","ble_security","enabled","idle_adv_ms","log_level"],
+  "ble.conf":["ble_passkey","ble_security","enabled","idle_adv_ms","log_level","pair_window_s"],
   "pprof.conf":["sprofiler_hz"],
   "wifi.conf":["improv_offline_s","switch_delay"],
 };
@@ -1109,8 +1110,8 @@ const TYPE_KEYS = {
   long: new Set(["adc_fake_freq","adv_ms","balance_hold_s","binary","ble","ble_passkey",
     "cv_hold_max_s","esp32adc1_avg","esp32adc1_sr","fpwm_gate_hold","holiday_days","i2c_freq",
     "i2c_hs_freq","i2c_scl","idle_adv_ms","idle_cpu_mhz","idle_interval_ms","improv_offline_s",
-    "ina22x_conv_time_us","pasv_port","port","pwm_freq","scan_interval","sprofiler_hz",
-    "switch_delay","tail_hold_s"]),
+    "ina22x_conv_time_us","pair_window_s","pasv_port","port","pwm_freq","scan_interval",
+    "sprofiler_hz","switch_delay","tail_hold_s"]),
   float: new Set(["L0","balance_delta","balance_interval","bat_c","bat_temp_derate",
     "bat_temp_max","bat_temp_min","boot_refresh_ns","bw","c_in","ctrl_iin_kd","ctrl_iin_kp",
     "ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td","ctrl_power_kd","ctrl_power_kp",
@@ -1189,7 +1190,7 @@ const DEFAULTS = {
   // lcd.conf
   "addr":"0",
   // ble.conf
-  "ble_passkey":"0","ble_security":"\"justworks\"","idle_adv_ms":"1000",
+  "ble_passkey":"0","ble_security":"\"justworks\"","idle_adv_ms":"1000","pair_window_s":"300",
   // pprof.conf
   "sprofiler_hz":"0",
   // wifi.conf

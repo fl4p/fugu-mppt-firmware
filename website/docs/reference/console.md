@@ -268,6 +268,17 @@ commands control them.
 | `svc restart <name>` / `svc rs <name>` | Restart a service (stop then start); re-reads its service-specific keys (not `enabled`/`log_level`; BLE security needs a reboot). See [When changes take effect](config/index.md#when-changes-take-effect). |
 | `svc log <name> <error\|warn\|info>` | Set and persist a service's log level. |
 
+## BLE Commands
+
+These commands need a `CONFIG_FUGU_WITH_BLE` build and the `ble` service running. See
+[Pairing window](config/ble.md#pairing-window).
+
+| Command | Description |
+| --- | --- |
+| `ble` / `ble bonds` | Print the security mode, the pairing window state with the seconds left, and the bonded addresses. The connected peer is marked. |
+| `ble pair [seconds]` | Open the pairing window, by default for `ble.conf::pair_window_s` (300 s if that is 0). `ble pair 0` closes it. |
+| `ble unpair <address\|all>` | Delete one bond (`aa:bb:cc:dd:ee:ff`, as listed by `ble bonds`) or all of them. A connected peer whose bond is deleted is disconnected. |
+
 ## Bench / Diagnostic Commands
 
 :::warning

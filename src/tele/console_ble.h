@@ -13,8 +13,11 @@
 //   none      - open, no pairing (any client may issue commands).
 //   justworks - encrypted link, no passkey (reliable with Web Bluetooth).
 //   passkey   - MITM-authenticated pairing using `passkey` (000000..999999); for native clients.
+// With justworks/passkey a new peer can pair only while the pairing window is open; it opens for
+// pairWindowS at the first begin (boot) and on blePairOpen(). Bonded peers are not affected.
 
-void bleConsoleBegin(const std::string &deviceName, const std::string &security, uint32_t passkey);
+void bleConsoleBegin(const std::string &deviceName, const std::string &security, uint32_t passkey,
+                     uint32_t pairWindowS);
 
 void bleConsoleEnd();
 
@@ -35,3 +38,8 @@ uint16_t bleConsoleAdvMs();
 // TX_BUF_CAP bytes in one go (e.g. `coredump get`) must call this between writes, else the FIFO
 // overflows and the tail is silently dropped. No-op without a connected BLE client (or -DWITH_BLE).
 void bleConsoleAwaitTxDrain(unsigned lowWater, unsigned timeoutMs);
+
+bool blePairGated();          // security needs pairing, so the window applies
+uint32_t blePairRemainingS(); // 0 = window closed
+// `ble` console command: "" (status) | pair [s] | bonds | unpair <addr|all>. nullptr = OK, else error.
+const char *bleCommand(const char *sub, const char *arg);

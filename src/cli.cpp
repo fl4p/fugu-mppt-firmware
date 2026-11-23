@@ -1003,6 +1003,13 @@ static void cmdOtaBle(cmd *c) {
     if (otaBleSubmitCommand(line.c_str()) == OtaBleSubmit::Rejected)
         CMD_FAIL_RETURN("otab: expected begin <size> <sha256hex> | end | abort");
 }
+
+// ble [bonds] | ble pair [s] | ble unpair <addr|all>
+static void cmdBle(cmd *c) {
+    Command cc(c);
+    if (const char *err = bleCommand(cc.getArg(0).getValue().c_str(), cc.getArg(1).getValue().c_str()))
+        CMD_FAIL_RETURN("ble: %s", err);
+}
 #endif
 
 #if defined(WITH_NETW) || defined(WITH_BLE_TELE)
@@ -2721,6 +2728,7 @@ void setupCli() {
 #endif
 #ifdef WITH_BLE
     cli.addBoundlessCmd("ota-ble", bfGuarded<cmdOtaBle>);
+    cli.addBoundlessCmd("ble", cmdBle);
 #endif
 #if defined(WITH_NETW) || defined(WITH_BLE_TELE)
     cli.addSingleArgCmd("set-time", cmdSetTime);

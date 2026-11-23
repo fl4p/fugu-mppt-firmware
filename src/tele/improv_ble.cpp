@@ -2,6 +2,7 @@
 
 #ifdef WITH_IMPROV
 
+#include <algorithm>
 #include <mutex>
 #include <string>
 
@@ -14,6 +15,7 @@
 
 #include "telemetry.h"
 #include "tele_adv.h"
+#include "console_ble.h"
 #include "../app_state.h"
 #include "../conf.h"
 
@@ -29,7 +31,7 @@ enum : uint8_t { E_NONE = 0, E_INVALID_RPC, E_UNKNOWN_RPC, E_UNABLE_TO_CONNECT, 
 enum : uint8_t { CMD_WIFI = 1, CMD_DEVICE_INFO = 3, CMD_SCAN = 4 };
 static constexpr uint8_t CAPS = 0x06; // device info + scan, no identify
 static constexpr time_ms CONNECT_TIMEOUT_MS = 25000, PROVISIONED_ADV_MS = 60000, RPC_STALE_MS = 2000,
-                         ADV_SWAP_MS = 500;
+                         ADV_SWAP_MS = 500, WINDOW_OFFLINE_MS = 20000;
 
 static BLECharacteristic *stateChr, *errChr, *resChr;
 static uint8_t state = 0, err = E_NONE;
@@ -242,11 +244,16 @@ void improvTick(time_ms now) {
     if (!stateChr) return;
     const bool up = WiFi.isConnected();
     if (up || !onlineMs) onlineMs = now;
+    // The BLE pairing window (boot, `ble pair`) is Improv's authorization; it also offers Improv
+    // after a short outage, so a power cycle re-provisions without waiting out improv_offline_s.
+    const bool window = blePairRemainingS() > 0;
+    const time_ms openAfter = window ? std::min<time_ms>(offlineOpenMs, WINDOW_OFFLINE_MS) : offlineOpenMs;
     if (up || g_app.disableWifi) accepting = false;
-    else if (!accepting && (noSsid || (offlineOpenMs && now - onlineMs >= offlineOpenMs))) {
+    else if (!accepting && (noSsid || (offlineOpenMs && now - onlineMs >= openAfter))) {
         accepting = true;
         ESP_LOGI(TAG, "offline, accepting Wi-Fi credentials");
     }
+    const uint8_t idle = up ? ST_PROVISIONED : accepting && (window || !blePairGated()) ? ST_AUTHORIZED : ST_AUTH_REQUIRED;
 
     if (state == ST_PROVISIONING) {
         if (up && attemptSsid == WiFi.SSID().c_str()) {
@@ -257,11 +264,11 @@ void improvTick(time_ms now) {
         } else if (now - attemptMs > CONNECT_TIMEOUT_MS) {
             ESP_LOGW(TAG, "could not connect to '%s'", attemptSsid.c_str());
             if (!up) disconnect_wifi(false); // stop the retry loop, it starves the BLE link
-            setState(up ? ST_PROVISIONED : accepting ? ST_AUTHORIZED : ST_AUTH_REQUIRED);
+            setState(idle);
             setErr(E_UNABLE_TO_CONNECT);
         }
     } else {
-        setState(up ? ST_PROVISIONED : accepting ? ST_AUTHORIZED : ST_AUTH_REQUIRED);
+        setState(idle);
     }
 
     uint8_t pkt[sizeof(rxBuf)];

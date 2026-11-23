@@ -47,16 +47,25 @@ Two clients support it:
 The device stores the network with `wifi-add` semantics and joins it. If the join fails within about 25 s, the
 client shows an error and you can retry.
 
-Improv has no authentication of its own. The device therefore accepts credentials only while it is offline:
+Improv has no authentication of its own. The device offers it only while it is offline, and accepts credentials only
+while the BLE [pairing window](../reference/config/ble.md#pairing-window) is open. The window takes the place of
+the authorization button that Improv expects:
 
 | Condition | Improv state |
 |---|---|
-| No network configured | Accepts credentials |
-| Wi-Fi down for `wifi.conf::improv_offline_s` (default 600 s; `0` disables this case) | Accepts credentials until Wi-Fi is up again |
+| No network configured, or Wi-Fi down for `wifi.conf::improv_offline_s` (default 600 s), and the pairing window open | Authorized; accepts credentials |
+| The same, with the pairing window closed | Authorization required; credentials refused |
 | Wi-Fi down for a shorter time, or turned off with `wifi off` | Authorization required; credentials refused |
 | Wi-Fi connected | Provisioned; credentials refused |
 
-The device advertises Improv only while it accepts credentials, and for one minute after a successful setup. The
+To authorize, power-cycle the device. The window opens at boot for `ble.conf::pair_window_s` (default 300 s), and
+while it is open the device offers Improv once Wi-Fi has been down for 20 s, so it does not wait out
+`improv_offline_s`. A device with no network configured is ready for setup right after power-up. `ble pair` from
+another console opens the window as well, which is the only way with `pair_window_s=0`. With
+`improv_offline_s=0`, Improv stays limited to devices with no network configured, also during the window. With
+`ble_security=none` the window is not needed.
+
+The device advertises Improv while it is offered, and for one minute after a successful setup. The
 Improv command characteristic uses the same pairing mode as the console
 ([`ble.conf::ble_security`](../reference/config/ble.md)), so with `justworks` or `passkey` the phone pairs first.
 The optional network scan is supported. Identify and hostname commands are not.
@@ -140,6 +149,13 @@ python3 etc/fugu_console.py --ble --address <ble-address>
 [`ble.conf::ble_security`](../reference/config/ble.md) sets the pairing mode: `justworks` (default, encrypted and
 bonded, no passkey) or `passkey` (bond + MITM with the static `ble_passkey`).
 
+A client without a bond pairs on its first connection. That works only while the
+[pairing window](../reference/config/ble.md#pairing-window) is open: for `pair_window_s` (default 300 s) after
+power-up, or after `ble pair` on another console. Once bonded, the client connects at any time. This applies to every
+client: the host running `fugu_console.py`, a browser using Web Bluetooth (the dashboard and the config editor pair
+through the operating system), and a BLE proxy. If the host still holds a bond that the device has deleted (after
+`ble unpair` or an NVS erase), remove the device in the host's Bluetooth settings and pair again inside a window.
+
 For firmware updates over BLE, see [OTA over BLE](updating/ota-ble.md).
 
 ### BLE through an ESPHome proxy
@@ -155,6 +171,10 @@ python3 etc/fugu_console.py --ble-proxy <proxy-ip> --address <ble-address>
 ```
 
 `--proxy-password` defaults to `$ESPHOME_API_PASSWORD`.
+
+The proxy, not the host, pairs with the device, so its first connection has to happen inside the
+[pairing window](../reference/config/ble.md#pairing-window). Whether it keeps that bond across its own restarts
+depends on the proxy firmware; one that does not needs a new window after each restart.
 
 ### MQTT
 

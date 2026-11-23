@@ -4,6 +4,7 @@
 // Credentials are accepted only while the device is offline: no network configured, or
 // Wi-Fi down for wifi.conf::improv_offline_s. Online, the state reads "provisioned" and
 // credentials are refused. A negative improv_offline_s disables Improv (no GATT service).
+// Unless ble_security=none, "authorized" also needs the BLE pairing window open.
 
 #include <cstddef>
 #include <cstdint>

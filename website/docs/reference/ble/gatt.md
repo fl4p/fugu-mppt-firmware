@@ -54,6 +54,11 @@ TELE carry no security requirement of their own. Each value sets pairing and wri
 | `passkey` | Bonded, secure connections, MITM protection with the static `ble_passkey` | Authenticated link required |
 | any other value | None | Open |
 
+With `justworks` or `passkey`, the device sends a security request on connect, and TX carries no output until the
+link is encrypted. A peer without a bond can pair only while the
+[pairing window](../config/ble.md#pairing-window) is open; otherwise the device answers its pairing request with
+"command not supported".
+
 ## Advertising
 
 The device advertises under its hostname (see [Connecting](../../guide/connecting.md#ble)) with the NUS service

@@ -6,6 +6,8 @@
 
 #ifdef WITH_BLE
 
+#include <algorithm>
+
 #include "service.h"
 #include "console_ble.h"
 #include "tele_ble.h"
@@ -40,7 +42,8 @@ protected:
 #endif
         bleConsoleBegin(        hn.starts_with("fugu-") ? hn : ("fugu-" + hn),
                         c.getString("ble_security", "justworks"),
-                        (uint32_t) c.getLong("ble_passkey", 0));
+                        (uint32_t) c.getLong("ble_passkey", 0),
+                        (uint32_t) std::max(c.getLong("pair_window_s", 300), 0L));
         return true;
     }
 

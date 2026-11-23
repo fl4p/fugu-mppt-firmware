@@ -12,6 +12,8 @@
 #include <BLE2902.h>
 #if defined(CONFIG_BT_NIMBLE_ENABLED)
 #include <host/ble_gap.h>
+#include <host/ble_hs.h>
+#include <host/ble_store.h>
 #endif
 #include <BLESecurity.h>
 #include <os/os_mbuf.h> // os_msys_num_free(): peek NimBLE's free mbuf pool before notifying
@@ -142,10 +144,88 @@ static constexpr uint32_t LINK_SETTLE_MS = 2000, LINK_ENC_WAIT_MS = 6000, LINK_P
                           LINK_RETRY_MS = 1000;
 static constexpr uint16_t ITVL_MIN = 6, ITVL_MAX = 12; // 7.5..15 ms
 
+// Pairing window. Closed, sm_sec_lvl 1 makes the SM answer every Pairing Request with "command not
+// supported" (ble_sm_pair_req_rx), before key exchange and before the repeat-pairing check; level 1
+// has no other effect (ATT checks start at 2). Bonded peers re-encrypt with their LTK and never send one.
+static volatile bool pairOpen = false, connEnc = false, bondEvicted = false;
+static bool rejLogged = false;
+static uint32_t pairEndMs = 0, pairDefaultS = 300; // millis()
+static int connBonds = 0;
+static const char *secName = "none";
+
+static const char *fmtAddr(const ble_addr_t &a, char *s) {
+    snprintf(s, 18, "%02x:%02x:%02x:%02x:%02x:%02x", a.val[5], a.val[4], a.val[3], a.val[2], a.val[1], a.val[0]);
+    return s;
+}
+
+static int bondCount() {
+    int n = 0;
+    ble_store_util_count(BLE_STORE_OBJ_TYPE_PEER_SEC, &n);
+    return n;
+}
+
+static void pairSet(uint32_t s) {
+    s = std::min(s, (uint32_t) 86400);
+    pairEndMs = millis() + s * 1000;
+    pairOpen = s > 0;
+    if (linkEncRequired) ble_hs_cfg.sm_sec_lvl = pairOpen ? MYNEWT_VAL(BLE_SM_LVL) : 1;
+}
+
+static void logUnbonded(const ble_addr_t &a) {
+    if (rejLogged || connEnc || !linkEncRequired || pairOpen) return;
+    rejLogged = true;
+    char s[18];
+    ESP_LOGW(TAG, "%s: no bond, pairing window closed (`ble pair`)", fmtAddr(a, s));
+}
+
+// Backstop: a bond added while the window is closed is dropped with its link.
+static void encAudit(uint16_t ch) {
+    ble_gap_conn_desc d;
+    if (ble_gap_conn_find(ch, &d) != 0) return;
+    const bool fresh = bondEvicted || bondCount() > connBonds;
+    bondEvicted = false;
+    char s[18];
+    fmtAddr(d.peer_id_addr, s);
+    if (fresh && linkEncRequired && !pairOpen) {
+        ESP_LOGE(TAG, "%s bonded outside the pairing window, dropped", s);
+        ble_gap_unpair(&d.peer_id_addr);
+        return;
+    }
+    ESP_LOGI(TAG, "%s %s", s, fresh ? "paired, new bond" : d.sec_state.bonded ? "bonded, encrypted" : "encrypted");
+}
+
+// Window closed: refuse a new bond with a full table. Open: NimBLE evicts the oldest on overflow.
+class StoreCallbacks : public BLEDeviceCallbacks {
+    int onStoreStatus(ble_store_status_event *e, void *arg) override {
+        if (e->event_code == BLE_STORE_EVENT_FULL && linkEncRequired && !pairOpen) {
+            ESP_LOGW(TAG, "pairing refused: window closed, bond table full");
+            return BLE_HS_ESTORE_CAP;
+        }
+        if (e->event_code == BLE_STORE_EVENT_OVERFLOW && (e->overflow.obj_type == BLE_STORE_OBJ_TYPE_OUR_SEC
+                                                          || e->overflow.obj_type == BLE_STORE_OBJ_TYPE_PEER_SEC)) {
+            ble_addr_t a[CONFIG_BT_NIMBLE_MAX_BONDS];
+            int n = 0;
+            char s[18];
+            if (ble_store_util_bonded_peers(a, &n, CONFIG_BT_NIMBLE_MAX_BONDS) == 0 && n)
+                ESP_LOGW(TAG, "bond table full, evicting oldest %s", fmtAddr(a[0], s));
+            bondEvicted = true;
+        }
+        return ble_store_util_status_rr(e, arg);
+    }
+};
+
+static StoreCallbacks storeCallbacks;
+
 static int linkGapEvent(ble_gap_event *e, void *) {
-    if (e->type == BLE_GAP_EVENT_ENC_CHANGE && e->enc_change.status == 0 && linkStep == LINK_IDLE) {
-        linkEnc = true;
-        linkT = millis();
+    if (e->type == BLE_GAP_EVENT_ENC_CHANGE && e->enc_change.status == 0) {
+        connEnc = true;
+        encAudit(e->enc_change.conn_handle);
+        if (linkStep == LINK_IDLE) {
+            linkEnc = true;
+            linkT = millis();
+        }
+    } else if (e->type == BLE_GAP_EVENT_DISCONNECT) {
+        logUnbonded(e->disconnect.conn.peer_id_addr);
     } else if (e->type == BLE_GAP_EVENT_PHY_UPDATE_COMPLETE) {
         linkPhyDone = true;
     } else if (e->type == BLE_GAP_EVENT_CONN_UPDATE && linkStep == LINK_CONN) {
@@ -160,6 +240,10 @@ static void linkTick() {
     switch (linkStep) {
         case LINK_IDLE:
             if (dt < (linkEnc || !linkEncRequired ? LINK_SETTLE_MS : LINK_ENC_WAIT_MS)) return;
+            if (!linkEnc) {
+                ble_gap_conn_desc d;
+                if (ble_gap_conn_find(ch, &d) == 0) logUnbonded(d.peer_id_addr);
+            }
             linkStep = LINK_CONN;
             linkT = now - LINK_RETRY_MS;
 #if defined(CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_2M_PHY)
@@ -226,6 +310,7 @@ static void bleTxDrain(time_ms nowMs) {
     if (nowMs - txConnectMs < TX_SETTLE_MS) return; // let pairing settle before touching the link
 #if defined(CONFIG_BT_NIMBLE_ENABLED)
     linkTick();
+    if (linkEncRequired && !connEnc) return; // no output to an unpaired peer
 #endif
 
     // Chunk at the negotiated ATT MTU minus the 3-byte notify header (falls back to the 20-byte
@@ -297,6 +382,10 @@ class ServerCallbacks : public BLEServerCallbacks {
         addLogCallback(bleLogWrite, false); // no boot replay: it floods the FIFO and eats the next result
 #if defined(CONFIG_BT_NIMBLE_ENABLED)
         linkEnc = false;
+        connEnc = false;
+        bondEvicted = false;
+        rejLogged = false;
+        connBonds = bondCount();
         linkT = millis();
         linkStep = LINK_IDLE; // linkTick() on the network loop, never from this host callback
 #endif
@@ -342,7 +431,8 @@ static FwRxCallbacks fwRxCallbacks;
 static ServerCallbacks serverCallbacks;
 static TxCallbacks txCallbacks;
 
-void bleConsoleBegin(const std::string &deviceName, const std::string &security, uint32_t passkey) {
+void bleConsoleBegin(const std::string &deviceName, const std::string &security, uint32_t passkey,
+                     uint32_t pairWindowS) {
     if (bleStarted) return; // already advertising
 
     if (bleInited) {
@@ -394,6 +484,11 @@ void bleConsoleBegin(const std::string &deviceName, const std::string &security,
     bleServer->setCallbacks(&serverCallbacks);
 #if defined(CONFIG_BT_NIMBLE_ENABLED)
     linkEncRequired = security == "passkey" || security == "justworks";
+    if (linkEncRequired) secName = security == "passkey" ? "passkey" : "justworks";
+    BLEDevice::setDeviceCallbacks(&storeCallbacks);
+    if (pairWindowS) pairDefaultS = pairWindowS;
+    pairSet(pairWindowS);
+    if (linkEncRequired) ESP_LOGI(TAG, "pairing window %lu s", (unsigned long) pairWindowS);
     static ble_gap_event_listener gapListener;
     ble_gap_event_listener_register(&gapListener, linkGapEvent, nullptr);
 #endif
@@ -456,6 +551,12 @@ void bleConsoleLoop(time_ms nowMs) {
     otaBleTick(nowMs); // drain any staged OTA firmware bytes to flash (no-op when not updating)
     teleBleTick(nowMs); // batch + notify the telemetry stream (no-op unless streaming)
     teleAdvTick(nowMs); // broadcast payload refresh + adv-mode reconciler (no-op unless enabled)
+#if defined(CONFIG_BT_NIMBLE_ENABLED)
+    if (pairOpen && (int32_t) (millis() - pairEndMs) >= 0) {
+        pairSet(0);
+        ESP_LOGI(TAG, "pairing window closed");
+    }
+#endif
     improvTick(nowMs);
 }
 
@@ -516,9 +617,74 @@ void bleConsoleAwaitTxDrain(unsigned lowWater, unsigned timeoutMs) {
     }
 }
 
+#if defined(CONFIG_BT_NIMBLE_ENABLED)
+bool blePairGated() { return linkEncRequired; }
+
+uint32_t blePairRemainingS() {
+    const int32_t ms = (int32_t) (pairEndMs - millis());
+    return pairOpen && ms > 0 ? (ms + 999) / 1000 : 0;
+}
+
+static bool parseAddr(const char *s, uint8_t *v) {
+    for (int i = 5; i >= 0; --i) {
+        char *e;
+        unsigned long b = strtoul(s, &e, 16);
+        if (e == s || e - s > 2 || *e != (i ? ':' : 0)) return false;
+        v[i] = (uint8_t) b;
+        s = e + 1;
+    }
+    return true;
+}
+
+const char *bleCommand(const char *sub, const char *arg) {
+    if (!bleInited) return "service not running";
+    ble_addr_t a[CONFIG_BT_NIMBLE_MAX_BONDS];
+    int n = 0;
+    ble_store_util_bonded_peers(a, &n, CONFIG_BT_NIMBLE_MAX_BONDS);
+    char s[18];
+    if (!strcmp(sub, "pair")) {
+        char *e;
+        unsigned long t = *arg ? strtoul(arg, &e, 10) : pairDefaultS;
+        if (*arg && *e) return "expected seconds";
+        pairSet(t);
+        ESP_LOGI(TAG, "pairing window %lu s", (unsigned long) blePairRemainingS());
+    } else if (!strcmp(sub, "unpair")) {
+        uint8_t v[6];
+        const bool all = !strcmp(arg, "all");
+        if (!all && !parseAddr(arg, v)) return "expected unpair <aa:bb:cc:dd:ee:ff|all>";
+        int k = 0;
+        for (int i = 0; i < n; ++i) {
+            if (!all && memcmp(a[i].val, v, 6)) continue;
+            ble_gap_unpair(&a[i]);
+            ESP_LOGI(TAG, "unpaired %s", fmtAddr(a[i], s));
+            ++k;
+        }
+        if (!k) return "no such bond";
+        n = 0;
+        ble_store_util_bonded_peers(a, &n, CONFIG_BT_NIMBLE_MAX_BONDS);
+    } else if (*sub && strcmp(sub, "bonds")) {
+        return "expected pair [s] | bonds | unpair <addr|all>";
+    }
+    UART_LOG("ble: security %s, pairing %s %lu s, bonds %d/%d", secName, pairOpen ? "open" : "closed",
+             (unsigned long) blePairRemainingS(), n, CONFIG_BT_NIMBLE_MAX_BONDS);
+    ble_gap_conn_desc d;
+    const bool conn = deviceConnected && bleServer && ble_gap_conn_find(bleServer->getConnId(), &d) == 0;
+    for (int i = 0; i < n; ++i)
+        UART_LOG("  %s %s%s", fmtAddr(a[i], s), a[i].type ? "random" : "public",
+                 conn && !ble_addr_cmp(&a[i], &d.peer_id_addr) ? " (connected)" : "");
+    return nullptr;
+}
+#else
+bool blePairGated() { return false; }
+
+uint32_t blePairRemainingS() { return 0; }
+
+const char *bleCommand(const char *, const char *) { return "not supported"; }
+#endif
+
 #else // !WITH_BLE — no-op stubs so callers (and the service wrapper) link without the BLE stack
 
-void bleConsoleBegin(const std::string &, const std::string &, uint32_t) {}
+void bleConsoleBegin(const std::string &, const std::string &, uint32_t, uint32_t) {}
 
 void bleConsoleEnd() {}
 
@@ -539,5 +705,11 @@ uint16_t bleConsoleAdvMs() { return 0; }
 const char *bleConsoleName() { return ""; }
 
 void bleConsoleAwaitTxDrain(unsigned, unsigned) {}
+
+bool blePairGated() { return false; }
+
+uint32_t blePairRemainingS() { return 0; }
+
+const char *bleCommand(const char *, const char *) { return "not supported"; }
 
 #endif
