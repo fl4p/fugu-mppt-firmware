@@ -201,13 +201,16 @@ static BatChargerParams holdParams(uint32_t maxS = 5400) {
     return p;
 }
 
-// 8s pack + cable: vcell_high = voc + imb + ibat * R_CELL, bus = 8 voc + ibat * 8 R_CELL + iout * R_BUS. Each converter
+// 8s pack + cable: vcell_high = voc + imb + vp + ibat * rc, bus = 8 (voc + vp) + ibat * 8 rc + iout * R_BUS. Each converter
 // is a CV source at its pin (R_SRC output resistance) limited to its PV current and Iout_max(). Its Vout sensor reads
 // off[i] from the bus, so it regulates the true bus to Vout_max() - off[i]. 1 s steps (loopLF), ibat frames every
 // 4 s, cell frames every 12 s.
 struct Plant {
-    static constexpr float R_CELL = 0.004f, R_BUS = 0.02f, R_SRC = 0.005f, DV_DAH = 0.0032f;
+    static constexpr float R_BUS = 0.02f, R_SRC = 0.005f, DV_DAH = 0.0032f;
     float voc = 3.38f, iload = 0.f, ipv[2] = {35.f, 35.f};
+    float rc = 0.004f; // cell resistance
+    // top of charge (off by default): polarization vp (rp, tauP), OCV slope DV_DAH + knee [V/Ah]
+    float rp = 0.f, tauP = 30.f, vp = 0.f, knee = 0.f;
     float imb = 0.f, kImb = 0.f; // highest cell above the mean, rising kImb V/Ah while charging
     float off[2] = {0.f, 0.f};
     bool flatOff = false; // unit 1 reads -0.1 V while unit 0 converts, else -0.9 V (fry/flat 11-23)
@@ -219,7 +222,7 @@ struct Plant {
     int t = 0;
 
     void solve(BatteryCharger **c, int n) {
-        float lo = 8 * voc - 5, hi = 8 * voc + 5;
+        float lo = 8 * (voc + vp) - 5, hi = 8 * (voc + vp) + 5;
         auto src = [&](int i, float v) {
             return std::clamp((c[i]->Vout_max() - off[i] - v) / R_SRC, 0.f, std::min(ipv[i], c[i]->Iout_max()));
         };
@@ -227,7 +230,7 @@ struct Plant {
             float v = 0.5f * (lo + hi), sum = 0;
             for (int i = 0; i < n; ++i) sum += src(i, v);
             float vb = v - sum * R_BUS;
-            float need = (vb - 8 * voc) / (8 * R_CELL) + iload;
+            float need = (vb - 8 * (voc + vp)) / (8 * rc) + iload;
             (sum > need ? lo : hi) = v;
         }
         vbus = 0.5f * (lo + hi);
@@ -236,7 +239,7 @@ struct Plant {
         ibat = sum - iload;
     }
 
-    [[nodiscard]] float vcell() const { return voc + imb + ibat * R_CELL; }
+    [[nodiscard]] float vcell() const { return voc + imb + vp + ibat * rc; }
 
     void run(BatteryCharger **c, int n, int sec, bool psu = false) {
         for (int k = 0; k < sec; ++k) {
@@ -244,7 +247,8 @@ struct Plant {
             setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
             if (flatOff) off[1] = iout[0] > 1.f ? -0.1f : -0.9f;
             solve(c, n);
-            voc += ibat * (1.f / 3600.f) * DV_DAH;
+            voc += ibat * (1.f / 3600.f) * (DV_DAH + knee);
+            if (rp > 0) vp += (ibat * rp - vp) * (1.f - expf(-1.f / tauP));
             if (ibat > 0) imb += ibat * (1.f / 3600.f) * kImb;
             for (int i = 0; i < n; ++i) {
                 if (ibatOn && t % 4 == 0) c[i]->batSt.updateBatCurrent(bmsLag ? ibatOld : ibat);
@@ -480,6 +484,80 @@ static BatChargerParams balParams(uint32_t holdS = 1800, uint32_t maxS = 0) {
     p.balance_interval_s = 30 * 86400;
     p.balance_hold_s = holdS;
     return p;
+}
+
+// Top of an 8s 280 Ah LFP pack fit to fry/flat 11-23 13:44 (both rebooted at float, highest cell 3.358 V at rest, then
+// 40 A): crossed 3.50 V ~75 s later, peaked 3.528 V in the hold. 1 mOhm + 2 mOhm / 30 s, OCV +0.05 V/Ah, 40 mV imbalance.
+static void topOfCharge(Plant &pl) {
+    pl.rc = 0.001f; pl.rp = 0.002f; pl.tauP = 30.f; pl.knee = 0.05f;
+    pl.imb = 0.04f; pl.voc = 3.318f;
+}
+
+static void test_hold_entry_40a_two_units() {
+    BatteryCharger a, b; a.params = balParams(7200); b.params = balParams(7200); setWallClockUs(1'000'000ULL);
+    a.termCond.reset(); b.termCond.reset();
+    a.balanceNow(); b.balanceNow();
+    Plant pl;
+    topOfCharge(pl);
+    pl.ipv[0] = pl.ipv[1] = 20.f;
+    BatteryCharger *u[2] = {&a, &b};
+    float vmax = 0, vlo = 9, vhi = 0;
+    int hold = -1;
+    for (int t = 0; t < 1200; ++t) {
+        pl.run(u, 2, 1);
+        vmax = std::max(vmax, pl.vcell());
+        if (hold < 0 && a.termCond.cvHold() && b.termCond.cvHold()) hold = t;
+        if (hold >= 0 && t > hold + 300) vlo = std::min(vlo, pl.vcell()), vhi = std::max(vhi, pl.vcell());
+    }
+    printf("  40 A entry: cell peak %.3f, hold after %d s, then %.3f..%.3f at %.1f A\n", vmax, hold, vlo, vhi, pl.ibat);
+    CHECK(vmax <= 3.5f + 0.015f, "40 A into the top: cell peak %.3f <= cv_eoc + 15 mV", vmax);
+    CHECK(hold >= 0 && !(bool) a.termCond && !(bool) b.termCond, "40 A: both in the hold, no latch");
+    CHECK(vlo >= 3.5f - 0.015f && vhi <= 3.5f + 0.015f, "40 A: held at cv_eoc +- 15 mV: %.3f..%.3f", vlo, vhi);
+}
+
+// 11-23 14:14: fry holds (16 A) as flat reboots and runs unlimited at 20 A before its ibat smoothing is warm.
+static void test_hold_sibling_boots_unlimited() {
+    BatteryCharger a, b; a.params = balParams(7200); b.params = balParams(7200); setWallClockUs(1'000'000ULL);
+    a.termCond.reset(); b.termCond.reset();
+    a.balanceNow(); b.balanceNow();
+    Plant pl;
+    topOfCharge(pl);
+    pl.ipv[0] = 16.f; pl.ipv[1] = 0.f;
+    BatteryCharger *u[2] = {&a, &b};
+    for (int k = 0; k < 3600 && pl.vcell() < 3.5f; ++k) pl.run(u, 1, 1);
+    pl.run(u, 2, 1); // b's first update before it may convert
+    pl.ipv[1] = 20.f;
+    float vmax = 0, idle = 0;
+    for (int t = 0; t < 900 && !(bool) a.termCond && !(bool) b.termCond; ++t) {
+        pl.run(u, 2, 1);
+        vmax = std::max(vmax, pl.vcell());
+        if (t < 30) idle = std::max(idle, pl.iout[1]);
+    }
+    printf("  sibling boots: cell peak %.3f, booted unit <= %.2f A in its first 30 s\n", vmax, idle);
+    CHECK(!(bool) a.termCond && !(bool) b.termCond, "sibling boot: no ceiling latch (peak %.3f)", vmax);
+    CHECK(vmax <= 3.5f + 0.015f && idle < 0.5f, "sibling boot: peak %.3f, booted unit idle (%.2f A)", vmax, idle);
+}
+
+// cell frames near the top but no ibat source: idle for BOOT_IDLE_US after boot only
+static void test_boot_idle_without_ibat() {
+    BatteryCharger c; c.params = holdParams(); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    for (int k = 0; k < 10; ++k) {
+        setWallClockUs(loopWallClockUs_ + 4'000'000ULL);
+        c.batSt.setVcellHigh(3.49f);
+        c.update(27.6f, 0.f, false);
+    }
+    CHECK(c.Iout_max() < 0.3f, "boot near the top, no ibat yet: idle (%.2f A)", c.Iout_max());
+    for (int k = 0; k < 30; ++k) {
+        setWallClockUs(loopWallClockUs_ + 4'000'000ULL);
+        c.batSt.setVcellHigh(3.49f);
+        c.update(27.6f, 0.f, false);
+    }
+    CHECK(c.Iout_max() >= 40.f - 1e-3f, "no ibat source: released after the boot window (%.1f A)", c.Iout_max());
+    BatteryCharger d; d.params = holdParams(); setWallClockUs(1'000'000ULL);
+    d.termCond.reset();
+    frames(d, 3.40f, 20.f, 12, true);
+    CHECK(d.Iout_max() >= 40.f - 1e-3f, "boot below the top: no idle (%.1f A)", d.Iout_max());
 }
 
 static void tick(BatteryCharger &c, float vout = 27.5f) {
@@ -967,6 +1045,9 @@ int main() {
     test_hold_psu_freezes_pin();
     test_hold_pv_limited_recovers();
     test_hold_stale_releases_limit();
+    test_hold_entry_40a_two_units();
+    test_hold_sibling_boots_unlimited();
+    test_boot_idle_without_ibat();
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

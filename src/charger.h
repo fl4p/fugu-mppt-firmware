@@ -508,6 +508,8 @@ class BatteryCharger {
     static constexpr time_us TEMP_EXPIRE_US = 3600ULL * 1000000ULL; // policy off without a frame (as without a sensor)
     static constexpr time_us IBAT_EXPIRE_US = 180ULL * 1000000ULL; // like VCELL_EXPIRATION_TIME_SEC
     static constexpr float IOUT_LIM_FLOOR = 0.25f; // the CC limiter normalizes by its setpoint; never 0
+    static constexpr float APPROACH_V = 0.03f; // [V] CV hold approach band below cv_eoc (> one cell frame's rise)
+    static constexpr time_us BOOT_IDLE_US = 120ULL * 1000000ULL;
     static constexpr time_us HOLIDAY_DAY_US = 86400ULL * 1000000ULL;
     static constexpr time_us HOLIDAY_GAP_US = 60ULL * 1000000ULL; // longer tick or ibat-frame gap: not covered
     static constexpr float HOLIDAY_DIS_A = 0.2f; // [A] discharge below this counts
@@ -904,17 +906,21 @@ public:
     }
 
     // CV hold, BMS frames only (no Vout reading). Cell frame: pack-current target = measured ibat + K (cv_eoc -
-    // vcell_high) / r, r the line's cell resistance (>= the cell's short-term dI->dV), so the cell loop gain is <= K
-    // per frame; units on one BMS compute the same target, so it does not add up. Ibat frame: the output-current
-    // limit moves G (target - ibat); N units sum to N G (dIbat/dIlim = 1), 2 G < 1 also with one frame of BMS lag.
-    // Up steps <= STEP_UP_A; the limit stays <= HEADROOM_A above the own iout (PV-limited: no wind-up).
+    // vcell_high) / r, r the line's cell resistance; the cell loop gain per frame is K R / r with R the cell's
+    // short-term dI->dV, < 1 also with a frame of lag. K_DOWN: R < r / 1.5 (7 mOhm at 280 Ah; field 2-3 mOhm), fast
+    // down so a cell above cv_eoc sheds the current before the steep top runs away. K_UP: R < 2 r, slow up, the
+    // polarization relaxing after a cut is not room. Units on one BMS compute the same target, so it does not add
+    // up. Ibat frame: the output-current limit moves G (target - ibat); N units sum to N G (dIbat/dIlim = 1), 2 G < 1
+    // also with one frame of BMS lag. Up steps <= STEP_UP_A; the limit stays <= HEADROOM_A above the own iout
+    // (PV-limited: no wind-up).
     void _cvHoldStep(bool step, float iout, float ibatCap) {
-        constexpr float K = 1.f, G = 0.4f, STEP_UP_A = 2.f, HEADROOM_A = 2.f;
+        constexpr float K_UP = 0.5f, K_DOWN = 1.5f, G = 0.4f, STEP_UP_A = 2.f, HEADROOM_A = 2.f;
         const float ibat = batSt.ibat_raw;
         uint32_t frame = batSt.vcell_high_t;
-        if (frame != _lastBmsFrameUs) {
+        if (frame != _lastBmsFrameUs || std::isnan(_cvIbat)) {
             _lastBmsFrameUs = frame;
-            _cvIbat = fminf(ibat + K * (params.cv_eoc - batSt.vcell_high) * params.tail_c_rate * params.Cbat
+            const float err = params.cv_eoc - batSt.vcell_high;
+            _cvIbat = fminf(ibat + (err > 0 ? K_UP : K_DOWN) * err * params.tail_c_rate * params.Cbat
                                    / (params.cv_eoc - params.cv_min), ibatCap);
         }
         frame = batSt.ibat_t;
@@ -975,10 +981,35 @@ public:
         // Vbat_max (a protection ceiling only), so a Vout-sensor error cannot keep power flowing. PSU mode freezes it.
         float ibat = batSt.ibatSmoothed();
         bool cvHold = termCond.cvHold();
+        // Approach (hold mode): a cell within APPROACH_V of cv_eoc above the tail current overshoots (cell frames
+        // seconds apart, steep top of charge). Cut the pack current to the tail current, the line's current at cv_eoc,
+        // and let the hold loop take it from there; kept until the hold, a latch, stale data or a discharging pack.
+        const float iTail = params.tail_c_rate * params.Cbat, ibatNow = batSt.ibat_raw;
+        bool ap = !cvHold && !psu && !nowTerm && (params.cv_hold_max_s || termCond.balance) && batDataOk && ibatFresh()
+                  && !_partialHold && !_coldBlocked && !(ibat < 0.f);
+        if (ap && !std::isfinite(_cvIlim) && batSt.vcell_high >= params.cv_eoc - APPROACH_V && ibatNow > iTail) {
+            _cvIlim = std::isfinite(ioutNow) ? fmaxf(ioutNow * iTail / ibatNow, IOUT_LIM_FLOOR) : iTail;
+            _cvIbat = iTail;
+            _lastBmsFrameUs = batSt.vcell_high_t;
+            _lastIbatFrameUs = batSt.ibat_t;
+            ESP_LOGW("charger", "cv approach: vcHigh %.3f @ iBat %.2f, ilim %.1f A", batSt.vcell_high, ibatNow, _cvIlim);
+        }
+        // Boot: cell frames near the top before termination could be evaluated (ibat warm-up): idle. Without an ibat
+        // source it ends BOOT_IDLE_US after boot.
+        bool boot = !_termDecided && batSt.haveValidCellVoltage()
+                    && (std::isfinite(_cvIlim) || batSt.vcell_high >= params.cv_eoc - APPROACH_V)
+                    && (batSt.ibat_t || nowUs < BOOT_IDLE_US);
+        if (boot) {
+            if (!std::isfinite(_cvIlim)) ESP_LOGW("charger", "boot: vcHigh %.3f, idle until the BMS frames", batSt.vcell_high);
+            _cvIlim = IOUT_LIM_FLOOR;
+            _cvIbat = NAN;
+        } else if (!cvHold && !ap) {
+            _cvIlim = NAN;
+        }
         if (cvHold != _wasCvHold) {
             _wasCvHold = cvHold;
             if (cvHold) {
-                _cvIlim = std::isfinite(ioutNow) ? fmaxf(ioutNow, IOUT_LIM_FLOOR) : params.Ibat_lim;
+                if (!std::isfinite(_cvIlim)) _cvIlim = std::isfinite(ioutNow) ? fmaxf(ioutNow, IOUT_LIM_FLOOR) : params.Ibat_lim;
                 _lastBmsFrameUs = ~batSt.vcell_high_t; // target from this frame
                 ESP_LOGW("charger", "cv hold: vcHigh %.3f > line %.3f @ iBat %.2f, ilim %.1f A",
                          batSt.vcell_high, termCond.v_term(), ibat, _cvIlim);
@@ -990,7 +1021,7 @@ public:
                          termCond.stalePaused() ? "paused" : nowTerm ? "terminated" : "charging", vpack_pin);
             }
         }
-        if (cvHold) {
+        if (cvHold || (ap && !boot && std::isfinite(_cvIlim))) {
             vpack_pin = params.Vbat_max;
             _vPinFilt.reset();
             _fallbackGlide.reset();

@@ -111,6 +111,13 @@ charger is not terminated, so it charges until termination latches again
 (within two cell frames if the pack is still full). That termination re-zeroes
 the counter, and from then on both release conditions apply as usual.
 
+Termination needs the pack current, which takes about eight `ibat` frames to
+settle after a boot. If a cell frame in that gap shows the highest cell within
+30 mV of `cv_eoc`, the charger limits its output current to 0.25 A until the
+termination line has run on two cell frames. A sibling charger may hold the
+pack at the top meanwhile, and a full-power start would push it over
+`cv_ceiling`. Without an `ibat_topic` this idle ends 120 s after boot.
+
 You can set `recharge_dod` in `charger.conf:recharge_dod`. A higher value
 releases later: deeper discharges between full charges, fewer cycles, and more
 time at mid-SoC. A lower value releases sooner: more frequent topping, more
@@ -187,9 +194,10 @@ converter's own Vout reading cannot shift the regulated cell voltage. Two
 loops run on the BMS frames:
 
 - Cell loop, on each cell frame: the pack-current target is the measured
-  `ibat` plus $(cv\_eoc - vcell\_high)/r$, where
+  `ibat` plus $K (cv\_eoc - vcell\_high)/r$, where
   $r = (cv\_eoc - cv\_float)/(tail\_c\_rate \cdot bat\_c)$ is the cell
   resistance implied by the termination line (about 10.7 mΩ for 280 Ah).
+  $K$ is 1.5 with the cell above `cv_eoc` and 0.5 below it.
 - Current loop, on each `ibat` frame: the converter's output-current limit
   moves by 0.4 × (target − `ibat`). Upward steps are at most 2 A, and the limit
   stays at most 2 A above the converter's own output current, so it does not
@@ -199,14 +207,29 @@ loops run on the BMS frames:
 The output current includes the house load ($i_{out} = i_{bat} + i_{load}$);
 regulating `ibat` with the limit as the integrator lets a load step settle
 within a few `ibat` frames, without waiting for the cell voltage to move. The
-limit starts at the output current when the hold begins, so entering the hold
-does not step the output. In PSU mode the limit stays where it is. A colder or
+limit starts at the output current when the hold begins, or keeps the limit of
+the [approach](#approach), so entering the hold does not step the output. In PSU mode the limit stays where it is. A colder or
 hotter pack than the temperature policy allows lowers the target to its
 pack-current limit.
 
 The target is the constant `cv_eoc`, for the same reason as in
 [Absorption target vs. termination line](#absorption-target-vs-termination-line):
 a target that follows the current would walk the current down to zero.
+
+### Approach
+
+Near the top of charge the cell voltage keeps rising for tens of seconds after
+the current drops, and cell frames arrive seconds apart. A hold that starts at
+full current overshoots `cv_eoc`: at 40 A into a 280 Ah pack the highest cell
+peaked about 28 mV above it. The charger therefore starts the current limit
+before the line crossing. When the highest cell comes within 30 mV of
+`cv_eoc` while the pack current is above the tail current
+(`tail_c_rate × bat_c`, the line's current at `cv_eoc`), the output-current
+limit drops at once to the output current scaled by tail current / `ibat`. The
+cell loop then raises it again at the slow gain. The approach lasts until the
+hold begins, termination latches, the BMS data goes stale, or the pack
+discharges. It applies only where a line crossing enters the hold
+(`cv_hold_max_s` > 0 or a balance run).
 
 The hold ends in one of these ways:
 
@@ -237,8 +260,12 @@ Parallel chargers on one pack each run their own hold on the same BMS data,
 without coordination. The gains are sized for that:
 
 - All chargers compute the same pack-current target from the same frames, so
-  the cell loop gain does not add up. Its gain per frame is at most 1, since
-  the short-term cell resistance is below $r$.
+  the cell loop gain does not add up. Its gain per frame is $K R/r$, with $R$
+  the short-term cell resistance (about 2–3 mΩ near the top for a 280 Ah
+  cell), and must stay below 1 with a frame of lag. Downward that holds for
+  $R < r/1.5$ (7 mΩ at 280 Ah), upward for $R < 2r$. The slow upward gain keeps
+  the polarization that relaxes after a current cut from being read as room
+  for more current.
 - Each charger's limit moves `ibat` one for one, so N chargers sum to a gain of
   0.4 N per `ibat` frame: 0.8 for two, stable also when the BMS reports the
   current one frame late.
