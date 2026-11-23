@@ -39,9 +39,36 @@ test('liveParse: values and mode from the status line; other lines are ignored',
   assert.equal(p(line('   CV')).mode, 'CV');
   assert.deepEqual([p(line('START')).mode, p(line('START')).stop], ['stopped', true]);
   assert.deepEqual([p(line('   UV')).mode, p(line('   UV')).stop], ['undervoltage', true]);
+  assert.equal(p(line('  N/A')).mode, 'N/A');
   assert.equal(p('V=24.10 I=1.20 P=29.0W'), null);
   assert.equal(p("I (100) main: Conf '/littlefs/conf/charger.conf:vout_max' = '28.8'"), null);
   assert.equal(p('OK: get-config charger.conf'), null);
+});
+
+// Every word the firmware prints in `st=%5s` (main.cpp lfStatusLine): short ones are right-aligned.
+const FW_MODES = [
+  ['↑MPPT', 'MPPT'], ['↓MPPT', 'MPPT'], ['⇡MPPT', 'MPPT'], ['⇣MPPT', 'MPPT'], ['SWEEP', 'Sweep'],
+  ['   CV', 'CV'], ['   CC', 'CC'], ['   CP', 'CP'], ['  N/A', 'N/A'],
+  ['START', 'stopped'], ['   UV', 'undervoltage'], [' MANU', 'manual'], ['  PSU', 'PSU'], ['  PVS', 'PV sim'],
+];
+const fwLine = (st, head = 'V=65.4/27.39 I=3.29/ 7.62A 215.1W') =>
+  `${head} 37℃43℃ 1477sps  0㎅/s CCM(H|L|Lm)=1777|2325|2325 st=${st},1 lag=862㎲ N=50034 rssi=-42`;
+
+test('status line: every firmware mode word and padded or negative numbers (live strip, tests sheet)', async () => {
+  const { window } = await loadEditor();
+  const live = (l) => { const r = window.tstLive([l]); return r && JSON.parse(JSON.stringify(r)); };
+  for (const [st, mode] of FW_MODES){
+    assert.equal(window.liveParse(fwLine(st)).mode, mode, `st=${st}`);
+    assert.deepEqual(live(fwLine(st)), { vin: 65.4, vout: 27.39, iin: 3.29, iout: 7.62, p: 215.1, mode: st.trim() }, `st=${st}`);
+  }
+  const cases = [
+    ['V= 9.6/ 5.12 I= 9.6/ 1.99A  56.0W', [9.6, 5.12, 9.6, 1.99, 56]],
+    ['V=65.8/27.10 I= 0.83/ 1.99A -12.3W', [65.8, 27.1, 0.83, 1.99, -12.3]],
+    ['V=-0.01/-0.02 I=-0.02/-0.01A  -0.3W', [-0.01, -0.02, -0.02, -0.01, -0.3]],
+    ['V=100.0/27.39 I=12.3/45.67A 1230.5W', [100, 27.39, 12.3, 45.67, 1230.5]],
+  ];
+  for (const [head, [vin, vout, iin, iout, p]] of cases)
+    assert.deepEqual(live(fwLine('   CV', head)), { vin, vout, iin, iout, p, mode: 'CV' }, head);
 });
 
 test('strip: hidden without a device read, shows the read device\'s status line, hidden on disconnect', async () => {

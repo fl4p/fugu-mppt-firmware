@@ -3730,6 +3730,7 @@ function tstLock(run){ tstRun=run; devBusy = run ? "“"+run.cmd+"”" : null; u
 const tstOpenNow = () => document.getElementById("tests").classList.contains("open");
 const tstLine = raw => stripAnsi(raw).replace(/\s+$/,"");
 const tstMsgOf = l => l.replace(/^\s*[IWEDV] \([^)]*\) [\w.-]+: /, "");     // drop the ESP log prefix
+// same pattern as dashboard.html REPLY.statusLine; printf pads numbers and the mode (`st=   CV`)
 const TST_V = /\bV=\s*(-?[\d.]+)\/\s*(-?[\d.]+) I=\s*(-?[\d.]+)\/\s*(-?[\d.]+)A\s+(-?[\d.]+)W\b.*?\bst=\s*([^,\s]+),/;
 const TST_NOCMD = /\bCommand not found\b/;
 

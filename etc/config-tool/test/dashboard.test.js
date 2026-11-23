@@ -179,6 +179,45 @@ test('the status line updates the live values and the age without telemetry; nan
   assert.equal(text(window, 'flat', '.mode'), 'N/A');
 });
 
+// Every word the firmware prints in `st=%5s` (main.cpp lfStatusLine): short ones are right-aligned.
+const FW_MODES = [
+  ['↑MPPT', 4, 'MPPT'], ['↓MPPT', 4, 'MPPT'], ['⇡MPPT', 4, 'MPPT'], ['⇣MPPT', 4, 'MPPT'], ['SWEEP', 5, 'Sweep'],
+  ['   CV', 1, 'CV'], ['   CC', 2, 'CC'], ['   CP', 3, 'CP'], ['  N/A', 0, 'N/A'],
+  ['START', 0, 'start'], ['   UV', 0, 'uv'], [' MANU', 0, 'manu'], ['  PSU', 0, 'psu'], ['  PVS', 0, 'pvs'],
+];
+const fwLine = (st, head = 'V=65.4/27.39 I=3.29/ 7.62A 215.1W') =>
+  `${head} 37℃43℃ 1477sps  0㎅/s CCM(H|L|Lm)=1777|2325|2325 st=${st},1 lag=862㎲ N=50034 rssi=-42`;
+
+test('status line: every firmware mode word, padded or not, sets the mode and the live values', async () => {
+  const { window, Dash, client } = await withBroker();
+  for (const [st, state, label] of FW_MODES){
+    log(client, 'flat', [fwLine('↑MPPT', 'V=10.0/20.00 I=1.00/ 1.00A  20.0W')]);   // a different operating point first
+    log(client, 'flat', [fwLine(st)]);
+    Dash.flush();
+    const t = Dash.devices.get('flat').tele;
+    assert.deepEqual([t.Ui, t.Uo, t.I, t.P, t.state], [65.4, 27.39, 7.62, 215.1, state], `st=${st}`);
+    assert.equal(text(window, 'flat', '.mode'), label, `st=${st}`);
+    assert.match(card(window, 'flat').querySelector('.log div:last-child').className, /\bst\b/, `st=${st}`);
+  }
+});
+
+test('status line: padded and negative numbers', async () => {
+  const { window, Dash, client } = await withBroker();
+  const cases = [
+    ['V= 9.6/ 5.12 I= 9.6/ 1.99A  56.0W', [9.6, 5.12, 1.99, 56]],
+    ['V=65.8/27.10 I= 0.83/ 1.99A -12.3W', [65.8, 27.1, 1.99, -12.3]],
+    ['V=-0.01/-0.02 I=-0.02/-0.01A  -0.3W', [-0.01, -0.02, -0.01, -0.3]],
+    ['V=100.0/27.39 I=12.3/45.67A 1230.5W', [100, 27.39, 45.67, 1230.5]],
+  ];
+  for (const [head, want] of cases){
+    log(client, 'flat', [fwLine('   CV', head)]);
+    Dash.flush();
+    const t = Dash.devices.get('flat').tele;
+    assert.deepEqual([t.Ui, t.Uo, t.I, t.P, t.state], [...want, 1], head);
+    assert.match(card(window, 'flat').querySelector('.log div:last-child').className, /\bst\b/, head);
+  }
+});
+
 test('alerts become badges: retained ones create no card and no log line, live ones are logged too', async () => {
   const { window, Dash, client } = await withBroker();
   client.emit('message', 'pv/alert/fugu-esp32s3-OLD/wire', enc('{"lvl":"unverified","msg":"no fresh wire data","t":1}'), { retain: true });

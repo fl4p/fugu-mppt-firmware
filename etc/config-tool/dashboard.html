@@ -243,8 +243,9 @@ const REPLY = {
   stopSweep:  /Stop sweep/,
   sweepVerdict: /sweep (?:verified|flagged):/,
   sc:         /(?:^|[^A-Za-z0-9_])sc:/,
-  status:     /^V=\d/,
-  statusLine: /^V=\s*(\S+)\/\s*(\S+) I=\s*(\S+)\/\s*(\S+)A\s+(\S+)W .*?\bst=(\S+?),\d/,
+  status:     /^V=\s*(?:-?\d|nan)/,
+  // printf pads numbers and the mode (`st=%5s`: `   CV`); same pattern as conf-editor.html TST_V
+  statusLine: /\bV=\s*(-?[\d.]+)\/\s*(-?[\d.]+) I=\s*(-?[\d.]+)\/\s*(-?[\d.]+)A\s+(-?[\d.]+)W\b.*?\bst=\s*([^,\s]+),/,
 };
 
 const now = () => Date.now();
