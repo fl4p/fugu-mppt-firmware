@@ -8,8 +8,7 @@
 #   $FUGU_ESP_DIR/$FUGU_IDF             directory holding the IDF versions
 #   <main checkout>/../../esp/$FUGU_IDF (default layout, resolved via git, so worktrees find it too)
 #   $IDF_PATH                           an IDF sourced earlier (only without FUGU_IDF)
-# FUGU_IDF=idf5.5 selects ESP-IDF 5.5 (default idf6.0.3); use a separate build dir + sdkconfig for it:
-#   idf.py -B build-idf55 -DSDKCONFIG=build-idf55/sdkconfig build
+# FUGU_IDF selects another IDF directory name (default idf6.0.3).
 # An ESPPORT already set is kept; otherwise the first USB serial port is picked (pass -p with 2+ boards).
 
 if [ -n "${ZSH_VERSION:-}" ]; then

@@ -5,7 +5,7 @@ dependencies:
   espressif/mdns: '*'
   ## Required IDF version
   idf:
-    version: '>=5.5'
+    version: '>=6.0'
   # # Put list of dependencies here
   # # For components maintained by Espressif:
   # component: "~1.0.0"
@@ -17,16 +17,7 @@ dependencies:
   #   # `public` flag doesn't have an effect dependencies of the `main` component.
   #   # All dependencies of `main` are public by default.
   #   public: true
-  # 3.3.8 added BLEDevice::getLocalIRK() which calls ble_gap_read_local_irk(), a NimBLE GAP API not
-  # present in ESP-IDF 5.5.1's bundled NimBLE -> build break for WITH_BLE. Cap below 3.3.8 until the
-  # IDF NimBLE catches up. 3.3.7 is the last compatible release.
-  # IDF 6 needs a newer arduino-esp32 (the 3.3.8 cap above only concerns 5.5.1's NimBLE).
-  espressif/arduino-esp32:
-    matches:
-      - if: "idf_version >=6.0"
-        version: '>=3.3.12,<4.0.0'
-      - if: "idf_version <6.0"
-        version: '>=3.3.2,<3.3.8'
+  espressif/arduino-esp32: '>=3.3.12,<4.0.0'
   joltwallet/littlefs: ^1.20.2
   # esp-ota-ble asks for the registry tamp; the vendored components/tamp is the one built.
   brianpugh/tamp: { override_path: ../components/tamp }
@@ -41,10 +32,7 @@ dependencies:
     rules:
       - if: "$CONFIG{FUGU_WITH_USB_MSC} == True"
   # esp-mqtt left IDF in 6.0
-  espressif/mqtt:
-    version: ^1.0.0
-    rules:
-      - if: "idf_version >=6.0"
+  espressif/mqtt: ^1.0.0
 
   # arduino-esp32 declares these as transitive deps but we don't use the Arduino libraries that
   # would compile them (RainMaker, Insights, PPP, WiFiProv-via-Zigbee, OpenThread, Matter, Modbus,
