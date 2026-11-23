@@ -24,6 +24,7 @@ window.mqtt = {
       end(){ this.ended=true; return this; },
     };
     window._mqttClients = (window._mqttClients||[]).concat(client);
+    if (window._mqttHook) window._mqttHook(client);   // set in beforeParse: reach clients made during load
     Promise.resolve().then(()=>client.emit('connect'));
     return client;
   }
@@ -179,7 +180,7 @@ function makeFakeWebSocket(outcome = () => 'error') {
 const doms = [];
 
 async function loadDash({ storage = {}, bluetooth = makeFakeBluetooth(), mqtt = true, url = 'http://localhost/',
-  ws = makeFakeWebSocket() } = {}) {
+  ws = makeFakeWebSocket(), beforeParse } = {}) {
   const dom = new JSDOM(buildHtml({ mqtt }), {
     url,
     runScripts: 'dangerously',
@@ -191,6 +192,7 @@ async function loadDash({ storage = {}, bluetooth = makeFakeBluetooth(), mqtt = 
       if (!url.startsWith('file:')) for (const [k, v] of Object.entries(storage)) window.localStorage.setItem(k, v);
       window.WebSocket = ws.WebSocket;
       if (bluetooth) Object.defineProperty(window.navigator, 'bluetooth', { value: bluetooth, configurable: true });
+      if (beforeParse) beforeParse(window);
     },
   });
   doms.push(dom);

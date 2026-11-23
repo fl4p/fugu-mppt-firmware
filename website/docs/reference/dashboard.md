@@ -127,7 +127,8 @@ certificate. A broker on a private network usually has no publicly issued certif
 authority works: issue the broker a server certificate whose subject alternative names list the IP addresses and host
 names clients use, give the broker the certificate and key (Mosquitto: `certfile`, `keyfile` on a `websockets`
 listener), and install the CA certificate once on each phone or computer that should open the page. A certificate the
-browser does not trust fails silently in the probe and shows as a connection error on Connect.
+browser does not trust fails silently in the probe. The browser shows no warning for a WebSocket and gives the page
+no reason.
 
 Without installing the CA, Chromium browsers can be told to accept the broker's certificate once: open the
 listener's address as a page, `https://<broker>:<wss port>/`, and choose "Advanced" and "Proceed". The page itself
@@ -135,6 +136,22 @@ stays empty, because the listener only speaks WebSocket, but the browser remembe
 the dashboard's `wss://` connection then succeeds. Chrome also asks once whether the page may reach devices on the
 local network; the broker is one of them, so allow it. Firefox has no such prompt, and its `about:config` setting
 `network.websocket.allowInsecureFromHTTPS` lets the `https` page use a plain `ws://` listener instead.
+
+The dashboard offers this step itself. When a `wss://` connection fails before the broker has answered, a banner
+says "Could not open a secure connection to `<host>:<port>`. If the broker uses a private certificate, open it once
+and accept the warning, then come back." Its button **Open https://`<host>:<port>`** opens the address in a new
+tab. When the dashboard tab gets the focus again, it reconnects once right away; the regular reconnect every 5 s
+continues as well. If that fails too, the banner and the button stay, and another immediate reconnect needs another
+click. The banner goes away once a connection succeeds.
+
+Before showing the banner, the page requests `https://<host>:<port>/` without reading the answer. If the browser
+accepts the certificate there, the banner says instead that the broker did not accept the MQTT WebSocket, so check
+the port and path of the listener. A failed request cannot tell an untrusted certificate, an unreachable broker and
+blocked local network access apart. `ws://` brokers and connections that drop after they were established get no
+banner.
+
+When the broker rejects the username or password, the status reads "the broker refused the login" with the
+broker's reason, and the page stops reconnecting until you press **Connect** again.
 
 The fields can also be prefilled from the page URL: `dashboard.html?mqtt=ws://<host>:<port>&user=<name>`. The page
 does not connect on its own then, and never reads a password from the URL.

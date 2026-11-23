@@ -149,7 +149,9 @@ filled in, the password empty and focused, the status "Enter the password for
 <user> to read <host>.", and a primary **Read <host>** button (`#mqtt-go`) next
 to **Scan for devices**. **Read <host>** saves the fields like a scan does and
 reads that device. When a handoff read fails (broker refused, no reply) the
-dialog opens the same way with "Could not read <host>: <reason>".
+dialog opens the same way with "Could not read <host>: <reason>"; a `wss://`
+broker that failed before CONNACK also gets the certificate advice (§5.3.1),
+whose retry repeats **Read <host>**.
 
 **Bluetooth.** `navigator.bluetooth.getDevices()` lists the devices this origin
 may use (the dashboard and the editor share it when served from one folder).
@@ -1039,6 +1041,55 @@ does not.
   effect (§2.14, §6.1).
 * Each `write(str)` publishes one trimmed line to `pv/log/<hostname>/cmd`
   with QoS 0 (MQTT is message-framed, not a byte stream).
+
+#### 5.3.1 Refused login, `wss://` failures
+
+`mqttBrokerConnect` rejects only before CONNACK. A CONNACK refusal (mqtt.js
+emits `error` "Connection refused: <reason>" with `code` = return code) is
+reported as such: return codes 4/5 (MQTT 5: 134/135) or a "Bad user…"/"Not
+authori…" reason read "the broker refused the login (<reason>)" (scan status
+"The broker refused the login (…)", handoff "Could not read <host>: the broker
+refused the login (…)"); other codes read "the broker refused the connection
+(<reason>)". A refusal never gets the advice below.
+
+A `wss://` connect that fails otherwise before CONNACK gets no reason from the
+browser: an untrusted certificate (no warning is shown for a WebSocket), an
+unreachable host and a denied local-network-access prompt all end in mqtt.js
+`close` (WebSocket code 1006) without an `error` event. For a scan, a
+**Read <host>** or a click on a listed device, the dialog then shows a quiet box
+(`#mqtt-hint`, the status line is cleared):
+
+> Could not open a secure connection to <host>:<port>. If the broker uses a
+> private certificate, open it once and accept the warning, then come back.
+> *A blank page after accepting is normal. If the browser asks whether this page
+> may access devices on the local network, allow it.*
+> [Open https://<host>:<port>]
+
+The button calls `window.open("https://<host>:<port>/", "_blank", "noopener")`
+from its click handler (nothing opens without that user gesture) and arms one
+retry: the next `focus` or `visibilitychange` to visible repeats the dialog's
+action (**Read <host>** with a handoff, else **Scan for devices**, both with the
+current fields) and the status reads "Retrying <host>:<port> …". The box stays
+until that connect succeeds; a failed retry shows it again with the button and
+retries only after another click. Closing the dialog, reopening it, a success or
+a failure that does not qualify clears the box and the pending retry. Never for
+`ws://`, a refusal, or a drop after a successful connect (the scan's 3 s
+reconnects). The URL opened carries host and port only.
+
+**Probe.** Before showing the box the editor fetches
+`https://<host>:<port>/` with `{mode:"no-cors", cache:"no-store",
+credentials:"omit"}` (4 s limit). It resolves (opaque response) once this
+browser accepts the broker's TLS certificate, whatever the HTTP status, and
+rejects with a `TypeError` for an untrusted certificate, an unreachable host and
+a blocked local-network access alike. So it can only rule the certificate out:
+when it resolves, the box instead says "<host>:<port> accepts a secure
+connection, but the broker did not accept the MQTT WebSocket on it. Check the
+port and the path of the broker's WebSocket listener." without a button. A
+rejected or unanswered probe keeps the certificate advice, worded for all three
+causes.
+
+`WssHint` (classification, probe, box, one-shot retry) is kept identical in
+`dashboard.html`; `test/wss_hint.test.js` compares the two copies.
 
 ---
 

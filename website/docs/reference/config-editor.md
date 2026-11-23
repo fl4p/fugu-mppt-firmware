@@ -92,6 +92,31 @@ The list shows every `<hostname>` seen publishing or present and marks those who
 listening while the dialog is open and reconnects every 3 s if the broker drops. Pick a device to read its config.
 See [MQTT topics](mqtt.md).
 
+### Connection failures
+
+When the broker rejects the username or password, the dialog says "The broker refused the login" with the broker's
+reason.
+
+A browser gives no reason when a `wss://` connection fails. A broker certificate that the browser does not trust,
+an unreachable broker and a denied local network access prompt all look the same, and for a WebSocket the browser
+shows no certificate warning. When a `wss://` connection fails before the broker has answered, the dialog shows:
+
+> Could not open a secure connection to `<host>:<port>`. If the broker uses a private certificate, open it once and
+> accept the warning, then come back.
+
+**Open https://`<host>:<port>`** opens the broker's address in a new tab. Choose **Advanced** and then
+**Proceed** there. The page stays blank, because the listener only speaks WebSocket. Chrome may also ask whether the
+editor may access devices on the local network; allow it, or the connection fails as well. When you return to the
+editor tab, it repeats the scan (or the **Read `<hostname>`** of a dashboard link) once. If that fails too, the
+message and the button stay, and the editor retries again only after another click.
+
+Before it shows the message, the editor requests `https://<host>:<port>/` without reading the answer. If the
+browser accepts the certificate there, the certificate is not the cause, and the dialog says instead that the
+broker did not accept the MQTT WebSocket: check the port and path of its WebSocket listener. A failed request cannot
+tell an untrusted certificate, an unreachable broker and blocked local network access apart, so in that case the
+message covers all three. `ws://` brokers and connections that drop after they were established never get the
+message. See [Dashboard: TLS](dashboard.md#tls) for setting up a broker certificate.
+
 ### Opening from the dashboard
 
 **Configure** on a [dashboard](dashboard.md) card opens the editor in a new tab and reads that device's config at

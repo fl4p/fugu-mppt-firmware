@@ -42,6 +42,11 @@
             color:var(--warn); font-size:13px; }
   .banner.found { border-color:var(--accent2); color:inherit; }
   .banner button { margin-left:8px; }
+  .banner.wss-hint { border-color:var(--line); color:var(--fg); background:var(--panel); }
+  .banner.wss-hint p { margin:0 0 6px; }
+  .banner.wss-hint p.note { color:var(--muted); font-size:12px; }
+  .banner.wss-hint p:last-child { margin-bottom:0; }
+  .banner.wss-hint button { margin:2px 0 0; }
   #empty { color:var(--muted); text-align:center; margin:60px 20px; }
   #cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(420px, 1fr)); gap:14px; padding:16px 20px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px;
@@ -642,6 +647,86 @@ async function requestChargerStatus(dev){
 /* ---------------------------------------------------------------------------------------------
    MQTT: discovery, telemetry, lease
 --------------------------------------------------------------------------------------------- */
+// WssHint: kept identical in conf-editor.html and dashboard.html (test/wss_hint.test.js compares them).
+// A WebSocket to a broker whose certificate the browser does not trust fails without a warning: mqtt.js
+// reports only "close" (code 1006), as for an unreachable host or a denied local-network-access prompt.
+// probe(): fetch(https://<host>:<port>/, no-cors) resolves once this browser accepts the broker's TLS
+// certificate and rejects with a TypeError for an untrusted certificate, an unreachable host and a blocked
+// local-network access alike. Resolved, it rules the certificate out; rejected, it cannot tell the three apart.
+const WssHint = (() => {
+  const LOGIN = new Set([4, 5, 134, 135]);   // CONNACK: bad user name or password, not authorized
+  // A CONNACK refusal (mqtt.js: error "Connection refused: <reason>", code = return code): "login" or
+  // "other"; null for a failed transport.
+  function refusal(e){
+    const m = String((e && e.message) || ""), rc = e && e.code;
+    if (LOGIN.has(rc) || /^Connection refused: (Bad user|Not authori)/i.test(m)) return "login";
+    return (Number.isInteger(rc) && rc > 0) || /^Connection refused:/i.test(m) ? "other" : null;
+  }
+  function refusedText(e){
+    const r = refusal(e), why = String((e && e.message) || "").replace(/^Connection refused:\s*/i, "");
+    return !r ? null : r === "login" ? "the broker refused the login (" + (why || "not authorized") + ")"
+      : "the broker refused the connection (" + why + ")";
+  }
+  // {name:"<host>:<port>", href:"https://<host>:<port>/"} for a wss:// URL, else null
+  function target(url){
+    let u;
+    try { u = new URL(url); } catch (_) { return null; }
+    if (u.protocol !== "wss:") return null;
+    const name = u.hostname + ":" + (u.port || 443);
+    return { name, href:"https://" + name + "/" };
+  }
+  // true: the TLS certificate is accepted; false: the fetch failed; null: no answer within ms, or no fetch
+  async function probe(href, ms = 4000){
+    if (typeof fetch !== "function") return null;
+    const ac = typeof AbortController === "function" ? new AbortController() : null;
+    let t;
+    try {
+      return await Promise.race([
+        fetch(href, { mode:"no-cors", cache:"no-store", credentials:"omit", signal:ac ? ac.signal : undefined })
+          .then(() => true, () => false),
+        new Promise(res => { t = setTimeout(() => { if (ac) ac.abort(); res(null); }, ms); }),
+      ]);
+    } finally { clearTimeout(t); }
+  }
+  let armed = null;
+  function disarm(){
+    if (!armed) return;
+    window.removeEventListener("focus", armed);
+    document.removeEventListener("visibilitychange", armed);
+    armed = null;
+  }
+  // again() runs once, the next time the page gets focus or becomes visible
+  function arm(again){
+    disarm();
+    armed = () => { if (document.visibilityState === "hidden") return; disarm(); again(); };
+    window.addEventListener("focus", armed);
+    document.addEventListener("visibilitychange", armed);
+  }
+  // The message for a wss:// connect that failed before CONNACK; tls: the probe's result. The button opens
+  // the broker's page from the click (a page opened without a user gesture is blocked) and arms again().
+  function box(t, tls, again){
+    const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+    const d = mk("div", "wss-hint");
+    d.setAttribute("role", "status");
+    if (tls === true){
+      d.append(mk("p", "", t.name + " accepts a secure connection, but the broker did not accept the MQTT WebSocket on it. "
+        + "Check the port and the path of the broker's WebSocket listener."));
+      return d;
+    }
+    const b = mk("button", "wss-open", "Open " + t.href.slice(0, -1));
+    b.type = "button";
+    b.onclick = () => { window.open(t.href, "_blank", "noopener"); if (again) arm(again); };
+    d.append(mk("p", "", "Could not open a secure connection to " + t.name + ". If the broker uses a private certificate, "
+        + "open it once and accept the warning, then come back."),
+      mk("p", "note", "A blank page after accepting is normal. If the browser asks whether this page may access devices "
+        + "on the local network, allow it."),
+      b);
+    return d;
+  }
+  return { refusal, refusedText, target, probe, box, disarm, get armed(){ return !!armed; } };
+})();
+// end WssHint
+
 let client = null, clientUrl = "", clientUser = "", clientUp = false;
 const mqttReady = () => !!(client && clientUp);
 
@@ -666,8 +751,24 @@ function setStatus(text, isErr){
   const s = $("mqtt-status"); s.textContent = text; s.classList.toggle("err", !!isErr);
 }
 
-function mqttConnect(url, user, pass){
-  mqttDisconnect();
+// A wss:// connect that failed before its first CONNACK: {url, t, tls, again} for the banner (see WssHint).
+let wssFail = null;
+async function onWssFail(c, url, user, pass){
+  const t = WssHint.target(url);
+  if (!t) return;
+  const tls = await WssHint.probe(t.href);
+  if (client !== c || clientUp) return;
+  const again = () => {
+    if (clientUp || !wssFail || wssFail.url !== url) return;
+    mqttConnect(url, user, pass, "retrying " + t.name + "…");
+  };
+  wssFail = { url, t, tls, again };
+  banners();
+}
+
+// retrying: status text for a repeat after the certificate advice, which stays up until it connects or fails.
+function mqttConnect(url, user, pass, retrying){
+  mqttDisconnect(!!retrying);
   url = (url || "").trim();
   if (!url) return null;
   if (!window.mqtt){ setStatus("mqtt.js did not load", true); return null; }
@@ -677,11 +778,19 @@ function mqttConnect(url, user, pass){
                                        reconnectPeriod:5000, connectTimeout:5000 }); }
   catch(e){ setStatus(e.message, true); return null; }
   client = c;
-  setStatus("connecting…");
+  setStatus(retrying || "connecting…");
   $("mqtt-connect").textContent = "Disconnect";
+  // up: CONNACK seen once; a later drop never brings the certificate advice. refused: a CONNACK refusal.
+  let up = false, refused = "", checked = false;
+  const failedEarly = () => {
+    if (up || refused || checked) return;
+    checked = true;
+    onWssFail(c, url, user, pass);
+  };
   c.on("connect", () => {
     if (client !== c) return;
-    clientUp = true;
+    clientUp = true; up = true; refused = "";
+    if (wssFail){ wssFail = null; WssHint.disarm(); banners(); }
     setStatus("connected");
     for (const t of ["pv/log/#", "pv/alert/#", "pv/tele/#"]) c.subscribe(t, { qos:0 }, () => {});
     for (const h of new Set([...knownHosts(url), ...Object.keys(loadSnaps())])) c.publish("pv/log/" + h + "/cmd", "hostname", { qos:0 }, () => {});
@@ -693,15 +802,30 @@ function mqttConnect(url, user, pass){
     renderAllSoon();
   });
   c.on("message", (topic, payload, pkt) => { if (client === c) onMqttMessage(topic, payload, pkt); });
-  c.on("error", (e) => { if (client === c) setStatus(e.message || String(e), true); });
-  c.on("close", () => { if (client !== c) return; clientUp = false; setStatus("disconnected, retrying…", true); renderAllSoon(); });
+  c.on("error", (e) => {
+    if (client !== c) return;
+    refused = WssHint.refusedText(e) || "";
+    // a refused login does not get better by retrying with the same password
+    if (WssHint.refusal(e) === "login"){ mqttDisconnect(); setStatus(refused + ": check the user and password", true); return; }
+    setStatus(refused || e.message || String(e), true);
+    failedEarly();
+  });
+  c.on("close", () => {
+    if (client !== c) return;
+    clientUp = false;
+    setStatus(refused ? refused + ", retrying…" : "disconnected, retrying…", true);
+    failedEarly();
+    renderAllSoon();
+  });
   return c;
 }
 
-function mqttDisconnect(){
+// keepHint: leave the certificate advice up (a repeat of the same connect)
+function mqttDisconnect(keepHint){
   const c = client;
   client = null; clientUp = false;
   $("mqtt-connect").textContent = "Connect";
+  if (!keepHint && wssFail){ wssFail = null; WssHint.disarm(); banners(); }
   if (c){ try { c.end(true); } catch(_){} setStatus("disconnected"); }
   renderAllSoon();
 }
@@ -1743,6 +1867,14 @@ function foundBanner(){
   return d;
 }
 
+// the certificate advice while the URL field still names the broker that failed
+function wssBanner(){
+  if (!wssFail || $("mqtt-url").value.trim() !== wssFail.url) return null;
+  const d = WssHint.box(wssFail.t, wssFail.tls, wssFail.again);
+  d.classList.add("banner");
+  return d;
+}
+
 /* ---------------------------------------------------------------------------------------------
    Header, banners, start-up
 --------------------------------------------------------------------------------------------- */
@@ -1759,8 +1891,8 @@ function banners(){
   if (location.protocol === "https:" && /^ws:\/\//i.test($("mqtt-url").value.trim()))
     out.push("An https page cannot open ws:// connections: use a wss:// broker URL.");
   const box = $("banners");
-  const fb = foundBanner();
-  box.replaceChildren(...out.map(t => el("div", "banner", t)), ...(fb ? [fb] : []));
+  const fb = foundBanner(), wb = wssBanner();
+  box.replaceChildren(...out.map(t => el("div", "banner", t)), ...(wb ? [wb] : []), ...(fb ? [fb] : []));
   $("ble-add").disabled = !navigator.bluetooth;
 }
 

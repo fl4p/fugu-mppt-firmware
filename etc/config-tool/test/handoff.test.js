@@ -108,7 +108,7 @@ test('MQTT handoff to an anonymous broker reads at once; a failed read reopens t
   w = (await loadEditor({ url: 'http://localhost/#mqtt=ws://broker:9001&device=ghost', beforeParse: refuse })).window;
   await until(() => w.document.getElementById('mqtt-modal').classList.contains('open'));
   assert.equal(w._state, null);
-  assert.equal($(w, 'mqtt-status').textContent, 'Could not read ghost: Connection refused: Not authorized');
+  assert.equal($(w, 'mqtt-status').textContent, 'Could not read ghost: the broker refused the login (Not authorized)');
   assert.equal($(w, 'mqtt-go').textContent, 'Read ghost');
 });
 

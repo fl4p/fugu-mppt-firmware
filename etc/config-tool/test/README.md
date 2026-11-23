@@ -41,6 +41,8 @@ Files map roughly to spec sections (`../spec.md`):
 | `dashboard_handoff.test.js` | `../dashboard.html` Configure (MQTT / BLE fragment, BLE link released first, no password in the URL) and the `#mqtt=` / `#ble=` fragment from the editor |
 | `_fakes.js` | fake firmware, MQTT hook and granted BLE device shared by the two editor files above |
 | `browser/handoff.spec.js` | the handoff end to end in Chromium (dashboard Configure → editor tab reads), fragment gone after load, the strip keeps the header height at 1280/1024/375 px; `browser/_fake_mqtt.js` is the in-page fake broker |
+| `wss_hint.test.js` | §5.3.1 and `../dashboard.html` (refused login, certificate advice after a `wss://` failure before CONNACK: only for `wss://`, `window.open` only from the click, one retry on focus, no loop, the probe's verdict; the two `WssHint` copies match) |
+| `browser/cert.spec.js` | the same against a real self-signed `wss://` listener (`browser/_wss_broker.js`, needs `openssl`) and the real `mqtt@5` in Chromium: untrusted certificate, refused login, https without WebSocket, closed port, and the click-through past the certificate warning (needs Playwright's full Chromium build, else skipped). `CERT_SHOTS=<dir>` saves screenshots |
 | `browser/smoke.spec.js` | CDN sanity (real `mqtt@5` + `ansi-to-html` load); real-layout tail-follow; folder drag-drop via `webkitGetAsEntry` |
 
 ## Adding tests
