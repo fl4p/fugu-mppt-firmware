@@ -71,6 +71,7 @@ void loopConsole(ConsoleLine &ln, int read(char *buf, size_t len), int write(con
     constexpr uint8_t bufSiz = ConsoleLine::bufSiz;
     char *buf = ln.buf;
     uint8_t &buf_pos = ln.pos;
+    constexpr uint8_t kDrop = 0xff;
 
     char chunk[bufSiz];
     int length = read(chunk, sizeof(chunk));
@@ -87,6 +88,14 @@ void loopConsole(ConsoleLine &ln, int read(char *buf, size_t len), int write(con
     // the whole chunk in one pass.
     for (int i = 0; i < length; ++i) {
         char c = chunk[i];
+
+        if (buf_pos == kDrop) {
+            if (c == '\r' || c == '\n') {
+                write("\r\nERR: line too long\r\n", 22);
+                buf_pos = 0;
+            }
+            continue;
+        }
 
         if (c == '\b' || c == 0x7f) { // backspace (^H) or DEL (terminals/macOS send 0x7f)
             if (buf_pos > 0) {
@@ -118,9 +127,7 @@ void loopConsole(ConsoleLine &ln, int read(char *buf, size_t len), int write(con
             buf[buf_pos++] = c;
             write(&c, 1); // echo
         } else {
-            buf[buf_pos] = 0;
-            ESP_LOGW("main", "discarding command buffer (%u bytes)", (unsigned) buf_pos);
-            buf_pos = 0;
+            buf_pos = kDrop;
         }
     }
 }

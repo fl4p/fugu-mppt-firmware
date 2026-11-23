@@ -117,9 +117,15 @@ static bool feed(Session *x, const char *b, int n) {
         char c = b[i];
         if (c != '\r' && c != '\n') {
             if (x->lineLen < kLineCap) x->line[x->lineLen++] = c;
+            else x->lineLen = 0xff;
             continue;
         }
         if (!x->lineLen) continue;
+        if (x->lineLen > kLineCap) {
+            sink("ERR: line too long\r\n", 20);
+            x->lineLen = 0;
+            continue;
+        }
         if (x->lineLen == 4 && !memcmp(x->line, "exit", 4)) return false;
         consoleDispatchAsync(x->line, x->lineLen, nullptr);
         x->lineLen = 0;
@@ -200,7 +206,7 @@ bool TlsConsoleService::onStart() {
         onStop();
         return false;
     }
-    ESP_LOGI(TAG, "listening on port %u, identity '%s'", port, id.c_str());
+    ESP_LOGI(TAG, "listening on port %u", port);
     return true;
 }
 

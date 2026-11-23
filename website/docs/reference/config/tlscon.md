@@ -44,7 +44,8 @@ with FTP or HTTP config access. The console masks it as `***` in the command ech
 
 The server accepts one client at a time. Once the handshake completes, the client receives the banner
 (`Welcome to <hostname> (<ip>)`, the firmware version) and from then on the muxed log, like a telnet client. Each
-line it sends runs as a console command; `exit` closes the session. A second client is refused while a session is
+line it sends runs as a console command; `exit` closes the session. A line longer than 128 bytes is discarded and
+answered with `ERR: line too long`. A second client is refused while a session is
 open, and so is a client when the free heap is below 24 KB. A handshake that has not completed after 10 s is
 dropped.
 

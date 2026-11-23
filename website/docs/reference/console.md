@@ -14,6 +14,8 @@ makes the console suitable for automated tests. The firmware multiplexes input a
 UART, USB serial-JTAG, and telnet.
 
 The default UART baud rate is 115200. Terminate each command with `\n` or `\r` (new line).
+A line typed on the serial, USB, BLE or `tlscon` console holds at most 127 bytes (`tlscon`: 128). A longer
+line is discarded, not run, and answered with `ERR: line too long`; the next line works normally.
 The firmware confirms a successfully handled command with this line:
 
 ```
