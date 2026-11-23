@@ -165,9 +165,12 @@ reads its own conf file for `enabled` (0/1) and `log_level` (error/warn/info): `
 `set-config <file>.conf <key> <value>` from the serial/telnet/MQTT console edits these in place without re-flashing —
 useful when iterating. FTP is also enabled when Wi-Fi is up (Filezilla, 1 connection; passive data port 50009, active mode also works).
 
-**When you add, rename, or remove a `.conf` key**, update all three sources together so they don't drift:
-the per-file reference table in `website/docs/reference/config/<file>.md`, and the editor metadata in
-`etc/config-tool/conf-editor.html` (`META` + `FILE_KEYS`).
+**When you add, rename, or remove a `.conf` key**, update all three places together so they don't drift:
+the code that reads it, the per-file reference table in `website/docs/reference/config/<file>.md`, and the editor
+metadata in `etc/config-tool/conf-editor.html` (`META` + `FILE_KEYS`).
+
+**Keep docs current.** When a change alters behaviour, a console command, a conf key, a build flag or a workflow that a
+page in `website/docs/` or this file describes, update that text in the same commit. Stale docs count as a bug.
 
 ## Documentation site
 
