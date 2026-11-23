@@ -4,14 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build / Flash / Monitor
 
-This is an ESP-IDF project (v5.5+) using `espressif/arduino-esp32` as a component. Target is `esp32s3` (also supports
-`esp32`).
+This is an ESP-IDF 6.0 (6.0.3) project using `espressif/arduino-esp32` as a component. Target is `esp32s3` (also
+supports `esp32`). IDF 5.5 is no longer supported; don't spend effort keeping it building.
 
-ESP-IDF 6.0 (6.0.3) is the default. It also builds on ESP-IDF 5.5 (`FUGU_IDF=idf5.5 . ./idf-export.sh`, then `idf.py -B build-idf55
--DSDKCONFIG=build-idf55/sdkconfig build`). `main/idf_component.yml` picks arduino-esp32 >=3.3.12,<4.0.0 (4.0.0 fails configure) and the
-external `espressif/mqtt` on IDF 6, <3.3.8 on IDF 5.5. Keep code compatible with both: IDF 6 driver config structs dropped
-fields (`io_loop_back`, pull flags) and added others, so zero-init (`= {}`) and assign instead of
-listing every field.
+`main/idf_component.yml` picks arduino-esp32 >=3.3.12,<4.0.0 (4.0.0 fails configure) and the external `espressif/mqtt`.
+IDF driver config structs change fields between releases, so zero-init (`= {}`) and assign instead of listing every
+field.
 
 Before any `idf.py` invocation, source ESP-IDF into the shell with the tracked helper. It works from any git worktree
 (it finds `../../esp/idf6.0.3` relative to the main checkout via `git rev-parse --git-common-dir`; override with
