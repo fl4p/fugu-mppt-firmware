@@ -98,11 +98,8 @@ public:
         //    ina226._wire = new TwoWire((uint8_t) i2c_port);
         ina226.i2cAddress = addr;
 
-        float resistor = boardConf.getFloat("ina22x_resistor"),
-                range = boardConf.getFloat("ina22x_range",
-                                         35.0f);// default: 1mOhm, 80A (ina226 shunt voltage range is 81.92mV)
-        ina226.setResistorRange(resistor, range);
-        //ESP_LOGI("ina226", "ina226.calVal=%d", ina226.calVal);
+        // CAL=2048: current LSB = shunt LSB (2.5 uV/R), range = 81.92 mV/R
+        ina226.setCalVal(2048, 0.08192f / boardConf.getFloat("ina22x_resistor"));
 
         long convReqUs = boardConf.getLong("ina22x_conv_time_us", 1100);
         auto ct = ina226ConvTimeAtLeast(convReqUs);
@@ -117,10 +114,6 @@ public:
 
         if (auto hsHz = boardConf.getLong("i2c_hs_freq", 0))
             beginHs(boardConf.getLong("i2c_freq", 100000), hsHz);
-
-        //ESP_LOGI("ina226", "ina226.calVal2=%d", ina226.calVal);
-        //ina226.setResistorRange(resistor, range);
-        //ina226.writeRegister(INA226_WE::INA226_CAL_REG, ina226.calVal);
 
         return true;
     }
