@@ -50,7 +50,7 @@ mechanism but is not a fault. Each further sweep without usable power doubles th
 300 s); a sweep that finds an MPP resets it to 30 s. A battery that comes back during the backoff ends it and resets it
 to 30 s: the output voltage was outside the battery range (below 2.5 V per cell or above 1.03 × `vout_max`) and has been
 back inside it for 1 to 2 s. A battery connected all along, as at dawn, never leaves that range. After a sweep the Vout cap
-ended, the cap rising above Vout ends the backoff too; see [MPPT tracker](mppt-tracker.md).
+ended, the cap rising above Vout ends the backoff too and starts a sweep at once; see [MPPT tracker](mppt-tracker.md).
 
 ### PSU mode
 

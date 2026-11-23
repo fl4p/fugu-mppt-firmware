@@ -1128,6 +1128,8 @@ static int runWx(const std::string &name, Wx &wx) {
     g_vconv.setPvExact(getenv("SIM_PV_EXACT") ? atoi(getenv("SIM_PV_EXACT")) != 0 : wx.exact);
     wx.init();
     wx.apply(0);
+    // a BMS cell topic is configured, as on a live board: the start path waits for its data
+    if (wx.bmsResweep >= 0) mppt.charger.beginMqtt(ConfFile{{"cell_voltages_max_topic", "bms"}});
     std::vector<double> dutyHist;
     if (g_ring) g_tickHook = ringTick, dutyHist.assign(1024, 0.0), g_ringRecFrom = std::max(0.0, wx.sweepAt);
     printf("# %s: clear-sky MPP %.0f W, Isc %.2f A, Voc %.0f V, %u substring(s), bat %.2f V / %.3f ohm, %.0f s\n",
