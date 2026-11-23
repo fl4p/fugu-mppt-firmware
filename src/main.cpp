@@ -259,7 +259,18 @@ static TeleConf setupNetworkAtBoot() {
     return teleConf;
 }
 
-static RTC_NOINIT_ATTR ChargerRtc s_chargerRtc;
+// fixed address below .rtc_wire (main/rtc_pin.ld)
+static ChargerRtc s_chargerRtc __attribute__((section(".rtc_charger")));
+
+// TODO drop once no device runs build 864 or older: builds 804..864 kept the copy at 0x500000f4 (S3)
+__attribute__((cold)) static void chargerRtcMigrate() {
+#if CONFIG_IDF_TARGET_ESP32S3
+    if (s_chargerRtc.valid()) return;
+    ChargerRtc o;
+    for (size_t i = 0; i < sizeof o / 4; ++i) ((uint32_t *) &o)[i] = ((const volatile uint32_t *) 0x500000f4)[i];
+    if (o.valid()) s_chargerRtc = o;
+#endif
+}
 
 // Sensors → converter → MPPT/tracker bring-up. Sets g_app.setupErr on any failure. Kept as one unit
 // because these initializations fail-together: without sensors the converter can't run safely,
@@ -282,6 +293,7 @@ static void setupConverterAndMppt(const ConfFile &boardConf, const Limits &lim, 
             converterConf = ConfFile{"/littlefs/conf/converter.conf"};
 
             mppt.charger.begin(chargerConf);
+            chargerRtcMigrate();
             mppt.charger.attachRtc(&s_chargerRtc);
             converter.init(converterConf, boardConf, coilConf);
             g_hwOvIsrHook = hwOvIsr;
@@ -531,21 +543,17 @@ __attribute__((cold)) static void wireGuardConf(const ConfFile &c) {
     assert_throw(w.drMin > 0 && w.rMax >= 0, "need wire_dr_min > 0, wire_r_max >= 0");
 }
 
-// fixed address at the top of RTC slow memory (main/wire_rtc.ld)
+// fixed address at the top of RTC slow memory (main/rtc_pin.ld)
 static WireGuard::Rtc s_wireRtc __attribute__((section(".rtc_wire")));
-// TODO drop once no device runs build 804: its copy at 0x50000004 (fit) / 0x50000024 (day)
-static RTC_NOINIT_ATTR struct {
-    WireGuard::FitRtc fit;
-    WireGuard::DayRtc day;
-} s_wireRtcOld;
 
 __attribute__((cold)) static void wireGuardLoad() {
     auto &g = mppt.charger.wireGuard;
     if (!g.conf.mode) return;
-    const bool cur = s_wireRtc.magic == WireGuard::RTC_MAGIC;
-    if (g.restoreDay(cur ? s_wireRtc.day : s_wireRtcOld.day))
-        ESP_LOGI("wire", "open day retained: %u Rc samples, %u sweeps", g.daySamples(), g.daySweeps());
-    if (g.restoreFit(cur ? s_wireRtc.fit : s_wireRtcOld.fit)) ESP_LOGI("wire", "offset regression retained");
+    if (s_wireRtc.magic == WireGuard::RTC_MAGIC) {
+        if (g.restoreDay(s_wireRtc.day))
+            ESP_LOGI("wire", "open day retained: %u Rc samples, %u sweeps", g.daySamples(), g.daySweeps());
+        if (g.restoreFit(s_wireRtc.fit)) ESP_LOGI("wire", "offset regression retained");
+    }
     WireGuard::Blob b;
     nvs.open();
     const bool have = nvs.readBlob("wire", &b, sizeof b);

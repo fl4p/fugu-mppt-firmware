@@ -141,7 +141,7 @@ struct BatChargerParams {
     }
 };
 
-// Charger state kept across esp_restart/panic/OTA in RTC_NOINIT RAM (not across power loss).
+// Charger state kept across esp_restart/panic/OTA in pinned RTC slow RAM (not across power loss).
 // The first 20 B are the v2 layout (older builds read it unchanged); the balance part validates alone.
 struct ChargerRtc {
     uint32_t magic;

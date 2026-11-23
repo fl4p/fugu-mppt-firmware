@@ -173,7 +173,7 @@ idf_component_register(SRCS
         # NetworkClientSecure # OTA
 )
 
-target_linker_script(${COMPONENT_LIB} INTERFACE "wire_rtc.ld")
+target_linker_script(${COMPONENT_LIB} INTERFACE "rtc_pin.ld")
 
 if (WITH_NETW)
     component_compile_definitions("WITH_NETW=1")

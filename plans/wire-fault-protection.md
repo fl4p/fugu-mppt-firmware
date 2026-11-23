@@ -693,3 +693,30 @@ any component shifts it again; so does `RTC_DATA_ATTR` data, which the linker pl
   with dummy `RTC_NOINIT_ATTR` arrays in `main.cpp` (52 B) and `util.cpp` (28 B) plus an
   `RTC_DATA_ATTR` array (20 B): `s_wireRtcOld` 0x50000004 → 0x5000004C, `s_wireRtc` still 0x50001E00.
 - Host test passes; the replay is byte-identical to main (OTA and real restarts, c1..c9 data).
+
+### 804 migration dropped, charger state pinned (2026-11-23)
+
+- `s_wireRtcOld` and its read in `wireGuardLoad` are gone (no device runs 804; a rollback lands on
+  813+, which already use `.rtc_wire`). An invalid `RTC_MAGIC` now just starts cold.
+- `main/wire_rtc.ld` became `main/rtc_pin.ld`: fixed slots at the top of `rtc_slow_seg`,
+  `.rtc_charger` (0x100 B, 0x50001D00 on the S3) below `.rtc_wire` (0x200 B, still 0x50001E00).
+  `ASSERT`s: RTC slow data must stay below the lowest slot, each slot within its size (both forced
+  and seen to fail the link). A new pinned block gets a new slot below the lowest one.
+- `s_chargerRtc` (`ChargerRtc`, 40 B: full-charge age, BMS reference at the last full, holiday
+  flag/streak/gaps/override, balance age/in-band/session time) moved there. Dropping
+  `s_wireRtcOld` would have moved it down anyway, so its loss on this OTA was
+  certain without the pin. Losing it means: full-charge age unknown, the partial hold charges to
+  full first, holiday mode and its override reset, the balance timer restarts.
+- Migration (TODO, drop once no device runs ≤ 864): `chargerRtcMigrate()` before `attachRtc`. If
+  the pinned copy is not `valid()`, it reads 40 B word-wise from 0x500000F4 (the 804..864 address,
+  S3 only, checked with nm on 840) and takes them only if that copy is `valid()` (MAGIC v2 +
+  FNV-1a + range checks); the balance part keeps its own magic and checksum in `attachRtc`. Nothing
+  in the new image is linked at 0x500000F4..0x5000011C (`.rtc_noinit` + `.rtc.force_slow` end at
+  0x50000048), so the old bytes survive until read. A rollback to ≤ 864 reads its untouched old
+  copy, as old as the OTA.
+- Not pinned: `s_ngRtc` (net-guard reboot hold and count; an OTA needs a connected network, so the
+  hold is already clear), flash-probe `s_rtc` (keyed to `fwTag`, re-probes after any new image),
+  IDF `s_sleep_sub_mode_ref_cnt` (`.rtc.force_slow`, reloaded by the bootloader on every reset).
+- nm (fleet, IDF 6.0.3): `s_ngRtc` 0x50000000, `s_rtc` 0x50000004, `s_sleep_sub_mode_ref_cnt`
+  0x50000024, `_rtc_force_slow_end` 0x50000048, `s_chargerRtc` 0x50001D00 (0x28), `s_wireRtc`
+  0x50001E00 (0xF4). DWARF layouts of `ChargerRtc` and `WireGuard::Rtc` identical to 840.

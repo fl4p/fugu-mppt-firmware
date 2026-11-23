@@ -21,8 +21,8 @@ discharge current while discharging (BMS `ibat` < -0.2 A).
 - **Override:** console `holiday auto|on|off` (also via MQTT/BLE). `status` prints
   `holiday ON|off (mode) quiet days n/N (gaps g) today: discharging h, mean x/lim A`.
 - **Reboot survival:** holiday flag, streak, gaps, override, full-charge age and the BMS
-  remaining-charge reference at the last full are kept in RTC_NOINIT RAM (`ChargerRtc`, MAGIC v2,
-  checksum). They survive software resets/OTA, not power loss. An implausible restored reference
+  remaining-charge reference at the last full are kept in RTC slow RAM (`ChargerRtc`, MAGIC v2,
+  checksum; pinned at a fixed address by `main/rtc_pin.ld`). They survive software resets/OTA, not power loss. An implausible restored reference
   (deficit outside -5 %…100 % of `bat_c`) is dropped.
 - `charger.conf` is read only at boot: changing keys needs a `restart`.
 
