@@ -120,3 +120,9 @@ phenomena on the switch node:
 This is a companion to [Diode Emulation.md](Diode%20Emulation.md), which covers the ZCD
 timing. Here we cover what happens *after* the LS FET turns off at the zero crossing.
 
+
+## Board letters on the published pages (2026-11-24)
+
+The published lab and internals pages use one letter per board: A = flat (≈51 µH), B = fry (≈80 µH),
+C = flu (83 µH, 320 kHz ring), D = fbuck (40 µH). `internals/dcm-ringing.mdx` row "A, B" is the low-`C_sw`
+illustration for fry/flat, not a measurement.

@@ -89,19 +89,19 @@ which is within 1 % of `f_r` for `Q ≥ 4`.
 `C_sw` differs per board and depends mostly on how many FETs are paralleled, so it isn't a universal constant. A `C_sw` of
 ~100–200 pF, which gives 1.3–2.3 MHz, is roughly an order of magnitude low for any board with paralleled 100 V FETs.
 
-The following table compares three example boards. Row A illustrates that low-`C_sw` case and isn't a measurement.
+The following table compares three example boards. The A, B row illustrates that low-`C_sw` case and isn't a measurement.
 
 | Board | `L` | `C_sw` | `f_r` | `T_ring/4` |
 |---|--:|--:|--:|--:|
-| A (illustration, low `C_sw`) | 50–80 µH | 100–200 pF (assumed) | 1.3–2.3 MHz | 111–199 ns |
-| B | 83 µH (measured) | 2.98–3.04 nF (measured) | 320 kHz | ~780 ns |
-| C | 40 µH (`coil.conf::L0`) | unmeasured | — | — |
+| A, B (illustration, low `C_sw`) | 50–80 µH | 100–200 pF (assumed) | 1.3–2.3 MHz | 111–199 ns |
+| C | 83 µH (measured) | 2.98–3.04 nF (measured) | 320 kHz | ~780 ns |
+| D | 40 µH (`coil.conf::L0`) | unmeasured | — | — |
 
-Board B carries a single IPP022N12NM6 on the low side. Board C carries 2× IPP050N10NF2S (HS) and 2× IPP039N10N5
+Board C carries a single IPP022N12NM6 on the low side. Board D carries 2× IPP050N10NF2S (HS) and 2× IPP039N10N5
 (LS), which puts four 100 V dies on the node. `C_oss` rises steeply toward 0 V, which is where this ring lives.
 
-[Switch-node capacitance](../lab/switch-node-capacitance.md) describes how the board B value was measured, why
-board C's existing captures do not give one, and the uncertainty of the resonant model behind the fit.
+[Switch-node capacitance](../lab/switch-node-capacitance.md) describes how the board C value was measured, why
+board D's existing captures do not give one, and the uncertainty of the resonant model behind the fit.
 
 ## Reduction techniques
 
@@ -116,12 +116,12 @@ An RC snubber is a series R+C from the switch node to ground, placed as close to
 possible. For the DCM ring, the tank is the main coil `L` and `C_sw`, both known (see
 [Ring frequency per board](#ring-frequency-per-board)), so no parasitic needs to be extracted:
 
-- `R` near the tank's characteristic impedance `√(L / C_sw)` damps it critically. Board B
+- `R` near the tank's characteristic impedance `√(L / C_sw)` damps it critically. Board C
   (83 µH, ~3 nF) gives about 166 Ω.
 - `C_snub` must be several times `C_sw`, so that its impedance at `f_r` is small against `R`.
-  At 3–10 × `C_sw` that is about 9–30 nF on board B.
+  At 3–10 × `C_sw` that is about 9–30 nF on board C.
 - The snubber capacitor is charged and discharged once per switching cycle, so its loss is about
-  `C_snub · V_in² · f_sw`. On board B (71 V, 39 kHz) that is about 1.8–5.9 W, a large
+  `C_snub · V_in² · f_sw`. On board C (71 V, 39 kHz) that is about 1.8–5.9 W, a large
   loss for damping a ring that is mainly an EMI concern.
 
 The DCM ring does not exceed the switching voltage: it starts at 0 V with an amplitude of at most
@@ -258,9 +258,9 @@ Increasing it also pushes the operating point toward the reverse-current cliff (
 What switch timing can do is choose *when* the next HS edge happens. Turning HS on at a ring valley (valley
 switching) lowers the `C_sw · V²` turn-on loss; it does not damp the ring.
 
-The valley time is per board: the first valley is one ring period after LS turn-off, about 3.1 µs on board B and
-0.4–0.8 µs for the board A illustration. A timing hard-coded to board A's `T_ring/4` (111–199 ns) would act at
-4–6 % of board B's period, near the start of its ring, where the node is still close to 0 V. Derive the timing
+The valley time is per board: the first valley is one ring period after LS turn-off, about 3.1 µs on board C and
+0.4–0.8 µs for the boards A and B illustration. A timing hard-coded to their `T_ring/4` (111–199 ns) would act at
+4–6 % of board C's period, near the start of its ring, where the node is still close to 0 V. Derive the timing
 from the board's own `L0` and FET population, not from a constant (see
 [Ring frequency per board](#ring-frequency-per-board)).
 

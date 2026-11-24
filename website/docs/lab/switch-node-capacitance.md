@@ -50,9 +50,9 @@ Take `C_sw` from the fitted `ω` rather than inverting the quarter period `T/4 =
 - The node swings about a midpoint `V_c`, so `dV/dt` peaks near mid-swing, not at the rail.
 - The HS body diode clamps the node one diode drop above `V_in`, which cuts the cosine short before its peak.
 
-## Board B result
+## Board C result
 
-Board B has one IPP022N12NM6 on the low side and an 81–83 µH coil (83 µH measured with a 4-wire DMM, 81.2 µH from
+Board C has one IPP022N12NM6 on the low side and an 81–83 µH coil (83 µH measured with a 4-wire DMM, 81.2 µH from
 `A_L·N²`). The capture ran with the output open, near-zero current and a low duty, over several events.
 
 The fit gives the following values:
@@ -68,9 +68,9 @@ The fit gives the following values:
 
 With `L` = 81–83 µH, `C_sw` is 2.98–3.04 nF.
 
-## Board C
+## Board D
 
-Board C has two 100 V FETs on each side (2× IPP050N10NF2S HS, 2× IPP039N10N5 LS) and a 40 µH coil. Its `C_sw` is
+Board D has two 100 V FETs on each side (2× IPP050N10NF2S HS, 2× IPP039N10N5 LS) and a 40 µH coil. Its `C_sw` is
 unmeasured.
 
 Its existing captures were triggered on the switch node, and they don't fit the resonant model:
@@ -89,9 +89,9 @@ Two models can explain the rise after the LS turns off:
 - **Constant-current charge** of `C_sw` by the negative coil current that the LS minimum on-time pumps,
   `I_neg = V_out·t_LS/L`. The transit is then proportional to `V_in`.
 
-A straight line fits 15–85 % of every rise in these captures to R² ≈ 0.999, board B's included. Over that span a
-cosine and a ramp are barely distinguishable, so the fit alone can't separate the two models. The board B value rests
-on two observations: its fit converges, where board C's does not, and the node shows the body-diode clamp.
+A straight line fits 15–85 % of every rise in these captures to R² ≈ 0.999, board C's included. Over that span a
+cosine and a ramp are barely distinguishable, so the fit alone can't separate the two models. The board C value rests
+on two observations: its fit converges, where board D's does not, and the node shows the body-diode clamp.
 
 A `V_in` sweep with the gate trigger would separate the models. Compare the fitted `ω` across the sweep: a resonance
 keeps it constant. The 0 V to clamp transit changes with `V_in` even for a resonance, because the clamp position on

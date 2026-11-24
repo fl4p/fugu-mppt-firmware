@@ -4,9 +4,9 @@ On-target tests (Unity, replaces main.cpp with test/main.cpp):
 RUN_TESTS=1 idf.py -B build/tests flash      # runs the full software unit suite by default
 ```
 
-Read the Unity output with `etc/fugu_console.py -p /dev/cu.usbmodem...` (it resets the board on
-connect, re-running the suite) — not `idf.py monitor`. The PWM/MCPWM tests are gated behind
-`#if WITH_MCPWM` and only run in an MCPWM build (`CONFIG_FUGU_WITH_MCPWM=y`); the software suite
+Read the Unity output with `etc/fugu_console.py -p /dev/cu.usbmodem...` (it does not reset the
+board on connect; press RESET to re-run the suite) — not `idf.py monitor`. The PWM/MCPWM tests are gated behind
+`#if WITH_MCPWM` and only run in an MCPWM build (`CONFIG_FUGU_WITH_MCPWM=y`, the default gate driver); the software suite
 runs and passes without it.
 
 Host-side tests (clang/g++, no flash needed):
