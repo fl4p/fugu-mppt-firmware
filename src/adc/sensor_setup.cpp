@@ -336,13 +336,19 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
         sensors.Vout = adcSampler.addSensor(vout.adc, vout.params, lim.Vout_max, vout.filtLen); // 60
     }
 
-    // Inverter-ripple notch: adaptive auto-tunes to the measured 2x-line tone on Vout; with
-    // notch_adaptive=0 the notch stays fixed at notch_freq (100 Hz = 50 Hz mains by default).
+    // Inverter-ripple filter: adaptive auto-tunes to the measured 2x-line tone on Vout; with
+    // notch_adaptive=0 it stays fixed at notch_freq (100 Hz = 50 Hz mains by default).
+    const std::string rf = sensConf.getString("ripple_filter", "notch");
+    uint8_t rippleMode = ADC_Sampler::rippleModeFrom(rf);
+    if (!rippleMode) {
+        ESP_LOGW("sensor", "ripple_filter=%s unknown (notch|comb|both), using notch", rf.c_str());
+        rippleMode = 1;
+    }
     adcSampler.configureNotch(
         sensConf.getByte("notch_adaptive", 1) != 0,
         sensConf.f("notch_freq", 100.f),
         sensConf.f("notch_q", 20.f),
-        -30.f);
+        -30.f, rippleMode);
     adcSampler.setRippleSource(sensors.Vout);
 
     // Glitch-safe median: pass dense load pulses through (unbiased current) but still clip impulse

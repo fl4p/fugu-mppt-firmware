@@ -20,6 +20,7 @@
 #include "math/notch.h"
 #include "math/noise.h"
 #include "math/ripple_freq.h"
+#include "math/ripple_comb.h"
 
 
 struct LinearTransform {
@@ -66,6 +67,7 @@ struct Sensor {
     float previous = NAN;
     uint32_t numSamples = 0;
     NotchFilter *notchFilter = nullptr; // filter 50/60 Hz inverter noise
+    RippleComb<24> *comb = nullptr; // one-ripple-period moving average after the notch (ripple_filter comb|both)
     RunningMedian5<float> med3{}; // filter burst noise
     AdaptiveNoiseFilter anf{};
     inline static bool anfEnabled = false; // diagnostics-only; kept out of the RT path unless `anf on`
@@ -145,6 +147,10 @@ struct Sensor {
             if (!numSamples) notchFilter->seed(last);
             notchFilter->filter(&last, &v, 1);
         }
+        if (comb) {
+            if (!numSamples) comb->seed(v);
+            v = comb->filter(v);
+        }
         float m = med3.next(v); // always feed the median window so it tracks the signal
         if (despikeK > 0.f && params.unit != 'C') { // the NTC is slow and finely averaged: plain median
             float dev = fabsf(v - m);
@@ -188,22 +194,30 @@ struct PhysicalSensor : public Sensor {
     }
 
     float notchFs = 0; // sample rate this sensor's notch was tuned for
+    bool notchOn = true;
     NotchFilter notchStore{}; // notchFilter points here once tuned (no heap on the RT core)
 
-    // Tunes (or enables) the notch to f0Hz. Skipped when f0 is above this sensor's Nyquist
-    // (a notch can't be placed there); the caller scales f0 by each sensor's own fs.
+    // Tunes (or enables) the notch and the comb to f0Hz. The notch is skipped when f0 is above this
+    // sensor's Nyquist (a notch can't be placed there); the caller scales f0 by each sensor's own fs.
     void retuneNotch(float f0Hz, float Q, float amp) {
-        if (notchFs <= 0) return;
+        if (notchFs <= 0 || f0Hz <= 0) return;
         float fNorm = f0Hz / notchFs;
-        if (fNorm <= 0 || fNorm >= 0.45f) return;
+        if (comb) comb->tune(1.f / fNorm);
+        if (!notchOn || fNorm >= 0.45f) return;
         notchStore.tune(fNorm, amp, Q); // preserves filter state -> glitch-free retune
         notchFilter = &notchStore;
     }
 
-    void createNotchFilter(float fs, float f0Hz, float Q, float amp) {
+    // mode: bit 0 notch, bit 1 comb (allocated by configureNotch). The comb needs its whole period L = fs/f in
+    // [2, 22] samples for every f in [fLo, fHi]; where it does not fit, the sensor gets the notch instead.
+    void createNotchFilter(float fs, float f0Hz, float Q, float amp, uint8_t mode, float fLo, float fHi) {
         notchFs = fs;
+        const bool c = comb && RippleComb<24>::fits(fs / fLo) && RippleComb<24>::fits(fs / fHi);
+        if (!c) delete comb, comb = nullptr;
+        notchOn = (mode & 1) || !c;
         retuneNotch(f0Hz, Q, amp);
-        ESP_LOGI("sampling", "%s notch fs=%.1fHz f0=%.1fHz Q=%.0f", params.teleName.c_str(), fs, f0Hz, Q);
+        ESP_LOGI("sampling", "%s %s%s fs=%.1fHz f0=%.1fHz Q=%.0f", params.teleName.c_str(), notchOn ? "notch" : "",
+                 c ? "comb" : "", fs, f0Hz, Q);
     }
 };
 
@@ -351,13 +365,23 @@ public:
     bool notchAdaptive = true;
     float notchFreq = 100.0f;          // active/fixed notch frequency [Hz]
     float notchQ = 20.0f, notchAmp = 0.0316228f; // NotchFilter::gainAmp(-30 dB)
+    uint8_t rippleMode = 1; // bit 0 notch, bit 1 comb (sensor.conf ripple_filter)
     static constexpr float NOTCH_SNR_MIN = 15.0f; // min peak/mean ratio to trust an estimate
+    static constexpr float RIPPLE_F_LO = 80.f, RIPPLE_F_HI = 140.f; // detector band [Hz]
     RippleFreqDetector<61> rippleDet{};
     const Sensor *rippleSrc = nullptr; // channel fed to the detector (Vout)
     float rippleSnr = 0;
     uint8_t notchRetunePos_ = 0xff; // next sensor to retune, past the end = none pending
 
-    void configureNotch(bool adaptive, float freqHz, float Q, float gain) {
+    // ripple_filter value -> mode bits, 0 = unknown
+    static uint8_t rippleModeFrom(const std::string &s) { return s == "notch" ? 1 : s == "comb" ? 2 : s == "both" ? 3 : 0; }
+
+    // call after the sensors are added
+    void configureNotch(bool adaptive, float freqHz, float Q, float gain, uint8_t mode) {
+        rippleMode = mode;
+        if (mode & 2)
+            for (auto s: realSensors)
+                if (!s->comb) s->comb = new RippleComb<24>{};
         notchAdaptive = adaptive;
         notchFreq = freqHz;
         notchQ = Q;
@@ -500,14 +524,15 @@ public:
         for (auto &s: sensors) {
             if (s->isVirtual) continue;
             auto ps = (PhysicalSensor *) s;
-            ps->createNotchFilter(effectiveSampleRate(ps), notchFreq, notchQ, notchAmp);
+            ps->createNotchFilter(effectiveSampleRate(ps), notchFreq, notchQ, notchAmp, rippleMode,
+                                  notchAdaptive ? RIPPLE_F_LO : notchFreq, notchAdaptive ? RIPPLE_F_HI : notchFreq);
         }
 
         if (notchAdaptive && rippleSrc) {
             float fs = effectiveSampleRate((PhysicalSensor *) rippleSrc);
             // scan 80..140 Hz (50/60 Hz inverters -> 100/120 Hz, plus off-grid drift); ~0.75 s window
             uint16_t blockN = (uint16_t) std::min(std::max(fs * 0.75f, 128.f), 1500.f);
-            rippleDet.configure(fs, 80.f, 140.f, blockN);
+            rippleDet.configure(fs, RIPPLE_F_LO, RIPPLE_F_HI, blockN);
             ESP_LOGI("sampling", "ripple notch auto-tune on %s fs=%.0fHz block=%u",
                      rippleSrc->params.teleName.c_str(), fs, blockN);
         }

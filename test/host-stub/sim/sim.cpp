@@ -212,7 +212,8 @@ static void setupFw() {
     mppt.ntc.setValueRef(ntcS->ewm.avg.get());
     sensors.Vout = adcSampler.addSensor(g_adc, {1, vt, {lim.Vout_max, .7f, false}, "vout", 'V', false}, lim.Vout_max, fl);
     adcSampler.configureNotch(sens.getByte("notch_adaptive", 1) != 0, sens.f("notch_freq", 100.f),
-                              sens.f("notch_q", 20.f), -30.f);
+                              sens.f("notch_q", 20.f), -30.f,
+                              std::max<uint8_t>(ADC_Sampler::rippleModeFrom(sens.getString("ripple_filter", "notch")), 1));
     adcSampler.setRippleSource(sensors.Vout);
     adcSampler.configureDespike(sens.f("despike", 0.f));
 

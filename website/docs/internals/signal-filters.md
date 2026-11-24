@@ -149,3 +149,54 @@ With `notch_adaptive=0`, the notch stays at `notch_freq` (default 100 Hz). `notc
 [`sensor.conf`](../reference/config/sensor.md).
 
 Background: [notch filters (video)](https://www.youtube.com/watch?v=tpAA5eUb6eo).
+
+## Ripple comb
+
+`sensor.conf::ripple_filter=comb` replaces the notch with a moving average over exactly one ripple period,
+L = fs/f samples, where L is usually fractional (4.5 samples for 100 Hz at 450 sps). The filter integrates the
+linearly interpolated input over the last L samples. With N = floor(L) and a = L − N, the taps from the newest sample
+back are 1/2, 1, …, 1, 1/2 + a − a²/2 and a²/2, all divided by L. The taps sum to L, so the DC gain is exactly 1.
+
+Properties:
+
+- It has a zero at the ripple frequency and deep zeros at its harmonics while they stay below fs/2. A harmonic that
+  aliases (3f at 450 sps lands at 150 Hz) is attenuated less.
+- The group delay is L/2 samples, half a ripple period (5 ms at 100 Hz), on the filtered values only. Protection
+  reads the raw sample.
+- A step settles within one period.
+- It runs in O(1) per sample: a running sum, re-summed once per buffer turn to bound rounding drift.
+- Every sample enters a 24-sample ring, so a retune only moves the window end over samples that are already there.
+  Neither a frequency change nor a change of N causes a step.
+
+The comb follows the same frequency as the notch (`notch_adaptive`, `notch_freq`). A channel whose period does not fit
+the ring (L above 22 samples, for example fs above about 1.7 kHz with the adaptive 80 Hz lower bound) or is shorter
+than 2 samples keeps the notch. `ripple_filter=both` runs the notch and then the comb.
+
+Attenuation of the comb (adaptive tuning on the ripple), next to the notch:
+
+| fs [sps] | ripple | at f | ±1 Hz | ±2 Hz | ±5 Hz | 2f | 3f |
+|---|---|---|---|---|---|---|---|
+| 450 | 100 Hz | −46 dB | −40 dB | −35 dB | −27 dB | −28 dB | −17 dB |
+| 513 | 100 Hz | −52 dB | −39 dB | −34 dB | −27 dB | −39 dB | −29 dB |
+| 1470 | 100 Hz | −78 dB | −40 dB | −34 dB | −26 dB | −66 dB | −58 dB |
+| notch, any fs | 100 Hz | −30 dB | −6 dB | −2.5 dB | −0.5 dB | 0 dB | 0 dB |
+
+A comb ahead of the median also keeps the mean of a pulsed current: the median of an unfiltered pulse train or of
+leftover harmonics reads low.
+
+### Choosing the filter
+
+In the closed-loop host simulator with captured inverter noise and bus ripple, the two filters compare as follows:
+
+- With the battery at the output-voltage cap, the Vout limiter reads the filtered voltage. Ripple harmonics from an
+  inverter that draws current pulses pass the notch, and the limiter then throttles the converter. In those runs the
+  notch kept 9–62 % of the available energy, the comb 85–96 %. With a pure-sine inverter both were equal.
+- With the ripple 1–3 Hz away from a fixed notch, the notch lost 8–17 % of the energy, the comb under 0.5 %. A
+  60 Hz inverter (120 Hz ripple) with the filter fixed at 100 Hz cost the notch 84 % at the cap, the comb 2 %.
+- Without an output cap and with a spiky current, the comb lost 1–7 % against the notch. The median can no longer
+  remove a current spike once the comb has spread it over one period.
+- Without ripple, the comb cost up to 0.6 % in some cloud, dusk and shade runs, and at dawn it sometimes added one
+  no-MPP backoff.
+
+The default is therefore `notch`. Use `comb` where an inverter with a pulsed input current shares the battery, or
+where the ripple frequency is not well known.

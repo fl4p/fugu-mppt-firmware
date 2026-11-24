@@ -24,6 +24,7 @@ entries:
 archive: libmain.a
 entries:
     main:_ZN8AsyncADCIfE6isGoodEv (noflash)
+    main:_ZN14PhysicalSensor11retuneNotchEfff (noflash)
     main:_ZTV15Esp32TempSensor (noflash)
     main:_ZTV18TempSensorGPIO_NTC (noflash)
     main:_ZTV10PD_Control (noflash)

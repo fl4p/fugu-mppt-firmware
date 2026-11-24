@@ -814,6 +814,7 @@ const META = {
   notch_adaptive:{unit:"",desc:"Auto-tune inverter-ripple notch to the tone measured on Vout",type:"bool"},
   notch_freq:{unit:"Hz",desc:"Notch frequency when not adaptive (2x mains: 100=50Hz, 120=60Hz)",type:"float"},
   notch_q:{unit:"",desc:"Notch quality factor (bandwidth ~ notch_freq/notch_q)",type:"float"},
+  ripple_filter:{unit:"",desc:"Inverter-ripple filter: notch (narrow biquad), comb (moving average over one ripple period: nulls the harmonics too, unbiased, ~5 ms delay) or both",type:"enum",opts:["notch","comb","both"]},
   despike:{unit:"",desc:"Glitch-safe median outlier threshold (mean-dev units): 0=off, ~8 enables. Passes dense load pulses (unbiased current), still clips impulse glitches (only beyond 4 quantization steps). Not applied to the NTC",type:"float"},
   esp32adc1_sr:{unit:"Hz",desc:"Internal ADC1 continuous-mode raw sample rate",type:"int"},
   esp32adc1_avg:{unit:"",desc:"Internal ADC1 hardware averaging count per sample",type:"int"},
@@ -1108,7 +1109,7 @@ const FILE_KEYS = {
     "pwm_sync_pin","skip_assert"],
   "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_inl","esp32adc1_sr",
     "ignore_calibration_constraints","ina22x_conv_time_us","ina22x_ov","ina22x_resistor",
-    "notch_adaptive","notch_freq","notch_q","ntc_ch"],
+    "notch_adaptive","notch_freq","notch_q","ntc_ch","ripple_filter"],
   "limits.conf":["hv_i_max","hv_max","iout_short","lv_i_max","lv_max","p_max",
     "reverse_current_paranoia","temp_derate","temp_max","vin_min","wire_dr_min","wire_p_derate",
     "wire_p_trip","wire_p_warn","wire_protect","wire_r_max"],
@@ -1176,7 +1177,8 @@ const TYPE_KEYS = {
   string: new Set(["adc","bat_charge_topic","bat_temp_topic","bat_voltage_topic","ble_security",
     "broker_uri","bssid","ca_file","cell_voltages_delta_topic","cell_voltages_max_topic",
     "ftp_pass","ftp_user","ibat_lim_topic","ibat_topic","influxdb_host","log_level","mcu","mode",
-    "password","psk","psk_id","pwm_driver_logic","rect_offset_drv","sync_role","topo","username"]),
+    "password","psk","psk_id","pwm_driver_logic","rect_offset_drv","ripple_filter","sync_role","topo",
+    "username"]),
 };
 // SCRAPER:END TYPE_KEYS
 const CHAN_SUFFIX_TYPE = { adc:"string", ch:"byte", rh:"float", rl:"float", factor:"float", midpoint:"float", filt_len:"long", gain:"float", offset:"float" };
@@ -1196,7 +1198,7 @@ const DEFAULTS = {
   // sensor.conf
   "adc":"\"\"","despike":"0.0","esp32adc1_inl":"0","ignore_calibration_constraints":"0",
   "ina22x_conv_time_us":"1100","ina22x_ov":"0","notch_adaptive":"1","notch_freq":"100.0",
-  "notch_q":"20.0","ntc_ch":"255",
+  "notch_q":"20.0","ntc_ch":"255","ripple_filter":"\"notch\"",
   // limits.conf
   "reverse_current_paranoia":"1","temp_max":"90.0","wire_dr_min":"4.0","wire_p_derate":"4.0",
   "wire_p_trip":"8.0","wire_p_warn":"2.0","wire_protect":"1","wire_r_max":"0.0",
