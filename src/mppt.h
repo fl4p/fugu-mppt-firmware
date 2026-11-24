@@ -205,6 +205,7 @@ public:
     uint8_t minPulseCnt = 0; // RT only, fresh Vout samples in a row above the LS min pulse ratio
     bool minPulseFloor = false; // RT only, update() holds Vin above the LS min pulse ratio
     bool minPulseWasExposed = false; // RT only, protect()'s previous minPulseExposed()
+    uint8_t ilSamples = 0; // RT only, edge-detects fresh samples of the current the converter's DCM test uses
 
 private:
     bool _sweeping = false; // global scan
@@ -997,9 +998,14 @@ public:
             );
             return false;
         }
-        auto vr = converter.updateSyncRectMaxDuty(
-            vIn, vOut, converter.boost() ? sensors.Iin->ewm.avg.get() : sensors.Iout->ewm.avg.get(),
-            freshV);
+        const Sensor *il = converter.boost() ? sensors.Iin : sensors.Iout;
+        if (const auto n = (uint8_t) (il->numSamples - ilSamples)) {
+            ilSamples += n;
+            // mean delay of ewm.avg in samples: 2-pass EWMA span-1, median 2 (despike passes through), comb L/2
+            converter.decayDrop(n, il->ewm.span() - 1 + (Sensor::despikeK > 0 ? 0 : 2) +
+                                   (il->comb ? (uint32_t) (il->comb->length() * .5f) : 0));
+        }
+        auto vr = converter.updateSyncRectMaxDuty(vIn, vOut, il->ewm.avg.get(), freshV);
 
         auto iOutSmall = sensorPhysicalI->ewm.avg.get() < (limits.Iout_max * 0.01f);
 

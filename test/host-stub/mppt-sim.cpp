@@ -20,6 +20,9 @@
 //                              # bf-daily-flat: the daily run from MPPT at ~160 W in CCM on flat's plant
 //                              # mc-flat: `measure-coil l0` entered from MPPT at ~160 W in CCM on flat's plant
 //                              # mc-flat-lowf: the same at 22 kHz (the sweep after `f=`, not the switch to it)
+//                              # mc-flat-ramp: the same entered by the `dc 0` ramp-down (SIM_MC_RAMP=1)
+//                              # dcd-stop-flat|fry: manual ramp-down from CCM that stops just below Vout/Voc (dcd-slow-*: 3x slower)
+//                              # dcd-ccm-flat|fry: deep CCM, P&O and a slow power-limiter retreat
 //                              # hs-night-ov*, hs-night-race*: OV alert / core-0 disable() around the LS ramp and hold
 //   weather scenarios (PV string of 1..3 substrings, irradiance played from a time series; "== SUMMARY" line):
 //     wx-cloud          recorded cloudy quarter hour (flat, 2026-11-14 11:20 UTC), full sun <-> cloud
@@ -322,9 +325,24 @@ static void noiseLoad(const char *name) {
 }
 
 static bool g_clampIgnoredLog = false;
+static int g_lsMinN = 0; // "-> pwmRectMin" log lines: a duty decrease dropped the LS to its minimum
+static bool g_ioTrack = false; // track g_ioMin until the converter turns off
+// min plant cycle-mean output current while tracked: g_ioMin with an LS window wider than its minimum + T/64 (the
+// min pulse alone leaves ~V_o*t/L of reverse current near zero load), g_ioMin0 any
+static float g_ioMin = 0, g_ioMin0 = 0;
+static uint16_t g_ioMinD = 0, g_ioMinLs = 0; // HS / LS counts at g_ioMin
+static void ioMinTick() {
+    if (converter.disabled()) g_ioTrack = false;
+    if (!g_ioTrack) return;
+    const float i = g_vconv.getIoutAvg();
+    g_ioMin0 = std::min(g_ioMin0, i);
+    if (i < g_ioMin && converter.getRectOnPwmCnt() > converter.getRectOnPwmMin() + converter.pwmMaxDriver() / 64)
+        g_ioMin = i, g_ioMinD = converter.getCtrlOnPwmCnt(), g_ioMinLs = converter.getRectOnPwmCnt();
+}
 
 static void logHook(char lvl, const char *tag, const char *msg) {
     if (strstr(msg, "hs_clamp ignored")) g_clampIgnoredLog = true;
+    if (strstr(msg, "-> pwmRectMin=")) ++g_lsMinN;
     // backoff log of MpptController::shutdownDcdc: "backoff %lus [%s]..."
     unsigned sec;
     char who[64];
@@ -1963,6 +1981,8 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
 //   no protection trip at the take-over (a duty ramp-down at full power trips highD-bflowOpen, whose backoff then
 //   holds the converter off under the sweep), the sweep finds its DCM points with the BF closed (no highD-bflowOpen
 //   near 2 A, L within 3 %). SIM_MC_RAMP=1 enters with the old ramp-down, SIM_MC_BFOPEN=1 sweeps with the BF open.
+// mc-flat-ramp (SIM_MC_RAMP=1): before pwmPerturb() counted the net decrease over the filtered current's lag, that ramp
+//   kept the CCM rect window below D = M, the coil current reversed and highD-bflowOpen tripped (field flat 2026-11-24).
 static int runMcFlat(const std::string &sc) {
     int f = 0;
     auto chk = [&](bool c, const char *w) {
@@ -1981,18 +2001,114 @@ static int runMcFlat(const std::string &sc) {
     const size_t trips0 = g_trips.size();
     const double tEnter = tNow();
     double secs = 0;
+    g_ioMin = g_ioMin0 = 0, g_ioTrack = true, g_tickHook = ioMinTick;
     const auto r = simMeasureL0(48, 1000, secs);
+    g_tickHook = nullptr;
     int entryTrips = 0;
     for (size_t i = trips0; i < g_trips.size(); ++i) entryTrips += g_trips[i].t < tEnter + 2;
     for (size_t i = trips0; i < g_trips.size(); ++i) printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
     printf("== %s: L %.2f uH vs plant %.2f uH, %d DCM pts, %.0f s, fsw %.0f Hz, Ipk up to %.2f A\n", sc.c_str(), r.L * 1e6f,
            g_vconv.getL() * 1e6f, r.n, secs, converter.realizedFreqHz(), g_mcIpk);
+    printf("== %s: until the first converter off: min plant Iout %.3f A with an LS window (HS %u, LS %u), %.3f A any\n",
+           sc.c_str(), g_ioMin, g_ioMinD, g_ioMinLs, g_ioMin0);
     chk(!entryTrips, "no protection trip at the take-over");
+    chk(g_ioMin > -0.05f, "no reverse output current under an LS window at the take-over");
     chk(g_trips.size() == trips0, "no protection trip during the sweep");
     chk(fabsf(r.L / g_vconv.getL() - 1) < 0.03f, "L within 3 % of the plant");
     chk(r.n >= 3 && std::isfinite(r.L), "the sweep found its DCM points");
     run(40, 5.0);
     chk(!converter.disabled() && g_app.opMode.load() == OpMode::Mppt, "MPPT running again");
+    printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+    return f != 0;
+}
+
+// dcd-*: duty decreases against pwmPerturb()'s decrease rule from MPPT in CCM, paranoia on, flat's (51 uH) or fry's
+//   (76 uH) plant and sensor filters.
+//   dcd-stop-*: manual ramp (pwmMax/512 per sample) to 30 and 60 counts below the zero-current duty Vout/Voc, then hold:
+//     no reverse output current, no protection trip, the duty held. dcd-slow-*: the same steps 3 samples apart.
+//   dcd-ccm-*: ~350 W deep CCM: 300 s of P&O, then a thermal derate that retreats the power limit from 110 % to 40 % of
+//     the PV power over 120 s: the rule never drops the LS to its minimum, no trip.
+static int runDcd(const std::string &sc) {
+    int f = 0;
+    auto chk = [&](bool c, const char *w) {
+        printf("== %s %s: %s\n", sc.c_str(), c ? "ok" : "FAIL", w);
+        f += !c;
+    };
+    const bool ccm = sc.rfind("dcd-ccm", 0) == 0, slow = sc.rfind("dcd-slow", 0) == 0;
+    auto pv = [] { const float v = g_vconv.getVin(); return v * g_vconv.pvCurrent(v); };
+    auto atPower = [&](float pMin) {
+        for (double dl = tNow() + 150; tNow() < dl && !(pv() > pMin && !converter.inDCM() && !mppt.isSweeping() &&
+                                                        g_app.opMode.load() == OpMode::Mppt && !converter.disabled());)
+            run(0.5, 0);
+        run(5, 0);
+        printf("== %s: PV %.0f W, Iout %.2f A, D %u, %s, %s\n", sc.c_str(), pv(), g_vconv.getIoutAvg(),
+               converter.getCtrlOnPwmCnt(), converter.inDCM() ? "DCM" : "CCM", modeStr());
+        chk(pv() > pMin && !converter.inDCM() && !converter.disabled(), "MPPT at power in CCM");
+    };
+    settle(30);
+    g_tickHook = ioMinTick;
+    if (!ccm) {
+        for (int off: {30, 60}) {
+            atPower(130);
+            const uint16_t pwmMax = converter.pwmMaxDriver(), d0 = converter.getCtrlOnPwmCnt();
+            const int dz = (int) std::lround(g_vconv.getVout() / g_vconv.getVoc() * pwmMax);
+            const auto target = (uint16_t) (dz - off);
+            const size_t trips0 = g_trips.size();
+            const int ls0 = g_lsMinN;
+            g_ioMin = g_ioMin0 = 0, g_ioTrack = true;
+            const double t0 = tNow();
+            if (slow) { // the same steps 3 samples apart: below the rule's rate (pwmMax/50 per filter lag)
+                if (!simPsuWait(mppt.requestPsuManual(d0, -1))) printf("  manual: RT transition timed out\n");
+                const double ts = 3.0 / atof(getenv("SIM_ADC_HZ"));
+                for (int d = d0; d > target && !converter.disabled() && tNow() < t0 + 5;) {
+                    d = std::max<int>(target, d - converter.pwmMaxDriver() / 512);
+                    mppt.setManualTarget((uint16_t) d);
+                    run(ts, 0);
+                }
+            } else if (!simPsuWait(mppt.requestPsuManual(target, -1))) printf("  manual: RT transition timed out\n");
+            while (converter.getCtrlOnPwmCnt() != target && !converter.disabled() && tNow() < t0 + 5) run(0.001, 0);
+            const double tRamp = tNow() - t0;
+            run(5, 0);
+            printf("== %s: D %u -> %u (zero-current duty %d %+d) in %.0f ms, LS to min %d x, min plant Iout %.3f A with an LS"
+                   " window (HS %u, LS %u), %.3f A any, now Vin %.1f V Iout %.2f A %s, %zu trips\n", sc.c_str(), d0, target, dz,
+                   -off, tRamp * 1e3, g_lsMinN - ls0, g_ioMin, g_ioMinD, g_ioMinLs, g_ioMin0, g_vconv.getVin(), g_vconv.getIoutAvg(), converter.inDCM() ? "DCM" : "CCM",
+                   g_trips.size() - trips0);
+            for (size_t i = trips0; i < g_trips.size(); ++i)
+                printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
+            chk(g_trips.size() == trips0, off == 30 ? "-30: no protection trip" : "-60: no protection trip");
+            chk(g_ioMin > -0.05f, off == 30 ? "-30: no reverse output current under an LS window"
+                                            : "-60: no reverse output current under an LS window");
+            chk(!converter.disabled() && converter.getCtrlOnPwmCnt() == target,
+                off == 30 ? "-30: the duty held" : "-60: the duty held");
+            g_ioTrack = false;
+            if (!simPsuWait(mppt.requestPsuSweep())) printf("  MPPT restore timed out\n");
+        }
+    } else {
+        atPower(250);
+        const size_t trips0 = g_trips.size();
+        const int ls0 = g_lsMinN;
+        const float p0 = pv(), span = mppt.limits.Temp_max - mppt.limits.Temp_derate;
+        auto tempFor = [&](float p) { return mppt.limits.Temp_max - span * p / mppt.limits.P_max; };
+        g_simChipTemp = tempFor(1.3f * p0); // the chip sensor's EWMA (40 reads, 3 s) settles while P&O runs
+        run(300, 0);
+        const int lsA = g_lsMinN - ls0;
+        const uint16_t dA = converter.getCtrlOnPwmCnt();
+        for (int i = 0; i <= 1200; ++i) {
+            g_simChipTemp = tempFor(p0 * (1.1f - 0.7f * (float) i / 1200));
+            run(0.1, 0);
+        }
+        run(150, 0);
+        const int lsB = g_lsMinN - ls0 - lsA;
+        printf("== %s: P&O 300 s: LS to min %d x; limiter retreat %.0f -> %.0f W (chip %.1f -> %.1f C in 120 s), D %u -> %u,"
+               " PV %.0f W, LS to min %d x; %zu trips\n", sc.c_str(), lsA, 1.1f * p0, 0.4f * p0, tempFor(1.1f * p0),
+               tempFor(0.4f * p0), dA, converter.getCtrlOnPwmCnt(), pv(), lsB, g_trips.size() - trips0);
+        chk(lsA == 0, "P&O never drops the LS to its minimum");
+        chk(lsB == 0, "the limiter retreat never drops the LS to its minimum");
+        chk(pv() < 0.55f * p0, "the limiter retreated");
+        chk(g_trips.size() == trips0, "no protection trip");
+        g_simChipTemp = 40;
+    }
+    g_tickHook = nullptr;
     printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
     return f != 0;
 }
@@ -3057,7 +3173,11 @@ static int simMain(int argc, char **argv) {
     const std::string name = sc;
     if (p0) sc.resize(sc.size() - 3);
     if (sc == "rcal-flat") setenv("SIM_RING", "flat", 0), setenv("SIM_ADC_HZ", "1470", 0);
-    const bool flatTake = sc == "bf-daily-flat" || sc == "mc-flat" || sc == "mc-flat-lowf" || sc.rfind("bf-flat-ccm", 0) == 0;
+    if (sc == "mc-flat-ramp") setenv("SIM_MC_RAMP", "1", 1);
+    const bool dcd = sc.rfind("dcd-", 0) == 0, dcdFry = dcd && sc.size() > 4 && !sc.compare(sc.size() - 4, 4, "-fry");
+    if (dcdFry) setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
+    const bool flatTake = sc == "bf-daily-flat" || sc.rfind("mc-flat", 0) == 0 || sc.rfind("bf-flat-ccm", 0) == 0 ||
+                          (dcd && !dcdFry);
     if (flatTake) setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
     if (sc == "rcal-pv") setenv("SIM_RING", "fry", 0);
     if (sc.rfind("wx-", 0) == 0 && sc.size() > 4 && sc.compare(sc.size() - 4, 4, "-fry") == 0)
@@ -3103,13 +3223,13 @@ static int simMain(int argc, char **argv) {
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         setenv("SIM_CONF", c.c_str(), 1);
     }
-    const bool selftest = sc.rfind("hs-", 0) == 0 || sc.rfind("bf-", 0) == 0 || sc.rfind("mc-flat", 0) == 0;
+    const bool selftest = sc.rfind("hs-", 0) == 0 || sc.rfind("bf-", 0) == 0 || sc.rfind("mc-flat", 0) == 0 || dcd;
     if (selftest) {
         std::string c = sc.size() > 7 && !sc.compare(sc.size() - 7, 7, "-nodecl") ? "" : "board.conf:bflow_bat=1";
         if (sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-dawn-nozero" || sc == "bf-daily-then-closed" || sc == "hs-short-unidir" ||
             sc == "hs-volt-clamp" || sc.rfind("hs-night", 0) == 0)
             c += ",board.conf:hs_clamp=1";
-        if (flatTake) // flat's sensor filters
+        if (flatTake || dcd) // flat's (and fry's) sensor filters
             c += ",sensor.conf:hv_v_filt_len=20,sensor.conf:lv_v_filt_len=20,sensor.conf:lv_i_filt_len=20";
         // the state `measure-coil l0 f=` runs in, near flat's floor (fsw*L0*0.95 > 1 ohm with L0 50 uH)
         if (sc == "mc-flat-lowf") c += ",board.conf:pwm_freq=22000";
@@ -3131,6 +3251,9 @@ static int simMain(int argc, char **argv) {
         // the switch's body diode takes 0.7 V of the drive: a bit more sun for the same live point
         if (sc.rfind("bf-flat-ccm", 0) == 0)
             ov.insert(ov.end(), {{"isc", sc == "bf-flat-ccm-open" ? "1.9" : "1.83"}, {"voc", "69"}, {"pv_k", "0.86"}, {"v_bat", "26.2"}});
+        else if (dcd)
+            ov.insert(ov.end(), {{"isc", sc.rfind("dcd-ccm", 0) == 0 ? "6" : "2.8"}, {"voc", dcdFry ? "78" : "62"},
+                                 {"pv_k", dcdFry ? "0.86" : "0.95"}, {"v_bat", dcdFry ? "26.8" : "25.6"}});
         else if (flatTake) ov.insert(ov.end(), {{"isc", "2.8"}, {"voc", "62"}, {"pv_k", "0.95"}, {"v_bat", "25.6"}});
         if (sc == "hs-cal") ov.insert(ov.end(), {{"hs_short", "1"}, {"isc", "1.0"}});
         if (sc.rfind("hs-dawn", 0) == 0) ov.push_back({"noise_iout", "0.04"});
@@ -3195,7 +3318,8 @@ static int simMain(int argc, char **argv) {
     if (sc == "idle-wake") return runIdleWake();
     if (sc.rfind("hs-", 0) == 0) return runHsShort(sc);
     if (sc.rfind("bf-", 0) == 0) return runBfTest(sc);
-    if (sc == "mc-flat" || sc == "mc-flat-lowf") return runMcFlat(sc);
+    if (sc.rfind("mc-flat", 0) == 0) return runMcFlat(sc);
+    if (dcd) return runDcd(sc);
     settle(sc == "d-noise" ? 60 : 60);
     size_t settleTrips = g_trips.size();
     printf("# trips during settle: %zu\n", settleTrips);

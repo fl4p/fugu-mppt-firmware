@@ -136,6 +136,7 @@ class SynchronousConverter {
     bool syncRectOffHyst = false; // latched: sync rect disabled by low current, needs 4x to re-arm
     float outInVoltageRatio = 0; // M
     float directionFloatBuffer = 0.0f; // fractional perturbation buffer
+    uint16_t dropAcc = 0; // net recent pwmCtrl decrease in 1/8 counts, leaks over the filtered current's lag (RT only)
 
     bool isBoost = false;
     // Requested forced-PWM mode (converter.conf::forced_pwm, `sync forced`). What actually reaches
@@ -1397,11 +1398,12 @@ public:
             if (pinSd != 255) digitalWrite(pinSd, 0);
         }
 
+        const int32_t ctrl0 = pwmCtrl, thr = driverPwmMax / 50;
         pwmCtrl = constrain(pwmCtrl + direction, pwmCtrlMin, pwmCtrlMax);
         if (direction < 0) fpwmRecheckAfterStep();
+        dropAcc = enabling ? 0 : (uint16_t) std::clamp<int32_t>(dropAcc + (ctrl0 - pwmCtrl) * 8, 0, 0xffff);
 
-
-        bool largerDecrease = (-direction > driverPwmMax / 50);
+        bool largerDecrease = (-direction > thr);
 
         // update pwmRect block
         if (manualRect >= 0) {
@@ -1415,7 +1417,10 @@ public:
 
             computePwmRectMax();
 
-            if (largerDecrease && !forcedPwm_()) {
+            // computeDCM() sees the filtered current, which lags: decreases adding up within that lag drop the LS
+            // too. The DCM flag stays computeDCM()'s: forced, protect() takes it for an exposed LS min pulse at high M
+            if (!forcedPwm_() && (largerDecrease || dropAcc > thr * 8)) {
+                dropAcc = 0;
                 // we don't know if we end up in CCM/DCM, so set rect duty cycle to min
                 // let the converter and sensors converge
                 if (pwmRect > pwmRectMin + (driverPwmMax / 64))
@@ -1440,6 +1445,11 @@ public:
         drvCommit(enabling, largerDecrease, direction);
     }
 
+    // n new samples of the current computeDCM() judges; its filter delays it by `lag` samples (mean)
+    void decayDrop(uint32_t n, uint32_t lag) {
+        dropAcc = n >= lag ? 0 : (uint16_t) (dropAcc - dropAcc * n / lag);
+    }
+
 
     /**
      * Perturb by a fractional step.
@@ -1460,12 +1470,13 @@ public:
         auto directionInt = (int16_t) (directionFloat);
         if (directionInt != 0)
             pwmPerturb(directionInt);
-        else if (forcedPwm_() && pwmRect < pwmRectMax)
+        else if (pwmRect < pwmRectMax &&
+                 (forcedPwm_() || (syncRectEnabled && pwmRect + (driverPwmMax >> 6) < pwmRectMax)))
             // The LS fade lives in pwmPerturb(), and this is the one caller that can stop reaching
             // it: a controller sitting at equilibrium truncates to a zero integer step forever.
             // Manual PWM has main.cpp's per-tick pwmPerturb(0) for this; the automatic modes would
-            // otherwise engage forced PWM and leave the low side at its diode-emulation minimum,
-            // carrying the current in the body diode. Zero step, so pwmCtrl does not move.
+            // otherwise engage forced PWM, or stop after a decrease dropped the LS to its minimum, and
+            // leave the current in the body diode. Zero step, so pwmCtrl does not move.
             pwmPerturb(0);
         directionFloatBuffer += directionFloat - (float) directionInt;
     }

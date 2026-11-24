@@ -637,7 +637,7 @@ top of that value:
 | DCM LS limit (`pwmRectMax`) | `pwmCtrl·ratio + rect_offset` counts, at most `pwmMax − pwmCtrl − 1 − late/ratio`, `late` the larger of `LateDrainBudget·pwmMax` (≈ 0.0198, from `VoltageMaxErr`) and `LateDrainMinNs` = 700 ns (the drain limit near `D = M`), with first-order error-feedback dither of the rounding remainder (so the limit's time-average tracks the unrounded target). |
 | CCM LS limit | `pwmMax − pwmCtrl − 1` (complementary). |
 | final clamp | The limit is clamped to `[pwmRectMin, pwmMax − pwmCtrl − 1]`. On a buck `pwmRectMin` = `boot_refresh_ns` in ticks + the HS→LS dead time, for bootstrap refresh. |
-| commanded LS count (`pwmRect`) | Fades in toward the limit (+1 count per update at first, then 1/64 of the remaining gap), follows it down immediately, and stays at `pwmRectMin` while sync rect is off. A duty decrease of more than `pwmMax/50` counts in one step (not in forced PWM) forces the DCM assumption, whose limit is never longer, and drops the command to `pwmRectMin`; the fade-in then restarts. |
+| commanded LS count (`pwmRect`) | Fades in toward the limit (+1 count per update at first, then 1/64 of the remaining gap), follows it down immediately, and stays at `pwmRectMin` while sync rect is off. While the gap is larger than `pwmMax/64`, the fade also advances on control updates that leave the duty unchanged. A duty decrease of more than `pwmMax/50` counts in one step (not in forced PWM) forces the DCM assumption, whose limit is never longer, and drops the command to `pwmRectMin`; the fade-in then restarts. Smaller decreases that add up to more than `pwmMax/50` within the lag of the current filter also drop the command to `pwmRectMin` (see [cumulative decrease](#cumulative-decrease)). |
 
 The ideal `t_on,LS` is therefore the pre-clamp target of the limit, not the commanded
 window. The dither's average carries over to the command only once it has settled at the
@@ -654,6 +654,34 @@ The minimum pulse is not covered by the drain limit. With the default `boot_refr
 drains within the period and pumps charge from the output back into the input. The firmware keeps a
 buck below that ratio with a start block, a `V_in` floor and a stop; see
 [LS minimum pulse near unity ratio](#ls-minimum-pulse-near-unity-ratio).
+
+#### Cumulative decrease
+
+The CCM/DCM decision uses the filtered output current, which lags the duty. A ramp of small
+steps can pull the duty below `M` while the decision still reads CCM. The complementary LS
+window then forces `V_i = V_o/D`, and once that is above the panel's open-circuit voltage the
+coil current reverses.
+
+The firmware therefore keeps a leaky sum of the net duty decrease; increases subtract from it.
+With each new current sample the sum loses `1/N` of its value, where `N` is the mean delay of
+the filtered current in samples:
+
+| filter stage | mean delay (samples) |
+|---|---|
+| two-pass EWMA of span `filt_len` | `filt_len − 1` |
+| median of five (bypassed with `despike`) | 2 |
+| ripple comb, when on | `L/2` |
+
+A steady ramp of `r` counts per current sample settles at `r·N`. When the sum exceeds
+`pwmMax/50`, the command drops to `pwmRectMin` and the sum starts again from zero. Ramps faster
+than `pwmMax/(50·N)` counts per sample (about 4 counts with `filt_len` 20) trigger it; the P&O
+dither and slow limiter retreats do not. On a fast-sampling board the fade from the end of a sweep
+to its MPP also triggers it, and the LS stays near its minimum until that fade ends. Forced PWM and
+a manual LS count bypass the rule.
+
+Unlike the single large step, this rule leaves the DCM state to `computeDCM`. A forced DCM state
+at a high `M` would count as an uncovered LS minimum pulse, and the minimum-pulse protection
+would stop the converter.
 
 ### Failure modes at the LS boundary
 
