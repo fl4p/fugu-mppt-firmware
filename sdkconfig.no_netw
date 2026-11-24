@@ -1,0 +1,16 @@
+# WITH_NETW=0 overrides on top of sdkconfig.defaults (+ sdkconfig.ble when WITH_BLE=1).
+#
+# Empty in practice: with the network source files dropped from the CMake build
+# (main/CMakeLists.txt::NETW_SRC) and the application-level WITH_NETW gates in place,
+# the linker GCs all of wifi/lwip/mbedtls/esp_http_client/esp_https_ota/esp_netif/
+# esp-tls/mdns/net80211/wpa_supplicant on its own. Nothing references them, so
+# disabling them via Kconfig only changes build time, not the flash image.
+#
+# Measured: WITH_NETW=0 WITH_BLE=1 binary is ~718 KB smaller than WITH_NETW=1
+# WITH_BLE=1 WITH_BINARY_TELE=1 (1,078,496 vs 1,813,392 bytes).
+#
+# Add disables here if a future change accidentally pulls a network component back
+# into the link, or if you want to assert "this build has no networking" at the
+# Kconfig level. Note: ESP_WIFI_ENABLED=n breaks arduino-esp32's WiFi.cpp compile
+# (the file is unconditionally part of the arduino managed component), so the
+# linker-GC path is the right default.
