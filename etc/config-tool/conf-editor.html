@@ -363,29 +363,34 @@
   #open-tests[aria-expanded="true"] { background:var(--field); }
   #open-tests.running svg { color:var(--accent); }
   #tests .sheet-foot:has(> #tst-msg:empty) { display:none; }
-  #tst-body { font-size:13px; line-height:1.45; color:var(--fg); }
-  .tst-group { margin:20px 0 6px; font-size:12px; font-weight:500; color:var(--muted); }
-  .tst-shead { display:flex; align-items:center; gap:8px; margin:14px 0 6px; }
+  #tst-body { font-size:13px; line-height:1.5; color:var(--fg); }
+  .tst-group { margin:32px 0 10px; font-size:12px; font-weight:500; color:var(--muted); }
+  .tst-shead { display:flex; align-items:center; gap:8px; margin:18px 0 10px; }
   .tst-status { border-bottom:1px solid var(--line); }
   details.tst-row { border-top:1px solid var(--line); }
   .tst-shead .tst-group { margin:0; }
   .tst-ago { margin-left:auto; font-size:12px; color:var(--muted); }
   .tst-shead .xbtn { padding:4px; margin-right:-4px; }
   .tst-shead .xbtn:disabled { opacity:.4; }
-  details.tst-row > summary { position:relative; display:grid; grid-template-columns:8.5em minmax(0,1fr); gap:12px; padding:5px 0; cursor:pointer; list-style:none; }
+  details.tst-row > summary { position:relative; display:grid; grid-template-columns:8.5em 7px minmax(0,1fr); align-items:baseline; gap:12px; padding:10px 0; cursor:pointer; list-style:none; }
   details.tst-row > summary::-webkit-details-marker { display:none; }
   .tst-x::before, details.tst-row > summary::before { content:""; position:absolute; left:-17px; top:calc(.725em - 3px); width:10px; height:6px;
     background:var(--chev) no-repeat center; transform:rotate(-90deg); transition:transform .15s; }
-  details.tst-row > summary::before { top:calc(5px + .725em - 3px); opacity:.6; }
+  details.tst-row > summary::before { top:calc(10px + .75em - 3px); opacity:.6; }
   details.tst-row > summary:hover::before, details.tst-row[open] > summary::before { opacity:1; }
   details.tst-row[open] > summary::before, .tst.open .tst-x::before { transform:none; }
   .tst-lbl { color:var(--muted); }
   .tst-val { min-width:0; overflow-wrap:anywhere; }
   .tst-row.bad .tst-val { color:var(--accent); }
-  .tst-row.bad .tst-val::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--accent); margin-right:7px; vertical-align:.05em; }
-  .tst-row .tst-out { margin:0 0 8px; }
-  .tst-note { margin:0 0 6px calc(8.5em + 12px); font-size:12.5px; color:var(--accent); }
-  .tst { padding:8px 0; border-top:1px solid var(--line); }
+  .tst-row.fail .tst-val { color:var(--a31); }
+  .tst-dot { width:7px; height:7px; border-radius:50%; align-self:center; }
+  .tst-dot.ok { background:var(--icon); }
+  .tst-dot.warn { background:var(--accent); }
+  .tst-dot.fail { background:var(--a31); }
+  .tst-dot.unk { background:var(--line-2); }
+  .tst-row .tst-out { margin:0 0 12px; }
+  .tst-note { margin:0 0 10px calc(8.5em + 31px); font-size:12.5px; color:var(--accent); }
+  .tst { padding:14px 0; border-top:1px solid var(--line); }
   .tst:not(:has(+ .tst)) { border-bottom:1px solid var(--line); }
   .tst-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; cursor:pointer; }
   .tst-ti { flex:1 1 220px; min-width:0; }
@@ -395,20 +400,21 @@
   .tst-runs { font-size:12px; font-weight:400; color:var(--muted); }
   .tst-runs:empty { display:none; }
   .tst-head > .abort { border-color:var(--line-2); padding:5px 12px; margin-left:auto; }
-  .tst-tag { margin:6px 0 0; font-size:12.5px; color:var(--muted); }
-  .tst-what { margin:1px 0 0; }
-  .tst-ctl { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:8px 0 0; }
+  .tst-more { padding:4px 0 2px; }
+  .tst-tag { margin:10px 0 0; font-size:12.5px; color:var(--muted); }
+  .tst-what { margin:4px 0 0; line-height:1.55; color:var(--fg-2); }
+  .tst-ctl { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:16px 0 0; }
   .tst-ctl button { border-color:var(--line-2); padding:5px 12px; }
   .tst-state { font-size:12.5px; color:var(--muted); }
   .tst-state:empty { display:none; }
-  .tst-det { margin:8px 0 0; }
-  .tst-opt { display:flex; align-items:center; gap:7px; margin:0 0 6px; width:fit-content; cursor:pointer; }
+  .tst-det { margin:12px 0 0; }
+  .tst-opt { display:flex; align-items:center; gap:7px; margin:0 0 10px; width:fit-content; cursor:pointer; }
   .tst-opt:has(input:disabled) { opacity:.5; cursor:not-allowed; }
-  .tst-meta { display:grid; grid-template-columns:auto minmax(0,1fr); gap:2px 12px; margin:0; }
+  .tst-meta { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 16px; margin:0; }
   .tst-meta dt { color:var(--muted); }
   .tst-meta dd { margin:0; overflow-wrap:anywhere; }
   .tst-cmd { font:12px var(--mono); }
-  .tst-res { margin:8px 0 0; }
+  .tst-res { margin:16px 0 0; }
   .tst-res:empty { display:none; }
   .tst-res .sum { margin:0; }
   .tst-res strong { font-weight:500; }
@@ -422,7 +428,7 @@
   .tst-res .d.err { color:var(--accent); }
   .tst-res .busy { color:var(--muted); }
   .tst-res .recheck { margin-top:6px; border-color:var(--line-2); padding:4px 10px; font-size:12.5px; }
-  .tst-chart { margin:10px 0 0; }
+  .tst-chart { margin:16px 0 4px; }
   .tst-chart figcaption { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
   .tst-chart svg { display:block; width:100%; height:auto; overflow:visible; }
   .tst-chart text { fill:var(--muted); font:10.5px var(--sans); font-variant-numeric:tabular-nums; }
@@ -434,7 +440,7 @@
   .tst-chart .mdrop { stroke:var(--icon); stroke-dasharray:2 3; opacity:.55; }
   .tst-chart .mpp { fill:var(--icon); stroke:var(--bg); stroke-width:2; }
   .tst-chart text.mlab { fill:var(--icon); font-size:11.5px; font-weight:500; paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
-  details.tst-log { margin-top:8px; }
+  details.tst-log { margin-top:14px; }
   details.tst-log > summary { font-size:12.5px; }
   .tst-out { margin-top:8px; max-height:170px; overflow:auto; padding:8px 10px; background:var(--side); border-radius:7px;
     font:11.5px/1.55 var(--mono); color:var(--fg-2); white-space:pre; }
@@ -3783,7 +3789,7 @@ const TESTS = [
     end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
 
   { id:"bflow", group:"Self-tests", title:"Backflow switch", root:"selftest", cmd:()=>"selftest bflow", abort:"selftest abort",
-    confirm:"typed", tag:"takes over the converter",
+    confirm:"typed",
     what:"Checks the battery-side backflow switch.",
     needs:"A buck with board.conf bflow_bat=1, Vin ≥ 1.2 × Vout and Vout + 3 V, nothing latched, no sweep, rect-cal or backoff.",
     dur:"10–30 s, up to about 3 min",
@@ -3792,7 +3798,7 @@ const TESTS = [
     end:/\bselftest bflow (?:blocks|conducts): (?:PASS|FAIL|ABORTED)\b|\bselftest bflow toggle(?: \([^)]*\))?: (?:PASS|FAIL|ABORTED)\b|\bselftest bflow: (?!started\b|aborting\b|running\b|daily run\b|mode restore\b)/,
     timeout:240000, finish:"selftest", recheck:"selftest" },
   { id:"clear", group:"Self-tests", title:"Clear latched faults", root:"selftest", cmd:()=>"selftest clear", confirm:"typed",
-    tag:"re-enables starts", what:"Lets the converter start again after a latched fault.",
+    what:"Lets the converter start again after a latched fault.",
     needs:"A latch shown by the protection self-checks.", dur:"instant",
     risk:"The converter may start again. A short that is still there latches again after 3 s; a failed backflow switch is not re-tested by clearing.",
     does:()=>"The latched faults are cleared and the converter may start again. A high-side short that is still there latches again after 3 s; a backflow switch that failed its test is not re-tested by clearing." },
@@ -4050,7 +4056,7 @@ function tstSummary(id, lines, extra){
     }
     case "rcstatus": {
       const s=parseRectStatus(lines); if (!s) return null;
-      return { cls: s.state==="failed" ? "warn" : s.cal==="calibrated" ? "pass" : "",
+      return { cls: s.state==="failed" || s.cal==="uncalibrated" ? "warn" : "pass",
                text:`rect_offset ${s.ns} ns (${s.ct} ct, ${s.drv}), ${s.cal}`,
                short: s.state==="failed" ? `offset ${s.ns} ns, failed${s.why ? ": "+s.why : ""}`
                     : `offset ${s.ns} ns, ${s.state}${s.cal==="calibrated" ? "" : ", "+s.cal}${s.unsaved ? ", not saved yet" : ""}`,
@@ -4442,7 +4448,7 @@ function tstBuild(body){
   for (const d of TESTS.filter(d=>d.group==="Status" && tstAvail(d))){
     const row=tstEl("details", "tst-row"); row.dataset.tst=d.id;
     const sm=tstEl("summary");
-    sm.append(tstEl("span", "tst-lbl", d.label), tstEl("span", "tst-val"));
+    sm.append(tstEl("span", "tst-lbl", d.label), tstEl("span", "tst-dot"), tstEl("span", "tst-val"));
     sm.onclick=e=>{ e.preventDefault(); const r=tstResult(d.id); r.open=!r.open; tstPaintRow(d.id); };
     row.append(sm, Object.assign(tstEl("p", "tst-note"), { hidden:true }), tstOutEl(d.title));
     st.append(row);
@@ -4462,7 +4468,7 @@ function tstBuild(body){
       hd.append(ti);
       if (d.abort){ const ab=tstEl("button", "abort", "Abort"); ab.type="button"; ab.onclick=()=>tstAbort(d.id); hd.append(ab); }
       hd.onclick=e=>{ if (e.target.closest(".abort")) return; const r=tstResult(d.id); r.open=!r.open; tstPaint(d.id); };
-      // the fold: tag, buttons, result, chart, output, then option, needs / takes / sends, the risk
+      // the fold: tag, option and risk / needs / takes / sends, buttons, result, chart, output
       const more=tstEl("div", "tst-more"), det=tstEl("div", "tst-det"), ctl=tstEl("div", "tst-ctl");
       more.id="tst-more-"+d.id; x.setAttribute("aria-controls", more.id);
       if (d.tag) more.append(tstEl("p", "tst-tag", d.tag[0].toUpperCase()+d.tag.slice(1)));
@@ -4473,9 +4479,9 @@ function tstBuild(body){
       const res=tstEl("div", "tst-res"); res.setAttribute("role","status");
       const lg=tstEl("details", "fold tst-log"); lg.hidden=true;
       lg.append(tstEl("summary", "", "Device output"), tstOutEl(d.title));
-      more.append(ctl, res);
+      more.append(det, ctl, res);
       if (d.chart){ const f=tstEl("figure", "tst-chart"); f.hidden=true; more.append(f); }
-      more.append(lg, det);
+      more.append(lg);
       if (d.opt){
         const lb=tstEl("label", "tst-opt"), cb=tstEl("input");
         cb.type="checkbox"; cb.checked=!!(tstOpt[d.id]||{})[d.opt.key];
@@ -4509,11 +4515,19 @@ function tstPaintOut(out, lines){
   if (atBottom) out.scrollTop=out.scrollHeight;
 }
 
+const TST_DOT = { ok:"OK", warn:"Needs attention", fail:"Fault", unk:"Unknown" };
 function tstPaintRow(id){
   const row=document.querySelector(`#tst-body .tst-row[data-tst="${id}"]`); if (!row) return;
   const r=tstResult(id), s=r.sum;
   const bad = s ? s.cls==="fail" || s.cls==="warn" : r.st==="refused" || r.st==="unknown" || r.noteErr;
+  // the dot: green fine, amber attention, red a latch, failure or trip, grey unknown; none for information only
+  const lv = s ? (id==="adccal" ? "" : { pass:"ok", warn:"warn", fail:"fail" }[s.cls] || "") : r.st==="refused" || r.noteErr ? "warn" : "unk";
+  const dot=row.querySelector(".tst-dot");
+  dot.className="tst-dot "+lv;
+  if (lv){ dot.setAttribute("role", "img"); dot.setAttribute("aria-label", TST_DOT[lv]); }
+  else { dot.removeAttribute("role"); dot.removeAttribute("aria-label"); }
   row.classList.toggle("bad", !!bad);
+  row.classList.toggle("fail", lv==="fail");
   row.open=!!r.open;
   row.querySelector(".tst-val").textContent = s ? s.short || s.text : r.st==="run" ? "reading …" : r.st==="refused" ? "refused"
     : r.st==="unknown" ? "no reply" : r.note ? "not recognised" : "–";

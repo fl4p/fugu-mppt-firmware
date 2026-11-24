@@ -165,6 +165,27 @@ test('Status rows: amber dot on a latched fault, a failed calibration and a refu
   assert.equal(card(window, 'clear').querySelector('.run').disabled, false, 'clear offered for the latch');
 });
 
+test('Status rows: a dot before each value, green fine, amber attention, red a latch, grey unknown, none for ADC calibration', async () => {
+  const dot = (w, id) => row(w, id).querySelector('.tst-dot');
+  const lv = (w, id) => [dot(w, id).className.replace('tst-dot', '').trim(), dot(w, id).getAttribute('aria-label')];
+  let { window } = await connected({});
+  await openSheet(window); await idle(window);
+  assert.deepEqual(lv(window, 'selftest'), ['ok', 'OK']);
+  assert.deepEqual(lv(window, 'rcstatus'), ['ok', 'OK']);
+  assert.deepEqual(lv(window, 'wire'), ['ok', 'OK']);
+  assert.deepEqual(lv(window, 'adccal'), ['', null], 'information only');
+  assert.equal(dot(window, 'adccal').getAttribute('role'), null);
+  assert.equal(dot(window, 'selftest').getAttribute('role'), 'img');
+  assert.equal(dot(window, 'selftest').nextElementSibling, row(window, 'selftest').querySelector('.tst-val'), 'before the value');
+  ({ window } = await connected({ silent: ['wire'], state: { hsLatched: true, rect: { state: 'idle', ct: 20, ns: '500', unsaved: 0, cal: 'uncalibrated' } } }));
+  await openSheet(window); await idle(window);
+  assert.deepEqual(lv(window, 'selftest'), ['fail', 'Fault']);
+  assert.ok(row(window, 'selftest').classList.contains('fail'));
+  assert.deepEqual(lv(window, 'rcstatus'), ['warn', 'Needs attention']);
+  assert.match(rowText(window, 'rcstatus'), /uncalibrated/);
+  assert.deepEqual(lv(window, 'wire'), ['warn', 'Needs attention'], 'no reply, with its note');
+});
+
 test('Status rows: a silent command shows "no reply" with its note', async () => {
   const { window } = await connected({ silent: ['wire'] });
   await openSheet(window); await idle(window);
@@ -209,8 +230,11 @@ test('action cards: collapsed to title and description; tag, buttons, a run, its
   const more = rc.querySelector('.tst-more');
   assert.equal(more.firstElementChild, rc.querySelector('.tst-tag'), 'the tag leads the fold');
   assert.equal(rc.querySelector('.tst-tag').textContent, 'Drives the converter · writes coil.conf');
-  assert.equal(rc.querySelector('.tst-tag').nextElementSibling, rc.querySelector('.tst-ctl'), 'then the buttons');
-  assert.ok(rc.querySelector('.tst-ctl').compareDocumentPosition(rc.querySelector('.tst-res')) & window.Node.DOCUMENT_POSITION_FOLLOWING);
+  assert.deepEqual([...more.children].map(e => e.className.split(' ').pop()), ['tst-tag', 'tst-det', 'tst-ctl', 'tst-res', 'tst-log'],
+    'tag, characteristics, buttons, result, output');
+  for (const id of ['bflow', 'clear']) assert.equal(card(window, id).querySelector('.tst-tag'), null, id + ': no tag');
+  assert.deepEqual(['sweep', 'coil', 'coills'].map(id => card(window, id).querySelector('.tst-tag').textContent),
+    ['Drives the converter', 'Drives the half-bridge', 'Drives the half-bridge']);
   fold(window, 'rectcal');
   const c = card(window, 'coil');
   c.querySelector('.tst-x').click();

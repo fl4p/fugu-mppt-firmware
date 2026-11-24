@@ -126,7 +126,7 @@ function firmware(host, opts = {}) {
       const sub = cmd.split(' ')[1] || '';
       if (sub === 'status') {
         const r = st.rect;
-        s(I('rectcal', `state=${r.state}${r.why ? ': ' + r.why : ''} auto=0 needed=0 drv=mcpwm offset=${r.ct} ct (${r.ns} ns) backstop=0 unsaved=${r.unsaved}`));
+        s(I('rectcal', `state=${r.state}${r.why ? ': ' + r.why : ''} auto=0 needed=0 drv=mcpwm offset=${r.ct} ct (${r.ns} ns${r.cal ? ', ' + r.cal : ''}) backstop=0 unsaved=${r.unsaved}`));
         return ok();
       }
       if (sub === 'abort') { if (st.rect.state !== 'running') return err('rect-cal: not running'); st.rect.abort = true; return ok(); }

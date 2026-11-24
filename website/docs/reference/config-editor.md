@@ -418,8 +418,10 @@ open it sends `help` to learn which commands the firmware build has, and probes 
 
 The panel opens with a **Status** block. Each time the panel opens, the editor reads the four read-only status
 commands in turn (`selftest`, `rect-cal status`, `wire`, `adc-cal`) and shows one line per check, for example
-"OK, nothing latched" or "offset 500 ns, idle". An amber dot marks a check that needs attention: a latched fault,
-a failed calibration, a tripped wire guard, a refusal or no reply. Click a line to see the device's raw output and,
+"OK, nothing latched" or "offset 500 ns, idle". A dot before the value rates it: green when the check is fine, amber
+when it needs attention (an uncalibrated or failed low-side timing, a raised wire guard level, a refusal or no reply),
+red for a latched fault or a tripped wire guard, grey while unknown. ADC calibration and a switched-off wire guard
+have no dot: they only inform. Click a line to see the device's raw output and,
 after a refusal or no reply, the reason; such a line opens by itself when the reason arrives. The
 block shows when it was last read, and its refresh button reads it again. Nothing that drives the converter runs
 until you click.
@@ -438,8 +440,9 @@ until you click.
 | Low-side timing from a coil sweep | Calibration | `measure-coil ls [apply]` | device name |
 
 The other entries are folded to a title and a one-line description. Click the line to unfold the entry: what the test
-does to the converter (for example "Drives the converter · writes coil.conf"), its buttons, its last result, the device
-output, the option where there is one, the risk, what the test needs, how long it takes and which command it sends. A
+does to the converter where the description does not say (for example "Drives the converter · writes coil.conf"), the
+option where there is one, the risk, what the test needs, how long it takes and which command it sends, then its
+buttons, its last result and the device output. A
 folded entry hides all of these, so a test starts only from an unfolded entry. Starting a test unfolds its entry, and a new
 result or a note that the test's state is unknown unfolds it once; after that the entry stays as you leave it.
 Before any of them starts, the editor reads `selftest` and the status line, then

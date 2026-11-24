@@ -718,10 +718,17 @@ amber.
   and the parsed one-line state (`summary.short`): "OK, nothing latched" /
   the latch; "offset <ns> ns, <state>" (+ uncalibrated, not saved yet;
   "failed: <why>"); "on|warn only|off, baseline <Rc> mΩ" (learning,
-  tripped, level <x>); "eFuse version <n>". An amber dot and amber text only
-  for a latch, a failed calibration, a tripped or raised wire level, a
-  refusal ("refused") or no reply ("no reply"); then the verbatim note sits
-  inside the row and unfolds it once when it arrives. No buttons on the rows;
+  tripped, level <x>); "eFuse version <n>". A 7 px dot (`.tst-dot`, its own
+  grid column between label and value, `role="img"` with an `aria-label`)
+  rates the row: green "OK" (`--icon`, as the result dot of a card) for
+  nothing latched, a calibrated or bound offset, a wire guard at level ok
+  (on or warn only); amber "Needs attention" for an uncalibrated offset, a
+  failed calibration, a raised wire level, a refusal, no reply or an
+  unrecognised reply; red "Fault" (`--a31`, value in red too) for a latch or
+  a tripped wire guard; grey "Unknown" before the first reply. No dot (an
+  empty column) for ADC calibration and a wire guard that is off: they only
+  inform. Amber text for the amber rows; on a refusal or no reply the
+  verbatim note sits inside the row and unfolds it once when it arrives. No buttons on the rows;
   a click on the line folds or unfolds the row (the note and the raw device
   output of the last read). A row whose command answers "Command not found" is
   dropped quietly and listed at the end. A `selftest` read by any other
@@ -734,19 +741,20 @@ amber.
   while the card is folded. A click anywhere on the head line except Abort
   (the title is a button with `aria-expanded` and `aria-controls`, so Enter
   and Space work) folds or unfolds everything below it (`.tst-more`), which
-  folded is out of the Tab order: first the tag as a muted line ("Drives the
-  converter", "Takes over the converter", "Re-enables starts", "Drives the
-  converter · writes coil.conf"), then the buttons (`.tst-ctl`): **Run**
-  (MPP sweep: **Read last sweep** and **Run sweep**; the read button is
-  hidden when `sweep-curve` is not in the build) and on Clear latched faults
-  the reason it is disabled ("Nothing latched") next to it; then the run or
-  its result (dot +
-  summary, green pass, amber fail/warn, muted detail lines in the normal
-  font, a note, a Check button where needed), the sweep chart on the MPP
-  sweep card, a collapsible "Device output (N lines)" (open while running,
-  folded once a result is in), then the option checkbox where the command
-  has one and *Risk*, *Needs*, *Takes* and *Sends* (the exact command and the
-  abort command, monospace). A folded card shows none of these. Starting a
+  folded is out of the Tab order, in this order: a muted tag line where it
+  says what the description does not ("Drives the converter" on the MPP
+  sweep, "Drives the half-bridge" on both coil cards, "Drives the converter
+  · writes coil.conf" on rect-cal; none on the backflow test and Clear
+  latched faults); the option checkbox where the command has one and *Risk*,
+  *Needs*, *Takes* and *Sends* (the exact command and the abort command,
+  monospace); the buttons (`.tst-ctl`): **Run** (MPP sweep: **Read last
+  sweep** and **Run sweep**; the read button is hidden when `sweep-curve` is
+  not in the build) and on Clear latched faults the reason it is disabled
+  ("Nothing latched") next to it; the run or its result (dot + summary,
+  green pass, amber fail/warn, muted detail lines in the normal font, a
+  note, a Check button where needed); the sweep chart on the MPP sweep card;
+  a collapsible "Device output (N lines)" (open while running, folded once a
+  result is in). A folded card shows none of these. Starting a
   run or a read unfolds its card; a result, a refusal or an unknown-state
   note unfolds it once when it arrives (a cancelled confirm and "nothing
   latched" do not); otherwise the user's fold wins. A running card may be
@@ -755,10 +763,14 @@ amber.
   fold per device for the session in `tstRes` (`r.open`), across repaints
   and rebuilds of the sheet. A 1 px `--line` divider separates the Status
   rows, closes the Status block and separates the cards; a group heading
-  sits above its first divider and each group ends with one. Text styles:
+  sits above its first divider and each group ends with one. Spacing is
+  loose on purpose (13 px text, line-height 1.5): 14 px above and below each
+  card's head line, 10 px around each Status row, 32 px above a group
+  heading and 10 px below it, 4 px between title and description, 16 px
+  above the buttons, the result and the chart. Text styles:
   title, body text, one muted grey (`--muted`, ≥ 4.5:1 in both themes) and
   monospace only for commands and raw output; amber only for failures,
-  warnings and refusals.
+  warnings and refusals; red only for a Status row's latch or trip.
 
 | Card | Group | Command | Confirm | Ends on | Then |
 | --- | --- | --- | --- | --- | --- |

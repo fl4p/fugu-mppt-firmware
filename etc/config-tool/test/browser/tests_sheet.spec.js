@@ -1,5 +1,5 @@
 // Real-browser checks for the Tests sheet's action cards (spec §2.15): a folded card shows title and
-// description only and its buttons are out of the Tab order; unfolded, the tag and the buttons lead the fold;
+// description only and its buttons are out of the Tab order; unfolded: tag, characteristics, then the buttons;
 // a folded running card keeps Abort and a "running …" hint on its line. Runs against the jsdom suite's
 // fake firmware (test/_tst_firmware.js). TST_SHOTS=<dir> saves screenshots (dark theme).
 const fs = require('fs');
@@ -32,7 +32,7 @@ async function openTests(page, opts = {}) {
 const card = (page, id) => page.locator(`#tst-body .tst[data-tst="${id}"]`);
 const shot = async (page, name) => { if (SHOTS) await page.locator('#tests').screenshot({ path: path.join(SHOTS, name) }); };
 
-test('folded cards: title and description only, buttons out of the Tab order; unfolded: tag, then buttons', async ({ page }) => {
+test('folded cards: title and description only, buttons out of the Tab order; unfolded: tag, characteristics, buttons', async ({ page }) => {
   await openTests(page);
   for (const id of ['sweep', 'coil', 'bflow', 'clear', 'rectcal', 'coills']) {
     const c = card(page, id);
@@ -52,8 +52,8 @@ test('folded cards: title and description only, buttons out of the Tab order; un
   await expect(s.locator('.tst-x')).toHaveAttribute('aria-expanded', 'true');
   await expect(s.locator('.tst-tag')).toHaveText('Drives the converter');
   const y = async sel => (await s.locator(sel).boundingBox()).y;
-  expect(await y('.tst-tag')).toBeLessThan(await y('.tst-ctl'));
-  expect(await y('.tst-ctl')).toBeLessThan(await y('.tst-det'));
+  expect(await y('.tst-tag')).toBeLessThan(await y('.tst-det'));
+  expect(await y('.tst-det')).toBeLessThan(await y('.tst-ctl'));
   await page.keyboard.press('Tab');
   await expect(s.locator('.read')).toBeFocused();
   await page.keyboard.press('Tab');
