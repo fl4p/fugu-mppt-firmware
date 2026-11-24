@@ -1,9 +1,9 @@
 ---
-title: OTA Updates
+title: OTA updates
 sidebar_position: 1
 ---
 
-# OTA Updates
+# OTA updates
 
 Devices update their firmware over Wi-Fi by downloading an image from an HTTP(S) URL into the inactive OTA slot.
 A freshly updated image must prove itself healthy, or the bootloader rolls back to the previous one.
@@ -27,7 +27,7 @@ the `esp32s3` target.
 
 `etc/ota.py` discovers devices and serves `build/fugu-firmware.bin` on port 9000. It builds the URL from the host IP
 as the device sees it, so the update also works when the device sits behind NAT. It then sends `ota <url>` to each
-device and prints a before/after version table.
+device and prints a table of the versions before and after the update.
 
 `etc/ota.py` accepts these flags:
 

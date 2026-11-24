@@ -24,7 +24,7 @@ If the device rejects the changes, it writes nothing, fails the eject command an
 The host may remove the drive anyway: macOS does, and discards the edits. Unplug and replug the device, or send
 `restart`, to get the drive back with the device's current files, then redo the edit.
 
-## What is checked
+## Checks
 
 The device applies the changes only if all of them pass the following checks. Otherwise it writes nothing.
 

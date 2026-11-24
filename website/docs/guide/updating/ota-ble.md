@@ -3,7 +3,7 @@ title: "OTA over BLE"
 sidebar_position: 2
 ---
 
-# OTA over BLE (no Wi-Fi)
+# OTA over BLE
 
 When there is no network, you can update the firmware over Bluetooth Low Energy. The host pushes the image
 to the device over the existing BLE NUS link. The device flashes it to the passive OTA partition
@@ -64,8 +64,8 @@ pairing as RX. See [GATT layout](../../reference/ble/gatt.md).
 
 ## Console commands
 
-The host controls the update with plain console commands on RX. For debugging, these commands also work over UART, telnet, and MQTT,
-but the bulk data flows only over the BLE FW characteristic. The device accepts these commands:
+The host controls the update with plain console commands on RX. For debugging, these commands also work over UART,
+telnet, and MQTT, but the bulk data flows only over the BLE FW characteristic. The device accepts these commands:
 
 ```
 ota-ble begin <size> <sha256hex>          arm: validate size, halt the converter, turn Wi-Fi off (if on), erase the passive partition
@@ -142,17 +142,17 @@ Keep these points in mind when you push an image:
   Raw pushes of a whole image run at about 13 kB/s with the 256 KB ring and 2–7 kB/s with the 8 KB ring.
 - **No PSRAM, tight heap.** Without PSRAM the ring falls back to 8 KB of internal heap. If even that fails to
   allocate, `begin` fails with `OTAB FAIL no-mem`.
-- **`begin` rejects oversized images.** `size` must be ≤ the passive partition size, 1 871 872 B
+- **Image size.** `begin` rejects oversized images: `size` must be ≤ the passive partition size, 1 871 872 B
   (`0x1c9000`, ≈ 1.87 MB or 1.79 MiB) per slot in `partitions.csv`. A too-large image fails fast; see
   [Binary size](../../development/binary-size.md).
 - **macOS GATT cache.** CoreBluetooth caches a device's GATT by its (stable) BLE address. After a
-  firmware change that alters the GATT (e.g. the first build that adds the FW characteristic), macOS
+  firmware change that alters the GATT (for example the first build that adds the FW characteristic), macOS
   keeps serving the stale service, and bleak reports `Characteristic 6e400004-… was not found`. To flush
   the cache, toggle Bluetooth with `blueutil -p 0 && blueutil -p 1`. Any later GATT change needs the same flush.
 - **Completion.** On success the device reboots immediately after queuing `OTAB OK`, so that
   notification usually never drains over the link. The host therefore waits for `OTAB PROG
   <size>/<size>` before sending `ota-ble end`, and doesn't rely on receiving `OTAB OK`. Over a direct link, the host
-  confirms success by reading the new image's digest from the running slot after the reboot. Only the ESPHome-proxy path accepts a disconnect followed by
-  re-advertising alone as success. See [transport selection](ble-ota-transports.md).
+  confirms success by reading the new image's digest from the running slot after the reboot. Only the ESPHome-proxy
+  path accepts a disconnect followed by re-advertising alone as success. See [transport selection](ble-ota-transports.md).
 
 See also: [Console](../../reference/console.md), [Services](../../reference/services.md), [Logging](../../development/debugging/logging.md).

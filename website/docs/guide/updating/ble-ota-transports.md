@@ -1,5 +1,5 @@
 ---
-title: "Direct OTA Transport Selection"
+title: "Direct OTA transport selection"
 sidebar_position: 3
 ---
 

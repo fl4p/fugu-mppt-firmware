@@ -1,9 +1,9 @@
 ---
-title: BMS Integration
+title: BMS integration
 sidebar_position: 3
 ---
 
-# BMS Integration
+# BMS integration
 
 The charger subscribes to battery data a BMS publishes over MQTT and regulates on the highest cell voltage instead of
 the pack voltage divided by the cell count.
@@ -11,10 +11,9 @@ the pack voltage divided by the cell count.
 The firmware reads the BMS only from MQTT. A BMS on BLE, CAN bus, or RS485 connects through a bridge that publishes
 plain numbers to MQTT, for example [batmon-ha](https://github.com/fl4p/batmon-ha) for Bluetooth BMSes.
 
-## Why use BMS data
+## Benefits
 
-With the cell voltages available, the charger keeps the highest cell below the BMS cut-off. This gives the following
-benefits:
+With the cell voltages available, the charger keeps the highest cell below the BMS cut-off. This gives:
 
 - no BMS over-voltage cut-off and no disconnect transient,
 - more time for cell balancing,
@@ -64,7 +63,7 @@ An ignored frame on `cell_voltages_max_topic` leaves the last good value in use 
 (see [Stale data and fallback](#stale-data-and-fallback)).
 :::
 
-## How the data is used
+## Data flow
 
 The following diagram shows how the two BMS feeds reach the Vout controller:
 
@@ -120,13 +119,13 @@ policy falls back to an output-current limit. Check that both feeds are live in 
 Point every charger at the same BMS topics. Each charger regulates independently on the same highest cell voltage.
 Set `bat_charge_topic` as well, so that all chargers count the same charge deficit and leave termination together.
 
-### Limit charge current from the BMS
+### Charge current limit from the BMS
 
 Publish the allowed current to the topic in `ibat_lim_topic`, for example from a BMS that reduces current near full or
 at low temperature. Each message replaces the current limit. The `iset` console command and `charger.conf::ibat_max`
 set the same value.
 
-### Verify the link
+### Link check
 
 To check the BMS link, run these commands:
 

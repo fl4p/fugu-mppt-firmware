@@ -119,8 +119,8 @@ The stream stops on disconnect, and the next client must enable it again.
 ## BLE advertising
 
 With `CONFIG_FUGU_WITH_BLE_ADV`, the device broadcasts a compact telemetry record in the manufacturer data of its
-advertisements while the `ble` service runs. It's a custom 17-byte little-endian record in the
-manufacturer data (company ID `0xFFFF`):
+advertisements while the `ble` service runs. The record is a custom 17-byte little-endian layout under company ID
+`0xFFFF`:
 
 ```
 u8 magic=0xF7, u8 seq, f16 Ui Uo I P, i8 mcu_temp ntc_temp, u16 pwm_duty, u16 lag_us, u8 state
