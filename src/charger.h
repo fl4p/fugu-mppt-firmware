@@ -141,9 +141,24 @@ struct BatChargerParams {
     }
 };
 
+#ifdef ESP_PLATFORM
+#include "esp_private/esp_clk.h"
+#include "soc/rtc.h"
+
+// RTC slow-clock counter (reset only with the RTC domain, unlike esp_rtc_get_time_us's retained sum) and its period
+inline uint64_t rtcSlowTicks(float &tickUs) {
+    tickUs = (float) esp_clk_slowclk_cal_get() * (1.f / (1 << RTC_CLK_CAL_FRACT));
+    return rtc_time_get();
+}
+#else
+inline uint64_t g_hostRtcUs = 0; // host: 0 = no RTC clock
+inline uint64_t rtcSlowTicks(float &tickUs) { tickUs = 1.f; return g_hostRtcUs; }
+#endif
+
 // Charger state kept across esp_restart/panic/OTA in pinned RTC slow RAM (not across power loss).
 // The first 20 B are the v2 layout (older builds read it unchanged); the balance part validates alone, the
-// appended ceiling wait with balSum (a 40 B build leaves it stale, balSum moves on).
+// appended ceiling wait with balSum (a 40 B build leaves it stale, balSum moves on), the appended BMS offset with
+// sum (a 48 B build leaves it stale: its bmsRef is in its own raw scale).
 struct ChargerRtc {
     uint32_t magic;
     uint32_t fullAgeS; // age of the last full charge, UINT32_MAX = unknown
@@ -157,6 +172,8 @@ struct ChargerRtc {
     uint32_t balSum;
     uint32_t balCeilS; // age of a run stopped on the cell ceiling, UINT32_MAX = none
     uint32_t balCeilSum;
+    float bmsOff; // CoulombCounter offset bmsRef was saved with
+    uint32_t offSum;
 
     static constexpr uint32_t MAGIC = 0x48444c32, BAL_MAGIC = 0x42414c32;
     [[nodiscard]] __attribute__((noinline)) static uint32_t fnv(const void *p, size_t words) {
@@ -175,9 +192,12 @@ struct ChargerRtc {
     [[nodiscard]] bool balValid() const { return balMagic == BAL_MAGIC && balSum == balChecksum(); }
     [[nodiscard]] uint32_t ceilChecksum() const { return fnv(&balSum, 2); }
     [[nodiscard]] bool ceilValid() const { return balValid() && balCeilSum == ceilChecksum(); }
+    [[nodiscard]] uint32_t offChecksum() const { return (fnv(&bmsOff, 1) ^ sum) * 16777619u; }
+    [[nodiscard]] bool offValid() const { return valid() && offSum == offChecksum() && std::isfinite(bmsOff); }
 };
 static_assert(offsetof(ChargerRtc, sum) == 16 && offsetof(ChargerRtc, balMagic) == 20
-              && offsetof(ChargerRtc, balCeilS) == 40 && sizeof(ChargerRtc) == 48, "ChargerRtc layout");
+              && offsetof(ChargerRtc, balCeilS) == 40 && offsetof(ChargerRtc, bmsOff) == 48
+              && sizeof(ChargerRtc) == 56, "ChargerRtc layout");
 
 struct BatteryState {
     static constexpr auto VCELL_EXPIRATION_TIME_SEC = 180;
@@ -837,9 +857,12 @@ public:
         }
     }
 
-    // Restores from r if valid (else starts unknown), then keeps r up to date on every update().
-    void attachRtc(ChargerRtc *r) {
+    // Restores from r if valid (else starts unknown), then keeps r up to date on every update(). q: the counter's
+    // last BMS charge, used only with an offset r was saved with by this build.
+    void attachRtc(ChargerRtc *r, CoulombCounter::Rtc *q = nullptr) {
         _rtc = r;
+        float off = r->offValid() ? r->bmsOff : NAN;
+        batSt.coulombCounter.attachRtc(q, off);
         if (!r->valid()) {
             ESP_LOGI("charger", "no retained state (power-on)");
             return;
@@ -847,7 +870,7 @@ public:
         if (r->fullAgeS < 365U * 86400U) {
             _fullAgeBootS = r->fullAgeS;
             if (std::isfinite(r->bmsRef)) {
-                batSt.coulombCounter.restoreRef(r->bmsRef);
+                batSt.coulombCounter.restoreRef(r->bmsRef + (std::isfinite(off) ? off : 0.f));
                 _refFull = true;
             }
         }
@@ -873,7 +896,8 @@ public:
         ChargerRtc r{};
         r.magic = ChargerRtc::MAGIC;
         r.fullAgeS = fullAgeS();
-        r.bmsRef = r.fullAgeS != UINT32_MAX && _refFull ? batSt.coulombCounter.bmsRef() : NAN;
+        r.bmsOff = batSt.coulombCounter.offset();
+        r.bmsRef = r.fullAgeS != UINT32_MAX && _refFull ? batSt.coulombCounter.ref() - r.bmsOff : NAN;
         r.holiday = _holiday;
         r.streak = _hStreak;
         r.gaps = _hGaps;
@@ -886,6 +910,7 @@ public:
         r.balSum = r.balChecksum();
         r.balCeilS = _balCeilT ? coarseTicksToSec(wallClockTicks() + 1 - _balCeilT) : UINT32_MAX;
         r.balCeilSum = r.ceilChecksum();
+        r.offSum = r.offChecksum();
         *_rtc = r;
     }
 
@@ -1267,7 +1292,9 @@ public:
                     LOG_VALUE_IGNORED("charger", "bat_charge", len, dat);
                     return;
                 }
-                batSt.coulombCounter.setBmsCharge(ah, wallClockTicks());
+                float tickUs;
+                uint64_t rtc = rtcSlowTicks(tickUs);
+                batSt.coulombCounter.setBmsCharge(ah, wallClockTicks(), rtc, tickUs);
             });
 
         // batmon-ha: <dev>/cell_voltages/delta [V]

@@ -262,6 +262,9 @@ static TeleConf setupNetworkAtBoot() {
 // fixed address below .rtc_wire (main/rtc_pin.ld)
 static ChargerRtc s_chargerRtc __attribute__((section(".rtc_charger")));
 
+static CoulombCounter::Rtc s_bmsChargeRtc __attribute__((section(".rtc_bmsq")));
+static_assert(sizeof(CoulombCounter::Rtc) == 24 && offsetof(CoulombCounter::Rtc, sum) == 16, "Rtc layout");
+
 // TODO drop once no device runs build 864 or older: builds 804..864 kept the copy at 0x500000f4 (S3)
 __attribute__((cold)) static void chargerRtcMigrate() {
 #if CONFIG_IDF_TARGET_ESP32S3
@@ -294,7 +297,11 @@ static void setupConverterAndMppt(const ConfFile &boardConf, const Limits &lim, 
 
             mppt.charger.begin(chargerConf);
             chargerRtcMigrate();
-            mppt.charger.attachRtc(&s_chargerRtc);
+            // resets that keep the RTC domain (and its slow-clock counter)
+            auto rr = esp_reset_reason();
+            if (rr != ESP_RST_SW && rr != ESP_RST_PANIC && rr != ESP_RST_INT_WDT && rr != ESP_RST_TASK_WDT)
+                s_bmsChargeRtc = {};
+            mppt.charger.attachRtc(&s_chargerRtc, &s_bmsChargeRtc);
             converter.init(converterConf, boardConf, coilConf);
             g_hwOvIsrHook = hwOvIsr;
             mppt.rectCal.autoRun = coilConf.getByte("rect_cal_auto", 1);

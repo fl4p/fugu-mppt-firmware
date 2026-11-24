@@ -6,6 +6,8 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <memory>
 #include <utility>
 #include "mock.h"
 #include "etc/coulomb_counter.h"
@@ -398,6 +400,192 @@ static void test_ten_days_no_drift() {
     }
 }
 
+// One BMS (charge every 12 s, ibat every 4 s) and units that can reboot. Each unit's RTC block and its RTC clock
+// (us since its power-on) survive a reset; its counter and uptime clock restart. ChargerRtc's ref is taken at the reset.
+struct Pack {
+    time_us T = 1'000'000ULL; // since power-on
+    float q, scale = 0.f, ibat = 0.f;
+    int n = 0;
+    explicit Pack(float q0) : q(q0) {}
+};
+struct RUnit {
+    std::unique_ptr<CoulombCounter> cc{new CoulombCounter};
+    CoulombCounter::Rtc rtc{};
+    time_us bootT = 0, rtcBase = 5'000'000ULL;
+    time_us downUntil = 0; // first frame after the reset, 0 = up
+    float saveRaw = NAN, saveOff = NAN; // ChargerRtc: bmsRef (raw) and bmsOff, saved after each frame
+    bool restoreFirst = true, restored = true, save = true;
+    RUnit() { cc->attachRtc(&rtc, NAN); }
+    // paired: ChargerRtc last written by this build (else by an older one: raw ref, no offset); soft: RTC clock kept
+    void reset(const Pack &p, time_us downUs, bool paired = true, bool soft = true) {
+        downUntil = p.T + downUs;
+        bootT = p.T + 500'000ULL; // app start
+        cc.reset(new CoulombCounter);
+        if (!soft) rtc = {};
+        float off = paired ? saveOff : NAN;
+        cc->attachRtc(&rtc, off);
+        restored = false;
+        if (restoreFirst) restore(off);
+    }
+    void restore(float off) { cc->restoreRef(saveRaw + (std::isfinite(off) ? off : 0.f)), restored = true; }
+    void frame(const Pack &p, bool charge) {
+        if (downUntil) {
+            if (p.T < downUntil) return;
+            downUntil = 0;
+        }
+        time_us up = p.T - bootT;
+        cc->updateBatCurrent(p.ibat, up);
+        if (!charge) return;
+        cc->setBmsCharge(p.q + p.scale, coarseTicks(up), p.T + rtcBase, 1.f);
+        if (!restored) restore(saveOff);
+        cc->sampleOnCellFrame(coarseTicks(up));
+        cc->updateDepth();
+        if (save) saveOff = cc->offset(), saveRaw = cc->ref() - saveOff;
+    }
+};
+static void step(Pack &p, std::initializer_list<RUnit *> u) {
+    p.T += 4'000'000ULL;
+    p.q += p.ibat * 4.f / 3600.f;
+    bool charge = ++p.n % 3 == 0;
+    for (auto *x: u) x->frame(p, charge);
+}
+
+// 11-23 (flat): full at 230 Ah, -3 A, flat reboots and the BMS re-seeds 227.26 -> 220.5 Ah inside the reboot.
+// Returns the deficit error after the reboot.
+static float reseedAcrossReboot(float downS, bool restoreFirst, float reseedTo = 220.5f, float ibat = -3.f,
+                                bool corrupt = false, bool rtcRestart = false, float rtcShortS = 0.f, bool soft = true) {
+    Pack p{230.f};
+    RUnit u;
+    u.restoreFirst = restoreFirst;
+    for (int i = 0; i < 3; ++i) step(p, {&u});
+    u.cc->markFull();
+    float full = p.q;
+    p.ibat = ibat;
+    while (p.q + p.scale > 227.3f) step(p, {&u});
+    while (p.n % 3 != 1) step(p, {&u}); // reset 4 s after a charge sample
+    u.reset(p, (time_us) (downS * 1e6f), true, soft);
+    if (corrupt) memset(&u.rtc, 0x5a, sizeof u.rtc);
+    u.rtcBase -= (time_us) (int64_t) (rtcShortS * 1e6); // RTC gap reads short (old calibration)
+    if (rtcRestart) u.rtcBase = 0, u.rtcBase -= u.bootT - 300'000ULL; // RTC clock restarts 0.3 s before the app
+    float stepAh = 0.f;
+    for (int i = 0; i < 59; ++i) { // ends on a charge frame
+        if (reseedTo > 0 && i == 1) stepAh = reseedTo - (p.q + p.scale), p.scale += stepAh;
+        step(p, {&u});
+    }
+    float err = u.cc->deficit() - (full - p.q);
+    printf("  down %.0f s, ibat %.0f A, restore %s, re-seed %+.2f Ah%s%s: deficit %.2f, true %.2f, error %+.2f Ah\n",
+           downS, ibat, restoreFirst ? "first" : "after", stepAh, corrupt ? ", RTC lost" : "",
+           rtcRestart ? ", RTC clock restarted" : "", u.cc->deficit(), full - p.q, err);
+    return err;
+}
+
+static void test_reseed_across_reboot() {
+    printf("re-seed across a reboot:\n");
+    for (bool rf: {true, false})
+        CHECK(std::fabs(reseedAcrossReboot(20.f, rf)) < 0.1f, "11-23: re-seed during a 20 s reboot absorbed (both restore orders)");
+    CHECK(std::fabs(reseedAcrossReboot(100.f, true)) < 0.1f, "re-seed during a 100 s reboot absorbed");
+    float e = reseedAcrossReboot(150.f, true);
+    CHECK(std::fabs(e - 6.76f) < 0.15f, "reboot > 120 s: re-seed taken raw");
+    e = reseedAcrossReboot(20.f, true, 220.5f, -3.f, true);
+    CHECK(std::fabs(e - 6.76f) < 0.15f, "RTC block lost (power loss): taken raw");
+    e = reseedAcrossReboot(20.f, true, 220.5f, -3.f, false, true);
+    CHECK(std::fabs(e - 6.76f) < 0.15f, "RTC clock restarted: dt unevaluable, taken raw");
+    for (float amps: {-30.f, -180.f})
+        for (bool rf: {true, false})
+            CHECK(std::fabs(reseedAcrossReboot(60.f, rf, 0.f, amps)) < 0.05f, "real discharge across a 60 s reboot taken in full");
+    CHECK(std::fabs(reseedAcrossReboot(20.f, true, 0.f, -200.f, false, false, 2.9f)) < 0.05f,
+          "200 A across a 20 s reboot, RTC gap 2.9 s short: taken in full");
+}
+
+// fry stays up, flat reboots for 20 s while the BMS re-seeds: the same deficit afterwards
+static void test_sibling_reboots_across_reseed() {
+    Pack p{230.f};
+    RUnit a, b;
+    for (int i = 0; i < 3; ++i) step(p, {&a, &b});
+    a.cc->markFull(); b.cc->markFull();
+    float full = p.q;
+    p.ibat = -3.f;
+    while (p.q + p.scale > 227.3f) step(p, {&a, &b});
+    while (p.n % 3 != 1) step(p, {&a, &b});
+    b.reset(p, 20'000'000ULL);
+    for (int i = 0; i < 59; ++i) { // ends on a charge frame
+        if (i == 1) p.scale += 220.5f - (p.q + p.scale);
+        step(p, {&a, &b});
+    }
+    float da = a.cc->deficit(), db = b.cc->deficit();
+    printf("one sibling reboots across the re-seed: %.2f / %.2f Ah (true %.2f)\n", da, db, full - p.q);
+    CHECK(std::fabs(da - db) < 0.1f && std::fabs(da - (full - p.q)) < 0.1f, "siblings keep the same deficit");
+}
+
+// Codex review of the RTC re-seed check: scale pairing, RTC validity and timestamp range.
+static void test_reboot_review_cases() {
+    printf("reboot review cases:\n");
+    // re-seed absorbed, reset before the ChargerRtc save of that tick: one scale via the saved offsets
+    for (bool cross: {false, true}) {
+        Pack p{230.f};
+        RUnit u;
+        for (int i = 0; i < 3; ++i) step(p, {&u});
+        u.cc->markFull();
+        float full = p.q;
+        p.ibat = -3.f;
+        while (p.q + p.scale > 227.3f) step(p, {&u});
+        while (p.n % 3 != 1) step(p, {&u});
+        if (cross) { // absorbed across a first reboot, then the race on the next one
+            p.scale += 220.5f - (p.q + p.scale);
+            u.save = false;
+            u.reset(p, 8'000'000ULL);
+            for (int i = 0; i < 2; ++i) step(p, {&u}); // first charge frame after boot absorbs, no save
+        } else {
+            step(p, {&u});
+            p.scale += 220.5f - (p.q + p.scale);
+            u.save = false;
+            step(p, {&u}); // absorbing charge frame, no save
+        }
+        float before = u.cc->deficit() - (full - p.q);
+        u.save = true;
+        u.reset(p, 8'000'000ULL);
+        for (int i = 0; i < 29; ++i) step(p, {&u});
+        float err = u.cc->deficit() - (full - p.q);
+        printf("  reset before the ref save (%s): error %+.2f before, %+.2f after\n",
+               cross ? "after a cross-boot absorb" : "in session", before, err);
+        CHECK(std::fabs(before) < 0.1f && std::fabs(err) < 0.1f, "reset before the ChargerRtc save: deficit continuous");
+    }
+    // new -> older build (absorbs in session, saves a raw ref without offset) -> new, within 120 s
+    {
+        Pack p{230.f};
+        RUnit u;
+        for (int i = 0; i < 3; ++i) step(p, {&u});
+        u.cc->markFull();
+        float full = p.q;
+        p.ibat = -3.f;
+        while (p.q + p.scale > 227.3f) step(p, {&u});
+        while (p.n % 3 != 1) step(p, {&u});
+        CoulombCounter old; // older build: no RTC block, offset from 0
+        old.restoreRef(u.saveRaw);
+        time_us t = 10'000'000ULL;
+        for (int i = 0; i < 2; ++i) step(p, {});
+        old.setBmsCharge(p.q + p.scale, coarseTicks(t)); old.sampleOnCellFrame(coarseTicks(t));
+        p.scale += 220.5f - (p.q + p.scale);
+        for (int i = 0; i < 3; ++i) step(p, {});
+        t += 12'000'000ULL;
+        old.setBmsCharge(p.q + p.scale, coarseTicks(t)); old.sampleOnCellFrame(coarseTicks(t)); old.updateDepth();
+        u.saveRaw = old.bmsRef(); // its ChargerRtc save, without a valid offset
+        u.reset(p, 8'000'000ULL, false);
+        for (int i = 0; i < 29; ++i) step(p, {&u});
+        float err = u.cc->deficit() - (full - p.q);
+        printf("  new -> old -> new round trip: old build %.2f, new build %.2f Ah, true %.2f\n", old.deficit(),
+               u.cc->deficit(), full - p.q);
+        CHECK(std::fabs(err) < 0.1f, "round trip through an older build: re-seed not absorbed twice");
+    }
+    // a reset that may restart the RTC domain (brownout, RTC WDT): the block is dropped
+    CHECK(std::fabs(reseedAcrossReboot(20.f, true, 220.5f, -3.f, false, false, 0.f, false) - 6.79f) < 0.15f,
+          "non-soft reset: re-seed taken raw");
+    CHECK(!CoulombCounter::Rtc{}.valid(), "a zeroed block is invalid");
+    // a sample untouched for 2^32 ms + 20 s (an older build ran for 50 days): too old, raw
+    float e = reseedAcrossReboot(20.f, true, 220.5f, -3.f, false, false, -4294967.296f);
+    CHECK(std::fabs(e - 6.79f) < 0.15f, "50 days old sample: taken raw");
+}
+
 int main() {
     test_integrators_deadlock();
     test_bms_releases_together();
@@ -415,6 +603,9 @@ int main() {
     test_sparse_ibat_no_drift();
     test_gap_limit();
     test_ten_days_no_drift();
+    test_reseed_across_reboot();
+    test_sibling_reboots_across_reseed();
+    test_reboot_review_cases();
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

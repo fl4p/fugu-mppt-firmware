@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstring>
 
 #include "esp_log.h"
 
@@ -28,7 +29,9 @@
  * The BMS may re-seed its charge (e.g. to 0.9 x nominal). A charge step larger than BAT_I_MAX_A
  * can move within BRIDGE_MAX_S of the previous sample (at least DELIVERY_S, + 0.5 Ah) is a re-seed: the step is replaced
  * by the ibat estimate for that window and the difference kept as an offset. A re-seed within that
- * bound, after a longer gap or during a reboot is taken as real.
+ * bound or after a longer gap is taken as real. Rtc keeps the last raw sample, its RTC slow-clock time and the
+ * offset across a soft reset, so the first sample after boot gets the same check (the ibat estimate then has only
+ * the ibat since boot, else 0 A) and the offset scale continues: a ref restored in it stays consistent.
  */
 class CoulombCounter {
     TrapezoidalIntegrator<> _integrator{1.f / 3600e6f, 30'000'000ULL}; // producer-only
@@ -44,10 +47,28 @@ class CoulombCounter {
     float _covS = 0.f; // integrated ibat time since the last charge sample, producer
 
 public:
+    // Last raw BMS charge, kept in RTC RAM across a soft reset (not a power loss). Producer only.
+    struct Rtc {
+        float ah, off; // raw charge and the offset at that sample
+        uint64_t t; // RTC slow-clock ticks of ah
+        uint32_t sum;
+        [[nodiscard]] __attribute__((noinline)) uint32_t checksum() const {
+            uint32_t h = 0x42514332u, w[4];
+            memcpy(w, this, sizeof w);
+            for (uint32_t x: w) h = (h ^ x) * 16777619u;
+            return h;
+        }
+        [[nodiscard]] bool valid() const { return sum == checksum() && std::isfinite(ah) && std::isfinite(off); }
+    };
+private:
+    Rtc *_rtc = nullptr; // producer
+
+public:
     static constexpr uint32_t BMS_CHARGE_EXPIRE_S = 120;
     static constexpr float BAT_I_MAX_A = 200.f; // pack fuse
     static constexpr float BRIDGE_MAX_S = 120.f;
     static constexpr float DELIVERY_S = 12.f; // one BMS publish period: late, batched or repeated values
+    static constexpr float RTC_TOL_S = 3.f; // RTC vs uptime clock mismatch the restart check tolerates
 
     void updateBatCurrent(float ibat) { updateBatCurrent(ibat, wallClockUs()); }
 
@@ -76,24 +97,46 @@ public:
         _depth = 0.f;
     }
 
-    // producer thread
-    void setBmsCharge(float ah, uint32_t ticks) {
+    // Before the first setBmsCharge. refOff: the offset the restored ref was saved with, NAN if unknown (then
+    // r is dropped: it may predate the ref). The offset continues from r, else from refOff.
+    void attachRtc(Rtc *r, float refOff) {
+        _rtc = r;
+        if (r && std::isnan(refOff)) r->sum = ~r->checksum();
+        _bmsOffset.store(r && r->valid() ? r->off : std::isfinite(refOff) ? refOff : 0.f, std::memory_order_relaxed);
+    }
+
+    // producer thread. rtc: RTC slow-clock ticks (reset only with the RTC domain) of tickUs each, 0 = none
+    void setBmsCharge(float ah, uint32_t ticks, uint64_t rtc = 0, float tickUs = 0.f) {
         float in = (float) _integrator.get(), off = _bmsOffset.load(std::memory_order_relaxed);
         float prev = _bmsCharge.load(std::memory_order_relaxed) - off;
         float dtS = (float) (int32_t) (ticks - _bmsChargeTicks.load(std::memory_order_relaxed)) * COARSE_TICK_S;
+        if (std::isnan(prev) && rtc && _rtc && _rtc->valid()) {
+            // first sample since boot. The RTC gap must span this boot's uptime, else the RTC clock restarted.
+            dtS = (float) (rtc - _rtc->t) * tickUs * 1e-6f;
+            if (dtS >= (float) ticks * COARSE_TICK_S - RTC_TOL_S) prev = _rtc->ah;
+        }
         float lim = BAT_I_MAX_A * fmaxf(dtS, DELIVERY_S) * (1.f / 3600.f), dc = ah - prev;
+        float est = NAN;
         if (dtS <= BRIDGE_MAX_S && std::fabs(dc) > lim + 0.5f) {
             float x = _integrator.last(); // -ibat
-            float est = _intAtCharge - in + (std::isfinite(x) ? -x * fmaxf(dtS - _covS, 0.f) * (1.f / 3600.f) : 0.f);
+            est = _intAtCharge - in + (std::isfinite(x) ? -x * fmaxf(dtS - _covS, 0.f) * (1.f / 3600.f) : 0.f);
             est = fmaxf(-lim, fminf(est, lim));
             off += est - dc;
-            _bmsOffset.store(off, std::memory_order_relaxed);
-            ESP_LOGW("charger", "BMS charge re-seed %.2f -> %.2f Ah in %.0f s, taken as %+.2f Ah", prev, ah, dtS, est);
         }
+        // the sample (with its offset) is committed before the offset is visible to the consumer's ChargerRtc save
+        if (_rtc && rtc) {
+            _rtc->ah = ah;
+            _rtc->off = off;
+            _rtc->t = rtc;
+            _rtc->sum = _rtc->checksum();
+        }
+        _bmsOffset.store(off, std::memory_order_relaxed);
         _bmsCharge.store(ah + off, std::memory_order_relaxed);
         _bmsChargeTicks.store(ticks, std::memory_order_relaxed);
         _intAtCharge = in;
         _covS = 0.f;
+        if (std::isfinite(est))
+            ESP_LOGW("charger", "BMS charge re-seed %.2f -> %.2f Ah in %.0f s, taken as %+.2f Ah", prev, ah, dtS, est);
     }
 
     // producer thread, on each BMS cell frame
@@ -114,9 +157,11 @@ public:
 
     [[nodiscard]] float depth() const { return _depth; }
 
-    // consumer: BMS charge at the last full in the BMS's raw scale, and its restore after a reboot
-    [[nodiscard]] float bmsRef() const { return _bmsRef - _bmsOffset.load(std::memory_order_relaxed); }
-    void restoreRef(float ref) { _bmsRef = ref + _bmsOffset.load(std::memory_order_relaxed); }
+    // consumer: BMS charge at the last full in the BMS's raw scale (bmsRef = ref - offset), and the restore of ref
+    [[nodiscard]] float bmsRef() const { return _bmsRef - offset(); }
+    [[nodiscard]] float ref() const { return _bmsRef; }
+    [[nodiscard]] float offset() const { return _bmsOffset.load(std::memory_order_relaxed); }
+    void restoreRef(float ref) { _bmsRef = ref; }
 
     // consumer thread, once per cell frame: deepest deficit since full (the recharge release depth).
     // While terminated the full point follows the charge up (a sibling charging, or a latch on it only).

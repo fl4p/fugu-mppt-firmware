@@ -1248,6 +1248,48 @@ static void test_two_units_one_relatch(bool reseed) {
           "%s: charging after the release keeps the ref and the depth", tag);
 }
 
+// BMS re-seed across reboots through BatteryCharger's RTC save: a re-seed 227.3 -> 220.5 absorbed on the first
+// sample after a reboot, a reset before the next update() saved the ref, and a ChargerRtc from an older build.
+static void test_reseed_rtc_pairing() {
+    ChargerRtc r{};
+    r.magic = ChargerRtc::MAGIC; r.fullAgeS = 1000; r.bmsRef = 230.f; r.sum = r.checksum();
+    r.bmsOff = 0.f; r.offSum = r.offChecksum();
+    CoulombCounter::Rtc q{227.3f, 0.f, 1'000'000'000ULL, 0};
+    q.sum = q.checksum();
+    auto boot = [&](BatteryCharger &c, ChargerRtc &cr, CoulombCounter::Rtc &cq) {
+        c.params = params(); c.params.Cbat = 245.f; c.attachRtc(&cr, &cq);
+    };
+    auto charge = [&](BatteryCharger &c, float ah, uint64_t upUs, uint64_t rtcUs) {
+        setWallClockUs(upUs);
+        c.batSt.coulombCounter.setBmsCharge(ah, wallClockTicks(), rtcUs, 1.f);
+        c.batSt.coulombCounter.sampleOnCellFrame(wallClockTicks());
+        c.batSt.coulombCounter.updateDepth();
+    };
+    const float want = 230.f - 227.3f;
+    BatteryCharger b; boot(b, r, q);
+    charge(b, 220.5f, 20'000'000ULL, 1'020'000'000ULL);
+    ChargerRtc stale = r; // reset before update() saves the ref
+    CoulombCounter::Rtc q2 = q;
+    b.update(26.4f, 0.f, false);
+    BatteryCharger c; boot(c, stale, q2);
+    charge(c, 220.5f, 10'000'000ULL, 1'032'000'000ULL);
+    BatteryCharger e; boot(e, r, q);
+    charge(e, 220.5f, 10'000'000ULL, 1'032'000'000ULL);
+    printf("  re-seed during a reboot: %.2f, reset before the ref save %.2f, after it %.2f Ah (want %.2f)\n",
+           b.batSt.coulombCounter.deficit(), c.batSt.coulombCounter.deficit(), e.batSt.coulombCounter.deficit(), want);
+    CHECK(std::fabs(b.batSt.coulombCounter.deficit() - want) < 0.05f
+          && std::fabs(c.batSt.coulombCounter.deficit() - want) < 0.05f
+          && std::fabs(e.batSt.coulombCounter.deficit() - want) < 0.05f, "re-seed across reboots: deficit continuous");
+
+    ChargerRtc o = stale; // an older build absorbed the re-seed itself and saved its raw ref, no offset
+    o.bmsRef = 220.5f + want;
+    o.sum = o.checksum();
+    BatteryCharger d; boot(d, o, q2);
+    charge(d, 220.5f, 10'000'000ULL, 1'040'000'000ULL);
+    printf("  ChargerRtc from an older build: %.2f Ah (want %.2f)\n", d.batSt.coulombCounter.deficit(), want);
+    CHECK(std::fabs(d.batSt.coulombCounter.deficit() - want) < 0.05f, "older build's ref: block dropped, raw scale");
+}
+
 int main() {
     test_bal_low_line_no_hold_cuts_at_band();
     test_hold_no_entry_after_restart_low_line();
@@ -1302,6 +1344,7 @@ int main() {
     test_bms_charge_reseed_no_release();
     test_two_units_one_relatch(false);
     test_two_units_one_relatch(true);
+    test_reseed_rtc_pairing();
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

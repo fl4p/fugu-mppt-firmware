@@ -148,13 +148,26 @@ publish period), so values that arrive late, in a batch or twice still pass.
 - The error at a re-seed is that of the `ibat` estimate over the one window,
   at most the change in current times the window.
 
-The reference saved for a reboot is stored in the BMS's own scale, so an
-absorbed step does not reappear after a restart.
+The reference saved for a reboot is stored in the BMS's own scale together
+with the offset, so an absorbed step does not reappear after a restart.
+
+The last BMS value, the offset and the time of that value are also kept in RTC
+memory across a software reset or a panic, task and interrupt watchdog
+included (not a power loss, brownout or other reset). The first value after a reboot is checked against it
+with the same bound. The time between the two comes from the RTC slow-clock
+counter and includes the reboot. A re-seed during a reboot is then replaced by
+the `ibat` received since the boot, or 0 A without one. The RTC time counts as
+unknown, and the value as real, when it is shorter than the time since boot
+(the counter restarted).
 
 Some re-seeds are taken as real charge or discharge:
 
-- a re-seed after a gap of more than 120 s between BMS values;
-- a re-seed during a reboot;
+- a re-seed after a gap of more than 120 s between BMS values, a reboot
+  included;
+- a re-seed during a reboot after a power loss, brownout or other reset that
+  may restart the RTC clock, or with an unknown RTC time;
+- a re-seed during a reboot when the reference was last saved by a firmware
+  without this check (after a rollback);
 - a re-seed small enough for 200 A to explain, for example up to 1.2 Ah
   within 12 s, or a 3.8 Ah step after a 69 s gap.
 
