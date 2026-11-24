@@ -715,10 +715,15 @@ void test_scan_timeout_returns_to_start() {
     auto r = std::make_unique<ScanRig>(68.8f);
     r->g[5] = 0.7f, r->shade(), r->sweep();
     const uint16_t dStart = (uint16_t) r->d;
-    r->run(60'000, [](ScanRig &x) { if (x.s.phase == PeakScan::Probe) x.now += 31'000; });
-    TEST_ASSERT_EQUAL_INT(4, r->ended);
-    TEST_ASSERT_EQUAL_INT((int) dStart, (int) r->s.d0);
-    TEST_ASSERT_TRUE(r->s.pRef <= 0);
+    // the first timeout: the rig does not return to d0, so a later scan starts off the near probes' settled duty
+    int d0 = -1;
+    float pRef = 1;
+    r->run(60'000, [&](ScanRig &x) {
+        if (x.s.phase == PeakScan::Probe) x.now += 31'000;
+        if (x.ended == 4 && d0 < 0) d0 = x.s.d0, pRef = x.s.pRef;
+    });
+    TEST_ASSERT_EQUAL_INT((int) dStart, d0);
+    TEST_ASSERT_TRUE(pRef <= 0);
 }
 
 // ---- substring count learned from the sweeps ----

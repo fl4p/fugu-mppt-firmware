@@ -1083,7 +1083,7 @@ void test_holiday_rtc_restore() {
 // restored record (full 1 h ago), then live BMS remaining charge bmsAh while running at ibat
 static void holidayBmsRun(BatteryCharger &c, float bmsAh, float ibat, uint32_t secs, ChargerRtc *r = nullptr) {
     if (r) {
-        *r = ChargerRtc{ChargerRtc::MAGIC, 3600, 250.f, 1, 0, 0, 0, 0};
+        *r = ChargerRtc{ChargerRtc::MAGIC, 3600, 250.f, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.f, 0};
         r->sum = r->checksum();
         c.attachRtc(r);
     }

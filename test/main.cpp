@@ -62,10 +62,10 @@ int g_handleCommandCalls = 0;
 String g_lastHandleCommand;
 bool g_lastHandleTrusted;
 
-bool handleCommand(const String &s, bool trusted) {
+bool handleCommand(const String &s, const char *ro) {
     ++g_handleCommandCalls;
     g_lastHandleCommand = s;
-    g_lastHandleTrusted = trusted;
+    g_lastHandleTrusted = !ro;
     return false;
 }
 

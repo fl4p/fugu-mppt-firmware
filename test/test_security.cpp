@@ -81,7 +81,7 @@ void test_telnet_command_is_deferred_then_runs_on_drain() {
     process_queued_tasks();             // drain anything left by earlier tests
     int before = g_handleCommandCalls;
 
-    consoleDispatchAsync("status", 6, true);
+    consoleDispatchAsync("status", 6, nullptr);
     // The whole point of the UAF fix: handleCommand must NOT have run inline.
     TEST_ASSERT_EQUAL_INT(before, g_handleCommandCalls);
 
@@ -94,10 +94,10 @@ void test_telnet_command_is_deferred_then_runs_on_drain() {
 // the transport's trust level reaches handleCommand through the deferred queue
 void test_console_dispatch_keeps_trust() {
     process_queued_tasks();
-    consoleDispatchAsync("status", 6, false);
+    consoleDispatchAsync("status", 6, "test");
     process_queued_tasks();
     TEST_ASSERT_FALSE(g_lastHandleTrusted);
-    consoleDispatchAsync("status", 6, true);
+    consoleDispatchAsync("status", 6, nullptr);
     process_queued_tasks();
     TEST_ASSERT_TRUE(g_lastHandleTrusted);
 }
@@ -105,7 +105,7 @@ void test_console_dispatch_keeps_trust() {
 void test_telnet_blank_command_is_dropped() {
     process_queued_tasks();
     int before = g_handleCommandCalls;
-    consoleDispatchAsync("   ", 3, true);  // trims to empty -> skipped, never reaches handleCommand
+    consoleDispatchAsync("   ", 3, nullptr);  // trims to empty -> skipped, never reaches handleCommand
     process_queued_tasks();
     TEST_ASSERT_EQUAL_INT(before, g_handleCommandCalls);
 }
