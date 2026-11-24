@@ -142,7 +142,7 @@ config FUGU_WITH_TLS_CONSOLE
     select MBEDTLS_KEY_EXCHANGE_PSK
     help
         Console over TLS 1.2 with a pre-shared key (tlscon.conf psk_id, psk). Turns on the mbedTLS
-        server role (sdkconfig.tls_console).
+        server role (sdkconfig.d/tls_console).
 
 config FUGU_WITH_SCOPE
     bool "ADC scope streamer (scope service, TCP port 24)"
@@ -188,7 +188,7 @@ config FUGU_WITH_BLE
     select BT_ENABLED
     help
         NimBLE console + OTA push. Adds ~250 KB flash. The NimBLE host selection and radio/thermal
-        tunings that Kconfig can't default from here live in sdkconfig.ble, layered by CMakeLists
+        tunings that Kconfig can't default from here live in sdkconfig.d/ble, layered by CMakeLists
         when this is on.
 
 config FUGU_WITH_BLE_TELE
@@ -238,7 +238,7 @@ config FUGU_WITH_USB_MSC
         the idf_component.yml rule needs the symbol to exist in every build). The S3 enumerates as a composite USB device: a CDC console and a FAT drive showing
         /littlefs/conf. Host edits are validated and written back on eject. Takes the USB PHY
         from USB-Serial-JTAG (no USB JTAG; flashing resets into the ROM download mode via the
-        CDC port). sdkconfig.usb_msc is layered by CMakeLists when this is on.
+        CDC port). sdkconfig.d/usb_msc is layered by CMakeLists when this is on.
 
 config FUGU_WITH_SPROFILER
     bool "Semihosting sampling profiler"
@@ -302,7 +302,7 @@ config FUGU_WITH_PWR_KNOBS
     help
         `pwr` console command: CPU frequency, PM/DFS/light sleep (with PM_ENABLE), WiFi power save,
         listen interval and TX power, BLE advertising interval, telemetry point interval, die
-        temperature. Changes are not persisted; a reboot restores the defaults. sdkconfig.pwr
-        enables it, sdkconfig.pm adds power management with auto light sleep.
+        temperature. Changes are not persisted; a reboot restores the defaults. sdkconfig.d/pwr
+        enables it, sdkconfig.d/pm adds power management with auto light sleep.
 
 endmenu

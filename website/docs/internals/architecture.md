@@ -33,7 +33,7 @@ The table lists what runs on each core and the rules that apply there.
 | 1 | `loopRT`: [sampling](sensors.md), [protection](protection.md), [PD controllers](control-loop.md), [MPPT](mppt-tracker.md), [PWM](pwm-drivers.md) | Nothing else is pinned here. The loop blocks on the next ADC sample; never add `vTaskDelay`. |
 | 0 | Arduino `loop()` → `loopNetwork_task`: [console](../reference/console.md), Wi-Fi, lwIP, [MQTT](../reference/mqtt.md), [telemetry](../reference/telemetry-fields.md), [BLE](../reference/ble/gatt.md) controller and NimBLE host, `esp_timer` task | All [services](services.md) tick here. |
 
-`sdkconfig.defaults` pins Arduino, Wi-Fi/lwIP, mDNS, MQTT, and the `esp_timer` task to core 0; `sdkconfig.ble`
+`sdkconfig.defaults` pins Arduino, Wi-Fi/lwIP, mDNS, MQTT, and the `esp_timer` task to core 0; `sdkconfig.d/ble`
 pins the Bluetooth controller and the NimBLE host there too. `loopRT` checks its
 core at startup.
 

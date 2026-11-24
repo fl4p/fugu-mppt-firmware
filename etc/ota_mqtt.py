@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """OTA devices through their MQTT consoles, one after the other, and verify each.
 
-    etc/fleet-build.sh                    # fry/flat image from a clean worktree (sdkconfig.fleet, IDF 6.0.3)
+    etc/fleet-build.sh                    # fry/flat image from a clean worktree (sdkconfig.d/fleet, IDF 6.0.3)
     etc/ota_mqtt.py --name fry,flat --bin ../fugu-fleet-wt/build/fleet/fugu-firmware.bin -n
     etc/ota_mqtt.py --name fry,flat --bin ... [--check wire --check "rect-cal status"]
 
@@ -762,7 +762,7 @@ def main():
     ap = argparse.ArgumentParser(
         description='OTA devices through their MQTT consoles, one after the other, and verify each. '
                     'Build the fry/flat image with etc/fleet-build.sh [rev] (clean cached worktree '
-                    '../fugu-fleet-wt, sdkconfig.fleet, IDF 6.0.3) and pass its .bin. '
+                    '../fugu-fleet-wt, sdkconfig.d/fleet, IDF 6.0.3) and pass its .bin. '
                     'Broker and credentials come from etc/mqtt.env; an ssh tunnel (via '
                     '$OTA_RELAY_SSH / $NAT_TUNNEL_HOST / havan-ts) is opened when the broker is '
                     'not directly reachable, and the image is staged on that relay host '

@@ -108,7 +108,7 @@ CONFIG_ESP_TIMER_ISR_AFFINITY_CPU0=y
 CONFIG_ESP_TIMER_TASK_AFFINITY_CPU0=y
 ```
 
-With BLE enabled, `sdkconfig.ble` adds `CONFIG_BT_CTRL_PINNED_TO_CORE_0=y` and `CONFIG_BT_NIMBLE_PINNED_TO_CORE_0=y`.
+With BLE enabled, `sdkconfig.d/ble` adds `CONFIG_BT_CTRL_PINNED_TO_CORE_0=y` and `CONFIG_BT_NIMBLE_PINNED_TO_CORE_0=y`.
 The Wi-Fi task stays on its IDF default, core 0.
 
 `src/etc/rt_core_check.h` turns placement drift into a build error: Arduino runtime, main task, esp_timer task and ISR,

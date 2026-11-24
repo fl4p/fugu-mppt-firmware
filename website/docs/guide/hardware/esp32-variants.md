@@ -84,7 +84,7 @@ ESP-IDF applies `sdkconfig.defaults.esp32` on top of `sdkconfig.defaults` only w
 disables the Wi-Fi RX IRAM optimization to free IRAM. Wi-Fi is pinned to core 0 and the control loop runs on core 1,
 so the Wi-Fi receive path running from flash doesn't affect the control loop.
 
-The top-level `CMakeLists.txt` then layers `sdkconfig.ble` and `sdkconfig.no_netw` for both targets. See
+The top-level `CMakeLists.txt` then layers `sdkconfig.d/ble` for both targets. See
 [Build Options](../getting-started/build-options.md#sdkconfig-layering).
 
 ### Bootloader (S3 only)

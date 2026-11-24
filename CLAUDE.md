@@ -39,7 +39,7 @@ Default build target is `esp32s3`. Classic `esp32`: own build dir and sdkconfig,
 `. ./idf-export.sh esp32 && idf.py -B build/esp32 -DSDKCONFIG=build/esp32/sdkconfig build`, or prefix each command
 with `IDF_TARGET=esp32` in an esp32s3 shell.
 Simulated-converter build on the S3 (provision `config/lab/vconv_mock`):
-`idf.py -B build/vconv -DSDKCONFIG=build/vconv/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" build`.
+`idf.py -B build/vconv -DSDKCONFIG=build/vconv/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.d/vconv_s3" build`.
 
 The top-level `CMakeLists.txt` invokes `littlefs_create_partition_image(... FLASH_IN_PROJECT)` so the **board config
 selected by `FUGU_LITTLEFS_SRC` (`config/lab/dry_mock` on esp32s3, `config/fugu1/fugu1_esp32` on esp32) is flashed
@@ -65,7 +65,7 @@ NAT router), sends `ota <url>` to each, then prints a before/after version table
 **Always `-n` first, and `-m <name>` to target, before OTAing `fry`/`flat`** — they're live converters and an OTA
 reboots them into the new image. Confirm versions in the after-table.
 
-**fry/flat image: `etc/fleet-build.sh [rev]`** (default HEAD) builds the production config (`sdkconfig.fleet`, IDF 6.0.3)
+**fry/flat image: `etc/fleet-build.sh [rev]`** (default HEAD) builds the production config (`sdkconfig.d/fleet`, IDF 6.0.3)
 in a clean, reused detached worktree `../fugu-fleet-wt` (`build/fleet/`), refuses a dirty worktree and prints the .bin
 path, version and sha256. Never ship a main-checkout build: it carries other sessions' uncommitted edits.
 
@@ -358,10 +358,10 @@ Filter-design studies that used to sit beside the client are now `etc/filter-stu
   `undefined reference to 'basic_stringbuf_nop'`. Use `snprintf` / `UART_LOG(fmt, …)` / `std::string` concatenation
   instead.
 - `sdkconfig` is gitignored — it's a generated artifact that varies with target + `WITH_*` flags + IDF version.
-  Source of truth is `sdkconfig.defaults` (+ `sdkconfig.defaults.esp32` overlay, `sdkconfig.ble` when
-  `CONFIG_FUGU_WITH_BLE=y`, `sdkconfig.no_netw` when `CONFIG_FUGU_WITH_NETW=n`, `sdkconfig.usb_msc` when
-  `CONFIG_FUGU_WITH_USB_MSC=y` — layered by the top
-  `CMakeLists.txt`). Delete `sdkconfig` to force regeneration if it ever looks wrong. An existing sdkconfig wins over
+  Source of truth is `sdkconfig.defaults` (+ `sdkconfig.defaults.<target>` overlay, `sdkconfig.d/ble` when
+  `CONFIG_FUGU_WITH_BLE=y`, `sdkconfig.d/usb_msc` when `CONFIG_FUGU_WITH_USB_MSC=y` — layered by the top
+  `CMakeLists.txt`); opt-in and variant fragments live in `sdkconfig.d/`. Delete `sdkconfig` to force regeneration
+  if it ever looks wrong. An existing sdkconfig wins over
   the defaults, so a changed default is ignored there; configure prints a WARNING listing such keys (mismatches a
   fresh sdkconfig already has are recorded in `<sdkconfig>.fugu-baseline` and not reported).
 - if you want to `git revert` but there are local dirty files, do a `git stash` before and `git stash pop` after

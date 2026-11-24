@@ -36,16 +36,16 @@ The following table lists each feature option, its default, and what it does:
 
 | Kconfig option | Default | What it does |
 |---|:---:|---|
-| `CONFIG_FUGU_WITH_NETW` | on | Wi-Fi, mDNS, MQTT, InfluxDB telemetry, OTA, FTP, telnet. Off strips all of them (~700 KB); the UART/USB/BLE consoles remain. Layers `sdkconfig.no_netw` when off. |
+| `CONFIG_FUGU_WITH_NETW` | on | Wi-Fi, mDNS, MQTT, InfluxDB telemetry, OTA, FTP, telnet. Off strips all of them (~700 KB); the UART/USB/BLE consoles remain. |
 | `CONFIG_FUGU_WITH_NETTOOLS` | off | `curl`, `ping`, `nslookup`, `tcpconnect`, `netstat` console commands. Needs `NETW`; `https://` URLs also need `HTTPS`. |
 | `CONFIG_FUGU_WITH_HTTPS` | off | TLS client: `https://` OTA and `curl`, `mqtts://` broker, verified against the mbedTLS CA bundle (MQTT: or a private CA in [`mqtt.conf`](../../reference/config/mqtt.md#tls) `ca_file`). Needs `NETW`; on adds ~77 KB flash (incl. the CA bundle). |
 | `CONFIG_FUGU_WITH_TELNET` | on | [Telnet console](../../reference/config/telnet.md) on TCP port 23, without authentication; runs only with `telnet.conf` `enabled=1`. Needs `NETW`. |
-| `CONFIG_FUGU_WITH_TLS_CONSOLE` | off | [TLS-PSK console](../../reference/config/tlscon.md) (`tlscon` service). Needs `NETW`; selects the mbedTLS PSK key exchange and layers `sdkconfig.tls_console` (TLS server role). On adds ~14 KB flash, ~13 KB on top of `HTTPS`. |
+| `CONFIG_FUGU_WITH_TLS_CONSOLE` | off | [TLS-PSK console](../../reference/config/tlscon.md) (`tlscon` service). Needs `NETW`; selects the mbedTLS PSK key exchange and layers `sdkconfig.d/tls_console` (TLS server role). On adds ~14 KB flash, ~13 KB on top of `HTTPS`. |
 | `CONFIG_FUGU_WITH_SCOPE` | on | Raw-ADC [scope](../../reference/host-tools.md#scopepy) streamer on TCP port 24. Needs `NETW`; off saves ~7 KB flash. |
 | `CONFIG_FUGU_WITH_FTP` | on | [FTP server](../../reference/config/ftp.md) for the config partition. Needs `NETW`; off saves ~15 KB flash. |
 | `CONFIG_FUGU_WITH_HTTP_CONF` | off | [HTTP file endpoint](../../reference/config/http.md) (`GET`/`PUT`/`DELETE /conf/<name>`) for the config partition, no extra task. Needs `NETW`; on adds ~9 KB flash. |
 | `CONFIG_FUGU_WITH_HA` | on | Home Assistant MQTT discovery and power state. Needs `NETW`; off saves ~6.5 KB flash. |
-| `CONFIG_FUGU_WITH_BLE` | on | NimBLE console (NUS) and BLE OTA push, ~250 KB. Layers `sdkconfig.ble`. |
+| `CONFIG_FUGU_WITH_BLE` | on | NimBLE console (NUS) and BLE OTA push, ~250 KB. Layers `sdkconfig.d/ble`. |
 | `CONFIG_FUGU_WITH_BLE_TELE` | off | Binary telemetry stream over a NUS notify characteristic. Needs `BLE`; turns on `TELE_BINARY`. |
 | `CONFIG_FUGU_WITH_TELE_BINARY` | off | Binary telemetry wire and tamp compressor, used when [`tele.conf`](../../reference/config/tele.md) `binary=1`. Needs `NETW` or `BLE_TELE`; off saves ~8.5 KB flash. |
 | `CONFIG_FUGU_WITH_BLE_ADV` | off | Connectionless telemetry in BLE advertising data. Needs `BLE`. |
@@ -58,12 +58,12 @@ The following table lists each feature option, its default, and what it does:
 | `CONFIG_FUGU_WITH_MEASURE_COIL` | off | On-device [coil inductance measurement](../../lab/coil-inductance.md). |
 | `CONFIG_FUGU_WITH_SCRIPTS` | off | On-device [console scripts](../../reference/console.md#scripts) (`run`, `sleep`, `scripts`, `script-set`). |
 | `CONFIG_FUGU_WITH_PSU` | on | PSU (constant-voltage) and PV-simulator output modes: `psu`/`pv` commands, `converter.conf` `mode=psu`/`pv`. A board config using either mode fails setup when off; off saves ~10 KB flash. |
-| `CONFIG_FUGU_WITH_USB_MSC` | off | ESP32-S3 only: [USB config drive](../usb-drive.md) plus a CDC console on the USB port, instead of USB-Serial-JTAG. Excludes `WSYNC`. Layers `sdkconfig.usb_msc`. |
+| `CONFIG_FUGU_WITH_USB_MSC` | off | ESP32-S3 only: [USB config drive](../usb-drive.md) plus a CDC console on the USB port, instead of USB-Serial-JTAG. Excludes `WSYNC`. Layers `sdkconfig.d/usb_msc`. |
 | `CONFIG_FUGU_WITH_INA226` | on | INA226 ADC backend (`sensor.conf` `*_adc=ina226`). A board config that selects it fails setup when off. |
 | `CONFIG_FUGU_WITH_ADS` | on | ADS1015/ADS1115 ADC backend (`*_adc=ads1015`/`ads1115`). A board config that selects it fails setup when off. |
 | `CONFIG_FUGU_INA226_MEASURED_RATE` | on | Report the INA226 sample rate measured at init instead of the datasheet value (some parts convert faster). Needs `INA226`. |
 | `CONFIG_FUGU_RT_ALLOC_COUNT` | on (S3) | Count heap allocations and frees made by the control-loop task; `rt-stats` and `bootinfo` print them. Selects `CONFIG_HEAP_USE_HOOKS`. |
-| `CONFIG_FUGU_RT_ALLOC_TRACE` | off | Also record the call stacks of the first 8 distinct control-loop heap operations. Layer `sdkconfig.rt_alloc_trace` to enable. |
+| `CONFIG_FUGU_RT_ALLOC_TRACE` | off | Also record the call stacks of the first 8 distinct control-loop heap operations. Layer `sdkconfig.d/rt_alloc_trace` to enable. |
 
 \* The Kconfig default is off, but `sdkconfig.defaults` enables `WSYNC`, so a fresh MCPWM build of this
 repository has it on.
@@ -146,11 +146,10 @@ The build also reads these environment variables:
 `sdkconfig` is a generated file and isn't tracked. The top-level `CMakeLists.txt` layers these fragments in order:
 
 1. `sdkconfig.defaults`
-2. `sdkconfig.defaults.esp32` (classic ESP32 target only)
-3. `sdkconfig.ble` when `CONFIG_FUGU_WITH_BLE=y`
-4. `sdkconfig.no_netw` when `CONFIG_FUGU_WITH_NETW=n`
-5. `sdkconfig.tls_console` when `CONFIG_FUGU_WITH_TLS_CONSOLE=y`
-6. `sdkconfig.usb_msc` when `CONFIG_FUGU_WITH_USB_MSC=y`
+2. `sdkconfig.defaults.<target>` (`.esp32` or `.esp32s3`, added by ESP-IDF)
+3. `sdkconfig.d/ble` when `CONFIG_FUGU_WITH_BLE=y`
+4. `sdkconfig.d/tls_console` when `CONFIG_FUGU_WITH_TLS_CONSOLE=y`
+5. `sdkconfig.d/usb_msc` when `CONFIG_FUGU_WITH_USB_MSC=y`
 
 If `sdkconfig` looks wrong, delete it to regenerate it.
 
@@ -183,11 +182,11 @@ To run the control loop against a simulated converter, pick `VCONV` as the gate 
 CONFIG_FUGU_WITH_VCONV=y
 ```
 
-On ESP32-S3 the repository ships this fragment as `sdkconfig.vconv_s3`. Build it in a separate build directory with
+On ESP32-S3 the repository ships this fragment as `sdkconfig.d/vconv_s3`. Build it in a separate build directory with
 its own `sdkconfig`:
 
 ```bash
-SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" idf.py -B build/vconv -DSDKCONFIG=build/vconv/sdkconfig build
+SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.d/vconv_s3" idf.py -B build/vconv -DSDKCONFIG=build/vconv/sdkconfig build
 ```
 
 Provision `config/lab/vconv_mock`.

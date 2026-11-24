@@ -37,9 +37,8 @@ project-root `sdkconfig` if it exists. The resolved options then select fragment
 
 | Condition | Effect |
 |---|---|
-| `CONFIG_FUGU_WITH_BLE=y` | appends `sdkconfig.ble` (NimBLE host and radio tuning) |
-| `CONFIG_FUGU_WITH_NETW=n` | appends `sdkconfig.no_netw` |
-| `CONFIG_FUGU_WITH_USB_MSC=y` | appends `sdkconfig.usb_msc` (USB-Serial-JTAG console off); `main/idf_component.yml` adds `espressif/tinyusb` |
+| `CONFIG_FUGU_WITH_BLE=y` | appends `sdkconfig.d/ble` (NimBLE host and radio tuning) |
+| `CONFIG_FUGU_WITH_USB_MSC=y` | appends `sdkconfig.d/usb_msc` (USB-Serial-JTAG console off); `main/idf_component.yml` adds `espressif/tinyusb` |
 | `CONFIG_FUGU_WITH_SPROFILER=n` | excludes the `esp32-semihosting-profiler` component |
 | target `esp32` | ESP-IDF adds `sdkconfig.defaults.esp32` |
 
@@ -49,12 +48,12 @@ Later fragments win. To pass your own fragments, set `SDKCONFIG_DEFAULTS` and qu
 SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py -B build/myvariant build
 ```
 
-`sdkconfig.vconv_s3` is the prepared fragment for a virtual-converter build on ESP32-S3. See
+`sdkconfig.d/vconv_s3` is the prepared fragment for a virtual-converter build on ESP32-S3. See
 [Build options](../guide/getting-started/build-options.md#control-loop-work-without-hardware) for its use. Build it in its own
 directory with its own `sdkconfig`:
 
 ```bash
-SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3" idf.py -B build/vconv -DSDKCONFIG=build/vconv/sdkconfig build
+SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.d/vconv_s3" idf.py -B build/vconv -DSDKCONFIG=build/vconv/sdkconfig build
 ```
 
 If the generated `sdkconfig` looks wrong, delete it and rebuild.

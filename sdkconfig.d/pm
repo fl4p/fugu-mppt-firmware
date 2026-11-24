@@ -1,5 +1,5 @@
 # Power-management experiment build: `pwr` knobs + PM/DFS + auto light sleep support.
-# idf.py -B build/pm -DSDKCONFIG=build/pm/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.pm" build
+# idf.py -B build/pm -DSDKCONFIG=build/pm/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.d/pm" build
 # Boots without DFS or light sleep (esp_pm_configure is never called, PM_DFS_INIT_AUTO off) until `pwr pm ...`.
 # Bench only: in light sleep every GPIO switches to its isolated sleep config (ESP_SLEEP_GPIO_RESET_WORKAROUND
 # selects PM_SLP_DISABLE_GPIO with tickless idle), gate and enable pins included.

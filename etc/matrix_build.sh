@@ -21,8 +21,8 @@ ROOT_LINKS=(
     CMakeLists.txt
     main src components config test
     partitions.csv
-    sdkconfig.defaults sdkconfig.defaults.esp32
-    sdkconfig.ble sdkconfig.no_netw
+    sdkconfig.defaults sdkconfig.defaults.esp32 sdkconfig.defaults.esp32s3
+    sdkconfig.d
     idf-export.sh
 )
 

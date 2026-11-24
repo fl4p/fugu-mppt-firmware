@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the fry/flat production image (sdkconfig.fleet, ESP-IDF 6.0.3) of a commit in a clean, reused
+# Build the fry/flat production image (sdkconfig.d/fleet, ESP-IDF 6.0.3) of a commit in a clean, reused
 # detached worktree, so no uncommitted edit of the main checkout ships.
 #   etc/fleet-build.sh [git-rev]      default HEAD of the main checkout
 # Env: FLEET_WT  worktree (default <main checkout>/../fugu-fleet-wt), build dir build/fleet inside it.
@@ -22,13 +22,14 @@ if [ -n "$dirt" ]; then
     exit 1
 fi
 
-# a cached sdkconfig would override a changed sdkconfig.fleet/defaults
+# a cached sdkconfig would override a changed fleet fragment/defaults
 rm -f "$wt/build/fleet/sdkconfig" "$wt/build/fleet/sdkconfig.fugu-baseline"
+frag=sdkconfig.d/fleet; [ -e "$wt/$frag" ] || frag=sdkconfig.fleet
 (
     cd "$wt"
     . ./idf-export.sh esp32s3 >/dev/null
     idf.py -B build/fleet -DSDKCONFIG=build/fleet/sdkconfig \
-        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.fleet" build
+        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;$frag" build
 )
 
 bin=$wt/build/fleet/fugu-firmware.bin

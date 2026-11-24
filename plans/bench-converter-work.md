@@ -40,7 +40,7 @@ Build for the bench with the coil measurement enabled:
 ```bash
 . ./idf-export.sh
 idf.py -B build-mc -DSDKCONFIG=build-mc/sdkconfig \
-  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.measure_coil" build
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.d/measure_coil" build
 python3 etc/rtprof_map.py --check main/rt_iram.lf - build-mc/fugu-firmware.elf        # 0 not in IRAM
 python3 etc/rtprof_map.py --check main/rt_iram_extra.lf - build-mc/fugu-firmware.elf  # 0 not in IRAM
 ```
@@ -266,7 +266,7 @@ These can be done on the installed converters or without hardware, whenever some
 - The 1 ms loop goal is closed: the 51 µH converter held under 1 ms for a full day on one build
   (worst 883 µs, 2026-11-15 17:53 to 2026-11-16 18:00 UTC).
 - Both installed converters run `main` at `e4cb061` (version string `fry-brk1-608-ge4cb0616`) without the
-  coil measurement command. To use `measure-coil` on them, build with the `sdkconfig.measure_coil`
+  coil measurement command. To use `measure-coil` on them, build with the `sdkconfig.d/measure_coil`
   fragment. The 76 µH converter has `board.conf idle_cpu_mhz=0` because the idle profile's start gate
   kept it from starting at dawn on 2026-11-18.
 - The wider picture (results, open problems, where the code is, working rules) is in

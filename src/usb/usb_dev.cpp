@@ -26,7 +26,7 @@
 #include "logging.h"
 
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG || CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
-#error "the OTG controller owns the USB PHY: disable the USB-Serial-JTAG console (sdkconfig.usb_msc)"
+#error "the OTG controller owns the USB PHY: disable the USB-Serial-JTAG console (sdkconfig.d/usb_msc)"
 #endif
 
 static const char *TAG = "usb";

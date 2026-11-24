@@ -1,0 +1,5 @@
+# Layer after sdkconfig.d/pm: drops the USB-Serial-JTAG NO_LIGHT_SLEEP lock, so automatic light sleep engages with a
+# host attached, and every sleep disables the USJ pad and clock: the USB console drops for the whole window
+# (use telnet/BLE/MQTT). Light sleep is never enabled at boot, only by a `pwr pm ... 1 <secs>` window.
+# idf.py -B build/pm-ls -DSDKCONFIG=build/pm-ls/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.d/pm;sdkconfig.d/pm_ls" build
+# CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION is not set

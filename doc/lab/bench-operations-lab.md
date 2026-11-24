@@ -37,7 +37,7 @@ panicking on mbuf exhaustion — reapply after every IDF bump. When re-applying,
 component's object actually rebuilt; the build banner timestamp does not move.
 
 Build variants: multiple defaults fragments MUST be quoted —
-`-DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.vconv_s3"`; unquoted, the shell eats the
+`-DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.d/vconv_s3"`; unquoted, the shell eats the
 second fragment silently. `idf.py set-config` does not exist in IDF 5.5, and `SDKCONFIG` as an
 environment variable has no effect — it must be `-DSDKCONFIG=` on the command line. Side IDF
 projects under `etc/*` (e.g. `etc/bsync-beacon`) keep their own gitignored `sdkconfig` which goes

@@ -55,8 +55,8 @@ set(NETW_SRC
 )
 
 # CONFIG_FUGU_WITH_NETW (default y) compiles the WiFi/mDNS/MQTT/telemetry/HTTPS-OTA path; off drops
-# all of the above and the firmware runs UART/USB/BLE consoles only. The sdkconfig.no_netw layering
-# in the top-level CMakeLists tracks the same symbol.
+# all of the above and the firmware runs UART/USB/BLE consoles only. The linker drops the
+# unreferenced network components, so no sdkconfig fragment is needed.
 if (CONFIG_FUGU_WITH_NETW)
     set(WITH_NETW 1)
 else ()
@@ -92,7 +92,7 @@ set(BLE_SRC
         "../src/tele/console_ble.cpp"
 )
 
-# CONFIG_FUGU_WITH_BLE (default y) compiles the NimBLE console + OTA path; the sdkconfig.ble layering
+# CONFIG_FUGU_WITH_BLE (default y) compiles the NimBLE console + OTA path; the sdkconfig.d/ble layering
 # in the top-level CMakeLists tracks the same symbol.
 if (CONFIG_FUGU_WITH_BLE)
     set(WITH_BLE 1)
@@ -298,7 +298,7 @@ if (CONFIG_FUGU_WITH_USB_MSC)
     idf_component_get_property(_tusb_lib espressif__tinyusb COMPONENT_LIB)
     target_include_directories(${_tusb_lib} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../src/usb")
 elseif (CONFIG_IDF_TARGET_ESP32S3 AND CONFIG_ESP_CONSOLE_SECONDARY_NONE)
-    # sdkconfig.usb_msc only seeds a fresh sdkconfig; switching the flag off keeps its console choice
+    # sdkconfig.d/usb_msc only seeds a fresh sdkconfig; switching the flag off keeps its console choice
     message(WARNING "USB-Serial-JTAG console is off (left over from FUGU_WITH_USB_MSC?): delete sdkconfig to restore it")
 endif ()
 

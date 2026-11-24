@@ -1,3 +1,0 @@
-# Runtime power knobs (`pwr` console command), no power management.
-# idf.py -B build/pwr -DSDKCONFIG=build/pwr/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.pwr" build
-CONFIG_FUGU_WITH_PWR_KNOBS=y
