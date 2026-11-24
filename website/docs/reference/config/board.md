@@ -5,7 +5,7 @@ sidebar_position: 1
 
 # board.conf
 
-`board.conf` describes the board's pins, buses, and ADC and driver wiring. The table lists its keys.
+`board.conf` describes the board's pins, buses, and ADC and driver wiring. The firmware reads it once at boot. The table lists its keys.
 
 The INA226 measurement settings (`ina22x_resistor`, `ina22x_conv_time_us`, `ina22x_ov`) are in
 [sensor.conf](sensor.md#ina226); see [Moving the INA226 keys](sensor.md#moving-the-ina226-keys).
@@ -13,29 +13,29 @@ The backflow switch pins were renamed; see [Backflow switch keys](#backflow-swit
 
 | key                     | unit | type   | default | description                                    |
 |-------------------------|------|--------|---------|------------------------------------------------|
-| `mcu`                   |      | string | —       | MCU type, e.g. `esp32s3` or `esp32`            |
+| `mcu`                   |      | string | —       | MCU type, `esp32s3` or `esp32`. It must match the build target, else setup fails and the converter stays off |
 | `skip_assert`           |      | bool   | 0       | Skip GPIO pull-resistor sanity checks at init  |
 | `i2c_sda`               | GPIO | int    | 255     | I2C SDA pin; 255 = no I2C                      |
 | `i2c_scl`               | GPIO | int    | —       | I2C SCL pin (required when `i2c_sda` is set)   |
 | `i2c_freq`              | Hz   | int    | 100000  | I2C bus clock frequency                        |
 | `i2c_hs_freq`           | Hz   | int    | 0       | INA226 sample-read clock (esp32s3); 0 = read through Wire at `i2c_freq`. Reads drive the I2C controller directly; above 400 kHz each read enters I2C high-speed mode (controller code at ≤380 kHz). Self-tested at boot, falls back to Wire |
 | `i2c_port`              |      | int    | 0       | INA226 bus index. Only 0 is implemented; any other value fails INA226 init |
-| `ina22x_alert`          | GPIO | int    | —       | INA226 ALERT pin                               |
+| `ina22x_alert`          | GPIO | int    | —       | INA226 ALERT pin, required with the `ina226` backend (unset fails INA226 init) |
 | `ina22x_addr`           |      | int    | 0x40    | INA226 I2C address                             |
-| `pwm_freq`              | Hz   | int    | —       | Converter PWM switching frequency at boot; the `pwm-freq` console verb changes it live for the session without persisting |
-| `pwm_driver_logic`      |      | enum   | —       | Gate driver logic: `HiLi` or `InEn`            |
-| `pwm_hi`                | GPIO | int    | —       | High-side gate driver pin (HiLi mode)          |
-| `pwm_li`                | GPIO | int    | —       | Low-side gate driver pin (HiLi mode)           |
+| `pwm_freq`              | Hz   | int    | —       | Converter PWM switching frequency at boot, 5–500 kHz (exclusive); 0.95 · `pwm_freq` · `coil.conf::L0` must lie between 1 and 20 Ω. The `pwm-freq` console verb changes it for the session without persisting |
+| `pwm_driver_logic`      |      | enum   | —       | Gate driver logic: `HiLi` or `InEn`; any other value fails converter setup |
+| `pwm_hi`                | GPIO | int    | —       | High-side gate driver pin (HiLi mode, required) |
+| `pwm_li`                | GPIO | int    | —       | Low-side gate driver pin (HiLi mode, required)  |
 | `pwm_sd`                | GPIO | int    | 255     | Gate driver shutdown/DIS pin (HiLi mode); 255 = none |
-| `pwm_in`                | GPIO | int    | —       | Gate driver IN pin (InEn mode)                 |
-| `pwm_en`                | GPIO | int    | —       | Gate driver EN pin (InEn mode)                 |
+| `pwm_in`                | GPIO | int    | —       | Gate driver IN pin (InEn mode, required)       |
+| `pwm_en`                | GPIO | int    | —       | Gate driver EN pin (InEn mode, required)       |
 | `boot_refresh_ns`       | ns   | float  | 2000    | Min *realized* LS on-time to refresh HS bootstrap cap; `pwm_deadtime_hl_ns` is reserved on top. Also sets the buck's highest Vout/Vin ratio in DCM ([LS minimum pulse](../../internals/diode-emulation.md#ls-minimum-pulse-near-unity-ratio)) |
-| `pwm_deadtime_ns`       | ns   | float  | 0       | HiLi hardware dead-time (MCPWM), common value for both transitions; 0 = none, and 0 also means the console `dt` command cannot arm it later |
-| `pwm_deadtime_hl_ns`    | ns   | float  | `pwm_deadtime_ns` | HS->LS override (ctrl-off -> rect-on). Hardware RED delay on the rect rising edge; the *realized* gap is one tick less (the ctrl generator spends one tick claiming its dead-time path). 0 leaves the submodule bypassed for the whole boot |
-| `pwm_deadtime_lh_ns`    | ns   | float  | `pwm_deadtime_ns` | LS->HS override (rect-off -> ctrl-on at the period wrap). Reserved in software as `pwmMax = periodTicks - ticks`; the realized band is one tick *wider* (callers cap `cmpLS` at `pwmMax-1`) and it eats commandable duty span |
+| `pwm_deadtime_ns`       | ns   | float  | 0       | HiLi hardware dead-time (MCPWM), common value for both transitions; 0 = none, and 0 also means the console `dt` command cannot arm it later. Valid 0–10⁶ ns, else 0 with an error; each edge is capped at 1/32 of the period. Ignored with `InEn` |
+| `pwm_deadtime_hl_ns`    | ns   | float  | `pwm_deadtime_ns` | HS->LS override (ctrl-off -> rect-on). Hardware RED delay on the rect rising edge; the *realized* gap is one tick less (the ctrl generator spends one tick claiming its dead-time path). 0 leaves the submodule bypassed for the whole boot. An out-of-range value (outside 0–10⁶ ns) falls back to `pwm_deadtime_ns` |
+| `pwm_deadtime_lh_ns`    | ns   | float  | `pwm_deadtime_ns` | LS->HS override (rect-off -> ctrl-on at the period wrap). Reserved in software as `pwmMax = periodTicks - ticks`; the realized band is one tick *wider* (callers cap `cmpLS` at `pwmMax-1`) and it eats commandable duty span. An out-of-range value falls back to `pwm_deadtime_ns` |
 | `pwm_fault_pin`         | GPIO | int    | 255     | GPIO for HW OST brake (MCPWM); 255 = disabled  |
 | `pwm_fault_active_high` |      | bool   | 0       | 1 if fault asserts high, 0 if low              |
-| `pwm_sync_pin`          | GPIO | int    | —       | Wired-sync pulse pin (`WITH_WSYNC`, MCPWM); leader out / follower in. Required when `sync_role` ≠ none |
+| `pwm_sync_pin`          | GPIO | int    | 255     | Wired-sync pulse pin (`CONFIG_FUGU_WITH_WSYNC`); leader out / follower in. Required when `converter.conf::sync_role` ≠ `none`. See [Wired Clock Sync](../../development/sync/wired-sync.md) |
 | `bflow_en`              | GPIO | int    | 0       | Backflow switch enable pin, driven high to turn the switch on; 0 = no switch. Set either `bflow_en` or `bflow_sd`, not both |
 | `bflow_sd`              | GPIO | int    | 0       | Backflow switch shutdown pin, driven high to turn the switch off; 0 = no switch |
 | `bflow_bat`             |      | bool   | 0       | Declares that the backflow switch (`bflow_en`/`bflow_sd`) sits between the converter output and the battery, and that the output current sensor is on the battery side. Enables the idle [high-side short check](../../internals/protection.md#high-side-short-check), `selftest bflow` and its daily run ([backflow switch test](../../internals/protection.md#backflow-switch-test)). Ignored on a boost, without a backflow switch, or with a virtual output current sensor |
@@ -46,8 +46,25 @@ The backflow switch pins were renamed; see [Backflow switch keys](#backflow-swit
 | `led_simple`            | GPIO | int    | 255     | Plain on/off status LED pin; 255 = off         |
 | `fan_pwm`               | GPIO | int    | 255     | Cooling fan PWM pin; 255 = off                 |
 | `ads_alert`             | GPIO | int    | —       | ADS1x15 ALERT/RDY pin                          |
-| `adc_fake_freq`         | Hz   | int    | 3000    | Mock ADC tick rate; every channel is sampled each tick |
-| `idle_cpu_mhz`          | MHz  | int    | 80      | CPU clock of the idle power profile, which starts after the converter and every maintenance task (PSU or manual duty, sweep, rect-cal, coil measurement, OTA, bsync, USB drive) have been off for 5 min, and ends on the first network-loop pass that sees one of them active. While the CPU runs at this clock the converter does not start: a start request ends the profile, and the converter starts once the control loop has run at the boot clock for at least 200 ms and 128 samples. The clock switch itself adds no measurable loop gap. On each entry the sample rate of the control loop is measured at the boot clock and again a few seconds after the switch; if it falls below 97 % of the boot-clock rate, the boot clock is restored and kept until the next reboot, while the rest of the profile (BLE advertising, telemetry interval) stays active. Allowed: 80, 160, 240; any other value fails setup. A value that needs a different PLL than the boot clock (240 MHz on the ESP32) is ignored with a warning. 0 = keep the boot clock |
+| `adc_fake_freq`         | Hz   | int    | 3000    | Tick rate of the `fake` mock ADC, and of the `vconv` plant when `vconv.conf::adc_freq` is unset; every channel is sampled each tick |
+| `idle_cpu_mhz`          | MHz  | int    | 80      | CPU clock of the [idle power profile](#idle-power-profile): 80, 160 or 240, any other value fails setup. 0, or the boot clock, keeps the boot clock |
+
+## Idle power profile
+
+The idle power profile starts after the converter and every maintenance task (PSU or manual duty,
+sweep, rect-cal, coil measurement, OTA, bsync, USB drive) have been off for 5 min. It ends on the
+first network-loop pass that sees one of them active. Besides the CPU clock it sets the BLE
+advertising interval ([`ble.conf::idle_adv_ms`](ble.md)) and the telemetry interval
+([`tele.conf::idle_interval_ms`](tele.md)).
+
+- While the CPU runs at `idle_cpu_mhz` the converter does not start. A start request ends the
+  profile, and the converter starts once the control loop has run at the boot clock for at least
+  200 ms and 128 samples.
+- On each entry the control-loop sample rate is measured at the boot clock and again a few seconds
+  after the switch. Below 97 % of the boot-clock rate, the boot clock is restored and kept until
+  the next reboot; the rest of the profile stays active.
+- A value that needs a different PLL than the boot clock (240 MHz on the ESP32) is ignored with a
+  warning.
 
 ## Backflow switch keys
 

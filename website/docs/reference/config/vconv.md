@@ -7,7 +7,9 @@ sidebar_position: 18
 
 `vconv.conf` configures the virtual converter plant, which replaces the power stage and ADC with a simulated PV source, battery, and passives. It applies to `CONFIG_FUGU_WITH_VCONV` builds with `sensor.conf` `adc = vconv`. `src/adc/sensor_setup.cpp` and `src/adc/vconv.h` read it. For an example, see [`config/lab/vconv_mock`](../../../../config/lab/vconv_mock/conf/vconv.conf).
 
-The simulation takes the inductor from `coil.conf::L0` and the topology from `converter.conf::topo` (`buck`/`boost`). This file doesn't set either.
+The simulation takes the inductor from `coil.conf::L0` (50 µH when unset) and the topology from `converter.conf::topo` (`buck`/`boost`). This file doesn't set either.
+
+In these builds the sensor map comes from `sensor.vconv.conf` when that file exists, else from `sensor.conf`, so a real board's `sensor.conf` can stay in place. The firmware does not drive the `board.conf` backflow switch pins; `bf_model` simulates the switch instead.
 
 The file accepts the following keys.
 
@@ -17,14 +19,14 @@ The file accepts the following keys.
 | `voc`           | V    | float | 40.0    | PV open-circuit voltage                                                     |
 | `pv_k`          |      | float | 0.8     | V_mpp / Voc                                                                 |
 | `v_bat`         | V    | float | 28.0    | Battery sink voltage (`v_bat=0`, `r_bat=1e9` ≈ open output)                 |
-| `r_bat`         | Ω    | float | 0.05    | Battery series resistance                                                   |
+| `r_bat`         | Ω    | float | 0.05    | Battery series resistance (floor 1 µΩ)                                      |
 | `vbat_ac_amp`   | V    | float | 0.0     | Ripple amplitude (peak) on V_bat; 0 = off                                   |
 | `vbat_ac_freq`  | Hz   | float | 100     | Ripple frequency                                                            |
-| `vbat_ac_shape` |      | int   | 0       | 0 = sine (inverter), 1 = full-wave \|sin\| (rectifier load), 2 = spiky pulse |
+| `vbat_ac_shape` |      | int   | 0       | 0 = sine (inverter), 1 = full-wave \|sin\| (rectifier load), 2 = spiky pulse; other values = sine |
 | `c_in`          | F    | float | 470e-6  | Input capacitance                                                           |
 | `c_out`         | F    | float | 470e-6  | Output capacitance                                                          |
 | `ring_c`        | F    | float | 0       | Buck switch-node capacitance; 0 = off. Rings with the coil at f = 1/(2π·√(L0·C)) while both switches are off, see [Switch-node ring](#switch-node-ring) |
-| `ring_q`        |      | float | 20      | Quality factor of that ring (amplitude decays as e^(−πf·t/Q))               |
+| `ring_q`        |      | float | 20      | Quality factor of that ring (amplitude decays as e^(−πf·t/Q)), minimum 0.5  |
 | `ring_v`        | V    | float | 0       | Input voltage at which `ring_c` applies; > 0 makes the node capacitance scale as (`ring_v`/Vin)^`ring_cexp`, 0 = constant |
 | `ring_cexp`     |      | float | 0.6     | Exponent of that scaling (MOSFET Coss falls with voltage)                   |
 | `ring_ct`       |      | float | 1       | Share of the node capacitance that the hard switch edges charge and discharge, see [Switch losses and timing](#switch-losses-and-timing) |
@@ -47,13 +49,13 @@ The file accepts the following keys.
 | `noise_ntc`     |      | float | 0       | Gaussian ADC noise σ on the NTC channel                                     |
 | `ntc_v`         | V    | float | 0.9     | Constant NTC channel voltage; 0.9 V reads about 1 °C, 1.65 V is 25 °C; `vconv set ntc_v` changes it at runtime |
 | `sun_day_s`     | s    | float | 0       | Length of the simulated day; 0 = off (static PV), minimum 1. See [Sun and clouds](#sun-and-clouds) |
-| `sun_night_s`   | s    | float | day/4   | Length of the night after each day                                          |
-| `sun_peak`      |      | float | 1.0     | Clear-sky irradiance at noon, fraction of the `isc`/`voc` conditions (0..1)  |
+| `sun_night_s`   | s    | float | day/4   | Length of the night after each day; a negative value = `sun_day_s`/4        |
+| `sun_peak`      |      | float | 1.0     | Clear-sky irradiance at noon, fraction of the `isc`/`voc` conditions (clamped to 0..1) |
 | `cloud_rate`    | 1/min | float | 0      | Mean cloud starts per minute of clear sky; 0 = no clouds                    |
-| `cloud_depth`   |      | float | 0.7     | Maximum irradiance dip of a cloud (0..1)                                    |
-| `cloud_len_s`   | s    | float | 20      | Mean cloud duration (1..600)                                                |
+| `cloud_depth`   |      | float | 0.7     | Maximum irradiance dip of a cloud (clamped to 0..1)                         |
+| `cloud_len_s`   | s    | float | 20      | Mean cloud duration (clamped to 1..600)                                     |
 | `cloud_edge_s`  | s    | float | 3       | Time constant of the cloud edges                                            |
-| `sun_seed`      |      | int   | 1       | Cloud random seed                                                           |
+| `sun_seed`      |      | int   | 1       | Cloud random seed; 0 = 1                                                    |
 
 ## Sun and clouds
 
@@ -88,10 +90,22 @@ cloud_depth=0.7
 cloud_len_s=15
 ```
 
-All keys except `pwm_clk` change at runtime with `vconv set <key> <value>`. Switching `sun_day_s` from 0 to a
+The sun and cloud keys change at runtime with `vconv set <key> <value>`. Switching `sun_day_s` from 0 to a
 positive value starts the day at sunrise, setting `sun_seed` reseeds the clouds and restarts the
 day, and `sun_day_s` 0 restores the full-sun curve. `vconv sun` prints G, G_clear, the cloud factor,
 the time of day and the effective Isc and Voc.
+
+## Runtime changes
+
+The firmware reads `vconv.conf` once at boot. The console changes part of the plant in RAM:
+
+- `vconv set <key> <value>`: `c_in`, `c_out`, `r_bat`, `vbat_ac_amp`, `vbat_ac_freq`, `vbat_ac_shape`,
+  `diode_vf`, `ring_c`, `ring_q`, `bf_model`, `bf_stuck`, `hs_short`, `i_unidir`, `ntc_v`, and the
+  sun and cloud keys. `vconv set l <H>` overrides the inductor.
+- `vconv pv <isc> <voc> [k]` sets the PV curve, `vconv bat <V|open|short>` the battery.
+
+The other keys (`ring_v`, `ring_cexp`, `ring_ct`, `t_dead`, `t_hs_ext`, `r_hs`, `r_ls`, `t_sw`,
+`pwm_clk`, `adc_freq`, `noise_*`) need a reboot. See [console](../console.md).
 
 ## Switch-node ring
 

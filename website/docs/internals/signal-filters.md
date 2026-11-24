@@ -131,7 +131,7 @@ The notch is 15 dB deep at its centre (`notch_depth`). With Q 20 it is narrow: a
 1 Hz off and 2.5 dB at 2 Hz off (at 450 sps, nearly independent of the depth), and it passes the ripple's
 harmonics.
 
-- Gain at the notch frequency: −15 dB (fixed).
+- Gain at the notch frequency: `notch_depth`, default −15 dB.
 - Quality factor: `notch_q`, default 20 (bandwidth ≈ f0/Q).
 - On a multiplexed ADC, `Vout` is sampled between every other channel, so it runs at a higher rate than the rest. Each
   notch is tuned to its sensor's actual rate.

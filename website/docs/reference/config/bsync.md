@@ -13,14 +13,16 @@ Sniffing is receive-only (no association or TX), so sync also works while Wi-Fi 
 
 The keys `enabled` (0/1) and `log_level` (`error`, `warn`, or `info`) are common to all services. See [Service Architecture](../services.md#per-service-conf-file).
 
+The service reads the keys below when it starts, so `svc rs bsync` applies a change. A missing or malformed `bssid`, or a `channel` outside 1–14, fails the start. It also refuses to start on a wired-sync follower.
+
 The file accepts the following keys:
 
 | key         | unit | type   | default | description                                                                |
 |-------------|------|--------|---------|----------------------------------------------------------------------------|
 | `bssid`     |      | string | —       | Sync AP BSSID `aa:bb:cc:dd:ee:ff` (required; same on all devices)          |
-| `channel`   |      | int    | 1       | Wi-Fi channel of the sync AP (used only while unassociated)                |
+| `channel`   |      | int    | 1       | Wi-Fi channel of the sync AP, 1–14 (used only while unassociated)          |
 | `phase_us`  | µs   | float  | 0       | Per-device target phase offset on the shared grid (interleaving)           |
-| `bw`        |      | float  | 1.0     | Loop-bandwidth scale (0.05–4): lower = less phase breathing, slower lock   |
+| `bw`        |      | float  | 1.0     | Loop-bandwidth scale, clamped to 0.05–4: lower = less phase breathing, slower lock |
 | `kp`        |      | float  | 5e-6    | Servo P gain, period-ticks per phase-error-tick (×bw)                      |
 | `ki`        | 1/s  | float  | 2.5e-7  | Servo I gain, steady-state crystal-offset trim (×bw²)                      |
 | `hw_only`   |      | bool   | 0       | Accept only full-IE (hw TBTT) beacons; drops short injected frames         |

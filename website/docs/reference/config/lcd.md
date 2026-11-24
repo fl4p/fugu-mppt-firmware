@@ -11,6 +11,6 @@ The file has the following keys:
 
 | key         | unit | type | default | description                                |
 |-------------|------|------|---------|--------------------------------------------|
-| `addr`      |      | int  | 0       | LCD I2C address (0 = auto-probe 0x27/0x3F) |
+| `addr`      |      | int  | 0       | LCD I2C address; 0, or an address that does not answer, probes 0x27 and 0x3F. Read when the service starts (`svc rs lcd`) until a display is found |
 | `enabled`   |      | bool | 0       | Start this service at boot                 |
 | `log_level` |      | enum | info    | Verbosity: `error`, `warn`, or `info` |

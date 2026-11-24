@@ -11,17 +11,20 @@ The following keys apply to all channels:
 
 | key                              | unit | type   | default | description                                                    |
 |----------------------------------|------|--------|---------|----------------------------------------------------------------|
-| `adc`                            |      | string | —       | Default ADC backend for all channels                           |
-| `ignore_calibration_constraints` |      | bool   | 0       | Bypass ADC calibration sanity constraints                      |
-| `notch_adaptive`                 |      | bool   | 1       | Auto-tune the inverter-ripple notch to the tone measured on Vout (off = fixed at `notch_freq`) |
+| `adc`                            |      | string | —       | Default ADC backend for all channels; required unless every present channel sets `<channel>_adc` |
+| `ignore_calibration_constraints` |      | bool   | 0       | Skip the ADC range and noise checks of the boot calibration    |
+| `notch_adaptive`                 |      | bool   | 1       | Auto-tune the inverter-ripple notch to the tone measured on Vout (80–140 Hz); 0 = fixed at `notch_freq` |
 | `notch_freq`                     | Hz   | float  | 100     | Notch frequency when not adaptive (2×mains: 100 = 50 Hz, 120 = 60 Hz) |
 | `notch_q`                        |      | float  | 20      | Notch quality factor (bandwidth ≈ `notch_freq`/`notch_q`)      |
-| `notch_depth`                    | dB   | float  | -15     | Notch attenuation at its centre, ≤ 0. Deeper is not always better, see [choosing the filter](../../internals/signal-filters.md#choosing-the-filter) |
-| `ripple_filter`                  |      | string | notch   | Inverter-ripple filter: `notch`, `comb` (moving average over one ripple period, also removes the harmonics, ~5 ms delay) or `both`. Tuned like the notch (`notch_adaptive`, `notch_freq`). See [signal filters](../../internals/signal-filters.md#ripple-comb) |
-| `despike`                        |      | float  | 0       | Glitch-safe median outlier threshold (running mean-deviation units): 0 = off (legacy unconditional median); ~8 enables (lower = clips more). Passes dense load pulses through (unbiased current) but still clips impulse glitches. A sample is clipped only if it also deviates by more than 4 quantization steps (learned per sensor). The NTC always uses the plain median and is not counted. A warning is logged when clips exceed 0.5 % of the samples in a window |
+| `notch_depth`                    | dB   | float  | -15     | Notch attenuation at its centre, ≤ 0; a positive value logs a warning and uses -15. See [choosing the filter](../../internals/signal-filters.md#choosing-the-filter) |
+| `ripple_filter`                  |      | string | notch   | Inverter-ripple filter: `notch`, `comb` or `both`; an unknown value logs a warning and uses `notch`. See [ripple comb](../../internals/signal-filters.md#ripple-comb) |
+| `despike`                        |      | float  | 0       | Outlier threshold of the decision-based median, in running mean-deviation units: 0 = plain median, about 8 enables it (lower clips more). See [despike](../../internals/signal-filters.md#despike) |
 | `esp32adc1_sr`                   | Hz   | int    | —       | Internal ADC1 continuous-mode raw sample rate (required with `esp32adc1`) |
-| `esp32adc1_avg`                  |      | int    | —       | Software average of N raw conversions per delivered sample (1–1023, required with `esp32adc1`) |
-| `esp32adc1_inl`                  |      | bool   | 0       | Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation only). It removes a ±0.2 V S-curve on a 28:1 divider between ~0.57 and ~2.66 V at the pin and tapers to zero outside that range. It has no gain or offset of its own, so set it together with `hv_v_gain`/`hv_v_offset` (and `lv_v_` if that side is on ADC1). It applies to every ADC1 channel, including NTC and current |
+| `esp32adc1_avg`                  |      | int    | —       | Software average of N raw conversions per delivered sample, 1–1023 (required with `esp32adc1`) |
+| `esp32adc1_inl`                  |      | bool   | 0       | Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation only, about ±0.2 V between 0.57 and 2.66 V at the pin, tapering to zero outside) to every ADC1 channel, including NTC and current. It has no gain or offset of its own, so calibrate `_gain`/`_offset` with it on. See [Internal ADC](../../guide/hardware/internal-adc.md) |
+
+The firmware reads `sensor.conf` once at boot. In `CONFIG_FUGU_WITH_VCONV` builds a
+`sensor.vconv.conf`, if present, is read instead (see [vconv.conf](vconv.md)).
 
 The following per-channel keys take a channel prefix. Name the voltage and current channels by the
 board side they measure: `hv_v_`, `lv_v_`, `hv_i_`, `lv_i_`. The temperature channel is `ntc_`.
@@ -40,6 +43,9 @@ An unknown `converter.conf::topo` fails sensor setup. The firmware no longer rea
 prefixes (`vin_`, `vout_`, `iin_`, `iout_`): a file that still has one fails sensor setup at boot.
 See [Migrating from role keys](#migrating-from-role-keys).
 
+The NTC channel is read only from `sensor.conf`: a `board.conf::ntc_ch` left over from earlier
+firmware fails setup when `sensor.conf` has no NTC channel.
+
 The `vconv` and `fake` simulators' channels are fixed by role (`src/adc/vconv.h`: 0 = Vin, 1 = Vout,
 2 = Iout, 4 = NTC; `src/adc/mock.h`), not by board side. Their profiles use the side key that plays
 that role under the profile's `topo`, so a `topo` change there means moving the channel numbers too.
@@ -52,13 +58,13 @@ flow. The same shunt therefore keeps the same `_factor` in both topologies.
 |-------------|------|--------|-------------|--------------------------------------------------------------------------------|
 | `_adc`      |      | string | value of `adc` | ADC backend for this channel                                                |
 | `_ch`       |      | byte   | 255         | ADC channel index (255 = absent)                                               |
-| `_rh`       | Ω    | float  | —           | Voltage divider upper (high-side) resistor (voltage channels)                  |
-| `_rl`       | Ω    | float  | —           | Voltage divider lower resistor (voltage channels)                              |
-| `_gain`     |      | float  | 1           | Per-board gain on top of the divider (voltage channels): V = gain · V_div + offset |
-| `_offset`   | V    | float  | 0           | Per-board offset (voltage channels), see `_gain`                               |
+| `_rh`       | Ω    | float  | —           | Voltage divider upper (high-side) resistor (voltage channels, required when `_ch` is set) |
+| `_rl`       | Ω    | float  | —           | Voltage divider lower resistor (voltage channels, required when `_ch` is set); the ADC input impedance is taken in parallel |
+| `_gain`     |      | float  | 1           | Per-board gain on top of the divider (voltage channels): V = gain · V_div + offset. Must be between 0.5 and 2 (exclusive), else sensor setup fails |
+| `_offset`   | V    | float  | 0           | Per-board offset (voltage channels), see `_gain`. Must be within ±10 V (exclusive), else sensor setup fails |
 | `_factor`   |      | float  | 1           | Linear scale factor raw ADC → physical, sign sets direction (current channels) |
 | `_midpoint` |      | float  | 0           | Zero/offset midpoint subtracted before scaling (current channels)              |
-| `_filt_len` |      | int    | 10          | Filter window length (samples). Currently ignored for `ntc`, which uses a fixed 50 |
+| `_filt_len` |      | int    | 10          | Filter window length (samples). Ignored for `ntc`, which uses a fixed 50       |
 
 For worked ACS712 and bare-ESP32 configs, see [Notes & examples](#notes--examples).
 
@@ -71,8 +77,8 @@ The following keys set the INA226 measurement (`ina226` backend); its wiring (`i
 | key | unit | type | default | description |
 |-----|------|------|---------|-------------|
 | `ina22x_resistor` | Ω | float | — | INA226 current-sense shunt resistance, required with `ina226` (0 to 10 Ω, else sensor setup fails); the current range is the shunt full scale, 81.92 mV / `ina22x_resistor`, at the shunt ADC resolution (2.5 µV / `ina22x_resistor`) |
-| `ina22x_conv_time_us` | µs | int | 1100 | INA226 per-conversion time (rounded up to nearest device step); lower = faster/noisier |
-| `ina22x_ov` | V | float | 0 | INA226 bus over-voltage limit, in volts of the sensor on the INA226 bus channel (after its divider; the LV side, which is the battery only in buck topology). When set, ALERT is a latched over-voltage alert: its ISR forces the gates off (MCPWM gate driver only) and the converter backs off; conversions are then polled instead of signalled. Set it above the highest normal voltage. 0 = ALERT is the conversion-ready strobe |
+| `ina22x_conv_time_us` | µs | int | 1100 | INA226 per-conversion time, rounded up to the next device step (140, 204, 332, 588, 1100, 2116, 4156, 8244; above that 8244); lower = faster/noisier |
+| `ina22x_ov` | V | float | 0 | INA226 bus over-voltage limit, in volts of the voltage channel on INA226 channel 0 (after its divider and `_gain`/`_offset`). When set, ALERT is a latched over-voltage alert: its ISR forces the gates off (MCPWM gate driver only) and the converter backs off; conversions are then polled. Set it above the highest normal voltage. Without a voltage channel on INA226 channel 0 sensor setup fails. 0 = ALERT is the conversion-ready strobe |
 
 ## Notes & examples
 
@@ -81,7 +87,7 @@ The following keys set the INA226 measurement (`ina226` backend); its wiring (`i
 Configure the voltage and current sensors in `sensor.conf` to match your topology and chips.
 
 There are four sensors: Vin, Vout, Iin, and Iout. Configure them by side (HV/LV); the topology
-assigns the roles. A converter can have one or two current sensors.
+assigns the roles. A converter can have one or two current sensors; with none, setup fails.
 With a single current sensor, the firmware computes the other from the voltage ratio and a fixed
 97 % conversion efficiency. The tables above list all keys.
 
@@ -126,6 +132,11 @@ Pick the ADC backend with `adc`, or per channel with `<channel>_adc`. The firmwa
 * `ads1115`
 * `ads1015`
 * `esp32adc1`: internal continuous-mode ADC, no external chip (see [Internal ADC](../../guide/hardware/internal-adc.md))
+* `fake`: sinusoidal mock for bench boards without a power stage (sample rate `board.conf::adc_fake_freq`)
+* `vconv`: the simulated plant of `CONFIG_FUGU_WITH_VCONV` builds (see [vconv.conf](vconv.md))
+
+`ina226` and `ads1015`/`ads1115` exist only when compiled in (`CONFIG_FUGU_WITH_INA226`,
+`CONFIG_FUGU_WITH_ADS`, both on by default); an unknown or disabled backend fails sensor setup.
 
 This backend is planned:
 
