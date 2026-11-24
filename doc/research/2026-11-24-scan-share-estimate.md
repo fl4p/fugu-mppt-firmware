@@ -440,8 +440,21 @@ heated cases. No factor meets it: every factor has a cell mean below -0.1 (wx-sh
   maximum 4-21 % better.
 * Closed loop: no cell mean below -0.2 points except wx-shade-walk (-0.34, noise-level, all factors negative there on
   this host).
-* The closed-loop vs static placement gap (2-3 %) is not explained in detail; candidates: the sweep-measured Voc and
-  Vmpp/Voc vs the static grid's exact values, and Vin from the tracker vs the exact maximum.
+* The closed-loop vs static placement gap (2-3 %) is the probe's own inputs. Measured 2026-11-24 by forcing each to
+  the plant's exact value (paired over the 10 board/offset pairs, `SIM_KVMP_EXACT` / `SIM_VOC_EXACT`, all runs on one
+  host; the same tree reproduces this table's l2 row exactly: 0.97 -> 1395.6 s / 93.42 %, 1.03 -> 240.9 s / 98.73 %):
+
+  | cell | base | `kVmp` exact | `voc` exact | both |
+  |---|---|---|---|---|
+  | l2 (shaded) | 97.35 % | 98.75 % (+1.40) | 98.21 % (+0.86) | 98.77 % (+1.42) |
+  | h1 (heated) | 98.83 % | 98.84 % (+0.01) | 98.85 % (+0.02) | 98.84 % (+0.01) |
+
+  `kVmp` dominates. It is learned only from an *unshaded* sweep MPP, and only if `v/voc` lies in `(0.74, 0.86)`
+  (`src/peak_scan.h`); a shaded maximum deliberately keeps the last value. With the shade already in at the boot
+  sweep it therefore stays at the **0.820 default** while the plant's `kp` is **0.860** - a systematic **-4.7 %** on
+  every probe, worth up to ~1.4 points of harvest.
+  `voc` is secondary: it is the **Vin at the sweep start** and is never refreshed, so it sits below the true Voc.
+  In the heated cells neither costs anything (h1 is already at 98.83 %), so that part of the gap is placement-only.
 
 ### Reproduce (round 2)
 
