@@ -78,6 +78,12 @@
 //     fry-wander, flat-wander, fry3-wander: Iout keeps its slow wander below 0.3 Hz (noise_profile.py --keep-slow;
 //     fry3: a capture with 3 % p-p at ~0.2 Hz). The == TRACKER line ends with the tracking loss in J, the part in slow
 //     mode and the largest Vin offset from the MPP in slow mode
+//     fry-inv, var-inv, china-inv, pv8a-inv, heater-inv: inverter on the DC bus (2x-line ripple; china-inv and
+//     pv8a-inv spiky with aliased harmonics, heater-inv a 500 W heater switching too), made by inverter_profiles.py
+//   ripple filter: SIM_CONF=sensor.conf:ripple_filter=notch|comb|both; SIM_NOTCH_DB=-15 sets the notch depth (the
+//     depth every build before the gainAmp fix had); bus ripple on any scenario with
+//     SIM_CONF=vconv.conf:vbat_ac_amp=0.26,vconv.conf:vbat_ac_freq=100,vconv.conf:vbat_ac_shape=0|1|2 (sine, |sin|,
+//     spiky); SIM_RIPPLE_DRIFT=dHz,period swings its frequency +-dHz with that period [s] (off-grid inverter)
 //   SIM_T=600 wx run length [s], SIM_TR=5 wx trace interval [s], SIM_V=1 firmware log in wx/shade runs
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
 //   SIM_TTRACE=t0,t1 /tmp/mppt-sim wx-dusk      # one line per tracker decision (duty, Vin, P, direction, LS) in t0..t1
@@ -685,6 +691,7 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
     ConfFile limitsConf{"/littlefs/conf/limits.conf"};
     Limits lim{limitsConf};
     setupSensors(boardConf, lim);
+    if (const char *e = getenv("SIM_NOTCH_DB")) adcSampler.notchAmp = NotchFilter::gainAmp((float) atof(e));
     mppt.initSensors(boardConf);
     ConfFile coilConf{"/littlefs/conf/coil.conf"};
     ConfFile chargerConf{"/littlefs/conf/charger.conf"};
@@ -1268,6 +1275,16 @@ static int runWx(const std::string &name, Wx &wx) {
             }
         }
         if (holdAt >= 0 && tb >= holdAt) mppt.speedScale = 0, holdAt = -1;
+        {
+            // SIM_RIPPLE_DRIFT=dHz,period: the bus ripple frequency swings +-dHz around vbat_ac_freq (off-grid inverter)
+            static float rd[3] = {0, 1, -1};
+            static bool rdOn = getenv("SIM_RIPPLE_DRIFT") && sscanf(getenv("SIM_RIPPLE_DRIFT"), "%f,%f", rd, rd + 1) == 2;
+            if (rdOn) {
+                if (rd[2] < 0) rd[2] = g_vconv.getVbatAcFreq();
+                g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), rd[2] + rd[0] * std::sin(2 * (float) M_PI * (float) tb / rd[1]),
+                                     g_vconv.getVbatAcShape());
+            }
+        }
         {
             // SIM_DC=ta,duty,tb: console `dc duty` at ta, `mppt` at tb
             static float dc[3] = {-1, 0, -1};
