@@ -433,7 +433,7 @@ until you click.
 | Output wire guard | Status | `wire` | no |
 | ADC calibration (eFuse) | Status | `adc-cal` (ESP32-S3 builds) | no |
 | MPP sweep | Measurements | `sweep`; **Read last sweep** sends `sweep-curve` | yes; not for reading |
-| Coil inductance (L0) | Measurements | `measure-coil l0 [apply]` (`CONFIG_FUGU_WITH_MEASURE_COIL`) | device name |
+| Coil inductance (L0) | Measurements | `measure-coil l0` (`CONFIG_FUGU_WITH_MEASURE_COIL`); **Save L0** sends `set-config coil.conf L0 <value>` | device name; not for saving |
 | Backflow switch | Self-tests | `selftest bflow`, abort with `selftest abort` | device name |
 | Clear latched faults | Self-tests | `selftest clear` | device name |
 | Low-side timing (rect-cal) | Calibration | `rect-cal [force]`, abort with `rect-cal abort` | yes; device name with `force` |
@@ -482,9 +482,16 @@ the measurement and sends `mppt` afterwards in every outcome: a result, a failur
 ends with "Resumed MPPT." or, in amber, why MPPT was not resumed. A device already at `dc 0` is measured as it is and
 left there. In PSU/PV mode or at a manual duty the editor stops nothing: the entry shows the firmware's refusal.
 
-`measure-coil l0 apply` writes `L0` to `coil.conf`, and the loaded `coil.conf` follows. rect-cal and
-`measure-coil ls apply` save `rect_offset_ns` only once the converter has been off for a while, so read the device
-again later to see it.
+The coil inductance run writes nothing. Next to **Run** the entry shows the device's current `L0` (read with
+`get-config coil.conf` when the entry unfolds) and, after a run with a value, the measured one with the difference,
+for example "Current L0: 50.9 µH · Measured 50.34 µH (−1.1 %)". **Save L0 to coil.conf** is enabled only then: it
+writes the value as the firmware prints it (`5.034000e-05`), reads `coil.conf` back and the loaded `coil.conf` follows.
+A run without a value (a failure, or a zero current that moved during the sweep) leaves it disabled. The converter
+reads `L0` at boot, so the new value takes effect after a restart; a save during conversion is a flash write like any
+other `set-config`.
+
+rect-cal and `measure-coil ls apply` save `rect_offset_ns` only once the converter has been off for a while, so read
+the device again later to see it.
 
 If the connection drops or a test does not end in time, the panel reports its state as unknown and offers a check
 (`selftest`, `rect-cal status` or `sweep-curve`) instead of a result. While a test runs, service actions and pushes

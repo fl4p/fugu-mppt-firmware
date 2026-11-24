@@ -405,7 +405,8 @@
   .tst-what { margin:4px 0 0; line-height:1.55; color:var(--fg-2); }
   .tst-ctl { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:16px 0 0; }
   .tst-ctl button { border-color:var(--line-2); padding:5px 12px; }
-  .tst-state { font-size:12.5px; color:var(--muted); }
+  .tst-state, .tst-l0 { font-size:12.5px; color:var(--muted); }
+  .tst-l0:empty { display:none; }
   .tst-state:empty { display:none; }
   .tst-det { margin:12px 0 0; }
   .tst-opt { display:flex; align-items:center; gap:7px; margin:0 0 10px; width:fit-content; cursor:pointer; }
@@ -3779,13 +3780,11 @@ const TESTS = [
     does:()=>"The tracker sweeps the duty from zero to maximum to find the maximum power point, after a short sensor zero calibration. Output power drops for a few seconds; PSU mode is left.",
     end:/\bsweep landed\b|\bStop sweep\b/, timeout:90000, finish:"sweep-curve", recheck:"sweep-curve" },
   { id:"coil", group:"Measurements", title:"Coil inductance (L0)", root:"measure-coil", optional:true,
-    cmd:o=>"measure-coil l0"+(o.apply ? " apply" : ""), confirm:"typed", tag:"drives the half-bridge",
+    cmd:()=>"measure-coil l0", confirm:"typed", tag:"drives the half-bridge", save:true,
     what:"Measures the inductance of the power coil.",
     needs:"MPPT or a converter stopped with “dc 0”, not PSU/PV mode; Vin above Vout + 1 V (sun); a build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1–1.5 min, no abort",
     risk:"Drives the half-bridge in manual PWM up to 2 A output. The firmware has no abort for it.",
-    opt:{ key:"apply", label:"Save L0 to coil.conf" },
-    does:o=>"Charging stops (“dc 0”), then the firmware sweeps the duty in manual PWM (diode emulation, up to 2 A output) for about 1–1.5 min; afterwards MPPT resumes if it was on. There is no abort command."
-      + (o.apply ? "\n\nThe result is written to coil.conf L0 (effective after the next reboot)." : ""),
+    does:()=>"Charging stops (“dc 0”), then the firmware sweeps the duty in manual PWM (diode emulation, up to 2 A output) for about 1–1.5 min; afterwards MPPT resumes if it was on. There is no abort command. Nothing is written: Save L0 does that afterwards.",
     end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
 
   { id:"bflow", group:"Self-tests", title:"Backflow switch", root:"selftest", cmd:()=>"selftest bflow", abort:"selftest abort",
@@ -3892,7 +3891,7 @@ function parseBflow(lines){
 
 // `measure-coil` output → summary.
 function parseCoil(lines){
-  let L=null, kind="", bad=null, applied=null, disturbed=false, peak=null, ofs=null, lc=null, lsApplied=null, skip=null, done=false;
+  let L=null, kind="", bad=null, l0=null, disturbed=false, peak=null, ofs=null, lc=null, lsApplied=null, skip=null, done=false;
   for (const raw of lines){
     const l=tstMsgOf(tstLine(raw)); let m;
     if ((m=l.match(/\bmeasure-coil: L = ([\d.]+) uH\s+\((ring fit|median of)/))){
@@ -3901,7 +3900,7 @@ function parseCoil(lines){
       kind = kind==="ring fit" ? "ring fit"+(n ? `, ±${n[1]} % noise, ±${n[2]} % syst` : "") : "median of the points, ring not resolved";
     }
     else if (/\bDISTURBED\b/.test(l)) disturbed=true;
-    else if ((m=l.match(/\bapplied coil\.conf L0=(\S+)/))) applied=m[1];
+    else if ((m=l.match(/-> coil\.conf L0=(\S+)/))) l0=m[1];
     else if ((m=l.match(/\bmeasure-coil: peak LS ([\d.]+)/))) peak=m[1];
     else if ((m=l.match(/\boffset peak-ideal ([+-]?\d+) ct/))) ofs=m[1];
     else if ((m=l.match(/\bL \(peak curvature\) = ([\d.]+) uH/))) lc=m[1];
@@ -3911,7 +3910,7 @@ function parseCoil(lines){
     else if ((m=l.match(/\bmeasure-coil: ((?:need |only |empty |converter |RT transition|missing |too few |FAILED |L0 not applied|.*restore failed).*)$/)) || (m=l.match(/^\s*(converter disabled \(protection\?\); aborting)/)))
       bad = bad || m[1];
   }
-  return { L, kind, bad, applied, disturbed, peak, ofs, lc, lsApplied, skip, done };
+  return { L, kind, bad, l0, disturbed, peak, ofs, lc, lsApplied, skip, done };
 }
 
 // `rect-cal status` → state line fields.
@@ -4100,7 +4099,7 @@ function tstSummary(id, lines, extra){
     case "coil": case "coills": {
       const c=parseCoil(lines);
       if (id==="coil" && c.L) return { cls: c.disturbed ? "warn" : "pass", text:`L = ${c.L} µH`, details:[ c.kind,
-        c.disturbed ? "Iout zero moved by more than 0.02 A during the sweep: not for coil.conf" : c.applied ? `saved to coil.conf: L0=${c.applied} (effective after the next reboot)` : "",
+        c.disturbed ? "Iout zero moved by more than 0.02 A during the sweep: not for coil.conf" : "",
         c.bad ? c.bad : "" ].filter(Boolean) };
       if (id==="coills" && c.peak) return { cls:"pass", text:`Low-side peak at ${c.peak} ct`+(c.ofs ? `, ${c.ofs} ct from ideal` : ""), details:[
         c.lc ? `L ≈ ${c.lc} µH (peak curvature, cross-check)` : "",
@@ -4217,6 +4216,31 @@ function tstAsk(d, o, live, extra){
 function tstResult(id){ let r=tstRes.get(id); if (!r) tstRes.set(id, r={ st:"idle", lines:[], sum:null, note:"", noteErr:false, recheck:false }); return r; }
 function tstPush(r, ln){ r.lines.push(ln); if (r.lines.length>400) r.lines.splice(0, r.lines.length-400); }
 
+// coil.conf L0: the device's (get-config, on unfolding and after a save), else the loaded file's
+function tstL0Cur(r){
+  const p = state && state.confPaths.find(x=>x.endsWith("/coil.conf"));
+  return +(r.cur!==undefined ? r.cur : p ? state.files[p].original.L0 : 0) || 0;
+}
+async function tstL0Read(id){
+  const r=tstResult(id), t=tstTarget();
+  if (!t || devBusy || tstProbing) return;
+  tstLock({ id, cmd:"get-config coil.conf", link:t }); tstGate();
+  try { r.cur=(await getConfig("coil.conf", TST_T.cmd)).L0 || ""; } catch(_){}
+  tstLock(null); tstGate();
+}
+async function tstL0Save(id){
+  const r=tstResult(id), t=tstTarget(), v=r.l0, cmd="set-config coil.conf L0 "+v;
+  if (!t || devBusy || !v) return;
+  tstLock({ id, cmd, link:t }); tstGate();
+  const x=await tstSend(cmd, ln=>tstPush(r, ln));
+  if (x.ok===true){ r.saved=v; svcSyncConf("coil", "L0", v); }
+  r.note = x.ok===true ? "Saved L0 to coil.conf; it takes effect after a restart." : `“${cmd}” ${x.ok===false ? "refused: "+(tstRefusal(x.lines, cmd)||"no reason") : "got no reply"}.`;
+  r.noteErr = x.ok!==true;
+  tstLock(null);
+  await tstL0Read(id);
+  tstGate();
+}
+
 // Read-only status command.
 async function tstRead(id){
   const d=tstDef(id), t=tstTarget();
@@ -4302,7 +4326,7 @@ async function tstStart(id){
   if (!tstAsk(d, o, tstLive(pre.lines), extra)) return end("idle", held ? `Not queued: the converter can't start now (${held}).` : "Not started.");
   if (tstTarget()!==t) return end("idle", `The link to ${dev} closed; nothing was sent.`, true);
 
-  r.st="run"; r.lines=[]; r.sum=null; r.open=true; tstPaint(id);
+  r.st="run"; r.lines=[]; r.sum=null; r.l0=null; r.open=true; tstPaint(id);
   const onLine = ln => { tstPush(r, ln); tstPaint(id); };
   let x=await tstSend(cmd, onLine);
   // measure-coil runs only from `dc 0`: stop MPPT (not PSU/PV or a manual duty), retry through the ramp-down
@@ -4368,7 +4392,7 @@ async function tstStart(id){
     }
   }
   r.sum=tstSummary(id, res, { noMpp });
-  if (id==="coil"){ const c=parseCoil(res); if (c.applied) svcSyncConf("coil", "L0", c.applied); }
+  if (d.save) r.l0=parseCoil(res).l0;
   await end("done", r.sum ? "" : "Run ended; the result was not recognised. See the output.", !r.sum);
 }
 
@@ -4467,7 +4491,8 @@ function tstBuild(body){
       ti.append(n, tstEl("p", "tst-what", d.what));
       hd.append(ti);
       if (d.abort){ const ab=tstEl("button", "abort", "Abort"); ab.type="button"; ab.onclick=()=>tstAbort(d.id); hd.append(ab); }
-      hd.onclick=e=>{ if (e.target.closest(".abort")) return; const r=tstResult(d.id); r.open=!r.open; tstPaint(d.id); };
+      hd.onclick=e=>{ if (e.target.closest(".abort")) return; const r=tstResult(d.id); r.open=!r.open; tstPaint(d.id);
+        if (d.save && r.open && r.cur===undefined) tstL0Read(d.id); };
       // the fold: tag, option and risk / needs / takes / sends, buttons, result, chart, output
       const more=tstEl("div", "tst-more"), det=tstEl("div", "tst-det"), ctl=tstEl("div", "tst-ctl");
       more.id="tst-more-"+d.id; x.setAttribute("aria-controls", more.id);
@@ -4475,7 +4500,9 @@ function tstBuild(body){
       if (d.read){ const rd=tstEl("button", "read", d.readLabel); rd.type="button"; rd.onclick=()=>tstRead(d.id); ctl.append(rd); }
       const run=tstEl("button", "run", d.runLabel || "Run"); run.type="button";
       run.onclick=()=>tstStart(d.id);
-      ctl.append(run, tstEl("span", "tst-state"));
+      ctl.append(run);
+      if (d.save){ const sv=tstEl("button", "save", "Save L0 to coil.conf"); sv.type="button"; sv.onclick=()=>tstL0Save(d.id); ctl.append(sv, tstEl("span", "tst-l0")); }
+      ctl.append(tstEl("span", "tst-state"));
       const res=tstEl("div", "tst-res"); res.setAttribute("role","status");
       const lg=tstEl("details", "fold tst-log"); lg.hidden=true;
       lg.append(tstEl("summary", "", "Device output"), tstOutEl(d.title));
@@ -4559,6 +4586,15 @@ function tstPaint(id){
   run.title = why || (devBusy && !mine ? devBusy+" is running" : "");
   if (ab){ ab.hidden=!mine || r.st!=="run"; ab.disabled=!t; }
   if (cb) cb.disabled=!!devBusy;
+  const sv=c.querySelector(".save");
+  if (sv){
+    const cur=tstL0Cur(r), ms=+r.l0||0, uH=v=>+(v*1e6).toFixed(2)+" µH";
+    sv.disabled = !t || !!devBusy || !ms || r.l0===r.saved;
+    sv.title = !ms ? (r.sum || r.note ? "This run gave no value for coil.conf" : "Run the measurement first") : r.l0===r.saved ? "Saved"
+      : devBusy ? devBusy+" is running" : !t ? "Not connected" : "";
+    c.querySelector(".tst-l0").textContent = [cur ? "Current L0: "+uH(cur) : "",
+      ms ? `Measured ${uH(ms)}`+(cur ? ` (${((ms-cur)/cur*100).toFixed(1).replace(/^-/, "−").replace(/^(?=\d)/, "+")} %)` : "") : ""].filter(Boolean).join(" · ");
+  }
   stl.textContent = id==="clear" ? why : "";
   c.querySelector(".tst-runs").textContent = mine && r.st==="run" && !r.open ? "running …" : "";
   const res=c.querySelector(".tst-res");

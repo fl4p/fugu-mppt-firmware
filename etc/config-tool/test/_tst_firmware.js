@@ -27,6 +27,7 @@ const SWEEP = sweepReply();
 
 // A scripted fake firmware. Async test output is emitted with setTimeout after the start marker.
 function firmware(host, opts = {}) {
+  opts = { ...opts, conf: structuredClone(opts.conf || {}) };      // set-config writes to its own copy
   const sent = [];
   const st = { hsLatched: false, bfLatched: false, bflowRunning: false, bfAbort: null, power: opts.power ?? 115.5,
     lastBf: [], rect: { state: 'idle', unsaved: 0, ct: 20, ns: '500' },
@@ -51,6 +52,11 @@ function firmware(host, opts = {}) {
     if ((g = cmd.match(/^get-config (\S+)$/))) {
       for (const [k, v] of Object.entries((opts.conf || {})[g[1]] || {})) s(`I (100) main: Conf '/littlefs/conf/${g[1]}:${k}' = '${v}'`);
       return s('OK: get-config ' + g[1]);
+    }
+    if ((g = cmd.match(/^set-config (\S+) (\S+) (.+)$/))) {
+      if (opts.setRefuse) return err('set-config: ' + opts.setRefuse);
+      (opts.conf[g[1]] = opts.conf[g[1]] || {})[g[2]] = g[3];
+      s(I('main', `Set conf '/littlefs/conf/${g[1]}:${g[2]}' = '${g[3]}'`)); return s('OK: ' + cmd);
     }
     const root = cmd.split(' ')[0];
     if ((opts.absent || []).includes(root) || ![...HELP.map(h => h.split(/[ ,]/)[0]), 'measure-coil', 'svc', 'dc'].includes(root)

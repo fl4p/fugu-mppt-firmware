@@ -780,7 +780,8 @@ amber.
 | ADC calibration (eFuse) | Status | `adc-cal` | – | marker | – |
 | MPP sweep: Run sweep | Measurements | `sweep` | confirm | `sweep landed` / `Stop sweep` (90 s), or queued (below) | `sweep-curve`; none when queued |
 | MPP sweep: Read last sweep | Measurements | `sweep-curve` | – | marker | – |
-| Coil inductance (L0) | Measurements | `measure-coil l0 [apply]` | typed | `measure-coil: done` (300 s) | – |
+| Coil inductance (L0) | Measurements | `measure-coil l0` | typed | `measure-coil: done` (300 s) | – |
+| Coil inductance: Save L0 | Measurements | `set-config coil.conf L0 <%.6e>` | – | marker | `get-config coil.conf` |
 | Backflow switch | Self-tests | `selftest bflow`, abort `selftest abort` | typed | a verdict or `selftest bflow: <why>` line (240 s) | `selftest` |
 | Clear latched faults | Self-tests | `selftest clear` | typed | marker | `selftest` |
 | Low-side timing (rect-cal) | Calibration | `rect-cal [force]`, abort `rect-cal abort` | confirm; typed with force | `rectcal: done:` / `failed:` (120 s) | `rect-cal status` |
@@ -824,7 +825,19 @@ amber.
   boot's last verdicts (Status row: the short form above); backflow run → PASS when every phase passed, FAIL with
   the phase (starts blocked until cleared), else "No verdict: <why>";
   `measure-coil l0` → "L = x µH" with ring fit/median and noise/systematic
-  error, amber when the zero moved (DISTURBED); `ls` → low-side peak, offset
+  error, amber when the zero moved (DISTURBED); the value to save is the
+  `-> coil.conf L0=<%.6e>` line (absent when DISTURBED). The L0 card has no
+  apply option: next to Run sit **Save L0 to coil.conf** and a muted
+  "Current L0: <x> µH · Measured <y> µH (±d %)". Current is `get-config
+  coil.conf` (under the device lock) the first time the card unfolds and
+  after a save, else the loaded `coil.conf`. Save is disabled without a
+  measured value ("Run the measurement first" / "This run gave no value for
+  coil.conf"), while the device is busy, and once that value is saved
+  ("Saved"); it sends `set-config coil.conf L0 <value>` (what `apply` writes:
+  `L0` is read at boot, so "it takes effect after a restart"), syncs the
+  loaded file and reads it back. A refusal is an amber note, Save stays
+  enabled. `ls` keeps its apply option: its live offset post has no
+  `set-config` equivalent; `ls` → low-side peak, offset
   from ideal, the curvature L, the applied offset; rect-cal → applied offset,
   or "Failed: <why>"; sweep → "MPP <P> W at <V> V" with the point count, age
   and landing on the same line (or "Sweeping: N points so far", "No sweep

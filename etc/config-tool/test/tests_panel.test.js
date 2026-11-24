@@ -242,10 +242,11 @@ test('action cards: collapsed to title and description; tag, buttons, a run, its
   assert.equal(c.querySelector('.tst-x').getAttribute('aria-expanded'), 'true');
   assert.equal(c.querySelector('.tst-more').hidden, false);
   assert.ok(seen(c.querySelector('.run')), 'Run in view once unfolded');
-  assert.match(c.querySelector('.tst-det').textContent, /Save L0 to coil\.conf.*Risk.*no abort.*Needs.*Takes.*Sends.*measure-coil l0/);
+  assert.match(c.querySelector('.tst-det').textContent, /Risk.*no abort.*Needs.*Takes.*Sends.*measure-coil l0$/);
   c.querySelector('.tst-what').click();
   assert.equal(c.classList.contains('open'), false, 'a click on the line folds it again');
   c.querySelector('.tst-what').click();
+  await idle(window);                                      // unfolding reads coil.conf L0
   window.prompt = () => null;
   c.querySelector('.run').click();                         // a button does not toggle the fold
   await idle(window);
@@ -401,26 +402,67 @@ test('abort: Abort sends selftest abort and the run ends without a verdict', asy
   assert.match(res.textContent, /No verdict: aborted/);
 });
 
-test('measure-coil L0 with apply: result parsed, coil.conf L0 follows the device', async () => {
-  const { window, dev } = await connected({ coil: true });
+test('measure-coil L0: Save L0 to coil.conf only after a value, with the current and measured value', async () => {
+  const { window, dev } = await connected({ coil: true, conf: { ...CONF, 'coil.conf': { L0: '5.090000e-05', rect_offset_ns: '500' } } });
   await openSheet(window); await idle(window);
-  const cb = card(window, 'coil').querySelector('.tst-opt input');
-  cb.checked = true; cb.dispatchEvent(new window.Event('change'));
-  assert.equal(card(window, 'coil').querySelector('.tst-cmd').textContent, 'measure-coil l0 apply');
-  assert.equal(card(window, 'coil').querySelector('.abort'), null, 'no abort: the firmware has none');
+  const c = card(window, 'coil'), sv = c.querySelector('.save'), txt = () => c.querySelector('.tst-l0').textContent;
+  assert.equal(c.querySelector('.tst-opt'), null, 'no apply option');
+  assert.equal(c.querySelector('.tst-cmd').textContent, 'measure-coil l0');
+  assert.equal(c.querySelector('.abort'), null, 'no abort: the firmware has none');
+  assert.equal(sv.textContent, 'Save L0 to coil.conf');
+  assert.equal(sv.disabled, true); assert.equal(sv.title, 'Run the measurement first');
+  let from = dev.sent.length;
+  fold(window, 'coil'); await idle(window);
+  assert.deepEqual(dev.sent.slice(from), ['get-config coil.conf'], 'unfolding reads the current value');
+  assert.equal(txt(), 'Current L0: 50.9 µH');
+  fold(window, 'coil'); fold(window, 'coil'); await idle(window);
+  assert.equal(dev.sent.length, from + 1, 'read once');
   let prompt = '';
   window.prompt = m => { prompt = m; return 'fry'; };
   await window.tstStart('coil');
   assert.match(prompt, /There is no abort command/);
-  assert.match(prompt, /written to coil\.conf L0/);
-  assert.ok(dev.sent.includes('measure-coil l0 apply'));
-  const res = card(window, 'coil').querySelector('.tst-res');
+  assert.match(prompt, /Nothing is written/);
+  assert.ok(!dev.sent.some(x => /apply|set-config/.test(x)), 'the run writes nothing');
+  const res = c.querySelector('.tst-res');
   assert.ok(res.classList.contains('pass'));
   assert.match(res.textContent, /L = 50\.34 µH/);
   assert.match(res.textContent, /ring fit, ±0\.4 % noise, ±1\.1 % syst/);
-  assert.match(res.textContent, /saved to coil\.conf: L0=5\.034000e-05/);
-  assert.equal(window._state.files['conf/coil.conf'].original.L0, '5.034000e-05');
+  assert.equal(sv.disabled, false);
+  assert.equal(txt(), 'Current L0: 50.9 µH · Measured 50.34 µH (−1.1 %)');
+  window.tstLock({ id: 'sweep', cmd: 'x', link: window.tstTarget() }); window.tstRender();
+  assert.equal(sv.disabled, true, 'not while the device is busy');
+  window.tstLock(null); window.tstRender();
+  from = dev.sent.length;
+  sv.click(); await idle(window);
+  assert.deepEqual(dev.sent.slice(from), ['set-config coil.conf L0 5.034000e-05', 'get-config coil.conf']);
+  assert.equal(txt(), 'Current L0: 50.34 µH · Measured 50.34 µH (+0.0 %)', 'refreshed from the device');
+  assert.match(res.textContent, /Saved L0 to coil\.conf; it takes effect after a restart\./);
+  assert.equal(sv.disabled, true); assert.equal(sv.title, 'Saved');
+  assert.equal(window._state.files['conf/coil.conf'].original.L0, '5.034000e-05', 'the loaded coil.conf follows');
   assert.equal(window.pendingCount(), 0);
+});
+
+test('measure-coil L0: no value (failure or disturbed zero) keeps Save disabled; a refused save is amber', async () => {
+  let { window, dev } = await connected({ coil: true, coilFail: true });
+  await openSheet(window); await idle(window);
+  window.prompt = () => 'fry';
+  await window.tstStart('coil');
+  let sv = card(window, 'coil').querySelector('.save');
+  assert.equal(sv.disabled, true); assert.equal(sv.title, 'This run gave no value for coil.conf');
+  const l0 = window.parseCoil(['measure-coil: L = 50.34 uH  (ring fit, 31 DCM pts)', '  -> coil.conf L0=5.034000e-05   note: …']).l0;
+  assert.equal(l0, '5.034000e-05');
+  assert.equal(window.parseCoil(['measure-coil: L = 50.34 uH  (ring fit, 31 DCM pts)',
+    'measure-coil: Iout zero +0.003/+0.030 A (off, before/after), subtracted; DISTURBED: moved > 0.02 A, L not for coil.conf']).l0, null);
+  ({ window, dev } = await connected({ coil: true, setRefuse: 'cannot write /littlefs/conf/coil.conf' }));
+  await openSheet(window); await idle(window);
+  window.prompt = () => 'fry';
+  await window.tstStart('coil');
+  sv = card(window, 'coil').querySelector('.save');
+  sv.click(); await idle(window);
+  const note = card(window, 'coil').querySelector('.tst-res .note');
+  assert.match(note.textContent, /“set-config coil\.conf L0 5\.034000e-05” refused: set-config: cannot write/);
+  assert.ok(note.classList.contains('err'));
+  assert.equal(sv.disabled, false, 'can be retried');
 });
 
 test('measure-coil failure and the LS sweep', async () => {
