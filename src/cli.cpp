@@ -274,7 +274,8 @@ static void cmdDc(cmd *c) {
     if (cc.countArgs() >= 2 && dc > 0 && (!argInt(cc, 1, manualRect) || manualRect < 0))
         CMD_FAIL_RETURN("dc: bad ls count");
 
-    const auto ticket = mppt.requestPsuManual(dc, manualRect);
+    // dc 0 stops at once: ramping below Vout/Vin in CCM at power reverses the coil current (highD-bflowOpen)
+    const auto ticket = mppt.requestPsuManual(dc, manualRect, false, dc == 0);
     if (!waitPsuCommand(ticket))
         CMD_FAIL_RETURN("dc: RT transition timed out");
     ESP_LOGI("main", "Switched to manual PWM");
