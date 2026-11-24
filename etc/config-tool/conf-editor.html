@@ -4066,6 +4066,8 @@ function tstCoilChart(fig, lines, cw, l0){
     ext(yr, p.L); if (uL){ ext(yr, uL); ext(yr, uL*0.95); }
   }
   if (!(yr[1]-yr[0]>1e-3)){ yr[0]-=0.5; yr[1]+=0.5; }
+  const dx=(p.ls ? 10 : 0.2)-(xr[1]-xr[0]);                       // the first rows: no hair-thin x range
+  if (dx>0){ xr[0]-=dx/2; xr[1]+=dx/2; }
   const xd=niceTicks(xr[0], xr[1], narrow ? 4 : 6), yd=niceTicks(yr[0]-(yr[1]-yr[0])*0.05, yr[1]+(yr[1]-yr[0])*0.05, 4);
   const { X, Y, L, R } = tstAxes(xd, yd, W, H, p.ls ? "ct" : "A", p.ls ? "A" : "µH");
   const f=v=>v.toFixed(1), inY=v=>v>=yd.lo && v<=yd.hi;
