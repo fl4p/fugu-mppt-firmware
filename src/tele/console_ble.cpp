@@ -585,9 +585,12 @@ void bleConsoleBegin(const std::string &deviceName, const std::string &security,
     svc->start();
     improvCreateService(bleServer, writeProps);
 
-    BLEAdvertising *adv = BLEDevice::getAdvertising();
-    adv->addServiceUUID(NUS_SERVICE_UUID);
-    adv->setScanResponse(true);
+    // Passive scanners never see the scan response, so the name rides the advert (the wrapper builds
+    // flags + name, shortened to fit, and rebuilds it after a host reset) and the NUS UUID the scan
+    // response, which active scanners merge.
+    BLEAdvertisementData rsp;
+    rsp.setCompleteServices(BLEUUID(NUS_SERVICE_UUID));
+    BLEDevice::getAdvertising()->setScanResponseData(rsp);
     BLEDevice::startAdvertising();
 
     bleInited = true;
@@ -689,6 +692,16 @@ bool bleConsoleSetAdvMs(uint16_t ms) {
 uint16_t bleConsoleAdvMs() { return advMs; }
 
 const char *bleConsoleName() { return advName.c_str(); }
+
+size_t bleNameAdv(uint8_t *ad) {
+    const size_t len = advName.size(), n = std::min(len, (size_t) 26);
+    ad[0] = 2; ad[1] = 0x01; ad[2] = 0x06;
+    if (!n) return 3;
+    ad[3] = (uint8_t) (n + 1);
+    ad[4] = len > n ? 0x08 : 0x09;
+    memcpy(&ad[5], advName.data(), n);
+    return 5 + n;
+}
 
 size_t bleConsoleChunk() {
     if (!deviceConnected || !bleServer) return 20;
@@ -807,6 +820,8 @@ bool bleConsoleSetAdvMs(uint16_t) { return false; }
 uint16_t bleConsoleAdvMs() { return 0; }
 
 const char *bleConsoleName() { return ""; }
+
+size_t bleNameAdv(uint8_t *ad) { ad[0] = 2; ad[1] = 0x01; ad[2] = 0x06; return 3; }
 
 void bleConsoleAwaitTxDrain(unsigned, unsigned) {}
 

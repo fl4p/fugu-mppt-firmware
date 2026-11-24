@@ -27,7 +27,7 @@ The change is limited to the payload. It adds no Kconfig option of its own (it b
 
 ## On-air format
 
-The frame uses a legacy BLE advertising PDU, 31 B max. The existing NUS console keeps its 128-bit service UUID in the scan response (already enabled by `setScanResponse(true)` in `src/tele/console_ble.cpp`), and the advertising data carries BTHome instead.
+The frame uses a legacy BLE advertising PDU, 31 B max. The existing NUS console keeps its 128-bit service UUID in the scan response (`setScanResponseData()` in `src/tele/console_ble.cpp`), and the advertising data carries BTHome instead.
 
 The advertising data has the following structure (max 31 B, plaintext BTHome v2):
 
@@ -152,18 +152,8 @@ The service behaves as follows:
 
 ### Modified: `src/tele/console_ble.cpp`
 
-To make room for the BTHome service data in the primary PDU, the NUS service UUID moves from the advertising data to the scan response. The change sits in the advertising setup of `console_ble.cpp`:
-
-```cpp
-BLEAdvertising *adv = BLEDevice::getAdvertising();
-adv->setScanResponse(true);
-auto *scanResp = BLEDevice::getAdvertising();   // NimBLE uses the same handle; pick the
-scanResp->setScanResponseData(/* NUS UUID + name */);  // exact API per the wrapper version
-// Primary adv: leave UUID list empty so BleBthomeService can own ~23 B of service-data room
-BLEDevice::startAdvertising();
-```
-
-The exact NimBLE-Arduino call that moves the NUS UUID into the scan response depends on the wrapper version (`setScanResponseData(BLEAdvertisementData&)` vs the deprecated boolean knob). During implementation, verify it against the pinned arduino-esp32 version. That version is capped below 3.3.8, whose BLE code needs an IDF NimBLE API absent from IDF 5.5.1.
+The NUS service UUID already sits in the scan response, so the primary PDU holds only flags and the device name.
+BTHome needs about 23 B of service-data room there, so the name has to give way or be shortened while BTHome is on.
 
 ### New: `/littlefs/conf/bthome.conf`
 

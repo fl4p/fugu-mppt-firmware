@@ -37,6 +37,8 @@ size_t bleConsoleChunk();       // usable notify payload: negotiated MTU-3, else
 bool bleConsoleLinkSettled();   // connected + post-connect settle window elapsed
 void bleConsoleResumeAdv();     // (re)start the connectable advertisement (tele_adv reconciler)
 const char *bleConsoleName();   // advertised device name ("" before begin)
+// Flags + local name (shortened to fit) into a 31-byte advert buffer; returns the length.
+size_t bleNameAdv(uint8_t *ad);
 // Connectable adv interval (ms, 0 = stack default); false (not applied) before begin or with a client.
 bool bleConsoleSetAdvMs(uint16_t ms);
 uint16_t bleConsoleAdvMs();

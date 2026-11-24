@@ -223,23 +223,20 @@ size_t improvAdvPayload(uint8_t *ad) {
 }
 
 // Without the telemetry broadcast nothing else rewrites the connectable advert: alternate the
-// Improv advert (UUID + service data, 31 B) with the console's flags + NUS UUID. The console advert
-// carries the service data too: a host that merges adverts (and lists GATT-cached UUIDs for a bonded
-// device) would otherwise see the Improv UUID without it.
+// Improv advert (UUID + service data, 31 B) with the console's flags + name (the NUS UUID stays in the
+// scan response). The console advert carries the service data too when it fits: a host that merges
+// adverts (and lists GATT-cached UUIDs for a bonded device) would otherwise see the Improv UUID without it.
 static void advTick(time_ms now) {
     static time_ms lastMs = 0;
     static bool onAir = false, improvPhase = false;
     if (teleAdvEnabled() || now - lastMs < ADV_SWAP_MS) return;
     lastMs = now;
-    uint8_t imp[31], ad[31] = {2, 0x01, 0x06, 17, 0x07, 0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
-                               0x93, 0xF3, 0xA3, 0xB5, 0x01, 0x00, 0x40, 0x6E};
-    size_t n = 21, ni = improvAdvPayload(imp);
+    uint8_t imp[31], ad[31];
+    size_t n, ni = improvAdvPayload(imp);
     if (!ni && !onAir) return;
-    if (ni) {
-        improvPhase = !improvPhase;
-        if (improvPhase) memcpy(ad, imp, n = ni);
-        else memcpy(ad + n, imp + 21, 10), n += 10;
-    }
+    if (ni) improvPhase = !improvPhase;
+    if (ni && improvPhase) memcpy(ad, imp, n = ni);
+    else if ((n = bleNameAdv(ad)) + 10 <= sizeof(ad) && ni) memcpy(ad + n, imp + 21, 10), n += 10;
     if (ble_gap_adv_set_data(ad, n) == 0) onAir = ni;
 }
 

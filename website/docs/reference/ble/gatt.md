@@ -63,16 +63,24 @@ authentication", and the client pairs and retries. TX carries no output until th
 
 ## Advertising
 
-The device advertises under its hostname (see [Connecting](../../guide/connecting.md#ble)) with the NUS service
-UUID in the advertising data, and answers scan requests. The name is in the scan response. It stops advertising while
-a client is connected.
+The device advertises under its hostname (see [Connecting](../../guide/connecting.md#ble)) and answers scan
+requests. It stops advertising while a client is connected.
+
+| Packet | Content |
+|---|---|
+| Advertising data | Flags `0x06`, complete local name (`0x09`); a name over 26 characters is cut to 26 and sent as shortened name (`0x08`) |
+| Scan response | Complete list of 128-bit service UUIDs (`0x07`): NUS |
+
+Passive scanners, such as a Bluetooth proxy in passive mode, see only the advertising data, so they find the device
+by name. Active scanners (Web Bluetooth, CoreBluetooth, Android) merge the scan response and can filter on the NUS
+service UUID.
 
 While Improv accepts credentials, the advertising data alternates every 0.5 s between two payloads, because the
 Improv service UUID and its `0x4677` service data must share one advertisement and fill all 31 bytes:
 
 | Payload | Content |
 |---|---|
-| Console | Flags, NUS service UUID |
+| Console | Flags, name, Improv service data `0x4677` if it still fits (names up to 16 characters) |
 | Improv | Flags, Improv service UUID, service data `0x4677`: state, capabilities, 4 reserved bytes |
 
 In `CONFIG_FUGU_WITH_BLE_ADV` builds the Improv payload takes every other telemetry slot while advertising is

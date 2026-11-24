@@ -92,16 +92,9 @@ static bool startNonConn() {
 // don't reach every observer (rpi kernel scans effectively passively next to an active LE
 // connection), so the name must ride the adv payload itself. Observers cache it per MAC.
 static bool namePayload(uint8_t slot) {
-    if (slot % 8 != 0) return false;
-    const char *name = bleConsoleName();
-    size_t n = std::min(strlen(name), (size_t) 26);
-    if (!n) return false;
+    if (slot % 8 != 0 || !*bleConsoleName()) return false;
     uint8_t ad[31];
-    ad[0] = 2; ad[1] = 0x01; ad[2] = 0x06;
-    ad[3] = (uint8_t) (n + 1);
-    ad[4] = strlen(name) > 26 ? 0x08 : 0x09;   // shortened / complete local name
-    memcpy(&ad[5], name, n);
-    int rc = ble_gap_adv_set_data(ad, 5 + n);
+    int rc = ble_gap_adv_set_data(ad, bleNameAdv(ad));
     if (rc != 0) warnThrottled("set name data", rc);
     return true;
 }
