@@ -45,6 +45,18 @@
 //     wx-sweep-preempt  a requested sweep pre-empts a scheduled re-sweep, which then does not count to the 10 min cap
 //     wx-sweep-fall-n1, wx-sweep-rise-n1, wx-sweep-one   single peak known (pv_substrings=1): no re-sweep; -one learns
 //                       it from two verified sweeps; "== VERDICT" PASS/FAIL
+//     wx-ovl-*          output limiter vs a left-side operating point (#70), Iout limit lv_i_max, thermal power derate by
+//                       chip temperature; "== OVL" PASS = no Iout-OC trip:
+//       wx-ovl-shade      wx-shade3-move shade, lv_i_max 4.7 A: limited on the 33 V peak, the shade lifts (0.3 -> 0.8)
+//                         until the valley passes the limit (reproduces #70, not in the default list)
+//       wx-ovl-shade-temp wx-shade3-move shade, lv_i_max 6.5 A: on the 33 V peak (144 W), derate at 600 s to 100 W, below
+//                         the valley (reproduces #70, not in the default list)
+//       wx-ovl-shade-hold the same with the derate to 125 W, above the valley: held on the 33 V peak's right shoulder
+//       wx-ovl-sun        1500 W string, 35 A: sun returns (0.25 -> 1 in SIM_OVL_EDGE s, default 2) from the dim MPP
+//       wx-ovl-ctl        1500 W string in full sun: the sweep ends at the Iout limit, a derate to 400 W from 300 s, a
+//                         sweep into it at 450 s
+//       wx-ovl-bad        detector calibration, must FAIL: light 0.2 -> 1 in one tick
+//       SIM_IOUT_MAX=<A> overrides lv_i_max
 //     wx-mp-ramp, wx-mp-psu, wx-mp-psu-nosink  source Voc slowly 1.25 -> 1.02 -> 1.25 x Vbat (LS min pulse ratio
 //                       limit): weak PV / stiff sinking source into a full battery / non-sinking bench PSU; the
 //                       == REVERSE line has the plant's reverse output current and the starts
@@ -172,6 +184,7 @@ static const auto lfPeriod = 3000000ULL;
 extern std::string g_simFsRoot;
 extern uint32_t g_simTickUs;
 extern void (*g_simLogHook)(char lvl, const char *tag, const char *msg);
+extern float g_simChipTemp;
 
 // ---- trace / event capture ----
 struct Trip {
@@ -901,6 +914,9 @@ struct Wx {
     double bmsAt = -1;                       // BMS frames from then on (ibat every 4 s, highest cell every 12 s)
     float vcell = 0;                         // highest cell [V] the BMS reports
     int bmsResweep = -1;                     // BMSCAP check: 1 a re-sweep must find the MPP, 0 no further sweep
+    bool ovl = false;                        // OVL check (wx-ovl-*)
+    float ioutMax = 0;                       // limits.conf lv_i_max, 0 = the mock's
+    Track chipT;                             // chip temperature [C] (thermal power derate above temp_derate)
 
     void init() {
         PvModel m;
@@ -938,6 +954,7 @@ struct Wx {
             if (std::fabs(v - vocNow) > 1e-3f) g_vconv.setPv(isc, vocNow = v, k);
         }
         if (!vbatT.empty()) g_vconv.setBat(trackAt(vbatT, t, vbat), rbat);
+        if (!chipT.empty()) g_simChipTemp = trackAt(chipT, t, 40);
     }
 };
 
@@ -1147,6 +1164,16 @@ static void itStep(ItState &it, double t) {
 }
 #endif
 
+// wx-ovl-*: per-tick maxima of Iout ewm / med3 over limits.Iout_max (the Iout-OC terms) from statsFrom
+static float g_ovlEwm = 0, g_ovlMed = 0;
+static double g_ovlFrom = 0;
+static void ovlTick() {
+    if (g_ring) ringTick();
+    if (tNow() < g_ovlFrom) return;
+    g_ovlEwm = std::max(g_ovlEwm, sensors.Iout->ewm.avg.get() / mppt.limits.Iout_max);
+    g_ovlMed = std::max(g_ovlMed, sensors.Iout->med3.get() / mppt.limits.Iout_max);
+}
+
 static int runWx(const std::string &name, Wx &wx) {
     if (const char *e = getenv("SIM_T")) wx.T = atof(e);
     g_verbose = getenv("SIM_V") != nullptr;
@@ -1187,6 +1214,9 @@ static int runWx(const std::string &name, Wx &wx) {
     double iMin = 0, tNeg = 0, qNeg = 0, tAbove = 0, tAboveDcm = 0;
     float mOnMax = 0;
     const unsigned starts0 = g_nStarts;
+    struct OvlEp { double t0, t1; float pIn, pMax; };
+    std::vector<OvlEp> ovl;
+    if (wx.ovl) g_tickHook = ovlTick, g_ovlFrom = wx.statsFrom;
     const float mCrit = 1.f - (float) converter.getRectOnPwmMin() /
                               ((float) converter.pwmMaxDriver() + (float) converter.getDtLhTicks());
 
@@ -1304,6 +1334,14 @@ static int runWx(const std::string &name, Wx &wx) {
             nextTr += trEvery;
         }
         if (tb < wx.statsFrom) continue;
+        if (wx.ovl) {
+            // IoutCTRL (3) / PowerCTRL (4) episodes, gaps below 1 s merged
+            const unsigned li = mppt.teleSnap().limIdx;
+            if (on && (li == 3 || li == 4)) {
+                if (ovl.empty() || tb - ovl.back().t1 > 1) ovl.push_back({tb, tb, pPv, pPv});
+                ovl.back().t1 = tNow(), ovl.back().pMax = std::max(ovl.back().pMax, pPv);
+            }
+        }
         if (g_ring && on && !sweeping) dutyHist[std::min<size_t>(1023, converter.getCtrlOnPwmCnt() / 4)] += dt;
 
         maxPk = std::max(maxPk, nReach);
@@ -1463,6 +1501,21 @@ static int runWx(const std::string &name, Wx &wx) {
                wx.bmsResweep == 2 ? "its sweep by BMS data + 10 s" : wx.bmsResweep ? ">= 2, last >= 95 %" : "1",
                last.p, pGLast, noMpp, mppt.charger.Vout_max(), ok ? "PASS" : "FAIL");
         if (!ok) return 1;
+    }
+    if (wx.ovl) {
+        size_t nOc = 0, nRise = 0;
+        for (auto &t: g_trips) nOc += t.t >= wx.statsFrom && t.who == "Iout-OC";
+        const OvlEp *w = nullptr;
+        for (auto &e: ovl) {
+            nRise += e.pMax > 1.05f * e.pIn;
+            if (!w || e.pMax / e.pIn > w->pMax / w->pIn) w = &e;
+        }
+        for (auto &e: ovl) if (ovl.size() <= 12) printf("==   limiter t=%.1f..%.1f s: PV %.1f W at entry, peak %.1f W\n", e.t0, e.t1, e.pIn, e.pMax);
+        printf("== OVL %s: %zu Iout-OC trips, %zu limiter episodes (%zu with PV power rising > 5 %%), max Iout/Iout_max %.2f"
+               " (ewm, med3 %.2f; Iout_max %.1f A), PV power at limit entry vs peak during episode %.1f -> %.1f W (worst, t=%.1f s): %s\n",
+               name.c_str(), nOc, ovl.size(), nRise, g_ovlEwm, g_ovlMed, mppt.limits.Iout_max, w ? w->pIn : 0.f, w ? w->pMax : 0.f,
+               w ? w->t0 : 0.0, nOc ? "FAIL" : "PASS");
+        if (nOc) return 1;
     }
     if (!wx.verdict.empty()) {
         const bool ok = g_verdict == wx.verdict && nSweeps == wx.sweeps;
@@ -1643,6 +1696,25 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         const bool off = sc == "wx-sweep-learn-off";
         // -off: the scan trigger (power off its reference while the light still rises) probes once
         wx.verdict = off ? "ppLs" : "ppf", wx.sweeps = 1;
+    } else if (sc.rfind("wx-ovl-", 0) == 0) {
+        wx.ovl = true, wx.statsFrom = 5;
+        if (sc == "wx-ovl-shade" || sc == "wx-ovl-shade-temp" || sc == "wx-ovl-shade-hold") {
+            // wx-shade3-move: the 33 V peak is global at the boot sweep, the shade lifts from 120 s
+            fry6(300), wx.T = 900;
+            const bool lift = sc == "wx-ovl-shade";
+            wx.sub[3] = wx.sub[4] = wx.sub[5] = {{120, 0.3f}, {420, lift ? 0.8f : 0.72f}};
+            if (lift) wx.ioutMax = 4.7f;
+            else wx.ioutMax = 6.5f, wx.chipT = {{600, 40}, {610, sc == "wx-ovl-shade-temp" ? 88.f : 87.5f}};
+        } else if (sc == "wx-ovl-sun" || sc == "wx-ovl-bad" || sc == "wx-ovl-ctl") {
+            fry(1500), wx.vocLog = 2.6f, wx.T = 600;
+            const float e = getenv("SIM_OVL_EDGE") ? atof(getenv("SIM_OVL_EDGE")) : 2;
+            if (sc == "wx-ovl-ctl") wx.chipT = {{300, 40}, {310, 82}}, wx.sweepAt = 450;
+            else if (sc == "wx-ovl-sun") wx.cloud = {{0, 0.25f}, {200, 0.25f}, {200 + e, 1}};
+            else wx.cloud = {{0, 0.2f}, {200, 0.2f}, {200.003f, 1}}, wx.T = 260;
+        } else {
+            return false;
+        }
+        if (const char *e = getenv("SIM_IOUT_MAX")) wx.ioutMax = atof(e);
     } else if (sc == "ring-sweep" || sc == "ring-weak") {
         // field-like string at the board's morning Voc; -sweep: a global sweep at 60 s in ~150-180 W sun
         const bool fry = !strcmp(g_ring->name, "fry");
@@ -2966,6 +3038,11 @@ static int simMain(int argc, char **argv) {
     }
     if (sc.rfind("wx-bms-", 0) == 0) {
         std::string c = "charger.conf:vout_max_fallback=26.8";
+        if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
+        setenv("SIM_CONF", c.c_str(), 1);
+    }
+    if (wx.ioutMax > 0) {
+        std::string c = "limits.conf:lv_i_max=" + std::to_string(wx.ioutMax);
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         setenv("SIM_CONF", c.c_str(), 1);
     }
