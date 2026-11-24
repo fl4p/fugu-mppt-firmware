@@ -236,8 +236,11 @@ def test_repo_keys_read_indirectly_are_kept(repo_scan, conf, key):
     assert key in repo_scan.file_keys.get(conf, set())
 
 
-def test_repo_ignored_and_guard_reads_stay_out(repo_scan):
-    assert "vconv.conf" not in repo_scan.file_keys
+def test_repo_vconv_conf_is_scanned(repo_scan):
+    assert {"pv_isc", "plant_c_out"} <= repo_scan.file_keys.get("vconv.conf", set())
+
+
+def test_repo_guard_reads_stay_out(repo_scan):
     assert "ntc_ch" not in repo_scan.file_keys["board.conf"]
     assert "pwm_driver" not in repo_scan.file_keys["converter.conf"]
 
