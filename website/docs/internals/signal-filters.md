@@ -127,6 +127,8 @@ An adaptive noise estimator exists only as a diagnostic (console `anf on`); it d
 An inverter on the DC bus draws ripple at twice the mains frequency (100 Hz for 50 Hz, 120 Hz for 60 Hz), which
 corrupts the MPPT power estimate. Each physical sensor whose own sample rate allows it (f0 < 0.45·fs) gets an IIR
 notch (biquad) at that frequency. Slower channels get none, and the notch settings have no effect on them.
+The notch is 30 dB deep at its centre. With Q 20 it is narrow: at 100 Hz it attenuates 6 dB at 1 Hz off and
+2.5 dB at 2 Hz off, and it passes the ripple's harmonics.
 
 - Gain at the notch frequency: −15 dB (fixed).
 - Quality factor: `notch_q`, default 20 (bandwidth ≈ f0/Q).

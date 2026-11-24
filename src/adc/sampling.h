@@ -350,7 +350,7 @@ public:
     // concurrently with filter().
     bool notchAdaptive = true;
     float notchFreq = 100.0f;          // active/fixed notch frequency [Hz]
-    float notchQ = 20.0f, notchAmp = 0.177828f; // amp: NotchFilter::gainAmp(-30 dB)
+    float notchQ = 20.0f, notchAmp = 0.0316228f; // NotchFilter::gainAmp(-30 dB)
     static constexpr float NOTCH_SNR_MIN = 15.0f; // min peak/mean ratio to trust an estimate
     RippleFreqDetector<61> rippleDet{};
     const Sensor *rippleSrc = nullptr; // channel fed to the detector (Vout)
