@@ -262,6 +262,14 @@ hold begins, termination latches, the BMS data goes stale, or the pack
 discharges. It applies only where a line crossing enters the hold
 (`cv_hold_max_s` > 0 or a balance run).
 
+The hold can also begin below the band. When a load takes most of the PV
+current, or a restart has cleared the line's peak-current memory, `ibat` is
+low and so is the line, so the crossing can come 100 mV or more below
+`cv_eoc`. The cell loop alone would let the limit follow the output current
+up to the band. A hold that begins without an approach limit therefore keeps
+the cut pending, and applies it once, the same way, when the highest cell
+first reaches the band above the tail current.
+
 The hold ends in one of these ways:
 
 - Tail: the BMS pack current stays below `tail_c_rate × bat_c` and the highest

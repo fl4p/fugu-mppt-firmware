@@ -1139,7 +1139,35 @@ static void test_bms_charge_reseed_no_release() {
     CHECK(std::fabs(d - (276.8f - q)) < 0.3f, "deficit follows the true charge (%.2f vs %.2f)", d, 276.8f - q);
 }
 
+// flat 11-24 11:19: after a reboot a load takes the PV current, ibat ~1 A puts the line at 3.36 V and the balance hold
+// starts 140 mV below cv_eoc. The load goes: the hold must cut on reaching the approach band, not run in at 35 A.
+static void test_bal_hold_entered_low_cuts_at_band() {
+    BatteryCharger c; c.params = balParams(7200); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    c.balanceNow();
+    Plant pl;
+    topOfCharge(pl.pack);
+    pl.pack.set(3.322f, 0.04f); // highest cell 3.362 V at rest
+    pl.iload = 34.f;
+    int k = pl.untilHold(c, 600);
+    CHECK(k >= 0 && c.balanceRunning() && pl.vcell() < 3.40f,
+          "low-ibat line: balance hold entered at %.3f V, ibat %.1f A", pl.vcell(), pl.ibat);
+    pl.run(c, 120);
+    pl.iload = 0.f;
+    float limAtBand = NAN, ibatAtBand = NAN, vmax = 0;
+    for (int s = 0; s < 1800 && !(bool) c.termCond; ++s) {
+        pl.run(c, 1);
+        vmax = std::max(vmax, pl.vcell());
+        if (std::isnan(limAtBand) && c.batSt.vcell_high >= 3.5f - 0.03f) limAtBand = c.Iout_max(), ibatAtBand = pl.ibat;
+    }
+    printf("  hold entered low: limit %.1f A at the band (ibat %.1f A), cell peak %.3f\n", limAtBand, ibatAtBand, vmax);
+    CHECK(limAtBand < 20.f, "hold entered low: cut at the band (limit %.1f A, ibat %.1f A)", limAtBand, ibatAtBand);
+    CHECK(!(bool) c.termCond && c.balanceRunning() && vmax <= 3.5f + 0.015f,
+          "hold entered low: no ceiling, peak %.3f <= cv_eoc + 15 mV", vmax);
+}
+
 int main() {
+    test_bal_hold_entered_low_cuts_at_band();
     test_hold_blind_decay(1, 120);
     test_hold_blind_decay(2, 120);
     test_hold_blind_decay(1, 240);

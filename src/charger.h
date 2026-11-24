@@ -463,7 +463,7 @@ class BatteryCharger {
     float _staleCap = NAN; // [V] bus cap latched for the cell-data gap that began at _staleCapTicks
     uint32_t _staleCapTicks = 0;
     bool _termJoin = false; // terminated without authority, joined at float because the pack discharges
-    bool _wasCvHold = false;
+    bool _wasCvHold = false, _apArm = false; // hold entered without an approach limit: cut pending
     float _cvIlim = NAN, _cvIbat = NAN; // [A] CV hold: output-current limit (NAN = none), pack-current target
 
     // Integrator step gate: advance vpack_pin only on a fresh BMS frame so the
@@ -998,20 +998,28 @@ public:
         // Approach (hold mode): a cell within APPROACH_V of cv_eoc above the tail current overshoots (cell frames
         // seconds apart, steep top of charge). Cut the pack current to the tail current, the line's current at cv_eoc,
         // and let the hold loop take it from there; kept until the hold, a latch, stale data or a discharging pack.
+        // A hold entered without that cut (line low at low ibat) keeps it armed: it cuts once on reaching the band.
         const float iTail = params.tail_c_rate * params.Cbat, ibatNow = batSt.ibat_raw;
-        bool ap = !cvHold && !psu && !nowTerm && (params.cv_hold_max_s || termCond.balance) && batDataOk && ibatFresh()
-                  && !_partialHold && !_coldBlocked && !(ibat < 0.f);
-        if (ap && !std::isfinite(_cvIlim) && batSt.vcell_high >= params.cv_eoc - APPROACH_V && ibatNow > iTail) {
+        const float band = params.cv_eoc - APPROACH_V;
+        const bool apOk = !psu && !nowTerm && (params.cv_hold_max_s || termCond.balance) && batDataOk && ibatFresh()
+                          && !_partialHold && !_coldBlocked && !(ibat < 0.f);
+        const bool ap = !cvHold && apOk;
+        if (cvHold && !_wasCvHold) _apArm = !std::isfinite(_cvIlim);
+        const bool cut = apOk && (cvHold ? _apArm : !std::isfinite(_cvIlim)) && batSt.vcell_high >= band
+                         && ibatNow > iTail;
+        if (cut) {
             _cvIlim = std::isfinite(ioutNow) && !sweep ? fmaxf(ioutNow * iTail / ibatNow, IOUT_LIM_FLOOR) : iTail;
             _cvIbat = iTail;
             _lastBmsFrameUs = batSt.vcell_high_t;
             _lastIbatFrameUs = batSt.ibat_t;
-            ESP_LOGW("charger", "cv approach: vcHigh %.3f @ iBat %.2f, ilim %.2f A", batSt.vcell_high, ibatNow, _cvIlim);
+            _apArm = false;
+            ESP_LOGW("charger", "cv approach%s: vcHigh %.3f @ iBat %.2f, ilim %.2f A", cvHold ? " (hold)" : "",
+                     batSt.vcell_high, ibatNow, _cvIlim);
         }
         // Boot: cell frames near the top before termination could be evaluated (ibat warm-up): idle. Without an ibat
         // source it ends BOOT_IDLE_US after boot.
         bool boot = !_termDecided && batSt.haveValidCellVoltage()
-                    && (std::isfinite(_cvIlim) || batSt.vcell_high >= params.cv_eoc - APPROACH_V)
+                    && (std::isfinite(_cvIlim) || batSt.vcell_high >= band)
                     && (batSt.ibat_t || nowUs < BOOT_IDLE_US);
         if (boot) {
             if (!std::isfinite(_cvIlim)) ESP_LOGW("charger", "boot: vcHigh %.3f, idle until the BMS frames", batSt.vcell_high);
@@ -1026,7 +1034,7 @@ public:
                 if (!std::isfinite(_cvIlim))
                     _cvIlim = sweep ? params.tail_c_rate * params.Cbat
                               : std::isfinite(ioutNow) ? fmaxf(ioutNow, IOUT_LIM_FLOOR) : params.Ibat_lim;
-                _lastBmsFrameUs = ~batSt.vcell_high_t; // target from this frame
+                if (!cut) _lastBmsFrameUs = ~batSt.vcell_high_t; // target from this frame
                 ESP_LOGW("charger", "cv hold: vcHigh %.3f > line %.3f @ iBat %.2f, ilim %.2f A",
                          batSt.vcell_high, termCond.v_term(), ibat, _cvIlim);
             } else {
