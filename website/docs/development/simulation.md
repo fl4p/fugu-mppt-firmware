@@ -164,17 +164,21 @@ and `limits.conf`.
 
 ### Running
 
-The script builds `/tmp/mppt-sim` with `clang++` (C++20) and runs the given scenarios:
+The script builds the simulator with `clang++` (C++20) and runs the given scenarios. The binary goes to
+`/tmp/mppt-sim.<n>`, where `<n>` is a checksum of the checkout path, so two checkouts do not overwrite each other's
+build; `OUT` sets another path:
 
 ```bash
 test/host-stub/mppt-sim.sh                    # build, run the default scenario list
 test/host-stub/mppt-sim.sh sanity wx-cloud    # build, run two scenarios
-/tmp/mppt-sim wx-shade2                       # run one scenario with the built binary
-OUT=/tmp/sim-b test/host-stub/mppt-sim.sh     # build to another path
+test/host-stub/mppt-sim.sh --list             # print the default scenario list, no build
+OUT=/tmp/sim-b test/host-stub/mppt-sim.sh     # build to /tmp/sim-b
+/tmp/sim-b wx-shade2                          # run one scenario with the built binary
 ```
 
-The script runs every scenario it is given and exits non-zero if any failed. The `cv-hold-*` scenarios run only when
-named.
+The script runs every scenario it is given and exits non-zero if any failed. The default list takes about 30 CPU
+minutes. The `Host tests` GitHub workflow runs it in eight parallel shards on every push to `main` that changes
+`src/`, `test/host-stub/` or `config/`.
 
 ### Scenarios
 

@@ -39,7 +39,7 @@ The repository has these top-level folders:
 | `doc/` | Working notes, specs and reviews that are not part of this site |
 | `plans/` | Implementation plans |
 | `website/` | This documentation site (Docusaurus); pages are in `website/docs/` |
-| `.github/workflows/` | `docs.yml`: builds and publishes this site |
+| `.github/workflows/` | `docs.yml`: builds and publishes this site; `host-tests.yml`: host simulator scenarios and host unit tests |
 
 The repository root holds these files: `CMakeLists.txt` (project, sdkconfig layering, littlefs image), `sdkconfig.defaults` and its fragments,
 `partitions.csv`, `idf-export.sh` (sources ESP-IDF, sets target and port), `provision.py`, `ota.sh`, `flash.sh`,
