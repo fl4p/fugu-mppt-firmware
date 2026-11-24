@@ -311,7 +311,6 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 * Lead-acid and AGM charging
   ([example](https://github.com/RedCommissary/mppt-charger-firmware/blob/c0dba8700d3baff1d13a86c43f5ce570b15e01af/source/application/inc/Battery.hpp#L27))
 * Self-test for a shorted LS switch (backflow switch and HS short are covered)
-* Open the backflow switch at low current and low voltage drop (temperature drift can fake a current)
 
 ## Known issues
 
