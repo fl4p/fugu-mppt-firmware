@@ -25,7 +25,7 @@
 #define FRY_I2C_SCL   2
 #define FRY_I2C_FREQ  800000
 #define FRY_INA_ADDR  0x40
-#define FRY_INA_ALERT 41 // ina22x_alert (active-low, conversion-ready)
+#define FRY_INA_ALERT 41 // ina226_alert (active-low, conversion-ready)
 
 // INA226 registers
 #define INA_REG_CONFIG   0x00

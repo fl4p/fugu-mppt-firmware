@@ -93,7 +93,7 @@ The following table lists common symptoms during bring-up and where to look for 
 | Symptom | Where to look |
 |---|---|
 | `setup: FAILED: <reason>` | The reason names the config file or key; see [Setup failure](../../reference/console.md#setup-failure) |
-| `Never got a sample! Please check ADC` | ADC backend, I²C pins, `ina22x_alert`/`ads_alert` pins in `board.conf` |
+| `Never got a sample! Please check ADC` | ADC backend, I²C pins, `ina226_alert`/`ads_alert` pins in `board.conf` |
 | `Calibration failed, <sensor> …` | Sensor not at rest at boot, or wrong `_midpoint`/`_factor` |
 | `START blocked: supply-UV` | The higher of Vin and Vout is below ~9.8 V, too low for the board supply |
 | `START blocked: temp` | NTC or MCU temperature within 3 °C of `limits.conf::temp_max`, or no MCU temperature sensor |

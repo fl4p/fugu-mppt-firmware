@@ -111,8 +111,15 @@ static void configureVirtualConverter() {
     g_vconv.setSwitching(vc.f("t_dead", 0.0f), vc.f("t_hs_ext", 0.0f), vc.f("r_hs", 0.0f), vc.f("r_ls", 0.0f),
                          vc.f("t_sw", 0.0f));
     g_vconv.setPwmClk((uint32_t) vc.getLong("pwm_clk", 0));
-    g_vconv.bfModel = vc.getByte("bf_model", 0);
-    g_vconv.bfStuck = vc.getByte("bf_stuck", 0);
+    // bf_model/bf_stuck were renamed to bflow_*; an old key alone fails setup
+    for (auto k: {"model", "stuck"}) {
+        const std::string o = std::string("bf_") + k, n = std::string("bflow_") + k;
+        if (!vc.has(o)) continue;
+        if (!vc.has(n)) throw std::runtime_error("vconv.conf: " + o + " was renamed to " + n);
+        ESP_LOGW("vconv", "vconv.conf: %s ignored, %s is set; remove %s", o.c_str(), n.c_str(), o.c_str());
+    }
+    g_vconv.bfModel = vc.getByte("bflow_model", 0);
+    g_vconv.bfStuck = vc.getByte("bflow_stuck", 0);
     g_vconv.hsShort = vc.getByte("hs_short", 0);
     g_vconv.iUnidir = vc.getByte("i_unidir", 0);
 
@@ -170,7 +177,15 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
     auto defAdcName = sensConf.getString("adc", "");
     const bool boost = readTopoIsBoost("sensor.conf");
     rejectSensorRoleKeys(sensConf, boost);
-    for (auto k: {"ina22x_resistor", "ina22x_conv_time_us", "ina22x_ov"})
+    // ina22x_* was renamed to ina226_* (the part number used elsewhere: ADC_INA226, adc=ina226)
+    for (auto k: {"alert", "addr", "resistor", "conv_time_us", "ov"}) {
+        const std::string o = std::string("ina22x_") + k, n = std::string("ina226_") + k;
+        if (!boardConf.has(o) && !sensConf.has(o)) continue;
+        if (!boardConf.has(n) && !sensConf.has(n))
+            throw std::runtime_error("ina22x_* was renamed to ina226_*: " + o + " is no longer read, use " + n);
+        ESP_LOGW("sensor", "%s ignored, %s is set; remove %s", o.c_str(), n.c_str(), o.c_str());
+    }
+    for (auto k: {"ina226_resistor", "ina226_conv_time_us", "ina226_ov"})
         if (boardConf.has(k)) {
             // a leftover copy is fine while sensor.conf holds the same value
             if (!sensConf.has(k) || boardConf.getFloat(k, 0) != sensConf.getFloat(k, 0))
@@ -178,7 +193,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
             ESP_LOGW("sensor", "board.conf %s is no longer read (same value in sensor.conf), remove it", k);
         }
     std::unordered_map<std::string, AsyncADC<float> *> adcs{};
-    float busOv = sensConf.getFloat("ina22x_ov", 0); // consumed by the ina226 bus channel
+    float busOv = sensConf.getFloat("ina226_ov", 0); // consumed by the ina226 bus channel
     for (auto chn_: {"ntc", "vin", "iin", "iout", "vout",}) {
         auto chn = std::string(chn_);
         const auto key = sensorKeyPrefix(chn, boost); // hv_v, lv_v, hv_i, lv_i by topo
@@ -212,7 +227,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
                 if (an == "ina226" && chNum == ADC_INA226::ChVBus && busOv != 0) {
                     ((ADC_INA226 *) adc)->setBusOvLimit(lt.apply_inverse(busOv));
 #ifndef HAVE_MCPWM
-                    ESP_LOGW("main", "ina22x_ov: gate driver is not MCPWM, the alert ISR cannot force the gates off");
+                    ESP_LOGW("main", "ina226_ov: gate driver is not MCPWM, the alert ISR cannot force the gates off");
 #endif
                     busOv = 0;
                 }
@@ -247,7 +262,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
         //         Vout_ch, Iout_ch, loopRateMin);
     }
 
-    assert_throw(busOv == 0, "ina22x_ov needs an ina226 bus voltage channel");
+    assert_throw(busOv == 0, "ina226_ov needs an ina226 bus voltage channel");
     params.find("vin")->second.params.calibrationConstraints = {lim.Vin_max, 1.8f, false};
     params.find("vin")->second.params.unit = 'V';
     params.find("vin")->second.params.rawTelemetry = true;

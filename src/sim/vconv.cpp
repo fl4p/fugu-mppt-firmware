@@ -502,7 +502,7 @@ void VirtualConverter::stepSeconds(float dt_s, uint32_t pwmFreqFallback) {
     }
 }
 
-// output node: C_out, and the battery behind r_bat (backward Euler); a blocking BF (bf_model) passes only forward
+// output node: C_out, and the battery behind r_bat (backward Euler); a blocking BF (bflow_model) passes only forward
 float VirtualConverter::outNext(float v, float iOut, float T) const {
     const float vn = v + (T * iOut) * invCout_;
     if (!bfModel) return (vn + aOut_ * vbNow_) * inv1pAout_;

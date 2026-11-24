@@ -177,7 +177,7 @@ A changed file shows an amber dot with its number of changed fields. A file that
 input/output role keys is drawn in amber (see [Removed role keys](#removed-role-keys)).
 
 Each file page starts with the file name, its path, "N of M keys set" and a one-line note on what the file
-controls. The keys follow, grouped by shared prefix (`i2c_`, `ina22x_`, …) into groups that start collapsed. A collapsed
+controls. The keys follow, grouped by shared prefix (`i2c_`, `ina226_`, …) into groups that start collapsed. A collapsed
 group that holds changed or invalid keys shows an amber dot with their count. At the bottom sit **Show all N keys**
 (see [Short view](#short-view)) and the folded sections **Add a key** and **Show `<file>` as text**.
 

@@ -71,14 +71,14 @@ For worked ACS712 and bare-ESP32 configs, see [Notes & examples](#notes--example
 
 ## INA226
 
-The following keys set the INA226 measurement (`ina226` backend); its wiring (`ina22x_alert`,
-`ina22x_addr`, `i2c_*`) is in [board.conf](board.md):
+The following keys set the INA226 measurement (`ina226` backend); its wiring (`ina226_alert`,
+`ina226_addr`, `i2c_*`) is in [board.conf](board.md):
 
 | key | unit | type | default | description |
 |-----|------|------|---------|-------------|
-| `ina22x_resistor` | Ω | float | — | INA226 current-sense shunt resistance, required with `ina226` (0 to 10 Ω, else sensor setup fails); the current range is the shunt full scale, 81.92 mV / `ina22x_resistor`, at the shunt ADC resolution (2.5 µV / `ina22x_resistor`) |
-| `ina22x_conv_time_us` | µs | int | 1100 | INA226 per-conversion time, rounded up to the next device step (140, 204, 332, 588, 1100, 2116, 4156, 8244; above that 8244); lower = faster/noisier |
-| `ina22x_ov` | V | float | 0 | INA226 bus over-voltage limit, in volts of the voltage channel on INA226 channel 0 (after its divider and `_gain`/`_offset`). When set, ALERT is a latched over-voltage alert: its ISR forces the gates off (MCPWM gate driver only) and the converter backs off; conversions are then polled. Set it above the highest normal voltage. Without a voltage channel on INA226 channel 0 sensor setup fails. 0 = ALERT is the conversion-ready strobe |
+| `ina226_resistor` | Ω | float | — | INA226 current-sense shunt resistance, required with `ina226` (0 to 10 Ω, else sensor setup fails); the current range is the shunt full scale, 81.92 mV / `ina226_resistor`, at the shunt ADC resolution (2.5 µV / `ina226_resistor`) |
+| `ina226_conv_time_us` | µs | int | 1100 | INA226 per-conversion time, rounded up to the next device step (140, 204, 332, 588, 1100, 2116, 4156, 8244; above that 8244); lower = faster/noisier |
+| `ina226_ov` | V | float | 0 | INA226 bus over-voltage limit, in volts of the voltage channel on INA226 channel 0 (after its divider and `_gain`/`_offset`). When set, ALERT is a latched over-voltage alert: its ISR forces the gates off (MCPWM gate driver only) and the converter backs off; conversions are then polled. Set it above the highest normal voltage. Without a voltage channel on INA226 channel 0 sensor setup fails. 0 = ALERT is the conversion-ready strobe |
 
 ## Notes & examples
 
@@ -206,14 +206,17 @@ factors are positive for HV → LV power. `vin_min`, `iout_short`, `p_max`, `ntc
 
 ## Moving the INA226 keys
 
-Earlier firmware read `ina22x_resistor`, `ina22x_conv_time_us` and `ina22x_ov` from
+Earlier firmware read `ina226_resistor`, `ina226_conv_time_us` and `ina226_ov` from
 [board.conf](board.md). The current firmware reads them only from `sensor.conf`. A copy left in
 `board.conf` with the same value in `sensor.conf` only logs a warning. Any other copy in
 `board.conf` stops sensor setup:
 
 ```
-board.conf ina22x_resistor is no longer read, move it to sensor.conf
+board.conf ina226_resistor is no longer read, move it to sensor.conf
 ```
+
+The keys were also renamed from the `ina22x_*` spelling, see
+[INA226 key prefix](board.md#ina226-key-prefix).
 
 `etc/migrate_side_keys.py` moves them as well. In a config directory it cuts the lines, with
 their comments, from `board.conf` and appends them to `sensor.conf`; a key that is in both files

@@ -149,31 +149,57 @@ class OfflineTest(unittest.TestCase):
         self.assertEqual(m.rewrite("limits.conf", "vin_min=8\niout_short=6\np_max=800\n", False)[1], [])
 
     def test_moves_ina226_keys_to_sensor_conf(self):
-        board = "# INA226\nina22x_alert=41\nina22x_resistor=0.5e-3\nina22x_conv_time_us=332 # fast\n#ina22x_ov=30\n"
+        # move_lines runs after rename_lines, so it sees the new names
+        board = "# INA226\nina226_alert=41\nina226_resistor=0.5e-3\nina226_conv_time_us=332 # fast\n#ina226_ov=30\n"
         b, s, ch = m.move_lines(board, "ntc_ch=7")
-        self.assertEqual(b, "# INA226\nina22x_alert=41\n")
-        self.assertEqual(s, "ntc_ch=7\n\n# INA226\nina22x_resistor=0.5e-3\nina22x_conv_time_us=332 # fast\n#ina22x_ov=30\n")
-        self.assertEqual(ch, [("ina22x_resistor", "0.5e-3"), ("ina22x_conv_time_us", "332")])
+        self.assertEqual(b, "# INA226\nina226_alert=41\n")
+        self.assertEqual(s, "ntc_ch=7\n\n# INA226\nina226_resistor=0.5e-3\nina226_conv_time_us=332 # fast\n#ina226_ov=30\n")
+        self.assertEqual(ch, [("ina226_resistor", "0.5e-3"), ("ina226_conv_time_us", "332")])
         self.assertEqual(m.move_lines(b, s), (b, s, []))
-        b, s, ch = m.move_lines("ina22x_ov=30\n", "#ina22x_ov=1\nina22x_ov=30\n")  # equal: drop from board
-        self.assertEqual((b, s, ch), ("", "#ina22x_ov=1\nina22x_ov=30\n", [("ina22x_ov", "30")]))
+        b, s, ch = m.move_lines("ina226_ov=30\n", "#ina226_ov=1\nina226_ov=30\n")  # equal: drop from board
+        self.assertEqual((b, s, ch), ("", "#ina226_ov=1\nina226_ov=30\n", [("ina226_ov", "30")]))
         with self.assertRaisesRegex(m.MigrationError, "differ"):
-            m.move_lines("ina22x_ov=30\n", "ina22x_ov=31\n")
+            m.move_lines("ina226_ov=30\n", "ina226_ov=31\n")
+
+    def test_offline_renames_then_moves_ina226_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "converter.conf").write_text("topo=buck\n")
+            (Path(tmp) / "board.conf").write_text("ina22x_alert=41\nina22x_addr=0x40\nina22x_resistor=0.5e-3\n#ina22x_ov=30\n")
+            (Path(tmp) / "sensor.conf").write_text("ntc_ch=7\n")
+            m.migrate_dir(tmp)
+            # renamed in board.conf, and the moved key lands in sensor.conf under its new name
+            self.assertEqual((Path(tmp) / "board.conf").read_text(), "ina226_alert=41\nina226_addr=0x40\n")
+            self.assertEqual((Path(tmp) / "sensor.conf").read_text(),
+                             "ntc_ch=7\n\n# INA226\nina226_resistor=0.5e-3\n#ina226_ov=30\n")
+            self.assertEqual(m.migrate_dir(tmp, write=False), [])  # idempotent
+
+    def test_renames_ina226_keys(self):
+        new, ch = m.rename_lines("board.conf", "ina22x_alert=41\nina22x_addr=0x40\n#ina22x_ov=30\n")
+        self.assertEqual(new, "ina226_alert=41\nina226_addr=0x40\n#ina226_ov=30\n")
+        self.assertEqual(ch, [("ina22x_alert", "ina226_alert", "41"), ("ina22x_addr", "ina226_addr", "0x40")])
+        self.assertEqual(m.rename_lines("sensor.conf", "ina22x_resistor=0.5e-3\n"),
+                         ("ina226_resistor=0.5e-3\n", [("ina22x_resistor", "ina226_resistor", "0.5e-3")]))
+        self.assertEqual(m.rename_lines("sensor.conf", "ina226_resistor=0.5e-3\n"),
+                         ("ina226_resistor=0.5e-3\n", []))
+        with self.assertRaisesRegex(m.MigrationError, "differ"):
+            m.rename_lines("sensor.conf", "ina22x_ov=30\nina226_ov=31\n")
 
     def test_renames_backflow_pins(self):
         text = "panel_sd=40   # SD\n# panel_en=8 # none\nbflow_bat=1\n"
-        new, ch = m.rename_lines(text)
+        new, ch = m.rename_lines("board.conf", text)
         self.assertEqual(new, "bflow_sd=40   # SD\n# bflow_en=8 # none\nbflow_bat=1\n")
         self.assertEqual(ch, [("panel_sd", "bflow_sd", "40")])
-        self.assertEqual(m.rename_lines(new), (new, []))
-        self.assertEqual(m.rename_lines("panel_sd=40\nbflow_sd=40\n"), ("bflow_sd=40\n", [("panel_sd", "bflow_sd", "40")]))
+        self.assertEqual(m.rename_lines("board.conf", new), (new, []))
+        self.assertEqual(m.rename_lines("board.conf", "panel_sd=40\nbflow_sd=40\n"),
+                         ("bflow_sd=40\n", [("panel_sd", "bflow_sd", "40")]))
         with self.assertRaisesRegex(m.MigrationError, "differ"):
-            m.rename_lines("panel_sd=40\nbflow_sd=41\n")
+            m.rename_lines("board.conf", "panel_sd=40\nbflow_sd=41\n")
 
-    def test_no_profile_has_old_backflow_keys(self):
-        for f in tracked("/board.conf"):
-            with self.subTest(profile=str(f.relative_to(ROOT))):
-                self.assertFalse(set(m.RENAMED_KEYS) & m.parse_conf(f.read_text()).keys())
+    def test_no_profile_has_old_keys(self):
+        for suffix, file in (("/board.conf", "board.conf"), ("/sensor.conf", "sensor.conf")):
+            for f in tracked(suffix):
+                with self.subTest(profile=str(f.relative_to(ROOT))):
+                    self.assertFalse(set(m.RENAMED_KEYS[file]) & m.parse_conf(f.read_text()).keys())
 
     def test_no_profile_has_ina226_keys_in_board_conf(self):
         for f in tracked("/board.conf"):
@@ -230,13 +256,22 @@ class LiveTest(unittest.TestCase):
         cap = ("Conf '/littlefs/conf/board.conf:ina22x_resistor' = '0.5e-3'\n"
                "Conf '/littlefs/conf/board.conf:ina22x_ov' = '30'\n"
                "Conf '/littlefs/conf/board.conf:ina22x_alert' = '41'")
-        # the old firmware reads board.conf: its copy is only deleted after the OTA
+        # the old firmware reads board.conf: its copy is only deleted after the OTA. The new name is
+        # set in board.conf too, so step 2's delete of it finds the key.
         self.assertEqual(m.live_steps(cap), (
-            ["set-config sensor.conf ina22x_resistor 0.5e-3", "set-config sensor.conf ina22x_ov 30"],
-            ["del-config board.conf ina22x_resistor", "del-config board.conf ina22x_ov"]))
+            ["set-config board.conf ina226_alert 41", "set-config board.conf ina226_resistor 0.5e-3",
+             "set-config board.conf ina226_ov 30",
+             "set-config sensor.conf ina226_resistor 0.5e-3", "set-config sensor.conf ina226_ov 30"],
+            ["del-config board.conf ina22x_alert", "del-config board.conf ina22x_resistor",
+             "del-config board.conf ina22x_ov",
+             "del-config board.conf ina226_resistor", "del-config board.conf ina226_ov"]))
         self.assertEqual(m.live_steps(cap, rollback=True), (
-            ["set-config board.conf ina22x_resistor 0.5e-3", "set-config board.conf ina22x_ov 30"],
-            ["del-config sensor.conf ina22x_resistor", "del-config sensor.conf ina22x_ov"]))
+            ["set-config board.conf ina22x_alert 41", "set-config board.conf ina22x_resistor 0.5e-3",
+             "set-config board.conf ina22x_ov 30",
+             "set-config board.conf ina226_resistor 0.5e-3", "set-config board.conf ina226_ov 30"],
+            ["del-config board.conf ina226_alert", "del-config board.conf ina226_resistor",
+             "del-config board.conf ina226_ov",
+             "del-config sensor.conf ina226_resistor", "del-config sensor.conf ina226_ov"]))
 
     def test_ina226_keys_same_in_both(self):  # fry 2026-11-23
         cap = ("Conf '/littlefs/conf/converter.conf:topo' = 'buck'\n"
@@ -246,10 +281,18 @@ class LiveTest(unittest.TestCase):
                "Conf '/littlefs/conf/sensor.conf:ina22x_ov' = '0'")
         w = []
         self.assertEqual(m.live_steps(cap, warnings=w), (
-            [], ["del-config board.conf ina22x_resistor", "del-config board.conf ina22x_ov"]))
+            ["set-config board.conf ina226_resistor 0.5e-3", "set-config board.conf ina226_ov 0",
+             "set-config sensor.conf ina226_resistor 0.0005", "set-config sensor.conf ina226_ov 0"],
+            ["del-config board.conf ina22x_resistor", "del-config board.conf ina22x_ov",
+             "del-config sensor.conf ina22x_resistor", "del-config sensor.conf ina22x_ov",
+             "del-config board.conf ina226_resistor", "del-config board.conf ina226_ov"]))
         self.assertEqual(w, [])
         self.assertEqual(m.live_steps(cap, rollback=True), (
-            ["set-config board.conf ina22x_resistor 0.5e-3", "set-config board.conf ina22x_ov 0"], []))
+            ["set-config board.conf ina22x_resistor 0.5e-3", "set-config board.conf ina22x_ov 0",
+             "set-config sensor.conf ina22x_resistor 0.0005", "set-config sensor.conf ina22x_ov 0",
+             "set-config board.conf ina226_resistor 0.5e-3", "set-config board.conf ina226_ov 0"],
+            ["del-config board.conf ina226_resistor", "del-config board.conf ina226_ov",
+             "del-config sensor.conf ina226_resistor", "del-config sensor.conf ina226_ov"]))
 
     def test_ina226_keys_differ(self):
         cap = ("Conf '/littlefs/conf/converter.conf:topo' = 'buck'\n"
@@ -257,17 +300,26 @@ class LiveTest(unittest.TestCase):
                "Conf '/littlefs/conf/sensor.conf:ina22x_resistor' = '1e-3'")
         w = []
         self.assertEqual(m.live_steps(cap, warnings=w), (
-            ["set-config sensor.conf ina22x_resistor 0.5e-3"], ["del-config board.conf ina22x_resistor"]))
+            ["set-config board.conf ina226_resistor 0.5e-3", "set-config sensor.conf ina226_resistor 1e-3",
+             "set-config sensor.conf ina226_resistor 0.5e-3"],
+            ["del-config board.conf ina22x_resistor", "del-config sensor.conf ina22x_resistor",
+             "del-config board.conf ina226_resistor"]))
         self.assertEqual(len(w), 1)
         self.assertIn("would fail setup", w[0])
         self.assertIn("board.conf's 0.5e-3", w[0])
+        # the rollback restores sensor.conf's value under its old name (the rename step), so it must
+        # not also re-create it under the new one: that copy would outlive the rollback
         self.assertEqual(m.live_steps(cap, rollback=True), (
-            ["set-config board.conf ina22x_resistor 0.5e-3"], ["set-config sensor.conf ina22x_resistor 1e-3"]))
+            ["set-config board.conf ina22x_resistor 0.5e-3", "set-config sensor.conf ina22x_resistor 1e-3",
+             "set-config board.conf ina226_resistor 0.5e-3"],
+            ["del-config board.conf ina226_resistor", "del-config sensor.conf ina226_resistor"]))
 
     def test_ina226_keys_already_migrated(self):
         cap = "Conf '/littlefs/conf/converter.conf:topo' = 'buck'\n" \
             "Conf '/littlefs/conf/sensor.conf:ina22x_resistor' = '0.5e-3'\nConf '/littlefs/conf/board.conf:i2c_port' = '0'"
-        self.assertEqual(m.live_steps(cap), ([], []))
+        self.assertEqual(m.live_steps(cap),
+                         (["set-config sensor.conf ina226_resistor 0.5e-3"],
+                          ["del-config sensor.conf ina22x_resistor"]))
 
     def test_step1_never_deletes_a_key_the_old_firmware_reads(self):
         cap = ("Conf '/littlefs/conf/converter.conf:topo' = 'buck'\n"
@@ -278,8 +330,8 @@ class LiveTest(unittest.TestCase):
         self.assertFalse([c for c in now if c.startswith("del-config board.conf")])
 
     def test_equal_spellings_move_offline(self):
-        b, s, ch = m.move_lines("ina22x_resistor=0.5e-3\n", "ina22x_resistor=0.0005\n")
-        self.assertEqual((b, s, ch), ("", "ina22x_resistor=0.0005\n", [("ina22x_resistor", "0.5e-3")]))
+        b, s, ch = m.move_lines("ina226_resistor=0.5e-3\n", "ina226_resistor=0.0005\n")
+        self.assertEqual((b, s, ch), ("", "ina226_resistor=0.0005\n", [("ina226_resistor", "0.5e-3")]))
 
     def test_backflow_rename_in_two_steps(self):
         cap = ("Conf '/littlefs/conf/board.conf:panel_sd' = '40'\n"

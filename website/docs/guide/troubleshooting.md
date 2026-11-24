@@ -35,10 +35,10 @@ The following table lists the setup, ADC and control-loop log lines, what they m
 | `conf <file>: …` | a config file does not parse (for example a duplicate key or a malformed value) | the named file |
 | `board.conf expects MCU …` | config for the other chip | [ESP32 variants](hardware/esp32-variants.md) |
 | `Error mounting LittleFS partition!` | the config partition is missing or unreadable | reprovision with `./provision.py <board>` |
-| `Never got a sample! Please check ADC` | no sample 20 s after boot; converter disabled, the device restarts after 15 min | ADC backend in `sensor.conf`, I²C pins, `ina22x_alert` / `ads_alert` pin, `scan-i2c` |
+| `Never got a sample! Please check ADC` | no sample 20 s after boot; converter disabled, the device restarts after 15 min | ADC backend in `sensor.conf`, I²C pins, `ina226_alert` / `ads_alert` pin, `scan-i2c` |
 | `ADC stall (…, last sample <n> ms ago), resetting` | no fresh sample for 200 ms; the ADC is reset | wiring, I²C noise, the tasks starving the sampler (`rt-stats`) |
 | `ADC stall <n> ms, shutdown` | the stall lasted over 0.8 s during conversion; the converter backs off 16 s, the device restarts after 60 s of stall | as above |
-| `ina22x: <n> timeout!` | the INA226 alert edge did not arrive in time and the firmware polled the chip instead; logged every 20000 timeouts | `ina22x_alert` pin, `ina22x_conv_time_us` |
+| `ina22x: <n> timeout!` | the INA226 alert edge did not arrive in time and the firmware polled the chip instead; logged every 20000 timeouts | `ina226_alert` pin, `ina226_conv_time_us` |
 | `Loop latency high (…), shutdown!` | Vout sampled at less than half its nominal rate for three 3 s windows in a row (the first two log `Loop latency high (…), window <n>/3`); the converter backs off 4 s | a blocked RT path, ADC alert pin or I²C errors (`rt-stats`, `sensor`) |
 | `backoff <n>s [<reason>]` | a protection or watchdog stopped the converter; no restart for at least `<n>` s | the reason in brackets and the log line before it |
 | `Calibration failed, <sensor> …` | a sensor was not at rest during zero-current calibration; the converter backs off 4 s | load or input connected at boot, wrong `_midpoint` |

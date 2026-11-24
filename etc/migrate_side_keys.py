@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Migrate sensor.conf and limits.conf from role keys to HV/LV side keys, move the INA226
-measurement keys (ina22x_resistor, ina22x_conv_time_us, ina22x_ov) from board.conf to sensor.conf,
-and rename the board.conf backflow switch pins panel_en/panel_sd to bflow_en/bflow_sd.
+measurement keys (ina226_resistor, ina226_conv_time_us, ina226_ov) from board.conf to sensor.conf,
+rename the board.conf backflow switch pins panel_en/panel_sd to bflow_en/bflow_sd, and rename the
+INA226 keys ina22x_* to ina226_* (board.conf alert/addr, sensor.conf resistor/conv_time_us/ov).
 
 Firmware from the sensor-hv-lv change on reads only side keys (src/conv_side.h). A sensor.conf or
 limits.conf that still has a role key (vin_ch, iout_factor, vin_max, ...) fails setup at boot, so
@@ -18,9 +19,10 @@ board.conf. Firmware that reads bflow_en/bflow_sd fails setup on a board.conf wi
 but not its replacement; with both it warns and uses the new key.
 
 Offline, rewrite conf directories in place (comments, order and inline comments are kept; already
-migrated files are left unchanged; a role key next to its own side key is refused; moved INA226 lines
-are appended to sensor.conf with their comments; panel_en/panel_sd lines are renamed in place, or
-dropped when the new key already holds the same value):
+migrated files are left unchanged; a role key next to its own side key is refused; ina22x_* lines are
+renamed in place first, so a board.conf ina22x_resistor moves to sensor.conf as ina226_resistor; moved
+INA226 lines are appended to sensor.conf with their comments; panel_en/panel_sd lines are renamed in
+place, or dropped when the new key already holds the same value):
   etc/migrate_side_keys.py dir config/lab/buck_bench [more dirs...] [--topo buck|boost] [--check]
 
 Live board, still on the old firmware: capture the configs, then print the console commands:
@@ -45,8 +47,16 @@ from pathlib import Path
 ROLE_CHANNELS = ("vin", "vout", "iin", "iout")
 SENSOR_SUFFIXES = ("adc", "ch", "rh", "rl", "factor", "midpoint", "filt_len", "gain", "offset")  # conv_side.h SensorKeySuffixes
 LIMIT_KEYS = ("vin_max", "vout_max", "iin_max", "iout_max")
-MOVED_KEYS = ("ina22x_resistor", "ina22x_conv_time_us", "ina22x_ov")  # board.conf -> sensor.conf
-RENAMED_KEYS = {"panel_en": "bflow_en", "panel_sd": "bflow_sd"}  # board.conf, src/pwm/backflow.h
+MOVED_KEYS = ("ina226_resistor", "ina226_conv_time_us", "ina226_ov")  # board.conf -> sensor.conf
+# old -> new, per file. panel_*: src/pwm/backflow.h. ina22x_* -> ina226_*: the part number used
+# everywhere else (ADC_INA226, sensor.conf adc=ina226); src/adc/ina226.h, sensor_setup.cpp
+INA_KEYS = {"ina22x_alert": "ina226_alert", "ina22x_addr": "ina226_addr",
+            "ina22x_resistor": "ina226_resistor", "ina22x_conv_time_us": "ina226_conv_time_us",
+            "ina22x_ov": "ina226_ov"}
+RENAMED_KEYS = {
+    "board.conf": {"panel_en": "bflow_en", "panel_sd": "bflow_sd", **INA_KEYS},
+    "sensor.conf": dict(INA_KEYS),
+}
 
 
 class MigrationError(Exception):
@@ -191,29 +201,31 @@ def move_lines(board_text, sensor_text):
     return "".join(keep), sensor_text, changes
 
 
-def renames(board_kv):
-    """[(old, new, value)] for the renamed board.conf keys in `board_kv`; new == old value is fine."""
+def renames(file, kv):
+    """[(old, new, value)] for the renamed keys of `file` in `kv`; new == old value is fine."""
+    table = RENAMED_KEYS.get(file, {})
     out = []
-    for old, new in RENAMED_KEYS.items():
-        if old not in board_kv:
+    for old, new in table.items():
+        if old not in kv:
             continue
-        if new in board_kv and board_kv[new] != board_kv[old]:
-            raise MigrationError(f"board.conf {old}={board_kv[old]} and {new}={board_kv[new]} differ; "
+        if new in kv and kv[new] != kv[old]:
+            raise MigrationError(f"{file} {old}={kv[old]} and {new}={kv[new]} differ; "
                                  "delete the wrong one, then rerun")
-        out.append((old, new, board_kv[old]))
+        out.append((old, new, kv[old]))
     return out
 
 
-def rename_lines(board_text):
-    """(board text, [(old, new, value)]) with panel_en/panel_sd lines, commented-out ones too, renamed
+def rename_lines(file, text):
+    """(text, [(old, new, value)]) with the renamed lines of `file`, commented-out ones too, renamed
     in place; an active old line is dropped when the new key is already set."""
-    active = parse_conf(board_text)
-    changes = renames(active)
+    table = RENAMED_KEYS.get(file, {})
+    active = parse_conf(text)
+    changes = renames(file, active)
     out = []
-    for line in board_text.splitlines(keepends=True):
+    for line in text.splitlines(keepends=True):
         body = line.rstrip("\r\n")
         m = LINE.match(body)
-        new = m and RENAMED_KEYS.get(m["key"])
+        new = m and table.get(m["key"])
         if new:
             if "#" not in m["pre"] and new in active:
                 continue
@@ -244,17 +256,23 @@ def migrate_dir(path, forced_topo=None, write=True):
         texts[f] = text
         done += [(file,) + c for c in changes]
     board = d / "board.conf"
+    sensor = d / "sensor.conf"
+    # rename sensor.conf first, so the move below sees the new names
+    if sensor.exists():
+        stext, changes = rename_lines("sensor.conf", texts.get(sensor, sensor.read_text()))
+        if changes:
+            texts[sensor] = stext
+            done += [("sensor.conf", o, n, v, v) for o, n, v in changes]
     if board.exists():
-        sensor = d / "sensor.conf"
         orig = board.read_text()
-        btext, stext, changes = move_lines(orig, texts.get(sensor, sensor.read_text() if sensor.exists() else ""))
+        btext, changes = rename_lines("board.conf", orig)
+        done += [("board.conf", o, n, v, v) for o, n, v in changes]
+        cur = texts[sensor] if sensor in texts else (sensor.read_text() if sensor.exists() else "")
+        btext, stext, changes = move_lines(btext, cur)
         if btext != orig:
             texts[sensor] = stext
-        done += [("board.conf", k, "sensor.conf", v, v) for k, v in changes]
-        btext, changes = rename_lines(btext)
-        if btext != orig:
             texts[board] = btext
-        done += [("board.conf", o, n, v, v) for o, n, v in changes]
+        done += [("board.conf", k, "sensor.conf", v, v) for k, v in changes]
     if write:
         for f, text in texts.items():
             if not f.exists() or f.read_text() != text:
@@ -285,26 +303,35 @@ def live_steps(text, forced_topo=None, rollback=False, warnings=None):
     if not {"sensor.conf", "limits.conf", "board.conf"} & files.keys():
         raise MigrationError("no sensor.conf, limits.conf or board.conf lines in the get-config output")
     sets, dels, after = [], [], []
-    board = files.get("board.conf", {})
-    for old, new, v in renames(board):
-        if rollback:
-            sets.append(f"set-config board.conf {old} {v}")
-            if new not in board:
-                after.append(f"del-config board.conf {new}")
-        else:
-            if new not in board:
-                sets.append(f"set-config board.conf {new} {v}")
-            after.append(f"del-config board.conf {old}")
+    board_raw = files.get("board.conf", {})
+    sens_raw = files.get("sensor.conf", {})
+    # renames first: step 1 adds the new name, step 2 drops the old one, so either firmware boots
+    # in between (the old one ignores the unknown new key)
+    for file, raw in (("board.conf", board_raw), ("sensor.conf", sens_raw)):
+        for old, new, v in renames(file, raw):
+            if rollback:
+                sets.append(f"set-config {file} {old} {v}")
+                if new not in raw:
+                    after.append(f"del-config {file} {new}")
+            else:
+                if new not in raw:
+                    sets.append(f"set-config {file} {new} {v}")
+                after.append(f"del-config {file} {old}")
+    # the move step works on the renamed view, so a board.conf ina22x_resistor moves as ina226_resistor
+    board = {RENAMED_KEYS["board.conf"].get(k, k): v for k, v in board_raw.items()}
+    sens = {RENAMED_KEYS["sensor.conf"].get(k, k): v for k, v in sens_raw.items()}
     # INA226 keys: the old firmware reads board.conf only, the new one sensor.conf and tolerates an
     # equal board.conf copy. Deletes wait for step 2 so either firmware boots in between.
-    sens = files.get("sensor.conf", {})
+    # a sensor.conf key the rename rollback restores under its old name must not also be re-created
+    # under the new one, or the new firmware would later read that stale copy
+    sens_renamed = {new for old, new in RENAMED_KEYS["sensor.conf"].items() if old in sens_raw}
     for k, v, sv in moves(board, sens):
         differs = sv is not None and not same_value(v, sv)
         if rollback:
             sets.append(f"set-config board.conf {k} {v}")
             if sv is None:
                 after.append(f"del-config sensor.conf {k}")
-            elif differs:
+            elif differs and k not in sens_renamed:
                 after.append(f"set-config sensor.conf {k} {sv}")
         else:
             if differs:
@@ -344,7 +371,7 @@ def main(argv=None):
     b.add_argument("log", nargs="?", default="-", help="get-config output (default stdin)")
     b.add_argument("--topo", choices=("buck", "boost"), help="needed when converter.conf was not captured")
     b.add_argument("--rollback", action="store_true", help="print the inverse sequence (side -> role keys, bflow_* -> panel_*, "
-                   "INA226 keys back to board.conf)")
+                   "ina226_* -> ina22x_*, INA226 keys back to board.conf)")
     args = ap.parse_args(argv)
 
     try:

@@ -16,7 +16,7 @@
 //                              # shade | shade-cv: half-shaded string (two peaks)
 //                              # idle-wake: start refused only by InhibitIdle while Vin rises (armed sweep and not)
 //                              # hs-short, hs-short-bfclosed, hs-cal, hs-dawn, hs-dawn-nozero: HS-short check
-//                              # bf-ok, bf-open, bf-closed: `selftest bflow` (vconv.conf bf_model=1)
+//                              # bf-ok, bf-open, bf-closed: `selftest bflow` (vconv.conf bflow_model=1)
 //                              # bf-daily-flat: the daily run from MPPT at ~160 W in CCM on flat's plant
 //                              # mc-flat: `measure-coil l0` entered from MPPT at ~160 W in CCM on flat's plant
 //                              # mc-flat-lowf: the same at 22 kHz (the sweep after `f=`, not the switch to it)
@@ -2155,7 +2155,7 @@ static int runRingCoil(const std::string &name, bool weak) {
     return 0;
 }
 
-// ---- self-tests (vconv.conf bf_model=1: battery-side BF, Vout/Iout sensed at the battery) ----
+// ---- self-tests (vconv.conf bflow_model=1: battery-side BF, Vout/Iout sensed at the battery) ----
 static float g_iOfs = 0; // Iout sensor offset [A]
 static float ofsHook(uint8_t ch, float x) { return ch == 2 ? x + g_iOfs : x; }
 static int g_vinGlitch = 0;
@@ -3330,15 +3330,15 @@ static int simMain(int argc, char **argv) {
         if (sc == "mc-flat-lowf") c += ",board.conf:pwm_freq=22000";
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         if (!c.empty()) setenv("SIM_CONF", c.c_str(), 1);
-        ov = {{"bf_model", "1"}};
-        if (sc == "bf-open" || sc == "bf-daily-fail" || sc == "bf-uni-open" || sc == "bf-flat-ccm-open") ov.push_back({"bf_stuck", "1"});
+        ov = {{"bflow_model", "1"}};
+        if (sc == "bf-open" || sc == "bf-daily-fail" || sc == "bf-uni-open" || sc == "bf-flat-ccm-open") ov.push_back({"bflow_stuck", "1"});
         if (sc == "bf-closed" || sc == "bf-uni-closed" || sc == "bf-uni-offdrop" || sc == "bf-uni-soft-closed" || sc == "bf-nobat-closed")
-            ov.push_back({"bf_stuck", "2"});
+            ov.push_back({"bflow_stuck", "2"});
         if (sc.rfind("bf-uni-soft", 0) == 0) ov.push_back({"isc", "1.6"}); // the PV, not the duty, sets the current
         if (sc.rfind("bf-uni-", 0) == 0 || sc == "hs-short-unidir" || sc == "bf-daily-uni" || sc == "bf-nobat-reconnect")
             ov.push_back({"i_unidir", "1"});
         if (sc == "bf-uni-dcm" || sc == "bf-ok-dcm") ov.push_back({"isc", "0.5"});
-        if (const char *e = getenv("SIM_BFSTUCK")) ov.push_back({"bf_stuck", e});
+        if (const char *e = getenv("SIM_BFSTUCK")) ov.push_back({"bflow_stuck", e});
         if (getenv("SIM_UNIDIR")) ov.push_back({"i_unidir", "1"});
         if (sc == "bf-uni-slow") c += ",sensor.conf:lv_i_filt_len=300", setenv("SIM_CONF", c.c_str(), 1);
         // 100 kHz: CCM from ~1 A, so the 1.6 A panel engages (DCM aborts)

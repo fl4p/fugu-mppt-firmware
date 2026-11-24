@@ -33,7 +33,7 @@ class ADC_INA226 : public AsyncADC<float> {
     uint32_t measuredPairUs_ = 0; // measured CVRF interval (Vbus+I pair); 0 = not measured
     uint32_t lastAlertUs_ = 0;    // last sample or MASK_EN poll (micros)
     float shuntR_;
-    uint16_t ovRaw_ = 0;          // BOL limit in bus LSBs (sensor.conf ina22x_ov), 0 = conversion-ready alert
+    uint16_t ovRaw_ = 0;          // BOL limit in bus LSBs (sensor.conf ina226_ov), 0 = conversion-ready alert
     volatile bool ovArmed_ = false;
     uint32_t ovArmFails_ = 0;
     uint8_t ovMiss_ = 0;          // CVRF polls without a conversion since the last sample
@@ -72,9 +72,9 @@ public:
     }
 
 
-    explicit ADC_INA226(const ConfFile &sensConf) : shuntR_(sensConf.getFloat("ina22x_resistor")) {
-        assert_throw(shuntR_ > 0 && shuntR_ < 10, "sensor.conf: ina22x_resistor missing or out of range");
-        long convReqUs = sensConf.getLong("ina22x_conv_time_us", 1100);
+    explicit ADC_INA226(const ConfFile &sensConf) : shuntR_(sensConf.getFloat("ina226_resistor")) {
+        assert_throw(shuntR_ > 0 && shuntR_ < 10, "sensor.conf: ina226_resistor missing or out of range");
+        long convReqUs = sensConf.getLong("ina226_conv_time_us", 1100);
         auto ct = ina226ConvTimeAtLeast(convReqUs);
         convSetting_ = ct.setting;
         convUs_ = ct.us;
@@ -88,7 +88,7 @@ public:
             return false;
         }
 
-        alertPin = (uint8_t) boardConf.getByte("ina22x_alert", 255);
+        alertPin = (uint8_t) boardConf.getByte("ina226_alert", 255);
         if (alertPin == 255) {
             ESP_LOGW("ina22x", "No ALERT pin specified");
             return false;
@@ -103,7 +103,7 @@ public:
         assert(!new_data);
 
         auto i2c_port = (i2c_port_t) boardConf.getByte("i2c_port", 0);
-        auto addr = boardConf.getByte("ina22x_addr", 0b1000000);
+        auto addr = boardConf.getByte("ina226_addr", 0b1000000);
 
         assert_throw(i2c_port == 0, ""); // not implemented, see _setupPeripherals()
         //if(i2c_port != 0)
@@ -213,7 +213,7 @@ public:
         new_data = false;
 
         try {
-            assertPinState(alertPin, true, "ina22x_alert", false);
+            assertPinState(alertPin, true, "ina226_alert", false);
 
             assert_throw(!new_data, "unexpected alert signal");
 
@@ -255,7 +255,7 @@ public:
         //ina226.setAverage(AVERAGE_64);
         //ina226.setConversionTime(CONV_TIME_1100, CONV_TIME_140);
         ina226.setAverage(AVERAGE_1);
-        ina226.setConversionTime(convSetting_, convSetting_); // ina22x_conv_time_us (hasData timeout derived)
+        ina226.setConversionTime(convSetting_, convSetting_); // ina226_conv_time_us (hasData timeout derived)
 
         ina226.setMeasureMode(CONTINUOUS);
         ina226.enableConvReadyAlert();
@@ -274,10 +274,10 @@ public:
 
     // Switch ALERT from conversion-ready to a latched bus over-voltage alert at `busV` (chip pin volts).
     void setBusOvLimit(float busV) {
-        assert_throw(busV > 0 && busV < 36, "ina22x_ov out of the INA226 bus range");
+        assert_throw(busV > 0 && busV < 36, "ina226_ov out of the INA226 bus range");
         ina226.writeRegister(INA226_WE::INA226_MASK_EN_REG, 0); // no CNVR edge may read as OV
         ovRaw_ = (uint16_t) lroundf(busV / 1.25e-3f);
-        assert_throw(armOv(), "ina22x_ov: arming the INA226 bus OV alert failed");
+        assert_throw(armOv(), "ina226_ov: arming the INA226 bus OV alert failed");
     }
 
     // Writes the full operating config (it also restores a chip that reset itself) and verifies it.

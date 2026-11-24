@@ -436,7 +436,7 @@ static bool boardOwnsPin(int pin) {
     try {
         ConfFile board{"/littlefs/conf/board.conf", true};
         for (auto k: {"pwm_hi", "pwm_li", "pwm_in", "pwm_en", "pwm_sd", "bflow_sd", "bflow_en", "lv_pgood", "pwm_fault_pin", "pwm_sync_pin",
-                      "i2c_sda", "i2c_scl", "ina22x_alert", "ads_alert", "fan_pwm", "led_WS2812", "led_simple"})
+                      "i2c_sda", "i2c_scl", "ina226_alert", "ads_alert", "fan_pwm", "led_WS2812", "led_simple"})
             if (board.getLong(k, -1) == pin) return true;
         return false;
     } catch (...) {
@@ -2478,8 +2478,8 @@ static void cmdVconv(cmd *c) {
         else if (key == "vbat_ac_freq") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), v, g_vconv.getVbatAcShape());
         else if (key == "vbat_ac_shape") g_vconv.setBatRipple(g_vconv.getVbatAcAmp(), g_vconv.getVbatAcFreq(), (int) v);
         else if (key == "diode_vf") g_vconv.setDiodeVf(v);
-        else if (key == "bf_model") g_vconv.bfModel = v != 0;
-        else if (key == "bf_stuck") g_vconv.bfStuck = (uint8_t) v;
+        else if (key == "bflow_model") g_vconv.bfModel = v != 0;
+        else if (key == "bflow_stuck") g_vconv.bfStuck = (uint8_t) v;
         else if (key == "hs_short") g_vconv.hsShort = (uint8_t) v;
         else if (key == "i_unidir") g_vconv.iUnidir = v != 0;
         else if (key == "ntc_v")    g_vconv.ntcV = v;

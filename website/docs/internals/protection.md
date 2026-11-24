@@ -380,7 +380,7 @@ the detected `Vbat_max` and detects it again after a new sensor calibration. A `
 
 ### Hardware over-voltage alert
 
-With `sensor.conf::ina22x_ov` set, the INA226 compares its bus voltage against that limit in hardware and raises its
+With `sensor.conf::ina226_ov` set, the INA226 compares its bus voltage against that limit in hardware and raises its
 ALERT pin. With the MCPWM gate driver, the ALERT interrupt forces the gates off immediately, without waiting for the
 real-time loop. The loop then trips with `hw-OV`. An alert that arrives while the converter is off is discarded, so it
 cannot block the next start. While the [low-side clamp](#low-side-clamp) is pending, ramping or held, the alert is kept
@@ -474,7 +474,7 @@ a running manual PWM. The table lists the reasons in the order they are checked:
 |---|---|
 | [`limits.conf`](../reference/config/limits.md) | Voltage, current and temperature limits, short-circuit current, `reverse_current_paranoia`, wire-fault guard |
 | [`charger.conf`](../reference/config/charger.md)`::vout_max` | Battery voltage that sets the output OV threshold |
-| [`sensor.conf`](../reference/config/sensor.md)`::ina22x_ov` | INA226 hardware over-voltage alert |
+| [`sensor.conf`](../reference/config/sensor.md)`::ina226_ov` | INA226 hardware over-voltage alert |
 | [`board.conf`](../reference/config/board.md)`::bflow_en`, `bflow_sd` | Backflow switch pin; a board with neither has no backflow switch |
 | [`board.conf`](../reference/config/board.md)`::bflow_bat`, `hs_clamp` | Idle high-side short check and backflow switch test; low-side clamp |
 | `ovset` (console) | Explicit output OV limit, RAM only |

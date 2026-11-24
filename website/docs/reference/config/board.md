@@ -7,7 +7,7 @@ sidebar_position: 1
 
 `board.conf` describes the board's pins, buses, and ADC and driver wiring. The firmware reads it once at boot. The table lists its keys.
 
-The INA226 measurement settings (`ina22x_resistor`, `ina22x_conv_time_us`, `ina22x_ov`) are in
+The INA226 measurement settings (`ina226_resistor`, `ina226_conv_time_us`, `ina226_ov`) are in
 [sensor.conf](sensor.md#ina226); see [Moving the INA226 keys](sensor.md#moving-the-ina226-keys).
 The backflow switch pins were renamed; see [Backflow switch keys](#backflow-switch-keys).
 
@@ -20,8 +20,8 @@ The backflow switch pins were renamed; see [Backflow switch keys](#backflow-swit
 | `i2c_freq`              | Hz   | int    | 100000  | I2C bus clock frequency                        |
 | `i2c_hs_freq`           | Hz   | int    | 0       | INA226 sample-read clock (esp32s3); 0 = read through Wire at `i2c_freq`. Reads drive the I2C controller directly; above 400 kHz each read enters I2C high-speed mode (controller code at ≤380 kHz). Self-tested at boot, falls back to Wire |
 | `i2c_port`              |      | int    | 0       | INA226 bus index. Only 0 is implemented; any other value fails INA226 init |
-| `ina22x_alert`          | GPIO | int    | —       | INA226 ALERT pin, required with the `ina226` backend (unset fails INA226 init) |
-| `ina22x_addr`           |      | int    | 0x40    | INA226 I2C address                             |
+| `ina226_alert`          | GPIO | int    | —       | INA226 ALERT pin, required with the `ina226` backend (unset fails INA226 init) |
+| `ina226_addr`           |      | int    | 0x40    | INA226 I2C address                             |
 | `pwm_freq`              | Hz   | int    | —       | Converter PWM switching frequency at boot, 5–500 kHz (exclusive); 0.95 · `pwm_freq` · `coil.conf::L0` must lie between 1 and 20 Ω. The `pwm-freq` console verb changes it for the session without persisting |
 | `pwm_driver_logic`      |      | enum   | —       | Gate driver logic: `HiLi` or `InEn`; any other value fails converter setup |
 | `pwm_hi`                | GPIO | int    | —       | High-side gate driver pin (HiLi mode, required) |
@@ -92,3 +92,29 @@ prints two steps:
 2. `del-config board.conf panel_sd` after the update.
 
 Between the two steps both keys are set, so either firmware finds its pin across the reboot.
+
+## INA226 key prefix
+
+The INA226 keys were spelled `ina22x_*`. They now use the part number, matching the `ina226` ADC
+backend and the `ADC_INA226` driver:
+
+| Old key               | New key                | File          |
+|-----------------------|------------------------|---------------|
+| `ina22x_alert`        | `ina226_alert`         | `board.conf`  |
+| `ina22x_addr`         | `ina226_addr`          | `board.conf`  |
+| `ina22x_resistor`     | `ina226_resistor`      | `sensor.conf` |
+| `ina22x_conv_time_us` | `ina226_conv_time_us`  | `sensor.conf` |
+| `ina22x_ov`           | `ina226_ov`            | `sensor.conf` |
+
+An old key without its new one in either file stops setup, and the converter stays off:
+
+```
+ina22x_* was renamed to ina226_*: ina22x_alert is no longer read, use ina226_alert
+```
+
+With both set, the firmware uses the new one and logs a warning that the old one is ignored.
+
+`etc/migrate_side_keys.py dir <dir>` renames the keys in a config directory, keeping comments. For a
+live board, capture `get-config board.conf` and `get-config sensor.conf`, then run
+`etc/migrate_side_keys.py live board.log`. It prints the same two steps as the backflow rename above,
+and moves a `board.conf` measurement key to `sensor.conf` under its new name.

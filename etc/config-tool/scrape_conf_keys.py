@@ -88,7 +88,7 @@ _CHAN = 'sensor channel <hv_v|lv_v|hv_i|lv_i|ntc>_<suffix>: pattern-based in the
 DYNAMIC_KEY_SITES = {
     **{('src/adc/sensor_setup.cpp', f'key + \'_\' + "{sfx}"'): _CHAN
        for sfx in ('ch', 'adc', 'rh', 'rl', 'gain', 'offset', 'factor', 'midpoint', 'filt_len')},
-    ('src/adc/sensor_setup.cpp', 'k'): 'migration guard: throws on board.conf ina22x_* leftovers (now sensor.conf)',
+    ('src/adc/sensor_setup.cpp', 'k'): 'migration guard: throws on board.conf ina226_* leftovers (now sensor.conf)',
     ('src/conv_side.h', 'key'): 'limits.conf side keys from limitSideKey(): INDIRECT_KEYS',
     ('src/pd_control.h', 'key'): 'pdReadGain(conf, "ctrl_<name>_kp|kd"): scan_pd_gains',
     ('src/pd_control.h', 'p + "td"'): 'ctrl_<name>_td: scan_pd_gains',

@@ -9,7 +9,7 @@ sidebar_position: 18
 
 The simulation takes the inductor from `coil.conf::L0` (50 µH when unset) and the topology from `converter.conf::topo` (`buck`/`boost`). This file doesn't set either.
 
-In these builds the sensor map comes from `sensor.vconv.conf` when that file exists, else from `sensor.conf`, so a real board's `sensor.conf` can stay in place. The firmware does not drive the `board.conf` backflow switch pins; `bf_model` simulates the switch instead.
+In these builds the sensor map comes from `sensor.vconv.conf` when that file exists, else from `sensor.conf`, so a real board's `sensor.conf` can stay in place. The firmware does not drive the `board.conf` backflow switch pins; `bflow_model` simulates the switch instead.
 
 The file accepts the following keys.
 
@@ -37,8 +37,8 @@ The file accepts the following keys.
 | `r_ls`          | Ω    | float | 0       | Resistance in series with the coil while the low side conducts             |
 | `t_sw`          | s    | float | 0       | High-side turn-off current fall time; the loss is paid from the input       |
 | `pwm_clk`       | Hz   | int   | 0       | Gate-driver timing the PWM shim emulates, read at boot: 0 = LEDC (80 MHz, power-of-two period: 2047 counts at 39 kHz), else the MCPWM timer clock (160000000: the MCPWM period of 4103 counts at 39 kHz; the plant runs at the realized frequency in whole Hz, 38995). `rect_offset_ns` and `boot_refresh_ns` are converted at this tick rate |
-| `bf_model`      |      | int   | 0       | 1 = backflow switch between the output node and the battery: on, it conducts both ways; off, it is a diode (0.7 V) toward the battery. Vout and Iout then read the battery side (terminal voltage, battery current). The firmware's backflow switch drives it (`selftest bflow`); `vconv set bf_model` at runtime |
-| `bf_stuck`      |      | int   | 0       | Fault on that switch: 0 none, 1 stuck open, 2 stuck closed (`bf_model` only) |
+| `bflow_model`   |      | int   | 0       | 1 = backflow switch between the output node and the battery: on, it conducts both ways; off, it is a diode (0.7 V) toward the battery. Vout and Iout then read the battery side (terminal voltage, battery current). The firmware's backflow switch drives it (`selftest bflow`); `vconv set bflow_model` at runtime |
+| `bflow_stuck`   |      | int   | 0       | Fault on that switch: 0 none, 1 stuck open, 2 stuck closed (`bflow_model` only) |
 | `i_unidir`      |      | int   | 0       | 1 = the Iout channel clips at 0, like a one-direction current amplifier: `selftest bflow` runs its toggle variant and `hs_clamp` is ignored. `vconv set i_unidir` at runtime |
 | `hs_short`      |      | int   | 0       | 1 = buck high side conducts permanently; with the low side on as well, the input capacitor is shorted to ground. 2 = the same, and the low side never turns on. For the [high-side short check](../../internals/protection.md#high-side-short-check) |
 | `adc_freq`      | Hz   | int   | 3000    | Sampling tick (falls back to `board.conf::adc_fake_freq`, then 3000)        |
@@ -100,7 +100,7 @@ the time of day and the effective Isc and Voc.
 The firmware reads `vconv.conf` once at boot. The console changes part of the plant in RAM:
 
 - `vconv set <key> <value>`: `c_in`, `c_out`, `r_bat`, `vbat_ac_amp`, `vbat_ac_freq`, `vbat_ac_shape`,
-  `diode_vf`, `ring_c`, `ring_q`, `bf_model`, `bf_stuck`, `hs_short`, `i_unidir`, `ntc_v`, and the
+  `diode_vf`, `ring_c`, `ring_q`, `bflow_model`, `bflow_stuck`, `hs_short`, `i_unidir`, `ntc_v`, and the
   sun and cloud keys. `vconv set l <H>` overrides the inductor.
 - `vconv pv <isc> <voc> [k]` sets the PV curve, `vconv bat <V|open|short>` the battery.
 

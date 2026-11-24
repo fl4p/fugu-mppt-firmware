@@ -778,8 +778,8 @@ const META = {
   i2c_freq:{unit:"Hz",desc:"I2C bus clock frequency",type:"int"},
   i2c_hs_freq:{unit:"Hz",desc:"INA226 sample-read clock (esp32s3), 0 = Wire at i2c_freq; above 400 kHz in I2C high-speed mode",type:"int"},
   i2c_port:{unit:"",desc:"INA226 bus index; only 0 is implemented, any other value fails INA226 init",type:"int"},
-  ina22x_alert:{unit:"GPIO",desc:"INA226 ALERT pin number; required with the ina226 backend (unset fails INA226 init)",type:"int"},
-  ina22x_addr:{unit:"",desc:"INA226 I2C address",type:"int"},
+  ina226_alert:{unit:"GPIO",desc:"INA226 ALERT pin number; required with the ina226 backend (unset fails INA226 init)",type:"int"},
+  ina226_addr:{unit:"",desc:"INA226 I2C address",type:"int"},
   pwm_freq:{unit:"Hz",desc:"Converter PWM switching frequency at boot, 5-500 kHz (exclusive); 0.95 * pwm_freq * coil.conf L0 must lie between 1 and 20 Ω",type:"int"},
   pwm_driver_logic:{unit:"",desc:"Gate driver logic: HiLi or InEn",type:"enum",opts:["HiLi","InEn"]},
   pwm_hi:{unit:"GPIO",desc:"High-side gate driver pin (HiLi mode)",type:"int"},
@@ -819,9 +819,9 @@ const META = {
   esp32adc1_sr:{unit:"Hz",desc:"Internal ADC1 continuous-mode raw sample rate (required with esp32adc1)",type:"int"},
   esp32adc1_avg:{unit:"",desc:"Software average of N raw conversions per delivered sample, 1..1023 (required with esp32adc1)",type:"int"},
   esp32adc1_inl:{unit:"",desc:"Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation, all ADC1 channels); calibrate gain/offset with it on",type:"bool"},
-  ina22x_resistor:{unit:"Ω",desc:"INA226 current-sense shunt resistance; current range = 81.92 mV / R",type:"float"},
-  ina22x_conv_time_us:{unit:"µs",desc:"INA226 per-conversion time (rounded up to nearest device step); lower=faster/noisier",type:"int"},
-  ina22x_ov:{unit:"V",desc:"INA226 bus over-voltage limit (sensor volts after divider); ALERT ISR forces gates off, conversions polled; 0=off",type:"float"},
+  ina226_resistor:{unit:"Ω",desc:"INA226 current-sense shunt resistance; current range = 81.92 mV / R",type:"float"},
+  ina226_conv_time_us:{unit:"µs",desc:"INA226 per-conversion time (rounded up to nearest device step); lower=faster/noisier",type:"int"},
+  ina226_ov:{unit:"V",desc:"INA226 bus over-voltage limit (sensor volts after divider); ALERT ISR forces gates off, conversions polled; 0=off",type:"float"},
 
   // limits.conf
   hv_max:{unit:"V",desc:"Maximum HV-side voltage before protection cutout (Vin max in buck, Vout max in boost)",type:"float"},
@@ -1011,8 +1011,8 @@ const FILE_META = {
     r_ls:{unit:"Ω",desc:"Resistance in series with the coil while the low side conducts",type:"float"},
     t_sw:{unit:"s",desc:"High-side turn-off current fall time; the loss is paid from the input",type:"float"},
     pwm_clk:{unit:"Hz",desc:"Gate-driver timing the PWM shim emulates: 0 = LEDC (80 MHz, power-of-two period), else the MCPWM timer clock (160000000)",type:"int"},
-    bf_model:{unit:"",desc:"1 = backflow switch between output node and battery (off: a 0.7 V diode toward the battery); Vout/Iout then read the battery side",type:"bool"},
-    bf_stuck:{unit:"",desc:"Fault on the bf_model switch: 0 none, 1 stuck open, 2 stuck closed",type:"int",opts:["0","1","2"]},
+    bflow_model:{unit:"",desc:"1 = backflow switch between output node and battery (off: a 0.7 V diode toward the battery); Vout/Iout then read the battery side",type:"bool"},
+    bflow_stuck:{unit:"",desc:"Fault on the bflow_model switch: 0 none, 1 stuck open, 2 stuck closed",type:"int",opts:["0","1","2"]},
     i_unidir:{unit:"",desc:"1 = the Iout channel clips at 0 (one-direction current amplifier): selftest bflow runs its toggle variant, hs_clamp is ignored",type:"bool"},
     hs_short:{unit:"",desc:"1 = buck high side conducts permanently (with the low side on, the input cap is shorted); 2 = the same and the low side never turns on",type:"int",opts:["0","1","2"]},
     adc_freq:{unit:"Hz",desc:"Sampling tick; unset = board.conf adc_fake_freq, then 3000",type:"int"},
@@ -1056,7 +1056,7 @@ const SVC_OFF_WARN = {
 const APPLY_NOTE = {"ftp.conf:ftp_user":"ignored while ftp_user is stored in NVS", "ftp.conf:ftp_pass":"ignored while ftp_pass is stored in NVS",
   "lcd.conf:addr":"only while no display has been found"};
 // vconv.conf is read at boot; these keys also change in RAM with a console command
-for (const [cmd, keys] of [["vconv set", "c_in c_out r_bat vbat_ac_amp vbat_ac_freq vbat_ac_shape diode_vf ring_c ring_q bf_model bf_stuck "+
+for (const [cmd, keys] of [["vconv set", "c_in c_out r_bat vbat_ac_amp vbat_ac_freq vbat_ac_shape diode_vf ring_c ring_q bflow_model bflow_stuck "+
     "hs_short i_unidir ntc_v sun_day_s sun_night_s sun_peak cloud_rate cloud_depth cloud_len_s cloud_edge_s sun_seed"],
     ["vconv pv", "isc voc pv_k"], ["vconv bat", "v_bat"]])
   for (const k of keys.split(" ")) APPLY_NOTE["vconv.conf:"+k] = `or now with ${cmd}, RAM only`;
@@ -1153,12 +1153,12 @@ const ADD_KEY_HINTS = { "sensor.conf": ["hv_v","lv_v","hv_i","lv_i"].flatMap(c =
 const FILE_KEYS = {
   "board.conf":["adc_fake_freq","ads_alert","bflow_bat","bflow_en","bflow_sd","boot_refresh_ns",
     "fan_pwm","hs_clamp","i2c_freq","i2c_hs_freq","i2c_port","i2c_scl","i2c_sda","idle_cpu_mhz",
-    "ina22x_addr","ina22x_alert","led_WS2812","led_simple","lv_pgood","lv_pgood_v","mcu",
+    "ina226_addr","ina226_alert","led_WS2812","led_simple","lv_pgood","lv_pgood_v","mcu",
     "pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","pwm_deadtime_ns","pwm_driver_logic","pwm_en",
     "pwm_fault_active_high","pwm_fault_pin","pwm_freq","pwm_hi","pwm_in","pwm_li","pwm_sd",
     "pwm_sync_pin","skip_assert"],
   "sensor.conf":["adc","despike","esp32adc1_avg","esp32adc1_inl","esp32adc1_sr",
-    "ignore_calibration_constraints","ina22x_conv_time_us","ina22x_ov","ina22x_resistor",
+    "ignore_calibration_constraints","ina226_conv_time_us","ina226_ov","ina226_resistor",
     "notch_adaptive","notch_depth","notch_freq","notch_q","ntc_ch","ripple_filter"],
   "limits.conf":["hv_i_max","hv_max","iout_short","lv_i_max","lv_max","p_max",
     "reverse_current_paranoia","temp_derate","temp_max","vin_min","wire_dr_min","wire_p_derate",
@@ -1191,7 +1191,7 @@ const FILE_KEYS = {
   "ble.conf":["ble_passkey","ble_security","enabled","idle_adv_ms","log_level","pair_window_s"],
   "pprof.conf":["sprofiler_hz"],
   "wifi.conf":["improv_offline_s","switch_delay"],
-  "vconv.conf":["adc_freq","bf_model","bf_stuck","c_in","c_out","cloud_depth","cloud_edge_s",
+  "vconv.conf":["adc_freq","bflow_model","bflow_stuck","c_in","c_out","cloud_depth","cloud_edge_s",
     "cloud_len_s","cloud_rate","diode_vf","hs_short","i_unidir","isc","noise_iin","noise_iout",
     "noise_ntc","noise_vin","noise_vout","ntc_v","pv_k","pwm_clk","r_bat","r_hs","r_ls","ring_c",
     "ring_cexp","ring_ct","ring_q","ring_v","sun_day_s","sun_night_s","sun_peak","sun_seed",
@@ -1205,15 +1205,15 @@ const FILE_KEYS = {
 const TYPE_KEYS = {
   byte: new Set(["addr","ads_alert","bflow_bat","bflow_en","bflow_sd","channel","cmd_input",
     "enabled","esp32adc1_inl","fan_pwm","forced_pwm","fpwm_gate","hs_clamp","hw_only","i2c_port",
-    "i2c_scl","i2c_sda","ignore_calibration_constraints","ina22x_addr","ina22x_alert",
+    "i2c_scl","i2c_sda","ignore_calibration_constraints","ina226_addr","ina226_alert",
     "led_WS2812","led_simple","lv_pgood","notch_adaptive","ntc_ch","pv_substrings","pwm_en",
     "pwm_fault_active_high","pwm_fault_pin","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin",
     "rect_cal_auto","rect_offset_cal","reverse_current_paranoia","scan_trigger","skip_assert",
-    "trusted","wire_protect","bf_model","bf_stuck","hs_short","i_unidir","vbat_ac_shape"]),
+    "trusted","wire_protect","bflow_model","bflow_stuck","hs_short","i_unidir","vbat_ac_shape"]),
   long: new Set(["adc_fake_freq","adv_ms","balance_hold_s","binary","ble","ble_passkey",
     "cv_hold_max_s","esp32adc1_avg","esp32adc1_sr","fpwm_gate_hold","holiday_days","i2c_freq",
     "i2c_hs_freq","i2c_scl","idle_adv_ms","idle_cpu_mhz","idle_interval_ms","improv_offline_s",
-    "ina22x_conv_time_us","pair_window_s","pasv_port","port","pwm_freq","scan_interval",
+    "ina226_conv_time_us","pair_window_s","pasv_port","port","pwm_freq","scan_interval",
     "sprofiler_hz","switch_delay","tail_hold_s","adc_freq","pwm_clk","sun_seed"]),
   float: new Set(["L0","balance_delta","balance_interval","bat_c","bat_temp_derate",
     "bat_temp_max","bat_temp_min","boot_refresh_ns","bw","c_in","ctrl_iin_kd","ctrl_iin_kp",
@@ -1221,7 +1221,7 @@ const TYPE_KEYS = {
     "ctrl_power_td","ctrl_vin_kd","ctrl_vin_kp","ctrl_vin_td","ctrl_vout_kd","ctrl_vout_kp",
     "ctrl_vout_td","cv_ceiling","cv_eoc","cv_float","cv_hold_band","despike","fpwm_gate_margin",
     "full_charge_interval","holiday_band","holiday_charge","holiday_ibat","hv_i_max","hv_max",
-    "ibat_max","ina22x_ov","ina22x_resistor","iout_short","ki","kp","lv_i_max","lv_max",
+    "ibat_max","ina226_ov","ina226_resistor","iout_short","ki","kp","lv_i_max","lv_max",
     "lv_pgood_v","notch_depth","notch_freq","notch_q","p_max","partial_charge","phase_us","psu_slew_down",
     "psu_vout","pv_iout_span","pv_isc","pv_k","pv_slew","pv_voc","pwm_deadtime_hl_ns",
     "pwm_deadtime_lh_ns","pwm_deadtime_ns","recharge_dod","recharge_vfloor_band",
@@ -1249,13 +1249,13 @@ const DEFAULTS = {
   // board.conf
   "adc_fake_freq":"3000","bflow_bat":"0","bflow_en":"0","bflow_sd":"0",
   "boot_refresh_ns":"2000.0","fan_pwm":"255","hs_clamp":"0","i2c_freq":"100000",
-  "i2c_hs_freq":"0","i2c_port":"0","i2c_sda":"255","idle_cpu_mhz":"80","ina22x_addr":"0x40",
-  "ina22x_alert":"255","led_WS2812":"255","led_simple":"255","lv_pgood":"255",
+  "i2c_hs_freq":"0","i2c_port":"0","i2c_sda":"255","idle_cpu_mhz":"80","ina226_addr":"0x40",
+  "ina226_alert":"255","led_WS2812":"255","led_simple":"255","lv_pgood":"255",
   "lv_pgood_v":"10.5","mcu":"\"\"","pwm_deadtime_ns":"0.0","pwm_fault_active_high":"0",
   "pwm_fault_pin":"255","pwm_sd":"255","pwm_sync_pin":"255","skip_assert":"0",
   // sensor.conf
   "adc":"\"\"","despike":"0.0","esp32adc1_inl":"0","ignore_calibration_constraints":"0",
-  "ina22x_conv_time_us":"1100","ina22x_ov":"0","notch_adaptive":"1","notch_depth":"-15.0","notch_freq":"100.0",
+  "ina226_conv_time_us":"1100","ina226_ov":"0","notch_adaptive":"1","notch_depth":"-15.0","notch_freq":"100.0",
   "notch_q":"20.0","ntc_ch":"255","ripple_filter":"\"notch\"",
   // limits.conf
   "reverse_current_paranoia":"1","temp_max":"90.0","wire_dr_min":"4.0","wire_p_derate":"4.0",
@@ -1305,7 +1305,7 @@ const DEFAULTS = {
   // wifi.conf
   "improv_offline_s":"600","switch_delay":"30",
   // vconv.conf
-  "bf_model":"0","bf_stuck":"0","c_out":"0.00047","cloud_depth":"0.7","cloud_edge_s":"3.0",
+  "bflow_model":"0","bflow_stuck":"0","c_out":"0.00047","cloud_depth":"0.7","cloud_edge_s":"3.0",
   "cloud_len_s":"20.0","cloud_rate":"0.0","diode_vf":"0.0","hs_short":"0","i_unidir":"0",
   "isc":"8.0","noise_iin":"0.0","noise_iout":"0.0","noise_ntc":"0.0","noise_vin":"0.0",
   "noise_vout":"0.0","pwm_clk":"0","r_bat":"0.05","r_hs":"0.0","r_ls":"0.0","ring_c":"0.0",
