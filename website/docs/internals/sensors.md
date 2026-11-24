@@ -1,6 +1,6 @@
 ---
 title: Sensors
-sidebar_position: 4
+sidebar_position: 2
 description: "The firmware implements a sensor layer that abstracts asynchronous ADC reads and supports multiple ADCs at once."
 ---
 

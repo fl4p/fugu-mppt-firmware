@@ -1,6 +1,6 @@
 ---
 title: "Diode Emulation"
-sidebar_position: 6
+sidebar_position: 8
 mdx:
   format: mdx
 description: "The rectifier switch (LS in a buck) can stay off, and the coil-discharge current then flows through its body diode."

@@ -1,6 +1,6 @@
 ---
 title: "LFP Longevity"
-sidebar_position: 10
+sidebar_position: 12
 toc_max_heading_level: 3
 mdx:
   format: mdx

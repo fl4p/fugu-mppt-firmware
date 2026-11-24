@@ -1,6 +1,6 @@
 ---
 title: Control Loop
-sidebar_position: 2
+sidebar_position: 4
 description: "The control loop reads Vout, Vin, and Iin and adjusts the PWM duty cycle of the converter for MPPT and output regulation."
 ---
 
