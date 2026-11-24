@@ -61,7 +61,7 @@ stateDiagram-v2
 The tracker starts with a global sweep from duty 0 upwards, captures the maximum power point, then follows it with
 fast and later slow perturb-and-observe. A new sweep runs every 30 minutes, and `sweep` starts one on demand. The
 periodic sweep waits while the charger holds (terminated, partial-charge ceiling, too cold, stale BMS data) or the output is
-voltage-limited. See [When the tracker does not sweep](../internals/mppt-tracker.md#when-the-tracker-does-not-sweep).
+voltage-limited. See [Sweep gating](../internals/mppt-tracker.md#when-the-tracker-does-not-sweep).
 
 Five PD limiters (Vin, Iin, Vout, Iout, power) run on every sample. The most restrictive one wins and overrides the
 tracker. The Vout limit comes from the charger. For details, see [LFP charging](charging/lfp-charging.md). Tracker

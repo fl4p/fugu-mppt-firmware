@@ -1,9 +1,9 @@
 ---
-title: MPP Tracker
+title: MPP tracker
 sidebar_position: 5
 ---
 
-# MPP Tracker
+# MPP tracker
 
 *Original hand-written note: the README section [MPPT Algorithm](https://github.com/fl4p/fugu-mppt-firmware#mppt-algorithm).*
 
@@ -66,10 +66,11 @@ A sweep (`startSweep()` in `src/mppt.h`) runs these steps:
    when Vin crosses the floor.
 4. Over every 1/128 of the duty range, or each move of Vin by $V_{oc}/256$, the sweep measures how far Vin moved.
    Where Vin moved less than Voc over the whole duty range would, the step grows by up to `sweep_pace` (default 4,
-   1 = off, at most 8), so the ramp runs at a more even
-   pace in Vin: fast near Voc, where the converter barely draws current, and on the flat high-duty end towards the
-   floor. The steep stretch past the MPP keeps the plain step. The speed-up fades out between no load and half the power
-   limit, and a Vout that moves without a battery holding it (open output) turns it off.
+   1 = off, at most 8), so the ramp runs at a more even pace in Vin: fast near Voc, where the converter barely draws
+   current, and on the flat high-duty end towards the floor. The steep stretch past the MPP keeps the plain step. The
+   speed-up fades out between no load and half the power limit, and a Vout that moves without a battery holding it
+   (open output) turns it off.
+
    The sensor filters lag the ramp, so the speed-up is also bounded by their delay: the ramp may move at most 1/64 of
    the duty range per filter delay $\tau = (\text{span} + 1) / f_s$ of the slowest of Vin, the power current and the
    power voltage (median-of-5 plus a two-pass EWM). At the base step (`sweep_speed` 4, 10 % of the duty range per
@@ -428,17 +429,17 @@ which it learns from the global sweeps (below), and a buck converter (no-op on b
 only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV emulator mode), above 5 % of
 `limits.conf::p_max`:
 
-1. Candidates: the unshaded substring share is estimated as $s_0 = k\,V_{oc}/n$, with $V_{oc}$ the input
-   voltage at the start of the last global sweep (converter off) and $k = V_{mpp}/V_{oc}$ taken from the sweep's
-   maximum when it lies in 0.74..0.86 (an unshaded string); otherwise the last value is kept (0.82 at start). The operating point is assigned to the
-   nearest multiple $m_0$ of $s_0$. $V_{in}/m_0$ overestimates the share when weaker substrings conduct at the
-   operating point, $s_0$ misses heating since the sweep and the spread of $V_{mpp}/V_{oc}$; the scan uses their
-   mean $s = (V_{in}/m_0 + s_0)/2$. A lower candidate ($m < m_0$) is placed at $0.97\,m\,s$, on the flat
-   low-voltage side of its maximum. A higher one ($m > m_0$) is placed at $1.015\,m\,s$: it includes substrings
-   weaker than any at the operating point, which lifts it above $m$ shares, and below such a maximum the power falls
-   about in proportion to the voltage (the weak substring limits the current). A candidate below
-   1.05 times the input voltage floor (the input undervoltage limit, and on a buck the start ratio of the
-   low-side minimum pulse, about $1.2\,V_{out}$), or above $0.95\,V_{oc}$, is skipped.
+1. Candidates: the unshaded substring share is estimated as $s_0 = k\,V_{oc}/n$, with $V_{oc}$ the input voltage at the
+   start of the last global sweep (converter off) and $k = V_{mpp}/V_{oc}$ taken from the sweep's maximum when it lies
+   in 0.74..0.86 (an unshaded string); otherwise the last value is kept (0.82 at start). The operating point is assigned
+   to the nearest multiple $m_0$ of $s_0$. $V_{in}/m_0$ overestimates the share when weaker substrings conduct at the
+   operating point, $s_0$ misses heating since the sweep and the spread of $V_{mpp}/V_{oc}$; the scan uses their mean
+   $s = (V_{in}/m_0 + s_0)/2$. A lower candidate ($m < m_0$) is placed at $0.97\,m\,s$, on the flat low-voltage side of
+   its maximum. A higher one ($m > m_0$) is placed at $1.015\,m\,s$: it includes substrings weaker than any at the
+   operating point, which lifts it above $m$ shares, and below such a maximum the power falls about in proportion to the
+   voltage (the weak substring limits the current). A candidate below 1.05 times the input voltage floor (the input
+   undervoltage limit, and on a buck the start ratio of the low-side minimum pulse, about $1.2\,V_{out}$), or above
+   $0.95\,V_{oc}$, is skipped.
 2. A lower candidate ($m < m_0$) delivers at most $m\,s$ times the largest current seen since the last sweep
    (the sweep passes every maximum). If that is below the present power plus the margin, the candidate is
    skipped. On an unshaded string in full sun this skips every candidate, and no scan runs (only the
@@ -482,11 +483,11 @@ them, about three probe times later.
 
 ### Substring count
 
-The sweep runs from $V_{oc}$ down to the battery and passes every maximum. It records the local maxima of the
-smoothed power below $0.93\,V_{oc}$ that have a dip on both sides: a maximum ends when the power falls below 0.92 times its
-peak, and the next one starts when the power rises above 1.08 times the low in between. It keeps up to 6; a sweep with
-more is noise and does not count. Once the [sweep verdict](#sweep-verdict) passes, or a limiter prevented the verdict
-(with `sweep_verify=0`: right after the sweep), the low-frequency loop (core 0) evaluates them within 3 s:
+The sweep runs from $V_{oc}$ down to the battery and passes every maximum. It records the local maxima of the smoothed
+power below $0.93\,V_{oc}$ that have a dip on both sides: a maximum ends when the power falls below 0.92 times its peak,
+and the next one starts when the power rises above 1.08 times the low in between. It keeps up to 6; a sweep with more is
+noise and does not count. Once the [sweep verdict](#sweep-verdict) passes, or a limiter prevented the verdict (with
+`sweep_verify=0`: right after the sweep), the low-frequency loop (core 0) evaluates them within 3 s:
 
 * The sweep's MPP must be one of the recorded maxima, and at least 5 % of `limits.conf::p_max`.
 * The first recorded maximum with at least 60 % of the MPP power is taken as the full-string maximum. Maxima above
@@ -503,16 +504,16 @@ unshaded string never scans.
 
 A string can also be learned as a single peak, $n = 1$: two verified sweeps in a row, each with exactly one recorded
 maximum that is the MPP, while no count is known. A flagged sweep in between starts the run again. A sweep without a
-verdict (limiter, `sweep_verify=0`) does not count; it breaks the run too unless it recorded exactly one maximum that
-is the MPP. The log shows `scan: single peak learned from 2
-verified sweeps`. With $n = 1$ the scan stays idle and a flagged single-maximum sweep is not
-[re-swept](#sweep-verdict). A later sweep that shows shading still teaches a count of 2..6, which replaces it.
+verdict (limiter, `sweep_verify=0`) does not count; it breaks the run too unless it recorded exactly one maximum that is
+the MPP. The log shows `scan: single peak learned from 2 verified sweeps`. With $n = 1$ the scan stays idle and a
+flagged single-maximum sweep is not [re-swept](#sweep-verdict). A later sweep that shows shading still teaches a count
+of 2..6, which replaces it.
 
-The count is kept in `tracker.conf::pv_substrings` (1 = single peak). It is written once when it grows, as soon as a flash write is
-safe (flash auto-suspend active, converter off, or below 5 W), and before a console restart. Setting it to 0 (`set-config`) makes the
-converter learn it again after the next restart; until then the running count stays in use. A count learned
-earlier in the same boot and not yet saved can still be written over the 0, so set it while the converter is off
-and restart right after. It is not meant to be set by hand otherwise.
+The count is kept in `tracker.conf::pv_substrings` (1 = single peak). It is written once when it grows, as soon as a
+flash write is safe (flash auto-suspend active, converter off, or below 5 W), and before a console restart. Setting it
+to 0 (`set-config`) makes the converter learn it again after the next restart; until then the running count stays in
+use. A count learned earlier in the same boot and not yet saved can still be written over the 0, so set it while the
+converter is off and restart right after. It is not meant to be set by hand otherwise.
 
 The evaluation works on a copy of the maxima. If a new sweep or a scan starts while it runs, the sweep is dropped.
 
@@ -542,15 +543,18 @@ The scan then runs on an unshaded string, probes, and stays; on a string of 6 su
 
 ### Schedule and cost
 
-A scan starts every `scan_interval` seconds (default 300) after the last scan or sweep. With `scan_interval`
-above 60, it also starts 60 s after a scan that stayed (also one rejected as "light changed") but whose best probe
-came within 6 % of the reference: under clouds the ratio between two maxima changes, and a
-probe taken in a cloud can miss a maximum that wins in the sun. With `scan_trigger=1` a scan also starts when,
-for 15 s without interruption, $V_{in}$ is more than half a substring share away from the voltage after the
-last scan, or the power is below 70 % or above 140 % of the power then. The power must also have stayed within
-±10 % for the last 5 s, and the last scan must be at least 60 s ago. A passing cloud changes the power by more
-than that every few seconds, so most cloud edges do not trigger a scan; a shadow that moves across the string
-over minutes does.
+A scan starts in these cases:
+
+- every `scan_interval` seconds (default 300) after the last scan or sweep;
+- with `scan_interval` above 60, also 60 s after a scan that stayed (also one rejected as "light changed") but whose
+  best probe came within 6 % of the reference: under clouds the ratio between two maxima changes, and a probe taken in
+  a cloud can miss a maximum that wins in the sun;
+- with `scan_trigger=1`, also when for 15 s without interruption $V_{in}$ is more than half a substring share away
+  from the voltage after the last scan, or the power is below 70 % or above 140 % of the power then. The power must
+  also have stayed within ±10 % for the last 5 s, and the last scan must be at least 60 s ago.
+
+A passing cloud changes the power by more than that every few seconds, so most cloud edges do not trigger a scan; a
+shadow that moves across the string over minutes does.
 
 A flagged sweep can start a scan as soon as the reference is taken, without a trigger (see
 [Sweep verdict](#sweep-verdict)).
@@ -575,14 +579,14 @@ $V_{oc}$, a higher probe can land on the steep high-voltage side of its maximum 
 placement would have found. A higher factor finds more upward moves in cool conditions and loses more of them
 after heating; 1.015 is the compromise.
 
-## When the tracker does not sweep
+## Sweep gating {#when-the-tracker-does-not-sweep}
 
 The tracker skips every scheduled automatic sweep (periodic, low-light power-doubled, and the re-sweeps after a
 flagged sweep or a lifted Vout cap) under these conditions:
 
 | Condition                                             | Why                                                           |
 |-------------------------------------------------------|---------------------------------------------------------------|
-| PSU / PV emulator mode                                     | No MPP to track; the output is regulated to a setpoint        |
+| PSU or PV emulator mode                               | No MPP to track; the output is regulated to a setpoint        |
 | A sweep is already running                            |                                                               |
 | Charge hold (terminated, partial-charge ceiling, too cold, CV hold at `cv_eoc`, paused on stale BMS data) | Ramping duty from 0 would dump a charge pulse into a full pack |
 | Control mode is CV (output-voltage limited)           | Same: the pack is full or the output is disconnected          |
@@ -592,14 +596,15 @@ flagged sweep or a lifted Vout cap) under these conditions:
 The periodic sweep and a scheduled re-sweep wait: they start once the condition clears.
 
 A no-MPP backoff of a sweep that the Vout cap cut ends when the cap rises more than 0.2 V above both that cap and
-Vout. The sweep then starts at once and checks only for PSU / PV emulator mode, not the conditions above.
+Vout. The sweep then starts at once and checks only for PSU or PV emulator mode, not the conditions above.
 
 When a BMS cell-voltage topic is configured, the sweep at start-up and after a shutdown also waits for the BMS. It
 is skipped while termination is active and the BMS data is fresh, and it waits up to 12 s for the first termination
 decision. A fresh-to-stale BMS edge re-arms that wait at most once per 10 min, so a flapping BMS
 cannot block the sweep indefinitely. See [Charge Termination](../guide/charging/termination.md).
 
-`tracker.conf::target_duty_cycle` (any value in [0, 1], including an explicit 0) skips the sweep entirely and holds a fixed duty (manual PWM); 0 holds the converter off.
+`tracker.conf::target_duty_cycle` (any value in [0, 1], including an explicit 0) skips the sweep entirely and holds a
+fixed duty (manual PWM); 0 holds the converter off.
 
 ## Configuration
 

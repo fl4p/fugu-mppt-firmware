@@ -65,7 +65,7 @@ A due sweep (periodic, retry or power-doubled) waits while the charger holds the
 stale-BMS hold), while the loop is in CV mode, in PSU or PV emulator mode, during a back-off, or while a flash operation
 runs. The start sweep has its own gates. At the maximum duty the loop steps down in CV mode; at the minimum duty outside
 a sweep it steps up.
-[MPP Tracker](mppt-tracker.md) describes the return pass, the landing check and the partial peak scan.
+[MPP tracker](mppt-tracker.md) describes the return pass, the landing check and the partial peak scan.
 
 ## Limiters
 
@@ -103,7 +103,7 @@ with a sweep after the back-off. The situation is transient and should not damag
 Tracking has three phases: a global sweep from minimum duty that records the MPP, then fast and later slow perturb
 and observe around it. A major change in power switches back to fast tracking. A new sweep runs every 30 minutes, so
 the tracker does not stay on a local maximum of a partially shaded string.
-[MPP Tracker](mppt-tracker.md) describes the phases, the sweep gating and the partial peak scan.
+[MPP tracker](mppt-tracker.md) describes the phases, the sweep gating and the partial peak scan.
 
 ## Noise versus speed
 
