@@ -9,7 +9,7 @@
 // there through the /littlefs fopen redirect (esp/sim_prelude.h); converter.conf mode psu -> mppt,
 // per-scenario keys appended to vconv.conf / limits.conf. Stubs: test/host-stub/esp/.
 //
-//   test/host-stub/mppt-sim.sh [scenario ...]   # builds /tmp/mppt-sim, runs the scenarios (default all)
+//   test/host-stub/mppt-sim.sh [scenario ...]   # builds /tmp/mppt-sim, runs the scenarios (default all but cv-hold-*)
 //   /tmp/mppt-sim <scenario>   # sanity | a | b | c | d-cloud | d-cloud-ramp | d-bus04 | d-bus08 | d-bus12 |
 //                              # d-noise | e | e-bleed; suffix -p0 = limits.conf reverse_current_paranoia=0
 //                              # e*: battery open at 60 s, back at 180 s: on within 5 s ("== RECONNECT")
@@ -103,6 +103,24 @@
 //     uncalibrated). -ledc anywhere in the board tag (fry-ledc, fry-hq-ledc, fry-ledc-off) or SIM_DRV=ledc: the LEDC
 //     timing (2047 counts, rect_offset 0) of every result before 2026-11-19; SIM_DRV=mcpwm also on the ideal plant
 //   SIM_PLANT="fry:ring_q=40,fry:rect_offset_ns=0,..." overrides board fields
+//   top of charge on a shared bus ("== CVHOLD" PASS/FAIL line), fry's board, charger.conf as on fry/flat (cv_eoc 3.5,
+//   ceiling 3.55, 280 Ah, ibat_max 40, cv_hold_max_s 5400) and a balance run from the start. Unit 1 is the firmware,
+//   unit 2 a second BatteryCharger driving a current source; one 8s pack (lfp_pack.h, the 11-23 top fit: R0 1 mOhm,
+//   2 mOhm / 30 s, the high cell 40 mV up and in the 0.05 V/Ah knee, the others on the plateau) behind 20 mOhm of
+//   cable, one BMS feeding both chargers (ibat every 4 s, highest cell every 12 s, 1 mV); PV SIM_PV_W per unit (560):
+//     cv-hold-pair     both units at ~20 A into cv_eoc: peak <= cv_eoc + 15 mV to hold + 300 s, then +-10 mV, no latch
+//     cv-hold-offset   unit 2's Vout reads 0 / -0.15 / -0.9 V idle / both converting / alone, 90 min
+//     cv-hold-gap      no BMS frames 1800..2000 s: both units pause on the stale data and run again within 60 s
+//     cv-hold-load     900 W on 30 s / off 30 s from 1200 s: cell <= cv_eoc + 15 mV
+//     cv-hold-reboot   unit 2 restarts at 1200 s
+//     all: no ceiling latch, the plant's highest cell stays below cv_ceiling. Unit 2's output current follows
+//     min(its PV current, Iout_max(), the current that puts its sensed Vout at Vout_max()) with a 0.3 s lag: no
+//     tracking loss, PD loop or diode emulation. Its charger updates every 3 s with main.cpp's authority (running and
+//     iout > 0.5 A or holding). A restart: charger rebuilt 5 s later (state from its ChargerRtc), BMS frames from 10 s,
+//     starts as loopRTNewData (not full; BMS data decided or a 12 s wait), then ramps to its PV current over 5 s
+//     (the sweep). Vout error: linear in 0..2 A own and 0..5 A sibling current. Overrides:
+//     SIM_VOUT_ERR=u:idle,both,alone[;u:...]  SIM_LOAD=W,on_s,off_s,from_s (W,1,0,0: constant)  SIM_REBOOT_AT=t
+//     SIM_BMS_GAP=t,len[,t2,len2]  SIM_BMS=ibat_phase,cell_phase,lag (lag 1: ibat one frame late)  SIM_T  SIM_TR
 //
 #include <algorithm>
 #include <cmath>
@@ -113,6 +131,7 @@
 #include <vector>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <random>
 #include <unistd.h>
 
@@ -126,6 +145,7 @@
 #include "selftest/coil_fit.h"
 #include "selftest/bflow_test.h"
 #include "plant_boards.h"
+#include "lfp_pack.h"
 
 #if __has_include("peak_scan.h")
 #define SCAN_ACTIVE() mppt.scan.active()
@@ -525,6 +545,13 @@ static void lfStuckWatchdog() {
     systemRestart();
 }
 
+// main.cpp's charger.update() call; an older charger.h (sensitivity runs) has no sweep argument
+template<class C>
+static void chargerUpdate(C &c, float vout, float iout, bool authority, bool psu, bool sweep) {
+    if constexpr (requires { c.update(vout, iout, authority, psu, sweep); }) c.update(vout, iout, authority, psu, sweep);
+    else c.update(vout, iout, authority, psu);
+}
+
 static void lfControl() {
     mppt.ntc.read();
     mppt.ucTemp.read();
@@ -538,7 +565,7 @@ static void lfControl() {
         const bool voutAuthority = !mppt.converter.disabled()
                                    && mppt.converter.getCtrlOnPwmCnt() > minAuthorityPwm
                                    && currentShowsAuthority;
-        mppt.charger.update(vout, iout, voutAuthority);
+        chargerUpdate(mppt.charger, vout, iout, voutAuthority, g_app.psuMode(), mppt.isSweeping());
     }
 }
 
@@ -2626,6 +2653,229 @@ static int runIdleWake() {
     return fails != 0;
 }
 
+// ---- top of charge on a shared bus (cv-hold-*) ----
+// Vout sensor error [V]: idle, both units converting, converting alone; linear in 0..2 A own and 0..5 A sibling
+// current, so no step at a threshold
+struct VoutErr {
+    float idle = 0, both = 0, alone = 0;
+    [[nodiscard]] float at(float own, float other) const {
+        const float s = std::clamp(other / 5.f, 0.f, 1.f), w = std::clamp(own / 2.f, 0.f, 1.f);
+        return idle + (alone + (both - alone) * s - idle) * w;
+    }
+};
+
+static struct TopBus {
+    LfpPack pack;
+    BmsFeed bms;
+    VoutErr err[2];
+    std::optional<BatteryCharger> u2;
+    ChargerRtc rtc2{};
+    float rBus = 0.02f, pv = 560, tau2 = 0.3f; // cable [Ohm], PV power per unit [W], unit 2 output lag [s]
+    float i2 = 0, iload = 0, err1 = 0, vcell = 0, ibat = 0;
+    float load[4] = {0, 30, 30, 0}; // W, on s, off s, from t
+    double gap[4] = {-1, 0, -1, 0}; // t, len (x2)
+    double boot2 = 0, sweep2 = 0, lf2 = 0, last = 0;
+    unsigned boots2 = 0;
+    enum { DOWN, WAIT, SWEEP, ON } st2 = DOWN;
+} *g_top;
+
+static float (*g_topPrevSense)(uint8_t, float) = nullptr;
+
+static float topSense(uint8_t ch, float x) {
+    if (g_topPrevSense) x = g_topPrevSense(ch, x);
+    return ch == 1 ? x + g_top->err1 : x;
+}
+
+template<class C>
+static bool stalePaused(const C &c) {
+    if constexpr (requires { c.termCond.stalePaused(); }) return c.termCond.stalePaused();
+    else return false;
+}
+
+// per RT tick: pack, load, BMS frames to both chargers, unit 2, then the battery the plant sees (Thevenin of the pack,
+// unit 2 and the load)
+static void topTick() {
+    auto &T = *g_top;
+    const double t = tNow();
+    const float dt = (float) (t - T.last);
+    if (dt <= 0) return;
+    T.last = t;
+    const float R = T.rBus + LfpPack::N * T.pack.r0, vbus = g_vconv.getVout(), i1 = g_vconv.getIoutAvg();
+    T.ibat = (vbus - T.pack.emf()) / R;
+    T.pack.step(T.ibat, dt);
+    T.vcell = T.pack.vcellHigh(T.ibat);
+    const float *L = T.load;
+    T.iload = L[0] > 0 && t >= L[3] && std::fmod(t - L[3], (double) (L[1] + L[2])) < L[1] ? L[0] / vbus : 0.f;
+    bool gap = false;
+    for (int k = 0; k < 4; k += 2) gap |= T.gap[k] >= 0 && t >= T.gap[k] && t < T.gap[k] + T.gap[k + 1];
+    T.bms.cells = T.bms.ibatOn = !gap;
+    T.bms.poll(t, T.ibat, T.vcell);
+    T.bms.deliver(mppt.charger);
+    // unit 2: up BOOT_S after a reset, BMS frames from MQTT_S, starts as loopRTNewData does (pack not full, BMS data
+    // decided or the 12 s wait over), ramps to its PV current over SWEEP_S (the sweep), then converts
+    constexpr double BOOT_S = 5, MQTT_S = 10, SWEEP_S = 5, BMS_WAIT_S = 12;
+    auto &c2 = T.u2;
+    if (T.st2 == TopBus::DOWN && t >= T.boot2 + BOOT_S) {
+        c2.emplace();
+        c2->begin(ConfFile{"/littlefs/conf/charger.conf"});
+        c2->attachRtc(&T.rtc2);
+        c2->beginMqtt(ConfFile{{"cell_voltages_max_topic", "bms"}});
+        if (!T.boots2++) c2->balanceNow();
+        T.st2 = TopBus::WAIT, T.lf2 = t;
+    }
+    if (c2 && t >= T.boot2 + MQTT_S) T.bms.deliver(*c2);
+    T.err1 = T.err[0].at(i1, T.i2);
+    const float v2 = vbus + T.err[1].at(T.i2, i1);
+    if (T.st2 == TopBus::WAIT) {
+        const bool fresh = c2->batSt.haveValidCellVoltage(), full = bool(c2->termCond) && fresh;
+        const bool waiting = c2->hasBmsCellSource() && (!c2->terminationDecided() || !fresh);
+        if (!full && (!waiting || t >= T.boot2 + BOOT_S + BMS_WAIT_S)) T.st2 = TopBus::SWEEP, T.sweep2 = t;
+    }
+    if (T.st2 == TopBus::SWEEP && t >= T.sweep2 + SWEEP_S) T.st2 = TopBus::ON;
+    float tgt = 0;
+    if (T.st2 >= TopBus::SWEEP) {
+        float cap = T.pv / vbus;
+        if (T.st2 == TopBus::SWEEP) cap *= (float) ((t - T.sweep2) / SWEEP_S);
+        tgt = std::clamp(T.i2 + (c2->Vout_max() - v2) / R, 0.f, std::min(cap, c2->Iout_max()));
+    }
+    T.i2 += (tgt - T.i2) * (1.f - expf(-dt / T.tau2));
+    if (c2 && t >= T.lf2) {
+        T.lf2 = t + lfPeriod * 1e-6;
+        chargerUpdate(*c2, v2, T.i2, T.st2 >= TopBus::SWEEP && (T.i2 > 0.5f || c2->chargeHold()), false,
+                      T.st2 == TopBus::SWEEP);
+    }
+    g_vconv.setBat(T.pack.emf() + R * (T.i2 - T.iload), R);
+}
+
+static const char *topState(const BatteryCharger *c) {
+    if (!c) return "down";
+    return stalePaused(*c) ? "paused" : c->balanceRunning() ? "bal" : c->termCond.cvHold() ? "hold" : (bool) c->termCond
+           ? "term" : "bulk";
+}
+
+static int runCvHold(const std::string &name, const std::string &sc) {
+    if (sc != "cv-hold-pair" && sc != "cv-hold-offset" && sc != "cv-hold-gap" && sc != "cv-hold-load" &&
+        sc != "cv-hold-reboot") {
+        printf("unknown scenario %s\n", sc.c_str());
+        return 1;
+    }
+    static TopBus top;
+    g_top = &top;
+    auto &T = top;
+    topOfCharge(T.pack);
+    T.pack.kneeV = 3.34f, T.pack.kneeW = 0.01f; // the high cell starts in the knee, the others on the plateau
+    T.bms.phaseI = 1.3f, T.bms.phaseC = 5.1f, T.bms.qV = 0.001f;
+    double tEnd = 3600, rebootAt = -1;
+    if (sc == "cv-hold-offset") tEnd = 5400, T.err[1] = {0, -0.15f, -0.9f};
+    if (sc == "cv-hold-gap") T.gap[0] = 1800, T.gap[1] = 200;
+    if (sc == "cv-hold-load") T.load[0] = 900, T.load[3] = 1200;
+    if (sc == "cv-hold-reboot") rebootAt = 1200;
+    if (const char *e = getenv("SIM_T")) tEnd = atof(e);
+    if (const char *e = getenv("SIM_PV_W")) T.pv = atof(e);
+    if (const char *e = getenv("SIM_LOAD")) sscanf(e, "%f,%f,%f,%f", T.load, T.load + 1, T.load + 2, T.load + 3);
+    if (const char *e = getenv("SIM_BMS_GAP")) sscanf(e, "%lf,%lf,%lf,%lf", T.gap, T.gap + 1, T.gap + 2, T.gap + 3);
+    if (const char *e = getenv("SIM_REBOOT_AT")) rebootAt = atof(e);
+    if (const char *e = getenv("SIM_BMS")) {
+        int lag = 0;
+        sscanf(e, "%f,%f,%d", &T.bms.phaseI, &T.bms.phaseC, &lag);
+        T.bms.lagI = lag;
+    }
+    for (const char *e = getenv("SIM_VOUT_ERR"); e && *e;) { // u:idle,both,alone[;u:...]
+        int u = 0;
+        VoutErr v;
+        if (sscanf(e, "%d:%f,%f,%f", &u, &v.idle, &v.both, &v.alone) == 4 && (u == 1 || u == 2)) T.err[u - 1] = v;
+        e = strchr(e, ';');
+        if (e) ++e;
+    }
+    const float R = T.rBus + LfpPack::N * T.pack.r0;
+    Wx wx; // unit 1's PV: fry's string
+    wx.voc = 80, wx.k = 0.86f, wx.pClear = T.pv, wx.vbat = T.pack.emf(), wx.rbat = R;
+    wx.init();
+    wx.apply(0);
+    mppt.charger.beginMqtt(ConfFile{{"cell_voltages_max_topic", "bms"}});
+    mppt.charger.balanceNow();
+    g_topPrevSense = g_simSenseHook, g_simSenseHook = topSense;
+    T.last = tNow(), g_tickHook = topTick;
+    g_verbose = getenv("SIM_V") != nullptr;
+    const double trEvery = getenv("SIM_TR") ? atof(getenv("SIM_TR")) : 60;
+    const auto &P = mppt.charger.params;
+    const float eoc = P.cv_eoc, ceil = P.cv_ceiling;
+    printf("# %s: %u cells, unit PV %.0f W, R %.0f mOhm, cv_eoc %.3f, ceiling %.3f, %.0f s; Vout error unit 1 %.2f/%.2f/%.2f,"
+           " unit 2 %.2f/%.2f/%.2f V; load %.0f W %.0f/%.0f s from %.0f s; BMS gaps %.0f+%.0f %.0f+%.0f s; reboot at %.0f s\n",
+           name.c_str(), (unsigned) P.n_cells, T.pv, R * 1e3f, eoc, ceil, tEnd, T.err[0].idle, T.err[0].both,
+           T.err[0].alone, T.err[1].idle, T.err[1].both, T.err[1].alone, T.load[0], T.load[1], T.load[2], T.load[3],
+           T.gap[0], T.gap[1], T.gap[2], T.gap[3], rebootAt);
+    double holdAt = -1, gapEnd = T.gap[0] >= 0 ? T.gap[0] + T.gap[1] : -1, resumeAt = -1;
+    float peak = 0, entry = 0, lo = 9, hi = 0;
+    bool wasTerm[2] = {}, paused[2] = {};
+    std::vector<std::string> latches;
+    unsigned nCeil = 0;
+    for (double nextTr = 0; tNow() < tEnd;) {
+        const double tb = tNow();
+        if (rebootAt >= 0 && tb >= rebootAt) {
+            printf("%9.2f >>> unit 2 reboots (cell %.3f)\n", tb, T.vcell);
+            T.u2.reset(), T.st2 = TopBus::DOWN, T.boot2 = tb, T.i2 = 0, wasTerm[1] = false, rebootAt = -1;
+        }
+        wx.apply(tb);
+        run(0.02, 0);
+        const BatteryCharger *u[2] = {&mppt.charger, T.u2 ? &*T.u2 : nullptr};
+        for (int k = 0; k < 2; ++k) {
+            if (!u[k]) continue;
+            const bool term = (bool) u[k]->termCond;
+            if (term && !wasTerm[k]) {
+                const bool c = u[k]->batSt.vcell_high >= ceil;
+                nCeil += c;
+                char b[96];
+                snprintf(b, sizeof b, "unit %d at %.0f s, BMS cell %.3f%s", k + 1, tb, u[k]->batSt.vcell_high,
+                         c ? " (ceiling)" : "");
+                latches.emplace_back(b);
+                printf("%9.2f >>> latch %s\n", tb, b);
+            }
+            wasTerm[k] = term;
+            if (gapEnd >= 0 && tb >= T.gap[0] && tb < gapEnd + 30) paused[k] |= stalePaused(*u[k]);
+        }
+        if (holdAt < 0 && u[1] && u[0]->termCond.cvHold() && u[1]->termCond.cvHold()) holdAt = tb;
+        if (gapEnd >= 0 && resumeAt < 0 && tb >= gapEnd && u[1] && u[0]->balanceRunning() && u[1]->balanceRunning())
+            resumeAt = tb;
+        peak = std::max(peak, T.vcell);
+        if (holdAt < 0 || tb < holdAt + 300) entry = peak;
+        else lo = std::min(lo, T.vcell), hi = std::max(hi, T.vcell);
+        if (tb >= nextTr) {
+            printf("%8.0f cell %.3f ibat %6.1f bus %6.3f load %4.1f | 1: %5.1f A lim %5.1f Vmax %6.3f %-6s %-11s | 2: %5.1f A"
+                   " lim %5.1f Vmax %6.3f %s\n", tb, T.vcell, T.ibat, g_vconv.getVout(), T.iload, g_vconv.getIoutAvg(),
+                   u[0]->Iout_max(), u[0]->Vout_max(), topState(u[0]), modeStr(), T.i2, u[1] ? u[1]->Iout_max() : 0.f,
+                   u[1] ? u[1]->Vout_max() : 0.f, topState(u[1]));
+            nextTr += trEvery;
+        }
+    }
+    g_tickHook = nullptr, g_simSenseHook = g_topPrevSense;
+    std::string ls;
+    for (auto &l: latches) ls += (ls.empty() ? "" : "; ") + l;
+    printf("\n== CVHOLD %s: both in the hold at %.0f s, cell peak %.3f to hold + 300 s, then %.3f..%.3f, run peak %.3f"
+           " (cv_eoc %.3f, ceiling %.3f); %zu latches, %u at the ceiling [%s]\n", name.c_str(), holdAt, entry, lo, hi,
+           peak, eoc, ceil, latches.size(), nCeil, ls.c_str());
+    bool ok = true;
+    std::string why;
+    auto need = [&](bool c, const char *w) { if (!c) ok = false, why += why.empty() ? w : std::string(", ") + w; };
+    need(nCeil == 0, "ceiling latch");
+    need(peak < ceil, "cell at the ceiling");
+    if (sc == "cv-hold-pair") {
+        need(holdAt >= 0, "no hold");
+        need(entry <= eoc + 0.015f, "entry peak > cv_eoc + 15 mV");
+        need(lo >= eoc - 0.010f && hi <= eoc + 0.010f, "not within +-10 mV");
+        need(latches.empty(), "latched");
+    }
+    if (sc == "cv-hold-load") need(holdAt >= 0 && peak <= eoc + 0.015f, "peak > cv_eoc + 15 mV");
+    if (gapEnd >= 0) {
+        printf("== CVHOLD %s gap %.0f..%.0f s: paused unit 1 %d, unit 2 %d; both running again at %.0f s\n", name.c_str(),
+               T.gap[0], gapEnd, (int) paused[0], (int) paused[1], resumeAt);
+        need(paused[0] && paused[1], "no stale pause");
+        need(resumeAt >= 0 && resumeAt < gapEnd + 60, "no resume within 60 s");
+    }
+    printf("== CVHOLD %s: %s%s%s\n", name.c_str(), ok ? "PASS" : "FAIL", ok ? "" : ": ", why.c_str());
+    return ok ? 0 : 1;
+}
+
 static int simMain(int argc, char **argv) {
     std::string sc = argc > 1 ? argv[1] : "sanity";
     g_simLogHook = logHook;
@@ -2643,7 +2893,15 @@ static int simMain(int argc, char **argv) {
         setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
     if (sc.rfind("wx-", 0) == 0 && sc.size() > 5 && sc.compare(sc.size() - 5, 5, "-flat") == 0)
         setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
-    if (sc.rfind("wx-", 0) == 0) setenv("SIM_RING", "fry", 0); // tracker scenarios: a field board's plant
+    const bool cvHold = sc.rfind("cv-hold-", 0) == 0;
+    if (sc.rfind("wx-", 0) == 0 || cvHold) setenv("SIM_RING", "fry", 0); // tracker scenarios: a field board's plant
+    if (cvHold) { // fry/flat's charger, a balance run
+        std::string c = "charger.conf:vout_max=29,charger.conf:vout_max_fallback=26.8,charger.conf:cv_eoc=3.5,"
+                        "charger.conf:cv_float=3.35,charger.conf:bat_c=280,charger.conf:ibat_max=40,"
+                        "charger.conf:cv_hold_max_s=5400,charger.conf:balance_interval=30,charger.conf:balance_hold_s=7200";
+        if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
+        setenv("SIM_CONF", c.c_str(), 1);
+    }
     if (const char *n = getenv("SIM_NOISE"); n && *n) noiseLoad(n);
     if (const char *f = getenv("SIM_PDUMP")) g_pDump = ::fopen(f, "wb");
     g_liveOffset = sc.rfind("rcal", 0) != 0;
@@ -2740,6 +2998,7 @@ static int simMain(int argc, char **argv) {
     }
     if (sc == "ring-coil" || sc == "ring-coil-weak") return runRingCoil(name, sc == "ring-coil-weak");
     if (isWx) return runWx(name, wx);
+    if (cvHold) return runCvHold(name, sc);
     if (sc.rfind("shade", 0) == 0) g_vconv.setPvShade(0.68f);
 
     if (sc == "sanity") {

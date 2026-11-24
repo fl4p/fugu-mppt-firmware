@@ -10,6 +10,7 @@ using std::min;
 using std::max;
 #include "mock.h"
 #include "charger.h"
+#include "lfp_pack.h"
 
 time_us loopWallClockUs_ = 0;
 MqttService MQTT;
@@ -201,29 +202,23 @@ static BatChargerParams holdParams(uint32_t maxS = 5400) {
     return p;
 }
 
-// 8s pack + cable: vcell_high = voc + imb + vp + ibat * rc, bus = 8 (voc + vp) + ibat * 8 rc + iout * R_BUS. Each converter
-// is a CV source at its pin (R_SRC output resistance) limited to its PV current and Iout_max(). Its Vout sensor reads
-// off[i] from the bus, so it regulates the true bus to Vout_max() - off[i]. 1 s steps (loopLF), ibat frames every
-// 4 s, cell frames every 12 s.
+// 8s pack (lfp_pack.h) + cable: bus = pack.emf() + ibat * 8 r0 + iout * R_BUS. Each converter is a CV source at its pin
+// (R_SRC output resistance) limited to its PV current and Iout_max(). Its Vout sensor reads off[i] from the bus, so it
+// regulates the true bus to Vout_max() - off[i]. 1 s steps (loopLF), ibat frames every 4 s, cell frames every 12 s.
 struct Plant {
-    static constexpr float R_BUS = 0.02f, R_SRC = 0.005f, DV_DAH = 0.0032f;
-    float voc = 3.38f, iload = 0.f, ipv[2] = {35.f, 35.f};
-    float rc = 0.004f; // cell resistance
-    // top of charge (off by default): polarization vp (rp, tauP), OCV slope DV_DAH + knee [V/Ah]
-    float rp = 0.f, tauP = 30.f, vp = 0.f, knee = 0.f;
-    float imb = 0.f, kImb = 0.f; // highest cell above the mean, rising kImb V/Ah while charging
+    static constexpr float R_BUS = 0.02f, R_SRC = 0.005f;
+    LfpPack pack;
+    BmsFeed bms;
+    float iload = 0.f, ipv[2] = {35.f, 35.f};
     float off[2] = {0.f, 0.f};
     bool flatOff = false; // unit 1 reads -0.1 V while unit 0 converts, else -0.9 V (fry/flat 11-23)
     float ibat = 0, vbus = 0, iout[2] = {0, 0};
-    bool cells = true; // BMS cell frames flowing
-    bool ibatOn = true; // BMS ibat frames flowing
-    bool bmsLag = false; // ibat frames report the current of one frame earlier
-    float ibatOld = 0;
     bool sweep = false; // mppt.isSweeping() of every unit
     int t = 0;
 
     void solve(BatteryCharger **c, int n) {
-        float lo = 8 * (voc + vp) - 5, hi = 8 * (voc + vp) + 5;
+        const float e = pack.emf(), rPack = LfpPack::N * pack.r0;
+        float lo = e - 5, hi = e + 5;
         auto src = [&](int i, float v) {
             return std::clamp((c[i]->Vout_max() - off[i] - v) / R_SRC, 0.f, std::min(ipv[i], c[i]->Iout_max()));
         };
@@ -231,7 +226,7 @@ struct Plant {
             float v = 0.5f * (lo + hi), sum = 0;
             for (int i = 0; i < n; ++i) sum += src(i, v);
             float vb = v - sum * R_BUS;
-            float need = (vb - 8 * (voc + vp)) / (8 * rc) + iload;
+            float need = (vb - e) / rPack + iload;
             (sum > need ? lo : hi) = v;
         }
         vbus = 0.5f * (lo + hi);
@@ -240,7 +235,7 @@ struct Plant {
         ibat = sum - iload;
     }
 
-    [[nodiscard]] float vcell() const { return voc + imb + vp + ibat * rc; }
+    [[nodiscard]] float vcell() const { return pack.vcellHigh(ibat); }
 
     void run(BatteryCharger **c, int n, int sec, bool psu = false) {
         for (int k = 0; k < sec; ++k) {
@@ -248,16 +243,13 @@ struct Plant {
             setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
             if (flatOff) off[1] = iout[0] > 1.f ? -0.1f : -0.9f;
             solve(c, n);
-            voc += ibat * (1.f / 3600.f) * (DV_DAH + knee);
-            if (rp > 0) vp += (ibat * rp - vp) * (1.f - expf(-1.f / tauP));
-            if (ibat > 0) imb += ibat * (1.f / 3600.f) * kImb;
+            pack.step(ibat, 1.f);
+            bms.poll(t, ibat, vcell());
             for (int i = 0; i < n; ++i) {
-                if (ibatOn && t % 4 == 0) c[i]->batSt.updateBatCurrent(bmsLag ? ibatOld : ibat);
-                if (cells && t % 12 == 0) c[i]->batSt.setVcellHigh(vcell());
+                bms.deliver(*c[i]);
                 // main.cpp lfControl(): any running converter has authority while the charger holds
                 c[i]->update(vbus + off[i], iout[i], iout[i] > 0.3f || (c[i]->chargeHold() && ipv[i] > 0), psu, sweep);
             }
-            if (t % 4 == 0) ibatOld = ibat;
         }
     }
     void run(BatteryCharger &c, int sec, bool psu = false) { BatteryCharger *a[1] = {&c}; run(a, 1, sec, psu); }
@@ -363,7 +355,7 @@ static void test_hold_stale_latches() {
     Plant pl;
     pl.untilHold(c);
     pl.run(c, 120);
-    pl.cells = false;
+    pl.bms.cells = false;
     pl.run(c, 170);
     CHECK(c.termCond.cvHold() && !(bool) c.termCond, "still holding within expiry");
     pl.run(c, 30);
@@ -392,7 +384,7 @@ static void test_hold_cloudy_exit() {
     pl.run(c, 300);
     pl.ipv[0] = 0.f;
     pl.iload = 5.f;
-    pl.voc = 3.33f; // sun gone, relaxed pack discharging
+    pl.pack.setMean(3.33f); // sun gone, relaxed pack discharging
     pl.run(c, 12 * 6);
     CHECK(!(bool) c.termCond && !c.termCond.cvHold(), "left the hold without latching");
     pl.run(c, 10);
@@ -403,7 +395,7 @@ static void test_hold_two_units_converge(bool lag) {
     BatteryCharger a, b; a.params = holdParams(); b.params = holdParams(); setWallClockUs(1'000'000ULL);
     a.termCond.reset(); b.termCond.reset();
     Plant pl;
-    pl.bmsLag = lag;
+    pl.bms.lagI = lag;
     pl.ipv[0] = 25.f; pl.ipv[1] = 25.f;
     BatteryCharger *u[2] = {&a, &b};
     for (int k = 0; k < 3600 && !(a.termCond.cvHold() && b.termCond.cvHold()); ++k) pl.run(u, 2, 1);
@@ -490,7 +482,7 @@ static void test_hold_stale_releases_limit() {
     pl.run(c, 300);
     CHECK(c.Iout_max() < 30.f, "hold limits the current: %.1f A", c.Iout_max());
     float lim = c.Iout_max();
-    pl.cells = false;
+    pl.bms.cells = false;
     pl.run(c, 170);
     CHECK(c.termCond.cvHold() && c.Iout_max() <= lim + 2.f, "within expiry: still limited %.1f A", c.Iout_max());
     pl.run(c, 30);
@@ -511,19 +503,12 @@ static BatChargerParams balParams(uint32_t holdS = 1800, uint32_t maxS = 0) {
     return p;
 }
 
-// Top of an 8s 280 Ah LFP pack fit to fry/flat 11-23 13:44 (both rebooted at float, highest cell 3.358 V at rest, then
-// 40 A): crossed 3.50 V ~75 s later, peaked 3.528 V in the hold. 1 mOhm + 2 mOhm / 30 s, OCV +0.05 V/Ah, 40 mV imbalance.
-static void topOfCharge(Plant &pl) {
-    pl.rc = 0.001f; pl.rp = 0.002f; pl.tauP = 30.f; pl.knee = 0.05f;
-    pl.imb = 0.04f; pl.voc = 3.318f;
-}
-
 static void test_hold_entry_40a_two_units() {
     BatteryCharger a, b; a.params = balParams(7200); b.params = balParams(7200); setWallClockUs(1'000'000ULL);
     a.termCond.reset(); b.termCond.reset();
     a.balanceNow(); b.balanceNow();
     Plant pl;
-    topOfCharge(pl);
+    topOfCharge(pl.pack);
     pl.ipv[0] = pl.ipv[1] = 20.f;
     BatteryCharger *u[2] = {&a, &b};
     float vmax = 0, vlo = 9, vhi = 0;
@@ -546,7 +531,7 @@ static void test_hold_sibling_boots_unlimited() {
     a.termCond.reset(); b.termCond.reset();
     a.balanceNow(); b.balanceNow();
     Plant pl;
-    topOfCharge(pl);
+    topOfCharge(pl.pack);
     pl.ipv[0] = 16.f; pl.ipv[1] = 0.f;
     BatteryCharger *u[2] = {&a, &b};
     for (int k = 0; k < 3600 && pl.vcell() < 3.5f; ++k) pl.run(u, 1, 1);
@@ -659,14 +644,14 @@ static void test_bal_progress_survives_sun_gone_and_cap() {
     Plant pl;
     pl.untilHold(c);
     pl.run(c, 600);
-    pl.ipv[0] = 0.f; pl.iload = 5.f; pl.voc = 3.33f; // sun gone
+    pl.ipv[0] = 0.f; pl.iload = 5.f; pl.pack.setMean(3.33f); // sun gone
     pl.run(c, 12 * 6);
     CHECK(!(bool) c.termCond && !c.termCond.cvHold(), "sun gone: hold left, not terminated");
     uint32_t p1 = c.balanceInBandS();
     CHECK(p1 > 450 && p1 <= 600 + 12, "first session in band %u s", p1);
     pl.run(c, 3600);
     CHECK(c.balanceInBandS() == p1 && c.balanceDue(), "progress kept overnight: %u s", c.balanceInBandS());
-    pl.ipv[0] = 35.f; pl.iload = 0.f; pl.voc = 3.40f; // next day
+    pl.ipv[0] = 35.f; pl.iload = 0.f; pl.pack.setMean(3.40f); // next day
     pl.untilHold(c, 7200);
     CHECK(c.balanceRunning(), "next day: run resumes");
     int held = 0;
@@ -805,7 +790,7 @@ static void test_bal_stale_gap(int gapS, bool bal = true) {
     pl.run(c, 1800);
     uint32_t p0 = c.balanceInBandS();
     float limBefore = c.Iout_max(), ibatBefore = pl.ibat;
-    pl.cells = pl.ibatOn = false;
+    pl.bms.cells = pl.bms.ibatOn = false;
     int s = 0, latchedAt = -1, pausedS = 0;
     float limMin = 99.f, vmaxGap = 0.f, ibatGapEnd = 0.f;
     for (; s < gapS; ++s) {
@@ -833,7 +818,7 @@ static void test_bal_stale_gap(int gapS, bool bal = true) {
     if (gapS > 800) {
         CHECK(latchedAt >= 775 && latchedAt <= 800, "long gap: latched after expiry + pause (%d s)", latchedAt);
         CHECK(!c.termCond.stalePaused() && c.balanceDue() && pGap >= p0, "long gap: run pending, progress kept");
-        pl.cells = pl.ibatOn = true;
+        pl.bms.cells = pl.bms.ibatOn = true;
         pl.run(c, 120);
         CHECK((bool) c.termCond && !c.termCond.cvHold(), "long gap: still terminated with fresh data");
         return;
@@ -841,7 +826,7 @@ static void test_bal_stale_gap(int gapS, bool bal = true) {
     CHECK(latchedAt < 0 && pausedS > 0 && c.termCond.stalePaused(), "short gap: paused, not latched (latched at %d s)",
           latchedAt);
     CHECK(ibatGapEnd < 2.f, "short gap: pack current off at float (%.1f A)", ibatGapEnd);
-    pl.cells = pl.ibatOn = true;
+    pl.bms.cells = pl.bms.ibatOn = true;
     int back = -1;
     float ibatMax = -99.f, vmax = 0.f;
     for (s = 0; s < 120; ++s) {
@@ -950,7 +935,7 @@ static void test_hold_vout_offset_two_units() {
     a.balanceNow(); b.balanceNow();
     Plant pl;
     pl.ipv[0] = pl.ipv[1] = 30.f;
-    pl.imb = 0.06f; pl.kImb = 0.01f; pl.flatOff = true;
+    pl.pack.set(3.38f, 0.06f); pl.pack.kImb = 0.01f; pl.flatOff = true;
     BatteryCharger *u[2] = {&a, &b};
     for (int k = 0; k < 3600 && !(a.balanceRunning() && b.balanceRunning()); ++k) pl.run(u, 2, 1);
     CHECK(a.balanceRunning() && b.balanceRunning(), "both run");
@@ -1043,7 +1028,7 @@ static void test_hold_blind_decay(int units, int gapS) {
     pl.run(u, units, 120);
     CHECK(a.termCond.cvHold() && !(bool) a.termCond, "blind %d/%d: in the hold", units, gapS);
     float lim0 = a.Iout_max(), ibat0 = pl.ibat;
-    pl.cells = pl.ibatOn = false;
+    pl.bms.cells = pl.bms.ibatOn = false;
     pl.run(u, units, 18);
     CHECK(a.Iout_max() >= lim0 - 0.01f, "blind %d/%d: 18 s, limit kept %.2f -> %.2f A", units, gapS, lim0, a.Iout_max());
     float limMin = 99.f, ibatEnd = 0.f;
@@ -1062,7 +1047,7 @@ static void test_hold_blind_decay(int units, int gapS) {
         return;
     }
     CHECK(latchedAt < 0 && a.termCond.cvHold(), "blind %d/%d: short gap, still in the hold", units, gapS);
-    pl.cells = pl.ibatOn = true;
+    pl.bms.cells = pl.bms.ibatOn = true;
     float vmax = 0;
     int back = -1;
     for (int s = 0; s < 900; ++s) {

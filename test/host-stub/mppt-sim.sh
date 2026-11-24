@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build the host closed-loop sim (mppt-sim.cpp) and run the given scenarios (default: all).
-#   test/host-stub/mppt-sim.sh [scenario ...]
+#   test/host-stub/mppt-sim.sh [scenario ...]   (cv-hold-* only by name)
 set -e
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT=${OUT:-/tmp/mppt-sim}
