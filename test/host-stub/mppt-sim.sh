@@ -3,7 +3,8 @@
 #   test/host-stub/mppt-sim.sh [scenario ...]   (cv-hold-* only by name)
 set -e
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-OUT=${OUT:-/tmp/mppt-sim}
+# per checkout: a shared path is rebuilt by other trees mid-run
+OUT=${OUT:-/tmp/mppt-sim.$(printf %s "$ROOT" | cksum | cut -d" " -f1)}
 clang++ -std=gnu++20 -O2 -fexceptions -Wno-format -Wno-deprecated-volatile \
     -include "$ROOT/test/host-stub/esp/sim_prelude.h" -I "$ROOT/test/host-stub/esp" -I "$ROOT/src" \
     -DSIM_REPO_ROOT="\"$ROOT\"" \

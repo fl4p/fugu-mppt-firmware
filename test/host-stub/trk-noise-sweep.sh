@@ -1,9 +1,10 @@
 #!/bin/bash
 # Tracker noise-robustness sweep: scenarios x replayed noise profiles x noise gain, in parallel.
-#   OUT=/tmp/mppt-sim test/host-stub/trk-noise-sweep.sh RESULTS.txt [jobs]
+#   test/host-stub/trk-noise-sweep.sh RESULTS.txt [jobs]   (OUT=<sim binary>, default as mppt-sim.sh)
 # Build the sim first (test/host-stub/mppt-sim.sh sanity). Compare two result files with trk-sweep-diff.py.
 set -e
-export OUT=${OUT:-/tmp/mppt-sim}
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+export OUT=${OUT:-/tmp/mppt-sim.$(printf %s "$ROOT" | cksum | cut -d" " -f1)}
 RES=${1:?results file}
 J=${2:-4}
 SCEN=${SCEN:-"wx-mid wx-dusk wx-low wx-wob-fry wx-cloud"}

@@ -9,7 +9,7 @@
 // there through the /littlefs fopen redirect (esp/sim_prelude.h); converter.conf mode psu -> mppt,
 // per-scenario keys appended to vconv.conf / limits.conf. Stubs: test/host-stub/esp/.
 //
-//   test/host-stub/mppt-sim.sh [scenario ...]   # builds /tmp/mppt-sim, runs the scenarios (default all but cv-hold-*)
+//   test/host-stub/mppt-sim.sh [scenario ...]   # builds /tmp/mppt-sim.<checkout cksum> (or $OUT), runs the scenarios (default all but cv-hold-*)
 //   /tmp/mppt-sim <scenario>   # sanity | a | b | c | d-cloud | d-cloud-ramp | d-bus04 | d-bus08 | d-bus12 |
 //                              # d-noise | e | e-bleed; suffix -p0 = limits.conf reverse_current_paranoia=0
 //                              # e*: battery open at 60 s, back at 180 s: on within 5 s ("== RECONNECT")

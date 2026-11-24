@@ -14,7 +14,7 @@ set -e
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 JOBS=${JOBS:-4}
 if [ -z "$SIM_BIN" ]; then
-    SIM_BIN=${OUT:-/tmp/mppt-sim}
+    SIM_BIN=${OUT:-/tmp/mppt-sim.$(printf %s "$ROOT" | cksum | cut -d" " -f1)}
     OUT=$SIM_BIN "$ROOT/test/host-stub/mppt-sim.sh" sanity > /dev/null
 fi
 export SIM_BIN
