@@ -87,7 +87,10 @@ The sweep stops as soon as any limiter produces a control mode (CV, CC, or CP), 
 duty. The captured MPP duty becomes the target, and the loop fades to it with a bounded step before handing over to
 P&O. A bright sweep on a buck that recorded two or more local maxima takes the [return pass](#return-pass) instead
 of the fade (conditions below). At the end of a sweep, the firmware writes "MPP Scan done" to the LCD and logs
-`Stop sweep ... MPP=(<W>,<duty>,<V>)`.
+`Stop sweep <s>s mode=<mode> (lim=<i> tgt=<target> act=<actual>) PWM=<duty> MPP=(<W>,<duty>,<V>)`. `lim` is the
+index of the limiter that was active when the sweep ended (the [`cv_lim_idx`](../reference/telemetry-fields.md#cv_lim_idx)
+numbering) with its target and actual value. A sweep that ended at the duty bound with no limiter active logs
+`lim=-1 tgt=nan act=nan`.
 
 On a buck with the backflow switch open, a sweep that reaches the conversion-ratio limit (Vin near Vout) with less
 than 0.05 A of current has no more power to find. It ends there like any other sweep, not as a fault.

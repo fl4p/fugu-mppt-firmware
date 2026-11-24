@@ -1559,7 +1559,7 @@ public:
             // the converter then resumes via normal MPPT / the next periodic re-sweep once there's real power.
             targetDutyCycle = 0;
             // cut by the Vout cap before any power: the cap lifting ends the backoff (noMppBatCheck)
-            _capV = ctrlState._limiting && limIdx == 1 ? limCtrl->target : 0;
+            _capV = limIdx == 1 ? limCtrl->target : 0;
             const uint32_t sec = std::min(30u << _noMpp.n, 300u);
             if (_noMpp.n < 4) ++_noMpp.n;
             ESP_LOGI("mppt", "Stop sweep: no MPP (best %.2fW < %.1fW), backing off %lus", maxPowerPoint.power,

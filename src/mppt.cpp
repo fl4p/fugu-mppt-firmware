@@ -287,8 +287,9 @@ void MpptController::update() {
                 outZ.add(sensors.Vout->med3.get(), sensors.Iout->med3.get(), (uint32_t) nowUs);
             rtcount("mppt.update.sweeping");
         } else {
-            _stopSweep(controlMode, limitingControl ? int(limitingControl - controlValues.begin()) : -1,
-                       limitingControl);
+            // the limiter only when one is active this tick (the smallest response is always set)
+            CVP *lim = limitingControlValue < 0 ? limitingControl : nullptr;
+            _stopSweep(controlMode, lim ? int(lim - controlValues.begin()) : -1, lim);
             rtcount("mppt.update.stopSweep");
             if (converter.disabled()) { // no-MPP backoff
                 ctrlState.mode = MpptControlMode::None;
