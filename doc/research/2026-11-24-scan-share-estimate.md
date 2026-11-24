@@ -24,6 +24,9 @@ harvest, and does a change help? Candidates: A (vs0 alone when m0 = n), B (lower
   any at the operating point; that lifts it above m shares, and below it the power falls about in proportion to the
   voltage (the weak substring limits the current), so a -10 % placement reads -10 %. Upward moves with a gain below
   about 10 % were missed until the next global sweep (wrong-peak 1360-1470 s of 1800 s in l1, l2, l4, l5).
+* **Round 3 (below, current firmware):** the 1.015 gain shrank from +0.71 to +0.48 points because ac7f3ffa drops the
+  LS to its minimum during the scan's travel to probes above the operating point; those probes read ~0.8 % low.
+  Holding the probe measurement until the LS fade-in is done restores +0.68 (sim experiment, not in firmware).
 * **Superseded by round 2 (below): the firmware uses 1.015, not 1.03.** A review found 1.03 overshoots higher
   maxima after heating; round 2 re-ran everything with fixed tooling and picked 1.015.
 * First round, adopted then (D6): probes above m0 at `1.03 m sh`, below m0 unchanged at `0.97 m sh`, share unchanged. Closed loop:
@@ -211,6 +214,8 @@ moves during those scans, so the start-of-scan truth is stale there.
 * `doc/research/scan-share/`: `job.sh`, `agg.py`, `static_agg.py`, `results.txt` (raw result lines, 1680 runs),
   `closed-loop-tables.md`.
 * Round 2: `doc/research/scan-share/static_cmp.py`, `results-2.txt` (2240 lines, pgx93), `closed-loop-tables-2.md`.
+* Round 3: `results-3.txt` (1400 lines, pgx93), `results-3-fix.txt` (840), `closed-loop-tables-3.md`,
+  `fix-ls-hold.patch` (sim experiment); `src/sim/vconv.h`: faster exact-string table (byte-identical output).
 
 ## Reproduce
 
@@ -484,3 +489,151 @@ python3 agg.py /tmp/results.txt                                   # results-2.tx
 ```
 
 About 13-20 runs per minute on pgx93 (18 slots), 2240 runs in about 2.5 h.
+
+## Round 3: current firmware (2026-11-24, night)
+
+On main b8a489c5 with the study's sim commit on top (51994123 rebased, 8ecb5abe; not on main) the l2 gain of 1.015 had shrunk on the Mac: 97.9 % on the study base, 94.6 %
+on main (base 0.97: 93.4 % on both). Round 3 finds the commit, measures the matrix on current firmware and tests a
+fix in the sim.
+
+### Culprit: ac7f3ffa (LS drop on accumulated duty decreases)
+
+Bisect on origin/main from a754f0b2 (patch-equivalent of the study base e5fa75b1) to 446b8b71, each step with 51994123's
+`mppt-sim.cpp` overlaid and the e7a1376d probe rule patched into `peak_scan.h` (no adaptation needed), cell l2,
+fry, offset 0, Mac:
+
+| Commit | l2 1.015 | PROBES (hit / miss-place / miss-noise) |
+|---|---|---|
+| a754f0b2, 44e16128, de7fb2b7, 6fe89389 | 97.92 % | 1 / 2 / 1 |
+| **ac7f3ffa** "duty decreases that add up within the current filter's lag drop the LS to its minimum" | 93.45 % | 0 / 11 / 9 |
+| 1819121a, 2b4916f5, fcf81a4e (after 3797fa4f) | 93.45 % | 0 / 11 / 9 |
+| ba83c76c (scan near: start power before and after) .. 446b8b71 | 94.60 % | 1 / 8 / 7 |
+
+0.97 stays at 93.41-93.45 % at every step (plant comparable). ba83c76c changes the scan sequence (near probes, then the
+start point again), which recovers one hit in this realisation; the bias below is unchanged by it.
+
+Mechanism: a scan moves to a probe above the operating point by lowering the duty in steps of up to pwmMax/64 + 1
+per control update. Each step is below the single-step threshold (pwmMax/50), but since ac7f3ffa their leaky sum
+`dropAcc` exceeds it within the current filter's lag, so the LS drops to `pwmRectMin` (320 counts) two or three times
+per scan (`Set pwmLS 1490 -> pwmRectMin=320` at 600.7, 601.3, 601.6 s in l2; none before ac7f3ffa). The LS then
+fades back in while the probe is settled and measured; the coil current freewheels through the LS body diode
+(plant `diode_vf` 0.7 V on the fry/flat boards), so the output power the scan compares reads low. The start point
+is measured before the travel and after the return (duty increases), so only probes above the operating point carry
+the loss. Probe read / true gain, probes with true gain > 0.95 (Mac, SIM_V=1, 1.015):
+
+| Cell (pairs) | a754f0b2 | 446b8b71 | 446b8b71 + LS hold |
+|---|---|---|---|
+| l2 (10) | 0.9969 | 0.9926 | 0.9986 |
+| l4 (10) | 0.9984 | 0.9947 | 0.9998 |
+| l1d (4) | 0.9983 | 0.9926 | 0.9992 |
+
+Harvest, same runs: l2 98.06 / 96.21 / 98.13 %, l4 97.09 / 95.50 / 96.68 %, l1d 97.66 / 96.61 / 97.06 % (l1d only 4
+pairs: the batch was stopped to take load off the Mac). In l2 the 1.015 probe sits at a true gain of 1.025..1.037
+against the 3 % margin, so a 0.5-0.9 % low reading turns most hits into misses.
+
+This is a firmware interaction, not a sim artefact: the scan travel trips the ac7f3ffa path, and a measurement
+during the LS fade-in on a board with real body-diode conduction reads low in the same way. How large the loss is on
+hardware depends on the real fade-in time and diode drop, which are not measured here.
+
+### Fix tested in the sim: hold the probe measurement while the LS fades in
+
+`scan-share/fix-ls-hold.patch` (sim experiment, not applied to the firmware): `PeakScan::hold`, set by
+`MpptController` while sync rect is enabled, not forced and `pwmRect + pwmMax/64 < pwmRectMax`; while it is set, a
+settled probe restarts its settle time. The ac7f3ffa protection stays as it is.
+
+### Closed loop on current firmware
+
+Binary sha256 `74bc3c9df196...` (tree 8ecb5abe = b8a489c5 + the study sim commit, before the vconv speed-up), the hold variant
+`ac968ec2e4a0...` (same tree with the speed-up + `fix-ls-hold.patch`). Every run on **pgx93** (tags scanf3-matrix,
+scanf3-fix), 28 cells x 10 paired realisations (fry/flat x offsets 0, 13, 29, 41, 57), fresh outputs
+(`results-3.txt`, 1400 lines; `results-3-fix.txt`, 840; `closed-loop-tables-3.md`, with standard errors and landing
+counts). Harvest delta vs base (0.97) of the same binary, points, mean (min..max):
+
+| Cell | base harvest | u1000 | u1015 | u1020 | D6 | hold: base harvest | hold: u1015 | hold: u1020 |
+|---|---|---|---|---|---|---|---|---|
+| a1 | 99.02 | +0.00 (-0.02..+0.02) | -0.00 (-0.02..+0.01) | +0.00 (-0.02..+0.02) | -0.01 (-0.03..+0.01) | 99.01 | +0.00 (-0.01..+0.03) | +0.00 (-0.02..+0.02) |
+| a2 | 99.51 | -0.00 (-0.02..+0.00) | -0.00 (-0.02..+0.02) | -0.01 (-0.03..+0.02) | -0.00 (-0.03..+0.01) | 99.49 | -0.01 (-0.02..+0.02) | +0.00 (-0.02..+0.03) |
+| a3 | 98.75 | +0.00 (-0.03..+0.03) | +0.01 (-0.02..+0.04) | +0.01 (-0.02..+0.05) | +0.01 (-0.03..+0.04) | 98.73 | +0.01 (-0.01..+0.04) | +0.01 (-0.02..+0.02) |
+| a4 | 99.07 | -0.00 (-0.03..+0.04) | -0.00 (-0.02..+0.03) | -0.00 (-0.05..+0.03) | -0.00 (-0.04..+0.03) | 99.01 | +0.00 (-0.03..+0.02) | +0.00 (-0.02..+0.04) |
+| a5 | 99.29 | +0.00 (-0.05..+0.05) | -0.00 (-0.05..+0.04) | +0.00 (-0.03..+0.06) | +0.02 (-0.05..+0.09) | 99.23 | -0.00 (-0.05..+0.06) | +0.01 (-0.08..+0.09) |
+| a6 | 97.94 | +0.00 (-0.01..+0.02) | -0.00 (-0.02..+0.01) | -0.00 (-0.05..+0.02) | -0.04 (-0.15..+0.01) | 98.39 | +0.01 (+0.00..+0.02) | -0.01 (-0.04..+0.01) |
+| l1 | 95.23 | +0.02 (-0.01..+0.05) | +0.02 (-0.01..+0.05) | +0.03 (+0.00..+0.07) | +0.09 (+0.00..+0.51) | 95.23 | +0.03 (+0.01..+0.06) | +0.02 (-0.02..+0.06) |
+| l2 | 93.43 | +0.00 (-0.04..+0.04) | +3.27 (+0.02..+5.35) | +4.40 (+0.03..+5.36) | +5.32 (+5.29..+5.35) | 93.36 | +4.55 (+1.38..+5.42) | +5.10 (+3.95..+5.41) |
+| l3 | 97.39 | +1.98 (+1.55..+2.11) | +2.08 (+2.03..+2.11) | +2.08 (+2.04..+2.10) | +2.09 (+2.05..+2.12) | 97.37 | +2.09 (+2.06..+2.13) | +2.09 (+2.01..+2.14) |
+| l4 | 94.02 | +0.00 (-0.02..+0.06) | +2.39 (-0.02..+5.34) | +3.76 (+0.51..+5.39) | +5.15 (+4.11..+5.38) | 93.95 | +4.20 (+2.16..+4.89) | +4.61 (+2.11..+5.37) |
+| l5 | 94.45 | +1.08 (-0.06..+3.76) | +3.32 (-0.04..+5.95) | +4.49 (-0.02..+5.95) | +4.73 (+0.01..+5.95) | 94.30 | +4.70 (+0.00..+6.08) | +4.79 (+0.00..+6.08) |
+| l6 | 99.20 | +0.02 (-0.02..+0.05) | +0.01 (+0.00..+0.05) | +0.02 (+0.00..+0.06) | +0.02 (+0.01..+0.03) | 99.20 | +0.01 (+0.00..+0.03) | +0.01 (+0.00..+0.04) |
+| l1d | 95.26 | +0.00 (-0.02..+0.03) | +1.52 (+0.25..+2.40) | +1.89 (+0.66..+3.32) | +3.16 (+2.53..+3.72) | 95.25 | +2.17 (+1.04..+3.47) | +2.80 (+1.71..+3.54) |
+| a3d | 98.77 | -0.00 (-0.05..+0.02) | -0.01 (-0.05..+0.01) | -0.01 (-0.06..+0.03) | -0.00 (-0.05..+0.02) | 98.75 | +0.00 (-0.02..+0.03) | +0.00 (-0.04..+0.03) |
+| l2k | 98.35 | +1.01 (+0.00..+1.47) | +1.23 (+0.31..+1.50) | +1.23 (+0.32..+1.50) | +1.24 (+0.33..+1.52) | 98.64 | +0.91 (+0.33..+1.49) | +0.92 (+0.33..+1.49) |
+| a3k | 99.14 | -0.03 (-0.08..+0.01) | -0.01 (-0.05..+0.02) | -0.01 (-0.07..+0.03) | -0.02 (-0.09..+0.02) | 99.18 | +0.00 (-0.03..+0.05) | -0.00 (-0.04..+0.05) |
+| h1 | 98.86 | -0.03 (-0.12..+0.02) | -0.02 (-0.08..+0.04) | -0.02 (-0.06..+0.07) | -0.56 (-1.16..+0.01) | 98.79 | +0.00 (-0.04..+0.04) | -0.35 (-1.19..+0.04) |
+| h2 | 98.10 | +0.93 (-0.01..+3.54) | +0.93 (-0.02..+3.55) | +0.94 (-0.01..+3.56) | +0.82 (-1.04..+3.55) | 97.95 | +1.07 (-0.01..+3.56) | +1.06 (-0.03..+3.56) |
+| h3 | 98.08 | -0.20 (-1.56..+1.70) | +0.08 (-1.24..+1.80) | -0.08 (-2.54..+1.81) | +0.02 (-1.18..+1.99) | 98.30 | -0.07 (-1.09..+0.98) | -0.47 (-2.69..+1.80) |
+| h4 | 98.56 | +0.01 (-0.54..+0.47) | -1.08 (-4.22..+0.91) | -0.84 (-3.47..+0.85) | -1.42 (-3.50..+0.33) | 98.60 | -0.62 (-1.75..+0.02) | -0.65 (-3.10..+1.13) |
+| wx-shade2-move | 99.12 | +0.00 (-0.01..+0.02) | -0.00 (-0.01..+0.01) | +0.00 (-0.01..+0.02) | +0.00 (-0.02..+0.02) | 99.12 | -0.00 (-0.02..+0.02) | -0.00 (-0.01..+0.01) |
+| wx-shade3-move | 99.33 | +0.00 (-0.01..+0.02) | +0.01 (+0.00..+0.04) | +0.01 (-0.02..+0.03) | +0.01 (-0.01..+0.03) | 99.31 | +0.01 (-0.01..+0.04) | +0.01 (-0.02..+0.04) |
+| wx-shade-walk | 96.98 | -0.17 (-0.91..+0.02) | -0.46 (-3.54..+0.57) | -0.05 (-0.61..+0.54) | -0.13 (-1.28..+0.54) | 96.95 | -0.14 (-0.99..+0.49) | -0.11 (-1.59..+0.58) |
+| wx-shade-cloud | 96.73 | +0.00 (+0.00..+0.00) | +0.00 (+0.00..+0.00) | +0.00 (+0.00..+0.00) | +0.00 (+0.00..+0.00) | 96.71 | +0.00 (+0.00..+0.00) | +0.00 (+0.00..+0.00) |
+| wx-sweep-shade | 99.25 | +0.02 (+0.01..+0.03) | +0.03 (+0.02..+0.04) | +0.03 (+0.01..+0.04) | +0.03 (+0.02..+0.04) | 99.23 | +0.03 (+0.01..+0.04) | +0.02 (+0.01..+0.04) |
+| wx-shade2 | 99.50 | -0.01 (-0.03..+0.02) | -0.01 (-0.03..+0.01) | -0.02 (-0.08..+0.01) | -0.01 (-0.05..+0.01) | 99.49 | -0.01 (-0.04..+0.02) | +0.00 (-0.02..+0.03) |
+| wx-shade3 | 99.44 | -0.00 (-0.02..+0.02) | -0.00 (-0.03..+0.02) | +0.00 (-0.02..+0.01) | +0.00 (-0.02..+0.02) | 99.43 | +0.00 (-0.03..+0.02) | +0.00 (-0.01..+0.04) |
+| wx-cloud | 99.05 | +0.00 (+0.00..+0.00) | +0.00 (+0.00..+0.00) | +0.00 (+0.00..+0.00) | +0.00 (+0.00..+0.00) | 99.01 | +0.00 (+0.00..+0.00) | +0.00 (+0.00..+0.00) |
+| **mean of 28 cells** | | **+0.17** | **+0.48** | **+0.64** | **+0.73** | | **+0.68** | **+0.71** |
+| worst cell mean | | -0.20 (h3) | -1.08 (h4) | -0.84 (h4) | -1.42 (h4) | | -0.62 (h4) | -0.65 (h4) |
+
+Compared with round 2 (+0.71 at 1.015): without the hold 1.015 gives +0.48 (l2 +3.27 vs +4.39, l4 +2.39 vs +3.54, l1d
++1.52 vs +1.98, l5 +3.32 vs +5.31) and h4 falls to -1.08 (se 0.60; 48 MISS-place landings in 10 runs, round 2: 1).
+With the hold 1.015 gives +0.68 (l2 +4.55, l4 +4.20, l1d +2.17, l5 +4.70); absolute harvest of the hold binary vs
+the current one at 1.015: +0.21 points over the 28 cells (l4 +1.75, l2 +1.20, l5 +1.23, l1d +0.64, h4 +0.49), cells
+without upward moves -0.06..+0.05 (a6 +0.46, both base and probes). With the hold, 1.02 adds only +0.03 over 1.015
+and costs h1 -0.35 and h3 -0.47.
+
+h4 stays below round 2 with the hold too (-0.62, se 0.22; round 2 +0.03). Not bisected: it can come from other
+commits since the round 2 base (the near-probe sequence of ba83c76c, the house base load and pack refit of 52063f84)
+or from the hold lengthening the scans.
+
+Main at 96bbd0bf (this commit's parent) has no change to `src/peak_scan.h`, `src/buck.h` or the scan path of
+`src/mppt.cpp` since b8a489c5; its `mppt-sim.cpp` has more scenarios and knobs (`SIM_KVMP_*` above), not re-run here.
+
+### Recommendation
+
+* Keep 1.015. On current firmware without a fix, 1.02 recovers more of the upward gain (+0.64) but with h4 -0.84
+  and the heating risk of round 2; that trades the culprit's measurement error for overshoot.
+* Fix the scan measurement instead: the probe must not be measured while the LS fades in after an ac7f3ffa drop.
+  The sim fix (`fix-ls-hold.patch`) restores the round 2 gain (+0.68). Alternatives: let the scan travel in single
+  steps above pwmMax/50 only once (one LS drop at the start of the travel instead of two or three), or exempt scan
+  travel from `dropAcc` (not tested; it removes the reverse-current protection ac7f3ffa added for the travel).
+* Open: the h4 regression vs round 2, and hardware confirmation of the probe bias (scan log `best x` vs a manual
+  probe at the same Vin with the LS settled).
+
+### Sim speed-up
+
+Profile of one wx-shade-gen run (l2, fry ring board; macOS `sample`, 65 k samples): the cycle-by-cycle plant is
+~95 % of the time (ring model `ringOff` / `RingSeg::at` / sincos / atan2 ~55 %, `expf` ~13 %, `stepOneCycle*`
+~16 %, `pvCurrent` ~12 %, `xBuild` ~2-15 % depending on how often the shade changes); firmware, filters and output
+are below 1 %, and runs without SIM_V print only the 30 s status lines. `src/sim/vconv.h` now evaluates equal
+substrings once in `xBuild()` and starts `pvCurrent()`'s table search from the last bracket (host-only exact-string
+path). Output is byte-identical (l2 fry 0, l1d flat 29 on vup, `cmp` apart from the tree path in the noise line);
+wall time per run on vup 48-51 s before, 46-48 s after. Larger gains need a coarser plant (`SIM_RING=ideal`, fewer
+plant steps per ADC sample), which changes results and would need re-validation.
+
+### Reproduce (round 3)
+
+```bash
+T=/tmp/scanf3-tree; rm -rf $T; mkdir -p $T; rsync -a src test config $T/
+OUT=/tmp/scanf3-bin $T/test/host-stub/mppt-sim.sh none >/dev/null; ~/bin/offload build-sim $T /tmp/scanf3-bin
+cd doc/research/scan-share
+for c in a1 a2 a3 a4 a5 a6 l1 l2 l3 l4 l5 l6 l1d a3d l2k a3k h1 h2 h3 h4 wx-shade2-move wx-shade3-move wx-shade-walk \
+         wx-shade-cloud wx-sweep-shade wx-shade2 wx-shade3 wx-cloud; do for b in fry flat; do for o in 0 13 29 41 57; do
+  for v in base u1000 u1015 u1020 D6; do echo "$c $v $b $o"; done; done; done; done > /tmp/jobs.txt
+BIN=/tmp/scanf3-bin HOST=pgx93 TAG=scanf3-matrix OUTDIR=/tmp/scanf3-out xargs -P 18 -I{} ./job.sh "{}" < /tmp/jobs.txt > /tmp/results.txt
+python3 agg.py /tmp/results.txt
+# hold variant: a second tree with `git apply doc/research/scan-share/fix-ls-hold.patch`, base u1015 u1020 only
+```
+
+About 19 runs per minute on pgx93 (18 slots, ~50 s per run), 1400 runs in about 75 min. Bisect step (Mac): `git archive
+<commit> src test config`, 51994123's `test/host-stub/mppt-sim.cpp` over it, `patch -p1` with e7a1376d's
+`src/peak_scan.h` hunk where `probeHigh` is missing, the mppt-sim.sh compile line, then
+`SIM_CONF=tracker.conf:pv_substrings=6 SIM_RING=fry SIM_NOISE=fry SIM_NOISE_OFS=0 SIM_SHADE=2,0.65,r,0,0.45
+SIM_SCAN_UP=1.015 <bin> wx-shade-gen`.

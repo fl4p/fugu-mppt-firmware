@@ -117,6 +117,7 @@ public:
     static constexpr int kTbl = 4096;
     mutable std::vector<float> xV_; // V(I) table, allocated only for the exact model (host sim)
     mutable float xImax_ = 0;
+    mutable int xLo_ = 0;
     void setPvExact(bool e) { xExact_ = e, xDirty_ = true; }
     void setPvHalf(int i, float f) { xHalf_[i] = f, xDirty_ = true; }
     float xVsub(int k, float I) const {
@@ -133,10 +134,16 @@ public:
         for (int k = 0; k < pvN_; ++k) im = std::max(im, xg_[k] * pv_.isc * std::max(1.f, xHalf_[k]));
         xImax_ = im;
         xV_.resize(kTbl + 1);
+        int same[6]; // equal substrings share one evaluation (same sum, ~6x fewer logs for typical shade)
+        for (int k = 0; k < pvN_; ++k) {
+            same[k] = k;
+            for (int q = 0; q < k; ++q)
+                if (xg_[q] == xg_[k] && xw_[q] == xw_[k] && xHalf_[q] == xHalf_[k]) { same[k] = q; break; }
+        }
         for (int j = 0; j <= kTbl; ++j) {
             const float I = im * (float) j / (float) kTbl * 0.99998f;
-            float v = 0;
-            for (int k = 0; k < pvN_; ++k) v += xVsub(k, I);
+            float v = 0, vs[6];
+            for (int k = 0; k < pvN_; ++k) v += vs[k] = same[k] == k ? xVsub(k, I) : vs[same[k]];
             xV_[j] = v;
         }
         xDirty_ = false;
@@ -146,8 +153,12 @@ public:
             if (xDirty_) xBuild();
             if (v >= xV_[0]) return 0;
             if (v <= xV_[kTbl]) return xImax_;
-            int lo = 0, hi = kTbl; // xV_ decreasing
-            while (hi - lo > 1) { int m = (lo + hi) / 2; if (xV_[m] > v) lo = m; else hi = m; }
+            int lo = xLo_, hi = lo + 1; // xV_ non-increasing: the last bracket usually still holds
+            if (!(hi <= kTbl && xV_[lo] > v && xV_[hi] <= v)) {
+                lo = 0, hi = kTbl;
+                while (hi - lo > 1) { int m = (lo + hi) / 2; if (xV_[m] > v) lo = m; else hi = m; }
+                xLo_ = lo;
+            }
             const float f = (xV_[lo] - v) / std::max(1e-9f, xV_[lo] - xV_[hi]);
             return xImax_ * ((float) lo + f) / (float) kTbl * 0.99998f;
         }

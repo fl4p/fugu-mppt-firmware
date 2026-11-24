@@ -1,0 +1,36 @@
+--- a/src/peak_scan.h	2026-11-24 19:20:28.000000000 +0000
++++ b/src/peak_scan.h	2026-11-24 21:13:18.516133420 +0000
+@@ -38,6 +38,7 @@
+     Phase phase = Idle;
+     uint8_t k = 0, nc = 0;
+     bool settled = false;
++    bool hold = false; // sim experiment: LS fading in, restart the settle time
+     uint8_t ended = 0; // back at the start point: 1, 3 light changed; 2 moved to another peak; 4 timed out (return to d0);
+                        // 6 return pass done
+     uint16_t d0 = 0;
+@@ -232,6 +233,7 @@
+         }
+         const float vt = phase == Near ? rv[k] : phase == Probe || phase == Go ? (ret ? rv[k] : vc[k]) : v0;
+         if (!settled && (std::fabs(vinFast - vt) < 0.01f * vt || now - tPhase > kTravelMs)) settled = true, tPhase = now;
++        if (settled && hold) tPhase = now, acc.clear();
+         if (settled) {
+             const float ts = std::fmin(settleMs(), 1000.f), dt = (float) (now - tPhase); // fmin: NAN -> 1 s
+             if (dt > ts) acc.add(pw);
+--- a/src/mppt.cpp	2026-11-24 19:20:28.000000000 +0000
++++ b/src/mppt.cpp	2026-11-24 21:13:18.511793134 +0000
+@@ -301,6 +301,7 @@
+         // lowers the duty: the sweep ends at a limit)
+         const uint16_t d = converter.getCtrlOnPwmCnt();
+         float t = NAN;
++        scan.hold = converter.syncRectEnabled_() && !converter.forcedPwm_() && converter.getRectOnPwmCnt() + converter.pwmCounts() / 64 < converter.getRectOnPwmMax();
+         if (controlMode == MpptControlMode::None || controlMode == MpptControlMode::MPPT || controlMode == CV)
+             t = scan.update(nowMs, sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get(), power, d, 0, 0,
+                             [this] { return powerSettleMs(); });
+@@ -360,6 +361,7 @@
+     if (controlMode == MpptControlMode::None && !_sweeping && !targetDutyCycle && !_svPhase && !g_app.psuMode() &&
+         !batteryFull && !converter.boost()) {
+         const uint16_t d = converter.getCtrlOnPwmCnt();
++        scan.hold = converter.syncRectEnabled_() && !converter.forcedPwm_() && converter.getRectOnPwmCnt() + converter.pwmCounts() / 64 < converter.getRectOnPwmMax();
+         const float t = scan.update(nowMs, sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get(), power, d,
+                                     1.05f * vinFloor(true), 25 * sweepMinPower(), [this] { return powerSettleMs(); });
+         if (!std::isnan(t)) {
