@@ -67,6 +67,11 @@ sample passes through unchanged unless both hold:
 Only such a sample is replaced by the median. Dense, recurring load pulses (for example from an inverter) then reach the
 EWMA, so the average current is not biased low, while isolated glitches are still clipped.
 
+A channel that has not moved since its last reset (for example an ADC sitting at constant counts at night) has a
+running mean deviation of 0. There the 4-step bound alone decides, so a one- or two-sample glitch is clipped as well.
+A real step larger than 4 steps on such a channel is clipped for its first two samples and then passes, which is when
+the plain median follows it too. The quantisation step is learned only from samples that pass, so a glitch cannot raise the bound.
+
 - Default: `despike=0` (off, plain median).
 - The NTC channel always uses the plain median.
 - A warning is logged when clips exceed 0.5 % of the samples in a window.

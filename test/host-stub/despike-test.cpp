@@ -2,8 +2,10 @@
 // Sensor itself is IDF-coupled (esp_dsp/esp_log), so this mirrors the exact 6-line decision logic
 // against the same RunningMedian5 and asserts the properties validated on the real China-inverter
 // capture: dense load pulses pass through (mean stays unbiased) while a lone impulse glitch is
-// clipped, a quantized quiet signal is not clipped (LSB floor), and disabled mode reproduces the
-// legacy unconditional median bit-for-bit.
+// clipped, a quantized quiet signal is not clipped (LSB floor), a glitch on a channel quiet since
+// reset (mean deviation 0) is clipped while a real step there arrives as fast as with the plain median,
+// noisy channels match the pre-floor logic, and disabled mode reproduces the legacy unconditional
+// median bit-for-bit.
 //
 // Build & run:
 //   clang++ -std=gnu++17 -I . -o /tmp/despike-test test/host-stub/despike-test.cpp && /tmp/despike-test
@@ -23,18 +25,19 @@ int g_run = 0, g_fail = 0;
 #define EXPECT(c) do{ ++g_run; if(!(c)){ ++g_fail; std::printf("  FAIL %s:%d  %s\n",__FILE__,__LINE__,#c);} }while(0)
 
 // Exact copy of the decision branch from Sensor::add_sample (despikeK=8, scale alpha 0.095),
-// identity transform (raw == value, factor 1).
+// identity transform (raw == value, factor 1). legacy = the branch before the quiet-channel floor.
 struct Despiker {
     RunningMedian5<float> med3{};
     float despikeScale = 0, despikeStep = 0, lastRaw = NAN;
-    uint32_t despikeTrips = 0;
-    const bool enabled; const float despikeK;
-    Despiker(bool en, float k = 8.f) : enabled(en), despikeK(k) {}
+    uint32_t despikeTrips = 0, numSamples = 0;
+    const bool enabled; const float despikeK; const bool legacy;
+    Despiker(bool en, float k = 8.f, bool legacy = false) : enabled(en), despikeK(k), legacy(legacy) {}
+    void reset() { med3.reset(); despikeScale = 0; numSamples = 0; }   // Sensor::reset keeps despikeStep
     float step(float v) {
         const float dRaw = std::fabs(v - lastRaw);
         lastRaw = v;
         float m = med3.next(v);
-        if (enabled) {
+        if (enabled && legacy) {
             float dev = std::fabs(v - m);
             if (dRaw > 0.f) {
                 float d = dRaw * 1.f;
@@ -42,12 +45,30 @@ struct Despiker {
             }
             if (despikeScale > 0.f && dev > despikeK * despikeScale && dev > 4.f * despikeStep) { v = m; ++despikeTrips; }
             despikeScale = (despikeScale > 0.f) ? (despikeScale + 0.095f * (dev - despikeScale)) : dev;
+        } else if (enabled) {
+            float dev = std::fabs(v - m);
+            if ((despikeScale > 0.f || numSamples >= 5) && dev > despikeK * despikeScale && dev > 4.f * despikeStep) {
+                v = m;
+                ++despikeTrips;
+                if (despikeScale == 0.f) despikeScale = 1e-30f;
+            } else if (dRaw > 0.f) {
+                float d = dRaw * 1.f;
+                if (d < despikeStep || despikeStep == 0.f) despikeStep = d;
+            }
+            despikeScale = (despikeScale > 0.f) ? (despikeScale + 0.095f * (dev - despikeScale)) : dev;
         } else {
             v = m;
         }
+        ++numSamples;
         return v;
     }
 };
+
+// First output index (>= at) whose value is within tol of target.
+int settleAt(const std::vector<float> &y, int at, float target, float tol) {
+    for (size_t i = at; i < y.size(); ++i) if (std::fabs(y[i] - target) <= tol) return (int) i - at;
+    return -1;
+}
 
 float ewmMean(const std::vector<float> &x, int span, int from) {
     float a = 2.f / (span + 1), y = NAN, last = 0;
@@ -125,6 +146,80 @@ int main() {
             if (i >= 5 && a != b) { identical = false; break; }   // skip NaN window-fill (NaN!=NaN)
         }
         EXPECT(identical);
+    }
+
+    // --- 5) Quiet channel (mean deviation exactly 0): single and double glitches are clipped. ---
+    for (int known = 0; known < 2; ++known) {
+        for (int width = 1; width <= 2; ++width) {
+            Despiker d(true), old(true, 8.f, true);
+            if (known) {   // step learned from 1-LSB toggles before a reset, then the ADC sits at 512 counts
+                for (int i = 0; i < 200; ++i) { d.step(512.f + (i & 1)); old.step(512.f + (i & 1)); }
+                d.reset(); old.reset();
+            }
+            float maxOut = 0, maxOld = 0;
+            for (int i = 0; i < 400; ++i) {
+                float x = 512.f + ((i >= 200 && i < 200 + width) ? 60.f : 0.f);
+                maxOut = std::max(maxOut, d.step(x));
+                maxOld = std::max(maxOld, old.step(x));
+            }
+            std::printf("  quiet (step %s) %d-sample glitch +60: out max %.0f (pre-floor %.0f) trips %u\n",
+                        known ? "known" : "unknown", width, maxOut, maxOld, d.despikeTrips);
+            EXPECT(maxOut == 512.f);
+            EXPECT(d.despikeTrips == (uint32_t) width);
+            EXPECT(maxOld > 512.f);   // the defect: the pre-floor branch passed it
+        }
+    }
+    // --- 6) Quiet channel + real step: reaches the EWM input no later than the plain median. ---
+    for (int known = 0; known < 2; ++known) {
+        for (float h: {3.f, 60.f, -60.f}) {
+            Despiker d(true), plain(false);
+            if (known) { for (int i = 0; i < 200; ++i) d.step(512.f + (i & 1)); d.reset(); }
+            std::vector<float> yd, yp;
+            for (int i = 0; i < 300; ++i) {
+                float x = 512.f + (i >= 100 ? h : 0.f);
+                yd.push_back(d.step(x)); yp.push_back(plain.step(x));
+            }
+            int ld = settleAt(yd, 100, 512.f + h, 0.f), lp = settleAt(yp, 100, 512.f + h, 0.f);
+            bool stays = true;
+            for (int i = 100 + ld; i < 300; ++i) stays &= yd[i] == 512.f + h;
+            std::printf("  quiet (step %s) real step %+.0f: delay despike %d, plain median %d samples\n",
+                        known ? "known" : "unknown", h, ld, lp);
+            EXPECT(ld >= 0 && ld <= lp);
+            EXPECT(stays);
+        }
+    }
+    // --- 6b) Dense pulses starting on a dead-constant baseline: the scale grows, pulses pass again. ---
+    {
+        auto sig = densePulseTrain(N, 100.f, 80.f);
+        for (int i = 0; i < 200; ++i) sig[i] = 100.f;
+        Despiker d(true);
+        std::vector<float> y(N);
+        for (int i = 0; i < N; ++i) y[i] = d.step(sig[i]);
+        double bias = ewmMean(y, 10, from) - mean(sig, from);
+        std::printf("  pulses after a dead-constant start: despike bias=%.2f trips=%u\n", bias, d.despikeTrips);
+        EXPECT(std::fabs(bias) < 1.0);
+    }
+    // --- 7) Noisy channels: identical to the pre-floor logic once the window is full. ---
+    {
+        std::mt19937 rng(7);
+        std::normal_distribution<float> nd(0.f, 1.f);
+        const int Nn = 200000;
+        int diff = 0, diffLate = 0;
+        double maxAbs = 0;
+        for (int kase = 0; kase < 3; ++kase) {
+            Despiker d(true), old(true, 8.f, true);
+            for (int i = 0; i < Nn; ++i) {
+                float x;
+                if (kase == 0) x = std::round(2048.f + 3.f * nd(rng)) + ((i % 997 == 0) ? 80.f : 0.f);   // quantized + glitches
+                else if (kase == 1) x = 30.f + 0.05f * nd(rng) + ((i % 9 == 0) ? 8.f : (i % 9 == 4) ? 4.8f : 0.f);   // dense pulses
+                else x = 27.f + 0.01f * nd(rng) + ((i / 5000) & 1) * 2.f;   // steps on fine noise
+                float a = d.step(x), b = old.step(x);
+                if (a != b) { ++diff; diffLate += i >= 5; maxAbs = std::max(maxAbs, (double) std::fabs(a - b)); }
+            }
+        }
+        std::printf("  noisy: %d differing outputs of %d (after window fill %d), max |delta| %.3g\n",
+                    diff, 3 * Nn, diffLate, maxAbs);
+        EXPECT(diffLate * 100000 < 3 * Nn);   // < 1e-5
     }
 
     std::printf("\ndespike-test: %d/%d passed\n", g_run - g_fail, g_run);

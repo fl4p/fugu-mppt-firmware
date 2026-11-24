@@ -74,7 +74,8 @@ struct Sensor {
     // Decision-based ("glitch-safe") median: the unconditional median-of-5 rejects sparse glitches
     // but UNDER-READS a current that draws dense periodic pulses (a cheap inverter), discarding real
     // charge -> ~5% low power. When despikeK > 0 the sample passes through unchanged unless it is an
-    // extreme outlier (|v-median| > despikeK * running mean-deviation and > 4 quantization steps), so
+    // extreme outlier (|v-median| > despikeK * running mean-deviation and > 4 quantization steps; a
+    // channel quiet since reset has mean-deviation 0, there the 4 steps alone decide), so
     // the recurring load pulses reach the mean (unbiased) while genuine impulse glitches are still
     // clipped. See conf `despike`.
     inline static float despikeK = 0;               // outlier threshold in robust-scale units; 0 = off
@@ -154,13 +155,15 @@ struct Sensor {
         float m = med3.next(v); // always feed the median window so it tracks the signal
         if (despikeK > 0.f && params.unit != 'C') { // the NTC is slow and finely averaged: plain median
             float dev = fabsf(v - m);
-            if (dRaw > 0.f) {
-                float d = dRaw * fabsf(params.transform.factor);
-                if (d < despikeStep || despikeStep == 0.f) despikeStep = d;
-            }
-            if (despikeScale > 0.f && dev > despikeK * despikeScale && dev > 4.f * despikeStep) {
+            // scale 0 with a full window = quiet channel, treated as scale -> 0+: the 4-step floor alone
+            // decides. The step is learned from passed samples only, so a glitch can't raise its own floor
+            if ((despikeScale > 0.f || numSamples >= 5) && dev > despikeK * despikeScale && dev > 4.f * despikeStep) {
                 v = m; // extreme outlier (glitch) -> clip; recurring load pulses pass through
                 ++despikeTrips;
+                if (despikeScale == 0.f) despikeScale = 1e-30f; // EWM from 0, not seeded by the glitch
+            } else if (dRaw > 0.f) {
+                float d = dRaw * fabsf(params.transform.factor);
+                if (d < despikeStep || despikeStep == 0.f) despikeStep = d;
             }
             // update robust scale AFTER the decision so an outlier can't lift its own threshold
             despikeScale = (despikeScale > 0.f) ? (despikeScale + 0.095f * (dev - despikeScale)) : dev;
