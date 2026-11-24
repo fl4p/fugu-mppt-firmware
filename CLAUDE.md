@@ -469,8 +469,6 @@ Find battery data in InfluxDB with `batmon()` in
   you could use a non-accessible (private) member, expose this with a getter. for vendor libraries ask for confirmation
   to change.
 - keep code comments at a minimum and short
-- if your identity is 'OpenCode (powered by moonshotai/kimi-k2.6)', set your git username to "kimi" and always commit
-  with this name
 - if your identity is 'Claude Code, Anthropic's official CLI for Claude', do commits under my name.
 - before `git commit ...`, always check for staged files and unstage those changes that are unrelated to what you just
   did.
