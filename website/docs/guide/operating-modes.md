@@ -1,9 +1,9 @@
 ---
-title: Operating Modes
+title: Operating modes
 sidebar_position: 7
 ---
 
-# Operating Modes
+# Operating modes
 
 The converter runs in one of three modes: MPPT, manual PWM, or PSU (constant voltage, including the PV emulator).
 `converter.conf` selects the mode at boot, and the [console](../reference/console.md) switches it live.
@@ -91,7 +91,7 @@ The following rules apply in manual mode:
 - While an on-device coil measurement runs (`CONFIG_FUGU_WITH_MEASURE_COIL`), every `dc` command, including `dc 0`,
   is rejected with `dc: busy measuring` until the measurement finishes. The measurement itself starts only after `dc 0`
   has stopped the converter, and leaves it at duty 0.
-- While `selftest bflow` runs, `dc` (including `dc 0`) and `+N`/`-N` are refused; `selftest abort` stops it.
+- While `selftest bflow` runs, `dc` (including `dc 0`), `+N` and `-N` are refused; `selftest abort` stops it.
 - If the control loop does not take `dc 0` within ~1 s, it fails with `RT transition timed out`.
 - If `dc` fails in any of these cases, assume nothing was stopped. Check the reply.
 - `dc 0` stops the converter at once; a non-zero `dc N` ramps to the new duty.
@@ -144,9 +144,9 @@ The following limits and fault rules apply in PSU mode:
   output sags below the setpoint; with an input that does not give way it stops (`minpulse-M`). See
   [LS minimum pulse near unity ratio](../internals/diode-emulation.md#ls-minimum-pulse-near-unity-ratio).
 - Output over-voltage and supply under-voltage trips retry fast. Within 60 s, the first 4 trips retry after 100 ms,
-  trips 5-8 use the normal backoff, and the 9th latches the output off (`psu` shows the latch). Other faults use their
+  trips 5–8 use the normal backoff, and the 9th latches the output off (`psu` shows the latch). Other faults use their
   normal backoff. Any mode command (`psu <V>`, `psu off`, `mppt`, `dc`) clears the latch.
-- `+N`/`-N` are rejected. Use `psu off` first.
+- `+N` and `-N` are rejected. Use `psu off` first.
 
 `config/psu_12v` uses MPPT mode instead, with `forced_pwm=1` and the output voltage set in
 `charger.conf::vout_max`. See [Supported boards](hardware/supported-boards.md#12-v-power-supply).
@@ -195,7 +195,8 @@ pv_k=0.8
 The emulator behaves as follows:
 
 - The setpoint moves along the curve, slew-limited by `pv_slew` (V/s) and clamped to
-  [Vin + 0.5 V, min(Voc, Vout max)], where Vout max is `limits.conf::hv_max` in a boost (`lv_max` in a buck). A boost can only emulate the part of the curve above Vin.
+  [Vin + 0.5 V, min(Voc, Vout max)], where Vout max is `limits.conf::hv_max` in a boost (`lv_max` in a buck). A boost
+  can only emulate the part of the curve above Vin.
 - The Iout limiter is capped at 1.1 × Isc (with [partial shade](#partial-shade), at 1.1 × the string's Isc).
 - In buck topology the same ratio limit as in PSU mode applies: no start while the setpoint is at or above about
   Vin / 1.18.

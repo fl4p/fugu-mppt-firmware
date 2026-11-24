@@ -36,7 +36,7 @@ restart
 
 Builds with `CONFIG_FUGU_WITH_IMPROV` (on by default) offer [Improv Wi-Fi](https://www.improv-wifi.com/) next to the
 BLE console, so a phone can send the credentials. It needs the `ble` service running (`svc on ble`, see
-[BLE](#ble)). A negative `wifi.conf::improv_offline_s` (e.g. `-1`) turns Improv off: the device then creates no
+[BLE](#ble)). A negative `wifi.conf::improv_offline_s` (for example `-1`) turns Improv off: the device then creates no
 Improv service and saves its heap. The setting is read when BLE starts, so restart after changing it.
 
 Two clients support it:
@@ -58,10 +58,13 @@ the authorization button that Improv expects:
 | Wi-Fi down for a shorter time, or turned off with `wifi off` | Authorization required; credentials refused |
 | Wi-Fi connected | Provisioned; credentials refused |
 
-To authorize, power-cycle the device. The window opens at boot for `ble.conf::pair_window_s` (default 300 s), and
-while it is open the device offers Improv once Wi-Fi has been down for 20 s, so it does not wait out
-`improv_offline_s`. A device with no network configured is ready for setup right after power-up. `ble pair` from
-another console opens the window as well, which is the only way with `pair_window_s=0`. With
+To authorize, power-cycle the device. The window opens at boot for `ble.conf::pair_window_s` (default 300 s). While
+it is open:
+
+- the device offers Improv once Wi-Fi has been down for 20 s, so it does not wait out `improv_offline_s`;
+- a device with no network configured is ready for setup right after power-up.
+
+`ble pair` from another console opens the window as well, which is the only way with `pair_window_s=0`. With
 `improv_offline_s=0`, Improv stays limited to devices with no network configured, also during the window. With
 `ble_security=none` the window is not needed.
 
@@ -86,7 +89,8 @@ masked as `***` (see [Secrets](../reference/console.md#secrets)).
 
 ### Serial
 
-Serial is the preferred transport because it works before Wi-Fi is configured and shows the complete boot log. To open an interactive console over serial, run:
+Serial is the preferred transport because it works before Wi-Fi is configured and shows the complete boot log. To
+open an interactive console over serial, run:
 
 ```bash
 python3 etc/fugu_console.py -p /dev/cu.usbmodemXXXX
@@ -193,8 +197,10 @@ python3 etc/fugu_console.py --mqtt <broker-ip> --mqtt-readonly    # passive log 
 ```
 
 The client matches `--name` as a substring of the hostname in the log topics. `--name` defaults to `fugu`, so
-without it the client matches hostnames containing `fugu`; pass `--name <hostname>` to watch one device
-or a hostname without `fugu`. A bare `--mqtt` uses the broker in `$MQTT_HOST`. `--mqtt-port`, `--mqtt-user`, and
+without it the client matches hostnames containing `fugu`; pass `--name <hostname>` to watch one device or a
+hostname without `fugu`.
+
+A bare `--mqtt` uses the broker in `$MQTT_HOST`. `--mqtt-port`, `--mqtt-user`, and
 `--mqtt-pass` default to `$MQTT_PORT` (else 1883), `$MQTT_USER` (else `pv`), and `$MQTT_PASS`. The client also reads
 these from `etc/mqtt.env` if present. Shell variables take precedence.
 
@@ -238,7 +244,7 @@ anything, and names the lock and its current holder.
 
 Read-only commands are the firmware's read-only console list (`kRoCmds` in `src/etc/con_guard.h`) plus the host-side
 `peek`, `sym`, `peek-struct`, `coredump info|get` and the `pwr` reads. Everything else is state-changing, including
-`+N`/`-N` and unknown commands. A line is read-only only if each of its `;;`-separated commands is.
+`+N`, `-N` and unknown commands. A line is read-only only if each of its `;;`-separated commands is.
 
 | Option | Effect |
 |---|---|
@@ -272,7 +278,7 @@ Repeat `-c` to run several commands over one connection:
 python3 etc/fugu_console.py --ip <device-ip> -c "svc list" -c "get-config tele.conf"
 ```
 
-### Watch a device without touching it
+### Read-only monitoring
 
 A read-only MQTT client monitors the log and never publishes. `--name` selects the device; without it, the filter
 is the default `fugu`:

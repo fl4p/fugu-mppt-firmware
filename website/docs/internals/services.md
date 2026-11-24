@@ -68,15 +68,18 @@ wraps; `src/main.cpp` only registers them.
 | `mqtt` | MQTT client: BMS data, console input, log mirror, Home Assistant | yes | yes | `FUGU_WITH_NETW` | [mqtt.conf](../reference/config/mqtt.md) |
 | `tele` | InfluxDB telemetry over UDP | yes | no | `FUGU_WITH_NETW` | [tele.conf](../reference/config/tele.md) |
 | `ftp` | FTP access to the conf partition | yes | yes | `FUGU_WITH_FTP` | [ftp.conf](../reference/config/ftp.md) |
-| `telnet` | Telnet console and log sink, port 23 | yes | yes | `FUGU_WITH_NETW` | [telnet.conf](../reference/config/telnet.md) |
+| `http` | HTTP file endpoint for the conf partition | yes | yes | `FUGU_WITH_HTTP_CONF` | [http.conf](../reference/config/http.md) |
+| `telnet` | Telnet console and log sink, port 23 | yes | no | `FUGU_WITH_TELNET` | [telnet.conf](../reference/config/telnet.md) |
+| `tlscon` | TLS-PSK console, port 992 | yes | no | `FUGU_WITH_TLS_CONSOLE` | [tlscon.conf](../reference/config/tlscon.md) |
 | `lcd` | I²C character display | no | no | always | [lcd.conf](../reference/config/lcd.md) |
+| `extport` | External comms port: VE.Direct text output | no | no | `FUGU_WITH_EXTPORT` | [extport.conf](../reference/config/extport.md) |
 | `scope` | Raw ADC stream over TCP, port 24 | yes | yes | `FUGU_WITH_SCOPE` | [scope.conf](../reference/config/scope.md) |
 | `ble` | BLE console (NUS), BLE OTA, BLE telemetry | no | no | `FUGU_WITH_BLE` | [ble.conf](../reference/config/ble.md) |
 | `bsync` | Switching-clock sync to Wi-Fi beacons | no | no | `FUGU_WITH_BSYNC` with MCPWM | [bsync.conf](../reference/config/bsync.md) |
-| `extport` | External comms port: VE.Direct text output | no | no | `FUGU_WITH_EXTPORT` | [extport.conf](../reference/config/extport.md) |
 
-`FUGU_WITH_FTP` and `FUGU_WITH_SCOPE` depend on `FUGU_WITH_NETW`. `bsync` sniffs beacons without associating, so it
-does not wait for Wi-Fi. See [Build Options](../guide/getting-started/build-options.md) for the Kconfig switches.
+The build options of the network services (`FUGU_WITH_FTP`, `FUGU_WITH_HTTP_CONF`, `FUGU_WITH_TELNET`,
+`FUGU_WITH_TLS_CONSOLE`, `FUGU_WITH_SCOPE`) depend on `FUGU_WITH_NETW`. `bsync` sniffs beacons without associating, so
+it does not wait for Wi-Fi. See [Build Options](../guide/getting-started/build-options.md) for the Kconfig switches.
 
 ### Per-service notes
 
