@@ -143,7 +143,7 @@ int main() {
 
     g_reset = false;
 
-    // the USB drive's stage is neither touched by a failed write nor by the boot cleanup
+    // a ConfFile write leaves the USB drive's stage alone; the boot cleanup drops it
     put(path, kOrig);
     put(usbStage, "usb=1\n");
     {
@@ -153,8 +153,7 @@ int main() {
         g_fault = None;
         CHECK(c.update({{"a", "1"}}) && slurp(usbStage) == "usb=1\n", "write touched the USB stage");
     }
-    CHECK(confDropStaging(dir.c_str()) && exists(usbStage), "boot cleanup removed the USB stage");
-    unlink(usbStage.c_str());
+    CHECK(confDropStaging(dir.c_str()) && !exists(usbStage), "boot cleanup kept the USB stage");
 
     // a CR-only last line without LF, CRLF and a last line without LF
     for (const char *in: {"a=1\n\r", "a=1\r\n\r\r", "a=1\r\nb=2"}) {

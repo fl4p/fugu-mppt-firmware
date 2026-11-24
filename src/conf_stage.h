@@ -2,6 +2,7 @@
 
 // ConfFile stages a rewrite as <name>.cft and renames it over <name>; the USB drive stages as .new.
 constexpr const char *CONF_FILE_STAGE_SUFFIX = ".cft";
+constexpr const char *USB_DRIVE_STAGE_SUFFIX = ".new";
 
 #ifdef WITH_USB_MSC
 #include <freertos/FreeRTOS.h>

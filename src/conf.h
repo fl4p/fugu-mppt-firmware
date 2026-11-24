@@ -435,17 +435,18 @@ public:
 
 #undef TAG
 
-// Boot, before anything reads or hashes dir: removes the stages a reset left during a ConfFile write.
-// False if one cannot be removed.
+// Boot, before anything reads or hashes dir: removes the stages a reset left during a ConfFile write
+// or a USB-drive commit. False if one cannot be removed.
 inline bool confDropStaging(const char *dir) {
     DIR *d = opendir(dir);
     if (!d) return true;
     std::vector<std::string> stale;
-    const size_t sl = strlen(CONF_FILE_STAGE_SUFFIX);
     for (dirent *e; (e = readdir(d));) {
         const size_t n = strlen(e->d_name);
-        if (n > sl && !strcmp(e->d_name + n - sl, CONF_FILE_STAGE_SUFFIX))
-            stale.push_back(std::string(dir) + "/" + e->d_name);
+        for (const char *sfx: {CONF_FILE_STAGE_SUFFIX, USB_DRIVE_STAGE_SUFFIX}) {
+            const size_t sl = strlen(sfx);
+            if (n > sl && !strcmp(e->d_name + n - sl, sfx)) stale.push_back(std::string(dir) + "/" + e->d_name);
+        }
     }
     closedir(d);
     bool ok = true;

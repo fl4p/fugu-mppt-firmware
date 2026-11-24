@@ -48,8 +48,8 @@ Each file is replaced atomically. A change to several files is applied file by f
 
 - If a rename or delete fails while the device is running, the console reports `PARTIALLY applied` and the eject
   fails. Check the files on the drive and eject again.
-- A power loss during an eject can leave some files updated and others not, with no message. Leftover
-  `<name>.conf.new` staging files stay in `conf/`; the drive hides them, and they can be removed over FTP.
+- A power loss during an eject can leave some files updated and others not, with no message. The next boot
+  removes leftover `<name>.conf.new` staging files without applying them and logs `removed stale …` for each.
   Reconnect the drive and check the files.
 
 ## Limits

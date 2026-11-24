@@ -204,7 +204,7 @@ static Commit commit() {
         const char *charger = nullptr, *limits = nullptr;
         for (auto &u: d.upsert) {
             targets.push_back(CONF_DIR + u.name);
-            staged.push_back(targets.back() + ".new");
+            staged.push_back(targets.back() + USB_DRIVE_STAGE_SUFFIX);
             if (!writeFile(staged.back(), u.data)) throw std::runtime_error("write " + staged.back() + " failed");
             if (u.name == "charger.conf") charger = staged.back().c_str();
             if (u.name == "limits.conf") limits = staged.back().c_str();
