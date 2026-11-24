@@ -3054,7 +3054,7 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     if (sc == "cv-hold-gap") T.gap[0] = 1800, T.gap[1] = 200;
     if (sc == "cv-hold-load") T.load[0] = 900, T.load[3] = 1200;
     if (sc == "cv-hold-reboot") rebootAt = 1200;
-    // a load takes the PV current (ibat ~1 A): the line crosses low and the hold starts far below cv_eoc; it ends
+    // a load takes the PV current (ibat ~1 A): the line crosses low, far below cv_eoc, but no hold starts; it ends
     if (sc == "cv-hold-mask") tEnd = 2400, T.load[0] = 1080, T.load[1] = 900, T.load[2] = 1e5f;
     if (const char *e = getenv("SIM_T")) tEnd = atof(e);
     if (const char *e = getenv("SIM_PV_W")) T.pv = atof(e);
@@ -3152,7 +3152,7 @@ static int runCvHold(const std::string &name, const std::string &sc) {
         need(latches.empty(), "latched");
     }
     if (sc == "cv-hold-load" || sc == "cv-hold-mask") need(holdAt >= 0 && peak <= eoc + 0.015f, "peak > cv_eoc + 15 mV");
-    if (sc == "cv-hold-mask") need(entry < eoc - 0.03f, "hold not entered below the band");
+    if (sc == "cv-hold-mask") need(holdAt >= T.load[1], "hold entered below the band");
     if (gapEnd >= 0) {
         printf("== CVHOLD %s gap %.0f..%.0f s: paused unit 1 %d, unit 2 %d; both running again at %.0f s\n", name.c_str(),
                T.gap[0], gapEnd, (int) paused[0], (int) paused[1], resumeAt);

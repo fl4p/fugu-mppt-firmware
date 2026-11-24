@@ -892,7 +892,7 @@ const META = {
   tail_c_rate:{unit:"C",desc:"End-of-charge tail current as fraction of capacity",type:"float"},
   cv_hold_max_s:{unit:"s",desc:"CV hold: hold the highest cell at cv_eoc instead of terminating on the line, terminate on the tail current, at most this long; 0 = off",type:"long"},
   tail_hold_s:{unit:"s",desc:"CV hold: pack current below tail_c_rate*bat_c, cell within cv_hold_band of cv_eoc, this long without a break to terminate",type:"long"},
-  cv_hold_band:{unit:"V",desc:"CV hold: cell band below cv_eoc that counts as held for the tail test",type:"float"},
+  cv_hold_band:{unit:"V",desc:"CV hold: cell band below cv_eoc that counts as held for the tail test; a line crossing enters the hold only inside it",type:"float"},
   recharge_dod:{unit:"",desc:"Depth-of-discharge since full to release termination",type:"float"},
   recharge_vfloor_band:{unit:"V",desc:"Cell-voltage drop below cv_float to release termination (fallback to DoD)",type:"float"},
   vout_offset_max:{unit:"V",desc:"Worst-case Vout-sensor error tolerated during float: how far below the float floor the BMS-driven EOC loop may pull to stop charging a full pack when Vout reads high",type:"float"},

@@ -282,6 +282,14 @@ above the line long before the pack is full. With `cv_hold_max_s` > 0 (default 0
 line crossing does not terminate. The charger enters a CV hold instead: it
 holds the highest cell at `cv_eoc` and lets the current taper.
 
+The crossing enters the hold only with the highest cell within `cv_hold_band`
+of `cv_eoc`, where the tail exit can end it. At a low `ibat` the line sits near
+`cv_float`: a load or a cloud takes most of the PV current, or a restart or a
+BMS data gap has cleared the line's peak-current memory. A cell still relaxing
+from a higher current then crosses it far below the top. Below the band the
+charger keeps charging, and the [approach](#approach) limits the current on
+the way up.
+
 The hold regulates the pack charge current from BMS data only. The output
 voltage limit stays at `vout_max` as a protection ceiling, so an error of the
 converter's own Vout reading cannot shift the regulated cell voltage. Two
@@ -328,13 +336,10 @@ hold begins, termination latches, the BMS data goes stale, or the pack
 discharges. It applies only where a line crossing enters the hold
 (`cv_hold_max_s` > 0 or a balance run).
 
-The hold can also begin below the band. When a load takes most of the PV
-current, or a restart has cleared the line's peak-current memory, `ibat` is
-low and so is the line, so the crossing can come 100 mV or more below
-`cv_eoc`. The cell loop alone would let the limit follow the output current
-up to the band. A hold that begins without an approach limit therefore keeps
-the cut pending, and applies it once, the same way, when the highest cell
-first reaches the band above the tail current.
+A hold that begins at a low `ibat` starts without an approach limit, and its
+cell loop alone would let the limit follow the output current when the sun
+returns. Such a hold keeps the cut pending and applies it once, the same way,
+when the pack current rises above the tail current with the cell in the band.
 
 The hold ends in one of these ways:
 
@@ -403,8 +408,9 @@ it is due:
 - The partial-charge ceiling does not hold, as when `full_charge_interval`
   expires. Holiday mode defers the run instead (see below), so its ceiling
   stays.
-- A crossing of the termination line enters the [CV hold](#cv-hold), also with
-  `cv_hold_max_s` = 0. The tail and the `cv_hold_max_s` timeout do not end it.
+- A crossing of the termination line within `cv_hold_band` of `cv_eoc` enters
+  the [CV hold](#cv-hold), also with `cv_hold_max_s` = 0. The tail and the
+  `cv_hold_max_s` timeout do not end it.
 - The time the highest cell spends within `cv_hold_band` of `cv_eoc` adds up
   across charge sessions (a cloudy day, a sunset) until it reaches
   `balance_hold_s` (default 7200 s).

@@ -1141,7 +1141,8 @@ static void test_bms_charge_reseed_no_release() {
 
 // flat 11-24 11:19: after a reboot a load takes the PV current, ibat ~1 A puts the line at 3.36 V and the balance hold
 // starts 140 mV below cv_eoc. The load goes: the hold must cut on reaching the approach band, not run in at 35 A.
-static void test_bal_hold_entered_low_cuts_at_band() {
+// A low-ibat line below the tail band enters no hold; once the load goes, the approach cuts at the band.
+static void test_bal_low_line_no_hold_cuts_at_band() {
     BatteryCharger c; c.params = balParams(7200); setWallClockUs(1'000'000ULL);
     c.termCond.reset();
     c.balanceNow();
@@ -1150,9 +1151,7 @@ static void test_bal_hold_entered_low_cuts_at_band() {
     pl.pack.set(3.322f, 0.04f); // highest cell 3.362 V at rest
     pl.iload = 34.f;
     int k = pl.untilHold(c, 600);
-    CHECK(k >= 0 && c.balanceRunning() && pl.vcell() < 3.40f,
-          "low-ibat line: balance hold entered at %.3f V, ibat %.1f A", pl.vcell(), pl.ibat);
-    pl.run(c, 120);
+    CHECK(k < 0 && pl.vcell() < 3.40f, "low-ibat line: no hold at %.3f V, ibat %.1f A", pl.vcell(), pl.ibat);
     pl.iload = 0.f;
     float limAtBand = NAN, ibatAtBand = NAN, vmax = 0;
     for (int s = 0; s < 1800 && !(bool) c.termCond; ++s) {
@@ -1160,10 +1159,30 @@ static void test_bal_hold_entered_low_cuts_at_band() {
         vmax = std::max(vmax, pl.vcell());
         if (std::isnan(limAtBand) && c.batSt.vcell_high >= 3.5f - 0.03f) limAtBand = c.Iout_max(), ibatAtBand = pl.ibat;
     }
-    printf("  hold entered low: limit %.1f A at the band (ibat %.1f A), cell peak %.3f\n", limAtBand, ibatAtBand, vmax);
-    CHECK(limAtBand < 20.f, "hold entered low: cut at the band (limit %.1f A, ibat %.1f A)", limAtBand, ibatAtBand);
+    printf("  low line: limit %.1f A at the band (ibat %.1f A), cell peak %.3f\n", limAtBand, ibatAtBand, vmax);
+    CHECK(limAtBand < 20.f, "low line: cut at the band (limit %.1f A, ibat %.1f A)", limAtBand, ibatAtBand);
     CHECK(!(bool) c.termCond && c.balanceRunning() && vmax <= 3.5f + 0.015f,
-          "hold entered low: no ceiling, peak %.3f <= cv_eoc + 15 mV", vmax);
+          "low line: hold in the band, no ceiling, peak %.3f <= cv_eoc + 15 mV", vmax);
+}
+
+// flat 11-24 11:19: 50 s after a restart (ibat peak reset), ibat ~1 A, the line at 3.360 V and a cell at 3.363 V
+// entered a hold at ~80 % SoC. Hold mode and a due balance run enter no hold below the tail band; in the band a
+// low-current line crossing still enters one, and with the hold off the line latches as before.
+static void test_hold_no_entry_after_restart_low_line() {
+    for (bool bal: {false, true}) {
+        BatteryCharger c; c.params = bal ? balParams(7200) : holdParams(); setWallClockUs(1'000'000ULL);
+        c.termCond.reset();
+        if (bal) c.balanceNow();
+        frames(c, 3.363f, 0.95f, 40, true);
+        CHECK(!c.termCond.cvHold() && !(bool) c.termCond, "restart, 3.363 V @ 0.95 A (line %.3f): no hold (bal %d)",
+              c.termCond.v_term(), bal);
+        frames(c, 3.485f, 0.95f, 2, true);
+        CHECK(c.termCond.cvHold() && !(bool) c.termCond, "in the tail band at 0.95 A: hold entered (bal %d)", bal);
+    }
+    BatteryCharger c; c.params = holdParams(0); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    frames(c, 3.363f, 0.95f, 40, true);
+    CHECK((bool) c.termCond, "hold off: the line latches as before");
 }
 
 // 11-23: both units latched (13:29/13:33), the pack charged on and only fry latched again (14:14, cell ceiling); flat
@@ -1230,7 +1249,8 @@ static void test_two_units_one_relatch(bool reseed) {
 }
 
 int main() {
-    test_bal_hold_entered_low_cuts_at_band();
+    test_bal_low_line_no_hold_cuts_at_band();
+    test_hold_no_entry_after_restart_low_line();
     test_hold_blind_decay(1, 120);
     test_hold_blind_decay(2, 120);
     test_hold_blind_decay(1, 240);

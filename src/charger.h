@@ -357,8 +357,11 @@ public:
             _ceilStreak = 0;
         }
 
+        // a hold enters only in the tail band: a reset or decayed ibat peak puts the line near cv_min
+        const bool holdMode = p.cv_hold_max_s or balance;
         bool lineLatch = false;
-        if (!terminated and !_cvHold and ibat > iBatFloor and vcell_high > _v_term) {
+        if (!terminated and !_cvHold and ibat > iBatFloor and vcell_high > _v_term
+            and !(holdMode and vcell_high < p.cv_eoc - p.cv_hold_band)) {
             if (++_lineStreak >= VTERM_STREAK_REQ) lineLatch = true;
         } else {
             _lineStreak = 0;
@@ -366,7 +369,7 @@ public:
 
         const bool resume = _staleT; // fresh after a stale pause: back in the hold, its clock kept
         _staleT = 0;
-        if (!ceilingLatch and (resume or (lineLatch and (p.cv_hold_max_s or balance)))) {
+        if (!ceilingLatch and (resume or (lineLatch and holdMode))) {
             // CV hold: the charger holds the cell at cv_eoc and the current tapers; latch on the tail
             lineLatch = false;
             _lineStreak = 0;
@@ -998,7 +1001,7 @@ public:
         // Approach (hold mode): a cell within APPROACH_V of cv_eoc above the tail current overshoots (cell frames
         // seconds apart, steep top of charge). Cut the pack current to the tail current, the line's current at cv_eoc,
         // and let the hold loop take it from there; kept until the hold, a latch, stale data or a discharging pack.
-        // A hold entered without that cut (line low at low ibat) keeps it armed: it cuts once on reaching the band.
+        // A hold entered at low ibat (no cut) keeps it armed: it cuts once on reaching the band.
         const float iTail = params.tail_c_rate * params.Cbat, ibatNow = batSt.ibat_raw;
         const float band = params.cv_eoc - APPROACH_V;
         const bool apOk = !psu && !nowTerm && (params.cv_hold_max_s || termCond.balance) && batDataOk && ibatFresh()
