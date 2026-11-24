@@ -85,28 +85,10 @@ a port.
 
 ## 3. VirtualConverter (vconv)
 
-`src/sim/vconv.h` is a physics model of a synchronous buck or boost converter in plain C++, with no
-Arduino, FreeRTOS, or ESP-IDF headers. It simulates the following parts:
-
-- A single-diode PV source (Isc, Voc, fill-factor k)
-- Battery/load (Vbat, Rbat)
-- Passives (L, Cin, Cout)
-- PWM gate timing (HS on-count, LS on-count, freq), at the LEDC or the MCPWM count resolution
-  (`vconv.conf::pwm_clk`)
-- Pluggable AC ripple models (sine inverter, |sin| rectifier, spiky China-inverter pulse)
-- An optional irradiance profile: clear-sky day and night with Markov clouds
-
-With `CONFIG_FUGU_WITH_VCONV=y`, the firmware replaces the real PWM driver with `PWM_VConv` and
-the real ADC with `ADC_VConv`. The complete control stack (MPP tracker, PD controllers,
-charger, protection) runs against the software plant on a real ESP32, with no physical power
-stage. The diagram shows how the two shims connect to the model:
-
-```
-┌─────────────────┐  update_pwm()  ┌──────────────────────┐  getSample()  ┌───────────────┐
-│   PWM_VConv     │ ─────────────> │   VirtualConverter   │ <──────────── │   ADC_VConv   │
-│ (PwmDriver shim)│                │   (g_vconv singleton)│               │ (AsyncADC shim│
-└─────────────────┘                └──────────────────────┘               └───────────────┘
-```
+`src/sim/vconv.h` models the power stage and its sensors in plain C++: PV source, half-bridge, coil, capacitors,
+battery and the ADC readings they produce. With `CONFIG_FUGU_WITH_VCONV=y` the complete control stack runs against
+this plant on a real ESP32, with no physical power stage. [Simulation](simulation.md) describes the plant model, the
+vconv build and the host simulator, which runs the same plant without a board.
 
 The simulated plant has these properties for agent use:
 
@@ -115,15 +97,15 @@ The simulated plant has these properties for agent use:
   touching a live converter.
 - The model is deterministic: identical inputs produce bit-identical outputs, so failures are
   repeatable.
-- `vconv.conf` (in `config/lab/vconv_mock/`) sets the PV curve, battery, and passives. An agent
-  adjusts these via `set-config vconv.conf …` without a rebuild, and `restart` applies them.
+- `vconv.conf` (in `config/lab/vconv_mock/`) sets the PV curve, battery, passives and an optional
+  [irradiance profile](../reference/config/vconv.md). An agent adjusts these via `set-config vconv.conf …` without a
+  rebuild, and `restart` applies them.
 - The `sensor avg`, `mppt`, `status`, `rt-stats`, and telemetry paths work as on a real
   converter. This includes the InfluxDB push, so time-series data from automated sweeps lands in
   the same dashboard.
 
 The vconv build runs on both ESP32-S3 (`vconv_mock`) and classic ESP32 (`vconv_mock_esp32`) and
 holds MPP around 815 W in lab conditions, which is enough for control-loop validation.
-[Simulation](simulation.md) describes the plant model and the host simulator, which runs the same plant without a board.
 
 ---
 
