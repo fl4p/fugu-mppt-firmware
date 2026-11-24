@@ -133,13 +133,13 @@ static float sweepL0(const MeasArgs &a) {
     uint8_t row[MEAS_MAX_PTS]; // sweep position of each point, for the zero interpolation
     int n = 0, rows = 0;
     for (int H = h_lo; H <= h_hi && n < MEAS_MAX_PTS; H += step) {
-        // BF closed, as with paranoia off: open, its body diode carries the sweep's ~2 A (highD-bflowOpen trips
-        // above 1 A) and its drop biases Vout and so L. LS stays off: no reverse current while Vin > Vout
+        // BF closed once forward current flows (output node above the battery, as MPPT closes it): open, its body
+        // diode carries the sweep's ~2 A (highD-bflowOpen trips above 1 A) and its drop biases Vout and so L
         if (!(sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1.0f)) {
             UART_LOG("  Vin no longer above Vout+1; stopping");
             break;
         }
-        mppt.bflow.enable(true);
+        if (sensors.Iout->ewm.avg.get() > 0.1f) mppt.bflow.enable(true);
         Reading r{};
         settleAndRead((uint16_t) H, a.dwellMs, r);
         if (converter.disabled()) { UART_LOG("  converter disabled (protection?); aborting"); break; }

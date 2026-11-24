@@ -1899,7 +1899,7 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
         float iMaxSeen = 0;
         for (int H = lo; H <= hi && n < coilfit::kMaxPts; H += step) {
             if (!(sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1.f)) break;
-            if (!getenv("SIM_MC_BFOPEN")) mppt.bflow.enable(true); // SIM_MC_BFOPEN=1: the sweep before the fix
+            if (!getenv("SIM_MC_BFOPEN") && sensors.Iout->ewm.avg.get() > 0.1f) mppt.bflow.enable(true); // SIM_MC_BFOPEN=1: the sweep before the fix
             mppt.setManualTarget((uint16_t) H);
             const double dl = tNow() + std::max<uint32_t>(dwellMs, 3000) * 1e-3 + H * 4e-3;
             while (converter.getCtrlOnPwmCnt() != H && tNow() < dl) run(0.02, 0);
