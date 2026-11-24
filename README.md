@@ -197,7 +197,7 @@ control, which is important (see below).
 
 Besides the MPP tracker, the control loop contains 5 PD control units (PID without the integral component):
 
-- `VinCTRL` (solar voltage), keeps solar voltage above 10.5V to prevent board supply UV
+- `VinCTRL` (solar voltage), keeps solar voltage above `limits.conf::vin_min` to prevent board supply UV
 - `IinCTRL` (solar current), limits input current to protect hardware
 - `VoutCTRL` (bat voltage), regulates the output voltage when battery is full or disconnected
 - `IoutCTRL` (charge current), controls the charge current
@@ -213,6 +213,7 @@ respectively.
 
 In each loop iteration we update all controllers and pick the one with the lowest response value. If it is positive, we
 can proceed with the MPPT. Otherwise, we halt MPPT and decrease the duty cycle proportionally to the control value.
+A limiter that only touches for less than 250 ms does not halt MPPT; the duty it took is given back afterwards.
 
 # Voltage & Current Sensors (ADC)
 
