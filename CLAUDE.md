@@ -220,7 +220,7 @@ go in the body. No walls of text: split a long study paragraph into a short setu
 A generic measurement method and its anonymised results ("board B, 83 µH") go on a published `website/docs/lab/`
 page, linked from the `internals/` or `reference/` page that uses them; that page keeps at most a short summary table.
 Bench-specific steps (which device, host, wiring) go to `doc/lab/`, the capture record to `doc/research/`.
-The production build enforces the mechanical part (`website/src/remark/docs-lint.mjs`; the dev server only warns). Every doc review, by Codex,
+The production build enforces the mechanical part (`website/src/remark/docs-lint.mjs`; the dev server only warns). `website/src/remark/docs-xlink.mjs` warns (never fails) when a page mentions a topic several times without linking its page; extend its `TOPICS` table when adding a page. Every doc review, by Codex,
 Astra or an agent, includes the criteria "reads as reference documentation, not notes or a transcript" and "no paragraph is a wall of
 text".
 **Always run the `doc-polish` skill** on every page you write or substantially change under `website/docs/` (new pages, new

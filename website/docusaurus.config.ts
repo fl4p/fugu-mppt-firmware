@@ -5,6 +5,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import repoLinks from './src/remark/repo-links.mjs';
 import docsLint from './src/remark/docs-lint.mjs';
+import docsXlink from './src/remark/docs-xlink.mjs';
 
 const repo = 'https://github.com/fl4p/fugu-mppt-firmware';
 
@@ -50,6 +51,7 @@ const config: Config = {
           beforeDefaultRemarkPlugins: [
             [repoLinks, {repoUrl: repo}],
             docsLint,
+            docsXlink,
           ],
           remarkPlugins: [remarkMath],
           rehypePlugins: [rehypeKatex],
