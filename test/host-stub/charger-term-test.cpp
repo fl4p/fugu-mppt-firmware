@@ -1183,9 +1183,20 @@ static void test_bal_low_line_no_hold_cuts_at_band() {
     c.balanceNow();
     Plant pl;
     topOfCharge(pl.pack, -30.f); // ~12 % below the hold region: 25 A at 3.500 V
+    pl.pack.y = 30.f; // charged at 30 A until the load came on: the polarization relaxes over minutes
     pl.iload = 34.f;
-    int k = pl.untilHold(c, 600);
-    CHECK(k < 0 && pl.vcell() < 3.40f, "low-ibat line: no hold at %.3f V, ibat %.1f A", pl.vcell(), pl.ibat);
+    int above = 0; // cell frames above the line, below the band
+    uint32_t fr = c.batSt.vcell_high_t;
+    for (int s = 0; s < 600 && !c.termCond.cvHold(); ++s) {
+        pl.run(c, 1);
+        if (fr == c.batSt.vcell_high_t) continue;
+        fr = c.batSt.vcell_high_t;
+        above += c.batSt.vcell_high > c.termCond.v_term()
+                 && c.batSt.vcell_high < c.params.cv_eoc - c.params.cv_hold_band && pl.ibat < 3.f;
+    }
+    CHECK(above >= 4, "precondition: the low-ibat line crossed below the band (%d frames)", above);
+    CHECK(!c.termCond.cvHold() && pl.vcell() < 3.40f, "low-ibat line: no hold at %.3f V, ibat %.1f A", pl.vcell(),
+          pl.ibat);
     pl.iload = 0.f;
     float limAtBand = NAN, ibatAtBand = NAN, vmax = 0;
     for (int s = 0; s < 1800 && !(bool) c.termCond; ++s) {
@@ -1193,7 +1204,8 @@ static void test_bal_low_line_no_hold_cuts_at_band() {
         vmax = std::max(vmax, pl.vcell());
         if (std::isnan(limAtBand) && c.batSt.vcell_high >= 3.5f - 0.03f) limAtBand = c.Iout_max(), ibatAtBand = pl.ibat;
     }
-    printf("  low line: limit %.1f A at the band (ibat %.1f A), cell peak %.3f\n", limAtBand, ibatAtBand, vmax);
+    printf("  low line: %d cell frames above the line below the band, limit %.1f A at the approach band (ibat %.1f A), "
+           "cell peak %.3f\n", above, limAtBand, ibatAtBand, vmax);
     CHECK(limAtBand < 20.f, "low line: cut at the band (limit %.1f A, ibat %.1f A)", limAtBand, ibatAtBand);
     CHECK(!(bool) c.termCond && c.balanceRunning() && vmax <= 3.5f + 0.015f,
           "low line: hold in the band, no ceiling, peak %.3f <= cv_eoc + 15 mV", vmax);
