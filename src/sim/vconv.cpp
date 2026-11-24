@@ -124,7 +124,10 @@ void VirtualConverter::stepOneCycle(float T) {
     // V_out near zero while the converter still delivers large I_L, and the
     // phase math handles V_out → 0 (phase-2/3 slopes go to zero, coil idles).
     vbNow_ = vBatEff;
-    if (inBf) bfVg_ = !bfConducts() ? 0.0f : bfVg_ + (pv_.voc + 5.0f - bfVg_) * (inBfTau > T ? T / inBfTau : 1.0f);
+    // the gate pump runs off the bootstrap supply: the gate rises only while the converter switches, then holds
+    if (inBf && !bfConducts()) bfVg_ = 0.0f;
+    else if (inBf && (ctrl || rect || bfStuck == 2))
+        bfVg_ += (pv_.voc + 5.0f - bfVg_) * (inBfTau > T ? T / inBfTau : 1.0f);
     struct HsRestore { uint16_t &r; uint16_t v; ~HsRestore() { r = v; } } hsRestore{pwm_.pwmCtrl, ctrl}, lsRestore{pwm_.pwmRect, rect};
     if (hsShort && !boost_ && ctrl < pmax && pmax) {
         if (rect && hsShort != 2) { // shorted HS + LS on: C_in dumps, the node sees ground
@@ -174,6 +177,7 @@ void VirtualConverter::stepOneCycle(float T) {
             const float k = T * invCin_ * pv_.isc * pv_.alpha / pv_.voc;
             v = (v + k * pv_.voc) / (1.0f + k);
         }
+        if (inBf && v > vi0) v = std::max(vi0, std::min(v, bfVg_)); // the follower stops at its gate
         return std::max(0.0f, v);
     };
     float qOut1 = 0.0f, qIn1 = 0.0f;
@@ -190,9 +194,9 @@ void VirtualConverter::stepOneCycle(float T) {
     iInAvg_ = (qIn1 + 2.0f * iInAvg_) * (1.0f / 3.0f);
 
     vIn_ = vinNext(iInAvg_);
-    if (inBf && vIn_ > vi0 && vIn_ > bfVg_) vIn_ = std::max(vi0, bfVg_); // the follower stops at its gate
     vOut_ = outNext(vOut_, iOutAvg_, T);
     if (vOut_ > vOutMax_) vOutMax_ = vOut_;
+    if (iInAvg_ > iInMax_) iInMax_ = iInAvg_;
     iLsOffMin_ = std::min(iLsOffMin_, iLsOff_), iOutMin_ = std::min(iOutMin_, iOutAvg_);
 
     // Safety bound only: a sinking panel stays near Voc on its own; a blocking source (open backflow switch)

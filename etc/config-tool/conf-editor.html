@@ -1028,7 +1028,7 @@ const FILE_META = {
     bflow_model:{unit:"",desc:"1 = backflow switch between output node and battery (off: a 0.7 V diode toward the battery); Vout/Iout then read the battery side",type:"bool"},
     bflow_stuck:{unit:"",desc:"Fault on the bflow_model switch: 0 none, 1 stuck open, 2 stuck closed",type:"int",opts:["0","1","2"]},
     in_bf:{unit:"",desc:"1 = boost fed from a battery behind its backflow switch: C_in charges only up to the switch gate, Vin senses the battery side",type:"int",opts:["0","1"]},
-    in_bf_tau:{unit:"s",desc:"Time constant of that switch gate after turn-on (soft battery connect)",type:"float"},
+    in_bf_tau:{unit:"s",desc:"Time constant of that switch gate after turn-on (soft battery connect); it rises only while the converter switches",type:"float"},
     i_unidir:{unit:"",desc:"1 = the Iout channel clips at 0 (one-direction current amplifier): selftest bflow runs its toggle variant, hs_clamp is ignored",type:"bool"},
     hs_short:{unit:"",desc:"1 = buck high side conducts permanently (with the low side on, the input cap is shorted); 2 = the same and the low side never turns on",type:"int",opts:["0","1","2"]},
     adc_freq:{unit:"Hz",desc:"Sampling tick; unset = board.conf adc_freq, then 3000",type:"int"},

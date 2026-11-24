@@ -12,7 +12,7 @@ DEFAULT="sanity a b c d-cloud d-cloud-ramp d-bus04 d-bus08 d-bus12 d-noise e e-b
     hs-short hs-short-clamp hs-short-unidir hs-short-bfclosed hs-night hs-night-dsp hs-night-abort hs-night-ov hs-night-ovpend hs-night-ovhold hs-night-race hs-night-race0 hs-cal hs-dawn hs-dawn-nozero hs-volt hs-volt-clamp hs-run hs-run-lsdead hs-run-nodecl hs-unplug hs-glitch 
     bf-rec bf-ok bf-ok-dcm bf-open bf-closed bf-nodecl bf-uni-ok bf-uni-closed bf-uni-open bf-uni-abort bf-uni-offdrop bf-uni-cloud bf-uni-dcm bf-uni-slow bf-uni-soft-ok bf-uni-soft-closed bf-uni-stale bf-uni-soft-vstep bf-nobat-ok bf-nobat-closed bf-nobat-reconnect bf-nobat-packsense bf-nobat-bms bf-nobat-sawbat bf-daily bf-daily-uni bf-daily-flat bf-daily-fail bf-daily-then-closed bf-abort bf-abort-cmd bf-flat-ccm bf-flat-ccm-open bf-flat-ccm-grow bf-flat-ccm-vinfall mc-flat mc-flat-lowf mc-flat-ramp 
     dcd-stop-flat dcd-stop-fry dcd-slow-flat dcd-slow-fry dcd-ccm-flat dcd-ccm-fry dcd-hv-step-flat dcd-hv-step-fry dcd-hv-train-flat dcd-hv-train-fry 
-    cv-hold-pair cv-hold-offset cv-hold-gap cv-hold-load cv-hold-reboot cv-hold-mask cv-hold-day psu-boost-dark psu-boost-cold mc-boost-dark mc-boost-dark-lowf mc-boost-open"
+    cv-hold-pair cv-hold-offset cv-hold-gap cv-hold-load cv-hold-reboot cv-hold-mask cv-hold-day psu-boost-dark psu-boost-cold mc-boost-dark mc-boost-dark-lowf mc-boost-open mc-boost-bfopen"
 [ "$1" = --list ] && { printf "%s\n" $DEFAULT; exit 0; }
 clang++ -std=gnu++20 -O2 -fexceptions -Wno-format -Wno-deprecated-volatile \
     -include "$ROOT/test/host-stub/esp/sim_prelude.h" -I "$ROOT/test/host-stub/esp" -I "$ROOT/src" \

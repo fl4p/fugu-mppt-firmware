@@ -179,7 +179,8 @@ public:
     [[nodiscard]] float getVoutSense() const { return bfModel ? vSense_ : vOut_; }
     [[nodiscard]] float getIoutSense() const { return bfModel ? ibat_ : iOutAvg_; }
     // Boost from a battery behind its backflow switch (opt-in): a source follower, C_in charges only up to its gate,
-    // which rises with inBfTau toward the battery once enabled (charge pump through R21 into C20 + Cgs).
+    // which rises with inBfTau toward the battery while enabled and switching (charge pump through R21 into C20 + Cgs
+    // off the bootstrap supply; it holds while idle).
     // Vin senses the battery side.
     bool inBf = false;
     float inBfTau = 5e-3f;
@@ -259,6 +260,7 @@ public:
     [[nodiscard]] float getVout() const { return vOut_; }
     // per-cycle Vout maximum since the last call
     float takeVoutMax() { float m = vOutMax_; vOutMax_ = vOut_; return m; }
+    float takeIinMax() { float m = iInMax_; iInMax_ = iInAvg_; return m; } // of the cycle means since the last take
     // per-cycle minima since the last call: coil current at LS turn-off, cycle-mean output current
     void takeIMin(float &iLsOff, float &iOut) {
         iLsOff = iLsOffMin_, iOut = iOutMin_;
@@ -348,7 +350,7 @@ private:
     float vOutMax_ = 0.0f;
     uint32_t vInClamps_ = 0;
     float iLEnd_ = 0.0f, iLsOff_ = 0.0f;
-    float iLsOffMin_ = 0.0f, iOutMin_ = 0.0f;
+    float iLsOffMin_ = 0.0f, iOutMin_ = 0.0f, iInMax_ = 0.0f;
     PwmState pwm_{};
     float iInAvg_  = 0.0f;
     float iOutAvg_ = 0.0f;

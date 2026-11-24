@@ -25,6 +25,7 @@
 //                              # mc-flat-ramp: the same entered by the `dc 0` ramp-down (SIM_MC_RAMP=1)
 //                              # mc-boost-dark: `measure-coil l0` in boost at night (battery in, dark string out); -lowf at 21.5 kHz
 //                              # mc-boost-open: the same with the output unloaded, the 80 V trip
+//                              # mc-boost-bfopen: the same with the backflow switch stuck open: the start aborts
 //                              # dcd-stop-flat|fry: manual ramp-down from CCM that stops just below Vout/Voc (dcd-slow-*: 3x slower)
 //                              # dcd-ccm-flat|fry: deep CCM, P&O and a slow power-limiter retreat
 //                              # dcd-hv-step|train-flat|fry: 700-count duty cut at Vin ~80 V near the CCM boundary, one
@@ -2125,6 +2126,7 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
 // `measure-coil l0` on a boost (sweepL0()'s boost path): BF on, the Iin zero, a low duty lifts Vout above Vin, then the
 // band at the 80 V trip, stopped by the live Vout/Iin; trips (task: Vout 80 V or Iin 8 A, med3; RT: ovset 80 V) stop
 // the PWM at once. Rows map onto the buck relations through coilfit::asBuck(). Fills g_mcIpk, g_mcVmax, g_mcImax.
+static float g_preImax = 0, g_preIewm = 0; // precharge: plant input current, its ewm reading
 static float g_mcVmax = 0, g_mcImax = 0, g_mcIpkPlant = 0, g_mcIpkMean = 0; // g_mcIpkMean: of the fitted rows
 static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &secs, std::string &stop) {
     const double t0 = tNow();
@@ -2166,8 +2168,26 @@ static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &se
     printf("  measure: boost fsw %.0f Hz pwmMax %u band %d..%d step %d Vin %.2f Vout %.2f\n", fsw, pwmMax, lo, hi, step,
            vin0, vout0);
     mppt.bflow.enable(true);
-    for (const double dl = tNow() + 3; tNow() < dl && !(sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() - 3);)
-        run(0.02, 0);
+    const auto hPre = (uint16_t) std::max(2, std::min((int) ceilf(2e-6f * fsw * pwmMax), converter.pwmCtrlMax / 8));
+    auto up = [] { return sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() - 3; };
+    if (!up()) mppt.setManualTarget(hPre);
+    const double tPre = tNow();
+    g_vconv.takeIinMax(), g_preImax = g_preIewm = 0, g_tickHook = [] {
+        g_preImax = std::max(g_preImax, g_vconv.takeIinMax()), g_preIewm = std::max(g_preIewm, sensors.Iin->ewm.avg.get());
+    };
+    for (const double dl = tNow() + 3; !up() && tNow() < dl && wait(0.02);) {}
+    g_tickHook = nullptr;
+    printf("  measure: precharge at duty %u: Vout %.2f after %.3f s, plant Iin max %.2f A, Iin ewm max %.2f A\n", hPre,
+           sensors.Vout->ewm.avg.get(), tNow() - tPre, g_preImax, g_preIewm);
+    if (!up() || tripped) {
+        printf("  measure: Vout %.2f did not follow Vin %.2f\n", sensors.Vout->ewm.avg.get(), sensors.Vin->ewm.avg.get());
+        stop = "Vout did not follow";
+        mppt.setManualTarget(0);
+        for (const double dl = tNow() + 10; !converter.disabled() && tNow() < dl;) run(0.01, 0);
+        mppt.setExplicitOvLimit(ov0);
+        secs = tNow() - t0;
+        return res;
+    }
     float d[coilfit::kMaxPts], vi[coilfit::kMaxPts], vo[coilfit::kMaxPts], io[coilfit::kMaxPts];
     uint8_t row[coilfit::kMaxPts];
     int n = 0, rows = 0;
@@ -2239,6 +2259,8 @@ static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &se
 //   L = L0 (1 - k Ipk) (1/A, default 0.01), SIM_MC_L: plant L0 (default 80e-6). Per pass: L vs the plant's L at the fitted
 //   rows' mean Ipk within 3 %, the slope vs -k (printed), Vout below 80 V, Iin below 8 A, no protection trip.
 // mc-boost-open: the output unloaded (string disconnected): the trip stops it at 80 V.
+// All start from the night state: C_in and the string at 6.85 V, the battery behind its open backflow switch (in_bf), whose
+// gate pump runs only while the converter switches. mc-boost-bfopen: that switch stuck open, the start must abort.
 static float g_mcVinOfs[2] = {0, 0};
 static int runMcBoost(const std::string &name) {
     int f = 0;
@@ -2259,7 +2281,7 @@ static int runMcBoost(const std::string &name) {
         sscanf(e, "%f,%f", &g_mcVinOfs[0], &g_mcVinOfs[1]);
         g_simSenseHook = [](uint8_t ch, float x) { return ch ? x : x - g_mcVinOfs[0] - g_mcVinOfs[1] * g_vconv.getIinAvg(); };
     }
-    g_vconv.setVin(26.6f), g_vconv.setVout(6.85f);
+    g_vconv.setVin(6.85f), g_vconv.setVout(6.85f); // night: C_in and the string at 6.85 V, the backflow switch open
     run(5, 0);
     printf("== %s: plant L0 %.1f uH, k %.1f %%/A, Vin %.2f Vout %.2f, fsw %.0f Hz, %s\n", name.c_str(), g_vconv.getL() * 1e6f,
            k * 100, g_vconv.getVin(), g_vconv.getVout(), converter.realizedFreqHz(), modeStr());
@@ -2274,7 +2296,12 @@ static int runMcBoost(const std::string &name) {
            " Ipk up to %.2f A (plant %.2f), Vout max %.2f V, Iin max %.2f A, stop: %s, %.0f s\n", name.c_str(), r.L * 1e6f,
            lPlant * 1e6f, g_mcIpkMean, (r.L / lPlant - 1) * 100, r.k * 100, r.kse * 100, -k * 100, r.n,
            r.f > 0 ? "fit" : "none", g_mcIpk, g_mcIpkPlant, g_mcVmax, g_mcImax, stop.c_str(), secs);
-    if (open) { // nothing loads the output: it climbs at the probe duty until the 80 V trip
+    if (name == "mc-boost-bfopen") { // the backflow switch never conducts: the start aborts, nothing reaches the output
+        chk(stop == "Vout did not follow", "aborted at the start");
+        chk(g_mcVmax < 26.6f && g_mcImax < 2.f, "Vout below Vin, Iin < 2 A");
+        chk(g_trips.size() == trips0, "no protection trip");
+        chk(secs < 20, "within 20 s");
+    } else if (open) { // nothing loads the output: it climbs at the probe duty until the 80 V trip
         chk(g_trips.size() > trips0 || stop == "TRIP", "tripped");
         chk(g_mcVmax < 80.5f, "Vout < 80.5 V");
     } else {
@@ -4009,7 +4036,7 @@ static int simMain(int argc, char **argv) {
         // the 6-substring string measured at night, 0.18 / 0.39 / 0.97 / 1.5 A at 70 / 74 / 78 / 80 V
         ov = {{"pv_isc", "200"}, {"pv_voc", "26.6"}, {"pv_k", "0.95"}, {"v_bat", "0"}, {"r_bat", "207.5e3"}, {"plant_c_in", "470e-6"},
               {"plant_c_out", "1.2e-3"}, {"out_d_i0", "2.3e-8"}, {"out_d_vt", "4.45"}, {"noise_iin", "0.02"}, {"noise_vin", "0.02"},
-              {"noise_vout", "0.05"}};
+              {"noise_vout", "0.05"}, {"in_bf", "1"}, {"bflow_stuck", sc == "mc-boost-bfopen" ? "1" : "0"}};
     boot(ov, p0);
     if (mcBoost && getenv("SIM_MC_L")) g_vconv.setPassives(g_vconv.getCin(), g_vconv.getCout(), (float) atof(getenv("SIM_MC_L")));
     if (rcal) g_vconv.setDiodeVf(0.7f);

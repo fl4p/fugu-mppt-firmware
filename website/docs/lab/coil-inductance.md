@@ -370,9 +370,14 @@ cross 90 % of that boundary.
 
 The run:
 
-1. The low-side MOSFET stays off for the whole sweep (no synchronous rectification), so the
-   battery reaches the coil only through the closed backflow switch. The command closes it and
-   waits for `Vout` to follow `Vin`.
+1. The high-side MOSFET stays off for the whole sweep (no synchronous rectification); its body
+   diode carries the coil current to the output. The battery reaches the coil only through the
+   backflow switch, whose gate pump runs off the bootstrap supply, so the switch conducts only once
+   the converter switches. The command turns the switch on. While `Vout` is more than 3 V below
+   `Vin`, it switches at a precharge duty of one 2 µs low-side pulse per period (7.8 % at 39 kHz).
+   The battery then charges the output through the coil and the body diode, at a rate set by the
+   switch's gate ramp rather than by the duty. If `Vout` is still more than 3 V below `Vin` after
+   3 s, the command takes the switch as not conducting and aborts.
 2. It reads the `Iin` zero, then raises the duty until `Vout` is 2 V above `Vin`. Below that the
    coil current does not return to zero in each period, so no row is taken.
 3. It steps through the duty band and ends the sweep at the first row that reaches one of these:

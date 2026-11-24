@@ -206,7 +206,7 @@ describes each scenario.
 | `ring-*` | Switch-node ringing in DCM: sweep, tracking, coil measurement | `== RING` |
 | `hs-*` | High-side short check | |
 | `bf-*` | Backflow switch self-test | |
-| `mc-*` | [`measure-coil l0`](../lab/coil-inductance.md#on-device-equivalent-measure-coil) entered from MPPT; `mc-boost-*` on a boost at night, into a dark PV string (output diode, open output) | |
+| `mc-*` | [`measure-coil l0`](../lab/coil-inductance.md#on-device-equivalent-measure-coil) entered from MPPT; `mc-boost-*` on a boost at night from the night state (string at 6.85 V, battery behind the open backflow switch), into a dark PV string (output diode, open output, switch stuck open) | |
 | `idle-wake` | Start inhibit while Vin rises | |
 | `psu-boost-dark` | Boost PSU from a battery into a dark PV string: setpoint steps 32 to 80 V with the overshoot, trips and battery current per step | `== STEP`, `== SUMMARY` |
 | `psu-boost-cold` | The same plant, `psu 32` from the night state: string at 6.85 V, battery behind the open backflow switch. Checks the ramp start against Vin, the time to 32 V and the trips. `SIM_BFSTUCK=1` keeps the switch open | `== COLD`, `== SUMMARY` |
