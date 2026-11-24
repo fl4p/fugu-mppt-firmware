@@ -5,6 +5,8 @@ sidebar_position: 3
 
 # MPP Tracker
 
+*Original hand-written note: the README section [MPPT Algorithm](https://github.com/fl4p/fugu-mppt-firmware#mppt-algorithm).*
+
 The tracker finds and follows the maximum power point (MPP) of the solar input by moving the converter duty cycle.
 It runs inside the [control loop](control-loop.md) only while no limiter is active.
 

@@ -10,7 +10,7 @@ import {LsSweepChart, LsTimingChart, MSensitivityChart} from '@site/src/componen
 
 # Diode Emulation
 
-*Original hand-written note: [doc/Diode Emulation.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Diode%20Emulation.md).*
+*Original hand-written notes: [doc/Diode Emulation.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Diode%20Emulation.md) and the README section [Synchronous Buck and Diode Emulation](https://github.com/fl4p/fugu-mppt-firmware#synchronous-buck-and-diode-emulation).*
 
 ## Nomenclature
 

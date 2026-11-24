@@ -6,7 +6,7 @@ description: "The control loop reads Vout, Vin, and Iin and adjusts the PWM duty
 
 # Control Loop
 
-*Original hand-written note: [doc/Control Loop.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Control%20Loop.md).*
+*Original hand-written notes: [doc/Control Loop.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Control%20Loop.md) and the README section [Control Loop](https://github.com/fl4p/fugu-mppt-firmware#control-loop).*
 
 If you are new to PID control, watch MATLAB's [What Is PID Control? (video)](https://www.youtube.com/watch?v=wkfEZmsQqiA) first.
 

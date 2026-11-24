@@ -6,7 +6,7 @@ description: "ADC noise sources and the filters that reduce them: median filter,
 
 # Signal Filters
 
-*Original hand-written note: [doc/Signal Filters.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Signal%20Filters.md).*
+*Original hand-written notes: [doc/Signal Filters.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Signal%20Filters.md) and the README section [Signal Filtering](https://github.com/fl4p/fugu-mppt-firmware#signal-filtering).*
 
 ## Noise sources
 
