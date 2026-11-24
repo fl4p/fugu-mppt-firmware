@@ -329,9 +329,10 @@ zero or negative one by 125 ns, at most once per 2 s. It never lengthens the off
 at the lowest value a calibration can apply, −(2.5 µs + 0.75 µs); an offset already below that
 stays.
 
-The backstop is armed only in MPPT mode (including sweeps; not in PSU/PV emulator mode or manual
-PWM, not during a calibration run) and from 2 s after the converter starts; its peak history
-is cleared whenever it is disarmed.
+The backstop is armed only on a buck in MPPT mode (including sweeps; not in PSU or PV emulator mode
+or manual PWM, not during a calibration run or an ADC calibration), with no manual LS count and no
+forced PWM, while `V_i > V_o + 1 V`, and from 2 s after the converter starts. Its peak history is
+cleared whenever it is disarmed.
 
 Each trigger marks the offset uncalibrated in RAM, so that the automatic calibration runs
 again. After the second trigger the reduced value is written to `coil.conf` (with the converter
@@ -348,12 +349,12 @@ top of that value:
 | step | behaviour |
 |---|---|
 | CCM/DCM decision (`computeDCM`) | Enters DCM when `ΔI_L > 2.0·I_o`, leaves when `ΔI_L ≤ 1.8·I_o` (hysteresis). Always DCM when `I_o < 0.1 A`. Effective forced PWM overrides all of this (never DCM). |
-| M bias | Assumes a ±1 % error on each voltage and divides `M` by `0.99/1.01`, i.e. biases it ≈ 2 % toward the early-turn-off side, then clamps it off unity (`≤ 0.99` buck, `≥ 1.01` boost). On a buck the full bias applies up to `M ≈ 0.97`; between 0.97 and 0.99 the clamp eats into it; above 0.99 the clamped `M` is *below* the true one and the LS window comes out longer than ideal (at `M = 0.995` the ratio is 0.0101 against an ideal 0.0050, ≈ 2×). |
+| M bias | Assumes a ±1 % error on each voltage and divides `M` by `0.99/1.01`, i.e. biases it ≈ 2 % toward the early-turn-off side, then clamps it off unity (`≤ 0.99` buck, `≥ 1.01` boost). On a buck the full bias applies up to `M ≈ 0.97`; between 0.97 and 0.99 the clamp eats into it; above 0.99 the clamped `M` is *below* the true one and the LS window comes out longer than ideal (at `M = 0.995` the ratio is 0.0101 against an ideal 0.0050, ≈ 2×). A buck without a valid reading (`V_i ≤ V_o` or `V_i ≤ 0.1 V`) uses the clamp value 0.99, the shortest window. |
 | low-current cut-off | In DCM the LS ratio is set to 0 when `I_o ≤ 0.01 A` or the low-side voltage is `< 1 V`; it stays at 0 until `I_o ≥ 0.04 A` and the voltage is back at `≥ 1 V`. The offset is not applied (a positive one needs a ratio of at least 0.25, a negative one is clamped up), so the target is `pwmRectMin`. |
 | DCM LS limit (`pwmRectMax`) | `pwmCtrl·ratio + rect_offset` counts, at most `pwmMax − pwmCtrl − 1 − late/ratio`, `late` the larger of `LateDrainBudget·pwmMax` (≈ 0.0198, from `VoltageMaxErr`) and `LateDrainMinNs` = 700 ns (the drain limit near `D = M`), with first-order error-feedback dither of the rounding remainder (so the limit's time-average tracks the unrounded target). |
 | CCM LS limit | `pwmMax − pwmCtrl − 1` (complementary). |
 | final clamp | The limit is clamped to `[pwmRectMin, pwmMax − pwmCtrl − 1]`. On a buck `pwmRectMin` = `boot_refresh_ns` in ticks + the HS→LS dead time, for bootstrap refresh. |
-| commanded LS count (`pwmRect`) | Fades in toward the limit (+1 count per update at first, then 1/64 of the remaining gap), follows it down immediately, and stays at `pwmRectMin` while sync rect is off. While the gap is larger than `pwmMax/64`, the fade also advances on control updates that leave the duty unchanged. A duty decrease of more than `pwmMax/50` counts in one step (not in forced PWM) forces the DCM assumption, whose limit is never longer, and drops the command to `pwmRectMin`; the fade-in then restarts. Smaller decreases that add up to more than `pwmMax/50` within the lag of the current filter also drop the command to `pwmRectMin` (see [cumulative decrease](#cumulative-decrease)). |
+| commanded LS count (`pwmRect`) | Fades in toward the limit (+1 count per update at first, then 1/64 of the remaining gap), follows it down immediately, and stays at `pwmRectMin` while sync rect is off. While the gap is larger than `pwmMax/64`, the fade also advances on control updates that leave the duty unchanged. A duty decrease of more than `pwmMax/50` counts in one step (not in forced PWM) forces the DCM assumption, whose limit is never longer, and drops the command to `pwmRectMin`; the fade-in then restarts. Smaller decreases that add up to more than `pwmMax/50` within the lag of the current filter also drop the command to `pwmRectMin` (see [cumulative decrease](#cumulative-decrease)). A manual LS count (`rect-cal`, bench tests) replaces all of this: the command holds that count, clamped to `[pwmRectMin, pwmMax − pwmCtrl − 1]`. |
 
 The ideal `t_on,LS` is therefore the pre-clamp target of the limit, not the commanded
 window. The dither's average carries over to the command only once it has settled at the
@@ -432,11 +433,11 @@ current is below −0.05 A.
 When the sensor reads reverse current, the firmware cuts the LS window back to `pwmRectMin`
 (`syncRectMinDuty`) and opens the backflow switch:
 
-- Two consecutive samples below −1 A (not in forced PWM): LS to minimum, backflow switch open. If
+- Two consecutive samples below −1 A (not in forced PWM or during the backflow-switch self-test): LS to minimum, backflow switch open. If
   the averaged output current is above 10 A at the same time, the reading counts as noise and the
   converter stops (`revI-highAvg`).
 - Averaged current below −1 A: the converter stops (`revI-ewm`).
-- Buck with `reverse_current_paranoia`: a filtered current below −0.05 A (the smaller of the average
+- Buck with `reverse_current_paranoia`, outside the backflow-switch self-test: a filtered current below −0.05 A (the smaller of the average
   and the larger of the last two samples) sets the LS to minimum and opens the backflow switch.
 
 The converter keeps switching after a reduction. The LS window recovers through the fade-in once the
