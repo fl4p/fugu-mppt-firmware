@@ -211,6 +211,7 @@
 #include "selftest/coil_fit.h"
 #include "selftest/bflow_test.h"
 #include "selftest/measure_coil.h"
+#include <thread>
 #include "plant_boards.h"
 #include "lfp_pack.h"
 
@@ -2417,9 +2418,11 @@ static int runMcBoost(const std::string &name) {
 }
 
 // The real measure-coil task (src/selftest/measure_coil.cpp) runs inline; its vTaskDelay() waits run the simulation.
+static void mcDelayHook();
 static void simDelay(uint32_t ms) {
     static bool in;
     if (in) return; // a wait inside the RT/LF path
+    mcDelayHook();
     in = true, run(ms * 1e-3, 0), in = false;
 }
 
@@ -2428,9 +2431,10 @@ static struct {
                 // 4 the reverse-current tick (fast samples reversed, EWM still forward), 5 shutdown, then the request
                 // published again and the BF closed (a core-0 close racing the shutdown), 6 the reverse-current tick
                 // during the LS sweep (manual LS pinned), 7 shutdown without backoff mid-ramp, 8 shutdown, then the BF
-                // closed from outside (the request stays cancelled)
-    bool injected, reqKept, revBad, lsBad, lsStop;
-    uint32_t offTicks, backoffTicks, closedTicks, srTicks, restartTicks;
+                // closed from outside (the request stays cancelled), 9 the reverse-current tick between an LS row and
+                // the next pin, 10 a shutdown racing the task's cleanup (another thread, paused inside shutdownDcdc)
+    bool injected, reqKept, revBad, lsBad, lsStop, lsMode, pinWait, lsCommitBad;
+    uint32_t offTicks, backoffTicks, closedTicks, srTicks, restartTicks, pinTicks, rowsAfter;
     uint16_t lastCtrl;
     double tPub, tInject = -1, tAbort = -1;
     float L = NAN;
@@ -2439,12 +2443,59 @@ static struct {
     float ipk, ipkPl; // largest DCM row Ipk (L-free), the plant's
 } g_mc;
 
+// protect() and updateManual() on fast samples reversed (EWM still forward), then the end of main.cpp's manual tick
+static void mcRevTick(float z) {
+    auto &i = *const_cast<Sensor *>(mppt.sensorPhysicalI);
+    i.ewm.avg.y[0] = i.ewm.avg.y[1] = z + .4f;
+    i.last = i.previous = z - .2f;
+    const bool ok = mppt.protect(true), bfP = mppt.bflow.state();
+    if (ok) mppt.updateManual();
+    const unsigned lsU = converter.getRectOnPwmCnt();
+    converter.pwmPerturb(0);
+    printf("== inject: reverse tick at t=%.3f: protect %d, BF after protect %d, after updateManual %d; LS %u, at the "
+           "end of the tick %u (min %u), manual LS %d\n", tNow(), (int) ok, (int) bfP, (int) mppt.bflow.state(), lsU,
+           converter.getRectOnPwmCnt(), converter.getRectOnPwmMin(), (int) converter.manualRect_());
+    g_mc.revBad = mppt.bflow.state();
+    g_mc.lsBad = converter.manualRect_() || converter.getRectOnPwmCnt() > converter.getRectOnPwmMin() + 1u;
+    g_mc.injected = true;
+}
+
+static std::atomic<int> g_raceStage{0}; // 1 shutdown thread started, 2 paused in shutdownDcdc, 3 released
+static std::thread g_raceThread;
+static void raceSeam() {
+    if (g_raceStage.load() != 1) return;
+    g_raceStage.store(2);
+    while (g_raceStage.load() != 3) std::this_thread::yield();
+}
+
+// the task's first wait after the injected clamp follows its next pin: that must not have moved LS off the minimum
+static void mcDelayHook() {
+    if (!g_mc.pinWait) return;
+    g_mc.pinWait = false;
+    g_mc.lsCommitBad = converter.getRectOnPwmCnt() > converter.getRectOnPwmMin() + 1u;
+    printf("== task wait after the clamp: LS %u (min %u)\n", converter.getRectOnPwmCnt(), converter.getRectOnPwmMin());
+}
+
 static void mcLog(const char *msg) {
     unsigned rH; // a DCM row: H D Vin Vout Iout mode
     float rD, rVi, rVo, rI;
     char rM[4];
     if (sscanf(msg, " %u %f %f %f %f %3s", &rH, &rD, &rVi, &rVo, &rI, rM) == 6 && !strcmp(rM, "DCM"))
         g_mc.ipk = std::max(g_mc.ipk, coilfit::ipkDcm(rD, rVi, rVo, rI));
+    unsigned row;
+    float a, b, c;
+    char m[4];
+    if (!strncmp(msg, "measure-coil LS:", 16)) g_mc.lsMode = true;
+    if (g_mc.lsMode && sscanf(msg, " %u %f %f %f %3s", &row, &a, &b, &c, m) == 5) {
+        g_mc.rowsAfter += g_mc.injected;
+        if (g_mc.inject == 9 && !g_mc.injected && row >= 780) mcRevTick(mppt.mcBfZero.load()), g_mc.pinWait = true;
+    }
+    if (g_mc.inject == 10 && !g_mc.injected && !strncmp(msg, "measure-coil: Iout zero", 23)) {
+        printf("== inject: shutdown on another thread, paused inside it, while the task cleans up\n");
+        g_mc.injected = true, g_raceStage.store(1), g_simShutdownSeam = raceSeam;
+        g_raceThread = std::thread([] { mppt.shutdownDcdc("race", 0); });
+        while (g_raceStage.load() != 2) std::this_thread::yield();
+    }
     if (!strncmp(msg, "measure-coil: L = ", 18)) {
         g_mc.L = (float) atof(msg + 18) * 1e-6f;
         g_mcSt = !strstr(msg, "on-time corrected");
@@ -2460,7 +2511,10 @@ static void mcLog(const char *msg) {
         g_mcResT.dl = dl * 1e-9f, g_mcResT.dlse = se * 1e-9f, g_mcResT.dlsys = sy * 1e-9f;
     if (strstr(msg, "DISTURBED")) g_mc.disturbed = true;
     if (!strncmp(msg, "measure-coil: peak LS", 21)) g_mc.peakLs = true;
-    if (!strncmp(msg, "measure-coil: done", 18)) g_mc.done = true;
+    if (!strncmp(msg, "measure-coil: done", 18)) {
+        g_mc.done = true;
+        if (g_raceThread.joinable()) g_raceStage.store(3), g_raceThread.join(), g_simShutdownSeam = nullptr;
+    }
     if (strstr(msg, "needs a physical Iout")) g_mc.refused = true;
     if (strstr(msg, "aborting") && g_mc.tAbort < 0) g_mc.tAbort = tNow();
     if (strstr(msg, "LS clamped by reverse-current protection")) g_mc.lsStop = true;
@@ -2475,11 +2529,12 @@ static void mcTick() {
         g_mc.ipkPl = std::max(g_mc.ipkPl, (float) ((g_vconv.getVin() - g_vconv.getVout()) * converter.getCtrlOnPwmCnt() /
                                               converter.periodCounts() / (converter.realizedFreqHz() * g_vconv.getL())));
     g_mc.restartTicks += g_mc.tInject >= 0 && !off && !g_mc.done;
+    g_mc.pinTicks += g_mc.injected && converter.manualRect_();
     const uint16_t ctrl = converter.getCtrlOnPwmCnt();
     const bool ramping = ctrl != g_mc.lastCtrl;
     g_mc.lastCtrl = ctrl;
     const float z = mppt.mcBfZero.load();
-    if (z != z || g_mc.injected) return;
+    if (!std::isfinite(z) || g_mc.injected) return;
     if (g_mc.tPub < 0) g_mc.tPub = tNow();
     const bool mid = bf && !off && tNow() - g_mc.tPub > 10;
     switch (g_mc.inject) {
@@ -2489,7 +2544,7 @@ static void mcTick() {
             if (g_mc.inject != 1 && !(mid && ramping)) return;
             printf("== inject: shutdown at t=%.3f (D %u, BF %d)\n", tNow(), ctrl, (int) bf);
             mppt.shutdownDcdc("inject", g_mc.inject == 7 ? 0 : 5);
-            g_mc.reqKept = mppt.mcBfZero.load() == mppt.mcBfZero.load();
+            g_mc.reqKept = std::isfinite(mppt.mcBfZero.load());
             g_mc.tInject = tNow();
             break;
         case 3:
@@ -2501,21 +2556,7 @@ static void mcTick() {
         case 4:
         case 6: {
             if (!mid || (g_mc.inject == 6 && !(converter.manualRect_() && tNow() - g_mc.tPub > 30))) return;
-            auto &i = *const_cast<Sensor *>(mppt.sensorPhysicalI);
-            i.ewm.avg.y[0] = i.ewm.avg.y[1] = z + .4f;
-            i.last = i.previous = z - .2f;
-            const bool ok = mppt.protect(true), bfP = mppt.bflow.state();
-            if (ok) mppt.updateManual();
-            printf("== inject: reverse tick at t=%.3f: protect %d, BF after protect %d, after updateManual %d\n", tNow(),
-                   (int) ok, (int) bfP, (int) mppt.bflow.state());
-            g_mc.revBad = mppt.bflow.state();
-            if (g_mc.inject == 6) { // the end of main.cpp's manual tick
-                const unsigned lsP = converter.getRectOnPwmCnt();
-                converter.pwmPerturb(0);
-                printf("== inject: LS after protect %u, at the end of the tick %u (min %u), manual LS %d\n", lsP,
-                       converter.getRectOnPwmCnt(), converter.getRectOnPwmMin(), (int) converter.manualRect_());
-                g_mc.lsBad = converter.manualRect_() || converter.getRectOnPwmCnt() > converter.getRectOnPwmMin() + 1u;
-            }
+            mcRevTick(z);
             break;
         }
         case 5:
@@ -2524,7 +2565,6 @@ static void mcTick() {
             mppt.shutdownDcdc("inject", 5);
             mppt.mcBfZero.store(z);
             mppt.bflow.enable(true);
-            g_mc.tInject = tNow();
             break;
         case 8:
             if (!mid) return;
@@ -2547,6 +2587,8 @@ static void mcTick() {
 //   -trip-pub / -trip-ramp: a shutdown when the request is published / mid-ramp cancels it and ends the sweep.
 //   -off: a disable (not a shutdown) mid-sweep with the duty target at 0: the RT opens the BF.
 //   -trip-stray: a shutdown followed by a late request and a BF close from outside: the RT opens it in the backoff.
+//   -latch-race: a shutdown on another thread, paused between its cancel and the BF opening while the task runs its
+//     cleanup: the request ends idle, and `dc` and `selftest bflow` work afterwards.
 //   -revtick: a tick whose fast samples reverse while the EWM still shows forward current: protect() opens the BF and
 //     updateManual() must not close it again.
 //   -trip0: a shutdown without backoff mid-ramp (as calibration does).
@@ -2555,6 +2597,8 @@ static void mcTick() {
 //   -ls, -ls-trip-pub: `measure-coil ls`; the RT closes BF and sync rect.
 //   -ls-revtick: the reverse-current tick during the LS sweep: the clamp drops the pinned LS, which stays at its minimum
 //     at the end of the tick, and the sweep stops.
+//   -ls-repin: the same tick right after an LS row is logged, before the task pins the next LS: no pin survives the
+//     clamp and no further row is measured.
 //   suffix -p0: reverse_current_paranoia=0.
 //   -virt: Iout computed from Iin: refused before any request.
 //   -ramp (SIM_MC_RAMP=1): entered from a `dc 0` ramp-down. Before pwmPerturb() counted the net decrease over the
@@ -2572,7 +2616,8 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
     g_mc.tPub = -1;
     g_mc.inject = sc == "mc-flat-trip-pub" || sc == "mc-flat-ls-trip-pub" ? 1 : sc == "mc-flat-trip-ramp" ? 2
                   : sc == "mc-flat-off" ? 3 : sc == "mc-flat-revtick" ? 4 : sc == "mc-flat-trip-stray" ? 5
-                  : sc == "mc-flat-ls-revtick" ? 6 : sc == "mc-flat-trip0" ? 7 : sc == "mc-flat-trip-close" ? 8 : 0;
+                  : sc == "mc-flat-ls-revtick" ? 6 : sc == "mc-flat-trip0" ? 7 : sc == "mc-flat-trip-close" ? 8
+                  : sc == "mc-flat-ls-repin" ? 9 : sc == "mc-flat-latch-race" ? 10 : 0;
     settle(30);
     for (double dl = tNow() + 120; tNow() < dl && !(g_vconv.getVin() * g_vconv.pvCurrent(g_vconv.getVin()) > 140.f);)
         run(0.5, 0);
@@ -2616,15 +2661,42 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
     chk(g_ioMin > -0.05f, "no reverse output current under an LS window at the take-over");
     chk(!g_mc.offTicks, "BF never closed with the converter off");
     chk(!g_mc.backoffTicks, "BF never closed in a backoff");
-    chk(mppt.mcBfZero.load() != mppt.mcBfZero.load() && !mppt.mcCancel.load(), "request and cancel latch cleared at the end");
+    chk(std::isnan(mppt.mcBfZero.load()), "request cleared at the end (idle)");
     chk(g_app.manualPwm() && converter.disabled() && !mppt.bflow.state() && mppt.manualTarget.load() == 0,
         "left in manual PWM at duty 0, converter off, BF open");
     if (g_mc.inject) {
         chk(g_mc.injected, "fault injected");
-        chk(g_trips.size() - trips0 <= (g_mc.tInject >= 0), "the sweep stopped: no protection trip but the injected one");
+        const int i = g_mc.inject;
+        chk(g_trips.size() - trips0 <= (i == 1 || i == 2 || i == 5 || i == 7 || i == 8 || i == 10),
+            "the sweep stopped: no protection trip but the injected one");
     }
     if (g_mc.inject == 1 || g_mc.inject == 2 || g_mc.inject == 7) chk(!g_mc.reqKept, "the shutdown cancelled the request");
-    if (g_mc.inject == 4 || g_mc.inject == 6) chk(!g_mc.revBad, "BF stays open after the reverse-current tick");
+    if (g_mc.inject == 4 || g_mc.inject == 6 || g_mc.inject == 9)
+        chk(!g_mc.revBad, "BF stays open after the reverse-current tick");
+    if (g_mc.inject == 9) {
+        chk(!g_mc.lsBad, "LS clamped at the end of the tick, pin dropped");
+        chk(!g_mc.pinTicks, "no LS pin honoured after the clamp");
+        chk(!g_mc.lsCommitBad, "the task's stale pin left LS at its minimum");
+        chk(!g_mc.rowsAfter, "no LS row measured after the clamp");
+        chk(g_mc.lsStop, "the LS sweep stopped on the clamp");
+    }
+    if (g_mc.inject == 10) {
+        chk(!g_raceThread.joinable() && g_raceStage.load() == 3, "the racing shutdown ran to its end");
+        run(2, 0);
+        chk(std::isnan(mppt.mcBfZero.load()), "request still idle after the racing shutdown");
+        simPsuWait(mppt.requestPsuManual(600, -1));
+        run(2, 0);
+        chk(!converter.disabled() && mppt.manualTarget.load() == 600, "`dc 600` runs after the task");
+        simPsuWait(mppt.requestPsuManual(0, -1, false, true));
+        for (int k = 0; k < 40 && !converter.disabled(); ++k) run(.1, 0);
+        const char *ref = bfTestRefusal();
+        if (ref) printf("  selftest bflow refused: %s\n", ref);
+        const bool st = !ref && bfTestStart();
+        for (int k = 0; st && k < 600 && bfTestBusy(); ++k) run(.1, 0);
+        const char vb = st ? bfTestVerdict(0) : '-', vc = st ? bfTestVerdict(1) : '-';
+        printf("  selftest bflow: block %c, conduct %c\n", vb ? vb : '-', vc ? vc : '-');
+        chk(st && !bfTestBusy() && vb == 'P' && vc == 'P', "`selftest bflow` passes after the task");
+    }
     if (g_mc.inject == 6) {
         chk(!g_mc.lsBad, "LS stays clamped at the end of the tick, pin dropped");
         chk(g_mc.lsStop, "the LS sweep stopped on the clamp");

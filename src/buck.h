@@ -122,7 +122,8 @@ class SynchronousConverter {
     uint16_t pwmCtrl = 0; // buck: HS
     uint16_t pwmRect = 0; // buck: LS
     uint16_t pwmRectMax = 0;
-    int32_t manualRect = -1; // >=0: hold LS at this count (bench), -1: auto diode emulation
+    int32_t manualRect = -1; // >=0: hold LS at this count (bench) while lsClampCount == manualRectGen, -1: auto
+    uint8_t manualRectGen = 0;
     float pwmRectRatioDCM = 0; // t_onRect/t_onCtrl when in DCM
     float rectDitherErr = 0; // carried LS-count rounding remainder (DCM error-feedback dither)
     int16_t rectOnOffset = 0; // DCM LS-count dead-time/gate-delay offset (counts; >0 = LS off later, toward zero crossing)
@@ -1157,20 +1158,24 @@ public:
         return std::max((float) driverPwmMax * LateDrainBudget, (float) lateDrainTicks);
     }
 
-    [[nodiscard]] bool manualRect_() const { return manualRect >= 0; }
+    [[nodiscard]] bool manualRect_() const { return manualRect >= 0 && manualRectGen == lsClamps(); }
 
     // Bench: pin the low-side on-count to `ls`, held against the auto diode-emulation logic
     // (lets you sweep LS timing by hand). `ls<0` restores automatic control. Clamped to
     // [pwmRectMin, complementary max]. NOTE: exceeding the natural zero-crossing draws reverse
-    // current - same envelope as forced PWM; protections stay active.
-    void setManualRect(int ls) {
+    // current - same envelope as forced PWM; protections stay active. gen: lsClamps() when the caller decided on
+    // the pin; an LS clamp or a stop since then (or later) voids it.
+    void setManualRect(int ls) { setManualRect(ls, lsClamps()); }
+    void setManualRect(int ls, uint8_t gen) {
         if (ls < 0) {
             manualRect = -1;
             return;
         }
         // -1: cmpLS == pwmMax would land on the timer-wrap, never firing the turn-off event;
         // LS would stay HIGH the whole period.
+        manualRectGen = gen;
         manualRect = constrain(ls, (int) pwmRectMin, (int) (driverPwmMax - pwmCtrl - 1));
+        if (!manualRect_()) return;
         pwmRect = (uint16_t) manualRect;
         drvCommitLsOff(pwmCtrl, pwmRect);
     }
@@ -1408,7 +1413,7 @@ public:
         bool largerDecrease = (-direction > thr);
 
         // update pwmRect block
-        if (manualRect >= 0) {
+        if (manualRect_()) {
             // bench: hold LS at the requested count (clamped to the complementary max)
             pwmRect = (uint16_t) constrain(manualRect, (int) pwmRectMin,
                                            (int) (driverPwmMax - pwmCtrl - 1));
@@ -1827,7 +1832,7 @@ public:
 
         updateForcedPwmGate(vh, vl, freshV);
         computeSyncRectRatio(vh, vl, il);
-        if (manualRect >= 0) return outInVoltageRatio; // bench: hold manual LS, skip clamp
+        if (manualRect_()) return outInVoltageRatio; // bench: hold manual LS, skip clamp
         computePwmRectMax(false); // clamp only -- pwmPerturb() owns the dither step this sample
 
         if (pwmRect > pwmRectMax) {
@@ -1867,7 +1872,6 @@ public:
      */
     void syncRectMinDuty() {
         lsClampCount.fetch_add(1, std::memory_order_relaxed);
-        manualRect = -1; // a pinned LS would come back with the next pwmPerturb()
         if (pwmRect > pwmRectMin) {
             if (pwmRect > pwmRectMin + pwmRectMin / 2) {
                 ESP_LOGW("dcdc", "set sync-rect PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmRect,

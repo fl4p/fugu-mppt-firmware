@@ -49,7 +49,7 @@ static bool waitMs(uint32_t ms) {
             UART_LOG("measure-coil: TRIP Vout %.2f (max %.1f) Iin %.2f A (max %.1f), stopped", sensors.Vout->med3.get(),
                      s_hvTrip, coilI()->med3.get(), s_iTrip);
         }
-        if (s_tripped || mppt.mcCancel.load(std::memory_order_relaxed)) return false;
+        if (s_tripped || mppt.mcBfZero.load() == INFINITY) return false;
         if (wallClockMs() >= dl) return true;
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -80,10 +80,7 @@ static float medianN(float *a, int n) {
 }
 
 // the BF request was cancelled by a protection shutdown (or is not published yet)
-static bool cancelled() {
-    const float z = mppt.mcBfZero.load();
-    return z != z || mppt.mcCancel.load(std::memory_order_relaxed);
-}
+static bool cancelled() { return !std::isfinite(mppt.mcBfZero.load()); }
 
 static bool stopped() { return converter.disabled() || cancelled(); }
 
@@ -335,8 +332,9 @@ static void sweepLs(const MeasArgs &a) {
     float Xls[MEAS_MAX_PTS], Yio[MEAS_MAX_PTS];
     int n = 0;
     float peak_io = -1e9f;
+    const uint8_t gen = converter.lsClamps(); // an LS clamp or a stop voids the pin, also one set after it
     for (int ls = ls_lo; ls <= ls_hi && n < MEAS_MAX_PTS; ls += step) {
-        converter.setManualRect(ls);
+        converter.setManualRect(ls, gen);
         bool ok = dwell(a.dwellMs);
         float ii[5], vv[5], oo[5];
         for (int k = 0; k < 5 && ok; ++k) {
@@ -346,7 +344,7 @@ static void sweepLs(const MeasArgs &a) {
             ok = dwell(50);
         }
         if (!ok || stopped()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
-        if (!converter.manualRect_()) { UART_LOG("  LS clamped by reverse-current protection; stopping"); break; }
+        if (converter.lsClamps() != gen) { UART_LOG("  LS clamped by reverse-current protection; stopping"); break; }
         float io = medianN(ii, 5);
         uint16_t rect = converter.getRectOnPwmCnt();
         Xls[n] = rect; Yio[n] = io; ++n;
@@ -418,7 +416,6 @@ static void measureCoilTask(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(10));
     mppt.mcBfZero.store(NAN);
     mppt.mcSyncRect.store(false, std::memory_order_relaxed);
-    mppt.mcCancel.store(false, std::memory_order_relaxed);
     const bool off = converter.disabled();
     if (boost) mppt.setExplicitOvLimit(ov0);
     s_hvTrip = 0;
@@ -450,8 +447,10 @@ bool measureCoilStart(bool ls, bool apply, int arg1, uint32_t dwellMs, uint32_t 
     if (!converter.deadTimeIdle() || !converter.pwmFreqIdle()) return false;
     if (s_measureBusy.exchange(true)) return false;
     s_measArgs = {ls, apply, arg1, dwellMs, ls ? 0 : fHz};
-    xTaskCreatePinnedToCore(measureCoilTask, "meas-coil", 6144, &s_measArgs, 1, nullptr, NON_RT_CORE);
-    return true;
+    if (xTaskCreatePinnedToCore(measureCoilTask, "meas-coil", 6144, &s_measArgs, 1, nullptr, NON_RT_CORE) == pdPASS)
+        return true;
+    s_measureBusy.store(false);
+    return false;
 }
 
 bool isMeasuring() { return s_measureBusy; }

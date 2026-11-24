@@ -178,6 +178,10 @@ struct MinSampler {
  * - MPP global scan
  * - Telemetry
  */
+#ifdef FUGU_HOST_SIM
+inline void (*g_simShutdownSeam)() = nullptr; // host sim: the task acting inside a shutdown
+#endif
+
 class MpptController {
     ADC_Sampler &sampler;
 
@@ -449,8 +453,11 @@ public:
     void shutdownDcdc(const char *who, uint32_t backoffSec = 5) {
         _limitPert = 0;
         lvPgood.release();
-        if (const float z = mcBfZero.exchange(NAN, std::memory_order_relaxed); z == z)
-            mcCancel.store(true, std::memory_order_relaxed);
+        for (float z = mcBfZero.load(std::memory_order_relaxed);
+             std::isfinite(z) && !mcBfZero.compare_exchange_weak(z, INFINITY, std::memory_order_relaxed);) {}
+#ifdef FUGU_HOST_SIM
+        if (g_simShutdownSeam) g_simShutdownSeam();
+#endif
         bflow.enable(false);
         converter.disable();
         if (backoffSec) {
@@ -905,7 +912,7 @@ public:
             // try to prevent voltage boost and disable low side for low currents
             auto currentFilt = fminf(sensorPhysicalI->ewm.avg.get(),
                                      std::max(sensorPhysicalI->last, sensorPhysicalI->previous));
-            if (const float z = mcBfZero.load(std::memory_order_relaxed); z == z) currentFilt -= z;
+            if (const float z = mcBfZero.load(std::memory_order_relaxed); std::isfinite(z)) currentFilt -= z;
             if (currentFilt < -0.05f && limits.reverse_current_paranoia && !bfT) {
                 RT_COLD(
                 if (converter.getRectOnPwmCnt() > converter.getRectOnPwmMax() / 2 &&
@@ -1756,11 +1763,11 @@ public:
         uint8_t floorHold = 0, holdN = 0, iSeen = 0; // fresh current samples before iFloor applies after a turn-on
         uint8_t why = 0; // toggle trip: 1 floor, 2 D Vin below Vout, 3 no-battery current, 4 Vin rose; 5 above iMax
     } bfTest;
-    // measure-coil: Iout zero (NAN: off; set only with sensorPhysicalI == Iout); the RT closes BF on forward current
-    // (with sync rect if mcSyncRect), opens it with the converter off
+    // measure-coil: Iout zero (set only with sensorPhysicalI == Iout), NAN: off, INFINITY: cancelled by a shutdown
+    // (manual duty 0 until the task ends); the RT closes BF on forward current (with sync rect if mcSyncRect),
+    // opens it with the converter off
     std::atomic<float> mcBfZero{NAN};
     std::atomic<bool> mcSyncRect{false};
-    std::atomic<bool> mcCancel{false}; // a shutdown cancelled the request: manual duty 0 until the task ends
 
     time_us lastUs = 0;
 

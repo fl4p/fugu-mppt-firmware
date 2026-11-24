@@ -500,13 +500,12 @@ void MpptController::updateManual() {
     const bool hold = inBackoff() || charger.wireGuard.tripped() || charger.params.awaitingDetect() ||
                       (converter.disabled() && tempStartBlock());
     if (hold && !converter.disabled()) converter.disable();
-    const bool mcCancelled = mcCancel.load(std::memory_order_relaxed);
     const float mcZ = mcBfZero.load(std::memory_order_acquire);
-    if ((mcZ == mcZ || mcCancelled) && !converter.boost()) { // boost: the task closes BF (battery feeds the coil)
+    if (mcZ == mcZ && !converter.boost()) { // boost: the task closes BF (battery feeds the coil)
         if (converter.disabled()) {
             if (bflow.state()) bflow.enable(false);
-        } else if (!mcCancelled && !bflow.state()) {
-            // lower bound of protect()'s reverse-current filter: fails whenever that opened BF
+        } else if (!bflow.state()) {
+            // lower bound of protect()'s reverse-current filter: fails whenever that opened BF (and when cancelled)
             const auto &s = *sensorPhysicalI;
             if (fminf(s.ewm.avg.get(), std::min(s.last, s.previous)) - mcZ > 0.1f) {
                 bflow.enable(true);
@@ -517,7 +516,7 @@ void MpptController::updateManual() {
     if (hold) return;
 
     if (bfTest.mode.load(std::memory_order_relaxed)) bfTestRt();
-    const uint16_t target = mcCancelled ? 0 : manualTarget.load(std::memory_order_relaxed);
+    const uint16_t target = mcZ == INFINITY ? 0 : manualTarget.load(std::memory_order_relaxed);
     if (target == 0) {
         if (!converter.disabled()) {
             if (converter.getCtrlOnPwmCnt() <= converter.pwmCtrlMin) {
