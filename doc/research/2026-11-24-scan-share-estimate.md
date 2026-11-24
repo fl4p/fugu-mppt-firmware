@@ -442,12 +442,13 @@ heated cases. No factor meets it: every factor has a cell mean below -0.1 (wx-sh
   this host).
 * The closed-loop vs static placement gap (2-3 %) is the probe's own inputs. Measured 2026-11-24 by forcing each to
   the plant's exact value (paired over the 10 board/offset pairs, `SIM_KVMP_EXACT` / `SIM_VOC_EXACT`, all runs on one
-  host; the same tree reproduces this table's l2 row exactly: 0.97 -> 1395.6 s / 93.42 %, 1.03 -> 240.9 s / 98.73 %):
+  host; the same tree reproduces this table's l2 row: 0.97 -> 1395.6 s / 93.42 %, 1.03 -> 240.9 s / 98.73 %). The
+  harvest is the `== TRACKER` figure, 2 dp, as in this document's tables:
 
   | cell | base | `kVmp` exact | `voc` exact | both |
   |---|---|---|---|---|
-  | l2 (shaded) | 97.35 % | 98.75 % (+1.40) | 98.21 % (+0.86) | 98.77 % (+1.42) |
-  | h1 (heated) | 98.83 % | 98.84 % (+0.01) | 98.85 % (+0.02) | 98.84 % (+0.01) |
+  | l2 (shaded) | 97.34 % | 98.75 % (+1.41) | 98.20 % (+0.86) | 98.75 % (+1.41) |
+  | h1 (heated) | 98.83 % | 98.84 % (+0.01) | 98.86 % (+0.02) | 98.84 % (+0.01) |
 
   `kVmp` dominates. It is learned only from an *unshaded* sweep MPP, and only if `v/voc` lies in `(0.74, 0.86)`
   (`src/peak_scan.h`); a shaded maximum deliberately keeps the last value. With the shade already in at the boot
@@ -455,6 +456,18 @@ heated cases. No factor meets it: every factor has a cell mean below -0.1 (wx-sh
   every probe, worth up to ~1.4 points of harvest.
   `voc` is secondary: it is the **Vin at the sweep start** and is never refreshed, so it sits below the true Voc.
   In the heated cells neither costs anything (h1 is already at 98.83 %), so that part of the gap is placement-only.
+* The fallback is the cheap lever. In a shaded cell the learning never fires, so holding `kVmp` at a constant
+  (`SIM_KVMP_SET`) is exactly the fallback the scan uses:
+
+  | plant `kp` | 0.82 (today) | 0.84 | 0.86 | 0.88 |
+  |---|---|---|---|---|
+  | 0.86 | 97.34 % | **98.75 % (+1.41)** | 98.75 % (+1.41) | 98.74 % (+1.40) |
+  | 0.80 | 99.59 % | 99.59 % (+0.00) | 99.59 % (+0.00) |  |
+
+  Raising the fallback from 0.82 to **0.84** recovers the whole gap and costs nothing at the bottom of the field's
+  0.79-0.85 range, so the wider-window and sweep-maxima candidates are not needed. The constants reproduce their
+  references exactly (`kVmp`=0.82 gives the base 97.34, `kVmp`=0.86 gives `kVmp exact` 98.75), so the constant does
+  stand in for the fallback. The firmware is unchanged here.
 
 ### Reproduce (round 2)
 
