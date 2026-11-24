@@ -79,7 +79,7 @@ as slope. The regression needs at least 2 A of spread in the output current befo
 the slope are evaluated. A minute that lies off the regression line by half of `wire_p_warn` (a step)
 doesn't enter it, and nothing enters it while a level is held, so a fault can't fade into the offset.
 - **Sweep fit.** The median output resistance of the last 5 qualifying sweeps (telemetry `Ro`)
-  against its own baseline, so up to 2 outlying sweeps out of 5 don't move it. Needs no BMS data and
+  against its own baseline, so up to 2 outlying sweeps out of 5 don't move it. Needs no [BMS data](../../guide/charging/bms-integration.md) and
   at least 3 sweeps since boot. It is graded at most once per 20 charging minutes, so a burst of
   sweeps within a few minutes counts once. A level needs 3 consecutive graded values above its
   threshold, which takes at least 40 charging minutes; a level drops only when all of the last 5

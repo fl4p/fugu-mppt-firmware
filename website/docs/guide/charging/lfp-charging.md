@@ -15,7 +15,8 @@ the same algorithm, see [Termination.md](termination.md).
 
 The charger drives a synchronous DC/DC converter to push solar power into an
 LFP battery pack. It's designed to work with a Battery Management System
-(BMS) that publishes per-cell voltages and pack current over MQTT. The BMS
+(BMS) that publishes per-cell voltages and pack current over MQTT (see
+[BMS integration](bms-integration.md)). The BMS
 is the source of truth about how full the pack is. The firmware uses that
 data to decide when to taper charging, when to hold, and when to back off.
 

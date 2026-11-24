@@ -24,10 +24,10 @@ The following table lists each profile with its purpose, the hardware it assumes
 | Folder | Purpose | Hardware assumptions | Notable keys |
 |---|---|---|---|
 | `dry_mock` | Firmware without a power stage | Any ESP32-S3 board | `sensor.conf::adc=fake` (sinusoidal mock), `board.conf::adc_freq`, `skip_assert=1`, BLE console `ble_security=justworks` |
-| `dry_int` | Internal ADC, gate driver not connected | ESP32-S3 (Waveshare ESP32-S3-Zero LED pin), integrated half-bridge driver | `adc=esp32adc1`, `pwm_driver_logic=InEn`, `skip_assert=1`, `pprof.conf::sprofiler_hz` |
+| `dry_int` | [Internal ADC](../guide/hardware/internal-adc.md), gate driver not connected | ESP32-S3 (Waveshare ESP32-S3-Zero LED pin), integrated half-bridge driver | `adc=esp32adc1`, `pwm_driver_logic=InEn`, `skip_assert=1`, `pprof.conf::sprofiler_hz` |
 | `vconv_mock` | Simulated converter on ESP32-S3 | Any ESP32-S3 board, `CONFIG_FUGU_WITH_VCONV=y` build | `sensor.conf::adc=vconv` (identity transform, the plant returns physical units), MPPT mode (`mode=psu` commented out), `vconv.conf::adc_freq=500` (1000 Hz and above intermittently starve the S3 idle task into a task-watchdog reboot), `vconv.conf` plant parameters incl. inverter-ripple shapes (`vbat_ac_*`) |
 | `vconv_mock_esp32` | Simulated converter on classic ESP32 | Classic ESP32 board, VCONV build | Same plant as `vconv_mock`, classic-ESP32 pins, `adc_freq=3000` |
-| `wokwi_mock` | Wokwi simulator | Simulated ESP32-S3 | `adc=fake`, all network services enabled |
+| `wokwi_mock` | [Wokwi simulator](../development/wokwi.md) | Simulated ESP32-S3 | `adc=fake`, all network services enabled |
 | `wokwi_mock_esp32` | Wokwi simulator | Simulated classic ESP32 | As `wokwi_mock`, classic-ESP32 pins |
 | `f2_test` | Fugu2-style buck on a bench supply | Fugu2 pinout, INA226 on the output, internal ADC for Vin/NTC | `forced_pwm=1`, `fpwm_gate=0`, `limits.conf::vin_min=72`, `tracker.conf::target_duty_cycle=0.425` |
 | `buck_bench` | Bench buck board, **battery / battery-emulator output** | Fugu2 pinout, INA226 (1.5 mΩ shunt) for Vout/Iout, internal ADC for Vin, 80 µH coil | `pwm_deadtime_ns=200`, `sync_role=follower`, `charger.conf::vout_max=29`, `target_duty_cycle=0.37` |

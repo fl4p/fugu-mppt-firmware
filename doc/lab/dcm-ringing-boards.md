@@ -124,5 +124,5 @@ timing. Here we cover what happens *after* the LS FET turns off at the zero cros
 ## Board letters on the published pages (2026-11-24)
 
 The published lab and internals pages use one letter per board: A = flat (≈51 µH), B = fry (≈80 µH),
-C = flu (83 µH, 320 kHz ring), D = fbuck (40 µH). `internals/dcm-ringing.mdx` row "A, B" is the low-`C_sw`
-illustration for fry/flat, not a measurement.
+C = flu (83 µH, 320 kHz ring), D = fbuck (40 µH). `internals/dcm-ringing.mdx` lists A and B with ring frequencies inferred from the Iout ripple of DCM sweeps, and the retracted
+1.3–2.3 MHz figure as an "early estimate" row. Scope captures of the DCM coil ring live in the private `dcdc-tools` repo (`bench/flu_dcm_ring.py`, LS-gate-falling trigger, the board C fit). The fry/flat scope check from the coil page's open questions belongs there too; the published A/B values are inferred from Iout ripple only.

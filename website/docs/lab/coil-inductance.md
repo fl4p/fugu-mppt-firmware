@@ -128,7 +128,7 @@ Gain errors do occur: a mis-scaled or non-genuine INA226 (wrong shunt LSB) reads
 high (see [dev-notes/ina226.md](../../../doc/dev-notes/ina226.md)). The DCM method cannot tell a
 current-gain error apart from a wrong true `L`, because both move `L_meas` by the same pure scale
 factor. Attributing a board-to-board discrepancy to the sensor therefore needs an independent
-current reference. §8 is a worked example: two boards self-measured ~1.57× apart because they carry
+current reference. §9 is a worked example: two boards self-measured ~1.57× apart because they carry
 different coils, and an independent current cross-check put both sensor gains near 1.
 
 If `L0` is derived from the same biased sensor and then used by the firmware, the gain cancels
@@ -160,7 +160,7 @@ The firmware therefore undershoots on purpose with `InductivityDcBias = 0.95`. E
 ### Sensor-gain cancellation
 
 A sensor-gain error cancels in the DCM decision. This only matters when a real gain error exists,
-which isn't established on the two boards of §8. The argument still makes the self-measured `L0`
+which isn't established on the two boards of §9. The argument still makes the self-measured `L0`
 the safe choice whatever causes a discrepancy. Suppose `L0 = L_true/g` (measured with a sensor of
 gain `g`) and the firmware compares against the *same* sensor's `Iout_meas = g·Iout_true`:
 
@@ -192,14 +192,14 @@ The script runs these steps:
 
 1. Read the realized switching frequency, the timer period and `pwmMax` from `pwm-dump`. The period is
    both the duty basis and, with the frequency, the time per count, the same basis the firmware uses
-   (`period_ticks` on MCPWM, `pwmMax` on LEDC). Obtain `pwmCtrlMax` from the `dc` out-of-range reply as
+   (`period_ticks` on MCPWM, `pwmMax` on LEDC; see [MCPWM driver](../internals/pwm-drivers.md)). Obtain `pwmCtrlMax` from the `dc` out-of-range reply as
    the upper duty bound, and read the current `coil.conf::L0` for reference. Firmware without
    `pwm-dump` falls back to `board.conf::pwm_freq` and `pwmCtrlMax/(1−0.06)` with a warning; pass
    `--fsw` and `--pwm-max` in that case.
 2. Read an idle status line for `M = Vout/Vin`; require `Vin > Vout` (buck headroom / sun).
 3. Sweep the high-side duty count `H` upward across the DCM band (`--lo`..`--hi` × `M·pwmMax`),
    holding each step `--dwell` seconds. The script reads `Vin`, `Vout`, and `Iout` from the
-   `sensor avg` compact line (`ewm.avg`), the firmware's notch+median+EWMA DC average
+   `sensor avg` compact line (`ewm.avg`), the firmware's notch+median+EWMA DC average ([Signal filters](../internals/signal-filters.md))
    (offset-corrected for current). It polls this line at ~10 Hz across the dwell and takes the
    median. The status line prints the raw instantaneous `last` for the voltages (no averaging, no
    notch) and is emitted only every `lfPeriod` (~3 s), too sparse to average a 100 Hz-rippled bus,
@@ -213,11 +213,11 @@ The script runs these steps:
    reads. Subtract this zero from the points, interpolated over the sweep rows in order (see
    [`Iout` zero](#iout-zero-during-the-sweep)). The device does the same.
 6. Discard points below an `Iout` floor (sensor offset territory, §3). Fit the remaining points
-   with the switch-node ring model of §7 and report `L = 1/c0`, its noise and systematic error (see
+   with the ring fit of §8 and report `L = 1/c0`, its noise and systematic error (see
    [Stated uncertainty](#stated-uncertainty)), the ring frequency and the median of the points for
    comparison. With fewer than 16 points, or when no
    periodic term of at least 1 % is found, report the median and IQR instead. Report `L` as a
-   function of the peak coil current (§7, [Peak-current dependence](#peak-current-dependence)).
+   function of the peak coil current (§8, [Peak-current dependence](#peak-current-dependence)).
    Restore MPPT (or `dc 0`) on exit.
 
 The script has two built-in checks. If all points are CCM, it warns that `forced_pwm` may be on
@@ -234,7 +234,7 @@ The method has these limitations:
   [Lower switching frequency](#lower-switching-frequency)). For the full bias curve use a scoped
   CCM-ripple measurement or an LCR meter with bias injection (§2).
 - The result scales with the `Iout` calibration (§3) and with `pwmMax`. The remaining biases
-  (switching transitions, gate delays, node charge) are listed in §7. Together they can move `L` a
+  (switching transitions, gate delays, node charge) are listed in §8. Together they can move `L` a
   few percent, mostly low, and most at the low-current end of the band.
 - The reported value is the physical inductance. Put it in `coil.conf` as `L0` directly. The
   firmware applies its own 0.95 bias.
@@ -269,7 +269,7 @@ dwell. `apply` writes `coil.conf::L0` (next boot) or `rect_offset_ns` with `rect
 to flash only after the converter has been disabled, because a flash write stalls the control loop.
 `L0` is not written when the run is marked `DISTURBED`. Like the script, it reports the physical
 inductance. A median-only version of the command agreed with the script to within ~2 % on board A
-of §8.
+of §9.
 
 The command starts only from a converter stopped with `dc 0` (manual PWM, duty 0, converter off)
 and leaves it there; `mppt` resumes tracking. Manual PWM keeps the tracker, its sweeps and its
@@ -394,10 +394,14 @@ $$
 The ring starts with the node at the low-side body-diode drop, `x ≈ −(Vout + Vf)`, and decays as
 $x = A\,e^{-\alpha t}\cos(2\pi f_r t + \varphi)$, $i \approx (A/Z_0)\,e^{-\alpha t}\sin(2\pi f_r t + \varphi)$.
 When `Vin < 2·Vout`, the first upswing reaches `Vin + Vf` and the high-side body diode clamps it,
-returning a little charge to the input. The same ring, started by a reverse current at low-side
-turn-off, shapes the late side of the rect-cal sweep, see [switch-node ringing in the rectifier timing
-calibration](../internals/rect-cal.md#switch-node-ringing). The converter model implements it
-with `vconv.conf::ring_c` and `ring_q`, see [vconv.conf](../reference/config/vconv.md#switch-node-ring).
+returning a little charge to the input.
+
+The same ring, started by a reverse current at low-side turn-off, shapes the late side of the
+rect-cal sweep (see [switch-node ringing in the rectifier timing
+calibration](../internals/rect-cal.md#switch-node-ringing)). The converter model implements it
+with `vconv.conf::ring_c` and `ring_q` (see [vconv.conf](../reference/config/vconv.md#switch-node-ring)).
+[DCM coil ringing](../internals/dcm-ringing.mdx) covers the tank, the node capacitance per board and
+how to reduce the ring.
 
 The high side turns on after the dead time
 
@@ -430,7 +434,7 @@ is zero.
 
 ### Field sweeps
 
-Global MPPT sweeps on two boards (the boards of §8) show an `Iout` ripple of ±10–25 % in DCM that
+Global MPPT sweeps on two boards (the boards of §9) show an `Iout` ripple of ±10–25 % in DCM that
 matches this model:
 
 | quantity                                   | board B (≈80 µH) | board A (≈51 µH) |
@@ -441,7 +445,8 @@ matches this model:
 | fitted `Q`                                 | ≈ 25             | ≈ 15             |
 
 The period scales with `Vout/Vin` as predicted, and the implied `C` is of the order of the
-transistors' output capacitance at the operating voltage. The model reproduces the absolute ripple
+transistors' output capacitance at the operating voltage. A direct scope fit of `C` is described in
+[Switch-node capacitance](switch-node-capacitance.md). The model reproduces the absolute ripple
 on board B (≈ 300 mA peak-to-peak) and underestimates it on board A by about a quarter, which
 suggests a higher `Q` there. The following alternatives were checked and do not fit:
 
@@ -457,7 +462,21 @@ from DC averages through the model. A scope capture settles them: probe the swit
 current at a fixed duty in DCM, step the high-side count through one period `N`, and read `f_r`, the
 decay and `i0` at each turn-on.
 
-### Estimator
+### Effect on MPPT
+
+Model runs with the fitted ring show the ripple in a global sweep. At 150–180 W the static power
+curve still has a single maximum above 60 % of the peak, at the DCM/CCM boundary, and the sweep
+settles within 1 % of it. At a steady 45 W, where the whole operating range is DCM, P&O holds within
+1 % of the maximum with or without the ring. Ripple-induced local maxima appear only below about
+60 % of the peak power.
+
+## 8. Ring-fit estimator {#ring-fit-estimator}
+
+The [switch-node ring](#switch-node-ringing-in-dcm) ripples the per-point `L` of a DCM sweep, so a median over
+the band can be off by a few percent. The script and `measure-coil` fit the ripple out instead. The fit also gives
+the dependence of `L` on the peak current and a stated uncertainty; a few biases remain outside it.
+
+### Fit model
 
 Each DCM point gives `y_i = 1/L_i = 2·Vout·fsw·Iout / ((Vin−Vout)·Vin·D²)` and a dead time
 `t_i = (1 − D·Vin/Vout)/fsw` from its own measured voltages. The estimator fits
@@ -470,14 +489,17 @@ by linear least squares at each trial frequency `f`, with `H = 2` from 24 points
 Here $x_i = I_{pk,i} - \overline{I_{pk}}$ is the peak coil current $I_{pk} = (V_{in}-V_{out})\,D/(f_{sw} L)$
 relative to its mean. The linear term absorbs a dependence of `L` on the current, which a
 frequency scan without it would otherwise fit as a ring of about one period over the band.
+
 The frequency is scanned from `max(80 kHz, 1/span)` to `min(1.2 MHz, 0.45/Δt)` in steps of
 `0.1/span`, then refined twice around the best value. Here `span` is the range of `t_i` and `Δt`
 their median spacing. The result is `L = 1/c0`, the mean of `1/L` over whole ring periods at the mean
-peak current. At the chosen frequency a final fit adds the envelope terms $x_i(a\cos + b\sin)$ of
-the first harmonic, because the ring decays over the dead time and its amplitude changes along the
-band. The fit is accepted only if it halves the residual against a straight line in $x_i$ and the
-first harmonic is at least 1 % of `c0`; otherwise the median of the points is returned. Fitting `1/L` rather than `L` keeps the
-model linear in `Iout`, so a ripple of `Iout` maps to an additive term.
+peak current. Fitting `1/L` rather than `L` keeps the model linear in `Iout`, so a ripple of `Iout`
+maps to an additive term.
+
+At the chosen frequency a final fit adds the envelope terms $x_i(a\cos + b\sin)$ of the first
+harmonic, because the ring decays over the dead time and its amplitude changes along the band. The
+fit is accepted only if it halves the residual against a straight line in $x_i$ and the first
+harmonic is at least 1 % of `c0`. Otherwise the median of the points is returned.
 
 Because the coordinate is the dead time computed from measured voltages, a soft source (a PV array
 whose `Vin` sags as the current rises) does not smear the ring. The estimator degrades as follows:
@@ -490,8 +512,8 @@ whose `Vin` sags as the current rises) does not smear the ring. The estimator de
 - **Strong damping.** A low-`Q` ring has mostly decayed before the high side turns on. The ripple
   then falls below 1 %, and the median is unbiased anyway.
 
-On synthetic sweeps from the converter model with the ring enabled (random `L` 40–100 µH, `C`
-3–8 nF, `Q` 10–40, stiff and soft sources, sensor noise), the 10-step median scatters 2–4 % rms
+On synthetic sweeps from the converter model ([Simulation](../development/simulation.md)) with
+the ring enabled (random `L` 40–100 µH, `C` 3–8 nF, `Q` 10–40, stiff and soft sources, sensor noise), the 10-step median scatters 2–4 % rms
 (95th percentile 4–7 %). The 48-step fit scatters 0.8–1.3 % rms (95th percentile 1.3–2.0 %), and
 the fitted ring frequency is within 1 %.
 
@@ -579,14 +601,16 @@ effects the model does not have.
 An error in the current sensor's zero biases `L` by $-\delta/I_{out}$ per point. A stale offset
 calibration of −0.12 A, for example from a calibration taken while the current was still decaying
 after high-power operation, raises `L` by about 14 % in the model. The ring fit absorbs part of the
-smooth bias pattern, and the stated error stays below 2 %. Both sweeps therefore read `Iout` with
-the converter off before and after the sweep (once the converter is off, after one dwell of at least
-2 s). They subtract the zero interpolated over the sweep rows in order. The zero's uncertainty is the
-2 mA read noise and half the difference taken as a uniform bound, in quadrature. A zero that moved
-by more than 0.02 A marks the run as disturbed: the zero drifted during the sweep, and the
-interpolation is only an approximation. On the model, a
-correction of a constant −0.12 A error leaves +0.4 % mean error, and a −0.12 A error decaying with
-a 20 s time constant is flagged in all runs. A change of the PV source during the sweep (a −40 %
+smooth bias pattern, and the stated error stays below 2 %.
+
+Both sweeps therefore read `Iout` with the converter off before and after the sweep (once the
+converter is off, after one dwell of at least 2 s). They subtract the zero interpolated over the
+sweep rows in order. The zero's uncertainty is the 2 mA read noise and half the difference taken as
+a uniform bound, in quadrature. A zero that moved by more than 0.02 A marks the run as disturbed:
+the zero drifted during the sweep, and the interpolation is only an approximation.
+
+On the model, a correction of a constant −0.12 A error leaves +0.4 % mean error, and a −0.12 A error
+decaying with a 20 s time constant is flagged in all runs. A change of the PV source during the sweep (a −40 %
 irradiance ramp) does not bias the result, because every point uses its own measured `Vin` and
 `Vout`.
 
@@ -610,15 +634,7 @@ turn-on, a loss) or gate delays, so the accuracy figures of the estimator do not
 stated systematic error includes both through their bounds. A current-probe or LCR-meter reference
 (§2) is needed to quantify them on a given board.
 
-### Effect on MPPT
-
-Model runs with the fitted ring show the ripple in a global sweep. At 150–180 W the static power
-curve still has a single maximum above 60 % of the peak, at the DCM/CCM boundary, and the sweep
-settles within 1 % of it. At a steady 45 W, where the whole operating range is DCM, P&O holds within
-1 % of the maximum with or without the ring. Ripple-induced local maxima appear only below about
-60 % of the peak power.
-
-## 8. Case study: two coils
+## 9. Case study: two coils
 
 Two Fugu2 boards in service self-measured ~1.57× apart because they have different coils. If both
 are assumed to carry the same coil, the gap looks like a sensor fault. The following table lists
@@ -690,20 +706,25 @@ The measurements lead to these findings:
   board B ≈ 80 µH. The shunt cross-check hints board A under-reports current ~6–7 %, which would inflate
   its `L` by the same factor and put the true value nearer the `N = 20` end (~48 µH). That correction
   is small compared with the 1.5× gap.
+- **Later ring fits read a few percent lower.** On-device ring-fit runs (§8) give 76.0–76.4 µH on board B,
+  4–5 % below the 79.8 µH median of this sweep, and 49.7 µH on board A, 2 % below its median. The fit returns the
+  mean of `1/L` over whole ring periods, which the median of a skewed ripple need not match, and the runs are
+  months apart with a different `Iout` zero handling. Which effect accounts for the gap is not established.
 - **Both means are flat across the whole current range** (≈0.3–3 A). There is no downward trend,
-  so this is not core saturation. The ±10–16 % point-to-point wiggle is the switch-node ring of
+  so this is not core saturation. The point-to-point wiggle of `L` (IQR 11–16 %) is the switch-node ring of
   §7 (its period in counts follows `Vout/Vin`), not noise in `L` and not SR timing. A median over a
-  band that does not span whole ring periods can be off by a few percent; the §7 fit removes that.
+  band that does not span whole ring periods can be off by a few percent; the §8 fit removes that.
 - **Boundary breakdown (the §5 limit, observed).** Pushing board B and board A toward `H ≈ M·pwmMax`
   makes the DCM estimate diverge (board B rolls down to ~37 µH, board A up past ~100 µH) as
   the waveform enters CCM and `Iout` stops obeying the DCM transfer relation. Both are artifacts of
   measuring outside DCM, not changes in the coil; the median over the clean DCM band is the result.
 
-Each board's `coil.conf::L0` belongs at its own measured value (board A ≈ `51e-6`, board B ≈ `80e-6`).
-The values configured before the measurement show both error directions of §4:
+Each board's `coil.conf::L0` was then set to its own measured value:
 
-- Board A had `56e-6`, ~10 % high, the riskier direction.
-- Board B had `40e-6`, very conservative, costing body-diode loss near the boundary.
+- Board A carried `56e-6`, about 10 % high and the riskier direction per §4. It now carries the
+  49.7 µH of its latest ring fit.
+- Board B carried `40e-6`, very conservative and costing body-diode loss near the boundary. It now
+  carries `80e-6`.
 
 The measurements don't indicate a sensor recalibration for either board.
 

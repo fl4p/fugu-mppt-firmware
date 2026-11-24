@@ -5,8 +5,9 @@ sidebar_position: 3
 
 # Wired inter-chip MCPWM clock sync (`CONFIG_FUGU_WITH_WSYNC`)
 
-Wired sync locks a follower's MCPWM timer to a leader's with nanosecond-class jitter. The beacon
-servo (`bsync`) is the microsecond-class alternative. The leader emits a pulse that its hardware
+Wired sync locks a follower's [MCPWM](../../internals/pwm-drivers.md) timer to a leader's with nanosecond-class jitter. The beacon
+servo ([`bsync`](beacon-sync.md)) is the microsecond-class alternative; [Multi-converter sync](index.md)
+compares the two. The leader emits a pulse that its hardware
 locks to the MCPWM TEZ event, and on the pulse's rising edge each follower's hardware reloads its
 timer count. No software runs in the loop.
 
@@ -159,7 +160,7 @@ Choose and fit the components as follows:
 
 ## Interaction with bsync
 
-`bsync` and `sync_role=follower` are mutually exclusive at runtime, because the wire owns the
+[`bsync`](beacon-sync.md) and `sync_role=follower` are mutually exclusive at runtime, because the wire owns the
 period. The `bsync` service refuses to start on a wired-sync follower. Run `bsync` on the leader,
 or in wireless-only setups.
 

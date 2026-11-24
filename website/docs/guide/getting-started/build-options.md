@@ -54,8 +54,8 @@ The following table lists each feature option, its default, and what it does:
 | `CONFIG_FUGU_WITH_IMPROV` | on | [Improv Wi-Fi](../connecting.md#improv-over-ble) provisioning over BLE. Needs `BLE` and `NETW`; off saves ~5 KB flash. |
 | `FUGU_GATE_DRIVER` | MCPWM\*\* | Gate driver, one per build: `CONFIG_FUGU_GATE_LEDC`, `CONFIG_FUGU_WITH_MCPWM` ([MCPWM](../../internals/pwm-drivers.md): hardware dead-time, fault brake, glitch-free updates, live `pwm-freq`/`dt`) or `CONFIG_FUGU_WITH_VCONV` (simulated converter in place of gate driver and ADC, `src/sim/vconv.*`). |
 | `CONFIG_FUGU_WITH_LEDC` | on | LEDC peripheral for the `anaw` command (the fan output is an on/off GPIO either way). The LEDC gate driver turns it on. |
-| `CONFIG_FUGU_WITH_WSYNC` | on\* | Wired MCPWM clock sync between converters. Needs `MCPWM`. |
-| `CONFIG_FUGU_WITH_BSYNC` | off | Beacon-sniffing MCPWM clock sync (`bsync` service). Needs `NETW` and `MCPWM`. |
+| `CONFIG_FUGU_WITH_WSYNC` | on\* | [Wired MCPWM clock sync](../../development/sync/wired-sync.md) between converters. Needs `MCPWM`. |
+| `CONFIG_FUGU_WITH_BSYNC` | off | [Beacon-sniffing MCPWM clock sync](../../development/sync/beacon-sync.md) (`bsync` service). Needs `NETW` and `MCPWM`. |
 | `CONFIG_FUGU_WITH_SPROFILER` | off | Semihosting sampling profiler; only useful with OpenOCD attached. Off excludes its component. |
 | `CONFIG_FUGU_WITH_RTPROF` | off | Core-1 call-stack sampler (`rtprof` command), a 2 kHz timer ISR counting return addresses. `CONFIG_FUGU_RTPROF_SLOTS` (default 4096) sizes its table. |
 | `CONFIG_FUGU_WITH_EXTPORT` | off | `extport` service: [VE.Direct text output](../../reference/config/extport.md) on a UART pin pair (about 10 KB of flash, mostly the UART driver). |

@@ -307,7 +307,7 @@ The sheet footer holds the save actions:
 | Action                         | Result                                                                                   |
 |--------------------------------|------------------------------------------------------------------------------------------|
 | **Download .zip**              | `<source>-edited.zip` if anything changed, else `<source>-backup-<YYYY-MM-DD>.zip`. Non-`.conf` files from the source are carried over unchanged |
-| **Push N changes to `<hostname>` over …** | `set-config <file> <key> <value>` per added or edited key, `del-config <file> <key>` per cleared key. A service's `enabled` and `log_level` go as `svc on`/`svc off <name>` and `svc log <name> <level>` instead, unless the firmware does not have that service: then they go as `set-config` and take effect after a reboot. Only changed fields are sent |
+| **Push N changes to `<hostname>` over …** | `set-config <file> <key> <value>` per added or edited key, `del-config <file> <key>` per cleared key. A service's `enabled` and `log_level` go as `svc on`/`svc off <name>` and `svc log <name> <level>` ([services](services.md)) instead, unless the firmware does not have that service: then they go as `set-config` and take effect after a reboot. Only changed fields are sent |
 
 The push button appears only when the loaded config was read from a device, and names that device. It stays
 available after a file or preset is overlaid onto that read. A config loaded from a file or preset alone has no
@@ -429,7 +429,7 @@ until you click.
 | Test | Group | Command | Asks first |
 |------|-------|---------|------------|
 | Protection self-checks | Status | `selftest` | no |
-| Low-side timing calibration | Status | `rect-cal status` | no |
+| [Low-side timing calibration](../internals/rect-cal.md) | Status | `rect-cal status` | no |
 | Output wire guard | Status | `wire` | no |
 | ADC calibration (eFuse) | Status | `adc-cal` (ESP32-S3 builds) | no |
 | MPP sweep | Measurements | `sweep`; **Read last sweep** sends `sweep-curve` | yes; not for reading |

@@ -12,7 +12,7 @@ wired clock sync, and the control-loop gains. The firmware reads it at boot, so 
 | key          | unit | type  | default | description                                                |
 |--------------|------|-------|---------|------------------------------------------------------------|
 | `topo`       |      | enum  | buck    | Converter topology: `buck` or `boost`; another value fails setup. Maps the `hv_`/`lv_` keys of `sensor.conf` and `limits.conf` to roles |
-| `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default, also when empty), `psu` (constant-voltage supply; see `psu` console command) or `pv` (PV emulator: output follows a PV curve; see `pv` console command). `psu`/`pv` need a build with `CONFIG_FUGU_WITH_PSU`; an unknown value, an invalid `psu_vout` or an invalid PV curve fails setup. `tracker.conf::target_duty_cycle` overrides `psu`/`pv` |
+| `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default, also when empty), `psu` (constant-voltage supply; see `psu` console command) or `pv` (PV emulator: output follows a PV curve; see `pv` console command). See [Operating Modes](../../guide/operating-modes.md). `psu`/`pv` need a build with `CONFIG_FUGU_WITH_PSU`; an unknown value, an invalid `psu_vout` or an invalid PV curve fails setup. `tracker.conf::target_duty_cycle` overrides `psu`/`pv` |
 | `psu_vout`   | V    | float | (required with `mode=psu`) | PSU mode output voltage setpoint, > 0 and at most the output voltage limit (`limits.conf::lv_max` in a buck, `hv_max` in a boost) |
 | `psu_slew_down` | V/s | float | 2   | PSU mode: a lower setpoint is approached at this rate (min 0.1); raising it is immediate. A boost returns the output charge to its input when it pulls Vout down, so a step can pump a supply that cannot sink. While Vout is above the new band the OV threshold stays at the old setpoint |
 | `pv_isc`     | A    | float | (required with `mode=pv`) | PV emulator short-circuit current, > 0 (also caps the Iout limiter at 1.1×) |
@@ -89,7 +89,7 @@ inductance (`coil.conf::L0`) plus the input and output voltages to decide whethe
 or CCM.
 
 Forced PWM is useful if you want to use the converter as power supply. Set `forced_pwm` to `1` to
-disable diode emulation and always run in CCM (*forced PWM* mode). This mode has the following
+disable [diode emulation](../../internals/diode-emulation.md) and always run in CCM (*forced PWM* mode). This mode has the following
 characteristics:
 
 * less output noise, because the inductor never free-wheels

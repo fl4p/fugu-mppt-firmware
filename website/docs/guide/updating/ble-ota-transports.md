@@ -5,7 +5,7 @@ sidebar_position: 3
 
 # Direct OTA transport selection
 
-`etc/ota_ble.py` accepts the shared esp-ota-ble transport controls. It loads the
+`etc/ota_ble.py` ([OTA over BLE](ota-ble.md)) accepts the shared esp-ota-ble transport controls. It loads the
 host module from the esp-ota-ble component: a local `../esp-ota-ble` checkout beside
 the repository, else `managed_components/esp-ota-ble/host` after the first build.
 `ESP_OTA_BLE_HOST` overrides both.

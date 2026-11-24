@@ -48,7 +48,7 @@ the scope ground.
 
 Two procedures verify the gate driver, one without instruments and one with a scope:
 
-- Without instruments, [`doc/pwm-test-spec1.md`](../../../doc/pwm-test-spec1.md) validates the MCPWM driver
+- Without instruments, [`doc/pwm-test-spec1.md`](../../../doc/pwm-test-spec1.md) validates the [MCPWM driver](../internals/pwm-drivers.md)
   (`src/pwm/mcpwm.h`) using the internal GPIO-matrix loopback into the MCPWM capture channels (12.5 ns resolution).
   It runs as part of the on-target Unity suite in an MCPWM build, see [Testing](../development/testing.md).
 - With a scope, `python3 etc/mcpwm_gate_verify.py` drives the device over the console and captures both gates

@@ -59,7 +59,8 @@ Two events end this backoff early:
 
 ### PSU mode
 
-In PSU mode, including the PV emulator, output over-voltage (`Vout-OV`) and supply under-voltage (`supply-UV`) trips retry
+In [PSU mode](../guide/operating-modes.md#psu-constant-voltage), including the
+[PV emulator](../guide/operating-modes.md#pv-emulator), output over-voltage (`Vout-OV`) and supply under-voltage (`supply-UV`) trips retry
 fast, because a load step can cause them:
 
 | Trips within 60 s of the first trip in a window | Backoff |

@@ -9,7 +9,7 @@ sidebar_position: 2
 `Li_ChgTerminationCondition` in `src/charger.h` implements a charge-termination
 line for LFP and other lithium chemistries, as described in
 [Charging Marine Lithium Battery Banks](https://nordkyndesign.com/charging-marine-lithium-battery-banks/).
-It works on the highest cell voltage and the pack current reported by the BMS, so
+It works on the highest cell voltage and the pack current reported by the [BMS](bms-integration.md), so
 the charger can keep every cell below the BMS over-voltage cut-off (and the
 voltage transient of that disconnect), give the cell balancer time, and avoid a
 trickle charge into a full pack.

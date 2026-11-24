@@ -77,4 +77,4 @@ These console commands and firmware tools show the device's state while it runs:
 | `sprofiler` | Sampling profiler, needs OpenOCD, `CONFIG_FUGU_WITH_SPROFILER` and `pprof.conf` `sprofiler_hz` |
 | `scope` | Streams raw ADC samples over TCP; view with `./etc/scope.py` |
 
-See [Console](../../reference/console.md) for all commands and [Logging](logging.md) for how log output reaches each transport.
+See [Console](../../reference/console.md) for all commands and [Logging](logging.md) for how log output reaches each transport. [Profiling](profiling.md) compares the profilers.

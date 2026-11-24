@@ -5,7 +5,7 @@ sidebar_position: 17
 
 # pprof.conf
 
-`pprof.conf` configures the sampling profiler of `CONFIG_FUGU_WITH_SPROFILER` builds. The firmware reads it once at boot and starts the profiler only if a debugger (OpenOCD) is attached at that moment; a parse error skips the profiler. It has one key:
+`pprof.conf` configures the [sampling profiler](../../development/debugging/profiling.md#esp32-semihosting-profiler) of `CONFIG_FUGU_WITH_SPROFILER` builds. The firmware reads it once at boot and starts the profiler only if a debugger (OpenOCD) is attached at that moment; a parse error skips the profiler. It has one key:
 
 | key            | unit | type | default | description                                                             |
 |----------------|------|------|---------|-------------------------------------------------------------------------|

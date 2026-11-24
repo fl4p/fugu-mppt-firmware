@@ -76,7 +76,8 @@ The flat margin is adequate for three reasons:
 - The dc margin in CCM at high power is much larger than the ripple, so a few-percent `L`
   error doesn't shift the boundary far.
 
-`L_0` is per board (`coil.conf::L0`). `etc/measure_coil.py` measures it.
+`L_0` is per board (`coil.conf::L0`). `etc/measure_coil.py` measures it (see
+[Coil inductance](../lab/coil-inductance.md)).
 
 The DCM conversion ratio (Erickson, *Fundamentals of Power Electronics*, 3e, pp. 145,
 597) is
@@ -251,7 +252,7 @@ on-time. That suits edge delays. A voltage-sensing error scales with `t_on,HS` i
 calibration is only exact near the operating point where it was measured.
 
 The firmware stores the correction in nanoseconds and converts it to counts at boot (`ns·1e-9·tick_rate`, where
-the tick rate is the full timer period × fsw or the MCPWM peripheral resolution, the same
+the tick rate is the full timer period × fsw or the [MCPWM](pwm-drivers.md) peripheral resolution, the same
 basis as `boot_refresh_ns`). Storing a time instead of counts keeps the calibration valid
 across changes of PWM resolution and `pwm_freq`. At the LEDC-equivalent 2048
 counts/period at 39 kHz one count is ≈ 12.5 ns, while MCPWM `bestTiming` gives ~4103
@@ -294,7 +295,7 @@ This asymmetry makes the peak locatable. The offset between the peak and the
 firmware's predicted point `rectCtrlRatio(M)·pwmCtrl` is the timing correction.
 
 `measure-coil ls [hs]` (on-device) or `etc/measure_coil.py --ls-sweep --hs N` brackets the
-peak. `--apply` computes `peak − ideal − --apply-margin` (default 12 counts), converts it to
+peak (see [SR timing and the `Iout` peak](../lab/coil-inductance.md#6-synchronous-rectifier-timing-and-the-iout-peak)). `--apply` computes `peak − ideal − --apply-margin` (default 12 counts), converts it to
 time with the tick rate read from `pwm-dump` (the basis the firmware uses to convert it back), and
 writes `coil.conf::rect_offset_ns`. After the reboot, check the `rect_offset=… ns (… ct)` boot
 log line.

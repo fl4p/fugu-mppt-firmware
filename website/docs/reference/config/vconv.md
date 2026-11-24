@@ -5,7 +5,7 @@ sidebar_position: 18
 
 # vconv.conf
 
-`vconv.conf` configures the virtual converter plant, which replaces the power stage and ADC with a simulated PV source, battery, and passives. It applies to `CONFIG_FUGU_WITH_VCONV` builds with `sensor.conf` `adc = vconv`. `src/adc/sensor_setup.cpp` and `src/adc/vconv.h` read it. For an example, see [`config/lab/vconv_mock`](../../../../config/lab/vconv_mock/conf/vconv.conf).
+`vconv.conf` configures the virtual converter plant ([Simulation](../../development/simulation.md)), which replaces the power stage and ADC with a simulated PV source, battery, and passives. It applies to `CONFIG_FUGU_WITH_VCONV` builds with `sensor.conf` `adc = vconv`. `src/adc/sensor_setup.cpp` and `src/adc/vconv.h` read it. For an example, see [`config/lab/vconv_mock`](../../../../config/lab/vconv_mock/conf/vconv.conf).
 
 The simulation takes the inductor from `coil.conf::L0` (50 µH when unset) and the topology from `converter.conf::topo` (`buck`/`boost`). This file doesn't set either.
 
@@ -124,7 +124,7 @@ The other keys (`ring_v`, `ring_cexp`, `ring_ct`, `t_dead`, `t_hs_ext`, `r_hs`, 
 
 ## Switch-node ring
 
-With `ring_c > 0` the buck plant models the switch node while both switches are off. The node
+With `ring_c > 0` the buck plant models the switch node while both switches are off ([DCM coil ringing](../../internals/dcm-ringing.mdx); measured values in [Switch-node capacitance](../../lab/switch-node-capacitance.md)). The node
 capacitance `C` rings with the coil about `Vout`, damped by a conductance `1/(Q·Z0)` from the node
 to the output (`Z0 = √(L0/C)`), and the body diodes clamp the node at `−Vf` and `Vin + Vf`. While
 clamped, the coil current ramps back to zero at the clamp voltage and the ring restarts from rest;

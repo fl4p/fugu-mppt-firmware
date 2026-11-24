@@ -5,7 +5,7 @@ sidebar_position: 9
 
 # tele.conf
 
-`tele.conf` configures the InfluxDB telemetry service `tele`, which is off by default, and the BLE telemetry
+`tele.conf` configures the InfluxDB [telemetry](../../guide/telemetry/index.md) service `tele`, which is off by default, and the BLE telemetry
 paths. See [Telemetry fields](../telemetry-fields.md) for the point contents.
 
 The keys are read at different times:

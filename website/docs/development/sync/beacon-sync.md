@@ -5,13 +5,13 @@ sidebar_position: 1
 
 # Beacon-sniffing MCPWM clock sync (`bsync`)
 
-Beacon sync locks the switching clocks of multiple converters to a shared timebase recovered
+[Beacon sync](index.md) locks the switching clocks of multiple converters to a shared timebase recovered
 from 802.11 beacons. The mechanism is receive-only. It needs neither association nor
 transmission, so it keeps working after `wifi off`, with no TX bursts on the 3V3 rail during
 precision measurements. It doesn't turn the station link off by itself. For the radio-quiet
 state, run `wifi off` (see [Radio state](#radio-state)).
 
-The implementation is in `src/sync/bsync.{h,cpp}`, with driver hooks in `src/pwm/mcpwm.h`
+The implementation is in `src/sync/bsync.{h,cpp}`, with driver hooks in `src/pwm/mcpwm.h` ([MCPWM driver](../../internals/pwm-drivers.md))
 (`setPeriodTicks`, `count`, `update_period_on_empty`). The dedicated beacon source is documented
 in [beacon-node.md](beacon-node.md).
 

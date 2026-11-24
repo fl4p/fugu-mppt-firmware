@@ -184,7 +184,8 @@ While both switches are off, the inductor rings with the switch-node
 capacitance `C` (FET output capacitances, driver and layout) at `Z_0 = √(L/C)`; the mechanism and
 the field fits of `C` and `Q` are in [Switch-node ringing in
 DCM](../lab/coil-inductance.md#switch-node-ringing-in-dcm). In DCM this is the ring around `V_o`
-that ripples `I_out` against the duty.
+that ripples `I_out` against the duty. [DCM coil ringing](dcm-ringing.mdx) covers the tank and the
+node capacitance per board.
 
 When the LS turns off with a reverse current `I_r`, the node
 swings up from 0 V; it reaches `V_i`, where the HS body diode clamps it and the remaining current

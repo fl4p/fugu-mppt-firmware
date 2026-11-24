@@ -5,7 +5,7 @@ sidebar_position: 8
 
 # mqtt.conf
 
-`mqtt.conf` sets the MQTT broker connection and the BMS topic subscriptions of the service `mqtt`. All keys
+`mqtt.conf` sets the MQTT broker connection and the [BMS topic](../../guide/charging/bms-integration.md#topics) subscriptions of the service `mqtt`. All keys
 except `enabled` and `log_level` are read when the service starts, so `svc rs mqtt` applies them. `enabled` and
 `log_level` are read at boot; `svc on|off` and `svc log` change them at runtime. The console masks `password` as
 `***` (see [Secrets](../console.md#secrets)).

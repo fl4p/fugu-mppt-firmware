@@ -295,7 +295,7 @@ adcscope. The following flags are available.
 
 `measure_coil.py` measures the coil inductance without a current probe. It uses Vin, Vout, and Iout at a series of
 low duty cycles in DCM, with the output clamped by a battery, and reports the median `L0`. `--ls-sweep` instead holds the high side
-and sweeps the low-side count to find the rectifier timing (`rect_offset_ns`). The on-device `measure-coil`
+and sweeps the low-side count to find the rectifier timing (`rect_offset_ns`, see [Rectifier timing calibration](../internals/rect-cal.md)). The on-device `measure-coil`
 command is a port of this script.
 
 :::danger
@@ -357,7 +357,7 @@ python3 etc/influx_binary_proxy.py --ble <name> --influx http://influxdb:8086 --
 
 ## run_e2e.py
 
-`run_e2e.py` runs the host-side end-to-end tests in `etc/e2e-test/`, grouped into clusters by rig requirement, and
+`run_e2e.py` runs the host-side end-to-end tests in `etc/e2e-test/` (see [Automated bench tests](../lab/automated-bench-tests.md)), grouped into clusters by rig requirement, and
 reports PASS/FAIL/SKIP. It skips tests whose prerequisites are missing and gives the reason. It exits with 1 on any
 FAIL, 2 when nothing ran (all skipped, not with `--dry-run`), and 0 otherwise.
 

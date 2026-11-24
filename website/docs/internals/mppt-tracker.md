@@ -280,7 +280,7 @@ reversal still waits while Vin is more than 1 % against the steering, see
   step by 2 samples, and a 2-pass EWMA with span $N$, so each pass has a time constant of $\tau \approx N/2$
   samples. The EWMA step response reaches 99 % after $6.64\,\tau$. At the sensor's sample rate $f_s$, the
   settling time is $t_f = (3.32\,N + 2) / f_s$. The slower of the two sensors sets $t_f$. The sample rate is
-  the one the sampler uses to tune the sensor's notch filter.
+  the one the sampler uses to tune the sensor's notch filter (see [Signal filters](signal-filters.md)).
 - Vin is back at the voltage of the reversal. In low light the input capacitor makes Vin lag the duty by
   about $C V / (2.5\, I)$, for example 0.34 s with 470 µF at 2 W and 60 V. Vin keeps moving in the old
   direction for a moment, then turns. When it gets back to the reversal voltage, the capacitor current has

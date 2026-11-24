@@ -199,7 +199,7 @@ defined in `mqtt.cpp`):
 | `ScopeService` | `src/tele/scope_service.h` | owns the `Scope` object as a member; the global `scope` pointer aims at it | `CONFIG_FUGU_WITH_SCOPE` (default on) |
 | `BleConsoleService` | `src/tele/console_ble_service.h` | no; the whole header is empty without BLE | `CONFIG_FUGU_WITH_BLE` |
 | `ExtPortService` | `src/tele/extport_service.h` | `adcSampler`, `sensors`, `mppt` (extern) | `CONFIG_FUGU_WITH_EXTPORT` (default off) |
-| `BeaconSyncService` | `src/sync/bsync.h` / `bsync.cpp` | the converter's MCPWM leg | `CONFIG_FUGU_WITH_BSYNC` with the MCPWM gate driver |
+| [`BeaconSyncService`](../development/sync/beacon-sync.md) | `src/sync/bsync.h` / `bsync.cpp` | the converter's MCPWM leg | `CONFIG_FUGU_WITH_BSYNC` with the MCPWM gate driver |
 
 The FTP, HTTP, telnet and TLS console options exist only with `CONFIG_FUGU_WITH_NETW`. The table follows the
 registration order.
@@ -232,7 +232,7 @@ The following table lists each service's conf file, network dependency, and hook
 | `lcd` | `lcd.conf` | no (disabled by default) | `lcd.init(addr)` if not already initialised; fails when no display answers | — | refresh the display |
 | `scope` | `scope.conf` | yes | require Wi-Fi, begin the TCP server on port 24, add the `_scope._tcp` mDNS record | end the server, remove the mDNS record | accept clients, then pump (the pump blocks ~1 tick and serves as the loop's yield) |
 | `ble` | `ble.conf` | no (disabled by default) | first start after boot: bring up the stack and NUS, named after the hostname (`fugu-` prefixed unless it already starts with it), with `ble_security`, `ble_passkey` and `pair_window_s`; later starts only resume advertising | stop the BLE telemetry stream, stop advertising and drop the client (the stack stays up) | drive the RX queue |
-| `extport` | `extport.conf` | no (disabled by default) | read `mode`/pins/`pid` (fails unless `mode=vedirect` and `tx_pin` is valid), install the UART1 driver | delete the driver, reset the pins | once a second: check RX (wrong-adapter guard), send a VE.Direct text block |
+| `extport` | [`extport.conf`](config/extport.md) | no (disabled by default) | read `mode`/pins/`pid` (fails unless `mode=vedirect` and `tx_pin` is valid), install the UART1 driver | delete the driver, reset the pins | once a second: check RX (wrong-adapter guard), send a VE.Direct text block |
 | `bsync` | `bsync.conf` | no (sniffs beacons without association; disabled by default) | parse `bssid`/`channel`/loop gains, bring up the RX-only sniffer, start the period dither | restore the nominal period, stop the sniffer | 1 Hz servo; re-arms the sniffer radio if it went down |
 
 `MqttService` is the MQTT module itself rather than a separate wrapper; a `preStart`

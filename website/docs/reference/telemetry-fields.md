@@ -5,7 +5,7 @@ sidebar_position: 6
 
 # Telemetry fields
 
-The firmware writes one InfluxDB measurement, `mppt`, tagged with the device hostname. This page lists its fields.
+The firmware writes one InfluxDB measurement ([Telemetry](../guide/telemetry/index.md)), `mppt`, tagged with the device hostname. This page lists its fields.
 
 ## Transports
 
@@ -65,7 +65,7 @@ interval of 1 s or more, every point carries all fields.
 | `bf_fail`     |        | int   | every 20th, when latched | 1 while a backflow-switch failure is latched                       |
 | `mcu_temp`    | °C     | float | every 40th    | MCU die temperature                                                             |
 | `ntc_temp`    | °C     | float | every 40th    | Board NTC temperature                                                           |
-| `lag`         | µs     | int   | every 40th    | Peak RT-loop lag; reset by `reset-lag` and at each periodic sweep                |
+| `lag`         | µs     | int   | every 40th    | Peak RT-loop lag ([Real-time latency](../development/debugging/real-time-latency.md)); reset by `reset-lag` and at each periodic sweep |
 | `rect_off`    | counts | int   | every 40th    | Active rectifier timing offset                                                  |
 | `heap`        | bytes  | int   | every 40th    | Free heap                                                                        |
 | `heap_min`    | bytes  | int   | every 40th    | Lowest free heap since boot                                                      |

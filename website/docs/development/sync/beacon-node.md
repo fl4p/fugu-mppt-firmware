@@ -5,7 +5,7 @@ sidebar_position: 2
 
 # bsync beacon node (`etc/bsync-beacon/`)
 
-The beacon node is a dedicated, always-on beacon source for [beacon-sync.md](beacon-sync.md).
+The beacon node is a dedicated, always-on beacon source for [beacon sync](beacon-sync.md) (see [Multi-converter sync](index.md)).
 Its hardware TBTT beacons are the shared timebase that the converters' `bsync` service locks
 to. The node is a minimal ESP-IDF softAP of about 120 lines of C, with no Arduino and no fugu dependencies.
 

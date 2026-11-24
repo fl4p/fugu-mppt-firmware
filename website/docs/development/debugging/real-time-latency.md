@@ -16,7 +16,8 @@ across the two cores: the real-time (RT) loop owns core 1, and everything else r
 
 ## Latency budget and watchdogs
 
-`loopRT` (`src/main.cpp`) runs once per ADC sample: sampling, protection, the PD controllers, MPPT, and the PWM update.
+`loopRT` (`src/main.cpp`) runs once per ADC sample: sampling, protection, the PD controllers, MPPT, and the PWM update (see
+[Control loop](../../internals/control-loop.md)).
 Three supervisors on the same task detect a loop that falls behind:
 
 | Supervisor | Trips when | Action |
@@ -72,7 +73,7 @@ The loop follows these design rules:
   count of exactly one starves `read()` whenever notifications pile up. This happens, for example, during the 1 s
   start-up delay that `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` adds before the loop starts.
 - Blocking on the ADC is the only wait. The RT path has no `yield()` or `vTaskDelay()`.
-- The 1 ms wait timeout is one tick. It applies to the internal ADC. The INA226 backend derives its timeout from the
+- The 1 ms wait timeout is one tick. It applies to the [internal ADC](../../guide/hardware/internal-adc.md). The INA226 backend derives its timeout from the
   conversion time. `CONFIG_FREERTOS_HZ=1000` sets the shortest time a task can wait. Raising it to 10 kHz costs a lot
   of scheduler overhead, so 2 kHz would be the next step to evaluate.
 - `loopRT` runs at priority 20. It sits above the lwIP TCP/IP task (18) but below the Wi-Fi and Bluetooth controller

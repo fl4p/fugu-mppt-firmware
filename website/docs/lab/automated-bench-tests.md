@@ -31,7 +31,7 @@ The bench has four parts:
   - A plain CV/CC bench PSU is enough for protection and transient tests (set V, set I-limit).
   - Real MPPT tracking needs a PV/solar-array simulator (Keysight, Chroma) or a PSU with a known
     series resistance, so that an MPP exists. A stiff CV source has no maximum power point, and the
-    tracker just walks to the current limit.
+    [tracker](../internals/mppt-tracker.md) just walks to the current limit.
   - As an in-house alternative, a second Fugu boost in `mode=pv` emulates the panel curve at its
     output (`pv` console command, `config/lab/boost_pv`). The PV emulator section of the
     [power loop page](power-loop.md) lists the rig caveats.
@@ -64,7 +64,7 @@ The tests use these console commands:
 | command | effect |
 |---|---|
 | `dc N [ls]` | manual PWM, fade HS duty to `N` (optional manual LS hold) |
-| `mppt` | re-enable auto MPPT (leave manual mode) |
+| `mppt` | re-enable auto MPPT (leave [manual mode](../guide/operating-modes.md#manual-pwm)) |
 | `sweep` | force a global sweep / re-calibration |
 | `sync on\|off\|forced\|forced!` | LS rectifier mode (manual PWM only; `forced` arms the bring-up gate, `forced!` engages at once) |
 | `bf 0/1` | backflow switch (manual PWM only) |

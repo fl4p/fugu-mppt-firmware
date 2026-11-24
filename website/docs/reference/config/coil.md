@@ -7,7 +7,8 @@ sidebar_position: 4
 
 `coil.conf` describes the inductor and the low-side timing calibration. The firmware reads it at boot, so reboot
 after `set-config` (see [When changes take effect](index.md#when-changes-take-effect)); `rect-cal` and
-`measure-coil ls apply` write their result here. The following table lists its keys.
+`measure-coil ls apply` write their result here. [Coil inductance](../../lab/coil-inductance.md) describes how to
+measure `L0`. The following table lists its keys.
 
 | key           | unit  | type  | default | description                                                                                                                                                |
 |---------------|-------|-------|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
