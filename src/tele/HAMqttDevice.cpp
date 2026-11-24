@@ -110,7 +110,9 @@ const String HAMqttDevice::getConfigPayload() const
         configPayload.concat("\":");
 
         auto &v =  _configVars[i].value;
-        bool valueIsDictionnary = v[0] == '{' or (std::isdigit(v[0]) and std::isdigit(v.length()-1));
+        bool valueIsDictionnary = v[0] == '{' or v.length();
+        for (unsigned j = 0; v[0] != '{' and j < v.length(); j++)
+            if (!std::isdigit((unsigned char) v[j])) valueIsDictionnary = false;
 
         if (!valueIsDictionnary)
             configPayload.concat('"');
