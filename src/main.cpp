@@ -529,8 +529,7 @@ static void lfMarkOtaValid() {
         ESP_LOGE("main", "failed to confirm OTA image valid");
 }
 
-__attribute__((cold)) static void wireGuardConf(const ConfFile &c) {
-    auto &w = mppt.charger.wireGuard.conf;
+__attribute__((cold)) void wireGuardConf(const ConfFile &c, WireGuardConf &w) {
     w.mode = c.getByte("wire_protect", 1);
     w.pWarn = c.getFloat("wire_p_warn", 2.f);
     w.pDerate = c.getFloat("wire_p_derate", 4.f);
@@ -640,7 +639,7 @@ __attribute__((cold)) void setup() {
     try {
         ConfFile limitsConf{"/littlefs/conf/limits.conf"};
         lim = Limits{limitsConf};
-        wireGuardConf(limitsConf);
+        wireGuardConf(limitsConf, mppt.charger.wireGuard.conf);
         limitsConf.warnUnknownKeys();
     } catch (const std::runtime_error &er) {
         logConfErr("limits.conf", er);

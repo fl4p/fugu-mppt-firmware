@@ -33,6 +33,7 @@
 #include "selftest/hs_short.h"
 
 bool rectCalPersist(int counts, uint8_t cal); // coil.conf, core 0
+void wireGuardConf(const ConfFile &c, WireGuardConf &w); // limits.conf wire_*, throws on bad values
 
 struct Limits {
     const float Vin_max{};

@@ -1921,7 +1921,7 @@ bool confCheck(const char *chargerPath, const char *limitsPath) {
         cf.warnUnknownKeys();
     };
     check(chargerPath, [](const ConfFile &cf) { BatChargerParams p; p.load(cf); });
-    check(limitsPath, [](const ConfFile &cf) { Limits l{cf}; (void) l; });
+    check(limitsPath, [](const ConfFile &cf) { Limits l{cf}; (void) l; WireGuardConf w; wireGuardConf(cf, w); });
     return ok;
 }
 
