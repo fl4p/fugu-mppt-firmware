@@ -279,7 +279,7 @@ void MpptController::update() {
                 maxPowerPoint.slope = _paceS;
             }
 
-            sweepPlot.add(sensors.Vin->med3.get(), converter.getDutyCycle(), power, limits.Vin_max);
+            sweepPlot.add(sensors.Vin->ewm.avg.get(), converter.getDutyCycle(), pPv, limits.Vin_max);
 
             // ascending ramp only: the move back to the MPP runs after _stopSweep
             if (!converter.disabled() && !converter.boost() && !g_app.psuMode() && !sensors.Iout->isVirtual &&
