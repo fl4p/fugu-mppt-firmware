@@ -392,9 +392,12 @@
   .tst-name { margin:0; font-size:13.5px; font-weight:500; display:flex; flex-wrap:wrap; align-items:baseline; gap:0 8px; }
   .tst-x { position:relative; border:0; background:none; padding:0; border-radius:0; font:inherit; color:var(--fg); text-align:left; cursor:pointer; }
   .tst-x:hover { background:none; }
-  .tst-tag { font-size:12px; font-weight:400; color:var(--muted); }
+  .tst-runs { font-size:12px; font-weight:400; color:var(--muted); }
+  .tst-runs:empty { display:none; }
+  .tst-head > .abort { border-color:var(--line-2); padding:5px 12px; margin-left:auto; }
+  .tst-tag { margin:6px 0 0; font-size:12.5px; color:var(--muted); }
   .tst-what { margin:1px 0 0; }
-  .tst-ctl { display:flex; align-items:center; gap:8px; margin-left:auto; }
+  .tst-ctl { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:8px 0 0; }
   .tst-ctl button { border-color:var(--line-2); padding:5px 12px; }
   .tst-state { font-size:12.5px; color:var(--muted); }
   .tst-state:empty { display:none; }
@@ -4434,25 +4437,23 @@ function tstBuild(body){
       const hd=tstEl("div", "tst-head"), ti=tstEl("div", "tst-ti");
       const n=tstEl("h4", "tst-name"), x=tstEl("button", "tst-x", d.title);
       x.type="button"; x.setAttribute("aria-expanded", "false");
-      n.append(x);
-      if (d.tag) n.append(tstEl("span", "tst-tag", d.tag));
+      n.append(x, tstEl("span", "tst-runs"));
       ti.append(n, tstEl("p", "tst-what", d.what));
-      const ctl=tstEl("div", "tst-ctl");
-      ctl.append(tstEl("span", "tst-state"));
+      hd.append(ti);
+      if (d.abort){ const ab=tstEl("button", "abort", "Abort"); ab.type="button"; ab.onclick=()=>tstAbort(d.id); hd.append(ab); }
+      hd.onclick=e=>{ if (e.target.closest(".abort")) return; const r=tstResult(d.id); r.open=!r.open; tstPaint(d.id); };
+      // the fold: tag, buttons, result, chart, output, then option, needs / takes / sends, the risk
+      const more=tstEl("div", "tst-more"), det=tstEl("div", "tst-det"), ctl=tstEl("div", "tst-ctl");
+      more.id="tst-more-"+d.id; x.setAttribute("aria-controls", more.id);
+      if (d.tag) more.append(tstEl("p", "tst-tag", d.tag[0].toUpperCase()+d.tag.slice(1)));
       if (d.read){ const rd=tstEl("button", "read", d.readLabel); rd.type="button"; rd.onclick=()=>tstRead(d.id); ctl.append(rd); }
       const run=tstEl("button", "run", d.runLabel || "Run"); run.type="button";
       run.onclick=()=>tstStart(d.id);
-      ctl.append(run);
-      if (d.abort){ const ab=tstEl("button", "abort", "Abort"); ab.type="button"; ab.onclick=()=>tstAbort(d.id); ctl.append(ab); }
-      hd.append(ti, ctl);
-      hd.onclick=e=>{ if (e.target.closest(".tst-ctl")) return; const r=tstResult(d.id); r.open=!r.open; tstPaint(d.id); };
-      // the fold: result, chart, output, then option, needs / takes / sends, the risk
-      const more=tstEl("div", "tst-more"), det=tstEl("div", "tst-det");
-      more.id="tst-more-"+d.id; x.setAttribute("aria-controls", more.id);
+      ctl.append(run, tstEl("span", "tst-state"));
       const res=tstEl("div", "tst-res"); res.setAttribute("role","status");
       const lg=tstEl("details", "fold tst-log"); lg.hidden=true;
       lg.append(tstEl("summary", "", "Device output"), tstOutEl(d.title));
-      more.append(res);
+      more.append(ctl, res);
       if (d.chart){ const f=tstEl("figure", "tst-chart"); f.hidden=true; more.append(f); }
       more.append(lg, det);
       if (d.opt){
@@ -4507,7 +4508,7 @@ function tstPaint(id){
   const c=document.querySelector(`#tst-body .tst[data-tst="${id}"]`); if (!c) return;
   const r=tstResult(id), t=tstTarget(), mine=tstRun && tstRun.id===id;
   const o=tstOpt[id]||{};
-  // the chevron folds everything below the head line; Abort stays on it
+  // the chevron folds everything below the head line; a run keeps Abort on it
   const shown = !!(mine || r.sum || r.note || r.lines.length);
   c.classList.toggle("open", !!r.open);
   c.classList.toggle("shown", shown);
@@ -4524,7 +4525,8 @@ function tstPaint(id){
   run.title = why || (devBusy && !mine ? devBusy+" is running" : "");
   if (ab){ ab.hidden=!mine || r.st!=="run"; ab.disabled=!t; }
   if (cb) cb.disabled=!!devBusy;
-  stl.textContent = id==="clear" ? why : mine && r.st==="run" && !r.open ? "running …" : "";
+  stl.textContent = id==="clear" ? why : "";
+  c.querySelector(".tst-runs").textContent = mine && r.st==="run" && !r.open ? "running …" : "";
   const res=c.querySelector(".tst-res");
   res.className="tst-res"+(r.sum && r.sum.cls ? " "+r.sum.cls : "");
   res.hidden=!shown;

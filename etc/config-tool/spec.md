@@ -728,16 +728,19 @@ amber.
   sequence (pre-read, finish, Check) updates its row too.
 * **Action cards**, grouped Measurements / Self-tests / Calibration. Folded
   (default): a chevron in the left gutter, the title (`.tst-x`, medium
-  weight) with a muted tag (`drives the converter`, `takes over the
-  converter`, `re-enables starts`), one description of at most ~70
-  characters, and on the right the buttons: **Run** (MPP sweep: **Read last
-  sweep** and **Run sweep**; the read button is hidden when `sweep-curve` is
-  not in the build), **Abort** while its run is in progress (only where the
-  firmware has one), and on Clear latched faults the reason it is disabled
-  ("Nothing latched"), or "running …" while its run is in progress and the
-  card is folded. A click on the title (a button with `aria-expanded` and
-  `aria-controls`) or the description (not on the buttons) folds or unfolds
-  everything below the head line (`.tst-more`): the run or its result (dot +
+  weight) and one description of at most ~70 characters, nothing else. While
+  its run is in progress the head line also carries **Abort** on the right
+  (only where the firmware has one), and a muted "running …" after the title
+  while the card is folded. A click anywhere on the head line except Abort
+  (the title is a button with `aria-expanded` and `aria-controls`, so Enter
+  and Space work) folds or unfolds everything below it (`.tst-more`), which
+  folded is out of the Tab order: first the tag as a muted line ("Drives the
+  converter", "Takes over the converter", "Re-enables starts", "Drives the
+  converter · writes coil.conf"), then the buttons (`.tst-ctl`): **Run**
+  (MPP sweep: **Read last sweep** and **Run sweep**; the read button is
+  hidden when `sweep-curve` is not in the build) and on Clear latched faults
+  the reason it is disabled ("Nothing latched") next to it; then the run or
+  its result (dot +
   summary, green pass, amber fail/warn, muted detail lines in the normal
   font, a note, a Check button where needed), the sweep chart on the MPP
   sweep card, a collapsible "Device output (N lines)" (open while running,
@@ -747,7 +750,8 @@ amber.
   run or a read unfolds its card; a result, a refusal or an unknown-state
   note unfolds it once when it arrives (a cancelled confirm and "nothing
   latched" do not); otherwise the user's fold wins. A running card may be
-  folded: **Abort** stays on the head line. Cards and Status rows keep their
+  folded: its output is hidden, **Abort** and "running …" stay on the head
+  line. Cards and Status rows keep their
   fold per device for the session in `tstRes` (`r.open`), across repaints
   and rebuilds of the sheet. A 1 px `--line` divider separates the Status
   rows, closes the Status block and separates the cards; a group heading
