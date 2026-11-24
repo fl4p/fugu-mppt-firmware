@@ -673,6 +673,41 @@ def ls_sweep(con, tap, hs, pwm_max, period, fsw, args):
         print(f"  readback rect_offset_ns = {get_conf(con, 'coil.conf', 'rect_offset_ns')}")
 
 
+class _Tee:
+    """Duplicates writes to a stream into a file."""
+
+    def __init__(self, stream, f):
+        self.stream, self.f = stream, f
+
+    def write(self, x):
+        self.f.write(x)
+        self.f.flush()
+        return self.stream.write(x)
+
+    def flush(self):
+        self.stream.flush()
+
+    def __getattr__(self, k):
+        return getattr(self.stream, k)
+
+
+def start_save(args, con):
+    """Tee stdout/stderr into --save (default: measure-coil-runs/<utc>-<host>.log at the repo root)."""
+    if args.no_save:
+        return None
+    path = args.save
+    if not path:
+        m = [re.search(r"Hostname: ([\w-]+)", ln) for ln in con.command("hostname", timeout=4.0)]
+        host = next((x.group(1) for x in m if x), "dev")
+        d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "measure-coil-runs")
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + f"-{host}.log")
+    f = open(path, "a")
+    sys.stdout, sys.stderr = _Tee(sys.stdout, f), _Tee(sys.stderr, f)
+    print(f"saving output to {path}")
+    return path
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -707,12 +742,15 @@ def main():
     ap.add_argument("--ton-ns", type=float,
                     help="bound of the HS on-time offset for the stated error (default: dead time, at least 50 ns)")
     ap.add_argument("--yes", action="store_true", help="skip the 'this moves power' confirmation")
+    ap.add_argument("--save", help="write the whole output to this file (default: measure-coil-runs/)")
+    ap.add_argument("--no-save", action="store_true", help="don't save the output")
     args = ap.parse_args()
 
     con, tap = connect(args)
     try:
         if not con.wait_ready(timeout=20):
             sys.exit("device not responding")
+        start_save(args, con)
 
         pwm_ctrl_max = query_pwm_ctrl_max(con)
         if not pwm_ctrl_max:

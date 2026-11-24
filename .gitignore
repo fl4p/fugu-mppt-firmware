@@ -115,3 +115,4 @@ _tmp_stm32
 .claude/memory/secrets.env
 
 littlefs-dump/
+measure-coil-runs/

@@ -326,6 +326,7 @@ python etc/measure_coil.py -p $ESPPORT --steps 12 --i-max 1.5
 | `--restore mppt\|off`             | `mppt`  | State when done                                               |
 | `--ton-ns`                        | dead time, at least 50 ns | Bound of the high-side on-time offset used for the stated error |
 | `--yes`                           |         | Skip the confirmation                                         |
+| `--save PATH`, `--no-save`        | `measure-coil-runs/<UTC time>-<hostname>.log` | Copy the whole output (header, rows, result) to a file; the default folder is at the repo root and not tracked |
 
 See [Coil Inductance Measurement](../lab/coil-inductance.md).
 
