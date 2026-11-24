@@ -98,8 +98,12 @@ Clients per login (broker log, 2026-11-24): `pv` = fry, flat, the bench board, t
 influxdb-udp-relay, havan's `mqtt_console.py` logger, browser dashboards, host tools and the
 lora-bridge; `addons` = batmon (publishes `bat_caravan/#`, `ant24/#`); `homeassistant` = HA core.
 
-Ways to get ACLs: a local fork of the add-on (template or nginx change), a separate mosquitto
-container, or an upstream fix.
+Upstream: home-assistant/app-mosquitto issue #5 (open), fix in PR #6 (go-auth returns
+`MOSQ_ERR_PLUGIN_IGNORE` on a grant, so the broker's `acl_file` still decides; two independent
+confirmations, waiting for review as of 2026-11-24). Once released, the add-on's documented recipe
+works: `/share/mosquitto/acl.conf` with `acl_file /share/mosquitto/accesscontrollist`, the rules
+above in mosquitto syntax (`topic read #` is fine there). Test with the shadow-broker method
+first, then restart under the havan lock.
 
 ## No TLS for fry/flat MQTT
 
