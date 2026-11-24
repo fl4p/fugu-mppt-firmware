@@ -54,7 +54,7 @@ flowchart LR
    [Signal filters](signal-filters.md).
 2. **Protection** (`mppt.protect`, `mppt.protectLf`): hard cut-outs. A violation turns the converter off and arms a backoff.
    See [Protection](protection.md).
-3. **PD controllers** (`src/pd_control.h`): the smallest response wins. See [Control Loop](control-loop.md).
+3. **PD controllers** (`src/pd_control.h`): the smallest response wins. See [Control loop](control-loop.md).
 4. **MPP tracker** (`src/tracker.h`): global sweep, then fast and slow perturb & observe. See [MPP Tracker](mppt-tracker.md).
 5. **Converter** (`src/buck.h`): computes the low-side on-time. See [Diode Emulation](diode-emulation.md) and
    [MCPWM driver](pwm-drivers.md).
@@ -98,7 +98,7 @@ The table maps source paths to their contents.
 
 | Page | Covers |
 |---|---|
-| [Control Loop](control-loop.md) | Loop iteration, limiters, noise versus speed, BMS coupling |
+| [Control loop](control-loop.md) | Loop iteration, limiters, noise versus speed, BMS coupling |
 | [Protection](protection.md) | Trip conditions, backoff, ADC and latency watchdogs, start conditions |
 | [MPP Tracker](mppt-tracker.md) | Global sweep, perturb & observe, when the tracker sweeps |
 | [Sensors](sensors.md) | ADC backends, scaling, virtual sensors |

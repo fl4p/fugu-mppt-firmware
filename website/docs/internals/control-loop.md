@@ -1,10 +1,10 @@
 ---
-title: Control Loop
+title: Control loop
 sidebar_position: 4
 description: "The control loop reads Vout, Vin, and Iin and adjusts the PWM duty cycle of the converter for MPPT and output regulation."
 ---
 
-# Control Loop
+# Control loop
 
 *Original hand-written notes: [doc/Control Loop.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Control%20Loop.md) and the README section [Control Loop](https://github.com/fl4p/fugu-mppt-firmware#control-loop).*
 
@@ -59,7 +59,7 @@ flowchart TD
 The protection checks also run on every new sample of the other channels; only the control step waits for a new
 `Vout` sample. [Protection](protection.md) describes the protection step and its trip conditions.
 
-No sweep starts while the battery is full or in CV, in PSU mode, during a back-off, or while a flash write is pending.
+Sweeps are held off while the battery is full or in CV, in PSU mode, during a back-off, or while a flash write is pending.
 At the maximum duty the loop steps down in CV mode; at the minimum duty outside a sweep it steps up.
 [MPP Tracker](mppt-tracker.md) describes the return pass, the landing check and the partial peak scan.
 
@@ -80,7 +80,9 @@ the output in range under load changes prevents damage from transient over-volta
 current source, so `IinCTRL` and `IoutCTRL` can be slower.
 
 Each iteration updates all controllers and takes the lowest response. If it is positive, MPPT proceeds. Otherwise,
-MPPT halts and the duty cycle decreases in proportion to the control value. A limiter that only touches for less than
+MPPT halts and the duty cycle decreases in proportion to the control value.
+
+A limiter that only touches for less than
 250 ms, without passing its set-point, does not restart the tracker: the following iterations give back the duty it
 took, and tracking carries on.
 
@@ -106,8 +108,7 @@ Sensor noise grows with power. A slower loop gives a steadier output and avoids 
 over-current shutdowns, which waste solar energy, but it raises the voltage transient on a load step such as a BMS cut-off.
 
 Filtering and loop speed depend on measurement quality and need tuning per board, except the inverter-ripple
-notch, which tunes itself. See
-[Signal Filters](signal-filters.md).
+notch, which tunes itself. See [Signal filters](signal-filters.md).
 
 ## BMS coupling
 

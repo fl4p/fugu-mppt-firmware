@@ -11,14 +11,14 @@ description: "The firmware implements a sensor layer that abstracts asynchronous
 The firmware implements a sensor layer that abstracts asynchronous ADC reads and supports multiple ADCs at once.
 A sensor represents an ADC channel, which is usually one physical pin, or two pins for a differential channel.
 
-## What the hardware must measure
+## Required signals
 
 The hardware must measure the following signals.
 
 | Signal | Required | Notes |
 |---|---|---|
 | `Vout` | Yes | Battery voltage; should be precise and sampled fast to limit transients on load changes |
-| `Vin` | Yes | May be coarse (an 8-bit ADC is enough if `Iout` is measured); needed for diode emulation in DCM and UV/OV shutdown |
+| `Vin` | Yes | May be coarse (an 8-bit ADC is enough if `Iout` is measured); needed for diode emulation in DCM and for the under- and over-voltage shutdowns |
 | `Iin` or `Iout` | At least one | The missing side is computed by a `VirtualSensor` from the voltage ratio and a fixed 97 % efficiency |
 | `ntc` | Optional | Heatsink temperature for derating |
 
@@ -39,6 +39,8 @@ The following backends implement this interface.
 | `ADC_Fake` | Sinusoidal mock, for tests and dev boards |
 
 `sensor.conf` selects the backend per channel with `<chn>_adc` and the channel with `<chn>_ch` (`255` = absent).
+`<chn>` names the board side, `hv_v`, `lv_v`, `hv_i` or `lv_i`, or `ntc`; `converter.conf::topo` maps the sides to
+Vin, Vout, Iin and Iout.
 See the [configuration reference](../reference/config/sensor.md).
 
 ## Types
@@ -58,4 +60,4 @@ The sensor layer consists of the following types.
 over-voltage protection relies on.
 :::
 
-[Signal Filters](signal-filters.md) describes the filtering (notch, moving median, EWM).
+[Signal filters](signal-filters.md) describes the filtering (notch or comb, moving median, EWMA).
