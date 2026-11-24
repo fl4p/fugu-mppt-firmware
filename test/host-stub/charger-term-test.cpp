@@ -1182,8 +1182,7 @@ static void test_bal_low_line_no_hold_cuts_at_band() {
     c.termCond.reset();
     c.balanceNow();
     Plant pl;
-    topOfCharge(pl.pack);
-    pl.pack.set(3.322f, 0.04f); // highest cell 3.362 V at rest
+    topOfCharge(pl.pack, -30.f); // ~12 % below the hold region: 25 A at 3.500 V
     pl.iload = 34.f;
     int k = pl.untilHold(c, 600);
     CHECK(k < 0 && pl.vcell() < 3.40f, "low-ibat line: no hold at %.3f V, ibat %.1f A", pl.vcell(), pl.ibat);
