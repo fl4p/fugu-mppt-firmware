@@ -354,7 +354,7 @@ following rules apply to a real converter:
     - Protection cuts out at the output current and voltage limits (`limits.conf` `lv_i_max`/`lv_max` in a
       buck, `hv_i_max`/`hv_max` in a boost). The converter stops and backs off.
     - `sync off` (diode emulation) is safer than `sync forced` (no reverse-current check).
-    - For on-device calibration, use `measure-coil l0` / `measure-coil ls` instead of raw PWM
+    - For on-device calibration, use [`measure-coil l0` / `measure-coil ls`](../lab/coil-inductance.md) instead of raw PWM
       stepping. It needs a `CONFIG_FUGU_WITH_MEASURE_COIL=y` build and a converter stopped with `dc 0`, uses a
       controlled DCM sweep, and ends in manual PWM at duty 0; `mppt` resumes tracking.
 

@@ -56,7 +56,7 @@ The host tools in `etc/` include:
 | `etc/ota.py`, `etc/ota_mqtt.py`, `etc/ota_ble.py` | Firmware updates over Wi-Fi (HTTP or the MQTT console) and BLE |
 | `etc/fleet-build.sh` | Builds the production image (`sdkconfig.d/fleet`) of a commit in a clean worktree |
 | `etc/e2e-test/` | End-to-end test suite, see [Testing](testing.md) |
-| `etc/config-tool/` | `conf-editor.html` single-page config editor, `conf-tool.py` |
+| `etc/config-tool/` | `conf-editor.html` single-page [config editor](../reference/config-editor.md), `conf-tool.py` |
 | `etc/scope.py` | Launcher for the adcscope client, see [Measurements](../lab/measurements.md#adc-noise) |
 | `etc/measure_coil.py`, `etc/pico_*.py`, `etc/mcpwm_gate_verify.py` | Bench measurements |
 | `etc/matrix_build.sh` | Build the common feature and target variants, see [Build](build.md) |
@@ -93,7 +93,7 @@ The build also uses these repositories, which are not submodules:
 
 | Repository | Default location | Override | Provides |
 |---|---|---|---|
-| [fl4p/esp-ota-ble](https://github.com/fl4p/esp-ota-ble) | fetched into `managed_components/` (pinned in `main/idf_component.yml`); `../esp-ota-ble` overrides it if present | `ESP_OTA_BLE_DIR` | OTA-over-BLE receiver component and host module |
+| [fl4p/esp-ota-ble](https://github.com/fl4p/esp-ota-ble) | fetched into `managed_components/` (pinned in `main/idf_component.yml`); `../esp-ota-ble` overrides it if present | `ESP_OTA_BLE_DIR` | [OTA-over-BLE](../guide/updating/ota-ble.md) receiver component and host module |
 | [fl4p/esp-bootguard](https://github.com/fl4p/esp-bootguard) | `../../esp/esp-bootguard` | `ESP_BOOTGUARD_DIR` | Optional crash-loop guard bootloader (ESP32-S3), see [esp-bootguard](bootguard.md) |
 
 Set the override as an environment variable or pass it as `-D<NAME>=<path>` to `idf.py`.

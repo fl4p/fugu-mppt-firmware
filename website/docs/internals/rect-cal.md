@@ -23,7 +23,7 @@ A run needs:
 - buck topology;
 - the converter on in MPPT mode (not in PSU or PV emulator mode or manual PWM, no ADC calibration
   running);
-- no sweep or peak scan, no forced PWM, no manual LS count, no queued dead-time change, no limiter
+- no sweep or [peak scan](mppt-tracker.md), no forced PWM, no manual LS count, no queued dead-time change, no limiter
   active;
 - sync rect and backflow switch on;
 - a physical `I_out` sensor reading at least 0.3 A (averaged);

@@ -366,7 +366,7 @@ Each stop aborts the run, as does a Vin drop of 1 % before a turn-on.
 Without a battery, the test runs only on request, never as the daily run. It refuses to start when:
 
 - BMS cell data is fresh,
-- a battery has been seen since boot: BMS data, or Vout above 9 V with the converter off for 2 minutes, so a pack may
+- a battery has been seen since boot: [BMS data](../guide/charging/bms-integration.md), or Vout above 9 V with the converter off for 2 minutes, so a pack may
   sit behind an open BMS,
 - Vbat max is unknown, or
 - min(Vin/2, 0.8 × Vbat max) is below Vout + 5 V.
@@ -464,7 +464,7 @@ watchdogs run in the low-frequency loop on core 0.
 | ADC stall | The ADC reports an error, or no fresh sample for 200 ms outside calibration | Reset the ADC peripherals (at most every 300 ms). After 800 ms of stall, if the converter is switching and no backoff runs: stop with a 5 s backoff and hold the start for 16 s. After 60 s: restart the system |
 | ADC reset | A requested ADC reset | Stop during the reset; restart 6 s after it (30 s if the reset failed) |
 | No sample | No sample at all 20 s after boot | Disable the converter, switching or not, and log `Never got a sample! Please check ADC`. After 15 min: restart the system |
-| Loop latency | While switching: Vout sample rate below half its nominal rate for 3 consecutive 3 s windows. Always on, unless Vout is a virtual sensor | Stop with a 4 s backoff (100 ms in PSU mode) |
+| [Loop latency](../development/debugging/real-time-latency.md) | While switching: Vout sample rate below half its nominal rate for 3 consecutive 3 s windows. Always on, unless Vout is a virtual sensor | Stop with a 4 s backoff (100 ms in PSU mode) |
 | Calibration failure | Sensor calibration fails | `stopAndBackoff(4, "calib-fail")`: hold the start for 4 s (100 ms in PSU mode). During a sweep, end the sweep and log `backoff 4s [calib-fail] mid-sweep` |
 | Stuck output | Average Iout within ±0.3 A despite input headroom (buck: average Vin more than 8 V above average Vout; boost: more than 2 V above Vin min), outside manual PWM and a no-MPP backoff. In PSU mode Vout must also be more than 2 V below the setpoint; otherwise the charger must not be holding the charge (for example terminated, in a CV hold or too cold) | After 30 s: release the CV-floor latch, which also clears the backoff. After 2 h: restart the system |
 

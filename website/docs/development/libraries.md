@@ -21,7 +21,7 @@ The firmware builds on ESP-IDF and the following managed components:
 | [espressif/mdns](https://components.espressif.com/components/espressif/mdns) | * | mDNS hostname |
 | [joltwallet/littlefs](https://components.espressif.com/components/joltwallet/littlefs) | ^1.20.2 | Configuration file system |
 | [brianpugh/tamp](https://github.com/BrianPugh/tamp) | vendored (`override_path: ../components/tamp`) | Compression for the binary telemetry wire (`CONFIG_FUGU_WITH_TELE_BINARY`); esp-ota-ble requests it from the registry, the override builds the vendored copy |
-| [fl4p/esp-ota-ble](https://github.com/fl4p/esp-ota-ble) (git) | pinned commit | OTA-over-BLE receiver (`ota-ble` command) |
+| [fl4p/esp-ota-ble](https://github.com/fl4p/esp-ota-ble) (git) | pinned commit | [OTA-over-BLE](../guide/updating/ota-ble.md) receiver (`ota-ble` command) |
 | [espressif/mqtt](https://components.espressif.com/components/espressif/mqtt) | ^1.0.0 | MQTT client on IDF 6, which no longer bundles it |
 | [espressif/tinyusb](https://components.espressif.com/components/espressif/tinyusb) | ≥ 0.19.0~3, < 0.22 | USB configuration drive, only with `CONFIG_FUGU_WITH_USB_MSC` |
 

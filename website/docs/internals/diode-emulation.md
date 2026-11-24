@@ -262,7 +262,7 @@ counts would therefore be off by a factor of two after switching between the two
 The stored time still belongs to one gate driver: the dead time and edge delays it absorbs are
 those of the driver it was measured on. A value carried over to another driver can hold the LS
 past the zero crossing. In DCM near `D ≈ M` the output current then collapses and reverses as the
-duty rises, which opens the backflow switch during a global sweep.
+duty rises, which opens the backflow switch during a [global sweep](mppt-tracker.md).
 
 `coil.conf::rect_offset_drv` therefore records the driver (`mcpwm`, `ledc`) next to the
 value. At boot the firmware uses `rect_offset_ns` only if `rect_offset_drv` names the active

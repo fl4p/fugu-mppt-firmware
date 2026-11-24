@@ -45,7 +45,7 @@ project-root `sdkconfig` if it exists. The resolved options then select fragment
 |---|---|
 | `CONFIG_FUGU_WITH_BLE=y` | appends `sdkconfig.d/ble` (NimBLE host and radio tuning) |
 | `CONFIG_FUGU_WITH_NETW=y` and `CONFIG_FUGU_WITH_TLS_CONSOLE=y` | appends `sdkconfig.d/tls_console` (mbedTLS server mode) |
-| `CONFIG_FUGU_WITH_USB_MSC=y` | appends `sdkconfig.d/usb_msc` (USB-Serial-JTAG console off); `main/idf_component.yml` adds `espressif/tinyusb` |
+| `CONFIG_FUGU_WITH_USB_MSC=y` ([USB config drive](../guide/usb-drive.md)) | appends `sdkconfig.d/usb_msc` (USB-Serial-JTAG console off); `main/idf_component.yml` adds `espressif/tinyusb` |
 | `CONFIG_FUGU_WITH_SPROFILER=n` | excludes the `esp32-semihosting-profiler` component |
 | any target | ESP-IDF adds `sdkconfig.defaults.<target>` (`.esp32`, `.esp32s3`) after each defaults file |
 

@@ -7,7 +7,8 @@
     "prebuild": "node scripts/copy-tools.mjs",
     "build": "docusaurus build",
     "serve": "docusaurus serve",
-    "clear": "docusaurus clear"
+    "clear": "docusaurus clear",
+    "xlink": "node scripts/docs-xlink.mjs"
   },
   "dependencies": {
     "@docusaurus/core": "^3.10.2",

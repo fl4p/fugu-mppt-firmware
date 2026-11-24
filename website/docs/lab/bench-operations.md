@@ -189,7 +189,7 @@ The following table maps each symptom to its cause and action:
 | Symptom | Cause and action |
 |---|---|
 | Absent from scans entirely | Someone holds the single connection (`NIMBLE_MAX_CONNECTIONS=1`): another console session, or a BLE telemetry bridge in connect mode. The link lives in bluetoothd, so killing the client does not free it; run `bluetoothctl devices Connected` and `disconnect <mac>` on the holder; device-side `svc rs ble` restores the connectable advertisement. A Wi-Fi scan loop against a missing AP can also starve BLE until `wifi off`. A board powered from Vin drops off BLE when the bench supply drops; check the boot log's vin calibration value. |
-| Visible to a raw scan but not to the tooling | With BLE_ADV telemetry the adv payload has no room for the NUS UUID, so UUID-filtered scanners show nothing. Match by **name**. |
+| Visible to a raw scan but not to the tooling | With BLE_ADV telemetry the adv payload has no room for the [NUS](../reference/ble/gatt.md) UUID, so UUID-filtered scanners show nothing. Match by **name**. |
 | Scans fine, every connect times out | Not the GATT-cache case: someone else holds the link (see row 1), and with `CONFIG_FUGU_WITH_BLE_ADV` the board stays visible-but-non-connectable while connected. |
 | ATT 3 "Writing is not permitted" on subscribe (bonded Mac) | Stale macOS GATT cache after a layout change (the cache is keyed by BLE address); toggle Bluetooth (`blueutil -p 0 && blueutil -p 1`, see [OTA over BLE](../guide/updating/ota-ble.md)). `blueutil` is not installed by default on macOS; unpairing otherwise needs the GUI. |
 | ATT 5/15 "Insufficient Authentication/Encryption" | Unbonded host vs `ble_security=justworks`; pair and bond the host first (see [`ble.conf`](../reference/config/ble.md)). |

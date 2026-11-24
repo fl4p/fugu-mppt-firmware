@@ -298,7 +298,7 @@ unchanged. The editor shows the firmware's error above the rows, with the replac
   or "when next used". `ftp_user` and `ftp_pass` add that they are ignored while credentials are stored in NVS. The
   footer sums it up, for example "Takes effect after: restarting mqtt, reboot".
 - An amber list above the files warns about dependent keys a change breaks (see [Dependent keys](#dependent-keys)),
-  and about switching off a service that carries a console: `mqtt` (a charger that gets its BMS data over MQTT then
+  and about switching off a service that carries a console: `mqtt` (a charger that gets its [BMS data](../guide/charging/bms-integration.md) over MQTT then
   falls back to its stale-cell voltage cap), `ble`, `telnet` or `tlscon`.
 - **Commands sent to the device** unfolds the exact command list.
 

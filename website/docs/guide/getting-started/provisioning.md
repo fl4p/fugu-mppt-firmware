@@ -45,7 +45,7 @@ Each folder under `config/` holds the configuration for one kind of hardware:
 | `config/lab/dry_mock` | Mock ADC with sinusoidal readings, for dev boards without power stage |
 | `config/lab/dry_int` | Internal ADC, dry testing |
 | `config/lab/vconv_mock` | Pairs with `CONFIG_FUGU_WITH_VCONV=y` (simulated converter) |
-| `config/lab/wokwi_mock` | [Wokwi](https://wokwi.com) ESP32-S3 simulator (`wokwi_mock_esp32` for classic ESP32) |
+| `config/lab/wokwi_mock` | [Wokwi](../../development/wokwi.md) ESP32-S3 simulator (`wokwi_mock_esp32` for classic ESP32) |
 
 `config/lab/` holds further bench profiles; see [Lab config profiles](../../lab/config-profiles.md).
 

@@ -1,5 +1,6 @@
 // Warns when a page mentions a topic several times but never links the page that covers it.
-// Warning only, never fails the build: the term list is a heuristic.
+// In the build it only warns, and pages served from the build cache are skipped; `npm run xlink` (scripts/docs-xlink.mjs) checks
+// every page and exits 1 on a finding.
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {visit} from 'unist-util-visit';
@@ -52,30 +53,37 @@ const ALSO = {
   'guide/updating/ota-ble.md': ['guide/updating/ble-ota-transports.md'],
 };
 // Pages that list every topic in passing (command and flag references) are exempt.
-const EXEMPT = new Set(['reference/console.md']);
+const EXEMPT = new Set(['reference/console.md', 'development/binary-size.md']);
 
 const norm = (p) => p.replace(/\\/g, '/');
 
+export function check(tree, filePath) {
+  const rel = norm(path.relative(docsDir, filePath));
+  if (rel.startsWith('..') || EXEMPT.has(rel)) return null;
+  const linked = new Set();
+  let text = '';
+  visit(tree, (node) => {
+    if (node.type === 'link' && node.url && !/^[a-z]+:/i.test(node.url)) {
+      const u = node.url.split('#')[0];
+      if (u) linked.add(norm(path.relative(docsDir, path.resolve(path.dirname(filePath), u))));
+    }
+    if (node.type === 'text' || node.type === 'inlineCode') text += node.value + '\n';
+  });
+  const missing = [];
+  for (const [target, spec] of Object.entries(TOPICS)) {
+    const [re, min] = Array.isArray(spec) ? spec : [spec, MIN_MENTIONS];
+    if (target === rel || linked.has(target) || (ALSO[target] || []).some((a) => a === rel || linked.has(a))) continue;
+    const n = (text.match(re) || []).length;
+    if (n >= min) missing.push(`${target} (${n}×)`);
+  }
+  return missing.length ? `[docs-xlink] ${rel}: mentions without a link to ${missing.join(', ')}` : null;
+}
+
+export {docsDir};
+
 export default function docsXlink() {
   return (tree, file) => {
-    const rel = norm(path.relative(docsDir, file.path));
-    if (rel.startsWith('..') || EXEMPT.has(rel)) return;
-    const linked = new Set();
-    let text = '';
-    visit(tree, (node) => {
-      if (node.type === 'link' && node.url && !/^[a-z]+:/i.test(node.url)) {
-        const u = node.url.split('#')[0];
-        if (u) linked.add(norm(path.relative(docsDir, path.resolve(path.dirname(file.path), u))));
-      }
-      if (node.type === 'text' || node.type === 'inlineCode') text += node.value + '\n';
-    });
-    const missing = [];
-    for (const [target, spec] of Object.entries(TOPICS)) {
-      const [re, min] = Array.isArray(spec) ? spec : [spec, MIN_MENTIONS];
-      if (target === rel || linked.has(target) || (ALSO[target] || []).some((a) => a === rel || linked.has(a))) continue;
-      const n = (text.match(re) || []).length;
-      if (n >= min) missing.push(`${target} (${n}×)`);
-    }
-    if (missing.length) console.warn(`[docs-xlink] ${rel}: mentions without a link to ${missing.join(', ')}`);
+    const msg = check(tree, file.path);
+    if (msg) console.warn(msg);
   };
 }

@@ -56,7 +56,7 @@ The following table lists each feature option, its default, and what it does:
 | `CONFIG_FUGU_WITH_LEDC` | on | LEDC peripheral for the `anaw` command (the fan output is an on/off GPIO either way). The LEDC gate driver turns it on. |
 | `CONFIG_FUGU_WITH_WSYNC` | on\* | [Wired MCPWM clock sync](../../development/sync/wired-sync.md) between converters. Needs `MCPWM`. |
 | `CONFIG_FUGU_WITH_BSYNC` | off | [Beacon-sniffing MCPWM clock sync](../../development/sync/beacon-sync.md) (`bsync` service). Needs `NETW` and `MCPWM`. |
-| `CONFIG_FUGU_WITH_SPROFILER` | off | Semihosting sampling profiler; only useful with OpenOCD attached. Off excludes its component. |
+| `CONFIG_FUGU_WITH_SPROFILER` | off | Semihosting [sampling profiler](../../development/debugging/profiling.md); only useful with OpenOCD attached. Off excludes its component. |
 | `CONFIG_FUGU_WITH_RTPROF` | off | Core-1 call-stack sampler (`rtprof` command), a 2 kHz timer ISR counting return addresses. `CONFIG_FUGU_RTPROF_SLOTS` (default 4096) sizes its table. |
 | `CONFIG_FUGU_WITH_EXTPORT` | off | `extport` service: [VE.Direct text output](../../reference/config/extport.md) on a UART pin pair (about 10 KB of flash, mostly the UART driver). |
 | `CONFIG_FUGU_WITH_MEASURE_COIL` | off | On-device [coil inductance measurement](../../lab/coil-inductance.md) (`measure-coil`). It starts only from a converter stopped with `dc 0`; on in the `sdkconfig.d/fleet` build. |
@@ -189,7 +189,7 @@ Without LEDC, the `anaw` command isn't available. The fan output is a plain on/o
 
 ### Control-loop work without hardware
 
-To run the control loop against a simulated converter, pick `VCONV` as the gate driver:
+To run the control loop against a [simulated converter](../../development/simulation.md), pick `VCONV` as the gate driver:
 
 ```ini title="vconv.frag"
 CONFIG_FUGU_WITH_VCONV=y
