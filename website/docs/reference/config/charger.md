@@ -9,7 +9,7 @@ sidebar_position: 6
 
 | key                 | unit | type  | default    | description                                                    |
 |---------------------|------|-------|------------|----------------------------------------------------------------|
-| `vout_max`          | V    | float | (required) | Max pack/output charge-target voltage. The cell count is ⌊`vout_max` / `cv_eoc`⌋ and must be at least 1 |
+| `vout_max`          | V    | float | (required) | Maximum charge-target voltage of the pack at the output. The cell count is ⌊`vout_max` / `cv_eoc`⌋ and must be at least 1 |
 | `cv_eoc`            | V    | float | 3.5        | End-of-charge voltage of highest cell at tail current; must be ≥ `cv_float` |
 | `cv_float`          | V    | float | 3.325      | Float cell voltage where termination line meets zero current   |
 | `cv_ceiling`        | V    | float | cv_eoc+0.05 | Hard per-cell ceiling: latch termination if highest cell reaches it, regardless of current (backstops cv_eoc on imbalanced packs). Must be ≥ `cv_eoc` |

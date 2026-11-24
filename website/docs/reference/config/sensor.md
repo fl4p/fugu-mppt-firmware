@@ -21,7 +21,7 @@ The following keys apply to all channels:
 | `despike`                        |      | float  | 0       | Outlier threshold of the decision-based median, in running mean-deviation units: 0 = plain median, about 8 enables it (lower clips more). See [despike](../../internals/signal-filters.md#despike) |
 | `esp32adc1_sr`                   | Hz   | int    | —       | Internal ADC1 continuous-mode raw sample rate (required with `esp32adc1`) |
 | `esp32adc1_avg`                  |      | int    | —       | Software average of N raw conversions per delivered sample, 1–1023 (required with `esp32adc1`) |
-| `esp32adc1_inl`                  |      | bool   | 0       | Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation only, about ±0.2 V between 0.57 and 2.66 V at the pin, tapering to zero outside) to every ADC1 channel, including NTC and current. It has no gain or offset of its own, so calibrate `_gain`/`_offset` with it on. See [Internal ADC](../../guide/hardware/internal-adc.md) |
+| `esp32adc1_inl`                  |      | bool   | 0       | Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation only, about ±0.2 V between 0.57 and 2.66 V at the pin, tapering to zero outside) to every ADC1 channel, including NTC and current. It has no gain or offset of its own, so calibrate `_gain` and `_offset` with it on. See [Internal ADC](../../guide/hardware/internal-adc.md) |
 
 The firmware reads `sensor.conf` once at boot. In `CONFIG_FUGU_WITH_VCONV` builds a
 `sensor.vconv.conf`, if present, is read instead (see [vconv.conf](vconv.md)).
@@ -63,7 +63,7 @@ flow. The same shunt therefore keeps the same `_factor` in both topologies.
 | `_gain`     |      | float  | 1           | Per-board gain on top of the divider (voltage channels): V = gain · V_div + offset. Must be between 0.5 and 2 (exclusive), else sensor setup fails |
 | `_offset`   | V    | float  | 0           | Per-board offset (voltage channels), see `_gain`. Must be within ±10 V (exclusive), else sensor setup fails |
 | `_factor`   |      | float  | 1           | Linear scale factor raw ADC → physical, sign sets direction (current channels) |
-| `_midpoint` |      | float  | 0           | Zero/offset midpoint subtracted before scaling (current channels)              |
+| `_midpoint` |      | float  | 0           | Zero-point offset subtracted before scaling (current channels)                 |
 | `_filt_len` |      | int    | 10          | Filter window length (samples). Ignored for `ntc`, which uses a fixed 50       |
 
 For worked ACS712 and bare-ESP32 configs, see [Notes & examples](#notes--examples).
@@ -77,16 +77,14 @@ The following keys set the INA226 measurement (`ina226` backend); its wiring (`i
 | key | unit | type | default | description |
 |-----|------|------|---------|-------------|
 | `ina226_resistor` | Ω | float | — | INA226 current-sense shunt resistance, required with `ina226` (0 to 10 Ω, else sensor setup fails); the current range is the shunt full scale, 81.92 mV / `ina226_resistor`, at the shunt ADC resolution (2.5 µV / `ina226_resistor`) |
-| `ina226_conv_time_us` | µs | int | 1100 | INA226 per-conversion time, rounded up to the next device step (140, 204, 332, 588, 1100, 2116, 4156, 8244; above that 8244); lower = faster/noisier |
-| `ina226_ov` | V | float | 0 | INA226 bus over-voltage limit, in volts of the voltage channel on INA226 channel 0 (after its divider and `_gain`/`_offset`). When set, ALERT is a latched over-voltage alert: its ISR forces the gates off (MCPWM gate driver only) and the converter backs off; conversions are then polled. Set it above the highest normal voltage. Without a voltage channel on INA226 channel 0 sensor setup fails. 0 = ALERT is the conversion-ready strobe |
+| `ina226_conv_time_us` | µs | int | 1100 | INA226 per-conversion time, rounded up to the next device step (140, 204, 332, 588, 1100, 2116, 4156, 8244; above that 8244); a lower value is faster and noisier |
+| `ina226_ov` | V | float | 0 | INA226 bus over-voltage limit, in volts of the voltage channel on INA226 channel 0 (after its divider, `_gain` and `_offset`). When set, ALERT is a latched over-voltage alert: its ISR forces the gates off (MCPWM gate driver only) and the converter backs off; conversions are then polled. Set it above the highest normal voltage. Without a voltage channel on INA226 channel 0 sensor setup fails. 0 = ALERT is the conversion-ready strobe |
 
 ## Notes & examples
 
 ### Sensors
 
-Configure the voltage and current sensors in `sensor.conf` to match your topology and chips.
-
-There are four sensors: Vin, Vout, Iin, and Iout. Configure them by side (HV/LV); the topology
+There are four sensors: Vin, Vout, Iin, and Iout. Configure them by side (HV or LV); the topology
 assigns the roles. A converter can have one or two current sensors; with none, setup fails.
 With a single current sensor, the firmware computes the other from the voltage ratio and a fixed
 97 % conversion efficiency. The tables above list all keys.
@@ -135,12 +133,10 @@ Pick the ADC backend with `adc`, or per channel with `<channel>_adc`. The firmwa
 * `fake`: sinusoidal mock for bench boards without a power stage (sample rate `board.conf::adc_freq`)
 * `vconv`: the simulated plant of `CONFIG_FUGU_WITH_VCONV` builds (see [vconv.conf](vconv.md))
 
-`ina226` and `ads1015`/`ads1115` exist only when compiled in (`CONFIG_FUGU_WITH_INA226`,
+`ina226`, `ads1015` and `ads1115` exist only when compiled in (`CONFIG_FUGU_WITH_INA226`,
 `CONFIG_FUGU_WITH_ADS`, both on by default); an unknown or disabled backend fails sensor setup.
 
-This backend is planned:
-
-* `ina228`
+An `ina228` backend is planned.
 
 ### Voltage sensors `hv_v`, `lv_v`
 
@@ -154,11 +150,11 @@ lv_v_rl = 47e3    # lower resistor
 
 ### ACS712
 
-The ACS712 sensitivity is 66mV/A. A 10k+3.3k voltage divider scales the output to match the ADC
+The ACS712 sensitivity is 66 mV/A. A 10k + 3.3k voltage divider scales the output to match the ADC
 voltage range. `hv_i_factor` encodes both the sensitivity and the divider.
 
 Specify the ACS712 midpoint voltage with `hv_i_midpoint` (or `lv_i_midpoint`). This ACS712 has a
-2.5V midpoint, scaled through the same 10k + 3.3k divider: `2.5V * 10k/(10k+3.3k)`. The following
+2.5 V midpoint, scaled through the same 10k + 3.3k divider: `2.5V * 10k/(10k+3.3k)`. The following
 example shows both keys:
 
 ```
@@ -181,7 +177,7 @@ sensor.conf: vout_ch is no longer read; with topo=boost use hv_v_ch
 factors are positive for HV → LV power. `vin_min`, `iout_short`, `p_max`, `ntc_*` and
 `charger.conf::vout_max` keep their names.
 
-- **Config directory** (profile or backup): rewrites `sensor.conf` and `limits.conf` in place,
+- Config directory (profile or backup): the script rewrites `sensor.conf` and `limits.conf` in place,
   keeping comments and order. Already migrated files stay unchanged; a role key next to its own
   side key is refused. `--check` only reports.
 
@@ -189,7 +185,7 @@ factors are positive for HV → LV power. `vin_min`, `iout_short`, `p_max`, `ntc
   python3 etc/migrate_side_keys.py dir config/my_board
   ```
 
-- **Live board**: migrate its configs *before* the OTA to the new firmware, otherwise sensor setup
+- Live board: migrate its configs *before* the OTA to the new firmware, otherwise sensor setup
   fails at boot. Capture `get-config converter.conf`, `get-config sensor.conf` and
   `get-config limits.conf` into a file, then print the console commands and run them over BLE or
   telnet:
