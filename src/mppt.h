@@ -1155,9 +1155,11 @@ public:
     // (converter.conf::psu_slew_down). A step lets the CV loop pull the output down as fast as
     // forced PWM allows, and a boost returns that charge to its INPUT: fboost, unloaded, 49 -> 20 V
     // pumped its 10 V bench-supply rail to 19.8 V and latched psu-setpoint-infeasible (2026-10-09).
-    // Upward steps stay immediate.
+    // Upward: psuSlewUpVps (psu_slew_up, 0 = immediate), from the measured Vout. An unloaded output is
+    // an integrator the converter cannot discharge: on a step the duty winds up while the caps charge
+    // and the energy in flight overshoots (boost 32 -> 40 V into 1.2 mF: 41.2 V, the 1.03x OV trip).
     float psuTarget = NAN;
-    float psuSlewDownVps = 2.0f;
+    float psuSlewDownVps = 2.0f, psuSlewUpVps = 0;
     std::atomic<bool> psuEscalated{false};
     std::atomic<bool> psuLatched{false};
 
@@ -1199,18 +1201,31 @@ public:
         psuOvHoldBase = (std::isfinite(hold) && hold > v) ? hold : NAN;
         VoutController.reset();
         psuTarget = v;
-        // slew down only from an active plain-PSU setpoint; PV-sim owns its own slew
+        // slew down only from an active plain-PSU setpoint, up from Vout; PV-sim owns its own slew
         if (!(g_app.psuMode() && !pvSim.active && v < psuVsetpoint))
-            psuVsetpoint = v;
+            psuVsetpoint = !pvSim.active && psuSlewUpVps > 0 && vout < v ? vout : v;
         publishedPsuSetpoint.store(psuVsetpoint, std::memory_order_release);
     }
 
-    // RT-only, plain PSU: advance psuVsetpoint one tick toward psuTarget (downward slew).
-    void psuAdvanceSetpoint(float dt) {
-        if (!(psuVsetpoint > psuTarget)) return;
+    // RT-only, plain PSU: advance psuVsetpoint one tick toward psuTarget.
+    __attribute__((always_inline)) void psuAdvanceSetpoint(float dt) {
+        if (!(psuVsetpoint != psuTarget) || !std::isfinite(psuTarget)) return;
         dt = std::min(dt > 0 ? dt : 6e-4f, 0.01f); // same stale-dt clamp as pvAdvanceSetpoint
-        psuVsetpoint = std::max(psuTarget, psuVsetpoint - psuSlewDownVps * dt);
+        psuVsetpoint = psuVsetpoint > psuTarget ? std::max(psuTarget, psuVsetpoint - psuSlewDownVps * dt)
+                                                : std::min(psuTarget, psuVsetpoint + psuSlewUpVps * dt);
         publishedPsuSetpoint.store(psuVsetpoint, std::memory_order_release);
+    }
+
+    // RT, PSU cold start: backflow switch on, the upward ramp restarts from Vout (a trip or backoff left it lower)
+    void psuArm() {
+        bflow.enable(true);
+        const float v = sensors.Vout->med3.get();
+        if (!pvSim.active && psuSlewUpVps > 0 && v < psuVsetpoint) {
+            psuVsetpoint = v;
+            publishedPsuSetpoint.store(v, std::memory_order_release);
+            VoutController.reset();
+        }
+        converter.pwmPerturb(1);
     }
 
     // Shared boost headroom: setpoint feasibility gate and the PV-sim curve floor.
@@ -1364,7 +1379,7 @@ public:
         // validates against this, and an OV limit inside (moving-Vset, Voc) would latch.
         const PvCurve c = pvPub.get();
         if (c.active) return c.voc;
-        return getPsuSetpoint();
+        return std::fmax(getPsuSetpoint(), psuTarget); // an upward ramp: its target
     }
     [[nodiscard]] uint16_t getManualTarget() const {
         return manualTarget.load(std::memory_order_relaxed);
@@ -1522,7 +1537,7 @@ public:
         // PV-sim: judge feasibility at the curve top (Voc), not the moving setpoint — the
         // per-tick Vin-floor clamp keeps the moving value feasible by construction, so the
         // infeasibility latch fires only when Vin rises to within the headroom of Voc.
-        const float v = pvSim.active ? pvSim.model.voc : psuVsetpoint;
+        const float v = pvSim.active ? pvSim.model.voc : std::fmax(psuVsetpoint, psuTarget); // a ramp: its target
         return validatePsuSetpoint(v, limits.Vout_max, converter.boost(), vin,
                                    getExplicitOvLimit());
     }
@@ -1561,6 +1576,7 @@ public:
         // PV-sim: pin the OV band to Voc so it doesn't follow the moving setpoint down the curve.
         float psuBase = pvSim.active ? pvSim.model.voc : psuVsetpoint;
         if (!pvSim.active && psuOvHoldBase > psuBase) psuBase = psuOvHoldBase;
+        if (!pvSim.active && psuTarget > psuBase) psuBase = psuTarget; // an upward ramp: the commanded setpoint
         if (g_app.psuMode() && std::isfinite(psuBase))
             return std::min(psuBase * (limits.reverse_current_paranoia ? 1.03f : 1.5f), limits.Vout_max);
         if (charger.params.haveVbatMax())

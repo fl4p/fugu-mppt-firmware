@@ -406,7 +406,7 @@ The `Vout-OV` threshold depends on the mode, in this order:
 1. An explicit limit from the console command `ovset`: min(`ovset`, Vout max).
 2. PSU mode: setpoint × 1.03 (× 1.5 without `reverse_current_paranoia`), capped at Vout max. The PV emulator uses its
    open-circuit voltage instead of the setpoint. After the setpoint is lowered, the old setpoint stays the base until
-   Vout falls inside the new band.
+   Vout falls inside the new band. While the setpoint ramps up (`psu_slew_up`), the base is the commanded setpoint.
 3. A known battery voltage: `Vbat_max` × 1.03 (× 1.5 without `reverse_current_paranoia`), capped at
    Vout max.
 4. Otherwise Vout max.
@@ -466,7 +466,7 @@ watchdogs run in the low-frequency loop on core 0.
 | No sample | No sample at all 20 s after boot | Disable the converter, switching or not, and log `Never got a sample! Please check ADC`. After 15 min: restart the system |
 | [Loop latency](../development/debugging/real-time-latency.md) | While switching: Vout sample rate below half its nominal rate for 3 consecutive 3 s windows. Always on, unless Vout is a virtual sensor | Stop with a 4 s backoff (100 ms in PSU mode) |
 | Calibration failure | Sensor calibration fails | `stopAndBackoff(4, "calib-fail")`: hold the start for 4 s (100 ms in PSU mode). During a sweep, end the sweep and log `backoff 4s [calib-fail] mid-sweep` |
-| Stuck output | Average Iout within ±0.3 A despite input headroom (buck: average Vin more than 8 V above average Vout; boost: more than 2 V above Vin min), outside manual PWM and a no-MPP backoff. In PSU mode Vout must also be more than 2 V below the setpoint; otherwise the charger must not be holding the charge (for example terminated, in a CV hold or too cold) | After 30 s: release the CV-floor latch, which also clears the backoff. After 2 h: restart the system |
+| Stuck output | Average Iout within ±0.3 A despite input headroom (buck: average Vin more than 8 V above average Vout; boost: more than 2 V above Vin min), outside manual PWM and a no-MPP backoff. In PSU mode Vout must also be more than 2 V below the setpoint and the output not latched off; otherwise the charger must not be holding the charge (for example terminated, in a CV hold or too cold) | After 30 s, not in PSU mode: release the CV-floor latch, which also clears the backoff. After 2 h: restart the system |
 
 The latency watchdog ignores manual PWM, the first 2 s after a calibration, and the first samples after boot. A single
 slow window logs a warning without stopping the converter.

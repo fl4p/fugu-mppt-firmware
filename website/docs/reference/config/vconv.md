@@ -25,6 +25,8 @@ The file accepts the following keys.
 | `vbat_ac_shape` |      | int   | 0       | 0 = sine (inverter), 1 = full-wave \|sin\| (rectifier load), 2 = spiky pulse; other values = sine |
 | `plant_c_in`    | F    | float | 470e-6  | Input capacitance of the plant; the real board's is `converter.conf::c_in`                                                           |
 | `plant_c_out`   | F    | float | 470e-6  | Output capacitance                                                          |
+| `out_d_i0`      | A    | float | 0       | Diode across the output, I = `out_d_i0`·(exp(V/`out_d_vt`) − 1): a dark PV string as the load of a boost, in parallel with `v_bat`/`r_bat`. 0 = off |
+| `out_d_vt`      | V    | float | 1       | Slope voltage of that diode, n·Ns·kT/q (Ns cells in series, ideality n, which can also lump the string's series resistance) |
 | `ring_c`        | F    | float | 0       | Buck switch-node capacitance; 0 = off. Rings with the coil at f = 1/(2π·√(L0·C)) while both switches are off, see [Switch-node ring](#switch-node-ring) |
 | `ring_q`        |      | float | 20      | Quality factor of that ring (amplitude decays as e^(−πf·t/Q)), minimum 0.5  |
 | `ring_v`        | V    | float | 0       | Input voltage at which `ring_c` applies; > 0 makes the node capacitance scale as (`ring_v`/Vin)^`ring_cexp`, 0 = constant |

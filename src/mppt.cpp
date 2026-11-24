@@ -612,6 +612,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     }
 
     psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
+    psuSlewUpVps = std::max(0.f, converterConf.getFloat("psu_slew_up", converter.boost() ? 5.0f : 0.f));
     cIn = converterConf.getFloat("c_in", 1e-3f);
     if (!(cIn >= 0 && cIn <= 20e-3f)) {
         ESP_LOGE("mppt", "converter.conf::c_in %g F invalid (0..0.02), using 1e-3", (double) cIn);

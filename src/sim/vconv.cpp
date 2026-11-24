@@ -505,10 +505,16 @@ void VirtualConverter::stepSeconds(float dt_s, uint32_t pwmFreqFallback) {
 
 // output node: C_out, and the battery behind r_bat (backward Euler); a blocking BF (bflow_model) passes only forward
 float VirtualConverter::outNext(float v, float iOut, float T) const {
-    const float vn = v + (T * iOut) * invCout_;
-    if (!bfModel) return (vn + aOut_ * vbNow_) * inv1pAout_;
+    float vn = v + (T * iOut) * invCout_, k = 0.0f, inv = inv1pAout_;
+    if (outDi0_ > 0.0f) { // output diode, backward Euler linearized at v
+        const float e = std::exp(std::min(v * outInvVt_, 80.0f)), g = outDi0_ * e * outInvVt_;
+        vn += T * invCout_ * (g * v - outDi0_ * (e - 1.0f));
+        k = T * invCout_ * g;
+        inv = 1.0f / (1.0f + aOut_ + k);
+    }
+    if (!bfModel) return (vn + aOut_ * vbNow_) * inv;
     const bool on = bfConducts();
     const float vb = vbNow_ + (on ? 0.0f : bfVf);
-    const float vc = (vn + aOut_ * vb) * inv1pAout_;
-    return on || vc > vb ? vc : vn;
+    const float vc = (vn + aOut_ * vb) * inv;
+    return on || vc > vb ? vc : vn / (1.0f + k);
 }

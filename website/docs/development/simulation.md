@@ -44,6 +44,7 @@ It models these parts:
 
 - A [PV source](#pv-source): a single panel, or a [string with bypass diodes](#pv-string) in the host simulator only
 - Battery as a voltage behind a series resistance, with optional bus ripple (sine, rectified, spiky)
+- An optional diode across the output, such as a dark PV string loading a boost
 - Coil, input and output capacitors
 - Gate timing at LEDC or MCPWM count resolution, dead time, body-diode drop, conduction and switching losses
 - Switch-node ringing while both switches are off
@@ -205,6 +206,7 @@ describes each scenario.
 | `bf-*` | Backflow switch self-test | |
 | `mc-*` | [`measure-coil l0`](../lab/coil-inductance.md#on-device-equivalent-measure-coil) entered from MPPT | |
 | `idle-wake` | Start inhibit while Vin rises | |
+| `psu-boost-dark` | Boost PSU from a battery into a dark PV string: setpoint steps 32 to 80 V with the overshoot, trips and battery current per step | `== STEP`, `== SUMMARY` |
 | `cv-hold-*` | Two converters charging one LFP pack to the top of charge, with one BMS feed | `== CVHOLD` |
 
 Scenarios with a `PASS`/`FAIL` verdict exit with status 1 on `FAIL`.

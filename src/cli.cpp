@@ -959,7 +959,7 @@ static void cmdOta(cmd *c) {
 
     idleProfileHold(true); // full CPU clock for the download
     auto savedMode = g_app.opMode.load();
-    const float savedPsuSetpoint = mppt.getPsuSetpoint();
+    const float savedPsuSetpoint = mppt.getRequestedPsuSetpoint();
     const uint16_t savedManualTarget = mppt.getManualTarget();
     float savedPvIsc, savedPvVoc, savedPvK;
     PvShade savedPvShade;
@@ -2219,6 +2219,8 @@ static void cmdStatus(cmd *) {
     if (std::isfinite(ovLimit) && ovLimit > 0)
         UART_LOG("  OV limit=%.2fV (explicit ovset%s)", ovLimit,
                  p.vbatMaxExplicit ? ", vset locked" : "");
+    else if (g_app.psuMode())
+        UART_LOG("  OV limit=%.2fV (derived from the PSU setpoint)", mppt.computeOvThreshold());
     else
         UART_LOG("  OV limit=derived from Vbat_max%s", p.vbatMaxExplicit ? " (vset locked)" : "");
     UART_LOG("  v_term=%.3fV cv_float=%.3f cv_eoc=%.3f  Cbat=%.1fAh recharge_dod=%.2f",
@@ -2262,7 +2264,7 @@ static void cmdStatus(cmd *) {
         UART_LOG("HS-short: start waits for a clean idle check");
     selftestPrintState();
     if (g_app.psuMode()) {
-        UART_LOG("PSU: vset=%.2fV %s trips=%u", mppt.getPsuSetpoint(),
+        UART_LOG("PSU: vset=%.2fV (ramp %.2fV) %s trips=%u", mppt.getRequestedPsuSetpoint(), mppt.getPsuSetpoint(),
                  mppt.isPsuLatched() ? "LATCHED" : mppt.isPsuEscalated() ? "escalated" : "ok",
                  mppt.getPsuTripCount());
         float isc, voc, k;

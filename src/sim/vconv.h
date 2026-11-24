@@ -214,6 +214,9 @@ public:
         if (fn) { vbatAcShapeFn_ = fn; vbatAcShape_ = -1; oscStep_ = -1.0f; }
     }
     void setPassives(float c_in, float c_out, float l) { cIn_ = c_in; cOut_ = c_out; l_ = l; }
+    // Diode across the output, I = i0 (exp(V / vt) - 1): a dark PV string as a boost load (vt = n Ns kT/q). i0 <= 0: off
+    void setOutDiode(float i0, float vt) { outDi0_ = i0 > 0.0f && vt > 0.0f ? i0 : 0.0f, outInvVt_ = vt > 0.0f ? 1.0f / vt : 0.0f; }
+    [[nodiscard]] float outDiodeI(float v) const { return outDi0_ * (std::exp(std::min(v * outInvVt_, 80.0f)) - 1.0f); }
     void setVin(float v)  { vIn_ = v; }
     void setVout(float v) { vOut_ = vSense_ = v; }
     void setDiodeVf(float v) { diodeVf_ = v; } // body-diode drop (LS and HS) in the dead/off phases
@@ -318,6 +321,7 @@ private:
     float l_    = 50e-6f;
     float diodeVf_ = 0.0f;
     float lK_ = 0.0f, iPk_ = 0.0f;
+    float outDi0_ = 0.0f, outInvVt_ = 0.0f;
 
     // State
     float vIn_   = 0.0f;

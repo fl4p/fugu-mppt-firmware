@@ -125,7 +125,7 @@ These commands enter, inspect, and leave PSU mode:
 
 ```
 psu 24          # enter PSU mode at 24 V
-psu             # print setpoint, trip count, latch state
+psu             # print setpoint, ramp, trip count, latch state
 psu off         # back to MPPT
 ```
 
@@ -151,7 +151,18 @@ The following limits and fault rules apply in PSU mode:
 - Output over-voltage and supply under-voltage trips retry fast. Within 60 s, the first 4 trips retry after 100 ms,
   trips 5–8 use the normal backoff, and the 9th latches the output off (`psu` shows the latch). Other faults use their
   normal backoff. Any mode command (`psu <V>`, `psu off`, `mppt`, `dc`) clears the latch.
+- A higher setpoint, and every start of the converter (also the fast retry after a trip), ramps up from the
+  measured Vout at `converter.conf::psu_slew_up`: 5 V/s in a boost, immediate in a buck. A lower setpoint ramps
+  down at `psu_slew_down` (2 V/s). The OV threshold follows the commanded setpoint, not the ramp.
 - `+N` and `-N` are rejected. Use `psu off` first.
+- The charger's battery logic does not act on the output: the wire-fault guard gets no samples, and the stuck-output
+  watchdog neither releases the charger's voltage pin nor counts while the output is latched off.
+
+The ramp matters at light load. An output with almost no load is an integrator: its capacitors keep whatever charge
+the coil delivers, and a boost cannot take it back. On an immediate step the duty winds up while the capacitors charge,
+and the charge still in flight when Vout reaches the setpoint overshoots it. In the host simulator a boost from 26.6 V
+into 1.2 mF and a dark PV string overshot a step from 32 to 40 V to 41.2 V, the 1.03 × OV threshold. At 5 V/s the
+overshoot stays below 0.2 V up to 70 V.
 
 `config/psu_12v` uses MPPT mode instead, with `forced_pwm=1` and the output voltage set in
 `charger.conf::vout_max`. See [Supported boards](hardware/supported-boards.md#12-v-power-supply).

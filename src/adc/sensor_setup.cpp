@@ -108,6 +108,7 @@ static void configureVirtualConverter() {
     g_vconv.setRing(vc.f("ring_c", 0.0f), vc.f("ring_q", 20.0f));
     g_vconv.setRingNode(vc.f("ring_v", 0.0f), vc.f("ring_cexp", 0.6f), vc.f("ring_ct", 1.0f));
     g_vconv.setDiodeVf(vc.f("diode_vf", 0.0f));
+    g_vconv.setOutDiode(vc.f("out_d_i0", 0.0f), vc.f("out_d_vt", 1.0f));
     g_vconv.setSwitching(vc.f("t_dead", 0.0f), vc.f("t_hs_ext", 0.0f), vc.f("r_hs", 0.0f), vc.f("r_ls", 0.0f),
                          vc.f("t_sw", 0.0f));
     g_vconv.setPwmClk((uint32_t) vc.getLong("pwm_clk", 0));

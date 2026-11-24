@@ -1042,7 +1042,7 @@ static void lfStuckWatchdog() {
     const float psuSetpoint = mppt.getPsuSetpoint();
     bool stuck = headroom && noPower && !g_app.manualPwm() && !mppt.noMppBackoff()
                  && (g_app.psuMode()
-                         ? (std::isfinite(psuSetpoint)
+                         ? (std::isfinite(psuSetpoint) && !mppt.isPsuLatched()
                             && sensors.Vout->ewm.avg.get() < psuSetpoint - 2.0f)
                          : !mppt.charger.chargeHold());
 
@@ -1052,7 +1052,7 @@ static void lfStuckWatchdog() {
     // Stage 1: in-place CV-floor latch release (no reboot). If it cleared a latch, let MPPT climb.
     if (!triedRelease && (nowUs - stuckSinceUs) >= RELEASE_US) {
         triedRelease = true;
-        if (mppt.releaseCvFloorLatch("stuck watchdog")) {
+        if (!g_app.psuMode() && mppt.releaseCvFloorLatch("stuck watchdog")) {
             ESP_LOGW("main", "stuck watchdog: released CV-floor latch in place, retrying");
             return;
         }
@@ -1148,7 +1148,7 @@ static void lfControl() {
                                    && mppt.converter.getCtrlOnPwmCnt() > minAuthorityPwm
                                    && currentShowsAuthority;
         mppt.charger.update(vout, iout, voutAuthority, g_app.psuMode(), mppt.isSweeping());
-        mppt.charger.updateWire(vout, iout, !mppt.converter.disabled());
+        mppt.charger.updateWire(vout, iout, !mppt.converter.disabled() && !g_app.psuMode()); // PSU: Vout is no pack
         lfWireGuard(iout);
     }
     alertTick();
@@ -1421,8 +1421,7 @@ static void loopRTNewData(time_ms nowMs) {
         } else if (!flashOpActive() && wallClockUs() > delayStartUntil) { // start runs from flash
             if (!mppt.startBlockReasonRt()) RT_COLD(
             if (g_app.psuMode()) {
-                mppt.bflow.enable(true);
-                converter.pwmPerturb(1);
+                mppt.psuArm();
                 delayStartUntil = wallClockUs() + 4 * 1000000ULL;
                 ESP_LOGI("mppt", "PSU: arming converter from cold start");
             } else if (!g_app.manualPwm()) {

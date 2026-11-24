@@ -61,7 +61,8 @@ on the board itself and grades the excess power:
 | trip   | excess power ≥ `wire_p_trip`, or still ≥ 1.25 × `wire_p_derate` for 5 minutes while derated | converter stopped until `wire-reset` or reboot |
 
 The ΔR floor keeps normal temperature drift of the copper (about 0.4 %/K) from raising a level at high
-current. Three estimates feed the grading:
+current. In PSU mode the output is not taken for the battery, and the protection gets no samples. Three estimates
+feed the grading:
 
 - **Excess drop per BMS frame.** The output-to-pack voltage drop minus the baseline resistances times
   the present output and battery current, minus a voltage offset, averaged over one minute while
