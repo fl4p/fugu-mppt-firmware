@@ -47,6 +47,13 @@ You can read and change the configuration in these ways:
   at the next boot.
 - A change to `ble.conf` security, passkey, or the device name needs a reboot.
 
+## Number format
+
+Integer keys (pins, channels, counts, modes) accept `0x` (hex) and `0b` (binary) prefixes, and a
+leading `0` makes the value octal: `010` reads as 8, and `08` or `09` fail to parse, so the file
+fails to load. Write integers without leading zeros. Decimal keys (volts, amps, seconds with a
+fraction) are read as plain decimals, so a leading zero does not change them.
+
 ## Table conventions
 
 The tables on the file pages use these conventions:

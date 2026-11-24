@@ -69,9 +69,7 @@ FILE_VAR_OVERRIDES: dict[str, dict[str, str]] = {}
 
 # .conf files read by firmware that the editor does not expose. Their keys are
 # resolved (so they cannot hide an unresolved variable) and then left out.
-IGNORED_CONFS = {
-    'vconv.conf',  # simulated converter (CONFIG_FUGU_WITH_VCONV), bench only; src/adc/vconv.h, sensor_setup.cpp
-}
+IGNORED_CONFS: set[str] = set()
 
 # An anonymous lambda's ConfFile parameter, keyed by the call the lambda is passed
 # to (`callee(first arg`): {rel: {call: conf}}.

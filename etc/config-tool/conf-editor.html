@@ -778,10 +778,10 @@ const META = {
   i2c_scl:{unit:"GPIO",desc:"I2C SCL pin number",type:"int"},
   i2c_freq:{unit:"Hz",desc:"I2C bus clock frequency",type:"int"},
   i2c_hs_freq:{unit:"Hz",desc:"INA226 sample-read clock (esp32s3), 0 = Wire at i2c_freq; above 400 kHz in I2C high-speed mode",type:"int"},
-  i2c_port:{unit:"",desc:"ESP32 I2C controller index (0 or 1)",type:"int"},
-  ina22x_alert:{unit:"GPIO",desc:"INA226 ALERT pin number",type:"int"},
+  i2c_port:{unit:"",desc:"INA226 bus index; only 0 is implemented, any other value fails INA226 init",type:"int"},
+  ina22x_alert:{unit:"GPIO",desc:"INA226 ALERT pin number; required with the ina226 backend (unset fails INA226 init)",type:"int"},
   ina22x_addr:{unit:"",desc:"INA226 I2C address",type:"int"},
-  pwm_freq:{unit:"Hz",desc:"Converter PWM switching frequency",type:"int"},
+  pwm_freq:{unit:"Hz",desc:"Converter PWM switching frequency at boot, 5-500 kHz (exclusive); 0.95 * pwm_freq * coil.conf L0 must lie between 1 and 20 Ω",type:"int"},
   pwm_driver_logic:{unit:"",desc:"Gate driver logic: HiLi or InEn",type:"enum",opts:["HiLi","InEn"]},
   pwm_hi:{unit:"GPIO",desc:"High-side gate driver pin (HiLi mode)",type:"int"},
   pwm_li:{unit:"GPIO",desc:"Low-side gate driver pin (HiLi mode)",type:"int"},
@@ -792,7 +792,7 @@ const META = {
   pwm_deadtime_lh_ns:{unit:"ns",desc:"LS->HS dead-time override (rect-off to ctrl-on at the period wrap); defaults to pwm_deadtime_ns. Reserved out of pwmMax; realized one tick wider",type:"float"},
   pwm_fault_pin:{unit:"GPIO",desc:"GPIO for HW OST brake (MCPWM); 255 = disabled",type:"int"},
   pwm_fault_active_high:{unit:"",desc:"1 if fault asserts high, 0 if low",type:"bool"},
-  pwm_sync_pin:{unit:"GPIO",desc:"Wired-sync pulse pin (WITH_WSYNC, MCPWM): leader out / follower in",type:"int"},
+  pwm_sync_pin:{unit:"GPIO",desc:"Wired-sync pulse pin (CONFIG_FUGU_WITH_WSYNC, MCPWM): leader out / follower in; required when converter.conf sync_role is not none",type:"int"},
   pwm_in:{unit:"GPIO",desc:"Gate driver IN pin (InEn mode)",type:"int"},
   pwm_en:{unit:"GPIO",desc:"Gate driver EN pin (InEn mode)",type:"int"},
   bflow_en:{unit:"GPIO",desc:"Backflow switch enable pin (high = on); 0 = no switch",type:"int"},
@@ -804,7 +804,7 @@ const META = {
   led_WS2812:{unit:"GPIO",desc:"WS2812 status LED data pin",type:"int"},
   led_simple:{unit:"GPIO",desc:"Plain on/off status LED pin",type:"int"},
   fan_pwm:{unit:"GPIO",desc:"Cooling fan PWM pin",type:"int"},
-  adc_fake_freq:{unit:"Hz",desc:"Mock ADC total fake sample rate (all channels)",type:"int"},
+  adc_fake_freq:{unit:"Hz",desc:"Tick rate of the fake mock ADC (every channel is sampled each tick); also the vconv plant's while vconv.conf adc_freq is unset",type:"int"},
   idle_cpu_mhz:{unit:"MHz",desc:"CPU clock while the idle power profile is on (converter off 5 min); a converter start waits until the boot clock is back; skipped until reboot if the control loop loses samples at it; 80, 160 or 240, 0 = keep boot clock",type:"int",opts:["0","80","160","240"]},
   ads_alert:{unit:"GPIO",desc:"ADS1x15 ALERT/RDY pin number",type:"int"},
 
@@ -814,11 +814,11 @@ const META = {
   notch_adaptive:{unit:"",desc:"Auto-tune inverter-ripple notch to the tone measured on Vout",type:"bool"},
   notch_freq:{unit:"Hz",desc:"Notch frequency when not adaptive (2x mains: 100=50Hz, 120=60Hz)",type:"float"},
   notch_q:{unit:"",desc:"Notch quality factor (bandwidth ~ notch_freq/notch_q)",type:"float"},
-  notch_depth:{unit:"dB",desc:"Notch attenuation at its centre (<= 0)",type:"float"},
+  notch_depth:{unit:"dB",desc:"Notch attenuation at its centre, <= 0; a positive value logs a warning and uses -15",type:"float"},
   ripple_filter:{unit:"",desc:"Inverter-ripple filter: notch (narrow biquad), comb (moving average over one ripple period: also attenuates the harmonics, ~5 ms delay) or both",type:"enum",opts:["notch","comb","both"]},
   despike:{unit:"",desc:"Glitch-safe median outlier threshold (mean-dev units): 0=off, ~8 enables. Passes dense load pulses (unbiased current), still clips impulse glitches (only beyond 4 quantization steps). Not applied to the NTC",type:"float"},
-  esp32adc1_sr:{unit:"Hz",desc:"Internal ADC1 continuous-mode raw sample rate",type:"int"},
-  esp32adc1_avg:{unit:"",desc:"Internal ADC1 hardware averaging count per sample",type:"int"},
+  esp32adc1_sr:{unit:"Hz",desc:"Internal ADC1 continuous-mode raw sample rate (required with esp32adc1)",type:"int"},
+  esp32adc1_avg:{unit:"",desc:"Software average of N raw conversions per delivered sample, 1..1023 (required with esp32adc1)",type:"int"},
   esp32adc1_inl:{unit:"",desc:"Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation, all ADC1 channels); calibrate gain/offset with it on",type:"bool"},
   ina22x_resistor:{unit:"Ω",desc:"INA226 current-sense shunt resistance; current range = 81.92 mV / R",type:"float"},
   ina22x_conv_time_us:{unit:"µs",desc:"INA226 per-conversion time (rounded up to nearest device step); lower=faster/noisier",type:"int"},
@@ -829,7 +829,7 @@ const META = {
   lv_max:{unit:"V",desc:"Maximum LV-side voltage before protection cutout (Vout max in buck, Vin max in boost)",type:"float"},
   hv_i_max:{unit:"A",desc:"Maximum HV-side current (Iin max in buck, Iout max in boost)",type:"float"},
   lv_i_max:{unit:"A",desc:"Maximum LV-side current (Iout max in buck, Iin max in boost)",type:"float"},
-  vin_min:{unit:"V",desc:"Minimum input voltage; below this converter stops",type:"float"},
+  vin_min:{unit:"V",desc:"Input-voltage regulation floor, below the Vin max: the Vin controller reduces duty to keep Vin >= vin_min (MPPT/PSU/PV, not manual PWM). Not a trip; the hard supply undervoltage stop is fixed at ~9 V",type:"float"},
   iout_short:{unit:"A",desc:"Output short-circuit current threshold",type:"float"},
   p_max:{unit:"W",desc:"Maximum power; sets thermal derating and the sweep's minimum MPP power (0.2 %)",type:"float"},
   temp_max:{unit:"°C",desc:"Maximum temperature before shutdown",type:"float"},
@@ -856,7 +856,7 @@ const META = {
   fpwm_gate:{unit:"",desc:"Hold forced PWM off until the duty reaches the voltage ratio (bring-up gate)",type:"bool"},
   fpwm_gate_margin:{unit:"",desc:"Duty margin the forced-PWM gate requires on top of the measured ratio",type:"float"},
   fpwm_gate_hold:{unit:"",desc:"Samples of passing duty before the forced-PWM gate engages (ramp held meanwhile)",type:"long"},
-  sync_role:{unit:"",desc:"Wired MCPWM clock sync (WITH_WSYNC): none, leader or follower",type:"enum",opts:["none","leader","follower"]},
+  sync_role:{unit:"",desc:"Wired MCPWM clock sync (CONFIG_FUGU_WITH_WSYNC, MCPWM gate driver): none, leader or follower; another value fails setup, a build without wired sync only warns",type:"enum",opts:["none","leader","follower"]},
   sync_phase_deg:{unit:"deg",desc:"Leader only: pulse offset as an angle (180 = interleave); ignored on follower",type:"float"},
   sync_phase_ns:{unit:"ns",desc:"Leader only: additive trim on sync_phase_deg for wire propagation delay",type:"float"},
   mode:{unit:"",desc:"Operating mode: mppt, psu or pv (solar-array-simulator output)",type:"enum",opts:["mppt","psu","pv"]},
@@ -898,7 +898,7 @@ const META = {
   recharge_vfloor_band:{unit:"V",desc:"Cell-voltage drop below cv_float to release termination (fallback to DoD)",type:"float"},
   vout_offset_max:{unit:"V",desc:"Worst-case Vout-sensor error tolerated during float: how far below the float floor the BMS-driven EOC loop may pull to stop charging a full pack when Vout reads high",type:"float"},
   partial_charge:{unit:"",desc:"SoC fraction to stop at between full charges (Ah-counted from the last termination, held by load-following); 0 = always charge to full",type:"float"},
-  full_charge_interval:{unit:"d",desc:"With partial_charge: charge to full (BMS balancing) at least this often",type:"float"},
+  full_charge_interval:{unit:"d",desc:"With partial_charge or holiday_charge: charge to full (BMS balancing) at least this often, 0 < x < 365",type:"float"},
   balance_interval:{unit:"d",desc:"Top balancing: hold the highest cell at cv_eoc for balance_hold_s at least this often (active balancer); 0 = off",type:"float"},
   balance_hold_s:{unit:"s",desc:"Top balancing: in-band time at cv_eoc that completes a run, summed over sessions (1..86400)",type:"long"},
   balance_delta:{unit:"V",desc:"Top balancing: run completes early once the BMS cell delta (cell_voltages_delta_topic) stays at or below this",type:"float"},
@@ -911,7 +911,7 @@ const META = {
   bat_temp_max:{unit:"°C",desc:"Charge current limit reaches zero here",type:"float"},
 
   // tracker.conf
-  target_duty_cycle:{unit:"",desc:"Fixed duty cycle fraction (0-1 of pwmMaxDriver); if > 0 enters manual PWM mode with hard-fixed duty (no PD control, no MPPT tracking)",type:"float"},
+  target_duty_cycle:{unit:"",desc:"Fixed duty cycle fraction 0..1 of pwmMaxDriver: a value in range (0 included) boots manual PWM at that duty (no PD control, no MPPT; 0 = converter off) and overrides converter.conf mode=psu/pv. Absent or out of range (logged): MPPT",type:"float"},
   sweep_speed:{unit:"",desc:"Global-sweep speed; scales both per-tick cap and limit-tracking gain (default 4.0)",type:"float"},
   sweep_pace:{unit:"",desc:"Largest sweep speed-up where Vin moves slowly with the duty (near Voc, towards the Vin floor), 1..8 (default 4.0; 1 = off, ramp linear in duty); bounded by the sensor filter delay",type:"float"},
   sweep_verify:{unit:"",desc:"Sweep verdict: flag a sweep when a return-pass probe or the settled landing power differs from the sweep's value by more than this fraction (default 0.1); 0 = off",type:"float"},
@@ -942,13 +942,13 @@ const META = {
   idle_interval_ms:{unit:"ms",desc:"Min telemetry point interval while the idle power profile is on (else 20 ms), default 900000 (15 min), max 3600000; at >= 1 s every point carries all fields and is sent unbatched; 0 = unchanged",type:"int"},
 
   // ftp.conf (nvs takes precedence; conf is the fallback)
-  ftp_user:{unit:"",desc:"FTP username for config access over LAN",type:"string"},
-  ftp_pass:{unit:"",desc:"FTP password for config access over LAN",type:"string"},
+  ftp_user:{unit:"",desc:"FTP username; NVS ftp_user wins over this. If either credential is unset in both: user, with the chip ID as password",type:"string"},
+  ftp_pass:{unit:"",desc:"FTP password; NVS ftp_pass wins over this. If either credential is unset in both: the chip ID, with user as username",type:"string"},
 
   // tlscon.conf (CONFIG_FUGU_WITH_TLS_CONSOLE)
   psk_id:{unit:"",desc:"TLS-PSK console identity; the service does not start without psk_id and psk",type:"string"},
-  psk:{unit:"",desc:"TLS-PSK console key, 32-64 hex digits (16-32 bytes); generate one per device",type:"string"},
-  pasv_port:{unit:"",desc:"FTP passive data port of session 1 (session 2: +1)",type:"int"},
+  psk:{unit:"",desc:"TLS-PSK console key, an even number of 32-64 hex digits (16-32 bytes); generate one per device",type:"string"},
+  pasv_port:{unit:"",desc:"FTP passive data port of session 1 (session 2: +1); outside 1024..65534 falls back to 50009",type:"int"},
 
   // http.conf (CONFIG_FUGU_WITH_HTTP_CONF; credentials from ftp)
   port:{unit:"",desc:"TCP port of the HTTP config-file endpoint",type:"int"},
@@ -957,21 +957,21 @@ const META = {
   addr:{unit:"",desc:"LCD I2C address (0 = auto-probe 0x27/0x3F)",type:"int"},
 
   // ble.conf
-  ble_security:{unit:"",desc:"BLE pairing mode: justworks or secure",type:"string"},
-  ble_passkey:{unit:"",desc:"BLE static passkey for secure pairing (0 = none)",type:"int"},
+  ble_security:{unit:"",desc:"BLE pairing: justworks (encrypted, no passkey) or passkey (bond + MITM); any other value (e.g. none) = no pairing and a read-only console. Also applies to Improv",type:"enum",opts:["justworks","passkey","none"]},
+  ble_passkey:{unit:"",desc:"Static passkey for ble_security=passkey",type:"int"},
   pair_window_s:{unit:"s",desc:"New BLE devices can pair only this long after boot or after `ble pair`; 0 = only after `ble pair`; bonded devices always connect",type:"int"},
   idle_adv_ms:{unit:"ms",desc:"Connectable advertising interval while the idle power profile is on, 20..10240, 0 = unchanged (stack default 30-60 ms)",type:"int"},
 
   // wifi.conf
   switch_delay:{unit:"s",desc:"Keep retrying the lost AP (router reboot) before roaming to another network; 0=immediate",type:"int"},
-  improv_offline_s:{unit:"s",desc:"Wi-Fi down this long before Improv over BLE accepts new credentials; 0=only with no network configured; negative=Improv off (no GATT service, read at BLE start)",type:"int"},
+  improv_offline_s:{unit:"s",desc:"Wi-Fi down this long before Improv over BLE is offered; while the BLE pairing window is open, at most 20 s. 0 = only while no network is configured; negative = Improv off (no GATT service). Read when BLE first starts after boot",type:"int"},
 
   // pprof.conf
   sprofiler_hz:{unit:"Hz",desc:"Sampling profiler frequency (needs OpenOCD attached)",type:"int"},
 
   // bsync.conf
   bssid:{unit:"",desc:"Sync AP BSSID aa:bb:cc:dd:ee:ff (same on all devices)",type:"string"},
-  channel:{unit:"",desc:"WiFi channel of the sync AP (used only while unassociated)",type:"int"},
+  channel:{unit:"",desc:"WiFi channel of the sync AP, 1-14 (used only while unassociated)",type:"int"},
   phase_us:{unit:"µs",desc:"Per-device target phase offset on the shared grid",type:"float"},
   kp:{unit:"",desc:"Beacon-sync servo P gain (period-ticks per phase-error-tick)",type:"float"},
   ki:{unit:"1/s",desc:"Beacon-sync servo I gain (steady-state crystal-offset trim)",type:"float"},
@@ -989,6 +989,49 @@ const FILE_META = {
   "tlscon.conf":   { port:{unit:"",desc:"TCP port of the TLS-PSK console (default 992)",type:"int"} },
   "telnet.conf":   { trusted:{unit:"",desc:"Allow all commands over telnet (0 = read-only commands only)",type:"bool"} },
   "converter.conf":{ vout_max:{unit:"V",desc:"Not read (old output voltage limit; now limits.conf lv_max in buck, hv_max in boost)",type:"float"} },
+  "vconv.conf":    {
+    isc:{unit:"A",desc:"PV short-circuit current (vconv pv)",type:"float"},
+    voc:{unit:"V",desc:"PV open-circuit voltage (vconv pv)",type:"float"},
+    pv_k:{unit:"",desc:"V_mpp / Voc (vconv pv)",type:"float"},
+    v_bat:{unit:"V",desc:"Battery sink voltage (v_bat=0, r_bat=1e9 ≈ open output; vconv bat)",type:"float"},
+    r_bat:{unit:"Ω",desc:"Battery series resistance (floor 1 µΩ)",type:"float"},
+    vbat_ac_amp:{unit:"V",desc:"Ripple amplitude (peak) on V_bat; 0 = off",type:"float"},
+    vbat_ac_freq:{unit:"Hz",desc:"Ripple frequency",type:"float"},
+    vbat_ac_shape:{unit:"",desc:"Ripple shape: 0 = sine (inverter), 1 = full-wave |sin| (rectifier load), 2 = spiky pulse; other values = sine",type:"int",opts:["0","1","2"]},
+    c_in:{unit:"F",desc:"Input capacitance",type:"float"},
+    c_out:{unit:"F",desc:"Output capacitance",type:"float"},
+    ring_c:{unit:"F",desc:"Buck switch-node capacitance, rings with the coil while both switches are off; 0 = off",type:"float"},
+    ring_q:{unit:"",desc:"Quality factor of the switch-node ring, minimum 0.5",type:"float"},
+    ring_v:{unit:"V",desc:"Input voltage at which ring_c applies; > 0 scales the node capacitance as (ring_v/Vin)^ring_cexp, 0 = constant",type:"float"},
+    ring_cexp:{unit:"",desc:"Exponent of the ring_v scaling (MOSFET Coss falls with voltage)",type:"float"},
+    ring_ct:{unit:"",desc:"Share of the node capacitance the hard switch edges charge and discharge",type:"float"},
+    diode_vf:{unit:"V",desc:"Body-diode forward drop on both clamps, in the dead time and on the reverse-current return to the input",type:"float"},
+    t_dead:{unit:"s",desc:"Dead time before each rising gate edge; the coil freewheels through a body diode",type:"float"},
+    t_hs_ext:{unit:"s",desc:"High-side on-time extension (turn-off minus turn-on delay)",type:"float"},
+    r_hs:{unit:"Ω",desc:"Resistance in series with the coil while the high side conducts",type:"float"},
+    r_ls:{unit:"Ω",desc:"Resistance in series with the coil while the low side conducts",type:"float"},
+    t_sw:{unit:"s",desc:"High-side turn-off current fall time; the loss is paid from the input",type:"float"},
+    pwm_clk:{unit:"Hz",desc:"Gate-driver timing the PWM shim emulates: 0 = LEDC (80 MHz, power-of-two period), else the MCPWM timer clock (160000000)",type:"int"},
+    bf_model:{unit:"",desc:"1 = backflow switch between output node and battery (off: a 0.7 V diode toward the battery); Vout/Iout then read the battery side",type:"bool"},
+    bf_stuck:{unit:"",desc:"Fault on the bf_model switch: 0 none, 1 stuck open, 2 stuck closed",type:"int",opts:["0","1","2"]},
+    i_unidir:{unit:"",desc:"1 = the Iout channel clips at 0 (one-direction current amplifier): selftest bflow runs its toggle variant, hs_clamp is ignored",type:"bool"},
+    hs_short:{unit:"",desc:"1 = buck high side conducts permanently (with the low side on, the input cap is shorted); 2 = the same and the low side never turns on",type:"int",opts:["0","1","2"]},
+    adc_freq:{unit:"Hz",desc:"Sampling tick; unset = board.conf adc_fake_freq, then 3000",type:"int"},
+    noise_vin:{unit:"V",desc:"Gaussian ADC noise σ on Vin; 0 = deterministic",type:"float"},
+    noise_vout:{unit:"V",desc:"Gaussian ADC noise σ on Vout",type:"float"},
+    noise_iout:{unit:"A",desc:"Gaussian ADC noise σ on Iout",type:"float"},
+    noise_iin:{unit:"A",desc:"Gaussian ADC noise σ on Iin (channel 3)",type:"float"},
+    noise_ntc:{unit:"",desc:"Gaussian ADC noise σ on the NTC channel",type:"float"},
+    ntc_v:{unit:"V",desc:"Constant NTC channel voltage; 0.9 V reads about 1 °C, 1.65 V is 25 °C",type:"float"},
+    sun_day_s:{unit:"s",desc:"Length of the simulated day; 0 = off (static PV), minimum 1",type:"float"},
+    sun_night_s:{unit:"s",desc:"Length of the night after each day; negative = sun_day_s/4",type:"float"},
+    sun_peak:{unit:"",desc:"Clear-sky irradiance at noon, fraction of the isc/voc conditions (clamped to 0..1)",type:"float"},
+    cloud_rate:{unit:"1/min",desc:"Mean cloud starts per minute of clear sky; 0 = no clouds",type:"float"},
+    cloud_depth:{unit:"",desc:"Maximum irradiance dip of a cloud (clamped to 0..1)",type:"float"},
+    cloud_len_s:{unit:"s",desc:"Mean cloud duration (clamped to 1..600)",type:"float"},
+    cloud_edge_s:{unit:"s",desc:"Time constant of the cloud edges",type:"float"},
+    sun_seed:{unit:"",desc:"Cloud random seed; 0 = 1",type:"int"},
+  },
 };
 const META_VOUT_MAX = {unit:"V",desc:"Maximum output voltage",type:"float"};
 
@@ -998,6 +1041,7 @@ const APPLY = {
   "mqtt.conf":"mqtt", "http.conf":"http", "tlscon.conf":"tlscon", "bsync.conf":"bsync",
   "tele.conf":{"":"tele", ble:"live", adv_ms:"ble", idle_interval_ms:"reboot"},
   "ftp.conf":{"":"ftp", ftp_user:"ftp http", ftp_pass:"ftp http"},
+  "telnet.conf":"telnet", "lcd.conf":"lcd",
 };
 // <name>.conf of these services: enabled/log_level are pushed as `svc on|off|log`, which writes and applies
 const SERVICES = ["mqtt","tele","ftp","http","telnet","tlscon","lcd","scope","ble","bsync"];
@@ -1010,7 +1054,13 @@ const SVC_OFF_WARN = {
   ble:"Its Bluetooth console closes.", telnet:"Its telnet console closes.", tlscon:"Its TLS console closes.",
 };
 // extra words for a key's "takes effect" hint
-const APPLY_NOTE = {"ftp.conf:ftp_user":"ignored while credentials are stored in NVS", "ftp.conf:ftp_pass":"ignored while credentials are stored in NVS"};
+const APPLY_NOTE = {"ftp.conf:ftp_user":"ignored while ftp_user is stored in NVS", "ftp.conf:ftp_pass":"ignored while ftp_pass is stored in NVS",
+  "lcd.conf:addr":"only while no display has been found"};
+// vconv.conf is read at boot; these keys also change in RAM with a console command
+for (const [cmd, keys] of [["vconv set", "c_in c_out r_bat vbat_ac_amp vbat_ac_freq vbat_ac_shape diode_vf ring_c ring_q bf_model bf_stuck "+
+    "hs_short i_unidir ntc_v sun_day_s sun_night_s sun_peak cloud_rate cloud_depth cloud_len_s cloud_edge_s sun_seed"],
+    ["vconv pv", "isc voc pv_k"], ["vconv bat", "v_bat"]])
+  for (const k of keys.split(" ")) APPLY_NOTE["vconv.conf:"+k] = `or now with ${cmd}, RAM only`;
 
 // tracker.conf target_duty_cycle set (absent = MPPT; outside [0,1] ignored) boots manual PWM and ignores converter.conf mode
 const DUTY_OVER = {file:"tracker.conf", key:"target_duty_cycle", holds:v=>v!=="" && isFinite(v) && +v>=0 && +v<=1};
@@ -1048,13 +1098,13 @@ const CHAN_RE = /^(hv_v|lv_v|hv_i|lv_i|ntc)_(.+)$/;
 const CHAN_SUFFIX = {
   adc:{unit:"",desc:"ADC backend for this channel",type:"string",opts:ADC_NAMES},
   ch:{unit:"",desc:"ADC channel index (255 = absent)",type:"int"},
-  rh:{unit:"Ω",desc:"Voltage divider upper (high-side) resistor",type:"float"},
-  rl:{unit:"Ω",desc:"Voltage divider lower resistor",type:"float"},
+  rh:{unit:"Ω",desc:"Voltage divider upper (high-side) resistor (voltage channels, required when _ch is set)",type:"float"},
+  rl:{unit:"Ω",desc:"Voltage divider lower resistor (voltage channels, required when _ch is set)",type:"float"},
   factor:{unit:"",desc:"Linear scale factor raw ADC → physical (sign sets direction)",type:"float"},
   midpoint:{unit:"",desc:"Zero/offset midpoint subtracted before scaling",type:"float"},
   filt_len:{unit:"",desc:"Filter window length (samples)",type:"int"},
-  gain:{unit:"",desc:"Per-board gain on top of the divider (voltage channels): V = gain · V_div + offset",type:"float"},
-  offset:{unit:"V",desc:"Per-board offset (voltage channels), see gain",type:"float"},
+  gain:{unit:"",desc:"Per-board gain on top of the divider (voltage channels): V = gain · V_div + offset; 0.5 < gain < 2, else sensor setup fails",type:"float"},
+  offset:{unit:"V",desc:"Per-board offset (voltage channels), see gain; within ±10 V (exclusive), else sensor setup fails",type:"float"},
 };
 
 /* Role keys the firmware no longer reads (src/conv_side.h): sensor.conf vin_/vout_/iin_/iout_
@@ -1098,7 +1148,7 @@ const ADD_KEY_HINTS = { "sensor.conf": ["hv_v","lv_v","hv_i","lv_i"].flatMap(c =
 
 /* Every key the firmware actually reads per file (mined from src/), so the
    editor can surface fields even when the uploaded .conf omits them.
-   wifi.conf is pattern-based (ssid_<name>/_psk) so it has no fixed list.
+   wifi.conf is pattern-based (any key starting with ssid, <key>_psk its passphrase) so it has no fixed list.
    Run `python3 etc/config-tool/scrape_conf_keys.py --write` to refresh. */
 // SCRAPER:BEGIN FILE_KEYS
 const FILE_KEYS = {
@@ -1142,6 +1192,11 @@ const FILE_KEYS = {
   "ble.conf":["ble_passkey","ble_security","enabled","idle_adv_ms","log_level","pair_window_s"],
   "pprof.conf":["sprofiler_hz"],
   "wifi.conf":["improv_offline_s","switch_delay"],
+  "vconv.conf":["adc_freq","bf_model","bf_stuck","c_in","c_out","cloud_depth","cloud_edge_s",
+    "cloud_len_s","cloud_rate","diode_vf","hs_short","i_unidir","isc","noise_iin","noise_iout",
+    "noise_ntc","noise_vin","noise_vout","ntc_v","pv_k","pwm_clk","r_bat","r_hs","r_ls","ring_c",
+    "ring_cexp","ring_ct","ring_q","ring_v","sun_day_s","sun_night_s","sun_peak","sun_seed",
+    "t_dead","t_hs_ext","t_sw","v_bat","vbat_ac_amp","vbat_ac_freq","vbat_ac_shape","voc"],
 };
 // SCRAPER:END FILE_KEYS
 
@@ -1155,12 +1210,12 @@ const TYPE_KEYS = {
     "led_WS2812","led_simple","lv_pgood","notch_adaptive","ntc_ch","pv_substrings","pwm_en",
     "pwm_fault_active_high","pwm_fault_pin","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin",
     "rect_cal_auto","rect_offset_cal","reverse_current_paranoia","scan_trigger","skip_assert",
-    "trusted","wire_protect"]),
+    "trusted","wire_protect","bf_model","bf_stuck","hs_short","i_unidir","vbat_ac_shape"]),
   long: new Set(["adc_fake_freq","adv_ms","balance_hold_s","binary","ble","ble_passkey",
     "cv_hold_max_s","esp32adc1_avg","esp32adc1_sr","fpwm_gate_hold","holiday_days","i2c_freq",
     "i2c_hs_freq","i2c_scl","idle_adv_ms","idle_cpu_mhz","idle_interval_ms","improv_offline_s",
     "ina22x_conv_time_us","pair_window_s","pasv_port","port","pwm_freq","scan_interval",
-    "sprofiler_hz","switch_delay","tail_hold_s"]),
+    "sprofiler_hz","switch_delay","tail_hold_s","adc_freq","pwm_clk","sun_seed"]),
   float: new Set(["L0","balance_delta","balance_interval","bat_c","bat_temp_derate",
     "bat_temp_max","bat_temp_min","boot_refresh_ns","bw","c_in","ctrl_iin_kd","ctrl_iin_kp",
     "ctrl_iin_td","ctrl_iout_kd","ctrl_iout_kp","ctrl_iout_td","ctrl_power_kd","ctrl_power_kp",
@@ -1174,7 +1229,10 @@ const TYPE_KEYS = {
     "rect_offset_ns","sweep_pace","sweep_speed","sweep_verify","sync_phase_deg","sync_phase_ns",
     "tail_c_rate","target_duty_cycle","temp_derate","temp_max","vin_min","vout_max",
     "vout_max_fallback","vout_offset_max","wire_dr_min","wire_p_derate","wire_p_trip",
-    "wire_p_warn","wire_r_max"]),
+    "wire_p_warn","wire_r_max","scan_near_v","c_out","cloud_depth","cloud_edge_s","cloud_len_s",
+    "cloud_rate","diode_vf","isc","noise_iin","noise_iout","noise_ntc","noise_vin","noise_vout","ntc_v",
+    "r_bat","r_hs","r_ls","ring_c","ring_cexp","ring_ct","ring_q","ring_v","sun_day_s","sun_night_s",
+    "sun_peak","t_dead","t_hs_ext","t_sw","v_bat","vbat_ac_amp","vbat_ac_freq","voc"]),
   string: new Set(["adc","bat_charge_topic","bat_temp_topic","bat_voltage_topic","ble_security",
     "broker_uri","bssid","ca_file","cell_voltages_delta_topic","cell_voltages_max_topic",
     "ftp_pass","ftp_user","ibat_lim_topic","ibat_topic","influxdb_host","log_level","mcu","mode",
@@ -1206,7 +1264,7 @@ const DEFAULTS = {
   // coil.conf
   "rect_cal_auto":"1","rect_offset_cal":"1","rect_offset_drv":"\"\"","rect_offset_ns":"0.0",
   // converter.conf
-  "c_in":"0.001","ctrl_iin_kd":"200","ctrl_iin_kp":"100","ctrl_iout_kd":"400",
+  "ctrl_iin_kd":"200","ctrl_iin_kp":"100","ctrl_iout_kd":"400",
   "ctrl_iout_kp":"200","ctrl_power_kd":"5","ctrl_power_kp":"20","ctrl_vin_kd":"-200",
   "ctrl_vin_kp":"-100","ctrl_vout_kd":"12000","ctrl_vout_kp":"1500","forced_pwm":"0",
   "fpwm_gate":"1","fpwm_gate_hold":"192","fpwm_gate_margin":"0.01","mode":"\"\"",
@@ -1222,7 +1280,7 @@ const DEFAULTS = {
   "tail_hold_s":"180","vout_offset_max":"0.6",
   // tracker.conf
   "pv_substrings":"0","scan_interval":"300","scan_trigger":"1","sweep_pace":"4.0",
-  "sweep_speed":"4.0","sweep_verify":"0.1",
+  "sweep_speed":"4.0","sweep_verify":"0.1","scan_near_v":"2.0",
   // mqtt.conf
   "bat_charge_topic":"\"\"","bat_temp_topic":"\"\"","bat_voltage_topic":"\"\"",
   "broker_uri":"\"\"","ca_file":"\"\"","cell_voltages_delta_topic":"\"\"",
@@ -1247,12 +1305,21 @@ const DEFAULTS = {
   "sprofiler_hz":"0",
   // wifi.conf
   "improv_offline_s":"600","switch_delay":"30",
+  // vconv.conf
+  "bf_model":"0","bf_stuck":"0","c_out":"0.00047","cloud_depth":"0.7","cloud_edge_s":"3.0",
+  "cloud_len_s":"20.0","cloud_rate":"0.0","diode_vf":"0.0","hs_short":"0","i_unidir":"0",
+  "isc":"8.0","noise_iin":"0.0","noise_iout":"0.0","noise_ntc":"0.0","noise_vin":"0.0",
+  "noise_vout":"0.0","pwm_clk":"0","r_bat":"0.05","r_hs":"0.0","r_ls":"0.0","ring_c":"0.0",
+  "ring_cexp":"0.6","ring_ct":"1.0","ring_q":"20.0","ring_v":"0.0","sun_day_s":"0.0",
+  "sun_night_s":"-1.0","sun_peak":"1.0","sun_seed":"1","t_dead":"0.0","t_hs_ext":"0.0","t_sw":"0.0",
+  "v_bat":"28.0","vbat_ac_amp":"0.0","vbat_ac_freq":"100.0","vbat_ac_shape":"0","voc":"40.0",
 };
 // SCRAPER:END DEFAULTS
 const CHAN_SUFFIX_DEFAULT = { ch:"255", factor:"1.0", midpoint:"0.0", filt_len:"10", gain:"1.0", offset:"0.0" };
 
 // defaults the flat DEFAULTS table can't hold: per-file values, and a "" read whose effect is a named mode
-const FILE_DEFAULTS = {"http.conf|port":"80", "tlscon.conf|port":"992", "converter.conf|mode":"\"mppt\""};
+const FILE_DEFAULTS = {"http.conf|port":"80", "tlscon.conf|port":"992", "converter.conf|mode":"\"mppt\"",
+  "converter.conf|c_in":"0.001", "vconv.conf|c_in":"0.00047", "vconv.conf|ntc_v":"0.9"};
 function lookupDefault(file, key){
   const base = file.split("/").pop(), fd = FILE_DEFAULTS[base+"|"+key];
   if (fd!==undefined) return fd;
@@ -1267,7 +1334,7 @@ function lookupType(key){
   for (const t of ["byte","long","float","string"]) if (TYPE_KEYS[t].has(key)) return t;
   const m = key.match(CHAN_RE);
   if (m && CHAN_SUFFIX_TYPE[m[2]]) return CHAN_SUFFIX_TYPE[m[2]];
-  if (/^ssid_.+$/.test(key)) return "string";
+  if (/^ssid/.test(key)) return "string";
   return "";
 }
 
@@ -1284,8 +1351,8 @@ function lookupMeta(file, key, inlineComment) {
     const s = CHAN_SUFFIX[m[2]];
     return { unit:s.unit, desc:CHAN_PREFIX[m[1]] + ": " + s.desc, type:s.type, opts:s.opts };
   }
-  if (/^ssid_.+_psk$/.test(key)) return {unit:"",desc:"WiFi password for the matching ssid_*",type:"string"};
-  if (/^ssid_.+$/.test(key))    return {unit:"",desc:"WiFi network SSID to connect to",type:"string"};
+  if (/^ssid.*_psk$/.test(key)) return {unit:"",desc:"WiFi password of the network whose key is this one without _psk",type:"string"};
+  if (/^ssid/.test(key))        return {unit:"",desc:"WiFi network SSID to connect to (any key starting with ssid)",type:"string"};
   if (inlineComment) return {unit:"", desc:inlineComment, type:"", fromComment:true};
   return null;
 }

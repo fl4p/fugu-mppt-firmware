@@ -44,6 +44,10 @@ test('wifi ssid pattern returns string meta; *_psk is the password variant', asy
   const { window } = await loadEditor();
   assert.equal(window.lookupMeta('conf/wifi.conf', 'ssid_home',     '').type, 'string');
   assert.match(window.lookupMeta('conf/wifi.conf', 'ssid_home_psk', '').desc, /password/i);
+  // telemetry.cpp: any key starting with ssid is a network, <key>_psk its password
+  assert.match(window.lookupMeta('conf/wifi.conf', 'ssidHome', '').desc, /SSID/);
+  assert.match(window.lookupMeta('conf/wifi.conf', 'ssid2_psk', '').desc, /password/i);
+  assert.equal(window.lookupType('ssid2'), 'string');
 });
 
 test('unknown key with an inline comment falls back to the comment as description', async () => {
@@ -99,4 +103,17 @@ test('board.conf backflow keys have meta', async () => {
   assert.equal(window.lookupMeta('conf/board.conf', 'bflow_sd', '').unit, 'GPIO');
   assert.equal(window.lookupType('bflow_en'), 'byte');
   assert.equal(window.lookupDefault('conf/board.conf', 'bflow_sd'), '0');
+});
+
+test('vconv.conf: per-file c_in meta/default, runtime-settable keys note the console command', async () => {
+  const { window } = await loadEditor();
+  assert.match(window.lookupMeta('conf/vconv.conf', 'c_in', '').desc, /^Input capacitance$/);
+  assert.equal(window.lookupDefault('conf/vconv.conf', 'c_in'), '0.00047');
+  assert.equal(window.lookupDefault('conf/converter.conf', 'c_in'), '0.001');
+  assert.equal(window.applyOf('vconv.conf', 'ring_c'), 'reboot');
+  assert.match(window.eval('APPLY_NOTE')['vconv.conf:ring_c'], /vconv set/);
+  assert.equal(window.eval('APPLY_NOTE')['vconv.conf:t_dead'], undefined);
+  assert.deepEqual([...window.applyOf('telnet.conf', 'trusted')], ['telnet']);
+  assert.deepEqual([...window.applyOf('lcd.conf', 'addr')], ['lcd']);
+  assert.equal(window.applyOf('ble.conf', 'ble_security'), 'reboot');
 });

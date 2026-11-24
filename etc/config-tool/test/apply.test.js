@@ -97,7 +97,7 @@ test('the review shows when each change takes effect, and a summary', async () =
     'mqtt.conf:broker_uri': 'after restarting mqtt',
     'tele.conf:enabled': 'now',
     'tele.conf:ble': 'when next used',
-    'ftp.conf:ftp_user': 'after restarting ftp and http (ignored while credentials are stored in NVS)',
+    'ftp.conf:ftp_user': 'after restarting ftp and http (ignored while ftp_user is stored in NVS)',
   });
   assert.equal(window.document.getElementById('review-when').textContent,
     'Takes effect after: restarting mqtt, restarting ftp, restarting http, reboot');
