@@ -98,6 +98,35 @@ test('a coil run shows its progress below the buttons', async ({ page }) => {
   await shot(page, 'tests-coil-progress.png');
 });
 
+test('a coil run on a ringing board: faded raw dots in step order, then the ring-fit line and its caption', async ({ page }) => {
+  test.setTimeout(90_000);
+  const conf = { 'coil.conf': { L0: '7.4e-05', rect_offset_ns: '500' }, 'charger.conf': { vout_max: '28.8' } };
+  const apart = async c => {                                   // the horizontal lines' labels do not overlap
+    const b = await c.locator('.tst-chart text.res-lab, .tst-chart text.ref-lab, .tst-chart text.hint-lab').evaluateAll(ts => ts.map(t => t.getBoundingClientRect().toJSON()));
+    expect(b.length).toBeGreaterThan(1);
+    for (const [i, r] of b.entries()) for (const l of b.slice(i + 1))
+      expect(r.left >= l.right || l.left >= r.right || r.top >= l.bottom || l.top >= r.bottom, JSON.stringify([r, l])).toBe(true);
+  };
+  for (const [w, tag] of [[1280, 'desktop'], [390, '390']]) {
+    await page.setViewportSize({ width: w, height: 1100 });
+    await openTests(page, { rowMs: 80, coilRing: 'ring', conf });
+    const c = card(page, 'coil');
+    await c.locator('.tst-x').click();
+    await c.locator('.run').click();
+    await expect.poll(() => c.locator('circle.pt.raw').count()).toBeGreaterThan(24);
+    await expect(c.locator('text.hint-lab')).toHaveText('ring-corrected L at the end');
+    await expect(c.locator('path.step')).toHaveCount(1);
+    await expect(c.locator('line.res')).toHaveCount(0);
+    await apart(c);
+    if (SHOTS) await c.screenshot({ path: path.join(SHOTS, `coil-ring-running-${tag}.png`) });
+    await expect(c.locator('text.res-lab')).toHaveText('L = 73.88 µH (ring fit)', { timeout: 20_000 });
+    await expect(c.locator('.tst-cap')).toHaveText('Dots: raw per-step values, they swing with the DCM ring (310 kHz); the line is the ring-corrected result.');
+    await expect(c.locator('text.hint-lab')).toHaveCount(0);
+    await apart(c);
+    if (SHOTS) await c.screenshot({ path: path.join(SHOTS, `coil-ring-result-${tag}.png`) });
+  }
+});
+
 test('an open sheet is the only scroller: the page behind it does not scroll', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 700 });
   await openTests(page);

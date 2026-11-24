@@ -809,14 +809,21 @@ amber.
   each new line). L0: a point per DCM row with a finite L, x = Ipk =
   (Vin − Vout)·D / (fsw·L_row) (coil_fit.h's Ipk·L over L; `fsw` from the
   `measure-coil L0: fsw=` header), y = L in µH, grey below the `Iout>=`
-  floor of the result line; the bins of `measure-coil: L(Ipk),
+  floor of the result line; the rows small and faded (`pt raw`), joined in
+  H order by a faint line (`step`, broken at points off the axis) so the
+  DCM ring's sawtooth shows; the bins of `measure-coil: L(Ipk),
   +-noise/offsets: lo-hiA <L>uH+-<se>/<sys>% | …` as a point at the bin
   centre, a horizontal line over lo..hi and two error bars (thin ±se, wide
   ±(se+sys)); the slope of `measure-coil: L(Ipk) slope <k> … over lo-hi A …`
   as a dashed line L = Lc·(1 + k·(I − Ic)) through the bins' mean (Ic, Lc);
-  horizontal lines for the result `L = …` (green), coil.conf L0 (muted, the
+  horizontal lines for the result (green, bold, "L = … (ring fit)" or
+  "L = … (median, ring not resolved)"; before it "ring-corrected L at the
+  end" while the run goes on), coil.conf L0 (muted, the
   card's current L0) and 0.95·L0 (dashed, "model (0.95·L0)",
-  `InductivityDcBias`); under the chart "L drops ≤ <x> %/A up to <hi> A" or
+  `InductivityDcBias`), each label above its line on the right, else left,
+  else below, clear of the labels before it; after a ring fit the caption
+  "Dots: raw per-step values, they swing with the DCM ring (<f> kHz); the
+  line is the ring-corrected result."; under the chart "L drops ≤ <x> %/A up to <hi> A" or
   "No drop resolved up to <hi> A". LS: Iout over the LS count, grey in CCM,
   vertical lines at `ideal_LS` (solid) and `auto_LS` (dashed), the `peak LS`
   point green with its label. Line labels sit on top with a background

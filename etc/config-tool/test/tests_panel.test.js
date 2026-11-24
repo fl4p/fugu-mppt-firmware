@@ -950,7 +950,7 @@ test('coil chart: drawn live in the card, the result, coil.conf L0 and the 0.95�
   assert.equal(svg.getAttribute('data-points'), '23');
   assert.equal(fig.querySelectorAll('circle.pt').length + fig.querySelectorAll('circle.pt.gr').length >= 23, true);
   const labs = [...svg.querySelectorAll('text')].map(t => t.textContent);
-  assert.ok(labs.includes('L = 50.34 µH'));
+  assert.ok(labs.includes('L = 50.34 µH (ring fit)'));
   assert.ok(labs.includes('coil.conf L0 50.9 µH'));
   assert.ok(labs.includes('model (0.95·L0)'));
   assert.ok(labs.includes('A') || labs.some(t => / A$/.test(t)), 'Ipk axis in A');
@@ -962,7 +962,8 @@ test('coil chart: drawn live in the card, the result, coil.conf L0 and the 0.95�
   assert.equal(svg.querySelectorAll('.inc').length, 1);
   assert.ok(labs.includes('incremental (DC bias)'));
   assert.equal(fig.querySelector('.tst-verdict').textContent, 'L drops ≤ 2.2 %/A up to 2.2 A; incremental L at 2.2 A: 48.9\u00a0µH (−4.8\u00a0% vs 0 A)');
-  assert.match(svg.getAttribute('aria-label'), /^Inductance over peak coil current, 23 points, L = 50\.34 µH, coil\.conf L0 50\.9 µH; L drops/);
+  assert.match(svg.getAttribute('aria-label'), /^Inductance over peak coil current, 23 points, L = 50\.34 µH \(ring fit\), coil\.conf L0 50\.9 µH; L drops/);
+  assert.equal(fig.querySelector('.tst-cap').textContent, 'Dots: raw per-step values, they swing with the DCM ring (310 kHz); the line is the ring-corrected result.');
   assert.ok(!svg.outerHTML.includes('NaN'));
   fold(window, 'coil');
   assert.equal(seen(fig), false, 'folds with the card');
@@ -976,6 +977,63 @@ test('coil chart: drawn live in the card, the result, coil.conf L0 and the 0.95�
   assert.ok(ll.some(t => / ct$/.test(t)));
   assert.equal(card(window, 'coills').querySelector('.tst-verdict'), null);
   assert.ok(!ls.outerHTML.includes('NaN'));
+});
+
+test('coil chart with DCM ringing: faded raw dots joined in step order, the ring-fit or median result, caption, labels apart', async () => {
+  const { window } = await loadEditor();
+  const { RING_ROWS, ringRun } = require('./_tst_firmware');
+  const head = ['measure-coil L0: fsw=39000 pwmMax=4103 band 374..1634 step 20  Vin=73.07 Vout=26.78 M=0.366', '      H      D    Vin   Vout   Iout mode    L_uH'];
+  const draw = (lines, l0 = 0) => { const fig = window.document.createElement('figure'); window.tstCoilChart(fig, lines, 520, l0); return fig; };
+  const xy = e => [+e.getAttribute('cx'), +e.getAttribute('cy')];
+  const verts = fig => fig.querySelector('path.step').getAttribute('d').match(/[ML][\d.-]+ [\d.-]+/g).map(v => v.slice(1).split(' ').map(Number));
+  const texts = fig => [...fig.querySelectorAll('svg text')].map(t => t.textContent);
+
+  let fig = draw([...head, ...RING_ROWS]);                         // live, the board's rows so far
+  const dots = [...fig.querySelectorAll('circle.pt')];
+  assert.equal(dots.length, 13);
+  assert.ok(dots.every(c => c.classList.contains('raw')), 'raw rows are faded dots');
+  assert.deepEqual(verts(fig), dots.map(xy), 'the step line joins the dots in H order');
+  const xs = dots.map(c => +c.getAttribute('cx'));
+  assert.ok(xs.some((x, i) => i && x < xs[i - 1]), 'Ipk goes back within a ring cycle: H order is not x order');
+  fig = draw([...head, ...[...RING_ROWS].reverse()]);
+  assert.deepEqual(verts(fig), [...fig.querySelectorAll('circle.pt')].map(xy).reverse(), 'sorted by H, not by arrival');
+  assert.equal(fig.querySelector('.res'), null, 'no result line while the run goes on');
+  assert.ok(texts(fig).includes('ring-corrected L at the end'));
+  assert.equal(fig.querySelector('.tst-cap'), null);
+  fig = draw([...head, ...RING_ROWS, 'measure-coil: only 2 DCM pts above 0.40 A; widen band or wait for sun']);
+  assert.ok(!texts(fig).includes('ring-corrected L at the end'), 'no hint once the run ended without a value');
+
+  const ring = ringRun();
+  fig = draw(ring, 7.4e-5);
+  assert.equal(fig.querySelector('svg').getAttribute('data-points'), '45');
+  assert.equal(fig.querySelectorAll('circle.pt.raw').length, 42, 'grey rows outside the fitted rows\' range are off the axis');
+  assert.equal(fig.querySelectorAll('circle.pt.raw.gr').length, 7, 'grey below the fit floor');
+  assert.deepEqual(verts(fig), [...fig.querySelectorAll('circle.pt')].map(xy), 'the step line starts at the first point on the axis');
+  assert.equal(fig.querySelectorAll('.res').length, 1);
+  const rl = fig.querySelector('text.res-lab');
+  assert.equal(rl.textContent, 'L = 73.88 µH (ring fit)');
+  assert.ok(Math.abs(+rl.getAttribute('y') + 4 - +fig.querySelector('line.res').getAttribute('y1')) < 0.2, 'label on its line');
+  assert.ok(!texts(fig).includes('ring-corrected L at the end'));
+  assert.equal(fig.querySelector('.tst-cap').textContent, 'Dots: raw per-step values, they swing with the DCM ring (310 kHz); the line is the ring-corrected result.');
+  assert.ok(fig.querySelector('.tst-cap').compareDocumentPosition(fig.querySelector('.tst-verdict')) & window.Node.DOCUMENT_POSITION_FOLLOWING);
+  assert.match(fig.querySelector('svg').getAttribute('aria-label'), /, L = 73\.88 µH \(ring fit\), coil\.conf L0 74 µH;/);
+  const box = t => [t.getAttribute('text-anchor'), +t.getAttribute('y')];
+  const cl = [...fig.querySelectorAll('text.ref-lab')].find(t => t.textContent === 'coil.conf L0 74 µH');
+  const [a1, y1] = box(rl), [a2, y2] = box(cl);
+  assert.ok(a1 !== a2 || Math.abs(y1 - y2) >= 13, 'L and coil.conf L0 0.2 % apart: labels do not overlap');
+  const right = [...fig.querySelectorAll('text.res-lab, text.ref-lab')].filter(t => t.getAttribute('text-anchor') === 'end').map(t => +t.getAttribute('y'));
+  assert.ok(right.every((y, i) => right.every((z, j) => i === j || Math.abs(y - z) >= 13)));
+  assert.equal(fig.querySelectorAll('.bpt').length, 3); assert.equal(fig.querySelectorAll('.fit').length, 1); assert.equal(fig.querySelectorAll('.inc').length, 1);
+  assert.ok(texts(fig).includes('model (0.95·L0)') && texts(fig).includes('incremental (DC bias)'));
+  assert.ok(!fig.outerHTML.includes('NaN'));
+
+  fig = draw(ringRun({ fit: 'median' }));
+  assert.equal(fig.querySelector('text.res-lab').textContent, 'L = 73.93 µH (median, ring not resolved)');
+  assert.equal(fig.querySelector('.tst-cap'), null, 'no ring caption without a ring fit');
+  assert.match(fig.querySelector('svg').getAttribute('aria-label'), /L = 73\.93 µH \(median, ring not resolved\)/);
+  const p = window.parseCoilPlot(ring);
+  assert.deepEqual([p.fit, p.ring, p.floor, p.end], ['ring', 310, 0.37, true]);
+  assert.deepEqual([...p.pts.slice(0, 3).map(q => q.h)], [374, 394, 414]);
 });
 
 test('measure-coil link check after a timeout uses the status line', async () => {

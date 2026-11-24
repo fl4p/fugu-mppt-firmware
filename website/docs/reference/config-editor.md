@@ -494,8 +494,11 @@ Both coil entries draw their sweep as the rows arrive, with the device output fo
 
 - **Coil inductance (L0)** plots the inductance of each DCM row over the coil's peak current,
   Ipk = (Vin − Vout)·D / (fsw·L) with the row's own L, the formula the firmware's fit uses. Rows below the fit's
-  current floor are grey. Once the run ends the chart adds the fit: its current bins as points with error bars (thin:
-  noise, wide: offset bounds), the fitted slope as a dashed line over its range, the result "L = …", the device's
+  current floor are grey. The raw rows are small faded dots joined in step order by a faint line: on a board with
+  DCM switch-node ringing each duty step catches the ring at another phase, so they swing ±10 % or more in a sawtooth
+  that the firmware's ring fit corrects. Once the run ends the chart adds the fit: its current bins as points with
+  error bars (thin: noise, wide: offset bounds), the fitted slope as a dashed line over its range, the result as a bold
+  line "L = … (ring fit)" or "L = … (median, ring not resolved)", the device's
   `coil.conf` L0 and, dashed, the converter model's 0.95·L0 (the fixed DC-bias allowance). The measured L is the
   secant inductance over 0…Ipk; when the fit resolves a drop the chart also draws the incremental inductance a
   datasheet DC-bias curve shows, L_inc = L(0)·(1 + 2k·I) from the fitted slope k

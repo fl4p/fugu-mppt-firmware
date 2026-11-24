@@ -37,6 +37,47 @@ function l0Rows() {
   return [...rows, '  entered CCM; stopping'];
 }
 
+// An L0 run on a board with DCM switch-node ringing: RING_ROWS as a board printed them (each duty step catches the
+// ring at another phase, so L swings ±8-15 % in a sawtooth), continued to Ipk 4.5 A, then the fit's lines.
+const RING_ROWS = [
+  '    374  0.091  73.07  26.78  0.221  DCM   60.95', '    394  0.096  73.06  26.79  0.235  DCM   63.43',
+  '    414  0.101  73.05  26.78  0.242  DCM   68.10', '    434  0.106  73.02  26.78  0.249  DCM   72.56',
+  '    454  0.111  73.02  26.79  0.258  DCM   76.66', '    474  0.116  73.00  26.79  0.263  DCM   81.86',
+  '    494  0.120  72.98  26.79  0.274  DCM   85.22', '    514  0.125  72.95  26.78  0.285  DCM   88.91',
+  '    534  0.130  72.86  26.78  0.310  DCM   87.83', '    554  0.135  72.69  26.78  0.352  DCM   82.84',
+  '    574  0.140  72.35  26.77  0.444  DCM   69.52', '    594  0.145  72.09  26.79  0.503  DCM   65.12',
+  '    614  0.150  71.99  26.78  0.530  DCM   65.83'];
+function ringRun({ fit = 'ring' } = {}) {
+  const fsw = 39000, Lt = i => 76 * (1 - 0.008 * i), rows = [...RING_ROWS], pts = [];
+  for (const r of RING_ROWS) { const [, D, vi, vo, io, , L] = r.trim().split(/\s+/).map(Number); pts.push({ x: (vi - vo) * D / (fsw * L * 1e-6), io, L }); }
+  let last = '';
+  for (let i = 13; i < 64; i++) {
+    const H = 374 + 20 * i, D = H / 4103, ph = ((i - 11) % 12) / 12, saw = ph < 8 / 12 ? -1 + 2 * ph * 12 / 8 : 1 - 2 * (ph - 8 / 12) * 3;
+    const vo = 26.78 + 0.01 * Math.sin(i * 1.7);
+    let vi = 72, L = 0, io = 0.53;
+    for (let k = 0; k < 3; k++) {
+      L = Lt((vi - vo) * D / (fsw * Lt(1) * 1e-6)) * (1 + 0.15 * Math.exp(-(i - 13) / 45) * saw);
+      io = (vi - vo) * vi * D * D / (2 * vo * fsw * L * 1e-6); vi = 72 - 0.6 * (io - 0.53);
+    }
+    const x = (vi - vo) * D / (fsw * L * 1e-6);
+    rows.push(`  ${String(H).padStart(5)} ${D.toFixed(3).padStart(6)} ${vi.toFixed(2).padStart(6)} ${vo.toFixed(2).padStart(6)} ${io.toFixed(3).padStart(6)}  DCM ${L.toFixed(2).padStart(7)}`);
+    pts.push({ x, io, L });
+    if (x > 4.5) { last = `  Ipk ${x.toFixed(2)} > 4.50; stopping`; break; }
+  }
+  const floor = Math.max(0.15, 0.2 * Math.max(...pts.map(q => q.io))), use = pts.filter(q => q.io >= floor);
+  const lo = Math.min(...use.map(q => q.x)), hi = Math.max(...use.map(q => q.x)), e = [0, 1, 2, 3].map(j => lo + (hi - lo) * j / 3);
+  const bins = [0, 1, 2].map(j => `${e[j].toFixed(1)}-${e[j + 1].toFixed(1)}A ${Lt((e[j] + e[j + 1]) / 2).toFixed(2)}uH+-0.6/1.2%`).join(' | ');
+  const L = Lt(use.reduce((a, q) => a + q.x, 0) / use.length).toFixed(2), med = [...use].sort((a, b) => a.L - b.L)[use.length >> 1].L.toFixed(2);
+  const l0 = ((fit === 'ring' ? L : med) * 1e-6).toExponential(6).replace(/e-(\d)$/, 'e-0$1');
+  return ['measure-coil L0: fsw=39000 pwmMax=4103 band 374..1634 step 20  Vin=73.07 Vout=26.78 M=0.366',
+    '      H      D    Vin   Vout   Iout mode    L_uH', ...rows, last,
+    `measure-coil: L(Ipk), +-noise/offsets: ${bins}`,
+    `measure-coil: L(Ipk) slope -0.80 +-0.40 %/A over ${lo.toFixed(1)}-${hi.toFixed(1)} A, Iout/on-time offsets add up to +-0.60: coil -1.80..+0.00 %/A, drop <= 1.8 %/A`,
+    fit === 'ring' ? `measure-coil: L = ${L} uH  (ring fit, ${use.length} DCM pts, Iout>=${floor.toFixed(2)}A, +-0.6% noise +-1.2% syst; ring 310 kHz = ${(1e9 / (39.478418 * 310e3 ** 2 * L * 1e-6)).toFixed(1)} nF node C, ripple +-14%, 3.4 periods; median of points ${med} uH)`
+      : `measure-coil: L = ${med} uH  (median of ${use.length} DCM pts, Iout>=${floor.toFixed(2)}A; ring not resolved: no periodic term, expect up to +-5%)`,
+    'measure-coil: Iout zero +0.003/+0.004 A (off, before/after), subtracted', `  -> coil.conf L0=${l0}`];
+}
+
 // LS sweep rows: Iout peaks near 151 ct, the sweep stops past the peak
 function lsRows() {
   const rows = [];
@@ -180,6 +221,7 @@ function firmware(host, opts = {}) {
       s('OK: ' + cmd);
       const apply = a[a.length - 1] === 'apply';
       const lines = opts.coilFail ? ['measure-coil: need Vin>Vout+1 (Vin=12.00 Vout=26.80)']
+        : a[0] === 'l0' && opts.coilRing ? ringRun({ fit: opts.coilRing })
         : a[0] === 'l0' ? ['measure-coil L0: fsw=39000 pwmMax=4103 band 1200..2600 step 30  Vin=36.10 Vout=26.80 M=0.742',
           '      H      D    Vin   Vout   Iout mode    L_uH', ...l0Rows(),
           'measure-coil: L(Ipk), +-noise/offsets: 1.4-1.6A 50.62uH+-0.3/0.9% | 1.6-1.9A 50.40uH+-0.3/0.9% | 1.9-2.2A 50.15uH+-0.4/1.0%',
@@ -226,4 +268,4 @@ function mqttFirmware(window, devs) {
   window.document.getElementById('mqtt-url').value = 'ws://broker:9001';
 }
 
-if (typeof module !== 'undefined') module.exports = { l0Rows, lsRows, W, I, vline, BLOCK, HELP, sweepReply, SWEEP, firmware, mqttFirmware };
+if (typeof module !== 'undefined') module.exports = { l0Rows, lsRows, RING_ROWS, ringRun, W, I, vline, BLOCK, HELP, sweepReply, SWEEP, firmware, mqttFirmware };

@@ -457,17 +457,22 @@
   .tst-chart .pt.gr { fill:var(--faint); }
   .tst-chart .ref { stroke:var(--muted); stroke-width:1; }
   .tst-chart .ref.dash { stroke-dasharray:4 3; }
-  .tst-chart .res { stroke:var(--icon); stroke-width:1.2; }
+  .tst-chart .pt.raw { fill:var(--muted); opacity:.65; }
+  .tst-chart .pt.raw.gr { fill:var(--faint); opacity:.55; }
+  .tst-chart .step { fill:none; stroke:var(--muted); stroke-width:.8; opacity:.4; stroke-linejoin:round; }
+  .tst-chart .res { stroke:var(--icon); stroke-width:2.2; }
   .tst-chart .bin { stroke:var(--fg-2); stroke-width:1.4; }
   .tst-chart .esys { stroke:var(--line-2); stroke-width:4; opacity:.8; }
   .tst-chart .ese { stroke:var(--fg-2); stroke-width:1.2; }
   .tst-chart .bpt { fill:var(--fg); stroke:var(--bg); stroke-width:1.5; }
   .tst-chart .fit { stroke:var(--icon); stroke-width:1.6; stroke-dasharray:6 3; }
   .tst-chart .inc { stroke:var(--accent); stroke-width:1.6; }
-  .tst-chart text.res-lab { fill:var(--icon); }
+  .tst-chart text.res-lab { fill:var(--icon); font-size:11.5px; font-weight:600; }
+  .tst-chart text.hint-lab { fill:var(--muted); font-style:italic; }
   .tst-chart text.inc-lab { fill:var(--accent); }
-  .tst-chart text.res-lab, .tst-chart text.ref-lab, .tst-chart text.inc-lab { paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
+  .tst-chart text.res-lab, .tst-chart text.ref-lab, .tst-chart text.inc-lab, .tst-chart text.hint-lab { paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
   .tst-verdict { margin:6px 0 0; color:var(--fg-2); }
+  .tst-cap { margin:6px 0 0; color:var(--muted); font-size:12.5px; }
   .tst-chart text.mlab { fill:var(--icon); font-size:11.5px; font-weight:500; paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
   details.tst-log { margin-top:14px; }
   details.tst-log > summary { font-size:12.5px; }
@@ -4071,21 +4076,24 @@ function tstAxes(xd, yd, W, H, xu, yu){
   return { X, Y, L, R };
 }
 
-// measure-coil output for the chart. L0: one point per DCM row, L (µH) over the peak coil current
+// measure-coil output for the chart. L0: one point per DCM row (h: its H), L (µH) over the peak coil current
 // Ipk = (Vin-Vout)·D/(fsw·L) (coil_fit.h with the row's L), grey below the fit's Iout floor; the fit's bins and
-// slope; the result. LS: Iout over the low-side count, grey in CCM; ideal, auto and peak.
+// slope; the result, fit "ring"|"median", ring kHz; end: the run printed its last line. LS: Iout over the low-side
+// count, grey in CCM; ideal, auto and peak.
 function parseCoilPlot(lines){
-  const p={ ls:false, fsw:0, pts:[], bins:[], slope:null, L:null, floor:0, ideal:null, auto:null, peak:null };
+  const p={ ls:false, fsw:0, pts:[], bins:[], slope:null, L:null, fit:"", ring:null, end:false, floor:0, ideal:null, auto:null, peak:null };
   for (const raw of lines){
     const l=tstMsgOf(tstLine(raw)); let m;
     if ((m=l.match(/\bmeasure-coil L0: fsw=([\d.]+)/))){ Object.assign(p, { ls:false, fsw:+m[1], pts:[] }); }
     else if ((m=l.match(/\bmeasure-coil LS: .*?ideal_LS=([\d.]+) auto_LS=(\d+)/))) Object.assign(p, { ls:true, ideal:+m[1], auto:+m[2], pts:[] });
     else if (!p.ls && p.fsw && (m=l.match(/^\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)\s+(DCM|CCM)\s+(\S+)$/))){
       const [D, vi, vo, io, L]=[+m[2], +m[3], +m[4], +m[5], +m[7]];
-      if (m[6]==="DCM" && L>0) p.pts.push({ x:(vi-vo)*D/(p.fsw*L*1e-6), y:L, io });
+      if (m[6]==="DCM" && L>0) p.pts.push({ x:(vi-vo)*D/(p.fsw*L*1e-6), y:L, io, h:+m[1] });
     }
     else if (p.ls && (m=l.match(/^\s+(\d+)\s+(-?[\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(DCM|CCM)$/))) p.pts.push({ x:+m[1], y:+m[2], g:m[5]==="CCM" });
-    else if ((m=l.match(/\bmeasure-coil: L = ([\d.]+) uH .*?Iout>=([\d.]+)A/))){ p.L=+m[1]; p.floor=+m[2]; }
+    else if ((m=l.match(/\bmeasure-coil: L = ([\d.]+) uH\s+\((ring fit|median)?.*?Iout>=([\d.]+)A(?:.*?\bring (\d+) kHz)?/))){
+      Object.assign(p, { L:+m[1], fit:(m[2]||"").split(" ")[0], floor:+m[3], ring: m[4] ? +m[4] : null, end:true }); }
+    else if (/\bmeasure-coil: (?:done\b|only \d)/.test(l)) p.end=true;
     else if ((m=l.match(/\bL\(Ipk\), \+-noise\/offsets:(.*)$/)))
       p.bins=m[1].split("|").map(b=>b.match(/([\d.]+)-([\d.]+)A ([\d.]+)uH\+-([\d.]+)\/([\d.]+)%/)).filter(Boolean)
         .map(b=>({ lo:+b[1], hi:+b[2], L:+b[3], se:b[4]/100, sys:b[5]/100 }));
@@ -4134,21 +4142,36 @@ function tstCoilChart(fig, lines, cw, l0){
   const f=v=>v.toFixed(1), inY=v=>v>=yd.lo && v<=yd.hi;
   const svg=svgEl("svg", { viewBox:`0 0 ${W} ${H}`, role:"img", "data-points":p.pts.length });
   svg.append(...tstAxes.els);
-  const labs=[];                                                   // line labels go on top of the points
-  const hline=(v, cls, label)=>{ if (!inY(v)) return;
-    svg.append(svgEl("line", { x1:L, x2:W-R, y1:f(Y(v)), y2:f(Y(v)) }, cls));
-    const t=svgEl("text", { x:W-R, y:f(Y(v)-4), "text-anchor":"end" }, cls.split(" ")[0]+"-lab"); t.textContent=label; labs.push(t); };
+  const labs=[], used=[];                                          // line labels go on top of the points
+  // a horizontal line's label above it on the right, else left, else below, clear of the labels placed before
+  const hlab=(y, cls, label)=>{
+    const [s, d]=[[0, -4], [1, -4], [0, 12], [1, 12]].find(([s, d])=>!used.some(q=>q[0]===s && Math.abs(q[1]-y-d)<13)) || [0, -4];
+    used.push([s, y+d]);
+    const t=svgEl("text", { x: s ? L+4 : W-R, y:f(y+d), "text-anchor": s ? "start" : "end" }, cls.split(" ")[0]+"-lab"); t.textContent=label; labs.push(t); };
+  const hline=(v, cls)=>svgEl("line", { x1:L, x2:W-R, y1:f(Y(v)), y2:f(Y(v)) }, cls);
   const vline=(v, cls, label, i)=>{ svg.append(svgEl("line", { x1:f(X(v)), x2:f(X(v)), y1:Y(yd.hi), y2:Y(yd.lo) }, cls));
     const t=svgEl("text", { x:f(X(v)+3), y:Y(yd.hi)+10+11*i }, cls.split(" ")[0]+"-lab"); t.textContent=label; labs.push(t); };
-  const u=v=>+v.toFixed(2)+" µH";
+  const u=v=>+v.toFixed(2)+" µH", how={ ring:" (ring fit)", median:" (median, ring not resolved)" }[p.fit]||"";
+  const res=!p.ls && p.L!=null && inY(p.L);
   if (p.ls){
     if (p.ideal!=null) vline(p.ideal, "ref", "ideal "+p.ideal, 0);
     if (p.auto!=null) vline(p.auto, "ref dash", "auto "+p.auto, 1);
+    for (const q of p.pts) if (inY(q.y)) svg.append(svgEl("circle", { cx:f(X(q.x)), cy:f(Y(q.y)), r:2.2 }, q.g ? "pt gr" : "pt"));
   } else {
-    if (uL){ hline(uL, "ref", "coil.conf L0 "+u(uL)); hline(uL*0.95, "ref dash", "model (0.95·L0)"); }
-    if (p.L!=null) hline(p.L, "res", "L = "+u(p.L));
+    if (res) hlab(Y(p.L), "res", "L = "+u(p.L)+how);
+    else if (!p.end) hlab(Y(yd.hi)+14, "hint", "ring-corrected L at the end");
+    for (const [v, cls, t] of uL ? [[uL, "ref", "coil.conf L0 "+u(uL)], [uL*0.95, "ref dash", "model (0.95·L0)"]] : [])
+      if (inY(v)){ svg.append(hline(v, cls)); hlab(Y(v), cls, t); }
+    // raw rows joined in step (H) order: the DCM ring's sawtooth; broken where a point is off the axis
+    let d="", on=false;
+    for (const q of [...p.pts].sort((a, b)=>a.h-b.h)){
+      if (!inY(q.y)){ on=false; continue; }
+      d+=(on ? "L" : "M")+f(X(q.x))+" "+f(Y(q.y)); on=true;
+    }
+    if (p.pts.length>1) svg.append(svgEl("path", { d }, "step"));
+    for (const q of p.pts) if (inY(q.y)) svg.append(svgEl("circle", { cx:f(X(q.x)), cy:f(Y(q.y)), r:1.8 }, q.g ? "pt raw gr" : "pt raw"));
+    if (res) svg.append(hline(p.L, "res"));
   }
-  for (const q of p.pts) if (inY(q.y)) svg.append(svgEl("circle", { cx:f(X(q.x)), cy:f(Y(q.y)), r:2.2 }, q.g ? "pt gr" : "pt"));
   if (!p.ls && p.bins.length){
     for (const b of p.bins){
       const x=X((b.lo+b.hi)/2);
@@ -4175,9 +4198,11 @@ function tstCoilChart(fig, lines, cw, l0){
   const verdict = !p.slope ? "" : p.slope.drop==null ? `No drop resolved up to ${p.slope.hi} A, so no incremental L`
     : `L drops ≤ ${p.slope.drop} %/A up to ${p.slope.hi} A`+(li ? `; incremental L at ${p.slope.hi} A: ${li.toFixed(1)}\u00a0µH (${lr<0 ? "−" : "+"}${Math.abs(lr).toFixed(1)}\u00a0% vs 0 A)` : "");
   svg.setAttribute("aria-label", p.ls ? `Output current over the low-side count, ${plural(p.pts.length, "point")}`+(p.peak ? `, peak at ${p.peak.x}` : "")+"."
-    : `Inductance over peak coil current, ${plural(p.pts.length, "point")}`+(p.L!=null ? `, L = ${u(p.L)}` : "")+(uL ? `, coil.conf L0 ${u(uL)}` : "")+(verdict ? `; ${verdict}` : "")+".");
+    : `Inductance over peak coil current, ${plural(p.pts.length, "point")}`+(p.L!=null ? `, L = ${u(p.L)}${how}` : "")+(uL ? `, coil.conf L0 ${u(uL)}` : "")+(verdict ? `; ${verdict}` : "")+".");
   const cap=document.createElement("figcaption"); cap.textContent=svg.getAttribute("aria-label");
   fig.replaceChildren(cap, svg);
+  if (p.fit==="ring") fig.append(tstEl("p", "tst-cap", "Dots: raw per-step values, they swing with the DCM ring"
+    +(p.ring ? ` (${p.ring} kHz)` : "")+"; the line is the ring-corrected result."));
   if (verdict) fig.append(tstEl("p", "tst-verdict", verdict));
 }
 
