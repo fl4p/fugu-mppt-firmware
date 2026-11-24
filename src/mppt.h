@@ -449,6 +449,7 @@ public:
     void shutdownDcdc(const char *who, uint32_t backoffSec = 5) {
         _limitPert = 0;
         lvPgood.release();
+        mcBfZero.store(NAN, std::memory_order_relaxed);
         bflow.enable(false);
         converter.disable();
         if (backoffSec) {
@@ -903,6 +904,7 @@ public:
             // try to prevent voltage boost and disable low side for low currents
             auto currentFilt = fminf(sensorPhysicalI->ewm.avg.get(),
                                      std::max(sensorPhysicalI->last, sensorPhysicalI->previous));
+            if (const float z = mcBfZero.load(std::memory_order_relaxed); z == z) currentFilt -= z;
             if (currentFilt < -0.05f && limits.reverse_current_paranoia && !bfT) {
                 RT_COLD(
                 if (converter.getRectOnPwmCnt() > converter.getRectOnPwmMax() / 2 &&
@@ -1753,6 +1755,8 @@ public:
         uint8_t floorHold = 0, holdN = 0, iSeen = 0; // fresh current samples before iFloor applies after a turn-on
         uint8_t why = 0; // toggle trip: 1 floor, 2 D Vin below Vout, 3 no-battery current, 4 Vin rose; 5 above iMax
     } bfTest;
+    // measure-coil L0: Iout zero (NAN: off); the RT closes BF on forward current, opens it with the converter off
+    std::atomic<float> mcBfZero{NAN};
 
     time_us lastUs = 0;
 

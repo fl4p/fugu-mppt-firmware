@@ -497,19 +497,27 @@ void MpptController::updateManual() {
 
     const int16_t rampStep = std::max(1, (int) std::lround((float) converter.pwmMaxDriver() / 512.f));
 
+    const float mcZ = mcBfZero.load(std::memory_order_relaxed);
     if (inBackoff() || charger.wireGuard.tripped() || charger.params.awaitingDetect()
         || (converter.disabled() && tempStartBlock())) {
         if (!converter.disabled()) converter.disable();
+        if (mcZ == mcZ && bflow.state()) bflow.enable(false);
         return;
+    }
+    if (mcZ == mcZ) {
+        if (converter.disabled()) {
+            if (bflow.state()) bflow.enable(false);
+        } else if (!bflow.state() && sensors.Iout->ewm.avg.get() - mcZ > 0.1f) bflow.enable(true);
     }
 
     if (bfTest.mode.load(std::memory_order_relaxed)) bfTestRt();
     const uint16_t target = manualTarget.load(std::memory_order_relaxed);
     if (target == 0) {
         if (!converter.disabled()) {
-            if (converter.getCtrlOnPwmCnt() <= converter.pwmCtrlMin)
+            if (converter.getCtrlOnPwmCnt() <= converter.pwmCtrlMin) {
                 converter.disable();
-            else
+                if (mcZ == mcZ) bflow.enable(false);
+            } else
                 converter.pwmPerturb(-rampStep);
         }
     } else {

@@ -204,6 +204,9 @@ static float sweepL0(const MeasArgs &a) {
             h_hi = -1;
         }
     }
+    // buck: BF closed once forward current flows (as MPPT closes it), by the RT loop each sample: open, its body diode
+    // carries the sweep's ~2 A (highD-bflowOpen trips above 1 A) and its drop biases Vout and so L
+    if (!boost) mppt.mcBfZero.store(z0);
     const char *iName = boost ? "Iin" : "Iout";
     UART_LOG("      H      D    Vin   Vout   %4s mode    L_uH", iName);
     float d[MEAS_MAX_PTS], vi[MEAS_MAX_PTS], vo[MEAS_MAX_PTS], io[MEAS_MAX_PTS];
@@ -217,9 +220,6 @@ static float sweepL0(const MeasArgs &a) {
         }
         // DCM ends at D = 1 - Vin/Vout, which moves with the load: stop a step short of 0.9 x it
         if (boost && (float) H / pwmMax > 0.9f * (1 - vin / vout)) { UART_LOG("  near CCM; stopping"); break; }
-        // buck: BF closed once forward current flows (output node above the battery, as MPPT closes it): open, its body
-        // diode carries the sweep's ~2 A (highD-bflowOpen trips above 1 A) and its drop biases Vout and so L
-        if (!boost && sensors.Iout->ewm.avg.get() > 0.1f) mppt.bflow.enable(true);
         Reading r{};
         settleAndRead((uint16_t) H, a.dwellMs, r);
         if (s_tripped || converter.disabled()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
@@ -394,6 +394,7 @@ static void measureCoilTask(void *arg) {
     time_ms doneDeadline = wallClockMs() + 10000;
     while (!converter.disabled() && wallClockMs() < doneDeadline)
         vTaskDelay(pdMS_TO_TICKS(10));
+    mppt.mcBfZero.store(NAN);
     const bool off = converter.disabled();
     if (boost) mppt.setExplicitOvLimit(ov0);
     s_hvTrip = 0;

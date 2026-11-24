@@ -38,6 +38,7 @@
 //                              # dcd-ccm-flat|fry: deep CCM, P&O and a slow power-limiter retreat
 //                              # dcd-hv-step|train-flat|fry: 700-count duty cut at Vin ~80 V near the CCM boundary, one
 //                              #   step / the manual ramp: LS to its minimum, no reverse coil current, LS back
+//                              # mc-flat-iofs-p/-n: the same with a +0.5/-0.5 A Iout sensor offset
 //                              # hs-night-ov*, hs-night-race*: OV alert / core-0 disable() around the LS ramp and hold
 //   weather scenarios (PV string of 1..3 substrings, irradiance played from a time series; "== SUMMARY" line):
 //     wx-cloud          recorded cloudy quarter hour (flat, 2026-11-14 11:20 UTC), full sun <-> cloud
@@ -250,6 +251,7 @@ static std::vector<double> g_sweepT; // "Start sweep" log times
 static std::vector<double> g_calFailT, g_onT; // "Calibration failed" log times, converter off -> on edges
 static unsigned g_calStarts = 0;
 static std::vector<std::string> g_logSince; // log lines after the scenario event
+static uint32_t g_bfLowI; // "Low current ..., disable backflow": the reverse-current guard opened a closed BF
 static double g_eventT = -1;
 static std::vector<double> g_slowDownT; // "Slow mode, duty" log times (slow-mode entries)
 static std::vector<std::pair<double, char>> g_scanT; // "scan:" log times; m = moved, l = light changed, - = stayed
@@ -404,6 +406,7 @@ static void logHook(char lvl, const char *tag, const char *msg) {
     }
     if (!strncmp(msg, "Calibration failed", 18)) g_calFailT.push_back(tNow());
     if (!strcmp(msg, "Start calibration")) ++g_calStarts;
+    if (strstr(msg, "disable backflow")) ++g_bfLowI;
     if (!strncmp(msg, "Slow mode, duty", 15)) g_slowDownT.push_back(tNow());
     if (!strncmp(msg, "sweep verified", 14)) g_verdict += 'v';
     if (!strncmp(msg, "sweep flagged", 13)) g_verdict += strstr(msg, "scan now") ? 'F' : 'f';
@@ -2098,6 +2101,9 @@ static bool simPsuWait(uint32_t ticket) {
     return mppt.isPsuCommandDone(ticket);
 }
 
+static float g_iOfs = 0; // Iout sensor offset [A]
+static float ofsHook(uint8_t ch, float x) { return ch == 2 ? x + g_iOfs : x; }
+
 static float med5(float *a) { return coilfit::detail::median(a, 5); }
 static float g_mcIpk = 0, g_mcIpkPl = 0; // largest row Ipk of the last simMeasureL0 (L-free DCM estimate; the plant's)
 
@@ -2128,11 +2134,27 @@ static int mcTonCheck(const std::string &sc, float lPlant, const std::function<v
     return 0;
 }
 
+// readZero(): Iout with the converter off (NAN: still on)
+static float simReadZero(uint32_t dwellMs) {
+    mppt.setManualTarget(0);
+    for (const double dl = tNow() + 10; !converter.disabled() && tNow() < dl;) run(0.01, 0);
+    if (!converter.disabled()) return NAN;
+    run(dwellMs * 1e-3, 0);
+    float c[5];
+    for (float &x: c) x = sensors.Iout->ewm.avg.get(), run(0.05, 0);
+    return med5(c);
+}
+
+static uint32_t g_mcBfOffTicks; // RT iterations that ended with the BF closed and the converter off
+static void mcBfTick() { g_mcBfOffTicks += converter.disabled() && mppt.bflow.state(); }
+
 static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
     const double t0 = tNow();
     coilfit::Result res;
     // SIM_MC_RAMP=1: the entry before the hard stop (a duty ramp-down)
     const bool ramp = getenv("SIM_MC_RAMP") != nullptr;
+    // SIM_MC_OLDBF=1: BF closed by the console task between steps on raw Iout (before the RT owned it)
+    const bool oldBf = getenv("SIM_MC_OLDBF") != nullptr;
     if (!simPsuWait(mppt.requestPsuManual(0, -1, false, !ramp))) printf("  measure: RT transition timed out\n");
     for (const double dl = tNow() + 10; tNow() < dl && !ramp;) { // let the filters drain
         if (converter.disabled() && fabsf(sensors.Iout->ewm.avg.get()) < 1.f) break;
@@ -2144,14 +2166,17 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
     g_mcIpk = g_mcIpkPl = 0;
     printf("  measure: fsw %.0f Hz pwmMax %u pwmCtrlMax %u\n", fsw, pwmMax, converter.pwmCtrlMax);
     const float vin0 = sensors.Vin->ewm.avg.get(), vout0 = sensors.Vout->ewm.avg.get();
+    const uint32_t zDwell = std::max<uint32_t>(dwellMs, 2000);
     int lo, hi, step;
-    if (coilfit::band(vin0, vout0, pwmMax, converter.pwmCtrlMax, steps, lo, hi, step)) {
+    float z0 = NAN;
+    if (coilfit::band(vin0, vout0, pwmMax, converter.pwmCtrlMax, steps, lo, hi, step) && (z0 = simReadZero(zDwell)) == z0) {
+        if (!getenv("SIM_MC_BFOPEN") && !oldBf) mppt.mcBfZero.store(z0); // SIM_MC_BFOPEN=1: the sweep with the BF open
         float d[coilfit::kMaxPts], vi[coilfit::kMaxPts], vo[coilfit::kMaxPts], io[coilfit::kMaxPts];
-        int n = 0;
-        float iMaxSeen = 0;
+        uint8_t row[coilfit::kMaxPts];
+        int n = 0, rows = 0;
         for (int H = lo; H <= hi && n < coilfit::kMaxPts; H += step) {
             if (!(sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1.f)) break;
-            if (!getenv("SIM_MC_BFOPEN") && sensors.Iout->ewm.avg.get() > 0.1f) mppt.bflow.enable(true); // SIM_MC_BFOPEN=1: the sweep before the fix
+            if (oldBf && sensors.Iout->ewm.avg.get() > 0.1f) mppt.bflow.enable(true);
             mppt.setManualTarget((uint16_t) H);
             const double dl = tNow() + std::max<uint32_t>(dwellMs, 3000) * 1e-3 + H * 4e-3;
             while (converter.getCtrlOnPwmCnt() != H && tNow() < dl) run(0.02, 0);
@@ -2164,7 +2189,8 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
             if (converter.disabled()) { printf("  measure: converter disabled; aborting\n"); break; }
             const float vin = med5(a), vout = med5(b), iout = med5(c), D = (float) converter.getCtrlOnPwmCnt() / converter.periodCounts();
             const bool dcm = converter.inDCM(), ok = iout > 0.02f && vin > vout;
-            if (dcm && ok) d[n] = D, vi[n] = vin, vo[n] = vout, io[n] = iout, ++n, iMaxSeen = std::max(iMaxSeen, iout);
+            if (dcm && ok) d[n] = D, vi[n] = vin, vo[n] = vout, io[n] = iout, row[n] = (uint8_t) rows, ++n;
+            ++rows;
             const float ipk = coilfit::ipkDcm(D, vin, vout, iout);
             if (dcm) g_mcIpk = std::max(g_mcIpk, ipk), g_mcIpkPl = std::max(g_mcIpkPl, (g_vconv.getVin() - g_vconv.getVout()) * D / (fsw * g_vconv.getL()));
             if (iout > iMaxLim || !(ipk <= ipkMax) || !dcm) {
@@ -2173,15 +2199,21 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
                 break;
             }
         }
+        const float z1 = simReadZero(zDwell);
+        const float zsig = coilfit::zeroCorrect(io, n, z0, z1 == z1 ? z1 : z0, row, rows);
+        printf("  measure: Iout zero %+.3f/%+.3f A\n", z0, z1);
+        float iMaxSeen = 0;
+        for (int i = 0; i < n; ++i) iMaxSeen = std::max(iMaxSeen, io[i]);
         const float floor = std::max(0.15f, 0.2f * iMaxSeen);
         int nk = 0;
         for (int i = 0; i < n; ++i)
             if (io[i] >= floor) d[nk] = d[i], vi[nk] = vi[i], vo[nk] = vo[i], io[nk] = io[i], ++nk;
-        res = mcFit(d, vi, vo, io, nk, fsw, 0);
-    }
+        res = mcFit(d, vi, vo, io, nk, fsw, zsig);
+    } else printf("  measure: no band or no zero\n");
     // restore as the task does: ramp down, wait for the disable, back to MPPT
     mppt.setManualTarget(0);
     for (double dl = tNow() + 10.0; !converter.disabled() && tNow() < dl;) run(0.01, 0);
+    mppt.mcBfZero.store(NAN);
     const bool off = converter.disabled();
     if (off && mppt.limits.reverse_current_paranoia) mppt.bflow.enable(false);
     if (!simPsuWait(off ? mppt.requestPsuOff() : mppt.requestPsuSweep())) printf("  measure: MPPT restore timed out\n");
@@ -2389,7 +2421,9 @@ static int runMcBoost(const std::string &name) {
 // mc-flat: `measure-coil l0` takes over from MPPT at ~150 W in CCM with paranoia on (bf-daily-flat's plant):
 //   no protection trip at the take-over (a duty ramp-down at full power trips highD-bflowOpen, whose backoff then
 //   holds the converter off under the sweep), the sweep finds its DCM points with the BF closed (no highD-bflowOpen
-//   near 2 A, L within 3 %). SIM_MC_RAMP=1 enters with the old ramp-down, SIM_MC_BFOPEN=1 sweeps with the BF open.
+//   near 2 A, L within 3 %), the BF never closed with the converter off. SIM_MC_IOFS=<A> (-iofs-p/-n: +-0.5) adds an Iout
+//   sensor offset at the take-over. SIM_MC_RAMP=1 enters with the old ramp-down, SIM_MC_BFOPEN=1 sweeps with the BF open,
+//   SIM_MC_OLDBF=1 closes it from the console task.
 // mc-flat-ramp (SIM_MC_RAMP=1): before pwmPerturb() counted the net decrease over the filtered current's lag, that ramp
 //   kept the CCM rect window below D = M, the coil current reversed and highD-bflowOpen tripped (field flat 2026-11-24).
 static int runMcFlat(const std::string &sc) {
@@ -2407,22 +2441,32 @@ static int runMcFlat(const std::string &sc) {
     // at 22 kHz flat's coil is still in DCM at full power
     const bool lowf = sc == "mc-flat-lowf" || sc == "mc-flat-f20";
     chk(p0 > 130.f && (lowf || !converter.inDCM()) && !converter.disabled(), lowf ? "MPPT at full power" : "MPPT at full power in CCM");
+    const char *e = getenv("SIM_MC_IOFS");
+    if (const float o = e ? (float) atof(e) : sc == "mc-flat-iofs-p" ? .5f : sc == "mc-flat-iofs-n" ? -.5f : 0) {
+        g_iOfs = o;
+        if (!g_simSenseHook) g_simSenseHook = ofsHook;
+        printf("== %s: Iout sensor offset %+.2f A\n", sc.c_str(), g_iOfs);
+    }
     const size_t trips0 = g_trips.size();
     const double tEnter = tNow();
     double secs = 0;
-    g_ioMin = g_ioMin0 = 0, g_ioTrack = true, g_tickHook = ioMinTick;
+    g_ioMin = g_ioMin0 = 0, g_ioTrack = true, g_mcBfOffTicks = 0, g_tickHook = [] { ioMinTick(), mcBfTick(); };
+    const uint32_t bfLowI0 = g_bfLowI;
     const auto r = simMeasureL0(48, 1000, secs);
     g_tickHook = nullptr;
     int entryTrips = 0;
     for (size_t i = trips0; i < g_trips.size(); ++i) entryTrips += g_trips[i].t < tEnter + 2;
     for (size_t i = trips0; i < g_trips.size(); ++i) printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
-    printf("== %s: L %.2f uH vs plant %.2f uH, %d DCM pts, %.0f s, fsw %.0f Hz, Ipk up to %.2f A\n", sc.c_str(), r.L * 1e6f,
-           g_vconv.getL() * 1e6f, r.n, secs, converter.realizedFreqHz(), g_mcIpk);
+    printf("== %s: L %.2f uH vs plant %.2f uH, %d DCM pts, %.0f s, fsw %.0f Hz, Ipk up to %.2f A, %u RT ticks with the BF "
+           "closed and the converter off, %u low-current BF openings\n", sc.c_str(), r.L * 1e6f, g_vconv.getL() * 1e6f,
+           r.n, secs, converter.realizedFreqHz(), g_mcIpk, g_mcBfOffTicks, g_bfLowI - bfLowI0);
     printf("== %s: until the first converter off: min plant Iout %.3f A with an LS window (HS %u, LS %u), %.3f A any\n",
            sc.c_str(), g_ioMin, g_ioMinD, g_ioMinLs, g_ioMin0);
     chk(!entryTrips, "no protection trip at the take-over");
     chk(g_ioMin > -0.05f, "no reverse output current under an LS window at the take-over");
     chk(g_trips.size() == trips0, "no protection trip during the sweep");
+    chk(!g_mcBfOffTicks, "BF never closed with the converter off");
+    chk(g_bfLowI - bfLowI0 <= 4, "BF does not toggle (reverse-current guard against the closure)");
     chk(fabsf(r.L / g_vconv.getL() - 1) < 0.03f, "L within 3 % of the plant");
     chk(r.n >= 3 && std::isfinite(r.L), "the sweep found its DCM points");
     mcTonCheck(sc, g_vconv.getL(), chk);
@@ -2627,8 +2671,6 @@ static int runRingCoil(const std::string &name, bool weak) {
 }
 
 // ---- self-tests (vconv.conf bflow_model=1: battery-side BF, Vout/Iout sensed at the battery) ----
-static float g_iOfs = 0; // Iout sensor offset [A]
-static float ofsHook(uint8_t ch, float x) { return ch == 2 ? x + g_iOfs : x; }
 static int g_vinGlitch = 0;
 static float glitchHook(uint8_t ch, float x) { if (ch == 0 && g_vinGlitch > 0) { --g_vinGlitch; return 1.f; } return x; }
 
