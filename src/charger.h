@@ -1008,8 +1008,9 @@ public:
         const bool cut = apOk && (cvHold ? _apArm : !std::isfinite(_cvIlim)) && batSt.vcell_high >= band
                          && ibatNow > iTail;
         if (cut) {
-            _cvIlim = std::isfinite(ioutNow) && !sweep ? fmaxf(ioutNow * iTail / ibatNow, IOUT_LIM_FLOOR) : iTail;
-            _cvIbat = iTail;
+            const float lim = std::isfinite(ioutNow) && !sweep ? fmaxf(ioutNow * iTail / ibatNow, IOUT_LIM_FLOOR) : iTail;
+            _cvIlim = std::isfinite(_cvIlim) ? fminf(_cvIlim, lim) : lim; // a cut never raises a hold's limit
+            _cvIbat = fminf(iTail, _holdIbatTarget());
             _lastBmsFrameUs = batSt.vcell_high_t;
             _lastIbatFrameUs = batSt.ibat_t;
             _apArm = false;
