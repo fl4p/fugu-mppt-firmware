@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
   "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="373.339725pt" height="252.207875pt" viewBox="0 0 373.339725 252.207875" xmlns="http://www.w3.org/2000/svg" version="1.1">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="371.675412pt" height="252.207875pt" viewBox="0 0 371.675412 252.207875" xmlns="http://www.w3.org/2000/svg" version="1.1">
   <defs>
   <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
  </defs>
  <g id="figure_1">
   <g id="patch_1">
    <path d="M 0 252.207875 
-L 373.339725 252.207875 
-L 373.339725 0 
+L 371.675412 252.207875 
+L 371.675412 0 
 L 0 0 
 L 0 252.207875 
 z
@@ -183,12 +183,12 @@ L 341.899375 219.816
     <text style="font-size: 10px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; text-anchor: end; fill: #898781" x="202.957375" y="206.692429" transform="rotate(-0 202.957375 206.692429)">resume after recharge_dod 0.20</text>
    </g>
    <g id="line2d_13">
-    <path d="M 251.503375 219.816 
-L 251.503375 3.6 
+    <path d="M 241.459375 219.816 
+L 241.459375 3.6 
 " clip-path="url(#pe3254888f0)" style="fill: none; stroke-dasharray: 5.6,4.2; stroke-dashoffset: 0; stroke: #898781; stroke-width: 1.4"/>
    </g>
    <g id="text_24">
-    <text style="font-size: 10px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; text-anchor: start; fill: #898781" x="255.520975" y="12.016235" transform="rotate(-0 255.520975 12.016235)">73 % calendar step [1]</text>
+    <text style="font-size: 10px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; text-anchor: start; fill: #898781" x="245.476975" y="12.016235" transform="rotate(-0 245.476975 12.016235)">~70 % calendar step [1]</text>
    </g>
   </g>
  </g>

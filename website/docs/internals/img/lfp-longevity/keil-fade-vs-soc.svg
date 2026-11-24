@@ -171,8 +171,8 @@ L 370.543438 7.779141
     </g>
    </g>
    <g id="line2d_25">
-    <path d="M 280.147438 207.363141 
-L 280.147438 7.779141 
+    <path d="M 270.103438 207.363141 
+L 270.103438 7.779141 
 " clip-path="url(#p895e532424)" style="fill: none; stroke-dasharray: 4.8,3.6; stroke-dashoffset: 0; stroke: #898781; stroke-width: 1.2"/>
    </g>
    <g id="patch_3">
@@ -190,8 +190,7 @@ L 370.543438 207.363141
     <text style="font-size: 10px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; text-anchor: start; fill: #898781" x="382.261438" y="25.507316" transform="rotate(-0 382.261438 25.507316)">50 °C</text>
    </g>
    <g id="text_21">
-    <text style="font-size: 10px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; fill: #898781" transform="translate(168.301713 20.367178)">central graphite peak</text>
-    <text style="font-size: 10px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; fill: #898781" transform="translate(195.511088 31.185069)">(new cell), 73 %</text>
+    <text style="font-size: 10px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; text-anchor: end; fill: #898781" x="266.085838" y="20.367178" transform="rotate(-0 266.085838 20.367178)">calendar step, ~70 %</text>
    </g>
    <g id="line2d_26">
     <path d="M 35.743438 206.115741 

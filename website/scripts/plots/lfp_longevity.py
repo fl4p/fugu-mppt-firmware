@@ -34,8 +34,8 @@ KEIL_2C = {
          (60, 0.8839), (65, 0.8801), (70, 0.8843), (80, 0.8654), (90, 0.8598), (95, 0.8565), (100, 0.8520)],
 }
 
-# §3.1 / §8 partial_charge row: calendar step at 73 % SoC in the LFP cell of [1], cell-dependent
-STEP_SOC = 73
+# §3.1 / §8 partial_charge row: calendar step above about 70 % SoC in the LFP cell of [1], cell-dependent
+STEP_SOC = 70
 # §3.3 / §8: manufacturer's recommended operating range [8]
 MFR_RANGE = (10, 90)
 # §3.1: storage fade hardly differed between 37.5 and 62.5 % SoC at 40 °C [3]
@@ -172,7 +172,7 @@ def fig_strip(out):
     ax.text(par[1] + 1.5, y + 0.9, "stop", va="center", ha="left", fontsize=FS)
     ax.text(par[0] - 1.5, y + 0.9, f"resume after recharge_dod {RECHARGE_DOD:.2f}", va="center", ha="right", fontsize=FS)
     ax.axvline(STEP_SOC, color=INK, lw=1.4, ls=(0, (4, 3)), zorder=3)
-    ax.text(STEP_SOC + 1.2, y_top, f"{STEP_SOC} % calendar step [1]", va="bottom", ha="left", fontsize=FS)
+    ax.text(STEP_SOC + 1.2, y_top, f"~{STEP_SOC} % calendar step [1]", va="bottom", ha="left", fontsize=FS)
     ax.set_yticks([])
     ax.set_ylim(y + 0.3, -0.5)
     soc_axis(ax)
@@ -190,7 +190,7 @@ def fig_keil(out):
         ax.plot(x, f, color=col, lw=1.8, marker=mk, ms=5.5, mew=0, zorder=4, clip_on=False)
         ax.text(103.5, f[-1], f"{t} °C", color=INK, va="center", fontsize=FS, clip_on=False)
     ax.axvline(STEP_SOC, color=INK, lw=1.2, ls=(0, (4, 3)), zorder=2)
-    ax.text(STEP_SOC - 1.2, 15.6, f"central graphite peak\n(new cell), {STEP_SOC} %", ha="right", va="top", fontsize=FS,
+    ax.text(STEP_SOC - 1.2, 15.6, f"calendar step, ~{STEP_SOC} %", ha="right", va="top", fontsize=FS,
             linespacing=1.15)
     ax.set_xlim(0, 100)
     ax.set_xticks(range(0, 101, 20), [f"{v}" for v in range(0, 101, 20)])
