@@ -1,0 +1,45 @@
+name: Host tests
+
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'test/host-stub/**', 'config/**', '.github/workflows/host-tests.yml']
+  pull_request:
+    paths: ['src/**', 'test/host-stub/**', 'config/**', '.github/workflows/host-tests.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: host-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pv-shade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          clang++ -std=gnu++20 -fexceptions -I test/host-stub -I src -o /tmp/pv-shade-test \
+            test/host-stub/pv-shade-test.cpp src/sim/vconv.cpp
+          /tmp/pv-shade-test
+
+  mppt-sim:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run scenarios of shard ${{ matrix.shard }}/8
+        run: |
+          set -o pipefail
+          S=$(test/host-stub/mppt-sim.sh --list | awk -v k=${{ matrix.shard }} '(NR-1)%8==k')
+          echo "scenarios:" $S
+          test/host-stub/mppt-sim.sh $S > sim.log 2>&1 && rc=0 || rc=$?
+          grep -E '^######## .* exit' sim.log || true
+          exit $rc
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mppt-sim-shard-${{ matrix.shard }}
+          path: sim.log
