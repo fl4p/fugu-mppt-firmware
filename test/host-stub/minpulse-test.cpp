@@ -13,6 +13,7 @@
 // MINPULSE_LIMIT=<M> replaces the stop ratio (known-bad calibration: 0.93 and 0.90 must fail).
 
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>

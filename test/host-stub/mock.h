@@ -20,7 +20,7 @@
 
 #define unlikely(x) (x)
 
-void pinMode(u_int8_t, int) { }
-void digitalWrite(u_int8_t, int) { }
+void pinMode(uint8_t, int) { }
+void digitalWrite(uint8_t, int) { }
 
 void assertPinState(uint8_t pin, bool digitalVal, const char *pinName, bool weakBackPull) {}

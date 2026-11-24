@@ -5,6 +5,15 @@
 #include <cstdint>
 #include <cstring>
 
+#ifdef __GLIBC__ // newlib and BSD libc have strnstr, glibc does not
+inline char *strnstr(const char *s, const char *find, size_t n) {
+    const size_t l = std::strlen(find);
+    for (size_t i = 0; l <= n && i <= n - l && s[i]; ++i)
+        if (!std::strncmp(s + i, find, l)) return const_cast<char *>(s + i);
+    return l ? nullptr : const_cast<char *>(s);
+}
+#endif
+
 typedef int esp_err_t;
 #ifndef ESP_OK
 #define ESP_OK 0

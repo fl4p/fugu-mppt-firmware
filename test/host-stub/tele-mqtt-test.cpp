@@ -78,6 +78,7 @@ esp_err_t esp_mqtt_client_disconnect(esp_mqtt_client_handle_t) { return ESP_OK; 
 esp_err_t esp_mqtt_client_destroy(esp_mqtt_client_handle_t c) { --g_live; delete c; return ESP_OK; }
 int esp_mqtt_client_subscribe(esp_mqtt_client_handle_t, const char *, int) { return 1; }
 int esp_mqtt_client_publish(esp_mqtt_client_handle_t, const char *t, const char *d, int len, int, int) {
+    if (!std::strncmp(t, "pv/dev/", 7)) return 0; // presence, not telemetry
     g_pubs.emplace_back(t, std::string(d, len ? (size_t) len : std::strlen(d)));
     return 0;
 }

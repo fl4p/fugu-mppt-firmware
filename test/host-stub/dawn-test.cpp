@@ -3,7 +3,7 @@
 // math/statmath.h) and the same VirtualConverter PV plant (sim/vconv.h) natively, reproducing
 // Sensor::add_sample's pipeline for a VirtualSensor (identity transform, no offset, no notch).
 //
-//   clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src test/host-stub/dawn-test.cpp -o /tmp/dawn-test
+//   clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src test/host-stub/dawn-test.cpp src/sim/vconv.cpp -o /tmp/dawn-test
 //
 #include <cassert>
 #include <cmath>

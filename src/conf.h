@@ -3,6 +3,7 @@
 
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <dirent.h>
 #include <stdexcept>
 #include <string>

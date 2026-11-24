@@ -6,6 +6,7 @@
 //       test/host-stub/dcm-current-test.cpp src/sim/vconv.cpp -o /tmp/dcm-current-test && /tmp/dcm-current-test
 
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
