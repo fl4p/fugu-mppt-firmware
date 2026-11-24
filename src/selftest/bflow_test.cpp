@@ -677,7 +677,10 @@ void selftestLoad() {
         mppt.hsRestore();
         ESP_LOGE("selftest", "HS short latched before the reboot: start blocked, gates off (selftest clear)");
     }
-    if (rec.bf) {
+    if (rec.bf && !mppt.hsIdleCheck()) {
+        rec.bf = 0; // the test cannot run here to clear it: drop it, persisted on the next write
+        ESP_LOGW("selftest", "backflow failure latched before the reboot ignored: check off (bflow_bat=0)");
+    } else if (rec.bf) {
         mppt.bfFailSet(true);
         ESP_LOGE("selftest", "backflow switch failed before the reboot: start blocked (selftest clear)");
     }
@@ -724,7 +727,7 @@ void selftestPrintState() {
     if (ra != UINT32_MAX) snprintf(last, sizeof last, "%.1f h ago", (float) ra / 3600.f);
     if (pa != UINT32_MAX) snprintf(pass, sizeof pass, "%.1f h ago", (float) pa / 3600.f);
     if (!mppt.hsIdleCheck()) {
-        UART_LOG("bflow: not checked (board.conf bflow_bat=0)");
+        UART_LOG("bflow: not checked (board.conf bflow_bat=0)%s", mppt.bfFail.load() ? "; FAIL LATCHED, start blocked" : "");
         return;
     }
     UART_LOG("bflow: %s; last run %c/%c %s; blocks pass %s (%s%s)%s%s",

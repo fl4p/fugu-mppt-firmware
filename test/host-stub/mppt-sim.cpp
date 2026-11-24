@@ -2926,6 +2926,15 @@ static int runBfTest(const std::string &sc) {
         simLoadBlob(b, 16);
         selftestLoad();
         chk(mppt.bfFail.load() && bfPassAgeS() == UINT32_MAX && simRecTog() == 0, "v1: bf kept, pass dropped");
+        mppt.bfFailSet(false);
+        const bool bat0 = mppt.bfBat;
+        mppt.bfBat = false; // board.conf bflow_bat=0: the test cannot run to clear a stored failure
+        simLoadBlob(b, 16);
+        selftestLoad();
+        selftestLf((uint32_t) (esp_timer_get_time() / 1000), false);
+        chk(!mppt.bfFail.load() && !converter.startInhibited(SynchronousConverter::InhibitBf) && !simStoredBf(),
+            "bflow_bat=0: stored bf dropped, start free, dropped in the store");
+        mppt.bfBat = bat0;
         printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
         return f != 0;
     }

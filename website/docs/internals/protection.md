@@ -304,7 +304,8 @@ A run aborts, without a verdict, when a protection trips, the input voltage coll
 short latches, a step times out or `selftest abort` is given. After a mode change the new mode stays; otherwise the previous mode is restored. The
 test keeps backoffs and the charger's latches as they were.
 
-A failed phase latches `bf-fail`: every start is refused until `selftest clear`, also after a reboot.
+A failed phase latches `bf-fail`: every start is refused until `selftest clear`, also after a reboot. A stored `bf-fail`
+on a board that now has `board.conf::bflow_bat=0` is dropped at boot, because the test cannot run there to clear it.
 
 #### Toggle variant
 
