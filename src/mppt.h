@@ -409,6 +409,14 @@ public:
         return fs > 0 ? k / fs : 1000.f;
     }
 
+    // the same in samples of s
+    [[nodiscard]] static float settleN(const Sensor *s) {
+        if (s->isVirtual) return 0;
+        float k = 3.32f * (float) s->ewm.span() + 2.f;
+        if (s->comb) k += s->comb->length() + 1.f;
+        return k;
+    }
+
     [[nodiscard]] float powerSettleMs() const { return std::max(settleMs(sensorPhysicalI), settleMs(sensorPhysicalU)); }
 
     struct TeleSnap {

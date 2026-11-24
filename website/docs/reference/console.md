@@ -304,7 +304,8 @@ phases and the daily run are under [Backflow switch test](../internals/protectio
 
 With an output current sensor that cannot read reverse current, or with Vout below 2 V (no battery), the test runs a
 single `toggle` phase instead: forced PWM at a fixed duty, the switch turned off and on 3 times. It prints the mean on
-and off readings (current with a battery, D × Vin − Vout without) and the smallest off step. See
+and off readings (current with a battery, D × Vin − Vout without) and the smallest off step. Readings that are not
+settled on fresh samples, or a Vout that moves between them, abort the run (no verdict). See
 [Toggle variant](../internals/protection.md#toggle-variant).
 
 The test is refused on a boost, without `board.conf::bflow_bat=1`, with a latched high-side short or `bf-fail`, while

@@ -310,6 +310,7 @@ static double tNow() { return (double) esp_timer_get_time() * 1e-6; }
 
 // ---- measured sensor noise (SIM_NOISE) ----
 float (*g_simSenseHook)(uint8_t ch, float x) = nullptr;
+bool g_simAdcMute = false;
 static struct {
     float fs[3], lsb[3], iRef = 1, gain = 1, exp = 1;
     uint64_t ofs = 0; // ticks
@@ -2715,6 +2716,9 @@ static int runHsShort(const std::string &sc) {
 // bf-uni-dcm: a 0.5 A panel stays in DCM up to the duty cap: aborted before forced PWM, no reverse current
 // bf-uni-slow: lv_i_filt_len=300: the toggle's dwell exceeds 1 s: refused
 // bf-uni-soft-ok/-closed: a 1.6 A panel at 100 kHz: the current partly stays while off, Vin rises by Vf / D instead
+// bf-uni-stale: no sample for 300 ms (SIM_MUTE s) from the first off command: no fresh reading in time, aborted
+// bf-uni-soft-vstep: the Vout reading 0.6 V up (SIM_DV, a sense error, the plant unchanged) in the first off window
+//   (from SIM_VAT s): the step in D Vin - Vout is gone, the current stays: aborted
 // bf-nobat-ok/-closed: battery removed (divider load only): toggle variant judged on D Vin - Vout per duty bump
 // bf-nobat-reconnect: a one-direction sensor, the pack (BMS) reconnects mid-toggle: RT stop, aborted
 // bf-nobat-packsense: a pack is there but Vout reads 0 (open divider): the output does not follow, aborted
@@ -2969,7 +2973,8 @@ static int runBfTest(const std::string &sc) {
     if (sc.rfind("bf-uni-", 0) == 0 || sc.rfind("bf-nobat-", 0) == 0) {
         const bool noBat = sc[3] == 'n', ok = sc.size() > 3 && !sc.compare(sc.size() - 3, 3, "-ok"),
                    offDrop = sc == "bf-uni-offdrop", sunDrop = sc == "bf-uni-abort" || sc == "bf-uni-cloud" || offDrop, reconnect = sc == "bf-nobat-reconnect",
-                   packSense = sc == "bf-nobat-packsense", aborts = sunDrop || reconnect || packSense || sc == "bf-uni-dcm",
+                   packSense = sc == "bf-nobat-packsense", stale = sc == "bf-uni-stale", vstep = sc == "bf-uni-soft-vstep",
+                   aborts = sunDrop || reconnect || packSense || sc == "bf-uni-dcm" || stale || vstep,
                    uni = !noBat || reconnect || getenv("SIM_UNIDIR");
         chk(mppt.batIBipolar() == !uni, uni ? "sensor unidirectional" : "sensor bipolar");
         static float (*prevHook)(uint8_t, float);
@@ -3008,9 +3013,32 @@ static int runBfTest(const std::string &sc) {
         static float iRevBfOn, vOutMax;
         static double revT0, revS; // reverse current with the switch on: first time, total time
         iRevBfOn = 0, vOutMax = 0, revT0 = -1, revS = 0;
+        // the first off window: 1 no samples from the command on, 2 a Vout reading offset after vAt, switch off
+        static int dist, offs;
+        static bool wasOff;
+        static float dVb, vOfs, muteS, vAt;
+        static double muteT;
+        dist = stale ? 1 : vstep ? 2 : 0, offs = 0, wasOff = false, muteT = 0;
+        dVb = getenv("SIM_DV") ? (float) atof(getenv("SIM_DV")) : .6f, vOfs = 0;
+        vAt = getenv("SIM_VAT") ? (float) atof(getenv("SIM_VAT")) : 0.f;
+        muteS = getenv("SIM_MUTE") ? (float) atof(getenv("SIM_MUTE")) : .3f;
+        if (vstep) g_simSenseHook = [](uint8_t ch, float x) { return (prevHook ? prevHook(ch, x) : x) + (ch == 1) * vOfs; };
         g_tickHook = [] {
             static double tPrev = 0;
             const double t = tNow();
+            if (dist) {
+                const uint8_t m = mppt.bfTest.mode.load();
+                const bool eng = (m & MpptController::BfToggle) && (m & MpptController::BfEngage),
+                           off = eng && (dist == 1 ? !(m & MpptController::BfOn) : !mppt.bflow.state());
+                if (off != wasOff) {
+                    if (off && !offs++) muteT = t, g_simAdcMute = dist == 1;
+                    if (!off && vOfs != 0) vOfs = 0, printf("%9.4f >>> Vout reading back\n", t);
+                    wasOff = off;
+                }
+                if (dist == 2 && off && offs == 1 && t - muteT >= vAt && vOfs == 0)
+                    vOfs = dVb, printf("%9.4f >>> Vout reading %+.2f V\n", t, dVb);
+                if (g_simAdcMute && t - muteT >= muteS) g_simAdcMute = false, printf("%9.4f >>> ADC unmute\n", t);
+            }
             if (mppt.bfTest.mode.load() && g_vconv.bfConducts()) {
                 iRevBfOn = std::min(iRevBfOn, g_vconv.getIoutSense());
                 if (g_vconv.getIoutSense() < -.5f) revS += t - tPrev, revT0 = revT0 < 0 ? t : revT0;
@@ -3051,7 +3079,7 @@ static int runBfTest(const std::string &sc) {
             trace();
         }
         if (sunDrop) g_vconv.setPv(isc, voc, g_vconv.getPvK()), g_vconv.setBat(vb, rb);
-        g_tickHook = nullptr;
+        g_tickHook = nullptr, g_simAdcMute = false;
         g_simSenseHook = prevHook;
         run(1.1, 0); // past the UART rate limit
         bfTestPrint();

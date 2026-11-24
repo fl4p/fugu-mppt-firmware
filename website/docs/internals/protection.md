@@ -316,9 +316,17 @@ instead when either is missing:
 - Vout (battery side) reads below 2 V when the test starts: no battery. The Vout divider bleeds an open battery side
   toward 0 V; a stale charge on the output capacitors makes the test refuse (Vout implausible) until it has decayed.
 
-The variant holds forced PWM at a fixed duty and turns the switch off and on 3 times. Each reading waits for the
-settling time of the current, Vin and Vout filters plus 20 ms after the edge, at least 60 ms. The test refuses to start when that wait
-exceeds 1 s (sensor filters too slow for the toggle).
+The variant holds forced PWM at a fixed duty and turns the switch off and on 3 times. It takes a reading once all of
+these hold:
+
+- the real-time loop has switched, and 10 ms more have passed (the gate's turn-on time);
+- since then, the current, Vin and Vout sensors have each delivered enough fresh samples to settle their filters (a
+  sample count, not a time);
+- the settling time plus 20 ms, at least 60 ms, has passed since the previous reading.
+
+A reading that takes longer than 4 times that wait aborts the run (no fresh samples), so a filter that still holds
+samples from before the edge never yields a verdict. The test refuses to start when the wait exceeds 1 s (sensor
+filters too slow for the toggle).
 
 The criterion is y = D × Vin − Vout, the voltage across the loop. With the switch on, y is the resistive drop. While
 off, a blocking switch adds its body-diode drop, or, on a stiff source, the current collapses instead.
@@ -329,7 +337,15 @@ off, a blocking switch adds its body-diode drop, or, on a stiff source, the curr
 | no battery | switch off, low side at its minimum pulse (an asynchronous buck), the duty climbing from its minimum until Vout has risen 1 V (at most to D × Vin = Vout + 3 V); the real-time loop then engages forced PWM, the duty goes above the output and ramps to min(Vin/2, 0.8 × Vbat max) − 3 V | every off reading: y at least 0.1 V above both on neighbours | an off reading below that, with steady neighbours |
 
 Steady neighbours means the two on readings around an off reading agree: y within 0.15 V and, with a battery, the
-current within 15 %. Otherwise the run aborts without a verdict.
+current within 15 %. With a battery, Vout must also hold:
+
+- the two on readings within 50 mV of each other;
+- the off reading at most 50 mV above both;
+- the off reading at most 50 mV below both, plus 0.2 Ω times the current's drop while off (a blocking switch lowers
+  the charge current, and with it the IR drop on the battery side).
+
+Otherwise the run aborts without a verdict. A Vout reading that moves during the off reading shifts y by the same
+amount, which can hide the diode step or fake one.
 
 A switch stuck closed steps 0.00 V. The 0.1 V threshold lies below a hot body diode's drop at a few hundred
 microamperes (0.15–0.35 V) and above the error of a settled reading. Without a battery, each turn-off also raises the

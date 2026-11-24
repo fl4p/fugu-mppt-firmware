@@ -20,6 +20,7 @@
 class ADC_VConv;
 #ifdef FUGU_HOST_SIM
 extern float (*g_simSenseHook)(uint8_t ch, float x); // host sim: measured sensor noise
+extern bool g_simAdcMute; // host sim: the plant runs, no sample is delivered
 #endif
 
 static bool adc_vconv_periodic_timer_callback(void *arg);
@@ -75,6 +76,9 @@ public:
             const float dt = 1e-6f * (float) (1000000u / std::max<uint32_t>(adcFreq_, 1)); // timer period, whole us
             g_vconv.stepSeconds(dt * (float) ticks, 39000);
         }
+#ifdef FUGU_HOST_SIM
+        if (g_simAdcMute) return false;
+#endif
         return ticks != 0;
     }
 

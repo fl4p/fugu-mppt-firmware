@@ -35,8 +35,10 @@ struct {
     bool daily = false, keepMode = false;
     bool tog = false, noBat = false, fp = false; // toggle variant (phase 0 only), no battery, forced PWM on
     uint8_t k = 0; // toggle readings: even BF on, odd BF off
-    float a = 0, ya = 0, xo = 0, yo = 0, on = 0, off = 0, dv = 0, vin0 = 0; // toggle: last on I and y, off I and y,
-    // sums, smallest y step
+    float a = 0, ya = 0, va = 0, xo = 0, yo = 0, vo = 0, on = 0, off = 0, dv = 0, vin0 = 0; // toggle: last on I, y and
+    // Vout, off I, y and Vout, sums, smallest y step
+    bool snap = false; // toggle: n holds the sample counts of I, Vin, Vout once the switch settled
+    uint32_t n[3] = {};
     uint32_t ticket = 0, t0 = 0, t1 = 0, dwell = 0, tickMs = 0;
     OpMode savedMode = OpMode::Mppt;
     uint16_t savedManual = 0, d = 0, dCap = 0, dMax = 0, bump = 0, dLive = 0; // dLive: MPPT duty at the take-over
@@ -285,6 +287,7 @@ void engage(uint32_t now) {
     if (!s.tog) return (void) mppt.bfTest.mode.fetch_or(MpptController::BfEngage);
     // toggle: the switch is on already (no battery: off, forced PWM on)
     s.st = St::Toggle, s.k = 0, s.a = i, s.on = s.off = 0, s.dv = INFINITY, s.vin0 = sensors.Vin->ewm.avg.get();
+    s.snap = false, s.t1 = now;
     s.dwell = togDwellMs();
     if (s.noBat) return bfOn(true);
     mppt.bfTest.iFloor = std::max(.3f, .3f * i);
@@ -298,27 +301,53 @@ void togEnd(char v) {
     stopRt();
 }
 
+// the filters of I, Vin and Vout hold only samples taken 10 ms or more after the RT switched (the gate's 2 tau)
+bool togFresh(uint32_t now, bool on) {
+    const Sensor *const ss[3] = {mppt.sensorPhysicalI, sensors.Vin, sensors.Vout};
+    if (!s.snap) {
+        if (mppt.bflow.state() != on || now - s.t1 < 20) {
+            if (mppt.bflow.state() != on) s.t1 = now;
+            return false;
+        }
+        for (int j = 0; j < 3; ++j) s.n[j] = ss[j]->numSamples;
+        return s.snap = true, false;
+    }
+    for (int j = 0; j < 3; ++j) {
+        if (ss[j]->numSamples < s.n[j]) return s.snap = false; // a sensor reset or the count wrapped: again
+        if (!((float) (ss[j]->numSamples - s.n[j]) >= MpptController::settleN(ss[j]))) return false;
+    }
+    return true;
+}
+
 // y = D Vin - Vout: the loop's drop. A blocking switch adds its body diode's drop while off,
 // unless the current collapses instead (a stiff source). Each off reading is judged against both on neighbours:
 // they must agree (steady source and load, else abort), and the off reading must stand out (else FAIL).
+// With a battery, Vout must hold within 50 mV, less the drop of a current that fell (0.2 ohm), else abort.
 void togStep(uint32_t now) {
     const bool on = !(s.k & 1);
     if (converter.disabled()) return abortRun("protection or a NaN current", now);
-    if (now - s.t0 < s.dwell || converter.getCtrlOnPwmCnt() != s.d) return;
+    if (converter.getCtrlOnPwmCnt() != s.d) return;
+    if (!togFresh(now, on) || now - s.t0 < s.dwell) {
+        if (now - s.t0 > 4 * s.dwell) abortRun("no fresh samples", now);
+        return;
+    }
     const float vi = sensors.Vin->ewm.avg.get(), x = mppt.sensorPhysicalI->ewm.avg.get(),
-            y = converter.dutyCtrlEff() * vi - sensors.Vout->ewm.avg.get();
+            v = sensors.Vout->ewm.avg.get(), y = converter.dutyCtrlEff() * vi - v;
     if (!std::isfinite(x) || !std::isfinite(y)) return abortRun("NaN reading", now);
-    s.t0 = now;
+    s.t0 = now, s.snap = false, s.t1 = now;
     if (!on) {
         if (!(vi >= .99f * s.vin0)) return abortRun("Vin dropped", now);
-        s.xo = x, s.yo = y, s.off += s.noBat ? y : x;
+        s.xo = x, s.yo = y, s.vo = v, s.off += s.noBat ? y : x;
         bfOn(true);
     } else {
-        const float a = s.a, ya = s.ya;
-        s.on += s.noBat ? y : x, s.ya = y, s.a = x;
+        const float a = s.a, ya = s.ya, va = s.va;
+        s.on += s.noBat ? y : x, s.ya = y, s.a = x, s.va = v;
         if (s.k) {
             if (!(fabsf(y - ya) < .15f && (s.noBat || fabsf(x - a) <= .15f * std::max(x, a))))
                 return abortRun("source or load changed", now);
+            if (!s.noBat && !(fabsf(v - va) <= .05f && s.vo - std::max(v, va) <= .05f &&
+                              std::min(v, va) - s.vo <= .05f + .2f * std::max(0.f, std::min(x, a) - s.xo)))
+                return abortRun("Vout moved", now);
             const float st = s.yo - std::max(ya, y);
             s.dv = std::min(s.dv, st);
             // the step is Vf less the loop drop a partial current collapse gives back; a closed switch steps 0
