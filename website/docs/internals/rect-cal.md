@@ -10,7 +10,7 @@ description: "rect-cal sweeps the low-side window across the inductor zero cross
 `coil.conf::rect_offset_ns` on a running buck (`src/rect_cal.h`). It runs the
 [bench LS sweep](diode-emulation.md#bench-measurement) itself.
 
-It lowers HS to `0.55·M` of the
+The run lowers HS to `0.55·M` of the
 period and holds it there. That point draws well below the panel's MPP current, so `V_i` sits on
 the flat, voltage-source part of the PV curve near `V_oc`. At the MPPT operating point itself the
 panel limits the power, the LS window hardly changes the output current, and the located peak
@@ -31,7 +31,7 @@ A run needs:
 - an HS count at or above the calibration HS of `0.55·M`, which must itself lie above the HS
   minimum.
 
-`rect-cal` further needs DCM and at most 4 A. At the calibration point the run further
+`rect-cal` also needs DCM and at most 4 A. At the calibration point the run also
 needs more than 0.15 A and LS headroom: the sweep cap, the smallest of the complementary limit, 90 %
 of the off-time limit `(1 − V_o/V_i)·T` and the ideal window + 2.5 µs, must reach at least the ideal
 window + 1.25 µs (`LS headroom`).
@@ -54,7 +54,7 @@ per control sample (about 0.3 s from a full-power operating point at ~450 sample
 Before the first HS step the LS is pinned at its minimum (`pwmRectMin`), and it stays there through the ramp
 and the settling phase. The converter is then a non-synchronous buck: the body diode carries the
 freewheel current and no reverse current can build, however fast the current falls through the
-CCM/DCM boundary and however late the CCM/DCM decision follows it. Lowering the duty only moves
+boundary between CCM and DCM and however late the CCM or DCM decision follows it. Lowering the duty only moves
 every limiter away from its limit (power, currents and `V_o` fall, `V_i` rises), so the ramp cannot
 make a limiter act. `V_i` rises toward `V_oc`; the run stops at 97% of the input over-voltage trip
 (`limits.conf::hv_max`) before the trip itself.
@@ -73,7 +73,9 @@ window with `bad sample`.
 The firmware computes the ideal window from the averaged voltages of the last settling
 window (`(V_i/V_o − 1)·HS`, without the worst-case ratio margin) and steps LS from 0.5× to 1.4× of
 it in 24 steps. Each step settles for 150 ms and averages `I_out` for 500 ms. Between steps, a
-reference LS of 0.6× ideal is held for 400 ms. Each point is the step's current minus the mean of
+reference LS of 0.6× ideal is held for 400 ms.
+
+Each point is the step's current minus the mean of
 the two references around it, which cancels any change of the source that is linear in time, such
 as slowly changing irradiance. Each point is placed relative to the ideal window of its own
 averaged `V_i` and `V_o`, so a voltage drift moves the coordinate with the zero crossing instead of
@@ -205,7 +207,9 @@ the ring phase, adds to the peak current and moves the zero crossing by that cur
 up to `±√(LC)`. The window `(V_i/V_o − 1)·HS` does not contain it. The phase follows the off-time
 after the crossing, `T − HS·V_i/V_o`, so the shift differs at every operating point and no constant
 offset can follow it. At the run's calibration point the crossing lies up to about 0.4 µs before
-and 0.75 µs after the ideal window. Holding the LS past the crossing changes the ring
+and 0.75 µs after the ideal window.
+
+Holding the LS past the crossing changes the ring
 current HS turns on into: with a negative ring current the output current bends up at the crossing;
 with a positive one it stays flat past the crossing and bends down only at the clamp onset.
 
@@ -266,7 +270,9 @@ cannot subtract without the node capacitance. A model inductance above the plant
 
 The run then fits a line with a quadratic bend from `x_0` on,
 `y = c_0 + c_1·d + c_2·min(0, d)² + c_3·max(0, d)²` with `d = x − x_0`, and searches `x_0` over the
-sweep. Two bends are fitted: a downward one (`c_2 ≤ 0`, `c_3 < c_2`) over all points up to a dip
+sweep.
+
+Two bends are fitted: a downward one (`c_2 ≤ 0`, `c_3 < c_2`) over all points up to a dip
 floor (below) and, if the highest of them lies past `zc`, an upward one (`c_3 > max(c_2, 0)`)
 through that point. Each must exceed 10 mA and 4× its residual RMS at the last point, counting
 only the bend it adds to the early side's own curvature; otherwise a concave early side and a
@@ -312,9 +318,10 @@ toward a longer LS when `learned` is negative. The result takes effect at once.
 A late LS turn-off builds reverse current at `V_o/L` per second. When the LS turns
 off, that current drains through the HS body diode into the input at `(V_i − V_o)/L`, so it takes
 `M/(1 − M)` times the late time to return to zero: one late time at `M = 0.5`, four at `M = 0.8`.
+
 Near `D = M` the 2% ratio margin of the diode-emulation window (about `0.02·T` = 0.5 µs at 39 kHz)
 is all that keeps the LS from filling the off-time, and a `V_o` reading 1.5–2% low (or `V_i` as much
-high) uses it up. A positive offset added on top then either reaches the complementary limit
+too high) uses it up. A positive offset added on top then either reaches the complementary limit
 `T − HS − 1`, where the LS turns off only when HS turns on and the converter runs backward from the
 battery in forced CCM, or leaves a reverse current that has not drained when HS turns on. An
 offset of +125 ns with `V_o` read 1.7 % low is enough for both.
@@ -338,7 +345,9 @@ tool does not apply the `V_i = 2·V_o` rule of the run.
 Above `V_i = 2·V_o` the reverse current must first lift the switch node to `V_i`
 before it is lost, which can put the downward bend after the zero crossing by a lag that the node
 capacitance sets. Driver and gate delays explain tens of nanoseconds, and a single run scatters by
-about 0.2 µs. A late result from a calibration point above `V_i = 2·V_o`, or one whose applied
+about 0.2 µs.
+
+A late result from a calibration point above `V_i = 2·V_o`, or one whose applied
 offset would exceed +125 ns below it, is therefore a bound, not a measurement: the run applies the
 shorter of the limit (0 above `V_i = 2·V_o`, +125 ns below) and the offset in use, and never moves an
 active offset later. A shorter measured offset stays as it is and keeps its state. Otherwise the
