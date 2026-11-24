@@ -34,7 +34,8 @@ Highlights:
 * BLE: console, [telemetry](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/telemetry/#ble-telemetry-stream) and Wi-Fi setup ([Improv](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/connecting/#improv-over-ble))
 * Backflow switch [self-test](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/protection/#backflow-switch-test) and
   [high-side short](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/protection/#high-side-short-check) detection
-* [MQTT](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/mqtt/) support to communicate with the BMS and Home Assistant
+* [MQTT](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/mqtt/) support to communicate with the [BMS](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/charging/bms-integration/) and
+  [Home Assistant](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/telemetry/#mqtt-and-home-assistant)
 * ADC abstraction layer with implementations for ESP32(S3) [Internal ADC](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/hardware/internal-adc/), ADS1x15 and
   INA226/INA228
 * Async ADC sampling for low latency control loop (<900µs in-out latency)
@@ -178,9 +179,10 @@ idf.py monitor
 If Wi-Fi connection is successful you will be able to connect with telnet and FTP.
 You can send the same commands over telnet as over the [Serial console](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/console/).
 
-Use FTP to change HW configuration files to configure IO pins, ADC and converter topology.
-Note that FTP server is unstable. It seems to work well with the Filezilla client.
-FTP settings: 1 simultaneous connection, disable passive mode.
+Use FTP or the [config editor](https://fl4p.github.io/fugu-mppt-firmware/tools/conf-editor.html) to change the
+configuration files (IO pins, ADC, converter topology). The FTP server takes two sessions; passive mode uses
+[`ftp.conf`](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/config/ftp/)`::pasv_port` (default 50009) and the port after it. Set `ftp_user` and
+`ftp_pass`, because the fallback password is the chip ID.
 
 # Control Loop
 
@@ -240,6 +242,8 @@ happening. This improves average CPU utilization and other things can run smooth
 
 ### Signal Filtering
 
+Details: [Signal filters](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/signal-filters/)
+
 We use IIR notch filters to remove inverter noise and a moving median to remove bursts/spikes from the voltage and
 current
 signals. Another IIR smoothing filter suppresses residual noise.
@@ -271,6 +275,8 @@ can significantly reduce overall efficiency.
 
 # Synchronous Buck and Diode Emulation
 
+Details: [Diode emulation](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/diode-emulation/)
+
 We can leave the Low-Side (LS, aka *sync-FET*, *synchronous rectifier*) switch off and the coil discharge current will
 flow through the LS MOSFET´s body diode.
 The buck converter then operates in non-synchronous mode with reduced conversion efficiency since the mosfet body diode
@@ -290,7 +296,6 @@ modelled using a constant -5% inductance drop, which appears to be reasonably ac
 noticeable during operation near the CCM/DCM transition point, and it usually causes the rectification switch to turn
 off too early. If you experience reverse inductor current, decrease `L0` value.
 A more accurate model would use the DC-bias curve from the core material's datasheet.
-See [Diode Emulation](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/diode-emulation/) for more details and formulae.
 
 For additional safety the low-side duty cycle is slowly faded to its maximum value. As soon as we detect reverse
 current (which might also be noise), we decrease the LS switch duty cycle and slowly recover.
@@ -335,20 +340,20 @@ cut-off. This avoids voltage transients, improves cell balancing time and avoids
 
 # Using this Firmware
 
-I am currently using this firmware on a couple of Fugu Devices in a real-world application. Each device is connected to
-2s 410WP solar panels, charging an 24V LiFePo4 battery. They produce more than 4 kWh on sunny days.
+I use this firmware on a couple of Fugu devices in a real-world application. Each device is connected to
+2s 410WP solar panels, charging a 24V LiFePo4 battery. They produce more than 4 kWh on sunny days.
 
-I'd consider the current state of this software as usable. ADC filtering and control loop speed depend on the quality of
-measurements (noise, outliers) and need to be
-adjusted manually.
+The software is in daily use. Filter settings and control loop speed depend on the quality of the measurements (noise,
+outliers) and may need tuning per board; the inverter-ripple notch tunes itself.
 
 Sensor noise increases with power, so we can slow down the control loop to ensure a steady output. Otherwise, the
 converter might repeatedly detect over-voltage or over-current and shut down, wasting solar energy. A slow control loop
-however causes higher voltage
-transients during load changes (e.g. BMS battery cut-off) which can be dangerous for devices.
+however causes higher voltage transients during load changes (e.g. BMS battery cut-off) which can be dangerous for
+devices.
 
 If the battery or load is removed during power conversion expect an over-voltage transient at the output.
-With a battery voltage of 28.5V, I measured 36V for 400ms.
+With a battery voltage of 28.5V, I measured 36V for 400ms. See
+[Overshoot on battery disconnect](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/protection/#overshoot-on-battery-disconnect) for the expected peak.
 
 Keep in mind that in case of a failure (software or hardware), the charger might permanently output the max solar
 voltage at the battery terminal, potentially destroying any connected device. Add over-voltage protection (another
