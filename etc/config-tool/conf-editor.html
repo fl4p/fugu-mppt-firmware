@@ -184,12 +184,10 @@
   .row .k { display:block; font:13.5px/1.4 var(--mono); color:var(--fg); word-break:break-all; }
   .row .k .pfx { color:var(--faint); }
   .row.extra:not(.filled) .k { color:var(--muted); }
-  .row .desc { color:var(--muted); font-size:12.5px; line-height:1.45; margin-top:2px;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:default; }
-  .row:focus-within .desc, .row .desc.open { white-space:normal; }
+  .row .desc { color:var(--muted); font-size:12.5px; line-height:1.45; margin-top:2px; }
   .row .desc .def { color:var(--faint); margin-left:.6em; }
   .row .desc.none { color:var(--faint); font-style:italic; }
-  .row .desc.err { color:var(--accent); white-space:normal; }
+  .row .desc.err { color:var(--accent); }
   .row .val { min-width:0; }
   .row .val-line { display:flex; align-items:center; gap:4px; position:relative; padding-right:28px; }
   .row .inwrap { flex:1; min-width:0; display:block; }
@@ -258,7 +256,10 @@
   .addkey input:nth-of-type(2) { flex:0 1 160px; }
   .addkey input:focus { outline:none; border-color:var(--line-2); background:var(--field); }
   .addkey button { border-color:var(--line-2); }
-  .pane-foot > button.more { font-size:13px; width:fit-content; text-decoration:none; }
+  .pane-foot > button.more { font-size:13px; width:fit-content; text-decoration:none; color:var(--muted); padding:0; display:flex; align-items:center; gap:8px; }
+  .pane-foot > button.more::before { content:""; width:10px; height:6px; background:var(--chev) no-repeat center; transform:rotate(-90deg); transition:transform .15s; }
+  .pane-foot > button.more.open::before { transform:none; }
+  .pane-foot > button.more:hover { color:var(--fg); }
   details.fold > summary { cursor:pointer; color:var(--muted); font-size:13px; width:fit-content; list-style:none; display:flex; align-items:center; gap:8px; }
   details.fold > summary::-webkit-details-marker { display:none; }
   details.fold > summary::before { content:""; width:10px; height:6px; background:var(--chev) no-repeat center; transform:rotate(-90deg); transition:transform .15s; }
@@ -535,8 +536,6 @@
     .phead h2 { font-size:24px; }
     .row { grid-template-columns:1fr; row-gap:8px; }
     .row::before { left:-10px; }
-    .row .desc { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
-    .row:focus-within .desc, .row .desc.open { -webkit-line-clamp:unset; }
     #drop { padding-top:6vh; }
     .start .intro h2 { font-size:25px; }
     .sheet { top:auto; width:100%; height:86vh; border-left:0; border-top:1px solid var(--line); border-radius:14px 14px 0 0;
@@ -1757,7 +1756,7 @@ function renderPane(){
   refreshCount();
   // rows Show all lists: every key except unset ones DEPENDS marks unused
   const nFull=f.order.filter(k=>!depState(base, k).unused || keyHas(f, k)).length;
-  const tog=document.createElement("button"); tog.type="button"; tog.className="link more";
+  const tog=document.createElement("button"); tog.type="button"; tog.className="link more"+(showAll ? " open" : "");
   tog.textContent = showAll ? "Show fewer keys" : `Show all ${nFull} keys`;
   if (nFull<nAll) tog.title = `${nAll-nFull} more not used with the current settings`;
   tog.onclick=()=>{ showAll ? showAllFiles.delete(path) : showAllFiles.add(path); renderPane(); refreshDirtyMarks(); };
@@ -1800,8 +1799,6 @@ function renderPane(){
     if (meta && meta.fromComment) d.textContent += " (from file comment)";
     const def = lookupDefault(path, key);
     if (def !== undefined){ const s=document.createElement("span"); s.className="def"; s.textContent="default: "+(meta && meta.type==="bool" && (def==="0"||def==="1") ? (def==="1" ? "on" : "off") : def); d.append(" ", s); }
-    d.title = d.textContent;
-    d.onclick = ()=>d.classList.toggle("open");
     left.appendChild(d);
 
     const right = document.createElement("div"); right.className="val";

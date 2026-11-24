@@ -336,7 +336,7 @@ no borders.
 | Element        | Behaviour                                                          |
 | -------------- | ------------------------------------------------------------------ |
 | key            | mono `<label>`, linked to the text input or select (a click focuses it); on a switch row it only names the switch (`aria-labelledby`), so a click on the key does not toggle the value. Tooltip carries the type: "<type>, read with ConfFile::get<Type>()" or "type unknown", plus "; no metadata in the firmware tables" when no description exists |
-| description    | muted, one line with ellipsis (two on mobile); expands while the row has focus or when clicked; full text in the tooltip. Source: `FILE_META` / `META` / channel pattern / ssid pattern; else the file's inline `# comment` suffixed "(from file comment)"; else faint italic "No description". A known default follows in a fainter tone as "default: <value>" (bool defaults as on/off) |
+| description    | muted, wrapped in full. Source: `FILE_META` / `META` / channel pattern / ssid pattern; else the file's inline `# comment` suffixed "(from file comment)"; else faint italic "No description". A known default follows in a fainter tone as "default: <value>" (bool defaults as on/off) |
 | value          | text input on a grey fill (mono); `<select>` for keys with `opts`; a switch for bool keys (§2.6). Unset firmware-known keys show the placeholder `<not set>` on a transparent, outlined field |
 | unit           | own column right of the input (V, A, Hz, GPIO, …), muted          |
 | `×`            | clears the key (§2.6); shown only when the field has a value, and only on row hover/focus (always faintly visible on touch devices) |
