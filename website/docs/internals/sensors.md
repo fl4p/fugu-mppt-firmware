@@ -33,12 +33,15 @@ The following backends implement this interface.
 
 | Backend | Hardware |
 |---|---|
-| `ADC_ESP32_Cont` | ESP32/ESP32-S3 internal ADC in continuous (DMA) mode, see [Internal ADC](../guide/hardware/internal-adc.md) |
-| `ADC_ADS` | ADS1015 / ADS1115 over I²C |
-| `ADC_INA226` | INA226 current/voltage monitor over I²C |
-| `ADC_Fake` | Sinusoidal mock, for tests and dev boards |
+| `ADC_ESP32_Cont` | ESP32/ESP32-S3 internal ADC in continuous (DMA) mode (`esp32adc1`), see [Internal ADC](../guide/hardware/internal-adc.md) |
+| `ADC_ADS` | ADS1015 / ADS1115 over I²C (`ads1015`, `ads1115`; `CONFIG_FUGU_WITH_ADS`) |
+| `ADC_INA226` | INA226 current and voltage monitor over I²C (`ina226`; `CONFIG_FUGU_WITH_INA226`) |
+| `ADC_Fake` | Sinusoidal mock, for tests and dev boards (`fake`) |
+| `ADC_VConv` | Simulated converter, in the simulated-converter build (`vconv`), see [vconv.conf](../reference/config/vconv.md) |
+| `ADC_Dummy` | Replays recorded samples, for unit tests only |
 
-`sensor.conf` selects the backend per channel with `<chn>_adc` and the channel with `<chn>_ch` (`255` = absent).
+`sensor.conf` selects the backend per channel with `<chn>_adc`, using the names in parentheses, and the channel
+with `<chn>_ch` (`255` = absent). A backend left out of the build fails setup.
 `<chn>` names the board side, `hv_v`, `lv_v`, `hv_i` or `lv_i`, or `ntc`; `converter.conf::topo` maps the sides to
 Vin, Vout, Iin and Iout.
 See the [configuration reference](../reference/config/sensor.md).
@@ -53,11 +56,12 @@ The sensor layer consists of the following types.
 | `Sensor` | A physical sensor with running statistics (mean, variance) |
 | `VirtualSensor` | A computed sensor, also with running statistics |
 | `LinearTransform` | `y = (x − midpoint)·factor` scaling; derived from `*_rh`/`*_rl` for voltage dividers |
-| `CalibrationConstraints` | Bounds (mean, standard deviation) a sensor must meet during zero-current calibration |
+| `CalibrationConstraints` | Limits for the start-up calibration with the converter off: largest absolute reading, standard deviation, and whether the zero offset is calibrated (current sensors) |
 
 :::warning
 `vout` must remain the last sensor added in `setupSensors()`. It then has the lowest latency, which the
 over-voltage protection relies on.
 :::
 
-[Signal filters](signal-filters.md) describes the filtering (notch or comb, moving median, EWMA).
+[Signal filters](signal-filters.md) describes the filter chain: median with despike, EWMA, and the
+inverter-ripple notch or comb.
