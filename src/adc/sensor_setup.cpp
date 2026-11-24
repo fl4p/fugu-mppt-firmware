@@ -186,6 +186,12 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
             throw std::runtime_error("ina22x_* was renamed to ina226_*: " + o + " is no longer read, use " + n);
         ESP_LOGW("sensor", "%s ignored, %s is set; remove %s", o.c_str(), n.c_str(), o.c_str());
     }
+    // board.conf: adc_fake_freq was renamed to adc_freq, shared by both mock backends
+    if (boardConf.has("adc_fake_freq")) {
+        if (!boardConf.has("adc_freq"))
+            throw std::runtime_error("board.conf: adc_fake_freq was renamed to adc_freq");
+        ESP_LOGW("sensor", "board.conf adc_fake_freq ignored, adc_freq is set; remove adc_fake_freq");
+    }
     for (auto k: {"ina226_resistor", "ina226_conv_time_us", "ina226_ov"})
         if (boardConf.has(k)) {
             // a leftover copy is fine while sensor.conf holds the same value

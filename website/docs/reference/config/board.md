@@ -46,7 +46,7 @@ The backflow switch pins were renamed; see [Backflow switch keys](#backflow-swit
 | `led_simple`            | GPIO | int    | 255     | Plain on/off status LED pin; 255 = off         |
 | `fan_pwm`               | GPIO | int    | 255     | Cooling fan PWM pin; 255 = off                 |
 | `ads_alert`             | GPIO | int    | —       | ADS1x15 ALERT/RDY pin                          |
-| `adc_fake_freq`         | Hz   | int    | 3000    | Tick rate of the `fake` mock ADC, and of the `vconv` plant when `vconv.conf::adc_freq` is unset; every channel is sampled each tick |
+| `adc_freq`              | Hz   | int    | 3000    | Tick rate of both mock ADC backends, `fake` and `vconv` (every channel is sampled each tick); `vconv.conf::adc_freq` overrides it in a vconv build |
 | `idle_cpu_mhz`          | MHz  | int    | 80      | CPU clock of the [idle power profile](#idle-power-profile): 80, 160 or 240, any other value fails setup. 0, or the boot clock, keeps the boot clock |
 
 ## Idle power profile

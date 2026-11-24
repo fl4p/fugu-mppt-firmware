@@ -46,7 +46,7 @@ private:
 
 public:
     bool init(const ConfFile &boardConf) override {
-        auto f = boardConf.getLong("adc_fake_freq", 1000 * 3);
+        auto f = boardConf.getLong("adc_freq", 1000 * 3);
         periodic_timer.begin(f, &adc_fake_periodic_timer_callback, this);
 
         // Test taskNotification

@@ -34,7 +34,7 @@ public:
         // Local vconv.conf: ADC tick rate + noise σ per channel.
         ConfFile vconvConf{"/littlefs/conf/vconv.conf"};
         adcFreq_ = (uint32_t) vconvConf.getLong("adc_freq",
-                       boardConf.getLong("adc_fake_freq", 3000));
+                       boardConf.getLong("adc_freq", 3000));
         noiseVin_  = vconvConf.f("noise_vin",  0.0f);
         noiseVout_ = vconvConf.f("noise_vout", 0.0f);
         noiseIout_ = vconvConf.f("noise_iout", 0.0f);

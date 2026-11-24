@@ -132,7 +132,7 @@ Pick the ADC backend with `adc`, or per channel with `<channel>_adc`. The firmwa
 * `ads1115`
 * `ads1015`
 * `esp32adc1`: internal continuous-mode ADC, no external chip (see [Internal ADC](../../guide/hardware/internal-adc.md))
-* `fake`: sinusoidal mock for bench boards without a power stage (sample rate `board.conf::adc_fake_freq`)
+* `fake`: sinusoidal mock for bench boards without a power stage (sample rate `board.conf::adc_freq`)
 * `vconv`: the simulated plant of `CONFIG_FUGU_WITH_VCONV` builds (see [vconv.conf](vconv.md))
 
 `ina226` and `ads1015`/`ads1115` exist only when compiled in (`CONFIG_FUGU_WITH_INA226`,

@@ -807,7 +807,7 @@ const META = {
   led_WS2812:{unit:"GPIO",desc:"WS2812 status LED data pin",type:"int"},
   led_simple:{unit:"GPIO",desc:"Plain on/off status LED pin",type:"int"},
   fan_pwm:{unit:"GPIO",desc:"Cooling fan PWM pin",type:"int"},
-  adc_fake_freq:{unit:"Hz",desc:"Tick rate of the fake mock ADC (every channel is sampled each tick); also the vconv plant's while vconv.conf adc_freq is unset",type:"int"},
+  adc_freq:{unit:"Hz",desc:"Tick rate of both mock ADC backends (fake and vconv; every channel is sampled each tick); vconv.conf adc_freq overrides it in a vconv build",type:"int"},
   idle_cpu_mhz:{unit:"MHz",desc:"CPU clock while the idle power profile is on (converter off 5 min); a converter start waits until the boot clock is back; skipped until reboot if the control loop loses samples at it; 80, 160 or 240, 0 = keep boot clock",type:"int",opts:["0","80","160","240"]},
   ads_alert:{unit:"GPIO",desc:"ADS1x15 ALERT/RDY pin number",type:"int"},
 
@@ -1025,7 +1025,7 @@ const FILE_META = {
     bflow_stuck:{unit:"",desc:"Fault on the bflow_model switch: 0 none, 1 stuck open, 2 stuck closed",type:"int",opts:["0","1","2"]},
     i_unidir:{unit:"",desc:"1 = the Iout channel clips at 0 (one-direction current amplifier): selftest bflow runs its toggle variant, hs_clamp is ignored",type:"bool"},
     hs_short:{unit:"",desc:"1 = buck high side conducts permanently (with the low side on, the input cap is shorted); 2 = the same and the low side never turns on",type:"int",opts:["0","1","2"]},
-    adc_freq:{unit:"Hz",desc:"Sampling tick; unset = board.conf adc_fake_freq, then 3000",type:"int"},
+    adc_freq:{unit:"Hz",desc:"Sampling tick; unset = board.conf adc_freq, then 3000",type:"int"},
     noise_vin:{unit:"V",desc:"Gaussian ADC noise σ on Vin; 0 = deterministic",type:"float"},
     noise_vout:{unit:"V",desc:"Gaussian ADC noise σ on Vout",type:"float"},
     noise_iout:{unit:"A",desc:"Gaussian ADC noise σ on Iout",type:"float"},
@@ -1161,7 +1161,7 @@ const ADD_KEY_HINTS = { "sensor.conf": ["hv_v","lv_v","hv_i","lv_i"].flatMap(c =
    Run `python3 etc/config-tool/scrape_conf_keys.py --write` to refresh. */
 // SCRAPER:BEGIN FILE_KEYS
 const FILE_KEYS = {
-  "board.conf":["adc_fake_freq","ads_alert","bflow_bat","bflow_en","bflow_sd","boot_refresh_ns",
+  "board.conf":["adc_freq","ads_alert","bflow_bat","bflow_en","bflow_sd","boot_refresh_ns",
     "fan_pwm","hs_clamp","i2c_freq","i2c_hs_freq","i2c_port","i2c_scl","i2c_sda","idle_cpu_mhz",
     "ina226_addr","ina226_alert","led_WS2812","led_simple","lv_pgood","lv_pgood_v","mcu",
     "pwm_deadtime_hl_ns","pwm_deadtime_lh_ns","pwm_deadtime_ns","pwm_driver_logic","pwm_en",
@@ -1221,7 +1221,7 @@ const TYPE_KEYS = {
     "pwm_fault_active_high","pwm_fault_pin","pwm_hi","pwm_in","pwm_li","pwm_sd","pwm_sync_pin",
     "rect_cal_auto","rect_offset_cal","reverse_current_paranoia","scan_trigger","skip_assert",
     "trusted","wire_protect","bflow_model","bflow_stuck","hs_short","i_unidir","vbat_ac_shape"]),
-  long: new Set(["adc_fake_freq","adv_ms","balance_hold_s","binary","ble","ble_passkey",
+  long: new Set(["adv_ms","balance_hold_s","binary","ble","ble_passkey",
     "cv_hold_max_s","esp32adc1_avg","esp32adc1_sr","fpwm_gate_hold","holiday_days","i2c_freq",
     "i2c_hs_freq","i2c_scl","pid","rx_pin","tx_pin","idle_adv_ms","idle_cpu_mhz","idle_interval_ms","improv_offline_s",
     "ina226_conv_time_us","pair_window_s","pasv_port","port","pwm_freq","scan_interval",
@@ -1258,7 +1258,7 @@ const CHAN_SUFFIX_TYPE = { adc:"string", ch:"byte", rh:"float", rl:"float", fact
 // SCRAPER:BEGIN DEFAULTS
 const DEFAULTS = {
   // board.conf
-  "adc_fake_freq":"3000","bflow_bat":"0","bflow_en":"0","bflow_sd":"0",
+  "adc_freq":"3000","bflow_bat":"0","bflow_en":"0","bflow_sd":"0",
   "boot_refresh_ns":"2000.0","fan_pwm":"255","hs_clamp":"0","i2c_freq":"100000",
   "i2c_hs_freq":"0","i2c_port":"0","i2c_sda":"255","idle_cpu_mhz":"80","ina226_addr":"0x40",
   "ina226_alert":"255","led_WS2812":"255","led_simple":"255","lv_pgood":"255",

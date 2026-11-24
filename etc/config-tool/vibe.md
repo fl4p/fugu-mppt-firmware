@@ -70,7 +70,7 @@ Once connected, the values can be read with the `get-config <file>` command, for
 I (267894) main: received serial command: 'get-config board.conf'
 Conf '/littlefs/conf/board.conf:mcu' = 'esp32s3'
 Conf '/littlefs/conf/board.conf:skip_assert' = '1'
-Conf '/littlefs/conf/board.conf:adc_fake_freq' = '3000'
+Conf '/littlefs/conf/board.conf:adc_freq' = '3000'
 Conf '/littlefs/conf/board.conf:pwm_freq' = '39000'
 I (267988) main: OK: get-config board.conf
 ```

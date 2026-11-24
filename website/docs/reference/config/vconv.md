@@ -41,7 +41,7 @@ The file accepts the following keys.
 | `bflow_stuck`   |      | int   | 0       | Fault on that switch: 0 none, 1 stuck open, 2 stuck closed (`bflow_model` only) |
 | `i_unidir`      |      | int   | 0       | 1 = the Iout channel clips at 0, like a one-direction current amplifier: `selftest bflow` runs its toggle variant and `hs_clamp` is ignored. `vconv set i_unidir` at runtime |
 | `hs_short`      |      | int   | 0       | 1 = buck high side conducts permanently; with the low side on as well, the input capacitor is shorted to ground. 2 = the same, and the low side never turns on. For the [high-side short check](../../internals/protection.md#high-side-short-check) |
-| `adc_freq`      | Hz   | int   | 3000    | Sampling tick (falls back to `board.conf::adc_fake_freq`, then 3000)        |
+| `adc_freq`      | Hz   | int   | 3000    | Sampling tick (falls back to `board.conf::adc_freq`, then 3000)        |
 | `noise_vin`     | V    | float | 0       | Gaussian ADC noise σ on Vin; 0 = deterministic                              |
 | `noise_vout`    | V    | float | 0       | Gaussian ADC noise σ on Vout                                                |
 | `noise_iout`    | A    | float | 0       | Gaussian ADC noise σ on Iout                                                |
