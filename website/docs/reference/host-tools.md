@@ -17,7 +17,7 @@ pip install pyserial bleak paho-mqtt zeroconf requests rich tqdm tamp   # + aioe
 
 Keep `aioesphomeapi` out of the ESP-IDF Python environment, because its dependencies break `idf.py`. Tools that call
 `idf.py`, `parttool.py`, or `esptool` need a sourced ESP-IDF environment. Initialize the submodules with
-`git submodule update --init etc/idf-devtools etc/adcscope`.
+`git submodule update --init etc/fugu etc/idf-devtools etc/adcscope`.
 
 The following table lists the tools and their purpose.
 
@@ -26,9 +26,11 @@ The following table lists the tools and their purpose.
 | [`etc/fugu_console.py`](#fugu_consolepy)                   | Console client over serial, telnet, BLE, MQTT    |
 | [`etc/fugu_health.py`](#fugu_healthpy)                     | Read-only health check table                     |
 | [`etc/ota.py`](#otapy)                                     | OTA update over Wi-Fi                            |
+| [`etc/ota_mqtt.py`](#ota_mqttpy)                           | OTA update through the MQTT console              |
 | [`etc/ota_ble.py`](#ota_blepy)                             | OTA update over BLE                              |
 | [`provision.py`](#provisionpy)                             | Write a board config to the `littlefs` partition |
 | [`etc/dump_littlefs.py`](#dump_littlefspy)                 | Read the `littlefs` partition back               |
+| [`flash.sh`](#flashsh)                                     | Serial flash with a device name for the ELF archive |
 | [`etc/idf-devtools/flash-diff.sh`](#flash-diffsh)          | Incremental serial flashing                      |
 | [`etc/idf-devtools/elf_archive.py`](#elf_archivepy)        | Archive build ELFs, decode coredumps             |
 | [`etc/scope.py`](#scopepy)                                 | ADC soft oscilloscope (adcscope)                 |
@@ -39,8 +41,9 @@ The following table lists the tools and their purpose.
 ## fugu_console.py
 
 `fugu_console.py` is a console client for the firmware's text [command protocol](console.md). It runs one command (`-c`), a batch from
-stdin (`--stdin`), or an interactive REPL. With no arguments at all it scans all transports (serial ports, mDNS, local
-BLE, and the MQTT broker in `$MQTT_HOST`) and prints how to connect, without connecting.
+stdin (`--stdin`), or an interactive REPL. With no arguments at all it scans all transports (serial ports, mDNS,
+port-forwarded telnet endpoints listed in `etc/nat.env`, local BLE, an ESPHome BLE proxy in `$BLE_PROXY`, and the MQTT
+broker in `$MQTT_HOST`) and prints how to connect, without connecting.
 
 The following examples cover discovery, the REPL, single commands, a batch, and a coredump:
 
@@ -59,12 +62,12 @@ python3 etc/fugu_console.py -p $ESPPORT --coredump get       # pull + decode a c
 | `-p`, `--port`                        | Serial port (default `$ESPPORT` or autodetect)                                 |
 | `-b`, `--baud`                        | Baud rate, default 115200                                                      |
 | `--ip HOST[:PORT]`                    | TCP/telnet                                                                     |
-| `--tls HOST[:PORT]`                   | TLS-PSK console (default port 992), key from `--psk`/`--psk-id` or `$FUGU_PSK`/`$FUGU_PSK_ID`; Python 3.13+ |
-| `--ble`                               | BLE NUS; filter by advertised name with `--name`                               |
-| `--name`, `--address`                 | Name substring filter (BLE name or MQTT hostname), BLE address                 |
+| `--tls HOST[:PORT]`                   | TLS-PSK console (default port 992), key from `--psk`/`--psk-id` or `$FUGU_PSK`/`$FUGU_PSK_ID` (identity default `fugu`); Python 3.13+ |
+| `--ble [NAME]`                        | BLE NUS; filter by advertised name with `NAME` or `--name`                     |
+| `--name`, `--address`                 | Name substring filter (BLE name or MQTT hostname, default `fugu`), BLE address |
 | `--adapter hciN`                      | BlueZ adapter (Linux)                                                          |
 | `--ble-proxy HOST[:PORT]`             | BLE via an ESPHome `bluetooth_proxy` (plaintext API); `--proxy-password`       |
-| `--mqtt BROKER`                       | MQTT, with `--mqtt-port`, `--mqtt-user`, `--mqtt-pass`; see [MQTT topics](mqtt.md) |
+| `--mqtt [BROKER]`                     | MQTT (bare: `$MQTT_HOST`), with `--mqtt-port`, `--mqtt-user`, `--mqtt-pass` (defaults `$MQTT_PORT`/`$MQTT_USER`/`$MQTT_PASS`, filled from `etc/mqtt.env`); see [MQTT topics](mqtt.md) |
 | `--mqtt-readonly`                     | Stream the log, never publish commands                                         |
 | `-c`, `--command CMD`                 | Run a command and exit; repeatable                                             |
 | `--stdin`                             | Run newline-separated commands from stdin (auto when stdin is piped)           |
@@ -76,16 +79,18 @@ Transports and line handling live in the `etc/fugu` package ([fl4p/fugu-py](http
 
 ## fugu_health.py
 
-`fugu_health.py` runs read-only commands (`ip`, `status`, `mem`, `svc list`, `sensor`) and prints a verdict table.
-It never drives the converter. It takes the same transport flags as `fugu_console.py`, plus `--plain` (borderless
-table) and `--timeout` (per command, default 6 s). It needs `rich`.
+`fugu_health.py` runs read-only commands (`ip`, `status`, `mem`, `svc list`, `sensor`, `coredump info`) and prints a
+verdict table. It never drives the converter. It takes a subset of the `fugu_console.py` transport flags (`-p`, `-b`,
+`--ble`, `--name`, `--address`, `--ble-proxy`, `--proxy-password`, `--ip`, `--mqtt BROKER` and the other `--mqtt-*`
+flags), plus `--plain` (borderless table) and `--timeout` (per command, default 6 s). It needs `rich`.
 
 ## ota.py
 
 `ota.py` updates devices over Wi-Fi in the following steps:
 
-1. It discovers devices via mDNS.
-2. It reads their running version over telnet.
+1. It discovers devices by the `scope` service's mDNS record (`_scope._tcp`), plus the port-forwarded telnet
+   endpoints listed in `etc/nat.env`.
+2. It reads their running version over telnet (port 23), so the `telnet` service must be running.
 3. It serves `build/fugu-firmware.bin` over HTTP on port 9000. If the port is free, it starts
    `python3 -m http.server` from the repo root.
 4. It sends `ota <url>` to each device that needs it.
@@ -109,6 +114,7 @@ PYTHONPATH=./ python3 etc/ota.py -m <hostname>
 | `-n`, `--dry-run`     | Show what would be updated, send nothing                   |
 | `-f`, `--force`       | Update even if the device already runs the local version   |
 | `--allow-driver-change` | Push non-interactively across a gate-driver change          |
+| `--bootloader`        | Push `build/bootloader/bootloader.bin` instead of the app. The device refuses unless conversion was stopped with `dc 0`; a power loss during the final copy bricks it until a serial flash |
 
 :::warning
 Without `-m`, `ota.py` updates every discovered device. `./ota.sh` forwards its arguments to `ota.py` and refuses
@@ -117,6 +123,43 @@ interactive) for a build without networking, a simulator (`CONFIG_FUGU_WITH_VCON
 (`-dirty`) build, or a gate driver that differs from the one the device runs (MCPWM vs. LEDC/VCONV, read with a
 no-argument `pwm-freq`) or can't be determined. See [OTA over Wi-Fi](../guide/updating/ota-wifi.md).
 :::
+
+## ota_mqtt.py
+
+`ota_mqtt.py` updates devices through their MQTT console (`cmd_input=1`, see [MQTT topics](mqtt.md)), one after
+the other, and stops at the first failure. Broker and credentials come from `$MQTT_HOST`, `$MQTT_PORT`,
+`$MQTT_USER` and `$MQTT_PASS` (filled from `etc/mqtt.env`). For each device it:
+
+1. Locks onto the exact hostname and reads `bootinfo`.
+2. Runs pre-flight checks: image flags, an unconfirmed running image, a `-dirty` image, a calibration, sweep or
+   balance run in progress, and the `--check` commands.
+3. Serves the image over HTTP, sends `ota <url>`, and follows the download (retrying a failed one with backoff)
+   and the reboot into the new image.
+4. With verification on (the default), waits for `rollback=VALID`, watches the new boot's log for faults, and
+   diffs the `--check` outputs.
+
+It exits with 0 when updated, already current or a dry run passed, 1 when an OTA or verification failed or was
+refused, and 2 on a setup error.
+
+```bash
+.venv/bin/python3 etc/ota_mqtt.py --name <hostname> --bin build/fugu-firmware.bin -n   # dry run first
+.venv/bin/python3 etc/ota_mqtt.py --name <hostname> --bin build/fugu-firmware.bin
+```
+
+`ota_mqtt.py` accepts the following main flags (`--help` lists the timeouts and the relay and gateway options).
+
+| Flag                        | Meaning                                                                    |
+|-----------------------------|----------------------------------------------------------------------------|
+| `--name HOST[,HOST…]`       | Exact hostnames, updated in this order (required)                          |
+| `--bin PATH`                | App image, default `build/fugu-firmware.bin`                               |
+| `-n`, `--dry-run`           | Connect, read `bootinfo`, run the checks and stage the image; do not send `ota` |
+| `-f`, `--force`             | Update even when the device already runs the image version                 |
+| `--check CMD`               | Read-only command run before and after, shown as a diff; repeatable        |
+| `--no-verify`               | Skip the `rollback=VALID` wait (`--valid-timeout`, 90 s) and log watch (`--watch`, 120 s) |
+| `--retries N`               | Retries after a failed download, default 2 (`--retry-backoff`, default `30,90` s) |
+| `--yes`                     | Accept the guard prompts                                                   |
+| `--allow-driver-change`     | Push across a gate-driver change or an unverified driver                   |
+| `--broker`, `--port`        | MQTT broker, default `$MQTT_HOST`, `$MQTT_PORT`                            |
 
 ## ota_ble.py
 
@@ -180,11 +223,21 @@ See [Provisioning](../guide/getting-started/provisioning.md) and [Partition layo
 or unpacks an existing image with `--input`. It accepts these flags: `-p`/`--port` (default `$ESPPORT`), `--partition` (default `littlefs`),
 `--input`, `--keep-image PATH`, `--block-size`.
 
+## flash.sh
+
+`./flash.sh <device-name> [idf.py args]` sets `FUGU_DEVICE` so the flash is recorded under that name in the
+[ELF archive](#elf_archivepy), then runs `idf.py` with the given arguments (`build flash` when there are none). It
+sources ESP-IDF with `idf-export.sh` when `idf.py` is not on the path.
+
+```bash
+./flash.sh <name> -p $ESPPORT app-flash
+```
+
 ## flash-diff.sh
 
 `flash-diff.sh` wraps `esptool write-flash --diff-with` to re-write only the flash sectors that changed since the
 last flash through the same port. It takes offsets and files from `build/flasher_args.json`. With no file argument,
-it flashes the app. It needs esptool ≥ 5.2. ESP-IDF 5.5 bundles v4, so install v5 separately.
+it flashes the app. It needs esptool ≥ 5.2, which the ESP-IDF 6.0 Python environment provides.
 
 The following command flashes the app:
 
@@ -259,7 +312,7 @@ python etc/measure_coil.py -p $ESPPORT --steps 12 --i-max 1.5
 
 | Flag                              | Default | Meaning                                                       |
 |-----------------------------------|---------|---------------------------------------------------------------|
-| `-p` / `--ip` / `--ble [NAME]`    |         | Transport (one of)                                            |
+| `-p` / `--ip` / `--ble [NAME]`    |         | Transport (one of); `--ble` without a name looks for `fugu`   |
 | `--fsw`                           | from `pwm-dump` | Switching frequency as realized, Hz                   |
 | `--pwm-max`                       | from `pwm-dump` | PWM period in timer ticks                             |
 | `--steps`                         | 48      | Duty steps across the DCM band (the ring fit needs ≥ 16 DCM points) |
@@ -271,6 +324,7 @@ python etc/measure_coil.py -p $ESPPORT --steps 12 --i-max 1.5
 | `--ls-sweep`                      |         | Low-side timing sweep; with `--hs`, `--ls-steps` (24), `--ls-lo` (0.5), `--ls-hi` (1.4) |
 | `--apply`, `--apply-margin`       | 12      | With `--ls-sweep`: write `coil.conf` `rect_offset_ns` (and `rect_offset_drv`, the active gate driver, and `rect_offset_cal=1`), keeping a margin in counts |
 | `--restore mppt\|off`             | `mppt`  | State when done                                               |
+| `--ton-ns`                        | dead time, at least 50 ns | Bound of the high-side on-time offset used for the stated error |
 | `--yes`                           |         | Skip the confirmation                                         |
 
 See [Coil Inductance Measurement](../lab/coil-inductance.md).
@@ -298,7 +352,7 @@ python3 etc/influx_binary_proxy.py --ble <name> --influx http://influxdb:8086 --
 | `--ble-all`                | Pull from every device in range; `--scan-interval` (default 30 s)     |
 | `--adv`                    | Observe connectionless advertisements; `--verbose` prints each record |
 | `--forward-udp HOST:PORT`  | Forward decoded lines as UDP line protocol                            |
-| `--influx URL`             | Forward over HTTP; `--db`, `--user`, `--password`, `--precision` (default `ms`) |
+| `--influx URL`             | Forward over HTTP; `--db`, `--user`, `--password`, `--precision` (default `ms`); `--insecure` skips TLS certificate verification |
 | `--test BLOB`              | Offline decode self-test                                              |
 
 ## run_e2e.py

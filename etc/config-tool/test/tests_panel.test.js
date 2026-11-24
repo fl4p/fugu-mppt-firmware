@@ -1106,8 +1106,17 @@ function drawn(window, lines) {
   return { sum, fig, svg, cap: fig.querySelector('figcaption') };
 }
 
+// The page's "N min ago" reads its own Date.now(); anchor it s seconds after the fixture sweep so the
+// label does not depend on how long the suite ran since SWEEP was built.
+function pinSweepAge(window, s = 120) {
+  const t = +SWEEP.lines[0].match(/\bt=(\d+)/)[1], real = window.Date.now.bind(window.Date);
+  const off = (t + s) * 1000 - real();
+  window.Date.now = () => real() + off;
+}
+
 test('MPP sweep card: Read last sweep sends sweep-curve without a confirm and draws the P-V curve', async () => {
   const { window, dev } = await connected();
+  pinSweepAge(window);
   await openSheet(window); await idle(window);
   assert.equal(card(window, 'curve'), null, 'one sweep card');
   const c = card(window, 'sweep');
@@ -1143,6 +1152,7 @@ test('MPP sweep card: Read last sweep sends sweep-curve without a confirm and dr
 
 test('without teledec.js the sweep card keeps the text summary and draws nothing', async () => {
   const { window } = await connected({ teledec: false });
+  pinSweepAge(window);
   assert.equal(window.TeleDec, undefined);
   await openSheet(window); await idle(window);
   card(window, 'sweep').querySelector('.read').click();

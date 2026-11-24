@@ -13,9 +13,10 @@ The firmware sends the same points to every enabled transport. The table lists w
 
 | Transport          | Enable                                               | Wire                                                           |
 |--------------------|------------------------------------------------------|----------------------------------------------------------------|
-| UDP to InfluxDB    | `tele` service, [`tele.conf`](config/tele.md) `influxdb_host`, Wi-Fi up and clock synced (SNTP) | Line protocol to UDP port 8086, batched per datagram; `binary=1` sends the compressed binary wire instead |
+| UDP to InfluxDB    | `tele` service, [`tele.conf`](config/tele.md) `influxdb_host`, Wi-Fi up and clock synced (SNTP) | Line protocol to UDP port 8086, batched per datagram; `binary=1` sends the compressed binary wire instead (needs `CONFIG_FUGU_WITH_TELE_BINARY`) |
 | BLE stream         | `CONFIG_FUGU_WITH_BLE_TELE`, `ble` service running, a connected client, `set-time`, `tele.conf` `ble=1`, and either `tele` stopped or `binary=1` (+ `svc rs tele`); then `tele-ble 1` | Binary wire over the NUS TELE characteristic                   |
-| BLE advertising    | `CONFIG_FUGU_WITH_BLE_ADV`, `ble` service running, `tele.conf` `adv_ms` | 17-byte record with a subset of fields (see below)             |
+| MQTT stream        | `CONFIG_FUGU_WITH_TELE_MQTT`, MQTT connected, clock set, and either `tele` stopped or `binary=1`; then `tele-mqtt <s>` (lease of up to 3600 s) | Uncompressed binary frames on `pv/tele/<hostname>`, published every 500 ms or when about 1 KB is buffered |
+| BLE advertising    | `CONFIG_FUGU_WITH_BLE_ADV`, `ble` service running, `tele.conf` `adv_ms` (default 500 ms) | 17-byte record with a subset of fields (see below)             |
 
 `etc/influx_binary_proxy.py` decodes the binary wire and BLE records back into line protocol. See
 [Host tools](host-tools.md#influx_binary_proxypy).
@@ -40,8 +41,9 @@ Each point carries one tag.
 
 ## Fields
 
-The firmware produces a point at most every 20 ms. Some fields appear only on every n-th point, as given in the
-*Rate* column.
+The firmware produces a point at most every 20 ms. While the idle power profile is on, the minimum interval is
+`tele.conf` `idle_interval_ms`. Some fields appear only on every n-th point, as given in the *Rate* column. At an
+interval of 1 s or more, every point carries all fields.
 
 | Field         | Unit   | Type  | Rate          | Meaning                                                                         |
 |---------------|--------|-------|---------------|---------------------------------------------------------------------------------|
@@ -54,13 +56,17 @@ The firmware produces a point at most every 20 ms. Some fields appear only on ev
 | `pwm_duty`    | counts | int   | every point   | Control-switch on-time in PWM timer counts (high side in buck mode)             |
 | `pwm_dir_f`   |        | float | every 20th    | Control value of the last loop iteration (sign = duty direction)                |
 | `mppt_state`  |        | int   | every 20th    | Control mode, see below                                                         |
+| `P_max_today` | W      | float | every 20th    | Peak power of the current day                                                   |
 | `Ro`          | mΩ     | float | every 20th, when valid | Output resistance from the last qualifying global sweep: a linear fit of `Vout` against `Iout` over the rising part of the sweep. It includes the cable, the BMS path and the battery's internal resistance. A sweep qualifies when its `Iout` span is at least 3 A, the fit's residual RMS at most 40 mV and the standard error of the slope at most 3 mΩ; a sweep that ends in a protection trip does not count. Absent before the first qualifying sweep, 6 h after the last one, and in PSU or boost mode or when `Iout` is virtual |
 | `Rc`, `Rb`    | mΩ     | float | every 20th, when valid | Converter-to-bus and bus-to-pack resistance, fitted per pack-voltage frame from the output-to-pack voltage drop against output and battery current (`mqtt.conf` `bat_voltage_topic`, `ibat_topic`); a constant voltage offset is fitted out. Absent until about 200 frames fit with a residual below 40 mV, and after an hour without frames |
 | `wf`          |        | int   | every 20th, `wire_protect` ≠ 0 | Output wire-fault level: 0 ok, 1 warn, 2 derate, 3 trip, -1 unverified (no estimate has data, or none for more than 3 charging days, and no level is held). With `wire_protect=1` or during the learning phase the value stays ≤ 1. See [limits.conf](config/limits.md#output-wire-fault-protection) |
 | `Pw`          | W      | float | every 20th, when valid | Excess power in the output wiring from the worst estimate that produced a value within the last 2 minutes |
+| `hs_short`    |        | int   | every 20th, when latched | High-side short latch: 1 low side clamped on, 2 all gates off, 3 gates off until `Vin` stays low (clamp pending), 4 low-side width ramp |
+| `bf_fail`     |        | int   | every 20th, when latched | 1 while a backflow-switch failure is latched                       |
 | `mcu_temp`    | °C     | float | every 40th    | MCU die temperature                                                             |
 | `ntc_temp`    | °C     | float | every 40th    | Board NTC temperature                                                           |
 | `lag`         | µs     | int   | every 40th    | Peak RT-loop lag; reset by `reset-lag` and at each periodic sweep                |
+| `rect_off`    | counts | int   | every 40th    | Active rectifier timing offset                                                  |
 | `heap`        | bytes  | int   | every 40th    | Free heap                                                                        |
 | `heap_min`    | bytes  | int   | every 40th    | Lowest free heap since boot                                                      |
 | `pwm_ls_duty` | counts | int   | every 10th, converter enabled | Rectifier-switch on-time                                         |

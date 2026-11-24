@@ -56,13 +56,14 @@ The public methods drive the lifecycle and the persisted settings:
 | `void stop()` | No-op if already `Stopped`. Calls `onStop()` and sets `Stopped` (also clearing `Failed`). |
 | `bool restart()` | `stop()` then `start()`. |
 | `void tick()` | Calls `onTick()` only while `Running`; a thrown exception transitions to `Failed`. |
-| `void setLogLevel(esp_log_level_t, bool persist = true)` | Applies the level to the ESP log tag and, if `persist`, writes `log_level` to the conf file. |
-| `void setEnabledPersist(bool)` | Writes `enabled` to the conf file. Does not itself start/stop. |
+| `bool setLogLevel(esp_log_level_t, bool persist = true)` | If `persist`, writes `log_level` to the conf file first, then applies the level to the ESP log tag. Returns false, level unchanged, when the write fails. |
+| `bool setEnabledPersist(bool)` | Writes `enabled` to the conf file. Does not itself start/stop. Returns false, flag unchanged, when the write fails. |
 | `void loadConf()` | Reads `enabled` and `log_level` from the conf file and applies the level. |
 
 ### Accessors
 
 The class has these accessors: `name()`, `state()` (routes through `liveState()`), `logLevel()`, `enabled()`, `requiresNetwork()`.
+`statusDetail()` is virtual and returns a one-line live detail for `svc list` (empty by default).
 
 ### Hooks (overridden by concrete services)
 
@@ -98,6 +99,8 @@ inline variable in `src/service.h`. It provides these methods:
 - `stopNetworkServices()`: stops the network services while the netif is still valid; called on the
   Wi-Fi-down edge, before `WiFi.disconnect()`.
 - `tickAll()`: ticks every service.
+- `stopAll()`: stops every service that is not `Stopped`; called before a reboot so tasks tear down
+  while Wi-Fi is still up.
 
 ## Threading and integration
 
@@ -181,20 +184,24 @@ These diagnostics are always on:
 ## File layout
 
 The base class and the registry live in `src/service.h`. Each concrete wrapper lives in its own header next to
-the module it wraps, and defines an `inline <Name>Service <name>Service;` instance:
+the module it wraps, and defines an `inline <Name>Service <name>Service;` instance (the MQTT service is `MQTT`,
+defined in `mqtt.cpp`):
 
-| Service | Header | Touches main.cpp globals? |
-|---|---|---|
-| `MqttService` | `src/tele/mqtt.h` / `mqtt.cpp` | the service *is* the MQTT module |
-| `FtpService` | `src/tele/ftp_service.h` | no |
-| `HttpConfService` | `src/tele/http_conf_service.h` | no; compiled only with `WITH_HTTP_CONF` |
-| `TelnetService` | `src/tele/telnet_service.h` | no; compiled only with `WITH_TELNET` |
-| `TlsConsoleService` | `src/tele/tls_console.h` | no; compiled only with `WITH_TLS_CONSOLE` |
-| `TelemetryService` | `src/tele/telemetry_service.h` | `mppt` (extern) |
-| `ScopeService` | `src/tele/scope_service.h` | owns the `Scope` object as a member; the global `scope` pointer aims at it |
-| `LcdService` | `src/viz/lcd_service.h` | owns the `LCD` as a member; also `adcSampler`, `sensors`, `mppt` (extern) |
-| `BleConsoleService` | `src/tele/console_ble_service.h` | no; whole header compiled only with `WITH_BLE` |
-| `BeaconSyncService` | `src/sync/bsync.h` / `bsync.cpp` | the converter's MCPWM leg; compiled only with `WITH_BSYNC` + `WITH_MCPWM` |
+| Service | Header | Touches main.cpp globals? | Registered with |
+|---|---|---|---|
+| `MqttService` | `src/tele/mqtt.h` / `mqtt.cpp` | the service *is* the MQTT module | `CONFIG_FUGU_WITH_NETW` |
+| `TelemetryService` | `src/tele/telemetry_service.h` | `mppt` (extern) | `CONFIG_FUGU_WITH_NETW` |
+| `FtpService` | `src/tele/ftp_service.h` | no | `CONFIG_FUGU_WITH_FTP` (default on) |
+| `HttpConfService` | `src/tele/http_conf_service.h` | no | `CONFIG_FUGU_WITH_HTTP_CONF` (default off) |
+| `TelnetService` | `src/tele/telnet_service.h` | no | `CONFIG_FUGU_WITH_TELNET` (default on) |
+| `TlsConsoleService` | `src/tele/tls_console.h` | no | `CONFIG_FUGU_WITH_TLS_CONSOLE` (default off) |
+| `LcdService` | `src/viz/lcd_service.h` | owns the `LCD` as a member; also `adcSampler`, `sensors`, `mppt` (extern) | always |
+| `ScopeService` | `src/tele/scope_service.h` | owns the `Scope` object as a member; the global `scope` pointer aims at it | `CONFIG_FUGU_WITH_SCOPE` (default on) |
+| `BleConsoleService` | `src/tele/console_ble_service.h` | no; the whole header is empty without BLE | `CONFIG_FUGU_WITH_BLE` |
+| `BeaconSyncService` | `src/sync/bsync.h` / `bsync.cpp` | the converter's MCPWM leg | `CONFIG_FUGU_WITH_BSYNC` with the MCPWM gate driver |
+
+The FTP, HTTP, telnet and TLS console options exist only with `CONFIG_FUGU_WITH_NETW`. The table follows the
+registration order.
 
 Where practical a service *owns* the object it wraps rather than referencing a global: `LcdService::lcd`
 is the display (mppt holds a reference to it and the boot splash draws on it via `lcdService.lcd`),
@@ -215,15 +222,15 @@ The following table lists each service's conf file, network dependency, and hook
 
 | Name | Conf | Network | `onStart` | `onStop` | `onTick` |
 |---|---|---|---|---|---|
-| `mqtt` | `mqtt.conf` | yes | release a leftover client, read conf, run the `preStart` hook (charger BMS subscriptions + `onConnected`), then `init()` (fails if the client cannot be created or started) | `close()` | — (the MQTT client runs its own task) |
-| `tele` | `tele.conf` | yes (disabled by default) | require Wi-Fi (UDP is connectionless), load the wire format, spawn the flush task (fails if it cannot be created) | delete the flush task | produce InfluxDB points (the flush task sends them) |
-| `ftp` | `ftp.conf` | yes | require Wi-Fi, resolve credentials, listen on port 21 | close the listener and sessions | poll sockets with a zero-timeout `select()`, one command and one chunk per session |
-| `http` | `http.conf` | yes | require Wi-Fi, resolve credentials, listen on `port` | close the listener and clients | poll sockets with a zero-timeout `select()`, one chunk per connection |
-| `telnet` | `telnet.conf` | yes (disabled by default) | require Wi-Fi, then `setupTelnet()` (fails if the server does not start) | `telnetStop()` (drops the log sink) | `telnetLoop()` |
-| `tlscon` | `tlscon.conf` | yes (disabled by default) | require Wi-Fi, parse `psk_id`/`psk` (fails without a key), listen on `port` | close the session and the listener | accept one client, step the TLS handshake, read command lines, send the buffered log |
-| `lcd` | `lcd.conf` | no (disabled by default) | `lcd.init()` if not already initialised | — | refresh the display |
-| `scope` | `scope.conf` | yes | require Wi-Fi, then begin the TCP server | end the server | accept clients, then pump (the pump blocks ~1 tick and serves as the loop's yield) |
-| `ble` | `ble.conf` | no (disabled by default) | begin NUS with `ble_security` / `ble_passkey` | end NUS | drive the RX queue |
+| `mqtt` | `mqtt.conf` | yes | release a leftover client, read conf (no `mqtt.conf`: stay idle, still `Running`), run the `preStart` hook (charger BMS subscriptions + `onConnected`), subscribe the command topic if `cmd_input=1`, then `init()` (fails if the client cannot be created or started) | `close()` | every 3 s, the `tickHook` (Home Assistant power publish); the MQTT client runs its own task |
+| `tele` | `tele.conf` | yes (disabled by default) | require Wi-Fi (UDP is connectionless), re-read `tele.conf` and the wire format, spawn the flush task (fails if it cannot be created) | delete the flush task | produce InfluxDB points (the flush task sends them) |
+| `ftp` | `ftp.conf` | yes | require Wi-Fi, resolve credentials, listen on port 21 with passive data ports from `pasv_port` (default 50009) | close the listener and sessions | poll sockets with a zero-timeout `select()`, one command and one chunk per session |
+| `http` | `http.conf` | yes | require Wi-Fi, resolve credentials, listen on `port` (default 80) | close the listener and clients | poll sockets with a zero-timeout `select()`, one chunk per connection |
+| `telnet` | `telnet.conf` | yes (disabled by default) | require Wi-Fi, read `trusted`, then `setupTelnet()` on port 23 (fails if the server does not start) | `telnetStop()` (drops the log sink) | `telnetLoop()` |
+| `tlscon` | `tlscon.conf` | yes (disabled by default) | require Wi-Fi, parse `psk_id`/`psk` (fails without a key), listen on `port` (default 992) | close the session and the listener | accept one client, step the TLS handshake, read command lines, send the buffered log |
+| `lcd` | `lcd.conf` | no (disabled by default) | `lcd.init(addr)` if not already initialised; fails when no display answers | — | refresh the display |
+| `scope` | `scope.conf` | yes | require Wi-Fi, begin the TCP server on port 24, add the `_scope._tcp` mDNS record | end the server, remove the mDNS record | accept clients, then pump (the pump blocks ~1 tick and serves as the loop's yield) |
+| `ble` | `ble.conf` | no (disabled by default) | first start after boot: bring up the stack and NUS, named after the hostname (`fugu-` prefixed unless it already starts with it), with `ble_security`, `ble_passkey` and `pair_window_s`; later starts only resume advertising | stop the BLE telemetry stream, stop advertising and drop the client (the stack stays up) | drive the RX queue |
 | `bsync` | `bsync.conf` | no (sniffs beacons without association; disabled by default) | parse `bssid`/`channel`/loop gains, bring up the RX-only sniffer, start the period dither | restore the nominal period, stop the sniffer | 1 Hz servo; re-arms the sniffer radio if it went down |
 
 `MqttService` is the MQTT module itself rather than a separate wrapper; a `preStart`
@@ -263,8 +270,10 @@ firmware's littlefs partition.
 
 `handleCommand()`, which UART, USB-CDC, telnet, and MQTT share, dispatches these commands:
 
-- `svc` or `svc list`: table of name, state, log level, and enabled flag (the `mqtt` row
-  also shows `connected` while it is `Running` with a live connection).
+- `svc` or `svc list`: table of name, state, log level, enabled flag and a live detail from
+  `statusDetail()`: `connected` for `mqtt`, `scope` and `ble` (`ble` adds `tele stream`), `connected` or
+  `handshake` for `tlscon`, the client address for `telnet`, the client addresses of `ftp`, the client
+  count of `http`, the UDP target for `tele`, `ok` for a found `lcd`, and the lock state for `bsync`.
 - `svc on <name>`: persist `enabled = 1` and start.
 - `svc off <name>`: persist `enabled = 0` and stop.
 - `svc restart <name>` (alias `svc rs <name>`): stop then start. Refused while the service is disabled; `svc on`

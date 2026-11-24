@@ -18,7 +18,7 @@ only resumes advertising, so a change needs `restart`. `idle_adv_ms` is read at 
 | `ble_security`  |      | string | justworks | `justworks` (encrypted, no passkey) or `passkey` (bond + MITM); any other value, e.g. `none`, = no pairing and a read-only console (see [Trusted consoles](../console.md#trusted-consoles)). Also applies to the [Improv](../../guide/connecting.md#improv-over-ble) command characteristic |
 | `ble_passkey`   |      | int    | 0         | Static passkey for `passkey` mode |
 | `pair_window_s` | s    | int    | 300       | How long new devices can pair after boot, see [Pairing window](#pairing-window). 0 = only after `ble pair`; max 86400 |
-| `idle_adv_ms`   | ms   | int    | 1000      | Connectable advertising interval while the idle power profile is on (see [`board.conf::idle_cpu_mhz`](board.md)), 20..10240; the stack default (30–60 ms) returns when the profile ends. In connectable mode the `tele.conf::adv_ms` payload rides this interval. 0 = unchanged |
+| `idle_adv_ms`   | ms   | int    | 1000      | Connectable advertising interval while the idle power profile is on (see [`board.conf::idle_cpu_mhz`](board.md#idle-power-profile)), 20..10240; the stack default (30–60 ms) returns when the profile ends. In connectable mode the `tele.conf::adv_ms` payload rides this interval. 0 = unchanged |
 | `enabled`       |      | bool   | 0         | Start this service at boot |
 | `log_level`     |      | enum   | info      | Verbosity: `error`, `warn` or `info` |
 
