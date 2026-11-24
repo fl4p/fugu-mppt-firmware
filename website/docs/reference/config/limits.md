@@ -5,7 +5,9 @@ sidebar_position: 3
 
 # limits.conf
 
-`limits.conf` holds the protection cutouts. The following table lists its keys.
+`limits.conf` holds the protection cutouts. The firmware reads it at boot, so reboot after `set-config` (see
+[When changes take effect](index.md#when-changes-take-effect)). A missing required key or a failed check stops setup
+and the converter stays off; `conf-check` reports the same errors without a reboot.
 
 Voltage and current ratings of the hardware are named by board side (HV/LV). `converter.conf::topo`
 maps them to the converter roles:
@@ -29,22 +31,22 @@ fails setup at boot with its replacement, for example
 
 | key                        | unit | type  | default | description                                       |
 |----------------------------|------|-------|---------|---------------------------------------------------|
-| `hv_max`                   | V    | float | —       | Maximum HV-side voltage before protection cutout       |
-| `lv_max`                   | V    | float | —       | Maximum LV-side voltage before protection cutout       |
-| `vin_min`                  | V    | float | —       | Input-voltage regulation floor. In MPPT/PSU/PV modes the Vin controller reduces duty to keep Vin ≥ `vin_min` (a buck in DCM also keeps Vin ≥ about 1.18 × Vout, see [Diode Emulation](../../internals/diode-emulation.md#ls-minimum-pulse-near-unity-ratio)). Not a trip, and not applied in manual PWM. The hard supply undervoltage stop is fixed at ~9 V. Required (no usable default) |
-| `hv_i_max`                 | A    | float | —       | Maximum HV-side current                           |
-| `lv_i_max`                 | A    | float | —       | Maximum LV-side current                           |
-| `iout_short`               | A    | float | —       | Output short-circuit current threshold            |
-| `p_max`                    | W    | float | —       | Maximum power; sets thermal derating and the sweep's minimum MPP power (0.2 %) |
-| `temp_max`                 | °C   | float | 90      | Maximum temperature before shutdown               |
-| `temp_derate`              | °C   | float | —       | Temperature where power derating begins           |
-| `reverse_current_paranoia` |      | bool  | 1       | Enable aggressive reverse-current protection      |
-| `wire_protect`             |      | int   | 1       | Output wire-fault protection: 0 off, 1 warn only, 2 warn, derate and trip. See [Output wire-fault protection](#output-wire-fault-protection) |
-| `wire_p_warn`              | W    | float | 2       | Excess wiring power that raises a warning         |
+| `hv_max`                   | V    | float | (required) | Maximum HV-side voltage before protection cutout       |
+| `lv_max`                   | V    | float | (required) | Maximum LV-side voltage before protection cutout       |
+| `vin_min`                  | V    | float | (required) | Input-voltage regulation floor; must be below the Vin max. In MPPT/PSU/PV modes the Vin controller reduces duty to keep Vin ≥ `vin_min` (a buck in DCM also keeps Vin ≥ about 1.18 × Vout, see [Diode Emulation](../../internals/diode-emulation.md#ls-minimum-pulse-near-unity-ratio)). Not a trip, and not applied in manual PWM. The hard supply undervoltage stop is fixed at ~9 V |
+| `hv_i_max`                 | A    | float | (required) | Maximum HV-side current                           |
+| `lv_i_max`                 | A    | float | (required) | Maximum LV-side current                           |
+| `iout_short`               | A    | float | (required) | Output short-circuit threshold: Iout above this with Vout below 1 V |
+| `p_max`                    | W    | float | (required) | Maximum power; sets thermal derating and the sweep's minimum MPP power (0.2 %). Vin max × Iin max must lie between `p_max` and 4 × `p_max` |
+| `temp_max`                 | °C   | float | 90      | NTC or MCU temperature that shuts the converter down; 20 < x < 120 |
+| `temp_derate`              | °C   | float | (required) | Temperature where power derating begins (linear to 0 at `temp_max`); must be below `temp_max` |
+| `reverse_current_paranoia` |      | bool  | 1       | Enable aggressive reverse-current protection; also sets the derived output OV threshold to 1.03 × the charge target or PSU setpoint (1.5 × when 0), capped at the output's side max |
+| `wire_protect`             |      | byte  | 1       | Output wire-fault protection: 0 off, 1 warn only, 2 warn, derate and trip. See [Output wire-fault protection](#output-wire-fault-protection) |
+| `wire_p_warn`              | W    | float | 2       | Excess wiring power that raises a warning. Needs 0 < `wire_p_warn` ≤ `wire_p_derate` ≤ `wire_p_trip` |
 | `wire_p_derate`            | W    | float | 4       | Excess wiring power that caps the output current at √(`wire_p_derate`/ΔR) |
 | `wire_p_trip`              | W    | float | 8       | Excess wiring power that stops the converter until `wire-reset` or a reboot |
-| `wire_dr_min`              | mΩ   | float | 4       | Minimum excess resistance ΔR for any level; twice this ΔR as a day's median raises the day warning |
-| `wire_r_max`               | mΩ   | float | 0       | Absolute cap on the learned converter-to-pack resistance baseline; 0 = none |
+| `wire_dr_min`              | mΩ   | float | 4       | Minimum excess resistance ΔR for any level; twice this ΔR as a day's median raises the day warning. Must be > 0 |
+| `wire_r_max`               | mΩ   | float | 0       | Absolute cap on the learned converter-to-pack resistance baseline; 0 = none, must be ≥ 0 |
 
 ## Output wire-fault protection
 

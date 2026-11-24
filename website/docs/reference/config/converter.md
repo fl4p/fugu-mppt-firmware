@@ -6,30 +6,32 @@ sidebar_position: 5
 # converter.conf
 
 `converter.conf` sets the converter topology and operating mode, the gate driver, the forced-PWM gate,
-wired clock sync, and the control-loop gains. The following table lists its keys.
+wired clock sync, and the control-loop gains. The firmware reads it at boot, so reboot after `set-config` (see
+[When changes take effect](index.md#when-changes-take-effect)). The following table lists its keys.
 
 | key          | unit | type  | default | description                                                |
 |--------------|------|-------|---------|------------------------------------------------------------|
-| `topo`       |      | enum  | buck    | Converter topology: `buck` or `boost`                      |
-| `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default), `psu` (constant-voltage supply; see `psu` console command) or `pv` (solar-array-simulator: output follows a PV curve; see `pv` console command) |
-| `psu_vout`   | V    | float | —       | PSU mode output voltage setpoint (used when `mode=psu`; range-checked against the output voltage limit, `limits.conf::lv_max` in a buck / `hv_max` in a boost) |
+| `topo`       |      | enum  | buck    | Converter topology: `buck` or `boost`; another value fails setup. Maps the `hv_`/`lv_` keys of `sensor.conf` and `limits.conf` to roles |
+| `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default, also when empty), `psu` (constant-voltage supply; see `psu` console command) or `pv` (solar-array-simulator: output follows a PV curve; see `pv` console command). `psu`/`pv` need a build with `CONFIG_FUGU_WITH_PSU`; an unknown value, an invalid `psu_vout` or an invalid PV curve fails setup. `tracker.conf::target_duty_cycle` overrides `psu`/`pv` |
+| `psu_vout`   | V    | float | (required with `mode=psu`) | PSU mode output voltage setpoint, > 0 and at most the output voltage limit (`limits.conf::lv_max` in a buck, `hv_max` in a boost) |
 | `psu_slew_down` | V/s | float | 2   | PSU mode: a lower setpoint is approached at this rate (min 0.1); raising it is immediate. A boost returns the output charge to its input when it pulls Vout down, so a step can pump a supply that cannot sink. While Vout is above the new band the OV threshold stays at the old setpoint |
-| `pv_isc`     | A    | float | —       | PV-sim short-circuit current (`mode=pv`; also caps the Iout limiter at 1.1×) |
-| `pv_voc`     | V    | float | —       | PV-sim open-circuit voltage (range-checked against the output voltage limit, `limits.conf::hv_max` in a boost; carries the OV threshold and boost feasibility) |
+| `pv_isc`     | A    | float | (required with `mode=pv`) | PV-sim short-circuit current, > 0 (also caps the Iout limiter at 1.1×) |
+| `pv_voc`     | V    | float | (required with `mode=pv`) | PV-sim open-circuit voltage, > 0 and at most the output voltage limit (`lv_max` in a buck, `hv_max` in a boost); carries the OV threshold and boost feasibility |
 | `pv_k`       |      | float | 0.8     | PV-sim Vmp/Voc curve factor, valid range [0.5, 0.95] |
 | `pv_slew`    | V/s  | float | 200     | PV-sim setpoint slew limit (min 10) |
-| `pv_iout_span` |    | float | 16      | PV-sim EWMA span of the Iout feedback for the curve (local, separate from the Iout sensor `_filt_len`) |
+| `pv_iout_span` |    | float | 16      | PV-sim EWMA span of the Iout feedback for the curve (min 1; separate from the Iout sensor `_filt_len`) |
 | `c_in`       | F    | float | 1e-3    | Input capacitance, board caps plus the array's. The sweep slows down so that the caps' discharge power C·V·dV/dt stays under 5 % of the input power, and subtracts that power from the power it records. Set it to the board's real input capacitance (2 × 470 µF on the standard board). 0 turns both off; a value outside 0..0.02 F or not a number is rejected with an error and the default is used. See [Global sweep](../../internals/mppt-tracker.md#global-sweep) |
 | `forced_pwm` |      | bool  | 0       | Force CCM PWM even at light loads (see notes below)        |
 | `fpwm_gate`  |      | bool  | 1       | Hold `forced_pwm` off until the duty reaches the voltage ratio (bring-up gate, see notes below) |
-| `fpwm_gate_margin` |  | float | 0.01    | Duty margin the gate requires on top of the measured ratio |
-| `fpwm_gate_hold` |    | long  | 192     | Samples the gate must see a passing duty before it engages (the ramp is held meanwhile) |
-| `sync_role`  |      | enum  | none    | Wired MCPWM clock sync (`WITH_WSYNC`): `none`, `leader` (emit TEZ pulse on `board.conf::pwm_sync_pin`) or `follower` (phase-reload timer from that pin). See [Wired Clock Sync](../../development/sync/wired-sync.md) |
-| `sync_phase_deg` | ° | float | 0      | Leader only: pulse offset from its TEZ as an angle (= follower period-start shift; `180` for interleave). Ignored on a follower (reload fixed at 0) |
-| `sync_phase_ns` | ns | float | 0      | Leader only: additive trim on `sync_phase_deg`, for wire + receiver propagation delay (a time, so it does not scale with `pwm_freq`) |
-| `ctrl_<n>_kp`  |      | float | see below | Proportional gain of control unit `<n>` ∈ {`vin`, `vout`, `iin`, `iout`, `power`} |
+| `fpwm_gate_margin` |  | float | 0.01    | Duty margin the gate requires on top of the measured ratio; a value outside 0 ≤ x < 0.5 uses 0.01 |
+| `fpwm_gate_hold` |    | long  | 192     | Samples the gate must see a passing duty before it engages (the ramp is held meanwhile); clamped to 1..65535 |
+| `sync_role`  |      | enum  | none    | Wired MCPWM clock sync (`CONFIG_FUGU_WITH_WSYNC`, MCPWM gate driver): `none`, `leader` (emit TEZ pulse on `board.conf::pwm_sync_pin`) or `follower` (phase-reload timer from that pin). Another value fails setup; a build without wired sync only warns. See [Wired Clock Sync](../../development/sync/wired-sync.md) |
+| `sync_phase_deg` | ° | float | 0      | Leader only: pulse offset from its TEZ as an angle (= follower period-start shift; `180` for interleave), within ±360. Ignored on a follower (reload fixed at 0) |
+| `sync_phase_ns` | ns | float | 0      | Leader only: additive trim on `sync_phase_deg`, for wire + receiver propagation delay (a time, so it does not scale with `pwm_freq`), within ± one PWM period |
+| `ctrl_<n>_kp`  |      | float | see below | Proportional gain of control unit `<n>` ∈ {`vin`, `vout`, `iin`, `iout`, `power`}; a non-finite value keeps the default |
 | `ctrl_<n>_kd`  |      | float | see below | Derivative gain of unit `<n>`, applied to the **per-sample** error difference |
-| `ctrl_<n>_td`  | s    | float | (unset)   | Derivative *time* of unit `<n>`. When set it replaces `_kd` and makes the D component sample-rate invariant |
+| `ctrl_<n>_td`  | s    | float | (unset)   | Derivative *time* of unit `<n>`. When set it replaces `_kd` and makes the D component sample-rate invariant; a negative value is ignored |
+| `pwm_driver`   |      |       | —         | Removed: the gate driver is a build-time choice (Kconfig `FUGU_GATE_DRIVER`). A set value is ignored with a warning |
 
 ## Control-loop gains
 
