@@ -103,8 +103,9 @@ boot as `ESP_OTA_IMG_PENDING_VERIFY`. The app must confirm itself or the bootloa
 next reset:
 
 - `lfMarkOtaValid()` (`main.cpp`, from `loopLF`) calls `esp_ota_mark_app_valid_cancel_rollback()` **only once the RT
-  loop
-  is proven healthy** (>20 s uptime + sampler producing samples). A directly-flashed image (state `UNDEFINED`, not
+  loop is proven healthy** (>20 s uptime + sampler producing samples). Without flash auto-suspend it then waits for
+  output < 5 W, for up to 2 h (`OTA_CONFIRM_DEADLINE_MS`); a reset in that window rolls back, and `ota` is refused
+  while the image is `PENDING_VERIFY` (check `bootinfo` `rollback=`). A directly-flashed image (state `UNDEFINED`, not
   `PENDING_VERIFY`) is left alone — the confirm is a no-op there.
 - A one-shot `esp_timer` **boot watchdog** armed at the top of `setup()` (30 s) `esp_restart()`s if `setup()` never
   finishes. With rollback, that reboot then lands on the previous good slot. (The Task-WDT can't cover `setup()`: it
