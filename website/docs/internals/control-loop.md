@@ -15,7 +15,7 @@ regulation. It runs once per `Vout` reading, which keeps the output voltage resp
 
 ## Loop iteration
 
-The flowchart shows one iteration of the real-time loop in MPPT mode. PSU and PV-simulator modes replace the tracker
+The flowchart shows one iteration of the real-time loop in MPPT mode. PSU and PV emulator modes replace the tracker
 step with a voltage setpoint.
 
 ```mermaid

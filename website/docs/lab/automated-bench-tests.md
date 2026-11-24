@@ -20,7 +20,7 @@ The converter under test sits between the input source and the output sink, and 
 its console:
 
 ```
-   [ PSU / PV-sim ] --Vin--> [ FUGU under test ] --Vout--> [ e-load / battery-sim ]
+   [ PSU / PV emulator ] --Vin--> [ FUGU under test ] --Vout--> [ e-load / battery-sim ]
                                      |
                               console (serial / telnet / BLE)
 ```
@@ -33,7 +33,7 @@ The bench has four parts:
     series resistance, so that an MPP exists. A stiff CV source has no maximum power point, and the
     tracker just walks to the current limit.
   - As an in-house alternative, a second Fugu boost in `mode=pv` emulates the panel curve at its
-    output (`pv` console command, `config/lab/boost_pv`). The PV-sim section of the
+    output (`pv` console command, `config/lab/boost_pv`). The PV emulator section of the
     [power loop page](power-loop.md) lists the rig caveats.
 - Output sink: an electronic load acts as the battery emulator.
   - CV mode sets a fixed pack voltage. The charger sees a battery clamped at that voltage.
@@ -94,7 +94,7 @@ seconds and count `shutdown` / `Converter enabled` lines.
 ### 1.2 Output over-voltage (OV)
 - **Setup**: charging normally, then drive output sink voltage above the OV threshold. It is
   `min(ovset, Vout_max)` if an `ovset` is set. Otherwise it is
-  `min(base·(paranoia ? 1.03 : 1.5), Vout_max)`, where the base is the PSU setpoint (`psu_vout` or `psu <V>`; PV-sim: `voc`) in
+  `min(base·(paranoia ? 1.03 : 1.5), Vout_max)`, where the base is the PSU setpoint (`psu_vout` or `psu <V>`; PV emulator: `voc`) in
   PSU/PV mode and `Vbat_max` otherwise, and `paranoia` is `limits.conf::reverse_current_paranoia`
   (default 1). A bench profile with `reverse_current_paranoia=0` and a 29 V pack gives 43.5 V, not
   29.9 V. Compute it from the unit's `limits.conf`, `charger.conf`, mode and `ovset`; `status` shows
@@ -149,12 +149,12 @@ seconds and count `shutdown` / `Converter enabled` lines.
 
 ## 2. MPPT tracking
 
-Requires a PV simulator, or a PSU with a series resistor.
+Requires a solar array simulator, the Fugu PV emulator, or a PSU with a series resistor.
 
 ### 2.1 Global sweep finds MPP
-- **Setup**: PV-sim at a fixed I-V curve.
+- **Setup**: PV emulator at a fixed I-V curve.
 - **Action**: `sweep`.
-- **Expected**: duty ramps 0→max, peak power captured, settles near the simulated MPP voltage.
+- **Expected**: duty ramps 0→max, peak power captured, settles near the emulated MPP voltage.
 - **Pass**: tracked power ≥ 98 % of the curve's true Pmax.
 
 ### 2.2 P&O convergence (fast then slow)
@@ -162,7 +162,7 @@ Requires a PV simulator, or a PSU with a series resistor.
 - **Expected**: fast P&O closes on MPP, then slow P&O; duty dither stays bounded.
 
 ### 2.3 Irradiance step
-- **Setup**: step the PV-sim curve (e.g. 100 %→40 % Isc) and back.
+- **Setup**: step the PV emulator curve (e.g. 100 %→40 % Isc) and back.
 - **Expected**: tracker re-converges to the new MPP without an OV/OC trip; measure settling time.
 
 ### 2.4 Periodic re-sweep
@@ -170,7 +170,7 @@ Requires a PV simulator, or a PSU with a series resistor.
   while the battery is full / in CV (recharge-after-full guard).
 
 ### 2.5 Partial shading / multi-peak
-- **Setup**: PV-sim with a two-step (shaded) curve.
+- **Setup**: a solar array simulator with a two-step (shaded) curve. The Fugu PV emulator has a single peak and cannot run this test.
 - **Expected**: global sweep finds the global peak, not a local one.
 
 ### 2.6 Low-power / cloudy

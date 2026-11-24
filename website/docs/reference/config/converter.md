@@ -12,14 +12,14 @@ wired clock sync, and the control-loop gains. The firmware reads it at boot, so 
 | key          | unit | type  | default | description                                                |
 |--------------|------|-------|---------|------------------------------------------------------------|
 | `topo`       |      | enum  | buck    | Converter topology: `buck` or `boost`; another value fails setup. Maps the `hv_`/`lv_` keys of `sensor.conf` and `limits.conf` to roles |
-| `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default, also when empty), `psu` (constant-voltage supply; see `psu` console command) or `pv` (solar-array-simulator: output follows a PV curve; see `pv` console command). `psu`/`pv` need a build with `CONFIG_FUGU_WITH_PSU`; an unknown value, an invalid `psu_vout` or an invalid PV curve fails setup. `tracker.conf::target_duty_cycle` overrides `psu`/`pv` |
+| `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default, also when empty), `psu` (constant-voltage supply; see `psu` console command) or `pv` (PV emulator: output follows a PV curve; see `pv` console command). `psu`/`pv` need a build with `CONFIG_FUGU_WITH_PSU`; an unknown value, an invalid `psu_vout` or an invalid PV curve fails setup. `tracker.conf::target_duty_cycle` overrides `psu`/`pv` |
 | `psu_vout`   | V    | float | (required with `mode=psu`) | PSU mode output voltage setpoint, > 0 and at most the output voltage limit (`limits.conf::lv_max` in a buck, `hv_max` in a boost) |
 | `psu_slew_down` | V/s | float | 2   | PSU mode: a lower setpoint is approached at this rate (min 0.1); raising it is immediate. A boost returns the output charge to its input when it pulls Vout down, so a step can pump a supply that cannot sink. While Vout is above the new band the OV threshold stays at the old setpoint |
-| `pv_isc`     | A    | float | (required with `mode=pv`) | PV-sim short-circuit current, > 0 (also caps the Iout limiter at 1.1×) |
-| `pv_voc`     | V    | float | (required with `mode=pv`) | PV-sim open-circuit voltage, > 0 and at most the output voltage limit (`lv_max` in a buck, `hv_max` in a boost); carries the OV threshold and boost feasibility |
-| `pv_k`       |      | float | 0.8     | PV-sim Vmp/Voc curve factor, valid range [0.5, 0.95] |
-| `pv_slew`    | V/s  | float | 200     | PV-sim setpoint slew limit (min 10) |
-| `pv_iout_span` |    | float | 16      | PV-sim EWMA span of the Iout feedback for the curve (min 1; separate from the Iout sensor `_filt_len`) |
+| `pv_isc`     | A    | float | (required with `mode=pv`) | PV emulator short-circuit current, > 0 (also caps the Iout limiter at 1.1×) |
+| `pv_voc`     | V    | float | (required with `mode=pv`) | PV emulator open-circuit voltage, > 0 and at most the output voltage limit (`lv_max` in a buck, `hv_max` in a boost); carries the OV threshold and boost feasibility |
+| `pv_k`       |      | float | 0.8     | PV emulator Vmp/Voc curve factor, valid range [0.5, 0.95] |
+| `pv_slew`    | V/s  | float | 200     | PV emulator setpoint slew limit (min 10) |
+| `pv_iout_span` |    | float | 16      | PV emulator EWMA span of the Iout feedback for the curve (min 1; separate from the Iout sensor `_filt_len`) |
 | `c_in`       | F    | float | 1e-3    | Input capacitance, board caps plus the array's. The sweep slows down so that the caps' discharge power C·V·dV/dt stays under 5 % of the input power, and subtracts that power from the power it records. Set it to the board's real input capacitance (2 × 470 µF on the standard board). 0 turns both off; a value outside 0..0.02 F or not a number is rejected with an error and the default is used. See [Global sweep](../../internals/mppt-tracker.md#global-sweep) |
 | `forced_pwm` |      | bool  | 0       | Force CCM PWM even at light loads (see notes below)        |
 | `fpwm_gate`  |      | bool  | 1       | Hold `forced_pwm` off until the duty reaches the voltage ratio (bring-up gate, see notes below) |

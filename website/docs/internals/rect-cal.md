@@ -21,7 +21,7 @@ lands late, toward a longer LS.
 A run needs:
 
 - buck topology;
-- the converter on in MPPT mode (not sweeping, not in PSU/PV-sim mode or manual PWM, no
+- the converter on in MPPT mode (not sweeping, not in PSU/PV emulator mode or manual PWM, no
   forced PWM, no limiter active);
 - sync rect and backflow switch on;
 - `V_i > V_o + 1 V`;

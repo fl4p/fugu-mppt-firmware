@@ -72,7 +72,7 @@ interval of 1 s or more, every point carries all fields.
 | `pwm_ls_duty` | counts | int   | every 10th, converter enabled | Rectifier-switch on-time                                         |
 | `pwm_ls_max`  | counts | int   | every 10th, converter enabled | Maximum allowed rectifier on-time                                |
 | `pwm_dcm`     |        | bool  | every 10th, converter enabled | Converter operates in discontinuous conduction mode              |
-| `Vset`        | V      | float | every 10th, PSU mode | Output voltage setpoint (moves in PV-sim mode)                            |
+| `Vset`        | V      | float | every 10th, PSU mode | Output voltage setpoint (moves in PV emulator mode)                            |
 | `cv_lim_idx`  |        | int   | when a limiter was active | Lowest index of the limiters that were active since the last point, see below |
 
 Source: `MpptController::telemetry()` in [`src/mppt.cpp`](https://github.com/fl4p/fugu-mppt-firmware/blob/main/src/mppt.cpp).

@@ -221,6 +221,8 @@ Bench-specific steps (which device, host, wiring) go to `doc/lab/`, the capture 
 The production build enforces the mechanical part (`website/src/remark/docs-lint.mjs`; the dev server only warns). Every doc review, by Codex,
 Astra or an agent, includes the criteria "reads as reference documentation, not notes or a transcript" and "no paragraph is a wall of
 text".
+**Always run the `doc-polish` skill** on every page you write or substantially change under `website/docs/` (new pages, new
+sections), before the docs build and the commit.
 
 ## Tests
 

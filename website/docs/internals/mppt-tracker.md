@@ -425,7 +425,7 @@ current bound (step 2 below) and moves to $m = 4$.*
 
 `PeakScan` (`src/peak_scan.h`) probes one voltage per candidate maximum. It needs the number of substrings $n$,
 which it learns from the global sweeps (below), and a buck converter (no-op on boost). It runs in tracking mode
-only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV-sim mode), above 5 % of
+only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV emulator mode), above 5 % of
 `limits.conf::p_max`:
 
 1. Candidates: the unshaded substring share is estimated as $s_0 = k\,V_{oc}/n$, with $V_{oc}$ the input
@@ -556,7 +556,7 @@ A flagged sweep can start a scan as soon as the reference is taken, without a tr
 [Sweep verdict](#sweep-verdict)).
 
 A limiter that becomes active during a scan ends it, and the duty fades back to the start point. A change of
-operating mode (manual, PSU, PV-sim, MPPT) drops a running scan and its reference; PSU and PV-sim mode keep
+operating mode (manual, PSU, PV emulator, MPPT) drops a running scan and its reference; PSU and PV emulator mode keep
 their own regulation.
 
 Each probe takes at most 2.6 s: up to 1.5 s to reach its voltage (within 1 %), the power filter settle (at most
@@ -582,7 +582,7 @@ flagged sweep or a lifted Vout cap) under these conditions:
 
 | Condition                                             | Why                                                           |
 |-------------------------------------------------------|---------------------------------------------------------------|
-| PSU / PV-sim mode                                     | No MPP to track; the output is regulated to a setpoint        |
+| PSU / PV emulator mode                                     | No MPP to track; the output is regulated to a setpoint        |
 | A sweep is already running                            |                                                               |
 | Charge hold (terminated, partial-charge ceiling, too cold, CV hold at `cv_eoc`, paused on stale BMS data) | Ramping duty from 0 would dump a charge pulse into a full pack |
 | Control mode is CV (output-voltage limited)           | Same: the pack is full or the output is disconnected          |
@@ -592,7 +592,7 @@ flagged sweep or a lifted Vout cap) under these conditions:
 The periodic sweep and a scheduled re-sweep wait: they start once the condition clears.
 
 A no-MPP backoff of a sweep that the Vout cap cut ends when the cap rises more than 0.2 V above both that cap and
-Vout. The sweep then starts at once and checks only for PSU / PV-sim mode, not the conditions above.
+Vout. The sweep then starts at once and checks only for PSU / PV emulator mode, not the conditions above.
 
 When a BMS cell-voltage topic is configured, the sweep at start-up and after a shutdown also waits for the BMS. It
 is skipped while termination is active and the BMS data is fresh, and it waits up to 12 s for the first termination

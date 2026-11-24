@@ -5,13 +5,13 @@ sidebar_position: 7
 
 # Operating Modes
 
-The converter runs in one of three modes: MPPT, manual PWM, or PSU (constant voltage, including the PV simulator).
+The converter runs in one of three modes: MPPT, manual PWM, or PSU (constant voltage, including the PV emulator).
 `converter.conf` selects the mode at boot, and the [console](../reference/console.md) switches it live.
-PSU and PV simulator need a build with `CONFIG_FUGU_WITH_PSU` (on by default). Without it the `psu` and `pv` commands
+PSU and PV emulator need a build with `CONFIG_FUGU_WITH_PSU` (on by default). Without it the `psu` and `pv` commands
 do not exist, and a board configured with `mode=psu` or `mode=pv` fails setup.
 
 :::danger Half-bridge safety
-Manual duty, forced PWM, PSU and PV-sim modes drive the half-bridge directly or regulate against a stiff source.
+Manual duty, forced PWM, PSU and PV emulator modes drive the half-bridge directly or regulate against a stiff source.
 A wrong duty or setpoint can push hundreds of amps through the switches or put the input voltage on the output.
 Use a current-limited supply for first tests and keep a scope on the switch node when changing timing.
 `dc 0` stops the converter from any mode once it replies OK.
@@ -36,7 +36,7 @@ The following table shows how to enter and leave each mode and what the mode reg
 | MPPT (default) | boot with `mode` unset or `mode=mppt`; `mppt`; `psu off` | `dc N`, `psu <V>`, `pv …` | input power, within the limiters and charger voltage |
 | Manual PWM | `dc N`; `tracker.conf::target_duty_cycle` at boot; `pv off` | `mppt`, `sweep`, `psu <V>`, `pv …` | nothing: fixed duty, protections still active |
 | PSU | `psu <V>`; `mode=psu` at boot | `psu off`, `mppt`, `sweep`, `dc N` (to manual) | Vout to the setpoint, CV/CC foldback |
-| PV simulator | `pv <isc> <voc> [k]`; `mode=pv` at boot | `pv off`, `dc N` (to manual); `psu off`, `mppt`, `sweep` | Vout along a PV curve V = f(Iout) |
+| PV emulator | `pv <isc> <voc> [k]`; `mode=pv` at boot | `pv off`, `dc N` (to manual); `psu off`, `mppt`, `sweep` | Vout along a PV curve V = f(Iout) |
 
 The topology (`converter.conf::topo=buck|boost`) is independent of the mode.
 
@@ -68,7 +68,7 @@ These commands control the tracker:
 
 | Command | Effect |
 |---|---|
-| `sweep` | Start a global sweep now (also leaves manual, PSU and PV simulator mode) |
+| `sweep` | Start a global sweep now (also leaves manual, PSU and PV emulator mode) |
 | `speed <s>` | Tracking speed scale, 0 ≤ s < 10, default 1.0 |
 | `+N` / `-N` | Perturb the duty by N counts, also while tracking; stays in the current mode (rejected in PSU mode) |
 
@@ -151,12 +151,28 @@ The following limits and fault rules apply in PSU mode:
 `config/psu_12v` uses MPPT mode instead, with `forced_pwm=1` and the output voltage set in
 `charger.conf::vout_max`. See [Supported boards](hardware/supported-boards.md#12-v-power-supply).
 
-## PV simulator
+## PV emulator
 
-The PV simulator is a PSU variant for bench work. The output follows a solar panel curve, with `Voc` at no load and
-the MPP at `k·Voc`, so another converter can track it like a real panel.
+The PV emulator is a PSU variant for bench work. The output follows a solar panel curve, with `Voc` at no load and
+the MPP at `k·Voc`, so another converter can track it like a real panel. Older versions of these pages call it the PV
+simulator.
 
-These commands set, scale, inspect, and stop the simulated panel:
+The emulated panel is an ideal single-diode cell, a current source in parallel with a diode, with no series or shunt
+resistance:
+
+```
+     ┌──────────┬──────────○ +   Vout
+     │          │
+    (↑) Isc    ─▼─ D
+     │          │
+     └──────────┴──────────○ −
+```
+
+The firmware regulates Vout to the curve's voltage at the filtered Iout. `k` sets the diode's steepness, and the
+curve has exactly one maximum. The model has a single cell group without bypass diodes, so the emulator cannot produce
+the multiple local maxima of a partly shaded string. [Simulation](../development/simulation.md#pv-source) gives the curve equation.
+
+These commands set, scale, inspect, and stop the emulated panel:
 
 ```
 pv 8 40         # Isc = 8 A, Voc = 40 V, k = 0.8
@@ -166,7 +182,7 @@ pv              # curve, live setpoint, trip state
 pv off          # ramp to duty 0, manual mode
 ```
 
-To start the simulator at boot, set the curve in `converter.conf`:
+To start the emulator at boot, set the curve in `converter.conf`:
 
 ```ini title="converter.conf"
 mode=pv
@@ -175,18 +191,18 @@ pv_voc=40
 pv_k=0.8
 ```
 
-The simulator behaves as follows:
+The emulator behaves as follows:
 
 - The setpoint moves along the curve, slew-limited by `pv_slew` (V/s) and clamped to
   [Vin + 0.5 V, min(Voc, Vout max)], where Vout max is `limits.conf::hv_max` in a boost (`lv_max` in a buck). A boost can only emulate the part of the curve above Vin.
 - The Iout limiter is capped at 1.1 × Isc.
 - In buck topology the same ratio limit as in PSU mode applies: no start while the setpoint is at or above about
   Vin / 1.18.
-- `pv off` goes to manual mode, not MPPT, since a simulator is a bench source.
+- `pv off` goes to manual mode, not MPPT, since an emulator is a bench source.
 
 :::danger
 Below the Vin floor the body diode conducts current the firmware cannot limit. Keep the current limit of the supply
-feeding the simulator low.
+feeding the emulator low.
 :::
 
 The [power-loop rig](../lab/power-loop.md) uses a boost in `mode=pv` as the source for a buck under test.
@@ -200,7 +216,7 @@ The following table lists the commands for common tasks:
 | Stop conversion now | `dc 0` |
 | Update firmware while converting | `ota <url>` stops conversion itself and resumes the previous mode if the update fails; `ota bootloader <url>` needs `dc 0` first |
 | Fixed output voltage from a battery | `topo=boost`, `mode=psu`, `psu_vout=<V>` |
-| Test a charger against a simulated panel | simulator: `mode=pv`; charger under test: normal MPPT |
+| Test a charger against an emulated panel | emulator: `mode=pv`; charger under test: normal MPPT |
 | Inspect the tracker | `+N`/`-N` while tracking, then watch it recover |
 
 See also: [Console reference](../reference/console.md), [`converter.conf`](../reference/config/converter.md),

@@ -119,7 +119,7 @@ expect reverse current of tens of amps at the settled engage point and during ra
 with an independent clamp, and have a way to cut the PSU and the loop before starting.
 :::
 
-## PV-sim source (solar-array-simulator)
+## PV emulator source
 
 To exercise the buck's tracker, run the boost in `mode=pv` (see
 [converter.conf](../reference/config/converter.md) and the `pv` console command). A stiff CV source has no maximum

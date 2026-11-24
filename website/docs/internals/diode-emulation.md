@@ -329,7 +329,7 @@ zero or negative one by 125 ns, at most once per 2 s. It never lengthens the off
 at the lowest value a calibration can apply, −(2.5 µs + 0.75 µs); an offset already below that
 stays.
 
-The backstop is armed only in MPPT mode (including sweeps; not in PSU/PV-sim mode or manual
+The backstop is armed only in MPPT mode (including sweeps; not in PSU/PV emulator mode or manual
 PWM, not during a calibration run) and from 2 s after the converter starts; its peak history
 is cleared whenever it is disarmed.
 
@@ -493,7 +493,7 @@ the zero crossing by only about 0.002 in `M`. With both readings at their 1 % li
 highest true ratio the stop admits is 0.890 / 0.884, 0.03 below `M_c`.
 
 - **Start:** a buck starts only below the start ratio, in addition to `V_in > V_out + 1 V`
-  (start-block reason `minpulse-M`). In PSU and PV-simulation mode the larger of `V_out` and
+  (start-block reason `minpulse-M`). In PSU and PV emulator mode the larger of `V_out` and
   the setpoint counts, so a setpoint at or above `M_start·V_in` does not start. A manual duty
   (`dc`) start, including the restart after a backoff, follows the same rule.
 - **`V_in` floor:** while the converter is in DCM, the input-voltage controller holds

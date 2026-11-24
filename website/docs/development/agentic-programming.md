@@ -123,6 +123,7 @@ The simulated plant has these properties for agent use:
 
 The vconv build runs on both ESP32-S3 (`vconv_mock`) and classic ESP32 (`vconv_mock_esp32`) and
 holds MPP around 815 W in lab conditions, which is enough for control-loop validation.
+[Simulation](simulation.md) describes the plant model and the host simulator, which runs the same plant without a board.
 
 ---
 

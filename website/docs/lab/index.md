@@ -14,7 +14,8 @@ The following table lists each setup with the hardware, build, and config profil
 | Setup | Hardware | Build | Config profile | Good for |
 |---|---|---|---|---|
 | No power stage | Any ESP32-S3 dev board | Default | `config/lab/dry_mock` | Console, services, networking, telemetry, config handling |
-| Simulated converter | Any ESP32-S3 (or classic ESP32) board | `CONFIG_FUGU_WITH_VCONV=y` | `config/lab/vconv_mock` (`vconv_mock_esp32`) | Closed-loop control, MPPT, charger, PSU/PV-sim modes |
+| Simulated converter | Any ESP32-S3 (or classic ESP32) board | `CONFIG_FUGU_WITH_VCONV=y` | `config/lab/vconv_mock` (`vconv_mock_esp32`) | Closed-loop control, MPPT, charger, PSU/PV emulator modes |
+| Host simulator | None (host compiler) | `test/host-stub/mppt-sim.sh` | `config/lab/vconv_mock` (copied) | Control-loop regression scenarios: clouds, shade, sweeps, protection. See [Simulation](../development/simulation.md#host-simulator) |
 | Simulator, no board | None | Default | `config/lab/wokwi_mock` (`wokwi_mock_esp32`) | Boot, console and CI smoke tests in [Wokwi](../development/wokwi.md) |
 | Single converter | A Fugu board, current-limited PSU on the input, e-load or battery emulator on the output | Default (MCPWM on ESP32-S3) | Your board's profile, e.g. `config/fmetal` | Diode emulation, protection, efficiency, [automated bench tests](automated-bench-tests.md) |
 | Two-converter loop | A boost and a buck board in a recirculating loop, one PSU | Default (MCPWM) | See [Power-loop rig](power-loop.md) | Waveforms, efficiency and sync work at power without a solar array |
