@@ -128,7 +128,7 @@ An inverter on the DC bus draws ripple at twice the mains frequency (100 Hz for 
 corrupts the MPPT power estimate. Each physical sensor whose own sample rate allows it (f0 < 0.45·fs) gets an IIR
 notch (biquad) at that frequency. Slower channels get none, and the notch settings have no effect on them.
 
-- Gain at the notch frequency: −30 dB (fixed).
+- Gain at the notch frequency: −15 dB (fixed).
 - Quality factor: `notch_q`, default 20 (bandwidth ≈ f0/Q).
 - On a multiplexed ADC, `Vout` is sampled between every other channel, so it runs at a higher rate than the rest. Each
   notch is tuned to its sensor's actual rate.
