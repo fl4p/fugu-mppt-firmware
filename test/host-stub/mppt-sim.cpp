@@ -23,6 +23,8 @@
 //                              # mc-flat-ramp: the same entered by the `dc 0` ramp-down (SIM_MC_RAMP=1)
 //                              # dcd-stop-flat|fry: manual ramp-down from CCM that stops just below Vout/Voc (dcd-slow-*: 3x slower)
 //                              # dcd-ccm-flat|fry: deep CCM, P&O and a slow power-limiter retreat
+//                              # dcd-hv-step|train-flat|fry: 700-count duty cut at Vin ~80 V near the CCM boundary, one
+//                              #   step / the manual ramp: LS to its minimum, no reverse coil current, LS back
 //                              # hs-night-ov*, hs-night-race*: OV alert / core-0 disable() around the LS ramp and hold
 //   weather scenarios (PV string of 1..3 substrings, irradiance played from a time series; "== SUMMARY" line):
 //     wx-cloud          recorded cloudy quarter hour (flat, 2026-11-14 11:20 UTC), full sun <-> cloud
@@ -2250,6 +2252,73 @@ static int runDcd(const std::string &sc) {
     return f != 0;
 }
 
+// dcd-hv-*: a duty cut at a high step-down ratio, Vin ~80 V (95 V Voc) into 26.8 V, from manual duty held in CCM
+//   just above the CCM/DCM boundary (Iout < 1.6 x half the coil ripple), paranoia on, fry's or flat's plant and
+//   filters. The cut goes 700 counts down (D ~0.34 -> ~0.17, below Vout/Voc), past the filtered current's lag:
+//   dcd-hv-step-*: in one pwmPerturb() step (> pwmMax/50: the large-decrease rule)
+//   dcd-hv-train-*: by the manual ramp, pwmMax/512 per sample (each step below pwmMax/50, the sum within the lag
+//     crosses it: the cumulative rule)
+//   Checks: the LS dropped to its minimum, no protection trip, the coil current at LS turn-off stays above -0.2 A
+//   (~0.6 us of LS past the zero crossing; without the drop the CCM window pulls -0.5 .. -1.9 A), the cycle-mean
+//   output current above -0.05 A, the LS back at its maximum within 2 s, the duty held.
+static int runDcdHv(const std::string &sc) {
+    int f = 0;
+    auto chk = [&](bool c, const char *w) {
+        printf("== %s %s: %s\n", sc.c_str(), c ? "ok" : "FAIL", w);
+        f += !c;
+    };
+    const bool train = sc.rfind("dcd-hv-train", 0) == 0;
+    settle(30);
+    for (double dl = tNow() + 150; tNow() < dl && !(!converter.inDCM() && !mppt.isSweeping() &&
+                                                    g_app.opMode.load() == OpMode::Mppt && !converter.disabled());)
+        run(0.5, 0);
+    run(5, 0);
+    const uint16_t pwmMax = converter.pwmMaxDriver(), d0 = converter.getCtrlOnPwmCnt();
+    const float vo = g_vconv.getVout(), vi = g_vconv.getVin(),
+                iBnd = vo * (1 - vo / vi) / (2 * g_vconv.getL() * converter.realizedFreqHz());
+    printf("== %s: Vin %.1f V, Vout %.2f V, Iout %.2f A (CCM boundary %.2f A), D %u, %s, %s\n", sc.c_str(), vi, vo,
+           g_vconv.getIoutAvg(), iBnd, d0, converter.inDCM() ? "DCM" : "CCM", modeStr());
+    if (!simPsuWait(mppt.requestPsuManual(d0, -1))) printf("  manual: RT transition timed out\n");
+    for (double dl = tNow() + 3; tNow() < dl && converter.getRectOnPwmCnt() + 2 < converter.getRectOnPwmMax();) run(0.01, 0);
+    run(0.5, 0);
+    chk(!converter.inDCM() && !converter.disabled() && g_vconv.getIoutAvg() < 1.6f * iBnd &&
+        converter.getRectOnPwmCnt() + 2 >= pwmMax - converter.getCtrlOnPwmCnt() - 1,
+        "manual duty in CCM near the boundary, LS at the CCM window");
+    const auto d1 = (uint16_t) (converter.getCtrlOnPwmCnt() - 700);
+    const size_t trips0 = g_trips.size();
+    const int ls0 = g_lsMinN;
+    float ilMin, ioMin;
+    g_vconv.takeIMin(ilMin, ioMin);
+    const double t0 = tNow();
+    mppt.setManualTarget(d1);
+    if (!train) converter.pwmPerturb((int16_t) (d1 - converter.getCtrlOnPwmCnt()));
+    double tFull = -1;
+    while (tNow() < t0 + 5) {
+        run(0.001, 0);
+        if (tFull < 0 && converter.getCtrlOnPwmCnt() == d1 &&
+            converter.getRectOnPwmCnt() + 2 >= converter.getRectOnPwmMax())
+            tFull = tNow() - t0;
+    }
+    g_vconv.takeIMin(ilMin, ioMin);
+    char tFullS[16] = "never";
+    if (tFull >= 0) snprintf(tFullS, sizeof tFullS, "%.0f ms", tFull * 1e3);
+    printf("== %s: D %u -> %u (%s; zero-current duty %d at Voc), LS to min %d x, back at its max after %s; coil current"
+           " at LS off >= %.2f A, cycle-mean Iout >= %.3f A; now Vin %.1f V Iout %.2f A LS %u/%u %s, %zu trips\n", sc.c_str(),
+           d0, d1, train ? "ramp" : "one step", (int) std::lround(vo / g_vconv.getVoc() * pwmMax), g_lsMinN - ls0,
+           tFullS, ilMin, ioMin, g_vconv.getVin(), g_vconv.getIoutAvg(), converter.getRectOnPwmCnt(),
+           converter.getRectOnPwmMax(), converter.inDCM() ? "DCM" : "CCM", g_trips.size() - trips0);
+    for (size_t i = trips0; i < g_trips.size(); ++i)
+        printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
+    chk(g_lsMinN > ls0, "the LS dropped to its minimum");
+    chk(g_trips.size() == trips0, "no protection trip");
+    chk(ilMin > -0.2f, "coil current at LS turn-off above -0.2 A");
+    chk(ioMin > -0.05f, "no reverse output current");
+    chk(tFull >= 0 && tFull < 2, "the LS back at its maximum within 2 s");
+    chk(!converter.disabled() && converter.getCtrlOnPwmCnt() == d1, "the duty held");
+    printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+    return f != 0;
+}
+
 static int runRingCoil(const std::string &name, bool weak) {
     Wx wx;
     const bool fry = !strcmp(g_ring->name, "fry");
@@ -3570,6 +3639,7 @@ static int simMain(int argc, char **argv) {
             sc == "hs-volt-clamp" || sc.rfind("hs-night", 0) == 0)
             c += ",board.conf:hs_clamp=1";
         if (sc == "hs-night-dsp") c += ",sensor.conf:despike=8";
+        if (sc.rfind("dcd-hv-", 0) == 0) c += ",limits.conf:hv_max=110";
         if (flatTake || dcd) // flat's (and fry's) sensor filters
             c += ",sensor.conf:hv_v_filt_len=20,sensor.conf:lv_v_filt_len=20,sensor.conf:lv_i_filt_len=20";
         // the state `measure-coil l0 f=` runs in, near flat's floor (fsw*L0*0.95 > 1 ohm with L0 50 uH)
@@ -3592,6 +3662,8 @@ static int simMain(int argc, char **argv) {
         // the switch's body diode takes 0.7 V of the drive: a bit more sun for the same live point
         if (sc.rfind("bf-flat-ccm", 0) == 0)
             ov.insert(ov.end(), {{"pv_isc", sc == "bf-flat-ccm-open" ? "1.9" : "1.83"}, {"pv_voc", "69"}, {"pv_k", "0.86"}, {"v_bat", "26.2"}});
+        else if (sc.rfind("dcd-hv-", 0) == 0) // ~1.5 x the CCM boundary current at Vin ~80 V
+            ov.insert(ov.end(), {{"pv_isc", dcdFry ? "1.7" : "2.1"}, {"pv_voc", "95"}, {"pv_k", "0.84"}, {"v_bat", "26.8"}});
         else if (dcd)
             ov.insert(ov.end(), {{"pv_isc", sc.rfind("dcd-ccm", 0) == 0 ? "6" : "2.8"}, {"pv_voc", dcdFry ? "78" : "62"},
                                  {"pv_k", dcdFry ? "0.86" : "0.95"}, {"v_bat", dcdFry ? "26.8" : "25.6"}});
@@ -3660,6 +3732,7 @@ static int simMain(int argc, char **argv) {
     if (sc.rfind("hs-", 0) == 0) return runHsShort(sc);
     if (sc.rfind("bf-", 0) == 0) return runBfTest(sc);
     if (sc.rfind("mc-flat", 0) == 0) return runMcFlat(sc);
+    if (sc.rfind("dcd-hv-", 0) == 0) return runDcdHv(sc);
     if (dcd) return runDcd(sc);
     settle(sc == "d-noise" ? 60 : 60);
     size_t settleTrips = g_trips.size();

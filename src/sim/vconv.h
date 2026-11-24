@@ -238,6 +238,11 @@ public:
     [[nodiscard]] float getVout() const { return vOut_; }
     // per-cycle Vout maximum since the last call
     float takeVoutMax() { float m = vOutMax_; vOutMax_ = vOut_; return m; }
+    // per-cycle minima since the last call: coil current at LS turn-off, cycle-mean output current
+    void takeIMin(float &iLsOff, float &iOut) {
+        iLsOff = iLsOffMin_, iOut = iOutMin_;
+        iLsOffMin_ = iLsOff_, iOutMin_ = iOutAvg_;
+    }
     [[nodiscard]] uint32_t vinClamps() const { return vInClamps_; } // cycles Vin hit its safety bound
     [[nodiscard]] float getIL()   const { return iLEnd_; }
     [[nodiscard]] float getILsOff() const { return iLsOff_; } // buck: coil current at LS turn-off (HS off: at its end)
@@ -320,6 +325,7 @@ private:
     float vOutMax_ = 0.0f;
     uint32_t vInClamps_ = 0;
     float iLEnd_ = 0.0f, iLsOff_ = 0.0f;
+    float iLsOffMin_ = 0.0f, iOutMin_ = 0.0f;
     PwmState pwm_{};
     float iInAvg_  = 0.0f;
     float iOutAvg_ = 0.0f;

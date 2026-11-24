@@ -189,6 +189,7 @@ void VirtualConverter::stepOneCycle(float T) {
     vIn_ = vinNext(iInAvg_);
     vOut_ = outNext(vOut_, iOutAvg_, T);
     if (vOut_ > vOutMax_) vOutMax_ = vOut_;
+    iLsOffMin_ = std::min(iLsOffMin_, iLsOff_), iOutMin_ = std::min(iOutMin_, iOutAvg_);
 
     // Safety bound only: a sinking panel stays near Voc on its own; a blocking source (open backflow switch)
     // has C_in integrate the pumped-back charge until the firmware's Vin OVP trips
