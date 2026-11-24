@@ -29,7 +29,11 @@ Highlights:
 * [Telemetry](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/telemetry/#influxdb-over-udp) to InfluxDB over UDP
 * LCD (hd44780) and WS2812B RGB LED driver
 * [Configuration files](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/config/) on flash file system (littlefs)
-* [Serial UART console](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/console/) and telnet to interact with the charger
+* [Console](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/console/) over serial, telnet, BLE and MQTT
+* [OTA updates](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/updating/ota-wifi/) over Wi-Fi or BLE, with rollback to the previous image
+* BLE: console, [telemetry](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/telemetry/#ble-telemetry-stream) and Wi-Fi setup ([Improv](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/connecting/#improv-over-ble))
+* Backflow switch [self-test](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/protection/#backflow-switch-test) and
+  [high-side short](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/protection/#high-side-short-check) detection
 * [MQTT](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/mqtt/) support to communicate with the BMS and Home Assistant
 * ADC abstraction layer with implementations for ESP32(S3) [Internal ADC](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/hardware/internal-adc/), ADS1x15 and
   INA226/INA228
