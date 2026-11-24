@@ -12,7 +12,9 @@ and recommend my improved design [Fugu2](https://github.com/fl4p/Fugu2).
 Browser tools: [live dashboard](https://fl4p.github.io/fugu-mppt-firmware/tools/dashboard.html),
 [config editor](https://fl4p.github.io/fugu-mppt-firmware/tools/conf-editor.html).
 
-The charger implements proper charge termination for Lithium-Batteries (e.g. LiFePo4, NCA, NCM, Sodium-Ion) as described in [this article](https://nordkyndesign.com/charging-marine-lithium-battery-banks).
+The charger implements proper charge termination for Lithium-Batteries (e.g. LiFePo4, NCA, NCM, Sodium-Ion) as described in
+[Charge Termination](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/charging/termination/)
+(based on [this article](https://nordkyndesign.com/charging-marine-lithium-battery-banks)).
 
 Highlights:
 
