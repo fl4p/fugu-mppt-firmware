@@ -12,7 +12,8 @@
  * substrings, at or above m substring MPP voltages. Measures the operating point, probes the candidates for a moment
  * each, measures the operating point again and moves to the best probe if it beats the larger of the two by `margin`.
  * Runs periodically and on a sustained Vin or power change since the last scan or sweep. Log only: before that,
- * two probes at the start Vin -+ nearDv show whether the operating point sits off the local peak.
+ * two probes at the start Vin -+ nearDv, bracketed by the start power measured before and after, show whether the
+ * operating point sits off the local peak; with no candidate they run alone, at most once per interval.
  */
 struct PeakScan {
     static constexpr float kProbeLow = 0.97f; // probe on the flat low-voltage side of a peak
@@ -40,7 +41,7 @@ struct PeakScan {
     uint16_t d0 = 0;
     float vc[6]{}, pc[6]{};
     // return pass: probe Vin and the down-pass power there (ascending), probe index of the best, largest probe/down - 1;
-    // a scan: its near probes in rv/rp 0, 1
+    // a scan: its near probes in rv/rp 0 (start point, before), 1, 2; rv[0] NAN: none
     bool ret = false;
     uint8_t nr = 0, rb = 0;
     float rv[7]{}, rp[7]{}, rDev = 0, rBest = 0, rLand = 0;
@@ -203,8 +204,8 @@ struct PeakScan {
             // trigger: off the reference Vin or power for 15 s, the power steady (+-10 %) for the last 5 s
             if (!trigger || (std::fabs(vin - vRef) < 0.5f * vs0 && pw > 0.7f * pRef && pw < 1.4f * pRef)) tOff = now;
             if (std::fabs(pw - pS) > 0.1f * pS) pS = pw, tS = now;
-            const bool due = force || (interval && now - tLast > interval * 1000u) ||
-                             (now - tOff > 15000 && now - tS > kSteadyMs && now - tLast > 60000);
+            const bool per = interval && now - tLast > interval * 1000u;
+            const bool due = force || per || (now - tOff > 15000 && now - tS > kSteadyMs && now - tLast > 60000);
             if (!due || pw < pMin) return NAN;
             tLast = now, force = false;
             // m0 of n substrings conduct at our peak. With weaker substrings conducting a peak sits above m unshaded
@@ -220,12 +221,11 @@ struct PeakScan {
                     continue;
                 vc[nc++] = v;
             }
-            if (!nc) {
-                pRef = pw, vRef = vin;
+            phase = Ref, v0 = vin, d0 = d, t0 = tPhase = now, settled = false, k = 0;
+            if (!armNear(nearDv && (nc || per), vMin, now) && !nc) {
+                phase = Idle, pRef = pw, vRef = vin;
                 return NAN;
             }
-            phase = Ref, v0 = vin, d0 = d, t0 = tPhase = now, settled = false, k = 0;
-            if (nearDv) armNear(vMin), nearStep(now, 0);
             acc.clear();
         }
         const float vt = phase == Near ? rv[k] : phase == Probe || phase == Go ? (ret ? rv[k] : vc[k]) : v0;
@@ -239,36 +239,53 @@ struct PeakScan {
         return phase == Idle ? NAN : (float) d * std::sqrt(vinFast / vt);
     }
 
-    // near probes at v0 -+ nearDv in rv/rp 0, 1; NAN: out of range, skipped
-    __attribute__((noinline)) void armNear(float vMin) {
-        for (int i = 0; i < 2; ++i) {
-            const float v = v0 + (i ? 0.1f : -0.1f) * (float) nearDv;
+    // on: v0 and the near probes at v0 -+ nearDv in rv 0..2 (NAN: out of range, skipped), starts them. False: off or
+    // both out of range (rv[0] NAN)
+    __attribute__((noinline)) bool armNear(bool on, float vMin, uint32_t now) {
+        bool any = false;
+        for (int i = 1; on && i < 3; ++i) {
+            const float v = v0 + (i == 2 ? 0.1f : -0.1f) * (float) nearDv;
             rv[i] = v >= vMin && v <= 0.95f * voc ? v : NAN;
+            any = any || !std::isnan(rv[i]);
         }
+        rv[0] = any ? v0 : NAN;
+        if (any) nearStep(now, 0);
+        return any;
     }
 
-    // scan start (k 0) or a near probe measured: the next in-range side, then Ref with the timeout started afresh
+    // scan start (k 0) or a near point measured: the next in-range one, then Ref with the timeout started afresh
     __attribute__((noinline)) void nearStep(uint32_t now, float p) {
         if (phase == Near) rp[k++] = p;
         else phase = Near;
-        while (k < 2 && std::isnan(rv[k])) rp[k++] = NAN;
-        if (k == 2) phase = Ref, k = 0, t0 = now;
+        while (k < 3 && std::isnan(rv[k])) rp[k++] = NAN;
+        if (k == 3) phase = Ref, k = 0, t0 = now;
     }
 
-    __attribute__((noinline)) void logNear(float pm) const {
+    // start point measured after the near probes: on to the candidates; without any, back to tracking
+    __attribute__((noinline)) void refDone(float p, float vin) {
+        if (!std::isnan(rv[0])) logNear(p);
+        p0 = p, phase = Probe;
+        if (!nc) phase = Idle, pRef = p, vRef = vin, ended = 1;
+    }
+
+    // ratios against the start power interpolated between before (rp[0]) and after (p) in measurement order; drift:
+    // the two differ by more than 1 %
+    __attribute__((noinline)) void logNear(float p) const {
         char s[2][12];
-        for (int i = 0; i < 2; ++i)
-            if (std::isnan(rp[i])) strcpy(s[i], "n/a");
-            else snprintf(s[i], sizeof s[i], "x%.3f", rp[i] / pm);
+        const int m = !std::isnan(rp[1]) + !std::isnan(rp[2]);
+        for (int i = 0, j = 0; i < 2; ++i)
+            if (std::isnan(rp[i + 1])) strcpy(s[i], "n/a");
+            else snprintf(s[i], sizeof s[i], "x%.3f", rp[i + 1] / (rp[0] + (p - rp[0]) * (float) ++j / (float) (m + 1)));
         const float dv = 0.1f * (float) nearDv;
-        ESP_LOGI("mppt", "scan near: v0 %.1f V, -%.1fV %s, +%.1fV %s", v0, dv, s[0], dv, s[1]);
+        ESP_LOGI("mppt", "scan near: v0 %.1f V, -%.1fV %s, +%.1fV %s, ref %.1f->%.1f W%s%s", v0, dv, s[0], dv, s[1], rp[0],
+                 p, std::fabs(p - rp[0]) > 0.005f * (p + rp[0]) ? ", drift" : "", nc ? "" : ", near only");
     }
 
     __attribute__((always_inline)) void step(uint32_t now, float vin) {
         const float p = acc.pop();
         settled = false, tPhase = now;
         if (phase == Ref) {
-            p0 = p, phase = Probe;
+            refDone(p, vin);
         } else if (phase == Near) {
             nearStep(now, p);
         } else if (phase == Probe && ret) {
@@ -288,7 +305,6 @@ struct PeakScan {
                 const float r = pc[i] / std::max(p0, p);
                 if (r > g) g = r, best = i;
             }
-            if (nearDv) logNear(std::max(p0, p));
             const bool steady = std::fabs(p - p0) < 0.15f * p0, move = steady && g > 1 + margin;
             ESP_LOGI("mppt", "scan: P %.1f->%.1f W at %.1fV, %u probes, best x%.3f at %.1fV%s", p0, p, v0, (unsigned) nc, g,
                      vc[best], !steady ? " (light changed)" : move ? ", moving" : "");

@@ -438,7 +438,8 @@ only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV-sim 
    low-side minimum pulse, about $1.2\,V_{out}$), or above $0.95\,V_{oc}$, is skipped.
 2. A lower candidate ($m < m_0$) delivers at most $m\,s$ times the largest current seen since the last sweep
    (the sweep passes every maximum). If that is below the present power plus the margin, the candidate is
-   skipped. On an unshaded string in full sun this skips every candidate, and no scan runs.
+   skipped. On an unshaded string in full sun this skips every candidate, and no scan runs (only the
+   [near-point probes](#near-point-probes), once per period).
 3. The scan holds the operating point, waits for the power filter to settle (`powerSettleMs()`, at most 1 s),
    and averages the power for 100 ms ($P_0$). It then steers $V_{in}$ to each candidate in turn (duty
    $D\sqrt{V_{in}/V_c}$ each loop tick, at most the fade step), settles, and averages again. Finally it returns
@@ -453,15 +454,28 @@ The log shows each scan as `scan: P <P0>-><P0'> W at <V>V, <n> probes, best x<ra
 
 ### Near-point probes
 
-With `scan_near_v` above 0 (default 2 V), each scan first probes $V_{in} \pm$ `scan_near_v` around the start
-point, before it measures $P_0$, with the same settle and 100 ms average. A side below 1.05 times the input voltage
-floor or above $0.95\,V_{oc}$ is skipped. Both are compared with $\max(P_0, P_0')$, as the candidates are, and
-logged as `scan near: v0 <V> V, -<dV>V x<ratio>, +<dV>V x<ratio>` (`n/a` for a skipped side). A ratio above 1
-on one side means the operating point sits below the local maximum, on the side away from it.
+With `scan_near_v` above 0 (default 2 V), each scan first measures the start point ($P_a$), then probes
+$V_{in} \pm$ `scan_near_v` around it, each with the same settle and 100 ms average, before it measures $P_0$. A
+side below 1.05 times the input voltage floor or above $0.95\,V_{oc}$ is skipped; with both skipped, no near
+probe runs. Each side is compared with the start power interpolated linearly between $P_a$ and $P_0$ in
+measurement order, so a steady change of irradiance during the probes does not bias the ratio. The log line is
 
-The two probes are a measurement only: they take no part in the best probe, the 15 % light-change check, the
+```
+scan near: v0 <V> V, -<dV>V x<ratio>, +<dV>V x<ratio>, ref <Pa>-><P0> W[, drift][, near only]
+```
+
+with `n/a` for a skipped side. `drift` marks a run whose $P_a$ and $P_0$ differ by more than 1 % of their mean;
+its ratios are less certain. A ratio above 1 on one side means the operating point sits off the local maximum,
+on the other side of it: `+<dV>V` above 1 means below $V_{mpp}$. At the maximum both ratios lie slightly below 1
+(the curvature over the offset, about 1 % at 2 V on a 70 V string).
+
+When a scan is due by its period (`scan_interval`) but no candidate is left (step 2, an unshaded string in full
+sun), the near probes run alone, marked `near only`, and the tracker then continues at the start point. A scan
+due by the trigger without candidates runs nothing, so near probes run at most once per period.
+
+The probes are a measurement only: they take no part in the best probe, the 15 % light-change check, the
 60 s re-scan or the move. The 30 s scan timeout starts after them, so the rest of the scan runs as without
-them, about two probe times later.
+them, about three probe times later.
 
 ### Substring count
 

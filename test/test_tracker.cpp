@@ -482,7 +482,7 @@ struct ScanRig {
         for (uint32_t end = now + ms; now < end;) {
             now += 2;
             f(*this);
-            const float t = s.update(now, vin(), vin(), p(), (uint16_t) d, 29.f, 5.f, [] { return 50.f; });
+            const float t = s.update(now, vin(), vin(), p(), (uint16_t) std::lround(d), 29.f, 5.f, [] { return 50.f; });
             if (!std::isnan(t)) d += std::clamp((t - d) * 0.2f, -10.f, 10.f), ++active;
             if (s.ended) ended = s.ended, s.ended = 0;
         }
@@ -530,12 +530,50 @@ void test_scan_ignores_light_change() {
 }
 
 // Clear sky on the full-string peak: no lower peak can beat it at the current seen in the sweep, so no probing.
+// Without near probes nothing moves; with them only the near points run, once per interval, back to the start.
 void test_scan_skips_clear_sky() {
     auto r = std::make_unique<ScanRig>(68.8f);
-    r->sweep();
+    r->s.nearDv = 0, r->sweep();
     r->run(30'000);
     TEST_ASSERT_EQUAL_INT(0, r->active);
     TEST_ASSERT_TRUE(r->s.pRef > 0);
+
+    auto q = std::make_unique<ScanRig>(68.8f);
+    q->sweep();
+    int probe = 0, runs = 0;
+    PeakScan::Phase ph = PeakScan::Idle;
+    q->run(50'000, [&](ScanRig &x) {
+        probe += x.s.phase == PeakScan::Probe;
+        runs += x.s.phase == PeakScan::Near && ph != PeakScan::Near, ph = x.s.phase;
+    });
+    TEST_ASSERT_EQUAL_INT(0, probe);
+    TEST_ASSERT_EQUAL_INT(2, runs); // interval 20 s
+    TEST_ASSERT_EQUAL_INT(1, q->ended);
+    TEST_ASSERT_FLOAT_WITHIN(0.3f, 68.8f, q->vin());
+    TEST_ASSERT_TRUE(q->s.rp[1] < q->s.rp[0] && q->s.rp[2] < q->s.rp[0]);
+}
+
+// Near probe calibration: 3 V below the MPP the +2 V point beats the start, the -2 V one loses; with the light rising
+// 2 % during the probes the start powers before and after differ and bracket it
+void test_scan_near_below_mpp() {
+    for (const float ramp: {0.f, 0.02f}) {
+        auto r = std::make_unique<ScanRig>(65.8f);
+        r->sweep();
+        uint32_t tN = 0;
+        r->run(25'000, [&](ScanRig &x) {
+            if (x.s.phase == PeakScan::Near && !tN) tN = x.now;
+            if (tN && ramp > 0) x.light = std::min(1 + ramp, 1 + ramp * (float) (x.now - tN) / 500.f), x.shade();
+        });
+        TEST_ASSERT_TRUE(tN > 0);
+        TEST_ASSERT_EQUAL_INT(1, r->ended);
+        const auto &s = r->s;
+        const float up = s.rp[2] / (s.rp[0] + (s.p0 - s.rp[0]) * 2 / 3), dn = s.rp[1] / (s.rp[0] + (s.p0 - s.rp[0]) / 3);
+        ESP_LOGI("test", "near: ramp %.2f, -2V x%.3f, +2V x%.3f, ref %.1f->%.1f W", ramp, dn, up, s.rp[0], s.p0);
+        TEST_ASSERT_TRUE(up > 1.005f);
+        TEST_ASSERT_TRUE(dn < 1);
+        TEST_ASSERT_EQUAL_INT(ramp > 0, std::fabs(s.p0 - s.rp[0]) > 0.005f * (s.p0 + s.rp[0]));
+        TEST_ASSERT_FLOAT_WITHIN(0.3f, 65.8f, r->vin());
+    }
 }
 
 // A flagged sweep forces a scan once the reference is taken, without period or trigger
