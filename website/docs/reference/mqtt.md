@@ -46,17 +46,20 @@ The firmware uses the following topics:
 
 | Topic                                              | Dir.      | Payload                   | Condition                          |
 |----------------------------------------------------|-----------|---------------------------|------------------------------------|
-| `pv/log/<hostname>`                                | publish   | console / log lines       | always while connected             |
+| `pv/log/<hostname>`                                | publish   | console / log lines, QoS 0 | always while connected            |
 | `pv/log/<hostname>/cmd`                            | subscribe | console command           | `cmd_input=1`                      |
 | `pv/dev/<hostname>`                                | publish   | `online` / `offline`, retained, QoS 1 | on connect; `offline` on a clean stop and as last will |
 | `pv/alert/<hostname>/<source>`                     | publish   | alert JSON, retained, QoS 1 | on a state change of the source    |
 | `pv/tele/<hostname>`                               | publish   | binary telemetry, QoS 0   | while a `tele-mqtt` lease runs     |
-| `homeassistant/sensor/<device-id>-power/config`    | publish   | HA discovery JSON, retained | on connect, then every 1000 state updates |
-| `homeassistant/sensor/<device-id>-power/state`     | publish   | power in W                | every 3 s, not during a sweep      |
+| `homeassistant/sensor/<device-id>-power/config`    | publish   | HA discovery JSON, retained, QoS 0 | `CONFIG_FUGU_WITH_HA`: on connect, then every 1000 state updates |
+| `homeassistant/sensor/<device-id>-power/state`     | publish   | power in W, QoS 0         | `CONFIG_FUGU_WITH_HA`: every 3 s, not during a sweep |
 | value of `cell_voltages_max_topic`                 | subscribe | highest cell voltage, V   | key set                            |
-| value of `ibat_topic`                                | subscribe | battery current, A        | key set                            |
+| value of `ibat_topic`                              | subscribe | battery current, A        | key set                            |
 | value of `ibat_lim_topic`                          | subscribe | charge current limit, A   | key set                            |
 | values of `bat_temp_topic` (up to 4)               | subscribe | pack temperature, °C      | key set                            |
+| value of `bat_charge_topic`                        | subscribe | remaining charge, Ah      | key set                            |
+| value of `bat_voltage_topic`                       | subscribe | pack voltage, V           | key set                            |
+| value of `cell_voltages_delta_topic`               | subscribe | cell-voltage spread, V    | key set                            |
 
 All subscriptions use QoS 0. In the Home Assistant topics, `<device-id>` is lower-cased.
 
@@ -97,7 +100,8 @@ client is connected. The firmware doesn't mirror lines that the MQTT client itse
 
 When `cmd_input=1`, `pv/log/<hostname>/cmd` accepts one console command per message. The command runs on the
 network task, and the reply plus `OK: <cmd>` or `ERR: <cmd>` appear on the log topic. The command set is the same
-as on the [serial console](console.md).
+as on the [serial console](console.md), and MQTT is a trusted console: every command runs (see
+[Trusted consoles](console.md#trusted-consoles)).
 
 :::warning
 With `cmd_input=1` anyone who can publish to the broker can control the converter (`dc`, `restart`, `ota`, …).
@@ -125,8 +129,9 @@ the option.
 
 ## Home Assistant discovery
 
-The firmware announces one sensor through [MQTT discovery](https://www.home-assistant.io/integrations/sensor.mqtt/)
-(`src/tele/home_assistant.cpp`). The config payload uses abbreviated keys, with `~` as the topic base:
+With the build option `CONFIG_FUGU_WITH_HA` (on by default), the firmware announces one sensor through
+[MQTT discovery](https://www.home-assistant.io/integrations/sensor.mqtt/) (`src/tele/home_assistant.cpp`). The
+config payload mostly uses abbreviated keys, with `~` (`homeassistant/sensor/<device-id>-power`) as the topic base:
 
 | Key            | Value                                   |
 |----------------|-----------------------------------------|
@@ -134,6 +139,7 @@ The firmware announces one sensor through [MQTT discovery](https://www.home-assi
 | `uniq_id`      | `<device-id>-power`                     |
 | `dev_cla`      | `power`                                 |
 | `unit_of_meas` | `W`                                     |
+| `native_unit_of_measurement`, `suggested_unit_of_measurement` | `W` |
 | `stat_cla`     | `measurement`                           |
 | `sug_dsp_prc`  | `1`                                     |
 | `exp_aft`      | `30` (s)                                |
@@ -150,7 +156,8 @@ longer than 30 s.
 
 The charger subscribes to BMS values when the corresponding `mqtt.conf` key names a topic
 (`src/charger.h`, `beginMqtt`). Each payload is a plain decimal number. The charger logs and ignores non-finite
-values. The keys have these effects:
+values, and also non-positive voltages and negative charge, spread and current-limit values. The keys have these
+effects:
 
 | Key                       | Unit | Effect                                                                                    |
 |---------------------------|------|-------------------------------------------------------------------------------------------|
@@ -158,6 +165,11 @@ values. The keys have these effects:
 | `ibat_topic`              | A    | Battery current (`Ibat = Iout − Iload`), smoothed; used for termination and coulomb counting. Expires after 180 s |
 | `ibat_lim_topic`          | A    | Replaces the charge current limit (`charger.conf::ibat_max`); negative values are ignored |
 | `bat_temp_topic`          | °C   | Comma-separated list, up to 4 topics. Drives the `bat_temp_*` policy in `charger.conf`; each sensor expires after 1 h |
+| `bat_charge_topic`        | Ah   | BMS remaining charge; while fresh, replaces the integrated `ibat` for the deficit since full, so chargers sharing a BMS release termination together |
+| `bat_voltage_topic`       | V    | BMS pack voltage; with `ibat_topic` it feeds the fit of the output-to-pack voltage drop against output and battery current (telemetry `Rc`/`Rb`) |
+| `cell_voltages_delta_topic` | V  | Cell-voltage spread; lets a top-balancing run finish early (`charger.conf::balance_delta`) |
+
+[mqtt.conf](config/mqtt.md) describes these keys in more detail.
 
 When `cell_voltages_max_topic` is set, a converter restarting after a stop waits up to 12 s for the BMS termination
 decision before it sweeps. The first sweep after boot starts without this wait, under the

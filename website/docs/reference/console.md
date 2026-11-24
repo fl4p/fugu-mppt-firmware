@@ -9,9 +9,9 @@ description: "The console lets you control and inspect the charger while it runs
 *Original hand-written note: [doc/Console.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Console.md).*
 
 The console lets you control and inspect the charger while it runs. You send text commands over
-UART, telnet, USB serial-JTAG, or MQTT. Every transport uses the same string protocol, which also
-makes the console suitable for automated tests. The firmware multiplexes input and output across
-UART, USB serial-JTAG, and telnet.
+UART, USB serial-JTAG (or USB CDC), telnet, BLE NUS, TLS-PSK (`tlscon`), or MQTT. Every transport uses the same
+string protocol, which also makes the console suitable for automated tests. Console and log output reaches every
+connected transport.
 
 The default UART baud rate is 115200. Terminate each command with `\n` or `\r` (new line).
 A line typed on the serial, USB, BLE or `tlscon` console holds at most 127 bytes (`tlscon`: 128). A longer
@@ -56,7 +56,8 @@ Each transport is trusted or untrusted. A trusted console runs every command.
 An untrusted console runs a line only if every command in it is on the read-only list below. Otherwise the line
 fails with `ERR: <cmd>` and a log line naming the reason, `refused: read-only console (telnet.conf trusted=0)` or
 `refused: read-only console (ble.conf ble_security=none)`. New commands are not
-on the list, so they are refused until added. The `+N`/`-N` PWM steps are refused.
+on the list, so they are refused until added. The `+N`/`-N` PWM steps are refused. A command's aliases (`?`, `hn`,
+`ifconfig`, `deadtime`, `fsw`, `getc`, `confhash`, `confcheck`, `service`) are allowed like the command.
 
 | Command | Allowed arguments |
 | --- | --- |
@@ -84,7 +85,7 @@ These commands manage the network, firmware updates, the clock, and resets.
 | `tele-mqtt [seconds]` *(needs `CONFIG_FUGU_WITH_TELE_MQTT`)* | Lease the MQTT telemetry stream on `pv/tele/<hostname>` for 1..3600 s (binary wire, uncompressed, see [MQTT topics](mqtt.md#telemetry-stream)); a new lease replaces the remaining time, `0` stops. Requires a set clock, a connected broker, and `tele.conf binary=1` while the `tele` service runs. No argument prints the state, the seconds left and the dropped bytes. |
 | `tele-ble [0\|1]` *(needs `CONFIG_FUGU_WITH_BLE_TELE`)* | Start/stop the BLE telemetry stream on the NUS TELE characteristic (binary wire, tamp-compressed). Requires the `ble` service running, a connected BLE client, a set clock (`set-time`), `tele.conf ble=1`, and either the `tele` service stopped or `tele.conf binary=1` + `svc rs tele`; no argument prints status + dropped bytes. Host side: `etc/influx_binary_proxy.py --ble` or `etc/fugu_console.py --ble --tele`. |
 | `curl [-X M] [-H k:v] [-d data] <url>` *(needs `CONFIG_FUGU_WITH_NETTOOLS`)* | Blocking HTTP(S) request that prints the status line and response body to the issuing console. TLS is verified against the mbedTLS certificate bundle. `-X` sets the method (GET/POST/PUT/DELETE/HEAD/PATCH); `-d` sends a request body (implies POST, defaults Content-Type to form-encoded unless a `-H Content-Type:…` is given); `-H` adds a header (up to 4, `key:value`). Flag values are single tokens without spaces, so use compact JSON. The body is streamed and capped at 16 KB. |
-| `ping <host> [count]` *(needs `CONFIG_FUGU_WITH_NETTOOLS`)* | ICMP echo to an IPv4 host/IP (`count` 1–60, default 4). Prints per-reply lines (seq/ttl/time) and a sent/received/loss summary. |
+| `ping <host> [count]` *(needs `CONFIG_FUGU_WITH_NETTOOLS`)* | ICMP echo to an IPv4 host/IP (`count` 1–60, default 4; a count out of range falls back to 4). Prints per-reply lines (seq/ttl/time) and a sent/received/loss summary. |
 | `nslookup <host>` (alias `resolve`) *(needs `CONFIG_FUGU_WITH_NETTOOLS`)* | Print every IPv4 address the resolver returns for `<host>`. |
 | `tcpconnect <host> <port>` (alias `probe`) *(needs `CONFIG_FUGU_WITH_NETTOOLS`)* | Non-blocking TCP connect with a 5 s timeout; reports `open` / `refused` / `timeout` / `error` and the elapsed time. Port-level reachability check for a broker or OTA endpoint. |
 | `netstat` (alias `ifconfig`) *(needs `CONFIG_FUGU_WITH_NETTOOLS`)* | STA link + IP config snapshot: ssid/bssid/channel/rssi, ip/gateway/netmask/dns, and MAC. |
@@ -113,11 +114,11 @@ These commands control the fan, LED, log levels, and ADC, and inspect sensors, m
 | `peek-struct <obj>[.field…] [depth]` *(host-only)* | DWARF-typed dump of an object or sub-object: enumerates each member (offset, type, name) and decodes its value (int / float / bool / pointer / enum / char[]). Reads the byte image via chunked `peek` calls. Embedded aggregates expand inline up to `[depth]` levels (default 2, range 0..16); past the budget they print as `<TypeName, N B>` and can be drilled into with a longer dotted path. Static `constexpr` class members are skipped (no storage). |
 | `uptime` | Print seconds since boot (monotonic; resets only on reboot) and the running app description (name, version, build date/time, IDF version). |
 | `rt-stats` | Print FreeRTOS per-task runtime statistics (sampled over ~2 s), sorted busiest-first, with each task's pinned core and per-core CPU % (a core-pinned task reads 0–100 % of its own core; read saturation off the `IDLEx` row, not the busy task). Tasks created or deleted during the window are listed as `Created`/`Deleted`; if the task walk misses a task, a `(n of m tasks listed)` line says so. The `rt-alloc:` line (also in `bootinfo`) counts heap allocations and frees made by the control-loop task since boot, the increase since the last print and the uptime of the last one; after start-up it should stay constant. With `CONFIG_FUGU_RT_ALLOC_TRACE` the call stacks of the first 8 distinct sites follow. The `loop-rate watchdog <n> Hz` line gives the Vout sample rate below which the loop-rate watchdog counts a window as starved (half the nominal rate, derived at boot; 0 for a virtual Vout). The last line, `loop gap during command: max <n> us`, is the longest control-loop gap seen during the command. The task counters are read in short kernel-lock sections of at most two tasks each rather than with `uxTaskGetSystemState()`, which held the kernel lock for about 2 ms and stalled the control loop; the gap should stay near one sample period. |
-| `reset-lag` | Reset the max-lag statistic and print [rtcount](../development/debugging/rtcount.md) timings. |
+| `reset-lag [q]` | Reset the max-lag and flash-stall statistics and print [rtcount](../development/debugging/rtcount.md) timings; `q` skips the print. |
 | `scan-i2c` | Run an I²C bus scan. |
 | `adc-restart` | Like `adc-reset`, and also clears each sensor's median and moving-average state (the notch filter and the zero-current calibration are kept). |
 | `adc-reset` | Stop the converter, reset the ADC hardware where the backend supports it (internal ADC DMA, INA226) and restart the sampling cycle. Tracking resumes after 6 s, or 30 s if the reset failed; manual `dc` mode stays off. Ignored while sampling is paused (OTA). |
-| `coredump [info\|get\|erase]` *(needs `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH`)* | Inspect or extract the panic core dump saved to the `coredump` flash partition. `info` (default) reports presence, size, integrity (`check=ok`) and `crashed=<epoch>`, a wall-clock estimate of the crash time, stamped into NVS on the first time-synced boot after a new dump (keyed by the dump's checksum; `0` = unknown/not yet stamped). `get` streams the raw partition image as base64 between `==COREDUMP-BEGIN==`/`==COREDUMP-END==` markers (mirrors to telnet/MQTT/BLE, so a backtrace can be pulled with no serial); `erase` clears the dump and its NVS stamp. Pull + decode host-side with `etc/fugu_console.py --coredump get` (writes `coredump.bin`), then symbolicate against the exact build's ELF: `etc/idf-devtools/elf_archive.py decode --device <name> coredump.bin` auto-matches by the dump's embedded app-SHA from the flash-time ELF archive (the firmware sets `CONFIG_APP_RETRIEVE_LEN_ELF_SHA=64` so the full hash is stored and the match is unambiguous; a short/zero value would match any ELF and yield a bogus backtrace). SHA-independent fallback: `xtensa-esp32s3-elf-addr2line -e <that>.elf <backtrace PCs>`. |
+| `coredump [info\|get\|erase]` *(needs `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH`)* | Inspect or extract the panic core dump saved to the `coredump` flash partition. `info` (default) reports presence, size, integrity (`check=ok`) and `crashed=<epoch>`, a wall-clock estimate of the crash time, stamped into NVS on the first time-synced boot after a new dump (keyed by the dump's checksum; `0` = unknown/not yet stamped). `get` streams the raw partition image as base64 between `==COREDUMP-BEGIN size=<bytes>==`/`==COREDUMP-END==` markers (mirrors to telnet/MQTT/BLE, so a backtrace can be pulled with no serial); `erase` clears the dump and its NVS stamp. Pull + decode host-side with `etc/fugu_console.py --coredump get` (writes `coredump.bin`), then symbolicate against the exact build's ELF: `etc/idf-devtools/elf_archive.py decode --device <name> coredump.bin` auto-matches by the dump's embedded app-SHA from the flash-time ELF archive (the firmware sets `CONFIG_APP_RETRIEVE_LEN_ELF_SHA=64` so the full hash is stored and the match is unambiguous; a short/zero value would match any ELF and yield a bogus backtrace). SHA-independent fallback: `xtensa-esp32s3-elf-addr2line -e <that>.elf <backtrace PCs>`. |
 | `crash <null\|abort\|stack>` *(needs `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH`)* | Deliberately panic the device to exercise the coredump path: `null` (write to 0x0 → StoreProhibited), `abort` (`abort()`), `stack` (unbounded recursion → stack overflow). The explicit subtype is required (the console is reachable over MQTT). Bench/test only. |
 
 ## Config Commands
@@ -199,13 +200,14 @@ These commands report the charger state and set battery limits, PSU mode, and PV
 
 | Command | Description |
 | --- | --- |
-| `status` | Print a charger/battery snapshot: charger state (`TERMINATED (float)`, `BLOCKED (pack cold)`, `PARTIAL HOLD (load-following)`, `CV HOLD (<s>s, ilim <A>A)` or `charging`), effective limits (`Vbat_max`/`Vout_max`, `Ibat_lim`/`Iout_max`), the termination line (`v_term`/`cv_float`/`cv_eoc`/`Cbat`/`recharge_dod`) and the BMS feed (`vcell_high` with staleness, `ibat`, `ahSinceFull`, `vout_avg`). In PSU mode also prints the setpoint, trip count and escalation state. |
-| `holiday [auto\|on\|off]` | Holiday ceiling (`charger.conf:holiday_charge`): `on` applies it now, `off` disables it, `auto` (default) follows the detection. Without an argument, prints the state, the mode and the ceiling in effect. Fails when `holiday_charge` is 0. The mode survives a software reset, not a power loss. See [Holiday auto mode](../guide/charging/termination.md#holiday-auto-mode-holiday_charge). |
+| `status` | Print a charger/battery snapshot: charger state (`TERMINATED (float)`, `BLOCKED (pack cold)`, `PARTIAL HOLD (load-following)`, `CV HOLD (<s>s, ilim <A>A)`, `CV HOLD balance (<in band>/<hold>s, ilim <A>A)` or `charging`), effective limits (`Vbat_max`/`Vout_max`, `Ibat_lim`/`Iout_max`), the OV limit (explicit `ovset` or derived), the termination line (`v_term`/`cv_float`/`cv_eoc`/`Cbat`/`recharge_dod`) and the BMS feed (`vcell_high` with staleness, `ibat`, `ahSinceFull` with its source, `vout_avg`). When configured, also the depth of discharge since full, the charge ceiling, the holiday and balance state and the pack temperature; then the high-side short and backflow switch state (as in `selftest`). In PSU mode also prints the setpoint, trip count and escalation state, and in PV-sim mode the curve. |
+| `holiday [auto\|on\|off]` | Holiday ceiling (`charger.conf:holiday_charge`): `on` applies it now, `off` disables it, `auto` (default) follows the detection. Without an argument, prints the state, the mode and the ceiling in effect. Setting a mode fails when `holiday_charge` is 0. The mode survives a software reset, not a power loss. See [Holiday auto mode](../guide/charging/termination.md#holiday-auto-mode-holiday_charge). |
+| `balance [now\|skip]` | Top-balancing run (`charger.conf:balance_interval`): without an argument prints `balance off`, the days to the next run, or `due` with `running`, the deferral reason or `next charge` and the in-band time. `now` makes a run due, `skip` marks it done; both fail when `balance_interval` is 0. See [Top balancing](../guide/charging/termination.md#top-balancing). |
 | `wire` | Print the output wire-fault protection state: mode, level and effective level, trip latch, `wf`, excess power, current cap, the learned baseline (days, learning, `Rc`, offset, `Rb`, `Ro`), each estimate's ΔR and excess power with its freshness, the offset and slope of the offset regression against the baseline, the day warning, the reference current, today's sample counts, the spread of today's output current and whether today counts toward learning. See [limits.conf](config/limits.md#baseline-and-learning). |
 | `wire-reset` | Clear the wire-fault trip latch, the learned baseline and the open day; learning restarts. The cleared baseline is written to NVS the next time the converter is stopped. |
 | `vset <float>` | Set the battery max voltage (`Vbat_max`), range (0, 999]. Marks the setpoint as explicit so the persistent-OV auto-detect will not silently discard it. |
 | `iset <float>` | Set the battery current limit (`Ibat_lim`), range 0–999. |
-| `ovset <float>` | Set an independent hard output over-voltage trip limit, range 0–999. 0 clears it (reverts to the derived threshold: `Vbat_max` × 1.5, or × 1.03 with `reverse_current_paranoia`). When set, the OV threshold is min(`ovset`, Vout max) (the `limits.conf` output voltage limit: `lv_max` in a buck, `hv_max` in a boost) regardless of the CV setpoint. |
+| `ovset <float>` | Set an independent hard output over-voltage trip limit, range 0–999. 0 clears it (reverts to the derived threshold: `Vbat_max` × 1.5, or × 1.03 with `reverse_current_paranoia`). When set, the OV threshold is min(`ovset`, Vout max) (the `limits.conf` output voltage limit: `lv_max` in a buck, `hv_max` in a boost) regardless of the CV setpoint. Refused when the PSU setpoint is at or above 98 % of the value. |
 | `psu <float>` | Enter PSU (constant-voltage) mode and set the output voltage setpoint. The limiter chain regulates Vout to the setpoint with CV/CC foldback, without the MPP tracker, periodic sweep or charger-layer battery semantics. Trips use a fast 100 ms auto-retry with escalation to a hard latch after repeated faults. Range-checks against the output voltage limit (`limits.conf::lv_max` in a buck, `hv_max` in a boost). A lower setpoint is approached at `converter.conf::psu_slew_down` (2 V/s default). A buck does not start while the setpoint is at or above about Vin / 1.18 (start-block reason `minpulse-M`, [LS minimum pulse near unity ratio](../internals/diode-emulation.md#ls-minimum-pulse-near-unity-ratio)). |
 | `psu off` | Exit PSU mode, return to MPPT tracking. |
 | `psu` | Print PSU mode state: setpoint, trip count, escalation/latch state. |
@@ -228,11 +230,11 @@ These commands set the duty cycle directly, switch between manual and tracking m
 | Command | Description |
 | --- | --- |
 | `dc <hs> [ls]` | Set the converter duty cycle directly and switch the charger to manual PWM mode (no tracking, protection still active). A non-zero duty enables sync rectification and the backflow switch unless `reverse_current_paranoia` is set. `dc 0` stops the converter at once instead of ramping the duty down: a ramp below Vout/Vin while the converter is in CCM at power would reverse the coil current and trip `highD-bflowOpen`. The optional `ls` (a non-negative integer) pins the LS on-count instead of automatic diode emulation (bench only, reverse-current risk). A buck does not start or restart while Vout is at or above about Vin / 1.18 (LS minimum pulse ratio). |
-| `+<int>`, `-<int>` | Relative duty-cycle perturbation step. Available both in manual and tracking mode (to test tracker recovery). **Be careful with large positive jumps:** they can cause extreme current transients that destroy the switches. |
+| `+<int>`, `-<int>` | Relative duty-cycle perturbation step. Available both in manual and tracking mode (to test tracker recovery); refused in PSU/PV-sim mode and while calibrating. **Be careful with large positive jumps:** they can cause extreme current transients that destroy the switches. |
 | `mppt` | Switch back to MPP tracking mode (only valid while in manual PWM or PSU mode). |
 | `sweep` | Start a global MPP scan / search. Exits PSU mode if active. The sweep starts once the converter may start; until then it waits (night, backoff, a latch). When the start is blocked after the zero calibration, the reply says so before `OK`: `sweep: queued, START blocked: <reason> (Vin=<V> Vout=<V>)`, with the reason of the `START blocked:` log line ([start conditions](../internals/protection.md#start-conditions)). |
 | `sweep calfail` | Test hook: like `sweep`, but the next zero calibration fails once (log `Calibration failed, <sensor> forced (test)`), so the converter takes the calibration-failure path. |
-| `sweep-curve` | Print the last sweep's Vin/P curve as `sc:` lines (`sc: none` before the first sweep). The points are the filtered Vin and the power less the input capacitors' discharge, the values the MPP is taken from. The header is `sc: t=<epoch_s> n=<points> mpp=<W>,<V> sweeping=0\|1`, followed by `flag=0\|light land=<W>` once the [sweep verdict](../internals/mppt-tracker.md#sweep-verdict) is in: `light` when the settled landing power (`land`) or a return-pass probe missed the sweep's value. |
+| `sweep-curve` | Print the last sweep's Vin/P curve as `sc:` lines ending with `sc: end` (`sc: none` before the first sweep); during a sweep, the points so far. The points are the filtered Vin and the power less the input capacitors' discharge, the values the MPP is taken from. The header is `sc: t=<epoch_s> n=<points> mpp=<W>,<V> sweeping=0\|1`, followed by `flag=0\|light land=<W>` once the [sweep verdict](../internals/mppt-tracker.md#sweep-verdict) is in: `light` when the settled landing power (`land`) or a return-pass probe missed the sweep's value. |
 | `speed <float>` | Set tracking speed scale, range [0, 10) (default 1.0). |
 | `dt [hl_ns [lh_ns]]`, `deadtime …` | MCPWM hardware dead-time, one value per transition: **hl** = ctrl-off -> rect-on (mid-period, hardware RED), **lh** = rect-off -> ctrl-on (period wrap, reserved out of `pwmMax`). Without an argument it prints both, the realized hl gap, and the limits derived from them: `dt hl=200 ns (32 ct, gap 31 ct) lh=100 ns (16 ct) pwmMax=… minLS=… maxHS=…`. One argument sets both; two set them independently. It retunes from the RT core, quantized to the timer tick (6.25 ns at 39 kHz). HiLi + MCPWM gate driver only; an InEn gate driver does its own dead-time. **RAM only**: persist with `set-config board.conf pwm_deadtime_hl_ns <ns>` and `set-config board.conf pwm_deadtime_lh_ns <ns>`, then reboot. The new delay and the duty clamp both latch on a period boundary (`update_dead_time_on_tez`), usually the same one. When a boundary falls between the two writes the intervening period runs the new dead-time against the old comparators, which keeps at least the old LS->HS band. Raising is allowed in any mode, but note it is an *unramped* duty step: at the ¹⁄₃₂ ceiling `maxHS` drops by ~190 counts in one control tick; **lowering either value requires manual PWM** (`dc N` first). Keep a scope on the switch node either way. |
 |  | Refusals, all of them shoot-through guards: **retuning only**: if the board booted with `pwm_deadtime_hl_ns=0` the submodule is bypassed, and arming it live would put the LS pin on the HS waveform between the two register writes, so `dt` refuses and you must set the conf key and reboot. **≥ 50 ns realized gap**: the HS generator spends one tick claiming its dead-time path, so the realized hl gap is one tick less than the configured value (1 tick would close it entirely). lh has no such offset and is realized one tick *wider*, since `cmpLS` is capped at `pwmMax-1`. The floor is a typo guard, not a tuned value: it is far below any dead-time we ship, and a gap that clears it is still not necessarily safe for a given FET and gate driver; that is yours to verify on the bench. **≤ ¹⁄₃₂ period** (800 ns at 39 kHz) per value: lh is reserved out of `pwmMax`, and hl pushes `minLS` up by the same amount, since it delays LS turn-on and the bootstrap-refresh pulse has to survive it. |
@@ -297,7 +299,8 @@ battery (BMS data, or Vout above 9 V with the converter off for 2 minutes; reboo
 exceeds 1 s. While it runs, every command that changes the PWM, rectification,
 backflow switch or sensors is refused: `+N`/`-N`, `dc`, `sync`, `bf`/`panel`, `short-ls`, `sweep`, `rect-cal`, `dt`,
 `pwm-freq`, `mcpwmtest`, `pwr`, `measure-coil`, `ota`, `ota-ble`, `wsync`, `adc-cal`, `adc-restart`, `adc-reset`, `anf`,
-`gpio`, `anaw`, `vset`, `ovset`, `vconv`, `sleep` and `speed`, also inside a line split with `;;`. `mppt`, `psu`, `pv`
+`gpio`, `anaw`, `vset`, `ovset`, `vconv`, `sleep` and `speed`, also inside a line split with `;;` and also in their
+read-only forms (bare `dt`, `pwm-freq`, `sync`, `wsync`). `mppt`, `psu`, `pv`
 and `selftest abort` abort it. The protections it suspends are listed under
 [Sub-trip reverse current](../internals/protection.md#sub-trip-reverse-current).
 
@@ -310,8 +313,8 @@ The following commands require manual PWM mode.
 
 ## Service Commands
 
-The firmware manages the optional non-RT subsystems (`mqtt`, telemetry, `ftp`, `telnet`, `lcd`, and `scope`) as
-services. Each has its own state, log level, and `enabled` flag persisted in its conf file. The following
+The firmware manages the optional non-RT subsystems as services: `mqtt`, `tele` (telemetry), `ftp`, `http`, `telnet`,
+`tlscon`, `lcd`, `scope`, `ble` and `bsync`, as far as the build includes them (`svc list` shows them). Each has its own state, log level, and `enabled` flag persisted in its conf file. The following
 commands control them.
 
 | Command | Description |
@@ -356,6 +359,8 @@ The following commands print help and inspect or drive hardware on the bench.
 | `pwm-dump` | Print the realized PWM frequency, period ticks and comparator positions. |
 | `anaw <pin> <0..255>` *(LEDC builds)* | Arduino `analogWrite` on a pin (drives the pin directly). |
 | `ota-ble …` *(needs `CONFIG_FUGU_WITH_BLE`)* | Device side of the OTA push over BLE; driven by the host tool, see [OTA over BLE](../guide/updating/ota-ble.md). |
+| `rtprof [clear\|all]` *(needs `CONFIG_FUGU_WITH_RTPROF`)* | Dump the core-1 call-stack sampler's counts of flash-resident return addresses (map them host-side with `etc/rtprof_map.py`); `clear` resets the table, `all` resets it and also counts IRAM/ROM addresses. The same build adds `rtlog-test`, which emits test log lines from the control loop. |
+| `pwr …` *(needs `CONFIG_FUGU_WITH_PWR_KNOBS`)* | Runtime power levers for experiments: CPU frequency, power management / light sleep, Wi-Fi power save, listen interval and TX power, BLE advertising interval, telemetry interval; also reports die temperature. Not persisted; a reboot restores the defaults. |
 | `vconv [pv\|bat\|sun\|set …]` *(needs `CONFIG_FUGU_WITH_VCONV`)* | Inspect or change the virtual converter simulation; `vconv sun` prints the simulated irradiance (see [vconv.conf](config/vconv.md#sun-and-clouds)). |
 
 ## Scripts
@@ -394,9 +399,13 @@ Scripts have these limitations:
 
 ## Telnet
 
-Use any telnet client to connect on port 23. No password is required. The console accepts one connection at a time.
+Use any telnet client to connect on port 23 (the `telnet` service, off by default). No password is required. The
+console accepts one connection at a time. It is read-only unless `telnet.conf` sets `trusted=1`, which
+`svc rs telnet` applies (see [Trusted consoles](#trusted-consoles) and [telnet.conf](config/telnet.md)). `exit`
+closes the connection.
 
 To connect from Home Assistant, follow these steps:
 
 1. Install the "Terminal & SSH" add-on.
 2. In the add-on Configuration, add `busybox-extras` to Packages.
+3. In the add-on terminal, run `telnet <device-ip> 23`.
