@@ -933,6 +933,7 @@ const stored = (window) => JSON.parse(window.localStorage.getItem('dash-devices'
 test('snapshot: written after ingest, at most every CFG.snapMs, no log lines or bins', async () => {
   const { window, Dash } = await loadDash();
   Dash.CFG.snapMs = 40;
+  clock(window);     // the debounce is snapMs from the first save, not what is left of it after a slow host's stall
   Dash.ingestTele('fry', mqttMsg([{ fields: { P: 120, Ui: 38.5, Uo: 27.25, I: 4.5, pwm_duty: 1500, mppt_state: 4,
     P_max_today: 300, E_today: 900, ntc_temp: 40, mcu_temp: 45, Ro: 200, Rc: 15 }, ts: 1_763_400_000_000 }]), 'mqtt');
   const dev = Dash.devices.get('fry');

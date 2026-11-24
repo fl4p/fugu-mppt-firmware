@@ -233,15 +233,21 @@ function firmware(host, opts = {}) {
         s(I('rectcal', `state=${r.state}${r.why ? ': ' + r.why : ''} auto=0 needed=0 drv=mcpwm offset=${r.ct} ct (${r.ns} ns${r.cal ? ', ' + r.cal : ''}) backstop=0 unsaved=${r.unsaved}`));
         return ok();
       }
-      if (sub === 'abort') { if (st.rect.state !== 'running') return err('rect-cal: not running'); st.rect.abort = true; return ok(); }
-      if (opts.rcRefuse) return err('rect-cal: refused: ' + opts.rcRefuse);
-      st.rect.state = 'running'; s(I('main', 'rect-cal: running at hs=812 (up to 60 s), see rect-cal status')); ok();
-      later(40, () => {
+      const end = () => {
         if (st.rect.abort) { st.rect = { state: 'failed', why: 'aborted', ct: 20, ns: '500', unsaved: 0 };
           return s(W('rectcal: failed: aborted (7 pts), offset stays 20 ct').replace('main: ', '')); }
         st.rect = { state: 'done', ct: 35, ns: '875', unsaved: 1 };
         s(I('rectcal', 'done: hs=812 ideal=900 zc=920 peak=935 learned=+35 ct, applied +35 ct (875 ns, mcpwm, 18 pts)'));
-      });
+      };
+      if (sub === 'abort') {
+        if (st.rect.state !== 'running') return err('rect-cal: not running');
+        st.rect.abort = true; ok();
+        if (opts.rcHold) later(5, end);
+        return;
+      }
+      if (opts.rcRefuse) return err('rect-cal: refused: ' + opts.rcRefuse);
+      st.rect.state = 'running'; s(I('main', 'rect-cal: running at hs=812 (up to 60 s), see rect-cal status')); ok();
+      if (!opts.rcHold) later(40, end);              // rcHold: runs until `rect-cal abort`
       return;
     }
     if (root === 'measure-coil') {

@@ -116,12 +116,12 @@ test('status: every CFG.chargerMs from the tick, single in flight, one retry on 
   t += 5000; Dash.tick();
   assert.equal(nStatus(client, 'fry'), 1);
   assert.equal(await Dash.requestChargerStatus(dev), false, 'single in flight');
-  await settle(40);
+  await until(() => !dev.chgReq, 3000, 'the request and its retry to time out');
   assert.equal(nStatus(client, 'fry'), 2, 'one retry');
   assert.equal(dev.chgReq, false);
   t += 100000; Dash.tick(); await settle(40);
   assert.equal(nStatus(client, 'fry'), 2);
-  t += 200000; Dash.tick(); await settle(40);
+  t += 200000; Dash.tick(); await until(() => !dev.chgReq, 3000, 'the request and its retry to time out');
   assert.equal(nStatus(client, 'fry'), 4, 'periodic request + its retry');
   // ERR is not retried
   Dash.CFG.chargerTimeoutMs = 1000;

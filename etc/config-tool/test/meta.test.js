@@ -105,10 +105,10 @@ test('board.conf backflow keys have meta', async () => {
   assert.equal(window.lookupDefault('conf/board.conf', 'bflow_sd'), '0');
 });
 
-test('vconv.conf: per-file c_in meta/default, runtime-settable keys note the console command', async () => {
+test('vconv.conf: plant_c_in meta/default, runtime-settable keys note the console command', async () => {
   const { window } = await loadEditor();
-  assert.match(window.lookupMeta('conf/vconv.conf', 'c_in', '').desc, /^Input capacitance$/);
-  assert.equal(window.lookupDefault('conf/vconv.conf', 'c_in'), '0.00047');
+  assert.match(window.lookupMeta('conf/vconv.conf', 'plant_c_in', '').desc, /^Input capacitance of the plant/);
+  assert.equal(window.lookupDefault('conf/vconv.conf', 'plant_c_in'), '0.00047');
   assert.equal(window.lookupDefault('conf/converter.conf', 'c_in'), '0.001');
   assert.equal(window.applyOf('vconv.conf', 'ring_c'), 'reboot');
   assert.match(window.eval('APPLY_NOTE')['vconv.conf:ring_c'], /vconv set/);

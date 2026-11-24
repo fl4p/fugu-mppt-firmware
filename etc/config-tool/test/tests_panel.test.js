@@ -13,7 +13,7 @@ const card = (w, id) => $(w, `#tst-body .tst[data-tst="${id}"]`);
 const row = (w, id) => $(w, `#tst-body .tst-row[data-tst="${id}"]`);
 const rowText = (w, id) => row(w, id).querySelector('.tst-val').textContent;
 const settle = (ms = 30) => new Promise(r => setTimeout(r, ms));
-async function until(pred, ms = 3000) {
+async function until(pred, ms = 20000) {
   const end = Date.now() + ms;
   while (!pred()) { if (Date.now() > end) throw new Error('timeout waiting'); await settle(5); }
 }
@@ -29,11 +29,28 @@ const below = c => [...c.querySelectorAll('.tst-tag, .tst-ctl, .run, .read, .tst
 async function connected(opts = {}) {
   const { window } = await loadEditor({ teledec: opts.teledec !== false });
   const dev = firmware('fry', { conf: CONF, ...opts });
+  // every line the fake emits passes the taps after the page has handled it (the page handles a line synchronously)
+  const taps = new Set(), h0 = dev.handler;
+  dev.handler = (cmd, s) => h0(cmd, ln => { s(ln); for (const f of [...taps]) f(ln); });
+  // resolves right after the line that makes pred() true, before the fake's next timer can move the page on
+  dev.when = (pred, ms = 20000) => pred() ? Promise.resolve() : new Promise((res, rej) => {
+    const f = () => { if (pred()) { taps.delete(f); clearTimeout(t); res(); } };
+    const t = setTimeout(() => { taps.delete(f); rej(new Error('timeout waiting for a line')); }, ms);
+    taps.add(f);
+  });
   mqttFirmware(window, { fry: dev, other: firmware('other', {}) });
   await window.mqttConnectAndImport('fry');
-  Object.assign(window.tstTimings(), { cmd: 300, probe: 300, settle: 20, poll: 5 });
+  // reply deadlines generous for a loaded host; tests of a silent command set their own
+  Object.assign(window.tstTimings(), { cmd: 3000, probe: 3000, settle: 20, poll: 5 });
   return { window, dev };
 }
+// The page's run timeouts count Date.now(): hold it so a short d.timeout cannot end a run while the test looks at it.
+function holdClock(window) {
+  const now = window.Date.now, t = now.call(window.Date);
+  window.Date.now = () => t;
+  return () => { window.Date.now = now; };
+}
+const quick = w => Object.assign(w.tstTimings(), { cmd: 300, probe: 300 });   // "within 0.3 s" notes, fast silent replies
 async function openSheet(window) {
   btn(window).click();
   await until(() => $(window, '#tst-body .tst-status'));
@@ -179,6 +196,7 @@ test('Status rows: a dot before each value, green fine, amber attention, red a l
   assert.equal(dot(window, 'selftest').getAttribute('role'), 'img');
   assert.equal(dot(window, 'selftest').nextElementSibling, row(window, 'selftest').querySelector('.tst-val'), 'before the value');
   ({ window } = await connected({ silent: ['wire'], state: { hsLatched: true, rect: { state: 'idle', ct: 20, ns: '500', unsaved: 0, cal: 'uncalibrated' } } }));
+  quick(window);
   await openSheet(window); await idle(window);
   assert.deepEqual(lv(window, 'selftest'), ['fail', 'Fault']);
   assert.ok(row(window, 'selftest').classList.contains('fail'));
@@ -189,6 +207,7 @@ test('Status rows: a dot before each value, green fine, amber attention, red a l
 
 test('Status rows: a silent command shows "no reply" with its note', async () => {
   const { window } = await connected({ silent: ['wire'] });
+  quick(window);
   await openSheet(window); await idle(window);
   assert.equal(rowText(window, 'wire'), 'no reply');
   assert.ok(row(window, 'wire').classList.contains('bad'));
@@ -203,7 +222,7 @@ test('Status rows: a silent command shows "no reply" with its note', async () =>
 });
 
 test('action cards: collapsed to title and description; tag, buttons, a run, its result and its output fold with the card', async () => {
-  const { window } = await connected({ coil: true });
+  const { window, dev } = await connected({ coil: true });
   await openSheet(window); await idle(window);
   for (const id of ['sweep', 'coil', 'bflow', 'clear', 'rectcal', 'coills']) {
     const c = card(window, id);
@@ -260,7 +279,7 @@ test('action cards: collapsed to title and description; tag, buttons, a run, its
   window.prompt = () => 'fry';
   const b = card(window, 'bflow');
   const run = window.tstStart('bflow');
-  await until(() => window.tstBusyNow() && b.querySelector('.tst-out').textContent.includes('forced PWM'));
+  await dev.when(() => window.tstBusyNow() && b.querySelector('.tst-out').textContent.includes('forced PWM'));
   assert.ok(b.classList.contains('open'), 'a run unfolds its card');
   assert.ok(seen(b.querySelector('.tst-res')) && seen(b.querySelector('.tst-out')), 'live output in view');
   assert.equal(b.querySelector('.tst-log').open, true);
@@ -300,6 +319,7 @@ test('action cards: Abort on a folded running card; an unknown state unfolds onc
   window.tstDefs().find(d => d.id === 'bflow').timeout = 400;
   await openSheet(window); await idle(window);
   window.prompt = () => 'fry';
+  const release = holdClock(window);
   const run = window.tstStart('bflow');
   const b = card(window, 'bflow');
   await until(() => window.tstBusyNow() && b.querySelector('.tst-out').textContent.includes('started'));
@@ -309,6 +329,7 @@ test('action cards: Abort on a folded running card; an unknown state unfolds onc
   await until(() => dev.sent.length > from);
   assert.equal(dev.sent[from], 'selftest abort');
   assert.equal(b.classList.contains('open'), false, 'Abort does not unfold');
+  release();
   await run;
   assert.ok(b.classList.contains('open'), 'the unknown-state note unfolds the card');
   assert.ok(seen(b.querySelector('.recheck')), 'Check in view');
@@ -332,7 +353,7 @@ test('backflow switch test: typed device name, live power in the prompt, live ou
 
   window.prompt = () => ' fry ';
   const run = window.tstStart('bflow');
-  await until(() => card(window, 'bflow').querySelector('.tst-out').textContent.includes('forced PWM from'));
+  await dev.when(() => card(window, 'bflow').querySelector('.tst-out').textContent.includes('forced PWM from'));
   assert.ok(window.tstBusyNow());
   assert.equal(card(window, 'bflow').querySelector('.abort').hidden, false, 'Abort shown while running');
   assert.equal(card(window, 'sweep').querySelector('.run').disabled, true, 'one test at a time');
@@ -576,7 +597,7 @@ test('rect-cal refusal and abort', async () => {
   await window.tstStart('rectcal');
   assert.match(resText(window, 'rectcal'), /fry refused “rect-cal”: rect-cal: refused: not in DCM/);
 
-  ({ window, dev } = await connected());
+  ({ window, dev } = await connected({ rcHold: true }));      // rect-cal ends only on its abort
   await openSheet(window); await idle(window);
   window.confirm = () => true;
   const run = window.tstStart('rectcal');
@@ -670,6 +691,18 @@ test('sweep at night on older firmware: a START blocked line or st=START ends th
   // no START blocked line: the status line still in START after the zero calibration
   ({ window, dev } = await connected({ power: 0, night: 'status' }));
   window.tstTimings().cal = 25;
+  // the START status line comes cal ms after the calibration on the page's clock, however late the fake's timers fire
+  const h = dev.handler;
+  let calDone = false;
+  dev.handler = (cmd, s) => h(cmd, ln => {
+    if (/\bCalibration done\b/.test(ln)) calDone = true;
+    else if (calDone && /\bst=START\b/.test(ln)) {
+      calDone = false;
+      const now = window.Date.now, cal = window.tstTimings().cal;
+      window.Date.now = () => now.call(window.Date) + cal;
+    }
+    s(ln);
+  });
   await openSheet(window); await idle(window);
   window.confirm = () => true;
   await window.tstStart('sweep');
@@ -722,9 +755,10 @@ test('timeout: state unknown, Check reads selftest and reports it without claimi
 });
 
 // measure-coil runs only from `dc 0`: Run stops MPPT itself, retries through the ramp-down and resumes MPPT in every outcome
-async function coilRun(opts, id = 'coil') {
+// stop: the retry deadline after `dc 0`; generous unless the test wants the converter to never stop
+async function coilRun({ stop = 10000, ...opts }, id = 'coil') {
   const { window, dev } = await connected({ coil: true, ...opts });
-  Object.assign(window.tstTimings(), { stop: 100 });
+  Object.assign(window.tstTimings(), { stop });
   await openSheet(window); await idle(window);
   window.confirm = () => true;
   const busy = [], h = dev.handler;
@@ -766,7 +800,7 @@ test('measure-coil waits out a protection backoff that dc 0 tripped, and ends a 
   assert.deepEqual(sent, ['selftest', 'measure-coil l0', 'dc 0', 'measure-coil l0', 'measure-coil l0', 'measure-coil l0', 'mppt']);
   assert.match(resText(window, 'coil'), /L = 50\.34 µH/);
   let note;
-  ({ window, sent, note } = await coilRun({ backoff: 1e9 }));
+  ({ window, sent, note } = await coilRun({ backoff: 1e9, stop: 100 }));
   assert.equal(sent.at(-1), 'mppt');
   assert.match(note.textContent, /stayed in a protection backoff for 0 s after “dc 0”; nothing was measured\. Resumed MPPT\./);
 });
@@ -782,7 +816,7 @@ test('measure-coil retries through the ramp-down; a converter that does not stop
   let { window, sent, note } = await coilRun({ rampDown: 2 });
   assert.deepEqual(sent, ['selftest', 'measure-coil l0', 'dc 0', 'measure-coil l0', 'measure-coil l0', 'measure-coil l0', 'mppt']);
   assert.match(resText(window, 'coil'), /L = 50\.34 µH/);
-  ({ window, sent, note } = await coilRun({ rampDown: 1e9 }));
+  ({ window, sent, note } = await coilRun({ rampDown: 1e9, stop: 100 }));
   assert.ok(!sent.slice(3, -1).some(c => c !== 'measure-coil l0'));
   assert.equal(sent.at(-1), 'mppt');
   assert.match(note.textContent, /did not stop within 0 s of “dc 0”; nothing was measured\. Resumed MPPT\./);
@@ -844,7 +878,7 @@ test('measure-coil progress: L0 and LS rows against the sweep band, early stops 
 });
 
 test('progress bar: shown while a test runs, a value for measure-coil, indeterminate otherwise, hidden afterwards', async () => {
-  const { window } = await connected({ coil: true, coilNeverEnds: true, bfNeverEnds: true, rowMs: 40 });
+  const { window, dev } = await connected({ coil: true, coilNeverEnds: true, bfNeverEnds: true, rowMs: 40 });
   window.tstDefs().find(d => d.id === 'coil').timeout = 4000;
   await openSheet(window); await idle(window);
   window.confirm = () => true; window.prompt = () => 'fry';
@@ -853,24 +887,28 @@ test('progress bar: shown while a test runs, a value for measure-coil, indetermi
   assert.equal(pg.getAttribute('aria-label'), 'Coil inductance (L0) progress');
   assert.equal(pg.hidden, true);
   assert.equal(c.querySelector('.tst-ctl').nextElementSibling, pg, 'below the buttons');
+  let release = holdClock(window);
   const run = window.tstStart('coil');
-  await until(() => c.querySelector('.tst-out').textContent.includes('1200  0.292'));
+  await dev.when(() => c.querySelector('.tst-out').textContent.includes('1200  0.292'));
   assert.equal(seen(pg), true);
   const step = +c.querySelector('.tst-pct').textContent.match(/^step (\d+) of 47$/)[1];
   assert.ok(step >= 1 && step <= 2, 'the first rows');
   assert.equal(pg.getAttribute('aria-valuenow'), String(Math.round((step - 1) * 30 / 1400 * 100)));
-  await until(() => c.querySelector('.tst-out').textContent.includes('L = 50.34'));
+  await dev.when(() => c.querySelector('.tst-out').textContent.includes('L = 50.34'));
   assert.equal(pg.getAttribute('aria-valuenow'), '100');
   assert.match(pg.querySelector('i').style.width, /^100(\.0)?%$/);
+  release();
   await run;
   assert.equal(pg.hidden, true);
   const b = card(window, 'bflow'), bp = b.querySelector('.tst-prog');
   window.tstDefs().find(d => d.id === 'bflow').timeout = 200;
+  release = holdClock(window);
   const r2 = window.tstStart('bflow');
   await until(() => window.tstBusyNow() && b.querySelector('.tst-out').textContent.includes('started'));
   assert.equal(seen(bp), true);
   assert.ok(bp.classList.contains('ind'));
   assert.equal(bp.getAttribute('aria-valuenow'), null);
+  release();
   await r2;
 });
 
@@ -934,14 +972,14 @@ test('coil L model: the measured line from the fit slope, incremental (DC bias) 
 });
 
 test('coil chart: drawn live in the card, the result, coil.conf L0 and the 0.95·L0 model, bins, slope and its verdict', async () => {
-  const { window } = await connected({ coil: true, rowMs: 30, conf: { ...CONF, 'coil.conf': { L0: '5.090000e-05' } } });
-  window.tstDefs().find(d => d.id === 'coil').timeout = 5000;
+  const { window, dev } = await connected({ coil: true, rowMs: 30, conf: { ...CONF, 'coil.conf': { L0: '5.090000e-05' } } });
+  window.tstDefs().find(d => d.id === 'coil').timeout = 60000;
   await openSheet(window); await idle(window);
   window.confirm = () => true;
   const c = card(window, 'coil'), fig = c.querySelector('.tst-chart');
   assert.equal(fig.hidden, true, 'no chart before a run');
   const run = window.tstStart('coil');
-  await until(() => +((fig.querySelector('svg') || { getAttribute: () => 0 }).getAttribute('data-points')) >= 3);
+  await dev.when(() => +((fig.querySelector('svg') || { getAttribute: () => 0 }).getAttribute('data-points')) >= 3);
   assert.equal(seen(fig), true, 'drawn while rows arrive');
   assert.equal(c.querySelector('.tst-log').open, false, 'the device output stays folded under the chart');
   assert.equal(fig.querySelector('.res'), null, 'no result line yet');
@@ -1103,16 +1141,16 @@ test('coil DC bias model: 1/L even in the flux, the incremental and secant drop 
 });
 
 test('coil DC bias chart: both passes (round, square), bins, the fit and incremental curves from 0 A, coil.conf L0, a legend', async () => {
-  const { window } = await connected({ coil: true, coilBias: true, rowMs: 10 });
-  window.tstDefs().find(d => d.id === 'coilbias').timeout = 5000;
+  const { window, dev } = await connected({ coil: true, coilBias: true, rowMs: 10 });
+  window.tstDefs().find(d => d.id === 'coilbias').timeout = 60000;
   Object.assign(window.tstTimings(), { stop: 100 });
   await openSheet(window); await idle(window);
   window.confirm = () => true;
   const c = card(window, 'coilbias'), fig = c.querySelector('.tst-chart');
   const run = window.tstStart('coilbias');
-  await until(() => fig.querySelectorAll('circle.pt.raw').length >= 3);
+  await dev.when(() => fig.querySelectorAll('circle.pt.raw').length >= 3);
   assert.ok([...fig.querySelectorAll('svg text')].some(t => t.textContent === 'curves after the first pass'), 'a hint while the first pass runs');
-  await until(() => fig.querySelectorAll('rect.pt.raw').length >= 3);
+  await dev.when(() => fig.querySelectorAll('rect.pt.raw').length >= 3);
   assert.equal(fig.querySelectorAll('path.inc.cv').length, 1, 'the curves from the first pass while the second runs');
   await run;
   const svg = fig.querySelector('svg');
@@ -1145,14 +1183,16 @@ test('coil DC bias progress: the first pass fills half the bar, the second the r
   assert.deepEqual(P([...a, DONE]), [0.5, 'pass 2 of 2: starting …']);
   assert.deepEqual(P([...a, DONE, ...b.slice(0, 12)]), [0.594, 'pass 2 of 2: step 10 of 48']);
   assert.deepEqual(P([...a, DONE, ...b]), [1, 'pass 2 of 2: finishing …']);
-  const { window: w2 } = await connected({ coil: true, coilBias: true, coilNeverEnds: true, rowMs: 40 });
+  const { window: w2, dev } = await connected({ coil: true, coilBias: true, coilNeverEnds: true, rowMs: 40 });
   w2.tstDefs().find(d => d.id === 'coilbias').timeout = 300;
   await openSheet(w2); await idle(w2);
   w2.confirm = () => true;
+  const release = holdClock(w2);
   const c = card(w2, 'coilbias'), run = w2.tstStart('coilbias');
-  await until(() => c.querySelector('.tst-out').textContent.includes('  457 '));
+  await dev.when(() => c.querySelector('.tst-out').textContent.includes('  457 '));
   assert.equal(c.querySelector('.tst-prog').getAttribute('aria-label'), 'Coil DC bias progress');
   assert.match(c.querySelector('.tst-pct').textContent, /^pass 1 of 2: step [12] of 48$/);
+  release();
   await run;
 });
 
@@ -1197,6 +1237,9 @@ test('coil DC bias failures still send mppt: a failed first pass skips the secon
   Object.assign(window.tstTimings(), { stop: 100 });
   await openSheet(window); await idle(window);
   window.confirm = () => true;
+  // the first pass must end within the timeout however slow the host: the clock runs from the second pass on
+  const release = holdClock(window), h = t.dev.handler;
+  t.dev.handler = (cmd, s) => { if (/ f=/.test(cmd)) release(); return h(cmd, s); };
   await window.tstStart('coilbias');
   assert.deepEqual(t.dev.sent.slice(-2), ['measure-coil l0 f=21500', 'mppt']);
   note = card(window, 'coilbias').querySelector('.tst-res .note');
@@ -1237,6 +1280,7 @@ test('one at a time: services actions and pushes wait for a running test, and th
 
 test('a status command the build lacks drops its row (help unavailable)', async () => {
   const { window, dev } = await connected({ helpSilent: true, absent: ['wire'] });
+  quick(window);
   await openSheet(window); await idle(window);
   assert.match($(window, '#tst-msg').textContent, /No reply to “help”/);
   assert.equal(row(window, 'adccal'), null, 'unknown build: adc-cal stays hidden');
