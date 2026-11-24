@@ -20,9 +20,10 @@ The following table lists the keys in `tlscon.conf`.
 | `log_level` |      | enum   | info    | Verbosity: `error`, `warn` or `info`                           |
 | `port`      |      | int    | 992     | TCP port                                                       |
 | `psk_id`    |      | string | `""`    | PSK identity the client must present                           |
-| `psk`       |      | string | `""`    | Key as 32 to 64 hex digits (16 to 32 bytes)                    |
+| `psk`       |      | string | `""`    | Key as an even number of 32 to 64 hex digits (16 to 32 bytes)  |
 
-The service does not start without `psk_id` and a valid `psk`; `svc list` then shows it as failed. There is no
+`port`, `psk_id` and `psk` are read when the service starts, so `svc rs tlscon` applies them. The service does not
+start without `psk_id` and a valid `psk`; `svc list` then shows it as failed. There is no
 built-in key. Generate one per device and set it over a console that is already trusted, such as serial or BLE:
 
 ```bash

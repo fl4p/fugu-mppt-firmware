@@ -17,10 +17,11 @@ The following table lists the keys in `http.conf`.
 |-------------|------|------|---------|--------------------------------------|
 | `enabled`   |      | bool | 1       | Start this service at boot           |
 | `log_level` |      | enum | info    | Verbosity: `error`, `warn` or `info` |
-| `port`      |      | int  | 80      | TCP port                             |
+| `port`      |      | int  | 80      | TCP port, read when the service starts (`svc rs http`) |
 
 The server uses the same credentials as the FTP service (NVS `ftp_user`/`ftp_pass`, then [`ftp.conf`](ftp.md), then
-user `user` with the chip ID as password), sent as HTTP Basic auth.
+user `user` with the chip ID as password), sent as HTTP Basic auth. They are read when the service starts, so
+`svc rs http` applies a change.
 
 :::warning
 The endpoint gives read-write access to `/littlefs/conf` (calibration, limits, Wi-Fi and MQTT secrets) over plain

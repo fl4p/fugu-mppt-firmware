@@ -17,4 +17,4 @@ The following table lists the keys in `telnet.conf`.
 |-------------|------|------|---------|--------------------------------------|
 | `enabled`   |      | bool | 0       | Start this service at boot           |
 | `log_level` |      | enum | info    | Verbosity: `error`, `warn` or `info` |
-| `trusted`   |      | bool | 0       | Allow every command; 0 = read-only commands only (read at service start) |
+| `trusted`   |      | bool | 0       | Allow every command; 0 = read-only commands only. Read when the service starts, so `svc rs telnet` applies it |

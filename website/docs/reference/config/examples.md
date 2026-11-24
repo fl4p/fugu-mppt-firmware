@@ -8,6 +8,8 @@ sidebar_position: 19
 ## Bare ESP32-S3 example
 
 This minimal `sensor.conf` runs the firmware on an ESP32-S3 with no external ADC. The channel→GPIO comments are S3 mappings.
+Channel keys are named by side; with the default `converter.conf` `topo=buck`, HV is the input and LV the output (see
+[sensor.conf](sensor.md)).
 
 ```
 adc = esp32adc1

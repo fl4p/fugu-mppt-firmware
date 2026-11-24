@@ -9,16 +9,18 @@ sidebar_position: 15
 
 `enabled` (0/1) and `log_level` (`error`/`warn`/`info`) are the common service keys. For how services use them, see [Service Architecture](../services.md#per-service-conf-file).
 
-The file has the following keys:
+`ble_security`, `ble_passkey` and `pair_window_s` are applied when the BLE stack first starts after boot; `svc rs ble`
+only resumes advertising, so a change needs `restart`. `idle_adv_ms` is read at boot. The console masks
+`ble_passkey` as `***` (see [Secrets](../console.md#secrets)).
 
-| key            | unit | type   | default   | description                                                                 |
-|----------------|------|--------|-----------|-----------------------------------------------------------------------------|
-| `ble_security` |      | string | justworks | `justworks` (encrypted, no passkey), `passkey` (bond + MITM); any other value = open console. Also applies to the [Improv](../../guide/connecting.md#improv-over-ble) command characteristic |
-| `ble_passkey`  |      | int    | 0         | Static passkey for `passkey` mode                                           |
-| `pair_window_s` | s   | int    | 300       | How long new devices can pair after boot, see [Pairing window](#pairing-window). 0 = only after `ble pair`. Max 86400 |
-| `idle_adv_ms`  | ms   | int    | 1000      | Connectable advertising interval while the idle power profile is on (see [`board.conf::idle_cpu_mhz`](board.md)), 20..10240. Applied while no client is connected, otherwise after it disconnects; the stack default (30–60 ms) returns when the profile ends. The non-connectable telemetry broadcast keeps its own timing, but in connectable mode the `tele.conf::adv_ms` payload rides this interval. 0 = unchanged |
-| `enabled`      |      | bool   | 0         | Start this service at boot                                                  |
-| `log_level` |      | enum   | info    | Verbosity: `error`, `warn` or `info` |
+| key             | unit | type   | default   | description |
+|-----------------|------|--------|-----------|-------------|
+| `ble_security`  |      | string | justworks | `justworks` (encrypted, no passkey) or `passkey` (bond + MITM); any other value, e.g. `none`, = no pairing and a read-only console (see [Trusted consoles](../console.md#trusted-consoles)). Also applies to the [Improv](../../guide/connecting.md#improv-over-ble) command characteristic |
+| `ble_passkey`   |      | int    | 0         | Static passkey for `passkey` mode |
+| `pair_window_s` | s    | int    | 300       | How long new devices can pair after boot, see [Pairing window](#pairing-window). 0 = only after `ble pair`; max 86400 |
+| `idle_adv_ms`   | ms   | int    | 1000      | Connectable advertising interval while the idle power profile is on (see [`board.conf::idle_cpu_mhz`](board.md)), 20..10240; the stack default (30–60 ms) returns when the profile ends. In connectable mode the `tele.conf::adv_ms` payload rides this interval. 0 = unchanged |
+| `enabled`       |      | bool   | 0         | Start this service at boot |
+| `log_level`     |      | enum   | info      | Verbosity: `error`, `warn` or `info` |
 
 ## Pairing window
 
@@ -41,6 +43,6 @@ stored subscription (another peer's first), never a bond. Clients subscribe agai
 remove bonds with `ble bonds` and `ble unpair <address|all>`, see
 [Console commands](../console.md#ble-commands).
 
-With `ble_security=none` the console is open to everyone and the window does not apply: any device can connect, and
+With `ble_security=none` the window does not apply: any device can connect and run read-only commands, and
 [Improv](../../guide/connecting.md#improv-over-ble) accepts credentials whenever it is offered.
 
