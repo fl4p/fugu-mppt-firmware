@@ -470,17 +470,24 @@ test('Stop sweep and leaving mppt_state 5 request sweep-curve (debounced, single
   assert.deepEqual(pubs(client, 'pv/log/fry/cmd'), ['sweep-curve', 'sweep-curve']);
 });
 
-test('sweep-curve: 4 s timeout (scaled) with 2 retries; incomplete curve retries', async () => {
-  const { Dash, client } = await withBroker();
-  Dash.CFG.curveTimeoutMs = 5;
+test('sweep-curve: timeout with 2 retries; incomplete curve retries', async () => {
+  const { window, Dash, client } = await withBroker();
+  // the curve timeout never fires on its own; the test fires it, so load cannot reorder it
+  const T = 1e9, due = [];
+  Dash.CFG.curveTimeoutMs = T;
+  window.setTimeout = ((st) => (fn, ms, ...a) => { if (ms === T) due.push(fn); return st(fn, ms, ...a); })(window.setTimeout);
   log(client, 'fry', ['x']);
   const dev = Dash.devices.get('fry');
   assert.equal(Dash.requestCurve(dev), true);
   assert.equal(Dash.requestCurve(dev), false, 'single in flight');
-  await settle(40);
+  for (let n = 1; n <= 3; n++){
+    assert.equal(pubs(client, 'pv/log/fry/cmd').length, n);
+    assert.equal(dev.curveErr, '');
+    due.shift()();
+  }
   assert.equal(pubs(client, 'pv/log/fry/cmd').length, 3);
   assert.equal(dev.curveErr, 'no sweep-curve reply');
-  Dash.CFG.curveTimeoutMs = 1000;
+  assert.equal(dev.curveReq, null);
   Dash.requestCurve(dev);
   log(client, 'fry', ['sc: t=1 n=4 mpp=1,2 sweeping=0', 'sc: 1 2', 'sc: end']);
   assert.equal(pubs(client, 'pv/log/fry/cmd').length, 5, 'short curve re-requested');

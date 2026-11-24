@@ -4,6 +4,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
+const { after } = require('node:test');
+
+// Windows left open keep the page's timers (live strip, tests-panel age, MQTT scan) running, so
+// the test file never exits; close every editor window once the file's tests are done.
+const windows = new Set();
+after(() => { for (const w of windows) w.close(); windows.clear(); });
 
 const HTML_PATH = process.env.CONF_EDITOR_HTML ? path.resolve(process.env.CONF_EDITOR_HTML) : path.resolve(__dirname, '..', 'conf-editor.html');
 
@@ -94,6 +100,7 @@ async function loadEditor(opts = {}) {
       if (typeof DecompressionStream !== 'undefined')   window.DecompressionStream = DecompressionStream;
     },
   });
+  windows.add(dom.window);
   // drain microtasks (mqtt connect callback, etc.)
   await new Promise(r => setTimeout(r, 0));
   return dom;
