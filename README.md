@@ -374,9 +374,9 @@ address in my github profile) if you want to contribute or just share your exper
 
 # Resources
 
-* [Robert Erikson: Fundamentals of Power Electronics](https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-power-electronics-3n_2020.pdf)
+* [Robert Erickson, Dragan Maksimović: Fundamentals of Power Electronics](https://link.springer.com/book/10.1007/978-3-030-43881-4)
 
-* [TI Power Topologies Handbook](https://www.ti.com/seclit/ug/slyu036/slyu036.pdf#page=18) (timings CCM, DCM, forced
+* [TI Power Topologies Handbook](https://www.ti.com/lit/ug/slyu036/slyu036.pdf#page=18) (timings CCM, DCM, forced
   PWM)
 
 * [Power conversion efficiency measurement](https://github.com/fl4p/fugu-mppt-doc/blob/master/Power%20Measurements.md#findings)
