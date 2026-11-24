@@ -58,7 +58,7 @@ on the board itself and grades the excess power:
 |--------|------------------------------------------------------------|--------|
 | warn   | excess power ≥ `wire_p_warn` and ΔR ≥ `wire_dr_min`         | log line, telemetry `wf`, MQTT alert |
 | derate | excess power ≥ `wire_p_derate` (and ΔR ≥ `wire_dr_min`)     | output current capped at √(`wire_p_derate`/ΔR) |
-| trip   | excess power ≥ `wire_p_trip`, or still ≥ 1.25 × `wire_p_derate` for 5 minutes while derated | converter stopped until `wire-reset` or reboot |
+| trip   | excess power ≥ `wire_p_trip`, or the excess drop still ≥ 1.25 × `wire_p_derate` for 5 consecutive minutes while derated | converter stopped until `wire-reset` or reboot |
 
 The ΔR floor keeps normal temperature drift of the copper (about 0.4 %/K) from raising a level at high
 current. In PSU mode the output is not taken for the battery, and the protection gets no samples. Three estimates
@@ -83,7 +83,9 @@ over hours and days. Against a fixed offset that drift would read as excess resi
 so the offset comes from a running regression of the one-minute drops against the output current
 (memory of about 120 minutes with output current): an offset carries no current, a resistance shows
 as slope. The regression needs at least 2 A of spread in the output current before the excess drop and
-the slope are evaluated. A minute that lies off the regression line by half of `wire_p_warn` (a step)
+the slope are evaluated.
+
+A minute whose excess power off the regression line reaches half of `wire_p_warn` (a step)
 doesn't enter it, and nothing enters it while a level is held, so a fault can't fade into the offset.
 
 The slope and the sweep fit are graded at the highest one-minute output current of the last one to
@@ -99,8 +101,8 @@ together (a single charger, steady loads), the converter can't tell a fault in t
 from one in its own wire, and the excess-drop and slope estimates grade it as its own.
 
 On days with little current a fault can stay below `wire_p_warn`. At the end of each day after the
-learning phase, the median excess resistance of the day's one-minute excess drops (without BMS data:
-of the day's sweep fits against their baseline) is checked on its own: at 2 × `wire_dr_min` or more
+learning phase, the median excess resistance of the day's one-minute excess drops (with fewer than 4
+excess-drop values that day: of the day's sweep fits against their baseline, once that baseline holds 3 days) is checked on its own: at 2 × `wire_dr_min` or more
 it raises a warning, regardless of current. The day warning never derates or trips, survives a
 reboot, and clears after a judged day below 1.5 × `wire_dr_min`.
 
@@ -126,14 +128,15 @@ in.
 An estimate is graded only once its baseline holds at least 3 stored days: the excess drop, the slope
 and the shared-section (`Rb`) check need 3 days in the resistance baseline, the sweep fit 3 days in
 the sweep baseline. A configured `wire_r_max` counts as a reference for the excess drop and the
-slope from the start; until 3 days are stored they grade against `wire_r_max` alone. An estimate
+slope once one day is stored; until 3 days are stored they grade against `wire_r_max` alone. An estimate
 that is not graded holds and raises no level and shows as `stale, baseline n/3 days` in the `wire`
 command; with no other estimate graded, `wf` reports -1. Every good day is still stored while
 learning.
 
-After learning, a day's median enters only when it lies within `wire_dr_min` of the current
-baseline and within half of `wire_dr_min` of the lowest baseline since learning ended, so a slowly
-growing fault isn't learned in.
+After learning, a day's median enters only when it is at most `wire_dr_min` above the current
+baseline and at most half of `wire_dr_min` above the lowest baseline since learning ended, so a slowly
+growing fault isn't learned in. The resistance part of a day is also rejected when more than half of its
+excess-drop minutes reached half of `wire_dr_min`.
 
 A day ends at the first hour without conversion at least 12 hours after the previous end, or after 36
 hours. After a cold start (power-up) the first such hour ends the day as soon as the day counts. The

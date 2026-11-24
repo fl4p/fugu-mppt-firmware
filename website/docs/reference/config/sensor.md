@@ -21,7 +21,7 @@ The following keys apply to all channels:
 | `despike`                        |      | float  | 0       | Outlier threshold of the decision-based median, in running mean-deviation units: 0 = plain median, about 8 enables it (lower clips more). See [despike](../../internals/signal-filters.md#despike) |
 | `esp32adc1_sr`                   | Hz   | int    | —       | Internal ADC1 continuous-mode raw sample rate (required with `esp32adc1`) |
 | `esp32adc1_avg`                  |      | int    | —       | Software average of N raw conversions per delivered sample, 1–1023 (required with `esp32adc1`) |
-| `esp32adc1_inl`                  |      | bool   | 0       | Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation only, about ±0.2 V between 0.57 and 2.66 V at the pin, tapering to zero outside) to every ADC1 channel, including NTC and current. It has no gain or offset of its own, so calibrate `_gain` and `_offset` with it on. See [Internal ADC](../../guide/hardware/internal-adc.md) |
+| `esp32adc1_inl`                  |      | bool   | 0       | Apply the built-in ESP32-S3 ADC1 INL correction (12 dB attenuation only, about −8 to +5 mV at the pin between 0.57 and 2.66 V, roughly ±0.2 V at the input of a 28:1 divider, tapering to zero outside) to every ADC1 channel, including NTC and current. It has no gain or offset of its own, so calibrate `_gain` and `_offset` with it on. See [Internal ADC](../../guide/hardware/internal-adc.md) |
 
 The firmware reads `sensor.conf` once at boot. In `CONFIG_FUGU_WITH_VCONV` builds a
 `sensor.vconv.conf`, if present, is read instead (see [vconv.conf](vconv.md)).

@@ -148,7 +148,9 @@ control interval of complementary low side behind.
 A still duty shows that the converter has settled, but it doesn't show that its output is floating.
 A stiff load, a manual target, or plain quantisation can hold `D` below the true `D₀` just as well.
 On a stiff output the gate will then engage and *stay* engaged. The reverse current is bounded in
-magnitude but not in duration. At 26.2 V / 70.5 V with
+magnitude but not in duration.
+
+At 26.2 V / 70.5 V with
 `R_loop ≈ 30 mΩ`, a fresh settled engagement at the converge floor allows ≈ −18 A, and an engaged
 gate may sit at the disengage floor at ≈ −41 A (≈ −59 A once worst-case ratio error is included).
 This is accepted so that a bench converter can be parked at the ratio in forced PWM, where it is

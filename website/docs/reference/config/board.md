@@ -43,7 +43,7 @@ The backflow switch pins were renamed; see [Backflow switch keys](#backflow-swit
 | `lv_pgood`              | GPIO | int    | 255     | LV power-good output; high disables the HV aux supply path (Fugu2: GPIO35, not usable on modules with octal PSRAM). LV is Vout on a buck, Vin on a boost. Released at once on a converter shutdown, ADC stall, stale or non-finite LV reading; 255 = none |
 | `lv_pgood_v`            | V    | float  | 10.5    | LV release point: `lv_pgood` releases below it and asserts after LV held 0.5 V above it for 5 s. Values below 5 V or non-finite fall back to 10.5 |
 | `led_WS2812`            | GPIO | int    | 255     | WS2812 status LED data pin; 255 = off          |
-| `led_simple`            | GPIO | int    | 255     | Plain on/off status LED pin; 255 = off         |
+| `led_simple`            | GPIO | int    | 255     | Plain status LED pin (on or off); 255 = off         |
 | `fan_pwm`               | GPIO | int    | 255     | Cooling fan PWM pin; 255 = off                 |
 | `ads_alert`             | GPIO | int    | —       | ADS1x15 ALERT/RDY pin                          |
 | `adc_freq`              | Hz   | int    | 3000    | Tick rate of both mock ADC backends, `fake` and `vconv` (every channel is sampled each tick); [`vconv.conf::adc_freq`](vconv.md) overrides it in a vconv build. Formerly `adc_fake_freq`; that key alone fails setup |
