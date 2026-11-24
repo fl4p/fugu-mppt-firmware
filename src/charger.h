@@ -1006,7 +1006,7 @@ public:
             _cvIbat = iTail;
             _lastBmsFrameUs = batSt.vcell_high_t;
             _lastIbatFrameUs = batSt.ibat_t;
-            ESP_LOGW("charger", "cv approach: vcHigh %.3f @ iBat %.2f, ilim %.1f A", batSt.vcell_high, ibatNow, _cvIlim);
+            ESP_LOGW("charger", "cv approach: vcHigh %.3f @ iBat %.2f, ilim %.2f A", batSt.vcell_high, ibatNow, _cvIlim);
         }
         // Boot: cell frames near the top before termination could be evaluated (ibat warm-up): idle. Without an ibat
         // source it ends BOOT_IDLE_US after boot.
@@ -1027,7 +1027,7 @@ public:
                     _cvIlim = sweep ? params.tail_c_rate * params.Cbat
                               : std::isfinite(ioutNow) ? fmaxf(ioutNow, IOUT_LIM_FLOOR) : params.Ibat_lim;
                 _lastBmsFrameUs = ~batSt.vcell_high_t; // target from this frame
-                ESP_LOGW("charger", "cv hold: vcHigh %.3f > line %.3f @ iBat %.2f, ilim %.1f A",
+                ESP_LOGW("charger", "cv hold: vcHigh %.3f > line %.3f @ iBat %.2f, ilim %.2f A",
                          batSt.vcell_high, termCond.v_term(), ibat, _cvIlim);
             } else {
                 // a latch glides to float from the bus as read now: no output step
