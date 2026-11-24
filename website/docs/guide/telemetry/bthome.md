@@ -12,9 +12,16 @@ The firmware implements a custom connectionless broadcast instead (`CONFIG_FUGU_
 default off, needs `CONFIG_FUGU_WITH_BLE`; `src/tele/tele_adv.cpp`). It sends a 17-byte
 little-endian record in the manufacturer-data AD (company id `0xFFFF`), laid out as
 `u8 magic=0xF7, u8 seq, f16 Ui Uo I P, i8 mcu_temp ntc_temp, u16 pwm_duty, u16 lag_us, u8 state (mppt_state | cv_lim_idx<<4)`.
-`tele.conf::adv_ms` sets the refresh interval (default 500 ms, min 100, `0` = off). The broadcast
-continues (non-connectable) while a console client is connected. On the host,
-`etc/influx_binary_proxy.py --adv` receives it. Home Assistant's BTHome integration does not decode it.
+
+- `f16` is an IEEE half-precision float. `I` and `P` come from the physically sensed current. A missing temperature
+  reads `-128`.
+- The `mppt_state` nibble is the control mode: `0` none, `1` CV, `2` CC, `3` CP, `4` MPPT, `5` sweep.
+- `tele.conf::adv_ms` sets the refresh interval (default 500 ms, min 100, `0` = off). Every 8th refresh carries the
+  device name instead of the record, and while Improv Wi-Fi provisioning is offered every other refresh carries the
+  Improv data.
+- The broadcast continues (non-connectable) while a console client is connected.
+
+On the host, `etc/influx_binary_proxy.py --adv` receives it. Home Assistant's BTHome integration does not decode it.
 :::
 
 ## Context
@@ -23,11 +30,11 @@ This spec lets Home Assistant (HA) discover a Fugu charger through its BTHome in
 
 The spec adds an always-on, plaintext BTHome v2 service-data field to the existing NimBLE advertising. The single-frame layout publishes one of each BTHome property: PV voltage, charge power, NTC temperature, daily energy, and a bit-packed status byte. Charge power is signed, so backflow shows as negative. The frame omits currents and Vout, for the reasons in *Why these ranges / type choices*. AES-CCM, total-energy, and Vout/Iout rotation frames are deferred (see *Open items*).
 
-The change is limited to the payload. It adds no Kconfig option of its own (it builds whenever `CONFIG_FUGU_WITH_BLE` is set) and no GATT service, and its flash growth does not put the tight ~1.87 MB OTA slot at risk (current image ~1.86 MB).
+The change is limited to the payload. It adds no Kconfig option of its own (it builds whenever `CONFIG_FUGU_WITH_BLE` is set) and no GATT service. Its flash growth has to fit the ~1.87 MB OTA slot.
 
 ## On-air format
 
-The frame uses a legacy BLE advertising PDU, 31 B max. The existing NUS console keeps its 128-bit service UUID in the scan response (`setScanResponseData()` in `src/tele/console_ble.cpp`), and the advertising data carries BTHome instead.
+The frame uses a legacy BLE advertising PDU, 31 B max. The existing NUS console keeps its 128-bit service UUID in the scan response (`setScanResponseData()` in `src/tele/console_ble.cpp`), and the advertising data carries BTHome instead. With `CONFIG_FUGU_WITH_BLE_ADV` the advertising data already rotates between the telemetry record, the device name and Improv data, so BTHome would need a slot in that rotation.
 
 The advertising data has the following structure (max 31 B, plaintext BTHome v2):
 
@@ -47,18 +54,19 @@ This leaves a maximum object payload of `31 - 3 (flags) - 1 (len) - 4 (type+UUID
 
 ### Object layout (primary frame, 19 B)
 
-The primary frame carries six objects in this order:
+The primary frame carries six objects. BTHome v2 requires object IDs in ascending order, so they go on air in this
+order:
 
 | Order | BTHome ID | Field    | Type            | Factor      | Source                                                  |
 |------:|----------:|----------|-----------------|-------------|---------------------------------------------------------|
 | 1     | `0x00`    | pkt-id   | u8              | —           | wraps 0..255 per frame, used by HA to dedupe            |
-| 2     | `0x4A`    | Vin      | u16 LE, 0.1 V   | 0.1 V       | `sensors.Vin->ewm.avg.get()`                            |
-| 3     | `0x5C`    | Pout     | i32 LE, 0.01 W  | 0.01 W      | `sensors.Vout->ewm.avg.get() * sensors.Iout->ewm.avg.get()` (signed → backflow shows negative) |
+| 2     | `0x09`    | state    | u8              | —           | bit-packed: see *State byte* below                      |
+| 3     | `0x0A`    | E_daily  | u24 LE, kWh     | 0.001 kWh   | `mppt.meter.dailyEnergyMeter.today.energyYield / 1000`  |
 | 4     | `0x45`    | T_ntc    | i16 LE, 0.1 °C  | 0.1 °C      | `mppt.ntc.last()`                                       |
-| 5     | `0x0A`    | E_daily  | u24 LE, kWh     | 0.001 kWh   | `mppt.meter.dailyEnergyMeter.today.energyYield / 1000`  |
-| 6     | `0x09`    | state    | u8              | —           | bit-packed: see *State byte* below                      |
+| 5     | `0x4A`    | Vin      | u16 LE, 0.1 V   | 0.1 V       | `sensors.Vin->ewm.avg.get()`                            |
+| 6     | `0x5C`    | Pout     | i32 LE, 0.01 W  | 0.01 W      | `sensors.Vout->ewm.avg.get() * sensors.Iout->ewm.avg.get()` (signed → backflow shows negative) |
 
-Bytes per object include the 1-byte ID. Total = `2+3+5+3+4+2 = 19 B`, with 4 B headroom inside the 23 B budget.
+Bytes per object include the 1-byte ID. Total = `2+2+4+3+3+5 = 19 B`, with 4 B headroom inside the 23 B budget.
 
 Every object ID appears exactly once, so HA names entities directly (`voltage`, `power`, `temperature`, `energy`, `count`) without `_2` suffixes. HA users don't need to remember which side a value refers to.
 
@@ -66,7 +74,7 @@ Every object ID appears exactly once, so HA names entities directly (`voltage`, 
 
 The state object is a single u8 that holds two nibbles:
 
-- Low nibble (bits 0..3): MPPT phase, mapped from `MpptControlMode` (`src/mppt.h`): `0 = off`, `1 = sweep`, `2 = fast P&O`, `3 = slow P&O`, `4 = CV`, `5 = CC`, `6 = CP`, `7 = manualPwm`. The encoder fixes the final enum mapping. Document the exact byte values on this page once the encoder lands.
+- Low nibble (bits 0..3): MPPT phase: `0 = off`, `1 = sweep`, `2 = fast P&O`, `3 = slow P&O`, `4 = CV`, `5 = CC`, `6 = CP`, `7 = manualPwm`. `MpptControlMode` (`src/mppt.h`) only has `None`, `CV`, `CC`, `CP`, `MPPT` and `Sweep`; the P&O phase and manual mode come from the tracker and the operating mode. The encoder fixes the final mapping. Document the exact byte values on this page once the encoder lands.
 - High nibble (bits 4..7): charger phase: `0 = idle`, `1 = bulk`, `2 = absorption/CV`, `3 = float`, `4 = terminated`, `5 = fault/backoff`. Derived from `mppt.charger.termCond`, `Vout_max()`, and the protection state.
 
 Users can split the two nibbles with an HA template helper such as this one:
@@ -152,7 +160,8 @@ The service behaves as follows:
 
 ### Modified: `src/tele/console_ble.cpp`
 
-The NUS service UUID already sits in the scan response, so the primary PDU holds only flags and the device name.
+The NUS service UUID already sits in the scan response, so the primary PDU holds only flags and the device name
+(or, with `CONFIG_FUGU_WITH_BLE_ADV`, the rotating telemetry record).
 BTHome needs about 23 B of service-data room there, so the name has to give way or be shortened while BTHome is on.
 
 ### New: `/littlefs/conf/bthome.conf`

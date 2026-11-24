@@ -7,6 +7,8 @@ sidebar_position: 7
 
 The converter runs in one of three modes: MPPT, manual PWM, or PSU (constant voltage, including the PV simulator).
 `converter.conf` selects the mode at boot, and the [console](../reference/console.md) switches it live.
+PSU and PV simulator need a build with `CONFIG_FUGU_WITH_PSU` (on by default). Without it the `psu` and `pv` commands
+do not exist, and a board configured with `mode=psu` or `mode=pv` fails setup.
 
 :::danger Half-bridge safety
 Manual duty, forced PWM, PSU and PV-sim modes drive the half-bridge directly or regulate against a stiff source.
@@ -32,9 +34,9 @@ The following table shows how to enter and leave each mode and what the mode reg
 | Mode | Enter | Leave | Regulates |
 |---|---|---|---|
 | MPPT (default) | boot with `mode` unset or `mode=mppt`; `mppt`; `psu off` | `dc N`, `psu <V>`, `pv …` | input power, within the limiters and charger voltage |
-| Manual PWM | `dc N`; `tracker.conf::target_duty_cycle` at boot; `pv off` | `mppt` | nothing: fixed duty, protections still active |
+| Manual PWM | `dc N`; `tracker.conf::target_duty_cycle` at boot; `pv off` | `mppt`, `sweep`, `psu <V>`, `pv …` | nothing: fixed duty, protections still active |
 | PSU | `psu <V>`; `mode=psu` at boot | `psu off`, `mppt`, `sweep`, `dc N` (to manual) | Vout to the setpoint, CV/CC foldback |
-| PV simulator | `pv <isc> <voc> [k]`; `mode=pv` at boot | `pv off` (to manual), `mppt` | Vout along a PV curve V = f(Iout) |
+| PV simulator | `pv <isc> <voc> [k]`; `mode=pv` at boot | `pv off`, `dc N` (to manual); `psu off`, `mppt`, `sweep` | Vout along a PV curve V = f(Iout) |
 
 The topology (`converter.conf::topo=buck|boost`) is independent of the mode.
 
@@ -43,8 +45,9 @@ The console commands move the converter between modes as follows:
 ```mermaid
 stateDiagram-v2
   MPPT --> Manual: dc N
-  Manual --> MPPT: mppt
+  Manual --> MPPT: mppt / sweep
   MPPT --> PSU: psu V / pv isc voc
+  Manual --> PSU: psu V / pv isc voc
   PSU --> MPPT: psu off / mppt / sweep
   PSU --> Manual: pv off / dc N
 ```
@@ -52,8 +55,9 @@ stateDiagram-v2
 ## MPPT
 
 The tracker starts with a global sweep from duty 0 upwards, captures the maximum power point, then follows it with
-fast and later slow perturb-and-observe. A new sweep runs every 30 minutes unless the battery is full, and `sweep`
-starts one on demand.
+fast and later slow perturb-and-observe. A new sweep runs every 30 minutes, and `sweep` starts one on demand. The
+periodic sweep waits while the charger holds (terminated, partial-charge ceiling, too cold, stale BMS data) or the output is
+voltage-limited. See [When the tracker does not sweep](../internals/mppt-tracker.md#when-the-tracker-does-not-sweep).
 
 Five PD limiters (Vin, Iin, Vout, Iout, power) run on every sample. The most restrictive one wins and overrides the
 tracker. The Vout limit comes from the charger. For details, see [LFP charging](charging/lfp-charging.md). Tracker
@@ -64,9 +68,9 @@ These commands control the tracker:
 
 | Command | Effect |
 |---|---|
-| `sweep` | Start a global scan now (also leaves PSU mode) |
+| `sweep` | Start a global sweep now (also leaves manual, PSU and PV simulator mode) |
 | `speed <s>` | Tracking speed scale, 0 ≤ s < 10, default 1.0 |
-| `+N` / `-N` | Perturb the duty by N counts, also while tracking (rejected in PSU mode) |
+| `+N` / `-N` | Perturb the duty by N counts, also while tracking; stays in the current mode (rejected in PSU mode) |
 
 ## Manual PWM
 
@@ -87,8 +91,10 @@ The following rules apply in manual mode:
 - While an on-device coil measurement runs (`CONFIG_FUGU_WITH_MEASURE_COIL`), every `dc` command, including `dc 0`,
   is rejected with `dc: busy measuring` until the measurement finishes. The measurement itself starts only after `dc 0`
   has stopped the converter, and leaves it at duty 0.
+- While `selftest bflow` runs, `dc` (including `dc 0`) and `+N`/`-N` are refused; `selftest abort` stops it.
 - If the control loop does not take `dc 0` within ~1 s, it fails with `RT transition timed out`.
-- If `dc` fails in either of these cases, assume nothing was stopped. Check the reply.
+- If `dc` fails in any of these cases, assume nothing was stopped. Check the reply.
+- `dc 0` stops the converter at once; a non-zero `dc N` ramps to the new duty.
 - Protections stay active. Unless `limits.conf::reverse_current_paranoia` is set, a non-zero duty enables synchronous
   rectification and the backflow switch.
 - In buck topology a non-zero duty does not start the converter (and does not restart it after a protection
@@ -129,7 +135,9 @@ The following limits and fault rules apply in PSU mode:
 
 - The setpoint is range-checked against the output voltage limit (`limits.conf::lv_max` in a buck, `hv_max` in a
   boost).
-- In boost topology the setpoint must exceed Vin by at least 0.5 V.
+- In boost topology the setpoint must exceed Vin by at least 0.5 V. If Vin later rises past that, the output
+  latches off.
+- With an explicit OV limit (`ovset`), the setpoint must stay below 98 % of it.
 - In buck topology the converter does not start while the setpoint is at or above `M_start·Vin`, about Vin / 1.18
   with the default `boot_refresh_ns` (start-block reason `minpulse-M`). The command is accepted and the converter
   starts once Vin is high enough. Running in DCM, it holds Vin at or above `Vout / M_start`, so with a weak input the
@@ -190,7 +198,7 @@ The following table lists the commands for common tasks:
 | Goal | Commands |
 |---|---|
 | Stop conversion now | `dc 0` |
-| Stop before an OTA at high power | `dc 0`, confirm the OK reply (or `status`) before updating; the reboot resumes the configured mode |
+| Update firmware while converting | `ota <url>` stops conversion itself and resumes the previous mode if the update fails; `ota bootloader <url>` needs `dc 0` first |
 | Fixed output voltage from a battery | `topo=boost`, `mode=psu`, `psu_vout=<V>` |
 | Test a charger against a simulated panel | simulator: `mode=pv`; charger under test: normal MPPT |
 | Inspect the tracker | `+N`/`-N` while tracking, then watch it recover |

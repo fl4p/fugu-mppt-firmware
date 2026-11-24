@@ -12,7 +12,8 @@ target. The classic ESP32 is kept for the original Fugu hardware.
 
 To build only for the classic ESP32, you can use the default `build/` directory: `idf.py set-target esp32 && idf.py
 build`. If your shell exports `IDF_TARGET` (for example `esp32s3`), unset it first. Otherwise `set-target esp32` fails
-with "not consistent with target … in the environment".
+with "not consistent with target … in the environment". `. ./idf-export.sh esp32` sources ESP-IDF with
+`IDF_TARGET=esp32` exported; without the argument it exports `esp32s3`.
 
 To keep both targets side by side, give the classic target its own build directory and its own `sdkconfig`. By
 default, the generated `sdkconfig` lives in the project root and records the target, so two build directories that
@@ -50,8 +51,11 @@ The following table lists where the two targets differ:
 
 | Area | ESP32-S3 | classic ESP32 |
 |---|---|---|
-| sdkconfig | `sdkconfig.defaults` | `sdkconfig.defaults` + `sdkconfig.defaults.esp32` (ESP-IDF layers the target file automatically) |
-| IRAM | fits with the defaults | `sdkconfig.defaults.esp32` disables `CONFIG_ESP_WIFI_RX_IRAM_OPT` so Wi-Fi + BLE + the IRAM-safe ADC ISR fit into IRAM |
+| sdkconfig | `sdkconfig.defaults` + `sdkconfig.defaults.esp32s3` | `sdkconfig.defaults` + `sdkconfig.defaults.esp32` (ESP-IDF layers the target file automatically) |
+| IRAM | control loop placed in IRAM (`main/rt_iram.lf`); Wi-Fi IRAM optimizations off to pay for it | `sdkconfig.defaults.esp32` disables `CONFIG_ESP_WIFI_RX_IRAM_OPT` so Wi-Fi + BLE + the IRAM-safe ADC ISR fit into IRAM |
+| Flash writes | flash auto-suspend, after a boot self-test passes | caches off during each erase/write, stalling the control loop |
+| Gate driver default | MCPWM | LEDC |
+| USB | USB-Serial-JTAG; optional USB config drive (`CONFIG_FUGU_WITH_USB_MSC`) | none on chip |
 | Console | UART0 on GPIO43/44 plus the built-in USB-Serial-JTAG port while USB is connected | UART0 on GPIO1/3, usually through the board's USB-UART bridge |
 | Bootloader | stock ESP-IDF bootloader ([esp-bootguard](../../development/bootguard.md) if present) | stock ESP-IDF bootloader |
 | `idf.py flash` littlefs image | `config/lab/dry_mock` | `config/fugu1/fugu1_esp32` |
@@ -60,7 +64,10 @@ The following table lists where the two targets differ:
 | Simulator configs | `config/lab/wokwi_mock`, `config/lab/vconv_mock` | `config/lab/wokwi_mock_esp32`, `config/lab/vconv_mock_esp32` |
 
 Both targets share the feature flags in `main/Kconfig.projbuild`: BLE, networking, LEDC, and MCPWM build for both.
-They also share the rollback-enabled OTA scheme and the partition table.
+The exceptions are S3 only: the USB config drive (the build stops with an error on a classic ESP32),
+`CONFIG_FUGU_GPIO_ISR_IRAM`, and RT-task heap-allocation counting (`CONFIG_FUGU_RT_ALLOC_COUNT`, on by default only on
+the S3). Both targets also share the rollback-enabled OTA scheme and the partition table for 4 MB flash: two 1.87 MB
+app slots, a 128 KB littlefs configuration partition and a 64 KB coredump partition.
 
 ## Details
 
@@ -80,9 +87,14 @@ differs.
 
 ### sdkconfig overlay
 
-ESP-IDF applies `sdkconfig.defaults.esp32` on top of `sdkconfig.defaults` only when `IDF_TARGET=esp32`. The overlay
-disables the Wi-Fi RX IRAM optimization to free IRAM. Wi-Fi is pinned to core 0 and the control loop runs on core 1,
-so the Wi-Fi receive path running from flash doesn't affect the control loop.
+ESP-IDF applies `sdkconfig.defaults.<target>` on top of `sdkconfig.defaults` for the selected target:
+
+- `sdkconfig.defaults.esp32` disables the Wi-Fi RX IRAM optimization to free IRAM. Wi-Fi is pinned to core 0 and the
+  control loop runs on core 1, so the Wi-Fi receive path running from flash doesn't affect the control loop.
+- `sdkconfig.defaults.esp32s3` enables flash auto-suspend, so a flash erase no longer freezes the control loop, and
+  moves the Wi-Fi IRAM optimizations to flash to pay for the control loop running from IRAM. The firmware uses
+  auto-suspend only after a boot self-test of the flash chip passes; until then flash writes disable the caches as on
+  the classic ESP32.
 
 The top-level `CMakeLists.txt` then layers `sdkconfig.d/ble` for both targets. See
 [Build Options](../getting-started/build-options.md#sdkconfig-layering).
@@ -93,13 +105,15 @@ The build uses the stock ESP-IDF bootloader unless it finds the optional
 [esp-bootguard](../../development/bootguard.md) crash-loop guard. Bootguard is a development aid, and the firmware
 runs without it.
 
-A bootloader reaches a device only by serial flash (`idf.py bootloader-flash` or `idf.py flash`). An OTA leaves the
-old bootloader in place.
+An app OTA leaves the old bootloader in place. A new bootloader reaches a device by serial flash
+(`idf.py bootloader-flash` or `idf.py flash`) or by [bootloader update](../updating/ota-wifi.md#bootloader-update)
+(`ota bootloader <url>`).
 
 ### Console
 
 Both targets run the same console on UART0 at 115200 baud. On the S3, the firmware also serves the console on the
-USB-Serial-JTAG port whenever a USB host is connected, so a bare S3 module needs no USB-UART bridge.
+USB-Serial-JTAG port whenever a USB host is connected, so a bare S3 module needs no USB-UART bridge. With
+`CONFIG_FUGU_WITH_USB_MSC` the USB port is a CDC console instead; see [USB config drive](../usb-drive.md).
 
 :::note Known issue
 On classic ESP32 builds, serial console *input* has been observed not to work (logs appear, commands are not

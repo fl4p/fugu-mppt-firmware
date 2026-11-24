@@ -27,17 +27,20 @@ The following table lists the board configurations in the repository.
 |---|---|---|---|---|---|
 | [Fugu2](https://github.com/fl4p/Fugu2) | `config/fmetal` | ESP32-S3 | Vin: internal ADC1 (200k / 7.5k divider), Vout: INA226 | INA226, 0.5 mΩ shunt, output side | Buck |
 | Original Fugu, ADS1015 | `config/fugu1/fugu1_esp32` | ESP32 | ADS1015 | ACS712-30 hall sensor, input side (Iout virtual) | Buck |
-| Original Fugu, ADS1015, ESP32-S3 module | `config/fugu1/fugu1_esp32s3` | ESP32-S3 | ADS1015 | ACS712-30, input side | Buck |
-| Original Fugu, internal ADC | `config/fugu1/fugu_int_adc` | ESP32 | internal ADC1 | ACS712-30 on internal ADC1, input side | Buck |
+| Original Fugu, ADS1015, ESP32-S3 module | `config/fugu1/fugu1_esp32s3` | ESP32-S3 | ADS1015 | ACS712-30 hall sensor, input side (Iout virtual) | Buck |
+| Original Fugu, internal ADC | `config/fugu1/fugu_int_adc` | ESP32 | internal ADC1 | ACS712-30 on internal ADC1, input side (Iout virtual) | Buck |
 | Solar boost (Fugu2 pinout) | `config/solar-boost` | ESP32-S3 | Vin: INA226, Vout: internal ADC1 (200k / 7.5k) | INA226, 1 mΩ shunt, input side | Boost |
 | 12 V power supply (Fugu2 pinout) | `config/psu_12v` | ESP32-S3 | Vin: internal ADC1, Vout: INA226 | INA226, 1 mΩ shunt, output side | Buck, forced PWM |
-| Boost PSU example | `config/psu/boost80V` | ESP32-S3 | Vin: INA226, Vout: internal ADC1 | INA226, 0.5 mΩ shunt | Boost, `mode=psu` at 24 V |
+| Boost PSU example | `config/psu/boost80V` | ESP32-S3 | Vin: INA226, Vout: internal ADC1 | INA226, 0.5 mΩ shunt, output side (Iin virtual) | Boost, `mode=psu` at 24 V |
 
 A board with a single current sensor gets the other current from a virtual sensor, computed from the voltage ratio
 and a fixed 97 % conversion efficiency.
 
 Configurations for development without a power stage (`config/lab/dry_mock`, `dry_int`, `vconv_mock`,
-`wokwi_mock`) are listed in [Provisioning](../getting-started/provisioning.md#board-configurations).
+`wokwi_mock`, and the classic-ESP32 variants `vconv_mock_esp32` and `wokwi_mock_esp32`) are listed in
+[Provisioning](../getting-started/provisioning.md#board-configurations). The remaining `config/lab/` folders
+(`boost_bench`, `boost_pv`, `buck_bench*`, `f2_test`, `fmetal_boost`) are bench variants of the Fugu2 pinout, as
+buck, boost, or a boost in `mode=pv`.
 
 ## Board notes
 
