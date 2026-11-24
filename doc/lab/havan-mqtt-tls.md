@@ -57,3 +57,51 @@ Over Tailscale: `http://100.64.0.10/local/fugu/dashboard.html?mqtt=ws://100.64.0
 
 An http page can open `ws://`, so the 8884 wss listener stays unused. Web Bluetooth is unavailable on an http page
 (secure context required); BLE cards need the hosted https copy or `localhost`. Re-copy after dashboard changes.
+
+## Topic ACLs (tried 2026-11-24, not in place)
+
+The broker enforces no topic ACLs. Every login can publish anywhere, including the BMS topics
+(`bat_caravan/#`, `ant24/#`) the chargers read, and `pv/log/<host>/cmd`, which is a trusted console.
+
+Why the add-on's documented method (`acl_file` in `/share/mosquitto/*.conf`) does nothing:
+
+- The add-on loads mosquitto-go-auth with backends `files,http`. Its nginx answers `200` to
+  `/superuser` and `/acl` for every user, so every client is a superuser and no ACL is consulted.
+  A shadow broker in the add-on container (same plugin, port 18830, with `acl_file`) let `pv`
+  publish to `bat_caravan/...`.
+- go-auth's `auth_opt_http_register user` (HTTP backend for logins only) fixes that: in the shadow
+  broker the files backend then enforced the rules below. Later `auth_opt_*` lines override
+  earlier ones.
+- Mosquitto 2.1 refuses `auth_opt_*` in an included file ("requires plugin ... to be defined
+  first"), and the add-on generates `mosquitto.conf` from a fixed template on each start, so there
+  is no place for that line. Putting it in `/share/mosquitto/acl.conf` stopped the broker
+  (2026-11-24, ~10 s outage, rolled back).
+
+Rule set that passed the shadow test (go-auth files syntax):
+
+```
+user homeassistant
+topic readwrite #
+user addons
+topic readwrite #
+user pv
+topic readwrite pv/#
+topic readwrite homeassistant/#
+topic readwrite lora-bridge/#
+topic read +/#
+```
+
+With `read +/#`, `pv` reads every concrete topic and `bat_caravan/#`-style filters, but a bare `#`
+subscription is refused; no `pv` client uses one (all subscribe under `pv/` or to named BMS topics).
+
+Clients per login (broker log, 2026-11-24): `pv` = fry, flat, the bench board, the
+influxdb-udp-relay, havan's `mqtt_console.py` logger, browser dashboards, host tools and the
+lora-bridge; `addons` = batmon (publishes `bat_caravan/#`, `ant24/#`); `homeassistant` = HA core.
+
+Ways to get ACLs: a local fork of the add-on (template or nginx change), a separate mosquitto
+container, or an upstream fix.
+
+## No TLS for fry/flat MQTT
+
+Largest free block on fry/flat is 21-25 KB, minimum ever 16-18 KB (2026-11-24); an mbedTLS
+handshake needs about that much. They stay on plaintext 1882.
