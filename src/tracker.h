@@ -64,7 +64,7 @@ struct Tracker {
         _direction = direction;
         _time = wallClockMs();
         _timeSettle = _timeTakeover = _time;
-        if (!isnan(vin)) _lastVin = vin;
+        if (!std::isnan(vin)) _lastVin = vin;
         setSlowMode(false);
         _powerBuf.clear(), _vinBuf.clear();
     }
@@ -72,7 +72,7 @@ struct Tracker {
     // start afresh at vin (NaN: unknown), e.g. after manual control froze the state
     void restart(float vin) {
         resetDirection(false, vin);
-        if (isnan(vin)) _lastVin = 0;
+        if (std::isnan(vin)) _lastVin = 0;
         maxPowerPoint.power = 0;
     }
 

@@ -30,8 +30,8 @@ public:
     [[nodiscard]] uint32_t span() const { return uint32_t(2.f / alpha) - 1; }
 
     inline void add(float_t x) {
-        if (unlikely(isnan(x))) return;
-        if (unlikely(isnan(y))) y = x;
+        if (unlikely(std::isnan(x))) return;
+        if (unlikely(std::isnan(y))) y = x;
         y = (1 - alpha) * y + alpha * x;
     }
 
@@ -65,8 +65,8 @@ public:
 
     inline void add(float_t x) {
         for (int i = 0; i < passes; ++i) {
-            if (unlikely(isnan(x))) return;
-            if (unlikely(isnan(y[i]))) y[i] = x;
+            if (unlikely(std::isnan(x))) return;
+            if (unlikely(std::isnan(y[i]))) y[i] = x;
             y[i] = (1 - alpha) * y[i] + alpha * x;
             x = y[i];
         }
@@ -111,7 +111,7 @@ public:
     inline void add(float_t x) {
         avg.add(x);
         const auto ex = meanVar ? avg.get() : last_x;
-        if (likely(!isnan(ex))) {
+        if (likely(!std::isnan(ex))) {
             float_t pct = (x - ex) / (abs(avg.get()) + regularisation);
             if (likely(std::isfinite(pct)))
                 std.add(pct * pct);
@@ -130,8 +130,8 @@ class EWMA_N {
 public:
     inline void add(float_t x) {
         constexpr auto alpha = (2.f / (float_t) (span + 1));
-        if (unlikely(isnan(x))) return;
-        if (unlikely(isnan(y))) y = x;
+        if (unlikely(std::isnan(x))) return;
+        if (unlikely(std::isnan(y))) y = x;
         y = (1 - alpha) * y + alpha * x;
     }
 
