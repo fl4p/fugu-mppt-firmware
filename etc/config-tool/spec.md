@@ -797,12 +797,12 @@ amber.
 | ADC calibration (eFuse) | Status | `adc-cal` | – | marker | – |
 | MPP sweep: Run sweep | Measurements | `sweep` | confirm | `sweep landed` / `Stop sweep` (90 s), or queued (below) | `sweep-curve`; none when queued |
 | MPP sweep: Read last sweep | Measurements | `sweep-curve` | – | marker | – |
-| Coil inductance (L0) | Measurements | `measure-coil l0` | typed | `measure-coil: done` (300 s) | – |
+| Coil inductance (L0) | Measurements | `measure-coil l0` | confirm | `measure-coil: done` (300 s) | – |
 | Coil inductance: Save L0 | Measurements | `set-config coil.conf L0 <%.6e>` | – | marker | `get-config coil.conf` |
 | Backflow switch | Self-tests | `selftest bflow`, abort `selftest abort` | typed | a verdict or `selftest bflow: <why>` line (240 s) | `selftest` |
 | Clear latched faults | Self-tests | `selftest clear` | typed | marker | `selftest` |
 | Low-side timing (rect-cal) | Calibration | `rect-cal [force]`, abort `rect-cal abort` | confirm; typed with force | `rectcal: done:` / `failed:` (120 s) | `rect-cal status` |
-| Low-side timing from a coil sweep | Calibration | `measure-coil ls [apply]` | typed | `measure-coil: done` (300 s) | – |
+| Low-side timing from a coil sweep | Calibration | `measure-coil ls [apply]` | confirm | `measure-coil: done` (300 s) | – |
 
 * **Coil charts** (`parseCoilPlot` → `tstCoilChart`, same axes helper
   `tstAxes` and styles as the sweep chart, redrawn from the card's lines on

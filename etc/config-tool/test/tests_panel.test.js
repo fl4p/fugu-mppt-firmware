@@ -480,7 +480,7 @@ test('measure-coil L0: Save L0 to coil.conf only after a value, with the current
   fold(window, 'coil'); fold(window, 'coil'); await idle(window);
   assert.equal(dev.sent.length, from + 1, 'read once');
   let prompt = '';
-  window.prompt = m => { prompt = m; return 'fry'; };
+  window.confirm = m => { prompt = m; return true; };
   await window.tstStart('coil');
   assert.match(prompt, /There is no abort command/);
   assert.match(prompt, /Nothing is written/);
@@ -507,7 +507,7 @@ test('measure-coil L0: Save L0 to coil.conf only after a value, with the current
 test('measure-coil L0: no value (failure or disturbed zero) keeps Save disabled; a refused save is amber', async () => {
   let { window, dev } = await connected({ coil: true, coilFail: true });
   await openSheet(window); await idle(window);
-  window.prompt = () => 'fry';
+  window.confirm = () => true;
   await window.tstStart('coil');
   let sv = card(window, 'coil').querySelector('.save');
   assert.equal(sv.disabled, true); assert.equal(sv.title, 'This run gave no value for coil.conf');
@@ -517,7 +517,7 @@ test('measure-coil L0: no value (failure or disturbed zero) keeps Save disabled;
     'measure-coil: Iout zero +0.003/+0.030 A (off, before/after), subtracted; DISTURBED: moved > 0.02 A, L not for coil.conf']).l0, null);
   ({ window, dev } = await connected({ coil: true, setRefuse: 'cannot write /littlefs/conf/coil.conf' }));
   await openSheet(window); await idle(window);
-  window.prompt = () => 'fry';
+  window.confirm = () => true;
   await window.tstStart('coil');
   sv = card(window, 'coil').querySelector('.save');
   sv.click(); await idle(window);
@@ -530,14 +530,14 @@ test('measure-coil L0: no value (failure or disturbed zero) keeps Save disabled;
 test('measure-coil failure and the LS sweep', async () => {
   let { window } = await connected({ coil: true, coilFail: true });
   await openSheet(window); await idle(window);
-  window.prompt = () => 'fry';
+  window.confirm = () => true;
   await window.tstStart('coil');
   assert.ok(card(window, 'coil').querySelector('.tst-res').classList.contains('fail'));
   assert.match(resText(window, 'coil'), /No result: need Vin>Vout\+1 \(Vin=12\.00 Vout=26\.80\)/);
 
   ({ window } = await connected({ coil: true }));
   await openSheet(window); await idle(window);
-  window.prompt = () => 'fry';
+  window.confirm = () => true;
   const cb = card(window, 'coills').querySelector('.tst-opt input');
   cb.checked = true; cb.dispatchEvent(new window.Event('change'));
   await window.tstStart('coills');
@@ -726,7 +726,7 @@ async function coilRun(opts, id = 'coil') {
   const { window, dev } = await connected({ coil: true, ...opts });
   Object.assign(window.tstTimings(), { stop: 100 });
   await openSheet(window); await idle(window);
-  window.prompt = () => 'fry';
+  window.confirm = () => true;
   const busy = [], h = dev.handler;
   const from = dev.sent.length;
   dev.handler = (cmd, s) => { busy.push(window.tstBusyNow()); return h(cmd, s); };
@@ -751,7 +751,7 @@ test('output lines during a run keep the same spinner node, so its animation doe
   const { window, dev } = await connected({ coil: true });
   Object.assign(window.tstTimings(), { stop: 100 });
   await openSheet(window); await idle(window);
-  window.prompt = () => 'fry';
+  window.confirm = () => true;
   const h = dev.handler, seen = [];
   dev.handler = (cmd, s) => { seen.push([cmd, card(window, 'coil').querySelector('.tst-res .busy')]); return h(cmd, s); };
   await window.tstStart('coil');
@@ -801,7 +801,7 @@ test('measure-coil: a failed measurement, a refused dc 0 and a timeout still sen
   window = t.window;
   window.tstDefs().find(d => d.id === 'coil').timeout = 60;
   await openSheet(window); await idle(window);
-  window.prompt = () => 'fry';
+  window.confirm = () => true;
   await window.tstStart('coil');
   assert.equal(t.dev.sent.at(-1), 'mppt');
   note = card(window, 'coil').querySelector('.tst-res .note');
@@ -847,7 +847,7 @@ test('progress bar: shown while a test runs, a value for measure-coil, indetermi
   const { window } = await connected({ coil: true, coilNeverEnds: true, bfNeverEnds: true, rowMs: 40 });
   window.tstDefs().find(d => d.id === 'coil').timeout = 4000;
   await openSheet(window); await idle(window);
-  window.prompt = () => 'fry';
+  window.confirm = () => true; window.prompt = () => 'fry';
   const c = card(window, 'coil'), pg = c.querySelector('.tst-prog');
   assert.equal(pg.getAttribute('role'), 'progressbar');
   assert.equal(pg.getAttribute('aria-label'), 'Coil inductance (L0) progress');
@@ -937,7 +937,7 @@ test('coil chart: drawn live in the card, the result, coil.conf L0 and the 0.95Â
   const { window } = await connected({ coil: true, rowMs: 30, conf: { ...CONF, 'coil.conf': { L0: '5.090000e-05' } } });
   window.tstDefs().find(d => d.id === 'coil').timeout = 5000;
   await openSheet(window); await idle(window);
-  window.prompt = () => 'fry';
+  window.confirm = () => true;
   const c = card(window, 'coil'), fig = c.querySelector('.tst-chart');
   assert.equal(fig.hidden, true, 'no chart before a run');
   const run = window.tstStart('coil');
@@ -968,7 +968,7 @@ test('coil chart: drawn live in the card, the result, coil.conf L0 and the 0.95Â
   fold(window, 'coil');
   assert.equal(seen(fig), false, 'folds with the card');
 
-  window.prompt = () => 'fry';
+  window.confirm = () => true;
   await window.tstStart('coills');
   const ls = card(window, 'coills').querySelector('.tst-chart svg');
   const ll = [...ls.querySelectorAll('text')].map(t => t.textContent);
@@ -1040,7 +1040,7 @@ test('measure-coil link check after a timeout uses the status line', async () =>
   const { window } = await connected({ coil: true, coilNeverEnds: true, measuring: true });
   window.tstDefs().find(d => d.id === 'coil').timeout = 60;
   await openSheet(window); await idle(window);
-  window.prompt = () => 'fry';
+  window.confirm = () => true;
   await window.tstStart('coil');
   card(window, 'coil').querySelector('.recheck').click();
   await idle(window);
