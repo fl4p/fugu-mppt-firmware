@@ -16,15 +16,15 @@ The charger implements proper charge termination for Lithium-Batteries (e.g. LiF
 
 Highlights:
 
-* Proper LiFePo4 [charge termination](https://nordkyndesign.com/charging-marine-lithium-battery-banks/)
+* Proper LiFePo4 [charge termination](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/charging/termination/)
 * Supports ESP32 and ESP32-S3
-* Robust signal processing using [notch filters](https://www.youtube.com/watch?v=tpAA5eUb6eo) (reject inverter noise)
-  , rolling median (reject burst noise) and fast IIR filters (low pass, like pandas ewm)
-* [PID](https://www.youtube.com/watch?v=wkfEZmsQqiA) control for precise voltage and current regulation
+* Robust [signal processing](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/signal-filters/) using notch
+  filters (reject inverter noise), rolling median (reject burst noise) and fast IIR filters (low pass)
+* [PID control](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/control-loop/) for precise voltage and current regulation
 * Periodic MPPT global search (aka scan, sweep)
 * Sophisticated [Diode Emulation](#synchronous-buck-and-diode-emulation) for low-side switch synchronous rectification
 * Supports buck and boost converter operation, and can be used for power supply too
-* Fast protection shutdown in over-voltage and over-current conditions
+* Fast [protection](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/protection/) shutdown in over-voltage and over-current conditions
 * Temperature power de-rating and PWM Fan Control
 * Telemetry to InfluxDB over UDP
 * LCD (hd44780) and WS2812B RGB LED driver

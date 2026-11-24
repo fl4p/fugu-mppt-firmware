@@ -100,10 +100,11 @@ These resources cover converter control and related topics:
 
 - CCM/DCM: see `power supply.md` in the [Fugu2](https://github.com/fl4p/Fugu2) repository
 - [Microchip EPC9151 power boost, average current mode control](https://mplab-discover.microchip.com/v2/item/com.microchip.code.examples/com.microchip.ide.project/com.microchip.subcategories.modules-and-peripherals.analog.adc-modules.adc/com.microchip.mplabx.project.epc9151-power-boost-acmc/1.0.1?view=about&dsl=EPC9151-power)
-- [PID auto tuning (video)](https://www.youtube.com/watch?v=fv6dLTEvl74)
 - [Data-driven DC/DC model](https://github.com/KrupaPrag/DCDC_BuckBoostConverter)
 - [Microchip PowerSmart DCLD](https://microchip-pic-avr-tools.github.io/powersmart-dcld/)
-- [DC/DC control (video)](https://www.youtube.com/watch?v=6brnVTfCp7A)
 - [MDPI Electronics 13(16):3207](https://www.mdpi.com/2079-9292/13/16/3207)
 - [Microchip DPSK3 buck voltage-mode control](https://microchip-pic-avr-examples.github.io/dpsk3-power-buck-voltage-mode-control/a01655.html)
+- [PID control (video)](https://www.youtube.com/watch?v=wkfEZmsQqiA)
+- [PID auto tuning (video)](https://www.youtube.com/watch?v=fv6dLTEvl74)
+- [DC/DC control (video)](https://www.youtube.com/watch?v=6brnVTfCp7A)
 - Search term: "voltage regulator control loop design"
