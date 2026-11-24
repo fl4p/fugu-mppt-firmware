@@ -455,7 +455,7 @@ Fields: `Ui`=Vin, `Uo`=Vout, `P`=power, `I`=Iout, `pwm_duty`=HS count, `cv_lim_i
 limiter, `lag`=loop latency, `mcu_temp`/`ntc_temp`, `mppt_state`, `P_max_today`=today's peak power (W). `device` is a tag (`fry`/`flat`).
 
 Find battery data in InfluxDB with `batmon()` in
-`/Users/fab/dev/ha/home-assistant-addons/batmon-ha/tools/impedance/datasets.py`, use default device="bat_caravan"
+`/Users/fab/dev/pv/bat-impedance/datasets.py` (db `open_pe` on influx.fabi.me:8086, creds in its `influxdb_server.json`), use device="bat_caravan"
 
 # Important
 

@@ -64,7 +64,7 @@ FIXED in code 09-07, not explicitly field-validated (superseded in practice by t
 latched at ~3.40 V/cell (07-02 ~84 % SoC, 07-03, 07-07; both units latch together via the shared BMS). Fix: target
 `cv_eoc` while charging, `cv_float` once terminated; `termCond.update()` once per cell frame, VTERM_STREAK_REQ=2. Premature
 termination also shifts the recharge band (DoD release is calibrated to true full). Cloud-dip latch (11-14) fixed 9a8dee7:
-line uses a decaying ibat peak (tau 120 s, `_iHold`); test in charger-term-test.cpp. Not field-validated: watch "Termination latched" in cloud dips and that a real tail still terminates.
+line uses a decaying ibat peak (tau 120 s, `_iHold`); test in charger-term-test.cpp. Field check 11-24: no false latch in a dip 11-14 12:00..11-24; real latches 11-14 12:55/14:19 (cell ≥ v_eoc) and 11-23 (cell ceiling, top-balance tail). Since CV hold (11-20) a full pack holds at cv_eoc instead of latching; holds leave on vcHigh < cv_min (load) or end on tail/BMS-stale (11-23 12:48 and 13:58 both units: "BMS data stale").
 
 ## Coulomb counter: no clamp
 2026-05-25, rule. `CoulombCounter` (`src/etc/coulomb_counter.h`) integrates −ibat; `ahSinceFull` going negative from

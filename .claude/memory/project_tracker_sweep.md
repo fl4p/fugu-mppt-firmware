@@ -12,7 +12,7 @@ Tools: host sim `test/host-stub/mppt-sim.sh` (wx-* scenarios; offload big sweeps
 Measured 11-08..14. Calm P&O loss ~0.5–0.6 % (half offset, half dither); periodic sweep 0.2–0.6 Wh each (~0.25 %). The big
 loss is a wrong local peak until the next 30-min sweep: 13/49 sweeps gained >5 % (fry up to +65 %). Cause 1: limiter release
 forced `resetDirection(up)` each time (sim `shade-cv` 69 → 99.7 %); fixed 3e6cbb5/59df7b7 (sub-250 ms D-only limits leave
-the tracker alone), live 11-14, not field-validated (check per-sweep gain stats). Open: sim at 1470 sps with Vout cap ≤0.5 V above battery loops in sweep-no-mpp (old and new code). Cause 2: moving shade (fry ~08:45 on the 72 V peak, 57 V 17–21 % better) needs a rescan.
+the tracker alone), live 11-14. Field check 11-24 (11-14..24, periodic sweeps >50 W, power 60 s before vs 30-90 s after, normalised by the sibling unit to cancel clouds): fry 14/68 and flat 11/67 gained >5 % (median +1.2 %); the big gains cluster ~08:40 and ~15:45 (moving shade, cause 2), raw before/after is cloud-dominated, only the sibling ratio is usable. No regression seen. Open: sim at 1470 sps with Vout cap ≤0.5 V above battery loops in sweep-no-mpp (old and new code). Cause 2: moving shade (fry ~08:45 on the 72 V peak, 57 V 17–21 % better) needs a rescan.
 **Why:** daily fry/flat energy ratio swings ±20 % (different arrays, ~0.65 on sunny days); use per-window/per-sweep stats.
 
 ## Fast/slow mode and rev_k
