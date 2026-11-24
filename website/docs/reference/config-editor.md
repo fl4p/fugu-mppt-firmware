@@ -494,8 +494,12 @@ Both coil entries draw their sweep as the rows arrive, with the device output fo
   Ipk = (Vin − Vout)·D / (fsw·L) with the row's own L, the formula the firmware's fit uses. Rows below the fit's
   current floor are grey. Once the run ends the chart adds the fit: its current bins as points with error bars (thin:
   noise, wide: offset bounds), the fitted slope as a dashed line over its range, the result "L = …", the device's
-  `coil.conf` L0 and, dashed, the converter model's 0.95·L0 (the fixed DC-bias allowance). Under the chart the slope
-  verdict reads, for example, "L drops ≤ 2.2 %/A up to 2.2 A" or "No drop resolved up to 1.8 A".
+  `coil.conf` L0 and, dashed, the converter model's 0.95·L0 (the fixed DC-bias allowance). The measured L is the
+  secant inductance over 0…Ipk; when the fit resolves a drop the chart also draws the incremental inductance a
+  datasheet DC-bias curve shows, L_inc = L(0)·(1 + 2k·I) from the fitted slope k
+  ([Peak-current dependence](../lab/coil-inductance.md#peak-current-dependence)), labelled "incremental (DC bias)".
+  Under the chart the verdict reads, for example, "L drops ≤ 2.2 %/A up to 2.2 A; incremental L at 2.2 A: 48.9 µH
+  (−4.8 % vs 0 A)" or "No drop resolved up to 1.8 A, so no incremental L".
 - **Low-side timing from a coil sweep** plots the output current over the low-side count (CCM rows grey), with the
   ideal and automatic low-side counts and the peak marked.
 

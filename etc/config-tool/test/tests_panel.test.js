@@ -844,6 +844,33 @@ test('coil chart parsing: L0 rows to L over Ipk, the fit bins and slope, the res
   assert.deepEqual({ ...q.peak }, { x: 151, y: 0.412 });
 });
 
+test('coil L model: secant from the fit slope, incremental (DC bias) L = L0·(1 + 2k·I), none without a resolved drop', async () => {
+  const { window } = await loadEditor();
+  const bins = 'measure-coil: L(Ipk), +-noise/offsets: 1.4-1.6A 50.62uH+-0.3/0.9% | 1.6-1.9A 50.40uH+-0.3/0.9% | 1.9-2.2A 50.15uH+-0.4/1.0%';
+  const slope = 'measure-coil: L(Ipk) slope -1.10 +-0.30 %/A over 1.4-2.2 A, Iout/on-time offsets add up to +-0.50: coil -2.20..+0.00 %/A, drop <= 2.2 %/A';
+  const m = window.coilLModel(window.parseCoilPlot([bins, slope]));
+  const ic = (1.5 + 1.75 + 2.05) / 3, L0 = (50.62 + 50.40 + 50.15) / 3 / (1 - 0.011 * ic);
+  assert.ok(Math.abs(m.L0 - L0) < 1e-9 && Math.abs(m.L0 - 51.389) < 0.001, 'L(Ipk -> 0) from the bins\' mean and k');
+  assert.ok(Math.abs(m.sec(ic) - 50.39) < 1e-9, 'the secant line passes the bins\' mean');
+  for (const i of [0, 1.4, 2.2]) {
+    const h = 1e-4, dsec = (m.sec(i + h) - m.sec(i - h)) / (2 * h);
+    assert.ok(Math.abs(m.inc(i) - (m.sec(i) + i * dsec)) < 1e-6, 'L_inc = L_s + I·dL_s/dI');
+    const lam = x => x * m.sec(x);                       // flux linkage λ = L_s·I
+    assert.ok(Math.abs(m.inc(i) - (lam(i + h) - lam(i - h)) / (2 * h)) < 1e-6, 'L_inc = dλ/dI');
+  }
+  assert.ok(Math.abs(m.inc(2.2) - 48.90) < 0.01);
+  assert.ok(Math.abs((m.inc(2.2) / m.L0 - 1) * 100 + 4.84) < 0.01);
+  const nd = window.coilLModel(window.parseCoilPlot([bins, 'measure-coil: L(Ipk) slope +0.40 +-0.30 %/A over 1.4-2.2 A, Iout/on-time offsets add up to +-0.20: coil -0.40..+1.20 %/A, no drop resolved']));
+  assert.ok(nd.sec && nd.inc === null, 'no drop resolved: the secant fit only');
+  assert.equal(window.coilLModel(window.parseCoilPlot([bins])), null, 'no slope line');
+  const fig = window.document.createElement('figure');
+  window.tstCoilChart(fig, ['measure-coil L0: fsw=39000 pwmMax=4103', '      H      D    Vin   Vout   Iout mode    L_uH',
+    '   1200  0.292  36.10  26.80  0.600  DCM  50.50', bins, 'measure-coil: L(Ipk) slope +0.40 +-0.30 %/A over 1.4-2.2 A, Iout/on-time offsets add up to +-0.20: coil -0.40..+1.20 %/A, no drop resolved'], 390, 0);
+  assert.equal(fig.querySelectorAll('.inc').length, 0);
+  assert.equal(fig.querySelectorAll('.fit').length, 1);
+  assert.equal(fig.querySelector('.tst-verdict').textContent, 'No drop resolved up to 2.2 A, so no incremental L');
+});
+
 test('coil chart: drawn live in the card, the result, coil.conf L0 and the 0.95·L0 model, bins, slope and its verdict', async () => {
   const { window } = await connected({ coil: true, rowMs: 30, conf: { ...CONF, 'coil.conf': { L0: '5.090000e-05' } } });
   window.tstDefs().find(d => d.id === 'coil').timeout = 5000;
@@ -870,7 +897,9 @@ test('coil chart: drawn live in the card, the result, coil.conf L0 and the 0.95�
   assert.equal(svg.querySelectorAll('.bpt').length, 3);
   assert.equal(svg.querySelectorAll('.ese').length, 3); assert.equal(svg.querySelectorAll('.esys').length, 3);
   assert.equal(svg.querySelectorAll('.fit').length, 1);
-  assert.equal(fig.querySelector('.tst-verdict').textContent, 'L drops ≤ 2.2 %/A up to 2.2 A');
+  assert.equal(svg.querySelectorAll('.inc').length, 1);
+  assert.ok(labs.includes('incremental (DC bias)'));
+  assert.equal(fig.querySelector('.tst-verdict').textContent, 'L drops ≤ 2.2 %/A up to 2.2 A; incremental L at 2.2 A: 48.9\u00a0µH (−4.8\u00a0% vs 0 A)');
   assert.match(svg.getAttribute('aria-label'), /^Inductance over peak coil current, 23 points, L = 50\.34 µH, coil\.conf L0 50\.9 µH; L drops/);
   assert.ok(!svg.outerHTML.includes('NaN'));
   fold(window, 'coil');

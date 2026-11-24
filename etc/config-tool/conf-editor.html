@@ -463,8 +463,10 @@
   .tst-chart .ese { stroke:var(--fg-2); stroke-width:1.2; }
   .tst-chart .bpt { fill:var(--fg); stroke:var(--bg); stroke-width:1.5; }
   .tst-chart .fit { stroke:var(--icon); stroke-width:1.6; stroke-dasharray:6 3; }
+  .tst-chart .inc { stroke:var(--accent); stroke-width:1.6; }
   .tst-chart text.res-lab { fill:var(--icon); }
-  .tst-chart text.res-lab, .tst-chart text.ref-lab { paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
+  .tst-chart text.inc-lab { fill:var(--accent); }
+  .tst-chart text.res-lab, .tst-chart text.ref-lab, .tst-chart text.inc-lab { paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
   .tst-verdict { margin:6px 0 0; color:var(--fg-2); }
   .tst-chart text.mlab { fill:var(--icon); font-size:11.5px; font-weight:500; paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
   details.tst-log { margin-top:14px; }
@@ -4051,12 +4053,23 @@ function parseCoilPlot(lines){
   return p;
 }
 
+// L(Ipk) model from the fit's slope (coil_fit.h: k = dL/dIpk / L(Ipk→0)), anchored on the bins' mean: the measured
+// secant L_s(I) = L0·(1 + k·I) and the incremental (DC-bias) L_inc = dλ/dI = L_s + I·dL_s/dI = L0·(1 + 2k·I), the
+// latter only for a resolved slope. µH, A. null: no slope.
+function coilLModel(p){
+  const s=p.slope, n=p.bins.length;
+  if (!s || !n) return null;
+  const ic=p.bins.reduce((a, b)=>a+(b.lo+b.hi)/2, 0)/n, L0=p.bins.reduce((a, b)=>a+b.L, 0)/n/(1+s.k*ic);
+  if (!(L0>0)) return null;
+  return { L0, k:s.k, lo:s.lo, hi:s.hi, sec:i=>L0*(1+s.k*i), inc: s.drop!=null ? i=>L0*(1+2*s.k*i) : null };
+}
+
 // The coil sweep (parseCoilPlot of `lines`) into `fig`, live while rows arrive; l0: coil.conf L0 (H) or 0.
 function tstCoilChart(fig, lines, cw, l0){
   const W=Math.max(280, Math.min(760, Math.round((cw||520)/10)*10)), key=[lines.length, lines[0], W, l0].join();
   if (fig._k===key) return;
   fig._k=key;
-  const p=parseCoilPlot(lines), use=p.pts.filter(q=>!q.g);
+  const p=parseCoilPlot(lines), use=p.pts.filter(q=>!q.g), lm=!p.ls && coilLModel(p);
   if (!p.pts.length){ fig.hidden=true; fig.replaceChildren(); return; }
   fig.hidden=false;
   const narrow=W<440, H=narrow ? 190 : 210, uL=l0*1e6, ext=(a, v)=>{ if (Number.isFinite(v)){ a[0]=Math.min(a[0], v); a[1]=Math.max(a[1], v); } };
@@ -4067,6 +4080,7 @@ function tstCoilChart(fig, lines, cw, l0){
   else {
     for (const b of p.bins){ ext(xr, b.lo); ext(xr, b.hi); ext(yr, b.L*(1-b.se-b.sys)); ext(yr, b.L*(1+b.se+b.sys)); }
     ext(yr, p.L); if (uL){ ext(yr, uL); ext(yr, uL*0.95); }
+    if (lm && lm.inc){ ext(yr, lm.inc(lm.lo)); ext(yr, lm.inc(lm.hi)); }
   }
   if (!(yr[1]-yr[0]>1e-3)){ yr[0]-=0.5; yr[1]+=0.5; }
   const dx=(p.ls ? 10 : 0.2)-(xr[1]-xr[0]);                       // the first rows: no hair-thin x range
@@ -4099,9 +4113,13 @@ function tstCoilChart(fig, lines, cw, l0){
         svgEl("line", { x1:f(x), x2:f(x), y1:f(Y(b.L*(1-b.se))), y2:f(Y(b.L*(1+b.se))) }, "ese"),
         svgEl("circle", { cx:f(x), cy:f(Y(b.L)), r:3.4 }, "bpt"));
     }
-    if (p.slope){
-      const n=p.bins.length, ic=p.bins.reduce((a, b)=>a+(b.lo+b.hi)/2, 0)/n, lc=p.bins.reduce((a, b)=>a+b.L, 0)/n, at=i=>lc*(1+p.slope.k*(i-ic));
-      svg.append(svgEl("line", { x1:f(X(p.slope.lo)), x2:f(X(p.slope.hi)), y1:f(Y(at(p.slope.lo))), y2:f(Y(at(p.slope.hi))) }, "fit"));
+    if (lm){
+      const seg=(at, cls)=>svgEl("line", { x1:f(X(lm.lo)), x2:f(X(lm.hi)), y1:f(Y(at(lm.lo))), y2:f(Y(at(lm.hi))) }, cls);
+      svg.append(seg(lm.sec, "fit"));
+      if (lm.inc){
+        svg.append(seg(lm.inc, "inc"));
+        const t=svgEl("text", { x:f(X(lm.hi)), y:f(Y(lm.inc(lm.hi))+13), "text-anchor":"end" }, "inc-lab"); t.textContent="incremental (DC bias)"; labs.push(t);
+      }
     }
   }
   if (p.ls && p.peak){
@@ -4109,7 +4127,9 @@ function tstCoilChart(fig, lines, cw, l0){
     const t=svgEl("text", { x:f(X(p.peak.x)+7), y:f(Y(p.peak.y)-8) }, "mlab"); t.textContent="peak "+p.peak.x; labs.push(t);
   }
   svg.append(...labs);
-  const verdict = !p.slope ? "" : (p.slope.drop!=null ? `L drops ≤ ${p.slope.drop} %/A` : "No drop resolved")+` up to ${p.slope.hi} A`;
+  const li=lm && lm.inc && lm.inc(lm.hi), lr=li && (li/lm.L0-1)*100;
+  const verdict = !p.slope ? "" : p.slope.drop==null ? `No drop resolved up to ${p.slope.hi} A, so no incremental L`
+    : `L drops ≤ ${p.slope.drop} %/A up to ${p.slope.hi} A`+(li ? `; incremental L at ${p.slope.hi} A: ${li.toFixed(1)}\u00a0µH (${lr<0 ? "−" : "+"}${Math.abs(lr).toFixed(1)}\u00a0% vs 0 A)` : "");
   svg.setAttribute("aria-label", p.ls ? `Output current over the low-side count, ${plural(p.pts.length, "point")}`+(p.peak ? `, peak at ${p.peak.x}` : "")+"."
     : `Inductance over peak coil current, ${plural(p.pts.length, "point")}`+(p.L!=null ? `, L = ${u(p.L)}` : "")+(uL ? `, coil.conf L0 ${u(uL)}` : "")+(verdict ? `; ${verdict}` : "")+".");
   const cap=document.createElement("figcaption"); cap.textContent=svg.getAttribute("aria-label");
