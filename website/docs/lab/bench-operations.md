@@ -45,7 +45,7 @@ After you change a firmware global's type, both `idf.py -B build build` and
 `RUN_TESTS=1 idf.py -B build/tests build` must be green. Only the second compiles the test TUs,
 and an `extern` type mismatch links silently (for example `time_us` vs `unsigned long`).
 
-## Identifying the board on a port
+## Board identification
 
 Re-verify a board's identity after every replug and before any board-specific write (role configs,
 `set-config`), not only before flashing. The port↔board mapping is not stable with several boards
@@ -57,7 +57,7 @@ attached. Typical failures:
 - Consecutive `flash.sh <name> -p …` runs go to a different board than intended while a test hits
   the unflashed one.
 
-The following checks are cheap. Try them in this order:
+These checks are cheap. Try them in this order:
 
 1. `system_profiler SPUSBDataType`: each S3's "USB JTAG/serial debug unit" reports its efuse MAC
    as the USB Serial Number, without touching the board. Keep a list of your boards' MACs to map
@@ -113,10 +113,10 @@ The following items cover resets, stuck boot modes, and unresponsive ports:
   `2>/dev/null` does not help, because the shell fails before exec. Quote patterns or split them
   per glob.
 
-## Console access mechanics
+## Console access
 
-The canonical invocation follows. See [Agentic programming](../development/agentic-programming.md)
-for the tool's design.
+The canonical invocation is below. [Agentic programming](../development/agentic-programming.md) describes the tool's
+design.
 
 ```bash
 timeout 30 python3 etc/fugu_console.py -p PORT -c "status" -c "svc" | grep -a -v '^V='
@@ -124,7 +124,7 @@ timeout 30 python3 etc/fugu_console.py -p PORT -c "status" -c "svc" | grep -a -v
 
 The client behaves as follows:
 
-- With `-c`/`--stdin`, the client exits after the last reply. Use `timeout N` only as an overall
+- With `-c` or `--stdin`, the client exits after the last reply. Use `timeout N` only as an overall
   deadline against a stalled connect or scan. Pipe through `grep -a`, because the stream carries
   non-UTF-8 bytes and plain grep prints "binary file matches" and nothing else. Use
   `tr -d '\0'` where NULs break downstream tools.
@@ -162,7 +162,7 @@ the rectifier state in any mode. Verify effects in the status line anyway, since
 interleave.
 :::
 
-## Editing config on a live board
+## Live config edits
 
 Config edits on a live board have these pitfalls:
 
@@ -173,7 +173,7 @@ Config edits on a live board have these pitfalls:
   one, so probe a known-value key to test config presence.
 - The deployed `/littlefs/conf/` drifts from `config/` in the repo. Provisioning is the only
   thing that syncs them, and `get-config` is ground truth for what a board actually uses.
-- WiFi keys (`ssid_<tag>` / `ssid_<tag>_psk`) are only loaded at boot (`wifi_load_conf`). After
+- WiFi keys (`ssid_<tag>` and `ssid_<tag>_psk`) are only loaded at boot (`wifi_load_conf`). After
   `wifi-add` or `set-config wifi.conf …`, run `restart` before the board will associate.
 - A checksum boot-loop (`Checksum failed. Calculated 0x.. read 0x..`) straight after a
   `provision.py` run does not mean a dead board; one full `idf.py flash` recovers it.
@@ -186,13 +186,13 @@ Config edits on a live board have these pitfalls:
 
 The following table maps each symptom to its cause and action:
 
-| Symptom | Cause / action |
+| Symptom | Cause and action |
 |---|---|
-| Absent from scans entirely | Someone holds the single connection (`NIMBLE_MAX_CONNECTIONS=1`): another console session, or a BLE telemetry bridge in connect mode. The link lives in bluetoothd, so killing the client does not free it; run `bluetoothctl devices Connected` / `disconnect <mac>` on the holder; device-side `svc rs ble` restores the connectable advertisement. Also: a Wi-Fi scan loop against a missing AP can starve BLE until `wifi off`. Also: a board powered from Vin drops off BLE when the bench supply drops; check the boot log's vin calibration value. |
+| Absent from scans entirely | Someone holds the single connection (`NIMBLE_MAX_CONNECTIONS=1`): another console session, or a BLE telemetry bridge in connect mode. The link lives in bluetoothd, so killing the client does not free it; run `bluetoothctl devices Connected` and `disconnect <mac>` on the holder; device-side `svc rs ble` restores the connectable advertisement. A Wi-Fi scan loop against a missing AP can also starve BLE until `wifi off`. A board powered from Vin drops off BLE when the bench supply drops; check the boot log's vin calibration value. |
 | Visible to a raw scan but not to the tooling | With BLE_ADV telemetry the adv payload has no room for the NUS UUID, so UUID-filtered scanners show nothing. Match by **name**. |
 | Scans fine, every connect times out | Not the GATT-cache case: someone else holds the link (see row 1), and with `CONFIG_FUGU_WITH_BLE_ADV` the board stays visible-but-non-connectable while connected. |
 | ATT 3 "Writing is not permitted" on subscribe (bonded Mac) | Stale macOS GATT cache after a layout change (the cache is keyed by BLE address); toggle Bluetooth (`blueutil -p 0 && blueutil -p 1`, see [OTA over BLE](../guide/updating/ota-ble.md)). `blueutil` is not installed by default on macOS; unpairing otherwise needs the GUI. |
-| ATT 5/15 "Insufficient Authentication/Encryption" | Unbonded host vs `ble_security=justworks`; pair/bond the host first (see [`ble.conf`](../reference/config/ble.md)). |
+| ATT 5/15 "Insufficient Authentication/Encryption" | Unbonded host vs `ble_security=justworks`; pair and bond the host first (see [`ble.conf`](../reference/config/ble.md)). |
 | ATT 17 "Insufficient Resources", intermittent | NimBLE mbuf starvation from rapid connect/disconnect cycles; clears on device `restart`. Space out reconnects. |
 
 Only a full `restart` applies `ble.conf` changes (`ble_security`, name). Neither `svc rs ble` nor
@@ -217,7 +217,7 @@ These points apply to BLE pushes:
 - The version string is `git describe`-derived. Rebuilding an uncommitted tree doesn't change it,
   so the tool takes its skip path (`☑️ skip: already at <ver>`) and exits looking successful.
   Pass `-f` whenever the tree changed without a commit, and never grep-filter OTA output down to a
-  success/fail whitelist that omits `skip`. A real push emits hundreds of progress lines.
+  whitelist of success and failure lines that omits `skip`. A real push emits hundreds of progress lines.
 - Run it detached or in the background. A full 1.7 MB image takes 2–3+ min, and a foreground
   command timeout can kill the push mid-transfer.
 - Run one BLE OTA at a time. Concurrent pushes contend for the host's single radio and stall.
@@ -229,7 +229,7 @@ These points apply to BLE pushes:
   to `pv/log/<name>/cmd` on your MQTT broker while serving the image with
   `python3 -m http.server 9000` from the repo root. Prove the path with `uptime` first.
 
-## Verifying what a board is running
+## Running firmware
 
 `bootinfo`'s `built <timestamp>` is the only reliable way to tell two bench builds apart. A build
 from a working tree with uncommitted changes is `-dirty`, so two such builds carry near-identical
@@ -241,7 +241,7 @@ you diagnose a crash on a shared board, follow these steps:
 
 1. Read `bootinfo`.
 2. Map version → commit.
-3. Compare against what you are reading with `git diff HEAD` / `git show <sha>:<file>`.
+3. Compare against what you are reading with `git diff HEAD` or `git show <sha>:<file>`.
 
 Before moving a USB cable off a board, confirm it keeps a remote path: `svc` shows `ble` running,
 or `ip` is non-zero. A board left with Wi-Fi off and BLE stopped is unreachable until it is

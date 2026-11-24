@@ -9,7 +9,7 @@ description: "This page lists the changes already made to shrink the firmware im
 *Original hand-written note: [doc/dev-notes/binary size.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/dev-notes/binary%20size.md).*
 
 This page lists the changes already made to shrink the firmware image and the ones still open. The 1.87 MB OTA slot
-(`partitions.csv`) (1,871,872 B per slot) is the hard ceiling for builds with `CONFIG_FUGU_WITH_BLE=y`. Inspect the image with `idf.py size`,
+(1,871,872 B per slot, `partitions.csv`) is the hard ceiling for builds with `CONFIG_FUGU_WITH_BLE=y`. Inspect the image with `idf.py size`,
 `idf.py size-components` and `idf.py size-files`.
 
 ## Size progression
@@ -51,9 +51,9 @@ The following changes predate the dated rounds below:
 - Make sprofiler build-time optional: `~10 KB`. The option is `WITH_SPROFILER=1` (now `CONFIG_FUGU_WITH_SPROFILER`).
   When it is unset, the top-level CMakeLists sets `EXCLUDE_COMPONENTS esp32-semihosting-profiler`.
 
-### 2026-05-25 round
+### Feature pruning
 
-Files changed: `sdkconfig.defaults`, `CMakeLists.txt`, `main/idf_component.yml`.
+Round of 2026-05-25. Files changed: `sdkconfig.defaults`, `CMakeLists.txt`, `main/idf_component.yml`.
 
 This round pruned unused IDF and Arduino features and fixed the build breaks that the pruning caused:
 
@@ -61,19 +61,19 @@ This round pruned unused IDF and Arduino features and fixed the build breaks tha
   `SSL_RENEGOTIATION`, `SERVER_SSL_SESSION_TICKETS`, `PKCS7`, `SHA512`, `ECDSA_DETERMINISTIC`, `PEM_WRITE`,
   `X509_CSR/CRL_PARSE`, `PK_PARSE_EC_{EXTENDED,COMPRESSED}`, `ECDH_{ECDSA,RSA}`, `GCM_SUPPORT_NON_AES_CIPHER`, and all
   curves except `SECP256R1`.
-- `CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n` + WPA3 (`SAE`, `SAE_PK`, `SAE_H2E`, `OWE_STA`) off. The firmware is STA-only
+- `CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n` and WPA3 (`SAE`, `SAE_PK`, `SAE_H2E`, `OWE_STA`) off. The firmware is STA-only
   and home APs are WPA2. arduino-esp32's `WiFiGeneric.cpp:298` still calls `esp_netif_create_default_wifi_ap()`
   unconditionally, so `main.cpp` has a weak inline stub returning `nullptr` to satisfy the link.
-- `CONFIG_ARDUINO_SELECTIVE_COMPILATION=y` + per-library opt-out. RainMaker / Insights / PPP / WiFiProv /
-  OpenThread / Matter / WebServer / Zigbee / ESP-SR / SimpleBLE / BluetoothSerial / SD / SD_MMC / SPIFFS / FFat /
-  NetBIOS / EEPROM / Ticker / ArduinoOTA are off. Kept: WiFi / Network / SPI / Wire / Update / HTTPClient / FS /
-  LittleFS / AsyncUDP / DNSServer / ESPmDNS / NetworkClientSecure / Hash / Preferences / BLE.
+- `CONFIG_ARDUINO_SELECTIVE_COMPILATION=y` with per-library opt-out. RainMaker, Insights, PPP, WiFiProv,
+  OpenThread, Matter, WebServer, Zigbee, ESP-SR, SimpleBLE, BluetoothSerial, SD, SD_MMC, SPIFFS, FFat,
+  NetBIOS, EEPROM, Ticker and ArduinoOTA are off. Kept: WiFi, Network, SPI, Wire, Update, HTTPClient, FS,
+  LittleFS, AsyncUDP, DNSServer, ESPmDNS, NetworkClientSecure, Hash, Preferences and BLE.
 - 15 managed components stubbed via `override_path: ../components/_idf_stubs/<name>` in `main/idf_component.yml`:
   `esp_rainmaker`, `esp_insights`, `esp_diagnostics`, `esp_diag_data_store`, `esp_modem`, `esp_rcp_update`,
   `esp_secure_cert_mgr`, `esp-sr`, `dl_fft`, `esp-zboss-lib`, `esp-zigbee-lib`, `esp-modbus`, `libsodium`, `qrcode`,
   `chmorgan/esp-libhelix-mp3`. Kept: `cbor`, `mdns`, `network_provisioning`, `rmaker_common`, `esp-dsp`,
   `led_strip`. Stubbing via `override_path` is needed because `EXCLUDE_COMPONENTS` doesn't apply to the IDF component
-  manager's managed deps (see [Considerations specific to this codebase](#considerations-specific-to-this-codebase)).
+  manager's managed deps (see [Codebase specifics](#codebase-specifics)).
 - arduino-esp32 REQUIRES patch in the top-level CMakeLists.txt. arduino-esp32's manifest is missing `esp_wifi`,
   `esp_event`, `esp_netif` and `network_provisioning`, even though its public `WiFi.h` → `WiFiType.h` transitively
   includes `esp_wifi_types.h` (and `WiFiGeneric.h` includes `network_provisioning/manager.h` when
@@ -85,22 +85,25 @@ This round pruned unused IDF and Arduino features and fixed the build breaks tha
 - `src/web/server.cpp` (since removed) trimmed from 36 lines of dead WebServer/SPIFFS/ArduinoOTA/AsyncTCP includes around one
   `MDNS.addService(...)` call to 6 lines.
 
-### 2026-05-25 round (gating)
+### Measure-coil gating
 
-`WITH_MEASURE_COIL`, now `CONFIG_FUGU_WITH_MEASURE_COIL` (default off), drops `src/selftest/measure_coil.cpp` (~11 KB), the `measure-coil` console command, and the
+In the same 2026-05-25 round, `WITH_MEASURE_COIL`, now `CONFIG_FUGU_WITH_MEASURE_COIL` (default off), drops `src/selftest/measure_coil.cpp` (~11 KB), the `measure-coil` console command, and the
 `isMeasuring()` guards in `cli.cpp` / `main.cpp`. Together these shrank the image by 14 KB (1,709,968 → 1,695,936 B). It is a bench-only tool ported from `etc/measure_coil.py`. To run
 coil sweeps on the bench, enable it with `idf.py menuconfig` (`CONFIG_FUGU_WITH_MEASURE_COIL`) or the `sdkconfig.d/measure_coil` fragment, then
 `idf.py build`.
 
-### 2026-05-25 round (per-file optimization)
+### Per-file optimization
 
-Per-file `-Os` on cold libmain TUs saved ~25 KB with no measurable RT regression. `main/CMakeLists.txt` applies
-`set_source_files_properties(... COMPILE_OPTIONS "-Os")` to `cli.cpp`, `selftest/bflow_test.cpp`, `sync/bsync.cpp`,
-`adc/sensor_setup.cpp`, `logging.cpp`, `util.cpp`, `viz/lcd.cpp`, `console.cpp`, `etc/rt.cpp` and `math/float16.cpp`,
-plus the enabled network sources (`NETW_SRC`: telemetry, mqtt, `etc/ota` and the optional telnet, TLS console, scope,
-FTP, HTTP conf, Home Assistant and MQTT telemetry files), the BLE sources (`BLE_SRC`: console_ble and the optional BLE
-telemetry, advertising and Improv files), the telemetry core (`tele_core`, `tamp_compress`), and `measure_coil.cpp`,
-`usb/*.cpp` and `etc/pwr_knobs.cpp` when enabled.
+In the 2026-05-25 round, per-file `-Os` on cold libmain TUs saved ~25 KB with no measurable RT regression.
+`main/CMakeLists.txt` applies `set_source_files_properties(... COMPILE_OPTIONS "-Os")` to these sources:
+
+- `cli.cpp`, `selftest/bflow_test.cpp`, `sync/bsync.cpp`, `adc/sensor_setup.cpp`, `logging.cpp`, `util.cpp`,
+  `viz/lcd.cpp`, `console.cpp`, `etc/rt.cpp` and `math/float16.cpp`
+- the enabled network sources (`NETW_SRC`: telemetry, mqtt, `etc/ota` and the optional telnet, TLS console, scope,
+  FTP, HTTP conf, Home Assistant and MQTT telemetry files)
+- the BLE sources (`BLE_SRC`: console_ble and the optional BLE telemetry, advertising and Improv files)
+- the telemetry core (`tele_core`, `tamp_compress`)
+- `measure_coil.cpp`, `usb/*.cpp` and `etc/pwr_knobs.cpp` when enabled
 
 Since then, the top-level `CMakeLists.txt` also compiles the core-0-only components (`bt`, `lwip`, `mdns`, `littlefs`,
 `wpa_supplicant`, `mqtt`, the HTTP/TLS stack, `esp_wifi`, `esp-ota-ble` and others, list `FUGU_OS_COMPONENTS`) and
@@ -110,15 +113,15 @@ calls, stay at `-O2`.
 These files keep `-O2` (`CONFIG_COMPILER_OPTIMIZATION_PERF`): `main.cpp` (hosts `loopRT`), `mppt.cpp`
 (`mppt.update` per ADC sample), and `adc/adc_esp32_cont.cpp` (DMA ISR helpers).
 
-### 2026-05-30 round (STL template bloat)
+### STL template removal
 
-This round removed STL templates that no other TU shares:
+The 2026-05-30 round removed STL templates that no other TU shares:
 
 - Drop `std::filesystem` (`src/main.cpp`, `src/cli.cpp`): `~62 KB` (measured 8 % → 12 % free this build).
   Two trivial directory operations (the `main.cpp` conf-dir listing on a bad board.conf and the `cli.cpp` `ls` console
   command) used `std::filesystem::{exists,directory_iterator,file_size}`. `std::filesystem::path` is built on
   `<codecvt>` (wchar UTF-8↔UTF-16), which pulled `locale-inst.o` (the single largest libstdc++ object) and the entire
-  wide-char locale + iostream + sstream cascade. The replacement is POSIX `opendir`/`readdir`/`stat`, which the
+  wide-char locale, iostream and sstream cascade. The replacement is POSIX `opendir`/`readdir`/`stat`, which the
   littlefs VFS supports. After the swap, `fs_path.o`, `ios.o`, `iostream-inst.o`, `sstream-inst.o`, `codecvt` and
   `wlocale` all went to 0 refs.
 
@@ -128,7 +131,7 @@ This round removed STL templates that no other TU shares:
 
 - Drop `std::unordered_map` from `rtcount` (`src/etc/rt.{h,cpp}`): `~80 KB` (measured 4 % → 8 % free this build).
   The per-section profiler keyed its stats by `const char*` in an `unordered_map`, which instantiated the whole
-  hash-table + node-allocator template. Its `operator[]` also heap-allocated on a first-seen key from the RT core, and
+  hash-table and node-allocator template. Its `operator[]` also heap-allocated on a first-seen key from the RT core, and
   once tripped a TLSF heap assert in the middle of `mppt.update()`. The replacement is a fixed `rtcount_entry[64]` table
   matched by interned-literal pointer and appended via an atomic index. It uses no heap, looks up faster, and drops the
   template code. Most of the saving is libstdc++ hashtable code that no other TU pulls in.
@@ -146,14 +149,14 @@ This round removed STL templates that no other TU shares:
     use `std::map`), not from firmware code. BLE needs it, and it cannot be removed without patching the vendor
     library.
 
-### 2026-10-08 round (ADC driver gating)
+### ADC driver gating
 
-`CONFIG_FUGU_WITH_INA226` / `CONFIG_FUGU_WITH_ADS` (default on) gate the INA226 and ADS1x15 backends with their init
+From the 2026-10-08 round, `CONFIG_FUGU_WITH_INA226` / `CONFIG_FUGU_WITH_ADS` (default on) gate the INA226 and ADS1x15 backends with their init
 self-tests. On boards that use the internal ADC, turning both off saves ~13 KB (1,571,168 → 1,557,424 B, ESP32-S3).
 
-### 2026-10-08 round (TLS gating)
+### TLS gating
 
-`CONFIG_FUGU_WITH_HTTPS` (default off) gates the TLS client. When it is off, `sdkconfig.defaults` sets
+Also from the 2026-10-08 round, `CONFIG_FUGU_WITH_HTTPS` (default off) gates the TLS client. When it is off, `sdkconfig.defaults` sets
 `CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=n` and `CONFIG_MQTT_TRANSPORT_SSL=n`, nothing attaches the mbedTLS CA bundle, and
 only `http://` OTA and `mqtt://` brokers work. When it is on, it selects both options and
 `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE`, and OTA (`src/etc/ota.cpp`), `curl` and MQTT (`src/tele/mqtt.cpp`) verify the
@@ -171,23 +174,25 @@ then check the "Archive member included because of file" section of `build/fugu-
 pulls in.
 
 - `std::function` (18 sites, `src/`): unverified, partly invasive. Each distinct signature instantiates a
-  type-erasure thunk + vtable. The ADC `SampleCallback` (`std::function<void(uint8_t,float)>`) is on the RT path, so
+  type-erasure thunk and a vtable. The ADC `SampleCallback` (`std::function<void(uint8_t,float)>`) is on the RT path, so
   replacing it with a function pointer or template saves both size and time. The `void()`/`float()` ones
   (`enqueue_task`, virtual-sensor reads) are easy swaps to function pointers. Do this opportunistically.
 - `std::to_string` (adc_esp32*.h, util.cpp, HAMqttDevice.cpp): small now that the locale cascade is gone
   (`to_string` uses `__to_chars`, not locale). Replace it with `snprintf` only if a TU shows up large in size-files.
 
-### Bigger levers, need verification
+### Bigger levers
+
+These options need verification before they are applied.
 
 - Global `CONFIG_COMPILER_OPTIMIZATION_SIZE=y` with per-file `-O2` overrides on the RT path: potentially
   `~100–150 KB`. The current per-file approach only affects libmain. Flipping the global default recompiles all of
-  IDF + arduino-esp32 + lwip + mbedtls at `-Os` too. Before doing this, measure `rtcount` numbers before and after, and
+  IDF, arduino-esp32, lwip and mbedtls at `-Os` too. Before doing this, measure `rtcount` numbers before and after, and
   override `-O2` on `main.cpp / mppt.cpp / adc/adc_esp32_cont.cpp` plus any IDF code on the sample-to-PWM path (likely
   `esp_adc/esp_adc_continuous.c`, parts of `freertos`, the ADC continuous ISR).
 - `-fno-asynchronous-unwind-tables`: `~80 KB`. `.eh_frame` is ~22 KB in libmain and ~61 KB in arduino-esp32. With
   `-fexceptions` ON, C++ exception throw/catch does not need async-unwind tables. They serve stack walking at arbitrary
   instructions (signal handlers, gcore-style dumps). Verify that panic backtraces still resolve before merging.
-- Disable `-fexceptions` globally + rewire `service.h` / `cli.cpp` / `main.cpp` try-catches as error returns:
+- Disable `-fexceptions` globally and rewire `service.h` / `cli.cpp` / `main.cpp` try-catches as error returns:
   `~60–80 KB` (drops `libstdc++.a`'s 66 KB `.rodata` exception unwind tables). The work is mechanical but invasive.
   Every `throw std::runtime_error(...)` in conf / sensor_setup / buck / mppt construction / ADC init would have to
   become a returned bool or `std::optional`. It is worth doing only after the other options are used up.
@@ -201,7 +206,7 @@ drops the whole chain. Both 2026-05-30 wins (`unordered_map`, `std::filesystem`)
    `grep -rn 'std::unordered_map\|std::map\|std::function\|std::filesystem\|std::to_string\|<iostream>\|<sstream>\|<fstream>\|<regex>\|std::shared_ptr' src/`.
 2. Ask the linker why a heavy object is in the image. `build/fugu-firmware.map` has an
    "Archive member included because of file (symbol)" section, which lists each pulled `libstdc++.a(foo.o)` with the
-   object + symbol that referenced it. Walk the chain back to the first non-libstdc++ object (a firmware TU). That
+   object and symbol that referenced it. Walk the chain back to the first non-libstdc++ object (a firmware TU). That
    object is the trigger. Example: `fs_path.o ← main.cpp.obj (std::filesystem::path::...)` → `codecvt` → `locale-inst.o`.
 3. Confirm the cascade dropped. After the change, `grep -c '<obj>.o' build/fugu-firmware.map` should read `0` for
    the whole chain (`fs_path.o`, `locale-inst.o`, `iostream-inst.o`, `sstream-inst.o`, …). 0 refs ⇒ the member is no
@@ -211,13 +216,13 @@ drops the whole chain. Both 2026-05-30 wins (`unordered_map`, `std::filesystem`)
 The largest offenders on xtensa-esp-elf 14.2 fall into two groups:
 
 - Anything that instantiates `std::locale` (`<iostream>`/`<sstream>`/`<fstream>`/`std::filesystem::path` via
-  `<codecvt>`). It pulls `locale-inst.o` + the wide-char facet table (~100 KB+).
-- Node-based containers (`unordered_map`/`map`/`unordered_set`). They pull hashtable/rb-tree + allocator code per
+  `<codecvt>`). It pulls `locale-inst.o` and the wide-char facet table (~100 KB+).
+- Node-based containers (`unordered_map`/`map`/`unordered_set`). They pull hashtable or rb-tree code plus allocator code per
   key/value type.
 
 Prefer `fopen`/`fgets`, POSIX `dirent`, `snprintf`, and flat `vector<pair>` over the STL equivalents.
 
-## Considerations specific to this codebase
+## Codebase specifics
 
 - `EXCLUDE_COMPONENTS` doesn't reach managed components. It only works for components from `EXTRA_COMPONENT_DIRS`
   and top-level `components/`, because the IDF component manager registers managed deps independently. To exclude
@@ -231,7 +236,7 @@ Prefer `fopen`/`fgets`, POSIX `dirent`, `snprintf`, and flat `vector<pair>` over
   `.rodata` is attributed to the first object alphabetically. The actual `.obj` content is ~1 KB. Ignore that row in
   size-files.
 
-## Matrix build (pre-2026-05-25)
+## Earlier matrix build
 
 The following table shows the image size for each target and feature combination before the 2026-05-25 changes. The
 column names are the former environment flags; `etc/matrix_build.sh` now seeds `CONFIG_FUGU_WITH_BLE` and
