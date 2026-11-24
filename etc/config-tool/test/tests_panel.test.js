@@ -230,8 +230,8 @@ test('action cards: collapsed to title and description; tag, buttons, a run, its
   const more = rc.querySelector('.tst-more');
   assert.equal(more.firstElementChild, rc.querySelector('.tst-tag'), 'the tag leads the fold');
   assert.equal(rc.querySelector('.tst-tag').textContent, 'Drives the converter · writes coil.conf');
-  assert.deepEqual([...more.children].map(e => e.className.split(' ').pop()), ['tst-tag', 'tst-det', 'tst-ctl', 'tst-res', 'tst-log'],
-    'tag, characteristics, buttons, result, output');
+  assert.deepEqual([...more.children].map(e => e.className.split(' ').pop()), ['tst-tag', 'tst-det', 'tst-ctl', 'tst-prog', 'tst-res', 'tst-log'],
+    'tag, characteristics, buttons, progress, result, output');
   for (const id of ['bflow', 'clear']) assert.equal(card(window, id).querySelector('.tst-tag'), null, id + ': no tag');
   assert.deepEqual(['sweep', 'coil', 'coills'].map(id => card(window, id).querySelector('.tst-tag').textContent),
     ['Drives the converter', 'Drives the half-bridge', 'Drives the half-bridge']);
@@ -731,6 +731,61 @@ test('measure-coil in PSU/PV mode or at a manual duty: the firmware refusal, not
       : /manual duty 812 set.*The editor stops only MPPT/);
     assert.ok(note.classList.contains('err'));
   }
+});
+
+test('measure-coil progress: L0 and LS rows against the sweep band, early stops complete it, the dc 0 phase is indeterminate', async () => {
+  const { window } = await loadEditor();
+  const P = ls => { const p = window.tstProgress(ls); return [p.f == null ? null : +p.f.toFixed(3), p.text]; };
+  const L0 = ['measure-coil L0: fsw=39000 pwmMax=4103 band 1200..2600 step 100  Vin=36.10 Vout=26.80 M=0.742',
+    '      H      D    Vin   Vout   Iout mode    L_uH'];
+  const row = H => `  ${String(H).padStart(5)}  0.292  36.10  26.80  0.210  DCM   50.10`;
+  assert.deepEqual(P([]), [null, 'starting …']);
+  assert.deepEqual(P(['W (1) main: measure-coil: MPPT on, stop conversion first (dc 0)', 'ERR: measure-coil l0', 'OK: dc 0']), [null, 'stopping the converter …']);
+  assert.deepEqual(P(['W (1) main: measure-coil: converter still on, wait for the ramp-down']), [null, 'stopping the converter …']);
+  assert.deepEqual(P(L0), [0, 'step 0 of 15']);
+  assert.deepEqual(P([...L0, row(1200)]), [0, 'step 1 of 15']);
+  assert.deepEqual(P([...L0, row(1200), row(1300), row(1900)]), [0.5, 'step 8 of 15']);
+  assert.deepEqual(P([...L0, row(2600)]), [1, 'step 15 of 15']);
+  for (const stop of ['  entered CCM; stopping', '  Iout 2.10 > 2.00; stopping', '  converter disabled (protection?); aborting',
+    '  Vin no longer above Vout+1; stopping', 'measure-coil: L = 50.34 uH  (ring fit, 31 DCM pts)'])
+    assert.deepEqual(P([...L0, row(1500), stop]), [1, 'finishing …'], stop);
+  const LS = ['measure-coil LS: HS=400 D=0.097 Vin=36.10 Vout=26.80 ideal_LS=139 auto_LS=130 sweep 70..195', '     LS    Iout    Vin   Vout mode'];
+  const lrow = n => `  ${String(n).padStart(5)}   0.412  36.10  26.80  DCM`;
+  assert.deepEqual(P(LS), [0, '0 %']);
+  assert.deepEqual(P([...LS, lrow(70), lrow(120)]), [0.4, '40 %']);
+  assert.deepEqual(P([...LS, lrow(151), '  passed peak; stopping']), [1, 'finishing …']);
+  assert.deepEqual(P([...LS, lrow(151), 'measure-coil: peak LS 151 (Iout_peak 0.412 A at raw argmax 150, two-sided fit)']), [1, 'finishing …']);
+});
+
+test('progress bar: shown while a test runs, a value for measure-coil, indeterminate otherwise, hidden afterwards', async () => {
+  const { window } = await connected({ coil: true, coilNeverEnds: true, bfNeverEnds: true, rowMs: 40 });
+  window.tstDefs().find(d => d.id === 'coil').timeout = 600;
+  await openSheet(window); await idle(window);
+  window.prompt = () => 'fry';
+  const c = card(window, 'coil'), pg = c.querySelector('.tst-prog');
+  assert.equal(pg.getAttribute('role'), 'progressbar');
+  assert.equal(pg.getAttribute('aria-label'), 'Coil inductance (L0) progress');
+  assert.equal(pg.hidden, true);
+  assert.equal(c.querySelector('.tst-ctl').nextElementSibling, pg, 'below the buttons');
+  const run = window.tstStart('coil');
+  await until(() => c.querySelector('.tst-out').textContent.includes('1200  0.292'));
+  assert.equal(seen(pg), true);
+  const step = +c.querySelector('.tst-pct').textContent.match(/^step (\d+) of 47$/)[1];
+  assert.ok(step >= 1 && step <= 2, 'the first rows');
+  assert.equal(pg.getAttribute('aria-valuenow'), String(Math.round((step - 1) * 30 / 1400 * 100)));
+  await until(() => c.querySelector('.tst-out').textContent.includes('L = 50.34'));
+  assert.equal(pg.getAttribute('aria-valuenow'), '100');
+  assert.match(pg.querySelector('i').style.width, /^100(\.0)?%$/);
+  await run;
+  assert.equal(pg.hidden, true);
+  const b = card(window, 'bflow'), bp = b.querySelector('.tst-prog');
+  window.tstDefs().find(d => d.id === 'bflow').timeout = 200;
+  const r2 = window.tstStart('bflow');
+  await until(() => window.tstBusyNow() && b.querySelector('.tst-out').textContent.includes('started'));
+  assert.equal(seen(bp), true);
+  assert.ok(bp.classList.contains('ind'));
+  assert.equal(bp.getAttribute('aria-valuenow'), null);
+  await r2;
 });
 
 test('measure-coil link check after a timeout uses the status line', async () => {

@@ -166,8 +166,8 @@ function firmware(host, opts = {}) {
           'measure-coil: peak LS 151 (Iout_peak 0.412 A at raw argmax 150, two-sided fit)',
           '  ideal LS 139  auto LS 130  offset peak-ideal +12 ct (+3.0% HS)  peak-auto +21 ct', '  L (peak curvature) = 49.8 uH (cross-check)',
           ...(apply ? ['  applied rect_offset 300 ns (0 ct, mcpwm); saved to coil.conf once the converter is off'] : [])];
-      lines.forEach((x, i) => later(10 + 5 * i, () => s(x)));
-      if (!opts.coilNeverEnds) later(20 + 5 * lines.length, () => { st.measuring = false; s('measure-coil: done, manual PWM at duty 0 (\'mppt\' resumes tracking)'); });
+      lines.forEach((x, i) => later(10 + (opts.rowMs ?? 5) * i, () => s(x)));
+      if (!opts.coilNeverEnds) later(20 + (opts.rowMs ?? 5) * lines.length, () => { st.measuring = false; s('measure-coil: done, manual PWM at duty 0 (\'mppt\' resumes tracking)'); });
       return;
     }
     if (cmd === 'dc 0') {

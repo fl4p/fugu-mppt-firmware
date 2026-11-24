@@ -450,7 +450,11 @@ asks; the question names the device, says what happens (for example that the con
 stops for about a minute) and states whether the converter is delivering power now and how much. The most invasive
 ones need the device name typed in. A refusal shows the firmware's reason as it printed it. Nothing is retried.
 
-While a test runs, its output appears in the unfolded entry, and **Abort** appears on the entry's line where the
+While a test runs, a thin progress bar sits below the buttons. The two coil measurements fill it from the sweep the
+firmware prints: the L0 run as "step i of n" over its duty band, the low-side run as a percentage of its low-side
+window; it fills up when the sweep stops early, and shows "stopping the converter …" while `dc 0` ramps the converter
+down. The other tests print no progress, so their bar only moves back and forth. Its output appears in the unfolded
+entry, and **Abort** appears on the entry's line where the
 firmware has an abort command (`measure-coil` has none). Folding a running entry hides the output; its line then says
 "running …" and keeps **Abort**. The result is a short summary:
 

@@ -750,7 +750,17 @@ amber.
   monospace); the buttons (`.tst-ctl`): **Run** (MPP sweep: **Read last
   sweep** and **Run sweep**; the read button is hidden when `sweep-curve` is
   not in the build) and on Clear latched faults the reason it is disabled
-  ("Nothing latched") next to it; the run or its result (dot + summary,
+  ("Nothing latched") next to it; while its run is in progress a progress
+  bar (`.tst-prog`, `role="progressbar"`, `aria-label` "<title> progress",
+  4 px `--line` track with an `--icon` fill, text in muted grey): for
+  `measure-coil` the fraction (x − lo) / (hi − lo) of the row's first
+  column (H or LS count) over the header's `band lo..hi step s` (L0, text
+  "step i of n") or `sweep lo..hi` (LS, text "N %"); an early stop
+  (`…; stopping`, `…; aborting`), `measure-coil: L = …` or `peak LS …`
+  completes it ("finishing …"); before the header it is indeterminate,
+  "stopping the converter …" once `dc 0` went out, else "starting …".
+  Other tests: indeterminate (a sliding segment; a faded full bar under
+  `prefers-reduced-motion`), no `aria-valuenow`; the run or its result (dot + summary,
   green pass, amber fail/warn, muted detail lines in the normal font, a
   note, a Check button where needed); the sweep chart on the MPP sweep card;
   a collapsible "Device output (N lines)" (open while running, folded once a

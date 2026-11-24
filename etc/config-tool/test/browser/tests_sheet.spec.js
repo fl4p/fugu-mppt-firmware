@@ -84,3 +84,16 @@ test('a folded running card keeps Abort and says it is running', async ({ page }
   await expect(b.locator('.tst-out')).toBeHidden();
   await shot(page, 'tests-running-collapsed.png');
 });
+
+test('a coil run shows its progress below the buttons', async ({ page }) => {
+  await openTests(page, { rowMs: 300, coilNeverEnds: true });
+  const c = card(page, 'coil');
+  await c.locator('.tst-x').click();
+  await c.locator('.run').click();
+  const pg = c.locator('.tst-prog');
+  await expect(pg).toHaveAttribute('aria-valuenow', '0');
+  await expect(c.locator('.tst-pct')).toHaveText('step 1 of 47');
+  const y = async sel => (await c.locator(sel).boundingBox()).y;
+  expect(await y('.tst-ctl')).toBeLessThan(await y('.tst-prog'));
+  await shot(page, 'tests-coil-progress.png');
+});

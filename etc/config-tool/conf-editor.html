@@ -409,6 +409,15 @@
   .tst-l0:empty { display:none; }
   .tst-state:empty { display:none; }
   .tst-det { margin:12px 0 0; }
+  .tst-prog { display:flex; align-items:center; gap:10px; margin:14px 0 0; }
+  .tst-prog[hidden] { display:none; }
+  .tst-bar { position:relative; flex:1; height:4px; border-radius:2px; background:var(--line); overflow:hidden; }
+  .tst-bar i { position:absolute; top:0; bottom:0; left:0; background:var(--icon); border-radius:2px; transition:width .3s; }
+  .tst-prog.ind .tst-bar i { width:30%; animation:tst-ind 1.4s ease-in-out infinite; }
+  @keyframes tst-ind { from { left:-30%; } to { left:100%; } }
+  @media (prefers-reduced-motion:reduce) { .tst-prog.ind .tst-bar i { animation:none; width:100%; opacity:.35; } }
+  .tst-pct { font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .tst-pct:empty { display:none; }
   .tst-opt { display:flex; align-items:center; gap:7px; margin:0 0 10px; width:fit-content; cursor:pointer; }
   .tst-opt:has(input:disabled) { opacity:.5; cursor:not-allowed; }
   .tst-meta { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 16px; margin:0; }
@@ -3913,6 +3922,24 @@ function parseCoil(lines){
   return { L, kind, bad, l0, disturbed, peak, ofs, lc, lsApplied, skip, done };
 }
 
+// measure-coil progress from the sweep header (`band lo..hi step s` / `sweep lo..hi`) and the rows (H or LS count
+// first): { f:0..1, or null before the header, text }. An early stop, the result or `done` completes it.
+function tstProgress(lines){
+  let lo=null, hi=0, step=0, x=null, end=false, stop=false;
+  for (const raw of lines){
+    const l=tstMsgOf(tstLine(raw)); let m;
+    if ((m=l.match(/\bmeasure-coil (?:L0|LS): .*?\b(?:band|sweep) (\d+)\.\.(\d+)(?: step (\d+))?/))){ lo=+m[1]; hi=+m[2]; step=+m[3]||0; x=null; end=false; }
+    else if (lo!=null && (m=l.match(/^\s+(\d+)\s+-?[\d.]+\s/))) x=+m[1];
+    else if (/; (?:stopping|aborting)$|\bmeasure-coil: (?:L = |peak LS |done\b)/.test(l)) end=true;
+    else if (/\bOK: dc 0\b|\bstill on\b/.test(l)) stop=true;
+  }
+  if (lo==null) return { f:null, text: stop ? "stopping the converter …" : "starting …" };
+  const f = end ? 1 : x==null || hi<=lo ? 0 : Math.min(1, Math.max(0, (x-lo)/(hi-lo)));
+  if (!step) return { f, text: end ? "finishing …" : Math.round(f*100)+" %" };
+  const n=Math.floor((hi-lo)/step)+1;
+  return { f, text: end ? "finishing …" : `step ${x==null ? 0 : Math.min(n, Math.round((x-lo)/step)+1)} of ${n}` };
+}
+
 // `rect-cal status` → state line fields.
 function parseRectStatus(lines){
   for (const raw of lines){
@@ -4506,7 +4533,11 @@ function tstBuild(body){
       const res=tstEl("div", "tst-res"); res.setAttribute("role","status");
       const lg=tstEl("details", "fold tst-log"); lg.hidden=true;
       lg.append(tstEl("summary", "", "Device output"), tstOutEl(d.title));
-      more.append(det, ctl, res);
+      const pg=tstEl("div", "tst-prog"), bar=tstEl("span", "tst-bar");
+      bar.append(tstEl("i")); pg.append(bar, tstEl("span", "tst-pct")); pg.hidden=true;
+      pg.setAttribute("role", "progressbar"); pg.setAttribute("aria-label", d.title+" progress");
+      pg.setAttribute("aria-valuemin", "0"); pg.setAttribute("aria-valuemax", "100");
+      more.append(det, ctl, pg, res);
       if (d.chart){ const f=tstEl("figure", "tst-chart"); f.hidden=true; more.append(f); }
       more.append(lg);
       if (d.opt){
@@ -4597,6 +4628,15 @@ function tstPaint(id){
   }
   stl.textContent = id==="clear" ? why : "";
   c.querySelector(".tst-runs").textContent = mine && r.st==="run" && !r.open ? "running …" : "";
+  const pg=c.querySelector(".tst-prog"), p = mine && r.st==="run" ? (d.root==="measure-coil" ? tstProgress(r.lines) : { f:null, text:"" }) : null;
+  pg.hidden=!p;
+  if (p){
+    pg.classList.toggle("ind", p.f==null);
+    if (p.f==null) pg.removeAttribute("aria-valuenow"); else pg.setAttribute("aria-valuenow", String(Math.round(p.f*100)));
+    pg.setAttribute("aria-valuetext", p.text || "running");
+    pg.querySelector("i").style.width = p.f==null ? "" : (p.f*100).toFixed(1)+"%";
+    pg.querySelector(".tst-pct").textContent=p.text;
+  }
   const res=c.querySelector(".tst-res");
   res.className="tst-res"+(r.sum && r.sum.cls ? " "+r.sum.cls : "");
   res.hidden=!shown;
