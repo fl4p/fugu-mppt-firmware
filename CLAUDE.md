@@ -187,7 +187,7 @@ reads its own conf file for `enabled` (0/1) and `log_level` (error/warn/info): `
 `ftp.conf`, `telnet.conf`, `lcd.conf`, `scope.conf`.
 
 `set-config <file>.conf <key> <value>` from the serial/telnet/MQTT console edits these in place without re-flashing —
-useful when iterating. FTP is also enabled when Wi-Fi is up (Filezilla, 1 connection; passive data port 50009, active mode also works).
+useful when iterating. FTP is also enabled when Wi-Fi is up (Filezilla; 2 sessions; passive data port `ftp.conf::pasv_port`, default 50009, active mode also works).
 
 **When you add, rename, or remove a `.conf` key**, update all three places together so they don't drift:
 the code that reads it, the per-file reference table in `website/docs/reference/config/<file>.md`, and the editor
