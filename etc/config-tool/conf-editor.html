@@ -277,7 +277,9 @@
   .sheet-head { display:flex; align-items:center; gap:12px; min-height:var(--hdr); padding:0 12px 0 24px; border-bottom:1px solid var(--line); flex:none; }
   .sheet-head h2 { margin:0; font-size:14px; font-weight:600; white-space:nowrap; }
   .sheet-head .sub { color:var(--muted); font-size:12.5px; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .sheet-body { flex:1; overflow:auto; padding:6px 24px 24px; }
+  .sheet-body { flex:1; overflow:auto; overscroll-behavior:contain; padding:6px 24px 24px; }
+  /* a modal sheet or dialog is the only scroller: the page behind it stays put */
+  html:has(.scrim.open, .modal-bg.open) { overflow:hidden; }
   .sheet-foot { border-top:1px solid var(--line); padding:14px 24px 16px; display:flex; flex-direction:column; gap:12px; flex:none; }
   .sheet-foot .btns { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
   .sheet-foot .btns > button:not(.primary) { border-color:var(--line-2); }

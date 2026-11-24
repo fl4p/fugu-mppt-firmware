@@ -97,3 +97,45 @@ test('a coil run shows its progress below the buttons', async ({ page }) => {
   expect(await y('.tst-ctl')).toBeLessThan(await y('.tst-prog'));
   await shot(page, 'tests-coil-progress.png');
 });
+
+test('an open sheet is the only scroller: the page behind it does not scroll', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await openTests(page);
+  await page.locator('#tst-close').click();
+  await page.evaluate(() => { if (document.scrollingElement.scrollHeight <= innerHeight) document.body.append(Object.assign(document.createElement('div'), { style: 'height:3000px' })); });
+  const pageScrolls = () => page.evaluate(() => getComputedStyle(document.documentElement).overflowY !== 'hidden'
+    && document.scrollingElement.scrollHeight > document.scrollingElement.clientHeight);
+  expect(await pageScrolls()).toBe(true);
+  for (const id of ['sweep', 'coil', 'rectcal']) {        // enough content for the sheet to scroll
+    await page.locator('#open-tests').click();
+    await card(page, id).locator('.tst-x').click();
+    await page.locator('#tst-close').click();
+  }
+  await page.locator('#open-tests').click();
+  await expect(page.locator('#tests')).toHaveClass(/open/);
+  expect(await pageScrolls()).toBe(false);
+  await page.mouse.move(20, 300);                          // over the scrim
+  await page.mouse.wheel(0, 600);
+  await page.waitForTimeout(200);
+  expect(await page.evaluate(() => document.scrollingElement.scrollTop)).toBe(0);
+  const scrollers = await page.evaluate(() => [...document.querySelectorAll('#tests, #tests *')].filter(e => {
+    const o = getComputedStyle(e).overflowY;
+    return (o === 'auto' || o === 'scroll') && e.scrollHeight > e.clientHeight;
+  }).map(e => e.id || e.className));
+  expect(scrollers).toEqual(['tst-body']);
+  await page.mouse.move(200, 400);                         // over the sheet: it scrolls, the page does not
+  await page.mouse.wheel(0, 400);
+  await page.waitForTimeout(200);
+  expect(await page.evaluate(() => document.getElementById('tst-body').scrollTop)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => document.scrollingElement.scrollTop)).toBe(0);
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'tests-one-scroller.png') });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#tests')).not.toHaveClass(/open/);
+  expect(await pageScrolls()).toBe(true);
+  // the other modal sheets lock the same way
+  await page.evaluate(() => document.getElementById('open-services').click());
+  await expect(page.locator('#services')).toHaveClass(/open/);
+  expect(await pageScrolls()).toBe(false);
+  await page.locator('#svc-scrim').click({ position: { x: 5, y: 5 } });
+  expect(await pageScrolls()).toBe(true);
+});

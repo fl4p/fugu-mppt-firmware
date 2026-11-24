@@ -462,7 +462,12 @@ desktop; a bottom sheet (86 vh, rounded top) on mobile. Closes with **Close**,
 Esc, or a click on the scrim. It is a modal dialog: opening it moves focus to
 **Close**, Tab and Shift+Tab cycle inside the sheet, and closing returns focus
 to the **Review changes** button (jumping to a field focuses that field
-instead).
+instead). While any sheet with a scrim (Review, Services, Tests) or a modal
+backdrop (the MQTT dialog) is open, the page behind does not scroll (CSS
+`html:has(.scrim.open, .modal-bg.open) { overflow:hidden }`, so every way of
+closing restores it); the sheet body is the only scroller
+(`overscroll-behavior:contain`). The Console sheet has no scrim and leaves
+the page scrollable.
 
 * **Head**: "Review changes" and "N changes in M files", plus ", K invalid"
   when any new value fails the number check.
