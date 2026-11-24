@@ -1033,18 +1033,36 @@ test('a sweep stopped by a limiter: "stop point", why it ended, and no chart for
   assert.equal(chart(window).hidden, true);
 });
 
+// A full-range sweep that ended at the PWM bound: the firmware still names the power controller (smallest response).
+const FULL = 'Stop sweep 8.43s mode=CV (lim=4 tgt=800.00 act=142.80) PWM=3782 MPP=(142.8W,3100,59.7V)';
+
+test('a sweep ending at the duty bound with an idle power limiter is a normal MPP', async () => {
+  const { window } = await connected({ sweepStop: FULL });
+  await openSheet(window); await idle(window);
+  window.confirm = () => true;
+  await window.tstStart('sweep');
+  const res = card(window, 'sweep').querySelector('.tst-res');
+  assert.ok(res.classList.contains('pass'));
+  assert.match(res.querySelector('strong').textContent, /^MPP /);
+  assert.doesNotMatch(res.textContent, /Stopped after|Stop point/);
+});
+
 test('sweep stop lines: limiter names, normal ends, an unverified landing', async () => {
   const { window } = await loadEditor({ teledec: true });
-  const stop = (lim, tgt) => window.tstSummary('sweep', [I('mppt', `Stop sweep 4.20s mode=CV (lim=${lim} tgt=${tgt} act=1.00) PWM=1 MPP=(9.0W,1,30.0V)`), ...SWEEP.lines]);
-  assert.match(stop(1, '28.80').details[0], /by the output-voltage limit \(28\.8 V\)/);
+  const stop = (lim, tgt, act = tgt) => window.tstSummary('sweep', [I('mppt', `Stop sweep 4.20s mode=CV (lim=${lim} tgt=${tgt} act=${act}) PWM=1 MPP=(9.0W,1,30.0V)`), ...SWEEP.lines]);
+  assert.match(stop(1, '28.80', '28.79').details[0], /by the output-voltage limit \(28\.8 V\)/);
   assert.match(stop(2, '9.00').details[0], /by the input-current limit \(9\.0 A\)/);
-  assert.match(stop(4, '400.00').details[0], /by the power limit \(400 W\)/);
+  assert.match(stop(4, '400.00', '396.10').details[0], /by the power limit \(400 W\)/);
   assert.match(stop(3, '2.00').text, /^Stop point /);
   assert.ok(stop(3, '2.00').curve.stop);
-  for (const lim of [0, -1]) {
-    const s = stop(lim, '20.00');
-    assert.match(s.text, /^MPP /, `lim=${lim} ends a sweep normally`);
+  const normal = [[0, '20.00'], [-1, '20.00', '1.00'], [-1, 'nan', 'nan'], [4, '800.00', '142.80'], [1, '28.80', '27.50'],
+    [3, '2.00', '1.95']];
+  for (const [lim, tgt, act] of normal) {
+    const s = stop(lim, tgt, act);
+    assert.match(s.text, /^MPP /, `lim=${lim} tgt=${tgt} act=${act} ends a sweep normally`);
+    assert.equal(s.cls, 'pass');
     assert.equal(s.details.length, 0);
+    assert.ok(!s.curve.stop);
   }
   const fig = window.document.createElement('figure');
   window.tstChart(fig, stop(3, '2.00').curve, 520);

@@ -472,7 +472,9 @@ progress shows the points so far. A sweep the firmware flagged because the light
 Without a sweep since boot there is no curve to draw, and with fewer than three points the entry says so instead of
 drawing one. If a limiter (output voltage, input or output current, or power) ended the sweep early, the result
 reads "Stop point" instead of "MPP" and names the limit and its setting: the point shown is where the sweep stopped,
-not the panel's maximum.
+not the panel's maximum. The entry counts a limiter as the cause only when its reading at the stop reached about 98 %
+of its setting. The firmware's stop line names the controller closest to its limit, even when the sweep simply reached
+the end of the duty range (or the input-voltage floor), and such a sweep is a normal full-range one.
 
 A sweep only runs once the converter can start. At night, during a protection backoff or with a latched fault, the
 firmware keeps the sweep waiting until it can. When the device's status says the converter is stopped or in

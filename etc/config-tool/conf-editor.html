@@ -4152,15 +4152,20 @@ function tstChart(fig, c, cw){
 
 const plural = (n, w) => `${n} ${w}${n===1 ? "" : "s"}`;
 
-// limiter order of mppt.cpp controlValues; 0 (Vin floor) and -1 (duty end) end a sweep normally
+// limiter order of mppt.cpp controlValues; 0 (Vin floor) and -1 (none) end a sweep normally. The firmware names the
+// controller with the smallest response even when none limits (PWM bound): only one at its target cut the sweep.
 const TST_LIM = [null, ["output-voltage limit","V"], ["input-current limit","A"], ["output-current limit","A"], ["power limit","W"]];
-// A sweep cut short by a limiter (`Stop sweep <s>s mode=… (lim=i tgt=… act=…) …`): why, else "".
+// `Stop sweep <s>s mode=… (lim=i tgt=… act=…) …` → {s, tgt, lim: [name, unit] if that limiter reached its target}
+function tstStopOf(raw){
+  const m=tstMsgOf(tstLine(raw)).match(/\bStop sweep ([\d.]+)s mode=\S+ \(lim=(-?\d+) tgt=(\S+) act=([^\s)]+)\)/);
+  if (!m) return null;
+  const tgt=+m[3], L=TST_LIM[+m[2]];
+  return { s:+m[1], tgt, lim: L && tgt>0 && +m[4]>=0.98*tgt ? L : null };
+}
+// Why the last sweep stopped early (a limiter at its target), else "".
 function tstSweepStop(lines){
-  for (const raw of lines){
-    const m=tstMsgOf(tstLine(raw)).match(/\bStop sweep ([\d.]+)s mode=\S+ \(lim=(-?\d+) tgt=(\S+) act=\S+\)/), L=m && TST_LIM[+m[2]];
-    if (L) return `Stopped after ${(+m[1]).toFixed(1)} s by the ${L[0]} (${(+m[3]).toFixed(L[1]==="W" ? 0 : 1)} ${L[1]}): the MPP shown is where the sweep stopped, not the panel's maximum.`;
-  }
-  return "";
+  const st=lines.map(l=>tstStopOf(l)).filter(Boolean).pop(), L=st && st.lim;
+  return L ? `Stopped after ${st.s.toFixed(1)} s by the ${L[0]} (${st.tgt.toFixed(L[1]==="W" ? 0 : 1)} ${L[1]}): the MPP shown is where the sweep stopped, not the panel's maximum.` : "";
 }
 
 // `START blocked: <reason> (Vin=… Vout=…)` (idle log line, and the `sweep: queued, …` reply) → why the
