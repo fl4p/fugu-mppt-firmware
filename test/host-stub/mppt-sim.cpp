@@ -84,6 +84,7 @@
 //     depth every build before the gainAmp fix had); bus ripple on any scenario with
 //     SIM_CONF=vconv.conf:vbat_ac_amp=0.26,vconv.conf:vbat_ac_freq=100,vconv.conf:vbat_ac_shape=0|1|2 (sine, |sin|,
 //     spiky); SIM_RIPPLE_DRIFT=dHz,period swings its frequency +-dHz with that period [s] (off-grid inverter)
+//   despike: SIM_CONF=sensor.conf:despike=8 (fry/flat run 8; the sim default is the conf default 0)
 //   SIM_T=600 wx run length [s], SIM_TR=5 wx trace interval [s], SIM_V=1 firmware log in wx/shade runs
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
 //   SIM_TTRACE=t0,t1 /tmp/mppt-sim wx-dusk      # one line per tracker decision (duty, Vin, P, direction, LS) in t0..t1
