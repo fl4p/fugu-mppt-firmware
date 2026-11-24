@@ -49,6 +49,9 @@ With only the input supply connected and the output open, check the following re
 
 - [ ] No `E (…)` error lines in the boot log. `board.conf expects MCU …` means the config does not match the chip.
   See [ESP32 variants](../hardware/esp32-variants.md).
+- [ ] `bootinfo` shows `setup: ok`. On `setup: FAILED: <reason>` (the status line then ends with `SETUP-ERR`) the
+  converter stays off; fix the named file or key and `restart`. See
+  [Setup failure](../../reference/console.md#setup-failure).
 - [ ] `sensor`: Vin matches a multimeter within a few percent. If not, fix that side's divider (`hv_v_rh`/`hv_v_rl` in a buck) in
   [`sensor.conf`](../../reference/config/sensor.md).
 - [ ] Current readings sit near zero. The sampler calibrates the zero-current offset at start.
@@ -89,10 +92,12 @@ The following table lists common symptoms during bring-up and where to look for 
 
 | Symptom | Where to look |
 |---|---|
-| `Never got a sample! Please check ADC` | ADC backend, I²C pins, `ina22x_*`/`ads_alert` pins in `board.conf` |
+| `setup: FAILED: <reason>` | The reason names the config file or key; see [Setup failure](../../reference/console.md#setup-failure) |
+| `Never got a sample! Please check ADC` | ADC backend, I²C pins, `ina22x_alert`/`ads_alert` pins in `board.conf` |
 | `Calibration failed, <sensor> …` | Sensor not at rest at boot, or wrong `_midpoint`/`_factor` |
 | `START blocked: supply-UV` | The higher of Vin and Vout is below ~9.8 V, too low for the board supply |
-| `START blocked: temp` | NTC or MCU temperature within 3 °C of `limits.conf::temp_max`, or MCU temperature unavailable; check `ntc_ch` |
+| `START blocked: temp` | NTC or MCU temperature within 3 °C of `limits.conf::temp_max`, or no MCU temperature sensor |
+| `START blocked: temp-stale` | A fitted NTC or MCU temperature sensor has no valid reading; check `sensor.conf::ntc_ch` and the NTC wiring |
 | Protection trips at low power | Divider values or current `_factor` sign in `sensor.conf` |
 
 For more symptoms, see [Troubleshooting](../troubleshooting.md).

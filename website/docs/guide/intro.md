@@ -21,7 +21,7 @@ The following table summarizes the firmware's features by area.
 | Area | What you get |
 |---|---|
 | Charging | Li-ion / LiFePO4 [charge termination](charging/termination.md), [BMS coupling](charging/bms-integration.md) over MQTT, for BMSes on BLE, CAN bus, or RS485 through a bridge |
-| Control | MPPT with periodic global sweep, five PD limiters (Vin, Iin, Vout, Iout, thermal), buck and boost operation, PSU mode |
+| Control | MPPT with periodic global sweep, five PD limiters (Vin, Iin, Vout, Iout, power with thermal derating), buck and boost operation, PSU mode |
 | Power stage | Synchronous buck with sensor-less [diode emulation](../internals/diode-emulation.md), LEDC or [MCPWM](../internals/pwm-drivers.md) gate driver |
 | Sensing | ADC abstraction for the [internal ADC](hardware/internal-adc.md), ADS1x15 and INA226, async sampling (< 900 µs in-out latency), [notch/median/IIR filters](../internals/signal-filters.md) |
 | Protection | Fast over-voltage / over-current shutdown, temperature derating, latency watchdog |
