@@ -359,8 +359,10 @@ without coordination. The gains are sized for that:
 
 - All chargers compute the same pack-current target from the same frames, so
   the cell loop gain does not add up. Its gain per frame is $K R/r$, with $R$
-  the short-term cell resistance (about 2–3 mΩ near the top for a 280 Ah
-  cell), and must stay below 1 with a frame of lag. Downward that holds for
+  the short-term cell resistance, and must stay below 1 with a frame of lag.
+  A model fitted to a field charge of a 280 Ah LFP pack near the top gives
+  1 mΩ at once plus 2 mΩ that builds up over about 30 s, so $R$ is about
+  2–3 mΩ. Downward that holds for
   $R < r/1.5$ (8.3 mΩ at 280 Ah with the defaults), upward for $R < 2r$. The slow upward gain keeps
   the polarization that relaxes after a current cut from being read as room
   for more current.
