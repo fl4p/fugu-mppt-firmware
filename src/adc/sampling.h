@@ -364,7 +364,7 @@ public:
     // concurrently with filter().
     bool notchAdaptive = true;
     float notchFreq = 100.0f;          // active/fixed notch frequency [Hz]
-    float notchQ = 20.0f, notchAmp = 0.0316228f; // NotchFilter::gainAmp(-30 dB)
+    float notchQ = 20.0f, notchAmp = 0.177828f; // NotchFilter::gainAmp(-15 dB)
     uint8_t rippleMode = 1; // bit 0 notch, bit 1 comb (sensor.conf ripple_filter)
     static constexpr float NOTCH_SNR_MIN = 15.0f; // min peak/mean ratio to trust an estimate
     static constexpr float RIPPLE_F_LO = 80.f, RIPPLE_F_HI = 140.f; // detector band [Hz]
@@ -385,6 +385,10 @@ public:
         notchAdaptive = adaptive;
         notchFreq = freqHz;
         notchQ = Q;
+        if (!(gain <= 0.f)) {
+            ESP_LOGW("sampler", "notch_depth %.1f dB > 0 would amplify, using -15", gain);
+            gain = -15.f;
+        }
         notchAmp = NotchFilter::gainAmp(gain);
     }
 

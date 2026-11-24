@@ -348,7 +348,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
         sensConf.getByte("notch_adaptive", 1) != 0,
         sensConf.f("notch_freq", 100.f),
         sensConf.f("notch_q", 20.f),
-        -30.f, rippleMode);
+        sensConf.f("notch_depth", -15.f), rippleMode);
     adcSampler.setRippleSource(sensors.Vout);
 
     // Glitch-safe median: pass dense load pulses through (unbiased current) but still clip impulse

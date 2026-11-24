@@ -127,8 +127,8 @@ An adaptive noise estimator exists only as a diagnostic (console `anf on`); it d
 An inverter on the DC bus draws ripple at twice the mains frequency (100 Hz for 50 Hz, 120 Hz for 60 Hz), which
 corrupts the MPPT power estimate. Each physical sensor whose own sample rate allows it (f0 < 0.45·fs) gets an IIR
 notch (biquad) at that frequency. Slower channels get none, and the notch settings have no effect on them.
-The notch is 30 dB deep at its centre. With Q 20 it is narrow: at 100 Hz it attenuates 6 dB at 1 Hz off and
-2.5 dB at 2 Hz off, and it passes the ripple's harmonics.
+The notch is 15 dB deep at its centre (`notch_depth`). With Q 20 it is narrow: at 100 Hz it attenuates 6 dB at
+1 Hz off and 2.5 dB at 2 Hz off, whatever the depth, and it passes the ripple's harmonics.
 
 - Gain at the notch frequency: −15 dB (fixed).
 - Quality factor: `notch_q`, default 20 (bandwidth ≈ f0/Q).
@@ -179,7 +179,7 @@ Attenuation of the comb (adaptive tuning on the ripple), next to the notch:
 | 450 | 100 Hz | −46 dB | −40 dB | −35 dB | −27 dB | −28 dB | −17 dB |
 | 513 | 100 Hz | −52 dB | −39 dB | −34 dB | −27 dB | −39 dB | −29 dB |
 | 1470 | 100 Hz | −78 dB | −40 dB | −34 dB | −26 dB | −66 dB | −58 dB |
-| notch, any fs | 100 Hz | −30 dB | −6 dB | −2.5 dB | −0.5 dB | 0 dB | 0 dB |
+| notch, any fs | 100 Hz | −15 dB | −6 dB | −2.5 dB | −0.5 dB | 0 dB | 0 dB |
 
 A comb ahead of the median also keeps the mean of a pulsed current: the median of an unfiltered pulse train or of
 leftover harmonics reads low.
@@ -190,7 +190,10 @@ In the closed-loop host simulator with captured inverter noise and bus ripple, t
 
 - With the battery at the output-voltage cap, the Vout limiter reads the filtered voltage. Ripple harmonics from an
   inverter that draws current pulses pass the notch, and the limiter then throttles the converter. In those runs the
-  notch kept 9–62 % of the available energy, the comb 85–96 %. With a pure-sine inverter both were equal.
+  notch kept 35–80 % of the available energy, the comb 85–96 %. With a pure-sine inverter both were equal.
+- A deeper notch made this worse. With a strong second harmonic near half the sample rate, the leftover
+  fundamental of a 15 dB notch keeps the median from passing the harmonic. At 30 dB the median output had more
+  ripple, the limiter cut the duty harder, and one run kept 9 % instead of 80 %.
 - With the ripple 1–3 Hz away from a fixed notch, the notch lost 8–17 % of the energy, the comb under 0.5 %. A
   60 Hz inverter (120 Hz ripple) with the filter fixed at 100 Hz cost the notch 84 % at the cap, the comb 2 %.
 - Without an output cap and with a spiky current, the comb lost 1–7 % against the notch. The median can no longer

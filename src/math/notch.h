@@ -13,7 +13,7 @@ public:
     //}
 
     // |H(f0)| = amp exactly (the denominator uses alpha, not alpha/amp), so the depth is gainDb itself
-    static float gainAmp(float gainDb) { return powf(10.f, gainDb / 20.f); }
+    static float gainAmp(float gainDb) { return expf(gainDb * 0.115129255f); } // 10^(dB/20); powf would link 1.6 KB
 
     void begin(float f, float gain = -30.f, float Q = 20.f) { tune(f, gainAmp(gain), Q); }
 
