@@ -345,5 +345,72 @@ class LiveTest(unittest.TestCase):
             m.live_steps(cap + "\nConf '/littlefs/conf/board.conf:bflow_sd' = '41'")
 
 
+def cap(**files):
+    return "\n".join(f"I (1) main: Conf '/littlefs/conf/{f.replace('_', '.')}:{k}' = '{v}'"
+                     for f, kv in files.items() for k, v in kv.items())
+
+
+# image bytes with the literals of every rule (newest firmware), and of a production build of it
+NEW_SIM = b"\0".join([m.GATE_INA, m.GATE_MOVED, m.GATE_ROLE, b"bflow_", m.RENAME_GATES["adc_fake_freq"],
+                      b"bflow_model", b"bflow_stuck", b"plant_c_in", b"plant_c_out", b""])
+NEW_FLEET = b"\0".join([m.GATE_INA, m.GATE_MOVED, m.GATE_ROLE, b"bflow_", m.RENAME_GATES["adc_fake_freq"],
+                        b"pv_isc", b"adc_freq", b""])
+
+
+class SetupBlockersTest(unittest.TestCase):
+    def blockers(self, image=None, **files):
+        return m.setup_blockers(m.parse_get_config(cap(**files)), image)
+
+    def test_bench_capture_before_migration(self):
+        # bench139c 2026-11-24: the vconv image failed setup on bf_model
+        got = self.blockers(NEW_SIM, vconv_conf=dict(isc="13.0", voc="76.0", c_in="470e-6", c_out="470e-6",
+                                                      bf_model="0", adc_freq="500"),
+                            board_conf=dict(adc_fake_freq="1221", bflow_sd="40"))
+        self.assertEqual(sorted(got), sorted([
+            "board.conf: adc_fake_freq was renamed to adc_freq", "vconv.conf: bf_model was renamed to bflow_model",
+            "vconv.conf: isc was renamed to pv_isc", "vconv.conf: voc was renamed to pv_voc",
+            "vconv.conf: c_in was renamed to plant_c_in", "vconv.conf: c_out was renamed to plant_c_out"]))
+
+    def test_new_key_beside_old_boots(self):
+        self.assertEqual(self.blockers(NEW_SIM, vconv_conf=dict(isc="1", pv_isc="1"),
+                                       board_conf=dict(adc_fake_freq="1", adc_freq="1")), [])
+
+    def test_production_image_ignores_vconv_conf(self):
+        # flat 2026-11-24: an unused vconv.conf with isc/voc; adc_freq/pv_isc are no vconv gate
+        self.assertEqual(self.blockers(NEW_FLEET, vconv_conf=dict(isc="3.0", voc="50.0", bf_model="0")), [])
+        self.assertEqual(len(self.blockers(None, vconv_conf=dict(isc="3.0", voc="50.0"))), 2)
+
+    def test_older_image_has_no_rule(self):
+        self.assertEqual(self.blockers(b"\0adc_fake_freq\0", board_conf=dict(adc_fake_freq="1"),
+                                       sensor_conf=dict(ina22x_resistor="1e-3"), limits_conf=dict(vin_max="80")), [])
+
+    def test_ina_rename_either_file(self):
+        self.assertEqual(self.blockers(NEW_FLEET, board_conf=dict(ina22x_alert="41")),
+                         ["ina22x_alert was renamed to ina226_alert"])
+        self.assertEqual(self.blockers(NEW_FLEET, board_conf=dict(ina22x_alert="41"),
+                                       sensor_conf=dict(ina226_alert="41")), [])
+
+    def test_moved_ina_keys(self):
+        self.assertEqual(self.blockers(NEW_FLEET, board_conf=dict(ina226_resistor="0.5e-3"),
+                                       sensor_conf=dict(ina226_resistor="0.0005")), [])
+        for sens in ({}, dict(ina226_resistor="1e-3")):
+            with self.subTest(sensor=sens):
+                self.assertEqual(self.blockers(NEW_FLEET, board_conf=dict(ina226_resistor="0.5e-3"), sensor_conf=sens),
+                                 ["board.conf ina226_resistor is no longer read, move it to sensor.conf"])
+
+    def test_role_keys_by_topo(self):
+        self.assertEqual(self.blockers(NEW_FLEET, sensor_conf=dict(vin_ch="0"), limits_conf=dict(iout_max="30")),
+                         ["sensor.conf: vin_ch is no longer read, use hv_v_ch",
+                          "limits.conf: iout_max is no longer read, use lv_i_max"])
+        self.assertEqual(self.blockers(NEW_FLEET, converter_conf=dict(topo="boost"), sensor_conf=dict(vin_ch="0")),
+                         ["sensor.conf: vin_ch is no longer read, use lv_v_ch"])
+        self.assertEqual(len(self.blockers(NEW_FLEET, converter_conf=dict(topo="sepic"))), 1)
+
+    def test_fix_steps_cover_vconv_and_adc(self):
+        now, after = m.live_steps(cap(board_conf=dict(adc_fake_freq="1221"), vconv_conf=dict(bf_model="0")))
+        self.assertEqual(now, ["set-config board.conf adc_freq 1221", "set-config vconv.conf bflow_model 0"])
+        self.assertEqual(after, ["del-config board.conf adc_fake_freq", "del-config vconv.conf bf_model"])
+
+
 if __name__ == "__main__":
     unittest.main()

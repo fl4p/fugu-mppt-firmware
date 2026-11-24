@@ -76,6 +76,59 @@ class Guards(unittest.TestCase):
             sys.stdin = stdin
 
 
+class FakeConfCon:
+    """get-config replies from a {file: text} map; a file mapped to None never completes."""
+    def __init__(self, files):
+        self.files, self.sent = files, []
+
+    def command(self, cmd, timeout=None):
+        self.sent.append(cmd)
+        f = cmd.split()[1]
+        text = self.files.get(f, f"W (1) conf: cannot read ConfFile /littlefs/conf/{f}")
+        return Dropped() if text is None else Ok(text.splitlines())
+
+
+class Ok(list):
+    ok = True
+
+
+class Dropped(list):
+    ok = False
+
+
+class ConfKeys(unittest.TestCase):
+    def run_check(self, files, image=b"adc_fake_freq was renamed to adc_freq\0", yes=False):
+        with tempfile.NamedTemporaryFile(suffix=".bin") as f:
+            f.write(image)
+            f.flush()
+            a = NS(bin=f.name, dry_run=False, yes=yes, would_refuse=False)
+            con = FakeConfCon(files)
+            stdin = sys.stdin
+            sys.stdin = open(os.devnull)
+            try:
+                return M.conf_keys_check(a, con, "dev"), a
+            finally:
+                sys.stdin.close()
+                sys.stdin = stdin
+
+    def test_leftover_key_refused_even_with_yes(self):
+        ok, a = self.run_check({"board.conf": "I (1) main: Conf '/littlefs/conf/board.conf:adc_fake_freq' = '1'"},
+                               yes=True)
+        self.assertFalse(ok)
+        self.assertTrue(a.would_refuse)
+
+    def test_clean_and_missing_files_pass(self):
+        ok, a = self.run_check({"board.conf": "I (1) main: Conf '/littlefs/conf/board.conf:adc_freq' = '1'"})
+        self.assertTrue(ok)
+        self.assertFalse(a.would_refuse)
+
+    def test_unread_file_is_unverified_not_clean(self):
+        ok, a = self.run_check({"sensor.conf": None})
+        self.assertFalse(ok)
+        ok, a = self.run_check({"sensor.conf": None}, yes=True)
+        self.assertTrue(ok)
+
+
 def havan_log(path):
     """(t, line)s of a pv/fugu_console.log excerpt ('YYYY-MM-DD HH:MM:SS,mmm  <dev>: <line>')."""
     out = []

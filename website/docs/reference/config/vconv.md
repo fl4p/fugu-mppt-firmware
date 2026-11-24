@@ -70,7 +70,9 @@ Four keys were renamed so they read as what they configure and stop colliding wi
 | `c_out`   | `plant_c_out` | the plant's capacitor                                             |
 
 An old key without its new one stops setup and names the replacement. `vconv set` takes the new
-names too.
+names too. `etc/migrate_side_keys.py` renames them in a config directory (`dir`) and prints the
+two-step console migration for a live board (`live`), as for `bf_model`/`bf_stuck` (now
+`bflow_model`/`bflow_stuck`).
 
 ## Sun and clouds
 

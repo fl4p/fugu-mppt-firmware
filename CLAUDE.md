@@ -74,7 +74,9 @@ path, version and sha256. Never ship a main-checkout build: it carries other ses
 the rest. It reads the broker and credentials from `etc/mqtt.env` (main checkout's as fallback), tunnels through
 `havan-ts` when the broker is not directly reachable, locks onto the exact hostname and runs pre-flight checks (also in
 `-n`): image flags, a `PENDING_VERIFY` running image, a `-dirty` image (refused for fry/flat unless `--allow-dirty` when the tree it was built in has
-uncommitted firmware inputs; non-firmware dirt does not block), rect-cal running/unsaved, a sweep or top-balance run
+uncommitted firmware inputs; non-firmware dirt does not block), conf keys the image fails setup on (renamed or role
+keys, from `get-config`; refused even with `--yes`, prints the `migrate_side_keys.py` two-step fix; an unreadable conf
+file asks), rect-cal running/unsaved, a sweep or top-balance run
 (need `--yes`), the RTC symbol layout vs the running build's archived ELF, the device's previous OTA record, and
 `--check CMD` outputs (repeatable, read-only commands, diffed after the OTA). A real OTA holds the `lock.sh` locks
 `ota-<device>` and `ota-relay` (refuses when held, `--lock-wait S` queues), stages the image on the relay with

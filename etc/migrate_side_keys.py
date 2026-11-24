@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Migrate sensor.conf and limits.conf from role keys to HV/LV side keys, move the INA226
 measurement keys (ina226_resistor, ina226_conv_time_us, ina226_ov) from board.conf to sensor.conf,
-rename the board.conf backflow switch pins panel_en/panel_sd to bflow_en/bflow_sd, and rename the
-INA226 keys ina22x_* to ina226_* (board.conf alert/addr, sensor.conf resistor/conv_time_us/ov).
+rename the board.conf backflow switch pins panel_en/panel_sd to bflow_en/bflow_sd, rename the
+INA226 keys ina22x_* to ina226_* (board.conf alert/addr, sensor.conf resistor/conv_time_us/ov), and
+rename board.conf adc_fake_freq and the vconv.conf keys (RENAMED_KEYS). setup_blockers() lists the
+keys a given image fails setup on (etc/ota_mqtt.py pre-flight).
 
 Firmware from the sensor-hv-lv change on reads only side keys (src/conv_side.h). A sensor.conf or
 limits.conf that still has a role key (vin_ch, iout_factor, vin_max, ...) fails setup at boot, so
@@ -54,8 +56,11 @@ INA_KEYS = {"ina22x_alert": "ina226_alert", "ina22x_addr": "ina226_addr",
             "ina22x_resistor": "ina226_resistor", "ina22x_conv_time_us": "ina226_conv_time_us",
             "ina22x_ov": "ina226_ov"}
 RENAMED_KEYS = {
-    "board.conf": {"panel_en": "bflow_en", "panel_sd": "bflow_sd", **INA_KEYS},
+    "board.conf": {"panel_en": "bflow_en", "panel_sd": "bflow_sd", "adc_fake_freq": "adc_freq", **INA_KEYS},
     "sensor.conf": dict(INA_KEYS),
+    # read only by CONFIG_FUGU_WITH_VCONV builds (src/adc/sensor_setup.cpp)
+    "vconv.conf": {"bf_model": "bflow_model", "bf_stuck": "bflow_stuck", "isc": "pv_isc", "voc": "pv_voc",
+                   "c_in": "plant_c_in", "c_out": "plant_c_out"},
 }
 
 
@@ -273,6 +278,12 @@ def migrate_dir(path, forced_topo=None, write=True):
             texts[sensor] = stext
             texts[board] = btext
         done += [("board.conf", k, "sensor.conf", v, v) for k, v in changes]
+    vconv = d / "vconv.conf"
+    if vconv.exists():
+        vtext, changes = rename_lines("vconv.conf", vconv.read_text())
+        if changes:
+            texts[vconv] = vtext
+            done += [("vconv.conf", o, n, v, v) for o, n, v in changes]
     if write:
         for f, text in texts.items():
             if not f.exists() or f.read_text() != text:
@@ -307,7 +318,8 @@ def live_steps(text, forced_topo=None, rollback=False, warnings=None):
     sens_raw = files.get("sensor.conf", {})
     # renames first: step 1 adds the new name, step 2 drops the old one, so either firmware boots
     # in between (the old one ignores the unknown new key)
-    for file, raw in (("board.conf", board_raw), ("sensor.conf", sens_raw)):
+    for file, raw in (("board.conf", board_raw), ("sensor.conf", sens_raw),
+                      ("vconv.conf", files.get("vconv.conf", {}))):
         for old, new, v in renames(file, raw):
             if rollback:
                 sets.append(f"set-config {file} {old} {v}")
@@ -352,6 +364,58 @@ def live_steps(text, forced_topo=None, rollback=False, warnings=None):
                 dels.append(f"del-config {file} {role}")
     # all sets first: an interrupted run leaves the old keys, which the old firmware still reads
     return sets + dels, after
+
+
+# ---- setup check: the keys a firmware image fails setup on
+
+# Byte strings only an image with that rule has (src/adc/sensor_setup.cpp, src/conv_side.h,
+# src/pwm/backflow.h); image=None applies every rule.
+GATE_INA = b"ina22x_* was renamed to ina226_*"
+GATE_MOVED = b" is no longer read, move it to sensor.conf"
+GATE_ROLE = b" is no longer read; with topo="
+# A plain new-key literal is not unique for these: adc_freq is also a vconv.conf key, pv_isc a
+# converter.conf key, bflow_<en|sd> is built at run time.
+RENAME_GATES = {"adc_fake_freq": b"adc_fake_freq was renamed to adc_freq",
+                "panel_en": b"bflow_\0", "panel_sd": b"bflow_\0",
+                "isc": b"plant_c_in\0", "voc": b"plant_c_in\0"}
+
+
+def _gate(image, lit):
+    return image is None or lit in image
+
+
+def setup_blockers(files, image=None):
+    """Messages for the keys in `files` ({file: {key: value}}, as parse_get_config) that make
+    `image` (the app .bin bytes) fail setup, the firmware's rules: a renamed key without its new
+    name, an INA226 key left in board.conf without an equal sensor.conf copy, any role key."""
+    out = []
+    board, sens = files.get("board.conf", {}), files.get("sensor.conf", {})
+    if _gate(image, GATE_INA):
+        for old, new in INA_KEYS.items():
+            if (old in board or old in sens) and new not in board and new not in sens:
+                out.append(f"{old} was renamed to {new}")
+    for file in ("board.conf", "vconv.conf"):
+        kv = files.get(file, {})
+        for old, new in RENAMED_KEYS[file].items():
+            if old in INA_KEYS:
+                continue
+            gate = RENAME_GATES.get(old, new.encode() + b"\0")
+            if old in kv and new not in kv and _gate(image, gate):
+                out.append(f"{file}: {old} was renamed to {new}")
+    if _gate(image, GATE_MOVED):
+        for k in MOVED_KEYS:
+            if k in board and (k not in sens or not same_value(board[k], sens[k])):
+                out.append(f"board.conf {k} is no longer read, move it to sensor.conf")
+    if _gate(image, GATE_ROLE):
+        try:
+            boost = topo_of(files.get("converter.conf", {}), None)
+        except MigrationError as e:
+            return out + [str(e)]
+        for file in ("sensor.conf", "limits.conf"):
+            for key in files.get(file, {}):
+                if side := side_key(file, key, boost):
+                    out.append(f"{file}: {key} is no longer read, use {side}")
+    return out
 
 
 def live_commands(text, forced_topo=None, rollback=False):

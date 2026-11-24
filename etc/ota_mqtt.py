@@ -50,6 +50,7 @@ from ota_common import (archive_elf, bootinfo_row, build_gate_driver,  # noqa: E
                         parse_bootinfo, parse_device_gate_driver, print_table, read_local_app_desc,
                         require_elf_archive)
 from ota_common import confirm as yes_no  # noqa: E402
+import migrate_side_keys as msk  # noqa: E402
 import rich  # noqa: E402,F401  (result table; fail before the OTA, not after it)
 
 elf_archive = require_elf_archive()  # vendored submodule (etc/idf-devtools); fail before any OTA
@@ -457,9 +458,48 @@ def guards(args, con, image, before, name=''):
     return ok
 
 
+CONF_FILES = ('board.conf', 'sensor.conf', 'limits.conf', 'converter.conf', 'vconv.conf')
+
+
+def conf_keys_check(args, con, name):
+    """Refuses (False) when the device's conf files hold keys the image fails setup on; a conf file
+    that could not be read asks first (unverified, not clean)."""
+    text, unread = [], []
+    for f in CONF_FILES:
+        r = None
+        for _ in range(2):
+            if (r := con.command(f'get-config {f}', timeout=8)).ok:
+                break
+        if r.ok:
+            text += r
+        else:
+            unread.append(f)
+    with open(args.bin, 'rb') as fh:
+        image = fh.read()
+    joined = '\n'.join(text)
+    blockers = msk.setup_blockers(msk.parse_get_config(joined), image)
+    for b in blockers:
+        print(f'⛔  {name}: {b} (the new image fails setup and stays off until rollback)')
+    if blockers:
+        try:
+            now, after = msk.live_steps(joined)
+            print(f'   fix before the OTA: ' + '; '.join(now) + (f'\n   after it is VALID: ' + '; '.join(after)
+                                                                 if after else ''))
+        except msk.MigrationError as e:
+            print(f'   etc/migrate_side_keys.py live: {e}')
+        args.would_refuse = True
+        return False
+    if unread:
+        print(f"⚠️  {name}: could not read {', '.join(unread)}: renamed keys unchecked")
+        return confirm('conf keys unverified', args)
+    print(f'{name}: conf keys ok for this image')
+    return True
+
+
 def preflight(args, con, tap, name, image, before):
     """guards() plus device activity, RTC layout and the last OTA record. Returns False to stop."""
     ok = guards(args, con, image, before, name)
+    ok = conf_keys_check(args, con, name) and ok
     busy = []
     rc = ' '.join(con.command('rect-cal status', timeout=8))
     if m := re.search(r'state=(running|fitting)', rc):
