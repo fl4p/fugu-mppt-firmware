@@ -505,11 +505,14 @@ stretch the current axis. The bins hold equal numbers of points sorted by `Ipk`.
 five bins of at least six points, and each spans at least about 0.8 ring periods so that the ring
 does not alias into a bin. A bin's value is the mean of the ring-corrected `1/L_i`.
 
-In DCM each cycle ramps the coil current from zero to `Ipk`, so the measured `L(Ipk)` is the secant
-inductance over that range, `L_s(I) = λ(I)/I` with `λ` the flux linkage. A datasheet DC-bias curve
-shows the incremental inductance `L_inc(I) = dλ/dI = L_s(I) + I·dL_s/dI`, the value that sets the
-ripple at a DC bias `I`. With the fitted line `L_s(I) = L(0)·(1 + k·I)` this is
-`L_inc(I) = L(0)·(1 + 2k·I)`: the incremental inductance falls twice as fast as the secant.
+In DCM each cycle ramps the coil current from zero to `Ipk` and back. The DCM relation inverts the
+charge per cycle, so for a current-dependent inductance the measured `L(Ipk)` is `λ²/(2E)`, with `λ`
+the flux linkage and `E` the energy stored at `Ipk` (and the L-free `Ipk = 2·Iout·Vout/(D·Vin)` is
+`2E/λ`). A datasheet DC-bias curve shows the incremental inductance `L_inc(I) = dλ/dI`, the value that
+sets the ripple at a DC bias `I`; the secant inductance is `L_s(I) = λ(I)/I`. With
+`L_inc(I) = L(0)·(1 + c·I)` the secant is `L(0)·(1 + c·I/2)` and the measured value `L(0)·(1 + c·I/3)`
+to first order. With the fitted line `L(Ipk) = L(0)·(1 + k·I)` the incremental inductance is therefore
+`L(0)·(1 + 3k·I)`: it falls three times as fast as the measured value.
 
 Two offsets tilt the apparent `L(Ipk)` and cannot be told apart from the coil's own DC-bias
 dependence over one sweep:

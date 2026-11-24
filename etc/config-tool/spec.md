@@ -748,7 +748,7 @@ amber.
   and Space work) folds or unfolds everything below it (`.tst-more`), which
   folded is out of the Tab order, in this order: a muted tag line where it
   says what the description does not ("Drives the converter" on the MPP
-  sweep, "Drives the half-bridge" on both coil cards, "Drives the converter
+  sweep, "Drives the half-bridge" on the coil cards, "Drives the converter
   · writes coil.conf" on rect-cal; none on the backflow test and Clear
   latched faults); the option checkbox where the command has one and *Risk*,
   *Needs*, *Takes* and *Sends* (the exact command and the abort command,
@@ -764,11 +764,14 @@ amber.
   (`…; stopping`, `…; aborting`), `measure-coil: L = …` or `peak LS …`
   completes it ("finishing …"); before the header it is indeterminate,
   "stopping the converter …" once `dc 0` went out, else "starting …".
+  Coil DC bias (`tstBiasProgress`): the lines up to the first
+  `measure-coil: done` are pass 1 (half the bar, "pass 1 of 2: …"), the
+  rest pass 2 (0.5 + f/2, "pass 2 of 2: …", "starting …" before its header).
   Other tests: indeterminate (a sliding segment; a faded full bar under
   `prefers-reduced-motion`), no `aria-valuenow`; the run or its result (dot + summary,
   green pass, amber fail/warn, muted detail lines in the normal font, a
   note, a Check button where needed); the sweep chart on the MPP sweep card,
-  the coil chart on both coil cards (below); "Device output" stays folded
+  the coil chart on the coil cards (below); "Device output" stays folded
   while a coil card runs, the chart is the live view;
   a collapsible "Device output (N lines)" (open while running, folded once a
   result is in). A folded card shows none of these. Starting a
@@ -799,6 +802,7 @@ amber.
 | MPP sweep: Read last sweep | Measurements | `sweep-curve` | – | marker | – |
 | Coil inductance (L0) | Measurements | `measure-coil l0` | confirm | `measure-coil: done` (300 s) | – |
 | Coil inductance: Save L0 | Measurements | `set-config coil.conf L0 <%.6e>` | – | marker | `get-config coil.conf` |
+| Coil DC bias | Measurements | `measure-coil l0`, then `measure-coil l0 f=<Hz>` | confirm | `measure-coil: done` per pass (300 s each) | – |
 | Backflow switch | Self-tests | `selftest bflow`, abort `selftest abort` | typed | a verdict or `selftest bflow: <why>` line (240 s) | `selftest` |
 | Clear latched faults | Self-tests | `selftest clear` | typed | marker | `selftest` |
 | Low-side timing (rect-cal) | Calibration | `rect-cal [force]`, abort `rect-cal abort` | confirm; typed with force | `rectcal: done:` / `failed:` (120 s) | `rect-cal status` |
@@ -823,8 +827,34 @@ amber.
   `InductivityDcBias`), each label above its line on the right, else left,
   else below, clear of the labels before it; after a ring fit the caption
   "Dots: raw per-step values, they swing with the DCM ring (<f> kHz); the
-  line is the ring-corrected result."; under the chart "L drops ≤ <x> %/A up to <hi> A" or
-  "No drop resolved up to <hi> A". LS: Iout over the LS count, grey in CCM,
+  line is the ring-corrected result."; with a resolved drop the incremental
+  inductance L_inc = L0·(1 + 3k·I) as a solid accent line labelled
+  "incremental (DC bias)" (a DCM row measures λ²/(2E), λ the flux linkage and
+  E the stored energy, which for L_inc = L0·(1 + c·I) is L0·(1 + c·I/3) to
+  first order); under the chart "L drops ≤ <x> %/A up to <hi> A; incremental L
+  at <hi> A: <L> µH (−d % vs 0 A)" or "No drop resolved up to <hi> A, so no
+  incremental L". Coil DC bias (`bias`): the lines split at the first
+  `measure-coil: done` into two passes (`coilBiasPasses`); a second pass
+  whose header `fsw=` is within 2 % of the first's (firmware that ignores
+  `f=`) is dropped. Both passes' rows, step lines and bins as above, the
+  second pass's marks square (`rect`); only the coil.conf L0 line (no
+  result line, no 0.95·L0); no slope line or verdict. The model
+  (`coilBiasModel`) fits the ring-corrected bins of every pass with a result
+  (`coilFitPts`: bin centre, L, relative σ = hypot(se, sys); a pass without
+  bins gives its result at its fitted rows' mean Ipk, σ 3 %): with
+  λ = Ipk·L, 1/L = Σ cₙλⁿ by weighted least squares, n = 0, 2 (inductance
+  even in the current), and n = 4 too from 4 points when that lowers χ² by
+  more than 4; a fit whose 1/L_inc is not positive and monotonic over
+  [0, λmax] is rejected. Then i = λ·Σ cₙ(n+2)/2·λⁿ, secant λ/i, incremental
+  1/Σ cₙ(n+2)(n+1)/2·λⁿ, the measured λ²/(2E) = 1/Σ cₙλⁿ at Ipk = λ·Σ cₙλⁿ.
+  λmax is the largest fitted row's λ = (Vin − Vout)·D/fsw (ring-free).
+  Drawn from λ = 0: the measured curve (dashed `fit cv`, through the bins)
+  over the firmware's Ipk and the incremental curve (solid accent `inc cv`)
+  over i. Before the first pass has bins the hint "curves after the first
+  pass". Below the SVG a legend (`.tst-legend`, wraps): "first pass,
+  <f> kHz", "second pass, <f> kHz", "fit", "incremental (DC bias)"; after a
+  ring fit "Small marks: raw per-step values, they swing with the DCM ring;
+  large marks: ring-corrected values with their error bars.". LS: Iout over the LS count, grey in CCM,
   vertical lines at `ideal_LS` (solid) and `auto_LS` (dashed), the `peak LS`
   point green with its label. Line labels sit on top with a background
   halo; the SVG has an `aria-label` summary (also the visually hidden
@@ -852,7 +882,17 @@ amber.
   Once `dc 0` went out, every ending (result, failure, refusal, timeout, lost
   link) sends `mppt` and appends "Resumed MPPT." ("MPPT already enabled"
   counts) or, amber, "MPPT not resumed (<why>): send “mppt”." to the note.
-  The device lock is held from the first command to `mppt`. Any other
+  The device lock is held from the first command to `mppt`. Coil DC bias
+  sends its second pass (`next`) once the first ended, with the same
+  ramp-down/backoff retry; `f=` is `tstBiasHz()`: 20 kHz, or the first
+  500 Hz step with fsw·L0·0.95 ≥ 1.005 Ω for the card's coil.conf L0 (the
+  firmware refuses fsw·L0·0.95 ≤ 1 Ω for the L0 it booted with). No second
+  pass when the first gave no L ("The first pass gave no inductance, so the
+  higher-current pass was not started.") or `f=` > 0.9 × the first pass's
+  `fsw=`; a refusal ("The higher-current pass was refused: <reason>.")
+  keeps the first pass's result; no reply, a lost link or a timeout in the
+  second pass ends unknown with the first pass's result shown. The busy text
+  names the command of the pass that runs. Any other
   refusal (PSU/PV mode, a manual duty, …) ends the run with the firmware's
   reason plus "The editor stops only MPPT for this test." where it names the
   mode; nothing is stopped.
@@ -894,8 +934,23 @@ amber.
   verified: a limiter was active." With fewer than 3 points: "The device
   recorded only N point(s), so there is no curve." and no chart (also for
   **Read last sweep**, which has no stop line). Counts are pluralised
-  ("1 point"); failure lines of `measure-coil` (need Vin>Vout+1, too few points, …)
-  → "No result: …".
+  ("1 point"); failure lines of `measure-coil` (need Vin>Vout+1, too few points,
+  `fsw <f> Hz: <why>`, …) → "No result: …". Coil DC bias (`coilBiasSum`):
+  "<L0> µH at low current; 10 % lower at <i> A, 20 % lower at <i> A" (or
+  "no 20 % drop up to <imax> A", "no 10 % drop up to <imax> A"; first
+  crossing of the incremental curve over [0, λmax], imax = i(λmax)), then
+  "Incremental inductance, the value a datasheet's DC-bias curve shows, from
+  a fit through N ring-corrected values[ of both passes].", the same drop for
+  the secant ("Averaged from zero current (secant inductance): …"), per pass
+  "<First|Second> pass at <f> kHz: L = <L> µH, peak current up to <i> A." (i
+  from the model), "Neither pass resolved a drop …" when the slope lines say
+  so, and amber notes: the skip or refusal, "This firmware ignored “f=” …
+  needs newer firmware (measure-coil l0 f=). Only the first pass is used.",
+  "The switching frequency was not restored: <line>." (`fsw <f> Hz restore
+  failed …`), "Second pass: <failure>", a moved Iout zero. Green only with
+  both passes and no note; without a model "L = <L> µH; too few
+  ring-corrected values for a DC-bias curve", the first pass's failure or
+  "No result in the output".
 * **MPP sweep card**: one card with two actions. **Read last sweep** sends
   `sweep-curve` like a status read (no confirm, holds the device lock);
   **Run sweep** is the confirmed `sweep` run, finished by `sweep-curve`. Both

@@ -468,6 +468,10 @@
   .tst-chart .bpt { fill:var(--fg); stroke:var(--bg); stroke-width:1.5; }
   .tst-chart .fit { stroke:var(--icon); stroke-width:1.6; stroke-dasharray:6 3; }
   .tst-chart .inc { stroke:var(--accent); stroke-width:1.6; }
+  .tst-chart path.cv { fill:none; stroke-linejoin:round; }
+  .tst-legend { display:flex; flex-wrap:wrap; gap:4px 14px; margin:6px 0 0; color:var(--muted); font-size:12.5px; }
+  .tst-legend span { display:inline-flex; align-items:center; gap:5px; }
+  .tst-legend svg { display:inline-block; width:14px; height:10px; flex:none; overflow:visible; }
   .tst-chart text.res-lab { fill:var(--icon); font-size:11.5px; font-weight:600; }
   .tst-chart text.hint-lab { fill:var(--muted); font-style:italic; }
   .tst-chart text.inc-lab { fill:var(--accent); }
@@ -3886,6 +3890,14 @@ const TESTS = [
     risk:"Drives the half-bridge in manual PWM up to 2 A output. The firmware has no abort for it.",
     does:()=>"Charging stops (“dc 0”), then the firmware sweeps the duty in manual PWM (diode emulation, up to 2 A output) for about 1–1.5 min; afterwards MPPT resumes if it was on. There is no abort command. Nothing is written: Save L0 does that afterwards.",
     end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
+  { id:"coilbias", group:"Measurements", title:"Coil DC bias", root:"measure-coil", optional:true, bias:true,
+    cmd:()=>"measure-coil l0", cmd2:()=>"measure-coil l0 f="+tstBiasHz(), next:tstBiasNext,
+    confirm:"plain", tag:"drives the half-bridge", chart:true,
+    what:"Measures how the coil's inductance falls as its current rises.",
+    needs:"MPPT or a converter stopped with “dc 0”, not PSU/PV mode; Vin above Vout + 1 V (sun); a build with CONFIG_FUGU_WITH_MEASURE_COIL, for the second pass firmware with “measure-coil l0 f=” and the MCPWM gate driver.", dur:"about 2–3 min, no abort",
+    risk:"Drives the half-bridge in manual PWM up to 2 A output, the second pass at a lower switching frequency (the coil may whine). The firmware has no abort for it.",
+    does:()=>`Charging stops (“dc 0”), then the firmware sweeps the duty twice in manual PWM (diode emulation, up to 2 A output): at the normal switching frequency, then at ${tstBiasHz()/1000} kHz, which drives a higher peak current through the coil. The normal frequency is restored after the second sweep, and MPPT resumes if it was on. There is no abort command. Nothing is written.`,
+    end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
 
   { id:"bflow", group:"Self-tests", title:"Backflow switch", root:"selftest", cmd:()=>"selftest bflow", abort:"selftest abort",
     confirm:"typed",
@@ -4037,7 +4049,7 @@ function parseBflow(lines){
 
 // `measure-coil` output → summary.
 function parseCoil(lines){
-  let L=null, kind="", bad=null, l0=null, disturbed=false, peak=null, ofs=null, lc=null, lsApplied=null, skip=null, done=false;
+  let L=null, kind="", bad=null, l0=null, disturbed=false, peak=null, ofs=null, lc=null, lsApplied=null, skip=null, done=false, restore=null;
   for (const raw of lines){
     const l=tstMsgOf(tstLine(raw)); let m;
     if ((m=l.match(/\bmeasure-coil: L = ([\d.]+) uH\s+\((ring fit|median of)/))){
@@ -4053,10 +4065,12 @@ function parseCoil(lines){
     else if ((m=l.match(/\bapplied rect_offset (-?[\d.]+) ns \((-?\d+) ct, ([^)]+)\)/))) lsApplied=`${m[1]} ns (${m[2]} ct, ${m[3]})`;
     else if ((m=l.match(/\bapply skipped: (.*)$/))) skip=m[1];
     else if (/\bmeasure-coil: done\b/.test(l)) done=true;
-    else if ((m=l.match(/\bmeasure-coil: ((?:need |only |empty |converter |RT transition|missing |too few |FAILED |L0 not applied|.*restore failed).*)$/)) || (m=l.match(/^\s*(converter disabled \(protection\?\); aborting)/)))
+    else if ((m=l.match(/\bmeasure-coil: ((?:need |only |empty |converter |RT transition|missing |too few |FAILED |L0 not applied|fsw \d+ Hz: |.*restore failed).*)$/)) || (m=l.match(/^\s*(converter disabled \(protection\?\); aborting)/))){
       bad = bad || m[1];
+      if (/restore failed/.test(m[1])) restore=m[1];
+    }
   }
-  return { L, kind, bad, l0, disturbed, peak, ofs, lc, lsApplied, skip, done };
+  return { L, kind, bad, l0, disturbed, peak, ofs, lc, lsApplied, skip, done, restore };
 }
 
 // measure-coil progress from the sweep header (`band lo..hi step s` / `sweep lo..hi`) and the rows (H or LS count
@@ -4075,6 +4089,12 @@ function tstProgress(lines){
   if (!step) return { f, text: end ? "finishing …" : Math.round(f*100)+" %" };
   const n=Math.floor((hi-lo)/step)+1;
   return { f, text: end ? "finishing …" : `step ${x==null ? 0 : Math.min(n, Math.round((x-lo)/step)+1)} of ${n}` };
+}
+// coilbias: the first pass fills half the bar, the second the rest
+function tstBiasProgress(lines){
+  const [a, b, two]=coilPasses(lines), p=tstProgress(two ? b : a);
+  if (!two) return { f: p.f==null ? null : p.f/2, text: p.f==null ? p.text : "pass 1 of 2: "+p.text };
+  return { f: 0.5+(p.f||0)/2, text:"pass 2 of 2: "+(p.f==null ? "starting …" : p.text) };
 }
 
 // `rect-cal status` → state line fields.
@@ -4175,33 +4195,143 @@ function parseCoilPlot(lines){
 }
 
 // L(Ipk) model from the fit's slope (coil_fit.h: k = dL/dIpk / L(Ipk→0)), anchored on the bins' mean: the measured
-// secant L_s(I) = L0·(1 + k·I) and the incremental (DC-bias) L_inc = dλ/dI = L_s + I·dL_s/dI = L0·(1 + 2k·I), the
-// latter only for a resolved slope. µH, A. null: no slope.
+// line L0·(1 + k·I) and the incremental (DC-bias) L_inc = dλ/dI. A DCM cycle measures L = λ²/(2E) (λ flux linkage, E
+// the energy at Ipk), so L_inc = L0·(1 + c·I) measures as L0·(1 + c·I/3): L_inc = L0·(1 + 3k·I) to first order, only
+// for a resolved slope. µH, A. null: no slope.
 function coilLModel(p){
   const s=p.slope, n=p.bins.length;
   if (!s || !n) return null;
   const ic=p.bins.reduce((a, b)=>a+(b.lo+b.hi)/2, 0)/n, L0=p.bins.reduce((a, b)=>a+b.L, 0)/n/(1+s.k*ic);
   if (!(L0>0)) return null;
-  return { L0, k:s.k, lo:s.lo, hi:s.hi, sec:i=>L0*(1+s.k*i), inc: s.drop!=null ? i=>L0*(1+2*s.k*i) : null };
+  return { L0, k:s.k, lo:s.lo, hi:s.hi, meas:i=>L0*(1+s.k*i), inc: s.drop!=null ? i=>L0*(1+3*s.k*i) : null };
 }
 
-// The coil sweep (parseCoilPlot of `lines`) into `fig`, live while rows arrive; l0: coil.conf L0 (H) or 0.
-function tstCoilChart(fig, lines, cw, l0){
-  const W=Math.max(280, Math.min(760, Math.round((cw||520)/10)*10)), key=[lines.length, lines[0], W, l0].join();
+// coilbias output: lines up to the first `measure-coil: done`, the rest, and whether that line came
+function coilPasses(lines){
+  const i=lines.findIndex(l=>/\bmeasure-coil: done\b/.test(tstLine(l)));
+  return i<0 ? [lines, [], false] : [lines.slice(0, i+1), lines.slice(i+1), true];
+}
+// the passes for the chart and the model; a second pass at the first one's frequency (firmware that ignores f=) is dropped
+function coilBiasPasses(lines){
+  const [a, b]=coilPasses(lines), ps=[parseCoilPlot(a)], q=parseCoilPlot(b);
+  if (q.fsw && !(Math.abs(q.fsw/(ps[0].fsw||1)-1)<0.02)) ps.push(q);
+  return ps;
+}
+// ring-corrected L(Ipk) of a pass: its bins, else its result at the fitted rows' mean Ipk; x A, y µH, s relative 1σ
+function coilFitPts(p){
+  if (p.bins.length) return p.bins.map(b=>({ x:(b.lo+b.hi)/2, y:b.L, s:Math.hypot(b.se, b.sys)||0.01 }));
+  const u=p.pts.filter(q=>!q.g);
+  return p.L!=null && u.length ? [{ x:u.reduce((a, q)=>a+q.x, 0)/u.length, y:p.L, s:0.03 }] : [];
+}
+// DC-bias model through ring-corrected L(Ipk) points. A DCM cycle measures L = λ²/(2E) at Ipk = 2E/λ (λ = Ipk·L flux
+// linkage, E the energy at Ipk), so 1/L = 2E/λ² = Σ c·λⁿ is linear in c: weighted least squares. Magnetization is odd in
+// the current, so the inductance is even: n = 0, 2, and 4 from 4 points when that lowers χ² by more than 4 and keeps the
+// curves monotonic. Then E = Σ c·λⁿ⁺²/2, current i = dE/dλ = λ·Σ c·(n+2)/2·λⁿ, secant λ/i, incremental
+// dλ/di = 1/Σ c·(n+2)(n+1)/2·λⁿ. Curves as functions of λ (µWb) up to the largest point's or lx; µH, A. null: under 2
+// points or no positive monotonic fit.
+function coilBiasModel(pts, lx){
+  const n=pts.length;
+  if (n<2) return null;
+  const lam=pts.map(p=>p.x*p.y), lmax=Math.max(...lam, lx||0);
+  const sum=(c, ex, w, l)=>c.reduce((s, v, j)=>s+v*w(ex[j])*l**ex[j], 0);
+  const W={ meas:()=>1, sec:e=>(e+2)/2, inc:e=>(e+2)*(e+1)/2 };
+  const lsq=ex=>{                                                 // normal equations, Gauss-Jordan
+    const k=ex.length, N=Array.from({ length:k }, ()=>new Array(k+1).fill(0));
+    pts.forEach((p, j)=>{ const w=(p.y/p.s)**2, a=ex.map(e=>lam[j]**e);
+      for (let r=0; r<k; r++){ for (let c=0; c<k; c++) N[r][c]+=w*a[r]*a[c]; N[r][k]+=w*a[r]/p.y; } });
+    for (let c=0; c<k; c++){
+      if (!(Math.abs(N[c][c])>1e-300)) return null;
+      for (let r=0; r<k; r++) if (r!==c){ const m=N[r][c]/N[c][c]; for (let j=c; j<=k; j++) N[r][j]-=m*N[c][j]; }
+    }
+    const c=N.map((r, j)=>r[k]/N[j][j]);
+    // positive, and 1/L_inc monotonic over [0, λmax]
+    const g=Array.from({ length:41 }, (_, j)=>sum(c, ex, W.inc, lmax*j/40)), d=g.slice(1).map((v, j)=>v-g[j]);
+    if (!(c[0]>0) || !g.every(v=>v>0) || !(sum(c, ex, W.meas, lmax)>0) || (d.some(v=>v>0) && d.some(v=>v<0))) return null;
+    return { ex, c, chi:pts.reduce((s, p, j)=>s+((1/p.y-sum(c, ex, W.meas, lam[j]))*p.y/p.s)**2, 0) };
+  };
+  const a=lsq([0, 2]), b=n>=4 ? lsq([0, 2, 4]) : null, f = b && (!a || a.chi-b.chi>4) ? b : a;
+  if (!f) return null;
+  const S=(w, l)=>sum(f.c, f.ex, W[w], l), cur=l=>l*S("sec", l);
+  const m={ quart:f===b, n, lmax, L0:1/f.c[0], imax:cur(lmax), cur, inc:l=>1/S("inc", l), sec:l=>1/S("sec", l),
+    meas:l=>1/S("meas", l), xmeas:l=>l*S("meas", l) };
+  // current where L(λ)/L0 first reaches 1 - d, linear between 400 samples; null: not within the measured range
+  m.drop=(L, d)=>{ let l0=0, r0=1;
+    for (let j=1; j<=400; j++){ const l=lmax*j/400, r=L(l)/m.L0;
+      if (r<=1-d) return cur(l0+(l-l0)*(r0-(1-d))/(r0-r));
+      l0=l; r0=r; }
+    return null; };
+  return m;
+}
+// the model of the passes with a result, up to the flux of their largest fitted row (λ = Ipk·L = (Vin-Vout)·D/fsw, ring-free)
+const coilBiasFit = ps => { const r=ps.filter(q=>coilFitPts(q).length);
+  return coilBiasModel(r.flatMap(coilFitPts), Math.max(0, ...r.flatMap(q=>q.pts.filter(o=>!o.g).map(o=>o.x*o.y)))); };
+// coilbias: the switching frequency of the second pass, the lowest the firmware takes: 20 kHz, or more where
+// fsw·L0·0.95 must stay above 1 Ω (coil.conf L0; the firmware checks the value it booted with)
+function tstBiasHz(){
+  const l0=tstL0Cur(tstResult("coilbias"));
+  let f=l0>0 ? Math.ceil(1/(0.95*l0)/500)*500 : 0;
+  if (f*l0*0.95<1.005) f+=500;
+  return Math.max(20000, f);
+}
+// coilbias after its first pass: { cmd } of the second, or { skip: why not }
+function tstBiasNext(lines){
+  const p=parseCoilPlot(lines), f=tstBiasHz();
+  if (p.L==null) return { skip:"The first pass gave no inductance, so the higher-current pass was not started." };
+  if (p.fsw && f>0.9*p.fsw) return { skip:`This coil allows no switching frequency below ${f/1000} kHz, close to the normal ${+(p.fsw/1000).toFixed(1)} kHz, so the higher-current pass was not started.` };
+  return { cmd:"measure-coil l0 f="+f };
+}
+// where L (a curve of the model m) is 10 % and 20 % lower than at 0 A, in words
+function coilDropTxt(m, L){
+  const a=m.drop(L, 0.1), b=a!=null && m.drop(L, 0.2), A=v=>v.toFixed(1)+" A";
+  return a==null ? `no 10 % drop up to ${A(m.imax)}` : `10 % lower at ${A(a)}, `+(b!=null ? `20 % lower at ${A(b)}` : `no 20 % drop up to ${A(m.imax)}`);
+}
+// coilbias result: the incremental inductance's drop, both passes, why a pass is missing
+function coilBiasSum(lines, skip){
+  const [a, b]=coilPasses(lines), c1=parseCoil(a), c2=parseCoil(b), ps=coilBiasPasses(lines);
+  const pa=parseCoilPlot(a), pb=parseCoilPlot(b), ign=pb.fsw && ps.length<2, kHz=v=>+(v/1000).toFixed(1)+" kHz";
+  const m=coilBiasFit(ps), notes=[];
+  if (skip) notes.push(skip);
+  if (ign) notes.push(`This firmware ignored “f=” and ran the second pass at ${kHz(pb.fsw)} again: the higher-current pass needs newer firmware (measure-coil l0 f=). Only the first pass is used.`);
+  if (c2.restore) notes.push(`The switching frequency was not restored: ${c2.restore}.`);
+  else if (c2.bad && !ign) notes.push("Second pass: "+c2.bad);
+  if (c1.disturbed || c2.disturbed) notes.push("The Iout zero moved by more than 0.02 A during a pass: the values may be off.");
+  if (!m) return c1.L ? { cls:"warn", text:`L = ${c1.L} µH; too few ring-corrected values for a DC-bias curve`, details:notes }
+    : c1.bad ? { cls:"fail", text:"No result: "+c1.bad, details:notes } : c1.done ? { cls:"warn", text:"No result in the output", details:notes } : null;
+  const top=ps.map(p=>p.pts.filter(q=>!q.g).reduce((v, q)=>Math.max(v, m.cur(q.x*q.y)), 0));
+  const passes=ps.map((p, i)=>`${i ? "Second" : "First"} pass at ${kHz(p.fsw)}: `+(p.L!=null ? `L = ${p.L} µH, ` : "")+`peak current up to ${top[i].toFixed(1)} A.`);
+  const res = pa.slope || pb.slope ? ps.some(p=>p.slope && p.slope.drop!=null) : true;
+  return { cls: notes.length || ps.length<2 ? "warn" : "pass", text:`${m.L0.toFixed(1)} µH at low current; ${coilDropTxt(m, m.inc)}`,
+    details:[ `Incremental inductance, the value a datasheet's DC-bias curve shows, from a fit through ${plural(m.n, "ring-corrected value")}${ps.length>1 ? " of both passes" : ""}.`,
+      `Averaged from zero current (secant inductance): ${coilDropTxt(m, m.sec)}.`,
+      ...passes,
+      ...(res ? [] : ["Neither pass resolved a drop beyond the current-sensor and timing offsets, so a small slope may not be the coil's."]),
+      ...notes ] };
+}
+
+// The coil sweep (parseCoilPlot of `lines`) into `fig`, live while rows arrive; l0: coil.conf L0 (H) or 0. bias: both
+// passes of a coilbias run (the second one's marks square), the DC-bias model's fit and incremental curves, a legend.
+function tstCoilChart(fig, lines, cw, l0, bias){
+  const W=Math.max(280, Math.min(760, Math.round((cw||520)/10)*10)), key=[lines.length, lines[0], W, l0, bias].join();
   if (fig._k===key) return;
   fig._k=key;
-  const p=parseCoilPlot(lines), use=p.pts.filter(q=>!q.g), lm=!p.ls && coilLModel(p);
-  if (!p.pts.length){ fig.hidden=true; fig.replaceChildren(); return; }
+  const ps=bias ? coilBiasPasses(lines) : [parseCoilPlot(lines)], p=ps[0], pts=ps.flatMap(q=>q.pts), use=pts.filter(q=>!q.g);
+  const lm=!bias && !p.ls && coilLModel(p), bm=bias && coilBiasFit(ps);
+  if (!pts.length){ fig.hidden=true; fig.replaceChildren(); return; }
   fig.hidden=false;
   const narrow=W<440, H=narrow ? 190 : 210, uL=l0*1e6, ext=(a, v)=>{ if (Number.isFinite(v)){ a[0]=Math.min(a[0], v); a[1]=Math.max(a[1], v); } };
+  // the model's curves over λ from 0 to the largest point's: through the bins, and the incremental inductance
+  const cv=bm ? [[bm.xmeas, bm.meas, "fit"], [bm.cur, bm.inc, "inc"]].map(([x, y, cls])=>({ cls,
+    xy:Array.from({ length:41 }, (_, j)=>{ const l=bm.lmax*j/40; return [x(l), y(l)]; }) })) : [];
   const xr=[Infinity, -Infinity], yr=[Infinity, -Infinity];
-  for (const q of p.pts) ext(xr, q.x);
-  for (const q of use.length ? use : p.pts) ext(yr, q.y);
+  for (const q of pts) ext(xr, q.x);
+  for (const q of use.length ? use : pts) ext(yr, q.y);
   if (p.ls){ ext(xr, p.ideal); ext(xr, p.auto); yr[0]=Math.min(0, yr[0]); }
   else {
-    for (const b of p.bins){ ext(xr, b.lo); ext(xr, b.hi); ext(yr, b.L*(1-b.se-b.sys)); ext(yr, b.L*(1+b.se+b.sys)); }
-    ext(yr, p.L); if (uL){ ext(yr, uL); ext(yr, uL*0.95); }
+    for (const b of ps.flatMap(q=>q.bins)){ ext(xr, b.lo); ext(xr, b.hi); ext(yr, b.L*(1-b.se-b.sys)); ext(yr, b.L*(1+b.se+b.sys)); }
+    if (!bias) ext(yr, p.L);
+    if (uL){ ext(yr, uL); if (!bias) ext(yr, uL*0.95); }
     if (lm && lm.inc){ ext(yr, lm.inc(lm.lo)); ext(yr, lm.inc(lm.hi)); }
+    for (const c of cv) for (const [x, y] of c.xy){ ext(xr, x); ext(yr, y); }
   }
   if (!(yr[1]-yr[0]>1e-3)){ yr[0]-=0.5; yr[1]+=0.5; }
   const dx=(p.ls ? 10 : 0.2)-(xr[1]-xr[0]);                       // the first rows: no hair-thin x range
@@ -4209,7 +4339,7 @@ function tstCoilChart(fig, lines, cw, l0){
   const xd=niceTicks(xr[0], xr[1], narrow ? 4 : 6), yd=niceTicks(yr[0]-(yr[1]-yr[0])*0.05, yr[1]+(yr[1]-yr[0])*0.05, 4);
   const { X, Y, L, R } = tstAxes(xd, yd, W, H, p.ls ? "ct" : "A", p.ls ? "A" : "µH");
   const f=v=>v.toFixed(1), inY=v=>v>=yd.lo && v<=yd.hi;
-  const svg=svgEl("svg", { viewBox:`0 0 ${W} ${H}`, role:"img", "data-points":p.pts.length });
+  const svg=svgEl("svg", { viewBox:`0 0 ${W} ${H}`, role:"img", "data-points":pts.length });
   svg.append(...tstAxes.els);
   const labs=[], used=[];                                          // line labels go on top of the points
   // a horizontal line's label above it on the right, else left, else below, clear of the labels placed before
@@ -4220,58 +4350,73 @@ function tstCoilChart(fig, lines, cw, l0){
   const hline=(v, cls)=>svgEl("line", { x1:L, x2:W-R, y1:f(Y(v)), y2:f(Y(v)) }, cls);
   const vline=(v, cls, label, i)=>{ svg.append(svgEl("line", { x1:f(X(v)), x2:f(X(v)), y1:Y(yd.hi), y2:Y(yd.lo) }, cls));
     const t=svgEl("text", { x:f(X(v)+3), y:Y(yd.hi)+10+11*i }, cls.split(" ")[0]+"-lab"); t.textContent=label; labs.push(t); };
+  // a mark: round, or square for the second pass
+  const dot=(x, y, r, cls, sq)=>sq ? svgEl("rect", { x:f(x-r*0.9), y:f(y-r*0.9), width:f(r*1.8), height:f(r*1.8) }, cls) : svgEl("circle", { cx:f(x), cy:f(y), r }, cls);
   const u=v=>+v.toFixed(2)+" µH", how={ ring:" (ring fit)", median:" (median, ring not resolved)" }[p.fit]||"";
-  const res=!p.ls && p.L!=null && inY(p.L);
+  const kHz=v=>+(v/1000).toFixed(1)+" kHz";
+  const res=!bias && !p.ls && p.L!=null && inY(p.L);
   if (p.ls){
     if (p.ideal!=null) vline(p.ideal, "ref", "ideal "+p.ideal, 0);
     if (p.auto!=null) vline(p.auto, "ref dash", "auto "+p.auto, 1);
     for (const q of p.pts) if (inY(q.y)) svg.append(svgEl("circle", { cx:f(X(q.x)), cy:f(Y(q.y)), r:2.2 }, q.g ? "pt gr" : "pt"));
   } else {
     if (res) hlab(Y(p.L), "res", "L = "+u(p.L)+how);
-    else if (!p.end) hlab(Y(yd.hi)+14, "hint", "ring-corrected L at the end");
-    for (const [v, cls, t] of uL ? [[uL, "ref", "coil.conf L0 "+u(uL)], [uL*0.95, "ref dash", "model (0.95·L0)"]] : [])
+    else if (!bias && !p.end) hlab(Y(yd.hi)+14, "hint", "ring-corrected L at the end");
+    else if (bias && !bm && !p.end) hlab(Y(yd.hi)+14, "hint", "curves after the first pass");
+    for (const [v, cls, t] of !uL ? [] : bias ? [[uL, "ref", "coil.conf L0 "+u(uL)]] : [[uL, "ref", "coil.conf L0 "+u(uL)], [uL*0.95, "ref dash", "model (0.95·L0)"]])
       if (inY(v)){ svg.append(hline(v, cls)); hlab(Y(v), cls, t); }
     // raw rows joined in step (H) order: the DCM ring's sawtooth; broken where a point is off the axis
-    let d="", on=false;
-    for (const q of [...p.pts].sort((a, b)=>a.h-b.h)){
-      if (!inY(q.y)){ on=false; continue; }
-      d+=(on ? "L" : "M")+f(X(q.x))+" "+f(Y(q.y)); on=true;
-    }
-    if (p.pts.length>1) svg.append(svgEl("path", { d }, "step"));
-    for (const q of p.pts) if (inY(q.y)) svg.append(svgEl("circle", { cx:f(X(q.x)), cy:f(Y(q.y)), r:1.8 }, q.g ? "pt raw gr" : "pt raw"));
+    ps.forEach((q, k)=>{
+      let d="", on=false;
+      for (const o of [...q.pts].sort((a, b)=>a.h-b.h)){
+        if (!inY(o.y)){ on=false; continue; }
+        d+=(on ? "L" : "M")+f(X(o.x))+" "+f(Y(o.y)); on=true;
+      }
+      if (q.pts.length>1) svg.append(svgEl("path", { d }, "step"));
+      for (const o of q.pts) if (inY(o.y)) svg.append(dot(X(o.x), Y(o.y), 1.8, o.g ? "pt raw gr" : "pt raw", k));
+    });
     if (res) svg.append(hline(p.L, "res"));
   }
-  if (!p.ls && p.bins.length){
-    for (const b of p.bins){
-      const x=X((b.lo+b.hi)/2);
-      svg.append(svgEl("line", { x1:f(X(b.lo)), x2:f(X(b.hi)), y1:f(Y(b.L)), y2:f(Y(b.L)) }, "bin"),
-        svgEl("line", { x1:f(x), x2:f(x), y1:f(Y(b.L*(1-b.se-b.sys))), y2:f(Y(b.L*(1+b.se+b.sys))) }, "esys"),
-        svgEl("line", { x1:f(x), x2:f(x), y1:f(Y(b.L*(1-b.se))), y2:f(Y(b.L*(1+b.se))) }, "ese"),
-        svgEl("circle", { cx:f(x), cy:f(Y(b.L)), r:3.4 }, "bpt"));
-    }
-    if (lm){
-      const seg=(at, cls)=>svgEl("line", { x1:f(X(lm.lo)), x2:f(X(lm.hi)), y1:f(Y(at(lm.lo))), y2:f(Y(at(lm.hi))) }, cls);
-      svg.append(seg(lm.sec, "fit"));
-      if (lm.inc){
-        svg.append(seg(lm.inc, "inc"));
-        const t=svgEl("text", { x:f(X(lm.hi)), y:f(Y(lm.inc(lm.hi))+13), "text-anchor":"end" }, "inc-lab"); t.textContent="incremental (DC bias)"; labs.push(t);
-      }
+  ps.forEach((q, k)=>{ if (!q.ls) for (const b of q.bins){
+    const x=X((b.lo+b.hi)/2);
+    svg.append(svgEl("line", { x1:f(X(b.lo)), x2:f(X(b.hi)), y1:f(Y(b.L)), y2:f(Y(b.L)) }, "bin"),
+      svgEl("line", { x1:f(x), x2:f(x), y1:f(Y(b.L*(1-b.se-b.sys))), y2:f(Y(b.L*(1+b.se+b.sys))) }, "esys"),
+      svgEl("line", { x1:f(x), x2:f(x), y1:f(Y(b.L*(1-b.se))), y2:f(Y(b.L*(1+b.se))) }, "ese"),
+      dot(x, Y(b.L), 3.4, "bpt", k));
+  } });
+  if (lm){
+    const seg=(at, cls)=>svgEl("line", { x1:f(X(lm.lo)), x2:f(X(lm.hi)), y1:f(Y(at(lm.lo))), y2:f(Y(at(lm.hi))) }, cls);
+    svg.append(seg(lm.meas, "fit"));
+    if (lm.inc){
+      svg.append(seg(lm.inc, "inc"));
+      const t=svgEl("text", { x:f(X(lm.hi)), y:f(Y(lm.inc(lm.hi))+13), "text-anchor":"end" }, "inc-lab"); t.textContent="incremental (DC bias)"; labs.push(t);
     }
   }
+  for (const c of cv) svg.append(svgEl("path", { d:c.xy.map(([x, y], j)=>(j ? "L" : "M")+f(X(x))+" "+f(Y(y))).join("") }, c.cls+" cv"));
   if (p.ls && p.peak){
     svg.append(svgEl("circle", { cx:f(X(p.peak.x)), cy:f(Y(p.peak.y)), r:4.5 }, "mpp"));
     const t=svgEl("text", { x:f(X(p.peak.x)+7), y:f(Y(p.peak.y)-8) }, "mlab"); t.textContent="peak "+p.peak.x; labs.push(t);
   }
   svg.append(...labs);
   const li=lm && lm.inc && lm.inc(lm.hi), lr=li && (li/lm.L0-1)*100;
-  const verdict = !p.slope ? "" : p.slope.drop==null ? `No drop resolved up to ${p.slope.hi} A, so no incremental L`
+  const verdict = !lm || !p.slope ? "" : p.slope.drop==null ? `No drop resolved up to ${p.slope.hi} A, so no incremental L`
     : `L drops ≤ ${p.slope.drop} %/A up to ${p.slope.hi} A`+(li ? `; incremental L at ${p.slope.hi} A: ${li.toFixed(1)}\u00a0µH (${lr<0 ? "−" : "+"}${Math.abs(lr).toFixed(1)}\u00a0% vs 0 A)` : "");
   svg.setAttribute("aria-label", p.ls ? `Output current over the low-side count, ${plural(p.pts.length, "point")}`+(p.peak ? `, peak at ${p.peak.x}` : "")+"."
+    : bias ? `Inductance over peak coil current, ${plural(pts.length, "point")} in ${ps.length>1 ? "2 passes" : "1 pass"} (${ps.map(q=>kHz(q.fsw)).join(", ")})`
+      +(uL ? `, coil.conf L0 ${u(uL)}` : "")+(bm ? `; ${bm.L0.toFixed(1)} µH at low current, incremental inductance ${coilDropTxt(bm, bm.inc)}` : "")+"."
     : `Inductance over peak coil current, ${plural(p.pts.length, "point")}`+(p.L!=null ? `, L = ${u(p.L)}${how}` : "")+(uL ? `, coil.conf L0 ${u(uL)}` : "")+(verdict ? `; ${verdict}` : "")+".");
   const cap=document.createElement("figcaption"); cap.textContent=svg.getAttribute("aria-label");
   fig.replaceChildren(cap, svg);
-  if (p.fit==="ring") fig.append(tstEl("p", "tst-cap", "Dots: raw per-step values, they swing with the DCM ring"
-    +(p.ring ? ` (${p.ring} kHz)` : "")+"; the line is the ring-corrected result."));
+  if (bias){
+    const lg=tstEl("p", "tst-legend");
+    const item=(el, t)=>{ const s=svgEl("svg", { width:14, height:10, viewBox:"0 0 14 10", "aria-hidden":"true" }), e=tstEl("span"); s.append(el); e.append(s, t); lg.append(e); };
+    ps.forEach((q, k)=>item(dot(7, 5, 3.4, "bpt", k), `${k ? "second" : "first"} pass, ${kHz(q.fsw)}`));
+    if (bm){ item(svgEl("line", { x1:0, x2:14, y1:5, y2:5 }, "fit"), "fit");
+      item(svgEl("line", { x1:0, x2:14, y1:5, y2:5 }, "inc"), "incremental (DC bias)"); }
+    fig.append(lg);
+  }
+  if (ps.some(q=>q.fit==="ring")) fig.append(tstEl("p", "tst-cap", bias ? "Small marks: raw per-step values, they swing with the DCM ring; large marks: ring-corrected values with their error bars."
+    : "Dots: raw per-step values, they swing with the DCM ring"+(p.ring ? ` (${p.ring} kHz)` : "")+"; the line is the ring-corrected result."));
   if (verdict) fig.append(tstEl("p", "tst-verdict", verdict));
 }
 
@@ -4417,6 +4562,7 @@ function tstSummary(id, lines, extra){
       if (c.bad) return { cls:"fail", text:"No result: "+c.bad, details:[] };
       return c.done ? { cls:"warn", text:"No result in the output", details:[] } : null;
     }
+    case "coilbias": return coilBiasSum(lines, extra && extra.skip);
     case "bflow": return parseBflow(lines);
     case "rectcal": {
       let done=null, fail=null;
@@ -4516,7 +4662,7 @@ function tstConvText(live){
 function tstAsk(d, o, live, extra){
   const dev=state.deviceName, lvl=tstConfirmLevel(d, o);
   if (!lvl) return true;
-  const msg = `${d.title}: run “${d.cmd(o)}” on ${dev}?\n\n${tstConvText(live)}\n\n${extra ? extra+"\n\n" : ""}${d.does(o)}`;
+  const msg = `${d.title}: run “${d.cmd(o)}”${d.cmd2 ? `, then “${d.cmd2()}”` : ""} on ${dev}?\n\n${tstConvText(live)}\n\n${extra ? extra+"\n\n" : ""}${d.does(o)}`;
   if (lvl!=="typed") return window.confirm(msg);
   const typed = window.prompt(`${msg}\n\nType the device name (${dev}) to confirm:`, "");
   return typed!=null && typed.trim()===dev;
@@ -4637,17 +4783,19 @@ async function tstStart(id){
 
   r.st="run"; r.lines=[]; r.sum=null; r.l0=null; r.open=true; tstPaint(id);
   const onLine = ln => { tstPush(r, ln); tstPaint(id); };
+  const busyRe=/\bstill on\b|\bprotection backoff\b/;                // `dc 0` at power can trip a short backoff
+  const retry = async c => { for (const t1=Date.now(); ; await svcSleep(TST_T.poll)){
+    const y=await tstSend(c, onLine);
+    if (y.ok!==false || !busyRe.test(tstRefusal(y.lines, c)) || Date.now()-t1 > TST_T.stop) return y; } };
   let x=await tstSend(cmd, onLine);
   // measure-coil runs only from `dc 0`: stop MPPT (not PSU/PV or a manual duty), retry through the ramp-down and a backoff
   if (d.root==="measure-coil" && x.ok===false && /\bMPPT on\b/.test(tstRefusal(x.lines, cmd))){
     mppt=true;
     const z=await tstSend("dc 0", onLine);
     if (z.ok!==true) return end("refused", `“dc 0” ${z.ok===false ? "refused: "+(tstRefusal(z.lines, "dc")||"no reason") : "got no reply"}; nothing was measured.`, true);
-    for (const t1=Date.now(); ; await svcSleep(TST_T.poll)){
-      x=await tstSend(cmd, onLine);
-      if (x.ok!==false || !/\bstill on\b|\bprotection backoff\b/.test(tstRefusal(x.lines, cmd))) break;  // `dc 0` at power can trip a short backoff
-      if (Date.now()-t1 > TST_T.stop) return end("refused", /backoff/.test(tstRefusal(x.lines, cmd)) ? `The converter stayed in a protection backoff for ${Math.round(TST_T.stop/1000)} s after “dc 0”; nothing was measured.` : `The converter did not stop within ${Math.round(TST_T.stop/1000)} s of “dc 0”; nothing was measured.`, true);
-    }
+    x=await retry(cmd);
+    if (x.ok===false && busyRe.test(tstRefusal(x.lines, cmd)))
+      return end("refused", /backoff/.test(tstRefusal(x.lines, cmd)) ? `The converter stayed in a protection backoff for ${Math.round(TST_T.stop/1000)} s after “dc 0”; nothing was measured.` : `The converter did not stop within ${Math.round(TST_T.stop/1000)} s of “dc 0”; nothing was measured.`, true);
   }
   if (x.lines.some(l=>TST_NOCMD.test(l))){ tstGone.add(d.root); await end("idle"); tstSetMsg(`“${d.root}” is not in this firmware build; its tests are hidden.`, true); return; }
   if (x.ok===false){ const why=tstRefusal(x.lines, cmd);
@@ -4662,7 +4810,7 @@ async function tstStart(id){
 
   // follow the run. A sweep the converter can't start waits in START: `sweep: queued, START blocked: …`,
   // else (older firmware) a START blocked line or st=START|UV once the zero calibration is over
-  const t0=Date.now(); let ended=false, lost=false, noMpp=null, cal=false, calAt=t0, blk=null, qv=null;
+  let t0, ended, lost, noMpp=null, cal=false, calAt, blk=null, qv=null;
   const watch = ln => {
     if (id!=="sweep") return;
     const m=tstLine(ln), b=tstBlockOf(ln), v=!b && liveParse(ln);
@@ -4671,17 +4819,21 @@ async function tstStart(id){
     else if (b && !b.soft && (!cal || /\bsweep: queued\b/.test(m))) blk=b;
     else if (v && v.stop && !cal && Date.now()-calAt>=TST_T.cal) qv=v;
   };
-  x.lines.forEach(watch);
   const follow = ln => { onLine(ln); watch(ln); const m=tstLine(ln); if (d.end.test(m)){ ended=true; const n=m.match(/\bStop sweep: (.*)$/); if (n) noMpp=n[1]; } };
-  lineListeners.add(follow);
-  tstRun.since=t0; tstGate();
-  while (!ended && !blk && !qv){
-    await svcSleep(TST_T.poll);
-    if (tstTarget()!==t){ lost=true; break; }
-    if (Date.now()-t0 > d.timeout) break;
-  }
-  if (ended){ await svcSleep(TST_T.settle); }
-  lineListeners.delete(follow);
+  const track = async xl => {
+    t0=calAt=Date.now(); ended=lost=false;
+    xl.forEach(watch);
+    lineListeners.add(follow);
+    tstRun.since=t0; tstGate();
+    while (!ended && !blk && !qv){
+      await svcSleep(TST_T.poll);
+      if (tstTarget()!==t){ lost=true; break; }
+      if (Date.now()-t0 > d.timeout) break;
+    }
+    if (ended){ await svcSleep(TST_T.settle); }
+    lineListeners.delete(follow);
+  };
+  await track(x.lines);
   if (lost){ r.recheck=!!d.recheck; return end("unknown", `The link to ${dev} closed during the test: its state is unknown. Read the device again (Open), then check.`, true); }
   if (!ended && (blk || qv)){
     const pb=tstBlk && !tstBlk.soft && Date.now()-tstBlk.at<=45000 ? tstBlk : null;
@@ -4689,6 +4841,25 @@ async function tstStart(id){
     return end("done");
   }
   if (!ended){ r.recheck=!!d.recheck; return end("unknown", `No end of the test within ${Math.round(d.timeout/1000)} s: its state is unknown.`, true); }
+
+  // a second pass (coilbias): refused or skipped, the first pass's result stands
+  let skip=null;
+  const nx=d.next && d.next(r.lines);
+  if (nx && nx.skip) skip=nx.skip;
+  else if (nx){
+    tstLock({ ...tstRun, cmd:nx.cmd }); tstGate();
+    const y=await retry(nx.cmd);
+    if (y.ok===false) skip=`The higher-current pass was refused: ${tstRefusal(y.lines, nx.cmd)||"no reason given"}.`;
+    else {
+      if (y.ok===true) await track(y.lines);
+      if (!ended){
+        r.sum=tstSummary(id, r.lines); r.recheck=!!d.recheck;
+        return end("unknown", y.ok===null ? `No reply to “${nx.cmd}” from ${dev}: whether the second pass started is unknown.`
+          : lost ? `The link to ${dev} closed during the second pass: its state is unknown. Read the device again (Open), then check.`
+          : `No end of the second pass within ${Math.round(d.timeout/1000)} s: its state is unknown.`, true);
+      }
+    }
+  }
 
   let res=[...r.lines];
   if (d.finish){
@@ -4700,7 +4871,7 @@ async function tstStart(id){
       const fin=parseBflow(f.lines); if (fin) res=f.lines;         // the device's own record of the run
     }
   }
-  r.sum=tstSummary(id, res, { noMpp });
+  r.sum=tstSummary(id, res, { noMpp, skip });
   if (d.save) r.l0=parseCoil(res).l0;
   await end("done", r.sum ? "" : "Run ended; the result was not recognised. See the output.", !r.sum);
 }
@@ -4888,7 +5059,7 @@ function tstPaint(id){
   c.classList.toggle("shown", shown);
   c.querySelector(".tst-x").setAttribute("aria-expanded", String(!!r.open));
   c.querySelector(".tst-more").hidden=!r.open;
-  c.querySelector(".tst-cmd").textContent = d.cmd(o) + (d.abort ? `  ·  ${d.abort}` : "") + (d.read ? `  ·  ${d.read}` : "");
+  c.querySelector(".tst-cmd").textContent = d.cmd(o) + (d.cmd2 ? "  ·  "+d.cmd2() : "") + (d.abort ? `  ·  ${d.abort}` : "") + (d.read ? `  ·  ${d.read}` : "");
   const run=c.querySelector(".run"), ab=c.querySelector(".abort"), cb=c.querySelector(".tst-opt input"), stl=c.querySelector(".tst-state");
   const rd=c.querySelector(".read");
   if (rd){ rd.hidden=!tstAvail({ root:d.read }); rd.disabled=!t || !!devBusy; rd.title = devBusy && !mine ? devBusy+" is running" : ""; }
@@ -4910,7 +5081,7 @@ function tstPaint(id){
   }
   stl.textContent = id==="clear" ? why : "";
   c.querySelector(".tst-runs").textContent = mine && r.st==="run" && !r.open ? "running …" : "";
-  const pg=c.querySelector(".tst-prog"), p = mine && r.st==="run" ? (d.root==="measure-coil" ? tstProgress(r.lines) : { f:null, text:"" }) : null;
+  const pg=c.querySelector(".tst-prog"), p = mine && r.st==="run" ? (d.root==="measure-coil" ? (d.bias ? tstBiasProgress : tstProgress)(r.lines) : { f:null, text:"" }) : null;
   pg.hidden=!p;
   if (p){
     pg.classList.toggle("ind", p.f==null);
@@ -4938,7 +5109,7 @@ function tstPaint(id){
   const sig=parts.map(e=>e.outerHTML).join("");
   if (res._sig!==sig){ res.replaceChildren(...parts); res._sig=sig; }
   const fig=c.querySelector(".tst-chart"), coil=d.root==="measure-coil";
-  if (coil) tstCoilChart(fig, r.lines, c.clientWidth, d.save ? tstL0Cur(r) : 0);
+  if (coil) tstCoilChart(fig, r.lines, c.clientWidth, d.save || d.bias ? tstL0Cur(r) : 0, d.bias);
   else if (fig) tstChart(fig, r.sum && !(mine && r.st==="run") ? r.sum.curve : null, c.clientWidth);
   const out=c.querySelector(".tst-out"), lg=c.querySelector(".tst-log");
   lg.hidden=!r.lines.length;

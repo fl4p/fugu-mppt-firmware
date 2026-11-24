@@ -434,6 +434,7 @@ until you click.
 | ADC calibration (eFuse) | Status | `adc-cal` (ESP32-S3 builds) | no |
 | MPP sweep | Measurements | `sweep`; **Read last sweep** sends `sweep-curve` | yes; not for reading |
 | Coil inductance (L0) | Measurements | `measure-coil l0` (`CONFIG_FUGU_WITH_MEASURE_COIL`); **Save L0** sends `set-config coil.conf L0 <value>` | device name; not for saving |
+| Coil DC bias | Measurements | `measure-coil l0`, then `measure-coil l0 f=<Hz>` | device name |
 | Backflow switch | Self-tests | `selftest bflow`, abort with `selftest abort` | device name |
 | Clear latched faults | Self-tests | `selftest clear` | device name |
 | Low-side timing (rect-cal) | Calibration | `rect-cal [force]`, abort with `rect-cal abort` | yes; device name with `force` |
@@ -450,8 +451,9 @@ asks; the question names the device, says what happens (for example that the con
 stops for about a minute) and states whether the converter is delivering power now and how much. The most invasive
 ones need the device name typed in. A refusal shows the firmware's reason as it printed it. Nothing is retried.
 
-While a test runs, a thin progress bar sits below the buttons. The two coil measurements fill it from the sweep the
-firmware prints: the L0 run as "step i of n" over its duty band, the low-side run as a percentage of its low-side
+While a test runs, a thin progress bar sits below the buttons. The coil measurements fill it from the sweep the
+firmware prints: the L0 run as "step i of n" over its duty band, the DC-bias run the same for each of its two passes
+("pass 1 of 2: step i of n", half the bar each), the low-side run as a percentage of its low-side
 window; it fills up when the sweep stops early, and shows "stopping the converter …" while `dc 0` ramps the converter
 down. The other tests print no progress, so their bar only moves back and forth. Its output appears in the unfolded
 entry, and **Abort** appears on the entry's line where the
@@ -464,6 +466,7 @@ firmware has an abort command (`measure-coil` has none). Folding a running entry
   D 0.370, Vin 68.7 V)" or "Conducts: not reached" for a phase that never measured, then the firmware's reason as a
   sentence (an unknown reason is shown as printed). The raw lines stay under **Device output**;
 - the coil inductance in µH with its fit and error estimate, or the reason there is no result;
+- the coil's inductance at low current and the currents where it is 10 % and 20 % lower;
 - the calibrated low-side offset, or the reason the calibration failed;
 - the maximum power point of the sweep, with its power-over-voltage curve.
 
@@ -485,12 +488,12 @@ voltages, and **OK** queues the sweep anyway. A queued run ends at once with "Sw
 (…)" instead of waiting for a result; the curve is there after the sweep has run (**Read last sweep**).
 
 The firmware runs `measure-coil` only from a converter stopped with `dc 0`. When the device is tracking (MPPT),
-**Run** on the two coil entries stops charging with `dc 0`, retries while the converter ramps down (up to 10 s), runs
+**Run** on the coil entries stops charging with `dc 0`, retries while the converter ramps down (up to 10 s), runs
 the measurement and sends `mppt` afterwards in every outcome: a result, a failure, a timeout or a lost link. The entry
 ends with "Resumed MPPT." or, in amber, why MPPT was not resumed. A device already at `dc 0` is measured as it is and
 left there. In PSU/PV mode or at a manual duty the editor stops nothing: the entry shows the firmware's refusal.
 
-Both coil entries draw their sweep as the rows arrive, with the device output folded below the chart:
+The coil entries draw their sweep as the rows arrive, with the device output folded below the chart:
 
 - **Coil inductance (L0)** plots the inductance of each DCM row over the coil's peak current,
   Ipk = (Vin − Vout)·D / (fsw·L) with the row's own L, the formula the firmware's fit uses. Rows below the fit's
@@ -499,12 +502,26 @@ Both coil entries draw their sweep as the rows arrive, with the device output fo
   that the firmware's ring fit corrects. Once the run ends the chart adds the fit: its current bins as points with
   error bars (thin: noise, wide: offset bounds), the fitted slope as a dashed line over its range, the result as a bold
   line "L = … (ring fit)" or "L = … (median, ring not resolved)", the device's
-  `coil.conf` L0 and, dashed, the converter model's 0.95·L0 (the fixed DC-bias allowance). The measured L is the
-  secant inductance over 0…Ipk; when the fit resolves a drop the chart also draws the incremental inductance a
-  datasheet DC-bias curve shows, L_inc = L(0)·(1 + 2k·I) from the fitted slope k
-  ([Peak-current dependence](../lab/coil-inductance.md#peak-current-dependence)), labelled "incremental (DC bias)".
-  Under the chart the verdict reads, for example, "L drops ≤ 2.2 %/A up to 2.2 A; incremental L at 2.2 A: 48.9 µH
-  (−4.8 % vs 0 A)" or "No drop resolved up to 1.8 A, so no incremental L".
+  `coil.conf` L0 and, dashed, the converter model's 0.95·L0 (the fixed DC-bias allowance). When the fit resolves a
+  drop the chart also draws the incremental inductance a datasheet DC-bias curve shows, L_inc = L(0)·(1 + 3k·I)
+  from the fitted slope k, labelled "incremental (DC bias)": a DCM row measures an energy-weighted value that falls
+  a third as fast ([Peak-current dependence](../lab/coil-inductance.md#peak-current-dependence)).
+  Under the chart the verdict reads, for example, "L drops ≤ 2.2 %/A up to 2.2 A; incremental L at 2.2 A: 47.7 µH
+  (−7.3 % vs 0 A)" or "No drop resolved up to 1.8 A, so no incremental L".
+- **Coil DC bias** runs the L0 sweep twice: at the normal switching frequency, then at the lowest frequency the
+  firmware accepts, 20 kHz or, for a small `coil.conf` L0, the first 500 Hz step with fsw·L0·0.95 above 1 Ω. The
+  lower frequency drives about 1.4 times the peak current through the coil at the same output current. Both passes
+  share one chart, the second pass's marks square, with a legend naming each pass's frequency. A curve is fitted
+  through the ring-corrected bins of both passes (each pass's result where it has no bins) and drawn from 0 A with
+  the incremental inductance it implies. The fit treats the inductance as even in the current (flat at 0 A),
+  with 1/L quadratic in the flux, plus a quartic term where that fits clearly better. Rows sit at the firmware's
+  peak current; the curves use the current the fit implies, a little higher for a saturating coil. The result reads,
+  for example, "50.6 µH at low current; 10 % lower at 4.0 A, 20 % lower at 6.2 A" or "no 10 % drop up to 5.9 A",
+  for the incremental inductance; the secant inductance (flux over current) and each pass's frequency and peak
+  current follow below. A first pass without a value ends the run. A refused second pass, firmware that ignores
+  `f=` (it then repeats the normal pass, which the chart leaves out) or a failed frequency change keep the first
+  pass's result, in amber, and say why. A frequency the firmware could not restore is named with the `pwm-freq`
+  command that fixes it.
 - **Low-side timing from a coil sweep** plots the output current over the low-side count (CCM rows grey), with the
   ideal and automatic low-side counts and the peak marked.
 

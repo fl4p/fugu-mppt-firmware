@@ -78,6 +78,41 @@ function ringRun({ fit = 'ring' } = {}) {
     'measure-coil: Iout zero +0.003/+0.004 A (off, before/after), subtracted', `  -> coil.conf L0=${l0}`];
 }
 
+// An L0 run (measure-coil l0 [f=]) on a saturating coil: incremental L = L0/(1+(i/12 A)^2), 10 % lower at 4 A and 20 % at
+// 6 A. A DCM row measures L = λ²/(2E) (λ flux linkage, E = -L0·a²·ln cos(λ/(L0·a)) the energy), Vin 60 V, Vout 26.8 V,
+// 48 steps, stopping above 2 A output (Ipk ~5.5 A at 39 kHz, ~7.4 A at 21.5 kHz). Bins and slope as coil_fit.h prints them.
+function biasRun(fsw = 39000, { restore = null } = {}) {
+  const L0 = 50.6e-6, a = 12, vi = 60, vo = 26.8, M = vo / vi, pwmMax = Math.round(160e6 / fsw) - 14;
+  const lo = Math.round(0.25 * M * pwmMax), hi = Math.round(0.9 * M * pwmMax), step = Math.floor((hi - lo) / 47);
+  const rows = [], pts = [];
+  let last = '';
+  for (let H = lo; H <= hi; H += step) {
+    const D = H / pwmMax, lam = (vi - vo) * D / fsw, u = lam / (L0 * a);
+    const L = lam * lam / (-2 * L0 * a * a * Math.log(Math.cos(u))) * (1 + 0.002 * Math.sin(H * 0.37));
+    const io = (vi - vo) * vi * D * D / (2 * vo * fsw * L);
+    rows.push(`  ${String(H).padStart(5)} ${D.toFixed(3).padStart(6)} ${vi.toFixed(2).padStart(6)} ${vo.toFixed(2).padStart(6)} ${io.toFixed(3).padStart(6)}  DCM ${(L * 1e6).toFixed(2).padStart(7)}`);
+    pts.push({ x: lam / L, io, L: L * 1e6 });
+    if (io > 2) { last = `  Iout ${io.toFixed(2)} > 2.00; stopping`; break; }
+  }
+  const floor = Math.max(0.15, 0.2 * Math.max(...pts.map(q => q.io))), use = pts.filter(q => q.io >= floor).sort((p, q) => p.x - q.x);
+  const nb = Math.min(5, Math.floor(use.length / 6)), bins = [];
+  for (let b = 0; b < nb; b++) {
+    const s = use.slice(Math.floor(b * use.length / nb), Math.floor((b + 1) * use.length / nb));
+    bins.push({ lo: s[0].x, hi: s.at(-1).x, L: s.length / s.reduce((t, q) => t + 1 / q.L, 0) });
+  }
+  const xm = bins.reduce((t, b) => t + (b.lo + b.hi) / 2, 0) / nb, ym = bins.reduce((t, b) => t + b.L, 0) / nb;
+  const sl = bins.reduce((t, b) => t + ((b.lo + b.hi) / 2 - xm) * (b.L - ym), 0) / bins.reduce((t, b) => t + ((b.lo + b.hi) / 2 - xm) ** 2, 0);
+  const k = sl / (ym - sl * xm) * 100, L = (use.length / use.reduce((t, q) => t + 1 / q.L, 0)).toFixed(2);
+  return [`measure-coil L0: fsw=${fsw} pwmMax=${pwmMax} band ${lo}..${hi} step ${step}  Vin=${vi.toFixed(2)} Vout=${vo.toFixed(2)} M=${M.toFixed(3)}`,
+    '      H      D    Vin   Vout   Iout mode    L_uH', ...rows, ...(last ? [last] : []),
+    `measure-coil: L = ${L} uH  (ring fit, ${use.length} DCM pts, Iout>=${floor.toFixed(2)}A, +-0.4% noise +-1.1% syst; ring 310 kHz = 5.2 nF node C, ripple +-3%, 2.1 periods; median of points ${L} uH)`,
+    'measure-coil: Iout zero +0.003/+0.004 A (off, before/after), subtracted',
+    `measure-coil: L(Ipk), +-noise/offsets: ${bins.map(b => `${b.lo.toFixed(1)}-${b.hi.toFixed(1)}A ${b.L.toFixed(2)}uH+-0.3/0.9%`).join(' | ')}`,
+    `measure-coil: L(Ipk) slope ${k.toFixed(2)} +-0.30 %/A over ${bins[0].lo.toFixed(1)}-${bins[nb - 1].hi.toFixed(1)} A, Iout/on-time offsets add up to +-0.50: coil ${(k - 1.1).toFixed(2)}..${(k + 1.1).toFixed(2)} %/A, drop <= ${(1.1 - k).toFixed(1)} %/A`,
+    `  -> coil.conf L0=${(L * 1e-6).toExponential(6).replace(/e-(\d)$/, 'e-0$1')}   note: scales with Iout cal & pwmMax; dead-time/DCR ~few % low`,
+    ...(fsw === 39000 ? [] : [restore || 'measure-coil: fsw restored to 39000 Hz'])];
+}
+
 // LS sweep rows: Iout peaks near 151 ct, the sweep stops past the peak
 function lsRows() {
   const rows = [];
@@ -212,6 +247,9 @@ function firmware(host, opts = {}) {
     if (root === 'measure-coil') {
       const a = cmd.split(' ').slice(1);
       if (!a.length) return err('measure-coil: expected l0|ls [args]');
+      // f=: older firmware (coilOld) takes it for a step count of 0 and sweeps at the normal frequency
+      const fa = !opts.coilOld && a.find(x => x.startsWith('f='));
+      if (fa && opts.coilFswRefuse) return err('measure-coil: ' + opts.coilFswRefuse);
       if (st.op === 'psu') return err('measure-coil: PSU/PV mode on, stop conversion first (dc 0)');
       if (st.op === 'mppt') return err('measure-coil: MPPT on, stop conversion first (dc 0)');
       if (st.op === 'duty') return err('measure-coil: manual duty 812 set, stop conversion first (dc 0)');
@@ -221,6 +259,8 @@ function firmware(host, opts = {}) {
       s('OK: ' + cmd);
       const apply = a[a.length - 1] === 'apply';
       const lines = opts.coilFail ? ['measure-coil: need Vin>Vout+1 (Vin=12.00 Vout=26.80)']
+        : fa && opts.coilFswFail ? [`measure-coil: fsw ${fa.slice(2)} Hz: ${opts.coilFswFail}`]
+        : a[0] === 'l0' && (fa || opts.coilBias) ? biasRun(fa ? +fa.slice(2) : 39000, { restore: opts.coilRestoreFail })
         : a[0] === 'l0' && opts.coilRing ? ringRun({ fit: opts.coilRing })
         : a[0] === 'l0' ? ['measure-coil L0: fsw=39000 pwmMax=4103 band 1200..2600 step 30  Vin=36.10 Vout=26.80 M=0.742',
           '      H      D    Vin   Vout   Iout mode    L_uH', ...l0Rows(),
@@ -234,7 +274,7 @@ function firmware(host, opts = {}) {
           '  ideal LS 139  auto LS 130  offset peak-ideal +12 ct (+3.0% HS)  peak-auto +21 ct', '  L (peak curvature) = 49.8 uH (cross-check)',
           ...(apply ? ['  applied rect_offset 300 ns (0 ct, mcpwm); saved to coil.conf once the converter is off'] : [])];
       lines.forEach((x, i) => later(10 + (opts.rowMs ?? 5) * i, () => s(x)));
-      if (!opts.coilNeverEnds) later(20 + (opts.rowMs ?? 5) * lines.length, () => { st.measuring = false; s('measure-coil: done, manual PWM at duty 0 (\'mppt\' resumes tracking)'); });
+      if (!opts.coilNeverEnds && !(fa && opts.coilFNeverEnds)) later(20 + (opts.rowMs ?? 5) * lines.length, () => { st.measuring = false; s('measure-coil: done, manual PWM at duty 0 (\'mppt\' resumes tracking)'); });
       return;
     }
     if (cmd === 'dc 0') {
@@ -268,4 +308,4 @@ function mqttFirmware(window, devs) {
   window.document.getElementById('mqtt-url').value = 'ws://broker:9001';
 }
 
-if (typeof module !== 'undefined') module.exports = { l0Rows, lsRows, RING_ROWS, ringRun, W, I, vline, BLOCK, HELP, sweepReply, SWEEP, firmware, mqttFirmware };
+if (typeof module !== 'undefined') module.exports = { l0Rows, lsRows, RING_ROWS, ringRun, biasRun, W, I, vline, BLOCK, HELP, sweepReply, SWEEP, firmware, mqttFirmware };

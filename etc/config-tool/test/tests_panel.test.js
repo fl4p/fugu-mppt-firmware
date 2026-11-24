@@ -906,24 +906,24 @@ test('coil chart parsing: L0 rows to L over Ipk, the fit bins and slope, the res
   assert.deepEqual({ ...q.peak }, { x: 151, y: 0.412 });
 });
 
-test('coil L model: secant from the fit slope, incremental (DC bias) L = L0·(1 + 2k·I), none without a resolved drop', async () => {
+test('coil L model: the measured line from the fit slope, incremental (DC bias) L = L0·(1 + 3k·I), none without a resolved drop', async () => {
   const { window } = await loadEditor();
   const bins = 'measure-coil: L(Ipk), +-noise/offsets: 1.4-1.6A 50.62uH+-0.3/0.9% | 1.6-1.9A 50.40uH+-0.3/0.9% | 1.9-2.2A 50.15uH+-0.4/1.0%';
   const slope = 'measure-coil: L(Ipk) slope -1.10 +-0.30 %/A over 1.4-2.2 A, Iout/on-time offsets add up to +-0.50: coil -2.20..+0.00 %/A, drop <= 2.2 %/A';
   const m = window.coilLModel(window.parseCoilPlot([bins, slope]));
   const ic = (1.5 + 1.75 + 2.05) / 3, L0 = (50.62 + 50.40 + 50.15) / 3 / (1 - 0.011 * ic);
   assert.ok(Math.abs(m.L0 - L0) < 1e-9 && Math.abs(m.L0 - 51.389) < 0.001, 'L(Ipk -> 0) from the bins\' mean and k');
-  assert.ok(Math.abs(m.sec(ic) - 50.39) < 1e-9, 'the secant line passes the bins\' mean');
-  for (const i of [0, 1.4, 2.2]) {
-    const h = 1e-4, dsec = (m.sec(i + h) - m.sec(i - h)) / (2 * h);
-    assert.ok(Math.abs(m.inc(i) - (m.sec(i) + i * dsec)) < 1e-6, 'L_inc = L_s + I·dL_s/dI');
-    const lam = x => x * m.sec(x);                       // flux linkage λ = L_s·I
-    assert.ok(Math.abs(m.inc(i) - (lam(i + h) - lam(i - h)) / (2 * h)) < 1e-6, 'L_inc = dλ/dI');
+  assert.ok(Math.abs(m.meas(ic) - 50.39) < 1e-9, 'the line passes the bins\' mean');
+  // a DCM cycle measures λ²/(2E): with λ = ∫L_inc dI and E = ∫I·L_inc dI that is the measured line, to first order in k·I
+  for (const I of [0.5, 1.4, 2.2]) {
+    let lam = 0, E = 0;
+    for (let j = 0, N = 2000; j < N; j++) { const i = (j + 0.5) * I / N, l = m.inc(i) * I / N; lam += l; E += i * l; }
+    assert.ok(Math.abs(lam * lam / (2 * E) / m.meas(I) - 1) < 2e-4, `λ²/(2E) at ${I} A`);
   }
-  assert.ok(Math.abs(m.inc(2.2) - 48.90) < 0.01);
-  assert.ok(Math.abs((m.inc(2.2) / m.L0 - 1) * 100 + 4.84) < 0.01);
+  assert.ok(Math.abs(m.inc(2.2) - 47.66) < 0.01);
+  assert.ok(Math.abs((m.inc(2.2) / m.L0 - 1) * 100 + 7.26) < 0.01);
   const nd = window.coilLModel(window.parseCoilPlot([bins, 'measure-coil: L(Ipk) slope +0.40 +-0.30 %/A over 1.4-2.2 A, Iout/on-time offsets add up to +-0.20: coil -0.40..+1.20 %/A, no drop resolved']));
-  assert.ok(nd.sec && nd.inc === null, 'no drop resolved: the secant fit only');
+  assert.ok(nd.meas && nd.inc === null, 'no drop resolved: the measured line only');
   assert.equal(window.coilLModel(window.parseCoilPlot([bins])), null, 'no slope line');
   const fig = window.document.createElement('figure');
   window.tstCoilChart(fig, ['measure-coil L0: fsw=39000 pwmMax=4103', '      H      D    Vin   Vout   Iout mode    L_uH',
@@ -961,7 +961,7 @@ test('coil chart: drawn live in the card, the result, coil.conf L0 and the 0.95�
   assert.equal(svg.querySelectorAll('.fit').length, 1);
   assert.equal(svg.querySelectorAll('.inc').length, 1);
   assert.ok(labs.includes('incremental (DC bias)'));
-  assert.equal(fig.querySelector('.tst-verdict').textContent, 'L drops ≤ 2.2 %/A up to 2.2 A; incremental L at 2.2 A: 48.9\u00a0µH (−4.8\u00a0% vs 0 A)');
+  assert.equal(fig.querySelector('.tst-verdict').textContent, 'L drops ≤ 2.2 %/A up to 2.2 A; incremental L at 2.2 A: 47.7\u00a0µH (−7.3\u00a0% vs 0 A)');
   assert.match(svg.getAttribute('aria-label'), /^Inductance over peak coil current, 23 points, L = 50\.34 µH \(ring fit\), coil\.conf L0 50\.9 µH; L drops/);
   assert.equal(fig.querySelector('.tst-cap').textContent, 'Dots: raw per-step values, they swing with the DCM ring (310 kHz); the line is the ring-corrected result.');
   assert.ok(!svg.outerHTML.includes('NaN'));
@@ -1034,6 +1034,175 @@ test('coil chart with DCM ringing: faded raw dots joined in step order, the ring
   const p = window.parseCoilPlot(ring);
   assert.deepEqual([p.fit, p.ring, p.floor, p.end], ['ring', 310, 0.37, true]);
   assert.deepEqual([...p.pts.slice(0, 3).map(q => q.h)], [374, 394, 414]);
+});
+
+// Coil DC bias: measure-coil l0, then l0 f=<Hz> (the lowest the firmware takes for coil.conf L0), mppt; both passes in one chart
+const DONE = "measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)";
+const biasFig = (w, lines, l0 = 50e-6, cw = 520) => { const fig = w.document.createElement('figure'); w.tstCoilChart(fig, lines, cw, l0, true); return fig; };
+
+test('coil DC bias: dc 0, both passes and mppt under one lock; the second at the lowest frequency coil.conf L0 allows', async () => {
+  const { window, sent, busy, note } = await coilRun({ coilBias: true }, 'coilbias');
+  assert.deepEqual(sent, ['selftest', 'measure-coil l0', 'dc 0', 'measure-coil l0', 'measure-coil l0 f=21500', 'mppt']);
+  assert.ok(busy.every(Boolean), 'the device lock is held for every command');
+  assert.equal(window.tstBusyNow(), false);
+  const res = card(window, 'coilbias').querySelector('.tst-res');
+  assert.ok(res.classList.contains('pass'));
+  assert.match(res.querySelector('.sum').textContent, /^50\.6 µH at low current; 10 % lower at 4\.0 A, 20 % lower at 6\.2 A$/);
+  assert.match(res.textContent, /Incremental inductance, the value a datasheet's DC-bias curve shows, from a fit through 8 ring-corrected values of both passes\./);
+  assert.match(res.textContent, /Averaged from zero current \(secant inductance\): 10 % lower at 7\.3 A, no 20 % drop up to 8\.3 A\./);
+  assert.match(res.textContent, /First pass at 39 kHz: L = 49\.6 µH, peak current up to 5\.9 A\..*Second pass at 21\.5 kHz: L = 48\.78 µH, peak current up to 8\.3 A\./);
+  assert.equal(note.textContent, 'Resumed MPPT.');
+  assert.equal(card(window, 'coilbias').querySelector('.tst-cmd').textContent, 'measure-coil l0  ·  measure-coil l0 f=21500');
+  assert.match(def(window, 'coilbias').does(), /at 21\.5 kHz, which drives a higher peak current/);
+  let asked = '';
+  window.confirm = m => { asked = m; return false; };
+  await window.tstStart('coilbias');
+  assert.match(asked, /^Coil DC bias: run “measure-coil l0”, then “measure-coil l0 f=21500” on fry\?/);
+  const ok = await coilRun({ coilBias: true, op: 'manu' }, 'coilbias');
+  assert.deepEqual(ok.sent, ['selftest', 'measure-coil l0', 'measure-coil l0 f=21500'], 'already at dc 0: no dc 0, no mppt');
+});
+
+test('coil DC bias frequency: 20 kHz, or the fsw·L0·0.95 > 1 Ω floor rounded up to 500 Hz with a margin', async () => {
+  for (const [L0, hz] of [['80e-6', 20000], ['50e-6', 21500], ['5.034000e-05', 21500], ['5.2e-05', 20500], ['', 20000]]) {
+    const { window } = await connected({ coil: true, conf: { ...CONF, 'coil.conf': { L0 } } });
+    assert.equal(window.tstBiasHz(), hz, L0);
+  }
+  const { window } = await loadEditor();
+  const p1 = ['measure-coil L0: fsw=22000 pwmMax=7258 band 1..2 step 1', 'measure-coil: L = 50.00 uH  (median of 9 DCM pts, Iout>=0.15A; ring not resolved: too few points, expect up to +-5%)'];
+  assert.match(window.tstBiasNext(p1).skip, /no switching frequency below 20 kHz, close to the normal 22 kHz/);
+  assert.match(window.tstBiasNext(['measure-coil: need Vin>Vout+1 (Vin=12.00 Vout=26.80)']).skip, /first pass gave no inductance/);
+});
+
+test('coil DC bias model: 1/L even in the flux, the incremental and secant drop of a saturating coil, monotonic only', async () => {
+  const { window } = await loadEditor();
+  const { biasRun } = require('./_tst_firmware');
+  const ps = window.coilBiasPasses([...biasRun(39000), DONE, ...biasRun(21500), DONE]);
+  assert.deepEqual(Array.from(ps, p => [p.fsw, p.bins.length]), [[39000, 5], [21500, 3]]);
+  const m = window.coilBiasModel(ps.flatMap(window.coilFitPts));
+  // the fake's coil: L_inc = 50.6 µH/(1 + (i/12 A)²): 10 % lower at 4 A, 20 % at 6 A
+  assert.ok(Math.abs(m.L0 - 50.6) < 0.1, m.L0);
+  assert.ok(Math.abs(m.drop(m.inc, 0.1) - 4.0) < 0.15 && Math.abs(m.drop(m.inc, 0.2) - 6.0) < 0.3);
+  for (const l of [50, 150, 300]) {
+    const h = 1e-3, di = (m.cur(l + h) - m.cur(l - h)) / (2 * h);
+    assert.ok(Math.abs(m.inc(l) - 1 / di) < 1e-6 * m.inc(l), 'L_inc = dλ/di');
+    assert.ok(Math.abs(m.sec(l) - l / m.cur(l)) < 1e-9, 'secant λ/i');
+    let E = 0;
+    for (let j = 0, N = 2000; j < N; j++) { const a = l * j / N, b = l * (j + 1) / N; E += (m.cur(a) + m.cur(b)) / 2 * (b - a); }
+    assert.ok(Math.abs(l * l / (2 * E) / m.meas(l) - 1) < 1e-5, 'the measured L is λ²/(2E)');
+  }
+  // too few points, a rising L the even model cannot bend into a monotonic curve: no model
+  assert.equal(window.coilBiasModel([{ x: 2, y: 50, s: 0.01 }]), null);
+  const flat = window.coilBiasModel([1, 2, 3, 4].map(x => ({ x, y: 50, s: 0.01 })));
+  assert.ok(Math.abs(flat.L0 - 50) < 1e-9 && flat.drop(flat.inc, 0.1) === null);
+  assert.equal(window.coilDropTxt(flat, flat.inc), 'no 10 % drop up to 4.0 A');
+  const one = window.coilBiasSum(['measure-coil L0: fsw=39000 pwmMax=4089 band 457..1644 step 25', '    600  0.147  60.00  26.80  0.500  DCM   50.10',
+    'measure-coil: L = 50.10 uH  (median of 9 DCM pts, Iout>=0.15A; ring not resolved: too few points, expect up to +-5%)', DONE], 'The higher-current pass was refused: x.');
+  assert.deepEqual([one.cls, one.text], ['warn', 'L = 50.10 µH; too few ring-corrected values for a DC-bias curve']);
+  const wavy = window.coilBiasModel([[1, 50], [2, 48], [3, 52], [4, 47], [5, 53]].map(([x, y]) => ({ x, y, s: 0.001 })));
+  assert.ok(!wavy || !wavy.quart, 'a wavy fit is not monotonic: no quartic term');
+});
+
+test('coil DC bias chart: both passes (round, square), bins, the fit and incremental curves from 0 A, coil.conf L0, a legend', async () => {
+  const { window } = await connected({ coil: true, coilBias: true, rowMs: 10 });
+  window.tstDefs().find(d => d.id === 'coilbias').timeout = 5000;
+  Object.assign(window.tstTimings(), { stop: 100 });
+  await openSheet(window); await idle(window);
+  window.confirm = () => true;
+  const c = card(window, 'coilbias'), fig = c.querySelector('.tst-chart');
+  const run = window.tstStart('coilbias');
+  await until(() => fig.querySelectorAll('circle.pt.raw').length >= 3);
+  assert.ok([...fig.querySelectorAll('svg text')].some(t => t.textContent === 'curves after the first pass'), 'a hint while the first pass runs');
+  await until(() => fig.querySelectorAll('rect.pt.raw').length >= 3);
+  assert.equal(fig.querySelectorAll('path.inc.cv').length, 1, 'the curves from the first pass while the second runs');
+  await run;
+  const svg = fig.querySelector('svg');
+  assert.equal(svg.getAttribute('data-points'), '58');
+  assert.equal(fig.querySelectorAll('circle.pt.raw').length, 36); assert.equal(fig.querySelectorAll('rect.pt.raw').length, 22);
+  assert.equal(fig.querySelectorAll('circle.bpt').length, 5 + 1); assert.equal(fig.querySelectorAll('rect.bpt').length, 3 + 1, 'bins, and one each in the legend');
+  assert.equal(fig.querySelectorAll('path.step').length, 2);
+  assert.equal(fig.querySelectorAll('path.fit.cv').length, 1); assert.equal(fig.querySelectorAll('path.inc.cv').length, 1);
+  assert.ok(fig.querySelector('path.inc.cv').getAttribute('d').startsWith('M' + fig.querySelector('path.fit.cv').getAttribute('d').slice(1).split('L')[0]), 'both from 0 A');
+  const labs = [...svg.querySelectorAll('text')].map(t => t.textContent);
+  assert.ok(labs.includes('coil.conf L0 50 µH') && !labs.includes('model (0.95·L0)'));
+  assert.ok(labs.includes('0') && labs.some(t => / A$/.test(t)), 'the current axis starts at 0 A');
+  assert.equal(svg.querySelectorAll('.res').length, 0);
+  assert.deepEqual([...fig.querySelectorAll('.tst-legend > span')].map(s => s.textContent), ['first pass, 39 kHz', 'second pass, 21.5 kHz', 'fit', 'incremental (DC bias)']);
+  assert.match(svg.getAttribute('aria-label'), /^Inductance over peak coil current, 58 points in 2 passes \(39 kHz, 21\.5 kHz\), coil\.conf L0 50 µH; 50\.6 µH at low current, incremental inductance 10 % lower at 4\.0 A, 20 % lower at 6\.2 A\.$/);
+  assert.equal(fig.querySelector('.tst-cap').textContent, 'Small marks: raw per-step values, they swing with the DCM ring; large marks: ring-corrected values with their error bars.');
+  assert.equal(fig.querySelector('.tst-verdict'), null);
+  assert.ok(!svg.outerHTML.includes('NaN'));
+  assert.equal(c.querySelector('.tst-log').open, false, 'the device output stays folded under the chart');
+});
+
+test('coil DC bias progress: the first pass fills half the bar, the second the rest', async () => {
+  const { window } = await loadEditor();
+  const { biasRun } = require('./_tst_firmware');
+  const P = ls => { const p = window.tstBiasProgress(ls); return [p.f == null ? null : +p.f.toFixed(3), p.text]; };
+  const a = biasRun(39000), b = biasRun(21500), rows = n => a.slice(0, 2 + n);
+  assert.deepEqual(P([]), [null, 'starting …']);
+  assert.deepEqual(P(rows(0)), [0, 'pass 1 of 2: step 0 of 48']);
+  assert.deepEqual(P(rows(12)), [0.116, 'pass 1 of 2: step 12 of 48']);
+  assert.deepEqual(P([...a, DONE]), [0.5, 'pass 2 of 2: starting …']);
+  assert.deepEqual(P([...a, DONE, ...b.slice(0, 12)]), [0.594, 'pass 2 of 2: step 10 of 48']);
+  assert.deepEqual(P([...a, DONE, ...b]), [1, 'pass 2 of 2: finishing …']);
+  const { window: w2 } = await connected({ coil: true, coilBias: true, coilNeverEnds: true, rowMs: 40 });
+  w2.tstDefs().find(d => d.id === 'coilbias').timeout = 300;
+  await openSheet(w2); await idle(w2);
+  w2.confirm = () => true;
+  const c = card(w2, 'coilbias'), run = w2.tstStart('coilbias');
+  await until(() => c.querySelector('.tst-out').textContent.includes('  457 '));
+  assert.equal(c.querySelector('.tst-prog').getAttribute('aria-label'), 'Coil DC bias progress');
+  assert.match(c.querySelector('.tst-pct').textContent, /^pass 1 of 2: step [12] of 48$/);
+  await run;
+});
+
+test('coil DC bias: a refused second pass, firmware that ignores f= and a failed frequency change keep the first pass, in amber', async () => {
+  let { window, sent, note } = await coilRun({ coilBias: true, coilFswRefuse: 'f= needs the MCPWM gate driver build' }, 'coilbias');
+  assert.deepEqual(sent, ['selftest', 'measure-coil l0', 'dc 0', 'measure-coil l0', 'measure-coil l0 f=21500', 'mppt']);
+  let res = card(window, 'coilbias').querySelector('.tst-res');
+  assert.ok(res.classList.contains('warn'));
+  assert.match(res.querySelector('.sum').textContent, /^50\.6 µH at low current; 10 % lower at 4\.0 A, no 20 % drop up to 5\.9 A$/);
+  assert.match(res.textContent, /The higher-current pass was refused: measure-coil: f= needs the MCPWM gate driver build\./);
+  assert.match(res.textContent, /fit through 5 ring-corrected values\./);
+  assert.ok(!/Second pass/.test(res.textContent));
+  assert.equal(note.textContent, 'Resumed MPPT.');
+
+  ({ window, sent } = await coilRun({ coilBias: true, coilOld: true }, 'coilbias'));
+  assert.deepEqual(sent.slice(-2), ['measure-coil l0 f=21500', 'mppt']);
+  res = card(window, 'coilbias').querySelector('.tst-res');
+  assert.ok(res.classList.contains('warn'));
+  assert.match(res.textContent, /This firmware ignored “f=” and ran the second pass at 39 kHz again: the higher-current pass needs newer firmware \(measure-coil l0 f=\)\. Only the first pass is used\./);
+  const fig = card(window, 'coilbias').querySelector('.tst-chart');
+  assert.equal(fig.querySelectorAll('rect.pt').length, 0, 'the repeated pass is not drawn');
+  assert.deepEqual([...fig.querySelectorAll('.tst-legend > span')].map(s => s.textContent), ['first pass, 39 kHz', 'fit', 'incremental (DC bias)']);
+
+  ({ window } = await coilRun({ coilBias: true, coilFswFail: 'fsw*L0 out of range for this coil (coil.conf::L0)' }, 'coilbias'));
+  assert.match(resText(window, 'coilbias'), /Second pass: fsw 21500 Hz: fsw\*L0 out of range for this coil \(coil\.conf::L0\)/);
+  ({ window } = await coilRun({ coilBias: true, coilRestoreFail: 'measure-coil: fsw 39000 Hz restore failed, now 21500 Hz: run `pwm-freq 39000`' }, 'coilbias'));
+  res = card(window, 'coilbias').querySelector('.tst-res');
+  assert.ok(res.classList.contains('warn'));
+  assert.match(res.textContent, /The switching frequency was not restored: fsw 39000 Hz restore failed, now 21500 Hz: run `pwm-freq 39000`\./);
+});
+
+test('coil DC bias failures still send mppt: a failed first pass skips the second, a second pass that never ends', async () => {
+  let { window, sent, note } = await coilRun({ coilBias: true, coilFail: true }, 'coilbias');
+  assert.deepEqual(sent, ['selftest', 'measure-coil l0', 'dc 0', 'measure-coil l0', 'mppt']);
+  const res = card(window, 'coilbias').querySelector('.tst-res');
+  assert.ok(res.classList.contains('fail'));
+  assert.match(res.textContent, /No result: need Vin>Vout\+1.*The first pass gave no inductance, so the higher-current pass was not started\./);
+  assert.equal(note.textContent, 'Resumed MPPT.');
+  const t = await connected({ coil: true, coilBias: true, coilFNeverEnds: true });
+  window = t.window;
+  window.tstDefs().find(d => d.id === 'coilbias').timeout = 1500;
+  Object.assign(window.tstTimings(), { stop: 100 });
+  await openSheet(window); await idle(window);
+  window.confirm = () => true;
+  await window.tstStart('coilbias');
+  assert.deepEqual(t.dev.sent.slice(-2), ['measure-coil l0 f=21500', 'mppt']);
+  note = card(window, 'coilbias').querySelector('.tst-res .note');
+  assert.match(note.textContent, /^No end of the second pass within 2 s: its state is unknown\. MPPT not resumed \(mppt: refused, measure-coil running\): send “mppt”\.$/);
+  assert.match(resText(window, 'coilbias'), /50\.6 µH at low current; 10 % lower at 4\.0 A/, 'the first pass\'s result stays');
+  assert.ok(card(window, 'coilbias').querySelector('.recheck'));
 });
 
 test('measure-coil link check after a timeout uses the status line', async () => {

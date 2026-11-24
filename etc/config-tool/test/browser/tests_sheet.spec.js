@@ -127,6 +127,39 @@ test('a coil run on a ringing board: faded raw dots in step order, then the ring
   }
 });
 
+test('a coil DC bias run: both passes in one chart, the curves, a legend, labels apart', async ({ page }) => {
+  test.setTimeout(90_000);
+  const dir = process.env.TST_BIAS_SHOTS || '/tmp/ce-dcbias-shots';
+  fs.mkdirSync(dir, { recursive: true });
+  const apart = async sel => {
+    const b = await page.locator(sel).evaluateAll(ts => ts.map(t => t.getBoundingClientRect().toJSON()));
+    expect(b.length).toBeGreaterThan(1);
+    for (const [i, r] of b.entries()) for (const l of b.slice(i + 1))
+      expect(r.left >= l.right || l.left >= r.right || r.top >= l.bottom || l.top >= r.bottom, JSON.stringify([r, l])).toBe(true);
+  };
+  for (const [w, tag] of [[1280, 'desktop'], [390, '390']]) {
+    await page.setViewportSize({ width: w, height: 1100 });
+    await openTests(page, { rowMs: 20, coilBias: true });
+    const c = card(page, 'coilbias');
+    await c.locator('.tst-x').click();
+    await c.locator('.run').click();
+    await expect(c.locator('.tst-pct')).toContainText('pass 2 of 2', { timeout: 20_000 });
+    await expect.poll(() => c.locator('rect.pt.raw').count()).toBeGreaterThan(5);
+    await expect(c.locator('.tst-res .busy')).toHaveText('Running measure-coil l0 f=21500 …');
+    await c.screenshot({ path: path.join(dir, `coilbias-running-${tag}.png`) });
+    await expect(c.locator('.tst-res .sum')).toHaveText('50.6 µH at low current; 10 % lower at 4.0 A, 20 % lower at 6.2 A', { timeout: 20_000 });
+    await expect(c.locator('path.fit.cv')).toHaveCount(1);
+    await expect(c.locator('path.inc.cv')).toHaveCount(1);
+    await expect(c.locator('.tst-legend > span')).toHaveText(['first pass, 39 kHz', 'second pass, 21.5 kHz', 'fit', 'incremental (DC bias)']);
+    await apart('[data-tst="coilbias"] .tst-chart svg[role="img"] text');
+    await apart('[data-tst="coilbias"] .tst-legend > span');
+    const fig = await c.locator('.tst-chart').boundingBox(), card0 = await c.boundingBox();
+    expect(fig.x + fig.width).toBeLessThanOrEqual(card0.x + card0.width + 0.5);
+    await c.screenshot({ path: path.join(dir, `coilbias-result-${tag}.png`) });
+    await c.locator('.tst-chart').screenshot({ path: path.join(dir, `coilbias-chart-${tag}.png`) });
+  }
+});
+
 test('an open sheet is the only scroller: the page behind it does not scroll', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 700 });
   await openTests(page);
