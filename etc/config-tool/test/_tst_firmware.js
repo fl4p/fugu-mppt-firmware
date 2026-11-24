@@ -52,7 +52,7 @@ function firmware(host, opts = {}) {
   const sent = [];
   const st = { hsLatched: false, bfLatched: false, bflowRunning: false, bfAbort: null, power: opts.power ?? 115.5,
     lastBf: [], rect: { state: 'idle', unsaved: 0, ct: 20, ns: '500' },
-    op: opts.op ?? 'mppt', ramp: opts.rampDown ?? 0, measuring: false, ...opts.state };   // op: mppt | manu | psu | duty (manual duty set)
+    op: opts.op ?? 'mppt', ramp: opts.rampDown ?? 0, backoff: opts.backoff ?? 0, measuring: false, ...opts.state };   // op: mppt | manu | psu | duty (manual duty set)
   let say = () => {};
   const later = (ms, fn) => setTimeout(fn, ms);
   const statusLines = () => {
@@ -174,6 +174,7 @@ function firmware(host, opts = {}) {
       if (st.op === 'mppt') return err('measure-coil: MPPT on, stop conversion first (dc 0)');
       if (st.op === 'duty') return err('measure-coil: manual duty 812 set, stop conversion first (dc 0)');
       if (st.ramp-- > 0) return err('measure-coil: converter still on, wait for the ramp-down');
+      if (st.backoff-- > 0) return err('measure-coil: protection backoff');
       st.measuring = true;
       s('OK: ' + cmd);
       const apply = a[a.length - 1] === 'apply';

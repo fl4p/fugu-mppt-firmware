@@ -4443,7 +4443,7 @@ async function tstStart(id){
     if (mppt){
       const m = tstTarget()===t ? await tstSend("mppt", ln=>{ tstPush(r, ln); tstPaint(id); }) : null;
       const ok = m && (m.ok===true || /already enabled/.test(tstRefusal(m.lines, "mppt")));
-      note = [note, ok ? "Resumed MPPT." : `MPPT not resumed (${!m ? "link closed" : m.ok===false ? tstRefusal(m.lines, "mppt")||"refused" : "no reply"}): send “mppt”.`].filter(Boolean).join(" ");
+      note = [note && !/[.!?]$/.test(note) ? note+"." : note, ok ? "Resumed MPPT." : `MPPT not resumed (${!m ? "link closed" : m.ok===false ? tstRefusal(m.lines, "mppt")||"refused" : "no reply"}): send “mppt”.`].filter(Boolean).join(" ");
       isErr = isErr || !ok;
     }
     r.st=st; r.note=note||""; r.noteErr=!!isErr; r.fold = st==="done"; if (st!=="idle" || isErr) r.open=true; tstLock(null); tstGate(); };
@@ -4475,15 +4475,15 @@ async function tstStart(id){
   r.st="run"; r.lines=[]; r.sum=null; r.l0=null; r.open=true; tstPaint(id);
   const onLine = ln => { tstPush(r, ln); tstPaint(id); };
   let x=await tstSend(cmd, onLine);
-  // measure-coil runs only from `dc 0`: stop MPPT (not PSU/PV or a manual duty), retry through the ramp-down
+  // measure-coil runs only from `dc 0`: stop MPPT (not PSU/PV or a manual duty), retry through the ramp-down and a backoff
   if (d.root==="measure-coil" && x.ok===false && /\bMPPT on\b/.test(tstRefusal(x.lines, cmd))){
     mppt=true;
     const z=await tstSend("dc 0", onLine);
     if (z.ok!==true) return end("refused", `“dc 0” ${z.ok===false ? "refused: "+(tstRefusal(z.lines, "dc")||"no reason") : "got no reply"}; nothing was measured.`, true);
     for (const t1=Date.now(); ; await svcSleep(TST_T.poll)){
       x=await tstSend(cmd, onLine);
-      if (x.ok!==false || !/\bstill on\b/.test(tstRefusal(x.lines, cmd))) break;
-      if (Date.now()-t1 > TST_T.stop) return end("refused", `The converter did not stop within ${Math.round(TST_T.stop/1000)} s of “dc 0”; nothing was measured.`, true);
+      if (x.ok!==false || !/\bstill on\b|\bprotection backoff\b/.test(tstRefusal(x.lines, cmd))) break;  // `dc 0` at power can trip a short backoff
+      if (Date.now()-t1 > TST_T.stop) return end("refused", /backoff/.test(tstRefusal(x.lines, cmd)) ? `The converter stayed in a protection backoff for ${Math.round(TST_T.stop/1000)} s after “dc 0”; nothing was measured.` : `The converter did not stop within ${Math.round(TST_T.stop/1000)} s of “dc 0”; nothing was measured.`, true);
     }
   }
   if (x.lines.some(l=>TST_NOCMD.test(l))){ tstGone.add(d.root); await end("idle"); tstSetMsg(`“${d.root}” is not in this firmware build; its tests are hidden.`, true); return; }

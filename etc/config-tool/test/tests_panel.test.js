@@ -685,6 +685,16 @@ test('measure-coil from MPPT: dc 0, measure, mppt under one lock; Resumed MPPT i
   assert.deepEqual(ls.sent, ['selftest', 'measure-coil ls', 'dc 0', 'measure-coil ls', 'mppt']);
 });
 
+test('measure-coil waits out a protection backoff that dc 0 tripped, and ends a persistent one with a sentence', async () => {
+  let { window, sent } = await coilRun({ backoff: 2 });
+  assert.deepEqual(sent, ['selftest', 'measure-coil l0', 'dc 0', 'measure-coil l0', 'measure-coil l0', 'measure-coil l0', 'mppt']);
+  assert.match(resText(window, 'coil'), /L = 50\.34 µH/);
+  let note;
+  ({ window, sent, note } = await coilRun({ backoff: 1e9 }));
+  assert.equal(sent.at(-1), 'mppt');
+  assert.match(note.textContent, /stayed in a protection backoff for 0 s after “dc 0”; nothing was measured\. Resumed MPPT\./);
+});
+
 test('measure-coil already at dc 0: no dc 0, no mppt afterwards', async () => {
   const { window, sent, note } = await coilRun({ op: 'manu' });
   assert.deepEqual(sent, ['selftest', 'measure-coil l0']);
