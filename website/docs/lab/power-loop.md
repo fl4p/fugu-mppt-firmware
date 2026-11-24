@@ -28,7 +28,7 @@ flowchart LR
     KO --> BI
 ```
 
-Both converters run forced PWM. Configure the boost with these settings:
+Both converters run forced PWM. Configure the boost with these settings (as in `config/lab/boost_bench`):
 
 ```
 # boost/converter.conf:
@@ -38,14 +38,14 @@ forced_pwm=1
 # boost/charger.conf:
 vout_max=75
 
-
 # boost/limits.conf:
-vin_min=27 
-hv_max=80
+vin_min=26
+hv_max=85
 ```
 
 A current sensor on the low side (GND) shows a current that is much lower than the actual current flowing. To prevent
-issues with CCM/DCM detection, enable forced PWM on the buck converter as well:
+issues with CCM/DCM detection, enable forced PWM on the buck converter as well (`config/lab/buck_bench` ships it
+commented out):
 
 ```
 # buck/converter.conf:
@@ -169,9 +169,8 @@ Avoid these traps when you measure on the rig:
 
 * Confirm that the buck really runs forced PWM (a bare `sync` reads it back). Without forced PWM, the buck silently
   runs DCM, and any loss analysis that assumes CCM is wrong for every point.
-* Use scope ground springs, not ground clips. A ground clip fabricated a ~15 MHz mode that outranked the real
-  switch-node ring in a mode/spectrum ranking and led to a retracted conclusion.
-* Record which board and which probes produced each capture. Identity assumed from context misidentified a probe for
-  a whole session.
+* Use scope ground springs, not ground clips. A ground-clip loop can add a spurious mode (~15 MHz on this rig) that
+  outranks the real switch-node ring in a mode/spectrum ranking.
+* Record which board and which probes produced each capture. Identity inferred from context is easy to get wrong.
 * A ranked mode table is not an identification. Read the modes below the first one, because an artifact can outrank
   the real signal.

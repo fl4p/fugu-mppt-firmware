@@ -16,8 +16,8 @@ The following table lists each setup with the hardware, build, and config profil
 | No power stage | Any ESP32-S3 dev board | Default | `config/lab/dry_mock` | Console, services, networking, telemetry, config handling |
 | Simulated converter | Any ESP32-S3 (or classic ESP32) board | `CONFIG_FUGU_WITH_VCONV=y` | `config/lab/vconv_mock` (`vconv_mock_esp32`) | Closed-loop control, MPPT, charger, PSU/PV-sim modes |
 | Simulator, no board | None | Default | `config/lab/wokwi_mock` (`wokwi_mock_esp32`) | Boot, console and CI smoke tests in [Wokwi](../development/wokwi.md) |
-| Single converter | A Fugu board, current-limited PSU on the input, e-load or battery emulator on the output | Default (or MCPWM) | Your board's profile, e.g. `config/fmetal` | Diode emulation, protection, efficiency, [automated bench tests](automated-bench-tests.md) |
-| Two-converter loop | A boost and a buck board in a recirculating loop, one PSU | MCPWM | See [Power-loop rig](power-loop.md) | Waveforms, efficiency and sync work at power without a solar array |
+| Single converter | A Fugu board, current-limited PSU on the input, e-load or battery emulator on the output | Default (MCPWM on ESP32-S3) | Your board's profile, e.g. `config/fmetal` | Diode emulation, protection, efficiency, [automated bench tests](automated-bench-tests.md) |
+| Two-converter loop | A boost and a buck board in a recirculating loop, one PSU | Default (MCPWM) | See [Power-loop rig](power-loop.md) | Waveforms, efficiency and sync work at power without a solar array |
 
 [Lab config profiles](config-profiles.md) describes what each profile under `config/lab/` assumes.
 [Testing](../development/testing.md) covers the unit and e2e suites that run on these setups.
@@ -54,8 +54,9 @@ input/output capacitance, and per-channel noise.
 - Never OTA a `VCONV` build to a real converter. The half-bridge is never switched, so the converter stops
   charging while looking healthy (real sensor readings, sweeps, repeated `Vr-sensor-fail`) and the loads drain the
   battery. See [Build options](../guide/getting-started/build-options.md).
-- Stop conversion before updating at high power. An OTA reboots the device into the new image, so send `dc 0`
-  first. With `etc/ota.py`, always dry-run (`-n`) and scope the target (`-m REGEX`) first.
+- An OTA reboots the device into the new image. The app `ota <url>` command stops conversion itself before the
+  download; a bootloader OTA refuses until conversion was stopped with `dc 0`. With `etc/ota.py`, always dry-run
+  (`-n`) and scope the target (`-m REGEX`) first.
 - Rollback needs the serial-flashed bootloader. A board that has only ever been updated over the air keeps its
   old bootloader and will not revert from a bad image. See [OTA over Wi-Fi](../guide/updating/ota-wifi.md).
 - Match the profile to the output. An open-output profile raises the output over-voltage threshold. Never keep

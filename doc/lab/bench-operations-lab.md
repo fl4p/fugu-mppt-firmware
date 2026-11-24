@@ -264,3 +264,19 @@ needs a branch + commit + push in the submodule's own repo first, then the point
 `bsync` service is default-on on MCPWM builds and no profile ships a `bsync.conf`, so a board can
 sit with bsync `Failed` forever (stale BSSID, sniffer re-arming every 10 s); `svc off bsync`
 persists. (Investigated and refuted as a cause of flaky BLE connects, n=30 — don't re-derive.)
+
+## Incidents cut from the published lab pages (2026-11-24)
+
+These were removed from `website/docs/lab/` when the pages were rewritten as reference text; the rules they motivated
+stay on the published pages.
+
+- Scope probing: a ground clip produced a ~15 MHz mode that outranked the real switch-node ring in a mode/spectrum
+  ranking and led to a retracted conclusion. A probe identity assumed from context was wrong for a whole session.
+- A 300 s foreground timeout killed a BLE OTA partway through; two parallel BLE OTAs both stalled at ~11 %.
+- Console framing corruption mangled a command into `~set-config …` twice; the write was silently lost.
+- USB-CDC re-enumeration failed once.
+- One session flashed one board's build onto another through `$ESPPORT` / a `/dev/cu.usbmodem*` glob.
+- A pyserial-triggered reset during `set-config` lost several writes. A board that looked dead after a `provision.py`
+  run was recovered by one full `idf.py flash`.
+- Coil L0 (coil-inductance page §8): the recommendation was board A ≈ `51e-6` (was `56e-6`, ~10 % high, the riskier
+  direction) and board B ≈ `80e-6`; see coil-inductance-fry-flat.md for the board mapping.

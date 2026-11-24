@@ -14,7 +14,7 @@ against your board before use.
 
 The network settings (`wifi.conf`, `mqtt.conf`, `tele.conf`) are lab-specific. After provisioning, set your own SSID,
 broker, and telemetry host with `set-config`, and do not reuse the values in the repository. `wifi.conf` is gitignored
-and absent on a fresh clone.
+and absent on a fresh clone. `mqtt.conf` is gitignored too, so most profiles ship without one.
 :::
 
 ## Profiles
@@ -66,8 +66,7 @@ Before provisioning, copy the profile, fix what it lacks, and remove the lab's n
 
 ```bash
 cp -r config/lab/dry_mock /tmp/mock
-cp config/fmetal/conf/charger.conf /tmp/mock/conf/   # dry_mock has no charger.conf
-rm -f /tmp/mock/conf/mqtt.conf                        # lab broker settings, not yours
+rm -f /tmp/mock/conf/mqtt.conf    # lab broker settings, not yours (if present)
 ./provision.py /tmp/mock
 ```
 

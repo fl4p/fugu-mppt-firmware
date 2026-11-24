@@ -66,8 +66,8 @@ The tests use these console commands:
 | `dc N [ls]` | manual PWM, fade HS duty to `N` (optional manual LS hold) |
 | `mppt` | re-enable auto MPPT (leave manual mode) |
 | `sweep` | force a global sweep / re-calibration |
-| `sync on/off/forced` | LS rectifier mode |
-| `bf 0/1` | backflow switch |
+| `sync on\|off\|forced\|forced!` | LS rectifier mode (manual PWM only; `forced` arms the bring-up gate, `forced!` engages at once) |
+| `bf 0/1` | backflow switch (manual PWM only) |
 | `fan N` | fan duty |
 | `set-config <file> <k> <v>` | write a conf key to flash. Most keys take effect at the next boot; `limits.conf` is read only at boot |
 | `ovset <V>` | live output-OV threshold (`0` clears it) |
@@ -85,11 +85,11 @@ seconds and count `shutdown` / `Converter enabled` lines.
 - **Action**: `dc 10`.
 - **Expected**: converter enables once, `protect()` trips on `Vout(avg) > 1.25·(Vin(avg)+1 V)`, or
   instantaneously `Vout > 2·(Vin+0.5 V)`, logs one
-  `MPPT: Vout .. > Vin .., shutdown duty=..`, then stays off. `setTargetDutyCycle(0)` on the trip
-  prevents re-fade.
+  `MPPT: Vout .. > Vin .., shutdown duty=..`, then stays off. The trip arms a protection backoff, and
+  afterwards the buck start condition (`Vin > Vout + 1`) keeps the converter from fading in again.
 - **Pass**: exactly one enable/trip/disable cycle; no repeating warnings; unit stays in manual mode,
   converter disabled.
-- **Fail mode this guards**: before the fix it re-faded every few ms (warning flood).
+- **Fail mode this guards**: a converter that re-fades every few ms after the trip (warning flood).
 
 ### 1.2 Output over-voltage (OV)
 - **Setup**: charging normally, then drive output sink voltage above the OV threshold. It is
@@ -99,8 +99,9 @@ seconds and count `shutdown` / `Converter enabled` lines.
   (default 1). A bench profile with `reverse_current_paranoia=0` and a 29 V pack gives 43.5 V, not
   29.9 V. Compute it from the unit's `limits.conf`, `charger.conf`, mode and `ovset`; `status` shows
   `Vbat_max` and whether an explicit `ovset` is in force.
-- **Expected**: `shutdownDcdc()`, `Vout .. > .. + 5pct!` warning, LCD "OV shutdown". If condition
-  persists >20 s, Vbat_max re-detects via calibration.
+- **Expected**: `shutdownDcdc()`, `Vout .. > .. + 5pct!` warning, LCD "OV shutdown". If the condition
+  persists >20 s outside PSU/PV mode, `Vbat_max` is cleared and re-detected via calibration, unless it was set
+  with `vset`.
 - **Pass**: shutdown within one control tick of the threshold crossing; recovers when voltage drops.
 
 ### 1.3 Battery interrupt (load disconnect)
@@ -248,8 +249,9 @@ Requires a battery emulator on the output.
 
 ### 6.1 startCondition gating
 - Verify no start when: NTC above `temp_max − 3` or MCU at/above `temp_max − 3` (87 °C with
-  `temp_max=90`); supply < 9.5 V; or the Vin/Vout polarity is wrong
-  for the topology (buck needs Vin > Vout+1 and Vin > ~1.18 Vout; boost needs Vin < Vout+1).
+  `temp_max=90`), or a fitted temperature sensor is stale; supply < 9.5 V; or the Vin/Vout polarity is wrong
+  for the topology (buck needs Vin > Vout+1 and `Vout/Vin` below the low-side minimum-pulse start ratio,
+  block reason `minpulse-M`; boost needs Vin < Vout+1).
 
 ### 6.2 Cold/low-light start
 - Ramp input from below threshold; confirm clean first sweep once `startCondition` is met.
@@ -312,6 +314,7 @@ Follow these practices when you script the cases:
 :::warning Lowered limits need a restart
 `dc 0`, `set-config limits.conf <k> <v>`, `get-config` to read it back, `restart`, then confirm the
 new value before applying power. The value must still pass the `Limits` checks
-(`temp_derate < temp_max`, 20 < `temp_max` < 120). Restore the same way. Use `ovset` for a live
+(`Vin_max > vin_min`, `p_max < Vin_max·Iin_max < 4·p_max`, `temp_derate < temp_max`, 20 < `temp_max` < 120),
+or setup fails at boot. Restore the same way. Use `ovset` for a live
 output-OV threshold.
 :::

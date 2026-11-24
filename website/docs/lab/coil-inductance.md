@@ -3,12 +3,12 @@ title: Coil inductance
 sidebar_position: 6
 ---
 
-# Measuring the coil inductance (`coil.conf::L0`)
+# Coil inductance (`coil.conf::L0`)
 
 `etc/measure_coil.py` measures the coil inductance `L0` from the three sensors the board already
 has (`Vin`, `Vout`, `Iout`). The synchronous converter needs `L0` to emulate a diode, although it
 has no inductor-current probe: `L0` decides CCM vs DCM and times the low-side turn-off (see
-[Diode Emulation.md](../internals/diode-emulation.md)). This page covers the theory of obtaining
+[Diode emulation](../internals/diode-emulation.md)). This page covers the theory of obtaining
 `L0`, how a miscalibrated current sensor distorts the measurement, what a wrong `L0` does to diode
 emulation, and how the script works.
 
@@ -128,9 +128,8 @@ Gain errors do occur: a mis-scaled or non-genuine INA226 (wrong shunt LSB) reads
 high (see [dev-notes/ina226.md](../../../doc/dev-notes/ina226.md)). The DCM method cannot tell a
 current-gain error apart from a wrong true `L`, because both move `L_meas` by the same pure scale
 factor. Attributing a board-to-board discrepancy to the sensor therefore needs an independent
-current reference. §8 is a worked example. Two boards self-measured ~1.57× apart, which looked like
-a sensor gain error until it turned out they carry different coils. An independent current
-cross-check confirmed that both sensors are fine.
+current reference. §8 is a worked example: two boards self-measured ~1.57× apart because they carry
+different coils, and an independent current cross-check put both sensor gains near 1.
 
 If `L0` is derived from the same biased sensor and then used by the firmware, the gain cancels
 for diode emulation specifically (see §4).
@@ -158,7 +157,7 @@ Here `ΔI_fw ∝ 1/L0`. The two error directions are asymmetric:
 The firmware therefore undershoots on purpose with `InductivityDcBias = 0.95`. Erring toward
 "too low" trades a little efficiency for safety margin. When in doubt, round `L0` down.
 
-### Why a sensor-gain error cancels
+### Sensor-gain cancellation
 
 A sensor-gain error cancels in the DCM decision. This only matters when a real gain error exists,
 which isn't established on the two boards of §8. The argument still makes the self-measured `L0`
@@ -266,10 +265,11 @@ medians off the `sensor avg` line), uses `pwmMaxDriver()` for the exact PWM peri
 that both agree to 0.1 %). The `l0` defaults are 48 steps and a 1 s dwell, about one minute in
 total: the device reads the averages directly and needs no console polling. `ls` keeps a 3 s
 dwell. `apply` writes `coil.conf::L0` (next boot) or `rect_offset_ns` with `rect_offset_drv` and
-`rect_offset_cal=1` (live at once). Either is written only after the converter has been disabled,
-because a flash write stalls the control loop. Like the script, it reports the physical
-inductance. The earlier median-only version agreed
-with the script to within ~2 % on board A of §8.
+`rect_offset_cal=1`, or 2 when the offset was clamped to +125 ns (live at once). Either is written
+to flash only after the converter has been disabled, because a flash write stalls the control loop.
+`L0` is not written when the run is marked `DISTURBED`. Like the script, it reports the physical
+inductance. A median-only version of the command agreed with the script to within ~2 % on board A
+of §8.
 
 The command starts only from a converter stopped with `dc 0` (manual PWM, duty 0, converter off)
 and leaves it there; `mppt` resumes tracking. Manual PWM keeps the tracker, its sweeps and its
@@ -312,7 +312,8 @@ the frequency gives about 1.4 times the peak current. The firmware changes the f
 converter off, through the same path as `pwm-freq` (`pwmMax`, the duty band, the CCM/DCM decision
 and the dead-time in counts all follow), and restores the previous frequency once the converter is
 off again, also after an abort or an error. The sweep header prints the frequency it ran at
-(`fsw=`), and every row's duty `D` refers to that frequency's `pwmMax`.
+(`fsw=`), and every row's duty `D` refers to that frequency's `pwmMax`. `f=` needs the MCPWM gate
+driver (the ESP32-S3 default) and is refused for `ls`.
 
 The frequency is bounded:
 
@@ -365,7 +366,7 @@ the SR-timing oscillation.
 That peak calibrates timing rather than `L` (at the optimum
 `t2/t1 = (Vin−Vout)/Vout = 1/M − 1 = rectCtrlRatio(M)`, with `L` cancelling out). The `--ls-sweep`
 peak-bracketing and the `coil.conf::rect_offset_ns` dead-time calibration it drives (`--apply`) are
-rectifier-timing concerns. [Diode Emulation.md](../internals/diode-emulation.md) covers them with
+rectifier-timing concerns. [Diode emulation](../internals/diode-emulation.md) covers them with
 the timing theory. They complement the inductance measurement and don't replace it. The ring of §7
 also modulates an LS sweep, so a shallow `Iout` peak can be a ring crest rather than the timing
 optimum.
@@ -427,7 +428,7 @@ first zero crossing of the current by `i0·L/(Vout+Vf)`, which warps the sinusoi
 sawtooth-like shape. The warp does not move the mean: the average of `sin E` over the mean anomaly
 is zero.
 
-### Evidence from field sweeps
+### Field sweeps
 
 Global MPPT sweeps on two boards (the boards of §8) show an `Iout` ripple of ±10–25 % in DCM that
 matches this model:
@@ -616,17 +617,17 @@ settles within 1 % of it. At a steady 45 W, where the whole operating range is D
 
 ## 8. Case study: two coils
 
-Two field boards (Fugu2 converters in service) self-measured ~1.57× apart because they have
-different coils. Assuming they shared one made the gap look like a sensor fault. The following
-table lists their hand-wound inductors:
+Two Fugu2 boards in service self-measured ~1.57× apart because they have different coils. If both
+are assumed to carry the same coil, the gap looks like a sensor fault. The following table lists
+their hand-wound inductors:
 
 | board  | core                  | turns | `Al`        | nominal `Al·N²`         | measured (median) |
 |--------|-----------------------|-------|-------------|-------------------------|-------------------|
 | A      | 2× stacked KS130-060A | 20–21 | 122 nH/N²   | 48.8 – 53.8 µH          | **50.9 µH**       |
 | B      | 2× KDM KS184-125A     | 10    | 562 nH/N²   | ~56 µH (documented)     | **79.8 µH**       |
 
-A full step-1 duty sweep on each (`measure_coil.py --steps 600 --i-max 6`, ~550 DCM points apiece,
-telnet) gives the real `L` vs `H` (PWM count) shown in the following plots. The dashed line is each
+A full step-1 duty sweep on each (`measure_coil.py --steps 600 --i-max 6`, ~550 DCM points apiece)
+gives the real `L` vs `H` (PWM count) shown in the following plots. The dashed line is each
 board's median. Points near the CCM boundary are excluded.
 
 ```
@@ -680,8 +681,8 @@ The measurements lead to these findings:
   known nameplate. Board B (KS184, nominally 10 t) measures ~80 µH. Its documented `~56 µH` was only
   an unverified figure and is the suspect number: the turns/`Al` look off, since 80 µH needs ~12
   turns at that `Al`. An independent battery-shunt cross-check puts board B's current gain at
-  ≈ 1.0, so its sensor is fine too. The gap doesn't come from a measurement error on either board.
-  The earlier "fake INA226 reading ~1.5× low" story is withdrawn.
+  ≈ 1.0, so its sensor is fine too. The gap doesn't come from a measurement error on either board,
+  and in particular not from an INA226 reading ~1.5× low.
 - **Each board's measured value is its true inductance, to a few %.** Take board A ≈ 51 µH,
   board B ≈ 80 µH. The shunt cross-check hints board A under-reports current ~6–7 %, which would inflate
   its `L` by the same factor and put the true value nearer the `N = 20` end (~48 µH). That correction
@@ -695,11 +696,11 @@ The measurements lead to these findings:
   the waveform enters CCM and `Iout` stops obeying the DCM transfer relation. Both are artifacts of
   measuring outside DCM, not changes in the coil; the median over the clean DCM band is the result.
 
-Set each board's `coil.conf::L0` to its own measured value:
+Each board's `coil.conf::L0` belongs at its own measured value (board A ≈ `51e-6`, board B ≈ `80e-6`).
+The values configured before the measurement show both error directions of §4:
 
-- Board A ≈ `51e-6`. Its current `56e-6` is ~10 % high, the riskier direction per §4.
-- Board B ≈ `80e-6`. Its current `40e-6` is very conservative, costing body-diode loss near the
-  boundary.
+- Board A had `56e-6`, ~10 % high, the riskier direction.
+- Board B had `40e-6`, very conservative, costing body-diode loss near the boundary.
 
 The measurements don't indicate a sensor recalibration for either board.
 

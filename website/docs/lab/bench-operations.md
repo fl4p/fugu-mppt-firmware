@@ -11,18 +11,15 @@ config edits, BLE failure modes, and OTA. Related pages are [Console commands](.
 [Agentic programming](../development/agentic-programming.md),
 [OTA over BLE](../guide/updating/ota-ble.md), and [OTA over Wi-Fi](../guide/updating/ota-wifi.md).
 
-Everything here was observed in bench sessions unless marked *inferred*.
-
 ## Toolchain and environment
 
-Source ESP-IDF (`. $IDF_PATH/export.sh`, 5.5+) and run `idf.py set-target esp32s3` once per build
-dir. Afterwards, invoke repo tools with a Python that has their dependencies ([Host tools](../reference/host-tools.md)).
+Source ESP-IDF 6.0 with `. ./idf-export.sh` and run `idf.py set-target esp32s3` once per build
+dir (see [Build](../development/build.md)). Afterwards, invoke repo tools with a Python that has their dependencies ([Host tools](../reference/host-tools.md)).
 `etc/fugu_console.py` has no exec bit, so call it through an interpreter:
 `python3 etc/fugu_console.py`.
 
 Pass the port explicitly (`-p`). With several boards attached, a `$ESPPORT` guessed from a
-`/dev/cu.usbmodem*` glob picks the wrong one. One session flashed one board's build onto another
-board's port this way.
+`/dev/cu.usbmodem*` glob can pick the wrong one and flash one board's build onto another board.
 
 `esptool` on PATH can resolve to a broken PlatformIO shim (`ModuleNotFoundError: esptool`).
 `python -m esptool …` after sourcing IDF always works. On S3, `chip_id` prints the efuse MAC
@@ -36,29 +33,28 @@ panicking on mbuf exhaustion. Reapply it after every IDF bump. When you reapply 
 
 For build variants, quote multiple defaults fragments:
 `-DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.d/vconv_s3"`. Unquoted, the shell silently eats
-the second fragment. `idf.py set-config` does not exist in IDF 5.5, and `SDKCONFIG` as an
-environment variable has no effect, so pass `-DSDKCONFIG=` on the command line. Side IDF
+the second fragment. `idf.py` has no `set-config` command, and `SDKCONFIG` as an environment
+variable has no effect, so pass `-DSDKCONFIG=` on the command line. Side IDF
 projects under `etc/*` (e.g. `etc/bsync-beacon`) keep their own gitignored `sdkconfig`, which goes
 stale. Delete it with `rm` and let it regenerate.
 
 If a flash or build dies with a truncated tail, the real error is in
-`build-<tag>/log/idf_py_std{err,out}_output_<pid>` (the pid is in the filename).
+`build/<name>/log/idf_py_std{err,out}_output_<pid>` (the pid is in the filename).
 
 After you change a firmware global's type, both `idf.py -B build build` and
 `RUN_TESTS=1 idf.py -B build/tests build` must be green. Only the second compiles the test TUs,
-and an `extern` type mismatch links silently (observed: `time_us` vs `unsigned long`).
+and an `extern` type mismatch links silently (for example `time_us` vs `unsigned long`).
 
 ## Identifying the board on a port
 
 Re-verify a board's identity after every replug and before any board-specific write (role configs,
 `set-config`), not only before flashing. The port↔board mapping is not stable with several boards
-attached. The following failures were observed:
+attached. Typical failures:
 
-- Two `usbmodem*` ports swapped board assignments mid-session, and role configs landed on the
-  wrong boards.
-- A port that used to be a Fugu board became a different, non-Fugu S3 after a replug (wrong-device
+- Two `usbmodem*` ports swap board assignments, and role configs land on the wrong boards.
+- A port that used to be a Fugu board becomes a different, non-Fugu S3 after a replug (wrong-device
   flash, see below).
-- Consecutive `flash.sh <name> -p …` runs went to a different board than intended while a test hit
+- Consecutive `flash.sh <name> -p …` runs go to a different board than intended while a test hits
   the unflashed one.
 
 The following checks are cheap. Try them in this order:
@@ -72,13 +68,13 @@ The following checks are cheap. Try them in this order:
    resort on a running converter.
 
 Check identity before you blame cables. Esptool errors that read as link problems (`Invalid head of packet`,
-`Corrupt data, expected 0x1000 bytes but received …`, an apparent ROM boot-loop) appeared when the
-device on the port was not the expected board at all. On a genuine link, dropping to `-b 115200`
-fixed mid-transfer corrupt data.
+`Corrupt data, expected 0x1000 bytes but received …`, an apparent ROM boot-loop) also appear when the
+device on the port is not the expected board at all. On a genuine link, dropping to `-b 115200`
+helps against mid-transfer corrupt data.
 
 esptool writes an image without validating it against the target's partition table. A 1.7 MB fugu
-app was written onto a foreign S3 with a 1448 KB app partition, and esptool reported
-`Hash of data verified. Done` while silently overrunning ~216 KB into that device's spiffs. To check
+app written onto a foreign S3 with a 1448 KB app partition overruns ~216 KB into that device's
+spiffs, and esptool still reports `Hash of data verified. Done`. To check
 an unknown device's partition table offline, run
 `python -m esptool -p PORT read_flash 0x8000 0xc00 pt.bin` and then
 `python $IDF_PATH/components/partition_table/gen_esp32part.py pt.bin`.
@@ -86,7 +82,7 @@ an unknown device's partition table offline, run
 ## Flashing
 
 Flash through the wrapper so the ELF archive is keyed by board name:
-`./flash.sh <name> -B build-<tag> -p PORT app-flash` (equivalently
+`./flash.sh <name> -B build/<variant> -p PORT app-flash` (equivalently
 `FUGU_DEVICE=<name> idf.py … app-flash`). Without `FUGU_DEVICE`, the archive falls back to the
 serial-port basename, which is unstable, so a later `elf_archive.py decode --device <name>` misses.
 
@@ -97,9 +93,9 @@ a full flash including the littlefs image that the app-flash rule exists to prev
 
 The following items cover resets, stuck boot modes, and unresponsive ports:
 
-- Never hand-roll a pyserial DTR/RTS reset. One held IO0 low and strapped the board into ROM
-  download mode (`rst:0x15 … boot:0x1 (DOWNLOAD)`), leaving a mute console indistinguishable from a
-  firmware hang. Several `set-config` writes were silently lost to it. The repo tool is
+- Never hand-roll a pyserial DTR/RTS reset. A wrong line sequence holds IO0 low and straps the board
+  into ROM download mode (`rst:0x15 … boot:0x1 (DOWNLOAD)`), leaving a mute console indistinguishable
+  from a firmware hang, and `set-config` writes sent to it are silently lost. The repo tool is
   `etc/idf-devtools/rts.py`, but its own docstring says it does not work on the S3's native
   USB-JTAG port.
 - A board can also get stuck *in* download mode, the inverse of the can't-enter case. A board
@@ -108,11 +104,10 @@ The following items cover resets, stuck boot modes, and unresponsive ports:
   Probe such a device non-disruptively with
   `python -m esptool -p PORT --before no_reset --after no_reset chip_id`, and kick it into the app
   with `--before no_reset run`.
-- USB-CDC occasionally fails to re-enumerate after a console `restart` (observed once). An RTS
-  reset or replug brings it back.
-- A board with a dead USB serial port can still be alive. One board gave nothing on serial through
-  every reset trick and answered instantly over BLE. Switch transport and keep diagnosing. Only a
-  power cycle restores serial in that state.
+- USB-CDC can fail to re-enumerate after a console `restart`. An RTS reset or replug brings it back.
+- A board with a dead USB serial port can still be alive and answer over BLE while serial stays mute
+  through every reset trick. Switch transport and keep diagnosing. Only a power cycle restores serial
+  in that state.
 - zsh aborts the whole command on any unmatched glob (`no matches found`), so
   `ls /dev/cu.usbmodem* /dev/cu.usbserial*` loses both listings and `--include=*.cpp` dies too.
   `2>/dev/null` does not help, because the shell fails before exec. Quote patterns or split them
@@ -136,17 +131,17 @@ The client behaves as follows:
 - `--ip host:port` is one argument. Behind a NAT or port forward, confirm the device with
   `hostname`, since forwarded mappings can move. MQTT takes `--mqtt host --mqtt-port N --name <dev>`
   (`--mqtt host:port` does not parse). `--ble --name <hostname>` takes the bare hostname.
-- Batched replies interleave with log output and can fabricate errors. A `-c "ip"` in a batch
-  produced `Command not found at 'ip'` *and* the correct reply. Character-interleaved garbage was
-  also observed. Re-send a command alone before you trust an `ERR:`. Under heavy log flood, send
+- Batched replies interleave with log output and can fabricate errors: a `-c "ip"` in a batch can
+  return `Command not found at 'ip'` *and* the correct reply, and characters can interleave. Re-send
+  a command alone before you trust an `ERR:`. Under heavy log flood, send
   it twice or quiet the board first (`log <tag> error`, see [Console](../reference/console.md)).
 - Reads right after a state-changing command return the pre-change state, because the `-c`
   commands go back-to-back with no settle. Sleep 3–10 s between the change and the read, ~12 s
   after `restart`, and 10–15 s after `wifi on` before `ip` means anything.
 - Async events only reach a connection that is open when they fire. A protection-trip reason,
   backoff, or ADC-init error printed between two client invocations is lost. To capture one, put
-  the log-level raise, the trigger, a device-side `sleep 3`, and the read in a *single* `--stdin`
-  script.
+  the log-level raise, the trigger, a device-side `sleep 3` (needs `CONFIG_FUGU_WITH_SCRIPTS=y`),
+  and the read in a *single* `--stdin` script.
 - The client's per-command timeout is 4 s by default, with overrides for `ota`, `scan-i2c`, `curl`,
   and `ping`. A slow reply looks like a dead board.
 - The shared dispatcher prints the log line `received serial command: '<cmd>'` for all
@@ -162,7 +157,7 @@ The client behaves as follows:
 
 :::danger `dc` takes over from any mode
 `dc N` switches to manual PWM from any mode and drives duty N (`dc 0` stops conversion).
-`sync on|off|forced` and `bf 0|1` are rejected with `ERR` outside manual mode. A bare `sync` reports
+`sync on|off|forced|forced!` and `bf 0|1` are rejected with `ERR` outside manual mode. A bare `sync` reports
 the rectifier state in any mode. Verify effects in the status line anyway, since batched replies can
 interleave.
 :::
@@ -171,8 +166,8 @@ interleave.
 
 Config edits on a live board have these pitfalls:
 
-- Read back every `set-config` with `get-config` in the same invocation. A stray `~` framing
-  corruption twice mangled a command into `~set-config …`, and the write was silently lost.
+- Read back every `set-config` with `get-config` in the same invocation. A stray `~` from framing
+  corruption can mangle a command into `~set-config …`, and the write is then silently lost.
 - `set-config k ""` stores the two quote characters literally. Clear a key with
   `del-config <file> <key>` instead. `get-config` cannot distinguish a missing key from an empty
   one, so probe a known-value key to test config presence.
@@ -181,7 +176,7 @@ Config edits on a live board have these pitfalls:
 - WiFi keys (`ssid_<tag>` / `ssid_<tag>_psk`) are only loaded at boot (`wifi_load_conf`). After
   `wifi-add` or `set-config wifi.conf …`, run `restart` before the board will associate.
 - A checksum boot-loop (`Checksum failed. Calculated 0x.. read 0x..`) straight after a
-  `provision.py` run was recovered by one full `idf.py flash`. The board was not dead.
+  `provision.py` run does not mean a dead board; one full `idf.py flash` recovers it.
 - `python3 etc/dump_littlefs.py <outdir>` reads a live config partition back. It writes the raw
   image and the extracted `conf/*.conf`, which round-trip into `provision.py`. It goes through
   `parttool.py`, so it reboots the board. Never run it on a live converter. To read one value, use
@@ -193,9 +188,9 @@ The following table maps each symptom to its cause and action:
 
 | Symptom | Cause / action |
 |---|---|
-| Absent from scans entirely | Someone holds the single connection (`NIMBLE_MAX_CONNECTIONS=1`): another console session, or a BLE telemetry bridge in connect mode. The link lives in bluetoothd, so killing the client does not free it; run `bluetoothctl devices Connected` / `disconnect <mac>` on the holder; device-side `svc rs ble` restores the connectable advertisement. Also: a WiFi scan-loop against a missing AP starved BLE until `wifi off`. Also: a board powered from Vin drops off BLE when the bench supply drops; check the boot log's vin calibration value. |
+| Absent from scans entirely | Someone holds the single connection (`NIMBLE_MAX_CONNECTIONS=1`): another console session, or a BLE telemetry bridge in connect mode. The link lives in bluetoothd, so killing the client does not free it; run `bluetoothctl devices Connected` / `disconnect <mac>` on the holder; device-side `svc rs ble` restores the connectable advertisement. Also: a Wi-Fi scan loop against a missing AP can starve BLE until `wifi off`. Also: a board powered from Vin drops off BLE when the bench supply drops; check the boot log's vin calibration value. |
 | Visible to a raw scan but not to the tooling | With BLE_ADV telemetry the adv payload has no room for the NUS UUID, so UUID-filtered scanners show nothing. Match by **name**. |
-| Scans fine, every connect times out | Not the GATT-cache case: someone else holds the link (see row 1), and with `WITH_BLE_ADV` the board stays visible-but-non-connectable while connected. |
+| Scans fine, every connect times out | Not the GATT-cache case: someone else holds the link (see row 1), and with `CONFIG_FUGU_WITH_BLE_ADV` the board stays visible-but-non-connectable while connected. |
 | ATT 3 "Writing is not permitted" on subscribe (bonded Mac) | Stale macOS GATT cache after a layout change (the cache is keyed by BLE address); toggle Bluetooth (`blueutil -p 0 && blueutil -p 1`, see [OTA over BLE](../guide/updating/ota-ble.md)). `blueutil` is not installed by default on macOS; unpairing otherwise needs the GUI. |
 | ATT 5/15 "Insufficient Authentication/Encryption" | Unbonded host vs `ble_security=justworks`; pair/bond the host first (see [`ble.conf`](../reference/config/ble.md)). |
 | ATT 17 "Insufficient Resources", intermittent | NimBLE mbuf starvation from rapid connect/disconnect cycles; clears on device `restart`. Space out reconnects. |
@@ -206,12 +201,13 @@ Only a full `restart` applies `ble.conf` changes (`ble_security`, name). Neither
 wrapper is not reinit-safe.
 
 To see boot-time (`setup()`) log lines over BLE, reconnect within ~3 s of `restart`. Later
-connects get no backlog of those lines, which has been misread as "the code isn't running".
+connects get no backlog of those lines, so their absence does not mean the code didn't run.
 
 ## OTA
 
 `etc/ota.py` (Wi-Fi; flags in [OTA over Wi-Fi](../guide/updating/ota-wifi.md)) refuses dirty
-images, `WITH_NETW=n` builds, and `WITH_VCONV=y` plant-sim builds when it runs non-interactively.
+images, `CONFIG_FUGU_WITH_NETW=n` builds, `CONFIG_FUGU_WITH_VCONV=y` plant-sim builds and a gate-driver
+change (unless `--allow-driver-change`) when it runs non-interactively.
 Scripted shells are not a tty, so commit (or `git stash push -- <unrelated paths>`) before a Wi-Fi
 OTA.
 
@@ -222,13 +218,11 @@ These points apply to BLE pushes:
   so the tool takes its skip path (`☑️ skip: already at <ver>`) and exits looking successful.
   Pass `-f` whenever the tree changed without a commit, and never grep-filter OTA output down to a
   success/fail whitelist that omits `skip`. A real push emits hundreds of progress lines.
-- Run it detached or in the background. A full 1.7 MB image takes 2–3+ min, and a 300 s foreground
-  timeout killed one mid-transfer.
-- Run one BLE OTA at a time. Two concurrent pushes contend for the host's single radio (both
-  stalled at ~11 %).
+- Run it detached or in the background. A full 1.7 MB image takes 2–3+ min, and a foreground
+  command timeout can kill the push mid-transfer.
+- Run one BLE OTA at a time. Concurrent pushes contend for the host's single radio and stall.
 - A failed or killed push leaves the device armed. Clear it with console `ota-ble abort`, then
-  retry. The registered verb is `ota-ble`, although the doc and the firmware's error text say
-  `otab`.
+  retry. The registered verb is `ota-ble`; its error replies and log tag still say `otab`.
 - Right after an OTA or `restart`, the board is not advertising for ~10–15 s. A scan miss or a
   READY timeout in that window is retryable, not a failure.
 - As a last-resort remote path with no working client, publish a console line (e.g. `ota <url>`)
@@ -237,8 +231,9 @@ These points apply to BLE pushes:
 
 ## Verifying what a board is running
 
-`bootinfo`'s `built <timestamp>` is the only reliable way to tell two bench builds apart. Every
-bench build is `-dirty`, so two sessions' builds carry near-identical `git describe` strings.
+`bootinfo`'s `built <timestamp>` is the only reliable way to tell two bench builds apart. A build
+from a working tree with uncommitted changes is `-dirty`, so two such builds carry near-identical
+`git describe` strings.
 
 The version string identifies a commit, not a binary. A fix that exists uncommitted in the tree is
 *not* on the device, and someone else may have reflashed the board from a different tree. Before
