@@ -11,24 +11,24 @@ wired clock sync, and the control-loop gains. The firmware reads it at boot, so 
 
 | key          | unit | type  | default | description                                                |
 |--------------|------|-------|---------|------------------------------------------------------------|
-| `topo`       |      | enum  | buck    | Converter topology: `buck` or `boost`; another value fails setup. Maps the `hv_`/`lv_` keys of `sensor.conf` and `limits.conf` to roles |
-| `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default, also when empty), `psu` (constant-voltage supply; see `psu` console command) or `pv` (PV emulator: output follows a PV curve; see `pv` console command). See [Operating Modes](../../guide/operating-modes.md). `psu`/`pv` need a build with `CONFIG_FUGU_WITH_PSU`; an unknown value, an invalid `psu_vout` or an invalid PV curve fails setup. `tracker.conf::target_duty_cycle` overrides `psu`/`pv` |
+| `topo`       |      | enum  | buck    | Converter topology: `buck` or `boost`; another value fails setup. Maps the `hv_` and `lv_` keys of `sensor.conf` and `limits.conf` to roles |
+| `mode`       |      | enum  | mppt    | Operating mode: `mppt` (default, also when empty), `psu` (constant-voltage supply; see `psu` console command) or `pv` (PV emulator: output follows a PV curve; see `pv` console command). See [Operating modes](../../guide/operating-modes.md). `psu` and `pv` need a build with `CONFIG_FUGU_WITH_PSU`; an unknown value, an invalid `psu_vout` or an invalid PV curve fails setup. `tracker.conf::target_duty_cycle` overrides `psu` and `pv` |
 | `psu_vout`   | V    | float | (required with `mode=psu`) | PSU mode output voltage setpoint, > 0 and at most the output voltage limit (`limits.conf::lv_max` in a buck, `hv_max` in a boost) |
 | `psu_slew_down` | V/s | float | 2   | PSU mode: a lower setpoint is approached at this rate (min 0.1); raising it is immediate. A boost returns the output charge to its input when it pulls Vout down, so a step can pump a supply that cannot sink. While Vout is above the new band the OV threshold stays at the old setpoint |
 | `pv_isc`     | A    | float | (required with `mode=pv`) | PV emulator short-circuit current, > 0 (also caps the Iout limiter at 1.1×) |
 | `pv_voc`     | V    | float | (required with `mode=pv`) | PV emulator open-circuit voltage, > 0 and at most the output voltage limit (`lv_max` in a buck, `hv_max` in a boost); carries the OV threshold and boost feasibility |
 | `pv_k`       |      | float | 0.8     | PV emulator Vmp/Voc curve factor, valid range [0.5, 0.95] |
 | `pv_slew`    | V/s  | float | 200     | PV emulator setpoint slew limit (min 10) |
-| `pv_shade`   |      | string | (unshaded) | PV emulator string: 2..6 comma-separated Isc factors in (0,1], one per substring with a bypass diode, e.g. `1,1,0.4`; `off` or absent = one panel. An invalid value logs an error and runs unshaded. See [PV emulator](../../guide/operating-modes.md#pv-emulator) |
+| `pv_shade`   |      | string | (unshaded) | PV emulator string: 2..6 comma-separated Isc factors in (0,1], one per substring with a bypass diode, e.g. `1,1,0.4`; `off` or absent = one panel. An invalid value fails setup. See [PV emulator](../../guide/operating-modes.md#pv-emulator) |
 | `pv_iout_span` |    | float | 16      | PV emulator EWMA span of the Iout feedback for the curve (min 1; separate from the Iout sensor `_filt_len`) |
 | `c_in`       | F    | float | 1e-3    | Input capacitance, board caps plus the array's. The sweep slows down so that the caps' discharge power C·V·dV/dt stays under 5 % of the input power, and subtracts that power from the power it records. Set it to the board's real input capacitance (2 × 470 µF on the standard board). 0 turns both off; a value outside 0..0.02 F or not a number is rejected with an error and the default is used. See [Global sweep](../../internals/mppt-tracker.md#global-sweep) |
 | `forced_pwm` |      | bool  | 0       | Force CCM PWM even at light loads (see notes below)        |
 | `fpwm_gate`  |      | bool  | 1       | Hold `forced_pwm` off until the duty reaches the voltage ratio (bring-up gate, see notes below) |
 | `fpwm_gate_margin` |  | float | 0.01    | Duty margin the gate requires on top of the measured ratio; a value outside 0 ≤ x < 0.5 uses 0.01 |
 | `fpwm_gate_hold` |    | long  | 192     | Samples the gate must see a passing duty before it engages (the ramp is held meanwhile); clamped to 1..65535 |
-| `sync_role`  |      | enum  | none    | Wired MCPWM clock sync (`CONFIG_FUGU_WITH_WSYNC`, MCPWM gate driver): `none`, `leader` (emit TEZ pulse on `board.conf::pwm_sync_pin`) or `follower` (phase-reload timer from that pin). Another value fails setup; a build without wired sync only warns. See [Wired Clock Sync](../../development/sync/wired-sync.md) |
+| `sync_role`  |      | enum  | none    | Wired MCPWM clock sync (`CONFIG_FUGU_WITH_WSYNC`, MCPWM gate driver): `none`, `leader` (emit TEZ pulse on `board.conf::pwm_sync_pin`) or `follower` (phase-reload timer from that pin). Another value fails setup; a build without wired sync only warns. See [Wired clock sync](../../development/sync/wired-sync.md) |
 | `sync_phase_deg` | ° | float | 0      | Leader only: pulse offset from its TEZ as an angle (= follower period-start shift; `180` for interleave), within ±360. Ignored on a follower (reload fixed at 0) |
-| `sync_phase_ns` | ns | float | 0      | Leader only: additive trim on `sync_phase_deg`, for wire + receiver propagation delay (a time, so it does not scale with `pwm_freq`), within ± one PWM period |
+| `sync_phase_ns` | ns | float | 0      | Leader only: additive trim on `sync_phase_deg`, for wire and receiver propagation delay (a time, so it does not scale with `pwm_freq`), within ± one PWM period |
 | `ctrl_<n>_kp`  |      | float | see below | Proportional gain of control unit `<n>` ∈ {`vin`, `vout`, `iin`, `iout`, `power`}; a non-finite value keeps the default |
 | `ctrl_<n>_kd`  |      | float | see below | Derivative gain of unit `<n>`, applied to the **per-sample** error difference |
 | `ctrl_<n>_td`  | s    | float | (unset)   | Derivative *time* of unit `<n>`. When set it replaces `_kd` and makes the D component sample-rate invariant; a negative value is ignored |
@@ -36,7 +36,7 @@ wired clock sync, and the control-loop gains. The firmware reads it at boot, so 
 
 ## Control-loop gains
 
-The five PD units in `src/mppt.h` limit duty against Vin (under-voltage), Vout (over-voltage / CV),
+The five PD units in `src/mppt.h` limit duty against Vin (under-voltage), Vout (over-voltage and CV),
 Iin, Iout, and power. Each unit produces a control value every tick, and the smallest response wins.
 Gains live here rather than in `charger.conf` because they are a property of the plant (L, output
 capacitance, `pwm_freq`, `pwmMax`, buck vs boost), not of the battery.
@@ -47,7 +47,7 @@ The following table lists the compiled-in defaults:
 |---------|-------|-------|----------------------|
 | `vin`   | -100  | -200  | `limits.conf::vin_min` |
 | `vout`  | 1500  | 12000 | `charger.Vout_max()` |
-| `iin`   | 100   | 200   | `limits.conf::hv_i_max` (buck) / `lv_i_max` (boost) |
+| `iin`   | 100   | 200   | `limits.conf::hv_i_max` (buck) or `lv_i_max` (boost) |
 | `iout`  | 200   | 400   | derived `Iout_max` |
 | `power` | 20    | 5     | derived power limit |
 
@@ -164,7 +164,7 @@ real step is about twice what the margin alone suggests. On a 68 V bus with
 `R_loop = 30 mΩ` that is roughly 40 A. Raise the margin only if reverse current at engagement is
 a bigger concern than forward current.
 
-`fpwm_gate_hold` is counted in fresh Vin/Vout samples, not in control-loop passes. The gate is
+`fpwm_gate_hold` is counted in fresh Vin and Vout samples, not in control-loop passes. The gate is
 evaluated on every pass, but it only advances its counters when the sampler has actually produced
 new voltage data. A stalled sensor therefore cannot be mistaken for a settled operating point.
 
@@ -188,6 +188,6 @@ the coil.
 
 #### Console
 
-A bare `sync` reports the state (`off`/`armed`/`arming`/`engaged`/`on (ungated)`) together with the
+A bare `sync` reports the state (`off`, `armed`, `arming`, `engaged` or `on (ungated)`) together with the
 threshold that currently applies. `sync forced!` engages immediately and bypasses the gate until the
 next `disable()`. After a shutdown, a sweep, or `dc 0`, forced PWM has to pass the gate again.

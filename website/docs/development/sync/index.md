@@ -82,7 +82,7 @@ dead-band. The phase offset is set on the leader.
 
 :::danger
 The sync edge acts on the low-side gate only, so an arbitrary-phase jump does not land in a clean period start.
-Qualify the wire before arming a follower. See [Wired Clock Sync](wired-sync.md) for the coupling circuit and bench
+Qualify the wire before arming a follower. See [Wired clock sync](wired-sync.md) for the coupling circuit and bench
 checklist.
 :::
 

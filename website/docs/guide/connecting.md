@@ -240,8 +240,9 @@ newest `build*/fugu-firmware.elf`). See [`peek`](../development/debugging/peek.m
 Hostnames listed in `etc/protected-devices` (one per line; `$FUGU_PROTECTED`, comma-separated, overrides the file)
 are guarded against unattributed changes. The client sends read-only commands to them as usual. Before a
 state-changing command, it confirms the hostname from the device (`hn`). Then it checks that the caller holds the
-device's lock from `~/bin/lock.sh`, named after the hostname. Without the lock, the client refuses before sending
-anything, and names the lock and its current holder.
+device's lock, named after the hostname, in the lock script `~/bin/lock.sh`, which is not part of this repository.
+Without the lock, or without that script, the client refuses before sending anything, and names the lock and its
+current holder.
 
 Read-only commands are the firmware's read-only console list (`kRoCmds` in `src/etc/con_guard.h`) plus the host-side
 `peek`, `sym`, `peek-struct`, `coredump info|get` and the `pwr` reads. Everything else is state-changing, including

@@ -102,7 +102,7 @@ The `cv_lim_idx` field reports the limiter by index.
 | 3     | `IoutCTRL`   | `Iout` ≤ charge current limit                       |
 | 4     | `PowerCTRL`  | Power ≤ thermal/`P_max` limit                       |
 
-For the limiters, see [Control Loop](../internals/control-loop.md).
+For the limiters, see [Control loop](../internals/control-loop.md).
 
 ## BLE advertising record
 

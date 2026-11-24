@@ -9,7 +9,7 @@ sidebar_position: 3
 [When changes take effect](index.md#when-changes-take-effect)). A missing required key or a failed check stops setup
 and the converter stays off; `conf-check` reports the same errors without a reboot.
 
-Voltage and current ratings of the hardware are named by board side (HV/LV). `converter.conf::topo`
+Voltage and current ratings of the hardware are named by board side, HV or LV. `converter.conf::topo`
 maps them to the converter roles:
 
 | side key   | buck (in = HV, out = LV) | boost (in = LV, out = HV) |
@@ -24,8 +24,8 @@ A missing limit names the key and the role it plays, for example
 source, the output, and the power path, not a side, and keep their role names. The battery limit
 `charger.conf::vout_max` is also unaffected: the battery is always on the output.
 
-The firmware no longer reads the old role keys for the four side ratings. A file that still has one
-fails setup at boot with its replacement, for example
+An old role key for one of the four side ratings fails setup at boot and names its replacement, for
+example
 `limits.conf: vout_max is no longer read; with topo=boost use hv_max`. See
 [Migrating from role keys](sensor.md#migrating-from-role-keys).
 
@@ -33,7 +33,7 @@ fails setup at boot with its replacement, for example
 |----------------------------|------|-------|---------|---------------------------------------------------|
 | `hv_max`                   | V    | float | (required) | Maximum HV-side voltage before protection cutout       |
 | `lv_max`                   | V    | float | (required) | Maximum LV-side voltage before protection cutout       |
-| `vin_min`                  | V    | float | (required) | Input-voltage regulation floor; must be below the Vin max. In MPPT/PSU/PV modes the Vin controller reduces duty to keep Vin ≥ `vin_min` (a buck in DCM also keeps Vin ≥ about 1.18 × Vout, see [Diode Emulation](../../internals/diode-emulation.md#ls-minimum-pulse-near-unity-ratio)). Not a trip, and not applied in manual PWM. The hard supply undervoltage stop is fixed at ~9 V |
+| `vin_min`                  | V    | float | (required) | Input-voltage regulation floor; must be below the Vin max. In MPPT, PSU and PV emulator mode the Vin controller reduces duty to keep Vin ≥ `vin_min` (a buck in DCM also keeps Vin ≥ about 1.18 × Vout, see [Diode emulation](../../internals/diode-emulation.md#ls-minimum-pulse-near-unity-ratio)). Not a trip, and not applied in manual PWM. The hard supply undervoltage stop is fixed at ~9 V |
 | `hv_i_max`                 | A    | float | (required) | Maximum HV-side current                           |
 | `lv_i_max`                 | A    | float | (required) | Maximum LV-side current                           |
 | `iout_short`               | A    | float | (required) | Output short-circuit threshold: Iout above this with Vout below 1 V |
@@ -70,6 +70,12 @@ current. Three estimates feed the grading:
   threshold.
 - **Slope.** The slope of those drops against the output current, against the baseline resistance.
   Evaluated once a minute; a level needs 30 consecutive minutes above its threshold.
+- **Sweep fit.** The median output resistance of the last 5 qualifying sweeps (telemetry `Ro`)
+  against its own baseline, so up to 2 outlying sweeps out of 5 don't move it. Needs no [BMS data](../../guide/charging/bms-integration.md) and
+  at least 3 sweeps since boot. It is graded at most once per 20 charging minutes, so a burst of
+  sweeps within a few minutes counts once. A level needs 3 consecutive graded values above its
+  threshold, which takes at least 40 charging minutes; a level drops only when all of the last 5
+  sweeps are below.
 
 The converter's and the BMS's voltage readings differ by an offset that drifts by tens of millivolts
 over hours and days. Against a fixed offset that drift would read as excess resistance at high current,
@@ -78,12 +84,6 @@ so the offset comes from a running regression of the one-minute drops against th
 as slope. The regression needs at least 2 A of spread in the output current before the excess drop and
 the slope are evaluated. A minute that lies off the regression line by half of `wire_p_warn` (a step)
 doesn't enter it, and nothing enters it while a level is held, so a fault can't fade into the offset.
-- **Sweep fit.** The median output resistance of the last 5 qualifying sweeps (telemetry `Ro`)
-  against its own baseline, so up to 2 outlying sweeps out of 5 don't move it. Needs no [BMS data](../../guide/charging/bms-integration.md) and
-  at least 3 sweeps since boot. It is graded at most once per 20 charging minutes, so a burst of
-  sweeps within a few minutes counts once. A level needs 3 consecutive graded values above its
-  threshold, which takes at least 40 charging minutes; a level drops only when all of the last 5
-  sweeps are below.
 
 The slope and the sweep fit are graded at the highest one-minute output current of the last one to
 two charging hours. Any estimate can raise the level. A level drops only after every estimate that
