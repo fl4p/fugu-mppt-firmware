@@ -9,6 +9,10 @@ sidebar_position: 2
 `Li_ChgTerminationCondition` in `src/charger.h` implements a charge-termination
 line for LFP and other lithium chemistries, as described in
 [Charging Marine Lithium Battery Banks](https://nordkyndesign.com/charging-marine-lithium-battery-banks/).
+It works on the highest cell voltage and the pack current reported by the BMS, so
+the charger can keep every cell below the BMS over-voltage cut-off (and the
+voltage transient of that disconnect), give the cell balancer time, and avoid a
+trickle charge into a full pack.
 
 The model places the cell at `cv_float` (the "float" voltage) at zero current and
 at `cv_eoc` (the absorption voltage) when the charging current equals the
@@ -22,6 +26,9 @@ The line can be restated as an apparent series resistance:
 r = (cv_eoc - cv_float) / (tail_c_rate * Cbat)
 ```
 
+With the firmware defaults (`cv_eoc` 3.5 V, `cv_float` 3.325 V, `tail_c_rate`
+0.05) and a 280 Ah pack, r = 0.175 V / 14 A = 12.5 mΩ.
+
 With that resistance, the per-current termination voltage becomes:
 
 ```
@@ -29,8 +36,12 @@ v_term(ibat) = cv_float + ibat * r       (clamped at cv_eoc)
 ```
 
 The charger declares termination when the highest reported cell voltage
-crosses `v_term`. Like the ceiling, the line trigger needs two consecutive BMS
-cell frames above the line (`termCond.update()` runs once per cell frame).
+is above `v_term` on two consecutive BMS cell frames (`termCond.update()` runs
+once per cell frame) while the pack is not discharging (`ibat` above
+−0.02 × `tail_c_rate` × `bat_c`). The line is evaluated only while both the cell
+voltages and `ibat` are fresh. The `cv_ceiling` backstop (see
+[Related parameters](#related-parameters)) also needs two consecutive frames,
+regardless of current.
 
 The current that places the line is the recent peak of the battery current, decaying with a time
 constant of 2 minutes, not the instantaneous value. When the charge current drops suddenly, for example
@@ -48,10 +59,15 @@ The following table lists typical values per chemistry:
 | Chemistry                            | `tail_c_rate` |
 |--------------------------------------|---------------|
 | LFP                                  | `0.05`        |
-| Sanyo/Panasonic NCR18650GA (67 mA / 3500 mAh, [datasheet](https://www.orbtronic.com/content/Datasheet-specs-Sanyo-Panasonic-NCR18650GA-3500mah.pdf)) | `~0.02` |
+| Sanyo/Panasonic NCR18650GA (67 mA / 3500 mAh, [spec sheet copy at a reseller](https://www.orbtronic.com/content/Datasheet-specs-Sanyo-Panasonic-NCR18650GA-3500mah.pdf)) | `~0.02` |
 | EVE INR18650                         | `0.033`       |
 
-A larger `tail_c_rate` is safer. It produces a steeper termination line, so
+For LFP, the Nordkyn article gives 0.033C for older and 0.05C for newer cells.
+The EVE INR18650 value has no cited source; check it against the cell's
+datasheet.
+
+A larger `tail_c_rate` is safer. It lowers `r` and flattens the termination
+line, so `v_term` is lower at any current below the `cv_eoc` clamp and
 termination triggers at a higher current, earlier in the constant-voltage
 phase. The cell is left less fully charged but with more headroom against
 over-charge.
@@ -134,10 +150,12 @@ The charger re-zeroes the integrator on every termination event. The
 integrator counts the "deficit since the last known full" and recalibrates
 itself each cycle, so it does not have to be a precise long-term SoC gauge.
 
-The counter and the termination latch are RAM-only. After a reboot, the
+The integrator and the termination latch are RAM-only. After a reboot, the
 charger is not terminated, so it charges until termination latches again
 (within two cell frames if the pack is still full). That termination re-zeroes
-the counter, and from then on both release conditions apply as usual.
+the counter, and from then on both release conditions apply as usual. The BMS
+reference of the last full charge is kept in RTC memory across a software reset
+(not a power loss), so the BMS-based deficit continues from that full point.
 
 Termination needs the pack current, which takes about eight `ibat` frames to
 settle after a boot. If a cell frame in that gap shows the highest cell within
@@ -175,15 +193,32 @@ Set `bat_charge_topic` so that all chargers leave termination together (see
 
 These parameters also shape termination:
 
-- `cv_eoc`: absorption voltage (LFP: 3.65 V; firmware default 3.5 V)
-- `cv_float`: float voltage (LFP: 3.37 V; firmware
-  default 3.325 V)
+- `cv_eoc`: absorption voltage, where the line meets the tail current
+  (default 3.5 V)
+- `cv_float`: float voltage, where the line meets zero current (default
+  3.325 V)
 - `cv_ceiling`: hard per-cell ceiling, default `cv_eoc + 0.05`. It latches
   termination after 2 consecutive frames at or above it, regardless of current.
 - `bat_c`: effective pack capacity in Ah. For parallel packs, use the summed
   Ah (e.g. 2P 280 Ah → 560). The model assumes `Cbat` is the parallel-effective
   capacity.
 - `recharge_dod`: DoD threshold for releasing termination (see above).
+- `vout_max_fallback`: pack output limit without BMS data and float target
+  after termination, default `n_cells × cv_float`. The cell count is
+  `floor(vout_max / cv_eoc)`.
+
+Setup fails and the converter stays off if `cv_eoc` is below `cv_float`,
+`cv_ceiling` is below `cv_eoc`, or `cv_hold_band` is not positive. With the
+[CV hold](#cv-hold) or [top balancing](#top-balancing) enabled, `cv_hold_band`
+must also be smaller than `cv_eoc − cv_float`.
+
+The Nordkyn article states the manufacturer termination condition for LFP as
+3.65 V at 0.033C (older cells) or 0.05C (newer cells), and about 3.37 V as the
+resting voltage of a fully charged cell, where the termination current is zero.
+The firmware defaults deliberately lie below that line: 3.5 V at 0.05C, which
+the article calls a conservative charging voltage, and 3.325 V at zero current,
+its suggested voltage for supplying loads without charging. Termination thus
+comes earlier, trading some capacity for less time at full charge.
 
 :::warning Set `bat_c` on any battery system
 If `bat_c` is missing, the termination line and the EOC feedback on the highest
@@ -195,24 +230,35 @@ releases termination. The pack floats near `cv_float` per cell and does not
 reach full, and the highest cell is not individually limited.
 :::
 
+## Stale cell data
+
+Cell voltages older than 180 s count as stale, and the output is limited to
+`vout_max_fallback`, open-loop on the Vout reading. If the data goes stale
+before termination (with `bat_c` set) and the last highest cell was below
+`cv_float` + 50 mV, the limit does not drop at once: it starts at the bus
+voltage plus 0.1 V (at most the previous limit) and ramps down to
+`vout_max_fallback` over 600 s, so the charger does not fall below a charging
+pack.
+
 ## Absorption target vs. termination line
 
 The termination line only *decides* termination. It is not a setpoint.
 
 The EOC feedback loop (`BatteryCharger::_updatePackVoltagePinning`) lowers the
 pack-voltage pin whenever the highest cell is above its target. That target is
-the fixed `cv_eoc` while charging and `cv_float` once terminated.
+the fixed `cv_eoc` while charging and `cv_float` once terminated. The pin may
+fall to `vout_max_fallback − vout_offset_max` (default 0.6 V below the float
+target), so a converter whose Vout reading is high still pulls the highest
+cell down.
 
 The target must not be the current-dependent `v_term`. Lowering the pin
 reduces the current, which lowers `v_term`, which lowers the pin again, until
-the current is zero and the line trips at `cv_float`. This is the premature
-termination observed in the field in July 2026 at 3.40 V/cell.
+the current is zero and the line trips at `cv_float`, a premature termination.
 
 ## CV hold
 
 At a high charge current the internal resistance raises the highest cell
-above the line long before the pack is full: on a 280 Ah LFP pack at 30 A the
-line can trip at about 90 % SoC. With `cv_hold_max_s` > 0 (default 0, off) the
+above the line long before the pack is full. With `cv_hold_max_s` > 0 (default 0, off) the
 line crossing does not terminate. The charger enters a CV hold instead: it
 holds the highest cell at `cv_eoc` and lets the current taper.
 
@@ -224,7 +270,8 @@ loops run on the BMS frames:
 - Cell loop, on each cell frame: the pack-current target is the measured
   `ibat` plus $K (cv\_eoc - vcell\_high)/r$, where
   $r = (cv\_eoc - cv\_float)/(tail\_c\_rate \cdot bat\_c)$ is the cell
-  resistance implied by the termination line (about 10.7 mΩ for 280 Ah).
+  resistance implied by the termination line (12.5 mΩ for 280 Ah with the
+  defaults, see above).
   $K$ is 1.5 with the cell above `cv_eoc` and 0.5 below it.
 - Current loop, on each `ibat` frame: the converter's output-current limit
   moves by 0.4 × (target − `ibat`). Upward steps are at most 2 A, and the limit
@@ -251,8 +298,7 @@ a target that follows the current would walk the current down to zero.
 
 Near the top of charge the cell voltage keeps rising for tens of seconds after
 the current drops, and cell frames arrive seconds apart. A hold that starts at
-full current overshoots `cv_eoc`: at 40 A into a 280 Ah pack the highest cell
-peaked about 28 mV above it. The charger therefore starts the current limit
+full current overshoots `cv_eoc`. The charger therefore starts the current limit
 before the line crossing. When the highest cell comes within 30 mV of
 `cv_eoc` while the pack current is above the tail current
 (`tail_c_rate × bat_c`, the line's current at `cv_eoc`), the output-current
@@ -291,7 +337,8 @@ The hold ends in one of these ways:
 Without BMS frames the hold runs blind: neither loop nor the ceiling check
 sees the pack. Once the newest cell or current frame is older than 20 s, the
 current limit decays from `ibat_max` towards its 0.25 A floor with a 20 s time
-constant (below 1 A after about 100 s), during the hold and its approach. The
+constant (with the default `ibat_max` of 20 A, below 1 A about 80 s after
+the last frame), during the hold and its approach. The
 floor is safe however many chargers share the pack, and it matches where the
 180 s expiry ends anyway. Fresh frames resume the regulation from the decayed
 limit, so the current ramps back up at the upward step limit instead of
@@ -310,7 +357,7 @@ without coordination. The gains are sized for that:
   the cell loop gain does not add up. Its gain per frame is $K R/r$, with $R$
   the short-term cell resistance (about 2–3 mΩ near the top for a 280 Ah
   cell), and must stay below 1 with a frame of lag. Downward that holds for
-  $R < r/1.5$ (7 mΩ at 280 Ah), upward for $R < 2r$. The slow upward gain keeps
+  $R < r/1.5$ (8.3 mΩ at 280 Ah with the defaults), upward for $R < 2r$. The slow upward gain keeps
   the polarization that relaxes after a current cut from being read as room
   for more current.
 - Each charger's limit moves `ibat` one for one, so N chargers sum to a gain of

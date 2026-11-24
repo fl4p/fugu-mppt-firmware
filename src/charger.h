@@ -336,7 +336,7 @@ public:
     // One call per BMS cell frame (the streaks count frames).
     bool update(float vcell_high, float ibat, float ahSinceFull) {
         // Termination line: at ibat = tail_c_rate * Cbat the cell sits at cv_eoc; at ibat = 0 it sits at cv_min.
-        // r models the apparent cell resistance implied by that line (for 280Ah / 0.05 → ~20mΩ).
+        // r models the apparent cell resistance implied by that line (defaults 3.5/3.325 V, 280Ah / 0.05 → 12.5mΩ).
         // See website/docs/guide/charging/termination.md.
         float r = (p.cv_eoc - p.cv_min) / (p.tail_c_rate * p.Cbat);
         auto now = wallClockUs();
@@ -915,7 +915,7 @@ public:
 
     // CV hold, BMS frames only (no Vout reading). Cell frame: pack-current target = measured ibat + K (cv_eoc -
     // vcell_high) / r, r the line's cell resistance; the cell loop gain per frame is K R / r with R the cell's
-    // short-term dI->dV, < 1 also with a frame of lag. K_DOWN: R < r / 1.5 (7 mOhm at 280 Ah; field 2-3 mOhm), fast
+    // short-term dI->dV, < 1 also with a frame of lag. K_DOWN: R < r / 1.5 (8.3 mOhm at 280 Ah with the defaults; field 2-3 mOhm), fast
     // down so a cell above cv_eoc sheds the current before the steep top runs away. K_UP: R < 2 r, slow up, the
     // polarization relaxing after a cut is not room. Units on one BMS compute the same target, so it does not add
     // up. Ibat frame: the output-current limit moves G (target - ibat); N units sum to N G (dIbat/dIlim = 1), 2 G < 1
