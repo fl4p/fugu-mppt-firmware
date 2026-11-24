@@ -614,7 +614,9 @@ public:
                 sensor.calibSq += sensor.last * sensor.last;
                 if (sensor.calibBuffer.num < kZeroBlock) return UpdateRet::NoNewData;
                 const float m = sensor.calibBuffer.getMean(), pm = sensor.calibPrevMean, psd = sensor.calibPrevSd;
-                const float sd = sqrtf(fmaxf(sensor.calibSq / kZeroBlock - m * m, 0.f));
+                // overflowed squares (inf - inf = NaN without FMA) must fail the noise check, not read as 0
+                const float var = sensor.calibSq / kZeroBlock - m * m,
+                        sd = var > 0.f ? sqrtf(var) : var <= 0.f ? 0.f : INFINITY;
                 const uint8_t j = sensor.calibBlocks;
                 sensor.calibBuffer.clear();
                 sensor.calibSq = 0;
