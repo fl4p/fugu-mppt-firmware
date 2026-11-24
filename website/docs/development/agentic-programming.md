@@ -155,6 +155,7 @@ The tests in `test/host-stub/` cover the following areas:
 | `vconv-test.cpp` | VirtualConverter: CCM/DCM physics, energy conservation, PV model, ripple models (21 cases A–U) |
 | `converter-test.cpp` | `SynchronousConverter` buck math (diode emulation timing) |
 | `integrator-test.cpp` | Integrator / coulomb-counter arithmetic |
+| `tracker-window-test.cpp` | Tracker averaging period under a limiter that takes over every period; `MeanAccumulator` saturation |
 | `mcpwm-timing-test.cpp` | MCPWM timing: prescaler / resolution selection (`bestTiming`) |
 | `scope-test.cpp` | Scope streaming framing |
 | `ripple-freq-test.cpp` | Adaptive inverter-ripple frequency detector (incl. a real Vout capture from a converter with an inverter on its DC bus) |

@@ -247,7 +247,7 @@ struct MeanAccumulator {
     }
 
     void add(float x) {
-        assert(num < std::numeric_limits<decltype(num)>::max()); // overflow
+        if (num == std::numeric_limits<decltype(num)>::max()) sum *= .5f, num /= 2; // keeps the mean
         sum += x;
         //if (x > max) max = x;
         ++num;

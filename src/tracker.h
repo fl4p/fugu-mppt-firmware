@@ -58,13 +58,15 @@ struct Tracker {
         minPowerStepRel = slow ? 0.0015f : 0.015f;
     }
 
-    // limiter hand-back: starts the settle window at vin, fast mode; slow mode waits for a reversal and 30 s
+    // limiter hand-back: starts the settle window and a new averaging period at vin, fast mode; slow mode waits
+    // for a reversal and 30 s. A limiter that takes over again within a period would otherwise keep it open
     void resetDirection(bool direction, float vin) {
         _direction = direction;
         _time = wallClockMs();
         _timeSettle = _timeTakeover = _time;
         if (!isnan(vin)) _lastVin = vin;
         setSlowMode(false);
+        _powerBuf.clear(), _vinBuf.clear();
     }
 
     // start afresh at vin (NaN: unknown), e.g. after manual control froze the state
@@ -72,7 +74,6 @@ struct Tracker {
         resetDirection(false, vin);
         if (isnan(vin)) _lastVin = 0;
         maxPowerPoint.power = 0;
-        _powerBuf.clear(), _vinBuf.clear();
     }
 
     // continue after a pause that returned to the same operating point, power settled at `power`
