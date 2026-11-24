@@ -1826,6 +1826,8 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
         int n = 0;
         float iMaxSeen = 0;
         for (int H = lo; H <= hi && n < coilfit::kMaxPts; H += step) {
+            if (!(sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1.f)) break;
+            if (!getenv("SIM_MC_BFOPEN")) mppt.bflow.enable(true); // SIM_MC_BFOPEN=1: the sweep before the fix
             mppt.setManualTarget((uint16_t) H);
             const double dl = tNow() + std::max<uint32_t>(dwellMs, 3000) * 1e-3 + H * 4e-3;
             while (converter.getCtrlOnPwmCnt() != H && tNow() < dl) run(0.02, 0);
@@ -1851,6 +1853,7 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
     mppt.setManualTarget(0);
     for (double dl = tNow() + 10.0; !converter.disabled() && tNow() < dl;) run(0.01, 0);
     const bool off = converter.disabled();
+    if (off && mppt.limits.reverse_current_paranoia) mppt.bflow.enable(false);
     if (!simPsuWait(off ? mppt.requestPsuOff() : mppt.requestPsuSweep())) printf("  measure: MPPT restore timed out\n");
     secs = tNow() - t0;
     return res;
@@ -1858,8 +1861,8 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
 
 // mc-flat: `measure-coil l0` takes over from MPPT at ~150 W in CCM with paranoia on (bf-daily-flat's plant):
 //   no protection trip at the take-over (a duty ramp-down at full power trips highD-bflowOpen, whose backoff then
-//   holds the converter off under the sweep), the sweep finds its DCM points. SIM_MC_RAMP=1 enters with the old
-//   ramp-down. Known, not checked: near 2 A the L0 sweep itself trips highD-bflowOpen (BF open, D > 0.33).
+//   holds the converter off under the sweep), the sweep finds its DCM points with the BF closed (no highD-bflowOpen
+//   near 2 A, L within 3 %). SIM_MC_RAMP=1 enters with the old ramp-down, SIM_MC_BFOPEN=1 sweeps with the BF open.
 static int runMcFlat(const std::string &sc) {
     int f = 0;
     auto chk = [&](bool c, const char *w) {
@@ -1882,6 +1885,8 @@ static int runMcFlat(const std::string &sc) {
     for (size_t i = trips0; i < g_trips.size(); ++i) printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
     printf("== %s: L %.2f uH vs plant %.2f uH, %d DCM pts, %.0f s\n", sc.c_str(), r.L * 1e6f, g_vconv.getL() * 1e6f, r.n, secs);
     chk(!entryTrips, "no protection trip at the take-over");
+    chk(g_trips.size() == trips0, "no protection trip during the sweep");
+    chk(fabsf(r.L / g_vconv.getL() - 1) < 0.03f, "L within 3 % of the plant");
     chk(r.n >= 3 && std::isfinite(r.L), "the sweep found its DCM points");
     run(40, 5.0);
     chk(!converter.disabled() && g_app.opMode.load() == OpMode::Mppt, "MPPT running again");

@@ -134,6 +134,13 @@ static float sweepL0(const MeasArgs &a) {
     uint8_t row[MEAS_MAX_PTS]; // sweep position of each point, for the zero interpolation
     int n = 0, rows = 0;
     for (int H = h_lo; H <= h_hi && n < MEAS_MAX_PTS; H += step) {
+        // BF closed, as with paranoia off: open, its body diode carries the sweep's ~2 A (highD-bflowOpen trips
+        // above 1 A) and its drop biases Vout and so L. LS stays off: no reverse current while Vin > Vout
+        if (!(sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1.0f)) {
+            UART_LOG("  Vin no longer above Vout+1; stopping");
+            break;
+        }
+        mppt.bflow.enable(true);
         Reading r{};
         settleAndRead((uint16_t) H, a.dwellMs, r);
         if (converter.disabled()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
@@ -291,6 +298,7 @@ static void measureCoilTask(void *arg) {
     while (!converter.disabled() && wallClockMs() < doneDeadline)
         vTaskDelay(pdMS_TO_TICKS(10));
     const bool off = converter.disabled();
+    if (off && mppt.limits.reverse_current_paranoia) mppt.bflow.enable(false);
     if (!off) UART_LOG("measure-coil: converter still on after the ramp-down");
     if (a.apply && l0 == l0 && !off) UART_LOG("  measure-coil: L0 not applied (converter still on)");
     else if (a.apply && l0 == l0) { // flash write with the converter off (it stalls the RT loop)
