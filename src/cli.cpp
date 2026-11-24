@@ -962,7 +962,8 @@ static void cmdOta(cmd *c) {
     const float savedPsuSetpoint = mppt.getPsuSetpoint();
     const uint16_t savedManualTarget = mppt.getManualTarget();
     float savedPvIsc, savedPvVoc, savedPvK;
-    const bool savedPvActive = mppt.getPvCurve(savedPvIsc, savedPvVoc, savedPvK);
+    PvShade savedPvShade;
+    const bool savedPvActive = mppt.getPvCurve(savedPvIsc, savedPvVoc, savedPvK, &savedPvShade);
     // Stop power conversion and let the stage de-energize BEFORE downloading. OTA flash
     // writes briefly stall the RT loop and draw erase-current spikes; at full power that
     // reset the device mid-transfer (doing `dc 0` by hand first was the reliable workaround).
@@ -1003,7 +1004,7 @@ static void cmdOta(cmd *c) {
         // restore must not turn it into the new `pv scale` reference.
         const auto ticket = savedPvActive
                                 ? mppt.queuePvCurve(savedPvIsc, savedPvVoc, savedPvK,
-                                                    false, false)
+                                                    false, false, savedPvShade)
                                 : mppt.queuePsuSetpoint(savedPsuSetpoint);
         if (!ticket || !waitPsuCommand(ticket)
             || mppt.getPsuCommandError(ticket) != PsuSetpointError::None) {
@@ -1971,6 +1972,15 @@ static void cmdOvset(cmd *c) {
         CMD_FAIL_RETURN("ovset: out of range [0,999] (0 = clear)");
 }
 
+static void pvLogShade(const PvShade &sh) {
+    if (!sh.on()) return;
+    char b[40];
+    int o = 0;
+    for (uint8_t j = 0; j < sh.n; ++j)
+        o += snprintf(b + o, sizeof(b) - o, "%s%.2f", j ? "," : "", sh.g[j] * 0.01f);
+    UART_LOG("  shade %s", b);
+}
+
 #if WITH_PSU
 static void cmdPsu(cmd *c) {
     Command cc(c);
@@ -2008,22 +2018,40 @@ static void cmdPsu(cmd *c) {
     ESP_LOGI("main", "PSU mode, vset=%.2fV", v);
 }
 
+// Local power maxima of the curve, scanned over the current.
+static void pvLogPeaks(float isc, float voc, float k, const PvShade &sh) {
+    PvModel m;
+    m.set(isc, voc, k);
+    float pPrev = 0, vPrev = voc, pPrev2 = -1;
+    constexpr int N = 600;
+    for (int j = 1; j <= N; ++j) {
+        const float i = isc * (float) j / N, v = sh.voltage(m, i), p = v * i;
+        if (pPrev > p && pPrev >= pPrev2 && pPrev > 0.1f)
+            UART_LOG("  peak %.1fV %.0fW", vPrev, pPrev);
+        pPrev2 = pPrev, pPrev = p, vPrev = v;
+    }
+}
+
 // pv                      — status
 // pv <isc> <voc> [k]      — enter PV-sim (output follows the panel curve) / update the curve
 // pv scale <s>            — irradiance knob: Isc = s * last full-command Isc
+// pv shade <g1,g2,..>|off — series string of 2..6 substrings with bypass diodes, Isc factors g
 // pv off                  — ramp to 0, manual mode (deliberately NOT the MPPT fallback of `psu off`)
 static void cmdPv(cmd *c) {
     Command cc(c);
     int n = cc.countArgs();
     auto arg = n >= 1 ? cc.getArg(0).getValue() : String();
+    PvShade sh;
     if (arg.length() == 0) {
         float isc, voc, k;
-        if (mppt.getPvCurve(isc, voc, k)) {
+        if (mppt.getPvCurve(isc, voc, k, &sh)) {
             UART_LOG("PV: on Isc=%.2fA Voc=%.2fV k=%.2f  Vset=%.2fV Vout=%.2fV Iout=%.2fA %s trips=%u",
                      isc, voc, k, mppt.getPsuSetpoint(),
                      sensors.Vout->med3.get(), sensors.Iout->med3.get(),
                      mppt.isPsuLatched() ? "LATCHED" : mppt.isPsuEscalated() ? "escalated" : "ok",
                      mppt.getPsuTripCount());
+            pvLogShade(sh);
+            pvLogPeaks(isc, voc, k, sh);
         } else {
             UART_LOG("PV: off");
         }
@@ -2040,12 +2068,19 @@ static void cmdPv(cmd *c) {
     }
     float isc, voc, k;
     bool rebase = true;
-    if (arg == "scale") {
+    const bool active = mppt.getPvCurve(isc, voc, k, &sh);
+    if (arg == "shade") {
+        if (!active)
+            CMD_FAIL_RETURN("pv shade: no active curve");
+        if (n < 2 || !sh.parse(cc.getArg(1).getValue().c_str()))
+            CMD_FAIL_RETURN("pv shade: expected 2..6 factors in (0,1] (e.g. 1,1,0.4) or off");
+        rebase = false;
+    } else if (arg == "scale") {
         float s;
         if (!argFloat(cc, 1, s) || s <= 0 || s > 1.2f)
             CMD_FAIL_RETURN("pv scale: expected (0,1.2]");
         float base = mppt.getPvBaseIsc();
-        if (!mppt.getPvCurve(isc, voc, k) || !std::isfinite(base))
+        if (!active || !std::isfinite(base))
             CMD_FAIL_RETURN("pv scale: no active curve");
         isc = base * s;
         rebase = false;
@@ -2056,17 +2091,16 @@ static void cmdPv(cmd *c) {
     }
     if (!MpptController::validPvParams(isc, voc, k))
         CMD_FAIL_RETURN("pv: expected isc>0 voc>0 k in [0.5,0.95]");
-    const auto ticket = mppt.queuePvCurve(isc, voc, k, false, rebase);
+    if (!active) sh = {};
+    const auto ticket = mppt.queuePvCurve(isc, voc, k, false, rebase, sh);
     if (!ticket)
         CMD_FAIL_RETURN("pv: %s", psuErrorText(mppt.getLastPsuRequestError()));
     if (!waitPsuCommand(ticket))
         CMD_FAIL_RETURN("pv: RT transition timed out");
     if (mppt.getPsuCommandError(ticket) != PsuSetpointError::None)
         CMD_FAIL_RETURN("pv: %s", psuErrorText(mppt.getPsuCommandError(ticket)));
-    PvModel m;
-    m.set(isc, voc, k);
-    ESP_LOGI("main", "PV-sim Isc=%.2fA Voc=%.2fV k=%.2f (MPP %.1fV/%.0fW)",
-             isc, voc, k, k * voc, k * voc * m.current(k * voc));
+    ESP_LOGI("main", "PV-sim Isc=%.2fA Voc=%.2fV k=%.2f%s", isc, voc, k, sh.on() ? " shaded" : "");
+    pvLogPeaks(isc, voc, k, sh);
 }
 #endif
 
@@ -2232,8 +2266,11 @@ static void cmdStatus(cmd *) {
                  mppt.isPsuLatched() ? "LATCHED" : mppt.isPsuEscalated() ? "escalated" : "ok",
                  mppt.getPsuTripCount());
         float isc, voc, k;
-        if (mppt.getPvCurve(isc, voc, k))
+        PvShade sh;
+        if (mppt.getPvCurve(isc, voc, k, &sh)) {
             UART_LOG("  PV curve Isc=%.2fA Voc=%.2fV k=%.2f", isc, voc, k);
+            pvLogShade(sh);
+        }
     }
 }
 
@@ -2825,7 +2862,7 @@ void setupCli() {
     cli.addSingleArgCmd("ovset", bfGuarded<cmdOvset>);
 #if WITH_PSU
     cli.addBoundlessCmd("psu", cmdPsu);
-    cli.addBoundlessCmd("pv", cmdPv); // pv <isc> <voc> [k] | scale <s> | off
+    cli.addBoundlessCmd("pv", cmdPv); // pv <isc> <voc> [k] | scale <s> | shade <g,..> | off
 #endif
     cli.addCommand("status", cmdStatus);
     cli.addBoundlessCmd("holiday", cmdHoliday); // holiday [auto|on|off]

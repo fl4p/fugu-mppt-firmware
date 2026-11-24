@@ -161,6 +161,7 @@ The tests in `test/host-stub/` cover the following areas:
 | `mcpwm-timing-test.cpp` | MCPWM timing: prescaler / resolution selection (`bestTiming`) |
 | `scope-test.cpp` | Scope streaming framing |
 | `ripple-freq-test.cpp` | Adaptive inverter-ripple frequency detector (incl. a real Vout capture from a converter with an inverter on its DC bus) |
+| `pv-shade-test.cpp` | PV emulator string model (`pv shade`): parsing, monotonic V(I), peak count, agreement with the vconv string model |
 | `dawn-test.cpp` | Dawn replay: production filter pipeline driven through the vconv PV plant |
 | `plot-test.cpp` | `plot.h` Series rendering at small/degenerate N (heap-safety) |
 | `service-test.cpp` | `ServiceManager` state machine (boot without `wifi.conf`) |

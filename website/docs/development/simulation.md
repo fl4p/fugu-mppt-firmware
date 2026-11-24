@@ -5,11 +5,16 @@ sidebar_position: 6.5
 
 # Simulation
 
-The control code can run against a software model of the power stage instead of real hardware. There are two ways
-to do this, and both use the same plant model, vconv:
+The control code can run without a power stage, against vconv, a virtual converter (the plant). vconv models the parts the
+firmware normally drives and measures: the PV source, the half-bridge, the coil and capacitors, and the battery. It
+also produces the voltage and current readings that the ADC would deliver. The firmware's control code sets the
+duty cycle on vconv and reads its sensor values as it would on real hardware.
 
-- A **vconv firmware build** runs the complete firmware on an ESP32, in real time, against the plant.
-- The **host simulator** (`mppt-sim`) compiles the real-time control path for the host and runs it against the plant
+vconv runs in two setups:
+
+- A **vconv firmware build** runs the complete firmware on an ESP32 in real time. A gate driver and an ADC backend
+  that talk to vconv replace the real ones, so no half-bridge switches and no ADC is read.
+- The **host simulator** (`mppt-sim`) compiles the real-time control path for the host and runs it against vconv
   in simulated time, driven by scripted scenarios.
 
 :::note PV emulator
@@ -107,7 +112,10 @@ Two variants compute the string current:
 - **Exact** (`SIM_PV_EXACT=1`, and the default for some weather scenarios): a tabulated series sum of the substring
   voltages $V(I)$. Each substring consists of two halves that can be shaded separately.
 
-A vconv firmware build always runs the single source, since `vconv.conf` has no string keys.
+A vconv firmware build always runs the single source, since `vconv.conf` has no string keys. The PV emulator's
+[partial shade](../guide/operating-modes.md#partial-shade) uses the exact variant with equal shares and whole
+substrings (`PvShade` in `src/math/pv_model.h`), with a linear knee over the last 5 % of each substring's Isc.
+`test/host-stub/pv-shade-test.cpp` checks that the two agree outside the knees.
 
 ## vconv firmware build
 

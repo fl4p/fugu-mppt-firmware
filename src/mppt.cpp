@@ -81,7 +81,7 @@ void MpptController::update() {
     // Vin floor the converter is a stiff CV source, and without this the only limit left
     // is the hardware Iout_max.
     float Iout_max = g_app.psuMode()
-                         ? (pvSim.active ? min(limits.Iout_max, pvSim.model.isc * 1.1f)
+                         ? (pvSim.active ? min(limits.Iout_max, pvSim.model.isc * pvSim.shade.iscScale() * 1.1f)
                                          : limits.Iout_max)
                          : min(limits.Iout_max, charger.Iout_max());
 
@@ -475,7 +475,7 @@ void MpptController::update() {
 void MpptController::pvAdvanceSetpoint(float iout, float vin, float dt) {
     if (std::isfinite(iout)) pvSim.iout.add(std::max(iout, 0.f));
     const float iF = pvSim.iout.get();
-    float vTgt = std::isfinite(iF) ? pvSim.model.voltage(iF) : pvSim.model.voc;
+    float vTgt = std::isfinite(iF) ? pvSim.shade.voltage(pvSim.model, iF) : pvSim.model.voc;
     const float ceil_ = std::min(pvSim.model.voc, limits.Vout_max);
     // Boost floor: below Vin the topology can't regulate — truncate the curve. If Vin has
     // risen into the headroom of Voc the feasible interval is empty; hold the ceiling and
@@ -588,7 +588,11 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
         float isc = converterConf.getFloat("pv_isc", 0.0f);
         float voc = converterConf.getFloat("pv_voc", 0.0f);
         float k = converterConf.getFloat("pv_k", 0.8f);
-        if (!queuePvCurve(isc, voc, k, true)) {
+        PvShade sh;
+        if (!sh.parse(converterConf.getString("pv_shade", "").c_str())) {
+            ESP_LOGE("mppt", "converter.conf pv_shade invalid, disabling");
+            g_app.setupFail("converter.conf pv_shade invalid");
+        } else if (!queuePvCurve(isc, voc, k, true, true, sh)) {
             ESP_LOGE("mppt", "PV mode but curve invalid (Isc=%.2f Voc=%.2f k=%.2f), disabling",
                      isc, voc, k);
             g_app.setupFail("converter.conf pv curve invalid");

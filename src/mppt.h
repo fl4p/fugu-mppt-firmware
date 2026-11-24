@@ -129,11 +129,13 @@ struct PsuReq {
     uint16_t duty = 0;
     bool rebase = false, boot = false, keepBackoff = false; // keep: backoff and CV-floor latch survive a mode change
     bool stop = false; // manual duty 0: PWM off at once, no ramp
+    PvShade shade{};
 };
 
 struct PvCurve {
     float isc, voc, k;
     bool active;
+    PvShade shade;
 };
 
 
@@ -274,7 +276,7 @@ private:
     // otherwise single-core charger params object as an ordinary float.
     std::atomic<float> explicitOvLimit{NAN};
     // Published PV curve for non-RT readers (status/OTA/measure-coil); RT is the only writer.
-    SeqLock<PvCurve> pvPub{{NAN, NAN, NAN, false}};
+    SeqLock<PvCurve> pvPub{{NAN, NAN, NAN, false, {}}};
     std::atomic<float> pvBaseIsc{NAN}; // last full `pv` Isc, reference for `pv scale`
     unsigned short _teleNumPoints = 0;
 
@@ -299,7 +301,9 @@ private:
             (ticket << 8) | static_cast<uint8_t>(error), std::memory_order_release);
     }
 
-    void publishPvState(bool active, float isc, float voc, float k) { pvPub.write({isc, voc, k, active}); }
+    void publishPvState(bool active, float isc, float voc, float k, const PvShade &sh = {}) {
+        pvPub.write({isc, voc, k, active, sh});
+    }
 
     void pvDeactivateRt() {
         if (!pvSim.active) return;
@@ -1174,6 +1178,7 @@ public:
     struct {
         bool active = false;
         PvModel model{};
+        PvShade shade{};
         float slewVps = 200.f;
         EWMA<float> iout{16};
     } pvSim;
@@ -1248,7 +1253,8 @@ public:
 
     // rebase=false (`pv scale`) keeps pvBaseIsc as the reference for later scales.
     [[nodiscard]] uint32_t queuePvCurve(float isc, float voc, float k,
-                                        bool bootRequest = false, bool rebase = true) {
+                                        bool bootRequest = false, bool rebase = true,
+                                        const PvShade &shade = {}) {
         if (!validPvParams(isc, voc, k)) {
             lastPsuRequestError.store(PsuSetpointError::OutOfRange, std::memory_order_relaxed);
             return 0;
@@ -1267,6 +1273,7 @@ public:
         // survive an RT-side rejection and corrupt a later `pv scale`.
         r.rebase = rebase;
         r.boot = bootRequest;
+        r.shade = shade;
         return postPsuCommand(PsuCommand::EnablePv, r);
     }
 
@@ -1275,7 +1282,7 @@ public:
     // seq can persist for a whole interrupt on the RT core, so spin briefly, then sleep-retry;
     // the final fallback (possibly-mixed read) only fires if RT died mid-publish — better than
     // wedging the caller forever.
-    bool getPvCurve(float &isc, float &voc, float &k) const {
+    bool getPvCurve(float &isc, float &voc, float &k, PvShade *shade = nullptr) const {
         PvCurve c;
         bool ok = false;
         for (int tries = 0; tries < 64 && !ok; ++tries) {
@@ -1286,6 +1293,7 @@ public:
         isc = c.isc;
         voc = c.voc;
         k = c.k;
+        if (shade) *shade = c.shade;
         return c.active;
     }
 
@@ -1458,8 +1466,9 @@ public:
                 clearBackoff();
             }
             pvSim.model.set(pvIsc, requested, pvK);
+            pvSim.shade = r.shade;
             if (pvRebase) pvBaseIsc.store(pvIsc, std::memory_order_relaxed);
-            publishPvState(true, pvIsc, requested, pvK);
+            publishPvState(true, pvIsc, requested, pvK, r.shade);
             ESP_LOGI("mppt", "PV curve update, Isc=%.2fA Voc=%.2fV k=%.2f", pvIsc, requested, pvK);
             completePsuCommand(ticket, PsuSetpointError::None);
             return;
@@ -1471,10 +1480,11 @@ public:
         psuResetTripState();
         if (pvCmd) {
             pvSim.model.set(pvIsc, requested, pvK);
+            pvSim.shade = r.shade;
             pvSim.iout.reset();
             pvSim.active = true;
             if (pvRebase) pvBaseIsc.store(pvIsc, std::memory_order_relaxed);
-            publishPvState(true, pvIsc, requested, pvK);
+            publishPvState(true, pvIsc, requested, pvK, r.shade);
             setPsuSetpoint(requested);
             g_app.opMode = OpMode::Psu;
             ESP_LOGI("mppt", "PV-sim mode, Isc=%.2fA Voc=%.2fV k=%.2f", pvIsc, requested, pvK);

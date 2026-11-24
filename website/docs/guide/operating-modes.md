@@ -168,9 +168,10 @@ resistance:
      └──────────┴──────────○ −
 ```
 
-The firmware regulates Vout to the curve's voltage at the filtered Iout. `k` sets the diode's steepness, and the
-curve has exactly one maximum. The model has a single cell group without bypass diodes, so the emulator cannot produce
-the multiple local maxima of a partly shaded string. [Simulation](../development/simulation.md#pv-source) gives the curve equation.
+The firmware regulates Vout to the curve's voltage at the filtered Iout. `k` sets the diode's steepness, and this
+curve has exactly one maximum. [Simulation](../development/simulation.md#pv-source) gives the curve equation.
+
+### Commands
 
 These commands set, scale, inspect, and stop the emulated panel:
 
@@ -195,7 +196,7 @@ The emulator behaves as follows:
 
 - The setpoint moves along the curve, slew-limited by `pv_slew` (V/s) and clamped to
   [Vin + 0.5 V, min(Voc, Vout max)], where Vout max is `limits.conf::hv_max` in a boost (`lv_max` in a buck). A boost can only emulate the part of the curve above Vin.
-- The Iout limiter is capped at 1.1 × Isc.
+- The Iout limiter is capped at 1.1 × Isc (with [partial shade](#partial-shade), at 1.1 × the string's Isc).
 - In buck topology the same ratio limit as in PSU mode applies: no start while the setpoint is at or above about
   Vin / 1.18.
 - `pv off` goes to manual mode, not MPPT, since an emulator is a bench source.
@@ -204,6 +205,27 @@ The emulator behaves as follows:
 Below the Vin floor the body diode conducts current the firmware cannot limit. Keep the current limit of the supply
 feeding the emulator low.
 :::
+
+### Partial shade
+
+`pv shade` turns the panel into a series string of 2 to 6 equal substrings, each with a bypass diode (0.5 V drop), as
+in the [PV string](../development/simulation.md#pv-string) model. Each factor scales one substring's Isc. Once the
+current exceeds a shaded substring's Isc, its bypass diode conducts, so the P-V curve has up to one peak per distinct
+factor:
+
+```
+pv shade 1,1,0.4    # three substrings, one at 40 % light: two peaks
+pv                  # lists the curve's peaks
+pv shade off        # single panel again
+```
+
+Over the last 5 % of a substring's Isc, its voltage falls linearly to the bypass drop. This bounds the slope of the
+curve, which would otherwise turn Iout noise into large setpoint steps, and slightly lowers a peak next to the knee.
+With `pv 8 40` and `pv shade 1,1,0.4`, the high-voltage peak drops by 0.4 % and moves 0.5 V up.
+
+`pv scale` and a re-issued `pv <isc> <voc>` keep the shading. `converter.conf::pv_shade` sets it at boot. The Iout
+limiter follows the string's Isc, 1.1 × Isc × the largest factor. In a boost, a peak below Vin + 0.5 V falls on the
+truncated part of the curve and cannot be emulated.
 
 The [power-loop rig](../lab/power-loop.md) uses a boost in `mode=pv` as the source for a buck under test.
 

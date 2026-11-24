@@ -170,7 +170,7 @@ Requires a solar array simulator, the Fugu PV emulator, or a PSU with a series r
   while the battery is full / in CV (recharge-after-full guard).
 
 ### 2.5 Partial shading / multi-peak
-- **Setup**: a solar array simulator with a two-step (shaded) curve. The Fugu PV emulator has a single peak and cannot run this test.
+- **Setup**: a two-step (shaded) curve: the Fugu PV emulator with `pv shade 1,1,0.4`, or a solar array simulator.
 - **Expected**: global sweep finds the global peak, not a local one.
 
 ### 2.6 Low-power / cloudy

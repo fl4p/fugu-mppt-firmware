@@ -19,6 +19,7 @@ wired clock sync, and the control-loop gains. The firmware reads it at boot, so 
 | `pv_voc`     | V    | float | (required with `mode=pv`) | PV emulator open-circuit voltage, > 0 and at most the output voltage limit (`lv_max` in a buck, `hv_max` in a boost); carries the OV threshold and boost feasibility |
 | `pv_k`       |      | float | 0.8     | PV emulator Vmp/Voc curve factor, valid range [0.5, 0.95] |
 | `pv_slew`    | V/s  | float | 200     | PV emulator setpoint slew limit (min 10) |
+| `pv_shade`   |      | string | (unshaded) | PV emulator string: 2..6 comma-separated Isc factors in (0,1], one per substring with a bypass diode, e.g. `1,1,0.4`; `off` or absent = one panel. An invalid value logs an error and runs unshaded. See [PV emulator](../../guide/operating-modes.md#pv-emulator) |
 | `pv_iout_span` |    | float | 16      | PV emulator EWMA span of the Iout feedback for the curve (min 1; separate from the Iout sensor `_filt_len`) |
 | `c_in`       | F    | float | 1e-3    | Input capacitance, board caps plus the array's. The sweep slows down so that the caps' discharge power C·V·dV/dt stays under 5 % of the input power, and subtracts that power from the power it records. Set it to the board's real input capacitance (2 × 470 µF on the standard board). 0 turns both off; a value outside 0..0.02 F or not a number is rejected with an error and the default is used. See [Global sweep](../../internals/mppt-tracker.md#global-sweep) |
 | `forced_pwm` |      | bool  | 0       | Force CCM PWM even at light loads (see notes below)        |
