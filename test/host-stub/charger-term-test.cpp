@@ -1112,6 +1112,33 @@ static void test_bal_ceiling_approach_rtc() {
     CHECK(e.balanceDeferWhy() == nullptr && e.balanceDue(), "stale ceiling tail ignored, balance part kept");
 }
 
+// 11-23 12:58: the BMS re-seeded its remaining charge to 0.9 x 245 Ah after a 69 s data gap; the
+// deficit jumped 19.8 -> 56.3 Ah and released termination by DoD (threshold 42 Ah).
+static void test_bms_charge_reseed_no_release() {
+    BatteryCharger c; c.params = params(); setWallClockUs(1'000'000ULL);
+    float q = 276.8f, scale = 0.f;
+    auto bframe = [&](float vcell, float ibat) {
+        setWallClockUs(loopWallClockUs_ + 4'000'000ULL);
+        q += ibat * 4.f / 3600.f;
+        c.batSt.coulombCounter.setBmsCharge(q + scale, wallClockTicks());
+        c.batSt.setVcellHigh(vcell);
+        c.batSt.updateBatCurrent(ibat);
+        c.update(26.7f, 0.f, true);
+    };
+    c.termCond.reset();
+    for (int i = 0; i < 20; ++i) bframe(c.params.cv_min + 0.10f, 0.f);
+    CHECK((bool) c.termCond && c.batSt.coulombCounter.bmsSource(), "latched on the BMS charge");
+    while (q > 257.02f) bframe(c.params.cv_min + 0.02f, -3.f);
+    setWallClockUs(loopWallClockUs_ + 69'000'000ULL);
+    q -= 3.f * 69.f / 3600.f;
+    scale = 220.5f - q;
+    for (int i = 0; i < 75; ++i) bframe(c.params.cv_min + 0.02f, -3.f);
+    float d = c.batSt.coulombCounter.deficit();
+    printf("  re-seed: deficit %.2f Ah, true %.2f Ah, terminated %d\n", d, 276.8f - q, (int) (bool) c.termCond);
+    CHECK((bool) c.termCond, "no release due to DoD after the BMS re-seed");
+    CHECK(std::fabs(d - (276.8f - q)) < 0.3f, "deficit follows the true charge (%.2f vs %.2f)", d, 276.8f - q);
+}
+
 int main() {
     test_hold_blind_decay(1, 120);
     test_hold_blind_decay(2, 120);
@@ -1161,6 +1188,7 @@ int main() {
     test_hold_entry_40a_two_units();
     test_hold_sibling_boots_unlimited();
     test_boot_idle_without_ibat();
+    test_bms_charge_reseed_no_release();
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

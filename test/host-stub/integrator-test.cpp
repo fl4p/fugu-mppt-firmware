@@ -22,19 +22,19 @@ int main() {
 
     assert(totalEnergy.get() == 0);
     totalEnergy.add(1.0f, 1000000);
-    assertRtol(totalEnergy.get(), .5f/3600.f);
+    assert(totalEnergy.get() == 0); // first sample: no prior interval
     totalEnergy.add(1.0f, 2000000);
-    assertRtol(totalEnergy.get(), .5f/3600.f + 1.f/3600.f);
+    assertRtol(totalEnergy.get(), 1.f/3600.f);
     totalEnergy.add(1.0f, 5000000);
-    assertRtol(totalEnergy.get(), .5f/3600.f + 1.f/3600.f + 3.f/3600.f);
+    assertRtol(totalEnergy.get(), 1.f/3600.f + 3.f/3600.f);
     totalEnergy.add(1.0f, 10000000);
-    assertRtol(totalEnergy.get(), .5f/3600.f + 1.f/3600.f + 3.f/3600.f);
+    assertRtol(totalEnergy.get(), 1.f/3600.f + 3.f/3600.f);
     totalEnergy.add(5.0f, 12000000);
-    assertRtol(totalEnergy.get(), .5f/3600.f + 1.f/3600.f + 3.f/3600.f + 3.f * 2.f/3600.0f);
+    assertRtol(totalEnergy.get(), 1.f/3600.f + 3.f/3600.f + 3.f * 2.f/3600.0f);
     totalEnergy.add(-5.0f, 14000000);
-    assertRtol(totalEnergy.get(), .5f/3600.f + 1.f/3600.f + 3.f/3600.f + 3.f * 2.f/3600.0f);
+    assertRtol(totalEnergy.get(), 1.f/3600.f + 3.f/3600.f + 3.f * 2.f/3600.0f);
     totalEnergy.add(-5.0f, 16000000);
-    assertRtol(totalEnergy.get(), .5f/3600.f + 1.f/3600.f + 3.f/3600.f + 3.f * 2.f/3600.0f - 5.f * 2.f/3600.0f);
+    assertRtol(totalEnergy.get(), 1.f/3600.f + 3.f/3600.f + 3.f * 2.f/3600.0f - 5.f * 2.f/3600.0f);
 
     std::cout << totalEnergy.get();
 

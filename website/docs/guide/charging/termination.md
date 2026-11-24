@@ -102,6 +102,34 @@ deepest deficit since the last full charge, so a sibling that starts charging
 cannot undo a release that is already due. If the BMS charge goes stale, the
 integrator takes over.
 
+Some BMSs re-seed their remaining charge, for example to 90 % of the nominal
+capacity after a reconnect. The charger treats a step as a re-seed when no
+battery current could cause it: the change since the previous BMS value
+exceeds 200 A (the pack maximum) times the time between the two values, plus
+0.5 Ah, and that time is at most 120 s. The time counts as at least 12 s (one BMS
+publish period), so values that arrive late, in a batch or twice still pass.
+
+- A re-seed is logged as `BMS charge re-seed ...`. Its step is replaced by the
+  `ibat` estimate for that one window (the integrated `ibat`, plus the last
+  `ibat` for time without data, limited to 200 A), and the difference is kept
+  as an offset.
+- Every other change passes unchanged, whatever the `ibat` rate or timing.
+- The error at a re-seed is that of the `ibat` estimate over the one window,
+  at most the change in current times the window.
+
+The reference saved for a reboot is stored in the BMS's own scale, so an
+absorbed step does not reappear after a restart.
+
+Some re-seeds are taken as real charge or discharge:
+
+- a re-seed after a gap of more than 120 s between BMS values;
+- a re-seed during a reboot;
+- a re-seed small enough for 200 A to explain, for example up to 1.2 Ah
+  within 12 s, or a 3.8 Ah step after a 69 s gap.
+
+A downward one can release termination early; the next full charge sets a new
+reference.
+
 The charger re-zeroes the integrator on every termination event. The
 integrator counts the "deficit since the last known full" and recalibrates
 itself each cycle, so it does not have to be a precise long-term SoC gauge.

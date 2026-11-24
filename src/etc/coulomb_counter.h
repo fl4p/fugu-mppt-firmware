@@ -2,6 +2,8 @@
 
 #include <atomic>
 
+#include "esp_log.h"
+
 #include "math/statmath.h"
 #include "util.h"
 
@@ -20,6 +22,11 @@
  * parallel chargers on one BMS share the same deficit. The charge is sampled on each cell frame
  * (sampleOnCellFrame) and the full-point reference is taken from that sample, so chargers that
  * latch on the same cell frame hold the same reference. Signed, never clamped.
+ *
+ * The BMS may re-seed its charge (e.g. to 0.9 x nominal). A charge step larger than BAT_I_MAX_A
+ * can move within BRIDGE_MAX_S of the previous sample (at least DELIVERY_S, + 0.5 Ah) is a re-seed: the step is replaced
+ * by the ibat estimate for that window and the difference kept as an offset. A re-seed within that
+ * bound, after a longer gap or during a reboot is taken as real.
  */
 class CoulombCounter {
     TrapezoidalIntegrator<> _integrator{1.f / 3600e6f, 30'000'000ULL}; // producer-only
@@ -30,17 +37,25 @@ class CoulombCounter {
     std::atomic<float> _bmsAtCell{NAN}; // _bmsCharge sampled on the last cell frame, NAN if stale
     float _bmsRef = NAN; // [Ah] charge at the last full (or first sample), consumer
     float _depth = 0.f; // deepest deficit since full, consumer
+    std::atomic<float> _bmsOffset{0.f}; // [Ah] added to the raw BMS charge, producer
+    float _intAtCharge = 0.f; // integrator at the last charge sample, producer
+    float _covS = 0.f; // integrated ibat time since the last charge sample, producer
 
 public:
     static constexpr uint32_t BMS_CHARGE_EXPIRE_S = 120;
+    static constexpr float BAT_I_MAX_A = 200.f; // pack fuse
+    static constexpr float BRIDGE_MAX_S = 120.f;
+    static constexpr float DELIVERY_S = 12.f; // one BMS publish period: late, batched or repeated values
 
     void updateBatCurrent(float ibat) { updateBatCurrent(ibat, wallClockUs()); }
 
     // producer thread
     void updateBatCurrent(float ibat, time_us nowUs) {
-        if (_resetRequested.exchange(false, std::memory_order_relaxed))
+        if (_resetRequested.exchange(false, std::memory_order_relaxed)) {
+            _intAtCharge -= (float) _integrator.get();
             _integrator.reset();
-        _integrator.add(-ibat, nowUs);
+        }
+        _covS += (float) _integrator.add(-ibat, nowUs) * 1e-6f;
         _ahSinceFull.store((float) _integrator.get(), std::memory_order_relaxed);
     }
 
@@ -61,8 +76,22 @@ public:
 
     // producer thread
     void setBmsCharge(float ah, uint32_t ticks) {
-        _bmsCharge.store(ah, std::memory_order_relaxed);
+        float in = (float) _integrator.get(), off = _bmsOffset.load(std::memory_order_relaxed);
+        float prev = _bmsCharge.load(std::memory_order_relaxed) - off;
+        float dtS = (float) (int32_t) (ticks - _bmsChargeTicks.load(std::memory_order_relaxed)) * COARSE_TICK_S;
+        float lim = BAT_I_MAX_A * fmaxf(dtS, DELIVERY_S) * (1.f / 3600.f), dc = ah - prev;
+        if (dtS <= BRIDGE_MAX_S && std::fabs(dc) > lim + 0.5f) {
+            float x = _integrator.last(); // -ibat
+            float est = _intAtCharge - in + (std::isfinite(x) ? -x * fmaxf(dtS - _covS, 0.f) * (1.f / 3600.f) : 0.f);
+            est = fmaxf(-lim, fminf(est, lim));
+            off += est - dc;
+            _bmsOffset.store(off, std::memory_order_relaxed);
+            ESP_LOGW("charger", "BMS charge re-seed %.2f -> %.2f Ah in %.0f s, taken as %+.2f Ah", prev, ah, dtS, est);
+        }
+        _bmsCharge.store(ah + off, std::memory_order_relaxed);
         _bmsChargeTicks.store(ticks, std::memory_order_relaxed);
+        _intAtCharge = in;
+        _covS = 0.f;
     }
 
     // producer thread, on each BMS cell frame
@@ -83,9 +112,9 @@ public:
 
     [[nodiscard]] float depth() const { return _depth; }
 
-    // consumer: BMS charge at the last full, and its restore after a reboot (before any cell frame)
-    [[nodiscard]] float bmsRef() const { return _bmsRef; }
-    void restoreRef(float ref) { _bmsRef = ref; }
+    // consumer: BMS charge at the last full in the BMS's raw scale, and its restore after a reboot
+    [[nodiscard]] float bmsRef() const { return _bmsRef - _bmsOffset.load(std::memory_order_relaxed); }
+    void restoreRef(float ref) { _bmsRef = ref + _bmsOffset.load(std::memory_order_relaxed); }
 
     // consumer thread, once per cell frame: deepest deficit since full (the recharge release depth)
     float updateDepth() {

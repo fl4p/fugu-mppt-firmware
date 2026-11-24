@@ -32,6 +32,7 @@ inline time_ms wallClockMs() { return loopWallClockUs_ / 1000ULL; }
 inline uint32_t coarseTicks(time_us us) { return (uint32_t) (us >> 20); }
 constexpr uint32_t secToCoarseTicks(uint32_t s) { return (uint32_t) (((uint64_t) s * 1000000ULL) >> 20); }
 inline uint32_t coarseTicksToSec(uint32_t t) { return (uint32_t) (((uint64_t) t << 20) / 1000000ULL); }
+constexpr float COARSE_TICK_S = (float) (1 << 20) / 1e6f;
 
 inline void setWallClockUs(time_us us) {
     loopWallClockUs_ = us;

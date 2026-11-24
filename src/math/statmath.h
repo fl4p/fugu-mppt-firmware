@@ -271,24 +271,26 @@ class TrapezoidalIntegrator {
     D value;
 public:
     explicit TrapezoidalIntegrator(float timeFactor = (1.f/ 3600e6f), T maxDt = 1000000ULL) :
-            timeFactor(timeFactor), maxDt(maxDt), lastTime{0}, lastX{0}, value{0} {}
+            timeFactor(timeFactor), maxDt(maxDt), lastTime{0}, lastX{NAN}, value{0} {}
 
     D get() const { return value; }
+    F last() const { return lastX; }
 
-    void add(F x, T nowTime) {
+    // returns the integrated interval, 0 if dropped
+    T add(F x, T nowTime) {
         T dt = nowTime - lastTime;
-        if (dt < maxDt && std::isfinite(lastX) && std::isfinite(x))
+        bool ok = dt < maxDt && std::isfinite(lastX) && std::isfinite(x);
+        if (ok)
             value += (D) ((lastX + x) * (F) 0.5 * (F) (dt * timeFactor));
         lastTime = nowTime;
         lastX = x;
+        return ok ? dt : 0;
     }
 
-    // Zero the accumulator and drop the prior sample. The next add() is treated
-    // as a "first sample" — the dt-since-last gap is intentionally discarded
-    // (the existing dt >= maxDt check on lastTime==0 handles it).
+    // Zero the accumulator and drop the prior sample; the next add() integrates nothing.
     void reset() {
         lastTime = 0;
-        lastX = 0;
+        lastX = NAN;
         value = 0;
     }
 
