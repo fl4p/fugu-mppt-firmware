@@ -219,7 +219,7 @@ fractions of `D = M`:
 | limit binds from `D/M` | 0.99 | 0.98 | 0.95 | 0.90 | 0.84 | 0.71 | 0.14 |
 
 At low `M` it binds only in the last percent of HS counts below `D = M`; above `M` ≈ 0.9 it binds in
-most of the DCM range, and above about 0.93 the LS minimum pulse is longer than the limit. Where
+most of the DCM range, and above about 0.88 the LS minimum pulse is longer than the limit. Where
 the limit would leave less than the LS minimum pulse, the minimum pulse is issued.
 
 The limit keeps the mean output current positive up to a combined ratio reading error of about
@@ -248,9 +248,12 @@ its own would call for a *negative* value. Measured values have been positive, s
 boards the other effects outweigh it. The value is per board, because it depends on the gate
 driver, FETs, and layout.
 
-The firmware adds the correction as a constant time, independent of `M` and of the HS
-on-time. That suits edge delays. A voltage-sensing error scales with `t_on,HS` instead, so a
-calibration is only exact near the operating point where it was measured.
+The firmware adds the correction as a constant time, independent of the HS on-time. That suits
+edge delays. A voltage-sensing error scales with `t_on,HS` instead, so a calibration is only exact
+near the operating point where it was measured. A positive offset is left out where the window
+ratio is below 0.25 (buck `M` above about 0.8) and is otherwise capped so that the LS turns off
+`T/32` plus the offset's drain time (`offset/ratio`) before the next HS turn-on; see
+[Late results](rect-cal.md#late-results).
 
 The firmware stores the correction in nanoseconds and converts it to counts at boot (`ns·1e-9·tick_rate`, where
 the tick rate is the full timer period × fsw or the [MCPWM](pwm-drivers.md) peripheral resolution, the same
@@ -326,8 +329,8 @@ because less power is drawn from the panel. A global sweep past the MPP does not
 because the panel current rises towards `I_sc` as `V_i` falls; a source drop such as a cloud
 lowers `V_i`.
 
-When the current (the protection's fast filter) drops below 25% of the peak seen
-on the rising duty run, with that peak above 0.5 A, HS above 0.8·M and `V_i` 0.5% above its
+When the current (the protection's fast filter) drops below 25% of the peak of the averaged
+current seen on the rising duty run, with that peak above 0.5 A, HS above 0.8·M and `V_i` 0.5% above its
 value at the peak, the firmware shortens the in-RAM offset: a positive offset drops to 0, a
 zero or negative one by 125 ns, at most once per 2 s. It never lengthens the offset and stops
 at the lowest value a calibration can apply, −(2.5 µs + 0.75 µs); an offset already below that
@@ -355,10 +358,20 @@ top of that value:
 | mode decision (`computeDCM`) | Enters DCM when `ΔI_L > 2.0·I_o`, leaves when `ΔI_L ≤ 1.8·I_o` (hysteresis). Always DCM when `I_o < 0.1 A`. Effective forced PWM overrides all of this (never DCM). |
 | M bias | Assumes a ±1 % error on each voltage and divides `M` by `0.99/1.01`, i.e. biases it ≈ 2 % toward the early-turn-off side, then clamps it off unity (`≤ 0.99` buck, `≥ 1.01` boost). On a buck the full bias applies up to `M ≈ 0.97`; between 0.97 and 0.99 the clamp eats into it; above 0.99 the clamped `M` is *below* the true one and the LS window comes out longer than ideal (at `M = 0.995` the ratio is 0.0101 against an ideal 0.0050, ≈ 2×). A buck without a valid reading (`V_i ≤ V_o` or `V_i ≤ 0.1 V`) uses the clamp value 0.99, the shortest window. |
 | low-current cut-off | In DCM the LS ratio is set to 0 when `I_o ≤ 0.01 A` or the low-side voltage is `< 1 V`; it stays at 0 until `I_o ≥ 0.04 A` and the voltage is back at `≥ 1 V`. The offset is not applied (a positive one needs a ratio of at least 0.25, a negative one is clamped up), so the target is `pwmRectMin`. |
-| DCM LS limit (`pwmRectMax`) | `pwmCtrl·ratio + rect_offset` counts, at most `pwmMax − pwmCtrl − 1 − late/ratio`, `late` the larger of `LateDrainBudget·pwmMax` (≈ 0.0198, from `VoltageMaxErr`) and `LateDrainMinNs` = 700 ns (the drain limit near `D = M`), with first-order error-feedback dither of the rounding remainder (so the limit's time-average tracks the unrounded target). |
+| DCM LS limit (`pwmRectMax`) | `pwmCtrl·ratio + rect_offset` counts, at most `pwmMax − pwmCtrl − 1 − late/ratio`, `late` the larger of `LateDrainBudget·pwmMax` (≈ 0.0198, from `VoltageMaxErr`) and `LateDrainMinNs` = 700 ns (the drain limit near `D = M`), with first-order error-feedback dither of the rounding remainder (so the limit's time-average tracks the unrounded target). A positive `rect_offset` is dropped at a ratio below 0.25 and otherwise capped at `pwmMax − pwmCtrl − 1 − pwmMax/32 − offset/ratio`, but not below `pwmCtrl·ratio`. |
 | CCM LS limit | `pwmMax − pwmCtrl − 1` (complementary). |
 | final clamp | The limit is clamped to `[pwmRectMin, pwmMax − pwmCtrl − 1]`. On a buck `pwmRectMin` = `boot_refresh_ns` in ticks + the HS→LS dead time, for bootstrap refresh. |
-| commanded LS count (`pwmRect`) | Fades in toward the limit (+1 count per update at first, then 1/64 of the remaining gap), follows it down immediately, and stays at `pwmRectMin` while sync rect is off. While the gap is larger than `pwmMax/64`, the fade also advances on control updates that leave the duty unchanged. A duty decrease of more than `pwmMax/50` counts in one step (not in forced PWM) forces the DCM assumption, whose limit is never longer, and drops the command to `pwmRectMin`; the fade-in then restarts. Smaller decreases that add up to more than `pwmMax/50` within the lag of the current filter also drop the command to `pwmRectMin` (see [cumulative decrease](#cumulative-decrease)). A manual LS count (`rect-cal`, bench tests) replaces all of this: the command holds that count, clamped to `[pwmRectMin, pwmMax − pwmCtrl − 1]`. |
+| commanded LS count (`pwmRect`) | Fades in toward the limit (+1 count per update at first, then 1 + 1/64 of the remaining gap), follows it down immediately, and stays at `pwmRectMin` while sync rect is off. While the gap is larger than `pwmMax/64` (in forced PWM at any gap), the fade also advances on control updates that leave the duty unchanged. Duty decreases and a manual LS count override it (below the table). |
+
+The commanded LS count also follows these rules:
+
+- A duty decrease of more than `pwmMax/50` counts in one step (not in forced PWM) forces the DCM
+  assumption, whose limit is never longer, and drops the command to `pwmRectMin`; the fade-in then
+  restarts.
+- Smaller decreases that add up to more than `pwmMax/50` within the lag of the current filter also
+  drop the command to `pwmRectMin` (see [cumulative decrease](#cumulative-decrease)).
+- A manual LS count (`rect-cal`, bench tests) replaces all of this: the command holds that count,
+  clamped to `[pwmRectMin, pwmMax − pwmCtrl − 1]`.
 
 The ideal `t_on,LS` is therefore the pre-clamp target of the limit, not the commanded
 window. The dither's average carries over to the command only once it has settled at the
@@ -473,29 +486,30 @@ the mean current settles only where the loop resistance limits it, `≈ −V_i·
 which is tens of amps a few percent above `M_c`. One percent above `M_c` the current
 falls by about 4 A per millisecond (`V_i` 29 V, `L` 76 µH), so no sensor-based reaction can
 follow the pump once it runs. A panel limits it by rising in voltage until `M` is back at `M_c`.
-With the defaults (`boot_refresh_ns` 2 µs at 39 kHz) `t_min/T` is 7.8 to 8.5 % depending on
-the dead time, so `M_c` ≈ 0.915–0.922.
+With the defaults (`boot_refresh_ns` 2 µs at 39 kHz) `t_min/T` is 7.8 to 8.6 % depending on
+the dead time, so `M_c` ≈ 0.914–0.922.
 
 Below `M_c` the pulse's reverse current drains within the period. The mean output current
 is still negative when the pulse exceeds twice the ideal window, i.e. at
 `t_HS < t_min·M/(2(1 − M))`; that current is bounded, about `V_o·t_min²/(2·L·T·(1 − M))`
 and does not grow. Near `M` 0.89 this lossless upper bound is 0.24–0.29 A on an 80 µH coil and
-0.37–0.45 A on 51 µH (0 to 200 ns dead time); the board models, with losses, give 0.2–0.3 A.
+0.37–0.45 A on 51 µH (`V_o` 27 V, 0 to 200 ns dead time); the board models, with losses, give 0.2–0.3 A.
 
 The firmware keeps a buck in DCM (diode emulation, not forced PWM) below `M_c` from the
 measured voltages:
 
 | | ratio `V_out/V_in` (readings) | defaults, dead time 0 / 200 ns |
 |---|---|---|
-| stop | `M_stop = (1 − (t_min + T/32)/T) · 0.99/1.01` | 0.873 / 0.866 (`V_in` < 1.146 / 1.155 `V_out`) |
-| start, `V_in` floor | `M_stop − 0.02` | 0.853 / 0.846 (`V_in` > 1.172 / 1.182 `V_out`) |
+| stop | `M_stop = (1 − (t_min + T/32)/T) · 0.99/1.01` | 0.873 / 0.865 (`V_in` < 1.145 / 1.155 `V_out`) |
+| start, `V_in` floor | `M_stop − 0.02` | 0.853 / 0.845 (`V_in` > 1.172 / 1.183 `V_out`) |
 
 The factor `0.99/1.01` is the worst-case ratio error of two voltage readings with 1 % error
 each (`V_out` read low, `V_in` read high). `T/32` (0.031 in `M`) is a further margin for
 reading errors beyond that: an output voltage sensor can read 1.1–1.7 % low while the
 converter switches. The ring current that a DCM period leaves in the coil at HS turn-on moves
 the zero crossing by only about 0.002 in `M`. With both readings at their 1 % limit the
-highest true ratio the stop admits is 0.890 / 0.884, 0.03 below `M_c`.
+highest true ratio the stop admits is 0.891 with no dead time and 0.883 with 200 ns, 0.03 below
+`M_c`.
 
 - **Start:** a buck starts only below the start ratio, in addition to `V_in > V_out + 1 V`
   (start-block reason `minpulse-M`). In PSU and PV emulator mode the larger of `V_out` and
