@@ -25,6 +25,9 @@ constexpr int kMaxBins = 5, kMinBinPts = 6;
 constexpr float kOnTimeMin = 50e-9f; // on-time offset bound (s) when the dead time is shorter
 constexpr float kGainTol = 0.01f;    // assumed Iout gain tolerance (shunt), relative
 
+// DCM peak coil current from the output average, L-free: Iout = Ipk*D*Vin/(2*Vout) (CCM: >= the real peak)
+inline float ipkDcm(float d, float vin, float vout, float iout) { return 2.0f * iout * vout / (d * vin); }
+
 // DCM duty band [lo, hi] (HS counts) and step for `steps` points between lo and hi * M * pwmMax
 inline bool band(float vin, float vout, uint16_t pwmMax, uint16_t pwmCtrlMax, int steps, int &lo, int &hi,
                  int &step) {

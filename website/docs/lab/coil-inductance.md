@@ -231,8 +231,9 @@ The method has these limitations:
   the sweep (2 A or the configured output limit) stops it at about 85–90 % of the boundary
   current. The `L(Ipk)` report therefore covers only the start of the DC-bias curve, a factor of
   about 2–2.5 in peak current. Beyond the boundary the transfer ratio no longer depends on `L`.
-  For the full bias curve use a scoped CCM-ripple measurement or an LCR meter with bias injection
-  (§2).
+  A lower switching frequency extends it somewhat (`measure-coil l0 f=`, see
+  [Lower switching frequency](#lower-switching-frequency)). For the full bias curve use a scoped
+  CCM-ripple measurement or an LCR meter with bias injection (§2).
 - The result scales with the `Iout` calibration (§3) and with `pwmMax`. The remaining biases
   (switching transitions, gate delays, node charge) are listed in §7. Together they can move `L` a
   few percent, mostly low, and most at the low-current end of the band.
@@ -254,8 +255,8 @@ The `measure-coil` console command runs the same two sweeps on the device with n
 has two forms:
 
 ```
-measure-coil l0 [steps] [dwell_ms] [apply]     # the §5 inductance sweep
-measure-coil ls [hs]    [dwell_ms] [apply]     # the §6 LS-timing / rect_offset_ns sweep
+measure-coil l0 [steps] [dwell_ms] [f=<Hz>] [apply]     # the §5 inductance sweep
+measure-coil ls [hs]    [dwell_ms] [apply]              # the §6 LS-timing / rect_offset_ns sweep
 ```
 
 It reads `Vin`/`Vout`/`Iout` directly from each sensor's `ewm.avg` (the same DC average the host
@@ -296,6 +297,48 @@ slope with its noise error, the slope the offset bounds can produce, and the res
 the coil's own slope. Read the lower end as an upper bound on how much the coil's `L` drops over
 the band (see [Peak-current dependence](#peak-current-dependence)). Both lines are omitted when
 the band covers fewer than about 1.6 ring periods. The host script prints the same lines.
+
+#### Lower switching frequency
+
+In DCM the peak coil current at a given output current is
+
+```
+Ipk = sqrt(2·Iout·Vout·(Vin − Vout) / (Vin·fsw·L)) = 2·Iout·Vout / (D·Vin)
+```
+
+so it grows as `1/sqrt(fsw)` at the sweep's `Iout` limit, and the DCM/CCM boundary current grows as
+`1/fsw`. `measure-coil l0 f=<Hz>` runs the sweep at a lower frequency to reach a higher `Ipk`: half
+the frequency gives about 1.4 times the peak current. The firmware changes the frequency with the
+converter off, through the same path as `pwm-freq` (`pwmMax`, the duty band, the CCM/DCM decision
+and the dead-time in counts all follow), and restores the previous frequency once the converter is
+off again, also after an abort or an error. The sweep header prints the frequency it ran at
+(`fsw=`), and every row's duty `D` refers to that frequency's `pwmMax`.
+
+The frequency is bounded:
+
+- At least 20 kHz. The low-side refresh pulse keeps its fixed length (`boot_refresh_ns`, default
+  2 µs), so the sag of the high-side bootstrap supply grows with the period: about
+  `Iq·T·R/t_refresh` for a driver quiescent current `Iq` through a bootstrap resistor `R`. With
+  the standard board's worst case (2.2 mA, 22 Ω) that is 0.6 V at 39 kHz and 1.1 V at 20 kHz, about
+  the whole margin between its 9.3 V gate supply (less the bootstrap diode) and the driver's
+  lockout near 7.9 V. The sag is that large only with no coil current: once current flows, the
+  freewheel interval adds refresh time. A lockout holds the high side off, which is safe but
+  makes a row read low. 20 kHz is also the upper edge of the audible range.
+- `fsw·L0·0.95` of at least 1 Ω with `coil.conf::L0`, the same ripple bound `pwm-freq` and the boot
+  configuration apply. For a 51 µH coil that is about 20.7 kHz.
+- At most the current frequency.
+
+Each row also stops the sweep once its peak current `2·Iout·Vout/(D·Vin)`, which needs no `L`,
+exceeds the configured output-current limit (`limits.conf`), the current the coil and switches
+carry in normal operation.
+
+Runs at different frequencies give comparable `L(Ipk)` bins, with one caveat. The duty basis is
+`pwmMax`, the period less the wrap-side dead-time. A non-zero wrap-side dead-time biases `L` high by
+about twice its share of the period, and that share halves at half the frequency.
+
+The ring fit's frequency ceiling, set by the spacing of the points in dead time, scales with the
+switching frequency at a given step count: with 48 steps it is about 0.65 MHz at 20 kHz, still above
+the 250–330 kHz rings of §7. More steps raise it.
 
 ## 6. Synchronous-rectifier timing and the `Iout` peak
 

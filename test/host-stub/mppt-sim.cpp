@@ -19,6 +19,7 @@
 //                              # bf-ok, bf-open, bf-closed: `selftest bflow` (vconv.conf bf_model=1)
 //                              # bf-daily-flat: the daily run from MPPT at ~160 W in CCM on flat's plant
 //                              # mc-flat: `measure-coil l0` entered from MPPT at ~160 W in CCM on flat's plant
+//                              # mc-flat-lowf: the same at 22 kHz (the sweep after `f=`, not the switch to it)
 //                              # hs-night-ov*, hs-night-race*: OV alert / core-0 disable() around the LS ramp and hold
 //   weather scenarios (PV string of 1..3 substrings, irradiance played from a time series; "== SUMMARY" line):
 //     wx-cloud          recorded cloudy quarter hour (flat, 2026-11-14 11:20 UTC), full sun <-> cloud
@@ -1877,6 +1878,7 @@ static bool simPsuWait(uint32_t ticket) {
 }
 
 static float med5(float *a) { return coilfit::detail::median(a, 5); }
+static float g_mcIpk = 0; // largest row Ipk of the last simMeasureL0 (L-free DCM estimate)
 
 static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
     const double t0 = tNow();
@@ -1888,9 +1890,11 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
         if (converter.disabled() && fabsf(sensors.Iout->ewm.avg.get()) < 1.f) break;
         run(0.01, 0);
     }
-    const float fsw = (float) converter.getPwmFrequency();
+    const float fsw = (float) converter.realizedFreqHz();
     const uint16_t pwmMax = converter.pwmMaxDriver();
-    const float iMaxLim = std::min(2.0f, mppt.limits.Iout_max);
+    const float iMaxLim = std::min(2.0f, mppt.limits.Iout_max), ipkMax = mppt.limits.Iout_max;
+    g_mcIpk = 0;
+    printf("  measure: fsw %.0f Hz pwmMax %u pwmCtrlMax %u\n", fsw, pwmMax, converter.pwmCtrlMax);
     const float vin0 = sensors.Vin->ewm.avg.get(), vout0 = sensors.Vout->ewm.avg.get();
     int lo, hi, step;
     if (coilfit::band(vin0, vout0, pwmMax, converter.pwmCtrlMax, steps, lo, hi, step)) {
@@ -1913,7 +1917,13 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
             const float vin = med5(a), vout = med5(b), iout = med5(c), D = (float) converter.getCtrlOnPwmCnt() / pwmMax;
             const bool dcm = converter.inDCM(), ok = iout > 0.02f && vin > vout;
             if (dcm && ok) d[n] = D, vi[n] = vin, vo[n] = vout, io[n] = iout, ++n, iMaxSeen = std::max(iMaxSeen, iout);
-            if (iout > iMaxLim || !dcm) break;
+            const float ipk = coilfit::ipkDcm(D, vin, vout, iout);
+            if (dcm) g_mcIpk = std::max(g_mcIpk, ipk);
+            if (iout > iMaxLim || !(ipk <= ipkMax) || !dcm) {
+                printf("  measure: stop at H %d D %.3f Iout %.2f Ipk %.2f (plant %.2f) %s\n", H, D, iout, ipk,
+                       (g_vconv.getVin() - g_vconv.getVout()) * D / (fsw * g_vconv.getL()), dcm ? "DCM" : "CCM");
+                break;
+            }
         }
         const float floor = std::max(0.15f, 0.2f * iMaxSeen);
         int nk = 0;
@@ -1947,7 +1957,9 @@ static int runMcFlat(const std::string &sc) {
     const float v = g_vconv.getVin(), p0 = v * g_vconv.pvCurrent(v);
     printf("== %s: PV %.0f W, %s, %s, paranoia %d\n", sc.c_str(), p0, converter.inDCM() ? "DCM" : "CCM", modeStr(),
            (int) mppt.limits.reverse_current_paranoia);
-    chk(p0 > 130.f && !converter.inDCM() && !converter.disabled(), "MPPT at full power in CCM");
+    // at 22 kHz flat's coil is still in DCM at full power
+    chk(p0 > 130.f && (sc == "mc-flat-lowf" || !converter.inDCM()) && !converter.disabled(),
+        sc == "mc-flat-lowf" ? "MPPT at full power" : "MPPT at full power in CCM");
     const size_t trips0 = g_trips.size();
     const double tEnter = tNow();
     double secs = 0;
@@ -1955,7 +1967,8 @@ static int runMcFlat(const std::string &sc) {
     int entryTrips = 0;
     for (size_t i = trips0; i < g_trips.size(); ++i) entryTrips += g_trips[i].t < tEnter + 2;
     for (size_t i = trips0; i < g_trips.size(); ++i) printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
-    printf("== %s: L %.2f uH vs plant %.2f uH, %d DCM pts, %.0f s\n", sc.c_str(), r.L * 1e6f, g_vconv.getL() * 1e6f, r.n, secs);
+    printf("== %s: L %.2f uH vs plant %.2f uH, %d DCM pts, %.0f s, fsw %.0f Hz, Ipk up to %.2f A\n", sc.c_str(), r.L * 1e6f,
+           g_vconv.getL() * 1e6f, r.n, secs, converter.realizedFreqHz(), g_mcIpk);
     chk(!entryTrips, "no protection trip at the take-over");
     chk(g_trips.size() == trips0, "no protection trip during the sweep");
     chk(fabsf(r.L / g_vconv.getL() - 1) < 0.03f, "L within 3 % of the plant");
@@ -2963,7 +2976,7 @@ static int simMain(int argc, char **argv) {
     const std::string name = sc;
     if (p0) sc.resize(sc.size() - 3);
     if (sc == "rcal-flat") setenv("SIM_RING", "flat", 0), setenv("SIM_ADC_HZ", "1470", 0);
-    const bool flatTake = sc == "bf-daily-flat" || sc == "mc-flat";
+    const bool flatTake = sc == "bf-daily-flat" || sc == "mc-flat" || sc == "mc-flat-lowf";
     if (flatTake) setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
     if (sc == "rcal-pv") setenv("SIM_RING", "fry", 0);
     if (sc.rfind("wx-", 0) == 0 && sc.size() > 4 && sc.compare(sc.size() - 4, 4, "-fry") == 0)
@@ -3009,7 +3022,7 @@ static int simMain(int argc, char **argv) {
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         setenv("SIM_CONF", c.c_str(), 1);
     }
-    const bool selftest = sc.rfind("hs-", 0) == 0 || sc.rfind("bf-", 0) == 0 || sc == "mc-flat";
+    const bool selftest = sc.rfind("hs-", 0) == 0 || sc.rfind("bf-", 0) == 0 || sc.rfind("mc-flat", 0) == 0;
     if (selftest) {
         std::string c = sc.size() > 7 && !sc.compare(sc.size() - 7, 7, "-nodecl") ? "" : "board.conf:bflow_bat=1";
         if (sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-dawn-nozero" || sc == "bf-daily-then-closed" || sc == "hs-short-unidir" ||
@@ -3017,6 +3030,8 @@ static int simMain(int argc, char **argv) {
             c += ",board.conf:hs_clamp=1";
         if (flatTake) // flat's sensor filters
             c += ",sensor.conf:hv_v_filt_len=20,sensor.conf:lv_v_filt_len=20,sensor.conf:lv_i_filt_len=20";
+        // the state `measure-coil l0 f=` runs in, near flat's floor (fsw*L0*0.95 > 1 ohm with L0 50 uH)
+        if (sc == "mc-flat-lowf") c += ",board.conf:pwm_freq=22000";
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         if (!c.empty()) setenv("SIM_CONF", c.c_str(), 1);
         ov = {{"bf_model", "1"}};
@@ -3096,7 +3111,7 @@ static int simMain(int argc, char **argv) {
     if (sc == "idle-wake") return runIdleWake();
     if (sc.rfind("hs-", 0) == 0) return runHsShort(sc);
     if (sc.rfind("bf-", 0) == 0) return runBfTest(sc);
-    if (sc == "mc-flat") return runMcFlat(sc);
+    if (sc == "mc-flat" || sc == "mc-flat-lowf") return runMcFlat(sc);
     settle(sc == "d-noise" ? 60 : 60);
     size_t settleTrips = g_trips.size();
     printf("# trips during settle: %zu\n", settleTrips);

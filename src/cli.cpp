@@ -2327,7 +2327,7 @@ static void cmdSelftest(cmd *c) {
 }
 
 #ifdef WITH_MEASURE_COIL
-// measure-coil l0|ls [steps|hs] [dwell_ms] [apply]  — the sweep logic lives in measure_coil.cpp.
+// measure-coil l0|ls [steps|hs] [dwell_ms] [f=<Hz>] [apply]  — the sweep logic lives in measure_coil.cpp.
 static void cmdMeasureCoil(cmd *c) {
     if (adcSampler.isCalibrating())
         CMD_FAIL_RETURN("measure-coil: busy calibrating");
@@ -2339,12 +2339,30 @@ static void cmdMeasureCoil(cmd *c) {
     else
         CMD_FAIL_RETURN("measure-coil: expected l0|ls [args]");
 
-    int nArgs = cc.countArgs();
-    bool apply = nArgs >= 2 && cc.getArg(nArgs - 1).getValue() == "apply";
-    int numArgs = apply ? nArgs - 1 : nArgs; // positional count excluding trailing 'apply'
-    int arg1 = numArgs >= 2 ? cc.getArg(1).getValue().toInt() : 0;
-    uint32_t dwellMs = numArgs >= 3 ? (uint32_t) cc.getArg(2).getValue().toInt() : 0; // 0: per-mode default
+    bool apply = false;
+    int pos[2] = {0, 0}, np = 0; // steps|hs, dwell_ms (0: per-mode default)
+    long fHz = 0;
+    for (int i = 1, n = cc.countArgs(); i < n; ++i) {
+        auto v = cc.getArg(i).getValue();
+        if (v == "apply") apply = true;
+        else if (!strncmp(v.c_str(), "f=", 2)) {
+            char *end = nullptr;
+            errno = 0;
+            fHz = strtol(v.c_str() + 2, &end, 10);
+            if (end == v.c_str() + 2 || *end || errno == ERANGE || fHz <= 0)
+                CMD_FAIL_RETURN("measure-coil: expected f=<Hz>");
+        } else if (np < 2) pos[np++] = v.toInt();
+    }
+    uint32_t dwellMs = (uint32_t) pos[1];
     if (dwellMs && dwellMs < 200) dwellMs = 200;
+    if (fHz && ls)
+        CMD_FAIL_RETURN("measure-coil: f= is for l0 only");
+    if (fHz && !converter.getPeriodTicks())
+        CMD_FAIL_RETURN("measure-coil: f= needs the MCPWM gate driver build");
+    if (fHz && (fHz < (long) kMeasFswMin || fHz > (long) converter.getPwmFrequency()))
+        CMD_FAIL_RETURN("measure-coil: f= expects %lu..%lu Hz", (unsigned long) kMeasFswMin,
+                        (unsigned long) converter.getPwmFrequency());
+    if (fHz == (long) converter.getPwmFrequency()) fHz = 0;
     // drives the half-bridge itself: only from a converter stopped with `dc 0`, where nothing else starts it
     if (!rtLoopRunning())
         CMD_FAIL_RETURN("measure-coil: no RT loop");
@@ -2372,9 +2390,11 @@ static void cmdMeasureCoil(cmd *c) {
 #endif
     if (!converter.deadTimeIdle())
         CMD_FAIL_RETURN("measure-coil: a dead-time change is still queued");
+    if (!converter.pwmFreqIdle())
+        CMD_FAIL_RETURN("measure-coil: a frequency change is still queued");
     if (bfTestBusy())
         CMD_FAIL_RETURN("measure-coil: selftest running");
-    if (!measureCoilStart(ls, apply, arg1, dwellMs))
+    if (!measureCoilStart(ls, apply, pos[0], dwellMs, (uint32_t) fHz))
         CMD_FAIL_RETURN("measure-coil: already running");
 }
 #endif // WITH_MEASURE_COIL
@@ -2832,7 +2852,7 @@ void setupCli() {
 #endif
     cli.addBoundlessCmd("selftest", cmdSelftest); // selftest [bflow|abort|clear]
 #ifdef WITH_MEASURE_COIL
-    cli.addBoundlessCmd("measure-coil", bfGuarded<cmdMeasureCoil>); // measure-coil l0|ls [steps|hs] [dwell_ms] [apply]
+    cli.addBoundlessCmd("measure-coil", bfGuarded<cmdMeasureCoil>); // measure-coil l0|ls [steps|hs] [dwell_ms] [f=<Hz>] [apply]
 #endif
 #if WITH_VCONV
     cli.addBoundlessCmd("vconv", bfGuarded<cmdVconv>); // vconv [pv|bat|set ...]

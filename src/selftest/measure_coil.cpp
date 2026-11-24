@@ -26,6 +26,7 @@ struct MeasArgs {
     bool apply;
     int arg1;       // L0: steps; LS: hs (0 = auto)
     uint32_t dwellMs;
+    uint32_t fHz;   // L0: switching frequency for the sweep, 0 = keep
 };
 
 static std::atomic<bool> s_measureBusy{false};
@@ -108,14 +109,30 @@ static bool measWriteConf(const char *key, const char *val) {
     return conf.add({{key, val}}, true);
 }
 
+// switching frequency through the console's runtime path (RT core applies it, duty counts rescaled)
+static bool setFsw(uint32_t hz) {
+    auto idle = [] {
+        const int64_t dl = esp_timer_get_time() + 2000000;
+        while (!converter.pwmFreqIdle() && esp_timer_get_time() < dl) vTaskDelay(1);
+        return converter.pwmFreqIdle();
+    };
+    uint16_t ticks = 0;
+    const char *e = idle() ? converter.requestPwmFrequency(hz, ticks) : "a frequency change is still being applied";
+    if (!e && !(idle() && converter.getPeriodTicks() == ticks && converter.getPwmFrequency() == hz))
+        e = "not confirmed by the RT loop";
+    if (e) UART_LOG("measure-coil: fsw %lu Hz: %s", (unsigned long) hz, e);
+    return !e;
+}
+
 // returns the inductance to persist (NAN: none)
 static float sweepL0(const MeasArgs &a) {
-    float fsw = (float) converter.getPwmFrequency();
-    uint16_t pwmMax = converter.pwmMaxDriver();
-    float iMaxLim = min(2.0f, mppt.limits.Iout_max);
-
     float vin0 = sensors.Vin->ewm.avg.get(), vout0 = sensors.Vout->ewm.avg.get();
     if (vin0 <= vout0 + 1.0f) { UART_LOG("measure-coil: need Vin>Vout+1 (Vin=%.2f Vout=%.2f)", vin0, vout0); return NAN; }
+    if (a.fHz && !setFsw(a.fHz)) return NAN;
+    // after the frequency change: pwmMax, pwmCtrlMax and the CCM/DCM basis fL follow it
+    const float fsw = (float) converter.realizedFreqHz();
+    const uint16_t pwmMax = converter.pwmMaxDriver();
+    const float iMaxLim = min(2.0f, mppt.limits.Iout_max), ipkMax = mppt.limits.Iout_max;
     int steps = a.arg1 > 0 ? min(a.arg1, MEAS_MAX_PTS) : 48;
     int h_lo, h_hi, step;
     if (!coilfit::band(vin0, vout0, pwmMax, converter.pwmCtrlMax, steps, h_lo, h_hi, step)) {
@@ -154,6 +171,8 @@ static float sweepL0(const MeasArgs &a) {
         }
         ++rows;
         if (r.iout > iMaxLim) { UART_LOG("  Iout %.2f > %.2f; stopping", r.iout, iMaxLim); break; }
+        const float ipk = coilfit::ipkDcm(D, r.vin, r.vout, r.iout);
+        if (!(ipk <= ipkMax)) { UART_LOG("  Ipk %.2f > %.2f; stopping", ipk, ipkMax); break; }
         if (!r.dcm) { UART_LOG("  entered CCM; stopping"); break; }
     }
     const float z1 = readZero(zDwell);
@@ -270,6 +289,7 @@ static void sweepLs(const MeasArgs &a) {
 static void measureCoilTask(void *arg) {
     auto a = *(const MeasArgs *) arg;
     if (!a.dwellMs) a.dwellMs = a.ls ? 3000 : 1000; // L0: 48 x ~1.3 s, about a minute
+    const uint32_t fNom = converter.getPwmFrequency();
     float l0 = NAN;
     // started from `dc 0` only (console); manual mode keeps MPPT, its sweeps and starts off until `mppt`
     const auto enterTicket = mppt.requestPsuManual(0, -1, false, true);
@@ -292,6 +312,13 @@ static void measureCoilTask(void *arg) {
     while (!converter.disabled() && wallClockMs() < doneDeadline)
         vTaskDelay(pdMS_TO_TICKS(10));
     const bool off = converter.disabled();
+    if (a.fHz && !(converter.pwmFreqIdle() && converter.getPwmFrequency() == fNom)) {
+        bool ok = false;
+        for (int i = 0; i < 3 && !ok; ++i) ok = setFsw(fNom);
+        if (ok) UART_LOG("measure-coil: fsw restored to %lu Hz", (unsigned long) fNom);
+        else UART_LOG("measure-coil: fsw %lu Hz restore failed, now %lu Hz: run `pwm-freq %lu`", (unsigned long) fNom,
+                      (unsigned long) converter.getPwmFrequency(), (unsigned long) fNom);
+    }
     if (off && mppt.limits.reverse_current_paranoia) mppt.bflow.enable(false);
     if (!off) UART_LOG("measure-coil: converter still on after the ramp-down");
     if (a.apply && l0 == l0 && !off) UART_LOG("  measure-coil: L0 not applied (converter still on)");
@@ -306,13 +333,13 @@ static void measureCoilTask(void *arg) {
     vTaskDelete(nullptr);
 }
 
-bool measureCoilStart(bool ls, bool apply, int arg1, uint32_t dwellMs) {
+bool measureCoilStart(bool ls, bool apply, int arg1, uint32_t dwellMs, uint32_t fHz) {
     // The sweeps below snapshot pwmMax/pwmCtrlMax/pwmRectMin once and run for seconds. A dead-time
     // request that is still queued (console `dt` timed out but did not withdraw it) would land
     // mid-sweep and move all three under those copies, silently corrupting an L0 we may persist.
-    if (!converter.deadTimeIdle()) return false;
+    if (!converter.deadTimeIdle() || !converter.pwmFreqIdle()) return false;
     if (s_measureBusy.exchange(true)) return false;
-    s_measArgs = {ls, apply, arg1, dwellMs};
+    s_measArgs = {ls, apply, arg1, dwellMs, ls ? 0 : fHz};
     xTaskCreatePinnedToCore(measureCoilTask, "meas-coil", 6144, &s_measArgs, 1, nullptr, NON_RT_CORE);
     return true;
 }
