@@ -463,32 +463,30 @@ otherwise. `temp-stale` is not logged before the first input-voltage sample, whe
 The temperature and supply checks use a margin above their trip level, so the converter does not restart right at the
 threshold.
 
-Manual PWM is held off only by `restart`, `hs-short`, `hs-check`, `bf-fail`, `conf-save`, `backoff`, `wire-trip`,
-`temp-stale`, `temp`, `minpulse-M` and `idle profile`; `backoff` and `wire-trip` also stop a running manual PWM.
+The table lists the reasons in the order they are checked. The last column shows which reasons also hold off manual PWM
+and which of those stop it while it runs:
 
-The table lists the reasons in the order they are checked:
-
-| Reason | Blocks the start while |
-|---|---|
-| `psu-latch` | PSU mode latched off after repeated trips |
-| `restart` | A system restart is under way. Also holds manual PWM |
-| `hs-short` | The [high-side short check](#high-side-short-check) latched. Also holds manual PWM |
-| `hs-check` | The high-side short check has not yet seen a clean sample after 0.5 s off, or a sample is suspect. Also holds manual PWM |
-| `bf-fail` | The [backflow switch test](#backflow-switch-test) failed. Also holds manual PWM |
-| `conf-save` | A rectifier-calibration result or a `pwr pwm` setting is being saved |
-| `psu-boost-setpoint` | PSU mode, boost: the setpoint is below Vin |
-| `psu-ov-conflict` | PSU mode: the setpoint conflicts with the OV limit |
-| `backoff` | The backoff timer is running |
-| `wire-trip` | The wire-fault guard is tripped |
-| `temp-stale` | A fitted NTC or MCU temperature sensor has given 3 invalid readings in a row (outside −40…150 °C), no valid reading for 90 s, or none since boot |
-| `temp` | NTC or MCU temperature > `temp_max` − 3 °C, or no MCU temperature |
-| `Vin-Vout` | Not in PSU mode: a buck needs average Vin > average Vout + 1 V, a boost needs average Vin < average Vout + 1 V |
-| `minpulse-M` | A buck start at the current Vout (or the PSU setpoint, if higher) would run the low-side minimum pulse above its start ratio |
-| `Vout-still-OV` | PSU mode: Vout is still above 98 % of the OV threshold |
-| `supply-UV` | Board supply below 9.5 V |
-| `calibrating` | Sensor calibration is running |
-| `filters-empty` | A Vin, Vout, Iin or Iout filter has not refilled after a calibration or ADC reset |
-| `idle profile` | The idle power profile holds the converter off; the loop asks it to leave |
+| Reason | Blocks the start while | Manual PWM |
+|---|---|---|
+| `psu-latch` | PSU mode latched off after repeated trips |  |
+| `restart` | A system restart is under way | held |
+| `hs-short` | The [high-side short check](#high-side-short-check) latched | held |
+| `hs-check` | The high-side short check has not yet seen a clean sample after 0.5 s off, or a sample is suspect | held |
+| `bf-fail` | The [backflow switch test](#backflow-switch-test) failed | held |
+| `conf-save` | A rectifier-calibration result or a `pwr pwm` setting is being saved | held |
+| `psu-boost-setpoint` | PSU mode, boost: the setpoint is below Vin |  |
+| `psu-ov-conflict` | PSU mode: the setpoint conflicts with the OV limit |  |
+| `backoff` | The backoff timer is running | held, stops it |
+| `wire-trip` | The wire-fault guard is tripped | held, stops it |
+| `temp-stale` | A fitted NTC or MCU temperature sensor has given 3 invalid readings in a row (outside −40…150 °C), no valid reading for 90 s, or none since boot | held |
+| `temp` | NTC or MCU temperature > `temp_max` − 3 °C, or no MCU temperature | held |
+| `Vin-Vout` | Not in PSU mode: a buck needs average Vin > average Vout + 1 V, a boost needs average Vin < average Vout + 1 V |  |
+| `minpulse-M` | A buck start at the current Vout (or the PSU setpoint, if higher) would run the low-side minimum pulse above its start ratio | held |
+| `Vout-still-OV` | PSU mode: Vout is still above 98 % of the OV threshold |  |
+| `supply-UV` | Board supply below 9.5 V |  |
+| `calibrating` | Sensor calibration is running |  |
+| `filters-empty` | A Vin, Vout, Iin or Iout filter has not refilled after a calibration or ADC reset |  |
+| `idle profile` | The idle power profile holds the converter off; the loop asks it to leave | held |
 
 ## Configuration
 
