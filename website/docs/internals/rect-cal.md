@@ -21,12 +21,15 @@ lands late, toward a longer LS.
 A run needs:
 
 - buck topology;
-- the converter on in MPPT mode (not sweeping, not in PSU/PV emulator mode or manual PWM, no
-  forced PWM, no limiter active);
+- the converter on in MPPT mode (not in PSU or PV emulator mode or manual PWM, no ADC calibration
+  running);
+- no sweep or peak scan, no forced PWM, no manual LS count, no queued dead-time change, no limiter
+  active;
 - sync rect and backflow switch on;
-- `V_i > V_o + 1 V`;
-- a physical `I_out` sensor reading at least 0.3 A;
-- an HS count above `0.55·M`.
+- a physical `I_out` sensor reading at least 0.3 A (averaged);
+- averaged `V_i > V_o + 1 V`;
+- an HS count at or above the calibration HS of `0.55·M`, which must itself lie above the HS
+  minimum.
 
 `rect-cal` further needs DCM and at most 4 A. At the calibration point the run further
 needs more than 0.15 A and LS headroom: the sweep cap, the smallest of the complementary limit, 90 %
@@ -35,7 +38,7 @@ window + 1.25 µs (`LS headroom`).
 
 With `coil.conf::rect_cal_auto=1` (default) the firmware starts a run (`rect-cal`, not `force`) by
 itself while the offset is uncalibrated, at most once a day, not in the first 10 minutes after
-boot and only at a steady operating point above 5 W. A refused start is retried after 10 minutes.
+boot and only at a steady operating point above 5 W. A refused start is retried after 10 minutes, a failed run after a day.
 A bound is retried only while the operating `V_i` is below `2·V_o` (the calibration point sits
 higher on the PV curve, so this is necessary, not sufficient) and not within 7 days of a bound
 result since boot: a board that always operates above `2·V_o` gives a bound on every run and
@@ -61,7 +64,7 @@ make a limiter act. `V_i` rises toward `V_oc`; the run stops at 97% of the input
 At the calibration HS the run waits until the converter reports DCM and two
 consecutive 0.5 s windows (each after 150 ms settling) agree: `I_out` within 0.02 A + 2%, `V_i`
 and `V_o` within 0.3%. It gives up 12 s after the start: `HS ramp` if HS has not reached the
-calibration point, `not in DCM`, or `unsettled`. A settled window with `V_o` at or below 0.5 V or
+calibration point, `not in DCM`, or `unsettled`. A settling window with `V_o` at or below 0.5 V or
 `V_i` not above `V_o + 1 V` fails with `Vin<=Vout`, and a non-finite averaged reading in any
 window with `bad sample`.
 
@@ -228,20 +231,23 @@ reaches about half of that.
 
 The run is aborted, and the LS returned to diode emulation, on any of these:
 
-- a limiter, a mode change, a sweep or `rect-cal abort`;
-- the input voltage near its trip;
+- `rect-cal abort` (`aborted`);
+- a limiter (`limiting`);
+- a mode change (`mode change`, `not in MPPT mode`), a sweep or peak scan (`sweeping`) or a
+  forced-PWM request (`forced PWM`);
+- the input voltage above 97% of its trip (`Vin near max`);
 - leaving DCM (`left DCM`) or a change of HS (`HS moved`) after the settling phase;
-- 60 s run time;
-- any protection action: a shutdown, the backflow switch or sync rect turned off, or the LS
-  clamped to its minimum.
+- 60 s run time (`timeout`);
+- any protection action (`protection`): a shutdown, the backflow switch or sync rect turned off,
+  or the LS clamped to its minimum.
 
 The protection check runs right before each
 LS update of the run, after the protection pass of the same sample, so the run never raises an LS
 that a protection has just lowered.
 
-Afterwards HS fades back to the operating point it started
-from, unless the backflow switch is open (reverse-current guard) or the mode changed; then the
-tracker continues from where the run stopped.
+Afterwards HS fades back to the operating point it started from, unless the converter is off,
+the backflow switch is open (reverse-current guard), the mode changed or a sweep or peak scan is
+running; then the tracker continues from where the run stopped.
 
 ## Locating the zero crossing
 
@@ -287,7 +293,7 @@ crossing by `τ·V_i/V_o`, of which the result contains about `τ`, which leaves
 
 The run is rejected, and the previous value kept, in any of these cases:
 
-- fewer than 6 points;
+- fewer than 6 points up to the dip floor (`few points`);
 - no step at 0.8–1× ideal (`no points below ideal`);
 - `|zc − ideal| > 2.5 µs` (`charge model`: `L0` or the current reading far off);
 - no bend (`no knee`: the bend at the last point under 10 mA or under 4× the residual RMS);
@@ -373,8 +379,16 @@ value is saved as uncalibrated.
 
 ## Failure reasons
 
-A run ends without a result, and the previous value stays, on any refusal or failure: `not in DCM`,
-`HS ramp`, `unsettled`, `Vin<=Vout`, `low I`, `LS headroom`, `bad sample`, `left DCM`,
-`HS moved`, `Vin shift`, `Vout shift`, `V shift`, `V step`, `sense follows LS`, `Iout follows LS`,
-`few points`, `no points below ideal`, `charge model`, `no knee`, `implausible`, an abort, or
-`timeout`.
+A run ends without a result, and the previous value stays, on any refusal, abort or failure.
+`rect-cal status` and the log name the reason.
+
+A refused start names the first unmet [precondition](#preconditions-and-automatic-runs):
+`converter off`, `boost`, `not in MPPT mode`, `sweeping`, `forced PWM`, `sync rect/backflow off`,
+`no Iout sensor`, `manual LS`, `dead-time change queued`, `limiting`, `not in DCM`,
+`Iout outside 0.3..4 A` (`Iout below 0.3 A` with `force`), `Vin<=Vout+1` or
+`HS below calibration point`.
+
+A started run fails with one of the [abort](#run-aborts) reasons or with `HS ramp`, `not in DCM`,
+`unsettled`, `Vin<=Vout`, `low I`, `LS headroom`, `bad sample`, `Vin shift`, `Vout shift`,
+`V shift`, `V step`, `sense follows LS`, `Iout follows LS`, `few points`, `no points below ideal`,
+`charge model`, `no knee` or `implausible`.
