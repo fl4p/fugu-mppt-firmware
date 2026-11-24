@@ -20,22 +20,28 @@ You can read and change the configuration in these ways:
 - `set-config <file>.conf <key> <value>` from the serial, telnet, MQTT, or BLE console edits a value
   in place, without a re-flash.
 - `get-config <file>.conf <key>` reads one value back, and `get-config <file>.conf` reads the whole
-  file.
+  file. Secrets (passwords, keys, URIs with credentials) print as `***`.
 - `del-config <file>.conf <key>` removes a value.
-- FTP works when Wi-Fi is up (1 connection; passive mode, data port 50009, works from the same
-  subnet only), or use `etc/config-tool/conf-tool.py`.
+- FTP works when Wi-Fi is up (2 sessions; passive mode on [`pasv_port`](ftp.md), default 50009, or
+  active mode), or use `etc/config-tool/conf-tool.py`.
 - The [config editor](../config-editor.md) is a browser page that reads a device's configuration
   over USB serial, Bluetooth or MQTT (or from a file, archive or board preset), shows every key with
   its unit, default and description, and writes only the changes back. It also lists services and
   runs self-tests and measurements. Open the [hosted copy](pathname:///tools/conf-editor.html).
 - `./provision.py <board>` writes a whole `config/<board>` image to the littlefs partition.
+- `idf.py flash` also writes the build's default image (`config/lab/dry_mock` on the ESP32-S3,
+  `config/fugu1/fugu1_esp32` on the ESP32, set by `FUGU_LITTLEFS_SRC` in `CMakeLists.txt`) over the
+  device's configuration. `idf.py app-flash` keeps it.
 
 ## When changes take effect
 
 `set-config` only rewrites the file (the config editor shows for each change when it takes effect). What applies the new value depends on the file:
 
-- `board`, `sensor`, `limits`, `coil`, `converter`, `charger`, and `tracker` are read at boot, so
-  reboot after `set-config`. Console verbs (`vset`, `iset`, `dt`, `pwm-freq`, …) change RAM only.
+- `board`, `sensor`, `limits`, `coil`, `converter`, `charger`, `tracker`, `pprof`, and `vconv` are
+  read at boot, so reboot after `set-config`. Console verbs (`vset`, `iset`, `dt`, `pwm-freq`, …)
+  change RAM only.
+- `wifi.conf` is read when Wi-Fi first connects. `wifi-add` stores a network and adds it at once;
+  other edits take effect at the next boot.
 - For service confs, `svc rs <name>` re-reads the service-specific keys. To change `enabled`, use
   `svc on|off`, and to change `log_level`, use `svc log`. A hand-edited value of either takes effect
   at the next boot.

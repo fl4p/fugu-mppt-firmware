@@ -12,11 +12,10 @@ description: "Using the ESP32 internal ADC: linearity and calibration, noise, wi
 
 The ESP32 internal ADC has a poor reputation: it is non-linear and known to be noisy.
 
-Calibration fixes the linearity, as long as the input stays within the voltage range Espressif suggests
-(e.g. at 6dB PGA attenuation 150 mV ~ 1750 mV,
+Calibration fixes most of the non-linearity, as long as the input stays within the voltage range Espressif suggests
+for the attenuation (e.g. at 6dB PGA attenuation 150 mV ~ 1750 mV,
 see [suggested range](https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32s3/api-reference/peripherals/adc.html#_CPPv425adc1_config_channel_atten14adc1_channel_t11adc_atten_t)).
-For a simple curve fit, see [this ESP-IDF issue comment](https://github.com/espressif/esp-idf/issues/164#issuecomment-318861287).
-A look-up table (LUT) improves on this.
+[Attenuation and calibration](#attenuation-and-calibration) describes what the firmware applies.
 
 Much of the noise comes from how measurements are taken. A simple approach is a periodic timer that takes a
 single-shot measurement with the Arduino API `analogRead()`, expecting 12-bit precision. This ignores conversion time.
@@ -31,7 +30,7 @@ measurement that takes 100µs, taken every 100ms, gives an effective ADC duty cy
 99.9% of the time.
 
 To use the ADC fully, the firmware runs continuous measurements and averages the samples down to the
-desired sampling rate. Averaging the raw adc int16 readings gives the best performance.
+desired sampling rate. It averages the raw 12-bit codes and converts the average to millivolts.
 `sensor.conf::esp32adc1_sr` sets the continuous rate, and IDF caps it at `SOC_ADC_SAMPLE_FREQ_THRES_HIGH`
 (83.3 kHz on the ESP32-S3). At that maximum, 32-sample averaging works well. With 3 channels this gives a
 per-channel rate of ~ 868 sps (=83333 / 32 / 3). [Sampling rate](#sampling-rate) gives the per-channel rates for
@@ -45,9 +44,10 @@ To use the internal ADC1 of the ESP32/ESP32-S3, omit or remove the ADS1015 or AD
 resistor (R31) next to it. Then use thin cables or isolated copper wire to connect the analog signals directly with
 the ESP32 chip.
 
-Select the internal ADC explicitly in `sensor.conf` (`adc = esp32adc1`, see the
-[bare ESP32 example](../../reference/config/examples.md)). If the configured ADC fails to initialise, sensor setup
-fails. There is no automatic fallback.
+Select the internal ADC explicitly in `sensor.conf` (`adc = esp32adc1` for all channels, or `<side>_adc = esp32adc1`
+per channel, see the [bare ESP32-S3 example](../../reference/config/examples.md#bare-esp32-s3-example)).
+`config/fugu1/fugu_int_adc` is a complete profile for the ESP32 wiring below. If the configured ADC fails to
+initialise, sensor setup fails. There is no automatic fallback.
 
 The following connections apply to each module.
 
@@ -56,16 +56,42 @@ The following connections apply to each module.
 ```
 A2 (solar current) ---> GPIO4 (ADC1_CHANNEL_3)
 A3 (solar voltage) ---> GPIO5 (ADC1_CHANNEL_4)
-A4 (bat voltage)   ---> GPIO6 (ADC1_CHANNEL_5) (orignally ADC-ALERT)
+A4 (bat voltage)   ---> GPIO6 (ADC1_CHANNEL_5) (originally ADC-ALERT)
 ```
 
 ### ESP32-WROOM-32
 
 ```
 A2 (solar current) ---> GPIO36 / SENSOR_VP (ADC1_CHANNEL_0)
-A3 (solar voltage) ---> GPIO34 (ADC1_CHANNEL_6) (orignally ADC-ALERT)
+A3 (solar voltage) ---> GPIO34 (ADC1_CHANNEL_6) (originally ADC-ALERT)
 A4 (bat voltage)   ---> GPIO39 / SENSOR_VN (ADC1_CHANNEL_3) 
 ```
+
+## Attenuation and calibration
+
+The firmware picks the attenuation from the highest voltage each channel can see at the pin: the channel's limit
+(`limits.conf`) through its divider or current-sense scaling, and 2.8 V for an NTC channel. The thresholds are:
+
+| Highest pin voltage | Attenuation |
+|---|---|
+| up to 0.8 V | 0 dB |
+| 0.8 to 1.06 V | 2.5 dB |
+| 1.06 to 1.6 V | 6 dB |
+| above 1.6 V | 12 dB |
+
+ESP-IDF requires one attenuation for all channels of ADC1 in continuous mode, so every channel runs at the highest
+one. Setup fails when a channel's highest pin voltage exceeds 3.548 V, and it logs a warning above 81 % of that
+(2.87 V).
+
+Raw codes are converted with the ESP-IDF calibration scheme for that attenuation: curve fitting on the ESP32-S3, line
+fitting on the ESP32. The firmware samples it into a table with a knot every 64 codes and interpolates, so a
+fractional average converts without rounding to an integer code. Two further corrections are optional:
+
+* `sensor.conf::esp32adc1_inl` adds a fitted ESP32-S3 INL correction (12 dB only, 0.57 to 2.66 V at the pin).
+* `<side>_v_gain` and `<side>_v_offset` correct a board's gain and offset after the divider.
+
+See [`sensor.conf`](../../reference/config/sensor.md) for both. The divider calculation models the ADC input as
+500 kΩ.
 
 ## Sampling rate
 
@@ -124,18 +150,9 @@ The following links cover the ADC sampling rates:
 
 The ESP32 appears to be the only one with 2Msps.
 
-## Other notes
+## Board noise
 
-These noise observations come from two boards:
+Floating-pin noise differs between boards:
 
 * Waveshare ESP32-S3 Mini (ESP32-S3-Zero) has no floating pin noise
 * ESP32-S3-WROOM DevBoard has peak noise level of 100~120
-
-The following commented-out defines list sampling-rate and averaging options:
-
-```
-//#define ADC1_SR 400000 // sampling rate (105k max, see https://www.esp32.com/viewtopic.php?t=1215)
-// 50k, 64k, 80k, 100k, 125k, 128k, 156.25k, 160k, 200k, 250k, 312.5k, 320k, 400k, 500k, 625k, 640k, 800k
-// https://www.wolframalpha.com/input?i=factor+%5B%2F%2Fmath%3A80000000%2F%2F%5D
-//#define ADC1_AVG 64 // num averaging samples, max 256
-```
