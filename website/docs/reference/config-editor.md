@@ -55,6 +55,12 @@ The editor can load a config from any of these sources:
 | Bluetooth (NUS) | **Bluetooth**                                    | Web Bluetooth, Nordic UART service; the OS may prompt for pairing     |
 | MQTT            | **MQTT broker…**                                 | WebSocket broker URL (`ws://` / `wss://`); needs `mqtt.conf` `cmd_input=1` |
 
+Over Bluetooth, a host without a bond pairs at the editor's first command (see
+[Connecting: BLE](../guide/connecting.md#ble)). If that command is still waiting after about 2 s, the status line
+asks you to accept the pairing request. On Android the request drops into the notifications after a few seconds and
+times out after about 30 s; if the link then drops, the error message lists a missed or timed-out pairing request
+among the causes.
+
 Once a config is loaded, the **Open** menu in the top bar offers the same device and file sources, plus
 **Start screen**. From there a "Back to …" link returns to the loaded config.
 

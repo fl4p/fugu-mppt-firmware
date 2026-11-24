@@ -36,8 +36,9 @@ function mqttHook(window, devs) {
   };
 }
 
-// BLE: a granted NUS device. busy: gatt.connect always fails; advert: whether watchAdvertisements fires.
-function bleDevice(window, { id = 'id-1', name = 'fugu-devB', fw, busy = false, advert } = {}) {
+// BLE: a granted NUS device. busy: gatt.connect always fails; advert: whether watchAdvertisements fires;
+// pair: {ms, fail} holds the first write ms (a pairing prompt), then acknowledges or fails it.
+function bleDevice(window, { id = 'id-1', name = 'fugu-devB', fw, busy = false, advert, pair } = {}) {
   const ls = [], advLs = [];
   const enc = new TextEncoder();
   const tx = {
@@ -47,6 +48,11 @@ function bleDevice(window, { id = 'id-1', name = 'fugu-devB', fw, busy = false, 
   let buf = '';
   const rx = {
     async writeValueWithResponse(d) {
+      if (pair) {
+        const p = pair; pair = null;
+        await new Promise(r => setTimeout(r, p.ms));
+        if (p.fail) throw new Error('GATT operation failed for unknown reason.');
+      }
       buf += new TextDecoder().decode(d);
       let i;
       while ((i = buf.indexOf('\n')) >= 0) {

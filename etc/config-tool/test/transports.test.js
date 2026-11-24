@@ -201,3 +201,41 @@ test('MQTT modal: Scan connects to the broker and lists devices seen on pv/log/<
     window.mqttModalClose();
   }
 });
+
+// A first BLE write held by a pairing prompt: a hint after ~2 s, cleared on the ack; a failed write
+// names the missed pairing request.
+test('BLE pairing hint while the first write is pending, and in the error when it fails', async () => {
+  const { firmware, bleDevice } = require('./_fakes');
+  const msg = w => w.document.getElementById('drop-msg').textContent;
+  const until = async (pred, ms = 6000) => { const end = Date.now() + ms;
+    while (!pred()) { if (Date.now() > end) throw new Error('timeout waiting'); await new Promise(r => setTimeout(r, 20)); } };
+  for (const fail of [false, true]) {
+    const { window } = await loadEditor();
+      const p = window.bleConnectAndImport(bleDevice(window, { fw: firmware('devB'), pair: { ms: 2600, fail } }));
+    await until(() => /^Waiting for pairing: accept the Bluetooth pairing request/.test(msg(window)));
+    const r = await p;
+    if (!fail) {
+      assert.equal(r, true);
+      assert.equal(window._state.deviceName, 'devB');
+      assert.doesNotMatch(msg(window), /Waiting for pairing/);
+    } else {
+      assert.equal(r, false);
+      assert.match(msg(window), /dropped the Bluetooth link while connecting \(GATT operation failed for unknown reason\.?\)/);
+      assert.match(msg(window), /pairing request was missed or timed out/);
+      assert.match(msg(window), /pair_window_s/);
+    }
+    window.close();
+  }
+});
+
+test('BLE: a quickly acknowledged first write shows no pairing hint; other link failures do not blame pairing', async () => {
+  const { firmware, bleDevice } = require('./_fakes');
+  const { window } = await loadEditor();
+  const shown = [];
+  const orig = window.showStatus;
+  window.showStatus = (m, ...a) => { shown.push(m); return orig(m, ...a); };
+  assert.equal(await window.bleConnectAndImport(bleDevice(window, { fw: firmware('devB') })), true);
+  assert.ok(!shown.some(m => /Waiting for pairing/.test(m)));
+  assert.doesNotMatch(window.bleErrText(new Error('GATT Server is disconnected.'), { name: 'fugu-devB' }), /pairing request/);
+  window.close();
+});

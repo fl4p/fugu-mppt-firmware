@@ -2281,19 +2281,30 @@ function sendCommand(cmdStr, onRx, timeoutMs=4000){
 // Ask the device its name via the `hostname` command (prints "Hostname: <name>").
 // The reply timeout starts once the write is acknowledged: a first BLE write can wait on OS
 // pairing prompts (Android: two, up to 30 s each), and a second write issued meanwhile fails
-// with "GATT operation already in progress".
-function fetchHostname(timeoutMs=2500){
+// with "GATT operation already in progress". Over BLE a write still pending after pairHintMs
+// shows a pairing hint; a failed write is tagged e.pairWait.
+function fetchHostname(timeoutMs=2500, pairHintMs=2000){
   return new Promise((resolve, reject)=>{
-    let name = null, wrote = false, timer = null;
+    let name = null, wrote = false, timer = null, prev = null;
+    const ble = activeWrite===bleWrite;
+    const hint = ble && setTimeout(()=>{
+      prev = document.getElementById("drop-msg").textContent;
+      showStatus("Waiting for pairing: accept the Bluetooth pairing request (on Android it may be in your notifications).", false, true);
+    }, pairHintMs);
+    const unhint = ()=>{ clearTimeout(hint); if (prev !== null){ showStatus(prev, false, true); prev = null; } };
     const done = ()=>{ clearTimeout(timer); lineListeners.delete(onLine); };
     const finish = ()=>{ if (wrote && name !== null){ done(); resolve(name); } };
     const onLine = (ln)=>{ const m = ln.match(/Hostname:\s*(.+?)\s*$/); if (m){ name = m[1]; finish(); } };
     lineListeners.add(onLine);
     activeWrite("hostname\r\n").then(()=>{
-      wrote = true;
+      unhint(); wrote = true;
       timer = setTimeout(()=>{ done(); resolve(null); }, timeoutMs);
       finish();
-    }, e=>{ done(); reject(e); });
+    }, e=>{
+      clearTimeout(hint); done();
+      if (ble && e && typeof e==="object") try { e.pairWait = true; } catch(_){}
+      reject(e);
+    });
   });
 }
 
@@ -2480,6 +2491,7 @@ function bleErrText(e, dev){
   return name+" dropped the Bluetooth link while connecting ("+m.replace(/\. .*$/,"")+"). Usual causes:\n"+
     "• weak signal: move closer;\n"+
     "• it takes one Bluetooth connection at a time: close other tabs, apps or console clients using it;\n"+
+    (e && e.pairWait ? "• the pairing request was missed or timed out: accept it within about 30 s (on Android it may be in your notifications);\n" : "")+
     "• a stale pairing: if this computer paired with it before a reflash or bond reset, remove it in your OS Bluetooth settings;\n"+
     "• newer firmware accepts a new pairing only for a few minutes after boot or after `ble pair` (pair_window_s in ble.conf).\n"+
     "Then retry.";
@@ -4702,7 +4714,8 @@ async function handoffBle(h){
   const r = await bleConnectAndImport(dev, (e, d, adv)=>
     `${d.name||label} ${adv===false ? "is not advertising" : "did not accept the Bluetooth link"} (${(e&&e.message||e+"").replace(/\.(\s.*)?$/,"")}). `+
     "It takes one Bluetooth connection at a time, so the dashboard, another tab or a console client may still hold it, "+
-    "or it is out of range. Close that link, then click Bluetooth to pick it.", 6000);
+    "or it is out of range"+(e && e.pairWait ? ", or the pairing request was missed or timed out" : "")+
+    ". Close that link, then click Bluetooth to pick it.", 6000);
   if (r===false && !state) startOffer("connect");
   return r;
 }
