@@ -28,10 +28,13 @@ The host may remove the drive anyway: macOS does, and discards the edits. Unplug
 
 The device applies the changes only if all of them pass the following checks. Otherwise it writes nothing.
 
-- File names must match `[A-Za-z0-9_-]+.conf`. Other files (editor backups, `.DS_Store`, `._*`) are ignored.
+- File names must match `[A-Za-z0-9_-]+.conf`, at most 64 characters. Other files (editor backups, `.DS_Store`,
+  `._*`) are ignored. A non-hidden entry ending in `.conf` that breaks the rule blocks the commit as
+  `invalid conf entry`, for example Finder's `charger copy.conf` (space) or `charger.old.conf` (extra dot), and so
+  does a directory named `*.conf`.
 - Every line must be blank, a `#` comment, or `key=value` with a key of letters, digits, `_`, `.`, or `-`, in
-  printable ASCII, and at most 254 characters long. A file may be at most 16 KiB. A UTF-8 byte-order mark at the
-  start is removed.
+  printable ASCII, and at most 254 characters long. A changed file may be at most 16 KiB; a larger one fails the
+  commit as `too large`. A UTF-8 byte-order mark at the start is removed.
 - `charger.conf` and `limits.conf` must pass the same checks the firmware applies at boot (`conf-check`). Other
   files are only checked for syntax, so a wrong value there shows up at the next boot. The drive and the console come
   up before the configuration is loaded, so a file that stops the firmware from starting can usually be fixed
@@ -41,9 +44,13 @@ The device applies the changes only if all of them pass the following checks. Ot
 - The drive must be readable as a whole. A damaged directory entry, a broken long file name, or a cluster chain
   shared by two files blocks the commit.
 
-Each file is replaced atomically. A change to several files is applied file by file and stops at the first error.
-A power loss or a flash error during an eject can leave some of them updated. The console then reports
-`PARTIALLY applied`. Reconnect the drive and check the files.
+Each file is replaced atomically. A change to several files is applied file by file and stops at the first error:
+
+- If a rename or delete fails while the device is running, the console reports `PARTIALLY applied` and the eject
+  fails. Check the files on the drive and eject again.
+- A power loss during an eject can leave some files updated and others not, with no message. Leftover
+  `<name>.conf.new` staging files stay in `conf/`; the drive hides them, and they can be removed over FTP.
+  Reconnect the drive and check the files.
 
 ## Limits
 
@@ -55,11 +62,13 @@ The drive has the following limits:
   metadata a host creates (`.fseventsd`, `._*` files) usually costs little. Beyond the limit, writes fail, and the
   host reports this as a removed or unavailable medium.
 - The root directory holds 64 entries, and a long file name takes extra entries (one per 13 characters).
-- Only the root directory of `conf/` is shown, up to 32 KiB of files. Subdirectories created on the drive are
-  ignored.
+- Only the root directory of `conf/` is shown. Files whose names break the naming rule are hidden from the drive.
+  Subdirectories created on the drive are ignored.
+- If `conf/` holds more than 32 KiB of files, or a file cannot be read, the drive does not appear.
 - Edits made over another console (`set-config`, FTP) while the drive is mounted are not merged. On eject, every
   file changed on the drive overwrites the device's copy.
-- After an eject the drive stays absent until the device is plugged in again or restarts.
+- After an eject the drive stays absent until the device is plugged in again or restarts, or until the host asks
+  to load the medium again.
 
 :::warning
 The drive shows every configuration file, including `wifi.conf` and `mqtt.conf` with their passwords. Any computer

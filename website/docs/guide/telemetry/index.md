@@ -6,18 +6,20 @@ sidebar_position: 1
 # Telemetry & Home Assistant
 
 The firmware publishes live data four ways: MQTT with Home Assistant discovery, InfluxDB line protocol over UDP, a
-BLE notify stream, and connectionless BLE advertisements.
+BLE notify stream, and connectionless BLE advertisements. A build option adds a fifth, a binary telemetry stream over
+MQTT.
 
 ## Quick start
 
-A change to `influxdb_host` takes effect after a reboot. To send data to InfluxDB over Wi-Fi, set the host, enable
-the `tele` service, and reboot:
+To send data to InfluxDB over Wi-Fi, set the host and enable the `tele` service:
 
 ```
 set-config tele.conf influxdb_host <influxdb-ip>
 svc on tele
-restart
 ```
+
+The service reads `influxdb_host` each time it starts; after changing the host of a running service, apply it with
+`svc rs tele`.
 
 To feed Home Assistant over MQTT, set the broker and its credentials, then restart the `mqtt` service:
 
@@ -30,14 +32,13 @@ svc rs mqtt
 
 ## Paths
 
-Each path has its own requirements, transport, and receiver:
-
 | Path | Needs | Transport | Receiver |
 |---|---|---|---|
 | MQTT + Home Assistant | Wi-Fi, `mqtt.conf::broker_uri` | MQTT | Home Assistant MQTT discovery |
 | InfluxDB | Wi-Fi, `tele.conf::influxdb_host`, `tele` service on | UDP to port 8086 | InfluxDB UDP listener, or `etc/influx_binary_proxy.py` |
-| BLE stream | `CONFIG_FUGU_WITH_BLE_TELE`, `ble` service on, a connected client | NUS notify characteristic | `etc/influx_binary_proxy.py --ble`, `etc/fugu_console.py --ble --tele` |
+| BLE stream | `CONFIG_FUGU_WITH_BLE_TELE`, `ble` service on, a connected client | notify characteristic (TELE) of the BLE console service | `etc/influx_binary_proxy.py --ble`, `etc/fugu_console.py --ble --tele` |
 | BLE advertising | `CONFIG_FUGU_WITH_BLE_ADV`, `ble` service on | manufacturer data in advertisements | `etc/influx_binary_proxy.py --adv` |
+| MQTT stream (build option) | `CONFIG_FUGU_WITH_TELE_MQTT` (off by default), Wi-Fi, a `tele-mqtt <0..3600>` lease | binary wire on `pv/tele/<hostname>` | [Dashboard](../../reference/dashboard.md), see [Telemetry stream](../../reference/mqtt.md#telemetry-stream) |
 
 The BLE paths need no Wi-Fi. See [Build Options](../getting-started/build-options.md) for the Kconfig flags.
 
@@ -70,8 +71,6 @@ influxdb_host=<influxdb-ip>   # an IP address, not a hostname
 binary=0
 ```
 
-The data and sending behavior are as follows:
-
 - Measurement `mppt`, tag `device=<hostname>`, fields such as `Ui`, `Uo`, `I`, `P`, `E`, `E_today`, `pwm_duty`,
   `mppt_state`, `mcu_temp`, `ntc_temp`, and `lag`. The full list is in [Telemetry fields](../../reference/telemetry-fields.md).
 - Points carry wall-clock timestamps, so the service starts sending after SNTP sets the clock.
@@ -82,7 +81,7 @@ The receiver is an InfluxDB 1.x UDP input on port 8086, or any relay that accept
 
 ### Binary wire
 
-`binary=1` replaces text line protocol with a symbol-table encoding (`src/tele/sym_line_protocol.h`), always
+`binary=1` replaces text line protocol with a symbol-table encoding (see [Telemetry fields](../../reference/telemetry-fields.md#transports)), always
 tamp-compressed, several times smaller. It needs a build with `CONFIG_FUGU_WITH_TELE_BINARY` (`CONFIG_FUGU_WITH_BLE_TELE`
 turns it on); other builds log a warning and keep the text wire. A plain InfluxDB can't read it, so put
 `etc/influx_binary_proxy.py` in between. The proxy can print the decoded points, forward them to a UDP relay, or write them to InfluxDB over HTTP:
@@ -144,8 +143,6 @@ is what the firmware sends today.
 :::
 
 ## Common scenarios
-
-The following setups match common goals:
 
 | Goal | Setup |
 |---|---|

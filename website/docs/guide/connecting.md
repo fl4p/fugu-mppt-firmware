@@ -72,8 +72,6 @@ The optional network scan is supported. Identify and hostname commands are not.
 
 ## Transports
 
-Each transport has its own requirements on the device and its own client flags:
-
 | Transport | Device side | Client flags |
 |---|---|---|
 | Serial | UART0 at 115200 baud; on ESP32-S3 also the USB-Serial-JTAG port | `-p PORT` (default `$ESPPORT`, else the first matching `/dev/cu.usbmodem*`, `/dev/ttyUSB*`, `/dev/ttyACM*`, …), `-b BAUD` |
@@ -137,8 +135,8 @@ svc on ble
 ```
 
 This persists `enabled=1` in `ble.conf`. The device advertises under its hostname, which defaults to
-`fugu-<target>-<chip id>` and changes with `hostname <name>`. If the hostname doesn't already start with `fugu-`, the
-device adds that prefix.
+`fugu-<target>-<chip id>`. If the hostname doesn't already start with `fugu-`, the device adds that prefix.
+`hostname <name>` only stores the new name; the network hostname and the BLE name change after `restart`.
 
 Connect to the first matching device, or filter by name or address:
 
@@ -148,8 +146,12 @@ python3 etc/fugu_console.py --ble --name <name>          # filter by advertised 
 python3 etc/fugu_console.py --ble --address <ble-address>
 ```
 
-[`ble.conf::ble_security`](../reference/config/ble.md) sets the pairing mode: `justworks` (default, encrypted and
-bonded, no passkey) or `passkey` (bond + MITM with the static `ble_passkey`).
+[`ble.conf::ble_security`](../reference/config/ble.md) sets the pairing mode:
+
+- `justworks` (default): encrypted and bonded, no passkey.
+- `passkey`: bond and MITM protection with the static `ble_passkey`.
+- Any other value: no pairing. The console is open to any client and runs only the read-only commands (`status`,
+  `get-config`, `bootinfo` and similar).
 
 A client without a bond pairs when it sends its first command, not on connect. That works only while the
 [pairing window](../reference/config/ble.md#pairing-window) is open: for `pair_window_s` (default 300 s) after
@@ -190,9 +192,11 @@ python3 etc/fugu_console.py --mqtt <broker-ip> --mqtt-user <user> --mqtt-pass <p
 python3 etc/fugu_console.py --mqtt <broker-ip> --mqtt-readonly    # passive log monitor, never publishes
 ```
 
-The client matches `--name` as a substring of the hostname in the log topics. `--mqtt-port`, `--mqtt-user`, and `--mqtt-pass`
-default to `$MQTT_PORT` (else 1883), `$MQTT_USER`, and `$MQTT_PASS`. The client also reads these from `etc/mqtt.env`
-if present. Shell variables take precedence.
+The client matches `--name` as a substring of the hostname in the log topics. `--name` defaults to `fugu`, so
+without it the client matches hostnames containing `fugu`; pass `--name <hostname>` to watch one device
+or a hostname without `fugu`. A bare `--mqtt` uses the broker in `$MQTT_HOST`. `--mqtt-port`, `--mqtt-user`, and
+`--mqtt-pass` default to `$MQTT_PORT` (else 1883), `$MQTT_USER` (else `pv`), and `$MQTT_PASS`. The client also reads
+these from `etc/mqtt.env` if present. Shell variables take precedence.
 
 :::warning
 Anyone who can publish to the command topic controls the converter, including the half-bridge. Leave `cmd_input`
@@ -200,8 +204,6 @@ off unless the broker requires authentication.
 :::
 
 ## Client modes
-
-The invocation selects the client mode:
 
 | Invocation | Mode |
 |---|---|
@@ -249,7 +251,8 @@ python3 etc/fugu_console.py --ip <device-ip> -c "svc list" -c "get-config tele.c
 
 ### Watch a device without touching it
 
-A read-only MQTT client monitors the log and never publishes:
+A read-only MQTT client monitors the log and never publishes. `--name` selects the device; without it, the filter
+is the default `fugu`:
 
 ```bash
 python3 etc/fugu_console.py --mqtt <broker-ip> --mqtt-readonly --name <hostname>

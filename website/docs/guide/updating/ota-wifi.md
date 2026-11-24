@@ -14,7 +14,7 @@ For devices without Wi-Fi, see [OTA over BLE](ota-ble.md).
 Run these commands from the repository root to build the firmware and update devices:
 
 ```bash
-# ESP-IDF exported; once: python -m pip install zeroconf
+# ESP-IDF exported, submodules checked out; once: python -m pip install requests
 idf.py build
 PYTHONPATH=. python etc/ota.py -n              # dry run: discover + show versions only
 PYTHONPATH=. python etc/ota.py -m <hostname>   # update devices whose hostname matches
@@ -36,10 +36,24 @@ device and prints a before/after version table.
 | `-n`, `--dry-run` | Discover and show which hosts would update; send nothing |
 | `-m REGEX`, `--match REGEX` | Only update devices whose hostname matches |
 | `-f`, `--force` | Update even if the device already runs the local build's version |
+| `--bootloader` | Push `build/bootloader/bootloader.bin` instead of the app (see [Bootloader update](#bootloader-update)) |
+| `--allow-driver-change` | Skip the gate-driver confirmation below |
+
+`etc/ota.py` imports the `etc/fugu` and `etc/idf-devtools` submodules and needs the `requests` package.
+
+Before an app update it reads the build's configuration and asks for a `y/N` confirmation when the image:
+
+- has no networking (`CONFIG_FUGU_WITH_NETW` off), so the devices lose Wi-Fi after the update;
+- is a plant-simulation build (`CONFIG_FUGU_WITH_VCONV`), which drives no real half-bridge;
+- uses a different gate driver than the device, or either driver cannot be determined;
+- is uncommitted (`-dirty` version).
+
+Without a terminal these confirmations are refused and the update aborts; `--allow-driver-change` approves only
+the gate-driver one.
 
 :::warning Live converters
 An OTA reboots the device into the new image. On converters connected to panels and a battery, run `-n` first
-and scope the update with `-m`. At high power, stop conversion (`dc 0`) before updating.
+and scope the update with `-m`.
 :::
 
 ## Manual update
@@ -56,18 +70,23 @@ Then send the `ota` command to the device:
 ota http://<host-ip>:9000/fugu-firmware.bin
 ```
 
-The `ota` [console command](../../reference/console.md) halts the converter and ADC during the download.
+The `ota` [console command](../../reference/console.md) stops conversion itself, waits for the output to
+de-energize, and halts the ADC during the download; no `dc 0` is needed. If the download fails and the device does
+not reboot, it restores the previous operating mode (MPPT, manual or PSU).
 
 Before the download the device also shuts BLE down and returns its memory to the heap, since every update ends in a
 reboot. A BLE console that sent the command loses its link; follow the update over serial, telnet or MQTT. BLE cannot
 be restarted without a reboot, so a failed or timed-out download reboots the device into the image it was running.
+BLE is kept while a failed [bootloader update](#bootloader-update) blocks restarts.
+
+A watchdog limits the download to 5 minutes. When it expires, the device restarts into the image it was running.
 
 An `https://` URL needs a build with `CONFIG_FUGU_WITH_HTTPS`; the server must have a certificate from the built-in CA
 bundle. See [`https://` OTA](../getting-started/build-options.md#https-ota) for heap figures and the URLs that fail.
 
 The command is refused before anything is stopped when Wi-Fi is not connected, or while the running image is still
 *pending verify* (see [rollback](#rollback-and-boot-watchdog)): an update can start only after the previous one has
-confirmed itself, about 20 s after its reboot.
+confirmed itself. Check `rollback=` in the `running:` line of `bootinfo` before updating again.
 
 ## Rollback and boot watchdog
 
@@ -77,7 +96,7 @@ The bootloader is built with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`, so a new
 ```mermaid
 stateDiagram-v2
   [*] --> Pending: OTA written, reboot
-  Pending --> Valid: RT loop healthy (> 20 s uptime, sampler producing samples)
+  Pending --> Valid: RT loop healthy (> 20 s uptime, sampler producing samples) and flash write safe
   Pending --> Rollback: reset before confirmation
   Pending --> Rollback: setup() hangs > 30 s (boot watchdog restarts)
   Rollback --> [*]: previous slot boots
@@ -86,7 +105,14 @@ stateDiagram-v2
 
 The confirmation and the watchdog behave as follows:
 
-- `lfMarkOtaValid()` confirms the image only once the real-time loop is proven healthy.
+- `lfMarkOtaValid()` confirms the image only once the real-time loop is proven healthy: at least 20 s uptime and
+  the ADC sampler producing samples.
+- Confirming writes flash. Without working flash auto-suspend, that write would stall the real-time loop at power, so
+  the confirmation waits until the converter is off or its output is below 5 W, for up to 2 h of uptime; after that
+  it confirms at power. The device logs `OTA confirm deferred until output < 5 W (a reset now rolls back)` when it
+  defers.
+- Until the image is confirmed, a reset rolls back to the previous image, and new `ota` and `ota-ble` updates are
+  refused. Check that `bootinfo` shows `rollback=VALID` before resetting or updating again.
 - A 30 s boot watchdog, armed at the top of `setup()`, restarts the device if setup never finishes. With rollback,
   that restart lands on the previous good slot.
 - Images flashed over serial are not *pending verify*, so the confirmation is a no-op there.
@@ -140,7 +166,7 @@ The new bootloader runs after the next reset. `bootinfo` reads the bootloader fr
 immediately after the update:
 
 ```
-bootloader: idf v6.0.3 v1, Nov 10 2026 14:28:38, len 22624, sha e2eee53100772072
+bootloader: idf <idf-version> v<desc-version>, <build date and time>, len <bytes>, sha <first 16 hex digits>
 ```
 
 To update without `etc/ota.py`, stop conversion and serve the build directory as in [Manual update](#manual-update):

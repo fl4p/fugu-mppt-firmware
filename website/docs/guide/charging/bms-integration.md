@@ -50,17 +50,18 @@ example `3.412`. The following table lists the topic keys:
 | `ibat_topic` | battery current, A, positive while charging | termination, recharge counter, `partial_charge` hold, temperature derating |
 | `ibat_lim_topic` | charge current limit, A (≥ 0) | overrides `charger.conf::ibat_max` at runtime |
 | `bat_temp_topic` | pack temperature, °C; up to 4 comma-separated topics | `bat_temp_min` / `bat_temp_derate` / `bat_temp_max` policy |
+| `bat_charge_topic` | BMS remaining charge, Ah (≥ 0) | charge deficit since full, shared by all chargers on the BMS; see [recharge hysteresis](termination.md#recharge-hysteresis-dod-based-release) |
+| `bat_voltage_topic` | pack voltage, V | output wiring resistance fit (with `ibat_topic`); see [wire-fault protection](../../reference/config/limits.md#output-wire-fault-protection) |
+| `cell_voltages_delta_topic` | cell-voltage spread (max − min), V (≥ 0) | early end of a [top-balancing](termination.md#top-balancing) run |
 
-A temperature outside −40…100 °C drops that sensor.
+A temperature outside −40…100 °C drops that sensor, and a sensor without a frame for 1 h expires.
 
-:::danger Payloads must be plain numbers
-Make sure the bridge never publishes non-numeric states to these topics. On the current, limit, and temperature topics,
-the firmware logs and ignores only empty, `nan`, or `inf` payloads (and negative values on `ibat_lim_topic`). Any other
-text (for example Home Assistant's `unavailable`) currently parses as **0** and is used, and the firmware accepts a
-numeric prefix such as `3.4V`. A 0 °C pack temperature can clear a hot derate.
-
-On `cell_voltages_max_topic`, a non-numeric payload marks the cell data invalid, and the limit falls back to
-`Vbat_fallback`.
+:::note Non-numeric payloads
+The firmware logs and ignores a payload that is not a plain number: empty payloads, text such as Home Assistant's
+`unavailable`, numbers with a unit such as `3.4V`, `nan` or `inf`, and payloads of 32 bytes or more. Values out of
+range are ignored the same way: a cell or pack voltage ≤ 0, and a negative current limit, charge or cell spread.
+An ignored frame on `cell_voltages_max_topic` leaves the last good value in use until it goes stale after 180 s
+(see [Stale data and fallback](#stale-data-and-fallback)).
 :::
 
 ## How the data is used
@@ -94,10 +95,12 @@ and the same timeout applies to `ibat`. The following table shows the output vol
 | Cell voltage fresh and `charger.conf::bat_c` set | regulated on the highest cell |
 | Cell topic configured, no data yet (boot) | `Vbat_fallback` |
 | Cell data goes stale | glides to `Vbat_fallback` over 5 s |
+| Cell data goes stale while charging: highest cell below `cv_float` + 0.05 V, `bat_c` set, not terminated | held at bus voltage + 0.1 V, lowered to `Vbat_fallback` over 600 s |
 | No cell topic, or `bat_c` missing | `Vbat_fallback` |
 
 `Vbat_fallback` is `charger.conf::vout_max_fallback`, by default `N_cells × cv_float`. This float voltage does not
-overcharge a full pack. The effective limit is never above `charger.conf::vout_max`.
+overcharge a full pack. The effective limit is never above `charger.conf::vout_max`. See also
+[stale cell data](termination.md#stale-cell-data).
 
 :::note
 `vout_max_fallback` must be greater than `vout_offset_max` (default 0.6 V). The firmware rejects a smaller value,
@@ -115,6 +118,7 @@ policy falls back to an output-current limit. Check that both feeds are live in 
 ### Several chargers on one battery
 
 Point every charger at the same BMS topics. Each charger regulates independently on the same highest cell voltage.
+Set `bat_charge_topic` as well, so that all chargers count the same charge deficit and leave termination together.
 
 ### Limit charge current from the BMS
 
