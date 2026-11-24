@@ -281,7 +281,9 @@ config FUGU_WITH_MEASURE_COIL
     bool "On-device coil inductance measurement"
     default n
     help
-        Compile the on-device coil L0/Ls sweep + `measure-coil` console command. Bench-only tool.
+        Compile the on-device coil L0/Ls sweep + `measure-coil` console command. It drives the
+        half-bridge with test pulses and refuses to start unless conversion was stopped with `dc 0`.
+        On in the fleet build (sdkconfig.d/fleet).
 
 config FUGU_WITH_SCRIPTS
     bool "On-device console scripts (run, sleep, scripts, script-set)"

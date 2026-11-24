@@ -10,12 +10,11 @@
 #include "../buck.h"
 #include "../mppt.h"
 #include "../adc/sampling.h"
-#include "../app_state.h"
 #include "../math/asym_peak_fit.h"
 #include "coil_fit.h"
 
 // Components owned by main.cpp (same extern coupling as cli.cpp; this TU is built only with the
-// real main, never the test mains). Mode flags live in g_app (app_state.h).
+// real main, never the test mains).
 extern SynchronousConverter converter;
 extern MpptController mppt;
 extern VIinVout<const Sensor *> sensors;
@@ -271,13 +270,8 @@ static void sweepLs(const MeasArgs &a) {
 static void measureCoilTask(void *arg) {
     auto a = *(const MeasArgs *) arg;
     if (!a.dwellMs) a.dwellMs = a.ls ? 3000 : 1000; // L0: 48 x ~1.3 s, about a minute
-    auto savedMode = g_app.opMode.load();
     float l0 = NAN;
-    const float savedPsuSetpoint = mppt.getPsuSetpoint();
-    const uint16_t savedManualTarget = mppt.getManualTarget();
-    float savedPvIsc, savedPvVoc, savedPvK;
-    const bool savedPvActive = mppt.getPvCurve(savedPvIsc, savedPvVoc, savedPvK);
-    // stop at once: a ramp-down from full power with paranoia opens the BF at high duty (highD-bflowOpen)
+    // started from `dc 0` only (console); manual mode keeps MPPT, its sweeps and starts off until `mppt`
     const auto enterTicket = mppt.requestPsuManual(0, -1, false, true);
     const bool entered = waitPsuCommand(enterTicket);
     for (const time_ms dl = wallClockMs() + 10000; entered && wallClockMs() < dl;) { // let the filters drain
@@ -307,27 +301,8 @@ static void measureCoilTask(void *arg) {
         if (measWriteConf("L0", buf)) UART_LOG("  applied coil.conf L0=%s (effective next boot)", buf);
         else UART_LOG("  measure-coil: FAILED to write coil.conf L0=%s", buf);
     }
-    if (savedMode == OpMode::Psu) {
-        // rebase=false: don't let a restore of a scaled curve become the `pv scale` reference
-        const auto ticket = savedPvActive
-                                ? mppt.queuePvCurve(savedPvIsc, savedPvVoc, savedPvK,
-                                                    false, false)
-                                : mppt.queuePsuSetpoint(savedPsuSetpoint);
-        if (!ticket || !waitPsuCommand(ticket)
-            || mppt.getPsuCommandError(ticket) != PsuSetpointError::None)
-            UART_LOG("measure-coil: PSU mode restore failed");
-    } else if (savedMode == OpMode::Manual) {
-        const auto ticket = mppt.requestPsuManual(savedManualTarget, -1);
-        if (!waitPsuCommand(ticket)) UART_LOG("measure-coil: manual mode restore failed");
-    } else {
-        // converter off: MPPT restarts through the normal start conditions (global sweep). Still on (the
-        // ramp-down stalled): a sweep request disables it on the RT core and re-acquires the MPP, instead
-        // of handing P&O a low duty with a stale tracker.
-        const auto ticket = off ? mppt.requestPsuOff() : mppt.requestPsuSweep();
-        if (!waitPsuCommand(ticket)) UART_LOG("measure-coil: MPPT mode restore failed");
-    }
     s_measureBusy.store(false);
-    UART_LOG("measure-coil: done, mode restored");
+    UART_LOG("measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)");
     vTaskDelete(nullptr);
 }
 

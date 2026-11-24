@@ -85,7 +85,8 @@ The following rules apply in manual mode:
 - `dc N` accepts 0 up to the driver's maximum count and prints the range when out of bounds.
 - While the sensors calibrate, a non-zero duty is refused, but `dc 0` is accepted.
 - While an on-device coil measurement runs (`CONFIG_FUGU_WITH_MEASURE_COIL`), every `dc` command, including `dc 0`,
-  is rejected with `dc: busy measuring` until the measurement finishes.
+  is rejected with `dc: busy measuring` until the measurement finishes. The measurement itself starts only after `dc 0`
+  has stopped the converter, and leaves it at duty 0.
 - If the control loop does not take `dc 0` within ~1 s, it fails with `RT transition timed out`.
 - If `dc` fails in either of these cases, assume nothing was stopped. Check the reply.
 - Protections stay active. Unless `limits.conf::reverse_current_paranoia` is set, a non-zero duty enables synchronous

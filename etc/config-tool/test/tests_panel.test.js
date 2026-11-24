@@ -160,7 +160,7 @@ function firmware(host, opts = {}) {
           '  ideal LS 139  auto LS 130  offset peak-ideal +12 ct (+3.0% HS)  peak-auto +21 ct', '  L (peak curvature) = 49.8 uH (cross-check)',
           ...(apply ? ['  applied rect_offset 300 ns (0 ct, mcpwm); saved to coil.conf once the converter is off'] : [])];
       lines.forEach((x, i) => later(10 + 5 * i, () => s(x)));
-      if (!opts.coilNeverEnds) later(20 + 5 * lines.length, () => s('measure-coil: done, mode restored'));
+      if (!opts.coilNeverEnds) later(20 + 5 * lines.length, () => s('measure-coil: done, manual PWM at duty 0 (\'mppt\' resumes tracking)'));
       return;
     }
     if (root === 'svc') { s('NAME       STATE    LOG    ENABLED  DETAIL'); return ok(); }

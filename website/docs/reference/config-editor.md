@@ -471,6 +471,9 @@ undervoltage, **Run sweep** says so before sending anything, with the firmware's
 voltages, and **OK** queues the sweep anyway. A queued run ends at once with "Sweep queued: the converter can't start
 (…)" instead of waiting for a result; the curve is there after the sweep has run (**Read last sweep**).
 
+The two `measure-coil` entries start only after `dc 0` has stopped conversion; otherwise the firmware refuses and the
+entry shows its reason. They leave the converter at duty 0 in manual PWM, and `mppt` resumes tracking.
+
 `measure-coil l0 apply` writes `L0` to `coil.conf`, and the loaded `coil.conf` follows. rect-cal and
 `measure-coil ls apply` save `rect_offset_ns` only once the converter has been off for a while, so read the device
 again later to see it.

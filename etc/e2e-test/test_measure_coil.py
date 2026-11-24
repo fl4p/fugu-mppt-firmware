@@ -14,8 +14,9 @@ so they cannot overlap — the test runs them back-to-back with the control conn
 between:
 
   1. ``etc/measure_coil.py`` as a subprocess (opens and closes its own connection); parse ``L = N uH``.
-  2. open a ``FuguDevice``, send ``measure-coil l0 …``, watch the streamed result for ``L = N uH``,
-     wait for ``done, mode restored``, close.
+  2. open a ``FuguDevice``, send ``dc 0`` (measure-coil refuses a running converter), then
+     ``measure-coil l0 …``, watch the streamed result for ``L = N uH``, wait for ``done``, send
+     ``mppt``, close.
   3. assert ``|L_dev - L_host| / mean <= --tol`` (default 10%: both fit the switch-node ring over a
      48-step sweep, ~1-2 % each; the old 10-step median scattered +-5 %, plus sensor drift between runs).
 
@@ -48,7 +49,7 @@ from fugu.transport import SerialTransport, SocketTransport
 from fugu.fugu import FuguDevice
 from _harness import Results, wait_for
 
-_DONE_RE = re.compile(r"measure-coil: done, (MPPT|mode) restored")
+_DONE_RE = re.compile(r"measure-coil: done\b")
 _L_RE = re.compile(r"L = ([\d.]+)\s*uH")                       # both: "L = 49.69 uH"
 _PEAK_RE = re.compile(r"peak LS\s*:?\s*(\d+)")                 # host "peak LS  : 553", dev "peak LS 560"
 _OFFSET_RE = re.compile(r"peak-ideal\s*([+-]?\d+)\s*ct")       # both: "peak-ideal +87 ct"
@@ -110,16 +111,25 @@ def run_device(dev, tap, mode, steps_or_hs, dwell_ms, args):
     """Send measure-coil, wait for the streamed result, return the raw output text (or None on timeout)."""
     t0 = time.monotonic()
     arg1 = steps_or_hs if steps_or_hs else ""
-    reply = dev.console.command(f"measure-coil {mode} {arg1} {dwell_ms}".strip(), timeout=6.0)
+    if not dev.console.command("dc 0", timeout=6.0).ok:
+        return None, "dc 0 rejected"
+    cmd = f"measure-coil {mode} {arg1} {dwell_ms}".strip()
+    for _ in range(15):  # refused while the converter still ramps down
+        reply = dev.console.command(cmd, timeout=6.0)
+        if reply.ok or "still on" not in reply.text:
+            break
+        time.sleep(1)
     if not reply.ok:
+        dev.console.command("mppt", timeout=6.0)
         return None, f"command rejected: {reply.text.strip()}"
-    # the sweep streams over many seconds; wait for the terminal "done, ... restored" line
-    # (older firmware: "done, MPPT restored", current: "done, mode restored").
+    # the sweep streams over many seconds; wait for the terminal "done" line
     deadline = (steps_or_hs or 48) * (dwell_ms / 1000.0 + 0.2) + 60
     got = wait_for(lambda: any(_DONE_RE.search(s) for s in tap.since(t0)),
                    min(max(deadline, 90), args.dev_timeout))
     text = "\n".join(tap.since(t0))
-    return text, (None if got else "no 'done, ... restored' before timeout")
+    if got:
+        dev.console.command("mppt", timeout=6.0)
+    return text, (None if got else "no 'measure-coil: done' before timeout")
 
 
 def parse_l(text):

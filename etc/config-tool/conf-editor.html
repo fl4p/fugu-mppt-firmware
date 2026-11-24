@@ -3770,12 +3770,12 @@ const TESTS = [
     does:()=>"The tracker sweeps the duty from zero to maximum to find the maximum power point, after a short sensor zero calibration. Output power drops for a few seconds; PSU mode is left.",
     end:/\bsweep landed\b|\bStop sweep\b/, timeout:90000, finish:"sweep-curve", recheck:"sweep-curve" },
   { id:"coil", group:"Measurements", title:"Coil inductance (L0)", root:"measure-coil", optional:true,
-    cmd:o=>"measure-coil l0"+(o.apply ? " apply" : ""), confirm:"typed", tag:"takes over the converter",
+    cmd:o=>"measure-coil l0"+(o.apply ? " apply" : ""), confirm:"typed", tag:"drives the half-bridge",
     what:"Measures the inductance of the power coil.",
-    needs:"Vin above Vout + 1 V (sun); bench build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1–1.5 min, no abort",
-    risk:"Stops conversion and drives the half-bridge in manual PWM up to 2 A output. The firmware has no abort for it.",
+    needs:"Conversion stopped with “dc 0” (the firmware refuses otherwise); Vin above Vout + 1 V (sun); a build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1–1.5 min, no abort",
+    risk:"Drives the half-bridge in manual PWM up to 2 A output. The firmware has no abort for it.",
     opt:{ key:"apply", label:"Save L0 to coil.conf" },
-    does:o=>"The converter is taken over: conversion stops at once, then the firmware sweeps the duty in manual PWM (diode emulation, up to 2 A output) for about 1–1.5 min and restores the previous mode; from MPPT it restarts with a sweep. There is no abort command."
+    does:o=>"The firmware sweeps the duty in manual PWM (diode emulation, up to 2 A output) for about 1–1.5 min and leaves the converter off at duty 0; “mppt” resumes tracking. It starts only after “dc 0” has stopped conversion. There is no abort command."
       + (o.apply ? "\n\nThe result is written to coil.conf L0 (effective after the next reboot)." : ""),
     end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
 
@@ -3805,12 +3805,12 @@ const TESTS = [
       + "\n\nA result is applied at once and saved to coil.conf once the converter has been off for about 10 s.",
     end:/\brectcal: (?:done|failed|refused):/, timeout:120000, finish:"rect-cal status", recheck:"rect-cal status" },
   { id:"coills", group:"Calibration", title:"Low-side timing from a coil sweep", root:"measure-coil", optional:true,
-    cmd:o=>"measure-coil ls"+(o.apply ? " apply" : ""), confirm:"typed", tag:"takes over the converter",
+    cmd:o=>"measure-coil ls"+(o.apply ? " apply" : ""), confirm:"typed", tag:"drives the half-bridge",
     what:"Finds the best low-side switch timing from a coil sweep.",
-    needs:"DCM with Vin > Vout at a low duty; bench build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1.5 min, no abort",
-    risk:"Stops conversion, forces sync rect and the backflow switch on and sweeps the low-side window in manual PWM. The firmware has no abort for it.",
+    needs:"Conversion stopped with “dc 0” (the firmware refuses otherwise); DCM with Vin > Vout at a low duty; a build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1.5 min, no abort",
+    risk:"Forces sync rect and the backflow switch on and sweeps the low-side window in manual PWM. The firmware has no abort for it.",
     opt:{ key:"apply", label:"Apply and save rect_offset" },
-    does:o=>"The converter is taken over: conversion stops at once, sync rect and the backflow switch are forced on, then the firmware holds a low duty and sweeps the low-side window for about 1.5 min and restores the previous mode. There is no abort command."
+    does:o=>"Sync rect and the backflow switch are forced on, then the firmware holds a low duty and sweeps the low-side window for about 1.5 min and leaves the converter off at duty 0; “mppt” resumes tracking. It starts only after “dc 0” has stopped conversion. There is no abort command."
       + (o.apply ? "\n\nThe offset is applied at once and saved to coil.conf once the converter is off." : ""),
     end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
 ];

@@ -125,6 +125,18 @@ static SimpleCLI cli;
 static bool s_cmdFailed = false;
 #define CMD_FAIL_RETURN(...) do { ESP_LOGW("main", __VA_ARGS__); s_cmdFailed = true; return; } while (0)
 
+// a running measure-coil owns the converter: refuse commands that change its mode or drive
+static bool measBusy(cmd *c) {
+#ifdef WITH_MEASURE_COIL
+    if (isMeasuring()) {
+        ESP_LOGW("main", "%s: refused, measure-coil running", Command(c).getName().c_str());
+        s_cmdFailed = true;
+        return true;
+    }
+#endif
+    return false;
+}
+
 static bool argInt(Command &cc, int i, int &out) {
     if (i >= cc.countArgs()) return false;
     auto s = cc.getArg(i).getValue();
@@ -184,6 +196,7 @@ static void cmdSync(cmd *c) {
                  converter.getRectOnPwmCnt());
         return;
     }
+    if (measBusy(c)) return;
     if (!g_app.manualPwm())
         CMD_FAIL_RETURN("sync: only in manual PWM (use 'dc N' first)");
     auto on = arg == "on" or arg == "1";
@@ -206,6 +219,7 @@ static void cmdSync(cmd *c) {
 }
 
 static void cmdBflow(cmd *c) {
+    if (measBusy(c)) return;
     if (!g_app.manualPwm())
         CMD_FAIL_RETURN("bf: only in manual PWM (use 'dc N' first)");
     if (!mppt.bflow)
@@ -221,7 +235,8 @@ static void cmdBflow(cmd *c) {
 
 static void cmdRestart(cmd *) { systemRestart(); }
 
-static void cmdMppt(cmd *) {
+static void cmdMppt(cmd *c) {
+    if (measBusy(c)) return;
     if (!g_app.psuMode() && !g_app.manualPwm() && !mppt.hasPendingPsuCommand()) {
         CMD_FAIL_RETURN("MPPT already enabled");
     }
@@ -384,7 +399,8 @@ static void cmdPwmFreq(cmd *c) {
              (unsigned long) converter.getPwmFrequency());
 }
 
-static void cmdShortLs(cmd *) {
+static void cmdShortLs(cmd *c) {
+    if (measBusy(c)) return;
     if (converter.boost() && abs(sensors.Vin->ewm.avg.get()) < 0.05) {
         const auto ticket = mppt.requestPsuShortLowSide();
         if (!waitPsuCommand(ticket))
@@ -497,6 +513,7 @@ static void cmdMcpwmTest(cmd *c) {
 }
 
 static void cmdSweep(cmd *c) {
+    if (measBusy(c)) return;
     Command cc(c);
     if (cc.countArgs()) {
         if (cc.getArg(0).getValue() != "calfail") CMD_FAIL_RETURN("usage: sweep [calfail]");
@@ -563,6 +580,7 @@ static void cmdRectCal(cmd *c) {
     }
     const bool force = sub == "force";
     if (sub.length() && !force) CMD_FAIL_RETURN("rect-cal: expected [force|status|abort]");
+    if (measBusy(c)) return;
     if (!rc.requestStart(force)) CMD_FAIL_RETURN("rect-cal: already running");
     for (int i = 0; i < 100 && rc.cal.get() == RectCal::Idle; ++i) delay(10);
     const auto st = rc.cal.get();
@@ -912,6 +930,7 @@ static void cmdOta(cmd *c) {
         CMD_FAIL_RETURN("ota: expected url");
     if (bfTestBusy())
         CMD_FAIL_RETURN("ota: selftest running");
+    if (measBusy(c)) return;
     UART_LOG("ota: running %s, downloading %s", format_version(), url.c_str());
     if (url.startsWith("bootloader")) {
         url.remove(0, 10);
@@ -1011,6 +1030,7 @@ static void cmdOta(cmd *c) {
 static void cmdOtaBle(cmd *c) {
     if (bfTestBusy())
         CMD_FAIL_RETURN("ota-ble: selftest running");
+    if (measBusy(c)) return;
     Command cc(c);
     // Reassemble the line for the module's parser, which owns both the command words and the OTAB
     // status words -- keeping them in one place is what stops them drifting apart again.
@@ -1958,6 +1978,7 @@ static void cmdPsu(cmd *c) {
         }
         return;
     }
+    if (measBusy(c)) return;
     if (arg == "off") {
         if (!g_app.psuMode() && !mppt.hasPendingPsuCommand())
             CMD_FAIL_RETURN("psu: not in PSU mode");
@@ -2000,6 +2021,7 @@ static void cmdPv(cmd *c) {
         }
         return;
     }
+    if (measBusy(c)) return;
     if (arg == "off") {
         if (!mppt.isPvActive() && !mppt.hasPendingPsuCommand())
             CMD_FAIL_RETURN("pv: not in PV mode");
@@ -2321,6 +2343,31 @@ static void cmdMeasureCoil(cmd *c) {
     int arg1 = numArgs >= 2 ? cc.getArg(1).getValue().toInt() : 0;
     uint32_t dwellMs = numArgs >= 3 ? (uint32_t) cc.getArg(2).getValue().toInt() : 0; // 0: per-mode default
     if (dwellMs && dwellMs < 200) dwellMs = 200;
+    // drives the half-bridge itself: only from a converter stopped with `dc 0`, where nothing else starts it
+    if (!rtLoopRunning())
+        CMD_FAIL_RETURN("measure-coil: no RT loop");
+    if (g_app.psuMode())
+        CMD_FAIL_RETURN("measure-coil: PSU/PV mode on, stop conversion first (dc 0)");
+    if (!g_app.manualPwm())
+        CMD_FAIL_RETURN("measure-coil: MPPT on, stop conversion first (dc 0)");
+    if (mppt.getManualTarget())
+        CMD_FAIL_RETURN("measure-coil: manual duty %u set, stop conversion first (dc 0)", (unsigned) mppt.getManualTarget());
+    if (mppt.hasPendingPsuCommand())
+        CMD_FAIL_RETURN("measure-coil: mode change pending");
+    if (mppt.isSweeping())
+        CMD_FAIL_RETURN("measure-coil: sweep running");
+    if (mppt.rectCal.cal.running())
+        CMD_FAIL_RETURN("measure-coil: rect-cal running");
+    if (!converter.disabled())
+        CMD_FAIL_RETURN("measure-coil: converter still on, wait for the ramp-down");
+    if (converter.startInhibited((uint8_t) ~SynchronousConverter::InhibitIdle))
+        CMD_FAIL_RETURN("measure-coil: start blocked (%s)", mppt.startBlockReason());
+    if (mppt.inBackoff())
+        CMD_FAIL_RETURN("measure-coil: protection backoff");
+#ifdef WITH_BLE
+    if (otaBleActive())
+        CMD_FAIL_RETURN("measure-coil: OTA running");
+#endif
     if (!converter.deadTimeIdle())
         CMD_FAIL_RETURN("measure-coil: a dead-time change is still queued");
     if (bfTestBusy())
@@ -2837,6 +2884,12 @@ bool handleCommand(const String &inp, const char *ro) {
             ESP_LOGW("main", "+-N: selftest bflow running");
             return false;
         }
+#ifdef WITH_MEASURE_COIL
+        if (isMeasuring()) {
+            ESP_LOGW("main", "+-N: refused, measure-coil running");
+            return false;
+        }
+#endif
         int pwmStep = inp.toInt();
         int target = (int) converter.getCtrlOnPwmCnt() + pwmStep;
         if (target < 0) target = 0;

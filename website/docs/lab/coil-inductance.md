@@ -250,7 +250,8 @@ python etc/measure_coil.py -p <serial-port> --steps 48 --dwell 3
 
 The `measure-coil` console command runs the same two sweeps on the device with no host
 (`src/selftest/measure_coil.cpp`, a spawned non-RT-core task). It requires a build with
-`CONFIG_FUGU_WITH_MEASURE_COIL=y` (off by default). The command has two forms:
+`CONFIG_FUGU_WITH_MEASURE_COIL=y` (off by default, on in the `sdkconfig.d/fleet` build). The command
+has two forms:
 
 ```
 measure-coil l0 [steps] [dwell_ms] [apply]     # the §5 inductance sweep
@@ -266,9 +267,14 @@ total: the device reads the averages directly and needs no console polling. `ls`
 dwell. `apply` writes `coil.conf::L0` (next boot) or `rect_offset_ns` with `rect_offset_drv` and
 `rect_offset_cal=1` (live at once). Either is written only after the converter has been disabled,
 because a flash write stalls the control loop. Like the script, it reports the physical
-inductance. When done, the command restores the previous mode; from MPPT it requests a fresh
-sweep, so the converter resumes without a manual `sweep`. The earlier median-only version agreed
+inductance. The earlier median-only version agreed
 with the script to within ~2 % on board A of §8.
+
+The command starts only from a converter stopped with `dc 0` (manual PWM, duty 0, converter off)
+and leaves it there; `mppt` resumes tracking. Manual PWM keeps the tracker, its sweeps and its
+start condition out for the whole run, and the console refuses the commands that would change the
+mode or the drive meanwhile. The refusals are listed in the
+[console reference](../reference/console.md).
 
 For a tight result, use many small steps. Otherwise the i-max abort leaves only the low end of the
 band sampled, and the ring fit falls back to the median.
