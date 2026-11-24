@@ -706,14 +706,13 @@ The measurements lead to these findings:
   board B ≈ 80 µH. The shunt cross-check hints board A under-reports current ~6–7 %, which would inflate
   its `L` by the same factor and put the true value nearer the `N = 20` end (~48 µH). That correction
   is small compared with the 1.5× gap.
-- **Later runs read a few percent lower.** On-device runs with the `Iout` zero subtracted (§8) give
-  76.0–76.4 µH on board B, 4–5 % below the 79.8 µH median of this sweep, and 49.2–49.8 µH on board A, about
-  2.5 % below its median. Within one run the fit and the median of the points agree (board B: 76.18 and
-  76.35 µH), so the gap lies between the runs, not between the two estimates. This sweep subtracted no `Iout`
-  zero. A zero offset biases `L` in proportion to `L` (a larger coil carries less current at the same duty), so
-  it would shift board B about 1.6 times as much as board A; the observed ratio is about 1.8, and an offset of
-  about −0.04 A accounts for both. The sweep's points and zero were not kept, so this is not established. The
-  later, zero-corrected values agree to within ±0.35 µH from run to run.
+- **Later runs read lower on board B.** Six on-device runs in November give 75.8–77.0 µH on board B,
+  4–5 % below the 79.8 µH median of this sweep. Board A's runs give 49.2–51.8 µH, around its 50.9 µH. Within
+  one run the fit and the median of the points agree (board B: 76.18 and 76.35 µH), so the gap lies between
+  the runs, not between the two estimates. This sweep subtracted no `Iout` zero, but November runs without
+  that step read the same as runs with it, and the zero they measured was −0.007 A. A zero offset therefore
+  explains the gap only if the sensor's offset calibration was stale during this sweep. The cause is not
+  established; the sweep's points were not kept.
 - **Both means are flat across the whole current range** (≈0.3–3 A). There is no downward trend,
   so this is not core saturation. The point-to-point wiggle of `L` (IQR 11–16 %) is the switch-node ring of
   §7 (its period in counts follows `Vout/Vin`), not noise in `L` and not SR timing. A median over a
