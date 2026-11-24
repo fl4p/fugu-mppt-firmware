@@ -22,9 +22,10 @@ Tracking runs in three phases:
    back to fast tracking.
 
 A new global sweep runs every 30 minutes so the tracker does not stay on a local maximum, which happens with
-partially shaded strings. A sweep takes 20–60 s, depending on the loop rate. Sweeping too often or too slowly
-costs yield. On a buck, once a sweep has shown a shaded string, a [partial peak scan](#partial-peak-scan) checks the
-other local maxima in about 1–3 s, every 5 minutes and after a sustained change.
+partially shaded strings. A sweep takes about 5–15 s, longer when a limiter holds the ramp back (see
+[Global sweep](#global-sweep)). Sweeping too often or too slowly costs yield. On a buck, once a sweep has shown a
+shaded string, a [partial peak scan](#partial-peak-scan) checks the other local maxima in a few seconds (at most
+2.6 s per probe), every 5 minutes and after a sustained change.
 
 In low light, power changes between P&O steps stay below the tracker's thresholds, so P&O cannot follow an
 MPP that moves while the light changes (see [Perturb & observe](#perturb--observe)). If the last sweep
@@ -36,13 +37,17 @@ The following state diagram shows the transitions between the phases:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Sweep: boot / sweep command / 30 min / low-light power x2
-    Sweep --> FadeToMPP: limiter active or max duty
+    [*] --> Sweep: boot / sweep command / 30 min / low-light power x2 / re-sweep
+    Sweep --> ReturnPass: limiter or max duty, 2+ maxima
+    Sweep --> FadeToMPP: limiter or max duty, otherwise
     Sweep --> Backoff: best power < 0.2 % of p_max
-    FadeToMPP --> Fast: target duty reached
-    Fast --> Slow: no new MPP for 30 s, reversed since the last takeover
+    ReturnPass --> Fast: landed on the best probe / 30 s timeout
+    FadeToMPP --> Landing: target duty reached
+    Landing --> Fast: power settled (trim, verdict)
+    Fast --> Slow: P > 2 W, no new MPP for 30 s, last takeover > 30 s ago and reversed since
     Slow --> Fast: new MPP / MPP reset / 45 s without reversal / limiter
-    Backoff --> Sweep: next start
+    Fast --> Sweep: flagged-sweep or Vout-cap re-sweep
+    Backoff --> Sweep: next start / Vout cap lifted
 ```
 
 ## Global sweep
@@ -50,12 +55,16 @@ stateDiagram-v2
 A sweep (`startSweep()` in `src/mppt.h`) runs these steps:
 
 1. It disables the converter, clears the fade target, and resets the PD controllers.
-2. It starts a sensor calibration. The periodic re-sweep doubles as periodic calibration.
+2. It starts a sensor calibration. The periodic re-sweep doubles as periodic calibration. After a failed
+   calibration the next sweep skips it and runs on the old zero offsets, so a persistent failure does not block
+   every start.
 3. Once calibration is done, it raises the duty each tick. `sweep_speed` caps the step, and the distance to the
-   nearest limit scales it, so the ramp slows down when approaching a Vout, current or power limit. The Vin floor
-   does not slow it: the sweep ends when Vin crosses the floor.
-4. Over every 1/128 of the duty range the sweep measures how far Vin moved. Where Vin moved less than Voc over the
-   whole duty range would, the step grows by up to `sweep_pace` (default 4, 1 = off), so the ramp runs at a more even
+   nearest limit scales it, so the ramp slows down when approaching a Vout, current or power limit. At the default
+   `sweep_speed` 4 the plain ramp covers the whole duty range in 10 s. The Vin floor does not slow it: the sweep ends
+   when Vin crosses the floor.
+4. Over every 1/128 of the duty range, or each move of Vin by $V_{oc}/256$, the sweep measures how far Vin moved.
+   Where Vin moved less than Voc over the whole duty range would, the step grows by up to `sweep_pace` (default 4,
+   1 = off, at most 8), so the ramp runs at a more even
    pace in Vin: fast near Voc, where the converter barely draws current, and on the flat high-duty end towards the
    floor. The steep stretch past the MPP keeps the plain step. The speed-up fades out between no load and half the power
    limit, and a Vout that moves without a battery holding it (open output) turns it off.
@@ -67,9 +76,8 @@ A sweep (`startSweep()` in `src/mppt.h`) runs these steps:
 5. In dim light the input capacitance matters. While Vin falls, the input caps discharge into the converter, and the
    measured power is the string's plus $C_{in} V \, |dV/dt|$: 1 mF at 50 V and 40 V/s adds 2 W to a 4 W string. Over
    the same window the sweep keeps this term under 5 % of the measured power by slowing the ramp, down to 1/32 of the
-   base step. $C_{in}$ is `converter.conf::c_in` (default 1 mF). It should match the board's real input
-   capacitance (two 470 µF capacitors on the standard board). The landing is not monotonic in it: with a 1.2 mF
-   plant, 0.5, 1 and 2 mF harvest 89.5, 91.2 and 95.8 % in a dusk test at 4 W but 97.6, 97.5 and 95.8 % at 10 W.
+   base step, once the power reaches `sweepMinPower()` (step 6). $C_{in}$ is `converter.conf::c_in` (default 1 mF).
+   It should match the board's real input capacitance (two 470 µF capacitors on the standard board).
 6. It records the sample with the highest power, less the discharge term, as the MPP, with the smoothed Vin (filtered
    like the power, so with equal filters the two refer to the same moment) and the local Vin slope per duty count. It ignores samples
    below 0.2 % of `limits.conf::p_max` (2 W at 1 kW, `sweepMinPower()`), so a sweep in marginal light cannot "peak"
@@ -77,14 +85,19 @@ A sweep (`startSweep()` in `src/mppt.h`) runs these steps:
 
 The sweep stops as soon as any limiter produces a control mode (CV, CC, or CP), including the bounce at the maximum
 duty. The captured MPP duty becomes the target, and the loop fades to it with a bounded step before handing over to
-P&O. A sweep that recorded two or more local maxima takes the [return pass](#return-pass) instead of the fade.
+P&O. A bright sweep on a buck that recorded two or more local maxima takes the [return pass](#return-pass) instead
+of the fade (conditions below). At the end of a sweep, the firmware writes "MPP Scan done" to the LCD and logs
+`Stop sweep ... MPP=(<W>,<duty>,<V>)`.
+
+On a buck with the backflow switch open, a sweep that reaches the conversion-ratio limit (Vin near Vout) with less
+than 0.05 A of current has no more power to find. It ends there like any other sweep, not as a fault.
 
 ### Return pass
 
 The sweep records the local maxima of the power that have a dip of about 8 % on both sides (see
 [Substring count](#substring-count)). When a bright sweep (MPP at least 5 % of `limits.conf::p_max`) on a buck has
-recorded two or more of them, the captured MPP counted as one, the way back up from the bottom of the sweep measures
-them again, lowest Vin first:
+recorded two or more of them above 1.05 times the input voltage floor, the captured MPP counted as one, the way back
+up from the bottom of the sweep measures them again, lowest Vin first (a boost has no return pass):
 
 1. The loop steers Vin to the recorded Vin of the maximum, as the [partial peak scan](#partial-peak-scan) steers to
    a probe. Maxima below 1.05 times the input voltage floor are skipped.
@@ -129,22 +142,28 @@ sweep landed 49.1 V 5.3 W, MPP 55.1 V 6.4 W
 sweep landing trim 341 -> 290
 ```
 
-If the best captured power is below that floor, the sweep commits no target. The converter shuts down for 30 s and
+### No-MPP backoff
+
+If the best captured power is below 0.2 % of `limits.conf::p_max` (`sweepMinPower()`, step 6 of the
+[sweep](#global-sweep)), the sweep commits no target. The converter shuts down for 30 s and
 resumes through the normal start path. The firmware logs this backoff at info level as
 `backoff 30s [sweep-no-mpp]`, not as a fault. Each consecutive sweep without an MPP doubles the backoff (60, 120,
 240 s) up to 300 s, so a dawn or a source that cannot deliver that power, such as a current-limited bench supply,
 retries every 5 min. A sweep that finds an MPP, or a battery reconnected during the backoff (see
 [protection](protection.md)), resets the backoff to 30 s.
 
+### Vout cap re-sweep
+
 The Vout cap can end a sweep before it captures any power, when the battery already sits above the cap. After a
 reboot, for example, the cap holds `vout_max_fallback` until BMS cell data arrives. Such a no-MPP backoff ends as soon
 as the cap rises 0.2 V above both the cap that ended the sweep and Vout (log
 `Vout cap <V> V lifted to <V> V, no-MPP backoff cleared`), and a sweep starts right away. It skips the start-up wait
 for the BMS termination decision, which takes several cell frames and would otherwise end only on its 12 s timeout.
-The doubling stays as it is.
 
-At the end of a sweep, the firmware writes "MPP Scan done" to the LCD and logs
-`Stop sweep ... MPP=(<W>,<duty>,<V>)`.
+A sweep that found an MPP but was cut by the Vout cap while BMS cell data was missing is swept again too. Once cell
+data is valid, the termination decision is made and no charge hold is active, a cap more than 0.2 V above the one
+that cut the sweep schedules a re-sweep 3 s later (log `sweep cap <V> V lifted to <V> V`). It counts against the
+one re-sweep per 10 minutes of the [sweep verdict](#sweep-verdict).
 
 ### Sweep verdict
 
@@ -278,25 +297,16 @@ condition below: it ends slow mode, and the tracker continues in fast mode for a
 a CV hold, or a sweep.
 
 The 1 s cap bounds a leg that the tracker walks without judging power, as long as Vin stays within 1 % of the
-reversal voltage. In simulation, a 1.5 s window
-harvested less than a fixed 150 ms window, because the excursion it allows costs more than the filter lag
-does.
+reversal voltage.
 
 Slow mode has no settle window. It evaluates every 500 ms, so a window there can only end at an evaluation, and
-any window that covers one skips it: the leg runs a whole period longer, and twice as long in total. In
-simulation that happened when changing light kept Vin from coming back to the reversal voltage, and with power
-filters that settle in more than 500 ms (filter length 60 at a low sample rate). Under an irradiance wobble of
-0.5 % at 0.2 Hz it cost 3 to 4 % of harvest without sensor noise and 0.2 to 1.7 % with measured sensor noise.
+any window that covers one skips it: the leg runs a whole period longer, and twice as long in total.
 Without the window, the first slow evaluation compares against a reference that still carries the filter lag
 and the input-capacitor current. That costs little because the slow-mode slew is 25 times slower than in fast
 mode. The capacitor power $C V \, dV/dt$ scales with the slew. In slow mode it is a few mW (470 µF at 60 V), below
-the slow-mode threshold of 0.15 % of $(P + 5\,\text{W})$, which is 10.5 mW at 2 W. The trade-off in simulation was at dusk: 0.1 to 0.5 % of
-harvest on average, up to 0.8 % in a single run with a slow power filter, and up to 1.4 % for single noise
-realisations. Without the window the tracker also reverses more often (with a slow filter, 21.5 to 28 reversals
-per minute at dusk).
+the slow-mode threshold of 0.15 % of $(P + 5\,\text{W})$, which is 10.5 mW at 2 W.
 
-The Vin condition has no deadband: ending the window 0.1 % of Vin early lost about 1 % of
-harvest at 2 to 20 W, and ending it 0.1 % late made no measurable difference.
+The Vin condition has no deadband.
 
 The tracker keeps its own MPP record. It resets the record after 5 min, or when the current power is below 85 % of
 the recorded MPP and the record is more than 30 s old (`Reset maxPower <record> (P=<power>)`). A period whose
@@ -321,8 +331,7 @@ all of these hold:
 - The last reversal is less than 45 s ago.
 
 Slow mode ends on a new MPP record (a 0.5 % gain, or the first period after a reset), on a takeover, and 45 s
-after the last reversal. Moving one way for that long means the MPP has moved. A slow-mode pass across its power
-band near the MPP takes about 35 s, so a limit of 15 s dropped back to fast mode every 20 to 60 s.
+after the last reversal. Moving one way for that long means the MPP has moved.
 
 The MPP record reset is evaluated before the entry, so the tracker does not enter slow mode in the same period in
 which the record is about to be reset. The 5-minute record reset also ends slow mode: the record is at least 30 s
@@ -340,33 +349,21 @@ The console command `speed <x>` (0 ≤ x < 10) scales the tracker step (default 
 P&O on the duty assumes that Vin follows it: more duty, lower Vin. Near the DCM/CCM boundary ($D \approx M$) on a
 low-impedance output this does not always hold. The switch-node ring after the coil current reaches zero leaves a
 current in the coil at the next high-side turn-on, and its value depends on the idle time, which shrinks as the
-duty rises. In a simulated board model with a 233 kHz ring and a battery output, at dusk light (about 23 W, MPP at
-48 V):
+duty rises. Over a span of the PWM period just below $D = M$ the extra on-time is cancelled: Vin barely follows the
+duty, $P(D)$ is flat with a shallow local maximum whose dip lies below both power thresholds, and at an unchanged
+duty Vin can step down by several volts within a fraction of a second.
 
-- Over about 12 % of the PWM period below $D = M$, Vin stays within 0.3 V. The coil current at turn-on goes from
-  +0.1 A to -0.3 A, which cancels the extra on-time.
-- Across that span $P(D)$ is flat with a slight rise toward higher duty, a local maximum at 37 V. The dip on the way
-  back to the MPP is 0.5 % of the power, below both thresholds.
-- At an unchanged duty, Vin can step down by 3 to 5 V within 0.3 s.
+When such a step comes while the tracker steers Vin up, a 5 % Vin rule that counted moves in either direction
+would reverse it toward lower Vin. Repeated, that leaves the tracker on the local maximum, far below the MPP, until
+the next sweep. The 5 % rule therefore counts only a move in the steered direction. The trap depends on the
+low-side timing (`rect_offset_ns`), not on the duty resolution.
 
-When such a step came while the tracker steered Vin up, the 5 % Vin rule reversed it toward lower Vin. The next
-step repeated that, and the tracker ended on the local maximum, up to 18 V below the MPP, until the next sweep. The
-5 % rule therefore counts only a move in the steered direction. This removes the trap: in simulated trapped runs
-it held 36 to 47 reversals per run.
-
-The trap depends on the low-side timing, not on the duty resolution. In simulation it occurs at both PWM
-resolutions (2047 and 4103 counts per period) with the low side turning off at the modelled zero crossing
-(`rect_offset_ns` 0). With the low side turning off 1.3 µs early (`rect_offset_ns` -1312), it did not occur in
-144 runs, with or without the rule.
-
-A power drop that coincides with such a step could reverse the tracker the same way, but that happened about once
-per trapped run. As a guard, a power drop does not reverse while Vin is more than 1 % against the steering. The
-1 % margin keeps reversals on light changes that move Vin. In DCM the converter input acts like a resistance, so
-dimming light lowers Vin and power together. Without a margin, that blocked every reversal of a leg toward higher
-Vin and none toward lower Vin, so the tracker ratcheted up the steep side of the P-V curve. Under an irradiance
-wobble of 0.5 % at 0.2 Hz, which moves Vin by about 0.4 %, it settled 4 V above the MPP and lost 4 % of harvest on
-one board model. In CCM against a stiff battery, $V_{in} = V_{out}/D$ does not move with the light, and only the
-power drops.
+A power drop that coincides with such a step could reverse the tracker the same way. As a guard, a power drop does
+not reverse while Vin is more than 1 % against the steering. The 1 % margin keeps reversals on light changes that
+move Vin. In DCM the converter input acts like a resistance, so dimming light lowers Vin and power together. Without
+a margin, the guard would block every reversal of a leg toward higher Vin and none toward lower Vin, and the
+tracker would ratchet up the steep side of the P-V curve. In CCM against a stiff battery, $V_{in} = V_{out}/D$ does
+not move with the light, and only the power drops.
 
 Both exceptions start 3 s after a limiter hand-back. The fade back to the sweep's MPP, or the limiter step before
 the hand-back, still moves Vin when P&O takes over, so the Vin at the hand-back is no reference. Vin can overshoot
@@ -377,133 +374,10 @@ In normal tracking a leg crosses the MPP, so Vin is past the last reversal point
 exception changes anything. They do not help a tracker that sits on a flat P-V curve far below the MPP while Vin
 follows the duty, for example with bypass-diode humps.
 
-### Steady-state efficiency and noise
+### Thresholds
 
-A simplified model shows how measurement noise limits P&O in steady light. It assumes a fixed curve (constant
-irradiance and temperature) and independent noise in each period's power reading. Near the MPP the power curve is
-a parabola in the relative voltage offset $x$:
-
-$$
-P(x) = P_m \left(1 - c\,x^2\right), \qquad x = \frac{V - V_m}{V_m}
-$$
-
-The single-diode model gives the curvature per cell, independent of the number of cells in series:
-
-$$
-c \approx 1 + \frac{V_m}{2\,n\,V_t}
-$$
-
-which is about 9 for crystalline silicon. The tracking efficiency is the mean power relative to the MPP:
-
-$$
-\eta = \frac{\overline{P}}{P_m} = 1 - c\,\overline{x^2}
-$$
-
-#### Without noise
-
-P&O with step $\delta = \Delta V / V_m$ oscillates around the MPP with
-
-$$
-\eta = 1 - \frac{c\,\delta^2}{2}
-$$
-
-For steps of about one PWM count this loss is negligible.
-
-#### Noise larger than the step
-
-Let $\sigma$ be the relative noise of each period-averaged power reading. When $\sigma$ exceeds the per-step power
-change, the operating point performs a random walk with a drift toward the MPP. Its stationary variance is
-
-$$
-\overline{x^2} = \frac{\sqrt{\pi}\,\sigma}{4\,c}
-$$
-
-so step size and curvature cancel:
-
-$$
-\eta \approx 1 - \frac{\sqrt{\pi}}{4}\,\sigma \approx 1 - 0.44\,\sigma
-$$
-
-The approximation ignores the direction persistence of P&O and holds to within about a factor of 2.
-
-#### Decision threshold
-
-With a relative decision threshold $\theta$ and a reference that follows every reading, the point wanders within
-$P > P_m (1 - \theta)$, and
-
-$$
-\eta \approx 1 - \frac{\theta}{3}
-$$
-
-The tracker holds its reference until the power changes by more than $\theta$, so on the way up the reference can
-sit up to $\theta$ below the peak, and the reversal on the way down comes another $\theta$ below the reference. The
-band then reaches $P_m(1 - 2\theta)$ and the loss lies between $\theta/3$ and $2\theta/3$.
-
-![P&O band on the parabola P/Pm = 1 - 9x², for the fast and the slow threshold](img/mppt-tracker/po-band.svg)
-
-*Parabola model with $c = 9$. Inner band: $P > P_m(1 - \theta)$, outer band: $P > P_m(1 - 2\theta)$, with the
-half-width in Vin offset.*
-
-The band model holds only while $\theta$ is well above the noise. In simulation the loss was 0.5 to 0.8 $\theta$
-without noise and for $\theta \gtrsim 3\sigma$. Below $\theta \approx \sigma$ the tracker reverses mostly on noise,
-and the loss levels off near $1\,\sigma$ instead of falling with $\theta$. A threshold above the noise then costs
-more than it saves, unless the light changes quickly: a larger $\theta$ also delays the reaction to rising light,
-and in heavy noise with moving clouds it prevents reversals on noise that walk the tracker off the MPP.
-
-The difference of two readings has noise $\sqrt{2}\,\sigma$. Writing $\theta = k\sqrt{2}\,\sigma$, false
-reversals become rare from $k \approx 2 \ldots 3$, which costs
-
-$$
-\eta \approx 1 - (0.9 \ldots 1.4)\,\sigma
-$$
-
-The fixed thresholds of the tracker sit below that: in simulation with measured sensor noise they correspond to
-$k \approx 0.6$ in fast mode and $0.2 \ldots 0.3$ in slow mode, so the tracker accepts noise-driven reversals in
-steady light. Thresholds derived from a running noise estimate (fixed $k$ from 1.4 to 2.5) gained at most a few
-tenths of a percent in simulation and lost up to several percent at low light, where the current-sensor noise
-floor does not scale with current; the tracker therefore keeps fixed thresholds.
-
-#### Averaging and low power
-
-The decision period $T_d$ is the tracker period, not the sensor sample period: 33 ms in fast mode and 500 ms in
-slow mode. The tracker averages the filtered power samples of one period. The sensor filters already average the
-raw samples and correlate successive filtered samples, so the period mean gains less than $\sqrt{f_s T_d}$.
-Modelling the filtered power as noise $\sigma_f$ with exponential correlation and time constant $\tau$, the
-variance of a mean over $T_d$ is
-
-$$
-\sigma^2 = \sigma_f^2\, g\!\left(\frac{T_d}{\tau}\right), \qquad
-g(u) = \frac{2}{u}\left(1 - \frac{1 - e^{-u}}{u}\right)
-$$
-
-with $g \to 1$ for $T_d \ll \tau$ and $g \to 2\tau/T_d$ for $T_d \gg \tau$. The filter's settling time gives
-$\tau \approx t_f / 6.64$ (see [Settle window](#settle-window)). For the INA226 profile at 450 Hz ($t_f$ = 152 ms,
-$\tau \approx$ 23 ms):
-
-| Mode | $T_d$  | $T_d/\tau$ | $g$   | $\sigma / \sigma_f$ |
-|------|--------|------------|-------|---------------------|
-| Fast | 33 ms  | 1.4        | 0.65  | 0.81                |
-| Slow | 500 ms | 22         | 0.087 | 0.30                |
-
-![g(u) on log axes with the fast and slow operating points](img/mppt-tracker/variance-g.svg)
-
-*$g(u)$ with its asymptote $2\tau/T_d$, for $\tau$ = 23 ms. Fast mode sits on the flat part, slow mode on the
-asymptote.*
-
-In fast mode the period mean is barely quieter than one filtered sample. The two-pass EWMA is not a single
-exponential, so these values are approximate. At low power $\sigma$ grows as $1/P$, so dawn, dusk and low
-light dominate the steady-state loss. A longer decision period lowers $\sigma$ but follows changing irradiance more
-slowly, which is a separate loss.
-
-With the relative thresholds of the tracker, the threshold loss is:
-
-| Mode | $\theta$ | $\theta / 3$ |
-|------|----------|--------------|
-| Fast | 1.5 %    | 0.5 %        |
-| Slow | 0.15 %   | 0.05 %       |
-
-The tracker reverses when the power change exceeds either the absolute threshold $\Delta P_\text{abs}$ or the
-relative threshold $\theta_\text{rel}$ applied to $P + 5\,\text{W}$ (only while $P > \Delta P_\text{abs}$), so the smaller of
+The tracker reverses when the power change exceeds the absolute threshold $\Delta P_\text{abs}$ or the relative
+threshold $\theta_\text{rel}$ applied to $P + 5\,\text{W}$ (only while $P > \Delta P_\text{abs}$), so the smaller of
 the two sets the effective relative threshold:
 
 $$
@@ -513,24 +387,18 @@ $$
 $\theta_\text{eff}$ is larger at low power and smaller at high power. Below about 62 W in fast mode and 328 W in
 slow mode the relative term is the smaller one.
 
+In steady light the operating point wanders in a band below the MPP set by the threshold. With the held reference
+the loss lies between $\theta/3$ and $2\theta/3$; for the relative thresholds alone:
+
+| Mode | $\theta$ | $\theta / 3$ |
+|------|----------|--------------|
+| Fast | 1.5 %    | 0.5 %        |
+| Slow | 0.15 %   | 0.05 %       |
+
 ![Effective relative threshold versus power for fast and slow mode, log-log](img/mppt-tracker/theta-eff.svg)
 
 *$\theta_\text{eff}$ from the tracker's thresholds. The dots mark where the absolute term takes over. The
 threshold loss is $\theta_\text{eff}/3$ to $2\theta_\text{eff}/3$.*
-
-#### Combined estimate
-
-Writing the noise as the absolute power noise $s_f$ of one filtered sample, so that
-$\sigma = s_f \sqrt{g} / P$, and taking the larger of the threshold and noise-walk losses gives
-
-$$
-\boxed{\; \eta \approx 1 - \frac{c\,\delta^2}{2} - \max\!\left(\kappa\,\frac{\theta_\text{eff}}{3},\; \frac{\sqrt{\pi}}{4}\,\frac{s_f\sqrt{g(T_d/\tau)}}{P}\right) \;}
-$$
-
-where $\kappa$ = 1 to 2 accounts for the held reference. The three terms come from separate limiting cases and are not exact in combination, so the result is an estimate
-to within about a factor of 2. Both loss terms grow as $1/P$ at low power. With
-$\theta \approx k\sqrt{2}\,\sigma$ and $k \ge 2$ the threshold term is the larger one; at the tracker's fixed
-thresholds ($k < 1$) the two terms are of similar size.
 
 ## Partial peak scan
 
@@ -593,8 +461,8 @@ them, about two probe times later.
 The sweep runs from $V_{oc}$ down to the battery and passes every maximum. It records the local maxima of the
 smoothed power below $0.93\,V_{oc}$ that have a dip on both sides: a maximum ends when the power falls below 0.92 times its
 peak, and the next one starts when the power rises above 1.08 times the low in between. It keeps up to 6; a sweep with
-more is noise and does not count. Once the [sweep verdict](#sweep-verdict) passes (with `sweep_verify=0`: right after the sweep),
-the low-frequency loop (core 0) evaluates them within 3 s:
+more is noise and does not count. Once the [sweep verdict](#sweep-verdict) passes, or a limiter prevented the verdict
+(with `sweep_verify=0`: right after the sweep), the low-frequency loop (core 0) evaluates them within 3 s:
 
 * The sweep's MPP must be one of the recorded maxima, and at least 5 % of `limits.conf::p_max`.
 * The first recorded maximum with at least 60 % of the MPP power is taken as the full-string maximum. Maxima above
@@ -610,8 +478,9 @@ One sweep is enough. The count only grows: a sweep that fits a smaller $n$ chang
 unshaded string never scans.
 
 A string can also be learned as a single peak, $n = 1$: two verified sweeps in a row, each with exactly one recorded
-maximum that is the MPP, while no count is known. A flagged sweep in between starts the run again; a sweep without a
-verdict (limiter, `sweep_verify=0`) neither counts nor breaks it. The log shows `scan: single peak learned from 2
+maximum that is the MPP, while no count is known. A flagged sweep in between starts the run again. A sweep without a
+verdict (limiter, `sweep_verify=0`) does not count; it breaks the run too unless it recorded exactly one maximum that
+is the MPP. The log shows `scan: single peak learned from 2
 verified sweeps`. With $n = 1$ the scan stays idle and a flagged single-maximum sweep is not
 [re-swept](#sweep-verdict). A later sweep that shows shading still teaches a count of 2..6, which replaces it.
 
@@ -622,8 +491,6 @@ earlier in the same boot and not yet saved can still be written over the 0, so s
 and restart right after. It is not meant to be set by hand otherwise.
 
 The evaluation works on a copy of the maxima. If a new sweep or a scan starts while it runs, the sweep is dropped.
-
-A shadow that comes and goes between two sweeps (30 minutes apart) after the first boot is not scanned on that pass.
 
 The grid of 6 shares also holds every multiple of 1/3, and lies within half a share of every multiple of 1/4 and
 1/5. The count therefore says which probe grid to use, not how many substrings there are:
@@ -667,24 +534,29 @@ A limiter that becomes active during a scan ends it, and the duty fades back to 
 operating mode (manual, PSU, PV-sim, MPPT) drops a running scan and its reference; PSU and PV-sim mode keep
 their own regulation.
 
-A scan takes 1.5 to 4 s and costs 10 to 150 J at 200 to 450 W, depending on the number of probes: the power
-given up at the probes plus the travel between them. A scan that moves to a better maximum pays this back
-within seconds. A probe aims at the flat low-voltage side of its maximum. From a maximum at which shaded substrings
+Each probe takes at most 2.6 s: up to 1.5 s to reach its voltage (within 1 %), the power filter settle (at most
+1 s) and 100 ms of averaging. A scan measures the reference, up to 5 candidates and the start point again, plus the
+two near-point probes; one that is not done 30 s after the near-point probes ends at the start point. The cost is
+the power given up at the probes plus the travel between them. A probe aims at the flat low-voltage side of its maximum. From a maximum at which shaded substrings
 conduct, $V_{in}/m_0$ overestimates the share, and the probe can land a few percent above the maximum, on its steep
 side, where it reads a few percent low. A maximum less than about 5 % above the operating point is therefore often not
 taken.
 
 ## When the tracker does not sweep
 
-The tracker skips the periodic re-sweep under these conditions:
+The tracker skips every automatic sweep (periodic, low-light power-doubled, and the re-sweeps after a flagged sweep
+or a lifted Vout cap) under these conditions:
 
 | Condition                                             | Why                                                           |
 |-------------------------------------------------------|---------------------------------------------------------------|
 | PSU / PV-sim mode                                     | No MPP to track; the output is regulated to a setpoint        |
 | A sweep is already running                            |                                                               |
-| Charge hold (terminated, partial-charge ceiling, too cold) | Ramping duty from 0 would dump a charge pulse into a full pack |
+| Charge hold (terminated, partial-charge ceiling, too cold, CV hold at `cv_eoc`, paused on stale BMS data) | Ramping duty from 0 would dump a charge pulse into a full pack |
 | Control mode is CV (output-voltage limited)           | Same: the pack is full or the output is disconnected          |
 | A protection backoff is pending                       | A sweep into an active trip timer would stall                 |
+| A flash operation is pending                          | The sweep start runs from flash                               |
+
+The periodic sweep and a scheduled re-sweep wait: they start once the condition clears.
 
 When a BMS cell-voltage topic is configured, the sweep at start-up and after a shutdown also waits for the BMS. It
 is skipped while termination is active and the BMS data is fresh, and it waits up to 12 s for the first termination
@@ -700,12 +572,13 @@ The tracker reads these keys from `tracker.conf`:
 | Key                                                                  | Default | Effect                                               |
 |----------------------------------------------------------------------|---------|------------------------------------------------------|
 | [`sweep_speed`](../reference/config/tracker.md)                      | 4.0     | Sweep speed; scales the per-tick cap and the limit-tracking gain (min 0.1) |
-| [`sweep_pace`](../reference/config/tracker.md)                       | 4.0     | Largest sweep speed-up where Vin moves slowly; 1 = off |
+| [`sweep_pace`](../reference/config/tracker.md)                       | 4.0     | Largest sweep speed-up where Vin moves slowly, 1..8; 1 = off |
 | [`sweep_verify`](../reference/config/tracker.md)                     | 0.10    | [Sweep verdict](#sweep-verdict) tolerance; 0 = off   |
 | [`target_duty_cycle`](../reference/config/tracker.md)                | absent  | Fixed duty fraction; if set (0 included) disables sweep and P&O |
 | [`scan_interval`](../reference/config/tracker.md)                    | 300     | Partial peak scan period [s]; 0 = triggered only     |
 | [`scan_trigger`](../reference/config/tracker.md)                     | 1       | Also scan after a sustained Vin or power change      |
 | [`scan_near_v`](../reference/config/tracker.md)                      | 2.0     | [Near-point probe](#near-point-probes) offset [V]; 0 = off |
+| [`pv_substrings`](../reference/config/tracker.md)                    | 0       | Learned [substring count](#substring-count) (2..6), 1 = single peak; 0 = learn again |
 
 Console: `sweep` starts a global sweep, `mppt` returns to automatic tracking, `speed <x>` scales the P&O step. See
 [Console](../reference/console.md).

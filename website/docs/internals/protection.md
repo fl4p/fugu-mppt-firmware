@@ -21,8 +21,8 @@ Both run in the same step, so `protectLf()` also runs after `protect()` has trip
 converter is off or while the sensors calibrate; calibration holds the converter off. While it is off, the
 [start conditions](#start-conditions) decide whether it may start again.
 
-Three watchdogs in `src/main.cpp` sit outside these functions and cover the sampler itself:
-[ADC stall](#adc-and-loop-watchdogs), missing samples and loop latency.
+Watchdogs in `src/main.cpp` sit outside these functions and cover the sampler and the loop:
+[ADC stall](#adc-and-loop-watchdogs), missing samples, loop latency and an output stuck near zero.
 
 ## Trip and backoff
 
@@ -38,8 +38,8 @@ running. A repeated trip does not extend a running backoff unless it asks for a 
 A failed check also makes the loop call `stopAndBackoff(4)`:
 
 - It holds the next start for at least 4 s (100 ms in PSU mode). This timer is not reported as a start-block reason.
-- If the check did not stop the converter itself, it stops it with a 5 s backoff logged as
-  `backoff 5s [stopAndBackoff]`.
+- If the check did not stop the converter itself, it stops it with a 4 s backoff logged as
+  `backoff 4s [stopAndBackoff]`.
 
 The converter restarts once both timers have expired and the [start conditions](#start-conditions) pass, so a 5 s or
 30 s trip restarts after 5 s or 30 s. In MPPT mode the restart is a new sweep. It waits while a fresh BMS report says
@@ -99,8 +99,23 @@ the side keys `hv_max`, `lv_max`, `hv_i_max` and `lv_i_max` map to these roles t
 | `temp-stale` | A fitted NTC or MCU temperature sensor is open, shorted or silent: 3 readings in a row outside −40…150 °C (about 9 s), or no valid reading for 90 s. A shorted NTC trips `temp` instead if the ADC saturates below the supply rail. An unfitted NTC never trips | 5 s, then until a valid reading |
 | `temp` | NTC or MCU temperature > `temp_max`, logged as `Temp … > …°C, shutdown` | 5 s |
 | `wire-trip` | Wire-fault guard tripped (`wire_protect = 2` only), see [Output wire-fault protection](../reference/config/limits.md#output-wire-fault-protection) | until `wire-reset` or reboot |
-| `hs-short` | Latched high-side short, see [High-side short check](#high-side-short-check). Logged as `HS short (…): …`, no `backoff` line | until `selftest clear` |
-| `bf-fail` | Latched failure of the [backflow switch test](#backflow-switch-test). No `backoff` line | until `selftest clear` |
+
+### Other stops
+
+These stops come from outside `protect()` and `protectLf()`:
+
+| `who` tag | Condition | Backoff |
+|---|---|---|
+| `ctrl-nan` | A PD controller output is not finite while the converter switches above 1 % duty | 5 s |
+| `calib` | Sensor calibration is running. No `backoff` line | none |
+| `stop` | A switch to manual PWM at duty 0 that stops at once, without a ramp: `ota <url>`, coil measurement, backflow switch test. No `backoff` line | none |
+| `stopAndBackoff` | An OTA push over BLE stops the converter before it halts the sampler | 5 s, start held 10 s |
+
+Two latches act outside the checks as well. Neither logs a `backoff` line, and both hold until `selftest clear`:
+
+- `hs-short`: the [high-side short check](#high-side-short-check) runs on every sample of an idle buck and turns all
+  gates off itself, logged as `HS short (…): …`.
+- `bf-fail`: a failed [backflow switch test](#backflow-switch-test) only refuses the next start.
 
 ### Sub-trip reverse current
 
@@ -132,19 +147,20 @@ switch between the converter output and the battery, and the current sensor on t
 the battery discharges into the panel through the high-side body diode at night, so the check could not learn its zero.
 
 The check judges the raw current, before the idle offset calibration subtracts its zero. That calibration accepts a
-zero of up to 5 % of the sensor's maximum current, so it would otherwise absorb a small short. The check keeps its own
-zero, learnt while no current can flow: the backflow switch commanded off and Vin more than 2 V below Vout.
+zero of up to 5 % of Iout max, so it would otherwise absorb a small short. The check keeps its own zero, learnt while no
+current can flow: the backflow switch commanded off, Vin more than 2 V below Vout, and the raw current within half the
+large-current threshold below (5 % of Iout max, at least 0.3 A).
 
 A sample is suspect when, with $I$ the current above that zero and the window $w$ = max(1.5 V, 4 % of Vout):
 
-- $I$ exceeds 10 % of the sensor's maximum current (at least 0.6 A), whatever the voltages, or
-- $I$ exceeds max(0.3 A, 1 % of the maximum current), Vout is above 5 V, and Vin lies within −$w$ and
+- $I$ exceeds 10 % of Iout max (at least 0.6 A), whatever the voltages, or
+- $I$ exceeds max(0.3 A, 1 % of Iout max), Vout is above 5 V, and Vin lies within −$w$ and
   $w$ + 0.05 Ω × $I$ of Vout, or
 - Vout is above the [OV threshold](#output-over-voltage-threshold) and Vin lies within the same window, at any current.
   This covers a battery that has been disconnected, for example by its BMS: the shorted high side then holds the
   output at the panel voltage with no current flowing. Off in PSU mode.
 
-The window allows for two voltage dividers with 1-2 % gain error each, which can disagree by 2.4 V at 60 V.
+The window covers two voltage dividers with 1-2 % gain error each (2.4 V at 60 V).
 
 Suspect samples hold the start (`hs-check`). They latch the fault after a hold that depends on the criterion:
 
@@ -153,13 +169,11 @@ Suspect samples hold the start (`hs-check`). They latch the fault after a hold t
 | current | 3 s | a short passes panel current to the battery, which a healthy idle converter cannot |
 | voltage only | 60 s | with a real short and the battery disconnected, the loads see the panel voltage for about 60 s before the latch; a false latch needs `selftest clear` |
 
-The voltage-only hold is 60 s with or without the [low-side clamp](#low-side-clamp). That criterion needs Vout above the
-OV threshold, so Vin is far above the 9 V at which the clamp may engage. A latch turns the gates off, which cannot
-stop the shorted high side, so an earlier latch would not take the panel voltage off the loads.
+The voltage-only hold is 60 s with or without the [low-side clamp](#low-side-clamp): an earlier latch would only turn the
+gates off, which cannot stop a shorted high side, and Vin is then far above the clamp's 9 V limit.
 
-A short holds Vout at Vin indefinitely. On a shared output bus, another charger can push the battery above the OV
-threshold while the panel voltage passes through the window, but rarely for a whole minute. Vin leaving the window
-before the hold ends drops the suspicion without a latch.
+Vin leaving the window before the hold ends drops the suspicion without a latch. A short holds Vout at Vin, while
+another charger on a shared output bus rarely holds the battery above the OV threshold for a whole minute.
 
 #### Latched fault
 
@@ -199,9 +213,9 @@ leaves the clamp pending. The clamp is armed when all of these hold:
 
 | State | Gates | Leaves the state |
 | --- | --- | --- |
-| pending | all off | to the ramp once Vin (EWMA) has stayed below 9 V for 60 s without a break; a NaN or a sample at or above 9 V restarts the 60 s. To all gates off when a check every 250 ms finds the clamp no longer armed |
+| pending | all off | to the ramp once Vin (EWMA) has stayed below 9 V for 60 s without a break; a NaN or a sample at or above 9 V restarts the 60 s. To all gates off when a check every 250 ms finds the clamp no longer armed, or on a hardware over-voltage alert |
 | ramp | high side held low, low side pulsed at the switching frequency | to the hold after 20 ms; to all gates off on battery current, a gate shutdown from any other path, a hardware over-voltage alert, or the clamp no longer armed |
-| hold | low side on, high side off | to all gates off on battery current, or when the clamp is no longer armed |
+| hold | low side on, high side off | to all gates off on battery current, a hardware over-voltage alert, or when the clamp is no longer armed |
 
 The ramp widens the low-side pulse linearly from 200 ns to the full period over 20 ms. The 200 ns is the realized
 on-time: where the gate driver adds a hardware dead-time to the low-side turn-on, the commanded pulse is longer by that
@@ -237,14 +251,9 @@ Limits of the checks:
 
 - Without a learnt zero, a sensor offset above the 0.3 A threshold reads as a short when Vin is near Vout (dawn, dusk).
   A board that boots at such a time can latch falsely, without the clamp. The zero is learnt during the first night.
-- A battery driven above the OV threshold by another charger, while the panel voltage passes through the window, latches
-  the voltage criterion after 60 s.
-- The clamp still discharges the input capacitors through the shorted high side and the low side. Below 9 V and with a
-  per-period ramp, circuit simulation puts the peak at about a third of the low-side pulse rating; the per-sample
-  staircase was not simulated.
+- Below 9 V and with a per-period ramp, circuit simulation puts the clamp's peak current at about a third of the
+  low-side pulse rating; the per-sample staircase was not simulated.
 - The 9 V limit relies on the Vin reading. A divider whose reading floors near 9 V in the dark never arms the clamp.
-- A short that latches by day keeps the panel voltage on the output until the night.
-- A backflow switch stuck closed turns the hold into a battery short for two samples, until the release.
 
 ### Backflow switch test
 
@@ -288,10 +297,8 @@ The variant holds forced PWM at a fixed duty and turns the switch off and on 3 t
 settling time of the current, Vin and Vout filters plus 20 ms after the edge, at least 60 ms. The test refuses to start when that wait
 exceeds 1 s (sensor filters too slow for the toggle).
 
-The criterion is y = D × Vin − Vout, the voltage across the loop. With the switch on, y is the resistive drop. A
-blocking switch adds its body-diode drop Vf while off: on a soft source the current stays and y rises by Vf (Vin rises
-by Vf / D); on a stiff source the current collapses instead. In between, y rises by Vf less the drop the lost current
-gave back on the loop resistance.
+The criterion is y = D × Vin − Vout, the voltage across the loop. With the switch on, y is the resistive drop. While
+off, a blocking switch adds its body-diode drop, or, on a stiff source, the current collapses instead.
 
 | Case | Operating point | Pass | Fail |
 | --- | --- | --- | --- |
@@ -299,11 +306,11 @@ gave back on the loop resistance.
 | no battery | switch off, low side at its minimum pulse (an asynchronous buck), the duty climbing from its minimum until Vout has risen 1 V (at most to D × Vin = Vout + 3 V); the real-time loop then engages forced PWM, the duty goes above the output and ramps to min(Vin/2, 0.8 × Vbat max) − 3 V | every off reading: y at least 0.1 V above both on neighbours | an off reading below that, with steady neighbours |
 
 Steady neighbours means the two on readings around an off reading agree: y within 0.15 V and, with a battery, the
-current within 15 %. Otherwise the source or the load changed during the cycle, and the run aborts without a verdict.
-A switch stuck closed steps 0.00 V. The 0.1 V threshold sits below a hot body diode's drop at a few hundred
-microamperes (0.15–0.35 V) and below a partial current collapse's step with Vf down to 0.15 V, and above the
-error of a settled reading. Without a battery, each turn-off also raises the duty by 1 V, so a blocking switch leaves the output
-one diode drop below the new D × Vin, even where the divider bleeds the output too slowly to show a drop.
+current within 15 %. Otherwise the run aborts without a verdict.
+
+A switch stuck closed steps 0.00 V. The 0.1 V threshold lies below a hot body diode's drop at a few hundred
+microamperes (0.15–0.35 V) and above the error of a settled reading. Without a battery, each turn-off also raises the
+duty by 1 V, so a blocking switch leaves the output one diode drop below the new D × Vin.
 
 The variant never lowers the duty with the switch on. The real-time loop owns the switch and these guards, because
 reverse current through the closed switch is invisible to a one-direction sensor:
@@ -362,11 +369,12 @@ the detected `Vbat_max` and detects it again after a new sensor calibration. A `
 With `sensor.conf::ina22x_ov` set, the INA226 compares its bus voltage against that limit in hardware and raises its
 ALERT pin. With the MCPWM gate driver, the ALERT interrupt forces the gates off immediately, without waiting for the
 real-time loop. The loop then trips with `hw-OV`. An alert that arrives while the converter is off is discarded, so it
-cannot block the next start.
+cannot block the next start. While the [low-side clamp](#low-side-clamp) is pending, ramping or held, the alert is kept
+instead and releases the clamp, turning all gates off.
 
 The loop also trips `hw-OV` when the alert cannot be armed or the INA226 has lost its alert configuration, for example
 after an I2C error or a chip reset. Without the MCPWM gate driver the firmware warns at boot that the alert cannot force
-the gates off. See [`board.conf`](../reference/config/board.md).
+the gates off. See [`sensor.conf`](../reference/config/sensor.md).
 
 ### Overshoot on battery disconnect
 
@@ -389,25 +397,26 @@ Simulated peaks for an 8S LFP pack (`Vbat_max` 29 V) charged at 28 A from 64 V, 
 | 30 µH | 560 µF | 37.3 V | 34.9 V |
 | 100 µH | 470 µF | 41.4 V | 41.4 V |
 
-A faster trip lowers the peak by at most a few volts, and only for small coils. Absorbing the coil energy
-($\tfrac{1}{2} L I^2$, about 12 mJ at 30 µH and 28 A) or adding output capacitance lowers it further. A fast trip still
-matters if the high side keeps switching with the low side off: Vout then climbs towards Vin.
+The coil energy sets the peak: a faster trip lowers it by at most a few volts, and only for small coils. Absorbing that
+energy ($\tfrac{1}{2} L I^2$, about 12 mJ at 30 µH and 28 A) or adding output capacitance lowers it further. A fast trip
+still limits the damage, because a high side that keeps switching with the low side off drives Vout on towards Vin.
 
-These figures come from the host simulator, not from measurements. Loads on the charger side of the BMS reduce the peak,
-but they are also exposed to it.
+The table comes from the host simulator. A measurement with the battery at 28.5 V showed 36 V at the output for
+400 ms. Loads on the charger side of the BMS reduce the peak, but they are also exposed to it.
 
 ## ADC and loop watchdogs
 
-These checks run in the real-time loop whether or not the converter is switching. They stop the converter only when it
-is switching.
+The ADC stall, ADC reset, no-sample and calibration checks run in the real-time loop. The loop-latency and stuck-output
+watchdogs run in the low-frequency loop on core 0.
 
 | Watchdog | Condition | Action |
 |---|---|---|
-| ADC stall | The ADC reports an error, or no fresh sample for 200 ms outside calibration | Reset the ADC peripherals (at most every 300 ms). After 800 ms of stall: stop with a 16 s backoff. After 60 s: restart the system |
+| ADC stall | The ADC reports an error, or no fresh sample for 200 ms outside calibration | Reset the ADC peripherals (at most every 300 ms). After 800 ms of stall, if the converter is switching and no backoff runs: stop with a 5 s backoff and hold the start for 16 s. After 60 s: restart the system |
 | ADC reset | A requested ADC reset | Stop during the reset; restart 6 s after it (30 s if the reset failed) |
-| No sample | No sample at all 20 s after boot | Disable the converter and log `Never got a sample! Please check ADC`. After 15 min: restart the system |
-| Loop latency | Vout sample rate below half its nominal rate for 3 consecutive 3 s windows. Always on, unless Vout is a virtual sensor | Stop with a 5 s backoff (100 ms in PSU mode) |
+| No sample | No sample at all 20 s after boot | Disable the converter, switching or not, and log `Never got a sample! Please check ADC`. After 15 min: restart the system |
+| Loop latency | While switching: Vout sample rate below half its nominal rate for 3 consecutive 3 s windows. Always on, unless Vout is a virtual sensor | Stop with a 4 s backoff (100 ms in PSU mode) |
 | Calibration failure | Sensor calibration fails | Hold the start for 4 s (100 ms in PSU mode) |
+| Stuck output | Average Iout within ±0.3 A despite input headroom (buck: average Vin more than 8 V above average Vout; boost: more than 2 V above Vin min), outside manual PWM and a no-MPP backoff. In PSU mode Vout must also be more than 2 V below the setpoint; otherwise the charger must not be holding the charge (for example terminated, in a CV hold or too cold) | After 30 s: release the CV-floor latch, which also clears the backoff. After 2 h: restart the system |
 
 The latency watchdog ignores manual PWM, the first 2 s after a calibration, and the first samples after boot. A single
 slow window logs a warning without stopping the converter.
@@ -419,12 +428,14 @@ low-frequency status line logs the blocking reason as `START blocked: <reason>`,
 otherwise. `temp-stale` is not logged before the first input-voltage sample, when every sensor is still empty.
 
 The temperature and supply checks use a margin above their trip level, so the converter does not restart right at the
-threshold. Manual PWM skips this table, but `hs-short`, `hs-check`, `bf-fail`, `temp-stale` and `temp` also hold it off. The table lists the reasons in
-the order they are checked:
+threshold. Manual PWM skips this table, but `restart`, `hs-short`, `hs-check`, `bf-fail`, `conf-save`, `backoff`,
+`wire-trip`, `temp-stale`, `temp`, `minpulse-M` and `idle profile` also hold it off; `backoff` and `wire-trip` also stop
+a running manual PWM. The table lists the reasons in the order they are checked:
 
 | Reason | Blocks the start while |
 |---|---|
 | `psu-latch` | PSU mode latched off after repeated trips |
+| `restart` | A system restart is under way. Also holds manual PWM |
 | `hs-short` | The [high-side short check](#high-side-short-check) latched. Also holds manual PWM |
 | `hs-check` | The high-side short check has not yet seen a clean sample after 0.5 s off, or a sample is suspect. Also holds manual PWM |
 | `bf-fail` | The [backflow switch test](#backflow-switch-test) failed. Also holds manual PWM |
@@ -440,6 +451,7 @@ the order they are checked:
 | `Vout-still-OV` | PSU mode: Vout is still above 98 % of the OV threshold |
 | `supply-UV` | Board supply below 9.5 V |
 | `calibrating` | Sensor calibration is running |
+| `filters-empty` | A Vin, Vout, Iin or Iout filter has not refilled after a calibration or ADC reset |
 | `idle profile` | The idle power profile holds the converter off; the loop asks it to leave |
 
 ## Configuration

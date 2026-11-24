@@ -273,7 +273,7 @@ When it detects a mayor change in power conditions (e.g. clouds, partial shading
 to quickly adapt to the new condition.
 
 A global scan is triggered every 30 minutes to prevent getting stuck in a local maximum. This can happen with partially
-shaded solar strings. A scan lasts about 20 to 60 seconds, depending on the loop update rate. Sweeping too often or to
+shaded solar strings. A scan lasts about 5 to 15 seconds, longer when a limiter holds the ramp back. Sweeping too often or to
 slow
 can significantly reduce overall efficiency.
 
