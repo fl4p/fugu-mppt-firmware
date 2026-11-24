@@ -38,7 +38,7 @@ The following state diagram shows the transitions between the phases:
 ```mermaid
 stateDiagram-v2
     [*] --> Sweep: boot / sweep command / 30 min / low-light power x2 / re-sweep
-    Sweep --> ReturnPass: limiter or max duty, 2+ maxima
+    Sweep --> ReturnPass: limiter or max duty, bright buck sweep, 2+ maxima
     Sweep --> FadeToMPP: limiter or max duty, otherwise
     Sweep --> Backoff: best power < 0.2 % of p_max
     ReturnPass --> Fast: landed on the best probe / limiter, no landing
@@ -89,7 +89,9 @@ A sweep (`startSweep()` in `src/mppt.h`) runs these steps:
 The sweep stops as soon as any limiter produces a control mode (CV, CC, or CP), including the bounce at the maximum
 duty. The captured MPP duty becomes the target, and the loop fades to it with a bounded step before handing over to
 P&O. A bright sweep on a buck that recorded two or more local maxima takes the [return pass](#return-pass) instead
-of the fade (conditions below). At the end of a sweep, the firmware writes "MPP Scan done" to the LCD and logs
+of the fade (conditions below).
+
+At the end of a sweep, the firmware writes "MPP Scan done" to the LCD and logs
 `Stop sweep <s>s mode=<mode> (lim=<i> tgt=<target> act=<actual>) PWM=<duty> MPP=(<W>,<duty>,<V>)`. `lim` is the
 index of the limiter that was active when the sweep ended (the [`cv_lim_idx`](../reference/telemetry-fields.md#cv_lim_idx)
 numbering) with its target and actual value. A sweep that ended at the duty bound with no limiter active logs
@@ -223,7 +225,7 @@ flowchart TD
     H -- no --> P["Stay, P&O from the landing"]
     N -- "1 (single peak)" --> P
     N -- unknown --> M{"≤ 1 maximum<br/>recorded?"}
-    M -- yes --> RS["Re-sweep in 60 s,<br/>at most one per 10 min"]
+    M -- yes --> RS["Re-sweep in 60 s (landed brighter:<br/>once the light holds),<br/>at most one per 10 min"]
     M -- no --> P
 ```
 
@@ -355,7 +357,7 @@ The console command `speed <x>` (0 ≤ x < 10) scales the tracker step (default 
 
 ### Plant moving against the step
 
-P&O on the duty assumes that Vin follows it: more duty, lower Vin. Near the DCM/CCM boundary ($D \approx M$) on a
+P&O on the duty assumes that Vin follows it: more duty, lower Vin. Near the boundary between DCM and CCM ($D \approx M$) on a
 low-impedance output this does not always hold. The switch-node ring after the coil current reaches zero leaves a
 current in the coil at the next high-side turn-on, and its value depends on the idle time, which shrinks as the
 duty rises. Over a span of the PWM period just below $D = M$ the extra on-time is cancelled: Vin barely follows the
@@ -434,10 +436,14 @@ only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV emul
    in 0.74..0.86 (an unshaded string); otherwise the last value is kept (0.82 at start). The operating point is assigned
    to the nearest multiple $m_0$ of $s_0$. $V_{in}/m_0$ overestimates the share when weaker substrings conduct at the
    operating point, $s_0$ misses heating since the sweep and the spread of $V_{mpp}/V_{oc}$; the scan uses their mean
-   $s = (V_{in}/m_0 + s_0)/2$. A lower candidate ($m < m_0$) is placed at $0.97\,m\,s$, on the flat low-voltage side of
+   $s = (V_{in}/m_0 + s_0)/2$.
+
+   A lower candidate ($m < m_0$) is placed at $0.97\,m\,s$, on the flat low-voltage side of
    its maximum. A higher one ($m > m_0$) is placed at $1.015\,m\,s$: it includes substrings weaker than any at the
    operating point, which lifts it above $m$ shares, and below such a maximum the power falls about in proportion to the
-   voltage (the weak substring limits the current). A candidate below 1.05 times the input voltage floor (the input
+   voltage (the weak substring limits the current).
+
+   A candidate below 1.05 times the input voltage floor (the input
    undervoltage limit, and on a buck the start ratio of the low-side minimum pulse, about $1.2\,V_{out}$), or above
    $0.95\,V_{oc}$, is skipped.
 2. A lower candidate ($m < m_0$) delivers at most $m\,s$ times the largest current seen since the last sweep
@@ -512,8 +518,8 @@ of 2..6, which replaces it.
 The count is kept in `tracker.conf::pv_substrings` (1 = single peak). It is written once when it grows, as soon as a
 flash write is safe (flash auto-suspend active, converter off, or below 5 W), and before a console restart. Setting it
 to 0 (`set-config`) makes the converter learn it again after the next restart; until then the running count stays in
-use. A count learned earlier in the same boot and not yet saved can still be written over the 0, so set it while the
-converter is off and restart right after. It is not meant to be set by hand otherwise.
+use. If the file already held 0 at boot, a count learned since then and not yet saved is still written over it, so set it
+while the converter is off and restart right after. It is not meant to be set by hand otherwise.
 
 The evaluation works on a copy of the maxima. If a new sweep or a scan starts while it runs, the sweep is dropped.
 
