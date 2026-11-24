@@ -119,8 +119,19 @@ The stream stops on disconnect, and the next client must enable it again.
 ## BLE advertising
 
 With `CONFIG_FUGU_WITH_BLE_ADV`, the device broadcasts a compact telemetry record in the manufacturer data of its
-advertisements while the `ble` service runs. It's a custom 17-byte record (company ID 0xFFFF, magic byte
-0xF7) with Vin, Vout, current, power, MCU and NTC temperature, duty, loop lag, and MPPT state.
+advertisements while the `ble` service runs. It's a custom 17-byte little-endian record in the
+manufacturer data (company ID `0xFFFF`):
+
+```
+u8 magic=0xF7, u8 seq, f16 Ui Uo I P, i8 mcu_temp ntc_temp, u16 pwm_duty, u16 lag_us, u8 state
+```
+
+- `f16` is an IEEE half-precision float. `I` and `P` come from the physically sensed current. A missing temperature
+  reads `-128`.
+- The low nibble of `state` is the control mode (`0` none, `1` CV, `2` CC, `3` CP, `4` MPPT, `5` sweep), the high
+  nibble the active CV limiter.
+- Every 8th refresh carries the device name instead of the record. While Improv Wi-Fi provisioning is offered, every
+  other refresh carries the Improv data.
 
 Any number of observers can listen without connecting. The device keeps broadcasting while a client holds the console
 connection. The broadcast is unencrypted and lossy, and observers stamp the time on receipt.
@@ -138,8 +149,9 @@ python3 etc/influx_binary_proxy.py --adv --verbose
 ```
 
 :::note
-[BTHome advertising](bthome.md) is a design proposal and not implemented. The custom manufacturer-data record above
-is what the firmware sends today.
+The firmware does not send BTHome, so Home Assistant's BTHome integration does not decode this record. A design
+for BTHome advertising is in
+[plans/bthome-advertising.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/plans/bthome-advertising.md).
 :::
 
 ## Common scenarios
