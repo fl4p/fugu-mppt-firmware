@@ -254,7 +254,9 @@ These commands set the duty cycle directly, switch between manual and tracking m
 
 `selftest bflow` runs each phase the same way. It ramps the duty in diode emulation from 0.97 × Vout/Vin up to the
 first CCM operating point with at least 0.3 A forward current. The ramp stops at a duty proven to be forward
-(Vout/Vin × 1.02 + 1 %) if CCM is not reached first. Then it switches to forced PWM (complementary low side) and steps
+(Vout/Vin × 1.02 + 1 %) if CCM is not reached first. The `conducts` phase, and the toggle, may also climb to the duty
+the converter ran at before the test; `conducts` goes up to 1/8 beyond it while the forward current stays below
+min(5 A, `lv_i_max`/2, the charger's current limit) and Vin keeps its headroom, for at most 60 s. Then it switches to forced PWM (complementary low side) and steps
 the duty down until D × Vin is 1 V below Vout:
 
 | Phase | Backflow switch | Pass | Fail |
@@ -268,7 +270,15 @@ about 1 A on a low-resistance path, so the sample that trips may read well below
 Each phase prints one line with the current, Vin, Vout, duty and ΔV = Vout − D × Vin at the stop. For a passing
 `conducts` phase, ΔV is the voltage at which reverse current appeared. A protection trip, a collapsing input voltage, a
 mode change (`mppt`, `psu`) or a latched high-side short aborts the test without a verdict. After a mode change the new
-mode stays.
+mode stays. The ramp's own aborts, also without a verdict, print as:
+
+| Reason | Meaning |
+| --- | --- |
+| `no CCM forward current at the duty cap` | still DCM at the highest duty the ramp may reach |
+| `forward current above the search limit` | the `conducts` climb past the previous duty met its current limit |
+| `CCM search timed out` | that climb took more than 60 s |
+| `Vin too low (needs >= 1.2 Vout and Vout + 3 V)` | Vin lost its headroom during that climb, or before a phase |
+| `DCM at engage` | back in DCM after the 150 ms wait before forced PWM |
 
 A failed phase latches `bf-fail`, which blocks every start until `selftest clear`, also across a reboot. Details on the
 phases and the daily run are under [Backflow switch test](../internals/protection.md#backflow-switch-test).

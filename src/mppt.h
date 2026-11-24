@@ -1666,8 +1666,9 @@ public:
         std::atomic<bool> tripped{false};
         float iMin = INFINITY, i = NAN, vin = NAN, vout = NAN, d = NAN; // trip record
         float iFloor = 0, vinMax = 0, vProof = 0; // vProof: no battery, Vout that proves it follows the duty
+        float iMax = INFINITY; // conducts, before BfEngage: stop above this forward current
         uint8_t floorHold = 0, holdN = 0, iSeen = 0; // fresh current samples before iFloor applies after a turn-on
-        uint8_t why = 0; // toggle trip: 1 floor, 2 D Vin below Vout, 3 no-battery current, 4 Vin rose
+        uint8_t why = 0; // toggle trip: 1 floor, 2 D Vin below Vout, 3 no-battery current, 4 Vin rose; 5 above iMax
     } bfTest;
 
     time_us lastUs = 0;

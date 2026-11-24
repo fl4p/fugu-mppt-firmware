@@ -39,7 +39,7 @@ struct {
     // sums, smallest y step
     uint32_t ticket = 0, t0 = 0, t1 = 0, dwell = 0, tickMs = 0;
     OpMode savedMode = OpMode::Mppt;
-    uint16_t savedManual = 0, d = 0, dCap = 0, bump = 0, dLive = 0; // dLive: MPPT duty at the take-over
+    uint16_t savedManual = 0, d = 0, dCap = 0, dMax = 0, bump = 0, dLive = 0; // dLive: MPPT duty at the take-over
     const char *why = nullptr;
     Res res[2];
 } s;
@@ -64,6 +64,7 @@ std::atomic<bool> abortReq{false};
 uint8_t seen = 0; // selftestUrgent: latch bits last looked at
 
 const char *const kName[2] = {"blocks", "conducts"};
+const char *const kAboveEnv = "forward current above the search limit";
 const char *name() { return s.tog ? "toggle" : kName[s.phase]; }
 constexpr uint8_t TogN = 3;
 constexpr uint32_t RecentS = 36u * 3600;
@@ -205,6 +206,7 @@ void startPhase(uint32_t now) {
     if (const char *r = voltRefusal()) return abortRun(r, now);
     auto &b = mppt.bfTest;
     b.iMin = INFINITY, b.i = b.vin = b.vout = b.d = NAN;
+    b.iMax = INFINITY, b.why = 0;
     b.tripped.store(false);
     if (!s.phase) {
         mppt.bflow.lockOff.fetch_or(BackflowDriver::LockSelftest);
@@ -214,16 +216,23 @@ void startPhase(uint32_t now) {
     s.st = St::BfOff, s.t0 = now;
 }
 
-// diode emulation from below D = M up to CCM, at most to a provably forward duty
+// diode emulation from below D = M up to CCM, at most to a provably forward duty. Switch on: up to the live duty,
+// then (conducts) 1/8 further while the current stays in the search envelope: the DCM exit needs more current than
+// the live point held CCM with.
 void startRamp(uint32_t now) {
     const float m = sensors.Vout->ewm.avg.get() / sensors.Vin->ewm.avg.get(), t = converter.periodCounts();
     s.dCap = (uint16_t) std::min<float>(converter.pwmCtrlMax, std::ceil((m * 1.0202f + .01f) * t));
-    if (s.phase || s.tog) s.dCap = std::max(s.dCap, s.dLive); // switch on: up to the live point's CCM
+    if (s.phase || s.tog) s.dCap = std::max(s.dCap, s.dLive);
+    s.dMax = s.phase && !s.tog ? std::min<uint16_t>(converter.pwmCtrlMax, s.dCap + s.dCap / 8) : s.dCap;
     s.d = (uint16_t) std::min<float>(s.dCap, m * .97f * t);
     s.dwell = constrain((uint32_t) (mppt.powerSettleMs() / 4), 20u, 500u);
     mppt.setManualTarget(s.d);
-    s.st = St::Ramp, s.t0 = now;
+    s.st = St::Ramp, s.t0 = now, s.t1 = 0;
 }
+
+// conducts, past dCap: the forward current below the 6 A highI-bflowOpen level (the switch's body diode may carry
+// it) with 1 A margin, half the board limit and the charger's cap; the RT stops above it before the next sample
+float searchEnvA() { return std::min(5.f, std::min(.5f * mppt.limits.Iout_max, mppt.charger.Iout_max())); }
 
 // no battery: the switch off, the LS at its minimum (an asynchronous buck: no reverse path, even through a closed
 // switch). Then forced PWM up to noBatV() - 3 bumps
@@ -517,7 +526,7 @@ bool bfTestTick(uint32_t now) {
             else if (now - s.t0 > 5000) abortRun(converter.disabled() ? "start refused" : "ramp timed out", now);
             break;
         case St::Seek:
-            if (converter.disabled()) abortRun("protection", now);
+            if (converter.disabled()) abortRun(b.why == 5 ? kAboveEnv : "protection", now);
             else if (s.noBat && !s.fp) nbProbe(now);
             else if (now - s.t0 >= s.dwell && converter.getCtrlOnPwmCnt() == s.d) {
                 s.t0 = now;
@@ -537,11 +546,17 @@ bool bfTestTick(uint32_t now) {
                     else engage(now);
                 } else if (s.d < s.dCap) mppt.setManualTarget(++s.d);
                 else if (s.tog && ccm && i >= .5f) s.st = St::Settle;
-                else abortRun("no CCM forward current at the duty cap", now);
+                else if (s.d < s.dMax) {
+                    if (!s.t1) s.t1 = now, b.iMax = searchEnvA();
+                    if (const char *r = voltRefusal()) abortRun(r, now);
+                    else if (!(i <= b.iMax)) abortRun(kAboveEnv, now);
+                    else if (now - s.t1 > 60000) abortRun("CCM search timed out", now);
+                    else mppt.setManualTarget(++s.d);
+                } else abortRun("no CCM forward current at the duty cap", now);
             }
             break;
         case St::Settle: // gate pump of the BF, ADC filters
-            if (converter.disabled()) abortRun("protection", now);
+            if (converter.disabled()) abortRun(b.why == 5 ? kAboveEnv : "protection", now);
             else if (now - s.t0 < 150) break;
             else if (s.noBat ? !s.fp : converter.inDCM()) abortRun(s.noBat ? "Vout not proven" : "DCM at engage", now);
             else engage(now);

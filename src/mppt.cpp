@@ -916,9 +916,15 @@ void MpptController::bfTestRt() {
     if (m & BfStop) return bfTestStopRt();
     if (m & BfToggle) return bfToggleRt(m);
     if (m & BfConducts) bflow.enable(true);
-    if (!(m & BfEngage)) return;
-    converter.setManualRect(0x7fff); // complementary LS, follows the HS count
     const float i = sensorPhysicalI->med3.get();
+    if (!(m & BfEngage)) {
+        if ((m & BfConducts) && !(i <= bfTest.iMax)) RT_COLD( // the CCM search's envelope; NaN stops too
+            bfTest.why = std::isnan(i) ? 0 : 5, bfTest.i = i;
+            bfTestStopRt();
+        );
+        return;
+    }
+    converter.setManualRect(0x7fff); // complementary LS, follows the HS count
     if (i < bfTest.iMin) bfTest.iMin = i;
     if (!(i >= ((m & BfBlocks) ? -.3f : -.5f))) { // NaN stops without a record
         if (!std::isnan(i)) {

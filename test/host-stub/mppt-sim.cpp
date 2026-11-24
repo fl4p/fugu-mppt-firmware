@@ -2384,6 +2384,10 @@ static int runHsShort(const std::string &sc) {
 // bf-daily-uni: the daily run on a one-direction sensor: toggle pass, verified, clamp not armed
 // bf-daily-then-closed: daily pass, then BF stuck closed: blocks FAIL revokes the pass, clamp disarmed
 // bf-abort: the daily run loses its sun mid-test: aborted, retried after 30 min, no spin
+// bf-flat-ccm: on request from MPPT at ~100 W on flat's plant (flat 2026-11-24): the live point holds CCM by the stay
+//   ratio, the conducts ramp leaves DCM only past the live duty. -open: BF stuck open, FAIL after that climb;
+//   -grow: the current reading grows 8 A/s during the climb, the RT stops at 5 A, aborted; -vinfall: the PV current to
+//   15 % during the climb, aborted on the Vin headroom
 static int runBfTest(const std::string &sc) {
     int f = 0;
     auto chk = [&](bool c, const char *w) { f += selftestCheck(sc, c, w); };
@@ -2536,6 +2540,62 @@ static int runBfTest(const std::string &sc) {
         }
         g_tickHook = nullptr;
         printf("== %s: blocks phase peak ewm I %.2f A\n", sc.c_str(), iMaxBlocks);
+        printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+        return f != 0;
+    }
+    if (sc.rfind("bf-flat-ccm", 0) == 0) {
+        const bool open = sc == "bf-flat-ccm-open", grow = sc == "bf-flat-ccm-grow", vinFall = sc == "bf-flat-ccm-vinfall";
+        run(60, 20);
+        static uint16_t dLive, dMax;
+        static float iSenseMax, iPlantMax, vinMin;
+        static bool fell;
+        dLive = converter.getCtrlOnPwmCnt(), dMax = 0, iSenseMax = iPlantMax = 0, vinMin = INFINITY, fell = false;
+        printf("== %s: live D %u Vin %.2f Vout %.2f Iout %.2f %s\n", sc.c_str(), dLive, sensors.Vin->ewm.avg.get(),
+               sensors.Vout->ewm.avg.get(), sensors.Iout->ewm.avg.get(), converter.inDCM() ? "DCM" : "CCM");
+        chk(!converter.inDCM() && g_app.opMode.load() == OpMode::Mppt, "live point in CCM");
+        g_iOfs = 0;
+        if (grow) g_simSenseHook = ofsHook;
+        g_tickHook = [] {
+            const uint8_t m = mppt.bfTest.mode.load();
+            if (!(m & MpptController::BfConducts) || converter.disabled()) return;
+            dMax = std::max(dMax, converter.getCtrlOnPwmCnt());
+            iSenseMax = std::max(iSenseMax, sensors.Iout->med3.get());
+            iPlantMax = std::max(iPlantMax, g_vconv.getIoutSense());
+            vinMin = std::min(vinMin, g_vconv.getVin());
+        };
+        const float isc = g_vconv.getIsc(), voc = g_vconv.getVoc();
+        chk(bfTestStart(), "armed");
+        const double t0 = tNow();
+        double tOver = -1;
+        while (bfTestBusy() && tNow() - t0 < 180) {
+            run(0.01, 0);
+            const bool over = (mppt.bfTest.mode.load() & MpptController::BfConducts) && converter.getCtrlOnPwmCnt() > dLive;
+            if (over && tOver < 0) tOver = tNow(), printf("%9.4f >>> conducts search above the live duty %u\n", tNow(), dLive);
+            if (grow && tOver >= 0 && !converter.disabled()) g_iOfs += .01f * 8.f; // 8 A/s
+            if (vinFall && tOver >= 0 && !fell) fell = true, g_vconv.setPv(isc * .15f, voc, g_vconv.getPvK());
+            if (getenv("SIM_V") && (mppt.bfTest.mode.load() & MpptController::BfConducts) && !converter.disabled())
+                printf("%9.4f bf: HS %u I %.2f/%.2f Vin %.2f Vout %.2f dcm %d\n", tNow(), converter.getCtrlOnPwmCnt(),
+                       sensors.Iout->med3.get(), sensors.Iout->ewm.avg.get(), sensors.Vin->ewm.avg.get(),
+                       sensors.Vout->ewm.avg.get(), (int) converter.inDCM());
+        }
+        g_tickHook = nullptr;
+        if (grow) g_simSenseHook = nullptr, g_iOfs = 0;
+        if (vinFall) g_vconv.setPv(isc, voc, g_vconv.getPvK());
+        run(1.1, 0);
+        printf("== %s: done after %.1f s, verdicts %c %c, conducts max D %u (live %u, +%.1f %%), sensed I max %.2f A, plant I max "
+               "%.2f A, plant Vin min %.2f V, trips %zu\n", sc.c_str(), tNow() - t0, bfTestVerdict(0) ?: '-',
+               bfTestVerdict(1) ?: '-', dMax, dLive, 100.f * ((float) dMax / dLive - 1.f), iSenseMax, iPlantMax, vinMin,
+               g_trips.size());
+        chk(!bfTestBusy() && !mppt.bfTest.mode.load() && !mppt.bflow.lockOff.load(), "finished, RT state released");
+        chk(bfTestVerdict(0) == 'P', "blocks PASS");
+        const char want1 = open ? 'F' : grow || vinFall ? 'A' : 'P';
+        chk(bfTestVerdict(1) == want1, open ? "conducts FAIL" : want1 == 'A' ? "conducts aborted" : "conducts PASS");
+        chk(iPlantMax < 5.5f, "plant forward current below the 6 A trip with margin");
+        if (grow) chk(mppt.bfTest.why == 5 && iSenseMax < 5.6f, "the RT stopped the search at the 5 A envelope");
+        run(20, 5.0);
+        chk(mppt.bfFail.load() == open, open ? "bf-fail latched" : "no bf-fail");
+        chk(g_app.opMode.load() == OpMode::Mppt && converter.disabled() == open,
+            open ? "MPPT restored, start blocked" : "MPPT restored and running");
         printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
         return f != 0;
     }
@@ -2979,7 +3039,7 @@ static int simMain(int argc, char **argv) {
     const std::string name = sc;
     if (p0) sc.resize(sc.size() - 3);
     if (sc == "rcal-flat") setenv("SIM_RING", "flat", 0), setenv("SIM_ADC_HZ", "1470", 0);
-    const bool flatTake = sc == "bf-daily-flat" || sc == "mc-flat" || sc == "mc-flat-lowf";
+    const bool flatTake = sc == "bf-daily-flat" || sc == "mc-flat" || sc == "mc-flat-lowf" || sc.rfind("bf-flat-ccm", 0) == 0;
     if (flatTake) setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
     if (sc == "rcal-pv") setenv("SIM_RING", "fry", 0);
     if (sc.rfind("wx-", 0) == 0 && sc.size() > 4 && sc.compare(sc.size() - 4, 4, "-fry") == 0)
@@ -3038,7 +3098,7 @@ static int simMain(int argc, char **argv) {
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         if (!c.empty()) setenv("SIM_CONF", c.c_str(), 1);
         ov = {{"bf_model", "1"}};
-        if (sc == "bf-open" || sc == "bf-daily-fail" || sc == "bf-uni-open") ov.push_back({"bf_stuck", "1"});
+        if (sc == "bf-open" || sc == "bf-daily-fail" || sc == "bf-uni-open" || sc == "bf-flat-ccm-open") ov.push_back({"bf_stuck", "1"});
         if (sc == "bf-closed" || sc == "bf-uni-closed" || sc == "bf-uni-offdrop" || sc == "bf-uni-soft-closed" || sc == "bf-nobat-closed")
             ov.push_back({"bf_stuck", "2"});
         if (sc.rfind("bf-uni-soft", 0) == 0) ov.push_back({"isc", "1.6"}); // the PV, not the duty, sets the current
@@ -3050,7 +3110,10 @@ static int simMain(int argc, char **argv) {
         if (sc == "bf-uni-slow") c += ",sensor.conf:lv_i_filt_len=300", setenv("SIM_CONF", c.c_str(), 1);
         // 100 kHz: CCM from ~1 A, so the 1.6 A panel engages (DCM aborts)
         if (sc.rfind("bf-uni-soft", 0) == 0) c += ",board.conf:pwm_freq=100000", setenv("SIM_CONF", c.c_str(), 1);
-        if (flatTake) ov.insert(ov.end(), {{"isc", "2.8"}, {"voc", "62"}, {"pv_k", "0.95"}, {"v_bat", "25.6"}});
+        // the switch's body diode takes 0.7 V of the drive: a bit more sun for the same live point
+        if (sc.rfind("bf-flat-ccm", 0) == 0)
+            ov.insert(ov.end(), {{"isc", sc == "bf-flat-ccm-open" ? "1.9" : "1.83"}, {"voc", "69"}, {"pv_k", "0.86"}, {"v_bat", "26.2"}});
+        else if (flatTake) ov.insert(ov.end(), {{"isc", "2.8"}, {"voc", "62"}, {"pv_k", "0.95"}, {"v_bat", "25.6"}});
         if (sc == "hs-cal") ov.insert(ov.end(), {{"hs_short", "1"}, {"isc", "1.0"}});
         if (sc.rfind("hs-dawn", 0) == 0) ov.push_back({"noise_iout", "0.04"});
     }

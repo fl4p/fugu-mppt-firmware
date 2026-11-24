@@ -272,7 +272,20 @@ The thresholds are trip levels, not bounds: one duty count moves the current by 
 path. The blocks phase engages forced PWM at once and steps down faster while the current exceeds 2 A, because the
 switch's body diode carries the forward current. It also engages at 4.5 A or at the duty cap without waiting for CCM; the 4.5 A limit stays clear of
 the 6 A `highI-bflowOpen` trip. The conducts phase engages only in CCM, after 150 ms for the switch's gate supply: in
-DCM, D × Vin is below Vout and forced PWM would pull reverse current at once. Without CCM at the duty cap it aborts.
+DCM, D × Vin is below Vout and forced PWM would pull reverse current at once.
+
+The ramp's cap is the proven-forward duty or, with the switch on, the duty the converter ran at before the test,
+whichever is higher. The conducts ramp may climb past it: leaving DCM takes more current than staying in CCM (half
+the coil ripple below 0.9 × the current instead of 1 ×), so a live point that held CCM need not reach it again after
+the restart. Above the cap, the ramp continues one count per step, at most 1/8 further, while all of these hold:
+
+- the forward current stays within the search limit: the lowest of 5 A, half of `limits.conf` `lv_i_max` and the
+  charger's current limit. 5 A keeps 1 A to the 6 A level the firmware allows through the switch's body diode. The
+  control loop checks every sample (median of 3) and stops the converter above it,
+- Vin stays at least 1.2 × Vout and 3 V above it (it falls as the duty passes the panel's maximum power point),
+- the climb takes at most 60 s.
+
+A breach aborts the run without a verdict, as does reaching 1/8 above the cap without CCM.
 
 A blocks FAIL ends the run: the conducts phase is not run on a switch that leaks backwards. The FAIL also discards the
 last blocks pass, which disarms the low-side clamp. Both are written to flash as soon as the converter has stopped.

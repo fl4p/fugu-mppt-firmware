@@ -356,7 +356,7 @@ test('backflow switch results in plain words: no verdict with an unreached phase
   assert.equal(nv.cls, 'warn');
   assert.equal(nv.text, 'No verdict: switch-on check not reached');
   assert.deepEqual([...nv.details], ['Blocks: passed (0.00 A at D 0.370, Vin 68.7 V)', 'Conducts: not reached',
-    'The converter stayed in DCM up to the duty it was running at, so the switch-on check could not start. Nothing is wrong; it usually passes at lower power or Vin.']);
+    'The converter stayed in DCM up to the highest duty the check may use, so the switch-on check could not start. Nothing is wrong; it usually passes at lower power or Vin.']);
   assert.doesNotMatch(nv.details.join(' '), /0\.00 V|D 0\.000|Vin=/, 'no zeros of a phase that never measured, no raw lines');
 
   const pp = window.parseBflow(['selftest bflow blocks: PASS I=0.40 A (min 0.05) Vin=36.10 Vout=26.80 D=0.7100 dV=1.17',
@@ -402,7 +402,7 @@ test('backflow switch card: a no-verdict run shows plain phase lines, the raw li
   assert.equal(res.querySelector('strong').textContent, 'No verdict: switch-on check not reached');
   assert.match(res.textContent, /Blocks: passed \(0\.00 A at D 0\.370, Vin 68\.7 V\)/);
   assert.match(res.textContent, /Conducts: not reached/);
-  assert.match(res.textContent, /stayed in DCM up to the duty it was running at/);
+  assert.match(res.textContent, /stayed in DCM up to the highest duty the check may use/);
   assert.doesNotMatch(res.textContent, /ABORTED|Vin=0\.00/);
   assert.match(c.querySelector('.tst-out').textContent, /conducts: ABORTED I=0\.00 A \(min 0\.00\) Vin=0\.00/);
 });

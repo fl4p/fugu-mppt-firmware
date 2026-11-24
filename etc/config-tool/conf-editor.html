@@ -3900,7 +3900,9 @@ function parseSelftest(lines){
 
 // abortRun / s.why reasons of src/selftest/bflow_test.cpp in plain words; {c}: the check that stopped
 const BF_WHY = {
-  "no CCM forward current at the duty cap":"The converter stayed in DCM up to the duty it was running at, so {c} could not start. Nothing is wrong; it usually passes at lower power or Vin.",
+  "no CCM forward current at the duty cap":"The converter stayed in DCM up to the highest duty the check may use, so {c} could not start. Nothing is wrong; it usually passes at lower power or Vin.",
+  "forward current above the search limit":"While searching for continuous current, the forward current reached the check's limit (at most 5 A), so {c} stopped. Nothing is wrong; it usually passes at lower power or Vin.",
+  "CCM search timed out":"The search for continuous current took more than 60 s, so {c} stopped. Nothing is wrong; try again in steadier light.",
   "DCM at engage":"The converter dropped back into DCM as {c} was about to start. Nothing is wrong; it usually passes at lower power or Vin.",
   aborted:"Aborted on request.",
   protection:"A protection limit stopped the converter.",
