@@ -23,16 +23,18 @@ You can profile the ESP32 with instrumented or sampling methods. The main option
   but no hardware. The `rt-stats` command reads them a few tasks at a time with `vTaskGetInfo()`, because the other two
   hold the kernel lock for milliseconds (see
   [Kernel critical sections from core 0](real-time-latency.md#kernel-critical-sections-from-core-0)).
-* esp32-semihosting-profiler is integrated into this firmware (`WITH_SPROFILER`) and uses xtensa perfmon.
+* esp32-semihosting-profiler is integrated into this firmware (`CONFIG_FUGU_WITH_SPROFILER`) and uses xtensa perfmon.
 
 ## Profiling tools in this firmware
 
-The firmware has three built-in profiling tools:
+The firmware has four built-in profiling tools:
 
 * sprofiler (sampling), described in [esp32-semihosting-profiler](#esp32-semihosting-profiler).
+* rtprof (sampling, core 1 only), described in [rtprof](#rtprof).
 * rt-stats (sampling), in `src/etc/perf.h` and `src/cli.cpp`. The console command `rt-stats` samples the FreeRTOS
-  run-time counters over ~2 s in the console task and prints CPU% per task per core, then the longest control-loop
-  gap seen meanwhile. Use it to check whether the RT loop is
+  run-time counters over ~2 s in the console task and prints CPU% per task per core. It then prints the RT task's heap
+  operations (`rt-alloc:`, with `CONFIG_FUGU_RT_ALLOC_COUNT`), the loop-rate watchdog threshold, and the longest
+  control-loop gap seen meanwhile (`loop gap during command: max <n> us`). Use it to check whether the RT loop is
   being preempted, or which task is using most of core 0.
 * rtcount (per-section instrumentation). Wrap any RT path with `rtcount("name")`. It uses the xtensa cycle counter to
   accumulate count, min, max, and total per label. Calls exist in `mppt.cpp`, `sampling.h`, and `main.cpp`.
@@ -51,16 +53,20 @@ sdkconfig fragment. Default builds exclude the `esp32-semihosting-profiler` comp
 
 The top `CMakeLists.txt` reads this symbol before `project()` to drop the component. Run `idf.py reconfigure build` after
 you toggle it. The legacy `WITH_SPROFILER` env var is rejected. `main.cpp` guards the profiler init with
-`#ifdef WITH_SPROFILER`, and `main/CMakeLists.txt` sets the matching compile def. This mirrors the `WITH_BLE` flag
-pattern.
+`#ifdef WITH_SPROFILER`, and `main/CMakeLists.txt` sets the matching compile def.
 
-To capture a profile, create `pprof.conf`, run openocd and the monitor on the host, and then run the analysis script:
+At boot, `setup()` reads `sprofiler_hz` from [`pprof.conf`](../../reference/config/pprof.md) (0 = off, about 100–300).
+The profiler starts only if a debugger is attached at that moment; otherwise the boot log prints
+`sprofiler configured but not debugger attached`. A malformed `pprof.conf` skips the profiler and does not stop the boot.
+
+To capture a profile, create `pprof.conf`, run openocd and the monitor on the host, and then run the analysis script.
+Semihosting writes `sprof.out` to openocd's working directory, so start openocd in a scratch directory:
 
 ```
 # create /littlefs/conf/pprof.conf:
 # sprofiler_hz=100
 
-# host terminal 1:
+# host terminal 1, in a scratch directory (here data/ in the repo root):
 cd data
 openocd -f board/esp32s3-builtin.cfg
 
@@ -78,6 +84,23 @@ python3 ../components/esp32-semihosting-profiler/sprofiler.py
 
 # tune PROFILING_ITEMS_PER_BANK
 ```
+
+## rtprof
+
+rtprof is a call-stack sampler for core 1, built with `CONFIG_FUGU_WITH_RTPROF=y` (default off). A 2 kHz timer ISR on
+core 1 unwinds the interrupted stack and counts every flash-resident return address in a fixed hash table
+(`CONFIG_FUGU_RTPROF_SLOTS`, default 4096 slots of 8 bytes). It needs no debugger.
+
+The console command has three forms:
+
+* `rtprof` prints `rtprof samples=… task=… lost=… entries=… elf=…`, then the table as `rtp` lines, then `rtprof end`.
+* `rtprof clear` resets the table.
+* `rtprof all` resets it and also counts IRAM and ROM addresses, which shows where the core waits.
+
+`etc/rtprof_map.py <log> <elf>` maps a captured dump to functions. With `--lf out.lf` it writes linker mapping
+fragments that place the sampled functions in IRAM (`noflash`); `main/rt_iram.lf` was generated this way. On the
+ESP32-S3 the RT path is already in IRAM, so rtprof sees little of it. Build with the environment variable
+`FUGU_RT_FLASH=1` to keep it in flash for a first profile of the whole path.
 
 ## gprof
 

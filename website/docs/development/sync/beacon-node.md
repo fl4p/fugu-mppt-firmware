@@ -7,7 +7,7 @@ sidebar_position: 2
 
 The beacon node is a dedicated, always-on beacon source for [beacon-sync.md](beacon-sync.md).
 Its hardware TBTT beacons are the shared timebase that the converters' `bsync` service locks
-to. The node is a minimal ESP-IDF softAP of ~160 LOC, with no Arduino and no fugu deps.
+to. The node is a minimal ESP-IDF softAP of about 120 lines of C, with no Arduino and no fugu dependencies.
 
 The node replaces the household AP. Its channel is quiet, so the converters accept the full
 10/s, compared with 0.2–3/s next to a switching converter on a congested channel. AP reboots
@@ -24,17 +24,17 @@ the timestamps µs-accurate with no software in the loop, and it has two consequ
 - ESP-IDF validates `wifi_ap_config_t::beacon_interval` as ≥100 TU (102.4 ms), so 10/s is
   the ceiling unless you patch the check or poke the TBTT register directly. Neither is
   worth doing. At 10/s, stamp noise limits the loop, not the rate: slow wander sits below
-  the per-beacon fast noise (see the campaign table in beacon-sync.md).
+  the per-beacon fast noise (see [Oscilloscope results](beacon-sync.md#oscilloscope-results)).
 - The hardware also overwrites the timestamp *field* of raw-injected frames
   (`esp_wifi_80211_tx`). This is verified: the receiver's residual gate accepts a
   sentinel-stamped injected beacon, which a verbatim sentinel could never pass. The TX
   *timing* of injected frames is soft-scheduled, though. Common view doesn't cancel that
   queueing jitter, and the measured slow wander was ~4× worse.
 
-The firmware still contains the 20 ms injector from that experiment. Receivers filter it out
+The node firmware still runs the 20 ms injector from that experiment. Receivers filter it out
 with `bsync.conf::hw_only=1`, which tells the frames apart by length: a full-IE beacon is
->80 B and the injected skeleton is 47 B. The production config keeps `hw_only=1`, and the
-injector is slated for removal.
+>80 B and the injected skeleton is 47 B, and `hw_only` drops frames shorter than 64 B. Set
+`hw_only=1` on every receiver.
 
 ## Firmware
 
@@ -46,11 +46,13 @@ It uses these settings:
 - `esp_wifi_set_max_tx_power(84)`
 
 The firmware stops the DHCP server after the AP starts. It waits for the default `AP_START`
-handler first to avoid the stop/start race. The node emits beacons and nothing else.
+handler first to avoid the stop/start race. The node sends its softAP beacons and the injected
+frames, and no other traffic.
 
 The console runs on USB-Serial/JTAG (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` in
-sdkconfig.defaults). The boot banner prints the AP MAC (base MAC + 1), which is the `bssid`
-to configure on the converters.
+sdkconfig.defaults). After start-up the node logs `AP up: bssid=<mac> channel=13 …`. That MAC
+is the AP interface MAC (base MAC + 1) and the `bssid` to configure on the converters. Every
+2 s it also logs the injector counters (`inject: tx=… err=… lastErr=…`).
 
 The user LED (GPIO 21) is solid once the app is entered. It blinks at 0.5 Hz when the AP is
 up and the injector is running. If the LED stays dark while the port enumerates, the chip is

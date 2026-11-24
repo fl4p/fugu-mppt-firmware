@@ -3,7 +3,7 @@ title: "Wired Clock Sync (wsync)"
 sidebar_position: 3
 ---
 
-# Wired inter-chip MCPWM clock sync (`WITH_WSYNC`)
+# Wired inter-chip MCPWM clock sync (`CONFIG_FUGU_WITH_WSYNC`)
 
 Wired sync locks a follower's MCPWM timer to a leader's with nanosecond-class jitter. The beacon
 servo (`bsync`) is the microsecond-class alternative. The leader emits a pulse that its hardware
@@ -22,7 +22,7 @@ take their normal TEZ actions with the software-reserved LS→HS dead band intac
 drives only LS.
 
 The sync must not drive HS. An HS sync action would switch HS on in the same clock that switches
-LS off. The LS→HS band comes from `pwmMax -= dtTicks`, which holds only at a real period boundary,
+LS off. The LS→HS band comes from `pwmMax = periodTicks - dtLhTicks`, which holds only at a real period boundary,
 so it isn't hardware dead time. An out-of-phase edge would command zero dead time and 30–80 ns of
 cross-conduction.
 
@@ -33,17 +33,20 @@ tick of resync quantization.
 
 Wired sync uses one Kconfig option and four conf keys:
 
-- Kconfig: `CONFIG_FUGU_WITH_WSYNC=y` (depends on `FUGU_WITH_MCPWM`).
-- `board.conf::pwm_sync_pin`: the sync GPIO. On the leader it's the pulse output; on the follower
-  it's the sync input, pulled down.
+- Kconfig: `CONFIG_FUGU_WITH_WSYNC=y` (depends on `FUGU_WITH_MCPWM`; on in `sdkconfig.defaults`). It cannot be
+  combined with `CONFIG_FUGU_WITH_USB_MSC`, which also uses the USB pads. A build without it ignores `sync_role`
+  and logs `sync_role set but firmware built without FUGU_WITH_WSYNC`.
+- `board.conf::pwm_sync_pin`: the sync GPIO, required when `sync_role` is not `none`. On the leader
+  it's the pulse output; on the follower it's the sync input, pulled down. It must not be one of
+  the gate, shutdown or fault pins.
 - `converter.conf::sync_role`: `none` (default), `leader`, or `follower`. Requires
-  the MCPWM gate driver.
+  the MCPWM gate driver; another value fails converter setup.
 - `converter.conf::sync_phase_deg` (leader only): the pulse offset from the leader's own TEZ as an
-  angle, which shifts the follower's period start (`180` = interleave, `0` = in phase). The angle
-  doesn't depend on frequency, so it survives a `pwm_freq` change.
+  angle, which shifts the follower's period start (`180` = interleave, `0` = in phase), within
+  ±360. The angle doesn't depend on frequency, so it survives a `pwm_freq` change.
 - `converter.conf::sync_phase_ns` (leader only): an additive trim on `sync_phase_deg` for wire and
-  receiver propagation delay. That delay is a fixed time rather than an angle, so it has its own
-  key.
+  receiver propagation delay, within ±1 period. That delay is a fixed time rather than an angle,
+  so it has its own key.
 
 A follower ignores `sync_phase_deg` and `sync_phase_ns` and logs a warning. Its reload target is
 fixed at count 0, because any value past a live comparator would re-open the skipped-event hazard
@@ -166,8 +169,7 @@ Ticked items have passed on the bench:
 
 - [x] Scope the leader pulse: ~1 µs, every period, fixed relative to the leader's HS rising edge.
 - [x] Confirm that the wire delivers: `wsync` on the follower reads the leader's rate (38.98 kHz),
-      and 0.00 kHz with the leader's `sync_role` set to `none` (the diagnostic has been seen to
-      fire).
+      and 0.00 kHz with the leader's `sync_role` set to `none`.
 - [ ] Confirm the follower locks: both switch nodes stay stationary relative to each other, with no
       beat.
 - [ ] Measure the propagation delay (leader TEZ → follower reload) and subtract it with
@@ -177,7 +179,17 @@ Ticked items have passed on the bench:
 - [ ] Inject a 1 V DC offset between the grounds: the lock doesn't change, and no DC current flows
       in the pair.
 
-`wsync` reports the running role (`wsync role=follower|leader`) before the count. A leader counts
+`wsync` counts edges on the sync pin for up to 250 ms and prints two lines:
+
+```
+wsync role=follower
+wsync edges: 9745 in 250ms (38.98 kHz)
+```
+
+A board without an edge counter (`sync_role=none`, a USB-pad fallback, or a build without wired
+sync) prints `wsync: no edge counter, mode=<mode>` instead.
+
+`wsync` reports the running role before the count. A leader counts
 its own outgoing pulse at exactly `pwm_freq`, the same as a locked follower, and `sync_role` is read
 once at boot, so the conf file can disagree with what the driver is doing. The count accumulates
 across the 16-bit PCNT wrap (`accum_count` plus a high-limit watch point), so a noise-multiplied
@@ -214,8 +226,9 @@ The probe handles two pad details:
 On the reject path, the teardown order is fixed (`stop → disable → del_channel → del_unit → pad
 enable`), so the pad never returns to the PHY while its pulls are still being changed.
 
-`wsync` reports the outcome (`mode=usb (no sync edges)`, `mode=usb (host active)`, …). Without that
-report, a USB fallback looks the same as a configured `sync_role=none`.
+`wsync` reports the outcome (`mode=usb (host active)`, `mode=usb (no sync edges)`, or
+`mode=usb (sync rate/spacing bad)`). Without that report, a USB fallback looks the same as a
+configured `sync_role=none`.
 
 A leader on a USB pad runs only step 1. With no active host, it disables the PHY pad and drives
 its pulse on D−. With a host, it keeps USB and runs unsynced. A leader has nothing to qualify, so it
@@ -243,8 +256,9 @@ skips only the USB host pre-check and runs the probe anyway. A leader takes the 
 unconditionally. The flag doesn't skip qualification: with `sync_role=follower` and no leader on
 the wire, the board still falls back to USB, because a follower armed against a dead
 wire takes its first arbitrary-phase sync edge while the gates are already switching, and the HS
-anomaly described above puts a double-length pulse into the half-bridge. `wsync arm off` clears a
-pending flag.
+anomaly described above puts a double-length pulse into the half-bridge. `wsync arm` replies
+`restart to apply`, and `wsync arm off` clears a pending flag. After the reboot, `wsync` marks the
+run `(armed this boot)`.
 
 The firmware reads, clears, and commits the flag in `setup()` before `converter.init()` runs. A
 crash inside the probe therefore returns the board to automatic mode instead of repeating the
@@ -252,10 +266,10 @@ forced probe on every boot. A plain power cycle also returns it to automatic mod
 `KeyValueStorage::commit()` exists for this case: `writeString()` only stages the `nvs_set_str`,
 and `esp_restart()` would discard it.
 
-The USB-pad path was bench-validated on a USB-only board on 2026-08-19: OTA over BLE,
-`pwm_sync_pin=19`, locked at 38.99–39.04 kHz across three windows against `pwm_freq=39000`, with
-no ADC errors and a steady sampler. With the pin pointed at D+ (GPIO20, not wired), `wsync`
-reported `mode=usb (no sync edges)` and the firmware restored USB.
+The USB-pad path has been validated on a USB-only board with `pwm_sync_pin=19` and `pwm_freq=39000`:
+the follower locked at 38.99–39.04 kHz across three windows, with no ADC errors and a steady sampler.
+With the pin pointed at D+ (GPIO20, not wired), `wsync` reported `mode=usb (no sync edges)` and the
+firmware restored USB.
 
 ## Switching-frequency changes
 

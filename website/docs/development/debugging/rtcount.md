@@ -13,8 +13,23 @@ Each `rtcount("<label>")` call in the loop marks the end of a labeled block. The
 the time that has passed since the previous call.
 
 The profiler keeps statistics of the elapsed time (min, max, mean). `rtcount_print(false)` displays them, and
-`rtcount_print(true)` also resets them, as the `reset-lag` console command does.
+`rtcount_print(true)` also resets them, as the `reset-lag` console command does (`reset-lag q` resets the loop-lag
+statistics without printing).
 The output is sorted by `max`, the most important statistic.
+
+The table header is `rtcount_print : (µs)`, followed by one row per label with these columns:
+
+| Column | Meaning |
+|---|---|
+| `key` | Label |
+| `num` | Number of samples |
+| `tot` | Total time, µs |
+| `mean` | Mean time, µs |
+| `max`, `maxNum` | Longest time, µs, and the sample index at which it occurred |
+| `min`, `minNum` | Shortest time, µs, and the sample index at which it occurred |
+
+Printing pauses the counters (`rtcount_en = false`) and waits 100 ms before it reads the table, so the RT loop does
+not update entries while they are sorted.
 
 Real-time performance depends on the maximum time the CPU spends executing a block. Speed profiling, by contrast,
 looks at the average or total execution time. The average gives information about the empirical distribution of
@@ -22,12 +37,10 @@ the measured execution times.
 
 To precisely profile an expression, enclose it between two `rtcount` calls:
 
-```
-
+```cpp
 rtcount("someFunc.pre");
 someFuncToMeasure();
 rtcount("someFunc");
-
 ```
 
 ## Implementation notes

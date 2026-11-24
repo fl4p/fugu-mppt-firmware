@@ -23,8 +23,11 @@ switching nodes beat against each other. Locking the clocks gives two results:
 
 ## Requirements
 
-Both methods need the MCPWM gate driver (`CONFIG_FUGU_WITH_MCPWM=y`) and
+Both methods need the MCPWM gate driver (`CONFIG_FUGU_WITH_MCPWM=y`, the default gate driver on the ESP32-S3) and
 identical `pwm_freq` on all converters. See [PWM Drivers](../../internals/pwm-drivers.md).
+
+The console command `sync on|off|forced` is unrelated: it switches synchronous rectification. The clock-sync
+diagnostics are `svc list` (bsync status) and `wsync` (wired sync).
 
 ## Methods compared
 
@@ -37,7 +40,7 @@ The following table compares the two methods.
 | Actuation | Software servo (1 Hz) trims the period by dithering it between P and P+1 | Hardware: the follower reloads its timer counter on each sync edge |
 | Relative phase | ~±1–3 µs; ±0.5 µs p2p with a dedicated beacon node | Up to one timer tick (6.25 ns) |
 | Wiring | None | AC-coupled sync wire and a GPIO per board |
-| Configuration | [`bsync.conf`](../../reference/config/bsync.md): `bssid`, `channel`, `phase_us`, `enabled` | `board.conf` `pwm_sync_pin`; `converter.conf` `sync_role`, `sync_phase_deg`, `sync_phase_ns` |
+| Configuration | [`bsync.conf`](../../reference/config/bsync.md): `bssid`, `channel`, `phase_us`, `hw_only`, `bw` (`kp`, `ki`), `enabled` | `board.conf` `pwm_sync_pin`; `converter.conf` `sync_role`, `sync_phase_deg`, `sync_phase_ns` |
 | Radio | Sniffs beacons receive-only; keeps the receiver on after `wifi off`. An associated STA link stays up and pins the channel unless `wifi off` | Not used |
 | Suited for | Frequency lock and coarse phase, no wiring | Degree-level phase, e.g. interleaved current sharing |
 

@@ -95,6 +95,7 @@ The device reports these errors:
 - `peek: invalid address '<s>'`: `strtoul` couldn't fully parse.
 - `peek: len out of range (1..256)`: `len <= 0` or `len > 256`.
 - `peek: executable region needs 4-byte aligned addr+len`: IROM/IRAM access without alignment.
+- `peek: mmio region needs 4-byte aligned addr+len`: peripheral access without alignment.
 - `peek: 0x<addr> not safely readable`: address class is unknown or mixed.
 
 All failures emit `ERR: peek …` as the command's reply marker.
@@ -154,9 +155,9 @@ sym /<regex>/
 
 - A bare pattern is a case-insensitive substring match.
 - `/.../` is a Python regex.
-- The output has one line per match, `  0x<addr> <size> <name>`, sorted largest first, then by
+- The output has one line per match, `  0x<addr> <size>  <name>`, sorted largest first, then by
   name.
-- The default limit is 40 hits. When the list is truncated, refine the pattern.
+- The default limit is 40 hits. A truncated list ends with `... <n> more (refine pattern)`.
 
 ---
 
@@ -187,8 +188,8 @@ The host reads the full byte image by issuing `peek 0x<addr+i> <n>` requests wit
 bytes and concatenating. The address range must remain readable on the device for every
 chunk, because the host does not split around unreadable holes.
 
-For a size > 4096 B, the host prints a one-line `<N> round-trips` warning before reading. There is
-no hard cap.
+For a size > 4096 B, the host prints `peek-struct: <target> is <size> B (<N> round-trips)` before
+reading. There is no hard cap.
 
 ### 4.4 Decoding rules
 
@@ -249,7 +250,8 @@ The host reports these errors:
 | `pyelftools` missing | `pyelftools missing — pip install pyelftools (or source idf-export.sh)` |
 | unknown symbol | `symbol not found: '<head>'` (or `…(base of '<dotted>')`) |
 | field not in struct | `no member '<m>' in <TypeName>` |
-| scalar/pointer target | `peek-struct: <target> is not a struct/class/union (<TypeName>); use peek <target> instead.` |
+| scalar/pointer target | ``peek-struct: <target> is not a struct/class/union (<TypeName>); use `peek <target>` instead.`` |
+| zero-size target | `peek-struct: <target> has zero size` |
 | chunked-read timeout | `peek-struct: peek '<cmd>' failed: <reply-text>` |
 
 ---
@@ -260,7 +262,8 @@ The host trusts that the local ELF matches the flashed firmware. There is no bui
 verification yet. The two diverge after a rebuild following a flash, or after an OTA from a
 different host. The addresses returned by `nm` and DWARF are then silently stale, and `peek` will
 read whatever bytes happen to live at those addresses. To spot a mismatch, inspect `uptime`, which
-prints the running app's build date and git description.
+prints the running app's version (git description) and build date. To read an older build, extract
+its ELF from the [ELF archive](index.md#elf-archive) and pass it with `--elf`.
 
 ---
 

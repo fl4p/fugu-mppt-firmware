@@ -21,7 +21,7 @@ Three supervisors on the same task detect a loop that falls behind:
 
 | Supervisor | Trips when | Action |
 |---|---|---|
-| Loop-rate watchdog (`lfWatchdog`) | Vout samples per second stay below half the nominal Vout sample rate for 3 consecutive ~3 s windows (outside calibration and manual PWM) | `Loop latency high (…), shutdown!`, `stopAndBackoff(4)` |
+| Loop-rate watchdog (`lfWatchdog`) | Vout samples per second stay below half the nominal Vout sample rate for 3 consecutive ~3 s windows while the converter is enabled (not in manual PWM, not within 2 s after a calibration) | `Loop latency high (…), shutdown!`, `stopAndBackoff(4)` |
 | ADC stall watchdog | The ADC reports an error, or no fresh sample arrived for 200 ms outside calibration | `resetPeripherals()` at most every 300 ms; `ADC stall <n> ms, shutdown` and `stopAndBackoff(16)` if the stall persists > 800 ms; system restart after 60 s |
 | No-sample check | No sample at all 20 s after start | `Never got a sample! Please check ADC`, converter disabled; system restart once uptime passes 15 min |
 
@@ -33,7 +33,8 @@ The per-sample OV/OC cutouts in `mppt.protect` are independent of these supervis
 arrives.
 
 The status line reports `lag=` in µs: the longest interval between two loop iterations while the converter was enabled,
-since the last `reset-lag` or periodic sweep.
+since the last `reset-lag` or automatic re-sweep (periodic, power-doubled, or retry). The `lag` telemetry field carries
+the same value.
 
 ## RT loop structure
 
@@ -57,7 +58,7 @@ void loopRT() {
 }
 
 void setup() {
-    xTaskCreatePinnedToCore(loopRT, "loopRt", 16384, nullptr, RT_PRIO, nullptr, RT_CORE); // RT_PRIO = 20
+    xTaskCreatePinnedToCore(loopRT, "loopRt", 8192, nullptr, RT_PRIO, nullptr, RT_CORE); // RT_PRIO = 20
     // Arduino loop() = network loop, core 0
 }
 ```
@@ -112,7 +113,8 @@ With BLE enabled, `sdkconfig.d/ble` adds `CONFIG_BT_CTRL_PINNED_TO_CORE_0=y` and
 The Wi-Fi task stays on its IDF default, core 0.
 
 `src/etc/rt_core_check.h` turns placement drift into a build error: Arduino runtime, main task, esp_timer task and ISR,
-lwIP, mDNS, default pthread core, NimBLE host, Wi-Fi, and MQTT tasks must all be off `RT_CORE`.
+lwIP, mDNS, default pthread core, NimBLE host, Wi-Fi, and MQTT tasks must all be off `RT_CORE`. A FreeRTOS timer
+service task pinned to `RT_CORE` produces a build warning.
 
 ### Why core 1
 
@@ -152,11 +154,16 @@ Two constraints apply to that install:
   `RT_CORE`, the core's single IPC worker waits on itself and `setup()` deadlocks permanently, before `loopRT` or any
   network service exists. The firmware runs the install in a short-lived task pinned to `RT_CORE` that notifies
   `setup()` when done.
-- Install with flags `0`, not `ESP_INTR_FLAG_IRAM`. `attachInterrupt()` registers arduino-esp32's
-  `__onPinInterrupt` dispatcher, which lives in flash. An IRAM service keeps firing while the flash cache is disabled
-  and then jumps into that dispatcher, which panics with `Cache disabled but cached memory region accessed`. A mock-ADC
-  configuration never attaches the interrupt and cannot reproduce this. With flags `0` the alert is masked for the
-  cache-off window. The core affinity comes from the installing task, not from the flag.
+- Install with flags `0` unless the dispatcher is in IRAM. `attachInterrupt()` registers arduino-esp32's
+  `__onPinInterrupt` dispatcher, which lives in flash by default. An IRAM service keeps firing while the flash cache is
+  disabled and then jumps into that dispatcher, which panics with `Cache disabled but cached memory region accessed`. A
+  mock-ADC configuration never attaches the interrupt and cannot reproduce this. With flags `0` the alert is masked for
+  the cache-off window. The core affinity comes from the installing task, not from the flag.
+
+`CONFIG_FUGU_GPIO_ISR_IRAM` (ESP32-S3 only, default off) installs the service with `ESP_INTR_FLAG_IRAM`, so the alerts
+and the `ina22x_ov` gate trip keep running during a cache-off flash write. It takes effect only where
+`main/rt_iram_extra.lf` places `__onPinInterrupt` in IRAM, so not with `FUGU_RT_FLASH=1`. It has not yet been tested on
+the cache-off path.
 
 A late or missed alert starves the sampler, and the loop-rate watchdog then shuts the converter down. That shutdown is
 correct. The starvation is the fault to fix.
@@ -179,11 +186,28 @@ cache, kernel spinlocks, and the heap lock.
 
 ### Flash-cache-disable windows
 
-A littlefs read or write, an NVS commit, an OTA write, or an erase disables the SPI-flash cache for its
-duration, and IDF parks the other core in IRAM while the operation runs. Only IRAM-resident code keeps running on
-core 1, which here is the continuous-ADC DMA ISR. The rest of the RT loop, including protection, stops. The INA226 path
-is entirely non-IRAM: its alert ISR is masked (flags `0`, see above) and its I2C read runs from flash, so every flash
-operation freezes the INA226 sampler for the operation's duration.
+Without flash auto-suspend, a littlefs read or write, an NVS commit, an OTA write, or an erase disables the SPI-flash
+cache for its duration, and IDF parks the other core in IRAM while the operation runs. Only IRAM-safe interrupts keep
+running on core 1, which here is the continuous-ADC DMA ISR. The rest of the RT loop, including protection, stops. The
+INA226 alert ISR is masked (flags `0`, see above), so every such flash operation freezes the INA226 sampler for the
+operation's duration. This is the behaviour on the classic ESP32, and on the ESP32-S3 while auto-suspend is not active.
+
+On the ESP32-S3 the firmware keeps the caches on during flash writes with two measures:
+
+- Flash auto-suspend (`CONFIG_SPI_FLASH_AUTO_SUSPEND` in `sdkconfig.defaults.esp32s3`): the flash chip suspends an
+  erase or program when the cache needs to read. The chip driver in `components/fugu_flash_chip` still disables the
+  caches until a boot self-test (`src/etc/flash_probe.cpp`) has verified suspend and resume on the fitted chip. A chip
+  that fails the test stays in cache-off mode.
+- RT path in IRAM: `main/rt_iram.lf` and `main/rt_iram_extra.lf` place the RT-loop functions, including the INA226
+  register reads and the I2C master transaction, in IRAM. They were generated from [rtprof](profiling.md#rtprof)
+  profiles. Building with the environment variable `FUGU_RT_FLASH=1` leaves the RT path in flash.
+
+Code or data that still lives in flash costs a slow cache miss while an erase is suspended (about 260 µs, see
+[Kernel critical sections from core 0](#kernel-critical-sections-from-core-0)).
+
+`bootinfo` reports the state in its `flash-suspend:` line: the self-test result, `-> active` or `-> caches-off`, and
+`lag flash/other <a>/<b>us`, the worst loop gap that overlapped a flash operation and the worst one otherwise. `reset-lag`
+clears both gaps.
 
 In this firmware, flash operations come from console `get-config` and `set-config`, coulomb-counter and statistics
 persistence (`/littlefs/stats`), configuration saves, NVS, and OTA.
@@ -202,7 +226,7 @@ critical section of length *S* therefore delays the next RT iteration by up to *
 `uxTaskGetSystemState()` holds that lock while it fills a record for every task, including the stack high-water
 mark, which it counts byte by byte over each task's untouched stack. That scan costs about 6–7 cycles per byte
 (about 40 ns at 160 MHz) and dominates: with about 17 tasks it held the lock for about 2 ms, and the loop gap
-rose from one sample period to 2.6 ms. The kernel is in IRAM (`CONFIG_FREERTOS_IN_IRAM`), so a flash operation
+rose from one sample period to 2.6 ms. On the ESP32-S3 the kernel is in IRAM (`CONFIG_FREERTOS_IN_IRAM` in `sdkconfig.defaults.esp32s3`), so a flash operation
 does not lengthen it; the time is the scan itself.
 
 `tasks` and `rt-stats` therefore do not call it. They walk the task lists themselves under the kernel lock
@@ -227,25 +251,28 @@ Do not add calls that hold the kernel lock for long on core 0: `uxTaskGetSystemS
 
 ### Heap-lock contention
 
-After `loggingEnableDefer()` (called just before the loop starts), `ESP_LOGx`, `UART_LOG`, and `printf_mux` on core 1
-do not write UART or USB. `enqueue_log()` (`src/logging.cpp`) formats into a heap buffer and queues it for core 0. That
-allocation (`new (std::nothrow) char[201]`, dropped on failure or when more than 200 entries are queued) takes the
-global heap lock. Core 1 waits whenever core 0 holds that lock for a long time, as in these two cases:
+Both cores share one global heap lock. A heap operation on core 1 waits whenever core 0 holds that lock for a long
+time, for example during the large Wi-Fi, lwIP and MQTT-TLS allocations at boot, or while console output is formatted
+and mirrored.
 
-- During boot, Wi-Fi, lwIP, and MQTT-TLS bring-up make large allocations. The symptom is a one-shot spike in the
-  `adc.update.handleSensorCalib` rtcount label (max 9 ms at an early `maxNum`, mean about 1 µs): the first sensor
-  calibration completes with two or three back-to-back `ESP_LOGI` calls (`src/adc/sampling.h`), each a contended
-  allocation. It does not recur once boot allocation settles.
-- Every console command logs `received serial command`, prints its response and an `OK:` marker through the console
-  mux, which allocates. This stalled the RT loop below the watchdog floor for a whole window even for commands that
-  touch neither flash nor hardware (`hostname`, `ip`, `uptime`); a discovery or health poller sending those commands
-  shut the converter down on every poll.
+Earlier firmware allocated one heap buffer per deferred log line on core 1 (`new (std::nothrow) char[201]`). That
+design showed two stalls:
+
+- During boot, a one-shot spike in the `adc.update.handleSensorCalib` rtcount label (max 9 ms at an early `maxNum`,
+  mean about 1 µs). The first sensor calibration completes with two or three back-to-back `ESP_LOGI` calls
+  (`src/adc/sampling.h`), each a contended allocation.
+- On every console command, which logs `received serial command`, prints its response and an `OK:` marker through the
+  console mux. This stalled the RT loop below the watchdog floor for a whole window even for commands that touch
+  neither flash nor hardware (`hostname`, `ip`, `uptime`), so a discovery or health poller sending those commands shut
+  the converter down on every poll.
+
+Deferred logging now uses a fixed ring and never allocates (see [Logging](logging.md#rt-log-ring)).
+`CONFIG_FUGU_RT_ALLOC_COUNT` (default on for the ESP32-S3) counts the heap operations of the RT task through heap
+hooks. `rt-stats` and `bootinfo` print them as `rt-alloc: <n> allocs, <m> frees by loopRt …`; in steady state the count
+must not grow. `CONFIG_FUGU_RT_ALLOC_TRACE` also records backtraces of the first 8 distinct allocation and free sites.
 
 The loop-rate watchdog requires three consecutive starved windows before it backs off, so a single core-0 stall cannot
-trip it. The contention itself remains.
-
-Two changes are still open: replacing the per-entry allocation with a preallocated ring, and keeping lightweight
-commands off the heavy logging path.
+trip it.
 
 Avoid logging from the RT loop in steady state, and avoid polling a converter's console.
 
@@ -257,7 +284,7 @@ The boot-log backlog and remote log sinks are described in [Logging](logging.md)
 through `vprintf_mux`, including output from system tasks.
 
 `vprintf_mux` formats into a 300-byte stack buffer and calls the sink callbacks. On the IDF Wi-Fi task, whose stack is
-3072 bytes (internal; IDF 5.5 has no `CONFIG_ESP_WIFI_TASK_STACK_SIZE`), a connect or reconnect burst through that path
+3072 bytes (set inside ESP-IDF; there is no `CONFIG_ESP_WIFI_TASK_STACK_SIZE`), a connect or reconnect burst through that path
 overflows the stack (`***ERROR*** A stack overflow in task wifi has been detected`) and the device reboot-loops
 before any network service starts. A board that never associates with
 a real access point does not reproduce it. The firmware guards against it in three places:
@@ -311,8 +338,13 @@ watchdog must never gate the operation that proves liveness.
 
 The INA226 can raise its ALERT output on bus over-voltage. Wired to the gate driver's shutdown input, it turns the
 converter off independently of the firmware, the flash cache, and core scheduling. The INA226's shortest conversion time
-is 140 µs. The INA226 has a single ALERT pin, and the INA226 backend already uses it as the conversion-ready
-interrupt, so using it for over-voltage takes that interrupt away from sampling.
+is 140 µs.
+
+The INA226 has a single ALERT pin, which the INA226 backend uses as the conversion-ready interrupt by default. Setting
+`sensor.conf::ina22x_ov` turns it into a latched bus over-voltage alert instead: its ISR forces the gates off (MCPWM gate
+driver only) and the converter backs off, and the backend polls for conversions. This firmware path still depends on
+the GPIO ISR running, so it stops during a cache-off flash write unless `CONFIG_FUGU_GPIO_ISR_IRAM` is set. See
+[sensor.conf](../../reference/config/sensor.md).
 
 ## Measuring latency
 
@@ -322,8 +354,10 @@ Each tool answers a different question about latency:
 |---|---|---|
 | `lag=` in the status line | Longest loop interval since the last `reset-lag` | [Console](../../reference/console.md) |
 | `rtcount("label")` + `reset-lag` | Which section of the RT loop is slow (count, total, mean, max, and the sample index of the max) | [rtcount](rtcount.md) |
-| `rt-stats` | CPU % per task and core over about 2 s, and the loop-rate watchdog threshold | [Profiling](profiling.md) |
+| `rt-stats` | CPU % per task and core over about 2 s, RT-task heap operations, and the loop-rate watchdog threshold | [Profiling](profiling.md) |
 | `tasks` | Task placement, priority, stack headroom | [Console](../../reference/console.md) |
+| `bootinfo` `flash-suspend:` line | Flash auto-suspend state and the worst loop gap during and outside flash operations | [Flash-cache-disable windows](#flash-cache-disable-windows) |
+| `rtprof` (`CONFIG_FUGU_WITH_RTPROF`) | Which core-1 code is sampled most often | [Profiling](profiling.md#rtprof) |
 | Sampling profiler (`CONFIG_FUGU_WITH_SPROFILER`), SystemView, gprof | Where time goes on average | [Profiling](profiling.md) |
 
 `rt-stats` and `tasks` read the task counters a few tasks at a time and print the longest loop gap seen while they
@@ -339,13 +373,14 @@ For latency, sort by `max`: the maximum execution time of a block, not its mean,
 is the sample index at which the maximum occurred, so a small `maxNum` points to start-up. A label's time is measured
 from the previous `rtcount()` call, so a stall anywhere between two labels is attributed to the second.
 
-The dumps below were committed in November 2024, taken with an earlier rtcount that printed integer microseconds and a 32-bit
+The dumps below come from an earlier firmware version (2024) whose rtcount printed integer microseconds and a 32-bit
 `tot`. The current version prints fractional microseconds and adds `min`/`minNum` columns. Several labels show maxima
-of 32–38 ms. The console excerpt comes from a mock-ADC build of the same period, whose status line printed `lag` in
-ms; it shows `lag` jumping from 0.9 ms to 34.8 ms across a sweep start that also wrote `/littlefs/stats`.
+of 32–38 ms. The console excerpt comes from a mock-ADC build of the same version, whose status line printed `lag` in
+ms; it shows `lag` jumping from 0.9 ms to 34.8 ms across a sweep start that also wrote `/littlefs/stats`. That build
+ran the RT loop from flash with caches disabled during flash writes.
 
 <details>
-<summary>Example rtcount dumps (committed November 2024)</summary>
+<summary>Example rtcount dumps (2024 firmware)</summary>
 
 ```
 rtcount_print :
@@ -447,13 +482,16 @@ Check every change that touches the RT core against these rules:
 - Pin nothing to core 1 except `loopRT` and short-lived setup tasks such as the GPIO ISR installer, and never move a
   system task there. `rt_core_check.h` must keep building.
 - Do not call `vTaskDelay()`, `yield()` or anything that blocks on I/O from `loopRT`. Block only on the ADC.
-- Do not log from the RT loop in steady state. Deferred logging still allocates on core 1.
-- Do not allocate on the RT path. `rtcount` uses a fixed table for this reason.
+- Do not log from the RT loop in steady state. Deferred lines are formatted on core 0, but a full 16-slot ring drops
+  lines.
+- Do not allocate on the RT path. `rtcount` and the log ring use fixed tables for this reason; `rt-stats` shows the
+  RT task's heap operations.
 - Install an interrupt with `ESP_INTR_FLAG_IRAM` only if the handler and everything it calls is in IRAM. Install
   flash-resident handlers with flags `0`.
 - Install interrupts that wake the RT loop from a task on `RT_CORE`, never through `esp_ipc_call_blocking()` to the
   same core.
 - Keep flash writes rare and short. Do not poll `get-config` on a converter under load.
+- Keep new RT-path code in IRAM on the ESP32-S3 (`main/rt_iram.lf`, regenerated with `etc/rtprof_map.py`).
 - Put a liveness watchdog after the operation that proves liveness, never in front of it.
 - Keep heavy log formatting off small-stack system tasks.
 - Check a change with `rtcount` maxima and `lag=`, not with means.
