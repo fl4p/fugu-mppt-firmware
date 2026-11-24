@@ -46,9 +46,9 @@ The firmware uses the following topics:
 
 | Topic                                              | Dir.      | Payload                   | Condition                          |
 |----------------------------------------------------|-----------|---------------------------|------------------------------------|
-| `pv/log/<hostname>`                                | publish   | console / log lines, QoS 0 | always while connected            |
+| `pv/log/<hostname>`                                | publish   | console and log lines, QoS 0 | always while connected            |
 | `pv/log/<hostname>/cmd`                            | subscribe | console command           | `cmd_input=1`                      |
-| `pv/dev/<hostname>`                                | publish   | `online` / `offline`, retained, QoS 1 | on connect; `offline` on a clean stop and as last will |
+| `pv/dev/<hostname>`                                | publish   | `online` or `offline`, retained, QoS 1 | on connect; `offline` on a clean stop and as last will |
 | `pv/alert/<hostname>/<source>`                     | publish   | alert JSON, retained, QoS 1 | on a state change of the source    |
 | `pv/tele/<hostname>`                               | publish   | binary telemetry, QoS 0   | while a `tele-mqtt` lease runs     |
 | `homeassistant/sensor/<device-id>-power/config`    | publish   | HA discovery JSON, retained, QoS 0 | `CONFIG_FUGU_WITH_HA`: on connect, then every 1000 state updates |
@@ -75,17 +75,19 @@ device at once, including quiet ones.
 
 Each alert source has its own retained topic `pv/alert/<hostname>/<source>`, so a subscriber sees the
 current state of every source after its own restart, and one source clearing doesn't hide another.
-The payload is
+The payload looks like this:
 
 ```json
 {"lvl":"warn","msg":"Pw 2.6W dR 4.3mOhm (fast)","t":1794490551}
 ```
 
-with `lvl` one of `ok`, `warn`, `derate`, `trip` and `unverified`, a short human-readable `msg`, and
-`t` the device's Unix time (seconds since boot until the clock is set). `ok` clears the alert;
-`unverified` means the source has no data to judge, which is not `ok`. The
-firmware publishes on a change of the level and once after boot, logs the same line, and republishes
-every source after an MQTT reconnect. A state change while MQTT is down is published once it is up.
+- `lvl` is one of `ok`, `warn`, `derate`, `trip` and `unverified`. `ok` clears the alert; `unverified` means the
+  source has no data to judge, which is not `ok`.
+- `msg` is a short human-readable message.
+- `t` is the device's Unix time (seconds since boot until the clock is set).
+
+The firmware publishes on a change of the level and once after boot, logs the same line, and republishes every
+source after an MQTT reconnect. A state change while MQTT is down is published once it is up.
 
 | Source | Levels | Meaning |
 |--------|--------|---------|
@@ -113,11 +115,12 @@ Use broker authentication and ACLs.
 ## Telemetry stream
 
 With the build option `CONFIG_FUGU_WITH_TELE_MQTT`, the `tele-mqtt <seconds>` console command leases a
-telemetry stream on `pv/tele/<hostname>` for up to 3600 s. Each message is `<cid><payload>`, byte-identical to one
-UDP telemetry datagram of the binary wire: `cid` is `0` (uncompressed), and the payload is a sequence of
-length-prefixed `sym_line_protocol` frames (symbol table and data points). The firmware batches points for up to
-0.5 s or 1 KB per message. A repeated `tele-mqtt <seconds>` renews the lease to that many seconds from now, `tele-mqtt 0` ends it,
-and the stream also ends when the `mqtt` service stops.
+telemetry stream on `pv/tele/<hostname>` for up to 3600 s. A repeated `tele-mqtt <seconds>` renews the lease to that
+many seconds from now, `tele-mqtt 0` ends it, and the stream also ends when the `mqtt` service stops.
+
+Each message is `<cid><payload>`, byte-identical to one UDP telemetry datagram of the binary wire: `cid` is `0`
+(uncompressed), and the payload is a sequence of length-prefixed `sym_line_protocol` frames (symbol table and data
+points). The firmware batches points for up to 0.5 s or 1 KB per message.
 
 The lease needs a set clock, a connected broker, the binary wire if the UDP telemetry service is running
 (`tele.conf binary=1`), and 16 KB of free heap. The stream switches the telemetry wire to binary while it runs.
@@ -149,7 +152,7 @@ config payload mostly uses abbreviated keys, with `~` (`homeassistant/sensor/<de
 
 The state payload is the smoothed converter power as plain text, with 3 decimals (0 decimals above 999 W).
 
-The firmware publishes no state while a global sweep runs, so the entity can expire (`exp_aft`) during a sweep
+While a global sweep runs, the firmware publishes no state, so the entity can expire (`exp_aft`) during a sweep
 longer than 30 s.
 
 ## BMS inputs

@@ -65,8 +65,8 @@ The `fugu1` folders differ as follows:
 - `fugu_int_adc` replaces the ADS1015 with the ESP32's internal ADC. Wiring is in
   [Internal ADC](internal-adc.md). Its `charger.conf`, `coil.conf` and `converter.conf` are those of `fugu1_esp32`.
 
-None of the `fugu1` folders sets `charger.conf::vout_max`, because it depends on the pack. Set it before the first
-start, otherwise setup fails and the converter stays off.
+Set `charger.conf::vout_max` before the first start. The `fugu1` folders leave it unset because it depends on the
+pack, and without it setup fails and the converter stays off.
 
 ### Solar boost
 
@@ -92,9 +92,7 @@ through the coil. Use this configuration only if the output is never pre-charged
 See [`converter.conf`](../../reference/config/converter.md#fpwm_gate-fpwm_gate_margin).
 :::
 
-## Adding your own board
-
-To add a board, follow these steps:
+## Custom boards
 
 1. Copy the closest folder, for example `cp -r config/fmetal config/myboard`.
 2. Set `board.conf::mcu` to the chip you build for (`esp32s3` or `esp32`). A mismatch stops the converter at boot.

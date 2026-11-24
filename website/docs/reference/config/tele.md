@@ -6,9 +6,14 @@ sidebar_position: 9
 # tele.conf
 
 `tele.conf` configures the InfluxDB telemetry service `tele`, which is off by default, and the BLE telemetry
-paths. `influxdb_host` and `binary` are read when the service starts (`svc rs tele`), `ble` on each `tele-ble 1`,
-`adv_ms` when BLE starts (`svc rs ble`), and `idle_interval_ms` at boot. See
-[Telemetry fields](../telemetry-fields.md) for the point contents.
+paths. See [Telemetry fields](../telemetry-fields.md) for the point contents.
+
+The keys are read at different times:
+
+- `influxdb_host` and `binary` when the service starts (`svc rs tele`)
+- `ble` on each `tele-ble 1`
+- `adv_ms` when BLE starts (`svc rs ble`)
+- `idle_interval_ms` at boot
 
 | key                | unit | type   | default | description |
 |--------------------|------|--------|---------|-------------|

@@ -20,11 +20,11 @@ The following table summarizes the firmware's features by area.
 
 | Area | What you get |
 |---|---|
-| Charging | Li-ion / LiFePO4 [charge termination](charging/termination.md), [BMS coupling](charging/bms-integration.md) over MQTT, for BMSes on BLE, CAN bus, or RS485 through a bridge |
+| Charging | Li-ion and LiFePO4 [charge termination](charging/termination.md), [BMS coupling](charging/bms-integration.md) over MQTT, for BMSes on BLE, CAN bus, or RS485 through a bridge |
 | Control | MPPT with periodic global sweep, five PD limiters (Vin, Iin, Vout, Iout, power with thermal derating), buck and boost operation, PSU mode |
 | Power stage | Synchronous buck with sensor-less [diode emulation](../internals/diode-emulation.md), LEDC or [MCPWM](../internals/pwm-drivers.md) gate driver |
-| Sensing | ADC abstraction for the [internal ADC](hardware/internal-adc.md), ADS1x15 and INA226, async sampling (< 900 µs in-out latency), [notch/median/IIR filters](../internals/signal-filters.md) |
-| Protection | Fast over-voltage / over-current shutdown, temperature derating, latency watchdog |
+| Sensing | ADC abstraction for the [internal ADC](hardware/internal-adc.md), ADS1x15 and INA226, async sampling (< 900 µs in-out latency), [notch, median and IIR filters](../internals/signal-filters.md) |
+| Protection | Fast over-voltage and over-current shutdown, temperature derating, latency watchdog |
 | Connectivity | [Console](../reference/console.md) over UART, USB, telnet, MQTT, and BLE; InfluxDB telemetry; Home Assistant; FTP |
 | Updates | [OTA over Wi-Fi](updating/ota-wifi.md) with rollback, [OTA over BLE](updating/ota-ble.md) |
 | Debugging | Coredumps with an ELF archive, real-time counters, sampling profiler, soft oscilloscope |
@@ -38,12 +38,11 @@ The firmware supports two reference boards:
 - [Original Fugu](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/) (Proteus): ADS1015 or
   internal ADC (`config/fugu1`). Its noise performance is poor, so Fugu2 is recommended.
 
-## Where to go next
-
-The following pages cover the next steps:
+## Next steps
 
 - [Getting Started](getting-started/index.mdx) covers building, flashing, and provisioning a board.
-- To tune a device, see the [configuration reference](../reference/config/index.md) and [console commands](../reference/console.md).
+- The [configuration reference](../reference/config/index.md) and [console commands](../reference/console.md) cover
+  tuning a device.
 - The [architecture overview](../internals/architecture.md) explains how the firmware works.
 
 :::caution

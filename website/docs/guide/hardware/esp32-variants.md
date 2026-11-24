@@ -11,7 +11,7 @@ target. The classic ESP32 is kept for the original Fugu hardware.
 ## Quick start
 
 To build only for the classic ESP32, you can use the default `build/` directory: `idf.py set-target esp32 && idf.py
-build`. If your shell exports `IDF_TARGET` (for example `esp32s3`), unset it first. Otherwise `set-target esp32` fails
+build`. If your shell exports `IDF_TARGET` (for example `esp32s3`), unset it first; otherwise `set-target esp32` fails
 with "not consistent with target … in the environment". `. ./idf-export.sh esp32` sources ESP-IDF with
 `IDF_TARGET=esp32` exported; without the argument it exports `esp32s3`.
 
@@ -31,8 +31,9 @@ IDF_TARGET=esp32 idf.py -B build/esp32 -D SDKCONFIG=build/esp32/sdkconfig -p $ES
 Pass the same `IDF_TARGET=esp32` prefix and `-B`/`-D SDKCONFIG=` pair to every classic-ESP32 command. The prefix
 selects the target of a new build directory, so no `set-target` is needed, and it overrides an `IDF_TARGET` your shell
 may export: ESP-IDF refuses both `-D IDF_TARGET=esp32` and an `esp32` build directory while the environment says
-`esp32s3`. Running `set-target` on a directory to
-switch it back and forth regenerates `sdkconfig` and forces a full rebuild.
+`esp32s3`.
+
+Running `set-target` on a directory to switch it back and forth regenerates `sdkconfig` and forces a full rebuild.
 
 On a blank chip, use `flash`, because `app-flash` writes no bootloader or partition table. `flash` also writes
 `config/fugu1/fugu1_esp32`, which is a real ADS1015 board configuration rather than a mock.
@@ -66,20 +67,22 @@ The following table lists where the two targets differ:
 Both targets share the feature flags in `main/Kconfig.projbuild`: BLE, networking, LEDC, and MCPWM build for both.
 The exceptions are S3 only: the USB config drive (the build stops with an error on a classic ESP32),
 `CONFIG_FUGU_GPIO_ISR_IRAM`, and RT-task heap-allocation counting (`CONFIG_FUGU_RT_ALLOC_COUNT`, on by default only on
-the S3). Both targets also share the rollback-enabled OTA scheme and the partition table for 4 MB flash: two 1.87 MB
+the S3).
+
+Both targets also share the rollback-enabled OTA scheme and the partition table for 4 MB flash: two 1.87 MB
 app slots, a 128 KB littlefs configuration partition and a 64 KB coredump partition.
 
-## Details
+## Target details
 
 ### Target check at boot
 
-The firmware compares `board.conf::mcu` with the target it was built for. On a mismatch, it logs the following line
+The firmware compares `board.conf::mcu` with the target it was built for. On a mismatch, it logs this line and doesn't start the control loop:
 
 ```
 board.conf expects MCU 'esp32s3', but target is 'esp32'
 ```
 
-and doesn't start the control loop. The console and network services stay up, so you can fix the file with
+The console and network services stay up, so you can fix the file with
 `set-config board.conf mcu esp32` and `restart`.
 
 `provision.py` catches the same mistake earlier. With `IDF_TARGET` set, it refuses a configuration whose `mcu`
@@ -116,8 +119,8 @@ USB-Serial-JTAG port whenever a USB host is connected, so a bare S3 module needs
 `CONFIG_FUGU_WITH_USB_MSC` the USB port is a CDC console instead; see [USB config drive](../usb-drive.md).
 
 :::note Known issue
-On classic ESP32 builds, serial console *input* has been observed not to work (logs appear, commands are not
-echoed). If that happens, configure Wi-Fi by adding it to `wifi.conf` in the provisioned image and use
+On classic ESP32 builds, serial console *input* has been observed to fail: logs appear, but commands are not
+echoed. If that happens, configure Wi-Fi by adding it to `wifi.conf` in the provisioned image and use
 [telnet](../connecting.md), or use BLE.
 :::
 
@@ -130,7 +133,7 @@ see [Internal ADC](internal-adc.md).
 
 ## Common scenarios
 
-### Firmware flashed, nothing starts
+### No start after flashing
 
 The usual cause is an S3 configuration provisioned on a classic ESP32, or the reverse. Check the boot log for the
 `board.conf expects MCU` line.

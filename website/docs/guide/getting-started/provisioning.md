@@ -10,6 +10,9 @@ Board-specific settings live as `.conf` files on that partition under `/littlefs
 
 ## Quick start
 
+`provision.py` needs `littlefs-python`. Install it once with `python -m pip install littlefs-python` in the exported
+ESP-IDF shell.
+
 To provision a device, set the serial port and pass a board name or a directory to `provision.py`:
 
 ```bash
@@ -25,9 +28,6 @@ partition with ESP-IDF's `parttool.py`, so the IDF environment must be exported.
 When `IDF_TARGET` is set, `provision.py` refuses a configuration whose `board.conf` `mcu` differs from it.
 `idf-export.sh` exports `IDF_TARGET=esp32s3` unless told otherwise, so provision a classic-ESP32 configuration from a
 shell sourced with `. ./idf-export.sh esp32`, or prefix the command: `IDF_TARGET=esp32 ./provision.py fugu1/fugu1_esp32`.
-
-Install `littlefs-python` once with `python -m pip install littlefs-python` in the exported
-ESP-IDF shell.
 
 ## Board configurations
 
@@ -49,7 +49,7 @@ Each folder under `config/` holds the configuration for one kind of hardware:
 
 `config/lab/` holds further bench profiles; see [Lab config profiles](../../lab/config-profiles.md).
 
-## Other ways to change the configuration
+## Other configuration methods
 
 Besides provisioning, you can change the configuration in these ways:
 
@@ -78,7 +78,7 @@ endif ()
 only.
 :::
 
-## Adding your own board
+## Custom boards
 
 1. Copy the closest folder under `config/`, for example `cp -r config/fmetal config/myboard`.
 2. Adjust pins in `board.conf`, divider ratios and channels in `sensor.conf`, limits in `limits.conf`, the
