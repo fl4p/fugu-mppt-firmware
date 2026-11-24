@@ -99,6 +99,7 @@
 //     spiky); SIM_RIPPLE_DRIFT=dHz,period swings its frequency +-dHz with that period [s] (off-grid inverter)
 //   despike: SIM_CONF=sensor.conf:despike=8 (fry/flat run 8; the sim default is the conf default 0)
 //   SIM_T=600 wx run length [s], SIM_TR=5 wx trace interval [s], SIM_V=1 firmware log in wx/shade runs
+//   SIM_KEEP_FS=1 keeps the temp littlefs dir (/tmp/mppt-sim-XXXXXX), removed at exit otherwise
 //   SIM_FINE=t0,t1 /tmp/mppt-sim c              # per-tick sensor trace between t0 and t1 [s]
 //   SIM_TTRACE=t0,t1 /tmp/mppt-sim wx-dusk      # one line per tracker decision (duty, Vin, P, direction, LS) in t0..t1
 //   SIM_PDUMP=<file>  per RT tick float32 t, Iout ewm, Vout ewm, HS count, slow mode, PV power; SIM_HOLD=t: wx runs hold the duty from t [s]
@@ -173,6 +174,7 @@
 //
 #include <algorithm>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -679,10 +681,24 @@ static void writeConf(const std::string &dir, const char *file,
     fclose(f);
 }
 
+// The temp littlefs is removed at exit (also on SIGINT/SIGTERM/SIGHUP); SIM_KEEP_FS=1 keeps it.
+static void simFsRemove() {
+    std::error_code ec;
+    if (!g_simFsRoot.empty()) std::filesystem::remove_all(g_simFsRoot, ec);
+}
+
+static void simFsSignal(int sig) { exit(128 + sig); }
+
 static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOverrides, bool paranoia0) {
     namespace fs = std::filesystem;
     char tmpl[] = "/tmp/mppt-sim-XXXXXX";
     g_simFsRoot = mkdtemp(tmpl);
+    if (!getenv("SIM_KEEP_FS")) {
+        atexit(simFsRemove);
+        for (int sig: {SIGINT, SIGTERM, SIGHUP}) signal(sig, simFsSignal);
+    }
+    printf("# littlefs %s%s\n", g_simFsRoot.c_str(), getenv("SIM_KEEP_FS") ? " (kept)" : "");
+    fflush(stdout);
     std::string confDir = g_simFsRoot + "/littlefs/conf";
     fs::create_directories(confDir);
     std::string src = std::string(SIM_REPO_ROOT) + "/config/lab/vconv_mock/conf";
