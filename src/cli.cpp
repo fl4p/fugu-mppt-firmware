@@ -739,6 +739,7 @@ static void cmdBootinfo(cmd *) {
         default: rs = "UNKNOWN"; break;
     }
     UART_LOG("reset reason: %s", rs);
+    UART_LOG("setup: %s%s", g_app.setupErr ? "FAILED: " : "ok", g_app.setupErrMsg);
     const esp_partition_t *run = esp_ota_get_running_partition();
     if (run) {
         const char *ss = "n/a";
@@ -2161,6 +2162,7 @@ static const char *hsStateStr(char *b, size_t n) {
 }
 
 static void cmdStatus(cmd *) {
+    if (g_app.setupErr) UART_LOG("setup: FAILED: %s", g_app.setupErrMsg);
     auto &chg = mppt.charger;
     const auto &p = chg.params;
     auto &bs = chg.batSt;

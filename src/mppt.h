@@ -1429,7 +1429,7 @@ public:
             ESP_LOGE("mppt", "PSU request %.2f V rejected: %s (Vin %.2f V, OV %.2f V)",
                      requested, why, vin, getExplicitOvLimit());
             if (bootRequest)
-                g_app.setupErr = true;
+                g_app.setupFail("PSU boot setpoint: %s", why);
             completePsuCommand(ticket, error);
             return;
         }

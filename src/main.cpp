@@ -172,7 +172,7 @@ static ConfFile loadConfSafe(const char *path, bool fatal = true, bool noWarnIfM
         return ConfFile{path, noWarnIfMissing};
     } catch (const std::exception &e) {
         logConfErr(path, e);
-        if (fatal) g_app.setupErr = true;
+        if (fatal) g_app.setupFail("%s: %s", strrchr(path, '/') + 1, e.what());
         return ConfFile{};
     }
 }
@@ -197,14 +197,14 @@ static void setupI2C(const ConfFile &boardConf, bool &noI2C) {
                     assertPinState(i2c_sda, true, "i2c_sda(scl_short)");
                 } catch (const std::exception &e) {
                     ESP_LOGE("main", "error %s", e.what());
-                    g_app.setupErr = true;
+                    g_app.setupFail("%s", e.what());
                 }
             ESP_LOGI("main", "i2c pins SDA=%hi SCL=%hi freq=%lu", i2c_sda, boardConf.getByte("i2c_scl"), i2c_freq);
             bool wireOk = false; // I2C interrupt on the RT core, see setupSensors()
             runOnCore(RT_CORE, [&] { wireOk = Wire.begin(i2c_sda, (uint8_t) boardConf.getLong("i2c_scl"), i2c_freq); });
             if (!wireOk) {
                 ESP_LOGE("main", "Failed to initialize Wire");
-                g_app.setupErr = true;
+                g_app.setupFail("I2C init failed");
             }
         } else {
             ESP_LOGI("main", "no i2c_sda pin set");
@@ -222,7 +222,7 @@ static void setupI2C(const ConfFile &boardConf, bool &noI2C) {
         }
     } catch (const std::exception &ex) {
         ESP_LOGE("main", "error %s", ex.what());
-        g_app.setupErr = true;
+        g_app.setupFail("%s", ex.what());
     }
 }
 
@@ -321,7 +321,7 @@ static void setupConverterAndMppt(const ConfFile &boardConf, const Limits &lim, 
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error during sensor/converter/tracker setup: %s", er.what());
         adcSampler.adcStates.clear();
-        g_app.setupErr = true;
+        g_app.setupFail("%s", er.what());
         if (!noI2C) scan_i2c();
     }
 }
@@ -582,7 +582,7 @@ __attribute__((cold)) void setup() {
 
     if (!mountLFS()) {
         ESP_LOGE("main", "Error mounting LittleFS partition!");
-        g_app.setupErr = true;
+        g_app.setupFail("LittleFS mount failed");
     } else if (!confDropStaging("/littlefs/conf")) {
         ESP_LOGE("main", "stale conf stage left in /littlefs/conf");
     }
@@ -627,7 +627,7 @@ __attribute__((cold)) void setup() {
     auto mcuStr = boardConf.getString("mcu", "");
     if (mcuStr != CONFIG_IDF_TARGET) {
         ESP_LOGE("main", "board.conf expects MCU '%s', but target is '%s'", mcuStr.c_str(), CONFIG_IDF_TARGET);
-        g_app.setupErr = true;
+        g_app.setupFail("board.conf mcu '%s' != " CONFIG_IDF_TARGET, mcuStr.c_str());
     }
 
     bool noI2C = true;
@@ -644,7 +644,7 @@ __attribute__((cold)) void setup() {
         limitsConf.warnUnknownKeys();
     } catch (const std::runtime_error &er) {
         logConfErr("limits.conf", er);
-        g_app.setupErr = true;
+        g_app.setupFail("limits.conf: %s", er.what());
     }
 
     wireGuardLoad();
@@ -760,7 +760,7 @@ static void loopRT(void *arg) {
         setLoopRateMin();
     } catch (const std::runtime_error &er) {
         ESP_LOGE("main", "error starting ADC sampler: %s", er.what());
-        g_app.setupErr = true; // the network loop advances the wall clock instead
+        g_app.setupFail("ADC sampler: %s", er.what()); // the network loop advances the wall clock instead
         vTaskDelete(nullptr);
     }
 
@@ -1172,7 +1172,7 @@ __attribute__((cold)) static void lfStatusLine(uint32_t nSamples, uint32_t sps, 
     };
     UART_LOG(
         "V=%4.*f/%5.*f I=%4.*f/%5.*fA %5.1fW %s℃%s℃ %2lusps %2lu㎅/s %s(H|L|Lm)=%4hu|%4hu|%4hu"
-        " st=%5s,%i lag=%lu㎲ N=%lu rssi=%hi",
+        " st=%5s,%i lag=%lu㎲ N=%lu rssi=%hi%s",
         sensors.Vin->last >= 9.55f ? 1 : 2, sensors.Vin->last,
         sensors.Vout->last >= 9.55f ? 2 : 2, sensors.Vout->last,
         sensors.Iin->ewm.avg.get() >= 9.55f ? 1 : 2, sensors.Iin->ewm.avg.get(),
@@ -1193,7 +1193,8 @@ __attribute__((cold)) static void lfStatusLine(uint32_t nSamples, uint32_t sps, 
         (int) mppt.active(),
         g_app.maxLoopLag,
         nSamples,
-        (int16_t) wifiRssi()
+        (int16_t) wifiRssi(),
+        g_app.setupErr ? " SETUP-ERR" : ""
     );
 
     // While idle in START, name the startCondition() clause that's blocking the start
@@ -1320,7 +1321,11 @@ __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
     static bool loggedConvCfg = false;
     if (!loggedConvCfg) {
         auto *mq = g_services.findByName("mqtt");
-        if (mq && mq->state() == ServiceState::Running) { loggedConvCfg = true; converter.logConfig(); }
+        if (mq && mq->state() == ServiceState::Running) {
+            loggedConvCfg = true;
+            converter.logConfig();
+            if (g_app.setupErr) ESP_LOGE("main", "setup: FAILED: %s", g_app.setupErrMsg);
+        }
     }
 
     // Print pacing stays coupled to console activity (don't scribble over what the user is typing,
@@ -1572,7 +1577,7 @@ static void idleProfileSetup(const ConfFile &boardConf) {
     const long mhz = boardConf.getLong("idle_cpu_mhz", 80);
     if (mhz && mhz != 80 && mhz != 160 && mhz != 240) {
         ESP_LOGE("main", "board.conf idle_cpu_mhz=%ld: expected 0, 80, 160 or 240", mhz);
-        g_app.setupErr = true;
+        g_app.setupFail("board.conf idle_cpu_mhz=%ld", mhz);
         return;
     }
     rtc_cpu_freq_config_t cur, idle;

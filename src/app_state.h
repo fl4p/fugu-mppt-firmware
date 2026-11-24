@@ -5,6 +5,8 @@
 // granularity already.
 
 #include <cstdint>
+#include <cstdarg>
+#include <cstdio>
 #include <atomic>
 
 #include "util.h"
@@ -27,6 +29,18 @@ struct AppState {
 #endif
     bool usbConnected = false;
     bool setupErr = false;
+    char setupErrMsg[96]{}; // first setup failure, usually the cause
+
+    // Sets setupErr; keeps the first message only.
+    __attribute__((cold, format(printf, 2, 3))) void setupFail(const char *fmt, ...) {
+        if (!setupErrMsg[0]) {
+            va_list a;
+            va_start(a, fmt);
+            vsnprintf(setupErrMsg, sizeof setupErrMsg, fmt, a);
+            va_end(a);
+        }
+        setupErr = true;
+    }
     uint16_t loopRateMin = 0;
     uint32_t maxLoopLag = 0; // peak RT-loop lag (µs), a time delta, not a timestamp
     uint32_t cmdLoopLag = 0; // peak RT-loop lag (µs) since a console command zeroed it, converter on or off

@@ -16,8 +16,9 @@ To collect the boot, status, sensor, service, and coredump information in one ca
 python3 etc/fugu_console.py -p $ESPPORT -c bootinfo -c status -c sensor -c "svc list" -c "coredump info"
 ```
 
-`bootinfo` shows the last reset reason (`PANIC`, `TASK_WDT`, `BROWNOUT`, …) and the OTA slot state. `coredump info`
-shows whether a crash dump is waiting.
+`bootinfo` shows the last reset reason (`PANIC`, `TASK_WDT`, `BROWNOUT`, …), whether setup failed and why
+(`setup: FAILED: <reason>`, see [Setup failure](../reference/console.md#setup-failure)) and the OTA slot state.
+`coredump info` shows whether a crash dump is waiting.
 
 ## ADC and control loop
 

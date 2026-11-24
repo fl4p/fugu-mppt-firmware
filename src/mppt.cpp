@@ -577,7 +577,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
         float vout = converterConf.getFloat("psu_vout", 0.0f);
         if (!requestPsuSetpoint(vout, true)) {
             ESP_LOGE("mppt", "PSU mode but psu_vout invalid (%.2f), disabling", vout);
-            g_app.setupErr = true;
+            g_app.setupFail("converter.conf psu_vout invalid");
         } else {
             ESP_LOGI("mppt", "PSU mode %.2fV queued until fresh telemetry", vout);
             psuBootQueued = true;
@@ -591,7 +591,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
         if (!queuePvCurve(isc, voc, k, true)) {
             ESP_LOGE("mppt", "PV mode but curve invalid (Isc=%.2f Voc=%.2f k=%.2f), disabling",
                      isc, voc, k);
-            g_app.setupErr = true;
+            g_app.setupFail("converter.conf pv curve invalid");
         } else {
             ESP_LOGI("mppt", "PV-sim Isc=%.2fA Voc=%.2fV k=%.2f queued until fresh telemetry",
                      isc, voc, k);
@@ -600,11 +600,11 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
 #else
     } else if (mode == "psu" || mode == "pv") {
         ESP_LOGE("mppt", "converter.conf mode=%s needs CONFIG_FUGU_WITH_PSU, disabling", mode.c_str());
-        g_app.setupErr = true;
+        g_app.setupFail("converter.conf mode=%s needs WITH_PSU", mode.c_str());
 #endif
     } else if (!mode.empty() && mode != "mppt" && !targetPwmCnt && !bootManualZero) {
         ESP_LOGE("mppt", "Unknown converter.conf mode '%s', disabling", mode.c_str());
-        g_app.setupErr = true;
+        g_app.setupFail("converter.conf mode '%s' unknown", mode.c_str());
     }
 
     psuSlewDownVps = std::max(0.1f, converterConf.getFloat("psu_slew_down", 2.0f));
