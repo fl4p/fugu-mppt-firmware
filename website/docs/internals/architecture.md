@@ -56,7 +56,7 @@ flowchart LR
    See [Protection](protection.md).
 3. **PD controllers** (`src/pd_control.h`): the smallest response wins. See [Control loop](control-loop.md).
 4. **MPP tracker** (`src/tracker.h`): global sweep, then fast and slow perturb & observe. See [MPP tracker](mppt-tracker.md).
-5. **Converter** (`src/buck.h`): computes the low-side on-time. See [Diode Emulation](diode-emulation.md) and
+5. **Converter** (`src/buck.h`): computes the low-side on-time. See [Diode emulation](diode-emulation.md) and
    [MCPWM driver](pwm-drivers.md).
 
 ## Configuration and state
@@ -103,7 +103,7 @@ The table maps source paths to their contents.
 | [MPP tracker](mppt-tracker.md) | Global sweep, perturb & observe, when the tracker sweeps |
 | [Sensors](sensors.md) | ADC backends, scaling, virtual sensors |
 | [Signal filters](signal-filters.md) | Notch, median, and EWMA filter chain |
-| [Diode Emulation](diode-emulation.md) | Low-side on-time, CCM/DCM transition |
+| [Diode emulation](diode-emulation.md) | Low-side on-time, CCM/DCM transition |
 | [MCPWM driver](pwm-drivers.md) | MCPWM synchronous-buck driver |
 | [Services](services.md) | Core-0 loop, service lifecycle, Wi-Fi and BLE |
 | [DCM coil ringing](dcm-ringing.mdx) | Switch-node ringing in discontinuous mode |

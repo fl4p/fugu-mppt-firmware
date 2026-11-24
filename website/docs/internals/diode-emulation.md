@@ -37,10 +37,10 @@ In this firmware, diode emulation is the sensor-less computation of that on-time
 CCM it is just `(1 − D)/f_sw`. In DCM it depends on the conversion ratio `M = V_o/V_i`.
 
 The alternative is a current sensor with hardware zero-cross detection (analog
-comparator into the gate driver `DIS`/`EN` pin, or fast ADC with µs-scale latency).
+comparator into the gate driver `DIS` or `EN` pin, or fast ADC with µs-scale latency).
 This board has no such sensor, so the firmware uses the sensor-less approach below.
 
-### CCM/DCM decision
+### Mode decision {#ccmdcm-decision}
 
 The converter enters DCM when half the ripple current exceeds the dc output current:
 
@@ -71,7 +71,7 @@ datasheet and a per-board geometry table. The margin is `L = L_0 · InductivityD
 with `InductivityDcBias = 0.95` (`μ/μ_i` as a fraction, i.e. a 5 % reduction, `src/buck.h`).
 The flat margin is adequate for three reasons:
 
-- The CCM/DCM boundary region is narrow in normal operation.
+- The boundary region between CCM and DCM is narrow in normal operation.
 - The saturation curve of well-chosen powder cores is flat through that region.
 - The dc margin in CCM at high power is much larger than the ripple, so a few-percent `L`
   error doesn't shift the boundary far.
@@ -198,6 +198,7 @@ $$
 with $r_{WCE}$ the window ratio from the biased `M` and $e$ = 1 % the assumed error per voltage
 reading (`VoltageMaxErr`). The first term is the time the `M` bias keeps the window early near
 `D = M`, so the budget covers a ratio error the size of the margin again; it is 0.5 µs at 39 kHz.
+
 The second term covers the ring-current shift $\sqrt{LC} = 1/(2\pi f_{ring})$, which is a fixed time
 and does not scale with the period: 0.68 µs at the lowest measured ring frequency of the boards,
 233 kHz. The firmware configuration has no ring frequency or node capacitance, so the floor is a
@@ -304,7 +305,9 @@ Both helpers locate the peak by fitting two half-parabolas that share an apex, o
 This is the shape derived above: the early side is shallow, the reverse-current side steep. The
 fit searches for the apex over the whole sweep. On the ideal model charted above (6.25 ns counts,
 default sweep of 0.5–1.4× the ideal window in 24 steps), the fit lands within one count of the
-true peak. With 1 mA of measurement noise on a 0.25 A output, the error stays around ±12 counts
+true peak.
+
+With 1 mA of measurement noise on a 0.25 A output, the error stays around ±12 counts
 and leans early, the safe side. The steep side's curvature also gives the `L` cross-check. The
 printed table shows the raw maximum next to the fitted peak; on the flat side the raw maximum
 is a poor estimate.
@@ -349,7 +352,7 @@ top of that value:
 
 | step | behaviour |
 |---|---|
-| CCM/DCM decision (`computeDCM`) | Enters DCM when `ΔI_L > 2.0·I_o`, leaves when `ΔI_L ≤ 1.8·I_o` (hysteresis). Always DCM when `I_o < 0.1 A`. Effective forced PWM overrides all of this (never DCM). |
+| mode decision (`computeDCM`) | Enters DCM when `ΔI_L > 2.0·I_o`, leaves when `ΔI_L ≤ 1.8·I_o` (hysteresis). Always DCM when `I_o < 0.1 A`. Effective forced PWM overrides all of this (never DCM). |
 | M bias | Assumes a ±1 % error on each voltage and divides `M` by `0.99/1.01`, i.e. biases it ≈ 2 % toward the early-turn-off side, then clamps it off unity (`≤ 0.99` buck, `≥ 1.01` boost). On a buck the full bias applies up to `M ≈ 0.97`; between 0.97 and 0.99 the clamp eats into it; above 0.99 the clamped `M` is *below* the true one and the LS window comes out longer than ideal (at `M = 0.995` the ratio is 0.0101 against an ideal 0.0050, ≈ 2×). A buck without a valid reading (`V_i ≤ V_o` or `V_i ≤ 0.1 V`) uses the clamp value 0.99, the shortest window. |
 | low-current cut-off | In DCM the LS ratio is set to 0 when `I_o ≤ 0.01 A` or the low-side voltage is `< 1 V`; it stays at 0 until `I_o ≥ 0.04 A` and the voltage is back at `≥ 1 V`. The offset is not applied (a positive one needs a ratio of at least 0.25, a negative one is clamped up), so the target is `pwmRectMin`. |
 | DCM LS limit (`pwmRectMax`) | `pwmCtrl·ratio + rect_offset` counts, at most `pwmMax − pwmCtrl − 1 − late/ratio`, `late` the larger of `LateDrainBudget·pwmMax` (≈ 0.0198, from `VoltageMaxErr`) and `LateDrainMinNs` = 700 ns (the drain limit near `D = M`), with first-order error-feedback dither of the rounding remainder (so the limit's time-average tracks the unrounded target). |
@@ -375,7 +378,7 @@ buck below that ratio with a start block, a `V_in` floor and a stop; see
 
 ### Cumulative decrease
 
-The CCM/DCM decision uses the filtered output current, which lags the duty. A ramp of small
+The decision between CCM and DCM uses the filtered output current, which lags the duty. A ramp of small
 steps can pull the duty below `M` while the decision still reads CCM. The complementary LS
 window then forces `V_i = V_o/D`, and once that is above the panel's open-circuit voltage the
 coil current reverses.
@@ -518,7 +521,9 @@ the ratio is at or above `M_stop`.
 Limits of the protection: the margin between `M_stop` and `M_c` is about 1 V of `V_in` at a
 27 V output. A stiff source that steps across it faster than the averaged readings follow
 (about 10 samples of the voltage filter plus 4 samples) pumps until the stop, at the
-resistive level above. A converter that leaves CCM above `M_c` (a stiff input falling while the
+resistive level above.
+
+A converter that leaves CCM above `M_c` (a stiff input falling while the
 HS runs at its maximum, which is about `1 − t_min/T`) pumps until the averaged current marks
 DCM. The bounded negative current at short HS times below the start ratio
 remains (a sweep starting from zero duty passes through it). A boost has no rect minimum
