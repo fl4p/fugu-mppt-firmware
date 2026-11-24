@@ -314,6 +314,11 @@ loops run on the BMS frames:
   resistance implied by the termination line (12.5 mΩ for 280 Ah with the
   defaults, see above).
   $K$ is 1.5 with the cell above `cv_eoc` and 0.5 below it.
+  Within 60 mV of `cv_eoc`, a cell that rose by more than 3 mV per frame on
+  two frames in a row, beyond the ohmic step of the `ibat` change (2.5 mΩ), uses
+  the voltage three frames ahead at that rise instead of the present one. The
+  polarization of a nearly full cell builds over minutes, so a cell below
+  `cv_eoc` that still rises has no room left.
 - Current loop, on each `ibat` frame: the converter's output-current limit
   moves by 0.4 × (target − `ibat`). Upward steps are at most 2 A, and the limit
   stays at most 2 A above the converter's own output current, so it does not
@@ -337,8 +342,8 @@ a target that follows the current would walk the current down to zero.
 
 ### Approach
 
-Near the top of charge the cell voltage keeps rising for tens of seconds after
-the current drops, and cell frames arrive seconds apart. A hold that starts at
+Near the top of charge the cell voltage keeps rising for minutes after the
+current drops, and cell frames arrive seconds apart. A hold that starts at
 full current overshoots `cv_eoc`. The charger therefore starts the current limit
 before the line crossing. When the highest cell comes within 30 mV of
 `cv_eoc` while the pack current is above the tail current
