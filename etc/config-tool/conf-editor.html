@@ -3742,7 +3742,7 @@ window.addEventListener("keydown", e=>{
    Tests sheet: measurements, self-tests and calibrations on the push target
    (same gating as Services), one at a time. Nothing runs or repeats on its own.
 ---------------------------------------------------------------------------- */
-const TST_T = { cmd:4000, probe:4000, settle:1200, poll:1000, cal:3000 };   // ms; cal: st=START ignored this long after the zero calibration
+const TST_T = { cmd:4000, probe:4000, settle:1200, poll:1000, cal:3000, stop:10000 };   // ms; cal: st=START ignored this long after the zero calibration; stop: ramp-down after `dc 0`
 function tstTimings(){ return TST_T; }
 function tstDefs(){ return TESTS; }
 // tstRun: the test in progress; tstHave: command names from `help` (null: unknown); tstGone: roots that
@@ -3775,10 +3775,10 @@ const TESTS = [
   { id:"coil", group:"Measurements", title:"Coil inductance (L0)", root:"measure-coil", optional:true,
     cmd:o=>"measure-coil l0"+(o.apply ? " apply" : ""), confirm:"typed", tag:"drives the half-bridge",
     what:"Measures the inductance of the power coil.",
-    needs:"Conversion stopped with “dc 0” (the firmware refuses otherwise); Vin above Vout + 1 V (sun); a build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1–1.5 min, no abort",
+    needs:"MPPT or a converter stopped with “dc 0”, not PSU/PV mode; Vin above Vout + 1 V (sun); a build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1–1.5 min, no abort",
     risk:"Drives the half-bridge in manual PWM up to 2 A output. The firmware has no abort for it.",
     opt:{ key:"apply", label:"Save L0 to coil.conf" },
-    does:o=>"The firmware sweeps the duty in manual PWM (diode emulation, up to 2 A output) for about 1–1.5 min and leaves the converter off at duty 0; “mppt” resumes tracking. It starts only after “dc 0” has stopped conversion. There is no abort command."
+    does:o=>"Charging stops (“dc 0”), then the firmware sweeps the duty in manual PWM (diode emulation, up to 2 A output) for about 1–1.5 min; afterwards MPPT resumes if it was on. There is no abort command."
       + (o.apply ? "\n\nThe result is written to coil.conf L0 (effective after the next reboot)." : ""),
     end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
 
@@ -3810,10 +3810,10 @@ const TESTS = [
   { id:"coills", group:"Calibration", title:"Low-side timing from a coil sweep", root:"measure-coil", optional:true,
     cmd:o=>"measure-coil ls"+(o.apply ? " apply" : ""), confirm:"typed", tag:"drives the half-bridge",
     what:"Finds the best low-side switch timing from a coil sweep.",
-    needs:"Conversion stopped with “dc 0” (the firmware refuses otherwise); DCM with Vin > Vout at a low duty; a build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1.5 min, no abort",
+    needs:"MPPT or a converter stopped with “dc 0”, not PSU/PV mode; DCM with Vin > Vout at a low duty; a build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1.5 min, no abort",
     risk:"Forces sync rect and the backflow switch on and sweeps the low-side window in manual PWM. The firmware has no abort for it.",
     opt:{ key:"apply", label:"Apply and save rect_offset" },
-    does:o=>"Sync rect and the backflow switch are forced on, then the firmware holds a low duty and sweeps the low-side window for about 1.5 min and leaves the converter off at duty 0; “mppt” resumes tracking. It starts only after “dc 0” has stopped conversion. There is no abort command."
+    does:o=>"Charging stops (“dc 0”), sync rect and the backflow switch are forced on, then the firmware holds a low duty and sweeps the low-side window for about 1.5 min; afterwards MPPT resumes if it was on. There is no abort command."
       + (o.apply ? "\n\nThe offset is applied at once and saved to coil.conf once the converter is off." : ""),
     end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
 ];
@@ -4262,7 +4262,15 @@ async function tstStart(id){
   if (devBusy){ tstSetMsg(`Wait for ${devBusy} to finish.`, true); return; }
   const o={...(tstOpt[id]||{})}, cmd=d.cmd(o), r=tstResult(id);
   tstLock({ id, cmd, link:t }); tstSetMsg(""); r.note=""; r.recheck=false; tstGate();
-  const end = (st, note, isErr) => { r.st=st; r.note=note||""; r.noteErr=!!isErr; r.fold = st==="done"; if (st!=="idle" || isErr) r.open=true; tstLock(null); tstGate(); };
+  let mppt=false;                                                // measure-coil stopped MPPT with `dc 0`: resume it at the end
+  const end = async (st, note, isErr) => {
+    if (mppt){
+      const m = tstTarget()===t ? await tstSend("mppt", ln=>{ tstPush(r, ln); tstPaint(id); }) : null;
+      const ok = m && (m.ok===true || /already enabled/.test(tstRefusal(m.lines, "mppt")));
+      note = [note, ok ? "Resumed MPPT." : `MPPT not resumed (${!m ? "link closed" : m.ok===false ? tstRefusal(m.lines, "mppt")||"refused" : "no reply"}): send “mppt”.`].filter(Boolean).join(" ");
+      isErr = isErr || !ok;
+    }
+    r.st=st; r.note=note||""; r.noteErr=!!isErr; r.fold = st==="done"; if (st!=="idle" || isErr) r.open=true; tstLock(null); tstGate(); };
 
   // live power and latches, for the confirm and the clear
   const pre=await tstSend("selftest");
@@ -4290,9 +4298,21 @@ async function tstStart(id){
 
   r.st="run"; r.lines=[]; r.sum=null; r.open=true; tstPaint(id);
   const onLine = ln => { tstPush(r, ln); tstPaint(id); };
-  const x=await tstSend(cmd, onLine);
-  if (x.lines.some(l=>TST_NOCMD.test(l))){ tstGone.add(d.root); end("idle"); tstSetMsg(`“${d.root}” is not in this firmware build; its tests are hidden.`, true); return; }
-  if (x.ok===false) return end("refused", `${dev} refused “${cmd}”: `+(tstRefusal(x.lines, cmd)||"no reason given"), true);
+  let x=await tstSend(cmd, onLine);
+  // measure-coil runs only from `dc 0`: stop MPPT (not PSU/PV or a manual duty), retry through the ramp-down
+  if (d.root==="measure-coil" && x.ok===false && /\bMPPT on\b/.test(tstRefusal(x.lines, cmd))){
+    mppt=true;
+    const z=await tstSend("dc 0", onLine);
+    if (z.ok!==true) return end("refused", `“dc 0” ${z.ok===false ? "refused: "+(tstRefusal(z.lines, "dc")||"no reason") : "got no reply"}; nothing was measured.`, true);
+    for (const t1=Date.now(); ; await svcSleep(TST_T.poll)){
+      x=await tstSend(cmd, onLine);
+      if (x.ok!==false || !/\bstill on\b/.test(tstRefusal(x.lines, cmd))) break;
+      if (Date.now()-t1 > TST_T.stop) return end("refused", `The converter did not stop within ${Math.round(TST_T.stop/1000)} s of “dc 0”; nothing was measured.`, true);
+    }
+  }
+  if (x.lines.some(l=>TST_NOCMD.test(l))){ tstGone.add(d.root); await end("idle"); tstSetMsg(`“${d.root}” is not in this firmware build; its tests are hidden.`, true); return; }
+  if (x.ok===false){ const why=tstRefusal(x.lines, cmd);
+    return end("refused", `${dev} refused “${cmd}”: `+(why||"no reason given")+(d.root==="measure-coil" && /PSU\/PV|manual duty/.test(why) ? " The editor stops only MPPT for this test." : ""), true); }
   if (x.ok===null){ r.recheck=!!d.recheck; return end("unknown", `No reply to “${cmd}” from ${dev}: whether it started is unknown.`, true); }
   if (!d.end){                                                   // one-shot (selftest clear)
     r.sum=tstSummary(id, x.lines);
@@ -4343,7 +4363,7 @@ async function tstStart(id){
   }
   r.sum=tstSummary(id, res, { noMpp });
   if (id==="coil"){ const c=parseCoil(res); if (c.applied) svcSyncConf("coil", "L0", c.applied); }
-  end("done", r.sum ? "" : "Run ended; the result was not recognised. See the output.", !r.sum);
+  await end("done", r.sum ? "" : "Run ended; the result was not recognised. See the output.", !r.sum);
 }
 
 async function tstAbort(id){

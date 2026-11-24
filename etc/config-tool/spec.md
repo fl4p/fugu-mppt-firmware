@@ -788,7 +788,19 @@ amber.
   (board.conf bflow_bat=0)`, nor started while one already runs.
 * **Refusal**: an `ERR` marker shows "<host> refused “<cmd>”: <reason>", the
   reason being the firmware's own line about the command (else its last
-  warning), verbatim. Nothing is retried.
+  warning), verbatim. Nothing is retried, except for `measure-coil` below.
+* **measure-coil from MPPT**: the firmware runs it only from `dc 0`. The
+  command goes out first; on the refusal "MPPT on" the editor sends `dc 0`
+  and the command again, once a `TST_T.poll` while the refusal says "still
+  on" (ramp-down), for at most `TST_T.stop` (10 s; then "did not stop within
+  10 s … nothing was measured"). A refused or unanswered `dc 0` ends the run.
+  Once `dc 0` went out, every ending (result, failure, refusal, timeout, lost
+  link) sends `mppt` and appends "Resumed MPPT." ("MPPT already enabled"
+  counts) or, amber, "MPPT not resumed (<why>): send “mppt”." to the note.
+  The device lock is held from the first command to `mppt`. Any other
+  refusal (PSU/PV mode, a manual duty, …) ends the run with the firmware's
+  reason plus "The editor stops only MPPT for this test." where it names the
+  mode; nothing is stopped.
 * **Following a run**: every line goes to the card; the run ends on the line in
   the table, then after 1.2 s the "Then" command gives the result. If the link
   closes (polled every second) or the time runs out, the state is **unknown**:

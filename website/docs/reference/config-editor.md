@@ -473,8 +473,11 @@ undervoltage, **Run sweep** says so before sending anything, with the firmware's
 voltages, and **OK** queues the sweep anyway. A queued run ends at once with "Sweep queued: the converter can't start
 (…)" instead of waiting for a result; the curve is there after the sweep has run (**Read last sweep**).
 
-The two `measure-coil` entries start only after `dc 0` has stopped conversion; otherwise the firmware refuses and the
-entry shows its reason. They leave the converter at duty 0 in manual PWM, and `mppt` resumes tracking.
+The firmware runs `measure-coil` only from a converter stopped with `dc 0`. When the device is tracking (MPPT),
+**Run** on the two coil entries stops charging with `dc 0`, retries while the converter ramps down (up to 10 s), runs
+the measurement and sends `mppt` afterwards in every outcome: a result, a failure, a timeout or a lost link. The entry
+ends with "Resumed MPPT." or, in amber, why MPPT was not resumed. A device already at `dc 0` is measured as it is and
+left there. In PSU/PV mode or at a manual duty the editor stops nothing: the entry shows the firmware's refusal.
 
 `measure-coil l0 apply` writes `L0` to `coil.conf`, and the loaded `coil.conf` follows. rect-cal and
 `measure-coil ls apply` save `rect_offset_ns` only once the converter has been off for a while, so read the device

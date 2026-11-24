@@ -593,6 +593,80 @@ test('timeout: state unknown, Check reads selftest and reports it without claimi
   assert.match(resText(window, 'bflow'), /still running on the device/);
 });
 
+// measure-coil runs only from `dc 0`: Run stops MPPT itself, retries through the ramp-down and resumes MPPT in every outcome
+async function coilRun(opts, id = 'coil') {
+  const { window, dev } = await connected({ coil: true, ...opts });
+  Object.assign(window.tstTimings(), { stop: 100 });
+  await openSheet(window); await idle(window);
+  window.prompt = () => 'fry';
+  const busy = [], h = dev.handler;
+  const from = dev.sent.length;
+  dev.handler = (cmd, s) => { busy.push(window.tstBusyNow()); return h(cmd, s); };
+  await window.tstStart(id);
+  const c = card(window, id);
+  return { window, dev, sent: dev.sent.slice(from), busy, note: c.querySelector('.tst-res .note') };
+}
+
+test('measure-coil from MPPT: dc 0, measure, mppt under one lock; Resumed MPPT in the result', async () => {
+  const { window, sent, busy, note } = await coilRun({});
+  assert.deepEqual(sent, ['selftest', 'measure-coil l0', 'dc 0', 'measure-coil l0', 'mppt']);
+  assert.ok(busy.every(Boolean), 'the device lock is held for every command');
+  assert.equal(window.tstBusyNow(), false);
+  assert.match(resText(window, 'coil'), /L = 50\.34 µH/);
+  assert.equal(note.textContent, 'Resumed MPPT.');
+  assert.ok(!note.classList.contains('err'));
+  const ls = await coilRun({}, 'coills');
+  assert.deepEqual(ls.sent, ['selftest', 'measure-coil ls', 'dc 0', 'measure-coil ls', 'mppt']);
+});
+
+test('measure-coil already at dc 0: no dc 0, no mppt afterwards', async () => {
+  const { window, sent, note } = await coilRun({ op: 'manu' });
+  assert.deepEqual(sent, ['selftest', 'measure-coil l0']);
+  assert.match(resText(window, 'coil'), /L = 50\.34 µH/);
+  assert.equal(note, null);
+});
+
+test('measure-coil retries through the ramp-down; a converter that does not stop ends the run and resumes MPPT', async () => {
+  let { window, sent, note } = await coilRun({ rampDown: 2 });
+  assert.deepEqual(sent, ['selftest', 'measure-coil l0', 'dc 0', 'measure-coil l0', 'measure-coil l0', 'measure-coil l0', 'mppt']);
+  assert.match(resText(window, 'coil'), /L = 50\.34 µH/);
+  ({ window, sent, note } = await coilRun({ rampDown: 1e9 }));
+  assert.ok(!sent.slice(3, -1).some(c => c !== 'measure-coil l0'));
+  assert.equal(sent.at(-1), 'mppt');
+  assert.match(note.textContent, /did not stop within 0 s of “dc 0”; nothing was measured\. Resumed MPPT\./);
+  assert.ok(note.classList.contains('err'));
+});
+
+test('measure-coil: a failed measurement, a refused dc 0 and a timeout still send mppt; a refused resume is loud', async () => {
+  let { window, sent, note } = await coilRun({ coilFail: true });
+  assert.equal(sent.at(-1), 'mppt');
+  assert.match(resText(window, 'coil'), /No result: need Vin>Vout\+1/);
+  assert.equal(note.textContent, 'Resumed MPPT.');
+  ({ window, sent, note } = await coilRun({ dcRefuse: 'selftest running (mppt aborts it)' }));
+  assert.deepEqual(sent, ['selftest', 'measure-coil l0', 'dc 0', 'mppt']);
+  assert.match(note.textContent, /“dc 0” refused: dc: selftest running.*nothing was measured\. Resumed MPPT\./);
+  const t = await connected({ coil: true, coilNeverEnds: true, measuring: true });
+  window = t.window;
+  window.tstDefs().find(d => d.id === 'coil').timeout = 60;
+  await openSheet(window); await idle(window);
+  window.prompt = () => 'fry';
+  await window.tstStart('coil');
+  assert.equal(t.dev.sent.at(-1), 'mppt');
+  note = card(window, 'coil').querySelector('.tst-res .note');
+  assert.match(note.textContent, /No end of the test.*MPPT not resumed \(mppt: refused, measure-coil running\): send “mppt”\./);
+  assert.ok(note.classList.contains('err'));
+});
+
+test('measure-coil in PSU/PV mode or at a manual duty: the firmware refusal, nothing stopped', async () => {
+  for (const op of ['psu', 'duty']) {
+    const { window, sent, note } = await coilRun({ op });
+    assert.deepEqual(sent, ['selftest', 'measure-coil l0'], op);
+    assert.match(note.textContent, op === 'psu' ? /refused “measure-coil l0”: measure-coil: PSU\/PV mode on.*The editor stops only MPPT for this test\.$/
+      : /manual duty 812 set.*The editor stops only MPPT/);
+    assert.ok(note.classList.contains('err'));
+  }
+});
+
 test('measure-coil link check after a timeout uses the status line', async () => {
   const { window } = await connected({ coil: true, coilNeverEnds: true, measuring: true });
   window.tstDefs().find(d => d.id === 'coil').timeout = 60;

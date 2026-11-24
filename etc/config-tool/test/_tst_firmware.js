@@ -29,7 +29,8 @@ const SWEEP = sweepReply();
 function firmware(host, opts = {}) {
   const sent = [];
   const st = { hsLatched: false, bfLatched: false, bflowRunning: false, bfAbort: null, power: opts.power ?? 115.5,
-    lastBf: [], rect: { state: 'idle', unsaved: 0, ct: 20, ns: '500' }, ...opts.state };
+    lastBf: [], rect: { state: 'idle', unsaved: 0, ct: 20, ns: '500' },
+    op: opts.op ?? 'mppt', ramp: opts.rampDown ?? 0, measuring: false, ...opts.state };   // op: mppt | manu | psu | duty (manual duty set)
   let say = () => {};
   const later = (ms, fn) => setTimeout(fn, ms);
   const statusLines = () => {
@@ -52,7 +53,7 @@ function firmware(host, opts = {}) {
       return s('OK: get-config ' + g[1]);
     }
     const root = cmd.split(' ')[0];
-    if ((opts.absent || []).includes(root) || ![...HELP.map(h => h.split(/[ ,]/)[0]), 'measure-coil', 'svc'].includes(root)
+    if ((opts.absent || []).includes(root) || ![...HELP.map(h => h.split(/[ ,]/)[0]), 'measure-coil', 'svc', 'dc'].includes(root)
         || (root === 'measure-coil' && !opts.coil)) {
       s(`\x1b[0;31mE (5002) main: Command not found at '${cmd}'\x1b[0m`); return s('ERR: ' + cmd);
     }
@@ -142,6 +143,11 @@ function firmware(host, opts = {}) {
     if (root === 'measure-coil') {
       const a = cmd.split(' ').slice(1);
       if (!a.length) return err('measure-coil: expected l0|ls [args]');
+      if (st.op === 'psu') return err('measure-coil: PSU/PV mode on, stop conversion first (dc 0)');
+      if (st.op === 'mppt') return err('measure-coil: MPPT on, stop conversion first (dc 0)');
+      if (st.op === 'duty') return err('measure-coil: manual duty 812 set, stop conversion first (dc 0)');
+      if (st.ramp-- > 0) return err('measure-coil: converter still on, wait for the ramp-down');
+      st.measuring = true;
       s('OK: ' + cmd);
       const apply = a[a.length - 1] === 'apply';
       const lines = opts.coilFail ? ['measure-coil: need Vin>Vout+1 (Vin=12.00 Vout=26.80)']
@@ -155,8 +161,17 @@ function firmware(host, opts = {}) {
           '  ideal LS 139  auto LS 130  offset peak-ideal +12 ct (+3.0% HS)  peak-auto +21 ct', '  L (peak curvature) = 49.8 uH (cross-check)',
           ...(apply ? ['  applied rect_offset 300 ns (0 ct, mcpwm); saved to coil.conf once the converter is off'] : [])];
       lines.forEach((x, i) => later(10 + 5 * i, () => s(x)));
-      if (!opts.coilNeverEnds) later(20 + 5 * lines.length, () => s('measure-coil: done, manual PWM at duty 0 (\'mppt\' resumes tracking)'));
+      if (!opts.coilNeverEnds) later(20 + 5 * lines.length, () => { st.measuring = false; s('measure-coil: done, manual PWM at duty 0 (\'mppt\' resumes tracking)'); });
       return;
+    }
+    if (cmd === 'dc 0') {
+      if (opts.dcRefuse) return err('dc: ' + opts.dcRefuse);
+      st.op = 'manu'; s(I('main', 'Switched to manual PWM')); return ok();
+    }
+    if (cmd === 'mppt') {
+      if (st.measuring) return err('mppt: refused, measure-coil running');
+      if (st.op === 'mppt') return err('MPPT already enabled');
+      st.op = 'mppt'; s(I('main', 'MPPT re-enabled')); return ok();
     }
     if (root === 'svc') { s('NAME       STATE    LOG    ENABLED  DETAIL'); return ok(); }
     return err('unhandled in fake: ' + cmd);
