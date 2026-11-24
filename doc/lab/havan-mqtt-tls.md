@@ -58,7 +58,7 @@ Over Tailscale: `http://100.64.0.10/local/fugu/dashboard.html?mqtt=ws://100.64.0
 An http page can open `ws://`, so the 8884 wss listener stays unused. Web Bluetooth is unavailable on an http page
 (secure context required); BLE cards need the hosted https copy or `localhost`. Re-copy after dashboard changes.
 
-## Topic ACLs (tried 2026-11-24, not in place)
+## Topic ACLs (in place since 2026-11-24, patched add-on image)
 
 The broker enforces no topic ACLs. Every login can publish anywhere, including the BMS topics
 (`bat_caravan/#`, `ant24/#`) the chargers read, and `pv/log/<host>/cmd`, which is a trusted console.
@@ -99,11 +99,22 @@ influxdb-udp-relay, havan's `mqtt_console.py` logger, browser dashboards, host t
 lora-bridge; `addons` = batmon (publishes `bat_caravan/#`, `ant24/#`); `homeassistant` = HA core.
 
 Upstream: home-assistant/app-mosquitto issue #5 (open), fix in PR #6 (go-auth returns
-`MOSQ_ERR_PLUGIN_IGNORE` on a grant, so the broker's `acl_file` still decides; two independent
-confirmations, waiting for review as of 2026-11-24). Once released, the add-on's documented recipe
-works: `/share/mosquitto/acl.conf` with `acl_file /share/mosquitto/accesscontrollist`, the rules
-above in mosquitto syntax (`topic read #` is fine there). Test with the shadow-broker method
-first, then restart under the havan lock.
+`MOSQ_ERR_PLUGIN_IGNORE` on a grant, so the broker's `acl_file` still decides).
+
+Deployed 2026-11-24 13:40 UTC: the 7.1.3 tag plus the PR #6 diff, built on havan
+(`/tmp/mq-build`, `docker build` with the original image's labels) as
+`local/app-mosquitto:7.1.3-pr6` and tagged `ghcr.io/home-assistant/app-mosquitto:7.1.3`, so the
+Supervisor starts it under the same slug, data and integration. The original image is kept as
+`local/app-mosquitto:7.1.3-orig`. Files: `/share/mosquitto/acl.conf`
+(`acl_file /share/mosquitto/accesscontrollist`) and `accesscontrollist` (rules above in mosquitto
+syntax, `topic read #` for `pv`). Verified live: a `pv` publish to `bat_caravan/...` is dropped,
+`pv/...` delivered; HA, batmon, fry, flat, relay, logger and dashboard reconnected.
+
+- Rollback: `docker tag local/app-mosquitto:7.1.3-orig ghcr.io/home-assistant/app-mosquitto:7.1.3`,
+  then `ha apps restart core_mosquitto` (under the havan lock).
+- An add-on update or reinstall pulls the upstream image and drops the patch: check that the release
+  contains PR #6 first, or the ACL file silently stops being enforced.
+- A new MQTT login needs a `user` block in `accesscontrollist`, else it gets no topic access.
 
 ## No TLS for fry/flat MQTT
 
