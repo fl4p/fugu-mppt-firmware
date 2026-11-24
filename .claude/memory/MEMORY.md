@@ -10,7 +10,7 @@ Topic notes (compacted 2026-11-24; each holds several dated sections).
 - [BMS feed + flat Vout error](project_charger_bms_feed.md) — flat reads 0.3–0.9 V low while converting (no Vout RC); don't trim vout_rl
 - [Tracker + sweep](project_tracker_sweep.md) — biggest loss = wrong local peak until next sweep; rev_k rejected, #70 deferred
 - [Backflow trip + wire guard #47](project_backflow_wire_guard.md) — join-at-float highD trip accepted; wire_protect warn only, RTC pinned
-- [Ripple filtering](project_ripple_filter.md) — notch before median; adaptive notch live; comb on main, fry trial suspended by 1009 OTA
+- [Ripple filtering](project_ripple_filter.md) — notch before median; adaptive notch live; comb trial: fry both vs flat notch, both on 1027
 - [RT loop latency](project_rt_loop_latency.md) — flash auto-suspend + IRAM set brought flat <1 ms (closed 11-18)
 - [Heap + idle power](project_heap_power_budget.md) — BLE ~110 KB heap; telemetry interval is the biggest idle-power lever
 
@@ -34,7 +34,7 @@ Topic notes (compacted 2026-11-24; each holds several dated sections).
 - [USB config drive (#40)](project_usb_msc_config_drive.md) — CONFIG_FUGU_WITH_USB_MSC: FAT over conf/, commit on eject
 
 ## OTA, access, tooling
-- [OTA lessons](project_ota.md) — check ota-owners.jsonl + bootinfo first; fry+flat on 1009-g44e16128 (11-24 15:30); BLE verb ota-ble
+- [OTA lessons](project_ota.md) — check ota-owners.jsonl + bootinfo first; fry+flat on 1027-g9c3890ea (11-24 17:23); BLE verb ota-ble
 - [Coredump + peek](project_coredump.md) — 64K partition needs serial flash; esp-coredump --core-format raw
 - [Reaching fry/flat](reference_device_access.md) — NAT ports flip, check hostname; MQTT console pv/log/<host>/cmd; creds in env files
 - [NAT router .231](project_nat_router.md) — OTA through it can lock it up; liveness WDT reboots after ~3 min dead upstream
