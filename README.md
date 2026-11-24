@@ -300,28 +300,20 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 
 # Not implemented / TODO
 
-* learn converter start duty cycle, converter self test * Calibration
-    * find pwm min duty (vout > 0 or iout > 0)
-* 2nd and more (interleaved) channels
-* -More precise PWM- not possible. clock is 80mhz
-* LCD Buttons
-* Web Interface
-* OTA Updates
-* WiFi Network managing, WiFi power saving / power off
-* Bluetooth communication
-* Serial / Modbus interface
-* Acid Lead, AGM charging
-  algorithm ([1](https://github.com/RedCommissary/mppt-charger-firmware/blob/c0dba8700d3baff1d13a86c43f5ce570b15e01af/source/application/inc/Battery.hpp#L27))
-* Boost converter
-* Detect burned HS and short LS, and back-flow? (implement self-tests), see libre-solar firmware
-* low current, low voltage drop -> disable bf (might sense phantom current due to temperature drift)
+* Learn the converter's start duty cycle (the minimum duty where Vout or Iout rises)
+* Two or more interleaved channels
+* LCD buttons
+* Modbus / serial interface
+* Lead-acid and AGM charging
+  ([example](https://github.com/RedCommissary/mppt-charger-firmware/blob/c0dba8700d3baff1d13a86c43f5ce570b15e01af/source/application/inc/Battery.hpp#L27))
+* Self-test for a shorted LS switch (backflow switch and HS short are covered)
+* Open the backflow switch at low current and low voltage drop (temperature drift can fake a current)
 
-## Issues
+## Known issues
 
-* There is a design issue with `IoutCTRL` and `PowerCTRL`. In an over-load situation, the controllers will
-  decrease duty-cycle, which can increase solar voltage, thus increase conversion power. In this case the converter will
-  increases power until it runs into the hard
-  limits, shuts down and recovers. Because this is a transient situation, it should not cause any damage to hardware.
+* `IoutCTRL` and `PowerCTRL` work on the wrong side of the MPP in an overload: lowering the duty cycle raises the
+  solar voltage and with it the converted power. Power then rises until it hits the hard limits, shuts down
+  and recovers. This is a transient and should not damage the hardware.
 
 # BMS Communication
 
