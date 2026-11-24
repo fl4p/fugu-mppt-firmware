@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <exception>
+#include <limits>
 #include <stdexcept>
 #include <esp_attr.h> // IRAM_ATTR
 #include <esp_cpu.h>  // esp_cpu_get_cycle_count
