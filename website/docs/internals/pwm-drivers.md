@@ -6,13 +6,13 @@ sidebar_position: 7
 # MCPWM driver
 
 The MCPWM gate driver drives a synchronous buck as an alternative to the LEDC driver in `src/pwm/ledc.h`. It targets
-ESP32-S3 and classic ESP32 (ESP-IDF ≥ 5.5).
+ESP32-S3 and classic ESP32 (ESP-IDF 6.0). It is the default gate driver; classic ESP32 builds default to LEDC.
 
 ## MCPWM vs LEDC
 
 MCPWM has four features that LEDC lacks: a per-operator dead-time submodule, an OST brake
 driven by a GPIO fault, timer sync sources for interleaved legs, and a 16-bit period counter
-that the driver sizes to the available source clock. LEDC instead uses a fixed 2048-tick period.
+that the driver sizes to the available source clock. LEDC instead uses a power-of-two period set by the switching frequency (2048 ticks at 20–39 kHz).
 
 ## Scope
 
@@ -59,7 +59,7 @@ For a given switching frequency, `bestTiming()` picks the largest `period_ticks`
 the highest duty resolution the hardware can give at `fsw`.
 
 The source clock `MCPWM_TIMER_CLK_SRC_DEFAULT` resolves to `PLL_F160M` = 160 MHz on both
-ESP32-S3 and classic ESP32 in IDF 5.5.
+ESP32-S3 and classic ESP32 in IDF 6.0.
 
 The algorithm returns `resolution_hz`, `period_ticks`, and `actual_freq` in four steps:
 

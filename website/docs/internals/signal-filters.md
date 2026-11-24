@@ -177,7 +177,8 @@ The comb has these properties:
 
 The comb delays everything read from the median or EWMA. These protections read raw samples and are not delayed:
 
-- the Vout over-voltage trip,
+- the Vin and Vout over-voltage trips,
+- the Iin over-current trip,
 - the 1.5× Iout trip,
 - the instantaneous reverse-current check (two raw samples), and
 - the Vout > 2·Vin trip.

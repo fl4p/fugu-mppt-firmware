@@ -47,8 +47,8 @@ concrete class implements `onStart()`, `onStop()` and optionally `onTick()`.
 | `Running` | `onStart()` returned true. `tick()` calls `onTick()` on every loop iteration. |
 | `Failed` | `onStart()` returned false or threw, or `onTick()` threw. `stop()` clears it to `Stopped`. |
 
-`start()` and `tick()` catch every exception and move the service to `Failed`, so a misbehaving subsystem cannot take
-down the network loop.
+`start()`, `stop()` and `tick()` catch every exception, so a misbehaving subsystem cannot take down the network loop.
+An exception in `start()` or `tick()` moves the service to `Failed`.
 
 Each service has its own conf file under `/littlefs/conf/`. Two keys there belong to the service layer:
 

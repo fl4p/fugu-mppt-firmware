@@ -354,7 +354,7 @@ Without a battery, the test runs only on request, never as the daily run. It ref
 - Vbat max is unknown, or
 - min(Vin/2, 0.8 × Vbat max) is below Vout + 5 V.
 
-It aborts when BMS data arrives or Vout does not rise within 3 s: a pack holds the output, or an open Vout divider reads
+It aborts when BMS data arrives or Vout does not rise within 3 s of the duty reaching its probe limit: a pack holds the output, or an open Vout divider reads
 no rise and may hide one. Without the low side, a switch stuck closed cannot pull reverse current from such a pack. A
 raised output after a no-battery run does not count as a battery.
 
@@ -470,7 +470,7 @@ and which of those stop it while it runs:
 |---|---|---|
 | `psu-latch` | PSU mode latched off after repeated trips |  |
 | `restart` | A system restart is under way | held |
-| `hs-short` | The [high-side short check](#high-side-short-check) latched | held |
+| `hs-short` | The [high-side short check](#high-side-short-check) latched | held, stops it |
 | `hs-check` | The high-side short check has not yet seen a clean sample after 0.5 s off, or a sample is suspect | held |
 | `bf-fail` | The [backflow switch test](#backflow-switch-test) failed | held |
 | `conf-save` | A rectifier-calibration result or a `pwr pwm` setting is being saved | held |
@@ -478,13 +478,13 @@ and which of those stop it while it runs:
 | `psu-ov-conflict` | PSU mode: the setpoint conflicts with the OV limit |  |
 | `backoff` | The backoff timer is running | held, stops it |
 | `wire-trip` | The wire-fault guard is tripped | held, stops it |
-| `temp-stale` | A fitted NTC or MCU temperature sensor has given 3 invalid readings in a row (outside −40…150 °C), no valid reading for 90 s, or none since boot | held |
+| `temp-stale` | A fitted NTC or MCU temperature sensor has given 3 invalid readings in a row (outside −40…150 °C), no valid reading for 90 s, or none since boot | held, stops it |
 | `temp` | NTC or MCU temperature > `temp_max` − 3 °C, or no MCU temperature | held |
 | `Vin-Vout` | Not in PSU mode: a buck needs average Vin > average Vout + 1 V, a boost needs average Vin < average Vout + 1 V |  |
 | `minpulse-M` | A buck start at the current Vout (or the PSU setpoint, if higher) would run the low-side minimum pulse above its start ratio | held |
 | `Vout-still-OV` | PSU mode: Vout is still above 98 % of the OV threshold |  |
 | `supply-UV` | Board supply below 9.5 V |  |
-| `calibrating` | Sensor calibration is running |  |
+| `calibrating` | Sensor calibration is running | held, stops it |
 | `filters-empty` | A Vin, Vout, Iin or Iout filter has not refilled after a calibration or ADC reset |  |
 | `idle profile` | The idle power profile holds the converter off; the loop asks it to leave | held |
 
